@@ -333,3 +333,129 @@ export const reorderDocHtml = (html, order, titles) => {
   const slots = blocks.map((b) => (b.rank >= 0 ? sorted[next++] : b));
   return src.slice(0, blocks[0].at) + slots.map((b) => b.html).join('');
 };
+
+/* ── LA LIGNE VIDE ENTRE LE TITRE, LES AUTEURS ET LES AFFILIATIONS ─────────────
+
+   La demande, mot pour mot : « In the final document the list of authors must be
+   separated by the title with one empty line. an empty line must also separate
+   the authors from the affiliations. »
+
+   Le document écrit donc la tête comme une revue la présente : le titre, une LIGNE
+   VIDE, les auteurs, une LIGNE VIDE, les affiliations (la ligne d'information du
+   projet vient après, sans ligne vide : elle n'en fait pas partie). La ligne vide
+   est un PARAGRAPHE À PART (`pf-empty-line`), pas une marge : elle se voit à
+   l'écran, sur la feuille imprimée, dans le PDF ET dans le .docx (Word y lit un
+   vrai paragraphe vide, voir htmlToDocxBody), et elle ne se perd pas quand la mise
+   en forme du panneau change la taille des textes.
+
+   TROIS ENDROITS, UNE SEULE RÈGLE : la page du projet (les rangées, voir
+   `docHeadRows`), le document FIGÉ et ce qui part à l'impression / au .docx (le
+   HTML, voir `docHeadSpacedHtml`). */
+
+/** Les blocs de TÊTE du panneau (voir PUB_DOC_BLOCKS, pubCitation.js) : le titre,
+ *  les auteurs et les affiliations — ceux qui se lisent sur des lignes séparées. */
+export const DOC_HEAD_IDS = ['title', 'authors', 'affiliations'];
+/** …et les classes avec lesquelles le document les écrit (les mêmes que met en
+ *  forme le « Publication format », voir PUB_LAYOUT_PARTS). */
+export const DOC_HEAD_CLASSES = ['pf-title', 'pf-authors', 'pf-affiliations'];
+
+/** La rangée « LIGNE VIDE » (voir docHeadRows) : `empty-line` est l'identifiant que
+ *  la page du projet rend, `pf-empty-line` la classe que le document écrit — et
+ *  `DOC_EMPTY_LINE_HTML` le balisage exact que `docHeadSpacedHtml` insère. */
+export const DOC_EMPTY_LINE_ID = 'empty-line';
+export const DOC_EMPTY_LINE_CLASS = 'pf-empty-line';
+export const DOC_EMPTY_LINE_HTML = `<div class="${DOC_EMPTY_LINE_CLASS}" aria-hidden="true">&nbsp;</div>`;
+
+/**
+ * LES RANGÉES DU DOCUMENT : les blocs que le projet a vraiment, dans l'ordre choisi
+ * au panneau (`docOrder`), avec UNE LIGNE VIDE (`DOC_EMPTY_LINE_ID`) entre deux blocs
+ * de tête qui se suivent.
+ *
+ *  L'ordre reste celui de l'utilisateur : la ligne vide ne sépare jamais que deux
+ *  blocs de tête VOISINS — un autre bloc entre eux (la ligne d'information du projet,
+ *  une section, les références) sépare déjà —, et elle se place toujours ENTRE les
+ *  deux. « Mettre l'auteur avant le titre » (l'exemple de la demande d'origine) se
+ *  lit donc avec la même ligne vide, sans réglage à refaire.
+ *
+ * @param {string[]} order                     l'ordre des blocs (`docOrder`)
+ * @param {(id: string) => boolean} [present]  ce que le projet a (voir `blocks`,
+ *                                             page du projet) — un bloc absent ne
+ *                                             compte pas
+ * @returns {string[]} les rangées : des identifiants de bloc et `empty-line`
+ */
+export const docHeadRows = (order, present) => {
+  const has = typeof present === 'function' ? present : () => true;
+  const ids = (Array.isArray(order) ? order : []).filter((id) => has(id));
+  const rows = [];
+  ids.forEach((id, i) => {
+    rows.push(id);
+    const next = ids[i + 1];
+    if (DOC_HEAD_IDS.includes(id) && DOC_HEAD_IDS.includes(next)) rows.push(DOC_EMPTY_LINE_ID);
+  });
+  return rows;
+};
+
+/* Le balisage d'une ligne vide DÉJÀ ÉCRITE (la page, un document enregistré) : la
+   classe peut y être accompagnée d'autres classes, entre apostrophes ou guillemets,
+   et l'élément peut être celui qu'on veut (`div` pour celui que le programme écrit). */
+const EMPTY_LINE_RE = /<(\w+)\b[^>]*\bclass\s*=\s*(?:"[^"]*\bpf-empty-line\b[^"]*"|'[^']*\bpf-empty-line\b[^']*')[^>]*>[\s\S]*?<\/\1>/gi;
+
+/** La fin d'un élément ouvert en `openEnd` (« </p> », « </h1> »…), ou `null`. */
+const closeTagOf = (src, openEnd, tag) => {
+  const re = new RegExp(`</${tag}\\s*>`, 'gi');
+  re.lastIndex = openEnd;
+  return re.exec(src);
+};
+
+/**
+ * LA MÊME RÈGLE, ÉCRITE SUR LE HTML DU DOCUMENT (voir `docHeadRows`) : une ligne
+ * vide entre deux blocs de tête qui se suivent.
+ *
+ *  C'est la fonction que la page du projet, le document FIGÉ (`project.exportDocHtml`,
+ *  écrit avant que le programme connaisse cette règle), l'impression, le PDF et
+ *  l'export .docx traversent tous (`projectDocBodyHtml`) : un seul endroit à corriger,
+ *  et le papier ne peut pas diverger de l'écran.
+ *
+ *  Les lignes vides DÉJÀ écrites sont retirées puis réécrites à la bonne place :
+ *  `reorderDocHtml` déplace des blocs entiers et une ligne vide voyage avec celui qui
+ *  la précède — une tête réordonnée à la main (« put the author before the title »)
+ *  garde donc ses lignes vides entre les bons blocs, sans doublon ni ligne orpheline.
+ *  Deux blocs de tête qui ne se SUIVENT pas (quelque chose entre eux) n'en reçoivent
+ *  aucune : il y a déjà de la place.
+ *
+ *  Un document sans les classes de la tête (écrit à la main, ou enregistré avant que
+ *  le programme les écrive) sort IDENTIQUE, au caractère près.
+ */
+export const docHeadSpacedHtml = (html) => {
+  const src = String(html == null ? '' : html);
+  if (!DOC_HEAD_CLASSES.some((c) => src.includes(c))) return src;
+  const bare = src.replace(EMPTY_LINE_RE, '');
+  /* LES DÉBUTS DES BLOCS DE TÊTE, dans l'ordre où le document les écrit (même
+     vocabulaire que reorderDocHtml : c'est la classe qui les fait reconnaître). */
+  const marks = [];
+  const RE = /<(h[1-6]|p|div)\b([^>]*)>/gi;
+  let m = RE.exec(bare);
+  while (m) {
+    const tokens = classOf(m[2]).toLowerCase().split(/\s+/).filter(Boolean);
+    if (DOC_HEAD_CLASSES.some((c) => tokens.includes(c))) {
+      marks.push({ at: m.index, openEnd: m.index + m[0].length, tag: m[1].toLowerCase() });
+    }
+    m = RE.exec(bare);
+  }
+  if (marks.length < 2) return bare;
+  let out = '';
+  let cut = 0;
+  for (let i = 0; i + 1 < marks.length; i += 1) {
+    const a = marks[i];
+    const b = marks[i + 1];
+    const close = closeTagOf(bare, a.openEnd, a.tag);
+    if (!close) continue;                                 // un bloc mal fermé : on n'y touche pas
+    /* Rien entre les deux (un commentaire, un blanc, un saut de ligne) : la ligne
+       vide se pose là. Autre chose (la ligne d'information, une section) : rien. */
+    const between = bare.slice(close.index + close[0].length, b.at).replace(/<!--[\s\S]*?-->/g, '');
+    if (between.trim()) continue;
+    out += bare.slice(cut, b.at) + DOC_EMPTY_LINE_HTML;
+    cut = b.at;
+  }
+  return out + bare.slice(cut);
+};

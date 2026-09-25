@@ -359,7 +359,7 @@ ok(/withoutBibliographySection\(project\.docSuggestion\.markedHtml\)/.test(pdm),
 {
   const frozenAt = pdm.indexOf('withoutBibliographySection(project.exportDocHtml)');
   const bibAt = pdm.indexOf('({refs.length})</h2>');
-  ok(frozenAt !== -1 && bibAt > frozenAt && pdm.slice(frozenAt, bibAt).includes('return docOrder.map((id) => blocks[id] || null);'),
+  ok(frozenAt !== -1 && bibAt > frozenAt && pdm.slice(frozenAt, bibAt).includes('return docHeadRows(docOrder, (id) => !!blocks[id]).map((id, i) => ('),
     'la liste des références est rendue HORS du texte figé ET APRÈS les blocs ordonnés (donc toujours à jour)');
 }
 ok(/<li key=\{r\.id\}/.test(pdm) && /pubCitationHtml\(citeData\(r\), pubFormat, operatorNames\)/.test(pdm),
@@ -510,8 +510,8 @@ ok(/pubLayoutCss\(activeFormat, '#pub-layout-preview'\)/.test(src),
   'l’aperçu du panneau est rendu par la feuille RÉELLE du document (il ne peut pas mentir)');
 eq((src.match(/layout: normalizePubLayout\(activeFormat\.layout\)/g) || []).length >= 1, true,
   'la mise en forme survit aux autres modifications du format (champs, et al., styles des noms)');
-ok(/const pubSetPreset = \(presetId\) =>/.test(src) && /pubSetPreset\(e\.target\.value\)/.test(src),
-  'changer de preset refait la citation mais GARDE la mise en forme du document');
+ok(/const pubSetPreset = \(presetId\) =>/.test(src) && /pubSetPreset\(v\.slice\('preset:'\.length\)\)/.test(src),
+  'changer de STYLE de bibliographie refait la citation mais GARDE la mise en forme du document');
 
 /* LA PAGE PROJET : la feuille part du format du projet (`project.pubFormat`,
    sinon le défaut) et vaut pour l'affichage — document figé compris — et pour

@@ -242,6 +242,23 @@ export const pubDocOrderMoved = (order, id, dir) => {
   return list;
 };
 
+/** Un bloc déplacé PAR GLISSER-DÉPOSER (le panneau n'a plus de ▲▼) : le bloc `id`
+ *  PREND LA PLACE du bloc `targetId` — il se pose à son index, les autres se
+ *  décalent d'un cran (glisser « a » sur « b » dans [a, b, c] donne [b, a, c]).
+ *  Un bloc FIXE ne se prend pas et ne se vise pas (la liste vivante des références
+ *  reste en dernier) ; un geste sur soi-même, ou une cible inconnue, ne change rien. */
+export const pubDocOrderDropped = (order, id, targetId) => {
+  const list = normalizePubDocOrder(order);
+  if (!id || !targetId || id === targetId) return list;
+  if (PUB_DOC_FIXED_IDS.includes(id) || PUB_DOC_FIXED_IDS.includes(targetId)) return list;
+  const from = list.indexOf(id);
+  const to = list.indexOf(targetId);
+  if (from < 0 || to < 0) return list;
+  const [moved] = list.splice(from, 1);
+  list.splice(to, 0, moved);
+  return list;
+};
+
 /* Les mots avec lesquels un DOCUMENT écrit nomme les blocs dont le programme écrit
    l'intitulé : « Materials and Methods » se lit « Methods » chez Nature, et un
    manuscrit importé peut l'avoir écrit « Experimental part » · « Experimental

@@ -177,7 +177,8 @@ has(PROJ, 'bodyHtml = reorderDocHtml(bodyHtml, docOrderWords(pubFormat), pubDocT
 has(PROJ, 'const docOrderWords = (fmt) => {',
   '…par la même liste de mots (docOrderWords, écrite une seule fois dans la page)');
 has(PROJ, 'fmt && fmt.docOrder,', '…lue dans `docOrder` du format, comme le document vivant');
-has(PROJ, '__html: reorderDocHtml(', 'le document ENREGISTRÉ affiché est réordonné lui aussi');
+has(PROJ, '__html: docHeadSpacedHtml(reorderDocHtml(',
+  'le document ENREGISTRÉ affiché est réordonné lui aussi — et reçoit ses lignes vides de tête (voir _pub_doc_head_lines_test.mjs)');
 
 /* ══ 5. LE CÂBLAGE : LES CLASSES DU VOCABULAIRE SONT CELLES QUE LA PAGE ÉCRIT ══
    C'est le maillon faible : une classe renommée dans la page ferait retomber les

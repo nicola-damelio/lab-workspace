@@ -23,7 +23,7 @@ register('./_esm_test_hook.mjs', import.meta.url);
 const {
   PUB_DOC_BLOCKS, PUB_DOC_BLOCK_IDS, PUB_DOC_TITLED_IDS, PUB_DOC_FIXED_IDS,
   buildPubDocOrder, buildPubDocTitles, buildPubFormat, normalizePubDocOrder,
-  normalizePubDocTitles, normalizePubFormat, pubDocOrderMoved, pubDocTitleKeywords,
+  normalizePubDocTitles, normalizePubFormat, pubDocOrderDropped, pubDocOrderMoved, pubDocTitleKeywords,
   pubDocOrderKeywords, pubDocTitleOf
 } = await import('./src/components/pubCitation.js');
 const {
@@ -72,6 +72,29 @@ eq(swapped, ['authors', 'title', 'affiliations', 'meta', 'sections', 'methods', 
 eq(pubDocOrderMoved(swapped, 'references', -1), swapped, '…la liste des références, elle, ne se déplace pas');
 eq(pubDocOrderMoved(PUB_DOC_BLOCK_IDS, 'title', -1), PUB_DOC_BLOCK_IDS, 'un cran hors de la liste ne fait rien');
 eq(pubDocOrderMoved(PUB_DOC_BLOCK_IDS, 'references', -1), PUB_DOC_BLOCK_IDS, '…comme un ▲ sur le premier bloc');
+
+/* 1b-bis. LE GLISSER-DÉPOSER — la demande : « these elements must be movable by
+   drag and drop rather than arrows ». Le bloc pris PREND LA PLACE du bloc visé. */
+eq(pubDocOrderDropped(PUB_DOC_BLOCK_IDS, 'authors', 'title'),
+  ['authors', 'title', 'affiliations', 'meta', 'sections', 'methods', 'experiments', 'references'],
+  'lâcher « Authors » sur « Title » le met à sa place (« put the author before the title »)');
+eq(pubDocOrderDropped(PUB_DOC_BLOCK_IDS, 'methods', 'title'),
+  ['methods', 'title', 'authors', 'affiliations', 'meta', 'sections', 'experiments', 'references'],
+  'lâcher un bloc VERS LE HAUT le fait remonter (les autres descendent)');
+eq(pubDocOrderDropped(PUB_DOC_BLOCK_IDS, 'title', 'methods'),
+  ['authors', 'affiliations', 'meta', 'sections', 'methods', 'title', 'experiments', 'references'],
+  'lâcher un bloc VERS LE BAS l’envoie à la place visée (les autres remontent)');
+eq(pubDocOrderDropped(PUB_DOC_BLOCK_IDS, 'title', 'title'), PUB_DOC_BLOCK_IDS,
+  'un geste sur soi-même ne change rien');
+eq(pubDocOrderDropped(PUB_DOC_BLOCK_IDS, 'references', 'title'), PUB_DOC_BLOCK_IDS,
+  'la liste VIVANTE des références ne se prend pas (elle reste la dernière)');
+eq(pubDocOrderDropped(PUB_DOC_BLOCK_IDS, 'title', 'references'), PUB_DOC_BLOCK_IDS,
+  '…et on ne peut pas la viser : rien ne passe derrière elle');
+eq(pubDocOrderDropped(PUB_DOC_BLOCK_IDS, 'nulle-part', 'title'), PUB_DOC_BLOCK_IDS,
+  'un bloc inconnu ne casse rien');
+eq(pubDocOrderDropped(swapped, 'title', 'authors'),
+  ['title', 'authors', 'affiliations', 'meta', 'sections', 'methods', 'experiments', 'references'],
+  'le même geste remet le titre en tête sur un ordre déjà déplacé');
 
 // 1c. Les intitulés — le second exemple : « Materials and Methods » → « Experimental section ».
 eq(normalizePubDocTitles(undefined), buildPubDocTitles(), 'sans choix, les intitulés du programme');
@@ -148,10 +171,17 @@ eq(reorderDocHtml(doc, JOURNAL_FORMATS.jacs.order).includes('Materials and Metho
 /* ══ 3. LE CÂBLAGE : LE PANNEAU ET LE DOCUMENT ═══════════════════════════════ */
 has(PANEL, 'PUB_DOC_BLOCKS', 'le panneau « Publication format » nomme les blocs du document');
 has(PANEL, 'Document sections (order & titles)', '…et leur consacre une rubrique');
-has(PANEL, 'onClick={() => pubMoveDocBlock(id, -1)}', '…avec les ▲▼ qui déplacent un bloc');
 has(PANEL, 'onChange={(e) => pubSetDocTitle(id, e.target.value)}', '…un champ par bloc qui porte un intitulé');
 has(PANEL, 'onClick={pubResetDocSections}', '…et un ↺ qui rend l’ordre et les intitulés du programme');
-has(PANEL, 'disabled={block.fixed}', '…les blocs FIXES (la liste des références) ne se déplacent pas');
+has(PANEL, 'draggable={!block.fixed}', '…chaque rangée se prend à la souris');
+has(PANEL, 'onDrop={(e) => { e.preventDefault(); e.stopPropagation(); pubDropDocBlock(id); }}',
+  '…et se lâche sur une autre (« movable by drag and drop rather than arrows »)');
+eq(PANEL.includes('pubMoveDocBlock'), false, '…plus une seule flèche ▲▼ dans le panneau');
+has(PANEL, 'Document layout & sections (project document)',
+  '…la mise en forme et les sections du document dans UNE carte (« must be fused with »)');
+has(PANEL, 'const pubDropDocBlock = (targetId) => {', 'le geste a sa fonction');
+has(PANEL, 'pubDocOrderDropped(docOrder, pubDocDragId, targetId)',
+  '…qui donne à la rangée prise la place de la rangée visée (pubDocOrderDropped)');
 has(PANEL, 'const docOrder = normalizePubDocOrder(activeFormat.docOrder);', 'le panneau lit l’ordre du format');
 has(PANEL, 'docTitles: normalizePubDocTitles(fmt && fmt.docTitles)', '…et ses intitulés, dans une seule liste de réglages');
 has(PANEL, '...(fmt && fmt.journal ? { journal: fmt.journal } : {}),',
@@ -167,7 +197,8 @@ has(PANEL, 'const pubResetDocSections = () => pubPatchFormat({ docOrder: buildPu
 has(PROJ, 'const docOrder = normalizePubDocOrder(pubFormat && pubFormat.docOrder);', 'le document du projet lit l’ordre du format');
 has(PROJ, 'const docTitles = normalizePubDocTitles(pubFormat && pubFormat.docTitles);', '…et ses intitulés');
 has(PROJ, 'const docHeading = (id) => pubDocTitleOf(docTitles, id);', '…et sait écrire l’intitulé d’un bloc');
-has(PROJ, 'return docOrder.map((id) => blocks[id] || null);', '…en rendant les blocs DANS CET ORDRE');
+has(PROJ, 'return docHeadRows(docOrder, (id) => !!blocks[id]).map((id, i) => (',
+  '…en rendant les blocs DANS CET ORDRE — avec la LIGNE VIDE entre le titre, les auteurs et les affiliations (voir _pub_doc_head_lines_test.mjs)');
 has(PROJ, 'blocks.title = (', 'le titre est un bloc déplaçable');
 has(PROJ, 'if (project.paperAuthors) blocks.authors = (', '…les auteurs un autre (« put the author before the title »)');
 has(PROJ, 'if (project.paperAffiliations) blocks.affiliations = (', '…les affiliations aussi');
@@ -183,8 +214,8 @@ has(PROJ, 'const docOrderWords = (fmt) => {',
   '…et l’ordre du PANNEAU passe avant celui du journal (voir docOrderWords, une seule fois)');
 has(PROJ, 'fmt && fmt.docOrder,',
   '…en lisant `docOrder` du format, comme le document vivant');
-has(PROJ, '__html: reorderDocHtml(',
-  'un document ENREGISTRÉ est réordonné lui aussi (la page du projet, pas seulement l’export)');
+has(PROJ, '__html: docHeadSpacedHtml(reorderDocHtml(',
+  'un document ENREGISTRÉ est réordonné lui aussi (la page du projet, pas seulement l’export), avec ses lignes vides de tête');
 has(PROJ, 'const OPTIONAL_TEXT_SECTION_IDS = [\'funding\', \'supporting\'];',
   'les sections de texte du projet viennent de la liste PARTAGÉE (utils/manuscriptImport.js) : un seul vocabulaire pour la page, l’import d’un manuscrit et le document');
 

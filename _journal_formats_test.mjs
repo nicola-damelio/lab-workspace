@@ -146,8 +146,17 @@ const PUB = readFileSync('./src/components/Publications.jsx', 'utf8');
 const DOC = readFileSync('./src/components/AppModules/projectDetailModule.jsx', 'utf8');
 ok(PUB.includes("from './journalFormats'"), 'le panneau importe les formats de journal');
 ok(PUB.includes('const pubSetJournal = (id) => {'), '…et le changement de journal a son geste');
-ok(PUB.includes('Submit to:'), '…avec la ligne « Submit to » dans le panneau Publication format');
+ok(PUB.includes('Journal preset:'), '…avec la ligne « Journal preset » dans le panneau Publication format');
 ok(PUB.includes('{JOURNAL_IDS.map((id) => ('), '…qui liste les journaux');
+ok(PUB.includes('Journal — references, typography and section order'),
+  '…dans un groupe à part : choisir un journal refait la citation, le caractère ET l’ordre des sections (« it does not seem to act on the styles and order of the sections »)');
+ok(PUB.includes('Bibliography style — the references only'),
+  '…et un STYLE de bibliographie, dans son propre groupe, ne touche que les références');
+ok(PUB.includes('onChange={(e) => pubSetJournalChoice(e.target.value)}'),
+  '…les deux passent par UN SEUL contrôle');
+ok(!PUB.includes('Submit to:'), '…l’ancienne ligne « Submit to », dont la fonction était unclear, est retirée');
+ok(PUB.includes('const pubJournalChoice = (fmt) => (fmt && fmt.journal'),
+  '…dont la valeur affichée suit le journal choisi, et sinon le style');
 ok(PUB.includes('setActiveFormat({ ...withPreset, layout: normalizePubLayout(withPreset.layout) })'),
   '…et applique le tout au format ACTIF (défaut ou projet)');
 ok(PUB.includes('journalOf(activeFormat) && (') && PUB.includes("journalSectionOrder(activeFormat).join(' → ')"),
@@ -156,8 +165,8 @@ ok(PUB.includes('📰 {journalLabelOf(journalOf(activeFormat))}'),
   '…et sans phrase explicative : la demande « remove all this explanatory text » a retiré les paragraphes du panneau');
 ok(DOC.includes('bodyHtml = reorderDocHtml(bodyHtml, docOrderWords(pubFormat), pubDocTitleKeywords(pubFormat));'),
   'le document EXPORTÉ / IMPRIMÉ suit l’ORDRE CHOISI au panneau (celui du journal vient après, voir docOrderWords) et les intitulés choisis');
-ok(DOC.indexOf('bodyHtml = reorderDocHtml(') > DOC.indexOf('const printProjectDoc = () => {'),
-  '…dans la fonction d’export (et non ailleurs)');
+ok(DOC.indexOf('bodyHtml = reorderDocHtml(') > DOC.indexOf('const projectDocBodyHtml = () => {'),
+  '…dans la fabrication du corps exporté (impression, PDF et .docx — voir _pub_docx_export_test.mjs)');
 ok(DOC.indexOf('bodyHtml = reorderDocHtml(') < DOC.indexOf('const title = `${project.name} — project document`;'),
   '…après la réparation des références et avant l’écriture de la page');
 ok(DOC.includes('journalSectionOrder, reorderDocHtml'), '…grâce au ré-export de Publications');

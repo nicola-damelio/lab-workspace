@@ -4,6 +4,7 @@ import { SmartImage } from '../TestShellRenderer';
 import {
   loadPubFormat, loadRelevantPapers, matchCoauthors, pubCitationData, pubCitationHtml,
   pubLayoutCss, journalSectionOrder, reorderDocHtml,
+  docHeadRows, docHeadSpacedHtml, DOC_EMPTY_LINE_ID, DOC_EMPTY_LINE_CLASS,
   normalizePubDocOrder, normalizePubDocTitles, pubDocTitleKeywords, pubDocOrderKeywords, pubDocTitleOf
 } from '../Publications';
 import { getStarredItems, buildStarCaption, buildMaterialsAndMethods, tabConfigForType } from '../../utils/starredItems';
@@ -13,6 +14,10 @@ import { suggestDriveFileName, openDrive, projectSectionFolderPath, projectSecti
 import { DriveUploadButton } from '../DriveUpload';
 import { UsefulFilesSection } from '../UsefulFilesSection';
 import { normalizeProjectFiles } from '../../utils/projectFiles';
+/* L'EXPORT EN .DOCX (« In the document of the project there must be a export to
+   docx button ») : le document affiché y devient un vrai fichier Word — même
+   corps que l'impression, voir projectDocBodyHtml. */
+import { downloadDocx } from '../../utils/docxExport';
 import {
   REFERENCE_FILE_ACCEPT, entryKeys, mergeReferenceEntries, parseReferences,
   projectBibEntry, readReferenceDocument
@@ -3320,11 +3325,13 @@ export const ProjectDetailModule = ({
   };
 
   // ---- Export the project as a printable text document ----
-  const printProjectDoc = () => {
-    const docEl = document.getElementById('project-doc-container');
-    if (!docEl) return;
-    const win = window.open('', '_blank', 'width=960,height=720');
-    if (!win) { window.print(); return; }
+  /* LE CORPS DU DOCUMENT POUR L'EXPORT — l'impression / le PDF ET le fichier Word
+     (voir exportProjectDocx) le partagent : le document affiché, RÉPARÉ, puis
+     rangé dans l'ordre du « Publication format ». Une seule fabrication, donc
+     l'écran, le papier et le .docx ne peuvent pas diverger. */
+  const projectDocBodyHtml = () => {
+    const docEl = document.getElementById(DOC_CONTAINER_ID);
+    if (!docEl) return '';
     /* CE QUI PART À L'IMPRESSION : le document affiché, RÉPARÉ.
        Un document enregistré (« ✏️ Edit text » → « 💾 Save changes ») est un
        INSTANTANÉ : les références importées DEPUIS n'y figurent pas et ses
@@ -3341,7 +3348,7 @@ export const ProjectDetailModule = ({
       bodyHtml = linkCitations(repaired.html);
     }
     /* L'ORDRE DES SECTIONS DU JOURNAL (la demande) : quand un journal est choisi
-       (« Submit to » dans le Publication format), le document EXPORTÉ / IMPRIMÉ se
+       (« Journal », dans le Publication format), le document EXPORTÉ / IMPRIMÉ se
        lit dans SON ordre — Introduction → … → References — sans qu'un mot du texte
        soit réécrit. Les titres que le journal ne nomme pas ne bougent pas, et deux
        sections du même genre gardent l'ordre de l'auteur (voir reorderDocHtml, qui
@@ -3355,6 +3362,22 @@ export const ProjectDetailModule = ({
        sections qu'aucun des deux ne nomme ne bougent pas. Les titres choisis
        partent avec (`pubDocTitleKeywords`), pour un texte déjà figé aussi. */
     bodyHtml = reorderDocHtml(bodyHtml, docOrderWords(pubFormat), pubDocTitleKeywords(pubFormat));
+    /* LA TÊTE SE LIT SUR DES LIGNES SÉPARÉES — « in the final document the list of
+       authors must be separated by the title with one empty line. an empty line must
+       also separate the authors from the affiliations. » Le titre, les auteurs et les
+       affiliations sont donc séparés par une LIGNE VIDE (voir docHeadSpacedHtml, qui
+       la pose entre deux blocs de tête VOISINS et la remet à sa place après tout
+       déplacement : un document figé, écrit avant cette règle, la reçoit ici aussi —
+       l'impression, le PDF et le .docx passent tous par cette fabrication). */
+    bodyHtml = docHeadSpacedHtml(bodyHtml);
+    return bodyHtml;
+  };
+
+  const printProjectDoc = () => {
+    if (!document.getElementById(DOC_CONTAINER_ID)) return;
+    const win = window.open('', '_blank', 'width=960,height=720');
+    if (!win) { window.print(); return; }
+    const bodyHtml = projectDocBodyHtml();
     const title = `${project.name} — project document`;
     /* LA MISE EN FORME DU DOCUMENT (« Publication format ») PART AVEC L'EXPORT :
        sa feuille vit dans la page de l'application (`#project-doc-container`),
@@ -3433,6 +3456,25 @@ export const ProjectDetailModule = ({
     win.document.close();
     win.focus();
     setTimeout(() => { try { win.print(); } catch { /* ignore */ } }, 350);
+  };
+
+  /* « 📄 Export to Word » — le MÊME corps que l'impression (voir
+     projectDocBodyHtml) écrit dans un vrai .docx : le fichier est fabriqué puis
+     téléchargé dans le navigateur, rien ne part ailleurs (utils/docxExport.js). */
+  const exportProjectDocx = () => {
+    const bodyHtml = projectDocBodyHtml();
+    if (!bodyHtml) {
+      setMmFeedback('⚠️ The document is not on screen — open the document first');
+      setTimeout(() => setMmFeedback(''), 3500);
+      return;
+    }
+    try {
+      downloadDocx(bodyHtml, project.name);
+      setMmFeedback('📄 Word document downloaded');
+    } catch {
+      setMmFeedback('⚠️ Could not build the .docx file');
+    }
+    setTimeout(() => setMmFeedback(''), 3500);
   };
 
   const renderTableDraft = () => {
@@ -3631,6 +3673,9 @@ export const ProjectDetailModule = ({
               )}
               <button onClick={printProjectDoc}
                       className="px-3 py-1.5 text-xs font-bold rounded-lg bg-blue-600 text-white hover:bg-blue-700">🖨️ Print / Save as PDF</button>
+              <button onClick={exportProjectDocx}
+                      className="px-3 py-1.5 text-xs font-bold rounded-lg bg-sky-600 text-white hover:bg-sky-700"
+                      title="Download this document as a Word file (.docx): the text, the headings, the lists, the tables, the captions and the links keep their structure and their formatting. The pixels of the figures live in the Drive, not in the page, so they are not embedded — “🖨️ Print / Save as PDF” keeps them.">📄 Export to Word</button>
               <button onClick={() => setDocFull((v) => !v)}
                       className="px-3 py-1.5 text-xs font-bold rounded-lg bg-slate-100 text-slate-700 border border-slate-300 hover:bg-slate-200"
                       title={docFull
@@ -3679,7 +3724,7 @@ export const ProjectDetailModule = ({
                      : 'border border-slate-200'}`}>
             {project.docSuggestion && docMode === 'view' ? (
               <div dangerouslySetInnerHTML={{
-                __html: repairContentImages(withoutBibliographySection(project.docSuggestion.markedHtml))
+                __html: docHeadSpacedHtml(repairContentImages(withoutBibliographySection(project.docSuggestion.markedHtml)))
               }} />
             ) : project.exportDocHtml ? (
               /* La bibliographie FIGÉE du document enregistré est retirée : la
@@ -3697,13 +3742,17 @@ export const ProjectDetailModule = ({
                  peuvent être renommés (voir pubDocTitleKeywords). L'ordre par
                  identifiant du document VIVANT, lui, reste plus fin (il déplace
                  aussi le titre, les auteurs, les affiliations) : il est rendu plus
-                 bas, quand aucun texte n'a encore été figé. */
+                 bas, quand aucun texte n'a encore été figé.
+                 LA TÊTE DU DOCUMENT FIGÉ REÇOIT LES MÊMES LIGNES VIDES que le document
+                 vivant (voir docHeadSpacedHtml) : le titre, les auteurs et les
+                 affiliations gardent, sur la page comme à l'impression, une ligne vide
+                 entre eux — même dans un document enregistré avant cette règle. */
               <div dangerouslySetInnerHTML={{
-                __html: reorderDocHtml(
+                __html: docHeadSpacedHtml(reorderDocHtml(
                   linkCitations(repairContentImages(withoutBibliographySection(project.exportDocHtml))),
                   docOrderWords(pubFormat),
                   pubDocTitleKeywords(pubFormat),
-                )
+                ))
               }} />
             ) : (() => {
               /* ── LES BLOCS DU DOCUMENT, DANS L'ORDRE CHOISI ─────────────────────
@@ -3866,7 +3915,19 @@ export const ProjectDetailModule = ({
                  pas rendu, les autres gardent exactement le balisage qu'ils avaient.
                  La liste des références, elle, est imprimée à la fin du document (voir
                  sa note ci-dessous) : elle ne se déplace pas, son intitulé se règle. */
-              return docOrder.map((id) => blocks[id] || null);
+              return docHeadRows(docOrder, (id) => !!blocks[id]).map((id, i) => (
+                /* LA LIGNE VIDE DE LA TÊTE — « in the final document the list of
+                   authors must be separated by the title with one empty line. an empty
+                   line must also separate the authors from the affiliations. » Elle est
+                   rendue ici, ENTRE deux blocs de tête voisins, dans l'ordre que
+                   l'utilisateur a réglé (voir docHeadRows) : c'est un vrai paragraphe
+                   vide, donc l'impression, le PDF et le .docx l'emportent (voir
+                   docHeadSpacedHtml, qui la récrit sur le HTML exporté). */
+                id === DOC_EMPTY_LINE_ID
+                  ? <div key={`${DOC_EMPTY_LINE_ID}-${i}`} className={DOC_EMPTY_LINE_CLASS}
+                         aria-hidden="true">&nbsp;</div>
+                  : (blocks[id] || null)
+              ));
             })()}
 
             {/* ── LA LISTE DES RÉFÉRENCES EST TOUJOURS VIVANTE ────────────────
