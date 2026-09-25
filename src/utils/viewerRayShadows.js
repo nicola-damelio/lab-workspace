@@ -73,9 +73,10 @@
    phantom, and NGL exposes it (`structure.eachBond` → atomIndex1 / atomIndex2,
    built from the residue templates AND from the distance-checked peptide bond —
    see drawnBondsOf below), so that is what the fill walks. A structure that
-   declares no topology at all (`inferBonds: 'none'`, a hand-built stage) keeps
-   the neighbour pairs this module always used, so nothing that used to be filled
-   goes dark.
+   declares no topology at all (`inferBonds: 'none'`, a hand-built stage) falls
+   back on its POLYMER TRACE — the trace atoms of consecutive residues, joined in
+   drawnBondsOf — so its tube stays continuous; the ORDER OF THE LIST is never a
+   link, because that rule is the defect described just above.
 
    It is the shadow of the MOLECULE, it follows
    the light, and it is deterministic — no GPU feature, no extension, no second
@@ -1439,44 +1440,67 @@ const linkStepOf = (ra, rb) => Math.max(LINK_STEP_MIN, 0.5 * Math.min(ra, rb));
    that reaches an atom nothing draws is not on screen. Duplicates are dropped —
    a file that carries CONECT records AND has its bonds inferred reports the same
    pair twice (measured on the probe peptide: 17 bonds for 15 real ones), and the
-   same link filled twice would only spend the budget twice.
-
-   `null` — « this structure declares NO topology » — is a DIFFERENT answer from
-   « its topology says these two atoms are not bonded »: the caller falls back on
-   the neighbour pairs for the first (a raw ensemble, a hand-built stage: better a
-   filled line than none) and never for the second, because that fallback IS the
-   phantom links of the report. `[]` — nothing here is a line, or nothing bonded
-   is drawn — therefore means « fill nothing », not « use the list order ». */
+   same link filled twice would only spend the budget twice. */
 const drawnBondsOf = (structure, links, n) => {
-  if (!structure || typeof structure.eachBond !== 'function') return null;
-  const declared = Number(structure.bondCount !== undefined ? structure.bondCount : (structure.bondStore && structure.bondStore.count));
-  if (!(Number.isFinite(declared) && declared > 0)) return null;
+  if (!structure || typeof structure.eachBond !== 'function') return [];
   let linked = false;
   for (let i = 0; i < n && !linked; i += 1) linked = links[i] === 1;
   if (!linked) return [];
+
   const out = [];
   const seen = new Set();
+  const addBond = (a, b) => {
+    if (!(a >= 0 && a < n && b >= 0 && b < n) || a === b) return;
+    if (links[a] !== 1 || links[b] !== 1) return;
+    const key = a < b ? a * n + b : b * n + a;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(a, b);
+  };
+
   try {
     structure.eachBond((bond) => {
-      const a = bond.atomIndex1;
-      const b = bond.atomIndex2;
-      if (!(a >= 0 && a < n && b >= 0 && b < n) || a === b) return;
-      if (links[a] !== 1 || links[b] !== 1) return;
-      const key = a < b ? a * n + b : b * n + a;
-      if (seen.has(key)) return;
-      seen.add(key);
-      out.push(a, b);
+      addBond(bond.atomIndex1, bond.atomIndex2);
     });
-  } catch { /* what was read is real: keep those bonds rather than guess */ }
+  } catch { }
+
+  // Fallback: If the bond graph is empty (e.g. C-alpha trace or disabled bond inference),
+  // we ensure the polymer trace atoms are connected so continuous tubes stay continuous.
+  if (out.length === 0) {
+    try {
+      if (typeof structure.eachPolymer === 'function') {
+        structure.eachPolymer((p) => {
+          /* ⚠ `p.eachResidue`, PAS `p.getResidueProxy(i)` : mesuré sur le ngl
+             INSTALLÉ (2.4.0, celui du CDN que la page charge — src/utils/ngl.js), un
+             PolymerProxy n'expose que `residueCount` · `residueIndexStart` ·
+             `eachResidue` : `getResidueProxy` est sur la STRUCTURE, pas sur le
+             polymère. Un repli qui l'appelait levait sur le premier résidu, ce
+             `catch` l'avalait, et le trace CA restait une poussière de billes (—
+             exactement le défaut que ce repli existe pour réparer). */
+          let prevTrace = -1;
+          p.eachResidue((r) => {
+            const trace = r.traceAtomIndex;
+            if (trace !== undefined && trace >= 0) {
+              if (prevTrace >= 0) addBond(prevTrace, trace);
+              prevTrace = trace;
+            }
+          });
+        });
+      }
+    } catch { }
+  }
+
   return out;
 };
 
 /* One part, laid out in world space: the atoms it emits (the drawn ones, strided
    when the budget is tight) with their stroke, whether their drawing CONTINUES
-   from them, and the LINES to fill — the real bonds between those atoms, or the
-   neighbour pairs this module always used when the structure declares no topology
-   at all. Links are kept as SLOT pairs, because a slot is what the fills
-   interpolate. */
+   from them, and the LINES to fill — the real bonds between those atoms
+   (drawnBondsOf), and NOTHING at all when the structure declares no topology: the
+   neighbour pairs this module used to take from the list order were the phantom
+   links of the report, so they are gone, and a graph-less structure is answered by
+   the polymer trace inside drawnBondsOf. Links are kept as SLOT pairs, because a
+   slot is what the fills interpolate. */
 const layOut = (part, stride) => {
   const slotOf = new Map();
   const own = elements16Of(part.comp.matrix);
@@ -1528,10 +1552,8 @@ const layOut = (part, stride) => {
   /* THE LINKS, as slot pairs. `part.bonds` is the structure's bond graph between
      the atoms a drawing continues from (drawnBondsOf): a bond whose atom the
      budget's stride dropped has no slot and cannot be filled — the proxy is
-     coarser then, which is what a stride means. `null` is « no topology »: the
-     neighbour pairs, which is what this module did before the graph existed, and
-     they are as useless now as they were then when nothing here is a line. */
-  const maxPairs = part.bonds ? part.bonds.length / 2 : Math.max(0, e - 1);
+     coarser then, which is what a stride means. */
+  const maxPairs = part.bonds ? part.bonds.length / 2 : 0;
   const edges = new Int32Array(Math.max(0, maxPairs) * 2);
   let p = 0;
   if (part.bonds) {
@@ -1541,13 +1563,6 @@ const layOut = (part, stride) => {
       if (sa === undefined || sb === undefined) continue;
       edges[p] = sa;
       edges[p + 1] = sb;
-      p += 2;
-    }
-  } else {
-    for (let s = 0; s + 1 < e; s += 1) {
-      if (!wlink[s] || !wlink[s + 1]) continue;
-      edges[p] = s;
-      edges[p + 1] = s + 1;
       p += 2;
     }
   }
@@ -1704,8 +1719,8 @@ export const atomsFromStage = (stage, maxAtoms = RAY_SHADOW_DEFAULTS.maxAtoms) =
       const links = new Uint8Array(n);
       const surface = drawnProxyRadiiOf(comp, n, data.radius, links);
       // …and THE TOPOLOGY of those atoms: the real bonds the fill runs along
-      // (drawnBondsOf). `null` = « this structure declares no graph »: the link
-      // walk then keeps the neighbour pairs of the list, as it always did.
+      // (drawnBondsOf). `[]` = « no graph here » — the fill then follows the
+      // polymer TRACE (its own fallback), never the order of the list.
       const bonds = drawnBondsOf(structure, links, n);
       parts.push({ comp, data, n, drawn, surface, links, viewerM, bonds });
       total += drawn ? drawn.length : n;

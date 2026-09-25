@@ -61,12 +61,15 @@ import {
   resolveImageToDataUrl, rasterizeSvgImage, lastLibraryListWrite
 } from '../../utils/figuresLibrary';
 import { SlidePreview, renderSlideToDataUrl } from '../FiguresSlides';
-/* LE DOCUMENT FINAL EN .docx : « ⬇️ Word (.docx) » écrit un VRAI fichier Word
+/* LE DOCUMENT FINAL EN .docx : « ⬇️ Word (.docx) » — le fichier se fabrique ici
+   (`exportProjectDocx`, plus bas), avec les deux moitiés du module : le corps du
+   document et les images (voir `downloadDocx`, `resolveDocxImages` importés plus
+   haut). ⚠ NE PAS réimporter `exportProjectDocx` : la ligne locale du merge le
+   faisait, ET le handler est déclaré dans ce fichier — deux déclarations du même
+   nom, et le fichier ne se parsait plus (le build échouait).
    (OOXML, ZIP de parties XML — aucune dépendance nouvelle, fflate est déjà là
    pour lire les .docx importés). Le texte, l'ordre des sections, les citations
    et les figures viennent du MÊME corps HTML que l'impression. */
-import { exportProjectDocx } from '../../utils/docxExport';
-
 /* ── L'APERÇU D'UNE CARTE DE CANVAS ──────────────────────────────────────────
    Signalé tel quel : « the preview of the images in the project does not work ».
    Une carte de canvas n'affichait QUE son rendu (`url`) : un canvas restauré
@@ -3725,7 +3728,7 @@ export const ProjectDetailModule = ({
                       className="px-3 py-1.5 text-xs font-bold rounded-lg bg-blue-600 text-white hover:bg-blue-700">🖨️ Print / Save as PDF</button>
               <button onClick={exportProjectDocx}
                       className="px-3 py-1.5 text-xs font-bold rounded-lg bg-sky-600 text-white hover:bg-sky-700"
-                      title="Download this document as a Word file (.docx): the text, the headings, the lists, the tables, the captions and the links keep their structure and their formatting. The pixels of the figures live in the Drive, not in the page, so they are not embedded — \"🖨️ Print / Save as PDF\" keeps them.">📄 Export to Word</button>
+                      title="Download this document as a Word file (.docx): the text, the headings, the lists, the tables, the captions and the links keep their structure and their formatting. The pixels of the figures live in the Drive, not in the page, so they are not embedded — &quot;🖨️ Print / Save as PDF&quot; keeps them.">📄 Export to Word</button>
               <button onClick={() => setDocFull((v) => !v)}
                       className="px-3 py-1.5 text-xs font-bold rounded-lg bg-slate-100 text-slate-700 border border-slate-300 hover:bg-slate-200"
                       title={docFull

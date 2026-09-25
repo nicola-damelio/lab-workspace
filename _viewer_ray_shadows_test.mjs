@@ -559,11 +559,21 @@ eq(drawnProxyRadiiOf({ structure: {} }, 3, new Float32Array([1.7, 1.7, 1.7])), n
 ok(Number.isNaN(drawnProxyRadiiOf(
   { reprList: [{ repr: { ...cartoonRep, visible: false } }] }, 1, new Float32Array([1.7]),
 )[0]), 'une représentation cachée ne donne aucun proxy');
+/* LE GRAPHE QUE CES BANCS DÉCLARENT : une CHAÎNE — les atomes voisins du banc sont
+   liés, ce qu'une structure réelle porte toujours (`eachBond`, voir
+   _viewer_shadow_links_test.mjs). Sans lui, un banc ne déclare AUCUNE topologie et
+   le remplissage n'a plus rien à suivre : la règle « l'atome suivant de la liste »
+   a été retirée du module (c'était ELLE, les liens fantômes du rapport). */
+const chainOf = (n) => ({
+  bondCount: Math.max(0, n - 1),
+  eachBond: (cb) => { for (let i = 0; i + 1 < n; i += 1) cb({ atomIndex1: i, atomIndex2: i + 1 }); },
+});
 /* Et de bout en bout : le ruban pèse 0,45 Å, pas 1,7 Å. */
 const ribbonStage = {
   compList: [{
     structure: {
       atomCount: 4,
+      ...chainOf(4),
       getAtomData: () => ({
         position: new Float32Array([0, 0, 0, 0, 1, 0, 0, 2, 0, 0, 3, 0]),
         radius: new Float32Array([1.7, 1.7, 1.7, 1.7]),
@@ -576,10 +586,11 @@ const ribbonStage = {
 const ribbon = atomsFromStage(ribbonStage, 100);
 /* ⚠ LE PROXY EST LA GÉOMÉTRIE DESSINÉE, pas une poussière de billes : les deux
    atomes dessinés sont reliés par les proxies qui REMPLISSENT le lien (un cartoon
-   marche la chaîne comme un TUYAU continu). Sans ce remplissage, un dessin fin ne
-   projette RIEN DU TOUT — mesuré : 0 pixel ombré sur 3655, contre 3160 sur 12247
-   avec les trous bouchés. 2 atomes à 1 Å, un trait de 0,45 Å → un pas de 0,3 Å →
-   3 proxies entre eux, donc 5. */
+   marche la chaîne comme un TUYAU continu ; le banc DÉCLARE cette chaîne — voir
+   `chainOf`). Sans ce remplissage, un dessin fin ne projette RIEN DU TOUT —
+   mesuré : 0 pixel ombré sur 3655, contre 3160 sur 12247 avec les trous bouchés.
+   2 atomes à 1 Å, un trait de 0,45 Å → un pas de 0,3 Å → 3 proxies entre eux, donc
+   5. */
 eq(ribbon.count, 5, 'seuls les atomes DESSINÉS sont lus, ET les proxies qui bouchent leur lien');
 eq(ribbon.filled, 3, '…soit 3 proxies de remplissage pour le lien d’1 Å du ruban');
 near(ribbon.radii[0], 0.45, 1e-6, '…et leur proxy a l’épaisseur du RUBAN, plus celle d’une sphère de van der Waals');
@@ -696,6 +707,7 @@ const realStage = {
   compList: [{
     structure: {
       atomCount: 2,
+      ...chainOf(2),
       getAtomData: () => ({
         position: new Float32Array([0, 0, 0, 0, 1.5, 0]),
         radius: new Float32Array([1.7, 1.7]),
@@ -848,7 +860,7 @@ const helixStage = (rep) => {
   }
   return {
     compList: [{
-      structure: { atomCount: n, getAtomData: () => ({ position, radius }) },
+      structure: { atomCount: n, ...chainOf(n), getAtomData: () => ({ position, radius }) },
       matrix: { elements: ident16 },
       reprList: [{
         name: rep.type, getType: () => rep.type, type: 'representation',
@@ -982,7 +994,7 @@ const sceneStage = ({ groups, compShift = [0, 0, 0] }) => {
   const { n, position, radius } = sceneAtoms();
   return {
     compList: [{
-      structure: { atomCount: n, getAtomData: () => ({ position, radius }) },
+      structure: { atomCount: n, ...chainOf(n), getAtomData: () => ({ position, radius }) },
       matrix: { elements: translateOf(compShift[0], compShift[1], compShift[2]) },
       reprList: [{
         name: tubeRep.type, getType: () => tubeRep.type, type: 'representation',

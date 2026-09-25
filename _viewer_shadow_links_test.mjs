@@ -32,21 +32,23 @@
      2. LA RÉPARATION, EXÉCUTÉE sur ce graphe : le proxy ne remplit QUE des
         liaisons réelles (aucun fantôme) et remplit TOUTES les liaisons dessinées,
         liaisons peptidiques comprises ;
-     3. L'ANCIEN DÉFAUT, REPRODUIT : le même peptide SANS topologie déclarée (le
-        repli) remplit des liens qui ne sont pas des liaisons et laisse les deux
-        liaisons peptidiques ouvertes — les blobs séparés du rapport. C'est
-        pourquoi le graphe est lu, et pourquoi le repli ne concerne QUE les
-        structures qui ne déclarent aucun graphe ;
-     4. LES DOUBLONS : un fichier qui porte des CONECT ET se fait inférer ses
-        liaisons donne la même paire deux fois (mesuré : 17 liaisons pour 15
-        réelles) — elle n'est remplie qu'une fois ;
-     5. LE BANC DU MODULE RESTE VRAI : une trace CA seule porte elle aussi ses
-        liaisons (l'ancien banc des ombres est « 30 CA d'un tube de 0,5 Å ») ;
-     6. LE COMPTE DE LA TOPOLOGIE, LU LÀ OÙ NGL L'ÉCRIT : `bondStore.count` (le
-        magasin des liaisons) et `bondCount` (la copie que `finalizeBonds` en prend
-        en fin de parsing). Une structure qui n'a QUE le premier — un objet
-        reconstruit, un montage à la main — est remplie par son graphe, jamais par
-        la liste des atomes : c'est ce que le module lit désormais.
+      3. L'ANCIEN DÉFAUT, REPRODUIT : le même peptide SANS topologie déclarée
+         remplissait des liens qui ne sont pas des liaisons et laissait les deux
+         liaisons peptidiques ouvertes — les blobs séparés du rapport. C'est
+         pourquoi la règle « l'atome suivant de la liste » a été RETIRÉE : sans
+         graphe, le module ne remplit plus rien, et le seul repli qui reste est la
+         TRACE DES POLYMÈRES (l'atome de trace de résidus CONSÉCUTIFS), mesurée ici
+         avec le fait NGL qui la nourrit ;
+      4. LES DOUBLONS : un fichier qui porte des CONECT ET se fait inférer ses
+         liaisons donne la même paire deux fois (mesuré : 17 liaisons pour 15
+         réelles) — elle n'est remplie qu'une fois ;
+      5. LE BANC DU MODULE RESTE VRAI : une trace CA seule porte elle aussi ses
+         liaisons (l'ancien banc des ombres est « 30 CA d'un tube de 0,5 Å ») ;
+      6. LE GRAPHE, ET RIEN QUE LUI : c'est `eachBond` qui décide, jamais un compte
+         (`bondCount` / `bondStore.count` ne sont plus lus du tout). Une structure
+         qui n'a QUE le magasin — un objet reconstruit, un montage à la main — est
+         remplie par son graphe, et un magasin VIDE dont `eachBond` rend les
+         liaisons l'est aussi.
    ========================================================================= */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -158,6 +160,26 @@ ok(REAL_KEYS.has('CB2-CG12') && REAL_KEYS.has('CB2-CG22') && !REAL_KEYS.has('CG1
 ok(REAL_KEYS.has('N1-CA1') && REAL_KEYS.has('CA1-C1') && REAL_KEYS.has('C1-O1'),
   '…avec le squelette et les doubles liaisons C=O');
 
+/* …ET LA TRACE DES POLYMÈRES — le SEUL repli qui reste dans le module. Une
+   structure NGL expose `eachPolymer`, chaque polymère son `residueCount` et son
+   `eachResidue`, et chaque résidu son atome de trace (`traceAtomIndex` : le CA
+   d'une protéine). C'est ce que le module parcourt quand AUCUN graphe n'est
+   déclaré (voir drawnBondsOf). */
+const CA_TRACE = PEPTIDE_ATOMS.reduce((a, r, i) => (r[1] === 'CA' ? a.concat(i) : a), []);
+const traceAtoms = [];
+peptide.eachPolymer((p) => {
+  /* ⚠ LE PIÈGE DU REPLI, mesuré ici : `getResidueProxy` est sur la STRUCTURE, pas
+     sur le POLYMÈRE. Un repli qui l'appelait sur le polymère levait sur le premier
+     résidu — et, avalé par son `catch`, ne remplissait RIEN. C'est `eachResidue`
+     qui rend les résidus, et chacun porte son atome de trace. */
+  eq(typeof p.getResidueProxy, 'undefined',
+    'un polymère NGL n’expose PAS `getResidueProxy` : le repli doit passer par `eachResidue`');
+  ok(typeof p.eachResidue === 'function' && p.residueCount === CA_TRACE.length,
+    '…mais il porte bien `eachResidue` et `residueCount` : les 3 résidus du peptide');
+  p.eachResidue((r) => traceAtoms.push(r.traceAtomIndex));
+});
+eq(traceAtoms.map((i) => nameOf(peptide, i)), ['CA1', 'CA2', 'CA3'],
+  'la trace du peptide, telle que NGL la donne, ce sont ses CA — résidu après résidu');
 
 /* ── 2. LA RÉPARATION, EXÉCUTÉE ───────────────────────────────────────────────
    Le stage est celui de l'application : le tube ET les bâtons partagent la même
@@ -182,15 +204,27 @@ const topologyOf = (bonds, declare) => {
     ? { bondStore: { count: bonds.length }, eachBond }
     : declare === 'store-empty'
       ? { bondStore: { count: 0 }, eachBond }
-      : { bondCount: bonds.length, eachBond };
+      : declare === 'empty-graph'
+        // Ce que `inferBonds: 'none'` laisse : le graphe EXISTE et ne rend RIEN.
+        ? { bondStore: { count: 0 }, eachBond: () => {} }
+        : { bondCount: bonds.length, eachBond };
 };
-const stageOf = ({ bonds, declare }) => ({
+/* LE POLYMÈRE D'UNE STRUCTURE RÉELLE, tel que le module le parcourt : un polymère,
+   son `residueCount` et son `eachResidue` — l'API MESURÉE au §1 (un PolymerProxy
+   n'a PAS `getResidueProxy`) — et L'ATOME DE TRACE de chacun de ses résidus. */
+const polymerOf = (trace) => (cb) => cb({
+  residueCount: trace.length,
+  eachResidue: (visit) => trace.forEach((t) => visit({ traceAtomIndex: t })),
+});
+const stageOf = ({ bonds, declare, polymers = false }) => ({
   compList: [{
     structure: {
       atomCount: POS.length,
       getAtomData: () => ({ position: POSITION, radius: RADIUS }),
-      // La topologie : sans elle, le module retombe sur la règle des voisins.
+      // La topologie : le graphe que `eachBond` rend. Sans elle (et sans polymère),
+      // RIEN ne se remplit — la règle « l'atome suivant de la liste » n'existe plus.
       ...topologyOf(bonds, declare),
+      ...(polymers ? { eachPolymer: polymerOf(CA_TRACE) } : {}),
     },
     matrix: { elements: IDENT16 },
     reprList: [{ repr: tubeRep }],
@@ -213,8 +247,8 @@ const distToSegment = (p, a, b) => {
 };
 
 const bondName = (a, b) => `${nameOf(peptide, a)}-${nameOf(peptide, b)}`;
-const audit = ({ bonds, declare }) => {
-  const res = atomsFromStage(stageOf({ bonds, declare }), 1e5);
+const audit = ({ bonds, declare, polymers = false, ref = REAL_BONDS }) => {
+  const res = atomsFromStage(stageOf({ bonds, declare, polymers }), 1e5);
   const fills = [];
   let atoms = 0;
   for (let k = 0; k < res.count; k += 1) {
@@ -222,15 +256,16 @@ const audit = ({ bonds, declare }) => {
     if (POS.some((q) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]) < 1e-4)) atoms += 1;
     else fills.push(p);
   }
-  const perBond = bonds.map(([a, b]) => fills.filter((p) => distToSegment(p, POS[a], POS[b]) < 0.02).length);
-  const onBond = (p) => bonds.some(([a, b]) => distToSegment(p, POS[a], POS[b]) < 0.02);
+  const perBond = ref.map(([a, b]) => fills.filter((p) => distToSegment(p, POS[a], POS[b]) < 0.02).length);
+  const onBond = (p) => ref.some(([a, b]) => distToSegment(p, POS[a], POS[b]) < 0.02);
   return {
     atoms,
     filled: res.filled,
     count: res.count,
     fills: fills.length,
+    points: fills,
     phantom: fills.filter((p) => !onBond(p)).length,
-    missing: bonds.filter((_, i) => perBond[i] === 0).map(([a, b]) => bondName(a, b)),
+    missing: ref.filter((_, i) => perBond[i] === 0).map(([a, b]) => bondName(a, b)),
     perBond,
   };
 };
@@ -248,13 +283,12 @@ ok(fillsOf(real, 'C1-N2') > 0 && fillsOf(real, 'C2-N3') > 0,
 ok(fillsOf(real, 'CB2-CG12') > 0 && fillsOf(real, 'CB2-CG22') > 0,
   '…et les BRANCHES latérales aussi (le bâton d’une chaîne latérale projette sa ligne, pas juste sa bille)');
 
-/* ── 2 bis. LA SECONDE SOURCE DU COMPTE : LE MAGASIN ────────────────────────
+/* ── 2 bis. LE GRAPHE, MÊME SANS `bondCount` ─────────────────────────────────
    LE MÊME peptide, LE MÊME graphe, la MÊME représentation — et une seule
    différence : la structure ne porte QUE `bondStore.count`, pas la copie
-   `bondCount` que `finalizeBonds` en prend. Sans la lecture du magasin, le module
-   conclurait « aucune topologie » et retomberait sur la liste des atomes : les
-   blobs du rapport reviendraient. Mesuré : le proxy est EXACTEMENT celui de la
-   structure complète (mêmes remplissages, aucun fantôme, aucune liaison ouverte). */
+   `bondCount` que `finalizeBonds` en prend. Le module ne lit AUCUN compte : c'est
+   `eachBond` qui décide, donc le proxy est EXACTEMENT celui de la structure
+   complète (mêmes remplissages, aucun fantôme, aucune liaison ouverte). */
 const stored = audit({ bonds: REAL_BONDS, declare: 'store' });
 eq([stored.filled, stored.count], [real.filled, real.count],
   'un graphe déclaré par le seul `bondStore.count` remplit exactement comme la structure complète');
@@ -263,31 +297,55 @@ eq([stored.phantom, stored.missing], [0, []],
 ok(fillsOf(stored, 'C1-N2') > 0 && fillsOf(stored, 'C2-N3') > 0,
   '…liaisons peptidiques comprises (ce qui recolle un résidu au suivant)');
 
-/* ── 3. L'ANCIEN DÉFAUT, REPRODUIT (LE REPLI) ────────────────────────────────
+/* ── 3. SANS GRAPHE : RIEN N'EST INVENTÉ, ET LE REPLI DE LA TRACE ────────────
    Le MÊME peptide, la MÊME représentation, et une seule différence : la structure
-   ne déclare AUCUNE topologie (c'est le cas `inferBonds: 'none'`, une structure
-   fabriquée à la main). Le module retombe alors sur la règle historique — le
-   suivant de la liste — et le défaut du rapport réapparaît : c'est à la fois la
-   preuve que la règle historique était bien la cause, et la démonstration que le
-   repli ne concerne QUE les structures sans graphe (une structure qui déclare son
-   graphe n'y retombe jamais, même si ses atomes dessinés ne sont pas liés). */
-
+   ne déclare AUCUNE topologie (le cas `inferBonds: 'none'`, une structure fabriquée
+   à la main). La règle « l'atome suivant de la liste », qui remplissait ces liens,
+   a été RETIRÉE du module : c'est ELLE qui dessinait les liens fantômes du rapport
+   (un atome de chaîne latérale relié au squelette du résidu suivant — mesuré sur
+   l'ancienne version : 49 remplissages fantômes ET 5 liaisons réelles laissées
+   ouvertes à la fois). Sans graphe, le module ne remplit donc plus rien par
+   défaut : le repli sur la liste, c'était réinventer le défaut. */
 const legacy = audit({ bonds: REAL_BONDS, declare: false });
-ok(legacy.phantom >= 10,
-  `sans graphe, « l’atome suivant de la liste » remplit des liens qui NE SONT PAS des liaisons (${legacy.phantom} fantômes ici)`);
-ok(legacy.missing.includes('C1-N2') && legacy.missing.includes('C2-N3'),
-  '…et il laisse les DEUX liaisons peptidiques ouvertes : un amas par résidu, aucun pont — les blobs du rapport');
-ok(legacy.missing.length > real.missing.length,
-  `…soit ${legacy.missing.length} liaisons non remplies contre ${real.missing.length} avec le graphe`);
-eq(legacy.fills, legacy.filled, '…et le compte annoncé reste celui qui est émis (le budget suit les remplissages)');
+eq([legacy.fills, legacy.phantom], [0, 0],
+  'sans graphe ni polymère, le module ne remplit plus RIEN : zéro lien fantôme (la règle des voisins en donnait 49)');
+eq(legacy.missing.length, REAL_BONDS.length,
+  `…et les ${REAL_BONDS.length} liaisons restent ouvertes : rien n'est inventé (l'ancienne règle en laissait 5 ouvertes AVEC ses fantômes)`);
+eq(legacy.atoms, PEPTIDE_ATOMS.length,
+  '…les 16 atomes dessinés sont émis quand même : le dessin est là, seul le trait n’est pas bouché');
 
-/* LE MAGASIN VIDE N'EST PAS UNE TOPOLOGIE : `count` à 0 déclare « rien de lié
-   ici », donc le même repli qu'une structure qui n'en dit pas plus — c'est
-   l'autre moitié de la règle (un compte absent ou nul ne fait pas retomber sur la
-   liste des atomes par accident, il y retombe pour la même raison que `false`). */
+/* …ET LE SEUL REPLI QUI RESTE : LA TRACE DES POLYMÈRES. Une structure qui PORTE son
+   graphe sans l'avoir rempli (c'est ce que `inferBonds: 'none'` laisse : `eachBond`
+   existe et ne rend rien — un trace CA, un montage reconstruit) est remplie le long
+   de sa TRACE : l'atome de trace de résidus CONSÉCUTIFS (voir drawnBondsOf). Les
+   remplissages tombent donc sur CA(i)–CA(i+1), et jamais sur un lien de la LISTE :
+   CB1–N2 (une chaîne latérale reliée au squelette du résidu suivant) est LE fantôme
+   du rapport, et il n'existe pas.
+
+   ⚠ LE REPLI VIT DANS LE CHEMIN « la structure SAIT dire ses liaisons » : sans
+   `eachBond` du tout (le montage à la main du §3 ci-dessus, mesuré : 0 remplissage)
+   il n'y a rien à interroger, et la trace n'est jamais lue. C'est ce que le module
+   fait, et c'est ce que ces deux cas mesurent. */
+const TRACE_BONDS = [[CA_TRACE[0], CA_TRACE[1]], [CA_TRACE[1], CA_TRACE[2]]];
+const dist = (a, b) => Math.hypot(...[0, 1, 2].map((k) => POS[b][k] - POS[a][k]));
+/* Le pas du module : la moitié du trait le plus fin (0,5 Å de tube → 0,25 Å),
+   planché à LINK_STEP_MIN (0,3 Å) — donc 0,3 Å ici. */
+const expectedTraceFills = TRACE_BONDS.reduce((a, [p, q]) => a + Math.max(0, Math.ceil(dist(p, q) / 0.3) - 1), 0);
+const trace = audit({ bonds: [], declare: 'empty-graph', polymers: true, ref: TRACE_BONDS });
+eq(trace.fills, expectedTraceFills,
+  `la trace du polymère est bouchée (${expectedTraceFills} remplissages pour ses ${TRACE_BONDS.length} segments : ${TRACE_BONDS.map(([p, q]) => `${bondName(p, q)} à ${dist(p, q).toFixed(2)} Å`).join(', ')})`);
+eq(trace.phantom, 0, '…AUCUN remplissage hors de la trace : ni CB1, ni aucun autre voisin de liste');
+eq(trace.missing, [], '…et chacun des deux segments de trace porte au moins un remplissage');
+const onTrace = (p) => TRACE_BONDS.some(([a, b]) => distToSegment(p, POS[a], POS[b]) < 0.05);
+eq(trace.points.filter((p) => distToSegment(p, POS[4], POS[5]) < 0.02 && !onTrace(p)).length, 0,
+  '…et le lien CB1–N2 de la LISTE (une chaîne latérale reliée au squelette du résidu suivant) n’est pas rempli : c’est le fantôme du rapport');
+
+/* LE COMPTE N'EST PLUS LU DU TOUT : ce qui décide, c'est ce que `eachBond` rend. Un
+   magasin VIDE dont le graphe porte les liaisons est donc rempli exactement comme
+   la structure complète, et aucune structure sans graphe ne l'est par un `count`. */
 const storedEmpty = audit({ bonds: REAL_BONDS, declare: 'store-empty' });
-eq([storedEmpty.phantom, storedEmpty.missing], [legacy.phantom, legacy.missing],
-  'un magasin de liaisons VIDE ne déclare rien : même repli exactement que sans topologie du tout');
+eq([storedEmpty.filled, storedEmpty.count, storedEmpty.phantom], [real.filled, real.count, 0],
+  'un magasin de liaisons VIDE ne fait plus rien retomber : `eachBond` rend les 15 liaisons, elles sont remplies');
 
 /* ── 4. LES DOUBLONS DU GRAPHE ───────────────────────────────────────────────
    Un fichier qui PORTE ses CONECT et se fait inférer ses liaisons donne la même
@@ -359,18 +417,20 @@ ok(MODULE.includes('structure.eachBond('),
   'le module des ombres lit CE graphe (`structure.eachBond` → atomIndex1 / atomIndex2)');
 ok(MODULE.includes('const drawnBondsOf = (structure, links, n) => {'),
   'le graphe est lu par une fonction à part, donc lisible et testable');
-ok(MODULE.includes("typeof structure.eachBond !== 'function'"),
-  'le repli est décidé par la TOPOLOGIE déclarée…');
-ok(MODULE.includes('Number.isFinite(declared) && declared > 0'),
-  '…(`bondCount` : un graphe déclaré mais vide ne fait PAS retomber sur la liste des atomes)');
-ok(MODULE.includes('structure.bondStore && structure.bondStore.count'),
-  '…et le compte se lit sur le MAGASIN quand la copie figée manque (une structure qui n’a que lui)');
-ok(MODULE.includes('structure.bondCount !== undefined ? structure.bondCount'),
-  '…en gardant `bondCount` d’abord : c’est la copie que NGL écrit en fin de parsing');
+ok(MODULE.includes("typeof structure.eachBond !== 'function') return [];"),
+  'sans `eachBond` il n’y a aucun lien à suivre : `[]`, et NON un repli sur la liste des atomes');
+ok(MODULE.includes("typeof structure.eachPolymer === 'function'") && MODULE.includes('eachResidue') && MODULE.includes('r.traceAtomIndex'),
+  '…le SEUL repli qui reste est la TRACE des polymères (`residueCount`, `eachResidue` → `traceAtomIndex`)');
+ok(MODULE.includes('if (out.length === 0) {'),
+  '…et il ne se déclenche que si le graphe n’a rien donné : une trace n’écrase jamais un vrai graphe');
 ok(MODULE.includes('if (links[a] !== 1 || links[b] !== 1) return;'),
   '…et une liaison n’est un lien que si les DEUX atomes sont dessinés par un trait');
-ok(!MODULE.includes('if (e + 1 < lay.len && lay.wlink[e] && lay.wlink[e + 1])'),
-  'l’ancienne marche « l’atome suivant de la liste » a disparu du remplissage');
+ok(MODULE.includes('const maxPairs = part.bonds ? part.bonds.length / 2 : 0;'),
+  '…le calque ne fabrique plus de paires « voisins de la liste » quand la structure ne déclare rien');
+ok(!MODULE.includes('Math.max(0, e - 1)') && !MODULE.includes('for (let s = 0; s + 1 < e; s += 1)'),
+  'l’ancienne marche « l’atome suivant de la liste » a disparu du calque');
+ok(!MODULE.includes('Number.isFinite(declared)'),
+  '…et le compte déclaré n’est plus lu du tout : c’est `eachBond` qui décide, jamais `bondCount`');
 ok(MODULE.includes('alone leaves holes ångströms wide that no ray can hit'),
   '…sans perdre le banc mesuré du module (0 pixel ombré sans remplissage, 3160 sans les trous)');
 ok(MODULE.includes('THAT is the graph of the'),
