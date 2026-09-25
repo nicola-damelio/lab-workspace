@@ -3,7 +3,8 @@ import { RichTextEditor } from '../RichTextEditor';
 import { SmartImage } from '../TestShellRenderer';
 import {
   loadPubFormat, loadRelevantPapers, matchCoauthors, pubCitationData, pubCitationHtml,
-  pubLayoutCss, journalSectionOrder, reorderDocHtml
+  pubLayoutCss, journalSectionOrder, reorderDocHtml,
+  normalizePubDocOrder, normalizePubDocTitles, pubDocTitleKeywords, pubDocTitleOf
 } from '../Publications';
 import { getStarredItems, buildStarCaption, buildMaterialsAndMethods, tabConfigForType } from '../../utils/starredItems';
 import { loadProjects, saveProjects, saveProjectsChecked, lightenProjectForStorage, recordProjectDeletion, loadPublications, TEST_TYPE_OPTIONS, testTypeLabel, genProjectId, normalizeAuthorized, projectAccessFor, saveProjectsRescued } from './projectsModule';
@@ -3302,8 +3303,12 @@ export const ProjectDetailModule = ({
        lit dans SON ordre — Introduction → … → References — sans qu'un mot du texte
        soit réécrit. Les titres que le journal ne nomme pas ne bougent pas, et deux
        sections du même genre gardent l'ordre de l'auteur (voir reorderDocHtml, qui
-       déplace des blocs entiers). */
-    bodyHtml = reorderDocHtml(bodyHtml, journalSectionOrder(pubFormat));
+       déplace des blocs entiers).
+       LES INTITULÉS CHOISIS PARTENT AVEC : `pubDocTitleKeywords` rend les mots du
+       document dont l'utilisateur a changé le titre (« materials and methods » →
+       « Experimental section »), donc un texte DÉJÀ ENREGISTRÉ — figé avant le
+       changement de nom — suit le nouveau titre au moment de l'export. */
+    bodyHtml = reorderDocHtml(bodyHtml, journalSectionOrder(pubFormat), pubDocTitleKeywords(pubFormat));
     const title = `${project.name} — project document`;
     /* LA MISE EN FORME DU DOCUMENT (« Publication format ») PART AVEC L'EXPORT :
        sa feuille vit dans la page de l'application (`#project-doc-container`),
@@ -3469,6 +3474,16 @@ export const ProjectDetailModule = ({
         ))}
       </ul>
     );
+    /* ── L'ORDRE ET LES INTITULÉS DES BLOCS DU DOCUMENT (voir PUB_DOC_BLOCKS) ──
+       Le format les porte (`docOrder` · `docTitles`) et le document les suit : les ▲▼
+       et les champs du panneau « Publication format » suffisent donc à mettre les
+       auteurs avant le titre, ou à appeler « Materials and Methods » autrement.
+       Un format enregistré avant cette version n'en porte pas : normalizePubDocOrder ·
+       normalizePubDocTitles rendent alors l'ordre et les intitulés du programme — le
+       document ne bouge pas d'un caractère tant que rien n'est réglé. */
+    const docOrder = normalizePubDocOrder(pubFormat && pubFormat.docOrder);
+    const docTitles = normalizePubDocTitles(pubFormat && pubFormat.docTitles);
+    const docHeading = (id) => pubDocTitleOf(docTitles, id);
     return (
       /* LA PAGE S'ADAPTE À LA LARGEUR DE L'ÉCRAN : le conteneur ne défile qu'en
          vertical (rien n'est coupé sur le côté), les marges se réduisent sur un
@@ -3627,43 +3642,59 @@ export const ProjectDetailModule = ({
               <div dangerouslySetInnerHTML={{
                 __html: linkCitations(repairContentImages(withoutBibliographySection(project.exportDocHtml)))
               }} />
-            ) : (
-              <>
-            <h1 className="pf-title text-2xl font-black text-slate-900 mb-1">
-              {project.paperTitle ? project.paperTitle : `📁 ${project.name}`}
-            </h1>
-            {project.paperAuthors && (
-              /* LES MARQUEURS D'AFFILIATION RESTENT DES EXPOSANTS, virgule
-                 comprise : « Rossi¹,² » s'affiche « Rossi<sup>1,2</sup> » (voir
-                 superscriptMarksHtml). La virgule entre deux affiliations était
-                 en exposant dans le document, elle le reste ici — et le champ
-                 enregistré, lui, n'est jamais réécrit (il reste éditable). */
-              <p className="pf-authors text-sm font-semibold text-slate-800 mb-1"
-                 dangerouslySetInnerHTML={{ __html: superscriptMarksHtml(project.paperAuthors) }} />
-            )}
-            {project.paperAffiliations && (
-              <p className="pf-affiliations text-[11px] text-slate-500 italic whitespace-pre-line mb-2"
-                 dangerouslySetInnerHTML={{ __html: superscriptMarksHtml(project.paperAffiliations) }} />
-            )}
-            <p className="pf-meta text-xs text-slate-500 mb-6">
-              {project.paperTitle ? `Project: ${project.name} · ` : ''}Scientist: {project.scientist || '—'} · Created: {new Date(project.createdAt).toLocaleDateString()}
-            </p>
+            ) : (() => {
+              /* ── LES BLOCS DU DOCUMENT, DANS L'ORDRE CHOISI ─────────────────────
+                 « In the publication format I cannot change the order of the sections
+                 nor change the titles of the subsections. I want to be able for example
+                 to put the author before the title or change the name of “materials and
+                 methods” into “experimental section” or whatever. »
+                 L'ordre et les intitulés vivent dans le format (`docOrder` ·
+                 `docTitles`, voir PUB_DOC_BLOCKS) et sont rendus ICI, dans cet ordre :
+                 le document vivant est la source de tout le reste — « 💾 Save changes »
+                 le fige, « 🖨️ Print » le copie, l'export en descend — donc l'ordre et
+                 les intitulés partent avec lui. Un bloc que le projet n'a pas (aucun
+                 auteur enregistré, aucun test inclus) n'est simplement pas rendu ; les
+                 autres gardent exactement le balisage qu'ils avaient. */
+              const blocks = {};
+              blocks.title = (
+                <h1 key="title" className="pf-title text-2xl font-black text-slate-900 mb-1">
+                  {project.paperTitle ? project.paperTitle : `📁 ${project.name}`}
+                </h1>
+              );
+              if (project.paperAuthors) blocks.authors = (
+                /* LES MARQUEURS D'AFFILIATION RESTENT DES EXPOSANTS, virgule
+                   comprise : « Rossi¹,² » s'affiche « Rossi<sup>1,2</sup> » (voir
+                   superscriptMarksHtml). La virgule entre deux affiliations était
+                   en exposant dans le document, elle le reste ici — et le champ
+                   enregistré, lui, n'est jamais réécrit (il reste éditable). */
+                <p key="authors" className="pf-authors text-sm font-semibold text-slate-800 mb-1"
+                   dangerouslySetInnerHTML={{ __html: superscriptMarksHtml(project.paperAuthors) }} />
+              );
+              if (project.paperAffiliations) blocks.affiliations = (
+                <p key="affiliations" className="pf-affiliations text-[11px] text-slate-500 italic whitespace-pre-line mb-2"
+                   dangerouslySetInnerHTML={{ __html: superscriptMarksHtml(project.paperAffiliations) }} />
+              );
+              blocks.meta = (
+                <p key="meta" className="pf-meta text-xs text-slate-500 mb-6">
+                  {project.paperTitle ? `Project: ${project.name} · ` : ''}Scientist: {project.scientist || '—'} · Created: {new Date(project.createdAt).toLocaleDateString()}
+                </p>
+              );
 
-            {sectionBlocks.map((s) => (
-              <div key={s.id} className="mb-6">
-                <h2 className="pf-heading text-base font-black text-slate-800 border-b border-slate-200 pb-1 mb-2">{s.title}</h2>
-                {s.html ? <div className="pf-body text-sm leading-relaxed" dangerouslySetInnerHTML={{ __html: repairContentImages(s.html) }} />
-                        : <p className="text-xs italic text-slate-400">—</p>}
-                {renderFigures(s.restFigures || [])}
-                {renderDocs(sectionDocs(s.id))}
-              </div>
-            ))}
+              blocks.sections = sectionBlocks.map((s) => (
+                <div key={s.id} className="mb-6">
+                  <h2 className="pf-heading text-base font-black text-slate-800 border-b border-slate-200 pb-1 mb-2">{s.title}</h2>
+                  {s.html ? <div className="pf-body text-sm leading-relaxed" dangerouslySetInnerHTML={{ __html: repairContentImages(s.html) }} />
+                          : <p className="text-xs italic text-slate-400">—</p>}
+                  {renderFigures(s.restFigures || [])}
+                  {renderDocs(sectionDocs(s.id))}
+                </div>
+              ));
 
 
-            {includedExps.length > 0 && (
-              <div className="mb-6">
-                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-1 mb-2">
-                  <h2 className="pf-heading text-base font-black text-slate-800">Materials and Methods</h2>
+              if (includedExps.length > 0) blocks.methods = (
+                <div key="methods" className="mb-6">
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-1 mb-2">
+                    <h2 className="pf-heading text-base font-black text-slate-800">{docHeading('methods')}</h2>
                   <div className="flex items-center gap-2 no-print">
                     {project.materialsAndMethods?.edited && (
                       <span className="text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5">
@@ -3704,13 +3735,13 @@ export const ProjectDetailModule = ({
                       );
                     })
                   )}
+                  </div>
                 </div>
-              </div>
-            )}
+              );
 
-            {includedExps.length > 0 && (
-              <div className="mb-6">
-                <h2 className="pf-heading text-base font-black text-slate-800 border-b border-slate-200 pb-1 mb-2">Experiments ({includedExps.length})</h2>
+              if (includedExps.length > 0) blocks.experiments = (
+                <div key="experiments" className="mb-6">
+                  <h2 className="pf-heading text-base font-black text-slate-800 border-b border-slate-200 pb-1 mb-2">{docHeading('experiments')} ({includedExps.length})</h2>
                 <p className="text-[10px] text-slate-400 mb-3">
                   Only the figures, plots and tables you ⭐-starred on the test pages are imported here.
                   Click the ✏️ next to a caption to edit it before export.
@@ -3755,10 +3786,15 @@ export const ProjectDetailModule = ({
                     </div>
                   );
                 })}
-              </div>
-            )}
-              </>
-            )}
+                </div>
+              );
+
+              /* L'ORDRE CHOISI, ET RIEN D'AUTRE : un bloc que le projet n'a pas n'est
+                 pas rendu, les autres gardent exactement le balisage qu'ils avaient.
+                 La liste des références, elle, est imprimée à la fin du document (voir
+                 sa note ci-dessous) : elle ne se déplace pas, son intitulé se règle. */
+              return docOrder.map((id) => blocks[id] || null);
+            })()}
 
             {/* ── LA LISTE DES RÉFÉRENCES EST TOUJOURS VIVANTE ────────────────
                 Elle est rendue ICI, HORS du texte figé : « ✏️ Edit text » →
@@ -3772,7 +3808,7 @@ export const ProjectDetailModule = ({
                 références du projet, rendue avec le format COURANT à chaque
                 affichage, est imprimée à sa place. */}
             <div className="mb-4">
-              <h2 className="pf-heading text-base font-black text-slate-800 border-b border-slate-200 pb-1 mb-2">References ({refs.length})</h2>
+              <h2 className="pf-heading text-base font-black text-slate-800 border-b border-slate-200 pb-1 mb-2">{docHeading('references')} ({refs.length})</h2>
               {/* LE TEXTE EST AUSSI DANS LE DOSSIER DU PROJET SUR LE DRIVE (voir
                   utils/projectDocumentDrive.js) : la page le dit et sait le
                   relire — le navigateur n'est qu'un cache, et un autre poste

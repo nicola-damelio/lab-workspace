@@ -143,6 +143,133 @@ export const PUB_LAYOUT_PARTS = [
 ];
 export const PUB_LAYOUT_PART_IDS = PUB_LAYOUT_PARTS.map((p) => p.id);
 
+/* ══ LES BLOCS DU DOCUMENT D'UN PROJET, DANS L'ORDRE OÙ ILS S'IMPRIMENT ══════
+   La demande : « In the publication format I cannot change the order of the sections
+   nor change the titles of the subsections. I want to be able for example to put the
+   author before the title or change the name of “materials and methods” into
+   “experimental section” or whatever. »
+
+   Le document d'un projet est une SUITE DE BLOCS — le titre, les auteurs, les
+   affiliations, la ligne d'information, les sections de texte de l'auteur,
+   « Materials and Methods », « Experiments », « References » — écrits jusqu'ici dans un
+   ordre FIXE par la page du projet (components/AppModules/projectDetailModule.jsx).
+   Ce format les NOMME, pour que
+     • l'ORDRE soit réglable (▲▼ du panneau « Publication format ») → `docOrder` ;
+     • l'INTITULÉ d'un bloc qui en porte un soit réglable → `docTitles` : c'est le seul
+       texte du document que le programme écrit lui-même (« Materials and Methods »,
+       « Experiments », « References ») — jamais celui de l'auteur, qui garde ses
+       propres intitulés de sections.
+   Un bloc sans intitulé propre (le titre de l'article EST le titre, les auteurs et les
+   affiliations sont du texte, la ligne d'information aussi) n'en porte pas : la liste
+   le dit (`titled: false`) et le panneau n'affiche alors qu'une explication.
+   `fixed: true` = le bloc ne se déplace pas : la liste VIVANTE des références du projet
+   est imprimée à la fin du document (elle est rendue hors du texte, pour suivre le
+   format courant — voir projectDetailModule.jsx) ; son intitulé, lui, se règle. */
+export const PUB_DOC_BLOCKS = [
+  { id: 'title', label: 'Title', hint: 'the paper title (or the folder name)' },
+  { id: 'authors', label: 'Authors', hint: 'the author line' },
+  { id: 'affiliations', label: 'Affiliations', hint: 'the affiliations line' },
+  { id: 'meta', label: 'Project line', hint: 'project · scientist · date' },
+  { id: 'sections', label: 'Text sections', hint: 'your text sections, in the order you wrote them' },
+  { id: 'methods', label: 'Materials and Methods', titled: true, title: 'Materials and Methods' },
+  { id: 'experiments', label: 'Experiments', titled: true, title: 'Experiments' },
+  { id: 'references', label: 'References', titled: true, title: 'References', fixed: true }
+];
+export const PUB_DOC_BLOCK_IDS = PUB_DOC_BLOCKS.map((b) => b.id);
+// Les blocs dont le programme écrit l'intitulé, et les blocs qui ne se déplacent pas.
+export const PUB_DOC_TITLED_IDS = PUB_DOC_BLOCKS.filter((b) => b.titled).map((b) => b.id);
+export const PUB_DOC_FIXED_IDS = PUB_DOC_BLOCKS.filter((b) => b.fixed).map((b) => b.id);
+export const pubDocBlockOf = (id) => PUB_DOC_BLOCKS.find((b) => b.id === id) || null;
+
+/** L'ordre du programme : celui que la page du projet a toujours suivi. */
+export const buildPubDocOrder = () => PUB_DOC_BLOCK_IDS.slice();
+
+/** Un ordre relu d'un enregistrement (localStorage, document d'un autre poste, copie
+ *  d'un projet) : seuls les blocs CONNUS et sans doublon passent, et tout bloc que
+ *  l'ordre oublie est REMIS À SA PLACE du programme — un format écrit avant cette
+ *  version (ou à la main) ne peut donc pas faire disparaître une section. */
+export const normalizePubDocOrder = (raw) => {
+  const out = [];
+  (Array.isArray(raw) ? raw : []).forEach((id) => {
+    const key = String(id || '');
+    if (PUB_DOC_BLOCK_IDS.includes(key) && !out.includes(key)) out.push(key);
+  });
+  PUB_DOC_BLOCK_IDS.forEach((id) => { if (!out.includes(id)) out.push(id); });
+  return out;
+};
+
+/** Les intitulés du programme, tels qu'ils sont écrits aujourd'hui. */
+export const buildPubDocTitles = () => {
+  const out = {};
+  PUB_DOC_BLOCKS.forEach((b) => { if (b.titled) out[b.id] = b.title; });
+  return out;
+};
+
+/** Les intitulés relus : du TEXTE, jamais du HTML (`<` et `>` sont retirés — un titre
+ *  de section ne peut pas apporter de balise au document), coupé à 120 caractères. Une
+ *  chaîne vide = « l'intitulé du programme » (voir pubDocTitleOf). */
+export const normalizePubDocTitles = (raw) => {
+  const out = buildPubDocTitles();
+  if (!raw || typeof raw !== 'object') return out;
+  PUB_DOC_TITLED_IDS.forEach((id) => {
+    const v = raw[id];
+    if (typeof v === 'string') out[id] = v.replace(/[<>]/g, '').replace(/\s+/g, ' ').trim().slice(0, 120);
+  });
+  return out;
+};
+
+/** L'intitulé que le document écrit pour un bloc : celui choisi par l'utilisateur, ou
+ *  celui du programme quand il est vide (ou quand le bloc n'en porte pas). */
+export const pubDocTitleOf = (titles, id) => {
+  const block = pubDocBlockOf(id);
+  if (!block || !block.titled) return '';
+  const own = titles && typeof titles === 'object' ? titles[id] : '';
+  const text = typeof own === 'string' ? own.replace(/[<>]/g, '').replace(/\s+/g, ' ').trim() : '';
+  return text || block.title;
+};
+
+/** Un bloc déplacé d'un cran (▲▼ du panneau). Un bloc FIXE ne bouge pas, un cran hors
+ *  de la liste ne fait rien : l'ordre rendu est toujours l'ordre normalisé. */
+export const pubDocOrderMoved = (order, id, dir) => {
+  const list = normalizePubDocOrder(order);
+  if (PUB_DOC_FIXED_IDS.includes(id)) return list;
+  const i = list.indexOf(id);
+  const j = i + dir;
+  if (i < 0 || j < 0 || j >= list.length) return list;
+  const tmp = list[i];
+  list[i] = list[j];
+  list[j] = tmp;
+  return list;
+};
+
+/* Les mots avec lesquels un DOCUMENT écrit nomme les blocs dont le programme écrit
+   l'intitulé : « Materials and Methods » se lit « Methods » chez Nature, et un
+   manuscrit importé peut l'avoir écrit « Experimental part » · « Experimental
+   procedures ». Ce sont ces mots que reorderDocHtml reconnaît (voir son troisième
+   argument), donc ceux qui doivent porter le titre choisi par l'utilisateur. */
+const DOC_TITLE_KEYWORDS = [
+  ['methods', ['materials and methods', 'methods', 'experimental part', 'experimental procedures']],
+  ['experiments', ['experiments']],
+  ['references', ['references', 'bibliography']]
+];
+
+/** LES TITRES CHOISIS, PRÊTS POUR `reorderDocHtml(html, order, titles)` : mot du
+ *  document → titre à lire. Un intitulé laissé au programme n'y est PAS (le document
+ *  écrit déjà le sien) : seuls les titres VRAIMENT choisis se propagent au texte déjà
+ *  écrit — un document figé avant le changement de nom suit donc le nouveau titre. */
+export const pubDocTitleKeywords = (fmt) => {
+  const titles = normalizePubDocTitles(fmt && fmt.docTitles);
+  const out = {};
+  DOC_TITLE_KEYWORDS.forEach(([id, words]) => {
+    const block = pubDocBlockOf(id);
+    if (!block || !block.titled) return;
+    const text = pubDocTitleOf(titles, id);
+    if (!text || text.toLowerCase() === String(block.title).toLowerCase()) return;
+    words.forEach((w) => { out[w] = text; });
+  });
+  return out;
+};
+
 /** Un réglage vierge : aucun style imposé, le document s'affiche comme avant.
  *  `bold` / `italic` / `underline` sont à TROIS états — `null` = laissé tel
  *  quel, `true` = imposé, `false` = explicitement retiré (utile pour un titre,
@@ -313,6 +440,8 @@ export const buildPubFormat = (presetId) => {
     scientistStyles: {},            // per lab member: 'none' | 'underline' | 'bold'
     inTextStyle: 'keep',            // in-text citation form (see IN_TEXT_STYLES)
     layout: buildPubLayout(),       // font / size / align / style / colour of each part (see pubLayoutCss)
+    docOrder: buildPubDocOrder(),   // the blocks of the project document, in the order they print (see PUB_DOC_BLOCKS)
+    docTitles: buildPubDocTitles(), // the headings the PROGRAM writes for them (« Materials and Methods » → the user's name)
     fields: preset.defs.map((def, i) => ({
       id: def[0], enabled: true, order: i, style: def[1], prefix: def[2], suffix: def[3]
     }))
@@ -331,6 +460,8 @@ export const normalizePubFormat = (parsed) => {
     scientistStyles: sanitizeScientistStyles(parsed && parsed.scientistStyles),
     inTextStyle: normalizeInTextStyle(parsed && parsed.inTextStyle),
     layout: normalizePubLayout(parsed && parsed.layout),
+    docOrder: normalizePubDocOrder(parsed && parsed.docOrder),
+    docTitles: normalizePubDocTitles(parsed && parsed.docTitles),
     fields: (parsed && parsed.fields) || buildPubFormat('nature').fields
   };
 };

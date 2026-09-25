@@ -681,7 +681,8 @@ has(PROJ, 'placeholder="Title of the paper — filled by “📥 Import a manusc
   'le titre stocké est modifiable à la main');
 has(PROJ, '{project.paperTitle ? project.paperTitle : `📁 ${project.name}`}',
   'le document exporté prend le titre du papier (le nom du projet reste en repli)');
-has(PROJ, '{project.paperAffiliations && (', '…et il imprime aussi les affiliations');
+has(PROJ, 'if (project.paperAffiliations) blocks.affiliations = (',
+  '…et il imprime aussi les affiliations (dans le bloc que l’ordre du document lui donne)');
 has(PROJ, 'dangerouslySetInnerHTML={{ __html: superscriptMarksHtml(project.paperAuthors) }}',
   'la liste des auteurs est écrite avec ses VRAIS exposants — la virgule entre deux affiliations reste un apice');
 has(PROJ, 'dangerouslySetInnerHTML={{ __html: superscriptMarksHtml(project.paperAffiliations) }}',

@@ -29,9 +29,11 @@ import { inTextCitationHtml } from '../utils/referenceLinks';
 import {
   AUTHOR_STYLE_IDS, AUTHOR_STYLES, IN_TEXT_STYLES, normalizeInTextStyle,
   PUB_FORMAT_KEY, PUB_FORMAT_PRESETS,
-  PUB_FONTS, PUB_LAYOUT_PARTS, PUB_TEXT_ALIGNMENTS,
-  authorMatchesCandidate, buildPubFormat, buildPubLayout, loadPubFormat, matchCoauthors,
-  normalizePubLayout, pubCitationData, pubCitationHtml, pubLayoutCss, pubTextStyleIsSet,
+  PUB_DOC_BLOCKS, PUB_FONTS, PUB_LAYOUT_PARTS, PUB_TEXT_ALIGNMENTS,
+  authorMatchesCandidate, buildPubFormat, buildPubDocOrder, buildPubDocTitles, buildPubLayout,
+  loadPubFormat, matchCoauthors, normalizePubDocOrder, normalizePubDocTitles, normalizePubLayout,
+  pubCitationData, pubCitationHtml, pubDocOrderMoved,
+  pubLayoutCss, pubTextStyleIsSet,
   scientistStyleOf
 } from './pubCitation';
 /* LES FORMATS DE JOURNAL (« cambiare giornale di submission velocemente ») : chaque
@@ -80,8 +82,10 @@ export {
   AUTHOR_STYLES, AUTHOR_STYLE_IDS, IN_TEXT_STYLES, IN_TEXT_STYLE_IDS, PUB_FORMAT_PRESETS,
   normalizeInTextStyle,
   PUB_FONTS, PUB_LAYOUT_PARTS, PUB_TEXT_ALIGNMENTS,
-  buildPubFormat, buildPubLayout, loadPubFormat, normalizePubFormat, normalizePubLayout,
-  pubLayoutCss, pubTextStyleIsSet, emptyPubTextStyle,
+  buildPubFormat, buildPubDocOrder, buildPubDocTitles, buildPubLayout, loadPubFormat,
+  normalizePubDocOrder, normalizePubDocTitles, normalizePubFormat, normalizePubLayout,
+  pubLayoutCss, pubTextStyleIsSet, emptyPubTextStyle, PUB_DOC_BLOCKS, PUB_DOC_BLOCK_IDS,
+  pubDocOrderMoved, pubDocTitleKeywords, pubDocTitleOf,
   pubCitationHtml, pubCitationText, pubFieldValue, pubDoiUrl,
   pubCitationData, pubOriginOf,
   authorMatchesCandidate, matchCoauthors, isLabAuthor, labMemberOf,
@@ -2415,7 +2419,21 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
       setPbProjects((prev) => prev.map((p) => (p.name === pubFormatScope ? { ...p, pubFormat: fmt } : p)));
     }
   };
+  /* CE QUI N'APPARTIENT PAS À LA CITATION — le journal choisi (« Submit to »), l'ordre
+     de ses sections et l'intitulé de sa bibliographie, puis L'ORDRE ET LES INTITULÉS DES
+     BLOCS DU DOCUMENT (voir PUB_DOC_BLOCKS). Un réglage de CITATION (un champ, la police
+     du corps, les noms des membres du laboratoire…) ne doit jamais les perdre : le
+     panneau promet « everything stays editable below », et changer un champ ne peut ni
+     décrocher le journal ni remettre le document dans l'ordre du programme. */
+  const pubDocSettings = (fmt) => ({
+    ...(fmt && fmt.journal ? { journal: fmt.journal } : {}),
+    ...(fmt && Array.isArray(fmt.order) ? { order: fmt.order.slice() } : {}),
+    ...(fmt && typeof fmt.bibLabel === 'string' ? { bibLabel: fmt.bibLabel } : {}),
+    docOrder: normalizePubDocOrder(fmt && fmt.docOrder),
+    docTitles: normalizePubDocTitles(fmt && fmt.docTitles)
+  });
   const pubCustomFormat = (fields) => ({
+    ...pubDocSettings(activeFormat),
     preset: 'custom',
     etAlLimit: activeFormat.etAlLimit || 0,
     alwaysShowScientists: !!activeFormat.alwaysShowScientists,
@@ -2478,11 +2496,35 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
     });
   };
   const pubResetAllLayout = () => setActiveFormat({ ...pubCustomFormat(activeFormat.fields), layout: buildPubLayout() });
+  /* ── L'ORDRE ET LES INTITULÉS DES BLOCS DU DOCUMENT (voir PUB_DOC_BLOCKS) ─────
+     La demande : « In the publication format I cannot change the order of the sections
+     nor change the titles of the subsections. I want to be able for example to put the
+     author before the title or change the name of “materials and methods” into
+     “experimental section” or whatever. »
+     ▲▼ déplace un bloc, le champ écrit l'intitulé d'un bloc que le PROGRAMME nomme
+     (« Materials and Methods », « Experiments », « References »), ↺ remet l'ordre et
+     les intitulés du programme. Rien de tout cela ne touche au texte de l'auteur : seuls
+     l'ORDRE des blocs et les intitulés que le programme écrit lui-même changent. */
+  const docOrder = normalizePubDocOrder(activeFormat.docOrder);
+  const docTitles = normalizePubDocTitles(activeFormat.docTitles);
+  const pubMoveDocBlock = (id, dir) => pubPatchFormat({ docOrder: pubDocOrderMoved(docOrder, id, dir) });
+  const pubSetDocTitle = (id, value) => pubPatchFormat({
+    /* Le texte est gardé TEL QUEL pendant la frappe (un espace en fin de mot ne doit pas
+       disparaître sous les doigts) : c'est pubDocTitleOf qui le nettoie à l'affichage. */
+    docTitles: { ...docTitles, [id]: String(value == null ? '' : value).replace(/[<>]/g, '').slice(0, 120) }
+  });
+  const pubResetDocSections = () => pubPatchFormat({ docOrder: buildPubDocOrder(), docTitles: buildPubDocTitles() });
   /* Le choix du preset d'un journal refait la CITATION : la mise en forme du
      document, elle, a été réglée partie par partie et n'a aucune raison de
      disparaître avec le preset. */
   const pubSetPreset = (presetId) =>
-    setActiveFormat({ ...buildPubFormat(presetId), layout: normalizePubLayout(activeFormat.layout) });
+    setActiveFormat({
+      ...buildPubFormat(presetId),
+      /* Le DOCUMENT ne bouge pas avec la CITATION : son ordre, ses intitulés et le
+         journal d'où ils viennent restent ceux de l'utilisateur. */
+      ...pubDocSettings(activeFormat),
+      layout: normalizePubLayout(activeFormat.layout)
+    });
 
   /* APPLIQUER UN JOURNAL — les TROIS choses du changement de journal d'un coup (la
      demande : « l'ordine delle sezioni, il formato della bibliografia, il carattere
@@ -2497,7 +2539,16 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
     if (!id) { setActiveFormat(clearJournalFormat(activeFormat, buildPubLayout())); return; }
     const def = JOURNAL_FORMATS[id];
     if (!def) { setActiveFormat(activeFormat); return; }
-    const withPreset = applyJournalFormat({ ...activeFormat, ...buildPubFormat(def.preset) }, id);
+    const withPreset = applyJournalFormat({
+      ...activeFormat,
+      ...buildPubFormat(def.preset),
+      /* L'ORDRE ET LES INTITULÉS DES BLOCS DU DOCUMENT RESTENT À L'UTILISATEUR : le
+         journal qui arrive apporte sa citation, le caractère de ses parties et l'ordre
+         de SES sections (voir `order`), pas la structure du document de quelqu'un
+         d'autre. « ↺ Default order & titles » les remet à ceux du programme. */
+      docOrder: normalizePubDocOrder(activeFormat.docOrder),
+      docTitles: normalizePubDocTitles(activeFormat.docTitles)
+    }, id);
     setActiveFormat({ ...withPreset, layout: normalizePubLayout(withPreset.layout) });
   };
 
@@ -2889,6 +2940,66 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
             The layout applies to the PROJECT document — the page, the printed document and its PDF, frozen
             text included (use “↩️ Rebuild from data” to give an old frozen text the new layout). Leave a
             setting empty (“As in the app”) and nothing is written: the document keeps the look of the app.
+          </p>
+        </div>
+
+        {/* ── LES SECTIONS DU DOCUMENT : ORDRE ET INTITULÉS ─────────────────────
+            La demande : « In the publication format I cannot change the order of the
+            sections nor change the titles of the subsections. I want to be able for
+            example to put the author before the title or change the name of “materials
+            and methods” into “experimental section” or whatever. »
+            Chaque bloc du document a ses ▲▼ (voir PUB_DOC_BLOCKS) ; ceux dont le
+            PROGRAMME écrit l'intitulé ont en plus un champ — c'est le seul texte du
+            document qu'il écrit lui-même — et un ↺ rend l'intitulé du programme. Le
+            texte de l'auteur, lui, n'est jamais touché. */}
+        <div className="bg-white border border-slate-200 rounded-lg p-3 mb-4">
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+            <span className="text-[10px] font-black uppercase tracking-wide text-slate-400"
+                  title="The blocks of the project document, in the order they are printed (page, printed document, PDF, export). Move one with ▲▼; rename a heading the program writes with its field.">
+              Document sections (order & titles)
+            </span>
+            <button type="button" onClick={pubResetDocSections}
+                    className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-300 hover:bg-slate-200"
+                    title="Put the blocks of the document back in the app's order, with the app's own section titles">
+              ↺ Default order & titles
+            </button>
+          </div>
+          <div className="flex flex-col gap-1">
+            {docOrder.map((id) => {
+              const block = PUB_DOC_BLOCKS.find((b) => b.id === id);
+              if (!block) return null;
+              return (
+                <div key={id} className="flex flex-wrap items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1">
+                  <span className="w-32 text-[11px] font-bold text-slate-700">{block.label}</span>
+                  {block.titled ? (
+                    <input type="text" value={docTitles[id] || ''} placeholder={block.title}
+                           onChange={(e) => pubSetDocTitle(id, e.target.value)}
+                           title={`The heading the document prints for “${block.label}” — empty = the app's own title (${block.title})`}
+                           className="flex-1 min-w-[8rem] border border-slate-300 rounded px-1.5 py-0.5 text-[11px] bg-white outline-none focus:border-indigo-400" />
+                  ) : (
+                    <span className="flex-1 text-[10px] italic text-slate-400">{block.hint}</span>
+                  )}
+                  {block.titled && (
+                    <button type="button" onClick={() => pubSetDocTitle(id, '')}
+                            className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-white border border-slate-300 text-slate-600 hover:bg-slate-100"
+                            title={`Back to “${block.title}”`}>↺</button>
+                  )}
+                  <div className="ml-auto flex items-center gap-0.5">
+                    <button type="button" onClick={() => pubMoveDocBlock(id, -1)} disabled={block.fixed}
+                            title={block.fixed ? 'The live list of the references of the project is always printed last' : 'Move up'}
+                            className="w-6 h-6 flex items-center justify-center rounded bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold disabled:opacity-40">▲</button>
+                    <button type="button" onClick={() => pubMoveDocBlock(id, 1)} disabled={block.fixed}
+                            title={block.fixed ? 'The live list of the references of the project is always printed last' : 'Move down'}
+                            className="w-6 h-6 flex items-center justify-center rounded bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold disabled:opacity-40">▼</button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <p className="text-[10px] text-slate-400 mt-2">
+            The order and the headings apply to the PROJECT document — the page, the printed document and its PDF, and
+            a text already saved follows them for the headings it lets the program write. The author's own text is never
+            rewritten.
           </p>
         </div>
 

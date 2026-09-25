@@ -358,9 +358,9 @@ ok(/withoutBibliographySection\(project\.docSuggestion\.markedHtml\)/.test(pdm),
   '…idem pour la version proposée (suggestion)');
 {
   const frozenAt = pdm.indexOf('withoutBibliographySection(project.exportDocHtml)');
-  const bibAt = pdm.indexOf('References ({refs.length})</h2>');
-  ok(frozenAt !== -1 && bibAt > frozenAt && pdm.slice(frozenAt, bibAt).includes('</>'),
-    'la liste des références est rendue HORS du texte figé (donc toujours à jour)');
+  const bibAt = pdm.indexOf('({refs.length})</h2>');
+  ok(frozenAt !== -1 && bibAt > frozenAt && pdm.slice(frozenAt, bibAt).includes('return docOrder.map((id) => blocks[id] || null);'),
+    'la liste des références est rendue HORS du texte figé ET APRÈS les blocs ordonnés (donc toujours à jour)');
 }
 ok(/<li key=\{r\.id\}/.test(pdm) && /pubCitationHtml\(citeData\(r\), pubFormat, operatorNames\)/.test(pdm),
   '…et chaque entrée imprimée passe par le publication format');

@@ -16,7 +16,9 @@
      3. `order`  → L'ORDINE DELLE SEZIONI, come parole chiave degli intitoli
         (« Introduction », « Materials and Methods », « Results and Discussion »,
         « Conclusion », « References »…): `reorderDocHtml` le riporta nell'ordine
-        del giornale sul documento esportato / stampato.
+        del giornale sul documento esportato / stampato — e, con il suo terzo
+        argomento, scrive sull'intitolo riconosciuto IL TITOLO CHE L'UTENTE VUOLE
+        LEGGERE (« Materials and Methods » → « Experimental section »).
 
    Onestà: questi bundle riproducono lo STILE tipico di ciascuna rivista, non sono
    la sua guida per gli autori — che cambia nel tempo e va riletta prima di
@@ -139,7 +141,10 @@ export const journalLayoutPatches = (id) => {
  *  carattere delle parti (`layout`) e l'ordine delle sezioni (`order`) — più il
  *  suo id (`journal`). Il testo delle citazioni, gli stili dei nomi dei membri del
  *  laboratorio e la forma dei renvoi nel testo restano quelli dell'utente. Un id
- *  sconosciuto restituisce il formato INTATTO. */
+ *  sconosciuto restituisce il formato INTATTO. L'ORDINE E GLI INTITOLI DEI BLOCCHI
+ *  DEL DOCUMENTO (`docOrder` · `docTitles`, vedere PUB_DOC_BLOCKS) NON appartengono
+ *  al giornale: sono decisioni dell'utente sul SUO documento — passano intatti da
+ *  qui, e « ↺ As in the app » li tocca tanto poco quanto il resto del formato. */
 export const applyJournalFormat = (fmt, id) => {
   const def = JOURNAL_FORMATS[id];
   const base = fmt && typeof fmt === 'object' ? fmt : {};
@@ -171,6 +176,35 @@ export const clearJournalFormat = (fmt, emptyLayout) => {
   return out;
 };
 
+/* ---- GLI INTITOLI CHE L'UTENTE SCEGLIE (vedi reorderDocHtml) ---------------- */
+// Il testo di un intitolo, scritto TALE E QUALE nel HTML: mai una balise (« < », « > »
+// vengono levati all'entrata, vedi normalizePubDocTitles).
+const escapeHeading = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+/** L'intitolo di un blocco sostituito con quello scelto: gli attributi del `<h2>`
+ *  restano (`class="pf-heading"`, e con essa la messa in forma del documento), e il
+ *  resto del blocco non si tocca — solo il testo fra `<h2>` e `</h2>`. */
+const renameHeading = (blockHtml, text) => {
+  const tag = /^<h2\b[^>]*>[\s\S]*?<\/h2>/i.exec(String(blockHtml));
+  if (!tag) return blockHtml;
+  const open = /^<h2\b[^>]*>/i.exec(tag[0])[0];
+  return `${open}${escapeHeading(text)}</h2>${String(blockHtml).slice(tag[0].length)}`;
+};
+/** La mappa dei titoli scelti, pronta per la ricerca: chiave = IL MOTORE DELL'ORDINE
+ *  (« materials and methods », vedi JOURNAL_FORMATS[id].order), valore = il titolo da
+ *  leggere nel documento. Un titolo vuoto non c'è: il documento tiene il suo. */
+const renameMapOf = (titles) => {
+  const out = {};
+  if (!titles || typeof titles !== 'object') return out;
+  Object.keys(titles).forEach((k) => {
+    const key = String(k || '').toLowerCase().trim();
+    const v = titles[k];
+    if (key && typeof v === 'string' && v.replace(/[<>]/g, '').trim()) {
+      out[key] = v.replace(/[<>]/g, '').trim();
+    }
+  });
+  return out;
+};
+
 /** L'ORDINE DELLE SEZIONI SU UN DOCUMENTO GIÀ SCRITTO.
  *
  *  Il documento vive in `#project-doc-container` e si esporta copiandone l'HTML:
@@ -183,23 +217,52 @@ export const clearJournalFormat = (fmt, emptyLayout) => {
  *    • due sezioni dello stesso rango (o due « References ») tengono l'ordine in
  *      cui l'autore le ha scritte.
  *  Senza ordine, con meno di due intitoli, o senza alcun intitolo riconosciuto,
- *  l'HTML esce identico a com'è entrato. */
-export const reorderDocHtml = (html, order) => {
+ *  l'HTML esce identico a com'è entrato.
+ *
+ *  `titles` (facoltativo) = L'INTITOLO CHE L'UTENTE VUOLE LEGGERE: una mappa dal
+ *  motore dell'ordine (« materials and methods ») al titolo scelto (« Experimental
+ *  section »). La richiesta: « In the publication format I cannot change … the
+ *  titles of the subsections … change the name of “materials and methods” into
+ *  “experimental section” ». Il titolo si scrive sull'intitolo del blocco
+ *  riconosciuto — gli attributi del `<h2>` (la classe `pf-heading`, e con essa la
+ *  messa in forma del « Publication format ») restano quelli — e il blocco parte
+ *  con il suo nuovo titolo. Un titolo senza ordine rientra lo stesso: rinominare
+ *  non è riordinare, e un documento già scritto deve poter seguire il titolo
+ *  scelto anche quando nessun giornale è stato scelto. */
+export const reorderDocHtml = (html, order, titles) => {
   const src = String(html == null ? '' : html);
   const keys = (Array.isArray(order) ? order : [])
     .map((k) => String(k || '').toLowerCase().trim())
     .filter(Boolean);
-  if (!keys.length) return src;
+  const renames = renameMapOf(titles);
+  const renameWords = Object.keys(renames);
+  if (!keys.length && !renameWords.length) return src;
   const marks = [...src.matchAll(/<h2\b[^>]*>([\s\S]*?)<\/h2>/gi)];
-  if (marks.length < 2) return src;
+  if (!marks.length) return src;
+  // RIORDINARE vuole un ORDINE ma vuole anche DUE intitoli; RINOMINARE no: un titolo
+  // scelto senza giornale si scrive lo stesso (rinominare non è riordinare).
+  const canReorder = keys.length > 0 && marks.length >= 2;
+  if (!canReorder && !renameWords.length) return src;
+  /* IL VOCABOLARIO DELLA RICERCA: l'ordine del giornale quando c'è, e in mancanza i
+     moti dell'intitolo scelto — così « Materials and Methods » → « Experimental
+     section » si applica a un documento già scritto anche quando NESSUN giornale è
+     stato scelto. */
+  const vocab = keys.length ? keys : renameWords;
   const textOf = (s) => String(s).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
   const blocks = marks.map((m, i) => {
     const at = m.index;
     const end = i + 1 < marks.length ? marks[i + 1].index : src.length;
-    return { at, end, i, rank: keys.findIndex((k) => textOf(m[1]).includes(k)), html: src.slice(at, end) };
+    const rank = vocab.findIndex((k) => textOf(m[1]).includes(k));
+    const blockHtml = src.slice(at, end);
+    // L'INTITOLO SCELTO PRIMA DI OGNI SPOSTAMENTO: il blocco parte con lui.
+    const wanted = rank >= 0 ? renames[vocab[rank]] : '';
+    return { at, end, i, rank, html: wanted ? renameHeading(blockHtml, wanted) : blockHtml };
   });
   const known = blocks.filter((b) => b.rank >= 0);
   if (!known.length) return src;                     // nulla di riconosciuto: intatto
+  // Niente da spostare (un solo intitolo, o nessun ordine): l'HTML esce con i titoli
+  // scelti e nient'altro di cambiato.
+  if (!canReorder) return src.slice(0, blocks[0].at) + blocks.map((b) => b.html).join('');
   const sorted = known.slice().sort((a, b) => (a.rank - b.rank) || (a.i - b.i));
   let next = 0;
   const slots = blocks.map((b) => (b.rank >= 0 ? sorted[next++] : b));

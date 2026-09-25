@@ -152,8 +152,8 @@ ok(PUB.includes('setActiveFormat({ ...withPreset, layout: normalizePubLayout(wit
   '…et applique le tout au format ACTIF (défaut ou projet)');
 ok(PUB.includes('journalOf(activeFormat) && (') && PUB.includes('journalSectionOrder(activeFormat).join('),
   '…en montrant l’ordre des sections du journal choisi');
-ok(DOC.includes('bodyHtml = reorderDocHtml(bodyHtml, journalSectionOrder(pubFormat));'),
-  'le document EXPORTÉ / IMPRIMÉ passe par l’ordre du journal');
+ok(DOC.includes('bodyHtml = reorderDocHtml(bodyHtml, journalSectionOrder(pubFormat), pubDocTitleKeywords(pubFormat));'),
+  'le document EXPORTÉ / IMPRIMÉ passe par l’ordre du journal — et par les intitulés choisis (voir _pub_doc_sections_test.mjs)');
 ok(DOC.indexOf('bodyHtml = reorderDocHtml(') > DOC.indexOf('const printProjectDoc = () => {'),
   '…dans la fonction d’export (et non ailleurs)');
 ok(DOC.indexOf('bodyHtml = reorderDocHtml(') < DOC.indexOf('const title = `${project.name} — project document`;'),
