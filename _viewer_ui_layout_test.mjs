@@ -4,7 +4,12 @@
 
    Ce qui doit rester vrai :
 
-     • le bouton « ⬇ Minimize » est SEUL tout en haut de la fenêtre (§0) ;
+     • le REPLI du viewer n'a QU'UN bouton de trop de moins (le rapport : « In NMR,
+       MD and Docking pages the "minimize viewer" button should be removed as there
+       is already another button to minimize. ») : la rangée §0 « ⬇ Minimize
+       viewer » a disparu, et les deux seuls contrôles de repli sont le ▼ flottant
+       du viewport (il replie) et le « ▲ Expand viewer » de la barre « 3D viewer
+       minimized » (il déplie — indispensable, le viewport replié mesure 0 px) ;
      • la barre de commande tient en DEUX lignes, dans l'ordre demandé :
        1 General (PDB / Load / Trajectory / Clear / PDB file / Predefined styles) ·
        2 Toolbar = Scene | Modify | Analysis | PyMOL sur UNE seule rangée ;
@@ -62,13 +67,24 @@ const VIEW = readFileSync(new URL('./src/components/NMRMoleculeViewer.jsx', impo
 const has = (needle, what) => ok(VIEW.includes(needle), `${what}\n  introuvable : ${needle}`);
 const gone = (needle, what) => ok(!VIEW.includes(needle), `${what}\n  encore présent : ${needle}`);
 
-/* ── 1. §0 : « Minimize » seul tout en haut ─────────────────────────────── */
+/* ── 1. LE REPLI DU VIEWER : UN SEUL BOUTON ───────────────────────────────
+   « In NMR, MD and Docking pages the "minimize viewer" button should be removed as
+   there is already another button to minimize. » La rangée §0 (« ⬇ Minimize
+   viewer » seule tout en haut) est donc partie : il ne reste que le ▼ FLOTTANT du
+   viewport, et le « ▲ Expand viewer » de la barre « 3D viewer minimized » qui le
+   déplie (le viewport replié est haut de 0 px : sans cette barre, plus rien ne
+   serait cliquable dans le viewer). */
 const iReturn = VIEW.indexOf('return (\n<div className="flex flex-col gap-2">');
 ok(iReturn > 0, 'la racine du viewer est un empilement compact de lignes');
-const iMin = VIEW.indexOf('{viewerCollapsed ? \'⬆ Expand viewer\' : \'⬇ Minimize viewer\'}');
+gone("{viewerCollapsed ? '⬆ Expand viewer' : '⬇ Minimize viewer'}", 'le bouton « ⬇ Minimize viewer » de §0 a disparu');
+gone('<div className="flex items-center justify-end gap-2">', '…et sa rangée §0 avec lui (plus rien au-dessus de §1)');
 const iS1 = VIEW.indexOf('<VSection title="1 · General"');
-ok(iMin > iReturn && iMin < iS1, 'le bouton Minimize est rendu AVANT toute autre ligne');
-ok(!VIEW.slice(iReturn, iMin).includes('<VSection'), '…et aucune section ne le précède');
+ok(iS1 > iReturn && VIEW.slice(iReturn, iS1).indexOf('<VSection') === -1,
+  '§1 General est donc la PREMIÈRE ligne du viewer (aucune section ne la précède)');
+ok(VIEW.indexOf('onClick={() => setViewerCollapsed(true)}') > 0,
+  'le ▼ FLOTTANT du viewport — « another button to minimize » — est toujours là, et c’est LUI qui replie');
+ok(VIEW.indexOf('▲ Expand viewer') > 0 && VIEW.indexOf('🧬 3D viewer minimized') > 0,
+  '…et la barre « 3D viewer minimized » déplie le viewer (le seul moyen quand il est replié)');
 ok(VIEW.indexOf('Retract (minimize) the 3D viewer window') > 0, 'son infobulle décrit le repli de la fenêtre');
 
 /* ── 2. Les DEUX lignes de la barre de commande, dans l'ordre ───────────── */
@@ -415,6 +431,22 @@ has('onClick={buildFromSequence}', '[modify] bouton 🧬 From sequence');
 has('disabled={!sequenceStructureText}', '[modify] …inactif tant qu\'aucune séquence n\'est saisie');
 has('const buildFromSequence = () => {', '[modify] …son implémentation (le PDB affiché est rangé, jamais perdu)');
 has('🧬 From sequence', '[modify] libellé du bouton');
+/* ↩ Back to PDB — LE RETOUR EST LÀ OÙ LE GESTE A ÉTÉ FAIT (le rapport : « when
+   clicking on "from sequence" the viewer generates the molecule from scratch but
+   before I had a button to come back to the structure that was present before I
+   clicked on "from sequence". Now it has disappeared. »). « 🧬 From sequence »
+   range ce qui est à l'écran — QUEL QUE SOIT le chemin par lequel la structure est
+   arrivée : un fichier, un PDB ID / URL, ou le texte servi par la PAGE, qui est
+   marqué « generated » comme le modèle de la séquence (c'est ce test-là qui faisait
+   disparaître le bouton). Le bouton apparaît à côté de « 🧬 From sequence », et il
+   appelle la MÊME résurrection que le ↩ Restore PDB de §1 General. */
+has('if (!stashedPdb && lastLoadedTextRef.current !== sequenceStructureText) {',
+  '[from sequence] ce qui est à l’écran est MIS DE CÔTÉ, quel que soit l’endroit d’où il vient');
+gone("if (structOrigin === 'external' && !stashedPdb) {",
+  '…le test « PDB chargé par l’utilisateur » ne conditionne plus le retour : le modèle de la page est rangé LUI AUSSI');
+has('{pdbAsideIsRestore && (', '[modify] le bouton de retour apparaît dès qu’une structure est de côté');
+has('onClick={restoreStashedPdb}', '[modify] …et c’est la MÊME résurrection que le ↩ Restore PDB de §1');
+has('↩ Back to PDB', '[modify] libellé du bouton « revenir à la structure d’avant »');
 has('onClick={autoNameFrom2D}', '[conservé] auto-nommage depuis la 2D');
 has('onClick={toggleMeasureMode}', '[conservé] 📏 Measure');
 has('onClick={clearMeasurements}', '[conservé] ✕ Clear distances');
@@ -432,7 +464,8 @@ has('onClick={() => setSstrucColors({ ...SSTRUC_COLOR_DEFAULTS })}', '[conservé
 // couleur reste celle du réglage enregistré, et le rendu la lit toujours.
 gone('onChange={(e) => setAssignedAtomColor(parseInt(', '[supprimé] plus de pastille « couleur des assigned » dans les menus');
 has('color: assignedAtomColorRef.current', '[conservé] la couleur des atomes assigned atteint le rendu');
-has('onClick={() => setViewerCollapsed((v) => !v)}', '[conservé] repli de la fenêtre 3D');
+has('onClick={() => setViewerCollapsed(true)}', '[conservé] repli de la fenêtre 3D — par le ▼ FLOTTANT du viewport (seul bouton de repli)');
+has('onClick={() => setViewerCollapsed(false)}', '[conservé] …et son dépli, dans la barre « 3D viewer minimized »');
 // Le bouton « ✨ Full detail » (et son helper) est SUPPRIMÉ : cliquer dessus
 // figeait la visualisation d'un gros système. Son effet est maintenant
 // AUTOMATIQUE — le premier geste de style dans §2 appelle leaveLightMode() et

@@ -3229,17 +3229,58 @@ const sectionLooksSig = (v) => JSON.stringify(MOL_KINDS.map((k) => [k, v && v[k]
    A value General hands down that a row cannot draw falls back on that row's own
    default (see effectiveSectionLook), so General can never break a sub-category.
 
-   A STYLE OR A COLOURING CHOSEN ON GENERAL IS EXCLUSIVE (the request: « in
+   A STYLE CHOSEN ON GENERAL REACHES THE PARTS THAT CAN DRAW IT (the report: « Se
+   imposto "General" su cartoon, il backbone deve passare a cartoon e le sidechain
+   a hide. Se imposto "General" su ball and stick, sia il backbone che le sidechain
+   devono passare a ball and stick. »): see partStyleUnderGeneral — the rule is read
+   in each row's OWN vocabulary, so the same two examples hold for the Backbone ·
+   bases · ribose of a nucleic acid and for the headgroups · acyl chains · glycerol
+   of a phospholipid without a single per-kind table.
+
+   A COLOURING, ON THE OTHER HAND, IS EXCLUSIVE (the request: « in
    phospholipids, proteins and nucleic acids when general (type or colouring) is
    changed the other molecule parts (backbone, side chain, bases, acyl chain,
-   glycerol etc) must be on hide »): describing the WHOLE molecule with one style
-   or one colouring and drawing the parts on top of it at the same time gives two
+   glycerol etc) must be on hide »): describing the WHOLE molecule with one
+   colouring and drawing the parts on top of it at the same time gives two
    drawings of the same atoms — the part would even keep the colouring
    « General » has just replaced. Every sub-part is therefore switched to
    « Hide », and it comes back by choosing a style on its OWN row (move 2), which
    is exactly what « deviating from General » means. A hidden part also stops
    FOLLOWING General (`follow: false`), because a row that follows would simply be
-   re-drawn with General's style — the hide would last one rebuild. */
+   re-drawn with General's style — the hide would last one rebuild.
+
+   THE TWO NUMBERS, THEMSELVES, REACH EVERY PART (the report: « Se modifico il
+   raggio di una sfera in "General", il nuovo valore deve aggiornare
+   automaticamente anche i raggi di backbone e sidechains. »): RADIUS_FIELDS are
+   written into every row, deviated or not, and the row keeps the style it has
+   chosen. « Modificare lo stile di una sottomolecola (es. impostare il backbone su
+   tube) deve agire solo localmente, senza alterare lo stato del comando "General" »
+   stays true: move 2 never touches General. */
+
+/* WHAT A STYLE CHOSEN ON GENERAL MEANS FOR ONE PART — the whole of the cascade,
+   and the reason it needs no per-kind table: the rule is read in the row's OWN
+   vocabulary (subsectionSpec(...).styles), so it holds for proteins, nucleic acids
+   AND lipids at once:
+     · a style that WALKS the molecule (cartoon · ribbon · tube · trace) is taken by
+       the part that walks the same path — the Backbone of a protein, the Backbone
+       of a nucleotide — and leaves the parts it cannot draw on « Hide »: side
+       chains · bases · ribose · headgroups · acyl chains · glycerol, whose atoms
+       General's walk draws already;
+     · a style that DRAWS THE ATOMS (ball+stick · licorice · line · spacefill ·
+       sphere) is taken by EVERY part — « General → Balls and sticks » is the whole
+       molecule in balls and sticks, part by part, each row with its own anchors
+       (the CA of a side chain, the bridges of the lipids);
+     · an envelope (surface · mesh), which no part draws, leaves every part hidden.
+   The report, word for word: « Se imposto "General" su cartoon, il backbone deve
+   passare a cartoon e le sidechain a hide. Se imposto "General" su ball and stick,
+   sia il backbone che le sidechain devono passare a ball and stick. » */
+const partStyleUnderGeneral = (kind, sub, value) => (
+  subsectionSpec(kind, sub).styles.includes(value) ? value : 'hide'
+);
+// The two RADIUS multipliers of a look: a number set on General reaches EVERY part,
+// deviated or not (see setGeneralSectionField). The other look fields keep the rule
+// of the material — a row that deviated is left alone.
+const RADIUS_FIELDS = ['sphere', 'bond'];
 const setGeneralSectionField = (looks, kind, field, value) => {
   const out = { ...looks, [kind]: { ...(looks[kind] || {}) } };
   out[kind].general = { ...defaultLookOf(kind, 'general'), ...(out[kind].general || null), [field]: value, follow: false };
@@ -3267,7 +3308,28 @@ const setGeneralSectionField = (looks, kind, field, value) => {
          hide left the protein EMPTY before, and draws cartoon backbone + licorice
          side chains now. */
       if (value === 'hide') { next.style = defaultLookOf(kind, s.sub).style; next.follow = false; }
+      /* THE PART THAT CAN DRAW WHAT GENERAL JUST CHOSE TAKES IT — and follows
+         General again, so the « ← General » badge of its row says where the style
+         comes from and the NEXT change of General reaches it. The part that cannot
+         draw it is exactly what General's own style would draw twice, so it goes to
+         « Hide » (see partStyleUnderGeneral: the rule is read in the row's own
+         vocabulary). Measured on the request: « General → Cartoon » gives Cartoon
+         to Backbone and Hide to Side chains · bases · ribose · headgroups · acyl
+         chains · glycerol; « General → Balls and sticks » gives Balls and sticks to
+         every one of them. */
+      else if (field === 'style') {
+        next.style = partStyleUnderGeneral(kind, s.sub, value);
+        next.follow = next.style !== 'hide';
+      }
       else { next.style = 'hide'; next.follow = false; }
+    }
+    // A NUMBER — the two radius multipliers — REACHES EVERY PART, deviated or not:
+    // a size is not a description, and the row keeps the style it has chosen (the
+    // report: « Se modifico il raggio di una sfera in General, il nuovo valore deve
+    // aggiornare automaticamente anche i raggi di backbone e sidechains. »).
+    else if (RADIUS_FIELDS.includes(field)) {
+      next[field] = value;
+      if (own && own.follow === false) next.follow = false;
     }
     // A row that had DEVIATED (its own style chosen on its own row, a part put away,
     // or its own material) is left ALONE by the other fields: no 'follow' is handed
@@ -11489,16 +11551,28 @@ const restoreStashedPdb = () => {
 
 /* ── ✏️ Modify · « 🧬 Build from sequence » ──────────────────────────────────
    Reconstruit la structure À PARTIR DE LA SÉQUENCE tapée dans la page, à tout
-   moment — même quand un PDB est chargé : le PDB est alors rangé (mêmes règles
-   que « 🗑 Delete PDB ») et le bouton ↩ Restore PDB de §1 General le ramène. Le
-   texte est fabriqué par la page (proteinSequenceToPdbText /
-   nucleicSequenceToPdbText) : aucun aller-retour réseau. */
+   moment — même quand un PDB est chargé : ce qui est à l'écran est alors rangé
+   (mêmes règles que « 🗑 Delete PDB », et QUELLE QUE SOIT la façon dont il est
+   arrivé : un fichier, un PDB ID / URL, ou le texte que la PAGE fournit), et le
+   bouton « ↩ Back to PDB » posé juste à côté du bouton — comme le ↩ Restore PDB
+   de §1 General, c'est la MÊME fonction — le ramène. Le texte est fabriqué par la
+   page (proteinSequenceToPdbText / nucleicSequenceToPdbText) : aucun aller-retour
+   réseau. */
 const buildFromSequence = () => {
   if (!sequenceStructureText) {
     flashSeqBuildMsg('⚠️ No sequence on this page — type the Protein / DNA / RNA sequence in “Molecular structure and visualization” first.');
     return;
   }
-  if (structOrigin === 'external' && !stashedPdb) {
+  /* WHAT WAS ON SCREEN IS PUT ASIDE — WHATEVER PUT IT THERE. A structure handed
+     over by the PAGE (its own file, or a text restored from Drive / IndexedDB) is
+     marked « generated » exactly like the sequence model itself, so the old
+     `structOrigin === 'external'` test never put it aside and left the user with NO
+     way back — the report: « when clicking on "from sequence" the viewer generates
+     the molecule from scratch but before I had a button to come back to the
+     structure that was present before I clicked on "from sequence". Now it has
+     disappeared. » Only the sequence model itself is not put aside: it IS what the
+     button is about to rebuild, so there would be nothing to go back to. */
+  if (!stashedPdb && lastLoadedTextRef.current !== sequenceStructureText) {
     const stash = pdbSourceOfCurrent();
     if (stash.file || stash.url || stash.text) setStashedPdb(stash);
   }
@@ -12536,23 +12610,15 @@ const resetLipidColours = () => setCatStyles((prev) => ({
 return (
 <div className="flex flex-col gap-2">
 
-{/* ══ 0 · WINDOW — « ⬇ Minimize » alone at the very top ═════════════════════
-    The control that shrinks the viewer's footprint stands on its own row,
-    above every other control: it is about the WINDOW itself, not about the
-    molecule. The floating ▼ inside the viewport (and the « viewer minimized »
-    bar) still do the same thing, so the button is never out of reach. */}
-<div className="flex items-center justify-end gap-2">
-  <button
-    type="button"
-    onClick={() => setViewerCollapsed((v) => !v)}
-    title={viewerCollapsed ? 'Restore the 3D viewer window' : 'Retract (minimize) the 3D viewer window — the structure stays loaded, only the tall canvas collapses to a thin bar'}
-    className={`text-xs font-bold px-3 py-1.5 rounded-md border transition-colors whitespace-nowrap ${viewerCollapsed ? 'bg-sky-600 text-white border-sky-600 hover:bg-sky-700' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-100'}`}
-  >
-    {viewerCollapsed ? '⬆ Expand viewer' : '⬇ Minimize viewer'}
-  </button>
-</div>
-
-{/* ══ 1 · GENERAL — what gets loaded, cleared and saved ══════════════════════ */}
+{/* ══ 1 · GENERAL — what gets loaded, cleared and saved ══════════════════════
+    THE « ⬇ Minimize viewer » ROW THAT USED TO STAND ABOVE IT IS GONE (the report:
+    « In NMR, MD and Docking pages the "minimize viewer" button should be removed
+    as there is already another button to minimize. »). The only two controls that
+    do that job are the ones the report points at, and both stay:
+      · the floating ▼ at the TOP-LEFT OF THE 3D VIEWPORT retracts the tall canvas;
+      · the « 🧬 3D viewer minimized » bar's « ▲ Expand viewer » brings it back —
+        it has to stay: the retracted viewport is 0 px tall, so the ▼ is out of
+        reach while the viewer is minimized. */}
 <VSection title="1 · General" hint="structure · trajectory · clear">
 <label
 title="Load structure file(s) from your computer — the first is the main structure, the rest appear in the Molecules bar (right side, multi-select)"
@@ -13019,6 +13085,24 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
 <span title={seqBuildMsg} className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-md px-2 py-1 h-7 inline-flex items-center max-w-[380px] truncate">
 {seqBuildMsg}
 </span>
+)}
+{/* ↩ Back to PDB — THE WAY BACK, WHERE THE GESTURE WAS MADE. §1 General's toggle
+    does exactly the same thing (ONE implementation: restoreStashedPdb), but the
+    report is explicit — the button that brings back the structure the viewer
+    showed BEFORE « 🧬 From sequence » has to be there, beside it: « before I had a
+    button to come back to the structure that was present before I clicked on "from
+    sequence". Now it has disappeared. » It appears exactly when a structure is put
+    aside and another one is on screen (pdbAsideIsRestore), i.e. in the very state
+    « From sequence » leaves the viewer in. */}
+{pdbAsideIsRestore && (
+<button
+type="button"
+onClick={restoreStashedPdb}
+title={`Bring back ${(stashedPdb && stashedPdb.name) || 'the structure'} — the file / URL / model the viewer showed before « 🧬 From sequence », with the trajectory it had.`}
+className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap bg-white border-emerald-300 text-emerald-700 hover:bg-emerald-50"
+>
+↩ Back to PDB
+</button>
 )}
 <button type="button" onClick={() => setDragMove((v) => !v)}
   disabled={status !== 'ready'}

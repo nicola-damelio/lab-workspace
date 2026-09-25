@@ -545,13 +545,19 @@ has('byStructure: new WeakMap(),', 'le magasin garde les bornes PAR STRUCTURE');
 has('const own = byStructure && atom && atom.structure ? byStructure.get(atom.structure) : null;',
   '…et gradientT lit celles de la structure de l’atome');
 
-/* ══ 6. LA RANGÉE GENERAL EST EXCLUSIVE ════════════════════════════════════
-   « in phospholipids, proteins and nucleic acids when general (type or colouring)
-   is changed the other molecule parts (backbone, side chain, bases, acyl chain,
-   glycerol etc) must be on hide. » Un style / une coloration choisis sur General
-   décrivent la molécule ENTIÈRE : dessiner en plus les parties par-dessus donnait
-   deux dessins des mêmes atomes, la partie gardant même la coloration que General
-   venait de remplacer. */
+/* ══ 6. LA RANGÉE GENERAL : CASCADE POUR UN STYLE, EXCLUSIVE POUR UNE COULEUR ══
+   Le rapport d'origine : « in phospholipids, proteins and nucleic acids when general
+   (type or colouring) is changed the other molecule parts (backbone, side chain,
+   bases, acyl chain, glycerol etc) must be on hide. » — il reste vrai pour une
+   COLORATION : décrire la molécule entière par une couleur et dessiner les parties
+   par-dessus donnait deux dessins des mêmes atomes, la partie gardant même la
+   couleur que General venait de remplacer.
+   Le rapport de cette session : « Se imposto "General" su cartoon, il backbone deve
+   passare a cartoon e le sidechain a hide. Se imposto "General" su ball and stick,
+   sia il backbone che le sidechain devono passare a ball and stick. » — un STYLE
+   descend donc sur les parties qui SAVENT le dessiner (partStyleUnderGeneral, lu
+   dans le vocabulaire de chaque rangée), et seules celles qui ne savent pas passent
+   sur « Hide ». */
 const HIER = new Function([
   sliceObject(VIEW, 'DEFAULT_ATOM_COLORS'),
   sliceObject(VIEW, 'KIND_CATEGORY'),
@@ -566,6 +572,8 @@ const HIER = new Function([
   sliceFn(VIEW, 'defaultLookOf'),
   sliceFn(VIEW, 'effectiveSectionLook'),
   sliceDecl(VIEW, 'rowFollowsGeneral'),
+  sliceFn(VIEW, 'partStyleUnderGeneral'),
+  sliceDecl(VIEW, 'RADIUS_FIELDS'),
   sliceFn(VIEW, 'setGeneralSectionField'),
   sliceFn(VIEW, 'setRowSectionField'),
   sliceDecl(VIEW, 'resetSectionRow'),
@@ -575,36 +583,55 @@ const HIER = new Function([
 const lookOf = (tree, kind, sub) => HIER.effectiveSectionLook(tree, kind, sub);
 const gen = (tree, kind, sub) => tree[kind][sub] || {};
 
-// 6a. Un STYLE sur General met les parties de la protéine sur « Hide ».
+// 6a. Un STYLE que les parties SAVENT dessiner descend sur elles ; les autres passent
+//     sur « Hide » (le rapport : « il backbone deve passare a cartoon e le sidechain a
+//     hide », et pour ball and stick « sia il backbone che le sidechain »).
 const byStyle = HIER.setGeneralSectionField({}, 'protein', 'style', 'ribbon');
 eq(gen(byStyle, 'protein', 'general').style, 'ribbon', 'General prend le style choisi');
 eq(gen(byStyle, 'protein', 'general').follow, false, '…et ne suit plus personne');
+eq(gen(byStyle, 'protein', 'backbone').style, 'ribbon',
+  '« ribbon » DESCEND sur le squelette, qui sait le dessiner (partStyleUnderGeneral)');
+eq(gen(byStyle, 'protein', 'backbone').follow, true, '…et la rangée suit de nouveau General (le badge « ← General » est affiché)');
+eq(lookOf(byStyle, 'protein', 'backbone').style, 'ribbon', '…donc c’est ce ruban que la rangée dessine');
+eq(gen(byStyle, 'protein', 'sidechain').style, 'hide',
+  'les CHAÎNES LATÉRALES ne dessinent pas de ruban : elles passent sur HIDE');
+eq(gen(byStyle, 'protein', 'sidechain').follow, false,
+  '…et cessent de suivre General (sinon il les redessinerait à sa place)');
+eq(lookOf(byStyle, 'protein', 'sidechain').style, 'hide', '…donc la rangée « Side chains » ne dessine RIEN');
+const byBall = HIER.setGeneralSectionField({}, 'protein', 'style', 'ball+stick');
 ['backbone', 'sidechain'].forEach((sub) => {
-  eq(gen(byStyle, 'protein', sub).style, 'hide', `« ${sub} » passe sur HIDE (une seule description de la molécule)`);
-  eq(gen(byStyle, 'protein', sub).follow, false,
-    `…et il CESSE de suivre General (sinon General le redessinerait à sa place)`);
-  eq(lookOf(byStyle, 'protein', sub).style, 'hide', `…donc la rangée « ${sub} » ne dessine RIEN`);
+  eq(gen(byBall, 'protein', sub).style, 'ball+stick',
+    `« General → Balls and sticks » : « ${sub} » prend le style (« sia il backbone che le sidechain »)`);
+  eq(gen(byBall, 'protein', sub).follow, true, `…et suit General (${sub})`);
 });
-// …et un DEUXIÈME changement de General ne les rallume pas.
-const byStyle2 = HIER.setGeneralSectionField(byStyle, 'protein', 'style', 'cartoon');
-['backbone', 'sidechain'].forEach((sub) => eq(lookOf(byStyle2, 'protein', sub).style, 'hide',
-  `un autre style sur General laisse « ${sub} » caché`));
+// …et un DEUXIÈME changement de General atteint chaque partie, déviée ou non.
+const byStyle2 = HIER.setGeneralSectionField(HIER.setRowSectionField(byStyle, 'protein', 'sidechain', 'style', 'licorice'),
+  'protein', 'style', 'cartoon');
+eq(lookOf(byStyle2, 'protein', 'backbone').style, 'cartoon', 'un autre style sur General : le squelette prend le cartoon');
+eq(lookOf(byStyle2, 'protein', 'sidechain').style, 'hide',
+  '…et la rangée qui avait dévié sur licorice est REMISE sur hide (aucune personnalisation ne survit)');
 // …le ↺ de la rangée, lui, la ramène (elle reprend la main sur son propre style).
 const reset = { ...byStyle2, protein: { ...byStyle2.protein, backbone: HIER.defaultLookOf('protein', 'backbone') } };
 eq(gen(reset, 'protein', 'backbone').style, 'cartoon', 'le ↺ de la rangée rend son style par défaut');
 eq(gen(reset, 'protein', 'backbone').follow, true, '…et elle suit de nouveau General');
-// 6b. Une COLORATION sur General aussi (le rapport dit « type OR colouring »).
+// 6b. Une COLORATION sur General, elle, reste EXCLUSIVE (le rapport dit « type OR colouring »).
 const byColor = HIER.setGeneralSectionField({}, 'protein', 'colorBy', 'element');
 eq(gen(byColor, 'protein', 'general').colorBy, 'element', 'General prend la coloration choisie');
 ['backbone', 'sidechain'].forEach((sub) => eq(gen(byColor, 'protein', sub).style, 'hide',
-  `…et « ${sub} » passe sur hide comme pour un style`));
-// 6c. Un LIPIDE : tête polaire · chaînes acyle · glycérol.
+  `…et « ${sub} » passe sur hide comme pour un style qu’il ne sait pas dessiner`));
+// 6c. Un LIPIDE : tête polaire · chaînes acyle · glycérol — elles savent toutes dessiner
+//     les styles du lipide, donc elles les prennent.
 const lipid = HIER.setGeneralSectionField({}, 'lipid', 'style', 'licorice');
-['head', 'tail', 'glycerol'].forEach((sub) => eq(gen(lipid, 'lipid', sub).style, 'hide',
-  `le « ${sub} » du lipide passe sur hide (le rapport nomme chaîne acyle et glycérol)`));
-// 6d. Un ACIDE NUCLÉIQUE : squelette · bases · ribose.
+['head', 'tail', 'glycerol'].forEach((sub) => {
+  eq(gen(lipid, 'lipid', sub).style, 'licorice',
+    `le « ${sub} » du lipide prend le style de General (le rapport nomme chaîne acyle et glycérol)`);
+  eq(lookOf(lipid, 'lipid', sub).style, 'licorice', `…et c’est ce que sa rangée dessine (${sub})`);
+});
+// 6d. Un ACIDE NUCLÉIQUE : le squelette prend le style, les bases et le ribose passent
+//     sur hide (le tube de General parcourt déjà leurs atomes).
 const nucleic = HIER.setGeneralSectionField({}, 'nucleic', 'style', 'tube');
-['backbone', 'bases', 'ribose'].forEach((sub) => eq(gen(nucleic, 'nucleic', sub).style, 'hide',
+eq(gen(nucleic, 'nucleic', 'backbone').style, 'tube', 'le squelette de l’acide nucléique prend le tube');
+['bases', 'ribose'].forEach((sub) => eq(gen(nucleic, 'nucleic', sub).style, 'hide',
   `le « ${sub} » de l’acide nucléique passe sur hide`));
 // 6e. Les AUTRES champs ne cachent rien : la transparence et les rayons continuent
 // de descendre (c’est la règle d’origine, intacte).
@@ -621,13 +648,17 @@ eq(lookOf(byOpacity, 'protein', 'sidechain').opacity, 0.5, '…elle descend bien
    REDESSINÉE avec le style de General — une partie mise de côté revenait donc avec
    un style jamais choisi. */
 const byMat = HIER.setGeneralSectionField(byStyle, 'protein', 'material', 'gloss');
-['backbone', 'sidechain'].forEach((sub) => {
-  eq(gen(byMat, 'protein', sub).style, 'hide', `un matériau sur General laisse « ${sub} » caché`);
-  eq(gen(byMat, 'protein', sub).follow, false, `…et toujours détaché de General`);
-  eq(lookOf(byMat, 'protein', sub).style, 'hide', `…donc RIEN de neuf n’apparaît à l’écran (${sub})`);
-  ok(lookOf(byMat, 'protein', sub).material !== 'gloss',
-    `…et la rangée garde son propre matériau (${sub})`);
-});
+// La rangée qui a été MISE DE CÔTÉ par un style de General (les chaînes latérales, 6a)
+// ne se rallume pas et ne change pas : c'est le rapport, mot pour mot.
+eq(gen(byMat, 'protein', 'sidechain').style, 'hide', 'un matériau sur General ne rallume PAS la rangée cachée par un style');
+eq(gen(byMat, 'protein', 'sidechain').follow, false, '…et elle reste détachée de General');
+eq(lookOf(byMat, 'protein', 'sidechain').style, 'hide', '…donc RIEN de neuf n’apparaît à l’écran');
+ok(lookOf(byMat, 'protein', 'sidechain').material !== 'gloss', '…et elle garde son propre matériau');
+// La rangée qui SUIT General reçoit le matériau — sans que son style change d’un
+// caractère (le squelette reste le ruban que General lui a donné).
+eq(gen(byMat, 'protein', 'backbone').style, 'ribbon', 'le matériau ne change pas le style d’une rangée qui suit General');
+eq(gen(byMat, 'protein', 'backbone').follow, true, '…et elle continue de le suivre');
+eq(lookOf(byMat, 'protein', 'backbone').material, 'gloss', '…tout en recevant le matériau (les deux règles ne se mélangent pas)');
 // Une rangée qui a choisi SON style n’est pas réécrite non plus par un matériau…
 const deviated = HIER.setRowSectionField(byStyle, 'protein', 'sidechain', 'style', 'licorice');
 const deviatedMat = HIER.setGeneralSectionField(deviated, 'protein', 'material', 'metallic');
@@ -645,7 +676,8 @@ const back = HIER.setRowSectionField(byStyle, 'protein', 'sidechain', 'style', '
 eq(gen(back, 'protein', 'sidechain').style, 'licorice', 'la rangée reprend son propre style');
 eq(gen(back, 'protein', 'sidechain').follow, false, '…et cesse de suivre General');
 eq(lookOf(back, 'protein', 'sidechain').style, 'licorice', '…donc elle redessine ses chaînes latérales');
-eq(gen(back, 'protein', 'backbone').style, 'hide', 'les AUTRES rangées restent sur hide');
+eq(gen(back, 'protein', 'backbone').style, 'ribbon',
+  'les AUTRES rangées gardent ce que General leur a donné (le squelette reste en ruban)');
 eq(gen(back, 'protein', 'general').style, 'ribbon', '…et General n’a pas bougé');
 // 6g. Une molécule d’UNE seule rangée (ligand · eau · ion) ne casse rien.
 ['ligand', 'water', 'ion', 'sugar'].forEach((kind) => {

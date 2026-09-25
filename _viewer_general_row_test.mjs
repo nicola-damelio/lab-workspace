@@ -34,7 +34,19 @@
         rangée, et une sous-rangée modifiée reste modifiée jusqu'au prochain
         changement de General (règle 1b · 1f).
 
-   Deux mesures, sur le code livré :
+     4. LA CASCADE (le rapport de cette session) : « Qualsiasi modifica applicata al
+        livello "General" deve forzare l'adeguamento a cascata delle sottomolecole.
+        Se imposto "General" su cartoon, il backbone deve passare a cartoon e le
+        sidechain a hide. Se imposto "General" su ball and stick, sia il backbone che
+        le sidechain devono passare a ball and stick. » — avec les rayons (« Se
+        modifico il raggio di una sfera in "General", il nuovo valore deve aggiornare
+        automaticamente anche i raggi di backbone e sidechains. »), la modification
+        locale qui n'atteint jamais General, et la commande suivante de General qui
+        ÉCRASE les personnalisations des parties. La règle est lue dans le
+        VOCABULAIRE de chaque rangée (partStyleUnderGeneral), donc elle vaut pour les
+        protéines, les acides nucléiques ET les lipides. Mesurée en §5.
+
+   Les mesures, sur le code livré (la cascade du rapport 4 est exécutée en §5) :
      §1 la HIÉRARCHIE pure (setGeneralSectionField · effectiveSectionLook ·
         rowFollowsGeneral), exécutée sur de vrais arbres de look ;
      §2 le RENDU réel (buildSectionReps), dont les sélections partent à NGL —
@@ -120,6 +132,8 @@ const HIER = new Function([
   sliceFn(VIEW, 'defaultLookOf'),
   sliceFn(VIEW, 'effectiveSectionLook'),
   sliceDecl(VIEW, 'rowFollowsGeneral'),
+  sliceFn(VIEW, 'partStyleUnderGeneral'),
+  sliceDecl(VIEW, 'RADIUS_FIELDS'),
   sliceFn(VIEW, 'setGeneralSectionField'),
   sliceFn(VIEW, 'setRowSectionField'),
   sliceDecl(VIEW, 'resetSectionRow'),
@@ -135,16 +149,29 @@ eq(eff({}, 'protein', 'sidechain').style, HIER.defaultLookOf('protein', 'sidecha
 eq(eff({}, 'protein', 'sidechain').follow, true, '…et le dit (`follow: true`)');
 ok(HIER.rowFollowsGeneral({}, 'protein', 'sidechain'), '…donc le badge « ← General » de la rangée est affiché');
 
-// 1b. Un STYLE sur General met les parties sur Hide (une seule description de la molécule).
+/* 1b. UN STYLE SUR GENERAL DESCEND SUR LES PARTIES QUI PEUVENT LE DESSINER, ET MET
+   LES AUTRES SUR HIDE (le rapport : « Qualsiasi modifica applicata al livello
+   "General" deve forzare l'adeguamento a cascata delle sottomolecole. Se imposto
+   "General" su cartoon, il backbone deve passare a cartoon e le sidechain a hide.
+   Se imposto "General" su ball and stick, sia il backbone che le sidechain devono
+   passare a ball and stick. »). Un ruban se parcourt le long du squelette : la
+   rangée du squelette SAIT le dessiner, elle le prend donc et elle se remet à
+   suivre General (son badge « ← General » le dit). Les chaînes latérales ne savent
+   pas dessiner un ruban : elles passent sur Hide, sinon elles redessineraient les
+   atomes que le ruban de General vient de parcourir. */
 const byStyle = HIER.setGeneralSectionField({}, 'protein', 'style', 'ribbon');
 eq(gen(byStyle, 'protein', 'general').style, 'ribbon', 'General prend le style choisi');
 eq(gen(byStyle, 'protein', 'general').follow, false, '…et cesse de suivre qui que ce soit');
-['backbone', 'sidechain'].forEach((sub) => {
-  eq(gen(byStyle, 'protein', sub).style, 'hide', `« ${sub} » passe sur HIDE (le rapport : « must be on hide »)`);
-  eq(gen(byStyle, 'protein', sub).follow, false, `…et il CESSE de suivre General (un suiveur serait redessiné à sa place)`);
-  eq(eff(byStyle, 'protein', sub).style, 'hide', `…donc la rangée « ${sub} » ne dessine rien`);
-});
-ok(!HIER.rowFollowsGeneral(byStyle, 'protein', 'backbone'), '…et le badge « ← General » disparaît');
+eq(gen(byStyle, 'protein', 'backbone').style, 'ribbon',
+  'le squelette SAIT dessiner un ruban : il le prend (le rapport : « il backbone deve passare a cartoon »)');
+eq(gen(byStyle, 'protein', 'backbone').follow, true, '…et il se REMET à suivre General — la cascade est lisible dans la barre');
+ok(HIER.rowFollowsGeneral(byStyle, 'protein', 'backbone'), '…donc le badge « ← General » reste affiché sur sa rangée');
+eq(eff(byStyle, 'protein', 'backbone').style, 'ribbon', '…et c’est bien ce ruban que sa rangée dessine');
+eq(gen(byStyle, 'protein', 'sidechain').style, 'hide',
+  'les CHAÎNES LATÉRALES ne dessinent pas de ruban : elles passent sur Hide (le rapport : « le sidechain a hide »)');
+eq(gen(byStyle, 'protein', 'sidechain').follow, false, '…et elles cessent de suivre General (un suiveur serait redessiné à sa place)');
+eq(eff(byStyle, 'protein', 'sidechain').style, 'hide', '…donc la rangée « Side chains » ne dessine rien');
+ok(!HIER.rowFollowsGeneral(byStyle, 'protein', 'sidechain'), '…et son badge « ← General » disparaît');
 
 /* 1c. « HIDE » SUR GENERAL = « PLUS DE DESCRIPTION GÉNÉRALE », PAS « MOLÉCULE VIDE ».
    Le rapport : « there is a bug in the general style of proteins … It is not working
@@ -324,21 +351,29 @@ ok(!redrawn.includes(':A and protein'), '…et AUCUNE rangée ne décrit plus la
    « if in general i put cartoon, then the subgroups must be on hide … if after that i
      change the style in the subgroup the style must change until i change again the
      general. »
-   1. « General → cartoon » : les parties passent sur Hide (1b), seul le cartoon décrit
-      la molécule.
+   1. « General → cartoon » : le squelette prend le cartoon (il sait le dessiner, 1b)
+      et les chaînes latérales passent sur Hide — une seule description du squelette,
+      celle de General.
    2. « Side chains → licorice » (1f) : les chaînes latérales se dessinent VRAIMENT — et
       le cartoon de General est TOUJOURS là, il marche encore la chaîne entière. C'est
       ce que la règle 3 protège : avant, la rangée des chaînes latérales emportait
       `(sidechain or .CA)`, donc TOUS les Cα, et le cartoon de la molécule entière
       disparaissait au premier réglage d'une sous-rangée.
-   3. « General → ribbon » (1b) : les deux parties repassent sur Hide — la modification
-      d'une sous-rangée ne survit pas à un changement de General. */
+   3. « General → ribbon » (1b) : les deux parties repassent sous General — le
+      squelette reprend le ruban, et les chaînes latérales (qui viennent de dévier)
+      sont remises sur Hide : la modification d'une sous-rangée ne survit pas à un
+      changement de General. */
 const step1 = HIER.setGeneralSectionField({}, 'protein', 'style', 'cartoon');
-eq(gen(step1, 'protein', 'sidechain').style, 'hide', 'étape 1 : « General → cartoon » met les parties sur Hide');
-eq(eff(step1, 'protein', 'sidechain').style, 'hide', '…donc seul le cartoon dessine la molécule');
+eq(gen(step1, 'protein', 'sidechain').style, 'hide', 'étape 1 : « General → cartoon » met les chaînes latérales sur Hide');
+eq(eff(step1, 'protein', 'sidechain').style, 'hide', '…donc seul le cartoon dessine les atomes qu’elles auraient dessinés');
+eq(gen(step1, 'protein', 'backbone').style, 'cartoon',
+  '…pendant que le squelette PREND le cartoon (il sait le dessiner — la cascade)');
+eq(eff(step1, 'protein', 'backbone').style, 'cartoon', '…et c’est le cartoon de General qui marche la chaîne');
 const step2 = HIER.setRowSectionField(step1, 'protein', 'sidechain', 'style', 'licorice');
 eq(gen(step2, 'protein', 'sidechain').style, 'licorice', 'étape 2 : la sous-rangée choisie prend SON style');
-eq(gen(step2, 'protein', 'backbone').style, 'hide', '…et les autres restent sur Hide');
+eq(gen(step2, 'protein', 'backbone').style, 'cartoon',
+  '…et le squelette garde ce que General lui a donné (il le suit toujours)');
+eq(gen(step2, 'protein', 'general').style, 'cartoon', '…General, lui, n’a pas bougé d’un pouce');
 const stepScene = scene(tree(['cartoon', 'sstruc'], ['hide', 'sstruc', false], ['licorice', 'element', false]));
 const stepCartoon = stepScene.find((r) => r.type === 'cartoon');
 ok(!!stepCartoon, '…le cartoon de General est TOUJOURS dessiné (il ne disparaît plus)');
@@ -416,5 +451,86 @@ has('warnIfEmptySelection(structure, sele, `« ${spec.label} » of ${sec.name}`)
   'le rendu l’appelle pour chaque rangée qu’il construit, avec son libellé');
 has('const emptySelectionWarned = new Set();',
   '…en se souvenant des sélections déjà signalées');
+
+/* ══ 5. LA CASCADE, TELLE QUE LE RAPPORT L'ÉCRIT (exécutée) ═══════════════════
+   Le rapport, mot pour mot :
+     • « Qualsiasi modifica applicata al livello "General" deve forzare
+        l'adeguamento a cascata delle sottomolecole. Se imposto "General" su
+        cartoon, il backbone deve passare a cartoon e le sidechain a hide. Se
+        imposto "General" su ball and stick, sia il backbone che le sidechain
+        devono passare a ball and stick. » ;
+     • « Se modifico il raggio di una sfera in "General", il nuovo valore deve
+        aggiornare automaticamente anche i raggi di backbone e sidechains. » ;
+     • « Modificare lo stile di una sottomolecola (es. impostare il backbone su tube)
+        deve agire solo localmente, senza alterare lo stato del comando "General". » ;
+     • « Se, dopo una modifica locale, riapplico un nuovo comando a "General" (es.
+        ribbon), questo deve tornare a sovrascrivere tutte le personalizzazioni
+        fatte in precedenza sulle singole parti. » ;
+     • « Questa logica di ereditarietà deve valere in modo trasversale per tutte le
+        tipologie molecolari (proteine, acidi nucleici, lipidi). »
+   Les TROIS familles sont donc mesurées ici, avec la MÊME règle — lue dans le
+   vocabulaire de chaque rangée (partStyleUnderGeneral), donc sans table par type. */
+// 5a. « General → Balls and sticks » : TOUTES les parties prennent le style, y compris
+//     celles qui ne savent pas dessiner un ruban.
+const ball = HIER.setGeneralSectionField({}, 'protein', 'style', 'ball+stick');
+['backbone', 'sidechain'].forEach((sub) => {
+  eq(gen(ball, 'protein', sub).style, 'ball+stick',
+    `« ${sub} » passe en ball+stick (le rapport : « sia il backbone che le sidechain »)`);
+  eq(eff(ball, 'protein', sub).style, 'ball+stick', '…et c’est bien ce que sa rangée dessine');
+  eq(gen(ball, 'protein', sub).follow, true, '…en suivant General (son badge « ← General » le dit)');
+});
+// 5b. « General → cartoon » : le squelette prend le cartoon, les chaînes latérales sont
+//     mises sur Hide (le premier exemple du rapport).
+const cart = HIER.setGeneralSectionField({}, 'protein', 'style', 'cartoon');
+eq(gen(cart, 'protein', 'backbone').style, 'cartoon', 'General cartoon → backbone cartoon');
+eq(gen(cart, 'protein', 'sidechain').style, 'hide', '…et side chains sur hide');
+// 5c. UN ACIDE NUCLÉIQUE (DNA / RNA) : squelette · bases · ribose.
+const nuc = HIER.setGeneralSectionField({}, 'nucleic', 'style', 'cartoon');
+eq(gen(nuc, 'nucleic', 'backbone').style, 'cartoon', 'le squelette d’un nucléotide prend le cartoon');
+['bases', 'ribose'].forEach((sub) => eq(gen(nuc, 'nucleic', sub).style, 'hide',
+  `…et « ${sub} » passe sur hide (le cartoon de General parcourt déjà ses atomes)`));
+const nucBall = HIER.setGeneralSectionField({}, 'nucleic', 'style', 'ball+stick');
+eq(['backbone', 'bases', 'ribose'].map((s) => gen(nucBall, 'nucleic', s).style),
+  ['ball+stick', 'ball+stick', 'ball+stick'],
+  'General ball+stick → les TROIS parties de l’acide nucléique en ball+stick');
+// 5d. UN PHOSPHOLIPIDE : tête polaire · chaînes acyle · glycérol.
+const lip = HIER.setGeneralSectionField({}, 'lipid', 'style', 'licorice');
+eq(['head', 'tail', 'glycerol'].map((s) => gen(lip, 'lipid', s).style),
+  ['licorice', 'licorice', 'licorice'],
+  'General licorice → les trois parties du phospholipide en licorice');
+const lipBall = HIER.setGeneralSectionField({}, 'lipid', 'style', 'ball+stick');
+eq(['head', 'tail', 'glycerol'].map((s) => gen(lipBall, 'lipid', s).follow), [true, true, true],
+  '…et elles suivent General (la cascade vaut pour les lipides comme pour le reste)');
+// 5e. UNE ENVELOPPE (surface · mesh) n’est dessinée par AUCUNE partie : elles passent
+//     toutes sur hide, et l’enveloppe de General décrit la molécule seule.
+const surf = HIER.setGeneralSectionField({}, 'protein', 'style', 'surface');
+eq(['backbone', 'sidechain'].map((s) => gen(surf, 'protein', s).style), ['hide', 'hide'],
+  'General surface → les parties passent sur hide (aucune ne dessine une surface)');
+
+// 5f. LES DEUX RAYONS DESCENDENT, MÊME DANS UNE PARTIE QUI A DÉVIÉ — et le style de
+//     cette partie ne bouge pas, General non plus (les deux avant-derniers points).
+const local = HIER.setRowSectionField(cart, 'protein', 'backbone', 'style', 'tube');
+eq(gen(local, 'protein', 'backbone').style, 'tube', 'modification locale : le backbone passe en tube');
+eq(gen(local, 'protein', 'backbone').follow, false, '…et sa rangée cesse de suivre General');
+eq(gen(local, 'protein', 'general').style, 'cartoon', '…General n’a PAS bougé (la modification reste LOCALE)');
+const radii = HIER.setGeneralSectionField(local, 'protein', 'sphere', 1.8);
+eq(gen(radii, 'protein', 'backbone').sphere, 1.8, 'le rayon de General atteint le backbone qui avait dévié');
+eq(gen(radii, 'protein', 'sidechain').sphere, 1.8, '…et les chaînes latérales');
+eq(gen(radii, 'protein', 'general').sphere, 1.8, '…General compris, évidemment');
+eq(gen(radii, 'protein', 'backbone').style, 'tube', '…SANS toucher au style que la partie avait choisi');
+eq(gen(radii, 'protein', 'backbone').follow, false, '…ni la raccrocher à General');
+const radii2 = HIER.setGeneralSectionField(radii, 'protein', 'bond', 0.6);
+eq(gen(radii2, 'protein', 'sidechain').bond, 0.6, 'il en va de même du rayon de liaison (bond)');
+// 5g. …et un NOUVEAU style sur General ÉCRASE la personnalisation locale (le rapport :
+//     « deve tornare a sovrascrivere tutte le personalizzazioni fatte in precedenza »).
+const over = HIER.setGeneralSectionField(radii2, 'protein', 'style', 'ribbon');
+eq(gen(over, 'protein', 'backbone').style, 'ribbon', 'un nouveau style sur General écrase le « tube » choisi localement');
+eq(gen(over, 'protein', 'backbone').follow, true, '…et la rangée repasse sous General');
+eq(gen(over, 'protein', 'backbone').sphere, 1.8, '…en gardant le rayon qui était descendu');
+// 5h. LE CÂBLAGE : une fonction à part pour la règle, un nom pour les deux rayons.
+has('const partStyleUnderGeneral = (kind, sub, value) => (', 'la cascade est une fonction à part (elle se teste seule)');
+has("subsectionSpec(kind, sub).styles.includes(value) ? value : 'hide'", '…qui lit le vocabulaire de LA rangée');
+has("const RADIUS_FIELDS = ['sphere', 'bond'];", '…et les deux rayons ont leur nom');
+has('next[field] = value;', '…le nombre est écrit dans CHAQUE partie, déviée ou non');
 
 console.log(`_viewer_general_row_test.mjs — ${passed} assertions OK (hiérarchie + rangée General exécutée)`);
