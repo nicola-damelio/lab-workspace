@@ -1107,6 +1107,19 @@ export const ProjectDetailModule = ({
   // cover every linked test (used by the project page section).
   const regenerateMaterialsAndMethods = (silent = false, onlyIncluded = true) => {
     const parts = mmPartsFor(project, tests, onlyIncluded);
+    /* RIEN À LIRE NE VEUT PAS DIRE « EFFACE CE QUI EST ÉCRIT » : avec aucun test coché
+       « Include », la génération sort vide et ÉCRASAIT le texte du projet — celui qu'on
+       a écrit à la main (« ✏️ Edit text ») comme celui qu'un manuscrit importé a déposé
+       dans ce champ, et que le document imprime (voir la section « Materials and
+       Methods » du document). Quand il n'y a rien à lire, le texte reste : la page le
+       DIT au lieu de le perdre. */
+    if (!parts.length && String((project.materialsAndMethods || {}).text || '').trim()) {
+      if (!silent) {
+        setMmFeedback('⚠ No test to read — the Materials & Methods text is unchanged');
+        setTimeout(() => setMmFeedback(''), 3500);
+      }
+      return;
+    }
     updateProject({
       materialsAndMethods: {
         text: parts.map((q) => `${q.name}: ${q.text}`).join('\n'),
@@ -3741,7 +3754,17 @@ export const ProjectDetailModule = ({
               ));
 
 
-              if (includedExps.length > 0) blocks.methods = (
+              /* LA SECTION S'ÉCRIT SI ELLE A QUELQUE CHOSE À DIRE : les tests cochés
+                 « Include » la remplissent, et le TEXTE DU PROJET la remplit aussi —
+                 celui qu'on écrit à la main comme celui qu'un manuscrit importé dépose
+                 dans « 📋 Materials & Methods » (l'import annonce, mot pour mot, que
+                 « le document exporté l'imprime »). Elle était pourtant liée aux SEULS
+                 tests cochés : un projet dont aucun test n'est coché n'écrivait AUCUNE
+                 section « Materials and Methods », donc le texte enregistré ne se voyait
+                 ni dans la page du projet, ni à l'impression, ni dans le PDF — « the
+                 Materials and Methods section does not appear in the final document ». */
+              const mmTextSaved = String((project.materialsAndMethods || {}).text || '').trim();
+              if (includedExps.length > 0 || mmTextSaved) blocks.methods = (
                 <div key="methods" className="mb-6">
                   <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-1 mb-2">
                     <h2 className="pf-heading text-base font-black text-slate-800">{docHeading('methods')}</h2>

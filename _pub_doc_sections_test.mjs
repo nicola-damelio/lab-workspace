@@ -29,6 +29,8 @@ const {
 const {
   JOURNAL_FORMATS, applyJournalFormat, clearJournalFormat, reorderDocHtml
 } = await import('./src/components/journalFormats.js');
+// Le document FIGÉ est affiché sans sa propre bibliographie : la coupe est mesurée en §5.
+const { withoutBibliographySection } = await import('./src/utils/referenceLinks.js');
 
 let passed = 0;
 const ok = (cond, what) => { assert.ok(cond, what); passed += 1; };
@@ -171,7 +173,7 @@ has(PROJ, 'if (project.paperAuthors) blocks.authors = (', '…les auteurs un aut
 has(PROJ, 'if (project.paperAffiliations) blocks.affiliations = (', '…les affiliations aussi');
 has(PROJ, 'blocks.meta = (', '…la ligne du projet aussi');
 has(PROJ, 'blocks.sections = sectionBlocks.map((s) => (', '…les sections de texte de l’auteur aussi');
-has(PROJ, 'if (includedExps.length > 0) blocks.methods = (', '…« Materials and Methods » aussi');
+has(PROJ, 'if (includedExps.length > 0 || mmTextSaved) blocks.methods = (', '…« Materials and Methods » aussi');
 has(PROJ, "{docHeading('methods')}</h2>", '…avec l’intitulé choisi (« Experimental section »)');
 has(PROJ, "{docHeading('experiments')} ({includedExps.length})</h2>", '…« Experiments (n) » garde son compte sous le titre choisi');
 has(PROJ, "{docHeading('references')} ({refs.length})</h2>", '…et « References (n) » son intitulé réglable');
@@ -232,5 +234,65 @@ ok(frozenRenamed.includes('Experimental section') && frozenRenamed.includes('Bio
   '…et les intitulés choisis s’écrivent sur le texte figé');
 ok(!reorderDocHtml(frozen, pubDocOrderKeywords(swappedOrder, ['Mes propres titres'])).includes('<script'),
   'un vocabulaire sans section connue ne casse rien');
+
+/* ══ 5. LE MATÉRIEL ET MÉTHODES NE DISPARAÎT PAS DU DOCUMENT FINAL ═════════════
+   Le rapport, mot pour mot : « matherial and method section does ntappear in the
+   final document ». La page du projet n'ÉCRIVAIT la section que si un test était coché
+   « Include » — alors que le TEXTE DU PROJET (« 📋 Materials and Methods », écrit à la
+   main, ou déposé par un manuscrit importé, que l'import annonce comme imprimé par le
+   document) la remplit à lui seul. Le document n'avait alors plus rien à figer, donc
+   rien à imprimer. Deux mesures : le CÂBLAGE (§5a) et ce que le document FINAL fait
+   d'une section qui est là (§5b, §5c, exécuté). */
+
+// 5a. Le texte du projet compte comme les tests cochés — et « 🔄 Update from tests »
+//     ne peut plus l'effacer quand il n'y a rien à lire.
+has(PROJ, "const mmTextSaved = String((project.materialsAndMethods || {}).text || '').trim();",
+  'la section « Materials and Methods » sait lire le TEXTE DU PROJET');
+has(PROJ, 'if (includedExps.length > 0 || mmTextSaved) blocks.methods = (',
+  '…et s’écrit dès que les tests cochés OU ce texte ont quelque chose à dire (aucun test coché ne peut plus la faire disparaître)');
+has(PROJ, "{project.materialsAndMethods?.text ? (",
+  '…le corps de la section imprime le texte enregistré avant toute génération');
+has(PROJ, "if (!parts.length && String((project.materialsAndMethods || {}).text || '').trim()) {",
+  '« 🔄 Update from tests » sans aucun test à lire ne touche pas au texte écrit (il l’écrasait)');
+has(PROJ, "'⚠ No test to read — the Materials & Methods text is unchanged'",
+  '…et la page le dit au lieu de le perdre');
+has(PROJ, "if (project.materialsAndMethods?.edited) return;",
+  'le texte écrit à la main n’est jamais réécrit par le rafraîchissement automatique du document');
+
+// 5b. Exécuté : une section PRÉSENTE traverse le réordonnancement entière.
+const mmFrozen = [
+  '<h1 class="pf-title">Titre</h1>', '<p class="pf-authors">Rossi M</p>',
+  H2('Scientific background'), '<p>bg</p>',
+  H2('Materials and Methods'), '<p>Le tampon était 20 mM Tris.</p>',
+  H2('Experiments (1)'), '<p>exps</p>',
+  H2('References (2)'), '<ol class="pf-bib"><li>ref 1</li><li>ref 2</li></ol>'
+].join('');
+const mmOrder = pubDocOrderKeywords(
+  ['title', 'authors', 'affiliations', 'meta', 'sections', 'experiments', 'methods', 'references'],
+  PROJECT_SECTIONS);
+const mmMoved = reorderDocHtml(mmFrozen, mmOrder);
+ok(mmMoved.indexOf('Experiments (1)') < mmMoved.indexOf('Materials and Methods'),
+  'les ▲▼ du panneau déplacent aussi le matériel et méthodes d’un document ENREGISTRÉ');
+ok(mmMoved.includes('<p>Le tampon était 20 mM Tris.</p>'),
+  '…son texte traverse le déplacement, intact');
+eq(mmMoved.length, mmFrozen.length, '…sans un caractère perdu ni dupliqué : le document final a tout');
+const mmTitled = reorderDocHtml(mmFrozen, mmOrder,
+  pubDocTitleKeywords({ docTitles: { methods: 'Experimental section' } }));
+ok(mmTitled.includes(`${H2('Experimental section')}<p>Le tampon était 20 mM Tris.</p>`),
+  '…et l’intitulé choisi reste collé à son texte (« change the name of “materials and methods” »)');
+
+// 5c. Exécuté : le retrait de la bibliographie d'un document FIGÉ s'arrête à sa liste —
+//     un matériel et méthodes écrit plus bas n'est pas emporté par la coupe, donc il
+//     survit à l'affichage puis à l'impression, qui copie cette page.
+const mmAfterBib = [
+  H2('Introduction'), '<p>intro</p>',
+  H2('References (2)'), '<ol class="pf-bib"><li>ref 1</li><li>ref 2</li></ol>',
+  H2('Materials and Methods'), '<p>Le tampon était 20 mM Tris.</p>'
+].join('');
+const mmStripped = withoutBibliographySection(mmAfterBib);
+ok(!mmStripped.includes('pf-bib'), 'la bibliographie figée est retirée du document affiché');
+ok(mmStripped.includes('<p>Le tampon était 20 mM Tris.</p>'),
+  '…mais rien APRÈS elle n’est emporté (le matériel et méthodes survit)');
+ok(mmStripped.includes(H2('Materials and Methods')), '…avec son intitulé');
 
 console.log(`_pub_doc_sections_test.mjs — ${passed} assertions OK (ordre & intitulés des sections du document)`);
