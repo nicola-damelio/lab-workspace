@@ -7414,6 +7414,29 @@ const generalWalkingSele = (structure, sec, style) => {
   return '';
 };
 
+/* ── UNE RANGÉE QUI NE DESSINE RIEN DOIT LE DIRE ──────────────────────────────
+   Le seul défaut qu'un SÉLECTEUR peut avoir sans que NGL ne proteste : NGL ne
+   lève pas, il ne dessine simplement AUCUN atome — et la rangée semble morte
+   (« if in general i select cartoon or whatever other style i don't see
+   anything »). C'est ce que la soustraction de la règle du relâchement peut
+   produire (une partie qui a pris tous les atomes de la rangée), et aucune
+   exception ne le signalerait. On le mesure donc UNE FOIS par sélection
+   distincte : `atomIndicesForSele` (le lecteur de sélection de la page) compte
+   les atomes que le sélecteur atteint vraiment, et le nom du sélecteur part dans
+   la console avec la rangée qui l'a produit. Coût : rien tant que la rangée
+   n'est pas soustractive, et un seul comptage par sélection. */
+const emptySelectionWarned = new Set();
+const warnIfEmptySelection = (structure, sele, where) => {
+  if (!structure || typeof sele !== 'string' || !sele.includes(' and not ')) return false;
+  if (emptySelectionWarned.has(sele)) return false;
+  let atoms = null;
+  try { atoms = atomIndicesForSele(structure, sele); } catch { return false; }
+  if (!atoms || atoms.length) return false;
+  emptySelectionWarned.add(sele);
+  console.warn('viewer: this row draws NOTHING — its selection reaches no atom', where || '', sele);
+  return true;
+};
+
 /* ONE pass over the residues of a component → its SECTIONS, in the order of
    MOL_KINDS. A molecule IS (the request's layout):
      • a CHAIN for a protein and for a nucleic acid — « keep one by one »: a file
@@ -7727,6 +7750,9 @@ const buildSectionReps = (comp, sections, trees, opts = {}) => {
         ? generalOnly
         : sectionRowSele(structure, sec, spec.sub, { anchorSideChains, backboneLosesCa, anchorParts });
       if (!sele) return;
+      // …et si ce sélecteur n'atteint AUCUN atome, la rangée le dit dans la console
+      // (la seule panne qu'un sélecteur puisse avoir sans que NGL ne lève).
+      warnIfEmptySelection(structure, sele, `« ${spec.label} » of ${sec.name}`);
       const colorParams = sectionColorParams(look, sec.kind);
       const opacity = sectionOpacity(look);
       /* EVERY REP OF THIS ROW REMEMBERS WHICH ROW IT DRAWS FOR. The material is a

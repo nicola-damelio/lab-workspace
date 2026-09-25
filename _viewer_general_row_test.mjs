@@ -229,6 +229,8 @@ const RENDER = new Function([
   sliceFn(VIEW, 'nucleicGroupIndicesIn'),
   sliceFn(VIEW, 'nucleotideGroupIndices'),
   sliceFn(VIEW, 'generalWalkingSele'),
+  sliceDecl(VIEW, 'emptySelectionWarned'),
+  sliceFn(VIEW, 'warnIfEmptySelection'),
   sliceFn(VIEW, 'bridgeAtomIndices'),
   sliceDecl(VIEW, 'schemeParam'),
   sliceFn(VIEW, 'sectionColorParams'),
@@ -241,7 +243,7 @@ const RENDER = new Function([
   'const gradientRangesFor = () => null;',
   'const gradientColorStore = { ranges: null };',
   sliceFn(VIEW, 'buildSectionReps'),
-  'return { buildSectionReps, generalWalkingSele };',
+  'return { buildSectionReps, generalWalkingSele, warnIfEmptySelection };',
 ].join('\n'))();
 const SECTIONS = [{ id: 'main::protein|A', key: 'protein|A', kind: 'protein', name: 'Chain A', sele: ':A and protein', count: 1 }];
 // Un look de rangée, tel que la barre de style l'écrit.
@@ -388,5 +390,31 @@ has("if (sec.kind === 'protein') return 'backbone';",
   '…le squelette d’une protéine (N · CA · C · O) est protégé nommément, avec un mot de NGL');
 has('return indexSele(nucleotideGroupIndices(structure, sec, \'phosphate\')',
   '…un nucléotide protège les atomes comptés sur SA structure (phosphate · pentose), sans dépendre d’une convention de nom');
+
+/* ══ 4. UNE RANGÉE QUI NE DESSINE RIEN LE DIT ════════════════════════════════
+   La seule panne qu'un SÉLECTEUR puisse avoir sans que NGL ne lève : il
+   n'atteint aucun atome, et la rangée semble morte — le rapport « if in general
+   i select cartoon or whatever other style i don't see anything ». Le compte est
+   fait par le lecteur de sélection de la page (atomIndicesForSele), une fois par
+   sélection distincte, et la rangée se nomme dans la console. */
+const warned = [];
+const realWarn = console.warn;
+console.warn = (...args) => { warned.push(args.join(' ')); };
+const emptyStruct = { eachAtom() {} };
+const SEL_EMPTY = ':A and protein and not ((:A and protein and (sidechain or .CA)))';
+ok(RENDER.warnIfEmptySelection(emptyStruct, SEL_EMPTY, '« General » of Chain A') === true,
+  'une sélection soustractive qui n’atteint AUCUN atome est signalée');
+eq(warned.length, 1, '…une fois, avec un seul message');
+ok(warned[0].includes('« General » of Chain A') && warned[0].includes('draws NOTHING') && warned[0].includes(SEL_EMPTY),
+  '…qui nomme la rangée ET écrit la sélection fautive (de quoi corriger en un regard)');
+ok(RENDER.warnIfEmptySelection(emptyStruct, SEL_EMPTY, '« General » of Chain A') === false,
+  '…et pas deux fois pour la même sélection (le Set des sélections déjà vues)');
+ok(RENDER.warnIfEmptySelection(emptyStruct, ':A and protein', 'x') === false,
+  'une sélection NON soustractive n’est jamais comptée (aucun coût)');
+console.warn = realWarn;
+has('warnIfEmptySelection(structure, sele, `« ${spec.label} » of ${sec.name}`);',
+  'le rendu l’appelle pour chaque rangée qu’il construit, avec son libellé');
+has('const emptySelectionWarned = new Set();',
+  '…en se souvenant des sélections déjà signalées');
 
 console.log(`_viewer_general_row_test.mjs — ${passed} assertions OK (hiérarchie + rangée General exécutée)`);

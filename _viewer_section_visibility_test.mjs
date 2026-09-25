@@ -110,6 +110,9 @@ const sandbox = [
   // La rangée General ne cède jamais les atomes de son propre chemin (un ribbon marche le
   // long du CA) : ici rien n’est cédé du tout, ce n’est pas ce que cette suite mesure.
   'const generalWalkingSele = () => "";',
+  // …et une rangée qui n’atteint aucun atome le dit (warnIfEmptySelection) : rien à
+  // mesurer ici, le lecteur de sélection de la page serait une doublure de plus.
+  'const warnIfEmptySelection = () => false;',
   'const sectionColorParams = () => ({ colorScheme: "element" });',
   'const espColorParams = () => ({ colorScheme: "esp" });',
   'const flagMeshShadows = () => {};',
