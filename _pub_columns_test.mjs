@@ -57,7 +57,7 @@ const {
   pubFigureCols, pubLayoutCss, pubPageColumnsOf, pubSectionSpanIn, pubSectionSpanOf, pubSpanIn, pubSpanOf,
 } = await import('./src/components/pubCitation.js');
 const {
-  JOURNAL_FORMATS, JOURNAL_IDS, applyJournalFormat, clearJournalFormat, journalLayoutPatches,
+  JOURNAL_FORMATS, JOURNAL_IDS, applyDetectedFormat, applyJournalFormat, clearJournalFormat, journalLayoutPatches,
 } = await import('./src/components/journalFormats.js');
 
 const PANEL = readFileSync(new URL('./src/components/Publications.jsx', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
@@ -211,6 +211,38 @@ ok(PANEL.includes('PUB_DOC_SPAN_IDS') && PANEL.includes('const pubSetDocSection 
 ok(PANEL.includes('{PUB_DOC_SPAN_IDS.includes(id) && ('), '…la rangée de chaque section porte donc son réglage « Columns »');
 ok(PANEL.includes('onChange={(e) => pubSetDocSection(id, e.target.value)}'), '…qui écrit le choix dans le format');
 ok(PANEL.includes('value={pubSectionSpanOf(activeFormat, id)}'), '…et montre le choix en cours');
+
+/* ── 6 bis. UN FORMAT APPLIQUÉ MET LES COLONNES DE TOUTES LES SECTIONS ───────
+   Le rapport, mot pour mot : « when I use “read the format from a pdf” the column
+   structure is not updated in all the sections. » La fusion d'un paquet ne
+   touchait JAMAIS `docSections` : une section que le format PRÉCÉDENT avait mise
+   « Full width » continuait de barrer la page sous le format nouveau, et le
+   document ne prenait les colonnes du PDF que là où le format d'avant n'avait rien
+   dit. Un paquet qui porte une PAGE (un journal, un PDF à deux colonnes) porte
+   désormais ses sections avec lui : chacune revient à « comme la page ». */
+const tuned = {
+  layout: {
+    ...buildPubFormat('nature').layout,
+    page: { columns: 2 },
+    docSections: { background: 'all', references: 'all' }
+  }
+};
+eq(pubSectionSpanOf(tuned, 'background'), 'all',
+  'le format d’avant avait mis « Scientific background » pleine largeur');
+const afterJournal = applyJournalFormat(tuned, JOURNAL_IDS[0]);
+eq(pubSectionSpanIn(afterJournal.layout, 'background'), '',
+  'appliquer un journal remet la section sur les colonnes de SA page : la structure ne s’arrête plus à quelques sections');
+eq(pubSectionSpanIn(afterJournal.layout, 'references'), '', '…toutes les sections, sans exception');
+const afterPdf = applyDetectedFormat(tuned, {
+  preset: 'acs', order: ['abstract', 'introduction'], layout: { page: { columns: 2 }, body: { size: 10 } }
+});
+eq(pubSectionSpanIn(afterPdf.layout, 'background'), '',
+  'un paquet LU DANS UN PDF à deux colonnes fait de même (le chemin « read the format from a PDF »)');
+const afterOneColumn = applyDetectedFormat(tuned, {
+  preset: 'nature', order: ['references'], layout: { body: { size: 11 } }
+});
+eq(pubSectionSpanIn(afterOneColumn.layout, 'background'), 'all',
+  '…mais un paquet qui ne parle pas de la page (un PDF imprimé sur une colonne) laisse les sections où elles sont : rien n’est perdu');
 
 /* ── 7. LES COLONNES, FIGURE PAR FIGURE ─────────────────────────────────────
    « there must be a way to specify if figures go in one column or in two » : le

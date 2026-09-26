@@ -72,7 +72,7 @@
    la sua guida per gli autori — che cambia nel tempo e va riletta prima di
    inviare. Tutto resta modificabile a mano dopo il cambio.
    ========================================================================= */
-import { PUB_FORMAT_PRESETS, PUB_FONTS, PUB_LAYOUT_PART_IDS, buildPubDocOrder, buildPubDocTitles, buildPubDocNoTitle, buildPubDocNoBlock, buildPubFormat, normalizePubDocNoTitle, normalizeInTextStyle, pubDocOrderForWords, pubDocTitlesForWords } from './pubCitation.js';
+import { PUB_FORMAT_PRESETS, PUB_FONTS, PUB_LAYOUT_PART_IDS, buildPubDocOrder, buildPubDocSections, buildPubDocTitles, buildPubDocNoTitle, buildPubDocNoBlock, buildPubFormat, normalizePubDocNoTitle, normalizeInTextStyle, pubDocOrderForWords, pubDocTitlesForWords } from './pubCitation.js';
 
 
 // Le famiglie di caratteri del pannello (senza « As in the app »: un giornale un
@@ -250,6 +250,20 @@ export const applyJournalBundle = (fmt, def, id = '') => {
   const layout = { ...(base.layout || {}) };
   const patch = (def && def.layout) || {};
   Object.keys(patch).forEach((part) => { layout[part] = { ...(layout[part] || {}), ...patch[part] }; });
+  /* UN PACCHETTO CHE PORTA UNA PAGINA PORTA ANCHE LE SUE SEZIONI. La richiesta :
+     « when I use “read the format from a pdf” the column structure is not updated
+     in all the sections. » Il difetto : la fusione non toccava MAI `docSections`,
+     quindi una sezione rimasta « Full width » (o « In the columns ») dal formato
+     precedente continuava a decidere da sola sotto la pagina nuova — il documento
+     prendeva le colonne del PDF solo dove il vecchio formato non aveva detto
+     nulla, e la struttura letta nel PDF non valeva per tutte le sezioni. Un
+     pacchetto che parla della PAGINA (`layout.page`, vedi PUB_PAGE_COLUMNS) parla
+     quindi di TUTTE le sue sezioni : ognuna torna a « come la pagina », e il
+     pannello lo mostra (la riga « Columns » di ogni sezione).
+     Un pacchetto che della pagina NON dice nulla — un PDF stampato su una colonna,
+     che per scelta non nomina la pagina (vedi publicationFormatFromPdf · columnsOf)
+     — lascia invece le sezioni dov'erano: niente è perso. */
+  if (patch.page) layout.docSections = buildPubDocSections();
   return {
     ...base,
     journal: id,

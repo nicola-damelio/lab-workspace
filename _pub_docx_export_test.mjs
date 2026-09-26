@@ -324,7 +324,10 @@ eq(Object.keys(table).sort(), ['a.png', pic].sort(), '…et la table rend celles
        de la bibliographie ;
      · LA FIN DU TEXTE N'EST PAS UNE PLACE : quand plus rien ne peut remplir la
        page qu'une figure attendait, elle reprend SA place (son image réduite si
-       cela la fait tenir, jamais sous un quart de page).
+       cela la fait tenir, jamais sous un quart de page) ;
+     · DEUX FIGURES NE SE CROISENT JAMAIS : la petite figure 2 qui tenait dans la
+       place laissée libre ne s'imprime pas avant la grande figure 1 qui attendait
+       — « Figure 1 is after figure 2 » (voir flowBlocks).
 
    Vérifié ici sur les deux cas, la borne, et la garantie « aucun bloc n'est
    perdu ». */
@@ -417,6 +420,24 @@ eq([...twoFigures.matchAll(/<w:drawing>|Figure \d\. Legende\./g)].map((m) => m[0
 eq(twoFigures.replace(/<[^>]*>/g, ''),
   longText + 'Figure 1. Legende.' + longText + 'Figure 2. Legende.' + tailText,
   'le TEXTE ne change pas d’un caractère : chaque figure reste derrière le sien, sa légende avec elle');
+/* …ET DEUX FIGURES NE SE CROISENT JAMAIS, même quand l'une est plus courte que
+   l'autre : la figure 1 ne tenait pas dans la place restante et la figure 2, plus
+   petite, y tenait — elle se posait donc à cette place, et la figure 1, repoussée en
+   haut de la page suivante, s'imprimait APRÈS elle. Le rapport, mot pour mot :
+   « their position is sometimes very strange. For example Figure 1 is after figure
+   2. » Un article ne se lit jamais « Figure 2 » puis « Figure 1 ». */
+const midText = `M${'m'.repeat(2799)}`;         // ≈ 34 lignes : la page est aux deux tiers pleine
+const smallFigure = '<w:p><w:pPr><w:keepNext/></w:pPr><w:r><w:drawing><wp:inline>'
+  + '<wp:extent cx="2000000" cy="1270000"/></wp:inline></w:drawing></w:r></w:p>';
+const orderedFigures = reflowFigures(
+  wPara(midText) + wFigure + wCaptionStyled + smallFigure + wCaption2 + wPara(tailText), null
+);
+eq([...orderedFigures.matchAll(/<w:drawing>|Figure \d\. Legende\./g)].map((m) => m[0]),
+  ['<w:drawing>', 'Figure 1. Legende.', '<w:drawing>', 'Figure 2. Legende.'],
+  'la figure courte qui tenait dans la place libre ne dépasse jamais la figure haute restée en attente');
+ok(orderedFigures.replace(/<[^>]*>/g, '').includes(midText)
+  && orderedFigures.replace(/<[^>]*>/g, '').includes(tailText),
+  '…et le texte, lui, ne bouge pas d’un caractère : aucun bloc n’est perdu');
 /* LA HAUTEUR D'UNE FIGURE EST PLAFONNÉE À LA COLONNE DE TEXTE : une image portrait
    plus haute qu'une page ne pourrait tenir NULLE PART — Word la pousserait seule sur
    la suivante, avec un grand vide derrière elle. */

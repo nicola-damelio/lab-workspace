@@ -22,6 +22,7 @@ import { RAY_SHADOW_DEFAULTS } from '../utils/viewerRayShadows';
 import { computeSmiles3DNameMap } from '../utils/atomNameSync';
 import { rebuildProteinHydrogenCoords } from '../utils/rebuildProteinHydrogens';
 import { enforceOneHeavyBondPerHydrogen } from '../utils/hydrogenBondRule';
+import { enforceCovalentProteinBonds } from '../utils/proteinBondRule';
 import { readXtcFrames, countXtcFrames, countXtcFramesInFile } from '../utils/xtcDecoder';
 import { abortControl, useAbortControl } from '../utils/abortControl';
 // HETATM code → SMILES: the Chemistry Component Dictionary of the RCSB (see
@@ -4990,6 +4991,25 @@ const presetTransparencyOf = (key) => {
   if (!Number.isFinite(op)) return null;
   return Number((1 - Math.min(1, Math.max(0, op))).toFixed(3));
 };
+/* LE GESTE D'UN CONTRÔLE DE MATÉRIAU, TRADUIT EN CHAMPS DE LA RANGÉE — écrit en
+   UNE seule fois. Un preset remet sa translucidité au curseur Transp de la rangée
+   (presetTransparencyOf) : choisir « glass » écrit donc `preset` ET `opacity`
+   ensemble, et tout autre champ de matériau n'écrit que lui-même.
+   POURQUOI LE PATCH EST UN OBJET, ET PAS DEUX ÉCRITURES DE SUITE : `setSectionField`
+   repart de `sectionTreeOf`, c'est-à-dire de `sectionLooksRef.current`, qui n'est mis
+   à jour qu'AU RENDU. Deux appels successifs partent donc tous les deux de l'arbre
+   d'AVANT le geste, et le second écrase le premier — le menu du matériau revenait sur
+   « auto » dès qu'on choisissait « glass », c'est-à-dire exactement LE PRESET QUI
+   ÉCRIT DEUX CHAMPS (rapport : « the option glass cannot be selected anymore »).
+   Voir setSectionMaterialField, qui applique ce patch en une écriture. Pur :
+   _viewer_materials_test.mjs l'exécute (§7bis). */
+const materialRowPatch = (field, value) => {
+  const patch = { [field]: value };
+  if (field !== 'preset') return patch;
+  const t = presetTransparencyOf(value);
+  if (t != null) patch.opacity = t;
+  return patch;
+};
 /* THE ELEMENT, NOT THE REPRESENTATION — this was the whole materials bug.
    `component.addRepresentation(type, params)` does NOT return the representation:
    it returns a RepresentationElement that WRAPS it (ngl 2.4.0, component.ts:
@@ -6346,6 +6366,28 @@ const setSectionField = (id, kind, sub, field, value) => {
   // (a field only the material shaders read), and the NEXT frame is what shows the
   // rows the effect has just recreated (see requestSceneRepaint). The gesture counter
   // enters the signature for the same reason (see sectionEpoch).
+  bumpSectionEpoch();
+  requestSceneRepaint();
+};
+/* 🎛 LE MATÉRIAU D'UNE RANGÉE — LE GESTE ENTIER EN UNE SEULE ÉCRITURE.
+   « Glass » écrit deux champs (materialRowPatch : le preset ET la transparence qu'il
+   remet au curseur Transp de la rangée). Deux `setSectionField` à la suite ne
+   pouvaient pas marcher : chacun repart de `sectionTreeOf`, donc de l'arbre d'AVANT
+   le geste, et le second effaçait le premier — le menu du matériau revenait sur
+   « auto » dès qu'on choisissait « glass » (le rapport : « the option glass cannot be
+   selected anymore »). Le patch est donc appliqué D'UN BLOC, puis écrit une fois. */
+const setSectionMaterialField = (id, kind, sub, field, value) => {
+  leaveLightMode();
+  const patch = materialRowPatch(field, value);
+  let nextTree = sectionTreeOf(id, kind);
+  Object.keys(patch).forEach((f) => { nextTree = setRowSectionField(nextTree, kind, sub, f, patch[f]); });
+  setSectionLooks((prev) => ({ ...prev, [id]: nextTree }));
+  setKindLooks((prev) => {
+    const next = { ...prev, [kind]: nextTree[kind] };
+    saveSectionLooks(next);
+    kindLooksRef.current = next;
+    return next;
+  });
   bumpSectionEpoch();
   requestSceneRepaint();
 };
@@ -9090,6 +9132,7 @@ const loadChainMolecule = useCallback(async (blob, name, ci) => {
     const comp = await stage.loadFile(blob, { ext: 'pdb' });
     try { ensureGlycanBonds(comp); } catch { /* best-effort (PART 2.2bis) */ }
     try { enforceOneHeavyBondPerHydrogen(comp); } catch { /* best-effort (H-bond rule) */ }
+    try { enforceCovalentProteinBonds(comp); } catch { /* best-effort (protein-bond rule) */ }
     const baseReps = applyCurrentStyleTo(comp, []);
     shadowRepsHook(comp);
     if (shadowOnRef.current) setMeshShadows(comp);
@@ -9225,6 +9268,13 @@ try { ensureGlycanBonds(component); } catch { /* best-effort — the grouping st
 // close to the next atom of its own chain got a second bond. Drop those before a
 // single representation reads the graph.
 try { enforceOneHeavyBondPerHydrogen(component); } catch { /* best-effort (H-bond rule) */ }
+// …and "CD-CA / CD-CB": two heavy atoms of ONE protein residue that both hang from a
+// third are never bonded (no amino acid carries a three-membered ring), yet the same
+// distance pass draws them whenever a builder placed them inside the C–C window
+// (0.76 + 0.76 + 0.3 = 1.82 A). The proline ring that produced the report is fixed
+// in NMRSections (_ringClose + its ring angle at CB); this makes the drawing
+// unconditional, for any file.
+try { enforceCovalentProteinBonds(component); } catch { /* best-effort (protein-bond rule) */ }
 
 // Note: NGL viewer structures from PDB/SDF already contain hydrogens when generated correctly.
 // We skip addHydrogens() to prevent "is not a function" errors in this NGL version.
@@ -11217,6 +11267,7 @@ try {
   const comp = await stage.loadFile(file);
   try { ensureGlycanBonds(comp); } catch { /* best-effort (PART 2.2bis) */ }
   try { enforceOneHeavyBondPerHydrogen(comp); } catch { /* best-effort (H-bond rule) */ }
+  try { enforceCovalentProteinBonds(comp); } catch { /* best-effort (protein-bond rule) */ }
   // Style it with the §2 « Molecular Styling » menus (the same renderer as the
   // main structure) so extra molecules follow the user's choices and never look
   // like a gray blob.
@@ -11566,15 +11617,7 @@ const renderSectionRow = (sec, sub) => {
         set,
         families: styleFamiliesOf(look.style),
         materialOf: () => ({ preset: look.material, roughness: look.roughness, metalness: look.metalness }),
-        setMaterial: (_fam, field, value) => {
-          set(field === 'preset' ? 'material' : field, value);
-          /* « Glass » REMET SA TRANSLUCIDITÉ AU CURSEUR Transp DE CETTE RANGÉE
-             (voir presetTransparencyOf) : le choix du matériau déplace le curseur
-             au lieu d'écrire une opacité que personne ne peut reprendre. Tout
-             autre preset laisse le curseur où il est. */
-          const t = field === 'preset' ? presetTransparencyOf(value) : null;
-          if (t != null) set('opacity', t);
-        },
+        setMaterial: (_fam, field, value) => setSectionMaterialField(sec.id, kind, sub, field, value),
         follows,
         onReset: () => resetSectionRowLook(sec.id, kind, sub),
       })}
@@ -12130,6 +12173,7 @@ const loadExtraStructureUrl = useCallback(async (rawSrc, n = 0) => {
     if (!comp || !comp.structure) return;
     try { ensureGlycanBonds(comp); } catch { /* best-effort (PART 2.2bis) */ }
     try { enforceOneHeavyBondPerHydrogen(comp); } catch { /* best-effort (H-bond rule) */ }
+    try { enforceCovalentProteinBonds(comp); } catch { /* best-effort (protein-bond rule) */ }
     // The same §2 « Molecular Styling » look as the main structure.
     const baseReps = applyCurrentStyleTo(comp, []);
     shadowRepsHook(comp);

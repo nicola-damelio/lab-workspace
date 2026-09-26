@@ -642,7 +642,11 @@ const renderBlock = (node, ctx, part) => {
        place ici — elles ne traversent jamais l'intitulé d'une autre section, ni
        celui de la bibliographie ;
      · LA FIN DU TEXTE N'EST PAS UNE PLACE : ce qu'aucune place n'a repris
-       retourne à SA place (deuxième passage, `pinned` — voir reflowFigures).
+       retourne à SA place (deuxième passage, `pinned` — voir reflowFigures) ;
+     · DEUX FIGURES NE SE CROISENT JAMAIS : une figure en attente passe toujours
+       AVANT celle qui la suit — le déplacement ne fait que pousser la figure plus
+       loin dans le texte, jamais derrière la suivante (voir flowBlocks : « Figure 1
+       is after figure 2 »).
 
    Dans ces deux cas la figure est RÉDUITE juste assez pour entrer dans ce qui
    reste de la page (fitGroupInSpace, jamais sous le quart d'une page) : c'est ce
@@ -904,11 +908,16 @@ const flowBlocks = (blocks, m, pinned) => {
     place(shrunk.height <= space ? shrunk : group);
   };
   while (queue.length || deferred.length) {
-    // 1. UNE FIGURE MISE DE CÔTÉ REPREND LA PAGE DÈS QU'ELLE Y TIENT : c'est le
-    //    moment où le texte qui l'a dépassée a rempli le vide qu'elle laissait.
-    for (let k = 0; k < deferred.length;) {
-      if (fitted(deferred[k].height)) { place(deferred[k]); deferred.splice(k, 1); } else k += 1;
-    }
+    /* 1. UNE FIGURE MISE DE CÔTÉ REPREND LA PAGE DÈS QU'ELLE Y TIENT : c'est le
+       moment où le texte qui l'a dépassée a rempli le vide qu'elle laissait.
+       …ET DANS L'ORDRE DU DOCUMENT : c'est la PREMIÈRE en attente qui doit passer.
+       L'ancienne boucle sautait par-dessus la figure trop haute pour en placer une
+       plus courte restée derrière elle : la figure 2 s'imprimait alors AVANT la
+       figure 1, sur la place libre laissée par celle-ci (le rapport : « their
+       position is sometimes very strange. For example Figure 1 is after figure
+       2. »). Un article ne se lit jamais 2 puis 1 : la file est donc dévidée par
+       la tête, et rien ne la double. */
+    while (deferred.length && fitted(deferred[0].height)) place(deferred.shift());
     if (!queue.length) break;                     // plus de texte : « stuck » (voir plus haut)
     const block = queue.shift();
     /* 2. UN INTITULÉ FERME LA SECTION DEVANT LUI : les figures encore en attente
@@ -927,8 +936,14 @@ const flowBlocks = (blocks, m, pinned) => {
       // groupe en deux et mettrait la légende seule sur la page suivante.
       group = fitGroupOnPage(group, m);
       // Une figure que MÊME LA PAGE ENTIÈRE ne peut pas porter reste à sa place
-      // (Word la poussera sur sa propre page, comme aujourd'hui).
-      if (group.height > m.height || fitted(group.height)) place(group);
+      // (Word la poussera sur sa propre page, comme aujourd'hui)…
+      // …ET AUCUNE FIGURE NE DÉPASSE CELLES QUI ATTENDENT DEVANT ELLE : tant
+      // qu'une figure est en attente, la suivante attend avec elle — sinon une
+      // figure courte se posait dans la place qu'une figure haute n'avait pas pu
+      // prendre, et le document s'imprimait « Figure 2 » puis « Figure 1 » (voir
+      // la boucle de reprise, même règle).
+      if (deferred.length) deferred.push(group);
+      else if (group.height > m.height || fitted(group.height)) place(group);
       else if (pinned.has(keyOf(group))) keep(group);
       else deferred.push(group);
       continue;

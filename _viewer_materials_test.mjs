@@ -110,13 +110,14 @@ const CODE = [
   extract(VIEW, 'selRowFamilies'),
   extract(VIEW, 'materialValueOf'),
   extract(VIEW, 'presetTransparencyOf'),
+  extract(VIEW, 'materialRowPatch'),
   extract(VIEW, 'reprOfElement'),
   extract(VIEW, 'repTypeOfElement'),
   extract(VIEW, 'applyMaterialToRep'),
 ].join('\n');
 const F = new Function(`${CODE}
   return { SEE_THROUGH_SURFACE, MATERIAL_PRESETS, MATERIAL_PRESET_KEYS, MATERIAL_KINDS, MATERIAL_KIND_OF_REP,
-    SEL_STYLE_REP_TYPE, selRowFamilies, materialValueOf, presetTransparencyOf, reprOfElement, repTypeOfElement, applyMaterialToRep };`)();
+    SEL_STYLE_REP_TYPE, selRowFamilies, materialValueOf, presetTransparencyOf, materialRowPatch, reprOfElement, repTypeOfElement, applyMaterialToRep };`)();
 
 ok(!/useState|useRef|componentRef/.test(CODE),
   'le réglage du matériau ne dépend d’aucun état React : il est exécutable tel quel');
@@ -547,8 +548,8 @@ has('const presetTransparencyOf = (key) => {',
   'la translucidité d’un preset est traduite en transparence de rangée, à UN seul endroit');
 has("if (field === 'preset') {\n    const t = presetTransparencyOf(value);\n    if (t != null) row.transparency = t;\n  }",
   'la barre Selections remet la translucidité du preset au curseur Transp de SA ligne');
-has("const t = field === 'preset' ? presetTransparencyOf(value) : null;\n          if (t != null) set('opacity', t);",
-  'la fenêtre de styling aussi — le curseur de la ligne bouge vraiment');
+has('setMaterial: (_fam, field, value) => setSectionMaterialField(sec.id, kind, sub, field, value),',
+  'la fenêtre de styling passe par le geste ENTIER — un seul chemin, une seule écriture');
 has("glass — the smoothest, and the only one that moves this row's Transp regulator (55 %)",
   'la bulle du menu 🎛 dit la même chose que le code : réglable, et 0 % redonne une surface pleine');
 gone('glass (translucent)',

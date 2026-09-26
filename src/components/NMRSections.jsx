@@ -2760,20 +2760,40 @@ const ssTorsionAt = (ssChar) => SS_TORSIONS[ssChar] || SS_TORSIONS.C;
 
 // ---- Side-chain geometry helpers ----
 // Places a point that must be at distance lenPrev from `prev` and lenAnchor from
-// `anchor` (circle–circle intersection), choosing the solution farther from
-// `avoid`. Used to close rings exactly (Pro CD–N, ribose C1').
+// `anchor` (circle–circle intersection), choosing the solution FARTHEST from
+// `avoid`. Used to close rings exactly (Pro CD–N).
+//
+// The two solutions lie on a CIRCLE of radius h around `mid`, in the plane
+// perpendicular to `anchor − prev`; `avoid` lies in the plane of the ring, so the
+// solution farthest from it is the one on the OPPOSITE side of the axis, along the
+// component of `avoid − mid` perpendicular to it:
+//
+//     d = mid − normalize( (avoid − mid) − u·((avoid − mid)·u) ) · h
+//
+// The previous version enumerated the two points PERPENDICULAR to that direction —
+// a fixed 90° away from the answer, and both of them out of the ring plane, i.e.
+// both inside the CA/CB corner of the ring — and then broke the tie with
+// `|c1 − avoid| > |c2 − avoid|`, a comparison that is ALWAYS a tie: `perp` is built
+// from `avoid` itself, so the two candidates are mirror images through a plane that
+// CONTAINS `avoid` and their distances to it are exactly equal (2.664 Å apart on the
+// generated proline ring, both 1.503 Å from the midpoint of CA/CB). The side was
+// therefore decided by floating-point noise, and the "crowded" solution won: CD
+// landed 1.59 Å from CA and 1.77 Å from CB. That is inside the covalent window of
+// AtomProxy.connectedTo (0.76 + 0.76 + 0.3 = 1.82 Å for a C–C pair), so NGL's
+// distance pass drew "CD–CA" and "CD–CB" — bonds that do not exist — on top of the
+// file's own CONECT records. See _protein_heavy_bonds_test.mjs.
 const _ringClose = (prev, anchor, lenPrev, lenAnchor, avoid) => {
   const d = _vecNorm(_vecSub(anchor, prev));
   const u = _vecNormalize(_vecSub(anchor, prev));
   const a = (lenPrev * lenPrev - lenAnchor * lenAnchor + d * d) / (2 * d);
   const h = Math.sqrt(Math.max(1e-6, lenPrev * lenPrev - a * a));
   const mid = _vecAdd(prev, _vecScale(u, a));
-  let perp = _vecCross(u, _vecNormalize(_vecSub(avoid, prev)));
-  if (_vecNorm(perp) < 1e-6) perp = _vecCross(u, [0, 0, 1]);
-  perp = _vecNormalize(perp);
-  const c1 = _vecAdd(mid, _vecScale(perp, h));
-  const c2 = _vecSub(mid, _vecScale(perp, h));
-  return _vecNorm(_vecSub(c1, avoid)) > _vecNorm(_vecSub(c2, avoid)) ? c1 : c2;
+  const toAvoid = _vecSub(avoid, mid);
+  let radial = _vecSub(toAvoid, _vecScale(u, _vecDot(toAvoid, u)));   // ⟂ to the axis
+  if (_vecNorm(radial) < 1e-6) radial = _vecCross(u, [0, 0, 1]);
+  if (_vecNorm(radial) < 1e-6) radial = _vecCross(u, [0, 1, 0]);
+  radial = _vecNormalize(radial);
+  return _vecSub(mid, _vecScale(radial, h));   // the side of the axis AWAY from `avoid`
 };
 
 // Idealized side-chain placement for all 20 amino acids (NeRF). Chi angles use
@@ -2938,12 +2958,22 @@ const placeSidechainAtoms = (char, bb) => {
     }
     case 'P': {
       CH2('CB', 'N', 'CA');
-      P('CG', 'N', 'CA', 'CB', 1.52, 110.5, -30);
+      // The ring's angle at CB is 104°, not the 110.5° of an open chain: in every
+      // experimental structure the proline ring IS the constraint that closes it
+      // (N-CA-CB ≈ 103.6°, CA-CB-CG ≈ 104.6°), and forcing the open-chain value left
+      // the 5-ring bent at CD (CB-CG-CD 91°, CG-CD-N 127° at best — and, with the old
+      // random side choice of _ringClose, CD itself 1.59 Å from CA). At 104° the ring
+      // closes on a near-regular pentagon: ring angles 105.5 – 111.2°, every 1,3
+      // contact (N…CB 2.45, CA…CG 2.50, N…CG 2.43, CA…CD 2.33, CB…CD 2.42) well
+      // outside the 1.82 Å covalent window of a C–C pair, and CG sits ~0.45 Å out of
+      // the N-CA-CB plane — the envelope pucker of a real proline.
+      P('CG', 'N', 'CA', 'CB', 1.52, 104, -20);
       CH2('CG', 'CA', 'CB');
-      // Close the ring: CD must be 1.52 Å from CG and 1.46 Å from N. The side is
-      // chosen AWAY from BOTH CA and CB (their midpoint): the other solution crowds
-      // the CB corner of the ring, where the two CD protons then sat 1.4 Å from CB —
-      // inside the distance NGL treats as a bond.
+      // Close the ring: CD must be 1.52 Å from CG and 1.46 Å from N, on the side of
+      // the CG–N axis AWAY from CA/CB (their midpoint) — the trans solution of the
+      // 5-ring. See _ringClose: the crowded solution it used to pick at random put CD
+      // itself 1.59 Å from CA and 1.77 Å from CB (inside the distance NGL treats as a
+      // bond) and its two protons 1.4 Å from CB.
       atoms.CD = _ringClose(atoms.CG, atoms.N, 1.52, 1.46, _vecScale(_vecAdd(atoms.CA, atoms.CB), 0.5));
       CH2('CD', 'CB', 'CG');
       bond('CD', 'N'); bond('CD', 'CG');
