@@ -3228,6 +3228,12 @@ const sectionLooksSig = (v) => JSON.stringify(MOL_KINDS.map((k) => [k, v && v[k]
      2. `setRowSectionField` — a field set on ONE row deviates that row alone
         (`follow` = false) and never touches General;
      3. `resetSectionRow` / `resetSectionKind` — the ↺ of a row / of a section.
+   A BILAYER ADDS TWO HOPS ABOVE ALL THIS (the request of this session): a measured
+   leaflet row imposes its setting on its own headgroups row, and that row imposes it
+   on the GENERAL row of every phospholipid section — see MEMBRANE_ROW_BELOW,
+   membraneRowImposes and imposeOnPhospholipids. Below the section, the three moves
+   above are exactly what carries it to the part rows (headgroups · acyl chains ·
+   glycerol).
    A value General hands down that a row cannot draw falls back on that row's own
    default (see effectiveSectionLook), so General can never break a sub-category.
 
@@ -4604,6 +4610,79 @@ const MEMBRANE_CHILD_OF = {
   upper_leaflet: 'upper_headgroups',
   lower_leaflet: 'lower_headgroups',
 };
+/* ── THE HIERARCHY OF A BILAYER — THE REQUEST ────────────────────────────────
+   « the order of hierarchy in this case is upper leaflet → upper headgroups →
+   phospholipids general → phospholipid headgroup, glycerol and acyl chains (the
+   last three on the same level). and also lower leaflet → lower headgroups →
+   phospholipids general → (…). In this way if I have a membrane which is a mixture
+   of POPC and POPE, changing phospholipid upper leaflet will also change the
+   sections of each of the two phospholipids. »
+
+   A leaflet CONTAINS its headgroups, and those heads ARE the heads of the
+   phospholipids the styling sections describe — so the row ABOVE IMPOSES its
+   setting on the row below, exactly as General does over a part
+   (setGeneralSectionField):
+     · `upper_leaflet`    → `upper_headgroups` (a measured row of the same leaflet)
+     · `upper_headgroups` → the GENERAL row of every phospholipid section, which
+       hands it down to its own rows (headgroups · acyl chains · glycerol) by the
+       cascade that already exists — so ONE gesture on the leaflet reaches the POPC
+       AND the POPE section of a mixture.
+   The fields that are imposed are the ones a row shows of ITSELF: the style, the
+   colouring (and its swatch), the transparency and the two radii. The 🎛 MATERIAL
+   is NOT imposed (it belongs to the row and to a family of representation, see the
+   material note), and neither is the ✔ of the molecule nor the 🙈 of a selection
+   (hiding a row already takes its atoms away from every row, see hiddenRowExprs).
+   NOTHING REACHES UP: a style chosen on the row of a phospholipid section never
+   changes the leaflet it belongs to (a child does not command its parent), and the
+   next gesture on the row above overwrites the row below — the request's « the
+   latter must impose the settings on the first ». */
+// The row a measured row LAYS ITS SETTING OUT ON: a leaflet fills its own headgroups
+// row, and that row is the one the phospholipid sections follow.
+const MEMBRANE_ROW_BELOW = {
+  upper_leaflet: 'upper_headgroups',
+  lower_leaflet: 'lower_headgroups',
+};
+// The four measured rows the phospholipid sections follow — the headgroups row of
+// each side: a leaflet reaches the sections THROUGH its headgroups row.
+const MEMBRANE_PHOSPHOLIPID_ROW = {
+  upper_leaflet: 'upper_headgroups', upper_headgroups: 'upper_headgroups',
+  lower_leaflet: 'lower_headgroups', lower_headgroups: 'lower_headgroups',
+};
+// THE FIELDS THAT ARE IMPOSED, with the name a SELECTIONS row keeps each one under —
+// the very mapping LOOK_FIELD_OF_SEL gives the two bars (they read the same thing: a
+// leaflet and the headgroups row it fills). `style` is not a field but a COMMAND
+// (the style flags, see setSelRowStyle), hence its empty name.
+const MEMBRANE_IMPOSED_FIELDS = {
+  style: '',
+  colorBy: 'colorMode',
+  solidColor: 'color',
+  opacity: 'transparency',
+  sphere: 'radiusSphere',
+  bond: 'radiusBond',
+};
+// Pure: what the phospholipid sections have to be told — the field and the value in
+// the vocabulary of a molecule SECTION, or null when the gesture does not reach
+// them: only the four MEASURED rows are part of this hierarchy (a 🧫 macro row is
+// not), and a value the phospholipid rows cannot draw is never written — a section
+// reads what it can and hides itself for the rest (partStyleUnderGeneral), so a
+// leaflet can never break the sections below it.
+const phospholipidImposedWrite = (key, field, value) => {
+  if (!MEMBRANE_PHOSPHOLIPID_ROW[key]) return null;
+  if (!Object.prototype.hasOwnProperty.call(MEMBRANE_IMPOSED_FIELDS, field)) return null;
+  const spec = subsectionSpec('lipid', 'general');
+  if (field === 'style' && !spec.styles.includes(value)) return null;
+  if (field === 'colorBy' && !spec.colors.includes(value)) return null;
+  return { field, value };
+};
+// Pure: the ids of the PHOSPHOLIPID SECTIONS of the whole bar — one section per
+// residue name, so a POPC + POPE bilayer has TWO of them (the request: « changing
+// phospholipid upper leaflet will also change the sections of each of the two
+// phospholipids »). The row is ONE look for the whole scene (a second file's bilayer
+// is drawn by the very same row state), so the sections of every membrane follow it.
+const phospholipidSectionIds = (catalog) => Object.keys(catalog || {})
+  .flatMap((molKey) => (((catalog || {})[molKey] || {}).sections || [])
+    .filter((s) => s.kind === 'lipid')
+    .map((s) => s.id));
 // The measured rows of the OTHER leaflet — what 👁 solo hides to reveal this one.
 const membraneOppositeRows = (key) => Object.keys(MEMBRANE_SIDE_OF)
   .filter((k) => k !== key && MEMBRANE_SIDE_OF[k] !== MEMBRANE_SIDE_OF[key]);
@@ -9369,20 +9448,58 @@ const toggleSelStyle = (key, style, from) => {
   return next;
 }
 
-/* CHOOSING A STYLE FROM THE SELECTOR OF A SELECTIONS ROW — the styling window's
-   first command, applied with the very gesture of the ticks: the styles this row
-   stops drawing are switched OFF through toggleSelStyle (so the other rows that
-   drew those atoms get them back, exactly like « hide <style>, <selection> »), and
-   the chosen one is switched ON the same way. One state update, threaded. */
-const setSelRowStyle = (key, token) => {
+/* …AND THE SAME GESTURE ON A STATE GIVEN TO IT, without any write: this is what the
+   hierarchy of a bilayer uses (see membraneRowImposes) to lay on ONE row the very
+   style another row has just received. Returns the state it was given when the row
+   already draws exactly that style — so a repeated gesture writes no state, and the
+   caller can chain two rows of ONE gesture (the leaflet then its headgroups). */
+const selRowWithStyle = (from, key, token) => {
   const flag = SEL_STYLE_FLAG_OF[token] || null;
-  let work = selStylesRef.current || {};
+  const cur = from[key] || {};
+  const flags = Object.keys(SEL_STYLE_TOGGLE_TOKEN);
+  if (flags.every((f) => !!cur[f] === (f === flag))) return from;
+  let work = from;
   Object.keys(SEL_STYLE_TOGGLE_TOKEN).forEach((f) => {
     if (f === flag) return;
     if (!((work[key] || {})[f])) return;
     work = toggleSelStyle(key, SEL_STYLE_TOGGLE_TOKEN[f], work);
   });
   if (flag && !((work[key] || {})[flag])) work = toggleSelStyle(key, SEL_STYLE_TOGGLE_TOKEN[flag], work);
+  return work;
+};
+
+/* THE HIERARCHY OF A BILAYER, IN ONE WRITE (see the note above MEMBRANE_ROW_BELOW):
+   the setting a MEASURED row has just been given is laid on the row BELOW it — the
+   leaflet on its own headgroups. `field` and `value` are the names the styling panel
+   speaks (`set(field, value)`), and MEMBRANE_IMPOSED_FIELDS says under which name a
+   Selections row keeps that field. Returns the state it was given when nothing
+   changes — a 🧫 macro row, a field that is not imposed, a value already laid — so a
+   gesture never writes state for nothing. */
+const membraneRowImposes = (work, key, field, value) => {
+  const below = MEMBRANE_ROW_BELOW[key];
+  if (!below || !Object.prototype.hasOwnProperty.call(MEMBRANE_IMPOSED_FIELDS, field)) return work;
+  if (field === 'style') {
+    // A STYLE is a COMMAND (the flags of setSelRowStyle), so the row below is told to
+    // draw what the row above has just been told to draw — and the headgroups keep
+    // OWNING their atoms (membraneHeadRelinquish): the leaflet subtracts them from
+    // every style it draws, so the two rows agree whatever the order of the gestures.
+    const laid = selRowWithStyle(work, below, value);
+    return membraneHeadRelinquish(below, value !== 'hide', laid);
+  }
+  const name = MEMBRANE_IMPOSED_FIELDS[field];
+  if (!name) return work;
+  const cur = work[below] || {};
+  if (cur[name] === value) return work;
+  return { ...work, [below]: { ...cur, [name]: value } };
+};
+
+/* CHOOSING A STYLE FROM THE SELECTOR OF A SELECTIONS ROW — the styling window's
+   first command, applied with the very gesture of the ticks: the styles this row
+   stops drawing are switched OFF through toggleSelStyle (so the other rows that
+   drew those atoms get them back, exactly like « hide <style>, <selection> »), and
+   the chosen one is switched ON the same way. One state update, threaded. */
+const setSelRowStyle = (key, token) => {
+  const work = selRowWithStyle(selStylesRef.current || {}, key, token);
   if (work !== selStylesRef.current) setSelStyles(work);
   return work;
 };
@@ -9423,12 +9540,40 @@ const setSelField = (key, field, value) => {
     // even when the leaflet draws spheres over them. « Hide » gives them back.
     const work = setSelRowStyle(key, value);
     const chained = membraneHeadRelinquish(key, value !== 'hide', work);
-    if (chained !== work) setSelStyles(chained);
+    // …AND THEN THE HIERARCHY OF THE BILAYER (the request of this session): the
+    // leaflet lays its style out on ITS headgroups row, and the phospholipid
+    // sections follow below (imposeOnPhospholipids) — so ONE gesture on
+    // `upper_leaflet` reaches `upper_headgroups`, the POPC section AND the POPE
+    // section of a mixture.
+    const laid = membraneRowImposes(chained, key, field, value);
+    if (laid !== work) setSelStyles(laid);
+    imposeOnPhospholipids(key, field, value);
     return;
   }
   const name = LOOK_FIELD_OF_SEL[field];
   if (!name) return;
-  setSelStyles({ ...selStylesRef.current, [key]: { ...(selStylesRef.current[key] || {}), [name]: value } });
+  // THE OTHER SETTINGS TAKE THE SAME ROAD (colouring, swatch, transparency, radii):
+  // the row below and the phospholipid sections receive them too, while the row
+  // itself keeps what was just asked of it (see MEMBRANE_IMPOSED_FIELDS).
+  const laid = membraneRowImposes(selStylesRef.current || {}, key, field, value);
+  setSelStyles({ ...laid, [key]: { ...(laid[key] || {}), [name]: value } });
+  imposeOnPhospholipids(key, field, value);
+};
+
+/* ONE GESTURE ON A 🧫 ROW REACHES THE PHOSPHOLIPIDS (the hierarchy of this file, see
+   MEMBRANE_ROW_BELOW): the write is laid on the GENERAL row of EVERY phospholipid
+   section of the bar — one section per residue name, so the POPC and the POPE
+   section of a mixture both follow, which is the request word for word. Each section
+   hands it down to its own rows (headgroups · acyl chains · glycerol) through
+   setGeneralSectionField, so the whole chain is one call per section — and
+   setSectionField asks for the repaint itself. NOTHING REACHES UP: styling a
+   section's own row never changes a leaflet. */
+const imposeOnPhospholipids = (key, field, value) => {
+  const write = phospholipidImposedWrite(key, field, value);
+  if (!write) return;
+  phospholipidSectionIds(sectionCatalogRef.current).forEach((id) => {
+    setSectionField(id, 'lipid', 'general', write.field, write.value);
+  });
 };
 /* 👁 SOLO OF ONE MEASURED ROW — the honest answer to « only lower leaflet works
    well ». The two leaflets of a bilayer stand one BEHIND the other: the front one
@@ -10876,7 +11021,16 @@ const renderSectionRow = (sec, sub) => {
    them (membraneHeadRelinquish — its style must be visible under a fat leaflet),
    and each measured row carries the 👁 solo that hides the other leaflet's two
    rows: the two leaflets stand one BEHIND the other, and the one at the back
-   cannot be seen, let alone styled, through the one in front. */
+   cannot be seen, let alone styled, through the one in front.
+
+   THE FOLLOW-UP — THE HIERARCHY OF THESE ROWS (the request): « since upper
+   headgroups is a part of upper leaflet, the latter must impose the settings on the
+   first … the order of hierarchy is upper leaflet → upper headgroups → phospholipids
+   general → phospholipid headgroup, glycerol and acyl chains ». A setting chosen on
+   a leaflet is therefore LAID on its own headgroups row (membraneRowImposes) and on
+   the GENERAL row of every phospholipid section of the bar (imposeOnPhospholipids):
+   one gesture on `upper_leaflet` restyles its heads AND the POPC and POPE sections,
+   and each section hands it down to its part rows. Nothing reaches up. */
 const renderMembraneSelections = (sec) => {
   const keys = lipidSelectionKeys();
   if (!keys.length) return null;
@@ -10904,11 +11058,19 @@ const renderMembraneSelections = (sec) => {
         const n = selectionAtomCount(key);
         const measuredRow = !!MEMBRANE_SIDE_OF[key];
         const solo = measuredRow && membraneSoloOn(key);
+        // WHAT THIS ROW IMPOSES, SAID ON THE ROW (the hierarchy of this file): a
+        // leaflet lays its setting on ITS headgroups row and on the phospholipid
+        // sections, a headgroups row on the phospholipid sections — and nothing ever
+        // reaches up.
+        const hierarchy = !measuredRow ? ''
+          : (MEMBRANE_ROW_BELOW[key]
+            ? ` · imposes its setting on ${MEMBRANE_ROW_BELOW[key]} and, through it, on the phospholipid sections of this bilayer`
+            : ` · the ${MEMBRANE_SIDE_OF[key]} leaflet row imposes its setting on this row, and this row imposes it on the phospholipid sections`);
         return (
           <div key={key} className="rounded border border-teal-100 bg-white px-1 py-0.5 flex flex-col gap-0.5">
             <div className="flex items-center justify-between gap-1">
               <span className={`text-[10px] font-bold truncate ${st.hidden ? 'text-slate-400 line-through' : 'text-slate-700'}`}
-                title={`${key} — a lipid selection of this bilayer: its atoms lie inside the lipids of ${sec.name}`}>
+                title={`${key} — a lipid selection of this bilayer: its atoms lie inside the lipids of ${sec.name}${hierarchy}`}>
                 {key}
               </span>
               {measuredRow && (
