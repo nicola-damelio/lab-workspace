@@ -1023,6 +1023,9 @@ export const buildRayShadowMask = ({ atoms, camera, light, width, height, option
     // without them a thin drawing casts nothing (see LINKED_KINDS).
     filled: Number(atoms && atoms.filled) || 0,
     strength: o.strength,
+    // HOW MANY PROXIES COME FROM A DRAWN RIBBON BAND (see bandProxiesOf): the
+    // Ray message counts them, so « the ribbon casts a ribbon » is readable.
+    bands: Number(atoms && atoms.bands) || 0,
     // WHAT THE PROXY IS MADE OF (see proxyStrokeSummary): the strokes the Ray
     // message shows, so a still whose sticks came out as vdW balls SAYS so
     // instead of looking round for no reason.
@@ -1132,6 +1135,10 @@ const drawnAtomIndicesOf = (comp, atomCount) => {
     try {
       const rep = (el && (el.repr || el)) || null;
       if (!rep || rep.visible === false) return;
+      // Un dessin que l'œil ne voit pas ne « dessine » rien non plus (voir
+      // opacityOf) : sinon ses atomes restaient dans la liste et projetaient
+      // leur ombre après que la transparence l'a effacé.
+      if (opacityOf(rep, el) <= INVISIBLE_OPACITY) return;
       const sv = rep.structureView;
       if (!sv || typeof sv.getAtomIndices !== 'function') return;
       const idx = sv.getAtomIndices();
@@ -1294,6 +1301,36 @@ export const LINKED_KINDS = Object.freeze({ spline: 1, tube: 1, bond: 1, ball: 1
    « a thin drawing casts no shadow » regression the link walk exists to fix. */
 export const BACKBONE_ONLY_KINDS = Object.freeze({ spline: 1, tube: 1 });
 
+/* ---- CE QUE L'ŒIL VOIT : L'OPACITÉ D'UNE REPRÉSENTATION --------------------
+   LE RAPPORT, une fois de plus : « the shadows keep being spherical always even
+   if I see only a ribbon ». Un dessin que l'œil ne voit PAS ne doit rien
+   projeter : une surface (ou un spacefill) laissée à `opacity: 0` — l'état que
+   la barre écrit quand l'utilisateur descend la transparence à fond, et
+   l'opacité 0,4 par défaut d'une surface de menu — restait « visible » aux yeux
+   de ce module (`rep.visible === false` la laisse passer) et donnait à CHAQUE
+   atome sa sphère de van der Waals : l'ombre du ruban qu'on regarde était
+   recouverte par celle du dessin qu'on ne regarde pas — ronde, donc, quelle que
+   soit la représentation choisie. C'est la « partial moon » du rapport.
+
+   `opacityOf` lit la valeur là où ngl 2.4 la garde (`this.opacity` de
+   l'instance, puis les paramètres de l'élément), et 1 quand personne ne dit
+   rien (une représentation à nous, un test). Le proxy D'UN DESSIN TRANSLUCIDE
+   est aminci dans la même proportion (voir drawnProxyRadiiOf) : la carte d'ombre
+   ne porte qu'UNE densité par rayon — elle ne sait pas accumuler —, donc la
+   seule façon qu'une surface à 40 % ne boive pas l'ombre du ruban est de donner
+   à son trait la largeur que l'œil lui accorde. */
+export const INVISIBLE_OPACITY = 0.02;
+export const opacityOf = (rep, el = null) => {
+  const sources = [rep, el && el.parameters, rep && rep.parameters];
+  for (let s = 0; s < sources.length; s += 1) {
+    const source = sources[s];
+    if (!source) continue;
+    const v = Number(source.opacity);
+    if (Number.isFinite(v)) return Math.min(1, Math.max(0, v));
+  }
+  return 1;
+};
+
 /* ONE number of a representation: the INSTANCE value first (that is where ngl 2.4
    keeps it: `rep.radiusScale`, `rep.radiusSize`, `rep.aspectRatio` …), then the
    same key on the element's own parameters (what `el.setParameters()` writes),
@@ -1426,6 +1463,8 @@ export const drawnProxyRadiiOf = (comp, atomCount, vdw = null, links = null) => 
     try {
       const rep = (el && (el.repr || el)) || null;
       if (!rep || rep.visible === false) return;
+      const op = opacityOf(rep, el);
+      if (op <= INVISIBLE_OPACITY) return;   // effacé à la transparence : il ne projette rien
       const sv = rep.structureView;
       if (!sv || typeof sv.getAtomIndices !== 'function') return;
       const idx = sv.getAtomIndices();
@@ -1446,15 +1485,193 @@ export const drawnProxyRadiiOf = (comp, atomCount, vdw = null, links = null) => 
         }
         const per = proxyRadiusOf(rep, vdw ? vdw[a] : 1.7, el);
         if (per == null) continue;
+        // Le trait d'un dessin TRANSLUCIDE est aminci comme l'œil le voit (voir
+        // opacityOf) : une surface à 40 % ne boit plus l'ombre du ruban opaque.
+        const seen = op < 1 ? per * op : per;
         // The FATTEST visible drawing of an atom is what the eye sees, so it is
         // what the shadow must use. A bond is a bond whatever else is drawn on
         // top of it, so the link is an OR.
-        if (!(out[a] >= per)) out[a] = per;
+        if (!(out[a] >= seen)) out[a] = seen;
         if (linked && links) links[a] = 1;
       }
     } catch { /* a representation that cannot list its atoms draws nothing */ }
   });
   return out;
+};
+
+/* ---- LES TRAITS PLATS : UN RUBAN EST UNE BANDE, PAS UN FIL -----------------
+   LE RAPPORT : « the shadows keep being spherical always even if I see only a
+   ribbon, it projects spherical shadows (more than spherical they seem like
+   partial moons) ». Un cartoon et un ruban ne sont PAS des tuyaux : ce sont des
+   BANDES PLATES — larges de 2 à 2,5 Å, épaisses de quelques dixièmes
+   d'ångström (ngl 2.4 : `RibbonRepresentation` lit sa taille par
+   `RadiusFactory('sstruc')`, 0,25 × `radiusScale` par résidu structuré ;
+   `CartoonRepresentation` la multiplie par son `aspectRatio` de 5). Le proxy de
+   la table ci-dessus les réduit à un FIL ROND le long de la chaîne : l'ombre
+   d'un ruban est donc celle d'un fil et, élargie par la pénombre, elle se lit
+   comme une suite de fuseaux ronds — les « partial moons ». Un fil n'a pas la
+   forme du ruban ; son ombre ne peut pas l'avoir.
+
+   Ici la bande est lue LÀ OÙ ELLE EST DESSINÉE : la géométrie du tampon de la
+   représentation, que ngl 2.4 remplit par sommet. `RibbonBuffer` et
+   `CartoonBuffer` écrivent QUATRE sommets par point de la spline, chacun avec
+   `normal` (la normale de la bande), `dir` (la largeur, pour le ruban) et
+   `size` (la demi-largeur du ruban, ou la demi-ÉPAISSEUR du cartoon, que son
+   shader étale par `aspectRatio`). Aucune formule n'est devinée : la bande est
+   celle du dessin. Un tampon illisible (une version d'ngl qui range autrement,
+   un test) rend `null` et le proxy garde le fil rond d'avant — jamais d'erreur,
+   jamais une image pire qu'avant. */
+export const FLAT_STROKE_BY_TYPE = Object.freeze({ cartoon: 1, ribbon: 1 });
+/* La brosse qui couvre une bande : bornée, pour qu'une bande de 500 résidus ne
+   fasse pas exploser le budget des proxies (voir fillDrawnLinks). */
+export const BAND_MAX_ACROSS = 6;
+export const BAND_MAX_ALONG = 8;
+export const BAND_MAX_PROXIES = 60000;
+const BAND_MIN_THICKNESS = 0.15;      // Å : sous cela, une bande ne couvre plus rien
+const BAND_TAPER = 1.6;               // deux voisins ne laissent pas de trou
+
+/* La GÉOMÉTRIE DESSINÉE d'une représentation (le premier tampon qui a des
+   positions) — `null` quand elle n'en a pas encore (construction différée) ou
+   quand la représentation n'est pas la nôtre. */
+const geometryOfRep = (rep) => {
+  const list = rep && rep.bufferList;
+  if (!Array.isArray(list)) return null;
+  for (let i = 0; i < list.length; i += 1) {
+    const g = list[i] && list[i].geometry;
+    const arr = g && g.attributes && g.attributes.position && g.attributes.position.array;
+    if (arr && arr.length >= 12) return g;
+  }
+  return null;
+};
+
+/* LES SECTIONS D'UNE BANDE : { p, d, w, t } — le centre, la LARGEUR (vecteur
+   unitaire), la demi-largeur et la demi-épaisseur, en coordonnées de la
+   structure (celles du tampon, donc). `null` quand la bande n'est pas lisible. */
+export const bandSectionsOf = (rep, el = null) => {
+  const kind = repTypeOf(rep, el);
+  if (!FLAT_STROKE_BY_TYPE[kind]) return null;
+  const geo = geometryOfRep(rep);
+  if (!geo) return null;
+  const A = geo.attributes;
+  const pos = A.position.array;
+  if (pos.length % 12 !== 0) return null;             // 4 sommets par point de spline
+  const points = pos.length / 12;
+  if (points < 2) return null;
+  const sizeArr = A.size && A.size.array;
+  if (!sizeArr || sizeArr.length < points * 4) return null;   // sans largeur : pas de bande
+  const dirArr = A.dir && A.dir.array && A.dir.array.length >= points * 12 ? A.dir.array : null;
+  const norArr = A.normal && A.normal.array && A.normal.array.length >= points * 12 ? A.normal.array : null;
+  const aspect = repNumber(rep, el, 'aspectRatio') || 5;
+  const sub = (arr, i) => [arr[i], arr[i + 1], arr[i + 2]];
+  const sections = [];
+  for (let v = 0; v < points; v += 1) {
+    const p = sub(pos, v * 12);
+    const s = Number(sizeArr[v * 4]);
+    if (!(s > 0)) return null;                        // un tampon sans taille : on n'invente pas
+    let d = dirArr ? normalize3(sub(dirArr, v * 12)) : null;
+    if (!d || !(length3(d) > 0.5)) {
+      // Le CARTOON ne porte pas de `dir` : sa largeur est perpendiculaire à la
+      // normale de la bande ET à la chaîne — deux voisins suffisent à la donner.
+      const next = sub(pos, Math.min(points - 1, v + 1) * 12);
+      const prev = sub(pos, Math.max(0, v - 1) * 12);
+      const t = normalize3(sub3(next, prev));
+      const n = norArr ? normalize3(sub(norArr, v * 12)) : null;
+      d = n ? normalize3(cross3(n, t)) : null;
+      if (!d || !(length3(d) > 0.5)) return null;     // pas d'orientation : on garde le fil
+    }
+    const w = kind === 'ribbon' ? s : s * aspect;
+    const t = kind === 'ribbon'
+      ? Math.max(BAND_MIN_THICKNESS, Math.min(0.25, w * 0.25))
+      : Math.max(BAND_MIN_THICKNESS, s);
+    sections.push({ p, d, w, t });
+  }
+  return sections.length >= 2 ? sections : null;
+};
+
+/* LA BROSSE D'UNE BANDE : ses sections sont couvertes par de petites sphères,
+   serrées d'un peu plus que leur rayon, le long ET en travers — l'union de ces
+   sphères EST la bande (une brosse plate, pas un chapelet). Une section est
+   couverte par `across` sphères réparties sur sa largeur ; entre deux sections,
+   `along` pas assurent la continuité, et le rayon prend le plus grand des deux
+   besoins (`BAND_TAPER`) pour qu'aucun trou n'apparaisse. */
+const bandBrushOf = (sections, opacity = 1) => {
+  const outPositions = [];
+  const outRadii = [];
+  const push = (x, y, z, r) => { outPositions.push(x, y, z); outRadii.push(r); };
+  for (let v = 0; v + 1 < sections.length; v += 1) {
+    const a = sections[v];
+    const b = sections[v + 1];
+    const dx = b.p[0] - a.p[0];
+    const dy = b.p[1] - a.p[1];
+    const dz = b.p[2] - a.p[2];
+    const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    if (!(len > 0) || !(len <= LINK_MAX * 3)) continue;   // un saut de chaîne ne se brosse pas
+    const r0 = Math.max(BAND_MIN_THICKNESS, Math.min(a.t, b.t), len * 0.02);
+    const along = Math.min(BAND_MAX_ALONG, Math.max(1, Math.ceil(len / (2 * r0))));
+    for (let i = 0; i <= along; i += 1) {
+      const u = i / (along + 1);
+      const px = a.p[0] + dx * u;
+      const py = a.p[1] + dy * u;
+      const pz = a.p[2] + dz * u;
+      const dir = normalize3([
+        a.d[0] + (b.d[0] - a.d[0]) * u,
+        a.d[1] + (b.d[1] - a.d[1]) * u,
+        a.d[2] + (b.d[2] - a.d[2]) * u,
+      ]);
+      const half = a.w + (b.w - a.w) * u;
+      if (!(half > 0) || !(length3(dir) > 0.5)) continue;
+      const across = Math.min(BAND_MAX_ACROSS, Math.max(1, Math.ceil((2 * half) / (2 * r0))));
+      const step = (2 * half) / across;
+      const r = Math.max(r0, step / BAND_TAPER);
+      for (let j = 0; j < across; j += 1) {
+        const off = -half + (j + 0.5) * step;
+        push(px + dir[0] * off, py + dir[1] * off, pz + dir[2] * off, r);
+      }
+    }
+    if (outRadii.length > BAND_MAX_PROXIES) break;
+  }
+  const count = outRadii.length;
+  const positions = new Float32Array(outPositions);
+  const radii = new Float32Array(outRadii);
+  if (opacity < 1) for (let i = 0; i < count; i += 1) radii[i] *= opacity;
+  return { positions, radii, count };
+};
+
+/* LES BANDES D'UN COMPOSANT : une brosse par représentation PLATE et VISIBLE
+   (`cartoon`, `ribbon`), en coordonnées de la structure — la même que
+   `structure.getAtomData`, donc la même matrice s'applique (voir layOut). Un
+   composant sans ruban lisible rend `{ count: 0 }` : rien à ajouter. */
+export const bandProxiesOf = (comp) => {
+  const empty = { positions: new Float32Array(0), radii: new Float32Array(0), count: 0, reps: 0 };
+  const list = comp && comp.reprList;
+  if (!Array.isArray(list)) return empty;
+  const brushes = [];
+  let total = 0;
+  list.forEach((el) => {
+    try {
+      const rep = (el && (el.repr || el)) || null;
+      if (!rep || rep.visible === false) return;
+      if (!FLAT_STROKE_BY_TYPE[repTypeOf(rep, el)]) return;
+      const op = opacityOf(rep, el);
+      if (op <= INVISIBLE_OPACITY) return;          // effacé : il ne projette rien
+      const sections = bandSectionsOf(rep, el);
+      if (!sections) return;
+      const brush = bandBrushOf(sections, op);
+      if (!brush.count) return;
+      brushes.push(brush);
+      total += brush.count;
+    } catch { /* une représentation illisible garde le fil rond du proxy des atomes */ }
+  });
+  if (!brushes.length) return empty;
+  const positions = new Float32Array(total * 3);
+  const radii = new Float32Array(total);
+  let at = 0;
+  brushes.forEach((b) => {
+    positions.set(b.positions, at * 3);
+    radii.set(b.radii, at);
+    at += b.count;
+  });
+  return { positions, radii, count: total, reps: brushes.length };
 };
 
 /* ---- THE PROXIES: the atoms, AND THE LINES THAT JOIN THEM ----------------- */
@@ -1567,6 +1784,32 @@ const layOut = (part, stride) => {
   const rad = part.data.radius;
   const surface = part.surface;
   const links = part.links;
+  /* LA BANDE D'UN RUBAN (voir bandProxiesOf), dans le MÊME espace que les
+     atomes : la matrice du composant (et celles du viewer) s'appliquent de la
+     même façon. Elle est émise APRÈS les atomes et leurs liens (voir
+     fillDrawnLinks) et son coût est compté dans le budget. */
+  const bandIn = part.bands && part.bands.count ? part.bands : null;
+  let band = null;
+  if (bandIn) {
+    const bp = new Float32Array(bandIn.count * 3);
+    const br = new Float32Array(bandIn.count);
+    for (let i = 0; i < bandIn.count; i += 1) {
+      const x = bandIn.positions[i * 3];
+      const y = bandIn.positions[i * 3 + 1];
+      const z = bandIn.positions[i * 3 + 2];
+      if (m) {
+        bp[i * 3] = m[0] * x + m[4] * y + m[8] * z + m[12];
+        bp[i * 3 + 1] = m[1] * x + m[5] * y + m[9] * z + m[13];
+        bp[i * 3 + 2] = m[2] * x + m[6] * y + m[10] * z + m[14];
+      } else {
+        bp[i * 3] = x;
+        bp[i * 3 + 1] = y;
+        bp[i * 3 + 2] = z;
+      }
+      br[i] = bandIn.radii[i];
+    }
+    band = { positions: bp, radii: br, count: bandIn.count };
+  }
   /* Does `surface` carry at least ONE stroke we could MEASURE? An atom whose
      representation is of a kind the stroke table does not know keeps NaN in
      `surface` (see proxyRadiusOf), and a component whose representations are ALL
@@ -1652,6 +1895,9 @@ const layOut = (part, stride) => {
     len: e,
     edges: p === edges.length ? edges : edges.subarray(0, p),
     fills: new Int32Array(Math.max(1, p / 2)),
+    // LA BANDE du ruban (voir bandProxiesOf) : émise avec la part, comptée dans
+    // le budget (fillDrawnLinks la laisse tomber si elle ne tient pas).
+    band,
   };
 };
 
@@ -1688,7 +1934,15 @@ const countFills = (lay, scale) => {
    atoms, so a branch (two bonds leaving one atom) is filled as well as a chain. */
 const fillDrawnLinks = (parts, stride, maxAtoms) => {
   const layouts = parts.map((part) => layOut(part, stride));
-  const slots = layouts.reduce((a, lay) => a + lay.len, 0);
+  const slotsOf = (list) => list.reduce((a, lay) => a + lay.len + (lay.band ? lay.band.count : 0), 0);
+  let slots = slotsOf(layouts);
+  /* ⚠ SI LES BANDES NE TIENNENT PAS, ELLES TOMBENT. Une scène énorme ne double
+     pas son coût pour la forme d'un ruban : les proxies des atomes et leurs
+     liens (ce que ce module faisait déjà) restent, et l'ombre est celle d'avant. */
+  if (slots > maxAtoms) {
+    layouts.forEach((lay) => { lay.band = null; });
+    slots = slotsOf(layouts);
+  }
   let scale = 1;
   let cost = layouts.reduce((a, lay) => a + countFills(lay, scale), 0);
   if (cost > 0 && slots + cost > maxAtoms) {
@@ -1738,8 +1992,29 @@ const fillDrawnLinks = (parts, stride, maxAtoms) => {
         k += 1;
       }
     }
+    // …puis LA BANDE du ruban (voir bandProxiesOf) : elle est déjà une brosse de
+    // proxies serrés, et la FORME du ruban est tout l'objet — c'est elle qui
+    // remplace les « partial moons » par une ombre de ruban.
+    if (lay.band) {
+      for (let i = 0; i < lay.band.count && k < capacity; i += 1) {
+        out[k * 3] = lay.band.positions[i * 3];
+        out[k * 3 + 1] = lay.band.positions[i * 3 + 1];
+        out[k * 3 + 2] = lay.band.positions[i * 3 + 2];
+        radii[k] = lay.band.radii[i];
+        k += 1;
+      }
+    }
   });
-  return { positions: out, radii, count: k, filled: cost };
+  return {
+    positions: out,
+    radii,
+    count: k,
+    filled: cost,
+    // Les proxies qui viennent des BANDES de ruban RÉELLEMENT gardées (le budget
+    // peut les avoir laissées tomber, voir plus haut) : le message de la « ray »
+    // dit ce qui a servi, pas ce qu'on avait l'intention de faire.
+    bands: layouts.reduce((a, lay) => a + (lay.band ? lay.band.count : 0), 0),
+  };
 };
 
 /* World space: NGL stores the atoms in the structure's OWN frame and gives the
@@ -1797,11 +2072,12 @@ export const atomsFromStage = (stage, maxAtoms = RAY_SHADOW_DEFAULTS.maxAtoms) =
       // when the component says nothing about its representations.
       const links = new Uint8Array(n);
       const surface = drawnProxyRadiiOf(comp, n, data.radius, links);
-      // …and THE TOPOLOGY of those atoms: the real bonds the fill runs along
-      // (drawnBondsOf). `[]` = « no graph here » — the fill then follows the
-      // polymer TRACE (its own fallback), never the order of the list.
+      // …and, for a cartoon / a ribbon, LA BANDE QU'IL DESSINE (voir
+      // bandProxiesOf) : le fil rond des atomes ne suffit pas à donner au ruban
+      // l'ombre d'un ruban. `count: 0` = rien à ajouter.
+      const bands = bandProxiesOf(comp);
       const bonds = drawnBondsOf(structure, links, n);
-      parts.push({ comp, data, n, drawn, surface, links, viewerM, bonds });
+      parts.push({ comp, data, n, drawn, surface, links, viewerM, bonds, bands });
       total += drawn ? drawn.length : n;
     } catch { /* a component that cannot report its atoms casts nothing */ }
   });
@@ -1997,6 +2273,11 @@ export const rayShadowNote = (shadow, reason = '') => {
     : null;
   const spheres = Number(shadow.spheres) || 0;
   const filled = Number(shadow.filled) || 0;
+  /* LES BANDES DE RUBAN (voir bandProxiesOf) : les proxies qui donnent à un
+     cartoon / un ruban l'ombre d'une BANDE et non d'un fil. Le message les
+     compte : c'est ce qui répond, dans un rapport, à « pourquoi l'ombre d'un
+     ruban n'est-elle pas un ruban ? » — et à « est-ce que la bande est là ? ». */
+  const bands = Number(shadow.bands) || 0;
   /* THE STROKES THE PROXY IS MADE OF (see proxyStrokeSummary). A drawing the
      table cannot name keeps the atom's vdW radius, so a shadow of round balls
      has to SAY which radii it used — « 1.70 Å » answers « why is my shadow
@@ -2011,7 +2292,8 @@ export const rayShadowNote = (shadow, reason = '') => {
     ? ` · rig ${Math.round(shadow.rig.width)}×${Math.round(shadow.rig.height)} Å`
     : '';
   return `· cast shadows ${pct}%${covered == null ? '' : ` (${covered}% of the pixels)`}`
-    + `${spheres ? ` · ${spheres} proxies${filled ? ` (${filled} filling the drawn strokes)` : ''}` : ''}${strokes}${rig}`;
+    + `${spheres ? ` · ${spheres} proxies${filled ? ` (${filled} filling the drawn strokes)` : ''}` : ''}`
+    + `${bands ? ` · ${bands} in the ribbon bands` : ''}${strokes}${rig}`;
 };
 
 

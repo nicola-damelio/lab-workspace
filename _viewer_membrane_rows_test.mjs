@@ -241,7 +241,7 @@ has('the front leaflet covers the one behind it',
    donc rien, et le CPK choisi plus tard sur le feuillet avale les têtes (et
    réciproquement). La règle ci-dessous repose la question à CHAQUE
    reconstruction de la scène, à partir des deux rangées elles-mêmes. */
-const iOwn = VIEW.indexOf('const MEMBRANE_CHILD_OF = {');
+const iOwn = VIEW.indexOf('const MEMBRANE_SIDE_OF = {');
 const jOwn = VIEW.indexOf('const selRowStyle = (st) => {');
 ok(iOwn >= 0 && jOwn > iOwn, 'la règle « propriétaire des têtes » est extractible du viewer');
 const CODE_OWN = VIEW.slice(iOwn, jOwn);
@@ -305,6 +305,117 @@ has('const sele = ex ? `(${seleBase}) and not (${ex})` : seleBase;',
 /* Une seule implémentation de la règle : pas de copie de la clause ailleurs. */
 eq(countOf(/membraneHeadOwnerExprs\s*=/g), 1, 'une seule définition de la règle (pas de copie)');
 eq(countOf(/membraneHeadOwnerExprs\(/g), 1, '…et un seul appel : c’est bien la MÊME règle partout');
+
+/* ── 6. UNE RANGÉE MESURÉE NE S’EFFACE PAS ELLE-MÊME ───────────────────────
+   LE RAPPORT : « the membrane panel does not work properly yet. The problem is
+   with upper headgroups and lower headgroups they interfere with each other and
+   with the leaflets (the leaflets work well but they are inactivated once the
+   headgroups are touched). »
+
+   Cause : `toggleSelStyle` est le geste commun des deux barres, et il écrit
+   l’expression de la rangée cliquée dans le `hideFor` de TOUTES les autres
+   (le dernier geste gagne). Styliser le FEUILLET inscrit donc « upper_leaflet »
+   dans le `hideFor` de `upper_headgroups` : la rangée de têtes se dessine
+   `(têtes) and not (feuillet)` = l’ensemble VIDE, et elle ne dessine plus rien.
+   Ci-dessous le geste est EXÉCUTÉ sur les fonctions réelles du viewer
+   (`setSelRowStyle` → `toggleSelStyle` → `membraneHeadRelinquish`), puis chaque
+   rangée est relue comme le renderer la lit. */
+const iTog = VIEW.indexOf('const toggleSelStyle = (key, style, from) => {');
+const jTog = VIEW.indexOf('/* CHOOSING A STYLE FROM THE SELECTOR');
+const iSet = VIEW.indexOf('const setSelRowStyle = (key, token) => {');
+const jSet = VIEW.indexOf('/* ── THE ONE LANGUAGE OF THE TWO BARS');
+ok(iTog >= 0 && jTog > iTog, 'le geste « un style pour cette rangée » est extractible du viewer');
+ok(iSet >= 0 && jSet > iSet, '…avec le sélecteur de style qui l’enchaîne');
+const CODE_GEST = [
+  CODE_OWN,
+  VIEW.slice(iTog, jTog),
+  VIEW.slice(iSet, jSet),
+  `/* les deux helpers dont l’écriture du style se sert */
+   const selRow = (key, token) => { const work = setSelRowStyle(key, token);
+     const chained = membraneHeadRelinquish(key, token !== 'hide', work);
+     if (chained !== work) setSelStyles(chained); };`,
+  `/* le sélecteur de la barre écrit « st.sphere » pour « CPK » : les flags
+      sont ceux de SEL_STYLE_FLAG_OF (une seule liste, voir §5). */
+   const FLAG_OF = { hide: null, 'ball+stick': 'ball', licorice: 'stick', line: 'line', spacefill: 'sphere', surface: 'surface' };`,
+].join('\n');
+/* Les atomes symboliques de la bicouche : le feuillet du haut = ut+uh, celui du
+   bas = lt+lh, et les têtes de chaque côté sont DANS leur feuillet. */
+const ATOMS_OF = {
+  upper_leaflet: ['uh', 'ut'], upper_headgroups: ['uh'],
+  lower_leaflet: ['lh', 'lt'], lower_headgroups: ['lh'],
+  POPC: ['uh', 'ut', 'lh', 'lt'],
+};
+const driveGest = (gestures) => new Function('cfg', `${CODE_GEST}
+  let STYLES = {};
+  const setSelStyles = (s) => { STYLES = s; };
+  const selStylesRef = { get current () { return STYLES; } };
+  const selections = [];
+  cfg.gestures.forEach(([key, token]) => selRow(key, token));
+  return STYLES;`)({ gestures });
+/* Ce que la rangée DESSINE VRAIMENT : sa clause, moins ce que son `hideFor`
+   du style lui enlève (la règle est exécutée), moins les têtes que le feuillet
+   cède à leur propre rangée (membraneHeadOwnerExprs, la règle du rendu). */
+const runAt = (styles, key, flag, withRule = true) => new Function('cfg', `${CODE_OWN}
+  const at = (k, f) => {
+    const st = cfg.styles[k] || {};
+    const out = new Set(cfg.atomsOf[k] || []);
+    const list = (st.hideFor && st.hideFor[f]) || [];
+    list.filter((h) => (cfg.withRule ? membraneExclusionKept(k, h) : true)).forEach((h) => {
+      (cfg.atomsOf[h] || []).forEach((a) => out.delete(a));
+    });
+    const owners = membraneHeadOwnerExprs(k, cfg.styles, (x) => (cfg.atomsOf[x] ? x : ''));
+    if (owners) (cfg.atomsOf[owners.replace(/[()]/g, '')] || []).forEach((a) => out.delete(a));
+    return [...out].sort();
+  };
+  return at(cfg.key, cfg.flag);`)({ styles, atomsOf: ATOMS_OF, key, flag, withRule });
+
+// (a) LE PIÈGE EXACT : les têtes existent, le feuillet change de style — et le
+//     style QUITTÉ est celui que les têtes dessinent. `setSelRowStyle` éteint
+//     l’ancien drapeau AVANT d’allumer le nouveau, et `toggleSelStyle` ÉCRIT
+//     l’expression de la rangée dans le hideFor de toutes les autres quand un
+//     style s’éteint : « upper_leaflet » tombe alors dans le hideFor.sphere de
+//     `upper_headgroups`, qui se dessine « têtes and not feuillet » = ∅.
+const leafChanges = driveGest([['upper_headgroups', 'spacefill'], ['upper_leaflet', 'spacefill'], ['upper_leaflet', 'licorice']]);
+eq(runAt(leafChanges, 'upper_headgroups', 'sphere', false), [],
+  '…la lecture d’AVANT vidait la rangée de têtes : le défaut est bien reproduit');
+eq(runAt(leafChanges, 'upper_headgroups', 'sphere'), ['uh'],
+  'les têtes gardent leurs atomes quand leur feuillet change de style');
+eq(runAt(leafChanges, 'upper_leaflet', 'stick'), ['ut'],
+  '…et le feuillet, passé en bâtons, dessine les siens (ses têtes cédées à leur rangée)');
+// (b) LE MÊME PIÈGE AVEC LES BÂTONS (les deux styles vont par paires).
+const stickChanges = driveGest([['upper_headgroups', 'licorice'], ['upper_leaflet', 'licorice'], ['upper_leaflet', 'spacefill']]);
+eq(runAt(stickChanges, 'upper_headgroups', 'stick', false), [],
+  '…la même chose en bâtons : la rangée de têtes était vide elle aussi');
+eq(runAt(stickChanges, 'upper_headgroups', 'stick'), ['uh'], 'les têtes en bâtons dessinent, quel que soit le geste du feuillet');
+eq(runAt(stickChanges, 'upper_leaflet', 'sphere'), ['ut'], '…et le feuillet en CPK ne redessine pas les têtes');
+// (b bis) L’ORDRE SIMPLE, QUI N’A JAMAIS ÉTÉ CASSÉ : chaque rangée prend son style
+//        une fois (aucun style éteint, donc rien n’est écrit dans les autres).
+const oneShot = driveGest([['upper_leaflet', 'spacefill'], ['upper_headgroups', 'spacefill']]);
+eq(runAt(oneShot, 'upper_headgroups', 'sphere'), ['uh'], 'un style par rangée : les têtes dessinent (avant comme après la règle)');
+eq(runAt(oneShot, 'upper_leaflet', 'sphere'), ['ut'], '…et le feuillet cède ses têtes, comme partout ailleurs');
+// (b ter) UN STYLE DIFFÉRENT DE CHAQUE CÔTÉ : rien ne se vide.
+const twoStyles = driveGest([['upper_headgroups', 'licorice'], ['upper_leaflet', 'spacefill']]);
+eq(runAt(twoStyles, 'upper_headgroups', 'stick'), ['uh'], 'deux styles différents : les têtes dessinent');
+eq(runAt(twoStyles, 'upper_leaflet', 'sphere'), ['ut'], '…et le feuillet cède ses têtes à leur rangée');
+// (c) LES DEUX CÔTÉS SONT INDÉPENDANTS : styliser le haut ne vide jamais le bas.
+const both = driveGest([['upper_leaflet', 'spacefill'], ['upper_headgroups', 'licorice'], ['lower_headgroups', 'licorice']]);
+eq(runAt(both, 'lower_headgroups', 'stick'), ['lh'], 'les têtes du bas dessinent les leurs');
+eq(runAt(both, 'upper_headgroups', 'stick'), ['uh'], '…sans rien changer aux têtes du haut');
+// (d) LA RÈGLE ELLE-MÊME, cas par cas : seul le sens INTERDIT est supprimé.
+const kept = (key, h) => new Function('cfg', `${CODE_OWN}
+  return membraneExclusionKept(cfg.key, cfg.h);`)({ key, h });
+eq(kept('upper_headgroups', 'upper_leaflet'), false, 'des têtes ne se soustraient JAMAIS leur feuillet (l’ensemble serait vide)');
+eq(kept('lower_headgroups', 'lower_leaflet'), false, '…ni celles du bas le leur');
+eq(kept('upper_leaflet', 'upper_headgroups'), true, 'un feuillet, LUI, garde le droit de céder ses têtes (la règle du propriétaire)');
+eq(kept('upper_leaflet', 'lower_leaflet'), true, 'deux feuillets ne se recouvrent pas : rien à supprimer');
+eq(kept('upper_headgroups', 'lower_headgroups'), true, 'les têtes des deux côtés non plus');
+eq(kept('upper_headgroups', 'upper_headgroups'), false, 'aucune rangée ne s’efface elle-même');
+eq(kept('upper_leaflet', 'upper_leaflet'), false, '…feuillets compris');
+eq(kept('POPC', 'upper_leaflet'), true, 'une rangée de SCRIPT garde tout son hideFor (la règle ne connaît que les quatre noms mesurés)');
+eq(kept('upper_headgroups', ''), false, 'une entrée vide n’est jamais une clause');
+has('((st.hideFor && st.hideFor[style]) || []).filter((h) => membraneExclusionKept(key, h));',
+  '…et le rendu passe TOUT son hideFor par cette règle, pour chaque style');
+eq(countOf(/membraneExclusionKept\(/g), 1, 'un seul APPEL dans le viewer : la règle n’est jamais recopiée');
 
 /* ── Bilan ─────────────────────────────────────────────────────────────── */
 console.log(`_viewer_membrane_rows_test.mjs — ${passed} assertions OK (feuillets stylables + deux barres identiques)`);

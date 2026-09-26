@@ -684,8 +684,48 @@ export const stripFigureMarks = (text) => normalizeText(text)
 
 /** Une LÉGENDE de figure : « Figure 1. … », « Fig. 2: … », « Figure 3 — … ».
  *  Le séparateur est OBLIGATOIRE : une phrase de corps de texte qui commence
- *  par « Figure 2 shows that… » n'est PAS une légende et reste dans le texte. */
-export const FIGURE_LEGEND_RE = /^fig(?:ure)?\.?\s*\d{1,3}\s*[.:\-–—]\s*\S/i;
+ *  par « Figure 2 shows that… » n'est PAS une légende et reste dans le texte.
+ *
+ *  ⚠ CE QUE LA PREMIÈRE VERSION NE RECONNAISSAIT PAS — LE RAPPORT : « the
+ *  problem with the caption is elsewhere. It is the ''import a manuscript'' that
+ *  does not recognise captions which are therefore treated as normal text. » La
+ *  légende d'un article s'écrit de bien des façons, et toutes celles-ci
+ *  restaient du TEXTE (donc écrites dans la section, sous la figure) :
+ *
+ *    • « Figure 1A. … » / « Fig. 2b: … » — le panneau. Le rang se lisait
+ *      `\d{1,3}` tout seul, donc « 1A » ne passait pas ;
+ *    • « Fig. 1 | … », « Figure 1, … », « Figure 1) … » — le séparateur ;
+ *    • « Supplementary Figure 3. … », « Supporting Fig. S2 — … »,
+ *      « Extended Data Figure 1. … » — la collection (ce sont bien des
+ *      légendes : l'exposant « S » est un rang, pas une lettre) ;
+ *    • « Figures 4 and 5. … » — la liste ;
+ *    • et une légende LONGUE (les « > 400 caractères » du garde-fou) : en
+ *      biologie une légende fait souvent une demi-page. La vraie protection
+ *      contre une phrase de corps n'est pas la longueur mais la POSITION : la
+ *      ligne doit être collée au marqueur de la figure (voir
+ *      figuresWithCaptionsFromRecords, ± 3 paragraphes), donc
+ *      MAX_CAPTION_CHARS laisse passer une légende entière. */
+export const FIGURE_LEGEND_LABEL_RE = new RegExp(
+  '^(?:(?:supplementary|supplemental|supporting|additional|extended\\s+data)\\s+)?'
+  + 'fig(?:ure)?s?\\.?\\s*'
+  + '(?:s\\s*)?'
+  // « Figures 6 and 7. » : un rang peut ouvrir une liste (le séparateur de la
+  // liste est le même que celui de la citation, voir citedFigureNumbers).
+  + '(?:\\d{1,3}\\s*(?:[,;–—-]|and|to|&)\\s*)*'
+  + '\\d{1,3}\\s*[a-z]?\\s*'
+  + '(?:[.:\\-–—|,)]|\\(\\s*[a-z]\\s*\\))\\s*',
+  'i',
+);
+/** La ligne ENTIÈRE est une légende : son étiquette est suivie de son texte. */
+export const FIGURE_LEGEND_RE = new RegExp(`${FIGURE_LEGEND_LABEL_RE.source}\\S`, 'i');
+export const MAX_CAPTION_CHARS = 1200;
+
+/** Titres qui annoncent les LÉGENDES (ou les figures) en fin de document, après
+ *  la bibliographie : « Figures », « Figure legends », « Legends », « List of
+ *  figures », « Table legends »… C'est ce titre qui termine la bibliographie
+ *  (voir splitManuscript) : un manuscrit de revue range souvent ses figures
+ *  APRÈS les références, et leurs légendes ne sont pas des références. */
+export const FIGURE_HEADING_RE = /^(?:figures?|figure\s+legends?|legends?|figure\s+captions?|list\s+of\s+figures|tables?|table\s+legends?|list\s+of\s+tables|supplementary\s+(?:figures?|tables?|information)|supporting\s+information)\b/i;
 
 /** Les lignes d'un document, avec leur HTML quand on le connaît : une entrée de
  *  `records` = un paragraphe (`{ text, html }`, `html` vide = texte simple). */
@@ -760,7 +800,11 @@ export const figuresWithCaptionsFromRecords = (records, figures) => {
   const at = (i) => String((list[i] || {}).text || '').trim();
   const take = (i) => {
     const t = at(i);
-    if (!t || isFigureMark(t) || t.length > 400 || !FIGURE_LEGEND_RE.test(t)) return null;
+    // La POSITION (collée au marqueur) est le vrai garde-fou ; la longueur ne
+    // fait que refuser une page entière (voir MAX_CAPTION_CHARS : une légende
+    // d'article dépasse souvent les 400 caractères de la première version, et
+    // elle restait alors dans le texte).
+    if (!t || isFigureMark(t) || t.length > MAX_CAPTION_CHARS || !FIGURE_LEGEND_RE.test(t)) return null;
     list[i] = { text: '', html: '' };
     return t;
   };
@@ -1119,19 +1163,53 @@ export const figureDataUrl = (fig) => {
 /** Titres qui annoncent la bibliographie de fin de document. */
 export const REFERENCE_HEADING_RE = /^(references|reference list|bibliography|bibliographie|literature cited|works cited|références|référence)\b/i;
 
-/** Le manuscrit en { body, referencesText } : tout ce qui suit le titre
- *  « References » (ou « Bibliography »…) est la bibliographie. */
+/** Le manuscrit en { body, referencesText, figureBlocks } : tout ce qui suit le
+ *  titre « References » (ou « Bibliography »…) est la bibliographie — SAUF les
+ *  FIGURES.
+ *
+ *  ⚠ LE RAPPORT : « even putting the text of the caption in the right place, the
+ *  last figure of a manuscript was written after the references! » Un manuscrit
+ *  de revue range ses figures À LA FIN, APRÈS la bibliographie (chaque image avec
+ *  sa légende). La première version coupait au titre « References » et donnait
+ *  TOUT ce qui suivait à la bibliographie : le marqueur de la dernière figure
+ *  (et sa légende, quand elle n'était pas reconnue) entraient donc dans les
+ *  RÉFÉRENCES du projet, et la figure — dont le marqueur n'existait plus dans le
+ *  texte — était posée au hasard dans la première section.
+ *
+ *  Ici la bibliographie s'arrête au premier élément qui n'en est pas une :
+ *    • un marqueur de figure (`[[FIGURE n]]`, l'image elle-même) ;
+ *    • une LÉGENDE (« Figure 1. … », « Supplementary Fig. S2 — … ») ;
+ *    • le titre qui les annonce (« Figures », « Figure legends », « Legends »,
+ *      « List of figures », « Table legends »…).
+ *  Tout ce qui suit (voir `figureBlocks`) appartient aux figures : leurs rangs
+ *  sont placés par la section qui les CITE dans le corps du texte (voir
+ *  manuscriptFigurePlacements). */
 export const splitManuscript = (blocks) => {
   const list = Array.isArray(blocks) ? blocks : [];
   const at = list.findIndex((b) => b.kind === 'heading' && REFERENCE_HEADING_RE.test(headingLabel(b.text)));
-  if (at !== -1) {
-    return {
-      body: list.slice(0, at),
-      referencesText: list.slice(at + 1).map((b) => b.text).join('\n'),
-      referencesHeading: headingLabel(list[at].text)
-    };
-  }
-  return { body: list, referencesText: '', referencesHeading: '' };
+  if (at === -1) return { body: list, referencesText: '', referencesHeading: '', figureBlocks: [], otherBlocks: [] };
+  const tail = list.slice(at + 1);
+  const isFigureBlock = (b) => {
+    const t = String((b && b.text) || '').trim();
+    if (!t) return false;
+    if (isFigureMark(t)) return true;
+    if (FIGURE_LEGEND_RE.test(t)) return true;
+    return b.kind === 'heading' && FIGURE_HEADING_RE.test(headingLabel(t));
+  };
+  const cut = tail.findIndex(isFigureBlock);
+  const bib = cut === -1 ? tail : tail.slice(0, cut);
+  const rest = cut === -1 ? [] : tail.slice(cut);
+  return {
+    body: list.slice(0, at),
+    referencesText: bib.map((b) => b.text).join('\n'),
+    referencesHeading: headingLabel(list[at].text),
+    figureBlocks: rest.filter(isFigureBlock),
+    /* Ce qui suit les références et n'est NI une figure NI une référence (un
+       « Supplementary Table 1 », une note de fin…) : rien n'en est fait, mais la
+       fenêtre d'import le DIT (voir le compte rendu) — un bloc qui disparaît sans
+       un mot est exactement ce que ce module s'interdit. */
+    otherBlocks: rest.filter((b) => !isFigureBlock(b))
+  };
 };
 
 /* ── 3. Les sections du projet et le titre qui y mène ─────────────────────── */
@@ -2011,12 +2089,55 @@ export const groupManuscriptParts = (blocks, { header = null } = {}) => {
    perdu en silence : `rerouted` compte les figures ainsi replacées et
    l'utilisateur le lit dans le compte rendu de l'import.
 
+   ⚠ LES FIGURES ÉCRITES APRÈS LA BIBLIOGRAPHIE — le rapport : « even putting the
+   text of the caption in the right place, the last figure of a manuscript was
+   written after the references! ». `figureBlocks` (voir splitManuscript) porte
+   les blocs de fin de document qui ne sont PAS des références : le marqueur de
+   la figure, sa légende, le titre « Figures ». Leur marqueur n'appartient à
+   aucune partie du corps, donc la place se décide par la CITATION : la figure va
+   dans la section dont le texte parle d'elle (« Figure 3 » dans la Discussion →
+   Discussion), et son ANCRE est le PARAGRAPHE qui la cite — le document exporté
+   l'imprime donc juste après, là où elle est commentée. Une figure de la fin que
+   rien ne cite garde le repli habituel (la section la plus proche, sinon la
+   première section de texte) : elle n'est jamais perdue.
+
    @returns {{ placements:Array<{section,index,anchor}>, rerouted:number,
-               orphans:number, sections:Array<string> }}
+               orphans:number, tail:number, sections:Array<string> }}
               `orphans` = figures du document dont le marqueur n'existe plus
-              dans le texte (elles sont posées quand même).
+              dans le texte (elles sont posées quand même) ; `tail` = figures de
+              la fin du document rattachées à la section qui les cite.
 */
-export const manuscriptFigurePlacements = (parts, figures = [], { focusSection = '' } = {}) => {
+
+/** LES RANGS DE FIGURE CITÉS par un texte : « Figure 3 », « Fig. 3A »,
+ *  « Figures 2 and 3 », « Figures 2–4 » (le tiret est un INTERVALLE : 2, 3 et 4),
+ *  « Supplementary Fig. S3 ». Le nombre est comparé comme un NOMBRE (30 n'est pas
+ *  3), et un intervalle est développé — c'est ce qui rattache une figure écrite
+ *  après la bibliographie à la section qui parle d'elle (voir
+ *  manuscriptFigurePlacements). */
+export const citedFigureNumbers = (text) => {
+  const out = new Set();
+  const re = /\bfig(?:ure)?s?\.?\s*(?:s\s*)?(\d{1,3}(?:\s*(?:[,;]|and|&|to|[-–—])\s*\d{1,3})*)/gi;
+  let m;
+  while ((m = re.exec(String(text || '')))) {
+    // split garde les séparateurs : « 2 and 3 » → ['2', 'and', '3'].
+    const parts = m[1].split(/\s*(and|&|to|,|;|[-–—])\s*/i);
+    let prev = 0;
+    for (let i = 0; i < parts.length; i += 2) {
+      const n = Number(String(parts[i] || '').trim());
+      if (!Number.isFinite(n)) continue;
+      const sep = String(parts[i - 1] || '');
+      if (i > 0 && prev && /^(?:to|[-–—])$/i.test(sep)) {
+        for (let k = prev + 1; k <= n && k <= prev + 30; k += 1) out.add(k);
+      } else out.add(n);
+      prev = n;
+    }
+  }
+  return out;
+};
+/** Ce texte parle-t-il de la figure `n` ? (voir citedFigureNumbers) */
+export const citesFigure = (text, n) => citedFigureNumbers(text).has(Math.max(1, Math.trunc(Number(n) || 1)));
+
+export const manuscriptFigurePlacements = (parts, figures = [], { focusSection = '', figureBlocks = [] } = {}) => {
   const list = Array.isArray(parts) ? parts : [];
   const textSections = PROJECT_TEXT_SECTIONS.map((s) => s.id);
   const fallback = String(focusSection || '').trim() || textSections[0];
@@ -2036,6 +2157,36 @@ export const manuscriptFigurePlacements = (parts, figures = [], { focusSection =
     marks.forEach((m) => placements.push({ section, index: m.index, anchor: m.anchor, at: i }));
   });
   const placed = new Set(placements.map((p) => p.index));
+  /* La partie qui CITE la figure, avec le paragraphe qui la cite (l'ancre). */
+  const citationOf = (n) => {
+    for (let i = 0; i < perPart.length; i += 1) {
+      const text = String((perPart[i].part && perPart[i].part.text) || '');
+      if (!text || !citesFigure(text, n)) continue;
+      const line = text.split('\n').map((l) => l.trim()).find((l) => l && citesFigure(l, n)) || '';
+      return { section: perPart[i].section, anchor: line, at: i };
+    }
+    return null;
+  };
+  /* LES FIGURES DE LA FIN DU DOCUMENT (voir splitManuscript) : leur marqueur
+     n'est dans aucune partie du corps — la CITATION décide, sinon le repli. */
+  const tailText = (Array.isArray(figureBlocks) ? figureBlocks : [])
+    .map((b) => String((b && b.text) || '')).join('\n');
+  let tail = 0;
+  figureMarksIn(tailText).forEach((m) => {
+    if (placed.has(m.index)) return;
+    placed.add(m.index);
+    const cite = citationOf(m.index);
+    // Sans citation, un rang de la fin garde le repli, mais depuis la FIN du
+    // document : le voisin d'une figure écrite après la bibliographie est la
+    // DERNIÈRE partie du texte, pas la première (`at` = une position APRÈS la
+    // dernière partie, donc nearestSection remonte depuis elle).
+    if (!cite) {
+      placements.push({ section: '', index: m.index, anchor: '', at: perPart.length });
+      return;
+    }
+    tail += 1;
+    placements.push({ section: cite.section, index: m.index, anchor: cite.anchor, at: cite.at });
+  });
   /* Une figure dont le marqueur a disparu du texte (ligne avalée par l'en-tête,
      document recollé) est posée quand même : on ne perd pas des pixels. */
   const orphans = (Array.isArray(figures) ? figures : [])
@@ -2058,6 +2209,7 @@ export const manuscriptFigurePlacements = (parts, figures = [], { focusSection =
     placements: placements.map(({ section, index, anchor }) => ({ section, index, anchor })),
     rerouted,
     orphans: orphans.length,
+    tail,
     sections: [...new Set(placements.map((p) => p.section))]
   };
 };

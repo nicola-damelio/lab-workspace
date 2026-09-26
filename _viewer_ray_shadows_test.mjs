@@ -59,6 +59,7 @@ import {
   lightDepthScale, lightMatricesOf, shadowRigOf, buildRayShadowMask, atomsFromStage,
   cameraFromViewer, viewerMatrixOf, rayShadowInputsOf, shadowImageData, addCastShadowsToBlob, rayShadowNote,
   pcfDiscOf, pcfRotationOf, PROXY_STROKE_BY_TYPE, repTypeOf, proxyRadiusOf, drawnProxyRadiiOf,
+  opacityOf, INVISIBLE_OPACITY, FLAT_STROKE_BY_TYPE, bandSectionsOf, bandProxiesOf,
 } from './src/utils/viewerRayShadows.js';
 
 let passed = 0;
@@ -1185,5 +1186,176 @@ ok(MODULE.includes('SELF-SHADOWING ON THE MOLECULE ITSELF'),
 ok(MODULE.includes('WHAT A SHADOW CANNOT DO IN NGL 2.4'),
   '…en disant honnêtement ce que NGL 2.4 ne peut pas faire (aucune shadow map dans la toile interactive)');
 
+/* ── 17. L'OMBRE D'UN RUBAN EST UNE BANDE, PAS UN FIL ─────────────────────
+   LE RAPPORT : « The ray image preview works well but the shadows keep being
+   spherical always even if I see only a ribbon, it projects spherical shadows
+   (more than spherical they seem like partial moons). »
+
+   Deux causes, deux règles :
+     • LE RUBAN EST UNE BANDE PLATE (large de 2 à 2,5 Å, épaisse de quelques
+       dixièmes). Le proxy de la table des traits le réduisait à un FIL ROND le
+       long de la chaîne : son ombre était celle d'un fil, et la pénombre en
+       faisait des fuseaux ronds. La bande est maintenant lue dans la GÉOMÉTRIE
+       DESSINÉE (le tampon du ruban : `position` / `dir` / `normal` / `size`).
+     • UN DESSIN QUE L'ŒIL NE VOIT PAS NE PROJETTE RIEN. Une surface restée à
+       `opacity: 0` (ou à 40 %) donnait à chaque atome sa sphère de van der
+       Waals : l'ombre ronde du dessin qu'on ne regarde pas recouvrait celle du
+       ruban qu'on regarde — « spherical ALWAYS », quelle que soit la
+       représentation affichée. */
+
+/* Une BANDE telle qu'ngl 2.4 la range : QUATRE sommets par point de la spline,
+   chacun avec sa position (répétée), son `dir` (la largeur, pour le ruban), sa
+   `normal` (la normale de la bande) et sa `size` (demi-largeur du ruban, ou
+   demi-épaisseur du cartoon). Ici la chaîne va suivant x, la largeur suivant z,
+   la normale suivant y — le ruban est donc dans le plan x-z. */
+const bandGeo = ({ points = 3, size = 1, step = 2, withDir = true, normal = true } = {}) => {
+  const position = new Float32Array(points * 12);
+  const dir = new Float32Array(points * 12);
+  const nor = new Float32Array(points * 12);
+  const sizes = new Float32Array(points * 4);
+  for (let v = 0; v < points; v += 1) {
+    for (let k = 0; k < 4; k += 1) {
+      const s = k % 2 === 0 ? 1 : -1;
+      position[v * 12 + k * 3] = v * step;
+      dir[v * 12 + k * 3 + 2] = s;
+      nor[v * 12 + k * 3 + 1] = s;
+      sizes[v * 4 + k] = size;
+    }
+  }
+  const attributes = { position: { array: position }, size: { array: sizes } };
+  if (withDir) attributes.dir = { array: dir };
+  if (normal) attributes.normal = { array: nor };
+  return { attributes };
+};
+const ribbonBandRep = (opts = {}, geo = {}) => ({
+  type: 'ribbon',
+  bufferList: [{ geometry: bandGeo(geo) }],
+  structureView: view([0, 1]),
+  ...opts,
+});
+const cartoonBandRep = (aspectRatio = 5, geo = {}) => ({
+  type: 'cartoon',
+  aspectRatio,
+  bufferList: [{ geometry: bandGeo({ withDir: false, size: 0.175, ...geo }) }],
+  structureView: view([0, 1]),
+});
+
+/* (a) LES SECTIONS : la largeur, la direction de la largeur, l'épaisseur. */
+const bandSecs = bandSectionsOf(ribbonBandRep({}, { points: 3, size: 1 }));
+eq(bandSecs.length, 3, 'les sections du ruban sont lues dans la géométrie dessinée');
+eq(bandSecs[0].p, [0, 0, 0], '…à la position des points de la spline');
+near(bandSecs[0].w, 1, 1e-6, 'la demi-largeur du ruban EST son `size` (ngl : 0,25 × radiusScale)');
+eq(bandSecs[0].d, [0, 0, 1], '…et sa largeur s’étend suivant `dir`, comme le tampon le dit');
+near(bandSecs[0].t, 0.25, 1e-6, 'son épaisseur est une fraction de sa largeur : c’est une BANDE');
+const cartoonSecs = bandSectionsOf(cartoonBandRep(5, { points: 3, size: 0.175 }));
+near(cartoonSecs[0].w, 0.875, 1e-6,
+  'un cartoon porte sa demi-ÉPAISSEUR : sa largeur est `size` × `aspectRatio` (0,175 × 5)');
+near(cartoonSecs[0].t, 0.175, 1e-6, '…et son épaisseur, c’est `size`');
+near(Math.abs(cartoonSecs[0].d[2]), 1, 1e-6,
+  'sans `dir`, la largeur est perpendiculaire à la normale de la bande ET à la chaîne');
+eq(bandSectionsOf({ type: 'tube', bufferList: [] }), null,
+  'un TUYAU n’est pas une bande (il est rond : le proxy de la table est juste)');
+eq(Object.keys(FLAT_STROKE_BY_TYPE), ['cartoon', 'ribbon'],
+  'les deux seuls traits PLATS que ngl dessine : le cartoon et le ruban');
+eq(bandSectionsOf({ type: 'ribbon', bufferList: [{ geometry: { attributes: { position: { array: new Float32Array(12) } } } }] }), null,
+  'un tampon sans taille ne se devine pas : la bande est laissée au fil rond d’avant');
+eq(bandSectionsOf({ type: 'ribbon' }), null, 'une représentation sans tampon non plus (construction différée)');
+
+/* (b) LA BROSSE : plate (largeur ≫ épaisseur), et elle couvre TOUTE la bande. */
+const brush = bandProxiesOf({ reprList: [{ repr: ribbonBandRep({}, { points: 3, size: 1, step: 2 }) }] });
+ok(brush.count > 0, `la bande du ruban devient des proxies (${brush.count})`);
+// La COUVERTURE de la brosse : l'étendue de ses sphères (centre ± rayon), c'est
+// elle que la carte d'ombre voit — et non le seul alignement des centres.
+const brushCover = (b) => {
+  const r = { x: [Infinity, -Infinity], y: [Infinity, -Infinity], z: [Infinity, -Infinity] };
+  for (let i = 0; i < b.count; i += 1) {
+    const rad = b.radii[i];
+    ['x', 'y', 'z'].forEach((ax, k) => {
+      const v = b.positions[i * 3 + k];
+      r[ax][0] = Math.min(r[ax][0], v - rad);
+      r[ax][1] = Math.max(r[ax][1], v + rad);
+    });
+  }
+  return { x: r.x[1] - r.x[0], y: r.y[1] - r.y[0], z: r.z[1] - r.z[0] };
+};
+const sp = brushCover(brush);
+ok(sp.z >= 1.9, `la brosse couvre la largeur DESSINÉE du ruban (${sp.z.toFixed(2)} Å pour 2 Å de bande)`);
+ok(sp.x >= 3.5, `…et toute la longueur de la chaîne (${sp.x.toFixed(2)} Å)`);
+ok(sp.y <= 0.8, `…avec l'épaisseur d'une bande (${sp.y.toFixed(2)} Å), pas celle d'une bille`);
+ok(sp.z > sp.y * 2.5, 'la brosse est donc PLATE : c’est elle qui donne au ruban une ombre de ruban');
+eq(brush.reps, 1, 'une bande par représentation plate visible');
+ok(bandProxiesOf({ reprList: [{ repr: ribbonBandRep({}, { points: 3 }) }, { repr: cartoonBandRep() }] }).reps === 2,
+  'un ruban ET un cartoon donnent chacun leur bande');
+
 /* ── Bilan ─────────────────────────────────────────────────────────────── */
+/* (c) DE BOUT EN BOUT : le proxy du ruban couvre la bande — et, sans géométrie
+   lisible, il reste le fil rond d'avant (c'est le défaut reproduit). */
+const bandStage = (rep) => ({
+  compList: [{
+    structure: {
+      atomCount: 2,
+      ...chainOf(2),
+      getAtomData: () => ({
+        position: new Float32Array([0, 0, 0, 2, 0, 0]),
+        radius: new Float32Array([1.7, 1.7]),
+      }),
+    },
+    matrix: { elements: ident16 },
+    reprList: [{ repr: rep }],
+  }],
+});
+const bandWithGeometry = atomsFromStage(bandStage(ribbonBandRep({}, { points: 2, size: 1 })), 100000);
+const bandWithout = atomsFromStage(bandStage({ type: 'ribbon', structureView: view([0, 1]) }), 100000);
+ok(bandWithGeometry.bands > 0, `la bande du ruban entre dans le proxy (${bandWithGeometry.bands} proxies)`);
+eq(bandWithout.bands, 0, '…et une représentation sans géométrie lisible n’en invente aucune');
+/* LE DÉFAUT, MESURÉ : sans la bande, le proxy du ruban ne couvre que le fil de
+   son trait (0,45 Å de rayon → 0,90 Å de large) ; avec elle, il couvre la bande
+   dessinée (2 Å). C'est exactement l'écart entre « spherical / partial moons »
+   et une ombre de ruban. */
+const thread = brushCover(bandWithout);
+const bandCover = brushCover(bandWithGeometry);
+near(thread.z, 0.9, 0.2, `sans bande, le ruban ne projette qu’un FIL (${thread.z.toFixed(2)} Å de large)`);
+ok(bandCover.z >= 1.9, `avec sa bande, il projette ce qu’il dessine (${bandCover.z.toFixed(2)} Å)`);
+ok(bandCover.z > thread.z * 2, '…soit plus du double : la forme du ruban est là');
+
+/* (d) CE QUE L'ŒIL NE VOIT PAS NE PROJETTE RIEN. */
+eq(opacityOf({ opacity: 0 }), 0, 'l’opacité d’une représentation se lit là où ngl la garde');
+eq(opacityOf({ opacity: 0.4 }), 0.4, '…et elle peut être partielle');
+eq(opacityOf({}), 1, 'une représentation qui n’en parle pas est opaque (les bancs, les vieux objets)');
+eq(opacityOf(null), 1, '…même quand il n’y a rien à lire');
+eq(INVISIBLE_OPACITY < 0.05, true, 'un dessin à moins de 5 % est tenu pour invisible');
+near(drawnProxyRadiiOf({ reprList: [{ repr: { ...cartoonRep, opacity: 0.4 } }] }, 1, new Float32Array([1.7]))[0],
+  0.18, 1e-6, 'un dessin à 40 % ne projette que 40 % de son trait (l’ombre d’une surface translucide)');
+ok(Number.isNaN(drawnProxyRadiiOf({ reprList: [{ repr: { ...cartoonRep, opacity: 0 } }] }, 1, new Float32Array([1.7]))[0]),
+  'un dessin à `opacity: 0` ne projette AUCUN proxy');
+eq(bandProxiesOf({ reprList: [{ repr: ribbonBandRep({ opacity: 0 }) }] }).count, 0,
+  '…et sa bande non plus');
+eq(atomsFromStage(bandStage(ribbonBandRep({ opacity: 0 })), 100000).count, 0,
+  'un composant dont la seule représentation est effacée ne projette plus RIEN : l’ombre ronde du dessin qu’on ne voit pas a disparu');
+
+/* (e) LE BUDGET : une scène énorme garde les proxies des atomes, pas la bande. */
+const tight = atomsFromStage(bandStage(ribbonBandRep({}, { points: 2, size: 1 })), 2);
+eq(tight.bands, 0, 'un budget trop serré laisse tomber les bandes (l’ombre d’avant reste)');
+ok(tight.count <= 2, `…et les proxies des atomes tiennent dans le budget (${tight.count})`);
+
+/* (f) LE MESSAGE DIT CE QUI A SERVI : combien de proxies viennent d'une bande. */
+const bandNote = rayShadowNote({
+  mask: new Float64Array(4), spheres: 12, filled: 3, bands: 34, strength: 0.5,
+  reachedPixels: 0, imageWidth: 10, imageHeight: 10, strokes: null,
+});
+ok(bandNote.includes('34 in the ribbon bands'),
+  `le message de la « ray » dit combien de proxies viennent d’une bande de ruban — ${bandNote}`);
+ok(!rayShadowNote({
+  mask: new Float64Array(4), spheres: 12, bands: 0, strength: 0.5,
+  reachedPixels: 0, imageWidth: 10, imageHeight: 10, strokes: null,
+}).includes('ribbon bands'), '…et il n’en parle pas quand il n’y en a aucune');
+/* …et les rouages sont ceux du module : la bande est lue dans la GÉOMÉTRIE, et
+   le composant la reçoit par bandProxiesOf (une seule définition). */
+ok(MODULE.includes('export const bandProxiesOf = ('), 'la bande est extraite par UNE fonction (bandProxiesOf)');
+ok(MODULE.includes('export const bandSectionsOf = ('), '…à partir de UNE lecture de la géométrie (bandSectionsOf)');
+ok(MODULE.includes('const bands = bandProxiesOf(comp);'), 'chaque composant apporte ses bandes au proxy des atomes');
+ok(MODULE.includes('bands: layouts.reduce('), 'le nombre de bandes RÉELLEMENT gardées est compté');
+ok(MODULE.includes('if (opacityOf(rep, el) <= INVISIBLE_OPACITY) return;'),
+  'la règle « ce que l’œil ne voit pas ne projette rien » est appliquée aux traits comme aux atomes');
+
 console.log(`_viewer_ray_shadows_test.mjs — ${passed} assertions OK (ombres portées)`);

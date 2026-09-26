@@ -1861,5 +1861,148 @@ has(PROJ, 'analyseManuscript(doc.text, file.name, doc.figures, undefined, doc.ht
 has(PROJ, 'No {row.label.toLowerCase()} recognised in the document — set the role of the right line',
   'un champ d’en-tête vide est signalé dans la fenêtre, avec la marche à suivre');
 
+/* ── 26. LES LÉGENDES, ET LES FIGURES ÉCRITES APRÈS LES RÉFÉRENCES ─────────
+   LES DEUX RAPPORTS :
+     « the problem with the caption is elsewhere. It is the ''import a
+       manuscript'' that does not recognise captions which are therefore treated
+       as normal text. »
+     « In any case, even putting the text of the caption in the right place, the
+       last figure of a manuscript was written after the references! » */
+
+/* (a) LES FORMES DE LÉGENDE QU'UN ARTICLE ÉCRIT VRAIMENT. Toutes celles-ci
+   restaient du TEXTE (donc écrites dans la section, sous la figure) : le
+   panneau, le séparateur « | », la collection supplémentaire, la liste, et la
+   légende longue. */
+['Figure 1. Phylogram of the isolates.',
+ 'Fig. 2: Overview of the pipeline.',
+ 'Figure 1A. Alignment of the capsid proteins.',
+ 'Fig. 2b | Predicted transmembrane topology.',
+ 'Figure 3 — Cryo-EM map of the complex.',
+ 'Figure 4, Overview of the infection process.',
+ 'Figure 5) Summary of the treatments.',
+ 'Figures 6 and 7. Symptoms on pepper leaves.',
+ 'Supplementary Figure 3. Additional controls.',
+ 'Supporting Fig. S2 - Sequence alignment.',
+ 'Extended Data Figure 1. Replicates.'].forEach((line) => {
+  ok(MS.FIGURE_LEGEND_RE.test(line), `« ${line} » est reconnue comme une LÉGENDE`);
+});
+/* …et ce qui n'en est PAS reste dans le texte : c'est la garde du séparateur. */
+['Figure 2 shows that the virus spreads quickly in the field.',
+ 'Figures 2 and 3 show the same trend in both seasons.',
+ 'Figure legends are collected at the end of the document.'].forEach((line) => {
+  ok(!MS.FIGURE_LEGEND_RE.test(line), `« ${line.slice(0, 28)}… » n’est PAS une légende : c’est du texte`);
+});
+/* Une légende LONGUE (le garde-fou des 400 caractères la refusait). */
+const LONG_CAPTION = `Figure 8. ${'Quantification of the viral load in the inoculated leaves. '.repeat(9)}`;
+ok(LONG_CAPTION.length > 400 && MS.FIGURE_LEGEND_RE.test(LONG_CAPTION),
+  'une légende de plus de 400 caractères est reconnue (une légende d’article fait souvent une demi-page)');
+const LONG_TAKEN = MS.figuresWithCaptionsFromRecords(
+  [{ text: '[[FIGURE 8]]', html: '' }, { text: LONG_CAPTION, html: '' }, { text: 'Next paragraph.', html: '' }],
+  [{ index: 8 }]
+);
+eq(LONG_TAKEN.figures[0].caption, LONG_CAPTION.trim(),
+  '…et elle devient la légende de sa figure (la ligne est rognée, comme partout)');
+eq(LONG_TAKEN.records.map((r) => r.text).filter(Boolean), ['[[FIGURE 8]]', 'Next paragraph.'],
+  '…et elle SORT du texte (elle est déjà sous l’image du document exporté)');
+/* Le panneau aussi : « Figure 1A. » est une légende de la figure 1. */
+eq(MS.figuresWithCaptionsFromRecords(
+  [{ text: '[[FIGURE 1]]', html: '' }, { text: 'Figure 1A. Catalytic site.', html: '' }], [{ index: 1 }]
+).figures[0].caption, 'Figure 1A. Catalytic site.', 'une légende de panneau suit la figure du même rang');
+
+/* (b) LA BIBLIOGRAPHIE S'ARRÊTE OÙ COMMENCENT LES FIGURES. Le document d'un
+   article de revue : les figures sont rangées APRÈS les références, chacune
+   avec sa légende. */
+const END_MS = MS.splitManuscript(MS.blocksFromText([
+  'Introduction',
+  'Aphids transmit many plant viruses.',
+  '',
+  'Results and Discussion',
+  'The capsid protein is shown in Figure 2.',
+  '',
+  'Conclusions',
+  'The new isolate spreads in southern Italy.',
+  '',
+  'References',
+  '1. Rossi M, Bianchi A (2018). Peptide-membrane interactions. BBA 1860:1234-1245.',
+  '2. Smith J (2020). Potyvirus taxonomy. J Gen Virol 101:1-10.',
+  '',
+  'Figure legends',
+  'Figure 1. Phylogeny of the isolates.',
+  '',
+  '[[FIGURE 1]]',
+  'Figure 2. Structure of the capsid protein.',
+  '',
+  '[[FIGURE 2]]'
+].join('\n')));
+ok(!/FIGURE/.test(END_MS.referencesText),
+  'les figures écrites après les références ne sont PAS dans la bibliographie');
+eq(END_MS.referencesText.split('\n').length, 2, '…qui garde ses deux références');
+ok(END_MS.figureBlocks.length >= 4, 'elles sont rendues à part (figureBlocks)');
+ok(/Rossi/.test(END_MS.referencesText) && !/capsid protein/.test(END_MS.referencesText),
+  'la légende de la dernière figure n’est pas une référence');
+ok(/capsid protein/.test(END_MS.figureBlocks.map((b) => b.text).join('\n')),
+  '…elle est du côté des figures');
+eq(END_MS.otherBlocks.length, 0, 'et rien d’autre ne traînait après les références dans ce document');
+
+/* (c) LA PLACE : la section qui CITE la figure, et l’ancre = le paragraphe qui
+   la cite (le document exporté l’imprime donc juste après). */
+const endParts = MS.withDocumentSections(MS.groupManuscriptParts(END_MS.body, {}))
+  .map((p, i) => ({ key: `part${i}`, heading: p.heading, text: p.text, dest: p.id || '' }));
+const END_PLAN = MS.manuscriptFigurePlacements(endParts, [{ index: 1 }, { index: 2 }],
+  { figureBlocks: END_MS.figureBlocks });
+eq(END_PLAN.placements.map((p) => [p.index, p.section]),
+  [[1, 'conclusions'], [2, 'discussion']],
+  'la figure citée va dans la section qui la cite, l’autre à la fin du texte');
+eq(END_PLAN.placements[1].anchor, 'The capsid protein is shown in Figure 2.',
+  '…et son ancre est le PARAGRAPHE qui la cite, pas la référence qui la précédait');
+eq(END_PLAN.tail, 1, 'le compte rendu dit combien de figures de la fin sont rattachées par CITATION');
+eq(END_PLAN.placements[0].section, 'conclusions',
+  '…et celle que rien ne cite (la figure 1) va à la DERNIÈRE partie du texte, pas à la première');
+ok(END_PLAN.rerouted >= 1, '…ce repli est COMPTÉ (l’import le dit, il ne le cache pas)');
+ok(!END_PLAN.placements.some((p) => p.section === ''),
+  'aucune figure de la fin ne retombe dans une section vide (avant : la première, au hasard)');
+/* Une figure de la fin que RIEN ne cite garde le repli (jamais perdue). */
+const LONE_PLAN = MS.manuscriptFigurePlacements(
+  [{ key: 'p0', heading: 'Discussion', text: 'No figure is mentioned here.', dest: 'discussion' }],
+  [{ index: 1 }],
+  { figureBlocks: MS.blocksFromText('[[FIGURE 1]]\nFigure 1. Nobody cites this one.') }
+);
+eq(LONE_PLAN.placements.map((p) => [p.index, p.section]), [[1, 'discussion']],
+  'une figure de la fin que rien ne cite garde le repli (la section la plus proche)');
+eq(LONE_PLAN.tail, 0, '…et elle n’est pas comptée comme rattachée par citation');
+
+/* (d) LA CITATION elle-même, cas par cas. */
+['Figure 3', 'Fig. 3A', 'Figures 2 and 3', 'Figures 2-4', 'Supplementary Fig. S3',
+ 'see Figure 3 for details', 'Figure 3).'].forEach((t) => {
+  ok(MS.citesFigure(t, 3), `« ${t} » cite la figure 3`);
+});
+['Figure 30', 'Figure 13', 'Figures 1 and 2', 'Figure 2 shows the trend',
+ 'The figure shows the trend'].forEach((t) => {
+  ok(!MS.citesFigure(t, 3), `« ${t} » ne cite PAS la figure 3`);
+});
+ok(MS.citesFigure('Figure 30', 30) && !MS.citesFigure('Figure 30', 3),
+  'le rang 30 se lit comme 30, jamais comme 3');
+
+/* (e) LE CÂBLAGE : la page projet passe les blocs de fin à la mise en place, et
+   le compte est dit dans l’état de l’import. */
+has(PROJ, 'figureBlocks: tailBlocks,', 'l’analyse garde les blocs de fin de document');
+has(PROJ, 'const tailFigures = figureMarksIn(tailBlocks.map((b) => b.text).join(\'\\n\')).length;',
+  '…et compte les figures qui y sont écrites');
+has(PROJ, 'figure(s) written after the references — placed in the section that cites them',
+  'le compte rendu de l’import le DIT (rien n’est fait en silence)');
+/* …et ce qui suit les références sans être une figure n’est pas caché non plus. */
+const MIXED_MS = MS.splitManuscript(MS.blocksFromText([
+  'Conclusions', 'Text.', '', 'References', '1. Rossi M (2018). Something.',
+  '', '[[FIGURE 1]]', 'Figure 1. Legend.', '', 'Data availability', 'Data are available on request.'
+].join('\n')));
+eq(MIXED_MS.figureBlocks.map((b) => b.text), ['[[FIGURE 1]]', 'Figure 1. Legend.'],
+  'la figure de la fin est à part, avec sa légende…');
+eq(MIXED_MS.otherBlocks.map((b) => b.text), ['Data availability', 'Data are available on request.'],
+  '…et le bloc qui n’est ni une figure ni une référence aussi (il n’est pas fondu dans la bibliographie)');
+has(PROJ, 'block(s) after the references are neither a reference nor a figure: not imported',
+  '…et la fenêtre d’import le DIT (rien ne disparaît sans un mot)');
+eq((PROJ.match(/figureBlocks: d\.figureBlocks \|\| \[\]/g) || []).length, 2,
+  'les deux chemins (import complet et « figures seules ») passent les mêmes blocs');
+
 console.log(`✅ ${passed} tests passés (manuscrit — blocs / parties / en-tête / sections / liens / figures)`);
 

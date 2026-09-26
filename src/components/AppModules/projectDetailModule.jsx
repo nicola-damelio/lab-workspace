@@ -1887,6 +1887,14 @@ export const ProjectDetailModule = ({
       .map((f) => (f && f.preview === undefined ? { ...f, preview: figureDataUrl(f) } : f));
     const blocks = blocksFromText(src, { htmlByText: html });
     const manuscript = splitManuscript(blocks);
+    /* LES FIGURES ÉCRITES APRÈS LA BIBLIOGRAPHIE (« even putting the text of the
+       caption in the right place, the last figure of a manuscript was written
+       after the references! ») : `splitManuscript` sort ces blocs de la
+       bibliographie, et leur place se décide par la CITATION dans le corps (voir
+       manuscriptFigurePlacements). Le compte est dit dans l'état de l'import. */
+    const tailBlocks = manuscript.figureBlocks || [];
+    const tailFigures = figureMarksIn(tailBlocks.map((b) => b.text).join('\n')).length;
+    const tailOther = (manuscript.otherBlocks || []).length;
     /* L'EN-TÊTE (titre / auteurs / affiliations) est reconnu AVANT le découpage :
        ces lignes ne sont donc pas proposées comme sections — elles vont dans les
        champs « 🧾 Title, authors & affiliations » du projet. */
@@ -1928,6 +1936,7 @@ export const ProjectDetailModule = ({
     setMsImport((d) => ({
       ...(d || {}), text: src, fileName: fileName || '', parts, plan, picks, busy: false, report: '',
       focusSection, header, body: manuscript.body, lines: header.lines || [], figures: figs,
+      figureBlocks: tailBlocks,
       htmlByText: html,
       headerPicks: (d && d.headerPicks) || defaultHeaderPicks,
       hash, previous, confirmRepeat: false,
@@ -1935,6 +1944,8 @@ export const ProjectDetailModule = ({
         + (alreadyThere ? ` (${alreadyThere} already in the project)` : '')
         + ` · ${plan.citations.length} citation(s)`
         + (figs.length ? ` · ${figs.length} figure(s)` : '')
+        + (tailFigures ? ` · ${tailFigures} figure(s) written after the references — placed in the section that cites them` : '')
+        + (tailOther ? ` · ⚠ ${tailOther} block(s) after the references are neither a reference nor a figure: not imported` : '')
         + (headerFound ? ` · header: ${headerFound}/3` : '')
         + (headerMissing.length
           ? ` · ⚠ no ${headerMissing.join(' / no ')} recognised — the lines of the document head are listed below, set the right one by hand`
@@ -2160,7 +2171,7 @@ export const ProjectDetailModule = ({
       const place = manuscriptFigurePlacements(
         (d.parts || []).map((p) => (anchoredText[p.key] !== undefined ? { ...p, text: anchoredText[p.key] } : p)),
         d.figures,
-        { focusSection: d.focusSection }
+        { focusSection: d.focusSection, figureBlocks: d.figureBlocks || [] }
       );
       let added = 0;
       let failed = [];
@@ -2251,7 +2262,7 @@ export const ProjectDetailModule = ({
     const figPlan = manuscriptFigurePlacements(
       d.parts.map((p) => (convertedTextByKey[p.key] !== undefined ? { ...p, text: convertedTextByKey[p.key] } : p)),
       d.figures,
-      { focusSection: d.focusSection }
+      { focusSection: d.focusSection, figureBlocks: d.figureBlocks || [] }
     );
     const figurePlacements = figPlan.placements;
     /* LES RÉFÉRENCES NUMÉROTÉES DU PROJET : une par entrée RETENUE de la

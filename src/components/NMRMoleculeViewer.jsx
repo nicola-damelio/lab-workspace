@@ -4716,6 +4716,36 @@ const MEMBRANE_CHILD_OF = {
   upper_leaflet: 'upper_headgroups',
   lower_leaflet: 'lower_headgroups',
 };
+/* ── A MEASURED ROW NEVER SUBTRACTS THE ROW THAT CONTAINS IT ─────────────────
+   THE REPORT: « the membrane panel does not work properly yet. upper headgroups
+   and lower headgroups interfere with each other and with the leaflets (the
+   leaflets work well but they are inactivated once the headgroups are touched). »
+
+   Cause trouvée : `toggleSelStyle` est l'UNIQUE langage des deux barres, et il
+   fait ce qu'un tick de la barre de gauche doit faire — « montrer ce style ICI »
+   = l'enlever des AUTRES rangées qui le dessinent (le dernier geste gagne). Une
+   rangée MESURÉE écrit donc son expression dans le `hideFor` de TOUTES les
+   autres, y compris la paire mesurée, et la hiérarchie des quatre noms n'y est
+   pas respectée : styliser `upper_leaflet` inscrit « upper_leaflet » dans le
+   `hideFor` de `upper_headgroups`, et la rangée de têtes se dessine alors
+   `(têtes du haut) and not (feuillet du haut)` — l'ENSEMBLE VIDE. La rangée de
+   têtes ne dessine plus rien du tout dès que son feuillet a été stylisé (et de
+   même pour les têtes du bas), ce qui ressemble exactement au rapport : la
+   rangée est « désactivée » par un geste fait sur l'autre.
+
+   Un feuillet, lui, DOIT pouvoir soustraire ses têtes (c'est membraneHeadOwnerExprs
+   et le `hideFor` de membraneHeadRelinquish : les têtes qu'il dessine sont
+   dessinées par leur propre rangée) : la règle ci-dessous ne supprime donc que
+   le sens interdit — une rangée à qui l'on demande de s'effacer entièrement. */
+const membraneExclusionKept = (key, entry) => {
+  // Une rangée de script (« POPC », une sélection de la macro) garde son propre
+  // hideFor : la règle est celle des QUATRE noms mesurés, que le viewer connaît.
+  if (!MEMBRANE_SIDE_OF[key]) return true;
+  const e = String(entry == null ? '' : entry).trim();
+  if (!e) return false;
+  if (e === key) return false;                  // jamais elle-même
+  return MEMBRANE_PARENT_OF[key] !== e;         // ni le feuillet qui la contient
+};
 // The measured rows of the OTHER leaflet — what 👁 solo hides to reveal this one.
 const membraneOppositeRows = (key) => Object.keys(MEMBRANE_SIDE_OF)
   .filter((k) => k !== key && MEMBRANE_SIDE_OF[k] !== MEMBRANE_SIDE_OF[key]);
@@ -10060,7 +10090,11 @@ useEffect(() => {
        heads were styled (the CPK of the report). */
     const membraneOwners = membraneHeadOwnerExprs(key, styles, selKeyExpr);
     const exclusionOf = (style) => {
-      const list = (st.hideFor && st.hideFor[style]) || [];
+      // A MEASURED ROW NEVER SUBTRACTS THE ROW THAT CONTAINS IT (see
+      // membraneExclusionKept): `toggleSelStyle` écrit l'expression de la rangée
+      // cliquée dans le hideFor de TOUTES les autres, et « upper_leaflet » dans
+      // celui de `upper_headgroups` vidait la rangée de têtes entière.
+      const list = ((st.hideFor && st.hideFor[style]) || []).filter((h) => membraneExclusionKept(key, h));
       const parts = list.map((h) => `(${expandSelectionExpr(h)})`).filter((p) => p && p !== '(all)');
       if (membraneOwners && !parts.includes(membraneOwners)) parts.push(membraneOwners);
       hiddenElsewhere.forEach((e) => {
