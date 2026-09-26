@@ -11,12 +11,18 @@
         couvrait : rien ne semblait changer. Une partie qui a reçu son PROPRE style
         reçoit maintenant ses atomes (la règle des têtes de groupe, et la sélection
         `sidechain` de PyMOL).
-     2. « the other molecule parts must be on hide » — mais un style choisi sur
-        General mettait aussi les parties sur Hide quand ce style ÉTAIT « Hide » :
-        la molécule disparaissait et le seul retour était de restyler Backbone ·
-        Side chains à la main. « Hide » sur General veut dire « PLUS DE DESCRIPTION
-        GÉNÉRALE », pas « molécule vide » : chaque partie reprend alors son propre
-        style par défaut et redessine la molécule.
+     2. « the other molecule parts must be on hide » — ET « HIDE » SUR GENERAL AUSSI.
+        Le premier correctif de ce rapport mettait les parties sur Hide quand General
+        disait « Hide » : la molécule disparaissait et le seul retour était de restyler
+        Backbone · Side chains à la main. Le suivant en a fait l'inverse — chaque
+        partie reprenait son propre style par défaut — et une protéine « cachée »
+        restait donc à l'écran en cartoon + licorice : c'est le rapport de cette
+        session, « adesso quando general é su hide, si attivano backbone e sidechain
+        che invece dovrebbero essere entrambi su hide ». « Hide » redescend donc sur
+        les parties, qui restent DANS la hiérarchie (`follow: true`, leur badge dit
+        que c'est General qui les cache) ; la molécule n'est jamais perdue pour
+        autant : le ✔ de son en-tête, un style sur N'IMPORTE quelle rangée ou le ↺
+        d'une rangée la ramènent (règles 1c · 1d).
      3. LA HIÉRARCHIE, celle de la règle 1 poussée trop loin : « the hierarchy of
         the styles is wrong. It was better before. If in general (which represents
         the full molecule) i put cartoon, then the subgroups must be on hide and
@@ -345,19 +351,20 @@ eq(hid.filter((s) => s === ':A and protein and backbone').length, 0,
 ok(hid.some((s) => String(s).endsWith('and not backbone)')),
   '…et le chemin de General (le squelette) lui reste, quoi qu’il arrive');
 
-/* 2d. Après « General → Hide » (1c), la molécule est REDESSINÉE par ses parties : le
-   MÊME arbre que celui de 1c, passé au rendu. Avant le correctif, les deux parties
-   étaient elles aussi sur Hide et la scène était VIDE. */
+/* 2d. Après « General → Hide » (1c), RIEN n'est dessiné : c'est la demande de cette
+   session — « quando general é su hide, si attivano backbone e sidechain che invece
+   dovrebbero essere entrambi su hide ». La molécule revient dès qu'un style est
+   choisi, sur General (la rangée entière) ou sur une partie (1c). */
 const afterHide = HIER.setGeneralSectionField({}, 'protein', 'style', 'hide');
-const redrawn = sels(tree(
-  [gen(afterHide, 'protein', 'general').style, 'sstruc'],
-  [gen(afterHide, 'protein', 'backbone').style, 'sstruc', false],
-  [gen(afterHide, 'protein', 'sidechain').style, 'element', false],
+const hiddenScene = sels(tree(
+  [gen(afterHide, 'protein', 'general').style, 'sstruc', false],
+  [gen(afterHide, 'protein', 'backbone').style, 'sstruc', gen(afterHide, 'protein', 'backbone').follow],
+  [gen(afterHide, 'protein', 'sidechain').style, 'element', gen(afterHide, 'protein', 'sidechain').follow],
 ));
-ok(redrawn.length > 0, 'après « Hide » sur General, la protéine est encore dessinée (elle n’est plus vide)');
-ok(redrawn.includes(':A and protein and backbone'), '…par la rangée du squelette, en cartoon');
-ok(redrawn.includes(':A and protein and (sidechain or .CA)'), '…et par celle des chaînes latérales, en licorice');
-ok(!redrawn.includes(':A and protein'), '…et AUCUNE rangée ne décrit plus la molécule entière (General se tait)');
+eq(hiddenScene, [], 'après « Hide » sur General, AUCUNE représentation ne part (les parties sont cachées avec lui)');
+const redrawn = sels(tree(['cartoon', 'sstruc', false], ['cartoon', 'sstruc', true], ['hide', 'element', false]));
+ok(redrawn.includes(':A and protein'), '…et un nouveau style sur General redessine la molécule entière');
+ok(redrawn.includes(':A and protein and backbone'), '…le squelette suivant General comme avant');
 
 /* 2e. LA HIÉRARCHIE DU RAPPORT, ÉTAPE PAR ÉTAPE — c'est LA demande :
    « if in general i put cartoon, then the subgroups must be on hide … if after that i
@@ -415,8 +422,10 @@ eq(RENDER.generalWalkingSele(fake, { kind: 'nucleic', sele: ':A and nucleic' }, 
   'un nucléotide sans atome lisible ne protège rien — jamais d’erreur, juste moins de protection');
 
 /* ══ 3. LE CÂBLAGE : LES TROIS RÈGLES SONT DANS LA SOURCE ═══════════════════ */
-has("if (value === 'hide') { next.style = defaultLookOf(kind, s.sub).style; next.follow = false; }",
-  'la source dit « Hide sur General → chaque partie reprend son style par défaut »');
+has("next.follow = next.style !== 'hide' || value === 'hide';",
+  'la source dit « une partie cachée PAR GENERAL reste dans la hiérarchie (elle le suit) »');
+gone("if (value === 'hide') { next.style = defaultLookOf(kind, s.sub).style; next.follow = false; }",
+  '…et l’exception « Hide sur General redonne à chaque partie son style par défaut » a disparu');
 has(".filter(({ look }) => !!look && look.style !== 'hide' && look.follow === false)",
   'une partie ne reçoit ses atomes que si elle a un style PROPRE (follow: false) ET dessine');
 has('const rowOpts = (style) => ({ anchorSideChains, backboneLosesCa, anchorParts: ATOM_DRAW_STYLES.includes(style) });',
@@ -544,5 +553,26 @@ has('const partStyleUnderGeneral = (kind, sub, value) => (', 'la cascade est une
 has("subsectionSpec(kind, sub).styles.includes(value) ? value : 'hide'", '…qui lit le vocabulaire de LA rangée');
 has("const RADIUS_FIELDS = ['sphere', 'bond'];", '…et les deux rayons ont leur nom');
 has('next[field] = value;', '…le nombre est écrit dans CHAQUE partie, déviée ou non');
+
+/* ══ 6. LA SCÈNE SE REPEINT TOUT DE SUITE ═════════════════════════════════════
+   La seconde moitié du rapport de cette session : « cambia il valore nella casella
+   del drop down ma non è come cliccare », « la scène ne s'actualise pas tout de
+   suite ». NGL ne dessine que lorsqu'on le lui demande (`requestRender()`), et les
+   représentations d'une rangée sont construites PENDANT cette image-là : sans
+   demande, le résultat d'un geste attendait un mouvement de souris sur le canevas.
+   La demande est donc faite LÀ OÙ les représentations naissent — et de nouveau sur
+   l'image suivante —, et le compteur des gestes de la barre entre dans la signature,
+   pour qu'un geste ne puisse plus être absorbé par une signature inchangée. */
+has('const requestSceneRepaint = () => {', 'la demande d’image est UNE fonction (voir son commentaire)');
+has('window.requestAnimationFrame(() => { try { v.requestRender(); } catch { /* ignore */ } });',
+  '…qui demande aussi l’image SUIVANTE (les représentations viennent d’être créées)');
+has('requestSceneRepaint();\n  return () => {', '…et l’effet qui rebâtit les rangées la fait aussitôt');
+has("const [sectionEpoch, setSectionEpoch] = useState(0);", 'le compteur des gestes de la barre existe');
+has('const bumpSectionEpoch = () => setSectionEpoch((n) => n + 1);', '…et sait s’incrémenter');
+has('|gesture:${sectionEpoch}`;', '…dans la signature qui décide de reconstruire la scène');
+ok((VIEW.match(/bumpSectionEpoch\(\);/g) || []).length >= 5,
+  'chaque geste de la barre (style · ↺ d’une rangée · ↺ d’une section · ✔ · 🎨 Copy) l’incrémente');
+ok((VIEW.match(/requestSceneRepaint\(\);/g) || []).length >= 6,
+  '…et demande l’image au lieu d’attendre un geste sans rapport avec le canevas');
 
 console.log(`_viewer_general_row_test.mjs — ${passed} assertions OK (hiérarchie + rangée General exécutée)`);

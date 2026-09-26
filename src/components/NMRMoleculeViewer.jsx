@@ -3302,11 +3302,12 @@ const setGeneralSectionField = (looks, kind, field, value) => {
     if (s.sub === 'general') return;
     const own = (out[kind] && out[kind][s.sub]) || null;
     const next = { ...defaultLookOf(kind, s.sub), ...(own || null) };
-    // `follow: false` too: `effectiveSectionLook` hands General's style down to a row
-    // that follows — so a hidden row would be RE-DRAWN with General's style the next
-    // time it is asked what it really draws. Hiding a part means it stops following
-    // until its own row is moved again (or its ↺ resets it), which is what makes
-    // « one description of the molecule » hold.
+    // `follow` says what the row does with the values General hands down: a row that
+    // follows is drawn with General's style, so it must be set for the row to be
+    // able to keep its own state — see the two cases under `if (field === 'style')`
+    // below (a row hidden BY General follows it; a row that cannot draw General's
+    // style falls back on « Hide » and stops following, or `effectiveSectionLook`
+    // would hand it General's style again and it would be drawn under it).
     if (field === 'style' || field === 'colorBy') {
       /* THE PART THAT CAN DRAW WHAT GENERAL JUST CHOSE TAKES IT — and follows
          General again, so the « ← General » badge of its row says where the style
@@ -5866,6 +5867,15 @@ sectionLooksRef.current = sectionLooks;
 const [sectionVis, setSectionVis] = useState({});       // { sectionId: bool }
 const sectionVisRef = useRef(sectionVis);
 sectionVisRef.current = sectionVis;
+/* ONE COUNTER OF THE BAR'S GESTURES — part of the rebuild signature (see
+   styleSignature). A gesture is what MUST be drawn, even if the tree it writes
+   happens to serialise to the same string (a reset that restores the default a row
+   already had, a row put back on what General hands down…): « the value changes in
+   the dropdown box but the scene does not follow » is exactly a rebuild that was
+   skipped, and this counter makes that impossible — the signature of the scene
+   changes whenever the user touched a control. */
+const [sectionEpoch, setSectionEpoch] = useState(0);
+const bumpSectionEpoch = () => setSectionEpoch((n) => n + 1);
 // The 3D labels of ONE molecule section (the request: the label switches of the old
 // §2 menus are imported here, one set PER SECTION, so « Residues » ticked on chain A
 // labels chain A only). Default: nothing labelled.
@@ -5939,17 +5949,28 @@ const setSectionField = (id, kind, sub, field, value) => {
     kindLooksRef.current = next;
     return next;
   });
+  // A frame is asked for HERE as well as in the effect that rebuilds the sections:
+  // the gesture must reach the canvas even if the scene did not have to be rebuilt
+  // (a field only the material shaders read), and the NEXT frame is what shows the
+  // rows the effect has just recreated (see requestSceneRepaint). The gesture counter
+  // enters the signature for the same reason (see sectionEpoch).
+  bumpSectionEpoch();
+  requestSceneRepaint();
 };
 // ↺ ONE row / ↺ the whole section: back to the DEFAULTS of that kind.
 const resetSectionRowLook = (id, kind, sub) => {
   leaveLightMode();
   const nextTree = resetSectionRow(sectionTreeOf(id, kind), kind, sub);
   setSectionLooks((prev) => ({ ...prev, [id]: nextTree }));
+  bumpSectionEpoch();
+  requestSceneRepaint();
 };
 const resetSectionKindLook = (id, kind) => {
   leaveLightMode();
   const nextTree = resetSectionKind(sectionTreeOf(id, kind), kind);
   setSectionLooks((prev) => ({ ...prev, [id]: nextTree }));
+  bumpSectionEpoch();
+  requestSceneRepaint();
 };
 // The ✔ of ONE section (water / ions start OFF).
 const sectionVisible = (id, kind) => {
@@ -5959,6 +5980,8 @@ const sectionVisible = (id, kind) => {
 const toggleSectionVisible = (id, kind) => {
   leaveLightMode();
   setSectionVis((prev) => ({ ...prev, [id]: !sectionVisible(id, kind) }));
+  bumpSectionEpoch();
+  requestSceneRepaint();
 };
 // 🎨 Copy — hand the look of ONE molecule to every OTHER molecule of the bar.
 const copySectionsToAll = () => {
@@ -5974,7 +5997,8 @@ const copySectionsToAll = () => {
     });
   });
   setSectionLooks(looks);
-  try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch {}
+  bumpSectionEpoch();
+  requestSceneRepaint();
 };
 // ---- « Molecules » entries of the bar (extra structures / PDB MODELs) ----
 // extraMols = extra loaded structure files (each its own NGL component); the
@@ -5996,7 +6020,7 @@ const [extraMols, setExtraMols] = useState([]);    // [{ id, name, style, color 
 // of it: the ramp is an NGL scheme read at render time, so a swatch only reaches the
 // screen if the representations are rebuilt (see setGradientPair).
 const gradientRampSignature = `${Number.isFinite((catStyles.protein || {}).gradientFrom) ? catStyles.protein.gradientFrom : ''}/${Number.isFinite((catStyles.protein || {}).gradientTo) ? catStyles.protein.gradientTo : ''}`;
-const styleSignature = `${sectionLooksSig(kindLooks)}|${JSON.stringify(sectionLooks)}|${JSON.stringify(sectionVis)}|${Object.keys(sectionCatalog).map((k) => `${k}:${(sectionCatalog[k].sections || []).map((s) => s.id).join('|')}`).join(';')}|ramp:${gradientRampSignature}`;
+const styleSignature = `${sectionLooksSig(kindLooks)}|${JSON.stringify(sectionLooks)}|${JSON.stringify(sectionVis)}|${Object.keys(sectionCatalog).map((k) => `${k}:${(sectionCatalog[k].sections || []).map((s) => s.id).join('|')}`).join(';')}|ramp:${gradientRampSignature}|gesture:${sectionEpoch}`;
 // The NAME every molecule shows in its space: the main structure takes its file
 // name, an extra molecule its own — kept in a ref the section enumeration reads, and
 // pushed into the catalog when it changes so the bar never shows a stale name.
@@ -9573,6 +9597,31 @@ const hiddenRowExprs = (styles, selfKey, exprOf) => {
   return out;
 };
 
+/* ── ASK FOR A FRAME AS SOON AS THE SCENE IS REBUILT — AND ASK AGAIN ON THE NEXT ──
+   NGL only draws when it is asked to: `viewer.requestRender()` coalesces every call
+   of one animation frame into ONE frame, and the representations of a styling row
+   are BUILT inside that frame. A gesture of the bar (a style, a colouring, a
+   radius…) therefore used to reach the screen only when something ELSE asked for a
+   frame — a mouse move over the canvas, a click, a camera turn — which is exactly
+   the report of this session: « i comandi è come se non fossero eseguiti. cambia il
+   valore nella casella del drop down ma non è come cliccare », and « la scena non si
+   aggiorna subito ». The frame is asked HERE, where the representations are created,
+   and once more on the NEXT animation frame (cheap: NGL draws once per frame
+   whatever the number of requests), so the rebuilt scene can never wait for an
+   unrelated gesture to appear. Every path that rebuilds the scene calls it: the
+   styling sections (the effect below), the gestures of the styling bar, and the
+   materials pass. */
+const requestSceneRepaint = () => {
+  const v = stageRef.current && stageRef.current.viewer;
+  if (!v || typeof v.requestRender !== 'function') return;
+  try { v.requestRender(); } catch { /* best-effort: never break a gesture */ }
+  try {
+    if (typeof window !== 'undefined' && window.requestAnimationFrame) {
+      window.requestAnimationFrame(() => { try { v.requestRender(); } catch { /* ignore */ } });
+    }
+  } catch { /* ignore */ }
+};
+
 // Rebuild all selection representations from selStyles.
 useEffect(() => {
   const component = componentRef.current;
@@ -9615,6 +9664,9 @@ useEffect(() => {
     baseCompsRef.current = [];
     buildMainReps();
   }
+  // …and the frame is asked THE MOMENT the sections exist (see requestSceneRepaint):
+  // a styling gesture must not wait for a mouse move to be seen.
+  requestSceneRepaint();
   prevCatSigRef.current = catSig;
   if (hideAll) return;
   const styles = selStylesRef.current || {};
@@ -9784,6 +9836,9 @@ useEffect(() => {
     }
     selCompsRef.current[key] = reps;
   });
+  // Same rule for the rows of the Selections bar: the frame is asked as soon as they
+  // are rebuilt, so a style chosen on the left reaches the canvas at once.
+  requestSceneRepaint();
   return () => {
     Object.keys(selCompsRef.current).forEach((k) => {
       (selCompsRef.current[k] || []).forEach((r) => { try { component.removeRepresentation(r); } catch {} });
@@ -9829,6 +9884,9 @@ const applyMaterialsToScene = () => {
     } catch { /* ignore */ }
   });
   try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch { /* ignore */ }
+  // The shader uniforms were written AFTER the frame the rebuild had already asked
+  // for, so the NEXT frame is asked for too (see requestSceneRepaint).
+  requestSceneRepaint();
 };
 useEffect(() => {
   applyMaterialsToScene();

@@ -62,7 +62,7 @@ import { createRequire } from 'node:module';
 const MODULE_PATH = process.env.SHADOW_MODULE || './src/utils/viewerRayShadows.js';
 const SHADOWS = await import(MODULE_PATH);
 const {
-  RAY_SHADOW_DEFAULTS, SHADOW_BLUR_REF, SHADOW_BLUR_MIN, shadowBlurScale,
+  RAY_SHADOW_DEFAULTS, SHADOW_BLUR_REF, SHADOW_BLUR_MIN, SHADOW_BLUR_STROKE_FRACTION, shadowBlurScale,
   maskScalePerAngstrom, proxyStrokeSummary, atomsFromStage, boundsOf, boundsBoxOf,
   shadowRigOf, mat4LookAt, mat4Multiply, buildRayShadowMask, rayShadowNote,
 } = SHADOWS;
@@ -157,14 +157,38 @@ ok(farScale <= scale600,
   'une boîte hors champ ne donne jamais une échelle PLUS GRANDE que celle de la molécule : le flou ne peut que diminuer');
 eq(shadowBlurScale(farScale), SHADOW_BLUR_MIN,
   '…et le plancher garde l’ombre douce même sur une échelle absurde (le seul écart possible est un flou plus PETIT)');
-ok(MODULE.includes('export const shadowBlurScale = (pxPerAngstrom) => {'),
-  'la règle est exportée, donc lisible et testable');
+ok(MODULE.includes('export const shadowBlurScale = (pxPerAngstrom, minStrokeRadius) => {'),
+  'la règle est exportée, donc lisible et testable — avec, en second, le trait le plus fin RÉELLEMENT tiré');
 ok(MODULE.includes('export const SHADOW_BLUR_REF = 20;'),
   '…avec l’échelle où les valeurs par défaut ont été réglées');
 ok(MODULE.includes('export const maskScalePerAngstrom = ({ clip, view, bounds, width, height } = {}) => {'),
   '…et la mesure du masque, qui la nourrit');
 ok(MODULE.includes('export const proxyStrokeSummary = (radii, count, max = 4) => {'),
   '…le diagnostic des traits, exporté lui aussi');
+
+/* LE SECOND PLAFOND, TIRÉ DU DESSIN. Le « demi-ångström » de SHADOW_BLUR_REF est
+   un demi-TUYAU (2 × 0,5 Å)… mais un licorice ENTIER (2 × 0,25 Å) : sur une scène
+   qui n'a QUE du licorice, ce flou-là avale le trait qu'il doit ombrer, et toutes
+   les ramifications s'effondrent dans la même bille. Le module lit donc le trait
+   le plus fin RÉELLEMENT dessiné (`atoms.radii`, voir minStrokeRadiusOf) et borne
+   la pénombre combinée à SHADOW_BLUR_STROKE_FRACTION de ce trait — en ne faisant
+   jamais que RÉDUIRE le flou d'avant. */
+eq(SHADOW_BLUR_STROKE_FRACTION, 0.6,
+  'la pénombre combinée ne dépasse jamais 0,6 fois le trait le plus fin que le dessin tire');
+const REF_PX = RAY_SHADOW_DEFAULTS.softness + RAY_SHADOW_DEFAULTS.penumbraMax;   // 9,6 px
+ok(shadowBlurScale(8, 0.25) < shadowBlurScale(8, 0.5),
+  `à la même résolution, un licorice (0,25 Å) reçoit MOINS de flou qu’un tuyau (0,5 Å) : ×${shadowBlurScale(8, 0.25).toFixed(3)} contre ×${shadowBlurScale(8, 0.5).toFixed(3)}`);
+near(shadowBlurScale(8, 0.25) / shadowBlurScale(8, 0.5), 0.5, 1e-9,
+  '…exactement la moitié, sous le plafond : le flou suit le trait, proportionnellement');
+eq(shadowBlurScale(8, 0), shadowBlurScale(8),
+  'un trait illisible (0 Å) laisse la règle d’avant — jamais un flou éteint');
+eq(shadowBlurScale(8, Number.NaN), shadowBlurScale(8), '…idem NaN');
+eq(shadowBlurScale(8, 5), shadowBlurScale(8),
+  'un trait ÉPAIS ne donne jamais plus de flou qu’avant : le plafond ne fait que réduire');
+near(shadowBlurScale(SHADOW_BLUR_REF, 0.25), (0.25 * SHADOW_BLUR_STROKE_FRACTION * SHADOW_BLUR_REF) / REF_PX, 1e-9,
+  '…et à la résolution de référence, un licorice seul est ramené à ×0,31 : la cible « demi-ångström » valait pour le tuyau');
+ok(MODULE.includes('const minStrokeRadiusOf = (atoms) => {') && MODULE.includes('if (v > 0 && v < min) min = v;'),
+  '…le trait le plus fin est lu dans les rayons du proxy (un rayon nul ou absent ne compte pas)');
 
 
 /* ── 3. LE MASQUE, EXÉCUTÉ : LES DÉFAUTS S'ACCOMMODENT À LA RÉSOLUTION ───────
@@ -220,6 +244,17 @@ near(wideShadow.blur.softness, RAY_SHADOW_DEFAULTS.softness * wideShadow.blur.sc
   '…la douceur par défaut est bien celle qui est réduite (1,6 px × l’échelle)');
 near(wideShadow.blur.penumbraMax, RAY_SHADOW_DEFAULTS.penumbraMax * wideShadow.blur.scale, 1e-9,
   '…et le plafond de la pénombre PCSS avec elle (8 px × l’échelle)');
+/* …ET LE MASQUE A BIEN LU LE TRAIT DE SA SCÈNE : l'échelle rapportée est celle de
+   la règle nourrie du plus fin rayon tiré — aucune constante devinée à sa place. */
+const minRadiusOf = (radii, count) => {
+  const n = Math.max(0, Math.min(Number(count) || 0, radii ? radii.length : 0));
+  let min = Infinity;
+  for (let i = 0; i < n; i += 1) if (radii[i] > 0 && radii[i] < min) min = radii[i];
+  return Number.isFinite(min) ? min : 0;
+};
+const thinnest = minRadiusOf(helixAtoms.radii, helixAtoms.count);
+near(wideShadow.blur.scale, shadowBlurScale(wideShadow.blur.pxPerAngstrom, thinnest), 1e-9,
+  `le masque EXÉCUTÉ a lu le trait le plus fin de sa scène (${thinnest} Å) : l’échelle est celle de la règle, pas une constante`);
 eq(wideShadow.penumbra.radius, wideShadow.blur.softness,
   'le rayon de pénombre RENDU est celui du flou réduit — le masque dit ce qu’il a vraiment reçu');
 ok(wideShadow.penumbra.reached <= pinnedShadow.penumbra.reached,

@@ -177,7 +177,9 @@ eq(AFTER.nucleic.gradientFrom, 0x00ff00, '…et toutes les autres avec elle');
 eq(CAT_STYLES.protein.gradientFrom, 0xff0000, 'la table d’entrée n’est jamais modifiée en place');
 has('setCatStyles((prev) => setGradientPairIn(prev, key, hex));', 'les pastilles écrivent la paire par setGradientPairIn');
 has('const gradientRampSignature =', 'la paire du dégradé entre dans la signature du style');
-has('|ramp:${gradientRampSignature}`;', '…donc une pastille fait REBÂTIR les représentations (sinon rien ne se repeint)');
+has('|ramp:${gradientRampSignature}', '…donc une pastille fait REBÂTIR les représentations (sinon rien ne se repeint)');
+has('|gesture:${sectionEpoch}`;',
+  '…et le compteur des gestes de la barre la ferme : un geste fait TOUJOURS rebâtir (le rapport « la scène ne s\'actualise pas tout de suite »)');
 has("title=\"Colour of the FIRST residue of every chain (N terminus · 5' end)\"",
   'les deux pastilles existent aussi dans la RANGÉE de la barre, là où le dégradé se choisit');
 has('<button type="button" onClick={swapGeneralGradient}', 'le ⇄ de la rangée inverse la paire globale');
