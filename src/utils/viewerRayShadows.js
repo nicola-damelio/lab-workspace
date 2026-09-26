@@ -210,6 +210,17 @@ export const RAY_SHADOW_DEFAULTS = Object.freeze({
   pcfTaps: 8,
   penumbra: 1.5,
   penumbraMax: 8,
+  /* ── LE MULTIPLICATEUR DE DOUCEUR (le curseur « blur » de la barre) ─────────
+     « you should also give me the possibility to control the blur and darkness » :
+     la noirceur, c'est `strength` ; la douceur du CONTOUR, c'est ce nombre. Il met
+     à l'échelle les trois réglages de pénombre d'un coup — `softness`, `penumbra`
+     et `penumbraMax`, donc la largeur du disque PCF *et* sa croissance avec
+     l'écart occulteur/récepteur : 1 = les valeurs par défaut ci-dessus, 0 = un
+     contour net (l'ombre dure d'une carte d'ombre), 4 = une pénombre très large.
+     Il ne touche NI la direction (elle vient du rig ◐ Shadows) NI la noirceur, et
+     un `softness` / `penumbra` donné en clair par un appelant garde la main sur
+     lui (voir rayShadowOptions). */
+  blur: 1,
 });
 
 /* The options a caller may pass, normalised: anything missing falls back on the
@@ -218,17 +229,25 @@ export const rayShadowOptions = (options = {}) => {
   const d = RAY_SHADOW_DEFAULTS;
   const num = (v, fallback) => (Number.isFinite(Number(v)) ? Number(v) : fallback);
   const span = (v, fallback, lo, hi) => Math.min(hi, Math.max(lo, num(v, fallback)));
+  /* LA DOUCEUR DU CONTOUR D'ABORD : `blur` multiplie les trois réglages de
+     pénombre — mais SEULEMENT ceux que l'appelant ne donne pas lui-même (un
+     `softness` / `penumbra` en clair l'emporte, comme le `taps: 8` de certains
+     tests). Avec le blur par défaut (1) les valeurs ci-dessous sont EXACTEMENT
+     celles d'avant, au bit près (× 1), donc aucune image ne change. */
+  const blur = span(options.blur, d.blur, 0, 4);
+  const soft = (v, fallback) => (v == null ? fallback * blur : num(v, fallback * blur));
   return {
     strength: span(options.strength, d.strength, 0, 1),
-    softness: Math.max(0, num(options.softness, d.softness)),
+    softness: Math.max(0, soft(options.softness, d.softness)),
     maskMaxWidth: Math.max(64, Math.round(num(options.maskMaxWidth, d.maskMaxWidth))),
     bias: num(options.bias, d.bias),
     sphereScale: Math.max(0.1, num(options.sphereScale, d.sphereScale)),
     maxAtoms: Math.max(1, Math.round(num(options.maxAtoms, d.maxAtoms))),
     fitMargin: span(options.fitMargin, d.fitMargin, 1, 2),
     pcfTaps: span(Math.round(num(options.pcfTaps, d.pcfTaps)), d.pcfTaps, 1, 32),
-    penumbra: Math.max(0, num(options.penumbra, d.penumbra)),
-    penumbraMax: Math.max(0, num(options.penumbraMax, d.penumbraMax)),
+    penumbra: Math.max(0, soft(options.penumbra, d.penumbra)),
+    penumbraMax: Math.max(0, soft(options.penumbraMax, d.penumbraMax)),
+    blur,
   };
 };
 

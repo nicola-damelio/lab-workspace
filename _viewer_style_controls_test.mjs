@@ -261,13 +261,17 @@ has('baseColor: DEFAULT_NUCLEIC_COLORS.base,', '…et les bases');
 has("{ sub: 'bases', label: 'DNA/RNA bases', styles: STYLES.bases, colors: COLORS.nucleicParts, def: { style: 'rings', colorBy: 'basetype' }, sele: 'bases' },",
   'les bases sont des PLAQUES PLEINES par défaut de leur rangée');
 has("if (look.style === 'rings' || look.style === 'plates') {", '…les deux styles de plaques partagent UNE branche');
-has('const plates = addPlates(drawn, look, spec.sub);', 'l’INTÉRIEUR des anneaux est une VRAIE plaque pleine');
+has('const plates = addPlates(drawn, look, spec.sub, sugarPlated);', 'l’INTÉRIEUR des anneaux est une VRAIE plaque pleine');
+has("const sugarPlated = spec.sub === 'bases' && ((subLooks.ribose || {}).style === 'plates');",
+  '…et la rangée des bases sait si la rangée du SUCRE dessine, elle aussi, une plaque (le pont C1’–N1/N9)');
+has("const outline = idx && idx.length", '…le pourtour des plaques est calculé à part (atomes des anneaux + pont éventuel)');
+has("addRow('licorice', { sele: `@${outline.join(',')}`", '…et c’est LUI que le fin anneau de bâtons dessine');
 has('const mesh = new NG.MeshBuffer({ position: data.position, normal: data.normal, color: data.color, index: data.index });',
   '…construite avec le vrai MeshBuffer de NGL');
 has("const rep = comp.addBufferRepresentation(mesh, { opacity: sectionOpacity(look), side: 'double' });",
   '…confiée au composant de structure, avec la transparence de SA rangée');
 has("sugarPlate: sub === 'ribose',", 'la plaque de l’anneau du RIBOSE est celle de la rangée « DNA/RNA ribose »');
-has("addRow('licorice', { sele: `@${idx.join(',')}`", 'un fin anneau de bâtons dessine le pourtour — des ANNEAUX seulement');
+has("addRow('licorice', { sele: `@${outline.join(',')}`", 'un fin anneau de bâtons dessine le pourtour — des ANNEAUX seulement');
 has("const baseIdentityCol = () => (baseIdentitySchemeKey ? { color: baseIdentitySchemeKey } : { colorScheme: 'resname' });",
   'repli sur la palette resname si le schéma n’a pas pu être enregistré');
 has('const BASE_IDENTITY_COLORS = { A: 0x22c55e, C: 0x3b82f6, G: 0xf59e0b, T: 0xec4899, U: 0xef4444 };',

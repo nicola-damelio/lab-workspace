@@ -4014,11 +4014,20 @@ const ringPlateColorOf = (m, resname, group) => {
 // The plate data of every ring of the nucleic atoms of ONE selection: one
 // MeshBuffer worth of vertices, plane normals, per-vertex colours and triangles,
 // plus the atom indices of the rings (the outline of the plates is drawn over
-// exactly those atoms). Returns null when the selection holds no ring at all.
+// exactly those atoms) and — quand les DEUX anneaux d'un nucléotide sont remplis —
+// les atomes de la liaison glycosidique qui les relie (`linkAtoms`, voir plus
+// bas). Returns null when the selection holds no ring at all.
 const nucleicRingPlates = (structure, sele, m) => {
   if (!structure || !sele || typeof structure.eachAtom !== 'function') return null;
   if (!m || m.bases !== 'rings') return null;   // the plates ARE the « Stylized rings » look
   const wantSugar = m.sugarPlate !== false;
+  /* LE SUCRE LU POUR LE PONT SEUL. La rangée des BASES remplit les anneaux des
+     bases ; elle ne remplit pas celui du sucre, mais elle doit pouvoir dessiner la
+     liaison C1'–N1/N9 quand la rangée « DNA/RNA ribose » dessine, ELLE, une plaque
+     (voir `sugarLink`). Le sucre est alors LU — ses anneaux sont trouvés sur le
+     graphe de liaisons — sans qu'une seule facette soit produite pour lui. */
+  const wantSugarForLink = m.sugarLink === true;
+  const fillGroup = (group) => (group === 'pentose' ? wantSugar : true);
   // 1. The heavy atoms of every nucleotide of the selection, sorted into the
   //    chemical groups the plate colouring speaks about (base / pentose).
   const residues = new Map();   // residueIndex → { resname, base: [index…], pentose: […] }
@@ -4027,7 +4036,7 @@ const nucleicRingPlates = (structure, sele, m) => {
       if (String(a.element || '').toUpperCase() === 'H') return;   // a ring is heavy atoms
       const group = nucleicGroupOf(a.atomname);
       if (group === 'phosphate') return;                           // the backbone is not a ring
-      if (group === 'pentose' && !wantSugar) return;
+      if (group === 'pentose' && !wantSugar && !wantSugarForLink) return;
       const ri = a.residueIndex;
       let res = residues.get(ri);
       if (!res) { res = { resname: a.resname, base: [], pentose: [] }; residues.set(ri, res); }
@@ -4040,11 +4049,16 @@ const nucleicRingPlates = (structure, sele, m) => {
   const color = [];
   const index = [];
   const atomIndices = [];
+  const linkAtoms = [];
   const seen = new Set();
   residues.forEach((res) => {
+    // The rings of this residue, per group, IN RING ORDER (a plate is filled from
+    // its own cycle, and the cycle is what a fan needs).
+    const ringsOf = { base: [], pentose: [] };
     ['base', 'pentose'].forEach((group) => {
       const nodes = res[group];
       if (!nodes || nodes.length < 3) return;
+      if (group === 'pentose' && !wantSugar && !wantSugarForLink) return;
       const inGroup = new Set(nodes);
       const neighbours = {};
       const points = {};
@@ -4059,6 +4073,8 @@ const nucleicRingPlates = (structure, sele, m) => {
       });
       const rgb = hexToRgb01(ringPlateColorOf(m, res.resname, group));
       ringCyclesOf(nodes, neighbours).forEach((ring) => {
+        ringsOf[group].push(ring);
+        if (!fillGroup(group)) return;   // lu pour le pont, pas rempli : aucune facette
         const tri = ringPlateTriangles(ring.map((i) => points[i]));
         if (!tri) return;
         const offset = position.length / 3;
@@ -4069,6 +4085,25 @@ const nucleicRingPlates = (structure, sele, m) => {
         ring.forEach((i) => { if (!seen.has(i)) { seen.add(i); atomIndices.push(i); } });
       });
     });
+    /* ── LA LIAISON ENTRE LES DEUX PLAQUES D'UN NUCLÉOTIDE ────────────────────
+       L'anneau de la base et celui du sucre sont deux rangées distinctes, et la
+       liaison glycosidique (le C1' du pentose sur le N1 / N9 de la base) n'est
+       dans le cycle NI de l'une NI de l'autre : chaque plaque reste donc posée
+       à côté de l'autre. Quand les DEUX anneaux sont remplis, les deux atomes qui
+       les relient sont gardés ici (`linkAtoms`) pour que la rangée qui les dessine
+       tende AUSSI ce bâton — lu sur le GRAPHE DE LIAISONS de la structure, jamais
+       deviné par un nom d'atome. Une seule des deux plaques : aucun pont (un bout
+       qui flotte est exactement ce que la demande écarte). */
+    if (ringsOf.base.length && ringsOf.pentose.length) {
+      const sugarRing = new Set(ringsOf.pentose.flat());
+      ringsOf.base.flat().forEach((i) => {
+        try {
+          structure.getAtomProxy(i).eachBondedAtom((b) => {
+            if (b && sugarRing.has(b.index)) linkAtoms.push(i, b.index);
+          });
+        } catch { /* pas de proxy → pas de pont */ }
+      });
+    }
   });
   if (!index.length) return null;
   return {
@@ -4077,6 +4112,7 @@ const nucleicRingPlates = (structure, sele, m) => {
     color: new Float32Array(color),
     index: new Uint32Array(index),
     atomIndices: atomIndices.sort((a, b) => a - b),
+    linkAtoms: [...new Set(linkAtoms)].sort((a, b) => a - b),
     rings: index.length / 3,          // one fan triangle per ring vertex
   };
 };
@@ -5781,6 +5817,19 @@ const [rayShadowStrength, setRayShadowStrength] = useState(() => {
     return Number.isFinite(v) && v > 0 ? Math.min(1, v / 100) : RAY_SHADOW_DEFAULTS.strength;
   } catch { return RAY_SHADOW_DEFAULTS.strength; }
 });
+/* LA DOUCEUR DU CONTOUR — le pendant de la noirceur (le rapport : « you should also
+   give me the possibility to control the blur »). C'est un MULTIPLICATEUR des trois
+   réglages de pénombre du module (softness · penumbra · penumbraMax, voir
+   RAY_SHADOW_DEFAULTS.blur) : 1 = les valeurs par défaut, 0 = un contour net, 4 = une
+   ombre très diffuse. Il se souvient dans la MÊME préférence que la case et la
+   noirceur (`on:<force %>:<doux %>`) : un rechargement rend les deux curseurs là où
+   ils étaient, et un ancien enregistrement (sans le troisième champ) retombe sur 1. */
+const [rayShadowBlur, setRayShadowBlur] = useState(() => {
+  try {
+    const v = Number((localStorage.getItem('labViewerRayShadows') || '').split(':')[2]);
+    return Number.isFinite(v) && v > 0 ? Math.min(4, v / 100) : 1;
+  } catch { return 1; }
+});
 const [rayBusy, setRayBusy] = useState(false);
 const [rayMsg, setRayMsg] = useState('');
 // One token per render: a slow ray that is superseded by a second click may
@@ -5793,8 +5842,8 @@ useEffect(() => {
   try { localStorage.setItem('labViewerRayTransparent', rayTransparent ? 'on' : 'off'); } catch { /* ignore */ }
 }, [rayTransparent]);
 useEffect(() => {
-  try { localStorage.setItem('labViewerRayShadows', rayShadows ? `on:${Math.round(rayShadowStrength * 100)}` : 'off'); } catch { /* ignore */ }
-}, [rayShadows, rayShadowStrength]);
+  try { localStorage.setItem('labViewerRayShadows', rayShadows ? `on:${Math.round(rayShadowStrength * 100)}:${Math.round(rayShadowBlur * 100)}` : 'off'); } catch { /* ignore */ }
+}, [rayShadows, rayShadowStrength, rayShadowBlur]);
 /* The resolution list of the ✨ Ray selector is written in PIXELS (`3× · 4800×
    2700 px`), so it is rebuilt when the canvas really changes size — a window
    resize, a new structure — and never shows a size another screen would give.
@@ -7907,7 +7956,7 @@ const buildSectionReps = (comp, sections, trees, opts = {}) => {
   // The colour of a plate is the identity of its base — the palette of the ⚙ wheel —
   // or the row's ONE flat colour for « Solid »; the OUTLINE sticks above carry the
   // row's own colouring, whatever it is.
-  const addPlates = (sele, look, sub) => {
+  const addPlates = (sele, look, sub, sugarLink) => {
     const NG = typeof window !== 'undefined' ? window.NGL : null;
     if (!NG || typeof NG.MeshBuffer !== 'function') return null;
     const data = nucleicRingPlates(structure, sele, {
@@ -7917,6 +7966,12 @@ const buildSectionReps = (comp, sections, trees, opts = {}) => {
       // The bases row fills the BASE rings and the ribose row the PENTOSE rings; the
       // selection handed in already restricts the walk to that row's own atoms.
       sugarPlate: sub === 'ribose',
+      // …mais l'anneau du SUCRE est lu aussi quand la rangée des bases demande le
+      // PONT vers lui (`sugarLink` : la rangée « DNA/RNA ribose » dessine alors une
+      // plaque elle aussi — voir le commentaire de l'appel). Aucune facette n'est
+      // produite pour lui dans ce cas : seuls les deux atomes de la liaison
+      // glycosidique entrent dans l'encadrement des plaques (data.linkAtoms).
+      sugarLink: !!sugarLink,
       groupColour: false,
     });
     if (!data || !data.rings) return null;
@@ -8036,10 +8091,34 @@ const buildSectionReps = (comp, sections, trees, opts = {}) => {
         return el;
       };
       if (look.style === 'rings' || look.style === 'plates') {
-        const plates = addPlates(drawn, look, spec.sub);
+        /* LE PONT VERS LA PLAQUE VOISINE — la demande : « the stylised rings of the
+           DNA/RNA style should include the bond to the ribose / desoxyribose only
+           when the latter is in “ring plate” style ». L'anneau de la BASE et celui
+           du SUCRE sont deux rangées distinctes : chacune ne dessine que ses
+           propres atomes, donc la liaison glycosidique (C1' → N1 / N9) n'est dans
+           l'encadrement NI de l'une NI de l'autre et les deux plaques restent
+           posées côte à côte. La rangée des BASES dessine ce bâton quand — et
+           seulement quand — la rangée « DNA/RNA ribose » dessine, elle aussi, une
+           PLAQUE (style « Ring plates ») : les deux anneaux sont alors TENUS
+           ensemble. Sucre en bâtons, en lignes, en billes ou caché : sa rangée
+           dessine déjà sa propre liaison quand elle dessine des atomes (voir
+           sectionRowSele), et une plaque qui tendrait un bâton vers un atome que
+           personne ne dessine serait un bout qui flotte — exactement ce que la
+           demande écarte. */
+        const sugarPlated = spec.sub === 'bases' && ((subLooks.ribose || {}).style === 'plates');
+        const plates = addPlates(drawn, look, spec.sub, sugarPlated);
         const idx = plates && plates.data ? plates.data.atomIndices : null;
-        if (idx && idx.length) {
-          addRow('licorice', { sele: `@${idx.join(',')}`, ...colorParams, radiusSize: LICORICE_BOND_RADIUS * 0.6 * (Number.isFinite(look.bond) ? look.bond : 1), opacity });
+        const link = sugarPlated && plates && plates.data && plates.data.linkAtoms ? plates.data.linkAtoms : null;
+        // L'encadrement des plaques est exactement `atomIndices`, plus les deux
+        // atomes du pont quand il y en a un : NGL dessine un bâton dès que ses DEUX
+        // atomes sont dans la sélection, donc la liaison apparaît — et rien d'autre
+        // ne change (les atomes de la base sont déjà là, et le C1' ainsi ajouté est
+        // déjà dessiné par la plaque du sucre).
+        const outline = idx && idx.length
+          ? (link && link.length ? [...new Set([...idx, ...link])].sort((a, b) => a - b) : idx)
+          : null;
+        if (outline && outline.length) {
+          addRow('licorice', { sele: `@${outline.join(',')}`, ...colorParams, radiusSize: LICORICE_BOND_RADIUS * 0.6 * (Number.isFinite(look.bond) ? look.bond : 1), opacity });
         }
       } else {
         sectionStyleReps(look.style, sec.kind, look).forEach(({ type, params }) => {
@@ -11228,8 +11307,17 @@ const renderSection = (sec) => {
           window now, in the lipid space, each with the full command set — and
           every selection a macro makes on lipids is listed with them. Rendered
           once per molecule (the first lipid space), never one copy per lipid
-          kind. */}
-      {shown && kind === 'lipid' && sec.id === firstLipidSectionOf(String(sec.id).split('::')[0]) && renderMembraneSelections(sec)}
+          kind.
+
+          ⚠ JAMAIS SOUS LA COCHE DE LA MOLÉCULE. Le groupe était gaté par `shown`
+          (la case « Draw « POPC » ») : décocher la molécule — un geste qui ne
+          cache QUE les représentations de la section — faisait DISPARAÎTRE tout
+          le groupe 🧫, alors que les rangées de feuillets, elles, continuent d'être
+          dessinées (ce sont des sélections à part, avec leur propre style) : plus
+          moyen de les styler, ni même de les cacher. Le seul état qui compte ici
+          est qu'il EXISTE des sélections de lipides, et `renderMembraneSelections`
+          ne rend rien du tout quand il n'y en a pas. */}
+      {kind === 'lipid' && sec.id === firstLipidSectionOf(String(sec.id).split('::')[0]) && renderMembraneSelections(sec)}
 
       <div className="flex items-center gap-1">
         <span className="text-[9px] font-bold text-slate-400 shrink-0" title="3D labels of THIS molecule alone">🏷</span>
@@ -11936,6 +12024,10 @@ const captureRay = async () => {
       shadows: rayShadows,
       lightDir: [lamp.x, lamp.y, lamp.z],
       shadow: { strength: rayShadowStrength },
+      // LA DOUCEUR DU CONTOUR, à part : le module la fusionne dans ses options
+      // d'ombre (voir captureRayImage), donc `shadow: { strength }` reste la
+      // façon dont la barre dit la noirceur.
+      shadowBlur: rayShadowBlur,
     });
     if (rayRunRef.current !== run) return;
     setRayMsg(out.saved
@@ -11951,6 +12043,22 @@ const captureRay = async () => {
       setTimeout(() => { if (rayRunRef.current === run) setRayMsg(''); }, 8000);
     }
   }
+};
+
+/* ⏹ ARRÊTER D'ATTENDRE — le rendu d'une « ray » ne peut pas être ANNULÉ dans NGL
+   (`makeImage` n'offre ni signal ni abort) : ce bouton rend la main à
+   l'utilisateur tout de suite. Le jeton du rendu change, donc son résultat — s'il
+   arrive un jour — n'écrit plus rien et ne télécharge rien ; la scène à l'écran,
+   elle, n'a jamais été touchée. Le chien de garde du module (RAY_STALL_MS) fait
+   exactement cela tout seul quand le rendu se tait trop longtemps — le bouton est
+   là pour celui qui ne veut pas attendre le verdict. */
+const abandonRay = () => {
+  if (!rayBusy) return;
+  const run = rayRunRef.current + 1;
+  rayRunRef.current = run;
+  setRayBusy(false);
+  setRayMsg('⏹ Ray abandoned — this render is no longer waited for (the scene on screen is untouched, and no file will be written).');
+  setTimeout(() => { if (rayRunRef.current === run) setRayMsg(''); }, 8000);
 };
 
 // ⚡ ESP targets the molecule currently selected in the Molecules bar.
@@ -13294,13 +13402,41 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
     ◐ shadows
   </label>
   {rayShadows && (
-    <input
-      type="range" min="0.1" max="1" step="0.05" value={rayShadowStrength}
-      onChange={(e) => setRayShadowStrength(Number(e.target.value))}
-      className="accent-amber-600 w-16 shrink-0"
-      title={`Darkness of the cast shadow — ${Math.round(rayShadowStrength * 100)} % (the DIRECTION comes from the 💡 Light sliders of « 2 · Toolbar » — Azimuth / Elevation)`}
-      aria-label="cast shadow strength"
-    />
+    <>
+      <input
+        type="range" min="0.1" max="1" step="0.05" value={rayShadowStrength}
+        onChange={(e) => setRayShadowStrength(Number(e.target.value))}
+        className="accent-amber-600 w-16 shrink-0"
+        title={`Darkness of the cast shadow — ${Math.round(rayShadowStrength * 100)} % (the DIRECTION comes from the 💡 Light sliders of « 2 · Toolbar » — Azimuth / Elevation)`}
+        aria-label="cast shadow strength"
+      />
+      {/* LA DOUCEUR DU CONTOUR — l'autre moitié réglable d'une ombre portée (sa
+          direction est celle du rig ◐). Elle multiplie la pénombre du module
+          (RAY_SHADOW_DEFAULTS.blur : 0 = contour net, 1 = les valeurs par défaut,
+          4 = très diffuse) — la noirceur ne bouge pas, et un rendu à 1 est
+          exactement celui d'avant. */}
+      <input
+        type="range" min="0" max="4" step="0.25" value={rayShadowBlur}
+        onChange={(e) => setRayShadowBlur(Number(e.target.value))}
+        className="accent-amber-600 w-16 shrink-0"
+        title={`Softness of the cast shadow — ×${Number(rayShadowBlur).toFixed(2)} of the default penumbra (0 = a hard edge, 1 = the viewer's own default, 4 = a very diffuse shadow). It widens the shadow blur AND how much that blur grows with the occluder-to-receiver distance.`}
+        aria-label="cast shadow blur"
+      />
+    </>
+  )}
+  {/* ⏹ STOP WAITING (le rapport : « start ray tracing … hangs ») : NGL ne sait pas
+      annuler un `makeImage` — le seul geste honnête est de cesser de l'attendre.
+      Le rendu abandonné n'écrira AUCUN fichier ; le module abandonne de lui-même
+      après RAY_STALL_MS de silence (voir viewerRayImage.js). */}
+  {rayBusy && (
+    <button
+      type="button"
+      onClick={abandonRay}
+      className="px-1.5 py-1 text-[10px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap bg-white border-amber-400 text-amber-800 hover:bg-amber-50"
+      title="Stop waiting for this render: the button is freed at once and this still is abandoned (NGL cannot cancel an image it has begun — no file will be written). The ✨ Ray render itself gives up on its own after 45 s without a sign of life."
+    >
+      ⏹ stop
+    </button>
   )}
 </div>
 {rayMsg && (

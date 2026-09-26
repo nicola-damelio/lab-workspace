@@ -77,8 +77,15 @@ gone('upper ${info.upperAtoms} atoms / ${info.upperResidues} lipids / lower',
 /* ── 2. LES RANGÉES VIVENT DANS L'ESPACE PHOSPHOLIPIDES DU STYLING ─────── */
 has("const renderMembraneSelections = (sec) => {", 'un rendu dédié aux sélections lipidiques');
 has('🧫 Membrane · leaflets', '…sous le nom « Membrane · leaflets »');
-has("{shown && kind === 'lipid' && sec.id === firstLipidSectionOf(String(sec.id).split('::')[0]) && renderMembraneSelections(sec)}",
-  '…rendu dans les ESPACES LIPIDIQUES (kind === \'lipid\') ET quand la molécule est visible, pas dans la barre de gauche');
+/* LE GROUPE 🧫 NE DÉPEND PLUS DE LA COCHE DE LA MOLÉCULE (le rapport : décocher
+   « Draw « POPC » » faisait disparaître tout le groupe, alors que les rangées de
+   feuillets, elles, continuent d’être dessinées — elles devenaient impossibles à
+   styler comme à cacher). Il se rend toujours dans les espaces lipidiques
+   (kind === 'lipid'), une seule fois par molécule. */
+has("{kind === 'lipid' && sec.id === firstLipidSectionOf(String(sec.id).split('::')[0]) && renderMembraneSelections(sec)}",
+  '…rendu dans les ESPACES LIPIDIQUES (kind === \'lipid\') et JAMAIS sous la case de la molécule, pas dans la barre de gauche');
+gone("{shown && kind === 'lipid' && sec.id === firstLipidSectionOf(String(sec.id).split('::')[0])",
+  '…et plus du tout derrière « Draw « POPC » » (le groupe survit à la molécule décochée)');
 has('const firstLipidSectionOf = (molKey) => {',
   '…UNE seule fois par molécule (la première cuve lipidique), jamais une copie par type de lipide');
 has('{info.axis} · mid {info.midplane.toFixed(1)} Å · {info.thickness.toFixed(1)} Å',

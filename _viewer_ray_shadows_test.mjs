@@ -94,6 +94,21 @@ ok(MODULE.includes('LINKED_KINDS') && MODULE.includes('camera.reach'),
 eq(rayShadowOptions({}), { ...RAY_SHADOW_DEFAULTS }, 'sans option, ce sont les valeurs par défaut');
 eq(rayShadowOptions({ strength: 5 }).strength, 1, 'une force au-dessus de 1 est ramenée à 1');
 eq(rayShadowOptions({ strength: -3 }).strength, 0, '…et en dessous de 0 à 0');
+/* LA DOUCEUR DU CONTOUR (le curseur « blur » de la barre, à côté de la noirceur) :
+   un MULTIPLICATEUR des trois réglages de pénombre — la noirceur, elle, ne bouge
+   pas, et à 1 RIEN ne change (aucun rendu existant n'est modifié). */
+eq([rayShadowOptions({ blur: 1 }).softness, rayShadowOptions({ blur: 1 }).penumbra],
+  [RAY_SHADOW_DEFAULTS.softness, RAY_SHADOW_DEFAULTS.penumbra],
+  'blur = 1 rend EXACTEMENT les valeurs d’avant (aucune image ne change)');
+eq(rayShadowOptions({ blur: 2 }).softness, RAY_SHADOW_DEFAULTS.softness * 2,
+  'blur = 2 élargit la pénombre (le disque PCF, donc le contour de l’ombre)');
+eq(rayShadowOptions({ blur: 0 }).softness, 0,
+  'blur = 0 donne un contour net (l’ombre dure d’une simple carte d’ombre)');
+eq(rayShadowOptions({ blur: 99 }).blur, 4, 'un blur démesuré est ramené à son maximum (4)');
+eq(rayShadowOptions({ blur: 2, softness: 3 }).softness, 3,
+  'un `softness` donné en clair garde la main sur le curseur (le module reste seul maître de ses réglages)');
+eq(rayShadowOptions({ blur: 2 }).strength, RAY_SHADOW_DEFAULTS.strength,
+  'le blur ne touche PAS la noirceur : les deux curseurs sont indépendants');
 eq(rayShadowOptions({ maskMaxWidth: 10 }).maskMaxWidth, 64, 'un masque ridiculement petit est relevé (jamais < 64)');
 const big = rayShadowMaskSize(4800, 2700, {});
 eq(big.width, RAY_SHADOW_DEFAULTS.maskMaxWidth, 'le masque est plafonné en largeur');
@@ -335,11 +350,15 @@ hasRay('const shadowTooBig = wantsShadow && pixels > shadowBudget;',
 hasRay('inputs = rayShadowInputsOf(stage, {', '…la scène est lue sur le stage');
 hasRay('buildRayShadowMask({', '…le masque est construit pour la taille RÉELLE de l’image (factor compris)');
 /* ⚠ L’ORDRE EST LA CORRECTION DE LA TACHE DÉTACHÉE (voir §13) : `makeImage` laisse
-   la caméra dans le sous-frustum de sa DERNIÈRE tuile, donc le rig se lit avant. */
+   la caméra dans le sous-frustum de sa DERNIÈRE tuile, donc le rig se lit avant.
+   Le rendu passe désormais par `makeImageGuarded` (le chien de garde de RAY_STALL_MS,
+   défini plus haut dans le fichier) : c’est son APPEL qui doit venir après la lecture
+   du rig, et `stage.makeImage` n’a qu’UN seul appelant — le chien de garde. */
 const readAt = RAY.indexOf('rayShadowInputsOf(stage, {');
-const renderAt = RAY.indexOf('await stage.makeImage({');
+const renderAt = RAY.indexOf('makeImageGuarded(stage, {');
 ok(readAt > 0 && renderAt > 0 && readAt < renderAt,
-  'le rig (caméra + atomes) est lu AVANT `stage.makeImage` : la caméra ne peut pas être celle d’une tuile');
+  'le rig (caméra + atomes) est lu AVANT le rendu : la caméra ne peut pas être celle d’une tuile');
+hasRay('stage.makeImage({', '…et `stage.makeImage` n’est appelée QUE par le chien de garde (un seul point d’entrée vers NGL)');
 hasRay('blob = await addCastShadowsToBlob(blob, { shadow });',
   '…et multiplié dans les pixels que NGL vient d’écrire');
 hasRay("shadowSkip = (err && err.message) || 'the mask could not be applied to the still';",

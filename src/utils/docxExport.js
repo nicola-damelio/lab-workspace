@@ -346,6 +346,13 @@ const pictureOf = (dataUrl) => {
 
 const EMU_PER_PX = 9525;      // 914 400 EMU par pouce, à 96 pixels par pouce
 const CONTENT_EMU = 6126624;  // 17,01 cm : une page A4 moins ses marges de 2 cm
+/* …ET SA HAUTEUR (14 570 twips = 9 251 950 EMU). Une figure plus haute que la
+   colonne de texte ne peut tenir sur AUCUNE page : Word la pousse alors seule sur
+   la page suivante et laisse un GRAND VIDE derrière elle (le rapport : « when you
+   export to word … large empty spaces in the page »). Toute image est donc
+   ramenée à 90 % de cette hauteur au plus (son rapport est gardé) : elle tient
+   toujours sur une page, avec sa légende. */
+const CONTENT_EMU_H = 8326755;
 
 /** Un `<w:drawing>` : l'image à l'échelle de la page (une figure plus large que
  *  la colonne de texte est réduite, son rapport gardé) et à la LARGEUR choisie
@@ -355,6 +362,9 @@ const drawingXml = (pic, widthPct) => {
   let cx = Math.round(pic.w * EMU_PER_PX);
   let cy = Math.round(pic.h * EMU_PER_PX);
   if (cx > max) { cy = Math.round((cy * max) / cx); cx = max; }
+  // …puis à la HAUTEUR de la colonne de texte (voir CONTENT_EMU_H) : une figure
+  // portrait ne peut pas être plus haute qu'une page.
+  if (cy > CONTENT_EMU_H) { cx = Math.round((cx * CONTENT_EMU_H) / cy); cy = CONTENT_EMU_H; }
   return '<w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0">'
     + `<wp:extent cx="${cx}" cy="${cy}"/><wp:docPr id="${pic.id}" name="Picture ${pic.id}"/>`
     + `<a:graphic><a:graphicData uri="${PIC_URI}">`
@@ -499,9 +509,20 @@ const renderBlock = (node, ctx, part) => {
   const own = partOfClasses(node);
   const pid = own || part || PART_BY_TAG[t] || '';
   const base = ctx.styleOf(pid);
+  /* La LÉGENDE d'une figure porte son STYLE DE PARAGRAPHE nommé (`Caption`, voir
+     captionStyle) : c'est ce que reflowFigures RECONNAÎT pour emmener une figure
+     AVEC sa légende. « Le paragraphe court qui suit une figure » n'en est qu'une
+     conjecture — un intitulé de section la suit aussi — alors que le style, lui,
+     est une certitude. Une `<figcaption>` l'est même quand un conteneur lui a
+     donné la partie « figure » (voir PART_BY_CLASS). */
+  const captionPart = t === 'figcaption' || pid === 'caption';
   /* L'alignement est une affaire de PARAGRAPHE (voir para), le reste va aux runs
      — exactement la répartition de la feuille du document. */
-  const popt = (extra) => ({ ...(base && base.align ? { align: base.align } : {}), ...extra });
+  const popt = (extra) => ({
+    ...(base && base.align ? { align: base.align } : {}),
+    ...(captionPart ? { style: 'Caption' } : {}),
+    ...extra
+  });
   if (t === '#text') {
     const text = String(node.text || '').replace(/\s+/g, ' ').trim();
     return text ? para(run(text, base), popt()) : '';
@@ -509,7 +530,10 @@ const renderBlock = (node, ctx, part) => {
   if (t === 'script' || t === 'style' || t === 'head' || t === 'svg' || t === 'input') return '';
   if (t === 'img') {
     const drawing = renderPicture(node, ctx, base);
-    return drawing ? para(drawing, popt()) : '';
+    /* `keepNext` : l'image et sa LÉGENDE (le paragraphe qui suit) sont UN SEUL
+       objet — Word ne les sépare jamais entre deux pages (c'est aussi la raison
+       pour laquelle reflowFigures les déplace ensemble). */
+    return drawing ? para(drawing, popt({ keepNext: true })) : '';
   }
   if (isScreenOnly(node)) return '';
   if (t === 'hr') return para('', popt({ rule: 'AAAAAA' }));
@@ -565,6 +589,174 @@ const renderBlock = (node, ctx, part) => {
   return para(kids.map((c) => renderInline(c, ctx, base)).join(''), popt());
 };
 
+/* ── 4 ter. LA REMISE EN PAGE DES FIGURES (« large empty spaces ») ──────────
+   Le défaut signalé : « when you export to word, you should reimpaginate and move
+   the figures to avoid large empty spaces in the page. » Un .docx n'a PAS de
+   pagination : c'est Word qui pagine à l'ouverture, et une figure qui ne tient pas
+   au bas d'une page y laisse un VIDE de la hauteur qu'elle aurait occupée — le
+   texte qui la suit, lui, ne remonte jamais. Ce module connaît l'ORDRE des blocs :
+   il peut donc faire ce qu'un typographe fait, et que Word ne fait pas à notre
+   place. Quand une figure ne tient pas dans la place qui reste, elle est DÉPLACÉE
+   après le texte qui suit jusqu'à la première place où elle tient ENTIÈREMENT
+   (avec sa légende) : le texte remplit la page qu'elle laissait vide, et la figure
+   tombe en tête de la page suivante — exactement comme une figure de journal.
+
+   ⚠ AUCUN SAUT DE PAGE N'EST ÉCRIT : l'ordre seul change. Word repagine donc
+   librement, et si sa métrique différait de l'estimation ci-dessous, le pire qui
+   puisse arriver est le vide d'aujourd'hui — jamais une page blanche ajoutée.
+
+   Les mesures sont celles du corps A4 (21 × 29,7 cm, marges de 2 cm — la feuille
+   de `documentXml`), de la hauteur de ligne des styles (`w:line="276"`, soit 1,15
+   ligne) et du corps de texte choisi dans le « Publication format » (voir
+   docxStyleOf, la même source que stylesXml). */
+
+const PAGE_CONTENT_H = 14570;   // 16838 (A4) − 2 × 1134 (marges), en twips
+const PAGE_CONTENT_W = 9638;    // 11906 − 2 × 1134, en twips
+const EMU_PER_TWIP = 635;
+
+/** Les mesures d'une page pour ce format : la hauteur d'une ligne, le blanc après
+ *  un paragraphe, la hauteur utilisable d'une page et le nombre de caractères
+ *  qu'une ligne porte. Pure, donc exécutable sous node (voir
+ *  _pub_docx_export_test.mjs). */
+export const docxPageMetrics = (format) => {
+  const body = docxStyleOf(normalizePubLayout(format && format.layout), 'body') || {};
+  const sz = body.size || 22;                        // demi-points, comme stylesXml
+  const line = Math.round(sz * 10 * 1.15);            // 11 pt × 1,15 = 253 twips
+  const charWidth = Math.max(1, Math.round((sz / 2) * 10.5));   // ≈ 0,525 em
+  return {
+    line,
+    after: 140,
+    height: PAGE_CONTENT_H,
+    charsPerLine: Math.max(20, Math.round(PAGE_CONTENT_W / charWidth)),
+  };
+};
+
+const blockTextOf = (block) => block.replace(/<[^>]*>/g, '');
+const blockHasDrawing = (block) => block.indexOf('<w:drawing') !== -1;
+
+/** La hauteur ESTIMÉE d'un bloc, en twips : le plus grand `w:sz` du bloc décide de
+ *  sa hauteur de ligne (un intitulé est plus grand que le texte), un `w:drawing`
+ *  apporte la hauteur de son image (`wp:extent cy`, en EMU), et le texte décide de
+ *  son nombre de lignes. Une estimation n'a pas à être exacte : elle décide
+ *  seulement OÙ une figure est mieux placée (voir reflowFigures). */
+export const blockHeight = (block, metrics) => {
+  const m = metrics || docxPageMetrics(null);
+  const sizes = [...block.matchAll(/<w:sz w:val="(\d+)"/g)].map((x) => Number(x[1])).filter((n) => n > 0);
+  const sz = sizes.length ? Math.max(...sizes) : 0;
+  const line = sz ? Math.max(m.line, Math.round(sz * 10 * 1.15)) : m.line;
+  if (block.startsWith('<w:tbl')) {
+    const rows = (block.match(/<w:tr\b/g) || []).length || 1;
+    return (rows * (line + 60)) + m.after;
+  }
+  const extent = /<wp:extent\b[^>]*\bcy="(\d+)"/.exec(block);
+  const image = extent ? Math.round(Number(extent[1]) / EMU_PER_TWIP) : 0;
+  const text = blockTextOf(block).replace(/\s+/g, ' ').trim();
+  const lines = text ? Math.max(1, Math.ceil(text.length / m.charsPerLine)) : 0;
+  return image + (lines * line) + m.after;
+};
+
+/** Les blocs de PREMIER NIVEAU du corps (`<w:p>…</w:p>`, `<w:p/>`, `<w:tbl>…`) —
+ *  un `<w:p>` d'une cellule de tableau appartient à son tableau. */
+const bodyBlocks = (xml) => {
+  const out = [];
+  const re = /<w:p\/>|<w:p\b[^>]*>|<\/w:p>|<w:tbl\b[^>]*>|<\/w:tbl>/g;
+  let depth = 0;
+  let start = -1;
+  let m = re.exec(xml);
+  while (m) {
+    const tok = m[0];
+    if (tok.startsWith('</')) {
+      depth -= 1;
+      if (depth <= 0 && start >= 0) {
+        out.push(xml.slice(start, m.index + tok.length));
+        start = -1;
+        depth = 0;
+      }
+    } else if (tok.endsWith('/>')) {
+      if (depth <= 0) out.push(tok);
+    } else {
+      if (depth <= 0) start = m.index;
+      depth += 1;
+    }
+    m = re.exec(xml);
+  }
+  if (start >= 0) out.push(xml.slice(start));
+  return out;
+};
+
+const CAPTION_STYLE_RE = /<w:pStyle\b[^>]*\bw:val="Caption"/;
+const HEADING_STYLE_RE = /<w:pStyle\b[^>]*\bw:val="Heading[1-9]"/;
+
+/** La LÉGENDE d'une figure : le paragraphe qui la suit quand c'est bien une
+ *  légende — reconnue à son STYLE (« Caption », voir captionStyle et renderBlock),
+ *  c'est-à-dire sans deviner. La figure et sa légende sont UN objet : elles se
+ *  déplacent ensemble, comme elles sont insécables à l'impression (le
+ *  `<w:keepNext/>` que renderBlock donne à l'image).
+ *
+ *  UN INTITULÉ DE SECTION N'EST JAMAIS UNE LÉGENDE : il suit une figure parce
+ *  qu'il vient après elle dans le document, pas parce qu'il la légende — l'emmener
+ *  ferait passer le titre SOUS son premier paragraphe. Un document écrit avant que
+ *  la légende ait son style garde le repli d'hier : un simple paragraphe de texte
+ *  COURT (≤ 300 caractères), une seconde image ou un tableau n'y entrant jamais. */
+const captionBlocksAfter = (queue) => {
+  const next = queue[0];
+  if (!next || blockHasDrawing(next) || next.startsWith('<w:tbl')) return 0;
+  if (HEADING_STYLE_RE.test(next)) return 0;                 // un intitulé RESTE où il est
+  if (CAPTION_STYLE_RE.test(next)) return 1;                 // la légende, reconnue à son style
+  const text = blockTextOf(next).replace(/\s+/g, ' ').trim();
+  return text && text.length <= 300 ? 1 : 0;                 // repli : un texte court
+};
+
+/** LE CORPS REMIS EN PAGE : le même corps, avec les figures DÉPLACÉES pour que le
+ *  texte remplisse les pages (voir la note ci-dessus). Le corps est rendu tel quel
+ *  quand il n'y a pas de figure, et aussi quand le découpage en blocs ne redonne
+ *  pas exactement l'entrée : on ne réécrit jamais ce qu'on n'a pas reconnu. */
+export const reflowFigures = (xml, format) => {
+  const source = String(xml || '');
+  if (source.indexOf('<w:drawing') === -1) return source;      // aucune figure : rien à déplacer
+  const blocks = bodyBlocks(source);
+  if (!blocks.length || blocks.join('') !== source) return source;
+  const m = docxPageMetrics(format);
+  const queue = blocks.slice();
+  const deferred = [];
+  const out = [];
+  let y = 0;
+  const fitted = (h) => y + h <= m.height;
+  const place = (group) => {
+    group.blocks.forEach((b) => out.push(b));
+    y += group.height;
+    if (y >= m.height) y = 0;                                  // la page est pleine
+  };
+  while (queue.length || deferred.length) {
+    // 1. UNE FIGURE MISE DE CÔTÉ REPREND LA PAGE DÈS QU'ELLE Y TIENT : c'est le
+    //    moment où le texte qui l'a dépassée a rempli le vide qu'elle laissait.
+    for (let k = 0; k < deferred.length;) {
+      if (fitted(deferred[k].height)) { place(deferred[k]); deferred.splice(k, 1); } else k += 1;
+    }
+    if (!queue.length) {
+      if (!deferred.length) break;
+      y = 0;                                                   // plus rien à remplir : elle a sa page
+      place(deferred.shift());
+      continue;
+    }
+    const block = queue.shift();
+    if (blockHasDrawing(block)) {
+      const group = { blocks: [block], height: 0 };
+      for (let n = captionBlocksAfter(queue); n > 0; n -= 1) group.blocks.push(queue.shift());
+      group.height = group.blocks.reduce((s, b) => s + blockHeight(b, m), 0);
+      // Une figure plus haute qu'une page ne « tiendra » jamais : elle reste à sa
+      // place (Word la poussera sur sa propre page, comme aujourd'hui).
+      if (group.height > m.height || fitted(group.height)) place(group);
+      else deferred.push(group);
+      continue;
+    }
+    const h = blockHeight(block, m);
+    if (h > m.height || !fitted(h)) y = 0;                      // une page neuve commence
+    place({ blocks: [block], height: h });
+  }
+  return out.join('');
+};
+
 /** `html` → `{ xml, links, rels, media }` : le corps du document Word, les liens
  *  à déclarer, TOUTES ses relations (liens et images) et les parties binaires que
  *  les images apportent (`word/media/…`). `options.format` = le « Publication
@@ -572,7 +764,11 @@ const renderBlock = (node, ctx, part) => {
  *  par la page (`src` → `data:` URL, voir resolveDocxImages). */
 export const htmlToDocxBody = (html, options) => {
   const ctx = newDocxContext(options);
-  const xml = renderNodes(parseHtmlTree(html).children, ctx, '');
+  /* LE CORPS, PUIS SA REMISE EN PAGE : une figure qui ne tient pas dans la place
+     restante est déplacée après le texte qui suit, pour que la page ne reste pas à
+     moitié vide (voir reflowFigures). Un document sans figure ressort identique, au
+     caractère près. */
+  const xml = reflowFigures(renderNodes(parseHtmlTree(html).children, ctx, ''), (options || {}).format);
   return {
     xml,
     links: ctx.rels.filter((r) => r.type === 'hyperlink').map((r) => ({ id: r.id, href: r.target })),
@@ -666,6 +862,14 @@ const headingStyle = (n) => {
     + `<w:rPr><w:b/><w:sz w:val="${sz}"/><w:szCs w:val="${sz}"/></w:rPr></w:style>`;
 };
 
+/* LA LÉGENDE D'UNE FIGURE : un style de PARAGRAPHE nommé, celui de Word. Il ne
+   change RIEN à la mise en forme (la légende garde les runs que renderBlock lui
+   donne, ceux du format du projet) : il nomme la légende, ce qui la montre dans la
+   galerie de Word et — surtout — permet à reflowFigures de la RECONNAÎTRE (voir
+   captionBlocksAfter) au lieu de prendre pour elle le premier paragraphe court venu. */
+const captionStyle = '<w:style w:type="paragraph" w:styleId="Caption"><w:name w:val="Caption"/>'
+  + '<w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/></w:style>';
+
 /** La feuille du document : les intitulés, le lien, et les DÉFAUTS DU TEXTE.
  *  Ceux-ci suivent la partie « texte des sections » quand le format en choisit
  *  une (police et taille) ; sans choix, ce sont ceux du programme — Georgia
@@ -682,6 +886,7 @@ const stylesXml = (format) => {
 </w:docDefaults>
 <w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style>
 <w:style w:type="character" w:styleId="Hyperlink"><w:name w:val="Hyperlink"/><w:rPr><w:color w:val="0563C1"/><w:u w:val="single"/></w:rPr></w:style>
+${captionStyle}
 ${[1, 2, 3].map(headingStyle).join('\n')}
 </w:styles>`;
 };

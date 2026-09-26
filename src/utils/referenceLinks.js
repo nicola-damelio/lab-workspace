@@ -512,6 +512,57 @@ export const numberImportedReferences = (entries, refs, opts = {}) => {
  *  retirée comme avant. Rien à migrer, donc : les deux titres vivent ici. */
 const BIB_LIST_RE = /<h[1-3][^>]*>\s*(?:References|Bibliography)\b[^<]*<\/h[1-3]>\s*<ol\b[^>]*>/i;
 
+/** Le NOM d'une bibliographie (l'intitulé du bloc, dans les deux langues du
+ *  programme) — comparé au TEXTE d'un titre, pas à sa balise : c'est ce qui permet
+ *  de reconnaître un bloc dont le titre existe mais que `BIB_LIST_RE` ne peut pas
+ *  voir (voir bibliographyCut). */
+const BIB_LABEL_RE = /^(references?|bibliograph(y|ie)|références?)\b/i;
+
+/** Un élément de liste qui porte une ANCRE de renvoi (`<li id="ref-12" …>`). */
+const REF_ITEM_RE = /<li\b[^>]*\bid="ref-\d+"/i;
+
+/**
+ * OÙ COMMENCE ET FINIT LA BIBLIOGRAPHIE D'UN DOCUMENT : `{ open, listEnd }`, ou
+ * `null` s'il n'y en a pas.
+ *
+ * Deux façons de la trouver, dans cet ordre :
+ *  1. le TITRE suivi de sa liste (BIB_LIST_RE) — le cas normal ;
+ *  2. SANS TITRE, la liste elle-même, reconnue à ses ANCRES (`<li id="ref-12">`) :
+ *     le format d'une revue peut demander « aucun intitulé » (`bibLabel: ''`,
+ *     l'habitude de Science), et l'instantané contient alors l'`<ol>` sans le
+ *     `<h2>References</h2>`. La regex du titre ne la voyait pas : la bibliographie
+ *     FIGÉE restait dans le document et la liste VIVANTE s'ajoutait derrière —
+ *     DEUX listes à l'écran, dans le PDF et dans le .docx (le rapport : « the
+ *     references are duplicated »). Un titre sans texte (ou qui NOMME la
+ *     bibliographie) juste au-dessus de la liste part avec elle ; le titre d'une
+ *     section de l'auteur, lui, ne part JAMAIS.
+ */
+const bibliographyCut = (source) => {
+  const heading = source.match(BIB_LIST_RE);
+  if (heading) return { open: heading.index, listEnd: heading.index + heading[0].length };
+  const ol = /<ol\b[^>]*>/gi;
+  let m = ol.exec(source);
+  while (m) {
+    const openEnd = m.index + m[0].length;
+    const close = source.indexOf('</ol>', openEnd);
+    if (close !== -1 && REF_ITEM_RE.test(source.slice(openEnd, close))) {
+      let open = m.index;
+      const before = source.slice(0, m.index);
+      const heads = [...before.matchAll(/<h[1-6]\b[^>]*>([\s\S]*?)<\/h[1-6]>/gi)];
+      const last = heads.length ? heads[heads.length - 1] : null;
+      // Le titre doit être LE DERNIER (rien que des blancs entre lui et la liste) et
+      // être vide ou nommer la bibliographie : sinon il appartient au texte.
+      if (last && before.slice(last.index + last[0].length).trim() === '') {
+        const text = String(last[1]).replace(/<[^>]*>/g, '').trim();
+        if (!text || BIB_LABEL_RE.test(text)) open = last.index;
+      }
+      return { open, listEnd: openEnd };
+    }
+    m = ol.exec(source);
+  }
+  return null;
+};
+
 /**
  * LES RÉFÉRENCES MANQUANTES D'UN DOCUMENT DÉJÀ ENREGISTRÉ.
  *
@@ -542,11 +593,14 @@ export const ensureReferenceEntries = (html, entries) => {
   const items = missing
     .map((e) => `<li id="${citationAnchorId(e.number)}" value="${e.number}">${e.html}</li>`)
     .join('');
-  const heading = source.match(BIB_LIST_RE);
-  if (heading) {
-    /* `</ol>` de la liste ouverte juste après le titre : la bibliographie n'a pas
-       de sous-liste, la première fermeture est donc la bonne. */
-    const close = source.indexOf('</ol>', heading.index + heading[0].length);
+  const cut = bibliographyCut(source);
+  if (cut) {
+    /* `</ol>` de la liste TROUVÉE : la bibliographie n'a pas de sous-liste, la
+       première fermeture est donc la bonne. Un document sans intitulé (Science,
+       `bibLabel: ''`) est reconnu par ses ancres : sans cela, ses références
+       ajoutées partaient dans un SECOND bloc, coiffé d'un titre que le format du
+       projet refuse — deux listes à l'écran. */
+    const close = source.indexOf('</ol>', cut.listEnd);
     if (close !== -1) {
       return { html: `${source.slice(0, close)}${items}${source.slice(close)}`, added: missing.length };
     }
@@ -577,17 +631,26 @@ export const ensureReferenceEntries = (html, entries) => {
  * ressort tel quel.
  */
 export const withoutBibliographySection = (html) => {
-  const source = String(html || '');
-  const heading = source.match(BIB_LIST_RE);
-  if (!heading) return source;
-  const open = heading.index;
-  const openEnd = heading.index + heading[0].length;
-  const close = source.indexOf('</ol>', openEnd);
-  const end = close === -1 ? source.length : close + '</ol>'.length;
-  /* Le conteneur qui portait le titre (`<div class="mb-4">…`) part avec lui
-     quand c'est LUI qui l'ouvre : sinon il resterait un cadre vide. */
-  const wrap = /<div\b[^>]*>\s*$/i.exec(source.slice(0, open));
-  const left = wrap ? wrap.index : open;
-  const afterEnd = wrap ? (source.slice(end, end + 6) === '</div>' ? end + 6 : end) : end;
-  return (source.slice(0, left) + source.slice(afterEnd)).trim();
+  let source = String(html || '');
+  /* TOUTES LES BIBLIOGRAPHIES, pas seulement la première. Un document figé deux
+     fois — ou un instantané qui portait déjà sa liste — en contient DEUX : n'en
+     retirer qu'une laissait l'autre s'afficher devant la liste vivante, soit
+     exactement le doublon signalé, par une autre porte. La boucle s'arrête d'elle
+     même (la fonction reste idempotente : un document déjà nettoyé ressort tel
+     quel). */
+  for (let guard = 0; guard < 20; guard += 1) {
+    const cut = bibliographyCut(source);
+    if (!cut) break;
+    const close = source.indexOf('</ol>', cut.listEnd);
+    const end = close === -1 ? source.length : close + '</ol>'.length;
+    /* Le conteneur qui portait le titre (`<div class="mb-4">…`) part avec lui
+       quand c'est LUI qui l'ouvre : sinon il resterait un cadre vide. */
+    const wrap = /<div\b[^>]*>\s*$/i.exec(source.slice(0, cut.open));
+    const left = wrap ? wrap.index : cut.open;
+    const afterEnd = wrap ? (source.slice(end, end + 6) === '</div>' ? end + 6 : end) : end;
+    const next = source.slice(0, left) + source.slice(afterEnd);
+    if (next === source) break;
+    source = next;
+  }
+  return source.trim();
 };

@@ -286,6 +286,32 @@ const bare = RL.withoutBibliographySection('<p>Texte.</p><h2>Bibliography (2)</h
 ok(!bare.includes('Bibliography') && bare.includes('<p>Texte.</p>'),
   'un titre « Bibliography » sans cadre emporte quand même sa liste');
 
+/* ── 8 quater. LA BIBLIOGRAPHIE SANS INTITULÉ (Science) ET LE DOUBLON ───────
+   « the references are duplicated » : un format qui refuse la ligne d'intitulé
+   (`bibLabel: ''` — l'habitude de Science) laisse l'instantané avec son `<ol>` de
+   références SANS titre. La regex du titre ne la voyait donc pas : la bibliographie
+   FIGÉE restait dans le document, devant la liste VIVANTE que la page ajoute — deux
+   listes à l'écran, dans le PDF et dans le .docx. Les ancres `id="ref-N"` que
+   linkCitations écrit, elles, sont toujours là : c'est par elles que la liste se
+   reconnaît désormais — et TOUTES les bibliographies partent, pas seulement la
+   première (un document figé deux fois en portait deux). */
+const NO_LABEL = '<div><p>Texte [1].</p><ol><li id="ref-1" value="1">Rossi 2018</li></ol></div>';
+eq(RL.withoutBibliographySection(NO_LABEL), '<div><p>Texte [1].</p></div>',
+  'sans intitulé, la liste est retrouvée par ses ancres et retirée (son cadre part avec elle)');
+eq(RL.withoutBibliographySection(NO_LABEL + NO_LABEL),
+  '<div><p>Texte [1].</p></div><div><p>Texte [1].</p></div>',
+  'deux listes de références figées partent TOUTES LES DEUX (aucun doublon ne survit)');
+ok(RL.withoutBibliographySection('<p>Texte.</p><ol><li>A</li></ol>').includes('<ol>'),
+  'une liste ordinaire du texte (aucune ancre #ref-n) n’est JAMAIS prise pour une bibliographie');
+const NO_LABEL_HEADED = '<p>T.</p><h2>Résultats</h2><ol><li id="ref-1">A</li></ol>';
+eq(RL.withoutBibliographySection(NO_LABEL_HEADED), '<p>T.</p><h2>Résultats</h2>',
+  'le titre d’une SECTION de l’auteur ne part jamais avec la liste (seul un titre vide, ou qui nomme la bibliographie, la suit)');
+const noLabelRefs = RL.ensureReferenceEntries(NO_LABEL, [{ number: 2, html: 'Dupont 2020' }]);
+ok(noLabelRefs.added === 1 && noLabelRefs.html.indexOf('id="ref-2"') < noLabelRefs.html.indexOf('</ol>'),
+  '…et les références manquantes entrent DANS cette liste-là');
+ok(noLabelRefs.html.indexOf('References') === -1,
+  '…sans inventer un titre que le format du projet refuse (le second bloc, c’est le doublon)');
+
 /* ── 8 ter. LA FORME DES RENVOIS DANS LE TEXTE (« Publication format ») ──────
    « nella sezione publication format, aggiungi la possibilità di controllare
    come i riferimenti bibliografici appaiono nel testo » : exposant, crochets,

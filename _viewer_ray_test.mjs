@@ -48,7 +48,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   RAY_FACTORS, RAY_DEFAULT_FACTOR, RAY_MAX_PIXELS, RAY_MAX_FACTOR,
-  RAY_ANTIALIAS_MAX_FACTOR, RAY_SHADOW_SKIP_NOTE,
+  RAY_ANTIALIAS_MAX_FACTOR, RAY_SHADOW_SKIP_NOTE, RAY_STALL_MS, rayStallNote,
   viewerPixelsOf, rayPixelsOf, clampRayFactor, rayFactorOptions, rayProgressText,
   rayTilesOf, rayAntialiasFor, rayPlanOf,
   captureRayImage, saveRayImage, rayFileName, rayStamp, downloadBlob, rayDimLimitOf,
@@ -113,6 +113,18 @@ const fakeStageWithGl = (w, h, limit) => ({
     },
   },
 });
+
+/* ⚠ DES PIXELS ENTIERS (le rapport : « the resolution label has decimals ») : la
+   taille lue est un rectangle CSS — `getBoundingClientRect` rend un demi-pixel dès
+   qu'un panneau tombe de travers — et le libellé du sélecteur, le masque d'ombre, le
+   nom du fichier et le message final héritaient tous de « 3× · 1234.5×698.25 px ».
+   Le module arrondit à la SOURCE, une fois pour toutes. */
+eq(viewerPixelsOf({ viewer: { width: 1234.5, height: 698.25 } }), { width: 1235, height: 698 },
+  'une taille CSS fractionnaire est ARRONDIE : aucune décimale ne sort du module');
+eq(rayFactorOptions({ viewer: { width: 1000.4, height: 500.4 } })[1].label, '3× · 3000×1500 px',
+  '…donc les libellés de résolution sont des entiers (aucun « 2196.5 px » dans le sélecteur)');
+eq(rayPlanOf({ viewer: { width: 1000.4, height: 500.4 } }, 3).realWidth, 3000,
+  '…et la taille annoncée sous la souris est un entier, elle aussi');
 
 eq(RAY_FACTORS, [2, 3, 4, 6], 'les facteurs offerts sont ceux de la liste du module (2× · 3× · 4× · 6×)');
 ok(RAY_FACTORS.includes(RAY_DEFAULT_FACTOR), 'le facteur par défaut est l’un des facteurs offerts (le sélecteur ne peut pas être vide)');
@@ -216,7 +228,8 @@ const captureStage = (w = 1600, h = 900) => ({
   viewer: { renderer: { domElement: { width: w, height: h } } },
   makeImage: async (params) => { calls.push(params); return { type: 'image/png', size: 4 }; },
 });
-const spy = () => {};
+const spyCalls = [];
+const spy = (...args) => { spyCalls.push(args); };
 const out = await captureRayImage(captureStage(), { factor: 3, transparent: true, onProgress: spy });
 const sent = calls[calls.length - 1];
 eq(sent.trim, false, 'trim est écrit EXPLICITEMENT (le défaut livré de NGL est déjà false, mais rien n’est laissé au hasard)');
@@ -224,7 +237,14 @@ eq(sent.factor, 3, 'le facteur est passé à NGL — sans lui la « ray » serai
 eq(sent.antialias, false,
   'à 3× la passe antialias n’est PAS demandée : la tuile est déjà un sur-échantillonnage, et ses 36 rendus sont ce qui faisait croire à un rendu qui ne finit jamais');
 eq(sent.transparent, true, 'le fond transparent demandé par l’utilisateur arrive bien à NGL');
-ok(sent.onProgress === spy, 'la progression est celle du viewer : la ligne de message suit les tuiles réellement rendues');
+ok(typeof sent.onProgress === 'function', 'NGL reçoit une fonction de progression : la ligne de message suit les tuiles réellement rendues');
+/* ⚠ L'IDENTITÉ DE LA FONCTION N'EST PLUS LA BONNE QUESTION : le rendu est surveillé
+   (RAY_STALL_MS, le rapport « start ray tracing … hangs ») et chaque tuile doit être
+   VUE pour relancer le compte à rebours — `onProgress` est donc ENROBÉ. C'est son
+   EFFET qui doit rester le même : la fonction du viewer est bien appelée, avec les
+   arguments de NGL. */
+sent.onProgress(2, 9, false);
+eq(spyCalls, [[2, 9, false]], '…et c’est bien celle du viewer que NGL appelle (l’enrobage du chien de garde ne la remplace pas)');
 eq([out.factor, out.antialias, out.tiles], [3, false, 9], 'le module rend à l’appelant le facteur, la passe et les TILES réellement rendues');
 eq(out.width, 4800, 'la taille annoncée À NGL correspond aux pixels réellement produits');
 eq(out.height, 2700, '…dans les deux dimensions');
@@ -357,6 +377,41 @@ const saved = await saveRayImage(captureStage(1600, 900), { label: 'test', facto
 eq(saved.fileName, 'Ray_test_3200x1800_2026-09-24_1507.png', 'saveRayImage nomme le fichier avec la taille RÉELLE et la date donnée');
 eq(saved.saved, false, 'hors navigateur l’enregistrement échoue proprement (le viewer le dit dans son message)');
 ok(!!saved.blob && saved.width === 3200, '…et l’image est bien rendue quand même (le résultat reste exploitable)');
+
+/* ── 2 bis. LE CHIEN DE GARDE : UN RENDU QUI NE RÉPOND PLUS ────────────────
+   Le rapport : « start ray tracing … hangs ». `makeImage` est une promesse que RIEN
+   n'oblige à se résoudre (contexte WebGL perdu, pilote qui ne rend jamais son GPU) et
+   NGL n'offre AUCUNE annulation. Ce que le module garantit, c'est de ne pas attendre
+   POUR TOUJOURS : le silence se mesure depuis la DERNIÈRE NOUVELLE, donc un rendu qui
+   avance — même lentement — n'est jamais coupé. */
+const silentStage = () => ({
+  viewer: { renderer: { domElement: { width: 400, height: 300 } } },
+  makeImage: () => new Promise(() => {}),          // jamais résolue : le rendu se tait
+});
+const t0 = Date.now();
+let stallError = null;
+try {
+  await captureRayImage(silentStage(), { factor: 2, stallMs: 40 });
+} catch (err) { stallError = err; }
+ok(!!stallError && stallError.message === rayStallNote(40),
+  'un rendu qui ne donne plus aucun signe de vie est ABANDONNÉ avec une raison lisible (le bouton ne reste pas sur « Rendering… »)');
+ok(Date.now() - t0 < 5000, '…au bout du silence demandé, jamais d’une attente infinie');
+ok(RAY_STALL_MS >= 10000, 'le silence par défaut est large : un gros rendu qui avance n’est jamais coupé (45 s)');
+let chattyTiles = 0;
+const chattyStage = {
+  viewer: { renderer: { domElement: { width: 400, height: 300 } } },
+  makeImage: async (params) => {
+    for (let i = 0; i < 4; i += 1) {                 // quatre tuiles, plus lentes que le délai
+      params.onProgress(i, 4);
+      await new Promise((r) => setTimeout(r, 25));
+      chattyTiles += 1;
+    }
+    return { type: 'image/png', size: 1 };
+  },
+};
+const chatty = await captureRayImage(chattyStage, { factor: 2, stallMs: 60, onProgress: () => {} });
+eq([chattyTiles, chatty.width, chatty.tiles], [4, 800, 16],
+  'un rendu qui donne de ses nouvelles N’EST PAS abandonné : chaque tuile relance le compte à rebours');
 
 /* ── 3. LE CÂBLAGE DANS LE VIEWER ──────────────────────────────────────── */
 has("} from '../utils/viewerRayImage';", 'le viewer importe le module de la « ray » (et rien d’autre de nouveau)');

@@ -281,7 +281,14 @@ gone('rounded-lg border border-teal-200 bg-teal-50/70', '…aucun encart de mesu
 has('NO « MEMBRANE » BOX IN THIS BAR', 'la barre de gauche ne contient plus que les sélections');
 has('const lipidSelectionKeys = () => {', 'la liste vient de la mesure du viewer ET des sélections du script');
 has("const renderMembraneSelections = (sec) => {", '…et elle se rend dans l’espace phospholipides');
-has("{shown && kind === 'lipid' && sec.id === firstLipidSectionOf(", '…une seule fois par molécule (le premier espace lipidique)');
+/* LE GROUPE 🧫 NE DÉPEND PLUS DE LA COCHE DE LA MOLÉCULE (le rapport : décocher
+   « Draw « POPC » » faisait disparaître tout le groupe, alors que les rangées de
+   feuillets continuent d’être dessinées — elles devenaient alors impossibles à
+   styler comme à cacher). Il se rend toujours une seule fois par molécule. */
+has("{kind === 'lipid' && sec.id === firstLipidSectionOf(", '…une seule fois par molécule (le premier espace lipidique)');
+gone("{shown && kind === 'lipid' && sec.id === firstLipidSectionOf(",
+  '…et JAMAIS derrière la case « Draw « POPC » » (le groupe reste là quand la molécule est décochée)');
+
 has('🧫 Membrane · leaflets', 'le groupe s’appelle « Membrane · leaflets »');
 // Le bouton « Setup » a été renommé (la demande).
 has('🎨 Predefined styles', 'le bouton « Setup » s’appelle « Predefined styles »');

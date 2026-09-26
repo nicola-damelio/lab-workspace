@@ -305,6 +305,26 @@ const sugarOff = H.nucleicRingPlates(fakeStructure, 'nucleic', { ...MENU, sugarP
 eq(sugarOff.rings, 6 + 5, 'sans la plaque du ribose : les deux cycles de la purine seulement');
 eq(sugarOff.atomIndices, ['N1', 'C2', 'N3', 'C4', 'C5', 'C6', 'N7', 'C8', 'N9'].map(at).sort((a, b) => a - b),
   '…et le pourtour ne garde que les atomes des bases');
+
+/* ══ 3 bis. LE PONT ENTRE LA PLAQUE DE LA BASE ET CELLE DU SUCRE ═══════════
+   La demande : « the stylised rings of the DNA/RNA style should include the bond to
+   the ribose / desoxyribose only when the latter is in “ring plate” style ». Le C1'
+   du pentose et le N9 de la purine sont chacun dans un cycle — mais dans DEUX cycles
+   différents : la liaison glycosidique n'est dans l'anneau ni de l'une ni de l'autre,
+   donc elle n'entre jamais dans le pourtour d'une plaque. Elle est proposée à part
+   (`linkAtoms`), et seulement quand les DEUX anneaux sont remplis. */
+ok(plates.atomIndices.includes(at("C1'")) && plates.atomIndices.includes(at('N9')),
+  'les deux atomes du pont sont chacun un atome de cycle (mais pas du même cycle)');
+eq(plates.linkAtoms, [at("C1'"), at('N9')].sort((a, b) => a - b),
+  'la liaison glycosidique est trouvée sur le graphe de liaisons (C1’ ↔ N9) quand les DEUX anneaux sont remplis');
+eq(sugarOff.linkAtoms, [], 'sans la plaque du SUCRE, aucun pont n’est proposé (rien à relier)');
+/* Lu POUR LE PONT SEUL (`sugarLink`), le sucre n'ajoute ni facette ni atome : c'est
+   la rangée des BASES qui tend le bâton, quand la rangée du sucre dessine une plaque. */
+const linked = H.nucleicRingPlates(fakeStructure, 'nucleic', { ...MENU, sugarPlate: false, sugarLink: true });
+eq(linked.rings, sugarOff.rings, 'le sucre lu pour le pont n’ajoute AUCUNE facette');
+eq(linked.atomIndices, sugarOff.atomIndices, '…ni un seul atome au pourtour (C1’ compris : il reste à la plaque du sucre)');
+eq(linked.linkAtoms, plates.linkAtoms, '…mais la liaison glycosidique est bien trouvée : les deux plaques seront TENUES ensemble');
+
 // « Colour by chemical group » allumé : chaque plaque prend la couleur de son GROUPE
 // (le ribose → la couleur du pentose, les bases → la couleur des bases).
 const grouped = H.nucleicRingPlates(fakeStructure, 'nucleic', { ...MENU, groupColour: true });
@@ -339,6 +359,10 @@ const chainOnly = {
   getAtomProxy: () => null,
 };
 eq(H.nucleicRingPlates(chainOnly, 'protein', MENU), null, 'une chaîne sans cycle ne produit aucune plaque');
+/* …et la lecture POUR LE PONT (`sugarLink`) ne change rien à cette règle : elle non
+   plus ne fabrique pas de plaque là où il n'y a aucun cycle. */
+eq(H.nucleicRingPlates(chainOnly, 'protein', { ...MENU, sugarLink: true }), null,
+  'la lecture pour le pont ne fabrique pas de plaque là où il n’y a aucun cycle');
 
 /* ══ 5. LE VRAI NGL ACCEPTE LA PLAQUE (MeshBuffer) ════════════════════════ */
 const mesh = new NGL.MeshBuffer({ position: plates.position, normal: plates.normal, color: plates.color, index: plates.index });

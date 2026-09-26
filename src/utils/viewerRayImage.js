@@ -87,6 +87,22 @@ export const RAY_MAX_FACTOR = 8;
 export const RAY_ANTIALIAS_MAX_FACTOR = 2;
 /* What the Ray message says when the still was too big for its shadow pass. */
 export const RAY_SHADOW_SKIP_NOTE = '· cast shadows skipped (the still is too big)';
+/* ── LE CHIEN DE GARDE DU RENDU (« il rendering non finisce mai ») ───────────
+   `makeImage` est une promesse que RIEN n'oblige à se résoudre : un contexte WebGL
+   perdu au milieu des tuiles, un pilote qui ne rend jamais son GPU, et la promesse
+   reste en suspens POUR TOUJOURS — le bouton restait alors sur « ✨ Rendering… »
+   sans que rien ne le débloque (le rapport exact : « start ray tracing … hangs »).
+   NGL n'expose AUCUNE annulation (`makeImage` n'accepte ni signal ni abort) : ce
+   qu'on peut garantir, c'est de NE PAS ATTENDRE INDÉFINIMENT. Le rendu est donc
+   surveillé — tant qu'il se manifeste (une tuile de plus, un changement d'étape),
+   le compte à rebours est relancé ; s'il se tait plus longtemps que ça, la
+   promesse est abandonnée avec une raison lisible, le `finally` du viewer relâche
+   le bouton, et l'utilisateur peut réessayer plus petit. Le silence est mesuré
+   par rapport à la DERNIÈRE NOUVELLE, pas au clic : un très gros rendu qui avance
+   n'est jamais coupé. */
+export const RAY_STALL_MS = 45000;
+/** La raison écrite dans le message quand le rendu s'est tu. */
+export const rayStallNote = (ms = RAY_STALL_MS) => `the renderer stopped reporting for ${Math.max(1, Math.round(Number(ms) / 1000))} s`;
 // Used when the WebGL limits cannot be read (no context yet, a probe): NGL
 // renders its tiles into a canvas of `canvasPixels × factor`.
 export const RAY_DIM_LIMIT_FALLBACK = 8192;
@@ -119,12 +135,19 @@ const canvasOfViewer = (viewer) => {
    of a test, another engine). */
 export const viewerPixelsOf = (stage) => {
   const viewer = stage && stage.viewer;
-  const fw = Number(viewer && viewer.width);
-  const fh = Number(viewer && viewer.height);
+  /* ⚠ DES PIXELS ENTIERS — la taille lue ici est un rectangle CSS
+     (`getBoundingClientRect`), donc un NOMBRE À VIRGULE dès que le panneau tombe
+     sur un demi-pixel : le sélecteur de résolution annonçait « 3× ·
+     1234.5×698.25 px », et ce nombre partait aussi dans le masque d'ombre et dans
+     le message final. Un canvas ne rend pas un demi-pixel : on ARRONDIT ici, une
+     fois pour toutes, et tout ce qui en descend (taille annoncée, taille réelle,
+     masque, nom du fichier, message) dit le même entier. */
+  const fw = Math.round(Number(viewer && viewer.width));
+  const fh = Math.round(Number(viewer && viewer.height));
   if (Number.isFinite(fw) && fw > 0 && Number.isFinite(fh) && fh > 0) return { width: fw, height: fh };
   const canvas = canvasOfViewer(viewer);
-  const w = canvas ? Number(canvas.width) : 0;
-  const h = canvas ? Number(canvas.height) : 0;
+  const w = canvas ? Math.round(Number(canvas.width)) : 0;
+  const h = canvas ? Math.round(Number(canvas.height)) : 0;
   if (Number.isFinite(w) && w > 0 && Number.isFinite(h) && h > 0) return { width: w, height: h };
   return { width: 0, height: 0 };
 };
@@ -248,6 +271,45 @@ export const rayProgressText = (done, total) => {
   return `✨ Rendering the ray still… ${d}/${t} tiles`;
 };
 
+/* ── LE RENDU SURVEILLÉ — voir RAY_STALL_MS ─────────────────────────────────
+   `makeImage` n'est JAMAIS appelée directement : la promesse est courue contre un
+   compte à rebours que chaque nouvelle (une tuile de plus, un changement d'étape)
+   relance. Un silence prolongé rejette avec une raison lisible : le rendu continue
+   peut-être dans le GPU, mais l'utilisateur, lui, n'attend plus pour rien — et le
+   viewer peut relâcher son bouton. Le rig d'ombre est lu AVANT (dans
+   captureRayImage), donc l'ordre « lire puis rendre » ne bouge pas. */
+const makeImageGuarded = (stage, params, onProgress, stallMs) => new Promise((resolve, reject) => {
+  let timer = null;
+  let decided = false;
+  const stop = () => { if (timer) { clearTimeout(timer); timer = null; } };
+  const touch = () => {
+    if (decided || !(stallMs > 0)) return;
+    stop();
+    timer = setTimeout(() => { decided = true; reject(new Error(rayStallNote(stallMs))); }, stallMs);
+  };
+  touch();
+  let running = null;
+  try {
+    // LE SEUL appel à NGL de tout ce module (le point d'entrée vérifié dans
+    // ngl 2.4.0), entouré du chien de garde ci-dessus.
+    running = stage.makeImage({
+      ...params,
+      onProgress: (done, total, isDone) => {
+        touch();
+        if (typeof onProgress === 'function') onProgress(done, total, isDone);
+      },
+    });
+  } catch (err) {
+    stop();
+    reject(err);
+    return;
+  }
+  Promise.resolve(running).then(
+    (blob) => { decided = true; stop(); resolve(blob); },
+    (err) => { decided = true; stop(); reject(err); },
+  );
+});
+
 /* ---- THE RENDER ---------------------------------------------------------- */
 /* `stage` is the NGL Stage of the viewer. Resolves to the PNG Blob plus the
    size that was really produced, whether the background is transparent and the
@@ -295,6 +357,13 @@ export const captureRayImage = async (stage, options = {}) => {
      expensive half) — from these inputs. `cameraFromViewer` refuses a camera that is
      mid-tile, so the mistake can never come back silently. */
   const pixels = width * factor * height * factor;
+  /* LA DOUCEUR DU CONTOUR (`shadowBlur` de la barre) voyage AVEC la noirceur :
+     elle multiplie la pénombre du module (`softness` · `penumbra` ·
+     `penumbraMax`, voir rayShadowOptions), comme `strength` porte la sienne. Elle
+     est fusionnée ICI pour que le module reste le seul à connaître ses réglages
+     d'ombre, et pour que « shadow: { strength } » de l'appelant reste tel quel. */
+  const shadowOptions = { ...(options.shadow || {}) };
+  if (options.shadowBlur != null) shadowOptions.blur = options.shadowBlur;
   const shadowBudget = Number.isFinite(Number(options.shadowMaxPixels)) ? Number(options.shadowMaxPixels) : RAY_SHADOW_MAX_PIXELS;
   const wantsShadow = options.shadows !== false && !!options.lightDir;
   const shadowTooBig = wantsShadow && pixels > shadowBudget;
@@ -311,7 +380,7 @@ export const captureRayImage = async (stage, options = {}) => {
     try {
       inputs = rayShadowInputsOf(stage, {
         lightDir: options.lightDir,
-        options: options.shadow || {},
+        options: shadowOptions,
       });
     } catch (err) {
       inputs = null;                               // no atoms / no camera: no shadow
@@ -319,15 +388,15 @@ export const captureRayImage = async (stage, options = {}) => {
       console.warn('✨ Ray: no cast shadows —', shadowSkip);
     }
   }
-  let blob = await stage.makeImage({
+  const stallMs = options.stallMs === undefined ? RAY_STALL_MS : Number(options.stallMs);
+  let blob = await makeImageGuarded(stage, {
     trim: false,
     factor,
     // NGL's antialias is the 4·factor² tiles average: what makes the still
     // smooth where the interactive canvas is one sample per pixel.
     antialias,
     transparent,
-    onProgress: typeof options.onProgress === 'function' ? options.onProgress : undefined,
-  });
+  }, options.onProgress, stallMs);
   if (!blob) throw new Error('NGL returned no image');
   let shadow = null;
   if (inputs) {
@@ -338,7 +407,7 @@ export const captureRayImage = async (stage, options = {}) => {
           ...inputs,
           width: width * factor,
           height: height * factor,
-          options: options.shadow || {},
+          options: shadowOptions,
         }),
         imageWidth: width * factor,
         imageHeight: height * factor,
