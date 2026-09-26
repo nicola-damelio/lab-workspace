@@ -5,6 +5,11 @@ import {
   loadPubFormat, loadRelevantPapers, matchCoauthors, pubCitationData, pubCitationHtml,
   pubLayoutCss, journalSectionOrder, reorderDocHtml,
   docHeadRows, docHeadSpacedHtml, DOC_EMPTY_LINE_ID, DOC_EMPTY_LINE_CLASS,
+  /* CE QUI N'EST PAS DU TEXTE (voir journalFormats.js, withoutScreenOnlyUi) : les
+     notes du programme, les boutons et le bandeau du Drive vivent dans le document
+     affiché (`no-print`) mais ne doivent entrer ni dans un document FIGÉ, ni dans
+     l'impression, ni dans le .docx. */
+  withoutScreenOnlyUi,
   normalizePubDocOrder, normalizePubDocTitles, pubDocTitleKeywords, pubDocOrderKeywords, pubDocTitleOf,
   pubDocTitleHidden, pubDocBlockOfSection
 } from '../Publications';
@@ -1191,7 +1196,9 @@ export const ProjectDetailModule = ({
     if (project.docSuggestion) {
       if (!window.confirm('There is already a pending suggestion. Starting a new one will replace it.')) return;
     }
-    setSuggestBaseHtml(el.innerHTML);
+    /* LA BASE DE LA SUGGESTION EST LE TEXTE, PAS LA PAGE (voir withoutScreenOnlyUi) :
+       les notes du programme et le bandeau du Drive restaient dans le diff. */
+    setSuggestBaseHtml(withoutScreenOnlyUi(el.innerHTML));
     setDocMode('suggest');
     setMmFeedback('');
   };
@@ -1201,7 +1208,16 @@ export const ProjectDetailModule = ({
   const saveDocText = () => {
     const el = document.getElementById('project-doc-container');
     if (!el) return;
-    updateProject({ exportDocHtml: el.innerHTML, docSuggestion: null });
+    /* LE DOCUMENT FIGÉ EST DU TEXTE, PAS DES BOUTONS. « ✏️ Edit text » → « 💾 Save
+       changes » recopiait `el.innerHTML` TEL QUEL : la mention « Automatically
+       generated … », l'aide « Only the figures … ⭐-starred … », le bandeau
+       « ☁ Text filed on Drive … ♻ Load the Drive copy » et les boutons de la page
+       entraient dans l'instantané — donc dans la page relue, dans le PDF et dans le
+       .docx. Ils portent tous `no-print` (la classe qui dit « ceci ne vit qu'à
+       l'écran », la même que la feuille d'impression et docxExport respectent) et
+       sont retirés ici (voir withoutScreenOnlyUi). Le texte de l'auteur sort au
+       caractère près. */
+    updateProject({ exportDocHtml: withoutScreenOnlyUi(el.innerHTML), docSuggestion: null });
     setDocMode('view');
     setMmFeedback('✓ Document text saved');
     setTimeout(() => setMmFeedback(''), 2500);
@@ -1212,8 +1228,11 @@ export const ProjectDetailModule = ({
   const saveDocSuggestion = () => {
     const el = document.getElementById('project-doc-container');
     if (!el) return;
-    const editedHtml = el.innerHTML;
-    const baseHtml = suggestBaseHtml || editedHtml;
+    // Le diff se compare sur du TEXTE : les deux côtés passent par le même filtre
+    // (voir withoutScreenOnlyUi), sans quoi une note du programme apparaîtrait
+    // comme une insertion de l'auteur.
+    const editedHtml = withoutScreenOnlyUi(el.innerHTML);
+    const baseHtml = withoutScreenOnlyUi(suggestBaseHtml) || editedHtml;
     updateProject({
       docSuggestion: {
         baseHtml,
@@ -3357,7 +3376,12 @@ export const ProjectDetailModule = ({
        références Paperpile, même une fois la numérotation en place. On ajoute
        ici les entrées manquantes (ancre `#ref-<n>`) et on relie les citations.
        Le texte de l'auteur, lui, n'est jamais réécrit. */
-    let bodyHtml = docEl.innerHTML;
+    /* LE PAPIER, LE PDF ET LE .docx NE PORTENT PAS L'INTERFACE (voir
+       withoutScreenOnlyUi). La feuille d'impression cache déjà les `no-print` et
+       docxExport les retire, mais le corps est fabriqué ICI, pour les trois à la
+       fois : on les retire une bonne fois, avant la réparation des références et
+       l'ordre du journal — le texte du document, lui, n'est jamais touché. */
+    let bodyHtml = withoutScreenOnlyUi(docEl.innerHTML);
     if (refs.length) {
       const repaired = ensureReferenceEntries(bodyHtml, refs.map((r) => ({
         number: Number(r && r.number) || 0,
@@ -3794,7 +3818,9 @@ export const ProjectDetailModule = ({
                      : 'border border-slate-200'}`}>
             {project.docSuggestion && docMode === 'view' ? (
               <div dangerouslySetInnerHTML={{
-                __html: docHeadSpacedHtml(repairContentImages(withoutBibliographySection(project.docSuggestion.markedHtml)))
+                __html: docHeadSpacedHtml(withoutScreenOnlyUi(
+                  repairContentImages(withoutBibliographySection(project.docSuggestion.markedHtml))
+                ))
               }} />
             ) : project.exportDocHtml ? (
               /* La bibliographie FIGÉE du document enregistré est retirée : la
@@ -3819,7 +3845,12 @@ export const ProjectDetailModule = ({
                  entre eux — même dans un document enregistré avant cette règle. */
               <div dangerouslySetInnerHTML={{
                 __html: docHeadSpacedHtml(reorderDocHtml(
-                  linkCitations(repairContentImages(withoutBibliographySection(project.exportDocHtml))),
+                  /* LE DOCUMENT FIGÉ EST NETTOYÉ AUSSI À L'AFFICHAGE (voir
+                     withoutScreenOnlyUi) : un instantané enregistré AVANT cette règle
+                     porte encore les notes du programme et le bandeau du Drive — ils
+                     sortent ici, pour la page comme pour ce qui en descend
+                     (impression, PDF, .docx). */
+                  withoutScreenOnlyUi(linkCitations(repairContentImages(withoutBibliographySection(project.exportDocHtml)))),
                   docOrderWords(pubFormat),
                   pubDocTitleKeywords(pubFormat),
                 ))
@@ -3905,7 +3936,10 @@ export const ProjectDetailModule = ({
                     </button>
                   </div>
                 </div>
-                <p className="text-[10px] text-slate-400 mb-3">
+                {/* LA NOTE EST UNE EXPLICATION DU PROGRAMME, PAS DU TEXTE : elle vit
+                    à l'écran (`no-print`) et sort du document figé, de
+                    l'impression, du PDF et du .docx — voir withoutScreenOnlyUi. */}
+                <p className="text-[10px] text-slate-400 mb-3 no-print">
                   Automatically generated from the Experimental Conditions, Instrumental Setup and Experiment Setup
                   of each included test
                   {project.materialsAndMethods?.edited
@@ -3940,7 +3974,9 @@ export const ProjectDetailModule = ({
                   {docHeading('experiments') ? (
                     <h2 className="pf-heading text-base font-black text-slate-800 border-b border-slate-200 pb-1 mb-2">{docHeading('experiments')} ({includedExps.length})</h2>
                   ) : null}
-                <p className="text-[10px] text-slate-400 mb-3">
+                {/* Même règle que la note des « Materials and Methods » : l'aide du
+                    programme ne fait pas partie du document (voir withoutScreenOnlyUi). */}
+                <p className="text-[10px] text-slate-400 mb-3 no-print">
                   Only the figures, plots and tables you ⭐-starred on the test pages are imported here.
                   Click the ✏️ next to a caption to edit it before export.
                 </p>
@@ -4025,7 +4061,11 @@ export const ProjectDetailModule = ({
                   utils/projectDocumentDrive.js) : la page le dit et sait le
                   relire — le navigateur n'est qu'un cache, et un autre poste
                   retrouve le texte sans passer par une sauvegarde HTML. */}
-              <div className="mb-3 flex flex-wrap items-center gap-2 text-[11px] text-slate-600 bg-sky-50 border border-sky-200 rounded-lg px-2 py-1.5">
+              {/* …ET LE BANDEAU QUI LE DIT EST DE L'INTERFACE, PAS DU TEXTE : il
+                  porte `no-print` (voir withoutScreenOnlyUi) — « ☁ Text filed on
+                  Drive … ♻ Load the Drive copy » se lit à l'écran et ne part ni dans
+                  le document figé, ni à l'impression, ni dans le .docx. */}
+              <div className="mb-3 flex flex-wrap items-center gap-2 text-[11px] text-slate-600 bg-sky-50 border border-sky-200 rounded-lg px-2 py-1.5 no-print">
                 {project.driveDocument && project.driveDocument.id ? (
                   <>
                     <span className="font-bold">☁ Text filed on Drive</span>

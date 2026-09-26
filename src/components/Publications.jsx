@@ -123,7 +123,11 @@ export {
   JOURNAL_FORMATS, JOURNAL_IDS, applyJournalFormat, clearJournalFormat,
   journalLabelOf, journalOf, journalSectionOrder, reorderDocHtml,
   DOC_HEAD_IDS, DOC_HEAD_CLASSES, DOC_EMPTY_LINE_ID, DOC_EMPTY_LINE_CLASS, DOC_EMPTY_LINE_HTML,
-  docHeadRows, docHeadSpacedHtml
+  docHeadRows, docHeadSpacedHtml,
+  /* CE QUI N'EST PAS DU TEXTE (voir journalFormats.js) : les notes du programme, les
+     boutons et le bandeau du Drive portent `no-print` et sortent du document FIGÉ,
+     de l'impression, du PDF et du .docx — le texte de l'auteur, lui, ne bouge pas. */
+  withoutScreenOnlyUi
 } from './journalFormats';
 
 const ifNum = (v) => {

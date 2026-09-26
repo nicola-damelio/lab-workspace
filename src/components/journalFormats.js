@@ -580,3 +580,82 @@ export const docHeadSpacedHtml = (html) => {
   }
   return out + bare.slice(cut);
 };
+
+/* ── CE QUI N'EST PAS DU TEXTE : LES ÉLÉMENTS « no-print » ─────────────────────
+   La mention « Automatically generated from the Experimental Conditions … of each
+   included test », l'aide « Only the figures, plots and tables you ⭐-starred on
+   the test pages are imported here », le bandeau « ☁ Text filed on Drive … ♻ Load
+   the Drive copy » : ce sont les explications DU PROGRAMME, et elles se
+   retrouvaient DANS le document — à l'écran comme à l'export, sous le texte de
+   l'auteur. Elles étaient visibles à la fois dans le document FIGÉ (« ✏️ Edit
+   text » → « 💾 Save changes » recopiait `el.innerHTML`, notes comprises) et dans
+   le .docx qui en descend. Le programme sait déjà quelles parties ne vivent qu'à
+   l'écran : c'est la classe `no-print` (les boutons, l'éditeur de légende — voir
+   docxExport.js, `isScreenOnly`, et la feuille d'impression de la page du projet).
+   Le FIGÉ, lui, n'en tenait pas compte : on retire donc ces éléments ici, au
+   moment où le document est enregistré — et le texte de l'auteur, lui, n'est
+   jamais touché.
+
+   POURQUOI UN SCAN ET PAS UNE EXPRESSION RÉGULIÈRE : les éléments marqués peuvent
+   S'IMBRIQUER (un bandeau `no-print` qui contient un bouton `no-print`). On repère
+   donc les étendues ouvrant/fermant par un petit scan (comme `closeTagOf`), et
+   l'étendue la plus EXTERNE gagne — retirer l'intérieure laisserait des balises
+   de fermeture orphelines. Un élément marqué jamais fermé (balisage abîmé à la
+   main) n'est PAS retiré : on préfère une note de trop à un document amputé.
+
+   Idempotent, sans effet sur un document sans `no-print`, et sans dépendance à
+   l'ordre des passes : la page du projet l'applique avant de figer un document,
+   avant d'en afficher un déjà figé, et juste avant l'impression / le PDF / le
+   .docx (voir `projectDocBodyHtml`).
+*/
+const VOID_TAGS = new Set([
+  'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'source', 'track', 'wbr'
+]);
+
+/** La balise ouverte capturée porte-t-elle `no-print` dans ses classes ? */
+const hasNoPrint = (attrs) => {
+  const m = /\b(?:class|className)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/i.exec(String(attrs || ''));
+  if (!m) return false;
+  const list = m[1] != null ? m[1] : (m[2] != null ? m[2] : m[3]);
+  return /(^|\s)no-print(\s|$)/.test(String(list || ''));
+};
+
+/** Le document SANS ses éléments d'interface (`no-print`) : les notes du
+ *  programme, les boutons et le bandeau du Drive ne partent ni dans un document
+ *  figé, ni dans un .docx. Le texte de l'auteur sort au caractère près. */
+export const withoutScreenOnlyUi = (html) => {
+  const src = String(html == null ? '' : html);
+  if (!src.includes('no-print')) return src;          // le cas courant : rien à faire
+  const re = /<(\/?)([a-zA-Z][a-zA-Z0-9-]*)((?:"[^"]*"|'[^']*'|[^'">])*)(\/?)>/g;
+  const stack = [];
+  const cuts = [];
+  let m = re.exec(src);
+  while (m) {
+    const [, close, tag, attrs, selfClose] = m;
+    const name = String(tag).toLowerCase();
+    if (close) {
+      for (let i = stack.length - 1; i >= 0; i -= 1) {
+        if (stack[i].name !== name) continue;
+        const open = stack[i];
+        stack.length = i;
+        if (open.cut) cuts.push({ at: open.at, end: m.index + m[0].length });
+        break;
+      }
+    } else if (selfClose || VOID_TAGS.has(name)) {
+      if (hasNoPrint(attrs)) cuts.push({ at: m.index, end: m.index + m[0].length });
+    } else {
+      stack.push({ name, at: m.index, cut: hasNoPrint(attrs) });
+    }
+    m = re.exec(src);
+  }
+  if (!cuts.length) return src;
+  cuts.sort((a, b) => a.at - b.at);
+  let out = '';
+  let cut = 0;
+  cuts.forEach(({ at, end }) => {
+    if (at < cut) return;                              // un élément marqué DANS un autre : déjà retiré
+    out += src.slice(cut, at);
+    cut = end;
+  });
+  return out + src.slice(cut);
+};
