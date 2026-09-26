@@ -24,6 +24,8 @@
    et le test _figure_placement_test.mjs vérifie exactement le même code.
    ========================================================================= */
 
+import { FIGURE_COLS_ATTR, pubFigureCols } from '../components/pubCitation.js';
+
 const TEXT_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;' };
 
 /** Échappe du TEXTE pour du HTML (le contenu d'un `<figcaption>`). */
@@ -150,7 +152,15 @@ export const figureInsertIndex = (html, anchor, plainFrom = 0) => {
 
 /** Le HTML d'une figure — mêmes balises que les figures ajoutées à la main, et
  *  déjà prévues par la feuille de style du document exporté (`figure`,
- *  `figcaption`, `page-break-inside: avoid`). */
+ *  `figcaption`, `page-break-inside: avoid`).
+ *  DEUX CHOSES DE PLUS, lues par la feuille ET par l'export .docx :
+ *   · la classe `pf-figure` (voir PUB_LAYOUT_PARTS, pubCitation.js) : elle était
+ *     absente ici, donc la mise en forme des figures du « Publication format » et
+ *     son `break-inside: avoid` ne s'appliquaient PAS aux figures rapportées par
+ *     un manuscrit importé ;
+ *   · `data-pf-cols="1|2"` quand l'utilisateur a réglé SA figure (la fiche de la
+ *     figure, page du projet) : « one column » ou « two columns » — « there must be
+ *     a way to specify if figures go in one column or in two » (voir FIGURE_COLS_ATTR). */
 export const figureHtml = (fig) => {
   const f = fig || {};
   const src = String(f.url || '').trim();
@@ -162,7 +172,9 @@ export const figureHtml = (fig) => {
   const cap = caption
     ? `<figcaption style="font-size:12px;color:#475569;margin-top:4px;">${escapeFigureText(caption)}</figcaption>`
     : '';
-  return `<figure style="margin:14px 0;text-align:center;break-inside:avoid;">${img}${cap}</figure>`;
+  const cols = pubFigureCols(f.columns);
+  const attr = cols ? ` ${FIGURE_COLS_ATTR}="${cols}"` : '';
+  return `<figure class="pf-figure"${attr} style="margin:14px 0;text-align:center;break-inside:avoid;">${img}${cap}</figure>`;
 };
 
 /** Le HTML d'une section AVEC ses figures à leur place.

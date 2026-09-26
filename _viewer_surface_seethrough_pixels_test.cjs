@@ -22,12 +22,12 @@
    `--headless=new` (WebGL par SwiftShader) : _viewer_surface_seethrough_
    pixels_page.html, `ngl.js` (le MÊME dist UMD 2.4.0 que le CDN que charge
    src/utils/ngl.js) et le source du viewer — pour que la page LISE la constante
-   SEE_THROUGH_SURFACE au lieu de la recopier. La page rend quatre fois la même
+   SEE_THROUGH_SURFACE au lieu de la recopier. La page rend huit fois une même
    molécule avec la même caméra et POSTe son verdict JSON ici — pas de CDP, pas
-   de socket. Les quatre PNG restent sur le disque pour l'œil humain
+   de socket. Les huit PNG restent sur le disque pour l'œil humain
    (_tmp_surface_probe_<cas>.png, ignorés par git).
 
-   LES QUATRE CAS (même molécule, même caméra)
+   LES QUATRE CAS HISTORIQUES (même molécule, même caméra)
      opaque1           opacity 1                        → la surface pleine
      transparent40     opacity .4 (+ transparent)       → le défaut NGL (OPAQUE_BACK)
      seeThrough40      opacity .4 + SEE_THROUGH_SURFACE → ce que le viewer demande
@@ -40,6 +40,20 @@
    qu'elle croit mesurer. Le define OPAQUE_BACK est relu sur le buffer ARRIÈRE
    (le DoubleSidedBuffer délègue `.parameters` et garde `.frontBuffer` /
    `.backBuffer`), c'est là qu'il opacifiait le fond.
+
+   …ET DEUX PAIRES POUR « TRANSP 0 % », qui est le SECOND rapport de la même
+   famille : « it is now very good for transparency but even if I set
+   transparency to 0 %, it remains a bit transparent ». À 0 % la rangée demande
+   opacity 1, mais le preset « glass » réécrivait 0.45 sur ses reps
+   (applyMaterialToRep) APRÈS le curseur et à chaque reconstruction : le fond
+   traversait encore la surface. Chaque paire rend LE MÊME cas deux fois, même
+   molécule, même caméra, seul le FOND change (blanc puis rouge) — un écart du
+   centre entre les deux est donc l'alpha qui reste :
+     glassImposed_white / _red    opacity 1 PUIS l'opacité du preset (TÉMOIN du
+                                  défaut : écart 112)
+     glassMaterial_white / _red   opacity 1 puis la seule FORME du preset
+                                  (« glass » = roughness 0.08 / metalness 0.0) →
+                                  ce que le viewer envoie maintenant : écart 0
 
    LANCEMENT : node _viewer_surface_seethrough_pixels_test.cjs
    Elle tourne en ~8 s, donc elle est AUSSI dans _verify.cjs (la liste rapide des
@@ -158,7 +172,7 @@ async function main () {
   console.log('--- verdict ---');
   check(d.stage === 'done', 'la sonde va au bout (stage = done)', d.stage);
   check(!!d.source && d.source.opaqueBack === false, 'SEE_THROUGH_SURFACE.opaqueBack lu à false dans NMRMoleculeViewer.jsx', JSON.stringify(d.source));
-  check(cs.length === 4, 'les 4 cas ont été rendus', String(cs.length));
+  check(cs.length === 8, 'les 8 cas ont été rendus (4 cas historiques + les 2 paires « glass » sur fond blanc et rouge)', String(cs.length));
   cs.forEach((c) => {
     check(!c.error, 'cas ' + c.id + ' : aucun jet', c.error);
     check(c.built === true, 'cas ' + c.id + ' : la rep a fini de s\'attacher au viewer', String(c.built));
@@ -192,7 +206,34 @@ async function main () {
   check(img(s).blobLuma > img(b).blobLuma + 8, 'sur TOUT le blob, la version du viewer laisse passer plus de blanc', img(s).blobLuma + ' vs ' + img(b).blobLuma);
   check(Math.abs(img(t).blobLuma - img(b).blobLuma) < 2, '…et le témoin reste collé au défaut sur tout le blob', img(t).blobLuma + ' vs ' + img(b).blobLuma);
   check(img(s).blobFrac > 0.05 && img(s).blobFrac < 0.95, 'le blob occupe bien une partie de l\'image (le fond est vu à côté)', String(img(s).blobFrac));
-  check(saved.length === 4, 'les 4 PNG sont sur le disque pour l\'œil humain', saved.join(' '));
+  check(saved.length === 8, 'les 8 PNG sont sur le disque pour l\'œil humain', saved.join(' '));
+
+  /* ── « Transp 0 % » DOIT ÊTRE OPAQUE — MATÉRIAU COMPRIS ──────────────────
+     Rapport : « even if I set transparency to 0 %, it remains a bit
+     transparent ». À 0 % la rangée demande opacity 1 (`1 − 0`, sectionOpacity),
+     mais le preset « glass » réécrivait 0.45 sur ses reps (applyMaterialToRep)
+     APRÈS le curseur et à chaque reconstruction : le fond traversait encore la
+     surface. Le MÊME cas est donc rendu deux fois, même molécule, même caméra,
+     seul le FOND change (blanc puis rouge) : si la surface est opaque, les deux
+     pixels du centre sont IDENTIQUES — le fond ne les touche pas — et s'il reste
+     de l'alpha, le rouge passe et l'écart le dit. */
+  const rgbOf = (c) => (c.image && c.image.centerRGB) || [0, 0, 0];
+  const bleed = (a, b) => Math.max(...[0, 1, 2].map((i) => Math.abs(rgbOf(a)[i] - rgbOf(b)[i])));
+  const giw = byId('glassImposed_white');
+  const gir = byId('glassImposed_red');
+  const gmw = byId('glassMaterial_white');
+  const gmr = byId('glassMaterial_red');
+  check(giw.applied === true && gmw.applied === true,
+    'les deux cas « glass » ont bien reçu leur matériau sur LEUR représentation (reprOfElement → repr.setParameters)',
+    JSON.stringify([giw.applied, gmw.applied]));
+  check(bleed(giw, gir) > 40,
+    'TÉMOIN : l’opacité du preset écrite sur la rep laisse passer le FOND — c’est le défaut du rapport, mesuré',
+    'écart blanc/rouge = ' + bleed(giw, gir));
+  check(bleed(gmw, gmr) === 0,
+    'le matériau ne règle plus l’opacité : à Transp 0 % (« glass » compris) le fond ne traverse PLUS la surface',
+    JSON.stringify(rgbOf(gmw)) + ' vs ' + JSON.stringify(rgbOf(gmr)));
+  check(img(gmw).centerLuma > 0,
+    '…et la surface reste bien dessinée (un cas vide passerait aussi le test d’égalité)', String(img(gmw).centerLuma));
 
   console.log('\n--- relevé ---');
   cs.forEach((c) => {
@@ -211,7 +252,7 @@ async function main () {
   console.log('total ' + CHECKS.length + ', failed ' + failed.length);
   /* La dernière ligne est celle que lisent _verify.cjs et _run_all.cjs. */
   console.log('_viewer_surface_seethrough_pixels_test.cjs — ' + (CHECKS.length - failed.length) + '/' + CHECKS.length + ' assertions OK' +
-    (failed.length ? ' ← ÉCHECS AU-DESSUS' : ' (opaqueBack:false vs défaut NGL, pixels réels Chrome/SwiftShader)'));
+    (failed.length ? ' ← ÉCHECS AU-DESSUS' : ' (opaqueBack:false vs défaut NGL — et « Transp 0 % » opaque, matériau compris : pixels réels Chrome/SwiftShader)'));
   try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (e) { /* chrome tient encore le profil */ }
   process.exit(failed.length ? 1 : 0);
 }

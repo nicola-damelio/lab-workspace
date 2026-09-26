@@ -49,7 +49,8 @@ import { zipSync, strToU8 } from 'fflate';
    COLONNES de la page et ce que chaque partie en fait (`span`) viennent du même
    format (voir columnBlocks). */
 import {
-  PUB_COLUMN_GAP_REM, PUB_LAYOUT_PARTS, normalizePubLayout, pubPageColumnsOf, pubSpanIn
+  DOC_SECTION_ATTR, FIGURE_COLS_ATTR, PUB_COLUMN_GAP_REM, PUB_LAYOUT_PARTS,
+  normalizePubLayout, pubFigureCols, pubPageColumnsOf, pubSectionSpanIn, pubSpanIn
 } from '../components/pubCitation.js';
 /* LA LIGNE VIDE DE LA TÊTE DU DOCUMENT (« in the final document the list of
    authors must be separated by the title with one empty line ») : la feuille du
@@ -1015,6 +1016,50 @@ const columnsOfPart = (part, layout, bars, pageColumns) => (
   pageColumns > 1 && (bars || pubSpanIn(layout, part) === 'all') ? 1 : pageColumns
 );
 
+/** LA LARGEUR D'UNE COLONNE, en EMU : la largeur utile de la page (PAGE_CONTENT_W)
+ *  moins les écarts entre colonnes (COLUMN_GAP_TWIPS, l'écart de la feuille), le
+ *  tout divisé par le nombre de colonnes. C'est la limite d'une figure qui coule
+ *  dans les colonnes (voir fitDrawingsToColumns). */
+const columnWidthEmu = (columns) => Math.round(
+  ((PAGE_CONTENT_W - COLUMN_GAP_TWIPS * (columns - 1)) / columns) * EMU_PER_TWIP
+);
+
+/** LE NOMBRE DE COLONNES D'UN BLOC, du plus précis au plus général :
+ *   · ce que la FIGURE dit d'elle-même (`data-pf-cols` : une figure sur deux
+ *     colonnes, une autre dans sa colonne, dans le même document) ;
+ *   · ce que la SECTION dit (`layout.docSections`, voir PUB_DOC_SPAN_IDS) ;
+ *   · ce que la PARTIE dit (`layout.<partie>.span`, voir pubSpanIn) ;
+ *   · et la ligne vide de la tête (`bars`), comme avant. */
+const columnsOfUnit = (unit, layout, pageColumns) => {
+  if (pageColumns <= 1) return pageColumns;
+  if (unit.figCols === 2) return 1;
+  if (unit.figCols === 1) return pageColumns;
+  if (pubSectionSpanIn(layout, unit.section) === 'all') return 1;
+  return columnsOfPart(unit.part, layout, unit.bars, pageColumns);
+};
+
+/** AUCUNE IMAGE PLUS LARGE QUE LA COLONNE QUI LA PORTE — « you tried to put
+ *  figures in one column but without resizing them, so they simply went out of the
+ *  visible space ». Un `<w:drawing>` de ce module est déjà ramené à la largeur de
+ *  la PAGE (voir drawingXml) ; ici, celui d'un bloc qui coule dans les colonnes est
+ *  ramené à la largeur d'UNE COLONNE, son rapport gardé. Un bloc à une colonne (la
+ *  figure qui barre la page, une section « Full width ») garde la largeur entière :
+ *  rien à réduire, et le fichier d'un document sans colonnes n'est pas touché. */
+const fitDrawingsToColumns = (block, columns) => {
+  const s = String(block);
+  if (columns <= 1 || !blockHasDrawing(s)) return s;
+  const max = columnWidthEmu(columns);
+  const fit = (m, cx, cy) => {
+    const w = Number(cx);
+    const h = Number(cy);
+    if (!(w > max)) return m;
+    return m.replace(`cx="${cx}" cy="${cy}"`, `cx="${max}" cy="${Math.round((h * max) / w)}"`);
+  };
+  return s
+    .replace(/<wp:extent cx="(\d+)" cy="(\d+)"\/>/g, (m, cx, cy) => fit(m, cx, cy))
+    .replace(/<a:ext cx="(\d+)" cy="(\d+)"\/>/g, (m, cx, cy) => fit(m, cx, cy));
+};
+
 /* LES CONTENEURS QU'ON OUVRE POUR CONNAÎTRE LA PARTIE DE CHAQUE BLOC : un
    conteneur qui n'a PAS de partie à lui (le `<div class="mb-6">` d'une section, la
    grille des figures) n'est pas un bloc du document — ses enfants le sont. On
@@ -1024,19 +1069,30 @@ const columnsOfPart = (part, layout, bars, pageColumns) => (
    rendu n'appartient qu'à eux. */
 const SPLIT_CONTAINERS = new Set(['div', 'section', 'article', 'header', 'main', 'aside']);
 
+/** LA VALEUR D'UN ATTRIBUT d'un nœud (`data-doc-section`, `data-pf-cols`) —
+ *  la page du projet les pose sur une section et sur une figure (voir
+ *  DOC_SECTION_ATTR · FIGURE_COLS_ATTR, pubCitation.js). */
+const attrOf = (node, name) => String((node.attrs && node.attrs[name]) || '').trim();
+
 /** Les nœuds de premier niveau → LES BLOCS DU CORPS, chacun avec LA PARTIE du
- *  document qui le met en forme (c'est d'elle que se lisent ses colonnes) et, pour
- *  la ligne vide de la tête, le drapeau `bars`. L'ORDRE et le XML sont exactement
- *  ceux du rendu (renderBlock) : on ne fait que savoir à quoi chaque bloc
- *  appartient. */
-const renderUnits = (nodes, ctx, part) => {
+ *  document qui le met en forme (c'est d'elle que se lisent ses colonnes), LA
+ *  SECTION à laquelle il appartient (`data-doc-section`, héritée du conteneur) et,
+ *  pour la ligne vide de la tête, le drapeau `bars`. L'ORDRE et le XML sont
+ *  exactement ceux du rendu (renderBlock) : on ne fait que savoir à quoi chaque
+ *  bloc appartient. */
+const renderUnits = (nodes, ctx, part, section) => {
   const units = [];
   (nodes || []).forEach((n) => {
     const kids = n.children || [];
     const own = partOfClasses(n);
     const pid = own || part || PART_BY_TAG[n.tag] || '';
+    /* LA SECTION SE TRANSMET À TOUT CE QU'ELLE CONTIENT : un `<div>` de section
+       porte son identifiant, ses intitulés, ses paragraphes et ses figures le
+       reçoivent d'ici — c'est ce qui permet à `layout.docSections` d'agir sur une
+       section ENTIÈRE (voir columnBlocks). */
+    const ownSection = attrOf(n, DOC_SECTION_ATTR) || section;
     if (!own && SPLIT_CONTAINERS.has(n.tag) && kids.some((c) => BLOCK_TAGS.has(c.tag))) {
-      units.push(...renderUnits(kids, ctx, pid));
+      units.push(...renderUnits(kids, ctx, pid, ownSection));
       return;
     }
     const xml = renderBlock(n, ctx, part);
@@ -1045,7 +1101,15 @@ const renderUnits = (nodes, ctx, part) => {
        Les garder poserait un saut de section pour un paragraphe qui n'existe pas
        — et le saut, lui, resterait dans le vide au lieu de fermer la section. */
     if (!xml) return;
-    units.push({ xml, part: pid, bars: classNamesOf(n).includes(DOC_EMPTY_LINE_CLASS) });
+    units.push({
+      xml,
+      part: pid,
+      section: ownSection,
+      /* LA FIGURE QU'ON A MISE EN DEUX COLONNES (la fiche de la figure, page du
+         projet) : elle le dit sur elle-même — 0 quand elle ne dit rien. */
+      figCols: pubFigureCols(attrOf(n, FIGURE_COLS_ATTR)),
+      bars: classNamesOf(n).includes(DOC_EMPTY_LINE_CLASS)
+    });
   });
   return units;
 };
@@ -1060,7 +1124,7 @@ const renderUnits = (nodes, ctx, part) => {
 export const columnBlocks = (units, layout, pageColumns) => {
   const flat = [];
   (units || []).forEach((u) => {
-    const columns = columnsOfPart(u.part, layout, u.bars, pageColumns);
+    const columns = columnsOfUnit(u, layout, pageColumns);
     const parts = bodyBlocks(u.xml);
     const split = parts.length && parts.join('') === u.xml ? parts : [u.xml];
     split.forEach((xml) => flat.push({ xml, columns }));
@@ -1068,11 +1132,15 @@ export const columnBlocks = (units, layout, pageColumns) => {
   const blocks = [];
   flat.forEach((b, i) => {
     const next = flat[i + 1];
+    /* LA FIGURE EST RAMENÉE À SA COLONNE AVANT QUE LA SECTION SE FERME : une
+       section « deux colonnes » porte donc une image de la largeur d'une colonne
+       (voir fitDrawingsToColumns, drawingXml applique déjà le reste). */
+    const xml = fitDrawingsToColumns(b.xml, b.columns);
     /* ICI le nombre de colonnes change : la section qui se termine porte les
        siennes, la suivante continue sur la même page avec les autres. */
     blocks.push(next && next.columns !== b.columns
-      ? closeSectionWith(b.xml, b.columns, pageColumns)
-      : b.xml);
+      ? closeSectionWith(xml, b.columns, pageColumns)
+      : xml);
   });
   return {
     blocks,

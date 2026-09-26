@@ -51,6 +51,17 @@ has(html, 'break-inside:avoid', 'la feuille de style d’export sait couper la p
 eq(FP.figureHtml({ url: '' }), '', 'sans image, il n’y a rien à insérer');
 ok(FP.figureHtml({ url: 'a"b' }).includes('src="a&quot;b"'), 'un guillemet dans l’URL ne casse pas l’attribut');
 ok(FP.figureHtml({ url: 'x', caption: 'A & B <c>' }).includes('A &amp; B &lt;c&gt;'), 'la légende est échappée');
+/* LA CLASSE ET LE CHOIX DE COLONNES DE LA FIGURE — les deux marques que la feuille
+   du « Publication format » et l'export .docx lisent (voir DOC_SECTION_ATTR ·
+   FIGURE_COLS_ATTR, pubCitation.js) : sans la classe, les règles de la partie
+   « Figures & captions » ne s'appliquaient pas aux figures d'un manuscrit importé ;
+   et une figure qui ne dit rien ne porte AUCUN attribut (le format décide). */
+has(html, 'class="pf-figure"', 'la figure rapportée porte la classe des figures du document (la mise en forme du format la vise)');
+ok(!html.includes('data-pf-cols'), '…et rien sur ses colonnes : c’est le format qui décide tant que personne ne règle la figure');
+has(FP.figureHtml({ url: 'x', columns: 2 }), 'data-pf-cols="2"', '« Two columns » : la figure le dit sur elle-même (elle barre la page)');
+has(FP.figureHtml({ url: 'x', columns: 1 }), 'data-pf-cols="1"', '« One column » aussi (elle reste dans sa colonne)');
+eq(FP.splitAnchoredFigures('one two', [{ url: 'x', anchor: 'one', columns: 2 }]).html.includes('data-pf-cols="2"'), true,
+  '…la marque traverse l’insertion dans le texte (c’est ce HTML que l’impression et le .docx reçoivent)');
 
 /* ── 2. La figure reprend sa place APRÈS son paragraphe ──────────────────── */
 const SECTION = [

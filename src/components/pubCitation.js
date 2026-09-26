@@ -164,6 +164,31 @@ export const PUB_LAYOUT_PARTS = [
 ];
 export const PUB_LAYOUT_PART_IDS = PUB_LAYOUT_PARTS.map((p) => p.id);
 
+/* LES DEUX ATTRIBUTS QUE LE DOCUMENT PORTE LUI-MÊME — les seuls faits que le HTML
+   ajoute au format, parce qu'ils sont PROPRES À UNE SECTION ou À UNE FIGURE et non
+   à la partie du document :
+     · `data-doc-section="<bloc>"` sur l'élément qui contient une section du
+       document (voir PUB_DOC_BLOCKS) : c'est lui que la feuille vise quand cette
+       section est réglée « Full width » — la demande « there must be a way to
+       specify which section is in multiple column and which does not » ;
+     · `data-pf-cols="1|2"` sur une `<figure>` : la figure dit elle-même si elle
+       tient dans UNE colonne ou si elle BARRE la page — deux figures du même
+       document peuvent donc différer (la demande « there must be a way to specify
+       if figures go in one column or in two »).
+   Les deux sont lus par la feuille (pubLayoutCss) ET par l'export .docx
+   (utils/docxExport.js, renderUnits · columnBlocks) : une seule source, deux
+   chemins, donc pas de divergence entre ce qui s'imprime et ce qui s'exporte. */
+export const DOC_SECTION_ATTR = 'data-doc-section';
+export const FIGURE_COLS_ATTR = 'data-pf-cols';
+
+/** Le choix de colonnes porté par une figure : 2 = elle barre la page, 1 = elle
+ *  tient dans une colonne, 0 = la figure ne dit rien (le format décide — voir
+ *  PUB_COLUMN_SPANS, partie « Figures & captions »). */
+export const pubFigureCols = (v) => {
+  const n = Number(v);
+  return n === 2 ? 2 : n === 1 ? 1 : 0;
+};
+
 /* L'écart entre deux colonnes, en rem — l'ordre de grandeur d'une revue (≈ 4
    lignes de texte à 10 pt), assez large pour que les deux colonnes se lisent
    séparément. */
@@ -315,6 +340,35 @@ export const PUB_DOC_SECTION_IDS = PUB_DOC_SECTION_BLOCKS.map((b) => b.section);
    `pf-meta`), jamais avec un intitulé. Un ordre de journal ne les concerne pas : ils
    restent la tête du document (voir pubDocOrderForWords). */
 export const PUB_DOC_HEAD_IDS = ['title', 'authors', 'affiliations', 'meta'];
+
+/* ── LES COLONNES, SECTION PAR SECTION ────────────────────────────────────────
+   La demande, mot pour mot : « in the publication format there must be a way to
+   specify which section is in multiple column and which does not ». Le réglage de
+   la PAGE (`layout.page.columns`) dit combien de colonnes la page a ; celui-ci dit
+   ce que CHAQUE SECTION en fait — une introduction sur les deux colonnes, un
+   abstract qui barre la page, une liste de références pleine largeur.
+
+   Les lignes de TÊTE (titre, auteurs, affiliations, ligne d'information) n'y sont
+   pas : leur partie porte déjà ce réglage (Title / Authors / Affiliations, voir
+   PUB_HEAD_PART_IDS) — deux endroits pour la même chose ne pourraient que se
+   contredire.
+
+   La valeur est celle de PUB_COLUMN_SPANS ('', 'flow', 'all') et vit dans
+   `layout.docSections`. Le document porte l'identifiant de la section
+   (DOC_SECTION_ATTR) pour que la feuille — et l'export .docx — la retrouvent. */
+export const PUB_DOC_SPAN_IDS = PUB_DOC_BLOCKS
+  .filter((b) => !PUB_DOC_HEAD_IDS.includes(b.id))
+  .map((b) => b.id);
+/** Les réglages vierges d'un format neuf : aucune section ne barre la page. */
+export const buildPubDocSections = () => PUB_DOC_SPAN_IDS
+  .reduce((out, id) => ({ ...out, [id]: '' }), {});
+/** Ce que la SECTION fait des colonnes de la page, telle que la feuille et le
+ *  panneau la lisent : '' = comme la page (aucune règle écrite). */
+export const pubSectionSpanIn = (layout, id) => {
+  const stored = ((layout || {}).docSections || {})[id];
+  return PUB_COLUMN_SPAN_IDS.includes(stored) ? stored : '';
+};
+export const pubSectionSpanOf = (fmt, id) => pubSectionSpanIn(normalizePubLayout(fmt && fmt.layout), id);
 export const pubDocBlockOf = (id) => PUB_DOC_BLOCKS.find((b) => b.id === id) || null;
 /** LA RANGÉE D'UNE SECTION DE TEXTE du projet, ou null : « conclusions » → le bloc
  *  « Conclusions », « background » → « Scientific background », « discussion » →
@@ -759,7 +813,7 @@ export const emptyPubTextStyle = () => ({
  *  LA PAGE — une seule colonne (le document tel que le programme l'écrit ; voir
  *  PUB_PAGE_COLUMNS). `span: ''` = « comme la page ». */
 export const buildPubLayout = () => {
-  const out = { page: { columns: 1 } };
+  const out = { page: { columns: 1 }, docSections: buildPubDocSections() };
   PUB_LAYOUT_PARTS.forEach((part) => {
     out[part.id] = {
       ...emptyPubTextStyle(),
@@ -820,14 +874,27 @@ const cleanPubTextStyle = (raw, { width = false, span = false } = {}) => {
   };
 };
 
+/* LES SECTIONS D'UN FORMAT ENREGISTRÉ : un identifiant connu (voir
+   PUB_DOC_SPAN_IDS) et un des mots de PUB_COLUMN_SPANS — tout le reste est
+   ignoré. Un format enregistré avant ce réglage n'en porte pas : aucune section
+   ne barre la page, le document ne change donc pas tout seul. */
+export const normalizePubDocSections = (raw) => {
+  const src = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  const out = buildPubDocSections();
+  PUB_DOC_SPAN_IDS.forEach((id) => { out[id] = cleanPubSpan(src[id]); });
+  return out;
+};
+
 /** La mise en forme d'un format, telle qu'elle est relue d'un enregistrement :
- *  chaque partie connue est gardée, tout le reste est ignoré — ET LES COLONNES DE
- *  LA PAGE le sont aussi (`page.columns`, voir PUB_PAGE_COLUMNS). Un format sans
- *  mise en forme (enregistré avant cette version) donne les réglages vierges —
- *  le document d'un projet ne change donc pas tout seul. */
+ *  chaque partie connue est gardée, tout le reste est ignoré — LES COLONNES DE LA
+ *  PAGE (`page.columns`, voir PUB_PAGE_COLUMNS) ET CELLES DE CHAQUE SECTION
+ *  (`docSections`, voir PUB_DOC_SPAN_IDS) le sont aussi. Un format sans mise en
+ *  forme (enregistré avant cette version) donne les réglages vierges — le document
+ *  d'un projet ne change donc pas tout seul. */
 export const normalizePubLayout = (raw) => {
   const out = buildPubLayout();
   out.page = { columns: cleanPubColumns(raw && raw.page && raw.page.columns) };
+  out.docSections = normalizePubDocSections(raw && raw.docSections);
   PUB_LAYOUT_PARTS.forEach((part) => {
     out[part.id] = cleanPubTextStyle(raw && raw[part.id], { width: !!part.width, span: !!part.span });
   });
@@ -898,26 +965,69 @@ export const pubLayoutCss = (fmt, scope = '#project-doc-container') => {
      pas seul au bas d'une colonne (`break-inside: avoid`) — le texte des
      sections, lui, doit pouvoir se couper : c'est tout l'intérêt des colonnes.
      Rien de tout cela n'est écrit pour une page à UNE colonne : la feuille d'un
-     format qui ne demande rien reste exactement ce qu'elle était. */
+     format qui ne demande rien reste exactement ce qu'elle était.
+
+     LE PASSAGE D'UNE MISE EN PAGE À L'AUTRE — « you did not insert a section
+     break to pass from two columns to another » : dans un navigateur, c'est
+     `column-span: all` qui joue le rôle du saut de section CONTINU de Word — le
+     dernier élément de la mise en page précédente porte le `sectPr` de Word, ici
+     l'élément qui barre ferme les colonnes en cours et les suivantes reprennent
+     en dessous. TROIS réglages écrivent ce mot, et chacun vise SA cible :
+       · la partie du document (titre, auteurs, intitulés, texte, figures,
+         bibliographie) — `layout.<partie>.span` ;
+       · UNE SECTION (voir PUB_DOC_SPAN_IDS) — `layout.docSections`, l'élément
+         portant DOC_SECTION_ATTR ;
+       · UNE FIGURE, une par une — FIGURE_COLS_ATTR, posé par la page du projet. */
   const columns = layout.page.columns;
   if (columns > 1) {
-    rules.push(`${scope} { column-count: ${columns} !important; column-gap: ${PUB_COLUMN_GAP_REM}rem !important; }`);
+    rules.push(`${scope} { column-count: ${columns} !important; column-gap: ${PUB_COLUMN_GAP_REM}rem !important;`
+      + ` -webkit-column-count: ${columns} !important; -webkit-column-gap: ${PUB_COLUMN_GAP_REM}rem !important; }`);
     PUB_LAYOUT_PARTS.forEach((part) => {
+      /* UNE FIGURE QUI A CHOISI SA COLONNE (voir FIGURE_COLS_ATTR) n'obéit pas au
+         réglage de la partie : « In the columns » retire le mot du format pour
+         elle, « Full width » ne le lui pose pas. */
+      const barring = part.id === 'figure'
+        ? (part.selectors || []).map((s) => `${s}:not([${FIGURE_COLS_ATTR}="1"])`)
+        : part.selectors;
       if (pubSpanIn(layout, part.id) === 'all') {
         /* La partie barre la page : elle sort du flux des colonnes. */
-        rule(part.selectors, 'column-span: all !important; break-inside: avoid !important;');
+        rule(barring, 'column-span: all !important; -webkit-column-span: all !important; break-inside: avoid !important;');
         return;
       }
       /* Les parties qu'une revue ne coupe jamais : une figure (et sa légende) et
          un intitulé de section. Le texte des sections, lui, se coupe. */
       if (part.id === 'figure' || part.id === 'heading') rule(part.selectors, 'break-inside: avoid;');
     });
+    /* …LES SECTIONS DU DOCUMENT QUI BARENT LA PAGE : le réglage est PAR SECTION
+       (« which section is in multiple columns and which does not »), donc la règle
+       vise l'élément qui porte l'identifiant de la section. */
+    PUB_DOC_SPAN_IDS.forEach((id) => {
+      if (pubSectionSpanIn(layout, id) === 'all') {
+        rule([`[${DOC_SECTION_ATTR}="${id}"]`],
+          'column-span: all !important; -webkit-column-span: all !important;');
+      }
+    });
+    /* …ET LA FIGURE QUI BARRE LA PAGE ELLE-MÊME (« two columns » dans la fiche de
+       la figure) — quelle que soit la place que le format donne aux figures. */
+    rule([`figure[${FIGURE_COLS_ATTR}="2"]`],
+      'column-span: all !important; -webkit-column-span: all !important; break-inside: avoid !important;');
+    /* AUCUNE IMAGE NE DÉBORDE DE SA COLONNE : une figure qui apporte sa propre
+       largeur — un manuscrit importé écrit `width:600px` dans le style de son
+       image — était plus large que la colonne où on venait de la mettre (« you
+       tried to put figures in one column but without resizing them, so they went
+       out of the visible space »). Ici l'image est RAMENÉE à sa colonne (100 % du
+       contenant = la colonne, ou la page quand la figure barre), son rapport
+       gardé. Seule une page à plusieurs colonnes écrit cette règle. */
+    PUB_LAYOUT_PARTS.filter((p) => p.id === 'figure').forEach((part) => {
+      rule((part.selectors || []).map((s) => `${s} img`),
+        'max-width: 100% !important; height: auto !important;');
+    });
     /* …ET LES LIGNES VIDES DE LA TÊTE DU DOCUMENT (la classe `pf-empty-line` que
        journalFormats.js pose entre le titre, les auteurs et les affiliations —
        voir DOC_EMPTY_LINE_CLASS) : elles font partie de cette tête, elles barrent
        donc la page comme elle, au lieu de former une petite boîte à deux colonnes
        pour un seul caractère insécable. */
-    rules.push(`${scope} .pf-empty-line { column-span: all !important; break-inside: avoid !important; }`);
+    rules.push(`${scope} .pf-empty-line { column-span: all !important; -webkit-column-span: all !important; break-inside: avoid !important; }`);
   }
   PUB_LAYOUT_PARTS.forEach((part) => {
     const st = layout[part.id];

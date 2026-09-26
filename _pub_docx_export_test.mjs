@@ -576,5 +576,80 @@ ok(!/w:cols/.test(oneCol.xml) && !/w:type w:val="continuous"/.test(oneCol.xml),
 eq(htmlToDocxBody(COL_DOC, { images: IMAGES }).xml, oneCol.xml,
   'un format absent ne change rien (le .docx d’un document sans format est celui d’avant)');
 
+/* ══ 10. LES FIGURES DANS LES COLONNES — LA FIGURE RAMENÉE À SA COLONNE ═══════
+   Deux demandes : « there must be a way to specify if figures go in one column or
+   in two » et « you tried to put figures in one column but without resizing them,
+   so they simply went out of the visible space ». Une figure qui coule dans les
+   colonnes est donc RAMENÉE à la largeur d'UNE colonne (son rapport gardé) ; une
+   figure qui barre la page garde la page entière ; et c'est LA FIGURE qui décide
+   (`data-pf-cols`, la fiche de la figure, page du projet) — le format donnant le
+   défaut de toutes les autres (voir FIGURE_COLS_ATTR · pubFigureCols). */
+const CONTENT_TWIPS = 9638;                                            // la largeur utile de la page A4
+const COL_EMU = Math.round(((CONTENT_TWIPS - GAP_TWIPS) / 2) * 635);   // UNE colonne, en EMU
+const COL_IMAGES = { 'https://drive.example/f1.png': pngDataUrl(1600, 900) };
+const extentOf = (x) => {
+  const m = /<wp:extent cx="(\d+)" cy="(\d+)"\/>/.exec(x);
+  return m ? { cx: Number(m[1]), cy: Number(m[2]) } : null;
+};
+const COL_FIG = '<p class="pf-body">Before.</p>'
+  + '<figure class="pf-figure"><img src="https://drive.example/f1.png" alt="F">'
+  + '<figcaption class="pf-caption">Figure 1.</figcaption></figure>'
+  + '<p class="pf-body">After.</p>';
+const colFig = htmlToDocxBody(COL_FIG, { format: twoColumns, images: COL_IMAGES });
+eq(extentOf(colFig.xml).cx, COL_EMU,
+  'une figure qui coule dans les colonnes est ramenée à la largeur d’UNE colonne : elle ne peut plus sortir de l’espace visible');
+ok(Math.abs(extentOf(colFig.xml).cy / extentOf(colFig.xml).cx - 900 / 1600) < 0.001,
+  '…et son rapport est gardé (16:9)');
+ok(!/<w:cols w:num="1"\/>/.test(colFig.xml), '…sans ouvrir de section : elle reste DANS les colonnes');
+eq(extentOf(htmlToDocxBody(COL_FIG, { images: COL_IMAGES }).xml).cx, 6126624,
+  'sur une page à UNE colonne, la même figure garde la largeur entière (rien ne change)');
+
+/* LA FIGURE QUI DIT « Two columns » BARRE LA PAGE — même quand le format met ses
+   figures dans les colonnes. */
+const WIDE_FIG = COL_FIG.replace('<figure class="pf-figure"', '<figure class="pf-figure" data-pf-cols="2"');
+const wideFig = htmlToDocxBody(WIDE_FIG, { format: twoColumns, images: COL_IMAGES });
+eq([...(wideFig.xml.matchAll(/<w:cols w:num="1"\/>/g))].length, 1,
+  'une figure réglée « Two columns » ouvre SA section d’une colonne : c’est le saut de section');
+eq(extentOf(wideFig.xml).cx, 6126624, '…elle reprend toute la largeur de la page (elle barre les colonnes)');
+ok(wideFig.xml.slice(wideFig.xml.indexOf('<w:cols w:num="1"/>')).includes('After.'),
+  '…et le texte qui suit reprend les colonnes de la page');
+eq(wideFig.columns, 2, '…la dernière section, elle, garde les deux colonnes du format');
+
+/* …ET CELLE QUI DIT « One column » RESTE DANS SA COLONNE, même sous un format qui
+   met TOUTES les figures pleine largeur (« Full width », la partie « Figures &
+   captions ») : le réglage de la figure l'emporte sur le défaut du format. */
+const forced = htmlToDocxBody(WIDE_FIG.replace('data-pf-cols="2"', 'data-pf-cols="1"'),
+  { format: { layout: { page: { columns: 2 }, figure: { span: 'all' } } }, images: COL_IMAGES });
+eq(extentOf(forced.xml).cx, COL_EMU, 'une figure réglée « One column » est ramenée à sa colonne');
+ok(!/<w:cols w:num="1"\/>/.test(forced.xml), '…et elle ne barre pas la page malgré le format');
+
+/* ══ 11. LES COLONNES, SECTION PAR SECTION ═══════════════════════════════════
+   « there must be a way to specify which section is in multiple column and which
+   does not » : une section réglée « Full width » (layout.docSections) barre la
+   page — son intitulé, son texte et ses figures — et le document reprend les
+   colonnes après elle. C'est le saut de section continu, celui que la feuille du
+   document écrit avec `column-span: all` (voir §9 et pubLayoutCss). */
+const SEC_DOC = '<p class="pf-body">Text in the columns.</p>'
+  + '<div data-doc-section="references"><h2 class="pf-heading">References</h2>'
+  + '<p class="pf-body">A reference.</p></div>';
+const secFmt = { layout: { page: { columns: 2 }, docSections: { references: 'all' } } };
+const secBody = htmlToDocxBody(SEC_DOC, { format: secFmt, images: COL_IMAGES });
+eq(secBody.columns, 1, 'la section réglée « Full width » est la dernière : elle est à UNE colonne');
+ok(secBody.xml.includes(`<w:cols w:num="2" w:space="${GAP_TWIPS}" w:equalWidth="1"/>`),
+  '…et le saut de section qui la précède referme les DEUX colonnes du texte');
+ok(secBody.xml.indexOf('A reference.') > secBody.xml.indexOf('<w:type w:val="continuous"/>'),
+  '…la référence s’écrit APRÈS le saut : elle barre la page');
+const noSecBody = htmlToDocxBody(SEC_DOC, { format: twoColumns, images: COL_IMAGES });
+eq(noSecBody.columns, 2, 'sans réglage, la même section reprend les colonnes de la page');
+eq([...(noSecBody.xml.matchAll(/<w:type w:val="continuous"\/>/g))].length, 0,
+  '…et AUCUN saut de section n’est écrit (le document ne change pas tout seul)');
+/* LA SECTION « In the columns », elle, coule : aucun saut, et les figures qu'elle
+   contient reprennent la largeur d'une colonne (elles ne débordent pas). */
+const flowFmt = { layout: { page: { columns: 2 }, docSections: { introduction: 'flow' } } };
+const flowBody = htmlToDocxBody('<div data-doc-section="introduction">' + COL_FIG + '</div>',
+  { format: flowFmt, images: COL_IMAGES });
+ok(!/<w:cols w:num="1"\/>/.test(flowBody.xml) && extentOf(flowBody.xml).cx === COL_EMU,
+  'une section « In the columns » coule, et sa figure est ramenée à sa colonne');
+
 console.log(`_pub_docx_export_test.mjs — ${passed} assertions OK (export .docx du document)`);
 

@@ -16,7 +16,12 @@ import {
      l'instantané enregistré (voir withoutHiddenHeadLines, plus bas). */
   withoutProjectLineHtml,
   normalizePubDocOrder, normalizePubDocTitles, pubDocTitleKeywords, pubDocOrderKeywords, pubDocTitleOf,
-  pubDocTitleHidden, pubDocBlockHidden, pubDocBlockOfSection
+  pubDocTitleHidden, pubDocBlockHidden, pubDocBlockOfSection,
+  /* LES COLONNES, SECTION PAR SECTION ET FIGURE PAR FIGURE : ce fichier POSE les
+     deux marques que la feuille du document et l'export .docx relisent — DOC_SECTION_ATTR
+     sur une section (voir pubLayoutCss · layout.docSections) et FIGURE_COLS_ATTR sur
+     une figure (pubFigureCols, le choix de la fiche de la figure). */
+  DOC_SECTION_ATTR, FIGURE_COLS_ATTR, pubFigureCols
 } from '../Publications';
 import { getStarredItems, buildStarCaption, buildMaterialsAndMethods, tabConfigForType } from '../../utils/starredItems';
 import { loadProjects, saveProjects, saveProjectsChecked, lightenProjectForStorage, recordProjectDeletion, loadPublications, TEST_TYPE_OPTIONS, testTypeLabel, genProjectId, normalizeAuthorized, projectAccessFor, saveProjectsRescued } from './projectsModule';
@@ -3331,6 +3336,29 @@ export const ProjectDetailModule = ({
                   <textarea value={fig.caption} onChange={(e) => patchSectionFigure(id, fig.id, { caption: e.target.value })}
                             placeholder="Figure caption…" rows={2}
                             className="w-full border border-slate-300 rounded-lg p-2 text-xs outline-none focus:border-blue-500 resize-y bg-white" />
+                  {/* ── LES COLONNES DE CETTE FIGURE ───────────────────────────────
+                      La demande : « there must be a way to specify if figures go in
+                      one column or in two ». Le format en donne le DÉFAUT (la partie
+                      « Figures & captions », voir PUB_COLUMN_SPANS) et CHAQUE figure
+                      dit ici si elle s'en écarte : « One column » la garde dans sa
+                      colonne, « Two columns » la fait barrer la page (un schéma large,
+                      comme les revues les impriment). Le choix part dans le document
+                      (FIGURE_COLS_ATTR, voir figureHtml · renderFigures) : la feuille
+                      du document, l'impression, le PDF et l'export .docx le lisent —
+                      et l'image est REDIMENSIONNÉE à sa colonne (elle ne peut plus
+                      sortir de l'espace visible). Sans page à plusieurs colonnes, il
+                      ne change rien. */}
+                  <label className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500"
+                         title="How this figure sits in the columns of the page: “As in the format” follows “Figures & captions” of the Publication format, “One column” keeps it inside a column, “Two columns” makes it bar the whole page. The image is resized to the width it is given. Nothing changes while the page has a single column.">
+                    Columns
+                    <select value={Number.isFinite(Number(fig.columns)) && Number(fig.columns) > 0 ? String(Number(fig.columns)) : ''}
+                            onChange={(e) => patchSectionFigure(id, fig.id, { columns: Number(e.target.value) || 0 })}
+                            className="border border-slate-300 rounded px-1.5 py-0.5 text-[11px] bg-white outline-none">
+                      <option value="">As in the format</option>
+                      <option value="1">One column</option>
+                      <option value="2">Two columns</option>
+                    </select>
+                  </label>
                   {fig.anchor && (
                     /* Figure venue d'un manuscrit importé : elle est attachée
                        ICI (elle reste modifiable) et c'est le document exporté
@@ -3643,7 +3671,12 @@ export const ProjectDetailModule = ({
      *  pubDocTitleHidden) n'écrit AUCUN `<h2>` : la section garde son texte, ses figures
      *  et sa place dans le document. */
     const renderSectionBlock = (s, heading) => (
-      <div key={s.id} className="mb-6">
+      /* LA SECTION PORTE SON IDENTIFIANT (`data-doc-section`) : c'est lui qui
+         permet au « Publication format » de régler SES colonnes — une introduction
+         sur les deux colonnes, un résumé qui barre la page (voir DOC_SECTION_ATTR ·
+         layout.docSections dans pubCitation.js). L'attribut suit le document
+         jusqu'à la feuille imprimée et à l'export .docx. */
+      <div key={s.id} className="mb-6" {...{ [DOC_SECTION_ATTR]: s.id }}>
         {heading ? <h2 className="pf-heading text-base font-black text-slate-800 border-b border-slate-200 pb-1 mb-2">{heading}</h2> : null}
         {s.html ? <div className="pf-body text-sm leading-relaxed" dangerouslySetInnerHTML={{ __html: repairContentImages(s.html) }} />
                 : <p className="text-xs italic text-slate-400">—</p>}
@@ -3654,7 +3687,11 @@ export const ProjectDetailModule = ({
     const renderFigures = (list) => list.filter((f) => (f.url || '').trim() !== '').length > 0 && (
       <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-4">
         {list.filter((f) => (f.url || '').trim() !== '').map((f) => (
-          <figure key={f.id} className="pf-figure">
+          /* FIGURE_COLS_ATTR : le choix de LA figure (« one column » / « two
+             columns », sa fiche plus haut). Seule une figure réglée le porte —
+             les autres suivent le format (« Figures & captions »). */
+          <figure key={f.id} className="pf-figure"
+                  {...(pubFigureCols(f.columns) ? { [FIGURE_COLS_ATTR]: String(pubFigureCols(f.columns)) } : {})}>
             <img src={f.url} alt={f.caption || 'Figure'} style={{ maxWidth: '100%', border: '1px solid #e2e8f0', borderRadius: '8px' }} />
             {f.caption && <figcaption className="pf-caption text-xs text-slate-500 mt-1">{f.caption}</figcaption>}
           </figure>
@@ -3960,7 +3997,7 @@ export const ProjectDetailModule = ({
                  Materials and Methods section does not appear in the final document ». */
               const mmTextSaved = String((project.materialsAndMethods || {}).text || '').trim();
               if (includedExps.length > 0 || mmTextSaved) blocks.methods = (
-                <div key="methods" className="mb-6">
+                <div key="methods" className="mb-6" {...{ [DOC_SECTION_ATTR]: 'methods' }}>
                   <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-1 mb-2">
                     {docHeading('methods') ? (
                       <h2 className="pf-heading text-base font-black text-slate-800">{docHeading('methods')}</h2>
@@ -4013,7 +4050,7 @@ export const ProjectDetailModule = ({
               );
 
               if (includedExps.length > 0) blocks.experiments = (
-                <div key="experiments" className="mb-6">
+                <div key="experiments" className="mb-6" {...{ [DOC_SECTION_ATTR]: 'experiments' }}>
                   {docHeading('experiments') ? (
                     <h2 className="pf-heading text-base font-black text-slate-800 border-b border-slate-200 pb-1 mb-2">{docHeading('experiments')} ({includedExps.length})</h2>
                   ) : null}
@@ -4106,7 +4143,7 @@ export const ProjectDetailModule = ({
                 l'objet de cette demande). La place de la liste, son texte et ses figures ne
                 changent pas : seul l'intitulé est celui du programme ou celui réglé dans
                 « Document sections (order & titles) ». */}
-            <div className="mb-4">
+            <div className="mb-4" {...{ [DOC_SECTION_ATTR]: 'references' }}>
               {docHeading('references') ? (
                 <h2 className="pf-heading text-base font-black text-slate-800 border-b border-slate-200 pb-1 mb-2">{docHeading('references')}</h2>
               ) : null}

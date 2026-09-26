@@ -49,6 +49,14 @@ import {
      colonnes de la page et le mot de chaque partie — voir PUB_PAGE_COLUMNS et
      pubPageColumnsOf dans pubCitation.js. */
   PUB_PAGE_COLUMNS, PUB_COLUMN_SPANS, pubPageColumnsOf,
+  /* …ET CELLES DE CHAQUE SECTION DU DOCUMENT ET DE CHAQUE FIGURE — les deux
+     demandes : « there must be a way to specify which section is in multiple
+     column and which does not » et « there must be a way to specify if figures
+     go in one column or in two ». Le réglage d'une section vit dans le format
+     (`layout.docSections`), celui d'une figure sur la figure du projet
+     (FIGURE_COLS_ATTR, lu par la feuille ET par l'export .docx). Les noms que le
+     panneau ne fait que ré-exporter plus bas ne sont pas importés ici. */
+  PUB_DOC_SPAN_IDS, pubSectionSpanOf,
   /* LA FORME DES NOMS D'AUTEURS dans la citation (voir utils/authorNames.js) :
      le panneau itère sur ces formes (boutons « as written », « Smith JA »…). */
   NAME_STYLES, normalizeNameStyle,
@@ -121,6 +129,12 @@ export {
      discussion · conclusions · funding · supporting : voir PUB_DOC_BLOCKS) : la page du
      projet les imprime chacune à sa place, sous l'intitulé qu'elle a reçu. */
   PUB_DOC_SECTION_BLOCKS, PUB_DOC_SECTION_IDS, pubDocBlockOfSection,
+  /* LES COLONNES, SECTION PAR SECTION ET FIGURE PAR FIGURE : la page du projet
+     pose l'identifiant d'une section (DOC_SECTION_ATTR) et le choix d'une figure
+     (FIGURE_COLS_ATTR) ; le panneau les règle et les lit (PUB_DOC_SPAN_IDS ·
+     pubSectionSpanOf · pubFigureCols). */
+  PUB_DOC_SPAN_IDS, pubSectionSpanOf, pubSectionSpanIn, pubFigureCols,
+  DOC_SECTION_ATTR, FIGURE_COLS_ATTR,
   pubCitationHtml, pubCitationText, pubFieldValue, pubDoiUrl,
   pubCitationData, pubOriginOf,
   authorMatchesCandidate, matchCoauthors, isLabAuthor, labMemberOf,
@@ -2569,6 +2583,21 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
       layout: { ...layout, [partId]: { ...layout[partId], ...patch } }
     });
   };
+  /* ── LES COLONNES D'UNE SECTION DU DOCUMENT — « there must be a way to specify
+     which section is in multiple column and which does not ». Les boutons de la
+     PAGE (ci-dessus) disent combien de colonnes elle a ; ce réglage-ci dit ce que
+     CHAQUE section en fait : « In the columns » elle y coule, « Full width » elle
+     BARRE la page — c'est le saut de section des traitements de texte (voir
+     pubLayoutCss pour la feuille, columnBlocks dans utils/docxExport.js pour
+     Word). « As the page » (la valeur '') n'écrit rien du tout. */
+  const pubSetDocSection = (blockId, span) => {
+    const layout = normalizePubLayout(activeFormat.layout);
+    if (!PUB_DOC_SPAN_IDS.includes(blockId)) return;
+    setActiveFormat({
+      ...pubCustomFormat(activeFormat.fields),
+      layout: { ...layout, docSections: { ...layout.docSections, [blockId]: span } }
+    });
+  };
   /* Le style d'un texte a TROIS états : non touché (comme le programme),
      imposé, ou explicitement retiré — un titre, que le programme écrit en gras,
      doit pouvoir redevenir normal. Un clic avance d'un état. */
@@ -3218,7 +3247,7 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
                   </label>
                   {part.span && (
                     <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500"
-                           title={`What ${part.label} does with the columns of the page (see “Page columns” above). “As the page” writes no rule of its own: the head lines of the document (title, authors, affiliations) bar the page and every other part flows in the columns. “Full width” is what a title, a wide figure or an abstract a journal prints across its two columns needs. Nothing changes while the page has one column.`}>
+                           title={`What ${part.label} does with the columns of the page (see “Page columns” above). “As the page” writes no rule of its own: the head lines of the document (title, authors, affiliations) bar the page and every other part flows in the columns. “Full width” is what a title, a wide figure or an abstract a journal prints across its two columns needs.${part.id === 'figure' ? ' For figures this is the DEFAULT: each figure of the project can say otherwise on its own card (“Columns” → One column / Two columns).' : ''} Nothing changes while the page has one column.`}>
                       Columns
                       <select value={st.span || ''} onChange={(e) => pubSetLayout(part.id, { span: e.target.value })}
                               className="border border-slate-300 rounded px-1 py-0.5 text-[11px] bg-white outline-none">
@@ -3346,6 +3375,29 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
                     <button type="button" onClick={() => pubSetDocTitle(id, '')}
                             className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-white border border-slate-300 text-slate-600 hover:bg-slate-100"
                             title={`Back to “${block.title}”`}>↺</button>
+                  )}
+                  {/* ── LES COLONNES DE CETTE SECTION ─────────────────────────────
+                      La demande : « there must be a way to specify which section is
+                      in multiple column and which does not ». La rangée de la section
+                      dit donc, pour ELLE SEULE, ce qu'elle fait des colonnes de la
+                      page — « Full width » la fait barrer la page (le saut de section
+                      des traitements de texte, voir pubLayoutCss · columnBlocks).
+                      Les lignes de tête (titre, auteurs, affiliations, ligne
+                      d'information) n'ont pas ce réglage : leur partie le porte déjà
+                      (« Title », « Authors », « Affiliations » — voir PUB_DOC_SPAN_IDS).
+                      Sans page à plusieurs colonnes, rien de tout cela ne se voit. */}
+                  {PUB_DOC_SPAN_IDS.includes(id) && (
+                    <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500 whitespace-nowrap"
+                           title={`What “${block.label}” does with the columns of the page (see “Page columns” above): “In the columns” flows with the text, “Full width” makes it bar the whole page — a section break, as a word processor writes one — and “As the page” writes no rule of its own. Nothing changes while the page has one column.`}>
+                      Columns
+                      <select value={pubSectionSpanOf(activeFormat, id)}
+                              onChange={(e) => pubSetDocSection(id, e.target.value)}
+                              className="border border-slate-300 rounded px-1 py-0.5 text-[10px] bg-white outline-none">
+                        {PUB_COLUMN_SPANS.map((s) => (
+                          <option key={s.id || 'page'} value={s.id}>{s.label}</option>
+                        ))}
+                      </select>
+                    </label>
                   )}
                   {block.fixed && (
                     <span className="ml-auto text-[9px] italic text-slate-400 whitespace-nowrap">always printed last</span>

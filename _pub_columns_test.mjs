@@ -20,16 +20,29 @@
      4. LES REVUES : chaque journal de la liste imprime en deux colonnes, donc
         chaque journal l'apporte (`applyJournalFormat`), et « As in the app »
         (`clearJournalFormat`) ramène la page à une colonne ;
-     5. LE PANNEAU : les deux réglages sont là — le nombre de colonnes de la page
+     5. LE PANNEAU : les DEUX réglages sont là — le nombre de colonnes de la page
         et la ligne « Columns » de CHAQUE partie — et ils passent par les
         fonctions qui écrivent le format (pubSetLayout), jamais par une écriture
         directe ; le document, lui, ne consulte que pubLayoutCss.
+     6. LES COLONNES, SECTION PAR SECTION — « there must be a way to specify which
+        section is in multiple column and which does not » : `layout.docSections`
+        (PUB_DOC_SPAN_IDS) et l'attribut que la page du projet pose sur une
+        section (DOC_SECTION_ATTR). Une section réglée « Full width » barre la
+        page : c'est le SAUT DE SECTION, que la feuille écrit dans le navigateur
+        et que l'export Word écrit en `sectPr` ;
+     7. LES COLONNES, FIGURE PAR FIGURE — « there must be a way to specify if
+        figures go in one column or in two » : FIGURE_COLS_ATTR sur la figure
+        (la fiche de la figure, page du projet) l'emporte sur la partie
+        « Figures & captions », qui reste le DÉFAUT de toutes les figures ; et
+        aucune image ne peut déborder de sa colonne (le réglage de largeur de la
+        page, elle, est celui d'une IMAGE ramenée à sa colonne).
 
    CE QU'ELLE NE VÉRIFIE PAS ICI : l'export .docx. Word ne connaît pas
    `column-count` : il porte les colonnes dans le `sectPr` d'une section, et c'est
    `src/utils/docxExport.js` qui les y traduit (voir §9 de
    _pub_docx_export_test.mjs : le nom de la page, la section de tête qui barre la
-   page, la figure « Full width », et la page à une colonne qui n'écrit rien).
+   page, la figure « Full width », LA FIGURE RAMENÉE À SA COLONNE et la page à une
+   colonne qui n'écrit rien).
    ========================================================================= */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -37,10 +50,11 @@ import { register } from 'node:module';
 
 register('./_esm_test_hook.mjs', import.meta.url);
 const {
-  PUB_COLUMN_GAP_REM, PUB_COLUMN_SPANS, PUB_COLUMN_SPAN_IDS, PUB_HEAD_PART_IDS,
+  DOC_SECTION_ATTR, FIGURE_COLS_ATTR, PUB_COLUMN_GAP_REM, PUB_COLUMN_SPANS, PUB_COLUMN_SPAN_IDS,
+  PUB_DOC_SPAN_IDS, PUB_HEAD_PART_IDS,
   PUB_LAYOUT_PARTS, PUB_LAYOUT_PART_IDS, PUB_PAGE_COLUMNS, PUB_PAGE_COLUMN_IDS,
   buildPubFormat, buildPubLayout, normalizePubFormat, normalizePubLayout,
-  pubLayoutCss, pubPageColumnsOf, pubSpanIn, pubSpanOf,
+  pubFigureCols, pubLayoutCss, pubPageColumnsOf, pubSectionSpanIn, pubSectionSpanOf, pubSpanIn, pubSpanOf,
 } = await import('./src/components/pubCitation.js');
 const {
   JOURNAL_FORMATS, JOURNAL_IDS, applyJournalFormat, clearJournalFormat, journalLayoutPatches,
@@ -101,11 +115,13 @@ eq(normalizePubFormat({ ...fresh, layout: { ...fresh.layout, page: { columns: 2 
 /* ── 3. LA FEUILLE DE STYLE ───────────────────────────────────────────────── */
 eq(pubLayoutCss(fresh), '', 'un format neuf (une colonne) n’écrit AUCUNE règle, comme avant');
 const css2 = pubLayoutCss({ layout: { page: { columns: 2 } } });
-ok(css2.includes(`#project-doc-container { column-count: 2 !important; column-gap: ${PUB_COLUMN_GAP_REM}rem !important; }`),
+ok(css2.includes(`#project-doc-container { column-count: 2 !important; column-gap: ${PUB_COLUMN_GAP_REM}rem !important;`),
   'la page à deux colonnes est écrite sur le CONTENEUR du document');
-ok(css2.includes('#project-doc-container .pf-title, #project-doc-container h1 { column-span: all !important; break-inside: avoid !important; }'),
+ok(css2.includes('-webkit-column-count: 2 !important;') && css2.includes(`-webkit-column-gap: ${PUB_COLUMN_GAP_REM}rem !important;`),
+  '…avec les préfixes -webkit- : un navigateur qui n’écrit que par eux imprime la même page');
+ok(css2.includes('#project-doc-container .pf-title, #project-doc-container h1 { column-span: all !important;'),
   '…et le titre barre la page (classe ET balise de repli, comme toutes les autres règles)');
-ok(css2.includes('#project-doc-container .pf-authors { column-span: all !important; break-inside: avoid !important; }'),
+ok(css2.includes('#project-doc-container .pf-authors { column-span: all !important;'),
   '…les auteurs aussi');
 ok(!/pf-body[^{]*\{[^}]*column-span/.test(css2), 'le texte des sections, lui, NE barre pas : il coule dans les colonnes');
 ok(!/pf-body[^{]*\{[^}]*break-inside/.test(css2), '…et il lui est interdit de ne pas se couper (une colonne doit pouvoir le couper)');
@@ -113,7 +129,8 @@ ok(css2.includes('#project-doc-container .pf-figure, #project-doc-container figu
   'une figure ne se coupe ni entre deux colonnes ni entre deux pages');
 ok(css2.includes('#project-doc-container .pf-heading, #project-doc-container h2 { break-inside: avoid; }'),
   '…un intitulé non plus (il ne reste pas seul au bas d’une colonne)');
-ok(css2.includes('#project-doc-container .pf-empty-line { column-span: all !important; break-inside: avoid !important; }'),
+ok(css2.includes('#project-doc-container .pf-empty-line { column-span: all !important;')
+  && /\.pf-empty-line \{[^}]*break-inside: avoid !important/.test(css2),
   'les lignes vides de la tête appartiennent à la tête : elles barrent la page comme elle');
 const css3 = pubLayoutCss({ layout: { page: { columns: 3 }, bibliography: { span: 'all' } } });
 ok(css3.includes('column-count: 3 !important'), 'trois colonnes s’écrivent comme deux');
@@ -160,4 +177,65 @@ ok(/@media screen\s*\{\s*#project-doc-container\[contenteditable="true"\]\s*\{[^
 ok(PANEL.includes("pubLayoutCss(activeFormat, '#pub-layout-preview')"),
   'l’aperçu du panneau suit le même chemin (ce qu’il montre est ce qui s’imprime)');
 
-console.log(`_pub_columns_test.mjs — ${passed} assertions OK (page à deux colonnes + un mot pour chaque partie)`);
+/* ── 6. LES COLONNES, SECTION PAR SECTION ───────────────────────────────────
+   « there must be a way to specify which section is in multiple column and which
+   does not » : le format porte le choix (`layout.docSections`), la page du projet
+   marque chaque section de son identifiant (pour que la feuille ait une cible) et
+   la feuille écrit le saut de section là où le choix le demande. */
+ok(PUB_DOC_SPAN_IDS.includes('background') && PUB_DOC_SPAN_IDS.includes('references')
+  && PUB_DOC_SPAN_IDS.includes('methods') && PUB_DOC_SPAN_IDS.includes('experiments'),
+  'chaque section du document a son mot sur les colonnes (contexte, résultats, méthodes, expériences, références…)');
+eq(PUB_DOC_SPAN_IDS.filter((id) => PUB_HEAD_PART_IDS.includes(id)), [],
+  '…mais les lignes de tête n’y sont pas : leur partie le porte déjà (un seul endroit pour la même chose)');
+eq(buildPubLayout().docSections.background, '', 'un format neuf : aucune section ne barre la page');
+eq(pubSectionSpanIn(buildPubLayout(), 'background'), '', '« comme la page » est la valeur par défaut d’une section');
+eq(pubSectionSpanIn(normalizePubLayout({ docSections: { background: 'all' } }), 'background'), 'all',
+  'un format enregistré garde le choix d’une section (aller-retour par normalizePubLayout)');
+eq(pubSectionSpanIn(normalizePubLayout({ docSections: { references: 'zzz' } }), 'references'), '',
+  'un mot inconnu ne casse rien : la section retombe sur « comme la page »');
+eq(pubSectionSpanIn(normalizePubLayout({ docSections: { unknown: 'all' } }), 'unknown'), '',
+  'un identifiant inconnu est ignoré (rien à viser dans le document)');
+eq(pubSectionSpanOf({ layout: { page: { columns: 2 }, docSections: { references: 'all' } } }, 'references'), 'all',
+  'pubSectionSpanOf lit la même chose sur un format entier (le panneau l’interroge)');
+const cssSec = pubLayoutCss({ layout: { page: { columns: 2 }, docSections: { references: 'all' } } });
+ok(cssSec.includes(`#project-doc-container [${DOC_SECTION_ATTR}="references"] { column-span: all !important;`),
+  'la section réglée « Full width » BARRE la page : c’est le saut de section (column-span: all, la traduction de `sectPr` en Word)');
+ok(!pubLayoutCss({ layout: { page: { columns: 2 }, docSections: { references: 'flow' } } }).includes(DOC_SECTION_ATTR),
+  '…« In the columns » n’écrit rien du tout : la section coule comme le reste');
+ok(PAGE.includes('{...{ [DOC_SECTION_ATTR]: s.id }}'), 'la page du projet marque CHAQUE section de son identifiant');
+ok(PAGE.includes("{...{ [DOC_SECTION_ATTR]: 'methods' }}") && PAGE.includes("{...{ [DOC_SECTION_ATTR]: 'experiments' }}")
+  && PAGE.includes("{...{ [DOC_SECTION_ATTR]: 'references' }}"),
+  '…méthodes, expériences et références comprises (les trois sections qui ont leur rangée au panneau)');
+ok(PANEL.includes('PUB_DOC_SPAN_IDS') && PANEL.includes('const pubSetDocSection = (blockId, span) => {'),
+  'le panneau écrit les colonnes d’une section par sa propre fonction (jamais à la main)');
+ok(PANEL.includes('{PUB_DOC_SPAN_IDS.includes(id) && ('), '…la rangée de chaque section porte donc son réglage « Columns »');
+ok(PANEL.includes('onChange={(e) => pubSetDocSection(id, e.target.value)}'), '…qui écrit le choix dans le format');
+ok(PANEL.includes('value={pubSectionSpanOf(activeFormat, id)}'), '…et montre le choix en cours');
+
+/* ── 7. LES COLONNES, FIGURE PAR FIGURE ─────────────────────────────────────
+   « there must be a way to specify if figures go in one column or in two » : le
+   format donne le défaut de toutes les figures (partie « Figures & captions »),
+   et CHAQUE figure peut dire autre chose — puis l'image est ramenée à la largeur
+   qu'on lui a donnée, sinon elle sort de l'espace visible. */
+eq(PUB_COLUMN_SPAN_IDS, ['', 'flow', 'all'], 'les mots d’une partie sont aussi ceux d’une section et d’une figure');
+eq([0, undefined, '', 3, 'x'].map(pubFigureCols), [0, 0, 0, 0, 0], 'une figure qui ne dit rien suit le format');
+eq(pubFigureCols(1), 1, '« One column » : la figure tient dans sa colonne');
+eq(pubFigureCols(2), 2, '« Two columns » : la figure barre la page');
+eq(pubFigureCols('2'), 2, '…même relu d’un attribut, qui est du texte');
+const cssFig = pubLayoutCss({ layout: { page: { columns: 2 }, figure: { width: 100 } } });
+ok(cssFig.includes(`#project-doc-container figure[${FIGURE_COLS_ATTR}="2"] { column-span: all !important;`),
+  'la figure réglée « Two columns » barre la page elle-même, quelle que soit la place du format');
+ok(cssFig.includes('#project-doc-container .pf-figure img, #project-doc-container figure img { max-width: 100% !important; height: auto !important; }'),
+  '…et TOUTE image est ramenée à sa colonne : une figure qui porte `width:600px` ne déborde plus de l’espace visible');
+ok(!pubLayoutCss({ layout: { page: { columns: 1 }, figure: { width: 40 } } }).includes('max-width: 100% !important'),
+  'une page à UNE colonne n’écrit rien de plus qu’avant (le document ne change pas tout seul)');
+ok(pubLayoutCss({ layout: { page: { columns: 2 }, figure: { span: 'all' } } }).includes(`.pf-figure:not([${FIGURE_COLS_ATTR}="1"])`),
+  'un format qui met TOUTES les figures pleine largeur laisse celles réglées « One column » dans leur colonne');
+ok(PAGE.includes('{...(pubFigureCols(f.columns) ? { [FIGURE_COLS_ATTR]: String(pubFigureCols(f.columns)) } : {})}'),
+  'la figure du document porte le choix de sa fiche (data-pf-cols) — la feuille et l’export .docx le lisent');
+ok(PAGE.includes('patchSectionFigure(id, fig.id, { columns: Number(e.target.value) || 0 })'),
+  '…et la fiche de la figure écrit ce choix sur la figure du projet');
+ok(PAGE.includes('<option value="1">One column</option>') && PAGE.includes('<option value="2">Two columns</option>'),
+  '…avec ses trois choix écrits en clair (« As in the format », « One column », « Two columns »)');
+
+console.log(`_pub_columns_test.mjs — ${passed} assertions OK (page à deux colonnes : chaque partie, chaque section et chaque figure)`);

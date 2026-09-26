@@ -29,11 +29,14 @@
    — la constante est EXTRAITE de src/components/NMRMoleculeViewer.jsx, jamais
    recopiée — puis lit les pixels du PNG rendu par stage.makeImage().
 
-   4 cas, même molécule, même caméra :
+   4 cas historiques + les 2 paires « glass » (blanc/rouge), même molécule, même
+   caméra :
      opaque1           opacity 1                        → la surface pleine
      transparent40     opacity .4 (+ transparent)       → le défaut NGL (OPAQUE_BACK)
      seeThrough40      opacity .4 + SEE_THROUGH_SURFACE → ce que le viewer demande
      opaqueBackTrue40  opacity .4 + opaqueBack:true     → témoin du défaut
+     glassImposed_*    opacity 1 PUIS l'opacité du preset → témoin de « Transp 0 % »
+     glassMaterial_*   opacity 1 puis la seule FORME du preset → la correction
    --------------------------------------------------------------------------- */
 var OUT = { stage: 'start', cases: [], log: [], source: null, ua: navigator.userAgent };
 
@@ -86,13 +89,38 @@ var BASE = {
   colorScheme: 'uniform', colorValue: 0x3366ff, useWorker: false,
 };
 
+/* Les deux rendus d'un MÊME cas, même molécule, même caméra, seul le FOND
+   change : un écart du centre entre les deux EST l'alpha qui reste (voir le
+   rapport ci-dessus). */
+function bgPair (id, params, then) {
+  return [
+    { id: id + '_white', params: params, then: then, bg: 'white' },
+    { id: id + '_red', params: params, then: then, bg: 0xff0000 },
+  ];
+}
+
 function buildCases (seeThroughOpaqueBack) {
   return [
     { id: 'opaque1', params: { opacity: 1 } },
     { id: 'transparent40', params: { opacity: 0.4, transparent: true } },
     { id: 'seeThrough40', params: { opacity: 0.4, transparent: true, opaqueBack: seeThroughOpaqueBack } },
     { id: 'opaqueBackTrue40', params: { opacity: 0.4, transparent: true, opaqueBack: true } },
-  ];
+  ].concat(
+    /* ── « TRANSP 0 % » DOIT ÊTRE OPAQUE, MATÉRIAU COMPRIS ──────────────────
+       Rapport : « even if I set transparency to 0 %, it remains a bit
+       transparent ». La rangée est alors à opacity 1 (`1 − 0`, sectionOpacity),
+       mais le preset « glass » réécrivait 0.45 sur ses reps (applyMaterialToRep,
+       MATERIAL_PRESETS.glass) — donc APRÈS le curseur, et à chaque
+       reconstruction : le fond traversait encore la surface à 0 %. Le matériau
+       ne règle donc plus que la FORME, et ces deux cas le mesurent :
+         glassImposed*  opacity 1 PUIS l'opacité du preset → le TÉMOIN du défaut,
+                        celui qui doit laisser passer le fond (l'ancien code) ;
+         glassMaterial* opacity 1 puis la seule forme du preset (« glass » =
+                        roughness 0.08 / metalness 0.0) → ce que le viewer envoie
+                        maintenant : le fond ne doit PAS passer. */
+    bgPair('glassImposed', { opacity: 1, transparent: true, opaqueBack: false }, { opacity: 0.45 }),
+    bgPair('glassMaterial', { opacity: 1, transparent: true, opaqueBack: false }, { roughness: 0.08, metalness: 0.0 }),
+  );
 }
 
 /* ---- un cas : une scène neuve, une surface, un PNG ------------------------ */
@@ -182,7 +210,7 @@ async function one (c, i) {
   var host = document.createElement('div');
   host.style.cssText = 'width:360px;height:360px;';
   document.getElementById('hosts').appendChild(host);
-  var stage = new window.NGL.Stage(host, { backgroundColor: 'white', quality: 'high', sampleLevel: 0 });
+  var stage = new window.NGL.Stage(host, { backgroundColor: c.bg || 'white', quality: 'high', sampleLevel: 0 });
   var viewer = stage.viewer;
   var added = [];
   var origAdd = viewer.add;
@@ -197,6 +225,19 @@ async function one (c, i) {
   var rep = comp.addRepresentation('surface', Object.assign({}, BASE, c.params));
   var getBuf = function () { return surfaceBufferIn(added); };
   var built = await waitBuilt(getBuf, 12000);
+  /* Le matériau arrive APRÈS les reps (c'est ce que fait applyMaterialToRep :
+     `reprOfElement(el).setParameters(…)`) : les cas « glass » le rejouent ici,
+     sur le MÊME objet que le viewer — jamais sur une copie. */
+  var applied = null;
+  if (c.then) {
+    var target = (rep && (rep.repr || (typeof rep.getRepresentation === 'function' ? rep.getRepresentation() : null))) || null;
+    if (target && typeof target.setParameters === 'function') {
+      try { target.setParameters(c.then); applied = true; } catch (e) { applied = String((e && e.message) || e); }
+    } else {
+      applied = 'aucune représentation';
+    }
+    await sleep(250);
+  }
   stage.viewer.requestRender();
   await sleep(400);
   var buf = getBuf();
@@ -207,6 +248,9 @@ async function one (c, i) {
   var rp = rep.getParameters() || {};
   var info = {
     built: built,
+    bg: c.bg || 'white',
+    then: c.then || null,
+    applied: applied,
     added: added.length,
     atoms: comp.structure.atomCount,
     rep: {

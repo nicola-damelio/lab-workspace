@@ -109,13 +109,14 @@ const CODE = [
   extract(VIEW, 'SEL_STYLE_REP_TYPE'),
   extract(VIEW, 'selRowFamilies'),
   extract(VIEW, 'materialValueOf'),
+  extract(VIEW, 'presetTransparencyOf'),
   extract(VIEW, 'reprOfElement'),
   extract(VIEW, 'repTypeOfElement'),
   extract(VIEW, 'applyMaterialToRep'),
 ].join('\n');
 const F = new Function(`${CODE}
   return { SEE_THROUGH_SURFACE, MATERIAL_PRESETS, MATERIAL_PRESET_KEYS, MATERIAL_KINDS, MATERIAL_KIND_OF_REP,
-    SEL_STYLE_REP_TYPE, selRowFamilies, materialValueOf, reprOfElement, repTypeOfElement, applyMaterialToRep };`)();
+    SEL_STYLE_REP_TYPE, selRowFamilies, materialValueOf, presetTransparencyOf, reprOfElement, repTypeOfElement, applyMaterialToRep };`)();
 
 ok(!/useState|useRef|componentRef/.test(CODE),
   'le réglage du matériau ne dépend d’aucun état React : il est exécutable tel quel');
@@ -363,8 +364,21 @@ eq(B2.calls[0].params, { roughness: 0.35, metalness: 0.15 }, '…et « gloss » 
 
 const B3 = bench();
 F.applyMaterialToRep(B3.el('surface'), { preset: 'glass' });
-eq(B3.calls[0].params, { roughness: 0.08, metalness: 0, opacity: 0.45 },
-  '« glass » ajoute l’opacité : une surface translucide, sans toucher au reste');
+eq(B3.calls[0].params, { roughness: 0.08, metalness: 0 },
+  '« glass » ne règle que la FORME : le matériau n’écrit plus aucune opacité sur les reps');
+// Le rapport : « even if I set transparency to 0 %, it remains a bit transparent ».
+// L'opacité du preset partait sur les reps APRÈS le curseur Transp et à chaque
+// reconstruction : une surface « glass » restait donc à 0.45 quoi que dise le
+// curseur. Sa translucidité est maintenant REMISE AU CURSEUR de la rangée (55 %),
+// donc visible, réglable, et ramenable à 0 %.
+eq(F.presetTransparencyOf('glass'), 0.55,
+  '…la translucidité de « glass » (0.45 d’opacité) est remise au curseur Transp de la rangée : 55 %');
+eq(['auto', 'matte', 'gloss', 'metallic'].map((p) => F.presetTransparencyOf(p)), [null, null, null, null],
+  'aucun autre preset ne touche à la transparence de la rangée');
+eq(F.presetTransparencyOf('inconnu'), null, 'un preset inconnu ne remet rien (le curseur ne bouge pas)');
+eq(F.presetTransparencyOf(null), null, '…et une ligne sans preset non plus');
+eq(F.MATERIAL_PRESETS.glass.opacity, 0.45,
+  '« glass » garde son opacité 0.45 : c’est elle que presetTransparencyOf traduit en 55 % de transparence');
 
 // LE MATÉRIAU APPARTIENT À LA LIGNE, plus à une famille de reps : la même valeur
 // atteint n’importe quelle rep de cette ligne — et c’est `rep.__sec` (voir §6) qui
@@ -507,10 +521,38 @@ has('const rowMat = (selStylesRef.current[sel.key] || {}).mat;',
   'le matériau cherché est celui de CETTE ligne');
 has('const setSelMaterial = (key, fam, field, value) => {',
   'la barre écrit le matériau de la famille (un adaptateur dédié aux deux barres)');
-has('[key]: { ...cur, mat: { ...mat, [fam]: { ...(mat[fam] || {}), [field]: value } } },',
+has('const row = { ...cur, mat: { ...mat, [fam]: { ...(mat[fam] || {}), [field]: value } } };',
   '…sans toucher aux autres familles ni aux autres lignes');
+has('setSelStyles({ ...selStylesRef.current, [key]: row });',
+  '…puis la ligne est écrite — avec la transparence si le preset en remet une (§7)');
 has('{families.map((fam) => {', '…un contrôle par famille réellement dessinée');
 has('families: selRowFamilies(st),', '…les familles étant celles que la ligne dessine');
+
+/* ── 7. « Transp 0 % » DOIT ÊTRE ATTEIGNABLE ──────────────────────────────
+   Le rapport, sur la surface du viewer : « it is now very good for transparency
+   but even if I set transparency to 0 %, it remains a bit transparent ».
+   La cause, mesurée sur de vrais pixels : le preset « glass » portait une
+   opacité que applyMaterialToRep RÉÉCRIVAIT sur les reps de la rangée — donc
+   derrière le curseur Transp, et à chaque reconstruction (applyMaterialsToScene
+   est un useEffect). Une surface « glass » restait à 0.45 quoi que dise le
+   curseur : le fond continuait de la traverser même à 0 %.
+   Règle désormais : l'opacité n'a QU'UN patron, le curseur Transp de la rangée
+   (0 = opaque, 1 = invisible) ; un preset qui veut de la translucidité la REMET
+   à ce curseur quand on le choisit, donc elle se voit et se reprend. */
+gone("const opacity = materialValueOf(mat, 'opacity');",
+  'le matériau ne lit plus d’opacité du tout (l’opacité n’est pas une propriété de la forme)');
+gone('if (opacity != null) params.opacity = opacity;',
+  '…donc il ne peut plus la réécrire sur les reps, ni derrière le curseur, ni après lui');
+has('const presetTransparencyOf = (key) => {',
+  'la translucidité d’un preset est traduite en transparence de rangée, à UN seul endroit');
+has("if (field === 'preset') {\n    const t = presetTransparencyOf(value);\n    if (t != null) row.transparency = t;\n  }",
+  'la barre Selections remet la translucidité du preset au curseur Transp de SA ligne');
+has("const t = field === 'preset' ? presetTransparencyOf(value) : null;\n          if (t != null) set('opacity', t);",
+  'la fenêtre de styling aussi — le curseur de la ligne bouge vraiment');
+has("glass — the smoothest, and the only one that moves this row's Transp regulator (55 %)",
+  'la bulle du menu 🎛 dit la même chose que le code : réglable, et 0 % redonne une surface pleine');
+gone('glass (translucent)',
+  '…la promesse muette (« glass (translucent) ») ne peut plus cacher une opacité imposée');
 
 /* ── Bilan ──────────────────────────────────────────────────────────────── */
 console.log(`_viewer_materials_test.mjs — ${passed} assertions OK`);

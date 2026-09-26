@@ -4663,6 +4663,10 @@ const MATERIAL_PRESETS = {
   matte: { roughness: 0.95, metalness: 0.0 },
   gloss: { roughness: 0.35, metalness: 0.15 },
   metallic: { roughness: 0.18, metalness: 0.85 },
+  // « Glass » : le plus lisse des quatre, ET le seul qui parle de transparence.
+  // Son `opacity` n'est jamais écrite dans le dos du curseur : la choisir REMET
+  // ses 0.45 au curseur Transp de la rangée (55 %), qui reste le patron — 0 %
+  // redonne une surface pleine (presetTransparencyOf, applyMaterialToRep).
   glass: { roughness: 0.08, metalness: 0.0, opacity: 0.45 },
 };
 // The four material families the user asked for, and the rep TYPES that belong to
@@ -4973,6 +4977,19 @@ const materialValueOf = (mat, prop) => {
   if (preset && preset[prop] != null) return preset[prop];
   return null;
 };
+/* La TRANSPARENCE qu'un preset REMET AU CURSEUR de sa rangée quand on le choisit,
+   au lieu de l'appliquer dans son dos (voir applyMaterialToRep : c'est ce
+   détournement qui rendait « Transp 0 % » inatteignable). « Glass » est le seul
+   preset qui en porte une (0.45 d'opacité = 55 % de transparence) : le choisir
+   DÉPLACE le curseur Transp de la rangée, donc la translucidité se voit dans la
+   barre, se règle, et se reprend à 0 % pour une surface pleine. `null` = le
+   preset ne dit rien de la transparence (le curseur ne bouge pas). */
+const presetTransparencyOf = (key) => {
+  const preset = MATERIAL_PRESETS[key] || null;
+  const op = preset && preset.opacity;
+  if (!Number.isFinite(op)) return null;
+  return Number((1 - Math.min(1, Math.max(0, op))).toFixed(3));
+};
 /* THE ELEMENT, NOT THE REPRESENTATION — this was the whole materials bug.
    `component.addRepresentation(type, params)` does NOT return the representation:
    it returns a RepresentationElement that WRAPS it (ngl 2.4.0, component.ts:
@@ -4992,6 +5009,23 @@ const repTypeOfElement = (el) => String((el && (el.name || (typeof el.getType ==
 // Through NGL's own parameters — the block above lists the source lines that prove
 // it is applied in place (no rebuild, no uniform poking). `mat` is the material of
 // the ROW this representation draws for: { preset, roughness, metalness }.
+/* ── LE MATÉRIAU NE DIT QUE LA FORME (roughness / metalness) ──────────────────
+   Le rapport : « the surface … even if I set transparency to 0 %, it remains a
+   bit transparent ». Le réglage Transp d'une rangée EST le patron de son opacité
+   (0 = opaque → 1 = invisible, converti en `1 − t` là où les reps se
+   construisent : sectionStyleReps, buildSectionReps, applyEntryStyle…), mais
+   `MATERIAL_PRESETS.glass` portait un `opacity: 0.45` que CETTE fonction
+   réécrivait sur toutes les reps de la rangée — et comme elle repasse à chaque
+   reconstruction (`applyMaterialsToScene`, useEffect), elle écrasait le réglage
+   APRÈS lui : une surface « glass » restait à 0.45 quoi que dise le curseur, et
+   le fond continuait de la traverser même à Transp 0 %. Mesuré sur de vrais
+   pixels (sonde différentielle : même scène sur fond blanc puis rouge, l'écart
+   du centre EST l'alpha qui reste) : 0 écart à Transp 0 %, 112 écarts dès que
+   l'opacité du preset est appliquée — l'écran disait la même chose que le
+   rapport. Un matériau ne touche donc plus à l'opacité : il ne règle que la
+   forme (les deux uniforms de NGL, appliqués en place), et la translucidité de
+   « glass » est REMISE AU CURSEUR de la rangée quand on la choisit
+   (presetTransparencyOf, ci-dessous) — visible, et ramenable à 0 %. */
 const applyMaterialToRep = (el, mat) => {
   if (!el || !mat) return;
   const kind = MATERIAL_KIND_OF_REP[repTypeOfElement(el)];
@@ -4999,10 +5033,8 @@ const applyMaterialToRep = (el, mat) => {
   const params = {};
   const roughness = materialValueOf(mat, 'roughness');
   const metalness = materialValueOf(mat, 'metalness');
-  const opacity = materialValueOf(mat, 'opacity');
   if (roughness != null) params.roughness = roughness;
   if (metalness != null) params.metalness = metalness;
-  if (opacity != null) params.opacity = opacity;
   // « auto » asks for nothing: NGL's own rough, non-metallic material stays.
   if (!Object.keys(params).length) return;
   const repr = reprOfElement(el);
@@ -10116,10 +10148,17 @@ const setMembraneSolo = (key, on) => {
 const setSelMaterial = (key, fam, field, value) => {
   const cur = selStylesRef.current[key] || {};
   const mat = cur.mat || {};
-  setSelStyles({
-    ...selStylesRef.current,
-    [key]: { ...cur, mat: { ...mat, [fam]: { ...(mat[fam] || {}), [field]: value } } },
-  });
+  const row = { ...cur, mat: { ...mat, [fam]: { ...(mat[fam] || {}), [field]: value } } };
+  /* « Glass » REMET SA TRANSLUCIDITÉ AU CURSEUR de la rangée (voir
+     presetTransparencyOf) : la transparence de la ligne passe à 55 %, là où le
+     curseur Transp la montre et où le prochain glissement la reprend — à 0 % la
+     surface est pleine. Le matériau, lui, ne règle plus que la forme
+     (applyMaterialToRep). */
+  if (field === 'preset') {
+    const t = presetTransparencyOf(value);
+    if (t != null) row.transparency = t;
+  }
+  setSelStyles({ ...selStylesRef.current, [key]: row });
 };
 
 // PDB anchor atoms used to build a SMALL, page-friendly key set when a residue
@@ -11472,7 +11511,7 @@ const renderLookControls = ({
               </span>
               <select value={mm.preset || 'auto'} onChange={(e) => setM('preset', e.target.value)}
                 className="border border-slate-300 rounded text-[10px] py-0.5 px-0.5 bg-white shrink-0"
-                title={`Material of the ${familyLabelOf(fam).toLowerCase()}: auto = NGL's own rough surface (0.40 / 0.00), matte, gloss, metallic, glass (translucent)`}>
+                title={`Material of the ${familyLabelOf(fam).toLowerCase()}: auto = NGL's own rough surface (0.40 / 0.00), matte, gloss, metallic, glass — the smoothest, and the only one that moves this row's Transp regulator (55 %), so its translucency stays adjustable and 0 % still gives a solid surface`}>
                 {MATERIAL_PRESET_KEYS.map((p) => <option key={p} value={p}>{p}</option>)}
               </select>
               <input type="range" min="0" max="1" step="0.05" value={lookMatValue(mm, 'roughness')}
@@ -11527,7 +11566,15 @@ const renderSectionRow = (sec, sub) => {
         set,
         families: styleFamiliesOf(look.style),
         materialOf: () => ({ preset: look.material, roughness: look.roughness, metalness: look.metalness }),
-        setMaterial: (_fam, field, value) => set(field === 'preset' ? 'material' : field, value),
+        setMaterial: (_fam, field, value) => {
+          set(field === 'preset' ? 'material' : field, value);
+          /* « Glass » REMET SA TRANSLUCIDITÉ AU CURSEUR Transp DE CETTE RANGÉE
+             (voir presetTransparencyOf) : le choix du matériau déplace le curseur
+             au lieu d'écrire une opacité que personne ne peut reprendre. Tout
+             autre preset laisse le curseur où il est. */
+          const t = field === 'preset' ? presetTransparencyOf(value) : null;
+          if (t != null) set('opacity', t);
+        },
         follows,
         onReset: () => resetSectionRowLook(sec.id, kind, sub),
       })}
