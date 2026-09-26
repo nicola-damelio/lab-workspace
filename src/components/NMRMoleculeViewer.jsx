@@ -4,7 +4,7 @@ import { ensureNGL } from '../utils/ngl';
 // « 💡 Light »): one single source of truth for the light colour, intensity,
 // direction and sampling level — shared with the Mol* translation that draws the
 // projected shadows and the ambient occlusion (utils/viewerLightRig.js).
-import { LIGHT_RIG, nglKeyLightDirection, nglLightParams } from '../utils/viewerLightRig';
+import { LIGHT_COLOR_DEFAULT, LIGHT_RIG, nglKeyLightDirection, nglLightParams, normalizeLightColor } from '../utils/viewerLightRig';
 // ✨ Ray — the high-resolution STILL of the current scene (its own module, see
 // src/utils/viewerRayImage.js): NGL's own supersampling path, so the still is
 // the very scene on screen and never a re-drawing of it. The module also OWNS the
@@ -6833,7 +6833,7 @@ useEffect(() => {
 // falls into shade as the model is rotated. The Darkness slider then only
 // raises the CONTRAST between the lit and the shaded sides: the key light gets
 // brighter while the fill light gets dimmer. Both lights stay pure white, so
-// element / residue colours are never tinted or warmed.
+// element / residue colours are never tinted or warmed — the ONE exception the user may ask for is the 💡 Light colour swatch of §2 Scene, just before ✂ Clipping, which tints the key light alone while this fill stays white.
 const [shadowOn, setShadowOn] = useState(() => {
   try { return String(localStorage.getItem('labViewerShadows') || '').startsWith('on'); } catch { return false; }
 });
@@ -6866,6 +6866,28 @@ const shadowDirRef = useRef({ az: shadowAz, el: shadowEl });
 shadowOnRef.current = shadowOn;
 shadowDarknessRef.current = shadowDarkness;
 shadowDirRef.current = { az: shadowAz, el: shadowEl };
+
+// ---- 💡 Light colour (Scene, JUST BEFORE « ✂ Clipping ») --------------------
+// The request: « in the molecular viewer add the possibility to change the color
+// of the light and put it just before the clipping in the scene section of the
+// toolbar ». The swatch writes the colour of the KEY light — the ONE colour of the
+// rig the user may change — and it goes through the rig's own validator
+// (normalizeLightColor, src/utils/viewerLightRig.js): anything that is not
+// '#rrggbb' falls back to the reference WHITE, so junk read back from
+// localStorage can never tint the scene. It is applied by the very
+// applyShadowSettings that pushes the rig, and NGL re-reads
+// `parameters.lightColor` on EVERY frame (Viewer.__updateLights, 2.4), so the
+// tint shows in both modes: with the ◐ Shadows rig aimed at the lamp, and on
+// NGL's own camera-linked headlight while that rig is off — which is why the
+// swatch stays visible in both (the Azimuth / Elevation sliders beside it only
+// mean something for the aimed rig and for the ray shadows). The AMBIENT fill
+// stays white (see nglLightParams): only the lit side of an atom takes the cast,
+// exactly like PyMOL's `light_color`.
+const [lightColor, setLightColor] = useState(() => {
+  try { return normalizeLightColor(localStorage.getItem('labViewerLightColor')); } catch { return LIGHT_COLOR_DEFAULT; }
+});
+const lightColorRef = useRef(lightColor);
+lightColorRef.current = lightColor;
 
 // Install a one-time rig on the NGL viewer's light. NGL's render loop calls
 // Viewer.__updateLights() every frame and parks its directional light on the
@@ -6915,9 +6937,11 @@ const applyShadowSettings = useCallback(() => {
     // Shadows ON: ONE fixed key light (aimed via the Azimuth / Elevation
     // controls). Darkness only raises the dark-vs-light CONTRAST — the key light
     // gets brighter while the ambient fill gets dimmer. The lights are pure
-    // white, so colours are never tinted (the old warm-golden key / cool-blue
-    // fill is gone — it read as "a red light was added"). The fill is floored so
-    // the shadow side never goes fully black.
+    // white BY DEFAULT, so colours are never tinted unless the user asks: the ONE
+    // exception is the 💡 Light colour swatch just before ✂ Clipping, which tints
+    // the KEY light and leaves the fill white (the old warm-golden key / cool-blue
+    // fill pair is gone — it read as "a red light was added"). The fill
+    // is floored so the shadow side never goes fully black.
     //
     // AMBIENT OCCLUSION: NGL 2.4 ships NO screen-space ambient-occlusion pass
     // (verified in the installed build: `ssao` / `AmbientOcclusion` do not exist
@@ -6934,7 +6958,7 @@ const applyShadowSettings = useCallback(() => {
     // Both branches feed on the rig (utils/viewerLightRig.js): the call below
     // returns exactly the payload this function used to build inline, so the NGL
     // look and its Mol* translation can never drift apart.
-    stage.setParameters(nglLightParams({ shadowOn: on, darkness: dark }));
+    stage.setParameters(nglLightParams({ shadowOn: on, darkness: dark, color: lightColorRef.current }));
     installShadowLightRig();
     try { if (stage.viewer.requestRender) stage.viewer.requestRender(); } catch {}
   } catch { /* best-effort */ }
@@ -6945,6 +6969,16 @@ useEffect(() => {
   try { localStorage.setItem('labViewerShadows', shadowOn ? `on:${Math.round(shadowDarkness * 100)}` : 'off'); } catch { /* ignore */ }
   applyShadowSettings();
 }, [shadowOn, shadowDarkness, applyShadowSettings]);
+
+// Persist + apply the LIGHT COLOUR (the 💡 Light colour swatch of §2 → Scene,
+// just before ✂ Clipping). applyShadowSettings is the ONE entry point of the rig,
+// so the tint is pushed to the live stage here as well — and it re-renders a
+// frame, so the new colour shows at once whether the ◐ Shadows rig is on (aimed
+// lamp) or off (NGL's camera-linked headlight).
+useEffect(() => {
+  try { localStorage.setItem('labViewerLightColor', lightColor); } catch { /* ignore */ }
+  applyShadowSettings();
+}, [lightColor, applyShadowSettings]);
 
 // Persist the light direction and re-render one frame so the fixed key light
 // visibly moves while the Azimuth / Elevation sliders are dragged.
@@ -12938,7 +12972,7 @@ const captureViewerSetup = () => ({
   selectedResidueColor,
   assignedAtomColor,
   fog: fogEnabled,
-  shadows: { on: shadowOn, darkness: shadowDarkness, az: shadowAz, el: shadowEl },
+  shadows: { on: shadowOn, darkness: shadowDarkness, az: shadowAz, el: shadowEl, color: lightColor },
   clip: { on: clipOn, near: clipNear, far: clipFar, dist: clipDist },
   background: bgColor,
   quality: qualityHigh,
@@ -12981,6 +13015,11 @@ const applyViewerSetup = (s) => {
   if (Number.isFinite(sh.darkness)) setShadowDarkness(sh.darkness);
   if (Number.isFinite(sh.az)) setShadowAz(sh.az);
   if (Number.isFinite(sh.el)) setShadowEl(sh.el);
+  // …and the colour of that lamp (💡 Light colour, §2 Scene → just before
+  // ✂ Clipping). It is run through the rig's own validator, so a setup file that
+  // was hand-edited with a name or a number falls back to the white reference
+  // instead of tinting the scene with something nobody validated.
+  if (typeof sh.color === 'string') setLightColor(normalizeLightColor(sh.color));
   const cl = s.clip || {};
   if (typeof cl.on === 'boolean') setClipOn(cl.on);
   if (Number.isFinite(cl.near)) setClipNear(cl.near);
@@ -13645,7 +13684,7 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
     a hairline; the expanded panels (⚡ ESP · Range, 🔢 Renumber, ✏️ Atom names,
     🧪 PyMOL, the clipping sliders) are full-width children of this same section,
     so the bar stays one row tall while nothing is open.
-    • Scene: 🌫 Fog · 🎨 Background · ◐ Shadows (+ 🌑 Darkness / 💡 Light) · ✂ Clipping · ✨ Ray (+ resolution · ⬚ alpha · ◐ shadows)
+    • Scene: 🌫 Fog · 🎨 Background · ◐ Shadows (+ 🌑 Darkness / 💡 Light) · 💡 Light colour · ✂ Clipping · ✨ Ray (+ resolution · ⬚ alpha · ◐ shadows)
     • Modify: 🧬 From sequence · ✋ Drag · ⚗️ Rebuild H · ✏️ Atom names · ⚡ ESP · 🔢 Renumber
     • Analysis: 📏 Measure · 🟢 Assigned
     • PyMOL: 🧪 Selections & PyMOL
@@ -13670,7 +13709,7 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
         and the Hide-everything button.
     The lighting rig is untouched: Shadows locks NGL's single light in place and
     the Darkness / Light sliders aim it (and now also drive the AMBIENT-OCCLUSION
-    equivalent, see applyShadowSettings). ✂ Clipping pushed OFF sets the camera
+    equivalent, see applyShadowSettings). Its ONE user-changeable colour is the « 💡 Light colour » swatch, parked IMMEDIATELY BEFORE « ✂ Clipping » because that is where the request puts it (« in the molecular viewer add the possibility to change the color of the light and put it just before the clipping in the scene section of the toolbar ») — white by default, so the reference look is what an untouched swatch gives. ✂ Clipping pushed OFF sets the camera
     bounds to the EXTREMES (near 0 · far 100000 · dist 0) so a large complex is
     never cut. */}
 <VSection title="2 · Toolbar" hint="scene · modify · analysis · PyMOL">
@@ -13696,18 +13735,18 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
 </button>
 <button type="button" onClick={() => setShadowOn((v) => !v)}
   className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 ${shadowOn ? 'bg-slate-800 border-slate-800 text-white' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
-  title="Shadows: swaps NGL's flat camera-lit look for ONE fixed key light whose direction you aim (Azimuth / Elevation appear while ON), so every side of the structure that turns away from the light falls into real shade as you rotate. The Darkness slider then only raises the dark↔light contrast — the light stays pure white, so colours are never tinted. Shadows also switches on the AMBIENT-OCCLUSION equivalent: NGL 2.4 has no SSAO pass, so the cavity shading comes from the deep-ambient + strong-key-light rig with supersampled shading (sampleLevel), which is what makes crevices and the inner sides of a fold read as depth. (True WebGL shadow maps aren't supported by NGL — trying them made the molecule disappear. Every mesh is still flagged cast+receive shadows, see flagMeshShadows.)">
+  title="Shadows: swaps NGL's flat camera-lit look for ONE fixed key light whose direction you aim (Azimuth / Elevation appear while ON), so every side of the structure that turns away from the light falls into real shade as you rotate. The Darkness slider then only raises the dark↔light contrast — the light stays pure white unless you say otherwise (the 💡 Light colour swatch that follows, immediately before ✂ Clipping, is the ONE control that tints this lamp). Shadows also switches on the AMBIENT-OCCLUSION equivalent: NGL 2.4 has no SSAO pass, so the cavity shading comes from the deep-ambient + strong-key-light rig with supersampled shading (sampleLevel), which is what makes crevices and the inner sides of a fold read as depth. (True WebGL shadow maps aren't supported by NGL — trying them made the molecule disappear. Every mesh is still flagged cast+receive shadows, see flagMeshShadows.)">
   ◐ Shadows: {shadowOn ? 'On' : 'Off'}
 </button>
 {shadowOn && (
-  <label className="flex items-center gap-1 text-[11px] font-bold text-slate-700 whitespace-nowrap" title="Darkness — contrast only: the lit side gets brighter and the shaded side darker, with no colour change (the key light is pure white and only the light/ambient INTENSITIES move). This is also what deepens the ambient-occlusion-like cavity shading.">
+  <label className="flex items-center gap-1 text-[11px] font-bold text-slate-700 whitespace-nowrap" title="Darkness — contrast only: the lit side gets brighter and the shaded side darker, with no colour change here (only the light/ambient INTENSITIES move, and the light keeps its colour — the 💡 Light colour swatch just before ✂ Clipping is where that colour is chosen, white by default). This is also what deepens the ambient-occlusion-like cavity shading.">
     🌑 Darkness
     <input type="range" min="0" max="100" value={Math.round(shadowDarkness * 100)} onChange={(e) => setShadowDarkness(Number(e.target.value) / 100)} className="w-20 accent-slate-700" />
     <span className="text-[10px] text-slate-500 w-8">{Math.round(shadowDarkness * 100)}%</span>
   </label>
 )}
 {(shadowOn || rayShadows) && (
-  <label className="flex items-center gap-1 text-[11px] font-bold text-slate-700 whitespace-nowrap" title="Light direction — aim the fixed key light (and therefore where the shadows fall). Azimuth 0° = light behind the camera (flat), 90° = screen-left, 180° = facing the camera; Elevation is the height above/below the horizon. The shade follows live while you drag. ⚠ The ✨ Ray still throws its cast shadow from THIS lamp too, so these sliders are shown whenever either the ◐ Shadows rig or the ray shadows are on — an off-axis lamp (about 90° / 45°) is what makes a cast shadow read as a shadow instead of hiding in the shade the canvas already draws.">
+  <label className="flex items-center gap-1 text-[11px] font-bold text-slate-700 whitespace-nowrap" title="Light direction — aim the fixed key light (and therefore where the shadows fall). Azimuth 0° = light behind the camera (flat), 90° = screen-left, 180° = facing the camera; Elevation is the height above/below the horizon. The shade follows live while you drag. ⚠ The ✨ Ray still throws its cast shadow from THIS lamp too, so these sliders are shown whenever either the ◐ Shadows rig or the ray shadows are on — an off-axis lamp (about 90° / 45°) is what makes a cast shadow read as a shadow instead of hiding in the shade the canvas already draws. The COLOUR of this lamp is the 💡 Light colour swatch just beside it — the swatch and these two sliders own the same lamp.">
     💡 Light
     <input type="range" min="0" max="360" value={shadowAz} onChange={(e) => setShadowAz(Number(e.target.value))} className="w-16 accent-slate-700" aria-label="Light azimuth" />
     <span className="text-[10px] text-slate-500 w-8">{shadowAz}°</span>
@@ -13716,6 +13755,32 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
     <span className="text-[10px] text-slate-500 w-8">{shadowEl}°</span>
   </label>
 )}
+{/* 💡 LIGHT COLOUR — the request: « in the molecular viewer add the possibility
+    to change the color of the light and put it just before the clipping in the
+    scene section of the toolbar ». It sits HERE, immediately before the ✂ Clipping
+    button, and it is the ONE control of the rig that tints anything: the KEY light
+    — the lamp NGL lights the scene with, the lamp the ◐ Shadows rig aims and the
+    ✨ Ray still re-renders with. White by default, which IS the reference look; the
+    ambient fill is deliberately left white (see nglLightParams in
+    utils/viewerLightRig.js), so the shaded side of an atom keeps the colour its
+    palette gave it and only the lit side takes the cast — the same bargain PyMOL's
+    `light_color` makes with `ambient_color`. Unlike the 💡 Light direction sliders
+    beside it (only the AIMED rig and the ray shadows need them), this swatch stays
+    visible in both modes: NGL re-reads `parameters.lightColor` on every frame
+    (Viewer.__updateLights, verified in the installed 2.4), so it also tints the
+    plain camera-linked headlight while ◐ Shadows is OFF. The value is validated by
+    the rig's own normalizeLightColor (junk → the white default), persisted like the
+    fog / shadows / clipping, and carried by a ⚙️ saved setup. */}
+  <label className="flex items-center gap-1 text-[11px] font-bold text-slate-700 whitespace-nowrap" title="Colour of the KEY light — the lamp the whole scene is lit with: the one the ◐ Shadows rig aims (Azimuth / Elevation) and the one the ✨ Ray re-renders in its still. White is the reference look. Any other colour tints the LIT side of every atom while the ambient fill stays white, so the shaded side keeps the colour its palette gave it (exactly PyMOL's light_color, which also leaves ambient_color alone). NGL re-reads the colour on every frame, so it applies with the Shadows rig ON and OFF; it is saved with the page and travels inside a ⚙️ saved setup.">
+    💡 Light colour
+    <input type="color" value={lightColor} onChange={(e) => setLightColor(normalizeLightColor(e.target.value))}
+      className="w-8 h-6 border border-slate-300 rounded cursor-pointer" aria-label="Light colour" />
+  </label>
+  <button type="button" onClick={() => setLightColor(LIGHT_COLOR_DEFAULT)}
+    className="px-1.5 py-1 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100"
+    title={`Back to the white key light (${LIGHT_COLOR_DEFAULT}) — the reference look, nothing tinted`}>
+    ↺
+  </button>
 <button type="button" onClick={() => setClipOn((v) => !v)}
   className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${clipOn ? 'bg-emerald-50 border-emerald-400 text-emerald-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
   title="Clipping plane. NGL clips the scene with the camera near / far planes: clipNear / clipFar are percentages of the scene bounding sphere and clipDist is the closest the near plane may come to the camera — exactly what CUTS a big complex when you zoom in. OFF = the camera bounds are pushed to the EXTREMES (near 0 · far 100000 · dist 0), so nothing is ever cut at any zoom. ON = your own values below.">

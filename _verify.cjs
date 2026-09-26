@@ -93,6 +93,13 @@ const tests = [
   // au VRAI schéma de paramètres de molstar 4.18 (PD.merge sur RendererParams /
   // PostprocessingParams / Canvas3DParams) et à la fonction de direction de Mol*
   // elle-même (Vec3.directionFromSpherical) : la lumière ne bouge pas d'un iota.
+  // …et, depuis la demande « in the molecular viewer add the possibility to change
+  // the color of the light and put it just before the clipping in the scene section
+  // of the toolbar », la COULEUR de cette lumière-clé (💡 Light colour, §2 Scene →
+  // juste avant ✂ Clipping) : validée par le module (tout ce qui n'est pas #rrggbb
+  // retombe sur le blanc de la référence), elle ne colore QUE la key light (l'am-
+  // biante reste blanche, comme `ambient_color` chez PyMOL) et le viewer la
+  // persiste, la pousse dans le payload du rig et la range dans un ⚙️ setup.
   '_viewer_light_rig_test.mjs',
   // Le MATÉRIAU des quatre familles (🎛 Material) ne faisait RIEN : la cible
   // était fausse. `addRepresentation` ne renvoie pas la représentation mais

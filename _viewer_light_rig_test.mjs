@@ -19,6 +19,15 @@
         inventée ou mal placée y serait silencieusement ignorée, donc les
         assertions comparent les valeurs APRÈS fusion, jamais avant.
 
+     3. la COULEUR de la lumière-clé, la demande : « in the molecular viewer add the
+        possibility to change the color of the light and put it just before the
+        clipping in the scene section of the toolbar ». Elle est validée par le
+        module (normalizeLightColor : tout ce qui n'est pas '#rrggbb' retombe sur le
+        blanc de la référence), elle ne colore QUE la key light (l'ambiante reste
+        blanche, comme `ambient_color` chez PyMOL), et le viewer la persiste, la
+        pousse dans le payload du rig et la range dans un ⚙️ setup — le garde-fou
+        l'EXÉCUTE sur le module et lit le câblage du viewer.
+
    Le viewer est un .jsx : il ne s'importe pas sous Node, ses réglages sont donc
    vérifiés SUR LA SOURCE (comme dans _pymol_selections_test.mjs). Le module de
    lumière, lui, est du JS pur et s'exécute vraiment.
@@ -28,12 +37,12 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 
 import {
-  LIGHT_RIG, MOLSTAR_HEADLIGHT, MOLSTAR_MULTISAMPLE_INTERACTIVE, MOLSTAR_MULTISAMPLE_STILL,
+  LIGHT_COLOR_DEFAULT, LIGHT_RIG, MOLSTAR_HEADLIGHT, MOLSTAR_MULTISAMPLE_INTERACTIVE, MOLSTAR_MULTISAMPLE_STILL,
   MOLSTAR_OCCLUSION_PARAMS, MOLSTAR_SHADOW_PRESETS,
-  ambientIntensity, clampDarkness, hexToInt, keyLightIntensity, molstarCanvasProps,
+  ambientIntensity, clampDarkness, hexToInt, keyLightColorInt, keyLightIntensity, molstarCanvasProps,
   molstarHeadlightFromCamera, molstarMultiSampleProps, molstarPostprocessingProps,
   molstarRendererProps, molstarSphericalFromDirection, nglKeyLightDirection, nglLightParams,
-  sampleLevel,
+  normalizeLightColor, sampleLevel,
 } from './src/utils/viewerLightRig.js';
 
 // Les modules de Mol* eux-mêmes (build commonjs, exécutable sous Node) : c'est
@@ -123,9 +132,9 @@ const behind = nglKeyLightDirection(0, 0);
 near(behind.z, -1, 'az=0 el=0 : la lampe est DERRIÈRE la caméra (z négatif, NGL regarde +z)');
 
 /* ── 4. Le viewer CONSOMME le rig (il ne réécrit plus les nombres) ───────── */
-has("import { LIGHT_RIG, nglKeyLightDirection, nglLightParams } from '../utils/viewerLightRig';",
-  'le viewer importe le rig');
-has('stage.setParameters(nglLightParams({ shadowOn: on, darkness: dark }));',
+has("import { LIGHT_COLOR_DEFAULT, LIGHT_RIG, nglKeyLightDirection, nglLightParams, normalizeLightColor } from '../utils/viewerLightRig';",
+  'le viewer importe le rig — et son validateur de couleur');
+has('stage.setParameters(nglLightParams({ shadowOn: on, darkness: dark, color: lightColorRef.current }));',
   'applyShadowSettings applique le payload du rig (les deux branches n’en font plus qu’une)');
 has('const { x, y, z } = nglKeyLightDirection(d0.az, d0.el);',
   'installShadowLightRig oriente la lampe avec le rig');
@@ -285,6 +294,79 @@ eq(wrongNesting.renderer.postprocessing, undefined, '…car le renderer de Mol* 
 eq([hexToInt('#f8fafc'), hexToInt('#fff'), hexToInt(0x123456), hexToInt('nope'), hexToInt(null)],
   [0xf8fafc, 0xffffff, 0x123456, 0xffffff, 0xffffff],
   'les couleurs du viewer deviennent les entiers de Mol* (et l’absurde ne casse rien)');
+
+/* ── 10. LA COULEUR DE LA LAMPE (💡 Light colour, juste avant ✂ Clipping) ─── */
+// La demande : « in the molecular viewer add the possibility to change the color
+// of the light and put it just before the clipping in the scene section of the
+// toolbar ». Le rig n'avait qu'une couleur — blanche, gelée, jamais modifiable ;
+// elle devient un RÉGLAGE, validé par le module lui-même, et il ne colore que la
+// KEY light : l'ambiante reste blanche, comme `ambient_color` chez PyMOL.
+eq(LIGHT_COLOR_DEFAULT, '#ffffff', 'la couleur de la lampe par défaut est le blanc de la référence');
+eq(normalizeLightColor('#ff8800'), '#ff8800', 'un #rrggbb passe tel quel');
+eq(normalizeLightColor('#FF8800'), '#ff8800', '…en minuscules (l’état React et le champ ne divergent pas)');
+eq(normalizeLightColor('  #00ff00  '), '#00ff00', '…les espaces autour sont ignorés');
+for (const junk of [null, undefined, '', 'red', '#fff', '#12345', '#ff88000', 'ff8800', 0xff8800, {}, [], true, 'javascript:alert(1)']) {
+  eq(normalizeLightColor(junk), '#ffffff',
+    `${JSON.stringify(junk)} retombe sur le blanc : rien d’invalide ne peut teinter la scène`);
+}
+eq(keyLightColorInt('#ff8800'), 0xff8800, '…et c’est l’entier que NGL (`lightColor`) et Mol* (`light.color`) attendent');
+eq(keyLightColorInt('nope'), LIGHT_RIG.keyColor, 'l’absurde redonne l’entier blanc du rig');
+
+// Le payload NGL : SEULE la clé porte la couleur. L'ambiante est intacte — le côté
+// ombre d'un atome garde donc la couleur de sa palette (PyMOL fait pareil).
+const tinted = nglLightParams({ shadowOn: true, darkness: 0.5, color: '#ff8800' });
+eq(tinted.lightColor, 0xff8800, 'le payload du rig colore la key light');
+eq(tinted.ambientColor, LIGHT_RIG.ambientColor, '…et laisse l’ambiante blanche');
+near(tinted.lightIntensity, keyLightIntensity(true, 0.5), 'l’intensité ne dépend PAS de la couleur (aucune compensation cachée)');
+near(tinted.ambientIntensity, ambientIntensity(true, 0.5), '…ni celle de l’ambiante');
+eq(nglLightParams({ color: null }), nglLightParams(), 'sans couleur : le payload d’avant, au bit près');
+eq(nglLightParams({ color: '#ff8800' }).sampleLevel, nglLightParams().sampleLevel,
+  'la couleur ne touche pas au sur-échantillonnage');
+
+// La même lampe chez Mol*, validée par le VRAI RendererParams de Mol*.
+const mTint = mergedRenderer(molstarRendererProps({ shadowOn: true, darkness: 0.5, az: 30, el: 25, lightColor: '#ff8800' }));
+eq(mTint.light[0].color, 0xff8800, 'la lampe de Mol* prend la même couleur (même nom, même sens)');
+eq(mTint.ambientColor, LIGHT_RIG.ambientColor, '…et l’ambiante de Mol* reste blanche elle aussi');
+eq(mergedRenderer(molstarRendererProps({ shadowOn: true })).light[0].color, LIGHT_RIG.keyColor,
+  'sans réglage : blanc, exactement comme avant la couleur réglable');
+const cfgTint = PD.merge(Canvas3DParams, PD.getDefaultValues(Canvas3DParams),
+  molstarCanvasProps({ shadowOn: true, lightColor: '#ff8800' }));
+eq(cfgTint.renderer.light[0].color, 0xff8800, 'la couleur traverse la config complète (renderer.light[0].color)');
+
+/* Le câblage du viewer : état, persistance, application, ⚙️ setup, PLACEMENT. */
+has("const [lightColor, setLightColor] = useState(() => {\n  try { return normalizeLightColor(localStorage.getItem('labViewerLightColor')); } catch { return LIGHT_COLOR_DEFAULT; }\n});",
+  'l’état est RELU au chargement, et il passe par le validateur du rig');
+has("try { localStorage.setItem('labViewerLightColor', lightColor); } catch { /* ignore */ }",
+  '…et persisté comme Fog / Shadows / Clipping');
+has('color: lightColorRef.current', 'applyShadowSettings pousse la couleur avec le reste du rig');
+has('el: shadowEl, color: lightColor },', '…et un ⚙️ setup enregistré la transporte');
+has('if (typeof sh.color === \'string\') setLightColor(normalizeLightColor(sh.color));',
+  '…un setup relu la valide avant de l’appliquer (un fichier trafiqué ne teinte rien)');
+has('aria-label="Light colour"', 'le sélecteur de couleur est accessible (💡 Light colour)');
+has('onChange={(e) => setLightColor(normalizeLightColor(e.target.value))}',
+  'le champ valide SA valeur (un <input type="color"> ne peut rien écrire d’invalide)');
+has('onClick={() => setLightColor(LIGHT_COLOR_DEFAULT)}', '↺ revient au blanc de la référence');
+gone('the light stays pure white, so colours are never tinted.',
+  'la phrase « la lumière reste blanche, donc rien n’est jamais teinté » a disparu : elle est devenue fausse');
+
+// LE PLACEMENT — la moitié de la demande : juste AVANT ✂ Clipping.
+const iSec2 = VIEW.indexOf('<VSection title="2 · Toolbar"');
+const iShadowBtn = VIEW.indexOf('◐ Shadows', iSec2);
+const iColour = VIEW.indexOf('aria-label="Light colour"', iSec2);
+const iClipBtn = VIEW.indexOf('✂ Clipping: ', iSec2);
+const iRayBlock = VIEW.indexOf('✨ RAY — the HIGH-RESOLUTION STILL', iSec2);
+ok(iSec2 > 0 && iColour > iSec2, 'le réglage vit dans la rangée « 2 · Toolbar »');
+ok(iColour > iShadowBtn, '…dans le groupe 🌫 Scene (après ◐ Shadows / 🌑 Darkness / 💡 Light)');
+ok(iClipBtn > 0 && iColour < iClipBtn, '…et JUSTE AVANT ✂ Clipping (la demande, mot pour mot)');
+ok(iRayBlock > 0 && iColour < iRayBlock, '…toujours dans le groupe Scene, pas dans ✨ Ray');
+ok(VIEW.includes('</button>\n<button type="button" onClick={() => setClipOn((v) => !v)}'),
+  '…c’est le DERNIER contrôle avant lui : rien ne s’intercale entre la couleur et le clipping');
+// Le swatch reste VISIBLE quand ◐ Shadows est éteint : le bloc conditionnel des
+// curseurs Azimuth / Elevation est refermé avant lui (NGL relit `lightColor` dans
+// les deux modes — la lampe liée à la caméra en profite aussi).
+const beforeColour = VIEW.slice(VIEW.lastIndexOf('{(shadowOn || rayShadows) && (', iColour), iColour);
+ok(beforeColour.includes(')}'), 'le swatch est HORS du bloc conditionnel : il reste là même sans les ombres');
+has('· 💡 Light colour · ✂ Clipping ·', 'la doc d’en-tête de la rangée Scene le liste à sa place');
 
 /* ── Bilan ───────────────────────────────────────────────────────────────── */
 console.log(`_viewer_light_rig_test.mjs — ${passed} assertions OK`);

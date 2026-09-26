@@ -17,6 +17,24 @@
                    bounding box distance (effectively parallel « sun » rays).
                    Shadows OFF keeps NGL's own camera-linked headlight.
 
+   LA COULEUR DE LA LAMPE — the ONE colour of the rig the user may change. The
+   request is « in the molecular viewer add the possibility to change the color of
+   the light and put it just before the clipping in the scene section of the
+   toolbar » : the « 💡 Light colour » swatch of §2 Scene (immediately BEFORE
+   « ✂ Clipping ») writes a #rrggbb into the KEY light — the lamp NGL lights the
+   scene with in BOTH modes (NGL re-reads `parameters.lightColor` on every frame,
+   Viewer.__updateLights, verified in the installed 2.4), the very lamp the
+   ◐ Shadows rig aims and the ✨ Ray still re-renders with.
+   The AMBIENT fill stays WHITE on purpose (LIGHT_RIG.ambientColor, never
+   overridden): the shaded side of an atom keeps the colour its palette gave it and
+   only the lit side takes the cast, which is exactly PyMOL's `light_color` — it
+   leaves `ambient_color` alone. Untouched, the swatch is the reference white above,
+   so a viewer whose swatch was never moved is bit-for-bit the rig pinned here.
+   `normalizeLightColor` is the ONLY door into the rig: anything that is not
+   '#rrggbb' (absent, a colour name, a number, junk read back from localStorage)
+   falls back to the white default instead of tinting the scene with a colour
+   nobody validated.
+
    The SAME rig is translated below for Mol* (Molstar), the engine that can draw
    the projected shadows and the cavity ambient-occlusion shading that NGL 2.4
    cannot. Every API fact used here was read in the installed molstar 4.18.0:
@@ -64,6 +82,22 @@ export const LIGHT_RIG = Object.freeze({
   // The lamp stands ~100 bounding boxes away → parallel rays (crisp sun).
   lampDistanceInBoundingBoxes: 100,
 });
+
+/* ---- The colour of the lamp (the « 💡 Light colour » swatch) ---------------
+   White is the reference (see the module doc): only the KEY light takes a colour,
+   the ambient fill is never touched here. */
+export const LIGHT_COLOR_DEFAULT = '#ffffff';
+
+// '#rrggbb' → '#rrggbb' (lower-case, an <input type="color"> agrees with itself);
+// anything else — absent, a colour name, a number, junk from localStorage — is the
+// WHITE default, so an invalid value can never tint the scene.
+export const normalizeLightColor = (value) => {
+  const s = String(value == null ? '' : value).trim();
+  return /^#[0-9a-fA-F]{6}$/.test(s) ? s.toLowerCase() : LIGHT_COLOR_DEFAULT;
+};
+
+// …and the integer both engines want it as (NGL `lightColor`, Mol* `light.color`).
+export const keyLightColorInt = (value) => hexToInt(normalizeLightColor(value));
 
 // Darkness is a 0…1 slider; anything else is clamped rather than trusted.
 export const clampDarkness = (darkness) => {
@@ -120,9 +154,13 @@ export const molstarHeadlightFromCamera = (cameraPosition, center = { x: 0, y: 0
 
 /* ---- NGL's `stage.setParameters` payload of the current mode --------------
    Byte-for-byte what the viewer applied before this module existed (the unit
-   test pins it), so the refactor cannot change the look by a single unit. */
-export const nglLightParams = ({ shadowOn = false, darkness = 0 } = {}) => ({
-  lightColor: LIGHT_RIG.keyColor,
+   test pins it), so the refactor cannot change the look by a single unit.
+   `color` is the « 💡 Light colour » swatch of §2 Scene: the KEY light only. The
+   ambient fill deliberately keeps the reference white, so the shade of a face
+   stays the colour its palette gave it (PyMOL's `light_color` leaves
+   `ambient_color` alone). Omitted → the white reference, i.e. the old payload. */
+export const nglLightParams = ({ shadowOn = false, darkness = 0, color = null } = {}) => ({
+  lightColor: keyLightColorInt(color),
   ambientColor: LIGHT_RIG.ambientColor,
   lightIntensity: keyLightIntensity(shadowOn, darkness),
   ambientIntensity: ambientIntensity(shadowOn, darkness),
@@ -242,6 +280,7 @@ export const molstarRendererProps = ({
   el = 0,
   backgroundColor = null,
   lampDirection = null,
+  lightColor = null,
 } = {}) => {
   // Shadows ON → the aimed key light; OFF → NGL's camera-linked headlight.
   const spherical = shadowOn
@@ -251,7 +290,8 @@ export const molstarRendererProps = ({
     light: [{
       inclination: spherical.inclination,
       azimuth: spherical.azimuth,
-      color: LIGHT_RIG.keyColor,
+      // The « 💡 Light colour » swatch — white unless the user moved it.
+      color: keyLightColorInt(lightColor),
       intensity: keyLightIntensity(shadowOn, darkness),
     }],
     ambientColor: LIGHT_RIG.ambientColor,

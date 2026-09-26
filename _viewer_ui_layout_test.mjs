@@ -547,6 +547,22 @@ has('aria-label="Clipping far"', '[§3] curseur far');
 has('aria-label="Clipping camera distance"', '[§3] curseur clipDist (la vraie cause de la coupe au zoom)');
 has('↺ No cut (0 · 100000 · 0 Å)', '[§3] retour aux valeurs extrêmes (aucune coupe)');
 has('min="0" max="30" step="0.1" value={clipDist}', '[§3] clipDist descend jusqu’à 0 (plus aucun plancher)');
+// 💡 LIGHT COLOUR — la demande : « in the molecular viewer add the possibility to
+// change the color of the light and put it just before the clipping in the scene
+// section of the toolbar ». Le garde-fou de la lumière (_viewer_light_rig_test.mjs)
+// EXÉCUTE la couleur ; ici on garde le PLACEMENT, qui est la moitié de la demande.
+has('aria-label="Light colour"', '[§3] 💡 Light colour : la couleur de la lampe est réglable');
+has('onClick={() => setLightColor(LIGHT_COLOR_DEFAULT)}', '[§3] …↺ revient au blanc de la référence');
+has('const [lightColor, setLightColor] = useState(() => {', '[§3] l’état de la couleur de la lampe');
+has("localStorage.setItem('labViewerLightColor'", '[§3] …persisté comme le clipping');
+{
+  const iColour = VIEW.indexOf('aria-label="Light colour"');
+  const iClip = VIEW.indexOf('✂ Clipping: ');
+  ok(iColour > 0 && iClip > 0 && iColour < iClip,
+    '[§3] …et le swatch se trouve JUSTE AVANT ✂ Clipping, dans le groupe 🌫 Scene (la demande, mot pour mot)');
+  ok(VIEW.includes('</button>\n<button type="button" onClick={() => setClipOn((v) => !v)}'),
+    '[§3] …c’est le DERNIER contrôle avant lui (aucun autre ne s’intercale)');
+}
 
 /* ── 10. Ombres : mailles cast + receive, ET l'équivalent de l'AO ───────── */
 has('const flagMeshShadows = (rep) => {', '[ombres] helper de marquage des mailles');
@@ -557,10 +573,10 @@ has('if (r) { flagMeshShadows(r); reps.push(r); }', '[ombres] appelé pour CHAQU
 // maintenant dans src/utils/viewerLightRig.js (avec sa traduction Mol*, où
 // l'occlusion est une vraie passe écran) : c'est _viewer_light_rig_test.mjs qui
 // l'EXÉCUTE et vérifie chaque nombre.
-has("import { LIGHT_RIG, nglKeyLightDirection, nglLightParams } from '../utils/viewerLightRig';",
+has("import { LIGHT_COLOR_DEFAULT, LIGHT_RIG, nglKeyLightDirection, nglLightParams, normalizeLightColor } from '../utils/viewerLightRig';",
   '[AO] la rig de lumière est un module à part, avec son propre garde-fou');
 has('const installShadowLightRig = useCallback(() => {', '[AO] ◐ Shadows installe la rig (ambiance + lumière-clé)');
-has('stage.setParameters(nglLightParams({ shadowOn: on, darkness: dark }));', '[AO] …alimentée par ◐ Shadows et 🌑 Darkness');
+has('stage.setParameters(nglLightParams({ shadowOn: on, darkness: dark, color: lightColorRef.current }));', '[AO] …alimentée par ◐ Shadows, 🌑 Darkness et 💡 Light colour');
 
 /* ── 11. Le rendu suit les menus (et plus les anciens sélecteurs) ───────── */
 has('const catStylesRef = useRef(catStyles);', '[rendu] miroir synchrone des styles de catégorie');
