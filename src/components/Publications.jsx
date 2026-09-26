@@ -58,10 +58,16 @@ import {
    journal réunit la forme de la citation, le CARACTÈRE de chaque partie du document
    et l'ORDRE de ses sections — voir journalFormats.js. */
 import {
-  JOURNAL_FORMATS, JOURNAL_IDS, applyJournalFormat, clearJournalFormat,
+  JOURNAL_FORMATS, JOURNAL_IDS, applyJournalFormat, applyDetectedFormat, clearJournalFormat,
   journalLabelOf, journalOf, journalSectionOrder, reorderDocHtml,
   DOC_EMPTY_LINE_CLASS
 } from './journalFormats';
+/* LIRE LE FORMAT D'UNE REVUE DANS UN PDF D'ELLE (voir le pannello : « Read a
+   format from a PDF… ») — le lecteur de texte (utils/pdfTextTokens.js, pdfjs
+   chargé à la demande dans son propre morceau de bundle) et le détecteur PUR
+   (components/publicationFormatFromPdf.js, testé par _pub_format_from_pdf_test.mjs). */
+import { pdfTextLines } from '../utils/pdfTextTokens';
+import { detectPublicationFormat } from './publicationFormatFromPdf';
 
 const JOURNALS_STORAGE_KEY = 'labWorkspace_journals';
 
@@ -771,6 +777,10 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
      retrouvent d'un poste à l'autre. */
   const [pubStyles, setPubStyles] = useState(() => loadPubStyles());
   const [pubStyleMsg, setPubStyleMsg] = useState('');
+  /* LE FORMAT LU DANS UN PDF (voir pubReadFormatPdf) : l'état de la lecture —
+     idle · reading · ready · error —, le nom du fichier, le résultat du
+     détecteur (bundle + preuves + avertissements) et le message d'erreur. */
+  const [pubPdfState, setPubPdfState] = useState({ status: 'idle', name: '', result: null, error: '' });
   const [pubExpanded, setPubExpanded] = useState(null);
   const [showExcludedPubs, setShowExcludedPubs] = useState(false);
   const [pubShowSearch, setPubShowSearch] = useState(false);
@@ -2668,6 +2678,69 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
     setActiveFormat({ ...withPreset, layout: normalizePubLayout(withPreset.layout) });
   };
 
+  /* ── LIRE UN FORMAT DANS UN PDF — la demande : « In the publication format, I
+     would like to have a function that extracts format information by uploading a
+     pdf… I could just upload a pdf of a publication in that journal and the
+     program would fill in the parameters such as the presence, order and the names
+     of the sections, the font, police and style of each section, the style of the
+     references in the text and in the final reference list and the way authors are
+     listed. »
+     Le PDF est lu DANS LE NAVIGATEUR (utils/pdfTextTokens.js : pdfjs n'est chargé
+     qu'ici, et dans son propre morceau de bundle — il n'y a rien à installer, le
+     fichier ne quitte pas la machine) ; le détecteur
+     (components/publicationFormatFromPdf.js) rend un paquet de format AVEC SES
+     PREUVES, montré avant d'être appliqué. « Apply » le fusionne exactement comme
+     un journal de la liste (applyDetectedFormat — journalFormats.js) ; « Save as a
+     style… » le range dans « User defined » sous le nom de la revue. */
+  const pubReadFormatPdf = async (file) => {
+    if (!file) return;
+    const name = file.name || 'PDF';
+    setPubPdfState({ status: 'reading', name, result: null, error: '' });
+    try {
+      const doc = await pdfTextLines(file, { maxPages: 10 });
+      const result = detectPublicationFormat(doc, { label: name.replace(/\.pdf$/i, '') });
+      if (!result || !result.bundle) {
+        setPubPdfState({
+          status: 'error', name, result: null,
+          error: (result && result.warnings && result.warnings[0]) || 'No format could be read from this PDF.',
+        });
+        return;
+      }
+      setPubPdfState({ status: 'ready', name, result, error: '' });
+    } catch (e) {
+      setPubPdfState({ status: 'error', name, result: null, error: String((e && e.message) || e) });
+    }
+  };
+  const pubPdfBundle = (pubPdfState.result && pubPdfState.result.bundle) || null;
+  const pubApplyPdfFormat = () => {
+    if (!pubPdfBundle) return;
+    const next = applyDetectedFormat(activeFormat, pubPdfBundle);
+    setActiveFormat({ ...next, layout: normalizePubLayout(next.layout) });
+    setPubStyleMsg('📄 format applied from “' + pubPdfState.name + '” — sections, fonts and references below are yours to check');
+  };
+  const pubSavePdfFormat = () => {
+    if (!pubPdfBundle) return;
+    const name = String(pubPdfState.result.journalName || pubPdfBundle.label || 'From a PDF').slice(0, 60);
+    const applied = applyDetectedFormat(activeFormat, pubPdfBundle);
+    const styles = savePubStyle(name, { ...applied, style: name });
+    setPubStyles(styles);
+    const key = Object.keys(styles).find((k) => k.toLowerCase() === name.toLowerCase()) || name;
+    setActiveFormat({ ...applied, style: key, layout: normalizePubLayout(applied.layout) });
+    setPubStyleMsg('💾 saved “' + key + '” — it is in “User defined”, and it follows you on the Drive');
+  };
+  const pubPdfSummary = () => {
+    if (!pubPdfBundle) return '';
+    const presetLabel = (PUB_FORMAT_PRESETS[pubPdfBundle.preset] || {}).label || pubPdfBundle.preset;
+    const inTextLabel = (IN_TEXT_STYLES.find((s) => s.id === pubPdfBundle.inText) || {}).label || pubPdfBundle.inText;
+    const nameLabel = (NAME_STYLES.find((s) => s.id === pubPdfBundle.names) || {}).label || 'as written';
+    return 'References: ' + presetLabel + (pubPdfBundle.bibFieldsOff.length ? ' (article title not printed)' : '')
+      + ' · in-text: ' + inTextLabel
+      + (pubPdfBundle.etAl ? ' after ' + pubPdfBundle.etAl + ' authors' : '')
+      + ' · authors: ' + nameLabel
+      + (pubPdfBundle.bibLabel ? ' · heading “' + pubPdfBundle.bibLabel + '”' : ' · no heading over the list')
+      + (pubPdfBundle.order.length ? ' · sections: ' + pubPdfBundle.order.join(' → ') : '');
+  };
+
   /* « Journal preset: » EST LE CONTROLE DU JOURNAL — un seul, pour que sa fonction
      soit claire : une seule liste, avec ses groupes visibles, dit ce que chaque
      choix change, et l'aperçu comme le document suivent. Il porte donc
@@ -2865,6 +2938,12 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
               🗑 Forget “{activeFormat.style}”
             </button>
           )}
+          <label className="px-2 py-1 rounded-lg text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 cursor-pointer"
+                 title="Pick a PDF of a paper published in the journal you are aiming at: the program reads its text and its fonts IN THE BROWSER (nothing is uploaded anywhere, nothing to install) and fills the format — the sections with their order and their names, the character of each part, the form of the in-text citations, the style of the reference list and the way authors are listed. It shows what it found, with its evidence, before anything is applied.">
+            {pubPdfState.status === 'reading' ? '⏳ Reading…' : '📄 Read a format from a PDF…'}
+            <input type="file" accept=".pdf,.PDF,application/pdf" className="hidden"
+                   onChange={(e) => { const f = e.target.files && e.target.files[0]; e.target.value = ''; pubReadFormatPdf(f); }} />
+          </label>
           {pubStyleMsg && (
             <span className="text-[10px] italic text-slate-500 max-w-[20rem] truncate" title={pubStyleMsg}>{pubStyleMsg}</span>
           )}
@@ -2876,6 +2955,47 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
           )}
         </div>
       </div>
+      {/* LE FORMAT LU DANS UN PDF — ses PREUVES d'abord, la fusion ensuite (voir
+          pubReadFormatPdf). Rien n'est appliqué tant que l'utilisateur ne le dit
+          pas : un PDF ne dit pas toujours son style, et ce panneau le montre. */}
+      {pubPdfState.status !== 'idle' && (
+        <div className="mx-4 mt-3 rounded-xl border border-emerald-200 bg-emerald-50/70 p-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="text-[10px] font-black uppercase tracking-wide text-emerald-700">
+              {pubPdfState.status === 'reading' ? 'Reading “' + pubPdfState.name + '”…'
+                : pubPdfState.status === 'error' ? 'Could not read “' + pubPdfState.name + '”'
+                  : 'Format read from “' + pubPdfState.name + '” — confidence ' + pubPdfState.result.confidence + '/5'}
+            </div>
+            <button type="button" className="text-emerald-700 hover:text-emerald-900 text-xs px-1"
+                    onClick={() => setPubPdfState({ status: 'idle', name: '', result: null, error: '' })}
+                    title="Close this reading (nothing has been changed)">✕</button>
+          </div>
+          {pubPdfState.error && <div className="text-[11px] text-red-600 mt-1">{pubPdfState.error}</div>}
+          {pubPdfState.result && (
+            <div className="mt-2">
+              <ul className="text-[11px] text-slate-700 leading-relaxed list-disc pl-4">
+                {pubPdfState.result.evidence.map((e) => <li key={e}>{e}</li>)}
+              </ul>
+              {pubPdfState.result.warnings.map((w) => (
+                <div key={w} className="text-[11px] italic text-amber-800 mt-1">⚠ {w}</div>
+              ))}
+              <div className="text-[10px] text-slate-500 mt-2">{pubPdfSummary()}</div>
+              <div className="flex flex-wrap items-center gap-2 mt-2">
+                <button type="button" onClick={pubApplyPdfFormat}
+                        className="px-2 py-1 rounded-lg text-[10px] font-bold bg-white text-emerald-700 border border-emerald-300 hover:bg-emerald-100"
+                        title="Merge what was read into the format shown — exactly like choosing a journal in the list: the citation fields, the in-text form, the author-name form, the character of each part, the section order and the titles the journal gives them. Every setting stays editable in the panel below.">
+                  ✅ Apply this format
+                </button>
+                <button type="button" onClick={pubSavePdfFormat}
+                        className="px-2 py-1 rounded-lg text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100"
+                        title="Save what was read as a style of your own, under the journal name found in the PDF: it appears in “User defined”, here and on every computer (it follows you on the Drive).">
+                  💾 Save as a style…
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
       <div className="p-4">
         {/* L'APERÇU VIVANT — LE DOCUMENT DU PROJET (il REMPLACE l'ancien aperçu de
             la seule citation, « Live preview — default », qui ne montrait ni la mise

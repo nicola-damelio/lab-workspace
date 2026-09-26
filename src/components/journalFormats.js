@@ -234,12 +234,11 @@ export const journalPubFields = (def) => {
   return buildPubFormat(preset).fields.map((f) => (off.includes(f.id) ? { ...f, enabled: false } : f));
 };
 
-export const applyJournalFormat = (fmt, id) => {
-  const def = JOURNAL_FORMATS[id];
+export const applyJournalBundle = (fmt, def, id = '') => {
   const base = fmt && typeof fmt === 'object' ? fmt : {};
   if (!def) return base;
   const layout = { ...(base.layout || {}) };
-  const patch = journalLayoutPatches(id);
+  const patch = (def && def.layout) || {};
   Object.keys(patch).forEach((part) => { layout[part] = { ...(layout[part] || {}), ...patch[part] }; });
   return {
     ...base,
@@ -293,6 +292,16 @@ export const applyJournalFormat = (fmt, id) => {
     style: '',
   };
 };
+
+/** APPLIQUER UN PAQUET DE FORMAT QUI NE VIENT PAS DE LA TABLE — un format LU
+ *  DANS UN PDF (components/publicationFormatFromPdf.js) : même fusion, mêmes
+ *  règles, seul le paquet change de provenance. `id` reste vide : ce n'est pas
+ *  un journal de la liste, c'est un format détecté (son nom vit dans le style
+ *  sauvegardé, « User defined »). */
+export const applyDetectedFormat = (fmt, bundle) => applyJournalBundle(fmt, bundle, '');
+
+/** APPLIQUER UN JOURNAL DE LA LISTE (voir JOURNAL_FORMATS). */
+export const applyJournalFormat = (fmt, id) => applyJournalBundle(fmt, JOURNAL_FORMATS[id], id);
 
 /** « ↺ As in the app »: il giornale si stacca e i suoi réglages se ne vanno con
  *  lui — il carattere delle parti torna vuoto (`emptyLayout`), l'ordine e gli intitoli
