@@ -115,7 +115,10 @@ const LARGE_ATOM_COUNT = 25000;                 // lighter rendering above this
    Surfaces: solid = opacity 1, surfaceOpacity (default 0.4) = transparent,
    mesh = wireframe. Whenever a menu is set to « Transparent », an Opacity
    slider (0 → 1) appears next to it and its value is what NGL receives as
-   `opacity` (with `transparent: true`).
+   `opacity` — together with SEE_THROUGH_SURFACE (`opaqueBack: false`), without
+   which NGL paints the FAR WALL of the envelope opaque and a « transparent »
+   surface reads as a solid object again, whatever the slider says (the whole
+   story of that flag is told at its definition, right below).
    `wireframe` is a real Buffer parameter (BufferMaterials 'wireframeMaterial');
    the surface representation only refuses it together with `contour` (volume
    isosurfaces), never for the molecular surfaces built from a structure.
@@ -302,6 +305,34 @@ const DEFAULT_ATOM_COLORS = {
 // and the wheel can never drift apart.
 const BASE_TYPE_ORDER = ['A', 'C', 'G', 'T', 'U'];
 const DEFAULT_SURFACE_COLOR = 0xcbd5e1;
+/* The ONE parameter that makes « Transparent » surfaces transparent FOR REAL.
+   NGL 2.4 draws every molecular surface with a SurfaceBuffer — a
+   DoubleSidedBuffer, whose stated purpose is « render the back of a mesh opaque
+   while the front is transparent » (doublesided-buffer.ts:19-20), hence TWO
+   walls, front and back. The surprise is that
+   MolecularSurfaceRepresentation defaults `opaqueBack` to TRUE:
+   `this.opaqueBack = defaults(p.opaqueBack, true)`
+   (molecularsurface-representation.ts:160, declared there as a buffer
+   parameter at :115 and forwarded to the SurfaceBuffer at :283). The Buffer
+   then defines `OPAQUE_BACK` (buffer.ts:553-555: the `if` at :553, the define at
+   :554), and that shader chunk — literally
+   `if (gl_FrontFacing == false) { gl_FragColor.a = 1.0; }` (FLIP_SIDED swaps
+   the test) — FORCES the alpha of the faces whose normals point away from the
+   camera to 1. NGL documents it as « render the back-faces of the surface
+   opaque, ignoring the transparency parameter »: a surface asked for opacity
+   0.4 blends its near wall over a fully opaque far wall, so it reads as a solid
+   shell with a pale rim — exactly « the opacity slider does nothing ».
+   `opaqueBack: false` (the Buffer's own default, buffer.ts:62) lets both walls
+   keep the material's alpha: the cartoon / atoms behind the surface, and the
+   inside of the envelope, stay visible. It is a shader-only switch
+   (BufferParameterTypes.opaqueBack = { updateShader: true }, buffer.ts:87),
+   it allocates nothing, and at opacity 1 it changes NOTHING — which is why only
+   the translucent surfaces carry it, never the solid ones.
+   `transparent: true` is kept next to it on purpose: NGL reads no `transparent`
+   parameter at all (a buffer's `transparent` is a getter over
+   `opacity < 1 || forceTransparent`, buffer.ts:232), so that flag is the stated
+   intent — and the tests watch it. */
+const SEE_THROUGH_SURFACE = { opaqueBack: false };
 // Group colours of the 🔬 Nucleic-acids menu (the 🎨 Colours panel of menu B):
 // phosphate backbone · pentose ring · bases.
 const DEFAULT_NUCLEIC_COLORS = { phosphate: 0xff922b, pentose: 0x4ea1ff, base: 0xb14aff };
@@ -7664,7 +7695,7 @@ const sectionStyleReps = (style, kind, look) => {
     // FULL Van der Waals radius — the row's R◯ multiplies it like any other style.
     case 'sphere': return [{ type: 'spacefill', params: { radiusScale: sphere, scale: 1 } }];
     case 'base': return [{ type: 'base', params: { radiusSize: BASE_BOND_RADIUS * bond } }];
-    case 'surface': return [{ type: 'surface', params: { surfaceType: 'av', opacity: Number((1 - Math.min(1, Math.max(0, (look && look.opacity) || 0))).toFixed(3)) } }];
+    case 'surface': return [{ type: 'surface', params: { surfaceType: 'av', opacity: Number((1 - Math.min(1, Math.max(0, (look && look.opacity) || 0))).toFixed(3)), ...SEE_THROUGH_SURFACE } }];
     case 'mesh': return [{ type: 'surface', params: { surfaceType: 'av', wireframe: true, opacity: 1 } }];
     default: return [];   // rings / plates — MeshBuffers, built by the caller
   }
@@ -8423,7 +8454,7 @@ const buildSectionReps = (comp, sections, trees, opts = {}) => {
       // « Electrostatic potential (only surfaces) »: the colouring needs a surface,
       // so a translucent one is added on top of the row's own style.
       if (look.colorBy === 'esp' && look.style !== 'surface' && look.style !== 'mesh') {
-        const r = addRow('surface', { sele: drawn, ...espColorParams(), transparent: true, opacity: 0.75 });
+        const r = addRow('surface', { sele: drawn, ...espColorParams(), ...SEE_THROUGH_SURFACE, transparent: true, opacity: 0.75 });
         if (r && espOut) {
           const prev = espOut.get(comp) || [];
           prev.push(r);
@@ -8452,7 +8483,8 @@ const buildSectionReps = (comp, sections, trees, opts = {}) => {
 // shell can be drawn even with the water atoms hidden.
 //
 // Surfaces are ordinary NGL `surface` representations — solid (opacity 1),
-// transparent (`transparent: true` + the menu's Opacity slider) or mesh
+// transparent (the menu's Opacity slider + SEE_THROUGH_SURFACE, the flag that
+// stops NGL painting the far wall of the envelope opaque) or mesh
 // (wireframe) — and « Surface Color: ESP » reuses the EXISTING
 // electrostatic-potential colouring (same colour scale and ±kcal/mol domain as
 // the ⚡ ESP button), so both ESP entry points stay in sync.
@@ -8525,7 +8557,9 @@ const buildCategoryReps = (comp) => {
   const lineGeom = (cat) => ({ linewidth: Math.max(1, Math.round(2 * catRadii(cs[cat]).bond)) });
   // Solid / transparent / mesh surfaces, in the category's own selection.
   // `opacityValue` is the menu's Opacity slider (0 → 1, default 0.4) and is only
-  // used by the Transparent mode: NGL receives `transparent: true` + `opacity`.
+  // used by the Transparent mode: NGL receives `opacity` (+ `transparent: true`),
+  // and SEE_THROUGH_SURFACE is what makes that opacity reach the FAR WALL too —
+  // without it NGL draws the envelope as an opaque shell (see addSurface).
   // The surface COLOUR comes from the same menu (element colours by default, a
   // flat colour for « Custom… », ESP for « Electrostatic Potential »).
   const addSurface = (sele, cat, opacityValue) => {
@@ -8540,7 +8574,7 @@ const buildCategoryReps = (comp) => {
     const r = mode === 'mesh'
       ? add('surface', { sele, ...colorParams, wireframe: true, opacity: 1 })
       : mode === 'transparent'
-        ? add('surface', { sele, ...colorParams, transparent: true, opacity: op })
+        ? add('surface', { sele, ...colorParams, ...SEE_THROUGH_SURFACE, transparent: true, opacity: op })
         : add('surface', { sele, ...colorParams, opacity: 1 });
     // Remember the ESP-coloured surfaces so the ⚡ Range control re-colours them
     // live, exactly like the ⚡ ESP overlay (espApplyLimits).
@@ -8908,13 +8942,16 @@ const espAddSurfaceRep = (comp) => {
   if (!comp || !comp.structure) return null;
   try {
     // 'not water' skips the noisy solvent shell of membrane / water-heavy files;
-    // opacity < 1 keeps the cartoon / atoms legible underneath the map.
+    // opacity < 1 keeps the cartoon / atoms legible underneath the map — and for
+    // that to be true the surface must also carry SEE_THROUGH_SURFACE: NGL would
+    // otherwise paint the far wall opaque and the overlay would be a shell.
     // The colouring is espColorParams(): the viewer's OWN `lab-esp` scheme, which
     // charges the hetero atoms NGL leaves at zero (see PART 4.0) — a docking pose
     // or a lipid really shows its red and blue poles now.
     return comp.addRepresentation('surface', {
       sele: 'not water',
       ...espColorParams(),
+      ...SEE_THROUGH_SURFACE,
       opacity: 0.85
     });
   } catch { return null; }
@@ -10444,7 +10481,9 @@ useEffect(() => {
        width follows the R— knob exactly as the styling window's own « Lines » does
        (2 px at 1.00×), so the two bars draw the same thing. */
     if (st.line) addWithOverrides('line', 'line', { colorScheme, opacity, linewidth: Math.max(1, Math.round(2 * rB)) }, false);
-    if (st.surface) addWithOverrides('surface', 'surface', { colorScheme, opacity: opacity != null ? opacity : 0.5 }, false);
+    // Its surface too: a script that asked for « set surface_transparency, 0.5 »
+    // must really see through it (SEE_THROUGH_SURFACE — see addSurface).
+    if (st.surface) addWithOverrides('surface', 'surface', { colorScheme, opacity: opacity != null ? opacity : 0.5, ...SEE_THROUGH_SURFACE }, false);
     // A PyMOL script that asked for « set cartoon_ring_mode, 1 » also gets the
     // FILLED RING PLATES of its own nucleic selections: in PyMOL mode the §2 menus
     // are off (the script owns the scene), so the stylized look has to be built
@@ -11199,7 +11238,9 @@ const restyleExtraMol = (id) => {
       else if (style === 'sticks') reps.push(comp.addRepresentation('licorice', { ...opts, multipleBond: true, radiusSize: LICORICE_BOND_RADIUS }));
       else if (style === 'lines') reps.push(comp.addRepresentation('line', { ...opts }));
       else if (style === 'spheres') reps.push(comp.addRepresentation('spacefill', { ...opts, scale: 0.6 }));
-      else if (style === 'surface') reps.push(comp.addRepresentation('surface', { ...opts }));
+      // The surface is the ONE style here whose transparency needs
+      // SEE_THROUGH_SURFACE: it is the only one with a far wall to paint.
+      else if (style === 'surface') reps.push(comp.addRepresentation('surface', { ...opts, ...SEE_THROUGH_SURFACE }));
     } catch { /* style best-effort */ }
   }
   entry.baseReps = reps;
@@ -12482,10 +12523,15 @@ const captureRay = async () => {
        sa fermeture, qui n'écrit rien. Le message dit la taille RÉELLE, la
        transparence et ce qu'ont coûté les ombres portées. */
     showRayPreview(out);
-    setRayMsg(`✓ ${out.width}×${out.height} px rendered${out.transparent ? ' · transparent' : ''}${out.shadowNote ? ` ${out.shadowNote}` : ''} — the preview is on screen: 💾 Save PNG writes the file`);
+    setRayMsg(`✓ ${out.width}×${out.height} px rendered${out.transparent ? ' · transparent' : ''}${out.shadowNote ? ` ${out.shadowNote}` : ''}${out.queueNote ? ` ${out.queueNote}` : ''} — the preview is on screen: 💾 Save PNG writes the file`);
   } catch (err) {
     if (rayRunRef.current === run) {
-      setRayMsg(`⚠️ Ray render failed (${(err && err.message) || 'unknown error'}) — try a smaller ×`);
+      /* LE CONSEIL VIENT DU MODULE quand il en a un (`err.hint` : contexte WebGL
+         perdu, rendu qui n'a JAMAIS démarré, file d'attente d'NGL bloquée) :
+         « try a smaller × » ne dirait rien d'utile à quelqu'un qui a perdu son
+         contexte WebGL — et c'est justement ce clic-là qui ne faisait RIEN. */
+      const hint = (err && err.hint) || 'try a smaller ×';
+      setRayMsg(`⚠️ Ray render failed (${(err && err.message) || 'unknown error'}) — ${hint}`);
     }
   } finally {
     if (rayRunRef.current === run) {
@@ -12682,11 +12728,13 @@ const catEspActive = ['protein', 'nucleic', 'organic'].some((c) => {
 
 /* ── Two shared render helpers of the styling menus ───────────────────────── */
 // « Transparent » alone is not enough: EVERY menu whose surface mode is
-// transparent shows an Opacity slider (0 → 1) and the value is what NGL gets
-// (with transparent: true, see addSurface).
+// transparent shows an Opacity slider (0 → 1) and the value is what NGL gets —
+// with transparent: true, and with SEE_THROUGH_SURFACE, without which NGL paints
+// the FAR WALL of the envelope opaque and the slider seems to do nothing (see
+// addSurface).
 const renderSurfaceOpacity = (cat, label = 'Opacity') => (
   (catStyles[cat] && catStyles[cat].surface === 'transparent') ? (
-    <VRow label={label} title="Opacity of this transparent surface — passed to NGL as opacity (with transparent: true). 0 = invisible, 1 = solid.">
+    <VRow label={label} title="Opacity of this transparent surface — the value NGL really receives as `opacity`, alongside `transparent: true` and `opaqueBack: false` (SEE_THROUGH_SURFACE), so the FAR WALL of the envelope is translucent too and not just the wall facing you. 0 = invisible, 1 = solid.">
       <input type="range" min="0" max="1" step="0.05"
         value={Number.isFinite(catStyles[cat].surfaceOpacity) ? catStyles[cat].surfaceOpacity : 0.4}
         onChange={(e) => setCatStyle(cat, 'surfaceOpacity', Number(e.target.value))}

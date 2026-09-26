@@ -291,6 +291,9 @@ const RENDER = new Function([
   sliceDecl(VIEW, 'schemeParam'),
   sliceFn(VIEW, 'sectionColorParams'),
   sliceFn(VIEW, 'sectionStyleReps'),
+  // L'objet que `sectionStyleReps` ÉTALE sur chaque surface (`{ opaqueBack: false }`) :
+  // sans lui, la ligne `case 'surface'` lève « SEE_THROUGH_SURFACE is not defined ».
+  sliceDecl(VIEW, 'SEE_THROUGH_SURFACE'),
   SCHEME_KEYS,
   'const espColorParams = () => ({ colorScheme: "esp" });',
   'const flagMeshShadows = () => {};',
@@ -566,6 +569,23 @@ eq(['head', 'tail', 'glycerol'].map((s) => gen(lipBall, 'lipid', s).follow), [tr
 const surf = HIER.setGeneralSectionField({}, 'protein', 'style', 'surface');
 eq(['backbone', 'sidechain'].map((s) => gen(surf, 'protein', s).style), ['hide', 'hide'],
   'General surface → les parties passent sur hide (aucune ne dessine une surface)');
+// 5e-bis. …ET CETTE ENVELOPPE EST PERMÉABLE : le regard doit la traverser. NGL 2.4 met
+//     `opaqueBack` à TRUE par défaut sur une surface (molecularsurface-representation.ts:160 ;
+//     l'`if` de buffer.ts:553-555 pose alors le define OPAQUE_BACK), et son shader force
+//     l'alpha de la paroi du FOND à 1 : une surface à 40 % de transparence lit comme un
+//     solide. Le viewer doit donc joindre `opaqueBack: false` à CHAQUE surface, et la
+//     transparence de la rangée (0 → solide, 1 → invisible) part telle quelle en `opacity`.
+const seeThrough = scene({ protein: {
+  general: { ...look('surface', 'element', false), opacity: 0.4 },
+  backbone: look('hide', 'sstruc', true),
+  sidechain: look('hide', 'element', true),
+} });
+const surfRep = seeThrough.find((r) => r.type === 'surface');
+ok(surfRep, 'General surface : l’enveloppe part bien à NGL');
+eq(surfRep && surfRep.params.opaqueBack, false,
+  '…avec opaqueBack: false — sans lui NGL rend la paroi du FOND opaque et la surface « transparente » reste un solide');
+eq(surfRep && surfRep.params.opacity, 0.6,
+  '…et l’opacité de la rangée (0,4 de transparence → 0,6 d’opacité) est transmise telle quelle');
 
 // 5f. LES DEUX RAYONS DESCENDENT, MÊME DANS UNE PARTIE QUI A DÉVIÉ — et le style de
 //     cette partie ne bouge pas, General non plus (les deux avant-derniers points).

@@ -1,11 +1,18 @@
 // Les onze suites du VIEWER 3D seul — les plus rapides à relancer après une
 // retouche de src/components/NMRMoleculeViewer.jsx (l'ensemble du dépôt, c'est
-// _run_all.cjs). _viewer_render_smoke_test.mjs est la SEULE qui exécute un vrai
-// rendu : elle construit son probe en SSR et monte la page docking, chaque
+// _run_all.cjs). _viewer_render_smoke_test.mjs est la SEULE ICI qui exécute un
+// vrai rendu : elle construit son probe en SSR et monte la page docking, chaque
 // section docking, le viewer et toutes les autres pages (c'est elle qui aurait
 // attrapé le « Cannot access 'extraMols' before initialization » de la page
 // docking). Résultat : EXIT + dernière ligne de chacune, sur la console et dans
 // _verify.txt.
+// Le SEUL garde-fou qui LIT DE VRAIS PIXELS WebGL est le dernier de la liste
+// (_viewer_surface_seethrough_pixels_test.cjs) : il ouvre Chrome en
+// --headless=new et rend quatre surfaces identiques — c'est lui qui a prouvé que
+// SEE_THROUGH_SURFACE (`opaqueBack: false`) laisse vraiment voir le fond à
+// travers la paroi arrière d'une surface translucide (luminance du centre 184.4
+// contre 161.9 pour le défaut NGL). ≈8 s, et SAUTÉ (exit 0) sur une machine sans
+// Chrome ni Edge.
 const { spawnSync } = require('child_process');
 const fs = require('fs');
 const tests = [
@@ -41,6 +48,14 @@ const tests = [
   // changement sur la rangée GENERAL devait mettre les parties de la molécule sur
   // « Hide ».
   '_viewer_style_gaps_test.mjs',
+  // Les DEUX suites qui EXÉCUTENT `sectionStyleReps`/`buildSectionReps` (le rendu
+  // réel, pas une lecture de la source) et qui manquaient ici : une retouche du
+  // viewer qui casse la traduction d'un style y casse une extraction — c'est ce qui
+  // est arrivé au drapeau SEE_THROUGH_SURFACE (`opaqueBack: false` sur les
+  // surfaces), absent de leur liste d'extraction (`ReferenceError` immédiat).
+  // `_viewer_general_row_test.mjs` est aussi celle qui vérifie la cascade de la
+  // rangée General jusqu'à la surface, opaqueBack compris.
+  '_viewer_general_row_test.mjs', '_viewer_style_coverage_test.mjs',
   // Le SMILES d'un ligand organique : le PDB ne donne que le code HETATM, donc le
   // SMILES vient du Chemical Component Dictionary du RCSB (fetch injecté, testé sans
   // réseau) — et la sous-section « Organic Molecule » du docking est revenue.
@@ -127,6 +142,14 @@ const tests = [
   '_viewer_theme_snapshot_test.mjs',
   '_ligand_smiles_test.mjs',
   '_viewer_render_smoke_test.mjs',
+  // …et le SEUL qui LIT DE VRAIS PIXELS, à la toute fin : quatre surfaces
+  // identiques (pleine · translucide par défaut · translucide AVEC
+  // SEE_THROUGH_SURFACE · témoin opaqueBack:true) rendues par un vrai WebGL, et
+  // la luminance de leur PNG. C'est le garde-fou de `opaqueBack: false` : une
+  // retouche qui perdrait SEE_THROUGH_SURFACE sur un des appels de surface (ou
+  // qui remettrait le paramètre au défaut NGL) y casse la mesure du fond qui
+  // traverse la paroi arrière, alors qu'aucune lecture de source ne la voit.
+  '_viewer_surface_seethrough_pixels_test.cjs',
 ];
 const rows = tests.map((t) => {
   const r = spawnSync(process.execPath, [t], { encoding: 'utf8' });

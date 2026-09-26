@@ -43,12 +43,24 @@
       et la persistance propres à ✨ Ray, le PLAN du facteur choisi (pixels et
       tuiles, lisibles AVANT le clic) et l'ADDITIVITÉ — ✨ Ray n'écrit rien dans
       la bibliothèque de figures, et rien de la scène n'est reconstruit.
+   4. LA FILE D'ATTENTE D'NGL — la cause RÉELLE du clic qui ne faisait RIEN : le
+      rapport « when I click the ray command it gets stucked and then it does not
+      do anything ». `Stage.makeImage` ne rend rien tant que les tâches du stage ne
+      sont pas retombées à zéro (`tasks.onZeroOnce`, relu dans le dist installé) :
+      une seule tâche éternelle — le repli `rcsb://` d'une barre « Molecules » sur
+      un réseau muet, une surface encore en calcul — et le clic n'appelait JAMAIS
+      NGL, sans aucune erreur. Le module ATTEND la file (RAY_QUEUE_WAIT_MS) puis
+      rend la scène telle qu'elle est, en le disant (rayQueueNote) ; le chien de
+      garde du DÉMARRAGE (RAY_START_MS) couvre le cas sans repli possible, et un
+      contexte WebGL perdu est vu avant d'attendre quoi que ce soit.
    ========================================================================= */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   RAY_FACTORS, RAY_DEFAULT_FACTOR, RAY_MAX_PIXELS, RAY_MAX_FACTOR,
   RAY_ANTIALIAS_MAX_FACTOR, RAY_SHADOW_SKIP_NOTE, RAY_STALL_MS, rayStallNote,
+  RAY_START_MS, rayStartNote, RAY_QUEUE_WAIT_MS, RAY_QUEUE_POLL_MS,
+  stageTaskCountOf, waitForStageTasks, rayQueueNote,
   viewerPixelsOf, rayPixelsOf, clampRayFactor, rayFactorOptions, rayProgressText,
   rayTilesOf, rayAntialiasFor, rayPlanOf,
   captureRayImage, saveRayImage, rayFileName, rayStamp, downloadBlob, rayDimLimitOf,
@@ -408,12 +420,31 @@ const silentStage = () => ({
 const t0 = Date.now();
 let stallError = null;
 try {
-  await captureRayImage(silentStage(), { factor: 2, stallMs: 40 });
+  await captureRayImage(silentStage(), { factor: 2, stallMs: 40, startMs: 40 });
 } catch (err) { stallError = err; }
-ok(!!stallError && stallError.message === rayStallNote(40),
-  'un rendu qui ne donne plus aucun signe de vie est ABANDONNÉ avec une raison lisible (le bouton ne reste pas sur « Rendering… »)');
+ok(!!stallError && stallError.message === rayStartNote(40),
+  'un rendu qui ne donne aucun signe de vie est ABANDONNÉ avec une raison lisible (le bouton ne reste pas sur « Rendering… »)');
+ok(/reload the page/.test((stallError && stallError.hint) || ''),
+  '…et le verdict porte son CONSEIL : un rendu qui n’a JAMAIS démarré parle de la page à recharger (le module dit quoi faire)');
 ok(Date.now() - t0 < 5000, '…au bout du silence demandé, jamais d’une attente infinie');
 ok(RAY_STALL_MS >= 10000, 'le silence par défaut est large : un gros rendu qui avance n’est jamais coupé (45 s)');
+ok(RAY_START_MS > 0 && RAY_START_MS < RAY_STALL_MS,
+  'le DÉMARRAGE a son propre délai, plus court que le silence (8 s · 45 s) : un rendu que NGL n’appelle même pas est su tout de suite');
+/* …ET UN RENDU QUI A COMMENCÉ PUIS SE TAIT est jugé par le SILENCE, lui : dire la
+   différence entre « jamais démarré » et « plus de nouvelles » est tout l’objet du
+   chien de garde. */
+const drowsyStage = () => ({
+  viewer: { renderer: { domElement: { width: 400, height: 300 } } },
+  makeImage: (params) => new Promise(() => { params.onProgress(1, 9, false); }),   // une tuile, puis plus rien
+});
+let drowsyError = null;
+try {
+  await captureRayImage(drowsyStage(), { factor: 2, stallMs: 40, startMs: 4000 });
+} catch (err) { drowsyError = err; }
+ok(!!drowsyError && drowsyError.message === rayStallNote(40),
+  'un rendu qui a COMMENCÉ puis s’est tu est abandonné avec la raison du silence (et non celle du démarrage)');
+ok(/try a smaller/.test((drowsyError && drowsyError.hint) || ''),
+  '…dont le conseil est bien « try a smaller × » (c’est le rendu qui est lourd, pas la page)');
 let chattyTiles = 0;
 const chattyStage = {
   viewer: { renderer: { domElement: { width: 400, height: 300 } } },
@@ -523,6 +554,139 @@ ok(!/useState|useRef|React/.test(MODULE), 'le module de la « ray » ne dépend 
 ok(MODULE.includes("typeof document === 'undefined'"),
   'la seule écriture (l’ancre de téléchargement) est gardée : le module s’importe hors navigateur');
 ok(/stage\.makeImage\(\{/.test(MODULE), 'le rendu passe par Stage.makeImage — le point d’entrée vérifié dans ngl 2.4.0');
+
+/* ── 2sexies. LA FILE D’ATTENTE D’NGL — LE CLIC QUI NE FAISAIT RIEN ────────
+   Le rapport : « when I click the ray command it gets stucked and then it does
+   not do anything ». La cause, relue dans le dist installé : `Stage.makeImage`
+   n’appelle le rendu QUE quand la file de tâches du stage est retombée à zéro
+   (`this.tasks.onZeroOnce((()=>{ this.viewer.makeImage(e)… }))`, ngl 2.4) — une
+   tâche qui ne se termine jamais rend ✨ Ray TOTALEMENT inerte : aucune tuile,
+   aucune erreur, aucune fin. Ce qui est vérifié ici : la file est ATTENDUE mais
+   pas indéfiniment, puis la scène est rendue TELLE QU’ELLE EST (c’est le rendu du
+   VIEWER que `Stage.makeImage` finit par appeler, sans l’attente) et le message
+   le dit. */
+ok(RAY_QUEUE_WAIT_MS > 0 && RAY_QUEUE_WAIT_MS <= 15000,
+  'l’échéance de la file est courte (5 s) : le clic ne reste pas des minutes devant « Rendering… »');
+ok(RAY_QUEUE_POLL_MS > 0 && RAY_QUEUE_POLL_MS <= 100,
+  '…et la file est scrutée finement (25 ms) : le rendu part dès qu’elle se vide');
+eq(stageTaskCountOf(null), 0, 'un stage absent n’a aucune tâche en attente (jamais NaN)');
+eq(stageTaskCountOf({}), 0, '…un stage sans compteur de tâches non plus');
+eq(stageTaskCountOf({ tasks: { count: 3 } }), 3, '…et le compteur d’NGL est lu tel quel');
+eq(stageTaskCountOf({ tasks: { count: -2 } }), 0, 'un compteur négatif (impossible) ne devient pas une attente');
+eq(stageTaskCountOf({ tasks: { count: 'zut' } }), 0, '…ni une valeur non numérique');
+eq(rayQueueNote(0), '', 'aucune note quand la file était vide (le message ordinaire, inchangé)');
+eq(rayQueueNote(1), '· rendered with 1 NGL task still pending', '…une note au singulier pour une tâche');
+eq(rayQueueNote(3), '· rendered with 3 NGL tasks still pending', '…et au pluriel au-delà');
+
+ok(await waitForStageTasks({ tasks: { count: 0 } }, 50), 'une file déjà vide est « vidée » tout de suite (aucune attente inutile)');
+eq(await waitForStageTasks({ tasks: { count: 2 } }, 0), false,
+  'échéance nulle et file qui ne se vide pas : on n’attend pas (l’appelant décide de rendre quand même)');
+const draining = { tasks: { count: 2 } };
+setTimeout(() => { draining.tasks.count = 0; }, 20);
+ok(await waitForStageTasks(draining, 500), 'une file qui se vide DANS l’échéance est attendue jusqu’au bout');
+
+/* L’APPEL DE REPLI — la promesse qui ne venait jamais. Cette doublure a une file
+   qui ne se vide JAMAIS et un `makeImage` qui n’appelle jamais NGL (c’est
+   exactement le `onZeroOnce` qui ne rappelle plus) : la « ray » doit quand même
+   sortir, rendue par le rendu du VIEWER, et le message dire avec combien de
+   tâches en attente. */
+const stuckCalls = [];
+const directCalls = [];
+const stuckStage = (w = 1600, h = 900) => ({
+  tasks: { count: 2 },
+  viewer: {
+    renderer: { domElement: { width: w, height: h } },
+    makeImage: async (params) => { directCalls.push(params); return { type: 'image/png', size: 7 }; },
+  },
+  makeImage: () => { stuckCalls.push(1); return new Promise(() => {}); },   // jamais résolue
+});
+const rescued = await captureRayImage(stuckStage(800, 600), { factor: 2, queueWaitMs: 30, stallMs: 100, startMs: 4000 });
+eq(directCalls.length, 1,
+  'une file qui ne se vide pas ne fige plus le clic : le rendu du VIEWER est appelé (celui que l’attente d’NGL finit par appeler)');
+eq(stuckCalls.length, 0, '…et Stage.makeImage, qui n’aurait jamais appelé le rendu, n’est même pas tenté');
+eq(directCalls[0].factor, 2, 'le facteur demandé part bien dans ce rendu de repli');
+eq(rescued.queueWaited, true, 'le module se souvient qu’il a attendu la file');
+eq(rescued.pendingTasks, 2, '…et avec combien de tâches NGL elle était encore chargée');
+eq(rescued.queueNote, rayQueueNote(2), '…ce que le message du viewer répète (la scène a été rendue telle quelle)');
+eq([rescued.width, rescued.height], [1600, 1200], 'la taille annoncée reste celle que NGL produit (facteur compris)');
+ok(!!rescued.blob, 'l’image est bien revenue : le clic ne finit plus sur « rien du tout »');
+
+/* …ET QUAND LA FILE SE VIDE À TEMPS, RIEN NE CHANGE : c’est Stage.makeImage (le
+   point d’entrée vérifié dans ngl 2.4.0) qui rend, et aucune note. */
+const drainedCalls = [];
+const viewerCalls = [];
+const drained = await (async () => {
+  const s = {
+    tasks: { count: 1 },
+    viewer: {
+      renderer: { domElement: { width: 800, height: 600 } },
+      makeImage: async () => { viewerCalls.push(1); return { type: 'image/png', size: 3 }; },
+    },
+    makeImage: async (params) => { drainedCalls.push(params); return { type: 'image/png', size: 9 }; },
+  };
+  setTimeout(() => { s.tasks.count = 0; }, 20);
+  return captureRayImage(s, { factor: 2, queueWaitMs: 500 });
+})();
+eq(drainedCalls.length, 1, 'une file qui se vide laisse le rendu à Stage.makeImage (le chemin ordinaire, inchangé)');
+eq(viewerCalls.length, 0, '…le repli direct n’est PAS pris quand la file s’est vidée');
+eq(drained.queueWaited, true, '…après avoir VRAIMENT attendu la file');
+eq(drained.pendingTasks, 0, '…jusqu’à zéro tâche en attente');
+eq(drained.queueNote, '', '…donc aucune note dans le message');
+eq([drained.width, drained.height], [1600, 1200], 'la taille annoncée est celle du rendu NGL (facteur compris)');
+
+/* LE CAS SANS AUCUN REPLI : file qui ne se vide pas ET pas de rendu de viewer. Le
+   chien de garde du DÉMARRAGE doit trancher vite — et dire quoi faire — au lieu
+   d’attendre le silence long de 45 s. */
+const tStart = Date.now();
+let stuckError = null;
+try {
+  await captureRayImage({
+    tasks: { count: 1 },
+    viewer: { renderer: { domElement: { width: 400, height: 300 } } },
+    makeImage: () => new Promise(() => {}),
+  }, { factor: 2, queueWaitMs: 20, stallMs: 5000, startMs: 40 });
+} catch (err) { stuckError = err; }
+ok(!!stuckError && stuckError.message === rayStartNote(40),
+  'sans repli possible, un rendu que NGL n’appelle JAMAIS est signalé par le chien de garde du DÉMARRAGE');
+ok(/reload the page/.test((stuckError && stuckError.hint) || ''), '…avec le conseil qui va avec (recharger la page)');
+ok(Date.now() - tStart < 3000, '…en quelques dizaines de millisecondes, pas après le silence de 45 s');
+eq(rayStartNote(8000),
+  'the renderer never started (no tile in 8 s) — the WebGL context may be lost',
+  'la raison du démarrage dit le délai exact et ce qu’il faut en penser');
+
+/* LE CONTEXTE WEBGL PERDU — vu AVANT d’attendre quoi que ce soit : sur un contexte
+   perdu NGL ne dessine plus rien, et l’attendre ne produirait qu’un silence (ou
+   une image noire). */
+const lostGl = () => ({
+  viewer: { renderer: { domElement: { width: 800, height: 600, getContext: () => ({ isContextLost: () => true }) } } },
+  makeImage: async () => ({ type: 'image/png', size: 1 }),
+});
+let lostError = null;
+try { await captureRayImage(lostGl(), { factor: 2 }); } catch (err) { lostError = err; }
+ok(!!lostError && /WebGL context/.test(lostError.message),
+  'un contexte WebGL perdu est refusé avec une raison lisible, au lieu d’un bouton qui tourne pour rien');
+ok(/reload the page/.test((lostError && lostError.hint) || ''), '…et le conseil est de recharger la page (Ctrl+F5)');
+const liveGl = {
+  viewer: { renderer: { domElement: { width: 800, height: 600, getContext: () => ({ isContextLost: () => false }) } } },
+  makeImage: async () => ({ type: 'image/png', size: 1 }),
+};
+ok(!!(await captureRayImage(liveGl, { factor: 2 })).blob, 'un contexte vivant (isContextLost → false) rend normalement');
+ok(!!(await captureRayImage({
+  viewer: { renderer: { domElement: { width: 800, height: 600 } } },
+  makeImage: async () => ({ type: 'image/png', size: 1 }),
+}, { factor: 2 })).blob, '…et une toile qui ne sait pas répondre à getContext (une doublure) n’est jamais refusée non plus');
+
+/* ── 3bis. CE QUE LE MESSAGE DU VIEWER DIT DE TOUT ÇA ─────────────────────── */
+has('${out.queueNote ?', 'le message final DIT quand la scène a été rendue avec des tâches NGL encore en attente');
+has("const hint = (err && err.hint) || 'try a smaller ×';",
+  '…et un échec affiche le conseil du MODULE (contexte perdu, rendu jamais démarré) au lieu du seul « try a smaller × »');
+ok(MODULE.includes('onZeroOnce'),
+  'la cause est nommée dans le module : c’est l’attente `tasks.onZeroOnce` d’NGL qui ne rappelle plus');
+ok(MODULE.includes('viewer.makeImage('),
+  '…et le repli DIRECT sur le rendu du viewer existe — exactement la fonction que Stage.makeImage attend d’appeler');
+ok(MODULE.includes('isContextLost'), '…plus le contexte WebGL perdu, vu AVANT d’attendre quoi que ce soit');
+ok(/RAY_QUEUE_WAIT_MS = 5000/.test(MODULE) && /RAY_START_MS = 8000/.test(MODULE),
+  'les deux échéances sont écrites en clair et nommées (5 s pour la file, 8 s pour le démarrage)');
 
 /* ── Bilan ─────────────────────────────────────────────────────────────── */
 console.log(`_viewer_ray_test.mjs — ${passed} assertions OK`);

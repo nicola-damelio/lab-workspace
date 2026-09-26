@@ -242,6 +242,9 @@ const RENDER_H = new Function([
   sliceDecl(VIEW, 'schemeParam'),
   sliceFn(VIEW, 'sectionColorParams'),
   sliceFn(VIEW, 'sectionStyleReps'),
+  // L'objet que `sectionStyleReps` ÉTALE sur chaque surface (`{ opaqueBack: false }`) :
+  // sans lui, la ligne `case 'surface'` lève « SEE_THROUGH_SURFACE is not defined ».
+  sliceDecl(VIEW, 'SEE_THROUGH_SURFACE'),
   SCHEME_KEYS,
   'const espColorParams = () => ({ colorScheme: "esp" });',
   'const flagMeshShadows = () => {};',

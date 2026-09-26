@@ -36,7 +36,9 @@
        de resnames : NGL 2.4 n'a pas de mot-clé `carbohydrate`) et celui des
        ligands exclut lipides ET sucres ;
      • la transparence d'une rangée EST l'opacité de sa surface (0 → 1), et la
-       valeur part dans NGL avec `transparent: true` ;
+       valeur part dans NGL avec `opacity` + `transparent: true` ET le drapeau
+       SEE_THROUGH_SURFACE (`opaqueBack: false`) : sans lui NGL 2.4 rend la
+       paroi du FOND opaque et une surface translucide paraît solide ;
      • « Clipping: Off » pousse les plans de la caméra aux extrêmes
        (0 · 100000 · 0 Å) pour ne jamais couper un gros complexe, et ◐ Shadows
        allume l'équivalent NGL de l'ambient occlusion — ambiance profonde +
@@ -376,6 +378,23 @@ has("addSurface(sugarSele, 'sugar', cs.sugar.surfaceOpacity);", '[sucres] surfac
 has("addSurface('water', 'other', cs.other.surfaceOpacity);", '[eau] la surface s’applique à la sélection `water`, toute seule');
 has("nglSeleCountCached(comp.structure, 'water') !== 0", '[eau] …même quand les atomes d’eau ne sont dans aucune autre sélection');
 has("transparent: true, opacity: op", '[opacité] NGL reçoit transparent: true + opacity');
+// …plus le drapeau SANS lequel cette opacité ne se voit pas. NGL 2.4 construit
+// ses surfaces avec `opaqueBack` par défaut à TRUE : le shader (chunk
+// `opaque_back_fragment.glsl`, `#ifdef OPAQUE_BACK`) force alors l'alpha des
+// faces ARRIÈRE à 1.0 — « render the back-faces of the surface opaque, ignoring
+// the transparency parameter ». La paroi du FOND reste donc pleine et une
+// surface à 40 % passe pour un solide : c'est exactement le défaut corrigé ici.
+has('const SEE_THROUGH_SURFACE = { opaqueBack: false };',
+  '[opacité] le viewer désarme `opaqueBack` : la paroi du fond redevient transparente');
+has('...SEE_THROUGH_SURFACE, transparent: true, opacity: op',
+  '[opacité] la surface « Transparent » d’un menu porte le drapeau avec son opacité');
+has('...espColorParams(), ...SEE_THROUGH_SURFACE, transparent: true, opacity: 0.75',
+  '[ESP] l’overlay ⚡ translucide l’est vraiment (paroi du fond comprise)');
+has('      ...espColorParams(),\n      ...SEE_THROUGH_SURFACE,\n      opacity: 0.85',
+  '[ESP] la surface ESP du bouton ⚡ garde son opacité ET se voit à travers');
+has('opacity: opacity != null ? opacity : 0.5, ...SEE_THROUGH_SURFACE }, false);',
+  '[PyMOL] « set surface_transparency » agit vraiment sur la surface du script');
+has('{ ...opts, ...SEE_THROUGH_SURFACE }', '[rendu] les molécules extra reçoivent le même drapeau : une seule règle');
 // Plus de curseur « Opacity » par menu : la TRANSPARENCE d'une rangée EST
 // l'opacité de sa surface (sectionOpacity), et la rangée le DIT quand son style est
 // une surface. La surface d'eau, elle, est un des styles de son propre espace.
@@ -529,8 +548,8 @@ has('const customHex = m.surfaceColor === \'custom\' ? flatHex(m.surfaceColorHex
 has('catEspRepsRef.current.set(comp, []);', '[ESP] les surfaces ESP sont réenregistrées à chaque reconstruction');
 has('catEspRepsRef.current.forEach((list) => {', '[ESP] ⚡ Range recolore aussi les surfaces de catégorie');
 has('{(espOnSelected || catEspActive) && (', '[ESP] le panneau Range s’affiche pour les deux entrées ESP');
-has("const r = addRow('surface', { sele: drawn, ...espColorParams(), transparent: true, opacity: 0.75 });",
-  '[ESP] l’overlay ⚡ garde son colorScheme/colorScale (espColorParams)');
+has("const r = addRow('surface', { sele: drawn, ...espColorParams(), ...SEE_THROUGH_SURFACE, transparent: true, opacity: 0.75 });",
+  '[ESP] l’overlay ⚡ garde son colorScheme/colorScale (espColorParams) — et sa transparence réelle');
 
 /* ── 9. §3 Scene : fog, ombres, plan de coupe aux extrêmes quand Off ────── */
 has('const CLIP_DEFAULTS = { near: 0, far: 100000, dist: 0 };',

@@ -103,6 +103,80 @@ export const RAY_SHADOW_SKIP_NOTE = '· cast shadows skipped (the still is too b
 export const RAY_STALL_MS = 45000;
 /** La raison écrite dans le message quand le rendu s'est tu. */
 export const rayStallNote = (ms = RAY_STALL_MS) => `the renderer stopped reporting for ${Math.max(1, Math.round(Number(ms) / 1000))} s`;
+/* ── LA FILE D'ATTENTE D'NGL : LA VRAIE CAUSE DU CLIC QUI NE FAISAIT RIEN ─────
+   `Stage.makeImage` n'appelle PAS le rendu tout de suite : il ATTEND que la file
+   de tâches du stage soit VIDE — `this.tasks.onZeroOnce(() => this.viewer.makeImage(…))`
+   (ngl 2.4, relu dans le dist installé). Une seule tâche qui ne se termine jamais
+   — le repli `rcsb://` d'une barre « Molecules » sur un réseau qui ne répond pas,
+   une surface encore en calcul, un `loadFile` abandonné — et `onZeroOnce` ne
+   rappelle plus JAMAIS : le clic sur ✨ Ray n'appelait alors aucune tuile, ne levait
+   aucune erreur, et le bouton restait sur « ✨ Rendering… » (le rapport exact :
+   « when I click the ray command it gets stucked and then it does not do anything »).
+   Ce que le module garantit maintenant : ATTENDRE la file, mais pas pour toujours
+   (RAY_QUEUE_WAIT_MS), puis rendre la scène TELLE QU'ELLE EST à l'écran en
+   appelant le rendu du viewer — `viewer.makeImage`, la fonction que
+   `Stage.makeImage` finit par appeler — et le DIRE (`rayQueueNote`). */
+export const RAY_QUEUE_WAIT_MS = 5000;
+/* Le pas de la scrutation de la file : assez court pour que le rendu reparte à la
+   milliseconde où elle se vide, assez long pour ne pas faire tourner une boucle
+   pendant l'attente. */
+export const RAY_QUEUE_POLL_MS = 25;
+/** Combien de tâches NGL attendent encore — `stage.tasks.count` quand le stage en
+ *  a un, 0 dans tous les autres cas (une doublure de test, un stage plus ancien).
+ *  Jamais NaN : c'est un nombre de tâches, il se lit et se compare comme tel. */
+export const stageTaskCountOf = (stage) => {
+  try {
+    const n = Number(stage && stage.tasks && stage.tasks.count);
+    return Number.isFinite(n) && n > 0 ? Math.round(n) : 0;
+  } catch { return 0; }
+};
+/** LA FILE, ATTENDUE MAIS PAS INDÉFINIMENT. Résout `true` quand elle s'est vidée
+ *  (il n'y a plus rien à attendre), `false` quand le délai est passé avant : le
+ *  rendu ne dépend alors plus d'elle, la scène est rendue telle qu'elle est. */
+export const waitForStageTasks = (stage, ms = RAY_QUEUE_WAIT_MS) => new Promise((resolve) => {
+  const budget = Number.isFinite(Number(ms)) && Number(ms) > 0 ? Number(ms) : 0;
+  if (stageTaskCountOf(stage) <= 0) { resolve(true); return; }
+  if (!budget) { resolve(false); return; }
+  const startedAt = Date.now();
+  let timer = null;
+  const finish = (drained) => {
+    if (timer) { clearTimeout(timer); timer = null; }
+    resolve(drained);
+  };
+  const tick = () => {
+    timer = null;
+    if (stageTaskCountOf(stage) <= 0) { finish(true); return; }
+    if (Date.now() - startedAt >= budget) { finish(false); return; }
+    timer = setTimeout(tick, RAY_QUEUE_POLL_MS);
+  };
+  timer = setTimeout(tick, RAY_QUEUE_POLL_MS);
+});
+/** Ce que le message dit quand la file n'était pas vide : la scène a bien été
+ *  rendue, mais avec du travail NGL encore en cours — l'utilisateur sait à quoi
+ *  s'en tenir si quelque chose manque dans l'image. */
+export const rayQueueNote = (pending) => {
+  const n = Math.max(0, Math.round(Number(pending) || 0));
+  return n > 0 ? `· rendered with ${n} NGL task${n === 1 ? '' : 's'} still pending` : '';
+};
+/* ── LE CHIEN DE GARDE DU DÉMARRAGE ──────────────────────────────────────────
+   Le compte à rebours de RAY_STALL_MS mesure le silence d'un rendu QUI A COMMENCÉ.
+   Une promesse que NGL n'appelle même pas — la file de tâches qui ne se vide
+   jamais, un contexte WebGL perdu — ne produit aucune tuile : elle n'a rien à
+   mesurer, et l'utilisateur attendrait RAY_STALL_MS pour rien. Ce délai-ci couvre
+   le DÉMARRAGE : sans une seule tuile en RAY_START_MS, le verdict tombe tout de
+   suite. */
+export const RAY_START_MS = 8000;
+/** La raison écrite dans le message quand le rendu n'a JAMAIS commencé. */
+export const rayStartNote = (ms = RAY_START_MS) => `the renderer never started (no tile in ${Math.max(1, Math.round(Number(ms) / 1000))} s) — the WebGL context may be lost`;
+/* Toutes les erreurs de ce module portent, en plus de leur message, le CONSEIL qui
+   va avec (`hint`) : le viewer écrit ce conseil tel quel après le message, au lieu
+   d'ajouter « try a smaller × » à une histoire de contexte perdu. */
+export const rayError = (message, hint = '') => {
+  const err = new Error(message);
+  if (hint) err.hint = hint;
+  return err;
+};
+
 // Used when the WebGL limits cannot be read (no context yet, a probe): NGL
 // renders its tiles into a canvas of `canvasPixels × factor`.
 export const RAY_DIM_LIMIT_FALLBACK = 8192;
@@ -271,34 +345,52 @@ export const rayProgressText = (done, total) => {
   return `✨ Rendering the ray still… ${d}/${t} tiles`;
 };
 
-/* ── LE RENDU SURVEILLÉ — voir RAY_STALL_MS ─────────────────────────────────
-   `makeImage` n'est JAMAIS appelée directement : la promesse est courue contre un
-   compte à rebours que chaque nouvelle (une tuile de plus, un changement d'étape)
-   relance. Un silence prolongé rejette avec une raison lisible : le rendu continue
-   peut-être dans le GPU, mais l'utilisateur, lui, n'attend plus pour rien — et le
-   viewer peut relâcher son bouton. Le rig d'ombre est lu AVANT (dans
-   captureRayImage), donc l'ordre « lire puis rendre » ne bouge pas. */
-const makeImageGuarded = (stage, params, onProgress, stallMs) => new Promise((resolve, reject) => {
+/* ── LE RENDU SURVEILLÉ — voir RAY_STALL_MS et RAY_START_MS ─────────────────
+   `makeImage` n'est JAMAIS appelée sans surveillance : la promesse est courue
+   contre DEUX comptes à rebours, tous les deux relancés par chaque nouvelle (une
+   tuile de plus — NGL n'offre pas d'autre signal).
+     · RAY_START_MS — aucune tuile n'est encore arrivée : le rendu n'a pas
+       COMMENCÉ. C'est le cas de la file d'attente qui ne se vide jamais (voir
+       RAY_QUEUE_WAIT_MS) et du contexte WebGL perdu : un silence de démarrage n'a
+       rien à voir avec un rendu lourd, et le dire est plus utile que d'attendre le
+       silence long.
+     · RAY_STALL_MS — le rendu a commencé puis s'est tu : le compte à rebours est
+       mesuré depuis la DERNIÈRE NOUVELLE, donc un très gros rendu qui avance
+       n'est jamais coupé.
+   Les deux verdicts sont des `rayError` : ils portent le conseil qui va avec, que
+   le viewer affiche tel quel. Le rig d'ombre est lu AVANT (dans captureRayImage),
+   donc l'ordre « lire puis rendre » ne bouge pas. */
+const makeImageGuarded = (stage, params, onProgress, stallMs, startMs, direct) => new Promise((resolve, reject) => {
   let timer = null;
   let decided = false;
+  let started = false;
   const stop = () => { if (timer) { clearTimeout(timer); timer = null; } };
-  const touch = () => {
-    if (decided || !(stallMs > 0)) return;
+  const touch = (ms) => {
+    if (decided || !(ms > 0)) return;
     stop();
-    timer = setTimeout(() => { decided = true; reject(new Error(rayStallNote(stallMs))); }, stallMs);
+    timer = setTimeout(() => {
+      decided = true;
+      reject(started
+        ? rayError(rayStallNote(stallMs), 'try a smaller ×')
+        : rayError(rayStartNote(startMs), 'reload the page (Ctrl+F5) — the 3-D canvas is not rendering any more'));
+    }, ms);
   };
-  touch();
+  const onTile = (done, total, isDone) => {
+    started = true;
+    touch(stallMs);
+    if (typeof onProgress === 'function') onProgress(done, total, isDone);
+  };
+  touch(startMs);
   let running = null;
   try {
-    // LE SEUL appel à NGL de tout ce module (le point d'entrée vérifié dans
-    // ngl 2.4.0), entouré du chien de garde ci-dessus.
-    running = stage.makeImage({
-      ...params,
-      onProgress: (done, total, isDone) => {
-        touch();
-        if (typeof onProgress === 'function') onProgress(done, total, isDone);
-      },
-    });
+    /* LE point d'entrée NGL, et le repli quand sa file d'attente est bloquée :
+       `stage.makeImage` n'appelle le rendu qu'une fois les tâches du stage
+       retombées à zéro (voir RAY_QUEUE_WAIT_MS) ; quand la file n'a pas voulu se
+       vider, `captureRayImage` passe `direct` et c'est le rendu du VIEWER qui est
+       appelé — la fonction que cette attente finit par appeler, sans l'attente. */
+    running = direct && stage && stage.viewer && typeof stage.viewer.makeImage === 'function'
+      ? stage.viewer.makeImage({ ...params, onProgress: onTile })
+      : stage.makeImage({ ...params, onProgress: onTile });
   } catch (err) {
     stop();
     reject(err);
@@ -322,6 +414,19 @@ export const captureRayImage = async (stage, options = {}) => {
   if (!stage || typeof stage.makeImage !== 'function') throw new Error('this viewer has no NGL renderer to render with');
   const { width, height } = viewerPixelsOf(stage);
   if (!width || !height) throw new Error('the 3D canvas has no size yet — load a structure first');
+  /* ── LE CONTEXTE WEBGL PERDU, VU AVANT D'ATTENDRE ─────────────────────────
+     Sur un contexte perdu, NGL ne dessine plus rien : chaque tuile sort d'une
+     toile vide, et la promesse peut bien ne jamais se résoudre. Le dire TOUT DE
+     SUITE — plutôt que de laisser l'utilisateur devant « ✨ Rendering… » — est la
+     seule réponse honnête. `glOfViewer` demande le contexte DÉJÀ en usage (webgl2
+     puis webgl) : elle n'en crée aucun. */
+  const usedGl = glOfViewer(stage);
+  if (usedGl && typeof usedGl.isContextLost === 'function' && usedGl.isContextLost()) {
+    throw rayError(
+      'the 3D canvas has lost its WebGL context (nothing can be drawn on it any more)',
+      'reload the page (Ctrl+F5) to get a new WebGL context',
+    );
+  }
   const factor = clampRayFactor(stage, options.factor);
   const transparent = !!options.transparent;
   // The antialias pass — 4·factor² tiles — is asked for by DEFAULT while the tiles
@@ -331,6 +436,31 @@ export const captureRayImage = async (stage, options = {}) => {
   const antialias = options.antialias === undefined ? rayAntialiasFor(factor) : !!options.antialias;
   const tiles = rayTilesOf(factor, antialias);
   const status = typeof options.onStatus === 'function' ? options.onStatus : null;
+  /* ── LA FILE D'ATTENTE D'NGL (voir RAY_QUEUE_WAIT_MS) ─────────────────────
+     `stage.makeImage` ne rend rien tant que `stage.tasks.count` n'est pas revenu
+     à zéro : un `loadFile` en vol (le repli `rcsb://` d'une barre « Molecules »,
+     une surface encore en calcul) rendait donc ✨ Ray TOTALEMENT inerte — aucune
+     tuile, aucune erreur, un bouton qui restait sur « Rendering… ». On attend la
+     file, mais avec une échéance ; passée l'échéance, la scène est rendue TELLE
+     QU'ELLE EST à l'écran (le rendu du viewer, sans l'attente) et le message le
+     dit. */
+  const queueBudget = options.queueWaitMs === undefined
+    ? RAY_QUEUE_WAIT_MS
+    : Math.max(0, Number(options.queueWaitMs) || 0);
+  const pendingBefore = stageTaskCountOf(stage);
+  let pendingTasks = pendingBefore;
+  let queueWaited = false;
+  let direct = false;
+  if (pendingBefore > 0) {
+    queueWaited = true;
+    if (status && queueBudget > 0) {
+      status(`✨ NGL still has ${pendingBefore} task${pendingBefore === 1 ? '' : 's'} running — waiting up to ${Math.round(queueBudget / 1000)} s, then the still is rendered as the scene is`);
+    }
+    const drained = await waitForStageTasks(stage, queueBudget);
+    pendingTasks = stageTaskCountOf(stage);
+    direct = !drained;
+    if (direct && status) status('✨ NGL never emptied its queue — rendering the scene as it is on screen…');
+  }
   /* ── THE CAST SHADOWS: WHAT THEY ARE, AND *WHEN* THE RIG IS READ ──────────
      NGL cannot cast them (no shadow-map pass in 2.4), so they are computed from
      the atoms with the SAME camera and the SAME key light and multiplied into the
@@ -389,6 +519,7 @@ export const captureRayImage = async (stage, options = {}) => {
     }
   }
   const stallMs = options.stallMs === undefined ? RAY_STALL_MS : Number(options.stallMs);
+  const startMs = options.startMs === undefined ? RAY_START_MS : Number(options.startMs);
   let blob = await makeImageGuarded(stage, {
     trim: false,
     factor,
@@ -396,7 +527,7 @@ export const captureRayImage = async (stage, options = {}) => {
     // smooth where the interactive canvas is one sample per pixel.
     antialias,
     transparent,
-  }, options.onProgress, stallMs);
+  }, options.onProgress, stallMs, startMs, direct);
   if (!blob) throw new Error('NGL returned no image');
   let shadow = null;
   if (inputs) {
@@ -433,6 +564,12 @@ export const captureRayImage = async (stage, options = {}) => {
     shadowNote: shadow
       ? rayShadowNote(shadow)
       : (shadowTooBig ? RAY_SHADOW_SKIP_NOTE : rayShadowNote(null, shadowSkip)),
+    // …et ce que la FILE D'ATTENTE d'NGL a coûté au clic (voir RAY_QUEUE_WAIT_MS):
+    // la scène a été rendue telle qu'elle était, avec du travail NGL en cours —
+    // le message du viewer le répète au lieu de laisser croire à une image complète.
+    queueNote: rayQueueNote(pendingTasks),
+    pendingTasks,
+    queueWaited,
   };
 };
 

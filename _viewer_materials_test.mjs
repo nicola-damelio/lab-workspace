@@ -15,15 +15,25 @@
    Ce garde-fou ne se contente donc pas de lire la source du viewer : il
    EXTRAIT les fonctions et les EXÉCUTE sur une doublure d'élément NGL, puis il
    lit les SOURCES ORIGINALES de ngl 2.4.0 — la sourcemap est livrée dans le
-   paquet — pour vérifier sur le vrai code les faits sur lesquels le correctif
-   repose :
+   paquet — et, pour les chunks GLSL (ils ne viennent pas du dépôt de ngl : ils
+   sont injectés dans le bundle), le `ngl.esm.js` RÉELLEMENT SERVI (§1bis),
+   pour vérifier sur le vrai code les faits sur lesquels le correctif repose :
      • l'élément reçoit `name = repr.type` et son propre `type` vaut la
        constante 'representation' (le contraire d'un type de rep) ;
      • roughness / metalness sont des paramètres de PREMIÈRE CLASSE de toute
        Representation, avec les défauts 0.4 / 0.0 (le « plat, pas brillant ») ;
      • côté buffer ils sont déclarés `{ uniform: true }` et `setParameters` les
        applique EN PLACE (setUniforms), le ShaderMaterial partageant le même
-       objet uniforms : aucun rebuild, aucun needsUpdate n'est nécessaire.
+       objet uniforms : aucun rebuild, aucun needsUpdate n'est nécessaire ;
+     • `opaqueBack` est le drapeau de la TRANSPARENCE RÉELLE d'une surface : la
+       MolecularSurfaceRepresentation le met à TRUE par défaut
+       (molecularsurface-representation.ts:160), le Buffer en tire le define
+       `OPAQUE_BACK` (buffer.ts:553-555), et le chunk que shader/Mesh.frag
+       inclut ALORS force l'alpha de la paroi du FOND à 1.0 — notre `opacity`
+       comprise (§1bis, relu dans le bundle réellement servi ; §1ter EXÉCUTE la
+       chaîne sur le paquet installé, où deux shaders ne diffèrent que par ce
+       seul define). C'est ce défaut que le viewer désarme avec
+       SEE_THROUGH_SURFACE (`opaqueBack: false`).
 
    LE MATÉRIAU APPARTIENT MAINTENANT À LA LIGNE DE STYLING. Il était réglé par
    UN panneau global en bas de la barre Selections, avec quatre familles
@@ -46,6 +56,17 @@
    ========================================================================= */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+
+// Le paquet INSTALLÉ (ngl 2.4.0), le même objet que la page instancie : §1ter
+// l'EXÉCUTE (la chaîne `opaqueBack` n'a besoin d'aucun contexte WebGL). Le
+// build CJS s'importe sous Node — contrairement au build ESM, dont l'import
+// nommé de `signals` échoue — donc les shaders s'assemblent ici pour de vrai.
+const require = createRequire(import.meta.url);
+let NGL = null;
+try {
+  NGL = require('ngl');
+} catch { /* ngl non installé : §1ter est sautée, jamais faussement verte */ }
 
 let passed = 0;
 const ok = (cond, what) => {
@@ -78,6 +99,9 @@ const extract = (src, name) => {
 };
 
 const CODE = [
+  // Le drapeau des surfaces translucides : la constante EXACTE que le viewer
+  // spreade dans ses paramètres NGL, donc celle que §1ter fait tourner.
+  extract(VIEW, 'SEE_THROUGH_SURFACE'),
   extract(VIEW, 'MATERIAL_PRESETS'),
   extract(VIEW, 'MATERIAL_PRESET_KEYS'),
   extract(VIEW, 'MATERIAL_KINDS'),
@@ -90,8 +114,8 @@ const CODE = [
   extract(VIEW, 'applyMaterialToRep'),
 ].join('\n');
 const F = new Function(`${CODE}
-  return { MATERIAL_PRESETS, MATERIAL_PRESET_KEYS, MATERIAL_KINDS, MATERIAL_KIND_OF_REP, SEL_STYLE_REP_TYPE,
-    selRowFamilies, materialValueOf, reprOfElement, repTypeOfElement, applyMaterialToRep };`)();
+  return { SEE_THROUGH_SURFACE, MATERIAL_PRESETS, MATERIAL_PRESET_KEYS, MATERIAL_KINDS, MATERIAL_KIND_OF_REP,
+    SEL_STYLE_REP_TYPE, selRowFamilies, materialValueOf, reprOfElement, repTypeOfElement, applyMaterialToRep };`)();
 
 ok(!/useState|useRef|componentRef/.test(CODE),
   'le réglage du matériau ne dépend d’aucun état React : il est exécutable tel quel');
@@ -164,8 +188,138 @@ if (ngl) {
     'point et line déclarent `roughness: null` : elles n’ont pas de matériau du tout');
   ok(!F.MATERIAL_KIND_OF_REP.point && !F.MATERIAL_KIND_OF_REP.line && !F.MATERIAL_KIND_OF_REP.label,
     '…donc aucune famille ne les touche (aucun curseur ne peut les prétendre réglables)');
+
+  /* ── 1bis. LE DRAPEAU DES SURFACES TRANSPARENTES, SUR LE PAQUET INSTALLÉ ──
+     Le rapport : « the surface in the NMR viewer is not transparent ». La
+     surface EST translucide (opacity 0.4) — mais NGL en peint la PAROI DU FOND
+     en plein, donc elle lit comme un solide. Le viewer joint donc
+     `SEE_THROUGH_SURFACE = { opaqueBack: false }` à CHACUNE de ses surfaces
+     (`src/components/NMRMoleculeViewer.jsx:335`, spreadé à tous les points
+     d'ajout ; _viewer_ui_layout_test.mjs §5 les dénombre).
+     Voici la chaîne complète, relue dans le paquet INSTALLÉ :
+       surface → MolecularSurfaceRepresentation.opaqueBack (défaut TRUE)
+               → Buffer.updateShader → `defines.OPAQUE_BACK`
+               → chunk `shader/chunk/opaque_back_fragment.glsl`
+               → `gl_FragColor.a = 1.0` sur la face qui tourne le dos.
+     Le chunk GLSL n'est PAS dans la sourcemap (ce n'est pas un fichier du dépôt
+     de ngl, il est injecté dans le bundle) : cette section relit donc aussi
+     `ngl.esm.js`, le fichier réellement servi. */
+  ok(/class SurfaceBuffer extends MeshBuffer/.test(srcOf('surface-buffer.ts') || ''),
+    'une surface se dessine avec un SurfaceBuffer, qui ÉTEND le MeshBuffer testé ici : les faits du buffer valent pour elle');
+  const msSrc = srcOf('molecularsurface-representation.ts');
+  ok(/this\.opaqueBack = defaults\(p\.opaqueBack, true\)/.test(msSrc),
+    'une surface met `opaqueBack` à TRUE par défaut : c’est ce défaut qu’il faut désarmer');
+  eq((bufSrc.match(/OPAQUE_BACK/g) || []).length, 1,
+    'dans buffer.ts, `OPAQUE_BACK` n’est écrit qu’UNE fois : ce paramètre est le seul levier');
+  ok(/if \(this\.parameters\.opaqueBack\) \{\s*defines\.OPAQUE_BACK = 1/.test(bufSrc),
+    '…et c’est sous `if (this.parameters.opaqueBack)` : `false` ⇒ aucun define, donc aucun code');
+  const dist = readFileSync(new URL('./node_modules/ngl/dist/ngl.esm.js', import.meta.url), 'utf8');
+  ok(dist.includes('"shader/chunk/opaque_back_fragment.glsl","#ifdef OPAQUE_BACK\\n#ifdef FLIP_SIDED\\n'
+    + 'if( gl_FrontFacing == true ){\\ngl_FragColor.a = 1.0;\\n}\\n#else\\n'
+    + 'if( gl_FrontFacing == false ){\\ngl_FragColor.a = 1.0;\\n}\\n#endif\\n#endif"'),
+    'le chunk livré force l’alpha à 1.0 sur la face qui tourne le dos (et sur la face avant si FLIP_SIDED)');
+  const fragAt = dist.indexOf('gl_FragColor = vec4( outgoingLight, diffuseColor.a );');
+  const chunkAt = dist.indexOf('#include opaque_back_fragment');
+  ok(fragAt >= 0 && chunkAt > fragAt,
+    'shader/Mesh.frag INCLUT ce chunk JUSTE APRÈS `gl_FragColor = vec4( outgoingLight, diffuseColor.a )` : '
+    + 'il écrase donc bel et bien l’alpha que `opacity` vient d’écrire');
 } else {
   console.log('  (ngl absent : les faits NGL n’ont pas été vérifiés)');
+}
+
+/* ── 1ter. LA MÊME CHAÎNE, EXÉCUTÉE SUR LE PAQUET INSTALLÉ ────────────────
+   §1bis la relit ; §1ter la fait TOURNER. Les paramètres exacts du viewer
+   (`F.SEE_THROUGH_SURFACE`, extrait du viewer plus haut, + l'opacité du
+   curseur) sont donnés à deux MeshBuffers réels, et leurs shaders comparés
+   caractère par caractère. Aucun contexte WebGL n'est nécessaire : assembler
+   un shader est le fait du Buffer, pas de la carte graphique. */
+if (NGL) {
+  const tri = {
+    position: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 1, 0]),
+    index: new Uint32Array([0, 1, 2, 1, 3, 2]),
+  };
+  const buffered = (params) => {
+    const b = new NGL.MeshBuffer(tri, params);
+    b.makeMaterial();
+    return b;
+  };
+  // L'un reçoit ce que la PAGE demande, l'autre `opaqueBack: true`, le défaut
+  // que MolecularSurfaceRepresentation applique quand on lui passe une surface.
+  const wanted = buffered({ ...F.SEE_THROUGH_SURFACE, transparent: true, opacity: 0.4 });
+  const stock = buffered({ opaqueBack: true, transparent: true, opacity: 0.4 });
+
+  eq(F.SEE_THROUGH_SURFACE, { opaqueBack: false },
+    'la constante du viewer nomme la clé que le Buffer de ngl lit vraiment');
+  ok(wanted.material.transparent === true,
+    'opacity 0.4 ⇒ matériau translucide pour three.js : le fond DOIT se voir au travers');
+  eq(wanted.getDefines(), {},
+    '…et les paramètres du viewer ne produisent AUCUN define : opaqueBack false, comme demandé');
+  eq(stock.getDefines(), { OPAQUE_BACK: 1 },
+    'sans le drapeau, ngl produit OPAQUE_BACK=1 : c’est le défaut qui rend la paroi du fond opaque');
+  ok(wanted.material.fragmentShader.includes('#ifdef OPAQUE_BACK')
+    && !wanted.material.fragmentShader.includes('#define OPAQUE_BACK'),
+    'le shader du viewer INCLUT le chunk, mais sans le define ce #ifdef est du code mort');
+  ok(stock.material.fragmentShader.includes('#define OPAQUE_BACK 1'),
+    '…tandis que le shader de ngl l’active : `gl_FragColor.a = 1.0` y écrase l’alpha du fond');
+  ok(stock.material.fragmentShader.replace('#define OPAQUE_BACK 1', '')
+    === wanted.material.fragmentShader,
+    'les deux shaders ne diffèrent QUE par ce define : voir au travers ne tient qu’à cette ligne');
+
+  // Le réglage est VIVANT : côté buffer `opaqueBack` est déclaré
+  // `{ updateShader: true }`, donc setParameters recompile le shader à chaud.
+  stock.setParameters({ ...F.SEE_THROUGH_SURFACE });
+  eq(stock.getDefines(), {}, 'setParameters({ opaqueBack: false }) retire aussi le define…');
+  ok(stock.material.fragmentShader === wanted.material.fragmentShader,
+    '…et recompile exactement le shader du viewer : le drapeau est un paramètre, pas un état figé');
+
+  // …et par la voie de la PAGE : c'est la REP qui porte le drapeau, celle que
+  // `addRepresentation('surface', { ...SEE_THROUGH_SURFACE, … })` construit.
+  const once = () => ({ add: () => {}, remove: () => {}, dispatch: () => {} });
+  const view = {
+    selection: { string: '' }, atomCount: 0, eachAtom: () => {}, getView: () => view,
+    signals: { refreshed: once(), parametersChanged: once() },
+  };
+  const structure = {
+    getView: () => view, eachAtom: () => {}, atomCount: 0,
+    signals: { refreshed: once(), parametersChanged: once(), atomSetChanged: once(), elementAdded: once() },
+  };
+  let renders = 0;
+  // `garni` comme la doublure de la page : instancier une rep programme son
+  // build en file d'attente (ngl `Queue`), et ce build appelle `viewer.remove`
+  // sur les buffers de la rep (Representation.clear) puis `viewer.add`. Sans
+  // ces trois méthodes la file lèverait une exception APRÈS les assertions.
+  const viewerStub = {
+    requestRender: () => { renders += 1; }, parameters: {}, remove: () => {}, add: () => {}, clear: () => {},
+    signals: { parametersChanged: once(), fullscreenChanged: once() },
+  };
+
+  const stockRep = new NGL.MolecularSurfaceRepresentation(structure, viewerStub, {});
+  ok(stockRep.opaqueBack === true,
+    'une rep de surface LIVRÉE est opaque par le fond : c’est bien au viewer de désarmer le défaut');
+  const stockRepBuffer = buffered(stockRep.getBufferParams({ opaqueBack: stockRep.opaqueBack }));
+  eq(stockRepBuffer.getDefines().OPAQUE_BACK, 1,
+    '…et ce `this.opaqueBack` repasse au buffer (createData, molecularsurface-representation.ts:283)');
+
+  const pageRep = new NGL.MolecularSurfaceRepresentation(structure, viewerStub,
+    { ...F.SEE_THROUGH_SURFACE, transparent: true, opacity: 0.4 });
+  ok(pageRep.opaqueBack === false,
+    'la rep construite avec les paramètres du viewer porte donc opaqueBack false');
+  const pageBuffer = buffered(pageRep.getBufferParams(
+    { opaqueBack: pageRep.opaqueBack, transparent: true, opacity: 0.4 }));
+  eq(pageBuffer.getDefines().OPAQUE_BACK, undefined,
+    '…et son SurfaceBuffer n’a plus de define OPAQUE_BACK : la paroi du fond garde l’opacité du curseur');
+  ok(pageBuffer.material.fragmentShader === wanted.material.fragmentShader,
+    '…au caractère près le shader du viewer : la page suit le chemin NORMAL du Buffer');
+
+  // Le drapeau reste réglable APRÈS construction : rep.setParameters descend
+  // aux buffers déjà construits (updateShader) et redemande un rendu.
+  stockRep.bufferList.push(stockRepBuffer);
+  stockRep.setParameters({ ...F.SEE_THROUGH_SURFACE });
+  eq(stockRepBuffer.getDefines().OPAQUE_BACK, undefined,
+    'rep.setParameters({ opaqueBack: false }) descend jusqu’au buffer déjà construit…');
+  ok(renders >= 1, '…et demande un rendu : sinon rien ne changerait à l’écran');
+} else {
+  console.log('  (ngl absent : la chaîne `opaqueBack` n’a pas été exécutée)');
 }
 
 /* ══ 2. LES QUATRE FAMILLES ET LEURS PRESETS ══════════════════════════════ */

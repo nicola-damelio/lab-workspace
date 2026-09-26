@@ -94,6 +94,9 @@ const sandbox = [
   sliceDecl(VIEW, 'BASE_BOND_RADIUS'),
   sliceDecl(VIEW, 'sectionOpacity'),
   sliceFn(VIEW, 'sectionStyleReps'),
+  // L'objet que `sectionStyleReps` ÉTALE sur chaque surface (`{ opaqueBack: false }`) :
+  // une section au style « surface » l'exige, même si cette suite ne dessine que des rubans.
+  sliceDecl(VIEW, 'SEE_THROUGH_SURFACE'),
   // Le store où le ✔ écrit : une ref lisible PENDANT le rendu, comme dans le
   // composant (sectionVisRef.current = sectionVis).
   'const sectionVisRef = { current: {} };',

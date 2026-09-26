@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Sonde NGL — surfaces translucides (opaqueBack)</title>
+<style>
+  html, body { margin:0; padding:0; background:#fff; font:12px/1.45 monospace; color:#111; }
+  #hosts { position:absolute; left:-10000px; top:0; }
+  #log { padding:8px; white-space:pre-wrap; }
+</style>
+</head>
+<body>
+<pre id="log">chargement de ngl.js…</pre>
+<div id="hosts"></div>
+<script src="/ngl.js"></script>
+<script>
+'use strict';
+/* ---------------------------------------------------------------------------
+   Sonde : une surface NGL 2.4.0 translucide laisse-t-elle voir le FOND à
+   travers sa paroi arrière quand le réglage du viewer (SEE_THROUGH_SURFACE,
+   opaqueBack:false) écrase le défaut opaqueBack:true de NGL ?
+
+   Page pilotée par _viewer_surface_seethrough_pixels_test.cjs, qui la sert en
+   127.0.0.1 avec `ngl.js` (le dist UMD 2.4.0) et le source du viewer, puis lit
+   le verdict JSON qu'elle POSTe. Elle n'est jamais ouverte à la main.
+
+   Elle rejoue exactement l'appel du viewer :
+       comp.addRepresentation('surface', Object.assign({}, BASE, SEE_THROUGH_SURFACE, { opacity }))
+   — la constante est EXTRAITE de src/components/NMRMoleculeViewer.jsx, jamais
+   recopiée — puis lit les pixels du PNG rendu par stage.makeImage().
+
+   4 cas, même molécule, même caméra :
+     opaque1           opacity 1                        → la surface pleine
+     transparent40     opacity .4 (+ transparent)       → le défaut NGL (OPAQUE_BACK)
+     seeThrough40      opacity .4 + SEE_THROUGH_SURFACE → ce que le viewer demande
+     opaqueBackTrue40  opacity .4 + opaqueBack:true     → témoin du défaut
+   --------------------------------------------------------------------------- */
+var OUT = { stage: 'start', cases: [], log: [], source: null, ua: navigator.userAgent };
+
+function log () {
+  OUT.log.push(Array.prototype.slice.call(arguments).join(' '));
+  document.getElementById('log').textContent = OUT.log.join('\n');
+}
+function post (extra) {
+  var payload = { stage: OUT.stage, cases: OUT.cases, log: OUT.log, source: OUT.source, ua: OUT.ua };
+  if (extra) { for (var k in extra) payload[k] = extra[k]; }
+  return fetch('/result', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+}
+function sleep (ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+window.addEventListener('error', function (e) { log('window.error: ' + (e.message || e)); });
+window.addEventListener('unhandledrejection', function (e) { log('rejet: ' + ((e.reason && e.reason.message) || e.reason)); });
+
+/* ---- une petite protéine factice : 4×4×4 carbones espacés de 2,6 Å ---------
+   Les sphères se recouvrent (rayon ~1,7 Å) : une seule masse, pas 64 billes. */
+function pad (v, w) { var s = String(v); while (s.length < w) s = ' ' + s; return s; }
+function f8 (v) { var s = v.toFixed(3); while (s.length < 8) s = ' ' + s; return s; }
+var pdb = ['HEADER    SONDE SURFACE TRANSLUCIDE'];
+var serial = 0;
+for (var gx = 0; gx < 4; gx++) {
+  for (var gy = 0; gy < 4; gy++) {
+    for (var gz = 0; gz < 4; gz++) {
+      serial++;
+      pdb.push('ATOM  ' + pad(serial, 5) + ' ' + ' C  ' + ' ' + 'ALA' + ' ' + 'A' + pad(serial, 4) + '    ' +
+        f8((gx - 1.5) * 2.6) + f8((gy - 1.5) * 2.6) + f8((gz - 1.5) * 2.6) +
+        '  1.00  0.00' + '          ' + ' C');
+    }
+  }
+}
+var PDB = pdb.join('\n') + '\nEND\n';
+
+/* ---- la constante du viewer, LUE dans le source (jamais recopiée) --------- */
+async function readSource () {
+  var src = await (await fetch('/viewer-source')).text();
+  var block = src.match(/const SEE_THROUGH_SURFACE = \{([^}]*)\}/);
+  var ob = block && block[1].match(/opaqueBack\s*:\s*(true|false)/);
+  return {
+    match: block ? ('const SEE_THROUGH_SURFACE = {' + block[1] + '}') : null,
+    opaqueBack: ob ? ob[1] === 'true' : null,
+  };
+}
+
+/* Les paramètres de surface du viewer (voir addSurface dans NMRMoleculeViewer). */
+var BASE = {
+  sele: 'all', surfaceType: 'av', probeRadius: 1.4, smooth: 2, scaleFactor: 2,
+  colorScheme: 'uniform', colorValue: 0x3366ff, useWorker: false,
+};
+
+function buildCases (seeThroughOpaqueBack) {
+  return [
+    { id: 'opaque1', params: { opacity: 1 } },
+    { id: 'transparent40', params: { opacity: 0.4, transparent: true } },
+    { id: 'seeThrough40', params: { opacity: 0.4, transparent: true, opaqueBack: seeThroughOpaqueBack } },
+    { id: 'opaqueBackTrue40', params: { opacity: 0.4, transparent: true, opaqueBack: true } },
+  ];
+}
+
+/* ---- un cas : une scène neuve, une surface, un PNG ------------------------ */
+/* ---- le buffer réellement attaché au viewer -------------------------------
+   Pour `side:'double'` (le défaut des surfaces) la rep n'ajoute pas le
+   SurfaceBuffer mais un DoubleSidedBuffer qui l'enveloppe
+   (molecularsurface-representation.ts:288-294). Le DoubleSidedBuffer n'a pas
+   de getDefines : il délègue `.parameters` au buffer enveloppé et garde
+   `.frontBuffer` / `.backBuffer`. On capture donc les buffers au passage, via
+   le `viewer.add` que la rep appelle dans attach(), plutôt que de les
+   chercher dans une structure interne. */
+function surfaceBufferIn (added) {
+  for (var i = added.length - 1; i >= 0; i--) {
+    var b = added[i];
+    if (b && b.parameters && 'opaqueBack' in b.parameters) return b;
+    if (b && b.frontBuffer && b.frontBuffer.parameters) return b;
+  }
+  return null;
+}
+function definesOf (b) {
+  if (!b) return null;
+  if (typeof b.getDefines === 'function') return b.getDefines();
+  if (b.frontBuffer && typeof b.frontBuffer.getDefines === 'function') return b.frontBuffer.getDefines();
+  return null;
+}
+function paramOf (b, k) {
+  if (!b) return null;
+  if (b.parameters && k in b.parameters) return b.parameters[k];
+  if (b.frontBuffer && b.frontBuffer.parameters && k in b.frontBuffer.parameters) return b.frontBuffer.parameters[k];
+  return null;
+}
+function countOf (b) {
+  var attr = b && b.geometry && b.geometry.attributes && b.geometry.attributes.position;
+  return attr ? attr.count : null;
+}
+
+async function waitBuilt (getBuf, ms) {
+  var t0 = Date.now();
+  while (Date.now() - t0 < ms) {
+    var b = getBuf();
+    if (b && countOf(b) > 0) return true;
+    await sleep(100);
+  }
+  return false;
+}
+
+async function analyse (blob) {
+  var bmp = await createImageBitmap(blob);
+  var w = bmp.width, h = bmp.height;
+  var cv = document.createElement('canvas');
+  cv.width = w; cv.height = h;
+  var ctx = cv.getContext('2d');
+  ctx.drawImage(bmp, 0, 0);
+  var px = ctx.getImageData(0, 0, w, h).data;
+  function at (x, y) { var i = (y * w + x) * 4; return [px[i], px[i + 1], px[i + 2], px[i + 3]]; }
+  var cx = w >> 1, cy = h >> 1, box = 20, sum = 0, n = 0, blue = 0, vis = 0, rs = 0, gs = 0, bs = 0;
+  for (var y = cy - box; y < cy + box; y++) {
+    for (var x = cx - box; x < cx + box; x++) {
+      var p = at(x, y);
+      var l = 0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2];
+      sum += l; n++; rs += p[0]; gs += p[1]; bs += p[2];
+      if (p[2] - p[0] > 25) blue++;
+      if (l < 250) vis++;
+    }
+  }
+  /* …et sur TOUT le blob : tout ce qui n'est pas le fond blanc */
+  var blobSum = 0, blobN = 0;
+  for (var k = 0; k < w * h; k++) {
+    var j = k * 4;
+    var lk = 0.2126 * px[j] + 0.7152 * px[j + 1] + 0.0722 * px[j + 2];
+    if (lk < 252) { blobSum += lk; blobN++; }
+  }
+  var rgb = [Math.round(rs / n), Math.round(gs / n), Math.round(bs / n)];
+  return {
+    w: w, h: h, centerPixel: at(cx, cy), centerRGB: rgb,
+    centerLuma: Math.round((sum / n) * 10) / 10,
+    blueSpread: Math.round(rgb[2] - rgb[0]),
+    blueFrac: Math.round((blue / n) * 1000) / 1000,
+    visibleFrac: Math.round((vis / n) * 1000) / 1000,
+    blobLuma: blobN ? Math.round((blobSum / blobN) * 10) / 10 : null,
+    blobFrac: Math.round((blobN / (w * h)) * 1000) / 1000,
+    dataURL: cv.toDataURL('image/png'),
+  };
+}
+
+async function one (c, i) {
+  var host = document.createElement('div');
+  host.style.cssText = 'width:360px;height:360px;';
+  document.getElementById('hosts').appendChild(host);
+  var stage = new window.NGL.Stage(host, { backgroundColor: 'white', quality: 'high', sampleLevel: 0 });
+  var viewer = stage.viewer;
+  var added = [];
+  var origAdd = viewer.add;
+  viewer.add = function (buffer, instanceList) {
+    added.push(buffer);
+    return origAdd.call(viewer, buffer, instanceList);
+  };
+  var comp = await stage.loadFile(new Blob([PDB], { type: 'text/plain' }), { ext: 'pdb' });
+  if (!comp || !comp.structure) throw new Error('structure non chargée');
+  comp.autoView(1);
+  await sleep(500);
+  var rep = comp.addRepresentation('surface', Object.assign({}, BASE, c.params));
+  var getBuf = function () { return surfaceBufferIn(added); };
+  var built = await waitBuilt(getBuf, 12000);
+  stage.viewer.requestRender();
+  await sleep(400);
+  var buf = getBuf();
+  var blob = await stage.makeImage({ factor: 1 });
+  var image = await analyse(blob);
+  await fetch('/save?name=' + c.id, { method: 'POST', body: image.dataURL });
+  delete image.dataURL;
+  var rp = rep.getParameters() || {};
+  var info = {
+    built: built,
+    added: added.length,
+    atoms: comp.structure.atomCount,
+    rep: {
+      opaqueBack: rp.opaqueBack, opacity: rp.opacity, transparent: rp.transparent,
+      surfaceType: rp.surfaceType, sele: String((rp.sele && rp.sele.string) || rp.sele),
+    },
+    buffer: buf ? {
+      kind: (buf.frontBuffer && buf.backBuffer) ? 'doubleSided(front+back)' : (typeof buf.getDefines === 'function' ? 'singleBuffer' : 'inconnu'),
+      constructorName: (buf.constructor && buf.constructor.name) || null,
+      opaqueBack: paramOf(buf, 'opaqueBack'),
+      defines: definesOf(buf),
+      transparent: (buf.transparent !== undefined) ? buf.transparent : (buf.frontBuffer && buf.frontBuffer.transparent),
+      forceTransparent: paramOf(buf, 'forceTransparent'),
+      side: (buf.side !== undefined) ? buf.side : paramOf(buf, 'side'),
+      visible: buf.visible,
+      count: countOf(buf),
+      backOpaqueBack: buf.backBuffer ? paramOf(buf.backBuffer, 'opaqueBack') : null,
+      backDefines: buf.backBuffer ? definesOf(buf.backBuffer) : null,
+    } : null,
+    image: image,
+  };
+  stage.dispose();
+  await sleep(200);
+  return info;
+}
+
+async function run () {
+  if (!window.NGL || typeof window.NGL.Stage !== 'function') {
+    throw new Error('window.NGL absent : /ngl.js (dist UMD) n\'a pas été posé');
+  }
+  OUT.source = await readSource();
+  if (OUT.source.opaqueBack !== false) {
+    throw new Error('SEE_THROUGH_SURFACE.opaqueBack attendu à false dans le source du viewer, lu : ' + OUT.source.opaqueBack);
+  }
+  OUT.stage = 'source lue';
+  await post();
+  var list = buildCases(OUT.source.opaqueBack);
+  for (var i = 0; i < list.length; i++) {
+    var c = list[i];
+    log('cas ' + c.id + ' : ' + JSON.stringify(c.params) + ' …');
+    try {
+      c.info = await one(c, i);
+      log('   ' + c.id + ' : somme=' + (c.info.buffer && c.info.buffer.count) + ' define=' + JSON.stringify(c.info.buffer && c.info.buffer.defines) + ' luma=' + c.info.image.centerLuma);
+    } catch (e) {
+      c.error = String((e && e.stack) || e);
+      log('   ' + c.id + ' A JETÉ : ' + c.error);
+    }
+    OUT.cases.push(Object.assign({ id: c.id, params: c.params, error: c.error }, c.info));
+    OUT.stage = 'cas ' + c.id + ' fini';
+    await post();
+  }
+  OUT.stage = 'done';
+  await post();
+  log('SONDE OK');
+}
+</script>
+<script>
+run().catch(function (e) {
+  OUT.stage = 'fatal';
+  OUT.error = String((e && e.stack) || e);
+  log('FATAL ' + OUT.error);
+  post();
+});
+</script>
+</body>
+</html>

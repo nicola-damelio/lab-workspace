@@ -458,6 +458,9 @@ const GRAD = new Function([
   sliceDecl(VIEW, 'schemeParam'),
   sliceFn(VIEW, 'sectionColorParams'),
   sliceFn(VIEW, 'sectionStyleReps'),
+  // L'objet que `sectionStyleReps` ÉTALE sur chaque surface (`{ opaqueBack: false }`) :
+  // sans lui, la ligne `case 'surface'` lève « SEE_THROUGH_SURFACE is not defined ».
+  sliceDecl(VIEW, 'SEE_THROUGH_SURFACE'),
   SCHEME_KEYS,
   'const DEFAULT_GRADIENT_COLORS = { from: 0x2563eb, to: 0xdc2626 };',
   sliceObject(VIEW, 'gradientColorStore'),
@@ -690,6 +693,33 @@ has('hidden — choose a style here to bring this part back',
   'la rangée cachée dit qu’elle l’est et comment la ramener');
 has('phospholipids, proteins and nucleic acids when general (type or colouring) is',
   '…et le code cite la demande mot pour mot');
+// 6i. UNE ENVELOPPE « TRANSPARENTE » L'EST VRAIMENT — PAROI DU FOND COMPRISE. NGL 2.4
+//     met `opaqueBack` à TRUE par défaut sur une surface (molecularsurface-representation.ts:160 ;
+//     l'`if` de buffer.ts:553-555 pose alors le define OPAQUE_BACK) : le shader force
+//     l'alpha des faces qui tournent le dos à la caméra à 1, donc la paroi du FOND — une
+//     surface à 40 % de transparence lit comme une coque solide au liseré pâle. C'est le
+//     défaut « le curseur de transparence ne fait rien ». `opaqueBack: false` (le défaut du
+//     Buffer, buffer.ts:62) laisse chaque paroi garder l'alpha du matériau.
+const surfReps = [];
+const surfComp = {
+  structure: { eachAtom: () => {} },
+  addRepresentation(type, params) { const rep = { type, params }; surfReps.push(rep); return rep; },
+};
+GRAD.buildSectionReps(surfComp, GRAD_SECTION, { 'main::protein|A': {
+  protein: {
+    general: { style: 'surface', colorBy: 'element', solidColor: 0xffffff, opacity: 0.4, sphere: 1, bond: 1, follow: false },
+    backbone: { style: 'hide', colorBy: 'sstruc', solidColor: 0xffffff, opacity: 0, sphere: 1, bond: 1, follow: true },
+    sidechain: { style: 'hide', colorBy: 'element', solidColor: 0xffffff, opacity: 0, sphere: 1, bond: 1, follow: true },
+  },
+} }, {});
+const seeThrough = surfReps.find((r) => r.type === 'surface');
+ok(seeThrough, 'la rangée General en « surface » dessine bien une enveloppe');
+eq(seeThrough && seeThrough.params.opaqueBack, false,
+  '…avec opaqueBack: false : la paroi du fond n’est plus forcée à l’alpha 1 (la transparence se voit)');
+eq(seeThrough && seeThrough.params.opacity, 0.6,
+  '…et l’opacité reçue est la transparence de la rangée, retournée (0,4 → 0,6)');
+eq(seeThrough && seeThrough.params.surfaceType, 'av',
+  '…sur la même enveloppe qu’avant : seule la paroi du fond change de traitement');
 
 /* ══ 7. LE SMILES D'UN LIGAND ORGANIQUE (HETATM → RCSB) ═══════════════════
    Un PDB ne nomme son ligand que par son code à 3 lettres : le SMILES se lit dans

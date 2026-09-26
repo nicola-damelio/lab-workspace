@@ -248,6 +248,9 @@ const MODULE = new Function('ATOM_EVAL', 'STRUCTURE', [
   sliceDecl(VIEW, 'schemeParam'),
   sliceFn(VIEW, 'sectionColorParams'),
   sliceFn(VIEW, 'sectionStyleReps'),
+  // L'objet que `sectionStyleReps` ÉTALE sur chaque surface (`{ opaqueBack: false }`) :
+  // sans lui, la ligne `case 'surface'` lève « SEE_THROUGH_SURFACE is not defined ».
+  sliceDecl(VIEW, 'SEE_THROUGH_SURFACE'),
   SCHEME_KEYS,
   'const espColorParams = () => ({ colorScheme: "esp" });',
   'const flagMeshShadows = () => {};',
@@ -430,7 +433,25 @@ ok(tubeThen.some((r) => r.type === 'cartoon' && r.params.sele === ':A and protei
 // 3f. UNE ENVELOPPE (« surface ») n'a aucun atome à donner ni à prendre : General
 //     l'applique à la molécule entière, et les parties (qui ne savent pas la dessiner)
 //     passent sur « Hide » par la cascade.
-check('General → surface', gesture([['protein', 'general', 'style', 'surface']]));
+const surfOnly = check('General → surface', gesture([['protein', 'general', 'style', 'surface']]));
+// …ET L'ENVELOPPE N'EST PAS UN MUR. NGL 2.4 met `opaqueBack` à TRUE par défaut sur une
+// surface (molecularsurface-representation.ts:160 → buffer.ts:553-555, le define
+// OPAQUE_BACK) : le shader force alors l'alpha de la paroi du FOND à 1, et une surface à
+// 40 % de transparence lit comme un solide — le curseur ne ferait rien de visible. Le
+// viewer joint donc `opaqueBack: false` à chaque surface qu'il demande.
+const surfRep = surfOnly.find((r) => r.type === 'surface');
+ok(surfRep, 'General → surface : l’enveloppe part à NGL avec sa sélection');
+eq(surfRep && surfRep.params.opaqueBack, false,
+  '…et opaqueBack: false : la paroi du fond garde l’alpha du matériau (la transparence se voit)');
+// L'opacité reçue est l'INVERSE de la transparence choisie : la rangée à 0,6 de
+// transparence donne une surface à 0,4 d'opacité — la valeur EXACTE du curseur.
+const midSurf = sceneOf({ protein: {
+  general: { ...LOOK('surface', 'element', false), opacity: 0.6 },
+  backbone: LOOK('hide', 'sstruc', true),
+  sidechain: LOOK('hide', 'element', true),
+} });
+eq(midSurf.find((r) => r.type === 'surface').params.opacity, 0.4,
+  '…et l’opacité de la surface est la transparence de la rangée, retournée (0,6 → 0,4)');
 
 // 3g. Le DÉFAUT d'une molécule neuve ne bouge pas d'un caractère : General cartoon, le
 //     squelette qui le suit, et les chaînes latérales en licorice.
