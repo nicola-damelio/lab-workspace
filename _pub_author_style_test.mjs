@@ -438,8 +438,9 @@ const freshFmt = buildPubFormat('nature');
 eq(pubLayoutCss(freshFmt), '', 'un format neuf n’écrit AUCUNE règle : le document garde l’aspect du programme');
 ok(PUB_LAYOUT_PART_IDS.every((id) => freshFmt.layout[id]),
   '…mais les réglages existent, prêts à être choisis (une entrée par partie)');
-eq(Object.keys(normalizePubLayout(undefined)).length, PUB_LAYOUT_PART_IDS.length,
-  'un format enregistré AVANT cette version n’impose rien non plus (mise en forme vierge)');
+eq(Object.keys(normalizePubLayout(undefined)).length, PUB_LAYOUT_PART_IDS.length + 1,
+  'un format enregistré AVANT cette version n’impose rien non plus (mise en forme vierge : les sept parties ET la page, à une colonne)');
+eq(normalizePubLayout(undefined).page, { columns: 1 }, '…sa page reste à UNE colonne : aucun style deux colonnes n’est imposé');
 eq(normalizePubLayout(undefined).body.align, '', '…son alignement reste « comme le programme »');
 eq(normalizePubLayout({}).figure.width, 100, 'et sa figure fait toute la largeur tant qu’on ne dit rien');
 eq(normalizePubFormat({ fields: buildPubFormat('nature').fields }).layout.body.align, '',

@@ -3721,6 +3721,16 @@ export const ProjectDetailModule = ({
              classes « .pf-… » posées ici et, en repli, les balises du document
              (un texte figé avant cette version n'a pas les classes). */
           ${pubLayoutCss(pubFormat, DOC_CONTAINER_SELECTOR)}
+          /* ── MAIS PAS PENDANT QU'ON ÉCRIT ────────────────────────────────────
+             Le document vivant est ÉDITABLE (contentEditable) : dans une page à
+             deux colonnes, le curseur saute d'une colonne à l'autre et une
+             correction en déplace le texte — on écrit dans une colonne, pas dans
+             une mise en page. La page d'écriture est donc remise sur UNE colonne,
+             et seulement À L'ÉCRAN : l'impression, le PDF et l'aperçu du panneau
+             gardent les colonnes du format. */
+          @media screen {
+            #project-doc-container[contenteditable="true"] { column-count: 1 !important; }
+          }
         `}</style>
         <div className={`w-full mx-auto px-2.5 py-3 sm:px-6 sm:py-5 md:px-8 md:py-8 ${docFull ? 'max-w-none' : 'max-w-4xl'}`}>
           <div className="flex flex-wrap items-center justify-between gap-2 mb-4 no-print">

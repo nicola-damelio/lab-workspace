@@ -29,6 +29,16 @@
    Aucune dépendance nouvelle : fflate (déjà utilisé par tous les imports .docx du
    projet) zippe les parties, le reste est du XML écrit ici — le module tourne donc
    aussi sous node (voir _pub_docx_export_test.mjs).
+
+   CE QUE CE FICHIER NE PORTE PAS (encore) : LES COLONNES DE LA PAGE. Le style
+   « deux colonnes » des revues (voir PUB_PAGE_COLUMNS, pubCitation.js) est une
+   propriété de PAGE : en HTML/CSS elle est écrite par pubLayoutCss — la page du
+   projet, la feuille d'impression, le PDF et l'aperçu la suivent donc tous — mais
+   Word ne connaît pas `column-count` : il la porte dans le `sectPr` d'une
+   SECTION (`<w:cols w:num="2"/>`). L'export .docx suit donc le caractère de
+   chaque partie (police, taille, alignement, gras / italique / souligné,
+   couleur) et laisse la page sur une colonne. Le dire ici plutôt que de laisser
+   croire : un document exporté en deux colonnes ne l'est pas.
    ========================================================================= */
 
 import { zipSync, strToU8 } from 'fflate';

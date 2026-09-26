@@ -45,6 +45,10 @@ import {
   effectivePubDocNoTitle,
   pubCitationData, pubCitationHtml, pubDocOrderDropped,
   pubLayoutCss, pubTextStyleIsSet, pubDocBlockHidden,
+  /* LES COLONNES DE LA PAGE (le style « deux colonnes » des revues) : le nombre de
+     colonnes de la page et le mot de chaque partie — voir PUB_PAGE_COLUMNS et
+     pubPageColumnsOf dans pubCitation.js. */
+  PUB_PAGE_COLUMNS, PUB_COLUMN_SPANS, pubPageColumnsOf,
   /* LA FORME DES NOMS D'AUTEURS dans la citation (voir utils/authorNames.js) :
      le panneau itère sur ces formes (boutons « as written », « Smith JA »…). */
   NAME_STYLES, normalizeNameStyle,
@@ -3106,8 +3110,41 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
               ↺ Reset all
             </button>
           </div>
+          {/* ── LA PAGE À DEUX COLONNES — LE STYLE DES REVUES ───────────────────
+              La demande, mot pour mot : « In the publication format we forgot to
+              implement the two column style which is quite common in journals? It
+              should be defined for all sections. » Le réglage est ici, en tête de
+              la mise en forme, et CHAQUE PARTIE dit ce qu'elle fait de ces
+              colonnes sur sa propre ligne (voir PUB_COLUMN_SPANS) — le titre, les
+              auteurs et les affiliations barrent la page, le texte y coule. */}
+          <div className="flex flex-wrap items-center gap-2 mb-2 border border-slate-100 rounded-lg px-2 py-1.5">
+            <span className="w-32 text-xs font-bold text-slate-700"
+                  title="How many columns the page of the journal has — the “two column style” most journals print. The document is laid out by the browser's own multi-column rules, so the page of the project, its printed sheet, its PDF and its export all follow; a format left on one column writes no rule at all, exactly as before.">
+              Page columns
+            </span>
+            <div className="flex flex-wrap items-center gap-0.5">
+              {PUB_PAGE_COLUMNS.map((c) => (
+                <button type="button" key={c.id} title={c.title}
+                        onClick={() => pubSetLayout('page', { columns: c.id })}
+                        className={`px-2 py-0.5 rounded text-[10px] font-bold border transition ${
+                          pubPageColumnsOf(activeFormat) === c.id ? 'bg-indigo-600 text-white border-indigo-600'
+                            : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'}`}>
+                  {['▯', '▯▯', '▯▯▯'][c.id - 1]} {c.label}
+                </button>
+              ))}
+            </div>
+            <span className="text-[10px] text-slate-400"
+                  title="Every part of the document says on its own row what it does with these columns: “As the page” leaves it to the default — the title, the authors and the affiliations bar the page, every other part flows in the columns.">
+              the head lines bar the page; every part below says what it does with the columns
+            </span>
+            <button type="button" onClick={() => pubResetLayout('page')}
+                    className="ml-auto px-2 py-0.5 rounded-lg text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-300 hover:bg-slate-200"
+                    title="Back to one column">
+              ↺
+            </button>
+          </div>
           <div className="text-[10px] font-black uppercase tracking-wide text-slate-400 mb-1.5"
-               title="One row per part of the document: font family, size in points, position (left / centre / right / justified), bold / italic / underlined (three states: imposed, removed, as in the app) and colour.">
+               title="One row per part of the document: font family, size in points, position (left / centre / right / justified), bold / italic / underlined (three states: imposed, removed, as in the app), colour — and what the part does with the columns of the page (see “Page columns” above).">
             Formatting of every part
           </div>
           <div className="flex flex-col gap-1.5">
@@ -3166,6 +3203,16 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
                       </button>
                     ) : 'colour'}
                   </label>
+                  {part.span && (
+                    <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500"
+                           title={`What ${part.label} does with the columns of the page (see “Page columns” above). “As the page” writes no rule of its own: the head lines of the document (title, authors, affiliations) bar the page and every other part flows in the columns. “Full width” is what a title, a wide figure or an abstract a journal prints across its two columns needs. Nothing changes while the page has one column.`}>
+                      Columns
+                      <select value={st.span || ''} onChange={(e) => pubSetLayout(part.id, { span: e.target.value })}
+                              className="border border-slate-300 rounded px-1 py-0.5 text-[11px] bg-white outline-none">
+                        {PUB_COLUMN_SPANS.map((s) => <option key={s.id || 'page'} value={s.id}>{s.label}</option>)}
+                      </select>
+                    </label>
+                  )}
                   {part.width && (
                     <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500"
                            title="Width of the figure image, as a percentage of the column">

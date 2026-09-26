@@ -46,10 +46,10 @@ JOURNAL_IDS.forEach((id) => {
   ok(!!j.label, `${id} : un nom lisible dans la liste`);
   ok(!!PUB_FORMAT_PRESETS[j.preset], `${id} : son preset de citation existe (${j.preset})`);
   eq(journalLabelOf(id), j.label, `${id} : journalLabelOf rend le même nom`);
-  eq(Object.keys(j.layout).sort(), PUB_LAYOUT_PART_IDS.slice().sort(),
-    `${id} : il règle les SEPT parties du document (titre → bibliographie)`);
-  eq(Object.keys(journalLayoutPatches(id)).sort(), PUB_LAYOUT_PART_IDS.slice().sort(),
-    `${id} : toutes ses parties passent le filtre des parties connues`);
+  eq(Object.keys(j.layout).sort(), [...PUB_LAYOUT_PART_IDS, 'page'].sort(),
+    `${id} : il règle les SEPT parties du document (titre → bibliographie) ET la page (ses deux colonnes — voir PUB_PAGE_COLUMNS)`);
+  eq(Object.keys(journalLayoutPatches(id)).sort(), [...PUB_LAYOUT_PART_IDS, 'page'].sort(),
+    `${id} : toutes ses parties passent le filtre des parties connues, la page comprise`);
   // Le nettoieur du panneau garde la valeur telle quelle : police, taille et
   // alignement sont donc LÉGAUX (sinon le document ignorerait le réglage).
   const clean = normalizePubLayout(j.layout);

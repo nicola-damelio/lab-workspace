@@ -131,12 +131,15 @@ export const PUB_FONTS = [
    (`.pf-…`, toujours présente dans le document vivant) et, en repli, la BALISE
    du document — un document figé avant cette version n'a pas les classes, la
    balise le rattrape. `caption` (figures seulement) = la légende, et `width` =
-   la largeur de l'image (pourcentage de la colonne). */
+   la largeur de l'image (pourcentage de la colonne). `span: true` = la partie a
+   un mot à dire sur les COLONNES DE LA PAGE (voir PUB_COLUMN_SPANS) — les sept
+   parties du document l'ont, la demande étant que le style deux colonnes soit
+   « défini pour toutes les sections ». */
 export const PUB_LAYOUT_PARTS = [
-  { id: 'title', label: 'Title', selectors: ['.pf-title', 'h1'] },
-  { id: 'authors', label: 'Authors', selectors: ['.pf-authors'] },
-  { id: 'affiliations', label: 'Affiliations', selectors: ['.pf-affiliations'] },
-  { id: 'heading', label: 'Section headings', selectors: ['.pf-heading', 'h2'] },
+  { id: 'title', label: 'Title', selectors: ['.pf-title', 'h1'], span: true },
+  { id: 'authors', label: 'Authors', selectors: ['.pf-authors'], span: true },
+  { id: 'affiliations', label: 'Affiliations', selectors: ['.pf-affiliations'], span: true },
+  { id: 'heading', label: 'Section headings', selectors: ['.pf-heading', 'h2'], span: true },
   {
     id: 'body',
     label: 'Section text',
@@ -146,18 +149,85 @@ export const PUB_LAYOUT_PARTS = [
        d'information et les légendes de figure sont EXCLUES : elles ont leur
        propre partie. */
     selectors: ['.pf-body',
-      'p:not(.pf-authors):not(.pf-affiliations):not(.pf-meta):not(.pf-caption)']
+      'p:not(.pf-authors):not(.pf-affiliations):not(.pf-meta):not(.pf-caption)'],
+    span: true
   },
   {
     id: 'figure',
     label: 'Figures & captions',
     selectors: ['.pf-figure', 'figure'],
     caption: ['.pf-caption', 'figcaption'],
-    width: true
+    width: true,
+    span: true
   },
-  { id: 'bibliography', label: 'References', selectors: ['.pf-bib', '.pf-bib li'] }
+  { id: 'bibliography', label: 'References', selectors: ['.pf-bib', '.pf-bib li'], span: true }
 ];
 export const PUB_LAYOUT_PART_IDS = PUB_LAYOUT_PARTS.map((p) => p.id);
+
+/* L'écart entre deux colonnes, en rem — l'ordre de grandeur d'une revue (≈ 4
+   lignes de texte à 10 pt), assez large pour que les deux colonnes se lisent
+   séparément. */
+export const PUB_COLUMN_GAP_REM = 2.2;
+
+/* ══ LES COLONNES DE LA PAGE — LE STYLE « DEUX COLONNES » DES REVUES ═════════
+   La demande, mot pour mot : « In the publication format we forgot to implement
+   the two column style which is quite common in journals? It should be defined
+   for all sections. »
+
+   Une revue n'imprime pas un texte « en deux colonnes » : elle imprime une PAGE
+   à deux colonnes, dans laquelle chaque partie du document se place — le titre,
+   les auteurs et les affiliations BARENT la page (ils courent sur les deux
+   colonnes), le texte des sections y COULE, une figure prend une colonne (ou la
+   page entière quand le format le dit, `span: 'all'`), la liste des références
+   coule aussi. Le réglage a donc deux niveaux, et les deux vivent dans le format :
+     · `layout.page.columns` — LE NOMBRE DE COLONNES DE LA PAGE (1 · 2 · 3) :
+       c'est le style deux colonnes lui-même, et tout journal de la liste
+       l'apporte (voir journalFormats.js, LAY) ;
+     · `layout.<partie>.span` — CE QUE LA PARTIE FAIT DE CES COLONNES, réglé
+       pour TOUTES les parties du document (les sept lignes du panneau) : 'flow'
+       = elle coule dans les colonnes, 'all' = elle barre la page, '' = comme la
+       page, c'est-à-dire le défaut — les trois lignes de tête barrent, tout le
+       reste coule (voir pubSpanIn).
+
+   Le document d'un projet est une suite de blocs DANS `#project-doc-container`
+   (components/AppModules/projectDetailModule.jsx) : la feuille de style met
+   `column-count` sur ce conteneur et `column-span: all` sur les parties qui
+   barrent — ce sont les propriétés multi-colonnes du navigateur, donc l'écran, le
+   document imprimé, le PDF et l'export les suivent tous, sans une ligne de
+   JavaScript. Un format neuf (une colonne) n'écrit AUCUNE de ces règles : le
+   document garde exactement l'aspect du programme tant que personne ne demande
+   deux colonnes. */
+export const PUB_PAGE_COLUMNS = [
+  { id: 1, label: 'One column', title: 'The document as the app prints it today: one column of text, every part on its own lines' },
+  { id: 2, label: 'Two columns', title: 'The page of most journals: the text flows in two columns, the head lines of the document (title, authors, affiliations) bar the page, and each part says what it does with the columns on its own row below' },
+  { id: 3, label: 'Three columns', title: 'A three-column page (rare in journals, but some print their reference list that way): the rule of two columns applies' }
+];
+export const PUB_PAGE_COLUMN_IDS = PUB_PAGE_COLUMNS.map((c) => c.id);
+export const PUB_COLUMN_SPANS = [
+  { id: '', label: 'As the page', title: 'No rule of its own: the head lines of the document (title, authors, affiliations) bar the page and every other part flows in the columns' },
+  { id: 'flow', label: 'In the columns', title: 'This part flows inside the columns of the page: a section text, a figure that takes one column, the reference list' },
+  { id: 'all', label: 'Full width', title: 'This part bars the whole page whatever the number of columns: a title, a wide figure, an abstract a journal prints across its two columns' }
+];
+export const PUB_COLUMN_SPAN_IDS = PUB_COLUMN_SPANS.map((s) => s.id);
+/* LES TROIS LIGNES DE TÊTE DU DOCUMENT : elles barrent la page tant que le format
+   n'en décide pas autrement — aucune revue ne coupe son titre en deux colonnes. */
+export const PUB_HEAD_PART_IDS = ['title', 'authors', 'affiliations'];
+/* LE NOMBRE DE COLONNES d'un format : 1 · 2 · 3, et 1 pour tout ce qui n'en dit
+   rien (un format enregistré avant ce réglage garde donc l'aspect d'avant). */
+export const pubPageColumnsOf = (fmt) => {
+  const n = Number(fmt && fmt.layout && fmt.layout.page && fmt.layout.page.columns);
+  return PUB_PAGE_COLUMN_IDS.includes(n) ? n : 1;
+};
+/* CE QUE LA PARTIE FAIT DES COLONNES, dans une mise en forme déjà normalisée :
+   son propre choix quand elle en a un, sinon le défaut de la page (les lignes de
+   tête barrent, le reste coule). C'est LA fonction que lisent la feuille de style
+   et le panneau — ils ne peuvent donc pas dire deux choses différentes. */
+export const pubSpanIn = (layout, partId) => {
+  const stored = ((layout || {})[partId] || {}).span;
+  if (stored && PUB_COLUMN_SPAN_IDS.includes(stored)) return stored;
+  return PUB_HEAD_PART_IDS.includes(partId) ? 'all' : 'flow';
+};
+export const pubSpanOf = (fmt, partId) => pubSpanIn(normalizePubLayout(fmt && fmt.layout), partId);
 
 /* ══ LES BLOCS DU DOCUMENT D'UN PROJET, DANS L'ORDRE OÙ ILS S'IMPRIMENT ══════
    La demande : « In the publication format I cannot change the order of the sections
@@ -685,11 +755,17 @@ export const emptyPubTextStyle = () => ({
   font: '', size: 0, align: '', bold: null, italic: null, underline: null, color: ''
 });
 
-/** Les réglages d'un format neuf : une entrée vierge par partie du document. */
+/** Les réglages d'un format neuf : une entrée vierge par partie du document, et
+ *  LA PAGE — une seule colonne (le document tel que le programme l'écrit ; voir
+ *  PUB_PAGE_COLUMNS). `span: ''` = « comme la page ». */
 export const buildPubLayout = () => {
-  const out = {};
+  const out = { page: { columns: 1 } };
   PUB_LAYOUT_PARTS.forEach((part) => {
-    out[part.id] = { ...emptyPubTextStyle(), ...(part.width ? { width: 100 } : {}) };
+    out[part.id] = {
+      ...emptyPubTextStyle(),
+      ...(part.span ? { span: '' } : {}),
+      ...(part.width ? { width: 100 } : {})
+    };
   });
   return out;
 };
@@ -720,8 +796,16 @@ const cleanPubWidth = (v) => {
   const n = Number(v);
   return Number.isFinite(n) && n >= 10 && n <= 100 ? Math.round(n) : 100;
 };
+/* CE QUE LA PARTIE FAIT DES COLONNES : un des trois mots de PUB_COLUMN_SPANS, ou
+   rien (comme la page). */
+const cleanPubSpan = (v) => (PUB_COLUMN_SPAN_IDS.includes(String(v)) ? String(v) : '');
+/* LE NOMBRE DE COLONNES DE LA PAGE : 1, 2 ou 3 — 1 pour tout le reste. */
+const cleanPubColumns = (v) => {
+  const n = Number(v);
+  return PUB_PAGE_COLUMN_IDS.includes(n) ? n : 1;
+};
 
-const cleanPubTextStyle = (raw, { width = false } = {}) => {
+const cleanPubTextStyle = (raw, { width = false, span = false } = {}) => {
   const st = raw && typeof raw === 'object' ? raw : {};
   return {
     font: cleanPubFont(st.font),
@@ -731,18 +815,21 @@ const cleanPubTextStyle = (raw, { width = false } = {}) => {
     italic: cleanPubTri(st.italic),
     underline: cleanPubTri(st.underline),
     color: cleanPubColor(st.color),
+    ...(span ? { span: cleanPubSpan(st.span) } : {}),
     ...(width ? { width: cleanPubWidth(st.width) } : {})
   };
 };
 
 /** La mise en forme d'un format, telle qu'elle est relue d'un enregistrement :
- *  chaque partie connue est gardée, tout le reste est ignoré. Un format sans
+ *  chaque partie connue est gardée, tout le reste est ignoré — ET LES COLONNES DE
+ *  LA PAGE le sont aussi (`page.columns`, voir PUB_PAGE_COLUMNS). Un format sans
  *  mise en forme (enregistré avant cette version) donne les réglages vierges —
  *  le document d'un projet ne change donc pas tout seul. */
 export const normalizePubLayout = (raw) => {
   const out = buildPubLayout();
+  out.page = { columns: cleanPubColumns(raw && raw.page && raw.page.columns) };
   PUB_LAYOUT_PARTS.forEach((part) => {
-    out[part.id] = cleanPubTextStyle(raw && raw[part.id], { width: !!part.width });
+    out[part.id] = cleanPubTextStyle(raw && raw[part.id], { width: !!part.width, span: !!part.span });
   });
   return out;
 };
@@ -804,6 +891,34 @@ export const pubLayoutCss = (fmt, scope = '#project-doc-container') => {
     const list = (selectors || []).filter(Boolean).map((s) => `${scope} ${s}`).join(', ');
     if (list) rules.push(`${list} { ${body} }`);
   };
+  /* ── LA PAGE À DEUX COLONNES (voir PUB_PAGE_COLUMNS) ───────────────────────
+     `column-count` sur le CONTENEUR du document : chaque partie y coule, sauf
+     celles qui portent `column-span: all` (pubSpanIn). Une figure ne se coupe
+     alors ni entre deux colonnes ni entre deux pages, et un intitulé ne reste
+     pas seul au bas d'une colonne (`break-inside: avoid`) — le texte des
+     sections, lui, doit pouvoir se couper : c'est tout l'intérêt des colonnes.
+     Rien de tout cela n'est écrit pour une page à UNE colonne : la feuille d'un
+     format qui ne demande rien reste exactement ce qu'elle était. */
+  const columns = layout.page.columns;
+  if (columns > 1) {
+    rules.push(`${scope} { column-count: ${columns} !important; column-gap: ${PUB_COLUMN_GAP_REM}rem !important; }`);
+    PUB_LAYOUT_PARTS.forEach((part) => {
+      if (pubSpanIn(layout, part.id) === 'all') {
+        /* La partie barre la page : elle sort du flux des colonnes. */
+        rule(part.selectors, 'column-span: all !important; break-inside: avoid !important;');
+        return;
+      }
+      /* Les parties qu'une revue ne coupe jamais : une figure (et sa légende) et
+         un intitulé de section. Le texte des sections, lui, se coupe. */
+      if (part.id === 'figure' || part.id === 'heading') rule(part.selectors, 'break-inside: avoid;');
+    });
+    /* …ET LES LIGNES VIDES DE LA TÊTE DU DOCUMENT (la classe `pf-empty-line` que
+       journalFormats.js pose entre le titre, les auteurs et les affiliations —
+       voir DOC_EMPTY_LINE_CLASS) : elles font partie de cette tête, elles barrent
+       donc la page comme elle, au lieu de former une petite boîte à deux colonnes
+       pour un seul caractère insécable. */
+    rules.push(`${scope} .pf-empty-line { column-span: all !important; break-inside: avoid !important; }`);
+  }
   PUB_LAYOUT_PARTS.forEach((part) => {
     const st = layout[part.id];
     if (part.id === 'figure') {

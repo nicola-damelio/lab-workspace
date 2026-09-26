@@ -94,8 +94,15 @@ const st = (font, size, align, extra) => ({
 const fig = (font, size, align, width, extra) => ({ ...st(font, size, align, extra), width });
 /* Le sette parti di un giornale da sette numeri: t titolo · a autori · af
    affiliazioni · h intitoli · b testo · f didascalie e bibliografia · w larghezza
-   delle figure (percentuale della colonna). */
+   delle figure (percentuale della colonna).
+   E LA PAGINA: TUTTE le riviste di questa lista stampano su DUE COLONNE (ed è la
+   richiesta: « we forgot to implement the two column style which is quite common
+   in journals »). Il titolo, gli autori e le affiliazioni sbarrano la pagina, il
+   testo ci scorre dentro — vedi PUB_PAGE_COLUMNS e pubSpanIn in pubCitation.js.
+   `w` è la larghezza di una figura in PERCENTUALE DELLA COLONNA dove si mette
+   (45 % = mezza colonna di una pagina a due colonne). */
 const LAY = (font, n) => ({
+  page: { columns: 2 },
   title: st(font, n.t, 'left', { bold: true }),
   authors: st(font, n.a, 'left'),
   affiliations: st(font, n.af, 'left', { italic: true }),
@@ -200,7 +207,10 @@ export const journalLayoutPatches = (id) => {
   if (!def) return {};
   const out = {};
   Object.keys(def.layout || {}).forEach((part) => {
-    if (!PUB_LAYOUT_PART_IDS.includes(part)) return;
+    /* `page` n'est pas une PARTIE du document : c'est la page elle-même (le
+       nombre de ses colonnes, voir PUB_PAGE_COLUMNS). Elle voyage avec les
+       parties, parce que le panneau la pose comme elles — d'un seul coup. */
+    if (part !== 'page' && !PUB_LAYOUT_PART_IDS.includes(part)) return;
     out[part] = { ...def.layout[part] };
   });
   return out;
