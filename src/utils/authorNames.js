@@ -27,6 +27,18 @@
       réglage di partenza: la citazione resta esattamente com'è sempre stata
       finché qualcuno non decide altrimenti.
 
+   3. LA CASSE AUSSI EST UNE DÉCISION DU FORMAT. Les sources donnent très souvent
+      le nom de famille en CAPITALES (« ROSSI M » d'un export RIS ou Paperpile,
+      « SMITH JA » de PubMed, « Marco ROSSI » tapé à la main) : c'est une écriture
+      de la source, et elle est gardée TELLE QUELLE tant que le format laisse les
+      noms « as written ». Mais aucune revue n'imprime « SMITH, J. A. » : dès qu'un
+      journal écrit le nom selon SA règle, la casse redevient celle d'un nom de
+      personne — « SMITH » → « Smith », « VAN DER BERG » → « van der Berg »,
+      « O'BRIEN » → « O'Brien » (voir `nameCase`, qui sert `formatAuthorName` et
+      `familyNameOf`). Un nom SANS initiales n'est jamais touché (« EPPO »,
+      « WHO » : une signature collective s'écrit en capitales, c'est son nom), ni
+      un nom qui n'est pas tout en capitales.
+
    Module PUR (aucun import, aucun React) : les tests node l'importent, le
    navigateur le charge comme les autres utils, et utils/referenceImport.js
    s'en sert pour normaliser ce qu'il lit.
@@ -264,6 +276,46 @@ const dotted = (initials) => String(initials || '')
   .filter(Boolean)
   .join('-');
 
+/* ── LA CASSE D'UN NOM QU'UN FORMAT ÉCRIT ────────────────────────────────────
+   Les sources écrivent souvent le nom en CAPITALES (« ROSSI M » d'un export RIS
+   ou Paperpile, « SMITH JA » de PubMed, « Marco ROSSI » tapé à la main) : c'est
+   une écriture de la SOURCE, et elle est gardée telle quelle tant que le format
+   laisse les noms « as written » — le comportement d'avant. Mais aucune revue
+   n'imprime « SMITH, J. A. » : dès qu'un format écrit le nom selon la règle d'un
+   journal (voir `formatAuthorName`), la casse redevient celle d'un nom de
+   personne. Un nom qui n'est pas TOUT en capitales n'est jamais touché
+   (« McDonald », « De Simone », « Rossi ») : ce test dit seulement « tout en
+   capitales », il ne devine rien d'autre. */
+const ALL_CAPS_NAME = /^\p{Lu}[\p{Lu}\s.'’-]*$/u;
+/* Les particules qui reprennent la minuscule : « VAN DER BERG » → « van der Berg »,
+   « DE LA CRUZ » → « de la Cruz ». « ST », « MAC », « MC », « BIN », « IBN » sont
+   des PARTICULES pour la reconnaissance d'un nom (« St John », « Mac Leod »),
+   mais en capitales elles ouvrent aussi des noms qui gardent leur majuscule :
+   elles ne sont donc pas abaissées ici. */
+const LOWERCASE_IN_CASE = new Set(
+  [...PARTICLES].filter((p) => !['st', 'mac', 'mc', 'bin', 'ibn'].includes(p))
+);
+/** Un mot d'un nom écrit en capitales → sa casse ordinaire : « SMITH » → « Smith »,
+ *  « O'BRIEN » → « O'Brien », « SMITH-JONES » → « Smith-Jones », « DER » → « der ». */
+const nameCaseWord = (word) => {
+  const low = String(word || '').toLowerCase();
+  if (!low) return String(word || '');
+  if (LOWERCASE_IN_CASE.has(low.replace(/[.’']$/, ''))) return low;
+  return low.replace(/(^|[-'’])(\p{L})/gu, (all, sep, ch) => sep + ch.toUpperCase());
+};
+/**
+ * UN NOM ÉCRIT EN CAPITALES → la casse d'un nom de personne. Un nom qui n'est pas
+ * tout en capitales est rendu AU CARACTÈRE PRÈS : « McDonald » et « De Simone »
+ * ne sont pas des noms « à corriger », ce sont des écritures.
+ */
+export const nameCase = (value) => {
+  const raw = trimEdges(value);
+  if (!raw || !ALL_CAPS_NAME.test(raw)) return raw;
+  return raw.split(' ')
+    .map((word) => word.split('-').map(nameCaseWord).join('-'))
+    .join(' ');
+};
+
 /**
  * UN AUTEUR DANS LA FORME DU FORMAT. Le nom de famille est la seule chose que
  * toutes les formes partagent : un auteur sans initiales sort donc famille
@@ -276,17 +328,25 @@ export const formatAuthorName = (value, style) => {
   if (id === 'asis' || !raw) return raw;
   const { family, initials } = nameParts(raw);
   if (!family) return raw;
-  if (!initials) return family;
+  /* LE NOM ÉCRIT PAR UN JOURNAL EST UN NOM DE PERSONNE : une famille que la
+     source donne en capitales devient « Smith », « van der Berg » — jamais
+     « SMITH » (voir nameCase). Un nom SANS initiales est rendu tel quel : rien ne
+     prouve que ce soit un nom de personne (« EPPO », « WHO »). */
+  const fam = initials ? nameCase(family) : family;
+  if (!initials) return fam;
   switch (id) {
-    case 'family-initials': return `${family} ${initials}`;
-    case 'family-dot-initials': return `${family} ${dotted(initials)}`;
-    case 'initials-family': return `${dotted(initials)} ${family}`;
-    case 'family-comma-initials': return `${family}, ${dotted(initials)}`;
+    case 'family-initials': return `${fam} ${initials}`;
+    case 'family-dot-initials': return `${fam} ${dotted(initials)}`;
+    case 'initials-family': return `${dotted(initials)} ${fam}`;
+    case 'family-comma-initials': return `${fam}, ${dotted(initials)}`;
     default: return raw;
   }
 };
 
 /** Le nom de FAMILLE seul (« Rossi M » → « Rossi », « John A. Smith » → « Smith ») :
- *  c'est lui qui s'écrit dans un renvoi auteur-année (voir utils/referenceLinks.js). */
-export const familyNameOf = (value) => nameParts(value).family || clean(value);
+ *  c'est lui qui s'écrit dans un renvoi auteur-année (voir utils/referenceLinks.js).
+ *  Un nom de famille ÉCRIT EN CAPITALES y redevient un nom (« SMITH » → « Smith ») :
+ *  ce libellé s'imprime dans le texte, il suit donc la même règle que la citation —
+ *  aucune revue n'écrit « (SMITH et al., 2018) ». */
+export const familyNameOf = (value) => nameCase(nameParts(value).family) || clean(value);
 

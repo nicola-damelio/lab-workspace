@@ -10,8 +10,13 @@ import {
      affiché (`no-print`) mais ne doivent entrer ni dans un document FIGÉ, ni dans
      l'impression, ni dans le .docx. */
   withoutScreenOnlyUi,
+  /* …ET LA LIGNE D'INFORMATION DU PROJET D'UN DOCUMENT DÉJÀ ÉCRIT : « the project
+     line should not appear in the document unless activated » — la page ne rend plus
+     ce bloc quand le format ne le montre pas, et cette fonction le retire de
+     l'instantané enregistré (voir withoutHiddenHeadLines, plus bas). */
+  withoutProjectLineHtml,
   normalizePubDocOrder, normalizePubDocTitles, pubDocTitleKeywords, pubDocOrderKeywords, pubDocTitleOf,
-  pubDocTitleHidden, pubDocBlockOfSection
+  pubDocTitleHidden, pubDocBlockHidden, pubDocBlockOfSection
 } from '../Publications';
 import { getStarredItems, buildStarCaption, buildMaterialsAndMethods, tabConfigForType } from '../../utils/starredItems';
 import { loadProjects, saveProjects, saveProjectsChecked, lightenProjectForStorage, recordProjectDeletion, loadPublications, TEST_TYPE_OPTIONS, testTypeLabel, genProjectId, normalizeAuthorized, projectAccessFor, saveProjectsRescued } from './projectsModule';
@@ -3366,6 +3371,15 @@ export const ProjectDetailModule = ({
      (voir exportProjectDocx) le partagent : le document affiché, RÉPARÉ, puis
      rangé dans l'ordre du « Publication format ». Une seule fabrication, donc
      l'écran, le papier et le .docx ne peuvent pas diverger. */
+  /* LA LIGNE D'INFORMATION DU PROJET, QUAND LE FORMAT NE LA MONTRE PAS (voir
+     pubDocBlockHidden · buildPubDocNoBlock) : « the project line should not appear in
+     the document unless activated ». Le document VIVANT ne rend plus ce bloc (voir
+     `blocks.meta`), mais un document DÉJÀ ENREGISTRÉ le porte encore — et c'est lui
+     qui part à l'impression, au PDF et dans le .docx : on le retire du HTML écrit,
+     exactement comme withoutBibliographySection retire la bibliographie figée que la
+     page réimprime vivante. */
+  const withoutHiddenHeadLines = (html) => (pubDocBlockHidden(pubFormat, 'meta') ? withoutProjectLineHtml(html) : html);
+
   const projectDocBodyHtml = () => {
     const docEl = document.getElementById(DOC_CONTAINER_ID);
     if (!docEl) return '';
@@ -3381,7 +3395,7 @@ export const ProjectDetailModule = ({
        docxExport les retire, mais le corps est fabriqué ICI, pour les trois à la
        fois : on les retire une bonne fois, avant la réparation des références et
        l'ordre du journal — le texte du document, lui, n'est jamais touché. */
-    let bodyHtml = withoutScreenOnlyUi(docEl.innerHTML);
+    let bodyHtml = withoutScreenOnlyUi(withoutHiddenHeadLines(docEl.innerHTML));
     if (refs.length) {
       const repaired = ensureReferenceEntries(bodyHtml, refs.map((r) => ({
         number: Number(r && r.number) || 0,
@@ -3850,7 +3864,9 @@ export const ProjectDetailModule = ({
                      porte encore les notes du programme et le bandeau du Drive — ils
                      sortent ici, pour la page comme pour ce qui en descend
                      (impression, PDF, .docx). */
-                  withoutScreenOnlyUi(linkCitations(repairContentImages(withoutBibliographySection(project.exportDocHtml)))),
+                  withoutScreenOnlyUi(withoutHiddenHeadLines(
+                    linkCitations(repairContentImages(withoutBibliographySection(project.exportDocHtml))),
+                  )),
                   docOrderWords(pubFormat),
                   pubDocTitleKeywords(pubFormat),
                 ))
@@ -3887,7 +3903,13 @@ export const ProjectDetailModule = ({
                 <p key="affiliations" className="pf-affiliations text-[11px] text-slate-500 italic whitespace-pre-line mb-2"
                    dangerouslySetInnerHTML={{ __html: superscriptMarksHtml(project.paperAffiliations) }} />
               );
-              blocks.meta = (
+              /* LA LIGNE D'INFORMATION DU PROJET NE S'IMPRIME QUE SI ELLE EST ACTIVÉE
+                 — « the project line should not appear in the document unless
+                 activated » : sa rangée, dans « Document sections (order & titles) »,
+                 porte la case qui l'allume (voir pubDocBlockHidden ·
+                 buildPubDocNoBlock). Le titre, les auteurs et les affiliations, eux,
+                 portent le TEXTE de l'auteur : ils s'impriment toujours. */
+              if (!pubDocBlockHidden(pubFormat, 'meta')) blocks.meta = (
                 <p key="meta" className="pf-meta text-xs text-slate-500 mb-6">
                   {project.paperTitle ? `Project: ${project.name} · ` : ''}Scientist: {project.scientist || '—'} · Created: {new Date(project.createdAt).toLocaleDateString()}
                 </p>

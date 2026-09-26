@@ -25,7 +25,7 @@ const {
   journalLayoutPatches, journalOf, journalPubFields, journalSectionOrder, reorderDocHtml
 } = await import('./src/components/journalFormats.js');
 const {
-  PUB_FORMAT_PRESETS, PUB_LAYOUT_PARTS, PUB_LAYOUT_PART_IDS,
+  PUB_FORMAT_PRESETS, PUB_LAYOUT_PARTS, PUB_LAYOUT_PART_IDS, IN_TEXT_STYLE_IDS,
   buildPubFormat, buildPubLayout, normalizePubLayout, pubCitationText, pubDocTitleKeywords, pubTextStyleIsSet
 } = await import('./src/components/pubCitation.js');
 const { NAME_STYLE_IDS, normalizeNameStyle } = await import('./src/utils/authorNames.js');
@@ -88,7 +88,15 @@ eq(applied.preset, 'acs', '…et sa citation prend le preset du journal');
 eq(applied.order, JOURNAL_FORMATS.jacs.order, '…et son ordre de sections');
 eq(applied.bibLabel, 'References', '…et le titre de sa bibliographie');
 eq(applied.layout.body.font, JOURNAL_FORMATS.jacs.layout.body.font, '…et le caractère de son texte');
-eq(applied.inTextStyle, 'superscript', 'le style de renvoi DANS le texte est conservé');
+/* LA FORME DU RENVOI DANS LE TEXTE EST, ELLE AUSSI, PORTÉE PAR LE JOURNAL — la
+   demande de cette session : « selecting a journal style in the journal preset
+   drop-down menu does not affect (as it should) the “In-text citations (project
+   document)” and the “et al. after” settings. » Le réglage du format cède donc
+   devant celui de JACS (l'exposant), comme le reste de sa citation ; un réglage
+   que le journal ne NOMME pas (ici `width`) reste intact — voir la ligne du
+   dessous. */
+eq(applied.inTextStyle, 'sup', '…et sa forme de renvoi dans le texte (l’exposant d’ACS)');
+eq(applied.etAlLimit, JOURNAL_FORMATS.jacs.etAl, '…ainsi que sa coupe des auteurs');
 eq(applied.width, 42, 'un réglage que le journal ne touche pas est conservé');
 ok(mine.journal === undefined, 'le format d’origine n’est pas modifié (copie, pas mutation)');
 const rebond = applyJournalFormat(applied, 'angewandte');
@@ -105,7 +113,13 @@ eq(cleared.journal, undefined, '« As in the app » détache le journal');
 eq(cleared.order, undefined, '…et son ordre de sections');
 eq('bibLabel' in cleared, false, '…et le titre de bibliographie du journal');
 eq(cleared.layout.body.font, '', '…et le caractère redevient vide (aucune règle écrite)');
-eq(cleared.inTextStyle, 'superscript', '…mais le reste du format est conservé');
+/* LES DEUX RÉGLAGES DE CITATION RESTENT, EUX AUSSI : « As in the app » détache le
+   journal de la STRUCTURE du document (ordre, intitulés, caractère), et laisse la
+   citation telle qu'elle est — les champs, la forme des noms, la forme des renvois
+   du texte et la coupe des auteurs, que l'utilisateur a sous les yeux dans la
+   rubrique « References (citation & bibliography) » (voir clearJournalFormat). */
+eq(cleared.inTextStyle, 'sup', '…mais le réglage de citation reste (la forme des renvois du journal)');
+eq(cleared.etAlLimit, JOURNAL_FORMATS.jacs.etAl, '…avec sa coupe des auteurs');
 eq(PUB_LAYOUT_PARTS.length, 7, 'les sept parties du document sont toujours celles du panneau');
 
 /* ══ 3. L'ORDRE DES SECTIONS SUR UN DOCUMENT RÉEL ═════════════════════════ */
@@ -277,5 +291,52 @@ ok(PUB.includes('nameStyle: normalizeNameStyle(activeFormat.nameStyle)'),
   '…et le choix survit au réglage d\'un champ de la citation (pubCustomFormat)');
 ok(PUB.includes('NAME_STYLES, normalizeNameStyle'),
   '…le panneau importe les écritures du paquet (comme le reste du format)');
+
+/* ══ 7. IL GIORNALE PORTA ANCHE I RINVII DEL TESTO E LA COUPE DEGLI AUTORI ═══
+   « selecting a journal style in the journal preset drop-down menu does not affect
+   (as it should) the “In-text citations (project document)” and the “et al. after”
+   settings. » Un giornale porta quindi anche questi due réglages: la forma dei
+   rinvii nel testo (`inText`, vedi IN_TEXT_STYLES) e il rango dopo il quale la
+   lista degli autori si taglia (`etAl`), e `applyJournalFormat` li scrive nel
+   formato — restando regolabili a mano dopo il cambio, come tutto il resto. */
+{
+  JOURNAL_IDS.forEach((id) => {
+    const j = JOURNAL_FORMATS[id];
+    ok(IN_TEXT_STYLE_IDS.includes(j.inText), `${id} : une forme de renvoi CONNUE (${j.inText})`);
+    ok(Number.isInteger(j.etAl) && j.etAl >= 0, `${id} : une coupe d'auteurs entière et jamais négative (${j.etAl})`);
+  });
+  const fresh = buildPubFormat('nature');
+  const of = (id) => applyJournalFormat(fresh, id);
+  eq([of('nature').inTextStyle, of('nature').etAlLimit], ['sup', 6],
+    'Nature : renvois en exposant, coupe après six auteurs');
+  eq([of('science').inTextStyle, of('science').etAlLimit], ['sup', 5],
+    'Science : exposant, coupe après cinq');
+  eq([of('jacs').inTextStyle, of('jacs').etAlLimit], ['sup', 10],
+    'JACS : exposant, coupe après dix (la règle d’ACS)');
+  eq([of('cell').inTextStyle, of('cell').etAlLimit], ['author-date', 0],
+    'Cell : renvois auteur-année, et la liste des auteurs reste entière');
+  eq([of('pnas').inTextStyle, of('pnas').etAlLimit], ['paren', 10],
+    'PNAS : numéros entre parenthèses, coupe après dix');
+  /* LE JOURNAL PASSE DEVANT LE RÉGLAGE DE L'UTILISATEUR (« all the elements of the
+     publication format must adapt to it »), ET LA COUPE SE VOIT DANS LA CITATION. */
+  const mine = { ...fresh, inTextStyle: 'bracket', etAlLimit: 3 };
+  eq(applyJournalFormat(mine, 'nature').inTextStyle, 'sup', 'le journal change la forme des renvois du format');
+  eq(applyJournalFormat(mine, 'nature').etAlLimit, 6, '…et la coupe des auteurs');
+  const many = {
+    authors: 'A One, B Two, C Three, D Four, E Five, F Six, G Seven, H Eight',
+    year: '2024', title: 'T', journal: 'J', volume: '1', pages: '2'
+  };
+  ok(pubCitationText(many, of('nature'), []).includes('et al.'),
+    'avec la coupe de Nature, une liste de huit auteurs finit par « et al. »');
+  ok(!pubCitationText(many, buildPubFormat('nature'), []).includes('et al.'),
+    'un format sans journal ne coupe rien (0 = jamais) : la coupe vient bien du journal');
+  /* LE PANNEAU LE DIT — les deux rubriques lisent le format COURANT, et le badge du
+     journal annonce ce qu'il apporte (pas de réglage invisible). */
+  ok(PUB.includes('et al. after') && PUB.includes('value={activeFormat.etAlLimit || 0}'),
+    'la rubrique « et al. after » lit le format courant');
+  ok(PUB.includes('In-text citations (project document)') && PUB.includes('normalizeInTextStyle(activeFormat.inTextStyle)'),
+    '…comme les boutons « In-text citations (project document) »');
+  ok(PUB.includes('in-text citations are'), 'et le badge du journal annonce la forme des renvois qu’il apporte');
+}
 
 console.log(`_journal_formats_test.mjs — ${passed} assertions passed`);

@@ -185,7 +185,15 @@ export const PUB_DOC_BLOCKS = [
   { id: 'title', label: 'Title', hint: 'the paper title (or the folder name)' },
   { id: 'authors', label: 'Authors', hint: 'the author line' },
   { id: 'affiliations', label: 'Affiliations', hint: 'the affiliations line' },
-  { id: 'meta', label: 'Project line', hint: 'project · scientist · date' },
+  /* LA LIGNE D'INFORMATION DU PROJET EST FACULTATIVE — la seule de la tête. C'est
+     le PROGRAMME qui l'écrit (le nom du projet, le scientifique, la date), et la
+     demande de cette session est catégorique : « The project line should not appear
+     in the document unless activated. » Elle est donc ÉTEINTE par défaut (voir
+     buildPubDocNoBlock) et la rangée « Project line » de « Document sections
+     (order & titles) » porte la case qui l'allume ; le document — page, impression,
+     PDF, .docx — la suit. Le titre, les auteurs et les affiliations, eux, portent le
+     TEXTE de l'auteur : ils s'impriment toujours. */
+  { id: 'meta', label: 'Project line', hint: 'project · scientist · date', optional: true },
   /* ── LES DEUX SECTIONS DE TEXTE QUI N'AVAIENT PAS DE RANGÉE ──────────────────
      La demande : « the “Document sections (order & titles)” section should contain
      “scientific background” and “Results and discussion”. As “Material and method” I
@@ -224,6 +232,11 @@ export const PUB_DOC_BLOCK_IDS = PUB_DOC_BLOCKS.map((b) => b.id);
 // Les blocs dont le programme écrit l'intitulé, et les blocs qui ne se déplacent pas.
 export const PUB_DOC_TITLED_IDS = PUB_DOC_BLOCKS.filter((b) => b.titled).map((b) => b.id);
 export const PUB_DOC_FIXED_IDS = PUB_DOC_BLOCKS.filter((b) => b.fixed).map((b) => b.id);
+/* LES BLOCS FACULTATIFS — ceux qu'un format peut NE PAS imprimer (`optional`). Un
+   bloc d'ici est éteint par défaut et le panneau le rallume (voir
+   buildPubDocNoBlock / pubDocBlockHidden) : aujourd'hui, la seule ligne
+   d'information du projet. */
+export const PUB_DOC_OPTIONAL_IDS = PUB_DOC_BLOCKS.filter((b) => b.optional).map((b) => b.id);
 /* Les blocs qui IMPRIMENT une section de texte du projet (`section` = son id). */
 export const PUB_DOC_SECTION_BLOCKS = PUB_DOC_BLOCKS.filter((b) => b.section);
 export const PUB_DOC_SECTION_IDS = PUB_DOC_SECTION_BLOCKS.map((b) => b.section);
@@ -328,6 +341,43 @@ export const normalizePubDocNoTitle = (raw) => {
 /** CET INTITULÉ EST-IL CACHÉ pour ce format ? (une case décochée au panneau, ou un style
  *  qui n'écrit pas ce titre — voir normalizePubDocNoTitle). */
 export const pubDocTitleHidden = (fmt, id) => normalizePubDocNoTitle(fmt && fmt.docNoTitle).includes(String(id || ''));
+
+/* ══ LES BLOCS QUE LE FORMAT N'IMPRIME PAS ═══════════════════════════════════
+   « The project line should not appear in the document unless activated. »
+
+   Un bloc de tête SANS intitulé n'a pas de `<h2>` à cacher : il a une LIGNE, et
+   `docNoTitle` ne peut donc pas le concerner. La ligne d'information du projet
+   (« Project: … · Scientist: … · Created: … ») est de ceux-là — écrite par le
+   PROGRAMME, sans intitulé — et elle est ÉTEINTE par défaut : `docNoBlock` naît
+   avec tous les blocs facultatifs (voir PUB_DOC_OPTIONAL_IDS), donc avec `meta`.
+   La rangée « Project line » de « Document sections (order & titles) » porte la
+   case qui l'allume (`docNoBlock` se vide), et le document — la page du projet,
+   l'impression, le PDF et le .docx — la suit : la page ne rend pas le bloc, et un
+   document DÉJÀ ÉCRIT voit sa ligne retirée (voir withoutProjectLineHtml,
+   journalFormats.js).
+
+   Les trois autres lignes de la tête (le titre, les auteurs, les affiliations)
+   portent le TEXTE de l'auteur : elles s'impriment toujours, et un format ne peut
+   pas les éteindre. */
+export const buildPubDocNoBlock = () => PUB_DOC_OPTIONAL_IDS.slice();
+
+/** La liste relue d'un enregistrement (localStorage, document d'un autre poste,
+ *  copie d'un projet) : seuls les blocs FACULTATIFS connus passent, sans doublon.
+ *  Un format qui n'en porte pas — écrit avant ce réglage — reçoit le défaut du
+ *  programme : la ligne d'information ne s'imprime donc pas, exactement ce que la
+ *  demande décrit. Une liste VIDE, elle, est un CHOIX : ce format la montre. */
+export const normalizePubDocNoBlock = (raw) => {
+  const out = [];
+  (Array.isArray(raw) ? raw : buildPubDocNoBlock()).forEach((id) => {
+    const key = String(id || '');
+    if (PUB_DOC_OPTIONAL_IDS.includes(key) && !out.includes(key)) out.push(key);
+  });
+  return out;
+};
+
+/** CE BLOC EST-IL ÉTEINT pour ce format ? (voir docNoBlock — un bloc facultatif
+ *  que le format ne montre pas ne s'imprime ni à l'écran ni sur le papier.) */
+export const pubDocBlockHidden = (fmt, id) => normalizePubDocNoBlock(fmt && fmt.docNoBlock).includes(String(id || ''));
 
 /** L'intitulé que le document écrit pour un bloc : celui choisi par l'utilisateur, ou
  *  celui du programme quand il est vide (ou quand le bloc n'en porte pas). */
@@ -767,6 +817,7 @@ export const buildPubFormat = (presetId) => {
     docOrder: buildPubDocOrder(),   // the blocks of the project document, in the order they print (see PUB_DOC_BLOCKS)
     docTitles: buildPubDocTitles(), // the headings the PROGRAM writes for them (« Materials and Methods » → the user's name)
     docNoTitle: buildPubDocNoTitle(), // the headings the format does NOT want (« Science » prints no title over its reference list)
+    docNoBlock: buildPubDocNoBlock(), // the blocks the format does NOT print (the project line — off until someone asks, see buildPubDocNoBlock)
     fields: preset.defs.map((def, i) => ({
       id: def[0], enabled: true, order: i, style: def[1], prefix: def[2], suffix: def[3]
     }))
@@ -795,6 +846,10 @@ export const normalizePubFormat = (parsed) => {
     docOrder: normalizePubDocOrder(parsed && parsed.docOrder),
     docTitles: normalizePubDocTitles(parsed && parsed.docTitles),
     docNoTitle: normalizePubDocNoTitle(parsed && parsed.docNoTitle),
+    /* Un format enregistré AVANT ce réglage n'a pas de `docNoBlock` : il reçoit le
+       défaut du programme — la ligne d'information du projet ne s'imprime pas
+       (voir normalizePubDocNoBlock). */
+    docNoBlock: normalizePubDocNoBlock(parsed && parsed.docNoBlock),
     fields: (parsed && parsed.fields) || buildPubFormat('nature').fields
   };
 };

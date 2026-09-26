@@ -44,6 +44,26 @@
         casella da decoccare a mano: « the references should behave like the other
         sections and not have a tick display reference title », e l'intitolo di una
         sezione è quello del formato o quello regolato in « Document sections ».
+        ATTENZIONE, DALL'ALTRA PARTE: `docNoTitle` è ciò che NASCONDE un intitolo, e un
+        intitolo che l'utente SCRIVE (« Document sections (order & titles) » → la riga
+        « References ») lo riaccende — « the references section always lacks the
+        reference title in the final document even if in principle I can edit its name in
+        the publication format section ». Scrivere un nome (o ↺) toglie il blocco da
+        `docNoTitle` (vedi pubSetDocTitle, Publications.jsx).
+     7. `inText` · `etAl` → LA FORMA DEI RENVII NEL TESTO e LA COUPE DEGLI AUTORI. La
+        richiesta: « selecting a journal style in the journal preset drop-down menu does
+        not affect (as it should) the “In-text citations (project document)” and the “et
+        al. after” settings. » Un giornale porta quindi anche questi due réglages (vedi
+        IN_TEXT_STYLES · etAlLimit, pubCitation.js): scegliere Nature mette l'esponente e
+        taglia dopo sei autori, scegliere Cell mette « (Rossi & Bianchi, 2018) » e stampa
+        la lista intera. I due restano regolabili a mano dopo il cambio, come tutto il
+        resto del formato.
+     8. `docNoBlock` → LE RIGHE CHE IL GIORNALE NON STAMPA AFFATTO. Una riga della testa
+        non ha intitolo da nascondere (`docNoTitle` non la riguarda): la riga
+        d'informazione del progetto si spegne e si riaccende con la sua casella —
+        `docNoBlock`, vedi buildPubDocNoBlock. « The project line should not appear in
+        the document unless activated. » Nessun giornale la spegne: la scelta è
+        dell'utente, e `applyJournalFormat` la lascia com'è.
 
    La richiesta: « when I select the journal preset, all the elements of the
    publication format must adapt to it, including the order of the sections. »
@@ -52,7 +72,7 @@
    la sua guida per gli autori — che cambia nel tempo e va riletta prima di
    inviare. Tutto resta modificabile a mano dopo il cambio.
    ========================================================================= */
-import { PUB_FORMAT_PRESETS, PUB_FONTS, PUB_LAYOUT_PART_IDS, buildPubDocOrder, buildPubDocTitles, buildPubDocNoTitle, buildPubFormat, normalizePubDocNoTitle, pubDocOrderForWords, pubDocTitlesForWords } from './pubCitation.js';
+import { PUB_FORMAT_PRESETS, PUB_FONTS, PUB_LAYOUT_PART_IDS, buildPubDocOrder, buildPubDocTitles, buildPubDocNoTitle, buildPubDocNoBlock, buildPubFormat, normalizePubDocNoTitle, normalizeInTextStyle, pubDocOrderForWords, pubDocTitlesForWords } from './pubCitation.js';
 
 
 // Le famiglie di caratteri del pannello (senza « As in the app »: un giornale un
@@ -96,37 +116,37 @@ const LAY = (font, n) => ({
    plantées au milieu des autres blocs pendant que les blocs nommés se réordonnent. */
 export const JOURNAL_FORMATS = {
   jacs: {
-    label: 'JACS (ACS)', preset: 'acs', bibLabel: 'References', names: 'family-comma-initials',
+    label: 'JACS (ACS)', preset: 'acs', bibLabel: 'References', names: 'family-comma-initials', inText: 'sup', etAl: 10,
     order: ['abstract', 'introduction', 'materials and methods', 'results and discussion', 'conclusion', 'funding', 'supporting information', 'references'],
     layout: LAY(SERIF, { t: 16, a: 11, af: 9, h: 12, b: 10, f: 9, w: 45 }),
     notes: 'ACS numbered references. The experimental details stay inside Materials and Methods, before the Results.',
   },
   orglett: {
-    label: 'Organic Letters (ACS)', preset: 'acs', bibLabel: 'References', names: 'family-comma-initials',
+    label: 'Organic Letters (ACS)', preset: 'acs', bibLabel: 'References', names: 'family-comma-initials', inText: 'sup', etAl: 10,
     order: ['abstract', 'introduction', 'results and discussion', 'materials and methods', 'conclusion', 'funding', 'supporting information', 'references'],
     layout: LAY(SERIF, { t: 15, a: 11, af: 9, h: 11, b: 10, f: 9, w: 45 }),
     notes: 'Short communication: Results and Discussion right after the introduction, the experimental details at the end.',
   },
   angewandte: {
-    label: 'Angewandte Chemie (Wiley)', preset: 'springer', bibLabel: 'References', names: 'initials-family',
+    label: 'Angewandte Chemie (Wiley)', preset: 'springer', bibLabel: 'References', names: 'initials-family', inText: 'sup', etAl: 10,
     order: ['abstract', 'introduction', 'results and discussion', 'conclusion', 'experimental section', 'materials and methods', 'funding', 'supporting information', 'references'],
     layout: LAY(GARAMOND, { t: 16, a: 11, af: 9, h: 12, b: 10, f: 9, w: 50 }),
     notes: 'The Experimental Section goes AFTER the Conclusion — the Angewandte convention.',
   },
   chemEurJ: {
-    label: 'Chemistry – A European Journal (Wiley)', preset: 'springer', bibLabel: 'References', names: 'initials-family',
+    label: 'Chemistry – A European Journal (Wiley)', preset: 'springer', bibLabel: 'References', names: 'initials-family', inText: 'sup', etAl: 10,
     order: ['abstract', 'introduction', 'results and discussion', 'conclusion', 'experimental section', 'materials and methods', 'funding', 'supporting information', 'references'],
     layout: LAY(GARAMOND, { t: 15, a: 11, af: 9, h: 12, b: 10, f: 9, w: 50 }),
     notes: 'Full paper: Results and Discussion, then Conclusion, then the Experimental Section.',
   },
   chemSci: {
-    label: 'Chemical Science (RSC)', preset: 'acs', bibLabel: 'References', names: 'initials-family',
+    label: 'Chemical Science (RSC)', preset: 'acs', bibLabel: 'References', names: 'initials-family', inText: 'sup', etAl: 10,
     order: ['abstract', 'introduction', 'results and discussion', 'conclusion', 'experimental', 'materials and methods', 'funding', 'supporting information', 'references'],
     layout: LAY(GARAMOND, { t: 15, a: 11, af: 9, h: 11, b: 10, f: 9, w: 50 }),
     notes: 'RSC: Results and Discussion before the Conclusion, then the Experimental part.',
   },
   nature: {
-    label: 'Nature', preset: 'nature', bibLabel: 'References', names: 'family-comma-initials',
+    label: 'Nature', preset: 'nature', bibLabel: 'References', names: 'family-comma-initials', inText: 'sup', etAl: 6,
     order: ['abstract', 'introduction', 'results', 'discussion', 'methods', 'materials and methods', 'funding', 'supporting information', 'references'],
     layout: LAY(SANS, { t: 18, a: 11, af: 9, h: 12, b: 10, f: 9, w: 100 }),
     notes: 'The Methods go at the END, after the discussion (Nature prints them there, in smaller type).',
@@ -138,7 +158,7 @@ export const JOURNAL_FORMATS = {
        l'intitolo di una sezione è quello che il giornale porta, e non c'è più nessuna
        casella da decoccare a mano (« the references should behave like the other
        sections and not have a tick display reference title »). */
-    label: 'Science', preset: 'science', bibLabel: '', names: 'initials-family',
+    label: 'Science', preset: 'science', bibLabel: '', names: 'initials-family', inText: 'sup', etAl: 5,
     /* I CAMPI CHE SCIENCE NON STAMPA: il titolo dell'articolo. La richiesta: « in
        Science il title non viene messo, ma se imposto su Science il tick sul title
        rimane e quindi nel documento finale ho i titoli che non dovrebbero esserci »
@@ -151,13 +171,13 @@ export const JOURNAL_FORMATS = {
     notes: 'Numbered references, Materials and Methods before the bibliography — and no heading of its own over the reference list.',
   },
   cell: {
-    label: 'Cell', preset: 'cell', bibLabel: 'References', names: 'family-comma-initials',
+    label: 'Cell', preset: 'cell', bibLabel: 'References', names: 'family-comma-initials', inText: 'author-date', etAl: 0,
     order: ['abstract', 'introduction', 'results', 'discussion', 'materials and methods', 'conclusion', 'funding', 'supporting information', 'references'],
     layout: LAY(SANS, { t: 16, a: 11, af: 9, h: 12, b: 10, f: 9, w: 100 }),
     notes: 'Author–year style, the experimental procedures after the discussion.',
   },
   pnas: {
-    label: 'PNAS', preset: 'pnas', bibLabel: 'References', names: 'family-initials',
+    label: 'PNAS', preset: 'pnas', bibLabel: 'References', names: 'family-initials', inText: 'paren', etAl: 10,
     order: ['abstract', 'introduction', 'results', 'discussion', 'materials and methods', 'conclusion', 'funding', 'supporting information', 'references'],
     layout: LAY(SERIF, { t: 15, a: 11, af: 9, h: 11, b: 10, f: 9, w: 100 }),
     notes: 'Numbered references, Results and Discussion may be printed as one section.',
@@ -238,6 +258,17 @@ export const applyJournalFormat = (fmt, id) => {
        celles importées avec l'écriture d'une autre revue. Un journal qui n'en
        décide pas laisse celle de l'utilisateur. */
     nameStyle: def.names || base.nameStyle || 'asis',
+    /* LA FORME DEI RINVII NEL TESTO E LA COUPE DEGLI AUTORI (vedi la nota 7 del
+       pacchetto): sono i due réglages della rubrica « References (citation &
+       bibliography) » che il giornale NON portava — « selecting a journal style in
+       the journal preset drop-down menu does not affect (as it should) the
+       “In-text citations (project document)” and the “et al. after” settings. »
+       Nature aggiunge l'esponente e taglia dopo sei autori, Cell scrive
+       « (Rossi & Bianchi, 2018) » e non taglia affatto. Un giornale che non ne
+       decidesse uno (nessuno oggi) lascerebbe il réglage dell'utente: il formato
+       non perde mai una scelta che il giornale non nomina. */
+    inTextStyle: normalizeInTextStyle(def.inText || base.inTextStyle),
+    etAlLimit: Number.isFinite(def.etAl) ? Math.max(0, def.etAl) : (Number(base.etAlLimit) > 0 ? Number(base.etAlLimit) : 0),
     layout,
     order: def.order.slice(),
     /* L'INTITOLO DELLA SUA BIBLIOGRAFIA: una stringa VUOTA è una risposta — quel
@@ -282,6 +313,10 @@ export const clearJournalFormat = (fmt, emptyLayout) => {
   /* « As in the app » rende anche gli intitoli: il giornale che non ne scriveva uno
      se ne va con lui, il documento torna a scriverli tutti. */
   out.docNoTitle = buildPubDocNoTitle();
+  /* « As in the app » rimette anche le RIGHE del programma: la riga d'informazione
+     del progetto torna spenta (docNoBlock), come nasce un formato (vedi
+     buildPubDocNoBlock) — la sua casella è nel pannello, accanto alle sezioni. */
+  out.docNoBlock = buildPubDocNoBlock();
   out.style = '';
   return out;
 };
@@ -660,4 +695,32 @@ export const withoutScreenOnlyUi = (html) => {
     cut = end;
   });
   return out + src.slice(cut);
+};
+
+/* LE BALISAGE DE LA LIGNE D'INFORMATION DU PROJET, dans un document DÉJÀ ÉCRIT
+   (`<p class="pf-meta text-xs …">Project: … · Scientist: …</p>`) : la classe
+   `pf-meta` est celle que le programme pose lui-même (voir PUB_LAYOUT_PARTS et
+   DOC_HEAD_CLASSES), et le premier `</p>` est bien sa fermeture — un `<p>` ne
+   s'imbrique pas. La recherche est la même forme que celle de la ligne vide
+   ci-dessus (EMPTY_LINE_RE) : un élément ordinaire, fermé par sa propre balise. */
+const PROJECT_LINE_RE = /<(\w+)\b[^>]*\b(?:class|className)\s*=\s*(?:"(?:[^"]*\s)?pf-meta(?![\w-])(?:\s[^"]*)?"|'(?:[^']*\s)?pf-meta(?![\w-])(?:\s[^']*)?')[^>]*>[\s\S]*?<\/\1>/gi;
+
+/**
+ * LA LIGNE D'INFORMATION DU PROJET RETIRÉE D'UN DOCUMENT ÉCRIT.
+ *
+ *  « The project line should not appear in the document unless activated. » La
+ *  page du projet ne rend plus ce bloc quand le format ne le montre pas (voir
+ *  pubDocBlockHidden), mais un document DÉJÀ ENREGISTRÉ (« ✏️ Edit text » →
+ *  « 💾 Save changes ») le porte encore : il s'afficherait, et il partirait à
+ *  l'impression, au PDF et dans le .docx. Cette fonction le retire de ce HTML-là
+ *  — c'est le même remède que `withoutBibliographySection` (utils/referenceLinks.js),
+ *  qui retire du document figé la bibliographie que la page réimprime vivante.
+ *
+ *  Idempotente, sans effet sur un document qui ne porte pas de `pf-meta`, et elle
+ *  ne touche QUE cet élément : le texte de l'auteur sort au caractère près.
+ */
+export const withoutProjectLineHtml = (html) => {
+  const src = String(html == null ? '' : html);
+  if (!src.includes('pf-meta')) return src;           // le cas courant : rien à faire
+  return src.replace(PROJECT_LINE_RE, '');
 };

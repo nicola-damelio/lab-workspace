@@ -149,7 +149,12 @@ ok(!xml.includes('Edit this caption'), '…ni les boutons de l’écran');
 /* ══ 4. LE CÂBLAGE : LA PAGE DU PROJET, LE PANNEAU, LEURS RÉ-EXPORTS ═════════ */
 has(PROJ, '  withoutScreenOnlyUi,',
   'la page du projet importe la règle (elle n’importe que le panneau : d’où le ré-export)');
-has(PANEL, '  withoutScreenOnlyUi\n', 'le panneau la ré-exporte');
+has(PANEL, '  withoutScreenOnlyUi,\n', 'le panneau la ré-exporte');
+/* …ET, AVEC ELLE, LE RETRAIT DE LA LIGNE D'INFORMATION DU PROJET (« the project
+   line should not appear in the document unless activated ») : la page du projet
+   n'importe que ce panneau, donc les deux règles voyagent ensemble. */
+has(PANEL, '  withoutProjectLineHtml\n',
+  '…avec le retrait de la ligne d’information du projet (voir withoutProjectLineHtml)');
 has(PANEL, "} from './journalFormats';", '…depuis journalFormats.js, où elle est écrite');
 
 /* L'ENREGISTREMENT : les trois chemins qui figent le document. */
@@ -164,9 +169,14 @@ has(PROJ, 'const baseHtml = withoutScreenOnlyUi(suggestBaseHtml) || editedHtml;'
 /* L'AFFICHAGE : un instantané déjà écrit, et le corps de l'impression / du .docx. */
 has(PROJ, '__html: docHeadSpacedHtml(withoutScreenOnlyUi(',
   'le document FIGÉ est nettoyé à l’affichage (les instantanés déjà enregistrés aussi)');
-has(PROJ, 'withoutScreenOnlyUi(linkCitations(repairContentImages(withoutBibliographySection(project.exportDocHtml))))',
+/* LE DOCUMENT FIGÉ (et l'export) PASSE AUSSI PAR LE RETRAIT DE LA LIGNE
+   D'INFORMATION DU PROJET : `withoutHiddenHeadLines` l'applique quand le format
+   ne la montre pas, et le nettoyage des notes du programme l'entoure. */
+has(PROJ, 'withoutScreenOnlyUi(withoutHiddenHeadLines(',
+  '…nettoyé des notes du programme ET de la ligne d’information du projet, au même endroit');
+has(PROJ, 'linkCitations(repairContentImages(withoutBibliographySection(project.exportDocHtml)))',
   '…avant les références et l’ordre du journal, sans toucher au texte de l’auteur');
-has(PROJ, 'let bodyHtml = withoutScreenOnlyUi(docEl.innerHTML);',
+has(PROJ, 'let bodyHtml = withoutScreenOnlyUi(withoutHiddenHeadLines(docEl.innerHTML));',
   'le corps PARTAGÉ de l’impression, du PDF et du .docx est nettoyé une seule fois, pour les trois');
 eq(count(PROJ, 'withoutScreenOnlyUi('), 7,
   'sept endroits seulement : les trois enregistrements, les deux affichages et le corps exporté — tous les chemins du document');

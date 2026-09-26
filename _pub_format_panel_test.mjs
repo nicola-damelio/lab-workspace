@@ -100,8 +100,20 @@ ok(!PANEL.includes('Print the “{docTitles.references || \'References\'}” hea
 ok(PANEL.includes("docNoTitle: normalizePubDocNoTitle(fmt && fmt.docNoTitle)"),
   '…le format garde `docNoTitle` (la liste des intitulés qu’un journal n’écrit pas)');
 ok(PANEL.includes('const pubSetJournal = (id) => {'), 'le journal entier aussi');
-ok(PANEL.includes('const pubResetDocSections = () => pubPatchFormat({ docOrder: buildPubDocOrder(), docTitles: buildPubDocTitles() });'),
-  'le ↺ de l’ordre et des intitulés est toujours là');
+/* LE ↺ DE L'ORDRE ET DES INTITULÉS rend au document l'ordre, les intitulés, les
+   intitulés qu'un STYLE cache (`docNoTitle` : Science n'écrit pas celui de sa
+   bibliographie) ET la ligne d'information du projet, à son état de départ (voir
+   `docNoBlock`). C'est le seul geste qui remet un document d'aplomb, et il répond
+   à « the references section always lacks the reference title in the final
+   document even if in principle I can edit its name in the publication format
+   section » — en plus du champ de la rangée, qui rallume l'intitulé lui-même
+   (voir pubSetDocTitle). */
+ok(PANEL.includes('const pubResetDocSections = () => pubPatchFormat({')
+  && PANEL.includes('docOrder: buildPubDocOrder(),')
+  && PANEL.includes('docTitles: buildPubDocTitles(),')
+  && PANEL.includes('docNoTitle: buildPubDocNoTitle(),')
+  && PANEL.includes('docNoBlock: buildPubDocNoBlock()'),
+  'le ↺ de l’ordre et des intitulés est toujours là — et il rend aussi les intitulés qu’un style cache et la ligne du projet à son état de départ');
 ok(PANEL.includes('const pubResetAllLayout = () => setActiveFormat({ ...pubCustomFormat(activeFormat.fields), layout: buildPubLayout() });'),
   '…comme celui de la mise en forme');
 

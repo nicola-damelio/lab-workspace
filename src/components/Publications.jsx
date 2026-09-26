@@ -36,11 +36,11 @@ import {
   AUTHOR_STYLE_IDS, AUTHOR_STYLES, IN_TEXT_STYLES, normalizeInTextStyle,
   PUB_FORMAT_KEY, PUB_FORMAT_PRESETS,
   PUB_DOC_BLOCKS, PUB_FONTS, PUB_LAYOUT_PARTS, PUB_TEXT_ALIGNMENTS,
-  authorMatchesCandidate, buildPubFormat, buildPubDocOrder, buildPubDocTitles, buildPubLayout,
+  authorMatchesCandidate, buildPubFormat, buildPubDocOrder, buildPubDocTitles, buildPubDocNoTitle, buildPubLayout,
   loadPubFormat, matchCoauthors, normalizePubDocOrder, normalizePubDocTitles, normalizePubLayout,
-  normalizePubDocNoTitle,
+  normalizePubDocNoTitle, normalizePubDocNoBlock, buildPubDocNoBlock,
   pubCitationData, pubCitationHtml, pubDocOrderDropped,
-  pubLayoutCss, pubTextStyleIsSet,
+  pubLayoutCss, pubTextStyleIsSet, pubDocBlockHidden,
   /* LA FORME DES NOMS D'AUTEURS dans la citation (voir utils/authorNames.js) :
      le panneau itère sur ces formes (boutons « as written », « Smith JA »…). */
   NAME_STYLES, normalizeNameStyle,
@@ -98,7 +98,8 @@ export {
   normalizeInTextStyle,
   PUB_FONTS, PUB_LAYOUT_PARTS, PUB_TEXT_ALIGNMENTS,
   buildPubFormat, buildPubDocOrder, buildPubDocTitles, buildPubDocNoTitle, buildPubLayout, loadPubFormat,
-  normalizePubDocOrder, normalizePubDocTitles, normalizePubDocNoTitle, normalizePubFormat, normalizePubLayout,
+  normalizePubDocOrder, normalizePubDocTitles, normalizePubDocNoTitle, normalizePubDocNoBlock, normalizePubFormat, normalizePubLayout,
+  buildPubDocNoBlock, pubDocBlockHidden,
   pubLayoutCss, pubTextStyleIsSet, emptyPubTextStyle, PUB_DOC_BLOCKS, PUB_DOC_BLOCK_IDS,
   pubDocOrderMoved, pubDocOrderDropped, pubDocTitleKeywords, pubDocOrderKeywords, pubDocTitleOf, pubDocTitleHidden,
   /* LES SECTIONS DE TEXTE QUI ONT LEUR RANGÉE (Scientific background · Results and
@@ -127,7 +128,13 @@ export {
   /* CE QUI N'EST PAS DU TEXTE (voir journalFormats.js) : les notes du programme, les
      boutons et le bandeau du Drive portent `no-print` et sortent du document FIGÉ,
      de l'impression, du PDF et du .docx — le texte de l'auteur, lui, ne bouge pas. */
-  withoutScreenOnlyUi
+  withoutScreenOnlyUi,
+  /* …ET LA LIGNE D'INFORMATION DU PROJET D'UN DOCUMENT DÉJÀ ÉCRIT (la demande :
+     « the project line should not appear in the document unless activated ») : la
+     page du projet ne rend plus ce bloc quand le format ne le montre pas, et cette
+     fonction le retire de l'instantané enregistré — impression, PDF et .docx
+     compris (voir withoutProjectLineHtml). */
+  withoutProjectLineHtml
 } from './journalFormats';
 
 const ifNum = (v) => {
@@ -2480,7 +2487,11 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
     /* …ET LES INTITULÉS QUE LE FORMAT NE VEUT PAS (une case décochée au panneau, un
        style qui n'écrit pas ce titre — voir normalizePubDocNoTitle) : régler un champ
        de la citation ne doit pas les rallumer. */
-    docNoTitle: normalizePubDocNoTitle(fmt && fmt.docNoTitle)
+    docNoTitle: normalizePubDocNoTitle(fmt && fmt.docNoTitle),
+    /* …ET LES LIGNES QUE LE FORMAT N'IMPRIME PAS (la seule aujourd'hui : la ligne
+       d'information du projet, éteinte tant que sa case n'est pas cochée — voir
+       buildPubDocNoBlock) : régler un champ de la citation ne doit pas la rallumer. */
+    docNoBlock: normalizePubDocNoBlock(fmt && fmt.docNoBlock)
   });
   const pubCustomFormat = (fields) => ({
     ...pubDocSettings(activeFormat),
@@ -2571,6 +2582,11 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
      les décocher pour nous (Science) ; le document n'écrit alors aucun `<h2>` pour ces
      blocs — leur texte, leurs figures et leur place restent. */
   const docNoTitle = normalizePubDocNoTitle(activeFormat.docNoTitle);
+  /* LA LIGNE D'INFORMATION DU PROJET (voir buildPubDocNoBlock) : elle est ÉTEINTE
+     tant que sa case n'est pas cochée — « the project line should not appear in the
+     document unless activated ». Toutes les autres lignes de la tête portent le texte
+     de l'auteur et s'impriment toujours (elles ne sont pas dans cette liste). */
+  const docNoBlock = normalizePubDocNoBlock(activeFormat.docNoBlock);
   const pubDropDocBlock = (targetId) => {
     const moved = pubDocOrderDropped(docOrder, pubDocDragId, targetId);
     if (moved.join('|') !== docOrder.join('|')) pubPatchFormat({ docOrder: moved });
@@ -2580,9 +2596,38 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
   const pubSetDocTitle = (id, value) => pubPatchFormat({
     /* Le texte est gardé TEL QUEL pendant la frappe (un espace en fin de mot ne doit pas
        disparaître sous les doigts) : c'est pubDocTitleOf qui le nettoie à l'affichage. */
-    docTitles: { ...docTitles, [id]: String(value == null ? '' : value).replace(/[<>]/g, '').slice(0, 120) }
+    docTitles: { ...docTitles, [id]: String(value == null ? '' : value).replace(/[<>]/g, '').slice(0, 120) },
+    /* LE NOM QU'ON ÉCRIT ICI EST CELUI QUE LE DOCUMENT IMPRIME — et il RALLUME
+       l'intitulé qu'un style avait éteint. Science, par exemple, imprime sa
+       bibliographie SANS intitulé (`bibLabel: ''` → `docNoTitle: ['references']`,
+       voir applyJournalFormat), et un format enregistré du temps où une case
+       « afficher l'intitulé » existait peut encore le cacher : le champ de la rangée
+       « References » n'aurait alors aucun effet, et c'est exactement la plainte —
+       « the references section always lacks the reference title in the final document
+       even if in principle I can edit its name in the publication format section ».
+       Un nom écrit (ou ↺, qui rend celui du programme) vaut donc « montre-le » : le
+       bloc sort de `docNoTitle` (et de `docNoBlock`, pour une ligne facultative). Rien
+       n'est décidé à la place de l'utilisateur : le journal reste maître de son format
+       tant que personne ne touche à l'intitulé. */
+    docNoTitle: normalizePubDocNoTitle(docNoTitle.filter((x) => x !== id)),
+    docNoBlock: normalizePubDocNoBlock(docNoBlock.filter((x) => x !== id))
   });
-  const pubResetDocSections = () => pubPatchFormat({ docOrder: buildPubDocOrder(), docTitles: buildPubDocTitles() });
+  /* LA CASE D'UNE LIGNE FACULTATIVE (aujourd'hui « Project line ») : cochée =
+     imprimée. Le format garde la liste des lignes qu'il N'imprime PAS (docNoBlock),
+     donc cocher retire l'id de la liste et décocher l'y met. */
+  const pubToggleDocBlock = (id, printed) => pubPatchFormat({
+    docNoBlock: normalizePubDocNoBlock(printed ? docNoBlock.filter((x) => x !== id) : [...docNoBlock, id])
+  });
+  /* ↺ DE L'ORDRE ET DES INTITULÉS : il rend au document l'ordre, les intitulés, les
+     intitulés CACHÉS (un style comme Science n'en écrit pas) ET la ligne d'information
+     du projet telle qu'un format neuf la porte — éteinte. C'est le seul geste qui
+     remet tout d'aplomb d'un coup, sans décocher quoi que ce soit à la main. */
+  const pubResetDocSections = () => pubPatchFormat({
+    docOrder: buildPubDocOrder(),
+    docTitles: buildPubDocTitles(),
+    docNoTitle: buildPubDocNoTitle(),
+    docNoBlock: buildPubDocNoBlock()
+  });
   /* LE CHOIX « Bibliography style — the references only » N'EST PLUS. La demande :
      « You can remove the “bibliography style - reference only” subsection of the
      drop-down menu because now it has become obsolete. » Chaque journal porte en effet
@@ -2776,12 +2821,12 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
             ))}
           </select>
           <label className="text-[10px] font-black uppercase tracking-wide text-slate-400"
-                 title="The journal the paper is meant for. One control, two groups: a JOURNAL changes the citation style, the character (font, size, alignment, bold, italic), the ORDER of the sections and the TITLES it gives them, all in one click; the styles you saved (User defined) put a whole format of your own back.">
+                 title="The journal the paper is meant for. One control, two groups: a JOURNAL changes the citation style, the FORM OF THE IN-TEXT CITATIONS of the document, the “et al.” cutoff, the character (font, size, alignment, bold, italic), the ORDER of the sections and the TITLES it gives them, all in one click; the styles you saved (User defined) put a whole format of your own back.">
             Journal preset:
           </label>
           <select value={pubJournalChoice(activeFormat)} onChange={(e) => pubSetJournalChoice(e.target.value)}
                   className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 font-semibold text-slate-700"
-                  title="Send the SAME work to another journal in one click: the citation and the bibliography style, the character (font, size, alignment, bold, italic) of every part of a project document, the ORDER of its sections and the NAMES it gives them (« Scientific background » becomes « Introduction ») change together — and a journal whose reference list carries no heading leaves that heading unticked below. Everything stays editable below, and « As in the app » puts the document back the way it was.">
+                  title="Send the SAME work to another journal in one click: the citation and the bibliography style, the form of the in-text citations and the “et al.” cutoff, the character (font, size, alignment, bold, italic) of every part of a project document, the ORDER of its sections and the NAMES it gives them (« Scientific background » becomes « Introduction ») change together — and a journal whose reference list carries no heading (Science) prints it without one: its row in “Document sections” then says “not printed by the style”, and a name typed there brings the heading back. Everything stays editable below, and « As in the app » puts the document back the way it was.">
             <optgroup label="Journal — references, typography, section order and titles">
               <option value="journal:">↺ As in the app (no journal)</option>
               {JOURNAL_IDS.map((id) => (
@@ -2818,7 +2863,7 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
           )}
           {journalOf(activeFormat) && (
             <span className="text-[10px] italic text-slate-500 max-w-[22rem] truncate"
-                  title={`${JOURNAL_FORMATS[journalOf(activeFormat)].notes} — sections of the exported document, in this journal's order: ${journalSectionOrder(activeFormat).join(' → ')}. A title this journal does not name does not move, and every setting stays editable in the panel below.`}>
+                  title={`${JOURNAL_FORMATS[journalOf(activeFormat)].notes} — sections of the exported document, in this journal's order: ${journalSectionOrder(activeFormat).join(' → ')}. Its in-text citations are “${(IN_TEXT_STYLES.find((s) => s.id === normalizeInTextStyle(activeFormat.inTextStyle)) || {}).label || 'as written'}” and it cuts the author list ${activeFormat.etAlLimit ? `after ${activeFormat.etAlLimit} authors` : 'never'}. A title this journal does not name does not move, and every setting stays editable in the panel below.`}>
               📰 {journalLabelOf(journalOf(activeFormat))}
             </span>
           )}
@@ -2857,8 +2902,16 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
             <p className="pf-affiliations text-[10px] text-slate-500 italic whitespace-pre-line mb-2">
               1 Dipartimento di Agraria, Portici, Italy{'\n'}3 INRAE, Villenave d’Ornon, France
             </p>
-            <div className={DOC_EMPTY_LINE_CLASS} aria-hidden="true">&nbsp;</div>
-            <p className="pf-meta text-[10px] text-slate-500 mb-2">Project: Aphid · Scientist: Rossi M</p>
+            {/* LA LIGNE D'INFORMATION DU PROJET SUIT SA CASE (voir docNoBlock,
+                buildPubDocNoBlock) : l'aperçu ne peut pas promettre une ligne que le
+                document n'imprime pas — la ligne vide qui la précède disparaît avec
+                elle, comme dans le document (voir docHeadRows). */}
+            {!pubDocBlockHidden(activeFormat, 'meta') && (
+              <>
+                <div className={DOC_EMPTY_LINE_CLASS} aria-hidden="true">&nbsp;</div>
+                <p className="pf-meta text-[10px] text-slate-500 mb-2">Project: Aphid · Scientist: Rossi M</p>
+              </>
+            )}
             {/* L'INTITULÉ DE LA SECTION SUIT LE PANNEAU : renommer « Results and
                 discussion » (ou choisir un journal qui l'appelle autrement) se voit ici,
                 comme dans le document. */}
@@ -3069,10 +3122,36 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
                   <span className="text-xs text-slate-400 select-none" aria-hidden="true">{block.fixed ? '🔒' : '⠿'}</span>
                   <span className="w-32 text-[11px] font-bold text-slate-700">{block.label}</span>
                   {block.titled ? (
-                    <input type="text" value={docTitles[id] || ''} placeholder={block.title}
-                           onChange={(e) => pubSetDocTitle(id, e.target.value)}
-                           title={`The heading the document prints for “${block.label}” — empty = the app's own title (${block.title})`}
-                           className="flex-1 min-w-[8rem] border border-slate-300 rounded px-1.5 py-0.5 text-[11px] bg-white outline-none focus:border-indigo-400" />
+                    <>
+                      <input type="text" value={docTitles[id] || ''} placeholder={block.title}
+                             onChange={(e) => pubSetDocTitle(id, e.target.value)}
+                             title={`The heading the document prints for “${block.label}” — empty = the app's own title (${block.title})`}
+                             className="flex-1 min-w-[8rem] border border-slate-300 rounded px-1.5 py-0.5 text-[11px] bg-white outline-none focus:border-indigo-400" />
+                      {/* L'INTITULÉ QU'UN STYLE N'ÉCRIT PAS (voir pubSetDocTitle) : la
+                          rangée le DIT, au lieu de laisser croire que le champ ne fait
+                          rien — écrire un nom (ou ↺) le fait revenir. */}
+                      {docNoTitle.includes(id) && (
+                        <span className="text-[9px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-1.5 py-0.5 whitespace-nowrap"
+                              title={`The current style prints “${block.label}” without its heading (a journal like Science writes none over its reference list). Type a name here — or press ↺ — and the document prints it.`}>
+                          not printed by the style
+                        </span>
+                      )}
+                    </>
+                  ) : block.optional ? (
+                    /* UNE LIGNE FACULTATIVE (voir PUB_DOC_OPTIONAL_IDS) : la case
+                       l'ACTIVE — « the project line should not appear in the document
+                       unless activated ». Elle est éteinte tant qu'elle n'est pas
+                       cochée, et le document (page, impression, PDF, .docx) la suit. */
+                    <>
+                      <label className="flex items-center gap-1.5 cursor-pointer text-[11px] font-bold text-slate-600 whitespace-nowrap"
+                             title={`Print “${block.label}” in the document — the page of the project, the printed sheet, the PDF and the .docx. It stays OFF until this box is ticked.`}>
+                        <input type="checkbox" checked={!docNoBlock.includes(id)}
+                               onChange={(e) => pubToggleDocBlock(id, e.target.checked)}
+                               className="w-3.5 h-3.5 accent-indigo-600" />
+                        printed
+                      </label>
+                      <span className="flex-1 text-[10px] italic text-slate-400">{block.hint}</span>
+                    </>
                   ) : (
                     <span className="flex-1 text-[10px] italic text-slate-400">{block.hint}</span>
                   )}

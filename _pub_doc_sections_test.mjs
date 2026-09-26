@@ -250,8 +250,15 @@ has(PANEL, 'const pubCustomFormat = (fields) => ({\n    ...pubDocSettings(active
 has(PANEL, '...pubDocSettings(activeFormat),', '…y compris au changement de preset de citation');
 has(PANEL, 'docOrder: normalizePubDocOrder(activeFormat.docOrder),\n      docTitles: normalizePubDocTitles(activeFormat.docTitles)',
   '…et que le journal qui arrive NE remet PAS la structure du document à celle du programme');
-has(PANEL, 'const pubResetDocSections = () => pubPatchFormat({ docOrder: buildPubDocOrder(), docTitles: buildPubDocTitles() });',
+has(PANEL, 'const pubResetDocSections = () => pubPatchFormat({',
   'le ↺ réécrit l’ordre ET les intitulés du programme');
+has(PANEL, 'docOrder: buildPubDocOrder(),', '…l’ordre et les intitulés (voir la rangée, plus haut)');
+/* …ET LES INTITULÉS QU'UN STYLE CACHE : le ↺ les rend aussi — « the references
+   section always lacks the reference title in the final document even if in
+   principle I can edit its name in the publication format section » (voir
+   pubSetDocTitle, qui rallume l'intitulé dès qu'un nom est écrit dans la rangée). */
+has(PANEL, 'docNoTitle: buildPubDocNoTitle(),', '…les intitulés qu’un style n’écrit pas');
+has(PANEL, 'docNoBlock: buildPubDocNoBlock()', '…et la ligne d’information du projet, éteinte comme un format neuf la porte');
 
 has(PROJ, 'const docOrder = normalizePubDocOrder(pubFormat && pubFormat.docOrder);', 'le document du projet lit l’ordre du format');
 has(PROJ, 'const docTitles = normalizePubDocTitles(pubFormat && pubFormat.docTitles);', '…et ses intitulés');
