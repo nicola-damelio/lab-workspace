@@ -65,7 +65,10 @@ after.forEach((a) => {
   if (!want) return;
   checked++;
   const got = [a.x, a.y, a.z];
-  if (dist(got, want) > 0.002) { mismatches++; if (mismatches < 6) console.log('H mismatch', seq[ri], a.resSeq, a.name, got, want); }
+  // 0.01 A: the rebuild reads the file's own 3-decimal PDB coordinates, so its
+  // geometry can differ from the full-precision builder by the rounding of the
+  // heavy-atom input (a direction built from three unit vectors amplifies it).
+  if (dist(got, want) > 0.01) { mismatches++; if (mismatches < 6) console.log('H mismatch', seq[ri], a.resSeq, a.name, got, want); }
 });
 console.log(`checked ${checked} H positions vs builder, mismatches=${mismatches}`);
 

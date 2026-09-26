@@ -83,9 +83,13 @@ const parseAtomRecord = (line) => {
 // scaffold matches it — and stay physically sensible on any other scaffold.
 const sidechainH = (char, h) => {
   const out = {};
+  const parents = {};            // placed hydrogen -> the heavy atom it hangs from
   const has = (nm) => !!h[nm];
   const add = (nm, a, b, c, len, ang, tor) => {
-    if (has(a) && has(b) && has(c)) out[nm] = nerfPlace(h[a], h[b], h[c], len, deg2rad(ang), deg2rad(tor));
+    if (has(a) && has(b) && has(c)) {
+      out[nm] = nerfPlace(h[a], h[b], h[c], len, deg2rad(ang), deg2rad(tor));
+      parents[nm] = c;
+    }
   };
   const ch2 = (cname, a, b) => {
     add(cname.replace(/^C/, 'H') + '2', a, b, cname, 1.09, 109.5, 120);
@@ -201,6 +205,65 @@ const sidechainH = (char, h) => {
     }
     default: break;
   }
+  // Methylene hydrogens: the same correction as the in-app builder (see the
+  // placeSidechainAtoms post-pass in NMRSections.jsx). The recipe torsions are
+  // tetrahedral only against the atom the frame was built on; against the NEXT
+  // heavy atom of the chain (or the proline ring nitrogen) one hydrogen landed
+  // 0.73 to 1.28 A from it -- a clash NGL then bound and drew as a bond
+  // (HD2-CE, HG2-CD, HB2-CG ...). Every CH2 with two known heavy neighbours is
+  // re-placed tetrahedrally to both, C-H kept at 1.09 A.
+  const hKids = {};
+  Object.keys(parents).forEach((nm) => {
+    const c = parents[nm];
+    if (nm.charAt(0) !== 'H' || !h[c]) return;
+    (hKids[c] = hKids[c] || []).push(nm);
+  });
+  // The heavy neighbourhood of a carbon is read from the coordinates, never from a
+  // distance *tolerance*: a covalent bond is <= 1.9 A (C-S 1.81 included) while a
+  // 1,3 ring contact — the proline CB...CD and CA...CD distances — is longer, so the
+  // closest heavy atoms of the residue are the bonded ones.
+  Object.keys(hKids).forEach((carbon) => {
+    const hs = hKids[carbon].sort();
+    const C = h[carbon];
+    if (!C || !hs.length) return;
+    // Same rule as the in-app builder: a covalent bond is <= 1.9 A, a 1,3 ring
+    // contact (proline CB...CD, CA...CD) is longer — the CLOSEST heavy atoms of the
+    // residue are the bonded ones, whatever the file's own topology says.
+    const near = Object.keys(h)
+      .filter((nm) => nm.charAt(0) !== 'H' && nm !== carbon && vNorm(vSub(h[nm], C)) <= 1.9)
+      .sort((p, q) => vNorm(vSub(h[p], C)) - vNorm(vSub(h[q], C)));
+    const twoH = hs.length === 2 && near.length >= 2;
+    const oneH = hs.length === 1 && near.length === 3;
+    if (!twoH && !oneH) return;
+    if (oneH) {
+      // The fourth tetrahedral direction given three substituents is the opposite
+      // of their unit-vector sum — the geometry of every sp3 methine.
+      const sum = near.reduce((acc, nm) => vAdd(acc, vNormalize(vSub(h[nm], C))), [0, 0, 0]);
+      if (vNorm(sum) < 1e-6) return;
+      out[hs[0]] = vAdd(C, vScale(vNormalize(sum), -1.09));
+      return;
+    }
+    const nbrs = near.slice(0, 2).sort();
+    const u = vNormalize(vSub(h[nbrs[0]], C));
+    const v = vNormalize(vSub(h[nbrs[1]], C));
+    const bis = vNormalize(vAdd(u, v));
+    let nrm = vCross(u, v);
+    if (vNorm(nrm) < 1e-6) return;
+    nrm = vNormalize(nrm);
+    const cosHalf = vDot(bis, u);
+    if (!(cosHalf > 0.05)) return;
+    const along = -1 / 3 / cosHalf;                // cos 109.47 deg = -1/3
+    const off = Math.sqrt(Math.max(0, 1 - along * along));
+    let d1 = vNormalize(vAdd(vScale(bis, along), vScale(nrm, off)));
+    let d2 = vNormalize(vAdd(vScale(bis, along), vScale(nrm, -off)));
+    const c1 = vNormalize(vSub(out[hs[0]], C));
+    const c2 = vNormalize(vSub(out[hs[1]], C));
+    if (vDot(d2, c1) + vDot(d1, c2) > vDot(d1, c1) + vDot(d2, c2)) {
+      const swap = d1; d1 = d2; d2 = swap;         // keep each H on its own side
+    }
+    out[hs[0]] = vAdd(C, vScale(d1, 1.09));
+    out[hs[1]] = vAdd(C, vScale(d2, 1.09));
+  });
   return out;
 };
 

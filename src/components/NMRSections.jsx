@@ -2878,7 +2878,11 @@ const placeSidechainAtoms = (char, bb) => {
     }
     case 'I':
       P('CG1', 'N', 'CA', 'CB', 1.52, 110.5, -60);
-      P('CG2', 'N', 'CA', 'CB', 1.52, 110.5, 120);
+      // 60, not 120: the two methyls of a branched CB must be 120 deg apart like
+      // LEU, VAL and THR. At 180 deg (the old value) they were splayed 139.5 deg and
+      // the CB proton ended up 1.53 A from CG2 — inside the range NGL could have
+      // drawn as a bond.
+      P('CG2', 'N', 'CA', 'CB', 1.52, 110.5, 60);
       H('HB', 'N', 'CA', 'CB', 1.09, 109.5, 180);
       P('CD1', 'CA', 'CB', 'CG1', 1.52, 112, 180);
       CH2('CG1', 'CA', 'CB');
@@ -2936,8 +2940,11 @@ const placeSidechainAtoms = (char, bb) => {
       CH2('CB', 'N', 'CA');
       P('CG', 'N', 'CA', 'CB', 1.52, 110.5, -30);
       CH2('CG', 'CA', 'CB');
-      // Close the ring: CD must be 1.52 Å from CG and 1.46 Å from N.
-      atoms.CD = _ringClose(atoms.CG, atoms.N, 1.52, 1.46, atoms.CA);
+      // Close the ring: CD must be 1.52 Å from CG and 1.46 Å from N. The side is
+      // chosen AWAY from BOTH CA and CB (their midpoint): the other solution crowds
+      // the CB corner of the ring, where the two CD protons then sat 1.4 Å from CB —
+      // inside the distance NGL treats as a bond.
+      atoms.CD = _ringClose(atoms.CG, atoms.N, 1.52, 1.46, _vecScale(_vecAdd(atoms.CA, atoms.CB), 0.5));
       CH2('CD', 'CB', 'CG');
       bond('CD', 'N'); bond('CD', 'CG');
       break;
@@ -2998,6 +3005,71 @@ const placeSidechainAtoms = (char, bb) => {
     }
     default: break;
   }
+  // ---- Methylene hydrogens: place them on the heavy geometry ACTUALLY built ----
+  // The fixed +-120 deg torsions of CH2 are tetrahedral only with respect to the
+  // atom the frame was built on. Against the NEXT heavy atom of the same chain --
+  // or the ring nitrogen of a proline -- one of the two hydrogens landed 0.73 to
+  // 1.28 A away from it, which is a clash, not a bond. NGL binds every H-heavy
+  // pair inside the covalent window (AtomProxy.connectedTo: covalent radii + 0.3,
+  // i.e. any H-C pair from 0.57 to 1.37 A), so the viewer drew exactly those
+  // impossible bonds: HD2-CE, HD3-CE, HD2-NE, HD3-NE, HG2-CD, HG3-CD, HB2-CG,
+  // HB3-CG. Every CH2 whose two heavy neighbours are known is therefore re-placed
+  // tetrahedrally to BOTH of them (bond length unchanged at 1.09 A, only the
+  // direction is corrected) -- including a proline ring, whose CD leans on the
+  // ring nitrogen as much as on its own CG.
+  const adj = {};
+  const link = (x, y) => {
+    if (x === y) return;
+    if (!(adj[x] = adj[x] || []).includes(y)) adj[x].push(y);
+    if (!(adj[y] = adj[y] || []).includes(x)) adj[y].push(x);
+  };
+  bonds.forEach(([a, b]) => { if (atoms[a] && atoms[b]) link(a, b); });
+  [['N', 'CA'], ['CA', 'C'], ['C', 'O'], ['CA', 'CB']].forEach(([a, b]) => {
+    if (atoms[a] && atoms[b]) link(a, b);        // the backbone bonds are outside `bonds`
+  });
+  Object.keys(adj).forEach((carbon) => {
+    const C = atoms[carbon];
+    if (!C) return;
+    const hs = adj[carbon].filter((n) => n.charAt(0) === 'H').sort();
+    if (!hs.length) return;
+    // A covalent bond is <= 1.9 A (C-S 1.81 included); a 1,3 ring contact — the
+    // proline CB...CD and CA...CD distances — is longer, so the CLOSEST heavy
+    // atoms are the bonded ones and the ring never fools the rule.
+    const near = Object.keys(atoms)
+      .filter((n) => n.charAt(0) !== 'H' && n !== carbon && _vecNorm(_vecSub(atoms[n], C)) <= 1.9)
+      .sort((p, q) => _vecNorm(_vecSub(atoms[p], C)) - _vecNorm(_vecSub(atoms[q], C)));
+    const twoH = hs.length === 2 && near.length >= 2;
+    const oneH = hs.length === 1 && near.length === 3;    // a methine: ILE, VAL, LEU, THR
+    if (!twoH && !oneH) return;                  // a methyl, an aromatic CH: left alone
+    if (oneH) {
+      // The fourth tetrahedral direction given three substituents is the opposite
+      // of their unit-vector sum — the geometry of every sp3 methine.
+      const sum = near.reduce((acc, n) => _vecAdd(acc, _vecNormalize(_vecSub(atoms[n], C))), [0, 0, 0]);
+      if (_vecNorm(sum) < 1e-6) return;
+      atoms[hs[0]] = _vecAdd(C, _vecScale(_vecNormalize(sum), -1.09));
+      return;
+    }
+    const nbrs = near.slice(0, 2).sort();
+    const u = _vecNormalize(_vecSub(atoms[nbrs[0]], C));
+    const v = _vecNormalize(_vecSub(atoms[nbrs[1]], C));
+    const bis = _vecNormalize(_vecAdd(u, v));
+    let nrm = _vecCross(u, v);
+    if (_vecNorm(nrm) < 1e-6) return;            // nearly linear: no room for two H
+    nrm = _vecNormalize(nrm);
+    const cosHalf = _vecDot(bis, u);
+    if (!(cosHalf > 0.05)) return;
+    const along = -1 / 3 / cosHalf;              // cos 109.47 deg = -1/3
+    const off = Math.sqrt(Math.max(0, 1 - along * along));
+    let d1 = _vecNormalize(_vecAdd(_vecScale(bis, along), _vecScale(nrm, off)));
+    let d2 = _vecNormalize(_vecAdd(_vecScale(bis, along), _vecScale(nrm, -off)));
+    const c1 = _vecNormalize(_vecSub(atoms[hs[0]], C));
+    const c2 = _vecNormalize(_vecSub(atoms[hs[1]], C));
+    if (_vecDot(d2, c1) + _vecDot(d1, c2) > _vecDot(d1, c1) + _vecDot(d2, c2)) {
+      const swap = d1; d1 = d2; d2 = swap;       // keep each H on its own side
+    }
+    atoms[hs[0]] = _vecAdd(C, _vecScale(d1, 1.09));
+    atoms[hs[1]] = _vecAdd(C, _vecScale(d2, 1.09));
+  });
   const backbone = new Set(['N', 'CA', 'C', 'O', 'CB']);
   return {
     atoms: Object.entries(atoms)
