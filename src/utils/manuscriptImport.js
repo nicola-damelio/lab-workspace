@@ -285,10 +285,35 @@ export const superscriptMarkToPlain = (s) => String(s == null ? '' : s)
  *  est un vrai exposant. Le séparateur est FACULTATIF (« *† » se suit sans
  *  ponctuation), mais une marque est toujours exigée après lui : la virgule qui
  *  SÉPARE DEUX AUTEURS (« Rossi¹, Anna Bianchi² ») est suivie d'une espace et
- *  d'un nom, jamais d'une marque — elle n'est donc jamais avalée. */
-const AFFIL_MARK_RUN_ATOM = `(?:[${SUP_MARK_CLASS}]+|${AFFIL_SYMBOL_CLASS})`;
+ *  d'un nom, jamais d'une marque — elle n'est donc jamais avalée.
+ *
+ *  LA MÊME RÈGLE VAUT POUR LE NUMÉRO ÉCRIT EN CHIFFRES NORMAUX, qui est ce que
+ *  garde le champ « Authors » quand la mise en exposant du document s'est perdue
+ *  (copier-coller d'un texte brut, PDF aplati) : « Mario Rossi 1,* » et
+ *  « Mario Rossi 1,2 » montent aussi, virgule comprise — mais seulement parce
+ *  qu'une AUTRE marque suit le numéro (voir AFFIL_MARK_RUN_PLAIN_DIGIT). */
+const AFFIL_MARK_RUN_ATOM = `(?:[${SUP_MARK_CLASS}]+|${AFFIL_SYMBOL_CLASS}`
+  + `|\\[\\s*\\d{1,2}\\s*\\]|\\(\\s*\\d{1,2}\\s*\\))`;
+/* LE NUMÉRO ÉCRIT EN CHIFFRES NORMAUX, collé au nom (« Rossi1 ») ou séparé par
+   UNE espace (« Rossi 1 ») : c'est ce qu'un document écrit quand sa mise en
+   exposant s'est perdue (copier-coller d'un texte brut, PDF aplati, saisie à la
+   main dans le champ « Authors »). Il ne compte comme marque QUE s'il ANNONCE
+   une autre marque (« Rossi 1,* », « Rossi 1,2 ») : c'est la situation même de
+   la demande — un symbole précédé d'un numéro et d'une virgule. Un numéro SEUL
+   ne monte donc jamais, et une ligne d'affiliations reste intacte :
+   « Corso Umberto I 40, 80138 Napoli » ne contient aucune marque, seul le
+   « * » d'un symbole fait monter la série (voir AFFIL_MARK_RUN_RE). */
+const AFFIL_MARK_RUN_PLAIN_DIGIT = '(?<=\\p{L}\\s?)\\d{1,2}(?!\\d)';
+/* Ce qui peut SUIVRE dans la série : une marque franche, ou les chiffres normaux
+   d'une marque — après une ponctuation (« Rossi 1,2,* ») ou collés
+   (« Rossi 1* »). Un numéro n'ouvre donc jamais une série tout seul, et il n'en
+   ouvre une que s'il en existe une (voir AFFIL_MARK_RUN_PLAIN_DIGIT). */
+const AFFIL_MARK_RUN_PLAIN_TAIL = '\\d{1,2}(?!\\d)';
+const AFFIL_MARK_RUN_TAIL = `(?:${AFFIL_MARK_SEP}(?:${AFFIL_MARK_RUN_ATOM}`
+  + `|${AFFIL_MARK_RUN_PLAIN_TAIL})|${AFFIL_MARK_RUN_ATOM})`;
 const AFFIL_MARK_RUN_RE = new RegExp(
-  `${AFFIL_MARK_RUN_ATOM}(?:${AFFIL_MARK_SEP}?${AFFIL_MARK_RUN_ATOM})*`, 'g'
+  `${AFFIL_MARK_RUN_ATOM}(?:${AFFIL_MARK_SEP}?${AFFIL_MARK_RUN_ATOM})*`
+  + `|${AFFIL_MARK_RUN_PLAIN_DIGIT}${AFFIL_MARK_RUN_TAIL}+`, 'gu'
 );
 
 /**
@@ -299,6 +324,10 @@ const AFFIL_MARK_RUN_RE = new RegExp(
  *     → 'Mario Rossi<sup>1,2</sup>, Anna Bianchi<sup>3</sup>'
  *   'Mario Rossi¹,*, Anna Bianchi²,†'
  *     → 'Mario Rossi<sup>1,*</sup>, Anna Bianchi<sup>2,†</sup>'
+ *   'Mario Rossi 1,*, Anna Bianchi 2,†'
+ *     → 'Mario Rossi <sup>1,*</sup>, Anna Bianchi <sup>2,†</sup>'
+ *   'Mario Rossi[1],*'
+ *     → 'Mario Rossi<sup>[1],*</sup>'
  *
  *  Pourquoi : le champ « Authors » d'un projet garde le texte du document, où
  *  les exposants sont des caractères Unicode (« ¹ »). Un caractère Unicode n'a

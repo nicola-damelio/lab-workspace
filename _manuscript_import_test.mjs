@@ -263,6 +263,37 @@ eq(MS.superscriptMarksHtml('Rossi M < Bianchi A *'), 'Rossi M &lt; Bianchi A <su
 eq(MS.cleanAuthorLine('Mario Rossi1*, Anna Bianchi2'), 'Mario Rossi\u00b9*, Anna Bianchi\u00b2',
   '…et l’import range le symbole avec son numéro, jamais dans un <sup>');
 
+/* ── 4 septies. LE NUMÉRO ÉCRIT EN CHIFFRES NORMAUX, QUAND UN SYMBOLE LE SUIT ─
+   « i simboli * e † nella lista di autori sono apici e se sono preceduti da una
+   virgola anche la virgola deve essere superscript » : la même demande vaut pour
+   un document dont la mise en exposant s'est PERDUE (texte brut collé, PDF
+   aplati, frappe à la main) — le champ « Authors » garde alors un numéro en
+   chiffres normaux (« Rossi1,* »), et c'est le champ que montrent l'écran,
+   l'impression et l'export (voir headerTextFor : le texte est gardé tel quel).
+   Un numéro n'ouvre une série QUE s'il en existe une derrière lui : seul, il ne
+   monte pas — donc une adresse ou un millésime ne bougent jamais. */
+eq(MS.superscriptMarksHtml('Mario Rossi1,*'), 'Mario Rossi<sup>1,*</sup>',
+  'un numéro collé au nom annonce le symbole : la virgule monte avec eux');
+eq(MS.superscriptMarksHtml('Mario Rossi 1,*, Anna Bianchi 2,\u2020'),
+  'Mario Rossi <sup>1,*</sup>, Anna Bianchi <sup>2,\u2020</sup>',
+  '…même séparé du nom par une espace (l’espace reste dans le texte, pas dans l’exposant)');
+eq(MS.superscriptMarksHtml('Mario Rossi1,2,*'), 'Mario Rossi<sup>1,2,*</sup>',
+  '…et une série entière écrite en chiffres normaux monte, ponctuation comprise');
+eq(MS.superscriptMarksHtml('Mario Rossi[1],*'), 'Mario Rossi<sup>[1],*</sup>',
+  'un numéro entre crochets est une marque au même titre qu’un astérisque');
+eq(MS.superscriptMarksHtml('Mario Rossi (1),\u2020'), 'Mario Rossi <sup>(1),\u2020</sup>',
+  '…comme un numéro entre parenthèses');
+eq(MS.superscriptMarksHtml('Mario Rossi1, Anna Bianchi2'), 'Mario Rossi1, Anna Bianchi2',
+  'un numéro SEUL (aucune marque derrière) ne monte pas : c’est ce qui protège les adresses');
+eq(MS.superscriptMarksHtml('Corso Umberto I 40, 80138 Napoli'), 'Corso Umberto I 40, 80138 Napoli',
+  '…d’où une adresse d’affiliation intacte, numéros de rue compris');
+eq(MS.superscriptMarksHtml('1 Dipartimento di Agraria, Portici, Italy'),
+  '1 Dipartimento di Agraria, Portici, Italy',
+  '…et le numéro qui ouvre une ligne d’affiliations');
+eq(MS.superscriptMarksHtml('Since 2018 the group works at Portici'),
+  'Since 2018 the group works at Portici',
+  '…et un millésime : quatre chiffres ne sont jamais un marqueur');
+
 
 /* ── 5. Le plan : la numérotation du PROJET, pas celle du document ───────── */
 const plan = MS.buildManuscriptPlan(manuscript, { existingReferences: [] });
