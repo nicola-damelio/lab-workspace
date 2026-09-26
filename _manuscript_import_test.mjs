@@ -213,12 +213,56 @@ eq(MS.superscriptMarksHtml('Mario Rossi\u00b9, Anna Bianchi\u00b2'),
   'la virgule qui SÉPARE deux auteurs n’est jamais avalée (un nom la suit)');
 eq(MS.superscriptMarksHtml('Mario Rossi\u00b9\u00b7\u00b2'), 'Mario Rossi<sup>1·2</sup>',
   '…et le point médian d’un PDF reste, lui aussi, en exposant');
-eq(MS.superscriptMarksHtml('Mario Rossi\u00b9*'), 'Mario Rossi<sup>1</sup>*',
-  'l’astérisque de l’auteur correspondant reste DEHORS (ce n’est pas un numéro)');
+eq(MS.superscriptMarksHtml('Mario Rossi\u00b9*'), 'Mario Rossi<sup>1*</sup>',
+  'l’astérisque de l’auteur correspondant monte AVEC le numéro (voir « 4 sexies »)');
 eq(MS.superscriptMarksHtml('Rossi M, Bianchi A'), 'Rossi M, Bianchi A',
   'une liste sans marqueur ressort inchangée (une initiale « Rossi M » n’est pas un exposant)');
 eq(MS.superscriptMarksHtml('Rossi M < Bianchi A'), 'Rossi M &lt; Bianchi A',
   'tout le reste est échappé : un document importé n’apporte jamais de HTML au projet');
+
+/* ── 4 sexies. LES SYMBOLES * ET † SONT DES EXPOSANTS, VIRGULE COMPRISE ──────
+   « i simboli * e † nella lista di autori sono apici (superscript) e se sono
+   preceduti da una virgola anche la virgola deve essere superscript ».
+
+   Un symbole d'auteur n'a PAS d'écriture Unicode en exposant (il n'existe pas de
+   « * » monté) : le texte enregistré le garde donc tel quel, collé à son numéro
+   d'affiliation (« Rossi¹,* »), et il ne montait pas du tout — ni le symbole, ni
+   la virgule qui le précède. superscriptMarksHtml le lit maintenant comme une
+   MARQUE au même titre qu'un chiffre : toute la série repasse dans la MÊME
+   balise <sup>, virgule comprise (voir AFFIL_MARK_RUN_RE dans
+   utils/manuscriptImport.js). Le texte enregistré, lui, n'est jamais réécrit. */
+eq(MS.superscriptMarksHtml('Mario Rossi\u00b9,*, Anna Bianchi\u00b2,\u2020'),
+  'Mario Rossi<sup>1,*</sup>, Anna Bianchi<sup>2,\u2020</sup>',
+  'la virgule DEVANT le symbole monte avec lui ; celle qui sépare deux auteurs reste dehors');
+eq(MS.superscriptMarksHtml('Jorge L. Martinez-Torrecuadrada\u2075,*'),
+  'Jorge L. Martinez-Torrecuadrada<sup>5,*</sup>',
+  '…comme le « 5,* » de l’auteur correspondant d’un consortium (le cas réel lu par le code)');
+eq(MS.superscriptMarksHtml('Mario Rossi*, Anna Bianchi\u2020'),
+  'Mario Rossi<sup>*</sup>, Anna Bianchi<sup>\u2020</sup>',
+  'un symbole SEUL monte aussi : dans l’article, l’astérisque du correspondant est un exposant');
+eq(MS.superscriptMarksHtml('Mario Rossi*\u2020'), 'Mario Rossi<sup>*\u2020</sup>',
+  'deux symboles qui se suivent sont UNE série, même sans ponctuation entre eux');
+eq(MS.superscriptMarksHtml('Mario Rossi\u00b9\u00b7\u00b2,*'), 'Mario Rossi<sup>1·2,*</sup>',
+  'la série garde la ponctuation du document (point médian d’un PDF) jusqu’au symbole');
+eq(MS.superscriptMarksHtml('* Corresponding author. E-mail: mario.rossi@unina.it'),
+  '<sup>*</sup> Corresponding author. E-mail: mario.rossi@unina.it',
+  'la ligne de correspondance d’une affiliation aussi (« * Corresponding author… »)');
+eq(MS.superscriptMarksHtml('Mario Rossi\u00b9,\u00b2, Anna Bianchi\u00b3,\u2020'),
+  'Mario Rossi<sup>1,2</sup>, Anna Bianchi<sup>3,\u2020</sup>',
+  '…et les deux règles se cumulent : deux affiliations puis le symbole du correspondant');
+eq((MS.superscriptMarksHtml('Mario Rossi\u00b9,*, Anna Bianchi\u00b2,\u2020').match(/<sup>/g) || []).length, 2,
+  'une seule balise <sup> par auteur — jamais une par marque : c’est UN exposant, pas plusieurs');
+eq(MS.superscriptMarksHtml('Rossi M < Bianchi A *'), 'Rossi M &lt; Bianchi A <sup>*</sup>',
+  'l’échappement du HTML tient toujours, symbole monté compris');
+{
+  const stored = 'Mario Rossi\u00b9,*, Anna Bianchi\u00b2,\u2020';
+  MS.superscriptMarksHtml(stored);
+  eq(stored, 'Mario Rossi\u00b9,*, Anna Bianchi\u00b2,\u2020',
+    'la LECTURE ne réécrit jamais le texte enregistré : le champ « Authors » reste éditable');
+}
+eq(MS.cleanAuthorLine('Mario Rossi1*, Anna Bianchi2'), 'Mario Rossi\u00b9*, Anna Bianchi\u00b2',
+  '…et l’import range le symbole avec son numéro, jamais dans un <sup>');
+
 
 /* ── 5. Le plan : la numérotation du PROJET, pas celle du document ───────── */
 const plan = MS.buildManuscriptPlan(manuscript, { existingReferences: [] });

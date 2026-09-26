@@ -90,6 +90,17 @@ const SUP_DIGIT_CHARS = '\u2070\u00b9\u00b2\u00b3\u2074\u2075\u2076\u2077\u2078\
    n'est toujours pas reconnue »). */
 const SUP_MARK_CLASS = `${SUP_DIGIT_CHARS}${Object.values(SUP_LETTERS).join('')}`;
 
+/* LES SYMBOLES D'UN AUTEUR : « * » (auteur correspondant), « † » « ‡ »
+   (contribution égale, adresse actuelle), « § » « ¶ » (notes de bas de page).
+   C'est le jeu de caractères qui dit « ceci est une MARQUE » dans tout ce
+   fichier : écrit UNE fois ici, chaque motif qui en a besoin le compose
+   (AFFILIATION_MARK_RE, AFFIL_MARK, AFFIL_MARK_IN_LINE_RE,
+   AUTHOR_MARK_IN_LINE_RE, AFFIL_MARK_TAIL_RE, AFFIL_MARK_RUN_RE) — un symbole
+   ajouté ici est ajouté partout au lieu d'être recopié six fois. Au RENDU, un
+   symbole est un EXPOSANT comme un numéro d'affiliation : voir
+   superscriptMarksHtml. */
+const AFFIL_SYMBOL_CLASS = '[*\\u2020\\u2021\\u00a7\\u00b6]';
+
 /** Marqueur d'affiliation en tête de ligne : « 1 … », « 1Dipartimento… » (un
  *  exposant COLLÉ par l'export Google Docs / Word), « * … », « a) … »,
  *  « ¹ Dipartimento… » (exposant Unicode). */
@@ -101,7 +112,7 @@ export const AFFILIATION_MARK_RE = new RegExp([
   '^\\s*\\[\\s*\\d{1,2}\\s*\\](?:\\s*[,;&-]\\s*\\d{1,2}\\s*\\]*)?\\s*\\S',
   '^\\s*(?:[a-e]|[ivx]{1,4})[.)\\]]\\s*\\S',      // « a) » / « a. » / « iv) »
   '^\\s*(?:[a-e]|[ivx]{1,4})\\s+(?=\\p{Lu})',     // « a Dipartimento »
-  '^\\s*[*\\u2020\\u2021\\u00a7\\u00b6]\\s*\\S',    // « * » / « † » / « ‡ » / « § »
+  '^\\s*' + AFFIL_SYMBOL_CLASS + '\\s*\\S',    // « * » / « † » / « ‡ » / « § »
   /* « ¹ Dipartimento… » : le MÊME exposant, écrit en UNICODE (un PDF, un texte
      collé d'un Google Docs, une liste d'auteurs recopiée du projet). */
   '^\\s*[' + SUP_MARK_CLASS + ']+\\s*\\S'
@@ -181,8 +192,8 @@ export const looksLikeAffiliationLine = (line) => {
    reconnue du tout — les auteurs restaient hors du champ « Authors » alors que
    le titre, lui, était trouvé (demande utilisateur : « l'en-tête est ENTRE le
    titre et les affiliations »). */
-const AFFIL_MARK = '(?:(?<![\\p{L}\\u2019])[A-H](?![\\p{L}\\u2019])|(?<![\\p{L}\\u2019])[a-h](?![\\p{L}\\u2019])|\\d{1,2}|[*\\u2020\\u2021\\u00a7\\u00b6]'
-  + `|[${SUP_MARK_CLASS}]+)`;
+const AFFIL_MARK = '(?:(?<![\\p{L}\\u2019])[A-H](?![\\p{L}\\u2019])|(?<![\\p{L}\\u2019])[a-h](?![\\p{L}\\u2019])|\\d{1,2}|'
+  + `${AFFIL_SYMBOL_CLASS}|[${SUP_MARK_CLASS}]+)`;
 /* LE SÉPARATEUR entre deux marqueurs du même nom : « Rossi¹,² », « Rossi1,2 »,
    « Rossi 1-2 », « Rossi1/2 », « Rossi¹·² » (le point médian d'un PDF),
    « Rossi*† » (auteur correspondant ET affiliation). Il manquait : une liste
@@ -197,7 +208,7 @@ const AFFIL_MARK_BRACKETED = `(?:\\[\\s*${AFFIL_MARK}(?:\\s*${AFFIL_MARK_SEP}\\s
    « ce nombre est le numéro de mon laboratoire » — jamais un renvoi de citation
    (voir isAuthorMarkLine, relu par utils/referenceLinks.js). */
 const AFFIL_MARK_IN_LINE_RE = new RegExp(
-  `\\p{L}\\s?(?:\\d{1,2}|[*\\u2020\\u2021\\u00a7\\u00b6]|[${SUP_MARK_CLASS}]+|\\[\\s*\\d{1,2})`, 'u');
+  `\\p{L}\\s?(?:\\d{1,2}|${AFFIL_SYMBOL_CLASS}|[${SUP_MARK_CLASS}]+|\\[\\s*\\d{1,2})`, 'u');
 /* Une MARQUE D'AUTEUR n'importe où dans la ligne : un exposant collé à un nom
    (« Susini1 », « Susini¹ »), le symbole de l'auteur correspondant (« Rossi* »,
    « Rossi† ») ou une initiale pointée (« Rossi, M. »). Elle décide qu'une ligne
@@ -207,12 +218,12 @@ const AFFIL_MARK_IN_LINE_RE = new RegExp(
    (collé au nom, ou séparé par une espace) : composé depuis `.source`, il reste
    d'accord avec lui au lieu d'être recopié. */
 const AUTHOR_MARK_IN_LINE_RE = new RegExp(`${AFFIL_MARK_IN_LINE_RE.source}`
-  + `|[*\\u2020\\u2021\\u00a7\\u00b6]|(?<![\\p{L}\\u2019])[\\p{Lu}]\\.(?![\\p{L}])`, 'u');
+  + `|${AFFIL_SYMBOL_CLASS}|(?<![\\p{L}\\u2019])[\\p{Lu}]\\.(?![\\p{L}])`, 'u');
 /* Le même marqueur, mais SANS les lettres MAJUSCULES : « Rossi B » est une
    écriture d'auteur (nom + initiale), jamais un marqueur à retirer — au
    contraire de « Rossi b », « Rossi1 », « Rossi[2] », « Rossi (3) ». */
 const AFFIL_MARK_TAIL_RE = new RegExp(
-  `(?:\\s*${AFFIL_MARK_SEP}?\\s*(?:${AFFIL_MARK_BRACKETED}|\\d{1,2}|[*\\u2020\\u2021\\u00a7\\u00b6]|(?<![\\p{L}\\u2019])[a-h](?![\\p{L}\\u2019])`
+  `(?:\\s*${AFFIL_MARK_SEP}?\\s*(?:${AFFIL_MARK_BRACKETED}|\\d{1,2}|${AFFIL_SYMBOL_CLASS}|(?<![\\p{L}\\u2019])[a-h](?![\\p{L}\\u2019])`
   + `|[${SUP_MARK_CLASS}]+))+\\s*$`, 'u');
 
 /** Un MORCEAU de nom, débarrassé de ses marqueurs d'affiliation :
@@ -254,17 +265,30 @@ export const superscriptMarkToPlain = (s) => String(s == null ? '' : s)
     return hit ? hit[0] : c;
   });
 
-/* UNE SÉRIE DE MARQUEURS D'AFFILIATION dans un texte d'auteurs : un exposant,
- *  puis les autres exposants du même auteur s'ils sont séparés par la
- *  ponctuation d'un marqueur — « ¹,² », « ¹⁻² », « ᵃ,ᵇ », « ¹·² ». La VIRGULE
- *  ENTRE DEUX AFFILIATIONS fait partie de la série : elle était en exposant
- *  dans le document, elle doit le rester à l'écran et à l'impression (demande
- *  de l'utilisateur : « la virgola tra due affiliazioni nella sezione degli
- *  autori deve rimanere apice se era in apice nel testo »). La virgule qui
- *  SÉPARE DEUX AUTEURS (« Rossi¹, Anna Bianchi² ») est suivie d'un nom, pas
- *  d'un exposant : elle n'est donc jamais prise dans la série. */
+/* UNE SÉRIE DE MARQUES dans un texte d'auteurs : un exposant numérique ou une
+ *  LETTRE d'affiliation (« ᵃ »), un SYMBOLE d'auteur (« * », « † »), puis les
+ *  autres marques du même auteur tant qu'elles se suivent — « ¹,² », « ¹⁻² »,
+ *  « ᵃ,ᵇ », « ¹·² », « ¹,* », « *† ».
+ *
+ *  LA PONCTUATION ENTRE DEUX MARQUES FAIT PARTIE DE LA SÉRIE : elle était en
+ *  exposant dans le document, elle doit le rester à l'écran et à l'impression.
+ *  C'est la même règle pour les numéros et pour les symboles, demandée deux
+ *  fois par l'utilisateur :
+ *    • « la virgola tra due affiliazioni nella sezione degli autori deve
+ *      rimanere apice se era in apice nel testo » (les numéros) ;
+ *    • « i simboli * e † nella lista di autori sono apici e se sono preceduti
+ *      da una virgola anche la virgola deve essere superscript » (les symboles).
+ *
+ *  Le SYMBOLE est donc une marque au même titre qu'un chiffre : « Rossi¹,* »
+ *  (affiliation + auteur correspondant) monte ENTIER, virgule comprise, et un
+ *  « Rossi* » seul monte aussi — dans l'article, l'astérisque du correspondant
+ *  est un vrai exposant. Le séparateur est FACULTATIF (« *† » se suit sans
+ *  ponctuation), mais une marque est toujours exigée après lui : la virgule qui
+ *  SÉPARE DEUX AUTEURS (« Rossi¹, Anna Bianchi² ») est suivie d'une espace et
+ *  d'un nom, jamais d'une marque — elle n'est donc jamais avalée. */
+const AFFIL_MARK_RUN_ATOM = `(?:[${SUP_MARK_CLASS}]+|${AFFIL_SYMBOL_CLASS})`;
 const AFFIL_MARK_RUN_RE = new RegExp(
-  `[${SUP_MARK_CLASS}]+(?:${AFFIL_MARK_SEP}[${SUP_MARK_CLASS}]+)*`, 'g'
+  `${AFFIL_MARK_RUN_ATOM}(?:${AFFIL_MARK_SEP}?${AFFIL_MARK_RUN_ATOM})*`, 'g'
 );
 
 /**
@@ -273,6 +297,8 @@ const AFFIL_MARK_RUN_RE = new RegExp(
  *
  *   'Mario Rossi¹,², Anna Bianchi³'
  *     → 'Mario Rossi<sup>1,2</sup>, Anna Bianchi<sup>3</sup>'
+ *   'Mario Rossi¹,*, Anna Bianchi²,†'
+ *     → 'Mario Rossi<sup>1,*</sup>, Anna Bianchi<sup>2,†</sup>'
  *
  *  Pourquoi : le champ « Authors » d'un projet garde le texte du document, où
  *  les exposants sont des caractères Unicode (« ¹ »). Un caractère Unicode n'a
@@ -282,6 +308,11 @@ const AFFIL_MARK_RUN_RE = new RegExp(
  *  balise `<sup>`, ponctuation comprise : l'écran, l'impression et l'export
  *  montrent ce que montrait l'article, sans rien changer au texte enregistré
  *  (le champ reste éditable, une correction manuelle n'est jamais réécrite).
+ *  Le SYMBOLE du correspondant (« * ») et les symboles de contribution égale
+ *  (« † » « ‡ ») sont des exposants au même titre que les chiffres : ils
+ *  montent, et la virgule qui les précède monte avec eux (« i simboli * e †
+ *  nella lista di autori sono apici e se sono preceduti da una virgola anche la
+ *  virgola deve essere superscript »).
  *  Un texte sans marqueur (une initiale « Rossi M », un nom nu) ressort
  *  INCHANGÉ, et tout le reste est échappé : rien d'un document importé ne peut
  *  apporter du HTML.

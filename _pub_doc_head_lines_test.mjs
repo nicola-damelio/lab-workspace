@@ -34,7 +34,7 @@ const {
   buildPubDocOrder, pubDocOrderKeywords, pubLayoutCss, PUB_LAYOUT_PARTS
 } = await import('./src/components/pubCitation.js');
 const { htmlToDocxBody } = await import('./src/utils/docxExport.js');
-const { PROJECT_TEXT_SECTIONS } = await import('./src/utils/manuscriptImport.js');
+const { PROJECT_TEXT_SECTIONS, superscriptMarksHtml } = await import('./src/utils/manuscriptImport.js');
 
 let passed = 0;
 const ok = (cond, what) => { assert.ok(cond, what); passed += 1; };
@@ -148,6 +148,30 @@ const GAP_PARA = '<w:p><w:r><w:t xml:space="preserve"> </w:t></w:r></w:p>';
     '…et le troisième APRÈS les affiliations (« there must be an empty line after the affiliations »)');
   ok(!htmlToDocxBody(plain).xml.includes(GAP_PARA),
     'un document sans les classes de la tête n’invente aucune ligne vide dans Word');
+}
+
+/* ══ 3 bis. LES MARQUES D’AUTEUR MONTENT AUSSI DANS LE FICHIER WORD ═════════
+   La liste d’auteurs est lue par superscriptMarksHtml AVANT d’entrer dans le
+   corps exporté (voir projectDetailModule : `__html: superscriptMarksHtml(
+   project.paperAuthors)`), donc le .docx reçoit une série déjà montée. Ce qui
+   est mesuré ici : le numéro, la VIRGULE et le SYMBOLE sont dans le MÊME « run »
+   exposant — la règle demandée (« i simboli * e † nella lista di autori sono
+   apici e se sono preceduti da una virgola anche la virgola deve essere
+   superscript »). Word n’a pas de virgule en exposant à poser lui-même : si elle
+   sortait du run, elle retomberait à la taille du texte dans le fichier. */
+{
+  const authors = superscriptMarksHtml('Mario Rossi\u00b9,*, Anna Bianchi\u00b2,\u2020');
+  eq(authors, 'Mario Rossi<sup>1,*</sup>, Anna Bianchi<sup>2,\u2020</sup>',
+    'la liste d’auteurs du document monte ses symboles, virgule comprise');
+  const { xml } = htmlToDocxBody(`<p class="pf-authors">${authors}</p>`);
+  const at = xml.indexOf('<w:t xml:space="preserve">1,*</w:t>');
+  ok(at > 0, 'le .docx écrit « 1,* » en UN seul morceau de texte (la virgule n’est pas restée dehors)');
+  ok(xml.slice(xml.lastIndexOf('<w:r>', at), at).includes('<w:vertAlign w:val="superscript"/>'),
+    '…et ce morceau est bien le run EXPOSANT : le symbole du correspondant monte dans Word comme dans l’article');
+  const daggerAt = xml.indexOf('<w:t xml:space="preserve">2,\u2020</w:t>');
+  ok(daggerAt > 0 && xml.slice(xml.lastIndexOf('<w:r>', daggerAt), daggerAt)
+    .includes('<w:vertAlign w:val="superscript"/>'),
+    '…idem pour le second auteur et sa dague (« 2,† ») : chaque auteur garde SON exposant dans le fichier');
 }
 
 /* ══ 4. LE CÂBLAGE : LA PAGE DU PROJET ET LE PANNEAU ═════════════════════════ */
