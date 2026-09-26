@@ -2749,10 +2749,14 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
     if (!style || style === 'keep') {
       return 'As shown previously\u00b9\u00b2 — or [12], or (12) — exactly as the document wrote it.';
     }
-    const one = (n) => inTextCitationHtml([n], {
+    /* UN GROUPE DE DEUX RENVOIS D'ABORD : c'est là que se voit la virgule —
+       elle monte avec les numéros en exposant (voir superscriptCitationRun,
+       utils/referenceLinks.js). L'aperçu passe par le MÊME moteur que le
+       document : il ne peut donc pas montrer autre chose que lui. */
+    const group = (nums) => inTextCitationHtml(nums, {
       style, refs: inTextSampleRefs, hrefFor: () => '#ref-1'
     });
-    return `As shown previously${one(1)}, and elsewhere${one(2)}.`;
+    return `As shown previously${group([1, 2])}, and elsewhere${group([1])}.`;
   };
 
   const renderPubFormat = () => (

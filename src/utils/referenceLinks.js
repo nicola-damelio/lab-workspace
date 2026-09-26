@@ -44,7 +44,7 @@
 import {
   NUMERIC_CITATION_RE, PAREN_CITATION_RE, SUPERSCRIPT_CITATION_RE,
   citationPassesGuards, numbersOfCitation, numericCitationNumbers,
-  digitsToSuperscript, isAuthorMarkLine
+  isAuthorMarkLine
 } from './manuscriptImport';
 import { entryKeys } from './referenceImport';
 /* Le découpage nom / prénom et le nom de famille, dans n'importe quelle
@@ -126,6 +126,23 @@ const citationLinks = (nums, { href, titleOf, innerFor }) => nums
   .map((n) => citeAnchor(n, innerFor ? innerFor(n) : n, { href, titleOf }))
   .join(',');
 
+/* ── UNE SÉRIE DE RENVOIS DANS UN SEUL EXPOSANT ─────────────────────────────
+   « previously¹,² » : l'auteur a écrit les numéros en caractères Unicode, et un
+   caractère Unicode n'a PAS de virgule en exposant. Lier le groupe tel quel
+   laissait donc une virgule PLEINE TAILLE au milieu de deux chiffres montés —
+   le défaut signalé sur les citations en exposant. Toute la série repasse
+   maintenant dans la MÊME balise `<sup>`, ponctuation comprise : c'est la règle
+   que superscriptMarksHtml applique déjà aux marqueurs d'affiliation
+   (utils/manuscriptImport.js, « la virgule entre deux affiliations était en
+   exposant dans le document, elle le reste »), appliquée ici aux renvois.
+
+   Les numéros redeviennent de VRAIS chiffres — un exposant ne se pose jamais
+   deux fois (un « ¹ » Unicode DANS un `<sup>` monte deux fois) — la virgule monte
+   avec eux, et chacun garde son lien vers sa référence. Seule la série que
+   l'auteur avait écrite en exposant prend cette forme : « [12] » et « (12) »
+   gardent la leur (voir linkCitationNumbers et inTextCitationHtml). */
+const superscriptCitationRun = (nums, plain) => `<sup>${citationLinks(nums, plain)}</sup>`;
+
 /**
  * Le TEXTE HTML d'une section, ses citations numérotées transformées en liens.
  *
@@ -201,7 +218,10 @@ export const linkCitationNumbers = (html, { numbers, hrefFor, titleFor } = {}) =
         if (!nums.length || !nums.every((n) => valid.has(n))) return raw;
         if (form === 'paren') return `(${citationLinks(nums, plain)})`;
         if (form === 'sup') {
-          return citationLinks(nums, { ...plain, innerFor: (n) => digitsToSuperscript(n) });
+          /* L'exposant Unicode de l'auteur : toute la série repasse dans UN
+             `<sup>` — la virgule monte donc avec les numéros (voir
+             superscriptCitationRun). */
+          return superscriptCitationRun(nums, plain);
         }
         return `[${citationLinks(nums, plain)}]`;
       }), token);
@@ -302,10 +322,11 @@ export const inTextCitationHtml = (nums, opts = {}) => {
       return citeAnchor(n, escapeAttr(citeAuthorYearLabel(ref) || String(n)), plain);
     }).join('; ')})`;
   }
-  const inner = list
-    .map((n) => citeAnchor(n, style === 'sup' ? digitsToSuperscript(n) : n, plain))
-    .join(',');
-  if (style === 'sup') return `<sup>${inner}</sup>`;
+  /* L'EXPOSANT : la MÊME forme que celle d'un renvoi déjà écrit en exposant
+     (voir superscriptCitationRun) — la virgule entre deux numéros monte avec
+     eux, et le chiffre ne se pose jamais deux fois (Unicode dans `<sup>`). */
+  if (style === 'sup') return superscriptCitationRun(list, plain);
+  const inner = list.map((n) => citeAnchor(n, n, plain)).join(',');
   if (style === 'bracket') return `[${inner}]`;
   if (style === 'paren') return `(${inner})`;
   return inner;

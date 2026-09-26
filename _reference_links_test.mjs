@@ -115,9 +115,11 @@ const sup = RL.linkCitationNumbers('<p>As shown previously<sup>2</sup>.</p>', { 
 eq(sup, '<p>As shown previously<sup><a class="cite-ref" href="#ref-2" data-ref="2">2</a></sup>.</p>',
   'un exposant HTML reste un exposant, avec le lien DEDANS');
 const uni = RL.linkCitationNumbers('<p>As shown previously¹,².</p>', { numbers: NUMBERS });
-eq(uni, '<p>As shown previously<a class="cite-ref" href="#ref-1" data-ref="1">¹</a>,'
-  + '<a class="cite-ref" href="#ref-2" data-ref="2">²</a>.</p>',
-  'un exposant en chiffres Unicode devient un lien qui reste en exposant');
+eq(uni, '<p>As shown previously<sup><a class="cite-ref" href="#ref-1" data-ref="1">1</a>,'
+  + '<a class="cite-ref" href="#ref-2" data-ref="2">2</a></sup>.</p>',
+  'un exposant en chiffres Unicode devient un lien qui reste en exposant — la VIRGULE MONTE AVEC LUI');
+ok(!uni.includes('¹') && !uni.includes('²'),
+  '…et les chiffres Unicode repassent en vrais chiffres : un exposant ne se pose jamais deux fois');
 
 /* Le piège : un manuscrit est plein d’exposants qui ne sont PAS des citations.
    Les lier abîmerait le texte de l’auteur — ils doivent rester intacts. */
@@ -304,8 +306,8 @@ const FORM_DOC = '<p>As shown previously[1] and (2), and <sup>12</sup>.</p>';
 eq(RL.applyInTextStyle(FORM_DOC, formOpts('keep')), FORM_DOC,
   '« as written » : le document garde l’écriture de ses renvois, rien n’est réécrit');
 const asSup = RL.applyInTextStyle(FORM_DOC, formOpts('sup'));
-ok(asSup.includes('<sup><a class="cite-ref" href="#ref-1" data-ref="1">\u00b9</a></sup>'),
-  'la forme « exposant » : le numéro monte en exposant sans perdre son lien');
+ok(asSup.includes('<sup><a class="cite-ref" href="#ref-1" data-ref="1">1</a></sup>'),
+  'la forme « exposant » : le numéro monte en exposant sans perdre son lien (un vrai chiffre dans UN seul <sup>)');
 eq((asSup.match(/data-ref="/g) || []).length, 3, '…et les TROIS renvois du texte sont traités');
 ok(RL.applyInTextStyle(FORM_DOC, formOpts('bracket'))
   .includes('[<a class="cite-ref" href="#ref-1" data-ref="1">1</a>]'), 'la forme « crochets »');
@@ -328,6 +330,41 @@ eq(RL.inTextCitationHtml([1, 2], { style: 'author-date', refs: FORM_REFS }),
   eq(RL.applyInTextStyle(once, formOpts(style)), once,
     `« ${style} » est IDEMPOTENTE (le document est réaffiché à chaque rendu)`);
 });
+/* ── 8 ter bis. LA VIRGULE D'UN RENVOI MULTIPLE EST EN EXPOSANT, ELLE AUSSI ──
+   Le défaut : « previously¹,² » liait bien les deux numéros, mais laissait une
+   virgule PLEINE TAILLE au milieu de deux chiffres montés — un caractère Unicode
+   n'a pas de virgule en exposant. Toute la série repasse donc dans UNE SEULE
+   balise `<sup>`, ponctuation comprise : c'est la règle que superscriptMarksHtml
+   applique déjà aux marqueurs d'affiliation (utils/manuscriptImport.js), ici
+   appliquée aux renvois — les mêmes numéros, un seul exposant, la virgule avec
+   eux. L'aperçu du panneau passe par le MÊME moteur : il ne peut donc pas
+   montrer autre chose que le document. */
+const SUP_GROUP = '<sup><a class="cite-ref" href="#ref-1" data-ref="1">1</a>,'
+  + '<a class="cite-ref" href="#ref-2" data-ref="2">2</a></sup>';
+eq(RL.linkCitationNumbers('<p>Shown previously¹,².</p>', { numbers: NUMBERS }),
+  `<p>Shown previously${SUP_GROUP}.</p>`,
+  'un groupe écrit en chiffres Unicode sort dans UN SEUL exposant, virgule comprise');
+eq(SUP_GROUP.match(/<sup>/g).length, 1,
+  '…un seul exposant pour toute la série (jamais un par numéro)');
+ok(SUP_GROUP.indexOf(',') > SUP_GROUP.indexOf('<sup>'),
+  '…et il est ouvert AVANT la virgule : elle monte donc avec les numéros');
+const uniGroup = RL.linkCitationNumbers('<p>Shown previously¹,².</p>', { numbers: NUMBERS });
+eq(RL.linkCitationNumbers(uniGroup, { numbers: NUMBERS }), uniGroup,
+  '…rejouer la liaison ne le retouche pas (idempotente)');
+eq(RL.inTextCitationHtml([1, 2], { style: 'sup' }), SUP_GROUP,
+  'la forme « exposant » écrit la MÊME chose que la liaison (l’aperçu ne peut pas mentir)');
+eq(RL.inTextCitationHtml([1, 2], { style: 'bracket' }),
+  '[<a class="cite-ref" href="#ref-1" data-ref="1">1</a>,'
+  + '<a class="cite-ref" href="#ref-2" data-ref="2">2</a>]',
+  '…les crochets gardent la leur, virgule DEDANS');
+eq(RL.inTextCitationHtml([1, 2], { style: 'sup' }).match(/[¹²³⁴⁵⁶⁷⁸⁹⁰]/g), null,
+  'aucun chiffre Unicode ne subsiste dans la série : un exposant ne se pose jamais deux fois (Unicode DANS `<sup>`)');
+eq(RL.inTextCitationHtml([1, 2], { style: 'sup' })
+  .match(/class="cite-ref" href="#ref-\d+" data-ref="\d+"/g).length, 2,
+  '…et chaque numéro garde son lien vers SA référence');
+eq(MS.superscriptMarksHtml('Mario Rossi¹,²'), 'Mario Rossi<sup>1,2</sup>',
+  'la règle est bien celle des marqueurs d’affiliation : toute la série dans UN `<sup>`, ponctuation comprise');
+
 eq(RL.applyInTextStyle('<p>As shown in [12].</p>', { ...formOpts('sup'), numbers: new Set([1]) }),
   '<p>As shown in [12].</p>',
   'aucune forme n’est écrite pour un numéro que le projet ne connaît pas (pas de lien mort)');

@@ -213,4 +213,27 @@ has(PROJ, '<ol className="pf-bib list-decimal pl-5 text-sm text-slate-800 space-
 has(PROJ, 'className="pf-title text-2xl font-black text-slate-900 mb-1"',
   '…et la tête du document (titre, auteurs, affiliations) n’est jamais marquée');
 
+/* ══ 5. L'INTERFACE DE LA PAGE N'EST PAS LE DOCUMENT ══════════════════════════
+   Les rangées de la page — « 🖼 Saved canvases », « 📚 References », « 🧾 Title,
+   authors & affiliations »… — vivent HORS du conteneur du document
+   (#project-doc-container) : l'instantané, la feuille d'impression / le PDF et
+   le .docx descendent tous de CE conteneur, jamais de la page. Le texte d'une
+   rangée de l'interface ne peut donc pas se retrouver dans la sortie (la sortie
+   ne contient que le document). */
+{
+  const open = PROJ.indexOf('<div id="project-doc-container"');
+  const afterDoc = open < 0 ? '' : PROJ.slice(open);
+  const row = afterDoc.indexOf('<SectionCard');
+  ok(open > 0 && row > 0, 'le document et les rangées de la page sont deux endroits distincts');
+  const doc = afterDoc.slice(0, row);
+  ok(!doc.includes('Saved canvases') && !doc.includes('SectionCard'),
+    '…aucune rangée de la page (dont « 🖼 Saved canvases ») n’est DANS le document');
+  has(doc, '<ol className="pf-bib',
+    '…alors que la liste des références, elle, en fait partie (le document a sa bibliographie)');
+  has(PROJ, 'document.getElementById(DOC_CONTAINER_ID)',
+    'l’impression / le PDF / le .docx se fabriquent DANS le conteneur du document');
+  has(PROJ, '<body><div id="${DOC_CONTAINER_ID}">${bodyHtml}</div></body>',
+    '…et la feuille imprimée ne porte QUE lui : rien de la page ne peut en sortir');
+}
+
 console.log(`_pub_doc_screen_only_test.mjs : ${passed} passed`);
