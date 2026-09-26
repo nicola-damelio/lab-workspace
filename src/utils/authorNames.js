@@ -75,6 +75,10 @@ const trimEdges = (value) => String(value == null ? '' : value)
 
 const isInitialToken = (token) => !!token && INITIAL_TOKEN.test(token);
 const isParticle = (token) => PARTICLES.has(String(token || '').toLowerCase().replace(/\.$/, ''));
+/* Un mot ÉCRIT EN CAPITALES (« ROSSI », « MCDONALD », « VAN ») : dans une liste
+ * d'auteurs, c'est la marque du nom de famille — voir la branche « NOM Prénom »
+ * de nameParts. */
+const isAllCapsWord = (token) => /^\p{Lu}{2,}[\p{Lu}.'’-]*$/u.test(String(token || ''));
 
 /* Un morceau d'un prénom → ses initiales. « John » → « J » ; un morceau DÉJÀ
    réduit aux initiales (« JA », « MA ») est gardé tel quel — « Rossi MA » donne
@@ -100,6 +104,7 @@ export const initialsOf = (given) => String(given || '')
  *   « John A. Smith »       → { family: 'Smith',        initials: 'JA' }
  *   « J. A. Smith »         → { family: 'Smith',        initials: 'JA' }
  *   « Smith JA »            → { family: 'Smith',        initials: 'JA' }
+ *   « ROSSI Marco »         → { family: 'ROSSI',        initials: 'M'  }  (le NOM en capitales : la casse tranche)
  *   « Smith, John A., Jr. » → { family: 'Smith',        initials: 'JA' }  (suffixe écarté)
  *   « van der Berg, Jan »   → { family: 'van der Berg', initials: 'J'  }
  *   « Jan van der Berg »    → { family: 'van der Berg', initials: 'J'  }
@@ -129,6 +134,26 @@ export const nameParts = (value) => {
   if (isInitialToken(tail) && tokens.length >= 2) {
     const family = tokens.slice(0, -1).join(' ').replace(/[\s,;.]+$/, '');
     return { family, initials: initialsOf(tail) };
+  }
+  /* « NOM Prénom » — LE NOM EN CAPITALES (« ROSSI Marco », « VAN DER BERG Jan »,
+     « MCDONALD John »). Sans virgule, rien ne dit si le premier mot est le nom ou
+     le prénom — SAUF la casse, et c'est l'écriture de listes entières d'articles
+     (et de beaucoup d'exports RIS) : « the names of the scientists have their
+     surname in capital letter ». Les mots CAPITALES de tête SONT donc le nom, et
+     le prénom suit (il reste dans la famille jusqu'au premier mot écrit
+     normalement). Le déclencheur est étroit — un premier mot tout en capitales, et
+     un mot qui suit et ne l'est pas —, donc :
+       • « ROSSI Marco »       → « ROSSI » + « M »   (le nom, pas « Marco ») ;
+       • « VAN DER BERG Jan »  → « VAN DER BERG » + « J » (particules comprises) ;
+       • « Marco ROSSI »       → règle ordinaire (prénom, puis nom en capitales) ;
+       • « SMITH JOHN »        → règle ordinaire aussi : TOUT en capitales ne dit
+         plus rien (voir la branche ci-dessous, la convention de l'application). */
+  if (isAllCapsWord(tokens[0])) {
+    let at = 1;
+    while (at < tokens.length && isAllCapsWord(tokens[at])) at += 1;
+    if (at < tokens.length) {
+      return { family: tokens.slice(0, at).join(' '), initials: initialsOf(tokens.slice(at).join(' ')) };
+    }
   }
   /* « Initiales Nom » (Elsevier, Harvard, Science). On écarte d'abord les
      initiales de tête, le reste EST le nom — particules comprises. */

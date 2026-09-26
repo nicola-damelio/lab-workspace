@@ -24,7 +24,7 @@ import { readFileSync } from 'node:fs';
 import { register } from 'node:module';
 
 register('./_esm_test_hook.mjs', import.meta.url);
-const { nameCase, formatAuthorName, familyNameOf, NAME_STYLE_IDS } = await import('./src/utils/authorNames.js');
+const { nameCase, nameParts, canonicalName, formatAuthorName, familyNameOf, NAME_STYLE_IDS } = await import('./src/utils/authorNames.js');
 const { citeAuthorYearLabel } = await import('./src/utils/referenceLinks.js');
 const {
   PUB_DOC_BLOCKS, PUB_DOC_OPTIONAL_IDS, buildPubFormat, buildPubDocNoBlock, buildPubLayout,
@@ -75,7 +75,19 @@ const lacks = (where, needle, what) => ok(!where.includes(needle), what);
   eq(formatAuthorName('SMITH JA', 'family-initials'), 'Smith JA', '…« Smith JA » chez PNAS');
   eq(formatAuthorName('Marco ROSSI', 'family-comma-initials'), 'Rossi, M.', 'un prénom ordinaire et un nom en capitales : pareil');
   eq(formatAuthorName('ROSSI M', 'family-dot-initials'), 'Rossi M.', 'les initiales restent, la casse revient');
+  eq(formatAuthorName('Rossi M', 'asis'), 'Rossi M', '« as written » laisse un nom déjà écrit tel quel');
   eq(formatAuthorName('ROSSI M', 'asis'), 'ROSSI M', '« as written » garde le nom AU CARACTÈRE PRÈS : la casse est une décision du format');
+  /* …ET LE NOM EN CAPITALES DIT OÙ EST LE NOM (sans virgule, rien d'autre ne le dit). */
+  eq(nameParts('ROSSI Marco'), { family: 'ROSSI', initials: 'M' },
+    '« ROSSI Marco » : le mot en capitales EST le nom (et non « Marco »)');
+  eq(nameParts('VAN DER BERG Jan'), { family: 'VAN DER BERG', initials: 'J' }, '…particules comprises');
+  eq(nameParts('MCDONALD John'), { family: 'MCDONALD', initials: 'J' }, '…comme un nom qui n’est pas en capitales d’habitude');
+  eq(nameParts('Marco ROSSI'), { family: 'ROSSI', initials: 'M' }, '« Marco ROSSI » (prénom puis nom en capitales) : la règle ordinaire suffit');
+  eq(nameParts('SMITH JA'), { family: 'SMITH', initials: 'JA' }, 'une liste tout en capitales AVEC initiales : inchangée (PubMed)');
+  eq(canonicalName('ROSSI Marco'), 'ROSSI M', 'la convention du laboratoire garde le nom, elle ne prend plus le prénom');
+  eq(formatAuthorName('ROSSI Marco', 'family-comma-initials'), 'Rossi, M.', '…et la citation d’un journal écrit « Rossi, M. »');
+  eq(formatAuthorName('ROSSI Marco', 'initials-family'), 'M. Rossi', '…« M. Rossi » chez Science');
+  eq(familyNameOf('ROSSI Marco'), 'Rossi', 'le libellé auteur-année prend le nom en capitales, lui aussi');
   eq(formatAuthorName('EPPO', 'family-initials'), 'EPPO', 'un nom collectif sans initiales n’est pas « corrigé »');
   eq(formatAuthorName('SMITH', 'family-comma-initials'), 'SMITH', '…même chose pour un nom de famille seul');
   eq(familyNameOf('SMITH M'), 'Smith', 'le libellé auteur-année du texte suit la même règle');
