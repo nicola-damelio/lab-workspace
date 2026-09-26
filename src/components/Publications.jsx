@@ -2737,11 +2737,24 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
     const presetLabel = (PUB_FORMAT_PRESETS[pubPdfBundle.preset] || {}).label || pubPdfBundle.preset;
     const inTextLabel = (IN_TEXT_STYLES.find((s) => s.id === pubPdfBundle.inText) || {}).label || pubPdfBundle.inText;
     const nameLabel = (NAME_STYLES.find((s) => s.id === pubPdfBundle.names) || {}).label || 'as written';
+    /* LE CARACTÈRE LU, PRÊT À ÊTRE COMPARÉ AU PANNEAU : les tailles de la page
+       (titre · auteurs · corps · liste), l'ORDRE DES CHAMPS de la liste (voir
+       referenceFieldOrder) et les colonnes de la page — pour que l'utilisateur
+       vérifie d'un coup d'œil ce que le PDF a donné, sans le rouvrir. */
+    const sizeOf = (part) => {
+      const st = (pubPdfBundle.layout || {})[part] || {};
+      return st.size ? st.size + ' pt' : '';
+    };
+    const fields = (pubPdfBundle.bibFieldOrder || []).join(' › ');
+    const cols = ((pubPdfBundle.layout || {}).page || {}).columns;
     return 'References: ' + presetLabel + (pubPdfBundle.bibFieldsOff.length ? ' (article title not printed)' : '')
       + ' · in-text: ' + inTextLabel
       + (pubPdfBundle.etAl ? ' after ' + pubPdfBundle.etAl + ' authors' : '')
-      + ' · authors: ' + nameLabel
+      + ' · authors: ' + nameLabel + (sizeOf('authors') ? ' at ' + sizeOf('authors') : '')
+      + ' · title ' + sizeOf('title') + ' / body ' + sizeOf('body') + ' / list ' + sizeOf('bibliography')
+      + (fields ? ' · fields: ' + fields : '')
       + (pubPdfBundle.bibLabel ? ' · heading “' + pubPdfBundle.bibLabel + '”' : ' · no heading over the list')
+      + (cols === 2 ? ' · two columns' : '')
       + (pubPdfBundle.order.length ? ' · sections: ' + pubPdfBundle.order.join(' → ') : '');
   };
 
@@ -2943,7 +2956,7 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
             </button>
           )}
           <label className="px-2 py-1 rounded-lg text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 cursor-pointer"
-                 title="Pick a PDF of a paper published in the journal you are aiming at: the program reads its text and its fonts IN THE BROWSER (nothing is uploaded anywhere, nothing to install) and fills the format — the sections with their order and their names, the character of each part, the form of the in-text citations, the style of the reference list and the way authors are listed. It shows what it found, with its evidence, before anything is applied.">
+                 title="Pick a PDF of a paper published in the journal you are aiming at: the program reads its text and its fonts IN THE BROWSER (nothing is uploaded anywhere, nothing to install) and fills the format — the sections with their order and their names, the character of each part (the title, the line of AUTHORS, the text, the reference list), whether the page prints in two columns, the form of the in-text citations, the style of the reference list with the order of the fields inside a reference, and the way authors are listed. It shows what it found, with its evidence, before anything is applied.">
             {pubPdfState.status === 'reading' ? '⏳ Reading…' : '📄 Read a format from a PDF…'}
             <input type="file" accept=".pdf,.PDF,application/pdf" className="hidden"
                    onChange={(e) => { const f = e.target.files && e.target.files[0]; e.target.value = ''; pubReadFormatPdf(f); }} />
@@ -2987,7 +3000,7 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
               <div className="flex flex-wrap items-center gap-2 mt-2">
                 <button type="button" onClick={pubApplyPdfFormat}
                         className="px-2 py-1 rounded-lg text-[10px] font-bold bg-white text-emerald-700 border border-emerald-300 hover:bg-emerald-100"
-                        title="Merge what was read into the format shown — exactly like choosing a journal in the list: the citation fields, the in-text form, the author-name form, the character of each part, the section order and the titles the journal gives them. Every setting stays editable in the panel below.">
+                        title="Merge what was read into the format shown — exactly like choosing a journal in the list: the citation fields, the in-text form, the author-name form, the character of each part (the title, the AUTHORS, the text, the reference list), the number of columns of the page, the section order and the titles the journal gives them. Every setting stays editable in the panel below.">
                   ✅ Apply this format
                 </button>
                 <button type="button" onClick={pubSavePdfFormat}

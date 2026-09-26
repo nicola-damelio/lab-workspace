@@ -3,8 +3,8 @@
 // TO END: a PDF built with pdf-lib and read back with pdfjs.
 // Run: node _pub_format_from_pdf_test.mjs
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
-import { detectPublicationFormat } from './src/components/publicationFormatFromPdf.js';
-import { pdfTextLines } from './src/utils/pdfTextTokens.js';
+import { detectPublicationFormat, referenceFieldPositions } from './src/components/publicationFormatFromPdf.js';
+import { pdfTextLines, linesOfPage, typefaceOf } from './src/utils/pdfTextTokens.js';
 import { applyDetectedFormat } from './src/components/journalFormats.js';
 
 let failures = 0;
@@ -30,6 +30,8 @@ const line = (text, size, face, o = {}) => ({
   y: o.y == null ? 700 : o.y,
   sup: !!o.sup,
   chars: text.length,
+  column: o.col || 0,
+  full: !!o.full,
   runs: o.runs || [{ name: face.name, text, face }],
 });
 const BODY = 'The reaction was followed by NMR and the result agrees with the earlier report of this group';
@@ -101,6 +103,46 @@ const scienceDoc = () => docOf([
   },
 ]);
 
+/* ---- 3. UNE PAGE D'ELSEVIER, telle qu'elle a été MESURÉE sur un vrai PDF
+   (Analytical Biochemistry) : le titre de la revue en plus gros que le titre de
+   l'article, l'adresse de la revue sous elle, le titre en deux lignes, la ligne
+   d'auteurs à 10,56 pt (petits), les affiliations à 6,38 pt en italique, un résumé
+   à 7,17 pt dans la colonne de droite, le corps à 7,97 pt, les intitulés EN GRAS à
+   la taille du corps (« AdvGulliv-B »), et une liste de références dont l'intitulé
+   s'imprime à la taille du CORPS et sans gras (« AdvGulliv-R »), ses entrées à
+   6,38 pt dans la forme « revue volume (année) pages ». */
+const FACE_SUB = { name: 'OFMPPN+AdvGulliv-R', family: 'AdvGulliv', bold: false, italic: false, serif: true, fallback: 'serif' };
+const FACE_SUB_B = { name: 'OFNIDO+AdvGulliv-B', family: 'AdvGulliv', bold: true, italic: false, serif: true, fallback: 'serif' };
+const FACE_SUB_I = { name: 'OFNAAP+AdvGulliv-I', family: 'AdvGulliv', bold: false, italic: true, serif: true, fallback: 'serif' };
+const elsAbstract = (y) => line('The mechanism of how full length Tat crosses artificial lipid membranes was studied here.', 7.17, FACE_SUB, { y, x: 207, col: 1 });
+const elsBody = (y) => line('The reaction was followed by NMR and the result agrees with the earlier report of this group.', 7.97, FACE_SUB, { y, x: 43, xEnd: 500 });
+const elsEntry = (n, y) => line('[' + n + '] H. Raagel, P. Saalik, U. Langel, Mapping of protein transduction pathways, Methods Mol. Biol. 683 (2011) 165-175.', 6.38, FACE_SUB, { y, x: 43 });
+const elsevierDoc = () => docOf([{
+  page: 1, width: 595, height: 794, lines: [
+    line('Analytical Biochemistry 438 (2013) 1-10', 6.38, FACE_SUB, { y: 770, x: 240 }),
+    line('Contents lists available at SciVerse ScienceDirect', 7.97, FACE_SUB, { y: 755, x: 211 }),
+    line('Analytical Biochemistry', 13.95, FACE_SUB, { y: 735, x: 224 }),
+    line('j o u r n a l h o m e p a g e : w w w . e l s e v i e r . c o m / l o c a t e / y a b i o', 7.97, FACE_SUB, { y: 720, x: 186 }),
+    line('Direct translocation of cell-penetrating peptides in liposomes: A combined', 13.45, FACE_SUB, { y: 700, x: 43 }),
+    line('mass spectrometry quantification and fluorescence detection study', 13.45, FACE_SUB, { y: 687, x: 43 }),
+    line('Astrid Walrant a, Lucrèce Matheron a,b, Sophie Cribier a, Isabel D. Alves a,c', 10.56, FACE_SUB, { y: 670, x: 43 }),
+    line('a UMR 7203 CNRS, ENS, Laboratoire des Biomolécules, 75005 Paris, France', 6.38, FACE_SUB_I, { y: 654, x: 43 }),
+    line('a b s t r a c t', 8.97, FACE_SUB, { y: 640, x: 207, col: 1 }),
+    elsAbstract(628), elsAbstract(615), elsAbstract(602), elsAbstract(589), elsAbstract(576),
+    line('1. Introduction', 7.97, FACE_SUB_B, { y: 560, x: 43 }),
+    elsBody(547), elsBody(534), elsBody(521),
+    line('2. Materials and methods', 7.97, FACE_SUB_B, { y: 505, x: 43 }),
+    elsBody(490), elsBody(477),
+    line('3. Results and discussion', 7.97, FACE_SUB_B, { y: 460, x: 43 }),
+    elsBody(445), elsBody(432),
+    line('References', 7.97, FACE_SUB, { y: 410, x: 43 }),
+    line('10 Direct translocation of the thing / A. Walrant et al. / Anal. Biochem. 438 (2013) 1-10', 6.38, FACE_SUB, { y: 398, x: 43 }),
+    elsEntry(1, 386), elsEntry(2, 374),
+    line('[4] S. El-Andaloussi et al., Cargo-dependent cytotoxicity and delivery efficacy, Biochem. J. 407 (2007) 285-292.', 6.38, FACE_SUB, { y: 362, x: 43 }),
+    elsEntry(5, 350),
+  ],
+}]);
+
 /* ---- LA DÉTECTION, CAS PAR CAS ---------------------------------------------- */
 const acs = detectPublicationFormat(acsDoc());
 ok(!!acs.bundle, 'ACS-like fixture: a format was read');
@@ -124,6 +166,60 @@ ok(sci.bundle.bibLabel === '', 'no heading over the reference list → bibLabel 
 ok(sci.bundle.bibFieldsOff.indexOf('title') >= 0, 'the article titles are absent → the Title field is switched off');
 ok(sci.bundle.names === 'initials-family', 'author names = “J. A. Smith” (' + sci.bundle.names + ')');
 ok(sci.bundle.inText === 'sup', 'in-text citations: superscript');
+
+/* ---- 3. LA PAGE D'ELSEVIER : LES TROIS LIMITES SIGNALÉES -------------------- */
+const els = detectPublicationFormat(elsevierDoc());
+ok(els.bundle.layout.body.size === 8, 'the body is 8 pt (' + els.bundle.layout.body.size + ')');
+ok(els.bundle.layout.title.size === 13,
+  'the article TITLE is 13 pt, not the journal name printed above it in 14 (' + els.bundle.layout.title.size + ')');
+ok(els.bundle.layout.authors.size === 11,
+  'the AUTHORS are 11 pt — read on the line of authors, not on the address of the journal (' + els.bundle.layout.authors.size + ')');
+ok(els.bundle.layout.bibliography.size === 6,
+  'the reference character is the one of its ENTRIES (6 pt), not the one of its heading (' + els.bundle.layout.bibliography.size + ')');
+ok(els.bundle.bibLabel === 'References',
+  'the reference list is found though its heading is printed at the body size and not bold (' + els.bundle.bibLabel + ')');
+ok(els.bundle.etAl === 0,
+  'one single “et al.” in one entry does not cut every list: et al. limit = ' + els.bundle.etAl);
+ok(els.bundle.order[0] === 'introduction' && els.bundle.order.indexOf('references') > 0,
+  'the SECTIONS are the printed ones, in their order: ' + els.bundle.order.join(' → '));
+ok(els.bundle.order.join(' ').indexOf('walrant') === -1
+  && els.bundle.order.join(' ').indexOf('biochimica') === -1
+  && els.bundle.order.join(' ').indexOf('direct translocation') === -1,
+  'the head of the article (title, authors, journal name) is NOT in the section order');
+ok(!!(els.bundle.layout.page && els.bundle.layout.page.columns === 2),
+  'the page prints in two columns → the format takes the two-column page (' + JSON.stringify(els.bundle.layout.page) + ')');
+ok(/fields printed authors/.test(els.evidence.join(' | ')),
+  'the evidence states the ORDER of the reference fields: ' + els.evidence.filter((e) => /references/.test(e))[0]);
+
+/* ---- 4. LA LECTURE ELLE-MÊME : LA LIGNE D'AUTEURS ET LES POLICES RENOMMÉES -- */
+/* Les runs d'une ligne d'auteurs d'un PDF d'Elsevier, tels que pdfjs les donne :
+   les signes d'affiliation sont posés EN EXPOSANT (+4,7 pt) au milieu de la ligne. */
+const bylineItems = [
+  { str: 'Astrid Walrant', x: 42.6, y: 565.1, width: 72.7, size: 10.56, eol: false },
+  { str: '  ', x: 115.3, y: 565.1, width: 0.2, size: 10.56, eol: false },
+  { str: 'a', x: 117.1, y: 569.8, width: 4.1, size: 7.04, eol: false },
+  { str: ', Lucrèce Matheron', x: 121.2, y: 565.1, width: 94.4, size: 10.56, eol: false },
+  { str: 'a,b', x: 217.4, y: 569.8, width: 10.5, size: 7.04, eol: false },
+  { str: ', Sophie Cribier', x: 227.9, y: 565.1, width: 75.2, size: 10.56, eol: true },
+  { str: 'a UMR 7203 CNRS, ENS, Laboratoire des Biomolécules', x: 43, y: 553, width: 200, size: 6.38, eol: true },
+];
+const bylineLines = linesOfPage(bylineItems);
+ok(bylineLines.length === 2, 'a raised affiliation marker does not split its line: 2 lines, not 4 (' + bylineLines.length + ')');
+ok(/Astrid Walrant.*Sophie Cribier/.test(bylineLines[0].text) && bylineLines[0].size === 10.56,
+  'the whole line of authors at its own size: “' + bylineLines[0].text + '” ' + bylineLines[0].size + ' pt');
+ok(typefaceOf('OFMPPN+AdvGulliv-B', 'serif').bold === true
+  && typefaceOf('OFNAAP+AdvGulliv-I').italic === true
+  && typefaceOf('OFMPPN+AdvGulliv-R').bold === false && typefaceOf('OFMPPN+AdvGulliv-R').italic === false,
+  'a renamed face keeps its style letter: “-B” bold, “-I” italic, “-R” neither');
+ok(typefaceOf('AdvTT28000ce1.B').bold === true, 'a style letter glued by a dot (“AdvTT28000ce1.B”) reads as bold');
+ok(typefaceOf('OFMPPN+AdvGulliv-R', 'serif').serif === true && typefaceOf('OFMPPN+AdvP4C4E51', 'sans-serif').serif === false,
+  'an opaque family takes the class pdfjs knows: “serif” vs “sans-serif”');
+const elsFieldLines = referenceFieldPositions({
+  text: 'H. Raagel, P. Saalik, Methods Mol Biol 683 (2011) 165-175.',
+  lines: [{ text: 'x', chars: 1, runs: [] }],
+});
+ok(elsFieldLines.indexOf('volume') >= 0 && elsFieldLines.indexOf('volume') < elsFieldLines.indexOf('year'),
+  'the volume is read where it is PRINTED, before the year (“683 (2011)”): ' + elsFieldLines.join(' › '));
 
 /* ---- LE PAQUET S'APPLIQUE COMME UN JOURNAL DE LA LISTE (le chemin du pannello) */
 const applied = applyDetectedFormat({}, acs.bundle);

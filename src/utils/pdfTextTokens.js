@@ -111,17 +111,58 @@ const SANS_RE = /(helv|arial|roboto|calibri|verdana|segoe|lato|open sans|liberat
 const BOLD_RE = /(bold|black|heavy|semibold|semi bold|demi|blk|extrabold|ultrabold)/;
 const ITALIC_RE = /(italic|oblique|slanted|inclined|cursive)/;
 
-/** « ABCDEF+TimesNewRoman-BoldItalic » → { name, family, bold, italic, serif }. */
-export const typefaceOf = (rawName) => {
-  const name = String(rawName || '').replace(SUBSET_PREFIX, '').replace(/[,\-_]+/g, ' ').replace(/\s+/g, ' ').trim();
+/* LA LETTRE DE STYLE D'UNE POLICE RENOMMÉE — « OFMPPN+AdvGulliv-R », « …-B »,
+   « …-I », « …-BI ». Un grand éditeur donne à ses polices le nom de son choix
+   (« AdvGulliv » pour Advantage Gulliver, « AdvP4C4E51 » pour une police de
+   tableau) et cache le nom d'origine : la seule chose qui reste LISIBLE est la
+   LETTRE du style, collée après le tiret. Sans elle, l'intitulé d'une section en
+   gras se lit comme du texte ordinaire — et une page de revue se couvre alors de
+   « sections » qui n'en sont pas (mesuré sur un PDF d'Elsevier : les intitulés
+   sont en « AdvGulliv-B », la liste des références en « AdvGulliv-R »). Le mot
+   entier (« bold », « italic ») est déjà reconnu par BOLD_RE / ITALIC_RE ; ce qui
+   suit ne lit QUE la lettre isolée, et seulement en dernier mot du nom. */
+const STYLE_LETTER_BOLD = /^(?:b|bd|bk|bi|ib|bold|black|heavy)$/;
+const STYLE_LETTER_ITALIC = /^(?:i|it|bi|ib|italic|oblique|slanted)$/;
+
+/** « ABCDEF+TimesNewRoman-BoldItalic » → { name, family, bold, italic, serif }.
+ *
+ *  `fallbackName` (facultatif) = CE QUE pdfjs DIT DE LA POLICE quand son nom ne
+ *  dit rien : « serif », « sans-serif », « monospace ». pdfjs tient sa propre
+ *  table des polices renommées et y répond mieux que ce module ne peut le faire
+ *  par le nom (« AdvGulliv-R » → « serif », « AdvP4C4E51 » → « sans-serif ») :
+ *  c'est donc lui qu'on croit quand le nom ne porte aucun mot connu — sinon un
+ *  texte en Times se serait lu « Arial » parce que sa famille s'appelle
+ *  « AdvGulliv ». Rien d'inventé pour autant : sans nom reconnu ni réponse de
+ *  pdfjs, la famille reste celle du programme. */
+export const typefaceOf = (rawName, fallbackName) => {
+  const raw = String(rawName || '').replace(SUBSET_PREFIX, '');
+  const name = raw.replace(/[,\-_]+/g, ' ').replace(/\s+/g, ' ').trim();
   const lower = name.toLowerCase();
   const sans = SANS_RE.test(lower);
+  /* Le DERNIER mot du nom, quand il ne dit que le style : « … Gulliv B », et aussi
+     « AdvTT28000ce1.B » (le point sépare la lettre du nom de la police — c'est la
+     forme qu'emploie un PDF d'Elsevier, dont les intitulés en gras n'étaient donc
+     pas lus comme gras). Il faut qu'un nom de famille le précède — un nom d'un seul
+     mot (« AdvP4C4E51 ») ne dit rien. */
+  const words = raw.split(/[,\s\-_.]+/).filter(Boolean);
+  const last = String(words[words.length - 1] || '').toLowerCase();
+  const before = String(words[words.length - 2] || '');
+  const letter = words.length > 1 && /^[a-z]{1,7}$/.test(last) && /[a-z]{2}/i.test(before);
+  const bold = BOLD_RE.test(lower) || (letter && STYLE_LETTER_BOLD.test(last));
+  const italic = ITALIC_RE.test(lower) || (letter && STYLE_LETTER_ITALIC.test(last));
+  const fallback = String(fallbackName || '');
+  const serifByName = SERIF_RE.test(lower);
+  /* La réponse de pdfjs ne parle que si le nom est muet : une famille reconnue
+     (« Times », « Arial ») garde ce que son nom dit. */
+  const serifByClass = !serifByName && !sans && /^serif$/i.test(fallback);
   return {
     name,
-    family: name.replace(/\s*(bold|black|heavy|semi ?bold|demi ?bold|extrabold|ultrabold|italic|oblique|regular|roman|normal|mt|psmt|ps|pro|std)\s*/gi, ' ').trim(),
-    bold: BOLD_RE.test(lower),
-    italic: ITALIC_RE.test(lower),
-    serif: !sans && SERIF_RE.test(lower),
+    family: (letter ? words.slice(0, -1).join(' ') : name)
+      .replace(/\s*(bold|black|heavy|semi ?bold|demi ?bold|extrabold|ultrabold|italic|oblique|regular|roman|normal|mt|psmt|ps|pro|std)\s*/gi, ' ').trim(),
+    bold,
+    italic,
+    serif: !sans && (serifByName || serifByClass),
+    fallback,
   };
 };
 
@@ -138,6 +179,9 @@ export const pubFontOfTypeface = (face) => {
   if (/verdana/.test(f)) return 'Verdana, Geneva, sans-serif';
   if (/(helv|arial|roboto|lato|open sans|futura|univers|frutiger|gill|tahoma|trebuchet)/.test(f)) return 'Arial, Helvetica, sans-serif';
   if (/(times|serif|minion|charter|palatino|cambria|baskerville|century|roman|cmr|lmr|book)/.test(f)) return '"Times New Roman", Times, serif';
+  /* Le nom de la famille ne dit rien (un éditeur l'a renommée) : la classe que
+     pdfjs connaît prend le relais (voir typefaceOf). */
+  if (/mono/i.test(String((face && face.fallback) || ''))) return '"Courier New", monospace';
   return face && face.serif === false ? 'Arial, Helvetica, sans-serif' : '"Times New Roman", Times, serif';
 };
 
@@ -156,7 +200,14 @@ export const lineOf = (items, fallbackY = 0) => {
   const dominant = pool.reduce((best, it) => (
     String(it.str).trim().length > String(best.str).trim().length ? it : best
   ), pool[0]);
-  const size = Math.max.apply(null, list.map((it) => it.size || 0));
+  /* LA TAILLE DE LA LIGNE EST CELLE DE SON RUN DOMINANT — le plus de caractères —
+     et non la plus grande des runs : un seul glyphe venu d'une autre police (le
+     « μ » d'un « μM », un appel en exposant d'une police à part) montait la ligne
+     entière à 9,4 pt alors que son texte est à 7,97, et une ligne de corps de
+     texte se lisait alors « plus grosse que le corps » — donc comme un intitulé
+     (mesuré sur un PDF d'Elsevier : des phrases entières de la Discussion
+     entraient dans l'ordre des sections). */
+  const size = Number((dominant.size || Math.max.apply(null, list.map((it) => it.size || 0))).toFixed(2));
   const x = Math.min.apply(null, list.map((it) => it.x));
   const xEnd = Math.max.apply(null, list.map((it) => it.x + (it.width || 0)));
   const sup = list.some((it) => it.size > 0 && it.size < size * 0.78
@@ -203,7 +254,15 @@ export const linesOfPage = (items) => {
          un run posé à la main (un appel de référence en exposant) y serait coupé
          de sa phrase. Un vrai passage à la ligne descend (y plus petit), un saut
          de colonne recule (x plus petit) : les deux sont déjà écartés. */
-      const sameLine = Math.abs((it.y || 0) - (prev.y || 0)) <= Math.max(1.5, Math.min(it.size || 0, prev.size || 0) * 0.45)
+      /* LA TOLÉRANCE SE MESURE SUR LE PLUS GRAND DES DEUX RUNS, pas sur le plus
+         petit : un marqueur d'affiliation posé EN EXPOSANT (« Walrant a,b ») monte
+         de ~0,45 fois la taille de la ligne, donc au-delà de la tolérance d'un
+         petit run — et la ligne d'auteurs d'un PDF d'Elsevier se coupait alors en
+         trois « lignes », ce qui faisait lire la mauvaise taille d'auteurs (8 pt
+         au lieu de 11 pt, mesuré). Un vrai interligne, lui, vaut plus d'une fois
+         la taille du texte : la marge reste donc franche. */
+      const sameLine = Math.abs((it.y || 0) - (prev.y || 0))
+        <= Math.max(1.5, Math.max(it.size || 0, prev.size || 0) * 0.45)
         && (it.x || 0) >= (prev.x || 0) - 1;
       if (!sameLine) flush();
     }
@@ -286,14 +345,21 @@ export const pdfTextLines = async (source, { maxPages = 10 } = {}) => {
       const key = String(id || '');
       if (!faces.has(key)) {
         let name = key;
+        let fallback = '';
         try {
           const store = page.commonObjs;
           const f = store && typeof store.get === 'function' && (typeof store.has !== 'function' || store.has(key))
             ? store.get(key)
             : (page.objs && typeof page.objs.get === 'function' ? page.objs.get(key) : null);
-          if (f) name = f.name || f.fallbackName || name;
+          if (f) {
+            name = f.name || f.fallbackName || name;
+            /* Ce que pdfjs dit de la POLICE elle-même (voir typefaceOf) : la
+               famille peut être renommée par l'éditeur, mais pdfjs garde la classe
+               de la police d'origine (« serif », « sans-serif »). */
+            fallback = f.fallbackName || '';
+          }
         } catch { /* l'identifiant, alors */ }
-        faces.set(key, typefaceOf(name));
+        faces.set(key, typefaceOf(name, fallback));
       }
       return faces.get(key);
     };
