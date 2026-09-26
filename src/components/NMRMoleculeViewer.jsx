@@ -11,7 +11,8 @@ import { LIGHT_RIG, nglKeyLightDirection, nglLightParams } from '../utils/viewer
 // budget of a still (RAY_MAX_PIXELS) and the antialias rule that keep a click on
 // ✨ Ray from turning into a render that never comes back.
 import {
-  RAY_FACTORS, RAY_DEFAULT_FACTOR, rayFactorOptions, rayPlanOf, rayProgressText, saveRayImage,
+  RAY_FACTORS, RAY_DEFAULT_FACTOR, rayFactorOptions, rayPlanOf, rayProgressText,
+  previewRayImage, previewUrlOf, releasePreviewUrl, downloadBlob,
 } from '../utils/viewerRayImage';
 // The CAST SHADOWS of a ✨ Ray still: NGL 2.4 has no shadow-map pass at all, so
 // the shadow is computed from the ATOMS with the camera and the key light of the
@@ -1354,6 +1355,34 @@ const LIPID_POLAR_ELEMENTS = new Set(['N', 'P', 'O', 'S']);
 const LIPID_NAMED_PROBE = new Set(['P', 'N', 'C1', 'C2', 'C3']);
 const LIPID_CHAIN_PROBE_RE = /^(?:C[23]\d|O[23]2)$/;
 
+/* ── À QUI APPARTIENT UNE NOMENCLATURE ? À UN RÉSIDU, PAS À UNE MOLÉCULE ────
+   LE DÉFAUT, vu sur une bicouche réelle : `named` était jugé sur TOUTE la
+   sélection des lipides. Une membrane de POPC + CHOLESTÉROL la passait donc
+   « nomenclature standard » grâce au POPC (P · C1 · C2 · C3 · C21 …) — et les
+   atomes du CHOLESTÉROL étaient lus avec ces règles-là. Or ses carbones de
+   cycles (C4 … C20) ne sont ni le squelette (C1 · C2 · C3 · O21 · O31) ni une
+   chaîne (C2x · C3x · O22 · O32) : ils tombaient donc dans le GROUPE DE TÊTE
+   (le repli « du côté sûr » de lipidGroupOf). Les rangées mesurées
+   « upper / lower headgroups » d'un feuillet recouvraient alors le noyau
+   hydrophobe, et styler les têtes rhabillait les chaînes acyle ET le glycérol.
+   LE RAPPORT : « the upper and lower headgroups changes the style of glycerol
+   and acyl chains (but it should affect only headgroups) ».
+
+   La nomenclature se juge donc PAR RÉSIDU, et elle demande le squelette d'un
+   PHOSPHOLIPIDE : un phosphore ÉCRIT `P`, un oxygène d'ester (`O21`/`O31`) ET
+   une chaîne (`C2x`/`C3x`). Ce qui ne les réunit pas — un cholestérol, un acide
+   gras, un sucre lipidique, une nomenclature séquentielle ou gros grain — prend
+   la règle des ÉLÉMENTS (voir lipidGroupOf) : les atomes POLAIRES sont la tête,
+   tout le reste une chaîne. Un carbone n'est donc plus JAMAIS une tête par
+   accident, et la tête du cholestérol redevient ce qu'elle est : son O3. */
+const LIPID_ESTER_PROBE_RE = /^O[23]1$/;
+const lipidNamingKnown = (names) => {
+  const list = (names || []).map((n) => String(n == null ? '' : n).replace(/\s+/g, '').toUpperCase());
+  return list.includes('P')
+    && list.some((n) => LIPID_ESTER_PROBE_RE.test(n))
+    && list.some((n) => LIPID_CHAIN_PROBE_RE.test(n));
+};
+
 // ── A hydrogen is placed by its BOND, never by its name ─────────────────────
 // A force field names the hydrogens of a chain after the POSITION in that chain,
 // not after the carbon they hang from. CHARMM36's POPC is the proof: C22 carries
@@ -1445,6 +1474,22 @@ const lipidSubSelections = (structure, lipidSele) => {
   }
   const named = atoms.some(([, n]) => LIPID_NAMED_PROBE.has(n.replace(/\s+/g, '').toUpperCase()))
     && atoms.some(([, n]) => LIPID_CHAIN_PROBE_RE.test(n.replace(/\s+/g, '').toUpperCase()));
+  /* …MAIS LA CLASSIFICATION, ELLE, SUIT LE RÉSIDU (voir lipidNamingKnown). La
+     sonde ci-dessus ne dit qu'une chose : « CE FICHIER connaît la nomenclature »
+     — c'est ce que la barre rapporte. Elle ne dit rien d'une molécule qui ne la
+     suit pas pour autant : dans une bicouche de POPC + CHOLESTÉROL, les carbones
+     de cycles du cholestérol tombaient ainsi dans le groupe de TÊTE, et les
+     rangées « upper / lower headgroups » d'un feuillet recouvraient le noyau
+     hydrophobe (« the upper and lower headgroups changes the style of glycerol
+     and acyl chains »). */
+  const namesOfRes = new Map();
+  atoms.forEach((a) => {
+    const list = namesOfRes.get(a[3]);
+    if (list) list.push(a[1]); else namesOfRes.set(a[3], [a[1]]);
+  });
+  const dialectOf = new Map();
+  namesOfRes.forEach((list, ri) => dialectOf.set(ri, lipidNamingKnown(list)));
+  const partOfAtom = (a) => lipidGroupOf(a[1], a[2], dialectOf.get(a[3]) === true);
   // PASS 1 — the heavy atoms carry the chemistry and are classified by NAME: the
   // backbone (C1 · C2 · C3 · O21 · O31), the chains (C21… · O22 · C31… · O32) and,
   // by exclusion, the headgroup.
@@ -1452,7 +1497,7 @@ const lipidSubSelections = (structure, lipidSele) => {
   const heavy = [];
   atoms.forEach((a) => {
     if (atomElement(a[1], a[2]) === 'H') return;
-    part.set(a[0], lipidGroupOf(a[1], a[2], named));
+    part.set(a[0], partOfAtom(a));
     heavy.push(a);
   });
   // PASS 2 — every HYDROGEN goes to the part of the heavy atom it is BONDED to:
@@ -1472,7 +1517,7 @@ const lipidSubSelections = (structure, lipidSele) => {
     const cutoff = best ? lipidBondCutoff('H', atomElement(best[1], best[2])) : 0;
     part.set(a[0], best && bestD2 <= cutoff * cutoff
       ? part.get(best[0])
-      : lipidGroupOf(a[1], a[2], named));
+      : partOfAtom(a));
   });
   const head = []; const glycerol = []; const acyl = [];
   atoms.forEach(([i]) => {
@@ -4044,6 +4089,28 @@ const nucleicRingPlates = (structure, sele, m) => {
     }, toNglSelection(sele));
   } catch { return null; }
   if (!residues.size) return null;
+  /* 1 bis. LE SUCRE LU POUR LE PONT, MÊME HORS DE LA SÉLECTION — LA PANNE de la
+     demande « the stylised rings of the DNA/RNA style should include the bond to
+     the ribose only when the latter is in “ring plate” style » : la rangée des
+     BASES ne sélectionne QUE les atomes des bases (`bases`), donc le pentose
+     n'était dans aucun de ses atomes, `ringsOf.pentose` restait vide et
+     `linkAtoms` ne sortait JAMAIS dans l'application (le test, lui, passait la
+     sélection `nucleic` entière et le trouvait). Le pentose est donc cherché dans
+     TOUTE LA STRUCTURE — mais seulement pour les résidus dont la base est DÉJÀ
+     dans la sélection, et le cycle reste lu sur le graphe de liaisons. Aucun atome
+     n'entre dans l'encadrement pour autant : seuls les deux atomes du pont en
+     sortent (voir linkAtoms). */
+  if (wantSugarForLink && residues.size) {
+    try {
+      structure.eachAtom((a) => {
+        if (String(a.element || '').toUpperCase() === 'H') return;
+        const res = residues.get(a.residueIndex);
+        if (!res || res.pentose.includes(a.index)) return;
+        if (nucleicGroupOf(a.atomname) !== 'pentose') return;
+        res.pentose.push(a.index);
+      });   // ← AUCUNE sélection : le sucre est celui du RÉSIDU, pas celui de la rangée
+    } catch { /* une structure sans atome n'a pas de pont */ }
+  }
   const position = [];
   const normal = [];
   const color = [];
@@ -5835,6 +5902,47 @@ const [rayMsg, setRayMsg] = useState('');
 // One token per render: a slow ray that is superseded by a second click may
 // never write its message (or clear the newer one) afterwards.
 const rayRunRef = useRef(0);
+/* ✨ L'APERÇU DE LA RAY — « Would it be possible to see on the screen the result of
+   ray before deciding to generate the image? » OUI : le clic rend la still et la
+   MONTRE (le PNG, à sa taille réelle), RIEN n'est écrit. L'aperçu porte le blob,
+   le nom du fichier que le 💾 écrira (`saveRayPreviewFile`), la taille réelle et
+   la note des ombres portées. L'objet URL qui porte l'image à l'écran est tenu par
+   une RÉFÉRENCE : il est libéré à la fermeture, à l'aperçu suivant et au démontage
+   du viewer (un objet URL garde son image en mémoire tant qu'il vit). La scène,
+   elle, n'a jamais été touchée : rien de tout cela ne change une représentation. */
+const [rayPreview, setRayPreview] = useState(null);
+const rayPreviewUrlRef = useRef('');
+const showRayPreview = (out) => {
+  if (rayPreviewUrlRef.current) releasePreviewUrl(rayPreviewUrlRef.current);
+  rayPreviewUrlRef.current = previewUrlOf(out.blob);
+  setRayPreview({
+    url: rayPreviewUrlRef.current,
+    blob: out.blob,
+    fileName: out.fileName,
+    width: out.width,
+    height: out.height,
+    transparent: !!out.transparent,
+    shadowNote: out.shadowNote || '',
+    saved: false,
+  });
+};
+const closeRayPreview = () => {
+  if (rayPreviewUrlRef.current) { releasePreviewUrl(rayPreviewUrlRef.current); rayPreviewUrlRef.current = ''; }
+  setRayPreview(null);
+};
+/* LE SEUL GESTE QUI ÉCRIT QUELQUE CHOSE : le 💾 de l'aperçu — le fichier que
+   l'aperçu montre, sous le nom qu'il annonce (le même downloadBlob qu'avant). */
+const saveRayPreviewFile = (preview) => {
+  if (!preview || !preview.blob) return;
+  const saved = downloadBlob(preview.blob, preview.fileName);
+  setRayPreview((prev) => (prev && prev.blob === preview.blob ? { ...prev, saved } : prev));
+  setRayMsg(saved
+    ? `✓ ${preview.fileName} — ${preview.width}×${preview.height} px${preview.transparent ? ' · transparent' : ''} · downloaded`
+    : `⚠️ ${preview.fileName} — the browser blocked the download (allow downloads for this page) · the preview is still on screen`);
+  setTimeout(() => setRayMsg(''), 8000);
+};
+// Le dernier aperçu est refermé quand le viewer s'en va : aucun objet URL ne survit.
+useEffect(() => () => { if (rayPreviewUrlRef.current) releasePreviewUrl(rayPreviewUrlRef.current); }, []);
 useEffect(() => {
   try { localStorage.setItem('labViewerRayFactor', String(rayFactor)); } catch { /* ignore */ }
 }, [rayFactor]);
@@ -11804,6 +11912,31 @@ const pdbSourceOfCurrent = () => {
   };
 };
 
+/* LA STRUCTURE QUE LA PAGE DÉFINIT — le PDB de « Molecular structure and
+   visualization » (son fichier, ses données, ou le texte déclaré) quand l'écran
+   montre DÉJÀ le modèle de la séquence. C'est LUI que « ↩ Back to PDB » doit
+   ramener après un « 🧬 Structure from sequence » : le modèle affiché, lui, est ce
+   que le bouton vient de reconstruire, donc il n'y a rien à ranger de ce côté. Le
+   rapport : « the button to recall predefined PDB after "from sequence" … does not
+   appear » — sans cette lecture, le seul candidat au rangement était le modèle
+   (== sequenceStructureText), rien n'était rangé, et le bouton ne pouvait JAMAIS
+   apparaître. Renvoie null quand la page n'a pas de PDB à elle. */
+const pageStructureStash = () => {
+  const text = structureText && String(structureText) !== String(sequenceStructureText) ? String(structureText) : '';
+  const dataUrl = typeof structureFileData === 'string' && /^data:/i.test(structureFileData) ? structureFileData : '';
+  const f = structureFile && !dataUrl ? structureFile : null;
+  if (!text && !dataUrl && !f) return null;
+  return {
+    file: f || null,
+    url: dataUrl || null,
+    text: text || null,
+    ext: String(structureTextExt || 'pdb').toLowerCase(),
+    name: (f && f.name) || structureFileName || (dataUrl ? 'the structure of this page' : 'the page structure'),
+    traj: null,
+    trajName: '',
+  };
+};
+
 const deleteLoadedPdb = () => {
   if (structOrigin !== 'external') return;
   const stash = pdbSourceOfCurrent();
@@ -11880,7 +12013,7 @@ const restoreStashedPdb = () => {
   flashStructAsideMsg(`↩ ${name} restored${traj ? ` with its trajectory (${traj.name || 'trajectory'})` : ''}.`);
 };
 
-/* ── ✏️ Modify · « 🧬 Build from sequence » ──────────────────────────────────
+/* ── ✏️ Modify · « 🧬 Structure from sequence » ──────────────────────────────
    Reconstruit la structure À PARTIR DE LA SÉQUENCE tapée dans la page, à tout
    moment — même quand un PDB est chargé : ce qui est à l'écran est alors rangé
    (mêmes règles que « 🗑 Delete PDB », et QUELLE QUE SOIT la façon dont il est
@@ -11888,7 +12021,8 @@ const restoreStashedPdb = () => {
    bouton « ↩ Back to PDB » posé juste à côté du bouton — comme le ↩ Restore PDB
    de §1 General, c'est la MÊME fonction — le ramène. Le texte est fabriqué par la
    page (proteinSequenceToPdbText / nucleicSequenceToPdbText) : aucun aller-retour
-   réseau. */
+   réseau. Le libellé a été renommé (« Structure from sequence ») : il dit ce que
+   le bouton FABRIQUE, à côté du PDB que la page définit. */
 const buildFromSequence = () => {
   if (!sequenceStructureText) {
     flashSeqBuildMsg('⚠️ No sequence on this page — type the Protein / DNA / RNA sequence in “Molecular structure and visualization” first.');
@@ -11903,9 +12037,12 @@ const buildFromSequence = () => {
      structure that was present before I clicked on "from sequence". Now it has
      disappeared. » Only the sequence model itself is not put aside: it IS what the
      button is about to rebuild, so there would be nothing to go back to. */
-  if (!stashedPdb && lastLoadedTextRef.current !== sequenceStructureText) {
-    const stash = pdbSourceOfCurrent();
-    if (stash.file || stash.url || stash.text) setStashedPdb(stash);
+  if (!stashedPdb) {
+    // Ce qui est à l'écran : ce que le viewer a chargé (un fichier, un PDB ID /
+    // URL, le texte de la page) — jamais le modèle de la séquence, qui est ce que
+    // le bouton s'apprête à reconstruire.
+    const stash = lastLoadedTextRef.current === sequenceStructureText ? pageStructureStash() : pdbSourceOfCurrent();
+    if (stash && (stash.file || stash.url || stash.text)) setStashedPdb(stash);
   }
   abortControl.abortAll();
   clearExtraMolecules();
@@ -11975,8 +12112,9 @@ const rebuildHydrogensNow = async () => {
    Its OWN button and its own handler: ✨ Ray renders the scene on screen — every
    palette, the ring plates, the ESP overlays, the clipping plane, the fog, the
    light rig, the trajectory frame — with NGL's own supersampling path
-   (utils/viewerRayImage.js: `factor²` tiles re-rendered and averaged) and writes
-   ONE PNG on the computer. Nothing here touches the scene: no representation is
+   (utils/viewerRayImage.js: `factor²` tiles re-rendered and averaged) et la MONTRE
+   à l'écran — l'aperçu (voir plus bas) ; c'est le 💾 de l'aperçu qui écrit le PNG
+   sur l'ordinateur, une fois le résultat VU. Nothing here touches the scene: no representation is
    rebuilt, no state of the viewer is changed, and NGL restores the canvas'
    sampling and clear alpha by itself when it is done.
 
@@ -12009,7 +12147,7 @@ const captureRay = async () => {
     // Elevation, see nglKeyLightDirection) and the strength chosen in the bar.
     // `shadows: false` is the plain supersampled still NGL drew before.
     const lamp = nglKeyLightDirection(shadowAz, shadowEl);
-    const out = await saveRayImage(stage, {
+    const out = await previewRayImage(stage, {
       label: file ? file.name : (pdbId || 'structure'),
       factor: rayFactor,
       transparent: rayTransparent,
@@ -12030,9 +12168,14 @@ const captureRay = async () => {
       shadowBlur: rayShadowBlur,
     });
     if (rayRunRef.current !== run) return;
-    setRayMsg(out.saved
-      ? `✓ ${out.fileName} — ${out.width}×${out.height} px${out.transparent ? ' · transparent' : ''}${out.shadowNote ? ` ${out.shadowNote}` : ''} · downloaded`
-      : `✓ rendered ${out.width}×${out.height} px${out.shadowNote ? ` ${out.shadowNote}` : ''} — the browser blocked the download (allow downloads for this page)`);
+    /* LE RENDU EST MONTRÉ, PAS ENCORE ÉCRIT. « Would it be possible to see on the
+       screen the result of ray before deciding to generate the image? » : le PNG
+       est à l'écran (showRayPreview), et les deux seuls gestes qui restent sont
+       le 💾 de l'aperçu (saveRayPreviewFile — le fichier que l'aperçu montre) et
+       sa fermeture, qui n'écrit rien. Le message dit la taille RÉELLE, la
+       transparence et ce qu'ont coûté les ombres portées. */
+    showRayPreview(out);
+    setRayMsg(`✓ ${out.width}×${out.height} px rendered${out.transparent ? ' · transparent' : ''}${out.shadowNote ? ` ${out.shadowNote}` : ''} — the preview is on screen: 💾 Save PNG writes the file`);
   } catch (err) {
     if (rayRunRef.current === run) {
       setRayMsg(`⚠️ Ray render failed (${(err && err.message) || 'unknown error'}) — try a smaller ×`);
@@ -13357,7 +13500,7 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
     onClick={captureRay}
     disabled={rayBusy}
     title={status === 'ready'
-      ? `Render a high-resolution still of the scene on screen: ${rayPlan.realWidth || 0}×${rayPlan.realHeight || 0} px${rayPlan.antialias ? ' (antialias pass)' : ''}, ${rayPlan.tiles || 0} tiles. It is NGL's own supersampling render of the very scene — every palette, the ring plates, the ESP surface, the fog and the light rig — and the PNG is downloaded to your computer. A size this GPU cannot take is reduced automatically, so the render never fails.`
+      ? `Render a high-resolution still of the scene on screen: ${rayPlan.realWidth || 0}×${rayPlan.realHeight || 0} px${rayPlan.antialias ? ' (antialias pass)' : ''}, ${rayPlan.tiles || 0} tiles. It is NGL's own supersampling render of the very scene — every palette, the ring plates, the ESP surface, the fog and the light rig. The still is SHOWN here first (✨ Ray preview): nothing is written until you press 💾 Save PNG, which downloads exactly the image you saw. A size this GPU cannot take is reduced automatically, so the render never fails.`
       : 'Load a structure first — ✨ Ray renders the 3D scene on screen at high resolution'}
     className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${rayBusy ? 'bg-amber-50 border-amber-300 text-amber-700 cursor-wait' : 'bg-white border-amber-300 text-amber-700 hover:bg-amber-50'}`}
   >
@@ -13455,10 +13598,10 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
 type="button"
 onClick={buildFromSequence}
 disabled={!sequenceStructureText}
-title="Build the 3D structure from the sequence typed in “Molecular structure and visualization” (Proteins / DNA / RNA) — the model the viewer shows whenever no PDB is loaded. A PDB already on screen is put aside, not lost: ↩ Restore PDB (§1 General) brings it back."
+title="Build the 3D structure from the sequence typed in “Molecular structure and visualization” (Proteins / DNA / RNA) — the model the viewer shows whenever no PDB is loaded. What is on screen is put aside, not lost: « ↩ Back to PDB », right here, and ↩ Restore PDB (§1 General) bring it back — including the PDB this page defines."
 className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap bg-white border-emerald-300 text-emerald-700 hover:bg-emerald-50 disabled:opacity-40 disabled:cursor-not-allowed"
 >
-🧬 From sequence
+🧬 Structure from sequence
 </button>
 {seqBuildMsg && (
 <span title={seqBuildMsg} className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-md px-2 py-1 h-7 inline-flex items-center max-w-[380px] truncate">
@@ -13468,12 +13611,17 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
 {/* ↩ Back to PDB — THE WAY BACK, WHERE THE GESTURE WAS MADE. §1 General's toggle
     does exactly the same thing (ONE implementation: restoreStashedPdb), but the
     report is explicit — the button that brings back the structure the viewer
-    showed BEFORE « 🧬 From sequence » has to be there, beside it: « before I had a
-    button to come back to the structure that was present before I clicked on "from
-    sequence". Now it has disappeared. » It appears exactly when a structure is put
-    aside and another one is on screen (pdbAsideIsRestore), i.e. in the very state
-    « From sequence » leaves the viewer in. */}
-{pdbAsideIsRestore && (
+    showed BEFORE « 🧬 Structure from sequence » has to be there, beside it: « before
+    I had a button to come back to the structure that was present before I clicked
+    on "from sequence". Now it has disappeared. » ET LE RAPPORT DE CETTE SESSION DIT
+    QU'IL N'APPARAISSAIT TOUJOURS PAS : « the button to recall predefined PDB after
+    "from sequence" … does not appear ». Sa condition exigeait en effet que la
+    structure rangée ne soit PAS celle d'un PDB chargé (`structOrigin !== 'external'`),
+    alors que le geste de retour doit se voir DÈS QUE quelque chose est de côté — le
+    titre dit lequel. Il apparaît donc pour TOUT ce qui est rangé, y compris le PDB
+    que la page définit (voir pageStructureStash, appelé par buildFromSequence
+    quand l'écran montre déjà le modèle de la séquence). */}
+{!!stashedPdb && (
 <button
 type="button"
 onClick={restoreStashedPdb}
@@ -14686,6 +14834,51 @@ className="text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white px-3 p
 </div>
 </div>
 </div>
+)}
+
+{/* ✨ L'APERÇU DE LA RAY — LE RENDU EST VU AVANT D'ÊTRE ÉCRIT. La demande :
+    « Would it be possible to see on the screen the result of ray before deciding
+    to generate the image? » Le PNG est donc MONTRÉ ici, à sa taille réelle, et
+    les deux seuls gestes qui restent sont ceux de l'utilisateur : 💾 Save PNG
+    écrit EXACTEMENT ce que l'aperçu montre (le même downloadBlob), et ✕ Close
+    n'écrit RIEN. Un clic sur le fond ferme aussi, et la scène n'a jamais été
+    touchée — ni par le rendu, ni par l'aperçu, ni par les deux boutons. */}
+{rayPreview && (
+  <div className="fixed inset-0 z-[99999] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4"
+    onClick={closeRayPreview}>
+    <div className="bg-white rounded-xl shadow-2xl p-4 max-w-[94vw] max-h-[94vh] flex flex-col gap-2"
+      onClick={(e) => e.stopPropagation()}>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-sm font-black text-slate-800">✨ Ray preview</span>
+        <span className="text-[11px] text-slate-500 font-mono">
+          {rayPreview.width}×{rayPreview.height} px{rayPreview.transparent ? ' · transparent' : ''}
+        </span>
+        {rayPreview.saved && <span className="text-[11px] font-bold text-emerald-700">✓ saved to your computer</span>}
+      </div>
+      {rayPreview.url ? (
+        <img src={rayPreview.url} alt={rayPreview.fileName}
+          className="max-h-[68vh] max-w-full object-contain rounded border border-slate-200 bg-slate-50" />
+      ) : (
+        <p className="text-xs text-slate-500 max-w-md">
+          The still could not be shown in this window — 💾 Save PNG still writes the file, exactly as it was rendered.
+        </p>
+      )}
+      {rayPreview.shadowNote && <p className="text-[11px] text-slate-500">{rayPreview.shadowNote}</p>}
+      <p className="text-[11px] text-slate-400 font-mono break-all max-w-[80vw]">{rayPreview.fileName}</p>
+      <div className="flex flex-wrap gap-2 justify-end">
+        <button type="button" onClick={closeRayPreview}
+          className="text-xs font-bold text-slate-500 hover:text-slate-700 px-3 py-2 rounded-lg"
+          title="Close the preview — nothing is written to your computer (the scene on screen is untouched)">
+          ✕ Close — write nothing
+        </button>
+        <button type="button" onClick={() => saveRayPreviewFile(rayPreview)}
+          className="text-xs font-bold bg-amber-500 hover:bg-amber-600 text-white px-3 py-2 rounded-lg shadow-sm"
+          title={`Write ${rayPreview.fileName} to your computer — the very image shown here, at ${rayPreview.width}×${rayPreview.height} px`}>
+          💾 Save PNG
+        </button>
+      </div>
+    </div>
+  </div>
 )}
 
 {/* "Replace or keep both?" — a structure is already loaded and the user picked new

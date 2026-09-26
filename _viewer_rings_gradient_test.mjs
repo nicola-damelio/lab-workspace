@@ -268,10 +268,31 @@ const proxy = (i) => ({
   z: atoms[i].z,
   eachBondedAtom: (cb) => { bondList[i].forEach((j) => cb(proxy(j))); },
 });
-const fakeStructure = {
-  eachAtom: (cb) => { atoms.forEach((a, i) => cb(proxy(i))); },
-  getAtomProxy: (i) => proxy(i),
+/* LE SÉLECTEUR, lui, n'arrive pas jusqu'ici : `toNglSelection` rend `undefined`
+   hors NGL, donc ce bouchon ne peut pas savoir ce que la rangée a sélectionné. Ce
+   bouchon dit donc LA SÉLECTION DE LA RANGÉE qu'il simule (le nom de la rangée →
+   le groupe chimique de `nucleicGroupOf`), et il applique le contrat des deux
+   passages de `nucleicRingPlates` : le PREMIER est celui de la sélection de la
+   rangée, tout passage SUIVANT est celui du pentose relu SANS sélection
+   (« 1 bis »). C'est exactement la panne de l'application qu'il faut pouvoir
+   reproduire : la rangée des bases sélectionne `bases`, le pentose n'est donc dans
+   AUCUN de ses atomes — et le pont doit quand même être trouvé. */
+const GROUP_OF_SEL = { bases: 'base', base: 'base', ribose: 'pentose', pentose: 'pentose', backbone: 'phosphate' };
+const fake = (visible) => {
+  const grp = GROUP_OF_SEL[visible] || '';       // '' = la rangée voit tout le nucléotide
+  let walks = 0;
+  return {
+    eachAtom: (cb) => {
+      walks += 1;
+      const whole = walks > 1;                     // le second passage : le pentose, hors sélection
+      atoms.forEach((a, i) => {
+        if (whole || !grp || H.nucleicGroupOf(a.atomname) === grp) cb(proxy(i));
+      });
+    },
+    getAtomProxy: (i) => proxy(i),
+  };
 };
+const fakeStructure = fake('nucleic');
 const MENU = {
   bases: 'rings', ringColour: 'base', ringColorHex: 0x000000, sugarPlate: true,
   groupColour: false, ringTransparency: H.RING_TRANSPARENCY_DEFAULT,
@@ -324,6 +345,19 @@ const linked = H.nucleicRingPlates(fakeStructure, 'nucleic', { ...MENU, sugarPla
 eq(linked.rings, sugarOff.rings, 'le sucre lu pour le pont n’ajoute AUCUNE facette');
 eq(linked.atomIndices, sugarOff.atomIndices, '…ni un seul atome au pourtour (C1’ compris : il reste à la plaque du sucre)');
 eq(linked.linkAtoms, plates.linkAtoms, '…mais la liaison glycosidique est bien trouvée : les deux plaques seront TENUES ensemble');
+/* ⚠ LA PANNE VUE DANS L'APPLICATION — la rangée des BASES ne sélectionne QUE les
+   atomes des bases (`bases`) : le pentose n'est dans AUCUN de ses atomes, et le pont
+   ne sortait donc JAMAIS (le test, lui, passait la sélection `nucleic` entière). Le
+   sucre doit être relu HORS de la sélection (voir nucleicRingPlates, « 1 bis »). */
+const basesOnly = H.nucleicRingPlates(fake('bases'), 'bases', { ...MENU, sugarPlate: false, sugarLink: true });
+ok(!!basesOnly, 'la rangée des bases construit ses plaques même quand sa sélection ne contient aucun atome du sucre');
+eq(basesOnly.rings, sugarOff.rings, '…elle ne remplit que les cycles des BASES (aucune facette pour le pentose)');
+eq(basesOnly.linkAtoms, plates.linkAtoms,
+  '…ET LE PONT EST TROUVÉ : le pentose est relu hors de la sélection, comme dans l’application');
+ok(basesOnly.atomIndices.every((i) => H.nucleicGroupOf(atoms[i].atomname) === 'base'),
+  '…sans ajouter un seul atome du sucre au pourtour (le C1’ reste à la plaque du ribose)');
+const basesPlain = H.nucleicRingPlates(fake('bases'), 'bases', { ...MENU, sugarPlate: false });
+eq(basesPlain.linkAtoms, [], '…et sans la plaque du sucre (`sugarLink` faux), aucun pont n’est même cherché');
 
 // « Colour by chemical group » allumé : chaque plaque prend la couleur de son GROUPE
 // (le ribose → la couleur du pentose, les bases → la couleur des bases).

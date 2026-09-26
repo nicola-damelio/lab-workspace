@@ -392,5 +392,57 @@ ok(wholeDoc.indexOf('<w:drawing') > wholeDoc.indexOf('After the figure.'),
 ok(wholeDoc.indexOf('Paragraph 0.') < wholeDoc.indexOf('Paragraph 11.'),
   '…et l’ordre du texte, lui, ne bouge pas');
 
+/* ══ 8 bis. LA LÉGENDE NE RESTE JAMAIS DERRIÈRE SA FIGURE ══════════════════
+   Le rapport de cette session : « some figure captions are detached from the figure
+   and this cannot be; they should always follow the figure ». Quatre causes, quatre
+   verrous : une légende LONGUE (le repli de 300 caractères ne la reconnaissait pas),
+   une légende qui porte une IMAGE (un `<w:drawing>` : elle était prise pour une
+   seconde figure), une légende en PLUSIEURS paragraphes (un seul était emmené), et
+   une figure dont l'image, plafonnée à 90 % de la colonne, ne laissait pas la place
+   de sa légende — Word coupait alors le groupe en deux. */
+const longCaption = `Figure 7. ${'c'.repeat(420)}`;
+const longUnstyled = reflowFigures(wPara(longText) + wFigure + wPara(longCaption) + wPara(tailText), null);
+ok(longUnstyled.indexOf(longCaption) > longUnstyled.indexOf('<w:drawing')
+  && longUnstyled.indexOf(longCaption) > longUnstyled.indexOf(tailText),
+  'une légende LONGUE sans style (« Figure 7. … ») part avec sa figure : son titre la nomme');
+
+const wCaptionIcon = '<w:p><w:pPr><w:pStyle w:val="Caption"/></w:pPr>'
+  + '<w:r><w:drawing><wp:inline><wp:extent cx="100000" cy="100000"/></wp:inline></w:drawing></w:r>'
+  + '<w:r><w:t xml:space="preserve">Figure 8. Icone.</w:t></w:r></w:p>';
+const iconCaption = reflowFigures(wPara(longText) + wFigure + wCaptionIcon + wPara(tailText), null);
+ok(iconCaption.indexOf('Figure 8. Icone.') > iconCaption.indexOf(tailText),
+  'une légende qui porte une ICÔNE (un `<w:drawing>` dans son paragraphe) reste une légende : le style est la certitude');
+
+const wCaptionNext = '<w:p><w:pPr><w:pStyle w:val="Caption"/></w:pPr>'
+  + '<w:r><w:t xml:space="preserve">Figure 9 (suite).</w:t></w:r></w:p>';
+const multiCaption = reflowFigures(wPara(longText) + wFigure + wCaptionStyled + wCaptionNext + wPara(tailText), null);
+ok(multiCaption.indexOf('Figure 1. Legende.') > multiCaption.indexOf(tailText)
+  && multiCaption.indexOf('Figure 9 (suite).') > multiCaption.indexOf('Figure 1. Legende.'),
+  'une légende en DEUX paragraphes voyage ENTIÈRE : le second suivrait sinon la figure de loin');
+/* …ET CELUI QUI SUIT UN TABLEAU N'EST PAS UNE LÉGENDE DE FIGURE : le titre d'un
+   tableau se pose AU-DESSUS de lui — il reste avec son tableau. */
+const wTable = '<w:tbl><w:tr><w:tc><w:p><w:r><w:t xml:space="preserve">T</w:t></w:r></w:p></w:tc></w:tr></w:tbl>';
+const tableTitle = reflowFigures(wPara(longText) + wFigure + wCaptionStyled + wTable + wPara(tailText), null);
+ok(tableTitle.indexOf('Figure 1. Legende.') < tableTitle.indexOf('<w:tbl'),
+  'une légende stylée posée AU-DESSUS d’un tableau n’est pas emmenée par la figure d’avant');
+
+/* LA FIGURE SI HAUTE QUE WORD COUPERAIT LE GROUPE : le plafond de 90 % de la
+   colonne laisse ~1,5 cm sous l'image, donc une légende de quatre lignes débordait
+   d'une page — et Word mettait la légende seule sur la suivante. L'image est
+   réduite juste assez pour que les deux tiennent ENSEMBLE, son rapport gardé. */
+const tallFigure = '<w:p><w:r><w:drawing><wp:inline><wp:extent cx="6126624" cy="8326755"/>'
+  + '</wp:inline></w:drawing></w:r></w:p>';
+const bigCaption = wCaptionStyled + wCaptionNext + wCaptionNext + wCaptionNext;
+const fittedGroup = reflowFigures(tallFigure + bigCaption, null);
+const fitExtent = /<wp:extent cx="(\d+)" cy="(\d+)"\/>/.exec(fittedGroup);
+ok(Number(fitExtent && fitExtent[2]) < 8326755,
+  'une figure trop haute pour rester avec sa légende est RÉDUITE : Word ne peut plus séparer les deux');
+ok(blockHeight(fittedGroup, metrics) <= metrics.height,
+  '…et le groupe entier (image + légende) tient alors dans une page');
+ok(Math.abs((Number(fitExtent[1]) / Number(fitExtent[2])) - (6126624 / 8326755)) < 0.001,
+  '…sans déformer la figure : son rapport est gardé (les deux extensions sont réécrites ensemble)');
+eq(reflowFigures(wFigure + wCaptionStyled, null), wFigure + wCaptionStyled,
+  'une figure qui tient déjà avec sa légende n’est ni déplacée ni réduite');
+
 console.log(`_pub_docx_export_test.mjs — ${passed} assertions OK (export .docx du document)`);
 

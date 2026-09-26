@@ -855,6 +855,8 @@ const LSUBS = new Function('NGL', [
   sliceDecl(VIEW, 'LIPID_POLAR_ELEMENTS'),
   sliceDecl(VIEW, 'LIPID_NAMED_PROBE'),
   sliceDecl(VIEW, 'LIPID_CHAIN_PROBE_RE'),
+  sliceDecl(VIEW, 'LIPID_ESTER_PROBE_RE'),
+  sliceFn(VIEW, 'lipidNamingKnown'),
   sliceDecl(VIEW, 'LIPID_COVALENT_RADII'),
   sliceFn(VIEW, 'lipidBondCutoff'),
   sliceFn(VIEW, 'lipidGroupOf'),

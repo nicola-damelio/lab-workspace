@@ -52,6 +52,7 @@ import {
   viewerPixelsOf, rayPixelsOf, clampRayFactor, rayFactorOptions, rayProgressText,
   rayTilesOf, rayAntialiasFor, rayPlanOf,
   captureRayImage, saveRayImage, rayFileName, rayStamp, downloadBlob, rayDimLimitOf,
+  previewRayImage, previewUrlOf, releasePreviewUrl,
 } from './src/utils/viewerRayImage.js';
 // La référence de l’ombre : le masque de la caméra AU REPOS, construit à la main
 // (voir §2quater — le rendu tuilé d’NGL laisse la caméra dans sa dernière tuile).
@@ -378,6 +379,22 @@ eq(saved.fileName, 'Ray_test_3200x1800_2026-09-24_1507.png', 'saveRayImage nomme
 eq(saved.saved, false, 'hors navigateur l’enregistrement échoue proprement (le viewer le dit dans son message)');
 ok(!!saved.blob && saved.width === 3200, '…et l’image est bien rendue quand même (le résultat reste exploitable)');
 
+/* ── 2quater. L’APERÇU — LE RENDU MONTRÉ AVANT LE FICHIER ─────────────────
+   La demande de cette session : « Would it be possible to see on the screen the
+   result of ray before deciding to generate the image? » `previewRayImage` rend
+   EXACTEMENT comme `saveRayImage` (le même `captureRayImage` : même scène, même
+   budget, mêmes ombres portées) mais N’ÉCRIT RIEN : le blob revient à l’appelant
+   avec le nom que le 💾 de l’aperçu écrira. */
+calls.length = 0;
+const shown = await previewRayImage(captureStage(1200, 800), { label: 'aperçu', factor: 2, date: day });
+eq(shown.fileName, 'Ray_apercu_2400x1600_2026-09-24_1507.png',
+  'l’aperçu annonce DÉJÀ le nom du fichier que le 💾 écrira (taille réelle et date)');
+ok(!!shown.blob && shown.width === 2400 && shown.height === 1600,
+  '…et il porte bien l’image rendue, à sa taille réelle');
+eq(calls.length, 1, 'un seul passage par NGL pour l’aperçu : l’enregistrement ne re-rend pas la scène');
+eq(previewUrlOf(null), '', 'sans blob il n’y a pas d’URL d’aperçu (rien à montrer)');
+eq(releasePreviewUrl(''), false, '…et rien à libérer quand il n’y en a pas');
+
 /* ── 2 bis. LE CHIEN DE GARDE : UN RENDU QUI NE RÉPOND PLUS ────────────────
    Le rapport : « start ray tracing … hangs ». `makeImage` est une promesse que RIEN
    n'oblige à se résoudre (contexte WebGL perdu, pilote qui ne rend jamais son GPU) et
@@ -425,7 +442,7 @@ has('const [raySizes, setRaySizes] = useState(() => rayFactorOptions(null));',
   'la liste des résolutions est de l’état : les pixels affichés sont ceux de CETTE toile');
 has("window.addEventListener('resize', refresh);", '…et elle est rafraîchie quand la toile change de taille');
 has('const captureRay = async () => {', 'le gestionnaire de la « ray » est son propre gestionnaire');
-has('saveRayImage(stage, {', 'il passe par la fonction unique du module (le seul chemin vers NGL)');
+has('previewRayImage(stage, {', 'il passe par la fonction unique du module (le seul chemin vers NGL) — le rendu SANS écriture');
 has('onProgress: (done, total) => {', 'la progression des tuiles remonte dans le message');
 has('rayProgressText(done, total)', '…avec le format du module (testé plus haut)');
 
@@ -434,6 +451,18 @@ has("{rayBusy ? '✨ Rendering…' : '✨ Ray'}", 'son libellé dit quand il tra
 has('disabled={rayBusy}', '…et il est réellement désactivé pendant le rendu');
 has('⬚ alpha', 'la case du fond transparent est dans la barre, à côté du sélecteur');
 has('label: file ? file.name : (pdbId || \'structure\')', 'le nom du fichier vient de la structure chargée (fichier, sinon PDB)');
+
+/* L’APERÇU — la demande : « Would it be possible to see on the screen the result of
+   ray before deciding to generate the image? » Le rendu est MONTRÉ (l’objet URL de
+   l’état, l’`<img>` de la modale) et RIEN n’est écrit ; le 💾 de l’aperçu écrit le
+   fichier que l’aperçu montre, et sa fermeture n’écrit rien du tout. */
+has('const [rayPreview, setRayPreview] = useState(null);', 'un état d’aperçu de la « ray » existe');
+has('rayPreviewUrlRef', '…son objet URL est tenu par une référence (libéré à la fermeture, au nouvel aperçu et au démontage)');
+has('releasePreviewUrl(rayPreviewUrlRef.current)', '…et il est vraiment libéré (l’image ne reste pas en mémoire)');
+has('<img src={rayPreview.url}', 'le PNG du rendu est MONTRÉ à l’écran, avant tout fichier');
+has('const saveRayPreviewFile = (preview) => {', 'le 💾 de l’aperçu écrit LE fichier montré (downloadBlob, comme avant)');
+has('onClick={() => saveRayPreviewFile(rayPreview)}', '…et il est branché sur cet aperçu précis');
+has('✕ Close — write nothing', 'la fermeture de l’aperçu n’écrit RIEN');
 
 /* L’ADDITIVITÉ — le point le plus important de la demande. */
 const bodyOf = (name) => {
@@ -462,6 +491,12 @@ ok(rayBody.includes('onStatus: (text) => {'),
   'la SECONDE moitié du travail (ombres portées + PNG) parle aussi : c’est ce silence qui ressemblait à un rendu bloqué');
 ok(rayBody.includes('RAY_SLOW_HINT_MS'),
   '…et après 20 s la ligne de progression DIT que ce × est lourd sur cet écran (le rapport « il rendering non finisce mai »)');
+/* …ET L’ÉCRITURE N’EST PLUS DANS LE RENDU : le clic MONTRE la still (showRayPreview),
+   c’est le 💾 de l’aperçu qui écrit le fichier — « before deciding to generate the
+   image ». Aucun téléchargement ne part donc sans le geste de l’utilisateur. */
+ok(!rayBody.includes('downloadBlob('),
+  'le rendu lui-même N’ÉCRIT RIEN : l’écriture est un geste de plus, après le regard');
+ok(rayBody.includes('showRayPreview(out)'), '…le résultat part vers l’APERÇU, qui le met à l’écran');
 
 /* LE 📷 FIGURE A ÉTÉ RETIRÉ (la demande : « il pulsante figure é redundant ») —
    le handler, son message et l’import de la bibliothèque de figures ont disparu

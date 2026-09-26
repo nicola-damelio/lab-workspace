@@ -155,6 +155,8 @@ const H = new Function('NGL', [
   sliceDecl(VIEW, 'LIPID_POLAR_ELEMENTS'),
   sliceDecl(VIEW, 'LIPID_NAMED_PROBE'),
   sliceDecl(VIEW, 'LIPID_CHAIN_PROBE_RE'),
+  sliceDecl(VIEW, 'LIPID_ESTER_PROBE_RE'),
+  sliceFn(VIEW, 'lipidNamingKnown'),
   sliceDecl(VIEW, 'LIPID_COVALENT_RADII'),
   sliceFn(VIEW, 'lipidBondCutoff'),
   sliceFn(VIEW, 'atomElement'),
@@ -396,6 +398,37 @@ const rawTail = list(H.sectionRowSele(RAW_STRUCT, { sele: '[POPC]', kind: 'lipid
 ok(rawTail.includes(rawIdx('O1')) || rawTail.includes(rawIdx('O2')),
   'même là, la « chaîne » prend l’oxygène auquel elle pend (la règle ne lit que les liaisons)');
 ok(bonded(RAW_STRUCT, rawIdx('C3'), rawIdx('O1')), 'preuve : la liaison O1–C3 existe dans le graphe');
+/* ── LE CHOLESTÉROL N'EST PAS UN PHOSPHOLIPIDE (la nomenclature suit le RÉSIDU) ─
+   Le défaut : la nomenclature était jugée sur TOUTE la sélection des lipides.
+   Une bicouche de POPC + CHOLESTÉROL la passait donc « standard » grâce au POPC,
+   et les atomes du cholestérol étaient lus avec CES règles-là : ses carbones de
+   cycles (C4 … C20) ne sont ni C1/C2/C3 ni C2x/C3x, donc ils tombaient dans les
+   TÊTES (« du côté sûr », voir lipidGroupOf). Les rangées mesurées « upper / lower
+   headgroups » d'un feuillet recouvraient alors le noyau hydrophobe, et styler les
+   têtes rhabillait les chaînes acyle ET le glycérol — le rapport : « the upper and
+   lower headgroups changes the style of glycerol and acyl chains (but it should
+   affect only headgroups) ». La nomenclature est donc jugée PAR RÉSIDU
+   (lipidNamingKnown), et elle demande le squelette d'un PHOSPHOLIPIDE. */
+const CHOL_NAMES = [['O3', 'O'], ['C3', 'C'], ['C4', 'C'], ['C5', 'C'], ['C6', 'C'], ['C7', 'C'],
+  ['C8', 'C'], ['C9', 'C'], ['C10', 'C'], ['C11', 'C'], ['C12', 'C'], ['C13', 'C'], ['C14', 'C'],
+  ['C15', 'C'], ['C16', 'C'], ['C17', 'C'], ['C18', 'C'], ['C19', 'C'], ['C20', 'C'],
+  ['C21', 'C'], ['C22', 'C'], ['C23', 'C'], ['C24', 'C'], ['C25', 'C'], ['C26', 'C'], ['C27', 'C']];
+const mixAtoms = [
+  ...LIPID_ATOMS.map(([n, e], i) => [n, e, 'POPC', 'A', 1, 3.0 * i, 0, 0]),
+  ...CHOL_NAMES.map(([n, e], i) => [n, e, 'CHOL', 'B', 2, 3.0 * i, 20, 0]),
+];
+const MIX_STRUCT = await loadPdb(pdbOf(mixAtoms, LIPID_BONDS));
+const mixParts = H.lipidSubSelections(MIX_STRUCT, '[POPC] or [CHOL]');
+const mixIdx = (resn, name) => atomIndices(MIX_STRUCT, `[${resn}] and .${name}`)[0];
+eq(CHOL_NAMES.map(([n]) => n).filter((n) => mixParts.headAtoms.has(mixIdx('CHOL', n))), ['O3'],
+  'dans POPC + CHOL, la TÊTE du cholestérol est son SEUL atome polaire (O3) : aucun carbone du noyau');
+ok(mixParts.acylAtoms.has(mixIdx('CHOL', 'C4')) && mixParts.acylAtoms.has(mixIdx('CHOL', 'C17')),
+  '…ses carbones de cycles sont des chaînes : styler les têtes ne les rhabille plus');
+ok(mixParts.glycerolAtoms.has(mixIdx('POPC', 'C1')) && mixParts.acylAtoms.has(mixIdx('POPC', 'C21')),
+  '…et le POPC de la MÊME bicouche garde sa nomenclature à lui (squelette · chaînes)');
+ok(mixParts.headAtoms.has(mixIdx('POPC', 'N')) && mixParts.headAtoms.has(mixIdx('POPC', 'P')),
+  '…sa tête par NOM (le phosphate et la choline), comme avant');
+ok(mixParts.named, 'la sonde du FICHIER, elle, ne change pas : ce fichier connaît la nomenclature (son POPC)');
 
 /* ══ 3. LES ACIDES NUCLÉIQUES : LA RIBOSE → LES BASES ET LE SQUELETTE ═══════════
    « nucleic acid ribose or desoxyribose must show their bond to the bases and to the

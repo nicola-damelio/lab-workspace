@@ -654,6 +654,63 @@ export const blockHeight = (block, metrics) => {
   const lines = text ? Math.max(1, Math.ceil(text.length / m.charsPerLine)) : 0;
   return image + (lines * line) + m.after;
 };
+/* ── LA LÉGENDE NE RESTE JAMAIS DERRIÈRE SA FIGURE ─────────────────────────
+   Une figure PLUS HAUTE QUE LA PAGE ne peut tenir nulle part : Word la met
+   seule sur une page et pousse sa légende sur la suivante — le rapport :
+   « some figure captions are detached from the figure and this cannot be; they
+   should always follow the figure ». Le plafond de `drawingXml` (90 % de la
+   colonne) laisse bien la place d'une légende courte, mais une légende longue
+   (quatre lignes, deux paragraphes) déborde les 10 % restants, et l'image la
+   plus haute du document tombe exactement dans ce cas. Ici, quand le GROUPE
+   figure + légende dépasse la page, l'IMAGE est réduite — son rapport gardé —
+   juste assez pour que les deux tiennent ensemble : Word n'a plus à choisir. */
+const CAPTION_GAP = 240;              // twips : le blanc entre l'image et sa légende
+const MIN_IMAGE_SHARE = 0.25;         // une figure réduite sous un quart de page n'en est plus une
+
+/** Le `<w:drawing>` d'un bloc, RAMENÉ à `maxTwips` de haut (largeur et hauteur
+ *  réécrites ENSEMBLE, le rapport gardé) : Word lit `wp:extent` ET `a:ext`, un
+ *  cadre qui ne suivrait pas l'image la découperait. Inchangé quand l'image tient
+ *  déjà — un document dont les figures tiennent sur une page ressort au caractère
+ *  près. Pure, donc exécutable sous node. */
+export const scaleDrawingTo = (block, maxTwips) => {
+  const extent = /<wp:extent\b[^>]*\bcx="(\d+)"[^>]*\bcy="(\d+)"/.exec(block || '');
+  if (!extent) return block;
+  const cx = Number(extent[1]);
+  const cy = Number(extent[2]);
+  if (!(cx > 0 && cy > 0)) return block;
+  const maxEmu = Math.round(Number(maxTwips) * EMU_PER_TWIP);
+  if (!(maxEmu > 0) || cy <= maxEmu) return block;
+  const k = maxEmu / cy;
+  const nx = Math.max(1, Math.round(cx * k));
+  const ny = Math.max(1, Math.round(cy * k));
+  return String(block)
+    .replace(/(<wp:extent\b[^>]*\bcx=")\d+("[^>]*\bcy=")\d+(")/, `$1${nx}$2${ny}$3`)
+    .replace(/(<a:ext\b[^>]*\bcx=")\d+("[^>]*\bcy=")\d+(")/g, `$1${nx}$2${ny}$3`);
+};
+
+/** Le groupe figure + légende REMIS DANS UNE PAGE : au-delà, l'image est
+ *  réduite (voir CAPTION_GAP). Jamais sous `MIN_IMAGE_SHARE` de la page — une
+ *  légende plus haute qu'une page ne tient nulle part, et rapetisser la figure
+ *  n'y changerait rien : le groupe est alors rendu tel quel. Renvoie le MÊME
+ *  objet quand rien n'a bougé. */
+export const fitGroupOnPage = (group, metrics) => {
+  const m = metrics || docxPageMetrics(null);
+  if (!group || group.height <= m.height) return group;
+  const blocks = group.blocks || [];
+  const drawings = blocks.filter(blockHasDrawing).length;
+  if (drawings !== 1) return group;                     // deux images : on ne touche à rien
+  const captionH = blocks.reduce((s, b) => s + (blockHasDrawing(b) ? 0 : blockHeight(b, m)), 0);
+  const at = blocks.findIndex(blockHasDrawing);
+  const room = m.height - captionH - CAPTION_GAP;
+  const maxTwips = Math.max(Math.round(m.height * MIN_IMAGE_SHARE), room);
+  const shrunk = scaleDrawingTo(blocks[at], maxTwips);
+  if (shrunk === blocks[at]) return group;
+  const next = blocks.slice();
+  next[at] = shrunk;
+  return { blocks: next, height: next.reduce((s, b) => s + blockHeight(b, m), 0) };
+};
+
+
 
 /** Les blocs de PREMIER NIVEAU du corps (`<w:p>…</w:p>`, `<w:p/>`, `<w:tbl>…`) —
  *  un `<w:p>` d'une cellule de tableau appartient à son tableau. */
@@ -698,13 +755,39 @@ const HEADING_STYLE_RE = /<w:pStyle\b[^>]*\bw:val="Heading[1-9]"/;
  *  ferait passer le titre SOUS son premier paragraphe. Un document écrit avant que
  *  la légende ait son style garde le repli d'hier : un simple paragraphe de texte
  *  COURT (≤ 300 caractères), une seconde image ou un tableau n'y entrant jamais. */
+/* UNE LÉGENDE SE NOMME ELLE-MÊME. Un document importé (ou écrit avant que la
+   légende ait son style) garde « Figure 1. … » / « Fig. S2 — » / « Table 3. » :
+   ce paragraphe EST une légende, quelle que soit sa longueur. Sans cette lecture,
+   une légende longue et sans style restait seule pendant que la figure partait
+   sur la page suivante — le rapport : « some figure captions are detached from
+   the figure and this cannot be; they should always follow the figure ». */
+const CAPTION_LABEL_RE = /^(?:fig(?:ure)?|scheme|chart|plate|table)\s*\.?\s*s?\d+\b/i;
+
 const captionBlocksAfter = (queue) => {
+  /* LA LÉGENDE RECONNUE À SON STYLE, AUTANT DE PARAGRAPHES QU'ELLE EN PREND : un
+     `<figcaption>` posé sur deux paragraphes, une légende suivie de sa note. Le
+     style est une CERTITUDE, donc rien d'autre n'est exigé — pas même l'absence
+     d'image : une légende qui porte une icône (un ✏️, un logo) est une légende.
+     Deux garde-fous, pourtant : un INTITULÉ n'est jamais une légende (il suit la
+     figure sans la légender), et une légende posée AU-DESSUS d'un tableau
+     appartient à ce tableau (jamais emmenée). */
+  const styled = CAPTION_STYLE_RE.test(queue[0] || '');
+  let n = 0;
+  while (n < queue.length && CAPTION_STYLE_RE.test(queue[n] || '')) {
+    if (HEADING_STYLE_RE.test(queue[n])) break;
+    if (String(queue[n + 1] || '').startsWith('<w:tbl')) break;
+    n += 1;
+  }
+  if (n) return n;
+  // Le style était là, mais le garde-fou l'a écartée : elle n'est pas à nous.
+  if (styled) return 0;
   const next = queue[0];
   if (!next || blockHasDrawing(next) || next.startsWith('<w:tbl')) return 0;
   if (HEADING_STYLE_RE.test(next)) return 0;                 // un intitulé RESTE où il est
-  if (CAPTION_STYLE_RE.test(next)) return 1;                 // la légende, reconnue à son style
   const text = blockTextOf(next).replace(/\s+/g, ' ').trim();
-  return text && text.length <= 300 ? 1 : 0;                 // repli : un texte court
+  if (!text) return 0;
+  // Repli : le titre que la légende se donne, ou un texte court.
+  return CAPTION_LABEL_RE.test(text) || text.length <= 300 ? 1 : 0;
 };
 
 /** LE CORPS REMIS EN PAGE : le même corps, avec les figures DÉPLACÉES pour que le
@@ -741,11 +824,15 @@ export const reflowFigures = (xml, format) => {
     }
     const block = queue.shift();
     if (blockHasDrawing(block)) {
-      const group = { blocks: [block], height: 0 };
+      let group = { blocks: [block], height: 0 };
       for (let n = captionBlocksAfter(queue); n > 0; n -= 1) group.blocks.push(queue.shift());
       group.height = group.blocks.reduce((s, b) => s + blockHeight(b, m), 0);
-      // Une figure plus haute qu'une page ne « tiendra » jamais : elle reste à sa
-      // place (Word la poussera sur sa propre page, comme aujourd'hui).
+      // …ET LA LÉGENDE NE RESTE JAMAIS DERRIÈRE : un groupe plus haut qu'une page
+      // voit son IMAGE réduite (voir fitGroupOnPage), sinon Word couperait le
+      // groupe en deux et mettrait la légende seule sur la page suivante.
+      group = fitGroupOnPage(group, m);
+      // Une figure que MÊME LA PAGE ENTIÈRE ne peut pas porter reste à sa place
+      // (Word la poussera sur sa propre page, comme aujourd'hui).
       if (group.height > m.height || fitted(group.height)) place(group);
       else deferred.push(group);
       continue;

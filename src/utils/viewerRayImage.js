@@ -480,16 +480,49 @@ export const downloadBlob = (blob, fileName) => {
   }
 };
 
-/* Render + download in one call — what the ✨ Ray button runs. */
-export const saveRayImage = async (stage, options = {}) => {
+/* ---- L'APERÇU, AVANT LE FICHIER ------------------------------------------- */
+/* LA DEMANDE : « Would it be possible to see on the screen the result of ray
+   before deciding to generate the image? » Le rendu devient donc un APERÇU : il
+   est MONTRÉ à l'écran — rien n'est écrit — et l'utilisateur décide ensuite, en
+   connaissance de cause, s'il écrit le PNG (downloadBlob) ou s'il ferme l'aperçu
+   sans rien écrire. C'est le MÊME `captureRayImage` (donc la même scène, le même
+   budget, les mêmes ombres) : seul le geste qui écrit le fichier est repoussé
+   après le regard. `saveRayImage`, plus bas, reste le chemin « rendu + écriture
+   d'un coup » : il rend par CETTE fonction et n'y ajoute que le téléchargement. */
+export const previewRayImage = async (stage, options = {}) => {
   const out = await captureRayImage(stage, options);
-  const fileName = rayFileName({
-    label: options.label,
-    width: out.width,
-    height: out.height,
-    transparent: out.transparent,
-    date: options.date,
-  });
-  const saved = downloadBlob(out.blob, fileName);
-  return { ...out, fileName, saved };
+  return {
+    ...out,
+    fileName: rayFileName({
+      label: options.label,
+      width: out.width,
+      height: out.height,
+      transparent: out.transparent,
+      date: options.date,
+    }),
+  };
+};
+
+/** Le PNG d'un aperçu → l'URL que l'`<img>` de l'aperçu affiche. `''` là où il
+ *  n'y a pas de DOM (le module s'importe et s'exécute sous node, voir
+ *  _viewer_ray_test.mjs), ou si le navigateur refuse l'objet URL. */
+export const previewUrlOf = (blob) => {
+  if (!blob || typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') return '';
+  try { return URL.createObjectURL(blob); } catch { return ''; }
+};
+
+/** L'URL d'un aperçu REMIS AU NAVIGATEUR — à la fermeture, à l'aperçu suivant
+ *  et au démontage du viewer : un objet URL garde son image en mémoire tant
+ *  qu'il vit. Renvoie true quand l'URL a bien été libérée. */
+export const releasePreviewUrl = (url) => {
+  if (!url || typeof URL === 'undefined' || typeof URL.revokeObjectURL !== 'function') return false;
+  try { URL.revokeObjectURL(url); return true; } catch { return false; }
+};
+
+/* Render + download in one call — the module's own path to a file. The ✨ Ray
+   button no longer runs it straight away: the still is first SHOWN (previewRayImage
+   above), and this is what the 💾 Save PNG of the preview runs. */
+export const saveRayImage = async (stage, options = {}) => {
+  const out = await previewRayImage(stage, options);
+  return { ...out, fileName: out.fileName, saved: downloadBlob(out.blob, out.fileName) };
 };

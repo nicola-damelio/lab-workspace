@@ -434,10 +434,10 @@ has('sequenceStructureExt = null,', '[séquence] …avec son extension (pdb / sd
 has("if (structOrigin === 'external') return;   // un PDB chargé par l'utilisateur occupe l'écran", '[séquence] un PDB chargé garde la priorité');
 has('if (sequenceStructureText === lastLoadedTextRef.current) return;', '[séquence] …et le modèle n\'est jamais rechargé deux fois');
 has("requestStructureLoad({ file: null, url: null, text: sequenceStructureText, ext: sequenceStructureExt || 'pdb', ts: Date.now() });", '[séquence] il passe par l\'entonnoir habituel (styles, séquence, tables d\'atomes)');
-has('onClick={buildFromSequence}', '[modify] bouton 🧬 From sequence');
+has('onClick={buildFromSequence}', '[modify] bouton 🧬 Structure from sequence');
 has('disabled={!sequenceStructureText}', '[modify] …inactif tant qu\'aucune séquence n\'est saisie');
 has('const buildFromSequence = () => {', '[modify] …son implémentation (le PDB affiché est rangé, jamais perdu)');
-has('🧬 From sequence', '[modify] libellé du bouton');
+has('🧬 Structure from sequence', '[modify] libellé du bouton (renommé : il dit ce qu\'il FABRIQUE)');
 /* ↩ Back to PDB — LE RETOUR EST LÀ OÙ LE GESTE A ÉTÉ FAIT (le rapport : « when
    clicking on "from sequence" the viewer generates the molecule from scratch but
    before I had a button to come back to the structure that was present before I
@@ -447,11 +447,14 @@ has('🧬 From sequence', '[modify] libellé du bouton');
    marqué « generated » comme le modèle de la séquence (c'est ce test-là qui faisait
    disparaître le bouton). Le bouton apparaît à côté de « 🧬 From sequence », et il
    appelle la MÊME résurrection que le ↩ Restore PDB de §1 General. */
-has('if (!stashedPdb && lastLoadedTextRef.current !== sequenceStructureText) {',
+has('lastLoadedTextRef.current === sequenceStructureText ? pageStructureStash() : pdbSourceOfCurrent()',
   '[from sequence] ce qui est à l’écran est MIS DE CÔTÉ, quel que soit l’endroit d’où il vient');
+has('const pageStructureStash = () => {',
+  '[from sequence] quand le MODÈLE de la séquence est à l’écran, c’est le PDB que la PAGE définit qui est rangé');
+
 gone("if (structOrigin === 'external' && !stashedPdb) {",
   '…le test « PDB chargé par l’utilisateur » ne conditionne plus le retour : le modèle de la page est rangé LUI AUSSI');
-has('{pdbAsideIsRestore && (', '[modify] le bouton de retour apparaît dès qu’une structure est de côté');
+has('{!!stashedPdb && (', '[modify] le bouton de retour apparaît dès qu’une structure est de côté');
 has('onClick={restoreStashedPdb}', '[modify] …et c’est la MÊME résurrection que le ↩ Restore PDB de §1');
 has('↩ Back to PDB', '[modify] libellé du bouton « revenir à la structure d’avant »');
 has('onClick={autoNameFrom2D}', '[conservé] auto-nommage depuis la 2D');
