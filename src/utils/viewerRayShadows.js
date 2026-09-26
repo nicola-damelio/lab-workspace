@@ -900,10 +900,63 @@ export const maskScalePerAngstrom = ({ clip, view, bounds, width, height } = {})
     if (s[1] > pxMaxY) pxMaxY = s[1];
     seen += 1;
   }
-  if (seen < 2) return 0;
-  const sx = vMaxX - vMinX > 1e-6 ? (pxMaxX - pxMinX) / (vMaxX - vMinX) : Infinity;
-  const sy = vMaxY - vMinY > 1e-6 ? (pxMaxY - pxMinY) / (vMaxY - vMinY) : Infinity;
-  const scale = Math.min(sx, sy);
+  if (seen >= 2) {
+    const sx = vMaxX - vMinX > 1e-6 ? (pxMaxX - pxMinX) / (vMaxX - vMinX) : Infinity;
+    const sy = vMaxY - vMinY > 1e-6 ? (pxMaxY - pxMinY) / (vMaxY - vMinY) : Infinity;
+    const scale = Math.min(sx, sy);
+    if (Number.isFinite(scale) && scale > 0) return scale;
+  }
+  /* FEWER THAN TWO OF THE BOX'S 8 CORNERS SURVIVED THE CAMERA'S OWN NEAR/FAR
+     CLIP (`clipToScreen`'s own check) — not because the camera is looking away
+     from the drawn atoms, but because a molecule BIGGER than what is currently
+     framed (the camera zoomed on a few residues of a longer chain) has a
+     bounding box whose far corners can sit well past the near/far planes even
+     though the camera is squarely on the middle of it. The old code gave up
+     right here and returned "unknown scale", which silently undid every blur
+     scale that reads it (see shadowBlurScale) — including the stroke-radius
+     ceiling above: at px/Å = 0, `shadowBlurScale` takes its very first early
+     return (`px <= 0`) before it ever looks at the stroke, so a licorice-only
+     still landed back on the FULL, unscaled 9.6 px of blur with no ångström
+     conversion possible — confirmed end to end on a 20-residue chain viewed
+     through a camera fitted tightly to 5 of them: `pxPerAngstrom` measured 0,
+     and the report was exactly this — a fix that measurably works in isolation
+     doing nothing once it's wired to a scale that never arrives. This fallback
+     returns ~114 px/Å on that same scene instead. One point near the middle of
+     what is actually drawn is far more likely to still be in range than eight
+     that bracket the WHOLE structure, however little of it the camera
+     currently shows — so it is a fallback, not a replacement: a scene where the
+     box's own corners already measure fine (`seen >= 2`, the common case) keeps
+     the exact number above, unchanged. Reuses the technique `rasterizeSpheres`
+     already uses to measure a sphere's own pixel radius: push a known ångström
+     distance along the CAMERA's own screen axes (`viewAxesOf`) and project both
+     ends. */
+  let cx = 0;
+  let cy = 0;
+  let cz = 0;
+  for (let i = 0; i < 8; i += 1) {
+    cx += corners[i][0];
+    cy += corners[i][1];
+    cz += corners[i][2];
+  }
+  cx /= 8;
+  cy /= 8;
+  cz /= 8;
+  const axes = viewAxesOf(view);
+  const probeAt = (dx, dy) => clipToScreen(mat4TransformPoint(clip, [
+    cx + axes.right[0] * dx + axes.up[0] * dy,
+    cy + axes.right[1] * dx + axes.up[1] * dy,
+    cz + axes.right[2] * dx + axes.up[2] * dy,
+    1,
+  ]), w, h);
+  const centre = probeAt(0, 0);
+  if (!centre) return 0;   // the middle of the drawn atoms is itself off-camera: truly unknown
+  const right = probeAt(1, 0);   // 1 Å along the camera's own screen-right
+  const up = probeAt(0, 1);      // 1 Å along the camera's own screen-up
+  const measured = [];
+  if (right) measured.push(Math.hypot(right[0] - centre[0], right[1] - centre[1]));
+  if (up) measured.push(Math.hypot(up[0] - centre[0], up[1] - centre[1]));
+  if (!measured.length) return 0;
+  const scale = Math.min(...measured);
   return Number.isFinite(scale) && scale > 0 ? scale : 0;
 };
 
