@@ -97,8 +97,8 @@ ok(!PANEL.includes("checked={!docNoTitle.includes('references')}"),
   'la rubrique « References (citation & bibliography) » n’a plus sa case « imprimer l’intitulé » (aucune autre section n’en a)');
 ok(!PANEL.includes('Print the “{docTitles.references || \'References\'}” heading'),
   '…et rien n’a pris sa place dans la rubrique des références');
-ok(PANEL.includes("docNoTitle: normalizePubDocNoTitle(fmt && fmt.docNoTitle)"),
-  '…le format garde `docNoTitle` (la liste des intitulés qu’un journal n’écrit pas)');
+ok(PANEL.includes("docNoTitle: effectivePubDocNoTitle(fmt)"),
+  '…et il garde `docNoTitle` par LA SEULE LISTE QUI COMPTE (voir effectivePubDocNoTitle : seul un journal sans intitulé en cache un)');
 ok(PANEL.includes('const pubSetJournal = (id) => {'), 'le journal entier aussi');
 /* LE ↺ DE L'ORDRE ET DES INTITULÉS rend au document l'ordre, les intitulés, les
    intitulés qu'un STYLE cache (`docNoTitle` : Science n'écrit pas celui de sa

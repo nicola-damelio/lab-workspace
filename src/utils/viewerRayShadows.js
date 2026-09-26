@@ -1548,6 +1548,20 @@ const layOut = (part, stride) => {
   const rad = part.data.radius;
   const surface = part.surface;
   const links = part.links;
+  /* Does `surface` carry at least ONE stroke we could MEASURE? An atom whose
+     representation is of a kind the stroke table does not know keeps NaN in
+     `surface` (see proxyRadiusOf), and a component whose representations are ALL
+     of that kind says nothing about any of its atoms: the proxy then keeps the
+     vdW radii it always used, so a drawing this module cannot read never loses
+     its shadow (an older NGL, a hand-built stub — the tests of this file). The
+     scan stops at the first stroke it finds, so it costs one entry on a normal
+     scene and only walks the whole array when nothing was measurable. */
+  let measurable = false;
+  if (surface) {
+    for (let i = 0; i < surface.length && !measurable; i += 1) {
+      measurable = Number.isFinite(surface[i]) && surface[i] > 0;
+    }
+  }
   const count = part.drawn ? part.drawn.length : part.n;
   const len = Math.max(0, Math.ceil(count / stride));
   const wpos = new Float32Array(Math.max(1, len) * 3);
@@ -1571,6 +1585,22 @@ const layOut = (part, stride) => {
     }
     const vdw = rad && Number.isFinite(rad[i]) ? rad[i] : 1.7;
     const stroke = surface ? surface[i] : NaN;
+    /* ⚠ AN ATOM NOTHING DRAWS CASTS NOTHING. The report: « the cast shadows appear
+       as large spheres (1,7 Å Van der Waals radius) for all atoms in the selection
+       (including side chains), instead of just following the thin ribbon backbone ».
+       `surface` is the stroke of every atom a VISIBLE representation really draws
+       (drawnProxyRadiiOf) and NaN for the atoms a selection merely LISTS — the side
+       chains of a cartoon, which NGL lists in the spline's StructureView and never
+       strokes — and each of those kept its vdW radius here: the proxy laid a 1,7 Å
+       ball around them, so the shadow of a thin ribbon came out as a string of fat
+       spheres. They are left out of the proxy altogether; the drawing that DOES
+       reach an atom brings its own stroke (0,25 Å for the licorice of a side chain,
+       0,45 Å for the spline of the backbone).
+       The vdW fallback survives for the ONE case where the surface claims nothing
+       measurable — `surface` null (an older NGL that says nothing about its
+       representations) or every entry NaN (nothing readable): the radii then stay
+       exactly as before, which is what `measurable` watches. */
+    if (surface && measurable && !(Number.isFinite(stroke) && stroke > 0)) continue;
     const drawn = Number.isFinite(stroke) && stroke > 0;
     // The drawing's own stroke when its representation gave one, the atom's own
     // vdW radius otherwise — and never a fat sphere around a thin ribbon.

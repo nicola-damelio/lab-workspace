@@ -261,7 +261,7 @@ has('baseColor: DEFAULT_NUCLEIC_COLORS.base,', '…et les bases');
 has("{ sub: 'bases', label: 'DNA/RNA bases', styles: STYLES.bases, colors: COLORS.nucleicParts, def: { style: 'rings', colorBy: 'basetype' }, sele: 'bases' },",
   'les bases sont des PLAQUES PLEINES par défaut de leur rangée');
 has("if (look.style === 'rings' || look.style === 'plates') {", '…les deux styles de plaques partagent UNE branche');
-has('const plates = addPlates(sele, look, spec.sub);', 'l’INTÉRIEUR des anneaux est une VRAIE plaque pleine');
+has('const plates = addPlates(drawn, look, spec.sub);', 'l’INTÉRIEUR des anneaux est une VRAIE plaque pleine');
 has('const mesh = new NG.MeshBuffer({ position: data.position, normal: data.normal, color: data.color, index: data.index });',
   '…construite avec le vrai MeshBuffer de NGL');
 has("const rep = comp.addBufferRepresentation(mesh, { opacity: sectionOpacity(look), side: 'double' });",

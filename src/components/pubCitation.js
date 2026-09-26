@@ -338,9 +338,44 @@ export const normalizePubDocNoTitle = (raw) => {
   return out;
 };
 
-/** CET INTITULÉ EST-IL CACHÉ pour ce format ? (une case décochée au panneau, ou un style
- *  qui n'écrit pas ce titre — voir normalizePubDocNoTitle). */
-export const pubDocTitleHidden = (fmt, id) => normalizePubDocNoTitle(fmt && fmt.docNoTitle).includes(String(id || ''));
+/* ══ CE QUI JUSTIFIE UN INTITULÉ CACHÉ : LE JOURNAL, ET RIEN D'AUTRE ═════════════
+   La plainte, après le retrait de la case : « In the final exported document of the
+   project page I still don't see the title of the section references. » Le marqueur
+   `docNoTitle` était pourtant lu, et le panneau promettait qu'un nom écrit rallumait
+   l'intitulé — mais un format ENREGISTRÉ du temps où la case existait gardait son
+   `docNoTitle: ['references']` SANS le journal qui l'expliquait, et l'intitulé restait
+   caché pour toujours.
+
+   LE JOURNAL SEUL DÉCIDE : un format dont la bibliographie n'a pas d'intitulé le dit
+   avec `bibLabel: ''` (Science — voir applyJournalFormat, journalFormats.js), et c'est
+   ce même champ qui voyage avec le format. Le marqueur ne compte donc QUE si le format
+   porte vraiment cet intitulé vide : autrement, c'est l'état laissé par la case
+   disparue, et le document écrit l'intitulé du programme (ou celui choisi dans
+   « Document sections (order & titles) »). */
+
+/** LE JOURNAL DU FORMAT N'ÉCRIT-IL AUCUN INTITULÉ au-dessus de sa bibliographie ?
+ *  `bibLabel` vide ET PRÉSENT (`''` — Science) : un format qui ne dit rien de son
+ *  intitulé (`bibLabel` absent, le cas de tous les formats neufs) n'en cache aucun. */
+const journalPrintsNoBibTitle = (fmt) => {
+  const label = fmt && fmt.bibLabel;
+  return typeof label === 'string' && label.trim() === '';
+};
+
+/** LES INTITULÉS QUE CE FORMAT CACHE VRAIMENT — la seule liste que le document, la
+ *  page du projet, l'impression, le PDF, le .docx et l'aperçu du panneau lisent (voir
+ *  `journalPrintsNoBibTitle`) : un marqueur que rien ne justifie est IGNORÉ.
+ *  Aucun journal n'a jamais caché l'intitulé d'une AUTRE section (la case disparue ne
+ *  concernait que la bibliographie) : seul « references » peut l'être. */
+export const effectivePubDocNoTitle = (fmt) => {
+  const list = normalizePubDocNoTitle(fmt && fmt.docNoTitle);
+  if (!list.length) return list;
+  if (!journalPrintsNoBibTitle(fmt)) return [];
+  return list.filter((id) => id === 'references');
+};
+
+/** CET INTITULÉ EST-IL CACHÉ pour ce format ? (un style qui n'écrit pas ce titre —
+ *  voir effectivePubDocNoTitle · normalizePubDocNoTitle). */
+export const pubDocTitleHidden = (fmt, id) => effectivePubDocNoTitle(fmt).includes(String(id || ''));
 
 /* ══ LES BLOCS QUE LE FORMAT N'IMPRIME PAS ═══════════════════════════════════
    « The project line should not appear in the document unless activated. »
@@ -474,7 +509,10 @@ export const docBlockOfWord = (word) => {
  *  écrit — un document figé avant le changement de nom suit donc le nouveau titre. */
 export const pubDocTitleKeywords = (fmt) => {
   const titles = normalizePubDocTitles(fmt && fmt.docTitles);
-  const hidden = normalizePubDocNoTitle(fmt && fmt.docNoTitle);
+  /* LA MÊME LISTE QUE LE DOCUMENT VIVANT (voir effectivePubDocNoTitle) : un intitulé
+     qu'un marqueur sans journal prétendait cacher n'est PAS réécrit vide ici — le
+     document figé, l'impression, le PDF et le .docx gardent leur titre comme la page. */
+  const hidden = effectivePubDocNoTitle(fmt);
   const out = {};
   DOC_TITLE_KEYWORDS.forEach(([id, words]) => {
     const block = pubDocBlockOf(id);
@@ -842,10 +880,23 @@ export const normalizePubFormat = (parsed) => {
     /* Un format enregistré avant que ce choix existe n'a pas de `nameStyle` :
        « asis » — ses citations sortent donc exactement comme avant. */
     nameStyle: normalizeNameStyle(parsed && parsed.nameStyle),
+    /* LE JOURNAL QUI A FAIT CE FORMAT SURVIT À L'ENREGISTREMENT — son id (`journal`),
+       son ordre de sections (`order`) ET l'intitulé de sa bibliographie (`bibLabel`).
+       Ils manquaient ici : après un rechargement de page, le panneau affichait « As in
+       the app (no journal) » alors que la citation, l'ordre et le caractère du journal
+       étaient bel et bien restés — et le marqueur qu'il avait posé sur l'intitulé de la
+       bibliographie (`docNoTitle`) restait aussi, sans plus aucun journal pour
+       l'expliquer (voir effectivePubDocNoTitle). Le format est donc relu ENTIER. */
+    ...(parsed && parsed.journal ? { journal: String(parsed.journal) } : {}),
+    ...(Array.isArray(parsed && parsed.order) ? { order: parsed.order.map(String) } : {}),
+    ...(typeof (parsed && parsed.bibLabel) === 'string' ? { bibLabel: parsed.bibLabel } : {}),
     layout: normalizePubLayout(parsed && parsed.layout),
     docOrder: normalizePubDocOrder(parsed && parsed.docOrder),
     docTitles: normalizePubDocTitles(parsed && parsed.docTitles),
-    docNoTitle: normalizePubDocNoTitle(parsed && parsed.docNoTitle),
+    /* UN INTITULÉ CACHÉ N'EST RELU QUE SI LE JOURNAL LE JUSTIFIE (voir
+       effectivePubDocNoTitle) : le marqueur laissé par la case disparue ne peut donc
+       plus cacher à jamais l'intitulé de la bibliographie. */
+    docNoTitle: effectivePubDocNoTitle(parsed),
     /* Un format enregistré AVANT ce réglage n'a pas de `docNoBlock` : il reçoit le
        défaut du programme — la ligne d'information du projet ne s'imprime pas
        (voir normalizePubDocNoBlock). */

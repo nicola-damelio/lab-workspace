@@ -197,14 +197,22 @@ ok(read('./src/utils/docxExport.js').includes('no-print'),
    commettre). On relit donc la source autour de chaque texte. */
 {
   const boxAt = PROJ.indexOf('rounded-lg px-2 py-1.5 no-print">');
-  const boxEnd = PROJ.indexOf('\n              </div>', boxAt);
+  const boxEnd = PROJ.indexOf('\n          </div>', boxAt);
   const box = PROJ.slice(boxAt, boxEnd);
   ok(box.includes('☁ Text filed on Drive') && box.includes('♻ Load the Drive copy'),
     'le « no-print » est sur LA BOÎTE du bandeau : « ☁ Text filed on Drive … ♻ Load the Drive copy » est dedans');
   ok(box.includes('☁ The text of this project is not filed on Drive yet') && box.includes('☁ File the text on Drive'),
     '…les DEUX branches du bandeau (projet déjà déposé / pas encore déposé) sont couvertes par le même `no-print`');
-  ok(boxEnd !== -1 && PROJ.indexOf('<ol className="pf-bib', boxAt) > boxEnd,
-    '…et la bibliographie est HORS de cette boîte : la liste des références reste dans le document');
+  /* …ET LA BOÎTE EST HORS DU DOCUMENT — la plainte de cette session : « In the final
+     exported document of the project page I still don't see the title of the section
+     references. In its place I see the section “Text filed on Drive” which should not be
+     there. » Le bandeau ne vit plus DANS le bloc des références (donc dans
+     `#project-doc-container`) : il est rendu APRÈS la fermeture du conteneur, du côté de
+     l'interface — et la liste des références, elle, reste dans le document. */
+  has(PROJ, '</div>\n          {/* ── LE BANDEAU DU DRIVE EST DE L\'INTERFACE',
+    'le bandeau vient APRÈS la fermeture du conteneur du document : il n’en fait plus partie');
+  ok(boxEnd !== -1 && PROJ.indexOf('<ol className="pf-bib', boxAt) < boxAt,
+    '…et la bibliographie est restée DANS le document (elle passe avant lui)');
   for (const [label, needle] of [
     ['la note « Automatically generated … » des Materials and Methods', 'Automatically generated from the Experimental'],
     ['l’aide des figures ⭐', '⭐-starred on the test pages'],

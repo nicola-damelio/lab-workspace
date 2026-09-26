@@ -11,12 +11,10 @@
        revise these commands because nothing works. I cannot even display the
        molecule in ball and sticks because it appears fragmented. »
    — et la référence que l'utilisateur donne : « in the vercel deployment be33c40 the
-   controls of the viewer worked well ». be33c40 dessinait la scène comme L'UNION des
-   rangées : la rangée General décrivait la molécule ENTIÈRE, chaque partie dessinait
-   ses atomes, et RIEN ne retirait d'atomes à personne. Les sessions suivantes y ont
-   ajouté un PARTAGE d'atomes (« la rangée General cède ses atomes aux parties qui ont
-   leur propre style », le CA du squelette enlevé puis rendu), et les trois pannes du
-   rapport en découlent :
+   controls of the viewer worked well ». Une CESSION d'atomes avait été essayée, puis
+   retirée, parce qu'elle AMPUTAIT les parties : la rangée General rendait ses atomes
+   aux parties (`sec.sele and not (…)`) et la clause de chaque partie était amputée des
+   atomes que le style de General parcourt. Les trois pannes du rapport en découlaient :
      1. un General dont TOUTES les parties avaient dévié ne dessinait PLUS RIEN
         (`:A and protein and not (…) and not (…)` = ∅) — « nothing is displayed » ;
      2. la rangée des chaînes latérales perdait le CA que sa parenthèse venait de
@@ -25,6 +23,12 @@
         représentation : entre un squelette sans CA (N · C · O) et des chaînes
         latérales sans N ni C (CB · CG · …), les liaisons N–CA et CA–C
         n'appartenaient à AUCUNE représentation — « it appears fragmented ».
+   LA CESSION EST REVENUE, SANS CES TROIS PANNES (voir generalCession dans le viewer) :
+   le style PROPRE d'une sous-rangée l'emporte sur General POUR EXACTEMENT les atomes
+   qu'elle dessine, General dessine ce qui reste, et AUCUNE PARTIE N'EST JAMAIS AMPUTÉE
+   — c'est une union de DESSINS, et non plus de sélections : l'union des rangées
+   réellement dessinées couvre encore toute la molécule, à un atome près — celui qu'une
+   rangée CACHE (« Hide » est une décision, et elle est mesurée ici comme telle).
 
    CE QUE CETTE SUITE MESURE, SUR LE VRAI buildSectionReps : une protéine de quatre
    résidus (N · CA · C · O · CB · CG), ses liaisons, et un modèle des mots NGL que les
@@ -32,11 +36,14 @@
    `@index` · and / or / not). Pour chaque GESTE de la barre de style — les gestes sont
    appliqués par les VRAIES fonctions de la hiérarchie (setGeneralSectionField ·
    setRowSectionField) — les rangées réellement dessinées sont évaluées :
-     • TOUTE la molécule est couverte : aucun atome que personne ne dessine ;
+     • TOUTE la molécule est couverte : aucun atome que personne ne dessine, sauf ceux
+       qu'une rangée cachée (« Hide ») a explicitement retirés ;
      • TOUTE liaison est dessinée par AU MOINS une rangée : aucune chaîne coupée ;
-     • la rangée General, quand elle a un style, dessine la molécule ENTIÈRE ;
-     • AUCUNE sélection produite n'est soustractive (` and not `) : une rangée ne peut
-       donc plus être vidée ni amputée par une autre.
+     • UNE SEULE clause soustractive peut exister, celle de la rangée General — et elle
+       ne peut pas emporter un atome dont un voisin ne serait plus dessiné
+       (partAtomsHeldBack) ;
+     • la rangée General, quand elle a un style qui DESSINE DES ATOMES et qu'aucune
+       partie ne lui prend ses atomes, décrit la molécule ENTIÈRE.
    ========================================================================= */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -85,8 +92,10 @@ const sliceFn = (src, name) => {
   throw new Error(`${name} : corps non terminé`);
 };
 // Un nom qui n'existe QUE dans une révision plus ancienne du viewer (VIEWER_SRC, pour
-// comparer avant/après le rapport) : extrait quand il est là, ignoré sinon.
-const sliceMaybe = (src, name) => (src.includes(`const ${name} = `) ? sliceFn(src, name) : '');
+// comparer avant/après le rapport) : extrait quand il est là, ignoré sinon. `sliceDecl`
+// (et non `sliceFn`) : il lit AUSSI BIEN une fonction, un tableau et un objet — et il
+// s'arrête au `;` de NIVEAU 0, donc il ne peut pas emporter la déclaration suivante.
+const sliceMaybe = (src, name) => (src.includes(`const ${name} = `) ? sliceDecl(src, name) : '');
 const sliceObject = (src, name) => {
   const start = src.indexOf(`const ${name} = {`);
   assert.ok(start >= 0, `objet ${name} introuvable`);
@@ -248,8 +257,11 @@ const MODULE = new Function('ATOM_EVAL', 'STRUCTURE', [
   'const gradientColorStore = { ranges: null };',
   sliceMaybe(VIEW, 'SPLINE_STYLES'),
   sliceMaybe(VIEW, 'generalWalkingSele'),
+  sliceMaybe(VIEW, 'SPLINE_TRAIT_OWNERS'),
+  sliceMaybe(VIEW, 'partAtomsHeldBack'),
+  sliceMaybe(VIEW, 'generalCession'),
   sliceFn(VIEW, 'buildSectionReps'),
-  'return { buildSectionReps };',
+  'return { buildSectionReps, sectionRowSele };',
 ].join('\n'))(ATOM_EVAL, STRUCTURE);
 
 // Les VRAIES fonctions de la hiérarchie : un geste de la barre s'applique exactement
@@ -296,7 +308,24 @@ const sceneOf = (t) => {
    (« surface ») recouvre les atomes qu'elle décrit ; les styles qui dessinent des
    ATOMES (ball+stick · licorice · line · spacefill) portent, EUX, les bâtons. */
 const ATOM_REPS = new Set(['ball+stick', 'licorice', 'line', 'spacefill', 'base']);
-const coverage = (reps) => {
+/* CE QU'UNE RANGÉE CACHE EST UNE DÉCISION, PAS UN TROU. Une rangée sur « Hide » ne dessine
+   rien : les atomes qu'elle décrit sont donc retirés de la liste des atomes « perdus » —
+   et quand General lui-même est sur « Hide », la cascade met TOUTES les parties sur Hide,
+   donc la section entière est cachée. Tout autre atome absent de toute rangée dessinée est
+   un atome PERDU : c'est ce que l'invariant mesure. */
+const HIDDEN_IF_GENERAL_HIDE = ':A and protein';
+const hiddenAtomsOf = (t) => {
+  const out = new Set();
+  const g = HIER.effectiveSectionLook(t, 'protein', 'general');
+  if (!g || g.style === 'hide') ATOM_EVAL(HIDDEN_IF_GENERAL_HIDE).forEach((x) => out.add(x));
+  ['backbone', 'sidechain'].forEach((sub) => {
+    const look = HIER.effectiveSectionLook(t, 'protein', sub);
+    if (!look || look.style !== 'hide') return;
+    ATOM_EVAL(MODULE.sectionRowSele(STRUCTURE, SECTIONS[0], sub, {})).forEach((x) => out.add(x));
+  });
+  return out;
+};
+const coverage = (reps, hidden) => {
   const sets = reps.map((r) => ATOM_EVAL(r.params.sele));
   const described = new Set();
   sets.forEach((s) => s.forEach((x) => described.add(x)));
@@ -305,7 +334,8 @@ const coverage = (reps) => {
   const atomDrawn = new Set();
   atomSets.forEach((s) => s.forEach((x) => atomDrawn.add(x)));
   return {
-    missingAtoms: atoms.filter((a) => !described.has(a.index)).map((a) => label(a.index)),
+    missingAtoms: atoms.filter((a) => !described.has(a.index) && !(hidden && hidden.has(a.index)))
+      .map((a) => label(a.index)),
     // Une liaison dont les DEUX atomes sont dessinés en ATOMES doit tenir dans UNE
     // SEULE représentation (la règle de NGL) : c'est exactement « part of the
     // backbone vanishes » quand elle est violée — N dans la rangée du squelette, CA
@@ -323,10 +353,12 @@ const gesture = (steps) => steps.reduce((t, [kind, sub, field, value]) => (
 ), {});
 const check = (what, t) => {
   const reps = sceneOf(t);
-  const c = coverage(reps);
-  eq(c.missingAtoms, [], `${what} : AUCUN atome n’est laissé hors de toute rangée dessinée`);
+  const c = coverage(reps, hiddenAtomsOf(t));
+  eq(c.missingAtoms, [],
+    `${what} : AUCUN atome n’est laissé hors de toute rangée dessinée (hors ceux qu’une rangée cache)`);
   eq(c.missingBonds, [], `${what} : AUCUNE liaison dont les deux atomes sont dessinés n’est laissée sans bâton`);
-  eq(c.subtractive, [], `${what} : aucune clause soustractive n’est produite`);
+  ok(c.subtractive.length <= 1,
+    `${what} : au plus UNE clause soustractive — celle de la rangée General (la cession) ; jamais une partie`);
   return reps;
 };
 
@@ -359,13 +391,15 @@ eq(sceneOf(gesture([['protein', 'general', 'style', 'hide']])), [],
 //     garde le CA qu'elle prend.
 const bb = check('Backbone → ball+stick (General cartoon)', gesture([['protein', 'backbone', 'style', 'ball+stick']]));
 ok(bb.some((r) => r.params.sele === ':A and protein and backbone'),
-  '…la rangée du squelette dessine son squelette ENTIER, CA compris');
+  '…la rangée du squelette dessine son squelette ENTIER, CA compris (aucune partie n’est amputée)');
 const both = check('Backbone → ball+stick PUIS Side chains → ball+stick',
   gesture([['protein', 'backbone', 'style', 'ball+stick'], ['protein', 'sidechain', 'style', 'ball+stick']]));
 ok(both.some((r) => r.params.sele === ':A and protein and (sidechain or .CA)'),
   '…et les chaînes latérales gardent le CA de leur parenthèse : la liaison CB–CA est dessinée');
-ok(both.some((r) => r.params.sele === ':A and protein'),
-  '…sous le dessin de General, resté ENTIER — c’est lui qui tenait la chaîne ensemble');
+ok(!both.some((r) => String(r.params.sele).includes(' and not ')),
+  '…et General ne redessine plus son ruban (le squelette a pris SON parcours) : aucune soustraction ici');
+ok(!both.some((r) => r.type === 'cartoon'),
+  '…donc UN SEUL dessin de la chaîne : celui du squelette, jamais deux rubans l’un sur l’autre');
 
 // 3d. LE RAPPORT, SYMPTÔME 3 : « I cannot even display the molecule in ball and sticks
 //     because it appears fragmented. » Les deux parties dévient, PUIS General prend les
@@ -381,16 +415,17 @@ check('General → ball+stick PUIS Backbone → licorice (une partie dévie)',
 check('General → ball+stick PUIS Side chains → sphere',
   gesture([['protein', 'general', 'style', 'ball+stick'], ['protein', 'sidechain', 'style', 'sphere']]));
 
-// 3e. L'ORDRE DE L'ANCIEN RAPPORT : « General → Tube » puis « Backbone → Cartoon » —
-//     la molécule reste entière, et les DEUX dessins sont là (le tube de General décrit
-//     la molécule, le cartoon du squelette se dessine par-dessus : deux `show` de PyMOL
-//     peuvent couvrir les mêmes atomes).
+// 3e. L'ORDRE DE L'ANCIEN RAPPORT : « General → Tube », puis « Backbone → Cartoon » —
+//     le squelette a pris SON parcours (un ruban), donc celui de General n'est plus
+//     dessiné : deux rubans l'un sur l'autre, c'était la panne « It is not working
+//     anymore ». La molécule reste ENTIÈRE : c'est le cartoon du squelette qui marche la
+//     chaîne, et les chaînes latérales restent sur le « Hide » de la cascade.
 const tubeThen = check('General → tube PUIS Backbone → cartoon',
   gesture([['protein', 'general', 'style', 'tube'], ['protein', 'backbone', 'style', 'cartoon']]));
-ok(tubeThen.some((r) => r.type === 'tube' && r.params.sele === ':A and protein'),
-  '…le tube de General décrit toujours la molécule entière');
+ok(!tubeThen.some((r) => r.params.sele === ':A and protein'),
+  '…le tube de General n’est plus dessiné : la rangée qui parcourt le même chemin a pris le parcours');
 ok(tubeThen.some((r) => r.type === 'cartoon' && r.params.sele === ':A and protein and backbone'),
-  '…et le cartoon du squelette se dessine vraiment (aucune rangée ne lui prend ses atomes)');
+  '…et le cartoon du squelette se dessine vraiment : le SEUL parcours de la scène');
 
 // 3f. UNE ENVELOPPE (« surface ») n'a aucun atome à donner ni à prendre : General
 //     l'applique à la molécule entière, et les parties (qui ne savent pas la dessiner)
@@ -402,18 +437,30 @@ check('General → surface', gesture([['protein', 'general', 'style', 'surface']
 check('le dessin par défaut (General cartoon · Backbone qui suit · Side chains licorice)',
   tree(['cartoon', 'sstruc'], ['cartoon', 'sstruc', true], ['licorice', 'element', true]));
 
-/* ══ 4. LE CÂBLAGE : LA RÈGLE D'UNION EST DANS LA SOURCE ═════════════════════ */
+/* ══ 4. LE CÂBLAGE : LA RÈGLE DE CESSION EST DANS LA SOURCE ═══════════════════ */
 has("next.follow = next.style !== 'hide' || value === 'hide';",
   'la cascade de General laisse une partie cachée PAR GENERAL dans la hiérarchie (elle le suit)');
 has("if (own.style === 'hide') return { ...own, follow: true };",
   '…et ce « Hide » TIENT : la partie ne retombe pas sur son propre style par défaut');
 has('const sele = sectionRowSele(structure, sec, spec.sub, { anchorSideChains, anchorParts });',
-  'la sélection d’une rangée est ce que sectionRowSele écrit — pour General la molécule entière, pour une partie sa part (+ ancre, + pont)');
+  'la sélection d’une PART est ce que sectionRowSele écrit — sa part (+ ancre, + pont) — et RIEN ne lui en est retiré');
 has('      : `${base} and backbone`;', 'le squelette garde ses CA : la chaîne ne se coupe plus');
-gone('const giveAway =', 'la CESSION D’ATOMES a disparu (aucune clause « and not » n’est fabriquée)');
-gone('const generalKeeps =', '…ni « les atomes que le style de General parcourt » à protéger');
-gone('const relinquished =', '…ni la liste des parties qui prenaient les atomes de General');
-gone('const generalOnly', '…ni la sélection remplacée de la rangée General');
-gone('const backboneLosesCa = anchorSideChains', '…ni les CA cédés par le squelette');
+has('const cession = generalCession(structure, sec, subLooks, { anchorSideChains });',
+  '…et la cession de la rangée General est calculée UNE fois pour la section, avec les mêmes drapeaux');
+has("        ? `${sec.sele || 'all'} and not (${cession.cede})`",
+  '…sous la forme « and not (…) », la SEULE clause soustractive du fichier : celle de la rangée General');
+has('const generalCession = (structure, sec, subLooks, opts = {}) => {',
+  'la règle de la cession est une fonction à part (mesurée seule dans _viewer_general_cession_test.mjs)');
+has('const partAtomsHeldBack = (structure, part, rowAtoms, taken, within) => {',
+  '…avec le garde-fou qui RETIENT à General l’atome dont un voisin ne serait plus dessiné par personne');
+has("const SPLINE_STYLES = ['cartoon', 'ribbon', 'tube', 'trace'];",
+  '…la liste des styles qui PARCOURENT la molécule : un parcours ne se partage pas atome par atome');
+has("const SPLINE_TRAIT_OWNERS = { protein: ['backbone'], nucleic: ['backbone', 'ribose'] };",
+  '…et les rangées qui parcourent le même chemin (le squelette, et la ribose d’un nucléotide)');
+gone('const giveAway =', 'l’ANCIENNE cession, qui AMPUTAIT les parties, ne peut pas revenir…');
+gone('const generalKeeps =', '…ni « les atomes que le style de General parcourt » à protéger…');
+gone('const relinquished =', '…ni la liste des parties qui prenaient les atomes de General…');
+gone('const generalOnly', '…ni la sélection remplacée de la rangée General…');
+gone('const backboneLosesCa = anchorSideChains', '…ni les CA retirés au squelette');
 
 console.log(`_viewer_style_coverage_test.mjs — ${passed} assertions OK (chaque atome, chaque liaison)`);

@@ -519,7 +519,7 @@ has('const customHex = m.surfaceColor === \'custom\' ? flatHex(m.surfaceColorHex
 has('catEspRepsRef.current.set(comp, []);', '[ESP] les surfaces ESP sont réenregistrées à chaque reconstruction');
 has('catEspRepsRef.current.forEach((list) => {', '[ESP] ⚡ Range recolore aussi les surfaces de catégorie');
 has('{(espOnSelected || catEspActive) && (', '[ESP] le panneau Range s’affiche pour les deux entrées ESP');
-has("const r = addRow('surface', { sele, ...espColorParams(), transparent: true, opacity: 0.75 });",
+has("const r = addRow('surface', { sele: drawn, ...espColorParams(), transparent: true, opacity: 0.75 });",
   '[ESP] l’overlay ⚡ garde son colorScheme/colorScale (espColorParams)');
 
 /* ── 9. §3 Scene : fog, ombres, plan de coupe aux extrêmes quand Off ────── */

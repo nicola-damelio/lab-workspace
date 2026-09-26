@@ -117,6 +117,10 @@ const sandbox = [
   'const DEFAULT_NUCLEIC_COLORS = { base: 0xffffff, sugar: 0xffffff, phosphate: 0xffffff };',
   'const gradientRangesFor = () => null;',
   'const gradientColorStore = { ranges: null };',
+  sliceDecl(VIEW, 'SPLINE_STYLES'),
+  sliceDecl(VIEW, 'SPLINE_TRAIT_OWNERS'),
+  sliceFn(VIEW, 'partAtomsHeldBack'),
+  sliceFn(VIEW, 'generalCession'),
   sliceFn(VIEW, 'buildSectionReps'),
   'return { hiddenSectionIds, buildSectionReps, sectionVisRef };',
 ].join('\n');

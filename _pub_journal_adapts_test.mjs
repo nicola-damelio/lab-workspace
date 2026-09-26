@@ -29,7 +29,7 @@ const { citeAuthorYearLabel } = await import('./src/utils/referenceLinks.js');
 const {
   PUB_DOC_BLOCKS, PUB_DOC_OPTIONAL_IDS, buildPubFormat, buildPubDocNoBlock, buildPubLayout,
   normalizePubDocNoBlock, pubDocBlockHidden, pubDocTitleKeywords, pubDocTitleHidden, pubDocTitleOf,
-  normalizePubDocTitles, pubCitationText
+  normalizePubDocTitles, normalizePubFormat, pubCitationText
 } = await import('./src/components/pubCitation.js');
 const {
   JOURNAL_IDS, applyJournalFormat, clearJournalFormat, withoutProjectLineHtml, docHeadSpacedHtml
@@ -196,22 +196,41 @@ const lacks = (where, needle, what) => ok(!where.includes(needle), what);
 /* ══ 4. L'INTITULÉ QU'ON ÉCRIT EST CELUI QUI S'IMPRIME ══════════════════════
    Un style peut cacher un intitulé (Science n'en écrit aucun au-dessus de sa
    bibliographie) : la rangée « References » le dit, et un nom écrit (ou ↺) le
-   fait revenir — sinon le champ ne ferait rien du tout. */
+   fait revenir. MAIS SEUL LE JOURNAL PEUT LE CACHER — la plainte de cette session,
+   « In the final exported document of the project page I still don't see the title of
+   the section references », venait d'un format enregistré du temps où la case
+   « Print the “References” heading » existait : son `docNoTitle: ['references']`
+   survivait SANS le journal qui l'expliquait, et l'intitulé restait caché pour
+   toujours (voir effectivePubDocNoTitle). */
 {
   /* LA RÈGLE DE LA PAGE DU PROJET, reproduite ici (voir `docHeading`,
      projectDetailModule) : l'intitulé du document est celui du format, et un
      intitulé CACHÉ n'en est pas un. */
   const docHeading = (fmt, id) => (pubDocTitleHidden(fmt, id) ? '' : pubDocTitleOf(normalizePubDocTitles(fmt && fmt.docTitles), id));
-  eq(docHeading({ docNoTitle: ['references'] }, 'references'), '',
+  /* SCIENCE : le journal dit lui-même qu'il n'écrit aucun intitulé (`bibLabel: ''`). */
+  const science = { docNoTitle: ['references'], bibLabel: '', journal: 'science' };
+  eq(docHeading(science, 'references'), '',
     'un style qui cache l’intitulé (Science) : le document n’écrit rien au-dessus de la liste');
+  eq(pubDocTitleKeywords(science).references, '',
+    '…sur un document DÉJÀ ÉCRIT, cet intitulé est réécrit VIDE : son <h2> s’en va, le bloc reste');
+  /* LE MARQUEUR DE LA CASE DISPARUE : gardé par un format enregistré, mais AUCUN
+     journal ne l'explique (`bibLabel` absent, ou un intitulé normal). */
+  eq(docHeading({ docNoTitle: ['references'] }, 'references'), 'References',
+    'un marqueur que RIEN ne justifie (la case disparue, un format rechargé) ne cache plus l’intitulé : il s’imprime de nouveau');
+  eq(pubDocTitleKeywords({ docNoTitle: ['references'] }).references, undefined,
+    '…et le document déjà écrit garde son <h2> : la liste des références ne reste plus sans titre dans le document final');
+  eq(pubDocTitleKeywords({ docNoTitle: ['references'], bibLabel: 'References' }).references, undefined,
+    '…même quand le format dit qu’il écrit un intitulé (bibLabel « References »)');
+  eq(pubDocTitleKeywords({ docNoTitle: ['references'], bibLabel: '' }).references, '',
+    '…tandis qu’un vrai journal sans intitulé (Science) continue de le retirer');
+  eq(pubDocTitleHidden({ docNoTitle: ['methods'] }, 'methods'), false,
+    'aucun journal n’a jamais caché l’intitulé d’une AUTRE section : cette liste n’en cache qu’un');
   eq(docHeading({ docNoTitle: [] }, 'references'), 'References',
     'le masque retiré, l’intitulé du programme s’imprime — c’est lui qui « manquait » dans le document final');
   eq(docHeading({ docNoTitle: [], docTitles: { references: 'Bibliography' } }, 'references'), 'Bibliography',
     '…ou le nom que l’utilisateur écrit dans « Document sections (order & titles) »');
   eq(docHeading({ docNoTitle: [] }, 'methods'), 'Materials and Methods',
     '…et aucune autre section ne change : c’est la même règle pour toutes');
-  eq(pubDocTitleKeywords({ docNoTitle: ['references'] }).references, '',
-    'sur un document DÉJÀ ÉCRIT, l’intitulé caché est réécrit VIDE : son <h2> s’en va, le bloc reste');
   eq(pubDocTitleKeywords({ docNoTitle: [] }).references, undefined,
     '…tandis qu’un intitulé laissé au programme n’a rien à réécrire (le document écrit déjà le sien)');
   has(PANEL, 'docNoTitle: normalizePubDocNoTitle(docNoTitle.filter((x) => x !== id)),',
@@ -221,10 +240,30 @@ const lacks = (where, needle, what) => ok(!where.includes(needle), what);
   has(PANEL, "onClick={() => pubSetDocTitle(id, '')}", 'le ↺ de la rangée passe par le même chemin');
   has(PANEL, 'docNoTitle.includes(id) &&', 'la rangée DIT que le style n’écrit pas cet intitulé');
   has(PANEL, 'not printed by the style', '…et le répète dans la bulle du badge');
-  has(ENGINE, 'docNoTitle: normalizePubDocNoTitle(parsed && parsed.docNoTitle),',
-    'le masque reste lu d’un format enregistré');
+  /* LE FORMAT LUI-MÊME : seul le journal justifie un intitulé caché — au chargement
+     comme dans le panneau (voir effectivePubDocNoTitle). */
+  eq(normalizePubFormat({ docNoTitle: ['references'] }).docNoTitle, [],
+    'un format rechargé perd le marqueur que rien ne justifie');
+  eq(normalizePubFormat({ docNoTitle: ['references'], bibLabel: '' }).docNoTitle, ['references'],
+    '…mais garde celui de son journal (Science) : son intitulé reste caché');
+  /* LE JOURNAL SURVIT AU RECHARGEMENT (il était perdu, avec son intitulé) : sans lui,
+     le panneau montrait « As in the app » et l'intitulé de la bibliographie restait
+     caché sans que rien ne l'explique. */
+  const reloaded = normalizePubFormat({
+    preset: 'science', journal: 'science', order: ['abstract', 'references'], bibLabel: '', docNoTitle: ['references']
+  });
+  eq(reloaded.journal, 'science', 'le NOM du journal survit au rechargement (le panneau le montre)');
+  eq(reloaded.bibLabel, '', '…l’intitulé de sa bibliographie aussi');
+  eq(reloaded.order, ['abstract', 'references'], '…et l’ordre de ses sections');
+  eq(reloaded.docNoTitle, ['references'], '…donc son intitulé caché reste caché (le journal le justifie)');
+  has(ENGINE, 'docNoTitle: effectivePubDocNoTitle(parsed),',
+    'le masque se relit par la MÊME règle que le document (effectivePubDocNoTitle)');
+  has(PANEL, 'docNoTitle: effectivePubDocNoTitle(fmt),',
+    'le panneau aussi : régler un champ de la citation ne remet pas un marqueur mort');
   has(PROJ, "pubDocTitleHidden(pubFormat, id) ? '' : pubDocTitleOf(docTitles, id)",
     'la page du projet suit ce masque, intitulé compris');
+  has(PROJ, "!docHeading('references') && (",
+    '…et elle DIT, à l’écran, quand c’est le style qui n’écrit pas l’intitulé (et comment le rendre)');
 }
 
 console.log(`_pub_journal_adapts_test.mjs — ${passed} assertions passed`);

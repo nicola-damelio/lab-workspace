@@ -39,6 +39,10 @@ import {
   authorMatchesCandidate, buildPubFormat, buildPubDocOrder, buildPubDocTitles, buildPubDocNoTitle, buildPubLayout,
   loadPubFormat, matchCoauthors, normalizePubDocOrder, normalizePubDocTitles, normalizePubLayout,
   normalizePubDocNoTitle, normalizePubDocNoBlock, buildPubDocNoBlock,
+  /* LA LISTE QUI COMPTE VRAIMENT POUR LE DOCUMENT (voir effectivePubDocNoTitle) : un
+     intitulé caché n'en fait partie que si le journal du format le justifie — le
+     marqueur laissé par la case « Print the “References” heading » n'en est plus. */
+  effectivePubDocNoTitle,
   pubCitationData, pubCitationHtml, pubDocOrderDropped,
   pubLayoutCss, pubTextStyleIsSet, pubDocBlockHidden,
   /* LA FORME DES NOMS D'AUTEURS dans la citation (voir utils/authorNames.js) :
@@ -99,6 +103,7 @@ export {
   PUB_FONTS, PUB_LAYOUT_PARTS, PUB_TEXT_ALIGNMENTS,
   buildPubFormat, buildPubDocOrder, buildPubDocTitles, buildPubDocNoTitle, buildPubLayout, loadPubFormat,
   normalizePubDocOrder, normalizePubDocTitles, normalizePubDocNoTitle, normalizePubDocNoBlock, normalizePubFormat, normalizePubLayout,
+  effectivePubDocNoTitle,
   buildPubDocNoBlock, pubDocBlockHidden,
   pubLayoutCss, pubTextStyleIsSet, emptyPubTextStyle, PUB_DOC_BLOCKS, PUB_DOC_BLOCK_IDS,
   pubDocOrderMoved, pubDocOrderDropped, pubDocTitleKeywords, pubDocOrderKeywords, pubDocTitleOf, pubDocTitleHidden,
@@ -2484,10 +2489,12 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
     ...(fmt && typeof fmt.bibLabel === 'string' ? { bibLabel: fmt.bibLabel } : {}),
     docOrder: normalizePubDocOrder(fmt && fmt.docOrder),
     docTitles: normalizePubDocTitles(fmt && fmt.docTitles),
-    /* …ET LES INTITULÉS QUE LE FORMAT NE VEUT PAS (une case décochée au panneau, un
-       style qui n'écrit pas ce titre — voir normalizePubDocNoTitle) : régler un champ
-       de la citation ne doit pas les rallumer. */
-    docNoTitle: normalizePubDocNoTitle(fmt && fmt.docNoTitle),
+    /* …ET LES INTITULÉS QUE LE FORMAT NE VEUT PAS — la liste qui COMPTE (voir
+       effectivePubDocNoTitle) : seul un journal dont la bibliographie n'a pas d'intitulé
+       (Science) en cache un, et régler un champ de la citation ne rallume donc pas
+       l'intitulé du journal. Le marqueur laissé par la case disparue, lui, ne part plus
+       avec la citation : il est simplement ignoré (il n'est plus écrit nulle part). */
+    docNoTitle: effectivePubDocNoTitle(fmt),
     /* …ET LES LIGNES QUE LE FORMAT N'IMPRIME PAS (la seule aujourd'hui : la ligne
        d'information du projet, éteinte tant que sa case n'est pas cochée — voir
        buildPubDocNoBlock) : régler un champ de la citation ne doit pas la rallumer. */
@@ -2577,11 +2584,13 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
      programme écrit lui-même changent. */
   const docOrder = normalizePubDocOrder(activeFormat.docOrder);
   const docTitles = normalizePubDocTitles(activeFormat.docTitles);
-  /* LES INTITULÉS QUE LE FORMAT NE VEUT PAS (voir normalizePubDocNoTitle) : la case de
-     la rubrique « References (citation & bibliography) » les décoche, et un style peut
-     les décocher pour nous (Science) ; le document n'écrit alors aucun `<h2>` pour ces
-     blocs — leur texte, leurs figures et leur place restent. */
-  const docNoTitle = normalizePubDocNoTitle(activeFormat.docNoTitle);
+  /* LES INTITULÉS QUE LE FORMAT NE VEUT VRAIMENT PAS (voir effectivePubDocNoTitle) : seul un
+     journal dont la bibliographie n'a pas d'intitulé (Science) en cache un — la rangée de
+     ces blocs le DIT, et le document n'écrit alors aucun `<h2>` pour eux (leur texte,
+     leurs figures et leur place restent). Un marqueur que plus rien ne justifie (la case
+     disparue) n'en fait plus partie : l'intitulé de la bibliographie s'imprime donc de
+     nouveau, sans que personne ait à le rallumer à la main. */
+  const docNoTitle = effectivePubDocNoTitle(activeFormat);
   /* LA LIGNE D'INFORMATION DU PROJET (voir buildPubDocNoBlock) : elle est ÉTEINTE
      tant que sa case n'est pas cochée — « the project line should not appear in the
      document unless activated ». Toutes les autres lignes de la tête portent le texte
@@ -2600,15 +2609,13 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
     /* LE NOM QU'ON ÉCRIT ICI EST CELUI QUE LE DOCUMENT IMPRIME — et il RALLUME
        l'intitulé qu'un style avait éteint. Science, par exemple, imprime sa
        bibliographie SANS intitulé (`bibLabel: ''` → `docNoTitle: ['references']`,
-       voir applyJournalFormat), et un format enregistré du temps où une case
-       « afficher l'intitulé » existait peut encore le cacher : le champ de la rangée
-       « References » n'aurait alors aucun effet, et c'est exactement la plainte —
-       « the references section always lacks the reference title in the final document
-       even if in principle I can edit its name in the publication format section ».
-       Un nom écrit (ou ↺, qui rend celui du programme) vaut donc « montre-le » : le
-       bloc sort de `docNoTitle` (et de `docNoBlock`, pour une ligne facultative). Rien
-       n'est décidé à la place de l'utilisateur : le journal reste maître de son format
-       tant que personne ne touche à l'intitulé. */
+       voir applyJournalFormat) : un nom écrit (ou ↺, qui rend celui du programme) vaut
+       donc « montre-le », et le bloc sort de `docNoTitle` (et de `docNoBlock`, pour une
+       ligne facultative). Rien n'est décidé à la place de l'utilisateur : le journal
+       reste maître de son format tant que personne ne touche à l'intitulé.
+       LA LISTE EST CELLE QUI COMPTE (`docNoTitle`, voir effectivePubDocNoTitle) : le
+       marqueur laissé par la case disparue n'y figure plus, donc rien à rallumer pour
+       lui — et l'écrire retire, au passage, ce marqueur de l'enregistrement. */
     docNoTitle: normalizePubDocNoTitle(docNoTitle.filter((x) => x !== id)),
     docNoBlock: normalizePubDocNoBlock(docNoBlock.filter((x) => x !== id))
   });

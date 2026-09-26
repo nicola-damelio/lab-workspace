@@ -203,19 +203,34 @@ eq(pubDocTitleOf({}, 'discussion'), 'Results and Discussion', '…et celle des r
 /* ── UN INTITULÉ QUE LE FORMAT NE VEUT PAS ────────────────────────────────────
    « if in the style of science references have no title then the title tick must be
    unchecked in the “References (citation & bibliography)” section. » La demande est
-   portée par `docNoTitle`, et le document écrit alors le bloc SANS son `<h2>`. */
+   portée par `docNoTitle`, et le document écrit alors le bloc SANS son `<h2>`.
+   …MAIS SEUL LE JOURNAL PEUT LE CACHER (voir effectivePubDocNoTitle) : la plainte de
+   cette session — « In the final exported document of the project page I still don't see
+   the title of the section references » — venait d'un marqueur laissé par la case
+   disparue, que plus aucun journal ne justifiait. */
 {
+  /* SCIENCE : le format dit lui-même qu'il n'écrit aucun intitulé (`bibLabel: ''`). */
+  const science = { docNoTitle: ['references'], bibLabel: '', journal: 'science' };
   const noHeading = reorderDocHtml(
     `${H2('References (2)')}<ol class="pf-bib"><li>ref 1</li><li>ref 2</li></ol>`,
     [],
-    pubDocTitleKeywords({ docNoTitle: ['references'] }));
+    pubDocTitleKeywords(science));
   ok(!noHeading.includes('<h2'), 'un bloc dont le format cache l’intitulé sort SANS son `<h2>` (Science ne titre pas sa bibliographie)');
   ok(noHeading.includes('<ol class="pf-bib"><li>ref 1</li><li>ref 2</li></ol>'),
     '…et sa liste reste entière, à la même place');
-  eq(pubDocTitleKeywords({ docNoTitle: ['references'] }).references, '',
+  eq(pubDocTitleKeywords(science).references, '',
     '…parce que le mot « references » du vocabulaire porte le titre VIDE');
-  eq(pubDocTitleKeywords({ docTitles: { references: 'Bibliography' } }).references, 'Bibliography',
+  eq(pubDocTitleKeywords({ docTitles: { references: 'Bibliography' }, bibLabel: '' }).references, 'Bibliography',
     '…alors qu’un titre choisi, lui, s’écrit (« Bibliography »)');
+  /* LE MARQUEUR SANS JOURNAL EST IGNORÉ — et le document déjà écrit garde son titre. */
+  const legacy = pubDocTitleKeywords({ docNoTitle: ['references'] });
+  eq(legacy.references, undefined,
+    'un marqueur que rien ne justifie n’est plus réécrit VIDE : le document final garde son intitulé');
+  const refsDoc = `${H2('References')}<ol class="pf-bib"><li>ref 1</li></ol>`;
+  eq(reorderDocHtml(refsDoc, [], legacy), refsDoc,
+    '…le bloc des références s’imprime donc de nouveau AVEC son titre (le document n’est pas touché)');
+  ok(reorderDocHtml(refsDoc, [], legacy).includes(H2('References')),
+    '…et l’intitulé « References » est bien là, comme la page l’écrit');
 }
 
 const angew = reorderDocHtml(doc, JOURNAL_FORMATS.angewandte.order, { 'materials and methods': 'Experimental section' });

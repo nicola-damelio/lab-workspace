@@ -477,6 +477,10 @@ const GRAD = new Function([
   sliceFn(VIEW, 'nucleotideGroupIndices'),
   sliceDecl(VIEW, 'emptySelectionWarned'),
   sliceFn(VIEW, 'warnIfEmptySelection'),
+  sliceDecl(VIEW, 'SPLINE_STYLES'),
+  sliceDecl(VIEW, 'SPLINE_TRAIT_OWNERS'),
+  sliceFn(VIEW, 'partAtomsHeldBack'),
+  sliceFn(VIEW, 'generalCession'),
   sliceFn(VIEW, 'buildSectionReps'),
   'return { buildSectionReps, gradientColorStore, gradientT, lerpHexColors, events };',
 ].join('\n'))();

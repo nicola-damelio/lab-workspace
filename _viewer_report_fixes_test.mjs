@@ -255,6 +255,10 @@ const RENDER_H = new Function([
   sliceFn(VIEW, 'nucleotideGroupIndices'),
   sliceDecl(VIEW, 'emptySelectionWarned'),
   sliceFn(VIEW, 'warnIfEmptySelection'),
+  sliceDecl(VIEW, 'SPLINE_STYLES'),
+  sliceDecl(VIEW, 'SPLINE_TRAIT_OWNERS'),
+  sliceFn(VIEW, 'partAtomsHeldBack'),
+  sliceFn(VIEW, 'generalCession'),
   sliceFn(VIEW, 'buildSectionReps'),
   'return { buildSectionReps };',
 ].join('\n'))();
@@ -278,11 +282,11 @@ const renderWith = (backbone, sidechain) => {
 const atomSels = renderWith('licorice', 'ball+stick').map((r) => r.params.sele);
 ok(atomSels.includes(':A and protein and (sidechain or .CA)'), 'la rangée des chaînes latérales dessine le CA');
 ok(atomSels.includes(':A and protein and backbone'),
-  '…et la rangée du squelette dessine TOUT son squelette, CA compris (aucun atome n’est plus retiré à personne)');
-ok(atomSels.includes(':A and protein'),
-  '…sous le dessin de General, qui décrit la molécule entière (règle d’union : le rapport de cette session)');
+  '…et la rangée du squelette dessine TOUT son squelette, CA compris (aucune partie n’est jamais amputée)');
+ok(!atomSels.includes(':A and protein'),
+  '…et le RUBAN de General n’est plus dessiné : le squelette a pris son propre style (un parcours se prend entier)');
 ok(!atomSels.some((s) => String(s).includes(' and not ')),
-  'AUCUNE clause soustractive n’est produite : le partage d’atomes entre rangées est retiré');
+  '…sans aucune soustraction : la cession ne touche que la rangée General, et un parcours ne se découpe pas');
 const ribbonSels = renderWith('cartoon', 'licorice').map((r) => r.params.sele);
 // LE RAPPORT : « side chains in ball and sticks or licorice should also display the
 // bond to the backbone ». Sous un RUBAN, le CA entre donc AUSSI dans la rangée des

@@ -285,6 +285,8 @@ eq(atomsFromStage({ compList: [meshOnly] }, 100).count, 0,
 const fullCover = { ...hiddenMolecule, reprList: [repEl([0, 1, 2, 3])] };
 eq(atomsFromStage({ compList: [fullCover] }, 100).count, 4,
   'une représentation qui couvre TOUTE la structure rend tous ses atomes (aucun filtre inutile)');
+ok(atomsFromStage({ compList: [fullCover] }, 100).radii[0] > 1,
+  '…et quand AUCUN trait n’est mesurable (un genre que la table ne connaît pas), les rayons de van der Waals sont gardés');
 
 const noRepInfo = { structure: deepStruct, matrix: { elements: ident16 } };
 eq(atomsFromStage({ compList: [noRepInfo] }, 100).count, 4,
@@ -623,6 +625,43 @@ ok(capped.count <= 3, `un plafond de 3 proxies n’est jamais dépassé (count $
 const jammed = atomsFromStage(ribbonStage, 2);
 ok(jammed.count <= 2 && jammed.filled === 0,
   `sans place du tout, le module retombe sur les atomes seuls (count ${jammed.count}, remplissage ${jammed.filled})`);
+/* …et UN ATOME QUE RIEN NE DESSINE NE PROJETTE PLUS DE BILLE. Le rapport : « the cast
+   shadows appear as large spheres (1,7 Å Van der Waals radius) for all atoms in the
+   selection (including side chains), instead of just following the thin ribbon
+   backbone ». Un ruban LISTE les chaînes latérales et n'en dessine aucune : elles
+   gardaient leur rayon de van der Waals et l'ombre du ruban devenait une chaîne de
+   grosses billes. Le proxy d'un atome dont le trait est illisible (NaN — voir
+   drawnProxyRadiiOf) est maintenant LAISSÉ DE CÔTÉ : le dessin qui l'atteint VRAIMENT
+   apporte son propre trait. */
+const unreadableRep = { repr: { visible: true, structureView: view([2, 3]) } };   // un genre absent de la table des traits
+const listedStage = {
+  compList: [{
+    structure: {
+      atomCount: 4,
+      getAtomData: () => ({
+        position: new Float32Array([0, 0, 0, 0, 1.5, 0, 0, 3, 0, 0, 4.5, 0]),
+        radius: new Float32Array([1.7, 1.7, 1.7, 1.7]),
+      }),
+    },
+    matrix: { elements: ident16 },
+    reprList: [{ repr: cartoonRep }, unreadableRep],
+  }],
+};
+const listed = atomsFromStage(listedStage, 100);
+eq(listed.count, 2,
+  'un atome LISTÉ par une sélection mais dessiné par personne n’entre plus dans le proxy (2 atomes, pas 4)');
+near(listed.radii[0], 0.45, 1e-6, '…seul le trait du ruban reste : 0,45 Å');
+near(listed.radii[1], 0.45, 1e-6, '…pour chacun des atomes que le ruban dessine vraiment');
+ok([...listed.radii].every((r) => !(r > 1)),
+  '…plus une seule bille de van der Waals dans l’ombre d’un ruban (c’était la tache du rapport)');
+ok(MODULE.includes('if (surface && measurable && !(Number.isFinite(stroke) && stroke > 0)) continue;'),
+  '…c’est la règle de layOut : un atome dont le trait est illisible est laissé hors du proxy');
+ok(MODULE.includes('measurable = Number.isFinite(surface[i]) && surface[i] > 0;'),
+  '…et elle ne touche PAS le repli : `measurable` garde les rayons de van der Waals quand rien n’est mesurable');
+// …et le repli reste : quand AUCUN trait n'est mesurable (une représentation dont la
+// table ne connaît pas le genre), les rayons de van der Waals sont gardés — un dessin
+// illisible ne perd pas son ombre (voir `measurable` dans layOut).
+
 
 /* ── 11bis. LA VRAIE FORME D’UNE REPRÉSENTATION NGL — LE BUG QUI RENDAIT LE ──
    CORRECTIF INVISIBLE DANS L’APPLICATION

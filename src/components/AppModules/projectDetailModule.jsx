@@ -4089,45 +4089,6 @@ export const ProjectDetailModule = ({
               {docHeading('references') ? (
                 <h2 className="pf-heading text-base font-black text-slate-800 border-b border-slate-200 pb-1 mb-2">{docHeading('references')}</h2>
               ) : null}
-              {/* LE TEXTE EST AUSSI DANS LE DOSSIER DU PROJET SUR LE DRIVE (voir
-                  utils/projectDocumentDrive.js) : la page le dit et sait le
-                  relire — le navigateur n'est qu'un cache, et un autre poste
-                  retrouve le texte sans passer par une sauvegarde HTML. */}
-              {/* …ET LE BANDEAU QUI LE DIT EST DE L'INTERFACE, PAS DU TEXTE : il
-                  porte `no-print` (voir withoutScreenOnlyUi) — « ☁ Text filed on
-                  Drive … ♻ Load the Drive copy » se lit à l'écran et ne part ni dans
-                  le document figé, ni à l'impression, ni dans le .docx. */}
-              <div className="mb-3 flex flex-wrap items-center gap-2 text-[11px] text-slate-600 bg-sky-50 border border-sky-200 rounded-lg px-2 py-1.5 no-print">
-                {project.driveDocument && project.driveDocument.id ? (
-                  <>
-                    <span className="font-bold">☁ Text filed on Drive</span>
-                    <span className="font-mono text-[10px] text-slate-500">
-                      {project.driveDocument.folder}/{project.driveDocument.name}
-                    </span>
-                    {project.driveDocument.url && (
-                      <a href={project.driveDocument.url} target="_blank" rel="noreferrer"
-                         className="font-bold text-sky-700 hover:underline">open</a>
-                    )}
-                    <button type="button" onClick={loadProjectDriveCopy} disabled={!!(msResult && msResult.driveBusy)}
-                            className="ml-auto px-2.5 py-1 text-[10px] font-bold rounded-lg bg-white border border-sky-300 text-sky-700 hover:bg-sky-100 disabled:opacity-50"
-                            title="Read the archived copy of this project's text from its Drive folder and put it back into the page (text sections, head, bibliography and numbered references). Nothing is applied before this click.">
-                      {msResult && msResult.driveBusy ? '⏳ Reading…' : '♻ Load the Drive copy'}
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <span className="font-bold">☁ The text of this project is not filed on Drive yet</span>
-                    <span className="text-[10px] text-slate-500">
-                      (this browser holds it — a full browser quota or another computer would lose the text)
-                    </span>
-                    <button type="button" onClick={saveProjectDriveCopy} disabled={!!(msResult && msResult.driveBusy)}
-                            className="ml-auto px-2.5 py-1 text-[10px] font-bold rounded-lg bg-white border border-sky-300 text-sky-700 hover:bg-sky-100 disabled:opacity-50"
-                            title="Write the text of this project into Lab Workspace/&lt;dataset&gt;/projects/&lt;project&gt;/&lt;project&gt;_document.json on Google Drive.">
-                      {msResult && msResult.driveBusy ? '⏳ Filing…' : '☁ File the text on Drive'}
-                    </button>
-                  </>
-                )}
-              </div>
               {refs.length === 0 ? <p className="text-xs italic text-slate-400">No references.</p> : (
                 /* La liste est TRIÉE par numéro et chaque entrée porte son numéro
                    réel (`value`) : le « [12] » du texte tombe donc toujours sur
@@ -4148,6 +4109,64 @@ export const ProjectDetailModule = ({
                 </ol>
               )}
             </div>
+          </div>
+          {/* ── LE BANDEAU DU DRIVE EST DE L'INTERFACE, PAS DU DOCUMENT ─────────
+              Signalé tel quel : « In the final exported document of the project page I
+              still don't see the title of the section references. In its place I see the
+              section “Text filed on Drive” which should not be there. » Le bandeau
+              (« ☁ Text filed on Drive … ♻ Load the Drive copy ») vivait DANS le bloc des
+              références, donc DANS `#project-doc-container` : là où l'intitulé du bloc
+              manque, la seule chose qui se lisait à sa place était ce cadre bleu, qui
+              ressemblait à un titre de section. Le texte du projet est bel et bien dans
+              le dossier du projet sur le Drive (voir utils/projectDocumentDrive.js) et la
+              page le dit — mais ELLE, pas le document : le bandeau vit maintenant HORS du
+              conteneur, comme le reste de l'interface. Rien de la page ne peut donc
+              entrer dans l'instantané, l'impression, le PDF ou le .docx (voir
+              `projectDocBodyHtml`, qui ne copie QUE le conteneur). */}
+          {/* LE STYLE N'ÉCRIT IL PAS CET INTITULÉ ? ON LE DIT, ET COMMENT LE RENDRE —
+              un journal comme Science imprime sa bibliographie sans titre (`bibLabel: ''`),
+              et la liste des références semble alors avoir perdu le sien pour toujours :
+              l'utilisateur cherche l'intitulé « de la section references » et ne trouve
+              qu'un bandeau à sa place. La note dit d'où vient le titre manquant et le
+              geste qui le rend (le champ de la rangée « References », ↺, ou un autre
+              journal) — à l'écran seulement. */}
+          {!docHeading('references') && (
+            <p className="mt-3 text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5 no-print">
+              ⚠ The current publication style prints the reference list without a heading (a journal like Science
+              writes none). Type a name — or press ↺ — on the <b>References</b> row of
+              “Publication format” → “Document sections (order &amp; titles)”, or choose another journal, to print one.
+            </p>
+          )}
+          <div className="mt-3 mb-3 flex flex-wrap items-center gap-2 text-[11px] text-slate-600 bg-sky-50 border border-sky-200 rounded-lg px-2 py-1.5 no-print">
+            {project.driveDocument && project.driveDocument.id ? (
+              <>
+                <span className="font-bold">☁ Text filed on Drive</span>
+                <span className="font-mono text-[10px] text-slate-500">
+                  {project.driveDocument.folder}/{project.driveDocument.name}
+                </span>
+                {project.driveDocument.url && (
+                  <a href={project.driveDocument.url} target="_blank" rel="noreferrer"
+                     className="font-bold text-sky-700 hover:underline">open</a>
+                )}
+                <button type="button" onClick={loadProjectDriveCopy} disabled={!!(msResult && msResult.driveBusy)}
+                        className="ml-auto px-2.5 py-1 text-[10px] font-bold rounded-lg bg-white border border-sky-300 text-sky-700 hover:bg-sky-100 disabled:opacity-50"
+                        title="Read the archived copy of this project's text from its Drive folder and put it back into the page (text sections, head, bibliography and numbered references). Nothing is applied before this click.">
+                  {msResult && msResult.driveBusy ? '⏳ Reading…' : '♻ Load the Drive copy'}
+                </button>
+              </>
+            ) : (
+              <>
+                <span className="font-bold">☁ The text of this project is not filed on Drive yet</span>
+                <span className="text-[10px] text-slate-500">
+                  (this browser holds it — a full browser quota or another computer would lose the text)
+                </span>
+                <button type="button" onClick={saveProjectDriveCopy} disabled={!!(msResult && msResult.driveBusy)}
+                        className="ml-auto px-2.5 py-1 text-[10px] font-bold rounded-lg bg-white border border-sky-300 text-sky-700 hover:bg-sky-100 disabled:opacity-50"
+                        title="Write the text of this project into Lab Workspace/&lt;dataset&gt;/projects/&lt;project&gt;/&lt;project&gt;_document.json on Google Drive.">
+                  {msResult && msResult.driveBusy ? '⏳ Filing…' : '☁ File the text on Drive'}
+                </button>
+              </>
+            )}
           </div>
         </div>
       </div>

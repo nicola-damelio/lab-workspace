@@ -509,10 +509,10 @@ eq(H.sectionRowSele(SUGAR_STRUCT, sugarSec, 'general', { anchorParts: true }), s
 has('const anchorParts = ATOM_DRAW_STYLES.includes(look.style);',
   'le rendu ne demande le pont que pour une rangée dessinée en ATOMES');
 has('const sele = sectionRowSele(structure, sec, spec.sub, { anchorSideChains, anchorParts });',
-  '…et les DEUX drapeaux de la rangée lui sont passés ensemble : la sélection n’est retirée à personne (règle d’union)');
+  '…et les DEUX drapeaux de la rangée lui sont passés ensemble : sa sélection ne bouge pas d’un caractère');
 has('const anchored = !!opts.anchorParts;', 'la sélection de rangée lit le drapeau du pont une seule fois');
 ok(!VIEW.includes('backboneLosesCa'),
-  'le squelette ne cède plus ses CA : la chaîne ne se coupe plus (« part of the backbone vanishes »)');
+  'le squelette ne perd plus ses CA par amputation : c’est General qui cède, et la chaîne tient (« part of the backbone vanishes »)');
 has('(opts.anchorSideChains ? `${base} and (sidechain or .CA)` : `${base} and sidechain`)',
   'les chaînes latérales, elles, prennent le CA dès qu’elles sont dessinées en ATOMES');
 
