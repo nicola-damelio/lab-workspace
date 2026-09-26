@@ -144,8 +144,8 @@ has("sphere: 'radiusSphere',", '…« sphere » devient « radiusSphere »');
 has("bond: 'radiusBond',", '…et « bond » devient « radiusBond »');
 has('const work = setSelRowStyle(key, value);',
   'le STYLE reste une COMMANDE (setSelRowStyle, le geste des ticks) — jamais une écriture directe');
-has("const chained = membraneHeadRelinquish(key, value !== 'hide', work);",
-  '…enchaînée sur la règle des têtes de groupe (leurs atomes quittent le feuillet parent)');
+has("const measured = membraneSeleRef.current[key];\n    const chained = measured ? membraneHeadRelinquish(key, value !== 'hide', work) : work;",
+  '…enchaînée sur la règle des têtes de groupe (leurs atomes quittent le feuillet parent) — mais SEULEMENT quand le viewer a MESURÉ la bicouche : sans mesure, `upper_headgroups` n’est qu’une sélection du script (« resn POPC and z>90 » = tout le feuillet) et la soustraire vidait le feuillet de ses chaînes acyle');
 has('const selLookOf = (st) => {', '…et la lecture d’une rangée de sélection passe par selLookOf');
 /* Les ticks « + show » ont DISPARU (le suivi : « in the selection window generated
    by pymol commands the buttons of style are now obsolete because replaced by the
@@ -293,9 +293,16 @@ eq(runOwn('upper_headgroups', { upper_headgroups: { ball: true }, upper_leaflet:
 eq(runOwn('lower_leaflet', undefined), '', 'aucun style = aucune clause (jamais de throw)');
 
 /* …et le branchement : la clause est calculée une fois par rangée et ajoutée à
-   l’exclusion de CHAQUE style, à côté de ce que hideFor dit déjà. */
-has('const membraneOwners = membraneHeadOwnerExprs(key, styles, selKeyExpr);',
-  'la clause est calculée à partir des styles VIVANTS, une fois par rangée');
+   l’exclusion de CHAQUE style, à côté de ce que hideFor dit déjà. Elle vient de
+   la MESURE (membraneSele), et d’elle seule : sans clause mesurée pour la rangée
+   de têtes, il n’y a pas de hiérarchie à imposer — `upper_headgroups` n’est
+   qu’une sélection du script, souvent toute la tranche du feuillet, et la
+   soustraire vidait le feuillet de ses chaînes acyle (le rapport :
+   _viewer_membrane_chains_test.mjs). */
+has('const measuredOwner = MEMBRANE_CHILD_OF[key] ? membraneSeleRef.current[MEMBRANE_CHILD_OF[key]] : null;',
+  'la clause des têtes se lit dans la MESURE, jamais dans ce que le script appelle `upper_headgroups`');
+has("const membraneOwners = measuredOwner ? membraneHeadOwnerExprs(key, styles, () => measuredOwner) : '';",
+  '…et la règle ne reçoit QUE cette clause-là : elle est calculée à partir des styles VIVANTS, une fois par rangée');
 has('if (membraneOwners && !parts.includes(membraneOwners)) parts.push(membraneOwners);',
   '…puis ajoutée pour chaque style, sans doublon avec hideFor');
 has('const exclusionOf = (style) => {', '…par la fonction d’exclusion que la rangée appelle par style');

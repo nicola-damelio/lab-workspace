@@ -203,8 +203,10 @@ has('membraneMeasRef.current = m;', '…remplie par la mesure du chargement');
 has('const reservedOverrides = () => {', 'le viewer mémoïse la carte nom → clause que le pont résout');
 has('membraneOverridesFor(structure, namedSeleMap(), membraneMeasRef.current, membraneSeleRef.current)',
   'la carte vient de la mesure ET des sélections du macro (la correction suit le script)');
-has("}::${measuredHeadClause(membraneMeasRef.current) || ''}`",
+has("}::${measuredHeadClause(membraneMeasRef.current) || ''}::${baseSig}`",
   'la mémoïsation est invalidée dès que les têtes mesurées changent');
+has('const baseSig = Object.keys(base)',
+  '…et dès que les QUATRE CLAUSES publiées changent : une carte construite AVANT elles (le commit de la mesure, quand selStyles a déjà des rangées) ne peut plus être figée pour la session — les quatre noms retombaient sinon sur les définitions du script et la rangée du feuillet se vidait de ses chaînes acyle (_viewer_membrane_chains_test.mjs, le rapport)');
 has('pymolSeleForStructure(structure, namedSeleMap(), text, (m) => warns.push(m), reservedOverrides().map)',
   'CHAQUE expansion (ligne, style, hideFor) passe cette carte : une seule réponse, donc jamais d’atomes divergents');
 has('const geo = reserved.map[key] || reserved.map[String(key).toLowerCase()];',

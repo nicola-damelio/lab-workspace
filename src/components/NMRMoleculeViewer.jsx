@@ -9625,7 +9625,21 @@ const reservedOverrides = () => {
   const structure = component && component.structure ? component.structure : null;
   // The heads are part of the signature: before the measurement runs this is
   // empty and the memo is rebuilt as soon as the geometry is known.
-  const sig = `${selections.map((s) => `${s.name}=${s.expr}`).join('|')}::${measuredHeadClause(membraneMeasRef.current) || ''}`;
+  // LES QUATRE CLAUSES PUBLIÉES SONT DANS LA SIGNATURE DE LA MÉMOIRE : sans elles,
+  // un appel fait dans le commit même de la mesure (le ref des têtes est posé,
+  // l'état `membraneSele` n'est pas encore rendu) gelait une carte SANS les quatre
+  // noms pour toute la session — et les noms retombaient sur les définitions du
+  // script (voir selKeyExpr / expandSelectionExpr, qui s'en gardent désormais aussi
+  // à la source). La signature reste courte : les clauses ne sont lues que par
+  // leur taille et leurs deux bouts, ce qui suffit à distinguer deux mesures.
+  const base = membraneSeleRef.current || {};
+  const baseSig = Object.keys(base)
+    .map((k) => {
+      const clause = String(base[k] || '');
+      return `${k}=${clause.length}:${clause.slice(0, 10)}:${clause.slice(-6)}`;
+    })
+    .join('|');
+  const sig = `${selections.map((s) => `${s.name}=${s.expr}`).join('|')}::${measuredHeadClause(membraneMeasRef.current) || ''}::${baseSig}`;
   const cached = reservedMapRef.current;
   if (cached && cached.struct === structure && cached.sig === sig) return cached.out;
   const out = membraneOverridesFor(structure, namedSeleMap(), membraneMeasRef.current, membraneSeleRef.current);
@@ -9635,6 +9649,18 @@ const reservedOverrides = () => {
 const expandSelectionExpr = (raw) => {
   const text = String(raw || '');
   if (!text) return 'all';
+  /* ── LES QUATRE NOMS MESURÉS SE RÉSOLVENT PAR LA GÉOMÉTRIE, JAMAIS PAR LE SCRIPT ─
+     C'est LE chemin du rapport : `membraneHeadRelinquish` écrit le NOM de la rangée
+     de têtes dans le `hideFor` du feuillet (« upper_headgroups »), et cette
+     expansion le résolvait par le pont — donc par la définition du script quand le
+     viewer n'a pas de mesure (« resn POPC and z>90 » : TOUT le feuillet). Le
+     feuillet se dessinait alors `(feuillet) and not (feuillet)` — l'ensemble VIDE :
+     ses chaînes acyle disparaissaient dès que la rangée des têtes passait en CPK.
+     La clause mesurée du nom passe donc AVANT le pont, et n'est jamais mise en
+     cache sous la forme d'une autre expression. Sans mesure publiée pour ce nom,
+     il n'est qu'une sélection du script et garde sa propre définition. */
+  const measured = membraneSeleRef.current[text] || membraneSeleRef.current[text.toLowerCase()];
+  if (measured) return measured;
   const component = componentRef.current;
   const structure = component && component.structure ? component.structure : null;
   if (seleCacheStructRef.current !== structure) {
@@ -9663,11 +9689,23 @@ const selKeyExpr = (key) => {
   // A MEASURED leaflet — or a headgroup name the macro got wrong — wins over
   // anything the script wrote for that name: the geometry is exact, `z>90` and
   // « or POPC » are guesses (membraneOverridesFor).
+  //
+  // …ET MÊME QUAND LA CARTE MÉMOÏSÉE N'A PAS ENCORE LES QUATRE CLAUSES : elle se
+  // mémoïse sur les sélections du script et la clause des têtes, PAS sur les
+  // clauses publiées, si bien qu'un appel fait dans le commit où la mesure vient
+  // d'être posée (le ref est rempli, l'état `membraneSele` n'est pas encore rendu)
+  // la fige SANS ELLES pour de bon. Les quatre noms mesurés retombaient alors sur
+  // les définitions du script (« resn POPC and z>90 » = tout le feuillet), et la
+  // rangée du feuillet se vidait de ses chaînes acyle dès que la rangée des têtes
+  // changeait de style (LE RAPPORT : « the headgroup becomes CPK but the acyl
+  // chains of the upper leaflet disappear »). La mesure se lit donc aussi ICI, à
+  // la source, et pas seulement dans cette carte.
   const reserved = reservedOverrides();
   const named = selections.find((s) => s.name === key);
   const text = named ? named.expr : key;
   const geo = reserved.map[key] || reserved.map[String(key).toLowerCase()];
-  const ngl = geo || expandSelectionExpr(text);
+  const measured = membraneSeleRef.current[key] || membraneSeleRef.current[String(key).toLowerCase()];
+  const ngl = geo || measured || expandSelectionExpr(text);
   // A corrected name is never a SILENT substitution: the row says what the
   // script promised and what the measurement used instead. Keyed on the
   // expression the row shows, exactly like the bridge's own warnings.
@@ -9849,7 +9887,17 @@ const setSelField = (key, field, value) => {
     // (membraneHeadRelinquish), so the heads can really be restyled on their own
     // even when the leaflet draws spheres over them. « Hide » gives them back.
     const work = setSelRowStyle(key, value);
-    const chained = membraneHeadRelinquish(key, value !== 'hide', work);
+    // LA HIÉRARCHIE N'EXISTE QUE SI LE VIEWER A MESURÉ LA BICOUCHE. Sans mesure,
+    // `upper_headgroups` n'est qu'une sélection DU SCRIPT — et une macro de membrane
+    // la définit souvent par une simple tranche (« resn POPC and z>90 »), qui couvre
+    // TOUT le feuillet. La soustraire à la rangée du feuillet (membraneHeadRelinquish
+    // écrit son nom dans le `hideFor` du parent) vidait alors le feuillet de ses
+    // chaînes acyle : LE RAPPORT (« the headgroup becomes CPK but the acyl chains of
+    // the upper leaflet disappear »). Sans mesure, le geste reste donc un style de
+    // rangée ordinaire, comme pour n'importe quelle autre sélection : aucun livre de
+    // comptes de hiérarchie n'est écrit dans un état que personne ne peut honorer.
+    const measured = membraneSeleRef.current[key];
+    const chained = measured ? membraneHeadRelinquish(key, value !== 'hide', work) : work;
     if (chained !== work) setSelStyles(chained);
     return;
   }
@@ -10123,7 +10171,15 @@ useEffect(() => {
        leaflet it is the clause of the head row that owns its heads — the atoms
        leave EVERY style the leaflet draws, including the ones chosen after the
        heads were styled (the CPK of the report). */
-    const membraneOwners = membraneHeadOwnerExprs(key, styles, selKeyExpr);
+    /* …ET ELLE N'EXISTE QUE SI LES DEUX RANGÉES SONT MESURÉES : la clause des têtes
+       se lit dans la MESURE (`membraneSele`), jamais dans ce que le script appelle
+       « upper_headgroups ». Sans elle, il n'y a pas de hiérarchie à imposer — la
+       rangée de têtes n'est qu'une sélection du script (souvent toute la tranche du
+       feuillet) et la soustraire vidait la rangée du feuillet, chaînes acyle
+       comprises (LE RAPPORT, voir aussi setSelField, le geste jumeau). */
+
+    const measuredOwner = MEMBRANE_CHILD_OF[key] ? membraneSeleRef.current[MEMBRANE_CHILD_OF[key]] : null;
+    const membraneOwners = measuredOwner ? membraneHeadOwnerExprs(key, styles, () => measuredOwner) : '';
     const exclusionOf = (style) => {
       // A MEASURED ROW NEVER SUBTRACTS THE ROW THAT CONTAINS IT (see
       // membraneExclusionKept): `toggleSelStyle` écrit l'expression de la rangée

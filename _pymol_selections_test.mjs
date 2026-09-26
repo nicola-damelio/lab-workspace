@@ -120,8 +120,16 @@ eq(H.styleHidesAfter(parsed.acts, parsed.acts.length - 1, 'sphere'), [],
 gone('translateSelection', 'l’ancienne traduction naïve a disparu (elle laissait `z>90` ne rien sélectionner)');
 has('const ngl = pymolSeleForStructure(structure, namedSeleMap(), text, (m) => warns.push(m), reservedOverrides().map);',
   'une expression passe par le pont, avec la structure ET les feuillets mesurés — la MÊME carte nom → clause pour chaque expansion (lignes, styles, hideFor)');
-has('const ngl = geo || expandSelectionExpr(text);',
+has('const ngl = geo || measured || expandSelectionExpr(text);',
   'un feuillet MESURÉ (ou un nom de têtes corrigé) gagne sur la définition du script (`membrane and z>90`)');
+/* …ET LA MESURE GAGNE MÊME QUAND LA CARTE MÉMOÏSÉE N’A PAS ENCORE LES QUATRE
+   CLAUSES : la carte se mémoïse sur les sélections du script et la clause des
+   têtes, si bien qu'un appel fait dans le commit de la mesure la figeait sans
+   elles — les quatre noms retombaient alors sur les définitions du script, et la
+   rangée du feuillet se vidait de ses chaînes acyle (le rapport, rejoué par
+   _viewer_membrane_chains_test.mjs). */
+has('const measured = membraneSeleRef.current[key] || membraneSeleRef.current[String(key).toLowerCase()];',
+  '…la clause MESURÉE est donc relue à la source, et pas seulement dans la carte');
 has('pymolSeleToNgl = (raw, ctx = {})', 'le pont a un point d’entrée pur (testable sans rendu)');
 has('if (!names.length) { warn(', 'une sélection qui ne trouve rien est SIGNALÉE, plus jamais silencieuse');
 has('resnoRangesClause', 'les feuillets sont écrits en plages de résidus (compact)');
