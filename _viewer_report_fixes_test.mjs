@@ -193,15 +193,19 @@ eq(ROW_H.sectionRowSele(null, PROTEIN, 'sidechain'), ':A and protein and sidecha
   'sans ancre, la rangée des chaînes latérales garde sa sélection d’origine');
 eq(ROW_H.sectionRowSele(null, PROTEIN, 'backbone'), ':A and protein and backbone',
   '…et celle du squelette aussi');
-// Avec ancre : le CA rejoint les chaînes latérales ; il QUITTE le squelette quand le
-// squelette est dessiné en ATOMES lui aussi (aucun atome n'est alors dessiné deux fois).
+// Avec ancre : le CA rejoint les chaînes latérales, ET LE SQUELETTE GARDE LES SIENS.
+// Le rapport de cette session : « If I put the backbone in ball and sticks the backbone
+// is displayed correctly but then if I put the side chains in ball and sticks part of
+// the backbone vanishes. » NGL ne dessine une liaison que si ses DEUX atomes sont dans
+// la MÊME représentation : un squelette amputé de ses CA perd les liaisons N–CA et
+// CA–C, et la rangée des chaînes latérales n'a ni N ni C — la chaîne se COUPE donc à
+// chaque résidu. Le CA appartient aux DEUX rangées (la convention de PyMOL).
 eq(ROW_H.sectionRowSele(null, PROTEIN, 'sidechain', { anchorSideChains: true }), ':A and protein and (sidechain or .CA)',
   'le CA est DANS la sélection des chaînes latérales : la liaison CB–CA est donc dessinée');
-eq(ROW_H.sectionRowSele(null, PROTEIN, 'backbone', { anchorSideChains: true, backboneLosesCa: true }),
-  ':A and protein and backbone and not .CA',
-  '…et il quitte celle du squelette QUAND celui-ci est dessiné en atomes : aucun atome deux fois');
 eq(ROW_H.sectionRowSele(null, PROTEIN, 'backbone', { anchorSideChains: true }), ':A and protein and backbone',
-  'sous un RUBAN (pas de `backboneLosesCa`) le squelette garde ses CA : NGL construit sa spline avec');
+  '…et le squelette garde TOUS ses CA, quel que soit le style des chaînes latérales');
+eq(ROW_H.sectionRowSele(null, PROTEIN, 'backbone'), ':A and protein and backbone',
+  '…avec ou sans ancre : sa sélection ne dépend plus du style d’une autre rangée');
 const ATOM_STYLES = new Function([sliceDecl(VIEW, 'ATOM_DRAW_STYLES'), 'return { ATOM_DRAW_STYLES };'].join('\n'))().ATOM_DRAW_STYLES;
 eq([...ATOM_STYLES].sort(), ['ball+stick', 'licorice', 'line', 'spacefill', 'sphere'].sort(),
   'l’ancre vaut pour les quatre styles qui dessinent des ATOMES');
@@ -245,14 +249,10 @@ const RENDER_H = new Function([
   'const DEFAULT_NUCLEIC_COLORS = { base: 0xffffff, sugar: 0xffffff, phosphate: 0xffffff };',
   'const gradientRangesFor = () => null;',
   'const gradientColorStore = { ranges: null };',
-  // Les atomes que le style de « General » PARCOURT — un ribbon / cartoon / tube marche
-  // le long du CA — ne sont jamais cédés à une partie (voir _viewer_general_row_test.mjs).
-  sliceDecl(VIEW, 'SPLINE_STYLES'),
   sliceFn(VIEW, 'nucleicGroupOf'),
   sliceDecl(VIEW, 'nucleicGroupCache'),
   sliceFn(VIEW, 'nucleicGroupIndicesIn'),
   sliceFn(VIEW, 'nucleotideGroupIndices'),
-  sliceFn(VIEW, 'generalWalkingSele'),
   sliceDecl(VIEW, 'emptySelectionWarned'),
   sliceFn(VIEW, 'warnIfEmptySelection'),
   sliceFn(VIEW, 'buildSectionReps'),
@@ -277,23 +277,23 @@ const renderWith = (backbone, sidechain) => {
 };
 const atomSels = renderWith('licorice', 'ball+stick').map((r) => r.params.sele);
 ok(atomSels.includes(':A and protein and (sidechain or .CA)'), 'la rangée des chaînes latérales dessine le CA');
-ok(atomSels.includes(':A and protein and backbone and not .CA'), 'la rangée du squelette ne le redessine pas');
-ok(!atomSels.includes(':A and protein and sidechain'), 'la sélection FLOTTANTE (sans CA) n’est plus produite');
-eq(atomSels.filter((s) => String(s).includes('.CA') && !String(s).includes('not .CA')).length, 1,
-  'le CA est DESSINÉ par une seule rangée (« not .CA » l’exclut, ce n’est pas un second dessin)');
+ok(atomSels.includes(':A and protein and backbone'),
+  '…et la rangée du squelette dessine TOUT son squelette, CA compris (aucun atome n’est plus retiré à personne)');
+ok(atomSels.includes(':A and protein'),
+  '…sous le dessin de General, qui décrit la molécule entière (règle d’union : le rapport de cette session)');
+ok(!atomSels.some((s) => String(s).includes(' and not ')),
+  'AUCUNE clause soustractive n’est produite : le partage d’atomes entre rangées est retiré');
 const ribbonSels = renderWith('cartoon', 'licorice').map((r) => r.params.sele);
 // LE RAPPORT : « side chains in ball and sticks or licorice should also display the
 // bond to the backbone ». Sous un RUBAN, le CA entre donc AUSSI dans la rangée des
-// chaînes latérales (sinon elles flottent à côté) — mais le ruban garde les siens :
-// c'est avec eux que NGL construit sa spline, on ne l'ampute jamais.
+// chaînes latérales (sinon elles flottent à côté) — et le ruban garde les siens : c'est
+// avec eux que NGL construit sa spline, on ne l'ampute jamais.
 ok(ribbonSels.includes(':A and protein and (sidechain or .CA)'),
   'sous un ruban, les chaînes latérales prennent le CA dont elles pendent');
 ok(ribbonSels.includes(':A and protein and backbone'), '…et le ruban garde sa sélection complète');
-ok(!ribbonSels.includes(':A and protein and backbone and not .CA'),
-  'on ne retire JAMAIS le CA de la sélection d’un ruban (la spline de NGL passe par eux)');
 has("const anchorSideChains = sec.kind === 'protein'", 'le rendu décide l’ancre d’après le look de SA rangée');
-has('const backboneLosesCa = anchorSideChains',
-  '…et ne cède les CA du squelette qu’à un squelette dessiné en ATOMES lui aussi');
+gone('backboneLosesCa',
+  '…et le squelette ne cède plus ses CA à personne (le rapport : « part of the backbone vanishes »)');
 
 /* ══ 5. LE 🔢 RENUMÉROTATION : LE PANNEAU S'OUVRE, ET IL SERT À QUELQUE CHOSE ═ */
 const RES_H = new Function([sliceFn(VIEW, 'collectResidues'), 'return { collectResidues };'].join('\n'))();

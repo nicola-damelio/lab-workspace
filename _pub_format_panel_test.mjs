@@ -87,14 +87,18 @@ ok(PANEL.includes('Set all to'), 'les membres du laboratoire ont leur réglage e
 
 /* ══ 5. CE QUI N'A PAS BOUGÉ ══════════════════════════════════════════════ */
 ok(PANEL.includes("else pubSetJournal(v.slice('journal:'.length));"), 'la valeur choisie route les deux familles d’options (un journal, un style sauvé)');
-/* LA CASE DU TITRE DE LA BIBLIOGRAPHIE (la demande : « if in the style of science
-   references have no title then the title tick must be unchecked in the “References
-   (citation & bibliography)” section ») : la rubrique des références la porte, et elle
-   lit `docNoTitle` du format. */
-ok(PANEL.includes("checked={!docNoTitle.includes('references')}"),
-  'la rubrique « References (citation & bibliography) » a la case « imprimer l’intitulé », décochée quand le style n’en écrit pas');
-ok(PANEL.includes('docNoTitle: e.target.checked') && PANEL.includes('? docNoTitle.filter((id) => id !== \'references\')'),
-  '…et la décocher écrit « pas d’intitulé » dans le format (le document suivra)');
+/* LA CASE DU TITRE DE LA BIBLIOGRAPHIE N'EXISTE PLUS — la demande de cette session :
+   « the references should behave like the other sections and not have a tick display
+   reference title ». L'intitulé d'une section est celui que le FORMAT porte (Science
+   n'en écrit aucun : `bibLabel: ''` → `docNoTitle`, voir applyJournalFormat) ou celui
+   que « Document sections (order & titles) » règle pour la rangée « References » : les
+   références n'ont plus de case à elles, et le document continue de lire `docNoTitle`. */
+ok(!PANEL.includes("checked={!docNoTitle.includes('references')}"),
+  'la rubrique « References (citation & bibliography) » n’a plus sa case « imprimer l’intitulé » (aucune autre section n’en a)');
+ok(!PANEL.includes('Print the “{docTitles.references || \'References\'}” heading'),
+  '…et rien n’a pris sa place dans la rubrique des références');
+ok(PANEL.includes("docNoTitle: normalizePubDocNoTitle(fmt && fmt.docNoTitle)"),
+  '…le format garde `docNoTitle` (la liste des intitulés qu’un journal n’écrit pas)');
 ok(PANEL.includes('const pubSetJournal = (id) => {'), 'le journal entier aussi');
 ok(PANEL.includes('const pubResetDocSections = () => pubPatchFormat({ docOrder: buildPubDocOrder(), docTitles: buildPubDocTitles() });'),
   'le ↺ de l’ordre et des intitulés est toujours là');

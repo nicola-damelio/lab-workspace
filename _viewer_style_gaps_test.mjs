@@ -471,14 +471,10 @@ const GRAD = new Function([
   // appels qui est en cause, pas la mesure elle-même.
   'const events = [];',
   'const gradientRangesFor = (structure, sele) => { events.push(`ranges:${sele}`); return { all: [0, 10] }; };',
-  // Les atomes que le style de « General » PARCOURT — un ribbon / cartoon / tube marche
-  // le long du CA — ne sont jamais cédés à une partie (voir _viewer_general_row_test.mjs).
-  sliceDecl(VIEW, 'SPLINE_STYLES'),
   sliceFn(VIEW, 'nucleicGroupOf'),
   sliceDecl(VIEW, 'nucleicGroupCache'),
   sliceFn(VIEW, 'nucleicGroupIndicesIn'),
   sliceFn(VIEW, 'nucleotideGroupIndices'),
-  sliceFn(VIEW, 'generalWalkingSele'),
   sliceDecl(VIEW, 'emptySelectionWarned'),
   sliceFn(VIEW, 'warnIfEmptySelection'),
   sliceFn(VIEW, 'buildSectionReps'),

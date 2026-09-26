@@ -3055,14 +3055,16 @@ const STYLES = {
 // it is not in this list — and neither is a filled plate / slab (`rings`, `plates`,
 // `base`), which draws a surface rather than the atoms of the part.
 const ATOM_DRAW_STYLES = ['ball+stick', 'licorice', 'line', 'spacefill', 'sphere'];
-// The styles that WALK THE POLYMER instead of drawing its atoms: NGL builds them along
-// the TRACE ATOM of CONSECUTIVE residues — read in the very build the page bundles
-// (ngl 2.4.0, `ResidueType`): a protein walks its CA, with the C giving the ribbon its
-// direction and the O its width; a nucleotide its C4', with the C1' · C2' and the
-// C3' · O4'. A row drawn with one of these therefore cannot hand the atoms of its own
-// path over to another row (see generalWalkingSele, and the relinquish rule of
-// buildSectionReps): it draws a PATH, and a path without its atoms is nothing at all.
-const SPLINE_STYLES = ['cartoon', 'ribbon', 'tube', 'trace'];
+// NO ROW EVER TAKES ATOMS AWAY FROM ANOTHER ROW. `cartoon` · `ribbon` · `tube` · `trace`
+// WALK the polymer instead of drawing its atoms — NGL builds them along the TRACE ATOM of
+// CONSECUTIVE residues (ngl 2.4.0, `ResidueType`: the CA of a protein, with the C giving
+// the ribbon its direction and the O its width; the C4' of a nucleotide, with the C1' ·
+// C2' and the C3' · O4') — and that is exactly why a SUBTRACTION between two rows is a
+// trap: take the Cα out of the row that walks the chain and it has nothing left to draw
+// (the cartoon of the whole molecule disappeared); take it out of the row that draws
+// sticks and the chain is broken at every residue. Every row therefore draws ONLY what it
+// says (see sectionRowSele and the union rule of buildSectionReps) — two rows may cover
+// the same atoms, exactly as two `show` commands in PyMOL do.
 // The « Color by » sets, one per row of the request. NOTE: « Lipid type » is NOT
 // offered on water (the request corrected exactly that), and « Charge » exists for
 // ions alone — it is what tells a Na⁺ from a Cl⁻ in the same solvent.
@@ -3407,6 +3409,19 @@ const effectiveSectionLook = (looks, kind, sub) => {
     if (!spec.colors.includes(own.colorBy)) own.colorBy = spec.def.colorBy;
     return own;
   }
+  /* « HIDE » ÉCRIT PAR LA CASCADE TIENT (le rapport : « Se imposto "General" su cartoon,
+     il backbone deve passare a cartoon e le sidechain a hide », puis « quando general é
+     su hide, si attivano backbone e sidechain che invece dovrebbero essere entrambi su
+     hide »). Une partie que `setGeneralSectionField` a mise sur « Hide » GARDE ce
+     « Hide » jusqu'au changement suivant de General : sans cette ligne, un style que SA
+     rangée ne sait pas dessiner (un cartoon sur des chaînes latérales) la faisait
+     retomber sur son propre DÉFAUT (licorice), et la scène redessinait des bâtons que
+     General venait de remplacer — le « Hide » de la cascade ne durait pas un dessin, et
+     la molécule semblait obéir à deux commandes à la fois. La rangée reste dans la
+     hiérarchie (`follow: true`) : son badge « ← General » le dit, et le prochain style
+     choisi sur General la reprend (un style que sa rangée SAIT dessiner, lui, descend
+     normalement). */
+  if (own.style === 'hide') return { ...own, follow: true };
   const g = { ...defaultLookOf(kind, 'general'), ...((looks && looks[kind] && looks[kind].general) || null) };
   return {
     ...own,
@@ -7423,14 +7438,20 @@ const sectionRowSele = (structure, sec, sub, opts = {}) => {
     // belongs to the SIDE-CHAIN row — exactly as in PyMOL, whose `sidechain`
     // selection includes it — so `opts.anchorSideChains`, which the renderer asks for
     // whenever the side-chain row draws ATOMS, adds it.
+    /* ⚠ LE SQUELETTE GARDE TOUJOURS SES CA — la chaîne ne se coupe plus.
+       Le rapport de cette session : « If I put the backbone in ball and sticks the
+       backbone is displayed correctly but then if I put the side chains in ball and
+       sticks part of the backbone vanishes. » NGL ne dessine une liaison que si ses DEUX
+       atomes sont dans la sélection de la MÊME représentation : un squelette amputé de ses
+       CA (`backbone and not .CA`) perdait ses liaisons N–CA et CA–C, et la rangée des
+       chaînes latérales, elle, n'a ni N ni C — la chaîne apparaissait donc COUPÉE à chaque
+       résidu dès que les deux rangées étaient dessinées en atomes. Le CA appartient aux
+       DEUX rangées, c'est la convention de PyMOL (sa sélection `sidechain` inclut le CA) :
+       l'atome est dessiné deux fois — au même endroit, par deux représentations de même
+       géométrie — et c'est le prix d'une chaîne entière. */
     const inner = sub === 'sidechain'
       ? (opts.anchorSideChains ? `${base} and (sidechain or .CA)` : `${base} and sidechain`)
-      // The BACKBONE row gives the CA away only when it draws atoms ITSELF
-      // (`opts.backboneLosesCa`): the two atom rows then join at the CB–CA bond, no
-      // atom is drawn twice, and the backbone stays connected by its own C–N peptide
-      // bonds. A RIBBONY backbone keeps its CAs — a ribbon / cartoon / tube walks
-      // THROUGH them, and taking them out of its selection would break its spline.
-      : (opts.backboneLosesCa ? `${base} and backbone and not .CA` : `${base} and backbone`);
+      : `${base} and backbone`;
     /* ⚠ THE N AND C TERMINI HANG ONTO WHAT THEY ARE BONDED TO.
        The report: « in some representation the N terminus and the C terminus residues
        remain detached from the rest. In that case add a bond. » A protein section is
@@ -7487,39 +7508,16 @@ const sectionRowSele = (structure, sec, sub, opts = {}) => {
   return base;
 };
 
-/* ── THE ATOMS A « GENERAL » ROW'S OWN STYLE WALKS ────────────────────────────
-   A ribbon / cartoon / tube / trace draws NO ATOM: NGL runs it along the TRACE ATOM
-   of CONSECUTIVE residues — the CA of a protein (the C giving the direction, the O
-   the width), the C4' of a nucleotide (the C1' · C2' and the C3' · O4' giving it) —
-   so a row drawn with one of them cannot hand those atoms over to a part that took
-   its own style: stripped of its path it drew NOTHING AT ALL. The report, word for
-   word:
-
-     « the hierarchy of the styles is wrong. It was better before. If in general
-       (which represents the full molecule) i put cartoon, then the subgroups must be
-       on hide and only cartoon must be visualised. if after that i change the style
-       in the subgroup the style must change until i change again the general. »
-
-   — measured: « General → cartoon » then « Side chains → licorice » (that row takes
-   `(sidechain or .CA)`) left the General row with no CA to walk, and the cartoon of
-   the WHOLE molecule disappeared at the first sub-row edit (see
-   _viewer_general_row_test.mjs).
-
-   The protein backbone (N · CA · C · O) has a word in NGL, so it is a SELECTOR. A
-   nucleic acid has none for « the sugar and the phosphate »: the atoms of the path
-   are counted on THIS structure — the phosphate and pentose groups the rows already
-   use — and the protection becomes an `@index` list, which depends on no naming
-   convention (C1' · C1* · …) and still leaves the nucleobase to the part that
-   takes it. */
-const generalWalkingSele = (structure, sec, style) => {
-  if (!SPLINE_STYLES.includes(style)) return '';
-  if (sec.kind === 'protein') return 'backbone';
-  if (sec.kind === 'nucleic') {
-    return indexSele(nucleotideGroupIndices(structure, sec, 'phosphate')
-      .concat(nucleotideGroupIndices(structure, sec, 'pentose')));
-  }
-  return '';
-};
+/* ── POURQUOI IL N'Y A PLUS DE « GENERAL GARDE LES ATOMES DE SON CHEMIN » ─────
+   Un ribbon / cartoon / tube / trace ne dessine AUCUN atome : NGL le fait courir le
+   long du TRACE ATOM de résidus CONSÉCUTIFS (le CA d'une protéine — le C donne la
+   direction, le O la largeur —, le C4' d'un nucléotide). C'est précisément pour cela
+   qu'un partage d'atomes entre rangées a été essayé, puis retiré : la fonction
+   `generalWalkingSele` protégeait le chemin de General pendant que les parties
+   recevaient le reste, et le partage produisait trois pannes (General vidé, CA des
+   chaînes latérales perdu, liaisons N–CA / CA–C dans aucune représentation — voir la
+   règle d'union de buildSectionReps et _viewer_style_coverage_test.mjs). Chaque
+   rangée dessine donc ce qu'elle dit, sans rien céder ni rien prendre. */
 
 /* ── UNE RANGÉE QUI NE DESSINE RIEN DOIT LE DIRE ──────────────────────────────
    Le seul défaut qu'un SÉLECTEUR peut avoir sans que NGL ne proteste : NGL ne
@@ -7794,56 +7792,49 @@ const buildSectionReps = (comp, sections, trees, opts = {}) => {
     const anchorSideChains = sec.kind === 'protein'
       && !!subLooks.sidechain && subLooks.sidechain.style !== 'hide'
       && ATOM_DRAW_STYLES.includes(subLooks.sidechain.style);
-    const backboneLosesCa = anchorSideChains
-      && !!subLooks.backbone && ATOM_DRAW_STYLES.includes(subLooks.backbone.style);
-    /* ⚠ THE GENERAL ROW GIVES ITS ATOMS AWAY TO A PART THAT HAS ITS OWN STYLE — BUT
-       NEVER THE ONES ITS OWN DRAWING WALKS.
-       Measured on this very code (_viewer_general_row_test.mjs): after « General →
-       Tube », choosing « Backbone → Cartoon » drew `:A and backbone` while the
-       General row went on drawing `:A` — the whole protein as a 0.5 Å tube — so the
-       cartoon and the licorice sticks were drawn INSIDE an opaque tube that covered
-       them, and the report was « the general style of proteins … is not working
-       anymore ». It is the very rule the membrane headgroups already follow
-       (membraneHeadRelinquish: a headgroup row takes its atoms out of the leaflet
-       row that draws them) and PyMOL's own `sidechain` selection: the atoms a row
-       has been given its OWN style are handed over to it.
-       ⚠ AND THE OTHER HALF — the hierarchy, which is what the report above asks for
-       (« the hierarchy of the styles is wrong. It was better before. If in general
-       (which represents the full molecule) i put cartoon, then the subgroups must be
-       on hide and only cartoon must be visualised. if after that i change the style
-       in the subgroup the style must change until i change again the general. »):
-       handing EVERY atom over took the atoms of General's OWN path with them — a
-       ribbon / cartoon / tube is walked along the Cα (see generalWalkingSele) — so
-       the row that describes the WHOLE molecule lost its path and its style VANISHED
-       from the molecule at the first sub-row edit: « General → cartoon » then
-       « Side chains → licorice » (that row takes `(sidechain or .CA)`) left the
-       protein with NO cartoon at all and only the sticks. The atoms a row's own
-       style walks are therefore KEPT by the General row, and a part takes only the
-       rest — the cartoon keeps walking the whole chain WHILE the side chains are
-       drawn by their own row.
-       Only a row the user DEVIATED (`follow: false` — a part that still follows
-       General has no style of its own, so General is its style) and that is really
-       drawn takes anything, so the default look of a molecule (General cartoon +
-       Backbone follows + Side chains licorice) is untouched: the two following rows
-       take nothing at all, and an atom-drawn General still stops painting over the
-       parts that have their own. */
-    const rowOpts = (style) => ({ anchorSideChains, backboneLosesCa, anchorParts: ATOM_DRAW_STYLES.includes(style) });
-    const generalKeeps = generalWalkingSele(structure, sec, (subLooks.general || {}).style);
-    /* « ce que la partie a pris, MOINS les atomes que le style de General parcourt » :
-       une partie qui n'a pris que ceux-là — le squelette d'un General en cartoon — ne
-       lui retire donc RIEN, et le dessin de General reste entier. Le sélecteur produit
-       reste une clause NGL valable dans tous les cas (un « and not » de trop ne casse
-       jamais un style : il ne lui enlève que des atomes). */
-    const giveAway = (sele) => (sele && generalKeeps ? `(${sele}) and not ${generalKeeps}` : sele);
-    const relinquished = subsectionsOf(sec.kind)
-      .filter((sp) => sp.sub !== 'general')
-      .map((sp) => ({ sp, look: subLooks[sp.sub] }))
-      .filter(({ look }) => !!look && look.style !== 'hide' && look.follow === false)
-      .map(({ sp, look }) => giveAway(sectionRowSele(structure, sec, sp.sub, rowOpts(look.style))))
-      .filter(Boolean);
-    const generalOnly = relinquished.length
-      ? `${sec.sele || 'all'} and not (${relinquished.join(') and not (')})`
-      : '';
+    /* ⚠ AUCUNE RANGÉE NE RETIRE D'ATOMES À UNE AUTRE — LA SCÈNE EST L'UNION DES RANGÉES.
+       Le rapport de cette session : « If I put the general to cartoon or to whatever other
+       style nothing is displayed. If I put the backbone in ball and sticks the backbone is
+       displayed correctly but then if I put the side chains in ball and sticks part of the
+       backbone vanishes. In other words you have to deeply revise these commands because
+       nothing works. I cannot even display the molecule in ball and sticks because it
+       appears fragmented. » — et la référence que l'utilisateur donne : « in the vercel
+       deployment be33c40 the controls of the viewer worked well », c'est-à-dire l'état
+       d'AVANT la « cession d'atomes » décrite ici.
+
+       CE QUE LA CESSION D'ATOMES FAISAIT (et pourquoi elle est partie) : la rangée General
+       cédait ses atomes aux parties qui avaient leur propre style — `sec.sele and not
+       ((…) and not backbone)` — et la clause de la partie était AMPUTÉE des atomes que le
+       style de General parcourt (`(sidechain or .CA) and not backbone`). Trois pannes
+       mesurables en découlaient, toutes signalées dans le rapport ci-dessus :
+         1. un General dont le style ne parcourt rien et dont TOUTES les parties ont dévié
+            n'avait plus AUCUN atome (`:A and protein and not (…) and not (…)` = ∅) : sa
+            représentation ne dessinait rien ;
+         2. la rangée des chaînes latérales perdait le CA que sa parenthèse venait de
+            prendre (`… and not backbone`) : les chaînes flottaient, et le CA n'était plus
+            dessiné par personne dès que le squelette dessinait en atomes (nous l'amputions
+            aussi : `backbone and not .CA`) — « part of the backbone vanishes » ;
+         3. NGL ne dessine une liaison que si ses DEUX atomes sont dans la MÊME sélection :
+            entre un squelette sans CA (N · C · O) et des chaînes latérales sans N ni C
+            (CB · CG · …), les liaisons N–CA et CA–C n'appartenaient à AUCUNE
+            représentation — la molécule « appears fragmented ».
+
+       LA RÈGLE EST DONC CELLE QUE L'UTILISATEUR A VALIDÉE (be33c40) :
+         · la rangée GENERAL décrit la molécule ENTIÈRE (`sec.sele`, voir sectionRowSele) :
+           elle ne peut plus être vidée par une sous-rangée, et « General → cartoon »
+           (ou tout autre style) dessine TOUJOURS toute la molécule ;
+         · chaque partie dessine SES atomes, tels que `sectionRowSele` les écrit — la part,
+           plus l'atome d'ANCRE qui la rattache à sa voisine (le CA des chaînes latérales),
+           plus le PONT de ses extrémités (bridgeAtomIndices) — et RIEN ne lui en est
+           retiré ;
+         · deux rangées peuvent donc dessiner les mêmes atomes : c'est ce que fait PyMOL
+           quand un `show cartoon` couvre un `show sticks` déjà affiché, et c'est la seule
+           façon d'avoir à la fois « la molécule entière » et « cette partie-ci avec mon
+           style ». La hiérarchie n'y perd rien : c'est `setGeneralSectionField` qui met
+           les parties sur « Hide » quand General prend un style, et `effectiveSectionLook`
+           qui fait tenir ce « Hide ».
+       Mesuré, séquence par séquence, dans _viewer_style_coverage_test.mjs (chaque atome et
+       chaque liaison de la molécule doit être dessiné au moins une fois). */
     subsectionsOf(sec.kind).forEach((spec) => {
       const look = subLooks[spec.sub];
       if (look.style === 'hide') return;
@@ -7853,9 +7844,7 @@ const buildSectionReps = (comp, sections, trees, opts = {}) => {
       // link them, the acyl chains their glycerol, the glycerol its phosphate — so no
       // part is left floating beside the one it is attached to.
       const anchorParts = ATOM_DRAW_STYLES.includes(look.style);
-      const sele = spec.sub === 'general' && generalOnly
-        ? generalOnly
-        : sectionRowSele(structure, sec, spec.sub, { anchorSideChains, backboneLosesCa, anchorParts });
+      const sele = sectionRowSele(structure, sec, spec.sub, { anchorSideChains, anchorParts });
       if (!sele) return;
       // …et si ce sélecteur n'atteint AUCUN atome, la rangée le dit dans la console
       // (la seule panne qu'un sélecteur puisse avoir sans que NGL ne lève).

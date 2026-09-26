@@ -3105,25 +3105,20 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
             References (citation &amp; bibliography)
           </div>
 
-          {/* LE TITRE DE LA BIBLIOGRAPHIE SE COCHE ICI — la demande : « If in the style
-              of science references have no title then the title tick must be unchecked in
-              the “References (citation & bibliography)” section. » La case lit
-              `docNoTitle` du format : choisir Science la décoche (sa liste suit le texte,
-              sans intitulé), la décocher soi-même retire le `<h2>` du document sur la
-              page, à l'impression, dans le PDF et dans le .docx — la liste des références,
-              elle, reste entière. Le champ de l'intitulé, lui, est dans « Document
-              sections (order & titles) », à la rangée « References ». */}
-          <label className="flex w-fit items-center gap-1.5 mb-3 text-[11px] font-bold text-slate-600 cursor-pointer"
-                 title="Print the heading over the reference list of the project document (page, print, PDF, .docx). Unticked — the habit of some journals, Science among them — the list follows the text with no heading of its own.">
-            <input type="checkbox" checked={!docNoTitle.includes('references')}
-                   onChange={(e) => pubPatchFormat({
-                     docNoTitle: e.target.checked
-                       ? docNoTitle.filter((id) => id !== 'references')
-                       : [...docNoTitle, 'references']
-                   })}
-                   className="w-3.5 h-3.5 accent-indigo-600" />
-            Print the “{docTitles.references || 'References'}” heading
-          </label>
+          {/* LA RANGÉE « References » N'A PLUS DE CASE À ELLE — elle se règle comme les
+              autres sections. La demande : « the references should behave like the other
+              sections and not have a tick display reference title ».
+              Il y avait ici une case « Print the “References” heading », née de la demande
+              « if in the style of science references have no title then the title tick must
+              be unchecked in the “References (citation & bibliography)” section » : elle
+              écrivait `docNoTitle`, la liste des blocs dont le document n'écrit pas le
+              `<h2>`. Elle n'existe plus parce qu'AUCUNE AUTRE section n'a de case de ce
+              genre : l'intitulé d'une section est celui que le format porte (un journal
+              comme Science n'en écrit aucun — `bibLabel: ''` → `docNoTitle`, voir
+              applyJournalFormat) ou celui que « Document sections (order & titles) » règle
+              pour la rangée « References ». Le document, l'impression, le PDF et le .docx
+              continuent de lire `docNoTitle` : un format enregistré qui cache l'intitulé
+              garde son effet, et ↺ / un changement de journal le réécrivent. */}
 
           <div className="flex flex-wrap items-center gap-x-6 gap-y-2 mb-3">
             <div className="flex items-center gap-2">

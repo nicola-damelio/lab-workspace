@@ -272,7 +272,8 @@ has(PROJ, 'const ownRowBlocks = sectionBlocksOf.filter((s) => !!pubDocBlockOfSec
 has(PROJ, 'if (includedExps.length > 0 || mmTextSaved) blocks.methods = (', '…« Materials and Methods » aussi');
 has(PROJ, "{docHeading('methods')}</h2>", '…avec l’intitulé choisi (« Experimental section »)');
 has(PROJ, "{docHeading('experiments')} ({includedExps.length})</h2>", '…« Experiments (n) » garde son compte sous le titre choisi');
-has(PROJ, "{docHeading('references')} ({refs.length})</h2>", '…et « References (n) » son intitulé réglable');
+has(PROJ, "{docHeading('references')}</h2>",
+  '…et « References » son intitulé réglable — SANS compteur : le rapport de cette session dit « the references should behave like the other sections and not have a tick display reference title (the number of references in parentheses is not professional) »');
 has(PROJ, 'reorderDocHtml(bodyHtml, docOrderWords(pubFormat), pubDocTitleKeywords(pubFormat))',
   'l’export écrit aussi les titres choisis sur un texte DÉJÀ enregistré');
 has(PROJ, 'const docOrderWords = (fmt) => {',

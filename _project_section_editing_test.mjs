@@ -51,8 +51,10 @@ has(PAGE, 'title="📚 References"', 'la carte de la page projet s’appelle « 
 ok(!PAGE.includes('📚 Bibliography'), '…et l’ancien intitulé n’est plus nulle part');
 has(PAGE, 'open={openSections.bibliography}',
   'la CLÉ de la section reste « bibliography » (l’état plié/déplié n’est pas perdu)');
-has(PAGE, "{docHeading('references')} ({refs.length})</h2>",
-  'le titre imprimé dans le document du projet est « References (n) » — « References » étant l’intitulé du programme, que le panneau « Publication format » peut renommer');
+has(PAGE, "{docHeading('references')}</h2>",
+  'le titre imprimé dans le document du projet est « References » — sans compteur : le rapport de cette session dit « the references should behave like the other sections and not have a tick display reference title (the number of references in parentheses is not professional) »');
+ok(!PAGE.includes("({refs.length})</h2>"),
+  '…et le nombre de références entre parenthèses n’est plus imprimé (« References (24) » n’appartient à aucun article)');
 {
   const part = PUB_LAYOUT_PARTS.find((p) => p.id === 'bibliography');
   eq(part.label, 'References', 'la partie du Publication format s’appelle « References »');

@@ -292,12 +292,16 @@ export const normalizePubDocTitles = (raw) => {
 };
 
 /* ══ LES INTITULÉS QUE LE DOCUMENT NE DOIT PAS ÉCRIRE ═════════════════════════════
-   La demande : « If in the style of science references have no title then the title
-   tick must be unchecked in the “References (citation & bibliography)” section. »
+   La demande d'origine : « If in the style of science references have no title then the
+   title tick must be unchecked in the “References (citation & bibliography)” section. »
+   — cette case n'existe plus : « the references should behave like the other sections
+   and not have a tick display reference title ». La liste ci-dessous est donc écrite par
+   les SEULS formats (un journal dont la bibliographie n'a pas d'intitulé le dit avec
+   `bibLabel: ''`, voir applyJournalFormat → `docNoTitle`).
 
    Un style peut donc dire qu'une de ses sections N'A PAS d'intitulé : Science imprime
-   sa bibliographie sans son titre, la liste suit le texte. La case du panneau se lit
-   sur cette liste (`docNoTitle`), et le document écrit alors le bloc SANS son `<h2>` :
+   sa bibliographie sans son titre, la liste suit le texte. Le document lit cette liste
+   (`docNoTitle`) et écrit alors le bloc SANS son `<h2>` :
    il garde son texte, ses figures et sa place (voir pubDocTitleKeywords, qui envoie un
    titre VIDE à reorderDocHtml, et le titre vide de reorderDocHtml, qui retire le
    `<h2>` sans toucher au reste).

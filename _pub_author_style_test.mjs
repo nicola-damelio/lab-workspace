@@ -358,7 +358,7 @@ ok(/withoutBibliographySection\(project\.docSuggestion\.markedHtml\)/.test(pdm),
   '…idem pour la version proposée (suggestion)');
 {
   const frozenAt = pdm.indexOf('withoutBibliographySection(project.exportDocHtml)');
-  const bibAt = pdm.indexOf('({refs.length})</h2>');
+  const bibAt = pdm.indexOf("{docHeading('references')}</h2>");
   ok(frozenAt !== -1 && bibAt > frozenAt && pdm.slice(frozenAt, bibAt).includes('return docHeadRows(docOrder, (id) => !!blocks[id]).map((id, i) => ('),
     'la liste des références est rendue HORS du texte figé ET APRÈS les blocs ordonnés (donc toujours à jour)');
 }

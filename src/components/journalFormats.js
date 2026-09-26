@@ -39,9 +39,11 @@
         a un documento già registrato.
      6. `bibLabel` → il titolo della bibliografia (« References », « Bibliography »). Una
         stringa VUOTA è una risposta, non un'assenza: quel giornale NON scrive nessun
-        intitolo sopra la sua lista (Science), e il pannello ne deduce `docNoTitle` —
-        « if in the style of science references have no title then the title tick must be
-        unchecked in the “References (citation & bibliography)” section ».
+        intitolo sopra la sua lista (Science), e il formato ne deduce `docNoTitle` — il
+        documento scrive allora la bibliografia senza il suo `<h2>`. Non c'è più nessuna
+        casella da decoccare a mano: « the references should behave like the other
+        sections and not have a tick display reference title », e l'intitolo di una
+        sezione è quello del formato o quello regolato in « Document sections ».
 
    La richiesta: « when I select the journal preset, all the elements of the
    publication format must adapt to it, including the order of the sections. »
@@ -131,10 +133,11 @@ export const JOURNAL_FORMATS = {
   },
   science: {
     /* `bibLabel: ''` — SCIENCE NON SCRIVE NESSUN INTITOLO SOPRA LA SUA BIBLIOGRAFIA: la
-       lista segue il testo. Il pannello ne deduce `docNoTitle: ['references']` (vedi
-       applyJournalFormat), quindi la casella « stampare l'intitolo » della rubrica
-       « References (citation & bibliography) » è DECOCCATA, e il documento scrive la
-       bibliografia senza il suo `<h2>`. */
+       lista segue il testo. Il formato ne deduce `docNoTitle: ['references']` (vedi
+       applyJournalFormat) e il documento scrive la bibliografia senza il suo `<h2>` —
+       l'intitolo di una sezione è quello che il giornale porta, e non c'è più nessuna
+       casella da decoccare a mano (« the references should behave like the other
+       sections and not have a tick display reference title »). */
     label: 'Science', preset: 'science', bibLabel: '', names: 'initials-family',
     /* I CAMPI CHE SCIENCE NON STAMPA: il titolo dell'articolo. La richiesta: « in
        Science il title non viene messo, ma se imposto su Science il tick sul title
@@ -250,10 +253,9 @@ export const applyJournalFormat = (fmt, id) => {
        choisi lui-même est respecté (voir pubDocTitlesForWords). */
     docTitles: pubDocTitlesForWords(def.order, base.docTitles),
     /* …ET GLI INTITOLI CHE NON SCRIVE AFFATTO: un giornale la cui bibliografia non porta
-       intitolo lascia il blocco « References » SENZA `<h2>` (la casella della rubrica
-       « References (citation & bibliography) » è decoccata, il documento non scrive il
-       titolo). Gli altri riprendono in mano quel réglage: un giornale che nomina le sue
-       sezioni le nomina tutte. */
+       intitolo lascia il blocco « References » SENZA `<h2>` (il documento legge
+       `docNoTitle` e non scrive il titolo). Gli altri riprendono in mano quel réglage: un
+       giornale che nomina le sue sezioni le nomina tutte. */
     docNoTitle: normalizePubDocNoTitle(def.bibLabel === '' ? ['references'] : []),
     /* Un style enregistré (« My styles ») ne décrit plus ce format : on vient d'en
        choisir un autre. */

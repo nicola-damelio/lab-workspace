@@ -4053,9 +4053,19 @@ export const ProjectDetailModule = ({
                 bibliographie (voir withoutBibliographySection) et la liste des
                 références du projet, rendue avec le format COURANT à chaque
                 affichage, est imprimée à sa place. */}
+            {/* L'INTITULÉ DE LA BIBLIOGRAPHIE EST CELUI DES AUTRES SECTIONS — sans
+                compteur. La demande : « the references should behave like the other
+                sections and not have a tick display reference title (the number of
+                references in parentheses is not professional) » : le document écrivait
+                « References (24) », un nombre entre parenthèses qui n'appartient à aucun
+                article ; les autres sections du document n'ont jamais porté le leur
+                (« Experiments (3) » reste, lui, la liste des tests inclus, et il n'est pas
+                l'objet de cette demande). La place de la liste, son texte et ses figures ne
+                changent pas : seul l'intitulé est celui du programme ou celui réglé dans
+                « Document sections (order & titles) ». */}
             <div className="mb-4">
               {docHeading('references') ? (
-                <h2 className="pf-heading text-base font-black text-slate-800 border-b border-slate-200 pb-1 mb-2">{docHeading('references')} ({refs.length})</h2>
+                <h2 className="pf-heading text-base font-black text-slate-800 border-b border-slate-200 pb-1 mb-2">{docHeading('references')}</h2>
               ) : null}
               {/* LE TEXTE EST AUSSI DANS LE DOSSIER DU PROJET SUR LE DRIVE (voir
                   utils/projectDocumentDrive.js) : la page le dit et sait le

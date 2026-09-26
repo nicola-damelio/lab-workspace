@@ -23,22 +23,27 @@
         que c'est General qui les cache) ; la molécule n'est jamais perdue pour
         autant : le ✔ de son en-tête, un style sur N'IMPORTE quelle rangée ou le ↺
         d'une rangée la ramènent (règles 1c · 1d).
-     3. LA HIÉRARCHIE, celle de la règle 1 poussée trop loin : « the hierarchy of
-        the styles is wrong. It was better before. If in general (which represents
-        the full molecule) i put cartoon, then the subgroups must be on hide and
-        only cartoon must be visualised. if after that i change the style in the
-        subgroup the style must change until i change again the general. » Une
-        rangée General cédait TOUS ses atomes, y compris ceux de SON PROPRE chemin :
-        un ribbon / cartoon / tube est parcouru le long du Cα (voir
-        generalWalkingSele), donc « General → cartoon » puis « Side chains →
-        licorice » (cette rangée prend `(sidechain or .CA)`) laissait le cartoon
-        SANS AUCUN Cα — le style de General disparaissait de la molécule entière au
-        premier changement de sous-rangée. General ne cède donc plus les atomes que
-        son propre style parcourt (le squelette N · CA · C · O d'une protéine, le
-        sucre et le phosphate d'un nucléotide) : le cartoon continue de marcher la
-        chaîne ENTIÈRE pendant que les chaînes latérales sont dessinées par leur
-        rangée, et une sous-rangée modifiée reste modifiée jusqu'au prochain
-        changement de General (règle 1b · 1f).
+     3. L'UNION DES RANGÉES, ET LA CESSION D'ATOMES RETIRÉE. La règle 1 avait été
+        poussée trop loin, sur un rapport plus ancien : « the hierarchy of the styles
+        is wrong. It was better before. If in general (which represents the full
+        molecule) i put cartoon, then the subgroups must be on hide and only cartoon
+        must be visualised. » Pour cela, la rangée General CÉDAIT ses atomes aux
+        parties (`sec.sele and not (…)`), et la clause de chaque partie était AMPUTÉE
+        des atomes que le style de General parcourt. LE RAPPORT DE CETTE SESSION :
+        « If I put the general to cartoon or to whatever other style nothing is
+        displayed. If I put the backbone in ball and sticks the backbone is displayed
+        correctly but then if I put the side chains in ball and sticks part of the
+        backbone vanishes. In other words you have to deeply revise these commands
+        because nothing works. I cannot even display the molecule in ball and sticks
+        because it appears fragmented. » — avec sa référence : « in the vercel
+        deployment be33c40 the controls of the viewer worked well », c'est-à-dire
+        l'état d'AVANT la cession. LA RÈGLE EST DONC L'UNION : la rangée General
+        décrit la molécule ENTIÈRE, chaque partie dessine ses atomes (sa part, son
+        ANCRE, ses PONTS) et RIEN n'est jamais soustrait d'une rangée à l'autre. La
+        hiérarchie tient par la CASCADE (règle 1b) et par `effectiveSectionLook` (une
+        partie cachée par General garde son « Hide »), jamais par des atomes retirés ;
+        mesuré atome par atome et liaison par liaison dans
+        _viewer_style_coverage_test.mjs.
 
      4. LA CASCADE (le rapport de cette session) : « Qualsiasi modifica applicata al
         livello "General" deve forzare l'adeguamento a cascata delle sottomolecole.
@@ -52,16 +57,18 @@
         VOCABULAIRE de chaque rangée (partStyleUnderGeneral), donc elle vaut pour les
         protéines, les acides nucléiques ET les lipides. Mesurée en §5.
 
-   Les mesures, sur le code livré (la cascade du rapport 4 est exécutée en §5) :
+   Les mesures, sur le code livré :
      §1 la HIÉRARCHIE pure (setGeneralSectionField · effectiveSectionLook ·
         rowFollowsGeneral), exécutée sur de vrais arbres de look ;
-     §2 le RENDU réel (buildSectionReps), dont les sélections partent à NGL —
-        c'est là que les règles « General cède ses atomes » et « jamais ceux de son
-        propre chemin » se voient ou ne se voient pas.
+     §2 le RENDU réel (buildSectionReps), dont les sélections partent à NGL — c'est
+        là que la règle d'union se voit : AUCUNE clause soustractive, la rangée
+        General intacte, et les CA que plus personne ne perd ;
+     §3 le CÂBLAGE de la règle dans la source (la cession d'atomes n'y est plus) ;
+     §4 · §5 les diagnostics (une rangée qui ne dessine rien le dit).
 
-   Les trois règles sont AUSSI écrites dans le viewer (elles y sont commentées avec
-   le nom de ce fichier) : §3 vérifie le câblage, pour qu'une refonte du rendu ne
-   puisse pas les perdre en silence.
+   Les règles sont AUSSI écrites dans le viewer (commentées avec le nom de ce
+   fichier) : §3 vérifie le câblage, pour qu'une refonte du rendu ne puisse pas les
+   perdre en silence.
    ========================================================================= */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -268,12 +275,10 @@ const RENDER = new Function([
   sliceDecl(VIEW, 'moleculeIndexCache'),
   sliceFn(VIEW, 'moleculeIndicesOf'),
   sliceDecl(VIEW, 'indexSele'),
-  sliceDecl(VIEW, 'SPLINE_STYLES'),
   sliceFn(VIEW, 'nucleicGroupOf'),
   sliceDecl(VIEW, 'nucleicGroupCache'),
   sliceFn(VIEW, 'nucleicGroupIndicesIn'),
   sliceFn(VIEW, 'nucleotideGroupIndices'),
-  sliceFn(VIEW, 'generalWalkingSele'),
   sliceDecl(VIEW, 'emptySelectionWarned'),
   sliceFn(VIEW, 'warnIfEmptySelection'),
   sliceFn(VIEW, 'bridgeAtomIndices'),
@@ -288,7 +293,7 @@ const RENDER = new Function([
   'const gradientRangesFor = () => null;',
   'const gradientColorStore = { ranges: null };',
   sliceFn(VIEW, 'buildSectionReps'),
-  'return { buildSectionReps, generalWalkingSele, warnIfEmptySelection };',
+  'return { buildSectionReps, warnIfEmptySelection };',
 ].join('\n'))();
 const SECTIONS = [{ id: 'main::protein|A', key: 'protein|A', kind: 'protein', name: 'Chain A', sele: ':A and protein', count: 1 }];
 // Un look de rangée, tel que la barre de style l'écrit.
@@ -316,40 +321,36 @@ ok(scene(tree(['cartoon', 'sstruc'], ['cartoon', 'sstruc', true], ['licorice', '
   .some((r) => r.type === 'cartoon' && r.params.sele === ':A and protein'),
   '…c’est bien le cartoon de General qui la dessine');
 
-/* 2b. UNE PARTIE QUI A SON PROPRE STYLE REÇOIT SES ATOMS — SAUF CEUX QUE LE STYLE DE
-   GENERAL PARCOURT (règle 3 : sans eux, le tube / cartoon de General disparaissait de
-   la molécule entière). L'ORDRE DU RAPPORT : « General → Tube », puis « Backbone →
-   Cartoon ».
-   Le squelette d'une protéine a un mot dans NGL (`backbone` = N · CA · C · O, le CA
-   que le ruban parcourt) : il est donc protégé NOMMÉMENT, et la clause produite reste
-   une clause NGL valable — `(… and backbone) and not backbone` ne retire rien. */
+/* 2b. CHAQUE RANGÉE DESSINE CE QU'ELLE DIT — ET LA RANGÉE GENERAL DESSINE TOUJOURS LA
+   MOLÉCULE ENTIÈRE. C'est la règle d'union (voir son commentaire dans
+   buildSectionReps) : la cession d'atomes a été RETIRÉE sur le rapport « nothing is
+   displayed … it appears fragmented », et l'état validé par l'utilisateur est celui de
+   be33c40 — celui-ci. L'ORDRE DU RAPPORT : « General → Tube », puis « Backbone →
+   Cartoon ». */
 const dev = sels(tree(['tube', 'sstruc'], ['cartoon', 'sstruc', false], ['licorice', 'element', false]));
-ok(!dev.includes(':A and protein'),
-  'le calque de General ne dessine plus la molécule ENTIÈRE (il ne couvre plus les parties)');
-eq(dev.filter((s) => String(s).includes('not (')).length, 1,
-  '…et UNE seule rangée cède ses atomes (celle de General)');
-const devGen = dev.find((s) => String(s).includes('not ('));
-ok(devGen.indexOf(':A and protein and not ((:A and protein and backbone) and not backbone)') === 0,
-  '…elle cède le squelette à la rangée du squelette — en GARDANT les atomes de son propre chemin');
-ok(devGen.includes('and not ((:A and protein and (sidechain or .CA)) and not backbone)'),
-  '…et les chaînes latérales (CA compris) à la leur, sauf ce chemin aussi');
-ok(!devGen.includes('and not (:A and protein and backbone)'),
-  'le squelette n’est plus retiré NU à General : son cartoon garde son chemin (c’était la règle 3)');
-ok(dev.includes(':A and protein and backbone'), '…le cartoon du squelette dessine donc son squelette, et on le VOIT');
-ok(dev.includes(':A and protein and (sidechain or .CA)'), '…et les chaînes latérales dessinent les leurs, CA compris');
-eq(dev.filter((s) => s === ':A and protein and (sidechain or .CA)').length, 1,
-  '…une seule rangée dessine ces atomes (aucun atome dessiné deux fois)');
+ok(dev.includes(':A and protein'),
+  'la rangée General dessine la molécule ENTIÈRE, même quand les deux parties ont leur propre style');
+eq(dev.filter((s) => s === ':A and protein').length, 1,
+  '…une seule fois (une seule rangée « General » par section)');
+ok(dev.every((s) => !String(s).includes(' and not ')),
+  '…et AUCUNE clause soustractive n’est produite : rien ne peut vider une rangée ni amputer une autre');
+ok(dev.includes(':A and protein and backbone'),
+  'le squelette dévié dessine son cartoon — sa sélection est la sienne, sans « and not »');
+ok(dev.includes(':A and protein and (sidechain or .CA)'),
+  '…et les chaînes latérales les leurs, CA COMPRIS (la parenthèse n’est plus amputée : elles ne flottent plus)');
+ok(scene(tree(['tube', 'sstruc'], ['cartoon', 'sstruc', false], ['licorice', 'element', false]))
+  .some((r) => r.type === 'tube' && r.params.sele === ':A and protein'),
+  '…c’est bien le tube de General qui décrit la molécule entière');
 
-// 2c. Une partie CACHÉE ne reçoit rien : elle ne dessine aucun atome, donc elle n'en
-//     prend pas non plus à General.
+/* 2c. Une partie CACHÉE ne dessine rien — et elle ne retire rien à General : une rangée
+   cachée ne produit AUCUNE représentation, la molécule entière reste dessinée par
+   General, et la partie qui a son propre style dessine ses atomes. */
 const hid = sels(tree(['tube', 'sstruc'], ['hide', 'sstruc', false], ['licorice', 'element', false]));
-ok(hid.includes(':A and protein and not ((:A and protein and (sidechain or .CA)) and not backbone)'),
-  'seule la partie qui DESSINE retire ses atomes de General');
+ok(hid.includes(':A and protein'),
+  'la rangée General est intacte, quoi qu’il arrive aux parties');
 ok(!hid.includes(':A and protein and backbone'), '…la partie cachée ne dessine rien du tout');
-eq(hid.filter((s) => s === ':A and protein and backbone').length, 0,
-  '…aucune représentation ne part pour elle (une rangée cachée n’en produit aucune)');
-ok(hid.some((s) => String(s).endsWith('and not backbone)')),
-  '…et le chemin de General (le squelette) lui reste, quoi qu’il arrive');
+ok(hid.includes(':A and protein and (sidechain or .CA)'),
+  '…et la partie qui a son propre style dessine ses atomes, CA compris');
 
 /* 2d. Après « General → Hide » (1c), RIEN n'est dessiné : c'est la demande de cette
    session — « quando general é su hide, si attivano backbone e sidechain che invece
@@ -371,13 +372,13 @@ ok(redrawn.includes(':A and protein and backbone'), '…le squelette suivant Gen
      change the style in the subgroup the style must change until i change again the
      general. »
    1. « General → cartoon » : le squelette prend le cartoon (il sait le dessiner, 1b)
-      et les chaînes latérales passent sur Hide — une seule description du squelette,
-      celle de General.
-   2. « Side chains → licorice » (1f) : les chaînes latérales se dessinent VRAIMENT — et
-      le cartoon de General est TOUJOURS là, il marche encore la chaîne entière. C'est
-      ce que la règle 3 protège : avant, la rangée des chaînes latérales emportait
-      `(sidechain or .CA)`, donc TOUS les Cα, et le cartoon de la molécule entière
-      disparaissait au premier réglage d'une sous-rangée.
+      et les chaînes latérales passent sur Hide — et ce « Hide » TIENT (règle 1g,
+      `effectiveSectionLook` : une partie cachée par General ne retombe pas sur son
+      propre style par défaut).
+   2. « Side chains → licorice » (1f) : les chaînes latérales se dessinent VRAIMENT —
+      et le cartoon de General est TOUJOURS là, ENTIER : sa sélection est la molécule
+      entière, elle n'a jamais été amputée (règle d'union). Avant, le partage
+      d'atomes laissait le cartoon sans aucun Cα.
    3. « General → ribbon » (1b) : les deux parties repassent sous General — le
       squelette reprend le ruban, et les chaînes latérales (qui viennent de dévier)
       sont remises sur Hide : la modification d'une sous-rangée ne survit pas à un
@@ -396,56 +397,57 @@ eq(gen(step2, 'protein', 'general').style, 'cartoon', '…General, lui, n’a pa
 const stepScene = scene(tree(['cartoon', 'sstruc'], ['hide', 'sstruc', false], ['licorice', 'element', false]));
 const stepCartoon = stepScene.find((r) => r.type === 'cartoon');
 ok(!!stepCartoon, '…le cartoon de General est TOUJOURS dessiné (il ne disparaît plus)');
-ok(String(stepCartoon.params.sele).endsWith('and not backbone)'),
-  '…en GARDANT le squelette qu’il parcourt (sans lui il ne dessine plus rien du tout)');
+eq(stepCartoon.params.sele, ':A and protein',
+  '…et c’est la molécule ENTIÈRE qu’il dessine : aucune sous-rangée ne lui prend ses Cα');
 ok(stepScene.some((r) => r.type === 'licorice' && r.params.sele === ':A and protein and (sidechain or .CA)'),
   '…et les chaînes latérales se dessinent vraiment, CA compris');
 eq(gen(HIER.setGeneralSectionField(step2, 'protein', 'style', 'ribbon'), 'protein', 'sidechain').style, 'hide',
   'étape 3 : un NOUVEAU style sur General remet la sous-rangée sur Hide (la règle 1b vaut à chaque fois)');
 
-/* 2f. LA RÈGLE ELLE-MÊME, HORS DU RENDU : generalWalkingSele. Un squelette pour une
-   protéine ; RIEN pour un style qui dessine les atomes (il peut tout céder) ; RIEN pour
-   un lipide (aucun chemin) ; et RIEN quand la structure n'a pas d'atome lisible — la
-   règle ne casse jamais un rendu, elle protège au pire trop peu. */
-const fake = { eachAtom: () => {} };
-['cartoon', 'ribbon', 'tube', 'trace'].forEach((st) => {
-  eq(RENDER.generalWalkingSele(fake, SECTIONS[0], st), 'backbone',
-    `« ${st} » : General garde le squelette de la protéine (N · CA · C · O)`);
+/* 2f. LA RÈGLE ELLE-MÊME, HORS DU RENDU : aucune clause soustractive, quel que soit le
+   couple (style de General, style des parties). C'est ce qui a remplacé la protection
+   du chemin de General (`generalWalkingSele`) : le partage d'atomes entre rangées est
+   retiré, et la seule chose à garantir est que rien ne disparaisse — mesuré atome par
+   atome et liaison par liaison dans _viewer_style_coverage_test.mjs. */
+['cartoon', 'ribbon', 'tube', 'trace', 'hide', 'licorice', 'ball+stick', 'spacefill', 'surface'].forEach((st) => {
+  [true, false].forEach((follow) => {
+    const sc = sels(tree([st, 'sstruc', false], ['licorice', 'sstruc', follow], ['ball+stick', 'element', follow]));
+    ok(sc.every((s) => !String(s).includes(' and not ')),
+      `« ${st} » (parties qui suivent : ${follow}) : AUCUNE clause « and not » n’est produite`);
+    if (st !== 'hide') {
+      ok(sc.includes(':A and protein'),
+        `« ${st} » : la rangée General décrit la molécule entière`);
+    }
+  });
 });
-['hide', 'licorice', 'ball+stick', 'spacefill', 'surface'].forEach((st) => {
-  eq(RENDER.generalWalkingSele(fake, SECTIONS[0], st), '',
-    `« ${st} » : un style qui dessine les atomes peut tout céder`);
-});
-eq(RENDER.generalWalkingSele(fake, { kind: 'lipid', sele: ':L' }, 'cartoon'), '',
-  'un lipide n’a pas de chemin à garder (aucun de ses styles ne parcourt la molécule)');
-eq(RENDER.generalWalkingSele(fake, { kind: 'nucleic', sele: ':A and nucleic' }, 'cartoon'), '',
-  'un nucléotide sans atome lisible ne protège rien — jamais d’erreur, juste moins de protection');
 
-/* ══ 3. LE CÂBLAGE : LES TROIS RÈGLES SONT DANS LA SOURCE ═══════════════════ */
+/* ══ 3. LE CÂBLAGE : LA RÈGLE D'UNION EST DANS LA SOURCE ════════════════════ */
 has("next.follow = next.style !== 'hide' || value === 'hide';",
   'la source dit « une partie cachée PAR GENERAL reste dans la hiérarchie (elle le suit) »');
 gone("if (value === 'hide') { next.style = defaultLookOf(kind, s.sub).style; next.follow = false; }",
   '…et l’exception « Hide sur General redonne à chaque partie son style par défaut » a disparu');
-has(".filter(({ look }) => !!look && look.style !== 'hide' && look.follow === false)",
-  'une partie ne reçoit ses atomes que si elle a un style PROPRE (follow: false) ET dessine');
-has('const rowOpts = (style) => ({ anchorSideChains, backboneLosesCa, anchorParts: ATOM_DRAW_STYLES.includes(style) });',
-  '…avec les mêmes drapeaux d’ancre que la rangée qui les reçoit');
-has('const generalOnly = relinquished.length',
-  'la rangée General ne devient exclusive que s’il y a des atomes à céder');
-has("const sele = spec.sub === 'general' && generalOnly",
-  '…et c’est la SEULE rangée dont la sélection est remplacée par cette clause');
-has("const SPLINE_STYLES = ['cartoon', 'ribbon', 'tube', 'trace'];",
-  'la source nomme les styles qui PARCOURENT la molécule au lieu de dessiner ses atomes');
-has('const generalKeeps = generalWalkingSele(structure, sec, (subLooks.general || {}).style);',
-  '…et lit les atomes du chemin de SON style avant de céder quoi que ce soit');
-has('const giveAway = (sele) => (sele && generalKeeps ? `(${sele}) and not ${generalKeeps}` : sele);',
-  '…les parties ne reçoivent donc que ce que ce chemin ne couvre pas');
-has('.map(({ sp, look }) => giveAway(sectionRowSele(structure, sec, sp.sub, rowOpts(look.style))))',
-  '…c’est la SEULE différence avec la cession d’avant (la règle des parties n’a pas bougé)');
-has("if (sec.kind === 'protein') return 'backbone';",
-  '…le squelette d’une protéine (N · CA · C · O) est protégé nommément, avec un mot de NGL');
-has('return indexSele(nucleotideGroupIndices(structure, sec, \'phosphate\')',
-  '…un nucléotide protège les atomes comptés sur SA structure (phosphate · pentose), sans dépendre d’une convention de nom');
+has("if (own.style === 'hide') return { ...own, follow: true };",
+  '…et un « Hide » écrit par la cascade TIENT : une partie cachée par General ne retombe pas sur son propre défaut');
+has("const anchorSideChains = sec.kind === 'protein'",
+  'le rendu décide l’ancre des chaînes latérales d’après le look de SA rangée');
+has('const sele = sectionRowSele(structure, sec, spec.sub, { anchorSideChains, anchorParts });',
+  '…et la sélection d’une rangée est EXACTEMENT ce que sectionRowSele écrit : la molécule entière pour General, la part (+ ancre, + pont) pour les autres');
+gone('const giveAway =',
+  'la CESSION D’ATOMES a disparu : plus aucune clause « and not » n’est fabriquée…');
+gone('const generalKeeps =',
+  '…ni « les atomes que le style de General parcourt » à protéger…');
+gone('const relinquished =',
+  '…ni la liste des parties qui prenaient les atomes de General…');
+gone('const rowOpts =',
+  '…ni les drapeaux qui servaient à ce partage…');
+gone('const generalOnly',
+  '…ni le remplacement de la sélection de la rangée General…');
+gone('const backboneLosesCa = anchorSideChains',
+  '…et le squelette ne cède plus ses CA : la chaîne ne se coupe plus (« part of the backbone vanishes »)');
+gone('const SPLINE_STYLES =',
+  '…la liste des styles qui PARCOURENT la molécule n’a plus d’usage : elle ne servait qu’au partage');
+gone('const generalWalkingSele =',
+  '…et la fonction qui protégeait le chemin de General est retirée (voir son commentaire dans le viewer)');
 
 /* ══ 4. UNE RANGÉE QUI NE DESSINE RIEN LE DIT ════════════════════════════════
    La seule panne qu'un SÉLECTEUR puisse avoir sans que NGL ne lève : il
