@@ -3290,6 +3290,11 @@ const mergeSectionLooks = (defaults, raw) => {
       if (Number.isFinite(entry.roughness)) dst.roughness = Math.min(1, Math.max(0, entry.roughness));
       if (Number.isFinite(entry.metalness)) dst.metalness = Math.min(1, Math.max(0, entry.metalness));
       if (typeof entry.follow === 'boolean') dst.follow = entry.follow;
+      /* Le marquage de la cascade de COLORATION (« cette rangée est cachée parce que
+         General la redessine », voir setGeneralSectionField) survit à un rechargement
+         comme le reste du look : sinon la cession reprendrait ses atomes à General dès
+         la réouverture, et la molécule disparaîtrait au premier rebuild. */
+      if (typeof entry.hiddenByGeneral === 'boolean') dst.hiddenByGeneral = entry.hiddenByGeneral;
     });
   });
   return out;
@@ -3337,20 +3342,30 @@ const sectionLooksSig = (v) => JSON.stringify(MOL_KINDS.map((k) => [k, v && v[k]
    that part back (a hidden row says so), and the ↺ of a row / of the section puts
    the defaults back.
 
-   A COLOURING, ON THE OTHER HAND, IS EXCLUSIVE (the request: « in
+   A COLOURING DESCENDS ON THE ROWS WHOSE MENU « Color by » HOLDS IT (the report of
+   this session: « se cambio il valore del “color by” drop-down menu della sezione
+   generale sparisce tutto. questo accade perché il cambio di questo valore nel menu
+   generale non impone lo stesso cambio nel menu “color by” della side chain »). A
+   colouring is A READING OF THE SAME ATOMS, not one drawing more: a row that offers
+   it in its OWN list takes it (`next.colorBy = value`) and keeps drawing what it was
+   drawing — the value therefore APPEARS in its « Color by » menu, which is exactly
+   what the report asks for — so the whole molecule stays on screen and every row
+   reads it the same way. It used to be the opposite: EVERY colouring was treated as a
+   style the row cannot draw, so every part went on « Hide » … and since a hidden row
+   CEDES its atoms (see generalCession), the General row was left without a single
+   atom to draw (`empty`) and was not built at all → the ENTIRE scene disappeared.
+   A row whose list does NOT hold the value cannot paint it: it keeps its own drawing
+   — no colouring of General's to duplicate — UNLESS General's own style DRAWS THE
+   ATOMS those very atoms are made of (ATOM_DRAW_STYLES: two drawings of the same
+   atoms, the part even keeping the colouring « General » has just replaced — the
+   request « in
    phospholipids, proteins and nucleic acids when general (type or colouring) is
    changed the other molecule parts (backbone, side chain, bases, acyl chain,
-   glycerol etc) must be on hide »): describing the WHOLE molecule with one
-   colouring and drawing the parts on top of it at the same time gives two
-   drawings of the same atoms — the part would even keep the colouring
-   « General » has just replaced. Every sub-part is therefore switched to
-   « Hide », and it comes back by choosing a style on its OWN row (move 2), which
-   is exactly what « deviating from General » means. A part that had to fall back
-   on « Hide » — it cannot draw the value General hands down — also stops
-   FOLLOWING General (`follow: false`), because such a row would simply be
-   re-drawn with General's style at the next rebuild: the hide would last one
-   rebuild. A part hidden because GENERAL says « Hide » keeps following it
-   instead, so its badge names the row that decided it.
+   glycerol etc) must be on hide »). Such a row
+   goes on « Hide », stops FOLLOWING General, and is MARKED `hiddenByGeneral` so that
+   General KEEPS those atoms and paints them with the colouring that just replaced
+   them (see generalCession). A part hidden because GENERAL says « Hide » keeps
+   following it instead, so its badge names the row that decided it.
 
    THE TWO NUMBERS, THEMSELVES, REACH EVERY PART (the report: « Se modifico il
    raggio di una sfera in "General", il nuovo valore deve aggiornare
@@ -3431,8 +3446,49 @@ const setGeneralSectionField = (looks, kind, field, value) => {
            « sono come se non fossero eseguiti » — the row was re-drawn under the
            style General had just chosen). */
         next.follow = next.style !== 'hide' || value === 'hide';
+        /* LE « HIDE » QUE *GENERAL* VIENT D'ÉCRIRE EST UN FAIT DE STYLE : la rangée cède
+           ses atomes comme tout « Hide » (voir generalCession). Si elle était cachée par
+           une COLORATION (`hiddenByGeneral`), ce marquage disparaît ici — c'est le style
+           qui décide désormais, et General ne garde plus ses atomes au passage. */
+        next.hiddenByGeneral = false;
       }
-      else { next.style = 'hide'; next.follow = false; }
+      /* LA COLORATION CHOISIE SUR GENERAL DESCEND SUR LES RANGÉES QUI L'ONT DANS LEUR
+         PROPRE MENU « Color by » (le rapport de cette session : « se cambio il valore del
+         “color by” … sparisce tutto … il cambio di questo valore nel menu generale non
+         impone lo stesso cambio nel menu “color by” della side chain »). La valeur est
+         ÉCRITE dans la rangée et celle-ci CONTINUE de dessiner ce qu'elle dessinait — un
+         style n'est pas une coloration : elle apparaît donc dans SON menu, la molécule
+         reste entière et toutes les rangées lisent la même chose. Une rangée cachée par
+         la coloration PRÉCÉDENTE revient (son style par défaut, et elle suit de nouveau
+         General : le dessin d'une molécule neuve).
+         LA RANGÉE QUI NE PEUT PAS LA PEINDRE (la valeur n'est pas dans sa liste) ne la
+         montre pas davantage : elle garde son propre dessin, et rien ne se recouvre —
+         SAUF quand le style de General DESSINE LES ATOMES eux-mêmes (ATOM_DRAW_STYLES) :
+         là, deux dessins des mêmes atomes se superposeraient, l'un gardant justement la
+         coloration que General vient de remplacer (la demande : « when general (type or
+         colouring) is changed the other molecule parts … must be on hide »). Cette
+         rangée passe alors sur « Hide » ET SE MARQUE (`hiddenByGeneral`) : General GARDE
+         ses atomes et les peint de sa nouvelle coloration (voir generalCession). Sans ce
+         marquage, la cession de General soustrayait les atomes d'une rangée qui ne
+         dessine RIEN : la rangée du haut devenait vide (`empty`) et n'était plus
+         construite du tout — TOUTE LA SCÈNE disparaissait, exactement le rapport. */
+      else if (s.colors.includes(value)) {
+        next.colorBy = value;
+        if (next.hiddenByGeneral === true) {
+          next.style = defaultLookOf(kind, s.sub).style;
+          next.follow = true;
+        }
+        next.hiddenByGeneral = false;
+      }
+      else if (ATOM_DRAW_STYLES.includes(out[kind].general.style)) {
+        next.style = 'hide';
+        next.follow = false;
+        next.hiddenByGeneral = true;
+      }
+      /* …ET SINON (la rangée ne connaît pas cette coloration et General ne dessine pas
+         ses atomes — il les PARCOURT, ou il en fait l'enveloppe) la rangée NE BOUGE PAS :
+         son propre dessin ne recouvre rien de ce que General vient de peindre, et le
+         défaut d'une molécule (le ruban de General + ses parties) reste intact. */
     }
     // A NUMBER — the two radius multipliers — REACHES EVERY PART, deviated or not:
     // a size is not a description, and the row keeps the style it has chosen (the
@@ -3461,6 +3517,11 @@ const setRowSectionField = (looks, kind, sub, field, value) => {
   const row = { ...defaultLookOf(kind, sub), ...((looks[kind] || {})[sub] || null), [field]: value };
   if (field === 'style' && !spec.styles.includes(value)) row.style = spec.def.style;
   if (field === 'colorBy' && !spec.colors.includes(value)) row.colorBy = spec.def.colorBy;
+  /* UN STYLE CHOISI SUR LA RANGÉE ELLE-MÊME EFFACE LE MARQUAGE `hiddenByGeneral` : c'est
+     la rangée qui décide désormais de son dessin, donc ses atomes lui appartiennent de
+     nouveau et General ne les garde plus (voir generalCession). Le menu de SA rangée est
+     le chemin du retour d'une partie que General avait cachée. */
+  if (field === 'style') row.hiddenByGeneral = false;
   if (FOLLOW_FIELDS.includes(field)) row.follow = false;
   return { ...looks, [kind]: { ...(looks[kind] || {}), [sub]: row } };
 };
@@ -7981,7 +8042,14 @@ const sectionRowSele = (structure, sec, sub, opts = {}) => {
         rangée qui SUIT General (`follow: true`) ne dessine rien d'elle-même, et General
         continue donc de dessiner là. Une rangée CACHÉE (« Hide ») cède ses propres
         atomes, SANS ancre : « Hide » veut dire « ne dessine plus ces atomes », et c'est
-        une décision de la part, pas de General.
+        une décision de la part, pas de General — SAUF quand le « Hide » vient de la
+        COLORATION de General (`hiddenByGeneral`, voir la cascade de
+        setGeneralSectionField) : là c'est GENERAL qui redessine ces atomes avec la
+        coloration qui vient de remplacer celle de la rangée, donc il les GARDE. Sans
+        cette exception, la cession soustrayait à General les atomes d'une rangée qui ne
+        dessine RIEN, sa sélection devenait vide (`empty`) et sa rangée n'était plus
+        construite du tout : la scène ENTIÈRE disparaissait — exactement le rapport
+        « se cambio il valore del “color by” … della sezione generale sparisce tutto ».
      2. RIEN N'EST AMPUTÉ : la part garde TOUTE la sélection que sectionRowSele lui écrit
         (sa part, son ANCRE, ses PONTS) ; c'est GENERAL qui cède. L'ancienne cession
         faisait exactement l'inverse — elle AMPUTAIT les parties et leur rendait les
@@ -8067,7 +8135,15 @@ const generalCession = (structure, sec, subLooks, opts = {}) => {
   const owners = subsectionsOf(sec.kind).filter((sp) => {
     if (sp.sub === 'general') return false;
     const look = subLooks[sp.sub];
-    return !!look && look.style !== undefined && look.follow === false;
+    /* UNE RANGÉE CACHÉE PAR LA COLORATION DE GENERAL NE LUI PREND RIEN (règle 1) : c'est
+       General qui la redessine, avec la coloration qui vient de remplacer la sienne — la
+       cascade de setGeneralSectionField la marque `hiddenByGeneral` pour cela. Sans cette
+       exclusion, la cession soustrayait à General les atomes d'une rangée qui ne dessine
+       RIEN : `empty` devenait vrai, la rangée du haut n'était pas construite, et la scène
+       entière disparaissait (le rapport « se cambio il valore del “color by” … sparisce
+       tutto »). Un « Hide » décidé par la RANGÉE (son propre menu, aucun marquage) cède
+       toujours ses atomes : « Hide » veut dire « ne dessine plus ceux-là ». */
+    return !!look && look.style !== undefined && look.follow === false && look.hiddenByGeneral !== true;
   });
   if (!owners.length) return none;
   if (SPLINE_STYLES.includes(style)) {
@@ -11630,13 +11706,20 @@ const renderSectionRow = (sec, sub) => {
       {look.colorBy === 'esp' && (
         <span className="text-[9px] text-slate-400 italic">NGL paints this colouring on a surface only — one is added on top of this row</span>
       )}
-      {/* A HIDDEN PART SAYS SO. Choosing a style or a colouring on the General row
-          switches every other row of this molecule to « Hide » (see
-          setGeneralSectionField), and a row the user hid with its own selector
-          looks the same: either way the row is empty, and either way the style
-          selector above it is the way back. */}
+      {/* A HIDDEN PART SAYS SO — AND WHY. A style chosen on the General row puts every
+          other row of this molecule on « Hide » (see setGeneralSectionField), and a row
+          the user hid with its own selector looks the same: either way the row is empty,
+          and either way the style selector above it is the way back. A row hidden BY
+          GENERAL'S COLOURING (`hiddenByGeneral`) is a third case, and it says so: General
+          KEEPS those atoms and paints them with the colouring that just replaced this
+          row's own, so the part is still on screen — it is this row that stopped drawing
+          (the report: « se cambio il valore del “color by” … sparisce tutto »). */}
       {look.style === 'hide' && sub !== 'general' && (
-        <span className="text-[9px] text-slate-400 italic">hidden — choose a style here to bring this part back</span>
+        <span className="text-[9px] text-slate-400 italic">
+          {look.hiddenByGeneral === true
+            ? 'hidden by the General row’s Color by — General draws these atoms with the colouring above; choose a style here to draw them yourself'
+            : 'hidden — choose a style here to bring this part back'}
+        </span>
       )}
     </div>
   );

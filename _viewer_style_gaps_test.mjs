@@ -33,10 +33,13 @@
         mémorisées PAR STRUCTURE ;
      6. « in phospholipids, proteins and nucleic acids when general (type or
         colouring) is changed the other molecule parts (backbone, side chain,
-        bases, acyl chain, glycerol etc) must be on hide. » — la rangée General est
-        devenue EXCLUSIVE : un style ou une coloration choisis là mettent les
-        autres rangées de la molécule sur « Hide », et une rangée revient en
-        choisissant SON style.
+        bases, acyl chain, glycerol etc) must be on hide. » — la rangée General
+        garde la main : un style choisi là descend sur les rangées qui savent le
+        dessiner, et une coloration descend sur celles qui l'ont dans leur menu
+        (la demande de cette session : le menu « Color by » d'une partie doit
+        montrer la valeur choisie sur General — l'ancienne règle cachait TOUT le
+        monde et vidait la rangée General, donc la scène entière disparaissait).
+        Une partie revient en choisissant SON style.
 
    Le viewer est un .jsx : les helpers PURS sont EXTRAITS du fichier puis EXÉCUTÉS,
    et le VRAI NGL 2.4 (celui de la page) est utilisé là où cela compte : le schéma
@@ -548,19 +551,29 @@ has('byStructure: new WeakMap(),', 'le magasin garde les bornes PAR STRUCTURE');
 has('const own = byStructure && atom && atom.structure ? byStructure.get(atom.structure) : null;',
   '…et gradientT lit celles de la structure de l’atome');
 
-/* ══ 6. LA RANGÉE GENERAL : CASCADE POUR UN STYLE, EXCLUSIVE POUR UNE COULEUR ══
+/* ══ 6. LA RANGÉE GENERAL : LA CASCADE, POUR UN STYLE COMME POUR UNE COLORATION ══
    Le rapport d'origine : « in phospholipids, proteins and nucleic acids when general
    (type or colouring) is changed the other molecule parts (backbone, side chain,
-   bases, acyl chain, glycerol etc) must be on hide. » — il reste vrai pour une
-   COLORATION : décrire la molécule entière par une couleur et dessiner les parties
-   par-dessus donnait deux dessins des mêmes atomes, la partie gardant même la
-   couleur que General venait de remplacer.
-   Le rapport de cette session : « Se imposto "General" su cartoon, il backbone deve
-   passare a cartoon e le sidechain a hide. Se imposto "General" su ball and stick,
+   bases, acyl chain, glycerol etc) must be on hide. » — il reste vrai là où il est
+   VRAIMENT nécessaire : décrire la molécule entière par une couleur et dessiner les
+   parties par-dessus donne deux dessins des mêmes atomes, la partie gardant même la
+   couleur que General venait de remplacer. C'est le cas quand la rangée n'OFFRE PAS la
+   coloration que General vient de choisir ET que le style de General DESSINE les
+   atomes : elle passe alors sur « Hide » — marquée « hiddenByGeneral », puisque General
+   garde ses atomes et les peint de sa nouvelle coloration.
+   Le rapport de cette session (« se cambio il valore del “color by” … sparisce tutto …
+   il cambio di questo valore nel menu generale non impone lo stesso cambio nel menu
+   “color by” della side chain ») : une couleur est une LECTURE des mêmes atomes, donc
+   elle DESCEND sur chaque rangée qui l'a dans son menu, écrite dans son propre menu,
+   sans que son style bouge ; et une rangée que General ne recouvre pas (il PARCOURT la
+   molécule) garde son dessin et sa coloration. L'ancienne règle (« toute coloration =
+   hide pour tout le monde ») vidait la rangée General : la scène entière disparaissait.
+   Le rapport de la session précédente : « Se imposto "General" su cartoon, il backbone
+   deve passare a cartoon e le sidechain a hide. Se imposto "General" su ball and stick,
    sia il backbone che le sidechain devono passare a ball and stick. » — un STYLE
-   descend donc sur les parties qui SAVENT le dessiner (partStyleUnderGeneral, lu
-   dans le vocabulaire de chaque rangée), et seules celles qui ne savent pas passent
-   sur « Hide ». */
+   descend donc sur les parties qui SAVENT le dessiner (partStyleUnderGeneral, lu dans
+   le vocabulaire de chaque rangée), et seules celles qui ne savent pas passent sur
+   « Hide ». */
 const HIER = new Function([
   sliceObject(VIEW, 'DEFAULT_ATOM_COLORS'),
   sliceObject(VIEW, 'KIND_CATEGORY'),
@@ -577,6 +590,7 @@ const HIER = new Function([
   sliceDecl(VIEW, 'rowFollowsGeneral'),
   sliceFn(VIEW, 'partStyleUnderGeneral'),
   sliceDecl(VIEW, 'RADIUS_FIELDS'),
+  sliceDecl(VIEW, 'ATOM_DRAW_STYLES'),
   sliceFn(VIEW, 'setGeneralSectionField'),
   sliceFn(VIEW, 'setRowSectionField'),
   sliceDecl(VIEW, 'resetSectionRow'),
@@ -617,11 +631,42 @@ eq(lookOf(byStyle2, 'protein', 'sidechain').style, 'hide',
 const reset = { ...byStyle2, protein: { ...byStyle2.protein, backbone: HIER.defaultLookOf('protein', 'backbone') } };
 eq(gen(reset, 'protein', 'backbone').style, 'cartoon', 'le ↺ de la rangée rend son style par défaut');
 eq(gen(reset, 'protein', 'backbone').follow, true, '…et elle suit de nouveau General');
-// 6b. Une COLORATION sur General, elle, reste EXCLUSIVE (le rapport dit « type OR colouring »).
+// 6b. UNE COLORATION SUR GENERAL DESCEND SUR LES RANGÉES QUI L'ONT DANS LEUR MENU (le
+//     rapport de cette session : « se cambio il valore del “color by” drop-down menu
+//     della sezione generale sparisce tutto … il cambio di questo valore nel menu
+//     generale non impone lo stesso cambio nel menu “color by” della side chain ») : la
+//     valeur est ÉCRITE dans la rangée, qui continue de dessiner ce qu'elle dessinait.
 const byColor = HIER.setGeneralSectionField({}, 'protein', 'colorBy', 'element');
 eq(gen(byColor, 'protein', 'general').colorBy, 'element', 'General prend la coloration choisie');
-['backbone', 'sidechain'].forEach((sub) => eq(gen(byColor, 'protein', sub).style, 'hide',
-  `…et « ${sub} » passe sur hide comme pour un style qu’il ne sait pas dessiner`));
+['backbone', 'sidechain'].forEach((sub) => {
+  eq(gen(byColor, 'protein', sub).colorBy, 'element',
+    `…et « ${sub} » la montre dans SON menu « Color by » (la demande mot pour mot)`);
+  eq(gen(byColor, 'protein', sub).style, HIER.defaultLookOf('protein', sub).style,
+    `…sans changer de style (${sub}) : une coloration n’est pas un style`);
+  eq(lookOf(byColor, 'protein', sub).style === 'hide', false, `…donc elle dessine toujours (${sub})`);
+});
+// …et la valeur qu'une rangée n'offre PAS ne peut pas être écrite dans son menu : quand le
+// style de General DESSINE les atomes (ball+stick · licorice · line · spacefill · sphere),
+// deux dessins des mêmes atomes se recouvriraient — cette rangée passe donc sur « Hide »
+// ET SE MARQUE, et General garde ses atomes (voir generalCession). Sans ce marquage, la
+// cession vidait la rangée General : la scène disparaissait entièrement (mesuré au rendu
+// dans _viewer_style_coverage_test.mjs §3b-bis).
+const atomsGeneral = HIER.setGeneralSectionField({}, 'protein', 'style', 'ball+stick');
+const bySstruc = HIER.setGeneralSectionField(atomsGeneral, 'protein', 'colorBy', 'sstruc');
+eq(gen(bySstruc, 'protein', 'backbone').colorBy, 'sstruc',
+  'le squelette offre « Secondary structure » : il la prend, sans quitter la cascade');
+eq(gen(bySstruc, 'protein', 'sidechain').hiddenByGeneral, true,
+  'la coloration qu’une rangée n’offre pas la marque `hiddenByGeneral` : General garde ses atomes');
+eq(gen(bySstruc, 'protein', 'sidechain').style, 'hide', '…elle ne dessine donc rien');
+eq(lookOf(bySstruc, 'protein', 'sidechain').style, 'hide', '…ce que sa rangée confirme');
+// …alors qu'un General qui PARCOURT la molécule (cartoon) ne recouvre pas les atomes des
+// parties : elles gardent leur propre dessin et leur propre coloration, sans marquage.
+const walkSstruc = HIER.setGeneralSectionField({}, 'protein', 'colorBy', 'sstruc');
+eq(gen(walkSstruc, 'protein', 'general').style, 'cartoon', 'prémisse : le défaut de General est un parcours');
+eq(gen(walkSstruc, 'protein', 'sidechain').hiddenByGeneral, undefined,
+  'un General qui parcourt la molécule ne marque personne : le défaut d’une molécule reste intact');
+eq(lookOf(walkSstruc, 'protein', 'sidechain').style, HIER.defaultLookOf('protein', 'sidechain').style,
+  '…et les chaînes latérales continuent de dessiner leur licorice');
 // 6c. Un LIPIDE : tête polaire · chaînes acyle · glycérol — elles savent toutes dessiner
 //     les styles du lipide, donc elles les prennent.
 const lipid = HIER.setGeneralSectionField({}, 'lipid', 'style', 'licorice');

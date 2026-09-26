@@ -242,11 +242,18 @@ eq(RULE.SPLINE_TRAIT_OWNERS, { protein: ['backbone'], nucleic: ['backbone', 'rib
 // Les looks d'un essai : ce que la barre écrit dans l'arbre de la section. `follow`
 // (faux pour GENERAL) dit si la rangée SUIT General — le défaut d'une molécule neuve —
 // ou si elle a son PROPRE style.
-const LOOK = (style, follow) => ({ style, colorBy: 'element', solidColor: 0xffffff, opacity: 0, sphere: 1, bond: 1, follow });
+const LOOK = (style, follow, hiddenByGeneral) => ({
+  style, colorBy: 'element', solidColor: 0xffffff, opacity: 0, sphere: 1, bond: 1, follow, hiddenByGeneral,
+});
+// `hiddenByGeneral` : le marquage que la cascade d'une COLORATION écrit sur une rangée
+// qu'elle cache (General garde alors ses atomes — voir setGeneralSectionField). Un essai
+// qui l'omet décrit une rangée cachée par SON PROPRE menu, qui cède ses atomes.
 const looksOf = (rows) => ({
   general: LOOK(rows.general ? rows.general.style : 'cartoon', false),
-  backbone: LOOK(rows.backbone ? rows.backbone.style : 'cartoon', !rows.backbone || rows.backbone.follow !== false),
-  sidechain: LOOK(rows.sidechain ? rows.sidechain.style : 'licorice', !rows.sidechain || rows.sidechain.follow !== false),
+  backbone: LOOK(rows.backbone ? rows.backbone.style : 'cartoon', !rows.backbone || rows.backbone.follow !== false,
+    rows.backbone && rows.backbone.hiddenByGeneral),
+  sidechain: LOOK(rows.sidechain ? rows.sidechain.style : 'licorice', !rows.sidechain || rows.sidechain.follow !== false,
+    rows.sidechain && rows.sidechain.hiddenByGeneral),
 });
 const NONE = { cede: '', empty: false, walkLost: false };
 const cessionOf = (rows, opts = {}) => RULE.generalCession(STRUCTURE, SECTION, looksOf(rows), opts);
@@ -347,6 +354,21 @@ const withHidden = cessionOf(
 eq(withHidden.cede, '(:A and protein and backbone) or (:A and protein and sidechain)',
   'une partie CACHÉE cède ses PROPRES atomes, sans ancre : « Hide » veut dire « ne dessine plus ceux-là »');
 eq(withHidden.empty, true, '…et General s’efface quand tout est pris ou caché');
+/* UN « HIDE » QUI VIENT DE LA *COLORATION* DE GENERAL, LUI, NE CÈDE RIEN (règle 1) : la
+   rangée est cachée parce que GENERAL la redessine, avec la coloration qui vient de
+   remplacer la sienne — la cascade de setGeneralSectionField la marque `hiddenByGeneral`.
+   Sans cette exception, la cession vidait la rangée General et la scène ENTIÈRE
+   disparaissait : c'est le rapport « se cambio il valore del “color by” … della sezione
+   generale sparisce tutto », mesuré au rendu dans _viewer_style_coverage_test.mjs
+   §3b-bis. */
+const byColor = cessionOf({
+  general: { style: 'ball+stick' },
+  backbone: { style: 'hide', follow: false, hiddenByGeneral: true },
+  sidechain: { style: 'hide', follow: false, hiddenByGeneral: true },
+}, { anchorSideChains: false });
+eq(byColor.cede, '',
+  'une rangée cachée PAR la coloration de General ne lui prend AUCUN atome : c’est lui qui la redessine');
+eq(byColor.empty, false, '…donc sa rangée a de quoi dessiner : la molécule reste entière à l’écran');
 
 /* ══ 6. LA MOLÉCULE ENTIÈRE, RELUE PAR UN VRAI NGL ════════════════════════════
    La règle n'est pas qu'un code couleur : la sélection qu'elle écrit pour General part

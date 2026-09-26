@@ -153,6 +153,7 @@ const HIER = new Function([
   sliceDecl(VIEW, 'rowFollowsGeneral'),
   sliceFn(VIEW, 'partStyleUnderGeneral'),
   sliceDecl(VIEW, 'RADIUS_FIELDS'),
+  sliceDecl(VIEW, 'ATOM_DRAW_STYLES'),
   sliceFn(VIEW, 'setGeneralSectionField'),
   sliceFn(VIEW, 'setRowSectionField'),
   sliceDecl(VIEW, 'resetSectionRow'),
@@ -222,10 +223,53 @@ const oneBack = HIER.setRowSectionField(hidden, 'protein', 'sidechain', 'style',
 eq(eff(oneBack, 'protein', 'sidechain').style, 'licorice',
   '…et le style choisi sur une rangée cachée la ramène (le chemin de retour existe toujours)');
 
-// 1d. « Color by » sur General, lui, reste EXCLUSIF : une seule description à la fois.
-const hiddenColor = HIER.setGeneralSectionField({}, 'protein', 'colorBy', 'element');
-['backbone', 'sidechain'].forEach((sub) => eq(gen(hiddenColor, 'protein', sub).style, 'hide',
-  `« ${sub} » passe sur Hide quand General prend une coloration (une seule description)`));
+/* 1d. « COLOR BY » SUR GENERAL : LA COLORATION DESCEND SUR LES RANGÉES QUI L'ONT DANS
+   LEUR MENU, ET ELLE EST ÉCRITE DANS LEUR RANGÉE. Le rapport de cette session, mot pour
+   mot : « se cambio il valore del “color by” drop-down menu della sezione generale
+   sparisce tutto. questo accade perché il cambio di questo valore nel menu generale non
+   impone lo stesso cambio nel menu “color by” della side chain ». « Atom type » est
+   offert par les trois rangées d'une protéine : chacune la prend et CONTINUE de dessiner
+   ce qu'elle dessinait — une coloration n'est pas un style. */
+const colored = HIER.setGeneralSectionField({}, 'protein', 'colorBy', 'element');
+eq(gen(colored, 'protein', 'general').colorBy, 'element', 'General prend la coloration choisie');
+['backbone', 'sidechain'].forEach((sub) => {
+  eq(gen(colored, 'protein', sub).colorBy, 'element',
+    `« ${sub} » montre la MÊME coloration dans SON menu — c’est la demande mot pour mot`);
+  eq(eff(colored, 'protein', sub).colorBy, 'element', `…et c’est elle que sa rangée peint (${sub})`);
+  eq(eff(colored, 'protein', sub).style, eff({}, 'protein', sub).style,
+    `…sans que son style bouge d’un caractère (${sub}) : une coloration n’est pas un style`);
+  eq(eff(colored, 'protein', sub).style === 'hide', false, `…donc la rangée dessine toujours (${sub})`);
+  eq(gen(colored, 'protein', sub).hiddenByGeneral, false, '…et elle n’est pas marquée comme cachée');
+});
+// …et une COLORATION QU'UNE RANGÉE N'OFFRE PAS (« Secondary structure » n'existe pas sur
+// des chaînes latérales) est le seul cas où la cascade cache une partie — et SEULEMENT
+// quand le style de General DESSINE les atomes : General garde alors ses atomes et les
+// peint de sa nouvelle coloration (`hiddenByGeneral`, lu par generalCession). Sans ce
+// marquage la cession vidait la rangée General et la scène ENTIÈRE disparaissait. Mesuré
+// au rendu dans _viewer_style_coverage_test.mjs §3b-bis.
+const atomsGeneral = HIER.setGeneralSectionField({}, 'protein', 'style', 'ball+stick');
+const bySstruc = HIER.setGeneralSectionField(atomsGeneral, 'protein', 'colorBy', 'sstruc');
+eq(gen(bySstruc, 'protein', 'backbone').colorBy, 'sstruc',
+  'le squelette offre « Secondary structure » : il la prend et continue de suivre General');
+eq(gen(bySstruc, 'protein', 'sidechain').style, 'hide',
+  'les chaînes latérales ne l’offrent pas : elles passent sur « Hide »');
+eq(gen(bySstruc, 'protein', 'sidechain').colorBy, HIER.defaultLookOf('protein', 'sidechain').colorBy,
+  '…une valeur que son menu n’offre pas ne peut pas y être écrite : elle garde la sienne');
+eq(gen(bySstruc, 'protein', 'sidechain').hiddenByGeneral, true,
+  '…et elles sont MARQUÉES : General garde leurs atomes, qu’il peint de sa coloration');
+eq(eff(bySstruc, 'protein', 'sidechain').style, 'hide', '…donc leur rangée ne dessine rien');
+// …alors qu'un General qui PARCOURT la molécule (cartoon) ne recouvre pas les atomes des
+// parties : elles gardent leur dessin et leur coloration, sans marquage.
+const walkSstruc = HIER.setGeneralSectionField({}, 'protein', 'colorBy', 'sstruc');
+eq(gen(walkSstruc, 'protein', 'sidechain').style, HIER.defaultLookOf('protein', 'sidechain').style,
+  'un General qui parcourt la molécule ne cache personne : le licorice de sa rangée reste');
+eq(gen(walkSstruc, 'protein', 'sidechain').hiddenByGeneral, undefined,
+  '…et aucune rangée n’est marquée : le défaut d’une molécule ne bouge pas');
+// Un style choisi SUR la rangée rend la main : le marquage tombe et la partie redessine.
+const backFromColor = HIER.setRowSectionField(bySstruc, 'protein', 'sidechain', 'style', 'licorice');
+eq(gen(backFromColor, 'protein', 'sidechain').hiddenByGeneral, false,
+  'un style choisi sur la rangée efface le marquage : ses atomes lui reviennent');
+eq(eff(backFromColor, 'protein', 'sidechain').style, 'licorice', '…et elle les redessine');
 
 // 1e. Une case qui n’est PAS une description (opacité · rayons · matériau) descend.
 const soft = HIER.setGeneralSectionField({}, 'protein', 'opacity', 0.4);

@@ -284,9 +284,10 @@ const HIER = new Function([
   sliceFn(VIEW, 'effectiveSectionLook'),
   sliceFn(VIEW, 'partStyleUnderGeneral'),
   sliceDecl(VIEW, 'RADIUS_FIELDS'),
+  sliceDecl(VIEW, 'ATOM_DRAW_STYLES'),
   sliceFn(VIEW, 'setGeneralSectionField'),
   sliceFn(VIEW, 'setRowSectionField'),
-  'return { setGeneralSectionField, setRowSectionField, effectiveSectionLook };',
+  'return { setGeneralSectionField, setRowSectionField, effectiveSectionLook, subsectionSpec };',
 ].join('\n'))();
 
 const SECTIONS = [{ id: 'main::protein|A', key: 'protein|A', kind: 'protein', name: 'Chain A', sele: ':A and protein', count: 1 }];
@@ -386,6 +387,43 @@ const check = (what, t) => {
 //     n'importe quelle rangée la ramène.
 eq(sceneOf(gesture([['protein', 'general', 'style', 'hide']])), [],
   'General → hide : la scène est vide, comme demandé — aucune sous-rangée ne se rallume toute seule');
+
+/* 3b-bis. LE GESTE DU RAPPORT DE CETTE SESSION : LE MENU « Color by » DE GENERAL.
+   « se cambio il valore del “color by” drop-down menu della sezione generale sparisce
+   tutto. questo accade perché il cambio di questo valore nel menu generale non impone lo
+   stesso cambio nel menu “color by” della side chain. » La cascade mettait TOUTES les
+   parties sur « Hide » ; comme une rangée cachée cède ses atomes, la rangée General
+   n'avait plus un SEUL atome à dessiner : elle n'était pas construite (`empty`) et, les
+   parties ne dessinant rien, la SCÈNE ÉTAIT VIDE — mesuré ici, avant le correctif, sur un
+   General en ball+stick (aucune représentation du tout).
+   Une coloration descend maintenant sur les rangées qui l'ont dans leur menu, et General
+   garde les atomes des rangées qu'il redessine : la scène reste entière, pour tous les
+   styles de la rangée du haut et toutes les colorations qu'elle offre. */
+const COLOURING_CHOICES = ['solid', 'element', 'chain', 'residue', 'sstruc', 'hydrophobicity', 'esp', 'gradient', 'rainbow'];
+const GENERAL_STYLES = ['cartoon', 'ball+stick', 'licorice', 'line', 'spacefill', 'sphere', 'surface'];
+GENERAL_STYLES.forEach((style) => {
+  COLOURING_CHOICES.forEach((col) => {
+    const reps = check(`General ${style} → Color by ${col}`,
+      gesture([['protein', 'general', 'style', style], ['protein', 'general', 'colorBy', col]]));
+    ok(reps.length > 0,
+      `General ${style} → Color by ${col} : la scène n'est jamais vide (le rapport : « sparisce tutto »)`);
+  });
+});
+// …et le geste EXACT du rapport — la coloration seule, sur le General d'une molécule neuve.
+COLOURING_CHOICES.forEach((col) => {
+  const t = gesture([['protein', 'general', 'colorBy', col]]);
+  const reps = check(`Color by ${col} sur General (défaut : cartoon)`, t);
+  ok(reps.length > 0, `Color by ${col} sur General : la molécule reste dessinée`);
+  /* LA VALEUR CHOSIE EST CELLE DE LA RANGÉE DU HAUT — l'objet de la demande : c'est elle
+     que les menus des parties montrent (la cascade écrit la même valeur dans chacune). */
+  eq(HIER.effectiveSectionLook(t, 'protein', 'general').colorBy, col,
+    `…et General peint la coloration choisie (${col})`);
+  ['backbone', 'sidechain'].forEach((sub) => {
+    const spec = HIER.effectiveSectionLook(t, 'protein', sub);
+    ok(spec.colorBy === col || !HIER.subsectionSpec('protein', sub).colors.includes(col),
+      `…« ${sub} » peint la MÊME coloration quand son menu l'offre (${col})`);
+  });
+});
 
 // 3c. LE RAPPORT, SYMPTÔME 2 : « If I put the backbone in ball and sticks the backbone
 //     is displayed correctly but then if I put the side chains in ball and sticks part
