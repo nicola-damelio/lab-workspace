@@ -196,8 +196,25 @@ eq(M.upper.residues, 6, '6 lipides dans le feuillet du haut');
 eq(M.lower.residues, 6, '6 dans celui du bas');
 eq(M.upper.atoms, 30, '…et tous leurs atomes suivent (5 par POPC)');
 eq(M.upper.headIndices.length, 18, 'les TÊTES du feuillet haut sont celles du classificateur des lipides (3 × 6)');
-ok(/1-6/.test(M.upper.clause), `les numéros de résidus sont compressés en plages (obtenu ${M.upper.clause})`);
-ok(M.upper.clause.includes('POPC'), '…et la clause rappelle les resnames (pour ne pas attraper l’eau au même numéro)');
+/* LA CLAUSE EST LA LISTE EXACTE DES ATOMES DU FEUILLET.
+   LE RAPPORT : « when upper or lower leaflet is activated it imposes things on
+   other atoms ». La cause : la clause publiée était écrite en NUMÉROS DE
+   RÉSIDUS — `(1-6) and ([POPC])` — et un numéro de résidu n'est unique que DANS
+   UNE CHAÎNE. Une bicouche dont les deux feuillets sont dans deux chaînes, ou
+   dont une autre molécule du fichier réutilise ces numéros, donnait donc à
+   `upper_leaflet` des atomes du feuillet d'en face. Ici la clause EST l'ensemble
+   des atomes de la mesure : aucun atome d'en face, jamais. */
+const idxOf = (clause) => String(clause || '').replace(/^@/, '').split(',').filter(Boolean).map(Number);
+ok(/^@\d+(,\d+)*$/.test(M.upper.clause),
+  `la clause d’un feuillet est une liste d’atomes NGL (@i,j,k), plus une plage de résidus (obtenu ${M.upper.clause})`);
+eq(idxOf(M.upper.clause).length, M.upper.atoms, '…elle porte EXACTEMENT les atomes du feuillet haut');
+ok(idxOf(M.upper.clause).every((i) => i < 30),
+  '…et pas UN SEUL atome du feuillet d’en face (les 30 du bas commencent à l’index 30)');
+ok(idxOf(M.lower.clause).every((i) => i >= 30), '…ni l’inverse : le feuillet du bas ne prend rien à celui du haut');
+ok(M.upper.headIndices.every((i) => idxOf(M.upper.clause).includes(i)),
+  'les têtes sont un SOUS-ENSEMBLE structurel de leur feuillet (headIndices ⊆ indices) — la règle du propriétaire des têtes ne peut plus vider une rangée');
+ok(M.upper.resnoClause.includes('1-6') && M.upper.resnoClause.includes('POPC'),
+  'la forme LISIBLE de la mesure reste disponible pour les diagnostics (plages de résidus + resnames) — elle ne dessine plus rien');
 const MR = B.membrane(membraneStructure('x'));
 eq(MR.axis, 'x', 'une membrane ORIENTÉE EN X est reconnue pareil : c’est tout l’intérêt (z n’est plus nécessaire)');
 eq(MR.upper.residues, 6, '…avec les mêmes feuillets');
@@ -219,6 +236,23 @@ if (NGL) {
     const broken = !sel.test || (sel.selection && sel.selection.error);
     ok(!broken, `NGL doit accepter « ${clause} » (erreur NGL : ${JSON.stringify(sel.selection && sel.selection.error)})`);
   });
+  /* …ET CE QUE NGL FAIT DE `@` — la clause publiée pour un FEUILLET est son
+     ensemble EXACT d'atomes, et NGL la lit comme des INDEX (source embarquée dans
+     ngl.js.map, selection-parser.ts) :
+
+         if (c.charAt(0) === '@') {
+           const indexList = c.substr(1).split(',').map(x => parseInt(x))
+           indexList.sort(function (a, b) { return a - b })
+           pushRule({ atomindex: indexList })
+
+     Une plage de résidus (`1-40`), elle, se lit par NUMÉRO — et un numéro de
+     résidu n'est unique que DANS UNE CHAÎNE : c'est ce qui donnait à
+     `upper_leaflet` des atomes du feuillet d'en face (« it imposes things on
+     other atoms »). */
+  const NGL_MAP = JSON.parse(readFileSync(new URL('./node_modules/ngl/dist/ngl.js.map', import.meta.url), 'utf8'));
+  const PARSER = (NGL_MAP.sourcesContent || [])[(NGL_MAP.sources || []).indexOf('../src/selection/selection-parser.ts')] || '';
+  ok(/c\.charAt\(0\) === '@'/.test(PARSER) && /atomindex: indexList/.test(PARSER),
+    'NGL lit « @i,j,k » comme `atomindex` : la liste d’un feuillet est un ensemble EXACT d’atomes');
   // Et la preuve du contraire : ce que la macro écrivait AVANT le pont.
   eq(new NGL.Selection('z>90').selection.rules, [{ resname: 'Z>90' }],
     'NGL 2.4 lit `z>90` comme un NOM DE RÉSIDU (0 atome) — la raison d’être du pont');

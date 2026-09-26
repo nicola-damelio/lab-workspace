@@ -1971,6 +1971,61 @@ eq(LONE_PLAN.placements.map((p) => [p.index, p.section]), [[1, 'discussion']],
   'une figure de la fin que rien ne cite garde le repli (la section la plus proche)');
 eq(LONE_PLAN.tail, 0, '…et elle n’est pas comptée comme rattachée par citation');
 
+/* (c ter) LE TITRE QUI N'EST PAS ÉTIQUETÉ COMME UN TITRE — LE RAPPORT : « the
+   last figure of a manuscript was written after the references! », puis « it
+   cannot stay after the references ». Le découpage ne coupait qu'à un bloc
+   `heading` : un titre que le lecteur n'a pas reconnu comme tel (« **References** »
+   en gras markdown, « *Bibliography* », « References: ») laissait la
+   BIBLIOGRAPHIE ENTIÈRE dans le corps. Conséquence, et c'est le rapport : le
+   marqueur de la figure de la fin suivait les LIGNES DE RÉFÉRENCES dans la même
+   partie, donc son ANCRE devenait une ligne de référence — et le document exporté
+   réinsère une figure derrière son ancre (utils/figurePlacement.js) : elle
+   s'imprimait APRÈS la bibliographie. */
+const PLAIN_REF_MS = MS.splitManuscript(MS.blocksFromText([
+  'Introduction', 'Aphids transmit many plant viruses.', '',
+  'Results and Discussion', 'The capsid protein is shown in Figure 2.', '',
+  'Conclusions', 'The new isolate spreads in southern Italy.', '',
+  '**References**', '1. Rossi M (2018). Characterization of a potyvirus. J Virol 12:345-356.',
+  '2. Bianchi A (2019). Aphid transmission. Plant Pathol 8:12-20.', '',
+  '[[FIGURE 1]]', 'Figure 1. Model of the infection cycle.', '',
+  '[[FIGURE 2]]', 'Figure 2. Capsid protein structure.'
+].join('\n')));
+eq(PLAIN_REF_MS.referencesHeading, 'References',
+  'un titre de bibliographie EN GRAS (markdown, non étiqueté comme titre) est reconnu — sans ses astérisques');
+eq(PLAIN_REF_MS.referencesText.split('\n').length, 2,
+  '…et la bibliographie est coupée du corps : ses deux références sont importées');
+ok(!/FIGURE/.test(PLAIN_REF_MS.referencesText), '…sans une seule ligne de figure dedans');
+eq(PLAIN_REF_MS.body.slice(-1)[0].text, 'The new isolate spreads in southern Italy.',
+  '…le corps du document s’arrête au TEXTE, pas à la bibliographie');
+eq(PLAIN_REF_MS.figureBlocks.map((b) => b.text),
+  ['[[FIGURE 1]]', 'Figure 1. Model of the infection cycle.', '[[FIGURE 2]]', 'Figure 2. Capsid protein structure.'],
+  '…et les deux figures de la fin de document sont à part');
+const PLAIN_REF_PLAN = MS.manuscriptFigurePlacements([
+  { key: 'p0', heading: 'Introduction', text: 'Aphids transmit many plant viruses.', dest: 'background' },
+  { key: 'p1', heading: 'Results and Discussion', text: 'The capsid protein is shown in Figure 2.', dest: 'discussion' }
+], [{ index: 1 }, { index: 2 }], { figureBlocks: PLAIN_REF_MS.figureBlocks });
+const PLAIN_REF_LINES = PLAIN_REF_MS.referencesText.split('\n').map((l) => l.trim()).filter(Boolean);
+eq(PLAIN_REF_PLAN.placements.map((p) => PLAIN_REF_LINES.includes(p.anchor)), [false, false],
+  'AUCUNE figure de la fin n’est ancrée à une LIGNE DE RÉFÉRENCE — c’est ce qui la faisait imprimer après la bibliographie');
+eq(PLAIN_REF_PLAN.placements[1].anchor, 'The capsid protein is shown in Figure 2.',
+  '…et la figure citée garde le PARAGRAPHE qui la cite');
+eq(MS.manuscriptFigurePlacements([
+  { key: 'p0', heading: 'Conclusions', text: 'Nothing is cited here.', dest: 'conclusions' }
+], [{ index: 1 }], { figureBlocks: PLAIN_REF_MS.figureBlocks }).placements[0].section, 'conclusions',
+  '…une figure que rien ne cite va à la dernière partie du TEXTE (avant la bibliographie), jamais dans les références');
+/* …et une PHRASE de corps de texte ne coupe JAMAIS le document, même quand elle
+   commence par « References » : la ligne doit être le titre ET RIEN D'AUTRE. */
+eq(MS.bibliographyTitleOf('References to previous work are given in Table 2.'), '',
+  '« References to previous work… » n’est PAS un titre de bibliographie');
+eq(MS.bibliographyTitleOf('6. Références'), 'Références', '…une ligne numérotée, si (le rang tombe)');
+eq(MS.bibliographyTitleOf('BIBLIOGRAPHY.'), 'BIBLIOGRAPHY', '…un titre ponctué, si (la ponctuation tombe)');
+eq(MS.bibliographyTitleOf('Literature'), '',
+  '…mais « Literature » seul n’est PAS un titre de bibliographie (un intitulé de paragraphe ne coupe pas le document)');
+eq(MS.splitManuscript(MS.blocksFromText([
+  'Conclusions', 'Text.', '', 'References to previous work are given in Table 2.', 'More text.'
+].join('\n'))).referencesHeading, '',
+  '…et le document reste ENTIER (aucune coupe sur une phrase)');
+
 /* (d) LA CITATION elle-même, cas par cas. */
 ['Figure 3', 'Fig. 3A', 'Figures 2 and 3', 'Figures 2-4', 'Supplementary Fig. S3',
  'see Figure 3 for details', 'Figure 3).'].forEach((t) => {

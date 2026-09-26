@@ -1163,6 +1163,37 @@ export const figureDataUrl = (fig) => {
 /** Titres qui annoncent la bibliographie de fin de document. */
 export const REFERENCE_HEADING_RE = /^(references|reference list|bibliography|bibliographie|literature cited|works cited|références|référence)\b/i;
 
+/* ── LE TITRE DE LA BIBLIOGRAPHIE, RÉDUIT À LUI-MÊME ─────────────────────────
+   LE RAPPORT : « the last figure of a manuscript was written after the
+   references! », puis, tel quel, « it cannot stay after the references ».
+
+   Le découpage ne coupait qu'à un bloc ÉTIQUETÉ `heading` (splitManuscript) :
+   un intitulé que le lecteur n'a pas reconnu comme un titre — « **References** »
+   (gras markdown), « *Bibliography* », « References: », « 6. Références », un
+   titre collé à sa ponctuation — laissait donc la BIBLIOGRAPHIE ENTIÈRE dans le
+   corps du texte. Deux conséquences, et la seconde est exactement le rapport :
+     • les références n'étaient pas importées (elles restaient du texte) ;
+     • la figure de la fin, dont le marqueur suivait les lignes de références
+       DANS LA MÊME PARTIE, gardait comme ANCRE le paragraphe qui la précédait —
+       c'est-à-dire une LIGNE DE RÉFÉRENCE. Le document exporté réinsère une
+       figure derrière son ancre (utils/figurePlacement.js) : elle était donc
+       imprimée après la bibliographie, à l'endroit exact où le lecteur la voyait.
+   Quand le titre EST un titre, la règle du dessus s'applique telle quelle (un
+   titre porte souvent une suite : « References and Notes ») ; ici la ligne doit
+   être LE TITRE ET RIEN D'AUTRE — c'est ce qui interdit à une phrase de corps de
+   texte (« References to previous work are given in Table 2. ») de couper le
+   document. `headingLabel` enlève la numérotation, les marques de mise en forme
+   (*, _, `) tombent, et la ponctuation finale est facultative. */
+export const BIBLIOGRAPHY_TITLE_RE = new RegExp(
+  '^(?:references?|reference list|bibliography|bibliographie|références?|literature cited|works cited|cited literature)\\s*\\.?$',
+  'i');
+/** Le titre d'une ligne qui EST un titre de bibliographie (`''` sinon), réduit à
+ *  son mot : « **Références** » → « Références », « BIBLIOGRAPHY. » → « BIBLIOGRAPHY ». */
+export const bibliographyTitleOf = (text) => {
+  const bare = headingLabel(String(text || '')).replace(/[*_`]/g, ' ').replace(/\s+/g, ' ').replace(/\.$/, '').trim();
+  return bare && BIBLIOGRAPHY_TITLE_RE.test(`${bare}.`) ? bare : '';
+};
+
 /** Le manuscrit en { body, referencesText, figureBlocks } : tout ce qui suit le
  *  titre « References » (ou « Bibliography »…) est la bibliographie — SAUF les
  *  FIGURES.
@@ -1186,7 +1217,13 @@ export const REFERENCE_HEADING_RE = /^(references|reference list|bibliography|bi
  *  manuscriptFigurePlacements). */
 export const splitManuscript = (blocks) => {
   const list = Array.isArray(blocks) ? blocks : [];
-  const at = list.findIndex((b) => b.kind === 'heading' && REFERENCE_HEADING_RE.test(headingLabel(b.text)));
+  /* LE TITRE EST CHERCHÉ DANS TOUT BLOC, PAS SEULEMENT DANS UN TITRE ÉTIQUETÉ
+     (voir BIBLIOGRAPHY_TITLE_RE) : un « **References** » que le lecteur a marqué
+     `paragraph` laissait la bibliographie entière dans le corps du texte, donc
+     les références n'étaient pas importées ET la figure de la fin s'ancrait sur
+     une LIGNE DE RÉFÉRENCE — imprimée après la bibliographie. */
+  const at = list.findIndex((b) => (b.kind === 'heading' && REFERENCE_HEADING_RE.test(headingLabel(b.text)))
+    || !!bibliographyTitleOf(b.text));
   if (at === -1) return { body: list, referencesText: '', referencesHeading: '', figureBlocks: [], otherBlocks: [] };
   const tail = list.slice(at + 1);
   const isFigureBlock = (b) => {
@@ -1202,7 +1239,7 @@ export const splitManuscript = (blocks) => {
   return {
     body: list.slice(0, at),
     referencesText: bib.map((b) => b.text).join('\n'),
-    referencesHeading: headingLabel(list[at].text),
+    referencesHeading: bibliographyTitleOf(list[at].text) || headingLabel(list[at].text),
     figureBlocks: rest.filter(isFigureBlock),
     /* Ce qui suit les références et n'est NI une figure NI une référence (un
        « Supplementary Table 1 », une note de fin…) : rien n'en est fait, mais la

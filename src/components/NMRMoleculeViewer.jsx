@@ -5029,12 +5029,38 @@ const membraneLeafletsOf = (structure) => {
   const upper = residues.filter((r) => r.anchor >= midplane);
   const lower = residues.filter((r) => r.anchor < midplane);
   if (!upper.length || !lower.length) return null;
-  const sideOf = (rs) => ({
-    residues: rs.length,
-    atoms: rs.reduce((s, r) => s + r.atoms.length, 0),
-    clause: `(${resnoRangesClause(rs.map((r) => r.resno))}) and ([${[...new Set(rs.map((r) => r.resname))].join(',')}])`,
-    headIndices: rs.flatMap((r) => r.headAtoms.map((a) => a.i)),
-  });
+  /* ── LA CLAUSE D'UN FEUILLET EST LA LISTE EXACTE DE SES ATOMES ────────────
+     LE RAPPORT : « when upper or lower leaflet is activated it imposes things on
+     other atoms — it must change only the atoms of that side ».
+
+     Cause trouvée : la clause publiée était écrite en NUMÉROS DE RÉSIDUS,
+     `(1-40 or 61-99) and ([POPC,POPE])`. Or un numéro de résidu n'est unique que
+     DANS UNE CHAÎNE : une bicouche dont les deux feuillets sont dans deux chaînes
+     (ou dont une autre molécule du même fichier réutilise ces numéros) donne
+     donc à `upper_leaflet` des atomes du feuillet d'en face — et, `toggleSelStyle`
+     écrivant l'expression d'une rangée dans le `hideFor` de toutes les autres,
+     styliser un feuillet RETIRAIT ses atomes à la rangée d'en face : c'est
+     exactement « it imposes things on other atoms ».
+
+     Les têtes sont publiées en `@i,j,k` depuis toujours (voir headClause, en
+     bas) : la MÊME mesure publie maintenant les deux feuillets de la même
+     façon. La liste est EXACTE par construction — ce sont les atomes de la
+     mesure, pas une description d'eux — et `headIndices ⊆ indices` devient vrai
+     structurellement, donc la règle du propriétaire des têtes
+     (membraneHeadOwnerExprs) ne peut plus vider une rangée par accident.
+     `resnoClause` garde la forme LISIBLE de la mesure (plages de résidus et
+     resnames) pour les diagnostics : c'est une description, et elle ne dessine
+     plus rien. */
+  const sideOf = (rs) => {
+    const indices = rs.flatMap((r) => r.atoms.map((a) => a.i)).sort((a, b) => a - b);
+    return {
+      residues: rs.length,
+      atoms: rs.reduce((s, r) => s + r.atoms.length, 0),
+      clause: `@${indices.join(',')}`,
+      resnoClause: `(${resnoRangesClause(rs.map((r) => r.resno))}) and ([${[...new Set(rs.map((r) => r.resname))].join(',')}])`,
+      headIndices: rs.flatMap((r) => r.headAtoms.map((a) => a.i)),
+    };
+  };
   return { axis, midplane, thickness: Math.abs(c2 - c1), upper: sideOf(upper), lower: sideOf(lower) };
 };
 
