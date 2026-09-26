@@ -34,6 +34,10 @@ const {
   DOCX_MIME, buildDocxBytes, docxFileName, htmlToDocxBody, imageSourcesIn,
   nodeText, parseHtmlTree, resolveDocxImages, reflowFigures, blockHeight, docxPageMetrics
 } = await import('./src/utils/docxExport.js');
+/* La LIGNE VIDE DE LA TÊTE et les colonnes de la page : ce sont elles que §9
+   traduit en `sectPr`, et le fichier garde exactement ce que le format écrit. */
+const { DOC_EMPTY_LINE_HTML } = await import('./src/components/journalFormats.js');
+const { PUB_COLUMN_GAP_REM } = await import('./src/components/pubCitation.js');
 
 let passed = 0;
 const ok = (cond, what) => { assert.ok(cond, what); passed += 1; };
@@ -310,7 +314,20 @@ eq(Object.keys(table).sort(), ['a.png', pic].sort(), '…et la table rend celles
    pagine à l'ouverture, et une figure qui ne tient pas au bas d'une page y laisse un
    vide de la hauteur qu'elle aurait occupée. L'ordre des blocs est donc réécrit —
    JAMAIS un saut de page — quand une figure ne tient pas dans la place qui reste :
-   le texte qui suit remplit la page, la figure tombe plus loin, avec sa légende. */
+   le texte qui suit remplit la page, la figure tombe plus loin, avec sa légende.
+
+   …ET ELLE NE QUITTE JAMAIS SA SECTION (le rapport de la session suivante : « the
+   figures are located in the middle of the references or after »). Deux bornes :
+
+     · UN INTITULÉ DE SECTION ferme la section devant lui : une figure encore en
+       attente reprend sa place juste avant lui — elle ne traverse pas l'intitulé
+       de la bibliographie ;
+     · LA FIN DU TEXTE N'EST PAS UNE PLACE : quand plus rien ne peut remplir la
+       page qu'une figure attendait, elle reprend SA place (son image réduite si
+       cela la fait tenir, jamais sous un quart de page).
+
+   Vérifié ici sur les deux cas, la borne, et la garantie « aucun bloc n'est
+   perdu ». */
 const metrics = docxPageMetrics(null);
 eq([metrics.line, metrics.height, metrics.charsPerLine > 40],
   [253, 14570, true],
@@ -321,41 +338,69 @@ const wFigure = '<w:p><w:pPr><w:keepNext/></w:pPr><w:r><w:drawing><wp:inline>'
 const wCaption = '<w:p><w:r><w:rPr><w:i/></w:rPr><w:t xml:space="preserve">Figure 1. Legende.</w:t></w:r></w:p>';
 const longText = `A${'a'.repeat(4200)}`;
 const tailText = 'BTAIL';
+/* UN TEXTE QUI REMPLIT LA PAGE QUE LA FIGURE LAISSAIT : c'est lui qui rend le
+   déplacement UTILE (≈ 2 000 caractères ≈ 25 lignes ≈ 40 % d'une page). */
+const longTail = `C${'c'.repeat(2000)}`;
+
+/* (a) LE DÉPLACEMENT UTILE : la figure ne tient pas au bas de la page, et le texte
+   qui la suit peut la remplir — la figure tombe derrière lui, à la page suivante. */
+const filled = reflowFigures(wPara(longText) + wFigure + wCaption + wPara(longTail), null);
+ok(filled.indexOf('<w:drawing') > filled.indexOf(longTail),
+  'la figure qui ne tient pas au bas de la page est DÉPLACÉE après le texte qui la remplit');
+ok(filled.indexOf('Figure 1. Legende.') > filled.indexOf('<w:drawing'),
+  '…et sa LÉGENDE voyage avec elle (elles sont un seul objet)');
+ok(filled.indexOf(longText) < filled.indexOf(longTail),
+  'le texte, lui, garde son ordre : seul le bloc de la figure change de place');
+eq((filled.match(/<w:p>[\s\S]*?<\/w:p>/g) || []).map((b) => b.replace(/<[^>]*>/g, '')).sort(),
+  (wPara(longText) + wFigure + wCaption + wPara(longTail)).match(/<w:p>[\s\S]*?<\/w:p>/g)
+    .map((b) => b.replace(/<[^>]*>/g, '')).sort(),
+  'ce sont les MÊMES paragraphes (mêmes textes), seulement dans un autre ordre : rien n’est perdu, rien n’est inventé');
+ok(!filled.includes('w:br w:type="page"') && !/w:br\b/.test(filled),
+  'AUCUN saut de page n’est écrit : Word repagine librement, une page blanche est impossible');
+
+/* (b) LA FIN DU TEXTE N'EST PAS UNE PLACE : quand rien ne peut plus remplir la page
+   qu'elle attendait, la figure REPREND SA PLACE — c'est ainsi qu'elle ne part plus
+   après la bibliographie (le rapport). Le texte qui la suit, lui, ne la dépasse plus. */
 const page = wPara(longText) + wFigure + wCaption + wPara(tailText);
 const flowed = reflowFigures(page, null);
-ok(flowed.indexOf('<w:drawing') > flowed.indexOf(tailText),
-  'la figure qui ne tient pas au bas de la page est DÉPLACÉE après le texte suivant (le texte remplit la page)');
-ok(flowed.indexOf('Figure 1. Legende.') > flowed.indexOf('<w:drawing'),
-  '…et sa LÉGENDE voyage avec elle (elles sont un seul objet)');
-ok(flowed.indexOf(longText) < flowed.indexOf(tailText),
-  'le texte, lui, garde son ordre : seul le bloc de la figure change de place');
-eq((flowed.match(/<w:p>[\s\S]*?<\/w:p>/g) || []).map((b) => b.replace(/<[^>]*>/g, '')).sort(),
-  (page.match(/<w:p>[\s\S]*?<\/w:p>/g) || []).map((b) => b.replace(/<[^>]*>/g, '')).sort(),
-  'ce sont les MÊMES paragraphes (mêmes textes), seulement dans un autre ordre : rien n’est perdu, rien n’est inventé');
-ok(!flowed.includes('w:br w:type="page"') && !/w:br\b/.test(flowed),
-  'AUCUN saut de page n’est écrit : Word repagine librement, une page blanche est impossible');
+ok(flowed.indexOf('<w:drawing') < flowed.indexOf(tailText),
+  'une figure qui attendait une page qui n’arrive pas reprend sa place, devant le texte qui la suit');
+ok(flowed.indexOf(longText) < flowed.indexOf('<w:drawing')
+  && flowed.indexOf('Figure 1. Legende.') > flowed.indexOf('<w:drawing'),
+  '…sans quitter son paragraphe : elle reste derrière son ancre, avec sa légende');
+eq((flowed.match(/<w:p>[\s\S]*?<\/w:p>/g) || []).length,
+  (page.match(/<w:p>[\s\S]*?<\/w:p>/g) || []).length,
+  '…et AUCUN paragraphe n’est perdu : le corps rendu les contient tous');
 eq(reflowFigures(wPara('Court') + wFigure + wCaption, null), wPara('Court') + wFigure + wCaption,
   'une figure qui tient dans la page ne bouge pas d’un caractère');
 eq(reflowFigures(wPara('sans figure'), null), wPara('sans figure'),
   'un corps sans figure ressort exactement tel quel (la remise en page ne peut rien casser)');
-/* UN INTITULÉ DE SECTION N'EST PAS UNE LÉGENDE. Sans cette règle, le premier
-   paragraphe COURT qui suit une figure était pris pour sa légende : un `<h2>` aussi
-   — et le titre de la section suivante repartait alors avec la figure, SOUS son
-   premier paragraphe. La légende, elle, est reconnue à son style (`Caption`), donc
-   sans jamais deviner, et elle voyage même quand du texte la suit. */
+/* UN INTITULÉ DE SECTION N'EST PAS UNE LÉGENDE, ET UNE FIGURE NE QUITTE PAS SA
+   SECTION. Sans la première règle, le premier paragraphe COURT qui suit une figure
+   était pris pour sa légende : un `<h2>` aussi — et le titre de la section suivante
+   repartait alors avec la figure, SOUS son premier paragraphe. La légende, elle, est
+   reconnue à son style (`Caption`), donc sans jamais deviner, et elle voyage même
+   quand du texte la suit. Sans la seconde, la figure allait se poser dans la section
+   d'après — c'est ainsi qu'une figure finissait ENTRE deux références (le rapport). */
 const wHead = '<w:p><w:pPr><w:pStyle w:val="Heading2"/></w:pPr>'
   + '<w:r><w:t xml:space="preserve">Results</w:t></w:r></w:p>';
 const wCaptionStyled = '<w:p><w:pPr><w:pStyle w:val="Caption"/></w:pPr>'
   + '<w:r><w:t xml:space="preserve">Figure 1. Legende.</w:t></w:r></w:p>';
-const headingAfter = reflowFigures(wPara(longText) + wFigure + wHead + wPara(tailText), null);
-ok(headingAfter.indexOf('Results') < headingAfter.indexOf('<w:drawing'),
-  'un intitulé de section ne voyage JAMAIS avec la figure (il reste devant elle)');
-ok(headingAfter.indexOf('<w:drawing') > headingAfter.indexOf(tailText),
-  '…et la figure, elle, est bien déplacée après le texte qui suit (la page reste remplie)');
-const styledCaption = reflowFigures(wPara(longText) + wFigure + wCaptionStyled + wPara(tailText), null);
-ok(styledCaption.indexOf('<w:drawing') > styledCaption.indexOf(tailText)
+const headingAfter = reflowFigures(wPara(longText) + wFigure + wHead + wPara(longTail), null);
+ok(headingAfter.indexOf('<w:drawing') < headingAfter.indexOf('Results'),
+  'un intitulé de section n’est jamais emmené par une figure : la figure reste DEVANT lui');
+ok(headingAfter.indexOf('<w:drawing') < headingAfter.indexOf(longTail)
+  && headingAfter.indexOf('Results') < headingAfter.indexOf(longTail),
+  '…et elle ne passe pas non plus derrière lui, même quand le texte qui suit remplirait la page');
+const headingBlocks = reflowFigures(wPara(longText) + wFigure + wHead + wPara(tailText), null);
+ok(headingBlocks.indexOf('<w:drawing') < headingBlocks.indexOf('Results'),
+  'une figure que rien ne remplace reste dans SA section : elle ne passe pas derrière l’intitulé qui la suit');
+ok(headingBlocks.indexOf(longText) < headingBlocks.indexOf('<w:drawing'),
+  '…et elle garde son ancre : elle reste derrière le texte qui la porte');
+const styledCaption = reflowFigures(wPara(longText) + wFigure + wCaptionStyled + wPara(longTail), null);
+ok(styledCaption.indexOf('<w:drawing') > styledCaption.indexOf(longTail)
   && styledCaption.indexOf('Figure 1. Legende.') > styledCaption.indexOf('<w:drawing')
-  && styledCaption.indexOf(tailText) < styledCaption.indexOf('Figure 1. Legende.'),
+  && styledCaption.indexOf(longTail) < styledCaption.indexOf('Figure 1. Legende.'),
   'la légende reconnue à son style voyage avec sa figure, même quand du texte suit');
 eq([...(styledCaption.match(/<w:pStyle w:val="Caption"\/>/g) || [])].length, 1,
   '…sans toucher au style de la légende (un seul paragraphe « Caption »)');
@@ -370,8 +415,8 @@ eq([...twoFigures.matchAll(/<w:drawing>|Figure \d\. Legende\./g)].map((m) => m[0
   ['<w:drawing>', 'Figure 1. Legende.', '<w:drawing>', 'Figure 2. Legende.'],
   'chaque figure garde SA légende collée et l’ordre du document est conservé');
 eq(twoFigures.replace(/<[^>]*>/g, ''),
-  longText + longText + tailText + 'Figure 1. Legende.' + 'Figure 2. Legende.',
-  'le TEXTE ne change pas d’un caractère : il remplit les pages devant, les deux figures se suivent');
+  longText + 'Figure 1. Legende.' + longText + 'Figure 2. Legende.' + tailText,
+  'le TEXTE ne change pas d’un caractère : chaque figure reste derrière le sien, sa légende avec elle');
 /* LA HAUTEUR D'UNE FIGURE EST PLAFONNÉE À LA COLONNE DE TEXTE : une image portrait
    plus haute qu'une page ne pourrait tenir NULLE PART — Word la pousserait seule sur
    la suivante, avec un grand vide derrière elle. */
@@ -383,14 +428,31 @@ eq(Number(tall && tall[2]), 8326755,
 ok(Number(tall && tall[1]) < 6126624, '…et sa largeur suit, le rapport de l’image est gardé');
 ok(blockHeight(`<w:p><w:r><w:t>${'x'.repeat(100)}</w:t></w:r></w:p>`, metrics) > metrics.line,
   'la hauteur estimée d’un paragraphe suit son nombre de lignes (l’estimation qui décide du placement)');
-/* …ET DEPUIS LE DOCUMENT LUI-MÊME : le chemin réel (HTML → XML → remise en page)
-   doit donner le même déplacement que le corps fabriqué à la main ci-dessus. */
+/* …ET DEPUIS LE DOCUMENT LUI-MÊME : le chemin réel (HTML → XML → remise en page).
+   LE CAS DU RAPPORT : la dernière figure d'un manuscrit, le texte qui la suit, et
+   la bibliographie derrière. La figure peut descendre derrière le texte qui remplit
+   sa page — mais PAS derrière l'intitulé de la bibliographie (voir flowBlocks) :
+   elle n'apparaît donc ni entre deux références, ni après elles. */
 const manyParas = Array.from({ length: 12 }, (_, i) => `<p class="pf-body">Paragraph ${i}. ${'m'.repeat(600)}</p>`).join('');
-const wholeDoc = htmlToDocxBody(`${manyParas}${FIG}<p class="pf-body">After the figure.</p>`, { images: IMAGES }).xml;
-ok(wholeDoc.indexOf('<w:drawing') > wholeDoc.indexOf('After the figure.'),
-  'le document entier passe par la remise en page : la figure descend après le texte qui la suit');
-ok(wholeDoc.indexOf('Paragraph 0.') < wholeDoc.indexOf('Paragraph 11.'),
-  '…et l’ordre du texte, lui, ne bouge pas');
+const refs = Array.from({ length: 20 }, (_, i) =>
+  `<p class="pf-body">${i + 1}. Rossi M (2018). A reference line.</p>`).join('');
+const wholeDoc = htmlToDocxBody(
+  `${manyParas}${FIG}<p class="pf-body">After the figure.</p><h2 class="pf-heading">References</h2>${refs}`,
+  { images: IMAGES }
+).xml;
+ok(wholeDoc.indexOf('<w:drawing') > wholeDoc.indexOf('Paragraph 11.'),
+  'le document entier passe par la remise en page : la figure reste derrière le texte qui la porte');
+ok(wholeDoc.indexOf('<w:drawing') < wholeDoc.indexOf('References'),
+  '…et DEVANT l’intitulé de la bibliographie : ni entre deux références, ni après elles (le rapport)');
+eq((wholeDoc.match(/<w:drawing/g) || []).length, 1,
+  '…et elle est toujours là, une seule fois : rien n’est perdu ni dupliqué');
+ok(wholeDoc.indexOf('Paragraph 0.') < wholeDoc.indexOf('Paragraph 11.')
+  && wholeDoc.indexOf('Paragraph 11.') < wholeDoc.indexOf('References')
+  && wholeDoc.indexOf('References') < wholeDoc.indexOf('1. Rossi')
+  && wholeDoc.indexOf('1. Rossi') < wholeDoc.indexOf('20. Rossi'),
+  '…et l’ordre du texte, lui, ne bouge pas (les paragraphes, puis la bibliographie)');
+ok(wholeDoc.indexOf('After the figure.') < wholeDoc.indexOf('<w:drawing'),
+  'la figure descend derrière le court paragraphe qui remplit la place qu’elle laissait');
 
 /* ══ 8 bis. LA LÉGENDE NE RESTE JAMAIS DERRIÈRE SA FIGURE ══════════════════
    Le rapport de cette session : « some figure captions are detached from the figure
@@ -401,22 +463,22 @@ ok(wholeDoc.indexOf('Paragraph 0.') < wholeDoc.indexOf('Paragraph 11.'),
    une figure dont l'image, plafonnée à 90 % de la colonne, ne laissait pas la place
    de sa légende — Word coupait alors le groupe en deux. */
 const longCaption = `Figure 7. ${'c'.repeat(420)}`;
-const longUnstyled = reflowFigures(wPara(longText) + wFigure + wPara(longCaption) + wPara(tailText), null);
+const longUnstyled = reflowFigures(wPara(longText) + wFigure + wPara(longCaption) + wPara(longTail), null);
 ok(longUnstyled.indexOf(longCaption) > longUnstyled.indexOf('<w:drawing')
-  && longUnstyled.indexOf(longCaption) > longUnstyled.indexOf(tailText),
-  'une légende LONGUE sans style (« Figure 7. … ») part avec sa figure : son titre la nomme');
+  && longUnstyled.indexOf(longCaption) > longUnstyled.indexOf(longTail),
+  'une légende LONGUE sans style (« Figure 7. … ») part avec sa figure : son titre la nomme, elle ne reste pas derrière');
 
 const wCaptionIcon = '<w:p><w:pPr><w:pStyle w:val="Caption"/></w:pPr>'
   + '<w:r><w:drawing><wp:inline><wp:extent cx="100000" cy="100000"/></wp:inline></w:drawing></w:r>'
   + '<w:r><w:t xml:space="preserve">Figure 8. Icone.</w:t></w:r></w:p>';
-const iconCaption = reflowFigures(wPara(longText) + wFigure + wCaptionIcon + wPara(tailText), null);
-ok(iconCaption.indexOf('Figure 8. Icone.') > iconCaption.indexOf(tailText),
+const iconCaption = reflowFigures(wPara(longText) + wFigure + wCaptionIcon + wPara(longTail), null);
+ok(iconCaption.indexOf('Figure 8. Icone.') > iconCaption.indexOf(longTail),
   'une légende qui porte une ICÔNE (un `<w:drawing>` dans son paragraphe) reste une légende : le style est la certitude');
 
 const wCaptionNext = '<w:p><w:pPr><w:pStyle w:val="Caption"/></w:pPr>'
   + '<w:r><w:t xml:space="preserve">Figure 9 (suite).</w:t></w:r></w:p>';
-const multiCaption = reflowFigures(wPara(longText) + wFigure + wCaptionStyled + wCaptionNext + wPara(tailText), null);
-ok(multiCaption.indexOf('Figure 1. Legende.') > multiCaption.indexOf(tailText)
+const multiCaption = reflowFigures(wPara(longText) + wFigure + wCaptionStyled + wCaptionNext + wPara(longTail), null);
+ok(multiCaption.indexOf('Figure 1. Legende.') > multiCaption.indexOf(longTail)
   && multiCaption.indexOf('Figure 9 (suite).') > multiCaption.indexOf('Figure 1. Legende.'),
   'une légende en DEUX paragraphes voyage ENTIÈRE : le second suivrait sinon la figure de loin');
 /* …ET CELUI QUI SUIT UN TABLEAU N'EST PAS UNE LÉGENDE DE FIGURE : le titre d'un
@@ -443,6 +505,76 @@ ok(Math.abs((Number(fitExtent[1]) / Number(fitExtent[2])) - (6126624 / 8326755))
   '…sans déformer la figure : son rapport est gardé (les deux extensions sont réécrites ensemble)');
 eq(reflowFigures(wFigure + wCaptionStyled, null), wFigure + wCaptionStyled,
   'une figure qui tient déjà avec sa légende n’est ni déplacée ni réduite');
+
+/* ══ 9. LES COLONNES DE LA PAGE ═══════════════════════════════════════════════
+   « …and the export to docx does not maintain the multiple column format. » Le
+   style « deux colonnes » des revues (PUB_PAGE_COLUMNS, pubCitation.js) est une
+   propriété de PAGE : la feuille du document la porte avec `column-count`, Word
+   avec les COLONNES D'UNE SECTION — `<w:cols>` dans le `sectPr`, et un saut de
+   section « continu » pour chaque partie qui BARRE la page (`column-span: all`
+   n'existe pas dans Word). C'est ce que ce fichier traduit, et ce qui est mesuré
+   ici : le nom de la page, la section de tête, la figure qui barre la page, et la
+   page à UNE colonne qui n'écrit rien du tout. */
+const twoColumns = { layout: { page: { columns: 2 } } };
+const COL_DOC = [
+  '<h1 class="pf-title">Title</h1>',
+  DOC_EMPTY_LINE_HTML,
+  '<p class="pf-authors">Rossi M</p>',
+  '<p class="pf-affiliations">1 Dipartimento</p>',
+  '<h2 class="pf-heading">Results</h2>',
+  '<p class="pf-body">The peptides were tested.</p>',
+  /* LE CAS RÉEL DU DOCUMENT : la grille des figures n'a pas de partie à elle, la
+     figure si — et c'est ELLE qui décide de la largeur (voir renderUnits). */
+  '<div class="mb-6"><p class="pf-body">Second paragraph.</p>'
+    + '<div class="mt-3 grid"><figure class="pf-figure"><img src="https://drive.example/f1.png" alt="F">'
+    + '<figcaption class="pf-caption">Figure 1. A caption.</figcaption></figure></div></div>',
+  '<h2 class="pf-heading">References</h2>',
+  '<ol class="pf-bib"><li>Rossi M. J. Biol. Chem. 2024.</li></ol>'
+].join('');
+const GAP_TWIPS = Math.round(PUB_COLUMN_GAP_REM * 16 * 15);
+const twoCol = htmlToDocxBody(COL_DOC, { format: twoColumns, images: IMAGES });
+eq([twoCol.pageColumns, twoCol.columns], [2, 2], 'les colonnes du format deviennent celles de la page et de sa dernière section');
+const breaks = [...twoCol.xml.matchAll(/<w:sectPr><w:type w:val="continuous"\/>[\s\S]*?<\/w:sectPr>/g)]
+  .map((m) => m[0]);
+eq(breaks.length, 1, 'UNE seule section se ferme : la tête (le titre, les auteurs, les affiliations)');
+eq(breaks[0], '<w:sectPr><w:type w:val="continuous"/><w:pgSz w:w="11906" w:h="16838"/>'
+  + '<w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134" w:header="708" w:footer="708" w:gutter="0"/>'
+  + '<w:cols w:num="1"/></w:sectPr>',
+  '…avec le type « continu » (la même page), la feuille A4 et UNE colonne : la tête barre la page');
+const afterBreak = twoCol.xml.slice(twoCol.xml.indexOf(breaks[0]) + breaks[0].length);
+ok(afterBreak.includes('1 Dipartimento') && afterBreak.indexOf('1 Dipartimento') < afterBreak.indexOf('Results'),
+  '…et c’est le DERNIER paragraphe de la tête qui la porte (la ligne vide du milieu n’ouvre rien)');
+ok(twoCol.xml.indexOf(breaks[0]) < twoCol.xml.indexOf('Results'),
+  '…le texte des sections, lui, vient après : il coule dans les deux colonnes');
+const colPage = strFromU8(unzipSync(buildDocxBytes(COL_DOC, { format: twoColumns }))['word/document.xml']);
+ok(colPage.includes(`<w:cols w:num="2" w:space="${GAP_TWIPS}" w:equalWidth="1"/>`),
+  '…et le document Word dit deux colonnes à écart égal (l’écart de la feuille, en twips)');
+eq((colPage.match(/<w:sectPr>/g) || []).length, 2,
+  'deux `sectPr` dans le fichier : celui du saut de section et celui de la fin du corps');
+
+/* UNE FIGURE « FULL WIDTH » BARRE LA PAGE : elle prend sa PROPRE section d'une
+   colonne, et le texte reprend les deux colonnes après elle. */
+const wideFigure = { layout: { page: { columns: 2 }, figure: { span: 'all' } } };
+const WIDE_DOC = '<p class="pf-body">Before the figure.</p>'
+  + '<figure class="pf-figure"><img src="https://drive.example/f1.png" alt="F">'
+  + '<figcaption class="pf-caption">Figure 1. A caption.</figcaption></figure>'
+  + '<p class="pf-body">After the figure.</p>';
+const wide = htmlToDocxBody(WIDE_DOC, { format: wideFigure, images: IMAGES });
+const wideBreaks = [...wide.xml.matchAll(/<w:cols w:num="1"\/>/g)];
+eq(wideBreaks.length, 1, 'la figure qui barre la page ouvre une section d’UNE colonne');
+eq([wide.pageColumns, wide.columns], [2, 2], '…et la dernière section reprend les colonnes de la page');
+ok(wide.xml.indexOf('Before the figure.') < wide.xml.indexOf('<w:cols w:num="1"/>')
+  && wide.xml.indexOf('<w:cols w:num="1"/>') < wide.xml.indexOf('After the figure.'),
+  '…entre le texte d’avant et le texte d’après : c’est bien la figure qui est pleine largeur');
+
+/* LA PAGE À UNE COLONNE N'ÉCRIT RIEN : ni `w:cols`, ni saut de section — le
+   fichier d'un document sans colonnes est celui d'avant, au caractère près. */
+const oneCol = htmlToDocxBody(COL_DOC, { images: IMAGES });
+eq([oneCol.pageColumns, oneCol.columns], [1, 1], 'sans colonne réglée, la page en a une');
+ok(!/w:cols/.test(oneCol.xml) && !/w:type w:val="continuous"/.test(oneCol.xml),
+  '…et AUCUNE section n’est écrite : ni colonnes, ni saut');
+eq(htmlToDocxBody(COL_DOC, { images: IMAGES }).xml, oneCol.xml,
+  'un format absent ne change rien (le .docx d’un document sans format est celui d’avant)');
 
 console.log(`_pub_docx_export_test.mjs — ${passed} assertions OK (export .docx du document)`);
 

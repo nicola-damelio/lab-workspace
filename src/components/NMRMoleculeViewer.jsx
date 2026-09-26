@@ -4717,6 +4717,21 @@ const MEMBRANE_CHILD_OF = {
   upper_leaflet: 'upper_headgroups',
   lower_leaflet: 'lower_headgroups',
 };
+/* ── LE PANNEAU N'OFFRE QUE LES DEUX FEUILLETS (la demande) ───────────────────
+   « from the membrane panel just remove the upper headgroup and lower headgroup. »
+
+   Les deux rangées de TÊTES ne sont pas supprimées du viewer : elles restent des
+   sélections MESURÉES (`membraneSele` — le pont les résout, et une macro de
+   membrane peut les écrire), la règle d'exclusion des feuillets continue de
+   fonctionner sur leurs atomes, et le style qu'une session enregistrée leur a
+   donné est toujours dessiné. Elles ne sont simplement plus des RANGÉES du
+   panneau : rien n'y les liste, et aucun autre nom de tête ne peut y rentrer par
+   la porte des sélections du script (voir lipidSelectionKeys).
+
+   Ce sont les deux noms qui ONT UN PARENT — la liste est donc celle-là, et elle
+   ne peut pas se désynchroniser de la hiérarchie (MEMBRANE_PARENT_OF). */
+const MEMBRANE_HEAD_ROWS = Object.keys(MEMBRANE_PARENT_OF);
+const membranePanelRowOffered = (key) => !MEMBRANE_HEAD_ROWS.includes(String(key == null ? '' : key));
 /* ── A MEASURED ROW NEVER SUBTRACTS THE ROW THAT CONTAINS IT ─────────────────
    THE REPORT: « the membrane panel does not work properly yet. upper headgroups
    and lower headgroups interfere with each other and with the leaflets (the
@@ -9813,13 +9828,18 @@ const selectionAtomCount = (key) => {
    the pymol macro a lipid is selected they should also be there. »
 
    So the 🧫 phospholipid space of the styling window lists:
-     · the FOUR selections this viewer MEASURED on the bilayer
-       (upper_leaflet · lower_leaflet · upper_headgroups · lower_headgroups) —
-       exactly the ticks that used to live in the left Membrane box, now each one
-       with the full command set of a styling row;
+     · the TWO selections this viewer MEASURED on the bilayer (upper_leaflet ·
+       lower_leaflet) — exactly the ticks that used to live in the left Membrane
+       box, now each one with the full command set of a styling row. The two
+       HEADGROUP rows are no longer offered (the request « from the membrane panel
+       just remove the upper headgroup and lower headgroup », see
+       membranePanelRowOffered) : they stay measured selections for the bridge,
+       they are simply not rows any more;
      · every selection the SCRIPT defines whose atoms lie INSIDE the lipids
        (seleIsWithin on the bridge-resolved clause), so a macro that selects
-       lipids finds its selections here too, styleable one at a time.
+       lipids finds its selections here too, styleable one at a time — minus the
+       two headgroup names, which the panel does not list whatever the macro
+       calls them.
 
    Memoised on its own signature: a 30 000-atom bilayer must not pay for the
    spill test on every render of the styling window. */
@@ -9827,7 +9847,10 @@ const lipidRowsRef = useRef({ sig: '', struct: null, keys: [] });
 const lipidSelectionKeys = () => {
   const component = componentRef.current;
   const structure = component && component.structure ? component.structure : null;
-  const measured = Object.keys(membraneSele || {});
+  /* LES DEUX RANGÉES DE TÊTES N'Y SONT plus (voir membranePanelRowOffered) : le
+     filtre s'applique AUX DEUX FAMILLES — une sélection de script nommée
+     `upper_headgroups` ne peut donc pas rentrer par la porte des sélections. */
+  const measured = Object.keys(membraneSele || {}).filter(membranePanelRowOffered);
   if (!structure) return measured;
   const sig = `${measured.join(',')}::${selections.map((s) => `${s.name}=${s.expr}`).join('|')}::${Object.keys(selStyles).join(',')}`;
   const cached = lipidRowsRef.current;
@@ -9840,7 +9863,7 @@ const lipidSelectionKeys = () => {
       const named = new Set(selections.map((s) => s.name));
       const raw = Object.keys(selStyles).filter((k) => k !== 'all' && !named.has(k));
       extra = [...selections.map((s) => s.name), ...raw].filter((k) => {
-        if (!k || measured.includes(k)) return false;
+        if (!k || measured.includes(k) || !membranePanelRowOffered(k)) return false;
         try { return seleIsWithin(structure, selKeyExpr(k), lipid) === true; } catch { return false; }
       });
     }
@@ -11479,7 +11502,15 @@ const renderSectionRow = (sec, sub) => {
    them (membraneHeadRelinquish — its style must be visible under a fat leaflet),
    and each measured row carries the 👁 solo that hides the other leaflet's two
    rows: the two leaflets stand one BEHIND the other, and the one at the back
-   cannot be seen, let alone styled, through the one in front. */
+   cannot be seen, let alone styled, through the one in front.
+
+   …ET LE PANNEAU N'EN MONTRE PLUS QUE DEUX : « from the membrane panel just
+   remove the upper headgroup and lower headgroup. » Les rangées d'un feuillet et
+   celles de ses têtes se recouvraient (l'une contient l'autre), et le panneau
+   demandait donc de comprendre une hiérarchie pour styliser un feuillet. Les
+   noms de têtes restent MESURÉS — le pont les résout, la règle du propriétaire
+   des têtes s'en sert, et une macro peut les écrire — mais le panneau ne les
+   liste plus (membranePanelRowOffered, appliqué par lipidSelectionKeys). */
 const renderMembraneSelections = (sec) => {
   const keys = lipidSelectionKeys();
   if (!keys.length) return null;

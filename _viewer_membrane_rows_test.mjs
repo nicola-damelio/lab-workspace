@@ -19,8 +19,9 @@
        ne garde que la MESURE et renvoie au styling.
     2. Ils sont devenus des RANGÉES du groupe « 🧫 Membrane · leaflets », DANS
        l'espace phospholipides de la fenêtre de styling, une seule fois par
-       molécule — et la liste joint les QUATRE sélections mesurées et TOUTE
-       sélection qu'un script PyMOL fait sur les lipides.
+       molécule — et la liste joint les feuillets MESURÉS (deux, depuis la demande
+       « from the membrane panel just remove the upper headgroup and lower
+       headgroup ») et TOUTE sélection qu'un script PyMOL fait sur les lipides.
     3. Chaque rangée écrit dans le MÊME état que les ticks (`selStyles`) : ce qui
        était dessiné avant l'est encore, mais stylable sélection par sélection.
     4. Les DEUX BARRES passent par UNE SEULE implémentation des commandes
@@ -95,9 +96,16 @@ gone('The leaflets are styled HERE, one selection at a time', '…sans le paragr
 gone('A row named after the heads can therefore never cover the whole bilayer.', '…ni la note sur les têtes');
 gone('The four measured names work in a PyMOL script as well', '…ni le rappel du macro : le contrat des quatre noms est dans le code');
 
-/* La liste : les QUATRE noms mesurés, plus les sélections du script DANS les lipides. */
-has('const measured = Object.keys(membraneSele || {});',
-  'la liste part des quatre sélections que le viewer a MESURÉES (les anciens ticks)');
+/* La liste : les DEUX feuillets mesurés, plus les sélections du script DANS les
+   lipides — les deux rangées de TÊTES en sont retirées (« from the membrane panel
+   just remove the upper headgroup and lower headgroup »), pour les deux familles
+   à la fois. */
+has('const MEMBRANE_HEAD_ROWS = Object.keys(MEMBRANE_PARENT_OF);',
+  'les rangées retirées sont EXACTEMENT les deux noms qui ont un parent (la liste ne peut pas se désynchroniser de la hiérarchie)');
+has('const measured = Object.keys(membraneSele || {}).filter(membranePanelRowOffered);',
+  'la liste part des sélections MESURÉES, les rangées de têtes retirées');
+has('if (!k || measured.includes(k) || !membranePanelRowOffered(k)) return false;',
+  '…et une sélection de SCRIPT nommée « upper_headgroups » ne rentre pas par l’autre porte');
 has('const cats = catSelectionsFor(structure);', '…elle lit la classification chimique de la structure');
 has('const lipid = cats && cats.lipid;', '…dont la sélection des lipides');
 has('return seleIsWithin(structure, selKeyExpr(k), lipid) === true;',

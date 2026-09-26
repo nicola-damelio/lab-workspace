@@ -30,22 +30,33 @@
    projet) zippe les parties, le reste est du XML écrit ici — le module tourne donc
    aussi sous node (voir _pub_docx_export_test.mjs).
 
-   CE QUE CE FICHIER NE PORTE PAS (encore) : LES COLONNES DE LA PAGE. Le style
-   « deux colonnes » des revues (voir PUB_PAGE_COLUMNS, pubCitation.js) est une
-   propriété de PAGE : en HTML/CSS elle est écrite par pubLayoutCss — la page du
-   projet, la feuille d'impression, le PDF et l'aperçu la suivent donc tous — mais
-   Word ne connaît pas `column-count` : il la porte dans le `sectPr` d'une
-   SECTION (`<w:cols w:num="2"/>`). L'export .docx suit donc le caractère de
-   chaque partie (police, taille, alignement, gras / italique / souligné,
-   couleur) et laisse la page sur une colonne. Le dire ici plutôt que de laisser
-   croire : un document exporté en deux colonnes ne l'est pas.
+   LES COLONNES DE LA PAGE SUIVENT AUSSI (le rapport : « the export to docx does
+   not maintain the multiple column format »). Le style « deux colonnes » des
+   revues est une propriété de PAGE : en HTML/CSS pubLayoutCss l'écrit sur le
+   conteneur du document — la page du projet, la feuille d'impression, le PDF et
+   l'aperçu la suivent donc tous — mais Word ne connaît pas `column-count` : il
+   connaît les COLONNES D'UNE SECTION (`<w:cols w:num="2"/>`, dans le `sectPr`
+   d'un saut de section « continu »). Ce fichier traduit donc les deux réglages du
+   format, partie par partie (voir columnBlocks) : la page garde ses colonnes, les
+   parties qui la BARENT (titre, auteurs, affiliations, une figure « Full width »)
+   ont une section à une colonne, et les autres coulent dans celles de la page.
    ========================================================================= */
 
 import { zipSync, strToU8 } from 'fflate';
 /* LA MISE EN FORME DU DOCUMENT (« Publication format ») : ses parties et leurs
    sélecteurs sont la SEULE définition de ce qu'est « le titre », « une figure »…
-   (voir pubLayoutCss) — l'export .docx les relit au lieu de les réécrire. */
-import { PUB_LAYOUT_PARTS, normalizePubLayout } from '../components/pubCitation.js';
+   (voir pubLayoutCss) — l'export .docx les relit au lieu de les réécrire. Les
+   COLONNES de la page et ce que chaque partie en fait (`span`) viennent du même
+   format (voir columnBlocks). */
+import {
+  PUB_COLUMN_GAP_REM, PUB_LAYOUT_PARTS, normalizePubLayout, pubPageColumnsOf, pubSpanIn
+} from '../components/pubCitation.js';
+/* LA LIGNE VIDE DE LA TÊTE DU DOCUMENT (« in the final document the list of
+   authors must be separated by the title with one empty line ») : la feuille du
+   document la fait BARRER LA PAGE comme la tête qu'elle sépare (voir pubLayoutCss)
+   — mais aucune partie du format ne la nomme : sa classe est la seule chose qui
+   la désigne, et c'est celle-ci (journalFormats.js l'écrit). */
+import { DOC_EMPTY_LINE_CLASS } from '../components/journalFormats.js';
 
 export const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 
@@ -615,6 +626,28 @@ const renderBlock = (node, ctx, part) => {
    librement, et si sa métrique différait de l'estimation ci-dessous, le pire qui
    puisse arriver est le vide d'aujourd'hui — jamais une page blanche ajoutée.
 
+   …ET UNE FIGURE NE QUITTE PAS SA SECTION (le rapport : « the figures are
+   located in the middle of the references or after »). Le déplacement cherche la
+   première place où la figure tient ENTIÈREMENT : tant que le texte qui suit est
+   long, c'est la page suivante — le geste du typographe. Mais quand il ne reste
+   que la bibliographie, cette « première place » tombe DEDANS (dès que l'intitulé
+   « References » a fermé la page, le déplacement reprend après sa première
+   référence) ou APRÈS elle (plus aucun début de page ne s'ouvre avant la fin du
+   texte : la figure attendait alors une page qui n'arrivait pas). Deux bornes,
+   donc :
+
+     · UN INTITULÉ DE SECTION FERME LA SECTION DEVANT LUI : les figures encore en
+       attente appartiennent à la section qui se termine, elles reprennent leur
+       place ici — elles ne traversent jamais l'intitulé d'une autre section, ni
+       celui de la bibliographie ;
+     · LA FIN DU TEXTE N'EST PAS UNE PLACE : ce qu'aucune place n'a repris
+       retourne à SA place (deuxième passage, `pinned` — voir reflowFigures).
+
+   Dans ces deux cas la figure est RÉDUITE juste assez pour entrer dans ce qui
+   reste de la page (fitGroupInSpace, jamais sous le quart d'une page) : c'est ce
+   que la remise en page cherchait — aucun grand vide derrière la figure —, et la
+   figure, elle, ne bouge plus.
+
    Les mesures sont celles du corps A4 (21 × 29,7 cm, marges de 2 cm — la feuille
    de `documentXml`), de la hauteur de ligne des styles (`w:line="276"`, soit 1,15
    ligne) et du corps de texte choisi dans le « Publication format » (voir
@@ -698,20 +731,23 @@ export const scaleDrawingTo = (block, maxTwips) => {
     .replace(/(<a:ext\b[^>]*\bcx=")\d+("[^>]*\bcy=")\d+(")/g, `$1${nx}$2${ny}$3`);
 };
 
-/** Le groupe figure + légende REMIS DANS UNE PAGE : au-delà, l'image est
- *  réduite (voir CAPTION_GAP). Jamais sous `MIN_IMAGE_SHARE` de la page — une
- *  légende plus haute qu'une page ne tient nulle part, et rapetisser la figure
- *  n'y changerait rien : le groupe est alors rendu tel quel. Renvoie le MÊME
- *  objet quand rien n'a bougé. */
-export const fitGroupOnPage = (group, metrics) => {
+/** Le groupe figure + légende RAMENÉ DANS UNE PLACE de `space` twips (celle qui
+ *  reste sur la page, ou la page entière) : l'IMAGE est réduite — son rapport
+ *  gardé — juste assez pour que le groupe y entre, et JAMAIS sous MIN_IMAGE_SHARE
+ *  de la page : une figure réduite sous un quart de page n'en est plus une. Le
+ *  groupe est rendu TEL QUEL quand même la plus petite figure n'y tiendrait pas
+ *  (Word la poussera sur la page suivante) et quand il n'a pas exactement une
+ *  image — un groupe de deux images n'a rien à décider. Renvoie le MÊME objet
+ *  quand rien n'a bougé. */
+export const fitGroupInSpace = (group, metrics, space) => {
   const m = metrics || docxPageMetrics(null);
-  if (!group || group.height <= m.height) return group;
+  if (!group || group.height <= space) return group;
   const blocks = group.blocks || [];
   const drawings = blocks.filter(blockHasDrawing).length;
   if (drawings !== 1) return group;                     // deux images : on ne touche à rien
   const captionH = blocks.reduce((s, b) => s + (blockHasDrawing(b) ? 0 : blockHeight(b, m)), 0);
   const at = blocks.findIndex(blockHasDrawing);
-  const room = m.height - captionH - CAPTION_GAP;
+  const room = Math.max(0, Math.round(space) - captionH - CAPTION_GAP);
   const maxTwips = Math.max(Math.round(m.height * MIN_IMAGE_SHARE), room);
   const shrunk = scaleDrawingTo(blocks[at], maxTwips);
   if (shrunk === blocks[at]) return group;
@@ -719,6 +755,15 @@ export const fitGroupOnPage = (group, metrics) => {
   next[at] = shrunk;
   return { blocks: next, height: next.reduce((s, b) => s + blockHeight(b, m), 0) };
 };
+
+/** Le groupe figure + légende REMIS DANS UNE PAGE : au-delà, l'image est réduite
+ *  (voir fitGroupInSpace, qui porte la règle). Jamais sous `MIN_IMAGE_SHARE` de la
+ *  page — une légende plus haute qu'une page ne tient nulle part, et rapetisser la
+ *  figure n'y changerait rien : le groupe est alors rendu tel quel. Renvoie le
+ *  MÊME objet quand rien n'a bougé (voir les tests). */
+export const fitGroupOnPage = (group, metrics) => fitGroupInSpace(
+  group, metrics, (metrics || docxPageMetrics(null)).height
+);
 
 
 
@@ -803,22 +848,59 @@ const captionBlocksAfter = (queue) => {
 /** LE CORPS REMIS EN PAGE : le même corps, avec les figures DÉPLACÉES pour que le
  *  texte remplisse les pages (voir la note ci-dessus). Le corps est rendu tel quel
  *  quand il n'y a pas de figure, et aussi quand le découpage en blocs ne redonne
- *  pas exactement l'entrée : on ne réécrit jamais ce qu'on n'a pas reconnu. */
+ *  pas exactement l'entrée : on ne réécrit jamais ce qu'on n'a pas reconnu.
+ *
+ *  UN PASSAGE, PUIS UN SECOND SEULEMENT S'IL LE FAUT : le premier découvre les
+ *  figures qu'AUCUNE place n'a reprises (le texte s'arrête avant — la place qu'une
+ *  figure attendait était une page qui n'arrivait pas, et elle partait alors APRÈS
+ *  la bibliographie). Le second les ÉPINGLE : une figure épinglée reprend sa place,
+ *  son image réduite pour y tenir. Chaque passage ne fait qu'épingler davantage, et
+ *  une figure épinglée n'attend plus jamais : la boucle s'arrête donc d'elle-même
+ *  (la borne de passages est là pour qu'aucun document ne puisse la faire tourner).
+ *  Le corps rendu contient TOUJOURS tous ses blocs (voir flowBlocks). */
 export const reflowFigures = (xml, format) => {
   const source = String(xml || '');
   if (source.indexOf('<w:drawing') === -1) return source;      // aucune figure : rien à déplacer
   const blocks = bodyBlocks(source);
   if (!blocks.length || blocks.join('') !== source) return source;
   const m = docxPageMetrics(format);
+  const pinned = new Set();
+  let flow = flowBlocks(blocks, m, pinned);
+  for (let pass = 0; pass < 8 && flow.stuck.size; pass += 1) {
+    flow.stuck.forEach((key) => pinned.add(key));
+    flow = flowBlocks(blocks, m, pinned);
+  }
+  return flow.out.join('');
+};
+
+/** UN PASSAGE de la remise en page. `pinned` = les figures à qui la place n'a pas
+ *  été donnée au passage précédent : celles-là reprennent leur place DANS L'ORDRE,
+ *  leur image réduite SEULEMENT si cela les fait tenir dans ce qui reste (voir
+ *  fitGroupInSpace) — c'est la borne « la fin du texte n'est pas une place ».
+ *  Renvoie les blocs du corps (`out`, dans l'ordre où ils s'écrivent) et les
+ *  figures qu'aucune place n'a reprises (`stuck`, leur premier bloc). AUCUN BLOC
+ *  N'EST PERDU : ce qui attend encore à la fin est écrit à la fin du corps. */
+const flowBlocks = (blocks, m, pinned) => {
   const queue = blocks.slice();
   const deferred = [];
   const out = [];
+  const stuck = new Set();
   let y = 0;
   const fitted = (h) => y + h <= m.height;
+  const keyOf = (group) => group.blocks[0];
   const place = (group) => {
     group.blocks.forEach((b) => out.push(b));
     y += group.height;
     if (y >= m.height) y = 0;                                  // la page est pleine
+  };
+  /* La figure qui ne peut plus attendre : sa place, et son image réduite SEULEMENT
+     si cela la fait ENTRER dans ce qui reste (une figure rapetissée qui ne tient
+     pas non plus garderait une taille pour rien : elle garde la sienne, et Word la
+     poussera sur la page suivante comme aujourd'hui). */
+  const keep = (group) => {
+    const space = m.height - y;
+    const shrunk = fitGroupInSpace(group, m, space);
+    place(shrunk.height <= space ? shrunk : group);
   };
   while (queue.length || deferred.length) {
     // 1. UNE FIGURE MISE DE CÔTÉ REPREND LA PAGE DÈS QU'ELLE Y TIENT : c'est le
@@ -826,13 +908,15 @@ export const reflowFigures = (xml, format) => {
     for (let k = 0; k < deferred.length;) {
       if (fitted(deferred[k].height)) { place(deferred[k]); deferred.splice(k, 1); } else k += 1;
     }
-    if (!queue.length) {
-      if (!deferred.length) break;
-      y = 0;                                                   // plus rien à remplir : elle a sa page
-      place(deferred.shift());
-      continue;
-    }
+    if (!queue.length) break;                     // plus de texte : « stuck » (voir plus haut)
     const block = queue.shift();
+    /* 2. UN INTITULÉ FERME LA SECTION DEVANT LUI : les figures encore en attente
+       appartiennent à la section qui se termine — la bibliographie comprise, dont
+       l'intitulé ne laisse jamais passer une figure d'avant (le rapport « in the
+       middle of the references »). */
+    if (deferred.length && HEADING_STYLE_RE.test(block)) {
+      while (deferred.length) keep(deferred.shift());
+    }
     if (blockHasDrawing(block)) {
       let group = { blocks: [block], height: 0 };
       for (let n = captionBlocksAfter(queue); n > 0; n -= 1) group.blocks.push(queue.shift());
@@ -844,6 +928,7 @@ export const reflowFigures = (xml, format) => {
       // Une figure que MÊME LA PAGE ENTIÈRE ne peut pas porter reste à sa place
       // (Word la poussera sur sa propre page, comme aujourd'hui).
       if (group.height > m.height || fitted(group.height)) place(group);
+      else if (pinned.has(keyOf(group))) keep(group);
       else deferred.push(group);
       continue;
     }
@@ -851,23 +936,176 @@ export const reflowFigures = (xml, format) => {
     if (h > m.height || !fitted(h)) y = 0;                      // une page neuve commence
     place({ blocks: [block], height: h });
   }
-  return out.join('');
+  deferred.forEach((group) => {
+    stuck.add(keyOf(group));
+    group.blocks.forEach((b) => out.push(b));
+  });
+  return { out, stuck };
 };
 
-/** `html` → `{ xml, links, rels, media }` : le corps du document Word, les liens
- *  à déclarer, TOUTES ses relations (liens et images) et les parties binaires que
- *  les images apportent (`word/media/…`). `options.format` = le « Publication
- *  format » du projet (voir docxStyleOf), `options.images` = les pixels rapatriés
- *  par la page (`src` → `data:` URL, voir resolveDocxImages). */
+/* ── 4 quater. LES COLONNES DE LA PAGE (« the export to docx does not maintain
+   the multiple column format ») ──────────────────────────────────────────────
+   Le style « deux colonnes » des revues est une propriété de PAGE (voir
+   PUB_PAGE_COLUMNS, pubCitation.js) : en HTML/CSS c'est pubLayoutCss qui le porte
+   au conteneur du document, mais Word ne connaît pas `column-count` — il connaît
+   les COLONNES D'UNE SECTION (`<w:cols w:num="2"/>`, dans le `sectPr` d'un saut
+   de section « continu »). Ce fichier traduit donc les DEUX réglages du format :
+
+     · `layout.page.columns` (1 · 2 · 3) → le `w:cols` de la DERNIÈRE section,
+       celle qui porte le `sectPr` de fin de corps (voir documentXml) ;
+     · `layout.<partie>.span` (voir pubSpanIn) → LE NOMBRE DE COLONNES DE LA
+       PARTIE : « all » (elle barre la page) = UNE colonne, « flow » (ou « comme
+       la page ») = celles de la page. Une partie qui change de nombre de colonnes
+       ouvre donc une SECTION : le dernier paragraphe de celle qui se termine porte
+       un `sectPr` (`w:type="continuous"` : la suivante continue sur la MÊME page).
+       C'est la traduction exacte de `column-span: all`, que Word n'a pas.
+
+   UNE PAGE À UNE COLONNE N'ÉCRIT RIEN : ni `w:cols`, ni saut de section. Le
+   .docx d'un document sans colonnes reste donc, au caractère près, celui d'avant.
+*/
+
+/* L'ÉCART ENTRE DEUX COLONNES : la même valeur que la feuille (PUB_COLUMN_GAP_REM
+   rem), en twips — 1 rem = 16 px, 1 px = 15 twips. */
+const COLUMN_GAP_TWIPS = Math.round(PUB_COLUMN_GAP_REM * 16 * 15);
+
+/** Les propriétés de PAGE d'une section : la feuille A4, ses marges, et ses
+ *  colonnes. `pageColumns` = ce que le FORMAT dit de la page (`layout.page.columns`) :
+ *  une page à une colonne n'écrit AUCUN `w:cols` — le fichier reste, au caractère
+ *  près, celui d'avant. Sur une page à plusieurs colonnes, chaque section dit les
+ *  SIENNES : `num` = `columns` (1 = la partie barre la page), l'écart entre deux
+ *  colonnes étant celui de la feuille (PUB_COLUMN_GAP_REM). */
+const pagePropertiesXml = (columns, pageColumns) => '<w:pgSz w:w="11906" w:h="16838"/>'
+  + '<w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134" w:header="708" w:footer="708" w:gutter="0"/>'
+  + (pageColumns > 1
+    ? (columns > 1
+      ? `<w:cols w:num="${columns}" w:space="${COLUMN_GAP_TWIPS}" w:equalWidth="1"/>`
+      : '<w:cols w:num="1"/>')
+    : '');
+
+/** Le `sectPr` de la FIN du corps (voir documentXml) et celui d'un SAUT DE SECTION
+ *  « continu » — la même page, d'autres colonnes. */
+const finalSectPrXml = (columns, pageColumns) => `<w:sectPr>${pagePropertiesXml(columns, pageColumns)}</w:sectPr>`;
+const breakSectPrXml = (columns, pageColumns) => `<w:sectPr><w:type w:val="continuous"/>${pagePropertiesXml(columns, pageColumns)}</w:sectPr>`;
+
+/** LE BLOC QUI FERME UNE SECTION : il porte le `sectPr` — DERNIER enfant de
+ *  `w:pPr`, l'ordre du schéma (après le style, le keepNext, l'espacement…). Un
+ *  TABLEAU ne peut pas en porter : un paragraphe vide le suit, et c'est lui qui
+ *  ferme la section. Deux blocs collés valent le bloc qu'ils remplacent : le corps
+ *  est recomposé bloc par bloc (voir columnBlocks). */
+const closeSectionWith = (block, columns, pageColumns) => {
+  const pr = breakSectPrXml(columns, pageColumns);
+  const s = String(block);
+  if (/^<w:p\b[^>]*>/.test(s) && !/^<w:p\s*\/>/.test(s)) {
+    const own = /<w:pPr>([\s\S]*?)<\/w:pPr>/.exec(s);
+    if (own) return s.replace(own[0], `<w:pPr>${own[1]}${pr}</w:pPr>`);
+    return s.replace(/^<w:p\b([^>]*)>/, `<w:p$1><w:pPr>${pr}</w:pPr>`);
+  }
+  /* CE QUI N'EST PAS UN PARAGRAPHE (un tableau, un paragraphe vide, un bloc que
+     le découpage n'a pas reconnu) ne peut pas porter de `sectPr` : une ligne vide
+     le suit et c'est elle qui ferme la section — la frontière entre les deux
+     parties est ainsi TOUJOURS écrite, jamais perdue. */
+  return `${s}<w:p><w:pPr>${pr}</w:pPr></w:p>`;
+};
+
+/** LE NOMBRE DE COLONNES D'UNE PARTIE : celles de la page, sauf « all » (la
+ *  partie barre la page = une colonne). La LIGNE VIDE DE LA TÊTE est le seul cas
+ *  que le format ne nomme pas : la feuille la fait barrer comme la tête qu'elle
+ *  sépare (voir pubLayoutCss), et sa classe est donc lue ici (`bars`). */
+const columnsOfPart = (part, layout, bars, pageColumns) => (
+  pageColumns > 1 && (bars || pubSpanIn(layout, part) === 'all') ? 1 : pageColumns
+);
+
+/* LES CONTENEURS QU'ON OUVRE POUR CONNAÎTRE LA PARTIE DE CHAQUE BLOC : un
+   conteneur qui n'a PAS de partie à lui (le `<div class="mb-6">` d'une section, la
+   grille des figures) n'est pas un bloc du document — ses enfants le sont. On
+   descend donc dedans, sans quoi tout le bloc d'une section prendrait la largeur
+   d'une figure réglée « Full width ». Les conteneurs qui rendent PLUSIEURS blocs
+   en un seul (un `<table>`, une liste, une figure) ne sont jamais ouverts : leur
+   rendu n'appartient qu'à eux. */
+const SPLIT_CONTAINERS = new Set(['div', 'section', 'article', 'header', 'main', 'aside']);
+
+/** Les nœuds de premier niveau → LES BLOCS DU CORPS, chacun avec LA PARTIE du
+ *  document qui le met en forme (c'est d'elle que se lisent ses colonnes) et, pour
+ *  la ligne vide de la tête, le drapeau `bars`. L'ORDRE et le XML sont exactement
+ *  ceux du rendu (renderBlock) : on ne fait que savoir à quoi chaque bloc
+ *  appartient. */
+const renderUnits = (nodes, ctx, part) => {
+  const units = [];
+  (nodes || []).forEach((n) => {
+    const kids = n.children || [];
+    const own = partOfClasses(n);
+    const pid = own || part || PART_BY_TAG[n.tag] || '';
+    if (!own && SPLIT_CONTAINERS.has(n.tag) && kids.some((c) => BLOCK_TAGS.has(c.tag))) {
+      units.push(...renderUnits(kids, ctx, pid));
+      return;
+    }
+    const xml = renderBlock(n, ctx, part);
+    /* UN NŒUD QUI N'ÉCRIT RIEN N'EST PAS UN BLOC : le blanc entre deux balises
+       (`\n`), une aide à l'écran (`no-print`), une image dont les pixels manquent.
+       Les garder poserait un saut de section pour un paragraphe qui n'existe pas
+       — et le saut, lui, resterait dans le vide au lieu de fermer la section. */
+    if (!xml) return;
+    units.push({ xml, part: pid, bars: classNamesOf(n).includes(DOC_EMPTY_LINE_CLASS) });
+  });
+  return units;
+};
+
+/** LES BLOCS DU CORPS, DANS L'ORDRE, AVEC LES SAUTS DE SECTION QUE LA PAGE EN
+ *  COLONNES DEMANDE. Renvoie `{ blocks, columns, pageColumns }` — `columns` =
+ *  celles de la DERNIÈRE section (celles du `sectPr` de fin de corps, voir
+ *  documentXml) et `pageColumns` = ce que le format dit de la PAGE. Un bloc que le
+ *  découpage ne redonne pas exactement est gardé ENTIER : le saut de section, s'il
+ *  en faut un, viendra après lui. Pure, donc exécutable sous node (voir
+ *  _pub_docx_export_test.mjs). */
+export const columnBlocks = (units, layout, pageColumns) => {
+  const flat = [];
+  (units || []).forEach((u) => {
+    const columns = columnsOfPart(u.part, layout, u.bars, pageColumns);
+    const parts = bodyBlocks(u.xml);
+    const split = parts.length && parts.join('') === u.xml ? parts : [u.xml];
+    split.forEach((xml) => flat.push({ xml, columns }));
+  });
+  const blocks = [];
+  flat.forEach((b, i) => {
+    const next = flat[i + 1];
+    /* ICI le nombre de colonnes change : la section qui se termine porte les
+       siennes, la suivante continue sur la même page avec les autres. */
+    blocks.push(next && next.columns !== b.columns
+      ? closeSectionWith(b.xml, b.columns, pageColumns)
+      : b.xml);
+  });
+  return {
+    blocks,
+    columns: flat.length ? flat[flat.length - 1].columns : pageColumns,
+    pageColumns
+  };
+};
+
+/** `html` → `{ xml, columns, pageColumns, links, rels, media }` : le corps du
+ *  document Word, le nombre de colonnes de sa DERNIÈRE section, celles de la PAGE
+ *  (voir columnBlocks), les liens à déclarer, TOUTES ses relations (liens et
+ *  images) et les parties binaires que les images apportent (`word/media/…`).
+ *  `options.format` = le « Publication format » du projet (voir docxStyleOf),
+ *  `options.images` = les pixels rapatriés par la page (`src` → `data:` URL, voir
+ *  resolveDocxImages). */
 export const htmlToDocxBody = (html, options) => {
   const ctx = newDocxContext(options);
-  /* LE CORPS, PUIS SA REMISE EN PAGE : une figure qui ne tient pas dans la place
-     restante est déplacée après le texte qui suit, pour que la page ne reste pas à
-     moitié vide (voir reflowFigures). Un document sans figure ressort identique, au
-     caractère près. */
-  const xml = reflowFigures(renderNodes(parseHtmlTree(html).children, ctx, ''), (options || {}).format);
+  const format = (options || {}).format || null;
+  /* LES BLOCS, PUIS LEURS COLONNES, PUIS LA REMISE EN PAGE : les sauts de section
+     se posent dans L'ORDRE DU DOCUMENT (un saut ne se déplace pas) et la remise en
+     page des figures, elle, travaille ensuite sur ce corps — les sauts comme les
+     intitulés y sont des frontières qu'une figure ne franchit pas (voir
+     flowBlocks). Un document sans colonne ressort identique, au caractère près. */
+  const { blocks, columns, pageColumns } = columnBlocks(
+    renderUnits(parseHtmlTree(html).children, ctx, ''),
+    normalizePubLayout(format && format.layout),
+    pubPageColumnsOf(format)
+  );
+  const xml = reflowFigures(blocks.join(''), format);
   return {
     xml,
+    columns,
+    pageColumns,
     links: ctx.rels.filter((r) => r.type === 'hyperlink').map((r) => ({ id: r.id, href: r.target })),
     rels: ctx.rels.slice(),
     media: ctx.media.slice()
@@ -999,12 +1237,14 @@ ${(rels || []).map((r) => (r.type === 'image'
     : `<Relationship Id="${esc(r.id)}" Type="${R_NS}/hyperlink" Target="${esc(r.target)}" TargetMode="External"/>`)).join('\n')}
 </Relationships>`;
 
-/** Le document lui-même : le corps rendu, plus la feuille (A4, marges de 2 cm).
- *  Word n'aime pas qu'un tableau termine le corps : un paragraphe vide le suit.
- *  Les espaces de noms du DESSIN sont déclarés ici, une fois (voir drawingXml). */
-const documentXml = (body) => `${XML_HEAD}
+/** Le document lui-même : le corps rendu, plus la feuille (A4, marges de 2 cm) et
+ *  SES COLONNES (`columns` = celles de la dernière section, `pageColumns` = ce que
+ *  le format dit de la page — voir columnBlocks). Word n'aime pas qu'un tableau
+ *  termine le corps : un paragraphe vide le suit. Les espaces de noms du DESSIN
+ *  sont déclarés ici, une fois (voir drawingXml). */
+const documentXml = (body, columns, pageColumns) => `${XML_HEAD}
 <w:document xmlns:w="${W_NS}" xmlns:r="${R_NS}" xmlns:wp="${WP_NS}" xmlns:a="${A_NS}">
-<w:body>${body}${body.trim().endsWith('</w:tbl>') ? '<w:p/>' : ''}<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr></w:body>
+<w:body>${body}${body.trim().endsWith('</w:tbl>') ? '<w:p/>' : ''}${finalSectPrXml(Number(columns) > 1 ? Number(columns) : 1, Number(pageColumns) > 1 ? Number(pageColumns) : 1)}</w:body>
 </w:document>`;
 
 /** Le .docx (un `Uint8Array`) du document HTML donné. `options` :
@@ -1012,11 +1252,11 @@ const documentXml = (body) => `${XML_HEAD}
  *  (voir htmlToDocxBody). */
 export const buildDocxBytes = (html, options) => {
   const o = options || {};
-  const { xml, rels, media } = htmlToDocxBody(html, o);
+  const { xml, rels, media, columns, pageColumns } = htmlToDocxBody(html, o);
   const files = {
     '[Content_Types].xml': strToU8(contentTypesXml(media)),
     '_rels/.rels': strToU8(ROOT_RELS),
-    'word/document.xml': strToU8(documentXml(xml)),
+    'word/document.xml': strToU8(documentXml(xml, columns, pageColumns)),
     'word/styles.xml': strToU8(stylesXml(o.format)),
     'word/_rels/document.xml.rels': strToU8(relsXml(rels))
   };

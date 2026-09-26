@@ -25,9 +25,11 @@
         fonctions qui écrivent le format (pubSetLayout), jamais par une écriture
         directe ; le document, lui, ne consulte que pubLayoutCss.
 
-   CE QU'ELLE NE VÉRIFIE PAS : l'export .docx, qui ne porte pas les colonnes de
-   la page (Word les met dans le `sectPr` d'une section — c'est dit dans l'en-tête
-   de src/utils/docxExport.js, et c'est la seule sortie qui n'a pas ce style).
+   CE QU'ELLE NE VÉRIFIE PAS ICI : l'export .docx. Word ne connaît pas
+   `column-count` : il porte les colonnes dans le `sectPr` d'une section, et c'est
+   `src/utils/docxExport.js` qui les y traduit (voir §9 de
+   _pub_docx_export_test.mjs : le nom de la page, la section de tête qui barre la
+   page, la figure « Full width », et la page à une colonne qui n'écrit rien).
    ========================================================================= */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
