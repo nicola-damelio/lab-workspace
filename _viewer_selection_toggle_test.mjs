@@ -26,6 +26,15 @@
    ligne qui dessine le même style, et le rendu les soustrait déjà atome par
    atome (`exclusionOf` → `and not (…)`).
 
+   UNE EXCEPTION, ET ELLE COMPTE : une des QUATRE rangées MESURÉES d'une
+   bicouche (upper/lower_leaflet, upper/lower_headgroups) laisse son NOM, jamais
+   l'expression que le script lui donne. Une macro de membrane définit souvent
+   « upper_headgroups » par une tranche — « headgroups and z>90 » — qui couvre
+   TOUT le feuillet : soustraite à la rangée du feuillet, elle vidait le feuillet
+   de ses chaînes acyle (le rapport : « the headgroup becomes CPK but the acyl
+   chains of the upper leaflet disappear »). Le nom, lui, est résolu par la
+   MESURE (voir membraneExclusionKept et membraneHeadOwnerExprs).
+
    Et le geste jumeau « 🙈 Hide » : mêmes lignes-overlays, donc masquer POPC ne
    retirait que les représentations de SA ligne — les billes de
    upper_headgroups restaient à l'écran, et les sticks de headgroups avec elles
@@ -75,6 +84,17 @@ const sliceFn = (src, name) => {
 };
 const CODE = sliceFn(VIEW, 'toggleSelStyle');
 
+/* ── Le bloc MÉMÉBRANAIRE du viewer, extrait tel quel ──────────────────────
+   `toggleSelStyle` demande aux QUATRE noms mesurés s'il clique une rangée de
+   bicouche : une telle rangée laisse son NOM dans le livre de comptes (jamais
+   l'expression que le script lui donne — une tranche « headgroups and z>90 »
+   couvre tout le feuillet, et la soustraire vidait le feuillet de ses chaînes
+   acyle : le rapport du CPK). Le banc lit donc le vrai bloc, pas une copie. */
+const MEMBRANE_SRC = VIEW.slice(VIEW.indexOf('const MEMBRANE_SIDE_OF = {'),
+  VIEW.indexOf('// The measured rows of the OTHER leaflet'));
+ok(MEMBRANE_SRC.includes('const MEMBRANE_SIDE_OF = {') && MEMBRANE_SRC.includes('const MEMBRANE_CHILD_OF = {'),
+  'le bloc des quatre noms mesurés est extractible du viewer (constantes + règle d’exclusion)');
+
 /* ── Les styles que la macro de référence produit (mêmes valeurs que ───────
    applyPyMOLScript : chaque `select` cité est remis à zéro, puis les `show` /
    `hide` / `set` de la macro s'appliquent dans l'ordre). */
@@ -99,7 +119,8 @@ const macroStyles = () => ({
 });
 
 /* ── Le banc : la fonction RÉELLE, ses trois collaborateurs en doublure ──── */
-const runToggle = (key, style, times = 1) => new Function('cfg', `${CODE}
+const runToggle = (key, style, times = 1) => new Function('cfg', `${MEMBRANE_SRC}
+${CODE}
   const selStylesRef = { current: cfg.styles };
   const selections = cfg.selections;
   let recorded = null;
@@ -113,10 +134,10 @@ const runToggle = (key, style, times = 1) => new Function('cfg', `${CODE}
    le « POPC reste en sphères ». */
 const A = runToggle('upper_headgroups', 'sphere');
 eq(A.next.upper_headgroups.sphere, false, 'la ligne cliquée perd bien SES sphères');
-eq(A.next[RAW].hideFor.sphere, ['membrane and z>90', 'headgroups and z>90'],
+eq(A.next[RAW].hideFor.sphere, ['membrane and z>90', 'upper_headgroups'],
   '…et ses atomes sont soustraits de l’autre ligne qui les dessinait aussi (le hide déjà présent est conservé)');
-ok(/and z>90$/.test(A.next[RAW].hideFor.sphere[1]),
-  'la clause rangée est le texte PyMOL de la ligne : le pont la ré-étendra au rendu');
+eq(A.next[RAW].hideFor.sphere[1], 'upper_headgroups',
+  'la clause rangée est le NOM de la rangée cliquée, jamais l’expression que le script lui donne : le nom est résolu par la MESURE (une tranche « headgroups and z>90 » couvre tout le feuillet, et la soustraire viderait le feuillet de ses chaînes acyle — le rapport du CPK)');
 eq(A.next.headgroups, macroStyles().headgroups,
   'une autre famille (les sticks de headgroups) n’est pas touchée du tout');
 eq(A.next.water, macroStyles().water, 'une ligne qui ne dessine pas ce style n’est pas modifiée pour rien');
@@ -156,7 +177,8 @@ eq(D.next[RAW], macroStyles()[RAW], '…et sans écrire d’exclusion sur les au
 /* ══ 7. LES STYLES D'ORIGINE NE SONT PAS MUTÉS ════════════════════════════ */
 const shared = macroStyles();
 const snapshot = JSON.parse(JSON.stringify(shared));
-new Function('cfg', `${CODE}
+new Function('cfg', `${MEMBRANE_SRC}
+${CODE}
   const selStylesRef = { current: cfg.styles };
   const selections = cfg.selections;
   const setSelStyles = () => {};

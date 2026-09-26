@@ -35,7 +35,16 @@
         (mesure · pont PyMOL · gestes des deux barres · exclusionOf), garde les
         chaînes acyle du feuillet du haut dans les DEUX configurations ;
      5. la version d'AVANT le correctif, reconstruite EN MÉMOIRE, vide bien le
-        feuillet : la sonde ci-dessous sait donc voir le défaut (mutation).
+        feuillet : la sonde ci-dessous sait donc voir le défaut (mutation) ;
+     6. LE MÊME RAPPORT QUAND LA MACRO A DESSINÉ LES TÊTES (`show ball+stick,
+        upper_headgroups`) : choisir CPK ÉTEINT ce ball+stick, et c'est ce geste
+        qui écrivait l'EXPRESSION de la rangée de têtes dans le `hideFor` du
+        feuillet. La règle d'exclusion reconnaît maintenant cette écriture comme
+        le NOM qu'elle recopie (membraneNameOfEntry), le geste ne laisse que le
+        nom (toggleSelStyle), et le feuillet garde ses chaînes acyle — mesuré
+        comme non mesuré ;
+     7. la mutation de CETTE réparation (expression écrite, règle des noms seuls)
+        vide bien le feuillet à son tour : la sonde sait voir ce défaut-là aussi.
    ========================================================================= */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -112,15 +121,27 @@ const GEST_OLD = slice('const toggleSelStyle = (key, style, from) => {', 'const 
   .replace("const measured = membraneSeleRef.current[key];\n    const chained = measured ? membraneHeadRelinquish(key, value !== 'hide', work) : work;",
     "const chained = membraneHeadRelinquish(key, value !== 'hide', work);");
 
-const CODE = (preFix) => [
-  slice('const LIPID_RESNAMES = new Set([', '/* ---- PART 2.1bis'),
-  slice('const LIPID_GLYCEROL_NAMES = new Set(', 'const lipidSubCache = new WeakMap();'),
-  slice('const nglSeleCount = ', '/* ---- ONE routing function'),
-  slice('const PYMOL_PREDICATES = {', '\nconst normalizeStructureSource'),
-  preFix ? PRE_FIX.selKeyExpr : slice('const selKeyExpr = (key) => {', '// Number of atoms matching a selection key'),
-  preFix ? GEST_OLD : slice('const toggleSelStyle = (key, style, from) => {', 'const membraneSoloOn = (key) => {'),
-  slice('const hiddenRowExprs = (styles, selfKey, exprOf) => {', 'const requestSceneRepaint = () => {'),
-].join('\n');
+const CODE = (preFix, oldWrite) => {
+  const src = [
+    slice('const LIPID_RESNAMES = new Set([', '/* ---- PART 2.1bis'),
+    slice('const LIPID_GLYCEROL_NAMES = new Set(', 'const lipidSubCache = new WeakMap();'),
+    slice('const nglSeleCount = ', '/* ---- ONE routing function'),
+    slice('const PYMOL_PREDICATES = {', '\nconst normalizeStructureSource'),
+    preFix ? PRE_FIX.selKeyExpr : slice('const selKeyExpr = (key) => {', '// Number of atoms matching a selection key'),
+    preFix ? GEST_OLD : slice('const toggleSelStyle = (key, style, from) => {', 'const membraneSoloOn = (key) => {'),
+    slice('const hiddenRowExprs = (styles, selfKey, exprOf) => {', 'const requestSceneRepaint = () => {'),
+  ].join('\n');
+  if (!oldWrite) return src;
+  /* MUTATION DE LA DEUXIÈME RÉPARATION : le geste qui écrit l'EXPRESSION de la
+     rangée cliquée (le code d'avant) et la règle d'exclusion qui ne reconnaît que
+     les NOMS (l'ancienne : ni membraneNameOfEntry, ni les deux comparaisons de
+     clause). La sonde DOIT alors voir le feuillet se vider de ses chaînes acyle. */
+  return src
+    .replace('const token = MEMBRANE_SIDE_OF[key] ? key : raw;', 'const token = raw;')
+    .replace('const named = membraneNameOfEntry(e, ctx.scriptDefs);', "const named = '';")
+    .replace('  const text = membraneClauseText(e);\n', '')
+    .replace('  if (own && text === own) return false;\n  if (parent && text === parent) return false;\n', '');
+};
 
 const EXCL_SRC = slice('const exclusionOf = (style) => {', 'const addSele = (type, params, seleBase, style) => {')
   .replace(/^const exclusionOf = /, '')
@@ -253,9 +274,18 @@ const EPILOGUE = (preFix) => `
     ${preFix
       ? 'const membraneOwners = membraneHeadOwnerExprs(key, selStyles, selKeyExpr);'
       : "const measuredOwner = MEMBRANE_CHILD_OF[key] ? membraneSeleRef.current[MEMBRANE_CHILD_OF[key]] : null;\n    const membraneOwners = measuredOwner ? membraneHeadOwnerExprs(key, selStyles, () => measuredOwner) : '';"}
-    const makeExclusion = new Function('key', 'st', 'membraneOwners', 'hiddenElsewhere', 'membraneExclusionKept', 'expandSelectionExpr',
+    // Le contexte de la règle d'exclusion, EXACTEMENT comme le rendu le pose.
+    const membraneCtx = {
+      own: expr,
+      parent: MEMBRANE_PARENT_OF[key]
+        ? (membraneSeleRef.current[MEMBRANE_PARENT_OF[key]] || expandSelectionExpr(MEMBRANE_PARENT_OF[key]))
+        : '',
+      measured: membraneSeleRef.current,
+      scriptDefs: membraneScriptDefs(selections),
+    };
+    const makeExclusion = new Function('key', 'st', 'membraneOwners', 'hiddenElsewhere', 'membraneExclusionKept', 'expandSelectionExpr', 'membraneCtx', 'membraneNameOfEntry',
       'return (' + cfg.EXCL_SRC + ');');
-    const exclusionOf = makeExclusion(key, st, membraneOwners, hiddenElsewhere, membraneExclusionKept, expandSelectionExpr);
+    const exclusionOf = makeExclusion(key, st, membraneOwners, hiddenElsewhere, membraneExclusionKept, expandSelectionExpr, membraneCtx, membraneNameOfEntry);
     const out = [];
     const add = (type, style) => {
       const ex = exclusionOf(style);
@@ -269,6 +299,7 @@ const EPILOGUE = (preFix) => `
     return out;
   };
   const sel = () => selStylesRef.current;
+  const kept = (k, e, ctx) => membraneExclusionKept(k, e, ctx || {});
   const styleOf = (key, token) => { setSelField(key, 'style', token); return selStylesRef.current; };
   const look = (key, field, value) => { setSelField(key, field, value); return selStylesRef.current; };
   const measured = () => membraneLeafletsOf(structure);
@@ -278,11 +309,11 @@ const EPILOGUE = (preFix) => `
     lower_headgroups: m.lower.headIndices.length ? '@' + m.lower.headIndices.join(',') : 'none',
   });
   const freeze = (v) => { COLD = !!v; };
-  return { structure, atomsOf, rowReps, sel, styleOf, measured, clauses, freeze, look };
+  return { structure, atomsOf, rowReps, sel, kept, styleOf, measured, clauses, freeze, look };
 `;
 
 const build = (atoms, selections, measured, opts = {}) => new Function('cfg',
-  `${STUBS(opts.preFix)}\n${CODE(opts.preFix)}\n${HARNESS}\n${EPILOGUE(opts.preFix)}`)({
+  `${STUBS(opts.preFix)}\n${CODE(opts.preFix, opts.oldWrite)}\n${HARNESS}\n${EPILOGUE(opts.preFix)}`)({
   atoms, selections, measured, TOKEN_RE, EXCL_SRC, ...opts,
 });
 
@@ -336,15 +367,20 @@ const TRANCHE_MACRO = [
   { name: 'lower_headgroups', expr: 'resn POPC and z<0' },
 ];
 
+/* `headsInBall` : la MACRO a laissé les deux rangées de têtes en ball+stick
+   (`show ball+stick, upper_headgroups`) — l'ingrédient sans lequel le défaut ne
+   se produit pas, car `setSelRowStyle` n'éteint un ancien style (et n'écrit donc
+   dans les autres rangées) que si la rangée cliquée le dessinait. */
 const scene = (opts) => {
   const probe = build(ATOMS, TRANCHE_MACRO, null, opts);
   const m = probe.measured();
   ok(!!m, 'la bicouche synthétique est mesurée (membraneLeafletsOf)');
   const clauses = probe.clauses(m);
+  const heads = opts.headsInBall ? { ball: true, stick: true } : {};
   const h = build(ATOMS, TRANCHE_MACRO, m, {
     ...opts,
     membraneSele: opts.noMeasurement ? null : clauses,
-    selStyles: { POPC: { sphere: true } },
+    selStyles: { POPC: { sphere: true }, upper_headgroups: { ...heads }, lower_headgroups: { ...heads } },
   });
   if (opts.freezeMap) h.freeze(true);   // la carte des noms réservés est figée SANS les clauses
   return { h, m, clauses };
@@ -390,6 +426,42 @@ const gesture = (h) => {
     '…et le geste n’écrit aucun livre de comptes de hiérarchie que personne ne peut honorer');
 }
 
+/* ── 4 bis. LE MÊME RAPPORT, AVEC LES TÊTES QUE LA MACRO A DESSINÉES ────────
+   L'INGRÉDIENT que la sonde d'avant ne mettait pas : la macro laisse les deux
+   rangées de têtes en ball+stick (`show ball+stick, upper_headgroups`). Le CPK
+   choisi sur `upper_headgroups` ÉTEINT donc d'abord son ball+stick — et
+   `toggleSelStyle` inscrivait alors l'EXPRESSION de la rangée de têtes
+   (« resn POPC and z>0 », TOUT le feuillet) dans le `hideFor.ball` du feuillet :
+   il se dessinait `(feuillet) and not (feuillet)`, L'ENSEMBLE VIDE. La première
+   réparation ne couvrait que les entrées écrites en NOM (le menu déroulant) ;
+   celle-ci couvre l'écriture par EXPRESSION (les ticks, l'ancien code). */
+{
+  const { h, clauses } = scene({ freezeMap: true, headsInBall: true });
+  const upperHeads = h.atomsOf(clauses.upper_headgroups);
+  const upperAll = h.atomsOf(clauses.upper_leaflet);
+  const { before, after, heads } = gesture(h);
+  ok(before[0] && before[0].atoms === upperAll.size - upperHeads.size,
+    'prémisse : le feuillet dessine ses chaînes (ses têtes sont déjà à leur propre rangée)');
+  ok(after.length > 0 && after[0].atoms === upperAll.size - upperHeads.size,
+    `LE RAPPORT, têtes en ball+stick : le feuillet GARDE ses chaînes acyle quand elles passent en CPK\n  attendu ${upperAll.size - upperHeads.size} atomes, obtenu ${after.length ? after[0].atoms : 0}`);
+  ok(heads.length > 0 && heads[0].atoms === upperHeads.size,
+    '…et les têtes en CPK dessinent EXACTEMENT les têtes mesurées');
+  eq((h.sel().upper_leaflet || {}).hideFor, { ball: ['upper_headgroups'] },
+    'le livre de comptes ne garde que le NOM de la rangée de têtes, jamais la tranche du script qui l’a définie (' +
+    'sinon la règle d’exclusion, qui lit une expression comme n’importe quelle autre, viderait le feuillet)');
+}
+/* (b bis) SANS MESURE, la même scène : le nom écrit par le geste ne retire rien
+   au feuillet — la hiérarchie des quatre noms n'existe que MESURÉE. */
+{
+  const { h } = scene({ noMeasurement: true, freezeMap: true, headsInBall: true });
+  const { before, after } = gesture(h);
+  ok(before[0] && before[0].atoms > 0, 'sans mesure, le feuillet dessine ce que le script a sélectionné');
+  ok(after[0] && after[0].atoms === before[0].atoms,
+    `…et le geste sur les têtes ne lui retire AUCUN atome\n  attendu ${before[0].atoms} atomes, obtenu ${after[0] ? after[0].atoms : 0}`);
+  eq((h.sel().upper_leaflet || {}).hideFor, { ball: ['upper_headgroups'] },
+    '…le nom y est bien écrit (le geste est mémorisé), mais il ne se résout pas sans mesure');
+}
+
 /* ── 5. MUTATION : LA VERSION D'AVANT LE CORRECTIF VIDE BIEN LE FEUILLET ─────
    Le même code, avec les trois lectures d'avant (selKeyExpr par le script,
    expandSelectionExpr par le pont, règle des têtes par selKeyExpr) et le geste
@@ -403,6 +475,36 @@ const gesture = (h) => {
     'AVANT le correctif : le feuillet du haut se dessine (feuillet) and not (feuillet) — L’ENSEMBLE VIDE, ses chaînes acyle disparaissent (le rapport)');
   ok(heads[0] && heads[0].atoms > upperHeads.size,
     '…et la rangée de têtes avale la tranche du script au lieu des têtes mesurées');
+}
+
+/* ── 5 bis. MUTATION DE LA DEUXIÈME RÉPARATION ──────────────────────────────
+   Le geste écrit l'expression (le code d'avant) et la règle d'exclusion ne
+   reconnaît que les noms (l'ancienne) : la même bicouche, les mêmes têtes en
+   ball+stick, le même CPK — et les entrées écrites en EXPRESSION passent la
+   règle, le feuillet perd des atomes qu'il doit garder. */
+{
+  const RULE_CTX = {
+    own: '@leaflet', parent: '', measured: { upper_leaflet: '@leaflet', upper_headgroups: '@heads' },
+    scriptDefs: [['resn popc and z>0', 'upper_headgroups']],
+  };
+  const { h, clauses } = scene({ freezeMap: true, headsInBall: true, oldWrite: true });
+  const upperHeads = h.atomsOf(clauses.upper_headgroups);
+  const upperAll = h.atomsOf(clauses.upper_leaflet);
+  const { after } = gesture(h);
+  eq((h.sel().upper_leaflet || {}).hideFor, { ball: ['resn POPC and z>0', 'upper_headgroups'] },
+    'AVANT la deuxième réparation : le feuillet reçoit l’EXPRESSION de la rangée de têtes (« resn POPC and z>0 »), celle de la macro');
+  ok(after.length > 0 && after[0].atoms < upperAll.size - upperHeads.size,
+    `…et il perd des atomes qu’il doit garder : ${after[0] ? after[0].atoms : 0} au lieu de ${upperAll.size - upperHeads.size} `
+    + '— dans un fichier où la tranche du script coïncide avec le feuillet mesuré, il les perd TOUS (le rapport)');
+  eq(h.kept('upper_leaflet', 'resn POPC and z>0', RULE_CTX), true,
+    'AVANT : la règle accepte l’entrée écrite en expression (elle ne connaît que les noms)…');
+  const fixed = scene({ freezeMap: true, headsInBall: true }).h;
+  eq(fixed.kept('upper_leaflet', 'resn POPC and z>0', RULE_CTX), true,
+    '…APRÈS aussi — mais elle est alors résolue comme le NOM qu’elle recopie : le feuillet retire les têtes MESURÉES, non la tranche du script (les nombres ci-dessus le montrent)');
+  eq(h.kept('upper_headgroups', 'resn POPC and z>0', RULE_CTX), true,
+    'AVANT, l’autre sens : la rangée de têtes acceptait sa PROPRE tranche — « têtes and not têtes », la rangée vide (le rapport « invisibili in ball and stick »)');
+  eq(fixed.kept('upper_headgroups', 'resn POPC and z>0', RULE_CTX), false,
+    'APRÈS : l’entrée est reconnue comme la rangée de têtes ELLE-MÊME et refusée — aucune rangée ne s’efface elle-même');
 }
 
 /* ── Bilan ───────────────────────────────────────────────────────────────── */

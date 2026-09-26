@@ -4738,14 +4738,90 @@ const MEMBRANE_CHILD_OF = {
    et le `hideFor` de membraneHeadRelinquish : les têtes qu'il dessine sont
    dessinées par leur propre rangée) : la règle ci-dessous ne supprime donc que
    le sens interdit — une rangée à qui l'on demande de s'effacer entièrement. */
-const membraneExclusionKept = (key, entry) => {
+/* …ET ELLE RECONNAÎT AUSSI L'ÉCRITURE PAR EXPRESSION.
+
+   LE RAPPORT DU CPK, mot pour mot (revu après la première réparation) : « I
+   deselect the lipid (eg POPC). I select ball and stick for upper leaflet and
+   lower leaflet. I make slightly transparent upper leaflet. Then I select CPK
+   for upper headgroup and the result is that the headgroup becomes CPK but the
+   acyl chains of the upper leaflet disappear. »
+
+   Cause trouvée : `toggleSelStyle` est le langage des DEUX barres, et quand le
+   geste ÉTEINT un style que la rangée cliquée dessinait, il écrit l'EXPRESSION
+   PyMOL de cette rangée dans le `hideFor` de toutes les autres. Or une macro de
+   membrane écrit couramment `select upper_headgroups, resn POPC and z>0` — TOUT
+   le feuillet. La rangée de têtes qui passe en CPK éteint donc d'abord son
+   ball+stick, et le feuillet reçoit `resn POPC and z>0` dans son propre
+   `hideFor.ball` : il se dessine `(feuillet) and not (feuillet)`, L'ENSEMBLE
+   VIDE. Ses chaînes acyle disparaissent, les têtes passent bien en CPK — le
+   rapport exact. La première réparation ne couvrait que les entrées écrites en
+   NOM (le geste du menu déroulant, membraneHeadRelinquish) ; celle-ci couvre
+   l'écriture par EXPRESSION, celle des ticks et celle des sessions déjà
+   enregistrées.
+
+   Une entrée n'est donc gardée que si la soustraire ne peut pas vider la rangée :
+     · vide, ou la clé de la rangée, ou le nom du feuillet qui la contient : non ;
+     · un des QUATRE noms mesurés : seulement celui de SA PROPRE rangée de têtes,
+       et seulement quand le viewer a MESURÉ les deux — ailleurs la hiérarchie
+       n'existe pas (sans mesure, `upper_headgroups` n'est qu'une tranche du
+       script, qui couvre le feuillet entier) ;
+     · L'EXPRESSION que le script donne à un de ces quatre noms EST ce nom (les
+       quatre noms se résolvent par la MESURE partout ailleurs, `membrane and
+       z>90` compris) : même règle, donc ;
+     · une clause identique à celle de la rangée elle-même, ou à celle du
+       feuillet qui la contient : non, elle la viderait par construction.
+   Tout le reste — une sélection du script, une clause étrangère — est gardé :
+   c'est la parole de la macro, et le viewer n'a rien à y redire. */
+const membraneClauseText = (v) => String(v == null ? '' : v).replace(/\s+/g, ' ').trim().toLowerCase();
+/* Les définitions que le SCRIPT donne des quatre noms mesurés, normalisées une
+   fois : `[['resn popc and z>0', 'upper_headgroups']]`. */
+const membraneScriptDefs = (selections) => {
+  const out = [];
+  (selections || []).forEach((s) => {
+    const name = String((s && s.name) || '').toLowerCase();
+    if (!MEMBRANE_SIDE_OF[name]) return;
+    const text = membraneClauseText(s && s.expr);
+    if (text) out.push([text, name]);
+  });
+  return out;
+};
+/* Le nom mesuré qu'une entrée de `hideFor` désigne vraiment, s'il y en a un :
+   le nom lui-même, ou l'expression que le script donne à ce nom. */
+const membraneNameOfEntry = (entry, defs) => {
+  const text = membraneClauseText(entry);
+  if (!text) return '';
+  if (MEMBRANE_SIDE_OF[text]) return text;
+  const hit = (defs || []).find((d) => d[0] === text);
+  return hit ? hit[1] : '';
+};
+/* `ctx` = la rangée elle-même (`own` : sa clause résolue), le feuillet qui la
+   contient (`parent`), la mesure publiée (`measured`) et les définitions du
+   script (`scriptDefs`, voir membraneScriptDefs). */
+const membraneExclusionKept = (key, entry, ctx = {}) => {
   // Une rangée de script (« POPC », une sélection de la macro) garde son propre
   // hideFor : la règle est celle des QUATRE noms mesurés, que le viewer connaît.
   if (!MEMBRANE_SIDE_OF[key]) return true;
   const e = String(entry == null ? '' : entry).trim();
   if (!e) return false;
   if (e === key) return false;                  // jamais elle-même
-  return MEMBRANE_PARENT_OF[key] !== e;         // ni le feuillet qui la contient
+  if (MEMBRANE_PARENT_OF[key] === e) return false;  // ni le feuillet qui la contient
+  const named = membraneNameOfEntry(e, ctx.scriptDefs);
+  if (named) {
+    // Seul un feuillet soustrait SA rangée de têtes — et seulement quand la
+    // mesure existe pour les deux (voir la règle du propriétaire,
+    // membraneHeadOwnerExprs, qui la pose alors de toute façon).
+    if (MEMBRANE_CHILD_OF[key] !== named) return false;
+    const measured = ctx.measured || {};
+    return !!(measured[key] && measured[named]);
+  }
+  const measured = ctx.measured || {};
+  const parentName = MEMBRANE_PARENT_OF[key];
+  const own = membraneClauseText(ctx.own);
+  const parent = membraneClauseText(ctx.parent || (parentName ? measured[parentName] : ''));
+  const text = membraneClauseText(e);
+  if (own && text === own) return false;
+  if (parent && text === parent) return false;
+  return true;
 };
 // The measured rows of the OTHER leaflet — what 👁 solo hides to reveal this one.
 const membraneOppositeRows = (key) => Object.keys(MEMBRANE_SIDE_OF)
@@ -9813,6 +9889,17 @@ const toggleSelStyle = (key, style, from) => {
     setSelStyles(simple);
     return simple;
   }
+  /* ── CE QUE LA RANGÉE LAISSE DERRIÈRE ELLE : SON NOM, PAS SON EXPRESSION ───
+     Une rangée 🧫 MESURÉE écrit son NOM dans le `hideFor` des autres — la seule
+     écriture que la règle d'exclusion reconnaît (membraneExclusionKept) et que
+     le pont résout par la MESURE. Son EXPRESSION, elle, est souvent la tranche
+     entière du feuillet (« select upper_headgroups, resn POPC and z>0 ») : la
+     soustraire vidait le feuillet de ses chaînes acyle quand la rangée de têtes
+     passait en CPK — LE RAPPORT (« the headgroup becomes CPK but the acyl chains
+     of the upper leaflet disappear »). Le livre de comptes des quatre noms
+     mesurés ne parle donc que de noms ; celui d'une rangée de script garde sa
+     propre expression, qui est sa parole (voir membraneExclusionKept). */
+  const token = MEMBRANE_SIDE_OF[key] ? key : raw;
   const next = { ...all, [key]: { ...cur, [style]: on } };
   Object.keys(next).forEach((other) => {
     if (other === key) return;
@@ -9822,8 +9909,8 @@ const toggleSelStyle = (key, style, from) => {
     // screen, so only those are touched. Showing: every row is cleaned, whatever
     // it draws — that is what makes the gesture reversible.
     if (!on && !st[style] && !list.length) return;
-    const kept = list.filter((h) => h !== raw);
-    const updated = on ? kept : [...kept, raw];
+    const kept = list.filter((h) => h !== token);
+    const updated = on ? kept : [...kept, token];
     const hideFor = { ...(st.hideFor || {}) };
     if (updated.length) hideFor[style] = updated; else delete hideFor[style];
     const clean = { ...st };
@@ -10134,6 +10221,12 @@ useEffect(() => {
   prevCatSigRef.current = catSig;
   if (hideAll) return;
   const styles = selStylesRef.current || {};
+  // Les définitions que le SCRIPT donne des quatre noms mesurés, normalisées UNE
+  // fois pour tout le rendu : `resn POPC and z>0` EST `upper_headgroups` (voir
+  // membraneExclusionKept), si bien qu'une entrée de `hideFor` écrite en
+  // expression se lit comme le nom qu'elle recopie — celui du script ou d'un
+  // geste d'une version antérieure.
+  const membraneDefs = membraneScriptDefs(selections);
   Object.keys(styles).forEach((key) => {
     const st = styles[key] || {};
     const expr = selKeyExpr(key);
@@ -10180,13 +10273,35 @@ useEffect(() => {
 
     const measuredOwner = MEMBRANE_CHILD_OF[key] ? membraneSeleRef.current[MEMBRANE_CHILD_OF[key]] : null;
     const membraneOwners = measuredOwner ? membraneHeadOwnerExprs(key, styles, () => measuredOwner) : '';
+    /* Le contexte de la règle d'exclusion de CETTE rangée (voir
+       membraneExclusionKept) : sa propre clause, celle du feuillet qui la
+       contient (la MESURE, ou la définition du script quand il n'y a pas de
+       mesure), la mesure publiée et les définitions du script — de quoi
+       reconnaître une entrée écrite en EXPRESSION là où un nom a été écrit. */
+    const membraneCtx = {
+      own: expr,
+      parent: MEMBRANE_PARENT_OF[key]
+        ? (membraneSeleRef.current[MEMBRANE_PARENT_OF[key]] || expandSelectionExpr(MEMBRANE_PARENT_OF[key]))
+        : '',
+      measured: membraneSeleRef.current,
+      scriptDefs: membraneDefs,
+    };
     const exclusionOf = (style) => {
       // A MEASURED ROW NEVER SUBTRACTS THE ROW THAT CONTAINS IT (see
       // membraneExclusionKept): `toggleSelStyle` écrit l'expression de la rangée
       // cliquée dans le hideFor de TOUTES les autres, et « upper_leaflet » dans
-      // celui de `upper_headgroups` vidait la rangée de têtes entière.
-      const list = ((st.hideFor && st.hideFor[style]) || []).filter((h) => membraneExclusionKept(key, h));
-      const parts = list.map((h) => `(${expandSelectionExpr(h)})`).filter((p) => p && p !== '(all)');
+      // celui de `upper_headgroups` vidait la rangée de têtes entière — comme
+      // « resn POPC and z>0 » dans celui du feuillet en vidait les chaînes acyle.
+      const list = ((st.hideFor && st.hideFor[style]) || []).filter((h) => membraneExclusionKept(key, h, membraneCtx));
+      /* CE QU'UNE ENTRÉE RETIRE, RÉSOLU : une entrée écrite en EXPRESSION mais
+         qui RECOPIE la définition d'un des quatre noms (« resn POPC and z>0 »
+         pour `upper_headgroups`, une session d'avant la réparation, ou un
+         `hide` de la macro) retire les atomes de CE NOM — la MESURE, jamais la
+         tranche du script (voir membraneNameOfEntry). Sans cela, une entrée
+         reconnue serait gardée par la règle puis expansée en tranche entière,
+         et le feuillet perdrait de nouveau ses chaînes acyle. */
+      const parts = list.map((h) => `(${expandSelectionExpr(membraneNameOfEntry(h, membraneCtx.scriptDefs) || h)})`)
+        .filter((p) => p && p !== '(all)');
       if (membraneOwners && !parts.includes(membraneOwners)) parts.push(membraneOwners);
       hiddenElsewhere.forEach((e) => {
         const p = `(${e})`;

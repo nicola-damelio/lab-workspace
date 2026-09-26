@@ -352,6 +352,20 @@ const ATOMS_OF = {
   lower_leaflet: ['lh', 'lt'], lower_headgroups: ['lh'],
   POPC: ['uh', 'ut', 'lh', 'lt'],
 };
+/* LA MESURE PUBLIÉE (les quatre clauses) ET LES DÉFINITIONS DU SCRIPT : le
+   contexte que la règle d'exclusion reçoit du rendu. La macro définit
+   « upper_headgroups » par une TRANCHE — « resn POPC and z>0 » — qui couvre tout
+   le feuillet : c'est le cas du rapport, et la raison pour laquelle une entrée
+   écrite ainsi doit être lue comme le NOM qu'elle recopie. */
+const MEASURED = {
+  upper_leaflet: '@upper', upper_headgroups: '@upper_heads',
+  lower_leaflet: '@lower', lower_headgroups: '@lower_heads',
+};
+const SCRIPT_DEFS = [
+  ['resn popc and z>0', 'upper_headgroups'],
+  ['resn popc and z<0', 'lower_headgroups'],
+];
+const ctxOf = (measured, scriptDefs) => ({ own: '', parent: '', measured: measured || {}, scriptDefs: scriptDefs || [] });
 const driveGest = (gestures) => new Function('cfg', `${CODE_GEST}
   let STYLES = {};
   const setSelStyles = (s) => { STYLES = s; };
@@ -363,18 +377,24 @@ const driveGest = (gestures) => new Function('cfg', `${CODE_GEST}
    du style lui enlève (la règle est exécutée), moins les têtes que le feuillet
    cède à leur propre rangée (membraneHeadOwnerExprs, la règle du rendu). */
 const runAt = (styles, key, flag, withRule = true) => new Function('cfg', `${CODE_OWN}
+  const ctxOf = (k) => ({
+    own: cfg.atomsOf[k] ? k : '',
+    parent: MEMBRANE_PARENT_OF[k] ? (cfg.measured[MEMBRANE_PARENT_OF[k]] || '') : '',
+    measured: cfg.measured,
+    scriptDefs: cfg.scriptDefs,
+  });
   const at = (k, f) => {
     const st = cfg.styles[k] || {};
     const out = new Set(cfg.atomsOf[k] || []);
     const list = (st.hideFor && st.hideFor[f]) || [];
-    list.filter((h) => (cfg.withRule ? membraneExclusionKept(k, h) : true)).forEach((h) => {
+    list.filter((h) => (cfg.withRule ? membraneExclusionKept(k, h, ctxOf(k)) : true)).forEach((h) => {
       (cfg.atomsOf[h] || []).forEach((a) => out.delete(a));
     });
     const owners = membraneHeadOwnerExprs(k, cfg.styles, (x) => (cfg.atomsOf[x] ? x : ''));
     if (owners) (cfg.atomsOf[owners.replace(/[()]/g, '')] || []).forEach((a) => out.delete(a));
     return [...out].sort();
   };
-  return at(cfg.key, cfg.flag);`)({ styles, atomsOf: ATOMS_OF, key, flag, withRule });
+  return at(cfg.key, cfg.flag);`)({ styles, atomsOf: ATOMS_OF, key, flag, withRule, measured: MEASURED, scriptDefs: SCRIPT_DEFS });
 
 // (a) LE PIÈGE EXACT : les têtes existent, le feuillet change de style — et le
 //     style QUITTÉ est celui que les têtes dessinent. `setSelRowStyle` éteint
@@ -408,20 +428,39 @@ eq(runAt(twoStyles, 'upper_leaflet', 'sphere'), ['ut'], '…et le feuillet cède
 const both = driveGest([['upper_leaflet', 'spacefill'], ['upper_headgroups', 'licorice'], ['lower_headgroups', 'licorice']]);
 eq(runAt(both, 'lower_headgroups', 'stick'), ['lh'], 'les têtes du bas dessinent les leurs');
 eq(runAt(both, 'upper_headgroups', 'stick'), ['uh'], '…sans rien changer aux têtes du haut');
-// (d) LA RÈGLE ELLE-MÊME, cas par cas : seul le sens INTERDIT est supprimé.
-const kept = (key, h) => new Function('cfg', `${CODE_OWN}
-  return membraneExclusionKept(cfg.key, cfg.h);`)({ key, h });
+// (d) LA RÈGLE ELLE-MÊME, cas par cas : ni la rangée elle-même, ni le feuillet
+//     qui la contient, ni un NOM d'une autre rangée — et l'écriture d'une macro
+//     se lit comme le nom qu'elle recopie.
+const kept = (key, h, ctx) => new Function('cfg', `${CODE_OWN}
+  return membraneExclusionKept(cfg.key, cfg.h, cfg.ctx);`)({ key, h, ctx: ctx || {} });
+const measuredAll = ctxOf(MEASURED, SCRIPT_DEFS);
 eq(kept('upper_headgroups', 'upper_leaflet'), false, 'des têtes ne se soustraient JAMAIS leur feuillet (l’ensemble serait vide)');
 eq(kept('lower_headgroups', 'lower_leaflet'), false, '…ni celles du bas le leur');
-eq(kept('upper_leaflet', 'upper_headgroups'), true, 'un feuillet, LUI, garde le droit de céder ses têtes (la règle du propriétaire)');
-eq(kept('upper_leaflet', 'lower_leaflet'), true, 'deux feuillets ne se recouvrent pas : rien à supprimer');
-eq(kept('upper_headgroups', 'lower_headgroups'), true, 'les têtes des deux côtés non plus');
+eq(kept('upper_leaflet', 'upper_headgroups'), false, 'sans mesure publiée, le nom de la rangée de têtes ne retire rien au feuillet (la hiérarchie n’existe que MESURÉE)');
+eq(kept('upper_leaflet', 'upper_headgroups', measuredAll), true, '…mesurée, le feuillet garde le droit de céder ses têtes (la règle du propriétaire)');
+eq(kept('upper_leaflet', 'lower_leaflet'), false, 'les QUATRE noms mesurés ne se soustraient pas entre eux : cacher une rangée est le geste du 🙈 / 👁 solo, la hiérarchie celui de la mesure');
+eq(kept('upper_headgroups', 'lower_headgroups'), false, '…les têtes des deux côtés non plus');
 eq(kept('upper_headgroups', 'upper_headgroups'), false, 'aucune rangée ne s’efface elle-même');
 eq(kept('upper_leaflet', 'upper_leaflet'), false, '…feuillets compris');
 eq(kept('POPC', 'upper_leaflet'), true, 'une rangée de SCRIPT garde tout son hideFor (la règle ne connaît que les quatre noms mesurés)');
 eq(kept('upper_headgroups', ''), false, 'une entrée vide n’est jamais une clause');
-has('((st.hideFor && st.hideFor[style]) || []).filter((h) => membraneExclusionKept(key, h));',
-  '…et le rendu passe TOUT son hideFor par cette règle, pour chaque style');
+/* L'ÉCRITURE PAR EXPRESSION — le rapport du CPK : la macro définit les têtes par
+   une tranche qui couvre TOUT le feuillet, et `toggleSelStyle` écrivait cette
+   expression (et non le nom) dans le hideFor des autres rangées. */
+eq(kept('upper_headgroups', 'resn POPC and z>0', measuredAll), false,
+  'l’expression que la macro donne à « upper_headgroups » EST cette rangée : elle ne peut pas se soustraire elle-même');
+eq(kept('upper_leaflet', 'resn POPC and z>0', measuredAll), true,
+  '…prise du feuillet, la même expression est le NOM de sa rangée de têtes : elle est gardée et résolue par la mesure');
+eq(kept('upper_leaflet', 'resn POPC and z>0', ctxOf({}, SCRIPT_DEFS)), false,
+  '…mais sans mesure, ce nom ne retire rien (aucune hiérarchie à imposer)');
+eq(kept('upper_leaflet', 'resn POPC and z>0'), true,
+  'sans les définitions du script, l’expression reste une expression : c’est la parole de la macro, gardée telle quelle');
+eq(kept('upper_leaflet', 'resn POPC and z>-1000', measuredAll), true,
+  'une clause ÉTRANGÈRE (que la macro n’emploie pour aucun des quatre noms) reste honorée');
+has('((st.hideFor && st.hideFor[style]) || []).filter((h) => membraneExclusionKept(key, h, membraneCtx));',
+  '…et le rendu passe TOUT son hideFor par cette règle, pour chaque style, avec le contexte de la rangée');
+has("expandSelectionExpr(membraneNameOfEntry(h, membraneCtx.scriptDefs) || h)",
+  '…et ce qu’une entrée RETIRE est résolu par le nom qu’elle recopie : la MESURE, jamais la tranche du script');
 eq(countOf(/membraneExclusionKept\(/g), 1, 'un seul APPEL dans le viewer : la règle n’est jamais recopiée');
 
 /* ── Bilan ─────────────────────────────────────────────────────────────── */
