@@ -180,8 +180,9 @@ gone("from '../utils/figuresLibrary'", '[§1] …ni d’import de la bibliothèq
 // la structure avec les coordonnées de la frame courante de la trajectoire.
 has('onClick={downloadFramePdb}', '[§1] bouton ⬇ PDB');
 has('const downloadFramePdb = async () => {', '[§1] …son implémentation');
-has('const writer = new NS.PdbWriter(structure);', '[§1] le fichier est écrit par le PdbWriter de NGL (coordonnées AFFICHÉES)');
-has('? `Download a PDB file of the frame displayed right now (frame ${toActualFrame(currentFrame)} of ${numFrames})', '[§1] l’infobulle nomme la frame en cours');
+has('text: new NS.PdbWriter(c.structure).getData(),', '[§1] le fichier est écrit par le PdbWriter de NGL (coordonnées AFFICHÉES)');
+has('joinPdbMolecules(comps.map((c, i) => ({', '[§1] …et les molécules de l’écran sont réunies dans UN fichier, la place de chacune comprise');
+has('? `Download ONE PDB file of what is on screen:', '[§1] l’infobulle nomme la frame en cours');
 has('const name = frameNo >= 0 ? `${base}_frame_${frameNo}.pdb` : `${base}.pdb`;', '[§1] le nom du fichier porte le numéro de frame');
 // Hauteur du canevas : RÉGLABLE (poignée de redimensionnement) mais réduite
 // d’un TIERS à l’ouverture d’une page (1000 px → 667 px, 1100 px → 733 px).

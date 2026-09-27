@@ -91,6 +91,10 @@ const eq = (a, b, what) => {
 
 const SRC = process.env.VIEWER_SRC || new URL('./src/components/NMRMoleculeViewer.jsx', import.meta.url);
 const VIEW = readFileSync(SRC, 'utf8').replace(/\r\n/g, '\n');
+// ☐ Le tick « Hide all hydrogens » est une dépendance du constructeur de rangées : la
+// sonde lui donne LE MODULE LIVRÉ (sans ses `export`), jamais un faux.
+const HYDROGEN_FILTER_SRC = readFileSync(new URL('./src/utils/viewerHydrogenFilter.js', import.meta.url), 'utf8')
+  .replace(/^export /gm, '');
 const has = (needle, what) => ok(VIEW.includes(needle), `${what}\n  introuvable : ${needle}`);
 const gone = (needle, what) => ok(!VIEW.includes(needle), `${what}\n  encore là   : ${needle}`);
 
@@ -350,6 +354,7 @@ const RENDER = new Function([
   sliceDecl(VIEW, 'SPLINE_TRAIT_OWNERS'),
   sliceFn(VIEW, 'partAtomsHeldBack'),
   sliceFn(VIEW, 'generalCession'),
+  HYDROGEN_FILTER_SRC,
   sliceFn(VIEW, 'buildSectionReps'),
   'return { buildSectionReps, warnIfEmptySelection };',
 ].join('\n'))();
@@ -699,7 +704,7 @@ has('window.requestAnimationFrame(() => { try { v.requestRender(); } catch { /* 
 has('requestSceneRepaint();\n  return () => {', '…et l’effet qui rebâtit les rangées la fait aussitôt');
 has("const [sectionEpoch, setSectionEpoch] = useState(0);", 'le compteur des gestes de la barre existe');
 has('const bumpSectionEpoch = () => setSectionEpoch((n) => n + 1);', '…et sait s’incrémenter');
-has('|gesture:${sectionEpoch}`;', '…dans la signature qui décide de reconstruire la scène');
+has('|gesture:${sectionEpoch}|H:', '…dans la signature qui décide de reconstruire la scène (le tick « Hide H » la suit)');
 ok((VIEW.match(/bumpSectionEpoch\(\);/g) || []).length >= 5,
   'chaque geste de la barre (style · ↺ d’une rangée · ↺ d’une section · ✔ · 🎨 Copy) l’incrémente');
 ok((VIEW.match(/requestSceneRepaint\(\);/g) || []).length >= 6,

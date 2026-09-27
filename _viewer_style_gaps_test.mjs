@@ -67,6 +67,10 @@ const near = (a, b, what, tol = 1e-4) => ok(Math.abs(a - b) < tol, `${what}\n  a
 
 const SRC = process.env.VIEWER_SRC || new URL('./src/components/NMRMoleculeViewer.jsx', import.meta.url);
 const VIEW = readFileSync(SRC, 'utf8').replace(/\r\n/g, '\n');
+// ☐ Le tick « Hide all hydrogens » est une dépendance du constructeur de rangées : la
+// sonde lui donne LE MODULE LIVRÉ (sans ses `export`), jamais un faux.
+const HYDROGEN_FILTER_SRC = readFileSync(new URL('./src/utils/viewerHydrogenFilter.js', import.meta.url), 'utf8')
+  .replace(/^export /gm, '');
 const has = (needle, what) => ok(VIEW.includes(needle), `${what}\n  introuvable : ${needle}`);
 const gone = (needle, what) => ok(!VIEW.includes(needle), `${what}\n  encore présent : ${needle}`);
 const countOf = (re) => (VIEW.match(re) || []).length;
@@ -137,6 +141,7 @@ has('the viewer did not store phospholipids in the styling window. they',
 // catalogue des sections, et le dessin léger reste UNE représentation.
 const ADD = new Function(`
   let added = [];
+  let last = null;
   let ensureCalls = 0;
   let light = false;
   const ensureSections = () => { ensureCalls += 1; return [{ id: 'main::lipid|POPC', key: 'lipid|POPC', kind: 'lipid' }]; };
@@ -145,19 +150,23 @@ const ADD = new Function(`
   const lightRenderRef = { get current() { return light; }, set current(v) { light = v; } };
   const largeStyleRef = { current: 'lines' };
   const showLargeWaterRef = { current: false };
+  const hideHydrogensRef = { current: false };
   const rebuildSectionsOf = () => [];
   const component = {
     structure: {},
-    addRepresentation: (type) => { added.push(type); return { type }; },
+    addRepresentation: (type, params) => { added.push(type); last = params; return { type }; },
     removeRepresentation: () => {},
   };
+${HYDROGEN_FILTER_SRC}
 ${sliceFn(VIEW, 'addDefaultReps')}
   return {
     addDefaultReps,
     component,
     setLight: (v) => { light = v; },
-    setAdded: () => { added = []; },
+    setAdded: () => { added = []; last = null; },
     added: () => added,
+    lastParams: () => last,
+    setHydrogens: (v) => { hideHydrogensRef.current = v; },
     ensureCalls: () => ensureCalls,
   };
 `)();
@@ -171,6 +180,16 @@ ADD.setLight(false);
 ADD.addDefaultReps(ADD.component, 'main');
 eq(ADD.ensureCalls(), 2, 'un système normal énumère ses sections par le même chemin');
 eq(ADD.added(), [], '…et là, ce sont les SECTIONS qui dessinent');
+// ☐ LE TICK « HIDE ALL HYDROGENS » VAUT AUSSI POUR L’AFFICHAGE LÉGER D’UN GRAND SYSTÈME —
+// « in all molecules » est la demande, et le drapeau est le même pour les deux chemins.
+ADD.setLight(true);
+ADD.setHydrogens(true);
+ADD.setAdded();
+ADD.addDefaultReps(ADD.component, 'main');
+eq(ADD.added(), ['line'], 'le tick coché laisse le rendu léger à UNE représentation');
+eq(ADD.lastParams().sele, '(not water) and not hydrogen',
+  '…et sa sélection écarte les hydrogènes EN PLUS de son « not water » (aucun style n’a été touché pour autant)');
+ADD.setHydrogens(false);
 has('{Object.keys(sectionCatalog).length === 0 && (',
   'la barre garde son message pour le cas où AUCUNE section n’existe');
 
@@ -488,6 +507,7 @@ const GRAD = new Function([
   sliceDecl(VIEW, 'SPLINE_TRAIT_OWNERS'),
   sliceFn(VIEW, 'partAtomsHeldBack'),
   sliceFn(VIEW, 'generalCession'),
+  HYDROGEN_FILTER_SRC,
   sliceFn(VIEW, 'buildSectionReps'),
   'return { buildSectionReps, gradientColorStore, gradientT, lerpHexColors, events };',
 ].join('\n'))();

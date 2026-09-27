@@ -56,8 +56,17 @@ has('const [sectionVis, setSectionVis] = useState({});', '…et les ✔ de secti
 
 /* ── 2. LE CHOIX DE LA MOLÉCULE (la référence de « 🎯 Fit to chosen ») ───── */
 has('const chooseMol = (key) => {', 'choisir une molécule est UN geste, nommé');
-has('onClick={() => chooseMol(molKey)}', '…et chaque espace a son bouton 🎯');
-has("🎯 {chosen ? 'chosen' : 'choose'}", '…qui DIT si c’est elle qui est choisie');
+has('onClick={() => chooseMol(molKey)}', '…et chaque espace a son bouton ★');
+has("★ {chosen ? 'main' : 'set main'}",
+  '…qui DIT « main » — la référence — au lieu d’un « chosen » discret (le rapport de cette session : « You say that the main is the molecule to move but there is no way to define the main. »)');
+has('★ main: {molNameOf(selectedMolKey)}',
+  'la barre NOMME en permanence la molécule de référence (on ne peut plus se demander laquelle c’est)');
+has("★ main: {molNameOf(selectedMolKey)} · 🎯 Fit to chosen and §2's ✥ Move · ↻ Rotate act on it",
+  '…et la ligne dit à QUOI elle sert : le fit ET les deux gestes de §2');
+has("✥ Move{mouseMode === 'move' ? ' ●' : ''}: {molNameOf(selectedMolKey)}",
+  'les boutons ✥ Move de §2 nomment LAQUELLE ils déplacent (leur titre le répétait, leur étiquette le montre)');
+has("↻ Rotate{mouseMode === 'rotate' ? ' ●' : ''}: {molNameOf(selectedMolKey)}", '…idem pour ↻ Rotate');
+has('Drag to move « ${molNameOf(selectedMolKey)} »', 'le calque de la souris dit quelle molécule suit le geste');
 has('const chosen = selectedMolKey === molKey;', '…et l’espace choisi porte un cadre violet');
 has("${chosen ? 'border-violet-400 bg-violet-50/60' : 'border-slate-300 bg-slate-50/70'}",
   '…le cadre de l’espace suit le choix');

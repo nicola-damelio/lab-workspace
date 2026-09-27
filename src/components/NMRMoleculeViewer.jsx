@@ -54,7 +54,11 @@ import { enforceCovalentProteinBonds } from '../utils/proteinBondRule';
 import { readXtcFrames, countXtcFrames, countXtcFramesInFile } from '../utils/xtcDecoder';
 import { abortControl, useAbortControl } from '../utils/abortControl';
 import { loadProgress } from '../utils/loadProgress';
-import { rigidTransform, atomMatchPairs, flatCoords, poseFromRigidMatrix, multiplyMat4, rigidMatrix, fitSummary } from '../utils/structureFit';
+import { rigidTransform, atomMatchPairs, flatCoords, poseFromRigidMatrix, multiplyMat4, rigidMatrix, fitSummary, applyMat4 } from '../utils/structureFit';
+// ⬇ « LE PDB DE L'ÉCRAN » — toutes les molécules dans UN fichier, la place de chacune
+// comprise (son propre module, voir src/utils/viewerPdbMolecules.js) : c'est ce qui fait
+// qu'un déplacement EST un contenu, et pas seulement une vue.
+import { joinPdbMolecules } from '../utils/viewerPdbMolecules';
 // HETATM code → SMILES: the Chemistry Component Dictionary of the RCSB (see
 // utils/ligandSmiles.js). A PDB only names its ligand by a 3-letter code, so this
 // is where the SMILES of a hand-loaded ligand comes from.
@@ -10293,10 +10297,13 @@ const addDefaultReps = (component, molKey = 'main') => {
   if (lightRenderRef.current) {
     const ls = largeStyleRef.current || 'lines';
     const sele = showLargeWaterRef.current ? 'all' : 'not water';
+    /* ☐ Le tick « Hide all hydrogens » vaut AUSSI pour l'affichage allégé d'un grand
+       système : « in all molecules » est la demande, et le drapeau est le même. */
+    const lightParams = (extra) => withoutHydrogensParams({ sele, colorScheme: 'element', ...extra }, hideHydrogensRef.current === true);
     try {
-      if (ls === 'spheres') trackBase(component.addRepresentation('spacefill', { sele, colorScheme: 'element', scale: 0.25, quality: 'low' }));
-      else if (ls === 'dots') trackBase(component.addRepresentation('dot', { sele, colorScheme: 'element' }));
-      else trackBase(component.addRepresentation('line', { sele, colorScheme: 'element' }));
+      if (ls === 'spheres') trackBase(component.addRepresentation('spacefill', lightParams({ scale: 0.25, quality: 'low' })));
+      else if (ls === 'dots') trackBase(component.addRepresentation('dot', lightParams({})));
+      else trackBase(component.addRepresentation('line', lightParams({})));
     } catch { /* lightweight style best-effort */ }
     return;
   }
@@ -10344,6 +10351,9 @@ const rebuildSectionsOf = (comp, molKey) => {
   return buildSectionReps(comp, sections, sectionTreesOf(sections), {
     hidden: hiddenSectionIds(sections),
     espReps: catEspRepsRef.current,
+    /* ☐ Le tick « Hide all hydrogens » de la barre : il vaut pour CETTE molécule comme
+       pour toutes les autres — le constructeur ne lit aucun état, il le reçoit. */
+    hideHydrogens: hideHydrogensRef.current === true,
   });
 };
 
@@ -11646,6 +11656,42 @@ const importKeyframeFilm = async (ev) => {
 // snapshot) and can be re-opened in PyMOL, VMD or back in this viewer. Without
 // a trajectory it simply saves the loaded structure. The frame number is both
 // written in the REMARK lines and appended to the file name.
+//
+// 💾 « THIS CHANGES THE PDB » — LA DEMANDE DE CETTE SESSION : « I need to be able to
+// change the position of one molecule with respect to the other, (this changes the
+// pdb). » Déplacer une molécule par rapport à une autre EST un contenu. Or le writer
+// de NGL écrit les coordonnées d'UNE structure, et il lit les COORDONNÉES des atomes :
+// une molécule placée par ✥ Move · ↻ Rotate, ou superposée par 🎯 Fit, vit dans la
+// MATRICE de sa composante — le fichier ne montrait donc pas l'arrangement de l'écran.
+// Deux corrections, dans cet ordre :
+//   · LA PLACE DE CHAQUE MOLÉCULE EST ÉCRITE DANS LES COORDONNÉES le temps de produire
+//     le texte (bakePoseIntoStructure : les tableaux de coordonnées sont ÉCHANGÉS, la
+//     scène n'est jamais modifiée, et ils sont remis en place dans un `finally`) ;
+//   · TOUTES LES MOLÉCULES SONT DANS LE FICHIER : la principale et chaque molécule
+//     ajoutée (joinPdbMolecules, avec un REMARK qui la nomme) — sans quoi la position
+//     « de l'une par rapport à l'autre » n'aurait rien à quoi se rapporter.
+// Un seul bloc (aucune molécule ajoutée, aucune pose) rend le fichier d'aujourd'hui
+// INCHANGÉ (voir joinPdbMolecules).
+const bakePoseIntoStructure = (comp) => {
+  const structure = comp && comp.structure;
+  const store = structure && structure.atomStore;
+  const m = comp && comp.matrix && comp.matrix.elements;
+  if (!store || !m || !store.x || !store.y || !store.z) return null;
+  const count = Math.min(Number(structure.atomCount) || 0, store.x.length);
+  if (count <= 0) return null;
+  // Les coordonnées d'origine, gardées telles quelles (des COPIES) : la remise en place
+  // est un échange de références, donc instantanée et sans arrondi.
+  const bx = new Float32Array(store.x);
+  const by = new Float32Array(store.y);
+  const bz = new Float32Array(store.z);
+  for (let i = 0; i < count; i += 1) {
+    const p = applyMat4(m, [store.x[i], store.y[i], store.z[i]]);
+    store.x[i] = p[0];
+    store.y[i] = p[1];
+    store.z[i] = p[2];
+  }
+  return () => { store.x = bx; store.y = by; store.z = bz; };
+};
 const downloadFramePdb = async () => {
   const component = componentRef.current;
   const structure = component && component.structure;
@@ -11655,10 +11701,18 @@ const downloadFramePdb = async () => {
   }
   const onFrame = !!trajRef.current;
   const frameNo = onFrame ? toActualFrame(currentFrame) : -1;
+  const comps = [component, ...(extraCompsRef.current || []).map((e) => e.comp)]
+    .filter((c) => c && c.structure);
+  const restores = [];
   try {
     const NS = await ensureNGL();
-    const writer = new NS.PdbWriter(structure);
-    const text = writer.getData();
+    // Les poses entrent dans les coordonnées LE TEMPS D'ÉCRIRE, puis tout revient.
+    comps.forEach((c) => { const back = bakePoseIntoStructure(c); if (back) restores.push(back); });
+    const text = joinPdbMolecules(comps.map((c, i) => ({
+      text: new NS.PdbWriter(c.structure).getData(),
+      name: i === 0 ? '' : molNameOf(molKeyOfComp(c)),
+      main: i === 0,
+    })));
     const base = String(
       (file && file.name) || (structure.name || '') || trajectoryName || 'structure'
     ).replace(/\.[^.]+$/, '').replace(/[^\w.-]+/g, '_') || 'structure';
@@ -11672,11 +11726,16 @@ const downloadFramePdb = async () => {
     document.body.appendChild(a);
     a.click();
     a.remove();
+    const where = comps.length > 1 ? ` — ${comps.length} molecules, the arrangement on screen written into the coordinates` : ' — the arrangement on screen written into the coordinates';
     setPdbMsg(frameNo >= 0
-      ? `⬇ ${name} — frame ${frameNo} of ${numFrames}`
-      : `⬇ ${name}`);
+      ? `⬇ ${name} — frame ${frameNo} of ${numFrames}${where}`
+      : `⬇ ${name}${where}`);
   } catch (err) {
     setPdbMsg(`⚠️ ${(err && err.message) || 'Could not write the PDB file'}`);
+  } finally {
+    // ⚠ LA SCÈNE REVIENT EXACTEMENT COMME ELLE ÉTAIT — même si l'écriture a échoué.
+    restores.forEach((back) => { try { back(); } catch { /* ignore */ } });
+    try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch { /* ignore */ }
   }
 };
 
@@ -16102,14 +16161,17 @@ className="hidden"
 )}
 {/* ⬇ PDB — the structure as a file, with the coordinates of the frame the
     ▶ playback bar is displaying right now (a trajectory snapshot); without a
-    trajectory it simply saves the loaded structure. See downloadFramePdb. */}
+    trajectory it simply saves the loaded structure. Depuis cette session, le fichier
+    porte AUSSI la place de chaque molécule à l'écran — ✥ Move · ↻ Rotate et 🎯 Fit,
+    pour la principale comme pour les molécules ajoutées — et toutes les molécules y
+    sont : c'est ce qui fait qu'un déplacement est un contenu (voir downloadFramePdb). */}
 <button
 type="button"
 onClick={downloadFramePdb}
 disabled={status !== 'ready'}
 title={trajStatus === 'ready'
-  ? `Download a PDB file of the frame displayed right now (frame ${toActualFrame(currentFrame)} of ${numFrames}) — the structure's own names / residues / chains with the coordinates of that snapshot`
-  : 'Download the loaded structure as a PDB file (load a trajectory to save the frame on screen instead)'}
+  ? `Download ONE PDB file of what is on screen: the frame displayed right now (frame ${toActualFrame(currentFrame)} of ${numFrames}) PLUS the place of every molecule — the ✥ Move · ↻ Rotate and 🎯 Fit poses of the main structure and of every added molecule are written into the coordinates, and every molecule goes in the same file`
+  : 'Download what is on screen as ONE PDB file: the loaded structure and every added molecule, with the place of each one (✥ Move · ↻ Rotate · 🎯 Fit) written into the coordinates (load a trajectory to save the frame on screen instead)'}
 className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap bg-white border-teal-300 text-teal-700 hover:bg-teal-50 disabled:opacity-40 disabled:cursor-not-allowed"
 >
 ⬇ PDB{trajStatus === 'ready' ? ' (frame)' : ''}
@@ -16611,15 +16673,15 @@ is placed now, and the ↺ of its space puts it back. */}
   onClick={() => setMouseMode((m) => (m === 'move' ? 'off' : 'move'))}
   disabled={status !== 'ready'}
   className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${mouseMode === 'move' ? 'bg-amber-400 border-amber-500 text-amber-950' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed'}`}
-  title="Move the CHOSEN molecule with the mouse: drag inside the viewer to slide it. The other molecules stay where they are (every space of the styling bar has the same button for its own molecule). Click again to give the camera back its rotate/zoom.">
-  ✥ Move: {mouseMode === 'move' ? 'On' : 'Off'}
+  title={`Move the ★ MAIN molecule — « ${molNameOf(selectedMolKey)} » right now, the reference named in the styling bar — with the mouse: drag inside the viewer to slide it. The other molecules stay where they are (every space of the styling bar has the same pair for its own molecule, and « set main » there changes WHICH molecule this pair moves). Click again to give the camera back its rotate/zoom.`}>
+  ✥ Move{mouseMode === 'move' ? ' ●' : ''}: {molNameOf(selectedMolKey)}
 </button>
 <button type="button"
   onClick={() => setMouseMode((m) => (m === 'rotate' ? 'off' : 'rotate'))}
   disabled={status !== 'ready'}
   className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${mouseMode === 'rotate' ? 'bg-amber-400 border-amber-500 text-amber-950' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed'}`}
-  title="Rotate the CHOSEN molecule with the mouse, about its own centre: drag sideways to spin it, up and down to tilt it. The other molecules do not move.">
-  ↻ Rotate: {mouseMode === 'rotate' ? 'On' : 'Off'}
+  title={`Rotate the ★ MAIN molecule — « ${molNameOf(selectedMolKey)} » right now, the reference named in the styling bar — with the mouse, about its own centre: drag sideways to spin it, up and down to tilt it. The other molecules do not move, and « set main » in another molecule's space hands this pair to that one.`}>
+  ↻ Rotate{mouseMode === 'rotate' ? ' ●' : ''}: {molNameOf(selectedMolKey)}
 </button>
 <button
 type="button"
@@ -17041,9 +17103,9 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
 </span>
 </div>
 <p className="text-[10px] text-slate-500 leading-tight">
-🎬 The film is the 3D canvas with the vignette the screen draws over it — the molecules, the styles, the
-labels and the extra molecules exactly as they are, frame by frame, in the order ▶ plays the run. Written on
-your computer as a real video file (<b>.webm</b>, or <b>mp4</b> where the browser can encode it), nothing uploaded;
+🎬 The film is the 3D canvas with the vignette the screen draws over it — the molecules, the styles, the labels
+and the extra molecules exactly as they are, frame by frame, in the order ▶ plays the run. Written on your computer
+as a real video file (<b>.webm</b>, or <b>mp4</b> where the browser can encode it) — nothing is uploaded anywhere;
 <b>keep this tab in the foreground</b> while it records (a hidden tab is not painted).
 </p>
 </VSection>
@@ -17433,8 +17495,8 @@ style={{ height: (viewerCollapsed ? 0 : viewH) + 'px' }}
     onMouseMove={dragMoveOnMove}
     onMouseUp={dragMoveOnUp}
     title={mouseMode === 'rotate'
-      ? 'Drag to rotate the chosen structure about its own centre — toggle ↻ Rotate off to rotate/zoom the camera again'
-      : 'Drag to move the chosen structure — toggle ✥ Move off to rotate/zoom the camera again'}
+      ? `Drag to rotate « ${molNameOf(selectedMolKey)} » — the ★ main molecule, the one the styling bar names — about its own centre. Toggle ↻ Rotate off to rotate/zoom the camera again.`
+      : `Drag to move « ${molNameOf(selectedMolKey)} » — the ★ main molecule, the one the styling bar names. Toggle ✥ Move off to rotate/zoom the camera again.`}
   />
 )}
 
@@ -17508,6 +17570,18 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
         {/* ☑ ALL / ☐ NONE — one button for both, because the state of it IS the
             picture. The old « Main » (show only the main structure) is gone: the ✔
             of each molecule space does that, one molecule at a time. */}
+        {/* ☐ HIDE ALL HYDROGENS — la demande de cette session : « In the styling window
+            add a tick allowing to hide all hydrogens in all molecules. » UN tick, un
+            réglage du VIEWER (persisté, lu par le constructeur des rangées de TOUTES les
+            molécules) : chaque représentation reçoit une clause de sélection de plus
+            (voir utils/viewerHydrogenFilter.js) — aucun style n'est touché, et décocher
+            rend les hydrogènes exactement tels qu'ils étaient. */}
+        <label className="flex items-center gap-1 px-1.5 py-0.5 text-[9px] font-bold rounded border bg-white border-slate-300 text-slate-600 cursor-pointer"
+          title="Hide every hydrogen of EVERY molecule shown here — the main structure, the added molecules and their chains, spheres and sticks alike. One tick, no style changed: NGL's own selection keyword (« hydrogen ») is added to each row's selection, so only real hydrogens disappear. Untick and they come back exactly as they were.">
+          <input type="checkbox" checked={hideHydrogens} onChange={(e) => setHideHydrogens(e.target.checked)}
+            className="accent-blue-600 w-3 h-3" />
+          Hide H
+        </label>
         <button type="button" onClick={toggleAllMolecules}
           className="px-1.5 py-0.5 text-[9px] font-bold rounded border bg-white border-blue-300 text-blue-600 hover:bg-blue-50"
           title={allMoleculesShown()
@@ -17532,6 +17606,16 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
     {!!fitMsg && (
       <p className="text-[10px] font-semibold text-violet-800 bg-violet-50 border border-violet-200 rounded px-1 py-0.5 shrink-0">{fitMsg}</p>
     )}
+    {/* ★ LA RÉFÉRENCE, NOMMÉE — la demande de cette session : « You say that the main
+        is the molecule to move but there is no way to define the main. » La barre
+        NOMME donc la molécule de référence en permanence : c'est celle dont le bouton
+        dit « main », celle que 🎯 Fit to chosen prend pour cible, et celle que les
+        boutons ✥ Move · ↻ Rotate de §2 déplacent. Changer de référence est un clic
+        (« set main ») sur l'espace de l'autre molécule. */}
+    <p className="text-[10px] font-bold text-violet-800 shrink-0"
+      title={`Every ␣ below is a molecule: its ☑ draws it, « ★ main » makes it the reference, and ✥ Move · ↻ Rotate place it. « ${molNameOf(selectedMolKey)} » is the reference right now — 🎯 Fit to chosen superposes the other shown structures onto it, and §2's ✥ Move · ↻ Rotate move IT.`}>
+      ★ main: {molNameOf(selectedMolKey)} · 🎯 Fit to chosen and §2's ✥ Move · ↻ Rotate act on it
+    </p>
     <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-1 min-h-0">
       {Object.keys(sectionCatalog).length === 0 && (
         <p className="text-[10px] text-slate-400 italic">
@@ -17557,12 +17641,18 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
               {/* 🎯 LE CHOIX DE LA MOLÉCULE — la référence de « 🎯 Fit to chosen » (le
                   rapport : « there is no way to select a molecule so I cannot try the
                   "fit to chosen" button »). Le choix se VOIT : espace violet + « chosen ». */}
+              {/* ★ LA MOLÉCULE « MAIN » (LA RÉFÉRENCE) — la demande de cette session :
+                  « You say that the main is the molecule to move but there is no way to
+                  define the main. » Le bouton DIT le mot « main », il est sur CHAQUE
+                  molécule, et il la choisit : 🎯 Fit to chosen superpose les autres sur
+                  elle, et les boutons ✥ Move · ↻ Rotate de §2 déplacent ELLE. La ligne
+                  ★ du haut de la barre nomme toujours celle qui est choisie. */}
               <button type="button" onClick={() => chooseMol(molKey)}
                 className={`text-[10px] font-bold px-1 rounded shrink-0 ${chosen ? 'bg-violet-600 text-white' : 'text-slate-500 hover:text-violet-700'}`}
                 title={chosen
-                  ? `${entry.name} IS the chosen molecule — 🎯 Fit to chosen superposes every other shown structure onto it`
-                  : `Choose ${entry.name} as the reference molecule: 🎯 Fit to chosen then superposes the other shown structures onto it`}>
-                🎯 {chosen ? 'chosen' : 'choose'}</button>
+                  ? `${entry.name} IS the main molecule (the reference): 🎯 Fit to chosen superposes every other shown structure onto it, and the ✥ Move · ↻ Rotate buttons of §2 move IT. Click another space's « set main » to change it.`
+                  : `Make ${entry.name} the main molecule (the reference): 🎯 Fit to chosen then superposes every other shown structure onto it, and the ✥ Move · ↻ Rotate buttons of §2 move it.`}>
+                ★ {chosen ? 'main' : 'set main'}</button>
               {extra && (
                 <button type="button" onClick={(e) => { e.stopPropagation(); deleteExtraMol(extra.id); }}
                   className="text-red-400 hover:text-red-600 font-bold text-[10px] px-1 shrink-0" title="Delete this structure">🗑</button>

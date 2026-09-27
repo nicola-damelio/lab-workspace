@@ -35,6 +35,10 @@ const eq = (a, b, what) => {
 
 // CRLF → LF pour écrire les aiguilles multi-lignes naturellement.
 const VIEW = readFileSync(new URL('./src/components/NMRMoleculeViewer.jsx', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+// ☐ Le tick « Hide all hydrogens » est une dépendance du constructeur de rangées : la
+// sonde lui donne LE MODULE LIVRÉ (sans ses `export`), jamais un faux.
+const HYDROGEN_FILTER_SRC = readFileSync(new URL('./src/utils/viewerHydrogenFilter.js', import.meta.url), 'utf8')
+  .replace(/^export /gm, '');
 const has = (needle, what) => ok(VIEW.includes(needle), `${what}\n  introuvable : ${needle}`);
 const gone = (needle, what) => ok(!VIEW.includes(needle), `${what}\n  encore présent : ${needle}`);
 
@@ -120,6 +124,7 @@ const sandbox = [
   'const DEFAULT_NUCLEIC_COLORS = { base: 0xffffff, sugar: 0xffffff, phosphate: 0xffffff };',
   'const gradientRangesFor = () => null;',
   'const gradientColorStore = { ranges: null };',
+  HYDROGEN_FILTER_SRC,
   sliceDecl(VIEW, 'SPLINE_STYLES'),
   sliceDecl(VIEW, 'SPLINE_TRAIT_OWNERS'),
   sliceFn(VIEW, 'partAtomsHeldBack'),

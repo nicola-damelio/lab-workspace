@@ -57,6 +57,11 @@ const eq = (a, b, what) => {
 
 const SRC = process.env.VIEWER_SRC || new URL('./src/components/NMRMoleculeViewer.jsx', import.meta.url);
 const VIEW = readFileSync(SRC, 'utf8').replace(/\r\n/g, '\n');
+// ☐ Le tick « Hide all hydrogens » est une dépendance du constructeur de rangées : la
+// sonde lui donne LE MODULE LIVRÉ (sans ses `export`), jamais un faux — la clause
+// mesurée ici est donc bien celle que le viewer ajoute aux sélections.
+const HYDROGEN_FILTER_SRC = readFileSync(new URL('./src/utils/viewerHydrogenFilter.js', import.meta.url), 'utf8')
+  .replace(/^export /gm, '');
 const has = (needle, what) => ok(VIEW.includes(needle), `${what}\n  introuvable : ${needle}`);
 const gone = (needle, what) => ok(!VIEW.includes(needle), `${what}\n  encore présent : ${needle}`);
 
@@ -263,6 +268,7 @@ const MODULE = new Function('ATOM_EVAL', 'STRUCTURE', [
   sliceMaybe(VIEW, 'SPLINE_TRAIT_OWNERS'),
   sliceMaybe(VIEW, 'partAtomsHeldBack'),
   sliceMaybe(VIEW, 'generalCession'),
+  HYDROGEN_FILTER_SRC,
   sliceFn(VIEW, 'buildSectionReps'),
   'return { buildSectionReps, sectionRowSele };',
 ].join('\n'))(ATOM_EVAL, STRUCTURE);

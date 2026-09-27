@@ -43,6 +43,10 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
+// ☐ Le tick « Hide all hydrogens » est une dépendance du constructeur de rangées : la
+// sonde la lui donne TELLE QUELLE (le module livré), au lieu de la remplacer par un
+// faux — le comportement mesuré ici est donc celui du viewer.
+import { withoutHydrogensParams } from './src/utils/viewerHydrogenFilter.js';
 
 const require = createRequire(import.meta.url);
 const NGL = require('ngl');
@@ -178,8 +182,8 @@ eq(CAT_STYLES.protein.gradientFrom, 0xff0000, 'la table d’entrée n’est jama
 has('setCatStyles((prev) => setGradientPairIn(prev, key, hex));', 'les pastilles écrivent la paire par setGradientPairIn');
 has('const gradientRampSignature =', 'la paire du dégradé entre dans la signature du style');
 has('|ramp:${gradientRampSignature}', '…donc une pastille fait REBÂTIR les représentations (sinon rien ne se repeint)');
-has('|gesture:${sectionEpoch}`;',
-  '…et le compteur des gestes de la barre la ferme : un geste fait TOUJOURS rebâtir (le rapport « la scène ne s\'actualise pas tout de suite »)');
+has('|gesture:${sectionEpoch}|H:',
+  '…et le compteur des gestes de la barre la ferme — suivi du tick « Hide H » : un geste fait TOUJOURS rebâtir (le rapport « la scène ne s\'actualise pas tout de suite »)');
 has("title=\"Colour of the FIRST residue of every chain (N terminus · 5' end)\"",
   'les deux pastilles existent aussi dans la RANGÉE de la barre, là où le dégradé se choisit');
 has('<button type="button" onClick={swapGeneralGradient}', 'le ⇄ de la rangée inverse la paire globale');
@@ -213,7 +217,7 @@ ok(!ATOM_STYLES.includes('cartoon') && !ATOM_STYLES.includes('ribbon') && !ATOM_
   'un squelette en ruban n’est jamais amputé de ses CA');
 
 // ── Le rendu RÉEL : les rangées d'une protéine, telles qu'elles partent à NGL ──
-const RENDER_H = new Function([
+const RENDER_H = new Function('withoutHydrogensParams', [
   sliceDecl(VIEW, 'LICORICE_BOND_RADIUS'),
   sliceDecl(VIEW, 'BALLSTICK_BOND_RADIUS'),
   sliceDecl(VIEW, 'BASE_BOND_RADIUS'),
@@ -264,7 +268,7 @@ const RENDER_H = new Function([
   sliceFn(VIEW, 'generalCession'),
   sliceFn(VIEW, 'buildSectionReps'),
   'return { buildSectionReps };',
-].join('\n'))();
+].join('\n'))(withoutHydrogensParams);
 const SECTIONS = [{ id: 'main::protein|A', key: 'protein|A', kind: 'protein', name: 'Chain A', sele: ':A and protein', count: 1 }];
 const rowTree = (backbone, sidechain) => ({
   protein: {

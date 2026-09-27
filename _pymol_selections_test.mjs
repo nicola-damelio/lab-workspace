@@ -192,7 +192,7 @@ const SESSION = new Function('localStorage', [
   // matériau (un look de sélection en porte un) et un `localStorage` de test.
   "const MATERIAL_PRESET_KEYS = ['auto', 'matte', 'gloss', 'metallic', 'glass'];",
   sliceBetween("const PYMOL_SESSION_KEY = 'labViewerPymolSession';", '\n/* ---- Which leaflet is which', 'session'),
-  'return { PYMOL_SESSION_KEY, loadPymolSession, savePymolSession, loadPymolSessionFor, pymolSessionKey, pymolSessionKeys, pymolSessionExperimentSlug, pymolSessionInstanceSlug };',
+  'return { PYMOL_SESSION_KEY, loadPymolSession, savePymolSession, loadPymolSessionFor, pymolSessionKey, pymolSessionKeys, pymolSessionExperimentSlug, pymolSessionInstanceSlug, pymolScopeLabelOf };',
 ].join('\n'))({
   getItem: (k) => (store.has(k) ? store.get(k) : null),
   setItem: (k, v) => store.set(k, String(v)),
@@ -247,7 +247,8 @@ eq(SESSION.loadPymolSession().selections, [], 'une entrée d’une autre version
        expérience, la même question, les mêmes fenêtres.
 
    La clé d'instance reste LUE en second (les sessions déjà écrites restent lisibles),
-   la générale en dernier. Tout est EXÉCUTÉ ici, sur les fonctions livrées. */
+   la générale seulement quand RIEN ne dit où l'on est. Tout est EXÉCUTÉ ici, sur les
+   fonctions livrées — y compris la PORTÉE que le panneau affiche (pymolScopeLabelOf). */
 eq(SESSION.pymolSessionKey(null, null), 'labViewerPymolSession',
   'sans expérience ni instance connue, la clé GÉNÉRALE reste utilisée (rien n’est perdu)');
 eq(SESSION.pymolSessionKey(null, { project: 'GEC', test: 'Mutant X', instance: '2026-01-05' }),
@@ -262,8 +263,8 @@ ok(SESSION.pymolSessionKey(null, { project: 'GEC', test: 'Mutant Y', instance: '
 eq(SESSION.pymolSessionKey('exp_7', null), 'labViewerPymolSession::exp_7',
   'sans contexte Drive, l’instance que la page donne reste la clé (la mémoire d’avant)');
 eq(SESSION.pymolSessionKeys(null, { project: 'GEC', test: 'Mutant X', instance: '2026-01-05' }),
-  ['labViewerPymolSession::exp_GEC_Mutant_X', 'labViewerPymolSession::GEC_Mutant_X_2026-01-05', 'labViewerPymolSession'],
-  'les clés LUES DANS L’ORDRE : l’expérience, puis l’instance (une session écrite par la version précédente), puis la générale');
+  ['labViewerPymolSession::exp_GEC_Mutant_X', 'labViewerPymolSession::GEC_Mutant_X_2026-01-05'],
+  'les clés LUES DANS L’ORDRE : l’expérience, puis l’instance (une session écrite par la version précédente) — la GÉNÉRALE n’est plus dans la liste, car le viewer SAIT où il est');
 eq(SESSION.pymolSessionKey('exp 7/2', null), 'labViewerPymolSession::exp_7_2',
   'les séparateurs sont neutralisés (aucune clé ne peut être détournée)');
 // LA RELECTURE : la PREMIÈRE clé qui porte une session gagne.
@@ -278,6 +279,51 @@ SESSION.savePymolSession({ selections: [{ name: 'heads', expr: 'resn POPC' }] },
 eq(SESSION.loadPymolSessionFor(SESSION.pymolSessionKeys('exp_9', { project: 'GEC', test: 'Mutant Z', instance: 'C' })).selections,
   [{ name: 'heads', expr: 'resn POPC' }],
   'une session enregistrée sous l’ANCIENNE clé d’instance est lue en second — rien n’est perdu');
+
+/* ⚠ LA MOITIÉ QUI MANQUAIT : « It should not appear in other experiments, even if they
+   are of the same type. » Les trois fuites sont fermées, et mesurées ici. */
+// 1. La clé GÉNÉRALE n’est plus un repli : une session qu’elle porte (celle d’une version
+//    antérieure, ou d’un viewer monté sans contexte) n’entre dans AUCUNE expérience.
+store.clear();
+SESSION.savePymolSession({ selections: [{ name: 'old', expr: 'resn TIP3' }], script: 'show spheres', active: true });
+eq(SESSION.loadPymolSessionFor(SESSION.pymolSessionKeys(null, { project: 'GEC', test: 'Mutant X', instance: 'A' })).selections, [],
+  'la clé générale n’est PLUS lue dans une expérience — c’est elle qui faisait apparaître les fenêtres d’une AUTRE');
+eq(SESSION.loadPymolSessionFor(SESSION.pymolSessionKeys('exp_A', null)).selections, [],
+  '…et pas davantage quand seule l’instance est connue');
+eq(SESSION.loadPymolSessionFor(SESSION.pymolSessionKeys(null, null)).selections, [{ name: 'old', expr: 'resn TIP3' }],
+  '…mais elle reste la mémoire d’un viewer monté hors de toute page d’expérience (son seul cas d’emploi)');
+// 2. Une expérience SANS NOM ne donne plus de clé d’expérience : la clé n’aurait porté
+//    que le projet, et TOUTES les expériences sans nom d’un projet auraient partagé une
+//    seule session. La clé de l’instance reste, elle.
+eq(SESSION.pymolSessionExperimentSlug({ project: 'GEC', test: '   ' }), '',
+  'une expérience sans nom ne produit AUCUNE clé d’expérience');
+ok(!SESSION.pymolSessionKeys(null, { project: 'GEC', test: '', instance: 'cond 1' })
+  .some((k) => k.startsWith('labViewerPymolSession::exp_')),
+  '…donc aucune clé « exp_ » n’est fabriquée pour elle');
+ok(SESSION.pymolSessionKeys(null, { project: 'GEC', test: '', instance: 'cond 1' })[0]
+  !== SESSION.pymolSessionKeys(null, { project: 'GEC', test: '', instance: 'cond 2' })[0],
+  '…et deux conditions sans nom ne se partagent pas la mémoire de l’autre');
+// 3. Deux expériences du MÊME type (même projet, noms différents) restent cloisonnées.
+store.clear();
+const expA = SESSION.pymolSessionKeys(null, { project: 'GEC', test: 'Mutant X', instance: 'A' });
+const expB = SESSION.pymolSessionKeys(null, { project: 'GEC', test: 'Mutant Y', instance: 'B' });
+SESSION.savePymolSession({ selections: [{ name: 'x', expr: 'all' }], script: 'show cartoon', active: true }, expA[0]);
+eq(SESSION.loadPymolSessionFor(expB).selections, [],
+  'une AUTRE expérience du même projet — et donc du même type — ne voit RIEN de la première');
+eq(SESSION.loadPymolSessionFor(SESSION.pymolSessionKeys(null, { project: 'GEC', test: 'Mutant X', instance: 'Z' })).selections,
+  [{ name: 'x', expr: 'all' }],
+  '…tandis qu’une NOUVELLE CONDITION de la première la retrouve (la demande, intacte)');
+// 4. La portée est DITE au panneau — une règle invisible est une règle qu’on croit fausse.
+eq(SESSION.pymolScopeLabelOf(null, { project: 'GEC', test: 'Mutant X' }).scope, 'experiment',
+  'la portée : une expérience nommée → ses conditions la partagent');
+ok(/Mutant X/.test(SESSION.pymolScopeLabelOf(null, { project: 'GEC', test: 'Mutant X' }).text),
+  '…et la ligne NOMME l’expérience (l’utilisateur doit pouvoir le vérifier à l’écran)');
+ok(/no other experiment sees it/.test(SESSION.pymolScopeLabelOf(null, { project: 'GEC', test: 'Mutant X' }).text),
+  '…en disant aussi qu’aucune autre expérience ne la voit');
+eq(SESSION.pymolScopeLabelOf('exp_7', null).scope, 'condition', 'sans nom d’expérience : la portée est la CONDITION');
+eq(SESSION.pymolScopeLabelOf(null, null).scope, 'viewer', 'hors page d’expérience : la portée est le VIEWER');
+has('const pymolScopeRef = useRef(null);', 'le panneau 🧪 reçoit la portée, calculée une fois');
+has('🧪 Kept for {pymolScopeRef.current.text}.', '…et l’ÉCRIT (la règle est vérifiable à l’écran)');
 
 // Le câblage : relue au montage, réécrite à chaque geste, et dite dans le journal.
 has("const PYMOL_SESSION_KEY = 'labViewerPymolSession';", 'la session a UNE clé de stockage — sa BASE');
