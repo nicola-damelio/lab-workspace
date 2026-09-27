@@ -6,6 +6,7 @@ import { parseSimulationParameters } from './MDData';
 import { CLASSIFICATION_MAP, PRIMARY_CATEGORIES } from '../data/testTypes';
 import { CollapsibleSection, useExperimentScrollMemory, useSectionMemory } from './ui';
 import { abortControl, useAbortControl } from '../utils/abortControl';
+import { useLoadProgress } from '../utils/loadProgress';
 import { mdAnalysisRunAll } from '../utils/mdAnalysisRunAll';
 import { Icon } from './Icons';
 import { suggestDriveFileName, openDrive } from '../utils/driveNaming';
@@ -378,27 +379,68 @@ export const SmartImage = ({ src, alt, style }) => {
 MAIN SHELL
 ========================================================================== */
 
-// Always-visible emergency stop. Lives at the top-right of every test page:
-// it enables the moment any operation registers itself in the global
-// abortControl registry and cancels it (structure / trajectory loads,
-// playback, MD analyses, …). Idle pages show it dimmed so it is always
-// findable — no more hunting for a hidden stop button mid-freeze.
-const GlobalStopButton = () => {
+/* THE TOP BAR OF THE WINDOW — the loading bar (the request).
+
+   « the stop (structure loading) message that appears when loading a
+     structure is useless and should be removed. At its place it would be
+     more useful a loading bar showing the progression that could be
+     inserted in the top bar of the window. »
+
+   The always-visible « ⏹ Stop (structure loading) » pill is GONE: while no
+   long operation runs, NOTHING is drawn — no dimmed button sitting on top of
+   every page. While one runs, a thin bar runs along the very top of the
+   window (the width of the viewport, like a browser's own load indicator)
+   and the chip beside it says what the operation is doing, with the
+   percentage when it can be told.
+
+   The stop it used to offer is not lost, it moved ONTO the bar: clicking the
+   chip (or its ✕) cancels through the very same abortControl registry, so
+   the operations that have no button of their own (an MD analysis, a DSSP
+   run, an image re-capture…) stay stoppable — they simply no longer shout
+   about it on every page.
+
+   Two sources, deliberately: `loadProgress` (utils/loadProgress.js) gives
+   the PROGRESSION of the operations that report one; `abortControl` gives
+   the label of an operation that registered without reporting any (it then
+   pulses). The bar appears as soon as either one is running. */
+export const GlobalLoadProgress = () => {
   const { active, label } = useAbortControl();
+  const prog = useLoadProgress();
+  const running = prog.active ? prog.label : (active ? label : '');
+  if (!running) return null;   // idle page → nothing at all on screen
+  const percent = prog.active ? prog.percent : null;
+  const text = (prog.active && prog.phase) ? prog.phase : `${running}…`;
   return (
-    <button
-      type="button"
-      onClick={() => abortControl.abortAll()}
-      disabled={!active}
-      className={`fixed top-2 right-2 z-[70] no-print inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wide shadow-md border transition-colors ${
-        active
-          ? 'bg-red-600 text-white border-red-600 hover:bg-red-700 animate-pulse'
-          : 'bg-white/70 text-slate-400 border-slate-200 cursor-default'
-      }`}
-      title={active ? `Abort: ${label}` : 'No operation in progress'}
+    <div
+      className="fixed top-0 left-0 right-0 z-[70] no-print pointer-events-none"
+      role="progressbar"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={percent === null ? undefined : percent}
+      aria-label={`${running}${percent === null ? ' — in progress' : ` — ${percent} %`}`}
     >
-      <Icon name="stop" size={12} /> {active ? `Stop (${label})` : 'Stop'}
-    </button>
+      <div className="h-1 w-full bg-slate-200/80 overflow-hidden">
+        {percent === null ? (
+          /* Nothing countable: the fill PULSES — it never fakes a width. */
+          <div className="h-full w-1/3 bg-red-500 animate-pulse" />
+        ) : (
+          <div className="h-full bg-red-500 transition-[width] duration-200" style={{ width: `${percent}%` }} />
+        )}
+      </div>
+      <div className="flex justify-end px-2 pt-1">
+        <button
+          type="button"
+          onClick={() => abortControl.abortAll()}
+          className="pointer-events-auto inline-flex items-center gap-1.5 max-w-[80vw] px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wide shadow-md border bg-white text-slate-600 border-slate-200 hover:bg-red-50 hover:text-red-700 hover:border-red-300 transition-colors"
+          title={`Abort: ${running} — the bar follows the progression the operation itself reports`}
+        >
+          <Icon name="stop" size={12} />
+          <span className="truncate">{text}</span>
+          {percent !== null && <span>{percent} %</span>}
+          <span aria-hidden="true">✕</span>
+        </button>
+      </div>
+    </div>
   );
 };
 
@@ -1387,7 +1429,7 @@ const details = [
     <div ref={pageRef} className="flex flex-col h-full overflow-y-auto md:overflow-hidden relative custom-scrollbar">
       {TestHeader}
 
-      <GlobalStopButton />
+      <GlobalLoadProgress />
 
       {CustomToolbar && <CustomToolbar ctx={ctx} />}
 

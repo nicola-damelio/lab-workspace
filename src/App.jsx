@@ -624,6 +624,65 @@ export const urlWithoutMod = (search, pathname) => {
     return `${pathname || window.location.pathname}${qs ? `?${qs}` : ''}`;
   } catch { return pathname || ''; }
 };
+/* =========================================================================
+   LA PAGE QUITTÉE RESTE VIVANTE (une seule à la fois) — la demande :
+
+     « Sometimes loading of files is very long and in the meantime i could do
+       something else. can the loading be done in background while I change page
+       to work elsewhere? »
+
+   et le choix retenu : « Keep alive EVERY page I leave (one at a time, hidden):
+   nothing ever reloads when I come back — loading or not (more memory kept) ».
+
+   POURQUOI C'ÉTAIT NÉCESSAIRE. Changer de page rendait un autre module et
+   DÉMONTAIT celui qu'on quittait. Le démontage n'emportait pas seulement un
+   formulaire à moitié rempli : le viewer 3D détruisait sa scène
+   (`stage.dispose()`) et son chargement en cours s'arrêtait (l'effet de
+   chargement pose `cancelled = true`), si bien qu'une longue structure — ou une
+   trajectoire — repartait de ZÉRO au retour, et qu'il fallait attendre deux fois.
+
+   CE QU'ON FAIT. La page qu'on vient de quitter reste MONTÉE mais cachée : son
+   état, ses toiles et ses chargements continuent de vivre (la barre de
+   chargement du haut de la fenêtre les suit, voir utils/loadProgress.js), et au
+   retour RIEN ne se recharge. UNE SEULE page est gardée : en quitter une
+   nouvelle libère la précédente — une scène WebGL n'est pas gratuite.
+
+   LES TROIS RÈGLES SONT PURES, donc testables (voir _page_parking_test.mjs) :
+     • `parkedAfter`   — la page à garder quand on quitte celle-ci (ou null) ;
+     • `pageSlotIds`   — les places à MONTER (`[affichée, gardée]` : la liste ne
+       contient jamais deux fois la même page) ;
+     • `pageSlotClass` — `contents` pour la page affichée (sa boîte ne compte
+       pas dans la mise en page), `hidden` pour la page gardée.
+   Ce qui fait vivre une page gardée n'est PAS cet ordre : c'est que sa place
+   (le <div> rendu par `pageSlot`) reste LA SIENNE — même `key`, même rang —
+   pendant qu'elle est cachée comme lorsqu'elle redevient la page affichée. Voir
+   le commentaire des places, plus bas, et la sonde qui le mesure pour de vrai.
+   ========================================================================= */
+
+/* La SEULE exception : les deux pages « storage ». `StorageModule` est monté EN
+   PERMANENCE (c'est lui qui regarde `currentModule` pour se dessiner) : son état
+   ne meurt donc jamais, et le garder ferait une SECONDE page storage — avec ses
+   propres effets. */
+export const parkedAfter = (leftModule) => {
+  const left = String(leftModule == null ? '' : leftModule);
+  if (!left || left === 'storage' || left === 'storage-detail') return null;
+  return left;
+};
+
+/* La page affichée, puis celle qu'on garde — jamais deux fois la même. */
+export const pageSlotIds = (shownModule, parkedModule) => {
+  const shown = String(shownModule == null ? '' : shownModule) || 'dashboard';
+  const parked = parkedModule && parkedModule !== shown ? String(parkedModule) : null;
+  return parked ? [shown, parked] : [shown];
+};
+
+/* `display: contents` : la boîte de la place ne participe PAS à la mise en page,
+   la page affichée se dessine donc exactement comme si elle était l'enfant
+   direct du <div> flex de la zone principale (aucun cran de mise en page ajouté,
+   aucune hauteur à recalculer). La page gardée, elle, est en `display: none` :
+   invisible, mais montée. */
+export const pageSlotClass = (slotId, shownModule) => (slotId === shownModule ? 'contents' : 'hidden');
+
 
 /* -------------------------------------------------------------------------
    « OÙ J'ÉTAIS » — dernière expérience ouverte.
@@ -1977,19 +2036,100 @@ if (customType === 'dosy') {
      porte la base ouverte (`?dataset=…`, que l'effet ci-dessus relit) et la page
      demandée (`&mod=…`). La fenêtre d'origine n'est JAMAIS touchée : ce qu'elle a
      à l'écran — un formulaire à moitié rempli, un envoi en cours, un viewer 3D —
-     y reste, et y revenir ne recharge rien. */
+     y reste, et y revenir ne recharge rien.
+
+     ⚠ SANS `noopener,noreferrer` — C'EST LE POINT (le rapport : « the command
+     opening a second browser window should not ask for username and password but
+     go directly to the page »). La session du laboratoire vit dans le
+     `sessionStorage` de l'onglet : c'est là que Firebase range la session
+     (`setPersistence(SESSION)`, voir l'initialisation) et que la connexion pose
+     ses deux marqueurs — `labSessionTab` (« cette session appartient à CET
+     onglet », lu par l'écouteur d'état) et `labCurrentUser` (l'identité, dont
+     `currentUser` est initialisé). Un contexte ouvert SANS `noopener` est un
+     contexte AUXILIAIRE du nôtre : il naît dans la même session et reçoit donc
+     une copie de ce `sessionStorage`. La fenêtre neuve y trouve son identité et
+     son marqueur d'onglet : la session est reconnue, l'écran de connexion ne
+     s'affiche PAS, et la page demandée s'ouvre directement.
+     Avec `noopener` / `noreferrer`, au contraire, le nouveau contexte était un
+     contexte TOP-LEVEL indépendant, avec un `sessionStorage` VIDE : l'écouteur
+     d'état prenait la session restaurée pour « une session d'une exécution
+     précédente du navigateur » et la fermait (voir SESSION_TAB_KEY) — le mot de
+     passe était redemandé à chaque ⧉. (Mesuré dans Chrome : la fenêtre ouverte
+     sans `noopener` voit `labSessionTab = '1'` ; ouverte avec, son
+     `sessionStorage` est vide.) Bonus du même changement : `window.open` rend
+     `null` quand la liste de fonctions contient `noopener`, même si la fenêtre
+     s'est bien ouverte — l'avertissement « the browser blocked… » se déclenchait
+     donc à tort ; sans `noopener` il ne dit plus que la vérité.
+     Le geste ouvre NOTRE page, sur NOTRE origine (même chemin, mêmes
+     paramètres) : il n'y a aucun lien tiers à isoler ici (le risque de « reverse
+     tabnabbing » ne concerne que les pages qu'on ne contrôle pas), et les liens
+     EXTERNES de l'application gardent, eux, leur `rel="noopener noreferrer"`. */
   const openPageInNewWindow = useCallback((moduleId) => {
     const wanted = APP_PAGE_IDS.includes(moduleId) ? moduleId : 'dashboard';
     const q = new URLSearchParams();
     if (currentDatasetId) q.set('dataset', String(currentDatasetId));
     q.set('mod', wanted);
     const url = `${window.location.origin}${window.location.pathname}?${q.toString()}`;
-    const win = window.open(url, '_blank', 'noopener,noreferrer');
+    const win = window.open(url, '_blank');
     if (!win) {
       window.alert(`⚠️ The browser blocked the second window.\n\nAllow pop-ups for this site and press ⧉ again to open “${appPageLabel(wanted)}” in its own window — this window keeps everything it has loaded.`);
     }
     return win;
   }, [currentDatasetId]);
+
+  /* LA PAGE QUITTÉE RESTE VIVANTE — le mécanisme (les règles pures sont en tête
+     de fichier : parkedAfter / pageSlotIds / pageSlotClass). Une SEULE page est
+     gardée : en quitter une nouvelle libère la précédente. Cachée, mais MONTÉE :
+     c'est ce qui laisse un long chargement se terminer pendant qu'on travaille
+     ailleurs, et c'est pourquoi revenir sur une page ne recharge RIEN (ni la
+     structure 3D, ni une trajectoire, ni un formulaire à moitié rempli).
+
+     ⚠ L'ÉTAT EST AJUSTÉ PENDANT LE RENDU, PAS DANS UN EFFET — la sonde
+     _page_parking_render_test.cjs l'a mesuré, et c'est TOUT le mécanisme : un
+     effet s'exécute APRÈS le rendu, donc pendant UN rendu la page quittée ne
+     serait ni affichée ni gardée (`pageSlotIds` ne la listerait pas) : React la
+     DÉMONTERAIT, et le rendu suivant la remonterait VIDE (le compteur de montage
+     de la sonde passait de 1 à 2 et l'état repartait de zéro — le défaut
+     d'origine, en pire puisque invisible). Le geste documenté par React
+     (« adjusting state during render ») relance le rendu TOUT DE SUITE, sans
+     jamais commiter l'état intermédiaire : la place de la page ne disparaît donc
+     jamais de l'arbre. */
+  const [parkedModule, setParkedModule] = useState(null);
+  const [shownSeen, setShownSeen] = useState(currentModule);
+  if (shownSeen !== currentModule) {
+    setShownSeen(currentModule);
+    setParkedModule(parkedAfter(shownSeen));
+  }
+
+  /* La page qui REVIENT était en `display: none` : ses toiles n'ont pas vu la
+     fenêtre changer de taille pendant ce temps (NGL n'écoute QUE `resize` — voir
+     « NGL must be told when the container grew/shrunk » dans NMRMoleculeViewer)
+     et une toile mesurée à zéro resterait blanche. Le geste qui réaffiche une
+     page lui redonne donc l'événement, exactement comme la page MD le fait à
+     l'ouverture du viewer
+     (`setTimeout(() => window.dispatchEvent(new Event('resize')), 100)`). */
+  useEffect(() => {
+    const t = setTimeout(() => {
+      try { window.dispatchEvent(new Event('resize')); } catch { /* ignore */ }
+    }, 100);
+    return () => clearTimeout(t);
+  }, [currentModule]);
+
+  /* LES PLACES DE PAGE : la page affichée, et celle qu'on garde — `pageSlot(id,
+     render)` NE REND QUE ces deux-là (`pageSlots`, calculé par la règle pure
+     ci-dessus : les autres places rendent `null`, donc aucune autre page n'est
+     montée). Chaque page a SA place dans l'arbre et elle la garde : que la page
+     soit affichée ou gardée, c'est le même `<div key={id}>` au même rang. C'est
+     la règle des clés de React : rien ne bouge, sauf la classe — React réutilise
+     donc l'arbre entier (l'état, la scène 3D, les chargements en cours) au lieu
+     de le reconstruire. Mesuré par la sonde : mêmes nœuds DOM avant/après, et le
+     compteur de la page gardée ne repart jamais de zéro. */
+  const pageSlots = pageSlotIds(currentModule, parkedModule);
+  const pageSlot = (id, render) => (
+    pageSlots.includes(id)
+      ? <div key={id} data-page={id} className={pageSlotClass(id, currentModule)}>{render()}</div>
+      : null
+  );
 
   /* Datasets supprimés VOLONTAIREMENT pendant cette session. Le document est
      retiré de Firestore, mais le cache localStorage de l’appareil en garde une
@@ -5383,28 +5523,32 @@ const openDataset = (dset, { keepPlace = false } = {}) => {
             onReturnToTest={handleReturnToTest}
           />
 
-          {/* MAIN CONTENT */}
+          {/* MAIN CONTENT — UNE PLACE PAR PAGE : celle qu'on AFFICHE, et celle
+              qu'on vient de quitter, gardée VIVANTE mais cachée (voir pageSlot
+              plus haut : `contents` quand elle est affichée — sa boîte ne compte
+              pas dans la mise en page, la page se dessine exactement comme avant
+              —, `hidden` quand elle est gardée). */}
           <div className="flex-1 flex flex-col bg-slate-50 h-full overflow-hidden relative">
-            {currentModule === 'dashboard' && (<DashboardModule
+            {pageSlot('dashboard', () => (<DashboardModule
               datasetTitle={datasetTitle} setDatasetTitle={setDatasetTitle}
               datasetSubtitle={datasetSubtitle}
               handlePrint={handlePrint} tests={tests} setTests={setTests} storages={storages}
               setCurrentModule={setCurrentModule} mergedPlan={mergedPlan}
-            />)}
+            />))}
 
-            {currentModule === 'projects' && (<ProjectsModule
+            {pageSlot('projects', () => (<ProjectsModule
               currentUser={currentUser} operatorNames={operatorNames} handlePrint={handlePrint}
               setCurrentModule={setCurrentModule} setCurrentProjectId={setCurrentProjectId}
-            />)}
-            {currentModule === 'project-detail' && (<ProjectDetailModule
+            />))}
+            {pageSlot('project-detail', () => (<ProjectDetailModule
               currentUser={currentUser} setCurrentModule={setCurrentModule}
               currentProjectId={currentProjectId} setCurrentProjectId={setCurrentProjectId}
               createEmptyTest={createEmptyTest} tests={tests} setTests={setTests}
               setActiveTestId={setActiveTestId} jumpToTest={jumpToTest}
               operatorNames={operatorNames} openImageBuilder={openImageBuilder}
-            />)}
+            />))}
 
-            {currentModule === 'library' && (<LibraryModule
+            {pageSlot('library', () => (<LibraryModule
               allCmpds={allCmpds} setActiveLibrarySelection={setActiveLibrarySelection} activeLibrarySelection={activeLibrarySelection}
               allCellLines={allCellLines}
               compoundMeta={compoundMeta} setCompoundMeta={setCompoundMeta}
@@ -5417,9 +5561,9 @@ const openDataset = (dset, { keepPlace = false } = {}) => {
               nmrProbes={nmrProbes} setNmrProbes={setNmrProbes}
               nmrInstruments={nmrInstruments} setNmrInstruments={setNmrInstruments}
               nmrExperiments={nmrExperiments} setNmrExperiments={setNmrExperiments}
-            />)}
+            />))}
 
-            {currentModule === 'settings' && (<SettingsModule
+            {pageSlot('settings', () => (<SettingsModule
               customFields={customFields}
               mandatoryRules={mandatoryRules} setMandatoryRules={setMandatoryRules}
               mandatoryBehavior={mandatoryBehavior} setMandatoryBehavior={setMandatoryBehavior}
@@ -5432,16 +5576,16 @@ const openDataset = (dset, { keepPlace = false } = {}) => {
               datasetsList={datasetsList} deleteDataset={deleteDataset} deleteEmptyDatasets={deleteEmptyDatasets}
               datasetTitle={datasetTitle}
               serverMode={serverLoginMode}
-            />)}
+            />))}
 
-            {currentModule === 'agenda' && (<AgendaModule
+            {pageSlot('agenda', () => (<AgendaModule
               currentUser={currentUser} agendaOpFilter={agendaOpFilter} setAgendaOpFilter={setAgendaOpFilter}
               operatorNames={operatorNames} mergedPlan={mergedPlan}
               calFilterDate={calFilterDate} setCalFilterDate={setCalFilterDate}
               agendaGrouped={agendaGrouped} jumpToTest={jumpToTest}
               currentMonth={currentMonth} monthName={monthName} startDayOffset={startDayOffset} totalDays={totalDays}
               handlePrevMonth={handlePrevMonth} handleNextMonth={handleNextMonth} handlePrint={handlePrint}
-            />)}
+            />))}
 
             <StorageModule
               currentModule={currentModule} tests={tests} setTests={setTests} storages={storages} setStorages={setStorages}
@@ -5452,7 +5596,7 @@ const openDataset = (dset, { keepPlace = false } = {}) => {
               setDeleteStorageModal={setDeleteStorageModal}
             />
 
-            {currentModule === 'tests' && (<TestsModule
+            {pageSlot('tests', () => (<TestsModule
               authSettings={authSettings} createEmptyTest={createEmptyTest} currentUser={currentUser}
               expandedGroups={expandedGroups} handlePrint={handlePrint}
               setActiveTestId={setActiveTestId} setCurrentModule={setCurrentModule} setCurrentUser={setCurrentUser}
@@ -5462,8 +5606,8 @@ const openDataset = (dset, { keepPlace = false } = {}) => {
               allCellLines={allCellLines} allCmpds={allCmpds} operatorNames={operatorNames} plasmidMeta={plasmidMeta}
               solvents={solvents} buffers={buffers} additives={additives}
               nmrInstruments={nmrInstruments} nmrProbes={nmrProbes} nmrExperiments={nmrExperiments}
-            />)}
-            {currentModule === 'protocols' && (<ProtocolsModule
+            />))}
+            {pageSlot('protocols', () => (<ProtocolsModule
               datasetProtocols={datasetProtocols} expandedGroups={expandedGroups} handlePrint={handlePrint}
               nmrExperiments={nmrExperiments} operatorNames={operatorNames} currentUser={currentUser}
               protocolCategories={protocolCategories}
@@ -5472,8 +5616,8 @@ const openDataset = (dset, { keepPlace = false } = {}) => {
               setDatasetProtocols={setDatasetProtocols} setExpandedGroups={setExpandedGroups}
               setProtocolCategories={setProtocolCategories}
               tests={tests}
-            />)}
-            {currentModule === 'active-test' && (<SectionsScope value={activeTestId}><ActiveTestModule
+            />))}
+            {pageSlot('active-test', () => (<SectionsScope value={activeTestId}><ActiveTestModule
               key={`test-page-${testPageNonce}`}
               onRefreshPage={refreshTestPage}
               refreshedAt={testPageRefreshedAt}
@@ -5492,8 +5636,8 @@ const openDataset = (dset, { keepPlace = false } = {}) => {
               setExpandedGroups={setExpandedGroups} setMoveModal={setMoveModal} setTests={setTests}
               solvents={solvents} storages={storages} testCategories={testCategories} tests={tests}
               unlockedTestIds={unlockedTestIds} MDTestRenderer={MDTestRenderer}
-            /></SectionsScope>)}
-            {currentModule === 'notebook' && (<NotebookModule
+            /></SectionsScope>))}
+            {pageSlot('notebook', () => (<NotebookModule
               tests={tests} allCellLines={allCellLines} testCategories={testCategories}
               setActiveTestId={setActiveTestId} setCurrentModule={setCurrentModule}
               customConc={customConc} cmpColors={cmpColors} allCmpds={allCmpds}
@@ -5501,9 +5645,9 @@ const openDataset = (dset, { keepPlace = false } = {}) => {
               solvents={solvents} buffers={buffers} additives={additives}
               nmrInstruments={nmrInstruments} nmrProbes={nmrProbes} nmrExperiments={nmrExperiments}
               currentUser={currentUser}
-            />)}
+            />))}
 
-            {currentModule === 'calculations' && (<CalculationsModule
+            {pageSlot('calculations', () => (<CalculationsModule
               compoundMeta={compoundMeta} plasmidMeta={plasmidMeta}
               solvents={solvents} buffers={buffers} additives={additives}
               allCmpds={allCmpds} calculationEntries={calculationEntries}
@@ -5512,24 +5656,24 @@ const openDataset = (dset, { keepPlace = false } = {}) => {
                  sur le Drive dans `_workspace/datasets/ds_<id>.json` (voir
                  mirrorDatasetContent), et la page affiche ce chemin. */
               datasetDrivePath={currentDatasetId ? workspaceDatasetPath(currentDatasetId) : ''}
-            />)}
+            />))}
 
-            {currentModule === 'publications' && (<PublicationsModule
+            {pageSlot('publications', () => (<PublicationsModule
               operatorNames={operatorNames} tests={tests} currentUser={currentUser}
-            />)}
+            />))}
 
             {/* Image Builder: dedicated page, siblings with Publications in the
                 sidebar (it used to be appended to the Publications page).
                 openCanvasId → the saved canvas a project page asked to reopen;
                 onBackToProject → the "📁 Project page" button of the builder. */}
-            {currentModule === 'image-builder' && (<ImageBuilderModule
+            {pageSlot('image-builder', () => (<ImageBuilderModule
               projectId={currentProjectId} jumpToTest={jumpToTest} currentUser={currentUser}
               openCanvasId={(pendingCanvas && pendingCanvas.projectId === (currentProjectId || null)) ? pendingCanvas.canvasId : null}
               onCanvasOpened={() => setPendingCanvas(null)}
               onBackToProject={currentProjectId ? () => setCurrentModule('project-detail') : undefined}
-            />)}
+            />))}
 
-            {currentModule === 'administration' && (<AdministrationModule
+            {pageSlot('administration', () => (<AdministrationModule
               currentUser={currentUser} user={user}
               datasetTitle={datasetTitle} saveStatus={saveStatus}
               content={adminContent} onChange={setAdminContent}
@@ -5545,7 +5689,7 @@ const openDataset = (dset, { keepPlace = false } = {}) => {
               canAdminUndo={adminHistoryIndex > 0}
               onAdminUndo={handleAdminUndo}
               serverMode={serverLoginMode}
-            />)}
+            />))}
           </div>
         </div>
       )}

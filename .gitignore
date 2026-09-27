@@ -45,3 +45,12 @@ workspace-shared-token.json.*
 # rendu réel des pages Approbation devis & BC et Achats prévus).
 /_approval_bc_render/
 
+# Idem pour le probe de _load_progress_bar_test.mjs : la barre de chargement de
+# la barre du haut rendue pour de vrai (au repos · avec compteurs · sans
+# compteur · opération seulement déclarée).
+/_render_progress/
+
+# Idem pour la sonde de _page_parking_render_test.cjs : le motif des places de
+# page (la page quittée gardée vivante) rendu par un vrai Chrome.
+/_render_parking/
+

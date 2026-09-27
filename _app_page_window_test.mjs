@@ -16,7 +16,13 @@
         reste que le chemin.
      §3 `openPageInNewWindow` (App.jsx) — le geste du ⧉, EXÉCUTÉ avec un faux
         `window` : l'URL porte la base ET la page, une page inconnue retombe sur
-        « dashboard », et une fenêtre bloquée par le navigateur est DITE.
+        « dashboard », une fenêtre bloquée par le navigateur est DITE, et la
+        fenêtre neuve n'est PAS isolée (`noopener` / `noreferrer` interdits) :
+        c'est ce qui lui transmet la session de l'onglet — donc pas de mot de
+        passe redemandé (« the command opening a second browser window should not
+        ask for username and password but go directly to the page »). Mesuré dans
+        Chrome : la fenêtre ouverte sans `noopener` voit `labSessionTab = '1'` et
+        `labCurrentUser` dans SON `sessionStorage` ; ouverte avec, il est vide.
      §4 LE CÂBLAGE : la barre latérale offre ⧉ pour chaque page, App.jsx relit
         `?mod=` au démarrage d'une base et lui passe le geste ; la liste des pages
         n'existe qu'une fois (APP_NAV_ITEMS → APP_PAGE_IDS).
@@ -120,8 +126,22 @@ eq(win.calls.opened.length, 1, '⧉ ouvre UNE fenêtre');
 eq(win.calls.opened[0].url, 'https://lab.example/index.html?dataset=ds_42&mod=tests',
   '…sur la MÊME base et sur la page demandée');
 eq(win.calls.opened[0].target, '_blank', '…dans un nouvel onglet / une nouvelle fenêtre');
-ok(String(win.calls.opened[0].features).includes('noopener'),
-  '…sans donner à la fenêtre neuve la main sur celle-ci (noopener)');
+/* ── LA SESSION SUIT DANS LA FENÊTRE NEUVE ────────────────────────────────────
+   `noopener` — et `noreferrer`, qui l'implique — fait de la fenêtre neuve un
+   contexte TOP-LEVEL INDÉPENDANT, donc avec un `sessionStorage` VIDE : la session
+   Firebase (`setPersistence(SESSION)`) et ses deux marqueurs (`labSessionTab`,
+   `labCurrentUser`) n'y sont plus, et l'application redemandait le mot de passe à
+   chaque ⧉. La liste de fonctions du geste doit donc rester VIDE : c'est elle, et
+   rien d'autre, qui transmet la session. (Au passage : `window.open` rend `null`
+   quand la liste contient `noopener`, même si la fenêtre s'est ouverte — le
+   message « the browser blocked… » se déclenchait à tort.) */
+const FEATURES = win.calls.opened[0].features == null ? '' : String(win.calls.opened[0].features);
+ok(!/(^|[\s,])noopener([\s,]|$)/.test(FEATURES),
+  '…sans `noopener` : la fenêtre neuve garde la session de l’onglet (fonctions : « ' + FEATURES + ' »)');
+ok(!/(^|[\s,])noreferrer([\s,]|$)/.test(FEATURES),
+  '…et sans `noreferrer`, qui isole tout autant (aucun mot de passe redemandé)');
+hasApp("const win = window.open(url, '_blank');", '…le geste appelle `window.open` SANS troisième argument (aucune isolation)');
+hasApp('labSessionTab', '…et le code dit POURQUOI : la session vit dans le `sessionStorage` de l’onglet');
 ok(win.returned && win.returned.url, 'le geste rend la fenêtre ouverte (l’appelant peut la suivre)');
 
 eq(scenario('inventée', 'ds_42').calls.opened[0].url, 'https://lab.example/index.html?dataset=ds_42&mod=dashboard',

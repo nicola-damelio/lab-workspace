@@ -1,4 +1,4 @@
-// Les trente suites du VIEWER 3D seul — les plus rapides à relancer après une
+// Les trente-cinq suites du VIEWER 3D seul — les plus rapides à relancer après une
 // retouche de src/components/NMRMoleculeViewer.jsx (l'ensemble du dépôt, c'est
 // _run_all.cjs). _viewer_render_smoke_test.mjs est la SEULE ICI qui exécute un
 // vrai rendu : elle construit son probe en SSR et monte la page docking, chaque
@@ -209,6 +209,29 @@ const tests = [
   // faux window : base + page dans l'URL, page inconnue → accueil, fenêtre
   // bloquée DITE) et le câblage — une seule liste de pages (APP_NAV_ITEMS).
   '_app_page_window_test.mjs',
+  // LA PAGE QUITTÉE RESTE VIVANTE (le rapport : « Sometimes loading of files is
+  // very long and in the meantime i could do something else. can the loading be
+  // done in background while I change page to work elsewhere? », choix retenu
+  // « keep alive EVERY page I leave (one at a time, hidden) ») : les trois règles
+  // EXÉCUTÉES (parkedAfter · pageSlotIds · pageSlotClass), l'état de la page
+  // gardée ajusté PENDANT LE RENDU (dans un effet, la page quittée disparaîtrait
+  // de l'arbre pendant un rendu et serait remontée vide — c'est le piège que la
+  // sonde mesure), l'événement `resize` redonné à la page qui revient (NGL
+  // n'écoute que lui), et les quatorze pages de la zone principale — aucune ne
+  // doit rester sans place. Les deux pages « storage » en sont exclues, et c'est
+  // voulu : StorageModule est monté en permanence, le garder ferait une seconde
+  // page storage.
+  '_page_parking_test.mjs',
+  // LE MESSAGE D'ARRÊT REMPLACÉ PAR UNE BARRE DE CHARGEMENT (la demande) : le
+  // bouton « ⏹ Stop (structure loading) » qui vivait en haut à droite de CHAQUE
+  // page — même au repos, où il était grisé — a disparu, et la barre du haut de
+  // la fenêtre montre à la place la progression de l'opération en cours. Le
+  // magasin (utils/loadProgress.js) est EXÉCUTÉ (paliers réels, rapporteur
+  // périmé, auditeur qui jette, désabonnement), le câblage du viewer vérifié
+  // (les deux chargements, et la barre refermée sur leurs quatre chemins de
+  // sortie), puis la barre est RENDUE POUR DE VRAI (build SSR d'un probe
+  // exécuté dans Node) dans ses cinq états — au repos, elle ne dessine RIEN.
+  '_load_progress_bar_test.mjs',
   '_ligand_smiles_test.mjs',
   '_viewer_render_smoke_test.mjs',
   // …et le SEUL qui LIT DE VRAIS PIXELS, à la toute fin : quatre surfaces
@@ -219,6 +242,14 @@ const tests = [
   // qui remettrait le paramètre au défaut NGL) y casse la mesure du fond qui
   // traverse la paroi arrière, alors qu'aucune lecture de source ne la voit.
   '_viewer_surface_seethrough_pixels_test.cjs',
+  // …ET LE MÊME MÉCANISME DE PLACES DE PAGE, MESURÉ PAR UN VRAI NAVIGATEUR
+  // (≈10 s) : le seul garde-fou qui prouve ce que React fait vraiment des places
+  // (keyed siblings) — la page quittée garde LE MÊME nœud DOM, continue de vivre
+  // cachée, et les deux places ÉCHANGENT leur rang au retour (un remontage aurait
+  // remis le compteur à zéro). Le témoin négatif — le motif d'avant, montage
+  // conditionnel — est monté à côté et se fait bien détruire/recréer, sinon la
+  // sonde serait verte sans rien mesurer. SAUTÉE (exit 0) sans Chrome ni Edge.
+  '_page_parking_render_test.cjs',
 ];
 const rows = tests.map((t) => {
   const r = spawnSync(process.execPath, [t], { encoding: 'utf8' });

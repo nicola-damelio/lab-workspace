@@ -291,9 +291,15 @@ export const AppSidebar = ({
                       (`?dataset=…`) et la page demandée (`&mod=…`) : voir
                       openPageInNewWindow dans App.jsx. CETTE fenêtre-ci n'est pas
                       touchée — son écran, ses envois en cours et ses viewers restent
-                      exactement où ils en sont, et y revenir ne recharge rien. Le
-                      geste n'est offert que pour les pages d'une base scientifique :
-                      une base d'administration a sa propre navigation. */}
+                      exactement où ils en sont, et y revenir ne recharge rien.
+                      ⚠ La fenêtre neuve entre DANS LA MÊME SESSION (le geste ouvre
+                      `window.open` SANS `noopener` : le `sessionStorage` de cet
+                      onglet — session Firebase + `labSessionTab` — lui est
+                      transmis) : elle s'ouvre donc directement sur la page, sans
+                      redemander le mot de passe. Voir le bloc détaillé dans
+                      App.jsx. Le geste n'est offert que pour les pages d'une base
+                      scientifique : une base d'administration a sa propre
+                      navigation. */}
                   {isSidebarOpen && !adminOnly && typeof onOpenPageInNewWindow === 'function' && (
                     <button
                       type="button"

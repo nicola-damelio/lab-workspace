@@ -1,0 +1,17 @@
+<!doctype html>
+<!-- =========================================================================
+     _page_parking_probe.html — la page de la sonde
+     _page_parking_render_test.cjs (le motif des places de page, mesuré dans un
+     vrai navigateur). Elle ne porte RIEN : le bundle construit par Vite monte la
+     sonde dans #root, joue le geste (partir, revenir) et POSTe ses mesures.
+     L'entry est une page (et non une « lib ») EXPRÈS : c'est le seul mode où
+     Vite lie la feuille de style de l'application — donc le VRAI `.hidden` de
+     Tailwind, celui sur lequel repose le mécanisme (`display: none`), au lieu
+     d'une classe recopiée pour la sonde.
+     ========================================================================= -->
+<meta charset="utf-8" />
+<title>page parking probe</title>
+<body>
+  <div id="root"></div>
+  <script type="module" src="./_page_parking_probe.jsx"></script>
+</body>

@@ -634,6 +634,22 @@ secours reste active tant que les règles sont ouvertes.
   ⚠️ Le « reprendre là où j'en étais » de Chrome/Firefox peut restaurer
   `sessionStorage` (donc la session) : si cela gêne, une durée de vie (TTL) et
   une déconnexion d'inactivité peuvent être ajoutées (`authSettings`).
+* **Le ⧉ « ouvrir cette page dans une autre fenêtre » garde la session** — et
+  c'est volontaire : le geste appelle `window.open` **sans** `noopener` /
+  `noreferrer` (`openPageInNewWindow`, `src/App.jsx`). Sans ces deux jetons, la
+  fenêtre neuve est un contexte *auxiliaire* du même onglet et reçoit une copie
+  de son `sessionStorage` — donc la session Firebase et les marqueurs
+  `labSessionTab` / `labCurrentUser` : elle s'ouvre **directement sur la page
+  demandée**, sans redemander le mot de passe. Avec `noopener`, son
+  `sessionStorage` était vide, l'écouteur d'état prenait la session restaurée
+  pour « une session d'une exécution précédente » et la fermait : il fallait
+  ressaisir le mot de passe à chaque ⧉. Le lien ouvert est **notre propre page,
+  sur notre origine** (aucun lien tiers à isoler — le risque de *reverse
+  tabnabbing* ne concerne que les pages qu'on ne contrôle pas) ; les liens
+  externes de l'application conservent, eux, `rel="noopener noreferrer"`. Les
+  deux fenêtres partagent la session du moment de l'ouverture : un **Sign out**
+  dans l'une n'efface pas la copie de l'autre (fermez-la aussi sur un poste
+  partagé).
 * **L'identité de la session est construite par UNE SEULE règle**
   (`memberIdentity`, `src/utils/auth.js`) : l'id de la fiche opérateur — et avec
   lui le lien `personnelId` vers la fiche Personnel du module Administration —

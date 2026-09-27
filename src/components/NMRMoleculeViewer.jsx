@@ -25,6 +25,7 @@ import { enforceOneHeavyBondPerHydrogen } from '../utils/hydrogenBondRule';
 import { enforceCovalentProteinBonds } from '../utils/proteinBondRule';
 import { readXtcFrames, countXtcFrames, countXtcFramesInFile } from '../utils/xtcDecoder';
 import { abortControl, useAbortControl } from '../utils/abortControl';
+import { loadProgress } from '../utils/loadProgress';
 // HETATM code → SMILES: the Chemistry Component Dictionary of the RCSB (see
 // utils/ligandSmiles.js). A PDB only names its ligand by a 3-letter code, so this
 // is where the SMILES of a hand-loaded ligand comes from.
@@ -3348,9 +3349,16 @@ const COLOR_LABELS = {
   rainbow: 'Rainbow (first → last)',
   charge: 'Charge',
 };
-// The style sets of the request, named after the rows that are allowed to use them.
+/* The style sets of the request, named after the rows that are allowed to use them.
+   ⚠ LE SQUELETTE N'A PLUS DE LISTE À LUI (le rapport : « in the styling window
+   backbone drop-down commands still do not have all the values as general (but they
+   should) »). Il lisait `polymer` — la liste des polymères, plus courte que celle de
+   la rangée General de son type : ni « surface », ni « mesh », et pas un seul
+   « trace » pour un acide nucléique —, si bien que des commandes que General offrait
+   n'existaient PAS dans le menu de son propre squelette. La rangée « Backbone » lit
+   donc LA LISTE DE SA RANGÉE GENERAL (STYLES.protein · STYLES.nucleic, voir
+   SECTION_SUBSECTIONS) : les deux menus offrent exactement les mêmes commandes. */
 const STYLES = {
-  polymer: ['hide', 'cartoon', 'ribbon', 'tube', 'ball+stick', 'licorice', 'line', 'spacefill', 'sphere'],
   protein: ['hide', 'cartoon', 'ribbon', 'tube', 'ball+stick', 'licorice', 'line', 'spacefill', 'sphere', 'surface', 'mesh'],
   nucleic: ['hide', 'cartoon', 'ribbon', 'tube', 'trace', 'ball+stick', 'licorice', 'line', 'spacefill', 'sphere', 'surface', 'mesh'],
   bases: ['hide', 'base', 'rings', 'ball+stick', 'licorice', 'line', 'spacefill', 'sphere'],
@@ -3391,10 +3399,8 @@ const ATOM_DRAW_STYLES = ['ball+stick', 'licorice', 'line', 'spacefill', 'sphere
 // ions alone — it is what tells a Na⁺ from a Cl⁻ in the same solvent.
 const COLORS = {
   protein: ['solid', 'element', 'chain', 'residue', 'sstruc', 'hydrophobicity', 'esp', 'gradient', 'rainbow'],
-  proteinBackbone: ['solid', 'element', 'chain', 'residue', 'sstruc'],
   proteinSide: ['solid', 'element', 'chain', 'residue'],
   nucleic: ['solid', 'element', 'chain', 'basetype', 'nucform', 'hydrophobicity', 'esp', 'gradient', 'rainbow'],
-  nucleicBackbone: ['solid', 'element', 'chain', 'basetype', 'nucform'],
   nucleicParts: ['solid', 'element', 'chain', 'basetype'],
   lipid: ['solid', 'element', 'chain', 'lipidtype', 'hydrophobicity', 'esp'],
   lipidParts: ['solid', 'element', 'lipidtype'],
@@ -3436,12 +3442,18 @@ const selColorMode = (st) => {
 const SECTION_SUBSECTIONS = {
   protein: [
     { sub: 'general', label: 'General', styles: STYLES.protein, colors: COLORS.protein, def: { style: 'cartoon', colorBy: 'sstruc' }, sele: '' },
-    { sub: 'backbone', label: 'Backbone', styles: STYLES.polymer, colors: COLORS.proteinBackbone, def: { style: 'cartoon', colorBy: 'sstruc' }, sele: 'backbone' },
+    /* LE SQUELETTE OFFRE TOUT CE QUE SA RANGÉE GENERAL OFFRE (le rapport : « in the
+       styling window backbone drop-down commands still do not have all the values as
+       general (but they should) ») : mêmes styles, mêmes colorations. Les deux listes
+       courtes d'avant (`polymer`, `proteinBackbone`) n'existaient que pour cette
+       rangée — elles sont donc parties avec leur raison d'être, et un style que le
+       squelette sait dessiner est maintenant CHOISISSABLE ici comme sur General. */
+    { sub: 'backbone', label: 'Backbone', styles: STYLES.protein, colors: COLORS.protein, def: { style: 'cartoon', colorBy: 'sstruc' }, sele: 'backbone' },
     { sub: 'sidechain', label: 'Side chains', styles: STYLES.sidechains, colors: COLORS.proteinSide, def: { style: 'licorice', colorBy: 'element' }, sele: 'sidechain' },
   ],
   nucleic: [
     { sub: 'general', label: 'General', styles: STYLES.nucleic, colors: COLORS.nucleic, def: { style: 'cartoon', colorBy: 'basetype' }, sele: '' },
-    { sub: 'backbone', label: 'Backbone', styles: STYLES.polymer, colors: COLORS.nucleicBackbone, def: { style: 'cartoon', colorBy: 'basetype' }, sele: 'backbone' },
+    { sub: 'backbone', label: 'Backbone', styles: STYLES.nucleic, colors: COLORS.nucleic, def: { style: 'cartoon', colorBy: 'basetype' }, sele: 'backbone' },
     { sub: 'bases', label: 'DNA/RNA bases', styles: STYLES.bases, colors: COLORS.nucleicParts, def: { style: 'rings', colorBy: 'basetype' }, sele: 'bases' },
     { sub: 'ribose', label: 'DNA/RNA ribose', styles: STYLES.ribose, colors: COLORS.nucleicParts, def: { style: 'plates', colorBy: 'basetype' }, sele: 'ribose' },
   ],
@@ -5326,8 +5338,18 @@ const presetTransparencyOf = (key) => {
    ÉCRIT DEUX CHAMPS (rapport : « the option glass cannot be selected anymore »).
    Voir setSectionMaterialField, qui applique ce patch en une écriture. Pur :
    _viewer_materials_test.mjs l'exécute (§7bis). */
+/* UN CHAMP DE MATÉRIAU PEUT PORTER DEUX NOMS, ET C'EST LE MÊME CHAMP.
+   Le contrôle partagé des deux barres (renderLookControls) nomme le preset
+   « preset », comme le `mat` d'une ligne de Selections ; le look d'une rangée de la
+   fenêtre de styling l'appelle, lui, « material » (SECTION_LOOK_FIELDS /
+   FOLLOW_FIELDS, la ligne General le fait descendre sous ce nom-là). Sans cette
+   traduction, choisir « gloss » écrivait un champ `preset` que PERSONNE ne lit — le
+   menu retombait sur « auto » à la première reconstruction : le rapport « all
+   material drop-down menus do not work anymore ». Le patch traduit donc le nom, et
+   c'est le SEUL endroit qui a besoin de le savoir. */
+const MATERIAL_LOOK_FIELD = { preset: 'material' };
 const materialRowPatch = (field, value) => {
-  const patch = { [field]: value };
+  const patch = { [MATERIAL_LOOK_FIELD[field] || field]: value };
   if (field !== 'preset') return patch;
   const t = presetTransparencyOf(value);
   if (t != null) patch.opacity = t;
@@ -9815,11 +9837,18 @@ setStatus('loading');
 setErrorMsg('');
 setTrajFile(null);
 setTrajStatus('none');
+// The progression the top bar of the window draws while THIS structure loads
+// (see utils/loadProgress.js): each step below says what it is doing, and the
+// loop over the molecules of a complex gives it real counters (i of N).
+const loadRep = loadProgress.begin('structure loading');
+loadRep.phase('Reading the file…');
 // Release the global ⏹ Stop registration as soon as the structure finishes
-// loading (success or error) — otherwise the red "Stop (structure loading)"
-// pill stays visible forever after a completed load.
+// loading (success or error): otherwise the stop stays armed for ever, and the
+// loading bar of the top bar of the window (loadRep, just above) would stay up
+// on a page that is not loading anything any more.
 const finishStructLoad = () => {
   unregisterAbort();
+  loadRep.end();
   if (abortRef.current && abortRef.current.token === abortToken) abortRef.current = null;
 };
 setNumFrames(0);
@@ -9891,6 +9920,10 @@ throw firstErr;
 
 if (cancelled) return;
 componentRef.current = component;
+// The file is in memory: everything below is the app's own reading of it (bond
+// fixes, categories, representations, molecule split, residue list) — the bar
+// names those steps so a big file does not look frozen.
+loadRep.phase('Preparing the structure…');
 
 // What the FILE did not say about the sugars — the glycosidic linkages of a
 // polysaccharide — is written into the bond graph NOW, before a single
@@ -9956,6 +9989,7 @@ try {
     nucleicClasses: nucleicClassCounts(component.structure),
   } : null);
 } catch { setCatInfo(null); }
+loadRep.phase('Building the representations…');
 buildMainReps();
 shadowRepsHook(component);
 if (shadowOnRef.current) setMeshShadows(component);
@@ -9997,6 +10031,10 @@ try {
             ? `${onePartPerModel ? `Model ${part.model + 1}` : `Molecule ${ci + 1} (Model ${part.model + 1})`}${part.chainId && part.chainId !== '_' ? ` · ${part.chainId}` : ''}`
             : (part.chainId && part.chainId !== '_' ? `Chain ${part.chainId}` : `Molecule ${ci + 1}`);
           await loadChainMolecule(part.blob, label, ci);
+          // Real counters, at last: the molecules (or models) of a complex are
+          // loaded one after the other, so the bar knows its length here — the
+          // only step of a structure load that can say « i of N ».
+          loadRep.step(ci + 1, moleculeParts.length, 'Loading the molecules…');
         }
         setExtraMols(extraMolsSnapshot());
       }
@@ -10006,6 +10044,7 @@ try {
 
 // Residue ticks (resno / resname / 1-letter code / NATURE per residue) — built
 // ONCE here, because the strip AND the sequence handshake below both need them.
+loadRep.phase('Reading the residues…');
 const ticks = collectResidueTicks(component);
 setResidueTicks(ticks);
 stripResidueRiRef.current = null;
@@ -10050,6 +10089,7 @@ run();
 return () => {
   cancelled = true;
   unregisterAbort();
+  loadRep.end();   // a new load starts a fresh bar (see utils/loadProgress.js)
   if (abortRef.current && abortRef.current.token === abortToken) abortRef.current = null;
 };
 // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -10094,12 +10134,19 @@ setNumFrames(0);
 setTrajTotal(0);
 setCurrentFrame(0);
 setPlaying(false);
+// The same loading bar follows the trajectory (see utils/loadProgress.js): the
+// native XTC decode below is the only step of it whose length is known in
+// advance, and it reports its frames.
+const loadRep = loadProgress.begin('trajectory loading');
+loadRep.phase('Reading the trajectory…');
 
 // Release the global ⏹ Stop registration as soon as the trajectory finishes
-// (success or failure) — otherwise the red "Stop (trajectory loading)" pill
-// stays visible forever after a completed load.
+// (success or failure): otherwise the stop stays armed for ever, and the
+// loading bar of the top bar of the window would stay up on a page that is not
+// loading anything any more.
 const finishTrajLoad = () => {
   unregisterAbort();
+  loadRep.end();
   if (abortRef.current && abortRef.current.token === abortToken) abortRef.current = null;
 };
 
@@ -10147,6 +10194,9 @@ if (ext === 'xtc' && srcFile) {
       // behind (otherwise the live counter would claim "more than total").
       setNumFrames(done);
       if (totalFrames <= 0 || done > totalFrames) setTrajTotal(done);
+      // …and the top bar of the window shows those very frames (the only
+      // trajectory step that can say « frame i of N »).
+      loadRep.step(done, totalFrames, 'Reading the trajectory…');
       await new Promise((r) => setTimeout(r, 0)); // let React repaint + honour aborts
     }
   }
@@ -10236,6 +10286,7 @@ initTraj();
 return () => {
   cancelled = true;
   unregisterAbort();
+  loadRep.end();   // a new trajectory starts a fresh bar (see utils/loadProgress.js)
   if (abortRef.current && abortRef.current.token === abortToken) abortRef.current = null;
 };
 }, [trajFile, trajectoryFile, trajectorySrc, trajectoryFormat, status, trajAborted]);
