@@ -35,7 +35,11 @@
         (la fiche de la figure, page du projet) l'emporte sur la partie
         « Figures & captions », qui reste le DÉFAUT de toutes les figures ; et
         aucune image ne peut déborder de sa colonne (le réglage de largeur de la
-        page, elle, est celui d'une IMAGE ramenée à sa colonne).
+        page, elle, est celui d'une IMAGE ramenée à sa colonne). ET LA GRILLE DES
+        FIGURES N'AVALE PAS UN BARREUR : une figure pleine largeur est rendue HORS
+        de la grille `grid grid-cols-1 md:grid-cols-2`, parce qu'une grille ouvre
+        un contexte de formatage indépendant où `column-span: all` ne vaut plus —
+        c'est `pubFigureBarsPage` qui tranche, pour la page comme pour la feuille.
 
    CE QU'ELLE NE VÉRIFIE PAS ICI : l'export .docx. Word ne connaît pas
    `column-count` : il porte les colonnes dans le `sectPr` d'une section, et c'est
@@ -55,7 +59,8 @@ const {
   PUB_DOC_SPAN_IDS, PUB_HEAD_PART_IDS,
   PUB_LAYOUT_PARTS, PUB_LAYOUT_PART_IDS, PUB_PAGE_COLUMNS, PUB_PAGE_COLUMN_IDS,
   buildPubFormat, buildPubLayout, normalizePubFormat, normalizePubLayout,
-  pubFigureCols, pubLayoutCss, pubPageColumnsOf, pubSectionSpanIn, pubSectionSpanOf, pubSpanIn, pubSpanOf,
+  pubFigureBarsPage, pubFigureCols, pubFigureSpanOf, pubLayoutCss, pubPageColumnsOf,
+  pubSectionSpanIn, pubSectionSpanOf, pubSpanIn, pubSpanOf,
 } = await import('./src/components/pubCitation.js');
 const {
   JOURNAL_FORMATS, JOURNAL_IDS, applyDetectedFormat, applyJournalFormat, clearJournalFormat, journalLayoutPatches,
@@ -306,5 +311,33 @@ ok(PAGE.includes('patchSectionFigure(id, fig.id, { columns: Number(e.target.valu
   '…et la fiche de la figure écrit ce choix sur la figure du projet');
 ok(PAGE.includes('<option value="1">One column</option>') && PAGE.includes('<option value="2">Two columns</option>'),
   '…avec ses trois choix écrits en clair (« As in the format », « One column », « Two columns »)');
+
+/* ── 7 bis. LA FIGURE QUI BARRE LA PAGE VIT HORS DE LA GRILLE DES FIGURES ───
+   Une grille (`grid grid-cols-1 md:grid-cols-2`) ouvre un CONTEXTE DE FORMATAGE
+   INDÉPENDANT, et `column-span: all` ne vaut que pour « the nearest multicol
+   ancestor IN THE SAME BLOCK FORMATTING CONTEXT » (CSS Multi-column Layout §6.1) :
+   la figure pleine largeur posée dans la grille restait donc DANS sa colonne —
+   mesuré dans un navigateur (page de 600 px à deux colonnes) : 133 px au lieu de
+   600. La page du projet demande donc à pubFigureBarsPage OÙ rendre chaque
+   figure. La demande, mot pour mot : « figures that are defined to be full width
+   in the publication format are put inside a column when the text is defined in
+   column but it should not be like this. » */
+const colsOnly = { layout: { page: { columns: 2 } } };
+const wideFigures = { layout: { page: { columns: 2 }, figure: { span: 'all' } } };
+eq(pubFigureSpanOf(colsOnly, 2), 'all', '« Two columns » sur la fiche : la figure barre la page, même sous un format qui les met dans les colonnes');
+eq(pubFigureSpanOf(wideFigures, 0), 'all', 'la figure qui ne dit rien suit la partie « Figures & captions » (« Full width »)');
+eq(pubFigureSpanOf(wideFigures, 1), 'flow', '…mais « One column » sur sa fiche l’emporte : elle reste dans sa colonne');
+eq([pubFigureBarsPage(colsOnly, 2), pubFigureBarsPage(wideFigures, 0), pubFigureBarsPage(wideFigures, 1)],
+  [true, true, false], 'la figure barre-t-elle la page ? C’est la réponse que lit la page du projet pour la ranger');
+eq(pubFigureBarsPage(colsOnly, 0), false,
+  'une figure sans réglage sous un format « In the columns » reste dans la grille des figures, comme avant');
+eq(pubFigureBarsPage({ layout: { page: { columns: 1 }, figure: { span: 'all' } } }, 0), false,
+  'sur une page à UNE colonne aucune figure ne barre quoi que ce soit : le document ne change pas');
+ok(PAGE.includes('if (!pubFigureBarsPage(pubFormat, f.columns)) { row.push(f); return; }'),
+  'la page du projet range la figure qui barre la page HORS de la grille (les autres y restent)');
+ok(PAGE.includes('className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-4"'),
+  '…et la grille des figures qui coulent garde exactement son balisage');
+ok(PANEL.includes('pubFigureBarsPage'),
+  'le panneau ré-exporte pubFigureBarsPage vers la page du projet (elle l’importe de ../Publications)');
 
 console.log(`_pub_columns_test.mjs — ${passed} assertions OK (page à deux colonnes : chaque partie, chaque section et chaque figure)`);

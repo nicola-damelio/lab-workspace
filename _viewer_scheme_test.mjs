@@ -164,11 +164,24 @@ const sandbox = [
   sliceObject(VIEW, 'LIPID_CLASS_COLORS'),
   sliceObject(VIEW, 'lipidClassColorStore'),
   sliceFn(VIEW, 'lipidClassColorOf'),
-  sliceFn(VIEW, 'defineLipidClassScheme'),  // PART 4 — les palettes et les schémas que la barre de style lit.
+  sliceFn(VIEW, 'defineLipidClassScheme'),
+  // Les PARTIES des trois palettes de la demande : la classe de lipide (tête ·
+  // glycérol · chaînes), le ribose de chaque base et le squelette / les chaînes de
+  // chaque résidu — les tables, les lecteurs et les classificateurs d'atome, pris
+  // d'un seul tenant pour qu'aucune ligne ne soit recopiée ici.
+  sliceConst('LIPID_TYPE_ORDER'),
+  sliceFn(VIEW, 'lipidPartNameOf'),
+  sliceRange('const lipidPartDefaults = () => Object.fromEntries', 'let lipidClassSchemeKey'),
+  sliceObject(VIEW, 'BASE_SUGAR_COLORS'),
+  sliceObject(VIEW, 'baseSugarColorStore'),
+  sliceFn(VIEW, 'baseSugarColorOf'),
+  // (les deux lignes des PARTS d'un residu vivent plus bas, apres RESIDUE_COLOR_PALETTE)  // PART 4 — les palettes et les schémas que la barre de style lit.
   sliceConst('BASE_TYPE_ORDER'),
   sliceObject(VIEW, 'RESIDUE_COLOR_PALETTE'),
   sliceObject(VIEW, 'residueColorStore'),
   sliceFn(VIEW, 'residueColorOf'),
+  sliceConst('RESIDUE_ORDER'),
+  sliceRange('const PROTEIN_BACKBONE_ATOMS = new Set([', 'const defineResidueScheme'),
   sliceFn(VIEW, 'defineResidueScheme'),
   sliceObject(VIEW, 'baseTypeColorStore'),
   sliceFn(VIEW, 'baseTypeColorOf'),
@@ -198,6 +211,9 @@ const sandbox = [
     glycanEntityColorOf, defineGlycanScheme, glycanEntityMapFor, isSugarResidueCode,
     LIPID_CLASS_ALIASES, LIPID_CLASS_SUFFIXES, lipidClassOf, LIPID_CLASS_COLORS, lipidClassColorStore,
     lipidClassColorOf, defineLipidClassScheme ,
+    LIPID_TYPE_ORDER, lipidPartNameOf, LIPID_PART_DEFAULTS, lipidPartColorStore, lipidPartColorOf, lipidAtomPart,
+    BASE_SUGAR_COLORS, baseSugarColorStore, baseSugarColorOf,
+    RESIDUE_ORDER, PROTEIN_BACKBONE_ATOMS, proteinAtomPart, RESIDUE_PART_DEFAULTS, residuePartColorStore, residuePartColorOf,
       BASE_TYPE_ORDER, RESIDUE_COLOR_PALETTE, residueColorStore, residueColorOf, defineResidueScheme, baseTypeColorStore, baseTypeColorOf, defineBaseTypeScheme, CHARGE_COLORS, chargeColorStore, ionChargeOf, chargeColorOf, defineChargeScheme, SUGAR_TYPE_COLORS, sugarTypeColorStore, SUGAR_TYPE_OF_CODE, sugarTypeOf, sugarTypeColorOf };`
 ].join('\n');
 const H = new Function(sandbox)();
@@ -654,6 +670,75 @@ eq(classCm.atomColor(null), H.LIPID_CLASS_COLORS.OTHER, '…et un atome absent a
 H.lipidClassColorStore.PC = 0xabcdef;
 eq(classCm.atomColor({ resname: 'DPPC' }), 0xabcdef, 'la pastille d\'une classe est lue en direct');
 H.lipidClassColorStore.PC = H.LIPID_CLASS_COLORS.PC;
+
+/* ── 5ter. LES PARTIES DES TROIS PALETTES (la demande) ─────────────────────────
+   « for each type of lipid allow to define the color for headgroup, glycerol and
+   acyl chains », « for each type of base … bases, ribose/desoxyribose », « for
+   each type of amino acid … backbone and sidechains » — et ces couleurs sont
+   celles que « color by lipid type / base type / residue » peint. Chaque schéma
+   choisit donc la couleur par la PART de l'atome : la MARCHE des lipides d'abord
+   (les @index que les rangées dessinent), le NOM de l'atome ensuite, et — quand
+   aucun des deux ne sait — la couleur du TYPE, jamais une part inventée. */
+const lipidStruct = {};                       // une structure factice : la marche la connaît
+H.lipidPartIndexStore.structure = lipidStruct;
+H.lipidPartIndexStore.head = new Set([7]);
+H.lipidPartIndexStore.glycerol = new Set([8]);
+H.lipidPartIndexStore.acyl = new Set([9]);
+H.lipidPartColorStore.PC = { head: 0x111111, glycerol: 0x222222, acyl: 0x333333 };
+eq(classCm.atomColor({ resname: 'POPC', structure: lipidStruct, index: 7 }), 0x111111,
+  'POPC · la TÊTE prend la couleur de tête de SA classe');
+eq(classCm.atomColor({ resname: 'POPC', structure: lipidStruct, index: 8 }), 0x222222,
+  '…le glycérol la sienne');
+eq(classCm.atomColor({ resname: 'POPC', structure: lipidStruct, index: 9 }), 0x333333,
+  '…la chaîne acyle la sienne');
+eq(classCm.atomColor({ resname: 'POPC', atomname: 'C21' }), 0x333333,
+  'hors marche, le NOM suffit (C21 = un carbone de chaîne)');
+eq(classCm.atomColor({ resname: 'POPC', atomname: 'P' }), H.LIPID_CLASS_COLORS.PC,
+  'un nom que le lecteur ne sait PAS placer garde la couleur de classe (aucune part inventée)');
+eq(classCm.atomColor({ resname: 'DPPE', atomname: 'C31' }), H.LIPID_CLASS_COLORS.PE,
+  '…et une classe dont les parts n\'ont pas été touchées garde sa couleur unique');
+H.lipidPartColorStore.PC = { head: H.LIPID_CLASS_COLORS.PC, glycerol: H.LIPID_CLASS_COLORS.PC, acyl: H.LIPID_CLASS_COLORS.PC };
+H.lipidPartIndexStore.structure = null; H.lipidPartIndexStore.head = null;
+H.lipidPartIndexStore.glycerol = null; H.lipidPartIndexStore.acyl = null;
+
+// Les bases : le ribose / 2′-désoxyribose a SON swatch, la base et le phosphate
+// gardent le leur — les deux valent la couleur de la base par défaut.
+const baseKey = H.registerColorScheme(NGL, 'lab-test-base-type', H.defineBaseTypeScheme());
+const baseCm = NGL.ColormakerRegistry.getScheme({ scheme: baseKey });
+eq(baseCm.atomColor({ resname: 'DA', atomname: 'N1' }), H.BASE_IDENTITY_COLORS.A,
+  'la base garde la couleur de sa base');
+eq(baseCm.atomColor({ resname: 'DA', atomname: "C1'" }), H.BASE_IDENTITY_COLORS.A,
+  '…et son ribose AUSSI par défaut (les deux swatches sont égaux au départ)');
+H.baseSugarColorStore.A = 0x123456;
+eq(baseCm.atomColor({ resname: 'DA', atomname: "C1'" }), 0x123456,
+  'séparer le swatch du ribose change les seuls atomes primés');
+eq(baseCm.atomColor({ resname: 'DA', atomname: 'N1' }), H.BASE_IDENTITY_COLORS.A,
+  '…la base, elle, ne bouge pas');
+eq(baseCm.atomColor({ resname: 'DA', atomname: 'P' }), H.BASE_IDENTITY_COLORS.A,
+  'le phosphate reste avec la base');
+H.baseSugarColorStore.A = H.BASE_IDENTITY_COLORS.A;
+
+// Les résidus : squelette et chaînes latérales, lus au NOM de l'atome.
+// ⚠ LEU et non ALA : `residueColorOf` laisse un résidu dont le nom commence par
+// A · C · G · T · U prendre la couleur de sa BASE (ALA → A, CYS → C) — un
+// comportement d'origine, que ce schéma ne fait que traverser.
+const resKey = H.registerColorScheme(NGL, 'lab-test-residue', H.defineResidueScheme());
+const resCm = NGL.ColormakerRegistry.getScheme({ scheme: resKey });
+eq(resCm.atomColor({ resname: 'LEU', atomname: 'CA' }), H.RESIDUE_COLOR_PALETTE.LEU,
+  'à défaut, un atome de squelette prend la couleur du résidu');
+H.residuePartColorStore.LEU = { backbone: 0xaaaaaa, sidechain: 0xbbbbbb };
+eq(resCm.atomColor({ resname: 'LEU', atomname: 'CA' }), 0xaaaaaa,
+  '…le swatch « squelette » la remplace (N · CA · C · O)');
+eq(resCm.atomColor({ resname: 'LEU', atomname: 'CB' }), 0xbbbbbb,
+  'une chaîne latérale prend celui des chaînes');
+eq(resCm.atomColor({ resname: 'LEU' }), H.RESIDUE_COLOR_PALETTE.LEU,
+  'un atome sans nom garde la couleur du résidu (jamais de part inventée)');
+eq(resCm.atomColor({ resname: 'DG', atomname: "C1'" }), H.BASE_IDENTITY_COLORS.G,
+  'un résidu NUCLÉIQUE garde la couleur de sa base (les 20 acides aminés seuls ont deux parts)');
+H.residuePartColorStore.LEU = { backbone: H.RESIDUE_COLOR_PALETTE.LEU, sidechain: H.RESIDUE_COLOR_PALETTE.LEU };
+eq(H.proteinAtomPart(' ca '), 'backbone', 'le lecteur normalise le nom (casse et espaces)');
+eq(H.proteinAtomPart('CB'), 'sidechain', '…et range CB avec les chaînes');
+eq(H.proteinAtomPart(''), '', '…tandis qu\'un nom vide ne dit rien du tout');
 
 
 /* ── Bilan ══════════════════════════════════════════════════════════════ */

@@ -20,8 +20,11 @@ import {
   /* LES COLONNES, SECTION PAR SECTION ET FIGURE PAR FIGURE : ce fichier POSE les
      deux marques que la feuille du document et l'export .docx relisent — DOC_SECTION_ATTR
      sur une section (voir pubLayoutCss · layout.docSections) et FIGURE_COLS_ATTR sur
-     une figure (pubFigureCols, le choix de la fiche de la figure). */
-  DOC_SECTION_ATTR, FIGURE_COLS_ATTR, pubFigureCols
+     une figure (pubFigureCols, le choix de la fiche de la figure). `pubFigureBarsPage`
+     est la QUESTION posée à ces deux réglages (« cette figure prend-elle toute la
+     page ? ») : elle décide si la figure est rendue DANS la grille des figures ou
+     HORS d'elle — une grille ne laisse pas passer `column-span`. */
+  DOC_SECTION_ATTR, FIGURE_COLS_ATTR, pubFigureCols, pubFigureBarsPage
 } from '../Publications';
 import { getStarredItems, buildStarCaption, buildMaterialsAndMethods, tabConfigForType } from '../../utils/starredItems';
 import { loadProjects, saveProjects, saveProjectsChecked, lightenProjectForStorage, recordProjectDeletion, loadPublications, TEST_TYPE_OPTIONS, testTypeLabel, genProjectId, normalizeAuthorized, projectAccessFor, saveProjectsRescued } from './projectsModule';
@@ -3684,20 +3687,58 @@ export const ProjectDetailModule = ({
         {renderDocs(sectionDocs(s.id))}
       </div>
     );
-    const renderFigures = (list) => list.filter((f) => (f.url || '').trim() !== '').length > 0 && (
-      <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-4">
-        {list.filter((f) => (f.url || '').trim() !== '').map((f) => (
-          /* FIGURE_COLS_ATTR : le choix de LA figure (« one column » / « two
-             columns », sa fiche plus haut). Seule une figure réglée le porte —
-             les autres suivent le format (« Figures & captions »). */
-          <figure key={f.id} className="pf-figure"
-                  {...(pubFigureCols(f.columns) ? { [FIGURE_COLS_ATTR]: String(pubFigureCols(f.columns)) } : {})}>
-            <img src={f.url} alt={f.caption || 'Figure'} style={{ maxWidth: '100%', border: '1px solid #e2e8f0', borderRadius: '8px' }} />
-            {f.caption && <figcaption className="pf-caption text-xs text-slate-500 mt-1">{f.caption}</figcaption>}
-          </figure>
-        ))}
-      </div>
+    /* ── LES FIGURES D'UNE SECTION ────────────────────────────────────────────
+       DEUX RANGEMENTS, ET C'EST LA PAGE QUI DÉCIDE (voir pubFigureBarsPage) :
+         · une figure qui COULE dans les colonnes est posée dans la GRILLE DES
+           FIGURES — deux par rangée sur un écran large, comme avant ;
+         · une figure qui BARRE LA PAGE (sa fiche dit « Two columns », ou le
+           format met ses figures « Full width » — partie « Figures & captions »)
+           est rendue ENFANT DIRECT de la section, HORS de la grille. Une grille
+           ouvre un CONTEXTE DE FORMATAGE INDÉPENDANT, or `column-span: all` ne
+           vaut que pour « the nearest multicol ancestor IN THE SAME BLOCK
+           FORMATTING CONTEXT » (CSS Multi-column Layout §6.1) : dans la grille, la
+           figure pleine largeur restait donc DANS sa colonne (mesuré : 133 px au
+           lieu de la page entière). C'est la demande, mot pour mot : « figures that
+           are defined to be full width in the publication format are put inside a
+           column when the text is defined in column but it should not be like
+           this. »
+       L'ORDRE DE LA LISTE EST CELUI DU DOCUMENT dans les deux cas : les figures qui
+       coulent forment des rangées, et chaque barreur coupe la rangée là où il est
+       (voir flushRow). Une page à UNE colonne, ou un format qui laisse ses figures
+       dans les colonnes, ne change rien du tout : c'est la grille et le balisage
+       d'avant, au caractère près. */
+    const figureNode = (f) => (
+      /* FIGURE_COLS_ATTR : le choix de LA figure (« one column » / « two
+         columns », sa fiche plus haut). Seule une figure réglée le porte —
+         les autres suivent le format (« Figures & captions »). */
+      <figure key={f.id} className="pf-figure"
+              {...(pubFigureCols(f.columns) ? { [FIGURE_COLS_ATTR]: String(pubFigureCols(f.columns)) } : {})}>
+        <img src={f.url} alt={f.caption || 'Figure'} style={{ maxWidth: '100%', border: '1px solid #e2e8f0', borderRadius: '8px' }} />
+        {f.caption && <figcaption className="pf-caption text-xs text-slate-500 mt-1">{f.caption}</figcaption>}
+      </figure>
     );
+    const renderFigures = (list) => {
+      const shown = list.filter((f) => (f.url || '').trim() !== '');
+      if (shown.length === 0) return null;
+      const out = [];
+      let row = [];
+      const flushRow = () => {
+        if (row.length === 0) return;
+        out.push(
+          <div key={`figrow-${row[0].id}`} className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-4">
+            {row.map((f) => figureNode(f))}
+          </div>
+        );
+        row = [];
+      };
+      shown.forEach((f) => {
+        if (!pubFigureBarsPage(pubFormat, f.columns)) { row.push(f); return; }
+        flushRow();
+        out.push(figureNode(f));
+      });
+      flushRow();
+      return out;
+    };
     const renderDocs = (list) => list.length > 0 && (
       <ul className="mt-2 text-xs text-slate-600 list-disc pl-4">
         {list.map((d) => (

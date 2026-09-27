@@ -352,10 +352,36 @@ const baseTypeColorOf = (base) => {
   const v = baseTypeColorStore[b];
   return Number.isFinite(v) ? v : 0xbdbdbd;
 };
+/* ---- THE TWO PARTS OF EVERY BASE (the request) -------------------------------
+   « In the setting wheel expand the DNA/RNA bases definition of colors: for each
+   type of base allow to define the color for bases, ribose/desoxyribose. These
+   colors will be used when color by "base type" is chosen. »
+   The BASE colour is the swatch the wheel already had (A · C · G · T · U); the
+   SUGAR colour of each base is the second swatch next to it, and the
+   lab-base-type scheme below paints an atom with the colour of the part its NAME
+   belongs to: every primed name (C1' … C5', O2' … O5', H2' …) is the ribose /
+   2'-deoxyribose ring — the reader is nucleicGroupOf, the very one the nucleic
+   menus draw with — while the base rings and the phosphate keep the base colour.
+   The default of every sugar swatch IS its base colour, so the palette changes
+   nothing until the two swatches are separated in the wheel. */
+const BASE_SUGAR_COLORS = {
+  A: BASE_IDENTITY_COLORS.A, C: BASE_IDENTITY_COLORS.C, G: BASE_IDENTITY_COLORS.G,
+  T: BASE_IDENTITY_COLORS.T, U: BASE_IDENTITY_COLORS.U,
+};
+const baseSugarColorStore = { ...BASE_SUGAR_COLORS };
+const baseSugarColorOf = (base) => {
+  const b = String(base || '').trim().toUpperCase();
+  const v = baseSugarColorStore[b];
+  return Number.isFinite(v) ? v : baseTypeColorOf(b);
+};
 // The definition of the scheme (named so a test can extract and really run it).
 const defineBaseTypeScheme = () => {
   return function () {
-    this.atomColor = function (atom) { return baseTypeColorOf(nucBaseOf(atom && atom.resname)); };
+    this.atomColor = function (atom) {
+      const base = nucBaseOf(atom && atom.resname);
+      if (base && nucleicGroupOf(atom && atom.atomname) === 'pentose') return baseSugarColorOf(base);
+      return baseTypeColorOf(base);
+    };
   };
 };
 let baseTypeSchemeKey = null; // id returned by ColormakerRegistry.addScheme (null = unusable)
@@ -553,10 +579,60 @@ const residueColorOf = (resname) => {
   const v = residueColorStore[n];
   return Number.isFinite(v) ? v : DEFAULT_ELEMENT_COLOR;
 };
+/* ---- THE TWO PARTS OF EVERY RESIDUE (the request) ---------------------------
+   « In the setting wheel expand the aminoacid definition of colors: for each type
+   of amino acid allow to define the color for backbone and sidechains. These
+   colors will be used when color by "residue" is chosen. »
+   ONE backbone and ONE side-chain colour per residue, edited by the ⚙ wheel, and
+   the lab-residue scheme below paints an atom with the colour of the part it
+   belongs to.
+   THE PART IS READ FROM THE ATOM NAME: the backbone is N · CA · C · O, plus the
+   OXT of a terminus and the hydrogens that hang on those atoms (H · HN · H1-H3 ·
+   HA · HA2 · HA3 · HT1-HT3); everything else of a standard residue is a SIDE
+   CHAIN. An atom the reader cannot place — an empty name, a residue that is not
+   one of the twenty — keeps the residue's own colour, so nothing is ever painted
+   with a colour nobody chose. Both defaults ARE that residue colour: the new
+   swatches change nothing until they are separated in the wheel. */
+const PROTEIN_BACKBONE_ATOMS = new Set([
+  'N', 'CA', 'C', 'O', 'OXT', 'H', 'HN', 'HN1', 'HN2', 'HNT', 'H1', 'H2', 'H3',
+  'HA', 'HA2', 'HA3', 'HT1', 'HT2', 'HT3', '1H', '2H', '3H', 'D',
+]);
+const proteinAtomPart = (name) => {
+  const n = String(name == null ? '' : name).replace(/\s+/g, '').toUpperCase();
+  if (!n) return '';
+  return PROTEIN_BACKBONE_ATOMS.has(n) ? 'backbone' : 'sidechain';
+};
+const residuePartDefaults = () => Object.fromEntries(RESIDUE_ORDER.map((r) => [
+  r, { backbone: RESIDUE_COLOR_PALETTE[r], sidechain: RESIDUE_COLOR_PALETTE[r] },
+]));
+const RESIDUE_PART_DEFAULTS = residuePartDefaults();
+// The live store the lab-residue scheme reads — fed by the ⚙ wheel's swatches
+// (see the effect that persists them), never re-registered.
+const residuePartColorStore = Object.fromEntries(
+  RESIDUE_ORDER.map((r) => [r, { ...RESIDUE_PART_DEFAULTS[r] }]),
+);
+// The colour of ONE part of ONE residue: the swatch the wheel edits, or the
+// residue's own colour when the swatch is missing / not a colour.
+const residuePartColorOf = (resname, part) => {
+  const n = String(resname || '').trim().toUpperCase();
+  const row = residuePartColorStore[n];
+  const v = row && part ? row[part] : null;
+  return Number.isFinite(v) ? v : residueColorOf(resname);
+};
 // The definition of the scheme (named so a test can extract and really run it).
 const defineResidueScheme = () => {
   return function () {
-    this.atomColor = function (atom) { return residueColorOf(atom && atom.resname); };
+    this.atomColor = function (atom) {
+      const resname = atom && atom.resname;
+      const key = String(resname == null ? '' : resname).trim().toUpperCase();
+      // Only the twenty standard residues have two parts: a nucleic residue keeps
+      // its base colour and a ligand the readable grey (residueColorOf).
+      if (residuePartColorStore[key]) {
+        const part = proteinAtomPart(atom && atom.atomname);
+        if (part) return residuePartColorOf(resname, part);
+      }
+      return residueColorOf(resname);
+    };
   };
 };
 let residueSchemeKey = null; // id returned by ColormakerRegistry.addScheme (null = unusable)
@@ -1467,6 +1543,22 @@ const lipidGroupOf = (name, element, named = true) => {
   const h = /^H(\d+)[A-Z]*$/.exec(n);
   if (h) return lipidGroupOf(`C${h[1]}`, '', true);
   return 'head';
+};
+
+/* WHICH of those three parts a NAME alone says — the reader the lipid CLASS
+   colouring uses for an atom the walk of the lipids menu never saw (a selection
+   row, a structure whose lipids no section has drawn yet). It is deliberately
+   STRICTER than lipidGroupOf: a name it cannot place returns '' — « I do not
+   know » — where lipidGroupOf keeps the headgroup as its safe default, because a
+   COLOURING must never invent a part a picture does not show. */
+const lipidPartNameOf = (name) => {
+  const n = String(name || '').replace(/\s+/g, '').toUpperCase();
+  if (!n) return '';
+  if (LIPID_GLYCEROL_NAMES.has(n)) return 'glycerol';
+  if (LIPID_ACYL_RE.test(n)) return 'acyl';
+  const h = /^H(\d+)[A-Z]*$/.exec(n);
+  if (h) return lipidPartNameOf(`C${h[1]}`);
+  return '';
 };
 
 // The three sub-selections of the lipids of ONE structure, as NGL `@index`
@@ -2871,10 +2963,55 @@ const lipidClassColorOf = (resname) => {
   const v = lipidClassColorStore[lipidClassOf(resname)];
   return Number.isFinite(v) ? v : DEFAULT_ELEMENT_COLOR;
 };
+/* ---- THE THREE PARTS OF EVERY LIPID TYPE (the request) ----------------------
+   « In the setting wheel expand the lipid types definition of colors: for each
+   type of lipid allow to define the color for headgroup, glycerol and acyl
+   chains. These colors will be used when color by "lipid type" is chosen. »
+   ONE row of three swatches per class (Head · Glycerol · Acyl), and the scheme
+   below paints an atom with the part's colour of ITS class — POPC's headgroup is
+   the PC headgroup swatch, its chains the PC acyl swatch, and so on.
+   WHICH PART an atom is comes from the very walk the lipids menu draws with (the
+   @index sets lipidSubSelections leaves in lipidPartIndexStore) and, for an atom
+   that walk never saw, from its own NAME (lipidPartNameOf) — never a guess: a
+   name the reader cannot place keeps the CLASS colour, so a file with an unusual
+   nomenclature stays readable instead of being painted by halves.
+   The three defaults ARE the class colour: the new swatches change nothing until
+   the user separates them in the wheel. */
+const lipidPartDefaults = () => Object.fromEntries(LIPID_TYPE_ORDER.map((k) => [k, {
+  head: LIPID_CLASS_COLORS[k], glycerol: LIPID_CLASS_COLORS[k], acyl: LIPID_CLASS_COLORS[k],
+}]));
+const LIPID_PART_DEFAULTS = lipidPartDefaults();
+const lipidPartColorStore = Object.fromEntries(
+  LIPID_TYPE_ORDER.map((k) => [k, { ...LIPID_PART_DEFAULTS[k] }]),
+);
+// The colour of ONE part of ONE lipid class: the swatch the wheel edits, or the
+// class's own colour when the swatch is missing / not a colour.
+const lipidPartColorOf = (resname, part) => {
+  const row = lipidPartColorStore[lipidClassOf(resname)];
+  const v = row && part ? row[part] : null;
+  return Number.isFinite(v) ? v : lipidClassColorOf(resname);
+};
+// WHICH part of its lipid an atom is — the walk first (it is what the rows
+// DRAW), the name second, and '' when neither can say.
+const lipidAtomPart = (atom) => {
+  const i = atom && atom.index;
+  const store = lipidPartIndexStore;
+  if (i !== undefined && store.head
+    && (!atom.structure || !store.structure || atom.structure === store.structure)) {
+    if (store.acyl.has(i)) return 'acyl';
+    if (store.glycerol.has(i)) return 'glycerol';
+    if (store.head.has(i)) return 'head';
+  }
+  return lipidPartNameOf(atom && atom.atomname);
+};
 let lipidClassSchemeKey = null; // id returned by ColormakerRegistry.addScheme (null = unusable)
 const defineLipidClassScheme = () => {
   return function () {
-    this.atomColor = function (atom) { return lipidClassColorOf(atom && atom.resname); };
+    this.atomColor = function (atom) {
+      const part = lipidAtomPart(atom);
+      if (!part) return lipidClassColorOf(atom && atom.resname);
+      return lipidPartColorOf(atom && atom.resname, part);
+    };
   };
 };
 const registerLipidClassScheme = (NGL) => {
@@ -2985,6 +3122,30 @@ const loadPalette = (key, defaults) => {
 const savePalette = (key, v) => {
   try { localStorage.setItem(key, JSON.stringify(v)); } catch { /* ignore */ }
 };
+/* The PART palettes of the request — one colour per part of a lipid type, of a
+   base and of a residue — are ONE level deeper than the tables above, so they get
+   the same rule at their own depth: a KNOWN row (a class, a base, a residue) and a
+   KNOWN part (head · glycerol · acyl / base · sugar / backbone · sidechain) with a
+   FINITE colour, everything else dropped. A hand-edited entry can therefore never
+   paint a part the schemes do not read. */
+const mergePartPalette = (defaults, raw) => {
+  const out = {};
+  Object.keys(defaults).forEach((k) => {
+    out[k] = { ...defaults[k] };
+    const row = raw && typeof raw === 'object' ? raw[k] : null;
+    if (!row || typeof row !== 'object') return;
+    Object.keys(defaults[k]).forEach((part) => {
+      if (Number.isFinite(row[part])) out[k][part] = row[part];
+    });
+  });
+  return out;
+};
+const loadPartPalette = (key, defaults) => {
+  try {
+    return mergePartPalette(defaults, JSON.parse(localStorage.getItem(key) || 'null'));
+  } catch { /* unreadable entry → the defaults */ }
+  return Object.fromEntries(Object.keys(defaults).map((k) => [k, { ...defaults[k] }]));
+};
 
 /* ---- Which NGL colour SCHEME a per-molecule « Colour by » choice is ---------
    The Molecules bar offers the NGL metaphors (chain / residue / hydrophobicity)
@@ -3073,6 +3234,64 @@ const KIND_CATEGORY = {
 const KIND_VISIBLE_BY_DEFAULT = {
   protein: true, nucleic: true, lipid: true, sugar: true, ligand: true, water: false, ion: false,
 };
+
+/* ---- THE BACKGROUNDS OF THE STYLING WINDOW (the request) --------------------
+   « In the styling window use a very light orange background for proteins
+   section degrading for general, backbone and sidechains. Use a light gray color
+   for lipid section degrading from general, headgroups, glycerols and acylchain.
+   Use a light green background for nucleic acids section degrading from general,
+   backbone, ribose, bases. Use a light blue background for water section and a
+   light magenta background for ions. Use a light brown background for sugars
+   section. Make these colors customizable in the setting wheel. »
+
+   ONE base colour per KIND — the space of a molecule is painted with it — and the
+   ROWS inside that space FADE from it: the General row carries the strongest tint
+   and each part below it mixes a little more white (General · Backbone · Side
+   chains, General · Backbone · Ribose · Bases …), so the hierarchy of a space is
+   readable at a glance without reading a word. The ligands (the request names no
+   colour for them) get a neutral very light grey, and EVERY one of the seven is a
+   swatch of the ⚙ settings wheel, persisted like the other palettes. */
+const SECTION_TINT_KEY = 'labViewerSectionTints';
+const DEFAULT_SECTION_TINTS = {
+  protein: 0xffe2c2,   // very light orange
+  nucleic: 0xd9f2dd,   // light green
+  lipid: 0xe8e8e8,     // light grey
+  sugar: 0xefe0c8,     // light brown
+  water: 0xd7ecfb,     // light blue
+  ion: 0xf7d9f7,       // light magenta
+  ligand: 0xeef1f5,    // neutral — the request names no colour for a ligand
+};
+// How much white each row of a space mixes into the base tint. The first entry is
+// the GENERAL row (the most tinted), the last one is the deepest row a kind has.
+const SECTION_TINT_STEPS = [0.45, 0.62, 0.74, 0.84];
+// The seven kinds in the order the wheel draws their swatches.
+const SECTION_TINT_ORDER = ['protein', 'nucleic', 'lipid', 'sugar', 'water', 'ion', 'ligand'];
+const SECTION_TINT_LABELS = {
+  protein: 'Proteins', nucleic: 'Nucleic acids', lipid: 'Lipids', sugar: 'Sugars',
+  water: 'Water', ion: 'Ions', ligand: 'Ligands',
+};
+// TWO colours of the same shape, mixed: the ONE arithmetic the gradient of the
+// styling window needs. Pure, and the reason the tint table can stay seven
+// numbers long while the window shows a whole ladder of shades.
+const mixHex = (a, b, t) => {
+  const x = Number.isFinite(a) ? a : 0xffffff;
+  const y = Number.isFinite(b) ? b : 0xffffff;
+  const k = Math.max(0, Math.min(1, Number.isFinite(t) ? t : 0));
+  const chan = (shift) => {
+    const va = (x >> shift) & 0xff;
+    const vb = (y >> shift) & 0xff;
+    return Math.round(va + (vb - va) * k) & 0xff;
+  };
+  return (chan(16) << 16) | (chan(8) << 8) | chan(0);
+};
+// The tint of ONE kind (the swatch of the wheel), never undefined: an unknown
+// kind falls back on the neutral grey of the ligands.
+const sectionTintOf = (tints, kind) => {
+  const v = tints ? tints[kind] : null;
+  return Number.isFinite(v) ? v : (DEFAULT_SECTION_TINTS[kind] || DEFAULT_SECTION_TINTS.ligand);
+};
+// The background of a SPACE, and the background of ONE of its rows.
+const sectionCardTintCss = (tints, kind) => numToHex(sectionTintOf(tints, kind));
 
 // ---- The STYLE vocabulary (the request's wording, NGL's tokens) --------------
 const STYLE_LABELS = {
@@ -3224,6 +3443,16 @@ const SECTION_SUBSECTIONS = {
 };
 const subsectionsOf = (kind) => SECTION_SUBSECTIONS[kind] || SECTION_SUBSECTIONS.ligand;
 const subsectionSpec = (kind, sub) => subsectionsOf(kind).find((s) => s.sub === sub) || subsectionsOf(kind)[0];
+// The background of ONE ROW of a space: the kind's tint, mixed a little further
+// toward white for every step DOWN the list of its parts (see
+// SECTION_TINT_STEPS) — General is the most tinted, the last part the palest.
+const sectionRowTintOf = (tints, kind, sub) => {
+  const list = subsectionsOf(kind);
+  const i = Math.max(0, list.findIndex((s) => s.sub === sub));
+  const t = SECTION_TINT_STEPS[Math.min(i, SECTION_TINT_STEPS.length - 1)];
+  return mixHex(sectionTintOf(tints, kind), 0xffffff, t);
+};
+const sectionRowTintCss = (tints, kind, sub) => numToHex(sectionRowTintOf(tints, kind, sub));
 
 /* ---- The LOOK of one row ---------------------------------------------------
    `style` and `colorBy` are the two dropdowns, `solidColor` the swatch « Solid »
@@ -6136,6 +6365,23 @@ const [baseTypeColors, setBaseTypeColors] = useState(() => loadPalette('labViewe
 const [chargeColors, setChargeColors] = useState(() => loadPalette('labViewerChargeColors', CHARGE_COLORS));
 const [lipidTypeColors, setLipidTypeColors] = useState(() => loadPalette('labViewerLipidTypeColors', LIPID_CLASS_COLORS));
 const [sugarTypeColors, setSugarTypeColors] = useState(() => loadPalette('labViewerSugarTypeColors', SUGAR_TYPE_COLORS));
+/* 🎨 THE SEVEN BACKGROUNDS OF THE STYLING WINDOW (the request): one colour per
+   KIND of molecule, the swatch grid of the ⚙ wheel, persisted like the palettes
+   above. The rows of a space are NOT stored — they are this colour mixed toward
+   white (sectionRowTintCss), so moving one swatch repaints the whole ladder. */
+const [sectionTints, setSectionTints] = useState(() => loadPalette(SECTION_TINT_KEY, DEFAULT_SECTION_TINTS));
+const setSectionTint = (kind, hex) => setSectionTints((p) => ({ ...p, [kind]: hex }));
+const resetSectionTints = () => setSectionTints({ ...DEFAULT_SECTION_TINTS });
+// The THREE PARTS of every lipid type (Head · Glycerol · Acyl) — the request's
+// second expansion of the ⚙ wheel. One object per class, persisted like the rest.
+const [lipidPartColors, setLipidPartColors] = useState(() => loadPartPalette('labViewerLipidPartColors', LIPID_PART_DEFAULTS));
+// The TWO PARTS of every DNA/RNA base: the base itself (the swatch the wheel
+// already had) and its ribose / 2'-deoxyribose ring — the request's third
+// expansion.
+const [baseSugarColors, setBaseSugarColors] = useState(() => loadPartPalette('labViewerBaseSugarColors', BASE_SUGAR_COLORS));
+// The TWO PARTS of every one of the twenty residues: backbone and side chains —
+// the request's fourth expansion. Both default to the residue's own colour.
+const [residuePartColors, setResiduePartColors] = useState(() => loadPartPalette('labViewerResiduePartColors', RESIDUE_PART_DEFAULTS));
 // 🔗 The CHAIN palette (« Color by : Chain ») — React state (the ⚙ wheel repaints at
 // once), persisted like the others, and copied into the mutable store the lab-chain
 // scheme reads (see the effect below): ONE palette, so the wheel and every coloured
@@ -6713,6 +6959,18 @@ const [molFold, setMolFold] = useState({});   // { [molKey]: 'style' | 'color' |
 const toggleMolFold = (key, section) => setMolFold((prev) => ({ ...prev, [key]: prev[key] === section ? null : section }));
 const foldOpen = (key, section) => molFold[key] === section;
 const [residueTicks, setResidueTicks] = useState([]); // [{ resno, resname, code, chainid }] — sequence strip above the 3D view
+// The SAME list in a ref: the « Selected » space of the styling window (the
+// request) is built inside rebuildSectionsOf, which applyCurrentStyleTo calls
+// through a useCallback with no dependency — a state read there would be the
+// FIRST render's value. The ref always holds the list the strip is showing.
+const residueTicksRef = useRef(residueTicks);
+residueTicksRef.current = residueTicks;
+/* 🎯 THE SIGNATURE OF THE « SELECTED » SPACE (the request): its rows are drawn by
+   the very builder of a molecule's space, so the rebuild has to follow the
+   SELECTION as well as the looks — same keys, same ticks, same kinds. The looks
+   have their own signature (styleSignature), which cannot see the selection:
+   this one is added to the dependency array of the effects that rebuild. */
+const selectedSpaceSig = `${(selectedKeys || []).join(',')}|${residueTicks.length}|${status}`;
 const extraCompsRef = useRef([]);                  // [{ id, name, comp, baseReps, style, color }]
 // "⚡ ESP" electrostatic-potential overlay — an optional extra NGL `surface`
 // representation per molecule component, coloured by NGL's built-in
@@ -7280,6 +7538,43 @@ useEffect(() => {
     if (Number.isFinite(sugarTypeColors[type])) sugarColorStore[code] = sugarTypeColors[type];
   });
 }, [sugarTypeColors]);
+/* 🎨 THE BACKGROUNDS OF THE STYLING WINDOW (the request): one swatch per KIND,
+   persisted like every other palette. Nothing else to feed — the styling window
+   reads this state directly (sectionCardTintCss / sectionRowTintCss), so moving a
+   swatch repaints the spaces and their whole ladder of rows at once. */
+useEffect(() => { savePalette(SECTION_TINT_KEY, sectionTints); }, [sectionTints]);
+/* 💧 THE THREE PARTS OF EVERY LIPID TYPE feed the class scheme's live store, so
+   moving one swatch repaints — at once — every lipid coloured by « Lipid type »,
+   without re-registering the scheme (the same contract as every palette here).
+   A stored row that lost a part falls back on the class's own default colour. */
+useEffect(() => {
+  savePalette('labViewerLipidPartColors', lipidPartColors);
+  Object.keys(LIPID_PART_DEFAULTS).forEach((k) => {
+    Object.keys(LIPID_PART_DEFAULTS[k]).forEach((part) => {
+      const v = lipidPartColors[k] ? lipidPartColors[k][part] : null;
+      lipidPartColorStore[k][part] = Number.isFinite(v) ? v : LIPID_PART_DEFAULTS[k][part];
+    });
+  });
+}, [lipidPartColors]);
+// 🧬 …the same for the ribose / 2'-deoxyribose colour of every base.
+useEffect(() => {
+  savePalette('labViewerBaseSugarColors', baseSugarColors);
+  Object.keys(BASE_SUGAR_COLORS).forEach((b) => {
+    const v = baseSugarColors[b];
+    if (Number.isFinite(v)) baseSugarColorStore[b] = v;
+  });
+}, [baseSugarColors]);
+// 🧪 …and for the backbone / side-chain colour of every residue.
+useEffect(() => {
+  savePalette('labViewerResiduePartColors', residuePartColors);
+  Object.keys(RESIDUE_PART_DEFAULTS).forEach((r) => {
+    const row = residuePartColors[r] || {};
+    Object.keys(RESIDUE_PART_DEFAULTS[r]).forEach((part) => {
+      const v = row[part];
+      residuePartColorStore[r][part] = Number.isFinite(v) ? v : RESIDUE_PART_DEFAULTS[r][part];
+    });
+  });
+}, [residuePartColors]);
 // 🔗 Feed the CHAIN palette from the ⚙ wheel: the lab-chain scheme reads this store
 // live, so moving a swatch repaints every molecule coloured by « Chain » at once —
 // no scheme is ever re-registered (the report: « it is possible to color by chain
@@ -8446,7 +8741,106 @@ const listMoleculeSections = (structure) => {
   ));
 };
 
+/* ══ PART 4.2bis · THE « SELECTED » SPACE ═════════════════════════════════════
+   The request: « Add a section "selected" for selected residues, use the same
+   menus as for molecules; general, backbone, sidechains, ribose/desoxyribose,
+   DNA/RNA bases, headgroups, glycerol, acyl chains. Not all these dropdown menu
+   must appear but only those related to selections classified as proteins,
+   nucleic acids or lipids. For example if a protein and a nucleic acid are
+   selected do not show headgroups, glycerol, acyl chains. If the selection is
+   not classified as proteins, nucleic acid or lipids, just show the general. »
+
+   The selected residues are the ones the SEQUENCE STRIP lights (the ticks the
+   page keeps in `selectedKeys`, `${resno - 1}-${atom}` — see
+   stripHighlightClauses) PLUS the residues of an atom picked in 3D, and they are
+   classified by the VERY reader that classifies a molecule's space
+   (classifySectionResidue): a kind that is really there becomes ONE synthetic
+   section whose `sele` is the clause of those residues. The whole machinery of
+   PART 4 then applies to the selection — the rows of its kind, the hierarchy of
+   General, the radii, the materials, the palettes — without a second
+   implementation. A selection with none of the three kinds (a water, an ion, a
+   ligand) gives ONE section of kind `ligand`: its list of parts is the General
+   row alone, which is exactly what the request asks for. */
+const SELECTED_SECTION_PREFIX = '__selected__';
+const SELECTED_KINDS = ['protein', 'nucleic', 'lipid'];
+// ONE residue of a tick, in the shape classifySectionResidue reads. `elements`
+// is derived from the atom NAMES (atomElement), because a tick carries the names
+// of its residue and nothing else.
+const tickResidueRecord = (tick) => {
+  const names = Array.isArray(tick && tick.atomNames) ? tick.atomNames : [];
+  const elements = new Set();
+  names.forEach((n) => { const e = atomElement(n, ''); if (e) elements.add(e); });
+  return {
+    resname: String((tick && tick.resname) || '').toUpperCase(),
+    atomNames: new Set(names.map((n) => String(n || '').trim().toUpperCase())),
+    elements,
+    count: names.length,
+  };
+};
+/* WHICH residues are selected, kind by kind: a Map `kind → Map(clé → clause)`,
+   the key being the chain + number + name of the residue (the very identity
+   residueTickClause writes into the clause). An unclassified residue lands in
+   `other` — the bucket that only gets the General row. Pure. */
+const selectedResiduePlan = (keys, ticks) => {
+  const list = Array.isArray(ticks) ? ticks : [];
+  const byRi = new Map();
+  list.forEach((t) => {
+    const ri = Number(t && t.resno) - 1;
+    if (!Number.isFinite(ri)) return;
+    if (!byRi.has(ri)) byRi.set(ri, []);
+    byRi.get(ri).push(t);
+  });
+  const out = new Map();
+  (Array.isArray(keys) ? keys : []).forEach((k) => {
+    const ri = parseInt(String(k).split('-')[0], 10);
+    if (!Number.isFinite(ri)) return;
+    (byRi.get(ri) || []).forEach((t) => {
+      const kindOfResidue = classifySectionResidue(tickResidueRecord(t));
+      const kind = SELECTED_KINDS.includes(kindOfResidue) ? kindOfResidue : 'other';
+      const clause = residueTickClause(t);
+      if (!clause) return;
+      if (!out.has(kind)) out.set(kind, new Map());
+      out.get(kind).set(`${t.chainname || t.chainid}|${t.resno}|${t.resname}`, clause);
+    });
+  });
+  return out;
+};
+/* The SECTIONS of the « Selected » space — one per kind that is really in the
+   selection (so a protein + a nucleic acid give two spaces, and neither of them
+   has headgroups · glycerol · acyl chains), or ONE `ligand`-kinded space (the
+   General row alone) when none of the three is there. `nombre` keeps the
+   sentence of the space readable: « Selected » alone, or « Selected · protein »
+   when several kinds share it. Pure — the bar and the renderer both call it. */
+const selectedResidueSections = (keys, ticks) => {
+  const plan = selectedResiduePlan(keys, ticks);
+  const kinds = SELECTED_KINDS.filter((k) => plan.has(k));
+  const rows = kinds.length ? kinds : ['other'];
+  const many = kinds.length > 1;
+  return rows.map((k) => {
+    const kind = k === 'other' ? 'ligand' : k;
+    const clauses = [...(plan.get(k) || new Map()).values()];
+    return {
+      id: `${SELECTED_SECTION_PREFIX}::${k}`,
+      key: `selected|${k}`,
+      kind,
+      name: many ? `Selected · ${MOL_KIND_LABELS[kind]}` : 'Selected',
+      detail: `${clauses.length} residue${clauses.length > 1 ? 's' : ''}`,
+      // ⚠ ONE CLAUSE PER RESIDUE, AND EACH ONE PARENTHESISED: a row selector is
+      // built as `${base} and backbone`, and NGL binds `and` TIGHTER than `or` —
+      // without the parentheses only the LAST residue of the selection would keep
+      // its part, the others being taken whole.
+      sele: clauses.length > 1 ? clauses.map((c) => `(${c})`).join(' or ') : clauses[0],
+      count: clauses.length,
+      selected: true,
+    };
+  // NOTHING RESOLVED (no selection at all, or keys that answer no tick): no space,
+  // rather than a space whose selector would be `undefined`.
+  }).filter((s) => !!s.sele);
+};
+
 /* ══ PART 4.3 · THE RENDERER — ONE MOLECULE SECTION BEHIND THE OTHER ══════════ */
+
+
 // Draws every section of ONE component from its tree of looks, and returns the
 // representations it added so the caller removes exactly those again. The plates of
 // « Stylized rings (filled plates) » / « Ring plates » are MeshBuffers handed to the
@@ -9090,6 +9484,17 @@ const molKeyOfComp = (comp) => {
   const hit = (extraCompsRef.current || []).find((e) => e && e.comp === comp);
   return hit ? hit.id : 'main';
 };
+/* 🎯 THE SYNTHETIC SECTIONS OF THE « SELECTED » SPACE (the request) — the rows
+   the styling window shows for the selected residues, and the very sections the
+   renderer draws. ONE function for both, read through the refs (see
+   residueTicksRef), so the rows a space offers are exactly the rows it paints.
+   Nothing selected, or no structure: no space at all. */
+const selectedSectionsForUi = () => {
+  if (statusRef.current !== 'ready') return [];
+  const keys = selectedKeysRef.current;
+  if (!Array.isArray(keys) || keys.length === 0) return [];
+  return selectedResidueSections(keys, residueTicksRef.current);
+};
 // Rebuild EVERY representation of ONE component from its sections (PART 4). The
 // sections are enumerated once per structure (ensureSections), each one carries its
 // own tree of looks, and the ESP surfaces « Electrostatic potential » needs are
@@ -9097,7 +9502,14 @@ const molKeyOfComp = (comp) => {
 // file and a chain — the bar can never style one molecule with another's rules.
 const rebuildSectionsOf = (comp, molKey) => {
   if (!comp || !comp.structure) return [];
-  const sections = ensureSections(comp, molKey);
+  // 🎯 THE « SELECTED » SPACE (the request) belongs to the MAIN structure: the
+  // selection is a set of ITS residues, and it is drawn by the very builder of
+  // every molecule — one synthetic section per kind the selection really holds
+  // (see selectedResidueSections). A selection with none of the three kinds gives
+  // the single General row.
+  const sections = ensureSections(comp, molKey).concat(
+    molKey === 'main' ? selectedSectionsForUi() : [],
+  );
   catEspRepsRef.current.set(comp, []);
   return buildSectionReps(comp, sections, sectionTreesOf(sections), {
     hidden: hiddenSectionIds(sections),
@@ -10777,7 +11189,7 @@ useEffect(() => {
     selCompsRef.current = {};
   };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [status, selections, selStyles, pymolActive, hideAll, styleSignature, sstrucColors]);
+}, [status, selections, selStyles, pymolActive, hideAll, styleSignature, sstrucColors, selectedSpaceSig]);
 
 // ── Material: applied AFTER the representations exist ────────────────────────
 // roughness / metalness live in NGL's shader UNIFORMS, not in its parameters
@@ -10822,7 +11234,7 @@ const applyMaterialsToScene = () => {
 useEffect(() => {
   applyMaterialsToScene();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [sectionCatalog, status, selStyles, pymolActive, hideAll, styleSignature]);
+}, [sectionCatalog, status, selStyles, pymolActive, hideAll, styleSignature, selectedSpaceSig]);
 
 // The two sliders of a row's material: NGL's own rough, non-metallic material is
 // what « auto » shows until the user moves them.
@@ -11632,7 +12044,11 @@ const renderLookControls = ({
       </div>
     )}
     {/* The 2°-structure palette RIGHT WHERE « Secondary structure » was chosen:
-        helix · sheet · loop, plus the ⚙ of its own section. */}
+        helix · sheet · loop. THE WHEEL BUTTON IS NOT REPEATED HERE (the request:
+        « the setting wheel is now repeated in every space but only one on the top
+        of the window is sufficient ») — the single ⚙ of the styling window's
+        header opens the wheel, whose « Secondary structure » section edits these
+        very three colours. */}
     {look.colorBy === 'sstruc' && (
       <div className="flex items-center gap-1 flex-wrap">
         {SSTRUC_COLOR_ITEMS.map((it) => (
@@ -11641,19 +12057,11 @@ const renderLookControls = ({
             className="w-5 h-5 rounded border border-slate-300 cursor-pointer shrink-0"
             title={`Colour of the ${it.what} — the 2°-structure palette (helix · sheet · loop)`} />
         ))}
-        <button type="button" onClick={() => setSettingsPanelOpen(true)}
-          className="px-1 py-0.5 text-[10px] font-bold rounded border bg-slate-50 border-slate-300 text-slate-600 hover:bg-slate-100 shrink-0"
-          title="Open the ⚙ settings wheel — « Secondary structure » has a section of its own there">⚙</button>
       </div>
     )}
-    {/* « Color by chain » needs the chain palette of the ⚙ wheel — offered right
-        here, exactly like the row of the styling window does. */}
-    {look.colorBy === 'chain' && (
-      <button type="button" onClick={() => setSettingsPanelOpen(true)}
-        className="px-1 py-0.5 text-[10px] font-bold rounded border bg-slate-50 border-slate-300 text-slate-600 hover:bg-slate-100 shrink-0"
-        title="Open the ⚙ settings wheel — the colour of every CHAIN (A · B · C …) has a section of its own there">
-        ⚙</button>
-    )}
+    {/* « Color by chain » reads the chain palette of the ⚙ wheel — a section of its
+        own there (« Chains · color by chain »), opened by the ONE ⚙ of the styling
+        window's header. No second opener in the row (see the note above). */}
     {/* ── LINE 2 — the SAME regulators as the styling window, with the same
         tooltips, so a row of either bar is read the same way. The two radii
         multiply the style's own atom size / stick thickness (1.00 = untouched);
@@ -11740,8 +12148,13 @@ const renderSectionRow = (sec, sub) => {
   const isSurface = look.style === 'surface' || look.style === 'mesh';
   const isPlates = look.style === 'rings' || look.style === 'plates';
   const uid = `« ${spec.label} » of ${sec.name}`;
+  /* 🎨 THE BACKGROUND OF A ROW: the tint of the space, mixed a little further
+     toward white for every step down the list of its parts — so « General ·
+     Backbone · Side chains » reads as a fading ladder, exactly as the request
+     asks. The membrane rows (renderMembraneSelections) keep their teal frame. */
   return (
-    <div key={`${sec.id}|${sub}`} className="rounded border border-slate-200 bg-white/85 px-1 py-0.5 flex flex-col gap-0.5">
+    <div key={`${sec.id}|${sub}`} className="rounded border border-slate-200 bg-white/85 px-1 py-0.5 flex flex-col gap-0.5"
+      style={{ backgroundColor: sectionRowTintCss(sectionTints, kind, sub) }}>
       {/* THE ROW ITSELF IS renderLookControls: the Style and Color by dropdowns,
           the swatch the colouring needs, the Transp · R● · R— regulators and the
           🎛 material — the ONE implementation both bars run (see its own note
@@ -11973,20 +12386,31 @@ const renderSection = (sec) => {
   const kind = sec.kind;
   const labels = { ...SECTION_LABEL_DEFAULTS, ...(sectionLabels[sec.id] || null) };
   const shown = sectionVisible(sec.id, kind);
+  /* 🎨 THE BACKGROUND OF A SPACE (the request): the light colour of its KIND —
+     very light orange for a protein, light grey for a lipid, light green for a
+     nucleic acid, light blue for water, light magenta for an ion, light brown for
+     a sugar — with the rows inside fading from it toward white. Both shades come
+     from the ⚙ wheel's « Styling window backgrounds » section; the selection of a
+     molecule keeps its blue BORDER (the tint is the background now). */
   return (
-    <div key={sec.id} className={`rounded border px-1 py-0.5 flex flex-col gap-0.5 ${selectedMolKey === sec.id ? 'border-blue-300 bg-blue-50/40' : 'border-slate-200'}`}>
+    <div key={sec.id}
+      className={`rounded border px-1 py-0.5 flex flex-col gap-0.5 ${selectedMolKey === sec.id ? 'border-blue-300' : 'border-slate-200'}`}
+      style={{ backgroundColor: sectionCardTintCss(sectionTints, kind) }}>
       <div className="flex items-center gap-1">
         <input type="checkbox" checked={shown} onChange={() => toggleSectionVisible(sec.id, kind)}
           className="accent-blue-600 w-3.5 h-3.5 shrink-0"
           title={`Draw « ${sec.name} » (${MOL_KIND_LABELS[kind]}) — unticked hides the whole molecule, exactly like the old « Hide » style`} />
         <span className="text-[10px] font-black text-slate-700 truncate flex-1"
-          title={`${sec.name} — ${MOL_KIND_LABELS[kind]}${sec.detail ? ` · ${sec.detail}` : ''}${sec.count > 1 ? ` · ${sec.count} molecules` : ''}`}>
+          title={`${sec.name} — ${MOL_KIND_LABELS[kind]}${sec.detail ? ` · ${sec.detail}` : ''}${sec.count > 1 ? (sec.selected ? ` · ${sec.count} selected residues` : ` · ${sec.count} molecules`) : ''}`}>
           {sec.name}
         </span>
         <span className="text-[9px] font-bold px-1 rounded bg-slate-100 text-slate-600 shrink-0"
-          title="The kind of molecule this space styles — it is what decides which rows appear inside">{MOL_KIND_LABELS[kind]}{sec.detail ? ` · ${sec.detail}` : ''}</span>
+          title={sec.selected
+            ? 'The kind of the SELECTED residues this space styles — it is what decides which rows appear inside'
+            : 'The kind of molecule this space styles — it is what decides which rows appear inside'}>{MOL_KIND_LABELS[kind]}{sec.detail ? ` · ${sec.detail}` : ''}</span>
         {sec.count > 1 && (
-          <span className="text-[9px] text-slate-400 font-bold shrink-0" title={`${sec.count} molecules of this kind share this space`}>×{sec.count}</span>
+          <span className="text-[9px] text-slate-400 font-bold shrink-0"
+            title={sec.selected ? `${sec.count} selected residues share this space` : `${sec.count} molecules of this kind share this space`}>×{sec.count}</span>
         )}
         {/* 🔎 ZOOM ON THIS MOLECULE ALONE (the request): NGL's autoView() takes the
             section's own selector, so the camera frames that molecule and not the
@@ -14853,6 +15277,15 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
           </div>
         );
       })}
+      {/* 🎯 THE « SELECTED » SPACE (the request: « Add a section "selected" for
+          selected residues, use the same menus as for molecules »). It appears as
+          soon as residues are selected (the sequence strip's ticks, or an atom
+          picked in 3D) and is drawn by the VERY renderSection / builder a molecule
+          uses — so its rows, its hierarchy, its radii, its materials and its
+          colourings are the ones of PART 4. A selection that holds none of the
+          three kinds (a protein / a nucleic acid / a lipid) shows ONE space whose
+          only row is General, exactly as the request asks. */}
+      {selectedSectionsForUi().map((sec) => renderSection(sec))}
       {/* SMILES of the molecule at hand (an organic condition, the ligand of a
           docking run, OR the ligand a loaded PDB declares by its HETATM code —
           see utils/ligandSmiles.js and the RCSB Chemical Component Dictionary).
@@ -14960,6 +15393,51 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
           ))}
         </div>
       </section>
+      {/* 🎨 THE BACKGROUNDS OF THE STYLING WINDOW (the request): the ONE colour of
+          the SPACE of every kind, plus the ladder of shades the rows inside that
+          space are drawn with. Not a colouring of the 3D scene: this is the
+          styling window's own readability, and it is editable like every palette
+          (persisted with the viewer's preferences). */}
+      <section className="flex flex-col gap-1">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="text-[11px] font-black uppercase tracking-wide text-slate-600">Styling window · section backgrounds</span>
+          <button type="button" onClick={resetSectionTints}
+            className="px-2 py-0.5 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100"
+            title="Put the seven backgrounds of the styling window back to their default colours">
+            ↺ Defaults
+          </button>
+        </div>
+        <p className="text-[10px] text-slate-500">
+          The background of every SPACE of the styling window, by kind of molecule: very light orange for a protein, light grey for a lipid, light green for a nucleic acid, light brown for a sugar, light blue for water, light magenta for an ion (a ligand keeps a neutral very light grey). The ROWS inside a space fade from that colour toward white — the General row carries the strongest tint, then each part below it is a little paler — so the hierarchy of a space is read at a glance.
+        </p>
+        <div className="mt-1 grid grid-cols-[repeat(auto-fill,minmax(7.5rem,1fr))] gap-1.5">
+          {SECTION_TINT_ORDER.map((k) => (
+            <label key={`tint-${k}`} className="flex items-center gap-1 border border-slate-200 rounded px-1 py-0.5 bg-slate-50"
+              title={`Background of every ${SECTION_TINT_LABELS[k]} space — its rows fade from this colour toward white`}>
+              <input type="color" value={numToHex(sectionTints[k])}
+                onChange={(e) => setSectionTint(k, parseInt(e.target.value.slice(1), 16))}
+                className="w-6 h-5 rounded border border-slate-300 cursor-pointer" aria-label={`${k} background colour`} />
+              <span className="text-[10px] font-bold text-slate-600 truncate">{SECTION_TINT_LABELS[k]}</span>
+            </label>
+          ))}
+        </div>
+        {/* The ladder itself, as the window draws it: the tint of the space, then
+            one bar per row of that kind — General first, the palest last. */}
+        <div className="mt-1 flex flex-wrap gap-1.5">
+          {SECTION_TINT_ORDER.map((k) => (
+            <span key={`ladder-${k}`} className="flex items-center gap-0.5 border border-slate-200 rounded px-1 py-0.5"
+              title={`${SECTION_TINT_LABELS[k]}: the space, then ${subsectionsOf(k).map((s) => s.label).join(' · ')} — each row a little paler than the one above`}>
+              <span className="text-[9px] text-slate-500">{SECTION_TINT_LABELS[k]}</span>
+              <span className="w-4 h-3 rounded-sm border border-slate-300"
+                style={{ backgroundColor: sectionCardTintCss(sectionTints, k) }} />
+              {subsectionsOf(k).map((sp) => (
+                <span key={`ladder-${k}-${sp.sub}`} className="w-4 h-3 rounded-sm border border-slate-300"
+                  style={{ backgroundColor: sectionRowTintCss(sectionTints, k, sp.sub) }} />
+              ))}
+            </span>
+          ))}
+        </div>
+      </section>
       <section className="flex flex-col gap-1">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="text-[11px] font-black uppercase tracking-wide text-slate-600">Amino acids · the 20 residues</span>
@@ -14980,6 +15458,35 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
                 className="w-6 h-5 rounded border border-slate-300 cursor-pointer" aria-label={`${res} colour`} />
               <span className="text-[10px] font-bold text-slate-600">{res}</span>
             </label>
+          ))}
+        </div>
+        {/* 🧪 THE TWO PARTS OF EVERY RESIDUE (the request) — backbone and side
+            chains — used when « Color by : Residue » is chosen. Both default to the
+            residue's own colour above, so nothing moves until they are separated
+            here; the reader is the atom NAME (backbone = N · CA · C · O · OXT and
+            the hydrogens on them, everything else a side chain). */}
+        <div className="flex flex-wrap items-center justify-between gap-2 mt-1">
+          <span className="text-[10px] font-black uppercase tracking-wide text-slate-500">Amino acids · backbone (B) / side chains (S)</span>
+          <button type="button" onClick={() => setResiduePartColors(mergePartPalette(RESIDUE_PART_DEFAULTS, null))}
+            className="px-2 py-0.5 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100"
+            title="Put the backbone and side-chain colours of every residue back to the residue's own colour">
+            ↺ Defaults
+          </button>
+        </div>
+        <div className="mt-1 grid grid-cols-[repeat(auto-fill,minmax(6.5rem,1fr))] gap-1.5">
+          {RESIDUE_ORDER.map((res) => (
+            <span key={`respart-${res}`} className="flex items-center gap-1 border border-slate-200 rounded px-1 py-0.5 bg-slate-50"
+              title={`${res}: the colour of its backbone and of its side chains — what « Color by : Residue » paints`}>
+              <span className="text-[10px] font-bold text-slate-600 w-7 shrink-0">{res}</span>
+              <input type="color" value={numToHex(residuePartColors[res].backbone)}
+                onChange={(e) => setResiduePartColors((p) => ({ ...p, [res]: { ...p[res], backbone: parseInt(e.target.value.slice(1), 16) } }))}
+                className="w-6 h-5 rounded border border-slate-300 cursor-pointer"
+                aria-label={`${res} backbone colour`} title={`${res} backbone — N · CA · C · O and the hydrogens on them`} />
+              <input type="color" value={numToHex(residuePartColors[res].sidechain)}
+                onChange={(e) => setResiduePartColors((p) => ({ ...p, [res]: { ...p[res], sidechain: parseInt(e.target.value.slice(1), 16) } }))}
+                className="w-6 h-5 rounded border border-slate-300 cursor-pointer"
+                aria-label={`${res} side chain colour`} title={`${res} side chains — every other atom of the residue`} />
+            </span>
           ))}
         </div>
       </section>
@@ -15063,6 +15570,21 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
               <span className="text-[10px] font-bold text-slate-600">{b}</span>
             </label>
           ))}
+          {/* 🧬 THE RIBOSE / 2'-DEOXYRIBOSE COLOUR OF EVERY BASE (the request): the
+              second swatch of each base (the one labelled with the prime). It is
+              what « Color by : DNA/RNA base » paints on the primed atoms of that
+              nucleotide — C1' … C5', O2' … O5', H2' … — while the base rings and
+              the phosphate keep the base colour of the first swatch. Both default
+              to that base colour, so the ring colours only separate here. */}
+          {BASE_TYPE_ORDER.map((b) => (
+            <label key={`sugar-${b}`} className="flex items-center gap-1 border border-slate-200 rounded px-1 py-0.5 bg-slate-50"
+              title={`Colour of the ribose / 2'-deoxyribose rings of every ${b} nucleotide — the primed atoms (C1' … C5', O2' … O5', H2' …)`}>
+              <input type="color" value={numToHex(baseSugarColors[b])}
+                onChange={(e) => setBaseSugarColors((p) => ({ ...p, [b]: parseInt(e.target.value.slice(1), 16) }))}
+                className="w-6 h-5 rounded border border-slate-300 cursor-pointer" aria-label={`${b} ribose colour`} />
+              <span className="text-[10px] font-bold text-slate-600">{b}′</span>
+            </label>
+          ))}
           {CHARGE_ORDER.map((c) => (
             <label key={c} className="flex items-center gap-1 border border-slate-200 rounded px-1 py-0.5 bg-slate-50" title={`Colour of a ${c} atom / ion`}>
               <input type="color" value={numToHex(chargeColors[c])}
@@ -15117,6 +15639,34 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
                 className="w-6 h-5 rounded border border-slate-300 cursor-pointer" aria-label={`${k} colour`} />
               <span className="text-[10px] font-bold text-slate-600">{k}</span>
             </label>
+          ))}
+        </div>
+        {/* 💧 THE THREE PARTS OF EVERY LIPID TYPE (the request): headgroup ·
+            glycerol · acyl chains. They are what « Color by : Lipid type » paints —
+            the headgroup swatch on the polar head of that class, the glycerol swatch
+            on its C1 · C2 · C3 backbone, the acyl swatch on its chains — and all
+            three default to the class colour above, so a class stays ONE colour
+            until its parts are separated here. */}
+        <div className="flex flex-wrap items-center justify-between gap-2 mt-1">
+          <span className="text-[10px] font-black uppercase tracking-wide text-slate-500">Lipid types · headgroup (H) / glycerol (G) / acyl chains (A)</span>
+          <button type="button" onClick={() => setLipidPartColors(mergePartPalette(LIPID_PART_DEFAULTS, null))}
+            className="px-2 py-0.5 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100"
+            title="Put the headgroup, glycerol and acyl-chain colours of every lipid class back to the class's own colour">
+            ↺ Defaults
+          </button>
+        </div>
+        <div className="mt-1 grid grid-cols-[repeat(auto-fill,minmax(7rem,1fr))] gap-1.5">
+          {LIPID_TYPE_ORDER.map((k) => (
+            <span key={`lipidpart-${k}`} className="flex items-center gap-1 border border-slate-200 rounded px-1 py-0.5 bg-slate-50"
+              title={`${k}: the colour of its headgroup, of its glycerol backbone and of its acyl chains — what « Color by : Lipid type » paints`}>
+              <span className="text-[10px] font-bold text-slate-600 w-10 shrink-0 truncate">{k}</span>
+              {[['head', 'H'], ['glycerol', 'G'], ['acyl', 'A']].map(([part, letter]) => (
+                <input key={`${k}-${part}`} type="color" value={numToHex(lipidPartColors[k][part])}
+                  onChange={(e) => setLipidPartColors((p) => ({ ...p, [k]: { ...p[k], [part]: parseInt(e.target.value.slice(1), 16) } }))}
+                  className="w-6 h-5 rounded border border-slate-300 cursor-pointer" aria-label={`${k} ${part} colour`}
+                  title={`${k} · ${part === 'head' ? 'headgroup' : part === 'glycerol' ? 'glycerol backbone' : 'acyl chains'} (${letter})`} />
+              ))}
+            </span>
           ))}
         </div>
       </section>

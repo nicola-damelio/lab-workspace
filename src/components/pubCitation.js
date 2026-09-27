@@ -185,7 +185,12 @@ export const PUB_LAYOUT_PART_IDS = PUB_LAYOUT_PARTS.map((p) => p.id);
        if figures go in one column or in two »).
    Les deux sont lus par la feuille (pubLayoutCss) ET par l'export .docx
    (utils/docxExport.js, renderUnits · columnBlocks) : une seule source, deux
-   chemins, donc pas de divergence entre ce qui s'imprime et ce qui s'exporte. */
+   chemins, donc pas de divergence entre ce qui s'imprime et ce qui s'exporte.
+   ⚠ L'ATTRIBUT NE SUFFIT PAS À FAIRE BARRER LA PAGE : la figure doit aussi être
+   rendue dans le même contexte de formatage que le conteneur multicolonne — une
+   figure pleine largeur posée dans la grille des figures reste dans sa colonne,
+   `column-span` ne traversant pas une grille (voir pubFigureBarsPage, qui le dit
+   et que la page du projet lit pour savoir OÙ rendre la figure). */
 export const DOC_SECTION_ATTR = 'data-doc-section';
 export const FIGURE_COLS_ATTR = 'data-pf-cols';
 
@@ -269,6 +274,46 @@ export const pubSpanIn = (layout, partId) => {
   return PUB_HEAD_PART_IDS.includes(partId) ? 'all' : 'flow';
 };
 export const pubSpanOf = (fmt, partId) => pubSpanIn(normalizePubLayout(fmt && fmt.layout), partId);
+
+/* ══ CE QU'UNE FIGURE FAIT DES COLONNES DE LA PAGE ══════════════════════════
+   Le réglage d'une figure vit sur DEUX niveaux, exactement comme celui d'une
+   partie : le format donne le DÉFAUT de toutes les figures (la partie « Figures &
+   captions » — `pubSpanIn(layout, 'figure')`) et la fiche de LA figure peut dire
+   autre chose (« One column » / « Two columns », l'attribut que la figure porte
+   elle-même : FIGURE_COLS_ATTR). C'est cette fonction, et elle seule, qui tranche.
+   La feuille de style (pubLayoutCss, qui écrit `column-span: all` sur la figure) et
+   la page du projet (projectDetailModule · renderFigures, qui décide OÙ la figure
+   est rendue) ne peuvent donc pas se contredire. */
+export const pubFigureSpanIn = (layout, columns) => {
+  const cols = pubFigureCols(columns);
+  if (cols === 2) return 'all';          // « Two columns » : elle barre la page
+  if (cols === 1) return 'flow';         // « One column » : elle tient dans sa colonne
+  return pubSpanIn(layout, 'figure');    // la figure ne dit rien : le format décide
+};
+export const pubFigureSpanOf = (fmt, columns) => pubFigureSpanIn(normalizePubLayout(fmt && fmt.layout), columns);
+
+/** LA FIGURE BARRE-T-ELLE LA PAGE ? Oui quand elle prend toute la largeur
+ *  (`pubFigureSpanOf` = 'all') ET que la page a PLUSIEURS colonnes : sur une page
+ *  à une colonne il n'y a aucune colonne à barrer, la question ne se pose pas.
+ *
+ *  ⚠ C'EST CETTE RÉPONSE QUI DÉCIDE OÙ LA FIGURE EST RENDUE (projectDetailModule ·
+ *  renderFigures), et ce n'est pas un détail : une figure qui barre la page ne peut
+ *  PAS vivre dans la GRILLE DES FIGURES — le `grid grid-cols-1 md:grid-cols-2` qui
+ *  range deux figures côte à côte. Une grille ouvre un CONTEXTE DE FORMATAGE
+ *  INDÉPENDANT, or `column-span: all` ne vaut que pour « the nearest multicol
+ *  ancestor IN THE SAME BLOCK FORMATTING CONTEXT » (CSS Multi-column Layout §6.1) :
+ *  une figure pleine largeur posée dans la grille restait donc DANS sa colonne —
+ *  mesuré dans un navigateur (une page de 600 px à deux colonnes), elle mesurait
+ *  133 px au lieu de 600. La page rend donc les figures qui barrent la page ENFANTS
+ *  DIRECTS de la section, hors de la grille : le barreur retrouve le conteneur
+ *  multicolonne dans le même contexte de formatage et prend la page entière.
+ *  C'est le défaut que le .docx avait déjà réparé de son côté (voir
+ *  utils/docxExport.js · holdsFigureWithOwnColumns) : « if I have text in two
+ *  columns and a figure full width, the figure is correctly placed in the exported
+ *  document but not in the docx ». */
+export const pubFigureBarsPage = (fmt, columns) => (
+  pubPageColumnsOf(fmt) > 1 && pubFigureSpanOf(fmt, columns) === 'all'
+);
 
 /* ══ LES BLOCS DU DOCUMENT D'UN PROJET, DANS L'ORDRE OÙ ILS S'IMPRIMENT ══════
    La demande : « In the publication format I cannot change the order of the sections
@@ -1045,7 +1090,10 @@ export const pubLayoutCss = (fmt, scope = '#project-doc-container') => {
     PUB_LAYOUT_PARTS.forEach((part) => {
       /* UNE FIGURE QUI A CHOISI SA COLONNE (voir FIGURE_COLS_ATTR) n'obéit pas au
          réglage de la partie : « In the columns » retire le mot du format pour
-         elle, « Full width » ne le lui pose pas. */
+         elle, « Full width » ne le lui pose pas. LE MOT ÉCRIT ICI NE VAUT QUE SI
+         la figure est dans le même contexte de formatage que le conteneur : la
+         page du projet tient donc les figures qui barrent la page HORS de la
+         grille des figures (voir pubFigureBarsPage, et la mesure qui l'explique). */
       const barring = part.id === 'figure'
         ? (part.selectors || []).map((s) => `${s}:not([${FIGURE_COLS_ATTR}="1"])`)
         : part.selectors;

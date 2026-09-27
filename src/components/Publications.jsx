@@ -131,8 +131,11 @@ export {
   /* LES COLONNES, SECTION PAR SECTION ET FIGURE PAR FIGURE : la page du projet
      pose l'identifiant d'une section (DOC_SECTION_ATTR) et le choix d'une figure
      (FIGURE_COLS_ATTR) ; le panneau les règle et les lit (PUB_DOC_SPAN_IDS ·
-     pubSectionSpanOf · pubFigureCols). */
-  PUB_DOC_SPAN_IDS, pubSectionSpanOf, pubSectionSpanIn, pubFigureCols,
+     pubSectionSpanOf · pubFigureCols). `pubFigureBarsPage` dit ce qu'une figure
+     fait de la page : c'est elle que la page du projet interroge pour rendre une
+     figure pleine largeur HORS de la grille des figures (une grille ne laisse pas
+     passer `column-span` — voir pubCitation.js). */
+  PUB_DOC_SPAN_IDS, pubSectionSpanOf, pubSectionSpanIn, pubFigureCols, pubFigureBarsPage,
   DOC_SECTION_ATTR, FIGURE_COLS_ATTR,
   pubCitationHtml, pubCitationText, pubFieldValue, pubDoiUrl,
   pubCitationData, pubOriginOf,

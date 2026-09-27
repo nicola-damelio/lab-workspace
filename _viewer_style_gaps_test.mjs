@@ -274,9 +274,10 @@ eq(chainCm.atomColor({ chainname: 'A' }), 0x123456,
   'déplacer le swatch A repeint la chaîne A SANS réenregistrer le schéma');
 CHAIN.chainColorStore.A = CHAIN.CHAIN_COLOR_PALETTE.A;
 
-// La rangée de la barre et la roue offrent le contrôle, et « Chain » passe bien par
-// le schéma maison (avec `chainid` en repli si l'enregistrement a échoué).
-has("{look.colorBy === 'chain' && (", 'la rangée « Color by » montre le ⚙ dès que « Chain » est choisi');
+// La rangée de la barre n'ouvre PLUS la roue : « the setting wheel is now repeated
+// in every space but only one on the top of the window is sufficient » — le SEUL ⚙
+// est celui de l'en-tête de la fenêtre de style, et la roue a sa section de chaînes.
+gone("{look.colorBy === 'chain' && (", 'la rangée « Color by » ne répète plus le ⚙ de la roue');
 has('Chains · color by chain', 'la roue ⚙ a une section À ELLE pour les chaînes');
 has('{CHAIN_COLOR_ORDER.map((c) => (', '…qui dessine la MÊME liste que le schéma');
 has('onClick={() => setChainColors({ ...CHAIN_COLOR_PALETTE })}', '…avec son ↺ Defaults');

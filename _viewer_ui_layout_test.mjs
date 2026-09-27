@@ -316,8 +316,8 @@ has("rainbow: 'Rainbow (first → last)',", '[vocabulaire] Rainbow (first → la
 // Le ↺ d'une rangée, et la roue ⚙ pour les palettes qu'une rangée n'édite pas
 // elle-même (les chaînes, les résidus, les sucres, les lipides, les bases…).
 has('onReset: () => resetSectionRowLook(sec.id, kind, sub),', '[rangées] ↺ d’une rangée (les défauts de son type)');
-has('title="Open the ⚙ settings wheel — the colour of every CHAIN (A · B · C …) has a section of its own there"',
-  '[rangées] « Color by : Chain » renvoie à la palette des chaînes de la roue ⚙');
+gone("{look.colorBy === 'chain' && (",
+  '[rangees] les rangees ne repetent plus l ouvreur de la roue : un SEUL, a l entete de la fenetre de style');
 
 /* ── 5bis. PART 2 — sélections & rendu avancés ──────────────────────────── */
 // 1. Lipides : la liste de resnames demandée + les trois sous-parties
