@@ -5800,6 +5800,85 @@ const buildNglSele = (keys, structure, moleculeType, namingConvention) => {
   return parts.length > 0 ? parts.join(' or ') : null;
 };
 
+/* ---- THE CLAUSE OF ONE RESIDUE TICK — the three tokens NGL REALLY READS -----
+   Clicking a tick of the residue strip must light the WHOLE residue in 3D, the
+   way clicking an atom lights its tick. The clause is therefore built from the
+   vocabulary the installed NGL 2.4 actually parses (see its selection-parser:
+   the SAME vocabulary the PyMOL bridge writes, pymolSeleToNgl):
+
+     `:A`    the PDB chain LETTER. NGL's `residue.chainid` is the chain INDEX
+             ('1', '2', …) and `:1` matches NO atom. The old clause used it, so
+             every tick highlight was empty in 3D while the tick itself lit up —
+             the report « selected residues in the sequence inside the viewer 3D
+             have to highlight the corresponding parts of the molecule ; at
+             present is only the reverse ».
+     `12`    the residue number, exactly as the file writes it (bare number or
+             `12-14` range).
+     `ALA`   the residue NAME — bare when 1-4 characters, otherwise the bracket
+             list `[A,B]` NGL wants. `resn ALA` is NOT a keyword there: the word
+             `resn` is read as a RESIDUE NAMED "RESN" and `resname X` throws, so
+             `… and resn ALA` matched NOTHING (the very mistake the bridge's
+             comment names: « the installed 2.4 build rejects `resname X` »).
+
+   The residue NAME stays even though the chain already pins the residue: the
+   file may hold a LIPID, a sugar or a water with the same number in that chain
+   (the reason the clause pinned it in the first place). Every term is optional,
+   so a file without chain names (`:''`) or without a residue name still gets a
+   clause instead of the leading `and` that used to make NGL throw. Pure — the
+   `tick` is one entry of collectResidueTicks. */
+const residueTickClause = (tick) => {
+  if (!tick) return '';
+  const chain = String(tick.chainname || tick.chainid || '').trim();
+  const resno = Number(tick.resno);
+  const resname = String(tick.resname || '').trim().toUpperCase();
+  const parts = [];
+  // `:X` — the chain NAME, never the index NGL keeps in `chainid`.
+  if (chain) parts.push(`:${chain}`);
+  // A bare number is NGL's resno test (`12`, `12-14`).
+  if (Number.isFinite(resno)) parts.push(String(resno));
+  // A bare residue name (1-4 characters) or NGL's bracket list for the rest.
+  if (resname) parts.push(/^[A-Z0-9]{1,4}$/.test(resname) ? resname : `[${resname}]`);
+  return parts.join(' and ');
+};
+
+/* ---- THE WHOLE-RESIDUE SELECTION OF A STRIP CLICK --------------------------
+   One tick highlighted in the strip → ONE amber residue in 3D. The keys the
+   page stores are `${resno - 1}-${atom}` (they carry NO chain: they also feed
+   the spectra and the 2D structure), so the residues a click covers are every
+   POLYMER tick whose `resno - 1` is that prefix — EXACTLY the ticks the strip
+   lights for the same keys (see its `isSel`). A file whose two chains are both
+   numbered 1…N therefore highlights both residues in 3D, never the first one in
+   the file; the waters, ions and lipids of the file are never part of it.
+
+   Returns the clause LIST (joined with ' or ' by the caller, the `sele` NGL
+   receives) and the approximate number of atoms touched (the caller falls back
+   to instanced spheres above 1500 — a big MD system must not pay for NGL's
+   full-structure bond list). Pure: `residueTicks` is the strip's tick list. */
+const stripHighlightClauses = (keys, residueTicks) => {
+  const polyByRi = new Map(); // `resno - 1` → the polymer ticks carrying it
+  (Array.isArray(residueTicks) ? residueTicks : []).forEach((t) => {
+    if (!t || !t.polymer || !Number.isFinite(Number(t.resno))) return;
+    const ri = Number(t.resno) - 1;
+    if (!polyByRi.has(ri)) polyByRi.set(ri, []);
+    polyByRi.get(ri).push(t);
+  });
+  const clauses = new Map(); // `${chainname}|${resno}|${resname}` → its clause
+  let atoms = 0;
+  (Array.isArray(keys) ? keys : []).forEach((k) => {
+    const riK = parseInt(String(k).split('-')[0], 10);
+    if (!Number.isFinite(riK)) return;
+    // resno alone can match SEVERAL residues when the file mixes molecule types
+    // (e.g. a membrane MD system: protein + phospholipid + water) — the clause
+    // pins the chain AND the residue name, in the tokens NGL really reads.
+    (polyByRi.get(riK) || []).forEach((t) => {
+      atoms += (t.atomNames || []).length;
+      const clause = residueTickClause(t);
+      if (clause) clauses.set(`${t.chainname || t.chainid}|${t.resno}|${t.resname}`, clause);
+    });
+  });
+  return { parts: Array.from(clauses.values()), atoms };
+};
+
 /* ============================================================================
    TOOLBAR BUILDING BLOCKS — the viewer UI is organised in a few numbered
    ROWS, so the command bar never eats the 3D canvas:
@@ -11260,22 +11339,10 @@ const isStripMode = stripRi !== null && Array.isArray(residueTicks) && sel.every
 });
 
 if (isStripMode) {
-  const resSet = new Map(); // `${chainid}|${resno}|${resname}` → whole-residue NGL clause
-  let approxAtoms = 0;
-  sel.forEach((k) => {
-    const riK = parseInt(String(k).split('-')[0], 10);
-    if (!Number.isFinite(riK)) return;
-    const t = residueTicks[riK];
-    if (!t) return;
-    approxAtoms += (t.atomNames || []).length;
-    const chainClause = t.chainid ? `:${t.chainid}` : '';
-    // resno alone can match SEVERAL residues when the file mixes molecule types
-    // (e.g. a membrane MD system: protein + phospholipid + water). A phospholipid
-    // with the same residue number would be highlighted too. Pin the residue
-    // NAME as well so only the clicked residue is highlighted.
-    resSet.set(`${t.chainid}|${t.resno}|${t.resname}`, `${chainClause} and ${t.resno} and resn ${t.resname}`);
-  });
-  const selParts = Array.from(resSet.values());
+  // Every polymer residue the clicked tick(s) stand for — the SAME residues the
+  // strip lights — in the three tokens NGL really reads (`:B` · `5` · `ALA`;
+  // neither NGL's chain INDEX nor `resn`, which are not in its grammar).
+  const { parts: selParts, atoms: approxAtoms } = stripHighlightClauses(sel, residueTicks);
   if (selParts.length > 0) {
     // Lightweight mode → instanced spheres: ball+stick would force NGL to
     // compute the full-structure bond list (seconds of freeze on a big system).
