@@ -100,6 +100,13 @@ const sliceRange = (from, to) => {
 
 
 
+/* ── Extraction : `const name = (…) => expr;` (flèche d'UNE ligne) ───────── */
+const sliceArrow = (src, name) => {
+  const m = new RegExp(`const ${name} = \\([^)]*\\) => [^\\n]+`).exec(src);
+  assert.ok(!!m, `fonction ${name} (une ligne) introuvable`);
+  return `${m[0]};`;
+};
+
 /* ── Les helpers du viewer, exécutés dans une sandbox avec le vrai NGL ──── */
 const sandbox = [
   sliceObject(VIEW, 'BASE_IDENTITY_COLORS'),
@@ -161,6 +168,12 @@ const sandbox = [
   sliceObject(VIEW, 'LIPID_CLASS_ALIASES'),
   sliceConst('LIPID_CLASS_SUFFIXES'),
   sliceFn(VIEW, 'lipidClassOf'),
+  /* ⚠ « CE RÉSIDU EST-IL UN LIPIDE ? » — le lecteur des parts s'en sert maintenant
+     pour décider qu'un atome que ni son nom ni sa liaison ne placent est la TÊTE
+     (voir lipidAtomPart) : la table de reconnaissance et son prédicat sont donc
+     pris dans la source, comme tout le reste. */
+  sliceConst('LIPID_RESNAMES'),
+  sliceArrow(VIEW, 'isLipidResname'),
   sliceObject(VIEW, 'LIPID_CLASS_COLORS'),
   sliceObject(VIEW, 'lipidClassColorStore'),
   sliceFn(VIEW, 'lipidClassColorOf'),
@@ -698,8 +711,10 @@ eq(classCm.atomColor({ resname: 'POPC', structure: lipidStruct, index: 9 }), 0x3
   '…la chaîne acyle la sienne');
 eq(classCm.atomColor({ resname: 'POPC', atomname: 'C21' }), 0x333333,
   'hors marche, le NOM suffit (C21 = un carbone de chaîne)');
-eq(classCm.atomColor({ resname: 'POPC', atomname: 'P' }), H.LIPID_CLASS_COLORS.PC,
-  'un nom que le lecteur ne sait PAS placer garde la couleur de classe (aucune part inventée)');
+eq(classCm.atomColor({ resname: 'POPC', atomname: 'P' }), 0x111111,
+  'un atome de TÊTE que le nom seul ne place pas prend la pastille de TÊTE de sa classe — plus jamais la couleur du type (le rapport de cette session : « still green hydrogen atoms in the headgroup »)');
+eq(classCm.atomColor({ resname: 'HOH', atomname: 'O' }), H.LIPID_CLASS_COLORS.OTHER,
+  '…mais HORS d’un lipide, rien n’est inventé : une eau garde la couleur de son type');
 eq(classCm.atomColor({ resname: 'DPPE', atomname: 'C31' }), H.LIPID_CLASS_COLORS.PE,
   '…et une classe dont les parts n\'ont pas été touchées garde sa couleur unique');
 /* ── 5ter-bis. UN HYDROGÈNE DE LIPIDE EST PEINT COMME L'ATOME DONT IL PEND ─────
@@ -722,15 +737,44 @@ const H_AT = (i) => ({
   resname: 'POPC', atomname: POPC_NAMES[i], element: POPC_ELS[i], structure: lipidGraph, index: i,
 });
 // Sans graphe de liaisons, rien ne change : le nom décide, comme avant.
-eq(classCm.atomColor({ resname: 'POPC', atomname: 'HN2', element: 'H' }), H.LIPID_CLASS_COLORS.PC,
-  'sans graphe, un H au nom muet garde la couleur du TYPE (comportement d’avant, préservé)');
+eq(classCm.atomColor({ resname: 'POPC', atomname: 'HN2', element: 'H' }), 0x111111,
+  'sans graphe, un H au nom muet reste dans sa TÊTE : c’est la pastille de tête qui gagne, plus le vert de la classe');
 // Avec le graphe : l'hydrogène suit SON atome lourd, pour les deux schémas.
 eq(classCm.atomColor(H_AT(1)), 0x222222, 'H2R pend à C2 : il prend la couleur du GLYCÉROL de sa classe');
 eq(classCm.atomColor(H_AT(5)), 0x333333, 'H21A pend à C21 : il prend celle des CHAÎNES');
 eq(classCm.atomColor(H_AT(9)), 0x333333,
   'un H au nom muet (HN2) pend à C31 : il prend AUSSI celle des chaînes — c’était la couleur de type, le vert du rapport');
-eq(classCm.atomColor(H_AT(3)), H.LIPID_CLASS_COLORS.PC,
-  'H16T pend à C16, que le lecteur strict ne place pas : la couleur du TYPE, exactement comme son carbone');
+eq(classCm.atomColor(H_AT(3)), 0x111111,
+  'H16T pend à C16, que le lecteur strict ne place pas : il suit la TÊTE de sa classe, exactement comme son carbone');
+/* ⚠ LA LIAISON PASSE AVANT LE NOM — le rapport de cette session : « there are still
+   green hydrogen atoms in the headgroup of lipids which do not follow the color
+   specified in the setting wheel choosing the option color by lipid type ». Un H de
+   chaîne nommé comme le SQUELETTE (H2R pend à C21) suivait son nom — « glycérol » — et
+   son carbone suivait la roue : la liaison, elle, ne se trompe pas. */
+const chainGraph = {
+  eachBond: (cb) => cb({ atomIndex1: 0, atomIndex2: 1 }),
+  getAtomProxy: (i) => (i === 0
+    ? { atomname: 'C21', element: 'C' }
+    : { atomname: 'H2R', element: 'H' }),
+};
+eq(classCm.atomColor({ resname: 'POPC', atomname: 'H2R', element: 'H', structure: chainGraph, index: 1 }), 0x333333,
+  'un H nommé comme le squelette mais LIÉ à une chaîne prend la couleur des CHAÎNES (la liaison tranche)');
+/* …ET LE VERD DU RAPPORT EST MESURÉ TEL QUEL : sur une tête de PE dont la roue ⚙ a
+   séparé les trois parts, la pastille de TÊTE doit gagner sur la couleur de CLASSE
+   pour l’atome ENTIER — le phosphore, l’azote, les carbones de tête ET leurs
+   hydrogènes, ceux que le nom seul ne place pas. */
+H.lipidClassColorStore.PE = 0x3fbf6f;   // le vert d’un PE (la couleur de classe du rapport)
+H.lipidPartColorStore.PE = { head: 0x2244ff, glycerol: 0x22aaaa, acyl: 0xdddddd };
+['P', 'N', 'C11', 'H11A', 'HN2', 'HO9'].forEach((n) => {
+  // `element: 'H'` pour les trois derniers : c'est la seule chose que NGL ajoute au nom.
+  const el = n.startsWith('H') ? 'H' : '';
+  eq(classCm.atomColor({ resname: 'POPE', atomname: n, element: el }), 0x2244ff,
+    `la tête de POPE « ${n} » suit la pastille de TÊTE de la roue ⚙, jamais le vert de sa classe`);
+});
+H.lipidClassColorStore.PE = H.LIPID_CLASS_COLORS.PE;
+H.lipidPartColorStore.PE = {
+  head: H.LIPID_CLASS_COLORS.PE, glycerol: H.LIPID_CLASS_COLORS.PE, acyl: H.LIPID_CLASS_COLORS.PE,
+};
 eq(lipidCm.atomColor(H_AT(9)), H.DEFAULT_LIPID_COLORS.acyl,
   '[parties] …et là aussi l’H suit son carbone (HN2 → chaîne, plus jamais la tête)');
 eq(lipidCm.atomColor(H_AT(1)), H.DEFAULT_LIPID_COLORS.glycerol,

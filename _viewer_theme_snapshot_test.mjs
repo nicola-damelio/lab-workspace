@@ -113,13 +113,16 @@ const setup = {
   selectedResidueColor: 255, assignedAtomColor: 65280,
   fog: true, shadows: { on: true }, clip: { on: false }, background: '#101010',
   quality: true, large: { style: 'line' }, generalLook: { foo: 'bar' },
-  palettes: { elements: {} }, savedAt: 'hier',
+  palettes: { elements: {} }, ray: { factor: 3, transparent: false }, esp: [15, 15],
+  savedAt: 'hier',
 };
 const glob = H.captureThemeGlobal(setup);
 ok(glob.fog === true && glob.background === '#101010' && glob.clip && glob.shadows,
   'la capture garde la scène : brouillard · fond · clipping · ombres');
 ok(glob.generalLook && glob.palettes && glob.sstrucColors && glob.catStyles,
   '…et la roue ⚙ (palettes + look général), les couleurs de 2°-structure et les menus');
+ok(glob.ray && glob.esp,
+  '…ainsi que ✨ Ray et ⚡ ESP (le rapport de cette session : « not all the settings necessary to reconstruct the image »)');
 eq(Object.keys(glob).sort(), [...H.THEME_GLOBAL_KEYS].sort(),
   'RIEN d’autre : ni la version, ni la date, ni un champ inconnu');
 ok(!('savedAt' in glob) && !('v' in glob), '…en particulier pas les métadonnées du fichier');
@@ -127,6 +130,45 @@ has('const applyThemeGlobal = (global) => applyViewerSetup(', 'l’environnement
 ok(VIEW.indexOf('const applyThemeGlobal = (global)') > VIEW.indexOf('const applyViewerSetup = (s) => {'),
   '…et il est défini APRÈS applyViewerSetup : au niveau module il ne l’aurait pas vu');
 eq(countOf(/const applyThemeGlobal = /g), 1, 'une seule définition (aucune copie au niveau module)');
+
+/* ══ 2bis. CE QU'UN ENREGISTREMENT DE SCÈNE DOIT CONTENIR EN PLUS ═════════
+   « In the viewer the cumulative and snapshot saves do not save all the settings
+   necessary to reconstruct the image as it was when it was saved. » Le rapport liste
+   deux familles de manques, et les deux sont maintenant couvertes :
+
+     · LA ROUE ⚙ ENTIÈRE — les neuf palettes qui ne voyageaient pas (résidus et leurs
+       parts, bases et leur ribose, charges, types de lipides et leurs trois parts,
+       types de sucres, fonds des espaces) ;
+     · CE QUI EST PROPRE À LA SCÈNE — l'étiquette 3D de chaque section, les réglages et
+       la position de chaque molécule, la session 🧪 Selections & PyMOL, la caméra.
+
+   Un THÈME ne prend pas la seconde famille (il parle de CLASSES) ; un setup nommé et un
+   snapshot la prennent : ce sont deux photographies. */
+[['residues', 'residueColors'], ['residueParts', 'residuePartColors'], ['baseTypes', 'baseTypeColors'],
+  ['baseSugars', 'baseSugarColors'], ['charges', 'chargeColors'], ['lipidTypes', 'lipidTypeColors'],
+  ['lipidParts', 'lipidPartColors'], ['sugarTypes', 'sugarTypeColors']]
+  .forEach(([k, v]) => {
+    has(`${k}: ${v},`, `la palette « ${k} » est CAPTURÉE par les deux enregistrements`);
+    has(`if (pal.${k})`, `…et RELUE au chargement (pal.${k})`);
+  });
+// Les fonds des espaces sont capturés en abrégé (`sectionTints,`), comme dans l'état.
+has('    sectionTints,\n', 'la palette des fonds d’espaces est capturée elle aussi');
+has('if (pal.sectionTints)', '…et relue au chargement');
+has('const captureSceneExtras = () => ({', 'la capture de la scène est UNE fonction');
+has('...captureSceneExtras(),', '…reprise par le setup nommé');
+has('scene: captureSceneExtras(),', 'le SNAPSHOT la range à côté de ses sections');
+has('applySceneExtras(sn.scene);', '…et la rejoue au chargement du snapshot');
+has('applySceneExtras(s);', 'le setup nommé la rejoue par SON lecteur (applyViewerSetup)');
+has('const applySceneExtras = (s) => {', 'le lecteur de la scène est UNE fonction, lui aussi');
+has('labels: { ...(sectionLabelsRef.current || {}) },', 'les étiquettes 3D de chaque section voyagent');
+has('pymol: {', '…la session 🧪 Selections & PyMOL aussi');
+has('camera: cameraPose(),', '…et le POINT DE VUE de la caméra');
+eq(countOf(/const captureSceneExtras = /g), 1, 'une seule définition de la capture de scène');
+eq(countOf(/const applySceneExtras = /g), 1, 'une seule définition de son lecteur');
+ok(!H.THEME_GLOBAL_KEYS.includes('pymol') && !H.THEME_GLOBAL_KEYS.includes('molecules'),
+  'un THÈME ne prend NI la session 🧪 NI les molécules : il parle de CLASSES');
+ok(H.THEME_GLOBAL_KEYS.includes('ray') && H.THEME_GLOBAL_KEYS.includes('esp'),
+  '…mais ✨ Ray et ⚡ ESP, oui : ce sont des réglages de SCÈNE');
 
 /* ══ 3. LA SIGNATURE D'UNE CLASSE (le conflit) ════════════════════════════ */
 eq(H.classStyleSig({ p: { style: 'cartoon' } }), H.classStyleSig({ p: { style: 'cartoon' } }),

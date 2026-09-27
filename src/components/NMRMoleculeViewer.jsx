@@ -1257,6 +1257,12 @@ const saveNamedMap = (key, map) => {
 const THEME_GLOBAL_KEYS = [
   'fog', 'shadows', 'clip', 'background', 'quality', 'large', 'generalLook', 'palettes',
   'catStyles', 'catLabels', 'sidechainStyle', 'sstrucColors', 'selectedResidueColor', 'assignedAtomColor',
+  // ⚠ ✨ Ray (facteur · fond transparent · ombre portée) et ⚡ ESP (les bornes du
+  // dégradé) font partie de « l'environnement global » des deux modes : ce sont des
+  // réglages de SCÈNE, pas de molécules (le rapport de cette session : les deux
+  // enregistrements ne sauvaient pas « all the settings necessary to reconstruct the
+  // image »).
+  'ray', 'esp',
 ];
 const captureThemeGlobal = (setup) => {
   const src = setup || {};
@@ -3068,13 +3074,46 @@ const lipidPartColorStore = Object.fromEntries(
 );
 // The colour of ONE part of ONE lipid class: the swatch the wheel edits, or the
 // class's own colour when the swatch is missing / not a colour.
+/* ⚠⚠ UN GALET RESTÉ AU DÉFAUT DE SA PART SUIT LA PASTILLE DE CLASSE — le rapport de
+   cette session : « in the styling window there are still green hydrogen atoms in the
+   headgroup of lipids which do not follow the color specified in the setting wheel
+   choosing the option color by lipid type. » La roue ⚙ offre DEUX réglages : une
+   couleur par TYPE de lipide (la pastille de la classe) et trois pastilles par type
+   (tête · glycérol · chaînes). « Color by : Lipid type » demandait donc aux trois
+   pastilles — qui valent la couleur de la classe JUSQU'À ce que l'utilisateur les
+   sépare — de porter le réglage que l'utilisateur venait de faire sur le TYPE : sa
+   couleur de classe n'atteignait jamais l'image, et l'ancien vert du défaut restait.
+   Une part encore au défaut de sa classe rend donc la couleur de CLASSE, lue EN
+   DIRECT (la pastille du type) ; une part que l'utilisateur a séparée garde SA couleur
+   — et le ↺ de la roue ramène les trois au défaut, donc à la couleur de la classe. */
 const lipidPartColorOf = (resname, part) => {
-  const row = lipidPartColorStore[lipidClassOf(resname)];
+  const cls = lipidClassOf(resname);
+  const row = lipidPartColorStore[cls];
   const v = row && part ? row[part] : null;
-  return Number.isFinite(v) ? v : lipidClassColorOf(resname);
+  const fallback = LIPID_PART_DEFAULTS[cls];
+  // Jamais séparée (ou valeur illisible) → la pastille de la CLASSE, en direct.
+  if (!Number.isFinite(v) || !fallback || v === fallback[part]) return lipidClassColorOf(resname);
+  return v;
 };
-// WHICH part of its lipid an atom is — the walk first (it is what the rows
-// DRAW), the name second, and '' when neither can say.
+/* WHICH part of its lipid an atom is — la MARCHE d'abord (c'est ce que les rangées
+   DESSINENT), la LIAISON d'un hydrogène ensuite, le nom après, et — DANS UN LIPIDE —
+   la TÊTE, jamais la couleur du TYPE.
+
+   ⚠⚠ LE RAPPORT DE CETTE SESSION : « in the styling window there are still green
+   hydrogen atoms in the headgroup of lipids which do not follow the color specified in
+   the setting wheel choosing the option color by lipid type. » Le vert est la couleur
+   de CLASSE d'un PE : le lecteur STRICT (lipidPartNameOf) ne place que le squelette
+   (C1 · C2 · C3 · O21 · O31), les chaînes (C2x / C3x / O22 / O32) et les hydrogènes
+   dont le nom pointe un de ces deux mondes — un H de tête nommé HN2, HO9, H11A… ne
+   renvoie donc à RIEN, et l'atome tombait sur la couleur de la CLASSE pendant que le
+   phosphore, l'azote ou le carbone C11 de SA tête suivaient, eux, la pastille de tête
+   de la roue ⚙. C'est exactement le défaut que la marche des lipides n'a jamais eu :
+   elle écrit `part.get(i) || 'head'` — dans un lipide, tout ce qui n'est ni glycérol ni
+   chaîne EST la tête (les trois parts pavent le résidu). Le lecteur des couleurs suit
+   maintenant la même règle, et un hydrogène suit son atome lourd AVANT son nom (un
+   H16T de chaîne renvoie à C16, que la nomenclature stricte ne place pas : la liaison,
+   elle, ne se trompe pas). Les atomes d'un résidu qui n'est PAS un lipide gardent '',
+   donc la couleur du type — aucune part n'est inventée hors d'un lipide. */
 const lipidAtomPart = (atom) => {
   const i = atom && atom.index;
   const store = lipidPartIndexStore;
@@ -3084,12 +3123,23 @@ const lipidAtomPart = (atom) => {
     if (store.glycerol.has(i)) return 'glycerol';
     if (store.head.has(i)) return 'head';
   }
+  /* 1. LA LIAISON D'UN HYDROGÈNE PASSE AVANT SON NOM : un H16T de chaîne renvoie à
+     C16 — un carbone que la nomenclature stricte ne place PAS — et un H2R renvoie à
+     C2, le squelette : la liaison, elle, ne se trompe jamais (elle est mesurée dans le
+     graphe de la structure). Sans graphe (un .gro, un PDB sans CONECT),
+     lipidPartByBond rend '' et le nom décide, exactement comme avant. */
+  const byBond = lipidPartByBond(atom);
+  if (byBond) return byBond;
   const byName = lipidPartNameOf(atom && atom.atomname);
   if (byName) return byName;
-  // ⚠ Un HYDROGÈNE que son nom ne place pas suit l'atome lourd auquel il est LIÉ (voir
-  // lipidPartByBond) : c'est ce qui lui évite la couleur de la CLASSE — le vert du
-  // rapport. Quand rien ne peut le dire, '' : le schéma retombe sur la classe.
-  return lipidPartByBond(atom);
+  /* 2. DANS UN LIPIDE, CE QUE NI LA LIAISON NI LE NOM NE PLACENT EST LA TÊTE — la
+     règle de la marche des lipides elle-même (`part.get(i) || 'head'`, les trois parts
+     pavent le résidu) : le phosphore, l'azote, les carbones de tête et LEURS
+     hydrogènes suivent donc TOUS la pastille de tête de la roue ⚙. Hors d'un lipide
+     (une eau, un ion, un ligand), rien n'est inventé : '' → la couleur du type. */
+  const resname = String((atom && atom.resname) || '').trim();
+  if (resname && (isLipidResname(resname) || lipidClassOf(resname) !== 'OTHER')) return 'head';
+  return '';
 };
 let lipidClassSchemeKey = null; // id returned by ColormakerRegistry.addScheme (null = unusable)
 const defineLipidClassScheme = () => {
@@ -5636,12 +5686,46 @@ const pymolSessionInstanceSlug = (instanceKey, driveNaming) => {
     .replace(/[\s|/\\]+/g, '_')
     .slice(0, 120);
 };
-/** La clé de stockage de la session de CETTE instance (la générale si l'instance
- *  n'est pas connue). Pure, donc testable — et c'est elle que la sonde exécute. */
-const pymolSessionKey = (instanceKey, driveNaming) => {
-  const slug = pymolSessionInstanceSlug(instanceKey, driveNaming);
-  return slug ? `${PYMOL_SESSION_KEY}${PYMOL_SESSION_INSTANCE_SEP}${slug}` : PYMOL_SESSION_KEY;
+/* ⚠⚠ TOUTES LES INSTANCES D'UNE EXPÉRIENCE PARTAGENT LA SESSION — le rapport de cette
+   session : « keep the selection generated by “selections and pymol” window in all
+   instances of one experiment. » La clé d'instance (ci-dessus, gardée comme REPLI et
+   comme lecteur des sessions déjà écrites) changeait de mémoire à chaque condition :
+   une expérience suivie sur trois conditions redonnait donc une barre de sélections
+   vide sur les deux autres, alors que c'est LA MÊME expérience et la même question.
+   La clé principale est donc celle de l'EXPÉRIENCE — le couple projet · expérience du
+   contexte de nommage Drive (`driveNaming.test` est le nom de l'expérience, `instance`
+   celui de la condition, et la CONDITION n'entre plus dans la clé).
+   L'ordre de lecture reste, lui, tolérant : la clé d'expérience d'abord, la clé
+   d'instance ensuite (une session enregistrée par la version précédente est donc
+   toujours retrouvée), la clé générale en dernier — un viewer monté hors d'une page
+   d'expérience ne perd rien. */
+const PYMOL_SESSION_EXPERIMENT_SEP = '::exp_';
+const pymolSessionExperimentSlug = (driveNaming) => {
+  const d = (driveNaming && typeof driveNaming === 'object') ? driveNaming : null;
+  if (!d) return '';
+  return [d.project, d.test]
+    .map((v) => String(v == null ? '' : v).trim())
+    .filter(Boolean)
+    .join('|')
+    .replace(/[\s|/\\]+/g, '_')
+    .slice(0, 120);
 };
+/** Les clés de CETTE session, dans l'ordre où on les lit — l'EXPÉRIENCE (toutes ses
+ *  conditions partagent la même), puis l'instance seule (la mémoire d'avant), puis la
+ *  générale. La PREMIÈRE est celle où l'on écrit : toutes les instances d'une
+ *  expérience écrivent donc au même endroit, et se relisent l'une l'autre. */
+const pymolSessionKeys = (instanceKey, driveNaming) => {
+  const out = [];
+  const exp = pymolSessionExperimentSlug(driveNaming);
+  if (exp) out.push(`${PYMOL_SESSION_KEY}${PYMOL_SESSION_EXPERIMENT_SEP}${exp}`);
+  const slug = pymolSessionInstanceSlug(instanceKey, driveNaming);
+  if (slug) out.push(`${PYMOL_SESSION_KEY}${PYMOL_SESSION_INSTANCE_SEP}${slug}`);
+  out.push(PYMOL_SESSION_KEY);
+  return out;
+};
+/** La clé de stockage de la session de CETTE instance (la générale si rien n'est connu).
+ *  Pure, donc testable — et c'est elle que la sonde exécute. */
+const pymolSessionKey = (instanceKey, driveNaming) => pymolSessionKeys(instanceKey, driveNaming)[0];
 // Les champs d'un look de SÉLECTION (voir l'état `selStyles`) — jamais un champ de
 // plus, et chacun de son propre type.
 const SEL_LOOK_FIELDS = [
@@ -5729,6 +5813,18 @@ const savePymolSession = (s, key) => {
   try {
     localStorage.setItem(key || PYMOL_SESSION_KEY, JSON.stringify({ v: PYMOL_SESSION_VERSION, ...(s || {}) }));
   } catch { /* private mode: the session simply is not remembered */ }
+};
+/* LA PREMIÈRE SESSION ENREGISTRÉE PARMI LES CLÉS, dans l'ordre de pymolSessionKeys :
+   l'expérience d'abord, l'instance ensuite, la générale en dernier. Une session VIDE à
+   la clé de l'expérience ne cache donc jamais celle qu'une version précédente avait
+   écrite pour cette condition, et un viewer neuf (deux clés vides) repart vierge. */
+const loadPymolSessionFor = (keys) => {
+  const list = (Array.isArray(keys) ? keys : [keys]).filter((k) => typeof k === 'string' && k);
+  for (let i = 0; i < list.length; i += 1) {
+    const one = loadPymolSession(list[i]);
+    if (one.selections.length || one.script || one.selOverrides.length || one.active) return one;
+  }
+  return emptyPymolSession();
 };
 
 /* ---- Which leaflet is which, from the GEOMETRY -----------------------------
@@ -7675,14 +7771,22 @@ assignedAtomColorRef.current = assignedAtomColor;
    visualization settings and selection windows » de la demande. Un état unique la
    lit UNE fois, et les sept états ci-dessous en partent : aucun d'eux ne peut donc
    démarrer sur une autre session que les autres. */
-/* La clé de session de CETTE instance (voir pymolSessionKey) — elle est FIGÉE au
-   montage : la page qu'on quitte reste vivante (voir le parking des pages d'App), et
-   deux viewers montés en même temps gardent donc chacun la sienne. Remonte quand la
-   page change d'instance : la page remonte le viewer (key=activeTest.id), donc la
-   session relue est bien celle de l'instance affichée. */
+/* La clé de session de CETTE instance (voir pymolSessionKey / pymolSessionKeys) — elle
+   est FIGÉE au montage : la page qu'on quitte reste vivante (voir le parking des pages
+   d'App), et deux viewers montés en même temps gardent donc chacun la sienne. Remonte
+   quand la page change d'instance : la page remonte le viewer (key=activeTest.id), donc
+   la session relue est bien celle de l'expérience affichée.
+   ⚠ TOUTES LES INSTANCES D'UNE EXPÉRIENCE PARTAGENT LA SESSION : la clé principale est
+   celle du couple projet · expérience, donc deux CONDITIONS du même test se relisent
+   l'une l'autre (le rapport de cette session : « keep the selection generated by
+   “selections and pymol” window in all instances of one experiment »). La clé
+   d'instance reste lue en second — la mémoire des versions précédentes — et la générale
+   en dernier. */
+const pymolSessionKeysRef = useRef(null);
+if (!pymolSessionKeysRef.current) pymolSessionKeysRef.current = pymolSessionKeys(instanceKey, driveNaming);
 const pymolSessionKeyRef = useRef(null);
-if (!pymolSessionKeyRef.current) pymolSessionKeyRef.current = pymolSessionKey(instanceKey, driveNaming);
-const [pymolSession] = useState(() => loadPymolSession(pymolSessionKeyRef.current));
+if (!pymolSessionKeyRef.current) pymolSessionKeyRef.current = pymolSessionKeysRef.current[0];
+const [pymolSession] = useState(() => loadPymolSessionFor(pymolSessionKeysRef.current));
 const [selections, setSelections] = useState(() => pymolSession.selections);   // [{ name, expr }]
 const [selStyles, setSelStyles] = useState(() => pymolSession.selStyles);       // key -> { cartoon, ribbon, tube, ball, stick, sphere, surface, color, colorMode, transparency, sphereScale, radiusSphere, radiusBond, hideFor, mat }
 // PyMOL's `set … , <selection>` commands are NOT looks: they are properties of
@@ -13014,10 +13118,19 @@ const renderSection = (sec) => {
      nucleic acid, light blue for water, light magenta for an ion, light brown for
      a sugar — with the rows inside fading from it toward white. Both shades come
      from the ⚙ wheel's « Styling window backgrounds » section; the selection of a
-     molecule keeps its blue BORDER (the tint is the background now). */
+     molecule keeps its blue BORDER (the tint is the background now).
+
+     ⚠ LE CADRE DISAIT LA MAUVAISE CLÉ — le rapport de cette session : « there is no way
+     to select a molecule so I cannot try the "fit to chosen" button. » La comparaison
+     `selectedMolKey === sec.id` ne pouvait JAMAIS être vraie : `selectedMolKey` est une
+     MOLÉCULE ('main', un id de molécule ajoutée) quand `sec.id` est une SECTION
+     (`main::protein`). Le cadre suit donc la molécule de la section (le préfixe avant
+     `::`), et l'espace choisi — celui que 🎯 Fit to chosen prend pour référence — le
+     montre. */
+  const molKeyOfSection = String(sec.id).split('::')[0];
   return (
     <div key={sec.id}
-      className={`rounded border px-1 py-0.5 flex flex-col gap-0.5 ${selectedMolKey === sec.id ? 'border-blue-300' : 'border-slate-200'}`}
+      className={`rounded border px-1 py-0.5 flex flex-col gap-0.5 ${selectedMolKey === molKeyOfSection ? 'border-violet-400' : 'border-slate-200'}`}
       style={{ backgroundColor: sectionCardTintCss(sectionTints, kind) }}>
       <div className="flex items-center gap-1">
         <input type="checkbox" checked={shown} onChange={() => toggleSectionVisible(sec.id, kind)}
@@ -13246,15 +13359,61 @@ const dragMoveOnUp = () => {
    buttons at the top are obsolete, you can replace them for a button to select all
    molecules or none ». ONE toggle, and the state of it IS the picture: every
    loaded structure shown, or none of them (each space keeps its own ✔, so a
-   molecule can always be brought back on its own). */
+   molecule can always be brought back on its own).
+
+   ⚠⚠ LE RAPPORT DE CETTE SESSION : « the "all" or "none" buttons should select or
+   deselect the ticks of each molecule and it is not what they do. » Le bouton ne
+   touchait que `visibleMolKeys` — l'état qui montre/cache la MOLÉCULE ENTIÈRE — tandis
+   que les ✔ que l'on voit dans la barre sont ceux des SECTIONS (§4 : « the ✔ that draws
+   it » par molécule / par part). Les deux états sont donc écrits ENSEMBLE : ☑ All coche
+   le ✔ de chaque molécule ET le ✔ de chaque section de chaque molécule, ☐ None les
+   décoche tous — le bouton et les cases ne peuvent plus se contredire. */
 const molKeysInBar = () => ['main', ...extraCompsRef.current.map(({ id }) => id)];
 const allMoleculesShown = () => {
   const keys = molKeysInBar();
   return keys.length > 0 && keys.every((k) => visibleMolKeys.has(k));
 };
+// ☑ LE TICK D'UNE MOLÉCULE — l'état que l'effet de visibilité lit (son ✔ est celui de
+// son espace dans la barre) : un clic sur la case EST le changement d'image.
+const molShown = (key) => visibleMolKeys.has(key);
+const setMolShown = (key, on) => {
+  leaveLightMode();
+  setVisibleMolKeys((prev) => {
+    const n = new Set(prev);
+    if (on) n.add(key); else n.delete(key);
+    return n;
+  });
+  try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch { /* ignore */ }
+};
+// ☑/☐ LE TICK DE TOUTES LES SECTIONS — les ✔ que la barre affiche (une molécule d'eau
+// ou un ion compris : « all » veut dire TOUT, et le prochain clic remet tout en place).
+const setEverySectionTick = (on) => {
+  const next = { ...sectionVisRef.current };
+  const cat = sectionCatalogRef.current || {};
+  Object.keys(cat).forEach((molKey) => {
+    ((cat[molKey] || {}).sections || []).forEach((sec) => { next[sec.id] = on; });
+  });
+  setSectionVis(next);
+};
 const toggleAllMolecules = () => {
   const keys = molKeysInBar();
-  setVisibleMolKeys((prev) => (keys.length && keys.every((k) => prev.has(k)) ? new Set() : new Set(keys)));
+  const on = !(keys.length && keys.every((k) => visibleMolKeys.has(k)));
+  setVisibleMolKeys(on ? new Set(keys) : new Set());
+  setEverySectionTick(on);
+  bumpSectionEpoch();
+  requestSceneRepaint();
+};
+/* 🎯 LA MOLÉCULE CHOISIE — le rapport : « there is no way to select a molecule so I
+   cannot try the "fit to chosen" button. » Cliquer le NOM d'un espace la choisissait
+   déjà (autoViewMol) mais RIEN ne le montrait : la surbrillance de la barre comparait
+   `selectedMolKey` à l'identifiant d'une SECTION (`protein · chain A`), jamais à celui
+   d'une molécule — elle ne pouvait donc jamais s'allumer. Il y a maintenant un bouton
+   🎯 par molécule (le choix se VOIT, « chosen » en violet), chaque espace choisi porte
+   un cadre violet, et les rangées de ses sections suivent (renderSection). C'est ce
+   choix-là que 🎯 Fit to chosen prend pour référence. */
+const chooseMol = (key) => {
+  setSelectedMolKey(key);
+  try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch { /* ignore */ }
 };
 
 /* 🎯 FIT ALL THE SHOWN STRUCTURES ONTO THE CHOSEN ONE — the request: « a button to
@@ -14423,14 +14582,104 @@ const captureViewerSetup = () => ({
   // palettes and the general look travel with a saved setup (they are validated on
   // the way back in, like every other field of the file).
   generalLook,
+  /* ⚙ LA ROUE ENTIÈRE — les palettes que les colorations lisent RÉELLEMENT.
+     ⚠⚠ LE RAPPORT DE CETTE SESSION : « in the viewer the cumulative and snapshot saves,
+     do not save all the settings necessary to reconstruct the image as it was when it
+     was saved. » Cinq palettes seulement voyageaient (types d'atomes, sucres,
+     conformations, motifs, chaînes) : les COULEURS DES RÉSIDUS (et leurs deux parts),
+     DES BASES (et leur ribose), DES CHARGES, DES TYPES DE LIPIDES (et leurs trois
+     parts), DES TYPES DE SUCRES et LES FONDS DES ESPACES restaient donc sur l'écran
+     précédent — l'image rechargée n'était pas celle que l'on avait réglée. Elles sont
+     toutes là maintenant, lues par les mêmes validateurs qu'au chargement du ⚙. */
   palettes: {
     elements: elementColors,
     sugars: sugarColors,
     nucleicForms: nucleicFormColors,
     nucleicMotifs: nucleicMotifColors,
     chains: chainColors,
+    residues: residueColors,
+    residueParts: residuePartColors,
+    baseTypes: baseTypeColors,
+    baseSugars: baseSugarColors,
+    charges: chargeColors,
+    lipidTypes: lipidTypeColors,
+    lipidParts: lipidPartColors,
+    sugarTypes: sugarTypeColors,
+    sectionTints,
   },
+  /* ✨ Ray (le facteur, le fond transparent, l'ombre portée avec sa force et son flou)
+     et ⚡ ESP (les deux bornes du dégradé) font partie de l'image d'une figure : ils
+     voyagent avec elle. */
+  ray: { factor: rayFactor, transparent: rayTransparent, shadows: rayShadows, strength: rayShadowStrength, blur: rayShadowBlur },
+  esp: espLimits,
+  // …et tout ce qui est propre à CETTE scène (voir captureSceneExtras).
+  ...captureSceneExtras(),
   savedAt: new Date().toISOString(),
+});
+
+/* ── LE POINT DE VUE — la caméra est une PARTIE de l'image ─────────────────────
+   Une figure se reconnaît à son orientation autant qu'à ses couleurs : sans elle,
+   « reload the image as it was » redonne la même molécule vue de l'autre côté. NGL
+   n'offre pas de pose de caméra par une seule propriété : on range donc les trois
+   qui la décrivent (la rotation, la translation et le zoom), lues et réécrites par
+   les objets du viewer — et TOUT est sous try/catch, une version de NGL qui ne les
+   exposerait pas laisse simplement la caméra où elle est. */
+const cameraPose = () => {
+  try {
+    const v = stageRef.current && stageRef.current.viewer;
+    if (!v) return null;
+    const q = (v.rotationGroup && v.rotationGroup.quaternion) ? Array.from(v.rotationGroup.quaternion.toArray()) : null;
+    const p = (v.translationGroup && v.translationGroup.position) ? Array.from(v.translationGroup.position.toArray()) : null;
+    const zoom = (v.camera && Number.isFinite(v.camera.zoom)) ? v.camera.zoom : null;
+    if (!q && !p && zoom == null) return null;
+    return { q, p, zoom };
+  } catch { return null; }
+};
+const applyCameraPose = (pose) => {
+  try {
+    const v = stageRef.current && stageRef.current.viewer;
+    if (!v || !pose || typeof pose !== 'object') return;
+    if (Array.isArray(pose.q) && pose.q.length === 4 && v.rotationGroup && v.rotationGroup.quaternion) {
+      const Q = v.rotationGroup.quaternion.constructor;
+      v.rotationGroup.setRotationFromQuaternion(new Q().fromArray(pose.q));
+    }
+    if (Array.isArray(pose.p) && pose.p.length === 3 && v.translationGroup && v.translationGroup.position) {
+      v.translationGroup.position.fromArray(pose.p);
+    }
+    if (Number.isFinite(pose.zoom) && v.camera) v.camera.zoom = pose.zoom;
+    if (typeof v.requestRender === 'function') v.requestRender();
+  } catch { /* une version de NGL sans ces objets laisse la caméra en place */ }
+};
+
+/* ── CE QU'UN ENREGISTREMENT DE SCÈNE AJOUTE À L'ENVIRONNEMENT ────────────────
+   « In the viewer the cumulative and snapshot saves do not save all the settings
+   necessary to reconstruct the image as it was when it was saved. » L'environnement
+   (menus, roue ⚙, lumières, fond, clipping, ray) ne suffit pas : ce que CES molécules
+   ont de particulier reste à côté —
+
+     · l'étiquette 3D de CHAQUE section (residues · type · atom names) ;
+     · les réglages PAR MOLÉCULE de la barre de styling (style · couleur · mode de
+       coloration · transparence) et LÀ OÙ ELLES SONT (position, un fit ou un ✥ Move
+       compris) ;
+     · la session 🧪 Selections & PyMOL — ses fenêtres, leurs looks, les `set` posés,
+       la macro et le drapeau « le script tient la scène » ;
+     · le POINT DE VUE de la caméra.
+
+   Un THÈME ne les prend pas (il parle de CLASSES, pas de ces molécules : voir
+   THEME_GLOBAL_KEYS) ; un SETUP nommé et un SNAPSHOT, si : ce sont deux photographies.
+   Tout est relu VALIDÉ champ par champ (applySceneExtras), comme le reste du fichier. */
+const captureSceneExtras = () => ({
+  labels: { ...(sectionLabelsRef.current || {}) },
+  molecules: {
+    main: { ...(mainMolRef.current || {}), pos: mainPos },
+    extras: extraMolsSnapshot().map((m) => ({ ...m })),
+    chosen: selectedMolKey,
+  },
+  pymol: {
+    selections, selStyles, selOverrides,
+    script: pymolScript, active: pymolActive, autoShow: autoShowSel, name: pymolScriptName,
+  },
+  camera: cameraPose(),
 });
 
 const applyViewerSetup = (s) => {
@@ -14480,6 +14729,32 @@ const applyViewerSetup = (s) => {
   if (pal.chains) setChainColors((p) => mergePalette(CHAIN_COLOR_PALETTE, { ...p, ...pal.chains }));
   if (pal.nucleicForms) setNucleicFormColors((p) => mergePalette(DEFAULT_NUCLEIC_FORM_COLORS, { ...p, ...pal.nucleicForms }));
   if (pal.nucleicMotifs) setNucleicMotifColors((p) => mergePalette(DEFAULT_NUCLEIC_MOTIF_COLORS, { ...p, ...pal.nucleicMotifs }));
+  /* ⚠ LES NEUF PALETTES QUI MANQUAIENT (le rapport : les enregistrements ne gardaient
+     pas « all the settings necessary to reconstruct the image ») : les résidus, les
+     bases, les charges, les TYPES de lipides et de sucres, les fonds des espaces — et
+     les TROIS palettes IMBRIQUÉES (une couleur par part), relues par le garde des
+     palettes imbriquées, qui ne garde que les classes et les parts connues. */
+  if (pal.residues) setResidueColors((p) => mergePalette(RESIDUE_COLOR_PALETTE, { ...p, ...pal.residues }));
+  if (pal.baseTypes) setBaseTypeColors((p) => mergePalette(BASE_IDENTITY_COLORS, { ...p, ...pal.baseTypes }));
+  if (pal.charges) setChargeColors((p) => mergePalette(CHARGE_COLORS, { ...p, ...pal.charges }));
+  if (pal.lipidTypes) setLipidTypeColors((p) => mergePalette(LIPID_CLASS_COLORS, { ...p, ...pal.lipidTypes }));
+  if (pal.sugarTypes) setSugarTypeColors((p) => mergePalette(SUGAR_TYPE_COLORS, { ...p, ...pal.sugarTypes }));
+  if (pal.sectionTints) setSectionTints((p) => mergePalette(DEFAULT_SECTION_TINTS, { ...p, ...pal.sectionTints }));
+  if (pal.residueParts) setResiduePartColors((p) => mergePartPalette(RESIDUE_PART_DEFAULTS, { ...p, ...pal.residueParts }));
+  if (pal.baseSugars) setBaseSugarColors((p) => mergePartPalette(BASE_SUGAR_COLORS, { ...p, ...pal.baseSugars }));
+  if (pal.lipidParts) setLipidPartColors((p) => mergePartPalette(LIPID_PART_DEFAULTS, { ...p, ...pal.lipidParts }));
+  /* ✨ Ray et ⚡ ESP, relus par LEURS propres validateurs : le facteur doit être l'un
+     des facteurs offerts, l'ombre une force 0.1–1 et un flou 0–4 (les bornes de leurs
+     deux curseurs), et les deux limites ESP deux nombres positifs ≤ 500. */
+  const ry = s.ray || {};
+  if (RAY_FACTORS.includes(Number(ry.factor))) setRayFactor(Number(ry.factor));
+  if (typeof ry.transparent === 'boolean') setRayTransparent(ry.transparent);
+  if (typeof ry.shadows === 'boolean') setRayShadows(ry.shadows);
+  if (Number.isFinite(ry.strength)) setRayShadowStrength(Math.min(1, Math.max(0.1, ry.strength)));
+  if (Number.isFinite(ry.blur)) setRayShadowBlur(Math.min(4, Math.max(0, ry.blur)));
+  if (Array.isArray(s.esp) && s.esp.length === 2 && s.esp.every((n) => Number.isFinite(n) && n > 0)) {
+    setEspLimits([Math.min(500, Math.max(0.5, s.esp[0])), Math.min(500, Math.max(0.5, s.esp[1]))]);
+  }
   if (s.generalLook && typeof s.generalLook === 'object') {
     setGeneralLook((prev) => {
       const next = { ...prev };
@@ -14490,7 +14765,116 @@ const applyViewerSetup = (s) => {
       return next;
     });
   }
+  /* …ET TOUT CE QUI EST PROPRE À LA SCÈNE (étiquettes de section, réglages par
+     molécule, session 🧪, caméra) — voir captureSceneExtras / applySceneExtras.
+     ⚠ applySceneExtras est défini juste APRÈS ce lecteur, comme applyThemeGlobal :
+     les deux sont des consts, et un setup n'est relu que par un geste — donc après
+     le rendu qui les a initialisés tous les deux. */
+  applySceneExtras(s);
   return true;
+};
+
+/* ── RELIRE CE QU'UN ENREGISTREMENT DE SCÈNE AJOUTE À L'ENVIRONNEMENT ─────────
+   Le pendant de captureSceneExtras, et le MÊME lecteur pour les trois magasins (un
+   setup nommé, un snapshot, un thème qui n'en contient pas — il les ignore alors).
+   Chaque champ est VALIDÉ : un fichier bricolé à la main ne peut ni inventer un style
+   de molécule, ni poser une position qui n'est pas trois nombres, ni remplacer une
+   sélection par autre chose qu'un nom et une expression. */
+const applySceneExtras = (s) => {
+  if (!s || typeof s !== 'object') return false;
+  let touched = false;
+  // 1. LES ÉTIQUETTES 3D DE CHAQUE SECTION — seuls les trois drapeaux connus.
+  const labs = (s.labels && typeof s.labels === 'object') ? s.labels : null;
+  if (labs) {
+    const next = {};
+    Object.keys(labs).forEach((id) => {
+      const l = labs[id];
+      if (!l || typeof l !== 'object') return;
+      const one = { ...SECTION_LABEL_DEFAULTS };
+      Object.keys(SECTION_LABEL_DEFAULTS).forEach((k) => { if (typeof l[k] === 'boolean') one[k] = l[k]; });
+      next[id] = one;
+    });
+    setSectionLabels(next);
+    touched = true;
+  }
+  // 2. LES RÉGLAGES PAR MOLÉCULE — la principale d'abord (style · couleur · mode ·
+  // transparence + SA POSITION, un fit ou un ✥ Move compris), puis chaque molécule
+  // ajoutée ENCORE CHARGÉE (celles qui ne le sont plus sont simplement ignorées),
+  // re-dessinée par restyleExtraMol pour que son style soit vraiment appliqué.
+  const mols = (s.molecules && typeof s.molecules === 'object') ? s.molecules : null;
+  if (mols) {
+    const m = (mols.main && typeof mols.main === 'object') ? mols.main : null;
+    if (m) {
+      setMainMol((prev) => {
+        const next = { ...prev };
+        if (typeof m.style === 'string') next.style = m.style;
+        if (typeof m.color === 'string') next.color = m.color;
+        if (typeof m.colorMode === 'string') next.colorMode = m.colorMode;
+        if (Number.isFinite(m.transparency)) next.transparency = Math.min(1, Math.max(0, m.transparency));
+        return next;
+      });
+      if (Array.isArray(m.pos) && m.pos.length === 3 && m.pos.every((n) => Number.isFinite(n))) {
+        setMainPos([m.pos[0], m.pos[1], m.pos[2]]);
+        try {
+          const comp = componentRef.current;
+          if (comp && typeof comp.setPosition === 'function') {
+            comp.setPosition([m.pos[0], m.pos[1], m.pos[2]]);
+            if (typeof comp.updateMatrix === 'function') comp.updateMatrix();
+          }
+        } catch { /* la position de la principale est best-effort */ }
+      }
+      touched = true;
+    }
+    if (Array.isArray(mols.extras)) {
+      let hit = 0;
+      mols.extras.forEach((e) => {
+        if (!e || typeof e !== 'object') return;
+        const entry = extraCompsRef.current.find((x) => x.id === e.id);
+        if (!entry) return;
+        if (typeof e.style === 'string') entry.style = e.style;
+        if (typeof e.color === 'string') entry.color = e.color;
+        if (typeof e.colorMode === 'string') entry.colorMode = e.colorMode;
+        if (Number.isFinite(e.transparency)) entry.transparency = Math.min(1, Math.max(0, e.transparency));
+        if (Array.isArray(e.position) && e.position.length === 3 && e.position.every((n) => Number.isFinite(n))) {
+          entry.position = [e.position[0], e.position[1], e.position[2]];
+          try {
+            const comp = entry.comp;
+            if (comp && typeof comp.setPosition === 'function') {
+              comp.setPosition(entry.position);
+              if (typeof comp.updateMatrix === 'function') comp.updateMatrix();
+            }
+          } catch { /* position best-effort */ }
+        }
+        restyleExtraMol(entry.id);
+        hit += 1;
+      });
+      if (hit) { setExtraMols(extraMolsSnapshot()); touched = true; }
+    }
+    if (typeof mols.chosen === 'string' && mols.chosen) setSelectedMolKey(mols.chosen);
+  }
+  // 3. LA SESSION 🧪 Selections & PyMOL — relue par les normalisateurs du stockage :
+  // ses fenêtres, leurs looks, les `set` posés, la macro, le drapeau « le script tient
+  // la scène » et l'affichage automatique des sélections. Le rendu des sélections a
+  // son propre effet, dont ces états sont des dépendances : la scène se redessine.
+  const py = (s.pymol && typeof s.pymol === 'object') ? s.pymol : null;
+  if (py) {
+    setSelections(normalizeSelNames(py.selections));
+    setSelStyles(normalizeSelStyles(py.selStyles));
+    setSelOverrides(normalizeSelOverrides(py.selOverrides));
+    if (typeof py.script === 'string') setPymolScript(sessionText(py.script, 40000));
+    if (typeof py.active === 'boolean') setPymolActive(py.active);
+    if (typeof py.autoShow === 'boolean') setAutoShowSel(py.autoShow);
+    if (typeof py.name === 'string') setPymolScriptName(sessionText(py.name, 128));
+    touched = true;
+  }
+  // 4. LE POINT DE VUE — la caméra de la figure (voir cameraPose / applyCameraPose).
+  if (s.camera) { applyCameraPose(s.camera); touched = true; }
+  if (touched) {
+    bumpSectionEpoch();
+    requestSceneRepaint();
+    try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch { /* ignore */ }
+  }
+  return touched;
 };
 
 // Feedback line of the ⚙️ panel (clears itself after a few seconds).
@@ -14689,6 +15073,13 @@ const saveSnapshot = (name) => {
     [name]: {
       v: VIEWER_SNAPSHOT_VERSION, name, savedAt: new Date().toISOString(),
       global: captureThemeGlobal(captureViewerSetup()), sections, vis: { ...sectionVis },
+      /* ⚠ CE QU'UNE PHOTOGRAPHIE DOIT CONTENIR DE PLUS (le rapport : « the cumulative
+         and snapshot saves do not save all the settings necessary to reconstruct the
+         image as it was when it was saved ») : les étiquettes 3D de chaque section, les
+         réglages et la POSITION de chaque molécule, la session 🧪 Selections & PyMOL et
+         le point de vue de la caméra. Un THÈME ne les prend pas (il parle de classes) ;
+         un snapshot, si — c'est une photographie de CETTE scène. */
+      scene: captureSceneExtras(),
     },
   };
   setViewerSnaps(map);
@@ -14720,6 +15111,9 @@ const loadSnapshot = (name) => {
   });
   setSectionLooks(looks);
   if (sn.vis && typeof sn.vis === 'object') setSectionVis({ ...sn.vis });
+  /* …ET TOUT CE QUI FAIT LA PHOTOGRAPHIE ELLE-MÊME : les étiquettes de section, les
+     réglages et la position de chaque molécule, la session 🧪 et la caméra. */
+  applySceneExtras(sn.scene);
   leaveLightMode();
   try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch { /* ignore */ }
   flashSetupMsg(`✓ snapshot “${name}” applied — ${hit} section(s)${miss ? `, ${miss} unknown (their look is kept)` : ''}`);
@@ -14993,6 +15387,22 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
 )}
 {showSetupPanel && (
 <div className="w-full bg-teal-50/50 border border-teal-200 rounded-lg px-2 py-2 flex flex-wrap items-center gap-2">
+  {/* ⚠ « I DO NOT UNDERSTAND THE USE OF PREDEFINED STYLES SAVE BUTTON » — le rapport de
+      cette session. Le panneau n'expliquait, nulle part, ce que chaque bouton range NI
+      à quoi sert le nom que l'on tape : cette ligne le dit UNE fois, en tête du bloc —
+      les cinq boutons de la rangée, puis les deux modes de sauvegarde qui décident de
+      ce qui est APPRIS. */}
+  <p className="w-full text-[10px] text-teal-900 leading-snug">
+    <b>Save / load the look of the whole viewer under a NAME.</b> Type a name in the box
+    (any name you like), then <b>💾 Save</b> stores the look that is on screen RIGHT NOW
+    — every molecule style, colour, radius, light, fog, background and clipping setting —
+    under that name; <b>📂 Load…</b> puts a stored look back on screen; <b>🗑 Delete</b>
+    removes the named one; <b>⬇ Export</b> / <b>⬆ Import</b> carry it as a .json file to
+    another page or computer. The <b>save mode</b> below says WHAT is remembered:
+    <b> 🎨 Theme</b> remembers styles BY MOLECULAR CLASS (a protein style you can reuse on
+    another file — cumulative), <b>📷 Snapshot</b> photographs THIS exact system
+    (molecule by molecule).
+  </p>
   <span className="text-[10px] font-black text-teal-800 uppercase tracking-wide whitespace-nowrap">Predefined styles</span>
   <input value={setupName} onChange={(e) => setSetupName(e.target.value)} placeholder="Style name"
     title="Name of the predefined style — 💾 saves the CURRENT look under this name (an existing name is overwritten)"
@@ -16027,12 +16437,28 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
       {Object.keys(sectionCatalog).map((molKey) => {
         const entry = sectionCatalog[molKey];
         const extra = extraMols.find((m) => m.id === molKey);
+        const chosen = selectedMolKey === molKey;
         return (
-          <div key={molKey} className="rounded border border-slate-300 bg-slate-50/70 p-1 flex flex-col gap-0.5">
+          <div key={molKey}
+            className={`rounded border-2 p-1 flex flex-col gap-0.5 ${chosen ? 'border-violet-400 bg-violet-50/60' : 'border-slate-300 bg-slate-50/70'}`}>
             <div className="flex items-center gap-1.5">
+              {/* ☑ LE ✔ DE CETTE MOLÉCULE — le tick que ☑ All / ☐ None coche pour tout le
+                  monde (l'État que l'effet de visibilité lit : le ✔ EST l'image). */}
+              <input type="checkbox" checked={molShown(molKey)} onChange={() => setMolShown(molKey, !molShown(molKey))}
+                className="accent-blue-600 w-3.5 h-3.5 shrink-0"
+                title={`Draw ${entry.name} — the tick of THIS molecule (☑ All / ☐ None tick them all at once). Unticking hides the whole structure, whatever its sections say.`} />
               <button type="button" onClick={() => autoViewMol(molKey)}
                 className="text-[10px] font-black text-slate-700 truncate flex-1 text-left hover:text-blue-700"
                 title={`${entry.name} — click to select & centre it`}>{entry.name}</button>
+              {/* 🎯 LE CHOIX DE LA MOLÉCULE — la référence de « 🎯 Fit to chosen » (le
+                  rapport : « there is no way to select a molecule so I cannot try the
+                  "fit to chosen" button »). Le choix se VOIT : espace violet + « chosen ». */}
+              <button type="button" onClick={() => chooseMol(molKey)}
+                className={`text-[10px] font-bold px-1 rounded shrink-0 ${chosen ? 'bg-violet-600 text-white' : 'text-slate-500 hover:text-violet-700'}`}
+                title={chosen
+                  ? `${entry.name} IS the chosen molecule — 🎯 Fit to chosen superposes every other shown structure onto it`
+                  : `Choose ${entry.name} as the reference molecule: 🎯 Fit to chosen then superposes the other shown structures onto it`}>
+                🎯 {chosen ? 'chosen' : 'choose'}</button>
               {extra && (
                 <button type="button" onClick={(e) => { e.stopPropagation(); deleteExtraMol(extra.id); }}
                   className="text-red-400 hover:text-red-600 font-bold text-[10px] px-1 shrink-0" title="Delete this structure">🗑</button>
