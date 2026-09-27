@@ -1,0 +1,27 @@
+﻿[_viewer_scheme_test.mjs] EXIT=0 :: _viewer_scheme_test.mjs ΓÇö 365 assertions OK
+[_viewer_style_controls_test.mjs] EXIT=0 :: _viewer_style_controls_test.mjs ΓÇö 466 assertions OK
+[_viewer_ui_layout_test.mjs] EXIT=0 :: _viewer_ui_layout_test.mjs ΓÇö 312 assertions OK
+[_viewer_rings_gradient_test.mjs] EXIT=0 :: _viewer_rings_gradient_test.mjs ΓÇö 183 assertions OK
+[_dock_style_test.mjs] EXIT=0 :: _dock_style_test.mjs ΓÇö 39 assertions OK
+[_large_system_style_test.mjs] EXIT=0 :: _large_system_style_test.mjs ΓÇö 42 assertions OK
+[_viewer_color_settings_test.mjs] EXIT=0 :: _viewer_color_settings_test.mjs ΓÇö 162 assertions OK
+[_viewer_structure_classes_test.mjs] EXIT=0 :: _viewer_structure_classes_test.mjs ΓÇö 237 assertions OK
+[_viewer_section_visibility_test.mjs] EXIT=0 :: _viewer_section_visibility_test.mjs ΓÇö 19 assertions OK
+[_viewer_main_reps_ownership_test.mjs] EXIT=0 :: _viewer_main_reps_ownership_test.mjs ΓÇö 12 assertions OK
+[_viewer_report_fixes_test.mjs] EXIT=0 :: _viewer_report_fixes_test.mjs ΓÇö 51 assertions OK
+[_viewer_sstruc_colors_test.mjs] EXIT=0 :: _viewer_sstruc_colors_test.mjs ΓÇö 64 assertions OK
+[_viewer_style_gaps_test.mjs] EXIT=0 :: _viewer_style_gaps_test.mjs ΓÇö 250 assertions OK
+[_viewer_general_row_test.mjs] EXIT=0 :: _viewer_general_row_test.mjs ΓÇö 183 assertions OK (hi├⌐rarchie + rang├⌐e General ex├⌐cut├⌐e)
+[_viewer_style_coverage_test.mjs] EXIT=0 :: _viewer_style_coverage_test.mjs ΓÇö 672 assertions OK (chaque atome, chaque liaison)
+[_pymol_selection_bridge_test.mjs] EXIT=0 :: _pymol_selection_bridge_test.mjs ΓÇö 70 assertions OK
+[_pymol_selections_test.mjs] EXIT=0 :: _pymol_selections_test.mjs ΓÇö 55 assertions OK
+[_viewer_selection_toggle_test.mjs] EXIT=0 :: _viewer_selection_toggle_test.mjs ΓÇö 78 assertions OK (styles + hide)
+[_viewer_headgroups_test.mjs] EXIT=0 :: _viewer_headgroups_test.mjs : 58 assertions OK
+[_viewer_light_rig_test.mjs] EXIT=0 :: _viewer_light_rig_test.mjs ΓÇö 384 assertions OK
+[_viewer_materials_test.mjs] EXIT=0 :: _viewer_materials_test.mjs ΓÇö 137 assertions OK
+[_viewer_ray_test.mjs] EXIT=0 :: Γ£¿ Ray: no cast shadows ΓÇö no decoder for the still
+[_viewer_theme_snapshot_test.mjs] EXIT=0 :: _viewer_theme_snapshot_test.mjs ΓÇö 34 assertions OK (th├¿me cumulatif + snapshot)
+[_ligand_smiles_test.mjs] EXIT=0 :: _ligand_smiles_test.mjs ΓÇö 32 assertions OK
+[_viewer_render_smoke_test.mjs] EXIT=0 :: _viewer_render_smoke_test.mjs ΓÇö 23 assertions OK
+[_viewer_surface_seethrough_pixels_test.cjs] EXIT=0 :: _viewer_surface_seethrough_pixels_test.cjs ΓÇö 60/60 assertions OK (opaqueBack:false vs d├⌐faut NGL ΓÇö et ┬½ Transp 0 % ┬╗ opaque, mat├⌐riau compris : pixels r├⌐els Chrome/SwiftShader)
+total 26, failed 0

@@ -40,6 +40,21 @@
    format, partie par partie (voir columnBlocks) : la page garde ses colonnes, les
    parties qui la BARENT (titre, auteurs, affiliations, une figure « Full width »)
    ont une section à une colonne, et les autres coulent dans celles de la page.
+
+   …ET UNE FIGURE EST RAMENÉE À SA PROPRE SECTION MÊME QUAND ELLE EST ANCRÉE DANS
+   LE TEXTE. Un manuscrit importé ne pose pas ses figures après la section : il les
+   pose DANS son texte (voir utils/figurePlacement.js · splitAnchoredFigures), donc
+   dans le `<div class="pf-body">` que l'export reçoit comme UN seul bloc. La figure
+   y était alors avalée : le format la veut pleine largeur (« Figures & captions :
+   Full width »), la feuille du document la faisait barrer la page d'un seul tenant
+   (`column-span: all`, elle ne regarde pas où la figure se trouve), et le .docx la
+   gardait dans sa colonne, réduite à la largeur d'une colonne — le rapport exact :
+   « figures that are defined to be full width in the publication format are still
+   inside columns in the exported docx document of the project (but ok in the
+   exported non-docx document) ». Le conteneur qui PORTE une telle figure est donc
+   ouvert par renderUnits, la figure devient un bloc à part — sa section d'une
+   colonne s'ouvre avant son image et se referme après sa légende —, et le texte
+   reprend les colonnes de la page (voir holdsFigureWithOwnColumns).
    ========================================================================= */
 
 import { zipSync, strToU8 } from 'fflate';
@@ -50,7 +65,7 @@ import { zipSync, strToU8 } from 'fflate';
    format (voir columnBlocks). */
 import {
   DOC_SECTION_ATTR, FIGURE_COLS_ATTR, PUB_COLUMN_GAP_REM, PUB_LAYOUT_PARTS,
-  normalizePubLayout, pubFigureCols, pubPageColumnsOf, pubSectionSpanIn, pubSpanIn
+  normalizePubLayout, pubFigureBarsPage, pubFigureCols, pubPageColumnsOf, pubSectionSpanIn, pubSpanIn
 } from '../components/pubCitation.js';
 /* LA LIGNE VIDE DE LA TÊTE DU DOCUMENT (« in the final document the list of
    authors must be separated by the title with one empty line ») : la feuille du
@@ -263,6 +278,20 @@ const partOfClasses = (node) => {
   if (names.includes(UNSTYLED_CLASS)) return '-';
   for (let i = 0; i < names.length; i += 1) if (PART_BY_CLASS[names[i]]) return PART_BY_CLASS[names[i]];
   return '';
+};
+
+/** La partie d'un nœud : celle que ses CLASSES nomment, sinon celle du conteneur
+ *  d'où l'on vient (le texte d'une section), sinon celle que sa BALISE vaut (voir
+ *  PART_BY_TAG). Une FIGURE est le seul cas que la balise tranche AVANT le
+ *  conteneur : la feuille du document vise `.pf-figure` **et `figure`** (voir
+ *  pubLayoutCss, partie « Figures & captions ») — une figure sans classe est donc
+ *  une figure partout, même dans le texte d'une section, et c'est SA partie qui
+ *  décide de la place qu'elle prend dans les colonnes (voir columnsOfUnit). */
+const partIdOf = (node, part) => {
+  const own = partOfClasses(node);
+  if (own) return own;
+  if (node.tag === 'figure') return 'figure';
+  return part || PART_BY_TAG[node.tag] || '';
 };
 
 /** La police : la PREMIÈRE famille de la liste CSS (« Georgia, "Times New
@@ -528,8 +557,7 @@ const renderNodes = (nodes, ctx, part) => (nodes || []).map((n) => renderBlock(n
  *  paragraphes, un `.pf-figure` à sa légende (voir docxStyleOf). */
 const renderBlock = (node, ctx, part) => {
   const t = node.tag;
-  const own = partOfClasses(node);
-  const pid = own || part || PART_BY_TAG[t] || '';
+  const pid = partIdOf(node, part);
   const base = ctx.styleOf(pid);
   /* La LÉGENDE d'une figure porte son STYLE DE PARAGRAPHE nommé (`Caption`, voir
      captionStyle) : c'est ce que reflowFigures RECONNAÎT pour emmener une figure
@@ -1043,7 +1071,10 @@ const columnWidthEmu = (columns) => Math.round(
  *   · ce que la FIGURE dit d'elle-même (`data-pf-cols` : une figure sur deux
  *     colonnes, une autre dans sa colonne, dans le même document) ;
  *   · ce que la SECTION dit (`layout.docSections`, voir PUB_DOC_SPAN_IDS) ;
- *   · ce que la PARTIE dit (`layout.<partie>.span`, voir pubSpanIn) ;
+ *   · ce que la PARTIE dit (`layout.<partie>.span`, voir pubSpanIn) — la partie
+ *     « figure » comprise : réglée « Full width », elle met TOUTES les figures
+ *     d'une colonne (c'est ce qu'une figure ancrée dans le texte vient chercher
+ *     ici, voir holdsFigureWithOwnColumns) ;
  *   · et la ligne vide de la tête (`bars`), comme avant. */
 const columnsOfUnit = (unit, layout, pageColumns) => {
   if (pageColumns <= 1) return pageColumns;
@@ -1084,32 +1115,49 @@ const fitDrawingsToColumns = (block, columns) => {
    rendu n'appartient qu'à eux. */
 const SPLIT_CONTAINERS = new Set(['div', 'section', 'article', 'header', 'main', 'aside']);
 
-/** UNE FIGURE QUI A CHOISI SA COLONNE, dans le sous-arbre d'un nœud (voir
- *  FIGURE_COLS_ATTR) : `data-pf-cols="1|2"`, la fiche de la figure de la page du projet
- *  (voir utils/figurePlacement.js · figureHtml, qui la marque même dans le TEXTE).
+/** UNE FIGURE QUI TIENT SA PROPRE SECTION, dans le sous-arbre d'un nœud. Elle le
+ *  fait de DEUX façons, et ce sont EXACTEMENT les deux que la page du projet et la
+ *  feuille du document connaissent :
+ *
+ *   · ELLE LE DIT ELLE-MÊME — `data-pf-cols="1|2"`, la fiche de la figure (voir
+ *     utils/figurePlacement.js · figureHtml, qui la marque même dans le TEXTE) ;
+ *   · OU LE FORMAT LE DIT POUR TOUTES SES FIGURES — la partie « Figures &
+ *     captions » réglée « Full width » (`layout.figure.span = 'all'`) : c'est la
+ *     fonction de la page, `pubFigureBarsPage` (« cette figure prend-elle toute la
+ *     page ? »), donc l'export ne peut pas en juger autrement. Une figure qui dit
+ *     « One column » (`data-pf-cols="1"`), elle, reste dans sa colonne — le
+ *     `:not([data-pf-cols="1"])` de la feuille.
  *
  *  POURQUOI CE TEST EXISTE : le texte d'une section arrive ici comme UN SEUL bloc — le
  *  `<div class="pf-body">` que la page du projet rend. Une figure ANCRÉE dans ce texte
  *  (c'est ainsi qu'un manuscrit importé pose ses figures, après le paragraphe qu'elles
  *  suivaient) restait donc À L'INTÉRIEUR du bloc : le réglage « Two columns » de sa
- *  fiche ne faisait rien pour Word, alors que la FEUILLE du document, elle, la faisait
- *  barrer la page (`figure[data-pf-cols="2"] { column-span: all !important }`, voir
- *  pubLayoutCss — le sélecteur ne regarde pas où la figure est). L'impression et le PDF
- *  montraient donc la figure en pleine largeur et le .docx la gardait dans sa colonne
- *  (réduite à la largeur d'une colonne par fitDrawingsToColumns) — c'est le rapport
- *  exact : « if I have text in two columns and a figure full width, the figure is
- *  correctly placed in the exported document but not in the docx ».
+ *  fiche — ou le « Full width » du format — ne faisait rien pour Word, alors que la
+ *  FEUILLE du document, elle, la faisait barrer la page (`figure[data-pf-cols="2"]`
+ *  et `figure:not([data-pf-cols="1"])` quand le format le dit : `column-span: all`,
+ *  voir pubLayoutCss — les sélecteurs ne regardent pas où la figure est). L'impression
+ *  et le PDF montraient donc la figure en pleine largeur et le .docx la gardait dans sa
+ *  colonne (réduite à la largeur d'une colonne par fitDrawingsToColumns) — c'est le
+ *  rapport exact : « if I have text in two columns and a figure full width, the figure
+ *  is correctly placed in the exported document but not in the docx », et sa suite,
+ *  « figures that are defined to be full width in the publication format are still
+ *  inside columns in the exported docx document of the project ».
  *
  *  Le conteneur qui PORTE une telle figure est donc ouvert (voir renderUnits) : la
- *  figure devient un bloc à elle, avec SA section (`columnsOfUnit` lit `figCols`), et
- *  les paragraphes qui l'entourent gardent la partie du conteneur. Rien d'autre ne
- *  change : un conteneur dont la figure ne dit rien (aucun `data-pf-cols`) reste entier. */
-const holdsFigureWithOwnColumns = (node) => {
+ *  figure devient un bloc à elle, avec SA section (`columnsOfUnit` lit `figCols`, puis
+ *  la partie « figure »), et les paragraphes qui l'entourent gardent la partie du
+ *  conteneur. Rien d'autre ne change : un conteneur dont les figures ne prennent ni
+ *  l'une ni l'autre de ces deux places reste entier (le .docx d'un document sans
+ *  colonnes ne bouge pas d'un caractère). */
+const holdsFigureWithOwnColumns = (node, format) => {
   const kids = (node && node.children) || [];
   for (let i = 0; i < kids.length; i += 1) {
     const c = kids[i];
-    if (c.tag === 'figure' && attrOf(c, FIGURE_COLS_ATTR)) return true;
-    if (holdsFigureWithOwnColumns(c)) return true;
+    if (c.tag === 'figure') {
+      const own = pubFigureCols(attrOf(c, FIGURE_COLS_ATTR));
+      if (own || pubFigureBarsPage(format, own)) return true;
+    }
+    if (holdsFigureWithOwnColumns(c, format)) return true;
   }
   return false;
 };
@@ -1130,13 +1178,15 @@ const attrOf = (node, name) => String((node.attrs && node.attrs[name]) || '').tr
  *  SECTION à laquelle il appartient (`data-doc-section`, héritée du conteneur) et,
  *  pour la ligne vide de la tête, le drapeau `bars`. L'ORDRE et le XML sont
  *  exactement ceux du rendu (renderBlock) : on ne fait que savoir à quoi chaque
- *  bloc appartient. */
-const renderUnits = (nodes, ctx, part, section) => {
+ *  bloc appartient. `format` = le « Publication format » : il dit ce que les
+ *  FIGURES font des colonnes (voir holdsFigureWithOwnColumns — c'est la même
+ *  réponse que la page du projet, `pubFigureBarsPage`). */
+const renderUnits = (nodes, ctx, part, section, format) => {
   const units = [];
   (nodes || []).forEach((n) => {
     const kids = n.children || [];
     const own = partOfClasses(n);
-    const pid = own || part || PART_BY_TAG[n.tag] || '';
+    const pid = partIdOf(n, part);
     /* LA SECTION SE TRANSMET À TOUT CE QU'ELLE CONTIENT : un `<div>` de section
        porte son identifiant, ses intitulés, ses paragraphes et ses figures le
        reçoivent d'ici — c'est ce qui permet à `layout.docSections` d'agir sur une
@@ -1144,16 +1194,17 @@ const renderUnits = (nodes, ctx, part, section) => {
     const ownSection = attrOf(n, DOC_SECTION_ATTR) || section;
     /* ON OUVRE LE CONTENEUR dans deux cas : il n'a PAS de partie à lui (le
        `<div class="mb-6">` d'une section, la grille des figures — voir SPLIT_CONTAINERS),
-       ou il en a une MAIS il porte une figure qui a choisi ses colonnes — sans quoi le
-       réglage « Two columns » de cette figure resterait sans effet pour Word, alors que
-       la feuille du document le suit (voir holdsFigureWithOwnColumns). Un conteneur qui
-       contient aussi du TEXTE EN LIGNE n'est jamais ouvert : le texte nu n'appartient à
-       aucune partie et perdrait le style du conteneur (voir hasInlineText). */
+       ou il en a une MAIS il porte une figure qui tient sa propre section — sans quoi le
+       réglage « Two columns » de cette figure (ou le « Full width » du format) resterait
+       sans effet pour Word, alors que la feuille du document le suit (voir
+       holdsFigureWithOwnColumns). Un conteneur qui contient aussi du TEXTE EN LIGNE n'est
+       jamais ouvert : le texte nu n'appartient à aucune partie et perdrait le style du
+       conteneur (voir hasInlineText). */
     const opens = SPLIT_CONTAINERS.has(n.tag) && !hasInlineText(n)
       && kids.some((c) => BLOCK_TAGS.has(c.tag))
-      && (!own || holdsFigureWithOwnColumns(n));
+      && (!own || holdsFigureWithOwnColumns(n, format));
     if (opens) {
-      units.push(...renderUnits(kids, ctx, pid, ownSection));
+      units.push(...renderUnits(kids, ctx, pid, ownSection, format));
       return;
     }
     const xml = renderBlock(n, ctx, part);
@@ -1224,10 +1275,14 @@ export const htmlToDocxBody = (html, options) => {
      se posent dans L'ORDRE DU DOCUMENT (un saut ne se déplace pas) et la remise en
      page des figures, elle, travaille ensuite sur ce corps — les sauts comme les
      intitulés y sont des frontières qu'une figure ne franchit pas (voir
-     flowBlocks). Un document sans colonne ressort identique, au caractère près. */
+     flowBlocks). Un document sans colonne ressort identique, au caractère près.
+     Le FORMAT descend jusqu'aux blocs : il dit ce que les figures font des colonnes
+     (voir renderUnits · holdsFigureWithOwnColumns), sans quoi une figure pleine
+     largeur ancrée dans le texte d'une section resterait dans sa colonne. */
+  const documentLayout = normalizePubLayout(format && format.layout);
   const { blocks, columns, pageColumns } = columnBlocks(
-    renderUnits(parseHtmlTree(html).children, ctx, ''),
-    normalizePubLayout(format && format.layout),
+    renderUnits(parseHtmlTree(html).children, ctx, '', '', format),
+    documentLayout,
     pubPageColumnsOf(format)
   );
   const xml = reflowFigures(blocks.join(''), format);

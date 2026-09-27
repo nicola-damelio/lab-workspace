@@ -1,0 +1,8 @@
+﻿audit-app-scope-refs.ps1
+audit-module-props.ps1
+cut-block.cjs
+fix-unused-declarations.cjs
+restore-catch-bindings.cjs
+verify-xtc-decoder.mjs
+_report-unused.cjs
+_tmp_fcs_palette2.cjs

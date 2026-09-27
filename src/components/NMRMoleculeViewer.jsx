@@ -15369,30 +15369,10 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
         title="Close the settings wheel">✕</button>
     </div>
     <div className="flex-1 overflow-y-auto custom-scrollbar p-4 flex flex-col gap-4">
-      <section className="flex flex-col gap-1">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <span className="text-[11px] font-black uppercase tracking-wide text-slate-600">Atom types (element colours)</span>
-          <button type="button" onClick={resetElementColors}
-            className="px-2 py-0.5 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100"
-            title="Put every element back to its default colour">
-            ↺ Defaults
-          </button>
-        </div>
-        <p className="text-[10px] text-slate-500">
-          What « Atom type » (the « Color by » option of every row of the styling bar) paints: one colour per element. The list is the request's: {ELEMENT_ORDER.join(' · ')}. An element that is NOT in the table (a metal of an unusual file) keeps a readable grey instead of turning black. Saved like every other viewer preference.
-        </p>
-        <div className="mt-1 grid grid-cols-[repeat(auto-fill,minmax(4.5rem,1fr))] gap-1.5">
-          {ELEMENT_ORDER.map((el) => (
-            <label key={el} className="flex items-center gap-1 border border-slate-200 rounded px-1 py-0.5 bg-slate-50"
-              title={`Colour of every ${el} atom`}>
-              <input type="color" value={numToHex(elementColors[el])}
-                onChange={(e) => setElementColor(el, parseInt(e.target.value.slice(1), 16))}
-                className="w-6 h-5 rounded border border-slate-300 cursor-pointer" aria-label={`${el} colour`} />
-              <span className="text-[10px] font-bold text-slate-600">{el}</span>
-            </label>
-          ))}
-        </div>
-      </section>
+      {/* ▲ THE ATOM-TYPE PALETTE HAS MOVED (the request). It now stands right after
+          « Styling window · section backgrounds » (just below), so the two palettes of
+          the WINDOW itself — its own space colours and the element colours it draws
+          molecules with — are read together, before the palettes of the molecules. */}
       {/* 🎨 THE BACKGROUNDS OF THE STYLING WINDOW (the request): the ONE colour of
           the SPACE of every kind, plus the ladder of shades the rows inside that
           space are drawn with. Not a colouring of the 3D scene: this is the
@@ -15440,39 +15420,52 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
       </section>
       <section className="flex flex-col gap-1">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <span className="text-[11px] font-black uppercase tracking-wide text-slate-600">Amino acids · the 20 residues</span>
-          <button type="button" onClick={() => setResidueColors({ ...RESIDUE_COLOR_PALETTE })}
+          <span className="text-[11px] font-black uppercase tracking-wide text-slate-600">Atom types (element colours)</span>
+          <button type="button" onClick={resetElementColors}
             className="px-2 py-0.5 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100"
-            title="Put every residue back to its default colour">
+            title="Put every element back to its default colour">
             ↺ Defaults
           </button>
         </div>
         <p className="text-[10px] text-slate-500">
-          What « Color by : Amino acid (residue) » of a protein — and « Amino acid » in the « Atom colour » selector of its menu — paints: one swatch per residue, {RESIDUE_ORDER.join(' · ')}. A NUCLEIC residue takes the colour of its BASE (the DNA/RNA base palette just below), because that IS its residue identity.
+          What « Atom type » (the « Color by » option of every row of the styling bar) paints: one colour per element. The list is the request's: {ELEMENT_ORDER.join(' · ')}. An element that is NOT in the table (a metal of an unusual file) keeps a readable grey instead of turning black. Saved like every other viewer preference.
         </p>
         <div className="mt-1 grid grid-cols-[repeat(auto-fill,minmax(4.5rem,1fr))] gap-1.5">
-          {RESIDUE_ORDER.map((res) => (
-            <label key={res} className="flex items-center gap-1 border border-slate-200 rounded px-1 py-0.5 bg-slate-50" title={`Colour of every ${res} residue`}>
-              <input type="color" value={numToHex(residueColors[res])}
-                onChange={(e) => setResidueColors((p) => ({ ...p, [res]: parseInt(e.target.value.slice(1), 16) }))}
-                className="w-6 h-5 rounded border border-slate-300 cursor-pointer" aria-label={`${res} colour`} />
-              <span className="text-[10px] font-bold text-slate-600">{res}</span>
+          {ELEMENT_ORDER.map((el) => (
+            <label key={el} className="flex items-center gap-1 border border-slate-200 rounded px-1 py-0.5 bg-slate-50"
+              title={`Colour of every ${el} atom`}>
+              <input type="color" value={numToHex(elementColors[el])}
+                onChange={(e) => setElementColor(el, parseInt(e.target.value.slice(1), 16))}
+                className="w-6 h-5 rounded border border-slate-300 cursor-pointer" aria-label={`${el} colour`} />
+              <span className="text-[10px] font-bold text-slate-600">{el}</span>
             </label>
           ))}
         </div>
-        {/* 🧪 THE TWO PARTS OF EVERY RESIDUE (the request) — backbone and side
-            chains — used when « Color by : Residue » is chosen. Both default to the
-            residue's own colour above, so nothing moves until they are separated
-            here; the reader is the atom NAME (backbone = N · CA · C · O · OXT and
-            the hydrogens on them, everything else a side chain). */}
-        <div className="flex flex-wrap items-center justify-between gap-2 mt-1">
-          <span className="text-[10px] font-black uppercase tracking-wide text-slate-500">Amino acids · backbone (B) / side chains (S)</span>
-          <button type="button" onClick={() => setResiduePartColors(mergePartPalette(RESIDUE_PART_DEFAULTS, null))}
+      </section>
+      <section className="flex flex-col gap-1">
+        {/* ✂ ONE SWATCH PER RESIDUE HAS GONE (the request) : « the color of
+            aminoacids is defined in “Amino acids · the 20 residues” and for the two
+            subgroups (backbone and chain) in “Amino acids · backbone (B) / side
+            chains (S)”. In this case the first “Amino acids · the 20 residues” is
+            obsolete (only two colors have to be defined). » TWO swatches per residue
+            are therefore offered, and nothing else: they are what
+            « Color by : Amino acid (residue) » paints, atom by atom (lab-residue
+            reads `proteinAtomPart`), and RESIDUE_COLOR_PALETTE — the only place the
+            20-residue table still lives — is the DEFAULT of the two, so nothing
+            moves until they are separated here. The reader of a part is the atom
+            NAME: backbone = N · CA · C · O · OXT and the hydrogens on them,
+            everything else a side chain. */}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="text-[11px] font-black uppercase tracking-wide text-slate-600">Amino acids · backbone (B) / side chains (S)</span>
+          <button type="button" onClick={() => { setResidueColors({ ...RESIDUE_COLOR_PALETTE }); setResiduePartColors(mergePartPalette(RESIDUE_PART_DEFAULTS, null)); }}
             className="px-2 py-0.5 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100"
-            title="Put the backbone and side-chain colours of every residue back to the residue's own colour">
+            title="Put the residue's own colour back to its default — the backbone and the side-chain swatches follow it">
             ↺ Defaults
           </button>
         </div>
+        <p className="text-[10px] text-slate-500">
+          What « Color by : Amino acid (residue) » of a protein — and « Amino acid » in the « Atom colour » selector of its menu — paints: TWO swatches per residue, {RESIDUE_ORDER.join(' · ')} — B its backbone, S its side chains. A NUCLEIC residue takes the colour of its BASE (the DNA/RNA base palette just below), because that IS its residue identity.
+        </p>
         <div className="mt-1 grid grid-cols-[repeat(auto-fill,minmax(6.5rem,1fr))] gap-1.5">
           {RESIDUE_ORDER.map((res) => (
             <span key={`respart-${res}`} className="flex items-center gap-1 border border-slate-200 rounded px-1 py-0.5 bg-slate-50"
@@ -15518,37 +15511,12 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
           ))}
         </div>
       </section>
-      {/* « Color by : Chain » paints with NGL's own `chainid` table, which NO control
-          of the viewer could change — the report: « it is possible to color by chain
-          but there is no way to define the color of the chain in the setting wheel ».
-          The scheme is the viewer's own (lab-chain) and reads exactly these swatches:
-          one per chain LETTER, plus the grey « other » for a chain whose name is not
-          a letter (a number, an empty chain, a force-field spelling). The colour is
-          read from the chain's NAME, so chain A keeps its colour from file to file. */}
-      <section className="flex flex-col gap-1">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <span className="text-[11px] font-black uppercase tracking-wide text-slate-600">Chains · color by chain</span>
-          <button type="button" onClick={() => setChainColors({ ...CHAIN_COLOR_PALETTE })}
-            className="px-2 py-0.5 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100"
-            title="Put the chain colours back to their defaults">
-            ↺ Defaults
-          </button>
-        </div>
-        <p className="text-[10px] text-slate-500">
-          What « Color by : Chain » paints on a protein / a nucleic acid / a lipid row: one colour per chain, read from the chain's NAME. {loadedChainLetters ? <>The loaded file(s) carry: <b>{loadedChainLetters}</b>.</> : 'No chain is loaded yet.'} A chain the table does not know (a number, an empty name) takes the grey « other ».
-        </p>
-        <div className="mt-1 grid grid-cols-[repeat(auto-fill,minmax(5.5rem,1fr))] gap-1.5">
-          {CHAIN_COLOR_ORDER.map((c) => (
-            <label key={c} className="flex items-center gap-1 border border-slate-200 rounded px-1 py-0.5 bg-slate-50"
-              title={c === 'other' ? 'Colour of a chain whose name is not one of the letters above' : `Colour of chain ${c} of every molecule`}>
-              <input type="color" value={numToHex(chainColors[c])}
-                onChange={(e) => setChainColors((p) => ({ ...p, [c]: parseInt(e.target.value.slice(1), 16) }))}
-                className="w-6 h-5 rounded border border-slate-300 cursor-pointer" aria-label={`chain ${c} colour`} />
-              <span className="text-[10px] font-bold text-slate-600 truncate">{c === 'other' ? 'other' : `Chain ${c}`}</span>
-            </label>
-          ))}
-        </div>
-      </section>
+      {/* ▲ THE CHAIN SECTION HAS MOVED (the request): « Chains · color by chain » now
+          stands UNDER THE LIPID TYPES, so the two palettes that colour a MEMBRANE —
+          the lipid classes and the chain letters of the file — are read together. Its
+          own note (« Color by : Chain » paints with NGL's own `chainid` table, which
+          NO control of the viewer could change … one per chain LETTER, plus the grey
+          « other ») travelled with it. */}
       <section className="flex flex-col gap-1">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="text-[11px] font-black uppercase tracking-wide text-slate-600">DNA/RNA bases · charge</span>
@@ -15595,81 +15563,10 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
           ))}
         </div>
       </section>
-      <section className="flex flex-col gap-1">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <span className="text-[11px] font-black uppercase tracking-wide text-slate-600">Sugar types</span>
-          <button type="button" onClick={() => setSugarTypeColors({ ...SUGAR_TYPE_COLORS })}
-            className="px-2 py-0.5 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100"
-            title="Put every sugar type back to its default colour">
-            ↺ Defaults
-          </button>
-        </div>
-        <p className="text-[10px] text-slate-500">
-          What « Sugar type » paints — the 29 CHEMICAL sugars of the request, not the 3-letter code a file happens to use (a file may write the same glucose GLC, BGC or GCS). A code the table below does not know keeps the readable grey.
-        </p>
-        <div className="mt-1 grid grid-cols-[repeat(auto-fill,minmax(4.5rem,1fr))] gap-1.5">
-          {SUGAR_TYPE_ORDER.map((t) => (
-            <label key={t} className="flex items-center gap-1 border border-slate-200 rounded px-1 py-0.5 bg-slate-50"
-              title={`Colour of the ${t} sugars (every code that IS ${t}: ${Object.keys(SUGAR_TYPE_OF_CODE).filter((c) => SUGAR_TYPE_OF_CODE[c] === t).join(' · ') || '—'})`}>
-              <input type="color" value={numToHex(sugarTypeColors[t])}
-                onChange={(e) => setSugarTypeColors((p) => ({ ...p, [t]: parseInt(e.target.value.slice(1), 16) }))}
-                className="w-6 h-5 rounded border border-slate-300 cursor-pointer" aria-label={`${t} colour`} />
-              <span className="text-[10px] font-bold text-slate-600 truncate">{t}</span>
-            </label>
-          ))}
-        </div>
-      </section>
-      <section className="flex flex-col gap-1">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <span className="text-[11px] font-black uppercase tracking-wide text-slate-600">Lipid types</span>
-          <button type="button" onClick={() => setLipidTypeColors({ ...LIPID_CLASS_COLORS })}
-            className="px-2 py-0.5 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100"
-            title="Put every lipid class back to its default colour">
-            ↺ Defaults
-          </button>
-        </div>
-        <p className="text-[10px] text-slate-500">
-          What « Lipid type » paints, read from the END of the residue name (POPC = PO + PC, TOCL = TO + CL, ERG = ergosterol, TAG / DAG / MAG = the three acylglycerols, CER = a ceramide): the 14 classes of the request. « PA » and the grey « OTHER » are kept at the end — a file vocabulary has them, the request simply did not name them.
-        </p>
-        <div className="mt-1 grid grid-cols-[repeat(auto-fill,minmax(4.5rem,1fr))] gap-1.5">
-          {LIPID_TYPE_ORDER.map((k) => (
-            <label key={k} className="flex items-center gap-1 border border-slate-200 rounded px-1 py-0.5 bg-slate-50" title={`Colour of the ${k} lipids`}>
-              <input type="color" value={numToHex(lipidTypeColors[k])}
-                onChange={(e) => setLipidTypeColors((p) => ({ ...p, [k]: parseInt(e.target.value.slice(1), 16) }))}
-                className="w-6 h-5 rounded border border-slate-300 cursor-pointer" aria-label={`${k} colour`} />
-              <span className="text-[10px] font-bold text-slate-600">{k}</span>
-            </label>
-          ))}
-        </div>
-        {/* 💧 THE THREE PARTS OF EVERY LIPID TYPE (the request): headgroup ·
-            glycerol · acyl chains. They are what « Color by : Lipid type » paints —
-            the headgroup swatch on the polar head of that class, the glycerol swatch
-            on its C1 · C2 · C3 backbone, the acyl swatch on its chains — and all
-            three default to the class colour above, so a class stays ONE colour
-            until its parts are separated here. */}
-        <div className="flex flex-wrap items-center justify-between gap-2 mt-1">
-          <span className="text-[10px] font-black uppercase tracking-wide text-slate-500">Lipid types · headgroup (H) / glycerol (G) / acyl chains (A)</span>
-          <button type="button" onClick={() => setLipidPartColors(mergePartPalette(LIPID_PART_DEFAULTS, null))}
-            className="px-2 py-0.5 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100"
-            title="Put the headgroup, glycerol and acyl-chain colours of every lipid class back to the class's own colour">
-            ↺ Defaults
-          </button>
-        </div>
-        <div className="mt-1 grid grid-cols-[repeat(auto-fill,minmax(7rem,1fr))] gap-1.5">
-          {LIPID_TYPE_ORDER.map((k) => (
-            <span key={`lipidpart-${k}`} className="flex items-center gap-1 border border-slate-200 rounded px-1 py-0.5 bg-slate-50"
-              title={`${k}: the colour of its headgroup, of its glycerol backbone and of its acyl chains — what « Color by : Lipid type » paints`}>
-              <span className="text-[10px] font-bold text-slate-600 w-10 shrink-0 truncate">{k}</span>
-              {[['head', 'H'], ['glycerol', 'G'], ['acyl', 'A']].map(([part, letter]) => (
-                <input key={`${k}-${part}`} type="color" value={numToHex(lipidPartColors[k][part])}
-                  onChange={(e) => setLipidPartColors((p) => ({ ...p, [k]: { ...p[k], [part]: parseInt(e.target.value.slice(1), 16) } }))}
-                  className="w-6 h-5 rounded border border-slate-300 cursor-pointer" aria-label={`${k} ${part} colour`}
-                  title={`${k} · ${part === 'head' ? 'headgroup' : part === 'glycerol' ? 'glycerol backbone' : 'acyl chains'} (${letter})`} />
-              ))}
-            </span>
-          ))}
-        </div>
-      </section>
+      {/* 🧬 THE NUCLEOTIDE CONFORMATIONS AND MOTIFS (the request): they stand UNDER
+          the DNA/RNA BASES above — the two palettes of a NUCLEIC ACID are read
+          together (the base swatches, then the conformations the coordinates of those
+          very nucleotides are classified into). */}
       <section className="flex flex-col gap-1">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="text-[11px] font-black uppercase tracking-wide text-slate-600">Nucleotide conformations &amp; motifs</span>
@@ -15710,6 +15607,102 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
           ))}
         </div>
       </section>
+      <section className="flex flex-col gap-1">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="text-[11px] font-black uppercase tracking-wide text-slate-600">Sugar types</span>
+          <button type="button" onClick={() => setSugarTypeColors({ ...SUGAR_TYPE_COLORS })}
+            className="px-2 py-0.5 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100"
+            title="Put every sugar type back to its default colour">
+            ↺ Defaults
+          </button>
+        </div>
+        <p className="text-[10px] text-slate-500">
+          What « Sugar type » paints — the 29 CHEMICAL sugars of the request, not the 3-letter code a file happens to use (a file may write the same glucose GLC, BGC or GCS). A code the table below does not know keeps the readable grey.
+        </p>
+        <div className="mt-1 grid grid-cols-[repeat(auto-fill,minmax(4.5rem,1fr))] gap-1.5">
+          {SUGAR_TYPE_ORDER.map((t) => (
+            <label key={t} className="flex items-center gap-1 border border-slate-200 rounded px-1 py-0.5 bg-slate-50"
+              title={`Colour of the ${t} sugars (every code that IS ${t}: ${Object.keys(SUGAR_TYPE_OF_CODE).filter((c) => SUGAR_TYPE_OF_CODE[c] === t).join(' · ') || '—'})`}>
+              <input type="color" value={numToHex(sugarTypeColors[t])}
+                onChange={(e) => setSugarTypeColors((p) => ({ ...p, [t]: parseInt(e.target.value.slice(1), 16) }))}
+                className="w-6 h-5 rounded border border-slate-300 cursor-pointer" aria-label={`${t} colour`} />
+              <span className="text-[10px] font-bold text-slate-600 truncate">{t}</span>
+            </label>
+          ))}
+        </div>
+      </section>
+      <section className="flex flex-col gap-1">
+        {/* ✂ ONE SWATCH PER LIPID CLASS HAS GONE (the request) : the colour of a
+            lipid is defined by its THREE PARTS — headgroup · glycerol · acyl chains —
+            and the class table of LIPID_CLASS_COLORS is now only the DEFAULT those
+            three start from. Offering the class swatch as well would leave the same
+            colour editable twice (the report's « redundant sections »).
+            What « Color by : Lipid type » paints, read from the END of the residue
+            name (POPC = PO + PC, TOCL = TO + CL, ERG = ergosterol, TAG / DAG / MAG =
+            the three acylglycerols, CER = a ceramide): the 16 classes of the request
+            — « PA » and the grey « OTHER » kept at the end, a file vocabulary has
+            them. Each class shows its H · G · A swatches below. */}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="text-[11px] font-black uppercase tracking-wide text-slate-600">Lipid types · headgroup (H) / glycerol (G) / acyl chains (A)</span>
+          <button type="button" onClick={() => { setLipidTypeColors({ ...LIPID_CLASS_COLORS }); setLipidPartColors(mergePartPalette(LIPID_PART_DEFAULTS, null)); }}
+            className="px-2 py-0.5 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100"
+            title="Put the headgroup, glycerol and acyl-chain colours of every lipid class back to the class's own default colour">
+            ↺ Defaults
+          </button>
+        </div>
+        <p className="text-[10px] text-slate-500">
+          What « Color by : Lipid type » paints: THREE swatches per lipid class — H its polar headgroup, G its glycerol backbone (C1 · C2 · C3), A its acyl chains. All three start at the class's own colour, so a class stays ONE colour until its parts are separated here; a class the table does not know keeps the readable grey.
+        </p>
+        <div className="mt-1 grid grid-cols-[repeat(auto-fill,minmax(7rem,1fr))] gap-1.5">
+          {LIPID_TYPE_ORDER.map((k) => (
+            <span key={`lipidpart-${k}`} className="flex items-center gap-1 border border-slate-200 rounded px-1 py-0.5 bg-slate-50"
+              title={`${k}: the colour of its headgroup, of its glycerol backbone and of its acyl chains — what « Color by : Lipid type » paints`}>
+              <span className="text-[10px] font-bold text-slate-600 w-10 shrink-0 truncate">{k}</span>
+              {[['head', 'H'], ['glycerol', 'G'], ['acyl', 'A']].map(([part, letter]) => (
+                <input key={`${k}-${part}`} type="color" value={numToHex(lipidPartColors[k][part])}
+                  onChange={(e) => setLipidPartColors((p) => ({ ...p, [k]: { ...p[k], [part]: parseInt(e.target.value.slice(1), 16) } }))}
+                  className="w-6 h-5 rounded border border-slate-300 cursor-pointer" aria-label={`${k} ${part} colour`}
+                  title={`${k} · ${part === 'head' ? 'headgroup' : part === 'glycerol' ? 'glycerol backbone' : 'acyl chains'} (${letter})`} />
+              ))}
+            </span>
+          ))}
+        </div>
+      </section>
+      {/* 🔗 THE CHAIN COLOURS (the request): « Color by : Chain » used to paint with
+          NGL's own table, which NO control of the viewer could change. This section
+          is the only writer: one colour per chain letter, plus a grey « other » for
+          a letter (a number, an empty chain, a force-field spelling). The colour is
+          read from the chain's NAME, so chain A keeps its colour from file to file.
+          It stands under the LIPID TYPES (the request): the two palettes that colour
+          a MEMBRANE — the lipid classes and the chain letters — are read together. */}
+      <section className="flex flex-col gap-1">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="text-[11px] font-black uppercase tracking-wide text-slate-600">Chains · color by chain</span>
+          <button type="button" onClick={() => setChainColors({ ...CHAIN_COLOR_PALETTE })}
+            className="px-2 py-0.5 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100"
+            title="Put the chain colours back to their defaults">
+            ↺ Defaults
+          </button>
+        </div>
+        <p className="text-[10px] text-slate-500">
+          What « Color by : Chain » paints on a protein / a nucleic acid / a lipid row: one colour per chain, read from the chain's NAME. {loadedChainLetters ? <>The loaded file(s) carry: <b>{loadedChainLetters}</b>.</> : 'No chain is loaded yet.'} A chain the table does not know (a number, an empty name) takes the grey « other ».
+        </p>
+        <div className="mt-1 grid grid-cols-[repeat(auto-fill,minmax(5.5rem,1fr))] gap-1.5">
+          {CHAIN_COLOR_ORDER.map((c) => (
+            <label key={c} className="flex items-center gap-1 border border-slate-200 rounded px-1 py-0.5 bg-slate-50"
+              title={c === 'other' ? 'Colour of a chain whose name is not one of the letters above' : `Colour of chain ${c} of every molecule`}>
+              <input type="color" value={numToHex(chainColors[c])}
+                onChange={(e) => setChainColors((p) => ({ ...p, [c]: parseInt(e.target.value.slice(1), 16) }))}
+                className="w-6 h-5 rounded border border-slate-300 cursor-pointer" aria-label={`chain ${c} colour`} />
+              <span className="text-[10px] font-bold text-slate-600 truncate">{c === 'other' ? 'other' : `Chain ${c}`}</span>
+            </label>
+          ))}
+        </div>
+      </section>
+      {/* ▲ THE NUCLEOTIDE PALETTES HAVE MOVED (the request): « Nucleotide
+          conformations & motifs » now stands UNDER THE DNA/RNA BASES, whose
+          nucleotides it classifies (χ · δ · the C1'-N distance), so the palettes of a
+          nucleic acid are read together. */}
       <section className="flex flex-col gap-1">
         <span className="text-[11px] font-black uppercase tracking-wide text-slate-600">Gradient &amp; general look</span>
         <p className="text-[10px] text-slate-500">

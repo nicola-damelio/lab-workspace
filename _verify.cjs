@@ -1,4 +1,4 @@
-// Les onze suites du VIEWER 3D seul — les plus rapides à relancer après une
+// Les trente suites du VIEWER 3D seul — les plus rapides à relancer après une
 // retouche de src/components/NMRMoleculeViewer.jsx (l'ensemble du dépôt, c'est
 // _run_all.cjs). _viewer_render_smoke_test.mjs est la SEULE ICI qui exécute un
 // vrai rendu : elle construit son probe en SSR et monte la page docking, chaque
@@ -19,6 +19,23 @@ const tests = [
   '_viewer_scheme_test.mjs', '_viewer_style_controls_test.mjs', '_viewer_ui_layout_test.mjs',
   '_viewer_rings_gradient_test.mjs', '_dock_style_test.mjs', '_large_system_style_test.mjs',
   '_viewer_color_settings_test.mjs', '_viewer_structure_classes_test.mjs',
+  // LA DEMANDE « styling window » DE CETTE SESSION, mesurée d'un bout à l'autre :
+  // une teinte par TYPE peint l'ESPACE de la barre de style — et les rangées de cet
+  // espace s'éclaircissent vers le blanc, General d'abord — toutes deux des pastilles
+  // de la roue ⚙, persistées comme les autres palettes ; la roue n'est plus répétée
+  // en tête de chaque espace (il n'en reste qu'une, celle de l'en-tête de la fenêtre) ;
+  // l'espace « SELECTED » est bâti par le MÊME catalogue qu'une molécule (une section
+  // synthétique par type présent, aucune seconde implémentation) ; et les trois
+  // palettes ÉTENUES de la roue — trois pastilles par classe de lipide (tête ·
+  // glycérol · chaînes acyle), deux par base (la base · son sucre), deux par résidu
+  // (squelette · chaînes latérales) — remplacent les grilles redondantes qu'il ne
+  // fallait plus offrir (« the color of aminoacids is defined in "the 20 residues"
+  // and for the two subgroups (backbone and chain) in "backbone (B) / side chains
+  // (S)". In this case the first is obsolete (only two colors have to be defined). »).
+  // Les helpers PURS de la roue y sont EXTRAITS puis EXÉCUTÉS, le JSX vérifié par
+  // ses marqueurs : c'est cette suite qui rougit si l'on ressuscite une des deux
+  // grilles retirées ou si l'on rouvre un second ⚙ dans un espace.
+  '_viewer_selected_space_test.mjs',
   // Le ✔ de la barre « Molecules · styling » EFFACE vraiment la molécule (le
   // bug : le rendu comparait la clé locale d'une section à un ensemble d'ids).
   '_viewer_section_visibility_test.mjs',
@@ -56,6 +73,18 @@ const tests = [
   // `_viewer_general_row_test.mjs` est aussi celle qui vérifie la cascade de la
   // rangée General jusqu'à la surface, opaqueBack compris.
   '_viewer_general_row_test.mjs', '_viewer_style_coverage_test.mjs',
+  // CE QUE LA RANGÉE GENERAL DESSINE, règle par règle, EXÉCUTÉE sur une protéine de
+  // quatre résidus : le geste de l'utilisateur — « General en ball and stick = la
+  // molécule entière en ball and stick ; puis Lines sur les chaînes latérales → les
+  // billes/bâtons disparaissent pour les SEULES chaînes latérales ». Une sous-rangée
+  // qui a son PROPRE style (`follow: false`) l'emporte sur General pour exactement les
+  // atomes qu'elle dessine (`generalCession` / `partAtomsHeldBack`) ; une enveloppe
+  // (surface · mesh, un seul objet) ne cède pas ; l'atome qu'un voisin ne dessinerait
+  // plus reste à General ; un parcours ne se coupe pas (General → cartoon garde son
+  // ruban quand le squelette est CACHÉ) ; et quand les parties ont tout pris, la rangée
+  // n'est pas construite du tout (la panne « nothing is displayed »). La suite rejoue
+  // aussi la règle sur une version d'avant : elle y est ROUGE.
+  '_viewer_general_cession_test.mjs',
   // Le SMILES d'un ligand organique : le PDB ne donne que le code HETATM, donc le
   // SMILES vient du Chemical Component Dictionary du RCSB (fetch injecté, testé sans
   // réseau) — et la sous-section « Organic Molecule » du docking est revenue.
@@ -98,6 +127,30 @@ const tests = [
   // nom déjà juste, celui qui ne parle pas des têtes, l'absence de mesure) et
   // vérifie le câblage sur la source.
   '_viewer_headgroups_test.mjs',
+  // LES FEUILLETS DANS L'ESPACE PHOSPHOLIPIDES, et les DEUX BARRES aux MÊMES
+  // commandes : les ticks « upper / lower leaflet » ont quitté la boîte « Membrane »
+  // de la barre de GAUCHE — qui ne garde que la MESURE et renvoie au styling — pour
+  // devenir des RANGÉES du groupe « 🧫 Membrane · leaflets » de la fenêtre de style,
+  // une seule fois par molécule, avec les feuillets MESURÉS et toute sélection qu'un
+  // script PyMOL fait sur les lipides ; chaque rangée écrit dans le MÊME état que les
+  // ticks (`selStyles`), donc ce qui était dessiné l'est encore, mais stylable
+  // sélection par sélection. Les deux fenêtres passent par UNE SEULE implémentation
+  // des commandes (renderLookControls), chacune gardant la curation de ses propres
+  // listes. La règle du propriétaire des têtes (membraneHeadOwnerExprs) y est
+  // EXÉCUTÉE : un feuillet soustrait les atomes de ses têtes pour TOUS les styles
+  // qu'il dessine, donc ni l'ordre des clics ni le premier style choisi ne peuvent
+  // plus enterrer les têtes sous les grosses sphères du feuillet.
+  '_viewer_membrane_rows_test.mjs',
+  // …et la suite qui garde les CHAÎNES ACYLE du même geste : « I select CPK for upper
+  // headgroup and the result is that the headgroup becomes CPK but the acyl chains of
+  // the upper leaflet disappear. » La résolution des quatre noms mesurés retombait sur
+  // la définition du SCRIPT (« resn POPC and z>90 », une tranche qui couvre tout le
+  // feuillet) dès que la mesure du viewer manquait : le feuillet se dessinait alors
+  // `(feuillet) and not (feuillet)`, l'ensemble vide. `selKeyExpr` et
+  // `expandSelectionExpr` résolvent désormais ces noms par la GÉOMÉTRIE — les deux
+  // endroits qui décident de ce qu'une rangée dessine et de ce que les `hideFor`
+  // écrits par les gestes soustraient.
+  '_viewer_membrane_chains_test.mjs',
   // Le RIG DE LUMIÈRE (§3 Scene → ◐ Shadows / 🌑 Darkness / 💡 Light) est extrait
   // dans src/utils/viewerLightRig.js : les nombres de la référence (blanc, key
   // 1.15 / ambiante 0.34 hors ombres, 1.3 + 0.7·dark / max(0.12, 0.34 − 0.22·dark)

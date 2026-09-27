@@ -701,5 +701,92 @@ const flowBody = htmlToDocxBody('<div data-doc-section="introduction">' + COL_FI
 ok(!/<w:cols w:num="1"\/>/.test(flowBody.xml) && extentOf(flowBody.xml).cx === COL_EMU,
   'une section « In the columns » coule, et sa figure est ramenée à sa colonne');
 
+/* ══ 12. LA FIGURE PLEINE LARGEUR ANCRÉE DANS LE TEXTE DE LA SECTION ═══════
+   Le rapport, mot pour mot : « figures that are defined to be full width in the
+   publication format are still inside columns in the exported docx document of the
+   project (but ok in the exported non-docx document). » Une figure n'est pas
+   toujours POSÉE après le texte d'une section : un manuscrit importé l'ANCRE dans
+   ce texte (utils/figurePlacement.js · splitAnchoredFigures), donc DANS le
+   `<div class="pf-body">` que l'export reçoit comme UN seul bloc — alors que la
+   feuille du document, elle, la fait barrer la page où qu'elle soit (`column-span:
+   all`, voir pubLayoutCss) : les deux sorties d'un même document ne pouvaient pas
+   dire deux choses différentes.
+
+   Le correctif est celui que l'export applique déjà aux figures qu'on lui donne
+   hors du texte (voir utils/docxExport.js · holdsFigureWithOwnColumns) :
+     · le conteneur qui PORTE une telle figure est OUVERT, et il l'est sur la
+       réponse de la MÊME fonction que la page du projet (`pubFigureBarsPage` :
+       « cette figure prend-elle toute la page ? ») ;
+     · la figure devient un bloc à part avec SA section — le saut de section se
+       pose AVANT son image et se referme APRÈS sa légende, la colonne choisie
+       étant écrite dans le `pPr` du DERNIER paragraphe de la section, comme Word
+       le fait (c'est la règle qu'un `sectPr` suit : il ferme la section qui se
+       termine à son paragraphe, et la suivante continue sur la même page). */
+const FULL_WIDTH_FIGURES = { layout: { page: { columns: 2 }, figure: { span: 'all' } } };
+const SECTION_WITH_FIGURE = (attrs) => '<div class="mb-6" data-doc-section="results">'
+  + '<h2 class="pf-heading">Results and discussion</h2>'
+  + '<div class="pf-body text-sm leading-relaxed">'
+  + '<p>Before the figure.</p>'
+  + '<figure class="pf-figure"' + (attrs || '') + '><img src="https://drive.example/f1.png" alt="F">'
+  + '<figcaption class="pf-caption">Figure 1.</figcaption></figure>'
+  + '<p>After the figure.</p>'
+  + '</div></div>';
+const anchoredWide = htmlToDocxBody(SECTION_WITH_FIGURE(''),
+  { format: FULL_WIDTH_FIGURES, images: COL_IMAGES });
+eq(extentOf(anchoredWide.xml).cx, 6126624,
+  'une figure « Full width » ANCRÉE dans le texte reprend toute la largeur de la page (le format la fait barrer la page)');
+const wideCuts = [...anchoredWide.xml.matchAll(/<w:type w:val="continuous"\/>/g)].map((m) => m.index);
+eq(wideCuts.length, 2, '…DEUX sauts de section continus : un AVANT son image, un APRÈS sa légende');
+const atBefore = anchoredWide.xml.indexOf('Before the figure.');
+const atDrawing = anchoredWide.xml.indexOf('<w:drawing');
+const atCaption = anchoredWide.xml.indexOf('Figure 1.');
+const atAfter = anchoredWide.xml.indexOf('After the figure.');
+/* UN `sectPr` VIT DANS LE `pPr` DU DERNIER PARAGRAPHE DE LA SECTION qu'il ferme : le
+   premier saut est donc dans le paragraphe du texte qui précède la figure (il
+   referme les DEUX colonnes), la figure vient après lui, et le second saut est dans
+   le paragraphe de sa LÉGENDE. C'est la structure que Word lit, et celle que la
+   demande décrit : « use breaks before the image and another break after its
+   caption to then continue with column style if defined for the text ». */
+const beforePara = (anchoredWide.xml.match(/<w:p>(?:(?!<w:p>)[\s\S])*?Before the figure\.[\s\S]*?<\/w:p>/) || [''])[0];
+ok(beforePara.includes('<w:type w:val="continuous"/>') && beforePara.includes('<w:cols w:num="2"'),
+  '…le premier referme les DEUX colonnes du texte qui la précède (il vit dans son paragraphe, avant l’image)');
+ok(wideCuts[0] < atBefore && wideCuts[0] < atDrawing && atDrawing < wideCuts[1],
+  '…l’image est donc ENTRE les deux sauts : personne ne la remet dans une colonne');
+ok(atDrawing < wideCuts[1] && wideCuts[1] < atAfter,
+  '…le second ferme la section de la légende, et le texte qui suit reprend les colonnes de la page');
+ok(atDrawing < atCaption && atCaption < atAfter,
+  '…sa légende suit son image, et le texte de la section vient après les deux');
+/* LE PARAGRAPHE QUI FERME LA SECTION EST CELUI DE LA LÉGENDE : c'est là qu'un
+   `sectPr` vit (le dernier paragraphe de la section), donc la figure ET sa légende
+   appartiennent à la section d'une colonne — le saut ne peut pas se glisser entre
+   les deux. */
+const captionPara = (anchoredWide.xml.match(/<w:p>(?:(?!<w:p>)[\s\S])*?<w:pStyle w:val="Caption"\/>[\s\S]*?<\/w:p>/) || [''])[0];
+ok(captionPara.includes('<w:cols w:num="1"/>') && captionPara.includes('Figure 1.'),
+  '…et c’est le paragraphe de la LÉGENDE qui porte la section d’UNE colonne (la figure et sa légende restent ensemble)');
+eq(anchoredWide.columns, 2, '…la dernière section du document, elle, garde les deux colonnes de la page');
+
+/* LA FIGURE QUI DIT « One column » RESTE DANS SA COLONNE, même sous un format qui
+   met TOUTES les figures pleine largeur : c'est le `:not([data-pf-cols="1"])` de la
+   feuille, et l'export ne peut pas en juger autrement (voir pubFigureBarsPage). */
+const anchoredOneCol = htmlToDocxBody(SECTION_WITH_FIGURE(' data-pf-cols="1"'),
+  { format: FULL_WIDTH_FIGURES, images: COL_IMAGES });
+eq(extentOf(anchoredOneCol.xml).cx, COL_EMU,
+  'une figure ancrée réglée « One column » reste dans sa colonne, malgré le format « Full width »');
+ok(!/<w:cols w:num="1"\/>/.test(anchoredOneCol.xml) && anchoredOneCol.columns === 2,
+  '…sans ouvrir la moindre section : son texte reste dans les deux colonnes');
+/* …ET LA PAGE À TROIS COLONNES SUIT LA MÊME RÈGLE : c'est la question posée à la
+   page (`pubFigureBarsPage`), jamais un « deux » écrit en dur dans l'export. */
+const threeCol = htmlToDocxBody(SECTION_WITH_FIGURE(''),
+  { format: { layout: { page: { columns: 3 }, figure: { span: 'all' } } }, images: COL_IMAGES });
+eq(extentOf(threeCol.xml).cx, 6126624, 'sur une page à trois colonnes, la figure « Full width » barre toujours la page');
+ok(threeCol.xml.includes('<w:cols w:num="3"'), '…et le texte qui la suit reprend les TROIS colonnes de la page');
+/* SANS COLONNES, RIEN NE BOUGE : la règle ne vaut que pour une page à plusieurs
+   colonnes — un document à une colonne n'écrit ni colonne ni saut, et sa figure
+   garde la largeur entière qu'elle avait. */
+const noColSection = htmlToDocxBody(SECTION_WITH_FIGURE(''), { images: COL_IMAGES });
+ok(!/w:cols/.test(noColSection.xml) && !/w:type w:val="continuous"/.test(noColSection.xml),
+  'une page à UNE colonne n’écrit toujours ni `w:cols` ni saut de section');
+eq(extentOf(noColSection.xml).cx, 6126624, '…et sa figure garde la largeur entière (le document ne change pas)');
+
 console.log(`_pub_docx_export_test.mjs — ${passed} assertions OK (export .docx du document)`);
 
