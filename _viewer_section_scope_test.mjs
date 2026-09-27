@@ -24,7 +24,9 @@
      §2 UNE SECTION NE PARLE QUE POUR ELLE : les sections DÉJÀ ÉNUMÉRÉES du même
         type sont ÉPINGLÉES sur l'arbre qu'elles affichent avant que le look du type
         ne soit écrit (pinSectionLooksOfKind, exécuté), et les quatre gestes de la
-        barre l'appellent — le 🎨 Copy reste la propagation volontaire.
+        barre l'appellent. Le 🎨 Copy, lui, a quitté la barre (le rapport : « the
+        “all”, “main”, “copy” buttons at the top are obsolete ») : son ancien emplacement
+        porte ☑ All / ☐ None et le 🎯 fit des molécules montrées sur la choisie.
      §3 LES TROIS LECTURES MAISON QUI MANQUAIENT au « Color by » d'une rangée de
         sélection / de 🧫 membrane (chain · charge · lipidtype) : `schemeForColorMode`
         rend maintenant EXACTEMENT les schémas des rangées du styling, donc les
@@ -271,8 +273,15 @@ eq(countOf(/const pinned = pinSectionLooksOfKind\(id, kind, nextTree\);/g), 4,
   'un seul appel par geste — setSectionField · setSectionMaterialField · ↺ d’une rangée · ↺ d’une section');
 eq(countOf(/setSectionLooks\(\(prev\) => \(\{ \.\.\.prev, \.\.\.pinned, \[id\]: nextTree \}\)\);/g), 4,
   '…et les quatre écrivent le patch épinglé en même temps que le leur');
-has('const copySectionsToAll = () => {', 'la propagation VOLONTAIRE garde son geste dédié (🎨 Copy)');
-has('onClick={copySectionsToAll}', '…et son bouton');
+has('const toggleAllMolecules = () => {',
+  'le bouton « toutes les molécules ou aucune » remplace « All » / « Main » (le rapport : les trois boutons du haut sont obsolètes)');
+has('onClick={toggleAllMolecules}', '…et son bouton');
+has('const fitMoleculesOnChosen = () => {',
+  '…avec le 🎯 fit des molécules montrées sur la molécule choisie');
+has('onClick={fitMoleculesOnChosen}', '…et son bouton');
+// La propagation VOLONTAIRE d'un look n'a plus de bouton (🎨 Copy retiré) : la barre
+// ne garde que ce qui décide QUELLES molécules sont montrées, et OÙ elles sont.
+ok(!VIEW.includes('onClick={copySectionsToAll}'), '🎨 Copy a quitté la barre des molécules');
 // LA COCHE ELLE-MÊME : dans la rangée GENERAL, et mémorisée.
 has('const [chainLink, setChainLink] = useState(() => {', 'la coche est un état dédié');
 has("localStorage.setItem('labViewerChainLink', chainLink ? 'on' : 'off');",

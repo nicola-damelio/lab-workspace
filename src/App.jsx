@@ -624,6 +624,25 @@ export const urlWithoutMod = (search, pathname) => {
     return `${pathname || window.location.pathname}${qs ? `?${qs}` : ''}`;
   } catch { return pathname || ''; }
 };
+/**
+ * La même URL, avec `&mod=<page>` : LA PAGE OÙ L'ON EST entre dans l'adresse.
+ *
+ * Le rapport de cette session : « When reloading a page the program forgets the
+ * visualisation settings. » Un F5 repartait du tableau de bord — donc de rien —
+ * parce que `mod` était EFFACÉ dès l'ouverture d'une base : la page, ses menus
+ * ouverts, son viewer et son « où j'en étais » n'étaient plus nulle part. La page
+ * reste maintenant dans l'adresse (voir l'effet miroir d'App), ce qui sert aussi
+ * le A+« duplicate tab » du navigateur, et le ⧉ de la barre latérale.
+ * Page vide (`null`/`''`) → `mod` est retiré, comme `urlWithoutMod` le fait.
+ */
+export const urlWithMod = (search, pathname, pageId) => {
+  try {
+    const q = new URLSearchParams(String(search == null ? '' : search));
+    if (pageId) q.set('mod', String(pageId)); else q.delete('mod');
+    const qs = q.toString();
+    return `${pathname || window.location.pathname}${qs ? `?${qs}` : ''}`;
+  } catch { return pathname || window.location.pathname; }
+};
 /* =========================================================================
    LA PAGE QUITTÉE RESTE VIVANTE (une seule à la fois) — la demande :
 
@@ -2013,23 +2032,47 @@ if (customType === 'dosy') {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isCloudReady, currentDatasetId, needsLogin, user, serverAuth.ready]);
 
-  /* ⧉ LA PAGE DEMANDÉE PAR L'URL (voir pageFromUrl / urlWithoutMod en tête de
+  /* ⧉ LA PAGE DEMANDÉE PAR L'URL (voir pageFromUrl / urlWithMod en tête de
      fichier) : une fenêtre neuve ouverte par le ⧉ de la barre reçoit la même base
-     ET la page voulue. Elle l'ouvre donc dès que sa base est là, puis EFFACE
-     `&mod=` de son adresse : la navigation qui suit dans cette fenêtre reste
-     celle de l'utilisateur, exactement comme `drive-bootstrap=1`. */
+     ET la page voulue. DEUX CORRECTIONS DU RAPPORT DE CETTE SESSION :
+
+       • l'effet ne dépend PLUS de l'ouverture de la base. C'est de là que venait
+         « When clicking to open a page in a different second page of the browser I
+         land in the general overview page and not to the page from where I clicked » :
+         sans base relue (ou avant qu'elle le soit) `?mod=` n'était jamais appliqué, et
+         l'écran restait le tableau de bord ;
+       • l'adresse GARDE `mod` (voir l'effet miroir juste après) : un F5 ramène sur la
+         page où l'on était — « When reloading a page the program forgets the
+         visualisation settings. »
+     `requestedModuleRef` retient la page demandée : `openDataset` remet le module à
+     `dashboard` en arrivant, et c'est cette mémoire qui l'empêche d'effacer la page
+     du ⧉ ('' = aucune page demandée). */
+  const requestedModuleRef = useRef('');
+  if (requestedModuleRef.current === '' && typeof window !== 'undefined') {
+    requestedModuleRef.current = pageFromUrl(window.location.search) || '';
+  }
   useEffect(() => {
-    if (!currentDatasetId) return;
     const wanted = pageFromUrl(window.location.search);
     if (!wanted) return;
     setCurrentModule(wanted);
     if (window.innerWidth < 768) setIsSidebarOpen(false);
-    try {
-      window.history.replaceState({}, '', urlWithoutMod(window.location.search, window.location.pathname));
-    } catch { /* ignore */ }
-    // Ne dépend QUE de la base : l'effet s'applique une fois, à son ouverture.
+    // Une seule fois, au démarrage : la page demandée est celle de l'adresse.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentDatasetId]);
+  }, []);
+
+  /* LA PAGE EST DANS L'ADRESSE. Chaque navigation l'y écrit (`replaceState`, donc
+     aucun cran d'historique de plus) : recharger la fenêtre rouvre la page où l'on
+     était, avec ce qu'elle avait mis de côté — le viewer relit ses réglages, la
+     base reprend son expérience ouverte (readLastExperiment). Le PREMIER passage
+     est sauté : la page de l'adresse vient d'être lue par l'effet ci-dessus, et
+     l'écrire avant lui écraserait `?mod=`. */
+  const modMirrorReady = useRef(false);
+  useEffect(() => {
+    if (!modMirrorReady.current) { modMirrorReady.current = true; return; }
+    try {
+      window.history.replaceState({}, '', urlWithMod(window.location.search, window.location.pathname, currentModule));
+    } catch { /* ignore */ }
+  }, [currentModule]);
 
   /* ⧉ OUVRIR UNE PAGE DANS UNE AUTRE FENÊTRE — le geste de la barre latérale (voir
      le bloc de pageFromUrl pour la règle et le rapport). La nouvelle fenêtre
@@ -3615,7 +3658,10 @@ const createNewDataset = async (kind = 'scientific') => {
 
     setCurrentDatasetId(newId);
     setAppView('dataset');
-    setCurrentModule(isAdmin ? 'administration' : 'dashboard');
+    // La page demandée par l'adresse (`?mod=`, le ⧉ d'une autre fenêtre) survit à
+    // l'ouverture de la base : sans cela elle était remplacée par le tableau de bord
+    // et la fenêtre neuve s'arrêtait là (voir requestedModuleRef).
+    setCurrentModule(isAdmin ? 'administration' : (requestedModuleRef.current || 'dashboard'));
 
     window.history.pushState({}, '', datasetHref(newId));
 
@@ -4000,9 +4046,13 @@ const openDataset = (dset, { keepPlace = false } = {}) => {
       setAppView('dataset');
       /* Relecture depuis la page ouverte (🔄 Refresh) : on reste sur la page,
          sur le module et sur l'onglet du navigateur où l'on est — le contenu est
-         adopté, la navigation non. */
+         adopté, la navigation non. Et quand ce n'est PAS une relecture (une
+         ouverture), la page demandée par l'adresse (`?mod=`, le ⧉ d'une autre
+         fenêtre) l'emporte sur le tableau de bord : c'est elle qui rend la page
+         rechargée ; sans quoi le programme retombait sur le tableau de bord
+         (voir requestedModuleRef). */
       if (!keepPlace) {
-        setCurrentModule('dashboard');
+        setCurrentModule(requestedModuleRef.current || 'dashboard');
         window.history.pushState({}, '', datasetHref(dset.id));
       }
       return true;

@@ -268,8 +268,10 @@ has("const outline = idx && idx.length", '…le pourtour des plaques est calcul�
 has("addRow('licorice', { sele: `@${outline.join(',')}`", '…et c’est LUI que le fin anneau de bâtons dessine');
 has('const mesh = new NG.MeshBuffer({ position: data.position, normal: data.normal, color: data.color, index: data.index });',
   '…construite avec le vrai MeshBuffer de NGL');
-has("const rep = comp.addBufferRepresentation(mesh, { opacity: sectionOpacity(look), side: 'double' });",
+has("return addRingPlateRep(comp, makePlates(), makePlates, { opacity: sectionOpacity(look), side: 'double' }, reps);",
   '…confiée au composant de structure, avec la transparence de SA rangée');
+has('const rep = comp.addBufferRepresentation(mesh, params);',
+  '…par le constructeur commun, qui garde la RECETTE de la plaque (elle suit les images)');
 has("sugarPlate: sub === 'ribose',", 'la plaque de l’anneau du RIBOSE est celle de la rangée « DNA/RNA ribose »');
 has("addRow('licorice', { sele: `@${outline.join(',')}`", 'un fin anneau de bâtons dessine le pourtour — des ANNEAUX seulement');
 has("const baseIdentityCol = () => (baseIdentitySchemeKey ? { color: baseIdentitySchemeKey } : { colorScheme: 'resname' });",

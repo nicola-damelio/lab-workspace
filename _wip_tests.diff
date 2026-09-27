@@ -1,0 +1,281 @@
+﻿diff --git a/_app_page_window_test.mjs b/_app_page_window_test.mjs
+index ba3be55..95ca2a8 100644
+--- a/_app_page_window_test.mjs
++++ b/_app_page_window_test.mjs
+@@ -13,7 +13,11 @@
+         null (une valeur invent├⌐e n'ouvre pas une page vide).
+      ┬º2 `urlWithoutMod` ΓÇö la m├¬me URL nettoy├⌐e de `&mod=`, EX├ëCUT├ëE : la base
+         (`?dataset=ΓÇª`) et les autres param├¿tres restent, et sans requ├¬te il ne
+-        reste que le chemin.
++        reste que le chemin. (Elle n'est PLUS appel├⌐e ├á l'ouverture : voir ┬º2bis.)
++     ┬º2bis `urlWithMod` ΓÇö la page o├╣ l'on est ├ëCRITE dans l'adresse (`?mod=ΓÇª`),
++        EX├ëCUT├ëE : c'est ce qui fait qu'un rechargement (F5) rouvre la m├¬me page ΓÇö
++        et donc ses r├⌐glages de visualisation (le rapport de cette session :
++        ┬½ When reloading a page the program forgets the visualisation settings ┬╗).
+      ┬º3 `openPageInNewWindow` (App.jsx) ΓÇö le geste du Γºë, EX├ëCUT├ë avec un faux
+         `window` : l'URL porte la base ET la page, une page inconnue retombe sur
+         ┬½ dashboard ┬╗, une fen├¬tre bloqu├⌐e par le navigateur est DITE, et la
+@@ -82,10 +86,11 @@ const PAGE_IDS = ['dashboard', 'projects', 'tests', 'notebook', 'library', 'agen
+   'protocols', 'storage', 'calculations', 'publications', 'image-builder', 'settings'];
+ 
+ /* ΓòÉΓòÉ ┬º1. LA PAGE QU'UNE URL R├ëCLAME ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ */
+-const { pageFromUrl, urlWithoutMod } = new Function('APP_PAGE_IDS', [
++const { pageFromUrl, urlWithoutMod, urlWithMod } = new Function('APP_PAGE_IDS', [
+   sliceDecl(APP, 'pageFromUrl'),
+   sliceDecl(APP, 'urlWithoutMod'),
+-  'return { pageFromUrl, urlWithoutMod };',
++  sliceDecl(APP, 'urlWithMod'),
++  'return { pageFromUrl, urlWithoutMod, urlWithMod };',
+ ].join('\n'))(PAGE_IDS);
+ 
+ eq(pageFromUrl('?dataset=ds_1&mod=tests'), 'tests', '┬½ ?mod=tests ┬╗ ouvre la page des exp├⌐riences');
+@@ -105,6 +110,21 @@ eq(urlWithoutMod('?dataset=ds_1&drive-bootstrap=1&mod=library', '/'), '/?dataset
+   'les autres param├¿tres de lΓÇÖadresse sont conserv├⌐s (le marqueur de d├⌐marrage du Drive compris)');
+ eq(urlWithoutMod('', '/index.html'), '/index.html', 'sans requ├¬te, le chemin est rendu tel quel');
+ 
++/* ΓòÉΓòÉ ┬º2bis. LA PAGE RESTE DANS L'ADRESSE (le rapport de cette session) ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
++   ┬½ When reloading a page the program forgets the visualisation settings. ┬╗ La
++   page o├╣ l'on est doit rester dans l'adresse : sinon un F5 repart du tableau de
++   bord, et ce que la page avait ΓÇö les r├⌐glages du viewer relus du stockage,
++   l'exp├⌐rience ouverte, les fen├¬tres de s├⌐lection ΓÇö n'est plus appliqu├⌐ ├á rien.
++   `urlWithMod` est la r├¿gle, et elle est EX├ëCUT├ëE ici. */
++eq(urlWithMod('?dataset=ds_1', '/', 'nmr'), '/?dataset=ds_1&mod=nmr',
++  'la page courante entre dans lΓÇÖadresse, avec la base');
++eq(urlWithMod('?dataset=ds_1&mod=tests', '/', 'nmr'), '/?dataset=ds_1&mod=nmr',
++  'ΓÇªet elle est REMPLAC├ëE quand on change de page (jamais deux `mod`)');
++eq(urlWithMod('?dataset=ds_1&drive-bootstrap=1', '/', 'library'), '/?dataset=ds_1&drive-bootstrap=1&mod=library',
++  'les autres param├¿tres survivent (le marqueur de d├⌐marrage du Drive compris)');
++eq(urlWithMod('?mod=tests&dataset=ds_1', '/', ''), '/?dataset=ds_1', 'une page vide retire `mod`');
++eq(urlWithMod('', '/index.html', 'tests'), '/index.html?mod=tests', 'sans requ├¬te, la page est le seul param├¿tre');
++
+ /* ΓòÉΓòÉ ┬º3. LE GESTE DU Γºë, EX├ëCUT├ë ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ */
+ // Un faux `window` complet (open + alert), pour chaque sc├⌐nario.
+ const scenario = (moduleId, datasetId, opts = {}) => {
+@@ -175,9 +195,15 @@ hasApp('const openPageInNewWindow = useCallback((moduleId) => {', 'le geste est
+ hasApp('onOpenPageInNewWindow={openPageInNewWindow}', 'ΓÇªet pass├⌐ ├á la barre lat├⌐rale');
+ hasApp('const wanted = pageFromUrl(window.location.search);', 'la fen├¬tre neuve relit `?mod=` au d├⌐marrage');
+ hasApp('setCurrentModule(wanted);', 'ΓÇªet ouvre la page demand├⌐e');
+-hasApp("window.history.replaceState({}, '', urlWithoutMod(window.location.search, window.location.pathname));",
+-  'ΓÇªpuis efface `mod` de son adresse (la navigation qui suit reste celle de lΓÇÖutilisateur)');
+-hasApp('}, [currentDatasetId]);', 'la relecture sΓÇÖapplique ├á lΓÇÖouverture dΓÇÖune base, une fois');
++hasApp("window.history.replaceState({}, '', urlWithMod(window.location.search, window.location.pathname, currentModule));",
++  'ΓÇªet chaque navigation R├ë├ëCRIT sa page dans lΓÇÖadresse : un F5 revient sur la m├¬me page, avec ses r├⌐glages');
++ok(!APP.includes('urlWithoutMod(window.location.search, window.location.pathname)'),
++  'la fen├¬tre neuve nΓÇÖEFFACE plus `mod` : cΓÇÖest cet effacement qui faisait ┬½ forget the visualisation settings ┬╗ au rechargement');
++hasApp("const requestedModuleRef = useRef('');",
++  'la page demand├⌐e est retenue d├¿s le montage (avant lΓÇÖouverture de la base)');
++hasApp("setCurrentModule(isAdmin ? 'administration' : (requestedModuleRef.current || 'dashboard'));",
++  'ΓÇªet lΓÇÖouverture dΓÇÖune base ne lΓÇÖ├⌐crase plus (le Γºë retombait sur ┬½ the general overview page ┬╗)');
++hasApp('}, [currentModule]);', 'lΓÇÖeffet miroir suit la page courante');
+ 
+ /* ΓöÇΓöÇ Bilan ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */
+ console.log(`_app_page_window_test.mjs ΓÇö ${passed} assertions OK (Γºë une page dans une autre fen├¬tre ┬╖ ?mod= relu au d├⌐marrage)`);
+diff --git a/_dock_style_test.mjs b/_dock_style_test.mjs
+index 3f5905a..105320f 100644
+--- a/_dock_style_test.mjs
++++ b/_dock_style_test.mjs
+@@ -118,8 +118,8 @@ has('{(entry.sections || []).map((sec) => renderSection(sec))}',
+   '[barre] chaque mol├⌐cule (la principale comprise) rend ses rang├⌐es');
+ has('{shown && subsectionsOf(kind).map((s) => renderSectionRow(sec, s.sub))}',
+   'ΓÇªles rang├⌐es du type de mol├⌐cule, et elles seules');
+-has('onChange={(e) => (extra ? setExtraMolPosition(extra.id, ai, e.target.value) : setMainPosition(ai, e.target.value))}',
+-  '[barre] le Move X ┬╖ Y ┬╖ Z dΓÇÖune mol├⌐cule (la principale comprise)');
++has('setSelectedMolKey(molKey); setMouseMode((m) => (m === \'move\' ? \'off\' : \'move\'));',
++  '[barre] le Move dΓÇÖune mol├⌐cule (la principale comprise) ΓÇö chaque espace d├⌐place LA SIENNE');
+ 
+ /* ΓöÇΓöÇ Bilan ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */
+ console.log(`_dock_style_test.mjs ΓÇö ${passed} assertions OK`);
+diff --git a/_pymol_selections_test.mjs b/_pymol_selections_test.mjs
+index 49204bd..935a1ad 100644
+--- a/_pymol_selections_test.mjs
++++ b/_pymol_selections_test.mjs
+@@ -192,7 +192,7 @@ const SESSION = new Function('localStorage', [
+   // mat├⌐riau (un look de s├⌐lection en porte un) et un `localStorage` de test.
+   "const MATERIAL_PRESET_KEYS = ['auto', 'matte', 'gloss', 'metallic', 'glass'];",
+   sliceBetween("const PYMOL_SESSION_KEY = 'labViewerPymolSession';", '\n/* ---- Which leaflet is which', 'session'),
+-  'return { PYMOL_SESSION_KEY, loadPymolSession, savePymolSession };',
++  'return { PYMOL_SESSION_KEY, loadPymolSession, savePymolSession, pymolSessionKey, pymolSessionInstanceSlug };',
+ ].join('\n'))({
+   getItem: (k) => (store.has(k) ? store.get(k) : null),
+   setItem: (k, v) => store.set(k, String(v)),
+@@ -235,9 +235,35 @@ eq(dirty.active, false, 'ΓÇª┬½ active ┬╗ nΓÇÖest vrai que sΓÇÖil vaut VRAIMENT t
+ store.set(SESSION.PYMOL_SESSION_KEY, JSON.stringify({ v: 99, selections: [{ name: 'x', expr: 'all' }] }));
+ eq(SESSION.loadPymolSession().selections, [], 'une entr├⌐e dΓÇÖune autre version nΓÇÖest pas relue du tout');
+ 
++/* ΓòÉΓòÉ ┬º2bis. LA SESSION EST CELLE D'UNE INSTANCE, PAS CELLE DE L'APPLICATION ΓòÉΓòÉΓòÉ
++   Le rapport de cette session, mot pour mot : ┬½ Saving the selection window in each
++   session was meant at each instance level, not general. ┬╗ La cl├⌐ est EX├ëCUT├ëE, et
++   la preuve est faite par l'ex├⌐cution : la session d'une instance ne revient pas
++   dans une autre, tandis que celle de l'instance concern├⌐e est bien retrouv├⌐e. */
++eq(SESSION.pymolSessionKey(null, null), 'labViewerPymolSession',
++  'sans instance connue, la cl├⌐ G├ëN├ëRALE reste utilis├⌐e (rien nΓÇÖest perdu)');
++eq(SESSION.pymolSessionKey('exp_7', null), 'labViewerPymolSession::exp_7',
++  'une instance nomm├⌐e porte SA cl├⌐ (labViewerPymolSession::<instance>)');
++eq(SESSION.pymolSessionKey(null, { project: 'GEC', test: 'Mutant X', instance: '2026-01-05' }),
++  'labViewerPymolSession::GEC_Mutant_X_2026-01-05',
++  'ΓÇªet le contexte Drive (projet ┬╖ exp├⌐rience ┬╖ condition) en tient lieu quand la page ne la donne pas');
++ok(SESSION.pymolSessionKey('a', null) !== SESSION.pymolSessionKey('b', null),
++  'deux instances ne partagent JAMAIS la m├¬me session');
++eq(SESSION.pymolSessionKey('exp 7/2', null), 'labViewerPymolSession::exp_7_2',
++  'les s├⌐parateurs sont neutralis├⌐s (aucune cl├⌐ ne peut ├¬tre d├⌐tourn├⌐e)');
++SESSION.savePymolSession({ selections: [{ name: 'water', expr: 'resn TIP3' }] }, SESSION.pymolSessionKey('exp_7', null));
++eq(SESSION.loadPymolSession(SESSION.pymolSessionKey('exp_8', null)).selections, [],
++  'une AUTRE instance d├⌐marre vierge ΓÇö cΓÇÖ├⌐tait le d├⌐faut : la fen├¬tre revenait dans toutes');
++eq(SESSION.loadPymolSession(SESSION.pymolSessionKey('exp_7', null)).selections, [{ name: 'water', expr: 'resn TIP3' }],
++  'ΓÇªet lΓÇÖinstance concern├⌐e retrouve la sienne au rechargement');
++
+ // Le c├óblage : relue au montage, r├⌐├⌐crite ├á chaque geste, et dite dans le journal.
+-has("const PYMOL_SESSION_KEY = 'labViewerPymolSession';", 'la session a UNE cl├⌐ de stockage');
+-has('const [pymolSession] = useState(loadPymolSession);', 'elle est relue au montage du viewer');
++has("const PYMOL_SESSION_KEY = 'labViewerPymolSession';", 'la session a UNE cl├⌐ de stockage ΓÇö sa BASE');
++has('const [pymolSession] = useState(() => loadPymolSession(pymolSessionKeyRef.current));',
++  'elle est relue au montage du viewer, DANS LA CL├ë DE SON INSTANCE');
++has('const pymolSessionKeyRef = useRef(null);', 'ΓÇªcl├⌐ fig├⌐e au montage (deux viewers mont├⌐s ne se la volent pas)');
++has('pymolSessionKey(instanceKey, driveNaming)', 'ΓÇªet d├⌐riv├⌐e de lΓÇÖinstance que la page donne au viewer');
++has('instanceKey = null,', 'la page peut nommer son instance (les trois pages y passent lΓÇÖexp├⌐rience ouverte)');
+ has('const [selections, setSelections] = useState(() => pymolSession.selections);',
+   'ΓÇªet les fen├¬tres de s├⌐lection en partent');
+ has('const [selStyles, setSelStyles] = useState(() => pymolSession.selStyles);', 'ΓÇªleurs looks aussi');
+diff --git a/_viewer_color_settings_test.mjs b/_viewer_color_settings_test.mjs
+index 7bb9e75..b63db8a 100644
+--- a/_viewer_color_settings_test.mjs
++++ b/_viewer_color_settings_test.mjs
+@@ -193,8 +193,10 @@ has('{shown && subsectionsOf(kind).map((s) => renderSectionRow(sec, s.sub))}',
+   '[barre] les rang├⌐es du type de la mol├⌐cule, et elles seules');
+ has('title="Transparency regulator of THIS row: 0 % = opaque, 100 % = invisible (NGL opacity)"',
+   '[barre] la transparence dΓÇÖune rang├⌐e dit ce quΓÇÖelle fait');
+-has('title="Shift the whole molecule along X ┬╖ Y ┬╖ Z (├à), or move it with the mouse (Γ£ï Drag)"',
+-  '[barre] le Move dΓÇÖune mol├⌐cule (X ┬╖ Y ┬╖ Z, ou Γ£ï Drag)');
++has('title="Move THIS molecule with the mouse ΓÇö drag inside the viewer to slide it (the other molecules stay where they are). Click again to rotate/zoom the camera as usual."',
++  '[barre] le Move dΓÇÖune mol├⌐cule (Γ£Ñ Move, la souris)');
++has('title="Rotate THIS molecule with the mouse, about its own centre ΓÇö drag sideways to spin it, up and down to tilt it. The other molecules do not move."',
++  '[barre] ΓÇªet son Γå╗ Rotate (la demande : ┬½ allowing to move and rotate each molecule independently ┬╗)');
+ has('const MOL_STYLE_OPTIONS = (', '[barre] une seule liste de styles pour toutes les lignes');
+ has('const MOL_COLOR_OPTIONS = (', '[barre] ΓÇªet une seule liste de colorations');
+ has('setMolFold((prev) => { const n = { ...prev }; delete n[id]; return n; });',
+diff --git a/_viewer_scheme_test.mjs b/_viewer_scheme_test.mjs
+index f4c0f5b..03ab7aa 100644
+--- a/_viewer_scheme_test.mjs
++++ b/_viewer_scheme_test.mjs
+@@ -171,6 +171,11 @@ const sandbox = [
+   // d'un seul tenant pour qu'aucune ligne ne soit recopi├⌐e ici.
+   sliceConst('LIPID_TYPE_ORDER'),
+   sliceFn(VIEW, 'lipidPartNameOf'),
++  // ΓÜá LES HYDROG├êNES DE LIPIDE SUIVENT LEUR LIAISON ΓÇö le rapport de cette session :
++  // ┬½ the hydrogen atoms of a lipid are green while the different parts of the lipid
++  // are defined in a different color in the setting wheel ┬╗. Le cache par structure
++  // et les deux lecteurs qui l'utilisent, pris d'un seul tenant.
++  sliceRange('const lipidBondParentCache = new WeakMap();', '// The three sub-selections'),
+   sliceRange('const lipidPartDefaults = () => Object.fromEntries', 'let lipidClassSchemeKey'),
+   sliceObject(VIEW, 'BASE_SUGAR_COLORS'),
+   sliceObject(VIEW, 'baseSugarColorStore'),
+@@ -697,7 +702,53 @@ eq(classCm.atomColor({ resname: 'POPC', atomname: 'P' }), H.LIPID_CLASS_COLORS.P
+   'un nom que le lecteur ne sait PAS placer garde la couleur de classe (aucune part invent├⌐e)');
+ eq(classCm.atomColor({ resname: 'DPPE', atomname: 'C31' }), H.LIPID_CLASS_COLORS.PE,
+   'ΓÇªet une classe dont les parts n\'ont pas ├⌐t├⌐ touch├⌐es garde sa couleur unique');
++/* ΓöÇΓöÇ 5ter-bis. UN HYDROG├êNE DE LIPIDE EST PEINT COMME L'ATOME DONT IL PEND ΓöÇΓöÇΓöÇΓöÇΓöÇ
++   Le rapport de cette session : ┬½ In the styling window the hydrogen atoms of a lipid
++   are green while the different parts of the lipid are defined in a different color in
++   the setting wheel. It seems that the ΓÇ£lipid typeΓÇ¥ option is not working anymore. ┬╗
++   Le nom seul ne dit rien d'un hydrog├¿ne de cha├«ne nomm├⌐ H16T (il renvoie ├á C16, que
++   la nomenclature stricte C2x / C3x ne place pas) : il tombait donc dans la T├èTE de la
++   palette des parties, pendant que son carbone suivait la roue ΓÜÖ. Le graphe de
++   liaisons de la structure tranche, et les DEUX sch├⌐mas sont ex├⌐cut├⌐s ici. */
++H.lipidColorStore.named = true;
++const POPC_NAMES = ['C2', 'H2R', 'C16', 'H16T', 'C21', 'H21A', 'O9', 'HO9', 'C31', 'HN2', 'N', 'H1'];
++const POPC_ELS = ['C', 'H', 'C', 'H', 'C', 'H', 'O', 'H', 'C', 'H', 'N', 'H'];
++const POPC_BONDS = [[0, 1], [2, 3], [4, 5], [6, 7], [8, 9], [10, 11]];  // chaque H sur SON atome lourd
++const lipidGraph = {
++  eachBond: (cb) => POPC_BONDS.forEach(([a, b]) => cb({ atomIndex1: a, atomIndex2: b })),
++  getAtomProxy: (i) => ({ atomname: POPC_NAMES[i], element: POPC_ELS[i] }),
++};
++const H_AT = (i) => ({
++  resname: 'POPC', atomname: POPC_NAMES[i], element: POPC_ELS[i], structure: lipidGraph, index: i,
++});
++// Sans graphe de liaisons, rien ne change : le nom d├⌐cide, comme avant.
++eq(classCm.atomColor({ resname: 'POPC', atomname: 'HN2', element: 'H' }), H.LIPID_CLASS_COLORS.PC,
++  'sans graphe, un H au nom muet garde la couleur du TYPE (comportement dΓÇÖavant, pr├⌐serv├⌐)');
++// Avec le graphe : l'hydrog├¿ne suit SON atome lourd, pour les deux sch├⌐mas.
++eq(classCm.atomColor(H_AT(1)), 0x222222, 'H2R pend ├á C2 : il prend la couleur du GLYC├ëROL de sa classe');
++eq(classCm.atomColor(H_AT(5)), 0x333333, 'H21A pend ├á C21 : il prend celle des CHA├ÄNES');
++eq(classCm.atomColor(H_AT(9)), 0x333333,
++  'un H au nom muet (HN2) pend ├á C31 : il prend AUSSI celle des cha├«nes ΓÇö cΓÇÖ├⌐tait la couleur de type, le vert du rapport');
++eq(classCm.atomColor(H_AT(3)), H.LIPID_CLASS_COLORS.PC,
++  'H16T pend ├á C16, que le lecteur strict ne place pas : la couleur du TYPE, exactement comme son carbone');
++eq(lipidCm.atomColor(H_AT(9)), H.DEFAULT_LIPID_COLORS.acyl,
++  '[parties] ΓÇªet l├á aussi lΓÇÖH suit son carbone (HN2 ΓåÆ cha├«ne, plus jamais la t├¬te)');
++eq(lipidCm.atomColor(H_AT(1)), H.DEFAULT_LIPID_COLORS.glycerol,
++  '[parties] H2R suit le squelette de son atome lourd');
++eq(lipidCm.atomColor(H_AT(7)), H.DEFAULT_LIPID_COLORS.head,
++  '[parties] HO9 pend ├á O9 : lΓÇÖhydrog├¿ne dΓÇÖune t├¬te reste dans la t├¬te');
++/* Le graphe est lu UNE fois par structure : deux lectures du m├¬me H ne le recalculent
++   pas (un compteur le mesure, et la couleur reste O(1) sur un grand syst├¿me). */
++let graphReads = 0;
++const countedGraph = {
++  eachBond: (cb) => { graphReads += 1; POPC_BONDS.forEach(([a, b]) => cb({ atomIndex1: a, atomIndex2: b })); },
++  getAtomProxy: (i) => ({ atomname: POPC_NAMES[i], element: POPC_ELS[i] }),
++};
++const counted = { resname: 'POPC', atomname: 'HN2', element: 'H', structure: countedGraph, index: 9 };
++classCm.atomColor(counted); classCm.atomColor(counted); classCm.atomColor(counted);
++eq(graphReads, 1, 'le graphe des liaisons nΓÇÖest lu quΓÇÖUNE fois par structure (cache)');
+ H.lipidPartColorStore.PC = { head: H.LIPID_CLASS_COLORS.PC, glycerol: H.LIPID_CLASS_COLORS.PC, acyl: H.LIPID_CLASS_COLORS.PC };
++
+ H.lipidPartIndexStore.structure = null; H.lipidPartIndexStore.head = null;
+ H.lipidPartIndexStore.glycerol = null; H.lipidPartIndexStore.acyl = null;
+ 
+diff --git a/_viewer_section_scope_test.mjs b/_viewer_section_scope_test.mjs
+index 3268876..f13ab40 100644
+--- a/_viewer_section_scope_test.mjs
++++ b/_viewer_section_scope_test.mjs
+@@ -24,7 +24,9 @@
+      ┬º2 UNE SECTION NE PARLE QUE POUR ELLE : les sections D├ëJ├Ç ├ëNUM├ëR├ëES du m├¬me
+         type sont ├ëPINGL├ëES sur l'arbre qu'elles affichent avant que le look du type
+         ne soit ├⌐crit (pinSectionLooksOfKind, ex├⌐cut├⌐), et les quatre gestes de la
+-        barre l'appellent ΓÇö le ≡ƒÄ¿ Copy reste la propagation volontaire.
++        barre l'appellent. Le ≡ƒÄ¿ Copy, lui, a quitt├⌐ la barre (le rapport : ┬½ the
++        ΓÇ£allΓÇ¥, ΓÇ£mainΓÇ¥, ΓÇ£copyΓÇ¥ buttons at the top are obsolete ┬╗) : son ancien emplacement
++        porte Γÿæ All / ΓÿÉ None et le ≡ƒÄ» fit des mol├⌐cules montr├⌐es sur la choisie.
+      ┬º3 LES TROIS LECTURES MAISON QUI MANQUAIENT au ┬½ Color by ┬╗ d'une rang├⌐e de
+         s├⌐lection / de ≡ƒº½ membrane (chain ┬╖ charge ┬╖ lipidtype) : `schemeForColorMode`
+         rend maintenant EXACTEMENT les sch├⌐mas des rang├⌐es du styling, donc les
+@@ -271,8 +273,15 @@ eq(countOf(/const pinned = pinSectionLooksOfKind\(id, kind, nextTree\);/g), 4,
+   'un seul appel par geste ΓÇö setSectionField ┬╖ setSectionMaterialField ┬╖ Γå║ dΓÇÖune rang├⌐e ┬╖ Γå║ dΓÇÖune section');
+ eq(countOf(/setSectionLooks\(\(prev\) => \(\{ \.\.\.prev, \.\.\.pinned, \[id\]: nextTree \}\)\);/g), 4,
+   'ΓÇªet les quatre ├⌐crivent le patch ├⌐pingl├⌐ en m├¬me temps que le leur');
+-has('const copySectionsToAll = () => {', 'la propagation VOLONTAIRE garde son geste d├⌐di├⌐ (≡ƒÄ¿ Copy)');
+-has('onClick={copySectionsToAll}', 'ΓÇªet son bouton');
++has('const toggleAllMolecules = () => {',
++  'le bouton ┬½ toutes les mol├⌐cules ou aucune ┬╗ remplace ┬½ All ┬╗ / ┬½ Main ┬╗ (le rapport : les trois boutons du haut sont obsol├¿tes)');
++has('onClick={toggleAllMolecules}', 'ΓÇªet son bouton');
++has('const fitMoleculesOnChosen = () => {',
++  'ΓÇªavec le ≡ƒÄ» fit des mol├⌐cules montr├⌐es sur la mol├⌐cule choisie');
++has('onClick={fitMoleculesOnChosen}', 'ΓÇªet son bouton');
++// La propagation VOLONTAIRE d'un look n'a plus de bouton (≡ƒÄ¿ Copy retir├⌐) : la barre
++// ne garde que ce qui d├⌐cide QUELLES mol├⌐cules sont montr├⌐es, et O├Ö elles sont.
++ok(!VIEW.includes('onClick={copySectionsToAll}'), '≡ƒÄ¿ Copy a quitt├⌐ la barre des mol├⌐cules');
+ // LA COCHE ELLE-M├èME : dans la rang├⌐e GENERAL, et m├⌐moris├⌐e.
+ has('const [chainLink, setChainLink] = useState(() => {', 'la coche est un ├⌐tat d├⌐di├⌐');
+ has("localStorage.setItem('labViewerChainLink', chainLink ? 'on' : 'off');",
+diff --git a/_viewer_ui_layout_test.mjs b/_viewer_ui_layout_test.mjs
+index 4e93c63..75a8be6 100644
+--- a/_viewer_ui_layout_test.mjs
++++ b/_viewer_ui_layout_test.mjs
+@@ -448,7 +448,8 @@ has('onChange={(e) => setSectionLabel(sec.id, k, e.target.checked)}', '[├⌐tiquet
+ has('allowed: new Set(indices)', '[├⌐tiquettes] build3dLabelMap ne re├ºoit que les atomes de lΓÇÖespace');
+ has('const atomIndicesForSele = (structure, sele) => {', '[├⌐tiquettes] la s├⌐lection du menu devient une liste dΓÇÖindices dΓÇÖatomes');
+ has('const routeCategorySelections = (sels, moleculeType) => {', '[rendu] UNE fonction de routage partag├⌐e par le rendu ET les ├⌐tiquettes');
+-has('onClick={() => setDragMove((v) => !v)}', '[conserv├⌐] Γ£ï Drag');
++has("onClick={() => setMouseMode((m) => (m === 'move' ? 'off' : 'move'))}", '[conserv├⌐] Γ£Ñ Move (ex-Γ£ï Drag)');
++has("onClick={() => setMouseMode((m) => (m === 'rotate' ? 'off' : 'rotate'))}", '[ajout├⌐] Γå╗ Rotate');
+ has('onClick={rebuildHydrogensNow}', '[conserv├⌐] ΓÜù∩╕Å Rebuild H');
+ has('onClick={() => setShowAtomPanel((v) => !v)}', '[conserv├⌐] Γ£Å∩╕Å panneau Atom names (renommage)');
+ /* ΓöÇΓöÇ La S├ëQUENCE de la page donne sa structure ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+@@ -525,7 +526,7 @@ has('const set = (field, value) => setSectionField(sec.id, kind, sub, field, val
+ has("onChange={(e) => set('style', e.target.value)}", '[conserv├⌐] ΓÇªle style de la rang├⌐e');
+ has("onChange={(e) => set('colorBy', e.target.value)}", '[conserv├⌐] ΓÇªsa coloration');
+ has("onChange={(e) => set('opacity', Number(e.target.value))}", '[conserv├⌐] ΓÇªsa transparence');
+-has('onClick={copySectionsToAll}', '[conserv├⌐] ≡ƒÄ¿ Copy de la barre Molecules (le look dΓÇÖune mol├⌐cule aux autres)');
++has('onClick={fitMoleculesOnChosen}', '[barre] ≡ƒÄ» Fit des mol├⌐cules montr├⌐es sur la mol├⌐cule choisie (remplace ≡ƒÄ¿ Copy)');
+ // La barre Molecules est aussi la maison du SMILES du ligand et du ΓÜÖ des palettes.
+ has('{shownLigandSmiles && (', '[barre] le SMILES de la mol├⌐cule / du ligand y est affich├⌐');
+ has('onClick={copyLigandSmiles}', '[barre] ΓÇªavec son bouton ≡ƒôï (copie)');

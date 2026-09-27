@@ -89,8 +89,13 @@ hasNot(RELOAD, 'openDataset,}', '…et n’est donc pas une dépendance de useCa
 has(APP, 'const openDataset = (dset, { keepPlace = false } = {}) => {',
   'openDataset accepte keepPlace (défaut false : les ouvertures ne changent pas)');
 /* Les sauts de ligne d'App.jsx sont des CRLF : on vise la FORME, pas le octets. */
+/* Le `keepPlace` d'une RELECTURE (🔄 Refresh) : la navigation ne bouge pas — ni
+   module, ni page d'administration. Une OUVERTURE, elle, suit la page réclamée
+   par l'adresse (`?mod=`, la fenêtre du ⧉) et retombe sur le tableau de bord
+   sinon : c'est cette page-là que le rechargement doit retrouver (le défaut
+   « reloading a page the program forgets ») — voir _app_page_window_test.mjs. */
 const GUARD = (body) => new RegExp(`if \\(!keepPlace\\) \\{\\s*\\r?\\n\\s*${body}`);
-ok(GUARD("setCurrentModule\\('dashboard'\\);").test(APP),
+ok(GUARD("setCurrentModule\\(requestedModuleRef\\.current \\|\\| 'dashboard'\\);").test(APP),
   'keepPlace garde le MODULE courant (aucun renvoi au dashboard)');
 ok(GUARD("setCurrentModule\\('administration'\\);").test(APP),
   '…et garde la page d’administration ouverte (bases administratives)');

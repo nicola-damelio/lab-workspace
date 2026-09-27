@@ -193,8 +193,10 @@ has('{shown && subsectionsOf(kind).map((s) => renderSectionRow(sec, s.sub))}',
   '[barre] les rangées du type de la molécule, et elles seules');
 has('title="Transparency regulator of THIS row: 0 % = opaque, 100 % = invisible (NGL opacity)"',
   '[barre] la transparence d’une rangée dit ce qu’elle fait');
-has('title="Shift the whole molecule along X · Y · Z (Å), or move it with the mouse (✋ Drag)"',
-  '[barre] le Move d’une molécule (X · Y · Z, ou ✋ Drag)');
+has('title="Move THIS molecule with the mouse — drag inside the viewer to slide it (the other molecules stay where they are). Click again to rotate/zoom the camera as usual."',
+  '[barre] le Move d’une molécule (✥ Move, la souris)');
+has('title="Rotate THIS molecule with the mouse, about its own centre — drag sideways to spin it, up and down to tilt it. The other molecules do not move."',
+  '[barre] …et son ↻ Rotate (la demande : « allowing to move and rotate each molecule independently »)');
 has('const MOL_STYLE_OPTIONS = (', '[barre] une seule liste de styles pour toutes les lignes');
 has('const MOL_COLOR_OPTIONS = (', '[barre] …et une seule liste de colorations');
 has('setMolFold((prev) => { const n = { ...prev }; delete n[id]; return n; });',

@@ -102,7 +102,10 @@ const sliceRaw = (name) => {
 /* ── La sandbox : les helpers du viewer, exécutés pour de vrai ───────────── */
 // `keys` dit si les schémas maison ont pu être enregistrés (`null` = échec de
 // l'enregistrement, le cas que le viewer doit encaisser sans ne rien dessiner).
-const buildHelpers = (keys = {}) => new Function([
+// `env.window` est le `window` que les helpers verront : absent = hors navigateur
+// (les helpers purs de la coloration), `{ NGL }` = la page — pour les helpers qui
+// construisent des MeshBuffers (section 9).
+const buildHelpers = (keys = {}, env = {}) => new Function('__window', [
   `const RING_MAX_SIZE = ${sliceRaw('RING_MAX_SIZE')};`,
   `const RING_TRANSPARENCY_DEFAULT = ${sliceRaw('RING_TRANSPARENCY_DEFAULT')};`,
   `const RING_TRANSPARENCY_MAX = ${sliceRaw('RING_TRANSPARENCY_MAX')};`,
@@ -122,6 +125,23 @@ const buildHelpers = (keys = {}) => new Function([
   sliceFn(VIEW, 'ringPlateTriangles'),
   sliceFn(VIEW, 'ringPlateColorOf'),
   sliceFn(VIEW, 'nucleicRingPlates'),
+  /* LES PLAQUES SUIVENT LES IMAGES DE LA TRAJECTOIRE (section 9) : `flagMeshShadows`
+     (appelée pour chaque plaque ajoutée), la recette gardée SUR l'élément de
+     représentation (`markRingPlates`), l'ajout (`addRingPlateRep`) et le remplissage
+     à nouveau de la géométrie déjà à l'écran (`refreshRingPlates`). */
+  sliceFn(VIEW, 'flagMeshShadows'),
+  `const window = __window;`,
+  sliceFn(VIEW, 'markRingPlates'),
+  sliceFn(VIEW, 'addRingPlateRep'),
+  sliceFn(VIEW, 'refreshRingPlates'),
+  /* Ce que `refreshScenePlates` / `hookStructurePlates` lisent DANS le composant
+     React : les deux refs de la scène et la demande de rendu — dit par le test. */
+  `const componentRef = { current: null };`,
+  `const extraCompsRef = { current: [] };`,
+  `let plateRepaints = 0;`,
+  `const requestSceneRepaint = () => { plateRepaints += 1; };`,
+  sliceFn(VIEW, 'refreshScenePlates'),
+  sliceFn(VIEW, 'hookStructurePlates'),
   sliceFn(VIEW, 'toNglSelection'),
   sliceFn(VIEW, 'lerpHexColors'),
   sliceFn(VIEW, 'gradientT'),
@@ -161,8 +181,13 @@ const buildHelpers = (keys = {}) => new Function([
     hexToRgb01, ringPlaneNormal, ringCyclesOf, ringPlateTriangles, ringPlateColorOf, nucleicRingPlates,
     toNglSelection, lerpHexColors, gradientT, gradientRangesFor, defineGradientScheme,
     registerColorScheme, catColorParams, gradientColorStore ,
-      BASE_TYPE_ORDER, RESIDUE_COLOR_PALETTE, residueColorStore, residueColorOf, defineResidueScheme, baseTypeColorStore, baseTypeColorOf, defineBaseTypeScheme, CHARGE_COLORS, chargeColorStore, ionChargeOf, chargeColorOf, defineChargeScheme, SUGAR_TYPE_COLORS, sugarTypeColorStore, SUGAR_TYPE_OF_CODE, sugarTypeOf, sugarTypeColorOf };`,
-].join('\n'))();
+      BASE_TYPE_ORDER, RESIDUE_COLOR_PALETTE, residueColorStore, residueColorOf, defineResidueScheme, baseTypeColorStore, baseTypeColorOf, defineBaseTypeScheme, CHARGE_COLORS, chargeColorStore, ionChargeOf, chargeColorOf, defineChargeScheme, SUGAR_TYPE_COLORS, sugarTypeColorStore, SUGAR_TYPE_OF_CODE, sugarTypeOf, sugarTypeColorOf,
+    // Section 9 — les plaques suivent les images de la trajectoire : la recette
+    // gardée sur la représentation, l'accroche au signal, et l'ajout réel.
+    flagMeshShadows, markRingPlates, addRingPlateRep, refreshRingPlates,
+    plateFrame: { componentRef, extraCompsRef, hookStructurePlates, refreshScenePlates,
+      repaints: () => plateRepaints } };`,
+].join('\n'))(env.window);
 const H = buildHelpers();
 const HS = buildHelpers({ sstruc: 'lab-test-sstruc', gradient: 'lab-test-gradient', elements: 'lab-test-elements', sugar: 'lab-test-sugar' });
 
@@ -515,8 +540,10 @@ has('registerGradientScheme(NGL);', 'le schéma du dégradé est enregistré ave
 has("registerColorScheme(NGL, 'lab-gradient'", '…sous son propre libellé (définition d’abord, libellé ensuite)');
 has("if (!m || m.bases !== 'rings') return null;", 'les plaques sont réservées à « Stylized rings »');
 has('const plates = addRingPlates(sels.nucleic);', 'la branche « Stylized rings » construit de VRAIES plaques');
-has("const rep = comp.addBufferRepresentation(mesh, { opacity: ringOpacity(), side: 'double' });",
+has('const rep = comp.addBufferRepresentation(mesh, params);',
   'le MeshBuffer est confié au COMPOSANT (il suit sa matrice : poses de docking, molécules extra)');
+has("return addRingPlateRep(comp, makePlates(), makePlates, { opacity: ringOpacity(), side: 'double' }, reps);",
+  '…avec la transparence de la rangée, par le constructeur commun à TOUTES les plaques');
 has('const mesh = new NG.MeshBuffer({ position: data.position, normal: data.normal, color: data.color, index: data.index });',
   'les plaques passent par le vrai MeshBuffer de NGL');
 has("add('licorice', { sele: `@${ringIdx.join(',')}`", 'le pourtour est dessiné sur EXACTEMENT les atomes des cycles');
@@ -551,6 +578,157 @@ ok(!CODE.includes("addScheme('lab-"), 'aucun schéma enregistré avec les deux a
 ok(!CODE.includes('computeVertexNormals'), 'les normales viennent du plan du cycle, pas d’un calcul par facette');
 ok(CODE.includes("value={look.opacity}") && CODE.includes("onChange={(e) => set('opacity', Number(e.target.value))}"), 'la transparence d une row est un curseur (0 % = opaque), plaques comprises');
 ok(CODE.includes('{ sub: \'ribose\', label: \'DNA/RNA ribose\''), 'la plaque du ribose est la row « DNA/RNA ribose » (Ring plates)');
+
+/* ══ 9. LES PLAQUES SUIVENT LES IMAGES DE LA TRAJECTOIRE ═══════════════════ */
+/* LA PANNE signalée (« le immagini scorrono ma le placche restano ») : les bâtons
+   des rangées nucléiques sont des représentations que NGL réécrit à chaque image
+   (`Structure#updatePosition` → `refreshPosition`), mais une plaque est un
+   MeshBuffer — un INSTANTANÉ de coordonnées, sans `updatePosition`. La recette qui
+   a construit chaque plaque est donc gardée SUR son élément de représentation
+   (`__plates`), et le signal `refreshed` de la structure la rejoue. */
+const HF = buildHelpers({}, { window: { NGL } });
+// Le VRAI Signal de NGL : c'est lui que la structure dispatche à chaque image.
+const refreshed = new NGL.Signal({ signals: {} });
+const mainComp = { structure: { signals: { refreshed } } };
+HF.plateFrame.componentRef.current = mainComp;
+
+// 1. L'accroche : UNE fois par structure, sur le signal des coordonnées.
+eq(refreshed.getNumListeners(), 0, 'rien n’écoute les coordonnées avant le chargement…');
+eq(HF.plateFrame.hookStructurePlates(mainComp), undefined, 'l’accroche ne rend rien (best-effort)');
+eq(refreshed.getNumListeners(), 1, '…et la structure principale est écoutée après');
+HF.plateFrame.hookStructurePlates(mainComp);
+eq(refreshed.getNumListeners(), 1, '…UNE seule fois (jamais un abonnement par rendu React)');
+HF.plateFrame.hookStructurePlates({});
+HF.plateFrame.hookStructurePlates(null);
+eq(refreshed.getNumListeners(), 1, '…et une structure sans signal ne casse rien');
+
+// 2. Une plaque de l'image 1, ajoutée EXACTEMENT comme l'application le fait.
+const make = () => HF.nucleicRingPlates(fakeStructure, 'nucleic', MENU);
+const before = [...new Float32Array(make().position)];
+const fakeComp = {
+  reps: [],
+  addBufferRepresentation(buffer, params) {
+    const rep = { buffer, params };            // ← l'élément que NGL rend (il porte __plates)
+    this.reps.push(rep);
+    return rep;
+  },
+  eachRepresentation(cb) { this.reps.forEach((rep) => cb(rep)); },
+};
+/* Le MÊME composant reçoit les coordonnées : c'est la structure de CE composant-là
+   qui dispatche `refreshed` — comme le StructureComponent de NGL, qui porte à la fois
+   ses représentations et le signal de sa structure. */
+fakeComp.structure = { signals: { refreshed: new NGL.Signal({ signals: {} }) } };
+const plateSignal = fakeComp.structure.signals.refreshed;
+HF.plateFrame.hookStructurePlates(fakeComp);
+eq(plateSignal.getNumListeners(), 1, 'la structure du composant PLAQUÉ est écoutée, elle aussi');
+
+const kept = [];
+const added = HF.addRingPlateRep(fakeComp, make(), make, { opacity: 0.5, side: 'double' }, kept);
+ok(!!added && !!added.rep, 'la plaque est confiée au composant (addBufferRepresentation)');
+eq(kept, [added.rep], '…et retenue dans la liste des représentations de la rangée');
+ok(added.rep.buffer instanceof NGL.MeshBuffer, 'le tampon est un VRAI MeshBuffer de NGL');
+eq(added.rep.__plates.make, make, 'la recette est gardée SUR l’élément de représentation');
+eq(added.rep.params, { opacity: 0.5, side: 'double' }, '…avec les paramètres choisis par addRingPlateRep seul');
+const buffer = added.rep.buffer;
+const posAttr = buffer.geometry.attributes.position;
+const screenPos = () => [...buffer.geometry.attributes.position.array];
+eq(screenPos(), before, 'la géométrie à l’écran est celle de l’image 1');
+eq(kept[0].__sec, undefined, 'aucune marque de rangée n’est inventée par le constructeur commun');
+
+
+// 3. L'IMAGE SUIVANTE : les atomes bougent (la trajectoire), les liaisons NON — le
+//    graphe est le même, donc les anneaux sont les mêmes et la plaque ne fait que
+//    suivre ses atomes.
+const delta = { x: 1.7, y: -0.9, z: 2.3 };
+const move = (k) => atoms.forEach((a) => { a.x += k * delta.x; a.y += k * delta.y; a.z += k * delta.z; });
+move(1);
+eq(HF.refreshRingPlates([fakeComp]), 1, 'le changement d’image réécrit la plaque');
+const after = screenPos();
+ok(after.join() !== before.join(), 'la géométrie à l’écran n’est plus celle de l’image 1');
+eq(after, [...make().position], '…elle vaut EXACTEMENT les plaques de la NOUVELLE image');
+eq([...buffer.geometry.attributes.normal.array], [...make().normal], 'les normales des facettes suivent (le plan du cycle)');
+eq([...buffer.geometry.attributes.color.array], [...make().color], '…et les couleurs sont réécrites');
+eq(buffer.geometry.index.count, make().index.length, 'l’index est réécrit : mêmes anneaux, autres coordonnées');
+for (let i = 0; i < after.length; i += 3) {
+  ok(Math.abs(after[i] - before[i] - delta.x) < 1e-4, 'chaque sommet a suivi la translation des atomes (x)');
+  ok(Math.abs(after[i + 1] - before[i + 1] - delta.y) < 1e-4, '…(y)');
+  ok(Math.abs(after[i + 2] - before[i + 2] - delta.z) < 1e-4, '…(z)');
+}
+/* LE MÊME TAMPON : NGL n'a rien reconstruit — le BufferAttribute est celui de la
+   construction, donc les mêmes tampons WebGL sont réécrits et rien ne clignote. */
+eq(fakeComp.reps.length, 1, 'aucune représentation n’est refaite (pas de clignotement)');
+ok(fakeComp.reps[0].buffer === buffer, '…c’est le MÊME MeshBuffer qui est rempli à nouveau');
+ok(buffer.geometry.attributes.position === posAttr, '…et le MÊME BufferAttribute (mêmes tampons WebGL)');
+eq(HF.refreshRingPlates([fakeComp]), 1, 'la géométrie peut être réécrite à chaque image, sans fin');
+
+// 4. Retour à l'image 1 : la plaque se repose EXACTEMENT sur ses atomes.
+move(-1);
+eq(HF.refreshRingPlates([fakeComp]), 1, 'le retour à l’image 1 réécrit la plaque');
+eq(screenPos(), before, '…et elle revient sur les coordonnées de l’image 1');
+
+
+// 5. Le rendu n'est demandé QUE si quelque chose a réellement été réécrit.
+HF.plateFrame.componentRef.current = fakeComp;
+eq(HF.plateFrame.refreshScenePlates(), undefined, 'refreshScenePlates ne rend rien (il DEMANDE un rendu)');
+eq(HF.plateFrame.repaints(), 1, 'les plaques de la scène → un rendu demandé');
+const bareComp = { reps: [], eachRepresentation(cb) { this.reps.forEach((rep) => cb(rep)); } };
+HF.plateFrame.componentRef.current = bareComp;
+HF.plateFrame.refreshScenePlates();
+eq(HF.plateFrame.repaints(), 1, 'une scène SANS plaque ne demande aucun rendu (pas un pixel pour rien)');
+HF.plateFrame.componentRef.current = null;
+HF.plateFrame.extraCompsRef.current = [{ comp: fakeComp }];
+HF.plateFrame.refreshScenePlates();
+eq(HF.plateFrame.repaints(), 2, 'les plaques des molécules EXTRA suivent aussi (leur propre composant)');
+
+// 6. LE SIGNAL : c'est ce que NGL dispatche à chaque image de la trajectoire.
+HF.plateFrame.componentRef.current = fakeComp;
+HF.plateFrame.extraCompsRef.current = [];
+const n = HF.plateFrame.repaints();
+move(1);
+plateSignal.dispatch();                      // ← Structure#refreshPosition le fait
+eq(HF.plateFrame.repaints(), n + 1, 'une image de la trajectoire → plaques réécrites ET un rendu');
+eq(screenPos(), [...make().position], '…les plaques à l’écran sont celles de la dernière image');
+move(1);
+plateSignal.dispatch();
+eq(HF.plateFrame.repaints(), n + 2, '…une demande de rendu par image, jamais plus');
+HF.plateFrame.componentRef.current = null;
+plateSignal.dispatch();
+eq(HF.plateFrame.repaints(), n + 2, '…et une image sans plaque ne redessine rien du tout');
+refreshed.dispatch();                        // l'AUTRE structure (sans plaque) ne dessine rien non plus
+eq(HF.plateFrame.repaints(), n + 2, 'un composant hors de la scène ne fait redessiner personne');
+
+/* ── Le BRANCHEMENT : ce que la section 9 vient d'exécuter est bien celui du viewer ── */
+has('hookStructurePlates(component);', 'le chargement ACCROCHE les plaques de la structure');
+ok(VIEW.indexOf('componentRef.current = component;') < VIEW.indexOf('hookStructurePlates(component);'),
+  '…APRÈS avoir retenu le composant : une image arrivée pendant le chargement est déjà suivie');
+has('const sig = comp && comp.structure && comp.structure.signals && comp.structure.signals.refreshed;',
+  '…sur le signal des COORDONNÉES de la structure (jamais celui du lecteur de trajectoire)');
+has('sig.add(() => refreshScenePlates());', 'l’écoute est posée sur `refreshed`');
+has('if (refreshRingPlates(comps)) requestSceneRepaint();',
+  '…et un rendu n’est demandé que si une plaque a ÉTÉ réécrite');
+has('const data = recipe.make();', 'la recette de la plaque est REJOUÉE sur la structure telle qu’elle est');
+has('recipe.mesh.setAttributes(attributes);',
+  '…et la géométrie déjà à l’écran est remplie À NOUVEAU (mêmes tampons, aucun scintillement)');
+has('const recipe = el && el.__plates;', 'la recette est lue SUR l’élément de représentation que NGL énumère');
+has("if (el && mesh && typeof make === 'function') el.__plates = { mesh, make };",
+  'elle n’est marquée que si la plaque a VRAIMENT été construite');
+has("return addRingPlateRep(comp, makePlates(), makePlates, { opacity: sectionOpacity(look), side: 'double' }, reps);",
+  'les plaques d’une ROW de style passent par le constructeur commun (elles suivent les images)');
+has("addRingPlateRep(component, data, makePlates, { opacity: op, side: 'double' }, reps);",
+  '…celles du chemin PyMOL aussi (un script peut être joué sur une trajectoire)');
+ok(CODE.includes('if (reps) reps.push(rep);'), 'la plaque est retenue dans la liste de SA rangée (elle est démontée avec elle)');
+eq((CODE.match(/addBufferRepresentation\(/g) || []).length, 1,
+  'le MeshBuffer n’est confié au composant qu’à UN endroit : aucune plaque ne peut échapper au marquage');
+eq((CODE.match(/addRingPlateRep\(/g) || []).length, 3,
+  '…et les TROIS constructeurs du viewer passent par le constructeur commun');
+eq((CODE.match(/const (markRingPlates|addRingPlateRep|refreshRingPlates|refreshScenePlates|hookStructurePlates) =/g) || []).length, 5,
+  'chaque helper des plaques n’existe qu’UNE fois (aucune copie oubliée)');
+eq((CODE.match(/__platesHook/g) || []).length, 2, 'l’accroche ne peut être posée qu’UNE fois par structure');
+
+move(-2);                                    // retour aux coordonnées de l'image 1
+ok(screenPos().join() !== before.join(), 'une plaque est un INSTANTANÉ : elle reste sur la dernière image reçue');
+eq(HF.refreshRingPlates([fakeComp]), 1, '…jusqu’à ce que la prochaine image la réécrive');
+eq(screenPos(), before, '…et la voilà reposée sur les atomes de l’image 1');
 
 /* ── Bilan ─────────────────────────────────────────────────────────────── */
 console.log(`_viewer_rings_gradient_test.mjs — ${passed} assertions OK`);

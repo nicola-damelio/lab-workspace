@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
+import { CollapsibleSection } from './ui';
 import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, Cell, ReferenceArea
 } from 'recharts';
@@ -1374,8 +1375,12 @@ export const MDExperimentSetupSection = ({ ctx }) => {
         </div>
       </div>
 
+      {/* Sequence and structure (Issue #10) — la peinture 🖌️ et la bande de
+          séquence sont regroupées dans UNE sous-section repliée par défaut : les
+          cartes de résultats restent en tête de page, et CollapsibleSection
+          mémorise le choix (ouvert / replié) par expérience. */}
       {d.moleculeType === 'protein' && d.parsedSeq.length > 0 && (
-        <div>
+        <CollapsibleSection title="Sequence and structure" icon="🖌️" defaultOpen={false}>
           <div className="flex flex-wrap gap-2 mb-3 items-center">
             <span className="text-xs font-bold text-slate-500 uppercase mr-1">🖌️ Brush:</span>
             {['C', 'H', 'E'].map((l) => (
@@ -1397,11 +1402,11 @@ export const MDExperimentSetupSection = ({ ctx }) => {
             onApply={(i) => paintSSAt(i, ssBrush)}
             focusIdx={focusIdx}
           />
-        </div>
+        </CollapsibleSection>
       )}
 
       {(d.moleculeType === 'dna' || d.moleculeType === 'rna') && d.parsedSeq.length > 0 && (
-        <div>
+        <CollapsibleSection title="Sequence and structure" icon="🖌️" defaultOpen={false}>
           <div className="flex flex-wrap gap-2 mb-3 items-center">
             <span className="text-xs font-bold text-slate-500 uppercase mr-1">🖌️ Brush:</span>
             {['A', 'B', 'Z'].map((l) => (
@@ -1422,7 +1427,7 @@ export const MDExperimentSetupSection = ({ ctx }) => {
             onApply={(i) => paintFormAt(i, formBrush)}
             focusIdx={focusIdx}
           />
-        </div>
+        </CollapsibleSection>
       )}
 
       <div>
@@ -1467,6 +1472,7 @@ export const MDExperimentSetupSection = ({ ctx }) => {
               
 <NMRMoleculeViewer
   key={`${activeTest.id || 'md'}|${trajectoryFile ? trajectoryFile.name : 'no-traj-file'}|${d.trajectoryUrl || 'no-traj'}`}
+  instanceKey={activeTest.id || null}
   src={activeTest.structureSrc}
   structureFileData={activeTest.structureFileData}
   structureFile={structureFile}

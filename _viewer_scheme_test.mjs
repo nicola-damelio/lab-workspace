@@ -171,6 +171,11 @@ const sandbox = [
   // d'un seul tenant pour qu'aucune ligne ne soit recopiée ici.
   sliceConst('LIPID_TYPE_ORDER'),
   sliceFn(VIEW, 'lipidPartNameOf'),
+  // ⚠ LES HYDROGÈNES DE LIPIDE SUIVENT LEUR LIAISON — le rapport de cette session :
+  // « the hydrogen atoms of a lipid are green while the different parts of the lipid
+  // are defined in a different color in the setting wheel ». Le cache par structure
+  // et les deux lecteurs qui l'utilisent, pris d'un seul tenant.
+  sliceRange('const lipidBondParentCache = new WeakMap();', '// The three sub-selections'),
   sliceRange('const lipidPartDefaults = () => Object.fromEntries', 'let lipidClassSchemeKey'),
   sliceObject(VIEW, 'BASE_SUGAR_COLORS'),
   sliceObject(VIEW, 'baseSugarColorStore'),
@@ -697,7 +702,53 @@ eq(classCm.atomColor({ resname: 'POPC', atomname: 'P' }), H.LIPID_CLASS_COLORS.P
   'un nom que le lecteur ne sait PAS placer garde la couleur de classe (aucune part inventée)');
 eq(classCm.atomColor({ resname: 'DPPE', atomname: 'C31' }), H.LIPID_CLASS_COLORS.PE,
   '…et une classe dont les parts n\'ont pas été touchées garde sa couleur unique');
+/* ── 5ter-bis. UN HYDROGÈNE DE LIPIDE EST PEINT COMME L'ATOME DONT IL PEND ─────
+   Le rapport de cette session : « In the styling window the hydrogen atoms of a lipid
+   are green while the different parts of the lipid are defined in a different color in
+   the setting wheel. It seems that the “lipid type” option is not working anymore. »
+   Le nom seul ne dit rien d'un hydrogène de chaîne nommé H16T (il renvoie à C16, que
+   la nomenclature stricte C2x / C3x ne place pas) : il tombait donc dans la TÊTE de la
+   palette des parties, pendant que son carbone suivait la roue ⚙. Le graphe de
+   liaisons de la structure tranche, et les DEUX schémas sont exécutés ici. */
+H.lipidColorStore.named = true;
+const POPC_NAMES = ['C2', 'H2R', 'C16', 'H16T', 'C21', 'H21A', 'O9', 'HO9', 'C31', 'HN2', 'N', 'H1'];
+const POPC_ELS = ['C', 'H', 'C', 'H', 'C', 'H', 'O', 'H', 'C', 'H', 'N', 'H'];
+const POPC_BONDS = [[0, 1], [2, 3], [4, 5], [6, 7], [8, 9], [10, 11]];  // chaque H sur SON atome lourd
+const lipidGraph = {
+  eachBond: (cb) => POPC_BONDS.forEach(([a, b]) => cb({ atomIndex1: a, atomIndex2: b })),
+  getAtomProxy: (i) => ({ atomname: POPC_NAMES[i], element: POPC_ELS[i] }),
+};
+const H_AT = (i) => ({
+  resname: 'POPC', atomname: POPC_NAMES[i], element: POPC_ELS[i], structure: lipidGraph, index: i,
+});
+// Sans graphe de liaisons, rien ne change : le nom décide, comme avant.
+eq(classCm.atomColor({ resname: 'POPC', atomname: 'HN2', element: 'H' }), H.LIPID_CLASS_COLORS.PC,
+  'sans graphe, un H au nom muet garde la couleur du TYPE (comportement d’avant, préservé)');
+// Avec le graphe : l'hydrogène suit SON atome lourd, pour les deux schémas.
+eq(classCm.atomColor(H_AT(1)), 0x222222, 'H2R pend à C2 : il prend la couleur du GLYCÉROL de sa classe');
+eq(classCm.atomColor(H_AT(5)), 0x333333, 'H21A pend à C21 : il prend celle des CHAÎNES');
+eq(classCm.atomColor(H_AT(9)), 0x333333,
+  'un H au nom muet (HN2) pend à C31 : il prend AUSSI celle des chaînes — c’était la couleur de type, le vert du rapport');
+eq(classCm.atomColor(H_AT(3)), H.LIPID_CLASS_COLORS.PC,
+  'H16T pend à C16, que le lecteur strict ne place pas : la couleur du TYPE, exactement comme son carbone');
+eq(lipidCm.atomColor(H_AT(9)), H.DEFAULT_LIPID_COLORS.acyl,
+  '[parties] …et là aussi l’H suit son carbone (HN2 → chaîne, plus jamais la tête)');
+eq(lipidCm.atomColor(H_AT(1)), H.DEFAULT_LIPID_COLORS.glycerol,
+  '[parties] H2R suit le squelette de son atome lourd');
+eq(lipidCm.atomColor(H_AT(7)), H.DEFAULT_LIPID_COLORS.head,
+  '[parties] HO9 pend à O9 : l’hydrogène d’une tête reste dans la tête');
+/* Le graphe est lu UNE fois par structure : deux lectures du même H ne le recalculent
+   pas (un compteur le mesure, et la couleur reste O(1) sur un grand système). */
+let graphReads = 0;
+const countedGraph = {
+  eachBond: (cb) => { graphReads += 1; POPC_BONDS.forEach(([a, b]) => cb({ atomIndex1: a, atomIndex2: b })); },
+  getAtomProxy: (i) => ({ atomname: POPC_NAMES[i], element: POPC_ELS[i] }),
+};
+const counted = { resname: 'POPC', atomname: 'HN2', element: 'H', structure: countedGraph, index: 9 };
+classCm.atomColor(counted); classCm.atomColor(counted); classCm.atomColor(counted);
+eq(graphReads, 1, 'le graphe des liaisons n’est lu qu’UNE fois par structure (cache)');
 H.lipidPartColorStore.PC = { head: H.LIPID_CLASS_COLORS.PC, glycerol: H.LIPID_CLASS_COLORS.PC, acyl: H.LIPID_CLASS_COLORS.PC };
+
 H.lipidPartIndexStore.structure = null; H.lipidPartIndexStore.head = null;
 H.lipidPartIndexStore.glycerol = null; H.lipidPartIndexStore.acyl = null;
 

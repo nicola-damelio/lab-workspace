@@ -16,7 +16,7 @@
    All coordinates are in nm (as produced by MDTrajectoryFrames.js).
    ========================================================================= */
 
-import { abortError } from './abortControl';
+import { abortError } from './abortControl.js';
 
 // ---------------------------------------------------------------------------
 // 3×3 SVD via one-sided Jacobi rotations (A = U·S·Vᵀ, row-major flat arrays)

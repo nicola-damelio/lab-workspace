@@ -1,0 +1,960 @@
+diff --git a/src/App.jsx b/src/App.jsx
+index f724a88..0d01e96 100644
+--- a/src/App.jsx
++++ b/src/App.jsx
+@@ -624,6 +624,25 @@ export const urlWithoutMod = (search, pathname) => {
+     return `${pathname || window.location.pathname}${qs ? `?${qs}` : ''}`;
+   } catch { return pathname || ''; }
+ };
++/**
++ * La même URL, avec `&mod=<page>` : LA PAGE OÙ L'ON EST entre dans l'adresse.
++ *
++ * Le rapport de cette session : « When reloading a page the program forgets the
++ * visualisation settings. » Un F5 repartait du tableau de bord — donc de rien —
++ * parce que `mod` était EFFACÉ dès l'ouverture d'une base : la page, ses menus
++ * ouverts, son viewer et son « où j'en étais » n'étaient plus nulle part. La page
++ * reste maintenant dans l'adresse (voir l'effet miroir d'App), ce qui sert aussi
++ * le A+« duplicate tab » du navigateur, et le ⧉ de la barre latérale.
++ * Page vide (`null`/`''`) → `mod` est retiré, comme `urlWithoutMod` le fait.
++ */
++export const urlWithMod = (search, pathname, pageId) => {
++  try {
++    const q = new URLSearchParams(String(search == null ? '' : search));
++    if (pageId) q.set('mod', String(pageId)); else q.delete('mod');
++    const qs = q.toString();
++    return `${pathname || window.location.pathname}${qs ? `?${qs}` : ''}`;
++  } catch { return pathname || window.location.pathname; }
++};
+ /* =========================================================================
+    LA PAGE QUITTÉE RESTE VIVANTE (une seule à la fois) — la demande :
+ 
+@@ -2013,23 +2032,47 @@ if (customType === 'dosy') {
+     // eslint-disable-next-line react-hooks/exhaustive-deps
+   }, [isCloudReady, currentDatasetId, needsLogin, user, serverAuth.ready]);
+ 
+-  /* ⧉ LA PAGE DEMANDÉE PAR L'URL (voir pageFromUrl / urlWithoutMod en tête de
++  /* ⧉ LA PAGE DEMANDÉE PAR L'URL (voir pageFromUrl / urlWithMod en tête de
+      fichier) : une fenêtre neuve ouverte par le ⧉ de la barre reçoit la même base
+-     ET la page voulue. Elle l'ouvre donc dès que sa base est là, puis EFFACE
+-     `&mod=` de son adresse : la navigation qui suit dans cette fenêtre reste
+-     celle de l'utilisateur, exactement comme `drive-bootstrap=1`. */
++     ET la page voulue. DEUX CORRECTIONS DU RAPPORT DE CETTE SESSION :
++
++       • l'effet ne dépend PLUS de l'ouverture de la base. C'est de là que venait
++         « When clicking to open a page in a different second page of the browser I
++         land in the general overview page and not to the page from where I clicked » :
++         sans base relue (ou avant qu'elle le soit) `?mod=` n'était jamais appliqué, et
++         l'écran restait le tableau de bord ;
++       • l'adresse GARDE `mod` (voir l'effet miroir juste après) : un F5 ramène sur la
++         page où l'on était — « When reloading a page the program forgets the
++         visualisation settings. »
++     `requestedModuleRef` retient la page demandée : `openDataset` remet le module à
++     `dashboard` en arrivant, et c'est cette mémoire qui l'empêche d'effacer la page
++     du ⧉ ('' = aucune page demandée). */
++  const requestedModuleRef = useRef('');
++  if (requestedModuleRef.current === '' && typeof window !== 'undefined') {
++    requestedModuleRef.current = pageFromUrl(window.location.search) || '';
++  }
+   useEffect(() => {
+-    if (!currentDatasetId) return;
+     const wanted = pageFromUrl(window.location.search);
+     if (!wanted) return;
+     setCurrentModule(wanted);
+     if (window.innerWidth < 768) setIsSidebarOpen(false);
++    // Une seule fois, au démarrage : la page demandée est celle de l'adresse.
++    // eslint-disable-next-line react-hooks/exhaustive-deps
++  }, []);
++
++  /* LA PAGE EST DANS L'ADRESSE. Chaque navigation l'y écrit (`replaceState`, donc
++     aucun cran d'historique de plus) : recharger la fenêtre rouvre la page où l'on
++     était, avec ce qu'elle avait mis de côté — le viewer relit ses réglages, la
++     base reprend son expérience ouverte (readLastExperiment). Le PREMIER passage
++     est sauté : la page de l'adresse vient d'être lue par l'effet ci-dessus, et
++     l'écrire avant lui écraserait `?mod=`. */
++  const modMirrorReady = useRef(false);
++  useEffect(() => {
++    if (!modMirrorReady.current) { modMirrorReady.current = true; return; }
+     try {
+-      window.history.replaceState({}, '', urlWithoutMod(window.location.search, window.location.pathname));
++      window.history.replaceState({}, '', urlWithMod(window.location.search, window.location.pathname, currentModule));
+     } catch { /* ignore */ }
+-    // Ne dépend QUE de la base : l'effet s'applique une fois, à son ouverture.
+-    // eslint-disable-next-line react-hooks/exhaustive-deps
+-  }, [currentDatasetId]);
++  }, [currentModule]);
+ 
+   /* ⧉ OUVRIR UNE PAGE DANS UNE AUTRE FENÊTRE — le geste de la barre latérale (voir
+      le bloc de pageFromUrl pour la règle et le rapport). La nouvelle fenêtre
+@@ -3615,7 +3658,10 @@ const createNewDataset = async (kind = 'scientific') => {
+ 
+     setCurrentDatasetId(newId);
+     setAppView('dataset');
+-    setCurrentModule(isAdmin ? 'administration' : 'dashboard');
++    // La page demandée par l'adresse (`?mod=`, le ⧉ d'une autre fenêtre) survit à
++    // l'ouverture de la base : sans cela elle était remplacée par le tableau de bord
++    // et la fenêtre neuve s'arrêtait là (voir requestedModuleRef).
++    setCurrentModule(isAdmin ? 'administration' : (requestedModuleRef.current || 'dashboard'));
+ 
+     window.history.pushState({}, '', datasetHref(newId));
+ 
+@@ -4002,7 +4048,9 @@ const openDataset = (dset, { keepPlace = false } = {}) => {
+          sur le module et sur l'onglet du navigateur où l'on est — le contenu est
+          adopté, la navigation non. */
+       if (!keepPlace) {
+-        setCurrentModule('dashboard');
++        // …et la page demandée par l'adresse (`?mod=`) l'emporte sur le tableau de
++        // bord : c'est la fenêtre ouverte par le ⧉ (voir requestedModuleRef).
++        setCurrentModule(requestedModuleRef.current || 'dashboard');
+         window.history.pushState({}, '', datasetHref(dset.id));
+       }
+       return true;
+diff --git a/src/components/DockingSections.jsx b/src/components/DockingSections.jsx
+index a550a81..d7984fa 100644
+--- a/src/components/DockingSections.jsx
++++ b/src/components/DockingSections.jsx
+@@ -581,9 +581,11 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
+         </div>
+       </div>
+ 
+-      {/* Secondary structure paint (protein only) */}
++      {/* Secondary structure paint (protein only) — Issue #10 : regroupée avec la
++          bande de séquence dans une sous-section « Sequence and structure »
++          repliée par défaut (CollapsibleSection mémorise le choix). */}
+       {d.moleculeType === 'protein' && d.parsedSeq.length > 0 && (
+-        <div>
++        <CollapsibleSection title="Sequence and structure" icon="🖌️" defaultOpen={false}>
+           <div className="flex flex-wrap gap-2 mb-3 items-center">
+             <span className="text-xs font-bold text-slate-500 uppercase mr-1">🖌️ Brush:</span>
+             {['C', 'H', 'E'].map((l) => (
+@@ -608,7 +610,7 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
+             onApply={(i) => paintSSAt(i, ssBrush)}
+             focusIdx="ALL"
+           />
+-        </div>
++        </CollapsibleSection>
+       )}
+ 
+       {/* 2D / 3D structure view */}
+@@ -664,6 +666,7 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
+                 )}
+               <NMRMoleculeViewer
+                 key={((activeTest && activeTest.id) || 'docking') + (selectedStruct ? '::' + selectedStruct.name : '')}
++                instanceKey={(activeTest && activeTest.id) || null}
+                 src={selectedStruct ? '' : structureSrc}
+                 structureText={selectedStruct ? selectedStruct.pdb : undefined}
+                 structureTextExt="pdb"
+diff --git a/src/components/MDSections.jsx b/src/components/MDSections.jsx
+index 8b495df..3b64528 100644
+--- a/src/components/MDSections.jsx
++++ b/src/components/MDSections.jsx
+@@ -1,4 +1,5 @@
+ import React, { useState, useMemo, useRef, useEffect } from 'react';
++import { CollapsibleSection } from './ui';
+ import {
+   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, Cell, ReferenceArea
+ } from 'recharts';
+@@ -1374,8 +1375,12 @@ export const MDExperimentSetupSection = ({ ctx }) => {
+         </div>
+       </div>
+ 
++      {/* Sequence and structure (Issue #10) — la peinture 🖌️ et la bande de
++          séquence sont regroupées dans UNE sous-section repliée par défaut : les
++          cartes de résultats restent en tête de page, et CollapsibleSection
++          mémorise le choix (ouvert / replié) par expérience. */}
+       {d.moleculeType === 'protein' && d.parsedSeq.length > 0 && (
+-        <div>
++        <CollapsibleSection title="Sequence and structure" icon="🖌️" defaultOpen={false}>
+           <div className="flex flex-wrap gap-2 mb-3 items-center">
+             <span className="text-xs font-bold text-slate-500 uppercase mr-1">🖌️ Brush:</span>
+             {['C', 'H', 'E'].map((l) => (
+@@ -1397,11 +1402,11 @@ export const MDExperimentSetupSection = ({ ctx }) => {
+             onApply={(i) => paintSSAt(i, ssBrush)}
+             focusIdx={focusIdx}
+           />
+-        </div>
++        </CollapsibleSection>
+       )}
+ 
+       {(d.moleculeType === 'dna' || d.moleculeType === 'rna') && d.parsedSeq.length > 0 && (
+-        <div>
++        <CollapsibleSection title="Sequence and structure" icon="🖌️" defaultOpen={false}>
+           <div className="flex flex-wrap gap-2 mb-3 items-center">
+             <span className="text-xs font-bold text-slate-500 uppercase mr-1">🖌️ Brush:</span>
+             {['A', 'B', 'Z'].map((l) => (
+@@ -1422,7 +1427,7 @@ export const MDExperimentSetupSection = ({ ctx }) => {
+             onApply={(i) => paintFormAt(i, formBrush)}
+             focusIdx={focusIdx}
+           />
+-        </div>
++        </CollapsibleSection>
+       )}
+ 
+       <div>
+@@ -1467,6 +1472,7 @@ export const MDExperimentSetupSection = ({ ctx }) => {
+               
+ <NMRMoleculeViewer
+   key={`${activeTest.id || 'md'}|${trajectoryFile ? trajectoryFile.name : 'no-traj-file'}|${d.trajectoryUrl || 'no-traj'}`}
++  instanceKey={activeTest.id || null}
+   src={activeTest.structureSrc}
+   structureFileData={activeTest.structureFileData}
+   structureFile={structureFile}
+diff --git a/src/components/NMRMoleculeViewer.jsx b/src/components/NMRMoleculeViewer.jsx
+index f92d978..fa3890d 100644
+--- a/src/components/NMRMoleculeViewer.jsx
++++ b/src/components/NMRMoleculeViewer.jsx
+@@ -26,6 +26,7 @@ import { enforceCovalentProteinBonds } from '../utils/proteinBondRule';
+ import { readXtcFrames, countXtcFrames, countXtcFramesInFile } from '../utils/xtcDecoder';
+ import { abortControl, useAbortControl } from '../utils/abortControl';
+ import { loadProgress } from '../utils/loadProgress';
++import { rigidTransform, atomMatchPairs, flatCoords, poseFromRigidMatrix, multiplyMat4, rigidMatrix, fitSummary } from '../utils/structureFit';
+ // HETATM code → SMILES: the Chemistry Component Dictionary of the RCSB (see
+ // utils/ligandSmiles.js). A PDB only names its ligand by a 3-letter code, so this
+ // is where the SMILES of a hand-loaded ligand comes from.
+@@ -1562,6 +1563,70 @@ const lipidPartNameOf = (name) => {
+   return '';
+ };
+ 
++/* ⚠ LES HYDROGÈNES D'UN LIPIDE SUIVENT LEUR LIAISON — le rapport de cette session :
++   « In the styling window the hydrogen atoms of a lipid are green while the different
++   parts of the lipid are defined in a different color in the setting wheel. It seems
++   that the “lipid type” option is not working anymore. »
++   Le nom seul ne dit rien d'un hydrogène : H16T renvoie à C16, que la nomenclature
++   stricte des chaînes (`C2x` / `C3x`) ne place PAS, et H2R renvoie à C2 — le
++   squelette. Les atomes qui tombaient ainsi sur « je ne sais pas » prenaient la
++   couleur de la CLASSE entière (le vert d'un PE, d'où le vert du rapport) au lieu de
++   suivre la part de l'atome lourd auquel ils sont LIÉS — la règle que le marcheur des
++   lipides applique déjà (lipidSubSelections, passe 2).
++   Le graphe de liaisons de la structure est donc lu UNE fois par structure
++   (`structure.eachBond`, la même source que le remplissage des ombres) et gardé ici :
++   la couleur d'un atome reste O(1), et un fichier qui n'a pas de graphe garde
++   exactement le comportement d'avant. */
++const lipidBondParentCache = new WeakMap(); // structure -> Map<hydrogenIndex, { name, element }>
++const lipidBondParentsOf = (structure) => {
++  let map = lipidBondParentCache.get(structure);
++  if (map) return map;
++  map = new Map();
++  try {
++    if (structure && typeof structure.eachBond === 'function' && typeof structure.getAtomProxy === 'function') {
++      const infoOf = (i) => {
++        try {
++          const a = structure.getAtomProxy(i);
++          return a ? { name: a.atomname, element: String(a.element || '').toUpperCase() } : null;
++        } catch { return null; }
++      };
++      structure.eachBond((bond) => {
++        if (!bond) return;
++        const i1 = bond.atomIndex1;
++        const i2 = bond.atomIndex2;
++        if (i1 === undefined || i2 === undefined) return;
++        // L'hydrogène retient l'atome LOURD de la liaison — jamais un autre hydrogène.
++        [[i1, i2], [i2, i1]].forEach(([h, heavy]) => {
++          const hi = infoOf(h);
++          const parent = infoOf(heavy);
++          if (!hi || !parent || hi.element !== 'H' || parent.element === 'H') return;
++          if (!map.has(h)) map.set(h, parent);
++        });
++      });
++    }
++  } catch { /* un graphe que NGL refuse → pas de règle par liaison (le nom reste) */ }
++  lipidBondParentCache.set(structure, map);
++  return map;
++};
++/** L'atome lourd auquel un HYDROGÈNE est lié — `{ name, element }`, ou null quand
++ *  rien ne peut le dire (ce n'est pas un hydrogène, la structure n'a pas de graphe
++ *  de liaisons, l'hydrogène n'y figure pas). C'est ce qui permet de peindre un
++ *  hydrogène EXACTEMENT comme l'atome dont il pend : sa couleur ne peut donc plus
++ *  être la couleur d'ensemble pendant que son carbone suit la roue ⚙. */
++const lipidBondParentOf = (atom) => {
++  if (!atom || String(atom.element || '').toUpperCase() !== 'H') return null;
++  const structure = atom.structure;
++  if (!structure || atom.index === undefined || atom.index === null) return null;
++  return lipidBondParentsOf(structure).get(atom.index) || null;
++};
++/** La part qu'un hydrogène tient de son atome lourd, lue par les NOMS (le lecteur
++ *  strict du schéma de classe : '' quand le nom du parent ne suffit pas — même
++ *  réponse que celle que le parent a reçue). */
++const lipidPartByBond = (atom) => {
++  const parent = lipidBondParentOf(atom);
++  return parent ? lipidPartNameOf(parent.name) : '';
++};
++
+ // The three sub-selections of the lipids of ONE structure, as NGL `@index`
+ // selections, plus the `named` flag the colour scheme reads. Computed once per
+ // structure + lipid selection (WeakMap cache), so a rep rebuild never re-walks
+@@ -2738,6 +2803,22 @@ const defineLipidGroupsScheme = () => {
+       }
+       // No walk for this atom (another structure, a file the walk never saw): the
+       // naming rules, as before.
++      // ⚠ UN HYDROGÈNE EST PEINT COMME L'ATOME DONT IL PEND — le rapport de cette
++      // session : « In the styling window the hydrogen atoms of a lipid are green
++      // while the different parts of the lipid are defined in a different color in
++      // the setting wheel. » Le nom seul ne dit rien d'un hydrogène de chaîne nommé
++      // H16T : `lipidGroupOf` le renvoyait à C16, que la nomenclature stricte des
++      // chaînes ne place pas, donc à la TÊTE — d'où la couleur d'ensemble sur des
++      // hydrogènes dont le carbone, lui, suivait la roue ⚙. La LIAISON, elle, ne se
++      // trompe pas : l'hydrogène prend la part de son atome lourd, quelle que soit la
++      // nomenclature du fichier (la même règle que la passe 2 du marcheur des lipides).
++      const parent = lipidBondParentOf(atom);
++      if (parent) {
++        const pg = lipidGroupOf(parent.name, parent.element, lipidColorStore.named);
++        if (pg === 'glycerol') return lipidColorStore.glycerol;
++        if (pg === 'acyl') return lipidColorStore.acyl;
++        return lipidColorStore.head;
++      }
+       const g = lipidGroupOf(atom && atom.atomname, atom && atom.element, lipidColorStore.named);
+       if (g === 'glycerol') return lipidColorStore.glycerol;
+       if (g === 'acyl') return lipidColorStore.acyl;
+@@ -3003,7 +3084,12 @@ const lipidAtomPart = (atom) => {
+     if (store.glycerol.has(i)) return 'glycerol';
+     if (store.head.has(i)) return 'head';
+   }
+-  return lipidPartNameOf(atom && atom.atomname);
++  const byName = lipidPartNameOf(atom && atom.atomname);
++  if (byName) return byName;
++  // ⚠ Un HYDROGÈNE que son nom ne place pas suit l'atome lourd auquel il est LIÉ (voir
++  // lipidPartByBond) : c'est ce qui lui évite la couleur de la CLASSE — le vert du
++  // rapport. Quand rien ne peut le dire, '' : le schéma retombe sur la classe.
++  return lipidPartByBond(atom);
+ };
+ let lipidClassSchemeKey = null; // id returned by ColormakerRegistry.addScheme (null = unusable)
+ const defineLipidClassScheme = () => {
+@@ -5458,6 +5544,36 @@ const applyMaterialToRep = (el, mat) => {
+    preset inconnu, ni faire planter une reconstruction. */
+ const PYMOL_SESSION_KEY = 'labViewerPymolSession';
+ const PYMOL_SESSION_VERSION = 1;
++/* ⚠⚠ LA SESSION EST CELLE D'UNE INSTANCE, PAS CELLE DE L'APPLICATION — le rapport de
++   cette session : « Saving the selection window in each session was meant at each
++   instance level, not general. » Une clé unique faisait revenir les fenêtres de
++   sélection d'une AUTRE condition (la « date / condition » de l'atelier, c'est-à-dire
++   l'instance) : la mémoire est donc portée par l'instance, et la clé devient
++   `labViewerPymolSession::<instance>`.
++   L'instance est celle que la page donne au viewer (propriété `instanceKey` — les
++   trois pages y passent l'expérience ouverte) et, à défaut, le contexte de nommage
++   Drive (projet · expérience · condition). Sans l'un ni l'autre — un viewer monté
++   hors d'une page d'expérience — la clé GÉNÉRALE reste utilisée : rien n'est perdu,
++   et une session enregistrée avant ce correctif reste lisible. */
++const PYMOL_SESSION_INSTANCE_SEP = '::';
++const pymolSessionInstanceSlug = (instanceKey, driveNaming) => {
++  const explicit = String(instanceKey == null ? '' : instanceKey).trim();
++  if (explicit) return explicit.replace(/[\s|/\\]+/g, '_').slice(0, 120);
++  const d = (driveNaming && typeof driveNaming === 'object') ? driveNaming : null;
++  if (!d) return '';
++  return [d.project, d.test, d.instance]
++    .map((v) => String(v == null ? '' : v).trim())
++    .filter(Boolean)
++    .join('|')
++    .replace(/[\s|/\\]+/g, '_')
++    .slice(0, 120);
++};
++/** La clé de stockage de la session de CETTE instance (la générale si l'instance
++ *  n'est pas connue). Pure, donc testable — et c'est elle que la sonde exécute. */
++const pymolSessionKey = (instanceKey, driveNaming) => {
++  const slug = pymolSessionInstanceSlug(instanceKey, driveNaming);
++  return slug ? `${PYMOL_SESSION_KEY}${PYMOL_SESSION_INSTANCE_SEP}${slug}` : PYMOL_SESSION_KEY;
++};
+ // Les champs d'un look de SÉLECTION (voir l'état `selStyles`) — jamais un champ de
+ // plus, et chacun de son propre type.
+ const SEL_LOOK_FIELDS = [
+@@ -5525,10 +5641,10 @@ const normalizeSelOverrides = (raw) => (Array.isArray(raw) ? raw : [])
+ const emptyPymolSession = () => ({
+   selections: [], selStyles: {}, selOverrides: [], script: '', active: false, autoShow: true, name: '',
+ });
+-const loadPymolSession = () => {
++const loadPymolSession = (key) => {
+   const base = emptyPymolSession();
+   try {
+-    const raw = JSON.parse(localStorage.getItem(PYMOL_SESSION_KEY) || 'null');
++    const raw = JSON.parse(localStorage.getItem(key || PYMOL_SESSION_KEY) || 'null');
+     if (!raw || typeof raw !== 'object' || raw.v !== PYMOL_SESSION_VERSION) return base;
+     return {
+       selections: normalizeSelNames(raw.selections),
+@@ -5541,9 +5657,9 @@ const loadPymolSession = () => {
+     };
+   } catch { return base; }
+ };
+-const savePymolSession = (s) => {
++const savePymolSession = (s, key) => {
+   try {
+-    localStorage.setItem(PYMOL_SESSION_KEY, JSON.stringify({ v: PYMOL_SESSION_VERSION, ...(s || {}) }));
++    localStorage.setItem(key || PYMOL_SESSION_KEY, JSON.stringify({ v: PYMOL_SESSION_VERSION, ...(s || {}) }));
+   } catch { /* private mode: the session simply is not remembered */ }
+ };
+ 
+@@ -6461,6 +6577,11 @@ const collectResidues = (structure) => {
+ 
+ const NMRMoleculeViewer = ({
+ src,
++// ⚠ L'INSTANCE À LAQUELLE CE VIEWER APPARTIENT — l'expérience / la condition ouverte
++// (les trois pages passent leur `activeTest.id`). C'est elle qui porte la clé de la
++// session PyMOL, donc PAR INSTANCE (voir pymolSessionKey) : la fenêtre de sélection
++// d'une autre condition ne revient plus ici, et celle d'ici n'y va plus.
++instanceKey = null,
+ structureText,
+ structureTextExt,
+ // Structure built by the PAGE from the sequence typed on it (protein / DNA /
+@@ -6654,8 +6775,18 @@ const [pdbId, setPdbId] = useState('');
+ const [pendingFileBatch, setPendingFileBatch] = useState(null); // File[] waiting for the "replace or keep both?" choice
+ const [pendingSrc, setPendingSrc] = useState(null); // a PDB code / URL waiting for the "replace or keep both?" choice
+ const lastAskedSrcRef = useRef(null); // last PDB code/URL we asked about, so the same value is never asked twice
+-const [dragMove, setDragMove] = useState(false); // move the selected structure with the mouse instead of typing X/Y/Z
+-const dragMoveRef = useRef(null); // { comp, pos, last } — active mouse drag-to-move session
++/* ✥ MOVE · ↻ ROTATE — the mouse gesture of the styling window. The request
++   replaces « ✋ Drag » by ONE Move button that lets every molecule be placed
++   INDEPENDENTLY (« allowing to move and rotate each molecule independently of the
++   others ») : `mouseMode` is 'off', 'move' (dragging slides the SELECTED
++   structure) or 'rotate' (dragging turns it about its own centre). Every molecule
++   space of the bar carries both buttons — they select that molecule AND arm the
++   gesture — and §2 « ✏️ Modify » carries the same pair for the chosen one. */
++const [mouseMode, setMouseMode] = useState('off'); // 'off' | 'move' | 'rotate'
++const dragMoveRef = useRef(null); // { comp, mode, pos, last } — active mouse session
++// 🎯 The result of the last « Fit to chosen one » (see fitMoleculesOnChosen): how
++// many structures were superposed, and which ones had no atom to fit on.
++const [fitMsg, setFitMsg] = useState('');
+ const [loadRequest, setLoadRequest] = useState(null);
+ const [status, setStatus] = useState('idle');
+ const statusRef = useRef(status); // mirror for event handlers (file-change dialog)
+@@ -6972,8 +7103,11 @@ const hiddenSectionIds = (sections) => {
+    et le défaut d'une molécule neuve : voir setSectionField), les sections DÉJÀ
+    ÉNUMÉRÉES de ce type reçoivent donc l'arbre qu'elles affichent À CET INSTANT :
+    elles sont ÉPINGLÉES et continuent de dessiner exactement ce qu'elles
+-   dessinaient. Chacune repart ensuite de son côté, et la propagation VOLONTAIRE
+-   garde son geste dédié : le 🎨 Copy de la barre Molecules (copySectionsToAll). */
++   dessinaient. Chacune repart ensuite de son côté : la propagation d'un look d'une
++   molécule aux autres n'est plus offerte par un bouton (le rapport : « the “all”,
++   “main”, “copy” buttons at the top are obsolete »), et la barre n'a plus que le
++   choix de ce qui est affiché (☑ All / ☐ None) et le 🎯 fit des molécules montrées
++   sur la molécule choisie. */
+ const pinSectionLooksOfKind = (keepId, kind, nextTree = null) => {
+   /* ⛓ LA COCHE DE LA RANGÉE GENERAL CHANGE CE QUE DEVIENNENT LES SECTIONS SŒURS
+      (voir chainLink). Cochée, les sections du MÊME FICHIER reçoivent l'arbre que le
+@@ -7074,23 +7208,12 @@ const toggleSectionVisible = (id, kind) => {
+   bumpSectionEpoch();
+   requestSceneRepaint();
+ };
+-// 🎨 Copy — hand the look of ONE molecule to every OTHER molecule of the bar.
+-const copySectionsToAll = () => {
+-  const source = sectionCatalogRef.current[selectedMolKey];
+-  if (!source) return;
+-  const srcById = {};
+-  (source.sections || []).forEach((s) => { srcById[s.key] = sectionTreeOf(s.id, s.kind); });
+-  const looks = { ...sectionLooksRef.current };
+-  Object.keys(sectionCatalogRef.current).forEach((molKey) => {
+-    if (molKey === selectedMolKey) return;
+-    (sectionCatalogRef.current[molKey].sections || []).forEach((s) => {
+-      if (srcById[s.key]) looks[s.id] = srcById[s.key];
+-    });
+-  });
+-  setSectionLooks(looks);
+-  bumpSectionEpoch();
+-  requestSceneRepaint();
+-};
++/* 🎨 « Copy the look to every other molecule » — REMOVED FROM THE BAR (the request:
++   « in the styling window the “all”, “main”, “copy” buttons at the top are obsolete,
++   you can replace them for a button to select all molecules or none and a button to
++   fit all selected molecules to a chosen one »). The slot now holds ☑ All / ☐ None
++   (toggleAllMolecules) and 🎯 Fit to chosen (fitMoleculesOnChosen) — one decides WHAT
++   is on screen, the other WHERE the molecules are. */
+ // ---- « Molecules » entries of the bar (extra structures / PDB MODELs) ----
+ // extraMols = extra loaded structure files (each its own NGL component); the
+ // "Molecules" selector shows exactly one at a time. Multi-MODEL PDB files
+@@ -7221,7 +7344,7 @@ const [selectedMolKey, setSelectedMolKey] = useState('main'); // active entry in
+ const [mainMol, setMainMol] = useState({ style: 'auto', color: '', colorMode: 'element', transparency: 0 });
+ const mainMolRef = useRef(mainMol);
+ mainMolRef.current = mainMol;
+-const [mainPos, setMainPos] = useState([0, 0, 0]); // main structure translation (Å), settable via Move X/Y/Z or ✋ Drag
++const [mainPos, setMainPos] = useState([0, 0, 0]); // main structure translation (Å) — written by ✥ Move / ↻ Rotate / 🎯 Fit and undone by ↺
+ // Which FOLD of which molecule is open in the Molecules bar — one group at a
+ // time per molecule (Style · Colour · Transp · Move), so the bar stays compact
+ // however many structures are loaded. Keyed by the molecule key ('main' or an
+@@ -7484,7 +7607,14 @@ assignedAtomColorRef.current = assignedAtomColor;
+    visualization settings and selection windows » de la demande. Un état unique la
+    lit UNE fois, et les sept états ci-dessous en partent : aucun d'eux ne peut donc
+    démarrer sur une autre session que les autres. */
+-const [pymolSession] = useState(loadPymolSession);
++/* La clé de session de CETTE instance (voir pymolSessionKey) — elle est FIGÉE au
++   montage : la page qu'on quitte reste vivante (voir le parking des pages d'App), et
++   deux viewers montés en même temps gardent donc chacun la sienne. Remonte quand la
++   page change d'instance : la page remonte le viewer (key=activeTest.id), donc la
++   session relue est bien celle de l'instance affichée. */
++const pymolSessionKeyRef = useRef(null);
++if (!pymolSessionKeyRef.current) pymolSessionKeyRef.current = pymolSessionKey(instanceKey, driveNaming);
++const [pymolSession] = useState(() => loadPymolSession(pymolSessionKeyRef.current));
+ const [selections, setSelections] = useState(() => pymolSession.selections);   // [{ name, expr }]
+ const [selStyles, setSelStyles] = useState(() => pymolSession.selStyles);       // key -> { cartoon, ribbon, tube, ball, stick, sphere, surface, color, colorMode, transparency, sphereScale, radiusSphere, radiusBond, hideFor, mat }
+ // PyMOL's `set … , <selection>` commands are NOT looks: they are properties of
+@@ -7542,7 +7672,7 @@ useEffect(() => {
+     active: pymolActive,
+     autoShow: autoShowSel,
+     name: pymolScriptName,
+-  });
++  }, pymolSessionKeyRef.current);
+ }, [selections, selStyles, selOverrides, pymolScript, pymolActive, autoShowSel, pymolScriptName]);
+ /* LA SESSION RELUE SE DIT DANS LE JOURNAL DU PANNEAU — c'est la seule façon de
+    savoir pourquoi la scène est celle d'un script (le §2 est alors tenu à l'écart,
+@@ -12318,23 +12448,6 @@ const setExtraMolTransparency = (id, t) => {
+ 
+ // Move ONE structure independently: translate its NGL component along an axis
+ // (position is stored in Ångström, in the structure's own coordinate system).
+-const setExtraMolPosition = (id, axis, value) => {
+-  const entry = extraCompsRef.current.find((e) => e.id === id);
+-  if (!entry) return;
+-  const pos = (entry.position || [0, 0, 0]).slice();
+-  pos[axis] = Number(value) || 0;
+-  entry.position = pos;
+-  setExtraMols(extraMolsSnapshot());
+-  try {
+-    const comp = entry.comp;
+-    if (comp && typeof comp.setPosition === 'function') {
+-      comp.setPosition(pos);
+-      if (typeof comp.updateMatrix === 'function') comp.updateMatrix();
+-      if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender();
+-    }
+-  } catch { /* position best-effort */ }
+-};
+-
+ const resetExtraMolPosition = (id) => {
+   const entry = extraCompsRef.current.find((e) => e.id === id);
+   if (!entry) return;
+@@ -12342,6 +12455,10 @@ const resetExtraMolPosition = (id) => {
+   setExtraMols(extraMolsSnapshot());
+   try {
+     const comp = entry.comp;
++    // ↺ puts the molecule back at the origin AND straightens it: a fit or a
++    // ↻ Rotate leaves a rotation behind, and « back to the origin » must undo both.
++    if (comp && comp.quaternion && typeof comp.setRotation === 'function') comp.setRotation([0, 0, 0, 1]);
++    if (comp && comp.transform && typeof comp.setTransform === 'function') comp.setTransform(new comp.transform.constructor());
+     if (comp && typeof comp.setPosition === 'function') {
+       comp.setPosition([0, 0, 0]);
+       if (typeof comp.updateMatrix === 'function') comp.updateMatrix();
+@@ -12866,25 +12983,17 @@ const renderSection = (sec) => {
+   );
+ };
+ 
+-// Move / reset the MAIN structure by typing X/Y/Z (the same controls the extra
+-// molecules have). The main's NGL component is moved independently.
+-const setMainPosition = (axis, value) => {
+-  const next = [mainPos[0] || 0, mainPos[1] || 0, mainPos[2] || 0];
+-  next[axis] = Number(value) || 0;
+-  setMainPos(next);
+-  try {
+-    const comp = componentRef.current;
+-    if (comp && typeof comp.setPosition === 'function') {
+-      comp.setPosition(next);
+-      if (typeof comp.updateMatrix === 'function') comp.updateMatrix();
+-      if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender();
+-    }
+-  } catch { /* position best-effort */ }
+-};
++// ↺ Back to the origin for the MAIN structure — the ↺ of its space in the styling
++// bar. The typed X · Y · Z fields are gone (the request: « The title “main” is also
++// useless as well as the x,y,z coordinate to shift »): a molecule is placed with the
++// mouse (✥ Move · ↻ Rotate), and this puts it back — position AND rotation, a fit
++// included. The main's NGL component is moved independently of the others.
+ const resetMainPosition = () => {
+   setMainPos([0, 0, 0]);
+   try {
+     const comp = componentRef.current;
++    if (comp && comp.quaternion && typeof comp.setRotation === 'function') comp.setRotation([0, 0, 0, 1]);
++    if (comp && comp.transform && typeof comp.setTransform === 'function') comp.setTransform(new comp.transform.constructor());
+     if (comp && typeof comp.setPosition === 'function') {
+       comp.setPosition([0, 0, 0]);
+       if (typeof comp.updateMatrix === 'function') comp.updateMatrix();
+@@ -12933,29 +13042,43 @@ const applyActiveStyleToAll = () => {
+   try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch {}
+ };
+ 
+-// ---- Move the selected structure with the MOUSE (drag-to-move) --------------
+-// Convert a screen-pixel delta into a world-space translation at the depth of
+-// the structure, so dragging the mouse slides the selected molecule on screen.
+-const worldDeltaForScreen = (dxPx, dyPx) => {
++// ---- ✥ MOVE · ↻ ROTATE the SELECTED structure with the MOUSE -----------------
++// Both gestures read the SAME camera basis, so they behave the way the picture
++// does however the camera is aimed: moving slides along the screen's own axes,
++// rotating turns about them.
++const cameraBasis = () => {
+   const stage = stageRef.current;
+   const viewer = stage && stage.viewer;
+-  if (!viewer || !viewer.camera) return [0, 0, 0];
++  if (!viewer || !viewer.camera) return null;
+   try {
+-    const canvas = stage.container && stage.container.querySelector('canvas');
+-    const h = canvas ? canvas.clientHeight : 300;
+     const cam = viewer.camera;
+     const v3 = cam.position.constructor;
+     const dir = cam.getWorldDirection(new v3());
+     const right = new v3().crossVectors(dir, cam.up).normalize();
+     const up = new v3().crossVectors(right, dir).normalize();
++    const canvas = stage.container && stage.container.querySelector('canvas');
++    const h = canvas ? canvas.clientHeight : 300;
+     const fov = (cam.fov || 40) * Math.PI / 180;
+     const dist = cam.position.length() || 100;
+     const wpp = (2 * Math.tan(fov / 2) * dist) / Math.max(1, h);
+-    const dxW = dxPx * wpp, dyW = -dyPx * wpp;
+-    return [right.x * dxW + up.x * dyW, right.y * dxW + up.y * dyW, right.z * dxW + up.z * dyW];
+-  } catch { return [0, 0, 0]; }
++    return { right, up, dir, wpp };
++  } catch { return null; }
+ };
+ 
++// Convert a screen-pixel delta into a world-space translation at the depth of
++// the structure, so dragging the mouse slides the selected molecule on screen.
++const worldDeltaForScreen = (dxPx, dyPx) => {
++  const b = cameraBasis();
++  if (!b) return [0, 0, 0];
++  const dxW = dxPx * b.wpp, dyW = -dyPx * b.wpp;
++  return [b.right.x * dxW + b.up.x * dyW, b.right.y * dxW + b.up.y * dyW, b.right.z * dxW + b.up.z * dyW];
++};
++
++// Radians of rotation per pixel dragged in « ↻ Rotate » (≈ 0.57°/px: a full turn
++// takes a drag of the window's width, which is what a hand expects).
++const ROTATE_PER_PIXEL = 0.01;
++
++
+ const dragMoveComp = () => (selectedMolKey === 'main'
+   ? componentRef.current
+   : (extraCompsRef.current.find((x) => x.id === selectedMolKey) || {}).comp);
+@@ -12963,9 +13086,9 @@ const dragMoveComp = () => (selectedMolKey === 'main'
+ const dragMoveOnDown = (e) => {
+   e.preventDefault();
+   const comp = dragMoveComp();
+-  if (!comp || typeof comp.setPosition !== 'function') return;
++  if (!comp) return;
+   const p = comp.position || { x: 0, y: 0, z: 0 };
+-  dragMoveRef.current = { comp, pos: [p.x || 0, p.y || 0, p.z || 0], last: { x: e.clientX, y: e.clientY } };
++  dragMoveRef.current = { comp, mode: mouseMode, pos: [p.x || 0, p.y || 0, p.z || 0], last: { x: e.clientX, y: e.clientY } };
+   window.addEventListener('mousemove', dragMoveOnMove);
+   window.addEventListener('mouseup', dragMoveOnUp);
+ };
+@@ -12977,12 +13100,30 @@ const dragMoveOnMove = (e) => {
+   const dy = e.clientY - d.last.y;
+   d.last = { x: e.clientX, y: e.clientY };
+   if (!dx && !dy) return;
+-  const [wx, wy, wz] = worldDeltaForScreen(dx, dy);
+-  d.pos = [d.pos[0] + wx, d.pos[1] + wy, d.pos[2] + wz];
+-  try {
+-    d.comp.setPosition(d.pos);
+-    if (typeof d.comp.updateMatrix === 'function') d.comp.updateMatrix();
+-  } catch { /* best-effort */ }
++  if (d.mode === 'rotate') {
++    // ↻ Turn the molecule about its OWN centre, on the screen's axes: a horizontal
++    // drag spins it about the camera's up axis, a vertical drag about its right
++    // axis — the two gestures a hand makes on a turntable.
++    try {
++      const b = cameraBasis();
++      const q = d.comp.quaternion;
++      if (b && q && typeof d.comp.setRotation === 'function') {
++        const Q = q.constructor;
++        const spin = new Q().setFromAxisAngle(b.up, dx * ROTATE_PER_PIXEL);
++        const tilt = new Q().setFromAxisAngle(b.right, dy * ROTATE_PER_PIXEL);
++        // World-space rotation: the new turn is applied AFTER the current one.
++        spin.multiply(tilt).multiply(q.clone());
++        d.comp.setRotation(spin);
++      }
++    } catch { /* rotation is best-effort */ }
++  } else {
++    const [wx, wy, wz] = worldDeltaForScreen(dx, dy);
++    d.pos = [d.pos[0] + wx, d.pos[1] + wy, d.pos[2] + wz];
++    try {
++      d.comp.setPosition(d.pos);
++      if (typeof d.comp.updateMatrix === 'function') d.comp.updateMatrix();
++    } catch { /* best-effort */ }
++  }
+   try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch {}
+ };
+ 
+@@ -12999,6 +13140,88 @@ const dragMoveOnUp = () => {
+   else if (d.comp === componentRef.current) { setMainPos([d.pos[0] || 0, d.pos[1] || 0, d.pos[2] || 0]); }
+ };
+ 
++/* ☑ ALL · ☐ NONE — the request: « in the styling window the “all”, “main”, “copy”
++   buttons at the top are obsolete, you can replace them for a button to select all
++   molecules or none ». ONE toggle, and the state of it IS the picture: every
++   loaded structure shown, or none of them (each space keeps its own ✔, so a
++   molecule can always be brought back on its own). */
++const molKeysInBar = () => ['main', ...extraCompsRef.current.map(({ id }) => id)];
++const allMoleculesShown = () => {
++  const keys = molKeysInBar();
++  return keys.length > 0 && keys.every((k) => visibleMolKeys.has(k));
++};
++const toggleAllMolecules = () => {
++  const keys = molKeysInBar();
++  setVisibleMolKeys((prev) => (keys.length && keys.every((k) => prev.has(k)) ? new Set() : new Set(keys)));
++};
++
++/* 🎯 FIT ALL THE SHOWN STRUCTURES ONTO THE CHOSEN ONE — the request: « a button to
++   fit all selected molecules to a chosen one ». The atoms of the chosen structure
++   and those of the structure being fitted are paired BY NAME (utils/structureFit),
++   the optimal rotation between them is Kabsch's (utils/mdAnalysis — the same solver
++   the MD analysis fits frames with), and the resulting rigid motion is handed back
++   to NGL as the (position, quaternion) of that component: the fit never touches the
++   representations, so every style, colouring and transparency of the molecule
++   survives it. A structure sharing too few atom names (a different molecule) is
++   LEFT ALONE and named in the message. */
++const atomsOfComponent = (comp) => {
++  const out = [];
++  const structure = comp && comp.structure;
++  if (!structure || typeof structure.eachAtom !== 'function') return out;
++  let sele;
++  try { sele = (comp.selection && typeof comp.selection.string === 'string' && comp.selection.string) ? comp.selection : undefined; } catch { sele = undefined; }
++  try {
++    structure.eachAtom((a) => { out.push({ name: a.atomname, resname: a.resname, x: a.x, y: a.y, z: a.z }); }, sele);
++  } catch { /* a selection NGL refuses → no atoms: the caller says so */ }
++  return out;
++};
++const molNameOf = (key) => ((sectionCatalogRef.current[key] || {}).name || key);
++const fitMoleculesOnChosen = () => {
++  const refKey = selectedMolKey;
++  const refComp = refKey === 'main' ? componentRef.current : (extraCompsRef.current.find((x) => x.id === refKey) || {}).comp;
++  const refAtoms = atomsOfComponent(refComp);
++  if (!refComp || refAtoms.length < 3) {
++    setFitMsg('🎯 The chosen structure has no atom to fit on — load it first.');
++    return;
++  }
++  const fitted = [];
++  const skipped = [];
++  molKeysInBar().filter((k) => k !== refKey && visibleMolKeys.has(k)).forEach((key) => {
++    const comp = key === 'main' ? componentRef.current : (extraCompsRef.current.find((x) => x.id === key) || {}).comp;
++    const movAtoms = atomsOfComponent(comp);
++    const pairs = atomMatchPairs(refAtoms, movAtoms);
++    if (!comp || pairs.size < 3) { skipped.push(molNameOf(key)); return; }
++    try {
++      // ⚠ rigidTransform (and not `kabsch` straight) : le solveur ne dit pas dans
++      // quel sens sa matrice tourne, et le fit le VÉRIFIE sur le résidu des atomes
++      // appariés (voir src/utils/structureFit.js).
++      const idx = pairs.movIdx.map((_, k) => k);
++      const fit = rigidTransform(flatCoords(refAtoms, pairs.refIdx), flatCoords(movAtoms, pairs.movIdx), idx);
++      // The fit is expressed ON TOP of the chosen structure's own matrix, so it
++      // lands in the right place even when that one has been moved or rotated.
++      const refMatrix = (refComp.matrix && refComp.matrix.elements) ? Array.from(refComp.matrix.elements) : null;
++      const target = refMatrix ? multiplyMat4(refMatrix, rigidMatrix(fit.R, fit.t)) : rigidMatrix(fit.R, fit.t);
++      const V3 = (comp.position && comp.position.constructor) || null;
++      const c = (V3 && typeof comp.getCenterUntransformed === 'function') ? comp.getCenterUntransformed(new V3()) : { x: 0, y: 0, z: 0 };
++      const { position, quaternion } = poseFromRigidMatrix(target, [c.x || 0, c.y || 0, c.z || 0]);
++      // « Fit on the chosen one » REPLACES the pose of the molecule being fitted: its
++      // general transform is cleared, so the Move controls of its space keep
++      // describing exactly where that molecule is.
++      try { if (comp.setTransform && comp.transform) comp.setTransform(new comp.transform.constructor()); } catch { /* ignore */ }
++      if (typeof comp.setRotation === 'function') comp.setRotation(quaternion);
++      if (typeof comp.setPosition === 'function') comp.setPosition(position);
++      const entry = extraCompsRef.current.find((x) => x.id === key);
++      if (entry) entry.position = [position[0], position[1], position[2]];
++      if (key === 'main') setMainPos([position[0], position[1], position[2]]);
++      fitted.push(molNameOf(key));
++    } catch { skipped.push(molNameOf(key)); }
++  });
++  setExtraMols(extraMolsSnapshot());
++  setFitMsg(fitSummary(fitted, skipped));
++  try { if (stageRef.current) stageRef.current.handleResize(); } catch { /* ignore */ }
++  try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch { /* ignore */ }
++};
++
+ // Delete ONE extra structure (its NGL component + Molecules-bar entry).
+ const deleteExtraMol = (id) => {
+   const idx = extraCompsRef.current.findIndex((e) => e.id === id);
+@@ -14802,7 +15025,7 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors
+     🧪 PyMOL, the clipping sliders) are full-width children of this same section,
+     so the bar stays one row tall while nothing is open.
+     • Scene: 🌫 Fog · 🎨 Background · ◐ Shadows (+ 🌑 Darkness / 💡 Light) · 💡 Light colour · ✂ Clipping · ✨ Ray (+ resolution · ⬚ alpha · ◐ shadows)
+-    • Modify: 🧬 From sequence · ✋ Drag · ⚗️ Rebuild H · ✏️ Atom names · ⚡ ESP · 🔢 Renumber
++    • Modify: 🧬 From sequence · ✥ Move / ↻ Rotate · ⚗️ Rebuild H · ✏️ Atom names · ⚡ ESP · 🔢 Renumber
+     • Analysis: 📏 Measure · 🟢 Assigned
+     • PyMOL: 🧪 Selections & PyMOL
+     THE FOUR MOVES OF THIS REVISION (each one is a line of the report):
+@@ -15086,11 +15309,26 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
+ ↩ Back to PDB
+ </button>
+ )}
+-<button type="button" onClick={() => setDragMove((v) => !v)}
++{/* ✥ MOVE · ↻ ROTATE — the request: « The drag button should be replaced with a
++move button in all subsections of the styling window allowing to move and rotate
++each molecule independently of the others. » The same pair sits in every molecule
++space of the styling bar; these two here arm it for the CHOSEN molecule (the one
++highlighted in that bar), so the toolbar keeps a way to place a molecule without
++opening the bar. The X · Y · Z fields are gone on purpose: a drag is how a molecule
++is placed now, and the ↺ of its space puts it back. */}
++<button type="button"
++  onClick={() => setMouseMode((m) => (m === 'move' ? 'off' : 'move'))}
++  disabled={status !== 'ready'}
++  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${mouseMode === 'move' ? 'bg-amber-400 border-amber-500 text-amber-950' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed'}`}
++  title="Move the CHOSEN molecule with the mouse: drag inside the viewer to slide it. The other molecules stay where they are (every space of the styling bar has the same button for its own molecule). Click again to give the camera back its rotate/zoom.">
++  ✥ Move: {mouseMode === 'move' ? 'On' : 'Off'}
++</button>
++<button type="button"
++  onClick={() => setMouseMode((m) => (m === 'rotate' ? 'off' : 'rotate'))}
+   disabled={status !== 'ready'}
+-  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${dragMove ? 'bg-amber-400 border-amber-500 text-amber-950' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed'}`}
+-  title="Move the selected structure with the mouse instead of typing X/Y/Z. When ON, dragging in the viewer slides the SELECTED structure (rotate/zoom is suspended) — one molecule at a time.">
+-  ✋ Drag: {dragMove ? 'On' : 'Off'}
++  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${mouseMode === 'rotate' ? 'bg-amber-400 border-amber-500 text-amber-950' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed'}`}
++  title="Rotate the CHOSEN molecule with the mouse, about its own centre: drag sideways to spin it, up and down to tilt it. The other molecules do not move.">
++  ↻ Rotate: {mouseMode === 'rotate' ? 'On' : 'Off'}
+ </button>
+ <button
+ type="button"
+@@ -15568,16 +15806,19 @@ style={{ height: (viewerCollapsed ? 0 : viewH) + 'px' }}
+ >
+ <div ref={containerRef} className="w-full h-full" />
+ 
+-{/* Mouse drag-to-move overlay — when "✋ Drag" is enabled, it captures the mouse
+-    (so NGL's rotate/zoom is suspended) and slides the SELECTED structure. */}
+-{dragMove && (
++{/* Mouse gesture overlay — when « ✥ Move » or « ↻ Rotate » is armed, it captures the
++    mouse (so NGL's rotate/zoom is suspended) and applies the gesture to the CHOSEN
++    structure only. */}
++{mouseMode !== 'off' && (
+   <div
+     className="absolute inset-0 z-20"
+-    style={{ cursor: 'move' }}
++    style={{ cursor: mouseMode === 'rotate' ? 'grab' : 'move' }}
+     onMouseDown={dragMoveOnDown}
+     onMouseMove={dragMoveOnMove}
+     onMouseUp={dragMoveOnUp}
+-    title="Drag with the mouse to move the selected structure — toggle off to rotate/zoom again"
++    title={mouseMode === 'rotate'
++      ? 'Drag to rotate the chosen structure about its own centre — toggle ↻ Rotate off to rotate/zoom the camera again'
++      : 'Drag to move the chosen structure — toggle ✥ Move off to rotate/zoom the camera again'}
+   />
+ )}
+ 
+@@ -15648,20 +15889,33 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
+           className="px-1.5 py-0.5 text-[9px] font-bold rounded border bg-white border-slate-400 text-slate-700 hover:bg-slate-100"
+           title="⚙ Settings — edit every palette this viewer colours with: atom types · residues · base types · secondary structure · chain colours · DNA/RNA conformation · lipid types · sugar types · charges · the gradient pair · the glycan colours">
+           ⚙</button>
+-        <button type="button"
+-          onClick={() => setVisibleMolKeys(new Set(extraCompsRef.current.map(({ id }) => id).concat(['main'])))}
++        {/* ☑ ALL / ☐ NONE — one button for both, because the state of it IS the
++            picture. The old « Main » (show only the main structure) is gone: the ✔
++            of each molecule space does that, one molecule at a time. */}
++        <button type="button" onClick={toggleAllMolecules}
+           className="px-1.5 py-0.5 text-[9px] font-bold rounded border bg-white border-blue-300 text-blue-600 hover:bg-blue-50"
+-          title="Show every structure">All</button>
+-        <button type="button"
+-          onClick={() => setVisibleMolKeys(new Set(['main']))}
+-          className="px-1.5 py-0.5 text-[9px] font-bold rounded border bg-white border-slate-300 text-slate-500 hover:bg-slate-50"
+-          title="Show only the main structure">Main</button>
+-        <button type="button" onClick={copySectionsToAll}
+-          className="px-1.5 py-0.5 text-[9px] font-bold rounded border bg-white border-emerald-300 text-emerald-700 hover:bg-emerald-50"
+-          title="🎨 Copy the look of the ACTIVE molecule to every OTHER molecule of the bar — every row whose kind it shares (chain A's protein rows go to chain B, and so on). Handy for a series of docked structures that should look the same">
+-          🎨 Copy</button>
++          title={allMoleculesShown()
++            ? 'Hide every structure (☑ of a molecule space, or this button again, brings them back)'
++            : 'Show every loaded structure'}>
++          {allMoleculesShown() ? '☐ None' : '☑ All'}</button>
++        {/* 🎯 FIT ALL THE SHOWN STRUCTURES ONTO THE CHOSEN ONE — where « 🎨 Copy »
++            used to duplicate a LOOK, this one puts the molecules where they belong:
++            every shown structure is superposed on the chosen one (the highlighted
++            space) with the Kabsch fit of utils/structureFit + utils/mdAnalysis, the
++            very same solver the MD analysis uses. */}
++        <button type="button" onClick={fitMoleculesOnChosen}
++          disabled={status !== 'ready' || visibleMolKeys.size < 2}
++          className="px-1.5 py-0.5 text-[9px] font-bold rounded border bg-white border-violet-300 text-violet-700 hover:bg-violet-50 disabled:opacity-40 disabled:cursor-not-allowed"
++          title="Superpose every SHOWN structure onto the CHOSEN one (the space highlighted in this bar): the atoms are paired by name and the best rotation + translation is computed (Kabsch). Structures sharing too few atom names are left alone, and it says so.">
++          🎯 Fit to chosen</button>
+       </span>
+     </div>
++    {/* 🎯 THE RESULT OF THE LAST FIT — how many structures were superposed, and which
++        ones had no atom to fit on. It is a line of the bar itself, not an alert: a
++        fit that could not be done must say so right where the button is. */}
++    {!!fitMsg && (
++      <p className="text-[10px] font-semibold text-violet-800 bg-violet-50 border border-violet-200 rounded px-1 py-0.5 shrink-0">{fitMsg}</p>
++    )}
+     <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-1 min-h-0">
+       {Object.keys(sectionCatalog).length === 0 && (
+         <p className="text-[10px] text-slate-400 italic">
+@@ -15682,25 +15936,29 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
+                   className="text-red-400 hover:text-red-600 font-bold text-[10px] px-1 shrink-0" title="Delete this structure">🗑</button>
+               )}
+             </div>
+-            {/* Move the WHOLE molecule: every row of every section follows the
+-                matrix of that molecule's NGL component. */}
+-            <div className="flex items-center gap-1" title="Shift the whole molecule along X · Y · Z (Å), or move it with the mouse (✋ Drag)">
+-              <span className="text-[9px] text-slate-400 font-bold shrink-0">Move</span>
+-              {['X', 'Y', 'Z'].map((ax, ai) => (
+-                <label key={ax} className="flex items-center gap-0.5 text-[9px] text-slate-400 font-bold">
+-                  {ax}
+-                  <input type="number" step="1"
+-                    value={extra ? ((extra.position && extra.position[ai]) || 0) : (mainPos[ai] || 0)}
+-                    onChange={(e) => (extra ? setExtraMolPosition(extra.id, ai, e.target.value) : setMainPosition(ai, e.target.value))}
+-                    className="border border-slate-200 rounded text-[10px] py-0.5 px-1 w-11" />
+-                </label>
+-              ))}
++            {/* ✥ MOVE · ↻ ROTATE THE WHOLE MOLECULE — the request: « The drag button
++                should be replaced with a move button in all subsections of the styling
++                window allowing to move and rotate each molecule independently of the
++                others. » Every space carries the pair, so the hand places ONE molecule
++                without touching the others; the button selects that molecule at the
++                same time (the gesture always acts on the chosen one). The typed X · Y · Z
++                shift is gone with the old title: a drag says where a molecule goes, and
++                ↺ puts it back (position AND rotation). Every row of every section of
++                that molecule follows its NGL component. */}
++            <div className="flex items-center gap-1">
++              <button type="button"
++                onClick={() => { setSelectedMolKey(molKey); setMouseMode((m) => (m === 'move' ? 'off' : 'move')); }}
++                className={`px-1 py-0.5 text-[9px] font-bold rounded border ${mouseMode === 'move' && selectedMolKey === molKey ? 'bg-amber-400 border-amber-500 text-amber-950' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-100'}`}
++                title="Move THIS molecule with the mouse — drag inside the viewer to slide it (the other molecules stay where they are). Click again to rotate/zoom the camera as usual.">
++                ✥ Move</button>
++              <button type="button"
++                onClick={() => { setSelectedMolKey(molKey); setMouseMode((m) => (m === 'rotate' ? 'off' : 'rotate')); }}
++                className={`px-1 py-0.5 text-[9px] font-bold rounded border ${mouseMode === 'rotate' && selectedMolKey === molKey ? 'bg-amber-400 border-amber-500 text-amber-950' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-100'}`}
++                title="Rotate THIS molecule with the mouse, about its own centre — drag sideways to spin it, up and down to tilt it. The other molecules do not move.">
++                ↻ Rotate</button>
+               <button type="button" onClick={() => (extra ? resetExtraMolPosition(extra.id) : resetMainPosition())}
+-                className="text-[10px] font-bold text-slate-500 hover:text-slate-800" title="Back to the origin">↺</button>
+-              <label className="flex items-center gap-1 text-[9px] font-bold text-slate-500 cursor-pointer ml-auto">
+-                <input type="checkbox" checked={dragMove} onClick={() => setDragMove((v) => !v)} className="accent-blue-600 w-3 h-3" />
+-                ✋ Drag
+-              </label>
++                className="text-[10px] font-bold text-slate-500 hover:text-slate-800 ml-auto"
++                title="↺ Back to the origin: undo the moves AND the rotations of this molecule (a fit included)">↺</button>
+             </div>
+             {(entry.sections || []).map((sec) => renderSection(sec))}
+           </div>
+diff --git a/src/components/NMRSections.jsx b/src/components/NMRSections.jsx
+index 4bdad47..497b902 100644
+--- a/src/components/NMRSections.jsx
++++ b/src/components/NMRSections.jsx
+@@ -5195,8 +5195,12 @@ const generatedStructure = useMemo(() => {
+         </div>
+       </div>
+       
++      {/* Sequence and structure (Issue #10) : la peinture 🖌️ et la bande de
++          séquence forment UNE sous-section, repliée par défaut — la page garde
++          ses cartes de travail en tête, et CollapsibleSection mémorise le choix
++          (ouvert / replié) par expérience. */}
+       {!univTestMode && d.moleculeType === 'protein' && d.parsedSeq.length > 0 && (
+-        <div>
++        <CollapsibleSection title="Sequence and structure" icon="🖌️" defaultOpen={false}>
+           <div className="flex flex-wrap gap-2 mb-3 items-center">
+             <span className="text-xs font-bold text-slate-500 uppercase mr-1">🖌️ Brush:</span>
+             {['C', 'H', 'E'].map((l) => (
+@@ -5212,7 +5216,7 @@ const generatedStructure = useMemo(() => {
+           </div>
+           <p className="text-xs text-slate-400 mb-3">💡 Select a brush, then click or drag across the sequence chips to paint secondary structure.</p>
+           <SequencePaintStrip residues={d.parsedSeq} getLetter={(i) => d.getSSAt(i)} meta={SS_META} onApply={(i) => paintSSAt(i, ssBrush)} focusIdx={focusIdx} />
+-        </div>
++        </CollapsibleSection>
+       )}
+       
+       <div className="mt-6 border-t border-slate-200 pt-6">
+@@ -5252,7 +5256,7 @@ const generatedStructure = useMemo(() => {
+         <div style={{ display: structureMode === '3d' ? 'block' : 'none' }} aria-hidden={structureMode !== '3d'}>
+           {hasOpened3D && (
+             <div className="flex flex-col gap-2">
+-              <NMRMoleculeViewer key={(activeTest && activeTest.id) || 'molecular-structure'} src={structureSrc} structureText={structureText} structureTextExt={structureTextExt} sequenceStructureText={sequenceStructure?.text || null} sequenceStructureExt={sequenceStructure?.ext || null} externalLoading={organicFetch.loading} externalError={organicFetch.error} structureFileData={activeTest.structureFileData} structureFileName={activeTest.structureFileName} structureFile={structureFile} onStructureSrc={(v) => updateActiveTest({ structureSrc: v })} onStructureFile={handleStructureFile} moleculeType={d.moleculeType} parsedSeq={d.parsedSeq} smiles={activeTest.smiles} onLigandSmiles={(info) => { if (info && info.smiles && !activeTest.smiles && !activeTest.ligandSmiles) updateActiveTest({ ligandCode: info.code, ligandSmiles: info.smiles }); }} selectedKeys={selectedKeys} manualKeys={manualKeys} onAtomClick={handleAtomClick} residueOffset={residueOffset} atomNameMap={atomNameMap} atomRenames={activeTest.atomRenames || {}} onAtomRenames={(map) => updateActiveTest({ atomRenames: map })} resRenumber={activeTest.resRenumber || {}} onResRenumber={(map) => updateActiveTest({ resRenumber: map })} onStructureSequence={(seq, parts) => { const _nat = structureSequencePatch(activeTest, d.moleculeType, seq, parts); if (_nat) updateActiveTest(_nat); }} driveNaming={{ project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || '', instance: activeTest.instanceName || '', scientist: activeTest.operator || '', section: 'Data', subsection: 'Structure' }} labelMode={atomLabelMode} height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? '1100px' : '1000px'} />
++              <NMRMoleculeViewer key={(activeTest && activeTest.id) || 'molecular-structure'} instanceKey={(activeTest && activeTest.id) || null} src={structureSrc} structureText={structureText} structureTextExt={structureTextExt} sequenceStructureText={sequenceStructure?.text || null} sequenceStructureExt={sequenceStructure?.ext || null} externalLoading={organicFetch.loading} externalError={organicFetch.error} structureFileData={activeTest.structureFileData} structureFileName={activeTest.structureFileName} structureFile={structureFile} onStructureSrc={(v) => updateActiveTest({ structureSrc: v })} onStructureFile={handleStructureFile} moleculeType={d.moleculeType} parsedSeq={d.parsedSeq} smiles={activeTest.smiles} onLigandSmiles={(info) => { if (info && info.smiles && !activeTest.smiles && !activeTest.ligandSmiles) updateActiveTest({ ligandCode: info.code, ligandSmiles: info.smiles }); }} selectedKeys={selectedKeys} manualKeys={manualKeys} onAtomClick={handleAtomClick} residueOffset={residueOffset} atomNameMap={atomNameMap} atomRenames={activeTest.atomRenames || {}} onAtomRenames={(map) => updateActiveTest({ atomRenames: map })} resRenumber={activeTest.resRenumber || {}} onResRenumber={(map) => updateActiveTest({ resRenumber: map })} onStructureSequence={(seq, parts) => { const _nat = structureSequencePatch(activeTest, d.moleculeType, seq, parts); if (_nat) updateActiveTest(_nat); }} driveNaming={{ project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || '', instance: activeTest.instanceName || '', scientist: activeTest.operator || '', section: 'Data', subsection: 'Structure' }} labelMode={atomLabelMode} height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? '1100px' : '1000px'} />
+               <button onClick={downloadPdbFile} className="self-center mt-2 px-4 py-2 bg-indigo-50 border border-indigo-200 text-indigo-700 font-bold text-xs rounded-lg hover:bg-indigo-100 transition-colors shadow-sm">📥 Download 3D PDB File</button>
+               {activeTest.structureFileName && (!structureFile || nmrStructRestore.message) && (
+                 <div className="flex flex-wrap items-center justify-center gap-2 text-[11px]">
+diff --git a/src/utils/mdAnalysis.js b/src/utils/mdAnalysis.js
+index 003f13c..595f23b 100644
+--- a/src/utils/mdAnalysis.js
++++ b/src/utils/mdAnalysis.js
+@@ -16,7 +16,7 @@
+    All coordinates are in nm (as produced by MDTrajectoryFrames.js).
+    ========================================================================= */
+ 
+-import { abortError } from './abortControl';
++import { abortError } from './abortControl.js';
+ 
+ // ---------------------------------------------------------------------------
+ // 3×3 SVD via one-sided Jacobi rotations (A = U·S·Vᵀ, row-major flat arrays)

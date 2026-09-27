@@ -1,0 +1,11 @@
+import fs from 'fs';
+const V = 'src/components/NMRMoleculeViewer.jsx';
+const v = fs.readFileSync(V, 'utf8').split(/\r?\n/);
+const out = [];
+const i = v.findIndex((l) => /(const|function)\s+nucleicRingPlates/.test(l));
+out.push(`definition at line ${i + 1}`);
+out.push(...v.slice(Math.max(0, i - 40), i + 150).map((l, k) => `${Math.max(0, i - 40) + k + 1}: ${l}`));
+out.push('--- /ringOpacity|sectionOpacity|ringTransparency/ ---');
+v.forEach((l, k) => { if (/ringOpacity|sectionOpacity\s*=|ringTransparency/.test(l)) out.push(`${k + 1}: ${l.trim()}`); });
+fs.writeFileSync('_t_plates3.txt', out.join('\n'));
+console.log('ok', i + 1);

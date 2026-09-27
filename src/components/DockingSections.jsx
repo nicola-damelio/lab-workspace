@@ -581,9 +581,11 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
         </div>
       </div>
 
-      {/* Secondary structure paint (protein only) */}
+      {/* Secondary structure paint (protein only) — Issue #10 : regroupée avec la
+          bande de séquence dans une sous-section « Sequence and structure »
+          repliée par défaut (CollapsibleSection mémorise le choix). */}
       {d.moleculeType === 'protein' && d.parsedSeq.length > 0 && (
-        <div>
+        <CollapsibleSection title="Sequence and structure" icon="🖌️" defaultOpen={false}>
           <div className="flex flex-wrap gap-2 mb-3 items-center">
             <span className="text-xs font-bold text-slate-500 uppercase mr-1">🖌️ Brush:</span>
             {['C', 'H', 'E'].map((l) => (
@@ -608,7 +610,7 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
             onApply={(i) => paintSSAt(i, ssBrush)}
             focusIdx="ALL"
           />
-        </div>
+        </CollapsibleSection>
       )}
 
       {/* 2D / 3D structure view */}
@@ -664,6 +666,7 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
                 )}
               <NMRMoleculeViewer
                 key={((activeTest && activeTest.id) || 'docking') + (selectedStruct ? '::' + selectedStruct.name : '')}
+                instanceKey={(activeTest && activeTest.id) || null}
                 src={selectedStruct ? '' : structureSrc}
                 structureText={selectedStruct ? selectedStruct.pdb : undefined}
                 structureTextExt="pdb"

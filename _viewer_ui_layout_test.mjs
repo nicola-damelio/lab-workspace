@@ -448,7 +448,8 @@ has('onChange={(e) => setSectionLabel(sec.id, k, e.target.checked)}', '[étiquet
 has('allowed: new Set(indices)', '[étiquettes] build3dLabelMap ne reçoit que les atomes de l’espace');
 has('const atomIndicesForSele = (structure, sele) => {', '[étiquettes] la sélection du menu devient une liste d’indices d’atomes');
 has('const routeCategorySelections = (sels, moleculeType) => {', '[rendu] UNE fonction de routage partagée par le rendu ET les étiquettes');
-has('onClick={() => setDragMove((v) => !v)}', '[conservé] ✋ Drag');
+has("onClick={() => setMouseMode((m) => (m === 'move' ? 'off' : 'move'))}", '[conservé] ✥ Move (ex-✋ Drag)');
+has("onClick={() => setMouseMode((m) => (m === 'rotate' ? 'off' : 'rotate'))}", '[ajouté] ↻ Rotate');
 has('onClick={rebuildHydrogensNow}', '[conservé] ⚗️ Rebuild H');
 has('onClick={() => setShowAtomPanel((v) => !v)}', '[conservé] ✏️ panneau Atom names (renommage)');
 /* ── La SÉQUENCE de la page donne sa structure ──────────────────────────────
@@ -525,7 +526,7 @@ has('const set = (field, value) => setSectionField(sec.id, kind, sub, field, val
 has("onChange={(e) => set('style', e.target.value)}", '[conservé] …le style de la rangée');
 has("onChange={(e) => set('colorBy', e.target.value)}", '[conservé] …sa coloration');
 has("onChange={(e) => set('opacity', Number(e.target.value))}", '[conservé] …sa transparence');
-has('onClick={copySectionsToAll}', '[conservé] 🎨 Copy de la barre Molecules (le look d’une molécule aux autres)');
+has('onClick={fitMoleculesOnChosen}', '[barre] 🎯 Fit des molécules montrées sur la molécule choisie (remplace 🎨 Copy)');
 // La barre Molecules est aussi la maison du SMILES du ligand et du ⚙ des palettes.
 has('{shownLigandSmiles && (', '[barre] le SMILES de la molécule / du ligand y est affiché');
 has('onClick={copyLigandSmiles}', '[barre] …avec son bouton 📋 (copie)');

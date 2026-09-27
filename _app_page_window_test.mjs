@@ -13,7 +13,11 @@
         null (une valeur inventée n'ouvre pas une page vide).
      §2 `urlWithoutMod` — la même URL nettoyée de `&mod=`, EXÉCUTÉE : la base
         (`?dataset=…`) et les autres paramètres restent, et sans requête il ne
-        reste que le chemin.
+        reste que le chemin. (Elle n'est PLUS appelée à l'ouverture : voir §2bis.)
+     §2bis `urlWithMod` — la page où l'on est ÉCRITE dans l'adresse (`?mod=…`),
+        EXÉCUTÉE : c'est ce qui fait qu'un rechargement (F5) rouvre la même page —
+        et donc ses réglages de visualisation (le rapport de cette session :
+        « When reloading a page the program forgets the visualisation settings »).
      §3 `openPageInNewWindow` (App.jsx) — le geste du ⧉, EXÉCUTÉ avec un faux
         `window` : l'URL porte la base ET la page, une page inconnue retombe sur
         « dashboard », une fenêtre bloquée par le navigateur est DITE, et la
@@ -82,10 +86,11 @@ const PAGE_IDS = ['dashboard', 'projects', 'tests', 'notebook', 'library', 'agen
   'protocols', 'storage', 'calculations', 'publications', 'image-builder', 'settings'];
 
 /* ══ §1. LA PAGE QU'UNE URL RÉCLAME ═══════════════════════════════════════════ */
-const { pageFromUrl, urlWithoutMod } = new Function('APP_PAGE_IDS', [
+const { pageFromUrl, urlWithoutMod, urlWithMod } = new Function('APP_PAGE_IDS', [
   sliceDecl(APP, 'pageFromUrl'),
   sliceDecl(APP, 'urlWithoutMod'),
-  'return { pageFromUrl, urlWithoutMod };',
+  sliceDecl(APP, 'urlWithMod'),
+  'return { pageFromUrl, urlWithoutMod, urlWithMod };',
 ].join('\n'))(PAGE_IDS);
 
 eq(pageFromUrl('?dataset=ds_1&mod=tests'), 'tests', '« ?mod=tests » ouvre la page des expériences');
@@ -104,6 +109,21 @@ eq(urlWithoutMod('?mod=tests', '/'), '/', '…et s’il ne restait que « mod »
 eq(urlWithoutMod('?dataset=ds_1&drive-bootstrap=1&mod=library', '/'), '/?dataset=ds_1&drive-bootstrap=1',
   'les autres paramètres de l’adresse sont conservés (le marqueur de démarrage du Drive compris)');
 eq(urlWithoutMod('', '/index.html'), '/index.html', 'sans requête, le chemin est rendu tel quel');
+
+/* ══ §2bis. LA PAGE RESTE DANS L'ADRESSE (le rapport de cette session) ═══════
+   « When reloading a page the program forgets the visualisation settings. » La
+   page où l'on est doit rester dans l'adresse : sinon un F5 repart du tableau de
+   bord, et ce que la page avait — les réglages du viewer relus du stockage,
+   l'expérience ouverte, les fenêtres de sélection — n'est plus appliqué à rien.
+   `urlWithMod` est la règle, et elle est EXÉCUTÉE ici. */
+eq(urlWithMod('?dataset=ds_1', '/', 'nmr'), '/?dataset=ds_1&mod=nmr',
+  'la page courante entre dans l’adresse, avec la base');
+eq(urlWithMod('?dataset=ds_1&mod=tests', '/', 'nmr'), '/?dataset=ds_1&mod=nmr',
+  '…et elle est REMPLACÉE quand on change de page (jamais deux `mod`)');
+eq(urlWithMod('?dataset=ds_1&drive-bootstrap=1', '/', 'library'), '/?dataset=ds_1&drive-bootstrap=1&mod=library',
+  'les autres paramètres survivent (le marqueur de démarrage du Drive compris)');
+eq(urlWithMod('?mod=tests&dataset=ds_1', '/', ''), '/?dataset=ds_1', 'une page vide retire `mod`');
+eq(urlWithMod('', '/index.html', 'tests'), '/index.html?mod=tests', 'sans requête, la page est le seul paramètre');
 
 /* ══ §3. LE GESTE DU ⧉, EXÉCUTÉ ═══════════════════════════════════════════════ */
 // Un faux `window` complet (open + alert), pour chaque scénario.
@@ -175,9 +195,15 @@ hasApp('const openPageInNewWindow = useCallback((moduleId) => {', 'le geste est 
 hasApp('onOpenPageInNewWindow={openPageInNewWindow}', '…et passé à la barre latérale');
 hasApp('const wanted = pageFromUrl(window.location.search);', 'la fenêtre neuve relit `?mod=` au démarrage');
 hasApp('setCurrentModule(wanted);', '…et ouvre la page demandée');
-hasApp("window.history.replaceState({}, '', urlWithoutMod(window.location.search, window.location.pathname));",
-  '…puis efface `mod` de son adresse (la navigation qui suit reste celle de l’utilisateur)');
-hasApp('}, [currentDatasetId]);', 'la relecture s’applique à l’ouverture d’une base, une fois');
+hasApp("window.history.replaceState({}, '', urlWithMod(window.location.search, window.location.pathname, currentModule));",
+  '…et chaque navigation RÉÉCRIT sa page dans l’adresse : un F5 revient sur la même page, avec ses réglages');
+ok(!APP.includes('urlWithoutMod(window.location.search, window.location.pathname)'),
+  'la fenêtre neuve n’EFFACE plus `mod` : c’est cet effacement qui faisait « forget the visualisation settings » au rechargement');
+hasApp("const requestedModuleRef = useRef('');",
+  'la page demandée est retenue dès le montage (avant l’ouverture de la base)');
+hasApp("setCurrentModule(isAdmin ? 'administration' : (requestedModuleRef.current || 'dashboard'));",
+  '…et l’ouverture d’une base ne l’écrase plus (le ⧉ retombait sur « the general overview page »)');
+hasApp('}, [currentModule]);', 'l’effet miroir suit la page courante');
 
 /* ── Bilan ──────────────────────────────────────────────────────────────── */
 console.log(`_app_page_window_test.mjs — ${passed} assertions OK (⧉ une page dans une autre fenêtre · ?mod= relu au démarrage)`);

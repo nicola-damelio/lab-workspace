@@ -5195,8 +5195,12 @@ const generatedStructure = useMemo(() => {
         </div>
       </div>
       
+      {/* Sequence and structure (Issue #10) : la peinture 🖌️ et la bande de
+          séquence forment UNE sous-section, repliée par défaut — la page garde
+          ses cartes de travail en tête, et CollapsibleSection mémorise le choix
+          (ouvert / replié) par expérience. */}
       {!univTestMode && d.moleculeType === 'protein' && d.parsedSeq.length > 0 && (
-        <div>
+        <CollapsibleSection title="Sequence and structure" icon="🖌️" defaultOpen={false}>
           <div className="flex flex-wrap gap-2 mb-3 items-center">
             <span className="text-xs font-bold text-slate-500 uppercase mr-1">🖌️ Brush:</span>
             {['C', 'H', 'E'].map((l) => (
@@ -5212,7 +5216,7 @@ const generatedStructure = useMemo(() => {
           </div>
           <p className="text-xs text-slate-400 mb-3">💡 Select a brush, then click or drag across the sequence chips to paint secondary structure.</p>
           <SequencePaintStrip residues={d.parsedSeq} getLetter={(i) => d.getSSAt(i)} meta={SS_META} onApply={(i) => paintSSAt(i, ssBrush)} focusIdx={focusIdx} />
-        </div>
+        </CollapsibleSection>
       )}
       
       <div className="mt-6 border-t border-slate-200 pt-6">
@@ -5252,7 +5256,7 @@ const generatedStructure = useMemo(() => {
         <div style={{ display: structureMode === '3d' ? 'block' : 'none' }} aria-hidden={structureMode !== '3d'}>
           {hasOpened3D && (
             <div className="flex flex-col gap-2">
-              <NMRMoleculeViewer key={(activeTest && activeTest.id) || 'molecular-structure'} src={structureSrc} structureText={structureText} structureTextExt={structureTextExt} sequenceStructureText={sequenceStructure?.text || null} sequenceStructureExt={sequenceStructure?.ext || null} externalLoading={organicFetch.loading} externalError={organicFetch.error} structureFileData={activeTest.structureFileData} structureFileName={activeTest.structureFileName} structureFile={structureFile} onStructureSrc={(v) => updateActiveTest({ structureSrc: v })} onStructureFile={handleStructureFile} moleculeType={d.moleculeType} parsedSeq={d.parsedSeq} smiles={activeTest.smiles} onLigandSmiles={(info) => { if (info && info.smiles && !activeTest.smiles && !activeTest.ligandSmiles) updateActiveTest({ ligandCode: info.code, ligandSmiles: info.smiles }); }} selectedKeys={selectedKeys} manualKeys={manualKeys} onAtomClick={handleAtomClick} residueOffset={residueOffset} atomNameMap={atomNameMap} atomRenames={activeTest.atomRenames || {}} onAtomRenames={(map) => updateActiveTest({ atomRenames: map })} resRenumber={activeTest.resRenumber || {}} onResRenumber={(map) => updateActiveTest({ resRenumber: map })} onStructureSequence={(seq, parts) => { const _nat = structureSequencePatch(activeTest, d.moleculeType, seq, parts); if (_nat) updateActiveTest(_nat); }} driveNaming={{ project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || '', instance: activeTest.instanceName || '', scientist: activeTest.operator || '', section: 'Data', subsection: 'Structure' }} labelMode={atomLabelMode} height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? '1100px' : '1000px'} />
+              <NMRMoleculeViewer key={(activeTest && activeTest.id) || 'molecular-structure'} instanceKey={(activeTest && activeTest.id) || null} src={structureSrc} structureText={structureText} structureTextExt={structureTextExt} sequenceStructureText={sequenceStructure?.text || null} sequenceStructureExt={sequenceStructure?.ext || null} externalLoading={organicFetch.loading} externalError={organicFetch.error} structureFileData={activeTest.structureFileData} structureFileName={activeTest.structureFileName} structureFile={structureFile} onStructureSrc={(v) => updateActiveTest({ structureSrc: v })} onStructureFile={handleStructureFile} moleculeType={d.moleculeType} parsedSeq={d.parsedSeq} smiles={activeTest.smiles} onLigandSmiles={(info) => { if (info && info.smiles && !activeTest.smiles && !activeTest.ligandSmiles) updateActiveTest({ ligandCode: info.code, ligandSmiles: info.smiles }); }} selectedKeys={selectedKeys} manualKeys={manualKeys} onAtomClick={handleAtomClick} residueOffset={residueOffset} atomNameMap={atomNameMap} atomRenames={activeTest.atomRenames || {}} onAtomRenames={(map) => updateActiveTest({ atomRenames: map })} resRenumber={activeTest.resRenumber || {}} onResRenumber={(map) => updateActiveTest({ resRenumber: map })} onStructureSequence={(seq, parts) => { const _nat = structureSequencePatch(activeTest, d.moleculeType, seq, parts); if (_nat) updateActiveTest(_nat); }} driveNaming={{ project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || '', instance: activeTest.instanceName || '', scientist: activeTest.operator || '', section: 'Data', subsection: 'Structure' }} labelMode={atomLabelMode} height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? '1100px' : '1000px'} />
               <button onClick={downloadPdbFile} className="self-center mt-2 px-4 py-2 bg-indigo-50 border border-indigo-200 text-indigo-700 font-bold text-xs rounded-lg hover:bg-indigo-100 transition-colors shadow-sm">📥 Download 3D PDB File</button>
               {activeTest.structureFileName && (!structureFile || nmrStructRestore.message) && (
                 <div className="flex flex-wrap items-center justify-center gap-2 text-[11px]">

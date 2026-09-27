@@ -118,8 +118,8 @@ has('{(entry.sections || []).map((sec) => renderSection(sec))}',
   '[barre] chaque molécule (la principale comprise) rend ses rangées');
 has('{shown && subsectionsOf(kind).map((s) => renderSectionRow(sec, s.sub))}',
   '…les rangées du type de molécule, et elles seules');
-has('onChange={(e) => (extra ? setExtraMolPosition(extra.id, ai, e.target.value) : setMainPosition(ai, e.target.value))}',
-  '[barre] le Move X · Y · Z d’une molécule (la principale comprise)');
+has('setSelectedMolKey(molKey); setMouseMode((m) => (m === \'move\' ? \'off\' : \'move\'));',
+  '[barre] le Move d’une molécule (la principale comprise) — chaque espace déplace LA SIENNE');
 
 /* ── Bilan ───────────────────────────────────────────────────────────────── */
 console.log(`_dock_style_test.mjs — ${passed} assertions OK`);

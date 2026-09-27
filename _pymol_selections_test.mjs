@@ -192,7 +192,7 @@ const SESSION = new Function('localStorage', [
   // matériau (un look de sélection en porte un) et un `localStorage` de test.
   "const MATERIAL_PRESET_KEYS = ['auto', 'matte', 'gloss', 'metallic', 'glass'];",
   sliceBetween("const PYMOL_SESSION_KEY = 'labViewerPymolSession';", '\n/* ---- Which leaflet is which', 'session'),
-  'return { PYMOL_SESSION_KEY, loadPymolSession, savePymolSession };',
+  'return { PYMOL_SESSION_KEY, loadPymolSession, savePymolSession, pymolSessionKey, pymolSessionInstanceSlug };',
 ].join('\n'))({
   getItem: (k) => (store.has(k) ? store.get(k) : null),
   setItem: (k, v) => store.set(k, String(v)),
@@ -235,9 +235,35 @@ eq(dirty.active, false, '…« active » n’est vrai que s’il vaut VRAIMENT t
 store.set(SESSION.PYMOL_SESSION_KEY, JSON.stringify({ v: 99, selections: [{ name: 'x', expr: 'all' }] }));
 eq(SESSION.loadPymolSession().selections, [], 'une entrée d’une autre version n’est pas relue du tout');
 
+/* ══ §2bis. LA SESSION EST CELLE D'UNE INSTANCE, PAS CELLE DE L'APPLICATION ═══
+   Le rapport de cette session, mot pour mot : « Saving the selection window in each
+   session was meant at each instance level, not general. » La clé est EXÉCUTÉE, et
+   la preuve est faite par l'exécution : la session d'une instance ne revient pas
+   dans une autre, tandis que celle de l'instance concernée est bien retrouvée. */
+eq(SESSION.pymolSessionKey(null, null), 'labViewerPymolSession',
+  'sans instance connue, la clé GÉNÉRALE reste utilisée (rien n’est perdu)');
+eq(SESSION.pymolSessionKey('exp_7', null), 'labViewerPymolSession::exp_7',
+  'une instance nommée porte SA clé (labViewerPymolSession::<instance>)');
+eq(SESSION.pymolSessionKey(null, { project: 'GEC', test: 'Mutant X', instance: '2026-01-05' }),
+  'labViewerPymolSession::GEC_Mutant_X_2026-01-05',
+  '…et le contexte Drive (projet · expérience · condition) en tient lieu quand la page ne la donne pas');
+ok(SESSION.pymolSessionKey('a', null) !== SESSION.pymolSessionKey('b', null),
+  'deux instances ne partagent JAMAIS la même session');
+eq(SESSION.pymolSessionKey('exp 7/2', null), 'labViewerPymolSession::exp_7_2',
+  'les séparateurs sont neutralisés (aucune clé ne peut être détournée)');
+SESSION.savePymolSession({ selections: [{ name: 'water', expr: 'resn TIP3' }] }, SESSION.pymolSessionKey('exp_7', null));
+eq(SESSION.loadPymolSession(SESSION.pymolSessionKey('exp_8', null)).selections, [],
+  'une AUTRE instance démarre vierge — c’était le défaut : la fenêtre revenait dans toutes');
+eq(SESSION.loadPymolSession(SESSION.pymolSessionKey('exp_7', null)).selections, [{ name: 'water', expr: 'resn TIP3' }],
+  '…et l’instance concernée retrouve la sienne au rechargement');
+
 // Le câblage : relue au montage, réécrite à chaque geste, et dite dans le journal.
-has("const PYMOL_SESSION_KEY = 'labViewerPymolSession';", 'la session a UNE clé de stockage');
-has('const [pymolSession] = useState(loadPymolSession);', 'elle est relue au montage du viewer');
+has("const PYMOL_SESSION_KEY = 'labViewerPymolSession';", 'la session a UNE clé de stockage — sa BASE');
+has('const [pymolSession] = useState(() => loadPymolSession(pymolSessionKeyRef.current));',
+  'elle est relue au montage du viewer, DANS LA CLÉ DE SON INSTANCE');
+has('const pymolSessionKeyRef = useRef(null);', '…clé figée au montage (deux viewers montés ne se la volent pas)');
+has('pymolSessionKey(instanceKey, driveNaming)', '…et dérivée de l’instance que la page donne au viewer');
+has('instanceKey = null,', 'la page peut nommer son instance (les trois pages y passent l’expérience ouverte)');
 has('const [selections, setSelections] = useState(() => pymolSession.selections);',
   '…et les fenêtres de sélection en partent');
 has('const [selStyles, setSelStyles] = useState(() => pymolSession.selStyles);', '…leurs looks aussi');
