@@ -146,7 +146,11 @@ has('title="Collapse the selections bar (▶ brings it back)', '…et un ◀ la 
 has('{ ...s, raw: false }', 'les sélections nommées sont listées');
 has(".filter((k) => k !== 'all' && !selections.some((s) => s.name === k))", '…et les looks créés sur une expression brute AUSSI');
 has("s.raw ? '⌗ ' : ''", '…marqués comme expressions brutes (⌗)');
-has('delete nx[s.name]; setSelStyles(nx);', 'chaque ligne porte un ✕ qui enlève vraiment le look');
+has('delete nx[name];\n  setSelStyles(nx);', 'le ✕ d’une ligne enlève son look');
+has('const removeSelectionRow = (name) => {', '…par un geste dédié (le rapport : « allow deleting selection window by hand »)');
+has('setSelections((prev) => prev.filter((s) => s.name !== name));',
+  '…qui retire AUSSI la sélection : une sélection nommée revenait sinon de `selections`, et le ✕ semblait sans effet');
+has('onClick={() => removeSelectionRow(s.name)}', '…et la ligne de la barre appelle CE geste');
 has("{st.hidden ? '👁 Show' : '🙈 Hide'}", '…et le 🙈 Hide d’origine reste');
 has('title={`Open the selections bar — ${selections.length} selection(s)', 'l’onglet annonce le nombre de sélections');
 
@@ -172,6 +176,76 @@ has('else if (pymolOwnSigRef.current !== catSig) {', 'un changement ULTÉRIEUR, 
 has('takes the main structure back', '…et le journal de la macro explique à l’utilisateur que §2 reprend la main');
 has("• §2 styling changed →", '…par une ligne de journal explicite');
 has('◀ collapses it', 'l’aide de la macro dit où est la barre (à gauche, repliable)');
+
+/* ── 9. LA SESSION SURVIT À UN RECHARGEMENT ────────────────────────────────
+   La demande : « When you reload an experiment which contains the viewer, remember
+   the last visualization settings and selection windows if it was created by
+   “selections and pymol” (allow deleting selection window by hand). » Les réglages
+   de style survivaient déjà (mémoire d’un type de molécule, palettes du ⚙) ; ce qui
+   mourait avec le montage du viewer, c’est la SESSION d’un script : ses sélections,
+   leurs looks, les `set` posés sur les atomes, la macro et le drapeau « le script
+   tient la scène ». Elle est donc écrite dans UNE entrée et relue au montage —
+   EXÉCUTÉ ici sur les fonctions livrées, avec un faux localStorage. */
+const store = new Map();
+const SESSION = new Function('localStorage', [
+  // Les deux seules dépendances extérieures du bloc : la liste des presets de
+  // matériau (un look de sélection en porte un) et un `localStorage` de test.
+  "const MATERIAL_PRESET_KEYS = ['auto', 'matte', 'gloss', 'metallic', 'glass'];",
+  sliceBetween("const PYMOL_SESSION_KEY = 'labViewerPymolSession';", '\n/* ---- Which leaflet is which', 'session'),
+  'return { PYMOL_SESSION_KEY, loadPymolSession, savePymolSession };',
+].join('\n'))({
+  getItem: (k) => (store.has(k) ? store.get(k) : null),
+  setItem: (k, v) => store.set(k, String(v)),
+});
+
+eq(SESSION.loadPymolSession().selections, [], 'aucune session au départ : le viewer démarre vierge');
+SESSION.savePymolSession({
+  selections: [{ name: 'water', expr: 'resn TIP3' }, { name: 'heads', expr: 'resn POPC' }],
+  selStyles: { water: { sphere: true, colorMode: 'residue', mat: { spheres: { preset: 'gloss' } } } },
+  selOverrides: [{ kind: 'sphereScale', value: 0.6, sel: 'heads' }],
+  script: 'show spheres, water',
+  active: true,
+  autoShow: false,
+  name: 'Membrane setup',
+});
+const back = SESSION.loadPymolSession();
+eq(back.selections, [{ name: 'water', expr: 'resn TIP3' }, { name: 'heads', expr: 'resn POPC' }],
+  'les FENÊTRES DE SÉLECTION du script reviennent au rechargement');
+eq(back.selStyles.water, { sphere: true, colorMode: 'residue', mat: { spheres: { preset: 'gloss' } } },
+  '…avec leurs looks (styles · coloration · matériau)');
+eq(back.selOverrides, [{ kind: 'sphereScale', value: 0.6, sel: 'heads' }],
+  '…et les `set` que la macro a posés sur les atomes');
+eq([back.script, back.active, back.autoShow, back.name], ['show spheres, water', true, false, 'Membrane setup'],
+  '…la macro elle-même, le drapeau « le script tient la scène », l’auto-affichage et le nom de la macro');
+
+// Un localStorage bricolé (ou une version d’une autre build) ne peut rien inventer.
+store.set(SESSION.PYMOL_SESSION_KEY, JSON.stringify({
+  v: 1,
+  selections: [{ name: 'x', expr: 'all' }, { name: '', expr: 'all' }, 'junk'],
+  selStyles: { x: { sphere: true, colorMode: 42, transparency: 99, preset: 'LOL', mat: { spheres: { preset: 'inconnu' } } } },
+  selOverrides: [{ kind: 'nope', value: 1, sel: 'x' }],
+  active: 'yes',
+}));
+const dirty = SESSION.loadPymolSession();
+eq(dirty.selections, [{ name: 'x', expr: 'all' }], 'une sélection vide ou d’un autre type est écartée');
+eq(dirty.selStyles.x, { sphere: true, transparency: 99 },
+  'un champ inconnu ou d’un mauvais type est écarté (aucun preset « LOL », aucun mode de coloration numérique)');
+eq(dirty.selOverrides, [], '…et un `set` d’un genre inconnu aussi');
+eq(dirty.active, false, '…« active » n’est vrai que s’il vaut VRAIMENT true');
+store.set(SESSION.PYMOL_SESSION_KEY, JSON.stringify({ v: 99, selections: [{ name: 'x', expr: 'all' }] }));
+eq(SESSION.loadPymolSession().selections, [], 'une entrée d’une autre version n’est pas relue du tout');
+
+// Le câblage : relue au montage, réécrite à chaque geste, et dite dans le journal.
+has("const PYMOL_SESSION_KEY = 'labViewerPymolSession';", 'la session a UNE clé de stockage');
+has('const [pymolSession] = useState(loadPymolSession);', 'elle est relue au montage du viewer');
+has('const [selections, setSelections] = useState(() => pymolSession.selections);',
+  '…et les fenêtres de sélection en partent');
+has('const [selStyles, setSelStyles] = useState(() => pymolSession.selStyles);', '…leurs looks aussi');
+has('const [pymolActive, setPymolActive] = useState(() => pymolSession.active);',
+  '…le drapeau « le script tient la scène » compris (c’est LUI qui fait la scène telle qu’elle était)');
+has('const [pymolScript, setPymolScript] = useState(() => pymolSession.script);', '…la macro est retrouvée dans son panneau');
+has('  savePymolSession({', '…et la session est réécrite à chaque geste');
+has('Session restored from your last', 'le journal du panneau dit que la session a été relue, et comment reprendre la main (§2 ou Clear)');
 
 /* ── Bilan ───────────────────────────────────────────────────────────────── */
 console.log(`_pymol_selections_test.mjs — ${passed} assertions OK`);

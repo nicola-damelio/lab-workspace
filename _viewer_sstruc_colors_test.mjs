@@ -140,8 +140,10 @@ eq(countOf(/setSstrucColour\(it\.key,/g), 2,
   'trois surfaces écrivent par setSstrucColour : la barre de style, la barre SÉLECTIONS (même série de commandes) et le menu §2');
 eq(countOf(/const setSstrucColour = \(key, hex\) => \{/g), 1, '…un seul écrivain, comme avant');
 const COLORS = new Function(`${sliceObject(VIEW, 'COLORS')}\nreturn COLORS;`)();
-['protein', 'proteinBackbone'].forEach((cat) => ok(COLORS[cat].includes('sstruc'),
-  `la rangée « ${cat} » offre « Secondary structure » — les pastilles ont donc où s’afficher`));
+ok(COLORS.protein.includes('sstruc'),
+  'la rangée « protein » offre « Secondary structure » — les pastilles ont donc où s’afficher');
+has("{ sub: 'backbone', label: 'Backbone', styles: STYLES.protein, colors: COLORS.protein,",
+  '…et le SQUELETTE lit cette même liste (le rapport : « backbone drop-down commands still do not have all the values as general »)');
 ok(!COLORS.proteinSide.includes('sstruc'),
   'une rangée de chaînes latérales ne l’offre pas (la 2° structure n’y dit rien)');
 ok(!COLORS.nucleic.includes('sstruc'),

@@ -110,6 +110,7 @@ const CODE = [
   extract(VIEW, 'selRowFamilies'),
   extract(VIEW, 'materialValueOf'),
   extract(VIEW, 'presetTransparencyOf'),
+  extract(VIEW, 'MATERIAL_LOOK_FIELD'),
   extract(VIEW, 'materialRowPatch'),
   extract(VIEW, 'reprOfElement'),
   extract(VIEW, 'repTypeOfElement'),
@@ -117,7 +118,7 @@ const CODE = [
 ].join('\n');
 const F = new Function(`${CODE}
   return { SEE_THROUGH_SURFACE, MATERIAL_PRESETS, MATERIAL_PRESET_KEYS, MATERIAL_KINDS, MATERIAL_KIND_OF_REP,
-    SEL_STYLE_REP_TYPE, selRowFamilies, materialValueOf, presetTransparencyOf, materialRowPatch, reprOfElement, repTypeOfElement, applyMaterialToRep };`)();
+    SEL_STYLE_REP_TYPE, selRowFamilies, materialValueOf, presetTransparencyOf, MATERIAL_LOOK_FIELD, materialRowPatch, reprOfElement, repTypeOfElement, applyMaterialToRep };`)();
 
 ok(!/useState|useRef|componentRef/.test(CODE),
   'le réglage du matériau ne dépend d’aucun état React : il est exécutable tel quel');
@@ -493,6 +494,26 @@ gone('const [matSettings, setMatSettings] = useState(',
 gone('🎛 Material', '…et son panneau en bas de la barre Selections avec lui');
 gone('localStorage.setItem(MATERIALS_KEY', '…ainsi que sa clé de persistance propre (le matériau est dans le look)');
 gone('matSliderValue', 'aucun reliquat du réglage global ne subsiste');
+
+/* ── 6quater. LE MENU 🎛 ÉCRIT LE CHAMP QUE LE LOOK LIT ────────────────────
+   Le rapport : « all material drop-down menus do not work anymore ». Le contrôle
+   partagé des deux barres nomme le preset « preset » — le vocabulaire du `mat`
+   d'une ligne de Selections —, alors que le look d'une ligne de la fenêtre de
+   styling l'appelle « material » (SECTION_LOOK_FIELDS / FOLLOW_FIELDS) : choisir
+   « gloss » écrivait donc un champ `preset` que PERSONNE ne lit, et le menu
+   retombait sur « auto ». La traduction vit dans le geste, et le geste est
+   EXÉCUTÉ ici. */
+eq(F.MATERIAL_LOOK_FIELD, { preset: 'material' },
+  'le vocabulaire du contrôle (« preset ») est traduit vers celui du look d’une ligne de styling (« material »)');
+eq(F.materialRowPatch('preset', 'gloss'), { material: 'gloss' },
+  '…donc choisir « gloss » écrit bien le champ que la ligne lit');
+eq(F.materialRowPatch('preset', 'glass'), { material: 'glass', opacity: 0.55 },
+  '…et « glass » remet sa translucidité au curseur Transp de la ligne, comme le §7 le veut');
+eq(F.materialRowPatch('roughness', 0.6), { roughness: 0.6 },
+  'les deux curseurs gardent leur nom (ils sont les mêmes dans les deux vocabulaires)');
+eq(F.materialRowPatch('metalness', 0.2), { metalness: 0.2 }, '…metalness aussi');
+has('const MATERIAL_LOOK_FIELD = { preset: \'material\' };',
+  'la traduction est UNE constante, pas une écriture dispersée');
 
 /* ── 6ter. LES LIGNES DE LA BARRE SELECTIONS : le matériau DE CE QU'ELLES
    DESSINENT. Une ligne de cette barre peut dessiner PLUSIEURS familles (sphères

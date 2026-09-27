@@ -282,6 +282,7 @@ const HIER = new Function([
   sliceDecl(VIEW, 'FOLLOW_FIELDS'),
   sliceFn(VIEW, 'defaultLookOf'),
   sliceFn(VIEW, 'effectiveSectionLook'),
+  sliceDecl(VIEW, 'ENVELOPE_STYLES'),
   sliceFn(VIEW, 'partStyleUnderGeneral'),
   sliceDecl(VIEW, 'RADIUS_FIELDS'),
   sliceDecl(VIEW, 'ATOM_DRAW_STYLES'),

@@ -263,8 +263,17 @@ has("spacefill: 'CPK',", '[vocabulaire] CPK (= spacefill)');
    PARTOUT où le CPK l’est, et les deux se distinguent par la TAILLE (CPK le
    spacefill compact de la barre, « Sphere » le rayon de Van der Waals entier). */
 has("sphere: 'Sphere',", '[vocabulaire] « Sphere » à côté de CPK (le mot de PyMOL)');
-has("polymer: ['hide', 'cartoon', 'ribbon', 'tube', 'ball+stick', 'licorice', 'line', 'spacefill', 'sphere'],",
-  'chaque rangée qui offrait CPK offre désormais « Sphere »');
+/* La demande : « in the styling window backbone drop-down commands still do not have
+   all the values as general (but they should). » Le squelette lisait une liste à lui
+   (`polymer`), plus courte que celle de sa rangée General : les deux menus ne
+   pouvaient donc pas offrir les mêmes commandes. Il lit maintenant LA LISTE DE SA
+   RANGÉE GENERAL, dans les deux types qui en ont un. */
+has("{ sub: 'backbone', label: 'Backbone', styles: STYLES.protein, colors: COLORS.protein, def: { style: 'cartoon', colorBy: 'sstruc' }, sele: 'backbone' },",
+  'le squelette d’une protéine offre TOUTES les commandes de sa rangée General');
+has("{ sub: 'backbone', label: 'Backbone', styles: STYLES.nucleic, colors: COLORS.nucleic, def: { style: 'cartoon', colorBy: 'basetype' }, sele: 'backbone' },",
+  '…et celui d’un acide nucléique aussi');
+ok(!/polymer: \[|proteinBackbone: \[|nucleicBackbone: \[/.test(VIEW),
+  'les deux listes courtes qui n’existaient que pour lui ont disparu (elles ne servaient plus rien)');
 has("small: ['hide', 'ball+stick', 'licorice', 'line', 'spacefill', 'sphere', 'surface', 'mesh'],",
   '…y compris les petites molécules (ligand · sucre)');
 has("const ATOM_DRAW_STYLES = ['ball+stick', 'licorice', 'line', 'spacefill', 'sphere'];",

@@ -3657,9 +3657,22 @@ const sectionLooksSig = (v) => JSON.stringify(MOL_KINDS.map((k) => [k, v && v[k]
      · an envelope (surface · mesh), which no part draws, leaves every part hidden.
    The report, word for word: « Se imposto "General" su cartoon, il backbone deve
    passare a cartoon e le sidechain a hide. Se imposto "General" su ball and stick,
-   sia il backbone che le sidechain devono passare a ball and stick. » */
+   sia il backbone che le sidechain devono passare a ball and stick. »
+   …ET L'ENVELOPPE RESTE VRAIE MÊME MAINTENANT QUE LE SQUELETTE SAIT LA DESSINER
+   (le rapport de cette session : « in the styling window backbone drop-down commands
+   still do not have all the values as general (but they should) » — le menu du
+   squelette offre donc « Surface » comme General, voir SECTION_SUBSECTIONS). La
+   rangée General recouvre DÉJÀ toute la molécule : une partie qui reprendrait son
+   enveloppe dessinerait une seconde surface IMBRIQUÉE dans la première — deux fois
+   le coût d'une surface, pour rien de plus à l'écran (un bilayer en surface est
+   justement le cas où ce coût se paie). Le choix d'une partie reste donc POSSIBLE —
+   sur SA rangée, où le menu l'offre, et où elle dessine vraiment sa propre sélection
+   —, mais la CASCADE de General ne la lui impose pas. */
+const ENVELOPE_STYLES = ['surface', 'mesh'];
 const partStyleUnderGeneral = (kind, sub, value) => (
-  subsectionSpec(kind, sub).styles.includes(value) ? value : 'hide'
+  ENVELOPE_STYLES.includes(value)
+    ? 'hide'
+    : (subsectionSpec(kind, sub).styles.includes(value) ? value : 'hide')
 );
 // The two RADIUS multipliers of a look: a number set on General reaches EVERY part,
 // deviated or not (see setGeneralSectionField). The other look fields keep the rule
@@ -3809,6 +3822,17 @@ const initialSectionTree = (kindLooks, kind) => {
   });
   return tree;
 };
+/* LE PARTAGE ENTRE LES SECTIONS SŒURS DE LA RANGÉE GENERAL — la coche « le même
+   projet dans les autres chaînes » (chainLink, dans le composant) s'appuie sur ces
+   deux règles, pures :
+     · `sameMoleculeOf` dit que deux sections viennent du MÊME fichier — l'id d'une
+       section est `<molecule>::<clé>` (voir ensureSections) — donc que l'une est
+       bien « l'autre chaîne de la même protéine » et non « une autre structure » ;
+     · `cloneSectionTree` donne à chaque section sœur SON arbre : la règle « aucun
+       partage d'objet entre deux sections » (mesurée par
+       _viewer_section_scope_test.mjs) reste donc vraie pour elles aussi. */
+const sameMoleculeOf = (a, b) => String(a).split('::')[0] === String(b).split('::')[0];
+const cloneSectionTree = (tree) => JSON.parse(JSON.stringify(tree));
 
 /* ---- WHAT ONE ROW REALLY DRAWS ---------------------------------------------
    `general` keeps its own look. Every other row follows General for the fields it
@@ -5407,6 +5431,122 @@ const applyMaterialToRep = (el, mat) => {
   try { repr.setParameters(params); } catch { /* never break the scene for a look */ }
 };
 
+/* ==== LA SESSION 🧪 SELECTIONS & PyMOL SURVIT À UN RECHARGEMENT ==============
+   Le rapport : « When you reload an experiment which contains the viewer, remember
+   the last visualization settings and selection windows if it was created by
+   “selections and pymol” (allow deleting selection window by hand). »
+
+   Les réglages de style survivent DÉJÀ à un rechargement — la mémoire d'un type de
+   molécule (SECTION_STYLES_KEY), les palettes du ⚙, le rig, le fond, le clipping —
+   mais pas la SESSION d'un script : ses sélections, leurs looks, les `set` qu'il a
+   posés, la macro elle-même et le drapeau « le script tient la scène » mouraient
+   avec le montage du viewer (un rechargement de la page, ou la réouverture de
+   l'expérience, repartait d'une scène vierge). Ils sont donc persistés ENSEMBLE,
+   dans UNE entrée de localStorage, comme les setups (loadViewerSetups) et les looks
+   de section (loadSectionLooks) — et relus au montage : l'expérience retrouve son
+   viewer exactement tel qu'il était.
+
+   ⚠ C'EST UN RÉGLAGE D'APPLICATION, COMME TOUS LES AUTRES DU VIEWER (la mémoire
+   d'un type de molécule vaut elle aussi pour n'importe quel fichier) : la session
+   relue n'est PAS filtrée par fichier chargé. C'est ce que la demande veut — les
+   fenêtres de sélection reviennent —, et c'est pour cela que le ✕ d'une ligne les
+   SUPPRIME VRAIMENT (voir removeSelectionRow) : une session qui ne correspond plus
+   au fichier affiché se vide à la main, ligne par ligne.
+
+   Ce qui est relu est VALIDÉ champ par champ, comme tout ce que ce fichier lit du
+   stockage : un localStorage bricolé ne peut ni inventer un style, ni écrire un
+   preset inconnu, ni faire planter une reconstruction. */
+const PYMOL_SESSION_KEY = 'labViewerPymolSession';
+const PYMOL_SESSION_VERSION = 1;
+// Les champs d'un look de SÉLECTION (voir l'état `selStyles`) — jamais un champ de
+// plus, et chacun de son propre type.
+const SEL_LOOK_FIELDS = [
+  'cartoon', 'ribbon', 'tube', 'ball', 'stick', 'sphere', 'surface',
+  'color', 'colorMode', 'transparency', 'sphereScale', 'radiusSphere', 'radiusBond',
+  'hidden',
+];
+// Les trois genres de `set` qu'un script peut poser sur des atomes (selOverrides).
+const SEL_OVERRIDE_KINDS = ['sphereScale', 'opacity', 'sphereOpacity'];
+const sessionText = (v, max) => (typeof v === 'string' ? v.slice(0, max) : '');
+const normalizeSelLook = (src) => {
+  if (!src || typeof src !== 'object') return null;
+  const out = {};
+  SEL_LOOK_FIELDS.forEach((k) => {
+    const v = src[k];
+    if (typeof v === 'boolean') out[k] = v;
+    else if (Number.isFinite(v) && k !== 'colorMode') out[k] = v;
+  });
+  // `colorMode` est le seul champ TEXTE d'un look (le nom du mode de coloration).
+  if (typeof src.colorMode === 'string' && src.colorMode.length <= 32) out.colorMode = src.colorMode;
+  /* `hideFor` : les « hide » POSTÉRIEURS d'un « show » du script — la règle « le
+     dernier gagne » de PyMOL, retenue sous forme de noms de sélections. */
+  if (src.hideFor && typeof src.hideFor === 'object') {
+    const hf = {};
+    Object.keys(src.hideFor).forEach((k) => {
+      const list = src.hideFor[k];
+      if (!Array.isArray(list)) return;
+      hf[k] = list.map((x) => sessionText(x, 64)).filter((x) => x !== '').slice(0, 64);
+    });
+    if (Object.keys(hf).length) out.hideFor = hf;
+  }
+  // `mat` : le matériau par famille de représentation de la ligne (le même que le 🎛).
+  if (src.mat && typeof src.mat === 'object') {
+    const mat = {};
+    Object.keys(src.mat).forEach((fam) => {
+      const m = src.mat[fam];
+      if (!m || typeof m !== 'object') return;
+      const one = {};
+      if (MATERIAL_PRESET_KEYS.includes(m.preset)) one.preset = m.preset;
+      if (Number.isFinite(m.roughness)) one.roughness = Math.min(1, Math.max(0, m.roughness));
+      if (Number.isFinite(m.metalness)) one.metalness = Math.min(1, Math.max(0, m.metalness));
+      if (Object.keys(one).length) mat[fam] = one;
+    });
+    if (Object.keys(mat).length) out.mat = mat;
+  }
+  return out;
+};
+const normalizeSelStyles = (raw) => {
+  const out = {};
+  if (!raw || typeof raw !== 'object') return out;
+  Object.keys(raw).forEach((k) => {
+    const one = normalizeSelLook(raw[k]);
+    if (one && Object.keys(one).length) out[k] = one;
+  });
+  return out;
+};
+const normalizeSelNames = (raw) => (Array.isArray(raw) ? raw : [])
+  .map((s) => (s && typeof s === 'object' ? { name: sessionText(s.name, 64), expr: sessionText(s.expr, 4000) } : null))
+  .filter((s) => s && s.name)
+  .slice(0, 512);
+const normalizeSelOverrides = (raw) => (Array.isArray(raw) ? raw : [])
+  .filter((o) => o && typeof o === 'object' && SEL_OVERRIDE_KINDS.includes(o.kind) && Number.isFinite(Number(o.value)))
+  .map((o) => ({ kind: o.kind, value: Number(o.value), sel: sessionText(o.sel, 4000) }))
+  .slice(0, 512);
+const emptyPymolSession = () => ({
+  selections: [], selStyles: {}, selOverrides: [], script: '', active: false, autoShow: true, name: '',
+});
+const loadPymolSession = () => {
+  const base = emptyPymolSession();
+  try {
+    const raw = JSON.parse(localStorage.getItem(PYMOL_SESSION_KEY) || 'null');
+    if (!raw || typeof raw !== 'object' || raw.v !== PYMOL_SESSION_VERSION) return base;
+    return {
+      selections: normalizeSelNames(raw.selections),
+      selStyles: normalizeSelStyles(raw.selStyles),
+      selOverrides: normalizeSelOverrides(raw.selOverrides),
+      script: sessionText(raw.script, 40000),
+      active: raw.active === true,
+      autoShow: raw.autoShow !== false,
+      name: sessionText(raw.name, 128),
+    };
+  } catch { return base; }
+};
+const savePymolSession = (s) => {
+  try {
+    localStorage.setItem(PYMOL_SESSION_KEY, JSON.stringify({ v: PYMOL_SESSION_VERSION, ...(s || {}) }));
+  } catch { /* private mode: the session simply is not remembered */ }
+};
+
 /* ---- Which leaflet is which, from the GEOMETRY -----------------------------
    `z>90` is how membrane macros split the two leaflets, and it breaks as soon as
    the file is not centred on z=90 or is oriented along another axis — the user's
@@ -6720,6 +6860,36 @@ sectionLooksRef.current = sectionLooks;
 const [sectionVis, setSectionVis] = useState({});       // { sectionId: bool }
 const sectionVisRef = useRef(sectionVis);
 sectionVisRef.current = sectionVis;
+/* ⛓ « LE MÊME PROJET DANS LES AUTRES CHAÎNES » — LA COCHE DE LA RANGÉE GENERAL
+   Le rapport : « In the general section of the styling window put a tick to decide
+   whether the command will be applied to the same protein in different chains. »
+
+   Un geste de la barre ne parlait QUE pour la section touchée : les autres sections
+   du même type recevaient l'arbre qu'elles affichaient DÉJÀ (pinSectionLooksOfKind,
+   ci-dessous), donc deux chaînes d'une même protéine se réglaient deux fois — la
+   réponse au rapport précédent (« the setting of the general section … applies to
+   all the molecules in different chains and this is not OK »), qui avait supprimé
+   la fuite. La demande d'aujourd'hui veut POUVOIR la rétablir : les deux
+   comportements sont donc un CHOIX, posé dans la rangée General d'une molécule.
+
+     · coche DÉCOCHÉE (le défaut, le geste qu'un rapport exigeait) : la commande ne
+       vaut que pour la molécule où elle est donnée ;
+     · coche COCHÉE : la commande est écrite dans TOUTES les sections du même type
+       du MÊME fichier — les autres chaînes de la même protéine (« the same protein
+       in different chains »), celles qui ont déjà leur propre arbre comprises.
+
+   Un seul drapeau pour le viewer (comme les autres réglages de la barre), persisté :
+   la préférence survit à un rechargement. Il est lu AU MOMENT DU GESTE
+   (chainLinkRef), puisque c'est pinSectionLooksOfKind — appelé par les quatre gestes
+   de la barre — qui s'en sert. */
+const [chainLink, setChainLink] = useState(() => {
+  try { return localStorage.getItem('labViewerChainLink') === 'on'; } catch { return false; }
+});
+const chainLinkRef = useRef(chainLink);
+chainLinkRef.current = chainLink;
+useEffect(() => {
+  try { localStorage.setItem('labViewerChainLink', chainLink ? 'on' : 'off'); } catch { /* ignore */ }
+}, [chainLink]);
 /* ONE COUNTER OF THE BAR'S GESTURES — part of the rebuild signature (see
    styleSignature). A gesture is what MUST be drawn, even if the tree it writes
    happens to serialise to the same string (a reset that restores the default a row
@@ -6804,11 +6974,22 @@ const hiddenSectionIds = (sections) => {
    elles sont ÉPINGLÉES et continuent de dessiner exactement ce qu'elles
    dessinaient. Chacune repart ensuite de son côté, et la propagation VOLONTAIRE
    garde son geste dédié : le 🎨 Copy de la barre Molecules (copySectionsToAll). */
-const pinSectionLooksOfKind = (keepId, kind) => {
+const pinSectionLooksOfKind = (keepId, kind, nextTree = null) => {
+  /* ⛓ LA COCHE DE LA RANGÉE GENERAL CHANGE CE QUE DEVIENNENT LES SECTIONS SŒURS
+     (voir chainLink). Cochée, les sections du MÊME FICHIER reçoivent l'arbre que le
+     geste vient d'écrire — même celles qui avaient déjà le leur — au lieu d'être
+     épinglées sur celui qu'elles affichent : « the same protein in different chains »
+     se règle donc d'un seul geste. `sameMoleculeOf` est ce qui arrête le partage au
+     FICHIER : une autre structure chargée n'est pas « la même protéine », et les
+     sections d'un autre type ne sont pas concernées non plus. Chaque section sœur
+     reçoit une COPIE (cloneSectionTree) : les arbres de deux sections ne partagent
+     donc jamais un objet, exactement comme ceux des sections épinglées. */
+  const link = !!chainLinkRef.current && !!nextTree;
   const out = {};
   Object.keys(sectionCatalogRef.current).forEach((molKey) => {
     (((sectionCatalogRef.current[molKey] || {}).sections) || []).forEach((s) => {
       if (s.kind !== kind || s.id === keepId || out[s.id]) return;
+      if (link && sameMoleculeOf(s.id, keepId)) { out[s.id] = cloneSectionTree(nextTree); return; }
       if (sectionLooksRef.current[s.id]) return;   // celle-ci a déjà son arbre : elle ne bouge pas
       out[s.id] = initialSectionTree(kindLooksRef.current, kind);
     });
@@ -6818,10 +6999,15 @@ const pinSectionLooksOfKind = (keepId, kind) => {
 // ONE row changed in the bar: the whole hierarchy goes through the two pure moves of
 // PART 4 (setRowSectionField / setGeneralSectionField). The persisted look of the
 // KIND follows the change, so the next molecule of that kind opens the same way.
+// LE GESTE PASSE L'ARBRE QU'IL VIENT D'ÉCRIRE à pinSectionLooksOfKind, qui en fait
+// DEUX choses selon la coche de la rangée General (voir chainLink) : il épingle les
+// autres sections du même type sur ce qu'elles affichent, et — coche cochée — il
+// écrit cet arbre dans les sections sœurs du MÊME fichier. Les quatre gestes de la
+// barre le font de la même façon, donc la coche vaut pour tous.
 const setSectionField = (id, kind, sub, field, value) => {
   leaveLightMode();
   const nextTree = setRowSectionField(sectionTreeOf(id, kind), kind, sub, field, value);
-  const pinned = pinSectionLooksOfKind(id, kind);
+  const pinned = pinSectionLooksOfKind(id, kind, nextTree);
   setSectionLooks((prev) => ({ ...prev, ...pinned, [id]: nextTree }));
   setKindLooks((prev) => {
     const next = { ...prev, [kind]: nextTree[kind] };
@@ -6849,7 +7035,7 @@ const setSectionMaterialField = (id, kind, sub, field, value) => {
   const patch = materialRowPatch(field, value);
   let nextTree = sectionTreeOf(id, kind);
   Object.keys(patch).forEach((f) => { nextTree = setRowSectionField(nextTree, kind, sub, f, patch[f]); });
-  const pinned = pinSectionLooksOfKind(id, kind);
+  const pinned = pinSectionLooksOfKind(id, kind, nextTree);
   setSectionLooks((prev) => ({ ...prev, ...pinned, [id]: nextTree }));
   setKindLooks((prev) => {
     const next = { ...prev, [kind]: nextTree[kind] };
@@ -6864,7 +7050,7 @@ const setSectionMaterialField = (id, kind, sub, field, value) => {
 const resetSectionRowLook = (id, kind, sub) => {
   leaveLightMode();
   const nextTree = resetSectionRow(sectionTreeOf(id, kind), kind, sub);
-  const pinned = pinSectionLooksOfKind(id, kind);
+  const pinned = pinSectionLooksOfKind(id, kind, nextTree);
   setSectionLooks((prev) => ({ ...prev, ...pinned, [id]: nextTree }));
   bumpSectionEpoch();
   requestSceneRepaint();
@@ -6872,7 +7058,7 @@ const resetSectionRowLook = (id, kind, sub) => {
 const resetSectionKindLook = (id, kind) => {
   leaveLightMode();
   const nextTree = resetSectionKind(sectionTreeOf(id, kind), kind);
-  const pinned = pinSectionLooksOfKind(id, kind);
+  const pinned = pinSectionLooksOfKind(id, kind, nextTree);
   setSectionLooks((prev) => ({ ...prev, ...pinned, [id]: nextTree }));
   bumpSectionEpoch();
   requestSceneRepaint();
@@ -7292,15 +7478,27 @@ const assignedAtomColorRef = useRef(assignedAtomColor);
 assignedAtomColorRef.current = assignedAtomColor;
 
 // ---- PyMOL-style selections & effects ----
-const [selections, setSelections] = useState([]);      // [{ name, expr }]
-const [selStyles, setSelStyles] = useState({});        // key -> { cartoon, ribbon, tube, ball, stick, sphere, surface, color, colorMode, transparency, sphereScale, radiusSphere, radiusBond, hideFor, mat }
+/* LA SESSION RELUE AU MONTAGE (voir loadPymolSession, tout en haut du fichier) :
+   les sélections du dernier script, leurs looks, les `set` qu'il a posés, la macro
+   elle-même et le drapeau « le script tient la scène » — c'est « remember the last
+   visualization settings and selection windows » de la demande. Un état unique la
+   lit UNE fois, et les sept états ci-dessous en partent : aucun d'eux ne peut donc
+   démarrer sur une autre session que les autres. */
+const [pymolSession] = useState(loadPymolSession);
+const [selections, setSelections] = useState(() => pymolSession.selections);   // [{ name, expr }]
+const [selStyles, setSelStyles] = useState(() => pymolSession.selStyles);       // key -> { cartoon, ribbon, tube, ball, stick, sphere, surface, color, colorMode, transparency, sphereScale, radiusSphere, radiusBond, hideFor, mat }
 // PyMOL's `set … , <selection>` commands are NOT looks: they are properties of
 // the ATOMS they name (« set sphere_scale, 0.6, headgroups » changes the beads
 // of the headgroups wherever they are drawn, now and later). They used to be
 // stored as a look keyed on their own expression — a row with no style at all —
 // so the macro's 0.6 / 0.8 beads never reached the beads the script drew. They
 // are kept aside here and SPLIT by the renderer.
-const [selOverrides, setSelOverrides] = useState([]);  // [{ kind, value, sel }]
+const [selOverrides, setSelOverrides] = useState(() => pymolSession.selOverrides);  // [{ kind, value, sel }]
+/* ⚠ LA SESSION EST RELUE ICI, RÉÉCRITE PLUS BAS (voir les deux effets après
+   `hideAll`) : ils lisent aussi `pymolScript`, `pymolActive`, `autoShowSel` et
+   `pymolScriptName`, qui sont déclarés plus bas — les placer ici lèverait
+   « Cannot access 'pymolScript' before initialization » au premier rendu (la
+   dépendance d'un useEffect est évaluée PENDANT le rendu). */
 // ── The leaflets the viewer MEASURES on the loaded structure ────────────────
 // Not `z>90`: the normal axis, the midplane and the two head clusters come from
 // the geometry (see membraneLeafletsOf), and the four resulting selections —
@@ -7314,8 +7512,8 @@ const [membraneInfo, setMembraneInfo] = useState(null);
 // field of EVERY styling row (`material` / `roughness` / `metalness`), saved with
 // the other look fields: two molecules, or a protein and its lipids, can be drawn
 // with two different materials, which ONE panel for the whole scene could not do.
-const [pymolActive, setPymolActive] = useState(false);
-const [pymolScript, setPymolScript] = useState('');
+const [pymolActive, setPymolActive] = useState(() => pymolSession.active);
+const [pymolScript, setPymolScript] = useState(() => pymolSession.script);
 const [pymolLog, setPymolLog] = useState('');
 const [showPymolPanel, setShowPymolPanel] = useState(false);
 /* 💾 LA MACRO S'ENREGISTRE ICI (le rapport de cette session : « It should be
@@ -7324,10 +7522,39 @@ const [showPymolPanel, setShowPymolPanel] = useState(false);
    ligne de confirmation : la réserve est celle de la Library (localStorage,
    utils/pymolScripts.js), donc rien n'est dupliqué et la macro apparaît aussitôt
    dans la liste déroulante du panneau comme dans « Library → PyMOL Scripts ». */
-const [pymolScriptName, setPymolScriptName] = useState('');
+const [pymolScriptName, setPymolScriptName] = useState(() => pymolSession.name);
 const [pymolSaveMsg, setPymolSaveMsg] = useState('');
-const [autoShowSel, setAutoShowSel] = useState(true); // auto-visibility of parsed selections
+const [autoShowSel, setAutoShowSel] = useState(() => pymolSession.autoShow); // auto-visibility of parsed selections
 const [hideAll, setHideAll] = useState(false);        // remove every representation
+/* ── LA SESSION RELUE EST RÉÉCRITE À CHAQUE GESTE (voir savePymolSession) ──────
+   Le rechargement suivant retrouve la scène de celui-ci : les fenêtres de sélection,
+   leurs looks, les `set` posés sur les atomes, la macro et le drapeau « le script
+   tient la scène ». « Clear » vide tout, donc la relit vide : rien à nettoyer à la
+   main après lui. L'effet est ICI, après les sept états de la session, parce qu'un
+   tableau de dépendances est évalué PENDANT le rendu : le placer plus haut lèverait
+   « Cannot access 'pymolScript' before initialization ». */
+useEffect(() => {
+  savePymolSession({
+    selections,
+    selStyles,
+    selOverrides,
+    script: pymolScript,
+    active: pymolActive,
+    autoShow: autoShowSel,
+    name: pymolScriptName,
+  });
+}, [selections, selStyles, selOverrides, pymolScript, pymolActive, autoShowSel, pymolScriptName]);
+/* LA SESSION RELUE SE DIT DANS LE JOURNAL DU PANNEAU — c'est la seule façon de
+   savoir pourquoi la scène est celle d'un script (le §2 est alors tenu à l'écart,
+   voir l'effet des sections) et comment la reprendre en main. Le journal n'est
+   écrit QUE s'il est vide : un script relancé dans la même session écrit le sien. */
+useEffect(() => {
+  if (!pymolSession.selections.length) return;
+  const n = pymolSession.selections.length;
+  setPymolLog((l) => (l ? l
+    : `• Session restored from your last « Selections & PyMOL » run (${n} selection(s)). Change any §2 styling control, or press Clear, to hand the main structure back to the styling window.`));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, []);
 const [bgColor, setBgColor] = useState(() => {
   // Restored from localStorage like Fog / Shadows / Clipping, so a chosen
   // background survives a reload; anything unexpected falls back to the default.
@@ -10899,6 +11126,20 @@ const setSelMaterial = (key, fam, field, value) => {
   }
   setSelStyles({ ...selStylesRef.current, [key]: row });
 };
+/* ✕ D'UNE LIGNE DE SÉLECTION — ELLE DISPARAÎT POUR DE BON (le rapport : « allow
+   deleting selection window by hand »). Le geste n'effaçait que le LOOK, et la
+   ligne d'une sélection NOMMÉE (« select water, resn TIP3 ») revient de `selections`
+   à chaque rendu : elle restait donc dans la barre, sans style, et le ✕ semblait ne
+   rien faire. Il retire maintenant LA SÉLECTION AUSSI — la fenêtre s'en va —, et
+   comme la session persistée suit les deux états (voir savePymolSession), la ligne
+   ne revient pas davantage au rechargement suivant. Le chemin du retour est celui
+   de toute la barre : relancer la macro, ou la recharger depuis la Library. */
+const removeSelectionRow = (name) => {
+  const nx = { ...selStylesRef.current };
+  delete nx[name];
+  setSelStyles(nx);
+  setSelections((prev) => prev.filter((s) => s.name !== name));
+};
 
 // PDB anchor atoms used to build a SMALL, page-friendly key set when a residue
 // tick is clicked. Keeping selectedAtomKeys small (≈ the size of a normal 3D
@@ -12323,6 +12564,23 @@ const renderSectionRow = (sec, sub) => {
         follows,
         onReset: () => resetSectionRowLook(sec.id, kind, sub),
       })}
+      {/* ⛓ LA COCHE DE LA RANGÉE GENERAL — « In the general section of the styling
+          window put a tick to decide whether the command will be applied to the same
+          protein in different chains. » Elle n'est donc offerte QUE là, sur la
+          rangée General, et elle vaut pour TOUTES les commandes de cet espace
+          (style · color by · pastille · transp · rayons · matériau · ↺), puisque ce
+          sont les quatre gestes de la barre qui la lisent (voir pinSectionLooksOfKind
+          et chainLink). Le libellé dit ce que la demande dit, et la bulle dit où le
+          partage s'arrête : les sections du MÊME fichier, jamais une autre
+          structure chargée. */}
+      {sub === 'general' && (
+        <label className="flex items-center gap-1 text-[9px] font-bold text-slate-500 cursor-pointer select-none"
+          title={`Apply every command of « ${sec.name} » to the SAME kind in the other chains of this file — « the same protein in different chains ». Unticked (the default), a command stays on the molecule you gave it to. Only the sections of THIS file are reached: another loaded structure is not the same protein, and a section of another kind is never touched.`}>
+          <input type="checkbox" checked={chainLink} onChange={(e) => setChainLink(e.target.checked)}
+            className="accent-blue-600 w-3 h-3 shrink-0" />
+          all chains of this file
+        </label>
+      )}
       {isSurface && (
         <span className="text-[9px] text-slate-400 italic">a surface: the transparency above IS its opacity (100 % = wireframe-visible mesh)</span>
       )}
@@ -16007,9 +16265,9 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
                   {st.hidden ? '👁 Show' : '🙈 Hide'}
                 </button>
                 <button type="button"
-                  onClick={() => { const nx = { ...selStylesRef.current }; delete nx[s.name]; setSelStyles(nx); }}
+                  onClick={() => removeSelectionRow(s.name)}
                   className="px-1.5 py-0.5 text-[10px] font-bold rounded border bg-slate-50 text-slate-500 border-slate-200 hover:bg-red-50 hover:text-red-600"
-                  title="Remove this look for good (the selection itself stays: re-run the script to get its look back)">
+                  title="Remove this selection for good — the row leaves the bar AND the gesture is remembered (a reload will not bring it back). Re-run the script, or load it again from the Library, to get it back">
                   ✕
                 </button>
               </div>

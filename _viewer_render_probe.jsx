@@ -45,7 +45,31 @@ setGlobal('document', {
   addEventListener() {}, removeEventListener() {},
 });
 setGlobal('navigator', { userAgent: 'node' });
-setGlobal('localStorage', { getItem: () => null, setItem() {}, removeItem() {} });
+/* ── LE STOCKAGE : LE VIEWER SE MONTE AVEC UNE SESSION PyMOL RELUE ─────────
+   `localStorage` ne rend pas toujours null : la session du dernier script est là
+   (labViewerPymolSession, voir savePymolSession), donc le viewer se monte comme
+   après le RECHARGEMENT d'une expérience qui l'utilisait — états relus, effets de
+   persistance installés, barre des sélections peuplée. C'est ce chemin-là qui a jeté
+   « Cannot access 'pymolScript' before initialization » le temps d'une révision (la
+   dépendance d'un useEffect est évaluée PENDANT le rendu) : un probe qui ne monterait
+   le viewer que sur un stockage VIDE ne verrait jamais cette classe d'erreur. */
+const SEED = new Map([
+  ['labViewerPymolSession', JSON.stringify({
+    v: 1,
+    selections: [{ name: 'water', expr: 'resn TIP3' }],
+    selStyles: { water: { sphere: true, colorMode: 'element' } },
+    selOverrides: [{ kind: 'sphereScale', value: 0.6, sel: 'water' }],
+    script: 'show spheres, water',
+    active: true,
+    autoShow: true,
+    name: '',
+  })],
+]);
+setGlobal('localStorage', {
+  getItem: (k) => (SEED.has(k) ? SEED.get(k) : null),
+  setItem: (k, v) => { SEED.set(String(k), String(v)); },
+  removeItem: (k) => { SEED.delete(String(k)); },
+});
 setGlobal('matchMedia', () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
 setGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
 setGlobal('MutationObserver', class { observe() {} disconnect() {} takeRecords() { return []; } });

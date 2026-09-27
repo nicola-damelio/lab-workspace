@@ -151,6 +151,7 @@ const HIER = new Function([
   sliceFn(VIEW, 'defaultLookOf'),
   sliceFn(VIEW, 'effectiveSectionLook'),
   sliceDecl(VIEW, 'rowFollowsGeneral'),
+  sliceDecl(VIEW, 'ENVELOPE_STYLES'),
   sliceFn(VIEW, 'partStyleUnderGeneral'),
   sliceDecl(VIEW, 'RADIUS_FIELDS'),
   sliceDecl(VIEW, 'ATOM_DRAW_STYLES'),
@@ -612,7 +613,31 @@ eq(['head', 'tail', 'glycerol'].map((s) => gen(lipBall, 'lipid', s).follow), [tr
 //     toutes sur hide, et l’enveloppe de General décrit la molécule seule.
 const surf = HIER.setGeneralSectionField({}, 'protein', 'style', 'surface');
 eq(['backbone', 'sidechain'].map((s) => gen(surf, 'protein', s).style), ['hide', 'hide'],
-  'General surface → les parties passent sur hide (aucune ne dessine une surface)');
+  'General surface → les parties passent sur hide (aucune ne redessine l’enveloppe)');
+/* 5e-ter. LA LISTE D'UN MENU ET LA CASCADE SONT DEUX CHOSES — la demande de cette
+   session : « in the styling window backbone drop-down commands still do not have all
+   the values as general (but they should). » Le squelette lit maintenant LA LISTE DE
+   SA RANGÉE GENERAL — « Surface » compris, puisque sa rangée sait la dessiner —,
+   tandis que la CASCADE de General ne la lui impose pas : General recouvre déjà toute
+   la molécule, et une seconde enveloppe imbriquée ne montrerait rien de plus (voir
+   ENVELOPE_STYLES). Le choix reste possible SUR la rangée du squelette, où le menu
+   l'offre et où il dessine vraiment sa propre sélection. */
+const SPEC = new Function([
+  sliceObject(VIEW, 'STYLES'),
+  sliceObject(VIEW, 'COLORS'),
+  sliceObject(VIEW, 'SECTION_SUBSECTIONS'),
+  'return SECTION_SUBSECTIONS;',
+].join('\n'))();
+const rowOf = (kind, sub) => SPEC[kind].find((s) => s.sub === sub);
+eq(rowOf('protein', 'backbone').styles, rowOf('protein', 'general').styles,
+  'le menu des styles du squelette EST celui de sa rangée General');
+eq(rowOf('protein', 'backbone').colors, rowOf('protein', 'general').colors,
+  '…et ses colorations aussi (les deux menus ne peuvent plus diverger)');
+ok(rowOf('protein', 'backbone').styles.includes('surface'),
+  '…donc « Surface » y est offert, comme le rapport le demande');
+eq(rowOf('nucleic', 'backbone').styles, rowOf('nucleic', 'general').styles,
+  '…le squelette d’un acide nucléique aussi (« trace » et « surface » compris)');
+eq(rowOf('nucleic', 'backbone').colors, rowOf('nucleic', 'general').colors, '…et ses colorations');
 // 5e-bis. …ET CETTE ENVELOPPE EST PERMÉABLE : le regard doit la traverser. NGL 2.4 met
 //     `opaqueBack` à TRUE par défaut sur une surface (molecularsurface-representation.ts:160 ;
 //     l'`if` de buffer.ts:553-555 pose alors le define OPAQUE_BACK), et son shader force
@@ -653,6 +678,8 @@ eq(gen(over, 'protein', 'backbone').follow, true, '…et la rangée repasse sous
 eq(gen(over, 'protein', 'backbone').sphere, 1.8, '…en gardant le rayon qui était descendu');
 // 5h. LE CÂBLAGE : une fonction à part pour la règle, un nom pour les deux rayons.
 has('const partStyleUnderGeneral = (kind, sub, value) => (', 'la cascade est une fonction à part (elle se teste seule)');
+has("const ENVELOPE_STYLES = ['surface', 'mesh'];",
+  '…et l’enveloppe a son nom : une enveloppe ne se partage pas entre General et ses parties (elle est imbriquée dans la sienne)');
 has("subsectionSpec(kind, sub).styles.includes(value) ? value : 'hide'", '…qui lit le vocabulaire de LA rangée');
 has("const RADIUS_FIELDS = ['sphere', 'bond'];", '…et les deux rayons ont leur nom');
 has('next[field] = value;', '…le nombre est écrit dans CHAQUE partie, déviée ou non');

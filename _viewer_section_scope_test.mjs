@@ -109,6 +109,7 @@ const HIER = new Function([
   sliceFn(VIEW, 'defaultLookOf'),
   sliceFn(VIEW, 'effectiveSectionLook'),
   sliceDecl(VIEW, 'rowFollowsGeneral'),
+  sliceDecl(VIEW, 'ENVELOPE_STYLES'),
   sliceFn(VIEW, 'partStyleUnderGeneral'),
   sliceDecl(VIEW, 'RADIUS_FIELDS'),
   sliceDecl(VIEW, 'ATOM_DRAW_STYLES'),
@@ -175,10 +176,11 @@ const styled = HIER.setGeneralSectionField({}, 'protein', 'style', 'ribbon');
 eq(gen(styled, 'protein', 'sidechain').style, 'hide', 'la cascade de style n’a pas bougé (une chaîne latérale ne dessine pas de ruban)');
 eq(eff(styled, 'protein', 'backbone').style, 'ribbon', '…et le squelette prend le ruban, comme avant');
 
-/* ══ §2. UNE SECTION NE PARLE QUE POUR ELLE ═══════════════════════════════════ */
-// La règle livrée est un pur calcul de patch : on l’exécute avec de fausses
-// références (le catalogue des sections, les arbres déjà écrits, le look du type).
-const PIN = new Function('sectionCatalogRef', 'sectionLooksRef', 'kindLooksRef', [
+/* ══ §2. UNE SECTION NE PARLE QUE POUR ELLE — ET LA COCHE DE LA RANGÉE GENERAL ══
+   La règle livrée est un pur calcul de patch : on l’exécute avec de fausses
+   références (le catalogue des sections, les arbres déjà écrits, le look du type,
+   la coche « le même projet dans les autres chaînes »). */
+const PIN = new Function('sectionCatalogRef', 'sectionLooksRef', 'kindLooksRef', 'chainLinkRef', [
   sliceObject(VIEW, 'DEFAULT_ATOM_COLORS'),
   sliceObject(VIEW, 'KIND_CATEGORY'),
   sliceDecl(VIEW, 'DEFAULT_ELEMENT_COLOR'),
@@ -189,6 +191,8 @@ const PIN = new Function('sectionCatalogRef', 'sectionLooksRef', 'kindLooksRef',
   sliceDecl(VIEW, 'subsectionSpec'),
   sliceFn(VIEW, 'defaultLookOf'),
   sliceFn(VIEW, 'initialSectionTree'),
+  sliceDecl(VIEW, 'sameMoleculeOf'),
+  sliceDecl(VIEW, 'cloneSectionTree'),
   sliceFn(VIEW, 'pinSectionLooksOfKind'),
   'return { pinSectionLooksOfKind, initialSectionTree };',
 ].join('\n'));
@@ -206,7 +210,7 @@ const kindLooks = {
   protein: { general: { style: 'cartoon', colorBy: 'sstruc', solidColor: 0x101010, opacity: 0, sphere: 1, bond: 1, material: 'auto', roughness: null, metalness: null, follow: false } },
   lipid: {},
 };
-const pin = PIN({ current: catalogOf() }, { current: {} }, { current: kindLooks });
+const pin = PIN({ current: catalogOf() }, { current: {} }, { current: kindLooks }, { current: false });
 
 const pinned = pin.pinSectionLooksOfKind('main::protein|A', 'protein');
 eq(Object.keys(pinned).sort(), ['main::protein|B', 'x1::protein|A'],
@@ -225,20 +229,60 @@ eq(pinned['x1::protein|A'].protein.general.solidColor, 0x101010,
   'chaque section épinglée repart avec SON arbre (aucun partage d’objet)');
 eq(kindLooks.protein.general.solidColor, 0x101010, '…et le look du type n’est pas modifié par le patch');
 
-// Une section qui a DÉJÀ son arbre n’est jamais réécrite.
-const pin2 = PIN({ current: catalogOf() }, { current: { 'main::protein|B': { general: { style: 'hide' } } } }, { current: kindLooks });
+// Une section qui a DÉJÀ son arbre n’est jamais réécrite (coche décochée).
+const pin2 = PIN({ current: catalogOf() }, { current: { 'main::protein|B': { general: { style: 'hide' } } } }, { current: kindLooks }, { current: false });
 eq(Object.keys(pin2.pinSectionLooksOfKind('main::protein|A', 'protein')), ['x1::protein|A'],
   'une section qui a déjà son arbre est laissée telle quelle');
 
-// Le câblage : les QUATRE gestes de la barre passent par cet épinglage, et la
-// propagation volontaire reste le 🎨 Copy.
-has('const pinSectionLooksOfKind = (keepId, kind) => {', 'la règle existe (une seule implémentation)');
-eq(countOf(/const pinned = pinSectionLooksOfKind\(id, kind\);/g), 4,
+/* ══ §2bis. LA COCHE DE LA RANGÉE GENERAL : « THE SAME PROTEIN IN DIFFERENT CHAINS » ══
+   La demande : « In the general section of the styling window put a tick to decide
+   whether the command will be applied to the same protein in different chains. »
+   Cochée, le geste est écrit dans les sections sœurs du MÊME FICHIER — celles qui
+   ont déjà leur arbre comprises —, et la règle est exécutée ici sur le catalogue du
+   §2 : une autre STRUCTURE (x1) n’est pas « la même protéine ». */
+const GESTE = pin.initialSectionTree(kindLooks, 'protein');
+GESTE.protein.general.style = 'ribbon';
+const linked = PIN({ current: catalogOf() }, { current: {} }, { current: kindLooks }, { current: true })
+  .pinSectionLooksOfKind('main::protein|A', 'protein', GESTE);
+eq(linked['main::protein|B'].protein.general.style, 'ribbon',
+  'coche cochée : l’autre CHAÎNE du même fichier reçoit la commande (« the same protein in different chains »)');
+eq(Object.keys(linked).sort(), ['main::protein|B', 'x1::protein|A'],
+  '…les sections du même fichier sont concernées, et les autres structures restent épinglées');
+eq(linked['x1::protein|A'].protein.general.style, 'cartoon',
+  '…la seconde STRUCTURE garde ce qu’elle affichait (ce n’est pas « la même protéine »)');
+ok(!('main::lipid|A' in linked), '…et la section d’un autre type n’est jamais touchée');
+eq(linked['main::protein|B'], GESTE, 'la sœur reçoit l’arbre du geste');
+ok(linked['main::protein|B'] !== GESTE, '…mais c’est une COPIE : deux sections ne partagent jamais un objet');
+linked['main::protein|B'].protein.general.style = 'tube';
+eq(GESTE.protein.general.style, 'ribbon', '…donc toucher l’une ne touche pas l’autre');
+
+// Une sœur qui avait DÉJÀ son arbre SUIT la commande quand la coche est cochée :
+// c’est tout l’objet du geste (sinon elle resterait sur son ancien look).
+const had = PIN({ current: catalogOf() }, { current: { 'main::protein|B': { general: { style: 'hide' } } } }, { current: kindLooks }, { current: true })
+  .pinSectionLooksOfKind('main::protein|A', 'protein', GESTE);
+eq(had['main::protein|B'].protein.general.style, 'ribbon',
+  'une sœur qui avait déjà son arbre est RÉÉCRITE par la commande cochée');
+
+// Le câblage : les QUATRE gestes de la barre passent l’arbre qu’ils viennent
+// d’écrire à cet épinglage, et la propagation volontaire reste le 🎨 Copy.
+has('const pinSectionLooksOfKind = (keepId, kind, nextTree = null) => {',
+  'la règle existe (une seule implémentation), et elle reçoit l’arbre du geste');
+eq(countOf(/const pinned = pinSectionLooksOfKind\(id, kind, nextTree\);/g), 4,
   'un seul appel par geste — setSectionField · setSectionMaterialField · ↺ d’une rangée · ↺ d’une section');
 eq(countOf(/setSectionLooks\(\(prev\) => \(\{ \.\.\.prev, \.\.\.pinned, \[id\]: nextTree \}\)\);/g), 4,
   '…et les quatre écrivent le patch épinglé en même temps que le leur');
 has('const copySectionsToAll = () => {', 'la propagation VOLONTAIRE garde son geste dédié (🎨 Copy)');
 has('onClick={copySectionsToAll}', '…et son bouton');
+// LA COCHE ELLE-MÊME : dans la rangée GENERAL, et mémorisée.
+has('const [chainLink, setChainLink] = useState(() => {', 'la coche est un état dédié');
+has("localStorage.setItem('labViewerChainLink', chainLink ? 'on' : 'off');",
+  '…persisté, donc une préférence, pas un geste à refaire');
+has('const chainLinkRef = useRef(chainLink);', '…et lu au moment du geste (la règle est pure, elle ne lit pas d’état React)');
+has('{sub === \'general\' && (', 'la coche vit dans la rangée GENERAL de la fenêtre de styling (la demande : « in the general section … put a tick »)');
+has('all chains of this file', '…avec son libellé');
+has('checked={chainLink} onChange={(e) => setChainLink(e.target.checked)}', '…et elle écrit l’état dédié');
+has("const sameMoleculeOf = (a, b) => String(a).split('::')[0] === String(b).split('::')[0];",
+  'le partage s’arrête au FICHIER : « the same protein in different chains », pas « une autre structure »');
 
 /* ══ §3. « COLOR BY : LIPID TYPE » D'UNE RANGÉE DE 🧫 MEMBRANE ════════════════ */
 // La correspondance « Color by » → schéma NGL, exécutée : c'est ELLE que la rangée
