@@ -126,7 +126,7 @@ frag('[ImageBuilder] the merge is sorted by panel letter', IB,
   '.sort((a, b) => comparePanelLetters(a.letter, b.letter) || (a.y - b.y) || (a.x - b.x))');
 frag('[ImageBuilder] letter rank helper', IB, 'const panelLetterRank = (letter) => {');
 frag('[ImageBuilder] comparator helper', IB, 'const comparePanelLetters = (a, b) => {');
-frag('[ImageBuilder] one caption text is drawn at the bottom', IB, '>{effectiveGlobalCaption}</text>');
+frag('[ImageBuilder] the caption is drawn LINE BY LINE (the wrapped effective caption)', IB, '>{capLine}</text>');
 frag('[ImageBuilder] the toolbar says the order is the letter order', IB,
   'Global caption (click to edit — merges the object sub-captions in letter order)');
 frag('[ImageBuilder] …and explains it on hover', IB, 'merges the panel sub-captions in LETTER order (A: … · B: … · C: …)');

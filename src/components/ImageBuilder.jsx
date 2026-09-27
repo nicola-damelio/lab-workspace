@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import {
   readLibrary, readProjectLibrary, readVisibleProjectLibrary, moveLibraryItem, moveLibraryItemOnDrive, reorderLibraryItem,
@@ -36,7 +36,7 @@ import { loadProjects, saveProjectsRescued, genProjectId, projectAccessFor, visi
 import { getDriveRootName } from '../utils/driveUpload';
 import { projectImagesFolderLabel } from '../utils/driveNaming';
 import { queuePendingFigureScroll } from '../utils/pendingFigureScroll';
-import { figureStyleTag, normalizeFigureStyle } from '../utils/figureStyle';
+import { figureStyleTag, normalizeFigureStyle, normalizeFigureColor } from '../utils/figureStyle';
 import {
   queueFigureRecaptures, figureRecaptureSummary, subscribeFigureRecapture, hasFreshFigureRecapture,
   stopFigureRecaptures
@@ -81,6 +81,119 @@ const letterFontCss = (font) => String(font == null ? '' : font).trim() || LETTE
 // bas-droite — assez pour ne pas se cacher sous l'original, assez peu pour
 // rester « juste à côté ».
 const TEXT_COPY_STEP = 3;
+
+/* ── LE CAPTION DU BAS DE L'IMAGE ───────────────────────────────────────────
+   Le texte qui légende la planche vit dans un BANDEAU sous le canvas. Trois
+   familles de réglages, et elles appartiennent toutes à la COMPOSITION (elles
+   partent avec le canvas, exactement comme la définition des lettres) :
+     • sa PRÉSENCE — « Show caption » : décoché, le caption ne s'affiche plus du
+       tout, ni à l'écran ni dans les exports. Sa hauteur tombe à ZÉRO, donc la
+       boîte du canvas, le zoom, le centrage du plein écran, la position des
+       éditeurs et la hauteur du PNG exporté suivent tout seuls ;
+     • sa MISE EN FORME — police, taille (pt), couleur, fond (background), gras,
+       italique ;
+     • son ALIGNEMENT — gauche, centré, droite ou justifié.
+   Le texte est WRAPPÉ sur la largeur de la toile : sans ça un caption long
+   dépassait de la planche (il était dessiné sur une seule ligne, centrée, et
+   débordait des deux côtés) et « justifié » n'aurait rien à justifier.
+   Les valeurs par défaut sont EXACTEMENT la mise en forme historique du caption
+   (12 pt, gras, centré, #1f2937, sans fond) : une planche enregistrée avant que
+   ces réglages existent s'ouvre donc sans changer d'allure. */
+const DEFAULT_CAPTION_PT = 12;      // la taille du caption historique
+const CAPTION_MIN_PT = 4;
+const CAPTION_MAX_PT = 48;
+const CAPTION_MARGIN_MM = 3;        // marge gauche / droite du texte (mm)
+const CAPTION_PAD_MM = 4;           // respiration au-dessus / au-dessous (mm)
+const CAPTION_LINE_MM = 1.28;       // hauteur d'une ligne / taille de la police
+const CAPTION_CHAR_MM = 0.5;        // largeur moyenne d'un caractère / taille
+const CAPTION_CHAR_MONO_MM = 0.6;   // … pour une police à chasse fixe
+const CAPTION_MONO_RE = /mono|courier|consolas|menlo|monaco/i;
+const CAPTION_ALIGN_CHOICES = [
+  { value: 'left', label: 'Left' },
+  { value: 'center', label: 'Centred' },
+  { value: 'right', label: 'Right' },
+  { value: 'justify', label: 'Justified' }
+];
+const CAPTION_ALIGNS = CAPTION_ALIGN_CHOICES.map((a) => a.value);
+const DEFAULT_CAPTION_STYLE = {
+  font: '', fontSize: DEFAULT_CAPTION_PT, color: '#1f2937', bold: true, italic: false, align: 'center', bg: ''
+};
+// Le style d'un caption, VALIDÉ à chaque écriture (les contrôles, les deux
+// chemins de relecture) : une taille hors bornes retombe sur la taille
+// historique, une couleur qui n'est pas un #rrggbb sur celle du profil de
+// figure, une police qui n'est pas une pile de polices sur la police de l'app —
+// un canvas importé ne peut donc pas repeindre autre chose que le caption.
+const normalizeCaptionStyle = (style) => {
+  const s = style && typeof style === 'object' ? style : {};
+  const pt = Number(s.fontSize);
+  return {
+    font: normalizeFigureStyle({ fontFamily: s.font }).fontFamily,
+    fontSize: Number.isFinite(pt) && pt > 0
+      ? Math.min(CAPTION_MAX_PT, Math.max(CAPTION_MIN_PT, Math.round(pt)))
+      : DEFAULT_CAPTION_PT,
+    color: normalizeFigureColor(s.color) || DEFAULT_CAPTION_STYLE.color,
+    bold: s.bold === undefined ? DEFAULT_CAPTION_STYLE.bold : !!s.bold,
+    italic: !!s.italic,
+    align: CAPTION_ALIGNS.includes(String(s.align)) ? String(s.align) : DEFAULT_CAPTION_STYLE.align,
+    bg: normalizeFigureColor(s.bg) // '' = pas de fond
+  };
+};
+const captionIsMono = (font) => CAPTION_MONO_RE.test(String(font == null ? '' : font));
+// Le texte DÉCOUPÉ en lignes qui tiennent dans la largeur de la toile. Une
+// mesure exacte demanderait les métriques de la police ; on estime (largeur
+// moyenne d'un caractère × nombre de caractères), ce qui est assez pour
+// qu'aucun mot ne sorte de la planche et reste DÉTERMINISTE : le même texte
+// donne toujours les mêmes lignes, donc la même hauteur de bandeau, donc le
+// même canvas (le test exécute ce miroir).
+const captionWrapLines = (text, style, canvasW) => {
+  const t = String(text == null ? '' : text).replace(/\s+/g, ' ').trim();
+  if (!t) return [];
+  const pt = Number(style && style.fontSize) > 0 ? Number(style.fontSize) : DEFAULT_CAPTION_PT;
+  const charMm = ptToMm(pt) * (captionIsMono(style && style.font) ? CAPTION_CHAR_MONO_MM : CAPTION_CHAR_MM);
+  const wrapW = Math.max(8, Number(canvasW) - 2 * CAPTION_MARGIN_MM);
+  const perLine = Math.max(8, Math.floor(wrapW / charMm));
+  const lines = [];
+  let cur = '';
+  for (const word of t.split(' ')) {
+    const next = cur ? `${cur} ${word}` : word;
+    if (next.length <= perLine) { cur = next; continue; }
+    if (cur) lines.push(cur);
+    cur = word;
+    // Un mot plus long qu'une ligne (une URL, une formule sans espace) est
+    // coupé, jamais laissé dépasser de la planche.
+    while (cur.length > perLine) { lines.push(cur.slice(0, perLine)); cur = cur.slice(perLine); }
+  }
+  if (cur) lines.push(cur);
+  return lines;
+};
+// LA GÉOMÉTRIE DU BANDEAU, calculée une fois par rendu : les lignes, la hauteur
+// d'une ligne, la hauteur du bloc de texte et — le chiffre qui compte partout
+// ailleurs — la hauteur RÉSERVÉE sous le canvas (`bandH`). C'est elle qui donne
+// la boîte du canvas, son ratio, le zoom, le centrage du plein écran, la
+// position des éditeurs posés sur la toile et la hauteur du PNG exporté.
+const captionBandGeometry = (text, style, canvasW) => {
+  const st = style || DEFAULT_CAPTION_STYLE;
+  const lines = captionWrapLines(text, st, canvasW);
+  const fontMm = ptToMm(st.fontSize || DEFAULT_CAPTION_PT);
+  const lineH = fontMm * CAPTION_LINE_MM;
+  const blockH = lines.length * lineH;
+  return {
+    lines,
+    lineH,
+    fontMm,
+    blockH,
+    ascent: fontMm * 0.95, // ligne de base dans la hauteur d'une ligne
+    wrapW: Math.max(8, Number(canvasW) - 2 * CAPTION_MARGIN_MM),
+    bandH: lines.length ? blockH + 2 * CAPTION_PAD_MM : 0
+  };
+};
+// Le bandeau garde la place d'UNE ligne pendant qu'on écrit le caption (sinon
+// l'éditeur se poserait sur le bord du canvas), et ZÉRO quand le caption ne doit
+// pas apparaître.
+const captionBandHeightMm = (geom, editing, emptyLineH) => (
+  geom.bandH > 0 ? geom.bandH : (editing ? emptyLineH : 0)
+);
+
 
 // In-memory session cache of the Image Builder state (keyed like the
 // localStorage entry). The canvas is persisted to localStorage too, but large
@@ -498,6 +611,16 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   const choosePanelDock = (dock) => setPanelDock(saveObjectWindowDock(dock));
   const dockIsSide = objectWindowDockIsSide(panelDock);
   const [globalCaption, setGlobalCaption] = useState('');     // figure-wide caption at the bottom
+  // ── LE CAPTION DU BAS : EST-IL LÀ, ET COMMENT EST-IL ÉCRIT ────────────────
+  // Deux réglages de la COMPOSITION (voir captionPayload / les deux relectures) :
+  //   • `captionShow` — le caption reste au bas de l'image, ou n'apparaît pas du
+  //     tout (bandeau de hauteur nulle : écran ET exports) ;
+  //   • `captionStyle` — police, taille (pt), couleur, fond, gras, italique,
+  //     alignement (gauche / centré / droite / justifié).
+  // Par défaut : la mise en forme historique du caption (DEFAULT_CAPTION_STYLE),
+  // donc aucune planche déjà enregistrée ne change d'allure en s'ouvrant ici.
+  const [captionShow, setCaptionShow] = useState(true);
+  const [captionStyle, setCaptionStyle] = useState(() => ({ ...DEFAULT_CAPTION_STYLE }));
   // Size the figure-wide letter-size control falls back to when the canvas holds
   // no panel yet: a size typed before the first panel is added is remembered for
   // it (see setLetterSizeAll / currentLetterPt).
@@ -808,7 +931,48 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     .sort((a, b) => comparePanelLetters(a.letter, b.letter) || (a.y - b.y) || (a.x - b.x))
     .map((o) => `${o.letter || '?'}: ${String(o.caption).trim()}`).join(' · ');
   const effectiveGlobalCaption = String(globalCaption || '').trim() ? globalCaption : autoGlobalCaption;
-  const captionH = (effectiveGlobalCaption.trim() || editingCaption) ? 14 : 0; // reserved caption band (mm)
+  // ── LE CAPTION DU BAS : GÉOMÉTRIE, ÉCRITURES ET PORTEUR ────────────────────
+  // Le texte effectivement légendé est celui du canvas s'il y en a un, sinon la
+  // fusion des sous-captions. « Show caption » décoché met `captionH` à zéro :
+  // le caption disparaît de l'écran ET des exports (la boîte du canvas, son
+  // ratio, le zoom, le centrage du plein écran, la position des éditeurs et la
+  // hauteur du PNG exporté se déduisent tous de ce seul chiffre).
+  const capGeom = captionBandGeometry(captionShow ? effectiveGlobalCaption : '', captionStyle, canvasW);
+  const capEmptyH = ptToMm(captionStyle.fontSize) * CAPTION_LINE_MM + 2 * CAPTION_PAD_MM; // la place d'une ligne vide
+  const captionH = captionBandHeightMm(capGeom, editingCaption, capEmptyH); // reserved caption band (mm)
+  // L'ancrage d'une ligne selon l'alignement. « Justifié » se lit comme du texte
+  // de gauche (voir le `textLength` du rendu : les lignes pleines sont étirées
+  // de marge à marge, la dernière reste naturelle).
+  const capAnchor = captionStyle.align === 'center' ? 'middle' : captionStyle.align === 'right' ? 'end' : 'start';
+  const capX = captionStyle.align === 'center'
+    ? canvasW / 2
+    : (captionStyle.align === 'right' ? canvasW - CAPTION_MARGIN_MM : CAPTION_MARGIN_MM);
+  const capBaseY = (i) => canvasH + CAPTION_PAD_MM + i * capGeom.lineH + capGeom.ascent;
+  const capClickTitle = "Click to edit the caption — it merges every object's sub-caption";
+  // Les écritures du réglage (les deux barres portent les MÊMES contrôles) et
+  // l'entrée « écrire le caption » : le clic sur le texte, ou sur la ligne des
+  // options. Ouvrir l'éditeur RÉ-AFFICHE le caption — cliquer le caption d'une
+  // planche qui ne l'affiche pas ne peut donc pas laisser un éditeur orphelin.
+  const setCaptionField = (key, value) => setCaptionStyle((prev) => normalizeCaptionStyle({ ...prev, [key]: value }));
+  const setCaptionSize = (pt) => {
+    const n = Number(pt);
+    if (!Number.isFinite(n) || n <= 0) return; // empty / invalid field → keep the current size
+    setCaptionStyle((prev) => normalizeCaptionStyle({ ...prev, fontSize: n }));
+  };
+  const toggleCaptionBg = (on) => setCaptionStyle((prev) => normalizeCaptionStyle({ ...prev, bg: on ? (prev.bg || '#ffffff') : '' }));
+  const openCaptionEditor = () => { setCaptionShow(true); setSelectedId(null); setEditingCaption(true); };
+  // LE CAPTION VOYAGE AVEC LA COMPOSITION, comme la définition des lettres :
+  // les trois porteurs (état de session / localStorage, canvas publié, sauvegarde
+  // automatique) passent tous par ici — une seule définition, donc les mêmes
+  // clés partout (voir les deux relectures dans ce fichier). C'est un
+  // `useCallback` parce qu'un des porteurs est un `useEffect` : la fabrique est
+  // ainsi une VRAIE dépendance (stable tant que le caption ne change pas)
+  // au lieu d'être recopiée dans la liste des dépendances.
+  const captionPayload = useCallback(
+    () => ({ captionShow, captionStyle: normalizeCaptionStyle(captionStyle) }),
+    [captionShow, captionStyle]
+  );
+
 
   // The SVG that is actually visible (fullscreen overlay when open).
   const activeSvgEl = () => (isFullScreen ? svgFsRef : svgRef).current;
@@ -879,6 +1043,12 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
           setHydrateTick((t) => t + 1);
         }
         if (data.globalCaption !== undefined) setGlobalCaption(data.globalCaption);
+        // Le caption du bas (présence + style) revient avec le canvas. Une
+        // composition enregistrée AVANT ces réglages n'a pas les clés : elle
+        // garde la mise en forme historique (DEFAULT_CAPTION_STYLE), donc le
+        // caption tel qu'il était.
+        if (data.captionShow !== undefined) setCaptionShow(!!data.captionShow);
+        if (data.captionStyle) setCaptionStyle(normalizeCaptionStyle(data.captionStyle));
         // Arrow annotations: they hold no pixels, so the persisted list IS the
         // live one — nothing to re-resolve. A canvas saved before arrows
         // existed simply has no value here and keeps the empty list. The SHAPES
@@ -1029,7 +1199,9 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
       // entrées de bibliothèque où ce canvas est enregistré) : sans elle, revenir
       // sur la page faisait oublier l'entrée et la sauvegarde automatique en
       // ajoutait une copie — « j'ai plusieurs canvas enregistrés dans le projet ».
-      const payload = { canvasW, canvasH, gridCols, gridRows, showPanelBorders, showGridLines, keepAspect, objects: persisted, arrows, shapes, focusObjId, globalCaption, isFullScreen, canvasKey, canvasEntries, canvasHome, canvasLabel };
+      // Le caption du bas (présence + style) part avec les autres réglages de la
+      // composition — mêmes clés dans les trois porteurs (voir captionPayload).
+      const payload = { canvasW, canvasH, gridCols, gridRows, showPanelBorders, showGridLines, keepAspect, objects: persisted, arrows, shapes, focusObjId, globalCaption, isFullScreen, canvasKey, canvasEntries, canvasHome, canvasLabel, ...captionPayload() };
       // Always keep the freshest copy in memory (survives module remounts even
       // when localStorage is full), then best-effort write localStorage:
       // rememberSessionCanvas keeps BOTH the lightweight payload AND the live
@@ -1038,7 +1210,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
       rememberSessionCanvas(storageKey, payload, objects || []);
       localStorage.setItem(storageKey, JSON.stringify(payload));
     } catch { /* localStorage may be full — the session cache above still holds the state */ }
-  }, [canvasW, canvasH, gridCols, gridRows, showPanelBorders, showGridLines, keepAspect, objects, arrows, shapes, focusObjId, globalCaption, isFullScreen, canvasKey, canvasEntries, canvasHome, canvasLabel, storageKey]);
+  }, [canvasW, canvasH, gridCols, gridRows, showPanelBorders, showGridLines, keepAspect, objects, arrows, shapes, focusObjId, globalCaption, isFullScreen, canvasKey, canvasEntries, canvasHome, canvasLabel, captionPayload, storageKey]);
 
   // Async "hydrate" pass — after objects are (re)loaded from a persisted canvas
   // or an undo snapshot, their images may reference Google Drive (the real
@@ -1366,6 +1538,9 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     setEditingObjCaption(null);
     setEditingCaption(false);
     setPlaceTextMode(false);
+    // Le caption : le TEXTE repart vide, mais sa mise en forme (police, taille,
+    // couleur, fond, gras, italique, alignement) et sa présence sont des
+    // réglages de FORMAT — elles restent, comme la grille et la taille du canvas.
     setGlobalCaption('');
     setFocusObjId(null);
     // Detach from the stored canvas: with no known entry the next "💾 Save
@@ -2952,7 +3127,10 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
         letterStyle: letterStyleNow(),
         objects: (objects || []).map(thumbnailsOf),
         arrows: arrows || [],
-        shapes: shapes || []
+        shapes: shapes || [],
+        // Le caption du bas (présence + style) : comme la définition des lettres,
+        // il fait partie du canvas — une planche rouverte le retrouve.
+        ...captionPayload()
       }
     });
     if (!entry) return null;
@@ -3174,7 +3352,9 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
       objects: (objects || []).map(thumbnailsOf),
       arrows: arrows || [],
       shapes: shapes || [],
-      updatedAt: new Date().toISOString()
+      updatedAt: new Date().toISOString(),
+      // Le caption du bas (présence + style) — voir captionPayload.
+      ...captionPayload()
     };
     const key = `${target || 'dataset'}|${label}|${JSON.stringify(canvasData)}`;
     if (!force && !publish && key === autoSaveKeyRef.current) return null;
@@ -3221,7 +3401,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
   useEffect(() => {
     const t = setTimeout(() => { try { if (autoSaveRef.current) autoSaveRef.current({}); } catch { /* ignore */ } }, AUTO_SNAPSHOT_MS);
     return () => clearTimeout(t);
-  }, [objects, arrows, canvasW, canvasH, gridCols, gridRows, showPanelBorders, showGridLines, keepAspect, globalCaption, canvasLabel, canvasHome, canvasEntries, canvasKey, projectId]);
+  }, [objects, arrows, canvasW, canvasH, gridCols, gridRows, showPanelBorders, showGridLines, keepAspect, globalCaption, canvasLabel, canvasHome, canvasEntries, canvasKey, projectId, captionShow, captionStyle]);
 
   // Passe cloud : après 8 s de calme, et au plus une fois par minute.
   useEffect(() => {
@@ -3231,7 +3411,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
       try { if (autoSaveRef.current) autoSaveRef.current({ publish: true }); } catch { /* ignore */ }
     }, AUTO_PUBLISH_QUIET_MS);
     return () => clearTimeout(t);
-  }, [objects, arrows, canvasW, canvasH, gridCols, gridRows, showPanelBorders, showGridLines, keepAspect, globalCaption, canvasLabel, canvasHome, canvasEntries, canvasKey, projectId]);
+  }, [objects, arrows, canvasW, canvasH, gridCols, gridRows, showPanelBorders, showGridLines, keepAspect, globalCaption, canvasLabel, canvasHome, canvasEntries, canvasKey, projectId, captionShow, captionStyle]);
 
   // On quitte (autre module, rechargement, onglet fermé) : la dernière
   // composition est écrite TOUT DE SUITE — la passe différée ne partirait
@@ -3329,6 +3509,11 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
     if (cd.showGridLines !== undefined) setShowGridLines(!!cd.showGridLines);
     if (cd.keepAspect !== undefined) setKeepAspect(!!cd.keepAspect);
     if (cd.globalCaption !== undefined) setGlobalCaption(cd.globalCaption);
+    // Le caption du bas (présence + style) — même règle que la police des
+    // lettres : une composition enregistrée avant ces réglages n'a pas les clés
+    // et garde la mise en forme historique, donc le caption tel qu'il était.
+    if (cd.captionShow !== undefined) setCaptionShow(!!cd.captionShow);
+    if (cd.captionStyle) setCaptionStyle(normalizeCaptionStyle(cd.captionStyle));
     // The canvas-wide LETTER definition (size / colour / bold / FONT) is part of
     // the saved canvas: it comes back with the panels, and a canvas saved with no
     // panel left still remembers it.
@@ -4870,12 +5055,40 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
           </g>
         );
       })}
+      {/* ── LE CAPTION DU BAS ────────────────────────────────────────────────
+          Rien n'est écrit en dur ici : la présence, la police, la taille, la
+          couleur, le fond, le gras, l'italique et l'alignement viennent des
+          options du canvas / de la barre du plein écran (voir CAPTION_* et
+          `captionStyle` en tête de fichier). Chaque ligne est un `<text>` : le
+          texte est WRAPPÉ sur la largeur de la planche (captionWrapLines), donc
+          « justifié » a un sens — les lignes pleines sont étirées de marge à
+          marge par `textLength`, la dernière reste naturelle. La police est
+          écrite EXPLICITEMENT (une pile de polices) : un export est rendu hors
+          du CSS de la page. Rien ne porte `data-selection-ui`, donc le caption
+          part dans TOUS les exports (PNG, canvas sauvé, insertion). */}
       {captionH > 0 && (
-        <text x={canvasW / 2} y={canvasH + captionH - 4} fontSize={ptToMm(12)} fill="#1f2937" textAnchor="middle" fontWeight="bold"
-          style={{ cursor: 'text', pointerEvents: 'auto' }}
-          title="Click to edit the caption — it merges every object's sub-caption"
-          onClick={(e) => { e.stopPropagation(); setSelectedId(null); setEditingCaption(true); }}
-        >{effectiveGlobalCaption}</text>
+        <g>
+          {captionStyle.bg && capGeom.lines.length > 0 && (
+            <rect x={CAPTION_MARGIN_MM} y={canvasH + CAPTION_PAD_MM} width={capGeom.wrapW} height={capGeom.blockH}
+              fill={captionStyle.bg} />
+          )}
+          {capGeom.lines.map((capLine, i) => {
+            const capJustify = captionStyle.align === 'justify' && i < capGeom.lines.length - 1;
+            return (
+              <text key={`cap${i}`} x={capX} y={capBaseY(i)} fontSize={capGeom.fontMm} fill={captionStyle.color}
+                fontFamily={letterFontCss(captionStyle.font)}
+                fontWeight={captionStyle.bold ? 'bold' : 'normal'}
+                fontStyle={captionStyle.italic ? 'italic' : 'normal'}
+                textAnchor={capAnchor}
+                textLength={capJustify ? capGeom.wrapW : undefined}
+                lengthAdjust={capJustify ? 'spacing' : undefined}
+                style={{ cursor: 'text', pointerEvents: 'auto' }}
+                title={capClickTitle}
+                onClick={(e) => { e.stopPropagation(); openCaptionEditor(); }}
+              >{capLine}</text>
+            );
+          })}
+        </g>
       )}
       {/* 🧽 ERASER — while it is armed the WHOLE canvas becomes the drawing
           area (a rubber takes off whatever is under it, whichever panel that
@@ -5865,7 +6078,7 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
         ? 'flex flex-wrap items-start gap-x-1.5 gap-y-1 min-w-0 col-span-full border-t border-slate-200 pt-1'
         : 'flex flex-wrap items-center gap-x-1.5 gap-y-1 border-t border-slate-200 pt-1'}>
         <span className="text-[10px] font-bold text-slate-500 uppercase shrink-0"
-          title={`Caption of panel ${selectedObj.letter || '—'} — a SUB-caption: it is never drawn inside the panel, it is merged into the figure caption at the bottom. The letter itself is automatic (by position) · size / colour / bold / font: canvas options.`}>
+          title={`Caption of panel ${selectedObj.letter || '—'} — a SUB-caption: it is never drawn inside the panel, it is merged into the figure caption at the bottom. The letter itself is automatic (by position) · size / colour / bold / font: canvas options — and the caption at the bottom has its own group there (“Caption (bottom of the image)”: show it or not, font, size, colour, background, bold, italic, alignment).`}>
           Caption {selectedObj.letter || '—'}
         </span>
         <textarea rows={1} value={selectedObj.caption} onChange={e => updateObj({ caption: e.target.value })}
@@ -6105,9 +6318,73 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
           <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500 pb-2 cursor-pointer" title="Bold for the panel letters — a FIGURE setting, like the size: it applies to every panel at once.">
             <input type="checkbox" checked={currentLetterBold()} onChange={e => setLetterBoldAll(e.target.checked)} /> Letters bold
           </label>
-          <label className="text-[10px] font-bold text-slate-500 flex flex-col flex-1 min-w-[220px]" title="The caption written at the bottom of the figure. By default it merges the panel sub-captions in LETTER order (A: … · B: … · C: …), whatever order the panels were created in.">Global caption (click to edit — merges the object sub-captions in letter order)
-            <span className="border border-slate-200 rounded p-1 text-xs bg-slate-50 text-slate-600 truncate hover:border-blue-400 hover:bg-blue-50 cursor-text" title={effectiveGlobalCaption} onClick={() => { setSelectedId(null); setEditingCaption(true); }}>{effectiveGlobalCaption || 'Merges the object sub-captions (A: …, B: …)'}</span>
-          </label>
+          {/* ── LE CAPTION DU BAS DE L'IMAGE : PRÉSENCE ET STYLE ─────────────
+              Le caption est la légende de la planche. « Show caption » décide
+              s'il reste au bas de l'image ou s'il n'apparaît pas du tout ; la
+              police, la taille, la couleur, le fond, le gras, l'italique et
+              l'alignement (gauche / centré / droite / justifié) sont la mise en
+              forme de ce caption-là. Tout est un réglage de la COMPOSITION : ça
+              part avec le canvas et dans les exports, et la barre du plein
+              écran offre les MÊMES contrôles (on ne remonte pas en vue normale
+              pour cacher ou styler le caption). Le TEXTE s'écrit en cliquant le
+              caption au bas de la toile, ou la ligne d'aperçu ci-dessous. */}
+          <div className="flex flex-col gap-1 flex-1 min-w-[340px] border border-slate-200 rounded-lg px-2 py-1.5 bg-slate-50"
+            title="The caption at the bottom of the image. “Show caption” keeps it (the band under the canvas) or removes it — from the screen AND from every export (the pictures get that room, the text stays saved). Font, size, colour, background (fond), bold, italic and alignment are the caption's own style, saved with the canvas. The text itself is edited by clicking the caption at the bottom of the canvas (or the preview line below): by default it merges the panel sub-captions in LETTER order (A: … · B: … · C: …). Global caption (click to edit — merges the object sub-captions in letter order).">
+            <span className="text-[10px] font-bold text-slate-500 uppercase">Caption (bottom of the image)</span>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500 cursor-pointer"
+                title="Keep the caption at the bottom of the image — on the canvas AND in every export (Export PNG, Save canvas, Insert into project). Unchecked, the caption band disappears from the composition: the figure itself gets that room back, and the caption text stays saved for later.">
+                <input type="checkbox" checked={captionShow} onChange={e => setCaptionShow(e.target.checked)} /> Show caption
+              </label>
+              <label className="text-[10px] font-bold text-slate-500 flex items-center gap-1"
+                title="FONT (police) of the caption — same list as the figure style / publication format: families every computer already has, so an exported PNG really shows the font you chose. “App default (Inter)” keeps the font of the app.">
+                Font
+                <select value={captionStyle.font} onChange={e => setCaptionField('font', e.target.value)} className="border rounded p-1 text-xs w-40 bg-white">
+                  {FIGURE_FONT_CHOICES.map((f) => (
+                    <option key={f.value || 'app'} value={f.value}>{f.label}</option>
+                  ))}
+                  {captionStyle.font && !FIGURE_FONT_CHOICES.some((f) => f.value === captionStyle.font) ? (
+                    <option value={captionStyle.font}>{captionStyle.font}</option>
+                  ) : null}
+                </select>
+              </label>
+              <label className="text-[10px] font-bold text-slate-500 flex items-center gap-1"
+                title="Size of the caption (pt). The caption band under the canvas grows and shrinks with it, so an exported PNG keeps exactly the room the caption needs — and a long caption wraps on as many lines as it takes.">
+                Size (pt)
+                <input type="number" min="4" max="48" value={captionStyle.fontSize} onChange={e => setCaptionSize(e.target.value)} className="border rounded p-1 text-xs w-16" />
+              </label>
+              <label className="text-[10px] font-bold text-slate-500 flex items-center gap-1"
+                title="Colour of the caption text.">
+                Colour
+                <input type="color" value={captionStyle.color} onChange={e => setCaptionField('color', e.target.value)} className="border rounded w-14 h-7 cursor-pointer" />
+              </label>
+              <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500 cursor-pointer"
+                title="FOND (background) of the caption: a colour band drawn behind the text, as wide as the caption block. Unchecked = no background at all (the white of the canvas).">
+                <input type="checkbox" checked={!!captionStyle.bg} onChange={e => toggleCaptionBg(e.target.checked)} /> Background
+                <input type="color" value={captionStyle.bg || '#ffffff'} disabled={!captionStyle.bg} onChange={e => setCaptionField('bg', e.target.value)} className="border rounded w-14 h-7 cursor-pointer disabled:opacity-40" />
+              </label>
+              <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500 cursor-pointer"
+                title="Gras (bold) du caption.">
+                <input type="checkbox" checked={captionStyle.bold} onChange={e => setCaptionField('bold', e.target.checked)} /> Bold
+              </label>
+              <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500 cursor-pointer"
+                title="Italique (italic) du caption.">
+                <input type="checkbox" checked={captionStyle.italic} onChange={e => setCaptionField('italic', e.target.checked)} /> Italic
+              </label>
+              <label className="text-[10px] font-bold text-slate-500 flex items-center gap-1"
+                title="Alignement du caption sur la largeur de la toile : Left / Centred / Right, ou Justified — le texte, d'abord WRAPPÉ sur la largeur de la planche, est alors étiré de marge à marge (sauf la dernière ligne, exactement comme un paragraphe justifié).">
+                Align
+                <select value={captionStyle.align} onChange={e => setCaptionField('align', e.target.value)} className="border rounded p-1 text-xs w-24 bg-white">
+                  {CAPTION_ALIGN_CHOICES.map((a) => (
+                    <option key={a.value} value={a.value}>{a.label}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <span className={`border rounded p-1 text-xs truncate cursor-text ${captionShow ? 'border-slate-200 bg-white text-slate-600 hover:border-blue-400 hover:bg-blue-50' : 'border-dashed border-slate-300 bg-slate-100 text-slate-400'}`}
+              title={captionShow ? capClickTitle : 'The caption is hidden (“Show caption” is off) — click to bring it back and write it.'}
+              onClick={openCaptionEditor}>{effectiveGlobalCaption || 'Merges the object sub-captions (A: …, B: …)'}</span>
+          </div>
           {/* « ↗ Add arrow » et « 🌓 Shadow panels » ONT QUITTÉ CETTE BARRE : les
               deux commandes vivent maintenant dans la FENÊTRE DE L'OBJET, où
               elles se trouvaient déjà — « ↗ Arrow · ╱ Line · ▭ Rectangle ·
@@ -6294,7 +6571,10 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
       {/* Inline caption editor — write the figure caption directly at the bottom */}
       {editingCaption && activeSvgEl() && (() => {
         const r = activeSvgEl().getBoundingClientRect();
-        const y = r.top + ((canvasH + captionH - 4) / (canvasH + captionH)) * r.height;
+        // L'éditeur se pose SUR LA PREMIÈRE LIGNE du caption : le bandeau n'a
+        // plus une hauteur fixe (« canvasH + captionH - 4 » le posait en bas d'un
+        // bandeau qui peut faire plusieurs lignes).
+        const y = r.top + ((canvasH + CAPTION_PAD_MM) / (canvasH + captionH)) * r.height;
         return createPortal(
           <input
             ref={capEditRef}
@@ -6421,6 +6701,44 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
                    </select>
                    <input type="color" value={currentLetterColor()} onChange={e => setLetterColorAll(e.target.value)} className="w-7 h-5 rounded border border-slate-300 bg-white cursor-pointer" title="Colour of every panel letter (figure setting)" />
                    <input type="checkbox" checked={currentLetterBold()} onChange={e => setLetterBoldAll(e.target.checked)} title="Bold for every panel letter (figure setting)" />
+                 </label>
+                 {/* ── LE CAPTION DU BAS — LES MÊMES RÉGLAGES QUE DANS LES
+                     OPTIONS DU CANVAS (une seule définition, deux endroits où
+                     la toucher : on ne remonte pas en vue normale pour cacher
+                     le caption ou changer sa police). Le TEXTE s'écrit en
+                     cliquant le caption, au bas de la toile. */}
+                 <label className="flex items-center gap-1 text-[11px] font-bold text-slate-600 bg-slate-100 rounded-lg px-2 py-1.5"
+                   title="Caption at the bottom of the image — exactly the settings of the canvas options: “Show caption” (keep it or remove it from the screen AND the exports), font, size, colour, background (fond), bold, italic and alignment (left / centred / right / justified).">
+                   Caption
+                   <input type="checkbox" checked={captionShow} onChange={e => setCaptionShow(e.target.checked)}
+                     title="Keep the caption at the bottom of the image (screen AND exports) — unchecked, the band disappears and the figures get that room" />
+                   <select value={captionStyle.font} onChange={e => setCaptionField('font', e.target.value)}
+                     className="border border-slate-300 rounded px-1 py-0.5 text-[11px] bg-white font-normal max-w-[8.5rem]"
+                     title="Font (police) of the caption — the same list as the figure style / publication format">
+                     {FIGURE_FONT_CHOICES.map((f) => (
+                       <option key={f.value || 'app'} value={f.value}>{f.label}</option>
+                     ))}
+                     {captionStyle.font && !FIGURE_FONT_CHOICES.some((f) => f.value === captionStyle.font) ? (
+                       <option value={captionStyle.font}>{captionStyle.font}</option>
+                     ) : null}
+                   </select>
+                   <input type="number" min="4" max="48" value={captionStyle.fontSize} onChange={e => setCaptionSize(e.target.value)}
+                     className="border border-slate-300 rounded px-1 py-0.5 text-[11px] w-12 bg-white font-normal" title="Size of the caption (pt)" />
+                   <input type="color" value={captionStyle.color} onChange={e => setCaptionField('color', e.target.value)}
+                     className="w-7 h-5 rounded border border-slate-300 bg-white cursor-pointer" title="Colour of the caption" />
+                   <input type="checkbox" checked={!!captionStyle.bg} onChange={e => toggleCaptionBg(e.target.checked)}
+                     title="Background (fond) of the caption — a colour band behind the text" />
+                   <input type="checkbox" checked={captionStyle.bold} onChange={e => setCaptionField('bold', e.target.checked)}
+                     title="Bold caption" />
+                   <input type="checkbox" checked={captionStyle.italic} onChange={e => setCaptionField('italic', e.target.checked)}
+                     title="Italic caption" />
+                   <select value={captionStyle.align} onChange={e => setCaptionField('align', e.target.value)}
+                     className="border border-slate-300 rounded px-1 py-0.5 text-[11px] bg-white font-normal"
+                     title="Alignment of the caption: left / centred / right, or justified (the wrapped lines are stretched from margin to margin, the last one stays natural)">
+                     {CAPTION_ALIGN_CHOICES.map((a) => (
+                       <option key={a.value} value={a.value}>{a.label}</option>
+                     ))}
+                   </select>
                  </label>
                  <button onClick={exportPng} title="PNG of the composition — the blue selection square and resize handles are never included; panel borders and grid lines follow the checkboxes." className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs">Export PNG</button>
               </div>
@@ -6718,7 +7036,11 @@ export const ImageBuilder = ({ projectId, jumpToTest, openCanvasId = null, onCan
               </select>
             </label>
             <label className="text-[10px] font-bold text-slate-500 flex flex-col gap-1">Caption (written at the bottom of the image)
-              <span className="border border-slate-200 rounded px-2 py-1.5 text-xs bg-slate-50 text-slate-600">{effectiveGlobalCaption || '— click the caption at the bottom of the canvas to write it —'}</span>
+              <span className="border border-slate-200 rounded px-2 py-1.5 text-xs bg-slate-50 text-slate-600">
+                {captionShow
+                  ? (effectiveGlobalCaption || '— click the caption at the bottom of the canvas to write it —')
+                  : '— not shown: “Caption” ▸ “Show caption” is off, so the image is exported without any caption (the text is still saved in the composition) —'}
+              </span>
             </label>
             <p className="text-[11px] text-slate-500 bg-slate-50 border border-slate-200 rounded p-2">
               The composition is inserted <span className="font-bold">as an image</span>: it stays visible in that section on

@@ -277,7 +277,7 @@ const legacyEntry = (id, at, rows, over = {}) => ({
    5. L'ÉDITEUR : l'identité de la composition VOYAGE avec elle
    ========================================================================= */
 {
-  has(IB, 'canvasKey, canvasEntries, canvasHome, canvasLabel };',
+  has(IB, 'canvasKey, canvasEntries, canvasHome, canvasLabel, ...captionPayload() };',
     'le payload persisté (localStorage + cache de session) porte l’identité de la composition');
   has(IB, 'const initialCanvasIdentity = useMemo(',
     'l’identité est SEMÉE avant le premier rendu (sinon la première écriture du payload l’effacerait)');
