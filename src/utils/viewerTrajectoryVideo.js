@@ -17,6 +17,16 @@
    the fog, the light rig, the frame at every step. No second engine, no
    re-drawing: nothing can drift from the picture.
 
+   ⚠ ET CE QUI N'EST PAS DANS LA TOILE N'Y SERA PAS. L'écran porte AUSSI des
+   couches HTML par-dessus la toile — la vignette de ★ Shadows → 🌑 Darkness est
+   celle qui change la COULEUR du fond — et un `captureStream` ne les voit jamais :
+   les coins du film restaient plats quand ceux de l'écran étaient assombris (le
+   rapport de cette session : « even the background is of different colours »).
+   L'appelant peut donc COMPOSER ces couches dans la toile qu'il enregistre, une
+   fois par image, par `beforeCapture` (voir filmVignetteGeometry /
+   filmVignetteStops) : rien n'est redessiné, la scène est simplement recopiée
+   dans une toile de film en 2D.
+
    HOW A BROWSER WRITES A VIDEO. `canvas.captureStream(fps)` gives a MediaStream
    fed by the canvas and `MediaRecorder` encodes it — both are standard and
    present in Chrome / Edge / Firefox / Opera and Safari 14.1+. TWO
@@ -300,6 +310,52 @@ const blobOf = (chunks, type) => {
   try { return new Blob(chunks, { type: type || VIDEO_DEFAULT_MIME }); } catch { return null; }
 };
 
+/* ---- 🖼 CE QU'UN FILM NE PEUT PAS PRENDRE À L'ÉCRAN ------------------------
+   Le film est pris sur la toile de NGL. L'écran, lui, porte des couches HTML
+   PAR-DESSUS cette toile — la vignette de ★ Shadows → 🌑 Darkness (un
+   `radial-gradient` multiplié, voir le viewer) en est la seule qui change la
+   COULEUR du fond — et aucune d'elles n'entre dans un `captureStream`. Le
+   rapport de cette session : « the video generated for the trajectory is
+   different from what I see on the screen … even the background is of different
+   colours. » D'où `beforeCapture` : l'appelant compose ces couches dans la toile
+   qu'il fait enregistrer.
+
+   LES TROIS RÈGLES DE LA VIGNETTE SONT PURES (donc exécutées sous node par
+   _viewer_trajectory_video_test.mjs) : la géométrie, les arrêts, et rien
+   d'autre — c'est le viewer qui possède la toile et le contexte 2D. Elles
+   reproduisent EXACTEMENT le CSS de la couche (`radial-gradient(ellipse at
+   50% 40%, rgba(30,30,30,0) 45%, rgba(30,30,30,·) 72%, rgba(30,30,30,·) 100%)`) :
+   même centre, mêmes arrêts, mêmes opacités, et l'ellipse « farthest-corner »
+   du CSS — ses deux rayons sont les distances du centre au coin le plus loin
+   (la moitié de la largeur, 60 % de la hauteur), donc elle passe par ce coin.
+   Un `multiply` de canvas sur `rgba(30,30,30,α)` assombrit EXACTEMENT comme le
+   `mix-blend-mode: multiply` du CSS (les deux valent `C·(1 − α·(225/255))`). */
+export const FILM_VIGNETTE_RGB = [30, 30, 30];
+/** Le centre et les deux rayons de l'ellipse de la vignette, en pixels. */
+export const filmVignetteGeometry = (width, height) => {
+  const w = Math.max(1, Number(width) || 1);
+  const h = Math.max(1, Number(height) || 1);
+  return {
+    cx: w * 0.5,
+    cy: h * 0.4,
+    rx: Math.max(1, w * 0.5),        // le coin le plus loin en largeur
+    ry: Math.max(1, h * 0.6),        // …et en hauteur (centre à 40 %)
+  };
+};
+/** Les quatre arrêts de la vignette, dans l'ordre — `[position, couleur CSS]`. */
+export const filmVignetteStops = (darkness) => {
+  const d = Math.min(1, Math.max(0, Number(darkness) || 0));
+  const [r, g, b] = FILM_VIGNETTE_RGB;
+  const inner = 0.04 + d * 0.06;
+  const outer = 0.12 + d * 0.18;
+  return [
+    [0, `rgba(${r},${g},${b},0)`],
+    [0.45, `rgba(${r},${g},${b},0)`],
+    [0.72, `rgba(${r},${g},${b},${inner.toFixed(4)})`],
+    [1, `rgba(${r},${g},${b},${outer.toFixed(4)})`],
+  ];
+};
+
 /* ---- 🎬 RECORD THE RUN -----------------------------------------------------
    Drives ONE real-time pass of the run into a MediaRecorder, and resolves with
    the film. Everything the recording needs is a PARAMETER, so the whole drive
@@ -312,6 +368,10 @@ const blobOf = (chunks, type) => {
    asks NGL for the frame; the module then waits for the picture to be
    presented and HOLDS it for 1/fps (see the header — this is what gives the
    film its rate). `onProgress(done, total)` feeds the bar's progress line.
+   `beforeCapture(i)` is called once per frame, just after that wait and BEFORE
+   the hold: it is the caller's one chance to compose into the recorded canvas
+   what the canvas cannot carry by itself (see « CE QU'UN FILM NE PEUT PAS
+   PRENDRE À L'ÉCRAN »). A caller with nothing to compose omits it.
 
    WHAT IT RETURNS, AND WHEN:
      · `{ blob, frames, seconds, mime }` — the film, built from the chunks the
@@ -333,6 +393,7 @@ export const recordTrajectoryVideo = async (options = {}) => {
     requestRender,
     onProgress,
     onStarted,
+    beforeCapture,
     cancelled,
     Recorder = typeof MediaRecorder === 'undefined' ? null : MediaRecorder,
     sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
@@ -396,6 +457,20 @@ export const recordTrajectoryVideo = async (options = {}) => {
       if (typeof presentFrame === 'function') presentFrame(i);
       if (typeof requestRender === 'function') requestRender();
       await paint();                                   // the new picture is on screen
+      /* 🧩 CE QUE LA TOILE N'EST PAS SEULE À PORTER — le rapport de cette session :
+         « the video generated for the trajectory is different from what I see on
+         the screen when I run the trajectory ? even the background is of
+         different colours. » Le film EST la toile que NGL dessine, mais l'écran,
+         lui, porte AUSSI des couches HTML par-dessus (la vignette de ★ Shadows →
+         🌑 Darkness en est une) : un `captureStream` ne les voit jamais. C'est ici
+         que l'appelant les COMPOSE, une fois par image, dans la toile qu'il fait
+         enregistrer (la sienne, voir filmCanvasFor / filmVignetteStops) : l'image
+         ensuite TENUE pendant 1/fps est celle qui a été composée, donc ce qui est
+         écrit est ce que l'écran montre. Un appelant qui n'a rien à composer ne
+         passe simplement rien — le film est alors la toile elle-même. */
+      if (typeof beforeCapture === 'function') {
+        try { beforeCapture(i); } catch { /* une composition ratée n'arrête jamais le film */ }
+      }
       const left = frameMs - (now() - startedAt);
       if (left > 1) await sleep(left);                 // …and it stays there for 1/fps
       if (typeof onProgress === 'function') onProgress(i + 1, total);

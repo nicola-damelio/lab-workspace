@@ -37,6 +37,13 @@ workspace-shared-token.json.*
 /_replica_*.pdb
 **/_ls_*.txt
 
+# Same for the ad-hoc PROBES behind those dumps: one-off scripts (a dist probe, a
+# syntax probe, a toolchain probe…), not test harnesses. They stay on disk — they
+# are the reproducible evidence for what the dumps say — they are just never part
+# of the app. The _*_test.mjs harnesses that grade the app stay tracked.
+/_kf_*.mjs
+/_kf_*.jsx
+
 # Build SSR du probe de rendu (_viewer_render_smoke_test.mjs) : le bundle du
 # probe et rien d'autre. Il est reconstruit à chaque exécution de la suite.
 /_render_smoke/
