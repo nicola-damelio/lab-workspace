@@ -59,6 +59,16 @@ import { rigidTransform, atomMatchPairs, flatCoords, poseFromRigidMatrix, multip
 // comprise (son propre module, voir src/utils/viewerPdbMolecules.js) : c'est ce qui fait
 // qu'un déplacement EST un contenu, et pas seulement une vue.
 import { joinPdbMolecules } from '../utils/viewerPdbMolecules';
+// ⬇ 🧬 CHAQUE MOLÉCULE EST UNE ENTITÉ (la demande : « you assign main to the
+// composition of all molecules in a group and that means that I cannot do
+// anything. Let me select molecule by molecule, even if these molecules are in
+// the same pdb they are separate entities. ») — LA RÈGLE de la découpe (fragments
+// connexes · division par chaîne · nom qui DÉSIGNE l'entité) vit dans son propre
+// module pur, pour être la MÊME que la structure vienne d'un fichier PDB, d'un
+// code PDB, d'une URL, d'un .cif ou d'un .gro (voir src/utils/viewerMoleculeParts.js).
+import {
+  fragmentMolecules, moleculePartNames, pdbTextForMolecule, MOLECULE_PART_MAX_ATOMS,
+} from '../utils/viewerMoleculeParts';
 // HETATM code → SMILES: the Chemistry Component Dictionary of the RCSB (see
 // utils/ligandSmiles.js). A PDB only names its ligand by a 3-letter code, so this
 // is where the SMILES of a hand-loaded ligand comes from.
@@ -531,6 +541,42 @@ const saveCatStyles = (v) => {
 // One string that changes whenever ANY category style changes — used as the
 // dependency / comparison signature that rebuilds the base representations.
 const catStylesSig = (v) => JSON.stringify(CAT_STYLE_CATS.map((c) => (v && v[c]) || DEFAULT_CAT_STYLES[c]));
+
+/* ── CE QU'UNE PHOTOGRAPHIE DE LA SCÈNE DEMANDE DE REDESSINER ────────────────
+   LE RAPPORT DE CETTE SESSION : « the surface representations are ignored in the
+   movie, even in the preview but they are very important. »
+
+   POURQUOI. Un film de poses (🎞) applique un instant du geste plusieurs fois par
+   seconde (applyKeyframeSample → applyViewerSetup → applySceneExtras). Chaque
+   application comptait comme un GESTE de la barre et faisait donc rebâtir TOUTES
+   les représentations de la scène — et NGL calcule une surface EN TÂCHE DE FOND,
+   maille par maille : la représentation suivante était ajoutée (et la précédente
+   retirée) bien avant que la moindre enveloppe ne soit prête. L'aperçu ▶ et le
+   fichier 🔴 ne montraient donc jamais une surface que l'écran, lui, portait
+   avant le clic — et chaque image payait la reconstruction complète de la scène.
+
+   LA RÈGLE. Cette signature est celle des RÉGLAGES d'une photographie : deux
+   instants qui la partagent se reposent SANS rien rebâtir. La CAMÉRA et la PLACE
+   des molécules en sont EXCLUES — ce sont justement les deux choses qui bougent
+   d'une image de film à l'autre, et elles se reposent sans reconstruction
+   (applyCameraPose, Component#setPosition). Tout le reste y est, sans exception :
+   un champ oublié ferait rebâtir une fois de trop, jamais une fois de moins. */
+const sceneRebuildSig = (s) => {
+  if (!s || typeof s !== 'object') return '';
+  const mols = (s.molecules && typeof s.molecules === 'object') ? s.molecules : null;
+  const main = (mols && mols.main && typeof mols.main === 'object')
+    ? { ...mols.main, pos: null }
+    : (mols ? mols.main : undefined);
+  const extras = Array.isArray(mols && mols.extras)
+    ? mols.extras.map((m) => ((m && typeof m === 'object') ? { ...m, position: null } : m))
+    : (mols ? mols.extras : undefined);
+  return JSON.stringify({
+    ...s,
+    camera: null,      // le point de vue : repositionné, jamais reconstruit
+    savedAt: null,     // l'horodatage d'une capture n'est pas une image
+    molecules: mols ? { ...mols, main, extras } : mols,
+  });
+};
 
 /* ---- SPHERE / BOND RADIUS of one category ---------------------------------
    The two sliders of every menu of §2 are read here — by the renderer AND by the
@@ -6374,20 +6420,44 @@ else if (traj.trajectory && typeof traj.trajectory.setFrame === 'function') traj
 } catch {}
 };
 
+/* 🧬 LES ENTITÉS D'UNE MOLÉCULE D'ATOMES — nommées, écrites, prêtes à charger.
+   `modelCount` est le nombre de MODEL du fichier (1 sans record MODEL) : c'est lui
+   qui décide des noms « Model 2 » / « Molecule 3 (Model 2) · B » que la barre
+   affiche. Les DEUX lectures (le texte PDB et la structure chargée par NGL) passent
+   par ici, donc le même fichier donne les mêmes entités — et les mêmes noms. */
+const namedPartsOf = (atoms, bonds, modelCount = 1) => {
+  const parts = fragmentMolecules(atoms, bonds);
+  const perModel = new Map();
+  parts.forEach((p) => perModel.set(p.model, (perModel.get(p.model) || 0) + 1));
+  const named = moleculePartNames(parts, {
+    multiModel: modelCount > 1 || parts.some((p) => p.model > 0),
+    onePartPerModel: parts.every((p) => perModel.get(p.model) === 1),
+  });
+  return named.map((p) => ({
+    chainId: p.chain,
+    model: p.model,
+    modelCount,
+    label: p.label,
+    atomCount: p.atomCount,
+    blob: new Blob([pdbTextForMolecule(atoms, p.idxs)], { type: 'text/plain' }),
+  }));
+};
+
 /** Split a text PDB file into one Blob per MOLECULE (connected fragment).
- *  Atoms are grouped by COVALENT connectivity scoped to their MODEL record:
- *  CONECT bonds first, then implicit bonds by proximity (≤ 2.0 Å, via a
- *  spatial grid). This separates:
+ *  Ici on ne fait que LIRE le texte : la règle qui décide des entités (fragments
+ *  connexes par CONECT + proximité ≤ 2,0 Å, jamais entre deux MODEL, puis division
+ *  par chaîne, eau pure ignorée, 30 entités au plus, et le NOM de chacune) vit
+ *  dans src/utils/viewerMoleculeParts.js — la MÊME pour une structure chargée par
+ *  NGL, donc les entités d'un fichier ne dépendent pas de la façon dont il est
+ *  arrivé (voir splitStructureIntoMolecules). This separates:
  *   - distinct chains (protein + ligand chain, complexes),
  *   - separate molecules that share ONE chain (receptor + ligand in chain A),
  *   - multimeric complexes held together only by non-covalent contacts,
  *   - overlapping conformers of a multi-MODEL PDB (NMR ensembles / docking
  *     clusters) — bonds never cross MODEL boundaries, so conformers with
  *     identical/overlapping coordinates are never merged into a single blob.
- *  Pure-water fragments are skipped, so a hydrated protein does not explode
- *  into dozens of tiny "molecule" entries. Returns [] when the file has 0/1
- *  molecules or cannot be read — the caller keeps the whole structure.
- *  Deterministic text parsing — independent of NGL internals. */
+ *  Returns [] when the file has 0/1 molecules or cannot be read — the caller keeps
+ *  the whole structure. Deterministic text parsing — independent of NGL internals. */
 const splitPdbFileIntoMolecules = async (file) => {
   if (!file) return [];
   let text = '';
@@ -6419,6 +6489,9 @@ const splitPdbFileIntoMolecules = async (file) => {
         line,
         chain: line.slice(21, 22).trim() || '_',
         resname: line.slice(17, 20).trim(),
+        resno: parseInt(line.slice(22, 26), 10),
+        atomname: line.slice(12, 16).trim(),
+        element: line.slice(76, 78).trim(),
         model,
         x, y, z
       });
@@ -6438,42 +6511,11 @@ const splitPdbFileIntoMolecules = async (file) => {
   if (atoms.length === 0) return [];
   const modelCount = blocksSeen > 0 ? blocksSeen : 1;  // 1 = no MODEL records (single model)
 
-  const parent = atoms.map((_, i) => i);
-  const find = (x) => { while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; } return x; };
-  const union = (a, b) => { const ra = find(a), rb = find(b); if (ra !== rb) parent[ra] = rb; };
-  // CONECT bonds are only valid INSIDE one MODEL — serial numbers may repeat
-  // across conformers, and a bond between different models would merge them.
-  conectBonds.forEach(([a, b]) => { if (atoms[a].model === atoms[b].model) union(a, b); });
-
-  // Implicit covalent bonds by proximity — spatial grid keeps this O(n).
-  // Same-MODEL rule again: overlapping conformers of an ensemble never merge.
-  const BOND_DIST = 2.0;
-  const grid = new Map();
-  const cellKey = (cx, cy, cz) => `${cx}|${cy}|${cz}`;
-  atoms.forEach((a, i) => {
-    const key = cellKey(Math.floor(a.x / BOND_DIST), Math.floor(a.y / BOND_DIST), Math.floor(a.z / BOND_DIST));
-    if (!grid.has(key)) grid.set(key, []);
-    grid.get(key).push(i);
-  });
-  for (let i = 0; i < atoms.length; i++) {
-    const a = atoms[i];
-    const cx = Math.floor(a.x / BOND_DIST), cy = Math.floor(a.y / BOND_DIST), cz = Math.floor(a.z / BOND_DIST);
-    for (let dx = -1; dx <= 1; dx++) {
-      for (let dy = -1; dy <= 1; dy++) {
-        for (let dz = -1; dz <= 1; dz++) {
-          const cell = grid.get(cellKey(cx + dx, cy + dy, cz + dz));
-          if (!cell) continue;
-          for (const j of cell) {
-            if (j <= i) continue;
-            const b = atoms[j];
-            if (a.model !== b.model) continue;
-            const ddx = a.x - b.x, ddy = a.y - b.y, ddz = a.z - b.z;
-            if (ddx * ddx + ddy * ddy + ddz * ddz <= BOND_DIST * BOND_DIST) union(i, j);
-          }
-        }
-      }
-    }
-  }
+  // 🧬 LA DÉCOUPE ELLE-MÊME EST AILLEURS (src/utils/viewerMoleculeParts.js) : les
+  // mêmes fragments connexes, la même division par chaîne et les mêmes noms
+  // valent pour une structure CHARGÉE par NGL (voir splitStructureIntoMolecules
+  // ci-dessous) — un fichier ne change pas d'entités selon la façon dont il est
+  // arrivé. Ici, tout ce que fait cette fonction est de LIRE les records.
 
   // Group by root; skip pure-water fragments; cap the number of entries.
   const groups = new Map();
@@ -7280,7 +7322,13 @@ useEffect(() => {
    skipped, and this counter makes that impossible — the signature of the scene
    changes whenever the user touched a control. */
 const [sectionEpoch, setSectionEpoch] = useState(0);
-const bumpSectionEpoch = () => setSectionEpoch((n) => n + 1);
+/* …ET LE DERNIER FICHIER DÉJÀ DESSINÉ (voir sceneRebuildSig). Un geste de la barre
+   PÉRIME cette mémoire, puisqu'il change la scène lui-même : le fichier appliqué
+   ensuite rebâtit donc une fois, même s'il demandait l'état d'AVANT le geste. C'est
+   ce qui rend la règle sûre — elle ne peut pas garder un dessin que l'utilisateur a
+   remplacé à la main. */
+const sceneRebuildSigRef = useRef('');
+const bumpSectionEpoch = () => { sceneRebuildSigRef.current = ''; setSectionEpoch((n) => n + 1); };
 // The 3D labels of ONE molecule section (the request: the label switches of the old
 // §2 menus are imported here, one set PER SECTION, so « Residues » ticked on chain A
 // labels chain A only). Default: nothing labelled.
@@ -8523,6 +8571,10 @@ const kfPlanNow = keyframePlan({
   width: videoCanvas ? videoCanvas.width : 0,
   height: videoCanvas ? videoCanvas.height : 0,
 });
+/* …ET SA CHRONOLOGIE (keyframeLegs), pour la ligne du panneau : la durée écrite à
+   côté des boutons est celle du ▶ et du 🔴, jamais un second calcul qui pourrait la
+   contredire. */
+const kfLegsNow = keyframeLegs(keyframes);
 // Le film entier (poses + réglages) est retenu comme les autres préférences du
 // viewer. Un magasin plein ne casse jamais le panneau : la capture continue de
 // fonctionner, elle n'est simplement pas retenue d'une visite à l'autre.
@@ -15535,7 +15587,16 @@ const applyViewerSetup = (s) => {
   setCatLabels(nextLabels);
   saveCatLabels(nextLabels);
   if (typeof s.sidechainStyle === 'string') setSidechainStyle(s.sidechainStyle);
-  if (s.sstrucColors && typeof s.sstrucColors === 'object') setSstrucColors((c) => ({ ...c, ...s.sstrucColors }));
+  if (s.sstrucColors && typeof s.sstrucColors === 'object') {
+    /* ⚠ LA MÊME VALEUR NE RÉÉCRIT RIEN (identité React) : deux effets — le redessin
+       des molécules ajoutées et le rebâtiment des représentations de base — lisent
+       cet état, et l'écrire avec un objet neuf à chaque image d'un film les faisait
+       tourner pour rien (rapport : la surface du film, voir sceneRebuildSig). */
+    setSstrucColors((c) => {
+      const next = { ...c, ...s.sstrucColors };
+      return Object.keys(next).every((k) => Object.is(c[k], next[k])) ? c : next;
+    });
+  }
   if (Number.isFinite(s.selectedResidueColor)) setSelectedResidueColor(s.selectedResidueColor);
   if (Number.isFinite(s.assignedAtomColor)) setAssignedAtomColor(s.assignedAtomColor);
   if (typeof s.fog === 'boolean') setFogEnabled(s.fog);
@@ -15669,22 +15730,39 @@ const applySceneExtras = (s) => {
         if (!e || typeof e !== 'object') return;
         const entry = extraCompsRef.current.find((x) => x.id === e.id);
         if (!entry) return;
-        if (typeof e.style === 'string') entry.style = e.style;
-        if (typeof e.color === 'string') entry.color = e.color;
-        if (typeof e.colorMode === 'string') entry.colorMode = e.colorMode;
-        if (Number.isFinite(e.transparency)) entry.transparency = Math.min(1, Math.max(0, e.transparency));
-        if (Array.isArray(e.position) && e.position.length === 3 && e.position.every((n) => Number.isFinite(n))) {
-          entry.position = [e.position[0], e.position[1], e.position[2]];
-          try {
-            const comp = entry.comp;
-            if (comp && typeof comp.setPosition === 'function') {
-              comp.setPosition(entry.position);
-              if (typeof comp.updateMatrix === 'function') comp.updateMatrix();
-            }
-          } catch { /* position best-effort */ }
+        /* ⚠ ON NE REDESSINE QUE CE QUI A CHANGÉ (voir sceneRebuildSig). Un film
+           repose le même état à chaque image : un `restyleExtraMol` par image et par
+           molécule recréait toutes ses représentations — dont sa SURFACE, que NGL
+           n'avait pas le temps de calculer. La POSITION, elle, est toujours reposée :
+           c'est ce qui glisse d'une image à l'autre, et elle ne rebâtit rien. */
+        let lookChanged = false;
+        let moved = false;
+        if (typeof e.style === 'string' && entry.style !== e.style) { entry.style = e.style; lookChanged = true; }
+        if (typeof e.color === 'string' && entry.color !== e.color) { entry.color = e.color; lookChanged = true; }
+        if (typeof e.colorMode === 'string' && entry.colorMode !== e.colorMode) { entry.colorMode = e.colorMode; lookChanged = true; }
+        if (Number.isFinite(e.transparency)) {
+          const t = Math.min(1, Math.max(0, e.transparency));
+          if (entry.transparency !== t) { entry.transparency = t; lookChanged = true; }
         }
-        restyleExtraMol(entry.id);
-        hit += 1;
+        if (Array.isArray(e.position) && e.position.length === 3 && e.position.every((n) => Number.isFinite(n))) {
+          const nextPos = [e.position[0], e.position[1], e.position[2]];
+          /* La position n'est reposée que si elle a bougé : une RETENUE du film
+             (l'image ne change pas) ne coûte alors pas un seul appel — et une
+             position qui glisse ne redessine RIEN (setPosition, jamais un rebuild). */
+          if (!Array.isArray(entry.position) || entry.position.some((n, i) => n !== nextPos[i])) {
+            entry.position = nextPos;
+            moved = true;
+            try {
+              const comp = entry.comp;
+              if (comp && typeof comp.setPosition === 'function') {
+                comp.setPosition(entry.position);
+                if (typeof comp.updateMatrix === 'function') comp.updateMatrix();
+              }
+            } catch { /* position best-effort */ }
+          }
+        }
+        if (lookChanged) restyleExtraMol(entry.id);
+        if (lookChanged || moved) hit += 1;
       });
       if (hit) { setExtraMols(extraMolsSnapshot()); touched = true; }
     }
@@ -15708,7 +15786,16 @@ const applySceneExtras = (s) => {
   // 4. LE POINT DE VUE — la caméra de la figure (voir cameraPose / applyCameraPose).
   if (s.camera) { applyCameraPose(s.camera); touched = true; }
   if (touched) {
-    bumpSectionEpoch();
+    /* ⚠ NE REBÂTIR QUE SI LES RÉGLAGES ONT VRAIMENT CHANGÉ — voir sceneRebuildSig.
+       C'est ce qui laisse une SURFACE EXISTER PENDANT UN FILM (le rapport de cette
+       session : « the surface representations are ignored in the movie, even in the
+       preview but they are very important ») : les images qui ne reposent que la
+       caméra et la place des molécules ne recréent plus les représentations, donc
+       l'enveloppe calculée par NGL en tâche de fond arrive enfin à l'écran — et
+       l'aperçu ▶ comme le fichier 🔴 montrent ce que l'écran montrait. */
+    const rebuildSig = sceneRebuildSig(s);
+    if (rebuildSig !== sceneRebuildSigRef.current) bumpSectionEpoch();
+    sceneRebuildSigRef.current = rebuildSig;
     requestSceneRepaint();
     try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch { /* ignore */ }
   }
@@ -17111,17 +17198,26 @@ as a real video file (<b>.webm</b>, or <b>mp4</b> where the browser can encode i
 </VSection>
 )}
 
-{/* ── 🎞 POSES & STYLES — « capture the pose and the styles of a scene, morph to
-    the next, write the film ». A keyframe is a PHOTOGRAPH of the viewer (the ⚙️
-    setup: menus, palettes, labels, fog, shadows, clipping, background, camera,
-    where every molecule stands) plus where each molecule is TURNED (its
+{/* ── 🎞 THE MOVIE MAKER — « capture the pose and the styles of a scene, morph to
+    the next, write the film ». (The section was called « 🎞 Poses & styles » until
+    this session — « rename “poses and style” as “movie maker” » — so the panel now
+    carries the name of the gesture it serves; nothing else about it moved.) A
+    keyframe is a PHOTOGRAPH of the viewer (the ⚙️ setup: menus, palettes, labels,
+    fog, shadows, clipping, background, camera, where every molecule stands) plus
+    where each molecule is TURNED (its
     quaternion, which a setup does not carry). ▶ and 🔴 go through the SAME
     function (applyKeyframeSample over sampleKeyframeFilm), so the film seen and
     the film written cannot drift apart. Nothing is uploaded: the .webm and the
     .json are written on this computer. The film is remembered between visits
     (localStorage) exactly like the fps of the 🎬 video. */}
-<VSection title="🎞 Poses & styles" hint="capture this pose · hold & morph · ▶ check · 🔴 record the film">
-<div className="flex flex-wrap items-center gap-2 bg-fuchsia-50 border border-fuchsia-200 rounded-lg px-2 py-1 w-full">
+<VSection title="🎞 Movie maker" hint="capture this pose · hold & morph · ▶ check · 🔴 record the film">
+{/* ── UNE SEULE LIGNE DE BOUTONS (le rapport : « keep all buttons in one line.
+    Remove the commentaries so that it fits in one row »). La rangée ne REVIENT PAS
+    À LA LIGNE : sur un panneau étroit elle défile horizontalement, donc aucun
+    contrôle n'est jamais repoussé dessous. Les paragraphes d'explication qui
+    l'encombraient vivent maintenant dans les bulles des boutons, où ils se lisent au
+    moment où on en a besoin. */}
+<div className="flex items-center gap-2 bg-fuchsia-50 border border-fuchsia-200 rounded-lg px-2 py-1 w-full overflow-x-auto">
 <button
 type="button"
 onClick={captureKeyframe}
@@ -17179,10 +17275,41 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
 ⏹ Stop
 </button>
 )}
-<span className="flex-1 min-w-[220px] text-[10px] font-bold text-fuchsia-800 leading-tight">
+<button
+type="button"
+onClick={exportKeyframeFilm}
+disabled={kfBusy || !keyframes.length}
+title="Write the film — every pose (its styles, its camera, its molecules, its hold, its morph, its easing) — as a .json file on your computer. 📂 Import reads it back, here or on another experiment."
+className="bg-slate-600 hover:bg-slate-700 disabled:opacity-40 text-white font-bold px-2 py-1 rounded-md text-[11px] shadow-sm transition-colors inline-flex items-center gap-1 h-7 whitespace-nowrap"
+>⬇ Export the film (.json)</button>
+<label
+className="cursor-pointer bg-slate-600 hover:bg-slate-700 text-white font-bold px-2 py-1 rounded-md text-[11px] shadow-sm transition-colors inline-flex items-center gap-1 h-7 whitespace-nowrap"
+title="Read a film written by ⬇ Export the film, here or on another experiment. Nothing is applied to the scene when it is read: ▶ plays it, 👁 goes to one pose.">
+📂 Import a film (.json)
+<input type="file" accept=".json,application/json" onChange={importKeyframeFilm} disabled={kfBusy} className="hidden" />
+</label>
+<button
+type="button"
+onClick={clearKeyframes}
+disabled={kfBusy || !keyframes.length}
+title="Forget every pose of the film. The scene is NOT touched and nothing else on this experiment changes — the film is only a description of it."
+className="bg-white border border-rose-300 hover:bg-rose-50 disabled:opacity-40 text-rose-700 font-bold px-2 py-1 rounded-md text-[11px] transition-colors inline-flex items-center gap-1 h-7 whitespace-nowrap"
+>🗑 Clear the film</button>
+{/* Le bilan du film, en clair et COMPACT : la durée est lue sur la chronologie du ▶
+    et du 🔴 (keyframeLegs), donc elle ne peut pas les contredire. */}
+<span className="shrink-0 text-[10px] font-bold text-slate-500 whitespace-nowrap">
+{keyframes.length} / {KEYFRAME_LIMITS.keys} poses{keyframes.length > 1 ? ` · ${videoSecondsText(kfLegsNow.totalSeconds)}` : ''}
+{kfPlanNow.ok ? ` · ${kfPlanNow.frames} frames at ${kfPlanNow.fps} fps` : ''}
+</span>
+{/* La ligne de retour ne pousse plus la rangée (min-w-0 + truncate) et sa bulle porte
+    le texte entier : un message long reste lisible sans tenir la largeur de l'écran.
+    Elle garde 8 rem de large quoi qu'il arrive — un retour qui disparaît serait pire
+    que le paragraphe qu'il remplace. */}
+<span className="flex-1 min-w-[8rem] truncate text-[10px] font-bold text-fuchsia-800"
+title={kfMsg || (videoReady.ok ? keyframeFilmSummary(keyframes.length, kfPlanNow) : videoReady.note)}>
 {kfMsg
   || (videoReady.ok
-    ? `${keyframeFilmSummary(keyframes.length, kfPlanNow)}${kfPlanNow.ok ? ' · ▶ plays it first if you want to check it' : ''}`
+    ? keyframeFilmSummary(keyframes.length, kfPlanNow)
     : videoReady.note)}
 </span>
 </div>
@@ -17300,63 +17427,10 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
     >✕</button>
     </div>);
   })}
-  <span className="text-[10px] text-slate-500 leading-tight">
-  The film lasts <b className="font-mono">{videoSecondsText(totalSeconds)}</b> — {keyframes.length} pose(s),
-    each HELD then MORPHED into the next. Nothing here is on screen until you press 👁 on a pose, ▶ to play
-    the film, or 🔴 to write it.
-  </span>
   </div>
   );
   })()}
 
-{/* ── THE FILM AS A FILE — ⬇ and 📂, the same contract as the ⚙️ named setups:
-    what is written is what is read back, and importing APPLIES NOTHING (a
-    description received from elsewhere has no right to change a scene without a
-    gesture: ▶) . Compare with the 🎬 video: the .webm is the PICTURE of the film,
-    this .json is the film ITSELF — poses are switches, so they travel. */}
-<div className="flex flex-wrap items-center gap-2 w-full">
-<button
-type="button"
-onClick={exportKeyframeFilm}
-disabled={kfBusy || !keyframes.length}
-title="Write the film — every pose (its styles, its camera, its molecules, its hold, its morph, its easing) — as a .json file on your computer. 📂 Import reads it back, here or on another experiment."
-className="bg-slate-600 hover:bg-slate-700 disabled:opacity-40 text-white font-bold px-2 py-1 rounded-md text-[11px] shadow-sm transition-colors inline-flex items-center gap-1 h-7 whitespace-nowrap"
->⬇ Export the film (.json)</button>
-<label
-className="cursor-pointer bg-slate-600 hover:bg-slate-700 text-white font-bold px-2 py-1 rounded-md text-[11px] shadow-sm transition-colors inline-flex items-center gap-1 h-7 whitespace-nowrap"
-title="Read a film written by ⬇ Export the film, here or on another experiment. Nothing is applied to the scene when it is read: ▶ plays it, 👁 goes to one pose.">
-📂 Import a film (.json)
-<input type="file" accept=".json,application/json" onChange={importKeyframeFilm} disabled={kfBusy} className="hidden" />
-</label>
-<button
-type="button"
-onClick={clearKeyframes}
-disabled={kfBusy || !keyframes.length}
-title="Forget every pose of the film. The scene is NOT touched and nothing else on this experiment changes — the film is only a description of it."
-className="bg-white border border-rose-300 hover:bg-rose-50 disabled:opacity-40 text-rose-700 font-bold px-2 py-1 rounded-md text-[11px] transition-colors inline-flex items-center gap-1 h-7 whitespace-nowrap"
->🗑 Clear the film</button>
-<span className="text-[10px] font-bold text-slate-500">
-{keyframes.length} / {KEYFRAME_LIMITS.keys} poses
-{kfPlanNow.ok ? ` · ${kfPlanNow.frames} frames at ${kfPlanNow.fps} fps → ${kfPlanNow.secondsText}` : ''}
-</span>
-</div>
-<p className="text-[10px] text-slate-500 leading-tight">
-🎞 A pose is a PHOTOGRAPH of the viewer, taken with the object the ⚙️ panel already knows how to save:
-the six menus with their radii, colours and group colours, the palettes of the ⚙ wheel, the labels, fog,
-shadows, clipping, the background, the camera and where every molecule stands — plus <b>how</b> every
-molecule is turned, which a setup does not carry (a fitted or dragged molecule is put back turned, not
-reset). The film is the way from one pose to the next: each pose is <b>held</b> for its own time, then
-<b>morphed</b> into the next over its own morph time, with its own easing — colours, radii and brightness
-fade, the camera glides, positions travel and rotations are interpolated along the <b>shortest way
-round</b> (never through a flip). What cannot be blended into anything sensible — a style NAME, a flag, a
-palette index — switches in the middle of the morph, like a cut, because a « semi-VDW » does not exist.
-▶ plays the film on screen through the very sampler the recording uses, so what is checked is what is
-written; 🔴 writes it as one video file (the 3D canvas itself, frame by frame, real time — keep the tab
-in the foreground) and brings the scene back exactly where it was. The poses are remembered in this
-browser between visits, like the rest of the viewer's preferences; ⬇ Export the film writes them as a
-.json that travels to another experiment. Nothing is uploaded anywhere: the .webm and the .json are
-written on your computer.
-</p>
 </VSection>
 
 {/* Residue sequence strip — click a tick to select that whole residue.

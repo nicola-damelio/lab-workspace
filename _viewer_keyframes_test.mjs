@@ -69,6 +69,7 @@ const deep = (a, b, what) => {
    pour une raison qui n'a rien à voir avec le code vérifié. */
 const VIEWER = readFileSync('./src/components/NMRMoleculeViewer.jsx', 'utf8').replace(/\r\n/g, '\n');
 const hasIn = (src, needle, what) => ok(src.includes(needle), what);
+const goneIn = (src, needle, what) => ok(!src.includes(needle), what);
 const countIn = (src, needle) => src.split(needle).length - 1;
 
 /* One keyframe as the panel captures it (the module's own normaliser decides
@@ -754,8 +755,20 @@ const kf = (over = {}) => normalizeKeyframe({
     'le ▶ de contrôle change de nom quand il joue : un bouton, deux états, jamais deux boutons');
   hasIn(VIEWER, 'Nothing is applied to the scene when it is read: ▶ plays it, 👁 goes to one pose.',
     'l’import DIT qu’il n’applique rien (l’utilisateur n’a pas à le deviner)');
-  hasIn(VIEWER, 'Nothing here is on screen until you press 👁 on a pose, ▶ to play',
-    '… et la ligne du panneau le redit : rien n’est à l’écran tant qu’un geste ne le demande pas');
+  /* 6bis. UNE SEULE LIGNE, ET PLUS DE ROMAN (le rapport de cette session : « rename
+     “poses and style” as “movie maker” and keep all buttons in one line. Remove the
+     commentaries so that it fits in one row »). Le panneau n'a plus NI retour à la
+     ligne (la rangée défile horizontalement) NI paragraphes d'explication : tout ce
+     qu'ils disaient vit dans les bulles des boutons, et le bilan tient en une ligne. */
+  hasIn(VIEWER, 'flex items-center gap-2 bg-fuchsia-50 border border-fuchsia-200 rounded-lg px-2 py-1 w-full overflow-x-auto',
+    'la rangée des gestes ne revient plus à la ligne : sur un panneau étroit elle DÉFILE');
+  goneIn(VIEWER, 'flex flex-wrap items-center gap-2 bg-fuchsia-50 border border-fuchsia-200',
+    '…donc plus aucun `flex-wrap` dans la barre du film');
+  goneIn(VIEWER, '🎞 A pose is a PHOTOGRAPH of the viewer',
+    'le paragraphe de douze lignes a quitté le panneau (le rapport : « remove the commentaries »)');
+  goneIn(VIEWER, 'The film lasts <b className="font-mono">',
+    '… et la phrase « The film lasts … » avec lui');
+  hasIn(VIEWER, '⚠️ The film lasts 0 s', '… sans perdre la garde qui refuse un film de 0 s (elle reste dans le geste)');
   hasIn(VIEWER, 'disabled={kfBusy || !kfPlanNow.ok || !videoReady.ok}',
     'le 🔴 n’est armé que si le navigateur sait enregistrer ET que le plan tient (le plan est lu avant le clic)');
   hasIn(VIEWER, 'disabled={kfBusy || keyframes.length < 2}',
@@ -766,13 +779,16 @@ const kf = (over = {}) => normalizeKeyframe({
     '⏹ est annoncé pour ce qu’il est : on s’arrête sans rien écrire (le film d’un demi-geste n’est pas le geste)');
   hasIn(VIEWER, 'const { legs, totalSeconds } = keyframeLegs(keyframes);',
     'la rangée des poses lit la chronologie du film (keyframeLegs) — la même que le ▶ et le 🔴, donc elle ne peut pas mentir');
-  hasIn(VIEWER, 'The film lasts <b className="font-mono">',
-    '… et la durée du film est écrite sous la rangée, dans le même texte que partout ailleurs');
+  hasIn(VIEWER, 'const kfLegsNow = keyframeLegs(keyframes);',
+    '… et la LIGNE du panneau lit la même (la durée écrite à côté des boutons ne peut pas la contredire)');
+  hasIn(VIEWER, '${videoSecondsText(kfLegsNow.totalSeconds)}',
+    '… dans le même texte que partout ailleurs (videoSecondsText)');
   hasIn(VIEWER, '{keyframes.length} / {KEYFRAME_LIMITS.keys} poses',
     'le panneau montre où en est le film par rapport à la limite du module');
   hasIn(VIEWER, '⬇ Export the film (.json)',
     'le film LUI-MÊME s’exporte : les poses voyagent (ce sont des réglages, pas des coordonnées)');
-  hasIn(VIEWER, '🎞 Poses & styles', 'et tout cela vit dans une section du viewer, nommée 🎞');
+  hasIn(VIEWER, '🎞 Movie maker', 'et tout cela vit dans une section du viewer, nommée 🎞 — « Movie maker »');
+  goneIn(VIEWER, 'title="🎞 Poses & styles"', '… et plus AUCUNE section ne s’appelle « Poses & styles » : le nom a suivi la demande');
 }
 
 /* ── 16. L’ADDITIVITÉ : la 🎬 de la trajectoire est INTACTE ────────────────

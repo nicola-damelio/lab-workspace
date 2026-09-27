@@ -1,6 +1,6 @@
 /* =========================================================================
-   _viewer_film_match_test.mjs — LE FILM RESSEMBLE À L'ÉCRAN (vignette), ET LA BARRE NE
-   RACONTE PLUS UN ROMAN.
+   _viewer_film_match_test.mjs — LE FILM RESSEMBLE À L'ÉCRAN (vignette, surfaces), ET LA
+   BARRE NE RACONTE PLUS UN ROMAN.
 
    La demande de cette session, mot pour mot :
      · « the video generated for the trajectory is different from what I see on the
@@ -11,7 +11,13 @@
        CSS (utils/viewerTrajectoryVideo : filmVignetteGeometry / filmVignetteStops) ;
      · « Remove the long commentary from the video as it takes a lot of space. »
        → le paragraphe de sept lignes sous la barre ▶ est remplacé par trois lignes, et
-       les faits qu'il portait vivent dans les titres des boutons.
+       les faits qu'il portait vivent dans les titres des boutons ;
+     · « The surface representations are ignored in the movie, even in the preview but
+       they are very important. »
+       → la scène n'est plus rebâtie à chaque image d'un film : une image qui ne repose
+       que la caméra et la place des molécules ne recrée AUCUNE représentation, donc la
+       SURFACE que NGL calcule en tâche de fond arrive vraiment à l'écran — l'aperçu ▶
+       et le fichier 🔴 montrent alors ce que l'écran montrait.
    ========================================================================= */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -124,6 +130,108 @@ has('keep this tab in the foreground', 'l’essentiel (garder l’onglet devant)
 has('🎬 The film is the 3D canvas with the vignette the screen draws over it',
   '…et la ligne dit désormais CE QUE LE FILM CONTIENT (la scène ET la vignette)');
 
-console.log(`_viewer_film_match_test.mjs — ${passed} assertions OK (vignette du CSS · beforeCapture par image · barre raccourcie)`);
+/* ── 5. UNE SURFACE SURVIT AU FILM ────────────────────────────────────────────
+   Le rapport de cette session : « the surface representations are ignored in the
+   movie, even in the preview but they are very important. »
+
+   POURQUOI ELLES L'ÉTAIENT. Un film de poses (🎞) applique un instant du geste
+   plusieurs fois par seconde (applyKeyframeSample → applyViewerSetup →
+   applySceneExtras). Chaque application comptait comme un GESTE et faisait rebâtir
+   TOUTES les représentations de la scène ; or NGL calcule une surface EN TÂCHE DE
+   FOND, maille par maille — la représentation suivante était ajoutée (et la
+   précédente retirée) avant que la moindre enveloppe ne soit prête. L'écran portait
+   donc la surface, l'aperçu ▶ et le fichier 🔴 jamais.
+
+   Ce qui est vérifié ici est EXÉCUTÉ : `sceneRebuildSig` est EXTRAITE du .jsx et
+   lancée pour de vrai (c'est une fonction pure). */
+{
+  const start = VIEW.indexOf('const sceneRebuildSig = (s) => {');
+  ok(start >= 0, 'le viewer porte la règle qui décide de rebâtir la scène (sceneRebuildSig)');
+  const body = VIEW.indexOf('{', VIEW.indexOf('=>', start));
+  let depth = 0; let end = -1;
+  for (let i = body; i < VIEW.length; i += 1) {
+    if (VIEW[i] === '{') depth += 1;
+    else if (VIEW[i] === '}') { depth -= 1; if (depth === 0) { end = i + 1; break; } }
+  }
+  ok(end > start && body > start, '… et elle se lit d’un seul tenant (un bloc complet)');
+  const sceneRebuildSig = new Function(`${VIEW.slice(start, end)}; return sceneRebuildSig;`)();
+
+  /* Un instant du film, tel que `captureViewerSetup` le photographie. */
+  const scene = (over = {}) => ({
+    v: 1,
+    catStyles: { protein: { backbone: 'cartoon', surface: 'transparent', surfaceOpacity: 0.4 } },
+    catLabels: { protein: { residues: false, residueType: false, atoms: false } },
+    background: '#000000',
+    quality: true,
+    molecules: {
+      main: { style: 'auto', color: '', colorMode: 'element', transparency: 0, pos: [0, 0, 0] },
+      extras: [{ id: 'mol_1', name: 'Ligand', style: 'auto', color: '', colorMode: 'element', transparency: 0, position: [0, 0, 0] }],
+      chosen: 'main',
+    },
+    labels: { 'main::protein|all': { residues: true, residueType: false, atoms: false } },
+    camera: { q: [0, 0, 0, 1], p: [0, 0, 0], zoom: 1 },
+    savedAt: '2026-01-01T00:00:00.000Z',
+    ...over,
+  });
+  const base = scene();
+  /* LE CAS DU FILM : la caméra tourne, les molécules glissent de leur pose à la
+     suivante — les réglages, eux, sont ceux du même geste. */
+  const gliding = scene({
+    camera: { q: [0, 0.7071, 0, 0.7071], p: [12, -3, 4], zoom: 2.5 },
+    molecules: {
+      main: { ...base.molecules.main, pos: [9, 9, 9] },
+      extras: [{ ...base.molecules.extras[0], position: [-4, 2, 8] }],
+      chosen: 'main',
+    },
+    savedAt: '2026-07-07T07:07:07.000Z',
+  });
+  eq(sceneRebuildSig(base), sceneRebuildSig(gliding),
+    'la caméra ET la place des molécules ne changent PAS la signature : aucun rebâtiment, donc la surface reste à l’écran');
+  ok(sceneRebuildSig(base).length > 40, 'la signature est bien celle des réglages (pas une chaîne vide)');
+
+  /* …MAIS TOUT CE QUI EST DESSINÉ LA CHANGE : un style, une surface, un drapeau, une
+     molécule ajoutée ou son look, la couleur de structure, le fond, une étiquette. */
+  const differs = (patch, what) => ok(sceneRebuildSig(scene(patch)) !== sceneRebuildSig(base), what);
+  differs({ catStyles: { protein: { backbone: 'cartoon', surface: 'hide' } } },
+    'éteindre la surface la REBÂTIT (elle disparaît vraiment)');
+  differs({ catStyles: { protein: { backbone: 'cartoon', surface: 'transparent', surfaceOpacity: 0.9 } } },
+    'son opacité aussi (le film morphe la transparence)');
+  differs({ catLabels: { protein: { residues: true, residueType: false, atoms: false } } },
+    'une étiquette 3D allumée par une pose');
+  differs({ background: '#112233' }, 'un fond');
+  differs({ sstrucColors: { helix: 0xff0000 } }, 'la palette 2° structure (que le redessin des extra lisait)');
+  differs({ molecules: { ...base.molecules, main: { ...base.molecules.main, transparency: 0.5 } } },
+    'la transparence de la molécule principale');
+  differs({ molecules: { ...base.molecules, extras: [{ ...base.molecules.extras[0], style: 'surface' }] } },
+    'le style d’une molécule ajoutée');
+  differs({ molecules: { ...base.molecules, extras: [] } }, 'une molécule ajoutée qui s’en va');
+  eq(sceneRebuildSig(null), '', 'une photographie absente n’a pas de signature (jamais de rebâtiment pour rien)');
+
+  /* LE CÂBLAGE : la signature est comparée, mémorisée, et un geste de la barre la
+     périme — le fichier appliqué ensuite rebâtit une fois, jamais l'inverse. */
+  has('const rebuildSig = sceneRebuildSig(s);', 'le lecteur d’une photographie lit la signature…');
+  has('if (rebuildSig !== sceneRebuildSigRef.current) bumpSectionEpoch();',
+    '… et il ne compte comme un GESTE que si elle a changé');
+  has('sceneRebuildSigRef.current = rebuildSig;', '… ce qu’il vient de dessiner est retenu');
+  has("const sceneRebuildSigRef = useRef('');", 'la mémoire de ce qui est déjà dessiné existe');
+  has("const bumpSectionEpoch = () => { sceneRebuildSigRef.current = ''; setSectionEpoch((n) => n + 1); };",
+    'un geste de la barre PÉRIME cette mémoire (le dessin à la main ne peut pas être gardé pour un fichier)');
+  gone("  if (touched) {\n    bumpSectionEpoch();",
+    'l’ancien code — rebâtir à CHAQUE application — a disparu (le bug ne peut pas revenir)');
+
+  /* LE REDESSIN D'UNE MOLÉCULE AJOUTÉE N'EST DEMANDÉ QUE SI SON LOOK A CHANGÉ (sa
+     position, elle, glisse à chaque image et ne rebâtit rien). */
+  has('let lookChanged = false;', 'le lecteur compare le look d’une molécule ajoutée avant de la redessiner');
+  has('if (lookChanged) restyleExtraMol(entry.id);',
+    '… et il ne recrée ses représentations que si quelque chose a vraiment changé (sa surface survit au film)');
+  has('let moved = false;', '… tandis qu’une POSITION qui glisse est traitée à part');
+  has('if (lookChanged || moved) hit += 1;',
+    'elle rafraîchit la barre sans redessiner : un déplacement n’est jamais un rebuild');
+  /* ET L'ÉCRITURE QUI RÉVEILLAIT CE REDESSIN GARDE SON IDENTITÉ quand rien n'a bougé. */
+  has('return Object.keys(next).every((k) => Object.is(c[k], next[k])) ? c : next;',
+    'la palette 2° structure n’est réécrite que si elle change (sinon les effets ne se réveillent pas à chaque image)');
+}
+
+console.log(`_viewer_film_match_test.mjs — ${passed} assertions OK (vignette du CSS · beforeCapture par image · barre raccourcie · une surface survit au film)`);
 
 

@@ -703,7 +703,8 @@ has('window.requestAnimationFrame(() => { try { v.requestRender(); } catch { /* 
   '…qui demande aussi l’image SUIVANTE (les représentations viennent d’être créées)');
 has('requestSceneRepaint();\n  return () => {', '…et l’effet qui rebâtit les rangées la fait aussitôt');
 has("const [sectionEpoch, setSectionEpoch] = useState(0);", 'le compteur des gestes de la barre existe');
-has('const bumpSectionEpoch = () => setSectionEpoch((n) => n + 1);', '…et sait s’incrémenter');
+has('const bumpSectionEpoch = () => { sceneRebuildSigRef.current = \'\'; setSectionEpoch((n) => n + 1); };',
+  '…et sait s’incrémenter (en PÉRIMANT au passage ce qu’un fichier appliqué avait déjà dessiné — voir sceneRebuildSig)');
 has('|gesture:${sectionEpoch}|H:', '…dans la signature qui décide de reconstruire la scène (le tick « Hide H » la suit)');
 ok((VIEW.match(/bumpSectionEpoch\(\);/g) || []).length >= 5,
   'chaque geste de la barre (style · ↺ d’une rangée · ↺ d’une section · ✔ · 🎨 Copy) l’incrémente');
