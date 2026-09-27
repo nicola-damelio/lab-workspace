@@ -245,10 +245,10 @@ const reset = () => {
     '…et les figures qui renvoient à ce canvas suivent (libellé des liens ✏️ Modify in Image Builder)');
   has(PD, 'if (touched) updateProject({ figures: nextFigures });', 'les figures ne sont enregistrées que si elles changent');
   has(PD, 'onClick={() => renameCanvas(c)}', '…avec son bouton sur la carte du canvas');
-  has(PD, 'title="Rename this canvas — the name is what this page, the image library and the “✏️ Modify in Image Builder” links show.',
+  has(PD, 'title="Rename this canvas — the name is what this page, the image library and the “✏️ Modify in Image Builder” links show (',
     '…et une infobulle qui dit ce que le nom change');
-  has(PD, 'canvases can also be\n            renamed in the Image Builder — its toolbar’s',
-    'le texte d’aide rappelle où renommer ailleurs (la barre de l’éditeur et la modale 🖼 Library)');
+  has(PD, 'canvases can also be renamed in the Image Builder: its toolbar’s ✏️ Rename button, or the ✎ of a thumbnail in the 🖼 Library modal',
+    'l’aide rappelle où renommer ailleurs (la barre de l’éditeur et la modale 🖼 Library) — elle vit désormais dans cette infobulle, avec le reste du geste');
   has(PD, '>✏️ Rename</button>', '…et le bouton dit « Rename » au lieu d’un crayon seul');
   has(PD, "renameFigureOnDrive({ scope: 'project', projectId: project.id, projectName: project.name || '', id: c.id, label })",
     '…et le FICHIER DU DRIVE suit le renommage (« I cannot find my renamed canvas in Drive »)');

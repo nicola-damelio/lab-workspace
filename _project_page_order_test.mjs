@@ -48,7 +48,6 @@ const CARDS = [
   ['🧪 Experiment planner', 'le plan d’expériences — AVANT la section du titre (la demande)'],
   ['🧪 Experiments in this project', 'les expériences du projet'],
   ['🧾 Title, authors & affiliations', 'la fiche de l’article'],
-  ['🖼 Saved canvases', 'les toiles enregistrées'],
   ['🔬 Scientific background', 'le contexte scientifique'],
   ['📋 Materials and Methods', 'le Matériel et méthodes'],
   ['💬 Results and Discussion', 'les résultats'],
@@ -57,6 +56,7 @@ const CARDS = [
   ['📎 Supporting information', 'les informations supplémentaires'],
   ['📚 References', 'la liste des références'],
   ['💬 Comments & review', 'la revue (appel de renderCommentsSection)'],
+  ['🖼 Saved canvases', 'les toiles enregistrées — APRÈS la revue (« move “saved canvases” after “comments and review” »)'],
   ['📎 Useful files', 'les fichiers utiles — EN DERNIER']
 ];
 
@@ -134,5 +134,35 @@ ok(PAGE.includes('const [openSections, setOpenSections] = useState({')
   'la carte reste pliable (openSections.usefulFiles)');
 ok(PAGE.includes('const [openSections, setOpenSections] = useState({') && PAGE.includes('usefulFiles: true'),
   'elle est ouverte par défaut — à la fin de la page, elle reste donc visible sans clic');
+
+/* ── 4. LES TOILES ENREGISTRÉES PASSENT APRÈS LA REVUE ─────────────────────────
+   La demande : « move “saved canvases” after “comments and review” and remove or
+   reduce drastically the comments of the “saved canvases”. » La carte se lit donc
+   entre la revue et « 📎 Useful files » (qui reste la dernière — la demande
+   précédente), et son explication tient en quelques lignes au lieu de dix-neuf. */
+const canvases = positionOf('🖼 Saved canvases');
+const comments = positionOf('💬 Comments & review');
+const useful2 = positionOf('📎 Useful files');
+ok(comments < canvases && canvases < useful2,
+  'les toiles enregistrées se lisent APRÈS la revue et AVANT les fichiers utiles');
+const canvasCard = render.slice(render.lastIndexOf('<SectionCard', canvases), render.indexOf('</SectionCard>', canvases));
+ok(canvasCard.includes('title="🖼 Saved canvases"'), '…et c’est bien cette carte-là, à sa nouvelle place');
+ok(canvasCard.includes('{savedCanvases.length}'), '…elle garde son compteur');
+ok(canvasCard.includes('savedCanvases.map((c) => ('), '…et la liste de ses toiles');
+ok(canvasCard.includes('canvasPreviewOf(c)'), '…avec l’aperçu de chaque toile');
+ok(canvasCard.includes('openImageBuilder(project.id, c.id)'),
+  '…et le lien qui la rouvre dans l’Image Builder (le déménagement n’a rien débranché)');
+ok(canvasCard.includes('removeCanvasLink(c.id)') && canvasCard.includes('renameCanvas(c)'),
+  '…le renommage et le retrait aussi');
+/* L'EXPLICATION A FONDÉ : dix-neuf lignes de prose (bibliothèque, dossier Drive,
+   doublons, restauration, renommage) sont devenues quelques lignes — le détail vit
+   désormais dans les infobulles des boutons concernés. */
+const canvasIntro = canvasCard.slice(canvasCard.indexOf('<p className="text-xs text-slate-500 mb-3">'),
+  canvasCard.indexOf('</p>', canvasCard.indexOf('<p className="text-xs text-slate-500 mb-3">')));
+ok(canvasIntro.split('\n').length <= 8,
+  `l’explication de la carte tient en quelques lignes (« remove or reduce drastically the comments ») — ${canvasIntro.split('\n').length} lignes`);
+ok(!canvasIntro.includes('Remove duplicate canvases') && !canvasIntro.includes('Restore a canvas file')
+  && !canvasIntro.includes('✏️ Rename'),
+  '…et ce qui reste est ce qui se fait ailleurs (les boutons ⬇ ☁ 🧹 📥 ✏️ 🗑 portent le détail)');
 
 console.log(`_project_page_order_test.mjs — ${passed} assertions passed`);

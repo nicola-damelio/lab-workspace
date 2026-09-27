@@ -120,7 +120,8 @@ eq(cleared.layout.body.font, '', '…et le caractère redevient vide (aucune rè
    rubrique « References (citation & bibliography) » (voir clearJournalFormat). */
 eq(cleared.inTextStyle, 'sup', '…mais le réglage de citation reste (la forme des renvois du journal)');
 eq(cleared.etAlLimit, JOURNAL_FORMATS.jacs.etAl, '…avec sa coupe des auteurs');
-eq(PUB_LAYOUT_PARTS.length, 7, 'les sept parties du document sont toujours celles du panneau');
+eq(PUB_LAYOUT_PARTS.length, 8,
+  'les huit parties du document sont celles du panneau — l’abstract, le titre, les auteurs, les affiliations, les intitulés, le texte, les figures et la bibliographie');
 
 /* ══ 3. L'ORDRE DES SECTIONS SUR UN DOCUMENT RÉEL ═════════════════════════ */
 const H2 = (t) => `<h2 class="pf-heading">${t}</h2>`;

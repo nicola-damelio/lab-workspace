@@ -636,6 +636,35 @@ ok(wideFig.xml.slice(wideFig.xml.indexOf('<w:cols w:num="1"/>')).includes('After
   '…et le texte qui suit reprend les colonnes de la page');
 eq(wideFig.columns, 2, '…la dernière section, elle, garde les deux colonnes du format');
 
+/* ── 10 bis. LA MÊME FIGURE, ANCRÉE DANS LE TEXTE ─────────────────────────────
+   Le rapport, mot pour mot : « in the docx document obtained by clicking on “export to
+   word” from the exported document, if I have text in two columns and a figure full
+   width, the figure is correctly placed in the exported document but not in the
+   docx. » Le texte d'une section arrive ici comme UN SEUL bloc — le
+   `<div class="pf-body">` de la page du projet — et c'est DEDANS qu'un manuscrit
+   importé pose ses figures (elles reprennent la place du paragraphe qu'elles suivaient,
+   voir utils/figurePlacement.js). La figure était donc AVALÉE par ce bloc : son
+   réglage « Two columns » ne faisait rien pour Word, alors que la feuille du document
+   (impression, PDF) la faisait barrer la page — les deux ne pouvaient pas être d'accord. */
+const NESTED_FIG = '<div class="pf-body"><p>Before.</p>'
+  + '<figure class="pf-figure" data-pf-cols="2"><img src="https://drive.example/f1.png" alt="F">'
+  + '<figcaption class="pf-caption">Figure 1.</figcaption></figure>'
+  + '<p>After.</p></div>';
+const nested = htmlToDocxBody(NESTED_FIG, { format: twoColumns, images: COL_IMAGES });
+eq([...(nested.xml.matchAll(/<w:cols w:num="1"\/>/g))].length, 1,
+  'une figure ancrée dans le texte ouvre SA section d’une colonne, comme celle de la grille des figures');
+eq(extentOf(nested.xml).cx, 6126624, '…elle reprend toute la largeur de la page, comme dans le document exporté');
+ok(nested.xml.indexOf('Before.') < nested.xml.indexOf('<w:cols w:num="1"/>')
+  && nested.xml.indexOf('<w:cols w:num="1"/>') < nested.xml.indexOf('After.'),
+  '…entre le texte d’avant et le texte d’après : le réglage de la figure ne se perd plus dans le bloc du texte');
+eq(nested.columns, 2, '…et le texte qui suit reprend les deux colonnes de la page');
+/* LA FIGURE QUI NE DIT RIEN reste dans le texte, sans section : le .docx d'un document
+   dont aucune figure n'est réglée est, au caractère près, celui d'avant. */
+const plainNested = htmlToDocxBody(NESTED_FIG.replace(' data-pf-cols="2"', ''),
+  { format: twoColumns, images: COL_IMAGES });
+ok(!/<w:cols w:num="1"\/>/.test(plainNested.xml) && extentOf(plainNested.xml).cx === COL_EMU,
+  'une figure ancrée SANS réglage coule dans les colonnes : rien ne change pour elle');
+
 /* …ET CELLE QUI DIT « One column » RESTE DANS SA COLONNE, même sous un format qui
    met TOUTES les figures pleine largeur (« Full width », la partie « Figures &
    captions ») : le réglage de la figure l'emporte sur le défaut du format. */

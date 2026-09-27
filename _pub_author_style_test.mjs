@@ -422,8 +422,8 @@ ok(/linkCitations\(repairContentImages\(withoutBibliographySection\(project\.exp
    la forme des renvois, et il est appliqué par une feuille de style (voir
    pubLayoutCss) : la page du projet, le document imprimé et son PDF — document
    figé compris. Un réglage laissé vide n'écrit RIEN. */
-eq(PUB_LAYOUT_PART_IDS, ['title', 'authors', 'affiliations', 'heading', 'body', 'figure', 'bibliography'],
-  'chaque partie d’un document a ses réglages (titre, auteurs, affiliations, intitulés, texte, figures, bibliographie)');
+eq(PUB_LAYOUT_PART_IDS, ['title', 'authors', 'affiliations', 'abstract', 'heading', 'body', 'figure', 'bibliography'],
+  'chaque partie d’un document a ses réglages (titre, auteurs, affiliations, abstract, intitulés, texte, figures, bibliographie)');
 eq(PUB_TEXT_ALIGNMENTS.map((a) => a.id), ['left', 'center', 'right', 'justify'],
   'les quatre positions demandées : gauche, centré, droite, justifié');
 ok(PUB_TEXT_ALIGNMENTS.every((a) => a.label && a.title), '…chacune expliquée (infobulle du bouton)');
@@ -451,8 +451,8 @@ const cssBody = pubLayoutCss({
   layout: { body: { font: 'Georgia, serif', size: 11.5, align: 'justify', bold: false, italic: true, underline: false, color: '#123456' } }
 });
 ok(cssBody.includes('#project-doc-container .pf-body'), 'le texte des sections est visé par sa classe');
-ok(cssBody.includes('#project-doc-container p:not(.pf-authors):not(.pf-affiliations):not(.pf-meta):not(.pf-caption)'),
-  '…et par ses paragraphes — en excluant l’en-tête, la ligne d’information et les légendes de figure');
+ok(cssBody.includes('#project-doc-container p:not(.pf-authors):not(.pf-affiliations):not(.pf-meta):not(.pf-caption):not(.pf-abstract)'),
+  '…et par ses paragraphes — en excluant l’en-tête, la ligne d’information, les légendes de figure ET les paragraphes de l’abstract (qui ont leur propre partie)');
 ok(cssBody.includes('font-family: Georgia, serif !important;'), 'la police choisie est écrite');
 ok(cssBody.includes('font-size: 11.5pt !important;'), 'la taille (en points, pour l’impression) aussi');
 ok(cssBody.includes('text-align: justify !important;'), 'la position (justifié) aussi');

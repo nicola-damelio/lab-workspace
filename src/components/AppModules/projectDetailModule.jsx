@@ -3961,6 +3961,32 @@ export const ProjectDetailModule = ({
                 <p key="affiliations" className="pf-affiliations text-[11px] text-slate-500 italic whitespace-pre-line mb-2"
                    dangerouslySetInnerHTML={{ __html: superscriptMarksHtml(project.paperAffiliations) }} />
               );
+              /* ── L'ABSTRACT DU PAPIER — UN BLOC DU DOCUMENT, APRÈS LES AFFILIATIONS ───
+                 La demande : « in the project page after the affiliations there must be the
+                 section of the “abstract” which should also be linked in the publication
+                 format (style, position in the text, etc). » Le résumé est un bloc comme
+                 les autres (voir PUB_DOC_BLOCKS) : il s'imprime à la place que le format
+                 lui donne — APRÈS les affiliations par défaut —, sous l'intitulé réglé au
+                 panneau (« Abstract »), avec le style et les colonnes de SA partie
+                 (« Abstract », voir PUB_LAYOUT_PARTS). Il ne s'imprime que REMPLI : un
+                 projet sans résumé ne change pas d'un caractère.
+                 DEUX CLASSES, ET C'EST VOULU : `pf-abstract` est portée par le CADRE et par
+                 chaque paragraphe — le cadre fait barrer tout le résumé d'un seul tenant
+                 quand le format le met « Full width » (column-span: all, et une section
+                 Word dans le .docx : voir pubLayoutCss · renderUnits), et les paragraphes
+                 sortent du sélecteur du TEXTE de section (`p:not(.pf-abstract)`), qui les
+                 mettrait en forme deux fois. Une ligne vide du champ = un paragraphe. */
+              const abstractText = String(project.paperAbstract || '').trim();
+              if (abstractText) blocks.abstract = (
+                <div key="abstract" className="pf-abstract mb-6" {...{ [DOC_SECTION_ATTR]: 'abstract' }}>
+                  {docHeading('abstract') ? (
+                    <h2 className="pf-heading text-base font-black text-slate-800 border-b border-slate-200 pb-1 mb-2">{docHeading('abstract')}</h2>
+                  ) : null}
+                  {abstractText.split('\n').map((p) => p.trim()).filter(Boolean).map((p, i) => (
+                    <p key={i} className="pf-abstract text-sm text-slate-800 text-justify leading-relaxed mb-2">{p}</p>
+                  ))}
+                </div>
+              );
               /* LA LIGNE D'INFORMATION DU PROJET NE S'IMPRIME QUE SI ELLE EST ACTIVÉE
                  — « the project line should not appear in the document unless
                  activated » : sa rangée, dans « Document sections (order & titles) »,
@@ -4648,15 +4674,18 @@ export const ProjectDetailModule = ({
 
         <SectionCard title="🧾 Title, authors & affiliations"
                      open={openSections.article} onToggle={() => toggleSection('article')}
-                     badge={(project.paperTitle || project.paperAuthors) ? (
+                     badge={(project.paperTitle || project.paperAuthors || project.paperAbstract) ? (
                        <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5">filled</span>
                      ) : null}>
           <p className="text-xs text-slate-500 mb-3">
             The header of the paper this project is about — its <span className="font-bold">title</span>, the
-            <span className="font-bold"> full author list</span> (in the order of the paper) and the
-            <span className="font-bold"> affiliations</span> behind each author.
-            “📥 Import a manuscript” fills these three fields from the first lines of the document, and
-            “📄 Export document” prints them at the top of the exported document. Nothing here is sent to Drive.
+            <span className="font-bold"> full author list</span> (in the order of the paper), the
+            <span className="font-bold"> affiliations</span> behind each author and the
+            <span className="font-bold"> abstract</span>. “📥 Import a manuscript” fills the title, the authors and the
+            affiliations from the first lines of the document (the abstract is pasted here), and
+            “📄 Export document” prints them at the top of the exported document — the abstract as the
+            <span className="font-bold"> “Abstract” block</span>, whose place in the text and style are set in
+            “Publication format”. Nothing here is sent to Drive.
           </p>
           <div className="flex flex-col gap-3">
             <label className="flex flex-col gap-1">
@@ -4677,149 +4706,27 @@ export const ProjectDetailModule = ({
                         onChange={(e) => updateProject({ paperAffiliations: e.target.value })}
                         placeholder={'One affiliation per line, numbered as in the author list\n1 Dipartimento di Agraria, Università di Napoli Federico II, Portici, Italy'} />
             </label>
+            {/* ── L'ABSTRACT, APRÈS LES AFFILIATIONS ───────────────────────────────────
+                La demande, mot pour mot : « in the project page after the affiliations there
+                must be the section of the “abstract” which should also be linked in the
+                publication format (style, position in the text, etc). » Le résumé du papier
+                se saisit donc ICI — la tête du papier est au même endroit — et il se lie au
+                document par le format : la rangée « Abstract » de « Document sections
+                (order & titles) » lui donne sa PLACE dans le texte (il naît après les
+                affiliations, et ↺/le glisser-déposer le déplacent comme les autres blocs) et
+                son INTITULÉ ; la partie « Abstract » de « Formatting of every part » lui
+                donne son style (police, taille, alignement, couleur) et ses COLONNES.
+                Une ligne vide = un paragraphe, comme les affiliations. Rien n'est envoyé
+                à Drive : le texte vit dans le projet, avec le reste. */}
+            <label className="flex flex-col gap-1">
+              <span className="text-[10px] font-bold text-slate-600 uppercase tracking-wide">Abstract</span>
+              <textarea className={`${inputCls} text-xs`} rows={5} value={project.paperAbstract || ''} readOnly={!canModify}
+                        onChange={(e) => updateProject({ paperAbstract: e.target.value })}
+                        placeholder={'The abstract of the paper — one paragraph per line. It is printed after the affiliations, as the “Abstract” block of the exported document.'} />
+            </label>
           </div>
         </SectionCard>
 
-        {/* ---------- Saved Image Builder canvases (links back into the editor) ---------- */}
-        <SectionCard title="🖼 Saved canvases" open={openSections.canvases} onToggle={() => toggleSection('canvases')}
-                     badge={<span className="text-[10px] font-bold text-slate-500 bg-slate-100 rounded-full px-2 py-0.5">{savedCanvases.length}</span>}>
-          <p className="text-xs text-slate-500 mb-3">
-            Compositions stored in this project's image library — with <span className="font-bold">💾 Save now</span> (the
-            dialog asks which project owns the canvas: pick this one) or by <span className="font-bold">📤 Insert into project…</span>.
-            Every canvas below is also an image of the library (🖼 Library in the Image Builder →
-            <span className="font-bold"> Project Library</span> tab)
-            and a <span className="font-bold">link</span> back into the editor: “Open in Image Builder” reloads its panels, captions
-            and grid, and saving it again updates this same entry. A composition inserted into a section keeps showing its
-            <span className="font-bold"> image</span> there — the link is added on top, it never replaces the picture.
-            A canvas saved by an older version could be stored <span className="font-bold">several times</span>: the
-            <span className="font-bold"> 🧹 Remove duplicate canvases</span> button below merges those copies — the most
-            recent composition of each canvas wins, and nothing is deleted from Google Drive.
-            If a canvas vanished from this browser (a forced refresh while its composition was too big for the browser
-            store), <span className="font-bold">📥 Restore a canvas file</span> brings it back from the
-            <span className="font-bold"> &lt;image&gt;.meta.json</span> that sits next to its image on Google Drive — no
-            list, no timestamp, no cloud connection needed: the file <span className="font-bold">is</span> the composition.
-            <span className="font-bold"> ✏️ Rename</span> on a card renames that canvas AND its file on Drive (the same file takes the new name, so the
-            figures that link to it keep working); canvases can also be
-            renamed in the Image Builder — its toolbar’s <span className="font-bold">✏️ Rename</span> button, and the
-            <span className="font-bold"> ✎</span> button on a thumbnail in the <span className="font-bold">🖼 Library</span> modal).
-          </p>
-          {/* The figure FILES are on Drive; this browser holds the LIST that shows
-              them. These two buttons are the same additive gestures as in the
-              Image Library modal, reachable from the project page too. */}
-          <div className="flex flex-wrap items-center gap-2 mb-3 text-[11px]">
-            <span className="text-slate-500">
-              Figures on <span className="font-bold">Google Drive → {projectImagesFolderLabel(project.name || '', getDriveRootName())}</span>
-            </span>
-            <button type="button" onClick={() => addMissingFiguresFromDrive()} disabled={figDriveBusy}
-                    className="font-bold px-2.5 py-1 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
-                    title="Read this project’s images folder on Drive and ADD the figures it holds but this list does not show (another computer, figures uploaded by a coworker). Nothing is deleted or replaced. The folder is SEARCHED (shared registry, then its name, then the closest project folder) — it is never created, so a renamed project folder no longer produces an empty twin beside your files.">
-              {figDriveBusy ? '⏳ Working…' : '⬇ Add missing figures from Drive'}
-            </button>
-            {canModify && (
-              <button type="button" onClick={saveFiguresToDrive} disabled={figDriveBusy}
-                      className="font-bold px-2.5 py-1 rounded-lg border border-sky-300 bg-sky-50 text-sky-700 hover:bg-sky-100 disabled:opacity-50"
-                      title="Send to Google Drive the figures of this project whose pixels are still only in this browser (they would not follow you on another computer). Nothing is deleted.">
-                ☁ Save figures to Drive
-              </button>
-            )}
-            {canModify && canvasDupCount > 0 && (
-              <button type="button" onClick={cleanCanvasDuplicates}
-                      className="font-bold px-2.5 py-1 rounded-lg border border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100"
-                      title="The automatic save of the Image Builder used to add one entry per pass once it had lost track of the canvas: this removes the extra copies. The most recent composition of each canvas is kept, along with every entry a figure of this page points at. Nothing is deleted from Google Drive.">
-                🧹 Remove {canvasDupCount} duplicate canvas cop{canvasDupCount === 1 ? 'y' : 'ies'}
-              </button>
-            )}
-            {canModify && (
-              <>
-                <button type="button" onClick={() => { if (canvasFileRef.current) canvasFileRef.current.click(); }}
-                        disabled={canvasRestoreBusy}
-                        className="font-bold px-2.5 py-1 rounded-lg border border-violet-300 bg-violet-50 text-violet-700 hover:bg-violet-100 disabled:opacity-50"
-                        title="Lost a canvas (browser refresh, empty store, another computer)? Pick the “<image>.meta.json” file that sits NEXT TO its image on Google Drive: its composition — panels, figures, letters, captions, grid, arrows — comes back into this project’s library, where “🖼 Open in Image Builder” can reopen it. The panels are compressed so the composition fits the browser store; the full-size file stays on Drive and “💾 Save now” re-uploads the image.">
-                  {canvasRestoreBusy ? '⏳ Restoring…' : '📥 Restore a canvas file'}
-                </button>
-                <input ref={canvasFileRef} type="file" accept=".json,application/json" className="hidden"
-                       onChange={(e) => {
-                         const f = e.target.files && e.target.files[0];
-                         e.target.value = '';
-                         restoreCanvasFromFile(f);
-                       }} />
-              </>
-            )}
-            {figDriveMsg && (
-              <span className="font-bold text-slate-600 bg-slate-50 border border-slate-200 rounded px-2 py-1">{figDriveMsg}</span>
-            )}
-          </div>
-          {/* LE DOSSIER D'IMAGES EST DÉRIVÉ DU NOM DU PROJET : quand il a été
-              renommé (ou renommé à la main sur le Drive), les fichiers sont
-              restés dans l'ancien dossier. Plutôt que de deviner — ou de créer un
-              dossier vide à côté — on MONTRE les dossiers de projet du dataset
-              avec leur contenu : lire le bon le retient pour ce projet, et les
-              envois suivants y vont aussi (voir utils/figuresFolder.js). */}
-          {figFolderChoices.length > 0 && (
-            <div className="flex flex-wrap items-center gap-1 mb-3 text-[11px] bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5">
-              <span className="font-bold text-amber-800">
-                📁 Other folders of this dataset on Drive (choose the one holding your figures):
-              </span>
-              {figFolderChoices.slice(0, 10).map((c) => (
-                <button key={c.folderId || c.name} type="button" disabled={figDriveBusy}
-                        onClick={() => addMissingFiguresFromDrive(c.name)}
-                        className="font-bold px-2 py-0.5 rounded border border-amber-300 bg-white text-amber-800 hover:bg-amber-100 disabled:opacity-50"
-                        title={`Read “projects/${c.name}/images” on Drive (${c.files} file(s), ${c.sidecars} editable composition(s)) and make it THIS project’s images folder. Nothing is deleted; the figures it holds are ADDED to this list.`}>
-                  {c.name} ({c.files})
-                </button>
-              ))}
-              <button type="button" onClick={() => setFigFolderChoices([])}
-                      className="px-1.5 py-0.5 rounded border border-amber-200 bg-white text-amber-700 hover:bg-amber-100"
-                      title="Hide this list (it comes back the next time a Drive read finds no folder for this project).">
-                ✕
-              </button>
-            </div>
-          )}
-          {savedCanvases.length === 0 ? (
-            <div className="text-xs italic text-slate-400 bg-slate-50 border border-dashed border-slate-300 rounded-lg px-3 py-5 text-center">
-              No canvas yet — in the Image Builder (sidebar → 🖼️ Image Builder) click “💾 Save now” and choose
-              <span className="font-bold"> this project</span> as the project that owns it, or insert a composition with
-              “📤 Insert into project…”: it appears here and in the image library's Project tab.
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-              {savedCanvases.map((c) => (
-                <div key={c.id} className="bg-slate-50 border border-amber-200 rounded-xl p-3 flex flex-col gap-2">
-                  <div className="bg-white border border-slate-200 rounded-lg h-28 flex items-center justify-center overflow-hidden">
-                    {canvasPreviewOf(c)
-                      ? <img src={canvasPreviewOf(c)} alt={c.label || 'Canvas'} className="max-h-28 max-w-full object-contain"
-                             title="Preview of this canvas — the rendered image when this browser has it, otherwise the first panel of its saved composition" />
-                      : <span className="text-[10px] italic text-slate-400 text-center px-2"
-                              title="This canvas holds its panels but no picture this browser can draw — open it (🖼 Open in Image Builder) and click “💾 Save now” to write its rendered image">composition only — 🖼 open it</span>}
-                  </div>
-                  <span className="text-xs font-bold text-slate-700 truncate" title={c.label || 'Canvas'}>{c.label || 'Canvas'}</span>
-                  <span className="text-[10px] text-slate-400">
-                    saved {new Date(c.updatedAt || c.addedAt || Date.now()).toLocaleString()}
-                    {c.drive ? ' · ☁ on your cloud' : ''}
-                  </span>
-                  <div className="flex items-center gap-1.5 mt-auto">
-                    <button type="button"
-                            onClick={() => { if (typeof openImageBuilder === 'function') openImageBuilder(project.id, c.id); }}
-                            className="flex-1 text-xs font-bold rounded-lg bg-amber-500 text-white hover:bg-amber-600 px-2 py-1.5"
-                            title="Reopen this canvas in the Image Builder (this project) — the editor loads the saved panels, captions and grid">
-                      🖼 Open in Image Builder
-                    </button>
-                    {canModify && (
-                      <button type="button" onClick={() => renameCanvas(c)}
-                              className="text-slate-600 hover:text-slate-800 border border-slate-200 bg-white rounded-lg px-2 py-1.5 text-xs font-bold"
-                              title="Rename this canvas — the name is what this page, the image library and the “✏️ Modify in Image Builder” links show. The figures that point at it follow, and the file already on Drive is renamed with it (same file, same link — nothing is left behind under the old name). If the cloud is not connected, the next “💾 Save now” names the image that way; if this browser’s store is full the write is refused and the message above says so.">✏️ Rename</button>
-                    )}
-                    {canModify && (
-                      <button type="button" onClick={() => removeCanvasLink(c.id)}
-                              className="text-red-400 hover:text-red-600 border border-red-200 bg-red-50 rounded-lg px-2 py-1.5 text-xs font-bold"
-                              title="Remove this canvas from the project image library (the cloud/Drive copy is kept)">🗑</button>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </SectionCard>
 
         {/* ---------- Scientific background ---------- */}
         {textSection('background', '🔬 Scientific background',
@@ -5034,6 +4941,139 @@ export const ProjectDetailModule = ({
 
 
         {renderCommentsSection()}
+
+        {/* ---------- Saved Image Builder canvases (links back into the editor) ---------- */}
+        <SectionCard title="🖼 Saved canvases" open={openSections.canvases} onToggle={() => toggleSection('canvases')}
+                     badge={<span className="text-[10px] font-bold text-slate-500 bg-slate-100 rounded-full px-2 py-0.5">{savedCanvases.length}</span>}>
+          {/* LA DEMANDE, MOT POUR MOT : « remove or reduce drastically the comments of the
+              “saved canvases”. » L'explication tenait dix-neuf lignes (bibliothèque, dossier
+              Drive, doublons, restauration, renommage…) : elle vit désormais dans
+              l'INFOBULLE du bouton qui la concerne (⬇ ☁ 🧹 📥 ✏️ 🗑), donc au moment du
+              geste et pas en prose au-dessus. Il ne reste ici que ce qui se fait ailleurs
+              et ne se devine pas. */}
+          <p className="text-xs text-slate-500 mb-3">
+            Compositions saved in this project's image library: <span className="font-bold">💾 Save now</span> in the
+            Image Builder stores one, <span className="font-bold">📤 Insert into project…</span> files an existing one here.
+            Each card below reopens its canvas in the editor; a composition already inserted into a section keeps its
+            <span className="font-bold"> image</span> there — the link is added on top, it never replaces the picture.
+          </p>
+          {/* The figure FILES are on Drive; this browser holds the LIST that shows
+              them. These two buttons are the same additive gestures as in the
+              Image Library modal, reachable from the project page too. */}
+          <div className="flex flex-wrap items-center gap-2 mb-3 text-[11px]">
+            <span className="text-slate-500">
+              Figures on <span className="font-bold">Google Drive → {projectImagesFolderLabel(project.name || '', getDriveRootName())}</span>
+            </span>
+            <button type="button" onClick={() => addMissingFiguresFromDrive()} disabled={figDriveBusy}
+                    className="font-bold px-2.5 py-1 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
+                    title="Read this project’s images folder on Drive and ADD the figures it holds but this list does not show (another computer, figures uploaded by a coworker). Nothing is deleted or replaced. The folder is SEARCHED (shared registry, then its name, then the closest project folder) — it is never created, so a renamed project folder no longer produces an empty twin beside your files.">
+              {figDriveBusy ? '⏳ Working…' : '⬇ Add missing figures from Drive'}
+            </button>
+            {canModify && (
+              <button type="button" onClick={saveFiguresToDrive} disabled={figDriveBusy}
+                      className="font-bold px-2.5 py-1 rounded-lg border border-sky-300 bg-sky-50 text-sky-700 hover:bg-sky-100 disabled:opacity-50"
+                      title="Send to Google Drive the figures of this project whose pixels are still only in this browser (they would not follow you on another computer). Nothing is deleted.">
+                ☁ Save figures to Drive
+              </button>
+            )}
+            {canModify && canvasDupCount > 0 && (
+              <button type="button" onClick={cleanCanvasDuplicates}
+                      className="font-bold px-2.5 py-1 rounded-lg border border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100"
+                      title="The automatic save of the Image Builder used to add one entry per pass once it had lost track of the canvas: this removes the extra copies. The most recent composition of each canvas is kept, along with every entry a figure of this page points at. Nothing is deleted from Google Drive.">
+                🧹 Remove {canvasDupCount} duplicate canvas cop{canvasDupCount === 1 ? 'y' : 'ies'}
+              </button>
+            )}
+            {canModify && (
+              <>
+                <button type="button" onClick={() => { if (canvasFileRef.current) canvasFileRef.current.click(); }}
+                        disabled={canvasRestoreBusy}
+                        className="font-bold px-2.5 py-1 rounded-lg border border-violet-300 bg-violet-50 text-violet-700 hover:bg-violet-100 disabled:opacity-50"
+                        title="Lost a canvas (browser refresh, empty store, another computer)? Pick the “<image>.meta.json” file that sits NEXT TO its image on Google Drive: its composition — panels, figures, letters, captions, grid, arrows — comes back into this project’s library, where “🖼 Open in Image Builder” can reopen it. The panels are compressed so the composition fits the browser store; the full-size file stays on Drive and “💾 Save now” re-uploads the image.">
+                  {canvasRestoreBusy ? '⏳ Restoring…' : '📥 Restore a canvas file'}
+                </button>
+                <input ref={canvasFileRef} type="file" accept=".json,application/json" className="hidden"
+                       onChange={(e) => {
+                         const f = e.target.files && e.target.files[0];
+                         e.target.value = '';
+                         restoreCanvasFromFile(f);
+                       }} />
+              </>
+            )}
+            {figDriveMsg && (
+              <span className="font-bold text-slate-600 bg-slate-50 border border-slate-200 rounded px-2 py-1">{figDriveMsg}</span>
+            )}
+          </div>
+          {/* LE DOSSIER D'IMAGES EST DÉRIVÉ DU NOM DU PROJET : quand il a été
+              renommé (ou renommé à la main sur le Drive), les fichiers sont
+              restés dans l'ancien dossier. Plutôt que de deviner — ou de créer un
+              dossier vide à côté — on MONTRE les dossiers de projet du dataset
+              avec leur contenu : lire le bon le retient pour ce projet, et les
+              envois suivants y vont aussi (voir utils/figuresFolder.js). */}
+          {figFolderChoices.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1 mb-3 text-[11px] bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5">
+              <span className="font-bold text-amber-800">
+                📁 Other folders of this dataset on Drive (choose the one holding your figures):
+              </span>
+              {figFolderChoices.slice(0, 10).map((c) => (
+                <button key={c.folderId || c.name} type="button" disabled={figDriveBusy}
+                        onClick={() => addMissingFiguresFromDrive(c.name)}
+                        className="font-bold px-2 py-0.5 rounded border border-amber-300 bg-white text-amber-800 hover:bg-amber-100 disabled:opacity-50"
+                        title={`Read “projects/${c.name}/images” on Drive (${c.files} file(s), ${c.sidecars} editable composition(s)) and make it THIS project’s images folder. Nothing is deleted; the figures it holds are ADDED to this list.`}>
+                  {c.name} ({c.files})
+                </button>
+              ))}
+              <button type="button" onClick={() => setFigFolderChoices([])}
+                      className="px-1.5 py-0.5 rounded border border-amber-200 bg-white text-amber-700 hover:bg-amber-100"
+                      title="Hide this list (it comes back the next time a Drive read finds no folder for this project).">
+                ✕
+              </button>
+            </div>
+          )}
+          {savedCanvases.length === 0 ? (
+            <div className="text-xs italic text-slate-400 bg-slate-50 border border-dashed border-slate-300 rounded-lg px-3 py-5 text-center">
+              No canvas yet — in the Image Builder (sidebar → 🖼️ Image Builder) click “💾 Save now” and choose
+              <span className="font-bold"> this project</span> as the project that owns it, or insert a composition with
+              “📤 Insert into project…”: it appears here and in the image library's Project tab.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+              {savedCanvases.map((c) => (
+                <div key={c.id} className="bg-slate-50 border border-amber-200 rounded-xl p-3 flex flex-col gap-2">
+                  <div className="bg-white border border-slate-200 rounded-lg h-28 flex items-center justify-center overflow-hidden">
+                    {canvasPreviewOf(c)
+                      ? <img src={canvasPreviewOf(c)} alt={c.label || 'Canvas'} className="max-h-28 max-w-full object-contain"
+                             title="Preview of this canvas — the rendered image when this browser has it, otherwise the first panel of its saved composition" />
+                      : <span className="text-[10px] italic text-slate-400 text-center px-2"
+                              title="This canvas holds its panels but no picture this browser can draw — open it (🖼 Open in Image Builder) and click “💾 Save now” to write its rendered image">composition only — 🖼 open it</span>}
+                  </div>
+                  <span className="text-xs font-bold text-slate-700 truncate" title={c.label || 'Canvas'}>{c.label || 'Canvas'}</span>
+                  <span className="text-[10px] text-slate-400">
+                    saved {new Date(c.updatedAt || c.addedAt || Date.now()).toLocaleString()}
+                    {c.drive ? ' · ☁ on your cloud' : ''}
+                  </span>
+                  <div className="flex items-center gap-1.5 mt-auto">
+                    <button type="button"
+                            onClick={() => { if (typeof openImageBuilder === 'function') openImageBuilder(project.id, c.id); }}
+                            className="flex-1 text-xs font-bold rounded-lg bg-amber-500 text-white hover:bg-amber-600 px-2 py-1.5"
+                            title="Reopen this canvas in the Image Builder (this project) — the editor loads the saved panels, captions and grid">
+                      🖼 Open in Image Builder
+                    </button>
+                    {canModify && (
+                      <button type="button" onClick={() => renameCanvas(c)}
+                              className="text-slate-600 hover:text-slate-800 border border-slate-200 bg-white rounded-lg px-2 py-1.5 text-xs font-bold"
+                              title="Rename this canvas — the name is what this page, the image library and the “✏️ Modify in Image Builder” links show (canvases can also be renamed in the Image Builder: its toolbar’s ✏️ Rename button, or the ✎ of a thumbnail in the 🖼 Library modal). The figures that point at it follow, and the file already on Drive is renamed with it (same file, same link — nothing is left behind under the old name). If the cloud is not connected, the next “💾 Save now” names the image that way; if this browser’s store is full the write is refused and the message above says so.">✏️ Rename</button>
+                    )}
+                    {canModify && (
+                      <button type="button" onClick={() => removeCanvasLink(c.id)}
+                              className="text-red-400 hover:text-red-600 border border-red-200 bg-red-50 rounded-lg px-2 py-1.5 text-xs font-bold"
+                              title="Remove this canvas from the project image library (the cloud/Drive copy is kept)">🗑</button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </SectionCard>
 
         {/* ---------- Useful files (project reference documents on Drive) ----------
             EN DERNIER : les documents de référence d'un projet (protocoles, PDF,

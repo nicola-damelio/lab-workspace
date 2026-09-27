@@ -106,6 +106,11 @@ const LAY = (font, n) => ({
   title: st(font, n.t, 'left', { bold: true }),
   authors: st(font, n.a, 'left'),
   affiliations: st(font, n.af, 'left', { italic: true }),
+  /* L'ABSTRACT — le résumé du papier (voir PUB_DOC_BLOCKS) : le caractère du CORPS du
+     texte, comme la plupart des revues l'impriment, et il y coule comme lui. Un format
+     qui ne le nomme pas (un PDF lu, un format enregistré d'avant) laisse le réglage de
+     l'utilisateur : aucune partie n'est jamais « perdue » par un format. */
+  abstract: st(font, n.b, 'justify'),
   heading: st(font, n.h, 'left', { bold: true }),
   body: st(font, n.b, 'justify'),
   figure: fig(font, n.f, 'left', n.w),
@@ -263,7 +268,23 @@ export const applyJournalBundle = (fmt, def, id = '') => {
      Un pacchetto che della pagina NON dice nulla — un PDF stampato su una colonna,
      che per scelta non nomina la pagina (vedi publicationFormatFromPdf · columnsOf)
      — lascia invece le sezioni dov'erano: niente è perso. */
-  if (patch.page) layout.docSections = buildPubDocSections();
+  if (patch.page) {
+    layout.docSections = buildPubDocSections();
+    /* …ET LES COLONNES DE CHAQUE PARTIE AUSSI. La même demande, de l'autre côté du
+       panneau : « when I use “read the format from a pdf” the column structure is not
+       updated in the column sections. » Un format qui avait réglé « Section text » (ou
+       « Abstract », ou « Figures & captions ») sur « Full width » le gardait sous la
+       page du PDF : la structure lue dans le PDF ne se voyait que sur les parties
+       restées muettes, et le panneau continuait de montrer celle de l'ANCIEN format.
+       Le pacchetto qui nomme la page remet donc chaque partie sur SA structure —
+       `span: ''` = « ce que la page fait d'elle-même » (les lignes de tête barrent, tout
+       le reste coule, voir pubSpanIn), que le panneau affiche (`pubSpanOf`). Un
+       pacchetto qui ne parle PAS de la page (un PDF imprimé sur une colonne : voir
+       publicationFormatFromPdf · columnsOf) ne touche à rien. */
+    PUB_LAYOUT_PART_IDS.forEach((partId) => {
+      layout[partId] = { ...(layout[partId] || {}), span: '' };
+    });
+  }
   return {
     ...base,
     journal: id,
@@ -540,15 +561,19 @@ export const reorderDocHtml = (html, order, titles) => {
    HTML, voir `docHeadSpacedHtml`). */
 
 /** Les blocs de TÊTE du panneau (voir PUB_DOC_BLOCKS, pubCitation.js) : le titre,
- *  les auteurs, les affiliations ET la ligne d'information — ceux qui se lisent sur
- *  des lignes séparées. La ligne d'information en fait partie depuis la demande
- *  « in the formatted paper there must be an empty line after the affiliations » :
- *  elle SUIT les affiliations, donc c'est entre les deux que la ligne vide se pose
- *  (voir docHeadRows / docHeadSpacedHtml). */
-export const DOC_HEAD_IDS = ['title', 'authors', 'affiliations', 'meta'];
+ *  les auteurs, les affiliations, L'ABSTRACT et la ligne d'information — ceux qui se
+ *  lisent sur des lignes séparées. La ligne d'information en fait partie depuis la
+ *  demande « in the formatted paper there must be an empty line after the
+ *  affiliations » : elle SUIT les affiliations, donc c'est entre les deux que la ligne
+ *  vide se pose (voir docHeadRows / docHeadSpacedHtml). L'ABSTRACT en fait partie
+ *  depuis la demande « in the project page after the affiliations there must be the
+ *  section of the “abstract” » : il se lit entre les affiliations et la ligne
+ *  d'information, la même ligne vide l'encadre, et un document d'avant cette version
+ *  (qui n'a pas d'abstract) garde exactement ses trois lignes vides. */
+export const DOC_HEAD_IDS = ['title', 'authors', 'affiliations', 'abstract', 'meta'];
 /** …et les classes avec lesquelles le document les écrit (les mêmes que met en
  *  forme le « Publication format », voir PUB_LAYOUT_PARTS). */
-export const DOC_HEAD_CLASSES = ['pf-title', 'pf-authors', 'pf-affiliations', 'pf-meta'];
+export const DOC_HEAD_CLASSES = ['pf-title', 'pf-authors', 'pf-affiliations', 'pf-abstract', 'pf-meta'];
 
 /** La rangée « LIGNE VIDE » (voir docHeadRows) : `empty-line` est l'identifiant que
  *  la page du projet rend, `pf-empty-line` la classe que le document écrit — et
@@ -563,8 +588,8 @@ export const DOC_EMPTY_LINE_HTML = `<div class="${DOC_EMPTY_LINE_CLASS}" aria-hi
  * de tête qui se suivent.
  *
  *  L'ordre reste celui de l'utilisateur : la ligne vide ne sépare jamais que deux
- *  blocs de tête VOISINS — un autre bloc entre eux (la ligne d'information du projet,
- *  une section, les références) sépare déjà —, et elle se place toujours ENTRE les
+ *  blocs de tête VOISINS — un autre bloc entre eux (une section, l'abstract d'un autre
+ *  ordre, les références) sépare déjà —, et elle se place toujours ENTRE les
  *  deux. « Mettre l'auteur avant le titre » (l'exemple de la demande d'origine) se
  *  lit donc avec la même ligne vide, sans réglage à refaire.
  *

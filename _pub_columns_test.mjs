@@ -50,7 +50,8 @@ import { register } from 'node:module';
 
 register('./_esm_test_hook.mjs', import.meta.url);
 const {
-  DOC_SECTION_ATTR, FIGURE_COLS_ATTR, PUB_COLUMN_GAP_REM, PUB_COLUMN_SPANS, PUB_COLUMN_SPAN_IDS,
+  DOC_SECTION_ATTR, FIGURE_COLS_ATTR, PUB_COLUMN_GAP_REM, PUB_COLUMN_SPANS, PUB_COLUMN_MENU_SPANS,
+  PUB_COLUMN_SPAN_IDS,
   PUB_DOC_SPAN_IDS, PUB_HEAD_PART_IDS,
   PUB_LAYOUT_PARTS, PUB_LAYOUT_PART_IDS, PUB_PAGE_COLUMNS, PUB_PAGE_COLUMN_IDS,
   buildPubFormat, buildPubLayout, normalizePubFormat, normalizePubLayout,
@@ -88,7 +89,7 @@ eq(normalizePubLayout({ page: { columns: '2' } }).page, { columns: 2 }, '…et l
 
 /* ── 2. LE MOT DE CHAQUE PARTIE, POUR TOUTES LES PARTIES ──────────────────── */
 eq(PUB_LAYOUT_PARTS.filter((p) => p.span).map((p) => p.id), PUB_LAYOUT_PART_IDS,
-  'LES SEPT parties du document ont un mot sur les colonnes (la demande : « defined for all sections »)');
+  'LES HUIT parties du document ont un mot sur les colonnes, l’abstract compris (la demande : « defined for all sections »)');
 eq(PUB_LAYOUT_PARTS.filter((p) => !p.span).length, 0, '…aucune ne l’oublie');
 eq(PUB_COLUMN_SPAN_IDS, ['', 'flow', 'all'], 'les trois mots : comme la page · dans les colonnes · pleine largeur');
 eq(PUB_COLUMN_SPANS.map((s) => s.label), ['As the page', 'In the columns', 'Full width'], '…avec les libellés du panneau');
@@ -157,18 +158,30 @@ ok(journalLayoutPatches('jacs').title && journalLayoutPatches('jacs').body,
   'les rustines portent toujours les parties du document (la page ne les remplace pas)');
 
 /* ── 5. LE PANNEAU ET LA PAGE DU PROJET ───────────────────────────────────── */
-ok(PANEL.includes('PUB_PAGE_COLUMNS, PUB_COLUMN_SPANS, pubPageColumnsOf'),
-  'le panneau importe la page ET les mots de partie (aucune copie locale)');
+ok(PANEL.includes('PUB_PAGE_COLUMNS, PUB_COLUMN_MENU_SPANS, pubPageColumnsOf, pubSpanOf,'),
+  'le panneau importe la page, LES DEUX mots du menu et la valeur EFFECTIVE d’une partie (aucune copie locale)');
 ok(PANEL.includes('{PUB_PAGE_COLUMNS.map((c) => ('), '…il affiche le nombre de colonnes de la page');
 ok(PANEL.includes("onClick={() => pubSetLayout('page', { columns: c.id })}"),
   '…et l’écrit par la fonction qui écrit une partie du format (pubSetLayout) — jamais à la main');
 ok(PANEL.includes('pubPageColumnsOf(activeFormat) === c.id'), '…en montrant le choix en cours');
 ok(PANEL.includes("onClick={() => pubResetLayout('page')}"), '↺ remet la page à une colonne');
 ok(PANEL.includes('{part.span && ('), '…et CHAQUE partie du document a son mot sur les colonnes (la demande)');
-ok(PANEL.includes("{PUB_COLUMN_SPANS.map((s) => <option key={s.id || 'page'} value={s.id}>{s.label}</option>)}"),
-  'la liste déroulante des mots est écrite par le rendu commun');
+/* ── LE MENU N’A QUE LES DEUX VALEURS QUI EXISTENT ─────────────────────────────
+   « that menu should only have two values: “in the columns” or “full width”. »
+   « As the page » n’est pas un choix : c’est ce qu’un format fait quand il n’a rien dit
+   (les lignes de tête barrent la page, tout le reste coule), donc le panneau MONTRE
+   cette valeur-là (`pubSpanOf`) et n’écrit que les deux mots. */
+eq(PUB_COLUMN_MENU_SPANS.map((s) => s.id), ['flow', 'all'],
+  'le menu d’une partie n’offre que « In the columns » et « Full width »');
+eq(PUB_COLUMN_MENU_SPANS.map((s) => s.label), ['In the columns', 'Full width'],
+  '…avec ces deux libellés, et rien d’autre');
+ok(PANEL.includes('{PUB_COLUMN_MENU_SPANS.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}'),
+  'la liste déroulante des mots est écrite avec ces deux valeurs');
+ok(PANEL.includes('value={pubSpanOf(activeFormat, part.id)}'),
+  '…et elle MONTRE la valeur qui s’applique aujourd’hui — un titre barre la page, un texte coule dans les colonnes');
 ok(PANEL.includes('onChange={(e) => pubSetLayout(part.id, { span: e.target.value })}'),
   '…et elle écrit dans la partie elle-même');
+ok(!PANEL.includes('PUB_COLUMN_SPANS.map'), '« As the page » n’est plus offert nulle part dans le panneau');
 ok(PAGE.includes('pubLayoutCss(pubFormat, DOC_CONTAINER_SELECTOR)'),
   'la page du projet et sa feuille d’impression lisent la MÊME feuille (donc les colonnes aussi)');
 ok(PAGE.includes('<div id="project-doc-container"'), '…sur le conteneur que la règle de colonnes vise');
@@ -206,11 +219,18 @@ ok(PAGE.includes('{...{ [DOC_SECTION_ATTR]: s.id }}'), 'la page du projet marque
 ok(PAGE.includes("{...{ [DOC_SECTION_ATTR]: 'methods' }}") && PAGE.includes("{...{ [DOC_SECTION_ATTR]: 'experiments' }}")
   && PAGE.includes("{...{ [DOC_SECTION_ATTR]: 'references' }}"),
   '…méthodes, expériences et références comprises (les trois sections qui ont leur rangée au panneau)');
-ok(PANEL.includes('PUB_DOC_SPAN_IDS') && PANEL.includes('const pubSetDocSection = (blockId, span) => {'),
-  'le panneau écrit les colonnes d’une section par sa propre fonction (jamais à la main)');
-ok(PANEL.includes('{PUB_DOC_SPAN_IDS.includes(id) && ('), '…la rangée de chaque section porte donc son réglage « Columns »');
-ok(PANEL.includes('onChange={(e) => pubSetDocSection(id, e.target.value)}'), '…qui écrit le choix dans le format');
-ok(PANEL.includes('value={pubSectionSpanOf(activeFormat, id)}'), '…et montre le choix en cours');
+/* LE MENU DE SECTION A DISPARU DU PANNEAU — c'est la demande, mot pour mot : « in the
+   column drop-down menu of each section there is some redundancy … the columns
+   drop-down menu in the “Document sections” list are useless. » Il doublait la ligne
+   « Columns » de la PARTIE qui imprime la section (voir §5), et c'est celle-là qui
+   décide. RIEN N'EST PERDU pour autant : `layout.docSections` reste lu par la feuille,
+   par la page du projet et par l'export .docx (columnBlocks), donc un format ENREGISTRÉ
+   qui s'en servait — ou un format lu dans un PDF d'avant cette version — garde son
+   aspect ; le panneau ne l'écrit simplement plus. */
+ok(!PANEL.includes('pubSetDocSection') && !PANEL.includes('{PUB_DOC_SPAN_IDS.includes(id) && ('),
+  'la rangée d’une section n’a PLUS de réglage « Columns » (le doublon inutile est parti)');
+ok(!PANEL.includes('value={pubSectionSpanOf(activeFormat, id)}'),
+  '…et rien d’autre n’écrit les colonnes d’une section dans le panneau');
 
 /* ── 6 bis. UN FORMAT APPLIQUÉ MET LES COLONNES DE TOUTES LES SECTIONS ───────
    Le rapport, mot pour mot : « when I use “read the format from a pdf” the column
@@ -224,25 +244,42 @@ const tuned = {
   layout: {
     ...buildPubFormat('nature').layout,
     page: { columns: 2 },
-    docSections: { background: 'all', references: 'all' }
+    docSections: { background: 'all', references: 'all' },
+    /* …ET LE RÉGLAGE DE PARTIE — l'autre menu des colonnes, celui qui reste (voir §5) :
+       « Section text » pleine largeur. */
+    body: { ...buildPubFormat('nature').layout.body, span: 'all' }
   }
 };
 eq(pubSectionSpanOf(tuned, 'background'), 'all',
   'le format d’avant avait mis « Scientific background » pleine largeur');
+eq(pubSpanOf(tuned, 'body'), 'all', '…et le texte des sections pleine largeur (le réglage de PARTIE)');
 const afterJournal = applyJournalFormat(tuned, JOURNAL_IDS[0]);
 eq(pubSectionSpanIn(afterJournal.layout, 'background'), '',
   'appliquer un journal remet la section sur les colonnes de SA page : la structure ne s’arrête plus à quelques sections');
 eq(pubSectionSpanIn(afterJournal.layout, 'references'), '', '…toutes les sections, sans exception');
+eq(pubSpanOf(afterJournal, 'body'), 'flow',
+  '…ET les colonnes de chaque PARTIE suivent la page du journal : le texte y coule, comme dans la revue');
 const afterPdf = applyDetectedFormat(tuned, {
   preset: 'acs', order: ['abstract', 'introduction'], layout: { page: { columns: 2 }, body: { size: 10 } }
 });
 eq(pubSectionSpanIn(afterPdf.layout, 'background'), '',
   'un paquet LU DANS UN PDF à deux colonnes fait de même (le chemin « read the format from a PDF »)');
+/* LA DEMANDE, MOT POUR MOT : « when I use “read the format from a pdf” the column
+   structure is not updated in the column sections. » La fusion ne touchait JAMAIS les
+   parties : « Section text » restait pleine largeur sous la page du PDF, et le panneau
+   continuait de montrer la structure de l'ANCIEN format. La page nouvelle remet donc
+   chaque partie sur SA structure (voir journalFormats · applyJournalBundle). */
+eq(pubSpanOf(afterPdf, 'body'), 'flow',
+  '…et la structure des colonnes de CHAQUE PARTIE est mise à jour, pas seulement celle des sections');
+eq(pubSpanOf(afterPdf, 'title'), 'all', '…les lignes de tête barrent la page, comme le PDF les imprime');
+eq(pubSpanOf(afterPdf, 'abstract'), 'flow', '…le résumé du papier coule dans les colonnes (le panneau le montre ainsi)');
 const afterOneColumn = applyDetectedFormat(tuned, {
   preset: 'nature', order: ['references'], layout: { body: { size: 11 } }
 });
 eq(pubSectionSpanIn(afterOneColumn.layout, 'background'), 'all',
   '…mais un paquet qui ne parle pas de la page (un PDF imprimé sur une colonne) laisse les sections où elles sont : rien n’est perdu');
+eq(pubSpanOf(afterOneColumn, 'body'), 'all',
+  '…ni les colonnes des parties : la structure en place reste intacte');
 
 /* ── 7. LES COLONNES, FIGURE PAR FIGURE ─────────────────────────────────────
    « there must be a way to specify if figures go in one column or in two » : le

@@ -139,6 +139,14 @@ export const PUB_LAYOUT_PARTS = [
   { id: 'title', label: 'Title', selectors: ['.pf-title', 'h1'], span: true },
   { id: 'authors', label: 'Authors', selectors: ['.pf-authors'], span: true },
   { id: 'affiliations', label: 'Affiliations', selectors: ['.pf-affiliations'], span: true },
+  /* L'ABSTRACT — la partie du résumé (voir PUB_DOC_BLOCKS, bloc « abstract ») : sa
+     classe est portée par le cadre du résumé ET par chacun de ses paragraphes, pour
+     que le style, l'alignement, le gras… s'appliquent au texte comme à son intitulé,
+     et pour que la colonne choisie (« Full width ») BARRE la page d'un seul tenant
+     dans la feuille comme dans l'export .docx (voir renderUnits). Le sélecteur du
+     TEXTE de section l'exclut (`p:not(.pf-abstract)`, partie « body ») : deux
+     rangées du panneau ne peuvent pas se disputer le même paragraphe. */
+  { id: 'abstract', label: 'Abstract', selectors: ['.pf-abstract'], span: true },
   { id: 'heading', label: 'Section headings', selectors: ['.pf-heading', 'h2'], span: true },
   {
     id: 'body',
@@ -149,7 +157,7 @@ export const PUB_LAYOUT_PARTS = [
        d'information et les légendes de figure sont EXCLUES : elles ont leur
        propre partie. */
     selectors: ['.pf-body',
-      'p:not(.pf-authors):not(.pf-affiliations):not(.pf-meta):not(.pf-caption)'],
+      'p:not(.pf-authors):not(.pf-affiliations):not(.pf-meta):not(.pf-caption):not(.pf-abstract)'],
     span: true
   },
   {
@@ -234,6 +242,14 @@ export const PUB_COLUMN_SPANS = [
   { id: 'all', label: 'Full width', title: 'This part bars the whole page whatever the number of columns: a title, a wide figure, an abstract a journal prints across its two columns' }
 ];
 export const PUB_COLUMN_SPAN_IDS = PUB_COLUMN_SPANS.map((s) => s.id);
+/* LES DEUX VALEURS QUE LE PANNEAU OFFRE — « that menu should only have two values:
+   “in the columns” or “full width” ». « As the page » n'est PAS un choix : c'est
+   l'état d'un format qui n'a rien dit, et `pubSpanIn` le traduit déjà en ce que la
+   page fait d'elle-même (les lignes de tête barrent, tout le reste coule). Le panneau
+   MONTRE donc la valeur EFFECTIVE (pubSpanOf) et n'écrit que ces deux mots ;
+   PUB_COLUMN_SPANS garde les trois, parce qu'un format enregistré peut porter '' et
+   qu'il faut savoir le relire. */
+export const PUB_COLUMN_MENU_SPANS = PUB_COLUMN_SPANS.filter((s) => !!s.id);
 /* LES TROIS LIGNES DE TÊTE DU DOCUMENT : elles barrent la page tant que le format
    n'en décide pas autrement — aucune revue ne coupe son titre en deux colonnes. */
 export const PUB_HEAD_PART_IDS = ['title', 'authors', 'affiliations'];
@@ -280,6 +296,24 @@ export const PUB_DOC_BLOCKS = [
   { id: 'title', label: 'Title', hint: 'the paper title (or the folder name)' },
   { id: 'authors', label: 'Authors', hint: 'the author line' },
   { id: 'affiliations', label: 'Affiliations', hint: 'the affiliations line' },
+  /* ── L'ABSTRACT — LE RÉSUMÉ DU PAPIER ────────────────────────────────────────
+     La demande : « in the project page after the affiliations there must be the
+     section of the “abstract” which should also be linked in the publication
+     format (style, position in the text, etc). » Le résumé est donc :
+       · UN TEXTE DU PROJET (`project.paperAbstract`) — le champ de la fiche
+         « 🧾 Title, authors & affiliations », JUSTE APRÈS les affiliations (voir
+         projectDetailModule.jsx) : c'est la tête du papier, elle se remplit d'un
+         bloc ;
+       · UN BLOC DU DOCUMENT — cette rangée-ci : il naît APRÈS les affiliations
+         (position dans le texte) et le panneau peut le déplacer comme les autres ;
+       · UNE PARTIE DU DOCUMENT — « Abstract » dans « Formatting of every part »
+         (police, taille, alignement, couleur, colonnes : voir PUB_LAYOUT_PARTS).
+     « Abstract » est l'intitulé que le PROGRAMME écrit ; le champ de la rangée le
+     remplace (comme « Materials and Methods »), et un format qui n'en veut pas
+     pose un titre VIDE (voir PUB_DOC_TITLE_KEYWORDS / reorderDocHtml).
+     Un projet SANS résumé n'imprime rien : la page ne rend le bloc que rempli —
+     comme « Funding » et « Supporting information » (voir projectDetailModule). */
+  { id: 'abstract', label: 'Abstract', titled: true, title: 'Abstract' },
   /* LA LIGNE D'INFORMATION DU PROJET EST FACULTATIVE — la seule de la tête. C'est
      le PROGRAMME qui l'écrit (le nom du projet, le scientifique, la date), et la
      demande de cette session est catégorique : « The project line should not appear
@@ -404,7 +438,25 @@ export const normalizePubDocOrder = (raw) => {
     if (replaced) { replaced.forEach(push); return; }
     push(key);
   });
-  PUB_DOC_BLOCK_IDS.forEach(push);
+  PUB_DOC_BLOCK_IDS.forEach((id, i) => {
+    if (out.includes(id)) return;
+    /* CE QU'UN ORDRE PLUS ANCIEN NE NOMME PAS REPREND SA PLACE DU PROGRAMME — jamais le
+       bout du document : un ordre enregistré AVANT qu'un bloc n'existe (aujourd'hui
+       l'abstract, voir PUB_DOC_BLOCKS) ne le nomme pas, et le ranger à la fin imprimerait
+       le résumé APRÈS le texte, juste avant les références. Le bloc oublié se glisse donc
+       juste après LE DERNIER — DANS L'ORDRE DE L'UTILISATEUR — des blocs qui le PRÉCÈDENT
+       dans l'ordre du programme (aucun → il ouvre la liste, ce que le programme fait de
+       lui). « Le dernier dans l'ordre de l'utilisateur » est ce qui compte : un ordre où
+       l'on a mis les auteurs avant le titre ne doit pas se faire glisser tout entier
+       derrière un bloc oublié. Un ordre complet — celui qu'écrit le panneau — n'y touche
+       pas : le bloc oublié tombe exactement à sa place du programme. */
+    let at = 0;
+    for (let k = 0; k < i; k += 1) {
+      const seen = out.indexOf(PUB_DOC_BLOCK_IDS[k]);
+      if (seen >= 0 && seen + 1 > at) at = seen + 1;
+    }
+    out.splice(at, 0, id);
+  });
   return out;
 };
 
@@ -592,6 +644,13 @@ export const pubDocOrderDropped = (order, id, targetId) => {
    Chaque liste commence par le mot que le programme écrit lui-même ; les suivants sont
    les synonymes qu'un manuscrit importé ou une revue emploient. */
 export const PUB_DOC_BLOCK_WORDS = {
+  /* L'ABSTRACT (voir PUB_DOC_BLOCKS) — le résumé du papier. Son mot est celui que les
+     revues impriment et que les manuscrits écrivent (« Abstract », « Summary »), donc
+     celui que `reorderDocHtml` reconnaît dans un document DÉJÀ ENREGISTRÉ, que le
+     titre choisi au panneau réécrit, et celui dont le JOURNAL donne la place : tous les
+     formats de la liste commencent par « abstract », donc un journal appliqué met le
+     résumé en tête du texte (voir pubDocOrderForWords). */
+  abstract: ['abstract', 'summary'],
   conclusions: ['conclusions', 'conclusion', 'concluding remarks', 'perspectives'],
   funding: ['funding', 'funding statement', 'acknowledgements', 'acknowledgments', 'financial support'],
   supporting: ['supporting information', 'supplementary information', 'supporting material', 'supplementary material', 'supplementary data'],
@@ -609,9 +668,9 @@ export const PUB_DOC_BLOCK_WORDS = {
      demande, mot pour mot : « if in the journal science the scientific background is
      called introduction, this must change in the “Document sections (order & titles)”
      section. »
-     « abstract » n'appartient à AUCUN bloc : un résumé n'est pas une section du document
-     (le programme n'en imprime pas), donc un journal qui le nomme ne déplace rien et ne
-     renomme rien — l'ordre des autres n'en dépend pas moins (voir pubDocOrderForWords). */
+     « abstract » a SA rangée depuis que le résumé du papier est un bloc du document
+     (voir PUB_DOC_BLOCKS) : son mot est défini en tête de ce vocabulaire, donc un
+     journal qui le nomme lui donne la place qu'il imprime. */
   background: ['scientific background', 'introduction', 'background'],
   discussion: ['results and discussion', 'results', 'discussion']
 };
@@ -620,7 +679,8 @@ const DOC_TITLE_KEYWORDS = Object.keys(PUB_DOC_BLOCK_WORDS).map((id) => [id, PUB
 /** LE BLOC qu'un mot de journal désigne, ou '' : le premier bloc dont la liste de mots
  *  contient exactement ce mot (voir PUB_DOC_BLOCK_WORDS). « experimental section » →
  *  « methods », « conclusion » → « conclusions », « introduction » → « background »,
- *  « abstract » → '' (aucun bloc : un résumé n'est pas une section du document). */
+ *  « abstract » → « abstract » (le résumé du papier : il a SA rangée et SA partie —
+ *  voir PUB_DOC_BLOCKS · PUB_LAYOUT_PARTS). */
 export const docBlockOfWord = (word) => {
   const w = String(word == null ? '' : word).toLowerCase().replace(/\s+/g, ' ').trim();
   if (!w) return '';

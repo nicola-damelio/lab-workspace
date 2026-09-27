@@ -73,12 +73,12 @@ const PANEL = read('./src/components/Publications.jsx');
 const PROJ = read('./src/components/AppModules/projectDetailModule.jsx');
 
 /* ══ 1. LES TROIS SECTIONS DE FIN SONT DES BLOCS DU DOCUMENT ═════════════════ */
-eq(PUB_DOC_BLOCK_IDS, ['title', 'authors', 'affiliations', 'meta',
+eq(PUB_DOC_BLOCK_IDS, ['title', 'authors', 'affiliations', 'abstract', 'meta',
   'background', 'discussion', 'conclusions', 'funding', 'supporting', 'methods', 'experiments', 'references'],
-'les cinq sections de texte du projet ont leur rangée, dans l’ordre où la page les imprime (le bloc générique « Text sections » a disparu)');
-eq(PUB_DOC_BLOCKS.length, 12, '…douze blocs nommés (onze avant, huit au départ)');
-eq(PUB_DOC_TITLED_IDS, ['background', 'discussion', 'conclusions', 'funding', 'supporting', 'methods', 'experiments', 'references'],
-'…et le programme écrit leur intitulé, comme celui de « Materials and Methods » — le contexte et les résultats compris (« as “Material and method” I must be able to edit their names »)');
+'les cinq sections de texte du projet ont leur rangée, dans l’ordre où la page les imprime (le bloc générique « Text sections » a disparu) — et le RÉSUMÉ du papier a la sienne, après les affiliations (« in the project page after the affiliations there must be the section of the “abstract” »)');
+eq(PUB_DOC_BLOCKS.length, 13, '…treize blocs nommés (douze avant, huit au départ)');
+eq(PUB_DOC_TITLED_IDS, ['abstract', 'background', 'discussion', 'conclusions', 'funding', 'supporting', 'methods', 'experiments', 'references'],
+'…et le programme écrit leur intitulé, comme celui de « Materials and Methods » — le résumé, le contexte et les résultats compris (« as “Material and method” I must be able to edit their names »)');
 eq(PUB_DOC_SECTION_IDS, ['background', 'discussion', 'conclusions', 'funding', 'supporting'],
 'chaque rangée dit QUELLE section de texte du projet elle imprime');
 eq(pubDocBlockOfSection('conclusions').id, 'conclusions', 'la section « conclusions » a sa rangée');
@@ -89,6 +89,7 @@ eq(PUB_DOC_HEAD_IDS, ['title', 'authors', 'affiliations', 'meta'], 'les quatre b
 eq(PUB_DOC_FIXED_IDS, ['references'], 'la liste vivante des références reste le seul bloc fixe');
 eq(!!pubDocBlockOf('funding').fixed, false, '…et le financement se déplace, lui');
 eq(buildPubDocTitles(), {
+  abstract: 'Abstract',
   background: 'Scientific background', discussion: 'Results and Discussion',
   conclusions: 'Conclusions', funding: 'Funding', supporting: 'Supporting information',
   methods: 'Materials and Methods', experiments: 'Experiments', references: 'References',
@@ -109,8 +110,9 @@ eq(docBlockOfWord('experimental section'), 'methods', '« experimental section �
 eq(docBlockOfWord('acknowledgements'), 'funding', '…« acknowledgements » le financement');
 eq(docBlockOfWord('introduction'), 'background',
   '« introduction » désigne la rangée du contexte (un manuscrit importé le nomme ainsi, et Science aussi : voir _journal_formats_test.mjs)');
-eq(docBlockOfWord('abstract'), '',
-  '…et « abstract » ne désigne AUCUN bloc : le programme n’imprime pas de résumé, donc rien ne bouge et rien ne se renomme');
+eq(docBlockOfWord('abstract'), 'abstract',
+  '…et « abstract » désigne la rangée du RÉSUMÉ : le papier a un abstract, il a donc sa place dans le texte et son style (« in the project page after the affiliations there must be the section of the “abstract” »)');
+eq(docBlockOfWord('summary'), 'abstract', '…« summary » aussi (un manuscrit l’écrit ainsi)');
 ok(PUB_DOC_TITLED_IDS.every((id) => !!pubDocBlockOf(id).title), 'chaque rangée à intitulé en porte un (le champ du panneau a son repli)');
 
 const has = (hay, needle, what) => ok(String(hay).includes(needle), `${what}\n  introuvable : ${needle}`);
@@ -135,14 +137,14 @@ const supportFirst = (() => {
   for (let i = 0; i < 4; i += 1) o = pubDocOrderMoved(o, 'supporting', -1);
   return o;
 })();
-eq(supportFirst.indexOf('supporting'), 4, 'la rangée « Supporting information » remonte de quatre crans (elle passe devant les sections de texte)');
-eq(supportFirst.slice(4, 7), ['supporting', 'background', 'discussion'], '…et se pose juste après la ligne d’information du projet');
+eq(supportFirst.indexOf('supporting'), 5, 'la rangée « Supporting information » remonte de quatre crans (elle passe devant les sections de texte)');
+eq(supportFirst.slice(5, 8), ['supporting', 'background', 'discussion'], '…et se pose juste après la ligne d’information du projet');
 const supportWords = pubDocOrderKeywords(supportFirst, PROJECT_TEXT_SECTIONS);
 ok(supportWords.indexOf('supporting information') < supportWords.indexOf('scientific background'),
   '…et le mot des informations supplémentaires passe devant celui du contexte : le document suivra');
 eq(pubDocOrderKeywords(['funding', 'sections', 'methods'], PROJECT_TEXT_SECTIONS).slice(0, 6),
-  ['funding', 'funding statement', 'acknowledgements', 'acknowledgments', 'financial support', 'scientific background'],
-  'un ordre sans les rangées des sections de texte les remet à leur place du programme (normalizePubDocOrder), sans les perdre');
+  ['pf-title', 'pf-authors', 'pf-affiliations', 'abstract', 'summary', 'pf-meta'],
+  'un ordre qui ne nomme ni la tête ni les autres rangées les remet À LEUR PLACE du programme (normalizePubDocOrder) : le titre redevient le titre, le résumé se pose après les affiliations, et rien n’est perdu — un ordre à la main ne peut plus envoyer la tête du document à la fin');
 
 /* ══ 3. LES INTITULÉS DES NOUVELLES RANGÉES ══════════════════════════════════ */
 const { reorderDocHtml } = await import('./src/components/journalFormats.js');
@@ -181,28 +183,29 @@ ok(!pubDocTitleKeywords({ docTitles: { funding: 'Funding' } }).funding, '…idem
    adapt to it, including the order of the sections. » */
 const fresh = { ...buildPubFormat('nature'), docOrder: buildPubDocOrder(), docTitles: buildPubDocTitles() };
 const jacs = applyJournalFormat(fresh, 'jacs');
-eq(jacs.docOrder, ['title', 'authors', 'affiliations', 'meta',
+eq(jacs.docOrder, ['title', 'authors', 'affiliations', 'abstract', 'meta',
   'background', 'methods', 'discussion', 'conclusions', 'funding', 'supporting', 'experiments', 'references'],
-'JACS : « Materials and Methods » remonte DEVANT la conclusion (la convention ACS), sans déranger la tête ni les blocs que le journal ne nomme pas');
+'JACS : « Materials and Methods » remonte DEVANT la conclusion (la convention ACS), sans déranger la tête ni les blocs que le journal ne nomme pas — et son mot « abstract » désigne désormais la rangée du résumé, qui reste après les affiliations');
 eq(jacs.docTitles.methods, 'Materials and Methods', '…et son mot est déjà celui du programme : rien à renommer');
 eq(jacs.order, JOURNAL_FORMATS.jacs.order, '…l’ordre du journal voyage avec le format, comme avant');
 const ang = applyJournalFormat(fresh, 'angewandte');
-eq(ang.docOrder, ['title', 'authors', 'affiliations', 'meta',
+eq(ang.docOrder, ['title', 'authors', 'affiliations', 'abstract', 'meta',
   'background', 'discussion', 'conclusions', 'methods', 'funding', 'supporting', 'experiments', 'references'],
-'Angewandte : la conclusion AVANT l’Experimental Section (c’est écrit dans ses notes)');
+'Angewandte : la conclusion AVANT l’Experimental Section (c’est écrit dans ses notes), et le résumé garde sa place après les affiliations');
 eq(ang.docTitles.methods, 'Experimental Section',
 '…et l’intitulé que le journal emploie (« experimental section ») devient celui du bloc');
 eq(applyJournalFormat(fresh, 'nature').docTitles.methods, 'Methods',
 'Nature : son mot « methods » devient l’intitulé (Nature imprime « Methods »)');
-eq(applyJournalFormat(fresh, 'nature').docOrder.slice(0, 4), PUB_DOC_HEAD_IDS,
-'Nature non plus ne touche pas la tête du document (titre, auteurs, affiliations, ligne d’information)');
+const HEAD_THEN_ABSTRACT = ['title', 'authors', 'affiliations', 'abstract', 'meta'];
+eq(applyJournalFormat(fresh, 'nature').docOrder.slice(0, 5), HEAD_THEN_ABSTRACT,
+'Nature non plus ne touche pas la tête du document (titre, auteurs, affiliations, l’abstract qui la suit, ligne d’information)');
 /* POUR TOUS LES JOURNAUX : la séquence des blocs qu'il NOMME est exactement celle de
    ses mots, les autres ne bougent pas, rien ne se perd, la bibliographie reste dernière. */
 JOURNAL_IDS.forEach((id) => {
   const fmt = applyJournalFormat(fresh, id);
-  eq(fmt.docOrder.slice(0, 4), PUB_DOC_HEAD_IDS, `${id} : la tête reste la tête`);
+  eq(fmt.docOrder.slice(0, 5), HEAD_THEN_ABSTRACT, `${id} : la tête reste la tête (l’abstract compris)`);
   eq(fmt.docOrder[fmt.docOrder.length - 1], 'references', `${id} : la bibliographie reste en dernier`);
-  eq(fmt.docOrder.slice().sort(), PUB_DOC_BLOCK_IDS.slice().sort(), `${id} : aucun bloc perdu (les onze sont là)`);
+  eq(fmt.docOrder.slice().sort(), PUB_DOC_BLOCK_IDS.slice().sort(), `${id} : aucun bloc perdu (tous sont là)`);
   const named = [];
   JOURNAL_FORMATS[id].order.forEach((w) => {
     const b = docBlockOfWord(w);

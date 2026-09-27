@@ -54,8 +54,9 @@ const PROGRAM = buildPubDocOrder();
 const classWords = pubDocOrderKeywords(PROGRAM, SECTIONS).filter((w) => w.startsWith('pf-'));
 eq(classWords, ['pf-title', 'pf-authors', 'pf-affiliations', 'pf-meta'],
   'le vocabulaire nomme les quatre blocs de tête par la classe que la page leur écrit');
-eq(pubDocOrderKeywords(PROGRAM, SECTIONS).slice(0, 4), classWords,
-  '…et il les met EN TÊTE quand l’ordre du programme les met en tête');
+eq(pubDocOrderKeywords(PROGRAM, SECTIONS).slice(0, 6),
+  ['pf-title', 'pf-authors', 'pf-affiliations', 'abstract', 'summary', 'pf-meta'],
+  '…et il les met EN TÊTE quand l’ordre du programme les met en tête — l’abstract s’intercale entre les affiliations et la ligne d’information (voir PUB_DOC_BLOCKS)');
 eq(pubDocOrderKeywords(['methods', 'title', 'authors', 'affiliations', 'meta', 'sections', 'experiments', 'references'], SECTIONS)[0],
   'materials and methods',
   'un bloc déplacé en tête passe devant : la place dans le vocabulaire est celle que l’utilisateur a réglée');
@@ -91,7 +92,7 @@ eq(reorderDocHtml(DOC, programWords, pubDocTitleKeywords({})), DOC,
 
 /* 2a. L'EXEMPLE DE LA DEMANDE : « mettre l'auteur avant le titre ». */
 const authorsFirst = pubDocOrderMoved(PROGRAM, 'authors', -1);
-eq(authorsFirst, ['authors', 'title', 'affiliations', 'meta', 'background', 'discussion', 'conclusions', 'funding', 'supporting', 'methods', 'experiments', 'references'],
+eq(authorsFirst, ['authors', 'title', 'affiliations', 'abstract', 'meta', 'background', 'discussion', 'conclusions', 'funding', 'supporting', 'methods', 'experiments', 'references'],
   'la rangée « Authors » remonte d’un cran dans le panneau');
 const swapped = reorderDocHtml(DOC, pubDocOrderKeywords(authorsFirst, SECTIONS));
 eq(swapped, [AUTHORS, TITLE, AFFIL, META, BG, DISC, CONCL, MM, EXP, REFS].join(''),
@@ -102,8 +103,9 @@ ok(swapped.indexOf('the context of the work') > swapped.indexOf('Kinetics of the
   '…et le texte de l’auteur est resté à sa place, derrière la tête');
 
 /* 2b. La ligne d'information aussi, et le titre peut descendre. */
-const titleLast = (() => { let o = PROGRAM; for (let i = 0; i < 3; i += 1) o = pubDocOrderMoved(o, 'title', 1); return o; })();
-eq(titleLast.slice(0, 4), ['authors', 'affiliations', 'meta', 'title'], 'trois ▼ emmènent le titre après la ligne d’information');
+const titleLast = (() => { let o = PROGRAM; for (let i = 0; i < 4; i += 1) o = pubDocOrderMoved(o, 'title', 1); return o; })();
+eq(titleLast.slice(0, 5), ['authors', 'affiliations', 'abstract', 'meta', 'title'],
+  'quatre ▼ emmènent le titre après le résumé et la ligne d’information');
 eq(reorderDocHtml(DOC, pubDocOrderKeywords(titleLast, SECTIONS)),
   [AUTHORS, AFFIL, META, TITLE, BG, DISC, CONCL, MM, EXP, REFS].join(''),
   '…et le document suit exactement cet ordre-là');
@@ -117,8 +119,8 @@ const bgLast = (() => { let o = PROGRAM; for (let i = 0; i < 3; i += 1) o = pubD
 eq(reorderDocHtml(DOC, pubDocOrderKeywords(bgLast, SECTIONS)),
   [TITLE, AUTHORS, AFFIL, META, DISC, CONCL, BG, MM, EXP, REFS].join(''),
   'la rangée « Scientific background » descend le contexte APRÈS les résultats et les conclusions, sans emporter les autres sections : chacune se règle à sa rangée (le bloc générique « Text sections » n’existe plus)');
-const bgFirst = (() => { let o = PROGRAM; for (let i = 0; i < 4; i += 1) o = pubDocOrderMoved(o, 'background', -1); return o; })();
-eq(bgFirst.slice(0, 4), ['background', 'title', 'authors', 'affiliations'], 'quatre ▲ amènent le contexte avant le titre');
+const bgFirst = (() => { let o = PROGRAM; for (let i = 0; i < 5; i += 1) o = pubDocOrderMoved(o, 'background', -1); return o; })();
+eq(bgFirst.slice(0, 4), ['background', 'title', 'authors', 'affiliations'], 'cinq ▲ amènent le contexte avant le titre');
 eq(reorderDocHtml(DOC, pubDocOrderKeywords(bgFirst, SECTIONS)),
   [BG, TITLE, AUTHORS, AFFIL, META, DISC, CONCL, MM, EXP, REFS].join(''),
   '…et la tête suit les sections, entière et dans son ordre (les résultats suivent la tête : eux aussi ont leur rangée)');
@@ -192,6 +194,8 @@ has(PROJ, 'className="pf-title text-2xl font-black text-slate-900 mb-1"', 'la pa
 has(PROJ, 'className="pf-authors text-sm font-semibold text-slate-800 mb-1"', '…celle des auteurs');
 has(PROJ, 'className="pf-affiliations text-[11px] text-slate-500 italic whitespace-pre-line mb-2"', '…celle des affiliations');
 has(PROJ, 'className="pf-meta text-xs text-slate-500 mb-6"', '…et celle de la ligne d’information');
+has(PROJ, 'className="pf-abstract mb-6"',
+  '…et celle de l’ABSTRACT (le cadre du résumé, encadré par la même ligne vide : voir journalFormats · DOC_HEAD_CLASSES)');
 classWords.forEach((w) => has(PROJ, `className="${w} `,
   `la classe « ${w} » du vocabulaire est bien celle que la page écrit (sinon la rangée du panneau ne déplacerait rien)`));
 const layoutText = JSON.stringify(PUB_LAYOUT_PARTS);

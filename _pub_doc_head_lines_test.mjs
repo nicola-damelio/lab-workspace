@@ -58,9 +58,9 @@ const SECTION = '<h2 class="pf-heading text-base font-black">Results and Discuss
 const BLANK = DOC_EMPTY_LINE_HTML;
 
 /* ══ 1. LES RANGÉES DE LA PAGE DU PROJET, EXÉCUTÉES ═══════════════════════════ */
-eq(DOC_HEAD_IDS, ['title', 'authors', 'affiliations', 'meta'],
-  'les quatre blocs de tête sont ceux du panneau (voir PUB_DOC_BLOCKS) — la ligne d’information en fait partie depuis « there must be an empty line after the affiliations »');
-eq(DOC_HEAD_CLASSES, ['pf-title', 'pf-authors', 'pf-affiliations', 'pf-meta'],
+eq(DOC_HEAD_IDS, ['title', 'authors', 'affiliations', 'abstract', 'meta'],
+  'les cinq blocs de tête sont ceux du panneau (voir PUB_DOC_BLOCKS) — la ligne d’information en fait partie depuis « there must be an empty line after the affiliations », et l’ABSTRACT depuis « after the affiliations there must be the section of the “abstract” »');
+eq(DOC_HEAD_CLASSES, ['pf-title', 'pf-authors', 'pf-affiliations', 'pf-abstract', 'pf-meta'],
   '…et ce sont les classes que le document leur écrit (voir reorderDocHtml)');
 eq(DOC_EMPTY_LINE_HTML, `<div class="${DOC_EMPTY_LINE_CLASS}" aria-hidden="true">&nbsp;</div>`,
   'la ligne vide a UN seul balisage, celui que la page écrit et que le HTML exporté reçoit');
@@ -70,8 +70,9 @@ ok(DOC_EMPTY_LINE_HTML.includes('&nbsp;') && !DOC_EMPTY_LINE_HTML.includes('no-p
 const PROGRAM = buildPubDocOrder();
 eq(docHeadRows(PROGRAM),
   ['title', DOC_EMPTY_LINE_ID, 'authors', DOC_EMPTY_LINE_ID, 'affiliations', DOC_EMPTY_LINE_ID,
+    'abstract', DOC_EMPTY_LINE_ID,
     'meta', 'background', 'discussion', 'conclusions', 'funding', 'supporting', 'methods', 'experiments', 'references'],
-  'la tête du document se lit : titre · ligne vide · auteurs · ligne vide · affiliations · ligne vide · ligne d’information (« in the formatted paper there must be an empty line after the affiliations »)');
+  'la tête du document se lit : titre · ligne vide · auteurs · ligne vide · affiliations · ligne vide · abstract · ligne vide · ligne d’information (« in the formatted paper there must be an empty line after the affiliations », et le résumé s’intercale entre les deux)');
 eq(docHeadRows(['authors', 'title', 'affiliations', 'meta']),
   ['authors', DOC_EMPTY_LINE_ID, 'title', DOC_EMPTY_LINE_ID, 'affiliations', DOC_EMPTY_LINE_ID, 'meta'],
   '…et « mettre l’auteur avant le titre » (l’exemple de la demande d’origine) garde les lignes vides ENTRE les blocs');
@@ -79,7 +80,8 @@ eq(docHeadRows(['title', 'conclusions', 'affiliations', 'meta']),
   ['title', 'conclusions', 'affiliations', DOC_EMPTY_LINE_ID, 'meta'],
   'deux blocs de tête séparés par un AUTRE bloc (une section) n’en reçoivent pas : il y a déjà de la place');
 eq(docHeadRows(PROGRAM, (id) => id !== 'authors'),
-  ['title', DOC_EMPTY_LINE_ID, 'affiliations', DOC_EMPTY_LINE_ID, 'meta', 'background', 'discussion',
+  ['title', DOC_EMPTY_LINE_ID, 'affiliations', DOC_EMPTY_LINE_ID, 'abstract', DOC_EMPTY_LINE_ID,
+    'meta', 'background', 'discussion',
     'conclusions', 'funding', 'supporting', 'methods', 'experiments', 'references'],
   'un projet SANS auteurs garde la ligne vide entre le titre et les affiliations (le bloc absent ne compte pas)');
 eq(docHeadRows(['title']), ['title'], 'une tête d’un seul bloc ne reçoit aucune ligne vide');

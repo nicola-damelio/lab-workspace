@@ -45,16 +45,17 @@ const PROJ = read('./src/components/AppModules/projectDetailModule.jsx');
 const has = (hay, needle, what) => ok(String(hay).includes(needle), `${what}\n  introuvable : ${needle}`);
 
 /* ══ 1. LES BLOCS DU DOCUMENT, EXÉCUTÉS ═══════════════════════════════════════ */
-eq(PUB_DOC_BLOCKS.length, 12, 'le document a douze blocs nommés');
-eq(PUB_DOC_BLOCK_IDS, ['title', 'authors', 'affiliations', 'meta',
+eq(PUB_DOC_BLOCKS.length, 13, 'le document a treize blocs nommés');
+eq(PUB_DOC_BLOCK_IDS, ['title', 'authors', 'affiliations', 'abstract', 'meta',
   'background', 'discussion', 'conclusions', 'funding', 'supporting', 'methods', 'experiments', 'references'],
-'les blocs du document, dans l’ordre où la page du projet les imprime (le contexte et les résultats ont leur rangée comme « Materials and Methods » — le bloc générique « Text sections » a disparu)');
-eq(PUB_DOC_TITLED_IDS, ['background', 'discussion', 'conclusions', 'funding', 'supporting', 'methods', 'experiments', 'references'],
-'huit blocs portent un intitulé que le PROGRAMME écrit, donc huit champs dans le panneau');
+'les blocs du document, dans l’ordre où la page du projet les imprime (le contexte et les résultats ont leur rangée comme « Materials and Methods » — le bloc générique « Text sections » a disparu, et le RÉSUMÉ du papier a la sienne, juste après les affiliations)');
+eq(PUB_DOC_TITLED_IDS, ['abstract', 'background', 'discussion', 'conclusions', 'funding', 'supporting', 'methods', 'experiments', 'references'],
+'neuf blocs portent un intitulé que le PROGRAMME écrit (le résumé compris), donc neuf champs dans le panneau');
 eq(PUB_DOC_FIXED_IDS, ['references'],
 'la liste VIVANTE des références est imprimée en dernier (son intitulé, lui, se règle)');
 eq(buildPubDocOrder(), PUB_DOC_BLOCK_IDS, 'l’ordre du programme est celui de la page du projet');
 eq(buildPubDocTitles(), {
+  abstract: 'Abstract',
   background: 'Scientific background', discussion: 'Results and Discussion',
   conclusions: 'Conclusions', funding: 'Funding', supporting: 'Supporting information',
   methods: 'Materials and Methods', experiments: 'Experiments', references: 'References'
@@ -64,18 +65,18 @@ eq(buildPubDocTitles(), {
 // 1a. Un ordre relu : rien ne disparaît, rien d’inconnu ne passe.
 eq(normalizePubDocOrder(undefined), PUB_DOC_BLOCK_IDS, 'un format sans ordre prend celui du programme');
 eq(normalizePubDocOrder(['authors', 'title']),
-  ['authors', 'title', 'affiliations', 'meta', 'background', 'discussion', 'conclusions', 'funding', 'supporting', 'methods', 'experiments', 'references'],
-  'un ordre PARTIEL est complété par les blocs oubliés (aucune section ne peut disparaître)');
+  ['authors', 'title', 'affiliations', 'abstract', 'meta', 'background', 'discussion', 'conclusions', 'funding', 'supporting', 'methods', 'experiments', 'references'],
+  'un ordre PARTIEL est complété par les blocs oubliés, CHACUN à sa place du programme (aucune section ne peut disparaître, et le résumé arrive après les affiliations, pas au bout du document)');
 eq(normalizePubDocOrder(['title', 'authors', 'affiliations', 'meta', 'sections', 'experiments', 'methods', 'references']),
-  ['title', 'authors', 'affiliations', 'meta', 'background', 'discussion', 'experiments', 'methods', 'references', 'conclusions', 'funding', 'supporting'],
-  'un ordre enregistré AVANT cette version nomme encore le bloc générique « sections » : ses deux sections prennent SA place (elles ne partent pas à la fin du document)');
+  ['title', 'authors', 'affiliations', 'abstract', 'meta', 'background', 'discussion', 'conclusions', 'funding', 'supporting', 'experiments', 'methods', 'references'],
+  'un ordre enregistré AVANT cette version nomme encore le bloc générique « sections » : ses deux sections prennent SA place, et les blocs qu’il ne nomme pas (l’abstract des versions suivantes) prennent la LEUR — juste après les affiliations');
 eq(normalizePubDocOrder(['title', 'title', 'nulle-part']), PUB_DOC_BLOCK_IDS,
   'les doublons et les blocs inconnus sont écartés');
 eq(normalizePubDocOrder('title'), PUB_DOC_BLOCK_IDS, 'un ordre qui n’est pas une liste est ignoré');
 
 // 1b. ▲▼ — le premier exemple de la demande : les AUTEURS avant le TITRE.
 const swapped = pubDocOrderMoved(PUB_DOC_BLOCK_IDS, 'authors', -1);
-eq(swapped, ['authors', 'title', 'affiliations', 'meta', 'background', 'discussion', 'conclusions', 'funding', 'supporting', 'methods', 'experiments', 'references'],
+eq(swapped, ['authors', 'title', 'affiliations', 'abstract', 'meta', 'background', 'discussion', 'conclusions', 'funding', 'supporting', 'methods', 'experiments', 'references'],
   '▲▼ met les auteurs AVANT le titre (« put the author before the title »)');
 eq(pubDocOrderMoved(swapped, 'references', -1), swapped, '…la liste des références, elle, ne se déplace pas');
 eq(pubDocOrderMoved(PUB_DOC_BLOCK_IDS, 'title', -1), PUB_DOC_BLOCK_IDS, 'un cran hors de la liste ne fait rien');
@@ -86,16 +87,16 @@ eq(pubDocOrderMoved(PUB_DOC_BLOCK_IDS, 'funding', -1).indexOf('funding'), PUB_DO
 /* 1b-bis. LE GLISSER-DÉPOSER — la demande : « these elements must be movable by
    drag and drop rather than arrows ». Le bloc pris PREND LA PLACE du bloc visé. */
 eq(pubDocOrderDropped(PUB_DOC_BLOCK_IDS, 'authors', 'title'),
-  ['authors', 'title', 'affiliations', 'meta', 'background', 'discussion', 'conclusions', 'funding', 'supporting', 'methods', 'experiments', 'references'],
+  ['authors', 'title', 'affiliations', 'abstract', 'meta', 'background', 'discussion', 'conclusions', 'funding', 'supporting', 'methods', 'experiments', 'references'],
   'lâcher « Authors » sur « Title » le met à sa place (« put the author before the title »)');
 eq(pubDocOrderDropped(PUB_DOC_BLOCK_IDS, 'methods', 'title'),
-  ['methods', 'title', 'authors', 'affiliations', 'meta', 'background', 'discussion', 'conclusions', 'funding', 'supporting', 'experiments', 'references'],
+  ['methods', 'title', 'authors', 'affiliations', 'abstract', 'meta', 'background', 'discussion', 'conclusions', 'funding', 'supporting', 'experiments', 'references'],
   'lâcher un bloc VERS LE HAUT le fait remonter (les autres descendent)');
 eq(pubDocOrderDropped(PUB_DOC_BLOCK_IDS, 'title', 'methods'),
-  ['authors', 'affiliations', 'meta', 'background', 'discussion', 'conclusions', 'funding', 'supporting', 'methods', 'title', 'experiments', 'references'],
+  ['authors', 'affiliations', 'abstract', 'meta', 'background', 'discussion', 'conclusions', 'funding', 'supporting', 'methods', 'title', 'experiments', 'references'],
   'lâcher un bloc VERS LE BAS l’envoie à la place visée (les autres remontent)');
 eq(pubDocOrderDropped(PUB_DOC_BLOCK_IDS, 'conclusions', 'discussion'),
-  ['title', 'authors', 'affiliations', 'meta', 'background', 'conclusions', 'discussion', 'funding', 'supporting', 'methods', 'experiments', 'references'],
+  ['title', 'authors', 'affiliations', 'abstract', 'meta', 'background', 'conclusions', 'discussion', 'funding', 'supporting', 'methods', 'experiments', 'references'],
   '…et une section de FIN se prend et se vise comme les autres');
 eq(pubDocOrderDropped(PUB_DOC_BLOCK_IDS, 'title', 'title'), PUB_DOC_BLOCK_IDS,
   'un geste sur soi-même ne change rien');
@@ -106,7 +107,7 @@ eq(pubDocOrderDropped(PUB_DOC_BLOCK_IDS, 'title', 'references'), PUB_DOC_BLOCK_I
 eq(pubDocOrderDropped(PUB_DOC_BLOCK_IDS, 'nulle-part', 'title'), PUB_DOC_BLOCK_IDS,
   'un bloc inconnu ne casse rien');
 eq(pubDocOrderDropped(swapped, 'title', 'authors'),
-  ['title', 'authors', 'affiliations', 'meta', 'background', 'discussion', 'conclusions', 'funding', 'supporting', 'methods', 'experiments', 'references'],
+  ['title', 'authors', 'affiliations', 'abstract', 'meta', 'background', 'discussion', 'conclusions', 'funding', 'supporting', 'methods', 'experiments', 'references'],
   'le même geste remet le titre en tête sur un ordre déjà déplacé');
 
 
@@ -326,7 +327,11 @@ const frozen = [
   H2('Experiments (2)'), '<p>exps</p>'
 ].join('');
 eq(pubDocOrderKeywords(buildPubDocOrder(), PROJECT_SECTIONS),
-  ['pf-title', 'pf-authors', 'pf-affiliations', 'pf-meta',
+  ['pf-title', 'pf-authors', 'pf-affiliations',
+    /* L'ABSTRACT : ses mots arrivent LÀ OÙ IL SE TROUVE — après les affiliations, avant
+       la ligne d'information du projet (voir PUB_DOC_BLOCKS). */
+    'abstract', 'summary',
+    'pf-meta',
     'scientific background', 'introduction', 'background',
     'results and discussion', 'results', 'discussion',
     'conclusions', 'conclusion', 'concluding remarks', 'perspectives',

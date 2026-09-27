@@ -46,17 +46,16 @@ import {
   pubCitationData, pubCitationHtml, pubDocOrderDropped,
   pubLayoutCss, pubTextStyleIsSet, pubDocBlockHidden,
   /* LES COLONNES DE LA PAGE (le style « deux colonnes » des revues) : le nombre de
-     colonnes de la page et le mot de chaque partie — voir PUB_PAGE_COLUMNS et
-     pubPageColumnsOf dans pubCitation.js. */
-  PUB_PAGE_COLUMNS, PUB_COLUMN_SPANS, pubPageColumnsOf,
-  /* …ET CELLES DE CHAQUE SECTION DU DOCUMENT ET DE CHAQUE FIGURE — les deux
-     demandes : « there must be a way to specify which section is in multiple
-     column and which does not » et « there must be a way to specify if figures
-     go in one column or in two ». Le réglage d'une section vit dans le format
-     (`layout.docSections`), celui d'une figure sur la figure du projet
-     (FIGURE_COLS_ATTR, lu par la feuille ET par l'export .docx). Les noms que le
-     panneau ne fait que ré-exporter plus bas ne sont pas importés ici. */
-  PUB_DOC_SPAN_IDS, pubSectionSpanOf,
+     colonnes de la page et le mot de chaque partie — voir PUB_PAGE_COLUMNS,
+     pubPageColumnsOf et pubSpanOf dans pubCitation.js. Le MENU n'offre que les DEUX
+     valeurs de PUB_COLUMN_MENU_SPANS (« In the columns » / « Full width » : « that menu
+     should only have two values ») et il montre la valeur EFFECTIVE d'une partie
+     (`pubSpanOf`) : « As the page » n'est pas un choix, c'est ce qu'un format fait quand
+     il n'a rien dit — les lignes de tête barrent la page, tout le reste coule. Le
+     réglage d'une FIGURE (FIGURE_COLS_ATTR, lu par la feuille ET par l'export .docx)
+     vit sur la fiche de la figure, page du projet ; les noms que le panneau ne fait que
+     ré-exporter plus bas ne sont pas importés ici. */
+  PUB_PAGE_COLUMNS, PUB_COLUMN_MENU_SPANS, pubPageColumnsOf, pubSpanOf,
   /* LA FORME DES NOMS D'AUTEURS dans la citation (voir utils/authorNames.js) :
      le panneau itère sur ces formes (boutons « as written », « Smith JA »…). */
   NAME_STYLES, normalizeNameStyle,
@@ -2583,21 +2582,22 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
       layout: { ...layout, [partId]: { ...layout[partId], ...patch } }
     });
   };
-  /* ── LES COLONNES D'UNE SECTION DU DOCUMENT — « there must be a way to specify
-     which section is in multiple column and which does not ». Les boutons de la
-     PAGE (ci-dessus) disent combien de colonnes elle a ; ce réglage-ci dit ce que
-     CHAQUE section en fait : « In the columns » elle y coule, « Full width » elle
-     BARRE la page — c'est le saut de section des traitements de texte (voir
-     pubLayoutCss pour la feuille, columnBlocks dans utils/docxExport.js pour
-     Word). « As the page » (la valeur '') n'écrit rien du tout. */
-  const pubSetDocSection = (blockId, span) => {
-    const layout = normalizePubLayout(activeFormat.layout);
-    if (!PUB_DOC_SPAN_IDS.includes(blockId)) return;
-    setActiveFormat({
-      ...pubCustomFormat(activeFormat.fields),
-      layout: { ...layout, docSections: { ...layout.docSections, [blockId]: span } }
-    });
-  };
+  /* ── LES COLONNES D'UNE SECTION NE SE RÈGLENT PLUS ICI. La demande, mot pour mot :
+     « in the column drop-down menu of each section there is some redundancy … the
+     columns drop-down menu in the “Document sections” list are useless. »
+     Il y avait DEUX menus pour la même chose — la ligne « Columns » d'une section du
+     document et celle de la PARTIE qui l'imprime (« Section text », « Abstract »,
+     « Figures & captions », « References » : voir PUB_LAYOUT_PARTS) — et c'est la
+     seconde qui décide : elle couvre tout ce que la partie imprime, elle porte aussi la
+     police, la taille, l'alignement et la couleur, et elle n'a que les DEUX valeurs qui
+     existent vraiment (« In the columns » / « Full width », voir PUB_COLUMN_MENU_SPANS).
+     RIEN N'EST PERDU CÔTÉ DOCUMENT : `layout.docSections` reste lu par la feuille
+     (pubLayoutCss), par la page du projet et par l'export .docx (columnBlocks), donc un
+     format ENREGISTRÉ qui s'en servait — ou un format lu dans un PDF d'avant cette
+     version — garde exactement l'aspect qu'il a toujours eu ; le panneau ne l'écrit
+     simplement plus. `applyJournalBundle` remet cette liste à zéro quand un format
+     nomme la page (voir journalFormats.js), donc elle ne survit pas à un changement de
+     format. */
   /* Le style d'un texte a TROIS états : non touché (comme le programme),
      imposé, ou explicitement retiré — un titre, que le programme écrit en gras,
      doit pouvoir redevenir normal. Un clic avance d'un état. */
@@ -3176,7 +3176,7 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
               ))}
             </div>
             <span className="text-[10px] text-slate-400"
-                  title="Every part of the document says on its own row what it does with these columns: “As the page” leaves it to the default — the title, the authors and the affiliations bar the page, every other part flows in the columns.">
+                  title="Every part of the document says on its own row what it does with these columns: “In the columns” flows with the text of the page, “Full width” bars the whole page. The value a row shows is the one that applies today — the head lines of the title bar the page, every other part flows in the columns.">
               the head lines bar the page; every part below says what it does with the columns
             </span>
             <button type="button" onClick={() => pubResetLayout('page')}
@@ -3246,12 +3246,20 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
                     ) : 'colour'}
                   </label>
                   {part.span && (
+                    /* ── LES DEUX VALEURS QUI EXISTENT VRAIMENT ──────────────────────
+                       La demande : « that menu should only have two values: “in the
+                       columns” or “full width”. » « As the page » a donc disparu du menu :
+                       ce n'est pas un choix, c'est ce que la page fait d'elle-même (les
+                       lignes de tête barrent, tout le reste coule), donc le menu MONTRE
+                       cette valeur-là (`pubSpanOf`) et n'écrit que les deux mots. Le ↺ de
+                       la ligne rend la valeur d'origine. */
                     <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500"
-                           title={`What ${part.label} does with the columns of the page (see “Page columns” above). “As the page” writes no rule of its own: the head lines of the document (title, authors, affiliations) bar the page and every other part flows in the columns. “Full width” is what a title, a wide figure or an abstract a journal prints across its two columns needs.${part.id === 'figure' ? ' For figures this is the DEFAULT: each figure of the project can say otherwise on its own card (“Columns” → One column / Two columns).' : ''} Nothing changes while the page has one column.`}>
+                           title={`What ${part.label} does with the columns of the page (see “Page columns” above): “In the columns” flows with the text of the page, “Full width” makes it bar the whole page — a section break, as a word processor writes one. The value shown is the one that applies today: the head lines of the document (title, authors, affiliations) bar the page, every other part flows in the columns.${part.id === 'figure' ? ' For figures this is the DEFAULT: each figure of the project can say otherwise on its own card (“Columns” → One column / Two columns).' : ''} Nothing changes while the page has one column.`}>
                       Columns
-                      <select value={st.span || ''} onChange={(e) => pubSetLayout(part.id, { span: e.target.value })}
+                      <select value={pubSpanOf(activeFormat, part.id)}
+                              onChange={(e) => pubSetLayout(part.id, { span: e.target.value })}
                               className="border border-slate-300 rounded px-1 py-0.5 text-[11px] bg-white outline-none">
-                        {PUB_COLUMN_SPANS.map((s) => <option key={s.id || 'page'} value={s.id}>{s.label}</option>)}
+                        {PUB_COLUMN_MENU_SPANS.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
                       </select>
                     </label>
                   )}
@@ -3376,29 +3384,18 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
                             className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-white border border-slate-300 text-slate-600 hover:bg-slate-100"
                             title={`Back to “${block.title}”`}>↺</button>
                   )}
-                  {/* ── LES COLONNES DE CETTE SECTION ─────────────────────────────
-                      La demande : « there must be a way to specify which section is
-                      in multiple column and which does not ». La rangée de la section
-                      dit donc, pour ELLE SEULE, ce qu'elle fait des colonnes de la
-                      page — « Full width » la fait barrer la page (le saut de section
-                      des traitements de texte, voir pubLayoutCss · columnBlocks).
-                      Les lignes de tête (titre, auteurs, affiliations, ligne
-                      d'information) n'ont pas ce réglage : leur partie le porte déjà
-                      (« Title », « Authors », « Affiliations » — voir PUB_DOC_SPAN_IDS).
-                      Sans page à plusieurs colonnes, rien de tout cela ne se voit. */}
-                  {PUB_DOC_SPAN_IDS.includes(id) && (
-                    <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500 whitespace-nowrap"
-                           title={`What “${block.label}” does with the columns of the page (see “Page columns” above): “In the columns” flows with the text, “Full width” makes it bar the whole page — a section break, as a word processor writes one — and “As the page” writes no rule of its own. Nothing changes while the page has one column.`}>
-                      Columns
-                      <select value={pubSectionSpanOf(activeFormat, id)}
-                              onChange={(e) => pubSetDocSection(id, e.target.value)}
-                              className="border border-slate-300 rounded px-1 py-0.5 text-[10px] bg-white outline-none">
-                        {PUB_COLUMN_SPANS.map((s) => (
-                          <option key={s.id || 'page'} value={s.id}>{s.label}</option>
-                        ))}
-                      </select>
-                    </label>
-                  )}
+                  {/* ── LES COLONNES DE CETTE SECTION NE SONT PLUS ICI ─────────────
+                      La demande, mot pour mot : « in the column drop-down menu of each
+                      section there is some redundancy … the columns drop-down menu in
+                      the “Document sections” list are useless. » Ce menu-ci DOUBLAIT
+                      celui de la partie qui imprime la section (« Section text »,
+                      « Abstract », « Figures & captions », « References » :
+                      voir PUB_LAYOUT_PARTS), qui porte aussi sa police, sa taille et sa
+                      couleur — et qui, lui, n'offre que les deux valeurs qui existent
+                      vraiment. C'est donc là que les colonnes d'une section se règlent,
+                      et un format ENREGISTRÉ qui portait encore `layout.docSections`
+                      garde son aspect : la feuille, la page du projet et l'export .docx
+                      continuent de le lire (voir pubSectionSpanIn · columnBlocks). */}
                   {block.fixed && (
                     <span className="ml-auto text-[9px] italic text-slate-400 whitespace-nowrap">always printed last</span>
                   )}

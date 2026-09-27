@@ -1084,6 +1084,42 @@ const fitDrawingsToColumns = (block, columns) => {
    rendu n'appartient qu'à eux. */
 const SPLIT_CONTAINERS = new Set(['div', 'section', 'article', 'header', 'main', 'aside']);
 
+/** UNE FIGURE QUI A CHOISI SA COLONNE, dans le sous-arbre d'un nœud (voir
+ *  FIGURE_COLS_ATTR) : `data-pf-cols="1|2"`, la fiche de la figure de la page du projet
+ *  (voir utils/figurePlacement.js · figureHtml, qui la marque même dans le TEXTE).
+ *
+ *  POURQUOI CE TEST EXISTE : le texte d'une section arrive ici comme UN SEUL bloc — le
+ *  `<div class="pf-body">` que la page du projet rend. Une figure ANCRÉE dans ce texte
+ *  (c'est ainsi qu'un manuscrit importé pose ses figures, après le paragraphe qu'elles
+ *  suivaient) restait donc À L'INTÉRIEUR du bloc : le réglage « Two columns » de sa
+ *  fiche ne faisait rien pour Word, alors que la FEUILLE du document, elle, la faisait
+ *  barrer la page (`figure[data-pf-cols="2"] { column-span: all !important }`, voir
+ *  pubLayoutCss — le sélecteur ne regarde pas où la figure est). L'impression et le PDF
+ *  montraient donc la figure en pleine largeur et le .docx la gardait dans sa colonne
+ *  (réduite à la largeur d'une colonne par fitDrawingsToColumns) — c'est le rapport
+ *  exact : « if I have text in two columns and a figure full width, the figure is
+ *  correctly placed in the exported document but not in the docx ».
+ *
+ *  Le conteneur qui PORTE une telle figure est donc ouvert (voir renderUnits) : la
+ *  figure devient un bloc à elle, avec SA section (`columnsOfUnit` lit `figCols`), et
+ *  les paragraphes qui l'entourent gardent la partie du conteneur. Rien d'autre ne
+ *  change : un conteneur dont la figure ne dit rien (aucun `data-pf-cols`) reste entier. */
+const holdsFigureWithOwnColumns = (node) => {
+  const kids = (node && node.children) || [];
+  for (let i = 0; i < kids.length; i += 1) {
+    const c = kids[i];
+    if (c.tag === 'figure' && attrOf(c, FIGURE_COLS_ATTR)) return true;
+    if (holdsFigureWithOwnColumns(c)) return true;
+  }
+  return false;
+};
+
+/** DU TEXTE EN LIGNE, directement, dans un conteneur (et pas seulement des blocs) : le
+ *  style de la partie ne peut alors pas être perdu — on ne descend pas dedans (le texte
+ *  nu n'appartient à aucune partie, voir renderBlock). */
+const hasInlineText = (node) => ((node && node.children) || [])
+  .some((c) => c.tag === '#text' && String(c.text || '').trim() !== '');
+
 /** LA VALEUR D'UN ATTRIBUT d'un nœud (`data-doc-section`, `data-pf-cols`) —
  *  la page du projet les pose sur une section et sur une figure (voir
  *  DOC_SECTION_ATTR · FIGURE_COLS_ATTR, pubCitation.js). */
@@ -1106,7 +1142,17 @@ const renderUnits = (nodes, ctx, part, section) => {
        reçoivent d'ici — c'est ce qui permet à `layout.docSections` d'agir sur une
        section ENTIÈRE (voir columnBlocks). */
     const ownSection = attrOf(n, DOC_SECTION_ATTR) || section;
-    if (!own && SPLIT_CONTAINERS.has(n.tag) && kids.some((c) => BLOCK_TAGS.has(c.tag))) {
+    /* ON OUVRE LE CONTENEUR dans deux cas : il n'a PAS de partie à lui (le
+       `<div class="mb-6">` d'une section, la grille des figures — voir SPLIT_CONTAINERS),
+       ou il en a une MAIS il porte une figure qui a choisi ses colonnes — sans quoi le
+       réglage « Two columns » de cette figure resterait sans effet pour Word, alors que
+       la feuille du document le suit (voir holdsFigureWithOwnColumns). Un conteneur qui
+       contient aussi du TEXTE EN LIGNE n'est jamais ouvert : le texte nu n'appartient à
+       aucune partie et perdrait le style du conteneur (voir hasInlineText). */
+    const opens = SPLIT_CONTAINERS.has(n.tag) && !hasInlineText(n)
+      && kids.some((c) => BLOCK_TAGS.has(c.tag))
+      && (!own || holdsFigureWithOwnColumns(n));
+    if (opens) {
       units.push(...renderUnits(kids, ctx, pid, ownSection));
       return;
     }
