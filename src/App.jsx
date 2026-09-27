@@ -8,7 +8,7 @@ import { Setup, Data, Simulations, Analysis, MD_ANALYSIS_SECTIONS, mdChartToSvg,
 
 import { MD_SIMULATION_TAB_CONFIG } from './data/specialPages';
 import {PRIMARY_CATEGORIES} from './data/testTypes';
-import { AppSidebar } from './components/AppModules/appSidebar';
+import { AppSidebar, APP_PAGE_IDS, appPageLabel } from './components/AppModules/appSidebar';
 import { AgendaModule } from './components/AppModules/agendaModule';
 import { DashboardModule } from './components/AppModules/dashboardModule';
 import { LibraryModule } from './components/AppModules/libraryModule';
@@ -586,6 +586,43 @@ const datasetHref = (datasetId) => {
     }
   } catch { /* ignore */ }
   return '?' + qs;
+};
+
+/* =========================================================================
+   ⧉ UNE PAGE DANS UNE AUTRE FENÊTRE (le rapport)
+
+   « When clicking in different pages or instance, it should be possible to
+   open that page in another window, not to loose the content of that page and
+   having to wait to reload it when I'm back on that page. »
+
+   LA PAGE DEVIENT UNE ADRESSE. L'URL était déjà celle de la BASE
+   (`?dataset=…`, relue au démarrage par l'effet d'ouverture d'une base
+   partagée) : elle porte maintenant AUSSI la page demandée (`&mod=…`), donc une
+   fenêtre neuve ouvre la MÊME base ET la MÊME page. Rien n'est déplacé dans la
+   fenêtre d'origine : son écran, ses envois en cours et ses viewers gardent
+   exactement l'état où ils sont, et y revenir ne recharge rien.
+
+   LES DEUX RÈGLES SONT PURES, donc testables (voir _app_page_window_test.mjs) :
+     • `pageFromUrl`  — la page qu'une URL réclame, ou null. Seules les pages de
+       la barre (APP_PAGE_IDS) sont acceptées : une valeur inventée à la main
+       n'ouvre pas une page vide ;
+     • `urlWithoutMod` — la même URL sans `&mod=`, ce que la fenêtre neuve écrit
+       dès qu'elle a ouvert la page (même geste que `drive-bootstrap=1`) pour que
+       la navigation qui suit reste celle de l'utilisateur.
+   ========================================================================= */
+export const pageFromUrl = (search) => {
+  try {
+    const wanted = new URLSearchParams(String(search == null ? '' : search)).get('mod');
+    return APP_PAGE_IDS.includes(wanted) ? wanted : null;
+  } catch { return null; }
+};
+export const urlWithoutMod = (search, pathname) => {
+  try {
+    const q = new URLSearchParams(String(search == null ? '' : search));
+    q.delete('mod');
+    const qs = q.toString();
+    return `${pathname || window.location.pathname}${qs ? `?${qs}` : ''}`;
+  } catch { return pathname || ''; }
 };
 
 /* -------------------------------------------------------------------------
@@ -1916,6 +1953,43 @@ if (customType === 'dosy') {
     // l'ajouter aux dépendances relancerait la lecture à chaque rendu.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isCloudReady, currentDatasetId, needsLogin, user, serverAuth.ready]);
+
+  /* ⧉ LA PAGE DEMANDÉE PAR L'URL (voir pageFromUrl / urlWithoutMod en tête de
+     fichier) : une fenêtre neuve ouverte par le ⧉ de la barre reçoit la même base
+     ET la page voulue. Elle l'ouvre donc dès que sa base est là, puis EFFACE
+     `&mod=` de son adresse : la navigation qui suit dans cette fenêtre reste
+     celle de l'utilisateur, exactement comme `drive-bootstrap=1`. */
+  useEffect(() => {
+    if (!currentDatasetId) return;
+    const wanted = pageFromUrl(window.location.search);
+    if (!wanted) return;
+    setCurrentModule(wanted);
+    if (window.innerWidth < 768) setIsSidebarOpen(false);
+    try {
+      window.history.replaceState({}, '', urlWithoutMod(window.location.search, window.location.pathname));
+    } catch { /* ignore */ }
+    // Ne dépend QUE de la base : l'effet s'applique une fois, à son ouverture.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentDatasetId]);
+
+  /* ⧉ OUVRIR UNE PAGE DANS UNE AUTRE FENÊTRE — le geste de la barre latérale (voir
+     le bloc de pageFromUrl pour la règle et le rapport). La nouvelle fenêtre
+     porte la base ouverte (`?dataset=…`, que l'effet ci-dessus relit) et la page
+     demandée (`&mod=…`). La fenêtre d'origine n'est JAMAIS touchée : ce qu'elle a
+     à l'écran — un formulaire à moitié rempli, un envoi en cours, un viewer 3D —
+     y reste, et y revenir ne recharge rien. */
+  const openPageInNewWindow = useCallback((moduleId) => {
+    const wanted = APP_PAGE_IDS.includes(moduleId) ? moduleId : 'dashboard';
+    const q = new URLSearchParams();
+    if (currentDatasetId) q.set('dataset', String(currentDatasetId));
+    q.set('mod', wanted);
+    const url = `${window.location.origin}${window.location.pathname}?${q.toString()}`;
+    const win = window.open(url, '_blank', 'noopener,noreferrer');
+    if (!win) {
+      window.alert(`⚠️ The browser blocked the second window.\n\nAllow pop-ups for this site and press ⧉ again to open “${appPageLabel(wanted)}” in its own window — this window keeps everything it has loaded.`);
+    }
+    return win;
+  }, [currentDatasetId]);
 
   /* Datasets supprimés VOLONTAIREMENT pendant cette session. Le document est
      retiré de Firestore, mais le cache localStorage de l’appareil en garde une
@@ -5296,6 +5370,7 @@ const openDataset = (dset, { keepPlace = false } = {}) => {
             onSignOut={handleSignOut}
             setUnlockedTestIds={setUnlockedTestIds} setLoginModal={setLoginModal}
             currentModule={currentModule} setCurrentModule={setCurrentModule}
+            onOpenPageInNewWindow={openPageInNewWindow}
             handlePrint={handlePrint} loadHTML={loadHTML} exportHTML={exportHTML}
             handleUndo={handleUndo} handleRedo={handleRedo}
             historyIndex={historyIndex} historyRef={historyRef}

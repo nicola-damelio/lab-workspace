@@ -6,6 +6,43 @@
 import React from 'react';
 import { Icon } from '../Icons';
 
+/* ── LES PAGES DE LA BARRE ────────────────────────────────────────────────────
+   La liste vit ICI, hors du composant, pour n'exister qu'UNE fois : la
+   navigation est construite à partir d'elle, APP_PAGE_IDS en est l'ensemble
+   d'identifiants, et App.jsx s'en sert pour ses deux gestes de fenêtre — le ⧉
+   « ouvrir cette page dans une autre fenêtre » (openPageInNewWindow) et la
+   relecture de `?mod=…` au démarrage d'une fenêtre neuve. Une page que la barre
+   ne propose pas ne peut donc jamais être demandée par une URL. */
+export const ADMIN_PAGE_ID = 'administration';
+export const APP_NAV_ITEMS = [
+  { id: 'dashboard', icon: '📊', label: 'Dataset Overview' },
+  { id: 'projects', icon: '📁', label: 'Projects' },
+  { id: 'tests', icon: '🧪', label: 'Experiments' },
+  { id: 'notebook', icon: '📓', label: 'Lab Notebook' },
+  { id: 'library', icon: '📚', label: 'Library' },
+  { id: 'agenda', icon: '🗓️', label: 'Agenda (Timeline)' },
+  { id: 'protocols', icon: '📝', label: 'Protocols' },
+  { id: 'storage', icon: '📦', label: 'Storage & Boxes' },
+  { id: 'calculations', icon: '🧮', label: 'Calculations' },
+  { id: 'publications', icon: '📰', label: 'Publications' },
+  // Sits directly under Publications, at the same level: the builder used to
+  // be embedded at the bottom of the Publications page.
+  { id: 'image-builder', icon: '🖼️', label: 'Image Builder' },
+  { id: ADMIN_PAGE_ID, icon: '🏛️', label: 'Administration' },
+  { id: 'settings', icon: '⚙️', label: 'Settings' }
+];
+/* Les pages d'une base SCIENTIFIQUE — celles que ⧉ et `?mod=` acceptent. La base
+   d'administration a sa propre navigation (adminNav) : ses pages ne se demandent
+   pas par une URL, et ⧉ n'y est donc pas offert. */
+export const APP_PAGE_IDS = APP_NAV_ITEMS
+  .filter((n) => n.id !== ADMIN_PAGE_ID)
+  .map((n) => n.id);
+/** Le libellé d'une page, pour une infobulle (« Experiments », …). */
+export const appPageLabel = (pageId) => {
+  const found = APP_NAV_ITEMS.find((n) => n.id === pageId);
+  return found ? found.label : 'page';
+};
+
 export const AppSidebar = ({
   isSidebarOpen, setIsSidebarOpen,
   handleBackToExplorer,
@@ -15,6 +52,7 @@ export const AppSidebar = ({
   currentUser, setCurrentUser, setUnlockedTestIds, setLoginModal,
   onSignOut,
   currentModule, setCurrentModule,
+  onOpenPageInNewWindow,     // ⧉ « ouvrir cette page dans une autre fenêtre » (App.jsx)
   lastOpenedTest, onReturnToTest,
   datasetKind,
   adminNav,
@@ -28,26 +66,9 @@ export const AppSidebar = ({
   // le module global « Administration » n’apparaît plus (l’accès se fait
   // depuis la page d’accueil via les datasets de type administration).
   const adminOnly = datasetKind === 'administration';
-  const NAV_ITEMS = [
-    { id: 'dashboard', icon: '📊', label: 'Dataset Overview' },
-    { id: 'projects', icon: '📁', label: 'Projects' },
-    { id: 'tests', icon: '🧪', label: 'Experiments' },
-    { id: 'notebook', icon: '📓', label: 'Lab Notebook' },
-    { id: 'library', icon: '📚', label: 'Library' },
-    { id: 'agenda', icon: '🗓️', label: 'Agenda (Timeline)' },
-    { id: 'protocols', icon: '📝', label: 'Protocols' },
-    { id: 'storage', icon: '📦', label: 'Storage & Boxes' },
-    { id: 'calculations', icon: '🧮', label: 'Calculations' },
-    { id: 'publications', icon: '📰', label: 'Publications' },
-    // Sits directly under Publications, at the same level: the builder used to
-    // be embedded at the bottom of the Publications page.
-    { id: 'image-builder', icon: '🖼️', label: 'Image Builder' },
-    { id: 'administration', icon: '🏛️', label: 'Administration' },
-    { id: 'settings', icon: '⚙️', label: 'Settings' }
-  ];
   const navItems = adminOnly
     ? (Array.isArray(adminNav) ? adminNav : [])
-    : NAV_ITEMS.filter((nav) => nav.id !== 'administration');
+    : APP_NAV_ITEMS.filter((nav) => nav.id !== ADMIN_PAGE_ID);
 
   return (
 
@@ -233,8 +254,11 @@ export const AppSidebar = ({
                   ? currentModule === 'administration' && currentAdminPage === nav.id
                   : currentModule === nav.id;
                 return (
-                  <button
+                  <div
                     key={nav.id}
+                    className={`flex items-center gap-1 ${isSidebarOpen ? 'w-full' : 'justify-center'}`}
+                  >
+                  <button
                     onClick={() => {
                       if (adminOnly) {
                         if (typeof onAdminNav === 'function') onAdminNav(nav.id);
@@ -245,7 +269,7 @@ export const AppSidebar = ({
                     }}
                     title={!isSidebarOpen ? nav.label : ''}
                     className={`flex items-center gap-3 py-2 rounded-lg text-sm transition-all text-left ${
-                      isSidebarOpen ? 'px-3 w-full' : 'px-0 w-10 justify-center'
+                      isSidebarOpen ? 'px-3 flex-1 min-w-0' : 'px-0 w-10 justify-center'
                     } ${
                       isActive
                         ? 'bg-blue-50 text-blue-700 font-bold shadow-sm'
@@ -259,6 +283,29 @@ export const AppSidebar = ({
                     )}
                     {isSidebarOpen && <span>{nav.label}</span>}
                   </button>
+                  {/* ⧉ OUVRIR CETTE PAGE DANS UNE AUTRE FENÊTRE — la demande :
+                      « When clicking in different pages or instance, it should be
+                      possible to open that page in another window, not to loose the
+                      content of that page and having to wait to reload it when I'm
+                      back on that page. » La fenêtre neuve reçoit la MÊME base
+                      (`?dataset=…`) et la page demandée (`&mod=…`) : voir
+                      openPageInNewWindow dans App.jsx. CETTE fenêtre-ci n'est pas
+                      touchée — son écran, ses envois en cours et ses viewers restent
+                      exactement où ils en sont, et y revenir ne recharge rien. Le
+                      geste n'est offert que pour les pages d'une base scientifique :
+                      une base d'administration a sa propre navigation. */}
+                  {isSidebarOpen && !adminOnly && typeof onOpenPageInNewWindow === 'function' && (
+                    <button
+                      type="button"
+                      onClick={() => onOpenPageInNewWindow(nav.id)}
+                      title={`Open “${nav.label}” in a SECOND browser window — this window keeps everything it has already loaded`}
+                      aria-label={`Open ${nav.label} in a new window`}
+                      className="shrink-0 w-7 h-7 rounded-lg text-[12px] leading-none text-slate-400 border border-transparent hover:text-blue-700 hover:bg-blue-50 hover:border-blue-200"
+                    >
+                      ⧉
+                    </button>
+                  )}
+                  </div>
                 );
               })}
             </nav>

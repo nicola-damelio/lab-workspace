@@ -30,7 +30,7 @@ import { abortControl, useAbortControl } from '../utils/abortControl';
 // is where the SMILES of a hand-loaded ligand comes from.
 import { cachedLigandSmiles, fetchLigandSmiles } from '../utils/ligandSmiles';
 import { archiveFileToDrive } from '../utils/driveUpload';
-import { getPymolScripts } from '../utils/pymolScripts';
+import { getPymolScripts, setPymolScript as savePymolScriptToLibrary } from '../utils/pymolScripts';
 import { SEQUENCE_NATURES } from '../utils/sequenceNatures';
 
 /* ---- Shared "Assigned atoms" highlight flag ---------------------------------
@@ -3173,6 +3173,21 @@ const schemeForColorMode = (mode) => {
   // flat element colour: a conformation or a motif is a STRUCTURAL notion.
   if (mode === 'nucform') return nucleicFormSchemeKey || sstrucSchemeKey || 'sstruc';
   if (mode === 'motif') return nucleicMotifSchemeKey || sstrucSchemeKey || 'sstruc';
+  /* LES TROIS LECTURES MAISON QUI MANQUAIENT ICI — « Color by : Chain », « Charge »
+     et « Lipid type » d'une rangée de SÉLECTION (la barre de gauche) et de 🧫 MEMBRANE
+     (le rapport de cette session : « the membrane section of the styling window does
+     not color lipids according to the colors defined in the settings wheel if I
+     select color by “lipid type” »). NGL n'enregistre NI « chain », NI « charge », NI
+     « lipidtype » : passés tels quels à NGL, ces trois noms demandaient un colormaker
+     INEXISTANT, et la rangée ne prenait donc aucune des couleurs de la ⚙. La
+     correspondance est maintenant EXACTEMENT celle des rangées de la fenêtre de
+     styling (sectionColorParams) — `lab-chain` · `lab-charge` · `lab-lipid-class`,
+     avec les replis natifs — donc les deux barres peignent la même palette, et une
+     couleur changée dans la roue ⚙ repaint la rangée de la membrane comme celle du
+     lipide. */
+  if (mode === 'chain') return chainSchemeKey || 'chainid';
+  if (mode === 'charge') return chargeSchemeKey || elementSchemeKey || 'element';
+  if (mode === 'lipidtype') return lipidClassSchemeKey || elementSchemeKey || 'element';
   return mode;
 };
 
@@ -3464,7 +3479,17 @@ const sectionRowTintCss = (tints, kind, sub) => numToHex(sectionRowTintOf(tints,
    protein and its lipids, do not have to be drawn with the same one (the
    request); it used to be ONE global panel for the whole scene. */
 const SECTION_LOOK_FIELDS = ['style', 'colorBy', 'solidColor', 'opacity', 'sphere', 'bond', 'material', 'roughness', 'metalness'];
-const FOLLOW_FIELDS = ['style', 'colorBy', 'opacity', 'sphere', 'bond', 'material', 'roughness', 'metalness'];
+/* LA COULEUR UNIE FAIT PARTIE DE CE QUE GENERAL REMET A SES PARTIES (le rapport
+   de cette session : « If I change the style in the general section of the styling
+   window and I select color by “solid”, the solid color is not transferred to the
+   subsections backbone, sidechains, etc. »). « Solid » n'est pas un dessin de plus,
+   c'est la couleur d'un dessin : elle se comporte donc comme l'opacité ou un rayon
+   — General l'écrit dans les rangées qui le suivent (et elles la reprennent quand
+   il change), tandis que la pastille d'UNE PARTIE détache cette partie seule
+   (`follow: false`), exactement comme n'importe quel autre champ. Sans cette ligne,
+   chaque partie gardait sa propre couleur d'aplat : « General → Solid » repeignait
+   la seule rangée du haut, et la molécule restait bariolée. */
+const FOLLOW_FIELDS = ['style', 'colorBy', 'solidColor', 'opacity', 'sphere', 'bond', 'material', 'roughness', 'metalness'];
 const defaultLookOf = (kind, sub) => {
   const spec = subsectionSpec(kind, sub);
   return {
@@ -3804,6 +3829,14 @@ const effectiveSectionLook = (looks, kind, sub) => {
     ...own,
     style: spec.styles.includes(g.style) ? g.style : spec.def.style,
     colorBy: spec.colors.includes(g.colorBy) ? g.colorBy : spec.def.colorBy,
+    /* …ET LA COULEUR UNIE AUSSI (le rapport : « If I change the style in the general
+       section … and I select color by “solid”, the solid color is not transferred to
+       the subsections backbone, sidechains, etc. »). C'est ici la MÊME règle que le
+       style et la coloration : la rangée qui suit General PEINT ce que General a
+       réglé, et la pastille qu'elle affiche montre cette couleur-là — les deux
+       lectures (le dessin et le menu) ne peuvent donc pas diverger. Une rangée qui a
+       sa propre pastille ne suit plus General et garde la sienne (own). */
+    solidColor: Number.isFinite(g.solidColor) ? g.solidColor : own.solidColor,
     opacity: g.opacity,
     sphere: g.sphere,
     bond: g.bond,
@@ -6734,13 +6767,40 @@ const hiddenSectionIds = (sections) => {
   });
   return set;
 };
+/* ---- UNE MOLÉCULE NE PARLE QUE POUR ELLE (le rapport de cette session) --------
+   « the setting of the general section does not affect only the molecule but all
+   the molecules in different chains and this is not OK ». Un arbre n'existe que
+   pour les sections DÉJÀ TOUCHÉES (`sectionLooks[id]`) : les autres relisent
+   `kindLooks[kind]` à CHAQUE rendu (voir sectionTreeOf), donc n'importe quel geste
+   fait sur une section se propageait à TOUTES les sections du même type — les
+   autres chaînes de la molécule, et les autres structures chargées — sans que
+   personne ne l'ait demandé.
+
+   AVANT d'écrire le look du type (qui reste la mémoire du PROCHAIN fichier chargé
+   et le défaut d'une molécule neuve : voir setSectionField), les sections DÉJÀ
+   ÉNUMÉRÉES de ce type reçoivent donc l'arbre qu'elles affichent À CET INSTANT :
+   elles sont ÉPINGLÉES et continuent de dessiner exactement ce qu'elles
+   dessinaient. Chacune repart ensuite de son côté, et la propagation VOLONTAIRE
+   garde son geste dédié : le 🎨 Copy de la barre Molecules (copySectionsToAll). */
+const pinSectionLooksOfKind = (keepId, kind) => {
+  const out = {};
+  Object.keys(sectionCatalogRef.current).forEach((molKey) => {
+    (((sectionCatalogRef.current[molKey] || {}).sections) || []).forEach((s) => {
+      if (s.kind !== kind || s.id === keepId || out[s.id]) return;
+      if (sectionLooksRef.current[s.id]) return;   // celle-ci a déjà son arbre : elle ne bouge pas
+      out[s.id] = initialSectionTree(kindLooksRef.current, kind);
+    });
+  });
+  return out;
+};
 // ONE row changed in the bar: the whole hierarchy goes through the two pure moves of
 // PART 4 (setRowSectionField / setGeneralSectionField). The persisted look of the
 // KIND follows the change, so the next molecule of that kind opens the same way.
 const setSectionField = (id, kind, sub, field, value) => {
   leaveLightMode();
   const nextTree = setRowSectionField(sectionTreeOf(id, kind), kind, sub, field, value);
-  setSectionLooks((prev) => ({ ...prev, [id]: nextTree }));
+  const pinned = pinSectionLooksOfKind(id, kind);
+  setSectionLooks((prev) => ({ ...prev, ...pinned, [id]: nextTree }));
   setKindLooks((prev) => {
     const next = { ...prev, [kind]: nextTree[kind] };
     saveSectionLooks(next);
@@ -6767,7 +6827,8 @@ const setSectionMaterialField = (id, kind, sub, field, value) => {
   const patch = materialRowPatch(field, value);
   let nextTree = sectionTreeOf(id, kind);
   Object.keys(patch).forEach((f) => { nextTree = setRowSectionField(nextTree, kind, sub, f, patch[f]); });
-  setSectionLooks((prev) => ({ ...prev, [id]: nextTree }));
+  const pinned = pinSectionLooksOfKind(id, kind);
+  setSectionLooks((prev) => ({ ...prev, ...pinned, [id]: nextTree }));
   setKindLooks((prev) => {
     const next = { ...prev, [kind]: nextTree[kind] };
     saveSectionLooks(next);
@@ -6781,14 +6842,16 @@ const setSectionMaterialField = (id, kind, sub, field, value) => {
 const resetSectionRowLook = (id, kind, sub) => {
   leaveLightMode();
   const nextTree = resetSectionRow(sectionTreeOf(id, kind), kind, sub);
-  setSectionLooks((prev) => ({ ...prev, [id]: nextTree }));
+  const pinned = pinSectionLooksOfKind(id, kind);
+  setSectionLooks((prev) => ({ ...prev, ...pinned, [id]: nextTree }));
   bumpSectionEpoch();
   requestSceneRepaint();
 };
 const resetSectionKindLook = (id, kind) => {
   leaveLightMode();
   const nextTree = resetSectionKind(sectionTreeOf(id, kind), kind);
-  setSectionLooks((prev) => ({ ...prev, [id]: nextTree }));
+  const pinned = pinSectionLooksOfKind(id, kind);
+  setSectionLooks((prev) => ({ ...prev, ...pinned, [id]: nextTree }));
   bumpSectionEpoch();
   requestSceneRepaint();
 };
@@ -7233,6 +7296,14 @@ const [pymolActive, setPymolActive] = useState(false);
 const [pymolScript, setPymolScript] = useState('');
 const [pymolLog, setPymolLog] = useState('');
 const [showPymolPanel, setShowPymolPanel] = useState(false);
+/* 💾 LA MACRO S'ENREGISTRE ICI (le rapport de cette session : « It should be
+   possible to save a pymol macro written in the viewer without having to go to the
+   library page to save a new one. »). Le nom que l'utilisateur lui donne, et la
+   ligne de confirmation : la réserve est celle de la Library (localStorage,
+   utils/pymolScripts.js), donc rien n'est dupliqué et la macro apparaît aussitôt
+   dans la liste déroulante du panneau comme dans « Library → PyMOL Scripts ». */
+const [pymolScriptName, setPymolScriptName] = useState('');
+const [pymolSaveMsg, setPymolSaveMsg] = useState('');
 const [autoShowSel, setAutoShowSel] = useState(true); // auto-visibility of parsed selections
 const [hideAll, setHideAll] = useState(false);        // remove every representation
 const [bgColor, setBgColor] = useState(() => {
@@ -11576,6 +11647,30 @@ const clearPyMOL = () => {
   setPymolScript('');
 };
 
+/* ---- 💾 ENREGISTRER LA MACRO ÉCRITE ICI (le rapport de cette session) --------
+   « It should be possible to save a pymol macro written in the viewer without
+   having to go to the library page to save a new one. » Le panneau écrit donc
+   dans la MÊME réserve que la page Library (utils/pymolScripts.js, localStorage) :
+   un nom suffit, la macro est enregistrée, et la liste déroulante « Load script »
+   du panneau la propose aussitôt (l'écriture d'un état force le rendu, donc
+   `getPymolScripts()` est relu). Un nom DÉJÀ PRIS n'est pas écrasé en silence : la
+   confirmation est la même que celle du 🗑 de la Library. Le commentaire d'une
+   macro existante est CONSERVÉ (le panneau n'édite que le script).
+   Le nom de la macro et sa ligne de confirmation restent dans le panneau : on peut
+   donc enregistrer, corriger et réenregistrer sans jamais changer de page. */
+const saveViewerPymolScript = () => {
+  const name = String(pymolScriptName || '').trim();
+  const body = String(pymolScript || '');
+  if (!name) { setPymolSaveMsg('⚠ Give the macro a name first (the field left of 💾).'); return; }
+  if (!body.trim()) { setPymolSaveMsg('⚠ The macro is empty — write some PyMOL commands first.'); return; }
+  const all = getPymolScripts();
+  const known = all[name];
+  if (known && !window.confirm(`Overwrite the saved PyMOL script “${name}”?`)) return;
+  const comment = known ? (typeof known === 'string' ? '' : (known.comment || '')) : '';
+  savePymolScriptToLibrary(name, body, comment);
+  setPymolSaveMsg(`✓ “${name}” saved — it is in Library → PyMOL Scripts and in the list above.`);
+};
+
 // Atom rename helpers
 const applyRename = () => {
   if (renameTarget === null) return;
@@ -14898,7 +14993,7 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
           e.target.value = '';
           if (!n) return;
           const entry = getPymolScripts()[n];
-          if (entry) setPymolScript(typeof entry === 'string' ? entry : (entry.script || ''));
+          if (entry) { setPymolScript(typeof entry === 'string' ? entry : (entry.script || '')); setPymolScriptName(n); }
         }}
         title="Load a script saved in the Library (Library → PyMOL Scripts) into the editor, then press Run"
         className="border border-violet-300 rounded-md px-2 py-1 text-xs bg-white outline-none focus:border-violet-500"
@@ -14909,6 +15004,31 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
         ))}
       </select>
       <span className="text-[9px] text-slate-400">saved in <b>Library → PyMOL Scripts</b></span>
+      {/* 💾 ENREGISTRER LA MACRO ÉCRITE ICI (le rapport : « It should be possible to
+          save a pymol macro written in the viewer without having to go to the
+          library page to save a new one. »). Le nom + le bouton écrivent DANS la
+          réserve de la Library (voir saveViewerPymolScript) : aucun aller-retour
+          vers la page Library, la macro est relue par la liste ci-contre à
+          l'instant, et un nom déjà pris demande confirmation avant d'être
+          remplacé. Choisir une macro dans la liste remplit le nom, donc 💾 met
+          simplement à jour celle qu'on vient de charger. */}
+      <input
+        type="text"
+        value={pymolScriptName}
+        onChange={(e) => setPymolScriptName(e.target.value)}
+        placeholder="Macro name"
+        className="border border-violet-300 rounded-md px-2 py-1 text-xs bg-white outline-none focus:border-violet-500 w-28 shrink-0"
+        title="Name of this macro — press 💾 and it is saved in the Library (Library → PyMOL Scripts) under that name; an existing name asks before being replaced" />
+      <button
+        type="button"
+        onClick={saveViewerPymolScript}
+        className="px-2 py-1 text-[10px] font-bold rounded bg-white border border-violet-400 text-violet-700 hover:bg-violet-100 shrink-0"
+        title="Save the macro written below in the Library — the same store as Library → PyMOL Scripts, with no trip to the Library page">
+        💾 Save macro
+      </button>
+      {pymolSaveMsg && (
+        <span className="text-[10px] font-bold text-violet-800">{pymolSaveMsg}</span>
+      )}
     </div>
     <label className="text-[10px] font-bold text-slate-500 uppercase">Paste a PyMOL script (select / show / hide / color / set sphere_scale·transparency·cartoon_ring_mode·cartoon_ring_color·cartoon_ring_transparency·cartoon_nucleic_acid_mode / bg_color / cartoon · ribbon · tube / surface / spectrum / util.ray_shadows)</label>
     <textarea value={pymolScript} onChange={(e) => setPymolScript(e.target.value)} rows={6}

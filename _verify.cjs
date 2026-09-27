@@ -193,6 +193,22 @@ const tests = [
   // cumulatif par classe moléculaire (merge verrouillé par le fichier, prompt de
   // conflit) et le SNAPSHOT exact de la scène, clé par section.
   '_viewer_theme_snapshot_test.mjs',
+  // LES QUATRE RÉGLAGES DE CETTE SESSION, du côté du viewer : la couleur unie de
+  // General qui descend sur les parties de la molécule (« the solid color is not
+  // transferred to the subsections backbone, sidechains, etc. »), la section qui
+  // ne parle QUE pour elle (les autres chaînes / structures sont ÉPINGLÉES avant
+  // que le look du type ne soit écrit : « the setting of the general section does
+  // not affect only the molecule but all the molecules in different chains »), le
+  // « Color by : Lipid type » d'une rangée de 🧫 membrane qui prend enfin les
+  // couleurs de la roue ⚙ (NGL n'enregistre pas de colormaker « lipidtype »), et
+  // la macro PyMOL qu'on enregistre DEPUIS le panneau du viewer, dans la réserve
+  // de la Library (« without having to go to the library page to save a new one »).
+  '_viewer_section_scope_test.mjs',
+  // ⧉ UNE PAGE DANS UNE AUTRE FENÊTRE : `?mod=…` (pageFromUrl · urlWithoutMod,
+  // EXÉCUTÉS), le geste de la barre latérale (openPageInNewWindow, EXÉCUTÉ sur un
+  // faux window : base + page dans l'URL, page inconnue → accueil, fenêtre
+  // bloquée DITE) et le câblage — une seule liste de pages (APP_NAV_ITEMS).
+  '_app_page_window_test.mjs',
   '_ligand_smiles_test.mjs',
   '_viewer_render_smoke_test.mjs',
   // …et le SEUL qui LIT DE VRAIS PIXELS, à la toute fin : quatre surfaces
