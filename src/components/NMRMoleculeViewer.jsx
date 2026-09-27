@@ -14,6 +14,15 @@ import {
   RAY_FACTORS, RAY_DEFAULT_FACTOR, rayFactorOptions, rayPlanOf, rayProgressText,
   previewRayImage, previewUrlOf, releasePreviewUrl, downloadBlob,
 } from '../utils/viewerRayImage';
+// 🎬 The VIDEO OF A TRAJECTORY — the run the ▶ button plays, written as one file
+// (its own module, see src/utils/viewerTrajectoryVideo.js). It records the very
+// canvas NGL is drawing into (`canvas.captureStream` + `MediaRecorder`), frame
+// by frame, in the order the playback plays them: the film IS what is on screen.
+import {
+  VIDEO_FPS_CHOICES, VIDEO_DEFAULT_FPS, VIDEO_STEP_CHOICES,
+  videoSupport, canvasOfStage, videoMime, videoPlan, videoProgressText,
+  videoSecondsText, videoFileName, recordTrajectoryVideo,
+} from '../utils/viewerTrajectoryVideo';
 // The CAST SHADOWS of a ✨ Ray still: NGL 2.4 has no shadow-map pass at all, so
 // the shadow is computed from the ATOMS with the camera and the key light of the
 // scene (utils/viewerRayShadows.js) — its own toggle and strength live in the Ray
@@ -8307,6 +8316,33 @@ const trajRef = useRef(null);
 const lastChosenTrajRef = useRef(null);                // guards the async XTC exact-count scan
 const blobUrlsRef = useRef([]);
 
+/* ---- 🎬 THE VIDEO OF THIS TRAJECTORY (see utils/viewerTrajectoryVideo.js) ----
+   Its OWN state, its own preferences and its own handler: the rate of the film
+   and « keep every Nth frame » are remembered like every other viewer
+   preference (localStorage, the app's habit), the plan of the chosen settings
+   is read on every render (so the button SHOWS what the film will cost before
+   the click — frames, length, rate), and `videoBusy` is what turns the
+   progress line and the ⏹ Stop button on. Recording takes the frame over from
+   the playback (`setPlaying(false)` on the way in) and gives it back
+   afterwards, exactly where it was: ONE driver of the frame at a time, and a
+   scene that ends up as it started. */
+const [videoFps, setVideoFps] = useState(() => {
+  try {
+    const v = Number(localStorage.getItem('labViewerVideoFps'));
+    return VIDEO_FPS_CHOICES.includes(v) ? v : VIDEO_DEFAULT_FPS;
+  } catch { return VIDEO_DEFAULT_FPS; }
+});
+const [videoStep, setVideoStep] = useState(() => {
+  try {
+    const v = Number(localStorage.getItem('labViewerVideoStep'));
+    return VIDEO_STEP_CHOICES.includes(v) ? v : 1;
+  } catch { return 1; }
+});
+const [videoBusy, setVideoBusy] = useState(false);
+const [videoMsg, setVideoMsg] = useState('');
+const videoRunRef = useRef(0);       // one recording at a time (⏹ changes the token)
+const videoCancelRef = useRef(false); // what ⏹ Stop writes, read by the drive loop
+
 // Number of frames we actually step through (the trajectory's total time span is
 // preserved because we jump by `effStride` frames each step). When a "Max frames"
 // cap is set, the stride is raised automatically so the full time range still fits
@@ -8316,6 +8352,32 @@ const effStride = numFrames > 0 && maxFrames > 0
   : stride;
 const keptFrames = numFrames > 0 ? Math.max(1, Math.ceil(numFrames / effStride)) : 0;
 const toActualFrame = (keptIdx) => Math.min(numFrames - 1, keptIdx * effStride);
+
+/* ── WHAT THE FILM WILL COST, READ BEFORE THE CLICK ─────────────────────────
+   Like the ✨ Ray plan (`rayPlan`), the plan of the 🎬 video is read on every
+   render so the bar SHOWS what the chosen settings produce — the frames, the
+   length in m:ss, the pixels and the rate the encoder will be asked for —
+   instead of discovering it once the run is over. The size it is based on is
+   the CANVAS'S DRAWING BUFFER (`canvas.width/height`), which is exactly what
+   `captureStream` records; the ✨ Ray still, by contrast, is built from NGL's
+   CSS size because `makeImage` multiplies THAT (see viewerRayImage.js). Two
+   different sizes, each read from the right place. */
+const videoCanvas = canvasOfStage(stageRef.current);
+const videoReady = videoSupport();
+const videoPlanNow = videoPlan({
+  keptFrames,
+  fps: videoFps,
+  step: videoStep,
+  width: videoCanvas ? videoCanvas.width : 0,
+  height: videoCanvas ? videoCanvas.height : 0,
+});
+// The two preferences of the film, remembered like the rest of the viewer's.
+useEffect(() => {
+  try { localStorage.setItem('labViewerVideoFps', String(videoFps)); } catch { /* ignore */ }
+}, [videoFps]);
+useEffect(() => {
+  try { localStorage.setItem('labViewerVideoStep', String(videoStep)); } catch { /* ignore */ }
+}, [videoStep]);
 
 /* LA BARRE DE LECTURE APPARTIENT À LA CONDITION, PAS SEULEMENT AU FICHIER EN
    MAIN. Une trajectoire DÉCLARÉE (`trajectoryName`, le nom resté sur la
@@ -10857,6 +10919,167 @@ const idx = parseInt(e.target.value, 10);
 if (Number.isNaN(idx)) return;
 setCurrentFrame(idx);
 setFrameSafe(trajRef.current, toActualFrame(idx));
+};
+
+/* ---- 🎬 SAVE THE RUN AS A VIDEO (see utils/viewerTrajectoryVideo.js) ---------
+   THE DEMAND: « in molecular viewer allow saving videos of the trajectory ».
+   The bar's own ▶ plays the run; this button WRITES it: the very canvas NGL is
+   drawing into is captured (`canvas.captureStream` + `MediaRecorder`) frame by
+   frame, so the film is the picture on screen in the order the playback puts it
+   there — palettes, labels, extra molecules, ring plates, fog, light rig.
+
+   THE THREE HONEST THINGS IT SAYS ALONG THE WAY:
+     · BEFORE the click, the summary line of the bar gives the price of the
+       chosen settings (frames, m:ss, pixels, Mbps — `videoPlanNow`), and the
+       button's title repeats it: a recording lasts as long as the film will,
+       because a canvas stream is sampled in REAL TIME.
+     · DURING, the progress line counts the frames and the seconds already
+       filmed, and ⏹ Stop is right there.
+     · AFTER, the message names the file, its frames, its length and its size,
+       and says whether the browser really wrote it (downloadBlob returns
+       whether the download was allowed) — the ✨ Ray wording, for the same
+       reason: a file that never landed must never be announced as saved.
+
+   ONE DRIVER OF THE FRAME AT A TIME. Recording takes the frame over from the
+   playback (`setPlaying(false)`) and gives it BACK at the end — exactly the
+   frame the user was on — so the scene is left as it was found and the ▶ button
+   never fights the recorder for the frame.
+   ⏹ STOP WRITES NOTHING. The recorder is stopped, the chunks are dropped, and
+   the message says so: a film of half a run is not the film of the run, and
+   silently saving it would be a lie about what the run did.
+   THE TAB MUST STAY IN FRONT. A hidden tab stops being painted (browsers
+   throttle animation frames), and a canvas stream only sees what is drawn: the
+   film would repeat its last picture. The message says it before the run and
+   the note under the bar repeats it. */
+const videoPlanSummary = (plan) => `🎬 ${plan.frames} frame${plan.frames === 1 ? '' : 's'} at ${plan.fps} fps → ${plan.secondsText}`
+  + (plan.step > 1 ? ` (slow-motion: 1 frame in ${plan.step} of the ${plan.keptFrames} played)` : '')
+  + ` · ${plan.width}×${plan.height} px · ${(plan.bitrate / 1e6).toFixed(1)} Mbps`
+  + (plan.long ? ' · long run — keep this tab in the foreground' : '');
+
+/* A short-lived message: it clears itself only if not one recording has been
+   started since (the token), so a message never wipes the progress of the run
+   that is happening now. */
+const flashVideoMsg = (text, ms = 7000) => {
+  const run = videoRunRef.current;
+  setVideoMsg(text);
+  setTimeout(() => { if (videoRunRef.current === run) setVideoMsg(''); }, ms);
+};
+
+/* ⏹ STOP — the recorder is stopped at once and NOTHING is written. The token
+   changes, so the handler of the run that is ending writes no message and no
+   file of its own. */
+const stopTrajectoryVideo = () => {
+  if (!videoBusy) return;
+  videoCancelRef.current = true;
+  videoRunRef.current += 1;
+  setVideoBusy(false);
+  setVideoMsg('⏹ Recording stopped — nothing was written (a film of half a run is not the film of the run).');
+  const run = videoRunRef.current;
+  setTimeout(() => { if (videoRunRef.current === run) setVideoMsg(''); }, 8000);
+};
+
+// The mime the browser really accepts (vp9 → vp8 → webm → mp4), asked with the
+// browser's own answer when it has one — the module keeps the default otherwise.
+const bestVideoMime = () => {
+  try {
+    const supported = typeof MediaRecorder !== 'undefined' && typeof MediaRecorder.isTypeSupported === 'function'
+      ? (m) => MediaRecorder.isTypeSupported(m)
+      : null;
+    return videoMime(supported);
+  } catch { return videoMime(); }
+};
+
+const recordTrajectoryVideoClick = async () => {
+  if (videoBusy) return;
+  const run = videoRunRef.current + 1;
+  videoRunRef.current = run;
+  if (trajStatus !== 'ready' || !trajRef.current || keptFrames === 0) {
+    flashVideoMsg('⚠️ Load a trajectory first — the film is made of the frames the ▶ button plays.');
+    return;
+  }
+  if (!videoReady.ok) {
+    flashVideoMsg(`⚠️ ${videoReady.note}`);
+    return;
+  }
+  // The plan is read again HERE, at the click, from the canvas as it is now:
+  // the bar's own summary can be one layout change old.
+  const canvas = canvasOfStage(stageRef.current);
+  const plan = videoPlan({
+    keptFrames,
+    fps: videoFps,
+    step: videoStep,
+    width: canvas ? canvas.width : 0,
+    height: canvas ? canvas.height : 0,
+  });
+  if (!canvas || !plan.ok) {
+    flashVideoMsg(`⚠️ ${plan.reason || 'there is no 3D canvas to record'}`);
+    return;
+  }
+  // ONE driver of the frame at a time, and the scene is put back where it was.
+  setPlaying(false);
+  videoCancelRef.current = false;
+  setVideoBusy(true);
+  const backToFrame = currentFrame;
+  /* The trajectory this film is made of, held for the whole recording: if the
+     page loads ANOTHER one while the film runs, the recording stops instead of
+     mixing two runs into one file (the loop's `cancelled` below). */
+  const traj = trajRef.current;
+  const label = (file && file.name) || (trajFile && trajFile.name) || declaredTrajName || 'trajectory';
+  setVideoMsg(`${videoPlanSummary(plan)}`);
+  try {
+    const out = await recordTrajectoryVideo({
+      canvas,
+      frames: plan.frames,
+      fps: plan.fps,
+      mime: bestVideoMime(),
+      bitrate: plan.bitrate,
+      presentFrame: (i) => {
+        // Frame i of the film IS frame indexAt(i) of the run: the same frames
+        // the ▶ button plays, put on screen in the same order.
+        const kept = plan.indexAt(i);
+        setCurrentFrame(kept);
+        setFrameSafe(traj, toActualFrame(kept));
+      },
+      requestRender: requestSceneRepaint,
+      onProgress: (done, total) => {
+        if (videoRunRef.current !== run) return;
+        setVideoMsg(videoProgressText(done, total, plan.fps));
+      },
+      cancelled: () => videoCancelRef.current
+        || videoRunRef.current !== run
+        || trajRef.current !== traj,   // another trajectory took over: stop here
+    });
+    if (videoRunRef.current !== run) return;   // a ⏹ already told the user what happened
+    if (!out.blob) {
+      setVideoMsg('⏹ Recording stopped before the end — nothing was written (a film of half a run is not the film of the run).');
+      return;
+    }
+    const name = videoFileName({
+      label,
+      frames: out.frames,
+      fps: plan.fps,
+      width: plan.width,
+      height: plan.height,
+      mime: out.mime,
+    });
+    const saved = downloadBlob(out.blob, name);
+    const mb = (out.blob.size / 1048576).toFixed(out.blob.size < 10485760 ? 1 : 0);
+    setVideoMsg(saved
+      ? `✓ ${name} — ${out.frames} frames · ${videoSecondsText(out.seconds)} · ${mb} MB · written on this computer`
+      : `⚠️ ${name} — the browser blocked the download (allow downloads for this page)`);
+  } catch (err) {
+    if (videoRunRef.current !== run) return;
+    setVideoMsg(`⚠️ Video failed (${(err && err.message) || 'unknown error'}) — ${(err && err.hint) || 'try a slower rate (fps)'}`);
+  } finally {
+    if (videoRunRef.current === run) {
+      setVideoBusy(false);
+      // The picture goes back EXACTLY where it was before the recording.
+      setCurrentFrame(backToFrame);
+      setFrameSafe(trajRef.current, toActualFrame(backToFrame));
+      requestSceneRepaint();
+      setTimeout(() => { if (videoRunRef.current === run) setVideoMsg(''); }, 15000);
+    }
+  }
 };
 
 // ---- ⬇ PDB of the structure / of the frame ON SCREEN -----------------------
@@ -16127,12 +16350,12 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
    declared on the experiment): the bar is never silent, and ▶ only wakes up
    once the frames are really in the browser. */}
 {(trajFile || trajectoryFile || trajectorySrc || declaredTrajName) && (
-<VSection title="▶ Trajectory playback" hint="▶ Play · frame slider · speed — this condition's own trajectory">
+<VSection title="▶ Trajectory playback" hint="▶ Play · frame slider · speed — and 🎬 the same run saved as one video file">
 <div className="flex flex-wrap items-center gap-2 bg-indigo-50 border border-indigo-200 rounded-lg px-2 py-1 w-full">
 <button
 type="button"
 onClick={togglePlay}
-disabled={trajStatus !== 'ready' || keptFrames === 0}
+disabled={trajStatus !== 'ready' || keptFrames === 0 || videoBusy}
 className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white font-bold px-3 py-1 rounded-md text-[11px] shadow-sm transition-colors inline-flex items-center gap-1 h-7 whitespace-nowrap"
 >
 {playing ? '⏸ Pause' : '▶ Play'}
@@ -16145,7 +16368,7 @@ min={0}
 max={Math.max(0, keptFrames - 1)}
 value={currentFrame}
 onChange={handleFrameChange}
-disabled={trajStatus !== 'ready' || keptFrames === 0}
+disabled={trajStatus !== 'ready' || keptFrames === 0 || videoBusy}
 className="flex-1 accent-indigo-600"
 />
 <span className="text-[10px] font-mono font-bold text-indigo-800 whitespace-nowrap">
@@ -16190,6 +16413,80 @@ className="border border-indigo-300 rounded-md px-1.5 py-0.5 text-[11px] bg-whit
 )}
 </span>
 </div>
+{/* ── 🎬 VIDEO — « save the run as one file » (the request: « in molecular
+    viewer allow saving videos of the trajectory »). It is the SECOND ROW of
+    this very bar, because the film is made of the frames ▶ plays and of no
+    others: the bar PLAYS the run, this row WRITES it. Everything is readable
+    BEFORE the click (the plan summary: frames, length, pixels, Mbps) and
+    nothing of the scene is touched — the frame goes back where it was when the
+    recording ends. The file is written on the computer (like the ✨ Ray PNG
+    and the frame PDB); the viewer never uploads a film anywhere. */}
+<div className="flex flex-wrap items-center gap-2 bg-violet-50 border border-violet-200 rounded-lg px-2 py-1 w-full">
+<span className="text-[9px] font-black text-violet-700 uppercase tracking-wide whitespace-nowrap">🎬 Video</span>
+<label className="flex items-center gap-1 text-[10px] font-bold text-violet-700 whitespace-nowrap">
+fps
+<select
+value={videoFps}
+onChange={(e) => setVideoFps(Number(e.target.value) || VIDEO_DEFAULT_FPS)}
+title="Frames per second of the FILM — and of the recording, which lasts as long as the film will (a canvas is sampled in real time). 10 fps is the viewer's own playback rate."
+className="border border-violet-300 rounded-md px-1.5 py-0.5 text-[11px] bg-white outline-none focus:border-violet-500 h-7"
+>
+{VIDEO_FPS_CHOICES.map((f) => <option key={f} value={f}>{f} fps</option>)}
+</select>
+</label>
+<label className="flex items-center gap-1 text-[10px] font-bold text-violet-700 whitespace-nowrap">
+keep every
+<select
+value={videoStep}
+onChange={(e) => setVideoStep(Number(e.target.value) || 1)}
+title="How much of the run is filmed: 1 frame in every N is put in the film (the LAST frame of the run is always kept, so the film always ends where the run ends). The frames that are kept are the run, in order — the film is simply shorter."
+className="border border-violet-300 rounded-md px-1.5 py-0.5 text-[11px] bg-white outline-none focus:border-violet-500 h-7"
+>
+{VIDEO_STEP_CHOICES.map((s) => <option key={s} value={s}>{s === 1 ? 'frame' : `${s}th frame`}</option>)}
+</select>
+of the run
+</label>
+<button
+type="button"
+onClick={recordTrajectoryVideoClick}
+disabled={videoBusy || trajStatus !== 'ready' || keptFrames === 0 || !videoReady.ok}
+title={!videoReady.ok
+  ? `🎬 ${videoReady.note}`
+  : (trajStatus !== 'ready' || keptFrames === 0
+    ? 'Load a trajectory first — the film is made of the frames the ▶ button plays'
+    : `Record the run into ONE file: ${videoPlanSummary(videoPlanNow)}. The film is taken from the 3D canvas itself, frame by frame, so it is exactly what is on screen — styles, labels, extra molecules, fog. It lasts as long as the film (the recording is real time): keep this tab in the foreground. The file is written on your computer when the run is over; ⏹ Stop ends it WITHOUT writing anything.`)}
+className="bg-violet-600 hover:bg-violet-700 disabled:opacity-40 text-white font-bold px-3 py-1 rounded-md text-[11px] shadow-sm transition-colors inline-flex items-center gap-1 h-7 whitespace-nowrap"
+>
+{videoBusy ? '🎬 Recording…' : '🎬 Record the run'}
+</button>
+{videoBusy && (
+<button
+type="button"
+onClick={stopTrajectoryVideo}
+title="Stop the recording now. Nothing is written: a film of half a run is not the film of the run — record again to get the whole thing."
+className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap bg-white border-amber-400 text-amber-800 hover:bg-amber-50"
+>
+⏹ Stop
+</button>
+)}
+<span className="flex-1 min-w-[220px] text-[10px] font-bold text-violet-800 leading-tight">
+{videoMsg
+  || (videoReady.ok && videoPlanNow.ok
+    ? `${videoPlanSummary(videoPlanNow)} · ▶ plays it first if you want to check it`
+    : (videoReady.ok ? videoPlanNow.reason : videoReady.note))}
+</span>
+</div>
+<p className="text-[10px] text-slate-500 leading-tight">
+🎬 The video is the SCENE ON SCREEN — the molecules, the styles, the labels and the extra molecules
+exactly as they are — taken from the 3D canvas frame by frame, in the order ▶ plays the run. The ▶
+<b>Speed</b> selector sets how fast the VIEWER plays; 🎬 <b>fps</b> sets how fast the FILM plays — the two are
+independent, so a film can be slower (or faster) than the run on screen. What is
+written is a real video file (<b>.webm</b>, or <b>.mp4</b> where the browser can encode it), saved on your
+computer: nothing is uploaded anywhere. Recording takes about as long as the film (a canvas is sampled in
+real time), so <b>keep this tab in the foreground</b> — a hidden tab is not painted and the film would repeat
+its last picture. ⏹ Stop ends a recording without writing anything, and the frame you were looking at comes
+back when the recording is over.
+</p>
 </VSection>
 )}
 
