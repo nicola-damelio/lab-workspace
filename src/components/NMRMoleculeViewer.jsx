@@ -6517,39 +6517,70 @@ const splitPdbFileIntoMolecules = async (file) => {
   // ci-dessous) — un fichier ne change pas d'entités selon la façon dont il est
   // arrivé. Ici, tout ce que fait cette fonction est de LIRE les records.
 
-  // Group by root; skip pure-water fragments; cap the number of entries.
-  const groups = new Map();
-  atoms.forEach((_, i) => {
-    const r = find(i);
-    if (!groups.has(r)) groups.set(r, []);
-    groups.get(r).push(i);
-  });
-  // Each connectivity part is further split by CHAIN, so a multi-chain complex
-  // (receptor + partner chains of a docking pose, etc.) exposes EVERY chain as
-  // its own entry in the Molecules selector — each can be shown/hidden, styled
-  // and coloured independently.
-  const parts = [];
-  groups.forEach((idxs) => {
-    if (parts.length >= 30) return;
-    const byChain = new Map();
-    idxs.forEach((i) => {
-      const c = atoms[i].chain || '_';
-      if (!byChain.has(c)) byChain.set(c, []);
-      byChain.get(c).push(i);
-    });
-    byChain.forEach((cidxs) => {
-      if (parts.length >= 30) return;
-      const pureWater = cidxs.every((i) => atoms[i].resname === 'HOH' || atoms[i].resname === 'WAT');
-      if (pureWater) return;
-      parts.push({
-        chainId: atoms[cidxs[0]].chain,
-        model: atoms[cidxs[0]].model,
-        modelCount,
-        blob: new Blob([cidxs.map((i) => atoms[i].line).join('\n') + '\nEND\n'], { type: 'text/plain' })
+  // 🧬 LES ENTITÉS — les fragments connexes, divisés par chaîne, l'eau pure
+  // ignorée et les noms qui les DÉSIGNENT viennent du module : les lignes
+  // d'origine ci-dessus et les coordonnées de la structure lue par NGL décrivent
+  // donc les mêmes molécules, dans le même ordre.
+  return namedPartsOf(atoms, conectBonds, modelCount);
+};
+
+/* 🧬 LES MOLÉCULES D'UNE STRUCTURE DÉJÀ CHARGÉE — QUELLE QUE SOIT SA SOURCE.
+   LA DEMANDE : « you assign main to the composition of all molecules in a group
+   and that means that I cannot do anything. Let me select molecule by molecule,
+   even if these molecules are in the same pdb they are separate entities. »
+   La découpe du TEXTE ne connaît que les fichiers PDB lus comme texte : une
+   structure venue d'un CODE PDB, d'une URL, d'un .cif ou d'un .gro restait UNE
+   composante — « la composition de toutes les molécules » — et rien (★ set main,
+   ✥ Move, ↻ Rotate, 🎯 Fit) ne pouvait viser une seule d'entre elles. Ici les
+   atomes sont lus DANS LA STRUCTURE, avec les liaisons que NGL connaît, et la MÊME
+   règle décide des entités : la barre montre alors une molécule par espace, quel
+   que soit le chemin par lequel le fichier est arrivé.
+   `modelCountHint` = le nombre de MODEL que NGL a compté (structure.modelStore) :
+   un ensemble NMR expose donc chaque conformère comme sa propre entité.
+   Une scène ÉNORME n'est pas découpée (MOLECULE_PART_MAX_ATOMS) : au-delà, la
+   structure reste ce qu'elle est — une seule entité — plutôt que d'être recopiée
+   en trente composantes. */
+const splitStructureIntoMolecules = (comp, modelCountHint = 0) => {
+  const structure = comp && comp.structure;
+  if (!structure || typeof structure.eachAtom !== 'function') return [];
+  let modelCount = 1;
+  try { modelCount = Math.max(1, Number((structure.modelStore && structure.modelStore.count) || 1)); } catch { modelCount = 1; }
+  if (Number.isFinite(modelCountHint) && modelCountHint > modelCount) modelCount = modelCountHint;
+  const atoms = [];
+  const bonds = [];                 // [i, j] paires dans `atoms`
+  const at = new Map();             // index NGL → position dans `atoms`
+  try {
+    structure.eachAtom((a) => {
+      const pos = atoms.length;
+      at.set(a.index, pos);
+      let model = 0;
+      try {
+        // NGL garde le MODEL d'une CHAÎNE (`chainStore.modelIndex`) — la même
+        // table que ses propres sélections lisent.
+        model = Number(structure.chainStore ? structure.chainStore.modelIndex[a.chainIndex] : 0) || 0;
+      } catch { model = 0; }
+      atoms.push({
+        chain: String(a.chainname || a.chainid || '').trim() || '_',
+        resname: String(a.resname || '').trim(),
+        resno: Number(a.resno),
+        atomname: String(a.atomname || '').trim(),
+        element: String(a.element || '').trim(),
+        model,
+        x: a.x, y: a.y, z: a.z,
       });
+      // Les liaisons que la STRUCTURE déclare (CONECT, liaisons NGL) : deux atomes
+      // liés restent une seule molécule même au-delà de 2,0 Å (pont S–S, métal…).
+      try {
+        a.eachBondedAtom((b) => {
+          const other = at.get(b.index);
+          if (other === undefined || other === pos) return;
+          bonds.push([Math.min(pos, other), Math.max(pos, other)]);
+        });
+      } catch { /* pas de liaisons : la proximité décide (la règle du module) */ }
     });
-  });
-  return parts;
+  } catch { return []; }
+  if (!atoms.length || atoms.length > MOLECULE_PART_MAX_ATOMS) return [];
+  return namedPartsOf(atoms, bonds, modelCount);
 };
 
 // Reverse map: NMR-style atom name → possible PDB atom names. Built once so
@@ -10812,42 +10843,45 @@ try {
     ? component.structure.modelStore.count : 0;
 } catch { nglModelCount = 0; }
 
-// Multi-molecule / multi-MODEL PDB (complexes, docking poses, NMR ensembles):
-// expose each MOLECULE — or each MODEL conformer — as its own entry in the
-// Molecules selector so the partners can be viewed alone or together. Uses the
-// PDB TEXT (deterministic, NGL-version independent) with connectivity from
-// CONECT + proximity, scoped to MODEL records. Non-PDB inputs are skipped.
+/* 🧬 LES MOLÉCULES DU FICHIER SONT DES ENTITÉS — la demande : « you assign main to
+   the composition of all molecules in a group and that means that I cannot do
+   anything. Let me select molecule by molecule, even if these molecules are in the
+   same pdb they are separate entities. » Deux lectures, UNE règle
+   (utils/viewerMoleculeParts) :
+     1. LE TEXTE quand on l'a (un .pdb local, un PDB collé) : les records du fichier
+        sont recopiés tels quels, et un ensemble multi-MODEL expose chaque conformère ;
+     2. LA STRUCTURE sinon — un code PDB, une URL, un .cif, un .gro : c'est CE
+        chemin qui manquait ; la barre n'avait alors qu'UN espace, « la composition
+        de toutes les molécules », dont aucune n'était sélectionnable.
+   Chaque entité devient sa propre composante NGL (donc : son ★ set main, son ☑,
+   ses ✥ Move · ↻ Rotate, son 🎯 Fit) et porte un nom qui la DÉSIGNE. */
 try {
   const srcFile = loadRequest && loadRequest.file;
   const textIsPdb = !!(loadRequest && loadRequest.text && ['pdb', 'ent'].includes(String(loadRequest.ext || '').toLowerCase()));
+  let moleculeParts = [];
   if (srcFile || textIsPdb) {
     const isPdb = srcFile
       ? /\.(pdb|ent)$/i.test(String(srcFile.name || ''))
       : textIsPdb;
     if (isPdb) {
       const srcForSplit = srcFile || new Blob([loadRequest.text], { type: 'text/plain' });
-      const moleculeParts = await splitPdbFileIntoMolecules(srcForSplit);
-      if (moleculeParts.length > 1) {
-        const multiModel = nglModelCount > 1 || (moleculeParts[0] && moleculeParts[0].modelCount > 1);
-        const perModelCounts = new Map();
-        moleculeParts.forEach((p) => perModelCounts.set(p.model, (perModelCounts.get(p.model) || 0) + 1));
-        const onePartPerModel = moleculeParts.every((p) => perModelCounts.get(p.model) === 1);
-        for (let ci = 0; ci < moleculeParts.length; ci++) {
-          const part = moleculeParts[ci];
-          const label = multiModel
-            ? `${onePartPerModel ? `Model ${part.model + 1}` : `Molecule ${ci + 1} (Model ${part.model + 1})`}${part.chainId && part.chainId !== '_' ? ` · ${part.chainId}` : ''}`
-            : (part.chainId && part.chainId !== '_' ? `Chain ${part.chainId}` : `Molecule ${ci + 1}`);
-          await loadChainMolecule(part.blob, label, ci);
-          // Real counters, at last: the molecules (or models) of a complex are
-          // loaded one after the other, so the bar knows its length here — the
-          // only step of a structure load that can say « i of N ».
-          loadRep.step(ci + 1, moleculeParts.length, 'Loading the molecules…');
-        }
-        setExtraMols(extraMolsSnapshot());
-      }
+      moleculeParts = await splitPdbFileIntoMolecules(srcForSplit);
     }
   }
-} catch { /* molecule splitting failed — keep the whole structure as one component */ }
+  if (moleculeParts.length <= 1) moleculeParts = splitStructureIntoMolecules(component, nglModelCount);
+  if (moleculeParts.length > 1) {
+    for (let ci = 0; ci < moleculeParts.length; ci++) {
+      // Le nom vient de la découpe (`Chain A`, `Chain A · LIG`, `Model 3 · B`…) :
+      // deux molécules de la même chaîne ne sont donc plus confondues.
+      await loadChainMolecule(moleculeParts[ci].blob, moleculeParts[ci].label, ci);
+      // Real counters, at last: the molecules (or models) of a complex are
+      // loaded one after the other, so the bar knows its length here — the
+      // only step of a structure load that can say « i of N ».
+      loadRep.step(ci + 1, moleculeParts.length, 'Loading the molecules…');
+    }
+    setExtraMols(extraMolsSnapshot());
+  }
+} catch { /* the split failed — the whole structure stays one component */ }
 
 // Residue ticks (resno / resname / 1-letter code / NATURE per residue) — built
 // ONCE here, because the strip AND the sequence handshake below both need them.
@@ -13426,23 +13460,34 @@ if (manSele) {
 } catch { /* manual highlight is best-effort */ }
 }, [manualKeys, showManualHighlight, status, assignedAtomColor]);
 
-// Load an additional structure file as its own NGL component (hidden by default —
-// the "Molecules" selector reveals one at a time).
-const loadExtraMolecule = useCallback(async (file, n) => {
-try {
-  const stage = stageRef.current;
-  if (!stage) return;
-  const comp = await stage.loadFile(file);
+/* 🧬 UNE MOLÉCULE AJOUTÉE EST ELLE AUSSI UNE (OU DES) ENTITÉ(S) — la demande vaut
+   pour TOUT ce qui entre dans la scène : un fichier ajouté (un complexe, une pose,
+   un partenaire) devient UNE entité PAR MOLÉCULE qu'il contient, au lieu de rester
+   « la composition de toutes ses molécules ». La composante du fichier ENTIER n'est
+   alors pas gardée : la barre montrerait deux fois les mêmes atomes, et l'espace du
+   « fichier » serait justement celui que ★ main ne peut pas distinguer. Un fichier
+   qui ne tient qu'UNE molécule (le cas courant d'un ligand) reste UNE entité, comme
+   avant — et garde sa composante, donc aucun rechargement. */
+const registerExtraComponent = useCallback(async (comp, name, n) => {
+  if (!comp || !comp.structure) return;
   try { ensureGlycanBonds(comp); } catch { /* best-effort (PART 2.2bis) */ }
   try { enforceOneHeavyBondPerHydrogen(comp); } catch { /* best-effort (H-bond rule) */ }
   try { enforceCovalentProteinBonds(comp); } catch { /* best-effort (protein-bond rule) */ }
+  const parts = splitStructureIntoMolecules(comp);
+  if (parts.length > 1) {
+    try { if (stageRef.current) stageRef.current.removeComponent(comp); } catch { /* ignore */ }
+    for (let i = 0; i < parts.length; i++) {
+      await loadChainMolecule(parts[i].blob, `${name} · ${parts[i].label}`, i);
+    }
+    setExtraMols(extraMolsSnapshot());
+    return;
+  }
   // Style it with the §2 « Molecular Styling » menus (the same renderer as the
   // main structure) so extra molecules follow the user's choices and never look
   // like a gray blob.
   const baseReps = applyCurrentStyleTo(comp, []);
   shadowRepsHook(comp);
   if (shadowOnRef.current) setMeshShadows(comp);
-  const name = file.name || `Molecule ${n}`;
   const id = `mol_${Date.now()}_${n}`;
   extraCompsRef.current.push({ id, name, comp, baseReps, style: 'auto', color: '', colorMode: 'element', transparency: 0, position: [0, 0, 0] });
   setExtraMols(extraMolsSnapshot());
@@ -13450,10 +13495,22 @@ try {
   // NOTE: no comp.autoView() here — the extra is HIDDEN and autoView would move
   // the camera away from the main structure. The camera is re-centred on the
   // main one after a flush; the Molecules bar (right side) toggles visibility.
+}, [applyCurrentStyleTo, loadChainMolecule]);
+
+// Load an additional structure file as its own NGL component (hidden by default —
+// the "Molecules" selector reveals one at a time). Ses molécules sont exposées par
+// registerExtraComponent, quel que soit le format (PDB, mmCIF, .gro…).
+const loadExtraMolecule = useCallback(async (file, n) => {
+try {
+  const stage = stageRef.current;
+  if (!stage) return;
+  const comp = await stage.loadFile(file);
+  const name = String((file && file.name) || `Molecule ${n}`).replace(/\.[^.]+$/, '') || `Molecule ${n}`;
+  await registerExtraComponent(comp, name, n);
 } catch (err) {
   console.warn('Could not load additional molecule:', err && err.message);
 }
-}, [applyCurrentStyleTo]);
+}, [registerExtraComponent]);
 
 // Snapshot of the Molecules-bar entries (used by every setExtraMols call).
 const extraMolsSnapshot = () => extraCompsRef.current.map(({ id, name, style, color, colorMode, transparency, position }) => ({ id, name, style, color, colorMode, transparency, position }));
@@ -14414,41 +14471,48 @@ const zoomSection = (sec) => {
   try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch { /* ignore */ }
 };
 
-// Flush the pending extra files once the MAIN structure is ready. This runs
-// AFTER the main load has called stage.removeAllComponents(), so the extras can
-// never be wiped by it. Then re-centre the camera on the main structure.
-useEffect(() => {
-  if (status !== 'ready') return;
-  const pending = pendingExtraFilesRef.current;
-  if (!pending || pending.length === 0) return;
-  pendingExtraFilesRef.current = [];
-  pending.forEach(({ file, n }) => { loadExtraMolecule(file, n); });
-  try { if (componentRef.current) componentRef.current.autoView(); } catch {}
-  try { if (stageRef.current) stageRef.current.handleResize(); } catch {}
-}, [status, loadExtraMolecule]);
-
 // Load one structure file as an EXTRA entry (no main-load side effects): if the
 // file is a multi-chain/multi-molecule PDB, each chain/molecule gets its own
 // entry in the Molecules bar; otherwise the whole file is one entry.
+// 🧬 Le NOM de chaque entité vient de la découpe (`Chain A`, `Chain A · LIG`,
+// `Model 2 · B`…) : deux molécules de la même chaîne ne sont plus confondues.
 const loadExtraStructureFile = useCallback(async (file) => {
   const baseName = String(file && file.name || 'Structure').replace(/\.[^.]+$/, '');
   try {
     const stage = stageRef.current;
     if (!stage) return;
+    // 1. LE TEXTE quand c'en est (les records du fichier sont recopiés tels quels).
     if (file && /\.(pdb|ent)$/i.test(String(file.name || ''))) {
       const parts = await splitPdbFileIntoMolecules(file);
       if (parts.length > 1) {
         for (let i = 0; i < parts.length; i++) {
-          const p = parts[i];
-          const nm = p.chainId && p.chainId !== '_' ? `Chain ${p.chainId}` : `Molecule ${i + 1}`;
-          await loadChainMolecule(p.blob, `${baseName} · ${nm}`, i);
+          await loadChainMolecule(parts[i].blob, `${baseName} · ${parts[i].label}`, i);
         }
         return;
       }
     }
+    // 2. TOUT LE RESTE (mmCIF, .gro, PDB d'une URL…) : loadExtraMolecule charge la
+    //    composante, et registerExtraComponent expose ses molécules une par une.
     await loadExtraMolecule(file, 0);
   } catch { /* best-effort */ }
 }, [loadChainMolecule, loadExtraMolecule]);
+
+// Flush the pending extra files once the MAIN structure is ready. This runs
+// AFTER the main load has called stage.removeAllComponents(), so the extras can
+// never be wiped by it. Then re-centre the camera on the main structure.
+// 🧬 Ces fichiers-là (le lot choisi avec la structure, ou gardé à côté d'elle)
+// passent par le MÊME chemin qu'une molécule ajoutée à la main : chacun de leurs
+// complexes devient une entité par molécule — avant, c'était UN espace par fichier,
+// « la composition de toutes ses molécules », et rien n'y était sélectionnable.
+useEffect(() => {
+  if (status !== 'ready') return;
+  const pending = pendingExtraFilesRef.current;
+  if (!pending || pending.length === 0) return;
+  pendingExtraFilesRef.current = [];
+  pending.forEach(({ file }) => { loadExtraStructureFile(file); });
+  try { if (componentRef.current) componentRef.current.autoView(); } catch {}
+  try { if (stageRef.current) stageRef.current.handleResize(); } catch {}
+}, [status, loadExtraStructureFile]);
 
 // Full replace: the first file becomes the new MAIN structure, the rest become
 // additional molecules (this is the classic multi-file behaviour).
@@ -14523,26 +14587,21 @@ const loadExtraStructureUrl = useCallback(async (rawSrc, n = 0) => {
       }
     }
     if (!comp || !comp.structure) return;
-    try { ensureGlycanBonds(comp); } catch { /* best-effort (PART 2.2bis) */ }
-    try { enforceOneHeavyBondPerHydrogen(comp); } catch { /* best-effort (H-bond rule) */ }
-    try { enforceCovalentProteinBonds(comp); } catch { /* best-effort (protein-bond rule) */ }
-    // The same §2 « Molecular Styling » look as the main structure.
-    const baseReps = applyCurrentStyleTo(comp, []);
-    shadowRepsHook(comp);
-    if (shadowOnRef.current) setMeshShadows(comp);
     const s = String(rawSrc || '').trim();
     const label = /^[0-9a-z]{4}$/i.test(s)
       ? `PDB ${s.toUpperCase()}`
       : (s.split(/[?#]/)[0].split('/').pop() || `Structure ${n}`);
-    const id = `mol_${Date.now()}_${n}`;
-    extraCompsRef.current.push({ id, name: label, comp, baseReps, style: 'auto', color: '', colorMode: 'element', transparency: 0, position: [0, 0, 0] });
-    setExtraMols(extraMolsSnapshot());
-    try { comp.setVisibility(false); } catch {}
+    // 🧬 Un code PDB / une URL n'est PAS un texte PDB : c'est registerExtraComponent
+    // qui expose les molécules de la structure chargée — une entité chacune, avec son
+    // ★ set main, ses ✥ Move · ↻ Rotate et son 🎯 Fit — exactement comme pour un
+    // fichier ajouté (la barre n'a donc plus « la composition de toutes les
+    // molécules » comme seule entrée).
+    await registerExtraComponent(comp, label.replace(/\.[^.]+$/, ''), n);
   } catch (err) {
     console.warn('Could not load structure source:', err && err.message);
     setErrorMsg(`Could not load "${String(rawSrc || '').trim()}": ${(err && err.message) || 'failed'}`);
   }
-}, [applyCurrentStyleTo]);
+}, [registerExtraComponent]);
 
 // A new PDB code / URL was given while a structure is already loaded — replace
 // the current structure with it (it becomes the new main structure).
@@ -17687,7 +17746,7 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
         boutons ✥ Move · ↻ Rotate de §2 déplacent. Changer de référence est un clic
         (« set main ») sur l'espace de l'autre molécule. */}
     <p className="text-[10px] font-bold text-violet-800 shrink-0"
-      title={`Every ␣ below is a molecule: its ☑ draws it, « ★ main » makes it the reference, and ✥ Move · ↻ Rotate place it. « ${molNameOf(selectedMolKey)} » is the reference right now — 🎯 Fit to chosen superposes the other shown structures onto it, and §2's ✥ Move · ↻ Rotate move IT.`}>
+      title={`Every ␣ below is ONE molecule — even when several molecules live in the SAME PDB file: each one has its own ☑, its own « ★ set main » and its own ✥ Move · ↻ Rotate, so they can be ticked, placed, styled and superposed one by one. « ${molNameOf(selectedMolKey)} » is the reference right now — 🎯 Fit to chosen superposes the other shown structures onto it, and §2's ✥ Move · ↻ Rotate move IT.`}>
       ★ main: {molNameOf(selectedMolKey)} · 🎯 Fit to chosen and §2's ✥ Move · ↻ Rotate act on it
     </p>
     <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-1 min-h-0">

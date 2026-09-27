@@ -255,7 +255,15 @@ const viewer = readFileSync('src/components/NMRMoleculeViewer.jsx', 'utf8');
 ok(/import \{[^}]*enforceOneHeavyBondPerHydrogen[^}]*\} from '\.\.\/utils\/hydrogenBondRule'/.test(viewer),
   'viewer imports the rule');
 const applied = viewer.split('enforceOneHeavyBondPerHydrogen(').length - 1;
-ok(applied >= 4, 'viewer applies it on every load path (' + applied + ' call sites)');
+ok(applied >= 3, 'viewer applies it on every load path (' + applied + ' call sites)');
+// Trois portes d’entrée : la principale, une chaîne / une molécule découpée
+// (loadChainMolecule) et une molécule ajoutée — fichier, code PDB ou URL, tous
+// réunis dans registerExtraComponent depuis que chaque molécule est une entité.
+const extraFn = viewer.indexOf('const registerExtraComponent = useCallback');
+const extraRule = viewer.indexOf('enforceOneHeavyBondPerHydrogen(comp)', extraFn);
+const extraParts = viewer.indexOf('const parts = splitStructureIntoMolecules(comp);', extraFn);
+ok(extraFn > 0 && extraRule > extraFn && extraParts > extraRule,
+  '…et une molécule AJOUTÉE est prunée AVANT que ses molécules soient exposées');
 const mainLoad = viewer.indexOf("component = await stage.loadFile(blob, { ext: loadRequest.ext || 'pdb' });");
 const mainCall = viewer.indexOf('enforceOneHeavyBondPerHydrogen(component)');
 const firstRep = viewer.indexOf('applyCurrentStyleTo(component', mainLoad);

@@ -331,7 +331,16 @@ const viewer = readFileSync('src/components/NMRMoleculeViewer.jsx', 'utf8');
 ok(/import \{[^}]*enforceCovalentProteinBonds[^}]*\} from '\.\.\/utils\/proteinBondRule'/.test(viewer),
   'viewer imports the rule');
 const applied = viewer.split('enforceCovalentProteinBonds(').length - 1;
-ok(applied >= 4, 'viewer applies it on every load path (' + applied + ' call sites)');
+ok(applied >= 3, 'viewer applies it on every load path (' + applied + ' call sites)');
+// Les trois endroits sont les TROIS portes d’entrée d’une structure : la
+// principale, une chaîne / une molécule découpée (loadChainMolecule) et une
+// molécule ajoutée — fichier, code PDB ou URL, qui passent tous par
+// registerExtraComponent depuis que leurs molécules sont exposées une par une.
+const extraFn = viewer.indexOf('const registerExtraComponent = useCallback');
+const extraRule = viewer.indexOf('enforceCovalentProteinBonds(comp)', extraFn);
+const extraParts = viewer.indexOf('const parts = splitStructureIntoMolecules(comp);', extraFn);
+ok(extraFn > 0 && extraRule > extraFn && extraParts > extraRule,
+  '…et une molécule AJOUTÉE est prunée AVANT que ses molécules soient exposées');
 const mainLoad = viewer.indexOf("component = await stage.loadFile(blob, { ext: loadRequest.ext || 'pdb' });");
 const mainCall = viewer.indexOf('enforceCovalentProteinBonds(component)');
 const firstRep = viewer.indexOf('applyCurrentStyleTo(component', mainLoad);

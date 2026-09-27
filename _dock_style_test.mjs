@@ -86,8 +86,10 @@ has("if (!style || style === 'auto') {",
   '…et une molécule chargée dont le style est « Auto » suit la barre (restyleExtraMol)');
 gone('if (dockStyleRef.current || !st.style', 'plus aucun drapeau de docking dans ce choix');
 gone('if (dockStyleRef.current || !style', '…ni dans celui des molécules chargées');
-ok(count(/const baseReps = applyCurrentStyleTo\(comp, \[\]\);/g) === 3,
-  'les trois chargements (chaîne, molécule supplémentaire, URL) passent par le rendu du §2');
+ok(count(/const baseReps = applyCurrentStyleTo\(comp, \[\]\);/g) === 2,
+  'la chaîne ET la fabrique des molécules ajoutées passent par le rendu du §2');
+ok(count(/await registerExtraComponent\(comp, /g) === 2,
+  '…et les DEUX entrées d’une molécule ajoutée (fichier · URL / code PDB) passent par cette fabrique');
 
 /* ── 4. Les rangées de la barre font le geste de style du docking ───────── */
 // Ce que le mode de docking faisait autrefois (faire quitter à un grand système

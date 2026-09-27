@@ -1,29 +1,38 @@
 // Extracts the REAL splitPdbFileIntoMolecules from the source and runs it on a
 // 20-model replica that mirrors the user's TAC file (paired identical models,
 // unique serials, per-model CONECT, cross-conformer close contacts).
+//
+// ⚠ Depuis que CHAQUE molécule est une entité (la demande : « let me select molecule
+// by molecule, even if these molecules are in the same pdb they are separate
+// entities »), la RÈGLE de découpe vit dans src/utils/viewerMoleculeParts.js — le
+// même module que celui qui découpe une structure CHARGÉE par NGL (une URL, un
+// code PDB, un .cif, un .gro). La sonde lui passe donc ses fonctions pures, et
+// exécute TELLES QUELLES les deux fonctions du composant qui la portent : la
+// lecture du texte PDB et la fabrique d'entités.
 const fs = require('fs');
 
 const src = fs.readFileSync('src/components/NMRMoleculeViewer.jsx', 'utf8');
 
-// Extract the function body between the const declaration and its closing ";"
-const startMarker = 'const splitPdbFileIntoMolecules = async (file) => {';
-const start = src.indexOf(startMarker);
-if (start < 0) throw new Error('splitter not found');
-let depth = 0;
-let end = start;
-for (let i = start + startMarker.length - 1; i < src.length; i++) {
-  const ch = src[i];
-  if (ch === '{') depth += 1;
-  else if (ch === '}') {
-    depth -= 1;
-    if (depth === 0) { end = i + 1; break; }
+// Extraction générique d'une fonction de premier niveau, par équilibrage des accolades.
+const sliceFn = (marker) => {
+  const at = src.indexOf(marker);
+  if (at < 0) throw new Error('introuvable: ' + marker);
+  let depth = 0, end = at;
+  for (let i = at + marker.length - 1; i < src.length; i++) {
+    const ch = src[i];
+    if (ch === '{') depth += 1;
+    else if (ch === '}') { depth -= 1; if (depth === 0) { end = i + 1; break; } }
   }
-}
-const fnText = src.slice(start, end) + ';';
+  return src.slice(at, end) + ';';
+};
+
+const fnText = sliceFn('const splitPdbFileIntoMolecules = async (file) => {');
+const namedText = sliceFn('const namedPartsOf = (atoms, bonds, modelCount = 1) => {');
+const RULE = require('./src/utils/viewerMoleculeParts.js');
 // eslint-disable-next-line no-eval
-const splitPdbFileIntoMolecules = eval(
-  '(' + fnText.replace(/^const splitPdbFileIntoMolecules = /, '').replace(/;\s*$/, '') + ')'
-);
+const splitPdbFileIntoMolecules = eval('(function (fragmentMolecules, moleculePartNames, pdbTextForMolecule) { '
+  + namedText + '\n' + fnText + '\nreturn splitPdbFileIntoMolecules; })'
+)(RULE.fragmentMolecules, RULE.moleculePartNames, RULE.pdbTextForMolecule);
 
 // ---- geometry: 8-atom fragment, 6 conformer families like the TAC ensemble ----
 const ATOMS = [
@@ -72,7 +81,7 @@ fs.writeFileSync('_replica_20model.pdb', pdb, 'utf8');
   out.push(`atoms in blob lines: ${lines.length}`);
   out.push(`SOURCE splitter returned ${parts.length} parts; modelCount=${parts[0].modelCount}`);
   out.push(`parts by model: ${parts.map((p) => `M${p.model + 1}`).join(', ')}`);
-  out.push(`per-part atom counts: ${parts.map((p) => p.blob.size).join(', ')}`);
+  out.push(`parts labelled: ${parts.map((p) => p.label).join(', ')}`);
   const ok = parts.length === 20 && parts[0].modelCount === 20 &&
     parts.every((p, i) => p.model === i);
   out.push(`RESULT: ${ok ? 'PASS (20 models separated)' : 'FAIL'}`);
