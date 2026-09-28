@@ -87,6 +87,14 @@ import {
   partKeyOf, centroidOf, partMoveIdentity, partMoveFromPose, partPosesOf,
   rotatePartMove, slidePartMove, partPositionsInto, isIdentityMove, normalisedDirection,
 } from '../utils/viewerMoleculeMoves';
+// ⬇ ✏️ RÉGLER UNE TORSION — OU ATTEINDRE UNE DISTANCE — AU CHIFFRE (utils/torsionDrive.js).
+// Quatre atomes piqués dans la vue 3D (A · B · C · D), un angle ou une distance tapés, et
+// le côté de D tourne d'UN SEUL bloc rigide autour de B–C : l'angle est RÉSOLU en forme
+// fermée (aucun balayage, aucune énergie), le graphe de liaisons de NGL dit QUELS atomes
+// partent avec D (jamais une supposition), et le dihèdre dont le module parle est signé
+// IUPAC — exactement la convention de `torsionDeg` ci-dessous (les lecteurs χ/δ du
+// classement) : _torsion_drive_test.mjs compare les deux, chiffre à chiffre.
+import { movingSideOf, planTorsion, dihedralDeg, distanceOf } from '../utils/torsionDrive';
 // HETATM code → SMILES: the Chemistry Component Dictionary of the RCSB (see
 // utils/ligandSmiles.js). A PDB only names its ligand by a 3-letter code, so this
 // is where the SMILES of a hand-loaded ligand comes from.
@@ -6943,6 +6951,19 @@ const collectResidues = (structure) => {
   } catch { /* a structure that cannot be walked lists nothing */ }
   return out;
 };
+/* ✏️ The four slots of a torsion pick — the letters the panel buttons show and the
+   letters the prompt asks for, from ONE place so « click atom B » and the button that
+   says B can never drift apart. Module scope on purpose: the 3D click handler is
+   installed ONCE (the stage effect), and it reads these on every click. */
+const TORSION_SLOT_LETTERS = ['A', 'B', 'C', 'D'];
+const TORSION_SLOT_ROLES = [
+  'the reference — it must NOT move',
+  'an atom of the axle B–C',
+  'the other atom of the axle B–C',
+  'the atom whose side turns',
+];
+
+
 
 const NMRMoleculeViewer = ({
 src,
@@ -7362,6 +7383,36 @@ const measureModeRef = useRef(false);
 measureModeRef.current = measureMode;
 const measurePendingRef = useRef(null); // { comp, atomIndex, label } of the 1st picked atom
 const measureRepsRef = useRef([]);      // [{ comp, elem }] NGL 'distance' representations that were drawn
+
+// ---- ✏️ Set a torsion — or reach a target distance — by the numbers ---------
+// The gesture the pointer cannot make precisely: pick FOUR atoms in the 3D view
+// (A · B · C · D — B–C is the bond that turns), type the dihedral you want in
+// degrees, or the distance A–D you need in Å, and the ANGLE IS SOLVED in closed
+// form by utils/torsionDrive.js. The whole side of D turns rigidly about B–C
+// through the SAME coordinate write-back a molecule drag uses (`positionFromArray`
+// → `updateRepresentations({ position: true })`, see applyPartMove), so the 📏
+// rungs, the plates, the film poses and 📥 Download all read the geometry that is
+// really there — and nothing else in the structure moves. ↺ puts the last torsion
+// back, atom by atom.
+const [showTorsionPanel, setShowTorsionPanel] = useState(false);
+const [torsionPick, setTorsionPick] = useState(0);   // 1..4 = the slot the NEXT click fills, 0 = idle
+const torsionPickRef = useRef(0);
+torsionPickRef.current = torsionPick;
+const torsionAtomsRef = useRef([]);                  // [{ comp, atomIndex, label }] — A · B · C · D
+const [torsionAtoms, setTorsionAtoms] = useState([]);
+const [torsionMsg, setTorsionMsg] = useState('');
+const [torsionAngleDraft, setTorsionAngleDraft] = useState('');
+const [torsionDistDraft, setTorsionDistDraft] = useState('');
+/* Le brouillon de l'angle, DOUBLÉ d'une référence : l'écoute du clic 3D est posée UNE
+   fois (le grand effet du stage, plus bas) et doit lire la valeur COURANTE du champ —
+   elle ne le pré-remplit que s'il est encore vide, et le champ, lui, se re-rend à
+   chaque frappe. Lire le state depuis cette écoute figerait la valeur du rendu qui l'a
+   créée. Le texte passe donc par ici, jamais directement par le setter. */
+const torsionAngleDraftRef = useRef('');
+const setTorsionAngleText = (v) => { torsionAngleDraftRef.current = v; setTorsionAngleDraft(v); };
+const [torsionClosest, setTorsionClosest] = useState(null); // last unreachable distance: { deltaDeg, closest, target }
+const torsionUndoRef = useRef(null);                 // { comp, structure, idxs, base, label }
+
 const [rebuildMsg, setRebuildMsg] = useState('');
 const rebuildMsgTimerRef = useRef(null);
 const flashRebuildMsg = (m) => {
@@ -8827,9 +8878,366 @@ const toggleMeasureMode = () => {
     setMeasurePending(null);
     setMeasureInfo('');
   } else {
+    torsionPickRef.current = 0;   // the ✏️ Torsion picker and 📏 Measure cannot both be armed
+    setTorsionPick(0);
     setMeasureInfo('📏 Measure ON — click two atoms to show the distance between them.');
   }
 };
+
+/* ── ✏️ SET A TORSION — OR REACH A TARGET DISTANCE — BY THE NUMBERS ────────────
+   The four atoms are picked with the pointer, in the order of a dihedral
+   (A · B · C · D : B–C is the axle, D turns with its whole side, A must not move);
+   everything else — the angle, the distance — is TYPED. Nothing here guesses :
+   utils/torsionDrive.js reads NGL's BOND GRAPH (`movingSideOf`) to know which atoms
+   travel with D (a bond is a hinge, never a pair of scissors), solves the angle in
+   closed form (`planTorsion`, through `solveDistance` for a target distance) and
+   RE-READS the geometry it has just written. This viewer reads four coordinates,
+   writes the turned ones back exactly the way a molecule drag does (positionFromArray
+   + updateRepresentations({ position: true }) — voir applyPartMove), and prints OUT
+   LOUD what the module refused : a bond inside a ring, a reference atom that would
+   travel, a distance the circle of D cannot reach — with the nearest rotation on
+   offer. The dihedral it speaks of is the SIGNED IUPAC one, the same reader as
+   `torsionDeg` just below (the χ/δ readers of the assignment) : the probe
+   _torsion_drive_test.mjs compares the two, digit for digit.
+   ⚠ WHAT A TORSION IS NOT. It is not stored anywhere : it lives in the COORDINATES
+   of the current frame, like every edit. A trajectory frame change (or the player's
+   ⏮) installs the frame's own geometry again, and dragging a molecule that has
+   ALREADY been dragged replays that placement — the panel says so rather than
+   pretending. */
+/** The four picked atoms, A · B · C · D — every change goes through here. */
+const putTorsionAtoms = (list) => {
+  torsionAtomsRef.current = Array.isArray(list) ? list : [];
+  setTorsionAtoms(torsionAtomsRef.current);
+};
+
+/** « A — B — C — D » : the four labels of the current pick, for a message. */
+const torsionQuadName = (slots) => (slots || []).map((s) => (s && s.label) || '').filter(Boolean).join(' — ');
+
+/** Where the NEXT click lands (1..4) — 1 again once the four are picked. */
+const nextTorsionSlot = () => (torsionAtomsRef.current.length >= 4 ? 1 : torsionAtomsRef.current.length + 1);
+
+/** ARM THE CLICK PICKER on slot `slot` : everything after it is dropped, and a click
+ *  on the 4th atom turns the picker off by itself (voir stage.signals.clicked). */
+const armTorsionPick = (slot) => {
+  const n = Math.min(4, Math.max(1, Number(slot) || 1));
+  putTorsionAtoms(torsionAtomsRef.current.slice(0, n - 1));
+  torsionPickRef.current = n;
+  setTorsionPick(n);
+  setTorsionClosest(null);
+  setTorsionMsg(`Click atom ${TORSION_SLOT_LETTERS[n - 1]} — ${TORSION_SLOT_ROLES[n - 1]}${n > 1 ? ` (${n - 1} of 4 already picked)` : ''}.`);
+};
+
+/** Empty the picker — and the click handler with it. */
+const clearTorsionPicks = () => {
+  putTorsionAtoms([]);
+  torsionPickRef.current = 0;
+  setTorsionPick(0);
+  setTorsionClosest(null);
+  setTorsionMsg('');
+};
+
+/** WHY A TORSION WAS REFUSED — one sentence per `reason` of utils/torsionDrive.js.
+ *  The panel never invents a diagnosis : every line here answers a `reason` the pure
+ *  module really returned (or its twin in this viewer : movingSideOf and planTorsion
+ *  are the ONLY deciders, and `no-dihedral` / `no-axis` come from the same code that
+ *  reads the dihedral shown in the panel). */
+const torsionWhy = (reason) => ({
+  'ring': 'the two atoms of the axle are STILL LINKED another way round — so the molecule has no “side of D” to turn: a bond inside a ring is not a hinge, and two atoms that are not bonded are not an axle',
+  'reference-moves': 'atom A would turn too — pick a reference atom on the other side of the axle',
+  'axis-atom': 'the atom that must turn is one of the two atoms of the axle — nothing would turn',
+  'bad-axis': 'the two atoms of the axle are not two different atoms of this structure — pick A · B · C · D again',
+  'bad-atom': 'the atom that must turn is no longer an atom of this structure — pick the four again',
+  'no-axis': 'the two atoms of the axle sit at the SAME place — there is no axis to turn about',
+  'no-dihedral': 'the dihedral is undefined for these four atoms (three of them are in line, or two are confounded) — pick another set',
+  'bad-points': 'the four picked atoms can no longer be read — pick them again',
+  'bad-target': 'the target distance must be a positive number of ångströms',
+  'no-request': 'type a dihedral angle or a distance first',
+  'no-rotation': 'the rotation could not be built — check the four atoms',
+  'moving-not-covered': 'the list of the atoms that must turn could not be made — pick the four atoms again',
+  'distance-fixed': 'turning this bond does NOT change the distance A–D (A or D lies ON the axle) — no angle can reach the distance you typed',
+  'unreachable': 'the distance you typed is out of reach',
+}[reason] || 'the torsion could not be applied');
+
+/** The structure and the four coordinates, or a refusal in plain words. */
+const torsionPicks = () => {
+  const slots = torsionAtomsRef.current;
+  if (slots.length < 4) return { ok: false, say: `Pick the four atoms first — ${4 - slots.length} still to go (A · B · C · D).` };
+  const comp = slots[0].comp;
+  const structure = comp && comp.structure;
+  if (!structure) return { ok: false, say: 'The structure these atoms belong to is gone — pick the four again.' };
+  const idx = slots.map((s) => Number(s.atomIndex));
+  let points = null;
+  try {
+    const ap = structure.getAtomProxy();
+    points = idx.map((i) => { ap.index = i; return [ap.x, ap.y, ap.z]; });
+  } catch { points = null; }
+  if (!points || !points.every((pt) => pt.every(Number.isFinite))) {
+    return { ok: false, say: 'The four picked atoms can no longer be read — pick them again.' };
+  }
+  return { ok: true, comp, structure, slots, idx, points };
+};
+
+/** NGL'S BOND GRAPH as a neighbour function — the bonds the file really carries.
+ *  `movingSideOf` l'emploie tel quel : la structure est la SEULE autorité sur ce qui
+ *  est lié (jamais une distance devinée). Un fichier sans CONECT rend un graphe vide,
+ *  donc un côté de D réduit à D — ce que le rapport du module décrit alors. */
+const torsionNeighboursOf = (structure) => {
+  const adj = new Map();
+  try {
+    const store = structure && structure.bondStore;
+    const count = (store && store.count) || 0;
+    for (let k = 0; k < count; k++) {
+      const i = Number(store.atomIndex1[k]);
+      const j = Number(store.atomIndex2[k]);
+      if (!Number.isInteger(i) || !Number.isInteger(j) || i === j) continue;
+      const li = adj.get(i); if (li) li.push(j); else adj.set(i, [j]);
+      const lj = adj.get(j); if (lj) lj.push(i); else adj.set(j, [i]);
+    }
+  } catch { /* pas de graphe de liaisons : voir movingSideOf */ }
+  return (i) => adj.get(i) || [];
+};
+
+/** A number, as the panel writes it. */
+const torsionDeg = (v) => (Number.isFinite(Number(v)) ? `${Number(v).toFixed(1)}°` : '—');
+const torsionAng = (v) => (Number.isFinite(Number(v)) ? `${Number(v).toFixed(2)} Å` : '—');
+
+/** THE LINE PRINTED AFTER A TORSION — every number comes from the module's report,
+ *  which RE-READ the geometry after turning : it announces what the structure has
+ *  now, not what was asked for. */
+const torsionReportOf = (slots, plan) => {
+  const quad = torsionQuadName(slots);
+  const turned = `${plan.movedCount} atom${plan.movedCount === 1 ? '' : 's'} turned`;
+  if (plan.targetDistance != null) {
+    return `✓ ${quad} : A–D ${torsionAng(plan.beforeDistance)} → ${torsionAng(plan.afterDistance)}`
+      + ` at dihedral ${torsionDeg(plan.afterDeg)} (turned ${torsionDeg(plan.deltaDeg)})`
+      + `${plan.alternativeDeg != null ? ` · the other solution is ${torsionDeg(plan.alternativeDeg)}` : ''} · ${turned}.`;
+  }
+  return `✓ ${quad} : dihedral ${torsionDeg(plan.beforeDeg)} → ${torsionDeg(plan.afterDeg)}`
+    + ` (turned ${torsionDeg(plan.deltaDeg)}) · A–D ${torsionAng(plan.beforeDistance)} → ${torsionAng(plan.afterDistance)} · ${turned}.`;
+};
+
+/** LES POSITIONS DE CETTE LISTE D'ATOMES — lues au moment du geste, jamais gardées. */
+const torsionPointsOf = (structure, idxs) => {
+  try {
+    const ap = structure.getAtomProxy();
+    return idxs.map((i) => { ap.index = i; return [ap.x, ap.y, ap.z]; });
+  } catch { return null; }
+};
+
+/** LE CÔTÉ QUI TOURNE — la réponse du module (les atomes qui partent avec D), ou sa
+ *  raison de refuser. `atomCount` vient de la structure : c'est lui qui rend un index
+ *  invalide (`bad-atom`) au lieu de faire croire à un atome qui n'existe pas. */
+const torsionMovingOf = (r) => {
+  const atomCount = (r.structure.atomStore && r.structure.atomStore.count) || 0;
+  const side = movingSideOf({
+    neighbours: torsionNeighboursOf(r.structure),
+    atomCount,
+    axis: [r.idx[1], r.idx[2]],
+    moving: r.idx[3],
+    stay: r.idx[0],
+  });
+  if (!side || !side.ok) return { ok: false, reason: (side && side.reason) || 'moving-not-covered' };
+  return { ok: true, moved: side.moved };
+};
+
+/** TOUTE LA STRUCTURE À PLAT — trois nombres par atome, dans l'ordre de ses atomes :
+ *  c'est ce que le ↺ du panneau remet quand une torsion doit être défaite en entier. */
+const torsionSnapshotOf = (structure) => {
+  try {
+    const n = (structure.atomStore && structure.atomStore.count) || 0;
+    if (!n) return null;
+    const flat = new Float32Array(n * 3);
+    const ap = structure.getAtomProxy();
+    for (let i = 0; i < n; i++) {
+      ap.index = i;
+      flat[i * 3] = ap.x; flat[i * 3 + 1] = ap.y; flat[i * 3 + 2] = ap.z;
+    }
+    return flat;
+  } catch { return null; }
+};
+
+/** ÉCRIRE DES COORDONNÉES DANS LA STRUCTURE — le chemin d'un glisser de molécule (voir
+ *  applyPartMove) : `positionFromArray` atome par atome, puis UNE demande de redessin,
+ *  et les plaques de la scène qui suivent les coordonnées. Le tableau `flat` est celui
+ *  du module (Float32Array, trois nombres par atome, dans l'ordre de `idxs`).
+ *  @returns {boolean} true quand NGL a bien reçu les nouvelles positions. */
+const writeStructurePositions = (comp, idxs, flat) => {
+  const structure = comp && comp.structure;
+  if (!structure || !idxs || !idxs.length || !flat) return false;
+  try {
+    const ap = structure.getAtomProxy();
+    for (let k = 0; k < idxs.length; k++) {
+      ap.index = idxs[k];
+      ap.positionFromArray(flat, k * 3);
+    }
+    if (typeof comp.updateRepresentations === 'function') comp.updateRepresentations({ position: true });
+  } catch { return false; }
+  refreshScenePlates();          // les plaques suivent les coordonnées, comme pour une image
+  requestSceneRepaint();
+  return true;
+};
+
+/** LA STRUCTURE À L'ÉCRAN A-T-ELLE ÉTÉ DÉPLACÉE À LA MAIN ? Le rapport de la torsion
+ *  doit LE DIRE : rejouer un glisser (changement d'image, ⏮ du lecteur) réinstalle les
+ *  coordonnées que ce glisser connaît, donc une torsion appliquée après lui n'y
+ *  survivrait pas. Mieux vaut l'annoncer au moment du geste que le laisser découvrir. */
+const structureWasDragged = (structure) => {
+  let dragged = false;
+  partMoveRef.current.forEach((rec) => {
+    if (dragged || !rec || rec.structure !== structure) return;
+    if (!isIdentityMove(rec)) dragged = true;
+  });
+  return dragged;
+};
+
+/** COMMITTER UN PLAN DE TORSION — le seul chemin d'écriture : vérifications, écriture
+ *  des atomes tournés, journal ↺, et le rapport que le panneau affiche. Un plan refusé
+ *  n'écrit RIEN et rend la raison du module telle quelle (`torsionWhy`, qui la traduit
+ *  en une phrase : jamais un diagnostic inventé ici). */
+const commitTorsion = (r, plan, label) => {
+  if (!r || !r.ok) {
+    setTorsionClosest(null);
+    setTorsionMsg(`✕ ${(r && r.say) || torsionWhy(plan && plan.reason)}`);
+    return false;
+  }
+  if (!plan) {
+    setTorsionClosest(null);
+    setTorsionMsg('✕ The torsion could not be planned — nothing was changed.');
+    return false;
+  }
+  if (!plan.ok) {
+    const extra = plan.reason === 'unreachable' && plan.solved
+      ? ` Turning the bond brings the two atoms within ${torsionAng(plan.solved.closestDistance)}`
+        + ` — ${plan.solved.tooFar ? 'they cannot be pulled further apart' : 'they cannot be brought closer'}`
+        + ` (a rotation of ${torsionDeg(plan.solved.closestDeltaDeg)})`
+      : '';
+    setTorsionMsg(`✕ ${torsionWhy(plan.reason)}${extra}.`);
+    setTorsionClosest(plan.reason === 'unreachable' && plan.solved
+      && Number.isFinite(Number(plan.solved.closestDeltaDeg))
+      ? { deltaDeg: plan.solved.closestDeltaDeg, closest: plan.solved.closestDistance, target: plan.targetDistance }
+      : null);
+    return false;
+  }
+  if (!plan.flatPositions) {
+    setTorsionClosest(null);
+    setTorsionMsg('✕ The turned coordinates could not be built — nothing was changed.');
+    return false;
+  }
+  const before = torsionSnapshotOf(r.structure);       // AVANT l'écriture : le ↺
+  if (!writeStructurePositions(r.comp, r.moved, plan.flatPositions)) {
+    setTorsionClosest(null);
+    setTorsionMsg('✕ The structure refused the new coordinates — nothing was changed.');
+    return false;
+  }
+  torsionUndoRef.current = {
+    comp: r.comp,
+    structure: r.structure,
+    count: before ? before.length / 3 : 0,
+    flat: before,
+    label,
+  };
+  setTorsionClosest(null);
+  const warn = structureWasDragged(r.structure)
+    ? ' ⚠ this molecule had also been DRAGGED by hand: re-playing that drag (another frame, the ⏮ button) puts its placement back — the same ✏️ Torsion gesture is always there to redo this.'
+    : '';
+  setTorsionMsg(`${torsionReportOf(r.slots, plan)}${warn}`);
+  return true;
+};
+
+/** ✏️ Dihedral → set it. The one number the panel needs is the dihedral of A · B · C · D. */
+const applyTorsionAngle = () => {
+  const r = torsionPicks();
+  if (!r.ok) { setTorsionClosest(null); setTorsionMsg(`✕ ${r.say}`); return; }
+  const want = Number(String(torsionAngleDraft).replace(',', '.'));
+  if (!Number.isFinite(want)) {
+    setTorsionClosest(null);
+    setTorsionMsg('✕ Type the dihedral you want first, in degrees (−180 to 180) — then ↵ or Set.');
+    return;
+  }
+  const side = torsionMovingOf(r);
+  if (!side.ok) { setTorsionClosest(null); setTorsionMsg(`✕ ${torsionWhy(side.reason)}.`); return; }
+  const pts = torsionPointsOf(r.structure, side.moved);
+  if (!pts) { setTorsionMsg('✕ The atoms that must turn can no longer be read — pick the four again.'); return; }
+  const plan = planTorsion({ points: r.points, moved: pts, request: { angleDeg: want } });
+  commitTorsion({ ...r, moved: side.moved }, plan, `dihedral ${torsionDeg(want)}`);
+};
+
+/** 📏 Distance A–D → reach it. L'angle est RÉSOLU en forme fermée, jamais balayé. */
+const applyTorsionDistance = () => {
+  const r = torsionPicks();
+  if (!r.ok) { setTorsionClosest(null); setTorsionMsg(`✕ ${r.say}`); return; }
+  const want = Number(String(torsionDistDraft).replace(',', '.'));
+  if (!Number.isFinite(want) || want <= 0) {
+    setTorsionClosest(null);
+    setTorsionMsg('✕ Type the distance A–D you want first, in ångströms (a positive number) — then ↵ or Reach.');
+    return;
+  }
+  const side = torsionMovingOf(r);
+  if (!side.ok) { setTorsionClosest(null); setTorsionMsg(`✕ ${torsionWhy(side.reason)}.`); return; }
+  const pts = torsionPointsOf(r.structure, side.moved);
+  if (!pts) { setTorsionMsg('✕ The atoms that must turn can no longer be read — pick the four again.'); return; }
+  const plan = planTorsion({ points: r.points, moved: pts, request: { distance: want } });
+  commitTorsion({ ...r, moved: side.moved }, plan, `A–D ${torsionAng(want)}`);
+};
+
+/** ↳ APPLY CLOSEST — la rotation que le rapport vient de calculer, quand la distance
+ *  demandée est hors d'atteinte : le chiffre refusé devient le geste qui en approche.
+ *  Rien n'est deviné : `deltaDeg` est celui du module, `rotateByDeg` le réemploie tel quel. */
+const applyClosestTorsion = () => {
+  const c = torsionClosest;
+  const r = torsionPicks();
+  if (!c || !r.ok) {
+    setTorsionClosest(null);
+    setTorsionMsg('✕ Nothing left to approach — pick the four atoms again.');
+    return;
+  }
+  const side = torsionMovingOf(r);
+  if (!side.ok) { setTorsionClosest(null); setTorsionMsg(`✕ ${torsionWhy(side.reason)}.`); return; }
+  const pts = torsionPointsOf(r.structure, side.moved);
+  if (!pts) { setTorsionMsg('✕ The atoms that must turn can no longer be read — pick the four again.'); return; }
+  const plan = planTorsion({ points: r.points, moved: pts, request: { rotateByDeg: c.deltaDeg } });
+  if (commitTorsion({ ...r, moved: side.moved }, plan, `the closest approach to A–D ${torsionAng(c.target)}`)) {
+    setTorsionMsg(`↳ ${torsionReportOf(r.slots, plan)} — the distance you typed (${torsionAng(c.target)}) cannot be reached on this circle: this is the closest the bond can come.`);
+  }
+};
+
+/** ↺ UNDO — la torsion défaite atome par atome, sur les coordonnées d'AVANT. Le ↺ ne
+ *  touche ni les picks ni les chiffres tapés : il défait le geste, pas la question. */
+const undoLastTorsion = () => {
+  const rec = torsionUndoRef.current;
+  const comp = componentRef.current;
+  if (!rec || !rec.flat || !rec.count) {
+    setTorsionMsg('↺ Nothing to undo — no torsion has been applied from this panel yet.');
+    return;
+  }
+  if (!comp || comp !== rec.comp || comp.structure !== rec.structure) {
+    setTorsionMsg('↺ That structure is no longer the one on screen (it was reloaded, or another molecule is shown) — the ↺ of its own space is the gesture that resets it.');
+    return;
+  }
+  const idxs = [];
+  for (let i = 0; i < rec.count; i++) idxs.push(i);
+  if (!writeStructurePositions(comp, idxs, rec.flat)) {
+    setTorsionMsg('↺ The coordinates could not be written back — the ↺ of the molecule’s own space resets it.');
+    return;
+  }
+  torsionUndoRef.current = null;
+  setTorsionClosest(null);
+  setTorsionMsg(`↺ ${rec.label || 'The torsion'} was undone — every atom is back exactly where it was before it.`);
+};
+
+/** LA LECTURE VIVANTE DU PANNEAU — le dihèdre et la distance A–D des quatre atomes
+ *  PIOUÉS, relus sur la structure à chaque rendu : après un geste, le « maintenant »
+ *  montre ce que les coordonnées portent, pas ce qui a été demandé. `null` tant que les
+ *  quatre atomes ne sont pas là (le panneau écrit alors sa propre invite). */
+const torsionReading = () => {
+  const r = torsionPicks();
+  if (!r.ok) return null;
+  const deg = dihedralDeg(r.points[0], r.points[1], r.points[2], r.points[3]);
+  const dist = distanceOf(r.points[0], r.points[3]);
+  return { deg, dist };
+};
+
+
 
 useEffect(() => {
 let cancelled = false;
@@ -8866,6 +9274,45 @@ applyShadowSettings(); // honour the user's shadow preference (off by default)
 stage.signals.clicked.add((pickingProxy) => {
 if (!pickingProxy || !pickingProxy.atom) return;
 const atom = pickingProxy.atom;
+// ✏️ Torsion: a click fills one slot of A · B · C · D instead of selecting an atom.
+// The four slots must live in ONE structure (a torsion spans one molecule) and no atom
+// can hold two slots ; once the fourth is in, the picker disarms by itself and the
+// panel is told the dihedral/distance the four atoms have RIGHT NOW.
+if (torsionPickRef.current) {
+  const comp = pickingProxy.component;
+  if (!comp) return;
+  const slot = torsionPickRef.current;
+  const taken = torsionAtomsRef.current;
+  const first = taken[0];
+  if (first && first.comp !== comp) {
+    setTorsionMsg(`⚠ The four atoms must belong to the SAME structure — ${first.label} and this atom are in two different molecules. Pick A · B · C · D in one molecule, or Clear and start again.`);
+    return;
+  }
+  const label = atomPickName(atom);
+  const next = taken.slice(0, slot - 1);
+  if (next.some((s) => s.comp === comp && s.atomIndex === atom.index)) {
+    setTorsionMsg(`⚠ ${label} is already one of the four atoms — each of A · B · C · D must be a different atom.`);
+    return;
+  }
+  next.push({ comp, atomIndex: atom.index, label });
+  putTorsionAtoms(next);
+  if (next.length < 4) {
+    const n = next.length + 1;
+    torsionPickRef.current = n;
+    setTorsionPick(n);
+    setTorsionMsg(`${next.length} of 4 picked (${torsionQuadName(next)}) — now click atom ${TORSION_SLOT_LETTERS[n - 1]} : ${TORSION_SLOT_ROLES[n - 1]}.`);
+    return;
+  }
+  torsionPickRef.current = 0;         // the fourth atom fills the picker : it disarms
+  setTorsionPick(0);
+  const r = torsionPicks();
+  const deg = r.ok ? dihedralDeg(r.points[0], r.points[1], r.points[2], r.points[3]) : null;
+  const dist = r.ok ? distanceOf(r.points[0], r.points[3]) : null;
+  if (!torsionAngleDraftRef.current && Number.isFinite(deg)) setTorsionAngleText(String(Math.round(deg * 10) / 10));
+  setTorsionMsg(`✓ ${torsionQuadName(next)} — now: dihedral ${torsionDeg(deg)} · A–D ${torsionAng(dist)}. `
+    + 'Type the dihedral you want (°) and press Set, or the distance A–D (Å) and press Reach — the angle is solved for you.');
+  return;                              // picking a torsion replaces atom-click selection
+}
 // 📏 Measure mode: clicks pick distance endpoints instead of selecting atoms.
 if (measureModeRef.current) {
   const comp = pickingProxy.component;
@@ -17821,6 +18268,120 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
     </div>
   </div>
 )}
+
+{/* ✏️ Torsion — METTRE UN DIHÈDRE — OU ATTEINDRE UNE DISTANCE — AU CHIFFRE. Le geste
+    que la souris ne sait pas faire exactement : quatre atomes piqués dans la vue 3D
+    (A · B · C · D — B–C est la charnière) puis UN nombre tapé. L'angle est RÉSOLU en
+    forme fermée (utils/torsionDrive.js, aucune énergie, aucun balayage), le côté de D
+    tourne d'un seul bloc rigide autour de B–C, et l'écriture passe par le MÊME chemin
+    qu'un glisser de molécule — donc le 📏, les plaques, le film et le 📥 Download
+    lisent la géométrie qui est vraiment là. Panneau pleine largeur, comme celui de
+    ✏️ Atom names : la ligne du groupe ✏️ Modify garde sa hauteur. */}
+<button type="button" onClick={() => setShowTorsionPanel((v) => !v)}
+  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${showTorsionPanel ? 'bg-amber-100 border-amber-400 text-amber-900' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+  title="Set the dihedral A–B–C–D of four picked atoms to a TYPED angle (e.g. −60°), or bring A and D to a typed DISTANCE in ångströms — the two gestures the mouse cannot make exactly. The bond B–C is a hinge: NGL's own bond graph says which atoms travel with D (never a guess), and the angle that reaches a distance is solved in CLOSED FORM (no scan: a 1° step could never be exact, and its answer would still have to be turned into a rotation). The four atoms may be anywhere in the molecule — a χ1 or a peptide ω, a ligand's aryl twist, a sugar's φ/ψ — and 📏 rungs, the plates, the film poses and 📥 Download all read the coordinates that were really written. The panel says OUT LOUD what it refused: a bond inside a ring, a reference atom that would turn too, a distance the circle of D cannot reach (with ↳ Apply closest to go as near as the bond can). ↺ puts the last torsion back, atom by atom. Nothing is stored anywhere: a torsion lives in the coordinates, like every edit.">
+  ✏️ Torsion{torsionAtoms.length ? ` (${torsionAtoms.length}/4)` : ''}
+</button>
+{showTorsionPanel && (() => {
+  const read = torsionReading();                        // relu à chaque rendu
+  const part = torsionPicks();
+  const dragged = part.ok ? structureWasDragged(part.structure) : false;
+  return (
+    <div className="w-full bg-amber-50/40 border border-amber-200 rounded-lg p-3 flex flex-col gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-[10px] font-black text-amber-700 uppercase tracking-wide">Torsion — A · B · C · D (B–C is the hinge: D’s whole side turns)</span>
+        <div className="flex flex-wrap items-center gap-1">
+          {TORSION_SLOT_LETTERS.map((letter, i) => {
+            const slot = torsionAtoms[i];
+            return (
+              <button key={letter} type="button" onClick={() => armTorsionPick(i + 1)}
+                title={`Pick atom ${letter} — ${TORSION_SLOT_ROLES[i]}. Arming a slot drops the atoms picked after it; the click that fills the fourth slot disarms the picker by itself.`}
+                className={`px-2 py-1 text-[10px] font-bold rounded border ${torsionPick === i + 1 ? 'bg-amber-600 text-white border-amber-600' : slot ? 'bg-white border-amber-300 text-amber-800' : 'bg-white border-slate-200 text-slate-400'}`}>
+                {letter} · {slot ? slot.label : '—'}
+              </button>
+            );
+          })}
+          <button type="button" onClick={clearTorsionPicks}
+            title="Empty the four slots, and disarm the picker with them."
+            className="px-2 py-1 text-[10px] font-bold rounded bg-white border border-red-300 text-red-600 hover:bg-red-50">
+            Clear
+          </button>
+        </div>
+      </div>
+      <p className="text-[10px] text-slate-500">
+        {read
+          ? <>Now: <b>dihedral {torsionDeg(read.deg)}</b> · <b>A–D {torsionAng(read.dist)}</b> — turn the bond by typing a dihedral (Set) or a distance (Reach).</>
+          : 'Pick the four atoms: A (the reference — it must not move), B · C (the axle bond), D (the atom whose side turns). Click the 💡 “Pick A · B · C · D” button, then click them one after the other in the 3D view.'}
+      </p>
+      {torsionPick > 0 && (
+        <p className="text-[10px] font-bold text-amber-800">● Pick atom {TORSION_SLOT_LETTERS[torsionPick - 1]} — {TORSION_SLOT_ROLES[torsionPick - 1]}</p>
+      )}
+      {torsionMsg && (
+        <p title={torsionMsg} className={`text-[10px] font-semibold rounded-md border px-2 py-1 whitespace-pre-wrap ${/^[✓↳↺]/.test(torsionMsg) ? 'text-emerald-800 bg-emerald-50 border-emerald-200' : 'text-rose-800 bg-rose-50 border-rose-200'}`}>
+          {torsionMsg}
+        </p>
+      )}
+      <div className="flex flex-wrap items-end gap-2">
+        <label className="flex items-center gap-1 text-[10px] font-bold text-amber-800">
+          dihedral
+          <input type="number" step="1" min="-180" max="180" value={torsionAngleDraft}
+            onChange={(e) => setTorsionAngleText(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') applyTorsionAngle(); }}
+            placeholder="−60" aria-label="Target dihedral A–B–C–D, in degrees"
+            title="The dihedral A–B–C–D you want, in degrees (−180 … 180). ↵ or Set turns the bond B–C — right-hand rule about B→C, the whole side of D moving as one rigid piece — until the dihedral is exactly this. The report tells the dihedral the structure HAS afterwards, read by the same signed-IUPAC reader as the χ/δ readers."
+            className="w-16 border border-amber-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-amber-500 text-[10px] font-mono bg-white" />
+          °
+        </label>
+        <button type="button" onClick={applyTorsionAngle}
+          className="px-2 py-1 text-[10px] font-bold rounded border bg-amber-600 border-amber-700 text-white hover:bg-amber-700"
+          title="Turn B–C in one rigid rotation until the dihedral A–B–C–D equals the angle typed on the left. A does not move, the two axle atoms do not move, and nothing else in the molecule is touched.">
+          Set
+        </button>
+        <label className="flex items-center gap-1 text-[10px] font-bold text-amber-800">
+          A–D
+          <input type="number" step="0.01" min="0.01" value={torsionDistDraft}
+            onChange={(e) => setTorsionDistDraft(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') applyTorsionDistance(); }}
+            placeholder="2.60" aria-label="Target distance A–D, in ångströms"
+            title="The distance |A − D| you want, in ångströms. D turns on a circle about B–C, so this has AT MOST TWO exact answers (two rotamers) and sometimes NONE — the panel then says how close the circle comes and offers ↳ Apply closest. ↵ or Reach applies the solution that turns the bond the least."
+            className="w-16 border border-amber-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-amber-500 text-[10px] font-mono bg-white" />
+          Å
+        </label>
+        <button type="button" onClick={applyTorsionDistance}
+          className="px-2 py-1 text-[10px] font-bold rounded border bg-amber-600 border-amber-700 text-white hover:bg-amber-700"
+          title="Solve the angle that brings A and D to the distance typed on the left — in closed form (cos(θ − φ) = C/Amp), never by scanning: a 1° step could not be exact, and its answer would still have to become a rotation. The nearest of the two exact solutions is applied.">
+          Reach
+        </button>
+        {torsionClosest && (
+          <button type="button" onClick={applyClosestTorsion}
+            className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-fuchsia-300 text-fuchsia-700 hover:bg-fuchsia-50"
+            title={`The distance you typed (${torsionAng(torsionClosest.target)}) cannot be reached: D's circle about B–C stops at ${torsionAng(torsionClosest.closest)}. This applies the rotation of exactly ${torsionDeg(torsionClosest.deltaDeg)} that comes as close as the bond can — the number comes from the same closed-form solution that refused the target.`}>
+            ↳ Apply closest ({torsionAng(torsionClosest.closest)})
+          </button>
+        )}
+        <button type="button" onClick={undoLastTorsion}
+          className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-700 hover:bg-slate-100"
+          title="Put the last torsion back: every atom of that structure is written back exactly where it was BEFORE the gesture (the four picks and the numbers typed stay — this undoes the move, not the question). With no torsion applied yet, the button says so instead of doing nothing.">
+          ↺ Undo torsion
+        </button>
+        <button type="button"
+          onClick={() => { if (measureModeRef.current) toggleMeasureMode(); armTorsionPick(torsionPick || nextTorsionSlot()); }}
+          className={`px-2 py-1 text-[10px] font-bold rounded border ${torsionPick ? 'bg-amber-600 text-white border-amber-600' : 'bg-white border-amber-300 text-amber-700 hover:bg-amber-100'}`}
+          title="Arm the click picker on the next slot: click the atoms in the 3D view, A then B then C then D. 📏 Measure is turned off if it was on (the two gestures cannot both take the clicks), and the click that fills the fourth slot disarms the picker by itself.">
+          🎯 Pick A · B · C · D
+        </button>
+      </div>
+      <p className="text-[10px] text-slate-400">
+        ⚠ A torsion is not stored anywhere: it lives in the COORDINATES of the frame on screen, like every edit of this bar. Loading another structure, or moving the trajectory to another frame (⏮ / the player), shows that frame’s own geometry again. The atoms that turn are the ones NGL’s bond graph reaches from D without crossing B–C: a bond inside a RING has no such side, and the panel refuses it rather than deforming the ring.
+      </p>
+      {dragged && (
+        <p className="text-[10px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">
+          ⚠ This molecule has also been DRAGGED by hand: a frame change or ⏮ replays that drag from the coordinates it knows, so a torsion applied after the drag goes with it. The ↺ of the molecule’s own space (styling bar) resets both — drag and torsion.
+        </p>
+      )}
+    </div>
+  );
+})()}
 
 {/* ⚡ ESP — the electrostatic-potential surface of the molecule selected in the
     Molecules bar. It sits in ✏️ Modify (the request: « anche il pulsante ESP
