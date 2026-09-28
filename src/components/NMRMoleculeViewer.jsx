@@ -121,7 +121,14 @@ import {
 import { cachedLigandSmiles, fetchLigandSmiles } from '../utils/ligandSmiles';
 import { archiveFileToDrive } from '../utils/driveUpload';
 import { getPymolScripts, setPymolScript as savePymolScriptToLibrary } from '../utils/pymolScripts';
-import { SEQUENCE_NATURES } from '../utils/sequenceNatures';
+/* La table des natures (une nature, un champ) ET ce qu'il faut pour CHOISIR
+   quand un fichier porte plusieurs séquences : ses candidates (une par chaîne
+   polymère), les natures ambiguës (plus d'une chaîne pour le même champ) et les
+   résidus à écrire une fois le choix fait — voir utils/sequenceNatures.js. */
+import {
+  SEQUENCE_NATURES, NATURE_LABELS, NATURE_UNITS,
+  sequenceCandidatesOf, ambiguousSequenceNatures, sequenceChoiceTicks,
+} from '../utils/sequenceNatures';
 
 /* ---- Shared "Assigned atoms" highlight flag ---------------------------------
    The green "assigned atoms" highlight is shown both on the 3D molecule viewer
@@ -8089,6 +8096,21 @@ const [residueTicks, setResidueTicks] = useState([]); // [{ resno, resname, code
 // FIRST render's value. The ref always holds the list the strip is showing.
 const residueTicksRef = useRef(residueTicks);
 residueTicksRef.current = residueTicks;
+/* 🧬 LE FICHIER PORTE PLUSIEURS SÉQUENCES — LAQUELLE ÉCRIRE ? (la demande)
+   Un .pdb / un .gro peut contenir plusieurs chaînes polymères (un homodimère
+   A · B, les deux brins d'un ADN, un complexe) : la case d'une nature n'en peut
+   garder qu'une, donc rien n'est écrit tant que l'utilisateur n'a pas choisi —
+   voir le panneau « Sequence to write » au-dessus du bandeau de résidus. État :
+   `{ candidates, ambiguous, sel }`, `sel` = la chaîne choisie par nature
+   ambiguë (`{ dna: 'dna|B' }`), initialisé sur la première du fichier. Le
+   fichier reste ENTIER dans la vue 3D : ce panneau ne décide que ce qui part
+   dans les cases de séquence de la page, et seulement si elles sont vides. */
+const [sequenceChoice, setSequenceChoice] = useState(null);
+// (L'état de la case de séquence de la page est lu par `parsedSeqRef`, la ref
+// partagée du viewer — voir plus bas : l'effet de chargement n'est relancé que
+// par la demande de chargement, donc la prop `parsedSeq` y serait la valeur du
+// chargement PRÉCÉDENT, alors que c'est bien l'état de la case À L'INSTANT du
+// chargement qui décide entre écrire et demander.)
 /* 🎯 THE SIGNATURE OF THE « SELECTED » SPACE (the request): its rows are drawn by
    the very builder of a molecule's space, so the rebuild has to follow the
    SELECTION as well as the looks — same keys, same ticks, same kinds. The looks
@@ -11730,6 +11752,7 @@ const unregisterAbort = abortControl.register('structure loading', () => {
 });
 setStatus('loading');
 setErrorMsg('');
+setSequenceChoice(null);   // le panneau de choix du fichier PRÉCÉDENT ne survit pas à un chargement
 setTrajFile(null);
 setTrajStatus('none');
 // The progression the top bar of the window draws while THIS structure loads
@@ -11966,7 +11989,30 @@ stripResidueRiRef.current = null;
 if (typeof onStructureSequence === 'function') {
 const seq = extractStructureSequence(component);
 const parts = structureSequenceParts(ticks);
-if (seq || parts.protein.seq || parts.dna.seq || parts.rna.seq) onStructureSequence(seq, parts);
+/* 🧬 PLUSIEURS SÉQUENCES DANS LE FICHIER — LAQUELLE ÉCRIRE ? Un .pdb / un .gro
+   d'homodimère (A · B), de duplex d'ADN (les deux brins) ou de complexe porte
+   PLUSIEURS chaînes polymères, et la case d'une nature n'en peut garder qu'UNE :
+   les écrire bout à bout fabriquait une séquence qui n'existe dans aucune des
+   deux. Le fichier est donc lu en CANDIDATES (une par nature ET par chaîne) et,
+   quand une même nature est servie par plusieurs chaînes, RIEN n'est écrit : le
+   panneau « Sequence to write » (au-dessus du bandeau de résidus) demande
+   laquelle écrire. Le cas courant — un fichier qui n'a qu'une chaîne par nature
+   — part directement dans son champ, exactement comme avant, et la page ne
+   remplit de toute façon qu'une case VIDE (structureSequencePatch). */
+const candidates = sequenceCandidatesOf(ticks);
+const ambiguous = ambiguousSequenceNatures(candidates);
+const pageBoxEmpty = !(Array.isArray(parsedSeqRef.current) && parsedSeqRef.current.length > 0);
+if (ambiguous.length > 0 && candidates.length > 1 && SEQUENCE_NATURES.includes(moleculeType) && pageBoxEmpty) {
+  const sel = {};
+  ambiguous.forEach((n) => {
+    const first = candidates.find((c) => c.nature === n);
+    if (first) sel[n] = first.key;   // la première chaîne du fichier, à changer d'un clic
+  });
+  setSequenceChoice({ candidates, ambiguous, sel });
+} else if (seq || parts.protein.seq || parts.dna.seq || parts.rna.seq) {
+  setSequenceChoice(null);
+  onStructureSequence(seq, parts);
+}
 }
 
 component.autoView();
@@ -13558,6 +13604,29 @@ const clearResidueSelection = () => {
   stripResidueRiRef.current = null;
   anchorTickRef.current = null;
   if (onAtomClickRef.current) onAtomClickRef.current(0, []);
+};
+
+/* 🧬 « ✔ Write to the sequence box » DU PANNEAU DE CHOIX (la demande) — la
+   séquence choisie part dans SA case, et rien d'autre n'est écrit :
+   `sequenceChoiceTicks` garde tous les résidus des natures NON ambiguës (elles
+   allaient déjà dans leur champ — choisir une chaîne de protéine ne doit pas
+   faire perdre l'ADN du complexe) et, de chaque nature ambiguë, la SEULE chaîne
+   cochée. C'est la liste que `structureSequenceParts` transforme en `parts`, le
+   second argument d'`onStructureSequence` : la page range chaque nature dans son
+   champ, et seulement s'il est VIDE (voir utils/sequenceNatures.js). Le fichier,
+   lui, n'est pas touché : la vue 3D garde toutes ses molécules. */
+const writeSequenceChoice = () => {
+  const plan = sequenceChoice;
+  if (!plan) return;
+  const kept = sequenceChoiceTicks(residueTicksRef.current, plan.sel);
+  const parts = structureSequenceParts(kept);
+  const seq = kept
+    .filter((t) => t && t.code && SEQUENCE_NATURES.includes(t.nature))
+    .map((t) => String(t.code).toUpperCase())
+    .join('');
+  setSequenceChoice(null);
+  if (typeof onStructureSequence === 'function'
+    && (seq || parts.protein.seq || parts.dna.seq || parts.rna.seq)) onStructureSequence(seq, parts);
 };
 
 /* ---- A HIDDEN ROW IS PyMOL'S LAST COMMAND ABOUT ITS ATOMS ------------------
@@ -16146,6 +16215,7 @@ const handleClearViewer = () => {
   setStatus('idle');
   setErrorMsg('');
   setResidueTicks([]);
+  setSequenceChoice(null);   // plus de fichier : plus de séquence à choisir
   setSelections([]);
   setSelStyles({});
   setPymolActive(false);
@@ -19246,6 +19316,62 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
 </VSection>
 )}
 
+
+{/* 🧬 LE FICHIER PORTE PLUSIEURS SÉQUENCES — LAQUELLE ÉCRIRE ? (la demande)
+    Le viewer a lu le fichier en candidates — une par nature ET par chaîne — et
+    une même nature est servie par PLUSIEURS chaînes : la case de cette nature
+    ne peut en garder qu'une, donc elle reste intacte jusqu'au choix. Ce panneau
+    ne décide QUE ce qui part dans les cases de séquence de la page (et la page
+    ne remplit qu'une case VIDE) : la vue 3D garde le fichier entier. */}
+{sequenceChoice && sequenceChoice.candidates.length > 0 && SEQUENCE_NATURES.includes(moleculeType) && (
+  <div className="flex flex-col gap-1.5 bg-teal-50 border border-teal-300 rounded-xl px-2 py-2">
+    <div className="flex items-center gap-2 flex-wrap">
+      <span className="text-[10px] font-black text-teal-900 uppercase shrink-0">🧬 Sequence to write</span>
+      <span className="text-[10px] text-teal-900 flex-1 min-w-[14rem]">
+        This file holds {sequenceChoice.candidates.length} sequences and more than one chain serves the same nature ({sequenceChoice.ambiguous.map((n) => NATURE_LABELS[n]).join(' · ')}), so the sequence box of the page was left untouched. Pick the chain to write below — and remember that only a box still EMPTY gets filled.
+      </span>
+      <button type="button" onClick={() => setSequenceChoice(null)}
+        title="Write nothing — the sequence boxes of the page stay exactly as they are"
+        className="px-1.5 py-1 rounded-md border bg-white border-teal-300 text-teal-800 text-[10px] font-black leading-none hover:bg-teal-100 shrink-0">
+        ✕ skip
+      </button>
+    </div>
+    {sequenceChoice.ambiguous.map((nat) => (
+      <div key={nat} className="flex items-center gap-1.5 flex-wrap">
+        <span className="text-[9px] font-black text-teal-900 uppercase tracking-wide text-right shrink-0 w-12">{NATURE_LABELS[nat]}</span>
+        {sequenceChoice.candidates.filter((c) => c.nature === nat).map((c) => {
+          const on = sequenceChoice.sel[nat] === c.key;
+          return (
+            <button key={c.key} type="button"
+              onClick={() => setSequenceChoice((prev) => (prev ? { ...prev, sel: { ...prev.sel, [nat]: c.key } } : prev))}
+              title={`${NATURE_LABELS[nat]} sequence of chain ${c.chain || '—'} — ${c.len} ${NATURE_UNITS[nat]}. ${c.chain ? '' : 'The file names no chain: this is every residue of that nature. '}Choosing it writes those letters into the ${NATURE_LABELS[nat]} box of the page, in the order they appear in the file.`}
+              className={`px-1.5 py-1 rounded-md border text-[10px] font-bold leading-none transition-colors ${on ? 'bg-teal-600 border-teal-700 text-white' : 'bg-white border-teal-300 text-teal-800 hover:bg-teal-100'}`}>
+              {on ? '●' : '○'} chain {c.chain || '—'} · {c.len} {NATURE_UNITS[nat]} · <span className="font-mono">{c.seq.slice(0, 12)}{c.seq.length > 12 ? '…' : ''}</span>
+            </button>
+          );
+        })}
+      </div>
+    ))}
+    {sequenceChoice.candidates.some((c) => !sequenceChoice.ambiguous.includes(c.nature)) && (
+      <p className="text-[9px] text-teal-800">
+        The other natures go to their own box as always:{' '}
+        {sequenceChoice.candidates
+          .filter((c) => !sequenceChoice.ambiguous.includes(c.nature))
+          .map((c) => `${NATURE_LABELS[c.nature]} chain ${c.chain || '—'} (${c.len} ${NATURE_UNITS[c.nature]})`)
+          .join(' · ')}
+        .
+      </p>
+    )}
+    <div className="flex items-center gap-2 flex-wrap">
+      <button type="button" onClick={writeSequenceChoice}
+        title="Write the chain chosen above into the sequence box of its nature — and only if that box is still empty"
+        className="px-2 py-1 rounded-md border border-teal-600 bg-teal-600 text-white text-[10px] font-black leading-none hover:bg-teal-700">
+        ✔ Write to the sequence box
+      </button>
+      <span className="text-[9px] text-teal-800">Only an EMPTY box is filled — a sequence you typed is never overwritten.</span>
+    </div>
+  </div>
+)}
 
 {/* Residue sequence strip — click a tick to select that whole residue.
     Only POLYMER residues (protein / nucleic) are shown: water, ions and
