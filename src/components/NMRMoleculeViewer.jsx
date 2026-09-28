@@ -113,6 +113,7 @@ import { movingSideOf, planTorsion, dihedralDeg, distanceOf } from '../utils/tor
 import {
   relaxGeometry, relaxWindow, bondLengthTarget, RELAX_DEFAULT_RADIUS, RELAX_MAX_RADIUS,
   RELAX_PAIR_TOLERANCE, RELAX_BOND_TOLERANCE, RELAX_ANGLE_TOLERANCE,
+  RELAX_STAGE_STEP, RELAX_MAX_STAGE_STEP, RELAX_PLANAR_TOLERANCE,
 } from '../utils/geometryRelax';
 // HETATM code → SMILES: the Chemistry Component Dictionary of the RCSB (see
 // utils/ligandSmiles.js). A PDB only names its ligand by a 3-letter code, so this
@@ -1792,6 +1793,33 @@ const lipidPartIndexStore = {
   structure: null, head: null, glycerol: null, acyl: null, named: true,
 };
 
+/* ⚠ LES OXYGÈNES D'UN PHOSPHATE NE SONT PAS DES « HEADS » — le rapport de cette
+   session : « tra gli atomi che definiscono gli head groups deve contenere solo il
+   fosforo …, gli atomi di azoto e gli ossigeni ad eccezione degli ossigeni legati al
+   fosforo. Non deve contenere carboni come invece adesso contiene. »
+   La lecture est celle du GRAPHE DE LIAISONS de la structure — les records CONECT,
+   les gabarits de résidus que NGL a lus —, jamais un tableau de noms : un oxygène
+   sort de la sous-catégorie quand l'un de ses voisins COVALENTS est un phosphore, ce
+   qui vaut pour le phosphate d'un POPC (O11 · O12 · O13 · O14) comme pour celui d'un
+   PI, d'une PS ou d'une SM (voir lipidSubSelections). Un fichier dont les liaisons ne
+   se lisent pas ne PROUVE rien : l'ensemble rendu est alors VIDE et aucun oxygène
+   n'est écarté sur un doute — la tête garde ce qu'elle avait. */
+const phosphateOxygenIndices = (structure, indices) => {
+  const out = new Set();
+  if (!structure || typeof structure.getAtomProxy !== 'function') return out;
+  (indices || []).forEach((i) => {
+    if (!Number.isFinite(i)) return;
+    try {
+      const a = structure.getAtomProxy(i);
+      if (!a || atomElement(a.atomname, a.element) !== 'O') return;
+      a.eachBondedAtom((b) => {
+        if (b && atomElement(b.atomname, b.element) === 'P') out.add(i);
+      });
+    } catch { /* un atome illisible ne retire rien */ }
+  });
+  return out;
+};
+
 const lipidSubCache = new WeakMap();
 const lipidSubSelections = (structure, lipidSele) => {
   const none = { head: '', glycerol: '', acyl: '', heads: '', named: false };
@@ -1868,18 +1896,30 @@ const lipidSubSelections = (structure, lipidSele) => {
     else if (g === 'acyl') acyl.push(i);
     else head.push(i);
   });
-  /* ⚠ LA SOUS-CATÉGORIE « heads » (le rapport de cette session) : « un'altra
-     sottocategoria … che si chiama “heads” e che contiene solo il fosforo, l'azoto ed
-     l'ossigeno degli headgroups ». Ce sont les atomes POLAIRES de la tête — P · N · O,
-     et eux seuls (le soufre d'un sulfolipide, les carbones de la choline et les
-     hydrogènes restent à la tête entière, donc les trois éléments demandés et rien de
-     plus). Le jeu est calculé ICI, avec les trois parts, donc la rangée « Heads
-     (P · N · O) » dessine EXACTEMENT les atomes que la tête classe, et les deux
-     rangées ne peuvent pas se contredire. */
+  /* ⚠ LA SOUS-CATÉGORIE « heads » — SA DÉFINITION A ÉTÉ REVUE (le rapport de cette
+     session) : « tra gli atomi che definiscono gli head groups deve contenere solo il
+     fosforo (che deve essere del colore definito per il fosforo nel setting wheel), gli
+     atomi di azoto e gli ossigeni ad eccezione degli ossigeni legati al fosforo. Non
+     deve contenere carboni come invece adesso contiene. »
+     Les atomes POLAIRES d'une tête, donc, MOINS les oxygènes du phosphate : le
+     PHOSPHORE (la charge du groupe, dessiné avec la couleur que la roue ⚙ donne à cet
+     élément — la rangée « Heads » se peint par « Atom type », voir
+     SECTION_SUBSECTIONS), l'AZOTE, et les oxygènes qui ne pendent PAS d'un phosphore
+     (l'O3 du cholestérol, les hydroxyles du glycérol d'un PG, les carboxyles d'une PS,
+     les OH d'un inositol, l'amide d'une SM). La chimie d'un POPC ne lui laisse donc que
+     DEUX atomes de tête — son P et son N —, ses quatre oxygènes de phosphate (O11 ·
+     O12 · O13 · O14) revenant à la TÊTE ENTIÈRE, dont la rangée ne bouge pas d'un atome.
+     Le soufre d'un sulfolipide, les carbones de la choline et les hydrogènes restent à
+     la tête entière : ni eux ni aucun CARBONE n'entrent ici. Le jeu est calculé ICI,
+     avec les trois parts, donc la rangée « Heads (P · N · O) » et la tête ne peuvent pas
+     se contredire : la lecture des oxygènes du phosphate est celle du graphe de liaisons
+     (phosphateOxygenIndices). */
   const HEAD_ELEMENTS = new Set(['P', 'N', 'O']);
-  const heads = atoms
+  const headPolar = atoms
     .filter(([i, n, el]) => (part.get(i) || 'head') === 'head' && HEAD_ELEMENTS.has(atomElement(n, el)))
     .map(([i]) => i);
+  const phosphateO = phosphateOxygenIndices(structure, headPolar);
+  const heads = headPolar.filter((i) => !phosphateO.has(i));
   const sele = (list) => (list.length ? `@${list.join(',')}` : '');
   const out = {
     head: sele(head), glycerol: sele(glycerol), acyl: sele(acyl),
@@ -3695,9 +3735,13 @@ const STYLES = {
      stile sarà semplicemente sphere ma dovrò poter regolare la dimensione ed il
      materiale delle spheres ». La liste est donc celle-là, et rien de plus : les deux
      réglages demandés (R◯ = la taille des billes, le panneau de matériau du rang) sont
-     ceux que TOUTE rangée porte déjà (ATOM_DRAW_STYLES contient `sphere`, donc la
-     rangée est ancrée à sa tête et sa liaison est dessinée). `hide` reste offert comme
-     partout : une rangée qu'on ne peut pas éteindre serait un piège. */
+     ceux que TOUTE rangée porte déjà. ⚠ LA RANGÉE N'EST PAS ANCRÉE, elle (voir
+     sectionRowSele) : sa définition est CLOSE — le phosphore, l'azote et les oxygènes
+     qui ne pendent pas d'un phosphore, aucun carbone —, or le pont d'une rangée lui
+     ajoutait les atomes voisins auxquels ses atomes pendent, c'est-à-dire le C3 du
+     glycérol et les carbones de la choline. Et une sphère ne dessine aucun bâton : il
+     n'y avait rien à rattacher. `hide` reste offert comme partout : une rangée qu'on ne
+     peut pas éteindre serait un piège. */
   heads: ['hide', 'sphere'],
   small: ['hide', 'ball+stick', 'licorice', 'line', 'spacefill', 'sphere', 'surface', 'mesh'],
   ion: ['hide', 'spacefill'],   // its spacefill IS its sphere, labelled « Sphere »
@@ -3795,14 +3839,17 @@ const SECTION_SUBSECTIONS = {
   lipid: [
     { sub: 'general', label: 'General', styles: STYLES.small, colors: COLORS.lipid, def: { style: 'ball+stick', colorBy: 'lipidtype' }, sele: '' },
     { sub: 'head', label: 'Phospholipid headgroups', styles: STYLES.sidechains, colors: COLORS.lipidParts, def: { style: 'ball+stick', colorBy: 'lipidtype' }, sele: 'head' },
-    /* « HEADS (P · N · O) » — LA SOUS-CATÉGORIE DEMANDÉE PAR CE RAPPORT : les SEULS
-       atomes polaires d'un groupe de tête (le phosphore, l'azote et l'oxygène), dessinés
-       en SPHÈRES dont la taille (R◯) et le matériau se règlent comme pour toute rangée.
-       Sa couleur vient de la roue ⚙ : « Color by : Lipid type » peint ces atomes avec la
-       pastille de TÊTE (H) de LEUR classe — les couleurs de l'utilisateur —, « Solid »
-       et « Atom type » restant offerts comme sur les autres parties. Le style par défaut
-       est la sphère, et la liste des styles offerts est celle-là (`STYLES.heads`). */
-    { sub: 'heads', label: 'Heads (P · N · O)', styles: STYLES.heads, colors: COLORS.lipidParts, def: { style: 'sphere', colorBy: 'lipidtype' }, sele: 'heads' },
+    /* « HEADS (P · N · O) » — LA SOUS-CATÉGORIE DEMANDÉE PAR CE RAPPORT, REVUE PAR LE
+       DERNIER : les SEULS atomes polaires d'un groupe de tête QUI NE PENDENT PAS D'UN
+       PHOSPHORE — le phosphore, l'azote et les oxygènes « libres » de la tête —,
+       dessinés en SPHÈRES dont la taille (R◯) et le matériau se règlent comme pour
+       toute rangée. Sa couleur vient de la roue ⚙, et c'est « Atom type » — SON DÉFAUT :
+       la bille du PHOSPHORE y porte la couleur que la roue ⚙ définit pour cet élément
+       (la table « Atom types (element colours) », 0xe08a20 par défaut), celle de
+       l'azote et celle des oxygènes les leurs — « Solid » et « Lipid type » restant
+       offerts comme sur les autres parties. Le style par défaut est la sphère, et la
+       liste des styles offerts est celle-là (`STYLES.heads`). */
+    { sub: 'heads', label: 'Heads (P · N · O)', styles: STYLES.heads, colors: COLORS.lipidParts, def: { style: 'sphere', colorBy: 'element' }, sele: 'heads' },
     { sub: 'tail', label: 'Acyl chains', styles: STYLES.sidechains, colors: COLORS.lipidParts, def: { style: 'ball+stick', colorBy: 'lipidtype' }, sele: 'tail' },
     { sub: 'glycerol', label: 'Glycerol', styles: STYLES.sidechains, colors: COLORS.lipidParts, def: { style: 'ball+stick', colorBy: 'lipidtype' }, sele: 'glycerol' },
   ],
@@ -6376,7 +6423,7 @@ const membraneOverridesFor = (structure, named, measured, base) => {
     map[key] = clause;
     const whole = nglSeleCount(structure, scripted);
     const heads = nglSeleCount(structure, clause);
-    fixed.set(key, `« ${name} » = \`${expr}\` does not select the headgroups: ${whole >= 0 ? `${whole} atoms — the whole lipid, tails included` : 'it reaches outside the measured headgroups'}. The MEASURED headgroups replace it (${heads >= 0 ? `${heads} atoms` : 'the heads of both leaflets'}), the atoms the Lipids menu itself calls heads`);
+    fixed.set(key, `« ${name} » = \`${expr}\` does not select the headgroups: ${whole >= 0 ? `${whole} atoms — the whole lipid, tails included` : 'it reaches outside the measured headgroups'}. The MEASURED headgroups replace it (${heads >= 0 ? `${heads} atoms` : 'the heads of both leaflets'}), the atoms the Lipids menu itself calls headgroups`);
   });
   return { map, fixed };
 };
@@ -7581,6 +7628,20 @@ const [relaxRadius, setRelaxRadius] = useState(RELAX_DEFAULT_RADIUS);
 const setRelaxRadiusText = (v) => {
   const n = Math.round(Number(String(v).replace(',', '.')));
   setRelaxRadius(Number.isFinite(n) ? Math.min(RELAX_MAX_RADIUS, Math.max(0, n)) : 0);
+};
+/* LE PAS À PAS DU ⚒ — l'écart entre deux paliers du rapprochement (2 Å par défaut :
+   18, puis 16, puis 14… jusqu'à la distance demandée), et la REPRISE qui relâche la
+   fenêtre entière après chacun. C'est ce qui empêche la molécule d'arriver à la bonne
+   distance avec une géométrie tordue — un cycle plissé, une chaîne tendue — au lieu
+   d'entasser la tension jusqu'au dernier pas. 0 = un seul palier : le geste d'avant,
+   la contrainte posée d'un bout à l'autre. C'est le second réglage du geste, avec
+   « ⇢ moves ». */
+const [relaxStageStep, setRelaxStageStep] = useState(RELAX_STAGE_STEP);
+const setRelaxStageStepText = (v) => {
+  const n = Number(String(v).replace(',', '.'));
+  setRelaxStageStep(Number.isFinite(n)
+    ? Math.min(RELAX_MAX_STAGE_STEP, Math.max(0, n))
+    : RELAX_STAGE_STEP);
 };
 
 const [rebuildMsg, setRebuildMsg] = useState('');
@@ -9280,7 +9341,9 @@ const relaxWhy = (run) => ({
 }[run.reason] || 'the build stopped');
 
 /** LE RAPPORT DU ⚒, À CÔTÉ DU GESTE — tout vient du module : l'énergie avant et
- *  après, les écarts de liaisons et d'angles qu'il a RELUS, le nombre d'atomes
+ *  après, les écarts de liaisons et d'angles qu'il a RELUS, les CYCLES PLANS qu'il a
+ *  tenus plats (avec l'écart à la planéité qu'il reste), le nombre de PALIERS et de
+ *  REPRISES du rapprochement (et ce que la reprise a redressé), le nombre d'atomes
  *  déplacés, et la distance DEMANDÉE, atteinte ou non (avec la raison). Il dit
  *  aussi ce que le geste N'EST PAS — une cible géométrique, pas un champ de
  *  forces — pour que personne n'attende une énergie en kcal/mol. */
@@ -9298,14 +9361,37 @@ const relaxReportOf = (pair, run, win) => {
     ? ` · ${run.unstuck} flat angle${run.unstuck === 1 ? '' : 's'} nudged before the descent` : '';
   const cut = win.truncated
     ? ` · ⚠ the window was CAPPED at ${win.movable.length} atoms (the farthest ones stay put)` : '';
+  /* LES CYCLES PLANS — la seule famille qui n'existait pas avant : un cycle perdait sa
+     planéité sans que rien ne le dise. Le rapport donne l'écart qu'il RESTE (moyenne
+     des dièdres du cycle) et nomme le pire quand il dépasse la tolérance. */
+  const rings = run.terms.planars
+    ? ` · ${run.terms.rings} planar ring${run.terms.rings === 1 ? '' : 's'} held flat`
+      + ` (${run.after.planarRms.toFixed(1)}° rms out of plane over ${run.terms.planars} dihedrals`
+      + `${run.after.worstPlanar && Math.abs(run.after.worstPlanar.dev) > RELAX_PLANAR_TOLERANCE
+        ? `, worst ${torsionDeg(run.after.worstPlanar.deg)}` : ''})`
+    : '';
+  /* LE PAS À PAS — combien de paliers, et la reprise qui a suivi chacun. */
+  const stages = run.stages > 1
+    ? ` · ⇉ ${run.stages} stages of ${run.stageStep} Å${run.restorations
+      ? `, each relaxed in place (${run.restorations} restores)` : ''}`
+    : (run.restorations > 0
+      ? ' · one stage, then relaxed in place (1 restore)' : '');
+  /* CE QUE LA REPRISE A REDRESSÉ — les écarts moyens avant la première reprise et
+     après la dernière : la tension résorbée, dite en chiffres. */
+  const restored = run.restore
+    ? ` · the restores brought bonds ${torsionAng(run.restore.bondRms.before)} → ${torsionAng(run.restore.bondRms.after)} rms`
+      + ` and angles ${run.restore.angleRms.before.toFixed(1)}° → ${run.restore.angleRms.after.toFixed(1)}° rms`
+      + `, moving the distance by ${run.restore.pairDrift.toFixed(3)} Å at most`
+    : '';
   return `⚒ Model build · ${names} : ${torsionAng(p ? p.before : 0)} → ${torsionAng(p ? p.after : 0)}`
     + `${verdict ? ` — ${verdict}` : ''}`
     + ` · energy ${run.before.total.toFixed(1)} → ${run.after.total.toFixed(1)}`
     + ` · bonds ${torsionAng(run.after.bondRms)} rms over ${run.terms.bonds}`
     + ` · angles ${run.after.angleRms.toFixed(1)}° rms over ${run.terms.angles}${worstAngle}`
+    + `${rings}`
     + ` · ${run.moved.length} atom${run.moved.length === 1 ? '' : 's'} moved of ${win.movable.length}`
-    + `${cut}${flat} · ${run.steps} steps, ${run.evaluations} evaluations.`
-    + ' A geometric TARGET FUNCTION (ideal bond lengths and angles, the distances you asked for) — no charges,'
+    + `${cut}${flat}${stages}${restored} · ${run.steps} steps, ${run.evaluations} evaluations.`
+    + ' A geometric TARGET FUNCTION (ideal bond lengths and angles, the distances you asked for, and the planarity of the rings the file itself reads as planar) — no charges,'
     + ' no solvent, and a LOCAL descent: what it could not do, it says instead of pretending. ↺ Undo torsion puts every atom back.';
 };
 
@@ -9351,6 +9437,7 @@ const buildModelNow = () => {
     bonds: geom.bonds,
     pairs: [{ i, j, target }],
     movable: win.movable,
+    stageStep: relaxStageStep,
   });
   if (!run.ok) {
     setTorsionClosest(null);
@@ -9359,8 +9446,8 @@ const buildModelNow = () => {
   }
   if (!run.moved.length) {
     setTorsionClosest(null);
-    setTorsionMsg(`✓ Already there: ${torsionAng(target)} is what ${pair.label} measures, and every bond and angle of the`
-      + ` ${win.movable.length}-atom window is within ${RELAX_BOND_TOLERANCE} Å / ${RELAX_ANGLE_TOLERANCE}° of its target. Nothing had to move.`);
+    setTorsionMsg(`✓ Already there: ${torsionAng(target)} is what ${pair.label} measures, and every bond, angle and planar ring`
+      + ` of the ${win.movable.length}-atom window is within ${RELAX_BOND_TOLERANCE} Å / ${RELAX_ANGLE_TOLERANCE}° / ${RELAX_PLANAR_TOLERANCE}° of its target. Nothing had to move.`);
     return;
   }
   const flat = new Float32Array(run.moved.length * 3);
@@ -10269,12 +10356,23 @@ const sectionRowSele = (structure, sec, sub, opts = {}) => {
     // from (O21 · O31, of the glycerol), the GLYCEROL row the acyl carbonyls and the
     // oxygen that carries the phosphate, the HEADGROUP row the C3 of the glycerol.
     // « Heads (P · N · O) » (le rapport de cette session) dessine, elle, les SEULS
-    // atomes polaires d'une tête — le phosphore, l'azote et l'oxygène — que la même
-    // marche a classés « head » : deux rangées, un seul classement.
+    // atomes polaires d'une tête QUI NE PENDENT PAS D'UN PHOSPHORE — le phosphore,
+    // l'azote et les autres oxygènes — que la même marche a classés « head » : deux
+    // rangées, un seul classement.
     const parts = lipidSubSelections(structure, base);
     const within = anchored ? moleculeIndicesOf(structure, base) : null;
     if (sub === 'head') return anchoredPartSele(structure, parts.headAtoms, within, anchored);
-    if (sub === 'heads') return anchoredPartSele(structure, parts.headsAtoms, within, anchored);
+    /* ⚠ LA RANGÉE « HEADS » N'EST JAMAIS ANCRÉE — sa définition est CLOSE, et le rapport
+       de cette session le dit mot pour mot : « non deve contenere carboni come invece
+       adesso contiene ». Le pont d'une rangée (voir bridgeAtomIndices) ajoute les atomes
+       VOISINS auxquels les siens pendent : pour un POPC, le C3 du glycérol qui porte le
+       phosphate et les carbones de la choline qui portent l'azote — trois CARBONES qui
+       entraient donc dans la sélection de la rangée et se dessinaient en BILLES, avec la
+       couleur de la rangée. La liaison, elle, n'y gagne rien : le seul style offert par
+       cette rangée est la SPHÈRE (`STYLES.heads`), et une sphère ne dessine aucun bâton
+       — il n'y a donc rien à rattacher. La rangée est EXACTEMENT le jeu « heads », ses
+       propres atomes et rien d'autre. */
+    if (sub === 'heads') return anchoredPartSele(structure, parts.headsAtoms, within, false);
     if (sub === 'tail') return anchoredPartSele(structure, parts.acylAtoms, within, anchored);
     if (sub === 'glycerol') return anchoredPartSele(structure, parts.glycerolAtoms, within, anchored);
   }
@@ -18735,9 +18833,19 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
             className="w-12 border border-amber-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-amber-500 text-[10px] font-mono bg-white" />
           bonds
         </label>
+        <label className="flex items-center gap-1 text-[10px] font-bold text-amber-800">
+          ⇉ stages
+          <input type="number" step="0.5" min="0" max={RELAX_MAX_STAGE_STEP} value={relaxStageStep}
+            onChange={(e) => setRelaxStageStepText(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') buildModelNow(); }}
+            aria-label="Largest step, in ångströms, between two stages of the model build"
+            title="How the pair is brought together, in ångströms: by STAGES of at most this much (2 by default — 18 Å, then 16, then 14… up to the distance you asked for), and after EVERY stage the whole window is relaxed once with the distance already obtained held in place (a restore). The strain of the approach is taken out before the next stage instead of piling up until the last step — measured: a pair 7.35 Å apart with a target of 3 Å stays at 6.94 Å in a single approach and reaches 3.11 Å in 2 Å stages. 0 = one single approach (the gesture this used to be). The report says how many stages and restores there were, and what they straightened."
+            className="w-12 border border-amber-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-amber-500 text-[10px] font-mono bg-white" />
+          Å
+        </label>
         <button type="button" onClick={buildModelNow}
           className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-emerald-300 text-emerald-700 hover:bg-emerald-50"
-          title="⚒ MODEL BUILD — the gesture HyperChem had: build a CHEMICALLY VALID model out of the bonds, after they are known. Two atoms picked (A and D of the four, or the only two), the distance typed in the A–D field (left empty, the length the table gives that pair of elements: S–S 2.05 Å, C–S 1.82 Å, C–C 1.54 Å…), and the atoms around them MOVE, step by step, until the molecule has moved enough for the two atoms to be that far apart. The energy it minimises is a TARGET FUNCTION: the squared deviations of every bond of the window from its typical length, of every angle from the ideal angle of its hybridisation (sp3 109.47°, sp2 120°, sp 180°, read from the bond graph — a ring is judged planar only if its own bonds are short, so benzene becomes 120° and cyclohexane stays 109.47°), of the distance you asked for, plus a light leash that keeps the change local. ⚠ It is NOT a force field: no charges, no solvent, no entropy, no atom or hydrogen added — and the descent is LOCAL and DETERMINISTIC, so a distance it cannot reach is REPORTED with the number it really got, never faked. Every atom is written back the way a molecule drag writes (positionFromArray), so 📏 Measure, the plates, the film and 📥 Download read this geometry; « ↺ Undo torsion » puts the whole molecule back exactly as it was.">
+          title="⚒ MODEL BUILD — the gesture HyperChem had: build a CHEMICALLY VALID model out of the bonds, after they are known. Two atoms picked (A and D of the four, or the only two), the distance typed in the A–D field (left empty, the length the table gives that pair of elements: S–S 2.05 Å, C–S 1.82 Å, C–C 1.54 Å…), and the atoms around them MOVE, step by step, until the molecule has moved enough for the two atoms to be that far apart. The energy it minimises is a TARGET FUNCTION: the squared deviations of every bond of the window from its typical length, of every angle from the ideal angle of its hybridisation (sp3 109.47°, sp2 120°, sp 180°, read from the bond graph — a ring is judged planar only if its own bonds are short, so benzene becomes 120° and cyclohexane stays 109.47°), of the distance you asked for, plus a light leash that keeps the change local, and the dihedrals of every ring the file ITSELF reads as planar (five or six atoms, bonds ≤ 1.45 Å — a benzene, a base) held at zero, so a ring cannot lose its planarity without the report saying so. The pair is brought together BY STAGES (the “⇉ stages” field of the panel, 2 Å by default) and after EVERY stage the whole window is relaxed once with the distance already obtained held in place: measured, a pair 7.35 Å apart aimed at 3 Å stays at 6.94 Å in a single approach and reaches 3.11 Å in 2 Å stages. ⚠ It is NOT a force field: no charges, no solvent, no entropy, no atom or hydrogen added — and the descent is LOCAL and DETERMINISTIC, so a distance it cannot reach is REPORTED with the number it really got, never faked. Every atom is written back the way a molecule drag writes (positionFromArray), so 📏 Measure, the plates, the film and 📥 Download read this geometry; « ↺ Undo torsion » puts the whole molecule back exactly as it was.">
           ⚒ Model build
         </button>
         {torsionClosest && (
@@ -18760,7 +18868,7 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
         </button>
       </div>
       <p className="text-[10px] text-slate-400">
-        ⚠ A torsion is not stored anywhere: it lives in the COORDINATES of the frame on screen, like every edit of this bar. Loading another structure, or moving the trajectory to another frame (⏮ / the player), shows that frame’s own geometry again. The atoms that turn are the ones NGL’s bond graph reaches from D without crossing B–C: a bond inside a RING has no such side, and the panel refuses it rather than deforming the ring. ⚒ Model build is the same kind of edit — the same coordinates, the same ↺ — except that it moves a whole WINDOW of atoms, chosen by the “⇢ moves” field, and writes back only those: everything else keeps its own numbers, to the last digit. Like the ⚭ Fold for disulfides next door it is not a physical calculation — it minimises a target function of ideal bond lengths and angles — and it says out loud what it could not do.
+        ⚠ A torsion is not stored anywhere: it lives in the COORDINATES of the frame on screen, like every edit of this bar. Loading another structure, or moving the trajectory to another frame (⏮ / the player), shows that frame’s own geometry again. The atoms that turn are the ones NGL’s bond graph reaches from D without crossing B–C: a bond inside a RING has no such side, and the panel refuses it rather than deforming the ring. ⚒ Model build is the same kind of edit — the same coordinates, the same ↺ — except that it moves a whole WINDOW of atoms, chosen by the “⇢ moves” field, and writes back only those: everything else keeps its own numbers, to the last digit. It minimises a target function of ideal bond lengths, ideal angles AND the planarity of the rings the file itself reads as planar (which is why a benzene no longer comes out of a build slightly plucked), and it brings the two atoms together BY STAGES, relaxing the whole window after each one — the “⇉ stages” field sets that step (2 Å by default, 0 = one single approach). Like the ⚭ Fold for disulfides next door it is not a physical calculation — it minimises a target function of ideal bond lengths and angles — and it says out loud what it could not do.
       </p>
       {dragged && (
         <p className="text-[10px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">
@@ -19607,7 +19715,7 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
           </button>
         </div>
         <p className="text-[10px] text-slate-500">
-          What « Atom type » (the « Color by » option of every row of the styling bar) paints: one colour per element. The list is the request's: {ELEMENT_ORDER.join(' · ')}. An element that is NOT in the table (a metal of an unusual file) keeps a readable grey instead of turning black. Saved like every other viewer preference.
+          What « Atom type » (the « Color by » option of every row of the styling bar) paints: one colour per element. The list is the request's: {ELEMENT_ORDER.join(' · ')}. An element that is NOT in the table (a metal of an unusual file) keeps a readable grey instead of turning black. The <b>P</b> swatch is, in particular, the colour of the <b>phosphorus</b> spheres of the « Heads (P · N · O) » row of the Lipids menu — that row is read by « Atom type ». Saved like every other viewer preference.
         </p>
         <div className="mt-1 grid grid-cols-[repeat(auto-fill,minmax(4.5rem,1fr))] gap-1.5">
           {ELEMENT_ORDER.map((el) => (
@@ -19830,7 +19938,7 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
           </button>
         </div>
         <p className="text-[10px] text-slate-500">
-          What « Color by : Lipid type » paints: THREE swatches per lipid class — H its polar headgroup, G its glycerol backbone (C1 · C2 · C3), A its acyl chains. All three start at the class's own colour, so a class stays ONE colour until its parts are separated here; a class the table does not know keeps the readable grey. The <b>H</b> swatch is also the colour of the « Heads (P · N · O) » row of the Lipids menu — the phosphorus, nitrogen and oxygen of a headgroup, drawn as spheres.
+          What « Color by : Lipid type » paints: THREE swatches per lipid class — H its polar headgroup, G its glycerol backbone (C1 · C2 · C3), A its acyl chains. All three start at the class's own colour, so a class stays ONE colour until its parts are separated here; a class the table does not know keeps the readable grey. The <b>H</b> swatch paints the « Phospholipid headgroups » row. The « Heads (P · N · O) » row of the Lipids menu does NOT follow it: it is read by <b>Atom type</b> (its own default), so each of its spheres wears the colour defined for its element above — the <b>P</b> one, the phosphorus, first of all.
         </p>
         <div className="mt-1 grid grid-cols-[repeat(auto-fill,minmax(7rem,1fr))] gap-1.5">
           {LIPID_TYPE_ORDER.map((k) => (
@@ -19841,7 +19949,7 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
                 <input key={`${k}-${part}`} type="color" value={numToHex(lipidPartColors[k][part])}
                   onChange={(e) => setLipidPartColors((p) => ({ ...p, [k]: { ...p[k], [part]: parseInt(e.target.value.slice(1), 16) } }))}
                   className="w-6 h-5 rounded border border-slate-300 cursor-pointer" aria-label={`${k} ${part} colour`}
-                  title={`${k} · ${part === 'head' ? 'headgroup — also the colour of the « Heads (P · N · O) » row' : part === 'glycerol' ? 'glycerol backbone' : 'acyl chains'} (${letter})`} />
+                  title={`${k} · ${part === 'head' ? 'headgroup — the whole « Phospholipid headgroups » row of the Lipids menu' : part === 'glycerol' ? 'glycerol backbone' : 'acyl chains'} (${letter})`} />
               ))}
             </span>
           ))}

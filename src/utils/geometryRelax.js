@@ -20,13 +20,27 @@
    Ce que ce module est — un objectif et sa dérivée, rien d'autre :
 
          E = Σ_bonds w_b (d − d₀)²  +  Σ_angles w_a (θ − θ₀)²
-           + Σ_pairs w_p (d − d₀)²  +  w_t Σ |r − r₀|²
+           + Σ_rings w_r (δ − 0)²   +  Σ_pairs w_p (d − d₀)²  +  w_t Σ |r − r₀|²
 
      • les liaisons et les angles viennent du GRAPHE DE LIAISONS de la molécule
        (les éléments de ses atomes, l'ordre de liaison quand le fichier le
        déclare) — jamais d'une distance devinée ici ;
      • les cibles d₀ et θ₀ sont celles des tables ci-dessous : C–C 1.54, C–N 1.47,
        C–O 1.43, C–H 1.09 Å, S–S 2.05 Å… et 109.47° (sp3) · 120° (sp2) · 180° (sp) ;
+     • les termes `rings` tiennent PLAT un cycle que le FICHIER dit plan (cinq ou six
+       atomes, liaisons ≤ 1.45 Å — 1.48 pour un cycle DÉJÀ plissé, voir
+       PLANAR_RING_KEEP_MAX_BOND : le benzène, les bases des acides nucléiques) :
+       l'ÉCART À LA PLANÉITÉ de chacun de ses dièdres consécutifs, pris à zéro
+       (δ = asin(sin φ), en degrés — nul pour un cycle plan dans les DEUX conventions
+       du dièdre, 90° pour un cycle plié en deux). Sans eux, la cible ne sait pas
+       distinguer un benzène d'un cyclohexane autrement que par la valeur de l'angle
+       (120° contre 109.47°) — et un cycle garde ses angles EXACTS en se plissant
+       (c'est ce que fait un cyclohexane à sedia), donc rien n'empêchait un benzène de
+       perdre sa planéité. MESURÉ : sans ce terme, un benzène dont la descente doit
+       rapprocher deux atomes à 3 Å se plisse de 21.6° en gardant ses angles à 0.1°
+       près ; avec lui, il reste plan à 0.02° près, et la distance demandée s'arrête à
+       3.11 Å au lieu de 3.04 — le rapport le DIT au lieu de plier le cycle en
+       silence (voir `_geometry_relax_test.mjs`) ;
      • les termes `pairs` sont ceux que l'UTILISATEUR impose : « amène ces deux
        atomes à cette distance » — c'est la contrainte qui pilote le geste, et elle
        pèse plus lourd que la géométrie sans jamais l'écraser ;
@@ -43,6 +57,30 @@
    recherche de rotamères de utils/disulfideFold.js : le MÊME modèle donne
    toujours le MÊME construit.
 
+   ELLE DESCEND PAR ÉTAPES, AVEC UNE REPRISE APRÈS CHACUNE. « Le programme
+   commence à rapprocher les deux atomes pas à pas », dit la demande — et pas à pas
+   veut dire ici deux choses :
+
+     · la distance demandée descend par PALIERS de RELAX_STAGE_STEP ångströms (2 par
+       défaut) : 18, puis 16, puis 14… jusqu'à la cible. Un palier est une descente
+       COURTE (le budget de pas est partagé entre les paliers) ;
+     · après chaque palier, la fenêtre ENTIÈRE est relâchée une fois : la distance
+       ATTEINTE devient la cible du terme de paire (la contrainte cesse de tirer,
+       elle tient) et les liaisons, les angles, les cycles et la longe reprennent
+       seuls, pendant RELAX_RESTORE_STEPS pas. C'est la REPRISE.
+
+   C'est ce découpage qui fait aboutir un rapprochement LOINTAIN : MESURÉ, sur un
+   cycle portant une chaîne dont deux atomes doivent passer de 7.35 Å à 3.00 Å, la
+   descente d'un seul tenant reste à 6.94 Å (elle ne bouge presque pas — la tension
+   de la contrainte la bloque) quand la MÊME descente par paliers de 2 Å atteint
+   3.11 Å ; sur deux chaînes à 7.50 Å, 7.57 Å contre 2.22 Å. Et la reprise fait
+   arriver un modèle DÉTENDU : les écarts de liaison à l'arrivée passent de 0.0144 Å
+   rms (sans reprise) à 0.0087 Å (avec), et la dernière reprise resserre encore les
+   angles du geste (0.093° → 0.079°). Le geste se termine donc sur une géométrie
+   relâchée, jamais sur une géométrie en pleine contrainte. UN SEUL PALIER (cible
+   toute proche, ou RELAX_STAGE_STEP à 0) reste le geste d'AVANT : une descente, la
+   contrainte posée d'un bout à l'autre, puis une reprise.
+
    ⚠ CE QUE CE N'EST PAS, et le rapport le redit :
      • ce n'est PAS un champ de forces : aucune charge, aucun van der Waals, aucun
        solvant, aucune entropie, aucun hydrogène ajouté. Les longueurs et les angles
@@ -52,6 +90,10 @@
      • la descente est LOCALE : une structure dont les atomes devraient franchir une
        barrière ne se fermera pas. Le rapport dit alors `converged: false` et la
        distance RÉELLEMENT obtenue, il n'invente jamais un pont ;
+     • la planéité d'un cycle est TENUE, jamais devinée : seuls les cycles que le
+       fichier dit plans (liaisons ≤ 1.45 Å) sont tenus plats, et un cyclohexane ou un
+       sucre gardent leur plissement à 109.47° — le module ne décide pas à leur place
+       de l'aromaticité d'un cycle dont les liaisons sont longues ;
      • seuls les atomes de `movable` bougent. Tout le reste est rendu BIT À BIT
        (l'ancrage d'une fenêtre est ce qui permet de refermer une boucle sans
        déplacer la protéine entière) ;
@@ -104,6 +146,17 @@ export const PLANAR_RING_MAX_BOND = 1.45;
  *  son ordre (un PDB n'écrit pas les ordres d'un cycle) mais pas par sa géométrie. */
 export const AROMATIC_CC_LENGTH = 1.39;
 
+/** LA MÊME MESURE, POUR TENIR UN CYCLE PLAT — un cheveu plus large que
+ *  PLANAR_RING_MAX_BOND, et pour une raison mesurable : un cycle qu'un geste
+ *  PRÉCÉDENT a déjà plissé a des liaisons allongées (1.39 → 1.46 Å pour un
+ *  plissement de 30°), et c'est justement ce cycle-là qu'il faut remettre à plat.
+ *  À 1.45 il n'est plus reconnu du tout, donc jamais redressé. À 1.48 il l'est, et
+ *  le chiffre reste très loin d'une liaison simple (C–C 1.54) comme de la moyenne
+ *  d'un cycle de sucre (1.50 : un pyranose ne passe pas — vérifié). Les cibles de
+ *  LIAISON et d'ANGLE, elles, gardent PLANAR_RING_MAX_BOND : rien ne change pour
+ *  les longueurs ni pour les 120°. */
+export const PLANAR_RING_KEEP_MAX_BOND = 1.48;
+
 /* ── 2 · LES POIDS ET LES BORNES ─────────────────────────────────────────────
    Les unités sont celles du rapport : des ångströms et des degrés. Un écart de
    0.1 Å sur une longueur coûte 2, un écart de 10° sur un angle coûte 20 — les deux
@@ -113,9 +166,17 @@ export const AROMATIC_CC_LENGTH = 1.39;
    en ÉCRASANT des angles de 45° — un modèle chimiquement faux ; à 0.2 elle préfère
    ne pas atteindre la cible et le DIRE). La distance DEMANDÉE par l'utilisateur
    pèse un quart d'une liaison : elle pilote le geste sans jamais avoir le droit de
-   détruire la géométrie, et la longe garde le changement local. */
+   détruire la géométrie, et la longe garde le changement local.
+   Le cycle PLAN pèse cinq fois un angle (1 contre 0.2, en degrés² comme lui) : un
+   plissement de 20° coûte 400, soit plus qu'un ångström entier d'écart sur une
+   liaison (200). MESURÉ, sur un benzène dont la contrainte doit rapprocher deux
+   atomes à 3 Å : sans le terme il se plisse de 21.6° (ses angles restent à 0.1° près,
+   donc rien ne l'en empêchait), et de 0.2 à 4 il reste plan à 0.02° près — la
+   distance demandée s'arrête alors à 3.08-3.11 Å au lieu de 3.04, et le rapport dit
+   la distance RÉELLEMENT obtenue. Plus lourd ne change pas le cycle et éloigne la
+   contrainte d'un cheveu : 1 est le milieu utile. */
 
-export const RELAX_WEIGHTS = { bond: 200, angle: 0.2, pair: 50, tether: 0.5 };
+export const RELAX_WEIGHTS = { bond: 200, angle: 0.2, planar: 1, pair: 50, tether: 0.5 };
 
 /** Le nombre de pas de la descente, le déplacement maximal d'un atome par pas, et
  *  les deux seuils d'arrêt (gradient devenu négligeable, énergie qui ne baisse plus). */
@@ -131,11 +192,42 @@ export const RELAX_DEFAULT_RADIUS = 6;
 export const RELAX_MAX_RADIUS = 12;
 export const RELAX_MAX_MOVABLE_ATOMS = 240;
 
+/** LE RAPPROCHEMENT PAR ÉTAPES — « commence par 18 Å, relâche, puis 16, relâche… ».
+ *  `RELAX_STAGE_STEP` est l'écart entre deux paliers de la distance DEMANDÉE (18 →
+ *  16 → 14 … ; un palier plus grand que l'écart total n'en fait qu'un), et
+ *  `RELAX_MAX_STAGES` le découpage maximal — au-delà, la fin du geste ne bouge plus
+ *  et cent paliers ne feraient que payer des pas. Chaque palier reçoit
+ *  `RELAX_MIN_STAGE_STEPS` pas au moins, le budget reçu (`steps`) étant partagé
+ *  entre eux. Un palier de 0 Å, ou un seul palier, rend le geste d'AVANT : une
+ *  seule descente, la contrainte posée d'un bout à l'autre. */
+export const RELAX_STAGE_STEP = 2;
+export const RELAX_MAX_STAGE_STEP = 12;
+export const RELAX_MAX_STAGES = 24;
+export const RELAX_MIN_STAGE_STEPS = 40;
+
+/** LA REPRISE — les pas de la descente qui RELÂCHE la fenêtre après chaque palier,
+ *  la distance atteinte tenue telle quelle (voir `relaxGeometry`). C'est elle qui
+ *  résorbe la tension accumulée par le rapprochement ; à 0, plus aucune reprise :
+ *  la fin de chaque palier resterait sous contrainte, avec la géométrie tordue que
+ *  la demande reprochait au geste. */
+export const RELAX_RESTORE_STEPS = 80;
+
+/** LE RESSORT DE LA REPRISE — le facteur appliqué au poids des distances demandées
+ *  pendant une reprise. La reprise ne conduit plus la contrainte, elle la TIENT : un
+ *  ressort plus raide (8×) empêche la détente de la géométrie de repartir avec la
+ *  distance obtenue. MESURÉ, sur un cycle que la contrainte doit plier (7.35 → 3.00 Å) :
+ *  avec le ressort de la descente, la reprise éloignait la distance demandée de 0.07 Å
+ *  (3.11 → 3.18 Å) pour 0.008 Å de liaisons gagnés ; avec celui-ci, la distance ne
+ *  bouge plus que de 0.02 Å pendant la reprise et la dernière reprise AMÉLIORE encore
+ *  les angles du geste. */
+export const RELAX_RESTORE_STIFFNESS = 8;
+
 /** LES TROIS TOLÉRANCES dont le rapport se sert pour DIRE que c'est fait : « la
  *  liaison est à sa longueur », « l'angle est respecté », « la distance demandée
  *  est atteinte ». */
 export const RELAX_BOND_TOLERANCE = 0.05;   // Å
 export const RELAX_ANGLE_TOLERANCE = 2;     // degrés
+export const RELAX_PLANAR_TOLERANCE = 2;    // degrés — « le cycle est resté plan »
 export const RELAX_PAIR_TOLERANCE = 0.05;   // Å
 
 /* ── 3 · L'ARITHMÉTIQUE ──────────────────────────────────────────────────────
@@ -258,8 +350,122 @@ export const ringSizeThrough = ({ neighbours, atom, cap = 6 }) => {
   return best;
 };
 
+/** LE PLUS COURT CHEMIN ENTRE DEUX ATOMES, AVEC SON CHEMIN — la même recherche en
+ *  largeur que `shortestPath`, mais elle rend la LISTE des atomes traversés (de
+ *  `from` à `to`, les deux compris) au lieu de sa longueur. Un cycle a besoin de son
+ *  ORDRE (c'est lui qui donne ses dièdres) ; sa taille, elle, se lit en deux lignes
+ *  (`shortestPath`, qui reste donc la version la moins chère pour les 4000 atomes
+ *  d'une protéine). Rend `null` quand aucun chemin de `cap` liaisons n'existe. */
+const shortestPathAtoms = ({ neighbours, from, to, avoid, cap }) => {
+  if (from === to) return [from];
+  const parent = new Map([[from, -1]]);
+  if (isIndex(avoid)) parent.set(avoid, -1);      // le pivot : traversé, jamais posé
+  let frontier = [from];
+  for (let depth = 1; depth <= cap; depth += 1) {
+    const next = [];
+    for (const cur of frontier) {
+      let list = [];
+      try { list = neighbours(cur) || []; } catch { list = []; }
+      for (const raw of list) {
+        const i = Number(raw);
+        if (!isIndex(i) || parent.has(i)) continue;
+        parent.set(i, cur);
+        if (i === to) {
+          const path = [i];
+          for (let a = cur; a !== -1; a = parent.get(a)) path.push(a);
+          return path.reverse();
+        }
+        next.push(i);
+      }
+    }
+    if (!next.length) return null;
+    frontier = next;
+  }
+  return null;
+};
+
+/**
+ * LE PLUS PETIT CYCLE QUI TRAVERSE UN ATOME, DANS SON ORDRE (liste vide = aucun).
+ * Même méthode que `ringSizeThrough` — chaque couple de voisins de l'atome relié
+ * par le plus court chemin qui l'évite — mais elle rend la SUITE DES ATOMES du
+ * cycle : `[atome, voisin, …, voisin]`, chacun lié au suivant et le dernier au
+ * premier. C'est ce que `planarRingsOf` lit ses dièdres dans l'ordre du cycle.
+ */
+export const ringCycleThrough = ({ neighbours, atom, cap = 6 }) => {
+  if (typeof neighbours !== 'function' || !isIndex(atom)) return [];
+  let list = [];
+  try { list = neighbours(atom) || []; } catch { list = []; }
+  const nb = [...new Set(list.map(Number).filter((i) => isIndex(i) && i !== atom))];
+  if (nb.length < 2) return [];
+  const limit = Math.max(1, (Number(cap) || 6) - 2);
+  let best = null;
+  for (let a = 0; a < nb.length; a += 1) {
+    for (let b = a + 1; b < nb.length; b += 1) {
+      const path = shortestPathAtoms({ neighbours, from: nb[a], to: nb[b], avoid: atom, cap: limit });
+      if (path && (!best || path.length + 2 < best.length)) best = [atom, ...path];
+    }
+  }
+  return best || [];
+};
+
+/**
+ * LES CYCLES QUE LE FICHIER DIT PLANS — ceux que `buildRelaxTerms` tient plans.
+ *
+ * Le critère est celui de la maison, un cheveu plus large : un cycle de CINQ ou SIX
+ * atomes dont les liaisons sont COURTES (moyenne ≤ PLANAR_RING_KEEP_MAX_BOND,
+ * 1.48 Å — le benzène 1.39, un benzène DÉJÀ plissé 1.46, jamais un cyclohexane à
+ * 1.53 ni un sucre à 1.50 en moyenne). La géométrie REÇUE est donc indispensable :
+ * sans elle, aucun cycle n'est déclaré plan (c'est déjà la règle de `hybridOf`, et
+ * pour la même raison — mieux vaut un cycle souple qu'un cycle inventé).
+ *
+ * L'entrée est un atome dont TOUTES les liaisons viennent d'être mesurées courtes :
+ * c'est ce qui laisse entrer les atomes SUBSTITUÉS d'un cycle (le Cγ d'une
+ * phénylalanine porte son Cβ à 1.51 Å — il n'est donc pas candidat, mais ses
+ * voisins de cycle, eux, le sont, et le cycle trouvé les comprend tous). Un cycle
+ * dont AUCUN atome n'a toutes ses liaisons courtes n'est pas vu : il reste plissé,
+ * ce qui est la bonne réponse pour lui.
+ *
+ * @returns {{atoms:number[], size:number, meanBond:number}[]} l'ordre du cycle, sa
+ *   taille et la MOYENNE de ses liaisons lues, pour chaque cycle plan distinct.
+ */
+export const planarRingsOf = ({
+  neighbours = null, positions = null, atomCount = 0, cap = 6,
+  maxBond = PLANAR_RING_KEEP_MAX_BOND,
+} = {}) => {
+  if (typeof neighbours !== 'function') return [];
+  const count = Math.max(0, Math.round(Number(atomCount) || 0));
+  const read = flatPositions(positions);
+  const x = read && (!count || read.count === count) ? read.flat : null;
+  if (!x) return [];                       // sans géométrie, aucun cycle n'est plan
+  const limit = Number(maxBond) > 0 ? Number(maxBond) : PLANAR_RING_KEEP_MAX_BOND;
+  const pt = (i) => [x[i * 3], x[i * 3 + 1], x[i * 3 + 2]];
+  const rings = [];
+  const seen = new Set();
+  for (let a = 0; a < count; a += 1) {
+    let nbs = [];
+    try { nbs = neighbours(a) || []; } catch { nbs = []; }
+    const heavy = [...new Set(nbs.map(Number).filter((i) => isIndex(i) && i < count && i !== a))];
+    if (heavy.length < 2) continue;
+    if (!heavy.every((i) => dist3(pt(a), pt(i)) <= limit)) continue;
+    const cycle = ringCycleThrough({ neighbours, atom: a, cap });
+    if (!PLANAR_RING_SIZES.has(cycle.length)) continue;
+    const key = [...cycle].sort((p, q) => p - q).join('-');
+    if (seen.has(key)) continue;
+    let sum = 0;
+    for (let k = 0; k < cycle.length; k += 1) {
+      sum += dist3(pt(cycle[k]), pt(cycle[(k + 1) % cycle.length]));
+    }
+    const meanBond = sum / cycle.length;
+    if (!(meanBond <= limit)) continue;
+    seen.add(key);
+    rings.push({ atoms: [...cycle], size: cycle.length, meanBond });
+  }
+  return rings;
+};
+
 /**
  * L'HYBRIDATION D'UN ATOME — lue sur ses liaisons, jamais sur son nom :
+
  *   · un ordre 3 déclaré                                     → sp  (180°)
  *   · un ordre 2 déclaré                                     → sp2 (120°)
  *   · deux voisins, dans un cycle de 5 ou 6 dont les liaisons mesurent ≤ 1.45 Å
@@ -294,10 +500,11 @@ export const hybridOf = ({ element: el, degree, maxOrder = 1, ringSize = 0, ring
 export const angleTargetOf = (hybrid) => (HYBRID_ANGLES[hybrid] != null ? HYBRID_ANGLES[hybrid] : null);
 
 /* ── 5 · LES TERMES DE LA FONCTION CIBLE ─────────────────────────────────────
-   Trois listes, et rien d'autre : les liaisons (avec leur longueur cible), les
-   angles (avec leur angle cible), et les distances DEMANDÉES. `positions` est
-   optionnel — il ne sert qu'à juger si un cycle est plan (PLANAR_RING_MAX_BOND) ;
-   sans lui, aucune liaison n'est déclarée aromatique. */
+   Quatre listes, et rien d'autre : les liaisons (avec leur longueur cible), les
+   angles (avec leur angle cible), les cycles PLANS (avec leurs dièdres), et les
+   distances DEMANDÉES. `positions` est optionnel — il ne sert qu'à juger si un
+   cycle est plan (PLANAR_RING_MAX_BOND) ; sans lui, ni liaison aromatique ni cycle
+   plan n'est déclaré, et la fonction cible ne les mentionne pas. */
 
 /**
  * LE GRAPHE D'UNE MOLÉCULE, tel que le fichier le déclare : la liste des liaisons
@@ -333,9 +540,10 @@ export const bondGraphOf = ({ bonds = [], atomCount = 0 } = {}) => {
  * @param {{elements?:any[], bonds?:any[], pairs?:any[], weights?:object, positions?:any}} spec
  *   `bonds` : [[i, j]] ou [[i, j, ordre]] ou [{i, j, order}] — l'ordre par défaut est 1.
  *   `pairs`  : [[i, j, d]] ou [{i, j, target}] — la distance que l'UTILISATEUR impose.
- * @returns {{count:number, bonds:object[], angles:object[], pairs:object[],
- *            hybrids:any[], ringSizes:number[], ringMeans:any[],
- *            bondCount:number, unknownBonds:number, aromaticBonds:number}}
+ * @returns {{count:number, bonds:object[], angles:object[], planars:object[],
+ *            pairs:object[], hybrids:any[], ringSizes:number[], ringMeans:any[],
+ *            planarRings:object[], bondCount:number, unknownBonds:number,
+ *            aromaticBonds:number}}
  */
 export const buildRelaxTerms = ({
   elements = [], bonds = [], pairs = [], weights = RELAX_WEIGHTS, positions = null,
@@ -417,9 +625,28 @@ export const buildRelaxTerms = ({
     pairTerms.push({ i, j, target, weight: Number(p.weight) || Number(weights.pair) || 0 });
   }
 
+  /* LES CYCLES PLANS — un cycle de cinq ou six atomes dont les liaisons mesurent
+     ≤ 1.48 Å (voir planarRingsOf) porte un dièdre de PLUS par paire d'atomes
+     consécutifs du cycle, visé à 0°. C'est ce qui tient le benzène PLAT : les
+     liaisons et les angles ne savent pas le faire (un cycle garde ses angles exacts
+     en se plissant), et sans ce terme la contrainte de l'utilisateur pouvait le
+     plier en laissant croire que tout allait bien. */
+  const planarRings = planarRingsOf({ neighbours, positions: x, atomCount: count });
+  const planarTerms = [];
+  for (const ring of planarRings) {
+    const n = ring.size;
+    for (let k = 0; k < n; k += 1) {
+      planarTerms.push({
+        i: ring.atoms[k], j: ring.atoms[(k + 1) % n],
+        k: ring.atoms[(k + 2) % n], l: ring.atoms[(k + 3) % n],
+        target: 0, weight: Number(weights.planar) || 0, ring: ring.atoms.join('-'),
+      });
+    }
+  }
+
   return {
-    count, bonds: bondTerms, angles: angleTerms, pairs: pairTerms,
-    hybrids, ringSizes, ringMeans,
+    count, bonds: bondTerms, angles: angleTerms, planars: planarTerms, pairs: pairTerms,
+    hybrids, ringSizes, ringMeans, planarRings,
     bondCount: bondsList.length, unknownBonds, aromaticBonds,
   };
 };
@@ -469,6 +696,24 @@ const FLAT_DEV = 0.5;           // …et dont l'écart à sa cible mérite le co
  *        Un angle EXACTEMENT plat (sin θ = 0) n'a aucune dérivée : le terme est
  *        alors sauté. C'est le seul cas que la descente ne sait pas franchir seule,
  *        et `relaxGeometry` le traite AVANT de descendre (UNSTICK_STEP).
+ *   · un cycle plan       δ = DEG·asin( Y / √(X² + Y²) ) — l'ÉCART À LA PLANÉITÉ du
+ *                         dièdre i–j–k–l, en degrés, avec u = rᵢ − rⱼ, v = r_k − rⱼ,
+ *                         w = r_l − r_k, D = u·(v×w), V = |v|², p = u·v, q = v·w,
+ *                         s = u·w, X = p·q − s·V et Y = |v|·D. Quatre atomes sont
+ *                         coplanaires quand sin φ = 0, soit φ = 0° COMME φ = 180° :
+ *                         δ vaut donc 0° pour un cycle plan dans l'une ou l'autre
+ *                         convention, 90° pour un cycle plié en deux ; E = w_r δ²
+ *        ∂δ/∂r = signe(cos φ)·DEG·(X·∂Y/∂r − Y·∂X/∂r) / (X² + Y²)
+ *                 — la règle du quotient d'un atan2, fois le signe de cos φ
+ *        ∂X/∂rᵢ = q·v − V·w                    ∂Y/∂rᵢ = |v|·(v×w)
+ *        ∂X/∂rⱼ = −(u+v)q − p·w + V·w + 2s·v   ∂Y/∂rⱼ = |v|(−(v×w) − (w×u)) − (D/|v|)·v
+ *        ∂X/∂r_k = u·q + p(w−v) + u·V − 2s·v   ∂Y/∂r_k = |v|((w×u) − (u×v)) + (D/|v|)·v
+ *        ∂X/∂rₗ = p·v − V·u                    ∂Y/∂rₗ = |v|·(u×v)
+ *        Ces dérivées sont MESURÉES à 1e-8 par différences finies : la formule qu'on
+ *        trouve « dans la littérature » ne tombait juste que pour deux des quatre
+ *        atomes, et elle a été jetée après mesure (voir energyOf, les cycles plans).
+ *        Quatre atomes alignés (X² + Y² = 0) n'ont aucun dièdre : le terme est sauté,
+ *        comme l'angle plat — c'est la seule singularité de cette famille.
  *   · la longe            E = w_t |r − r₀|²   →  ∂E/∂r = 2w_t (r − r₀), seulement
  *        sur les atomes qui ont le droit de bouger.
  *
@@ -483,19 +728,22 @@ const FLAT_DEV = 0.5;           // …et dont l'écart à sa cible mérite le co
  * La sonde vérifie ce gradient par DIFFÉRENCES FINIES (_geometry_relax_test.mjs) :
  * une dérivée écrite à la main ne vaut rien tant qu'on ne l'a pas mesurée.
  *
- * @returns {{total:number, bond:number, angle:number, pair:number, tether:number,
- *            bondRms:number, angleRms:number, worstBond:object|null, worstAngle:object|null}}
+ * @returns {{total:number, bond:number, angle:number, planar:number, pair:number,
+ *            tether:number, bondRms:number, angleRms:number, planarRms:number,
+ *            worstBond:object|null, worstAngle:object|null, worstPlanar:object|null}}
  */
 export const energyOf = (terms, x, {
   grad = null, hess = null, ref = null, tether = 0, movable = null,
 } = {}) => {
   const out = {
-    total: 0, bond: 0, angle: 0, pair: 0, tether: 0,
-    bondRms: 0, angleRms: 0, worstBond: null, worstAngle: null,
+    total: 0, bond: 0, angle: 0, planar: 0, pair: 0, tether: 0,
+    bondRms: 0, angleRms: 0, planarRms: 0,
+    worstBond: null, worstAngle: null, worstPlanar: null,
   };
   if (grad) grad.fill(0);
   if (hess) hess.fill(0);
   let nBonds = 0; let sumBonds = 0; let nAngles = 0; let sumAngles = 0;
+  let nPlanars = 0; let sumPlanars = 0;
 
   const distanceTerm = (t, bucket) => {
     const i = t.i; const j = t.j;
@@ -571,6 +819,94 @@ export const energyOf = (terms, x, {
     }
   }
 
+  /* LES CYCLES PLANS — le dièdre i–j–k–l du cycle, visé à zéro. Il se lit en atan2 de
+     DEUX SCALAIRES : X = (u×v)·(v×w) = (u·v)(v·w) − (u·w)(v·v) et Y = |v|·u·(v×w).
+     Aucun acos hors bornes, aucune division par zéro : c'est un atan2. Le gradient est
+     ANALYTIQUE — celui d'un atan2, ∂φ = (X·∂Y − Y·∂X)/(X² + Y²), avec les dérivées de
+     X et de Y écrites une fois pour les quatre atomes (douze lignes, ci-dessous).
+     ⚠ La formule « de la littérature » a été essayée d'abord, et elle était FAUSSE :
+     mesurée par différences finies, elle ne tombait juste que pour deux des quatre
+     atomes. Celle-ci est mesurée pièce par pièce — ∂X, ∂Y, puis ∂φ — à 1e-8
+     (_geometry_relax_test.mjs) : une dérivée écrite à la main ne vaut rien tant qu'on
+     ne l'a pas mesurée. */
+  for (const t of terms.planars || []) {
+    const i = t.i; const j = t.j; const k = t.k; const l = t.l;
+    const ux = x[i * 3] - x[j * 3]; const uy = x[i * 3 + 1] - x[j * 3 + 1]; const uz = x[i * 3 + 2] - x[j * 3 + 2];
+    const vx = x[k * 3] - x[j * 3]; const vy = x[k * 3 + 1] - x[j * 3 + 1]; const vz = x[k * 3 + 2] - x[j * 3 + 2];
+    const wx = x[l * 3] - x[k * 3]; const wy = x[l * 3 + 1] - x[k * 3 + 1]; const wz = x[l * 3 + 2] - x[k * 3 + 2];
+    const rv = Math.hypot(vx, vy, vz);
+    if (rv < 1e-9) continue;
+    const p = ux * vx + uy * vy + uz * vz;          // u·v
+    const q = vx * wx + vy * wy + vz * wz;          // v·w
+    const sn = ux * wx + uy * wy + uz * wz;         // u·w  (`s` est le pas, plus bas)
+    const V = vx * vx + vy * vy + vz * vz;          // v·v
+    const dux = vy * wz - vz * wy; const duy = vz * wx - vx * wz; const duz = vx * wy - vy * wx;   // v×w
+    const dvx = wy * uz - wz * uy; const dvy = wz * ux - wx * uz; const dvz = wx * uy - wy * ux;   // w×u
+    const dwx = uy * vz - uz * vy; const dwy = uz * vx - ux * vz; const dwz = ux * vy - uy * vx;   // u×v
+    const D = ux * dux + uy * duy + uz * duz;       // u·(v×w), le produit mixte
+    const X = p * q - sn * V; const Y = rv * D;
+    const den = X * X + Y * Y;
+    if (!(den > 1e-12)) continue;      // quatre atomes alignés (ou confondus) : aucun dièdre
+    /* L'ÉCART À LA PLANÉITÉ — δ = asin(sin φ), en degrés, et non φ lui-même : quatre
+       atomes sont COPLANAIRES quand sin φ = 0, c'est-à-dire pour φ = 0° **comme pour
+       φ = 180°**, et un cycle plan peut se présenter dans l'une ou l'autre convention
+       (mesuré : l'hexagone régulier donne 0°, une même forme légèrement plissée donne
+       177°). Viser φ = 0 punirait donc un cycle déjà plan. δ vaut 0 dans les deux cas,
+       90° quand le cycle est plié en deux, et son signe est celui de sin φ. */
+    const root = Math.sqrt(den);
+    const sinPhi = Y / root;
+    const cosPhi = X / root;
+    const deg = Math.asin(sinPhi) * DEG;
+    const dev = deg - t.target;
+    out.planar += t.weight * dev * dev;
+    nPlanars += 1; sumPlanars += dev * dev;
+    if (!out.worstPlanar || Math.abs(dev) > Math.abs(out.worstPlanar.dev)) {
+      out.worstPlanar = { i, j, k, l, deg, target: t.target, dev, ring: t.ring };
+    }
+    if (!grad && !hess) continue;
+    /* LE JACOBIEN DU DIÈDRE — ∂φ°/∂r, atome par atome. ∂X et ∂Y se lisent sur ce qui
+       est déjà là : la dérivée de (u·v)(v·w) − (u·w)(v·v) d'un côté, celle de
+       |v|·u·(v×w) de l'autre, avec les trois produits vectoriels (v×w, w×u, u×v)
+       calculés plus haut. Chaque atome porte SES deux vecteurs : c'est ce que la
+       formule « de la littérature » ratait pour j et k. */
+    const dr = D / rv;                       // D/|v|, la part de |v| dans ∂Y
+    const xix = q * vx - V * wx; const xiy = q * vy - V * wy; const xiz = q * vz - V * wz;
+    const yix = rv * dux; const yiy = rv * duy; const yiz = rv * duz;
+    const xjx = -(ux + vx) * q - p * wx + V * wx + 2 * sn * vx;
+    const xjy = -(uy + vy) * q - p * wy + V * wy + 2 * sn * vy;
+    const xjz = -(uz + vz) * q - p * wz + V * wz + 2 * sn * vz;
+    const yjx = -(dux + dvx) * rv - dr * vx;
+    const yjy = -(duy + dvy) * rv - dr * vy;
+    const yjz = -(duz + dvz) * rv - dr * vz;
+    const xkx = ux * q + (wx - vx) * p + ux * V - 2 * sn * vx;
+    const xky = uy * q + (wy - vy) * p + uy * V - 2 * sn * vy;
+    const xkz = uz * q + (wz - vz) * p + uz * V - 2 * sn * vz;
+    const ykx = (dvx - dwx) * rv + dr * vx;
+    const yky = (dvy - dwy) * rv + dr * vy;
+    const ykz = (dvz - dwz) * rv + dr * vz;
+    const xlx = p * vx - V * ux; const xly = p * vy - V * uy; const xlz = p * vz - V * uz;
+    const ylx = rv * dwx; const yly = rv * dwy; const ylz = rv * dwz;
+    const kd = (cosPhi >= 0 ? DEG : -DEG) / den;
+    const jix = kd * (X * yix - Y * xix); const jiy = kd * (X * yiy - Y * xiy); const jiz = kd * (X * yiz - Y * xiz);
+    const jjx = kd * (X * yjx - Y * xjx); const jjy = kd * (X * yjy - Y * xjy); const jjz = kd * (X * yjz - Y * xjz);
+    const jkx = kd * (X * ykx - Y * xkx); const jky = kd * (X * yky - Y * xky); const jkz = kd * (X * ykz - Y * xkz);
+    const jlx = kd * (X * ylx - Y * xlx); const jly = kd * (X * yly - Y * xly); const jlz = kd * (X * ylz - Y * xlz);
+    if (hess) {
+      const w2 = 2 * t.weight;
+      hess[i * 3] += w2 * jix * jix; hess[i * 3 + 1] += w2 * jiy * jiy; hess[i * 3 + 2] += w2 * jiz * jiz;
+      hess[k * 3] += w2 * jkx * jkx; hess[k * 3 + 1] += w2 * jky * jky; hess[k * 3 + 2] += w2 * jkz * jkz;
+      hess[j * 3] += w2 * jjx * jjx; hess[j * 3 + 1] += w2 * jjy * jjy; hess[j * 3 + 2] += w2 * jjz * jjz;
+      hess[l * 3] += w2 * jlx * jlx; hess[l * 3 + 1] += w2 * jly * jly; hess[l * 3 + 2] += w2 * jlz * jlz;
+    }
+    if (grad) {
+      const k2 = 2 * t.weight * dev;
+      grad[i * 3] += k2 * jix; grad[i * 3 + 1] += k2 * jiy; grad[i * 3 + 2] += k2 * jiz;
+      grad[k * 3] += k2 * jkx; grad[k * 3 + 1] += k2 * jky; grad[k * 3 + 2] += k2 * jkz;
+      grad[j * 3] += k2 * jjx; grad[j * 3 + 1] += k2 * jjy; grad[j * 3 + 2] += k2 * jjz;
+      grad[l * 3] += k2 * jlx; grad[l * 3 + 1] += k2 * jly; grad[l * 3 + 2] += k2 * jlz;
+    }
+  }
+
   if (tether > 0 && ref && movable && movable.length) {
     for (const i of movable) {
       const dx = x[i * 3] - ref[i * 3];
@@ -590,7 +926,8 @@ export const energyOf = (terms, x, {
 
   out.bondRms = nBonds ? Math.sqrt(sumBonds / nBonds) : 0;
   out.angleRms = nAngles ? Math.sqrt(sumAngles / nAngles) : 0;
-  out.total = out.bond + out.angle + out.pair + out.tether;
+  out.planarRms = nPlanars ? Math.sqrt(sumPlanars / nPlanars) : 0;
+  out.total = out.bond + out.angle + out.planar + out.pair + out.tether;
   return out;
 };
 
@@ -689,13 +1026,15 @@ export const relaxWindow = ({
 
 /* ── 8 · LE CONSTRUIT, PAS À PAS ───────────────────────────────────────────── */
 
-/** Le résumé d'une évaluation — les six chiffres que le rapport affiche, et les
- *  deux pires écarts (la liaison la plus fausse, l'angle le plus faux). */
+/** Le résumé d'une évaluation — les chiffres que le rapport affiche (l'énergie de
+ *  chaque famille, les écarts rms, et les trois pires : la liaison la plus fausse,
+ *  l'angle le plus faux, le dièdre de cycle le plus plissé). */
 const summaryOf = (e) => ({
-  total: e.total, bond: e.bond, angle: e.angle, pair: e.pair, tether: e.tether,
-  bondRms: e.bondRms, angleRms: e.angleRms,
+  total: e.total, bond: e.bond, angle: e.angle, planar: e.planar, pair: e.pair, tether: e.tether,
+  bondRms: e.bondRms, angleRms: e.angleRms, planarRms: e.planarRms,
   worstBond: e.worstBond ? { ...e.worstBond } : null,
   worstAngle: e.worstAngle ? { ...e.worstAngle } : null,
+  worstPlanar: e.worstPlanar ? { ...e.worstPlanar } : null,
 });
 
 /**
@@ -710,19 +1049,29 @@ const summaryOf = (e) => ({
  * côté (une constante ne se minimise pas), l'énergie et son gradient sont évalués,
  * puis chaque pas est une plus grande pente PLAFONNÉE suivie d'une recherche
  * linéaire par dichotomie. Aucun aléatoire, aucune barrière franchie : la descente
- * est locale et le rapport le dit.
+ * est locale et le rapport le dit. Quand la distance demandée est loin, elle est
+ * approchée PAR PALIERS (`stageStep`), chacun suivi d'une REPRISE qui relâche la
+ * fenêtre entière à la distance obtenue (voir l'en-tête du module) : le modèle rendu
+ * est donc un modèle relâché, pas un modèle en pleine contrainte.
  *
  * @param {{positions:number[]|Float32Array|number[][], elements?:any[], bonds?:any[],
  *          pairs?:any[], movable?:number[]|null, steps?:number, maxAtomStep?:number,
  *          tolerance?:number, gradientTolerance?:number, weights?:object,
- *          tether?:number|null}} spec
+ *          tether?:number|null, stageStep?:number, maxStages?:number,
+ *          restoreSteps?:number}} spec
  *   `pairs` = les distances DEMANDÉES : [{i, j, target}] ou [[i, j, d]].
  *   `movable` = les atomes qui ont le droit de bouger (par défaut : tous). Les
  *   autres sont rendus BIT À BIT, et c'est leur ancrage qui tient la molécule.
+ *   `stageStep` = l'écart entre deux paliers du rapprochement, en ångströms (2 par
+ *   défaut, 0 = un seul palier : le geste d'avant) ; `restoreSteps` = les pas de la
+ *   reprise après chaque palier (0 = aucune reprise).
  * @returns {{ok:boolean, reason:string, converged:boolean, reached:boolean,
  *            positions:number[]|null, moved:number[], before:object|null,
- *            after:object|null, pairs:object[], steps:number, evaluations:number,
- *            terms:object, hybrids:any[]}}
+ *            after:object|null, pairs:object[], stages:number, stageStep:number,
+ *            stagePlan:object[], restorations:number, restore:object|null,
+ *            steps:number, evaluations:number, terms:object, hybrids:any[]}}
+ *   `restore` donne les écarts moyens AVANT la première reprise et APRÈS la
+ *   dernière (`bondRms`, `angleRms`, `planarRms`) : c'est la tension résorbée.
  */
 export const relaxGeometry = (spec = {}) => {
   const {
@@ -730,6 +1079,7 @@ export const relaxGeometry = (spec = {}) => {
     steps = RELAX_MAX_STEPS, maxAtomStep = RELAX_MAX_ATOM_STEP,
     tolerance = RELAX_ENERGY_TOLERANCE, gradientTolerance = RELAX_GRADIENT_TOLERANCE,
     weights = RELAX_WEIGHTS, tether = null,
+    stageStep = RELAX_STAGE_STEP, maxStages = RELAX_MAX_STAGES, restoreSteps = RELAX_RESTORE_STEPS,
   } = spec || {};
 
   const read = flatPositions(positions);
@@ -744,7 +1094,7 @@ export const relaxGeometry = (spec = {}) => {
   const els = Array.from(elements || []).map((e) => element(e));
   const terms = buildRelaxTerms({ elements: els, bonds, pairs, weights, positions: read.flat });
   const termInfo = {
-    bonds: 0, angles: 0, pairs: 0, unstuck: 0,
+    bonds: 0, angles: 0, planars: 0, rings: 0, pairs: 0, unstuck: 0,
     bondCount: terms.bondCount, unknownBonds: terms.unknownBonds,
     aromaticBonds: terms.aromaticBonds, positions: count,
   };
@@ -767,12 +1117,17 @@ export const relaxGeometry = (spec = {}) => {
   const active = {
     bonds: terms.bonds.filter((t) => movableSet.has(t.i) || movableSet.has(t.j)),
     angles: terms.angles.filter((t) => movableSet.has(t.i) || movableSet.has(t.j) || movableSet.has(t.k)),
+    planars: terms.planars.filter((t) => movableSet.has(t.i) || movableSet.has(t.j)
+      || movableSet.has(t.k) || movableSet.has(t.l)),
     pairs: terms.pairs.filter((t) => movableSet.has(t.i) || movableSet.has(t.j)),
   };
   termInfo.bonds = active.bonds.length;
   termInfo.angles = active.angles.length;
+  termInfo.planars = active.planars.length;
+  termInfo.rings = new Set(active.planars.map((t) => t.ring)).size;
   termInfo.pairs = active.pairs.length;
-  if (!active.bonds.length && !active.angles.length && !active.pairs.length) return refuse('no-terms');
+  if (!active.bonds.length && !active.angles.length && !active.planars.length
+    && !active.pairs.length) return refuse('no-terms');
 
   const n3 = count * 3;
   const x0 = read.flat.slice();
@@ -792,96 +1147,208 @@ export const relaxGeometry = (spec = {}) => {
 
   let current = energyOf(active, x, { grad, hess, ref: x0, tether: tetherWeight, movable: movableList });
   let evaluations = 2;
-  let taken = 0;
-  let quiet = 0;
   let reason = 'max-steps';
+  let stalledOnce = false;      // une descente s'est posée sans pouvoir bouger
   const capMax = Math.max(1e-6, Number(maxAtomStep) || RELAX_MAX_ATOM_STEP);
 
-  /* LA CONTRAINTE AVANCE PAR PALIERS — « le programme commence à rapprocher les
-     deux atomes pas à pas ». La cible de chaque distance demandée part de la
-     distance ACTUELLE et rejoint la cible en la moitié des pas ; l'autre moitié
-     relâche la géométrie à la cible finale. Imposer la cible d'un coup (mesuré)
-     fait écraser des angles de 45° là où le rapprochement progressif laisse la
-     molécule se replier en gardant ses liaisons et ses angles. */
-  const pairStartDistances = beforePairs.map((p) => p.distance);
+  /* LA CONTRAINTE, ET SON RESSORT. La cible de chaque paire est ce que la descente
+     CONDUIT ; son POIDS change pendant une reprise (voir `setPairSpring`) : la reprise
+     tient la distance obtenue au lieu de la conduire, et elle la tient d'autant plus
+     fermement qu'un écart qu'elle créerait elle-même ne servirait à rien — c'est le
+     reste de la géométrie qui doit se détendre, pas la distance qui doit repartir. */
+  const pairWeights = active.pairs.map((t) => t.weight);
   const pairTargets = active.pairs.map((t) => t.target);
-  const rampSteps = Math.max(1, Math.round(maxSteps / 2));
+  const distancesOf = () => pairReportOf(active, x).map((p) => p.distance);
+  const setPairSpring = (k) => { active.pairs.forEach((t, i) => { t.weight = pairWeights[i] * k; }); };
+  const setPairTargets = (list) => {
+    let changed = false;
+    active.pairs.forEach((t, i) => { if (t.target !== list[i]) { t.target = list[i]; changed = true; } });
+    return changed;
+  };
+  const rescore = () => {
+    current = energyOf(active, x, { grad, hess, ref: x0, tether: tetherWeight, movable: movableList });
+    evaluations += 1;
+  };
 
-  for (let s = 0; s < maxSteps; s += 1) {
-    const ramp = Math.min(1, (s + 1) / rampSteps);
-    let targetMoved = false;
-    active.pairs.forEach((t, i) => {
-      const next = pairStartDistances[i] + (pairTargets[i] - pairStartDistances[i]) * ramp;
-      if (next !== t.target) { t.target = next; targetMoved = true; }
-    });
-    if (targetMoved) {
-      current = energyOf(active, x, { grad, hess, ref: x0, tether: tetherWeight, movable: movableList });
-      evaluations += 1;
-      quiet = 0;
-    }
-    /* LA DIRECTION — la plus grande pente PRÉCONDITIONNÉE : chaque coordonnée se
-       déplace de −g/h, où h est SA raideur (la diagonale de Gauss-Newton, 2w fois le
-       carré du jacobien du terme). Un poids de 100 sur les longueurs et de 0.02 sur
-       les angles ont ainsi chacun leur pas, au lieu que le terme le plus raide
-       impose son échelle à tous les autres (sans ce préconditionneur, la descente
-       oscillait et s'arrêtait à une énergie de 11 au lieu de 0.01 : mesuré).
-       La direction est ensuite ramenée à un RAYON DE CONFIANCE : le déplacement d'un
-       atome ne dépasse pas `cap`, qui décroît avec les pas — les premiers viennent
-       de loin, les derniers ajustent finement. */
-    let gmax = 0;
-    for (const i of movableList) {
-      const g = Math.max(
-        Math.abs(grad[i * 3]), Math.abs(grad[i * 3 + 1]), Math.abs(grad[i * 3 + 2]),
-      );
-      if (g > gmax) gmax = g;
-    }
-    if (gmax < gradientTolerance) { reason = 'converged'; break; }
-    dir.fill(0);
-    let dmax = 0;
-    for (const i of movableList) {
-      for (let c = 0; c < 3; c += 1) {
-        const k = i * 3 + c;
-        dir[k] = hess[k] > 1e-12 ? -grad[k] / hess[k] : 0;
+  /* LA DESCENTE, UNE FOIS — un palier, une reprise, ou le dernier rapprochement.
+     `target` est la cible de chaque paire à la FIN de cette descente ; avec
+     `reach: true` elle y va PAR PALIERS (la cible part de la distance ACTUELLE et la
+     rejoint en la moitié des pas, l'autre moitié relâche la géométrie), avec
+     `reach: false` elle y est POSÉE d'un coup — c'est la reprise, où la cible EST la
+     distance obtenue : il n'y a plus rien à rapprocher, la contrainte cesse de tirer
+     et tient la distance pendant que les liaisons, les angles et les cycles se
+     détendent. Rend les pas pris et la raison de l'arrêt ; ne touche ni à `x0`, ni au
+     rapport, ni à la cible finale des paires. */
+  const descend = ({ budget, target = null, reach = true }) => {
+    const budgetN = Math.max(0, Math.round(Number(budget) || 0));
+    if (!budgetN) return { taken: 0, stop: 'max-steps' };
+    if (target && !reach && setPairTargets(target)) rescore();
+    const from = target && reach ? distancesOf() : null;
+    const rampSteps = Math.max(1, Math.round(budgetN / 2));
+    let taken = 0; let quiet = 0; let stop = 'max-steps';
+    for (let s = 0; s < budgetN; s += 1) {
+      if (from) {
+        const ramp = Math.min(1, (s + 1) / rampSteps);
+        let targetMoved = false;
+        active.pairs.forEach((t, i) => {
+          const next = from[i] + (target[i] - from[i]) * ramp;
+          if (next !== t.target) { t.target = next; targetMoved = true; }
+        });
+        if (targetMoved) { rescore(); quiet = 0; }
       }
-      const d = Math.hypot(dir[i * 3], dir[i * 3 + 1], dir[i * 3 + 2]);
-      if (d > dmax) dmax = d;
-    }
-    if (!(dmax > 1e-15)) { reason = 'converged'; break; }
-    const progress = maxSteps > 1 ? s / (maxSteps - 1) : 1;
-    const cap = Math.max(capMax * 0.05, capMax * (1 - 0.95 * progress));
-    const scale = cap / dmax;
-    for (const i of movableList) {
-      dir[i * 3] *= scale; dir[i * 3 + 1] *= scale; dir[i * 3 + 2] *= scale;
-    }
+      /* LA DIRECTION — la plus grande pente PRÉCONDITIONNÉE : chaque coordonnée se
+         déplace de −g/h, où h est SA raideur (la diagonale de Gauss-Newton, 2w fois le
+         carré du jacobien du terme). Un poids de 100 sur les longueurs et de 0.02 sur
+         les angles ont ainsi chacun leur pas, au lieu que le terme le plus raide
+         impose son échelle à tous les autres (sans ce préconditionneur, la descente
+         oscillait et s'arrêtait à une énergie de 11 au lieu de 0.01 : mesuré).
+         La direction est ensuite ramenée à un RAYON DE CONFIANCE : le déplacement d'un
+         atome ne dépasse pas `cap`, qui décroît avec les pas — les premiers viennent
+         de loin, les derniers ajustent finement. */
+      let gmax = 0;
+      for (const i of movableList) {
+        const g = Math.max(
+          Math.abs(grad[i * 3]), Math.abs(grad[i * 3 + 1]), Math.abs(grad[i * 3 + 2]),
+        );
+        if (g > gmax) gmax = g;
+      }
+      if (gmax < gradientTolerance) { stop = 'converged'; break; }
+      dir.fill(0);
+      let dmax = 0;
+      for (const i of movableList) {
+        for (let c = 0; c < 3; c += 1) {
+          const k = i * 3 + c;
+          dir[k] = hess[k] > 1e-12 ? -grad[k] / hess[k] : 0;
+        }
+        const d = Math.hypot(dir[i * 3], dir[i * 3 + 1], dir[i * 3 + 2]);
+        if (d > dmax) dmax = d;
+      }
+      if (!(dmax > 1e-15)) { stop = 'converged'; break; }
+      const progress = budgetN > 1 ? s / (budgetN - 1) : 1;
+      const cap = Math.max(capMax * 0.05, capMax * (1 - 0.95 * progress));
+      const scale = cap / dmax;
+      for (const i of movableList) {
+        dir[i * 3] *= scale; dir[i * 3 + 1] *= scale; dir[i * 3 + 2] *= scale;
+      }
 
-    /* LE PAS — divisé par deux jusqu'à ce que l'énergie BAISSE vraiment. Si aucun
-       pas ne la fait baisser, la descente est arrivée sur un palier : elle s'ARRÊTE
-       et le DIT (aucun pas inventé pour faire semblant). */
-    const wasTotal = current.total;
-    let accepted = false;
-    let move = 1;
-    for (let back = 0; back < 16; back += 1) {
-      const trial = x.slice();
-      for (let k = 0; k < n3; k += 1) trial[k] += dir[k] * move;
-      const e = energyOf(active, trial, { ref: x0, tether: tetherWeight, movable: movableList });
-      evaluations += 1;
-      if (e.total < wasTotal - 1e-12) {
-        x = trial;
-        current = energyOf(active, x, { grad, hess, ref: x0, tether: tetherWeight, movable: movableList });
+      /* LE PAS — divisé par deux jusqu'à ce que l'énergie BAISSE vraiment. Si aucun
+         pas ne la fait baisser, la descente est arrivée sur un palier : elle s'ARRÊTE
+         et le DIT (aucun pas inventé pour faire semblant). */
+      const wasTotal = current.total;
+      let accepted = false;
+      let move = 1;
+      for (let back = 0; back < 16; back += 1) {
+        const trial = x.slice();
+        for (let k = 0; k < n3; k += 1) trial[k] += dir[k] * move;
+        const e = energyOf(active, trial, { ref: x0, tether: tetherWeight, movable: movableList });
         evaluations += 1;
-        accepted = true;
-        break;
+        if (e.total < wasTotal - 1e-12) {
+          x = trial;
+          current = energyOf(active, x, { grad, hess, ref: x0, tether: tetherWeight, movable: movableList });
+          evaluations += 1;
+          accepted = true;
+          break;
+        }
+        move /= 2;
       }
-      move /= 2;
+      taken = s + 1;
+      if (!accepted) { stop = 'stalled'; break; }
+      if (wasTotal - current.total < tolerance) {
+        quiet += 1;
+        if (quiet >= 2) { stop = 'converged'; break; }
+      } else {
+        quiet = 0;
+      }
     }
-    taken = s + 1;
-    if (!accepted) { reason = 'stalled'; break; }
-    if (wasTotal - current.total < tolerance) {
-      quiet += 1;
-      if (quiet >= 2) { reason = 'converged'; break; }
-    } else {
-      quiet = 0;
+    return { taken, stop };
+  };
+
+  /* ── LE PAS À PAS — LES PALIERS, ET LA REPRISE APRÈS CHACUN ────────────────────
+     « Le programme commence à rapprocher les deux atomes pas à pas. » Pas à pas veut
+     donc dire ici : la distance demandée descend par PALIERS de `stageStep` ångströms
+     (18, puis 16, puis 14…), et après chaque palier la fenêtre ENTIÈRE est relâchée
+     une fois — la reprise, la distance obtenue tenue par un ressort plus raide. C'est
+     elle qui empêche la tension du rapprochement de s'entasser jusqu'au dernier pas
+     (et un cycle plan de rester plissé) : chaque palier part d'une géométrie DÉTENDUE,
+     au lieu d'hériter de la tension du précédent. Le geste REFERME ensuite sur la
+     cible de l'utilisateur — un dernier rapprochement court, puis une dernière
+     reprise — donc le modèle rendu est un modèle relâché, à la distance demandée.
+     UN SEUL PALIER (cible toute proche, ou `stageStep` à 0) est le geste d'AVANT :
+     une descente, la contrainte posée d'un bout à l'autre, puis une reprise. */
+  const span = maxSteps > 0 && active.pairs.length
+    ? Math.max(...active.pairs.map((t, i) => Math.abs(t.target - beforePairs[i].distance)))
+    : 0;
+  const askedStage = Number(stageStep);
+  const stageSize = Number.isFinite(askedStage)
+    ? Math.max(0, Math.min(RELAX_MAX_STAGE_STEP, askedStage))
+    : RELAX_STAGE_STEP;
+  const stageMax = Math.max(1, Math.round(Number(maxStages) || RELAX_MAX_STAGES));
+  const stageCount = stageSize > 0 && span > stageSize
+    ? Math.min(stageMax, Math.ceil(span / stageSize))
+    : 1;
+  const stageSteps = stageCount > 1
+    ? Math.max(RELAX_MIN_STAGE_STEPS, Math.round(maxSteps / stageCount))
+    : maxSteps;
+  const restoreBudget = Math.max(0, Math.round(Number(restoreSteps) || 0));
+  /* La cible de chaque paire à un avancement donné — de sa distance de DÉPART à la
+     cible de l'utilisateur, au prorata (toutes les paires avancent ensemble). */
+  const planTargets = (progress) => pairTargets.map((target, i) => (
+    beforePairs[i].distance + (target - beforePairs[i].distance) * progress
+  ));
+  const stagePlan = [];
+  let restorations = 0;
+  let restoreFrom = null;
+  let restoreTo = null;
+  let restoreDrift = 0;
+  let stepsTaken = 0;
+  /* LA REPRISE — une descente où la contrainte ne tire plus : sa cible est la
+     distance obtenue, et son ressort plus raide, donc les liaisons, les angles, les
+     cycles et la longe se détendent SANS que la distance reparte. `restoreDrift`
+     retient de combien elle a bougé quand même (la plus grande, sur toutes les
+     reprises) : c'est ce chiffre que le rapport affiche, et il doit rester petit —
+     c'est la contrainte que l'utilisateur a demandée. */
+  const restore = () => {
+    if (!restoreBudget) return;
+    if (!restoreFrom) restoreFrom = summaryOf(energyOf(active, x));
+    const held = distancesOf();
+    setPairSpring(RELAX_RESTORE_STIFFNESS);
+    const hold = descend({ budget: restoreBudget, target: held, reach: false });
+    setPairSpring(1);
+    const kept = distancesOf();
+    kept.forEach((d, i) => {
+      const drift = Math.abs(d - held[i]);
+      if (drift > restoreDrift) restoreDrift = drift;
+    });
+    stepsTaken += hold.taken;
+    if (hold.stop === 'stalled') stalledOnce = true;
+    restoreTo = summaryOf(energyOf(active, x));
+    restorations += 1;
+  };
+  if (maxSteps > 0 && active.pairs.length) {
+    for (let k = 1; k <= stageCount; k += 1) {
+      const progress = span > 0 ? Math.min(1, (k * stageSize) / span) : 1;
+      const targets = planTargets(progress);
+      const step = descend({ budget: stageSteps, target: targets, reach: true });
+      stepsTaken += step.taken;
+      reason = step.stop;
+      if (step.stop === 'stalled') stalledOnce = true;
+      stagePlan.push({ progress, target: targets, distance: distancesOf(), stop: step.stop });
+      restore();
     }
+    if (stageCount > 1) {
+      const close = descend({
+        budget: Math.max(1, Math.round(stageSteps / 2)), target: pairTargets, reach: false,
+      });
+      stepsTaken += close.taken;
+      reason = close.stop;
+      if (close.stop === 'stalled') stalledOnce = true;
+      restore();
+    }
+  } else if (maxSteps > 0) {
+    const step = descend({ budget: maxSteps, target: null, reach: false });
+    stepsTaken += step.taken;
+    reason = step.stop;
+    if (step.stop === 'stalled') stalledOnce = true;
   }
 
   /* LE RAPPORT — relu sur les coordonnées RÉELLEMENT obtenues, jamais supposé. La
@@ -896,7 +1363,12 @@ export const relaxGeometry = (spec = {}) => {
   }
   const reached = afterPairs.length > 0 && afterPairs.every((p) => p.reached);
   return {
-    ok: true, reason, converged: reached, reached, unstuck,
+    ok: true,
+    /* UNE DESCENTE QUI S'EST POSÉE LE DIT, même quand les paliers suivants ont fini
+       autrement : `stalled` est la vérité la plus utile quand la cible n'est pas
+       atteinte (l'autre raison n'est qu'un budget épuisé). */
+    reason: stalledOnce ? 'stalled' : reason,
+    converged: reached, reached, unstuck,
     positions: x,
     moved,
     before,
@@ -906,7 +1378,23 @@ export const relaxGeometry = (spec = {}) => {
       before: p.distance, after: afterPairs[i].distance,
       deviation: afterPairs[i].deviation, reached: afterPairs[i].reached,
     })),
-    steps: taken,
+    stages: stagePlan.length,
+    stageStep: stageSize,
+    stagePlan,
+    restorations,
+    /* CE QUE LA REPRISE A RENDU — les écarts moyens du premier état d'avant reprise
+       et du dernier état d'après, et de combien la distance DEMANDÉE a bougé au
+       passage (`pairDrift`, la plus grande des reprises) : c'est le chiffre qui dit
+       si la molécule arrive tendue ou détendue, et si la distance tient (voir
+       `relaxReportOf`, qui l'affiche). */
+    restore: restoreFrom && restoreTo ? {
+      passes: restorations,
+      bondRms: { before: restoreFrom.bondRms, after: restoreTo.bondRms },
+      angleRms: { before: restoreFrom.angleRms, after: restoreTo.angleRms },
+      planarRms: { before: restoreFrom.planarRms, after: restoreTo.planarRms },
+      pairDrift: restoreDrift,
+    } : null,
+    steps: stepsTaken,
     evaluations,
     terms: termInfo,
     hybrids: terms.hybrids,

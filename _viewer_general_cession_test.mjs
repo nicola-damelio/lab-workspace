@@ -458,6 +458,9 @@ const REAL = new Function('NGL', [
   sliceFn(VIEW, 'lipidGroupOf'),
   sliceDecl(VIEW, 'lipidPartIndexStore'),
   sliceDecl(VIEW, 'lipidSubCache'),
+  // Les oxygènes du phosphate, lus dans le graphe de liaisons : la définition de
+  // « heads » les écarte depuis la révision (voir lipidSubSelections).
+  sliceFn(VIEW, 'phosphateOxygenIndices'),
   sliceFn(VIEW, 'lipidSubSelections'),
   sliceDecl(VIEW, 'moleculeIndexCache'),
   sliceFn(VIEW, 'moleculeIndicesOf'),

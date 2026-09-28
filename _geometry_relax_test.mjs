@@ -20,6 +20,10 @@
      §1 les tables (C–C 1.54, C–H 1.09, et le S–S 2.05 Å du pont disulfure) ;
      §2 l'hybridation lue sur les LIAISONS (sp3 109.47 · sp2 120 · sp 180) ;
      §3 les cycles — le benzène est PLAN, le cyclohexane et un sucre ne le sont pas ;
+     §3bis la PLANÉITÉ TENUE — le cycle ORDONNÉ (ringCycleThrough), les cycles que le
+        fichier dit plans (planarRingsOf), et le TERME qui les tient plats : un benzène
+        plissé que la descente redresse, un cycle qu'une contrainte ne peut plus plier
+        (et le rapport qui dit alors la distance RÉELLE au lieu de plier le cycle) ;
      §4 le graphe, les termes, et les angles de chaque sommet ;
      §5 le GRADIENT ANALYTIQUE vérifié par DIFFÉRENCES FINIES : une dérivée écrite
         à la main ne vaut rien tant qu'on ne l'a pas mesurée ;
@@ -30,6 +34,9 @@
      §7 la distance DEMANDÉE : deux atomes rapprochés pas à pas, la contrainte
         atteinte, la géométrie tenue — et le rapport qui dit la VÉRITÉ quand il
         n'atteint pas la cible ;
+     §7bis LE PAS À PAS ET LA REPRISE — un rapprochement lointain (7.35 → 3.00 Å) qui
+        n'aboutit PAS d'un seul tenant et qui aboutit par paliers de 2 Å, chacun suivi
+        d'une reprise qui relâche la fenêtre entière à la distance obtenue ;
      §8 un VRAI NGL : un PDB écrit à la main est parsé, ses liaisons viennent du
         fichier, la descente écrit dans la structure (positionFromArray), le PDB
         exporté est RELU et remesuré ;
@@ -42,9 +49,11 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import {
   HYBRID_ANGLES, IDEAL_BOND_LENGTHS, BOND_ORDER_SHORTENING, PLANAR_RING_SIZES,
-  PLANAR_RING_MAX_BOND, RELAX_WEIGHTS, RELAX_PAIR_TOLERANCE,
-  bondLengthTarget, bondGraphOf, ringSizeThrough, hybridOf, angleTargetOf,
-  buildRelaxTerms, energyOf, pairReportOf, relaxWindow, relaxGeometry, flatPositions,
+  PLANAR_RING_MAX_BOND, PLANAR_RING_KEEP_MAX_BOND, RELAX_WEIGHTS, RELAX_PAIR_TOLERANCE,
+  RELAX_PLANAR_TOLERANCE, RELAX_STAGE_STEP, RELAX_MAX_STAGE_STEP, RELAX_RESTORE_STEPS,
+  RELAX_RESTORE_STIFFNESS,
+  bondLengthTarget, bondGraphOf, ringSizeThrough, ringCycleThrough, hybridOf, angleTargetOf,
+  planarRingsOf, buildRelaxTerms, energyOf, pairReportOf, relaxWindow, relaxGeometry, flatPositions,
 } from './src/utils/geometryRelax.js';
 import { SS_BOND_LENGTH } from './src/utils/disulfideFold.js';
 
@@ -162,6 +171,106 @@ eq(ringSizeThrough({ neighbours: fused, atom: 1 }), 5, 'dans un système fusionn
 const furanose = ringGraph([[0, 1, 2, 3, 4]]);
 eq(ringSizeThrough({ neighbours: furanose, atom: 0 }), 5, 'le cycle d’un sucre fait cinq atomes');
 
+/* ════════════ 3bis. LE CYCLE, EN ORDRE — ET LA PLANÉITÉ TENUE ═══════════════
+   Le dièdre d'un cycle a besoin de ses atomes DANS L'ORDRE (`ringCycleThrough`), et
+   le terme qui tient un cycle plat a besoin de savoir QUELLES liaisons sont courtes
+   (`planarRingsOf`). Puis la descente, exécutée : un benzène plissé se redresse avec
+   le terme, RESTE plissé sans lui, et un cycle qu'une contrainte veut plier tient
+   bon — le rapport dit alors la distance RÉELLE au lieu de tordre le cycle. */
+const RING6 = [[0, 1], [1, 2], [2, 3], [3, 4], [4, 5], [5, 0]];
+const ring6Graph = ringGraph([[0, 1, 2, 3, 4, 5]]);
+const cycle = ringCycleThrough({ neighbours: ring6Graph, atom: 3 });
+eq(cycle.length, 6, 'le plus petit cycle qui traverse un atome, avec sa taille');
+eq(cycle[0], 3, '…il COMMENCE par l’atome demandé (c’est cet ordre qui donne les dièdres)');
+eq([...cycle].sort((a, b) => a - b), [0, 1, 2, 3, 4, 5], '…et il porte les six atomes du cycle, chacun une fois');
+ok(cycle.every((a, i) => ring6Graph(a).includes(cycle[(i + 1) % cycle.length])),
+  '⚠ consécutifs dans la liste = LIÉS dans le graphe : le cycle se referme sur lui-même');
+eq(ringCycleThrough({ neighbours: (i) => (i > 0 && i < 9 ? [i - 1, i + 1] : [1]), atom: 4 }), [],
+  'une chaîne n’a aucun cycle (liste vide, jamais une exception)');
+eq(ringCycleThrough({ neighbours: null, atom: 0 }), [], 'sans graphe non plus');
+eq(ringCycleThrough({ neighbours: ring6Graph, atom: -1 }), [], 'un indice invalide non plus');
+
+/* LES CYCLES QUE LE FICHIER DIT PLANS — la géométrie décide, et elle seule. */
+const graphOf = (bonds, n) => {
+  const adj = Array.from({ length: n }, () => []);
+  for (const [i, j] of bonds) { adj[i].push(j); adj[j].push(i); }
+  return (i) => adj[i] || [];
+};
+const flatRing = (r) => Array.from({ length: 6 }, (_, i) => [
+  r * Math.cos((i * Math.PI) / 3), r * Math.sin((i * Math.PI) / 3), 0,
+]);
+const buckledRing = (r, z) => flatRing(r).map((p, i) => [p[0], p[1], i % 2 ? z : -z]);
+const meanRing = (pos) => {
+  let sum = 0;
+  for (let k = 0; k < pos.length; k += 1) {
+    sum += Math.hypot(...[0, 1, 2].map((c) => pos[k][c] - pos[(k + 1) % pos.length][c]));
+  }
+  return sum / pos.length;
+};
+const ringsOf = (pos) => planarRingsOf({ neighbours: graphOf(RING6, 6), positions: pos.flat(), atomCount: 6 });
+eq(ringsOf(flatRing(1.39)).map((r) => r.atoms), [[0, 1, 2, 3, 4, 5]], 'un benzène (1.39 Å) est le cycle plan du fichier');
+near(ringsOf(flatRing(1.39))[0].meanBond, 1.39, '…et sa moyenne de liaisons est celle qu’on a lue', 1e-9);
+eq(ringsOf(flatRing(1.53)), [], '⚠ un cyclohexane (1.53 Å) n’est JAMAIS déclaré plan');
+eq(ringsOf(flatRing(1.52)), [], '…ni un sucre (1.52 Å)');
+const buckled = buckledRing(1.39, 0.25);
+ok(ringsOf(buckled).length === 1,
+  `⚠ un benzène DÉJÀ PLISSÉ est encore reconnu (liaisons ${meanRing(buckled).toFixed(3)} Å) — sinon il ne serait jamais redressé`);
+ok(PLANAR_RING_KEEP_MAX_BOND > PLANAR_RING_MAX_BOND,
+  'la mesure qui TIENT un cycle est un cheveu plus large que celle qui le lit (1.48 contre 1.45)');
+eq(planarRingsOf({ neighbours: graphOf(RING6, 6), atomCount: 6 }), [],
+  '⚠ sans géométrie, aucun cycle n’est déclaré plan (la règle de hybridOf, §2)');
+
+/* LES TERMES — un dièdre par quadruple consécutif du cycle, tous visés à zéro. */
+const pinchTerms = buildRelaxTerms({ elements: Array(6).fill('C'), bonds: RING6, positions: buckled.flat() });
+eq(pinchTerms.planarRings.length, 1, 'la fonction cible porte UN cycle plan');
+eq(pinchTerms.planars.length, 6, '…et six dièdres (les six quadruples consécutifs du cycle)');
+ok(pinchTerms.planars.every((t) => t.target === 0 && t.weight === RELAX_WEIGHTS.planar),
+  '…visés à zéro, au poids des cycles plans');
+eq(buildRelaxTerms({ elements: Array(6).fill('C'), bonds: RING6, positions: flatRing(1.53).flat() }).planars, [],
+  '⚠ un cyclohexane ne porte AUCUN terme de ce genre : ses 109.47° restent son affaire');
+eq(RELAX_PLANAR_TOLERANCE, 2, 'la tolérance du rapport : « le cycle est resté plan » à 2° près');
+
+/* LE CYCLE PLISSÉ QU'ON RELÂCHE — avec le terme, et sans lui. */
+const relaxRing = (pos, planar) => relaxGeometry({
+  positions: pos, elements: Array(6).fill('C'), bonds: RING6,
+  weights: { ...RELAX_WEIGHTS, planar },
+});
+const mildPucker = buckledRing(1.39, 0.05);
+const mildFree = relaxRing(mildPucker.flat(), 0);
+const mildHeld = relaxRing(mildPucker.flat(), RELAX_WEIGHTS.planar);
+ok(mildFree.after.planarRms > 2,
+  `⚠ SANS le terme, un benzène plissé reste hors du plan : ${mildFree.after.planarRms.toFixed(2)}°`);
+ok(mildHeld.after.planarRms <= RELAX_PLANAR_TOLERANCE,
+  `…AVEC lui, la descente le redresse : ${mildHeld.after.planarRms.toFixed(2)}° hors du plan`);
+near(mildHeld.after.angleRms, 0, '…sans rien perdre des angles (120°)', 0.5);
+near(mildHeld.after.bondRms, 0, '…ni des liaisons', 0.01);
+const hardFree = relaxRing(buckled.flat(), 0);
+const hardHeld = relaxRing(buckled.flat(), RELAX_WEIGHTS.planar);
+ok(hardFree.after.planarRms > 20,
+  `⚠ …et un cycle franchement plissé reste plissé : ${hardFree.after.planarRms.toFixed(1)}°`);
+ok(hardHeld.after.planarRms <= RELAX_PLANAR_TOLERANCE,
+  `AVEC le terme il revient dans le plan (${hardHeld.after.planarRms.toFixed(2)}°) — au prix d’angles à ${hardHeld.after.angleRms.toFixed(1)}° de leur cible, ce que le rapport affiche`);
+
+/* LE CYCLE QU'UNE CONTRAINTE VEUT PLIER — le cas de la demande : un cycle est dans la
+   fenêtre d'un rapprochement, et il perdait sa planéité sans que rien ne le dise. */
+const ringAndChain = [...flatRing(1.39), [2.90, 0, 0], [4.43, 0, 0], [5.96, 0, 0]];
+const ringChainBonds = [...RING6, [0, 6], [6, 7], [7, 8]];
+const squeeze = (planar) => relaxGeometry({
+  positions: ringAndChain.flat(), elements: Array(9).fill('C'), bonds: ringChainBonds,
+  pairs: [{ i: 3, j: 8, target: 3 }], weights: { ...RELAX_WEIGHTS, planar },
+});
+const bowed = squeeze(0);
+const held = squeeze(RELAX_WEIGHTS.planar);
+ok(bowed.after.planarRms > 15,
+  `⚠ SANS le terme, le rapprochement PLIE le cycle de ${bowed.after.planarRms.toFixed(1)}° (angles à ${bowed.after.angleRms.toFixed(2)}° près : rien ne l’en empêchait)`);
+ok(held.after.planarRms <= RELAX_PLANAR_TOLERANCE,
+  `AVEC lui, le cycle reste plan (${held.after.planarRms.toFixed(2)}°) et la distance demandée s’arrête à ${held.pairs[0].after.toFixed(2)} Å (${bowed.pairs[0].after.toFixed(2)} sans le terme)`);
+ok(held.pairs[0].after > bowed.pairs[0].after,
+  '…le cycle tenu est bien ce qui coûte la distance — et le rapport la DIT au lieu de tordre le cycle');
+ok(bowed.reached === true && held.reached === false,
+  '⚠ sans le terme la cible est « atteinte » (en pliant le cycle) ; avec lui elle ne l’est PLUS — et c’est DIT, plutôt que caché');
+near(bowed.after.bondRms, 0, 'les deux modèles gardent leurs liaisons', 0.05);
+
 /* ════════════ 4. LE GRAPHE ET LES TERMES ════════════════════════════════════ */
 const g1 = bondGraphOf({ bonds: [[0, 1], [1, 2], [1, 2], [2, 2], ['a', 'b'], [3, 9]], atomCount: 3 });
 eq(g1.list, [{ i: 0, j: 1, order: 1 }, { i: 1, j: 2, order: 1 }],
@@ -229,8 +338,8 @@ const opts = { ref: toyRef, tether: 0.5, movable: movableAll };
 const analytic = new Float64Array(toyX.length);
 const hessian = new Float64Array(toyX.length);
 const toyEnergy = energyOf(toyTerms, toyX, { ...opts, grad: analytic, hess: hessian });
-near(toyEnergy.total, toyEnergy.bond + toyEnergy.angle + toyEnergy.pair + toyEnergy.tether,
-  'l’énergie est la SOMME des quatre familles, sans rien d’autre', 1e-12);
+near(toyEnergy.total, toyEnergy.bond + toyEnergy.angle + toyEnergy.planar + toyEnergy.pair + toyEnergy.tether,
+  'l’énergie est la SOMME des cinq familles, sans rien d’autre', 1e-12);
 ok(toyEnergy.tether > 0, 'la longe compte (son origine est ailleurs qu’aux coordonnées)');
 const h = 1e-6;
 let worstGrad = 0;
@@ -243,6 +352,31 @@ for (let k = 0; k < toyX.length; k += 1) {
 ok(worstGrad < 1e-5,
   `⚠ le gradient ANALYTIQUE est le vrai gradient : le pire écart aux différences finies est ${worstGrad.toExponential(2)}`);
 ok(hessian.every((v) => v > 0), 'la diagonale de Gauss-Newton est positive partout (préconditionneur utilisable)');
+
+/* LE GRADIENT DES CYCLES PLANS, MESURÉ DE LA MÊME FAÇON — c'est la seule famille dont
+   la dérivée ne s'écrit pas d'un trait : elle passe par deux scalaires (X = A·B et
+   Y = |v|·u·(v×w), la règle du quotient d'un atan2) et par les dérivées de CES deux
+   scalaires, atome par atome. La formule « de la littérature » essayée d'abord ne
+   tombait juste que pour deux des quatre atomes d'un dièdre ; celle-ci se mesure. */
+const ringX = buckled.flat();
+const ringTerms = buildRelaxTerms({ elements: Array(6).fill('C'), bonds: RING6, positions: ringX });
+const planarOnly = { bonds: [], angles: [], pairs: [], planars: ringTerms.planars };
+const ringGrad = new Float64Array(ringX.length);
+const ringEnergy = energyOf(planarOnly, ringX, { grad: ringGrad });
+ok(ringEnergy.planar > 0,
+  `un cycle plissé coûte ${ringEnergy.planar.toFixed(0)} d’énergie de planéité (${ringEnergy.planarRms.toFixed(1)}° hors du plan)`);
+near(ringEnergy.total, ringEnergy.planar + ringEnergy.bond + ringEnergy.angle + ringEnergy.pair + ringEnergy.tether,
+  '…et cette famille entre dans le total comme les autres', 1e-12);
+let worstRing = 0;
+for (let k = 0; k < ringX.length; k += 1) {
+  const up = ringX.slice(); up[k] += h;
+  const dn = ringX.slice(); dn[k] -= h;
+  const numeric = (energyOf(planarOnly, up).total - energyOf(planarOnly, dn).total) / (2 * h);
+  worstRing = Math.max(worstRing, Math.abs(numeric - ringGrad[k]));
+}
+const ringScale = Math.max(...Array.from(ringGrad, Math.abs));
+ok(worstRing < 1e-6 * ringScale + 1e-9,
+  `⚠ le gradient des cycles est le VRAI gradient : pire écart ${worstRing.toExponential(2)} pour des dérivées qui montent à ${ringScale.toFixed(0)}`);
 const tetherOnly = energyOf(toyTerms, toyX, { ref: toyRef, tether: 2, movable: [1] });
 const tdx = toyX[3] - toyRef[3]; const tdy = toyX[4] - toyRef[4]; const tdz = toyX[5] - toyRef[5];
 near(tetherOnly.tether, 2 * (tdx * tdx + tdy * tdy + tdz * tdz),
@@ -505,8 +639,56 @@ eq(zeroSteps.reason, 'max-steps', '…la raison est celle-là, dite telle quelle
   eq(relaxed.moved, [1, 2, 3], '…et le rapport nomme exactement les trois atomes de la fenêtre');
 }
 
+/* ════════════ 10bis. LE PAS À PAS ET LA REPRISE ═════════════════════════════
+   « Le programme commence à rapprocher les deux atomes pas à pas. » Mesuré sur un
+   cycle portant une chaîne dont deux atomes doivent passer de 7.35 Å à 3.00 Å : d'un
+   seul tenant la descente n'aboutit PAS (la tension de la contrainte la bloque), par
+   paliers de 2 Å elle arrive au bout de ce que la géométrie peut donner — et chaque
+   palier se termine par une REPRISE qui relâche la fenêtre entière, la distance
+   obtenue tenue par un ressort plus raide. C'est la demande, mot pour mot : « starts
+   with 18, relax, then 16, relax… ». */
+eq(RELAX_STAGE_STEP, 2, 'le palier par défaut du rapprochement : 2 Å');
+ok(RELAX_MAX_STAGE_STEP > RELAX_STAGE_STEP, '…et le plafond du champ du panneau est plus large');
+ok(RELAX_RESTORE_STEPS > 0, 'la reprise a ses propres pas');
+ok(RELAX_RESTORE_STIFFNESS > 1,
+  '⚠ le ressort de la reprise est plus raide que celui de la descente : la distance obtenue ne repart pas');
+const pullStages = (stageStep, restoreSteps) => relaxGeometry({
+  positions: ringAndChain.flat(), elements: Array(9).fill('C'), bonds: ringChainBonds,
+  pairs: [{ i: 3, j: 8, target: 3 }], stageStep, restoreSteps,
+});
+const startGap = Math.hypot(...[0, 1, 2].map((c) => ringAndChain[3][c] - ringAndChain[8][c]));
+const oneGo = pullStages(0, 0);
+const staged = pullStages(RELAX_STAGE_STEP, RELAX_RESTORE_STEPS);
+ok(oneGo.pairs[0].after > startGap - 1,
+  `⚠ d’UN SEUL tenant, la descente reste à ${oneGo.pairs[0].after.toFixed(2)} Å sur les ${startGap.toFixed(2)} Å du départ (elle ne bouge presque pas) : c’est le geste d’AVANT`);
+ok(staged.pairs[0].after < oneGo.pairs[0].after - 2,
+  `…par paliers de ${staged.stageStep} Å elle atteint ${staged.pairs[0].after.toFixed(2)} Å`);
+eq(oneGo.stages, 1, 'un palier de 0 Å : aucune découpe (le geste d’avant)');
+eq(staged.stages, Math.ceil((startGap - 3) / RELAX_STAGE_STEP),
+  '…et le nombre de paliers est celui que la distance à couvrir demande (18 → 16 → 14…)');
+const gaps = staged.stagePlan.map((s) => s.distance[0]);
+ok(gaps.every((d, i) => i === 0 || d <= gaps[i - 1] + 0.001),
+  `la distance DESCEND palier après palier : ${gaps.map((d) => d.toFixed(1)).join(' → ')}`);
+ok(gaps.every((d) => d >= 3 - 0.001), '⚠ …sans jamais repasser SOUS la cible demandée');
+eq(staged.restorations, staged.stages + 1,
+  'chaque palier a sa reprise, plus celle du dernier rapprochement (le geste referme)');
+ok(staged.restore && staged.restore.passes === staged.restorations,
+  '…et le rapport porte une entrée par reprise (`restore.passes`)');
+ok(staged.restore.pairDrift < 0.05,
+  `⚠ la reprise ne repart PAS avec la distance obtenue : ${staged.restore.pairDrift.toFixed(3)} Å de dérive au plus (ressort ${RELAX_RESTORE_STIFFNESS}×)`);
+ok(staged.restore.bondRms.after !== staged.restore.bondRms.before
+  || staged.restore.angleRms.after !== staged.restore.angleRms.before,
+  `…et elle a bel et bien travaillé : liaisons ${staged.restore.bondRms.before.toFixed(4)} → ${staged.restore.bondRms.after.toFixed(4)} Å rms, angles ${staged.restore.angleRms.before.toFixed(2)}° → ${staged.restore.angleRms.after.toFixed(2)}°`);
+const noRestore = pullStages(RELAX_STAGE_STEP, 0);
+eq(noRestore.restorations, 0, 'restoreSteps = 0 : aucune reprise, et le rapport le dit');
+ok(noRestore.after.bondRms > staged.after.bondRms,
+  `…la tension reste alors dans le modèle : ${noRestore.after.bondRms.toFixed(4)} Å rms contre ${staged.after.bondRms.toFixed(4)} avec les reprises`);
+const noPairStaged = relaxGeometry({ ...spec5, positions: bent, stageStep: RELAX_STAGE_STEP });
+eq(noPairStaged.positions, bentRun.positions,
+  '⚠ sans distance demandée, le pas à pas ne change RIEN : la descente reste celle d’avant');
+eq(noPairStaged.stages, 0, '…et le rapport ne compte aucun palier');
+
 /* ════════════ 11. LE BRANCHEMENT DU VIEWER ══════════════════════════════════
-   Le module ne sert à rien s'il n'est pas branché. Ce que la page DOIT dire : le
    bouton, le champ de la fenêtre, la façon dont la molécule est lue (le vrai
    graphe de NGL), la cible prise au champ A–D ou à la TABLE, le chemin d'écriture
    d'un geste (writeStructurePositions + le journal ↺), et un rapport qui dit ce
@@ -558,8 +740,26 @@ has(VIEW, '· ${run.moved.length} atom${run.moved.length === 1 ? \'\' : \'s\'} m
 has(VIEW, '· ⚠ the window was CAPPED at ${win.movable.length} atoms', '…et il DIT quand la fenêtre a mordu le plafond');
 has(VIEW, '${run.unstuck} flat angle${run.unstuck === 1 ? \'\' : \'s\'} nudged before the descent',
   '…et quand des angles plats ont reçu leur coup de pouce');
-has(VIEW, 'A geometric TARGET FUNCTION (ideal bond lengths and angles, the distances you asked for) — no charges,',
-  '⚠ le rapport dit ce que le geste N’EST PAS : une cible géométrique, pas un champ de forces');
+has(VIEW, 'const [relaxStageStep, setRelaxStageStep] = useState(RELAX_STAGE_STEP);',
+  'le pas à pas du ⚒ a son état (le champ « ⇉ stages »)');
+has(VIEW, 'const setRelaxStageStepText = (v) => {', '…et son lecteur, borné au plafond du module');
+has(VIEW, 'stageStep: relaxStageStep,', '⚠ le champ du pas à pas entre dans la descente');
+has(VIEW, '⇉ stages', '…et le champ est nommé « ⇉ stages »');
+has(VIEW, '· ${run.terms.rings} planar ring${run.terms.rings === 1 ? ', 'le rapport dit les cycles plans qu’il a tenus plats');
+has(VIEW, '· ⇉ ${run.stages} stages of ${run.stageStep} Å', '…et les paliers du rapprochement');
+has(VIEW, '· the restores brought bonds ${torsionAng(run.restore.bondRms.before)} → ${torsionAng(run.restore.bondRms.after)} rms',
+  '…avec ce que les reprises ont redressé');
+has(VIEW, ', moving the distance by ${run.restore.pairDrift.toFixed(3)} Å at most',
+  '…et de combien la distance a bougé au passage (le ressort de la reprise, mesuré)');
+has(VIEW, 'RELAX_STAGE_STEP, RELAX_MAX_STAGE_STEP, RELAX_PLANAR_TOLERANCE,',
+  '…et les trois constantes du pas à pas et de la planéité sont importées');
+has(VIEW, 'held at zero, so a ring cannot lose its planarity without the report saying so.',
+  '⚠ le bouton ⚒ dit que les cycles du fichier sont tenus plats (le défaut de la demande)');
+has(VIEW, 'The pair is brought together BY STAGES', '…et que le rapprochement se fait par paliers');
+has(VIEW, 'which is why a benzene no longer comes out of a build slightly plucked',
+  'la note du panneau dit ce que le geste corrige (un benzène plissé, 21.6° mesurés)');
+has(VIEW, 'A geometric TARGET FUNCTION (ideal bond lengths and angles, the distances you asked for, and the planarity of the rings the file itself reads as planar) — no charges,',
+  '⚠ le rapport dit ce que le geste N’EST PAS : une cible géométrique (la planéité des cycles comprise), pas un champ de forces');
 has(VIEW, 'no solvent, and a LOCAL descent: what it could not do, it says instead of pretending.',
   '…locale, et honnête sur ce qu’elle n’a pas su faire');
 has(VIEW, 'const relaxWhy = (run) => ({', 'les raisons du module pur sont TRADUITES, jamais inventées');
@@ -574,6 +774,7 @@ has(VIEW, '⚒ Model build is the same kind of edit — the same coordinates, th
   'la note du panneau range le geste à côté de la torsion (mêmes coordonnées, même ↺)');
 
 /* ── Bilan ─────────────────────────────────────────────────────────────────── */
-console.log(`_geometry_relax_test.mjs — ${passed} assertions OK (les tables de la chimie, l'hybridation et les`
-  + ' cycles, le gradient mesuré par différences finies, la descente exécutée pas à pas, la fenêtre,'
+console.log(`_geometry_relax_test.mjs — ${passed} assertions OK (les tables de la chimie, l'hybridation, les`
+  + ' cycles et la PLANÉITÉ tenue, le gradient mesuré par différences finies (les cycles compris),'
+  + ' la descente exécutée pas à pas, le PAS À PAS du rapprochement et ses reprises, la fenêtre,'
   + ' et un vrai PDB étiré reconstruit puis relu par NGL)');
