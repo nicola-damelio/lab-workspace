@@ -114,6 +114,7 @@ import {
   relaxGeometry, relaxWindow, bondLengthTarget, RELAX_DEFAULT_RADIUS, RELAX_MAX_RADIUS,
   RELAX_PAIR_TOLERANCE, RELAX_BOND_TOLERANCE, RELAX_ANGLE_TOLERANCE,
   RELAX_STAGE_STEP, RELAX_MAX_STAGE_STEP, RELAX_PLANAR_TOLERANCE,
+  RELAX_DEFAULT_ESCAPES, RELAX_MAX_ESCAPES, RELAX_CLASH_DISTANCE,
 } from '../utils/geometryRelax';
 // HETATM code → SMILES: the Chemistry Component Dictionary of the RCSB (see
 // utils/ligandSmiles.js). A PDB only names its ligand by a 3-letter code, so this
@@ -7650,6 +7651,25 @@ const setRelaxStageStepText = (v) => {
     ? Math.min(RELAX_MAX_STAGE_STEP, Math.max(0, n))
     : RELAX_STAGE_STEP);
 };
+/* 🎲 LES ÉCHAPPÉES DU ⚒ — combien de BOTTES DE TORSION la descente a le droit
+   d'essayer quand elle s'est arrêtée dans un creux (« e se usassi un metodo di
+   minimizzazione che esce dalle buche locali? »). Chaque botte est une rotation
+   rigide d'une partie de la fenêtre autour d'une liaison, suivie d'une descente
+   courte ; le module garde le meilleur modèle, et le résultat n'est donc JAMAIS
+   moins bon que celui de la descente seule. 0 = le geste d'avant (une seule
+   descente). Le panneau envoie 6 par défaut (RELAX_DEFAULT_ESCAPES) : la graine
+   du module est fixe, donc le même geste redonne exactement le même construit. */
+const [relaxEscapes, setRelaxEscapes] = useState(RELAX_DEFAULT_ESCAPES);
+const setRelaxEscapesText = (v) => {
+  const n = Math.round(Number(String(v).replace(',', '.')));
+  setRelaxEscapes(Number.isFinite(n) ? Math.min(RELAX_MAX_ESCAPES, Math.max(0, n)) : 0);
+};
+/* LE GESTE, IMAGE PAR IMAGE — la mémoire de l'animation du ⚒ (voir
+   `playRelaxFrames`) : les images retenues de la dernière construction, et la
+   façon de terminer TOUT DE SUITE un geste encore en train de se jouer. Un
+   nouveau clic, un chargement, un dépli du viewer : `finishRelaxPlayback` écrit
+   la dernière image et rend la main, donc jamais de molécule à mi-chemin. */
+const relaxAnimRef = useRef(null);
 
 const [rebuildMsg, setRebuildMsg] = useState('');
 const rebuildMsgTimerRef = useRef(null);
@@ -9356,6 +9376,7 @@ const geometryOfStructure = (structure) => {
 const relaxWhy = (run) => ({
   'converged': 'the descent reached the bottom of its target function',
   'stalled': 'the descent found nowhere left to go (a LOCAL minimum: the atoms would have to cross a barrier, and this is not a force field)',
+  'escaped': 'the descent was stuck in a local minimum and the 🎲 escapes found a DEEPER one — the model shown is the best of them (the kicks are in the report), not the descent’s own result',
   'max-steps': 'the step budget ran out before the target function was at its bottom',
   'no-movable': 'no atom is allowed to move (the window is empty)',
   'no-terms': 'this molecule has no bond the table knows and no distance was asked for — there is nothing to build',
@@ -9405,6 +9426,23 @@ const relaxReportOf = (pair, run, win) => {
       + ` and angles ${run.restore.angleRms.before.toFixed(1)}° → ${run.restore.angleRms.after.toFixed(1)}° rms`
       + `, moving the distance by ${run.restore.pairDrift.toFixed(3)} Å at most`
     : '';
+  /* LES ÉCHAPPÉES — combien de bottes, combien ont été GARDÉES, et ce qu'elles ont
+     changé. Rien n'est inventé : les chiffres viennent de `run.escapes`, et quand
+     aucune botte n'a tourné le rapport DIT pourquoi (`skip`). */
+  const kicks = run.escapes && run.escapes.used
+    ? ` · 🎲 ${run.escapes.tried} torsion kick${run.escapes.tried === 1 ? '' : 's'} of ${run.escapes.wanted}`
+      + ` (${run.escapes.improved} kept — each one a DIFFERENT basin, ${run.escapes.rejected} rejected)`
+    : (run.escapes && run.escapes.wanted
+      ? ` · 🎲 no kick: ${run.escapes.skip}` : '');
+  /* LES CONTACTS TROP COURTS — le dernier mot sur « la géométrie est-elle
+     réalisable » : la fonction cible n'a AUCUN van der Waals, donc rien en elle ne
+     peut écarter deux atomes superposés. Le rapport le dit au lieu de le taire. */
+  const clash = run.clashes
+    ? (run.clashes.count
+      ? ` · ⚠ ${run.clashes.count} atom pair${run.clashes.count === 1 ? '' : 's'} closer than ${torsionAng(RELAX_CLASH_DISTANCE)}`
+        + ` (closest ${torsionAng(run.clashes.worst.distance)}) — no van der Waals term can pull them apart here`
+      : ` · ✓ no atom pair closer than ${torsionAng(run.clashes.minDistance)}`)
+    : '';
   return `⚒ Model build · ${names} : ${torsionAng(p ? p.before : 0)} → ${torsionAng(p ? p.after : 0)}`
     + `${verdict ? ` — ${verdict}` : ''}`
     + ` · energy ${run.before.total.toFixed(1)} → ${run.after.total.toFixed(1)}`
@@ -9412,9 +9450,87 @@ const relaxReportOf = (pair, run, win) => {
     + ` · angles ${run.after.angleRms.toFixed(1)}° rms over ${run.terms.angles}${worstAngle}`
     + `${rings}`
     + ` · ${run.moved.length} atom${run.moved.length === 1 ? '' : 's'} moved of ${win.movable.length}`
-    + `${cut}${flat}${stages}${restored} · ${run.steps} steps, ${run.evaluations} evaluations.`
+    + `${cut}${flat}${stages}${restored}${kicks}${clash} · ${run.steps} steps, ${run.evaluations} evaluations.`
     + ' A geometric TARGET FUNCTION (ideal bond lengths and angles, the distances you asked for, and the planarity of the rings the file itself reads as planar) — no charges,'
-    + ' no solvent, and a LOCAL descent: what it could not do, it says instead of pretending. ↺ Undo torsion puts every atom back.';
+    + ' no solvent, and a LOCAL descent: what it could not do, it says instead of pretending.'
+    + ' The 🎲 escapes are torsion kicks drawn from a FIXED seed, so the same molecule and the same gesture give the same model, to the last digit. ↺ Undo torsion puts every atom back.';
+};
+
+/* ── ⚒ MODEL BUILD · LA MOLÉCULE QUI CHANGE À CHAQUE PAS ─────────────────────
+   « Sarebbe bello vedere la molecola che cambia ad ogni passo invece che il
+   risultato finale di botto. » Le module PUR annonce chaque pas (`onStep` : la
+   descente, les reprises, les 🎲 bottes, le dernier état) ; les trois fonctions
+   ci-dessous en font des IMAGES et les écrivent dans la structure, une par image
+   affichée. Rien n'est réinventé ici : chaque image porte les coordonnées que le
+   module avait à cet instant, l'écriture est celle d'un geste de souris, et le
+   texte final est le rapport du module. */
+
+/** Combien d'images l'animation garde au plus (≈ 4 s à 60 i/s). Au-delà, une image
+ *  sur deux est jetée et le pas double : la chronologie est conservée, un geste de
+ *  3000 pas tient dans 240 images, et les bottes restent toutes là. */
+const RELAX_ANIM_FRAMES = 240;
+
+/** ÉCRIRE UNE IMAGE DU ⚒ — le MÊME chemin d'écriture qu'une torsion
+ *  (`writeStructurePositions` : `positionFromArray` atome par atome + redessin),
+ *  et le même refus : si la structure ne prend pas les coordonnées, le panneau le
+ *  dit au lieu de croire au geste. */
+const writeRelaxFrame = (comp, movable, flat) => {
+  if (!writeStructurePositions(comp, movable, flat)) {
+    setTorsionMsg('✕ The structure refused the new coordinates — nothing was changed.');
+    return false;
+  }
+  return true;
+};
+
+/** TERMINER L'ANIMATION EN COURS — la dernière image écrite d'un coup, le rapport
+ *  affiché. Appelée par un nouveau geste, par un chargement, ou par un repli du
+ *  viewer : la molécule ne reste jamais à mi-chemin d'un construit. Rend true
+ *  quand il y avait bien un geste à terminer. */
+const finishRelaxPlayback = () => {
+  const anim = relaxAnimRef.current;
+  if (!anim) return false;
+  relaxAnimRef.current = null;
+  anim.finish();
+  return true;
+};
+
+/** JOUER LES IMAGES DU ⚒ — une par image affichée (`requestAnimationFrame`), donc
+ *  la molécule change à l'écran au lieu du résultat de but en blanc. `frames` vient
+ *  de `onStep` (voir `buildModelNow`), `finalFlat` porte les coordonnées du rapport
+ *  (elles sont écrites si le geste n'a produit aucune image) : la géométrie finale
+ *  est TOUJOURS celle du module, à l'image près. */
+const playRelaxFrames = ({
+  comp, movable, frames, finalIdxs, finalFlat, report, progressOf,
+}) => {
+  const total = frames.length;
+  const anim = { finish: () => {} };
+  const finish = () => {
+    if (relaxAnimRef.current === anim) relaxAnimRef.current = null;
+    if (total) writeRelaxFrame(comp, movable, frames[total - 1].flat);
+    else if (finalIdxs && finalFlat) writeRelaxFrame(comp, finalIdxs, finalFlat);
+    setTorsionMsg(report);
+  };
+  anim.finish = finish;
+  if (!total) { finish(); return anim; }
+  relaxAnimRef.current = anim;
+  let at = 0;
+  const tick = () => {
+    /* ANNULÉ — un autre geste a pris la main, ou la structure à l'écran n'est plus
+       celle qu'on écrit : on s'arrête sans écrire une image de plus. */
+    if (relaxAnimRef.current !== anim || componentRef.current !== comp) return;
+    const frame = frames[at];
+    if (!writeRelaxFrame(comp, movable, frame.flat)) { relaxAnimRef.current = null; return; }
+    at += 1;
+    if (at >= total) { finish(); return; }
+    setTorsionMsg(progressOf(frames[at - 1], at, total));
+    if (typeof window !== 'undefined' && window.requestAnimationFrame) {
+      window.requestAnimationFrame(tick);
+    } else tick();
+  };
+  if (typeof window !== 'undefined' && window.requestAnimationFrame) {
+    window.requestAnimationFrame(tick);
+  } else tick();
+  return anim;
 };
 
 /* ── ✏️ Torsion · « ⚒ Model build » — LE GESTE DE LA DEMANDE ──────────────────
@@ -9431,6 +9547,10 @@ const relaxReportOf = (pair, run, win) => {
    📥 Download lisent la géométrie qui est vraiment là, et « ↺ Undo torsion » la
    remet exactement comme avant. */
 const buildModelNow = () => {
+  /* UN GESTE QUI JOUE ENCORE EST TERMINÉ D'ABORD — sa dernière image est écrite et
+     son rapport affiché avant que celui-ci ne prenne la main : jamais deux
+     animations en même temps sur la même structure. */
+  finishRelaxPlayback();
   const pair = torsionPairOf();
   if (!pair.ok) { setTorsionClosest(null); setTorsionMsg(`✕ ${pair.say}`); return; }
   const { comp, structure, idx } = pair;
@@ -9453,13 +9573,57 @@ const buildModelNow = () => {
     setTorsionMsg('✕ No atom to move — pick the two atoms again.');
     return;
   }
+  /* ── LES IMAGES DU GESTE — `onStep` les retient au fil de la descente ─────────
+     Une image par pas (coordonnées de la FENÊTRE, énergie, distance demandée,
+     palier, botte), plafonnée à RELAX_ANIM_FRAMES : au-delà, une image sur deux
+     est jetée et le pas double, donc la chronologie tient dans la mémoire sans
+     jamais perdre les bottes des 🎲 échappées (elles sont gardées d'office, comme
+     le dernier état du module). */
+  const movable = win.movable;
+  const frames = [];
+  const buffer = new Float32Array(movable.length * 3);
+  let stride = 1;
+  const keep = (v) => {
+    for (let k = 0; k < movable.length; k += 1) {
+      const a = movable[k];
+      buffer[k * 3] = v.positions[a * 3];
+      buffer[k * 3 + 1] = v.positions[a * 3 + 1];
+      buffer[k * 3 + 2] = v.positions[a * 3 + 2];
+    }
+    frames.push({
+      flat: buffer.slice(),
+      step: v.step,
+      phase: v.phase,
+      energy: v.energy,
+      distance: v.distances.length ? v.distances[0] : 0,
+      stage: v.stage,
+      stages: v.stages,
+      attempt: v.attempt,
+      attempts: v.attempts,
+      clash: v.clash,
+      accepted: v.accepted,
+    });
+  };
+  const onStep = (v) => {
+    if (v.phase === 'kick' || v.phase === 'escape' || v.phase === 'final') { keep(v); return; }
+    if (frames.length < RELAX_ANIM_FRAMES) { keep(v); return; }
+    if (frames.length === RELAX_ANIM_FRAMES) {
+      const thin = frames.filter((_, k) => k % 2 === 0);
+      frames.length = 0;
+      for (const f of thin) frames.push(f);
+      stride *= 2;
+    }
+    if (v.step % stride === 0) keep(v);
+  };
   const run = relaxGeometry({
     positions: geom.positions,
     elements: geom.elements,
     bonds: geom.bonds,
     pairs: [{ i, j, target }],
-    movable: win.movable,
+    movable,
     stageStep: relaxStageStep,
+    escapes: relaxEscapes,
+    onStep,
   });
   if (!run.ok) {
     setTorsionClosest(null);
@@ -9472,18 +9636,17 @@ const buildModelNow = () => {
       + ` of the ${win.movable.length}-atom window is within ${RELAX_BOND_TOLERANCE} Å / ${RELAX_ANGLE_TOLERANCE}° / ${RELAX_PLANAR_TOLERANCE}° of its target. Nothing had to move.`);
     return;
   }
+  /* LES COORDONNÉES DU RAPPORT — les seuls atomes écrits, dans l'ordre du ↘ : c'est
+     la géométrie que la fin de l'animation laisse à l'écran, et celle que le ↺
+     remettra à l'envers (le snapshot d'AVANT est pris juste après, avant la
+     première image écrite). */
   const flat = new Float32Array(run.moved.length * 3);
   run.moved.forEach((k, c) => {
     flat[c * 3] = run.positions[k * 3];
     flat[c * 3 + 1] = run.positions[k * 3 + 1];
     flat[c * 3 + 2] = run.positions[k * 3 + 2];
   });
-  const before = torsionSnapshotOf(structure);       // AVANT l'écriture : le ↺
-  if (!writeStructurePositions(comp, run.moved, flat)) {
-    setTorsionClosest(null);
-    setTorsionMsg('✕ The structure refused the new coordinates — nothing was changed.');
-    return;
-  }
+  const before = torsionSnapshotOf(structure);       // AVANT la première image : le ↺
   torsionUndoRef.current = {
     comp,
     structure,
@@ -9495,7 +9658,24 @@ const buildModelNow = () => {
   const warn = structureWasDragged(structure)
     ? ' ⚠ this molecule had also been DRAGGED by hand: re-playing that drag (another frame, the ⏮ button) puts its placement back.'
     : '';
-  setTorsionMsg(`${relaxReportOf(pair, run, win)}${warn}`);
+  const report = `${relaxReportOf(pair, run, win)}${warn}`;
+  /* LA MOLÉCULE CHANGE À CHAQUE PAS — les images du module sont écrites une par
+     image affichée (voir `playRelaxFrames`), en commençant par le premier pas de la
+     descente ; la dernière écrit exactement les coordonnées du rapport. Un clic de
+     plus pendant que ça joue termine le geste d'un coup, donc la molécule ne reste
+     jamais entre deux buches. */
+  playRelaxFrames({
+    comp,
+    movable,
+    frames,
+    finalIdxs: run.moved,
+    finalFlat: flat,
+    report,
+    progressOf: (frame, at, total) => `⚒ building — image ${at}/${total} · step ${frame.step}`
+      + `${frame.stages ? ` · ⇉ stage ${frame.stage}/${frame.stages}` : ''}`
+      + `${frame.attempt ? ` · 🎲 kick ${frame.attempt}/${frame.attempts}` : ''}`
+      + ` · energy ${frame.energy.toFixed(1)} · ${pair.label} ${torsionAng(frame.distance)}`,
+  });
 };
 
 /** LE CÔTÉ QUI TOURNE — la réponse du module (les atomes qui partent avec D), ou sa
@@ -9569,6 +9749,10 @@ const structureWasDragged = (structure) => {
  *  n'écrit RIEN et rend la raison du module telle quelle (`torsionWhy`, qui la traduit
  *  en une phrase : jamais un diagnostic inventé ici). */
 const commitTorsion = (r, plan, label) => {
+  /* UNE TORSION APPLIQUÉE TERMINE D'ABORD L'ANIMATION DU ⚒ — sinon deux gestes
+     écriraient les mêmes coordonnées en même temps, et le dernier pas du construit
+     recouvrirait la torsion. Terminer écrit la dernière image et son rapport. */
+  finishRelaxPlayback();
   if (!r || !r.ok) {
     setTorsionClosest(null);
     setTorsionMsg(`✕ ${(r && r.say) || torsionWhy(plan && plan.reason)}`);
@@ -9678,6 +9862,10 @@ const applyClosestTorsion = () => {
 /** ↺ UNDO — la torsion défaite atome par atome, sur les coordonnées d'AVANT. Le ↺ ne
  *  touche ni les picks ni les chiffres tapés : il défait le geste, pas la question. */
 const undoLastTorsion = () => {
+  /* LE ↺ ARRÊTE D'ABORD L'ANIMATION DU ⚒ — sinon la torsion défaite serait recouverte
+     image après image par le construit en cours. Terminer maintenant, c'est annuler le
+     geste : la dernière image du ⚒ est écrite, puis le ↺ remet la géométrie d'AVANT. */
+  finishRelaxPlayback();
   const rec = torsionUndoRef.current;
   const comp = componentRef.current;
   if (!rec || !rec.flat || !rec.count) {
@@ -18913,9 +19101,19 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
             className="w-12 border border-amber-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-amber-500 text-[10px] font-mono bg-white" />
           Å
         </label>
+        <label className="flex items-center gap-1 text-[10px] font-bold text-amber-800">
+          🎲 escapes
+          <input type="number" step="1" min="0" max={RELAX_MAX_ESCAPES} value={relaxEscapes}
+            onChange={(e) => setRelaxEscapesText(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') buildModelNow(); }}
+            aria-label="How many torsion kicks the model build may try when the descent gets stuck"
+            title="How the build gets out of a LOCAL minimum. The descent stops in the first dip of its target function and says so — on a long fold (two atoms only another conformation can bring together) that dip is a wall, and the molecule stays stretched. Each 🎲 escape is a TORSION KICK: a part of the window is turned RIGIDLY about one bond the module draws at random (a bond inside a ring is refused, so no cycle is ever bent), by an angle that shrinks from 70° to 12° as the attempts go by — the first ones explore, the last ones adjust. Bond lengths and angles of the turned part are preserved to the digit (it is a rigid rotation), then a SHORT descent (60 steps) relaxes what crosses the axle, and the BEST model of all attempts is the one kept: the result is never worse than the plain descent, and a fold the descent alone could not find can appear. 0 = the gesture as it was (one single descent). The draws come from a FIXED seed, so the same molecule and the same gesture give the same model to the last digit, and a kick that would put two unbonded atoms closer than 1.45 Å is only kept if it is much better otherwise — the report says how many such contacts remain on the model you get."
+            className="w-12 border border-amber-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-amber-500 text-[10px] font-mono bg-white" />
+          kicks
+        </label>
         <button type="button" onClick={buildModelNow}
           className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-emerald-300 text-emerald-700 hover:bg-emerald-50"
-          title="⚒ MODEL BUILD — the gesture HyperChem had: build a CHEMICALLY VALID model out of the bonds, after they are known. Two atoms picked (A and D of the four, or the only two), the distance typed in the A–D field (left empty, the length the table gives that pair of elements: S–S 2.05 Å, C–S 1.82 Å, C–C 1.54 Å…), and the atoms around them MOVE, step by step, until the molecule has moved enough for the two atoms to be that far apart. The energy it minimises is a TARGET FUNCTION: the squared deviations of every bond of the window from its typical length, of every angle from the ideal angle of its hybridisation (sp3 109.47°, sp2 120°, sp 180°, read from the bond graph — a ring is judged planar only if its own bonds are short, so benzene becomes 120° and cyclohexane stays 109.47°), of the distance you asked for, plus a light leash that keeps the change local, and the dihedrals of every ring the file ITSELF reads as planar (five or six atoms, bonds ≤ 1.45 Å — a benzene, a base) held at zero, so a ring cannot lose its planarity without the report saying so. The pair is brought together BY STAGES (the “⇉ stages” field of the panel, 2 Å by default) and after EVERY stage the whole window is relaxed once with the distance already obtained held in place: measured, a pair 7.35 Å apart aimed at 3 Å stays at 6.94 Å in a single approach and reaches 3.11 Å in 2 Å stages. ⚠ It is NOT a force field: no charges, no solvent, no entropy, no atom or hydrogen added — and the descent is LOCAL and DETERMINISTIC, so a distance it cannot reach is REPORTED with the number it really got, never faked. Every atom is written back the way a molecule drag writes (positionFromArray), so 📏 Measure, the plates, the film and 📥 Download read this geometry; « ↺ Undo torsion » puts the whole molecule back exactly as it was.">
+          title="⚒ MODEL BUILD — the gesture HyperChem had: build a CHEMICALLY VALID model out of the bonds, after they are known. Two atoms picked (A and D of the four, or the only two), the distance typed in the A–D field (left empty, the length the table gives that pair of elements: S–S 2.05 Å, C–S 1.82 Å, C–C 1.54 Å…), and the atoms around them MOVE, step by step, until the molecule has moved enough for the two atoms to be that far apart. The energy it minimises is a TARGET FUNCTION: the squared deviations of every bond of the window from its typical length, of every angle from the ideal angle of its hybridisation (sp3 109.47°, sp2 120°, sp 180°, read from the bond graph — a ring is judged planar only if its own bonds are short, so benzene becomes 120° and cyclohexane stays 109.47°), of the distance you asked for, plus a light leash that keeps the change local, and the dihedrals of every ring the file ITSELF reads as planar (five or six atoms, bonds ≤ 1.45 Å — a benzene, a base) held at zero, so a ring cannot lose its planarity without the report saying so. The pair is brought together BY STAGES (the “⇉ stages” field of the panel, 2 Å by default) and after EVERY stage the whole window is relaxed once with the distance already obtained held in place: measured, a pair 7.35 Å apart aimed at 3 Å stays at 6.94 Å in a single approach and reaches 3.11 Å in 2 Å stages. ⚠ It is NOT a force field: no charges, no solvent, no entropy, no atom or hydrogen added — and the descent is LOCAL and DETERMINISTIC, so a distance it cannot reach is REPORTED with the number it really got, never faked. Every atom is written back the way a molecule drag writes (positionFromArray), so 📏 Measure, the plates, the film and 📥 Download read this geometry; « ↺ Undo torsion » puts the whole molecule back exactly as it was. 🎲 The “escapes” field beside this button says how many TORSION KICKS the build may try when the descent has stopped in a LOCAL minimum (see its own tooltip): a rigid rotation of a part of the window about a drawn bond, then a short descent, the BEST model kept — so the result is never worse than the plain descent — and the draws taken from a FIXED seed, so the same gesture gives the same model to the last digit. And the gesture is WATCHED: the molecule CHANGES on screen at every step (240 images at most, the last one being exactly the geometry the report describes), and clicking ⚒ again while it plays finishes the gesture at once.">
           ⚒ Model build
         </button>
         {torsionClosest && (
@@ -18938,7 +19136,7 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
         </button>
       </div>
       <p className="text-[10px] text-slate-400">
-        ⚠ A torsion is not stored anywhere: it lives in the COORDINATES of the frame on screen, like every edit of this bar. Loading another structure, or moving the trajectory to another frame (⏮ / the player), shows that frame’s own geometry again. The atoms that turn are the ones NGL’s bond graph reaches from D without crossing B–C: a bond inside a RING has no such side, and the panel refuses it rather than deforming the ring. ⚒ Model build is the same kind of edit — the same coordinates, the same ↺ — except that it moves a whole WINDOW of atoms, chosen by the “⇢ moves” field, and writes back only those: everything else keeps its own numbers, to the last digit. It minimises a target function of ideal bond lengths, ideal angles AND the planarity of the rings the file itself reads as planar (which is why a benzene no longer comes out of a build slightly plucked), and it brings the two atoms together BY STAGES, relaxing the whole window after each one — the “⇉ stages” field sets that step (2 Å by default, 0 = one single approach). Like the ⚭ Fold for disulfides next door it is not a physical calculation — it minimises a target function of ideal bond lengths and angles — and it says out loud what it could not do.
+        ⚠ A torsion is not stored anywhere: it lives in the COORDINATES of the frame on screen, like every edit of this bar. Loading another structure, or moving the trajectory to another frame (⏮ / the player), shows that frame’s own geometry again. The atoms that turn are the ones NGL’s bond graph reaches from D without crossing B–C: a bond inside a RING has no such side, and the panel refuses it rather than deforming the ring. ⚒ Model build is the same kind of edit — the same coordinates, the same ↺ — except that it moves a whole WINDOW of atoms, chosen by the “⇢ moves” field, and writes back only those: everything else keeps its own numbers, to the last digit. It minimises a target function of ideal bond lengths, ideal angles AND the planarity of the rings the file itself reads as planar (which is why a benzene no longer comes out of a build slightly plucked), and it brings the two atoms together BY STAGES, relaxing the whole window after each one — the “⇉ stages” field sets that step (2 Å by default, 0 = one single approach). 🎲 The “escapes” field beside it is how the build leaves a LOCAL minimum (see its tooltip: torsion kicks drawn from a fixed seed, the best model kept), and the molecule you are looking at CHANGES at every step of the gesture instead of jumping to the final geometry — the line above the button follows the steps, and the report at the end is the module’s own. Like the ⚭ Fold for disulfides next door it is not a physical calculation — it minimises a target function of ideal bond lengths and angles — and it says out loud what it could not do, contacts too short included.
       </p>
       {dragged && (
         <p className="text-[10px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">

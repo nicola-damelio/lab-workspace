@@ -40,7 +40,20 @@
      §8 un VRAI NGL : un PDB écrit à la main est parsé, ses liaisons viennent du
         fichier, la descente écrit dans la structure (positionFromArray), le PDB
         exporté est RELU et remesuré ;
-     §9 le branchement du viewer (le bouton, la fenêtre, l'écriture, le journal ↺).
+     §9 LES ÉCHAPPÉES — un rapprochement que la descente seule ne sait pas replier :
+        la botte de torsion (`torsionKickOf`) est une rotation RIGIDE (longueurs et
+        angles préservés au chiffre près), elle refuse une liaison de CYCLE, elle
+        est tirée à GRAINE FIXE, et la « Monte Carlo minimization » garde le
+        MEILLEUR modèle — jamais moins bon que la descente ordinaire. Le rapport
+        dit combien de bottes ont été essayées et gardées, et les CONTACTS TROP
+        COURTS du modèle rendu (`clashReportOf` : « la géométrie est-elle
+        réalisable ? » — c'est le « geometrie irrealizzabili » de la demande) ;
+     §10 LE PAS VU DE L'EXTÉRIEUR — `onStep` : l'ordre des phases (descente,
+        reprises, bottes), les chiffres de chaque pas, le dernier état toujours
+        annoncé, et un rapport qui se plaint sans arrêter la descente ;
+     §11 LE BRANCHEMENT DU VIEWER (le bouton, les champs « ⇢ moves », « ⇉ stages »
+        et « 🎲 escapes », l'écriture du geste, le journal ↺, et l'animation : la
+        molécule change à chaque pas au lieu du résultat de but en blanc).
 
    Run: node _geometry_relax_test.mjs
    ========================================================================= */
@@ -51,9 +64,12 @@ import {
   HYBRID_ANGLES, IDEAL_BOND_LENGTHS, BOND_ORDER_SHORTENING, PLANAR_RING_SIZES,
   PLANAR_RING_MAX_BOND, PLANAR_RING_KEEP_MAX_BOND, RELAX_WEIGHTS, RELAX_PAIR_TOLERANCE,
   RELAX_PLANAR_TOLERANCE, RELAX_STAGE_STEP, RELAX_MAX_STAGE_STEP, RELAX_RESTORE_STEPS,
-  RELAX_RESTORE_STIFFNESS,
+  RELAX_RESTORE_STIFFNESS, RELAX_MAX_STAGES,
+  RELAX_ESCAPES, RELAX_DEFAULT_ESCAPES, RELAX_MAX_ESCAPES, RELAX_ESCAPE_STEPS,
+  RELAX_KICK_DEG, RELAX_MIN_KICK_DEG, RELAX_ESCAPE_SEED, RELAX_CLASH_DISTANCE, RELAX_CLASH_WEIGHT,
   bondLengthTarget, bondGraphOf, ringSizeThrough, ringCycleThrough, hybridOf, angleTargetOf,
   planarRingsOf, buildRelaxTerms, energyOf, pairReportOf, relaxWindow, relaxGeometry, flatPositions,
+  makeRelaxRandom, bondSideOf, torsionKickOf, clashReportOf,
 } from './src/utils/geometryRelax.js';
 import { SS_BOND_LENGTH } from './src/utils/disulfideFold.js';
 
@@ -688,11 +704,249 @@ eq(noPairStaged.positions, bentRun.positions,
   '⚠ sans distance demandée, le pas à pas ne change RIEN : la descente reste celle d’avant');
 eq(noPairStaged.stages, 0, '…et le rapport ne compte aucun palier');
 
+/* ════════════ 9. LES ÉCHAPPÉES — SORTIR D'UNE BUCHE LOCALE ══════════════════
+   « Non funziona […] finisce sempre per geometrie irrealizzabili. » Deux
+   questions, deux réponses mesurables : QU'EST-CE qu'une géométrie irréalisable
+   (deux atomes que le graphe ne relie pas et qui se touchent), et COMMENT sortir
+   d'une buche locale (une botte de torsion, puis une descente, en gardant le
+   meilleur modèle). Rien n'est imprévisible pour autant : la graine est FIXE, donc
+   le même geste redonne le même construit au chiffre près. */
+
+/* ── 9a · LES CONTACTS TROP COURTS ─────────────────────────────────────────── */
+eq(RELAX_CLASH_DISTANCE, 1.45, 'deux atomes non liés à moins de 1.45 Å : un contact trop court');
+ok(RELAX_CLASH_WEIGHT >= RELAX_WEIGHTS.pair,
+  '⚠ une échappée qui en crée un est refusée : il pèse au moins un écart de 0.1 Å sur la distance demandée');
+const touch = clashReportOf({ positions: [0, 0, 0, 0.8, 0, 0], bonds: [], atomCount: 2 });
+eq(touch.count, 1, 'deux atomes à 0.8 Å sans liaison : UN contact trop court');
+eq(touch.worst, { i: 0, j: 1, distance: 0.8 }, '…le rapport nomme le couple et sa distance');
+near(touch.severity, (1.45 - 0.8) ** 2, '…et porte sa gravité Σ (seuil − d)², le chiffre des échappées', 1e-12);
+eq(touch.pairs.length, 1, '…ainsi que la liste nommée');
+eq(clashReportOf({ positions: [0, 0, 0, 0.8, 0, 0], bonds: [[0, 1]], atomCount: 2 }).count, 0,
+  '⚠ deux atomes LIÉS ne sont jamais un contact : c’est le graphe qui décide, pas une distance imaginée');
+eq(clashReportOf({ positions: [0, 0, 0, 1.5, 0, 0], bonds: [], atomCount: 2 }).count, 0,
+  '…et 1.5 Å, au-dessus du seuil, n’en est pas un');
+const crowd = [0, 0, 0, 0.5, 0, 0, 1.0, 0, 0, 1.4, 0, 0];
+eq(clashReportOf({ positions: crowd, bonds: [], atomCount: 4 }).count, 6,
+  'quatre atomes empilés : TOUS les couples non liés sont comptés (six)');
+eq(clashReportOf({ positions: crowd, bonds: [], atomCount: 4, maxReported: 2 }).pairs.length, 2,
+  '…mais le rapport n’en NOMME que ce qu’on lui demande');
+eq(clashReportOf({ positions: crowd, bonds: [], atomCount: 4, movable: [0] }).count, 3,
+  '⚠ la mesure est LOCALE : avec un seul atome mobile, seuls SES contacts comptent');
+eq(clashReportOf({ positions: crowd, bonds: [], atomCount: 4, movable: [0, 2] }).count, 5,
+  '…et un couple dont les DEUX atomes bougent n’est compté qu’une fois');
+eq(clashReportOf({ positions: crowd, bonds: [], atomCount: 4, movable: [0] }).checked, 1,
+  '…`checked` dit combien d’atomes ont été regardés');
+eq(clashReportOf({ positions: null, bonds: [] }).count, 0, 'sans coordonnées, aucun contact — jamais une exception');
+
+/* ── 9b · LE TIRAGE, LE CÔTÉ, LA BOTTE ─────────────────────────────────────── */
+const rndA = makeRelaxRandom(RELAX_ESCAPE_SEED);
+const rndB = makeRelaxRandom(RELAX_ESCAPE_SEED);
+const rndC = makeRelaxRandom(7);
+const seqA = [rndA(), rndA(), rndA()];
+eq(seqA, [rndB(), rndB(), rndB()], '⚠ deux tirages de MÊME graine donnent la même suite : le construit est reproductible');
+ok(seqA.every((v) => v >= 0 && v < 1), '…des nombres dans [0, 1)');
+ok(seqA.join() !== [rndC(), rndC(), rndC()].join(), '…et une autre graine, une autre suite');
+
+const kickGraph = bondGraphOf({ bonds: chainBonds(6), atomCount: 6 });
+eq(bondSideOf({ neighbours: kickGraph.neighbours, atom: 1, other: 2, atomCount: 6 }), [0],
+  'le côté de la liaison 1–2 d’une chaîne, c’est l’atome 0 (l’axe, lui, ne bouge pas)');
+eq(bondSideOf({ neighbours: kickGraph.neighbours, atom: 1, other: 0, atomCount: 6 }), [2, 3, 4, 5],
+  '…et de l’autre côté de la même liaison, le reste de la chaîne');
+eq(bondSideOf({ neighbours: kickGraph.neighbours, atom: 0, other: 1, atomCount: 6 }), [],
+  '⚠ du côté du PREMIER atome il n’y a personne d’autre : la liste est vide, pas inventée');
+const kickRingGraph = bondGraphOf({ bonds: RING6, atomCount: 6 });
+eq(bondSideOf({ neighbours: kickRingGraph.neighbours, atom: 0, other: 1, atomCount: 6 }), null,
+  '⚠ une liaison de CYCLE n’a AUCUN côté : ce n’est pas une charnière, la botte la refusera');
+eq(bondSideOf({ neighbours: kickGraph.neighbours, atom: 1, other: 1 }), null, 'un axe dégénéré n’a pas de côté non plus');
+eq(bondSideOf({ neighbours: null, atom: 0, other: 1 }), null, '…ni un graphe absent');
+
+const kickN = 12;
+const kickBonds = chainBonds(kickN);
+const kickStart = chainAt(kickN, 1.54, 0.4);
+const kickFrozen = kickStart.slice();
+const kickAll = [...Array(kickN).keys()];
+const kick = torsionKickOf({
+  positions: kickStart, bonds: kickBonds, atomCount: kickN,
+  movable: kickAll, seeds: [0, kickN - 1], angleDeg: RELAX_KICK_DEG,
+});
+ok(kick.ok, 'une botte tourne sur une chaîne (une liaison sépare toujours un arbre)');
+eq(kickStart, kickFrozen, '⚠ les coordonnées reçues ne sont JAMAIS modifiées (la botte travaille sur une copie)');
+ok(kickBonds.some(([a, b]) => (a === kick.bond.a && b === kick.bond.b)
+  || (a === kick.bond.b && b === kick.bond.a)), '…et la liaison tournée est une VRAIE liaison du graphe');
+near(Math.abs(kick.angle), RELAX_KICK_DEG, '…tournée de l’angle demandé (le signe, lui, est tiré)', 1e-9);
+eq(kick.turned, 1,
+  '⚠ UN SEUL des deux atomes de la paire est du côté tourné : la distance DEMANDÉE change forcément');
+eq([kick.bond.a, kick.bond.b].some((i) => kick.side.includes(i)), false,
+  '⚠ aucun atome de l’AXE ne tourne : ils sont sur l’axe, par construction');
+eq(atomAt(kick.positions, kick.bond.a), atomAt(kickStart, kick.bond.a), '…l’ancrage est immobile, au chiffre près');
+let kickWorstBond = 0;
+for (let i = 0; i < kickN - 1; i += 1) {
+  kickWorstBond = Math.max(kickWorstBond,
+    Math.abs(distOf(kick.positions, i, i + 1) - distOf(kickStart, i, i + 1)));
+}
+ok(kickWorstBond < 1e-12,
+  `⚠ toutes les liaisons sont préservées (pire écart ${kickWorstBond.toExponential(1)} Å) : une botte est une rotation RIGIDE, elle ne casse aucune géométrie`);
+const sideSet = new Set(kick.side);
+let kickWorstAngle = 0;
+for (let j = 1; j < kickN - 1; j += 1) {
+  const trio = [j - 1, j, j + 1];
+  const inside = trio.every((i) => sideSet.has(i));
+  const outside = trio.every((i) => !sideSet.has(i));
+  if (!inside && !outside) continue;        // cet angle ENJAMBE l’axe : le seul qui a le droit de changer
+  kickWorstAngle = Math.max(kickWorstAngle, Math.abs(
+    angleDeg(atomAt(kick.positions, trio[0]), atomAt(kick.positions, trio[1]), atomAt(kick.positions, trio[2]))
+    - angleDeg(atomAt(kickStart, trio[0]), atomAt(kickStart, trio[1]), atomAt(kickStart, trio[2])),
+  ));
+}
+ok(kickWorstAngle < 1e-9,
+  '…et les angles INTERNES au côté tourné ne bougent pas non plus (seuls ceux qui enjambent l’axe changent)');
+const kickPairBefore = distOf(kickStart, 0, kickN - 1);
+const kickPairAfter = distOf(kick.positions, 0, kickN - 1);
+ok(Math.abs(kickPairAfter - kickPairBefore) > 1e-6,
+  `…donc la distance DEMANDÉE a bougé (${kickPairBefore.toFixed(3)} → ${kickPairAfter.toFixed(3)} Å) : c’est tout l’intérêt de la botte`);
+const kickAgain = torsionKickOf({
+  positions: kickStart, bonds: kickBonds, atomCount: kickN,
+  movable: kickAll, seeds: [0, kickN - 1], angleDeg: RELAX_KICK_DEG,
+});
+eq(kickAgain.positions, kick.positions, '⚠ deux appels identiques donnent la MÊME botte (graine fixe)');
+const smallWin = torsionKickOf({
+  positions: kickStart, bonds: kickBonds, atomCount: kickN, movable: [0, 1, 2], seeds: [0, kickN - 1], angleDeg: 60,
+});
+ok(!smallWin.ok || smallWin.side.every((i) => [0, 1, 2].includes(i)),
+  '⚠ une fenêtre étroite ne fait tourner QUE les atomes qu’on lui donne — ou refuse la botte');
+eq(torsionKickOf({ positions: flatRing(1.39).flat(), bonds: RING6, atomCount: 6, seeds: [0, 3] }).reason, 'no-bridge',
+  '⚠ six liaisons de cycle : aucune charnière — la botte refuse au lieu de déformer le cycle');
+eq(torsionKickOf({ positions: kickStart, bonds: [], atomCount: kickN }).reason, 'no-bond', 'sans liaison, aucune botte');
+eq(torsionKickOf({ positions: null }).reason, 'bad-points', '…sans coordonnées non plus');
+eq(torsionKickOf({ positions: kickStart, bonds: kickBonds, atomCount: kickN, movable: [] }).reason, 'no-movable',
+  '…ni sans un seul atome mobile');
+
+/* ── 9c · LES ÉCHAPPÉES, EXÉCUTÉES — LE REPLIEMENT QUE LA DESCENTE NE SAIT PAS FAIRE ─
+   Le cas du rapport : soixante carbones en zigzag (2.6 Å entre voisins, 153 Å d'un
+   bout à l'autre) et les deux BOUTS à rapprocher à 3 Å. La descente seule laisse la
+   molécule étirée ; les 🎲 bottes de torsion la replient. Tout est mesuré ici. */
+eq(RELAX_ESCAPES, 0, '⚠ le défaut du MODULE reste le geste d’avant : aucune botte (les sondes du dossier le mesurent)');
+eq(RELAX_DEFAULT_ESCAPES, 6, '…et le panneau du viewer, lui, en envoie six');
+ok(RELAX_MAX_ESCAPES >= RELAX_DEFAULT_ESCAPES, '…sous un plafond plus grand que lui');
+eq(RELAX_ESCAPE_STEPS, 60, 'chaque botte est suivie d’une descente COURTE (60 pas)');
+ok(RELAX_KICK_DEG > RELAX_MIN_KICK_DEG,
+  '⚠ l’amplitude DÉCROÎT d’une botte à l’autre : les premières explorent, les dernières ajustent');
+const LONG_N = 60;
+const longEls = Array(LONG_N).fill('C');
+const longStart = chainAt(LONG_N, 2.6, 0.5);
+const longBonds = chainBonds(LONG_N);
+const longPairs = [{ i: 0, j: LONG_N - 1, target: 3 }];
+const longGap = distOf(longStart, 0, LONG_N - 1);
+const longSpec = { positions: longStart, elements: longEls, bonds: longBonds, pairs: longPairs };
+const plainRun = relaxGeometry(longSpec);
+ok(!plainRun.reached,
+  `la descente seule n’atteint pas 3 Å sur ${longGap.toFixed(1)} Å d’écart (elle finit à ${plainRun.pairs[0].after.toFixed(2)} Å) : c’est le « non funziona » du rapport`);
+eq(plainRun.stages, RELAX_MAX_STAGES,
+  '⚠ …et les paliers sont PLAFONNÉS (24) au lieu d’être tronqués : le voyage entier est planifié');
+ok(plainRun.stageStep > RELAX_STAGE_STEP,
+  `…avec un pas PLUS GRAND que les 2 Å du champ (${plainRun.stageStep.toFixed(2)} Å) — c’est ce qui fait arriver la cible au bout`);
+ok(plainRun.pairs[0].after < longGap / 3,
+  `…donc elle va beaucoup plus loin qu’un arrêt au 24ᵉ palier : ${plainRun.pairs[0].after.toFixed(2)} Å obtenus pour ${longGap.toFixed(1)} Å de départ`);
+eq(plainRun.escapes.skip, 'off', 'sans 🎲 bottes demandées, le rapport DIT que le geste est celui d’avant');
+eq(plainRun.escapes.tried, 0, '…aucune botte essayée');
+ok(plainRun.reason !== 'escaped', '…et sa raison est celle de la descente, jamais celle d’une botte');
+const zeroRun = relaxGeometry({ ...longSpec, escapes: 0 });
+eq(zeroRun.positions, plainRun.positions, '⚠ escapes: 0 est EXACTEMENT l’ancien geste : mêmes coordonnées, au chiffre près');
+const escapedRun = relaxGeometry({ ...longSpec, escapes: RELAX_DEFAULT_ESCAPES });
+eq(escapedRun.escapes.wanted, RELAX_DEFAULT_ESCAPES, 'les six bottes demandées sont bien celles du rapport');
+eq(escapedRun.escapes.tried, RELAX_DEFAULT_ESCAPES, '…toutes essayées');
+ok(escapedRun.escapes.improved > 0, `…et ${escapedRun.escapes.improved} GARDÉES (chacune un autre pli)`);
+eq(escapedRun.escapes.rejected, escapedRun.escapes.tried - escapedRun.escapes.improved,
+  '…les autres REFUSÉES : le meilleur modèle ne recule jamais');
+eq(escapedRun.escapes.plan.length, escapedRun.escapes.tried, 'le rapport porte une entrée par botte');
+ok(escapedRun.escapes.plan.every((p) => p.bond && Number.isInteger(p.bond.a) && Number.isInteger(p.bond.b)),
+  '…avec la liaison réellement tournée');
+ok(escapedRun.escapes.plan.every((p) => Math.abs(p.angle) <= RELAX_KICK_DEG + 1e-9),
+  '…et son angle, jamais au-delà de l’amplitude demandée');
+ok(Math.abs(escapedRun.escapes.plan[0].angle)
+  >= Math.abs(escapedRun.escapes.plan[escapedRun.escapes.plan.length - 1].angle),
+  '⚠ …et cette amplitude DÉCROÎT bien d’une botte à la suivante');
+ok(escapedRun.escapes.plan.filter((p) => p.accepted).length === escapedRun.escapes.improved,
+  '…les entrées gardées sont celles qui ont amélioré la fonction cible');
+ok(escapedRun.pairs[0].after < plainRun.pairs[0].after,
+  `⚠ LES BOTTES RAPPROCHENT VRAIMENT LA CIBLE : ${plainRun.pairs[0].after.toFixed(2)} Å → ${escapedRun.pairs[0].after.toFixed(2)} Å`);
+ok(escapedRun.after.total < plainRun.after.total,
+  `…et la fonction cible BAISSE : ${plainRun.after.total.toFixed(0)} → ${escapedRun.after.total.toFixed(0)}`);
+ok(escapedRun.clashes.count <= plainRun.clashes.count,
+  `⚠ les contacts trop courts ne sont jamais PIRE qu’avant les bottes (${plainRun.clashes.count} → ${escapedRun.clashes.count})`);
+eq(escapedRun.clashes.minDistance, RELAX_CLASH_DISTANCE, '…et le rapport dit à quel seuil il les a comptés');
+ok(escapedRun.reason === 'escaped' || escapedRun.reason === 'max-steps' || escapedRun.reason === 'stalled'
+  || escapedRun.reason === 'converged', `la raison rendue est une raison connue (${escapedRun.reason})`);
+const escapedAgain = relaxGeometry({ ...longSpec, escapes: RELAX_DEFAULT_ESCAPES });
+eq(escapedAgain.positions, escapedRun.positions,
+  '⚠ deux gestes identiques donnent le MÊME construit, bottes comprises (la graine est fixe)');
+const noPairRun = relaxGeometry({ positions: longStart, elements: longEls, bonds: longBonds, escapes: 4 });
+eq(noPairRun.escapes.skip, 'no-pair', '⚠ sans distance demandée, les bottes n’ont RIEN à rapprocher : le rapport le dit');
+eq(noPairRun.escapes.tried, 0, '…et aucune ne tourne');
+const doneRun = relaxGeometry({
+  ...spec5, positions: bent, pairs: [{ i: 0, j: 1, target: 1.54 }], escapes: 4,
+});
+eq(doneRun.escapes.skip, 'reached',
+  '⚠ quand la descente n’est PAS coincée, il n’y a rien à fuir : les bottes ne tournent pas non plus');
+eq(doneRun.reached, true, '…et la cible est bien atteinte (le rapport le dit aussi)');
+const zeroStepRun = relaxGeometry({ ...longSpec, escapes: 4, steps: 0 });
+eq(zeroStepRun.escapes.skip, 'no-steps', '…et sans le moindre pas, aucune botte non plus');
+
+/* ════════════ 10. LE PAS VU DE L'EXTÉRIEUR — `onStep` ══════════════════════
+   « Sarebbe bello vedere la molecola che cambia ad ogni passo. » Le module annonce
+   chaque pas — la phase, les chiffres, les coordonnées de travail — et l'écran s'en
+   sert pour ANIMER le geste (voir §11). Ce qui suit vérifie l'ordre, les chiffres et
+   les garanties : le dernier état est toujours annoncé, un rapport qui se plaint
+   n'arrête rien, et `stepEvery` allège sans rien perdre de la fin. */
+const walk = [];
+const walked = relaxGeometry({
+  ...longSpec, escapes: 2,
+  onStep: (v) => { walk.push(v); },
+});
+ok(walk.length > 100, `le module annonce chaque pas (${walk.length} annonces pour ce geste)`);
+eq(walk[walk.length - 1].phase, 'final', '…le DERNIER est l’état final, toujours annoncé');
+near(walk[walk.length - 1].energy, walked.after.total, '…avec l’énergie exacte du rapport', 1e-9);
+eq(walk[0].phase, 'descend', 'le premier pas annoncé est celui de la descente');
+eq(walk[0].stage, 1, '…du premier palier du rapprochement');
+eq(walk[0].stages, walked.stages, '…qui annonce le nombre de paliers à venir');
+ok(walk.every((v, i) => i === 0 || v.step > walk[i - 1].step), '⚠ les numéros de pas montent, un par un');
+ok(walk.every((v) => v.positions.length === LONG_N * 3),
+  'chaque annonce porte les coordonnées de TRAVAIL (à copier, jamais à écrire)');
+ok(walk.every((v) => v.movable.length === LONG_N && Array.isArray(v.movable)),
+  '…et la fenêtre qui a le droit de bouger');
+ok(walk.some((v) => v.phase === 'restore'),
+  'les REPRISES sont annoncées aussi : la géométrie se détend sous nos yeux, pas seulement à la fin');
+ok(walk.some((v) => v.phase === 'kick'), '…et chaque 🎲 botte des échappées');
+ok(walk.some((v) => v.phase === 'escape'), '…avec le verdict de la botte');
+ok(walk.filter((v) => v.phase === 'kick').length === 2,
+  '…autant de kicks que de bottes demandées (2 ici)');
+ok(walk.some((v) => v.attempt > 0), '…et la botte en cours est numérotée dans chaque annonce');
+near(walk[0].distances[0], longGap, 'la première annonce porte la distance de DÉPART', 1);
+ok(walk[walk.length - 1].distances[0] <= walk[0].distances[0],
+  '…et la dernière une distance plus courte : le geste a bien rapproché');
+const few = [];
+relaxGeometry({
+  ...spec5, positions: bent, pairs: [{ i: 0, j: 4, target: 2.6 }],
+  steps: 40, stageStep: 0, restoreSteps: 0, stepEvery: 8,
+  onStep: (v) => { few.push(v); },
+});
+ok(few.length >= 2 && few.length <= 8,
+  `…un pas sur huit n’annonce que ${few.length} états (l’animation reste légère)`);
+eq(few[few.length - 1].phase, 'final',
+  '⚠ …mais le dernier état est TOUJOURS annoncé : l’animation ne peut pas finir ailleurs');
+const noisy = relaxGeometry({
+  ...spec5, positions: bent, pairs: [{ i: 0, j: 4, target: 2.6 }], steps: 40, stageStep: 0, restoreSteps: 0,
+  onStep: () => { throw new Error('rapport en panne'); },
+});
+ok(noisy.ok && noisy.steps > 0,
+  '⚠ un onStep qui lève ne fait PAS échouer le geste : la descente va au bout');
+
 /* ════════════ 11. LE BRANCHEMENT DU VIEWER ══════════════════════════════════
-   bouton, le champ de la fenêtre, la façon dont la molécule est lue (le vrai
-   graphe de NGL), la cible prise au champ A–D ou à la TABLE, le chemin d'écriture
-   d'un geste (writeStructurePositions + le journal ↺), et un rapport qui dit ce
-   qui est et ce qui n'est pas. */
+   bouton, les champs de la fenêtre (« ⇢ moves », « ⇉ stages », « 🎲 escapes »), la
+   façon dont la molécule est lue (le vrai graphe de NGL), la cible prise au champ
+   A–D ou à la TABLE, le chemin d'écriture d'un geste (writeStructurePositions + le
+   journal ↺), un rapport qui dit ce qui est et ce qui n'est pas — et l'ANIMATION :
+   la molécule change à chaque pas au lieu du résultat de but en blanc. */
 has(VIEW, "} from '../utils/geometryRelax';", 'le viewer importe le module du model build');
 has(VIEW, 'relaxGeometry, relaxWindow, bondLengthTarget, RELAX_DEFAULT_RADIUS, RELAX_MAX_RADIUS,',
   '…avec les quatre fonctions dont il se sert');
@@ -723,11 +977,12 @@ has(VIEW, 'const target = Number.isFinite(typed) && typed > 0 ? typed : table;',
   '…et le chiffre du champ A–D l’emporte dès qu’il y en a un');
 has(VIEW, 'pairs: [{ i, j, target }],', 'la distance DEMANDÉE entre dans la fonction cible');
 has(VIEW, 'if (!run.moved.length) {', '⚠ quand rien n’a besoin de bouger, le panneau le dit au lieu d’écrire');
-has(VIEW, 'if (!writeStructurePositions(comp, run.moved, flat)) {',
-  'l’écriture passe par le MÊME chemin qu’une torsion (positionFromArray + redessin)');
+has(VIEW, 'if (!writeStructurePositions(comp, movable, flat)) {',
+  'chaque image du geste passe par le MÊME chemin d’écriture qu’une torsion (positionFromArray + redessin)');
 has(VIEW, 'label: `⚒ model build ${pair.label} ${torsionAng(target)}`,',
   '…et le journal ↺ retient le geste sous son nom (le ↺ est celui de la torsion)');
-has(VIEW, 'setTorsionMsg(`${relaxReportOf(pair, run, win)}${warn}`);', 'le rapport est affiché dans le panneau');
+has(VIEW, 'const report = `${relaxReportOf(pair, run, win)}${warn}`;',
+  'le rapport du module est calculé UNE fois, et c’est lui que l’animation affiche à la fin');
 has(VIEW, 'const relaxReportOf = (pair, run, win) => {', 'le rapport est construit à part (énergie, rms, atomes, verdict)');
 has(VIEW, '· energy ${run.before.total.toFixed(1)} → ${run.after.total.toFixed(1)}',
   '…il donne l’énergie avant et après');
@@ -773,8 +1028,59 @@ has(VIEW, 'onKeyDown={(e) => { if (e.key === \'Enter\') buildModelNow(); }}', '�
 has(VIEW, '⚒ Model build is the same kind of edit — the same coordinates, the same ↺',
   'la note du panneau range le geste à côté de la torsion (mêmes coordonnées, même ↺)');
 
+/* ── 11bis · LES ÉCHAPPÉES ET L'ANIMATION — la demande, mot pour mot ──────────
+   « Non funziona […] se usassi un metodo di minimizzazione che esce dalle buche
+   locali? Sarebbe bello vedere la molecola che cambia ad ogni passo invece che il
+   risultato finale di botto. » Le panneau, donc : un champ de plus, un module qui
+   annonce chaque pas, et une écriture image par image. */
+has(VIEW, 'RELAX_DEFAULT_ESCAPES, RELAX_MAX_ESCAPES, RELAX_CLASH_DISTANCE,',
+  'le viewer importe les constantes des 🎲 échappées et des contacts trop courts');
+has(VIEW, 'const [relaxEscapes, setRelaxEscapes] = useState(RELAX_DEFAULT_ESCAPES);',
+  'le champ « 🎲 escapes » a son état (six bottes par défaut)');
+has(VIEW, 'const setRelaxEscapesText = (v) => {', '…et son lecteur, borné au plafond du module');
+has(VIEW, 'escapes: relaxEscapes,', '⚠ le nombre de bottes entre dans la descente');
+has(VIEW, '🎲 escapes', '…et le champ est nommé « 🎲 escapes » kicks');
+has(VIEW, 'onStep,', '…et le module est chargé d’annoncer chaque pas');
+has(VIEW, "if (v.phase === 'kick' || v.phase === 'escape' || v.phase === 'final') { keep(v); return; }",
+  '⚠ les bottes et le dernier état sont TOUJOURS gardés : on voit le saut d’une buche à l’autre');
+has(VIEW, 'const RELAX_ANIM_FRAMES = 240;', 'l’animation est plafonnée en images (≈ 4 s à 60 i/s)');
+has(VIEW, 'stride *= 2;',
+  '…au-delà du plafond, une image sur deux est jetée et le pas double : la chronologie tient');
+has(VIEW, 'const playRelaxFrames = ({', 'l’animation a sa fonction');
+has(VIEW, 'window.requestAnimationFrame(tick);', '…et joue une image par image affichée');
+has(VIEW, 'const finishRelaxPlayback = () => {', 'un geste en train de jouer se termine D’UN COUP');
+has(VIEW, 'finishRelaxPlayback();\n  const pair = torsionPairOf();',
+  '…et le ⚒ lui-même le termine avant de recommencer : jamais deux animations sur la même structure');
+has(VIEW, 'finalIdxs: run.moved,',
+  '…la géométrie finale écrite est celle du rapport, à l’image près');
+has(VIEW, 'progressOf: (frame, at, total) => `⚒ building — image ${at}/${total} · step ${frame.step}`',
+  '…et la ligne du panneau suit les images, les paliers et les bottes');
+has(VIEW, '🎲 ${run.escapes.tried} torsion kick${run.escapes.tried === 1 ? \'\' : \'s\'} of ${run.escapes.wanted}',
+  'le rapport dit combien de bottes ont été essayées et combien gardées');
+has(VIEW, '` · 🎲 no kick: ${run.escapes.skip}`',
+  '…et POURQUOI aucune n’a tourné quand c’est le cas (jamais un silence)');
+has(VIEW, "'escaped': 'the descent was stuck in a local minimum",
+  'la raison « escaped » du module est traduite, comme les autres');
+has(VIEW, 'no atom pair closer than ${torsionAng(run.clashes.minDistance)}',
+  '⚠ le rapport dit les contacts trop courts du modèle rendu — le « geometrie irrealizzabili » de la demande');
+has(VIEW, 'atom pair${run.clashes.count === 1 ? \'\' : \'s\'} closer than ${torsionAng(RELAX_CLASH_DISTANCE)}',
+  '…et quand il en reste, il dit COMBIEN et à quelle distance (le plus court)');
+has(VIEW, 'The 🎲 escapes are torsion kicks drawn from a FIXED seed',
+  '…en rappelant que les tirages sont à graine fixe : même geste, même construit');
+has(VIEW, 'the molecule you are looking at CHANGES at every step',
+  'la note du panneau dit que la molécule CHANGE à chaque pas au lieu du résultat de but en blanc');
+has(VIEW, 'the gesture is WATCHED: the molecule CHANGES on screen at every step',
+  '…et l’infobulle du ⚒ le répète');
+has(VIEW, 'clicking ⚒ again while it plays finishes the gesture at once',
+  '…avec la façon de sauter l’animation (un clic de plus)');
+has(VIEW, 'a rigid rotation of a part of the window about a drawn bond',
+  'l’infobulle du champ 🎲 dit ce qu’est une botte : une rotation RIGIDE autour d’une liaison tirée');
+has(VIEW, 'a bond inside a ring is refused, so no cycle is ever bent',
+  '⚠ …et qu’une liaison de cycle est refusée : aucune botte ne déforme un cycle');
+
 /* ── Bilan ─────────────────────────────────────────────────────────────────── */
 console.log(`_geometry_relax_test.mjs — ${passed} assertions OK (les tables de la chimie, l'hybridation, les`
   + ' cycles et la PLANÉITÉ tenue, le gradient mesuré par différences finies (les cycles compris),'
   + ' la descente exécutée pas à pas, le PAS À PAS du rapprochement et ses reprises, la fenêtre,'
-  + ' et un vrai PDB étiré reconstruit puis relu par NGL)');
+  + ' les 🎲 ÉCHAPPÉES (la botte de torsion, les contacts trop courts, le meilleur modèle gardé),'
+  + ' le PAS VU DE L’EXTÉRIEUR (onStep), et un vrai PDB étiré reconstruit puis relu par NGL)');

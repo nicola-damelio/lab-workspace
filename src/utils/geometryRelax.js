@@ -81,6 +81,44 @@
    toute proche, ou RELAX_STAGE_STEP à 0) reste le geste d'AVANT : une descente, la
    contrainte posée d'un bout à l'autre, puis une reprise.
 
+   ELLE SAIT AUSSI SORTIR D'UNE BUCHE LOCALE — LES ÉCHAPPÉES (`escapes` > 0).
+   Une plus grande pente s'arrête au PREMIER creux de sa fonction cible : « the
+   descent found nowhere left to go ». Or c'est exactement ce creux qui rendait le
+   geste inutilisable sur un REPLIEMENT lointain — deux atomes que seule une
+   AUTRE conformation peut rapprocher, et la molécule restait étirée, pliée de
+   travers, la cible non atteinte. Le module sait donc rejouer la descente depuis
+   d'autres conformations :
+
+     · chaque essai est une BOTTE DE TORSION — une rotation RIGIDE d'une partie de
+       la fenêtre autour d'une liaison (`torsionKickOf`), d'un angle tiré entre
+       ±`kickDeg` (70° par défaut, décroissant jusqu'à `RELAX_MIN_KICK_DEG` d'un
+       essai au suivant : les premiers explorent, les derniers ajustent). Le côté
+       tourné est choisi pour que la distance DEMANDÉE change vraiment (un des deux
+       atomes de la paire d'un côté de la liaison, l'autre de l'autre), tous ses
+       atomes sont dans la fenêtre, et une liaison de CYCLE est refusée comme
+       partout ailleurs : une botte ne déforme aucun cycle. Longueurs et angles du
+       côté tourné sont préservés AU CHIFFRE près — c'est une rotation rigide, donc
+       le modèle ne repart jamais d'une géométrie cassée ;
+     · la botte est suivie d'une DESCENTE COURTE (`escapeSteps`, 60 pas) ;
+     · le MEILLEUR modèle est gardé et la botte suivante repart de LUI : c'est la
+       « Monte Carlo minimization » (Li & Scheraga, 1987) — aucune étape n'est
+       acceptée médiocre, et le modèle rendu n'est JAMAIS moins bon que celui de la
+       descente ordinaire ;
+     · le tirage est à GRAINE FIXE (`seed`, RELAX_ESCAPE_SEED) : le même modèle et
+       le même geste donnent le même construit, au chiffre près. Rien ici n'est
+       imprévisible ;
+     · le choix entre deux modèles ne regarde pas que l'énergie : les CONTACTS
+       TROP COURTS comptent aussi (`clashReportOf`, RELAX_CLASH_WEIGHT). Deux
+       atomes que le graphe ne relie pas à moins de RELAX_CLASH_DISTANCE (1.45 Å)
+       ne sont pas deux atomes côte à côte, c'est une géométrie irréalisable — et
+       une échappée qui en crée n'est gardée que si elle est très nettement
+       meilleure par ailleurs. MESURÉ, sur le rapprochement que la descente ne sait
+       pas faire (soixante carbones, 153 Å → 3 Å) : la descente seule rend 4 couples
+       plus proches que 1.45 Å, le plus court à 0.75 Å ; le modèle gardé par les six
+       bottes n'en a plus que 2, le plus court à 1.28 Å — et la paire demandée passe
+       de 13.52 à 12.52 Å, l'énergie de 12594 à 9596. C'est le critère des contacts
+       qui a choisi entre ces modèles, pas seulement l'énergie.
+
    ⚠ CE QUE CE N'EST PAS, et le rapport le redit :
      • ce n'est PAS un champ de forces : aucune charge, aucun van der Waals, aucun
        solvant, aucune entropie, aucun hydrogène ajouté. Les longueurs et les angles
@@ -88,8 +126,11 @@
        valide (« chemically valid » au sens de la demande), jamais une énergie en
        kcal/mol ;
      • la descente est LOCALE : une structure dont les atomes devraient franchir une
-       barrière ne se fermera pas. Le rapport dit alors `converged: false` et la
-       distance RÉELLEMENT obtenue, il n'invente jamais un pont ;
+       barrière ne se fermera pas — c'est ce que les 🎲 échappées (`escapes`)
+       rattrapent, en rejouant la descente depuis d'autres conformations et en
+       gardant le meilleur modèle. Quand elles n'y arrivent pas non plus, le rapport
+       dit la distance RÉELLEMENT obtenue et les contacts trop courts qui restent :
+       il n'invente jamais un pont ;
      • la planéité d'un cycle est TENUE, jamais devinée : seuls les cycles que le
        fichier dit plans (liaisons ≤ 1.45 Å) sont tenus plats, et un cyclohexane ou un
        sucre gardent leur plissement à 109.47° — le module ne décide pas à leur place
@@ -221,6 +262,46 @@ export const RELAX_RESTORE_STEPS = 80;
  *  bouge plus que de 0.02 Å pendant la reprise et la dernière reprise AMÉLIORE encore
  *  les angles du geste. */
 export const RELAX_RESTORE_STIFFNESS = 8;
+
+/* ── LES ÉCHAPPÉES — SORTIR D'UNE BUCHE LOCALE ─────────────────────────────────
+   Une descente de plus grande pente s'arrête au premier creux. `escapes` est le
+   nombre de BOTTES DE TORSION que le module a le droit d'essayer après elle,
+   chacune suivie d'une descente courte, le meilleur modèle étant gardé (voir
+   `relaxGeometry` et l'en-tête du module). Trois chiffres :
+
+     · `RELAX_ESCAPES` — la valeur par DÉFAUT du module : **0**. C'est le geste
+       d'AVANT (une seule descente) et c'est ce que mesurent les sondes du dossier ;
+       les échappées sont un geste qu'on DEMANDE (le panneau du viewer envoie le
+       sien, `RELAX_DEFAULT_ESCAPES` = 6) ;
+     · `RELAX_ESCAPE_STEPS` — les pas de la descente qui suit chaque botte (60 :
+       assez pour retomber dans un creux, pas assez pour refaire le geste entier) ;
+     · `RELAX_KICK_DEG` → `RELAX_MIN_KICK_DEG` — l'amplitude de la botte, en
+       degrés : elle DÉCROÎT d'un essai au suivant (70° → 12°), donc les premières
+       bottes explorent des conformations franchement différentes et les dernières
+       ajustent la fin du repliement. */
+export const RELAX_ESCAPES = 0;
+export const RELAX_DEFAULT_ESCAPES = 6;
+export const RELAX_MAX_ESCAPES = 24;
+export const RELAX_ESCAPE_STEPS = 60;
+export const RELAX_KICK_DEG = 70;
+export const RELAX_MIN_KICK_DEG = 12;
+export const RELAX_MAX_KICK_DEG = 179;
+
+/** LA GRAINE DES BOTTES — fixe. Le module n'est donc pas « déterministe parce
+ *  qu'il ne tire rien » mais « déterministe parce que ses tirages sont à graine
+ *  fixe » : le même modèle, le même geste, le même construit, au chiffre près. */
+export const RELAX_ESCAPE_SEED = 20240928;
+
+/** LES CONTACTS TROP COURTS — deux atomes que le graphe ne LIE pas et qui se
+ *  retrouvent à moins de `RELAX_CLASH_DISTANCE` (1.45 Å) : ce ne sont pas deux
+ *  atomes côte à côte, c'est une géométrie irréalisable (un atome passé à travers
+ *  un autre). Le module ne met PAS ce terme dans la fonction cible — il n'y a
+ *  aucun van der Waals ici, ce n'est pas un champ de forces — il les COMPTE
+ *  (`clashReportOf`, que le rapport affiche) et il s'en sert comme d'un SECOND
+ *  critère pour choisir entre deux modèles pendant les échappées : `RELAX_CLASH_WEIGHT`
+ *  est le prix (en unités de la fonction cible) d'un ångström carré de recouvrement. */
+export const RELAX_CLASH_DISTANCE = 1.45;
+export const RELAX_CLASH_WEIGHT = 60;
 
 /** LES TROIS TOLÉRANCES dont le rapport se sert pour DIRE que c'est fait : « la
  *  liaison est à sa longueur », « l'angle est respecté », « la distance demandée
@@ -978,6 +1059,247 @@ export const unstickFlatAngles = (terms, x, step = UNSTICK_STEP) => {
   return nudged;
 };
 
+/* ── 6bis · LES ÉCHAPPÉES — LA BOTTE, ET LES CONTACTS TROP COURTS ─────────── */
+
+/**
+ * UN TIRAGE REPRODUCTIBLE — mulberry32, trente-deux bits, aucune dépendance.
+ * C'est lui qui rend les échappées compatibles avec la règle du module : « le
+ * même modèle donne toujours le même construit ». La graine est fixe
+ * (`RELAX_ESCAPE_SEED`), donc les mêmes bottes reviennent dans le même ordre,
+ * avec les mêmes angles — vérifiable par deux appels identiques.
+ */
+export const makeRelaxRandom = (seed = RELAX_ESCAPE_SEED) => {
+  let a = (Math.round(Number(seed)) >>> 0) || 0;
+  return () => {
+    a = (a + 0x6D2B79F5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+};
+
+/**
+ * LE CÔTÉ D'UNE LIAISON — les atomes que le graphe atteint depuis `atom` SANS
+ * traverser la liaison atom–other. C'est la règle d'un chimiste, la même que
+ * `movingSideOf` de utils/torsionDrive.js : une rotation autour de l'axe ne peut
+ * déplacer que ce côté-là, l'autre reste l'ancrage.
+ *
+ * Rend `null` quand `other` est atteint AUTREMENT — la liaison est alors dans un
+ * CYCLE, elle n'est pas une charnière, et `torsionKickOf` la refusera plutôt que
+ * de déformer un cycle. `atom` lui-même n'est jamais dans la liste (il est SUR
+ * l'axe, il ne bouge pas), `other` non plus.
+ */
+export const bondSideOf = ({ neighbours, atom, other, atomCount = 0 } = {}) => {
+  if (typeof neighbours !== 'function' || !isIndex(atom) || !isIndex(other) || atom === other) return null;
+  const limit = Math.max(0, Math.round(Number(atomCount) || 0));
+  const seen = new Set([atom]);
+  const side = [];
+  let frontier = [atom];
+  while (frontier.length) {
+    const next = [];
+    for (const cur of frontier) {
+      let list = [];
+      try { list = neighbours(cur) || []; } catch { list = []; }
+      for (const raw of list) {
+        const i = Number(raw);
+        if (!isIndex(i) || (limit && i >= limit) || seen.has(i)) continue;
+        if ((cur === atom && i === other) || (cur === other && i === atom)) continue;   // jamais l'axe
+        if (i === other) return null;                 // atteint ailleurs : un cycle
+        seen.add(i); side.push(i); next.push(i);
+      }
+    }
+    frontier = next;
+  }
+  return side;
+};
+
+/** LA ROTATION RIGIDE D'UN CÔTÉ AUTOUR D'UN AXE (Rodrigue), par `angleDeg`. Le
+ *  côté tourne, l'axe ne bouge pas : les longueurs ET les angles INTERNES au côté
+ *  sont préservés au chiffre près, seuls les angles qui enjambent l'axe changent.
+ *  Rend une COPIE des coordonnées — l'argument n'est jamais touché. */
+const rotateSideOf = ({ positions, side, axis, angleDeg, bond }) => {
+  const [a, b] = axis;
+  const ax = positions[b * 3] - positions[a * 3];
+  const ay = positions[b * 3 + 1] - positions[a * 3 + 1];
+  const az = positions[b * 3 + 2] - positions[a * 3 + 2];
+  const n = Math.hypot(ax, ay, az);
+  if (!(n > 1e-9)) return { ok: false, reason: 'no-axis' };
+  const ux = ax / n; const uy = ay / n; const uz = az / n;
+  const rad = ((Number(angleDeg) || 0) * Math.PI) / 180;
+  const c = Math.cos(rad); const s = Math.sin(rad);
+  const ox = positions[a * 3]; const oy = positions[a * 3 + 1]; const oz = positions[a * 3 + 2];
+  const x = positions.slice();
+  for (const i of side) {
+    const px = positions[i * 3] - ox;
+    const py = positions[i * 3 + 1] - oy;
+    const pz = positions[i * 3 + 2] - oz;
+    const dot = px * ux + py * uy + pz * uz;          // u·p
+    const qx = uy * pz - uz * py;                     // u×p
+    const qy = uz * px - ux * pz;
+    const qz = ux * py - uy * px;
+    x[i * 3] = ox + px * c + qx * s + ux * dot * (1 - c);
+    x[i * 3 + 1] = oy + py * c + qy * s + uy * dot * (1 - c);
+    x[i * 3 + 2] = oz + pz * c + qz * s + uz * dot * (1 - c);
+  }
+  return { ok: true, positions: x, side: [...side], bond, angle: Number(angleDeg) || 0 };
+};
+
+/**
+ * UNE BOTTE DE TORSION — la seule perturbation que les échappées s'autorisent.
+ *
+ * Elle tire une liaison au hasard (dans l'ordre d'un tirage à graine fixe), en
+ * garde un côté, et le fait tourner RIGIDEMENT autour d'elle : le modèle qui en
+ * sort a la même géométrie interne, seulement un dihèdre de plus. C'est
+ * exactement le geste que la demande décrit (« changing the dihedral angles by
+ * hand is useful but it is a lot of work ») — fait à la place de l'utilisateur,
+ * pour sortir d'une buche locale.
+ *
+ *   · la liaison doit séparer le graphe (`bondSideOf` : une liaison de cycle est
+ *     refusée — la botte ne déforme aucun cycle) ;
+ *   · TOUS les atomes du côté tourné doivent être dans `movable` : la botte ne
+ *     touche jamais un atome que l'appelant a laissé de côté ;
+ *   · quand `seeds` est donné (les deux atomes de la distance DEMANDÉE), la
+ *     liaison est choisie pour que la distance change VRAIMENT : un seul des deux
+ *     grains du côté tourné. Une botte qui ne fait pas bouger la cible ne sert à
+ *     rien ; le module en essaie d'autres, et retombe sur la première valable
+ *     quand aucune ne fait mieux (`turned` le dit) ;
+ *   · la recherche est plafonnée (`maxTries`, 60 liaisons essayées au plus) : un
+ *     essai reste un clic, pas un parcours de la molécule entière.
+ *
+ * @returns {{ok:boolean, reason?:string, positions?:Float64Array|number[],
+ *            side?:number[], bond?:{a:number,b:number}, angle?:number, turned?:number}}
+ */
+export const torsionKickOf = ({
+  positions = null, bonds = [], atomCount = 0, movable = null, seeds = [],
+  angleDeg = RELAX_KICK_DEG, rnd = null, maxTries = 60,
+} = {}) => {
+  const read = flatPositions(positions);
+  if (!read) return { ok: false, reason: 'bad-points' };
+  const count = Number(atomCount) > 0 && Number(atomCount) < read.count
+    ? Number(atomCount) : read.count;
+  const graph = bondGraphOf({ bonds, atomCount: count });
+  const movSet = new Set((movable == null ? Array.from({ length: count }, (_, i) => i) : Array.from(movable))
+    .map(Number).filter((i) => isIndex(i) && i < count));
+  if (!movSet.size) return { ok: false, reason: 'no-movable' };
+  if (!graph.list.length) return { ok: false, reason: 'no-bond' };
+  const wanted = [...new Set(Array.from(seeds || []).map(Number).filter((i) => isIndex(i) && i < count))];
+  const random = typeof rnd === 'function' ? rnd : makeRelaxRandom(RELAX_ESCAPE_SEED);
+  const amp = Math.min(RELAX_MAX_KICK_DEG,
+    Math.max(1, Number.isFinite(Number(angleDeg)) ? Math.abs(Number(angleDeg)) : RELAX_KICK_DEG));
+  const angle = amp * (random() < 0.5 ? -1 : 1);
+  /* LE TIRAGE DE LA LIAISON — un mélange de Fisher–Yates des candidates, donc une
+     botte différente à chaque essai, dans un ordre que la graine décide. */
+  const cand = graph.list.filter((b) => movSet.has(b.i) || movSet.has(b.j));
+  if (!cand.length) return { ok: false, reason: 'no-bond' };
+  for (let k = cand.length - 1; k > 0; k -= 1) {
+    const j = Math.floor(random() * (k + 1));
+    const tmp = cand[k]; cand[k] = cand[j]; cand[j] = tmp;
+  }
+  const tries = Math.max(1, Math.min(cand.length, Math.round(Number(maxTries) || 60)));
+  let fallback = null;
+  for (let t = 0; t < tries; t += 1) {
+    const b = cand[t];
+    for (const pair of [[b.i, b.j], [b.j, b.i]]) {
+      const a = pair[0]; const other = pair[1];
+      const side = bondSideOf({ neighbours: graph.neighbours, atom: a, other, atomCount: count });
+      if (!side || !side.length) continue;                       // un cycle : aucune charnière
+      if (!side.every((i) => movSet.has(i))) continue;            // un atome hors fenêtre
+      const turned = wanted.length ? side.filter((i) => wanted.includes(i)).length : 0;
+      const bond = { a, b: other };
+      if (!wanted.length || turned === 1) {
+        /* LA BOTTE QUI CHANGE LA CIBLE — un atome de la paire d'un côté, l'autre
+           de l'autre : la rotation déplace forcément leur distance. */
+        const done = rotateSideOf({ positions: read.flat, side, axis: [a, other], angleDeg: angle, bond });
+        if (done.ok) { done.turned = turned; done.count = count; }
+        return done;
+      }
+      if (!fallback) fallback = { bond, side, turned };
+    }
+  }
+  if (!fallback) return { ok: false, reason: 'no-bridge' };
+  const done = rotateSideOf({
+    positions: read.flat, side: fallback.side, axis: [fallback.bond.a, fallback.bond.b],
+    angleDeg: angle, bond: fallback.bond,
+  });
+  if (done.ok) { done.turned = fallback.turned; done.count = count; }
+  return done;
+};
+
+/**
+ * LES CONTACTS TROP COURTS D'UN MODÈLE — « cette géométrie est-elle réalisable ? »
+ * Deux atomes que le graphe ne relie PAS et qui se touchent à moins de
+ * `minDistance` (1.45 Å par défaut) : ce ne sont pas deux atomes côte à côte,
+ * c'est un atome passé à travers un autre. Le module les COMPTE au lieu de les
+ * ignorer — c'est le seul juge de « réalisabilité » qu'il ait, et le rapport
+ * l'affiche.
+ *
+ * La mesure est LOCALE (`movable`) : seuls les atomes qu'un geste peut déplacer
+ * sont regardés, et un couple n'est compté qu'une fois (que les deux bougent ou
+ * non). Une grille de la taille du seuil évite le O(n²) d'une protéine : chaque
+ * atome ne regarde que ses 27 cellules voisines.
+ *
+ * Rend `{count, worst, pairs, severity, checked, minDistance}` : le NOMBRE de
+ * couples trop courts, le plus court (`worst` = `{i, j, distance}`), les premiers
+ * couples nommés (`maxReported`), et `severity` = Σ (seuil − d)² — le chiffre
+ * dont les échappées se servent pour préférer un modèle propre à un modèle
+ * empilé (`RELAX_CLASH_WEIGHT`).
+ */
+export const clashReportOf = ({
+  positions = null, bonds = [], atomCount = 0, movable = null,
+  minDistance = RELAX_CLASH_DISTANCE, maxReported = 8,
+} = {}) => {
+  const limit = Number(minDistance) > 0 ? Number(minDistance) : RELAX_CLASH_DISTANCE;
+  const out = { count: 0, worst: null, pairs: [], severity: 0, checked: 0, minDistance: limit };
+  const read = flatPositions(positions);
+  if (!read) return out;
+  const count = read.count;
+  const x = read.flat;
+  const graph = bondGraphOf({ bonds, atomCount: count });
+  const bonded = new Set(graph.list.map((b) => (b.i < b.j ? `${b.i}-${b.j}` : `${b.j}-${b.i}`)));
+  const who = movable == null ? null : new Set(Array.from(movable).map(Number)
+    .filter((i) => isIndex(i) && i < count));
+  const cell = limit;
+  const grid = new Map();
+  const key3 = (a, b, c) => `${a},${b},${c}`;
+  const cellOf = (i, axis) => Math.floor(x[i * 3 + axis] / cell);
+  for (let i = 0; i < count; i += 1) {
+    const k = key3(cellOf(i, 0), cellOf(i, 1), cellOf(i, 2));
+    const bucket = grid.get(k);
+    if (bucket) bucket.push(i); else grid.set(k, [i]);
+  }
+  const seen = new Set();
+  for (let i = 0; i < count; i += 1) {
+    if (who && !who.has(i)) continue;
+    out.checked += 1;
+    const cx = cellOf(i, 0); const cy = cellOf(i, 1); const cz = cellOf(i, 2);
+    for (let dx = -1; dx <= 1; dx += 1) {
+      for (let dy = -1; dy <= 1; dy += 1) {
+        for (let dz = -1; dz <= 1; dz += 1) {
+          const bucket = grid.get(key3(cx + dx, cy + dy, cz + dz));
+          if (!bucket) continue;
+          for (const j of bucket) {
+            if (j === i) continue;
+            if (who && who.has(j) && j < i) continue;          // compté une seule fois
+            const key = i < j ? `${i}-${j}` : `${j}-${i}`;
+            if (bonded.has(key) || seen.has(key)) continue;
+            seen.add(key);
+            const d = dist3([x[i * 3], x[i * 3 + 1], x[i * 3 + 2]], [x[j * 3], x[j * 3 + 1], x[j * 3 + 2]]);
+            if (!(d < limit)) continue;
+            out.count += 1;
+            out.severity += (limit - d) * (limit - d);
+            if (!out.worst || d < out.worst.distance) out.worst = { i, j, distance: d };
+            if (out.pairs.length < Math.max(0, Math.round(Number(maxReported) || 0))) {
+              out.pairs.push({ i, j, distance: d });
+            }
+          }
+        }
+      }
+    }
+  }
+  return out;
+};
+
 /* ── 7 · LA FENÊTRE QUI A LE DROIT DE BOUGER ───────────────────────────────── */
 /**
  * LES ATOMES QUE LE CONSTRUIT PEUT DÉPLACER — ceux qui sont à `radius` liaisons ou
@@ -1065,10 +1387,27 @@ const summaryOf = (e) => ({
  *   `stageStep` = l'écart entre deux paliers du rapprochement, en ångströms (2 par
  *   défaut, 0 = un seul palier : le geste d'avant) ; `restoreSteps` = les pas de la
  *   reprise après chaque palier (0 = aucune reprise).
+ *   `escapes` = le nombre de BOTTES DE TORSION que le module a le droit d'essayer
+ *   quand la descente s'est arrêtée dans un creux (0 par défaut = le geste
+ *   d'avant, `RELAX_DEFAULT_ESCAPES` = 6 pour le panneau), `escapeSteps` = les pas
+ *   de la descente qui suit chaque botte, `kickDeg` = l'amplitude de la première
+ *   botte (elle décroît jusqu'à RELAX_MIN_KICK_DEG), `seed` = la graine des
+ *   tirages (fixe : le même modèle donne le même construit), `clashDistance` = le
+ *   seuil des contacts trop courts (voir `clashReportOf`).
+ *   `onStep` = LE PAS VU DE L'EXTÉRIEUR : une fonction appelée après chaque pas
+ *   (une itération de descente, une botte, une reprise), avec
+ *   `{phase, step, positions, movable, energy, distances, stage, stages, attempt,
+ *   attempts}` — `positions` est le tableau de travail (à COPIER pour le garder,
+ *   jamais à écrire), `energy` la fonction cible à cet instant et `distances` les
+ *   distances DEMANDÉES relues. C'est ce qui permet à l'écran de montrer la
+ *   molécule QUI CHANGE, pas seulement le résultat final. `stepEvery` (1 par
+ *   défaut) n'annonce qu'un pas sur N ; le dernier pas est toujours annoncé
+ *   (`final`). Un `onStep` qui lève n'arrête pas la descente.
  * @returns {{ok:boolean, reason:string, converged:boolean, reached:boolean,
  *            positions:number[]|null, moved:number[], before:object|null,
  *            after:object|null, pairs:object[], stages:number, stageStep:number,
  *            stagePlan:object[], restorations:number, restore:object|null,
+ *            escapes:object, clashes:object,
  *            steps:number, evaluations:number, terms:object, hybrids:any[]}}
  *   `restore` donne les écarts moyens AVANT la première reprise et APRÈS la
  *   dernière (`bondRms`, `angleRms`, `planarRms`) : c'est la tension résorbée.
@@ -1080,6 +1419,9 @@ export const relaxGeometry = (spec = {}) => {
     tolerance = RELAX_ENERGY_TOLERANCE, gradientTolerance = RELAX_GRADIENT_TOLERANCE,
     weights = RELAX_WEIGHTS, tether = null,
     stageStep = RELAX_STAGE_STEP, maxStages = RELAX_MAX_STAGES, restoreSteps = RELAX_RESTORE_STEPS,
+    escapes = RELAX_ESCAPES, escapeSteps = RELAX_ESCAPE_STEPS, kickDeg = RELAX_KICK_DEG,
+    seed = RELAX_ESCAPE_SEED, clashDistance = RELAX_CLASH_DISTANCE,
+    onStep = null, stepEvery = 1,
   } = spec || {};
 
   const read = flatPositions(positions);
@@ -1087,7 +1429,7 @@ export const relaxGeometry = (spec = {}) => {
     return {
       ok: false, reason: 'bad-points', converged: false, reached: false,
       positions: null, moved: [], before: null, after: null, pairs: [],
-      steps: 0, evaluations: 0, terms: null, hybrids: [],
+      steps: 0, evaluations: 0, terms: null, hybrids: [], escapes: null, clashes: null,
     };
   }
   const count = read.count;
@@ -1101,7 +1443,7 @@ export const relaxGeometry = (spec = {}) => {
   const refuse = (reason) => ({
     ok: false, reason, converged: false, reached: false, positions: null, moved: [],
     before: null, after: null, pairs: [], steps: 0, evaluations: 0,
-    terms: termInfo, hybrids: terms.hybrids,
+    terms: termInfo, hybrids: terms.hybrids, escapes: null, clashes: null,
   });
 
   /* LES ATOMES MOBILES — ceux qu'on donne, ou tous. Un indice hors molécule, un
@@ -1151,6 +1493,43 @@ export const relaxGeometry = (spec = {}) => {
   let stalledOnce = false;      // une descente s'est posée sans pouvoir bouger
   const capMax = Math.max(1e-6, Number(maxAtomStep) || RELAX_MAX_ATOM_STEP);
 
+  /* ── LE PAS, VU DE L'EXTÉRIEUR — voir `onStep` ────────────────────────────────
+     Un pas = une itération de descente, une botte de torsion, une reprise. Le
+     panneau du viewer s'en sert pour montrer la molécule QUI BOUGE au lieu du
+     résultat de but en blanc ; une sonde s'en sert pour vérifier l'ORDRE et les
+     chiffres. `positions` est le tableau de travail : l'appelant le COPIE s'il
+     veut le garder, il ne l'écrit jamais. Le dernier pas d'un geste est toujours
+     annoncé (`final`), même quand `stepEvery` n'annonce qu'un pas sur N. */
+  let stepsEmitted = 0;
+  const everySteps = Math.max(1, Math.round(Number(stepEvery) || 1));
+  const emit = (phase, extra = {}) => {
+    if (typeof onStep !== 'function') return;
+    stepsEmitted += 1;
+    if (extra.final !== true && everySteps > 1 && (stepsEmitted % everySteps) !== 0) return;
+    try {
+      onStep({
+        phase,
+        step: stepsEmitted,
+        positions: x,
+        movable: movableList,
+        /* L'ÉNERGIE ANNONCÉE EST CELLE DU RAPPORT — la fonction cible SANS la longe
+           (`before`/`after` du rapport sont calculés sans elle) : les chiffres de
+           l'animation et ceux du rapport se comparent donc directement. */
+        energy: current ? current.total - (Number(current.tether) || 0) : 0,
+        distances: distancesOf(),
+        stage: stageIndex,
+        stages: stageTotal,
+        attempt: escapeTry,
+        attempts: escapeTotal,
+        ...extra,
+      });
+    } catch { /* un rapport qui se plaint ne doit pas arrêter la descente */ }
+  };
+  let stageIndex = 0;           // le palier en cours du rapprochement (0 = aucun)
+  let stageTotal = 0;
+  let escapeTry = 0;            // l'échappée en cours (0 = aucune)
+  let escapeTotal = 0;
+
   /* LA CONTRAINTE, ET SON RESSORT. La cible de chaque paire est ce que la descente
      CONDUIT ; son POIDS change pendant une reprise (voir `setPairSpring`) : la reprise
      tient la distance obtenue au lieu de la conduire, et elle la tient d'autant plus
@@ -1179,7 +1558,7 @@ export const relaxGeometry = (spec = {}) => {
      et tient la distance pendant que les liaisons, les angles et les cycles se
      détendent. Rend les pas pris et la raison de l'arrêt ; ne touche ni à `x0`, ni au
      rapport, ni à la cible finale des paires. */
-  const descend = ({ budget, target = null, reach = true }) => {
+  const descend = ({ budget, target = null, reach = true, phase = 'descend' }) => {
     const budgetN = Math.max(0, Math.round(Number(budget) || 0));
     if (!budgetN) return { taken: 0, stop: 'max-steps' };
     if (target && !reach && setPairTargets(target)) rescore();
@@ -1252,6 +1631,7 @@ export const relaxGeometry = (spec = {}) => {
         move /= 2;
       }
       taken = s + 1;
+      emit(phase);
       if (!accepted) { stop = 'stalled'; break; }
       if (wasTotal - current.total < tolerance) {
         quiet += 1;
@@ -1283,8 +1663,18 @@ export const relaxGeometry = (spec = {}) => {
     ? Math.max(0, Math.min(RELAX_MAX_STAGE_STEP, askedStage))
     : RELAX_STAGE_STEP;
   const stageMax = Math.max(1, Math.round(Number(maxStages) || RELAX_MAX_STAGES));
-  const stageCount = stageSize > 0 && span > stageSize
-    ? Math.min(stageMax, Math.ceil(span / stageSize))
+  /* ⚠ UNE DISTANCE QUI DÉPASSE LE DÉCOUPAGE PRÉVU — vingt-quatre paliers de 2 Å ne
+     couvrent que 48 Å, et la version d'avant s'ARRÊTAIT donc là : sur une chaîne
+     étendue (153 Å à couvrir d'après `_geometry_relax_test.mjs`), la molécule
+     restait étirée, à moitié repliée de travers, et le rapport ne savait dire que
+     « max-steps ». Le PAS grandit maintenant pour que le voyage ENTIER tienne dans
+     le plafond de paliers (153 Å en 24 paliers de 6.27 Å, mesuré) au lieu d'être
+     tronqué : même nombre de paliers, même budget de pas, mais la cible est atteinte
+     (153 Å → 13.52 Å, là où l'ancien découpage s'arrêtait au bout de 48 Å). Quand
+     le plafond ne mordait pas, `stageSpan` EST `stageSize` et rien ne change. */
+  const stageSpan = stageSize > 0 ? Math.max(stageSize, span / stageMax) : 0;
+  const stageCount = stageSpan > 0 && span > stageSpan
+    ? Math.min(stageMax, Math.ceil(span / stageSpan))
     : 1;
   const stageSteps = stageCount > 1
     ? Math.max(RELAX_MIN_STAGE_STEPS, Math.round(maxSteps / stageCount))
@@ -1312,8 +1702,12 @@ export const relaxGeometry = (spec = {}) => {
     if (!restoreFrom) restoreFrom = summaryOf(energyOf(active, x));
     const held = distancesOf();
     setPairSpring(RELAX_RESTORE_STIFFNESS);
-    const hold = descend({ budget: restoreBudget, target: held, reach: false });
+    const hold = descend({ budget: restoreBudget, target: held, reach: false, phase: 'restore' });
     setPairSpring(1);
+    /* LE RESSORT RETIRÉ, L'ÉTAT EST RECALCULÉ — sans ce `rescore`, `current` garderait
+       la raideur 8× et la cible « tenue » du dernier pas accepté, et les énergies
+       annoncées (l'animation) ne seraient pas celles de l'état réel. */
+    rescore();
     const kept = distancesOf();
     kept.forEach((d, i) => {
       const drift = Math.abs(d - held[i]);
@@ -1325,9 +1719,11 @@ export const relaxGeometry = (spec = {}) => {
     restorations += 1;
   };
   if (maxSteps > 0 && active.pairs.length) {
+    stageTotal = stageCount;
     for (let k = 1; k <= stageCount; k += 1) {
-      const progress = span > 0 ? Math.min(1, (k * stageSize) / span) : 1;
+      const progress = span > 0 ? Math.min(1, (k * stageSpan) / span) : 1;
       const targets = planTargets(progress);
+      stageIndex = k;
       const step = descend({ budget: stageSteps, target: targets, reach: true });
       stepsTaken += step.taken;
       reason = step.stop;
@@ -1335,6 +1731,7 @@ export const relaxGeometry = (spec = {}) => {
       stagePlan.push({ progress, target: targets, distance: distancesOf(), stop: step.stop });
       restore();
     }
+    stageIndex = 0;
     if (stageCount > 1) {
       const close = descend({
         budget: Math.max(1, Math.round(stageSteps / 2)), target: pairTargets, reach: false,
@@ -1351,6 +1748,109 @@ export const relaxGeometry = (spec = {}) => {
     if (step.stop === 'stalled') stalledOnce = true;
   }
 
+  /* ── LES ÉCHAPPÉES — SORTIR DE LA BUCHE OÙ LA DESCENTE S'EST POSÉE ───────────
+     « E se usassi un metodo di minimizzazione che esce dalle buche locali? » La
+     descente ci-dessus est LOCALE : elle s'arrête au premier creux et le DIT
+     (`reason: 'stalled'`). Sur un REPLIEMENT lointain — deux atomes que seule une
+     autre conformation peut rapprocher — ce creux est un mur, et la molécule reste
+     étirée, pliée de travers : c'est le « non funziona » du rapport. Le module
+     rejoue donc la descente depuis d'autres conformations : une BOTTE DE TORSION
+     (`torsionKickOf`), une descente courte, et le MEILLEUR modèle est gardé — la
+     « Monte Carlo minimization » de Li & Scheraga. Le modèle rendu n'est JAMAIS
+     moins bon que celui de la descente ordinaire.
+     Deux critères, et pas un seul : l'énergie ET les contacts trop courts
+     (`clashReportOf`), parce qu'une conformation qui rapproche la cible en faisant
+     passer un atome À TRAVERS un autre n'est pas une solution — c'est exactement
+     le « géométrie irréalisable » de la demande. Rien n'est imprévisible pour
+     autant : la graine est fixe (`seed`). `escapes` = 0 rend le geste d'AVANT. */
+  const escapeWanted = Math.max(0, Math.min(RELAX_MAX_ESCAPES, Math.round(Number(escapes) || 0)));
+  const escapeBudget = Math.max(1, Math.round(Number(escapeSteps) || RELAX_ESCAPE_STEPS));
+  const kickMax = Math.max(RELAX_MIN_KICK_DEG, Math.min(RELAX_MAX_KICK_DEG,
+    Number.isFinite(Number(kickDeg)) ? Math.abs(Number(kickDeg)) : RELAX_KICK_DEG));
+  const clashMin = Number(clashDistance) > 0 ? Number(clashDistance) : RELAX_CLASH_DISTANCE;
+  const random = makeRelaxRandom(seed == null ? RELAX_ESCAPE_SEED : seed);
+  const scoreOf = (arr) => {
+    /* LA MÊME FONCTION CIBLE QUE LA DESCENTE, LONGE COMPRISE : sans elle, une botte
+       pourrait « gagner » en éloignant la molécule de son point de départ, et la
+       promesse « jamais moins bon que la descente ordinaire » ne serait plus vraie
+       sous l'objectif de la descente elle-même. */
+    const e = energyOf(active, arr, { ref: x0, tether: tetherWeight, movable: movableList });
+    const c = clashReportOf({ positions: arr, bonds, movable: movableList, minDistance: clashMin });
+    return {
+      total: e.total, clash: c, score: e.total + RELAX_CLASH_WEIGHT * c.severity,
+      energy: e.total - (Number(e.tether) || 0),
+    };
+  };
+  const escapeState = {
+    wanted: escapeWanted, tried: 0, improved: 0, rejected: 0, used: false,
+    skip: escapeWanted ? '' : 'off', plan: [], best: null,
+  };
+  const pairSeeds = [...new Set(active.pairs.flatMap((t) => [t.i, t.j]))];
+  /* LA CIBLE REDEVIENT CELLE DE L'UTILISATEUR AVANT DE JUGER — la reprise laisse les
+     cibles à la distance OBTENUE (« la contrainte cesse de tirer, elle tient »), donc
+     lire `reached` sans les remettre jugerait le geste sur la mauvaise cible et les
+     échappées seraient sautées à tort. C'est aussi la cible sur laquelle une botte se
+     juge : la distance DEMANDÉE, pas un palier de passage. */
+  setPairTargets(pairTargets);
+  active.pairs.forEach((t, i) => { t.target = pairTargets[i]; });
+  rescore();
+  const reachedNow = active.pairs.length > 0 && pairReportOf(active, x).every((p) => p.reached);
+  if (escapeWanted && !maxSteps) escapeState.skip = 'no-steps';
+  else if (escapeWanted && !active.pairs.length) escapeState.skip = 'no-pair';
+  else if (escapeWanted && reachedNow && !stalledOnce) escapeState.skip = 'reached';
+  if (!escapeState.skip) {
+    let best = scoreOf(x);
+    let bestX = x.slice();
+    escapeTotal = escapeWanted;
+    for (let e = 0; e < escapeWanted; e += 1) {
+      escapeTry = e + 1;
+      /* L'AMPLITUDE DÉCROÎT — les premières bottes explorent, les dernières ajustent. */
+      const amp = Math.max(RELAX_MIN_KICK_DEG, kickMax * (1 - e / escapeWanted));
+      const kick = torsionKickOf({
+        positions: bestX, bonds, atomCount: count, movable: movableList,
+        seeds: pairSeeds, angleDeg: amp, rnd: random,
+      });
+      if (!kick.ok) { escapeState.skip = kick.reason; break; }
+      x = kick.positions.slice();
+      rescore();
+      emit('kick', { final: true, bond: kick.bond, angle: kick.angle, turned: kick.turned });
+      const step = descend({ budget: escapeBudget, target: null, reach: false, phase: 'escape' });
+      stepsTaken += step.taken;
+      const cand = scoreOf(x);
+      const accepted = cand.score < best.score - 1e-9;
+      const distances = distancesOf();
+      escapeState.tried += 1;
+      escapeState.plan.push({
+        attempt: e + 1, angle: kick.angle, bond: kick.bond, turned: kick.turned,
+        energy: cand.energy, score: cand.score, clash: cand.clash.count,
+        distance: distances, accepted, stop: step.stop,
+      });
+      emit('escape', {
+        final: true, energy: cand.energy, distances, accepted,
+        clash: cand.clash.count, bond: kick.bond, angle: kick.angle,
+      });
+      if (accepted) { escapeState.improved += 1; best = cand; bestX = x.slice(); } else escapeState.rejected += 1;
+    }
+    escapeTry = 0;
+    escapeTotal = 0;
+    x = bestX.slice();
+    rescore();
+    escapeState.used = escapeState.tried > 0;
+    escapeState.best = {
+      energy: best.energy, score: best.score, clashes: best.clash.count,
+      worst: best.clash.worst ? { ...best.clash.worst } : null,
+      distance: distancesOf(),
+    };
+    /* UNE ÉCHAPPÉE QUI A GAGNÉ EST UNE RÉPONSE, PAS UN CUL-DE-SAC : la descente
+       s'était posée quelque part, les bottes ont trouvé mieux, et c'est CE
+       modèle-là qui est rendu — détendu, la distance obtenue tenue (la reprise). */
+    if (escapeState.improved > 0) {
+      reason = 'escaped';
+      stalledOnce = false;
+      restore();
+    }
+  }
+
   /* LE RAPPORT — relu sur les coordonnées RÉELLEMENT obtenues, jamais supposé. La
      cible de chaque paire est celle de l'UTILISATEUR (le rapprochement par paliers
      n'est qu'un chemin), et l'énergie est recalculée à cette cible-là. */
@@ -1362,6 +1862,14 @@ export const relaxGeometry = (spec = {}) => {
       + Math.abs(x[i * 3 + 2] - x0[i * 3 + 2]) > 1e-9) moved.push(i);
   }
   const reached = afterPairs.length > 0 && afterPairs.every((p) => p.reached);
+  /* LES CONTACTS TROP COURTS DU MODÈLE RENDU — le dernier mot sur la
+     « réalisabilité » : le rapport l'affiche, et le panneau le dit en clair. */
+  const finalClashes = clashReportOf({ positions: x, bonds, movable: movableList, minDistance: clashMin });
+  /* LE DERNIER ÉTAT EST RECALCULÉ AVANT D'ÊTRE ANNONCÉ — les cibles viennent d'être
+     remises à celles de l'utilisateur, donc `current` devient exactement l'énergie du
+     rapport : le dernier chiffre de l'animation est celui que le panneau affiche. */
+  rescore();
+  emit('final', { final: true });
   return {
     ok: true,
     /* UNE DESCENTE QUI S'EST POSÉE LE DIT, même quand les paliers suivants ont fini
@@ -1379,7 +1887,7 @@ export const relaxGeometry = (spec = {}) => {
       deviation: afterPairs[i].deviation, reached: afterPairs[i].reached,
     })),
     stages: stagePlan.length,
-    stageStep: stageSize,
+    stageStep: stageSpan,
     stagePlan,
     restorations,
     /* CE QUE LA REPRISE A RENDU — les écarts moyens du premier état d'avant reprise
@@ -1394,6 +1902,16 @@ export const relaxGeometry = (spec = {}) => {
       planarRms: { before: restoreFrom.planarRms, after: restoreTo.planarRms },
       pairDrift: restoreDrift,
     } : null,
+    /* LES ÉCHAPPÉES — ce qu'elles ont essayé, ce qu'elles ont gagné, et pourquoi
+       elles n'ont pas tourné du tout (`skip` : 'off' quand le geste n'en demande
+       aucune, 'no-pair' sans distance demandée, 'no-steps', 'reached' quand la
+       descente n'était PAS coincée — il n'y avait rien à fuir — ou la raison d'une
+       botte impossible : 'no-bond', 'no-bridge' quand aucune liaison n'est une
+       charnière). */
+    escapes: escapeState,
+    /* LES CONTACTS TROP COURTS DU MODÈLE RENDU (voir `clashReportOf`) : `count: 0`
+       veut dire « aucun atome passé à travers un autre » au seuil du module. */
+    clashes: finalClashes,
     steps: stepsTaken,
     evaluations,
     terms: termInfo,
