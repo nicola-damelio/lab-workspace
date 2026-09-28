@@ -7099,15 +7099,17 @@ const [pdbId, setPdbId] = useState('');
 const [pendingFileBatch, setPendingFileBatch] = useState(null); // File[] waiting for the "replace or keep both?" choice
 const [pendingSrc, setPendingSrc] = useState(null); // a PDB code / URL waiting for the "replace or keep both?" choice
 const lastAskedSrcRef = useRef(null); // last PDB code/URL we asked about, so the same value is never asked twice
-/* ✥ MOVE · ↻ ROTATE — the mouse gesture of the styling window. The request
-   replaces « ✋ Drag » by ONE Move button that lets every molecule be placed
-   INDEPENDENTLY (« allowing to move and rotate each molecule independently of the
-   others ») : `mouseMode` is 'off', 'move' (dragging slides the SELECTED
-   structure) or 'rotate' (dragging turns it about its own centre). Every molecule
-   space of the bar carries both buttons — they select that molecule AND arm the
-   gesture — and §2 « ✏️ Modify » carries the same pair for the chosen one. */
-const [mouseMode, setMouseMode] = useState('off'); // 'off' | 'move' | 'rotate'
-const dragMoveRef = useRef(null); // { comp, mode, pos, last } — active mouse session
+/* 🖱 LE GESTE EST LA SOURIS ELLE-MÊME — il n'y a plus de bouton à armer (voir
+   installMoleculeDrag, plus bas, pour le geste complet). Le rapport de cette
+   session : « The separated move and rotate buttons are impractical, it would be
+   better to simply continue to move and rotate with the mouse, the only difference
+   is that one molecule is moved and the other stay fixed. » `mouseMode` a donc
+   disparu : un glisser qui COMMENCE sur une molécule la tourne (bouton gauche) ou
+   la fait glisser (bouton droit), les autres ne bougent pas ; un glisser qui
+   commence sur le fond est la caméra, comme avant.
+   `molGrabRef` est la molécule que la main tient PENDANT ce geste (vide au repos) :
+   c'est elle qui reçoit la position finale dans la mémoire de la barre. */
+const molGrabRef = useRef(null); // { comp, key } | null — la molécule tenue par la souris
 // 🎯 The result of the last « Fit to chosen one » (see fitMoleculesOnChosen): how
 // many structures were superposed, and which ones had no atom to fit on.
 const [fitMsg, setFitMsg] = useState('');
@@ -10844,56 +10846,31 @@ buildMainReps();
 shadowRepsHook(component);
 if (shadowOnRef.current) setMeshShadows(component);
 
-// Multi-MODEL PDB files (ensembles / docking clusters / NMR structures):
-// NGL 2.4.0 does not expose structure.frameCount (and StructureComponent has
-// no setFrame), so the MODEL count comes from structure.modelStore.count —
-// the number of MODEL records the PDB parser created. The per-MODEL /
-// per-molecule text split below exposes each entry in the Molecules selector.
-let nglModelCount = 0;
-try {
-  nglModelCount = component.structure && component.structure.modelStore
-    ? component.structure.modelStore.count : 0;
-} catch { nglModelCount = 0; }
+/* 🧬 UN ATOME N'EST DESSINÉ QUE PAR UNE COMPOSANTE — DONC LA STRUCTURE CHARGÉE
+   RESTE **UNE** COMPOSANTE. Le rapport de cette session : « I do not understand
+   what you did to move the molecules now I have twice as much of molecules. » La
+   découpe en molécules de la structure CHARGÉE (une composante NGL par chaîne, par
+   MODEL, par fragment — voir utils/viewerMoleculeParts) GARDAIT la composante
+   entière ET ajoutait ces composantes-là : dès qu'une molécule était cochée dans la
+   barre — ou aussitôt après un « keep both », qui coche ce qu'il vient de garder —
+   la MÊME molécule était dessinée deux fois, et un déplacement ne faisait que
+   séparer visiblement les deux copies (une qui bougeait, une qui restait). C'est
+   exactement ce que le rapport décrit.
 
-/* 🧬 LES MOLÉCULES DU FICHIER SONT DES ENTITÉS — la demande : « you assign main to
-   the composition of all molecules in a group and that means that I cannot do
-   anything. Let me select molecule by molecule, even if these molecules are in the
-   same pdb they are separate entities. » Deux lectures, UNE règle
-   (utils/viewerMoleculeParts) :
-     1. LE TEXTE quand on l'a (un .pdb local, un PDB collé) : les records du fichier
-        sont recopiés tels quels, et un ensemble multi-MODEL expose chaque conformère ;
-     2. LA STRUCTURE sinon — un code PDB, une URL, un .cif, un .gro : c'est CE
-        chemin qui manquait ; la barre n'avait alors qu'UN espace, « la composition
-        de toutes les molécules », dont aucune n'était sélectionnable.
-   Chaque entité devient sa propre composante NGL (donc : son ★ set main, son ☑,
-   ses ✥ Move · ↻ Rotate, son 🎯 Fit) et porte un nom qui la DÉSIGNE. */
-try {
-  const srcFile = loadRequest && loadRequest.file;
-  const textIsPdb = !!(loadRequest && loadRequest.text && ['pdb', 'ent'].includes(String(loadRequest.ext || '').toLowerCase()));
-  let moleculeParts = [];
-  if (srcFile || textIsPdb) {
-    const isPdb = srcFile
-      ? /\.(pdb|ent)$/i.test(String(srcFile.name || ''))
-      : textIsPdb;
-    if (isPdb) {
-      const srcForSplit = srcFile || new Blob([loadRequest.text], { type: 'text/plain' });
-      moleculeParts = await splitPdbFileIntoMolecules(srcForSplit);
-    }
-  }
-  if (moleculeParts.length <= 1) moleculeParts = splitStructureIntoMolecules(component, nglModelCount);
-  if (moleculeParts.length > 1) {
-    for (let ci = 0; ci < moleculeParts.length; ci++) {
-      // Le nom vient de la découpe (`Chain A`, `Chain A · LIG`, `Model 3 · B`…) :
-      // deux molécules de la même chaîne ne sont donc plus confondues.
-      await loadChainMolecule(moleculeParts[ci].blob, moleculeParts[ci].label, ci);
-      // Real counters, at last: the molecules (or models) of a complex are
-      // loaded one after the other, so the bar knows its length here — the
-      // only step of a structure load that can say « i of N ».
-      loadRep.step(ci + 1, moleculeParts.length, 'Loading the molecules…');
-    }
-    setExtraMols(extraMolsSnapshot());
-  }
-} catch { /* the split failed — the whole structure stays one component */ }
+   Les molécules de la structure chargée vivent donc dans la BARRE, comme SECTIONS
+   de son espace : une section par chaîne / par glycan / par type de petite molécule,
+   chacune avec son ✔, son style, son 🔎 et sa sélection — c'est ce que la demande
+   « select molecule by molecule, even if these molecules are in the same pdb » veut
+   dire, et ça ne coûte aucune copie de la scène.
+
+   Une molécule qui doit être DÉPLACÉE TOUTE SEULE a sa propre composante : c'est le
+   chemin des structures AJOUTÉES (📂 Add structure · un code PDB / une URL gardés à
+   côté), où la composante du fichier ENTIER est retirée pour cette raison précise
+   (voir registerExtraComponent, plus bas) — jamais les deux à la fois.
+
+   La position / rotation d'une molécule se fait maintenant au clic (voir
+   installMoleculeDrag) et, pour un ensemble multi-MODEL (NMR, docking), le nombre de
+   MODEL n'est plus lu ici : il ne servait qu'à cette découpe. */
 
 // Residue ticks (resno / resname / 1-letter code / NATURE per residue) — built
 // ONCE here, because the strip AND the sequence handshake below both need them.
@@ -14237,103 +14214,129 @@ const applyActiveStyleToAll = () => {
   try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch {}
 };
 
-// ---- ✥ MOVE · ↻ ROTATE the SELECTED structure with the MOUSE -----------------
-// Both gestures read the SAME camera basis, so they behave the way the picture
-// does however the camera is aimed: moving slides along the screen's own axes,
-// rotating turns about them.
-const cameraBasis = () => {
-  const stage = stageRef.current;
-  const viewer = stage && stage.viewer;
-  if (!viewer || !viewer.camera) return null;
-  try {
-    const cam = viewer.camera;
-    const v3 = cam.position.constructor;
-    const dir = cam.getWorldDirection(new v3());
-    const right = new v3().crossVectors(dir, cam.up).normalize();
-    const up = new v3().crossVectors(right, dir).normalize();
-    const canvas = stage.container && stage.container.querySelector('canvas');
-    const h = canvas ? canvas.clientHeight : 300;
-    const fov = (cam.fov || 40) * Math.PI / 180;
-    const dist = cam.position.length() || 100;
-    const wpp = (2 * Math.tan(fov / 2) * dist) / Math.max(1, h);
-    return { right, up, dir, wpp };
-  } catch { return null; }
-};
+/* 🖱 UNE MOLÉCULE BOUGE, LES AUTRES NE BOUGENT PAS — ET C'EST LA SOURIS QUI LE FAIT.
+   Le rapport de cette session : « The separated move and rotate buttons are
+   impractical, it would be better to simply continue to move and rotate with the
+   mouse, the only difference is that one molecule is moved and the other stay
+   fixed. » Les boutons ✥ Move · ↻ Rotate (et le « mode » qu'ils armaient) sont donc
+   SUPPRIMÉS : le geste EST la souris —
+     · un glisser qui COMMENCE SUR une molécule la TOURNE (bouton gauche) ou la fait
+       GLISSER (bouton droit) ; les autres molécules ne bougent pas ;
+     · un glisser qui commence SUR LE FOND est la caméra, exactement comme avant
+       (gauche = tourner, droit = déplacer, molette = zoom) ;
+     · Alt+gauche rend la caméra même sur une molécule, et Ctrl · Méta · Maj laissent
+       TOUT à NGL — dont ses propres gestes de composante (Ctrl+Maj+gauche = tourner,
+       Ctrl+Maj+droit = glisser), qui faisaient déjà exactement cela.
+   ⚠⚠ LE GESTE EST CELUI DE NGL : `trackballControls.rotateComponent` / `panComponent`
+   tournent et déplacent la composante SOUS LE CURSEUR — celle que le picking met
+   dans `stage.transformComponent` — avec le pas, les repères et l'inertie de NGL. Le
+   viewer n'entretient donc plus une seule ligne de quaternion pour cela, et la
+   caméra et la molécule ne peuvent pas se désynchroniser.
+   ⚠ `transformComponent` EST REMIS À ZÉRO PAR NOUS À CHAQUE APPUI — et rempli AU
+   PIXEL DE L'APPUI par notre propre picking synchrone : NGL ne l'efface que quand un
+   survol TROUVE quelque chose, si bien qu'un glisser sur le fond aurait déplacé la
+   molécule du geste précédent au lieu de la caméra. Ici la molécule est connue AVANT
+   le premier pixel de mouvement, et le fond est un « rien » franc. C'est aussi ce qui
+   laisse un simple CLIC intact : c'est toujours lui qui sélectionne l'atome (les
+   signaux clicked / hovered du stage, inchangés).
+   La molécule que la main attrape devient la ★ référence de la barre : ↺ la remet à
+   l'origine, 🎯 Fit to chosen s'en sert, et la ligne ★ la nomme. */
+useEffect(() => {
+  // L'INSTALLATEUR — il rend la fonction qui défera tout (voir le cleanup de l'effet).
+  const installMoleculeDrag = (stage) => {
+    const tb = stage.trackballControls;
+    const repaint = () => { try { stage.viewer.requestRender(); } catch { /* jamais bloquant */ } };
+    // LA MOLÉCULE SOUS LE POINT D'APPUI — le picking de NGL, au pixel du clic. Les
+    // coordonnées sont celles de son observateur (pixels de la toile, y compté depuis
+    // le BAS), et seule une composante CONNUE répond : le fond — comme tout autre
+    // objet — rend « rien », et le glisser appartient alors à la caméra.
+    const compToGrab = (e) => {
+      const canvas = stage.container && stage.container.querySelector('canvas');
+      if (!canvas || !stage.pickingControls || typeof stage.viewer.pick !== 'function') return null;
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = rect.height - (e.clientY - rect.top);
+      let comp = null;
+      try { comp = (stage.pickingControls.pick(x, y) || {}).component || null; } catch { comp = null; }
+      if (!comp) return null;
+      if (comp === componentRef.current) return { comp, key: 'main' };
+      const hit = extraCompsRef.current.find((entry) => entry && entry.comp === comp);
+      return hit ? { comp, key: hit.id } : null;
+    };
 
-// Convert a screen-pixel delta into a world-space translation at the depth of
-// the structure, so dragging the mouse slides the selected molecule on screen.
-const worldDeltaForScreen = (dxPx, dyPx) => {
-  const b = cameraBasis();
-  if (!b) return [0, 0, 0];
-  const dxW = dxPx * b.wpp, dyW = -dyPx * b.wpp;
-  return [b.right.x * dxW + b.up.x * dyW, b.right.y * dxW + b.up.y * dyW, b.right.z * dxW + b.up.z * dyW];
-};
 
-// Radians of rotation per pixel dragged in « ↻ Rotate » (≈ 0.57°/px: a full turn
-// takes a drag of the window's width, which is what a hand expects).
-const ROTATE_PER_PIXEL = 0.01;
-
-
-const dragMoveComp = () => (selectedMolKey === 'main'
-  ? componentRef.current
-  : (extraCompsRef.current.find((x) => x.id === selectedMolKey) || {}).comp);
-
-const dragMoveOnDown = (e) => {
-  e.preventDefault();
-  const comp = dragMoveComp();
-  if (!comp) return;
-  const p = comp.position || { x: 0, y: 0, z: 0 };
-  dragMoveRef.current = { comp, mode: mouseMode, pos: [p.x || 0, p.y || 0, p.z || 0], last: { x: e.clientX, y: e.clientY } };
-  window.addEventListener('mousemove', dragMoveOnMove);
-  window.addEventListener('mouseup', dragMoveOnUp);
-};
-
-const dragMoveOnMove = (e) => {
-  const d = dragMoveRef.current;
-  if (!d) return;
-  const dx = e.clientX - d.last.x;
-  const dy = e.clientY - d.last.y;
-  d.last = { x: e.clientX, y: e.clientY };
-  if (!dx && !dy) return;
-  if (d.mode === 'rotate') {
-    // ↻ Turn the molecule about its OWN centre, on the screen's axes: a horizontal
-    // drag spins it about the camera's up axis, a vertical drag about its right
-    // axis — the two gestures a hand makes on a turntable.
-    try {
-      const b = cameraBasis();
-      const q = d.comp.quaternion;
-      if (b && q && typeof d.comp.setRotation === 'function') {
-        const Q = q.constructor;
-        const spin = new Q().setFromAxisAngle(b.up, dx * ROTATE_PER_PIXEL);
-        const tilt = new Q().setFromAxisAngle(b.right, dy * ROTATE_PER_PIXEL);
-        // World-space rotation: the new turn is applied AFTER the current one.
-        spin.multiply(tilt).multiply(q.clone());
-        d.comp.setRotation(spin);
-      }
-    } catch { /* rotation is best-effort */ }
-  } else {
-    const [wx, wy, wz] = worldDeltaForScreen(dx, dy);
-    d.pos = [d.pos[0] + wx, d.pos[1] + wy, d.pos[2] + wz];
-    try {
-      d.comp.setPosition(d.pos);
-      if (typeof d.comp.updateMatrix === 'function') d.comp.updateMatrix();
-    } catch { /* best-effort */ }
-  }
-  try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch {}
-};
-
-const dragMoveOnUp = () => {
-  window.removeEventListener('mousemove', dragMoveOnMove);
-  window.removeEventListener('mouseup', dragMoveOnUp);
-  const d = dragMoveRef.current;
-  dragMoveRef.current = null;
-  if (!d) return;
-  // Sync the Molecules-bar X/Y/Z inputs with the dragged position (extras AND
-  // the main structure — both have Move controls now).
-  const entry = extraCompsRef.current.find((x) => x.comp === d.comp);
-  if (entry) { entry.position = d.pos; setExtraMols(extraMolsSnapshot()); }
-  else if (d.comp === componentRef.current) { setMainPos([d.pos[0] || 0, d.pos[1] || 0, d.pos[2] || 0]); }
-};
+    // LA POSITION RETENUE PAR LA BARRE SUIT LA MAIN (le ↺ de l'espace l'annule) :
+    // une molécule ajoutée garde la sienne dans son entrée, la structure chargée
+    // dans `mainPos`. Les deux servent aux poses du film et au ↺, jamais au dessin.
+    const syncBar = () => {
+      const g = molGrabRef.current;
+      molGrabRef.current = null;
+      if (!g) return;
+      const p = g.comp.position || { x: 0, y: 0, z: 0 };
+      const pos = [p.x || 0, p.y || 0, p.z || 0];
+      const entry = extraCompsRef.current.find((x) => x.comp === g.comp);
+      if (entry) { entry.position = pos; setExtraMols(extraMolsSnapshot()); }
+      else if (g.comp === componentRef.current) setMainPos(pos);
+    };
+    // UN GLISSER = LA MOLÉCULE TENUE, SINON LA CAMÉRA (les deux gestes de NGL).
+    const dragRotate = (st, dx, dy) => {
+      if (st.transformComponent) tb.rotateComponent(dx, dy);
+      else tb.rotate(dx, dy);
+      repaint();
+    };
+    const dragSlide = (st, dx, dy) => {
+      if (st.transformComponent) tb.panComponent(dx, dy);
+      else tb.pan(dx, dy);
+      repaint();
+    };
+    const cameraRotate = (st, dx, dy) => { st.trackballControls.rotate(dx, dy); repaint(); };
+    // ⚠ SEULS LES DEUX GLISSERS « NUS » SONT LES NÔTRES : la molette, Maj · Ctrl ·
+    // Ctrl+Maj (gestes de composante compris), le clic et le double-clic restent ceux
+    // de NGL, intacts.
+    stage.mouseControls.remove('drag-left');
+    stage.mouseControls.remove('drag-right');
+    stage.mouseControls.add('drag-left', dragRotate);
+    stage.mouseControls.add('drag-right', dragSlide);
+    stage.mouseControls.add('drag-alt-left', cameraRotate);   // la caméra, même sur une molécule
+    const el = containerRef.current;
+    const onDown = (e) => {
+      if (e.button !== 0 && e.button !== 2) return;                  // molette → NGL (zoom)
+      if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;  // → les gestes de NGL
+      const g = compToGrab(e);
+      stage.transformComponent = g ? g.comp : undefined;
+      molGrabRef.current = g;
+      // La molécule qu'une main attrape EST la référence ★ (la barre le montre, et
+      // 🎯 Fit to chosen comme ↺ travaillent alors sur elle).
+      if (g) setSelectedMolKey(g.key);
+    };
+    const onUp = () => { syncBar(); stage.transformComponent = undefined; };
+    el.addEventListener('mousedown', onDown, true);
+    window.addEventListener('mouseup', onUp, true);
+    return () => {
+      el.removeEventListener('mousedown', onDown, true);
+      window.removeEventListener('mouseup', onUp, true);
+      try {
+        stage.mouseControls.preset('default');   // les gestes de NGL, tels quels
+        stage.transformComponent = undefined;
+        molGrabRef.current = null;
+      } catch { /* la scène s'en va : plus rien à remettre */ }
+    };
+  };
+  let cancelled = false;
+  let cleanup = null;
+  // ⚠ LA SCÈNE ARRIVE AVANT LES STRUCTURES (`stageReadyRef` est la promesse du
+  // stage) : les gestes s'installent dès qu'elle existe, et non « au premier
+  // chargement ». L'appui est écouté EN CAPTURE, sans jamais l'arrêter : NGL reçoit
+  // toujours ses clics (c'est lui qui sélectionne l'atome).
+  Promise.resolve(stageReadyRef.current)
+    .then((stage) => {
+      if (cancelled || !stage || !stage.mouseControls || !stage.trackballControls) return;
+      cleanup = installMoleculeDrag(stage);
+    })
+    .catch(() => { /* pas de scène : aucun geste à installer */ });
+  return () => { cancelled = true; if (cleanup) cleanup(); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, []);
 
 /* ☑ ALL · ☐ NONE — the request: « in the styling window the “all”, “main”, “copy”
    buttons at the top are obsolete, you can replace them for a button to select all
@@ -16956,27 +16959,18 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
 ↩ Back to PDB
 </button>
 )}
-{/* ✥ MOVE · ↻ ROTATE — the request: « The drag button should be replaced with a
-move button in all subsections of the styling window allowing to move and rotate
-each molecule independently of the others. » The same pair sits in every molecule
-space of the styling bar; these two here arm it for the CHOSEN molecule (the one
-highlighted in that bar), so the toolbar keeps a way to place a molecule without
-opening the bar. The X · Y · Z fields are gone on purpose: a drag is how a molecule
-is placed now, and the ↺ of its space puts it back. */}
-<button type="button"
-  onClick={() => setMouseMode((m) => (m === 'move' ? 'off' : 'move'))}
-  disabled={status !== 'ready'}
-  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${mouseMode === 'move' ? 'bg-amber-400 border-amber-500 text-amber-950' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed'}`}
-  title={`Move the ★ MAIN molecule — « ${molNameOf(selectedMolKey)} » right now, the reference named in the styling bar — with the mouse: drag inside the viewer to slide it. The other molecules stay where they are (every space of the styling bar has the same pair for its own molecule, and « set main » there changes WHICH molecule this pair moves). Click again to give the camera back its rotate/zoom.`}>
-  ✥ Move{mouseMode === 'move' ? ' ●' : ''}: {molNameOf(selectedMolKey)}
-</button>
-<button type="button"
-  onClick={() => setMouseMode((m) => (m === 'rotate' ? 'off' : 'rotate'))}
-  disabled={status !== 'ready'}
-  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${mouseMode === 'rotate' ? 'bg-amber-400 border-amber-500 text-amber-950' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed'}`}
-  title={`Rotate the ★ MAIN molecule — « ${molNameOf(selectedMolKey)} » right now, the reference named in the styling bar — with the mouse, about its own centre: drag sideways to spin it, up and down to tilt it. The other molecules do not move, and « set main » in another molecule's space hands this pair to that one.`}>
-  ↻ Rotate{mouseMode === 'rotate' ? ' ●' : ''}: {molNameOf(selectedMolKey)}
-</button>
+{/* 🖱 PLACER UNE MOLÉCULE — les boutons ✥ Move · ↻ Rotate ont disparu avec le mode
+qu'ils armaient (le rapport : « The separated move and rotate buttons are
+impractical… ») : le geste se fait à la souris, sur la molécule que l'on attrape
+(voir installMoleculeDrag). Comme il n'y a plus de bouton pour l'apprendre, cette
+pastille LE DIT — elle ne fait rien d'autre. Le X · Y · Z tapé reste supprimé :
+un glisser dit où va une molécule, et le ↺ de son espace annule position ET
+rotation. */}
+<span
+  className="px-2 py-1 text-[10px] font-semibold rounded-md border h-7 inline-flex items-center whitespace-nowrap bg-amber-50 border-amber-200 text-amber-800"
+  title={`Drag ON a molecule to turn it about its own centre (left button) · right-drag ON it to slide it — the other molecules stay where they are, and the molecule you take hold of becomes « ${molNameOf(selectedMolKey)} »'s ★ reference (its ↺ in the styling bar puts it back). Start the drag on the background (or hold Alt) to turn the camera as before, and use the wheel to zoom.`}>
+  🖱 drag a molecule: turn · right-drag: slide
+</span>
 <button
 type="button"
 onClick={rebuildHydrogensNow}
@@ -17765,21 +17759,12 @@ style={{ height: (viewerCollapsed ? 0 : viewH) + 'px' }}
 >
 <div ref={containerRef} className="w-full h-full" />
 
-{/* Mouse gesture overlay — when « ✥ Move » or « ↻ Rotate » is armed, it captures the
-    mouse (so NGL's rotate/zoom is suspended) and applies the gesture to the CHOSEN
-    structure only. */}
-{mouseMode !== 'off' && (
-  <div
-    className="absolute inset-0 z-20"
-    style={{ cursor: mouseMode === 'rotate' ? 'grab' : 'move' }}
-    onMouseDown={dragMoveOnDown}
-    onMouseMove={dragMoveOnMove}
-    onMouseUp={dragMoveOnUp}
-    title={mouseMode === 'rotate'
-      ? `Drag to rotate « ${molNameOf(selectedMolKey)} » — the ★ main molecule, the one the styling bar names — about its own centre. Toggle ↻ Rotate off to rotate/zoom the camera again.`
-      : `Drag to move « ${molNameOf(selectedMolKey)} » — the ★ main molecule, the one the styling bar names. Toggle ✥ Move off to rotate/zoom the camera again.`}
-  />
-)}
+{/* ⚠ PLUS DE CALQUE DE GESTE ICI. Un div plein cadre capturait la souris quand
+    ✥ Move / ↻ Rotate étaient armés — c'est ce qui rendait le geste « séparé »
+    (armer un mode, et tant qu'il l'était la caméra était suspendue). Le geste vit
+    maintenant DANS la souris elle-même (une action de `stage.mouseControls`, voir
+    installMoleculeDrag) : rien à superposer, et la caméra répond toujours dès que
+    le glisser ne commence pas sur une molécule. */}
 
 {/* Soft edge vignette — a subtle framing cue drawn above the canvas. The real
     shadow impression now comes from the FIXED key light (installShadowLightRig);
@@ -17887,15 +17872,16 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
     {!!fitMsg && (
       <p className="text-[10px] font-semibold text-violet-800 bg-violet-50 border border-violet-200 rounded px-1 py-0.5 shrink-0">{fitMsg}</p>
     )}
-    {/* ★ LA RÉFÉRENCE, NOMMÉE — la demande de cette session : « You say that the main
-        is the molecule to move but there is no way to define the main. » La barre
-        NOMME donc la molécule de référence en permanence : c'est celle dont le bouton
-        dit « main », celle que 🎯 Fit to chosen prend pour cible, et celle que les
-        boutons ✥ Move · ↻ Rotate de §2 déplacent. Changer de référence est un clic
-        (« set main ») sur l'espace de l'autre molécule. */}
+    {/* ★ LA RÉFÉRENCE, NOMMÉE — la demande d'une session précédente : « You say that
+        the main is the molecule to move but there is no way to define the main. » La
+        barre NOMME donc la molécule de référence en permanence : celle que 🎯 Fit to
+        chosen prend pour cible, et celle dont l'espace porte le cadre violet. Changer
+        de référence est un clic (« set main ») sur l'espace de l'autre molécule — ou
+        simplement ATTRAPER l'autre à la souris dans la vue 3D : la molécule qu'une
+        main attrape DEVIENT la référence (voir installMoleculeDrag). */}
     <p className="text-[10px] font-bold text-violet-800 shrink-0"
-      title={`Every ␣ below is ONE molecule — even when several molecules live in the SAME PDB file: each one has its own ☑, its own « ★ set main » and its own ✥ Move · ↻ Rotate, so they can be ticked, placed, styled and superposed one by one. « ${molNameOf(selectedMolKey)} » is the reference right now — 🎯 Fit to chosen superposes the other shown structures onto it, and §2's ✥ Move · ↻ Rotate move IT.`}>
-      ★ main: {molNameOf(selectedMolKey)} · 🎯 Fit to chosen and §2's ✥ Move · ↻ Rotate act on it
+      title={`Every ␣ below is ONE molecule — even when several molecules live in the SAME PDB file: each one has its own ☑, its own « ★ set main », its own styling rows and its own 🔎, so they can be ticked, styled, moved and superposed one by one. « ${molNameOf(selectedMolKey)} » is the reference right now — 🎯 Fit to chosen superposes the other shown structures onto it, and a drag that starts ON a molecule turns it (left) or slides it (right) without moving the others.`}>
+      ★ main: {molNameOf(selectedMolKey)} · a drag on a molecule turns/slides it · 🎯 Fit to chosen superposes the others onto it
     </p>
     <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-1 min-h-0">
       {Object.keys(sectionCatalog).length === 0 && (
@@ -17922,46 +17908,35 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
               {/* 🎯 LE CHOIX DE LA MOLÉCULE — la référence de « 🎯 Fit to chosen » (le
                   rapport : « there is no way to select a molecule so I cannot try the
                   "fit to chosen" button »). Le choix se VOIT : espace violet + « chosen ». */}
-              {/* ★ LA MOLÉCULE « MAIN » (LA RÉFÉRENCE) — la demande de cette session :
-                  « You say that the main is the molecule to move but there is no way to
-                  define the main. » Le bouton DIT le mot « main », il est sur CHAQUE
-                  molécule, et il la choisit : 🎯 Fit to chosen superpose les autres sur
-                  elle, et les boutons ✥ Move · ↻ Rotate de §2 déplacent ELLE. La ligne
+              {/* ★ LA MOLÉCULE « MAIN » (LA RÉFÉRENCE) — la demande d'une session
+                  précédente : « You say that the main is the molecule to move but there
+                  is no way to define the main. » Le bouton DIT le mot « main », il est
+                  sur CHAQUE molécule, et il la choisit : 🎯 Fit to chosen superpose les
+                  autres sur elle, et c'est elle que la souris tourne ou fait glisser
+                  quand on l'attrape dans la vue 3D (voir installMoleculeDrag). La ligne
                   ★ du haut de la barre nomme toujours celle qui est choisie. */}
               <button type="button" onClick={() => chooseMol(molKey)}
                 className={`text-[10px] font-bold px-1 rounded shrink-0 ${chosen ? 'bg-violet-600 text-white' : 'text-slate-500 hover:text-violet-700'}`}
                 title={chosen
-                  ? `${entry.name} IS the main molecule (the reference): 🎯 Fit to chosen superposes every other shown structure onto it, and the ✥ Move · ↻ Rotate buttons of §2 move IT. Click another space's « set main » to change it.`
-                  : `Make ${entry.name} the main molecule (the reference): 🎯 Fit to chosen then superposes every other shown structure onto it, and the ✥ Move · ↻ Rotate buttons of §2 move it.`}>
+                  ? `${entry.name} IS the main molecule (the reference): 🎯 Fit to chosen superposes every other shown structure onto it, and it is the one a drag on it turns or slides. Click another space's « set main » to change it.`
+                  : `Make ${entry.name} the main molecule (the reference): 🎯 Fit to chosen then superposes every other shown structure onto it. Grabbing it in the 3D view (a drag on it) makes it the reference too.`}>
                 ★ {chosen ? 'main' : 'set main'}</button>
               {extra && (
                 <button type="button" onClick={(e) => { e.stopPropagation(); deleteExtraMol(extra.id); }}
                   className="text-red-400 hover:text-red-600 font-bold text-[10px] px-1 shrink-0" title="Delete this structure">🗑</button>
               )}
             </div>
-            {/* ✥ MOVE · ↻ ROTATE THE WHOLE MOLECULE — the request: « The drag button
-                should be replaced with a move button in all subsections of the styling
-                window allowing to move and rotate each molecule independently of the
-                others. » Every space carries the pair, so the hand places ONE molecule
-                without touching the others; the button selects that molecule at the
-                same time (the gesture always acts on the chosen one). The typed X · Y · Z
-                shift is gone with the old title: a drag says where a molecule goes, and
-                ↺ puts it back (position AND rotation). Every row of every section of
-                that molecule follows its NGL component. */}
+            {/* ↺ — LES DEUX BOUTONS ✥ Move · ↻ Rotate DE CET ESPACE ONT DISPARU avec le
+                mode qu'ils armaient (le rapport : « The separated move and rotate
+                buttons are impractical… »). Le geste est maintenant la souris, sur la
+                molécule qu'on attrape : glisser la tourne (gauche) ou la fait glisser
+                (droit), sans rien armer ni choisir d'abord (voir installMoleculeDrag).
+                ↺ reste ici, et il annule TOUT ce geste — position ET rotation, un fit
+                compris — pour cette molécule-là. */}
             <div className="flex items-center gap-1">
-              <button type="button"
-                onClick={() => { setSelectedMolKey(molKey); setMouseMode((m) => (m === 'move' ? 'off' : 'move')); }}
-                className={`px-1 py-0.5 text-[9px] font-bold rounded border ${mouseMode === 'move' && selectedMolKey === molKey ? 'bg-amber-400 border-amber-500 text-amber-950' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-100'}`}
-                title="Move THIS molecule with the mouse — drag inside the viewer to slide it (the other molecules stay where they are). Click again to rotate/zoom the camera as usual.">
-                ✥ Move</button>
-              <button type="button"
-                onClick={() => { setSelectedMolKey(molKey); setMouseMode((m) => (m === 'rotate' ? 'off' : 'rotate')); }}
-                className={`px-1 py-0.5 text-[9px] font-bold rounded border ${mouseMode === 'rotate' && selectedMolKey === molKey ? 'bg-amber-400 border-amber-500 text-amber-950' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-100'}`}
-                title="Rotate THIS molecule with the mouse, about its own centre — drag sideways to spin it, up and down to tilt it. The other molecules do not move.">
-                ↻ Rotate</button>
               <button type="button" onClick={() => (extra ? resetExtraMolPosition(extra.id) : resetMainPosition())}
                 className="text-[10px] font-bold text-slate-500 hover:text-slate-800 ml-auto"
-                title="↺ Back to the origin: undo the moves AND the rotations of this molecule (a fit included)">↺</button>
+                title="↺ Back to the origin: undo the moves AND the rotations of this molecule (a fit included) — drag ON the molecule to turn it (left button) or slide it (right button).">↺</button>
             </div>
             {(entry.sections || []).map((sec) => renderSection(sec))}
           </div>

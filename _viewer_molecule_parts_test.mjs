@@ -6,11 +6,14 @@
    molecule by molecule, even if these molecules are in the same pdb they are
    separate entities. »
 
-   Une entité de la barre EST une composante NGL : une molécule ne peut avoir son
-   ★ set main, son ☑, ses ✥ Move · ↻ Rotate et son 🎯 Fit que si elle A sa
-   composante. La découpe n'existait que pour un PDB lu COMME TEXTE — une structure
-   venue d'un code PDB, d'une URL, d'un .cif ou d'un .gro restait UNE composante,
-   « la composition de toutes les molécules ». Ce qu'on mesure ici :
+   Une entité de la barre EST une composante NGL : une molécule ajoutée ne peut avoir
+   son ★ set main, son ☑, son style et son 🎯 Fit que si elle A sa composante.
+   ⚠⚠ LA STRUCTURE CHARGÉE, ELLE, RESTE **UNE** COMPOSANTE — le rapport de cette
+   session : « I do not understand what you did to move the molecules now I have
+   twice as much of molecules. » La découpe la dessinait DEUX FOIS (sa composante
+   entière ET une composante par entité), et le moindre déplacement ne faisait que
+   séparer les deux copies. Ses molécules vivent dans la BARRE, comme sections de son
+   espace. Ce qu'on mesure ici :
      §1 LA RÈGLE (src/utils/viewerMoleculeParts) — les fragments connexes, jamais
         à travers deux MODEL, divisés par chaîne, l'eau pure ignorée, 30 au plus ;
      §2 LE NOM — une petite molécule dit ce qu'elle est (« Chain A · LIG ») et un
@@ -146,10 +149,11 @@ has('a.eachBondedAtom((b) => {', 'les liaisons que la structure déclare sont lu
 has('structure.chainStore.modelIndex[a.chainIndex]', 'le MODEL d’un atome vient de sa chaîne (un ensemble NMR reste séparé)');
 has('if (!atoms.length || atoms.length > MOLECULE_PART_MAX_ATOMS) return [];',
   'une scène énorme n’est pas découpée : elle reste une entité');
-has('if (moleculeParts.length <= 1) moleculeParts = splitStructureIntoMolecules(component, nglModelCount);',
-  'un code PDB, une URL, un .cif, un .gro : la structure est découpée à son tour');
-has('await loadChainMolecule(moleculeParts[ci].blob, moleculeParts[ci].label, ci);',
-  'chaque entité du fichier devient sa propre composante (donc son ★ set main · ✥ Move · 🎯 Fit)');
+has("UN ATOME N'EST DESSINÉ QUE PAR UNE COMPOSANTE",
+  'la STRUCTURE CHARGÉE reste UNE composante (le rapport : « now I have twice as much of molecules » — la découpe la dessinait deux fois)');
+hasNot('moleculeParts = await splitPdbFileIntoMolecules(srcForSplit);', '…son texte n’est plus recopié molécule par molécule');
+hasNot('await loadChainMolecule(moleculeParts[ci].blob, moleculeParts[ci].label, ci);',
+  '…et aucune entité du fichier chargé n’a sa propre composante (aucun atome dessiné deux fois)');
 has('const registerExtraComponent = useCallback(async (comp, name, n) => {', 'une molécule AJOUTÉE passe par la même fabrique');
 has('const parts = splitStructureIntoMolecules(comp);', '…on découpe la structure de la molécule ajoutée');
 has('stageRef.current.removeComponent(comp);', 'la composante du fichier ENTIER n’est pas gardée en double');

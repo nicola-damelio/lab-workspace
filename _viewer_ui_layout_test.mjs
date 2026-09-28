@@ -449,8 +449,10 @@ has('onChange={(e) => setSectionLabel(sec.id, k, e.target.checked)}', '[étiquet
 has('allowed: new Set(indices)', '[étiquettes] build3dLabelMap ne reçoit que les atomes de l’espace');
 has('const atomIndicesForSele = (structure, sele) => {', '[étiquettes] la sélection du menu devient une liste d’indices d’atomes');
 has('const routeCategorySelections = (sels, moleculeType) => {', '[rendu] UNE fonction de routage partagée par le rendu ET les étiquettes');
-has("onClick={() => setMouseMode((m) => (m === 'move' ? 'off' : 'move'))}", '[conservé] ✥ Move (ex-✋ Drag)');
-has("onClick={() => setMouseMode((m) => (m === 'rotate' ? 'off' : 'rotate'))}", '[ajouté] ↻ Rotate');
+has('🖱 drag a molecule: turn · right-drag: slide',
+  '[conservé] le placement d’une molécule, DIT au lieu d’être boutonné (✥ Move · ↻ Rotate ont disparu : ils étaient « impractical »)');
+has("stage.mouseControls.add('drag-left', dragRotate);",
+  '[ajouté] …et installé sur les gestes de NGL (un glisser sur une molécule la tourne, les autres ne bougent pas)');
 has('onClick={rebuildHydrogensNow}', '[conservé] ⚗️ Rebuild H');
 has('onClick={() => setShowAtomPanel((v) => !v)}', '[conservé] ✏️ panneau Atom names (renommage)');
 /* ── La SÉQUENCE de la page donne sa structure ──────────────────────────────
