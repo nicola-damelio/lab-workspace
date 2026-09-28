@@ -360,22 +360,88 @@ export const parseKeyframeFilm = (text) => {
  *
  *  The position is the one the component itself reports when it has one: it is
  *  exactly what `Component#setPosition` takes back, and the decomposition is
- *  only a fallback. A position that is not three finite numbers is refused. */
-export const keyframePoseOf = (key, elements, position, center) => {
+ *  only a fallback. A position that is not three finite numbers is refused.
+ *
+ *  ⚠ `parts` — LES MOLÉCULES DU FICHIER CHARGÉ QUI ONT ÉTÉ DÉPLACÉES (voir
+ *  utils/viewerMoleculeMoves) : une composante n'a qu'UNE position, mais elle peut
+ *  porter plusieurs molécules, dont une seule a été prise à la souris. Sans ce champ,
+ *  le film remettrait la molécule dans le fichier au premier morphème — la scène
+ *  perdrait exactement ce que l'utilisateur venait de placer. La forme est celle que
+ *  le viewer sait relire : `{ clé: { pivot, t, q } }`, des nombres, rien d'autre. */
+export const keyframePoseOf = (key, elements, position, center, parts) => {
   const { position: decomposed, quaternion } = poseFromRigidMatrix(elements, center);
   const given = numArrayOf(position, 3);
-  return { key: String(key), position: given || decomposed, quaternion };
+  const pose = { key: String(key), position: given || decomposed, quaternion };
+  const moves = normalizePoseParts(parts);
+  return moves ? { ...pose, parts: moves } : pose;
+};
+
+/* LES MOUVEMENTS D'UNE POSE, RELUS — chaque molécule doit dire son pivot (trois
+   nombres), son déplacement (trois nombres) et son orientation (quatre nombres) : une
+   entrée illisible est IGNORÉE plutôt que de peindre un NaN. Au-delà de 64 molécules
+   déplacées, la liste est tronquée : un film est un document, pas un dépotoir. */
+const POSE_PARTS_MAX = 64;
+export const normalizePoseParts = (raw) => {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const out = {};
+  let n = 0;
+  Object.keys(raw).forEach((key) => {
+    if (n >= POSE_PARTS_MAX || !key) return;
+    const one = raw[key];
+    if (!one || typeof one !== 'object') return;
+    const pivot = numArrayOf(one.pivot, 3);
+    const t = numArrayOf(one.t, 3);
+    const q = numArrayOf(one.q, 4);
+    if (!pivot || !t || !q) return;
+    out[key] = { pivot, t, q };
+    n += 1;
+  });
+  return n ? out : null;
+};
+
+/** DEUX MOUVEMENTS D'UNE MÊME MOLÉCULE, MÉLANGÉS : le déplacement et le pivot glissent
+ *  nombre par nombre, l'orientation est slerpée (comme la caméra et les molécules).
+ *  Une molécule qu'UNE SEULE des deux poses connaît se mélange avec « ne bouge pas »
+ *  (les mêmes nombres, à l'arrêt) — elle entre donc dans la scène en glissant depuis
+ *  sa place d'origine, elle ne saute pas. */
+const mixPosePart = (a, b, t) => {
+  const pivotA = numArrayOf((a && a.pivot) || null, 3) || numArrayOf((b && b.pivot) || null, 3) || [0, 0, 0];
+  const pivotB = numArrayOf((b && b.pivot) || null, 3) || pivotA;
+  const tA = numArrayOf((a && a.t) || null, 3) || [0, 0, 0];
+  const tB = numArrayOf((b && b.t) || null, 3) || [0, 0, 0];
+  return {
+    pivot: pivotA.map((n, i) => lerpNum(n, pivotB[i], t)),
+    t: tA.map((n, i) => lerpNum(n, tB[i], t)),
+    q: slerpQuat((a && a.q) || [0, 0, 0, 1], (b && b.q) || [0, 0, 0, 1], t),
+  };
+};
+
+/** …ET TOUT UN LOT. Une clé qui n'existe QUE d'un côté compte comme « à l'arrêt » de
+ *  l'autre (voir mixPosePart) ; s'il n'y a de mouvement nulle part, il n'y a pas de
+ *  champ `parts` du tout — une pose de scène intacte reste exactement ce qu'elle était
+ *  avant cette version du film. */
+export const mixPoseParts = (a, b, t) => {
+  const A = normalizePoseParts(a); const B = normalizePoseParts(b);
+  if (!A && !B) return null;
+  const out = {};
+  const keys = new Set([...Object.keys(A || {}), ...Object.keys(B || {})]);
+  keys.forEach((key) => { out[key] = mixPosePart(A && A[key], B && B[key], t); });
+  return Object.keys(out).length ? out : null;
 };
 
 /** Two poses of the same molecule, mixed: the centre glides, the orientation is
- *  slerped. */
+ *  slerped, and the molecules the file holds follow the very same rule (see
+ *  mixPoseParts) — their place AND their orientation glide too. */
 export const mixPose = (a, b, t) => {
   const pa = numArrayOf(a.position, 3); const pb = numArrayOf(b.position, 3);
-  return {
+  const out = {
     key: a.key,
     position: (pa && pb) ? pa.map((n, i) => lerpNum(n, pb[i], t)) : (t < 0.5 ? a.position : b.position),
     quaternion: slerpQuat(a.quaternion, b.quaternion, t),
   };
+  const parts = mixPoseParts(a.parts, b.parts, t);
+  if (parts) out.parts = parts;
+  return out;
 };
 
 /** The poses of a whole scene, mixed. They are paired by molecule KEY, so a

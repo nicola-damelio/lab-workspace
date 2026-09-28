@@ -16,8 +16,10 @@
        reste du viewer (buildSectionReps), sans aucun drapeau de docking à
        consulter ;
      • chaque molécule a son PROPRE espace dans la barre, avec les rangées de son
-       type (une par partie de la molécule) et son Move ; une molécule chargée dont
-       le style est « Auto » suit la barre.
+       type (une par partie de la molécule) ; une molécule chargée dont le style est
+       « Auto » suit la barre, et le PLACEMENT d'une molécule (autrefois les boutons
+       ✥ Move · ↻ Rotate d'un espace, à armer) est le geste de la souris : la
+       molécule attrapée — celle du fichier chargé comprise — tourne ou glisse SEULE.
 
    Le viewer est un .jsx : il ne s'importe pas sous Node. Les règles sont donc
    vérifiées SUR LA SOURCE — comme les autres garde-fous du dépôt.
@@ -120,8 +122,23 @@ has('{(entry.sections || []).map((sec) => renderSection(sec))}',
   '[barre] chaque molécule (la principale comprise) rend ses rangées');
 has('{shown && subsectionsOf(kind).map((s) => renderSectionRow(sec, s.sub))}',
   '…les rangées du type de molécule, et elles seules');
-has('setSelectedMolKey(molKey); setMouseMode((m) => (m === \'move\' ? \'off\' : \'move\'));',
-  '[barre] le Move d’une molécule (la principale comprise) — chaque espace déplace LA SIENNE');
+has('setSelectedMolKey(molKey);', '[barre] chaque espace CHOISIT sa molécule (★)');
+/* ⚠ LE MOVE D'UNE MOLÉCULE N'EST PLUS UN BOUTON PAR ESPACE : il n'y avait que des
+   boutons « ✥ Move · ↻ Rotate » à ARMER, et le rapport de cette session les a
+   supprimés (« The separated move and rotate buttons are impractical, it would be
+   better to simply continue to move and rotate with the mouse, the only difference is
+   that one molecule is moved and the other stay fixed. »). Ce qui reste vrai, et que
+   cette section vérifie, c'est que CHAQUE molécule se déplace pour son compte : la
+   barre dit le geste, et c'est la molécule ATTRAPÉE — dans le fichier chargé aussi —
+   qui tourne ou qui glisse (voir installMoleculeDrag et viewerMoleculeMoves). */
+has('🖱 drag a molecule: turn · right-drag: slide',
+  '…et le Move se fait désormais À LA SOURIS (plus rien à armer avant de placer)');
+has("partStep(g, dx, dy, 'turn')",
+  '…sur la molécule attrapée ELLE-MÊME : dans un PDB qui en porte plusieurs, une seule bouge');
+gone("const [mouseMode, setMouseMode] = useState('off');",
+  '…le mode à armer a disparu (le geste est la souris, il n’y a plus de bouton de Move)');
+gone('onClick={() => setMouseMode((m) => (m === \'move\' ? \'off\' : \'move\'))}',
+  '…ni le bouton ✥ Move d’un espace de molécule');
 
 /* ── Bilan ───────────────────────────────────────────────────────────────── */
 console.log(`_dock_style_test.mjs — ${passed} assertions OK`);

@@ -69,6 +69,14 @@ import { joinPdbMolecules } from '../utils/viewerPdbMolecules';
 import {
   fragmentMolecules, moleculePartNames, pdbTextForMolecule, MOLECULE_PART_MAX_ATOMS,
 } from '../utils/viewerMoleculeParts';
+// ⬇ 🖱 DÉPLACER **UNE** MOLÉCULE DANS UNE STRUCTURE CHARGÉE (voir le gros commentaire
+// du module : la découpe en composantes a été essayée et dessinait tout deux fois — un
+// ensemble multi-MODEL perdrait en plus sa trajectoire). Le déplacement est rigide,
+// par molécule, et REJOUABLE (autre image, ↺, pose de film).
+import {
+  partKeyOf, centroidOf, partMoveIdentity, partMoveFromPose, partPosesOf,
+  rotatePartMove, slidePartMove, partPositionsInto, isIdentityMove, normalisedDirection,
+} from '../utils/viewerMoleculeMoves';
 // HETATM code → SMILES: the Chemistry Component Dictionary of the RCSB (see
 // utils/ligandSmiles.js). A PDB only names its ligand by a 3-letter code, so this
 // is where the SMILES of a hand-loaded ligand comes from.
@@ -6424,7 +6432,13 @@ else if (traj.trajectory && typeof traj.trajectory.setFrame === 'function') traj
    `modelCount` est le nombre de MODEL du fichier (1 sans record MODEL) : c'est lui
    qui décide des noms « Model 2 » / « Molecule 3 (Model 2) · B » que la barre
    affiche. Les DEUX lectures (le texte PDB et la structure chargée par NGL) passent
-   par ici, donc le même fichier donne les mêmes entités — et les mêmes noms. */
+   par ici, donc le même fichier donne les mêmes entités — et les mêmes noms.
+   ⚠⚠ LES CHAMPS QUE LE GESTE DE LA SOURIS LIT SONT ICI AUSSI (voir
+   utils/viewerMoleculeMoves et molPartAt) : `idxs` — les indices d'ATOMES de l'entité,
+   ce qui permet d'écrire SES atomes sans toucher à ceux des autres —, `resnames` et
+   les bornes de résidus (la clé STABLE d'une molécule, voir partKeyOf), et `polymer`
+   (ce qu'elle est). Sans eux, une molécule d'un fichier à plusieurs molécules serait
+   « déplaçable » sans qu'on sache quels atomes sont les siens. */
 const namedPartsOf = (atoms, bonds, modelCount = 1) => {
   const parts = fragmentMolecules(atoms, bonds);
   const perModel = new Map();
@@ -6439,6 +6453,11 @@ const namedPartsOf = (atoms, bonds, modelCount = 1) => {
     modelCount,
     label: p.label,
     atomCount: p.atomCount,
+    idxs: p.idxs,
+    resnames: p.resnames,
+    polymer: p.polymer,
+    resnoMin: p.resnoMin,
+    resnoMax: p.resnoMax,
     blob: new Blob([pdbTextForMolecule(atoms, p.idxs)], { type: 'text/plain' }),
   }));
 };
@@ -7108,8 +7127,23 @@ const lastAskedSrcRef = useRef(null); // last PDB code/URL we asked about, so th
    la fait glisser (bouton droit), les autres ne bougent pas ; un glisser qui
    commence sur le fond est la caméra, comme avant.
    `molGrabRef` est la molécule que la main tient PENDANT ce geste (vide au repos) :
-   c'est elle qui reçoit la position finale dans la mémoire de la barre. */
-const molGrabRef = useRef(null); // { comp, key } | null — la molécule tenue par la souris
+   c'est elle qui reçoit la position finale dans la mémoire de la barre.
+   ⚠⚠ ET DANS UN FICHIER QUI PORTE PLUSIEURS MOLÉCULES, LA MAIN NE PREND QU'UNE
+   MOLÉCULE : la demande de cette session (« in case where more molecules are present
+   in one pdb, why don't you split the pdb … and I can do the move independent ») est
+   servie SANS découper le fichier — les atomes de la molécule attrapée sont déplacés
+   DANS la structure (voir src/utils/viewerMoleculeMoves pour le pourquoi), donc rien
+   n'est dessiné deux fois et la trajectoire continue de piloter la scène.
+     • `molPartsRef` : les molécules de la structure CHARGÉE (ses fragments, la même
+       règle que partout) et, pour chaque atome, la sienne — la mémoire d'un clic ;
+     • `partMoveRef` : ce que chaque molécule a comme déplacement/rotation, avec ses
+       COORDONNÉES D'ORIGINE (ce qui permet de tout rejouer : une autre image de
+       trajectoire, le ↺, une pose de film) ;
+     • `heldPart` : le nom de la molécule que la main tient (la barre le dit). */
+const molGrabRef = useRef(null); // { comp, key, part, rec, axes, anchor } | null
+const molPartsRef = useRef({ structure: null, parts: [], ofAtom: null });
+const partMoveRef = useRef(new Map());   // partKey → { key, structure, idxs, base, pivot, t, q, scratch }
+const [heldPart, setHeldPart] = useState('');   // « Chain A · LIG » | '' — ce que la main tient
 // 🎯 The result of the last « Fit to chosen one » (see fitMoleculesOnChosen): how
 // many structures were superposed, and which ones had no atom to fit on.
 const [fitMsg, setFitMsg] = useState('');
@@ -10764,6 +10798,14 @@ throw firstErr;
 
 if (cancelled) return;
 componentRef.current = component;
+/* 🖱 LA MÉMOIRE DES MOLÉCULES DÉPLACÉES REPART À ZÉRO — la nouvelle structure n'a
+   évidemment rien à voir avec l'ancienne : les mouvements (partMoveRef) et la carte
+   « quel atome est dans quelle molécule » (molPartsRef) de l'ancienne scène sont
+   oubliés, et le nom de la molécule tenue aussi. Un geste sur la nouvelle structure
+   repart donc de SES coordonnées, jamais de celles d'un autre fichier. */
+partMoveRef.current.clear();
+molPartsRef.current = { structure: null, parts: [], ofAtom: null };
+setHeldPart('');
 /* LES PLAQUES SUIVENT LES IMAGES DE LA TRAJECTOIRE — voir hookStructurePlates
    et refreshRingPlates. Les plaques des rangées nucléiques sont des MeshBuffers :
    des INSTANTANÉS de coordonnées que NGL ne réécrit pas quand la structure change
@@ -11448,6 +11490,12 @@ const captureKeyframePoses = () => {
         elements,
         (p && Number.isFinite(p.x)) ? [p.x, p.y, p.z] : null,
         c ? [c.x || 0, c.y || 0, c.z || 0] : [0, 0, 0],
+        /* ⚠ ET OÙ SONT LES MOLÉCULES DU FICHIER QUI ONT ÉTÉ DÉPLACÉES : une composante
+           n'a qu'une position (elle vient d'être écrite), mais elle peut en porter
+           plusieurs — sans ce champ, le premier morphème du film rendrait le ligand à
+           sa place dans le fichier, c'est-à-dire perdrait le travail. Voir
+           partPosesForPose (les molécules intactes n'y sont pas). */
+        key === 'main' ? partPosesForPose() : null,
       ));
     } catch { /* une molécule sans matrice n'a pas de pose : elle est laissée où elle est */ }
   });
@@ -11468,6 +11516,11 @@ const applyKeyframePoses = (poses) => {
       if (Array.isArray(p.quaternion) && p.quaternion.length === 4 && typeof comp.setRotation === 'function') comp.setRotation(p.quaternion);
       if (typeof comp.updateMatrix === 'function') comp.updateMatrix();
     } catch { /* best-effort : une pose refusée laisse la molécule où elle est */ }
+    /* …ET LES MOLÉCULES DU FICHIER CHARGÉ QUI AVAIENT ÉTÉ DÉPLACÉES (voir
+       applyPartPoses, et partPosesForPose pour la capture) : leur place est écrite
+       dans la structure, pas dans la composante — une pose sans `parts` vaut donc
+       « aucune molécule déplacée », et la scène repart de ses coordonnées. */
+    if (p.key === 'main') applyPartPoses(p.parts);
   });
 };
 
@@ -12535,6 +12588,214 @@ const refreshScenePlates = () => {
     .filter(Boolean);
   if (refreshRingPlates(comps)) requestSceneRepaint();
 };
+/* ── 🖱 LES MOLÉCULES D'UNE STRUCTURE CHARGÉE, DANS LA MAIN ───────────────────
+   LE POURQUOI D'ABORD (la question de cette session : « in case where more molecules
+   are present in one pdb, why don't you split the pdb so that you have more separated
+   molecule and I can do the move independent or the fit independent? ») : la découpe
+   en composantes a été essayée, elle dessine tout DEUX FOIS (« now I have twice as
+   much of molecules ») et, sur un ensemble multi-MODEL, chaque « molécule » EST une
+   image de la trajectoire — des composantes séparées la figeraient. On ne découpe donc
+   rien : on DÉPLACE LES ATOMES de la molécule attrapée (voir utils/viewerMoleculeMoves
+   pour les maths, et installMoleculeDrag pour le geste).
+   ⚠ CE QUI SUIT EST LA MÉMOIRE DU GESTE, pas le geste : quelles molécules existe dans
+   la structure chargée, quel atome appartient à laquelle, et où chacune a été posée. */
+
+/* LES MOLÉCULES DE LA STRUCTURE CHARGÉE — les fragments connexes, par la MÊME règle
+   que partout ailleurs (splitStructureIntoMolecules : CONECT + proximité ≤ 2,0 Å,
+   jamais à travers deux MODEL, l'eau pure ignorée, 30 entités au plus).
+   ⚠ `part.idxs` sont des indices d'ATOMES : la découpe énumère la structure avec
+   `structure.eachAtom(...)` sans sélection, qui parcourt les atomes dans l'ordre de
+   `atomStore` — l'ordre où un `AtomProxy.index` compte. C'est ce qui permet de passer
+   d'un atome piqué à SA molécule sans jamais re-parcourir la structure.
+   Le résultat est GARDÉ tant que la structure ne change pas : le premier clic d'une
+   grosse scène paie la découpe une fois, les suivants non. Une structure d'UNE seule
+   molécule (ou trop grosse pour être découpée) rend `[]` : le geste reste alors celui
+   de NGL, une composante entière — c'est-à-dire exactement ce qu'il y a à déplacer. */
+const molPartsOf = (comp) => {
+  const structure = comp && comp.structure;
+  if (!structure) return [];
+  const cache = molPartsRef.current;
+  if (cache && cache.structure === structure) return cache.parts;
+  let parts = [];
+  try { parts = splitStructureIntoMolecules(comp); } catch { parts = []; }
+  if (!Array.isArray(parts) || parts.length < 2) parts = [];
+  const ofAtom = new Map();
+  parts.forEach((p, pi) => { (p && p.idxs ? p.idxs : []).forEach((i) => ofAtom.set(i, pi)); });
+  molPartsRef.current = { structure, parts, ofAtom };
+  return parts;
+};
+
+/** LA MOLÉCULE D'UN ATOME PIOUÉ — son rang dans molPartsOf, ou -1 (c'est alors la
+ *  composante entière que la main prend, comme avant). */
+const molPartAt = (comp, atomIndex) => {
+  const parts = molPartsOf(comp);
+  if (!parts.length || !Number.isInteger(atomIndex)) return -1;
+  const pi = molPartsRef.current.ofAtom.get(atomIndex);
+  return Number.isInteger(pi) ? pi : -1;
+};
+
+/**
+ * LE MOUVEMENT D'UNE MOLÉCULE, CRÉÉ AU PREMIER GESTE — et jamais deux fois : tant
+ * qu'il existe, c'est LUI qui décrit où va la molécule, donc un rejeu (une image de
+ * trajectoire, une pose de film) repart toujours des mêmes coordonnées d'origine et
+ * rien ne se cumule. Les coordonnées d'origine (`base`) sont lues ICI, à la première
+ * prise : elles valent l'image courante si la molécule n'a jamais bougé.
+ */
+const partMoveFor = (comp, pi) => {
+  const structure = comp && comp.structure;
+  const parts = molPartsOf(comp);
+  const part = parts[pi];
+  if (!structure || !part || !part.idxs || !part.idxs.length) return null;
+  const key = partKeyOf(part);
+  const known = partMoveRef.current.get(key);
+  if (known && known.structure === structure) return known;
+  const idxs = part.idxs;
+  const base = new Float32Array(idxs.length * 3);
+  try {
+    const ap = structure.getAtomProxy();
+    for (let k = 0; k < idxs.length; k++) {
+      ap.index = idxs[k];
+      base[k * 3] = ap.x; base[k * 3 + 1] = ap.y; base[k * 3 + 2] = ap.z;
+    }
+  } catch { return null; }
+  const rec = {
+    ...partMoveIdentity(key, centroidOf(base)),   // tourner = tourner SUR SON PROPRE CENTRE
+    structure, pi, idxs, base,
+    scratch: null,                                // un tampon réutilisé à chaque geste
+  };
+  partMoveRef.current.set(key, rec);
+  return rec;
+};
+/**
+ * ÉCRIRE LE MOUVEMENT DANS LA STRUCTURE — les atomes de la molécule vont là où dit
+ * son mouvement, et NGL redessine. C'est EXACTEMENT le chemin d'une image de
+ * trajectoire : `panAtom` (le geste de NGL sur un atome) écrit `positionAdd(v)` puis
+ * appelle `updateRepresentations({ position: true })` ; ici l'écriture est faite par
+ * `partPositionsInto` (pure, depuis les coordonnées d'origine) et la demande de
+ * redessin suit, avec les plaques de la scène qui doivent suivre les coordonnées.
+ */
+const applyPartMove = (comp, rec) => {
+  const structure = comp && comp.structure;
+  if (!structure || !rec || rec.structure !== structure) return false;
+  try {
+    rec.scratch = partPositionsInto(rec.base, rec, rec.scratch);
+    const ap = structure.getAtomProxy();
+    for (let k = 0; k < rec.idxs.length; k++) {
+      ap.index = rec.idxs[k];
+      ap.positionFromArray(rec.scratch, k * 3);
+    }
+    if (typeof comp.updateRepresentations === 'function') comp.updateRepresentations({ position: true });
+  } catch { return false; }
+  refreshScenePlates();          // les plaques suivent les coordonnées, comme pour une image
+  requestSceneRepaint();
+  return true;
+};
+
+/**
+ * REJOUER LES MOUVEMENTS APRÈS UN CHANGEMENT D'IMAGE. Le signal `refreshed` d'une
+ * structure part à chaque fois que ses coordonnées ont été REMPLACÉES (une image de
+ * trajectoire, une interpolation, une superposition) : à cet instant l'image
+ * installée est NEUVE, donc elle devient la base de chaque mouvement, et la molécule
+ * déplacée se replace dessus — une molécule posée à côté de la protéine y reste,
+ * image après image, au lieu de retourner dans le fichier.
+ * ⚠ On ne rejoue QUE les molécules réellement déplacées (`isIdentityMove`) : une scène
+ * que personne n'a touchée ne coûte rien à chaque image.
+ */
+const reapplyPartMoves = (comp) => {
+  const structure = comp && comp.structure;
+  if (!structure || !partMoveRef.current.size) return 0;
+  let n = 0;
+  partMoveRef.current.forEach((rec) => {
+    if (!rec || rec.structure !== structure || isIdentityMove(rec)) return;
+    try {
+      const ap = structure.getAtomProxy();
+      for (let k = 0; k < rec.idxs.length; k++) {
+        ap.index = rec.idxs[k];
+        rec.base[k * 3] = ap.x; rec.base[k * 3 + 1] = ap.y; rec.base[k * 3 + 2] = ap.z;
+      }
+      // Le centre suit la nouvelle image : c'est LE point du nouveau conformère.
+      rec.pivot = centroidOf(rec.base);
+    } catch { return; }
+    if (applyPartMove(comp, rec)) n += 1;
+  });
+  return n;
+};
+
+/**
+ * ↺ REMETTRE TOUTES LES MOLÉCULES D'UNE STRUCTURE À L'ORIGINE — le ↺ de son espace
+ * (voir resetMainPosition) : chaque atome repart des coordonnées d'origine gardées,
+ * puis les mouvements sont oubliés (donc la molécule est vraiment « comme chargée »,
+ * et un nouveau geste repartira de là).
+ */
+const restorePartMoves = (comp) => {
+  const structure = comp && comp.structure;
+  if (!structure || !partMoveRef.current.size) return 0;
+  const keys = [];
+  let n = 0;
+  partMoveRef.current.forEach((rec, key) => {
+    if (!rec || rec.structure !== structure) return;
+    try {
+      const ap = structure.getAtomProxy();
+      for (let k = 0; k < rec.idxs.length; k++) {
+        ap.index = rec.idxs[k];
+        ap.positionFromArray(rec.base, k * 3);
+      }
+    } catch { /* une molécule illisible ne bloque pas le ↺ des autres */ }
+    keys.push(key);
+    n += 1;
+  });
+  keys.forEach((key) => partMoveRef.current.delete(key));
+  if (n) {
+    try { comp.updateRepresentations({ position: true }); } catch { /* best-effort */ }
+    refreshScenePlates();
+    requestSceneRepaint();
+  }
+  return n;
+};
+
+/** LES MOUVEMENTS DE LA STRUCTURE CHARGÉE, POUR UNE POSE DE FILM — `{ clé: {pivot,t,q} }`
+ *  (voir partPosesOf : les molécules intactes n'y sont pas). */
+const partPosesForPose = () => {
+  const comp = componentRef.current;
+  if (!comp) return {};
+  const list = [];
+  partMoveRef.current.forEach((rec) => {
+    if (rec && rec.structure === comp.structure && !isIdentityMove(rec)) list.push(rec);
+  });
+  return partPosesOf(list);
+};
+
+/** …ET LES REPOSER (une pose de film) : la pose DÉCRIT TOUTE LA SCÈNE, donc on repart
+ *  d'abord des coordonnées d'origine (restorePartMoves) puis on pose exactement les
+ *  molécules qu'elle nomme. Sans ce premier pas, revenir à une pose antérieure
+ *  laisserait la molécule là où la pose suivante l'avait mise — une molécule qui
+ *  s'oublie ne revient jamais. Une pose sans aucune molécule déplacée (le cas le plus
+ *  courant : personne n'a rien touché) est donc la scène telle qu'elle a été chargée. */
+const applyPartPoses = (poses) => {
+  const comp = componentRef.current;
+  const structure = comp && comp.structure;
+  if (!structure) return false;
+  const list = (poses && typeof poses === 'object' && !Array.isArray(poses)) ? poses : {};
+  const keys = Object.keys(list);
+  if (!keys.length) return restorePartMoves(comp) > 0;
+  restorePartMoves(comp);
+  const parts = molPartsOf(comp);
+  let any = false;
+  keys.forEach((key) => {
+    const pi = parts.findIndex((p) => p && partKeyOf(p) === key);
+    if (pi < 0) return;                      // une molécule que CE fichier ne porte pas
+    const rec = partMoveFor(comp, pi);
+    if (!rec) return;
+    const read = partMoveFromPose(key, list[key], rec.pivot);
+    rec.pivot = read.pivot; rec.t = read.t; rec.q = read.q;
+    any = applyPartMove(comp, rec) || any;
+  });
+  return any;
+};
+
+
+
+
 
 /* …et voici QUI le demande : le signal `refreshed` de la structure principale.
    Il est dispatché à CHAQUE fois que ses coordonnées changent — `Structure`:
@@ -12545,13 +12806,18 @@ const refreshScenePlates = () => {
    C'est l'accroche la plus juste possible : les plaques sont refaites LÀ où les
    coordonnées arrivent, quel que soit le chemin qui les a demandées (le curseur,
    la lecture d'un XTC, une image « gardée », une interpolation, une superposition),
-   sans rien surveiller côté React et sans dépendre du PLAYER. */
+   sans rien surveiller côté React et sans dépendre du PLAYER.
+   ⚠ ET C'EST LÀ AUSSI QUE LES MOLÉCULES DÉPLACÉES SE REPLACENT (voir reapplyPartMoves) :
+   une molécule posée à côté de la protéine doit y RESTER quand la trajectoire avance,
+   donc le rejeu doit précéder les plaques (qui lisent les coordonnées). Les deux
+   passent par le MÊME signal, et notre écriture à nous ne redispatch rien — donc aucun
+   va-et-vient possible entre les deux. */
 const hookStructurePlates = (comp) => {
   try {
     const sig = comp && comp.structure && comp.structure.signals && comp.structure.signals.refreshed;
     if (!sig || typeof sig.add !== 'function' || comp.__platesHook) return;
     comp.__platesHook = true;
-    sig.add(() => refreshScenePlates());
+    sig.add(() => { reapplyPartMoves(comp); refreshScenePlates(); });
   } catch { /* best-effort: une structure sans signal ne casse rien */ }
 };
 
@@ -14160,10 +14426,17 @@ const renderSection = (sec) => {
 // useless as well as the x,y,z coordinate to shift »): a molecule is placed with the
 // mouse (✥ Move · ↻ Rotate), and this puts it back — position AND rotation, a fit
 // included. The main's NGL component is moved independently of the others.
+// ⚠ ET SI LE FICHIER PORTE PLUSIEURS MOLÉCULES, CE ↺ LES REMET TOUTES AUSSI : celles
+// qu'une main avait prises ont leurs atomes déplacés DANS la structure (voir
+// partMoveRef / restorePartMoves) — le ↺ les rend exactement comme au chargement,
+// sinon « tout remettre à l'origine » ne remettrait que la composante, et les
+// molécules resteraient là où on les avait posées (le pire des deux mondes).
 const resetMainPosition = () => {
   setMainPos([0, 0, 0]);
   try {
     const comp = componentRef.current;
+    if (comp) restorePartMoves(comp);
+    setHeldPart('');
     if (comp && comp.quaternion && typeof comp.setRotation === 'function') comp.setRotation([0, 0, 0, 1]);
     if (comp && comp.transform && typeof comp.setTransform === 'function') comp.setTransform(new comp.transform.constructor());
     if (comp && typeof comp.setPosition === 'function') {
@@ -14250,16 +14523,25 @@ useEffect(() => {
     // coordonnées sont celles de son observateur (pixels de la toile, y compté depuis
     // le BAS), et seule une composante CONNUE répond : le fond — comme tout autre
     // objet — rend « rien », et le glisser appartient alors à la caméra.
+    // ⚠ POUR LA STRUCTURE CHARGÉE, LE PICKING DIT AUSSI **QUELLE MOLÉCULE** : l'atome
+    // piqué donne son fragment (molPartAt), et le geste ne prendra que celui-là. Une
+    // structure d'une seule molécule, ou trop grosse pour être découpée, rend `-1` : le
+    // geste reste alors celui de NGL — la composante entière (ce qu'il y a à déplacer).
     const compToGrab = (e) => {
       const canvas = stage.container && stage.container.querySelector('canvas');
       if (!canvas || !stage.pickingControls || typeof stage.viewer.pick !== 'function') return null;
       const rect = canvas.getBoundingClientRect();
       const x = e.clientX - rect.left;
       const y = rect.height - (e.clientY - rect.top);
-      let comp = null;
-      try { comp = (stage.pickingControls.pick(x, y) || {}).component || null; } catch { comp = null; }
+      let picked = null;
+      try { picked = stage.pickingControls.pick(x, y) || null; } catch { picked = null; }
+      const comp = picked && picked.component;
       if (!comp) return null;
-      if (comp === componentRef.current) return { comp, key: 'main' };
+      if (comp === componentRef.current) {
+        const atom = picked.atom;
+        const pi = atom ? molPartAt(comp, atom.index) : -1;
+        return pi >= 0 ? { comp, key: 'main', part: pi, anchor: atom.index } : { comp, key: 'main' };
+      }
       const hit = extraCompsRef.current.find((entry) => entry && entry.comp === comp);
       return hit ? { comp, key: hit.id } : null;
     };
@@ -14278,13 +14560,69 @@ useEffect(() => {
       if (entry) { entry.position = pos; setExtraMols(extraMolsSnapshot()); }
       else if (g.comp === componentRef.current) setMainPos(pos);
     };
+    /* LE VECTEUR D'UN DÉPLACEMENT D'ÉCRAN, DANS LE REPÈRE DE LA STRUCTURE — MESURÉ SUR
+       NGL LUI-MÊME. `TrackballControls.panAtom` déplace UN atome du vecteur EXACT qu'un
+       `panComponent` ajouterait à une composante : mêmes repères (la rotation du viewer
+       et celle de la composante), même pas (`panSpeed` × l'échelle de la toile), même
+       profondeur (le z de l'atome entre dans l'échelle). Ce vecteur est calculé par NGL
+       dans une variable interne, inaccessible ; on le LIT donc en laissant NGL déplacer
+       l'atome sonde, puis on remet l'atome où il était.
+       C'est ce qui fait qu'une molécule suit la souris EXACTEMENT comme une composante
+       entière, sans qu'une seule matrice soit réécrite ici — et ce même vecteur sert
+       DEUX fois : tel quel pour faire glisser la molécule, et (sa direction, ramenée à
+       l'unité) comme axe de ses rotations.
+       ⚠ L'atome sonde est l'atome PIOUÉ : il fait partie de la molécule tenue, donc sa
+       propre position est réécrite juste après par applyPartMove — rien ne dérive. */
+    const screenVector = (comp, atomIndex, dx, dy) => {
+      const structure = comp && comp.structure;
+      if (!structure || !Number.isInteger(atomIndex) || typeof tb.panAtom !== 'function') return null;
+      let ap = null;
+      try { ap = structure.getAtomProxy(atomIndex); } catch { return null; }
+      if (!ap || typeof ap.positionAdd !== 'function') return null;
+      const x0 = ap.x; const y0 = ap.y; const z0 = ap.z;
+      const prevComp = stage.transformComponent;
+      const prevAtom = stage.transformAtom;
+      stage.transformComponent = comp; stage.transformAtom = ap;
+      try { tb.panAtom(dx, dy); } catch { /* pas de vecteur : la molécule ne bougera pas */ }
+      const v = [ap.x - x0, ap.y - y0, ap.z - z0];
+      ap.x = x0; ap.y = y0; ap.z = z0;              // la sonde repart d'où elle vient
+      stage.transformComponent = prevComp; stage.transformAtom = prevAtom;
+      return v;
+    };
+    /* LE PAS D'UN GESTE SUR LA MOLÉCULE TENUE — tourner (gauche) ou glisser (droit),
+       écrit dans les atomes de cette SEULE molécule (voir applyPartMove). Rien n'est
+       écrit si NGL ne rend aucun vecteur : la mise en place d'une scène ne doit jamais
+       bouger une molécule pour rien. */
+    const partStep = (g, dx, dy, how) => {
+      if (!g || !g.rec) return false;
+      if (how === 'slide') {
+        const v = screenVector(g.comp, g.anchor, dx, dy);
+        if (!v || (!v[0] && !v[1] && !v[2])) return false;
+        g.rec.t = slidePartMove(g.rec, v).t;
+      } else {
+        g.rec.q = rotatePartMove(g.rec, g.axes, dx, dy).q;
+      }
+      applyPartMove(g.comp, g.rec);
+      repaint();
+      return true;
+    };
     // UN GLISSER = LA MOLÉCULE TENUE, SINON LA CAMÉRA (les deux gestes de NGL).
+    // ⚠⚠ ET SI LA MOLÉCULE TENUE EST UNE **MOLÉCULE DU FICHIER CHARGÉ** (un fragment),
+    // c'est ELLE SEULE qui tourne ou qui glisse : ses atomes sont écrits dans la
+    // structure (voir partStep). Les autres molécules ne bougent pas d'un atome — c'est
+    // la demande de cette session (« one molecule is moved and the other stay fixed »)
+    // servie SANS découper le fichier en composantes (voir utils/viewerMoleculeMoves :
+    // la découpe dessinait tout deux fois et perdrait la trajectoire d'un ensemble NMR).
     const dragRotate = (st, dx, dy) => {
+      const g = molGrabRef.current;
+      if (g && g.rec && st.transformComponent === g.comp && partStep(g, dx, dy, 'turn')) return;
       if (st.transformComponent) tb.rotateComponent(dx, dy);
       else tb.rotate(dx, dy);
       repaint();
     };
     const dragSlide = (st, dx, dy) => {
+      const g = molGrabRef.current;
+      if (g && g.rec && st.transformComponent === g.comp && partStep(g, dx, dy, 'slide')) return;
       if (st.transformComponent) tb.panComponent(dx, dy);
       else tb.pan(dx, dy);
       repaint();
@@ -14305,6 +14643,29 @@ useEffect(() => {
       const g = compToGrab(e);
       stage.transformComponent = g ? g.comp : undefined;
       molGrabRef.current = g;
+      /* LA MOLÉCULE ATTRAPÉE D'UNE STRUCTURE QUI EN PORTE PLUSIEURS : on prépare SON
+         mouvement et les DEUX directions d'écran DANS SON REPÈRE, mesurées ici — au
+         pixel de l'appui, quand la caméra ne bouge plus. Si la mesure échoue (une
+         structure sans proxy d'atome, un NGL sans `panAtom`), `rec` reste vide : le
+         geste retombe sur celui de NGL, la composante entière, et rien ne casse.
+         ⚠ C'EST LA SEULE LECTURE QUI PRÉCÈDE LE PREMIER PIXEL DE MOUVEMENT : un appui
+         sans glisser ne déplace donc pas une seule molécule (il ne fait que choisir la
+         ★ référence, comme avant). */
+      if (g && g.part != null) {
+        g.rec = null;
+        g.axes = null;
+        const rec = partMoveFor(g.comp, g.part);
+        const vx = screenVector(g.comp, g.anchor, 1, 0);
+        const vy = screenVector(g.comp, g.anchor, 0, 1);
+        const ax = normalisedDirection(vx);
+        const ay = normalisedDirection(vy);
+        if (rec && ax && ay) {
+          g.rec = rec;
+          g.axes = { x: ax, y: ay };
+          const part = molPartsOf(g.comp)[g.part];
+          setHeldPart((part && part.label) || '');
+        }
+      }
       // La molécule qu'une main attrape EST la référence ★ (la barre le montre, et
       // 🎯 Fit to chosen comme ↺ travaillent alors sur elle).
       if (g) setSelectedMolKey(g.key);
@@ -16968,8 +17329,8 @@ un glisser dit où va une molécule, et le ↺ de son espace annule position ET
 rotation. */}
 <span
   className="px-2 py-1 text-[10px] font-semibold rounded-md border h-7 inline-flex items-center whitespace-nowrap bg-amber-50 border-amber-200 text-amber-800"
-  title={`Drag ON a molecule to turn it about its own centre (left button) · right-drag ON it to slide it — the other molecules stay where they are, and the molecule you take hold of becomes « ${molNameOf(selectedMolKey)} »'s ★ reference (its ↺ in the styling bar puts it back). Start the drag on the background (or hold Alt) to turn the camera as before, and use the wheel to zoom.`}>
-  🖱 drag a molecule: turn · right-drag: slide
+  title={`Drag ON a molecule to turn it about its own centre (left button) · right-drag ON it to slide it — the other molecules stay where they are, and the molecule you take hold of becomes « ${molNameOf(selectedMolKey)} »'s ★ reference (its ↺ in the styling bar puts it back). Start the drag on the background (or hold Alt) to turn the camera as before, and use the wheel to zoom. In a PDB that holds SEVERAL molecules (a complex, a receptor with its ligands, an NMR model), the molecule under the pointer is the ONE that moves: its atoms are placed inside the structure, the file is never split into copies (a split would draw every atom twice and would freeze the frame slider), and its place is written into the film's poses with the ↺ of its space putting it back.`}>
+  🖱 drag a molecule: turn · right-drag: slide{heldPart ? ` · 🖐 ${heldPart}` : ''}
 </span>
 <button
 type="button"
@@ -17881,7 +18242,7 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
         main attrape DEVIENT la référence (voir installMoleculeDrag). */}
     <p className="text-[10px] font-bold text-violet-800 shrink-0"
       title={`Every ␣ below is ONE molecule — even when several molecules live in the SAME PDB file: each one has its own ☑, its own « ★ set main », its own styling rows and its own 🔎, so they can be ticked, styled, moved and superposed one by one. « ${molNameOf(selectedMolKey)} » is the reference right now — 🎯 Fit to chosen superposes the other shown structures onto it, and a drag that starts ON a molecule turns it (left) or slides it (right) without moving the others.`}>
-      ★ main: {molNameOf(selectedMolKey)} · a drag on a molecule turns/slides it · 🎯 Fit to chosen superposes the others onto it
+      ★ main: {molNameOf(selectedMolKey)} · a drag on a molecule turns/slides it · 🎯 Fit to chosen superposes the others onto it{heldPart ? ` · 🖐 moving « ${heldPart} » ALONE` : ''}
     </p>
     <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-1 min-h-0">
       {Object.keys(sectionCatalog).length === 0 && (

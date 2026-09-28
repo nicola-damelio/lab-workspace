@@ -135,12 +135,17 @@ const buildHelpers = (keys = {}, env = {}) => new Function('__window', [
   sliceFn(VIEW, 'addRingPlateRep'),
   sliceFn(VIEW, 'refreshRingPlates'),
   /* Ce que `refreshScenePlates` / `hookStructurePlates` lisent DANS le composant
-     React : les deux refs de la scène et la demande de rendu — dit par le test. */
+     React : les deux refs de la scène et la demande de rendu — dit par le test.
+     ⚠ ET `partMoveRef` : le signal `refreshed` rejoue d'abord les molécules que la
+     main a déplacées DANS la structure (voir reapplyPartMoves) ; une scène que
+     personne n'a touchée a une carte VIDE, et le rejeu ne fait donc rien. */
   `const componentRef = { current: null };`,
   `const extraCompsRef = { current: [] };`,
+  `const partMoveRef = { current: new Map() };`,
   `let plateRepaints = 0;`,
   `const requestSceneRepaint = () => { plateRepaints += 1; };`,
   sliceFn(VIEW, 'refreshScenePlates'),
+  sliceFn(VIEW, 'reapplyPartMoves'),
   sliceFn(VIEW, 'hookStructurePlates'),
   sliceFn(VIEW, 'toNglSelection'),
   sliceFn(VIEW, 'lerpHexColors'),
@@ -185,7 +190,7 @@ const buildHelpers = (keys = {}, env = {}) => new Function('__window', [
     // Section 9 — les plaques suivent les images de la trajectoire : la recette
     // gardée sur la représentation, l'accroche au signal, et l'ajout réel.
     flagMeshShadows, markRingPlates, addRingPlateRep, refreshRingPlates,
-    plateFrame: { componentRef, extraCompsRef, hookStructurePlates, refreshScenePlates,
+    plateFrame: { componentRef, extraCompsRef, partMoveRef, hookStructurePlates, refreshScenePlates, reapplyPartMoves,
       repaints: () => plateRepaints } };`,
 ].join('\n'))(env.window);
 const H = buildHelpers();
@@ -581,6 +586,9 @@ ok(CODE.includes('{ sub: \'ribose\', label: \'DNA/RNA ribose\''), 'la plaque du 
 
 
 
+
+
+
 // 3. L'IMAGE SUIVANTE : les atomes bougent (la trajectoire), les liaisons NON — le
 //    graphe est le même, donc les anneaux sont les mêmes et la plaque ne fait que
 //    suivre ses atomes.
@@ -642,13 +650,23 @@ eq(HF.plateFrame.repaints(), n + 2, '…et une image sans plaque ne redessine ri
 refreshed.dispatch();                        // l'AUTRE structure (sans plaque) ne dessine rien non plus
 eq(HF.plateFrame.repaints(), n + 2, 'un composant hors de la scène ne fait redessiner personne');
 
+/* 7. LE REJEU DES MOLÉCULES DÉPLACÉES NE COÛTE RIEN SUR UNE SCÈNE INTACTE : la carte
+   des mouvements (partMoveRef) est vide — personne n'a attrapé de molécule — donc une
+   image de trajectoire passe sans qu'un seul atome soit réécrit. C'est ce que le
+   signal fait AVANT les plaques (voir reapplyPartMoves). */
+eq(HF.plateFrame.partMoveRef.current.size, 0, 'aucune molécule déplacée dans cette scène');
+eq(HF.plateFrame.reapplyPartMoves(fakeComp), 0,
+  '…et le rejeu d’une image le dit : rien à replacer, rien d’écrit (une scène intacte reste intacte)');
+eq(HF.plateFrame.reapplyPartMoves(null), 0, '…même sans composant du tout');
+
 /* ── Le BRANCHEMENT : ce que la section 9 vient d'exécuter est bien celui du viewer ── */
 has('hookStructurePlates(component);', 'le chargement ACCROCHE les plaques de la structure');
 ok(VIEW.indexOf('componentRef.current = component;') < VIEW.indexOf('hookStructurePlates(component);'),
   '…APRÈS avoir retenu le composant : une image arrivée pendant le chargement est déjà suivie');
 has('const sig = comp && comp.structure && comp.structure.signals && comp.structure.signals.refreshed;',
   '…sur le signal des COORDONNÉES de la structure (jamais celui du lecteur de trajectoire)');
-has('sig.add(() => refreshScenePlates());', 'l’écoute est posée sur `refreshed`');
+has('sig.add(() => { reapplyPartMoves(comp); refreshScenePlates(); });',
+  'l’écoute est posée sur `refreshed`, et elle REJOUE D’ABORD les molécules que la main a déplacées dans le fichier (une molécule posée à côté de la protéine doit y rester quand l’image change — voir reapplyPartMoves) : les plaques, qui lisent les coordonnées, viennent après');
 has('if (refreshRingPlates(comps)) requestSceneRepaint();',
   '…et un rendu n’est demandé que si une plaque a ÉTÉ réécrite');
 has('const data = recipe.make();', 'la recette de la plaque est REJOUÉE sur la structure telle qu’elle est');

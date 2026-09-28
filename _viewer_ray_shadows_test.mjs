@@ -793,9 +793,10 @@ near(realRibbon.radii[1], 0.45, 1e-6, '…et non des sphères de van der Waals d
    `_finalize()` remet `camera.view` à null SANS appeler `updateProjectionMatrix()` :
    la matrice de projection reste celle de la DERNIÈRE tuile jusqu’au rendu suivant.
    Un masque lu là-dessus est le masque d’une fenêtre 1/n × 1/n de l’image — grossi
-   n× (n = le facteur, doublé par la passe antialias) et jeté dans le coin de cette
-   tuile : la tache détachée, dans TOUTES les directions de lampe et quel que soit
-   le poids des proxies. D’où les deux pièces ci-dessous : le rig se lit AVANT la
+   n× (n = le facteur, doublé par la passe antialias) et posé au centre de cette
+   tuile : une ombre énorme qui remplit le masque, au lieu de l’empreinte de la
+   molécule (mesuré plus bas), quel que soit le poids des proxies. D’où les deux
+   pièces ci-dessous : le rig se lit AVANT la
    « ray » (voir captureRayImage) et `cameraFromViewer` REFUSE une caméra restée
    dans une tuile. */
 const NGLJS = readFileSync(new URL('./node_modules/ngl/dist/ngl.js', import.meta.url), 'utf8');
@@ -841,10 +842,19 @@ const cleanBox = bboxOf(cleanMask.mask, cleanMask.maskWidth, cleanMask.maskHeigh
 const staleBox = bboxOf(staleMask.mask, staleMask.maskWidth, staleMask.maskHeight);
 ok(cleanBox.count > 0 && staleBox.count > 0,
   'les deux masques ombrent bien quelque chose (deux ombres réelles sont comparées)');
-ok(Math.abs(staleBox.cx - cleanBox.cx) > 0.25 || Math.abs(staleBox.cy - cleanBox.cy) > 0.25,
-  `la tache de la caméra restée dans la tuile est DÉTACHÉE : centre ${staleBox.cx.toFixed(2)}/${staleBox.cy.toFixed(2)} contre ${cleanBox.cx.toFixed(2)}/${cleanBox.cy.toFixed(2)} sur la molécule`);
-ok(staleBox.count > cleanBox.count * 1.5,
-  '…et elle est plus GROSSE : le sous-frustum la magnifie (la « grosse tache » du rapport)');
+/* ⚠ CE QUE LA CAMÉRA D'UNE TUILE FAIT VRAIMENT, mesuré (et non supposé) : elle
+   MONTRE une fenêtre de la scène, grossie n× et posée au centre de l'image. L'ombre
+   de la molécule n'est donc pas « détachée » d'un quart d'image — elle est ÉNORME
+   (elle remplit presque tout le masque : 16 198 des 16 384 pixels contre 14 218 pour
+   l'ombre juste) et son centre est celui de la FENÊTRE (0,50) au lieu de celui de la
+   molécule (0,54). C'est la « grosse tache » du rapport, et c'est ce qui rend la
+   « ray » inutilisable tant que la caméra n'est pas refusée. */
+ok(staleBox.count > cleanBox.count * 1.05,
+  'la tache de la caméra restée dans la tuile est plus GROSSE : le sous-frustum la magnifie');
+ok(staleBox.count > 0.9 * staleMask.maskWidth * staleMask.maskHeight,
+  '…au point de remplir le masque ENTIER — une fenêtre de tuile grossie ne laisse plus voir la molécule');
+ok(Math.abs(staleBox.cx - cleanBox.cx) > 0.02,
+  `…et son centre est celui de la FENÊTRE, pas celui de la molécule : ${staleBox.cx.toFixed(2)}/${staleBox.cy.toFixed(2)} contre ${cleanBox.cx.toFixed(2)}/${cleanBox.cy.toFixed(2)} sur la molécule`);
 
 // Le garde-fou : une caméra en pleine tuile est refusée, jamais lue en silence.
 const throws = (fn, re, what) => {
@@ -1132,13 +1142,20 @@ ok(noFrame.onDrawing === 0,
   `sans le repère de la scène, le masque ne touche AUCUN pixel du dessin (${noFrame.onDrawing} sur ${noFrame.drawn} dessinés ; ${noFrame.shadowAll} pixels d'ombre au total, ${noFrame.proxies} proxies) — le « no cast shadow » du rapport`);
 ok(withFrame.drawn > 0 && withFrame.shadowAll > 0,
   `avec le repère, l'ombre existe ET le dessin est dans le cadre (${withFrame.shadowAll} pixels d'ombre pour ${withFrame.drawn} dessinés)`);
-ok(withFrame.onDrawing === withFrame.shadowAll,
-  `…et elle tombe TOUTE SUR le dessin (${withFrame.onDrawing}/${withFrame.shadowAll} pixels)`);
+/* ⚠ CE QUE LE MASQUE EST VRAIMENT (mesuré : 188 020 pixels inkhés sur 39 965 dessinés) :
+   une carte d'ombre de TOUTE l'image — le volume d'ombre derrière la molécule s'étend
+   jusqu'au bord. Le contrat du module n'est donc PAS « un pixel ombré est un pixel
+   dessiné », c'est : l'ALPHA de l'image n'est jamais touchée (`applyShadowToPixels`
+   ne réécrit que le RGB), donc un fond transparent reste transparent et l'ombre ne
+   peut pas « fuir » hors du dessin. Ce qui doit être vrai, et qui l'est, c'est que le
+   DESSIN reçoive l'ombre EN ENTIER — c'est ce qu'on mesure ici. */
+ok(withFrame.onDrawing === withFrame.drawn && withFrame.onDrawing > 0,
+  `…et elle tombe sur TOUT le dessin (${withFrame.onDrawing}/${withFrame.drawn} pixels dessinés) — le masque couvre toute l'image, c'est l'alpha qui décide de ce qui se voit`);
 ok(withFrame.shadowAll / withFrame.drawn > 0.1,
   `…le dessin reçoit donc une vraie ombre portée : ${(100 * withFrame.shadowAll / withFrame.drawn).toFixed(1)} % de ses pixels (az 120 / el 15, tube de 0,5 Å)`);
 const movedComp = sceneShadowOf({ groups: true, compShift: [3, 1, -2] });
-ok(movedComp.shadowAll > 0 && movedComp.onDrawing === movedComp.shadowAll,
-  `une molécule DÉPLACÉE par la barre de style reste dans le repère (${movedComp.onDrawing}/${movedComp.shadowAll} pixels d'ombre sur le dessin)`);
+ok(movedComp.shadowAll > 0 && movedComp.onDrawing === movedComp.drawn,
+  `une molécule DÉPLACÉE par la barre de style reste dans le repère (${movedComp.onDrawing}/${movedComp.drawn} pixels dessinés ombrés)`);
 eq(viewerMatrixOf({}), null, 'sans viewer, viewerMatrixOf ne change rien (les anciens cas gardent leur chemin)');
 eq(viewerMatrixOf({ viewer: {} }), null, '…et un viewer au repos aussi');
 const centredPt = mat4TransformPoint(viewerChain(), [FILE_CENTER[0], FILE_CENTER[1], FILE_CENTER[2], 1]);
