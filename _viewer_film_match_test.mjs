@@ -18,11 +18,19 @@
        que la caméra et la place des molécules ne recrée AUCUNE représentation, donc la
        SURFACE que NGL calcule en tâche de fond arrive vraiment à l'écran — l'aperçu ▶
        et le fichier 🔴 montrent alors ce que l'écran montrait.
+      · « The saved movie always has a black background even if my movie was taken with
+        white background. On the right there is always like an ellipse that is not part
+        of the movie. »
+        → le fond de la FIGURE est peint dans la toile de film AVANT la scène (NGL le
+        réserve au CSS de son canvas : clear d'alpha 0), donc le film est aussi clair que
+        l'écran — et la vignette, multipliée sur ce fond, assombrit les coins au lieu de
+        s'y voir comme une ellipse (voir filmBackdropColor).
    ========================================================================= */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   recordTrajectoryVideo, filmVignetteGeometry, filmVignetteStops, FILM_VIGNETTE_RGB,
+  filmBackdropColor, FILM_BACKDROP_DEFAULT,
 } from './src/utils/viewerTrajectoryVideo.js';
 
 let passed = 0;
@@ -55,6 +63,45 @@ eq(darkest[3][1], 'rgba(30,30,30,0.3000)', '…et les coins');
 eq(filmVignetteStops(5)[3][1], darkest[3][1], 'une noirceur hors bornes est RAMENÉE à 1 (jamais plus sombre que la couche)');
 eq(filmVignetteStops(-3)[3][1], dark[3][1], '…et une valeur négative à 0');
 eq(filmVignetteGeometry(0, 0).rx, 1, 'une toile de taille nulle ne donne pas un rayon nul (division par zéro évitée)');
+
+/* ── 1bis. LE FOND DU FILM — LA COULEUR DE LA SCÈNE, PAS DU NOIR ────────────
+   Le rapport de cette session, mot pour mot : « The saved movie always has a black
+   background even if my movie was taken with white background. On the right there is
+   always like an ellipse that is not part of the movie. »
+
+   POURQUOI. NGL ne peint pas son fond dans la toile : `setBackground` fait
+   `setClearColor(couleur, 0)` — alpha ZÉRO — puis pose la couleur en
+   `style.backgroundColor` DU CANVAS (ngl 2.4, viewer.setBackground) : le fond de
+   l'écran est la couleur CSS du canvas, vue à travers une toile transparente. Un film
+   n'a pas d'alpha (un WebM est écrit en YUV) : le transparent y devient NOIR, et la
+   vignette multipliée sur du transparent se peignait telle quelle — une ellipse au
+   lieu d'une ombre. La toile de film remplit donc son fond AVANT de recopier la scène. */
+eq(filmBackdropColor('#ffffff'), '#ffffff', 'le fond du film est celui de la scène (blanc ici)');
+eq(filmBackdropColor('#F8FAFC'), '#f8fafc', 'la casse est normalisée (un canvas s’en moque, un test non)');
+eq(filmBackdropColor('  #112233  '), '#112233', 'les espaces autour sont ignorés');
+eq(filmBackdropColor('red'), FILM_BACKDROP_DEFAULT,
+  'une couleur nommée n’est pas un #rrggbb : le fond par défaut du viewer');
+eq(filmBackdropColor(''), FILM_BACKDROP_DEFAULT, 'une valeur vide aussi — JAMAIS du noir');
+eq(filmBackdropColor(null), FILM_BACKDROP_DEFAULT, 'null aussi');
+eq(filmBackdropColor('#fff'), FILM_BACKDROP_DEFAULT,
+  'trois chiffres ne suffisent pas (le viewer écrit toujours six)');
+eq(filmBackdropColor(undefined, '#123456'), '#123456', 'un secours VALIDE sert quand la couleur ne l’est pas');
+eq(filmBackdropColor('red', 'blue'), FILM_BACKDROP_DEFAULT, 'un secours invalide retombe sur le défaut du viewer');
+eq(FILM_BACKDROP_DEFAULT, '#f8fafc', 'le défaut du module EST le fond par défaut du viewer (BG_DEFAULT)');
+/* LE CÂBLAGE : la fabrique valide et PEINT la couleur, et les DEUX enregistreurs (la
+   trajectoire 🎬 et les poses 🎞) lui passent le `bgColor` de la barre. */
+has('const backdrop = filmBackdropColor(background);', 'la toile de film valide la couleur de la scène');
+has('ctx.fillStyle = backdrop;\n        ctx.fillRect(0, 0, w, h);',
+  '…et REMPLIT son fond avant de recopier la scène');
+has('const film = filmCanvasFor(canvas, vignetteDarkness, bgColor);',
+  'le 🎬 de la trajectoire passe la couleur de la scène');
+has(': Number.NaN, bgColor);', 'le 🎞 des poses aussi (les deux films ont le même fond)');
+/* L'ORDRE DU COMPOSITE est ce qui fait qu'une ombre assombrit le fond au lieu de le
+   couvrir : le fond, puis la scène, puis la vignette. */
+ok(VIEW.indexOf('ctx.fillStyle = backdrop;') < VIEW.indexOf('ctx.drawImage(source, 0, 0, w, h);'),
+  'le fond est peint AVANT la scène');
+ok(VIEW.indexOf('ctx.drawImage(source, 0, 0, w, h);') < VIEW.indexOf("ctx.globalCompositeOperation = 'multiply';"),
+  '…et la vignette APRÈS la scène (elle assombrit, elle ne masque pas)');
 
 /* ── 2. `beforeCapture` EST APPELÉ UNE FOIS PAR IMAGE, APRÈS LE DESSIN ────── */
 class FakeRecorder {
@@ -105,7 +152,7 @@ eq(broken.out.frames, 3, 'une composition qui échoue N’ARRÊTE PAS le film (l
 
 /* ── 3. LE BRANCHEMENT DANS LE VIEWER, ET LE PARAGRAPHE RACCOURCI ─────────── */
 has('filmVignetteGeometry, filmVignetteStops,', 'le viewer prend la géométrie et les arrêts du module 🎬');
-has('const filmCanvasFor = (source, vignetteDarkness) => {', 'la toile de film est construite par le viewer');
+has('const filmCanvasFor = (source, vignetteDarkness, background) => {', 'la toile de film est construite par le viewer');
 has("ctx.globalCompositeOperation = 'multiply';", 'la vignette est PEINTE en « multiply », comme le mix-blend-mode du CSS');
 has('canvas: film ? film.canvas : canvas,', 'le 🎬 de la trajectoire enregistre la toile de film');
 has('beforeCapture: film ? film.composite : undefined,', '…et compose la vignette à chaque image');
@@ -214,7 +261,7 @@ has('🎬 The film is the 3D canvas with the vignette the screen draws over it',
     '… et il ne compte comme un GESTE que si elle a changé');
   has('sceneRebuildSigRef.current = rebuildSig;', '… ce qu’il vient de dessiner est retenu');
   has("const sceneRebuildSigRef = useRef('');", 'la mémoire de ce qui est déjà dessiné existe');
-  has("const bumpSectionEpoch = () => { sceneRebuildSigRef.current = ''; setSectionEpoch((n) => n + 1); };",
+  has("const bumpSectionEpoch = () => {\n  sceneRebuildSigRef.current = '';\n  poseStyleSigRef.current = '';\n  setSectionEpoch((n) => n + 1);\n};",
     'un geste de la barre PÉRIME cette mémoire (le dessin à la main ne peut pas être gardé pour un fichier)');
   gone("  if (touched) {\n    bumpSectionEpoch();",
     'l’ancien code — rebâtir à CHAQUE application — a disparu (le bug ne peut pas revenir)');
@@ -232,6 +279,6 @@ has('🎬 The film is the 3D canvas with the vignette the screen draws over it',
     'la palette 2° structure n’est réécrite que si elle change (sinon les effets ne se réveillent pas à chaque image)');
 }
 
-console.log(`_viewer_film_match_test.mjs — ${passed} assertions OK (vignette du CSS · beforeCapture par image · barre raccourcie · une surface survit au film)`);
+console.log(`_viewer_film_match_test.mjs — ${passed} assertions OK (vignette du CSS · FOND DE LA FIGURE dans le film · beforeCapture par image · barre raccourcie · une surface survit au film)`);
 
 

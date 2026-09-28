@@ -33,7 +33,7 @@ import {
   KEYFRAME_EASINGS, KEYFRAME_DEFAULT_EASING, KEYFRAME_EASING_LABELS,
   KEYFRAME_LIMITS, KEYFRAME_DEFAULT_HOLD, KEYFRAME_DEFAULT_MORPH,
   KEYFRAME_MIN_MORPH, KEYFRAME_STORE_VERSION, KEYFRAME_STATE_DROP,
-  ease, mixHexColor, normQuat, slerpQuat, mixValue, mixState,
+  ease, mixHexColor, normQuat, slerpQuat, mixValue, mixState, mixCamera,
   mixPose, mixPoseList, keyframeLegs, sampleKeyframeFilm, keyframePlan,
   keyframeFilmSummary, keyframePoseOf, normalizeKeyframe, normalizeKeyframeFilm,
   nextKeyframeId, slimKeyframeState, serialiseKeyframeFilm, parseKeyframeFilm,
@@ -190,6 +190,19 @@ const kf = (over = {}) => normalizeKeyframe({
   eq(mixValue('visible', true, false, 0.8), false, '… dans les deux sens');
   eq(mixValue('onlyB', undefined, 7, 0.5), 7, 'un réglage qui n\'existe que d\'un côté est repris tel quel');
   eq(mixValue('onlyA', 7, undefined, 0.5), 7, '… et il ne disparaît pas en chemin');
+  /* LE POINT DE VUE GLISSE, IL NE COUPE PAS (le rapport de cette session : « it does
+     not manage zoom. if pose 2 is zoomed respect to pose 1, the zoom remains the same
+     in the movie. ») : une caméra est la SEULE valeur qui se mélange sous quatre noms
+     à la fois — sa rotation (slerpée), son déplacement et son zoom (glissés). */
+  const camA = { q: [0, 0, 0, 1], p: [0, 0, 0], dist: 100 };
+  const camB = { q: far, p: [20, -8, 4], dist: 40 };
+  const camQuarter = mixValue('camera', camA, camB, 0.25);
+  near(camQuarter.dist, 85, 'le zoom (dist) glisse : il n’attend pas le milieu du morphème');
+  near(camQuarter.p[0], 5, '…le déplacement aussi');
+  const camHalf = mixCamera(camA, camB, 0.5);
+  near(camHalf.q[2], Math.sin(85 * Math.PI / 360), '…et la rotation est SLERPÉE, à mi-chemin', 1e-3);
+  deep(mixCamera(camA, null, 0.5), camA, 'une pose sans caméra ne fait pas bouger l’autre');
+  deep(mixCamera(camA, camB, 0.5).zoom, undefined, 'un champ absent des deux poses n’est pas inventé');
   deep(mixState({ a: 1 }, { b: 2 }, 0.5), { a: 1, b: 2 },
     'l\'union des clés est parcourue : un réglage ajouté dans une pose est PORTÉ, pas perdu');
   deep(mixState({ n: { x: 0 } }, { n: { x: 10 } }, 0.25), { n: { x: 2.5 } },

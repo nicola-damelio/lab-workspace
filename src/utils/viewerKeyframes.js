@@ -152,11 +152,41 @@ export const slerpQuat = (a, b, t) => {
   return normQuat(A.map((n, i) => (n * wa) + (end[i] * wb))) || A.slice();
 };
 
+/* LE POINT DE VUE D'UNE POSE SE MÉLANGE, LUI AUSSI (le rapport de cette session :
+   « it does not manage zoom. if pose 2 is zoomed respect to pose 1, the zoom
+   remains the same in the movie. »). Une caméra est un quatuor de valeurs
+   { q, p, zoom, dist } : sa ROTATION est slerpée, son DÉPLACEMENT et son ZOOM
+   glissent nombre par nombre. La scène tourne, glisse et se rapproche donc au lieu
+   de sauter au milieu du morphème — c'est ce que la barre annonce depuis toujours
+   (« the camera glides », voir le titre du champ « Morph »). Rien n'est inventé :
+   un champ qu'une seule des deux poses porte est repris tel quel. */
+export const mixCamera = (a, b, t) => {
+  const A = isPlainObject(a) ? a : null;
+  const B = isPlainObject(b) ? b : null;
+  if (!A) return B || a;
+  if (!B) return A;
+  const out = { ...A, ...B };
+  const qa = normQuat(A.q); const qb = normQuat(B.q);
+  if (qa && qb) out.q = slerpQuat(qa, qb, t);
+  const pa = numArrayOf(A.p, 3); const pb = numArrayOf(B.p, 3);
+  if (pa && pb) out.p = pa.map((n, i) => lerpNum(n, pb[i], t));
+  /* LES DEUX NOMS DU ZOOM — `dist` est celui de NGL (cameraDistance), `zoom` celui
+     des enregistrements écrits avant (voir applyCameraPose) : les deux glissent. */
+  ['zoom', 'dist'].forEach((k) => {
+    const va = Number(A[k]); const vb = Number(B[k]);
+    if (Number.isFinite(va) && Number.isFinite(vb)) out[k] = lerpNum(va, vb, t);
+  });
+  return out;
+};
+
 /* The mix of ONE value, told the name it lives under — that name is what makes
    a four-number array a rotation and not a measurement. */
 export const mixValue = (key, a, b, t) => {
   if (a === undefined) return b;
   if (b === undefined) return a;
+  // LE POINT DE VUE : la seule valeur qui se mélange sous plusieurs noms (q · p ·
+  // zoom · dist) et qui ne doit donc pas couper au milieu du morphème.
+  if (key === 'camera') return mixCamera(a, b, t);
   if (typeof a === 'number' && typeof b === 'number') return lerpNum(a, b, t);
   if (typeof a === 'string' && typeof b === 'string' && HEX_COLOR.test(a) && HEX_COLOR.test(b)) {
     return mixHexColor(a, b, t);
@@ -241,6 +271,50 @@ export const slimKeyframeState = (state) => {
   const out = { ...state };
   KEYFRAME_STATE_DROP.forEach((k) => { delete out[k]; });
   return out;
+};
+
+/* ---- LE STYLE D'UNE POSE, RETROUVÉ DANS LA SCÈNE PRÉSENTE -------------------
+   LE RAPPORT DE CETTE SESSION : « it does not manage transitions in style. For
+   example if pose 1 has a surface and pose 2 is ball and stick, the movie always
+   shows the style of the first pose also for the second pose. » Une pose ne
+   photographiait QUE l'environnement — les six menus de §2, les palettes, la
+   caméra : les styles de la BARRE (un arbre de réglages par section, « protein ·
+   chain A », et le ✔ de chaque espace) n'en faisaient pas partie. Un film reposait
+   donc les mêmes styles du début à la fin, quelle que soit la pose.
+
+   UNE SECTION SE RETROUVE PAR SON ID D'ABORD — il est global (`<molécule>::<clé>`,
+   voir ensureSections) — PUIS PAR SA CLÉ LOCALE (« protein|A ») : le même fichier
+   rechargé garde ses ids (la molécule principale est toujours « main »), tandis
+   qu'une molécule AJOUTÉE reçoit un id neuf à chaque chargement — sa clé locale est
+   alors le seul fil qui la relie à la pose. C'est exactement la règle des snapshots
+   (voir loadSnapshot, dans le viewer).
+
+   Rien n'est inventé : une section que la pose ne connaît pas est ABSENTE du
+   résultat, et l'appelant la laisse telle qu'elle est. `null` quand la pose ne
+   porte aucun style (un enregistrement d'avant, ou une scène sans section). */
+export const poseStylesForSections = (looks, vis, sections) => {
+  const list = (Array.isArray(sections) ? sections : []).filter((s) => s && typeof s.id === 'string');
+  const L = isPlainObject(looks) ? looks : null;
+  const V = isPlainObject(vis) ? vis : null;
+  if (!list.length || (!L && !V)) return null;
+  const pick = (map, s) => {
+    if (!map) return undefined;
+    if (Object.prototype.hasOwnProperty.call(map, s.id)) return map[s.id];
+    if (typeof s.key === 'string' && Object.prototype.hasOwnProperty.call(map, s.key)) return map[s.key];
+    return undefined;
+  };
+  const outLooks = {};
+  const outVis = {};
+  let looksHit = 0;
+  let visHit = 0;
+  list.forEach((s) => {
+    const look = pick(L, s);
+    if (isPlainObject(look)) { outLooks[s.id] = look; looksHit += 1; }
+    const v = pick(V, s);
+    if (typeof v === 'boolean') { outVis[s.id] = v; visHit += 1; }
+  });
+  if (!looksHit && !visHit) return null;
+  return { looks: looksHit ? outLooks : null, vis: visHit ? outVis : null };
 };
 
 /* ---- LE MAGASIN DU NAVIGATEUR ------------------------------------------ */

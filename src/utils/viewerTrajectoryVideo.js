@@ -25,7 +25,9 @@
    L'appelant peut donc COMPOSER ces couches dans la toile qu'il enregistre, une
    fois par image, par `beforeCapture` (voir filmVignetteGeometry /
    filmVignetteStops) : rien n'est redessiné, la scène est simplement recopiée
-   dans une toile de film en 2D.
+   dans une toile de film en 2D. ⚠ LE FOND LUI-MÊME N'EST PAS DANS LA TOILE non
+   plus : NGL le réserve au CSS du canvas (clear d'alpha 0) — voir
+   filmBackdropColor, sans quoi le fond d'un film est noir.
 
    HOW A BROWSER WRITES A VIDEO. `canvas.captureStream(fps)` gives a MediaStream
    fed by the canvas and `MediaRecorder` encodes it — both are standard and
@@ -354,6 +356,41 @@ export const filmVignetteStops = (darkness) => {
     [0.72, `rgba(${r},${g},${b},${inner.toFixed(4)})`],
     [1, `rgba(${r},${g},${b},${outer.toFixed(4)})`],
   ];
+};
+
+/* 🖼 LE FOND DU FILM — LA COULEUR DE LA SCÈNE, SOUS L'IMAGE (le rapport de cette
+   session : « The saved movie always has a black background even if my movie was
+   taken with white background. On the right there is always like an ellipse that is
+   not part of the movie. »).
+
+   POURQUOI LE FILM ÉTAIT NOIR. NGL NE PEINT PAS SON FOND DANS LA TOILE. Son
+   `setBackground` fait les deux choses suivantes (viewer.setBackground, ngl 2.4) :
+   `renderer.setClearColor(couleur, 0)` — un clear d'alpha ZÉRO — puis
+   `domElement.style.backgroundColor = couleur`. Le fond que l'on voit à l'écran est
+   donc la COULEUR CSS DU CANVAS, vue À TRAVERS une toile transparente ; c'est aussi
+   ce qui permet à la vignette de ★ Shadows (une couche HTML multipliée PAR-DESSUS)
+   d'assombrir ce fond. Un film, lui, n'a pas d'alpha : le WebM que MediaRecorder
+   écrit est en YUV (même un codec qui sait porter un alpha n'est pas demandé ici),
+   donc le transparent y devient NOIR. Et la vignette, multipliée sur un fond
+   transparent, ne pouvait plus assombrir quoi que ce soit : ses quatre arrêts se
+   peignaient tels quels, et l'ellipse apparaissait comme une tache au lieu d'être
+   une ombre.
+
+   LA RÈGLE. La toile de film (voir filmCanvasFor, dans le viewer) commence par
+   REMPLIR son fond de la couleur de la scène, puis recopie la toile de NGL, puis
+   peint la vignette : ce qui est enregistré est alors ce que l'œil voit — le fond
+   de la figure, ses molécules et ses coins assombris. La couleur est celle que la
+   barre porte (§2 Toolbar → 🌫 Scene → 🎨 Background, `bgColor` du viewer) ; une
+   valeur qui n'est pas un `#rrggbb` retombe sur le fond par défaut du viewer, et
+   jamais sur du noir : un film ne doit pas être plus sombre que l'écran. */
+export const FILM_BACKDROP_DEFAULT = '#f8fafc';
+/** La couleur de fond d'un film, VALIDÉE (`#rrggbb`), avec le fond par défaut en
+ *  secours — la couleur d'une scène, jamais un noir imposé. */
+export const filmBackdropColor = (value, fallback = FILM_BACKDROP_DEFAULT) => {
+  const v = typeof value === 'string' ? value.trim() : '';
+  if (/^#[0-9a-fA-F]{6}$/.test(v)) return v.toLowerCase();
+  const f = typeof fallback === 'string' ? fallback.trim() : '';
+  return /^#[0-9a-fA-F]{6}$/.test(f) ? f.toLowerCase() : FILM_BACKDROP_DEFAULT;
 };
 
 /* ---- 🎬 RECORD THE RUN -----------------------------------------------------

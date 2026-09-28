@@ -22,7 +22,7 @@ import {
   VIDEO_FPS_CHOICES, VIDEO_DEFAULT_FPS, VIDEO_STEP_CHOICES,
   videoSupport, canvasOfStage, videoMime, videoPlan, videoProgressText,
   videoSecondsText, videoFileName, recordTrajectoryVideo,
-  filmVignetteGeometry, filmVignetteStops,
+  filmVignetteGeometry, filmVignetteStops, filmBackdropColor,
 } from '../utils/viewerTrajectoryVideo';
 // 🎞 THE POSES & STYLES FILM — capture the pose and the styles of a scene as
 // keyframes and interpolate between them into one video (its own module, see
@@ -35,7 +35,7 @@ import {
   KEYFRAME_EASINGS, KEYFRAME_EASING_LABELS, KEYFRAME_LIMITS,
   keyframePlan, keyframeFilmSummary, keyframeLegs, sampleKeyframeFilm,
   keyframePoseOf, normalizeKeyframe, normalizeKeyframeFilm, parseKeyframeFilm,
-  serialiseKeyframeFilm, slimKeyframeState,
+  serialiseKeyframeFilm, slimKeyframeState, poseStylesForSections,
 } from '../utils/viewerKeyframes';
 // The CAST SHADOWS of a ✨ Ray still: NGL 2.4 has no shadow-map pass at all, so
 // the shadow is computed from the ATOMS with the camera and the key light of the
@@ -7359,7 +7359,19 @@ const [sectionEpoch, setSectionEpoch] = useState(0);
    ce qui rend la règle sûre — elle ne peut pas garder un dessin que l'utilisateur a
    remplacé à la main. */
 const sceneRebuildSigRef = useRef('');
-const bumpSectionEpoch = () => { sceneRebuildSigRef.current = ''; setSectionEpoch((n) => n + 1); };
+/* ⚠ …ET LA MÉMOIRE DES STYLES DE LA BARRE QU'UNE POSE VIENT DE REPOSER (voir l'étape
+   5 d'applySceneExtras). Un film repose le MÊME instant plusieurs fois par seconde :
+   comparer cette signature évite d'écrire un objet neuf — donc un rendu de la barre —
+   à chaque image d'une pose tenue, tout en appliquant vraiment ce qui change au
+   milieu du morphème (les styles coupent au milieu, voir mixValue). Un geste de la
+   barre PÉRIME cette mémoire, comme celle du dessin : ce que l'utilisateur vient de
+   régler à la main ne peut pas être pris pour ce qu'une pose avait laissé. */
+const poseStyleSigRef = useRef('');
+const bumpSectionEpoch = () => {
+  sceneRebuildSigRef.current = '';
+  poseStyleSigRef.current = '';
+  setSectionEpoch((n) => n + 1);
+};
 // The 3D labels of ONE molecule section (the request: the label switches of the old
 // §2 menus are imported here, one set PER SECTION, so « Residues » ticked on chain A
 // labels chain A only). Default: nothing labelled.
@@ -11253,10 +11265,23 @@ const bestVideoMime = () => {
    module 🎬 appelle `composite()` une fois par image, juste avant de tenir
    l'image : le film porte alors ce que l'écran montre.
 
+   🖼 ET LE FOND EST PEINT LE PREMIER (le rapport de CETTE session : « The saved
+   movie always has a black background even if my movie was taken with white
+   background. On the right there is always like an ellipse that is not part of the
+   movie. »). NGL ne met PAS le fond dans la toile : `setBackground` fait
+   `setClearColor(couleur, 0)` — alpha zéro — et pose la couleur en
+   `style.backgroundColor` DU CANVAS (voir filmBackdropColor, dans le module 🎬).
+   L'écran voit donc le fond À TRAVERS une toile transparente ; un film, qui n'a pas
+   d'alpha, le voyait NOIR — et la vignette, multipliée sur du transparent, se
+   peignait telle quelle au lieu d'assombrir : une ellipse en travers de l'image.
+   La toile de film commence donc par remplir son fond de la couleur de la scène
+   (`bgColor`), puis recopie la scène et peint la vignette par-dessus. Une couleur
+   qui n'est pas un `#rrggbb` retombe sur le fond par défaut — jamais sur du noir.
+
    Elle renvoie `null` quand un contexte 2D n'est pas disponible : le film est
    alors la toile de NGL elle-même, comme avant — une composition impossible ne
    casse jamais l'enregistrement. */
-const filmCanvasFor = (source, vignetteDarkness) => {
+const filmCanvasFor = (source, vignetteDarkness, background) => {
   try {
     if (!source || typeof document === 'undefined' || typeof document.createElement !== 'function') return null;
     const w = Math.max(1, Math.round(Number(source.width) || 0));
@@ -11266,6 +11291,8 @@ const filmCanvasFor = (source, vignetteDarkness) => {
     canvas.height = h;
     const ctx = canvas.getContext('2d');
     if (!ctx || typeof ctx.drawImage !== 'function') return null;
+    // La couleur de fond de la FIGURE, celle du 🎨 Background (§2 → 🌫 Scene).
+    const backdrop = filmBackdropColor(background);
     const geo = filmVignetteGeometry(w, h);
     /* La vignette n'est peinte QUE si elle est à l'écran (le même `shadowOn` que
        la couche de l'écran, voir son JSX) : une vignette éteinte ne doit pas
@@ -11284,6 +11311,10 @@ const filmCanvasFor = (source, vignetteDarkness) => {
         ctx.setTransform(1, 0, 0, 1, 0, 0);
         ctx.globalCompositeOperation = 'source-over';
         ctx.clearRect(0, 0, w, h);
+        /* 🖼 LE FOND DE LA FIGURE, SOUS L'IMAGE — sinon le film est noir là où
+           l'écran est blanc (voir le commentaire de la fabrique plus haut). */
+        ctx.fillStyle = backdrop;
+        ctx.fillRect(0, 0, w, h);
         ctx.drawImage(source, 0, 0, w, h);
         if (!gradient) return;
         /* `multiply` + une ellipse : exactement le `mix-blend-mode: multiply` et le
@@ -11327,15 +11358,17 @@ const recordTrajectoryVideoClick = async () => {
     flashVideoMsg(`⚠️ ${plan.reason || 'there is no 3D canvas to record'}`);
     return;
   }
-  /* 🖼 LA TOILE ENREGISTRÉE. Le film est pris sur une toile de film qui reçoit la
-     scène ET la vignette que l'écran porte par-dessus (voir filmCanvasFor) : c'est
-     ce que le rapport demandait — « the video … is different from what I see on the
-     screen ». Sa taille est celle de la toile de NGL, donc le film garde exactement
-     les pixels que le plan annonce. Une vignette ÉTEINTE n'est pas peinte (NaN). */
+  /* 🖼 LA TOILE ENREGISTRÉE. Le film est pris sur une toile de film qui reçoit le FOND
+     de la figure, la scène ET la vignette que l'écran porte par-dessus (voir
+     filmCanvasFor) : c'est ce que le rapport demandait — « the video … is different
+     from what I see on the screen » et « The saved movie always has a black
+     background even if my movie was taken with white background ». Sa taille est
+     celle de la toile de NGL, donc le film garde exactement les pixels que le plan
+     annonce. Une vignette ÉTEINTE n'est pas peinte (NaN). */
   const vignetteDarkness = shadowOn
     ? (Number.isFinite(Number(shadowDarkness)) ? Number(shadowDarkness) : 0)
     : Number.NaN;
-  const film = filmCanvasFor(canvas, vignetteDarkness);
+  const film = filmCanvasFor(canvas, vignetteDarkness, bgColor);
   // ONE driver of the frame at a time, and the scene is put back where it was.
   setPlaying(false);
   videoCancelRef.current = false;
@@ -11636,7 +11669,7 @@ const recordKeyframeFilmClick = async () => {
      viewer se ressembleraient seulement l'un à l'autre. */
   const kfFilmCanvas = filmCanvasFor(canvas, shadowOn
     ? (Number.isFinite(Number(shadowDarkness)) ? Number(shadowDarkness) : 0)
-    : Number.NaN);
+    : Number.NaN, bgColor);
   const back = { state: captureViewerSetup(), pose: captureKeyframePoses() };
   const label = (file && file.name) || (trajFile && trajFile.name) || declaredTrajName || 'scene';
   setKfMsg(`${keyframeFilmSummary(keys.length, plan)}${plan.long ? ' · long film — keep this tab in the foreground' : ''}`);
@@ -15569,24 +15602,55 @@ const captureViewerSetup = () => ({
 /* ── LE POINT DE VUE — la caméra est une PARTIE de l'image ─────────────────────
    Une figure se reconnaît à son orientation autant qu'à ses couleurs : sans elle,
    « reload the image as it was » redonne la même molécule vue de l'autre côté. NGL
-   n'offre pas de pose de caméra par une seule propriété : on range donc les trois
-   qui la décrivent (la rotation, la translation et le zoom), lues et réécrites par
-   les objets du viewer — et TOUT est sous try/catch, une version de NGL qui ne les
-   exposerait pas laisse simplement la caméra où elle est. */
+   n'offre pas de pose de caméra par une seule propriété : on range donc ce qui la
+   décrit (la rotation, la translation ET LE ZOOM), lues et réécrites par les objets
+   du viewer — et TOUT est sous try/catch, une version de NGL qui ne les exposerait
+   pas laisse simplement la caméra où elle est.
+
+   ⚠⚠ LE ZOOM DE NGL N'EST PAS `camera.zoom` (le rapport de CETTE session : « it
+   does not manage zoom. if pose 2 is zoomed respect to pose 1, the zoom remains the
+   same in the movie. »). Les contrôles de NGL 2.4 tiennent la distance de la caméra
+   dans `viewer.cameraDistance` et la molette écrit là :
+
+     ViewerControls#zoom(e)   → distance(cameraDistance · (1 − e))
+     ViewerControls#distance(e) → viewer.cameraDistance = max(|e|, 0.2) ; viewer.updateZoom()
+
+   `camera.zoom`, lui, n'est qu'un champ de la caméra ORTHOGRAPHIQUE (recalculé par
+   `updateZoom()` à partir de la distance) : sur une caméra en perspective — celle du
+   viewer — il vaut 1 pour toujours. La pose enregistrée portait donc « zoom: 1 » à
+   chaque capture, et la reposer ne rapprochait rien : un film gardait le zoom de son
+   premier instant. La distance est maintenant lue par `sceneZoomDistance` (les
+   contrôles d'abord, `viewer.cameraDistance` en secours) et reposée par
+   `ViewerControls#distance` — le geste de la molette, à l'identique. `zoom` reste lu
+   et écrit pour les enregistrements d'avant et pour une caméra orthographique. */
+const sceneZoomDistance = (stage) => {
+  try {
+    const v = stage && stage.viewer;
+    if (!v) return null;
+    const controls = stage.viewerControls;
+    const d = (controls && typeof controls.getCameraDistance === 'function')
+      ? controls.getCameraDistance()
+      : v.cameraDistance;
+    return (Number.isFinite(Number(d)) && Number(d) > 0) ? Number(d) : null;
+  } catch { return null; }
+};
 const cameraPose = () => {
   try {
-    const v = stageRef.current && stageRef.current.viewer;
+    const stage = stageRef.current;
+    const v = stage && stage.viewer;
     if (!v) return null;
     const q = (v.rotationGroup && v.rotationGroup.quaternion) ? Array.from(v.rotationGroup.quaternion.toArray()) : null;
     const p = (v.translationGroup && v.translationGroup.position) ? Array.from(v.translationGroup.position.toArray()) : null;
+    const dist = sceneZoomDistance(stage);
     const zoom = (v.camera && Number.isFinite(v.camera.zoom)) ? v.camera.zoom : null;
-    if (!q && !p && zoom == null) return null;
-    return { q, p, zoom };
+    if (!q && !p && dist == null && zoom == null) return null;
+    return { q, p, dist, zoom };
   } catch { return null; }
 };
 const applyCameraPose = (pose) => {
   try {
-    const v = stageRef.current && stageRef.current.viewer;
+    const stage = stageRef.current;
+    const v = stage && stage.viewer;
     if (!v || !pose || typeof pose !== 'object') return;
     if (Array.isArray(pose.q) && pose.q.length === 4 && v.rotationGroup && v.rotationGroup.quaternion) {
       const Q = v.rotationGroup.quaternion.constructor;
@@ -15595,7 +15659,19 @@ const applyCameraPose = (pose) => {
     if (Array.isArray(pose.p) && pose.p.length === 3 && v.translationGroup && v.translationGroup.position) {
       v.translationGroup.position.fromArray(pose.p);
     }
-    if (Number.isFinite(pose.zoom) && v.camera) v.camera.zoom = pose.zoom;
+    /* LE ZOOM — par le GESTE des contrôles : `distance()` écrit `cameraDistance` ET
+       refait la projection (`updateZoom()`), ce qui vaut pour les deux types de
+       caméra. À défaut d'un `ViewerControls` (une version de NGL qui n'en aurait
+       pas), la même écriture est faite à la main. */
+    const dist = Number(pose.dist);
+    if (Number.isFinite(dist) && dist > 0) {
+      const controls = stage.viewerControls;
+      if (controls && typeof controls.distance === 'function') controls.distance(dist);
+      else {
+        v.cameraDistance = dist;
+        if (typeof v.updateZoom === 'function') v.updateZoom();
+      }
+    } else if (Number.isFinite(pose.zoom) && v.camera) v.camera.zoom = pose.zoom;
     if (typeof v.requestRender === 'function') v.requestRender();
   } catch { /* une version de NGL sans ces objets laisse la caméra en place */ }
 };
@@ -15610,6 +15686,15 @@ const applyCameraPose = (pose) => {
      · les réglages PAR MOLÉCULE de la barre de styling (style · couleur · mode de
        coloration · transparence) et LÀ OÙ ELLES SONT (position, un fit ou un ✥ Move
        compris) ;
+     · LES STYLES DE LA BARRE (§4) — un ARBRE DE RÉGLAGES PAR SECTION (« protein ·
+       chain A » : son style, son « Color by », ses rayons, sa transparence, son
+       matériau) et le ✔ de chaque espace. C'est la PARTIE QUE J'AI OUBLIÉE JUSQU'ICI,
+       et le rapport de cette session : « it does not manage transitions in style. if
+       pose 1 has a surface and pose 2 is ball and stick, the movie always shows the
+       style of the first pose also for the second pose. » Une pose ne portait que les
+       six menus de §2 (catStyles) : les arbres que la barre dessine, eux, ne
+       voyageaient pas — un film reposait donc les MÊMES styles du début à la fin
+       (voir captureSectionLooks / poseStylesForSections, et l'étape 5 du lecteur) ;
      · la session 🧪 Selections & PyMOL — ses fenêtres, leurs looks, les `set` posés,
        la macro et le drapeau « le script tient la scène » ;
      · le POINT DE VUE de la caméra.
@@ -15617,6 +15702,39 @@ const applyCameraPose = (pose) => {
    Un THÈME ne les prend pas (il parle de CLASSES, pas de ces molécules : voir
    THEME_GLOBAL_KEYS) ; un SETUP nommé et un SNAPSHOT, si : ce sont deux photographies.
    Tout est relu VALIDÉ champ par champ (applySceneExtras), comme le reste du fichier. */
+
+/* TOUTES LES SECTIONS DE LA SCÈNE, à plat et dans l'ordre de la barre : ce que la
+   capture photographie et ce que le lecteur retrouve (voir poseStylesForSections). */
+const sceneSectionsFlat = () => {
+  const out = [];
+  const cat = sectionCatalogRef.current || {};
+  Object.keys(cat).forEach((molKey) => {
+    (((cat[molKey] || {}).sections) || []).forEach((sec) => { if (sec && sec.id) out.push(sec); });
+  });
+  return out;
+};
+/* LES STYLES DE LA BARRE, PHOTOGRAPHIÉS — l'arbre EFFECTIF de chaque section, même
+   celle que personne n'a touchée : `sectionTreeOf` rend alors l'arbre du type
+   (kindLooks), et c'est bien ce qui est à l'écran. L'arbre est CLONÉ (cloneSectionTree)
+   comme celui d'une section sœur : la pose ne partage donc jamais un objet avec la
+   scène vivante, et une pose jouée ne peut pas être modifiée par un geste de la barre
+   (ni l'inverse). Le ✔ de chaque section est enregistré de la même façon, EFFECTIF
+   (KIND_VISIBLE_BY_DEFAULT compris), pour qu'une pose dise aussi ce qui est caché. */
+const captureSectionLooksForPose = () => {
+  const out = {};
+  sceneSectionsFlat().forEach((sec) => {
+    // Une section sans arbre lisible ne doit pas faire échouer la photo ENTIÈRE (une
+    // pose est prise par un geste : ▲ Capture, 💾 Snapshot, ⚙️ Setup).
+    try { out[sec.id] = cloneSectionTree(sectionTreeOf(sec.id, sec.kind)); } catch { /* cette section reste hors de la pose */ }
+  });
+  return out;
+};
+const captureSectionVisForPose = () => {
+  const out = {};
+  sceneSectionsFlat().forEach((sec) => { out[sec.id] = sectionVisible(sec.id, sec.kind); });
+  return out;
+};
+
 const captureSceneExtras = () => ({
   labels: { ...(sectionLabelsRef.current || {}) },
   molecules: {
@@ -15624,6 +15742,11 @@ const captureSceneExtras = () => ({
     extras: extraMolsSnapshot().map((m) => ({ ...m })),
     chosen: selectedMolKey,
   },
+  // 🎨 LES STYLES DE LA BARRE (voir le commentaire ci-dessus) : les clés sont les IDs
+  // GLOBAUX des sections, et le lecteur sait retrouver une section par sa CLÉ LOCALE
+  // quand un fichier rechargé a donné de nouveaux ids à ses molécules ajoutées.
+  sectionLooks: captureSectionLooksForPose(),
+  sectionVis: captureSectionVisForPose(),
   pymol: {
     selections, selStyles, selOverrides,
     script: pymolScript, active: pymolActive, autoShow: autoShowSel, name: pymolScriptName,
@@ -15844,6 +15967,31 @@ const applySceneExtras = (s) => {
   }
   // 4. LE POINT DE VUE — la caméra de la figure (voir cameraPose / applyCameraPose).
   if (s.camera) { applyCameraPose(s.camera); touched = true; }
+  /* 5. LES STYLES DE LA BARRE (§4) — L'ARBRE DE CHAQUE SECTION ET SON ✔ (le rapport
+     de cette session : « it does not manage transitions in style … the movie always
+     shows the style of the first pose also for the second pose. »). C'est le même
+     lecteur pour les trois magasins : une pose de film, un setup nommé, un snapshot.
+     `poseStylesForSections` retrouve chaque section par son id, puis par sa CLÉ
+     LOCALE (un fichier rechargé garde les ids de sa molécule principale et perd ceux
+     de ses molécules ajoutées) ; une section inconnue de la pose n'est PAS touchée —
+     les arbres retrouvés sont donc FUSIONNÉS sur ce que la barre porte, jamais
+     substitués à l'ensemble de la scène.
+     ⚠ ON N'ÉCRIT QUE SI QUELQUE CHOSE CHANGE : un film repose le même instant à
+     chaque image d'une pose tenue, et réécrire un objet neuf à chaque image ferait
+     re-rendre la barre — et resigner styleSignature — pour rien. Une VRAIE
+     différence, elle, compte comme un geste : la signature ci-dessous rebâtit la
+     scène une fois (voir sceneRebuildSig), donc une surface s'éteint et un
+     ball-and-stick apparaît au milieu du film. */
+  const poseStyles = poseStylesForSections(s.sectionLooks, s.sectionVis, sceneSectionsFlat());
+  if (poseStyles) {
+    const poseSig = JSON.stringify(poseStyles);
+    if (poseSig !== poseStyleSigRef.current) {
+      poseStyleSigRef.current = poseSig;
+      if (poseStyles.looks) setSectionLooks((prev) => ({ ...prev, ...poseStyles.looks }));
+      if (poseStyles.vis) setSectionVis((prev) => ({ ...prev, ...poseStyles.vis }));
+      touched = true;
+    }
+  }
   if (touched) {
     /* ⚠ NE REBÂTIR QUE SI LES RÉGLAGES ONT VRAIMENT CHANGÉ — voir sceneRebuildSig.
        C'est ce qui laisse une SURFACE EXISTER PENDANT UN FILM (le rapport de cette
@@ -17283,7 +17431,7 @@ onClick={captureKeyframe}
 disabled={kfBusy || keyframes.length >= KEYFRAME_LIMITS.keys}
 title={keyframes.length >= KEYFRAME_LIMITS.keys
   ? `${KEYFRAME_LIMITS.keys} poses is the limit — delete one to capture another`
-  : 'Store the scene AS IT IS NOW as a pose: every menu with its radius, colour and group colours, the palettes of the ⚙ wheel, the labels, fog, shadows, clipping, the background, the camera, where every molecule stands AND how it is turned. Nothing moves on screen — a pose is a copy of the scene, the scene is never a pose.'}
+  : 'Store the scene AS IT IS NOW as a pose: the style of EVERY molecule section of the styling bar (its style, Color by, radii, transparency, material and its ✔) and of the six §2 menus, the palettes of the ⚙ wheel, the labels, fog, shadows, clipping, the background, the camera (its direction, its position AND its zoom), where every molecule stands AND how it is turned. Nothing moves on screen — a pose is a copy of the scene, the scene is never a pose.'}
 className="bg-fuchsia-600 hover:bg-fuchsia-700 disabled:opacity-40 text-white font-bold px-3 py-1 rounded-md text-[11px] shadow-sm transition-colors inline-flex items-center gap-1 h-7 whitespace-nowrap"
 >
 ＋ Capture this pose
