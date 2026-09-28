@@ -2,7 +2,7 @@ import NMRMoleculeViewer, { useShowAssignedFlag } from './NMRMoleculeViewer';
 import {
   ChartControlBar, SharedChartStylePanel, ChartInspector, brokenAxisProps, AngledTick, tickLabelOffset, cfgTickFormatter, cfgAxisLabel, cfgChartMargin, errorBarRange, instancesLinked, InstanceLinkToggle } from './SharedAnalysisTools';
 import { Icon } from './Icons';
-import React, { useState, useMemo, useRef, useEffect } from 'react';
+import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import {
   ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceArea, ReferenceLine, BarChart, Bar, LineChart, Line, Legend, ErrorBar, Cell
 } from 'recharts';
@@ -22,6 +22,10 @@ import { sequenceForMoleculeType, sequencePatchForMoleculeType, structureSequenc
 // viewer 🔢) : une seule règle pour la table des déplacements, la bande de
 // séquence de « Sequence and structure » et les ponts disulfure.
 import { residueNumberResolver, residueNumberOf } from '../utils/residueNumbering';
+// LE repliement demandé par le bouton « ⚭ Fold for disulfides » du viewer : la
+// détente des torsions qui amène les deux Sγ d'un pont défini à une distance de
+// liaison (module pur, la géométrie lui est injectée — voir plus bas).
+import { foldProteinForDisulfides } from '../utils/disulfideFold.js';
 import {
   AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, CARBON_RANGE_DB,
   SS_CORRECTIONS, SS_META, DNA_FORM_OFFSETS, SUGAR_ANOMER_OFFSETS,
@@ -2786,7 +2790,11 @@ const _ringClose = (prev, anchor, lenPrev, lenAnchor, avoid) => {
 // standard staggered defaults (χ1 = -60°, subsequent χ = 180°); aromatic rings
 // are built as exact planar regular polygons; Pro closes its ring exactly via
 // circle–circle intersection. Output = { name, pos }[] of all side-chain atoms.
-const placeSidechainAtoms = (char, bb) => {
+//
+// `chi` (optionnel) = { chi1 } EN RADIANS, lu par la seule cystéine : c'est le
+// rotamère que le repliement « ⚭ Fold for disulfides » a choisi pour ses deux
+// Cys (utils/disulfideFold.js). Absent → −60° (g−), comme avant.
+const placeSidechainAtoms = (char, bb, chi = null) => {
   const atoms = { N: bb.N, CA: bb.CA, C: bb.C, O: bb.O };
   if (bb.CB) atoms.CB = bb.CB;
   // Track every covalent bond created (atom-name pairs) so the generated PDB can
@@ -2849,10 +2857,17 @@ const placeSidechainAtoms = (char, bb) => {
       P('OD1', 'CA', 'CB', 'CG', 1.25, 120, 120);
       P('OD2', 'CA', 'CB', 'CG', 1.25, 120, -120);
       break;
-    case 'C':
-      P('SG', 'N', 'CA', 'CB', 1.81, 109.5, -60); CH2('CB', 'N', 'CA');
+    case 'C': {
+      /* χ1 d'une cystéine : −60° (g−) par défaut, mais l'angle est un
+         ARGUMENT — le repliement « ⚭ Fold for disulfides » essaie les trois
+         rotamères (g−, g+, trans) et garde celui qui met les deux Sγ à portée
+         de liaison (voir utils/disulfideFold.js). `chi.chi1` est en radians,
+         P() attend des degrés. */
+      const chi1 = (chi && Number.isFinite(chi.chi1)) ? (chi.chi1 * 180 / Math.PI) : -60;
+      P('SG', 'N', 'CA', 'CB', 1.81, 109.5, chi1); CH2('CB', 'N', 'CA');
       H('HG', 'CA', 'CB', 'SG', 1.34, 100, 180);
       break;
+    }
     case 'Q':
       P('CG', 'N', 'CA', 'CB', 1.52, 110.5, -60); CH2('CB', 'N', 'CA');
       P('CD', 'CA', 'CB', 'CG', 1.50, 110.5, 180); CH2('CG', 'CA', 'CB');
@@ -3098,31 +3113,69 @@ const placeSidechainAtoms = (char, bb) => {
 const buildProteinBackbone = (seq, ssString) => {
   const n = seq.length;
   const B = PROTEIN_BB;
+  /* `ssString` = la structure secondaire peinte (H / E / C) — OU, pour le
+     repliement « ⚭ Fold for disulfides », le TABLEAU de torsions rendu par
+     utils/disulfideFold.js ({ phi, psi, chi1 } en radians, un objet par
+     résidu) : un tableau est pris tel quel, c'est lui qui porte les φ/ψ
+     détendus et le χ1 rotamère choisi pour les cystéines du pont. */
+  const torsionAt = (i) => (Array.isArray(ssString)
+    ? (ssString[i] || SS_TORSIONS.C)
+    : ssTorsionAt((ssString && ssString[i]) || 'C'));
   const N0 = [0, 0, 0];
   const CA0 = [B.N_CA, 0, 0];
   const C0 = [B.N_CA - B.CA_C * Math.cos(B.ANG_N_CA_C), B.CA_C * Math.sin(B.ANG_N_CA_C), 0];
   const residues = [{ N: N0, CA: CA0, C: C0 }];
-  const ssAt = (i) => (ssString && ssString[i]) || 'C';
   for (let i = 1; i < n; i++) {
     const prev = residues[i - 1];
-    const psiPrev = ssTorsionAt(ssAt(i - 1)).psi;
+    const psiPrev = torsionAt(i - 1).psi;
     const Ni = nerfPlace(prev.N, prev.CA, prev.C, B.C_N, B.ANG_CA_C_N, psiPrev);
     const CAi = nerfPlace(prev.CA, prev.C, Ni, B.N_CA, B.ANG_C_N_CA, B.OMEGA);
-    const phiI = ssTorsionAt(ssAt(i)).phi;
+    const phiI = torsionAt(i).phi;
     const Ci = nerfPlace(prev.C, Ni, CAi, B.CA_C, B.ANG_N_CA_C, phiI);
     residues.push({ N: Ni, CA: CAi, C: Ci });
   }
   for (let i = 0; i < n; i++) {
     const r = residues[i];
-    const psiI = ssTorsionAt(ssAt(i)).psi;
+    const psiI = torsionAt(i).psi;
     r.O = nerfPlace(r.N, r.CA, r.C, B.C_O, B.ANG_CA_C_O, psiI - Math.PI);
     if (seq[i] !== 'G') r.CB = nerfPlace(r.C, r.N, r.CA, B.CA_CB, _deg2rad(110.5), _deg2rad(-122.5));
   }
   return residues;
 };
 
-const proteinSequenceToPdbText = (seq, ssString, title = 'GENERATED') => {
-  const residues = buildProteinBackbone(seq, ssString);
+/* ----------------------------------------------------------------------------
+   proteinSequenceToPdbText(seq, ssString, title, opts)
+
+   `opts.cysDisulfides` = les ponts définis dans « Cysteine states »
+   ([[posA, posB], …], en POSITIONS DE SÉQUENCE 1-based — la clé du panneau,
+   jamais un numéro affiché), et `opts.torsions` = le tableau de torsions
+   détendues rendu par utils/disulfideFold.js (« ⚭ Fold for disulfides »), ou
+   null pour le modèle idéal habituel.
+
+   Trois choses, et rien d'autre, quand des ponts sont définis :
+    1. les deux Sγ d'une paire sont joints par un CONECT — LE record que NGL lit
+       pour dessiner une liaison (ngl@2.4.0 parse CONECT et ne traite AUCUN
+       SSBOND : un SSBOND seul ne dessinerait rien) : le pont apparaît donc en
+       Sticks / Ball+stick / Lines, colorié moitié-moitié ;
+    2. HG est RETIRÉ des cystéines engagées dans un pont — un thiol oxydé n'a pas
+       de proton (le modèle redox de la page le dit déjà : les ¹³C de ces Cys
+       sont pris sur CYS_OXIDIZED_CARBON_RANGE) ;
+    3. des records SSBOND sont écrits aussi, pour les outils qui les lisent.
+   La liaison est écrite MÊME quand la détente n'a pas réussi à réunir les deux
+   Sγ : elle est alors étirée, et c'est le message du viewer qui le dit.
+   ---------------------------------------------------------------------------- */
+const proteinSequenceToPdbText = (seq, ssString, title = 'GENERATED', opts = {}) => {
+  const relaxTorsions = Array.isArray(opts.torsions) ? opts.torsions : null;
+  // Le squelette suit les torsions DÉTENDUES quand il y en a (et non plus la
+  // structure secondaire) : c'est tout l'objet du repliement — χ1 seul ne
+  // rapprocherait jamais deux Sγ que φ/ψ séparent.
+  const residues = buildProteinBackbone(seq, relaxTorsions || ssString);
+  const cysDisulfides = (Array.isArray(opts.cysDisulfides) ? opts.cysDisulfides : [])
+    .filter((p) => Array.isArray(p) && p.length === 2 && Number.isInteger(p[0]) && Number.isInteger(p[1]))
+    .filter((p) => p[0] >= 1 && p[0] <= seq.length && p[1] >= 1 && p[1] <= seq.length && p[0] !== p[1])
+    .filter((p) => seq[p[0] - 1] === 'C' && seq[p[1] - 1] === 'C');
+  const bondedCys = new Set();     // les Cys d'un pont : pas de proton de thiol
+  cysDisulfides.forEach(([a, b]) => { bondedCys.add(a); bondedCys.add(b); });
   const lines = [
     'HEADER    IDEALIZED ALL-ATOM MODEL (GENERATED)',
     `TITLE     ${title}`,
@@ -3130,12 +3183,23 @@ const proteinSequenceToPdbText = (seq, ssString, title = 'GENERATED') => {
     'REMARK   1 extended fallback), including complete side chains and hydrogens.',
     'REMARK   1 Not an experimental or energy-minimized structure.',
   ];
+  if (relaxTorsions) {
+    lines.push('REMARK   1 Disulphide-restrained relaxation — the phi/psi of the residues between');
+    lines.push('REMARK   1 each pair and the Cys chi1 rotamers were relaxed so the S-gamma atoms');
+    lines.push('REMARK   1 come within bonding distance (Fold for disulfides). Not a physical fold.');
+  }
+  // SSBOND — colonnes PDB : nom, n° du pont, CYS + chaîne + resSeq ×2, distance.
+  cysDisulfides.forEach(([a, b], k) => {
+    const pad = (s, w) => String(s).padStart(w);
+    lines.push(`SSBOND${pad(k + 1, 3)} CYS A${pad(a, 4)}${' '.repeat(10)} CYS A${pad(b, 4)}${' '.repeat(12)}2.05`);
+  });
   let serial = 1;
   const serialOf = new Map();       // `${atomName}@${residueIndex}` → serial
   const residueBondPairs = [];      // [{ i, bonds: [[an, bn], ...] }]
   residues.forEach((r, i) => {
     const char = seq[i];
     const resName = AA_1_TO_3[char] || 'UNK';
+    const dropHg = char === 'C' && bondedCys.has(i + 1);
     // Backbone hydrogens (HA always; HN for non-Pro; H1/H2/H3 on the N-terminus)
     const bbH = [];
     try {
@@ -3160,9 +3224,10 @@ const proteinSequenceToPdbText = (seq, ssString, title = 'GENERATED') => {
       console.warn(`Backbone-H placement failed for residue ${i + 1} (${char}), continuing without them:`, e);
     }
     // Side chain -- never let one residue's spec kill the whole structure
+    // (le 3ᵉ argument porte le χ1 du modèle détendu : voir placeSidechainAtoms)
     let sidechain = { atoms: [], bonds: [] };
     try {
-      sidechain = placeSidechainAtoms(char, r);
+      sidechain = placeSidechainAtoms(char, r, relaxTorsions ? relaxTorsions[i] : null);
     } catch (e) {
       console.warn(`Side-chain generation failed for residue ${i + 1} (${char}), keeping backbone only:`, e);
     }
@@ -3172,13 +3237,17 @@ const proteinSequenceToPdbText = (seq, ssString, title = 'GENERATED') => {
     (sidechain.atoms || []).forEach((a) => ordered.push(a));
     ordered.forEach((a) => {
       if (!a || !Array.isArray(a.pos) || a.pos.some((v) => !Number.isFinite(v))) return;
+      if (dropHg && a.name === 'HG') return;      // thiol oxydé : aucun proton
       serialOf.set(`${a.name}@${i}`, serial);
       lines.push(pdbAtomLine({
         serial: serial++, atomName: a.name, element: a.name[0], resName, chain: 'A',
         resSeq: i + 1, x: a.pos[0], y: a.pos[1], z: a.pos[2],
       }));
     });
-    residueBondPairs.push({ i, bonds: sidechain.bonds || [] });
+    residueBondPairs.push({
+      i,
+      bonds: (sidechain.bonds || []).filter(([an, bn]) => !(dropHg && (an === 'HG' || bn === 'HG'))),
+    });
   });
   // Explicit CONECT records for every intended bond, so NGL renders exactly the
   // covalent graph of the idealized structure and never invents bonds by distance
@@ -3207,6 +3276,13 @@ const proteinSequenceToPdbText = (seq, ssString, title = 'GENERATED') => {
     // Side-chain bonds (recorded by placeSidechainAtoms).
     (residueBondPairs[i].bonds || []).forEach(([an, bn]) => emitBond(`${an}@${i}`, `${bn}@${i}`));
   });
+  /* LE PONT DISULFURE, ENFIN DESSINÉ : un CONECT entre les deux Sγ de chaque
+     paire définie. C'est le seul record que NGL sait lire pour une liaison
+     (ngl@2.4.0 n'a aucun traitement des SSBOND) — voir l'en-tête de cette
+     fonction. Écrit quelle que soit la géométrie : si la détente n'a pas réuni
+     les deux Sγ, la liaison est étirée et le spectateur le voit (le message du
+     viewer donne la distance obtenue). */
+  cysDisulfides.forEach(([a, b]) => emitBond(`SG@${a - 1}`, `SG@${b - 1}`));
   lines.push('TER', 'END');
   return lines.join('\n') + '\n';
 };
@@ -3536,6 +3612,36 @@ const cysCarbonRange = (cName, { oxidized, reduced }) => {
   if (oxidized) return { min: ox.min, max: ox.max, note: 'oxidised Cys (S–S)' };
   return red;
 };
+
+// ================= LE PONT DISULFURE, DESSINÉ =================
+// Les couleurs d'un pont : la MÊME teinte le raconte partout — sur la puce de
+// paire, sur la ligne de chaque Cys appariée et sur la bande de séquence de
+// « Sequence and structure » (linkOf). Ambre pour le premier pont, puis des
+// teintes assez éloignées pour que deux ponts se distinguent au premier coup
+// d'œil (une protéine peut en porter huit).
+export const DISULFIDE_PAIR_COLORS = ['#b45309', '#7c3aed', '#0e7490', '#be123c', '#4d7c0f', '#1d4ed8'];
+export const disulfidePairColor = (pairIndex) =>
+  DISULFIDE_PAIR_COLORS[((pairIndex % DISULFIDE_PAIR_COLORS.length) + DISULFIDE_PAIR_COLORS.length) % DISULFIDE_PAIR_COLORS.length];
+
+/* LE PONT, DESSINÉ — pas seulement écrit « ⚭ ». Deux atomes de SOUFRE (les
+   pastilles S̲), la LIAISON S–S qui les unit, et les deux traits pâles des
+   liaisons Cβ–Sγ qui les amènent là : la définition montre donc la liaison
+   exactement comme la 3D la dessine (le CONECT SG–SG de
+   proteinSequenceToPdbText, voir ⚭ Fold for disulfides). Les NUMÉROS restent
+   autour du dessin, dans les puces : ce sont eux qui portent la renumérotation
+   🔢 (utils/residueNumbering.js), pas le dessin. */
+const DisulfideBondGlyph = ({ color = DISULFIDE_PAIR_COLORS[0], title = 'S–S' }) => (
+  <svg width="46" height="18" viewBox="0 0 46 18" role="img" aria-label="Disulphide bond" className="shrink-0 align-middle">
+    <title>{title}</title>
+    <line x1="3" y1="9" x2="13" y2="9" stroke={color} strokeWidth="2" strokeLinecap="round" opacity="0.45" />
+    <circle cx="18" cy="9" r="4.6" fill={color} />
+    <text x="18" y="12.4" textAnchor="middle" fontSize="6.5" fontWeight="bold" fill="#fff">S</text>
+    <line x1="22.6" y1="9" x2="23.4" y2="9" stroke={color} strokeWidth="3" strokeLinecap="round" />
+    <circle cx="28" cy="9" r="4.6" fill={color} />
+    <text x="28" y="12.4" textAnchor="middle" fontSize="6.5" fontWeight="bold" fill="#fff">S</text>
+    <line x1="32.6" y1="9" x2="43" y2="9" stroke={color} strokeWidth="2" strokeLinecap="round" opacity="0.45" />
+  </svg>
+);
 
 // ================= SHARED DERIVED DATA HOOK =================
 const useNmrDerived = (activeTest, ctx = {}) => {
@@ -4860,7 +4966,11 @@ const sequenceStructure = useMemo(() => {
       // structure painted with the brush (that would leak the answer). An
       // empty secondary structure yields the fully-extended chain.
       const ssFor3D = univTestMode ? '' : (activeTest.secondaryStructure || '');
-      return { text: proteinSequenceToPdbText(d.seq, ssFor3D, activeTest.name || 'PROTEIN'), ext: 'pdb' };
+      // Les ponts disulfure définis dans « Cysteine states » entrent dans le
+      // modèle : CONECT SG–SG (le pont se voit en Sticks / Ball+stick) + le
+      // proton HG retiré des Cys engagées. Le squelette reste le modèle idéal
+      // tant que « ⚭ Fold for disulfides » n'est pas cliqué (voir plus bas).
+      return { text: proteinSequenceToPdbText(d.seq, ssFor3D, activeTest.name || 'PROTEIN', { cysDisulfides: activeTest.cysDisulfides }), ext: 'pdb' };
     }
 
     if ((d.moleculeType === 'dna' || d.moleculeType === 'rna') && d.seq) {
@@ -4874,7 +4984,7 @@ const sequenceStructure = useMemo(() => {
   }
 
   return null;
-}, [d.moleculeType, d.seq, activeTest.secondaryStructure, activeTest.name, univTestMode]);
+}, [d.moleculeType, d.seq, activeTest.secondaryStructure, activeTest.name, univTestMode, activeTest.cysDisulfides]);
 
 const generatedStructure = useMemo(() => {
   if (hasExplicitOverride) {
@@ -4883,6 +4993,70 @@ const generatedStructure = useMemo(() => {
   }
   return sequenceStructure;
 }, [hasExplicitOverride, sequenceStructure]);
+
+  /* ── ⚭ Fold for disulfides — LE GESTE DU VIEWER, CALCULÉ ICI ──────────────
+     Le bouton du groupe Modify du viewer appelle cette fabrique : elle rend le
+     MÊME modèle de séquence, mais avec les torsions DÉTENDUES jusqu'à ce que
+     chaque pont défini dans « Cysteine states » puisse se fermer
+     (utils/disulfideFold.js : les deux Sγ visés à 2.05 Å, φ/ψ des résidus
+     entre les deux Cys + les trois rotamères χ1).
+
+     Trois propriétés qui comptent :
+       • RIEN NE BOUGE TANT QUE LE BOUTON N'EST PAS CLIQUÉ : le modèle servi
+         d'office reste le modèle idéal ci-dessus (c'est une déformation
+         explicite, pas une surprise à l'ouverture d'une condition) ;
+       • le texte rendu est celui du constructeur avec `torsions` — donc il
+         porte AUSSI le CONECT SG–SG et l'absence de HG (voir
+         proteinSequenceToPdbText) ;
+       • `note` dit ce qui a été obtenu, pont par pont, avec les NUMÉROS
+         AFFICHÉS (le 🔢 du viewer), y compris quand un pont n'a PAS pu être
+         fermé : c'est le viewer qui l'affiche tel quel. Aucune promesse de
+         repliement physique n'est faite (le module n'en fait pas non plus).
+     Rend `null` quand il n'y a rien à détendre (pas de pont, pas de
+     séquence) : le bouton du viewer est alors désactivé. */
+  const buildDisulfideFoldedStructure = useCallback(() => {
+    const pairs = (Array.isArray(activeTest.cysDisulfides) ? activeTest.cysDisulfides : [])
+      .filter((p) => Array.isArray(p) && p.length === 2 && p[0] !== p[1]);
+    if (d.moleculeType !== 'protein' || !d.seq || pairs.length === 0) return null;
+    const ssFor3D = univTestMode ? '' : (activeTest.secondaryStructure || '');
+    // Les torsions de départ SONT celles du modèle idéal : une par résidu (la
+    // même lecture que buildProteinBackbone, mais explicite ici).
+    const base = d.seq.split('').map((_, i) => {
+      const t = ssTorsionAt(ssFor3D[i] || 'C');
+      return { phi: t.phi, psi: t.psi, chi1: _deg2rad(-60) };
+    });
+    // La géométrie réelle, injectée dans le module pur : le constructeur NeRF de
+    // la page et le vrai placement du Sγ (χ1 compris).
+    const sgPositions = (torsions) => {
+      const residues = buildProteinBackbone(d.seq, torsions);
+      const sg = new Array(d.seq.length).fill(null);
+      residues.forEach((r, i) => {
+        if (d.seq[i] !== 'C') return;
+        try {
+          const sc = placeSidechainAtoms('C', r, torsions[i]);
+          const a = (sc.atoms || []).find((x) => x.name === 'SG');
+          if (a) sg[i] = a.pos;
+        } catch { /* une Cys sans Sγ ne bloque pas le repliement */ }
+      });
+      return { sg, ca: residues.map((r) => r.CA) };
+    };
+    const result = foldProteinForDisulfides({ torsions: base, pairs, sgPositions });
+    const text = proteinSequenceToPdbText(d.seq, ssFor3D, activeTest.name || 'PROTEIN', {
+      cysDisulfides: pairs, torsions: result.torsions,
+    });
+    const resNoOf = residueNumberResolver(activeTest);
+    const noOf = (pos) => resNoOf(pos - 1);
+    const parts = result.pairs.map(({ a, b, distance, bonded }) => (
+      distance === null
+        ? `Cys ${noOf(a)}–Cys ${noOf(b)}: no Sγ could be placed`
+        : `Cys ${noOf(a)}–Cys ${noOf(b)}: ${distance.toFixed(2)} Å ${bonded ? '✓ bonded' : '(not closed)'}`
+    ));
+    return {
+      text,
+      ext: 'pdb',
+      note: `${result.converged ? '⚭ Disulphide-folded model' : '⚠️ Partially folded model'} — ${parts.join(' · ')}. Chain relaxed, not a physical fold.`,
+    };
+  }, [activeTest, d.moleculeType, d.seq, univTestMode, activeTest.secondaryStructure]);
 
   // Organic molecules with no override: fetch + validate a real 3D structure ourselves (Cactus,
   // falling back to PubChem) instead of handing NGL a raw URL to fetch on its own -- this is what
@@ -4986,7 +5160,7 @@ const generatedStructure = useMemo(() => {
       // Fallback: build it fresh even if organicFetch/generatedStructure hasn't populated yet
       try {
         const text = d.moleculeType === 'protein'
-          ? proteinSequenceToPdbText(d.seq, univTestMode ? '' : (activeTest.secondaryStructure || ''), activeTest.name || 'PROTEIN')
+          ? proteinSequenceToPdbText(d.seq, univTestMode ? '' : (activeTest.secondaryStructure || ''), activeTest.name || 'PROTEIN', { cysDisulfides: activeTest.cysDisulfides })
           : nucleicSequenceToPdbText(d.seq, d.moleculeType, activeTest.name || 'NUCLEIC_ACID');
         triggerDownload(text, `${pdbBase}.pdb`);
       } catch (e) {
@@ -5107,9 +5281,17 @@ const generatedStructure = useMemo(() => {
                       {cysPositions.map((pos) => {
                         const st = effState(pos);
                         const pairTargets = cysPositions.filter((p) => p !== pos && !pairs.some(([a, b]) => a === pos || b === pos));
+                        /* Le pont auquel CETTE Cys appartient — s'il y en a un : même
+                           couleur que la puce du pont, et le dessin S–S sur la ligne
+                           elle-même, pour qu'une Cys appariée se voie au premier
+                           regard (les numéros restent ceux du 🔢). */
+                        const pairIdx = pairs.findIndex(([a, b]) => a === pos || b === pos);
+                        const partner = pairIdx >= 0 ? (pairs[pairIdx][0] === pos ? pairs[pairIdx][1] : pairs[pairIdx][0]) : null;
+                        const pairColor = pairIdx >= 0 ? disulfidePairColor(pairIdx) : null;
                         return (
-                          <div key={pos} className="flex flex-wrap items-center gap-2 text-xs">
-                            <span className="font-bold text-slate-700 w-14">Cys #{noOf(pos)}</span>
+                          <div key={pos} className="flex flex-wrap items-center gap-2 text-xs rounded-md pr-1"
+                            style={pairColor ? { backgroundColor: `${pairColor}14`, boxShadow: `inset 3px 0 0 ${pairColor}` } : undefined}>
+                            <span className="font-bold text-slate-700 w-14 pl-1">Cys #{noOf(pos)}</span>
                             <div className="flex rounded-lg overflow-hidden border border-slate-300">
                               <button type="button" onClick={() => setState(pos, 'reduced')}
                                 className={`px-2 py-1 font-bold transition-colors ${st === 'reduced' ? 'bg-emerald-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
@@ -5121,6 +5303,14 @@ const generatedStructure = useMemo(() => {
                             <button type="button" onClick={() => clearState(pos)}
                               className="text-[10px] text-slate-400 hover:text-slate-600 underline"
                               title="Use the default state and remove this residue from any disulphide pair">auto</button>
+                            {pairColor && (
+                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full border bg-white text-[10px] font-bold"
+                                style={{ borderColor: pairColor, color: pairColor }}
+                                title={`Cys ${noOf(pos)} is engaged in a disulphide bond with Cys ${noOf(partner)} — the very bond drawn in the 3D model (⚭ Fold for disulfides)`}>
+                                <DisulfideBondGlyph color={pairColor} title={`S–S with Cys ${noOf(partner)}`} />
+                                ⚭ Cys #{noOf(partner)}
+                              </span>
+                            )}
                             {pairTargets.length > 0 && (
                               <span className="flex items-center gap-1">
                                 <span className="text-[10px] text-slate-400">⚭ couple with</span>
@@ -5144,12 +5334,20 @@ const generatedStructure = useMemo(() => {
                     {pairs.length > 0 && (
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="text-[10px] font-bold text-slate-500 uppercase">Disulfide pairs</span>
-                        {pairs.map((pair, pi) => (
-                          <span key={pi} className="inline-flex items-center gap-1 bg-amber-100 border border-amber-300 rounded-full px-2 py-0.5 text-[11px] font-bold text-amber-900">
-                            Cys #{noOf(pair[0])} ⚭ Cys #{noOf(pair[1])}
-                            <button type="button" onClick={() => removePair(pi)} className="text-amber-700 hover:text-red-600 font-black" title="Remove this disulphide bond">×</button>
-                          </span>
-                        ))}
+                        {pairs.map((pair, pi) => {
+                          const col = disulfidePairColor(pi);
+                          return (
+                            <span key={pi}
+                              className="inline-flex items-center gap-1 rounded-full border bg-white pl-2 pr-1 py-0.5 text-[11px] font-bold"
+                              style={{ borderColor: col, color: col }}
+                              title={`Disulphide bond Cys ${noOf(pair[0])} — Cys ${noOf(pair[1])}: shown as an S–S bond in the 3D model (⚭ Fold for disulfides folds the chain so the two Sγ can actually meet)`}>
+                              <span>Cys #{noOf(pair[0])}</span>
+                              <DisulfideBondGlyph color={col} title={`Disulphide bond Cys ${noOf(pair[0])} — Cys ${noOf(pair[1])}`} />
+                              <span>Cys #{noOf(pair[1])}</span>
+                              <button type="button" onClick={() => removePair(pi)} className="text-slate-400 hover:text-red-600 font-black ml-0.5" title="Remove this disulphide bond">×</button>
+                            </span>
+                          );
+                        })}
                       </div>
                     )}
                   </div>
@@ -5218,7 +5416,19 @@ const generatedStructure = useMemo(() => {
             <button onClick={() => setAllSS('E')} className="px-3 py-1 rounded-lg text-xs font-bold bg-amber-100 border border-amber-300 text-amber-700 hover:bg-amber-200">All β-Sheet</button>
           </div>
           <p className="text-xs text-slate-400 mb-3">💡 Select a brush, then click or drag across the sequence chips to paint secondary structure.</p>
-          <SequencePaintStrip residues={d.parsedSeq} getLetter={(i) => d.getSSAt(i)} meta={SS_META} onApply={(i) => paintSSAt(i, ssBrush)} focusIdx={focusIdx} residueNo={residueNoOf} />
+          <SequencePaintStrip residues={d.parsedSeq} getLetter={(i) => d.getSSAt(i)} meta={SS_META} onApply={(i) => paintSSAt(i, ssBrush)} focusIdx={focusIdx} residueNo={residueNoOf}
+            /* Les Cys d'un pont disulfure portent un repère de la MÊME couleur que
+               la puce du pont dans « Cysteine states » : la bande de séquence
+               montre donc la liaison, elle aussi (le dessin S–S complet est dans la
+               définition ; ici c'est le marqueur de paire, sans mesure DOM). */
+            linkOf={(i) => {
+              const pairs = Array.isArray(activeTest.cysDisulfides) ? activeTest.cysDisulfides : [];
+              const pos = i + 1;
+              const pi = pairs.findIndex(([a, b]) => a === pos || b === pos);
+              if (pi < 0) return null;
+              const partner = pairs[pi][0] === pos ? pairs[pi][1] : pairs[pi][0];
+              return { pairIndex: pi, partner: residueNoOf(partner - 1), color: disulfidePairColor(pi) };
+            }} />
         </CollapsibleSection>
       )}
       
@@ -5259,7 +5469,7 @@ const generatedStructure = useMemo(() => {
         <div style={{ display: structureMode === '3d' ? 'block' : 'none' }} aria-hidden={structureMode !== '3d'}>
           {hasOpened3D && (
             <div className="flex flex-col gap-2">
-              <NMRMoleculeViewer key={(activeTest && activeTest.id) || 'molecular-structure'} instanceKey={(activeTest && activeTest.id) || null} src={structureSrc} structureText={structureText} structureTextExt={structureTextExt} sequenceStructureText={sequenceStructure?.text || null} sequenceStructureExt={sequenceStructure?.ext || null} externalLoading={organicFetch.loading} externalError={organicFetch.error} structureFileData={activeTest.structureFileData} structureFileName={activeTest.structureFileName} structureFile={structureFile} onStructureSrc={(v) => updateActiveTest({ structureSrc: v })} onStructureFile={handleStructureFile} moleculeType={d.moleculeType} parsedSeq={d.parsedSeq} smiles={activeTest.smiles} onLigandSmiles={(info) => { if (info && info.smiles && !activeTest.smiles && !activeTest.ligandSmiles) updateActiveTest({ ligandCode: info.code, ligandSmiles: info.smiles }); }} selectedKeys={selectedKeys} manualKeys={manualKeys} onAtomClick={handleAtomClick} residueOffset={residueOffset} atomNameMap={atomNameMap} atomRenames={activeTest.atomRenames || {}} onAtomRenames={(map) => updateActiveTest({ atomRenames: map })} resRenumber={activeTest.resRenumber || {}} onResRenumber={(map) => updateActiveTest({ resRenumber: map })} onStructureSequence={(seq, parts) => { const _nat = structureSequencePatch(activeTest, d.moleculeType, seq, parts); if (_nat) updateActiveTest(_nat); }} driveNaming={{ project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || '', instance: activeTest.instanceName || '', scientist: activeTest.operator || '', section: 'Data', subsection: 'Structure' }} labelMode={atomLabelMode} height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? '1100px' : '1000px'} />
+              <NMRMoleculeViewer key={(activeTest && activeTest.id) || 'molecular-structure'} instanceKey={(activeTest && activeTest.id) || null} src={structureSrc} structureText={structureText} structureTextExt={structureTextExt} sequenceStructureText={sequenceStructure?.text || null} sequenceStructureExt={sequenceStructure?.ext || null} buildDisulfideFoldedStructure={buildDisulfideFoldedStructure} externalLoading={organicFetch.loading} externalError={organicFetch.error} structureFileData={activeTest.structureFileData} structureFileName={activeTest.structureFileName} structureFile={structureFile} onStructureSrc={(v) => updateActiveTest({ structureSrc: v })} onStructureFile={handleStructureFile} moleculeType={d.moleculeType} parsedSeq={d.parsedSeq} smiles={activeTest.smiles} onLigandSmiles={(info) => { if (info && info.smiles && !activeTest.smiles && !activeTest.ligandSmiles) updateActiveTest({ ligandCode: info.code, ligandSmiles: info.smiles }); }} selectedKeys={selectedKeys} manualKeys={manualKeys} onAtomClick={handleAtomClick} residueOffset={residueOffset} atomNameMap={atomNameMap} atomRenames={activeTest.atomRenames || {}} onAtomRenames={(map) => updateActiveTest({ atomRenames: map })} resRenumber={activeTest.resRenumber || {}} onResRenumber={(map) => updateActiveTest({ resRenumber: map })} onStructureSequence={(seq, parts) => { const _nat = structureSequencePatch(activeTest, d.moleculeType, seq, parts); if (_nat) updateActiveTest(_nat); }} driveNaming={{ project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || '', instance: activeTest.instanceName || '', scientist: activeTest.operator || '', section: 'Data', subsection: 'Structure' }} labelMode={atomLabelMode} height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? '1100px' : '1000px'} />
               <button onClick={downloadPdbFile} className="self-center mt-2 px-4 py-2 bg-indigo-50 border border-indigo-200 text-indigo-700 font-bold text-xs rounded-lg hover:bg-indigo-100 transition-colors shadow-sm">📥 Download 3D PDB File</button>
               {activeTest.structureFileName && (!structureFile || nmrStructRestore.message) && (
                 <div className="flex flex-wrap items-center justify-center gap-2 text-[11px]">

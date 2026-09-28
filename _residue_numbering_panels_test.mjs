@@ -105,14 +105,14 @@ cases.forEach(({ test, n }, ci) => {
 });
 
 /* ════════════ 2. LA BANDE DE SÉQUENCE PORTE LE NUMÉRO AFFICHÉ ════════════ */
-has(DATA, 'export const SequencePaintStrip = ({ residues, getLetter, meta, onApply, focusIdx, charLabel, residueNo }) => {',
-  'la bande de séquence accepte le numéro affiché');
+has(DATA, 'export const SequencePaintStrip = ({ residues, getLetter, meta, onApply, focusIdx, charLabel, residueNo, linkOf }) => {',
+  'la bande de séquence accepte le numéro affiché (et, avec les ponts disulfure, les résidus appariés)');
 has(DATA, 'const numberAt = typeof residueNo === \'function\' ? residueNo : (i) => i + 1;',
   '…et retombe sur le rang dans la séquence quand aucune page ne le fournit');
 has(DATA, '<div className="text-[8px] text-slate-500 font-bold">{resNo}</div>',
   'la pastille écrit LE numéro du résidu (et non son rang)');
 has(DATA, 'const resNo = numberAt(i);', '…calculé une fois par pastille');
-has(DATA, 'title={`${r.name || r.char} ${resNo}: ${m.label}`}',
+has(DATA, 'title={`${r.name || r.char} ${resNo}: ${m.label}${link ? ` · ⚭ disulphide with ${link.partner}` : \'\'}`}',
   'l’infobulle donne le même numéro que la pastille (plus de « Ala1 » qui contredit « 12 »)');
 gone(DATA, '<div className="text-[8px] text-slate-500 font-bold">{i + 1}</div>',
   'l’ancien rang de séquence n’est plus écrit sous la lettre');
@@ -157,8 +157,8 @@ eq(count(MD, 'title="Sequence and structure"'), 2,
 has(SEC, 'import { residueNumberResolver, residueNumberOf } from \'../utils/residueNumbering\';',
   'la page NMR lit la règle partagée');
 has(SEC, 'const residueNoOf = residueNumberResolver(activeTest);', '…et se construit le résolveur');
-has(SEC, '<SequencePaintStrip residues={d.parsedSeq} getLetter={(i) => d.getSSAt(i)} meta={SS_META} onApply={(i) => paintSSAt(i, ssBrush)} focusIdx={focusIdx} residueNo={residueNoOf} />',
-  'la bande NMR de « Sequence and structure » l’utilise');
+has(SEC, '<SequencePaintStrip residues={d.parsedSeq} getLetter={(i) => d.getSSAt(i)} meta={SS_META} onApply={(i) => paintSSAt(i, ssBrush)} focusIdx={focusIdx} residueNo={residueNoOf}',
+  'la bande NMR de « Sequence and structure » l’utilise (et lui passe les ponts disulfure par linkOf)');
 
 /* ════════════ 4. LA TABLE DES DÉPLACEMENTS LIT LA MÊME RÈGLE ════════════ */
 has(SEC, 'const displayNo = residueNumberOf(activeTest, idx);',
@@ -171,12 +171,14 @@ has(SEC, 'const resNoOf = residueNumberResolver(activeTest);',
   'le panneau Cys se construit le résolveur de numéros');
 has(SEC, 'const noOf = (pos) => resNoOf(pos - 1);',
   'la position 1-based de séquence est traduite en index de résidu');
-has(SEC, '<span className="font-bold text-slate-700 w-14">Cys #{noOf(pos)}</span>',
+has(SEC, '<span className="font-bold text-slate-700 w-14 pl-1">Cys #{noOf(pos)}</span>',
   'l’étiquette d’une cystéine porte le numéro de la structure renumérotée');
 has(SEC, '{pairTargets.map((p2) => <option key={p2} value={p2}>Cys #{noOf(p2)}</option>)}',
   '« ⚭ couple with » propose les numéros affichés — la VALEUR stockée reste la position');
-has(SEC, 'Cys #{noOf(pair[0])} ⚭ Cys #{noOf(pair[1])}',
-  'la définition du pont disulfure s’écrit avec les numéros affichés');
+has(SEC, '<span>Cys #{noOf(pair[0])}</span>',
+  'la définition du pont disulfure s’écrit avec les numéros affichés (premier Cys)');
+has(SEC, '<span>Cys #{noOf(pair[1])}</span>',
+  '…et le second — le DESSIN S–S vit entre les deux (DisulfideBondGlyph)');
 has(SEC, 'if (p2) addPair(pos, p2);',
   '…mais la paire enregistrée reste en POSITIONS de séquence (le modèle redox les lit)');
 has(SEC, 'cysDisulfides: [...remaining, [a, b]]', 'aucune écriture de paire n’a été convertie en numéros affichés');

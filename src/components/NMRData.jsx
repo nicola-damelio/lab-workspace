@@ -1572,9 +1572,17 @@ export const MultiSelectDropdown = ({ options, selected, onToggle, placeholder }
 // (🔢) renumbers the strip exactly like the 3D labels and the shifts table.
 // Without that prop the strip falls back to the sequence rank (1, 2, …), which
 // is what every page showed before the renumbering reached it.
-export const SequencePaintStrip = ({ residues, getLetter, meta, onApply, focusIdx, charLabel, residueNo }) => {
+//
+// `linkOf(i)` (optionnel) = le PONT DISULFURE du résidu i, ou null :
+// { pairIndex, partner, color }. Posée par la seule page NMR (les ponts
+// disulfure n'existent que là) : le chip prend alors un repère de la couleur du
+// pont et son infobulle nomme le partenaire — la même couleur que la puce du
+// pont dans « Cysteine states ». Aucune mesure de DOM ni d'arc entre les chips :
+// le dessin S–S complet vit dans la définition, ici c'est le repère de paire.
+export const SequencePaintStrip = ({ residues, getLetter, meta, onApply, focusIdx, charLabel, residueNo, linkOf }) => {
   const [painting, setPainting] = useState(false);
   const numberAt = typeof residueNo === 'function' ? residueNo : (i) => i + 1;
+  const linkAt = typeof linkOf === 'function' ? linkOf : () => null;
   useEffect(() => {
     const up = () => setPainting(false);
     window.addEventListener('mouseup', up);
@@ -1587,6 +1595,7 @@ export const SequencePaintStrip = ({ residues, getLetter, meta, onApply, focusId
         const m = meta[l] || { label: String(l), color: '#64748b' };
         const dim = focusIdx !== 'ALL' && focusIdx !== i;
         const resNo = numberAt(i);
+        const link = linkAt(i);
         return (
           <button
             key={i}
@@ -1594,10 +1603,22 @@ export const SequencePaintStrip = ({ residues, getLetter, meta, onApply, focusId
             onDragStart={(e) => e.preventDefault()}
             onMouseDown={(e) => { e.preventDefault(); setPainting(true); onApply(i); }}
             onMouseEnter={() => { if (painting) onApply(i); }}
-            title={`${r.name || r.char} ${resNo}: ${m.label}`}
-            className="w-11 py-1 rounded-md border text-center leading-tight transition-all"
-            style={{ backgroundColor: m.color + '22', borderColor: m.color, opacity: dim ? 0.35 : 1 }}
+            title={`${r.name || r.char} ${resNo}: ${m.label}${link ? ` · ⚭ disulphide with ${link.partner}` : ''}`}
+            className="relative w-11 py-1 rounded-md border text-center leading-tight transition-all"
+            style={{
+              backgroundColor: m.color + '22',
+              borderColor: link ? link.color : m.color,
+              boxShadow: link ? `0 3px 0 0 ${link.color}` : undefined,
+              opacity: dim ? 0.35 : 1,
+            }}
           >
+            {link && (
+              <span
+                className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full border border-white"
+                style={{ backgroundColor: link.color }}
+                title={`⚭ Disulphide with ${link.partner}`}
+              />
+            )}
             <div className="text-[8px] text-slate-500 font-bold">{resNo}</div>
             <div className="text-sm font-black text-slate-800">{charLabel ? charLabel(r) : r.char}</div>
             <div className="text-[10px] font-black" style={{ color: m.color }}>{l}</div>

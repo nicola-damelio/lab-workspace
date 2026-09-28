@@ -6934,6 +6934,16 @@ structureTextExt,
 // still wins on screen; the model simply stays one click away.
 sequenceStructureText = null,
 sequenceStructureExt = null,
+// ⚭ Fold for disulfides — LA PAGE FABRIQUE LE MODÈLE DÉTENDU, À LA DEMANDE.
+// `buildDisulfideFoldedStructure()` rend { text, ext, note } : le même modèle de
+// séquence, mais avec les φ/ψ des résidus entre chaque pont disulfure défini
+// (et les rotamères χ1 de ses deux Cys) relâchés jusqu'à ce que les deux Sγ
+// soient à une distance de liaison — et un `note` qui dit, pont par pont, la
+// distance obtenue (utils/disulfideFold.js). Le viewer ne calcule rien : il
+// charge ce texte comme celui de « 🧬 Structure from sequence » et affiche la
+// note. Rien ne bouge tant que le bouton n'est pas cliqué : le modèle servi
+// d'office reste le modèle idéal.
+buildDisulfideFoldedStructure = null,
 externalLoading = false,
 externalError = null,
 structureFileData,
@@ -8899,6 +8909,16 @@ const flashSeqBuildMsg = (m) => {
   setSeqBuildMsg(m);
   clearTimeout(seqBuildTimerRef.current);
   seqBuildTimerRef.current = setTimeout(() => setSeqBuildMsg(''), 6000);
+};
+/* Le message de « ⚭ Fold for disulfides », À CÔTÉ de son bouton : il nomme les
+   ponts obtenus avec leur distance Sγ–Sγ et dit franchement quand un pont n'a
+   PAS pu être fermé (le module ne prétend jamais avoir réussi). */
+const [disulfideFoldMsg, setDisulfideFoldMsg] = useState('');
+const disulfideFoldTimerRef = useRef(null);
+const flashDisulfideFoldMsg = (m) => {
+  setDisulfideFoldMsg(m);
+  clearTimeout(disulfideFoldTimerRef.current);
+  disulfideFoldTimerRef.current = setTimeout(() => setDisulfideFoldMsg(''), 9000);
 };
 // The « 🗑 Delete PDB / ↩ Restore PDB » toggle of §1 General: the button DELETES
 // while a PDB the user loaded is on screen, and RESTORES once that PDB has been
@@ -15303,6 +15323,53 @@ const buildFromSequence = () => {
   flashSeqBuildMsg(`🧬 Structure rebuilt from the sequence — ${atoms.toLocaleString()} atoms, ${sequenceStructureText.length.toLocaleString()} PDB characters.`);
 };
 
+/* ── ✏️ Modify · « ⚭ Fold for disulfides » ─────────────────────────────────
+   LE PONT DISULFURE EST DÉJÀ DESSINÉ dans le modèle servi par la page (un
+   CONECT entre les deux Sγ : les styles Sticks / Ball+stick / Lines le
+   montrent). Ce bouton va plus loin — et seulement quand on le clique : la
+   page DÉTEND la chaîne (φ/ψ des résidus entre les deux Cys, rotamères χ1) pour
+   que les deux Sγ viennent à une distance de liaison, puis sert ce modèle-là.
+
+   Ce que le bouton ne fait PAS, et le message le redit : ce n'est pas un
+   repliement physique (aucune énergie, aucun solvant) — et quand la fenêtre
+   relâchée ne suffit pas à réunir deux Sγ lointaines, le modèle arrive quand
+   même, avec la distance RÉELLE dans le message au lieu d'un pont imaginaire.
+
+   Le geste range ce qui était à l'écran comme le fait « 🧬 Structure from
+   sequence » (mêmes règles, même « ↩ Back to PDB ») : le modèle détendu n'est
+   jamais une impasse. */
+const foldForDisulfides = () => {
+  if (typeof buildDisulfideFoldedStructure !== 'function') {
+    flashDisulfideFoldMsg('⚠️ No disulphide pair to fold for — define one in “Cysteine states” (Cysteine states ⚭ couple with).');
+    return;
+  }
+  let built = null;
+  try {
+    built = buildDisulfideFoldedStructure();
+  } catch (e) {
+    flashDisulfideFoldMsg(`⚠️ Disulphide folding failed: ${e?.message || e}`);
+    return;
+  }
+  if (!built || !built.text) {
+    flashDisulfideFoldMsg('⚠️ Nothing to fold: this condition has no disulphide pair (or no protein sequence).');
+    return;
+  }
+  if (!stashedPdb) {
+    const stash = lastLoadedTextRef.current === sequenceStructureText ? pageStructureStash() : pdbSourceOfCurrent();
+    if (stash && (stash.file || stash.url || stash.text)) setStashedPdb(stash);
+  }
+  abortControl.abortAll();
+  clearExtraMolecules();
+  setFile(null);
+  setPdbId('');
+  setManualOverride(false);
+  setStructOrigin('generated');
+  lastLoadedTextRef.current = built.text;
+  requestStructureLoad({ file: null, url: null, text: built.text, ext: built.ext || 'pdb', ts: Date.now() });
+  const atoms = (built.text.match(/^(ATOM|HETATM)/gm) || []).length;
+  flashDisulfideFoldMsg(`${built.note || '⚭ Disulphide-folded model loaded.'} (${atoms.toLocaleString()} atoms)`);
+};
+
 // ---- Abort the current long-running operation (vertical-bar / global Stop) ----
 // Stops trajectory playback, closes the frame-selection modal and cancels the
 // active structure / trajectory load so the UI returns to a usable state.
@@ -17295,6 +17362,24 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
 {seqBuildMsg && (
 <span title={seqBuildMsg} className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-md px-2 py-1 h-7 inline-flex items-center max-w-[380px] truncate">
 {seqBuildMsg}
+</span>
+)}
+{/* ⚭ Fold for disulfides — le pont disulfure défini dans « Cysteine states »
+    est DÉJÀ dessiné (CONECT SG–SG, écrit par le modèle de la page) ; ce bouton
+    fait un pas de plus, sur demande : la chaîne est détendue pour que les deux
+    Sγ puissent se lier. Désactivé quand la page n'a rien à détendre. */}
+<button
+type="button"
+onClick={foldForDisulfides}
+disabled={typeof buildDisulfideFoldedStructure !== 'function'}
+title="Relax the sequence model (phi/psi between the two cysteines and their chi1 rotamers) until each disulphide pair defined in “Cysteine states” has its two S-gamma atoms within bonding distance — the S–S is then a real bond in Sticks / Ball+stick. The model is a chain relaxation, NOT a physical fold, and the message says the true Sγ–Sγ distance of every pair, including the ones that could not be closed."
+className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap bg-white border-amber-300 text-amber-700 hover:bg-amber-50 disabled:opacity-40 disabled:cursor-not-allowed"
+>
+⚭ Fold for disulfides
+</button>
+{disulfideFoldMsg && (
+<span title={disulfideFoldMsg} className="text-[10px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1 h-7 inline-flex items-center max-w-[380px] truncate">
+{disulfideFoldMsg}
 </span>
 )}
 {/* ↩ Back to PDB — THE WAY BACK, WHERE THE GESTURE WAS MADE. §1 General's toggle
