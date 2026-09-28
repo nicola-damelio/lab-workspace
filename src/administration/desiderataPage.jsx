@@ -50,7 +50,7 @@ import { budgetDocPath, budgetDocFileName } from './driveFiling';
    immédiatement (copie « …_approuvé_signé.pdf »), exactement comme avec le
    bouton ✓ de la page « Approbation devis & BC ». */
 import { buildSignedDeposit, renameDepositDriveFileTo } from './depositSigning';
-import { scopeMeNames, scopeMePersonId, scopeCanSeeItem, scopePersonIdForName, scopeSeesAllRows, scopeFonctions } from './ownScope';
+import { scopeCanDeleteAchatLines, scopeMeNames, scopeMePersonId, scopeCanSeeItem, scopePersonIdForName, scopeSeesAllRows, scopeFonctions } from './ownScope';
 import {
   TRANSFER_TARGETS, targetMetaOf, TRANSFER_MODES,
   devisPatchFromDesiderata, desiderataTransferStatus, isDepenseBcSigne,
@@ -963,6 +963,12 @@ export const DesiderataPage = () => {
     : `Fonctions reconnues sur votre fiche Personnel : ${scopeFonctions(access).join(', ') || 'aucune'}. `
       + (seesAllRows
         ? 'Le suivi des achats (Gestionnaire / Responsable d’achats) affiche toutes les demandes.'
+          /* La RESPONSABLE D'ACHATS supprime en plus toutes les lignes (voir
+             ownScope.js › scopeCanDeleteAchatLines) : le dire ici, sinon le 🗑
+             proposé sur la demande d’un autre membre étonne. */
+          + (scopeCanDeleteAchatLines(access)
+            ? ' La suppression d’une ligne (🗑) est ouverte à la responsable d’achats : elle corrige un doublon ou une saisie erronée.'
+            : '')
         : 'Seules vos propres demandes sont affichées ici. Pour voir toutes les demandes, cochez « Gestionnaire » ou « Responsable d’achats » sur votre fiche dans Administration › Personnel.');
   const meNames = useMemo(() => scopeMeNames(access, currentUser), [access, currentUser]);
   const mePersonId = useMemo(() => scopeMePersonId(access), [access]);
@@ -1141,9 +1147,19 @@ export const DesiderataPage = () => {
     }
   };
 
+  /* ── Suppression d'une ligne ─────────────────────────────────────────────
+     Ouverte au superutilisateur, à la RESPONSABLE D'ACHATS (fonction
+     « Achats » — elle suit l'ensemble des demandes et corrige donc un doublon
+     ou une saisie erronée : voir ownScope.js › scopeCanDeleteAchatLines) et,
+     pour les autres membres, à leurs PROPRES demandes — les seules qu'ils
+     voient. */
+  const canDeleteRow = (rec) => isSuper
+    || scopeCanDeleteAchatLines(access)
+    || scopeCanSeeItem(rec, { isSuper, meNames, mePersonId });
+
   const onRemove = (rec) => {
     if (!rec) return;
-    if (!isSuper && !scopeCanSeeItem(rec, { isSuper, meNames, mePersonId })) return;
+    if (!canDeleteRow(rec)) return;
     const label = txt(rec.description) || rec.id;
     if (!window.confirm(`Supprimer l’achat prévu / souhaité « ${label} » ?\nCette action est définitive.`)) return;
     removeRecord('desiderate', rec);
@@ -1721,12 +1737,19 @@ export const DesiderataPage = () => {
               title="Modifier l’achat prévu / souhaité"
               className="text-[11px] font-black px-2 py-1 rounded-lg border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 transition-colors"
             >✏️ Modifier</button>
-          <button
-            type="button"
-            onClick={() => onRemove(r)}
-            title="Supprimer l’achat prévu / souhaité"
-            className="text-[11px] font-black px-2 py-1 rounded-lg border border-red-200 bg-red-50 text-red-500 hover:bg-red-100 transition-colors"
-          >🗑️</button>
+            {/* La suppression n'est proposée qu'à qui en a le DROIT : la
+                responsable d'achats (fonction « Achats ») et le superutilisateur
+                sur toutes les lignes, chaque autre membre sur les siennes.
+                Sans cette condition, un Gestionnaire — qui voit tout — aurait un
+                bouton sans effet (la garde d’onRemove refusait la suppression). */}
+            {canDeleteRow(r) ? (
+              <button
+                type="button"
+                onClick={() => onRemove(r)}
+                title="Supprimer l’achat prévu / souhaité"
+                className="text-[11px] font-black px-2 py-1 rounded-lg border border-red-200 bg-red-50 text-red-500 hover:bg-red-100 transition-colors"
+              >🗑️</button>
+            ) : null}
         </div>
       );
       },

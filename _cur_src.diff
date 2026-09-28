@@ -1,1619 +1,753 @@
-diff --git a/src/components/MDSections.jsx b/src/components/MDSections.jsx
-index add1412..d76674f 100644
---- a/src/components/MDSections.jsx
-+++ b/src/components/MDSections.jsx
-@@ -814,9 +814,17 @@ export const MDExperimentSetupSection = ({ ctx }) => {
-   // continuent de les écrire : on les garde donc sous leur nom « _ » : rien de
-   // l'ordre de recherche (base du navigateur → Drive) n'a changé, seule la
-   // ligne qui le racontait a disparu.
--  const [_trajDriveMsg, setTrajDriveMsg] = useState('');
-+  // MISE À JOUR (25/09/2026) : la phrase du viewer conseillait « ⬇️ Bring it back
-+  // from Google Drive », un bouton qui vivait DANS cette barre — donc un geste que
-+  // plus rien ne portait. Le bouton est revenu, renommé « ⬇️ Bring it back from the
-+  // cloud », à l'intérieur de la barre de lecture du viewer, juste à côté de la
-+  // phrase qui le demande : les deux états de la TRAJECTOIRE redeviennent donc
-+  // visibles (`trajPhase`, `trajDriveMsg`) et la page les passe au viewer. Ceux de
-+  // la topologie restent privés (`_structPhase`, `_structRestoreMsg`) : là, la
-+  // reprise automatique suffit, et sa recherche n'est affichée nulle part.
-+  const [trajDriveMsg, setTrajDriveMsg] = useState('');   // visible : la barre de lecture le montre
-   const [_structRestoreMsg, setStructRestoreMsg] = useState('');
--  const [_trajPhase, setTrajPhase] = useState('browser');
-+  const [trajPhase, setTrajPhase] = useState('browser');   // …et c'est lui qui dit si une reprise tourne
-   const [_structPhase, setStructPhase] = useState('browser');
-   // Re-run the restore effects when Google Drive connects (their Drive fallback
-   // may have found nothing while Drive was still disconnected).
-@@ -1129,6 +1137,41 @@ export const MDExperimentSetupSection = ({ ctx }) => {
-     return { ok: true, message };
+diff --git a/src/App.jsx b/src/App.jsx
+index cdc9af2..7a37f4b 100644
+--- a/src/App.jsx
++++ b/src/App.jsx
+@@ -39,6 +39,11 @@ import { repairBoxPlacements } from './utils/storageBoxes';
+ import { setActiveProjectId, readLibrary, readAllProjectLibraries, mergeLibraryFromSnapshot, refreshLibraryFromStorage } from './utils/figuresLibrary';
+ import { clearDriveToken, testDriveAccess, getConfiguredDriveClientId, connectDriveWithGis, sharedWorkspaceMode, getWorkspaceServerIssue, getLastDriveConnectError, driveBootstrapRequestedAtLoad, setDriveRootContext, ensureDriveFolder, getDriveToken, uploadWorkspaceFile, cleanupWorkspaceRootFolders, cloudBackendAvailable } from './utils/driveUpload';
+ import { migrateCommonLibraryOnce } from './utils/commonLibraryMigrate';
++/* Les DOCUMENTS DE SECTION d'une page projet vivaient dans un dossier au nom du
++   projet POSÉ À LA RACINE du dataset (« <projet>/<section> ») : ce déménagement
++   les range dans `projects/<projet>/<section>`, à côté des expériences, des
++   figures et du document du projet (voir utils/projectRootMigrate.js). */
++import { migrateProjectRootFoldersOnce } from './utils/projectRootMigrate';
+ /* ── LE DRIVE EST LE MIROIR DU PROGRAMME (et le même sur chaque poste) ──────
+    driveMirror.js : supprimer ou renommer un dataset / un projet se répercute
+    sur Drive (dossier mis à la corbeille, dossier renommé — jamais de doublon).
+@@ -1311,6 +1316,11 @@ if (customType === 'dosy') {
+            la lecture continue de fonctionner sur les anciens emplacements
+            entre-temps (voir utils/commonLibraryMigrate.js). */
+         .then(() => migrateCommonLibraryOnce())
++        /* LES DOSSIERS DE PROJET POSÉS À LA RACINE DU DATASET (« <projet> », où
++           allaient les documents de section d'une page projet) rentrent dans
++           `projects/<projet>` : même endroit, une fois par dataset, et le chemin
++           abandonné est mis en pierre tombale (voir utils/projectRootMigrate.js). */
++        .then(() => migrateProjectRootFoldersOnce())
+         .catch(() => {});
+     }, 800);
+     return () => {
+diff --git a/src/administration/adminSchema.js b/src/administration/adminSchema.js
+index e292a5e..c5e3920 100644
+--- a/src/administration/adminSchema.js
++++ b/src/administration/adminSchema.js
+@@ -70,6 +70,12 @@ export const ADMIN_SETTINGS_DOC = 'global';
+          achats prévus transférés depuis « OM prévus / souhaités » et « Achats
+          prévus / souhaités » (création de devis « Approbation devis & BC » et de
+          fiches du registre Remboursements).
++       • SUPPRESSION des lignes de suivi des achats (« Achats prévus / souhaités »
++         et « Approbation devis & BC ») : ouverte au superutilisateur ET à la
++         fonction Achats (« Responsable d'achats ») — elle corrige un doublon ou
++         une saisie erronée sans attendre une décision du superutilisateur ; un
++         membre ne supprime que ses propres demandes. Règle unique :
++         ownScope.js › scopeCanDeleteAchatLines (les deux pages l'appliquent).
+      • Personnel → superutilisateur uniquement.
+       • Page Setup → ouverte à tout membre connecté (changement de son propre
+           mot de passe) ; gestion des comptes et réglages avancés réservés au
+@@ -89,10 +95,10 @@ export const ADMIN_PAGES = [
+     blurb: 'Ordres de mission prévus / souhaités : dates, demandeur, destination, coûts, statut (En attente / Acceptée…). Un OM « Acceptée » peut être transféré en dépense réelle (page Dépenses › onglet OM). Le statut « Test » compte l’OM dans les prévisions des Recettes sans l’accepter réellement.',
+     fields: ['Description', 'Demandeur', 'Date de demande · Départ · Retour', 'Destination', 'Transport · Hébergement · Repas · Inscription', 'Coût total (calculé)', 'Statut : En attente / Acceptée / Test / Refusée / Terminée', 'Estimé vs Exact', 'Ligne budgétaire liée (Recette)', 'Commentaires'] },
+   { id: 'desiderate', label: 'Achats prévus / souhaités', icon: '🛒', superuserOnly: false, kind: 'desiderate',
+-    blurb: 'Achats prévus / souhaités de l’équipe : coût estimé et frais de port saisis par le demandeur, décision réservée au superutilisateur (Approuvé / En attente / Test / Pas maintenant). Le statut « Test » compte le montant dans les prévisions des Recettes sans que la demande soit réellement acceptée.',
++    blurb: 'Achats prévus / souhaités de l’équipe : coût estimé et frais de port saisis par le demandeur, décision réservée au superutilisateur (Approuvé / En attente / Test / Pas maintenant). Le statut « Test » compte le montant dans les prévisions des Recettes sans que la demande soit réellement acceptée. Suppression d’une ligne (🗑) : superutilisateur et responsable d’achats (fonction « Achats ») — doublon ou saisie erronée corrigés sans attendre la décision.',
+     fields: ['Décision — réservée au superutilisateur : Approuvé / En attente / Test / Pas maintenant', 'Souhait d’achat', 'Urgence : Urgent / Important / Souhaitable', 'Demandeur', 'Fournisseur', 'Ligne budgétaire suggérée', 'Coût estimé', 'Frais de port', 'N° devis · Lien du devis (Drive, facultatif) · Code produit', 'Date de demande', 'Commentaires'] },
+   { id: 'devisBc', label: 'Approbation devis & BC', icon: '📝', superuserOnly: false, kind: 'devisBc',
+-    blurb: 'Deux sections seulement. « Devis à approuver » : les devis pas encore signés (visibles par les Permanents ; le Gestionnaire et le Responsable d’achats voient toutes les demandes ; les lignes demandées par « Service » sont visibles par tout le monde). « BC à faire et à approuver » : d’un côté les devis SIGNÉS dont le bon de commande reste à faire — on clique leur ligne pour déposer le BC (le devis y est déjà rattaché), de l’autre les BC déposés à approuver. Un devis signé quitte donc « Devis à approuver » et n’en finit qu’à la signature de son BC. Les fichiers sont téléversés dans Budget_labo/<année>/Devis|BC avec un nom qui reprend le N°, les attributs de la ligne ET l’objet (description) après un « _ » à la fin du titre ; l’approbation d’un devis le valide, et celle du BC lié crée la dépense « BC signé » correspondante dans la page Dépenses (catégorie, ligne budgétaire, N° SIFAC/D.A. et date de signature transmis automatiquement). À l’approbation d’un fichier PDF, une copie signée « …_approuvé_signé.pdf » est créée (image de signature du superutilisateur en bas de la dernière page) et devient le fichier officiel — l’original reste intact.',
++    blurb: 'Deux sections seulement. « Devis à approuver » : les devis pas encore signés (visibles par les Permanents ; le Gestionnaire et le Responsable d’achats voient toutes les demandes ; les lignes demandées par « Service » sont visibles par tout le monde). « BC à faire et à approuver » : d’un côté les devis SIGNÉS dont le bon de commande reste à faire — on clique leur ligne pour déposer le BC (le devis y est déjà rattaché), de l’autre les BC déposés à approuver. Un devis signé quitte donc « Devis à approuver » et n’en finit qu’à la signature de son BC. Les fichiers sont téléversés dans Budget_labo/<année>/Devis|BC avec un nom qui reprend le N°, les attributs de la ligne ET l’objet (description) après un « _ » à la fin du titre ; l’approbation d’un devis le valide, et celle du BC lié crée la dépense « BC signé » correspondante dans la page Dépenses (catégorie, ligne budgétaire, N° SIFAC/D.A. et date de signature transmis automatiquement). À l’approbation d’un fichier PDF, une copie signée « …_approuvé_signé.pdf » est créée (image de signature du superutilisateur en bas de la dernière page) et devient le fichier officiel — l’original reste intact. La suppression d’une ligne (🗑) est ouverte au superutilisateur ET à la responsable d’achats (fonction « Achats ») : un doublon ou une saisie erronée se corrige donc sans attendre une décision.',
+     fields: ['Statut : En attente / Approuvé / Refusé (décision réservée au superutilisateur)', 'Type : Devis ou BC', 'Description', 'Fournisseur', 'N° devis · N° BC · Catégorie · N° SIFAC/D.A.', 'Montant (optionnel)', 'Fichier téléversé (Budget_labo/<année>/Devis ou /BC)', 'Déposant', 'Date de dépôt', 'Dépense « BC signé » créée automatiquement à l’approbation du BC'] },
+   { id: 'budget', label: 'Budget overview', icon: '💶', superuserOnly: false, kind: null,
+     blurb: 'Graphiques personnels de suivi budgétaire : dépenses découpées comme les onglets de la page Dépenses (Achats / Prestations internes / OM / Rémunérations de stage), lignes budgétaires & soldes (page Recettes), OM, souhaits, Remboursements (avec états liquidatifs) et devis & BC à approuver — chaque membre enregistre ses propres graphiques.',
+@@ -598,7 +604,7 @@ export const ADMIN_FONCTIONS = ['AP', 'Gestionnaire', 'Achats'];
+ export const ADMIN_FONCTION_META = {
+   AP: { label: 'AP', hint: 'Agent de prévention → ajoute Dépenses, Budget overview + Hygiène & Sécurité.' },
+   Gestionnaire: { label: 'Gestionnaire', hint: '→ ajoute Recettes (création de lignes budgétaires), Dépenses, Budget overview, Questions ouvertes + Approbation devis & BC (toutes les demandes).' },
+-  Achats: { label: "Responsable d'achats", hint: "→ ajoute Recettes (création de lignes budgétaires), Dépenses, Budget overview + Approbation devis & BC (toutes les demandes) ; reçoit les OM / achats prévus transférés et est notifié par e-mail quand un devis est créé." },
++  Achats: { label: "Responsable d'achats", hint: "→ ajoute Recettes (création de lignes budgétaires), Dépenses, Budget overview + Approbation devis & BC (toutes les demandes) ; reçoit les OM / achats prévus transférés et est notifié par e-mail quand un devis est créé ; supprime les lignes de « Achats prévus / souhaités » et d'« Approbation devis & BC » (doublon, saisie erronée)." },
+ };
+ 
+ /** Synonymes acceptés pour chaque fonction : libellé affiché, saisie libre,
+diff --git a/src/administration/approbationPage.jsx b/src/administration/approbationPage.jsx
+index 204551d..b62165e 100644
+--- a/src/administration/approbationPage.jsx
++++ b/src/administration/approbationPage.jsx
+@@ -32,8 +32,11 @@
+            Recettes dès que sa date de signature est renseignée ;
+          – une décision envoie un e-mail au(x) gestionnaire(s) (et au
+            déposant quand son e-mail figure dans sa fiche Personnel) ;
+-     · seul le superutilisateur peut supprimer une ligne ; un déposant peut
+-       modifier sa propre ligne tant qu'elle est « En attente ».
++     · la suppression d'une ligne est ouverte au superutilisateur ET à la
++       responsable d'achats (fonction « Achats » — règle partagée
++       `scopeCanDeleteAchatLines`, voir ownScope.js) : elle corrige ainsi un
++       doublon ou une saisie erronée sans attendre une décision ; un déposant
++       peut modifier sa propre ligne tant qu'elle est « En attente ».
+ 
+    Modèle stocké (collection `devisBc`) :
+      devis : { kind:'devis', description, fournisseur, ligneBudgetaire,
+@@ -75,7 +78,7 @@ import { fileBudgetDocs, hasApprovedSuffix, withApprovedSuffix } from './driveFi
+ import {
+   buildSignedDeposit, budgetLaboPath, depositDocDriveNameOf, renameDepositDriveFileTo,
+ } from './depositSigning';
+-import { scopeFonctions } from './ownScope';
++import { scopeCanDeleteAchatLines, scopeFonctions } from './ownScope';
+ import {
+   sendAdminMail, personEmailOf, personnelEmailsMatching, superuserEmailsOf, mergeEmails,
+   notificationTargetOf,
+@@ -288,6 +291,14 @@ export const ApprobationPage = () => {
+   })();
+   const isAchatsRole = currentFonctions.indexOf('Gestionnaire') !== -1
+     || currentFonctions.indexOf('Achats') !== -1;
++  /* ── Suppression d'une ligne (devis / BC) ─────────────────────────────────
++     Ouverte au superutilisateur ET à la RESPONSABLE D'ACHATS (fonction
++     « Achats ») : elle suit l'ensemble des demandes et corrige donc un doublon
++     ou une saisie erronée sans attendre une décision. La règle vit dans
++     ownScope.js (`scopeCanDeleteAchatLines`) — la page « Achats prévus /
++     souhaités » applique exactement la même, et une ligne supprimée disparaît
++     des deux côtés. */
++  const canRemoveRow = scopeCanDeleteAchatLines(access);
+   /* Visibilité : le superutilisateur, la gestionnaire et la responsable
+      d’achats voient TOUTES les lignes. Les autres membres ne voient que
+      leurs propres éléments (déposés par eux, demandés à leur nom ou créés
+@@ -892,9 +903,9 @@ export const ApprobationPage = () => {
+     });
    };
  
-+  /* ⬇️ « BRING IT BACK FROM THE CLOUD » — LE GESTE À LA DEMANDE, DANS LA BARRE DE
-+     LECTURE DU VIEWER. La phrase « déclarée sur cette expérience mais pas encore
-+     dans ce navigateur » conseillait ce bouton ; il vivait dans la barre
-+     « 🧬 System files » RETIRÉE, donc la phrase demandait un geste que plus rien ne
-+     portait : sans lui, une tentative automatique manquée (pointeur d'un ancien
-+     dataset, fichier renommé sur le Drive, Drive connecté après coup) restait SANS
-+     recours. Le geste appelle LA MÊME fonction que l'essai automatique
-+     (`restoreTrajectoryFromDrive`) : un seul chemin de code, donc rien qui puisse
-+     dire autre chose que ce qu'il fait. Un seul essai à la fois (le bouton est
-+     inerte tant qu'une recherche tourne : `bringTrajectoryBusy`). */
-+  const trajRestoreBusyRef = useRef(false);
-+  const bringTrajectoryBack = async () => {
-+    if (trajRestoreBusyRef.current) return;
-+    trajRestoreBusyRef.current = true;
-+    try {
-+      await restoreTrajectoryFromDrive();
-+    } catch (err) {
-+      // Une reprise qui casse ne doit pas rester MUETTE : le constat s'affiche
-+      // sous la phrase, et le bouton est relâché par le `finally` ci-dessous.
-+      setTrajPhase('notfound');
-+      setTrajDriveMsg(`⚠️ the cloud request failed (${(err && err.message) || 'unknown error'}). Re-select the file with “📂 Trajectory” if it happens again.`);
-+    } finally {
-+      trajRestoreBusyRef.current = false;
-+    }
-+  };
-+  /* CE QUE LA RECHERCHE RÉPOND, montré sous la phrase — sans quoi un clic sur le
-+     bouton alors que le Drive n'est pas connecté ne produirait rien de visible.
-+     Seuls les constats d'une recherche EN COURS (« 🔎 … checking Google Drive… »,
-+     phase `drive`) ou de son dernier échec (`nocloud`, `notfound`) sont affichés :
-+     `done` et `browser` n'affichent rien — une reprise réussie, ou un envoi,
-+     laisserait sinon sa phrase sous une ligne qui dit « pas encore là ». */
-+  const trajRestoreNote = (trajPhase === 'drive' || trajPhase === 'notfound' || trajPhase === 'nocloud')
-+    ? trajDriveMsg
-+    : '';
-+
-   // Restore a previously-uploaded trajectory on (re)load, so the user does not
-   // have to re-upload the .xtc/.trr/.dcd after refreshing the page. Source
-   // order: 1) this browser's IndexedDB cache (fast, offline) → 2) Google Drive
-@@ -1496,6 +1539,13 @@ export const MDExperimentSetupSection = ({ ctx }) => {
-   trajectorySrc={trajNorm.url}
-   trajectoryFile={trajectoryFile}
-   trajectoryName={activeTest.trajectoryFileName || activeTest.trajectoryDriveName || ''}
-+  // ⬇️ Le geste à la demande vit MAINTENANT dans la barre de lecture du viewer,
-+  // à côté de la phrase qui le demande : la MÊME fonction que la tentative
-+  // automatique, le constat de la recherche, et un bouton inerte tant qu'elle
-+  // tourne. La phrase cessait d'être vraie (elle conseillait un bouton disparu).
-+  onBringTrajectoryBack={bringTrajectoryBack}
-+  bringTrajectoryNote={trajRestoreNote}
-+  bringTrajectoryBusy={trajPhase === 'drive'}
-   trajectoryFallbacks={trajNorm.fallbacks}
-   trajectoryFormat={d.trajectoryFormat}
-   moleculeType={d.moleculeType}
-diff --git a/src/components/NMRMoleculeViewer.jsx b/src/components/NMRMoleculeViewer.jsx
-index fb7096d..5dbfd2c 100644
---- a/src/components/NMRMoleculeViewer.jsx
-+++ b/src/components/NMRMoleculeViewer.jsx
-@@ -51,6 +51,16 @@ import { enforceOneHeavyBondPerHydrogen } from '../utils/hydrogenBondRule';
- // every molecule. It never rewrites a style: a tick, and the same rows.
- import { withoutHydrogensParams } from '../utils/viewerHydrogenFilter';
- import { enforceCovalentProteinBonds } from '../utils/proteinBondRule';
-+// ⚭ « Disulfides: shown / hidden » — le pont disulfure, LU DANS LE GRAPHE de la
-+// structure et RETIRÉ de ce graphe quand on le cache : le seul endroit où NGL
-+// laisse encore décider du dessin d'une liaison, et la même sorte de règle que
-+// les deux ci-dessus (utils/disulfideBonds.js). La distance Sγ–Sγ que le bouton
-+// rapporte est jugée avec la fenêtre du repliement (utils/disulfideFold.js) :
-+// une seule définition de « pont fermé », pour ⚭ Fold et pour l'interrupteur.
-+import { applyDisulfideDisplay } from '../utils/disulfideBonds';
-+import { SS_BOND_LENGTH, SS_BOND_TOLERANCE } from '../utils/disulfideFold';
-+
-+
- import { readXtcFrames, countXtcFrames, countXtcFramesInFile } from '../utils/xtcDecoder';
- import { abortControl, useAbortControl } from '../utils/abortControl';
- import { loadProgress } from '../utils/loadProgress';
-@@ -305,7 +315,7 @@ const LARGE_ATOM_COUNT = 25000;                 // lighter rendering above this
-    Background »), persisted like Fog / Shadows / Clipping, and it is part of a
-    saved setup.
+-  /* ── Suppression (superutilisateur uniquement) ────────────────────────── */
++  /* ── Suppression (superutilisateur et responsable d'achats) ───────────── */
+   const removeRow = (rec) => {
+-    if (!rec || !rec.id || !isSuper) return;
++    if (!rec || !rec.id || !canRemoveRow) return;
+     const ref = txt(rec.numBC) || txt(rec.numDevis) || txt(rec.description) || rec.id;
+     if (!window.confirm(`Supprimer définitivement cette ligne « ${ref} » ?`)) return;
+     /* Un devis supprimé ne doit pas laisser un BC orphelin : les bons de
+@@ -955,6 +966,7 @@ export const ApprobationPage = () => {
+         if (generated && currentName && isAchatsRole) return true;
+         return !!(txt(r.deposant) && currentName && sameName(r.deposant, currentName));
+       },
++      canRemove: canRemoveRow,
+       onDecide: decideRow,
+       onEdit: (r) => setModal({ mode: 'edit', kind: activeKind, rec: r }),
+       onMakeBc: openBcDeposit,
+@@ -963,7 +975,7 @@ export const ApprobationPage = () => {
+       onSendBack: returnToAchats,
+     }),
+     // eslint-disable-next-line react-hooks/exhaustive-deps
+-    [activeKind, isSuper, busyId, devisById, activeRows, currentName, isAchatsRole, showTreated, sendForSignature, returnToAchats]
++    [activeKind, isSuper, busyId, devisById, activeRows, currentName, isAchatsRole, canRemoveRow, showTreated, sendForSignature, returnToAchats]
+   );
  
--   SAVED SETUPS (🎨 Predefined styles, §1 General) — « Save the visualisation setup »: a NAMED
-+   SAVED SETUPS (🎨 Styles, §2 · the Scene line) — « Save the visualisation setup »: a NAMED
-    snapshot of the whole viewer look (the six menus with their radii and colours,
-    the nucleic-acid group colours and the lipid part colours, the label switches,
-    the 2°-structure and highlight colours, Fog / Shadows / Clipping / Background /
-@@ -314,7 +324,7 @@ const LARGE_ATOM_COUNT = 25000;                 // lighter rendering above this
-    a look can be reused on another page or another computer.
-    ============================================================================ */
- const CAT_STYLE_KEY = 'labViewerCategoryStyles';
--// Saved visualisation setups (🎨 Predefined styles, §1 General). One localStorage entry holds
-+// Saved visualisation setups (🎨 Styles, §2 · the Scene line). One localStorage entry holds
- // a { name → setup } map; a setup is the plain object built by captureViewerSetup
- // and read back by applyViewerSetup, with a version so an older file can never
- // break the viewer (unknown / missing keys simply keep their default).
-@@ -1270,7 +1280,7 @@ const nucleicClassCounts = (structure) => {
-   return { total: info ? info.nucleotides.length : 0, forms, motifs };
+   const pendingCount = (kind) => visibleRows.filter((r) => r.kind === kind && isApprovalPending(r.statut)).length;
+@@ -1129,6 +1141,12 @@ export const ApprobationPage = () => {
+               <>
+                 👁 Vous voyez <b>toutes</b> les demandes déposées (suivi des achats — Gestionnaire /
+                 Responsable d’achats) : les devis &amp; BC de tous les membres sont listés ici.
++                {canRemoveRow ? (
++                  <>
++                    {' '}La <b>suppression</b> d’une ligne (🗑) vous est ouverte : elle corrige un
++                    doublon ou une saisie erronée sans attendre la décision du superutilisateur.
++                  </>
++                ) : null}
+               </>
+             ) : currentName ? (
+               <>
+@@ -1301,7 +1319,7 @@ export const ApprobationPage = () => {
+ /* ── Colonnes de la table active (devis ou BC) ──────────────────────────── */
+ const buildColumns = ({
+   kind, isSuper, busyId, devisById,
+-  canEdit, onDecide, onEdit, onMakeBc, onRemove, onSendForSignature, onSendBack,
++  canEdit, canRemove, onDecide, onEdit, onMakeBc, onRemove, onSendForSignature, onSendBack,
+ }) => {
+   /* La section « BC à faire et à approuver » mélange DEUX natures de lignes :
+      le devis SIGNÉ dont le bon de commande reste à faire, puis les bons de
+@@ -1550,7 +1568,9 @@ const buildColumns = ({
+       value: () => '',
+       display: (r) => {
+         const editable = canEdit(r);
+-        const deletable = isSuper;
++        /* Suppression : superutilisateur et responsable d'achats (`canRemove`,
++           calculé plus haut par `scopeCanDeleteAchatLines`). */
++        const deletable = !!canRemove;
+         if (!editable && !deletable) return <span className="text-slate-300 text-xs">—</span>;
+         return (
+           <div className="flex items-center gap-1 justify-end">
+@@ -1564,7 +1584,7 @@ const buildColumns = ({
+             {deletable && (
+               <button
+                 type="button"
+-                onClick={() => onRemove(r)} title="Supprimer (réservé au superutilisateur)"
++                onClick={() => onRemove(r)} title="Supprimer cette ligne (superutilisateur et responsable d’achats)"
+                 className="w-7 h-7 rounded-lg border border-slate-200 text-slate-400 hover:bg-red-50 hover:text-red-600 text-xs"
+               >🗑</button>
+             )}
+diff --git a/src/administration/desiderataPage.jsx b/src/administration/desiderataPage.jsx
+index c87443b..2b512f5 100644
+--- a/src/administration/desiderataPage.jsx
++++ b/src/administration/desiderataPage.jsx
+@@ -50,7 +50,7 @@ import { budgetDocPath, budgetDocFileName } from './driveFiling';
+    immédiatement (copie « …_approuvé_signé.pdf »), exactement comme avec le
+    bouton ✓ de la page « Approbation devis & BC ». */
+ import { buildSignedDeposit, renameDepositDriveFileTo } from './depositSigning';
+-import { scopeMeNames, scopeMePersonId, scopeCanSeeItem, scopePersonIdForName, scopeSeesAllRows, scopeFonctions } from './ownScope';
++import { scopeCanDeleteAchatLines, scopeMeNames, scopeMePersonId, scopeCanSeeItem, scopePersonIdForName, scopeSeesAllRows, scopeFonctions } from './ownScope';
+ import {
+   TRANSFER_TARGETS, targetMetaOf, TRANSFER_MODES,
+   devisPatchFromDesiderata, desiderataTransferStatus, isDepenseBcSigne,
+@@ -963,6 +963,12 @@ export const DesiderataPage = () => {
+     : `Fonctions reconnues sur votre fiche Personnel : ${scopeFonctions(access).join(', ') || 'aucune'}. `
+       + (seesAllRows
+         ? 'Le suivi des achats (Gestionnaire / Responsable d’achats) affiche toutes les demandes.'
++          /* La RESPONSABLE D'ACHATS supprime en plus toutes les lignes (voir
++             ownScope.js › scopeCanDeleteAchatLines) : le dire ici, sinon le 🗑
++             proposé sur la demande d’un autre membre étonne. */
++          + (scopeCanDeleteAchatLines(access)
++            ? ' La suppression d’une ligne (🗑) est ouverte à la responsable d’achats : elle corrige un doublon ou une saisie erronée.'
++            : '')
+         : 'Seules vos propres demandes sont affichées ici. Pour voir toutes les demandes, cochez « Gestionnaire » ou « Responsable d’achats » sur votre fiche dans Administration › Personnel.');
+   const meNames = useMemo(() => scopeMeNames(access, currentUser), [access, currentUser]);
+   const mePersonId = useMemo(() => scopeMePersonId(access), [access]);
+@@ -1141,9 +1147,19 @@ export const DesiderataPage = () => {
+     }
+   };
+ 
++  /* ── Suppression d'une ligne ─────────────────────────────────────────────
++     Ouverte au superutilisateur, à la RESPONSABLE D'ACHATS (fonction
++     « Achats » — elle suit l'ensemble des demandes et corrige donc un doublon
++     ou une saisie erronée : voir ownScope.js › scopeCanDeleteAchatLines) et,
++     pour les autres membres, à leurs PROPRES demandes — les seules qu'ils
++     voient. */
++  const canDeleteRow = (rec) => isSuper
++    || scopeCanDeleteAchatLines(access)
++    || scopeCanSeeItem(rec, { isSuper, meNames, mePersonId });
++
+   const onRemove = (rec) => {
+     if (!rec) return;
+-    if (!isSuper && !scopeCanSeeItem(rec, { isSuper, meNames, mePersonId })) return;
++    if (!canDeleteRow(rec)) return;
+     const label = txt(rec.description) || rec.id;
+     if (!window.confirm(`Supprimer l’achat prévu / souhaité « ${label} » ?\nCette action est définitive.`)) return;
+     removeRecord('desiderate', rec);
+@@ -1721,12 +1737,19 @@ export const DesiderataPage = () => {
+               title="Modifier l’achat prévu / souhaité"
+               className="text-[11px] font-black px-2 py-1 rounded-lg border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 transition-colors"
+             >✏️ Modifier</button>
+-          <button
+-            type="button"
+-            onClick={() => onRemove(r)}
+-            title="Supprimer l’achat prévu / souhaité"
+-            className="text-[11px] font-black px-2 py-1 rounded-lg border border-red-200 bg-red-50 text-red-500 hover:bg-red-100 transition-colors"
+-          >🗑️</button>
++            {/* La suppression n'est proposée qu'à qui en a le DROIT : la
++                responsable d'achats (fonction « Achats ») et le superutilisateur
++                sur toutes les lignes, chaque autre membre sur les siennes.
++                Sans cette condition, un Gestionnaire — qui voit tout — aurait un
++                bouton sans effet (la garde d’onRemove refusait la suppression). */}
++            {canDeleteRow(r) ? (
++              <button
++                type="button"
++                onClick={() => onRemove(r)}
++                title="Supprimer l’achat prévu / souhaité"
++                className="text-[11px] font-black px-2 py-1 rounded-lg border border-red-200 bg-red-50 text-red-500 hover:bg-red-100 transition-colors"
++              >🗑️</button>
++            ) : null}
+         </div>
+       );
+       },
+diff --git a/src/administration/ownScope.js b/src/administration/ownScope.js
+index 9a92928..3ce8eac 100644
+--- a/src/administration/ownScope.js
++++ b/src/administration/ownScope.js
+@@ -14,6 +14,12 @@
+        verrouillé sur soi-même pour les membres), sinon par correspondance de
+        nom normalisée avec la colonne « demandeur » (anciens imports Google
+        Sheets) puis par l’enveloppe d’audit `createdBy`.
++
++   Suppression (voir `scopeCanDeleteAchatLines` plus bas) : le superutilisateur
++   et la fonction « Achats » — c’est-à-dire la RESPONSABLE D’ACHATS, qui suit
++   l’ensemble des demandes — peuvent retirer une ligne de « Achats prévus /
++   souhaités » et de « Approbation devis & BC » (doublon, saisie erronée) ;
++   chaque autre membre ne supprime que ses propres demandes.
+    ========================================================================= */
+ 
+ import { adminFonctionCode } from './adminSchema';
+@@ -67,6 +73,25 @@ export const scopeSeesAllRows = (access) => {
+   return fonctions.indexOf('Gestionnaire') !== -1 || fonctions.indexOf('Achats') !== -1;
  };
  
--/* ---- Saved visualisation setups (🎨 Predefined styles, §1 General) ---------------------
-+/* ---- Saved visualisation setups (🎨 Styles, §2 · the Scene line) ---------------------
-    One localStorage entry holds a { name → setup } map. A setup is the plain
-    object built by captureViewerSetup and read back by applyViewerSetup; the
-    version lets a file written by another build be accepted safely — every field is
-@@ -6764,23 +6774,39 @@ const stripHighlightClauses = (keys, residueTicks) => {
- 
- /* ============================================================================
-    TOOLBAR BUILDING BLOCKS — the viewer UI is organised in a few numbered
--   ROWS, so the command bar never eats the 3D canvas:
--     §0 Window (alone, top) · §1 General (PDB / Load / Trajectory / Clear /
--     PDB file / Predefined styles) · §2 Toolbar = Scene | Modify | Analysis |
--     PyMOL in ONE row.
--   The tool row is now the SECTION 2: the old « 2 · Molecular Styling »
--   accordion (Hide everything / ESP / Renumber) is gone, its gestures live in
--   the group they belong to (see the comment above the row), and the styling of
--   every molecule has its own bar on the RIGHT of the canvas — one space per
--   molecule (PART 4). Every row carries its own 3D-label switches (Residues /
--   Residue type / Atom names), because the old global « 4 · Labels » row is gone.
--   These tiny presentational components keep every row identical.
-+   ROWS, so the command bar never eats the 3D canvas. The rows of THIS session
-+   (the request: « the viewer menu must be drastically reduced and organised …
-+   the “analysis” and “modify” can be in one line but clearly separated … the
-+   “styles” section can fit inside the line of the “scene” section … the movie
-+   maker section can fit in the line of the general section »):
-+     · §1 General — what is loaded, cleared and filmed: PDB file(s) / PDB ID ·
-+       Trajectory · ⬇ PDB · 🗑 Clear · 🗑 Delete PDB, AND the whole 🎞 Movie maker
-+       row on the SAME line (it films the structure the row loads);
-+     · §2 Toolbar — TWO lines of clearly separated groups, each one a small
-+       tinted box (the separator between two boxes stays a hairline):
-+         line 1:  🌫 Scene  │  🎨 Styles (the former « 🎨 Predefined styles »
-+                  button: name · 🎨 Cumulative · 📷 Snapshot · 💾 · 📂 · 🗑 · ⬇ ⬆);
-+         line 2:  ✏️ Modify │ 📏 Analysis │ 🧪 PyMOL;
-+     · ▶ Trajectory playback — the ▶ Play bar, with 🎬 Video (the same run saved
-+       as one file) right next to it.
-+   The old « 2 · Molecular Styling » accordion (Hide everything / ESP /
-+   Renumber) is gone, its gestures live in the group they belong to, and the
-+   styling of every molecule has its own bar on the RIGHT of the canvas — one
-+   space per molecule (PART 4). Every row carries its own 3D-label switches
-+   (Residues / Residue type / Atom names), because the old global « 4 · Labels »
-+   row is gone. These tiny presentational components keep every row identical.
-    ============================================================================ */
-+/* LA LIGNE DE RÉSUMÉ D'UNE RANGÉE NE S'IMPRIME PLUS (cette session : « there is too
-+   much writing which can be substituted by information available by hovering »).
-+   Elle vivait en gris pâle à côté du titre (« structure · trajectory · clear »,
-+   « scene · modify · analysis · PyMOL »…), elle tenait de la place pour dire ce que
-+   la rangée fait : elle est maintenant la BULLE du titre de la rangée. Le texte de
-+   la demande n'a pas bougé d'un caractère — seul son endroit a changé, et la rangée
-+   ne montre plus que ce sur quoi on peut cliquer. */
- const VSection = ({ title, hint, right = null, children }) => (
-   <section className="flex flex-col gap-1 bg-slate-50/80 border border-slate-200 rounded-lg px-1.5 py-1">
-     <div className="flex flex-wrap items-center gap-1.5">
--      <span className="text-[9px] font-black text-slate-700 uppercase tracking-wide whitespace-nowrap">{title}</span>
--      {hint && <span className="text-[9px] text-slate-400 truncate hidden lg:inline">{hint}</span>}
-+      <span className="text-[9px] font-black text-slate-700 uppercase tracking-wide whitespace-nowrap" title={hint || undefined}>{title}</span>
-       {right}
-     </div>
-     <div className="flex flex-wrap items-center gap-1">{children}</div>
-@@ -6953,6 +6979,22 @@ structureFormat = 'auto',
- trajectorySrc,
- trajectoryFile,
- trajectoryName = '',   // nom DÉCLARÉ sur l'expérience (même si le fichier n'est pas encore là)
-+// ⬇️ « Bring it back from the cloud » — LE GESTE À LA DEMANDE, LÀ OÙ ON LE CHERCHE.
-+// La ligne « déclarée sur cette expérience mais pas encore dans ce navigateur »
-+// conseillait un bouton qui vivait dans la barre « 🧬 System files » RETIRÉE de la
-+// page MD : elle demandait donc un geste que plus rien ne portait, et l'utilisateur
-+// n'avait plus AUCUN moyen de relancer une reprise que l'essai automatique avait
-+// manquée (pointeur d'un ancien dataset, fichier renommé sur le Drive, Drive
-+// connecté après coup). La page fournit ici LA MÊME fonction que sa tentative
-+// automatique (`restoreTrajectoryFromDrive`), plus l'état de sa recherche :
-+// `bringTrajectoryNote` = son constat (mot pour mot : « le Drive n'est pas connecté
-+// ICI », « introuvable sous ce nom », « 🔎 … checking… ») et `bringTrajectoryBusy` =
-+// une recherche tourne. Un seul chemin de code : la phrase ne peut donc pas
-+// annoncer une chose et en faire une autre. Sans la fonction, aucun bouton n'est
-+// rendu (aucune promesse creuse) et la phrase reste celle d'avant.
-+onBringTrajectoryBack = null,
-+bringTrajectoryNote = '',
-+bringTrajectoryBusy = false,
- trajectoryFallbacks = [],
- trajectoryFormat = 'xtc',
- onStructureFile,
-@@ -7964,19 +8006,37 @@ const [showNucleicColoursPanel, setShowNucleicColoursPanel] = useState(false);
- // lipid — headgroup · glycerol backbone · acyl chains (see the lab-lipid-groups
- // scheme). Same panel, same behaviour, amber instead of violet.
- const [showLipidColoursPanel, setShowLipidColoursPanel] = useState(false);
--// 🎨 Predefined styles (§1 General) — NAMED snapshots of the whole visualisation setup: the
--// saved map, the name being typed, the open/closed state of the panel and its
--// feedback line (see captureViewerSetup / applyViewerSetup below).
--const [showSetupPanel, setShowSetupPanel] = useState(false);
--/* THE TWO SAVE MODES (the request): which one 💾 / 📂 / 🗑 / ⬇ / ⬆ act on, the two
--   stores, and the conflict the THEME save may have to resolve first (two molecules
--   of the same class drawn differently: the user picks the class default). */
-+/* 🎨 Styles (l'ex-« 🎨 Predefined styles ») — ce que la bande de §2 range : le nom
-+   en cours de frappe, les DEUX magasins du mode actif, le conflit qu'un THÈME doit
-+   parfois résoudre, et la ligne de retour qui s'efface toute seule. Le bouton qui
-+   ouvrait le panneau n'existe plus (la bande est toujours là, cette session), donc
-+   ni `showSetupPanel` ni l'état des « setups » nommés de l'ancienne bande. */
- const [setupSaveMode, setSetupSaveMode] = useState('theme');   // 'theme' | 'snapshot'
--const [viewerThemes, setViewerThemes] = useState(() => loadNamedMap(VIEWER_THEME_KEY));
-+/* ⚙️ LES « SETUPS » NOMMÉS DE L'ANCIENNE BANDE (clé labViewerSetups) : la bande
-+   montrait DEUX jeux de cinq boutons pour les mêmes cinq gestes — il n'en reste
-+   qu'un, celui du mode actif. Ces « setups » rangeaient exactement ce qu'un THÈME
-+   range (l'environnement global + les styles par classe), mais sans mode : ils sont
-+   donc repris ICI, UNE SEULE FOIS, comme thèmes du MÊME NOM — rien de ce qui a été
-+   enregistré n'est perdu, et ils se rechargent par 📂 Load… comme les autres. La clé
-+   est vidée dans la foulée : ce grand ménage ne se refait jamais. */
-+const [viewerThemes, setViewerThemes] = useState(() => {
-+  const themes = loadNamedMap(VIEWER_THEME_KEY);
-+  const legacy = loadViewerSetups();
-+  const names = Object.keys(legacy);
-+  if (!names.length) return themes;
-+  const merged = { ...themes };
-+  names.forEach((name) => {
-+    if (merged[name]) return;   // un thème du même nom est déjà là : il gagne
-+    const s = legacy[name] || {};
-+    merged[name] = { v: VIEWER_THEME_VERSION, name, savedAt: new Date().toISOString(), global: s, classes: s.catStyles || {} };
-+  });
-+  saveNamedMap(VIEWER_THEME_KEY, merged);
-+  saveViewerSetups({});
-+  return merged;
-+});
- const [viewerSnaps, setViewerSnaps] = useState(() => loadNamedMap(VIEWER_SNAPSHOT_KEY));
- const [themeConflicts, setThemeConflicts] = useState(null);    // [{ kind, options: [sec] }]
- const [themeChoices, setThemeChoices] = useState(null);        // kind → section id
--const [viewerSetups, setViewerSetups] = useState(() => loadViewerSetups());
- const [setupName, setSetupName] = useState('');
- const [setupMsg, setSetupMsg] = useState('');
- const setupMsgTimerRef = useRef(null);   // the “✓ saved / applied” line clears itself
-@@ -8920,6 +8980,29 @@ const flashDisulfideFoldMsg = (m) => {
-   clearTimeout(disulfideFoldTimerRef.current);
-   disulfideFoldTimerRef.current = setTimeout(() => setDisulfideFoldMsg(''), 9000);
- };
-+/* ⚭ « Disulfides: shown / hidden » — L'INTERRUPTEUR DU DESSIN DU PONT.
-+   Ce qui change entre deux clics est UN booléen : quand il est faux, la règle
-+   utils/disulfideBonds.js retire les S–S du graphe de liaisons de la structure,
-+   au moment où elle est chargée — le seul endroit où NGL peut encore ne pas les
-+   dessiner — et le modèle est resservi. `disulfideDrawn` est ce que la structure
-+   À L'ÉCRAN dessine (lu pendant ce même chargement, ponts et distances Sγ–Sγ
-+   compris) : c'est lui qui dit au bouton s'il a quelque chose à cacher et sous
-+   quel nom le raconter. La DÉFINITION des ponts (la PAGE, « Cysteine states »),
-+   le fichier, le 📥 Download et la copie Drive ne sont jamais touchés. */
-+const [disulfidesShown, setDisulfidesShown] = useState(true);
-+const disulfidesShownRef = useRef(true);
-+disulfidesShownRef.current = disulfidesShown;
-+const [disulfideDrawn, setDisulfideDrawn] = useState({ bonds: [], removed: 0 });
-+const disulfideDrawnRef = useRef({ bonds: [], removed: 0 });
-+const [disulfideShowMsg, setDisulfideShowMsg] = useState('');
-+const disulfideShowTimerRef = useRef(null);
-+const flashDisulfideShowMsg = (m) => {
-+  setDisulfideShowMsg(m);
-+  clearTimeout(disulfideShowTimerRef.current);
-+  disulfideShowTimerRef.current = setTimeout(() => setDisulfideShowMsg(''), 9000);
++/** Le membre connecté peut-il SUPPRIMER une ligne de suivi des achats — une
++ *  ligne « Achats prévus / souhaités » (collection desiderate) ou une ligne de
++ *  devis / BC (page « Approbation devis & BC ») ?
++ *
++ *  Oui pour le superutilisateur, et pour la fonction « Achats » — c’est-à-dire
++ *  la RESPONSABLE D’ACHATS : elle suit l’ENSEMBLE des demandes (voir
++ *  scopeSeesAllRows) et corrige donc un doublon ou une saisie erronée sans
++ *  attendre une décision du superutilisateur. Les autres membres ne suppriment
++ *  que leurs PROPRES demandes (`scopeCanSeeItem`).
++ *
++ *  La règle vit ICI, en un seul endroit testable, et les deux pages l’importent
++ *  — une ligne supprimée disparaît des deux côtés (le souhait transféré et son
++ *  devis « Approbation devis & BC »). */
++export const scopeCanDeleteAchatLines = (access) => {
++  const a = access || {};
++  if (a.isSuperuser) return true;
++  return scopeFonctions(a).indexOf('Achats') !== -1;
 +};
 +
-+
- // The « 🗑 Delete PDB / ↩ Restore PDB » toggle of §1 General: the button DELETES
- // while a PDB the user loaded is on screen, and RESTORES once that PDB has been
- // put aside (and nothing else has taken its place on screen since).
-@@ -10861,6 +10944,25 @@ try { enforceOneHeavyBondPerHydrogen(component); } catch { /* best-effort (H-bon
- // unconditional, for any file.
- try { enforceCovalentProteinBonds(component); } catch { /* best-effort (protein-bond rule) */ }
+ /** Noms d’identité du membre connecté : fiche Personnel liée d’abord, nom du
+  *  compte opérateur sinon (les deux sont conservés s’ils diffèrent). */
+ export const scopeMeNames = (access, currentUser) => {
+diff --git a/src/components/AppModules/projectDetailModule.jsx b/src/components/AppModules/projectDetailModule.jsx
+index 255693e..7c9757c 100644
+--- a/src/components/AppModules/projectDetailModule.jsx
++++ b/src/components/AppModules/projectDetailModule.jsx
+@@ -1414,9 +1414,12 @@ export const ProjectDetailModule = ({
  
-+/* ⚭ LE PONT DISULFURE, DESSINÉ OU NON — la MÊME sorte de règle que les trois
-+   ci-dessus, au même endroit (avant qu'une seule représentation ne lise le
-+   graphe) : elle LIT ce que la structure dessine — chaque liaison entre deux Sγ
-+   de deux résidus différents, qu'elle vienne d'un CONECT ou de la passe de
-+   distances de NGL — et, quand l'interrupteur « ⚭ Disulfides » est sur
-+   « hidden », elle la RETIRE du graphe. C'est la seule façon de cacher un S–S :
-+   ngl@2.4.0 n'a aucune visibilité par liaison. Aucun TEXTE n'est requis (un
-+   PDB-ID, une URL, un .cif, un .gro marchent comme le modèle de la page), et
-+   rien du fichier n'est touché. `disulfideDrawn` retient ce qui a été trouvé —
-+   le bouton dit ainsi ce qu'il cache, résidu par résidu, avec la distance
-+   Sγ–Sγ de l'écran. */
-+let disulfideDrawnNow = { bonds: [], removed: 0 };
-+try {
-+  disulfideDrawnNow = applyDisulfideDisplay(component, { hidden: !disulfidesShownRef.current }) || disulfideDrawnNow;
-+} catch { /* best-effort (disulphide display) — un graphe qu'on ne peut pas éditer garde ses ponts */ }
-+setDisulfideDrawn(disulfideDrawnNow);
-+disulfideDrawnRef.current = disulfideDrawnNow;
-+
-+
- // Note: NGL viewer structures from PDB/SDF already contain hydrogens when generated correctly.
- // We skip addHydrogens() to prevent "is not a function" errors in this NGL version.
- 
-@@ -15370,6 +15472,61 @@ const foldForDisulfides = () => {
-   flashDisulfideFoldMsg(`${built.note || '⚭ Disulphide-folded model loaded.'} (${atoms.toLocaleString()} atoms)`);
+   /* ── Où les documents d'une section vont-ils sur le Drive ? ───────────────
+      La chaîne de dossiers est celle de l'envoi lui-même
+-     (driveNaming.projectSectionFolderPath → <projet>/<section>, à l'intérieur
+-     du dossier du dataset) : l'étiquette affichée et le dossier réellement créé
+-     ne peuvent donc pas diverger. */
++     (driveNaming.projectSectionFolderPath → projects/<projet>/<section>) : le
++     document d'une section vit DANS le dossier du projet, comme ses expériences,
++     ses figures et son document de texte — l'étiquette affichée et le dossier
++     réellement créé ne peuvent donc pas diverger. Un Drive où les documents
++     étaient encore dans `<projet>/<section>`, À LA RACINE du dataset, est rangé
++     par utils/projectRootMigrate.js au démarrage. */
+   const sectionDrivePath = (label) => projectSectionFolderPath(project.name || '', label);
+   const sectionDriveLabel = (label) =>
+     projectSectionFolderLabel(project.name || '', label, getDriveRootName());
+diff --git a/src/components/MDSections.jsx b/src/components/MDSections.jsx
+index d76674f..acb1710 100644
+--- a/src/components/MDSections.jsx
++++ b/src/components/MDSections.jsx
+@@ -971,10 +971,23 @@ export const MDExperimentSetupSection = ({ ctx }) => {
+     // fichier reste dans le dataset : c'est lui qui le ramène sur un autre poste.
+     setTrajDriveMsg(`⬆️ Archiving ${file.name} to Google Drive…`);
+     (async () => {
+-      const { name: driveName, pointer } = await archiveFileToDriveWithPointer({
++      /* L'AVANCEMENT EST MONTRÉ. Une trajectoire part maintenant PAR MORCEAUX
++         (session « resumable » — voir utils/driveChunkUpload.js) : sans le
++         pourcentage, un envoi de plusieurs Go restait muet pendant des minutes et
++         on ne pouvait pas distinguer « ça travaille » de « c'est perdu ». */
++      let lastPct = -1;
++      const onProgress = (sent, total) => {
++        if (!total) return;
++        const pct = Math.min(100, Math.round((sent / total) * 100));
++        if (pct === lastPct) return;
++        lastPct = pct;
++        setTrajDriveMsg(`⬆️ Archiving ${file.name} to Google Drive… ${pct}%`);
++      };
++      const { name: driveName, pointer, error } = await archiveFileToDriveWithPointer({
+         file,
+         ctx: { project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || '', instance: activeTest.instanceName || '', scientist: activeTest.operator || '', section: 'Setup', subsection: 'Trajectory' },
+-        suffix: 'trajectory'
++        suffix: 'trajectory',
++        onProgress
+       }).catch(() => null);
+       if (!driveName) return;
+       placeRestorePointer({
+@@ -984,9 +997,15 @@ export const MDExperimentSetupSection = ({ ctx }) => {
+         activeKey: mdActiveIdRef.current,
+         patch: updateActiveTest
+       });
++      /* L'ÉCHEC SE DIT, AVEC SA RAISON. « archivé » ne doit jamais être annoncé
++         quand le fichier n'est pas sur le Drive (c'est ce qui a fait croire, le
++         25/09/2026, qu'une trajectoire de plusieurs Go était en sécurité alors que
++         ni le Drive ni l'autre poste ne l'avaient). Le geste de reprise nommé est
++         celui qui EXISTE sur la page (« Choose XTC / TRR » ré-archive le fichier) :
++         renvoyer à un bouton imaginaire ne répare rien. */
+       setTrajDriveMsg(pointer
+         ? `✅ ${file.name} archived to Google Drive.`
+-        : `⚠️ ${file.name} was loaded, but the Drive upload failed. Use “Archive trajectory to Drive” to retry (check the Drive connection first).`);
++        : `⚠️ ${file.name} was loaded, but the Drive upload failed${error ? ` — ${error}` : ''}. Use “Choose XTC / TRR” to pick the file again (the upload archives it once more) once the Drive connection is back.`);
+     })();
+     setTrajectoryFile(file);
+     updateActiveTest({ trajectoryFileName: file.name });
+diff --git a/src/utils/driveMirror.js b/src/utils/driveMirror.js
+index de9be83..617b5d9 100644
+--- a/src/utils/driveMirror.js
++++ b/src/utils/driveMirror.js
+@@ -217,11 +217,13 @@ const findProjectFolder = async ({ datasetId = '', datasetName = '', projectName
+   return findFolderByName(sanitizeSlug(projectName), projectsFolderId);
  };
  
-+/* ── ✏️ Modify · « ⚭ Disulfides: shown / hidden » ─────────────────────────────
-+   LE DESSIN DU PONT, PAS SA DÉFINITION. Le pont existe deux fois : dans la
-+   définition (« Cysteine states », la page) et dans le graphe de liaisons de la
-+   structure affichée — c'est ce graphe que NGL dessine en Sticks / Ball+stick /
-+   Lines, et c'est lui seul que ce bouton touche (utils/disulfideBonds.js). Cacher
-+   un S–S ne retire donc ni un atome, ni une définition, ni un enregistrement du
-+   fichier : le modèle est resservi SANS ce lien (le même entonnoir de chargement
-+   que le ⚗️ rebuild des hydrogènes, où la règle s'applique), et le remettre ne
-+   demande rien de plus — la structure suivante apporte ses ponts tels quels.
-+
-+   Ce que le message dit, et pourquoi : chaque pont est nommé par ses deux
-+   résidus (le NUMÉRO AFFICHÉ, le 🔢 du viewer) avec la distance Sγ–Sγ RÉELLE de
-+   l'écran. Le rapport était « you displayed the disulfide bonds but you did not
-+   fold the structure to bring the cysteines at bond distance » : un pont étiré
-+   est donc DIT, chiffre en main, au lieu de passer pour une liaison — et
-+   ⚭ Fold for disulfides, juste à côté, est le geste qui essaie de le fermer.
-+   La fenêtre de liaison est celle du repliement (SS_BOND_LENGTH /
-+   SS_BOND_TOLERANCE de utils/disulfideFold.js) : une seule définition de « pont
-+   fermé » pour le repliement et pour ce compte rendu. */
-+// « Cys 6–Cys 127: 2.04 Å ✓ bonded » / « … 18.42 Å ⚠️ drawn but stretched »
-+const describeDisulfideBond = (b) => {
-+  const label = (resno, chain, otherChain) => `${chain && chain !== otherChain ? `${chain} ` : ''}${displayResno(resno)}`;
-+  const where = `Cys ${label(b.resno1, b.chain1, b.chain2)}–Cys ${label(b.resno2, b.chain2, b.chain1)}`;
-+  if (b.distance == null) return `${where}: no Sγ coordinates`;
-+  const bonded = Math.abs(b.distance - SS_BOND_LENGTH) <= SS_BOND_TOLERANCE;
-+  return `${where}: ${b.distance.toFixed(2)} Å ${bonded ? '✓ bonded' : '⚠️ drawn but stretched (the two Sγ are not at bonding distance)'}`;
-+};
-+
-+const toggleDisulfideBonds = () => {
-+  const drawn = disulfideDrawnRef.current;
-+  const bonds = (drawn && drawn.bonds) || [];
-+  if (bonds.length === 0) {
-+    flashDisulfideShowMsg('⚠️ No disulphide bond is drawn in this model — nothing to hide. NGL draws an S–S from the bond graph only (a CONECT record, or the distance between two Sγ): a file that declares SSBOND alone, with its two cysteines apart, draws none. Define the pair in “Cysteine states” — the model the page builds writes that CONECT itself.');
-+    return;
-+  }
-+  const next = !disulfidesShownRef.current;
-+  const parts = bonds.map(describeDisulfideBond).join(' · ');
-+  const n = bonds.length;
-+  /* Un pont DESSINÉ mais étiré est le cas du rapport (« you displayed the
-+     disulfide bonds but you did not fold the structure to bring the cysteines at
-+     bond distance ») : le compte rendu le dit, et il nomme le geste qui essaie de
-+     le fermer — ⚭ Fold for disulfides, juste à côté. */
-+  const stretched = bonds.filter((b) => b.distance != null && Math.abs(b.distance - SS_BOND_LENGTH) > SS_BOND_TOLERANCE).length;
-+  const hint = stretched
-+    ? ` ${stretched} of them ${stretched === 1 ? 'is' : 'are'} drawn but STRETCHED — ⚭ Fold for disulfides, right here, relaxes the chain until the two Sγ can meet.`
-+    : '';
-+  disulfidesShownRef.current = next;
-+  setDisulfidesShown(next);
-+  requestStructureLoad({ ...(loadRequest || {}), ts: Date.now() });
-+  flashDisulfideShowMsg(next
-+    ? `⚭ ${n} disulphide bond${n === 1 ? '' : 's'} drawn again — ${parts}.${hint}`
-+    : `⚭ ${n} disulphide bond${n === 1 ? '' : 's'} hidden — every atom stays, and the definition (“Cysteine states”), the PDB file, the 📥 download and the Drive copy keep their S–S: the model simply no longer draws it. ${parts}.${hint}`);
-+};
-+
-+
- // ---- Abort the current long-running operation (vertical-bar / global Stop) ----
- // Stops trajectory playback, closes the frame-selection modal and cancels the
- // active structure / trajectory load so the UI returns to a usable state.
-@@ -16519,71 +16676,17 @@ const flashSetupMsg = (m) => {
-   clearTimeout(setupMsgTimerRef.current);
-   setupMsgTimerRef.current = setTimeout(() => setSetupMsg(''), 4000);
+-/** Le dossier de PROJET À LA RACINE du dataset (« <dataset>/<projet> »), celui
+- *  qui porte les DOCUMENTS DE SECTION (<projet>/<section> — le dossier affiché
+- *  sous « 📁 Drive location » de chaque section de la page projet). Il n'est pas
+- *  dans « projects/ » : c'est un SECOND dossier de projet, et c'est lui qui
+- *  restait sur le Drive après la suppression d'un projet. '' s'il n'existe pas. */
++/** Le dossier de PROJET À LA RACINE du dataset (« <dataset>/<projet> ») — le
++ *  chemin HISTORIQUE des DOCUMENTS DE SECTION (<projet>/<section>, voir
++ *  driveNaming.projectSectionFolderPath, qui les range aujourd'hui dans
++ *  `projects/<projet>/<section>`). Il n'est donc plus créé, mais il reste SUIVI :
++ *  c'est lui qui restait sur le Drive après la suppression d'un projet, et c'est
++ *  lui que range utils/projectRootMigrate.js quand il existe encore.
++ *  '' s'il n'existe pas. */
+ const findProjectRootFolder = async ({ datasetId = '', datasetName = '', projectName = '' }) => {
+   /* Le chemin vient de la MÊME liste que les tombes (projectFolderPaths) : un
+      projet nommé comme un dossier partagé du dataset (« projects »…) n'a donc
+@@ -236,12 +238,13 @@ const findProjectRootFolder = async ({ datasetId = '', datasetName = '', project
+ 
+ /**
+  * Supprimer un projet : SES DEUX dossiers Drive partent à la corbeille — les
+- * expériences, figures et le document (`projects/<projet>`) ET le dossier des
+- * documents de section (`<projet>`, à la racine du dataset, voir
+- * driveNaming.projectSectionFolderPath). Les deux chemins sont mis en pierre
+- * tombale, donc ni l'un ni l'autre ne se recrée, et un autre poste ne les voit
+- * plus. Le compte rendu dit ce qui a été trouvé (`missing`) : un dossier absent
+- * (déjà supprimé, ou projet jamais envoyé sur le Drive) n'est pas une erreur.
++ * expériences, figures et le document (`projects/<projet>`) ET l'éventuel dossier
++ * de documents de SECTION resté à la racine du dataset (`<projet>` — le chemin
++ * historique, voir driveNaming.projectSectionFolderPath et
++ * utils/projectRootMigrate.js). Les deux chemins sont mis en pierre tombale, donc
++ * ni l'un ni l'autre ne se recrée, et un autre poste ne les voit plus. Le compte
++ * rendu dit ce qui a été trouvé (`missing`) : un dossier absent (déjà supprimé, ou
++ * projet jamais envoyé sur le Drive) n'est pas une erreur.
+  */
+ export const mirrorDeleteProject = async ({ datasetId = '', datasetName = '', projectName = '' } = {}) => {
+   const paths = projectFolderPaths(projectName);
+diff --git a/src/utils/driveMirrorStore.js b/src/utils/driveMirrorStore.js
+index 7065263..e57243e 100644
+--- a/src/utils/driveMirrorStore.js
++++ b/src/utils/driveMirrorStore.js
+@@ -207,13 +207,15 @@ const pathUnder = (path, base) => {
+ export const projectFolderPath = (projectName) =>
+   `projects/${sanitizeSlug(projectName) || '_unassigned'}`;
+ 
+-/** Le chemin Drive du dossier de PROJET À LA RACINE DU DATASET (« <projet> ») :
+- *  c'est là que vivent les DOCUMENTS DE SECTION (<projet>/<section>, voir
+- *  driveNaming.projectSectionFolderPath — « 📁 Drive location » de chaque
+- *  section de la page projet). Un projet a donc DEUX dossiers sur le Drive, et
+- *  supprimer le projet doit emporter les deux : n'en mettre qu'un à la
+- *  corbeille laissait l'autre sur le Drive (« si je supprime un projet, son
+- *  dossier reste »). */
++/** Le chemin Drive du dossier de PROJET À LA RACINE DU DATASET (« <projet> »).
++ *  C'EST UN CHEMIN HISTORIQUE : jusqu'au 25/09/2026 les DOCUMENTS DE SECTION
++ *  d'une page projet partaient là (`<projet>/<section>`, voir
++ *  driveNaming.projectSectionFolderPath), donc un projet avait DEUX dossiers sur
++ *  le Drive. Les nouveaux envois vont dans `projects/<projet>/<section>`, mais ce
++ *  chemin reste suivi pour deux raisons : un Drive d'avant le déménagement garde
++ *  son dossier (utils/projectRootMigrate.js le range au démarrage), et un projet
++ *  qui n'aurait pas encore été visité depuis doit pouvoir être supprimé PROPREMENT
++ *  (les deux chemins partent à la corbeille). Voir projectFolderPaths. */
+ export const projectRootFolderPath = (projectName) => sanitizeSlug(projectName);
+ 
+ /** Les dossiers Drive d'un projet, du plus imbriqué au plus haut — ceux qu'une
+diff --git a/src/utils/driveNaming.js b/src/utils/driveNaming.js
+index 16355a9..e9fc1b0 100644
+--- a/src/utils/driveNaming.js
++++ b/src/utils/driveNaming.js
+@@ -69,6 +69,24 @@ export const projectSectionFolderAlias = (label) => {
+   return PROJECT_SECTION_FOLDER_ALIASES[raw.toLowerCase()] || raw;
  };
--// 💾 Save the setup currently on screen under the typed name (or « Setup n »).
--const saveCurrentSetup = () => {
--  const name = String(setupName || '').trim() || `Setup ${Object.keys(viewerSetups).length + 1}`;
--  const next = { ...viewerSetups, [name]: captureViewerSetup() };
--  setViewerSetups(next);
--  saveViewerSetups(next);
--  setSetupName(name);
--  flashSetupMsg(`✓ “${name}” saved`);
--};
--const loadSetup = (name) => {
--  const s = viewerSetups[name];
--  if (!s) { flashSetupMsg('no such setup'); return; }
--  applyViewerSetup(s);
--  setSetupName(name);
--  flashSetupMsg(`✓ “${name}” applied`);
--};
--const deleteSetup = (name) => {
--  const next = { ...viewerSetups };
--  delete next[name];
--  setViewerSetups(next);
--  saveViewerSetups(next);
--  flashSetupMsg(`“${name}” deleted`);
--};
--// ⬇ Export as a .json file — re-importable on another page / another computer.
--const exportSetup = (name) => {
--  const s = viewerSetups[name];
--  if (!s) { flashSetupMsg('no such setup'); return; }
--  try {
--    const blob = new Blob([JSON.stringify({ name, setup: s }, null, 2)], { type: 'application/json' });
--    const url = URL.createObjectURL(blob);
--    const a = document.createElement('a');
--    a.href = url;
--    a.download = `viewer-setup-${name.replace(/[^\w.-]+/g, '_')}.json`;
--    document.body.appendChild(a);
--    a.click();
--    document.body.removeChild(a);
--    setTimeout(() => URL.revokeObjectURL(url), 1000);
--    flashSetupMsg(`✓ “${name}” exported`);
--  } catch { flashSetupMsg('export failed'); }
--};
--// ⬆ Import a setup file: the name inside the file wins, and the setup is applied
--// at once so the effect is visible. A file from another build is accepted (every
--// field is merged over the defaults by applyViewerSetup).
--const importSetupFile = (file) => {
--  if (!file) return;
--  const reader = new FileReader();
--  reader.onload = () => {
--    try {
--      const raw = JSON.parse(String(reader.result || ''));
--      const s = raw && raw.setup ? raw.setup : raw;
--      if (!s || typeof s !== 'object' || !s.catStyles) throw new Error('not a viewer setup');
--      const name = String((raw && raw.name) || file.name.replace(/\.json$/i, '')).trim() || 'Imported setup';
--      const next = { ...viewerSetups, [name]: s };
--      setViewerSetups(next);
--      saveViewerSetups(next);
--      applyViewerSetup(s);
--      setSetupName(name);
--      flashSetupMsg(`✓ “${name}” imported and applied`);
--    } catch (err) {
--      flashSetupMsg(`import failed: ${(err && err.message) || 'bad file'}`);
--    }
--  };
--  reader.onerror = () => flashSetupMsg('import failed: could not read the file');
--  reader.readAsText(file);
--};
-+/* ⚠ LES CINQ GESTES DE L'ANCIENNE BANDE (💾 Save · 📂 Load · 🗑 Delete · ⬇ Export ·
-+   ⬆ Import des « setups » nommés) N'EXISTENT PLUS ICI : ils sont exactement ceux que
-+   la bande « 🎨 Styles » fait déjà, sur le mode ACTIF (voir saveActiveEnv,
-+   loadActiveEnv, deleteActiveEnv, exportActiveEnv, importActiveEnvFile ci-dessous).
-+   Deux jeux de cinq boutons pour cinq gestes, c'était la bande dupliquée que la
-+   demande de cette session a supprimée. Ce que ces « setups » contenaient a été
-+   repris en thèmes du même nom (la migration vit à côté de l'état des thèmes). */
-+/* ⬇ Export / ⬆ Import d'un « setup » nommé : même chose que ⬇ / ⬆ de la bande
-+   « 🎨 Styles » (exportActiveEnv / importActiveEnvFile, qui écrivent un fichier
-+   viewer-theme-….json ou viewer-snapshot-….json et appliquent au retour ce que le
-+   fichier annonce). Le nom gagnant est celui du fichier, comme ici. */
  
- /* 📂 MODE 1 · LOAD A THEME — the PARTIAL application of the request: the global
-    environment first, then every molecule whose class the theme knows. */
-@@ -16812,6 +16915,18 @@ const resetLipidColours = () => setCatStyles((prev) => ({
-   },
- }));
- 
-+/* 🎨 Styles — la liste des styles ENREGISTRÉES ne s'imprime plus dans la bande : elle
-+   y tenait une ligne entière (« themes: a · b · c ») pour répéter ce que la liste
-+   déroulante 📂 Load… montre déjà. Elle vit maintenant dans la bulle du groupe ET
-+   dans celle de chacun de ses boutons, comme tout le reste du mode d'emploi de la
-+   bande (cette session : « there is too much writing which can be substituted by
-+   information available by hovering »). */
-+const activeEnv = activeEnvStore();
-+const stylesSavedNames = Object.keys(activeEnv.map).sort();
-+const stylesSavedTitle = stylesSavedNames.length
-+  ? `${activeEnv.tag === 'theme' ? 'Themes' : 'Snapshots'} saved: ${stylesSavedNames.join(' · ')}`
-+  : `No ${activeEnv.tag} saved yet — type a name in the box and press 💾 Save.`;
++/** LES NOMS HISTORIQUES des dossiers de SECTION d'un projet (les cinq sections de
++ *  la page projet + le titre complet de « Scientific background »). Ils servent à
++ *  RECONNAÎTRE, sur un Drive déjà touché, un dossier de projet resté à la racine
++ *  du dataset : son contenu est fait de ces dossiers-là (voir
++ *  utils/projectRootMigrate.js). PUR. */
++export const PROJECT_SECTION_FOLDER_NAMES = [
++  'Background', 'Scientific background', 'Discussion', 'Results and discussion',
++  'Conclusions', 'Funding', 'Supporting information'
++];
 +
- return (
- <div className="flex flex-col gap-2">
- 
-@@ -16934,300 +17049,378 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors
- {structAsideMsg && (
- <span className="text-[10px] font-bold text-slate-600 bg-slate-50 border border-slate-200 rounded-md px-2 py-1 max-w-[380px] truncate" title={structAsideMsg}>{structAsideMsg}</span>
- )}
--{/* ⚙️ SETUP — save / load the WHOLE visualisation setup under a name (see
--    captureViewerSetup): the six menus with their radii, colours and group
--    colours, the 3D-label switches, the side-chain style, the 2°-structure and
--    highlight colours, Fog / Shadows / Clipping / Background / quality and the
--    lightweight style of a large system. Stored in localStorage (listable,
--    loadable, deletable) and exportable / importable as a .json file, so a look
--    can be reused on another page or another computer. */}
--<button type="button" onClick={() => setShowSetupPanel((v) => !v)}
--  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${showSetupPanel ? 'bg-teal-100 border-teal-400 text-teal-900' : 'bg-white border-teal-300 text-teal-700 hover:bg-teal-50'}`}
--  title={Object.keys(viewerSetups).length
--    ? `Save / load a predefined style — ${Object.keys(viewerSetups).length} saved: ${Object.keys(viewerSetups).join(' · ')}`
--    : 'Save the whole visualisation look (the styles of every molecule section, their sphere / bond radius and colours, the nucleic-acid group colours, the labels, Fog / Shadows / Clipping / Background, the ligand / water styles…) as a PREDEFINED STYLE, and load it back later — or export it as a .json file'}>
--  🎨 Predefined styles{Object.keys(viewerSetups).length ? ` (${Object.keys(viewerSetups).length})` : ''}
--</button>
--{setupMsg && (
--<span className="text-[10px] font-bold text-teal-700 bg-teal-50 border border-teal-200 rounded-md px-2 py-1">{setupMsg}</span>
--)}
--{showSetupPanel && (
--<div className="w-full bg-teal-50/50 border border-teal-200 rounded-lg px-2 py-2 flex flex-wrap items-center gap-2">
--  {/* ⚠ « I DO NOT UNDERSTAND THE USE OF PREDEFINED STYLES SAVE BUTTON » — le rapport de
--      cette session. Le panneau n'expliquait, nulle part, ce que chaque bouton range NI
--      à quoi sert le nom que l'on tape : cette ligne le dit UNE fois, en tête du bloc —
--      les cinq boutons de la rangée, puis les deux modes de sauvegarde qui décident de
--      ce qui est APPRIS. */}
--  <p className="w-full text-[10px] text-teal-900 leading-snug">
--    <b>Save / load the look of the whole viewer under a NAME.</b> Type a name in the box
--    (any name you like), then <b>💾 Save</b> stores the look that is on screen RIGHT NOW
--    — every molecule style, colour, radius, light, fog, background and clipping setting —
--    under that name; <b>📂 Load…</b> puts a stored look back on screen; <b>🗑 Delete</b>
--    removes the named one; <b>⬇ Export</b> / <b>⬆ Import</b> carry it as a .json file to
--    another page or computer. The <b>save mode</b> below says WHAT is remembered:
--    <b> 🎨 Theme</b> remembers styles BY MOLECULAR CLASS (a protein style you can reuse on
--    another file — cumulative), <b>📷 Snapshot</b> photographs THIS exact system
--    (molecule by molecule).
--  </p>
--  <span className="text-[10px] font-black text-teal-800 uppercase tracking-wide whitespace-nowrap">Predefined styles</span>
--  <input value={setupName} onChange={(e) => setSetupName(e.target.value)} placeholder="Style name"
--    title="Name of the predefined style — 💾 saves the CURRENT look under this name (an existing name is overwritten)"
--    className="border border-teal-300 rounded-md px-1.5 py-1 text-[11px] bg-white outline-none focus:border-teal-500 h-7 w-40" />
--  <button type="button" onClick={saveCurrentSetup}
--    className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-teal-400 text-teal-800 hover:bg-teal-100 h-7"
--    title="Save the setup currently on screen under this name">
--    💾 Save
--  </button>
--  <select value="" onChange={(e) => { if (e.target.value) loadSetup(e.target.value); }}
--    title="Load a predefined style — it replaces the current styles, colours, radii and scene settings"
--    className="border border-teal-300 rounded-md px-1.5 py-1 text-[11px] bg-white outline-none focus:border-teal-500 h-7 w-40">
--    <option value="">📂 Load…</option>
--    {Object.keys(viewerSetups).sort().map((n) => <option key={n} value={n}>{n}</option>)}
--  </select>
--  <button type="button"
--    onClick={() => (viewerSetups[setupName] ? deleteSetup(setupName) : flashSetupMsg('type the name of the predefined style to delete'))}
--    className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-red-300 text-red-600 hover:bg-red-50 h-7"
--    title="Delete the predefined style whose name is written on the left">
--    🗑 Delete
--  </button>
--  <button type="button"
--    onClick={() => (viewerSetups[setupName] ? exportSetup(setupName) : flashSetupMsg('type the name of the setup to export'))}
--    className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-teal-300 text-teal-700 hover:bg-teal-100 h-7"
--    title="Download this predefined style as a .json file — it can be imported on another page or another computer">
--    ⬇ Export
--  </button>
--  <label className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-teal-300 text-teal-700 hover:bg-teal-100 h-7 flex items-center gap-1 cursor-pointer"
--    title="Import a predefined-style .json file — it is saved under the name it carries and applied at once">
--    ⬆ Import
--    <input type="file" accept=".json,application/json" className="hidden"
--      onChange={(e) => { importSetupFile(e.target.files && e.target.files[0]); e.target.value = ''; }} />
--  </label>
--  <span className="text-[10px] text-slate-500 italic">
--    {Object.keys(viewerSetups).length
--      ? `saved: ${Object.keys(viewerSetups).sort().join(' · ')} — ⬇ exports the one named on the left`
--      : 'no predefined style yet — type a name and press 💾 Save'}
--  </span>
--  {/* ══ THE TWO SAVE MODES OF THE VISUALISATION ENVIRONMENT (the request) ══════
--      🎨 THEME — a dictionary of styles keyed by MOLECULAR CLASS (protein · nucleic
--      acid · lipid · sugar · ligand · water · ion), independent of the molecules on
--      screen. Saving MERGES into what the file already held: the classes of THIS
--      scene are updated or added, every class the file knew and the scene has not
--      keeps its style; two molecules of one class drawn differently and the bar ASKS
--      which one becomes the class default (themeConflicts).
--      📷 SNAPSHOT — the exact state of THIS system, section by section (« protein ·
--      chain A » …), with NO merge: one isolated file, mapped back onto those very
--      sections (by id, then by section key).
--      Both save the global environment first — lights, fog, background, clipping and
--      the ⚙ wheel — which is what applyThemeGlobal replays. */}
--  <div className="w-full border-t border-teal-200 pt-2 flex flex-wrap items-center gap-2">
--    <span className="text-[10px] font-black text-teal-800 uppercase tracking-wide whitespace-nowrap">Save mode</span>
--    {[['theme', '🎨 Theme (cumulative)'], ['snapshot', '📷 Snapshot (this scene)']].map(([m, label]) => (
--      <button key={m} type="button"
--        onClick={() => { setSetupSaveMode(m); setThemeConflicts(null); setThemeChoices(null); }}
--        className={`px-2 py-1 text-[10px] font-bold rounded border h-7 transition-colors ${setupSaveMode === m ? 'bg-teal-600 text-white border-teal-600' : 'bg-white text-teal-700 border-teal-300 hover:bg-teal-100'}`}
--        title={m === 'theme'
--          ? 'Theme: learn the styles BY MOLECULAR CLASS (protein · nucleic acid · lipid · sugar · ligand · water · ion) and MERGE them into the theme file — the classes the file already knew and this scene has not are kept. Two molecules of one class drawn differently: you are asked which one becomes the class default.'
--          : 'Snapshot: the exact state of THIS system, section by section (« protein · chain A » …), with no merge — one isolated file for these very coordinates.'}>
--        {label}
--      </button>
--    ))}
--    <button type="button" onClick={saveActiveEnv}
--      className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-teal-400 text-teal-800 hover:bg-teal-100 h-7"
--      title={setupSaveMode === 'theme'
--        ? 'Save the theme under the name written on the left: the styles of the classes on screen are learned (merged), the rest of the file is left untouched'
--        : 'Save a snapshot of this scene under the name written on the left (an existing name is overwritten — no merge)'}>
--      💾 Save {setupSaveMode === 'theme' ? 'theme' : 'snapshot'}
--    </button>
--    <select value="" onChange={(e) => loadActiveEnv(e.target.value)}
--      title={setupSaveMode === 'theme'
--        ? 'Load a theme: the global environment, then the style of every class the theme knows — a class it does not know keeps the neutral base style'
--        : 'Load a snapshot: the global environment and the styles of the very sections it photographed'}
--      className="border border-teal-300 rounded-md px-1.5 py-1 text-[11px] bg-white outline-none focus:border-teal-500 h-7 w-40">
--      <option value="">📂 Load…</option>
--      {Object.keys(activeEnvStore().map).sort().map((n) => <option key={n} value={n}>{n}</option>)}
--    </select>
--    <button type="button" onClick={deleteActiveEnv}
--      className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-red-300 text-red-600 hover:bg-red-50 h-7"
--      title="Delete the theme / snapshot whose name is written on the left">
--      🗑 Delete
--    </button>
--    <button type="button" onClick={() => exportActiveEnv(setupName)}
--      className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-teal-300 text-teal-700 hover:bg-teal-100 h-7"
--      title="Download it as a .json file — re-importable on another page or another computer">
--      ⬇ Export
--    </button>
--    <label className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-teal-300 text-teal-700 hover:bg-teal-100 h-7 flex items-center gap-1 cursor-pointer"
--      title="Import a theme / snapshot .json file: its mode is read from the file and it is applied at once">
--      ⬆ Import
--      <input type="file" accept=".json,application/json" className="hidden"
--        onChange={(e) => { importActiveEnvFile(e.target.files && e.target.files[0]); e.target.value = ''; }} />
--    </label>
--    <span className="text-[10px] text-slate-500 italic">
--      {setupSaveMode === 'theme'
--        ? `themes: ${Object.keys(viewerThemes).sort().join(' · ') || 'none yet — type a name and press 💾 Save theme'}`
--        : `snapshots: ${Object.keys(viewerSnaps).sort().join(' · ') || 'none yet — type a name and press 💾 Save snapshot'}`}
--    </span>
--    {themeConflicts && (
--      <div className="w-full bg-amber-50 border border-amber-300 rounded-lg px-2 py-1.5 flex flex-col gap-1">
--        <span className="text-[10px] font-black text-amber-800 uppercase tracking-wide">
--          {themeConflicts.length} class(es) drawn in two ways — choose the class default
--        </span>
--        {themeConflicts.map((c) => (
--          <label key={c.kind} className="flex items-center gap-1 text-[10px] text-amber-900">
--            <span className="font-bold w-24 shrink-0 truncate" title="The molecular class a theme keys its styles by">
--              {MOL_KIND_LABELS[c.kind] || c.kind}
--            </span>
--            <select value={(themeChoices && themeChoices[c.kind]) || ''}
--              onChange={(e) => setThemeChoices({ ...(themeChoices || {}), [c.kind]: e.target.value })}
--              className="border border-amber-300 rounded text-[10px] bg-white flex-1 min-w-0 h-6"
--              title="The molecule whose style becomes the default of this class in the theme">
--              {c.options.map((sec) => <option key={sec.id} value={sec.id}>{classLabelOfSection(sec)}</option>)}
--            </select>
--          </label>
--        ))}
--        <span className="text-[9px] text-amber-700">
--          Press 💾 Save theme again: the chosen style is written as the class default, and the styles of the other molecules are not touched.
--        </span>
--      </div>
--    )}
--  </div>
--</div>
--)}
--</VSection>
--
--{/* ══ 2 · TOOLBAR — Scene | Modify | Analysis | PyMOL, ONE horizontal row ════
--    This is §2 of the command bar now (the report: « quindi toolbar diventa la
--    sezione 2 e contiene separatamente scene, modify e analysis »). The four
--    groups are ONE wrapped row, each introduced by a small chip and separated by
--    a hairline; the expanded panels (⚡ ESP · Range, 🔢 Renumber, ✏️ Atom names,
--    🧪 PyMOL, the clipping sliders) are full-width children of this same section,
--    so the bar stays one row tall while nothing is open.
--    • Scene: 🌫 Fog · 🎨 Background · ◐ Shadows (+ 🌑 Darkness / 💡 Light) · 💡 Light colour · ✂ Clipping · ✨ Ray (+ resolution · ⬚ alpha · ◐ shadows)
--    • Modify: 🧬 From sequence · ✥ Move / ↻ Rotate · ⚗️ Rebuild H · ✏️ Atom names · ⚡ ESP · 🔢 Renumber
--    • Analysis: 📏 Measure · 🟢 Assigned
--    • PyMOL: 🧪 Selections & PyMOL
--    THE FOUR MOVES OF THIS REVISION (each one is a line of the report):
--      · ✨ Ray and its associates (the resolution, ⬚ alpha, ◐ shadows + strength)
--        left §1 General for the 🌫 Scene group — a still of the SCENE belongs with
--        the fog / background / shadows / clipping that define it, and the ◐
--        Shadows rig that aims the light of the still is right there;
--      · 📷 Figure is REMOVED (redundant): the very still of the scene is written
--        by ✨ Ray as a PNG on the computer, and the ★ figures of Publications &
--        Slides keep their own capture / import paths (the canvas, the Image
--        builder, the imported files);
--      · 🙈 Hide everything is REMOVED here: the Selections bar on the left keeps
--        its own « 🙈 Hide all » / « Show all » button on the SAME `hideAll` state,
--        so the gesture survives and this row no longer repeats it;
--      · ⚡ ESP and 🔢 Renumber (the button AND its list) left the old §2 for the
--        ✏️ Modify group — they modify the selected molecule's surface and the
--        numbering of the residues on screen;
--      · §2 « Molecular Styling » disappears with them: the styling of every
--        molecule has lived in the bar on the RIGHT of the canvas since PART 4
--        (one space per molecule), and the accordion only held those two gestures
--        and the Hide-everything button.
--    The lighting rig is untouched: Shadows locks NGL's single light in place and
--    the Darkness / Light sliders aim it (and now also drive the AMBIENT-OCCLUSION
--    equivalent, see applyShadowSettings). Its ONE user-changeable colour is the « 💡 Light colour » swatch, parked IMMEDIATELY BEFORE « ✂ Clipping » because that is where the request puts it (« in the molecular viewer add the possibility to change the color of the light and put it just before the clipping in the scene section of the toolbar ») — white by default, so the reference look is what an untouched swatch gives. ✂ Clipping pushed OFF sets the camera
--    bounds to the EXTREMES (near 0 · far 100000 · dist 0) so a large complex is
--    never cut. */}
--<VSection title="2 · Toolbar" hint="scene · modify · analysis · PyMOL">
--<span className="text-[9px] font-black text-sky-700 uppercase tracking-wide whitespace-nowrap">🌫 Scene</span>
--<button type="button" onClick={() => setFogEnabled((v) => !v)}
--  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 ${fogEnabled ? 'bg-sky-100 border-sky-400 text-sky-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
--  title="NGL's default depth fog fades distant atoms toward the background (a grey haze). Toggle it off for a crisp image — the setting is saved and persists across pages.">
--  🌫 Fog: {fogEnabled ? 'On' : 'Off'}
-+{/* ── 🎞 THE MOVIE MAKER — « capture the pose and the styles of a scene, morph to
-+    the next, write the film ». IL VIT MAINTENANT SUR LA LIGNE « 1 · General »
-+    (la demande : « the movie maker section can fit in the line of the general
-+    section (where you upload the pdb and trajectory) ») : il filme la structure
-+    et la trajectoire qui se chargent juste à côté, donc c'est là qu'on le
-+    cherche. Sa rangée de gestes n'a pas bougé d'un pixel — une ligne, pas de
-+    retour à la ligne, pas de roman (voir le commentaire de la bande). */}
-+<div className="flex flex-col gap-1 w-full">
-+<span className="text-[9px] font-black text-fuchsia-700 uppercase tracking-wide whitespace-nowrap" title="Capture the pose and the styles of a scene, morph to the next, write the film: ＋ photographs the scene as it is, ⏸ hold / morph say how long each picture stays and how long the way to the next one takes, ▶ checks the film on screen and 🔴 writes it into one file. Every gesture explains itself in its own tooltip.">🎞 Movie maker</span>
-+{/* ── UNE SEULE LIGNE DE BOUTONS (le rapport : « keep all buttons in one line.
-+    Remove the commentaries so that it fits in one row »). La rangée ne REVIENT PAS
-+    À LA LIGNE : sur un panneau étroit elle défile horizontalement, donc aucun
-+    contrôle n'est jamais repoussé dessous. Les paragraphes d'explication qui
-+    l'encombraient vivent maintenant dans les bulles des boutons, où ils se lisent au
-+    moment où on en a besoin. */}
-+<div className="flex items-center gap-2 bg-fuchsia-50 border border-fuchsia-200 rounded-lg px-2 py-1 w-full overflow-x-auto">
-+<button
-+type="button"
-+onClick={captureKeyframe}
-+disabled={kfBusy || keyframes.length >= KEYFRAME_LIMITS.keys}
-+title={keyframes.length >= KEYFRAME_LIMITS.keys
-+  ? `${KEYFRAME_LIMITS.keys} poses is the limit — delete one to capture another`
-+  : 'Store the scene AS IT IS NOW as a pose: the style of EVERY molecule section of the styling bar (its style, Color by, radii, transparency, material and its ✔) and of the six §2 menus, the palettes of the ⚙ wheel, the labels, fog, shadows, clipping, the background, the camera (its direction, its position AND its zoom), where every molecule stands AND how it is turned. Nothing moves on screen — a pose is a copy of the scene, the scene is never a pose.'}
-+className="bg-fuchsia-600 hover:bg-fuchsia-700 disabled:opacity-40 text-white font-bold px-3 py-1 rounded-md text-[11px] shadow-sm transition-colors inline-flex items-center gap-1 h-7 whitespace-nowrap"
-+>
-+＋ Capture this pose
- </button>
--{/* 🎨 BACKGROUND — the colour of the 3D scene itself (§2 Scene). It is applied to
--    the live stage (stage.setParameters({ backgroundColor })), persists like the
--    fog / shadows / clipping, and travels inside a ⚙️ saved setup. The 🧪 PyMOL
--    panel writes this very same state, so the two entries never disagree. */}
--<label className="flex items-center gap-1 text-[11px] font-bold text-slate-700 whitespace-nowrap" title="Background colour of the 3D scene — the colour the depth fog fades toward. Saved and persistent across pages, and part of a ⚙️ setup.">
--  🎨 Background
--  <input type="color" value={bgColor} onChange={(e) => setBgColor(e.target.value)}
--    className="w-8 h-6 border border-slate-300 rounded cursor-pointer" aria-label="Background colour" />
-+<label className="flex items-center gap-1 text-[10px] font-bold text-fuchsia-700 whitespace-nowrap">
-+fps
-+<select
-+value={kfFps}
-+onChange={(e) => setKfFilm((f) => ({ ...f, fps: Number(e.target.value) || f.fps }))}
-+disabled={kfBusy}
-+title="Frames per second of the FILM. The recording lasts as long as the film does (a canvas is sampled in real time), so a high rate means a longer recording — and a smoother file."
-+className="border border-fuchsia-300 rounded-md px-1.5 py-0.5 text-[11px] bg-white outline-none focus:border-fuchsia-500 h-7"
-+>
-+{VIDEO_FPS_CHOICES.map((f) => <option key={f} value={f}>{f} fps</option>)}
-+</select>
- </label>
--<button type="button" onClick={() => setBgColor(BG_DEFAULT)}
--  className="px-1.5 py-1 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100"
--  title={`Back to the default background (${BG_DEFAULT})`}>
--  ↺
-+<button
-+type="button"
-+onClick={previewKeyframeFilm}
-+disabled={kfBusy || keyframes.length < 2}
-+title={keyframes.length < 2
-+  ? 'Capture a second pose first: a film is the way from one pose to the next'
-+  : 'Play the film ON SCREEN, at the chosen rate and through the very sampler the recording uses — what you see here is what the file will hold. ⏹ Stop leaves the scene where the film had reached.'}
-+className="bg-white border border-fuchsia-400 text-fuchsia-800 hover:bg-fuchsia-100 disabled:opacity-40 font-bold px-3 py-1 rounded-md text-[11px] shadow-sm transition-colors inline-flex items-center gap-1 h-7 whitespace-nowrap"
-+>
-+{kfPreview ? '⏹ Stop the preview' : '▶ Preview the film'}
- </button>
--<button type="button" onClick={() => setShadowOn((v) => !v)}
--  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 ${shadowOn ? 'bg-slate-800 border-slate-800 text-white' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
--  title="Shadows: swaps NGL's flat camera-lit look for ONE fixed key light whose direction you aim (Azimuth / Elevation appear while ON), so every side of the structure that turns away from the light falls into real shade as you rotate. The Darkness slider then only raises the dark↔light contrast — the light stays pure white unless you say otherwise (the 💡 Light colour swatch that follows, immediately before ✂ Clipping, is the ONE control that tints this lamp). Shadows also switches on the AMBIENT-OCCLUSION equivalent: NGL 2.4 has no SSAO pass, so the cavity shading comes from the deep-ambient + strong-key-light rig with supersampled shading (sampleLevel), which is what makes crevices and the inner sides of a fold read as depth. (True WebGL shadow maps aren't supported by NGL — trying them made the molecule disappear. Every mesh is still flagged cast+receive shadows, see flagMeshShadows.)">
--  ◐ Shadows: {shadowOn ? 'On' : 'Off'}
-+<button
-+type="button"
-+onClick={recordKeyframeFilmClick}
-+disabled={kfBusy || !kfPlanNow.ok || !videoReady.ok}
-+title={!videoReady.ok
-+  ? `🎞 ${videoReady.note}`
-+  : (!kfPlanNow.ok
-+    ? `🎞 ${kfPlanNow.reason}`
-+    : `Write the film into ONE file: ${keyframeFilmSummary(keyframes.length, kfPlanNow)}. The film is the 3D canvas itself, frame by frame — styles, palettes, labels, camera, molecules — so it is exactly what is on screen. It lasts as long as the film (the recording is real time): keep this tab in the foreground. The scene comes back exactly where it was, and ⏹ Stop ends the recording WITHOUT writing anything.`)}
-+className="bg-fuchsia-600 hover:bg-fuchsia-700 disabled:opacity-40 text-white font-bold px-3 py-1 rounded-md text-[11px] shadow-sm transition-colors inline-flex items-center gap-1 h-7 whitespace-nowrap"
-+>
-+{kfBusy ? '🔴 Writing the film…' : '🔴 Record the film'}
- </button>
--{shadowOn && (
--  <label className="flex items-center gap-1 text-[11px] font-bold text-slate-700 whitespace-nowrap" title="Darkness — contrast only: the lit side gets brighter and the shaded side darker, with no colour change here (only the light/ambient INTENSITIES move, and the light keeps its colour — the 💡 Light colour swatch just before ✂ Clipping is where that colour is chosen, white by default). This is also what deepens the ambient-occlusion-like cavity shading.">
--    🌑 Darkness
--    <input type="range" min="0" max="100" value={Math.round(shadowDarkness * 100)} onChange={(e) => setShadowDarkness(Number(e.target.value) / 100)} className="w-20 accent-slate-700" />
--    <span className="text-[10px] text-slate-500 w-8">{Math.round(shadowDarkness * 100)}%</span>
--  </label>
--)}
--{(shadowOn || rayShadows) && (
--  <label className="flex items-center gap-1 text-[11px] font-bold text-slate-700 whitespace-nowrap" title="Light direction — aim the fixed key light (and therefore where the shadows fall). Azimuth 0° = light behind the camera (flat), 90° = screen-left, 180° = facing the camera; Elevation is the height above/below the horizon. The shade follows live while you drag. ⚠ The ✨ Ray still throws its cast shadow from THIS lamp too, so these sliders are shown whenever either the ◐ Shadows rig or the ray shadows are on — an off-axis lamp (about 90° / 45°) is what makes a cast shadow read as a shadow instead of hiding in the shade the canvas already draws. The COLOUR of this lamp is the 💡 Light colour swatch just beside it — the swatch and these two sliders own the same lamp.">
--    💡 Light
--    <input type="range" min="0" max="360" value={shadowAz} onChange={(e) => setShadowAz(Number(e.target.value))} className="w-16 accent-slate-700" aria-label="Light azimuth" />
--    <span className="text-[10px] text-slate-500 w-8">{shadowAz}°</span>
--    <span className="text-slate-400">/</span>
--    <input type="range" min="-90" max="90" value={shadowEl} onChange={(e) => setShadowEl(Number(e.target.value))} className="w-16 accent-slate-700" aria-label="Light elevation" />
--    <span className="text-[10px] text-slate-500 w-8">{shadowEl}°</span>
--  </label>
--)}
--{/* 💡 LIGHT COLOUR — the request: « in the molecular viewer add the possibility
--    to change the color of the light and put it just before the clipping in the
--    scene section of the toolbar ». It sits HERE, immediately before the ✂ Clipping
--    button, and it is the ONE control of the rig that tints anything: the KEY light
--    — the lamp NGL lights the scene with, the lamp the ◐ Shadows rig aims and the
--    ✨ Ray still re-renders with. White by default, which IS the reference look; the
--    ambient fill is deliberately left white (see nglLightParams in
--    utils/viewerLightRig.js), so the shaded side of an atom keeps the colour its
--    palette gave it and only the lit side takes the cast — the same bargain PyMOL's
--    `light_color` makes with `ambient_color`. Unlike the 💡 Light direction sliders
--    beside it (only the AIMED rig and the ray shadows need them), this swatch stays
--    visible in both modes: NGL re-reads `parameters.lightColor` on every frame
--    (Viewer.__updateLights, verified in the installed 2.4), so it also tints the
--    plain camera-linked headlight while ◐ Shadows is OFF. The value is validated by
--    the rig's own normalizeLightColor (junk → the white default), persisted like the
--    fog / shadows / clipping, and carried by a ⚙️ saved setup. */}
--  <label className="flex items-center gap-1 text-[11px] font-bold text-slate-700 whitespace-nowrap" title="Colour of the KEY light — the lamp the whole scene is lit with: the one the ◐ Shadows rig aims (Azimuth / Elevation) and the one the ✨ Ray re-renders in its still. White is the reference look. Any other colour tints the LIT side of every atom while the ambient fill stays white, so the shaded side keeps the colour its palette gave it (exactly PyMOL's light_color, which also leaves ambient_color alone). NGL re-reads the colour on every frame, so it applies with the Shadows rig ON and OFF; it is saved with the page and travels inside a ⚙️ saved setup.">
--    💡 Light colour
--    <input type="color" value={lightColor} onChange={(e) => setLightColor(normalizeLightColor(e.target.value))}
--      className="w-8 h-6 border border-slate-300 rounded cursor-pointer" aria-label="Light colour" />
--  </label>
--  <button type="button" onClick={() => setLightColor(LIGHT_COLOR_DEFAULT)}
--    className="px-1.5 py-1 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100"
--    title={`Back to the white key light (${LIGHT_COLOR_DEFAULT}) — the reference look, nothing tinted`}>
--    ↺
--  </button>
--<button type="button" onClick={() => setClipOn((v) => !v)}
--  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${clipOn ? 'bg-emerald-50 border-emerald-400 text-emerald-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
--  title="Clipping plane. NGL clips the scene with the camera near / far planes: clipNear / clipFar are percentages of the scene bounding sphere and clipDist is the closest the near plane may come to the camera — exactly what CUTS a big complex when you zoom in. OFF = the camera bounds are pushed to the EXTREMES (near 0 · far 100000 · dist 0), so nothing is ever cut at any zoom. ON = your own values below.">
--  ✂ Clipping: {clipOn ? 'On' : 'Off'}
-+{kfBusy && (
-+<button
-+type="button"
-+onClick={stopKeyframeFilm}
-+title="Stop the recording now. Nothing is written: the film of half a gesture is not the film of the gesture — record again to get the whole thing. The scene goes back exactly where it was."
-+className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap bg-white border-amber-400 text-amber-800 hover:bg-amber-50"
-+>
-+⏹ Stop
- </button>
--{clipOn && (
--  <>
--    <label className="flex items-center gap-1 text-[11px] font-bold text-slate-700 whitespace-nowrap" title="clipNear — how much is cut in FRONT of the molecule, as a percentage of the bounding sphere. 0 cuts nothing (the near plane sits on the front edge of the sphere); positive values bring the near plane closer to the molecule.">
--      near
--      <input type="range" min="-50" max="50" step="1" value={clipNear} onChange={(e) => setClipNear(Number(e.target.value))} className="w-20 accent-emerald-600" aria-label="Clipping near" />
--      <span className="text-[10px] text-slate-500 w-10">{clipNear}%</span>
--    </label>
--    <label className="flex items-center gap-1 text-[11px] font-bold text-slate-700 whitespace-nowrap" title="clipFar — how far BEHIND the molecule the far plane sits, as a percentage of the bounding sphere. 50 = the centre of the sphere, 100 = its back edge, 150 = one radius further; « Off » uses 100000 (effectively infinite).">
--      far
--      <input type="range" min="50" max="150" step="1" value={clipFar} onChange={(e) => setClipFar(Number(e.target.value))} className="w-20 accent-emerald-600" aria-label="Clipping far" />
--      <span className="text-[10px] text-slate-500 w-10">{clipFar}%</span>
--    </label>
--    <label className="flex items-center gap-1 text-[11px] font-bold text-slate-700 whitespace-nowrap" title="clipDist — the MINIMUM distance (Å) between the camera and the near plane. NGL floors the near plane with it, which is what cuts a large complex when you zoom in: 0 removes the floor completely (that is what « Off » uses).">
--      cam. near
--      <input type="range" min="0" max="30" step="0.1" value={clipDist} onChange={(e) => setClipDist(Math.max(0, Number(e.target.value)))} className="w-20 accent-emerald-600" aria-label="Clipping camera distance" />
--      <span className="text-[10px] text-slate-500 w-12">{clipDist} Å</span>
--    </label>
--    <button type="button"
--      onClick={() => { setClipNear(CLIP_DEFAULTS.near); setClipFar(CLIP_DEFAULTS.far); setClipDist(CLIP_DEFAULTS.dist); }}
--      className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-emerald-300 text-emerald-700 hover:bg-emerald-50"
--      title="Back to the « no cut » extremes: clipNear 0 · clipFar 100000 · clipDist 0 Å">
--      ↺ No cut (0 · 100000 · 0 Å)
--    </button>
--  </>
-+)}
-+<button
-+type="button"
-+onClick={exportKeyframeFilm}
-+disabled={kfBusy || !keyframes.length}
-+title="Write the film — every pose (its styles, its camera, its molecules, its hold, its morph, its easing) — as a .json file on your computer. 📂 Import reads it back, here or on another experiment."
-+className="bg-slate-600 hover:bg-slate-700 disabled:opacity-40 text-white font-bold px-2 py-1 rounded-md text-[11px] shadow-sm transition-colors inline-flex items-center gap-1 h-7 whitespace-nowrap"
-+>⬇ Export the film (.json)</button>
-+<label
-+className="cursor-pointer bg-slate-600 hover:bg-slate-700 text-white font-bold px-2 py-1 rounded-md text-[11px] shadow-sm transition-colors inline-flex items-center gap-1 h-7 whitespace-nowrap"
-+title="Read a film written by ⬇ Export the film, here or on another experiment. Nothing is applied to the scene when it is read: ▶ plays it, 👁 goes to one pose.">
-+📂 Import a film (.json)
-+<input type="file" accept=".json,application/json" onChange={importKeyframeFilm} disabled={kfBusy} className="hidden" />
-+</label>
-+<button
-+type="button"
-+onClick={clearKeyframes}
-+disabled={kfBusy || !keyframes.length}
-+title="Forget every pose of the film. The scene is NOT touched and nothing else on this experiment changes — the film is only a description of it."
-+className="bg-white border border-rose-300 hover:bg-rose-50 disabled:opacity-40 text-rose-700 font-bold px-2 py-1 rounded-md text-[11px] transition-colors inline-flex items-center gap-1 h-7 whitespace-nowrap"
-+>🗑 Clear the film</button>
-+{/* Le bilan du film, en clair et COMPACT : la durée est lue sur la chronologie du ▶
-+    et du 🔴 (keyframeLegs), donc elle ne peut pas les contredire. */}
-+<span className="shrink-0 text-[10px] font-bold text-slate-500 whitespace-nowrap">
-+{keyframes.length} / {KEYFRAME_LIMITS.keys} poses{keyframes.length > 1 ? ` · ${videoSecondsText(kfLegsNow.totalSeconds)}` : ''}
-+{kfPlanNow.ok ? ` · ${kfPlanNow.frames} frames at ${kfPlanNow.fps} fps` : ''}
-+</span>
-+{/* La ligne de retour ne pousse plus la rangée (min-w-0 + truncate) et sa bulle porte
-+    le texte entier : un message long reste lisible sans tenir la largeur de l'écran.
-+    Elle garde 8 rem de large quoi qu'il arrive — un retour qui disparaît serait pire
-+    que le paragraphe qu'il remplace. */}
-+<span className="flex-1 min-w-[8rem] truncate text-[10px] font-bold text-fuchsia-800"
-+title={kfMsg || (videoReady.ok ? keyframeFilmSummary(keyframes.length, kfPlanNow) : videoReady.note)}>
-+{kfMsg
-+  || (videoReady.ok
-+    ? keyframeFilmSummary(keyframes.length, kfPlanNow)
-+    : videoReady.note)}
-+</span>
-+</div>
++/** Vrai quand un dossier porte le nom d'une SECTION de projet (comparaison sans
++ *  casse ni espaces). PUR. */
++export const isProjectSectionFolderName = (name) => {
++  const slug = sanitizeSlug(name).toLowerCase();
++  if (!slug) return false;
++  return PROJECT_SECTION_FOLDER_NAMES.some((n) => sanitizeSlug(n).toLowerCase() === slug);
++};
 +
-+{/* ── THE POSES THEMSELVES — one row per keyframe, in the order the film plays
-+    them. Its time (the 0:03 on the left) is read from the film's own chronology
-+    (keyframeLegs), the very one the ▶ and the 🔴 use: the column can never
-+    disagree with the film. Everything a row changes is a SWITCH of the film and
-+    touches nothing on screen — 👁 is what puts a pose back on screen. */}
-+{keyframes.length > 0 && (() => {
-+  const { legs, totalSeconds } = keyframeLegs(keyframes);
-+  return (
-+  <div className="flex flex-col gap-1 w-full">
-+  {keyframes.map((k, i) => {
-+    const leg = legs.find((l) => l.from === i) || { start: 0 };
-+    const last = i === keyframes.length - 1;
-+    return (
-+    <div key={k.id} className="flex flex-wrap items-center gap-1.5 w-full rounded-md border border-slate-200 bg-white px-1.5 py-1">
-+    <span className="text-[10px] font-black text-fuchsia-700 w-6 shrink-0" title={`Pose ${i + 1} of ${keyframes.length}`}>#{i + 1}</span>
-+    <span className="text-[9px] font-mono font-bold text-slate-400 w-10 shrink-0" title="When this pose is reached in the film (every hold and morph before it)">{videoSecondsText(leg.start)}</span>
-+    <input
-+    type="text"
-+    value={k.name}
-+    onChange={(e) => updateKeyframe(k.id, { name: e.target.value })}
-+    disabled={kfBusy}
-+    title="The name of this pose — it is written in the exported .json, so it is how you find the pose again in a film of twelve."
-+    className="border border-slate-300 rounded-md px-1.5 py-0.5 text-[11px] font-bold bg-white outline-none focus:border-fuchsia-500 h-7 w-[8.5rem]"
-+    />
-+    <label className="flex items-center gap-1 text-[10px] font-bold text-slate-600 whitespace-nowrap">
-+    hold
-+    <input
-+    type="number"
-+    min={KEYFRAME_LIMITS.hold[0]}
-+    max={KEYFRAME_LIMITS.hold[1]}
-+    step={0.5}
-+    value={k.hold}
-+    onChange={(e) => updateKeyframe(k.id, { hold: e.target.value === '' ? 0 : Number(e.target.value) })}
-+    disabled={kfBusy}
-+    title="How long the picture STAYS on this pose before the morph starts — « I want the same image for 3 s, then the next one ». 0 s means the morph starts at once."
-+    className="w-14 border border-slate-300 rounded-md px-1 py-0.5 text-[11px] bg-white outline-none focus:border-fuchsia-500 h-7"
-+    />
-+    s
-+    </label>
-+    <label className="flex items-center gap-1 text-[10px] font-bold text-slate-600 whitespace-nowrap">
-+    morph
-+    {last ? (
-+    <span className="text-[10px] text-slate-400 italic" title="The last pose is followed by nothing: it is held, and the film stops there.">— the film ends here</span>
-+    ) : (
-+    <input
-+    type="number"
-+    min={KEYFRAME_LIMITS.morph[0]}
-+    max={KEYFRAME_LIMITS.morph[1]}
-+    step={0.5}
-+    value={k.morph}
-+    onChange={(e) => updateKeyframe(k.id, { morph: e.target.value === '' ? 0 : Number(e.target.value) })}
-+    disabled={kfBusy}
-+    title="How long the way to the NEXT pose takes, read with this pose's own easing: the styles fade, the camera glides and every molecule moves to where the next pose holds it."
-+    className="w-14 border border-slate-300 rounded-md px-1 py-0.5 text-[11px] bg-white outline-none focus:border-fuchsia-500 h-7"
-+    />
-+    )}
-+    {!last && 's'}
-+    </label>
-+    <select
-+    value={k.easing}
-+    onChange={(e) => updateKeyframe(k.id, { easing: e.target.value })}
-+    disabled={kfBusy || last}
-+    title={last ? 'The last pose has no way to go: it is held' : 'How the morph starts and ends — « smooth » starts and finishes slowly (the shape of a real gesture), « linear » keeps the same speed, « in »/« out » start or end slowly, « cut » jumps to the next pose INSTANTLY (a hard cut, exactly what a film cut is).'}
-+    className="border border-slate-300 rounded-md px-1 py-0.5 text-[11px] bg-white outline-none focus:border-fuchsia-500 h-7"
-+    >
-+    {KEYFRAME_EASINGS.map((name) => <option key={name} value={name}>{KEYFRAME_EASING_LABELS[name] || name}</option>)}
-+    </select>
-+    {/* 👁 puts the scene on this pose — the same call as ▶ and 🔴, which is why
-+        a pose can be checked without ever recording a film. */}
-+    <button
-+    type="button"
-+    onClick={() => showKeyframe(k)}
-+    disabled={kfBusy}
-+    title={`Put the scene back on “${k.name}” — the styles, the camera, where every molecule stands AND how it is turned. This is the very call the ▶ preview and the 🔴 recording use, so it is exactly what the film shows at this moment.`}
-+    className="bg-white border border-slate-300 hover:bg-fuchsia-50 text-slate-700 rounded-md px-1.5 text-[11px] font-bold h-7 whitespace-nowrap"
-+    >👁</button>
-+    <button
-+    type="button"
-+    onClick={() => moveKeyframe(k.id, -1)}
-+    disabled={kfBusy || i === 0}
-+    title="Move this pose EARLIER in the film — its hold, its morph and its easing travel with it (the scene is not touched)."
-+    className="bg-white border border-slate-300 hover:bg-slate-100 disabled:opacity-30 text-slate-600 rounded-md px-1.5 text-[11px] font-bold h-7 whitespace-nowrap"
-+    >◀</button>
-+    <button
-+    type="button"
-+    onClick={() => moveKeyframe(k.id, 1)}
-+    disabled={kfBusy || last}
-+    title="Move this pose LATER in the film — its hold, its morph and its easing travel with it (the scene is not touched)."
-+    className="bg-white border border-slate-300 hover:bg-slate-100 disabled:opacity-30 text-slate-600 rounded-md px-1.5 text-[11px] font-bold h-7 whitespace-nowrap"
-+    >▶</button>
-+    <button
-+    type="button"
-+    onClick={() => duplicateKeyframe(k.id)}
-+    disabled={kfBusy || keyframes.length >= KEYFRAME_LIMITS.keys}
-+    title="Copy this pose, right after itself (same styles, same place, same hold): it is how a picture is held longer than the 30 s a hold is allowed, and how a pose is kept before being changed."
-+    className="bg-white border border-slate-300 hover:bg-slate-100 disabled:opacity-30 text-slate-600 rounded-md px-1.5 text-[11px] font-bold h-7 whitespace-nowrap"
-+    >⧉</button>
-+    <button
-+    type="button"
-+    onClick={() => recaptureKeyframe(k.id)}
-+    disabled={kfBusy}
-+    title="Replace this pose with the scene AS IT IS NOW. Its place in the film, its hold and its morph do not change — only what it holds."
-+    className="bg-white border border-slate-300 hover:bg-slate-100 disabled:opacity-30 text-slate-600 rounded-md px-1.5 text-[11px] font-bold h-7 whitespace-nowrap"
-+    >📸</button>
-+    <button
-+    type="button"
-+    onClick={() => removeKeyframe(k.id)}
-+    disabled={kfBusy}
-+    title="Remove this pose from the film — the scene is not touched, and the poses after it simply close the gap."
-+    className="bg-white border border-rose-300 hover:bg-rose-50 disabled:opacity-30 text-rose-700 rounded-md px-1.5 text-[11px] font-bold h-7 whitespace-nowrap"
-+    >✕</button>
-+    </div>);
-+  })}
-+  </div>
-+  );
-+  })()}
-+
-+</div>
-+</VSection>
-+
-+{/* ══ 2 · TOOLBAR — Scene | Modify | Analysis | PyMOL, ONE horizontal row ════
-+    This is §2 of the command bar now (the report: « quindi toolbar diventa la
-+    sezione 2 e contiene separatamente scene, modify e analysis »). The four
-+    groups are ONE wrapped row, each introduced by a small chip and separated by
-+    a hairline; the expanded panels (⚡ ESP · Range, 🔢 Renumber, ✏️ Atom names,
-+    🧪 PyMOL, the clipping sliders) are full-width children of this same section,
-+    so the bar stays one row tall while nothing is open.
-+    • Scene: 🌫 Fog · 🎨 Background · ◐ Shadows (+ 🌑 Darkness / 💡 Light) · 💡 Light colour · ✂ Clipping · ✨ Ray (+ resolution · ⬚ alpha · ◐ shadows)
-+    • Modify: 🧬 From sequence · ✥ Move / ↻ Rotate · ⚗️ Rebuild H · ✏️ Atom names · ⚡ ESP · 🔢 Renumber
-+    • Analysis: 📏 Measure · 🟢 Assigned
-+    • PyMOL: 🧪 Selections & PyMOL
-+    THE FOUR MOVES OF THIS REVISION (each one is a line of the report):
-+      · ✨ Ray and its associates (the resolution, ⬚ alpha, ◐ shadows + strength)
-+        left §1 General for the 🌫 Scene group — a still of the SCENE belongs with
-+        the fog / background / shadows / clipping that define it, and the ◐
-+        Shadows rig that aims the light of the still is right there;
-+      · 📷 Figure is REMOVED (redundant): the very still of the scene is written
-+        by ✨ Ray as a PNG on the computer, and the ★ figures of Publications &
-+        Slides keep their own capture / import paths (the canvas, the Image
-+        builder, the imported files);
-+      · 🙈 Hide everything is REMOVED here: the Selections bar on the left keeps
-+        its own « 🙈 Hide all » / « Show all » button on the SAME `hideAll` state,
-+        so the gesture survives and this row no longer repeats it;
-+      · ⚡ ESP and 🔢 Renumber (the button AND its list) left the old §2 for the
-+        ✏️ Modify group — they modify the selected molecule's surface and the
-+        numbering of the residues on screen;
-+      · §2 « Molecular Styling » disappears with them: the styling of every
-+        molecule has lived in the bar on the RIGHT of the canvas since PART 4
-+        (one space per molecule), and the accordion only held those two gestures
-+        and the Hide-everything button.
-+    The lighting rig is untouched: Shadows locks NGL's single light in place and
-+    the Darkness / Light sliders aim it (and now also drive the AMBIENT-OCCLUSION
-+    equivalent, see applyShadowSettings). Its ONE user-changeable colour is the « 💡 Light colour » swatch, parked IMMEDIATELY BEFORE « ✂ Clipping » because that is where the request puts it (« in the molecular viewer add the possibility to change the color of the light and put it just before the clipping in the scene section of the toolbar ») — white by default, so the reference look is what an untouched swatch gives. ✂ Clipping pushed OFF sets the camera
-+    bounds to the EXTREMES (near 0 · far 100000 · dist 0) so a large complex is
-+    never cut. */}
-+<VSection title="2 · Toolbar" hint="scene · styles · modify · analysis · PyMOL">
-+{/* ── LIGNE 1 · 🌫 SCENE, SEUL DANS SA BOÎTE (la demande : « the scene, modify and
-+    analyze subgroups are not clearly separated but I do not want to use a line for
-+    each of them »). Chaque groupe est maintenant une petite boîte teintée à sa
-+    couleur, refermée sur elle-même : la séparation ne demande aucune ligne de plus,
-+    et le filet qui reste entre deux boîtes dit où finit l'une et où commence
-+    l'autre. 🎨 Styles vit sur CETTE ligne, derrière son filet. */}
-+<div className="flex flex-wrap items-center gap-1 rounded-md border border-sky-200 bg-sky-50/40 px-1.5 py-1">
-+<span className="text-[9px] font-black text-sky-700 uppercase tracking-wide whitespace-nowrap" title="The scene the structure is drawn in: NGL's depth fog, the background colour, the shadows and the one light that casts them, the clipping plane, and the high-resolution still (✨ Ray, with its resolution, its alpha and its cast shadows).">🌫 Scene</span>
-+<button type="button" onClick={() => setFogEnabled((v) => !v)}
-+  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 ${fogEnabled ? 'bg-sky-100 border-sky-400 text-sky-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
-+  title="NGL's default depth fog fades distant atoms toward the background (a grey haze). Toggle it off for a crisp image — the setting is saved and persists across pages.">
-+  🌫 Fog: {fogEnabled ? 'On' : 'Off'}
-+</button>
-+{/* 🎨 BACKGROUND — the colour of the 3D scene itself (§2 Scene). It is applied to
-+    the live stage (stage.setParameters({ backgroundColor })), persists like the
-+    fog / shadows / clipping, and travels inside a ⚙️ saved setup. The 🧪 PyMOL
-+    panel writes this very same state, so the two entries never disagree. */}
-+<label className="flex items-center gap-1 text-[11px] font-bold text-slate-700 whitespace-nowrap" title="Background colour of the 3D scene — the colour the depth fog fades toward. Saved and persistent across pages, and part of a ⚙️ setup.">
-+  🎨 Background
-+  <input type="color" value={bgColor} onChange={(e) => setBgColor(e.target.value)}
-+    className="w-8 h-6 border border-slate-300 rounded cursor-pointer" aria-label="Background colour" />
-+</label>
-+<button type="button" onClick={() => setBgColor(BG_DEFAULT)}
-+  className="px-1.5 py-1 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100"
-+  title={`Back to the default background (${BG_DEFAULT})`}>
-+  ↺
-+</button>
-+<button type="button" onClick={() => setShadowOn((v) => !v)}
-+  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 ${shadowOn ? 'bg-slate-800 border-slate-800 text-white' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
-+  title="Shadows: swaps NGL's flat camera-lit look for ONE fixed key light whose direction you aim (Azimuth / Elevation appear while ON), so every side of the structure that turns away from the light falls into real shade as you rotate. The Darkness slider then only raises the dark↔light contrast — the light stays pure white unless you say otherwise (the 💡 Light colour swatch that follows, immediately before ✂ Clipping, is the ONE control that tints this lamp). Shadows also switches on the AMBIENT-OCCLUSION equivalent: NGL 2.4 has no SSAO pass, so the cavity shading comes from the deep-ambient + strong-key-light rig with supersampled shading (sampleLevel), which is what makes crevices and the inner sides of a fold read as depth. (True WebGL shadow maps aren't supported by NGL — trying them made the molecule disappear. Every mesh is still flagged cast+receive shadows, see flagMeshShadows.)">
-+  ◐ Shadows: {shadowOn ? 'On' : 'Off'}
-+</button>
-+{shadowOn && (
-+  <label className="flex items-center gap-1 text-[11px] font-bold text-slate-700 whitespace-nowrap" title="Darkness — contrast only: the lit side gets brighter and the shaded side darker, with no colour change here (only the light/ambient INTENSITIES move, and the light keeps its colour — the 💡 Light colour swatch just before ✂ Clipping is where that colour is chosen, white by default). This is also what deepens the ambient-occlusion-like cavity shading.">
-+    🌑 Darkness
-+    <input type="range" min="0" max="100" value={Math.round(shadowDarkness * 100)} onChange={(e) => setShadowDarkness(Number(e.target.value) / 100)} className="w-20 accent-slate-700" />
-+    <span className="text-[10px] text-slate-500 w-8">{Math.round(shadowDarkness * 100)}%</span>
-+  </label>
-+)}
-+{(shadowOn || rayShadows) && (
-+  <label className="flex items-center gap-1 text-[11px] font-bold text-slate-700 whitespace-nowrap" title="Light direction — aim the fixed key light (and therefore where the shadows fall). Azimuth 0° = light behind the camera (flat), 90° = screen-left, 180° = facing the camera; Elevation is the height above/below the horizon. The shade follows live while you drag. ⚠ The ✨ Ray still throws its cast shadow from THIS lamp too, so these sliders are shown whenever either the ◐ Shadows rig or the ray shadows are on — an off-axis lamp (about 90° / 45°) is what makes a cast shadow read as a shadow instead of hiding in the shade the canvas already draws. The COLOUR of this lamp is the 💡 Light colour swatch just beside it — the swatch and these two sliders own the same lamp.">
-+    💡 Light
-+    <input type="range" min="0" max="360" value={shadowAz} onChange={(e) => setShadowAz(Number(e.target.value))} className="w-16 accent-slate-700" aria-label="Light azimuth" />
-+    <span className="text-[10px] text-slate-500 w-8">{shadowAz}°</span>
-+    <span className="text-slate-400">/</span>
-+    <input type="range" min="-90" max="90" value={shadowEl} onChange={(e) => setShadowEl(Number(e.target.value))} className="w-16 accent-slate-700" aria-label="Light elevation" />
-+    <span className="text-[10px] text-slate-500 w-8">{shadowEl}°</span>
-+  </label>
-+)}
-+{/* 💡 LIGHT COLOUR — the request: « in the molecular viewer add the possibility
-+    to change the color of the light and put it just before the clipping in the
-+    scene section of the toolbar ». It sits HERE, immediately before the ✂ Clipping
-+    button, and it is the ONE control of the rig that tints anything: the KEY light
-+    — the lamp NGL lights the scene with, the lamp the ◐ Shadows rig aims and the
-+    ✨ Ray still re-renders with. White by default, which IS the reference look; the
-+    ambient fill is deliberately left white (see nglLightParams in
-+    utils/viewerLightRig.js), so the shaded side of an atom keeps the colour its
-+    palette gave it and only the lit side takes the cast — the same bargain PyMOL's
-+    `light_color` makes with `ambient_color`. Unlike the 💡 Light direction sliders
-+    beside it (only the AIMED rig and the ray shadows need them), this swatch stays
-+    visible in both modes: NGL re-reads `parameters.lightColor` on every frame
-+    (Viewer.__updateLights, verified in the installed 2.4), so it also tints the
-+    plain camera-linked headlight while ◐ Shadows is OFF. The value is validated by
-+    the rig's own normalizeLightColor (junk → the white default), persisted like the
-+    fog / shadows / clipping, and carried by a ⚙️ saved setup. */}
-+  <label className="flex items-center gap-1 text-[11px] font-bold text-slate-700 whitespace-nowrap" title="Colour of the KEY light — the lamp the whole scene is lit with: the one the ◐ Shadows rig aims (Azimuth / Elevation) and the one the ✨ Ray re-renders in its still. White is the reference look. Any other colour tints the LIT side of every atom while the ambient fill stays white, so the shaded side keeps the colour its palette gave it (exactly PyMOL's light_color, which also leaves ambient_color alone). NGL re-reads the colour on every frame, so it applies with the Shadows rig ON and OFF; it is saved with the page and travels inside a ⚙️ saved setup.">
-+    💡 Light colour
-+    <input type="color" value={lightColor} onChange={(e) => setLightColor(normalizeLightColor(e.target.value))}
-+      className="w-8 h-6 border border-slate-300 rounded cursor-pointer" aria-label="Light colour" />
-+  </label>
-+  <button type="button" onClick={() => setLightColor(LIGHT_COLOR_DEFAULT)}
-+    className="px-1.5 py-1 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100"
-+    title={`Back to the white key light (${LIGHT_COLOR_DEFAULT}) — the reference look, nothing tinted`}>
-+    ↺
-+  </button>
-+<button type="button" onClick={() => setClipOn((v) => !v)}
-+  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${clipOn ? 'bg-emerald-50 border-emerald-400 text-emerald-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
-+  title="Clipping plane. NGL clips the scene with the camera near / far planes: clipNear / clipFar are percentages of the scene bounding sphere and clipDist is the closest the near plane may come to the camera — exactly what CUTS a big complex when you zoom in. OFF = the camera bounds are pushed to the EXTREMES (near 0 · far 100000 · dist 0), so nothing is ever cut at any zoom. ON = your own values below.">
-+  ✂ Clipping: {clipOn ? 'On' : 'Off'}
-+</button>
-+{clipOn && (
-+  <>
-+    <label className="flex items-center gap-1 text-[11px] font-bold text-slate-700 whitespace-nowrap" title="clipNear — how much is cut in FRONT of the molecule, as a percentage of the bounding sphere. 0 cuts nothing (the near plane sits on the front edge of the sphere); positive values bring the near plane closer to the molecule.">
-+      near
-+      <input type="range" min="-50" max="50" step="1" value={clipNear} onChange={(e) => setClipNear(Number(e.target.value))} className="w-20 accent-emerald-600" aria-label="Clipping near" />
-+      <span className="text-[10px] text-slate-500 w-10">{clipNear}%</span>
-+    </label>
-+    <label className="flex items-center gap-1 text-[11px] font-bold text-slate-700 whitespace-nowrap" title="clipFar — how far BEHIND the molecule the far plane sits, as a percentage of the bounding sphere. 50 = the centre of the sphere, 100 = its back edge, 150 = one radius further; « Off » uses 100000 (effectively infinite).">
-+      far
-+      <input type="range" min="50" max="150" step="1" value={clipFar} onChange={(e) => setClipFar(Number(e.target.value))} className="w-20 accent-emerald-600" aria-label="Clipping far" />
-+      <span className="text-[10px] text-slate-500 w-10">{clipFar}%</span>
-+    </label>
-+    <label className="flex items-center gap-1 text-[11px] font-bold text-slate-700 whitespace-nowrap" title="clipDist — the MINIMUM distance (Å) between the camera and the near plane. NGL floors the near plane with it, which is what cuts a large complex when you zoom in: 0 removes the floor completely (that is what « Off » uses).">
-+      cam. near
-+      <input type="range" min="0" max="30" step="0.1" value={clipDist} onChange={(e) => setClipDist(Math.max(0, Number(e.target.value)))} className="w-20 accent-emerald-600" aria-label="Clipping camera distance" />
-+      <span className="text-[10px] text-slate-500 w-12">{clipDist} Å</span>
-+    </label>
-+    <button type="button"
-+      onClick={() => { setClipNear(CLIP_DEFAULTS.near); setClipFar(CLIP_DEFAULTS.far); setClipDist(CLIP_DEFAULTS.dist); }}
-+      className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-emerald-300 text-emerald-700 hover:bg-emerald-50"
-+      title="Back to the « no cut » extremes: clipNear 0 · clipFar 100000 · clipDist 0 Å">
-+      ↺ No cut (0 · 100000 · 0 Å)
-+    </button>
-+  </>
- )}
- {/* ✨ RAY — the HIGH-RESOLUTION STILL of the scene, HERE in the 🌫 Scene group
-     (the request: « i comandi ray e i suoi associati (alpha, shadow) devono
-@@ -17338,13 +17531,118 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors
-     </button>
-   )}
- </div>
--{rayMsg && (
--<span className="text-[10px] font-bold text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">{rayMsg}</span>
-+{rayMsg && (
-+<span className="text-[10px] font-bold text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">{rayMsg}</span>
-+)}
-+</div>
-+
-+{/* ── 🎨 STYLES — l'ex-bouton « 🎨 Predefined styles » est devenu une BANDE
-+    TOUJOURS LÀ, posée sur la ligne de 🌫 Scene et séparée d'elle par un filet
-+    (la demande : « the “predefined styles” button can be replaced by a “Styles”
-+    section containing the cumulative, snapshot, save, load, delete buttons and
-+    the space to title the name of the file. The “styles” section can fit inside
-+    the line of the “scene” section but it should be clear that they are
-+    separated »). Les cinq gestes demandés, dans cet ordre : le NOM, les DEUX
-+    modes d'apprentissage (🎨 Cumulative · 📷 Snapshot), puis 💾 Save · 📂 Load… ·
-+    🗑 Delete — et, au bout, les deux gestes de FICHIER (⬇ · ⬆) qui emportent une
-+    style sur un autre ordinateur.
-+    IL N'Y A PLUS QU'UN JEU DE CES CINQ BOUTONS : la bande en montrait DEUX (les
-+    « setups » nommés, puis les deux modes), donc deux pavés de prose pour
-+    expliquer deux fois la même chose. Tout ce qui était écrit ici se lit
-+    maintenant en survolant le bouton qui le fait — la liste des styles
-+    enregistrées comprise — et la bande ne coûte plus une seule ligne de texte.
-+    Les « setups » de l'ancienne bande sont repris une fois comme thèmes du même
-+    nom (la migration est en tête du composant, à côté de l'état des thèmes). */}
-+<span className="w-px h-6 bg-slate-200 shrink-0" aria-hidden="true" />
-+<div className="flex flex-wrap items-center gap-1 rounded-md border border-teal-200 bg-teal-50/40 px-1.5 py-1">
-+<span className="text-[9px] font-black text-teal-700 uppercase tracking-wide whitespace-nowrap" title={`Save / load the whole visualisation look under a NAME: every molecule style, its colour, its radii, the labels, Fog / Shadows / Clipping / Background, the light and its colour… ${stylesSavedTitle}`}>🎨 Styles</span>
-+<input
-+type="text"
-+value={setupName}
-+onChange={(e) => setSetupName(e.target.value)}
-+onKeyDown={(e) => { if (e.key === 'Enter') saveActiveEnv(); }}
-+placeholder="Style name"
-+title="The NAME of the style — 💾 saves the look on screen under it (an existing name is overwritten, and an empty box gets a name typed for you), 🗑 Delete removes the one written here, ⬇ exports it. It is the name you will find in 📂 Load… and the name of the .json file."
-+className="border border-teal-300 rounded-md px-2 py-1 text-[11px] w-28 bg-white outline-none focus:border-teal-500 h-7"
-+/>
-+{[['theme', '🎨 Cumulative'], ['snapshot', '📷 Snapshot']].map(([m, label]) => (
-+<button key={m} type="button"
-+onClick={() => { setSetupSaveMode(m); setThemeConflicts(null); setThemeChoices(null); }}
-+title={m === 'theme'
-+? 'Cumulative: 💾 Save learns the styles BY MOLECULAR CLASS (protein · nucleic acid · lipid · sugar · ligand · water · ion) and MERGES them into the theme — a style you can reuse on another file; a class the theme does not know keeps the neutral base style.'
-+: 'Snapshot: 💾 Save photographs THIS exact scene, section by section (« protein · chain A » …), with no merge — one isolated setting for this system only.'}
-+className={`px-2 py-1 text-[10px] font-bold rounded border h-7 whitespace-nowrap ${setupSaveMode === m ? 'bg-teal-600 border-teal-700 text-white' : 'bg-white border-teal-300 text-teal-800 hover:bg-teal-100'}`}>
-+{label}
-+</button>
-+))}
-+<button type="button" onClick={saveActiveEnv}
-+title={setupSaveMode === 'theme'
-+? `Save the theme under the name written on the left: the styles of the classes on screen are learned (merged), the rest of the file is untouched. A name is typed for you when the box is empty. ${stylesSavedTitle}`
-+: `Save a snapshot of this scene under the name written on the left (an existing name is overwritten — no merge): one picture of THIS system, section by section. A name is typed for you when the box is empty. ${stylesSavedTitle}`}
-+className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-teal-400 text-teal-800 hover:bg-teal-100 h-7 whitespace-nowrap">
-+💾 Save {setupSaveMode === 'theme' ? 'theme' : 'snapshot'}
-+</button>
-+<select value="" onChange={(e) => loadActiveEnv(e.target.value)}
-+title={setupSaveMode === 'theme'
-+? `Put a saved theme back on screen: the global environment first, then the style of every class the theme knows — a class it does not know keeps the neutral base style. ${stylesSavedTitle}`
-+: `Put a saved snapshot back on screen: the global environment and the styles of the very sections it photographed. ${stylesSavedTitle}`}
-+className="border border-teal-300 rounded-md px-1.5 py-1 text-[11px] bg-white outline-none focus:border-teal-500 h-7 max-w-[10rem]">
-+<option value="">📂 Load…</option>
-+{Object.keys(activeEnvStore().map).sort().map((n) => <option key={n} value={n}>{n}</option>)}
-+</select>
-+<button type="button" onClick={deleteActiveEnv}
-+title={`Delete the theme / snapshot whose name is written on the left. The scene on screen is NOT touched — deleting a saved style never changes what you see. ${stylesSavedTitle}`}
-+className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-teal-300 text-teal-800 hover:bg-teal-100 h-7 whitespace-nowrap">
-+🗑 Delete
-+</button>
-+<button type="button" onClick={() => exportActiveEnv(setupName)}
-+title={`Download the style named on the left as a .json file — it can be imported on another page or another computer. ${stylesSavedTitle}`}
-+className="px-1.5 py-1 text-[11px] font-bold rounded border bg-white border-teal-300 text-teal-800 hover:bg-teal-100 h-7">
-+⬇
-+</button>
-+<label title={`Import a style .json file (written by ⬇): its mode is read from the file and it is applied at once. ${stylesSavedTitle}`}
-+className="cursor-pointer px-1.5 py-1 text-[11px] font-bold rounded border bg-white border-teal-300 text-teal-800 hover:bg-teal-100 h-7 inline-flex items-center">
-+⬆
-+<input type="file" accept=".json,application/json"
-+onChange={(e) => { importActiveEnvFile(e.target.files && e.target.files[0]); e.target.value = ''; }}
-+className="hidden" />
-+</label>
-+{setupMsg && (
-+<span className="text-[10px] font-bold text-teal-700 bg-teal-50 border border-teal-200 rounded-md px-2 py-1 max-w-[320px] truncate" title={setupMsg}>{setupMsg}</span>
-+)}
-+{/* Le conflit d'un THÈME (deux molécules d'une même classe dessinées autrement) :
-+    le SEUL texte que la bande garde, parce qu'il attend une réponse. */}
-+{themeConflicts && (
-+<div className="w-full flex flex-wrap items-center gap-1.5 bg-amber-50 border border-amber-300 rounded-md px-2 py-1">
-+<span className="text-[10px] font-black text-amber-800" title="A theme keys its styles by MOLECULAR CLASS: when two molecules of the same class are drawn differently, you choose which one becomes the class default — then press 💾 Save again. The styles of the other molecules are not touched.">
-+{themeConflicts.length} class(es) drawn in two ways — choose the class default
-+</span>
-+{themeConflicts.map((c) => (
-+<label key={c.kind} className="flex items-center gap-1 text-[10px] font-bold text-amber-900">
-+<span title="The molecular class a theme keys its styles by">{MOL_KIND_LABELS[c.kind] || c.kind}</span>
-+<select value={(themeChoices && themeChoices[c.kind]) || ''}
-+onChange={(e) => setThemeChoices({ ...(themeChoices || {}), [c.kind]: e.target.value })}
-+title="The molecule whose style becomes the default of this class in the theme"
-+className="border border-amber-300 rounded-md px-1.5 py-1 text-[11px] bg-white outline-none focus:border-amber-500 h-7">
-+{c.options.map((sec) => <option key={sec.id} value={sec.id}>{classLabelOfSection(sec)}</option>)}
-+</select>
-+</label>
-+))}
-+</div>
- )}
-+</div>
-+
-+{/* ── LIGNE 2 · ✏️ MODIFY │ 📏 ANALYSIS │ 🧪 PYMOL : les trois partagent la
-+    deuxième ligne, chacun dans sa boîte, séparés par un filet (la demande :
-+    « the “analysis” and “modify” can be in one line but clearly separated »).
-+    Cette barre pleine largeur est ce qui met fin à la ligne 1 : un frère qui
-+    occupe toute la largeur oblige les suivants à descendre. */}
-+<span className="basis-full h-0" aria-hidden="true" />
+ /* ── Le rangement d'un STORAGE et de ses BOÎTES ─────────────────────────────
+    Une boîte de stockage n'est PAS une expérience : c'est un EMPLACEMENT. Elle
+    ne suit donc pas l'architecture d'une expérience (ni « instance », ni
+@@ -166,13 +184,25 @@ export const driveFolderPath = (ctx = {}) => {
+     return protoSlug ? ['protocols', protoSlug] : ['protocols'];
+   }
+   const segs = [];
+-  if (ctx.project) segs.push(ctx.project);
+-  if (ctx.test) {
+-    // Test files: Project/Test/Instance/Section
+-    segs.push(ctx.test);
++  const test = String(ctx.test || '').trim();
++  const projectSeg = sanitizeSlug(ctx.project);
++  if (test) {
++    // Test files: Project/Test/Instance/Section (l'ordre historique de cette
++    // fonction — le chemin d'une EXPÉRIENCE, conteneur `projects/` compris, est
++    // celui de canonicalExperimentPath, qui est la route réellement utilisée).
++    if (projectSeg) segs.push(projectSeg);
++    segs.push(test);
+     if (ctx.instance) segs.push(ctx.instance);
++  } else if (projectSeg) {
++    /* UN DOCUMENT DE PROJET (aucune expérience) : il vit DANS le dossier du
++       projet, comme ses expériences, ses figures, son document de texte et ses
++       `useful_files` — jamais dans un dossier au nom du projet POSÉ À LA RACINE
++       du dataset (défaut signalé le 25/09/2026 : « je trouve des dossiers au nom
++       d'un projet en dehors du dossier projects »). C'est aussi ce que rend
++       projectSectionFolderPath. */
++    segs.push(PROJECTS_CONTAINER, projectSeg);
+   }
+-  if (ctx.section) segs.push(ctx.test ? ctx.section : projectSectionFolderAlias(ctx.section));
++  if (ctx.section) segs.push(test ? ctx.section : projectSectionFolderAlias(ctx.section));
+   return segs.map(sanitizeSlug).filter(Boolean);
+ };
  
- {/* ── Modify ─────────────────────────────────────────────────────────────── */}
- <span className="w-px h-6 bg-slate-200 shrink-0" aria-hidden="true" />
--<span className="text-[9px] font-black text-amber-700 uppercase tracking-wide whitespace-nowrap">✏️ Modify</span>
-+<div className="flex flex-wrap items-center gap-1 rounded-md border border-amber-200 bg-amber-50/40 px-1.5 py-1">
-+<span className="text-[9px] font-black text-amber-700 uppercase tracking-wide whitespace-nowrap" title="Change the molecule itself: build it from the page's sequence, fold it for its disulphides, show or hide the drawn disulphide bonds, rebuild the hydrogens, rename the atoms, colour by electrostatic potential and renumber the residues.">✏️ Modify</span>
- {/* 🧬 From sequence — the page's sequence (Proteins / DNA / RNA) becomes a 3D
-     structure at any moment, even over a loaded PDB (which is put aside: the
-     ↩ Restore PDB button of §1 General brings it back). No network round trip:
-@@ -17382,6 +17680,34 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
- {disulfideFoldMsg}
- </span>
- )}
-+{/* ⚭ Disulfides: shown / hidden — L'INTERRUPTEUR DU DESSIN, PAS DE LA DÉFINITION.
-+    Le pont est écrit par la page (CONECT SG–SG) et NGL le dessine ; ngl@2.4.0
-+    n'offre AUCUNE visibilité par liaison, donc cacher le pont se fait dans le
-+    GRAPHE de la structure au chargement (utils/disulfideBonds.js), à côté des deux
-+    autres règles de liaisons — et le modèle est resservi, le même geste que le ⚗️
-+    rebuild des hydrogènes. Rien du fichier n'est touché : ni le PDB, ni le texte
-+    de la page, ni le 📥 Download, ni la copie Drive, ni « Cysteine states ».
-+    Inactif quand la structure à l'écran ne dessine aucun pont — et le geste le DIT
-+    alors au lieu de ne rien faire, comme son voisin ⚭ Fold for disulfides. */}
-+<button
-+type="button"
-+onClick={toggleDisulfideBonds}
-+disabled={disulfideDrawn.bonds.length === 0}
-+title="Show or hide the disulphide bonds the model on screen DRAWS. Hiding takes every Sγ–Sγ link between two residues out of the structure's own bond graph (utils/disulfideBonds.js), so Sticks / Ball+stick / Lines stop drawing them — nothing else changes: every atom stays, and the definition in “Cysteine states”, the PDB file, the 📥 download and the Drive copy keep their S–S. The model is then re-served, the same gesture as the ⚗️ hydrogen rebuild. Inactive when the structure on screen draws no disulphide at all: NGL draws an S–S from the bond graph only (a CONECT record, or the distance between two Sγ) — a file that declares SSBOND alone, with its two cysteines apart, draws none."
-+className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap bg-white border-amber-300 text-amber-700 hover:bg-amber-50 disabled:opacity-40 disabled:cursor-not-allowed"
-+>
-+{disulfidesShown ? '⚭ Disulfides: shown' : '⚭ Disulfides: hidden'}
-+</button>
-+{/* Le compte rendu, juste à côté : chaque pont par son NUMÉRO AFFICHÉ et par la
-+    distance Sγ–Sγ RÉELLE de l'écran — un pont dessiné mais étiré est dit ÉTIRÉ,
-+    il n'est pas caché (c'est la distance de liaison de utils/disulfideFold.js qui
-+    tranche, la seule définition de « pont fermé »). */}
-+{disulfideShowMsg && (
-+<span title={disulfideShowMsg} className="text-[10px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1 h-7 inline-flex items-center max-w-[380px] truncate">
-+{disulfideShowMsg}
-+</span>
-+)}
-+
- {/* ↩ Back to PDB — THE WAY BACK, WHERE THE GESTURE WAS MADE. §1 General's toggle
-     does exactly the same thing (ONE implementation: restoreStashedPdb), but the
-     report is explicit — the button that brings back the structure the viewer
-@@ -17565,10 +17891,12 @@ className="text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 bord
- {/* The ONE renumbering panel of the viewer (see renderRenumberPanel) — the same
-     specification the 🔢 of a molecule's header opens. */}
- {renderRenumberPanel()}
-+</div>
+@@ -386,10 +416,17 @@ export const projectImagesFolderPath = (projectName) => (sanitizeSlug(projectNam
+ /** Canonical Drive folder NAMES (relative to the dataset folder) of a PROJECT
+  *  DOCUMENT attached to one of the project page's sections (Scientific
+  *  background / Discussion / Conclusions …):
+- *      <project>/<section>
+- *  Exactly the routing driveFolderPath({ project, section }) gives an upload
+- *  carrying that naming context, so the label shown in the interface and the
+- *  folder where the file really lands can never drift apart. */
++ *      projects/<project>/<section>
++ *  Le dossier du PROJET d'abord, exactement comme ses expériences
++ *  (`projects/<projet>/<expérience>/…`), ses figures (`…/images`), son document
++ *  de texte (`<projet>_document.json`) et ses `useful_files` : un projet n'a
++ *  qu'UN dossier sur le Drive. Avant le 25/09/2026 cette route était
++ *  `<projet>/<section>`, donc un dossier au nom du projet POSÉ À LA RACINE du
++ *  dataset, à côté de `projects/` (deux dossiers par projet, dont un orphelin
++ *  quand le projet était renommé) ; utils/projectRootMigrate.js déplace ce qui
++ *  existe déjà. La chaîne est exactement celle de l'envoi
++ *  (`driveFolderPath({ project, section })`, voir projectDetailModule.jsx) : le
++ *  libellé affiché et le dossier réellement créé ne peuvent pas diverger. */
+ export const projectSectionFolderPath = (projectName, section) =>
+   driveFolderPath({ project: projectName, section });
  
- {/* ── Analysis ───────────────────────────────────────────────────────────── */}
- <span className="w-px h-6 bg-slate-200 shrink-0" aria-hidden="true" />
--<span className="text-[9px] font-black text-rose-700 uppercase tracking-wide whitespace-nowrap">📏 Analysis</span>
-+<div className="flex flex-wrap items-center gap-1 rounded-md border border-rose-200 bg-rose-50/40 px-1.5 py-1">
-+<span className="text-[9px] font-black text-rose-700 uppercase tracking-wide whitespace-nowrap" title="Read the structure: measure the distance between two atoms (in Å), clear the drawn distances and show or hide the green highlight of the atoms assigned by NMR.">📏 Analysis</span>
- <button
- type="button"
- onClick={toggleMeasureMode}
-@@ -17600,10 +17928,12 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors
- >
- {showManualHighlight ? '🟢 Assigned: On' : '⚪ Assigned: Off'}
- </button>
-+</div>
+diff --git a/src/utils/driveUpload.js b/src/utils/driveUpload.js
+index 74bbed3..892c827 100644
+--- a/src/utils/driveUpload.js
++++ b/src/utils/driveUpload.js
+@@ -101,6 +101,11 @@ import {
+ import { pickCanonicalFolder, emptyTwinIds, isCanonicalDatasetDir } from './datasetDirTwins';
+ import { oncePerFolder, folderCreateKey } from './folderRace';
+ import { getCloudProvider, nextcloudConfigured, ncUploadFile } from './nextcloud';
++/* L'ENVOI DES GROS FICHIERS PAR MORCEAUX (session « resumable ») : au-delà de
++   `RESUMABLE_MIN_BYTES`, une seule requête multipart n'a aucun point de reprise —
++   une trajectoire MD de plusieurs Go arrivait alors « à moitié » (l'arborescence
++   créée, le fichier absent : voir driveChunkUpload.js). */
++import { shouldChunkUpload, uploadBlobInChunks } from './driveChunkUpload';
+ import {
+   enqueuePendingUpload, removePendingUpload, listPendingUploads,
+   touchPendingUpload, notifyPendingChanged,
+@@ -214,14 +219,24 @@ export const driveFetch = async (path, opts = {}) => {
+   // be aborted after 20 seconds. File-content DOWNLOADS (`alt=media`) get the
+   // same long timeout by default, since the bytes are streamed as the response.
+   const isFileDownload = typeof path === 'string' && path.includes('alt=media');
+-  const { timeout: timeoutMs = isFileDownload ? 10 * 60 * 1000 : 20000, ...rest } = opts;
++  const { timeout: timeoutMs = isFileDownload ? 10 * 60 * 1000 : 20000, accept = null, ...rest } = opts;
++  /* UN CHEMIN ABSOLU EST UTILISÉ TEL QUEL : l'URL d'une session d'envoi
++     « resumable » est rendue par Drive dans l'en-tête `Location` et ne se
++     reconstruit pas (elle porte un `upload_id`). Les appels ordinaires — chemins
++     relatifs — sont préfixés comme avant. */
++  const isAbsolute = typeof path === 'string' && /^https?:\/\//i.test(path);
++  const url = isAbsolute ? path : `https://www.googleapis.com${path}`;
++  /* `accept` : des statuts NON-ok qui ont un sens ici — 308 pendant un envoi
++     par morceaux (« le morceau est passé, la session continue »). Ils ne sont
++     donc pas convertis en erreur (voir driveChunkUpload.js). */
++  const accepted = Array.isArray(accept) ? accept : [];
  
- {/* ── PyMOL ──────────────────────────────────────────────────────────────── */}
- <span className="w-px h-6 bg-slate-200 shrink-0" aria-hidden="true" />
--<span className="text-[9px] font-black text-violet-700 uppercase tracking-wide whitespace-nowrap">🧪 PyMOL</span>
-+<div className="flex flex-wrap items-center gap-1 rounded-md border border-violet-200 bg-violet-50/40 px-1.5 py-1">
-+<span className="text-[9px] font-black text-violet-700 uppercase tracking-wide whitespace-nowrap" title="Write, load and keep PyMOL scripts: every selection a script defines — and every look it creates on a raw expression — appears in the Selections bar on the LEFT of the 3D viewer (◀ collapses it). The macro itself is saved in Library → PyMOL Scripts, one session per experiment.">🧪 PyMOL</span>
- <button type="button" onClick={() => setShowPymolPanel((v) => !v)}
-   className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 ${showPymolPanel ? 'bg-violet-100 border-violet-400 text-violet-900' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
-   title="Paste or load a PyMOL script (select / show / hide / color / set sphere_scale·transparency / bg_color / cartoon · ribbon · tube / surface / spectrum / util.ray_shadows). Every selection the script defines — and every look it creates on a raw expression — appears in the Selections bar on the LEFT of the 3D viewer (◀ collapses it).">
-@@ -17691,6 +18021,7 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors
-     )}
-   </div>
- )}
-+</div>
- </VSection>
+   const perform = async (tok, attempt) => {
+     const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+     const timeout = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+     let res;
+     try {
+-      res = await fetch(`https://www.googleapis.com${path}`, {
++      res = await fetch(url, {
+         ...rest,
+         signal: controller ? controller.signal : undefined,
+         headers: { Authorization: `Bearer ${tok}`, ...(rest.headers || {}) }
+@@ -264,7 +279,7 @@ export const driveFetch = async (path, opts = {}) => {
+     if (res.status === 403) {
+       throwCode('TOKEN_EXPIRED', 'Google Drive denied the request (scope or permissions). Please reconnect Google Drive from the sidebar.');
+     }
+-    if (!res.ok) {
++    if (!res.ok && !accepted.includes(res.status)) {
+       let msg = `Drive error (HTTP ${res.status})`;
+       try {
+         const j = await res.json();
+@@ -1306,7 +1321,7 @@ export const moveTestFolderOutOfProject = async ({ testName, projectName }) => {
+  *  `path` is an explicit path array or `ctx` still describes a legacy folder
+  *  (non-experiment uploads such as library figures or project documents).
+  *  @returns {{ id:string, name:string, driveUrl:string }} */
+-const uploadDriveFileToFolderOnce = async ({ name, mimeType, file, ctx = null, path = null, folderNames = null, folderId = '' }) => {
++const uploadDriveFileToFolderOnce = async ({ name, mimeType, file, ctx = null, path = null, folderNames = null, folderId = '', onProgress = null }) => {
+   // ── Nextcloud provider ─────────────────────────────────────────────────────
+   // Mirror the Drive folder layout on the WebDAV tree:
+   //   <user>/Lab Workspace/<dataset>/<project>/<test>/<page section>/[<subsection>]
+@@ -1388,22 +1403,43 @@ const uploadDriveFileToFolderOnce = async ({ name, mimeType, file, ctx = null, p
+     ? { name, mimeType: type }
+     : { name, mimeType: type, parents: [targetId] });
  
- {/* (The global Side / Backbone / Mol / Large / Water selectors and the docking
-@@ -17767,7 +18098,26 @@ className="border border-indigo-300 rounded-md px-1.5 py-0.5 text-[11px] bg-whit
- {waitingTrajFile && (
-   <span className="text-amber-700">
-     ⏳ “{declaredTrajName}” is declared on this experiment but is not loaded in this browser yet — press
--    “⬇️ Bring it back from Google Drive” on the page (the reference copy), or pick the file here with 📂 Trajectory.
-+    “⬇️ Bring it back from the cloud” (the reference copy), or pick the file here with 📂 Trajectory.
-+    {/* LE GESTE EST ICI, à côté de la phrase qui le demande : rendu dès que la page
-+        fournit sa fonction de reprise (celle de sa tentative automatique). Il est
-+        inerte pendant qu'une recherche tourne, et le constat de cette recherche
-+        (bringTrajectoryNote) s'affiche juste après — un clic sans Drive connecté ne
-+        doit pas rester muet. */}
-+    {onBringTrajectoryBack && (
-+      <button
-+        type="button"
-+        onClick={onBringTrajectoryBack}
-+        disabled={bringTrajectoryBusy}
-+        title={`Bring “${declaredTrajName}” back from the cloud (the reference copy) — the very attempt this page makes on its own, restarted on demand.`}
-+        className="ml-1.5 px-2 py-0.5 text-[10px] font-bold rounded-md border transition-colors h-6 inline-flex items-center whitespace-nowrap bg-white border-amber-400 text-amber-800 hover:bg-amber-50 disabled:opacity-40 disabled:cursor-not-allowed"
-+      >
-+        {bringTrajectoryBusy ? '⏳ Bringing it back…' : '⬇️ Bring it back from the cloud'}
-+      </button>
-+    )}
-+    {bringTrajectoryNote && (
-+      <span className="ml-1.5 font-semibold text-amber-800">{bringTrajectoryNote}</span>
-+    )}
-     ▶ turns on as soon as the frames are read.
-   </span>
- )}
-@@ -17814,7 +18164,7 @@ title={!videoReady.ok
-   ? `🎬 ${videoReady.note}`
-   : (trajStatus !== 'ready' || keptFrames === 0
-     ? 'Load a trajectory first — the film is made of the frames the ▶ button plays'
--    : `Record the run into ONE file: ${videoPlanSummary(videoPlanNow)}. The film is taken from the 3D canvas itself, frame by frame, so it is exactly what is on screen — styles, labels, extra molecules, fog. It lasts as long as the film (the recording is real time): keep this tab in the foreground. The file is written on your computer when the run is over; ⏹ Stop ends it WITHOUT writing anything.`)}
-+    : `Record the run into ONE file: ${videoPlanSummary(videoPlanNow)}. 🎬 The film is the 3D canvas with the vignette the screen draws over it — the molecules, the styles, the labels and the extra molecules exactly as they are, frame by frame, in the order ▶ plays the run. It lasts as long as the film (the recording is real time): keep this tab in the foreground, a hidden tab is not painted. The file is written on your computer when the run is over, as a real video file (.webm, or mp4 where the browser can encode it) — nothing is uploaded anywhere; ⏹ Stop ends it WITHOUT writing anything.`)}
- className="bg-violet-600 hover:bg-violet-700 disabled:opacity-40 text-white font-bold px-3 py-1 rounded-md text-[11px] shadow-sm transition-colors inline-flex items-center gap-1 h-7 whitespace-nowrap"
- >
- {videoBusy ? '🎬 Recording…' : '🎬 Record the run'}
-@@ -17836,249 +18186,9 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
-     : (videoReady.ok ? videoPlanNow.reason : videoReady.note))}
- </span>
- </div>
--<p className="text-[10px] text-slate-500 leading-tight">
--🎬 The film is the 3D canvas with the vignette the screen draws over it — the molecules, the styles, the labels
--and the extra molecules exactly as they are, frame by frame, in the order ▶ plays the run. Written on your computer
--as a real video file (<b>.webm</b>, or <b>mp4</b> where the browser can encode it) — nothing is uploaded anywhere;
--<b>keep this tab in the foreground</b> while it records (a hidden tab is not painted).
--</p>
- </VSection>
- )}
- 
--{/* ── 🎞 THE MOVIE MAKER — « capture the pose and the styles of a scene, morph to
--    the next, write the film ». (The section was called « 🎞 Poses & styles » until
--    this session — « rename “poses and style” as “movie maker” » — so the panel now
--    carries the name of the gesture it serves; nothing else about it moved.) A
--    keyframe is a PHOTOGRAPH of the viewer (the ⚙️ setup: menus, palettes, labels,
--    fog, shadows, clipping, background, camera, where every molecule stands) plus
--    where each molecule is TURNED (its
--    quaternion, which a setup does not carry). ▶ and 🔴 go through the SAME
--    function (applyKeyframeSample over sampleKeyframeFilm), so the film seen and
--    the film written cannot drift apart. Nothing is uploaded: the .webm and the
--    .json are written on this computer. The film is remembered between visits
--    (localStorage) exactly like the fps of the 🎬 video. */}
--<VSection title="🎞 Movie maker" hint="capture this pose · hold & morph · ▶ check · 🔴 record the film">
--{/* ── UNE SEULE LIGNE DE BOUTONS (le rapport : « keep all buttons in one line.
--    Remove the commentaries so that it fits in one row »). La rangée ne REVIENT PAS
--    À LA LIGNE : sur un panneau étroit elle défile horizontalement, donc aucun
--    contrôle n'est jamais repoussé dessous. Les paragraphes d'explication qui
--    l'encombraient vivent maintenant dans les bulles des boutons, où ils se lisent au
--    moment où on en a besoin. */}
--<div className="flex items-center gap-2 bg-fuchsia-50 border border-fuchsia-200 rounded-lg px-2 py-1 w-full overflow-x-auto">
--<button
--type="button"
--onClick={captureKeyframe}
--disabled={kfBusy || keyframes.length >= KEYFRAME_LIMITS.keys}
--title={keyframes.length >= KEYFRAME_LIMITS.keys
--  ? `${KEYFRAME_LIMITS.keys} poses is the limit — delete one to capture another`
--  : 'Store the scene AS IT IS NOW as a pose: the style of EVERY molecule section of the styling bar (its style, Color by, radii, transparency, material and its ✔) and of the six §2 menus, the palettes of the ⚙ wheel, the labels, fog, shadows, clipping, the background, the camera (its direction, its position AND its zoom), where every molecule stands AND how it is turned. Nothing moves on screen — a pose is a copy of the scene, the scene is never a pose.'}
--className="bg-fuchsia-600 hover:bg-fuchsia-700 disabled:opacity-40 text-white font-bold px-3 py-1 rounded-md text-[11px] shadow-sm transition-colors inline-flex items-center gap-1 h-7 whitespace-nowrap"
-->
--＋ Capture this pose
--</button>
--<label className="flex items-center gap-1 text-[10px] font-bold text-fuchsia-700 whitespace-nowrap">
--fps
--<select
--value={kfFps}
--onChange={(e) => setKfFilm((f) => ({ ...f, fps: Number(e.target.value) || f.fps }))}
--disabled={kfBusy}
--title="Frames per second of the FILM. The recording lasts as long as the film does (a canvas is sampled in real time), so a high rate means a longer recording — and a smoother file."
--className="border border-fuchsia-300 rounded-md px-1.5 py-0.5 text-[11px] bg-white outline-none focus:border-fuchsia-500 h-7"
-->
--{VIDEO_FPS_CHOICES.map((f) => <option key={f} value={f}>{f} fps</option>)}
--</select>
--</label>
--<button
--type="button"
--onClick={previewKeyframeFilm}
--disabled={kfBusy || keyframes.length < 2}
--title={keyframes.length < 2
--  ? 'Capture a second pose first: a film is the way from one pose to the next'
--  : 'Play the film ON SCREEN, at the chosen rate and through the very sampler the recording uses — what you see here is what the file will hold. ⏹ Stop leaves the scene where the film had reached.'}
--className="bg-white border border-fuchsia-400 text-fuchsia-800 hover:bg-fuchsia-100 disabled:opacity-40 font-bold px-3 py-1 rounded-md text-[11px] shadow-sm transition-colors inline-flex items-center gap-1 h-7 whitespace-nowrap"
-->
--{kfPreview ? '⏹ Stop the preview' : '▶ Preview the film'}
--</button>
--<button
--type="button"
--onClick={recordKeyframeFilmClick}
--disabled={kfBusy || !kfPlanNow.ok || !videoReady.ok}
--title={!videoReady.ok
--  ? `🎞 ${videoReady.note}`
--  : (!kfPlanNow.ok
--    ? `🎞 ${kfPlanNow.reason}`
--    : `Write the film into ONE file: ${keyframeFilmSummary(keyframes.length, kfPlanNow)}. The film is the 3D canvas itself, frame by frame — styles, palettes, labels, camera, molecules — so it is exactly what is on screen. It lasts as long as the film (the recording is real time): keep this tab in the foreground. The scene comes back exactly where it was, and ⏹ Stop ends the recording WITHOUT writing anything.`)}
--className="bg-fuchsia-600 hover:bg-fuchsia-700 disabled:opacity-40 text-white font-bold px-3 py-1 rounded-md text-[11px] shadow-sm transition-colors inline-flex items-center gap-1 h-7 whitespace-nowrap"
-->
--{kfBusy ? '🔴 Writing the film…' : '🔴 Record the film'}
--</button>
--{kfBusy && (
--<button
--type="button"
--onClick={stopKeyframeFilm}
--title="Stop the recording now. Nothing is written: the film of half a gesture is not the film of the gesture — record again to get the whole thing. The scene goes back exactly where it was."
--className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap bg-white border-amber-400 text-amber-800 hover:bg-amber-50"
-->
--⏹ Stop
--</button>
--)}
--<button
--type="button"
--onClick={exportKeyframeFilm}
--disabled={kfBusy || !keyframes.length}
--title="Write the film — every pose (its styles, its camera, its molecules, its hold, its morph, its easing) — as a .json file on your computer. 📂 Import reads it back, here or on another experiment."
--className="bg-slate-600 hover:bg-slate-700 disabled:opacity-40 text-white font-bold px-2 py-1 rounded-md text-[11px] shadow-sm transition-colors inline-flex items-center gap-1 h-7 whitespace-nowrap"
-->⬇ Export the film (.json)</button>
--<label
--className="cursor-pointer bg-slate-600 hover:bg-slate-700 text-white font-bold px-2 py-1 rounded-md text-[11px] shadow-sm transition-colors inline-flex items-center gap-1 h-7 whitespace-nowrap"
--title="Read a film written by ⬇ Export the film, here or on another experiment. Nothing is applied to the scene when it is read: ▶ plays it, 👁 goes to one pose.">
--📂 Import a film (.json)
--<input type="file" accept=".json,application/json" onChange={importKeyframeFilm} disabled={kfBusy} className="hidden" />
--</label>
--<button
--type="button"
--onClick={clearKeyframes}
--disabled={kfBusy || !keyframes.length}
--title="Forget every pose of the film. The scene is NOT touched and nothing else on this experiment changes — the film is only a description of it."
--className="bg-white border border-rose-300 hover:bg-rose-50 disabled:opacity-40 text-rose-700 font-bold px-2 py-1 rounded-md text-[11px] transition-colors inline-flex items-center gap-1 h-7 whitespace-nowrap"
-->🗑 Clear the film</button>
--{/* Le bilan du film, en clair et COMPACT : la durée est lue sur la chronologie du ▶
--    et du 🔴 (keyframeLegs), donc elle ne peut pas les contredire. */}
--<span className="shrink-0 text-[10px] font-bold text-slate-500 whitespace-nowrap">
--{keyframes.length} / {KEYFRAME_LIMITS.keys} poses{keyframes.length > 1 ? ` · ${videoSecondsText(kfLegsNow.totalSeconds)}` : ''}
--{kfPlanNow.ok ? ` · ${kfPlanNow.frames} frames at ${kfPlanNow.fps} fps` : ''}
--</span>
--{/* La ligne de retour ne pousse plus la rangée (min-w-0 + truncate) et sa bulle porte
--    le texte entier : un message long reste lisible sans tenir la largeur de l'écran.
--    Elle garde 8 rem de large quoi qu'il arrive — un retour qui disparaît serait pire
--    que le paragraphe qu'il remplace. */}
--<span className="flex-1 min-w-[8rem] truncate text-[10px] font-bold text-fuchsia-800"
--title={kfMsg || (videoReady.ok ? keyframeFilmSummary(keyframes.length, kfPlanNow) : videoReady.note)}>
--{kfMsg
--  || (videoReady.ok
--    ? keyframeFilmSummary(keyframes.length, kfPlanNow)
--    : videoReady.note)}
--</span>
--</div>
--
--{/* ── THE POSES THEMSELVES — one row per keyframe, in the order the film plays
--    them. Its time (the 0:03 on the left) is read from the film's own chronology
--    (keyframeLegs), the very one the ▶ and the 🔴 use: the column can never
--    disagree with the film. Everything a row changes is a SWITCH of the film and
--    touches nothing on screen — 👁 is what puts a pose back on screen. */}
--{keyframes.length > 0 && (() => {
--  const { legs, totalSeconds } = keyframeLegs(keyframes);
--  return (
--  <div className="flex flex-col gap-1 w-full">
--  {keyframes.map((k, i) => {
--    const leg = legs.find((l) => l.from === i) || { start: 0 };
--    const last = i === keyframes.length - 1;
--    return (
--    <div key={k.id} className="flex flex-wrap items-center gap-1.5 w-full rounded-md border border-slate-200 bg-white px-1.5 py-1">
--    <span className="text-[10px] font-black text-fuchsia-700 w-6 shrink-0" title={`Pose ${i + 1} of ${keyframes.length}`}>#{i + 1}</span>
--    <span className="text-[9px] font-mono font-bold text-slate-400 w-10 shrink-0" title="When this pose is reached in the film (every hold and morph before it)">{videoSecondsText(leg.start)}</span>
--    <input
--    type="text"
--    value={k.name}
--    onChange={(e) => updateKeyframe(k.id, { name: e.target.value })}
--    disabled={kfBusy}
--    title="The name of this pose — it is written in the exported .json, so it is how you find the pose again in a film of twelve."
--    className="border border-slate-300 rounded-md px-1.5 py-0.5 text-[11px] font-bold bg-white outline-none focus:border-fuchsia-500 h-7 w-[8.5rem]"
--    />
--    <label className="flex items-center gap-1 text-[10px] font-bold text-slate-600 whitespace-nowrap">
--    hold
--    <input
--    type="number"
--    min={KEYFRAME_LIMITS.hold[0]}
--    max={KEYFRAME_LIMITS.hold[1]}
--    step={0.5}
--    value={k.hold}
--    onChange={(e) => updateKeyframe(k.id, { hold: e.target.value === '' ? 0 : Number(e.target.value) })}
--    disabled={kfBusy}
--    title="How long the picture STAYS on this pose before the morph starts — « I want the same image for 3 s, then the next one ». 0 s means the morph starts at once."
--    className="w-14 border border-slate-300 rounded-md px-1 py-0.5 text-[11px] bg-white outline-none focus:border-fuchsia-500 h-7"
--    />
--    s
--    </label>
--    <label className="flex items-center gap-1 text-[10px] font-bold text-slate-600 whitespace-nowrap">
--    morph
--    {last ? (
--    <span className="text-[10px] text-slate-400 italic" title="The last pose is followed by nothing: it is held, and the film stops there.">— the film ends here</span>
--    ) : (
--    <input
--    type="number"
--    min={KEYFRAME_LIMITS.morph[0]}
--    max={KEYFRAME_LIMITS.morph[1]}
--    step={0.5}
--    value={k.morph}
--    onChange={(e) => updateKeyframe(k.id, { morph: e.target.value === '' ? 0 : Number(e.target.value) })}
--    disabled={kfBusy}
--    title="How long the way to the NEXT pose takes, read with this pose's own easing: the styles fade, the camera glides and every molecule moves to where the next pose holds it."
--    className="w-14 border border-slate-300 rounded-md px-1 py-0.5 text-[11px] bg-white outline-none focus:border-fuchsia-500 h-7"
--    />
--    )}
--    {!last && 's'}
--    </label>
--    <select
--    value={k.easing}
--    onChange={(e) => updateKeyframe(k.id, { easing: e.target.value })}
--    disabled={kfBusy || last}
--    title={last ? 'The last pose has no way to go: it is held' : 'How the morph starts and ends — « smooth » starts and finishes slowly (the shape of a real gesture), « linear » keeps the same speed, « in »/« out » start or end slowly, « cut » jumps to the next pose INSTANTLY (a hard cut, exactly what a film cut is).'}
--    className="border border-slate-300 rounded-md px-1 py-0.5 text-[11px] bg-white outline-none focus:border-fuchsia-500 h-7"
--    >
--    {KEYFRAME_EASINGS.map((name) => <option key={name} value={name}>{KEYFRAME_EASING_LABELS[name] || name}</option>)}
--    </select>
--    {/* 👁 puts the scene on this pose — the same call as ▶ and 🔴, which is why
--        a pose can be checked without ever recording a film. */}
--    <button
--    type="button"
--    onClick={() => showKeyframe(k)}
--    disabled={kfBusy}
--    title={`Put the scene back on “${k.name}” — the styles, the camera, where every molecule stands AND how it is turned. This is the very call the ▶ preview and the 🔴 recording use, so it is exactly what the film shows at this moment.`}
--    className="bg-white border border-slate-300 hover:bg-fuchsia-50 text-slate-700 rounded-md px-1.5 text-[11px] font-bold h-7 whitespace-nowrap"
--    >👁</button>
--    <button
--    type="button"
--    onClick={() => moveKeyframe(k.id, -1)}
--    disabled={kfBusy || i === 0}
--    title="Move this pose EARLIER in the film — its hold, its morph and its easing travel with it (the scene is not touched)."
--    className="bg-white border border-slate-300 hover:bg-slate-100 disabled:opacity-30 text-slate-600 rounded-md px-1.5 text-[11px] font-bold h-7 whitespace-nowrap"
--    >◀</button>
--    <button
--    type="button"
--    onClick={() => moveKeyframe(k.id, 1)}
--    disabled={kfBusy || last}
--    title="Move this pose LATER in the film — its hold, its morph and its easing travel with it (the scene is not touched)."
--    className="bg-white border border-slate-300 hover:bg-slate-100 disabled:opacity-30 text-slate-600 rounded-md px-1.5 text-[11px] font-bold h-7 whitespace-nowrap"
--    >▶</button>
--    <button
--    type="button"
--    onClick={() => duplicateKeyframe(k.id)}
--    disabled={kfBusy || keyframes.length >= KEYFRAME_LIMITS.keys}
--    title="Copy this pose, right after itself (same styles, same place, same hold): it is how a picture is held longer than the 30 s a hold is allowed, and how a pose is kept before being changed."
--    className="bg-white border border-slate-300 hover:bg-slate-100 disabled:opacity-30 text-slate-600 rounded-md px-1.5 text-[11px] font-bold h-7 whitespace-nowrap"
--    >⧉</button>
--    <button
--    type="button"
--    onClick={() => recaptureKeyframe(k.id)}
--    disabled={kfBusy}
--    title="Replace this pose with the scene AS IT IS NOW. Its place in the film, its hold and its morph do not change — only what it holds."
--    className="bg-white border border-slate-300 hover:bg-slate-100 disabled:opacity-30 text-slate-600 rounded-md px-1.5 text-[11px] font-bold h-7 whitespace-nowrap"
--    >📸</button>
--    <button
--    type="button"
--    onClick={() => removeKeyframe(k.id)}
--    disabled={kfBusy}
--    title="Remove this pose from the film — the scene is not touched, and the poses after it simply close the gap."
--    className="bg-white border border-rose-300 hover:bg-rose-50 disabled:opacity-30 text-rose-700 rounded-md px-1.5 text-[11px] font-bold h-7 whitespace-nowrap"
--    >✕</button>
--    </div>);
--  })}
--  </div>
+-  const pre = new Blob(
+-    [`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n--${boundary}\r\nContent-Type: ${type}\r\n\r\n`],
+-    { type: 'multipart/related' }
 -  );
--  })()}
+-  const post = new Blob([`\r\n--${boundary}--\r\n`], { type: 'multipart/related' });
+-  const body = new Blob([pre, blob, post], { type: `multipart/related; boundary=${boundary}` });
 -
--</VSection>
+-  const res = await driveFetch(
+-    existingId
+-      ? `/upload/drive/v3/files/${existingId}?uploadType=multipart&fields=id,name`
+-      : `/upload/drive/v3/files?uploadType=multipart&fields=id,name`,
+-    // Large raw files (trajectories, videos, …) can take minutes to upload —
+-    // never abort them with the short interactive-request timeout.
+-    { method: existingId ? 'PATCH' : 'POST', headers: { 'Content-Type': `multipart/related; boundary=${boundary}` }, body, timeout: 10 * 60 * 1000 }
+-  );
+-  const fileMeta = await res.json();
++  /* LES GROS FICHIERS PARTENT PAR MORCEAUX (session « resumable »). Une seule
++     requête multipart n'a aucun point de reprise : une trajectoire de plusieurs Go
++     laissait ses dossiers sur le Drive SANS son fichier, et rien ne pouvait plus
++     la restaurer sur un autre poste (défaut signalé le 25/09/2026). Même nom,
++     même dossier, même remplacement d'un fichier existant : seule la façon de
++     transporter les octets change. Une session refusée (`Location` illisible,
++     p. ex. une réponse CORS sans en-tête exposé) rend `null` et l'envoi en une
++     seule requête ci-dessous reste le repli — un échec de TRANSFERT, lui, remonte
++     (il doit se dire, pas se doubler d'un second envoi complet). */
++  let fileMeta = null;
++  if (shouldChunkUpload(blob.size)) {
++    fileMeta = await uploadBlobInChunks({
++      blob, name, mimeType: type, targetId, existingId, driveFetch, onProgress
++    });
++    if (!fileMeta) {
++      console.warn(`Resumable session unavailable for “${name}” (${Math.round(blob.size / 1048576)} MB) — single-request upload.`);
++    }
++  }
++
++  if (!fileMeta) {
++    const pre = new Blob(
++      [`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n--${boundary}\r\nContent-Type: ${type}\r\n\r\n`],
++      { type: 'multipart/related' }
++    );
++    const post = new Blob([`\r\n--${boundary}--\r\n`], { type: 'multipart/related' });
++    const body = new Blob([pre, blob, post], { type: `multipart/related; boundary=${boundary}` });
++
++    const res = await driveFetch(
++      existingId
++        ? `/upload/drive/v3/files/${existingId}?uploadType=multipart&fields=id,name`
++        : `/upload/drive/v3/files?uploadType=multipart&fields=id,name`,
++      // Large raw files (trajectories, videos, …) can take minutes to upload —
++      // never abort them with the short interactive-request timeout.
++      { method: existingId ? 'PATCH' : 'POST', headers: { 'Content-Type': `multipart/related; boundary=${boundary}` }, body, timeout: 10 * 60 * 1000 }
++    );
++    fileMeta = await res.json();
++  }
+   if (!fileMeta || !fileMeta.id) throwCode('DRIVE_ERROR', 'Drive returned no file.');
  
- {/* Residue sequence strip — click a tick to select that whole residue.
-     Only POLYMER residues (protein / nucleic) are shown: water, ions and
+   // Make it readable via the link so the app can show thumbnails / others can open it.
+@@ -1500,7 +1536,7 @@ export const saveUploadForRetry = async ({ name, mimeType, file, ctx = null, pat
+  *  Non-experiment uploads (protocols, publications, figures, imports that pass
+  *  an explicit `path`) are routed exactly as before.
+  */
+-export const uploadLocalFile = async ({ name, mimeType, file, ctx = null, path = null, skipQueue = false, folderId = '' }) => {
++export const uploadLocalFile = async ({ name, mimeType, file, ctx = null, path = null, skipQueue = false, folderId = '', onProgress = null }) => {
+   const folderCtxs = [];
+   if (ctx && typeof ctx === 'object' && String(ctx.test || '').trim() && ctx.protocol === undefined) {
+     const projects = projectNamesOf(ctx);
+@@ -1538,7 +1574,8 @@ export const uploadLocalFile = async ({ name, mimeType, file, ctx = null, path =
+         /* Le dossier résolu par IDENTIFIANT ne vaut que pour une SEULE cible (les
+            figures d'un projet). Un fichier déposé dans plusieurs projets a un
+            chemin PAR PROJET : il n'y a alors pas d'identifiant unique à viser. */
+-        folderId: folderCtxs.length === 1 ? folderId : ''
++        folderId: folderCtxs.length === 1 ? folderId : '',
++        onProgress
+       });
+       if (res) last = res;
+     } catch (err) {
+@@ -2276,22 +2313,41 @@ export const driveFilePointer = (res, fallbackName = '') => (
+ );
+ 
+ /** Comme `archiveFileToDrive`, mais rend de quoi écrire un POINTEUR de
+- *  restauration : `{ name, pointer }`. Le nom (celui du Drive) est rendu même
+- *  quand l'envoi échoue — c'est lui que cherchera la restauration par nom sur un
+- *  poste vierge ; `pointer` est null dans ce cas (rien à viser par id).
++ *  restauration : `{ name, pointer, error }`. Le nom (celui du Drive) est rendu
++ *  même quand l'envoi échoue — c'est lui que cherchera la restauration par nom
++ *  sur un poste vierge ; `pointer` est null dans ce cas (rien à viser par id) et
++ *  `error` dit POURQUOI l'envoi n'a pas abouti (l'appelant l'affiche : un échec
++ *  muet laissait croire à une archive qui n'existait pas).
++ *  `onProgress(octetsConfirmés, total)` est passé à l'envoi : les gros fichiers
++ *  partant par morceaux, l'interface peut annoncer leur avancement.
+  *  Le nommage reste EXACTEMENT celui d'`archiveFileToDrive` : rien ne change
+  *  dans l'arborescence du Drive.
+- *  @returns {Promise<{ name: string, pointer: {id:string,name:string,url:string}|null }>} */
+-export const archiveFileToDriveWithPointer = async ({ file, ctx = {}, title = '', suffix = 'file' }) => {
++ *  @returns {Promise<{ name: string, pointer: {id:string,name:string,url:string}|null, error: string }>} */
++export const archiveFileToDriveWithPointer = async ({ file, ctx = {}, title = '', suffix = 'file', onProgress = null }) => {
+   const name = archiveFileDriveName({ file, ctx, title, suffix });
+-  if (!file || !getDriveToken()) return { name, pointer: null };
++  if (!file || !getDriveToken()) {
++    return { name, pointer: null, error: 'Google Drive is not connected in this browser.' };
++  }
+   const base = title || String(file.name || '').replace(/\.[^/.]+$/, '');
+   try {
+-    const res = await uploadLocalFile({ name, mimeType: file.type || 'application/octet-stream', file, ctx: { ...ctx, title: base, suffix } });
+-    return { name, pointer: driveFilePointer(res, name) };
++    const res = await uploadLocalFile({ name, mimeType: file.type || 'application/octet-stream', file, ctx: { ...ctx, title: base, suffix }, onProgress });
++    const pointer = driveFilePointer(res, name);
++    if (pointer) return { name, pointer, error: '' };
++    /* L'ÉCHEC SE DIT : la copie de référence du fichier n'est PAS sur le Drive,
++       donc elle n'existe que dans ce navigateur. Un fichier plus gros que la file
++       de reprise (MAX_SINGLE_BYTES) n'y est même pas mis : c'est écrit noir sur
++       blanc au lieu d'un « archivé » trompeur. */
++    const tooLarge = Number(file.size || 0) > MAX_SINGLE_BYTES;
++    return {
++      name,
++      pointer: null,
++      error: tooLarge
++        ? `the file is too large for the retry queue (${Math.round(MAX_SINGLE_BYTES / 1048576)} MB max) — keep this browser open and press again`
++        : 'the upload did not complete (network, session or permission) — it is queued and retried on its own'
++    };
+   } catch (err) {
+     console.warn('Drive archive failed:', err && err.message);
+-    return { name, pointer: null };
++    return { name, pointer: null, error: String((err && err.message) || 'Drive upload failed.') };
+   }
+ };
+ 
+@@ -2352,21 +2408,31 @@ export const uploadWorkspaceFile = async ({ name, mimeType, file, folder = 'back
+       ? { name, mimeType: type }
+       : { name, mimeType: type, parents: [folderId] });
+ 
+-    const pre = new Blob(
+-      [`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n--${boundary}\r\nContent-Type: ${type}\r\n\r\n`],
+-      { type: 'multipart/related' }
+-    );
+-    const post = new Blob([`\r\n--${boundary}--\r\n`], { type: 'multipart/related' });
+-    const body = new Blob([pre, blob, post], { type: `multipart/related; boundary=${boundary}` });
+-
+-    const res = await driveFetch(
+-      existingId
+-        ? `/upload/drive/v3/files/${existingId}?uploadType=multipart&fields=id,name`
+-        : `/upload/drive/v3/files?uploadType=multipart&fields=id,name`,
+-      // Weekly backup HTML files can be several MB — allow a long transfer time.
+-      { method: existingId ? 'PATCH' : 'POST', headers: { 'Content-Type': `multipart/related; boundary=${boundary}` }, body, timeout: 10 * 60 * 1000 }
+-    );
+-    const fileMeta = await res.json();
++    /* Même règle que pour les envois d'expérience : au-delà de
++       `RESUMABLE_MIN_BYTES` (une sauvegarde HTML hebdomadaire peut peser
++       plusieurs Mo), le fichier part par MORCEAUX — avec reprise — et l'envoi en
++       une seule requête reste le repli si la session est refusée. */
++    let fileMeta = null;
++    if (shouldChunkUpload(blob.size)) {
++      fileMeta = await uploadBlobInChunks({ blob, name, mimeType: type, targetId: folderId, existingId, driveFetch });
++    }
++    if (!fileMeta) {
++      const pre = new Blob(
++        [`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n--${boundary}\r\nContent-Type: ${type}\r\n\r\n`],
++        { type: 'multipart/related' }
++      );
++      const post = new Blob([`\r\n--${boundary}--\r\n`], { type: 'multipart/related' });
++      const body = new Blob([pre, blob, post], { type: `multipart/related; boundary=${boundary}` });
++
++      const res = await driveFetch(
++        existingId
++          ? `/upload/drive/v3/files/${existingId}?uploadType=multipart&fields=id,name`
++          : `/upload/drive/v3/files?uploadType=multipart&fields=id,name`,
++        // Weekly backup HTML files can be several MB — allow a long transfer time.
++        { method: existingId ? 'PATCH' : 'POST', headers: { 'Content-Type': `multipart/related; boundary=${boundary}` }, body, timeout: 10 * 60 * 1000 }
++      );
++      fileMeta = await res.json();
++    }
+     if (!fileMeta || !fileMeta.id) return null;
+     return { id: String(fileMeta.id), name: String(fileMeta.name || name) };
+   } catch (err) {

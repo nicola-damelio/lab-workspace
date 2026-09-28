@@ -63,7 +63,7 @@ eq(NAMING.storageFileCtx({ storage: 'storage1', box: 'Box 1', title: 'file2' }),
 
 /* non-régression : expériences et documents de projet gardent leur chemin */
 eq(NAMING.driveFolderPath({ project: 'CD project', test: 'Exp 1', instance: 'i1', section: 'data' }), ['CD_project', 'Exp_1', 'i1', 'data'], 'une expérience garde son niveau « instance »');
-eq(NAMING.driveFolderPath({ project: 'CD project', section: 'Results and Discussion' }), ['CD_project', 'Discussion'], 'un document de projet garde son alias de dossier');
+eq(NAMING.driveFolderPath({ project: 'CD project', section: 'Results and Discussion' }), ['projects', 'CD_project', 'Discussion'], 'un document de projet vit DANS projects/<projet> (jamais dans un dossier au nom du projet posé à la racine du dataset)');
 
 /* ── 2. L’étiquette : une seule table pour l’écran, le PDF et le Drive ────── */
 const box = {

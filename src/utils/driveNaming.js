@@ -69,6 +69,24 @@ export const projectSectionFolderAlias = (label) => {
   return PROJECT_SECTION_FOLDER_ALIASES[raw.toLowerCase()] || raw;
 };
 
+/** LES NOMS HISTORIQUES des dossiers de SECTION d'un projet (les cinq sections de
+ *  la page projet + le titre complet de « Scientific background »). Ils servent à
+ *  RECONNAÎTRE, sur un Drive déjà touché, un dossier de projet resté à la racine
+ *  du dataset : son contenu est fait de ces dossiers-là (voir
+ *  utils/projectRootMigrate.js). PUR. */
+export const PROJECT_SECTION_FOLDER_NAMES = [
+  'Background', 'Scientific background', 'Discussion', 'Results and discussion',
+  'Conclusions', 'Funding', 'Supporting information'
+];
+
+/** Vrai quand un dossier porte le nom d'une SECTION de projet (comparaison sans
+ *  casse ni espaces). PUR. */
+export const isProjectSectionFolderName = (name) => {
+  const slug = sanitizeSlug(name).toLowerCase();
+  if (!slug) return false;
+  return PROJECT_SECTION_FOLDER_NAMES.some((n) => sanitizeSlug(n).toLowerCase() === slug);
+};
+
 /* ── Le rangement d'un STORAGE et de ses BOÎTES ─────────────────────────────
    Une boîte de stockage n'est PAS une expérience : c'est un EMPLACEMENT. Elle
    ne suit donc pas l'architecture d'une expérience (ni « instance », ni
@@ -166,13 +184,25 @@ export const driveFolderPath = (ctx = {}) => {
     return protoSlug ? ['protocols', protoSlug] : ['protocols'];
   }
   const segs = [];
-  if (ctx.project) segs.push(ctx.project);
-  if (ctx.test) {
-    // Test files: Project/Test/Instance/Section
-    segs.push(ctx.test);
+  const test = String(ctx.test || '').trim();
+  const projectSeg = sanitizeSlug(ctx.project);
+  if (test) {
+    // Test files: Project/Test/Instance/Section (l'ordre historique de cette
+    // fonction — le chemin d'une EXPÉRIENCE, conteneur `projects/` compris, est
+    // celui de canonicalExperimentPath, qui est la route réellement utilisée).
+    if (projectSeg) segs.push(projectSeg);
+    segs.push(test);
     if (ctx.instance) segs.push(ctx.instance);
+  } else if (projectSeg) {
+    /* UN DOCUMENT DE PROJET (aucune expérience) : il vit DANS le dossier du
+       projet, comme ses expériences, ses figures, son document de texte et ses
+       `useful_files` — jamais dans un dossier au nom du projet POSÉ À LA RACINE
+       du dataset (défaut signalé le 25/09/2026 : « je trouve des dossiers au nom
+       d'un projet en dehors du dossier projects »). C'est aussi ce que rend
+       projectSectionFolderPath. */
+    segs.push(PROJECTS_CONTAINER, projectSeg);
   }
-  if (ctx.section) segs.push(ctx.test ? ctx.section : projectSectionFolderAlias(ctx.section));
+  if (ctx.section) segs.push(test ? ctx.section : projectSectionFolderAlias(ctx.section));
   return segs.map(sanitizeSlug).filter(Boolean);
 };
 
@@ -386,10 +416,17 @@ export const projectImagesFolderPath = (projectName) => (sanitizeSlug(projectNam
 /** Canonical Drive folder NAMES (relative to the dataset folder) of a PROJECT
  *  DOCUMENT attached to one of the project page's sections (Scientific
  *  background / Discussion / Conclusions …):
- *      <project>/<section>
- *  Exactly the routing driveFolderPath({ project, section }) gives an upload
- *  carrying that naming context, so the label shown in the interface and the
- *  folder where the file really lands can never drift apart. */
+ *      projects/<project>/<section>
+ *  Le dossier du PROJET d'abord, exactement comme ses expériences
+ *  (`projects/<projet>/<expérience>/…`), ses figures (`…/images`), son document
+ *  de texte (`<projet>_document.json`) et ses `useful_files` : un projet n'a
+ *  qu'UN dossier sur le Drive. Avant le 25/09/2026 cette route était
+ *  `<projet>/<section>`, donc un dossier au nom du projet POSÉ À LA RACINE du
+ *  dataset, à côté de `projects/` (deux dossiers par projet, dont un orphelin
+ *  quand le projet était renommé) ; utils/projectRootMigrate.js déplace ce qui
+ *  existe déjà. La chaîne est exactement celle de l'envoi
+ *  (`driveFolderPath({ project, section })`, voir projectDetailModule.jsx) : le
+ *  libellé affiché et le dossier réellement créé ne peuvent pas diverger. */
 export const projectSectionFolderPath = (projectName, section) =>
   driveFolderPath({ project: projectName, section });
 

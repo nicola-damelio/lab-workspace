@@ -1414,9 +1414,12 @@ export const ProjectDetailModule = ({
 
   /* ── Où les documents d'une section vont-ils sur le Drive ? ───────────────
      La chaîne de dossiers est celle de l'envoi lui-même
-     (driveNaming.projectSectionFolderPath → <projet>/<section>, à l'intérieur
-     du dossier du dataset) : l'étiquette affichée et le dossier réellement créé
-     ne peuvent donc pas diverger. */
+     (driveNaming.projectSectionFolderPath → projects/<projet>/<section>) : le
+     document d'une section vit DANS le dossier du projet, comme ses expériences,
+     ses figures et son document de texte — l'étiquette affichée et le dossier
+     réellement créé ne peuvent donc pas diverger. Un Drive où les documents
+     étaient encore dans `<projet>/<section>`, À LA RACINE du dataset, est rangé
+     par utils/projectRootMigrate.js au démarrage. */
   const sectionDrivePath = (label) => projectSectionFolderPath(project.name || '', label);
   const sectionDriveLabel = (label) =>
     projectSectionFolderLabel(project.name || '', label, getDriveRootName());

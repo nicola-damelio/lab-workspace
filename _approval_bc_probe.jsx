@@ -49,10 +49,16 @@ const YEAR = new Date().getFullYear();
 
 const SUPER = { id: 'op-super', name: 'Alice Martin', role: 'superuser' };
 const MEMBER = { id: 'op-member', name: 'Bob Durand', role: 'user' };
-const OPERATORS = [SUPER, MEMBER];
+/* La RESPONSABLE D'ACHATS : compte ordinaire (aucun rôle superutilisateur) dont
+   la fiche Personnel porte la fonction « Achats ». C'est elle qui doit pouvoir
+   supprimer une ligne de « Achats prévus / souhaités » et d'« Approbation
+   devis & BC » (voir ownScope.js › scopeCanDeleteAchatLines). */
+const ACHATS = { id: 'op-achats', name: 'Claire Petit', role: 'user' };
+const OPERATORS = [SUPER, MEMBER, ACHATS];
 const PERSONNEL = [
   { id: 'p1', nom: 'Alice Martin', statut: 'Permanent', email: 'alice@labo.fr', fonction: 'Gestionnaire' },
   { id: 'p2', nom: 'Bob Durand', statut: 'Permanent', email: 'bob@labo.fr' },
+  { id: 'p3', nom: 'Claire Petit', statut: 'Permanent', email: 'claire@labo.fr', fonction: 'Achats' },
 ];
 
 /* Jeu d'essai : un devis EN ATTENTE (« DEV-EN-ATTENTE »), un devis SIGNÉ AVEC
@@ -82,6 +88,14 @@ const DEVIS_BC = [
     numBC: 'BC-001', devisId: 'd-signe', fournisseur: 'Fournisseur Trois', deposant: 'Alice Martin',
     ligneBudgetaire: 'S2R03', demandeur: 'Alice Martin', createdAt: 1000,
   },
+  /* Devis déposé par Bob Durand (le membre) : il le voit et peut le modifier,
+     mais le bouton 🗑 reste réservé au superutilisateur et à la responsable
+     d'achats — c'est le contrôle négatif du droit de suppression. */
+  {
+    id: 'd-bob', kind: 'devis', statut: 'En attente', description: 'DEV-BOB-PROPRE imprimante',
+    numDevis: 'DEV-004', fournisseur: 'Fournisseur Un', deposant: 'Bob Durand',
+    ligneBudgetaire: 'S2R05', demandeur: 'Bob Durand', createdAt: 900,
+  },
 ];
 
 const DESIDERATE = [
@@ -97,6 +111,15 @@ const DESIDERATE = [
     statut: 'Approuvé', numDevis: 'DEV-011', fichierUrl: 'https://drive.google.com/file/d/def/view',
     dateDemande: `${YEAR}-01-10`, createdAt: 3500,
     transfert: { cible: 'Achats', by: 'Alice Martin', at: Date.now(), mode: 'signature', devisId: 'd-signe' },
+  },
+  /* Demande déposée par Bob Durand (le membre) : il la voit et la supprime,
+     mais il ne voit PAS celles d'Alice — la responsable d'achats, elle, voit
+     toutes les demandes et peut donc supprimer une ligne qui n'est pas la
+     sienne (c'est exactement ce que vérifie le test). */
+  {
+    id: 'w-bob', description: 'ACHAT-BOB-PROPRE pipettes', demandeur: 'Bob Durand',
+    fournisseur: 'Fournisseur Un', ligneBudgetaire: 'S2R05', montantEstime: 250, fraisPort: 0,
+    statut: 'En attente', dateDemande: `${YEAR}-02-01`, createdAt: 2000,
   },
 ];
 
@@ -137,5 +160,8 @@ const target = (label, element) => {
 
 target('approbation-superuser', wrap(SUPER, ADMIN, <ApprobationPage />));
 target('approbation-membre', wrap(MEMBER, ADMIN, <ApprobationPage />));
+target('approbation-achats', wrap(ACHATS, ADMIN, <ApprobationPage />));
 target('achats-prevus-superuser', wrap(SUPER, ADMIN, <DesiderataPage />));
+target('achats-prevus-membre', wrap(MEMBER, ADMIN, <DesiderataPage />));
+target('achats-prevus-achats', wrap(ACHATS, ADMIN, <DesiderataPage />));
 out('done');

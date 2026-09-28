@@ -101,6 +101,11 @@ import {
 import { pickCanonicalFolder, emptyTwinIds, isCanonicalDatasetDir } from './datasetDirTwins';
 import { oncePerFolder, folderCreateKey } from './folderRace';
 import { getCloudProvider, nextcloudConfigured, ncUploadFile } from './nextcloud';
+/* L'ENVOI DES GROS FICHIERS PAR MORCEAUX (session « resumable ») : au-delà de
+   `RESUMABLE_MIN_BYTES`, une seule requête multipart n'a aucun point de reprise —
+   une trajectoire MD de plusieurs Go arrivait alors « à moitié » (l'arborescence
+   créée, le fichier absent : voir driveChunkUpload.js). */
+import { shouldChunkUpload, uploadBlobInChunks } from './driveChunkUpload';
 import {
   enqueuePendingUpload, removePendingUpload, listPendingUploads,
   touchPendingUpload, notifyPendingChanged,
@@ -214,14 +219,24 @@ export const driveFetch = async (path, opts = {}) => {
   // be aborted after 20 seconds. File-content DOWNLOADS (`alt=media`) get the
   // same long timeout by default, since the bytes are streamed as the response.
   const isFileDownload = typeof path === 'string' && path.includes('alt=media');
-  const { timeout: timeoutMs = isFileDownload ? 10 * 60 * 1000 : 20000, ...rest } = opts;
+  const { timeout: timeoutMs = isFileDownload ? 10 * 60 * 1000 : 20000, accept = null, ...rest } = opts;
+  /* UN CHEMIN ABSOLU EST UTILISÉ TEL QUEL : l'URL d'une session d'envoi
+     « resumable » est rendue par Drive dans l'en-tête `Location` et ne se
+     reconstruit pas (elle porte un `upload_id`). Les appels ordinaires — chemins
+     relatifs — sont préfixés comme avant. */
+  const isAbsolute = typeof path === 'string' && /^https?:\/\//i.test(path);
+  const url = isAbsolute ? path : `https://www.googleapis.com${path}`;
+  /* `accept` : des statuts NON-ok qui ont un sens ici — 308 pendant un envoi
+     par morceaux (« le morceau est passé, la session continue »). Ils ne sont
+     donc pas convertis en erreur (voir driveChunkUpload.js). */
+  const accepted = Array.isArray(accept) ? accept : [];
 
   const perform = async (tok, attempt) => {
     const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
     const timeout = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
     let res;
     try {
-      res = await fetch(`https://www.googleapis.com${path}`, {
+      res = await fetch(url, {
         ...rest,
         signal: controller ? controller.signal : undefined,
         headers: { Authorization: `Bearer ${tok}`, ...(rest.headers || {}) }
@@ -264,7 +279,7 @@ export const driveFetch = async (path, opts = {}) => {
     if (res.status === 403) {
       throwCode('TOKEN_EXPIRED', 'Google Drive denied the request (scope or permissions). Please reconnect Google Drive from the sidebar.');
     }
-    if (!res.ok) {
+    if (!res.ok && !accepted.includes(res.status)) {
       let msg = `Drive error (HTTP ${res.status})`;
       try {
         const j = await res.json();
@@ -1306,7 +1321,7 @@ export const moveTestFolderOutOfProject = async ({ testName, projectName }) => {
  *  `path` is an explicit path array or `ctx` still describes a legacy folder
  *  (non-experiment uploads such as library figures or project documents).
  *  @returns {{ id:string, name:string, driveUrl:string }} */
-const uploadDriveFileToFolderOnce = async ({ name, mimeType, file, ctx = null, path = null, folderNames = null, folderId = '' }) => {
+const uploadDriveFileToFolderOnce = async ({ name, mimeType, file, ctx = null, path = null, folderNames = null, folderId = '', onProgress = null }) => {
   // ── Nextcloud provider ─────────────────────────────────────────────────────
   // Mirror the Drive folder layout on the WebDAV tree:
   //   <user>/Lab Workspace/<dataset>/<project>/<test>/<page section>/[<subsection>]
@@ -1388,22 +1403,43 @@ const uploadDriveFileToFolderOnce = async ({ name, mimeType, file, ctx = null, p
     ? { name, mimeType: type }
     : { name, mimeType: type, parents: [targetId] });
 
-  const pre = new Blob(
-    [`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n--${boundary}\r\nContent-Type: ${type}\r\n\r\n`],
-    { type: 'multipart/related' }
-  );
-  const post = new Blob([`\r\n--${boundary}--\r\n`], { type: 'multipart/related' });
-  const body = new Blob([pre, blob, post], { type: `multipart/related; boundary=${boundary}` });
+  /* LES GROS FICHIERS PARTENT PAR MORCEAUX (session « resumable »). Une seule
+     requête multipart n'a aucun point de reprise : une trajectoire de plusieurs Go
+     laissait ses dossiers sur le Drive SANS son fichier, et rien ne pouvait plus
+     la restaurer sur un autre poste (défaut signalé le 25/09/2026). Même nom,
+     même dossier, même remplacement d'un fichier existant : seule la façon de
+     transporter les octets change. Une session refusée (`Location` illisible,
+     p. ex. une réponse CORS sans en-tête exposé) rend `null` et l'envoi en une
+     seule requête ci-dessous reste le repli — un échec de TRANSFERT, lui, remonte
+     (il doit se dire, pas se doubler d'un second envoi complet). */
+  let fileMeta = null;
+  if (shouldChunkUpload(blob.size)) {
+    fileMeta = await uploadBlobInChunks({
+      blob, name, mimeType: type, targetId, existingId, driveFetch, onProgress
+    });
+    if (!fileMeta) {
+      console.warn(`Resumable session unavailable for “${name}” (${Math.round(blob.size / 1048576)} MB) — single-request upload.`);
+    }
+  }
 
-  const res = await driveFetch(
-    existingId
-      ? `/upload/drive/v3/files/${existingId}?uploadType=multipart&fields=id,name`
-      : `/upload/drive/v3/files?uploadType=multipart&fields=id,name`,
-    // Large raw files (trajectories, videos, …) can take minutes to upload —
-    // never abort them with the short interactive-request timeout.
-    { method: existingId ? 'PATCH' : 'POST', headers: { 'Content-Type': `multipart/related; boundary=${boundary}` }, body, timeout: 10 * 60 * 1000 }
-  );
-  const fileMeta = await res.json();
+  if (!fileMeta) {
+    const pre = new Blob(
+      [`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n--${boundary}\r\nContent-Type: ${type}\r\n\r\n`],
+      { type: 'multipart/related' }
+    );
+    const post = new Blob([`\r\n--${boundary}--\r\n`], { type: 'multipart/related' });
+    const body = new Blob([pre, blob, post], { type: `multipart/related; boundary=${boundary}` });
+
+    const res = await driveFetch(
+      existingId
+        ? `/upload/drive/v3/files/${existingId}?uploadType=multipart&fields=id,name`
+        : `/upload/drive/v3/files?uploadType=multipart&fields=id,name`,
+      // Large raw files (trajectories, videos, …) can take minutes to upload —
+      // never abort them with the short interactive-request timeout.
+      { method: existingId ? 'PATCH' : 'POST', headers: { 'Content-Type': `multipart/related; boundary=${boundary}` }, body, timeout: 10 * 60 * 1000 }
+    );
+    fileMeta = await res.json();
+  }
   if (!fileMeta || !fileMeta.id) throwCode('DRIVE_ERROR', 'Drive returned no file.');
 
   // Make it readable via the link so the app can show thumbnails / others can open it.
@@ -1500,7 +1536,7 @@ export const saveUploadForRetry = async ({ name, mimeType, file, ctx = null, pat
  *  Non-experiment uploads (protocols, publications, figures, imports that pass
  *  an explicit `path`) are routed exactly as before.
  */
-export const uploadLocalFile = async ({ name, mimeType, file, ctx = null, path = null, skipQueue = false, folderId = '' }) => {
+export const uploadLocalFile = async ({ name, mimeType, file, ctx = null, path = null, skipQueue = false, folderId = '', onProgress = null }) => {
   const folderCtxs = [];
   if (ctx && typeof ctx === 'object' && String(ctx.test || '').trim() && ctx.protocol === undefined) {
     const projects = projectNamesOf(ctx);
@@ -1538,7 +1574,8 @@ export const uploadLocalFile = async ({ name, mimeType, file, ctx = null, path =
         /* Le dossier résolu par IDENTIFIANT ne vaut que pour une SEULE cible (les
            figures d'un projet). Un fichier déposé dans plusieurs projets a un
            chemin PAR PROJET : il n'y a alors pas d'identifiant unique à viser. */
-        folderId: folderCtxs.length === 1 ? folderId : ''
+        folderId: folderCtxs.length === 1 ? folderId : '',
+        onProgress
       });
       if (res) last = res;
     } catch (err) {
@@ -2276,22 +2313,41 @@ export const driveFilePointer = (res, fallbackName = '') => (
 );
 
 /** Comme `archiveFileToDrive`, mais rend de quoi écrire un POINTEUR de
- *  restauration : `{ name, pointer }`. Le nom (celui du Drive) est rendu même
- *  quand l'envoi échoue — c'est lui que cherchera la restauration par nom sur un
- *  poste vierge ; `pointer` est null dans ce cas (rien à viser par id).
+ *  restauration : `{ name, pointer, error }`. Le nom (celui du Drive) est rendu
+ *  même quand l'envoi échoue — c'est lui que cherchera la restauration par nom
+ *  sur un poste vierge ; `pointer` est null dans ce cas (rien à viser par id) et
+ *  `error` dit POURQUOI l'envoi n'a pas abouti (l'appelant l'affiche : un échec
+ *  muet laissait croire à une archive qui n'existait pas).
+ *  `onProgress(octetsConfirmés, total)` est passé à l'envoi : les gros fichiers
+ *  partant par morceaux, l'interface peut annoncer leur avancement.
  *  Le nommage reste EXACTEMENT celui d'`archiveFileToDrive` : rien ne change
  *  dans l'arborescence du Drive.
- *  @returns {Promise<{ name: string, pointer: {id:string,name:string,url:string}|null }>} */
-export const archiveFileToDriveWithPointer = async ({ file, ctx = {}, title = '', suffix = 'file' }) => {
+ *  @returns {Promise<{ name: string, pointer: {id:string,name:string,url:string}|null, error: string }>} */
+export const archiveFileToDriveWithPointer = async ({ file, ctx = {}, title = '', suffix = 'file', onProgress = null }) => {
   const name = archiveFileDriveName({ file, ctx, title, suffix });
-  if (!file || !getDriveToken()) return { name, pointer: null };
+  if (!file || !getDriveToken()) {
+    return { name, pointer: null, error: 'Google Drive is not connected in this browser.' };
+  }
   const base = title || String(file.name || '').replace(/\.[^/.]+$/, '');
   try {
-    const res = await uploadLocalFile({ name, mimeType: file.type || 'application/octet-stream', file, ctx: { ...ctx, title: base, suffix } });
-    return { name, pointer: driveFilePointer(res, name) };
+    const res = await uploadLocalFile({ name, mimeType: file.type || 'application/octet-stream', file, ctx: { ...ctx, title: base, suffix }, onProgress });
+    const pointer = driveFilePointer(res, name);
+    if (pointer) return { name, pointer, error: '' };
+    /* L'ÉCHEC SE DIT : la copie de référence du fichier n'est PAS sur le Drive,
+       donc elle n'existe que dans ce navigateur. Un fichier plus gros que la file
+       de reprise (MAX_SINGLE_BYTES) n'y est même pas mis : c'est écrit noir sur
+       blanc au lieu d'un « archivé » trompeur. */
+    const tooLarge = Number(file.size || 0) > MAX_SINGLE_BYTES;
+    return {
+      name,
+      pointer: null,
+      error: tooLarge
+        ? `the file is too large for the retry queue (${Math.round(MAX_SINGLE_BYTES / 1048576)} MB max) — keep this browser open and press again`
+        : 'the upload did not complete (network, session or permission) — it is queued and retried on its own'
+    };
   } catch (err) {
     console.warn('Drive archive failed:', err && err.message);
-    return { name, pointer: null };
+    return { name, pointer: null, error: String((err && err.message) || 'Drive upload failed.') };
   }
 };
 
@@ -2352,21 +2408,31 @@ export const uploadWorkspaceFile = async ({ name, mimeType, file, folder = 'back
       ? { name, mimeType: type }
       : { name, mimeType: type, parents: [folderId] });
 
-    const pre = new Blob(
-      [`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n--${boundary}\r\nContent-Type: ${type}\r\n\r\n`],
-      { type: 'multipart/related' }
-    );
-    const post = new Blob([`\r\n--${boundary}--\r\n`], { type: 'multipart/related' });
-    const body = new Blob([pre, blob, post], { type: `multipart/related; boundary=${boundary}` });
+    /* Même règle que pour les envois d'expérience : au-delà de
+       `RESUMABLE_MIN_BYTES` (une sauvegarde HTML hebdomadaire peut peser
+       plusieurs Mo), le fichier part par MORCEAUX — avec reprise — et l'envoi en
+       une seule requête reste le repli si la session est refusée. */
+    let fileMeta = null;
+    if (shouldChunkUpload(blob.size)) {
+      fileMeta = await uploadBlobInChunks({ blob, name, mimeType: type, targetId: folderId, existingId, driveFetch });
+    }
+    if (!fileMeta) {
+      const pre = new Blob(
+        [`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n--${boundary}\r\nContent-Type: ${type}\r\n\r\n`],
+        { type: 'multipart/related' }
+      );
+      const post = new Blob([`\r\n--${boundary}--\r\n`], { type: 'multipart/related' });
+      const body = new Blob([pre, blob, post], { type: `multipart/related; boundary=${boundary}` });
 
-    const res = await driveFetch(
-      existingId
-        ? `/upload/drive/v3/files/${existingId}?uploadType=multipart&fields=id,name`
-        : `/upload/drive/v3/files?uploadType=multipart&fields=id,name`,
-      // Weekly backup HTML files can be several MB — allow a long transfer time.
-      { method: existingId ? 'PATCH' : 'POST', headers: { 'Content-Type': `multipart/related; boundary=${boundary}` }, body, timeout: 10 * 60 * 1000 }
-    );
-    const fileMeta = await res.json();
+      const res = await driveFetch(
+        existingId
+          ? `/upload/drive/v3/files/${existingId}?uploadType=multipart&fields=id,name`
+          : `/upload/drive/v3/files?uploadType=multipart&fields=id,name`,
+        // Weekly backup HTML files can be several MB — allow a long transfer time.
+        { method: existingId ? 'PATCH' : 'POST', headers: { 'Content-Type': `multipart/related; boundary=${boundary}` }, body, timeout: 10 * 60 * 1000 }
+      );
+      fileMeta = await res.json();
+    }
     if (!fileMeta || !fileMeta.id) return null;
     return { id: String(fileMeta.id), name: String(fileMeta.name || name) };
   } catch (err) {

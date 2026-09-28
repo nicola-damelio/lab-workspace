@@ -207,13 +207,15 @@ const pathUnder = (path, base) => {
 export const projectFolderPath = (projectName) =>
   `projects/${sanitizeSlug(projectName) || '_unassigned'}`;
 
-/** Le chemin Drive du dossier de PROJET À LA RACINE DU DATASET (« <projet> ») :
- *  c'est là que vivent les DOCUMENTS DE SECTION (<projet>/<section>, voir
- *  driveNaming.projectSectionFolderPath — « 📁 Drive location » de chaque
- *  section de la page projet). Un projet a donc DEUX dossiers sur le Drive, et
- *  supprimer le projet doit emporter les deux : n'en mettre qu'un à la
- *  corbeille laissait l'autre sur le Drive (« si je supprime un projet, son
- *  dossier reste »). */
+/** Le chemin Drive du dossier de PROJET À LA RACINE DU DATASET (« <projet> »).
+ *  C'EST UN CHEMIN HISTORIQUE : jusqu'au 25/09/2026 les DOCUMENTS DE SECTION
+ *  d'une page projet partaient là (`<projet>/<section>`, voir
+ *  driveNaming.projectSectionFolderPath), donc un projet avait DEUX dossiers sur
+ *  le Drive. Les nouveaux envois vont dans `projects/<projet>/<section>`, mais ce
+ *  chemin reste suivi pour deux raisons : un Drive d'avant le déménagement garde
+ *  son dossier (utils/projectRootMigrate.js le range au démarrage), et un projet
+ *  qui n'aurait pas encore été visité depuis doit pouvoir être supprimé PROPREMENT
+ *  (les deux chemins partent à la corbeille). Voir projectFolderPaths. */
 export const projectRootFolderPath = (projectName) => sanitizeSlug(projectName);
 
 /** Les dossiers Drive d'un projet, du plus imbriqué au plus haut — ceux qu'une

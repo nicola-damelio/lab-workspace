@@ -14,7 +14,8 @@ Lab Workspace/
 │   └── datasets/
 │       └── ds_<dataset>.json        ← le CONTENU d'un dataset (charge compressée comprise)
 ├── <dataset>/                       ← nommé d'après le titre du dataset (le dossier est RENOMMÉ avec lui)
-│   ├── projects/<projet>/           ← expériences, figures, <projet>_document.json, useful_files
+│   ├── projects/<projet>/           ← expériences, figures, documents de SECTION
+│   │                                    (Background…), <projet>_document.json, useful_files
 │   ├── general_library_images/      ← figures de la bibliothèque COMMUNE (celles d'aucun projet)
 │   ├── protocols/<protocole>/
 │   ├── backups/                     ← instantanés HTML du dataset
@@ -33,8 +34,9 @@ jamais mélangés à cette mémoire.
 | Geste dans le programme | Sur le Drive |
 | --- | --- |
 | Supprimer un dataset | son dossier `<dataset>/` part à la **corbeille** (fichiers compris) et une **pierre tombale** est écrite dans `_workspace/state.json` |
-| Supprimer un projet | `<dataset>/projects/<projet>/` part à la corbeille + pierre tombale du chemin |
+| Supprimer un projet | `<dataset>/projects/<projet>/` part à la corbeille + pierre tombale du chemin (et, sur un Drive d'avant le 25/09/2026, l'éventuel dossier `<projet>` de la racine aussi) |
 | Renommer un dataset | `<ancien titre>/` est **renommé** en `<nouveau titre>/` (jamais un second dossier) |
+| Envoyer un document dans une section de la page projet | il va dans `<dataset>/projects/<projet>/<section>/` — jamais dans un dossier au nom du projet posé à la racine du dataset |
 | Renommer un projet | le dossier du projet **et** son `<projet>_document.json` sont renommés |
 | Supprimer une expérience / un protocole | le dossier de l'expérience / du protocole part à la corbeille |
 | Renommer un storage / une boîte | son dossier Drive (`storage/<storage>`, `storage/<storage>/boxes/<boîte>`) est **renommé** — une boîte ne garde jamais le « Test 74 » de sa création |
@@ -1377,4 +1379,107 @@ enregistré pour `lab_datasets_local_v2`, la copie écrite à chaque changement,
 vidage de `state.json` à la fermeture, et le câblage réel dans `App.jsx` ;
 `node _workspace_drive_test.mjs` — l'index du Drive complète toujours la liste du
 poste.
+
+
+## Une trajectoire de plusieurs Go n'arrivait pas sur le Drive (25/09/2026)
+
+Signalé : « hier j'ai chargé une trajectoire dans une image MD et l'analyse a marché ;
+aujourd'hui, sur un autre poste, la trajectoire ne se charge plus — et sur le Drive
+je trouve tout le chemin où elle devrait être, mais pas le fichier ». Le fichier était
+très gros.
+
+Ce qui se passait : **tout envoi partait en UNE seule requête** (`uploadType=multipart`),
+et deux choses rendaient l'échec invisible :
+
+* **la chaîne de dossiers se crée AVANT les octets** (`resolveDrivePathFromNames`) —
+  un envoi qui échoue laisse donc EXACTEMENT ce qui était vu : le chemin existe, le
+  fichier est absent ;
+* **l'échec était muet** : `archiveFileToDriveWithPointer` ne faisait qu'un
+  `console.warn` et rendait `{ name, pointer: null }` — impossible de distinguer
+  « archivée » de « restée dans ce navigateur ». Pire : au-delà de
+  `pendingUploads.MAX_SINGLE_BYTES` (250 Mo), le fichier n'entrait même pas dans la
+  file de reprise (`reason: 'too_large'`), donc les seuls octets existants étaient
+  ceux de la cache du navigateur **de ce poste**.
+
+Désormais (`src/utils/driveChunkUpload.js`, branché dans `driveUpload.js`) :
+
+* au-delà de `RESUMABLE_MIN_BYTES` (**5 Mio**, la limite annoncée de l'envoi en une
+  requête), le fichier part par **SESSION « resumable »** : ouverture (`POST`, ou
+  `PATCH` du fichier remplacé), puis des morceaux de **8 Mio** (multiple de 256 Kio,
+  exigence de l'API) avec leur `Content-Range` ; Drive répond **308 + `Range`** tant
+  que le fichier est incomplet, puis la ressource au dernier morceau ;
+* **un morceau qui tombe est rejoué** : la session est d'abord interrogée
+  (`bytes */<total>`) pour savoir où elle en est — rien n'est renvoyé deux fois pour
+  rien, rien n'est perdu, et `sent` ne recule jamais ;
+* le nom, le type, le dossier (`parents`) et le remplacement d'un fichier existant
+  sont **exactement** ceux de l'envoi en une requête : seule la façon de transporter
+  les octets change (l'arborescence ne bouge pas d'un iota) ;
+* `driveFetch` accepte un **chemin absolu** (l'URL de session porte un `upload_id`,
+  elle ne se reconstruit pas) et un `accept` de statuts non-ok (**308**) ;
+* **l'échec se dit** : `archiveFileToDriveWithPointer` rend `{ name, pointer, error }`
+  et la page MD écrit la raison (« trop gros pour la file de reprise (250 Mo max) »,
+  réseau, session, permission) au lieu d'un succès trompeur ;
+* la page MD affiche l'**avancement** (`⬆️ Archiving … 42%`) : une attente de
+  plusieurs minutes ne peut plus ressembler à une perte ;
+* une session REFUSÉE (`Location` illisible, p. ex. réponse CORS sans l'en-tête
+  exposé) rend `null` : l'envoi en une seule requête reste le repli, donc rien ne
+  régresse si l'environnement ne permet pas la session.
+
+*Vérifier :* `node _drive_big_upload_test.mjs` — calculs de morceaux (bornes incluses,
+dernier plus court, en-têtes `Range`), seuil, session complète sur un faux Drive
+(fichier **assemblé octet par octet**), morceau en échec rejoué, session qui reste
+ouverte (la ressource vient de l'« ack »), session refusée (repli), et le câblage
+réel dans `driveUpload.js` / `MDSections.jsx`.
+
+
+## Un dossier au nom d'un projet n'existe plus à la racine du dataset (25/09/2026)
+
+Signalé : « je trouve des dossiers au nom d'un projet **en dehors du dossier
+`projects`** ».
+
+Ils venaient des **documents de section** de la page projet : chaque section
+(Scientific background, Discussion, Conclusions…) envoyait ses fichiers dans
+`<dataset>/<projet>/<section>` — donc un **second dossier de projet**, posé à la
+racine du dataset, à côté de `projects/` (la structure déclarée d'un dataset
+n'admet que `projects`, `general_library_images`, `backups`, `protocols`,
+`storage`, `publications`). Un projet renommé laissait même l'ancien dossier
+orphelin. Le programme connaissait ce doublon (il le mettait à la corbeille à la
+suppression d'un projet), mais il le **créait** lui-même.
+
+Désormais :
+
+* la route est `projects/<projet>/<section>` — `driveNaming.projectSectionFolderPath`
+  et `driveFolderPath({ project, section })` (document de projet SANS expérience) :
+  le document d'une section vit **dans le dossier du projet**, comme ses expériences,
+  ses figures (`images`), son document de texte (`<projet>_document.json`) et ses
+  `useful_files`. L'étiquette « 📁 Drive location » et l'envoi ne peuvent pas diverger :
+  elles passent par la même fonction ;
+* **le Drive déjà touché est rangé tout seul**, une fois par dataset, quand le Drive
+  est prêt (`src/utils/projectRootMigrate.js`, appelé par `App.jsx` juste après
+  `migrateCommonLibraryOnce`) :
+  `<dataset>/<projet>/<section>/<doc>` → `<dataset>/projects/<projet>/<section>/<doc>` ;
+* ce qui est **reconnu** : un dossier de la racine dont le nom est celui d'un dossier
+  déjà présent dans `projects/`, ou dont le contenu est fait de dossiers de section de
+  projet (`driveNaming.isProjectSectionFolderName`). Un dossier incompris est
+  **laissé** et annoncé (`kept`) — on ne range pas ce qu'on ne comprend pas, et un
+  conteneur partagé n'est jamais candidat ;
+* la **fusion** ne perd rien : un dossier de section dont le nom est déjà pris dans le
+  projet reçoit seulement les **fichiers** de l'autre ; un **fichier** dont le nom est
+  déjà pris est **laissé** (on n'écrase jamais un document) et son dossier ne peut donc
+  pas partir à la corbeille ;
+* un dossier vidé part à la corbeille, et son **chemin est mis en pierre tombale**
+  (`labDriveMirror`) : plus aucun envoi ne le recrée ;
+* un chemin **déjà supprimé** dans le programme n'est pas « réparé » : la migration
+  l'ignore (c'est ce qui empêche de ressusciter le dossier d'un projet supprimé) ;
+* la suppression d'un projet continue de mettre à la corbeille **les deux** chemins
+  (`projects/<projet>` et le `<projet>` historique) : un Drive d'avant ce correctif
+  n'a donc pas besoin d'être rangé pour être supprimé proprement.
+
+*Vérifier :* `node _project_root_migrate_test.mjs` — la route et l'étiquette, la
+reconnaissance (dossier de projet vs conteneur partagé vs inconnu), le déménagement
+sur un faux Drive (déplacement, **fusion**, non-écrasement d'un fichier en double,
+corbeille + pierre tombale du chemin abandonné, dossier incompris laissé), et le
+câblage réel dans `App.jsx` ; `node _library_restore_test.mjs` et
+`node _storage_drive_layout_test.mjs` — les chemins déclarés du rangement des
+documents de projet.
 

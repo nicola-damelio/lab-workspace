@@ -32,8 +32,11 @@
            Recettes dès que sa date de signature est renseignée ;
          – une décision envoie un e-mail au(x) gestionnaire(s) (et au
            déposant quand son e-mail figure dans sa fiche Personnel) ;
-     · seul le superutilisateur peut supprimer une ligne ; un déposant peut
-       modifier sa propre ligne tant qu'elle est « En attente ».
+     · la suppression d'une ligne est ouverte au superutilisateur ET à la
+       responsable d'achats (fonction « Achats » — règle partagée
+       `scopeCanDeleteAchatLines`, voir ownScope.js) : elle corrige ainsi un
+       doublon ou une saisie erronée sans attendre une décision ; un déposant
+       peut modifier sa propre ligne tant qu'elle est « En attente ».
 
    Modèle stocké (collection `devisBc`) :
      devis : { kind:'devis', description, fournisseur, ligneBudgetaire,
@@ -75,7 +78,7 @@ import { fileBudgetDocs, hasApprovedSuffix, withApprovedSuffix } from './driveFi
 import {
   buildSignedDeposit, budgetLaboPath, depositDocDriveNameOf, renameDepositDriveFileTo,
 } from './depositSigning';
-import { scopeFonctions } from './ownScope';
+import { scopeCanDeleteAchatLines, scopeFonctions } from './ownScope';
 import {
   sendAdminMail, personEmailOf, personnelEmailsMatching, superuserEmailsOf, mergeEmails,
   notificationTargetOf,
@@ -288,6 +291,14 @@ export const ApprobationPage = () => {
   })();
   const isAchatsRole = currentFonctions.indexOf('Gestionnaire') !== -1
     || currentFonctions.indexOf('Achats') !== -1;
+  /* ── Suppression d'une ligne (devis / BC) ─────────────────────────────────
+     Ouverte au superutilisateur ET à la RESPONSABLE D'ACHATS (fonction
+     « Achats ») : elle suit l'ensemble des demandes et corrige donc un doublon
+     ou une saisie erronée sans attendre une décision. La règle vit dans
+     ownScope.js (`scopeCanDeleteAchatLines`) — la page « Achats prévus /
+     souhaités » applique exactement la même, et une ligne supprimée disparaît
+     des deux côtés. */
+  const canRemoveRow = scopeCanDeleteAchatLines(access);
   /* Visibilité : le superutilisateur, la gestionnaire et la responsable
      d’achats voient TOUTES les lignes. Les autres membres ne voient que
      leurs propres éléments (déposés par eux, demandés à leur nom ou créés
@@ -892,9 +903,9 @@ export const ApprobationPage = () => {
     });
   };
 
-  /* ── Suppression (superutilisateur uniquement) ────────────────────────── */
+  /* ── Suppression (superutilisateur et responsable d'achats) ───────────── */
   const removeRow = (rec) => {
-    if (!rec || !rec.id || !isSuper) return;
+    if (!rec || !rec.id || !canRemoveRow) return;
     const ref = txt(rec.numBC) || txt(rec.numDevis) || txt(rec.description) || rec.id;
     if (!window.confirm(`Supprimer définitivement cette ligne « ${ref} » ?`)) return;
     /* Un devis supprimé ne doit pas laisser un BC orphelin : les bons de
@@ -955,6 +966,7 @@ export const ApprobationPage = () => {
         if (generated && currentName && isAchatsRole) return true;
         return !!(txt(r.deposant) && currentName && sameName(r.deposant, currentName));
       },
+      canRemove: canRemoveRow,
       onDecide: decideRow,
       onEdit: (r) => setModal({ mode: 'edit', kind: activeKind, rec: r }),
       onMakeBc: openBcDeposit,
@@ -963,7 +975,7 @@ export const ApprobationPage = () => {
       onSendBack: returnToAchats,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [activeKind, isSuper, busyId, devisById, activeRows, currentName, isAchatsRole, showTreated, sendForSignature, returnToAchats]
+    [activeKind, isSuper, busyId, devisById, activeRows, currentName, isAchatsRole, canRemoveRow, showTreated, sendForSignature, returnToAchats]
   );
 
   const pendingCount = (kind) => visibleRows.filter((r) => r.kind === kind && isApprovalPending(r.statut)).length;
@@ -1129,6 +1141,12 @@ export const ApprobationPage = () => {
               <>
                 👁 Vous voyez <b>toutes</b> les demandes déposées (suivi des achats — Gestionnaire /
                 Responsable d’achats) : les devis &amp; BC de tous les membres sont listés ici.
+                {canRemoveRow ? (
+                  <>
+                    {' '}La <b>suppression</b> d’une ligne (🗑) vous est ouverte : elle corrige un
+                    doublon ou une saisie erronée sans attendre la décision du superutilisateur.
+                  </>
+                ) : null}
               </>
             ) : currentName ? (
               <>
@@ -1301,7 +1319,7 @@ export const ApprobationPage = () => {
 /* ── Colonnes de la table active (devis ou BC) ──────────────────────────── */
 const buildColumns = ({
   kind, isSuper, busyId, devisById,
-  canEdit, onDecide, onEdit, onMakeBc, onRemove, onSendForSignature, onSendBack,
+  canEdit, canRemove, onDecide, onEdit, onMakeBc, onRemove, onSendForSignature, onSendBack,
 }) => {
   /* La section « BC à faire et à approuver » mélange DEUX natures de lignes :
      le devis SIGNÉ dont le bon de commande reste à faire, puis les bons de
@@ -1550,7 +1568,9 @@ const buildColumns = ({
       value: () => '',
       display: (r) => {
         const editable = canEdit(r);
-        const deletable = isSuper;
+        /* Suppression : superutilisateur et responsable d'achats (`canRemove`,
+           calculé plus haut par `scopeCanDeleteAchatLines`). */
+        const deletable = !!canRemove;
         if (!editable && !deletable) return <span className="text-slate-300 text-xs">—</span>;
         return (
           <div className="flex items-center gap-1 justify-end">
@@ -1564,7 +1584,7 @@ const buildColumns = ({
             {deletable && (
               <button
                 type="button"
-                onClick={() => onRemove(r)} title="Supprimer (réservé au superutilisateur)"
+                onClick={() => onRemove(r)} title="Supprimer cette ligne (superutilisateur et responsable d’achats)"
                 className="w-7 h-7 rounded-lg border border-slate-200 text-slate-400 hover:bg-red-50 hover:text-red-600 text-xs"
               >🗑</button>
             )}

@@ -35,6 +35,10 @@ const {
   isDevisSigned, devisHasBc, devisAwaitingBc, desiderataTransferStatus,
   isDevisGestion, devisCompleteOf,
 } = await import('./src/administration/transferAchats.js');
+/* Droit de SUPPRESSION des lignes de suivi des achats (superutilisateur et
+   responsable d'achats) : la règle vit dans ownScope.js — un seul endroit, que
+   les deux pages importent. */
+const { scopeCanDeleteAchatLines } = await import('./src/administration/ownScope.js');
 const {
   depositFileKindOf, sniffBudgetDocBytes, depositDocDriveNameOf, depositDocDriveFinalName,
   signedDocDriveName, budgetLaboPath, bytesToDataUrl, buildSignedDeposit,
@@ -168,6 +172,30 @@ ok(
   '…et la raison est dite en clair (best-effort, jamais bloquant)',
 );
 
+/* ── 3bis. Droit de SUPPRESSION : la « responsable d'achats » ──────────────
+   La suppression d'une ligne — « Achats prévus / souhaités » (collection
+   desiderate) et « Approbation devis & BC » (collection devisBc) — est ouverte
+   au superutilisateur ET à la fonction « Achats », c'est-à-dire la RESPONSABLE
+   D'ACHATS : elle suit l'ENSEMBLE des demandes et corrige donc un doublon ou
+   une saisie erronée sans attendre une décision. Chaque autre membre ne
+   supprime que ses propres demandes. */
+const accessOf = (fonction, isSuperuser = false) => ({
+  isSuperuser,
+  profile: {
+    isSuperuser,
+    fonctions: fonction ? [fonction] : [],
+    fonction: fonction || '',
+    person: { id: 'p-x', nom: 'X Test', fonction: fonction || '' },
+  },
+});
+eq(scopeCanDeleteAchatLines(accessOf('Achats')), true, 'la fonction « Achats » (responsable d’achats) supprime une ligne');
+eq(scopeCanDeleteAchatLines(accessOf('Responsable d’achats')), true, 'le libellé « Responsable d’achats » est reconnu (anciennes fiches)');
+eq(scopeCanDeleteAchatLines(accessOf('Achats et logistique')), true, 'un libellé libre contenant « achats » est reconnu');
+eq(scopeCanDeleteAchatLines(accessOf('Gestionnaire')), false, 'la fonction « Gestionnaire » ne supprime pas les lignes des autres');
+eq(scopeCanDeleteAchatLines(accessOf('AP')), false, 'la fonction AP ne supprime pas');
+eq(scopeCanDeleteAchatLines(accessOf('', true)), true, 'le superutilisateur supprime toujours');
+eq(scopeCanDeleteAchatLines(null), false, 'sans profil : pas de suppression');
+
 /* ── 3. RENDU RÉEL des deux pages (SSR) ──────────────────────────────────── */
 const ENTRY = '_approval_bc_probe.jsx';
 const OUT_DIR = '_approval_bc_render';
@@ -200,7 +228,10 @@ const htmlOf = (label) => {
 
 const apprSuper = htmlOf('approbation-superuser');
 const apprMember = htmlOf('approbation-membre');
+const apprAchats = htmlOf('approbation-achats');
 const achats = htmlOf('achats-prevus-superuser');
+const achatsMembre = htmlOf('achats-prevus-membre');
+const achatsAchats = htmlOf('achats-prevus-achats');
 
 /* Les deux sections, et la nouvelle règle de répartition. */
 ok(apprSuper.includes('Devis à approuver'), 'la section « Devis à approuver » est rendue');
@@ -225,10 +256,27 @@ ok(achats.includes('ACHAT-APPROUVE a transferer'), 'un achat approuvé non trans
 ok(!achats.includes('→ Devis & BC'), 'le bouton « → Devis & BC » a disparu');
 ok(!achats.includes('Devis signé · BC à signer'), 'l’ancien libellé « Devis signé · BC à signer » a disparu');
 
+/* Droit de suppression, vu du RENDU :
+   · la responsable d'achats (fonction « Achats », SANS rôle superutilisateur)
+     reçoit le 🗑 sur les deux pages, y compris sur les lignes déposées par
+     d'autres membres ;
+   · un membre conserve le 🗑 de SES demandes, mais jamais celui des autres — et
+     aucun 🗑 sur « Approbation devis & BC ». */
+ok(apprAchats.includes('🗑'), 'approbationPage : la responsable d’achats peut supprimer une ligne (🗑 proposé)');
+ok(apprAchats.includes('DEV-EN-ATTENTE'), 'approbationPage : la responsable d’achats voit toutes les demandes');
+ok(apprMember.includes('DEV-BOB-PROPRE'), 'approbationPage : un membre voit bien son propre devis');
+ok(!apprMember.includes('🗑'), 'approbationPage : un membre n’a PAS de bouton Supprimer');
+ok(achatsMembre.includes('ACHAT-BOB-PROPRE'), 'desiderataPage : un membre voit sa propre demande');
+ok(achatsMembre.includes('🗑️'), 'desiderataPage : un membre supprime SES demandes');
+ok(!achatsMembre.includes('ACHAT-APPROUVE'), 'desiderataPage : un membre ne voit pas les demandes des autres');
+ok(achatsAchats.includes('ACHAT-APPROUVE a transferer'), 'desiderataPage : la responsable d’achats voit toutes les demandes');
+ok(achatsAchats.includes('🗑️'), 'desiderataPage : la responsable d’achats supprime aussi les lignes des autres membres');
+
 /* ── 4. Câblage du JSX (ce qui ne se voit qu'au clic / à l'onglet BC) ────── */
 const apprSrc = readFileSync('src/administration/approbationPage.jsx', 'utf8');
 const desiSrc = readFileSync('src/administration/desiderataPage.jsx', 'utf8');
 const tableSrc = readFileSync('src/administration/smartTable.jsx', 'utf8');
+const ownScopeSrc = readFileSync('src/administration/ownScope.js', 'utf8');
 const signingSrc = readFileSync('src/administration/depositSigning.js', 'utf8');
 
 const has = (src, needle, what) => {
@@ -282,5 +330,21 @@ has(desiSrc, "'Devis signé · BC à faire'", 'desiderataPage : le badge dit « 
 gone(desiSrc, '>→ Devis & BC<', 'desiderataPage : le bouton « → Devis & BC » a été retiré');
 gone(desiSrc, "'Devis signé · BC à signer'", 'desiderataPage : l’ancien badge a disparu');
 has(desiSrc, 'to: cible.emails,', 'desiderataPage : le transfert notifie toujours la cible (destinataires inchangés)');
+
+/* Droit de SUPPRESSION : la règle vit dans ownScope.js et les DEUX pages
+   l'appliquent. Sans elle, la responsable d'achats voyait un 🗑 sans effet sur
+   « Achats prévus / souhaités » (l'ancienne garde refusait la suppression d'une
+   ligne déposée par un autre membre) et aucun 🗑 sur « Approbation devis & BC »
+   (bouton conditionné au seul rôle superutilisateur). */
+has(ownScopeSrc, 'export const scopeCanDeleteAchatLines', 'ownScope : la règle de suppression vit en un seul endroit');
+has(apprSrc, 'const canRemoveRow = scopeCanDeleteAchatLines(access);', 'approbationPage : le droit de suppression vient d’ownScope');
+has(apprSrc, 'canRemove: canRemoveRow,', 'approbationPage : la suppression est passée aux colonnes (canRemove)');
+has(apprSrc, 'const deletable = !!canRemove;', 'approbationPage : le bouton 🗑 dépend du droit, plus du seul rôle superutilisateur');
+gone(apprSrc, 'const deletable = isSuper;', 'approbationPage : la suppression n’est plus réservée au superutilisateur');
+has(desiSrc, 'const canDeleteRow = (rec) => isSuper', 'desiderataPage : le droit de suppression est calculé par ligne');
+has(desiSrc, 'scopeCanDeleteAchatLines(access)', 'desiderataPage : le droit de suppression vient d’ownScope');
+gone(desiSrc, 'if (!isSuper && !scopeCanSeeItem(rec, { isSuper, meNames, mePersonId })) return;', 'desiderataPage : l’ancienne garde (bouton 🗑 sans effet) a disparu');
+has(desiSrc, '{canDeleteRow(r) ? (', 'desiderataPage : le bouton 🗑 n’est proposé qu’à qui en a le droit');
+has(desiSrc, 'est ouverte à la responsable d’achats', 'desiderataPage : l’info-bulle d’en-tête dit qui peut supprimer');
 
 console.log(`_approval_bc_flow_test: ${passed} passed`);

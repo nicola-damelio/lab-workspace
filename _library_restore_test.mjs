@@ -361,20 +361,20 @@ eq((await LIB.pushLibraryToDrive({ scope: 'common' })).total, 0, '…de même po
 
 /* ── 10. Le dossier du dataset fait toujours partie du chemin ─────────────── */
 eq(NAMING_MOD.projectSectionFolderPath('CD project', '🔬 Scientific background'),
-  ['CD_project', 'Scientific_background'],
-  'un document de section va dans <projet>/<section> (la même route que l’envoi)');
+  ['projects', 'CD_project', 'Scientific_background'],
+  'un document de section va dans projects/<projet>/<section> (la même route que l’envoi)');
 eq(NAMING_MOD.projectSectionFolderLabel('CD project', 'Discussion', 'My dataset (2026)'),
-  'My_dataset_2026 / CD_project / Discussion',
-  'l’étiquette affichée commence par le dossier RÉEL du dataset');
+  'My_dataset_2026 / projects / CD_project / Discussion',
+  'l’étiquette affichée commence par le dossier RÉEL du dataset — et le projet est DANS projects/');
 /* Le titre affiché d'une section peut changer (« Discussion » → « Results and
    Discussion ») : le dossier Drive, lui, garde son nom historique — sinon les
    documents déjà envoyés sembleraient avoir disparu (dossier orphelin) et un
    second dossier apparaîtrait. */
 eq(NAMING_MOD.projectSectionFolderPath('CD project', 'Results and Discussion'),
-  ['CD_project', 'Discussion'],
+  ['projects', 'CD_project', 'Discussion'],
   'la section renommée « Results and Discussion » range ses documents dans le dossier historique « Discussion »');
 eq(NAMING_MOD.projectSectionFolderLabel('CD project', 'Results and Discussion', 'My dataset (2026)'),
-  'My_dataset_2026 / CD_project / Discussion',
+  'My_dataset_2026 / projects / CD_project / Discussion',
   '…et l’emplacement affiché est celui du dossier réel (aucun dossier fantôme)');
 eq(NAMING_MOD.driveFolderPath({ project: 'CD project', test: 'Exp 1', section: 'Results and Discussion' }),
   ['CD_project', 'Exp_1', 'Results_and_Discussion'],

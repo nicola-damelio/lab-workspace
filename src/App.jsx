@@ -39,6 +39,11 @@ import { repairBoxPlacements } from './utils/storageBoxes';
 import { setActiveProjectId, readLibrary, readAllProjectLibraries, mergeLibraryFromSnapshot, refreshLibraryFromStorage } from './utils/figuresLibrary';
 import { clearDriveToken, testDriveAccess, getConfiguredDriveClientId, connectDriveWithGis, sharedWorkspaceMode, getWorkspaceServerIssue, getLastDriveConnectError, driveBootstrapRequestedAtLoad, setDriveRootContext, ensureDriveFolder, getDriveToken, uploadWorkspaceFile, cleanupWorkspaceRootFolders, cloudBackendAvailable } from './utils/driveUpload';
 import { migrateCommonLibraryOnce } from './utils/commonLibraryMigrate';
+/* Les DOCUMENTS DE SECTION d'une page projet vivaient dans un dossier au nom du
+   projet POSÉ À LA RACINE du dataset (« <projet>/<section> ») : ce déménagement
+   les range dans `projects/<projet>/<section>`, à côté des expériences, des
+   figures et du document du projet (voir utils/projectRootMigrate.js). */
+import { migrateProjectRootFoldersOnce } from './utils/projectRootMigrate';
 /* ── LE DRIVE EST LE MIROIR DU PROGRAMME (et le même sur chaque poste) ──────
    driveMirror.js : supprimer ou renommer un dataset / un projet se répercute
    sur Drive (dossier mis à la corbeille, dossier renommé — jamais de doublon).
@@ -1311,6 +1316,11 @@ if (customType === 'dosy') {
            la lecture continue de fonctionner sur les anciens emplacements
            entre-temps (voir utils/commonLibraryMigrate.js). */
         .then(() => migrateCommonLibraryOnce())
+        /* LES DOSSIERS DE PROJET POSÉS À LA RACINE DU DATASET (« <projet> », où
+           allaient les documents de section d'une page projet) rentrent dans
+           `projects/<projet>` : même endroit, une fois par dataset, et le chemin
+           abandonné est mis en pierre tombale (voir utils/projectRootMigrate.js). */
+        .then(() => migrateProjectRootFoldersOnce())
         .catch(() => {});
     }, 800);
     return () => {

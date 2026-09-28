@@ -467,7 +467,7 @@ ok(MDSRC.includes("takePendingRestorePointer({ field: 'trajectoryDrive', key: ac
 ok(VIEWSRC.includes('if (driveNaming && !onStructureFile) archiveFileToDrive({ file: first, ctx: driveNaming }).catch(() => {});'),
   'le viewer n’envoie le fichier PRINCIPAL que si la page ne le fait pas (aucun doublon Drive)');
 
-ok(UPLOADSRC.includes("export const archiveFileToDriveWithPointer = async ({ file, ctx = {}, title = '', suffix = 'file' }) => {"),
+ok(UPLOADSRC.includes("export const archiveFileToDriveWithPointer = async ({ file, ctx = {}, title = '', suffix = 'file', onProgress = null }) => {"),
   'le nommage + le pointeur vivent en un seul endroit (lib/driveUpload)');
 ok(UPLOADSRC.includes("export const driveFilePointer = (res, fallbackName = '') => ("),
   '…avec un constructeur de pointeur unique');

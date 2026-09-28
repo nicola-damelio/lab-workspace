@@ -217,11 +217,13 @@ const findProjectFolder = async ({ datasetId = '', datasetName = '', projectName
   return findFolderByName(sanitizeSlug(projectName), projectsFolderId);
 };
 
-/** Le dossier de PROJET À LA RACINE du dataset (« <dataset>/<projet> »), celui
- *  qui porte les DOCUMENTS DE SECTION (<projet>/<section> — le dossier affiché
- *  sous « 📁 Drive location » de chaque section de la page projet). Il n'est pas
- *  dans « projects/ » : c'est un SECOND dossier de projet, et c'est lui qui
- *  restait sur le Drive après la suppression d'un projet. '' s'il n'existe pas. */
+/** Le dossier de PROJET À LA RACINE du dataset (« <dataset>/<projet> ») — le
+ *  chemin HISTORIQUE des DOCUMENTS DE SECTION (<projet>/<section>, voir
+ *  driveNaming.projectSectionFolderPath, qui les range aujourd'hui dans
+ *  `projects/<projet>/<section>`). Il n'est donc plus créé, mais il reste SUIVI :
+ *  c'est lui qui restait sur le Drive après la suppression d'un projet, et c'est
+ *  lui que range utils/projectRootMigrate.js quand il existe encore.
+ *  '' s'il n'existe pas. */
 const findProjectRootFolder = async ({ datasetId = '', datasetName = '', projectName = '' }) => {
   /* Le chemin vient de la MÊME liste que les tombes (projectFolderPaths) : un
      projet nommé comme un dossier partagé du dataset (« projects »…) n'a donc
@@ -236,12 +238,13 @@ const findProjectRootFolder = async ({ datasetId = '', datasetName = '', project
 
 /**
  * Supprimer un projet : SES DEUX dossiers Drive partent à la corbeille — les
- * expériences, figures et le document (`projects/<projet>`) ET le dossier des
- * documents de section (`<projet>`, à la racine du dataset, voir
- * driveNaming.projectSectionFolderPath). Les deux chemins sont mis en pierre
- * tombale, donc ni l'un ni l'autre ne se recrée, et un autre poste ne les voit
- * plus. Le compte rendu dit ce qui a été trouvé (`missing`) : un dossier absent
- * (déjà supprimé, ou projet jamais envoyé sur le Drive) n'est pas une erreur.
+ * expériences, figures et le document (`projects/<projet>`) ET l'éventuel dossier
+ * de documents de SECTION resté à la racine du dataset (`<projet>` — le chemin
+ * historique, voir driveNaming.projectSectionFolderPath et
+ * utils/projectRootMigrate.js). Les deux chemins sont mis en pierre tombale, donc
+ * ni l'un ni l'autre ne se recrée, et un autre poste ne les voit plus. Le compte
+ * rendu dit ce qui a été trouvé (`missing`) : un dossier absent (déjà supprimé, ou
+ * projet jamais envoyé sur le Drive) n'est pas une erreur.
  */
 export const mirrorDeleteProject = async ({ datasetId = '', datasetName = '', projectName = '' } = {}) => {
   const paths = projectFolderPaths(projectName);

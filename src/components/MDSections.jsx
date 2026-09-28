@@ -971,10 +971,23 @@ export const MDExperimentSetupSection = ({ ctx }) => {
     // fichier reste dans le dataset : c'est lui qui le ramène sur un autre poste.
     setTrajDriveMsg(`⬆️ Archiving ${file.name} to Google Drive…`);
     (async () => {
-      const { name: driveName, pointer } = await archiveFileToDriveWithPointer({
+      /* L'AVANCEMENT EST MONTRÉ. Une trajectoire part maintenant PAR MORCEAUX
+         (session « resumable » — voir utils/driveChunkUpload.js) : sans le
+         pourcentage, un envoi de plusieurs Go restait muet pendant des minutes et
+         on ne pouvait pas distinguer « ça travaille » de « c'est perdu ». */
+      let lastPct = -1;
+      const onProgress = (sent, total) => {
+        if (!total) return;
+        const pct = Math.min(100, Math.round((sent / total) * 100));
+        if (pct === lastPct) return;
+        lastPct = pct;
+        setTrajDriveMsg(`⬆️ Archiving ${file.name} to Google Drive… ${pct}%`);
+      };
+      const { name: driveName, pointer, error } = await archiveFileToDriveWithPointer({
         file,
         ctx: { project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || '', instance: activeTest.instanceName || '', scientist: activeTest.operator || '', section: 'Setup', subsection: 'Trajectory' },
-        suffix: 'trajectory'
+        suffix: 'trajectory',
+        onProgress
       }).catch(() => null);
       if (!driveName) return;
       placeRestorePointer({
@@ -984,9 +997,15 @@ export const MDExperimentSetupSection = ({ ctx }) => {
         activeKey: mdActiveIdRef.current,
         patch: updateActiveTest
       });
+      /* L'ÉCHEC SE DIT, AVEC SA RAISON. « archivé » ne doit jamais être annoncé
+         quand le fichier n'est pas sur le Drive (c'est ce qui a fait croire, le
+         25/09/2026, qu'une trajectoire de plusieurs Go était en sécurité alors que
+         ni le Drive ni l'autre poste ne l'avaient). Le geste de reprise nommé est
+         celui qui EXISTE sur la page (« Choose XTC / TRR » ré-archive le fichier) :
+         renvoyer à un bouton imaginaire ne répare rien. */
       setTrajDriveMsg(pointer
         ? `✅ ${file.name} archived to Google Drive.`
-        : `⚠️ ${file.name} was loaded, but the Drive upload failed. Use “Archive trajectory to Drive” to retry (check the Drive connection first).`);
+        : `⚠️ ${file.name} was loaded, but the Drive upload failed${error ? ` — ${error}` : ''}. Use “Choose XTC / TRR” to pick the file again (the upload archives it once more) once the Drive connection is back.`);
     })();
     setTrajectoryFile(file);
     updateActiveTest({ trajectoryFileName: file.name });

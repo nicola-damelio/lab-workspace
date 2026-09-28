@@ -14,6 +14,12 @@
        verrouillé sur soi-même pour les membres), sinon par correspondance de
        nom normalisée avec la colonne « demandeur » (anciens imports Google
        Sheets) puis par l’enveloppe d’audit `createdBy`.
+
+   Suppression (voir `scopeCanDeleteAchatLines` plus bas) : le superutilisateur
+   et la fonction « Achats » — c’est-à-dire la RESPONSABLE D’ACHATS, qui suit
+   l’ensemble des demandes — peuvent retirer une ligne de « Achats prévus /
+   souhaités » et de « Approbation devis & BC » (doublon, saisie erronée) ;
+   chaque autre membre ne supprime que ses propres demandes.
    ========================================================================= */
 
 import { adminFonctionCode } from './adminSchema';
@@ -65,6 +71,25 @@ export const scopeSeesAllRows = (access) => {
   if (a.isSuperuser) return true;
   const fonctions = scopeFonctions(a);
   return fonctions.indexOf('Gestionnaire') !== -1 || fonctions.indexOf('Achats') !== -1;
+};
+
+/** Le membre connecté peut-il SUPPRIMER une ligne de suivi des achats — une
+ *  ligne « Achats prévus / souhaités » (collection desiderate) ou une ligne de
+ *  devis / BC (page « Approbation devis & BC ») ?
+ *
+ *  Oui pour le superutilisateur, et pour la fonction « Achats » — c’est-à-dire
+ *  la RESPONSABLE D’ACHATS : elle suit l’ENSEMBLE des demandes (voir
+ *  scopeSeesAllRows) et corrige donc un doublon ou une saisie erronée sans
+ *  attendre une décision du superutilisateur. Les autres membres ne suppriment
+ *  que leurs PROPRES demandes (`scopeCanSeeItem`).
+ *
+ *  La règle vit ICI, en un seul endroit testable, et les deux pages l’importent
+ *  — une ligne supprimée disparaît des deux côtés (le souhait transféré et son
+ *  devis « Approbation devis & BC »). */
+export const scopeCanDeleteAchatLines = (access) => {
+  const a = access || {};
+  if (a.isSuperuser) return true;
+  return scopeFonctions(a).indexOf('Achats') !== -1;
 };
 
 /** Noms d’identité du membre connecté : fiche Personnel liée d’abord, nom du
