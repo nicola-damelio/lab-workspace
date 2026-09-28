@@ -1566,8 +1566,15 @@ export const MultiSelectDropdown = ({ options, selected, onToggle, placeholder }
 };
 
 // ================= PAINT STRIP =================
-export const SequencePaintStrip = ({ residues, getLetter, meta, onApply, focusIdx, charLabel }) => {
+// One chip per residue. The number written on a chip is THE number of that
+// residue on screen — not its rank in the sequence: the page passes it in
+// (residueNo, from utils/residueNumbering.js), so renumbering the 3D structure
+// (🔢) renumbers the strip exactly like the 3D labels and the shifts table.
+// Without that prop the strip falls back to the sequence rank (1, 2, …), which
+// is what every page showed before the renumbering reached it.
+export const SequencePaintStrip = ({ residues, getLetter, meta, onApply, focusIdx, charLabel, residueNo }) => {
   const [painting, setPainting] = useState(false);
+  const numberAt = typeof residueNo === 'function' ? residueNo : (i) => i + 1;
   useEffect(() => {
     const up = () => setPainting(false);
     window.addEventListener('mouseup', up);
@@ -1579,6 +1586,7 @@ export const SequencePaintStrip = ({ residues, getLetter, meta, onApply, focusId
         const l = getLetter(i);
         const m = meta[l] || { label: String(l), color: '#64748b' };
         const dim = focusIdx !== 'ALL' && focusIdx !== i;
+        const resNo = numberAt(i);
         return (
           <button
             key={i}
@@ -1586,11 +1594,11 @@ export const SequencePaintStrip = ({ residues, getLetter, meta, onApply, focusId
             onDragStart={(e) => e.preventDefault()}
             onMouseDown={(e) => { e.preventDefault(); setPainting(true); onApply(i); }}
             onMouseEnter={() => { if (painting) onApply(i); }}
-            title={`${r.id}: ${m.label}`}
+            title={`${r.name || r.char} ${resNo}: ${m.label}`}
             className="w-11 py-1 rounded-md border text-center leading-tight transition-all"
             style={{ backgroundColor: m.color + '22', borderColor: m.color, opacity: dim ? 0.35 : 1 }}
           >
-            <div className="text-[8px] text-slate-500 font-bold">{i + 1}</div>
+            <div className="text-[8px] text-slate-500 font-bold">{resNo}</div>
             <div className="text-sm font-black text-slate-800">{charLabel ? charLabel(r) : r.char}</div>
             <div className="text-[10px] font-black" style={{ color: m.color }}>{l}</div>
           </button>

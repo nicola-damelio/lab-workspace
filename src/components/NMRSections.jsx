@@ -18,10 +18,15 @@ import { blobStore } from '../utils/blobStore';
 import { archiveRestoreJson, isMissingValue, placeRestorePointer, pointerStillWanted, restoreJsonFor, restoreRawFileFor, restoreStems, sameRawFileFor, takePendingRestorePointer, wantedRawNames } from '../utils/driveRestore';
 import { useDriveAutoRestore } from './useDriveAutoRestore';
 import { sequenceForMoleculeType, sequencePatchForMoleculeType, structureSequencePatch, sequenceNaturesNote } from '../utils/sequenceNatures';
+// LE numéro affiché d'un résidu (position + residueOffset → table resRenumber du
+// viewer 🔢) : une seule règle pour la table des déplacements, la bande de
+// séquence de « Sequence and structure » et les ponts disulfure.
+import { residueNumberResolver, residueNumberOf } from '../utils/residueNumbering';
 import {
   AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, CARBON_RANGE_DB,
   SS_CORRECTIONS, SS_META, DNA_FORM_OFFSETS, SUGAR_ANOMER_OFFSETS,
-  RESIDUE_COLORS, RANDOM_COIL_DB, CYS_OXIDIZED_RC, CYS_OXIDIZED_CARBON_RANGE, TICKS_1H, TICKS_13C, TICKS_15N
+  RESIDUE_COLORS, RANDOM_COIL_DB, CYS_OXIDIZED_RC, CYS_OXIDIZED_CARBON_RANGE, TICKS_1H, TICKS_13C, TICKS_15N,
+  SequencePaintStrip
 } from './NMRData';
 export { VIS_PALETTES };
 
@@ -1218,30 +1223,11 @@ const StructureSVGView = ({ structure, minWidth, isExpanded, onToggleExpand, sel
   );
 };
 
-const SequencePaintStrip = ({ residues, getLetter, meta, onApply, focusIdx, charLabel }) => {
-  const [painting, setPainting] = useState(false);
-  useEffect(() => {
-    const up = () => setPainting(false);
-    window.addEventListener('mouseup', up);
-    return () => window.removeEventListener('mouseup', up);
-  }, []);
-  return (
-    <div className="flex flex-wrap gap-1.5 select-none">
-      {residues.map((r, i) => {
-        const l = getLetter(i);
-        const m = meta[l] || { label: String(l), color: '#64748b' };
-        const dim = focusIdx !== 'ALL' && focusIdx !== i;
-        return (
-          <button key={i} draggable={false} onDragStart={(e) => e.preventDefault()} onMouseDown={(e) => { e.preventDefault(); setPainting(true); onApply(i); }} onMouseEnter={() => { if (painting) onApply(i); }} title={`${r.id}: ${m.label}`} className="w-11 py-1 rounded-md border text-center leading-tight transition-all" style={{ backgroundColor: m.color + '22', borderColor: m.color, opacity: dim ? 0.35 : 1 }}>
-            <div className="text-[8px] text-slate-500 font-bold">{i + 1}</div>
-            <div className="text-sm font-black text-slate-800">{charLabel ? charLabel(r) : r.char}</div>
-            <div className="text-[10px] font-black" style={{ color: m.color }}>{l}</div>
-          </button>
-        );
-      })}
-    </div>
-  );
-};
+// (The sequence strip of this page is the SHARED one — `SequencePaintStrip`
+// from ./NMRData, imported above. It used to be a private copy here, which
+// meant a fix applied to one strip did not reach the other two pages. It now
+// also receives `residueNo`, so its chips carry the residue numbers the 3D
+// viewer shows after a 🔢 renumbering.)
 
 const CustomXTick1H = ({ x, y, payload, isZoomed, fs = 11, angle = 0, color = '#64748b', fontFamily = '' }) => {
   const numVal = Number(payload.value);
@@ -3743,12 +3729,12 @@ const useNmrDerived = (activeTest, ctx = {}) => {
       estN = +(res.backboneRand.N + (ssKey !== 'coil' ? corr.c['N'] || 0 : 0)).toFixed(2);
       estCP = +(res.backboneRand.CP + (ssKey !== 'coil' ? corr.c["C'"] || 0 : 0)).toFixed(2);
     }
-    // Residue numbering: honour the residue offset and the renumber map
-    // (resRenumber: original residue number -> new number) so renumbering the
-    // 3D structure also renumbers the shifts table, plots and labels.
-    const origNo = idx + 1 + (activeTest.residueOffset || 0);
-    const ren = (activeTest.resRenumber || {})[String(origNo)];
-    const displayNo = ren != null && ren !== '' ? Number(ren) : origNo;
+    // Residue numbering: the SAME rule as every other panel
+    // (utils/residueNumbering.js) — the residue's position + the residue offset
+    // of the condition, then the viewer's 🔢 renumber table. Renumbering the 3D
+    // structure therefore renumbers the shifts table, the plots and the labels
+    // alike.
+    const displayNo = residueNumberOf(activeTest, idx);
     return { ...res, id: `${res.code3 || res.char}${displayNo}`, estShifts, estUniqueC, estShifts13C, estN, estCP, cysOxidized: cysOxidizedHere, ssLetter, formLetter: getFormAt(idx), residueNo: displayNo };
   }), [parsedSeq, moleculeType, sugarAnomer, sugarConf, ssRaw, formsRaw, dnaFormDefault, activeTest.residueOffset, activeTest.resRenumber, activeTest.cysOxidized, activeTest.cysStates, activeTest.cysDisulfides]);
   
@@ -4589,6 +4575,11 @@ export const MolecularStructureSection = ({ ctx }) => {
   const structureMode = activeTest.structureMode || '2d';
   const atomLabelMode = activeTest.atomLabelMode || 'selected';
   const residueOffset = activeTest.residueOffset || 0;
+  // LE numéro affiché d'un résidu (position + décalage, puis table 🔢 du viewer) :
+  // la bande de séquence de « Sequence and structure » et les étiquettes Cys des
+  // ponts disulfure lisent le MÊME résolveur que le viewer et que la table des
+  // déplacements.
+  const residueNoOf = residueNumberResolver(activeTest);
   // "University test" exam mode: hides every hint that would give the
   // secondary structure away (brush + 3D folding driven by the brush).
   const univTestMode = Boolean(activeTest.universityTest);
@@ -5063,6 +5054,17 @@ const generatedStructure = useMemo(() => {
                 if (cysPositions.length === 0) return null;
                 const pairs = Array.isArray(activeTest.cysDisulfides) ? activeTest.cysDisulfides : [];
                 const states = activeTest.cysStates || {};
+                // The NUMBERS written in this panel are the residues' ON-SCREEN
+                // numbers: their 1-based sequence position + the residue offset
+                // of the condition, then the viewer's 🔢 renumber table
+                // (utils/residueNumbering.js). A structure renumbered in the 3D
+                // viewer therefore shows cysteines — and disulphide bonds —
+                // numbered like its 3D labels and like the shifts table.
+                // The STATES and the PAIRS themselves stay keyed by SEQUENCE
+                // POSITION (that is what the redox model reads): renumbering the
+                // molecule never rewrites a state nor a disulphide definition.
+                const resNoOf = residueNumberResolver(activeTest);
+                const noOf = (pos) => resNoOf(pos - 1);
                 const effState = (pos) => pairs.some(([a, b]) => a === pos || b === pos)
                   ? 'oxidized'
                   : (states[pos] || (activeTest.cysOxidized ? 'oxidized' : 'reduced'));
@@ -5099,6 +5101,7 @@ const generatedStructure = useMemo(() => {
                         Default: Oxidized
                       </label>
                       <span className="text-[10px] text-amber-700 font-semibold">oxidized Cys ¹³Cβ ≈ 39.6 ppm · reduced ≈ 28.0 ppm</span>
+                      <span className="text-[10px] text-slate-500 italic" title="Residue numbers written here are the ones the 3D viewer shows: sequence position + residue offset, replaced by the 🔢 renumbering">🔢 numbers follow the 3D viewer</span>
                     </div>
                     <div className="flex flex-col gap-1.5">
                       {cysPositions.map((pos) => {
@@ -5106,7 +5109,7 @@ const generatedStructure = useMemo(() => {
                         const pairTargets = cysPositions.filter((p) => p !== pos && !pairs.some(([a, b]) => a === pos || b === pos));
                         return (
                           <div key={pos} className="flex flex-wrap items-center gap-2 text-xs">
-                            <span className="font-bold text-slate-700 w-14">Cys #{pos}</span>
+                            <span className="font-bold text-slate-700 w-14">Cys #{noOf(pos)}</span>
                             <div className="flex rounded-lg overflow-hidden border border-slate-300">
                               <button type="button" onClick={() => setState(pos, 'reduced')}
                                 className={`px-2 py-1 font-bold transition-colors ${st === 'reduced' ? 'bg-emerald-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
@@ -5130,7 +5133,7 @@ const generatedStructure = useMemo(() => {
                                   }}
                                   className="border border-slate-300 rounded px-1 py-0.5 text-[11px] bg-white outline-none">
                                   <option value="">…</option>
-                                  {pairTargets.map((p2) => <option key={p2} value={p2}>Cys #{p2}</option>)}
+                                  {pairTargets.map((p2) => <option key={p2} value={p2}>Cys #{noOf(p2)}</option>)}
                                 </select>
                               </span>
                             )}
@@ -5143,7 +5146,7 @@ const generatedStructure = useMemo(() => {
                         <span className="text-[10px] font-bold text-slate-500 uppercase">Disulfide pairs</span>
                         {pairs.map((pair, pi) => (
                           <span key={pi} className="inline-flex items-center gap-1 bg-amber-100 border border-amber-300 rounded-full px-2 py-0.5 text-[11px] font-bold text-amber-900">
-                            Cys #{pair[0]} ⚭ Cys #{pair[1]}
+                            Cys #{noOf(pair[0])} ⚭ Cys #{noOf(pair[1])}
                             <button type="button" onClick={() => removePair(pi)} className="text-amber-700 hover:text-red-600 font-black" title="Remove this disulphide bond">×</button>
                           </span>
                         ))}
@@ -5215,7 +5218,7 @@ const generatedStructure = useMemo(() => {
             <button onClick={() => setAllSS('E')} className="px-3 py-1 rounded-lg text-xs font-bold bg-amber-100 border border-amber-300 text-amber-700 hover:bg-amber-200">All β-Sheet</button>
           </div>
           <p className="text-xs text-slate-400 mb-3">💡 Select a brush, then click or drag across the sequence chips to paint secondary structure.</p>
-          <SequencePaintStrip residues={d.parsedSeq} getLetter={(i) => d.getSSAt(i)} meta={SS_META} onApply={(i) => paintSSAt(i, ssBrush)} focusIdx={focusIdx} />
+          <SequencePaintStrip residues={d.parsedSeq} getLetter={(i) => d.getSSAt(i)} meta={SS_META} onApply={(i) => paintSSAt(i, ssBrush)} focusIdx={focusIdx} residueNo={residueNoOf} />
         </CollapsibleSection>
       )}
       

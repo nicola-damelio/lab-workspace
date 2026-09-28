@@ -9,6 +9,10 @@ import { storeJson, loadJson } from '../utils/pdbStore';
 import { archiveRestoreJson, placeRestorePointer, restoreJsonFor, restoreStems, takePendingRestorePointer } from '../utils/driveRestore';
 import { useDriveAutoRestore } from './useDriveAutoRestore';
 import { sequenceForMoleculeType, sequencePatchForMoleculeType, structureSequencePatch, sequenceNaturesNote } from '../utils/sequenceNatures';
+// LE numéro affiché d'un résidu (position + residueOffset → table 🔢 du viewer) :
+// les pastilles de « Sequence and structure » montrent les mêmes numéros que le
+// viewer 3D et que la table des déplacements.
+import { residueNumberResolver } from '../utils/residueNumbering';
 import { gunzipSync } from 'fflate';
 // One character size per element + the font family of the shared figure style
 // (the axis numbers keep riding on cfg.fontSize, see utils/chartStyle.js).
@@ -347,6 +351,10 @@ export const DockingExperimentalConditions = ({ ctx }) => {
 export const DockingExperimentSetupSection = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
   const d = useDockingDerived(activeTest, ctx);
+  // LE numéro affiché d'un résidu (position + residueOffset, puis table 🔢 du
+  // viewer) : les pastilles de « Sequence and structure » portent les numéros
+  // que la structure renumérotée montre dans le viewer 3D.
+  const residueNoOf = residueNumberResolver(activeTest);
 
   // Docking cluster structures (8_seletopclusts) read by the calculation-directory
   // importer — the full PDB texts live in localStorage, keyed by the test id.
@@ -609,6 +617,7 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
             meta={SS_META}
             onApply={(i) => paintSSAt(i, ssBrush)}
             focusIdx="ALL"
+            residueNo={residueNoOf}
           />
         </CollapsibleSection>
       )}

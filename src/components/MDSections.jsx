@@ -28,6 +28,10 @@ import { DriveUploadButton } from './DriveUpload';
 import { suggestDriveFileName } from '../utils/driveNaming';
 import { archiveFileToDrive, archiveFileToDriveWithPointer, getDriveToken, getDriveFileRegistry, driveFetch } from '../utils/driveUpload';
 import { sequenceForMoleculeType, sequencePatchForMoleculeType, structureSequencePatch, sequenceNaturesNote } from '../utils/sequenceNatures';
+// LE numéro affiché d'un résidu (position + residueOffset → table 🔢 du viewer) :
+// les pastilles de « Sequence and structure » montrent les mêmes numéros que le
+// viewer 3D et que la table des déplacements.
+import { residueNumberResolver } from '../utils/residueNumbering';
 // Cache des graphes calculés (domanda 2) : copie bornée enregistrée avec le test
 // (suit le jeu de données sur le Drive / Firestore) + copie locale pour réafficher
 // les courbes instantanément, avec empreinte de la trajectoire et boutons
@@ -789,6 +793,11 @@ export const MDExperimentSetupSection = ({ ctx }) => {
   const structureMode = activeTest.structureMode || '2d';
   const atomLabelMode = activeTest.atomLabelMode || 'selected';
   const residueOffset = activeTest.residueOffset || 0;
+  // LE numéro affiché d'un résidu (position + residueOffset, puis table 🔢 du
+  // viewer) : les pastilles de « Sequence and structure » (protéine comme acide
+  // nucléique) portent les numéros que la structure renumérotée montre dans le
+  // viewer 3D et dans la table des déplacements.
+  const residueNoOf = residueNumberResolver(activeTest);
 
   const atomNameMap = useMemo(() => {
     try { return activeTest.atomNameMap ? JSON.parse(activeTest.atomNameMap) : {}; } catch { return {}; }
@@ -1401,6 +1410,7 @@ export const MDExperimentSetupSection = ({ ctx }) => {
             meta={SS_META}
             onApply={(i) => paintSSAt(i, ssBrush)}
             focusIdx={focusIdx}
+            residueNo={residueNoOf}
           />
         </CollapsibleSection>
       )}
@@ -1426,6 +1436,7 @@ export const MDExperimentSetupSection = ({ ctx }) => {
             meta={FORM_META}
             onApply={(i) => paintFormAt(i, formBrush)}
             focusIdx={focusIdx}
+            residueNo={residueNoOf}
           />
         </CollapsibleSection>
       )}
