@@ -218,8 +218,8 @@ has('const entry = (sn.sections && sn.sections[sec.id]) || (byKey[sec.key] ? sn.
 gone('mergeThemeClasses(nextClasses', 'le snapshot ne passe jamais par le merge du thème');
 // Les commandes : un mode actif, un magasin, les mêmes boutons.
 has("const activeEnvStore = () => (setupSaveMode === 'theme'", '💾 / 📂 / 🗑 / ⬇ / ⬆ servent le mode ACTIF');
-has("{[['theme', '🎨 Theme (cumulative)'], ['snapshot', '📷 Snapshot (this scene)']].map(([m, label]) => (",
-  'les deux modes sont deux boutons, dans le panneau « Predefined styles »');
+has("{[['theme', '🎨 Cumulative'], ['snapshot', '📷 Snapshot']].map(([m, label]) => (",
+  'les deux modes — « cumulative » et « snapshot », les mots de la demande — sont deux boutons de la bande « 🎨 Styles »');
 has("{themeConflicts && (", 'le prompt de conflit n’apparaît que là où il y a un conflit');
 has('const mergeThemeClasses = (prevClasses, looksByClass, choices) => {',
   'la « regola aurea » est une fonction PURE, donc exécutable par ce garde-fou');

@@ -224,12 +224,11 @@ has(MD, 'trajectoryFormat={d.trajectoryFormat}',
    menée (base du navigateur → Drive, ou « le Drive n'est pas connecté ICI »). */
 ok(!MD.includes('The file is being brought back from this browser'),
   '[MD] la phrase « le fichier revient de la base du navigateur » a disparu');
-/* Les quatre états qui racontaient la recherche (phase + message) survivent sous
-   leur nom « _ » : les fonctions de reprise — seule tentative automatique
-   désormais, le bouton à la demande ayant disparu avec la barre — continuent de
-   les écrire. L’ORDRE de la recherche, lui, n’a pas bougé. */
-has(MD, "const [_trajPhase, setTrajPhase] = useState('browser');",
-  '[MD] la reprise de la trajectoire a toujours son état lisible');
+/* Les états qui racontent la recherche (phase + message) sont de nouveau LUS pour la
+   trajectoire : le viewer les affiche sous la phrase « déclarée mais pas encore là »
+   (bouton « ⬇️ Bring it back from the cloud » : constat de la recherche + état). */
+has(MD, "const [trajPhase, setTrajPhase] = useState('browser');",
+  '[MD] l’état de la reprise de la trajectoire est de nouveau VISIBLE (le viewer le lit)');
 has(MD, "const [_structPhase, setStructPhase] = useState('browser');",
   '[MD] …la topologie aussi');
 ok(!MD.includes('const trajSourceHint = trajPhase'),
@@ -238,14 +237,65 @@ has(MD, "setTrajPhase('nocloud');",
   '[MD] sans Drive connecté dans CE navigateur, la reprise le constate au lieu de promettre');
 has(MD, "setTrajDriveMsg(`✅ ${restored.name} brought back from this browser.`);",
   '[MD] …et note de quelle source le fichier est revenu');
-ok(!MD.includes('onClick={() => { restoreTrajectoryFromDrive(); }}'),
-  '[MD] plus de bouton « à la demande » (il vivait dans la barre retirée)');
+has(MD, 'onBringTrajectoryBack={bringTrajectoryBack}',
+  '[MD] la page branche le bouton du viewer sur son geste à la demande');
+has(MD, 'the cloud request failed',
+  '[MD] …et une reprise qui casse le DIT (le clic ne reste pas muet)');
+assert.equal(countOf(MD, 'await restoreTrajectoryFromDrive();'), 2,
+  '[MD] deux appelants, UNE seule fonction de reprise : la tentative automatique et le bouton');
+passed += 1;
 has(MD, 'await restoreTrajectoryFromDrive();',
   '[MD] la reprise AUTOMATIQUE reste branchée (base du navigateur → Drive)');
 has(MD, 'await restoreStructureFromDrive();',
   '[MD] …et pour la topologie');
 has(MD, 'const restoreTrajectoryFromDrive = async () => {',
   '[MD] la tentative automatique et le bouton passent par la MÊME fonction');
+
+/* ══ 5bis. « ⬇️ BRING IT BACK FROM THE CLOUD » — LE GESTE EST REVENU, LÀ OÙ LA
+   PHRASE LE DEMANDE ══════════════════════════════════════════════════════════
+   Signalé le 25/09/2026 : « quand j'ouvre une page MD la trajectoire n'est pas
+   chargée et le message dit de presser “⬇️ Bring it back from Google Drive”, mais
+   ce bouton n'existe pas ». Il avait raison : le bouton vivait dans la barre
+   « 🧬 System files » RETIRÉE, et la phrase du viewer était restée à l'ancien monde
+   — elle demandait un geste que plus rien ne portait, si bien qu'une tentative
+   automatique manquée n'avait plus AUCUN recours. Le bouton est rendu PAR LE
+   VIEWER, juste après la phrase (barre ▶ Trajectory playback), renommé
+   « ⬇️ Bring it back from the cloud » : la page ne lui fournit que sa fonction de
+   reprise — celle de sa tentative automatique — et l'état de sa recherche. */
+ok(!VIEW.includes('Bring it back from Google Drive'),
+  '[viewer] la phrase ne conseille plus un bouton qui n’existe pas (ancien nom retiré)');
+ok(!VIEW.includes('on the page (the reference copy)'),
+  '[viewer] …et n’envoie plus l’utilisateur « sur la page » chercher ce bouton');
+has(VIEW, '“⬇️ Bring it back from the cloud” (the reference copy), or pick the file here with 📂 Trajectory.',
+  '[viewer] la phrase nomme le geste tel qu’il est écrit sur le bouton');
+has(VIEW, "'⬇️ Bring it back from the cloud'",
+  '[viewer] LE BOUTON est rendu, dans la barre de lecture, à côté de la phrase');
+has(VIEW, '{onBringTrajectoryBack && (',
+  '…uniquement quand la page fournit la fonction de reprise (aucune promesse creuse)');
+has(VIEW, 'onBringTrajectoryBack = null,',
+  'le viewer accepte la fonction de reprise à la demande');
+has(VIEW, "bringTrajectoryNote = '',",
+  '…plus le constat de la recherche (affiché après le bouton)');
+has(VIEW, 'bringTrajectoryBusy = false,',
+  '…et l’état « une recherche tourne »');
+has(VIEW, 'disabled={bringTrajectoryBusy}',
+  '[viewer] un seul essai à la fois : le bouton est inerte pendant la recherche');
+has(VIEW, '{bringTrajectoryNote && (',
+  '[viewer] le constat de la recherche est AFFICHÉ (un clic sans cloud ne reste pas muet)');
+has(MD, 'const bringTrajectoryBack = async () => {',
+  '[MD] le geste à la demande est une fonction unique, dans la page');
+has(MD, 'if (trajRestoreBusyRef.current) return;',
+  '[MD] …qui refuse un second essai tant que le premier n’est pas fini');
+has(MD, 'bringTrajectoryNote={trajRestoreNote}',
+  '[MD] …et elle passe au viewer le constat de la recherche');
+has(MD, "bringTrajectoryBusy={trajPhase === 'drive'}",
+  '[MD] …ainsi que l’état « recherche en cours »');
+has(MD, "const trajRestoreNote = (trajPhase === 'drive' || trajPhase === 'notfound' || trajPhase === 'nocloud')",
+  '[MD] le constat affiché est celui d’une recherche en cours ou de son échec — jamais l’histoire d’avant');
+has(MD, "const [trajDriveMsg, setTrajDriveMsg] = useState('');",
+  '[MD] …ce qui suppose que le message de recherche ne soit plus gardé sous un « _ »');
+has(DOC, '## Le geste de reprise à la demande est revenu — renommé « ⬇️ Bring it back from the cloud » (25/09/2026)',
+  'le retour du geste à la demande et son nouveau nom sont documentés');
 has(MD, 'const applyReloadedFile = async ({ kind, testId, wantedName, file, paint }) => {',
   '[MD] le fichier ramené est rangé sous la clé de SA condition');
 has(MD, "await blobStore.save(kind === 'trajectory' ? trajBlobKey(testId) : structBlobKey(testId), restored);",

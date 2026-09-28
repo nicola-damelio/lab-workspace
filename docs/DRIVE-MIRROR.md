@@ -1144,9 +1144,9 @@ alors que la trajectoire EXISTAIT.
    honnête
 
    > ⏳ “<nom>” is declared on this experiment but is not loaded in this browser
-   > yet — press “⬇️ Bring it back from Google Drive” on the page (the reference
-   > copy), or pick the file here with 📂 Trajectory. ▶ turns on as soon as the
-   > frames are read.
+   > yet — press “⬇️ Bring it back from the cloud” (the reference copy) in the
+   > playback bar just below, or pick the file here with 📂 Trajectory. ▶ turns on
+   > as soon as the frames are read.
 
    et ▶ ne s'active que lorsque les images sont réellement lues
    (`trajStatus === 'ready'`) : aucune barre qui promet une lecture inexistante.
@@ -1194,16 +1194,58 @@ Ce qui n'a **pas** changé :
   pour un `.xtc`, `.trr`, `.dcd`, `.gro`, `.pdb` ou `.cif`.
 * **Les deux reprises automatiques restent branchées**, par les mêmes fonctions
   (`restoreTrajectoryFromDrive` / `restoreStructureFromDrive`) et dans le même
-  ordre : base du navigateur → Google Drive. Seul le geste **à la demande** a
-  disparu avec la barre qui l'hébergeait.
-* Les états qui racontaient la recherche (`trajPhase`, `structPhase`,
-  `trajDriveMsg`, `structRestoreMsg`) sont **toujours écrits** par ces fonctions
-  et gardent leur nom préfixé d'un `_` : plus rien ne les affiche, mais l'ordre
-  de la recherche et ses constats restent dans le code.
+  ordre : base du navigateur → Google Drive. Le geste **à la demande**, lui, est
+  revenu avec sa phrase, renommé (voir le § suivant).
+* Les états de la recherche : `trajPhase` et `trajDriveMsg` sont de nouveau LUS
+  (la barre de lecture affiche le constat de la reprise) ; `structPhase` et
+  `structRestoreMsg` restent **écrits** mais privés (`_`) : la reprise de la
+  topologie reste automatique et sa recherche n'est affichée nulle part.
 
 *Vérifier :* `node _condition_page_test.mjs` — la barre est absente
-(`🧬 System files`), le format reste auto-détecté, et les deux reprises
-automatiques sont toujours appelées.
+(`🧬 System files`), le format reste auto-détecté, les deux reprises
+automatiques sont toujours appelées, et le bouton « ⬇️ Bring it back from the
+cloud » est rendu par le viewer (voir le § suivant).
+
+## Le geste de reprise à la demande est revenu — renommé « ⬇️ Bring it back from the cloud » (25/09/2026)
+
+Signalé : *« quand j'ouvre une page MD la trajectoire n'est pas chargée et je vois
+le message “… is declared on this experiment but is not loaded in this browser yet —
+press “⬇️ Bring it back from Google Drive” …”, mais ce bouton n'existe pas. Si tu le
+réinstalles, change son nom en “bring back from the cloud”.»*
+
+La phrase était juste sur le fait, fausse sur le geste : le bouton nommé a bel et
+bien existé — **jusqu'à ce que la barre 🧬 System files soit retirée**, les deux
+gestes à la demande vivant dedans. La phrase du viewer était restée à l'ancien monde
+et envoyait donc presser un bouton disparu : une tentative automatique manquée
+(pointeur d'un ancien dataset, fichier renommé sur le Drive, Drive connecté après
+coup) n'avait plus **aucun** recours — exactement le cas signalé.
+
+Le geste est revenu **là où la phrase le demande**, et **renommé** :
+
+* le bouton **⬇️ Bring it back from the cloud** est rendu par le viewer, dans la
+  barre **▶ Trajectory playback**, juste après la phrase qui le demande. La phrase
+  n'envoie plus « sur la page » et ne nomme plus Google Drive : le cloud du poste
+  peut être Nextcloud. Quand la page ne fournit aucune fonction de reprise, aucun
+  bouton n'est rendu (aucune promesse creuse) ;
+* la page ne fournit que **sa fonction de reprise** et **l'état de sa recherche** :
+  `onBringTrajectoryBack` = `bringTrajectoryBack` → `restoreTrajectoryFromDrive`,
+  **la même fonction que la tentative automatique** (un seul essai à la fois, refusé
+  tant que le précédent tourne) ; `bringTrajectoryNote` = son constat mot pour mot ;
+  `bringTrajectoryBusy` = une recherche tourne, auquel cas le bouton est inerte. Un
+  seul chemin de code : rien ne peut dire une chose et en faire une autre ;
+* le constat de la recherche s'affiche **sous la phrase** — sans lui, un clic alors
+  que le cloud n'est pas connecté ne produirait rien de visible — et seulement pour
+  une recherche en cours (phase `drive`) ou son échec (`nocloud`, `notfound`, y
+  compris une erreur inattendue, qui est alors écrite au lieu d'être avalée) :
+  `done` et `browser` n'affichent rien, pour qu'une reprise réussie, ou un envoi, ne
+  laisse pas sa phrase sous une ligne qui dit « pas encore là » ;
+* les deux états de la **trajectoire** (`trajPhase`, `trajDriveMsg`) redeviennent
+  donc visibles ; ceux de la **topologie** restent privés (`_structPhase`,
+  `_structRestoreMsg`) : sa reprise reste automatique et n'a pas de ligne dédiée.
+
+*Vérifier :* `node _condition_page_test.mjs` — le bouton existe et porte le nouveau
+nom, l'ancien nom a disparu de la phrase, et le geste comme la tentative automatique
+passent par la même fonction.
 
 ## Le champ « PDB ID / URL / local file » a été RETIRÉ (page NMR, volet 3D)
 

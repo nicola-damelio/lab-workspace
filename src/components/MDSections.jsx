@@ -814,9 +814,17 @@ export const MDExperimentSetupSection = ({ ctx }) => {
   // continuent de les écrire : on les garde donc sous leur nom « _ » : rien de
   // l'ordre de recherche (base du navigateur → Drive) n'a changé, seule la
   // ligne qui le racontait a disparu.
-  const [_trajDriveMsg, setTrajDriveMsg] = useState('');
+  // MISE À JOUR (25/09/2026) : la phrase du viewer conseillait « ⬇️ Bring it back
+  // from Google Drive », un bouton qui vivait DANS cette barre — donc un geste que
+  // plus rien ne portait. Le bouton est revenu, renommé « ⬇️ Bring it back from the
+  // cloud », à l'intérieur de la barre de lecture du viewer, juste à côté de la
+  // phrase qui le demande : les deux états de la TRAJECTOIRE redeviennent donc
+  // visibles (`trajPhase`, `trajDriveMsg`) et la page les passe au viewer. Ceux de
+  // la topologie restent privés (`_structPhase`, `_structRestoreMsg`) : là, la
+  // reprise automatique suffit, et sa recherche n'est affichée nulle part.
+  const [trajDriveMsg, setTrajDriveMsg] = useState('');   // visible : la barre de lecture le montre
   const [_structRestoreMsg, setStructRestoreMsg] = useState('');
-  const [_trajPhase, setTrajPhase] = useState('browser');
+  const [trajPhase, setTrajPhase] = useState('browser');   // …et c'est lui qui dit si une reprise tourne
   const [_structPhase, setStructPhase] = useState('browser');
   // Re-run the restore effects when Google Drive connects (their Drive fallback
   // may have found nothing while Drive was still disconnected).
@@ -1128,6 +1136,41 @@ export const MDExperimentSetupSection = ({ ctx }) => {
     if (paint) { setStructPhase('done'); setStructRestoreMsg(message); }
     return { ok: true, message };
   };
+
+  /* ⬇️ « BRING IT BACK FROM THE CLOUD » — LE GESTE À LA DEMANDE, DANS LA BARRE DE
+     LECTURE DU VIEWER. La phrase « déclarée sur cette expérience mais pas encore
+     dans ce navigateur » conseillait ce bouton ; il vivait dans la barre
+     « 🧬 System files » RETIRÉE, donc la phrase demandait un geste que plus rien ne
+     portait : sans lui, une tentative automatique manquée (pointeur d'un ancien
+     dataset, fichier renommé sur le Drive, Drive connecté après coup) restait SANS
+     recours. Le geste appelle LA MÊME fonction que l'essai automatique
+     (`restoreTrajectoryFromDrive`) : un seul chemin de code, donc rien qui puisse
+     dire autre chose que ce qu'il fait. Un seul essai à la fois (le bouton est
+     inerte tant qu'une recherche tourne : `bringTrajectoryBusy`). */
+  const trajRestoreBusyRef = useRef(false);
+  const bringTrajectoryBack = async () => {
+    if (trajRestoreBusyRef.current) return;
+    trajRestoreBusyRef.current = true;
+    try {
+      await restoreTrajectoryFromDrive();
+    } catch (err) {
+      // Une reprise qui casse ne doit pas rester MUETTE : le constat s'affiche
+      // sous la phrase, et le bouton est relâché par le `finally` ci-dessous.
+      setTrajPhase('notfound');
+      setTrajDriveMsg(`⚠️ the cloud request failed (${(err && err.message) || 'unknown error'}). Re-select the file with “📂 Trajectory” if it happens again.`);
+    } finally {
+      trajRestoreBusyRef.current = false;
+    }
+  };
+  /* CE QUE LA RECHERCHE RÉPOND, montré sous la phrase — sans quoi un clic sur le
+     bouton alors que le Drive n'est pas connecté ne produirait rien de visible.
+     Seuls les constats d'une recherche EN COURS (« 🔎 … checking Google Drive… »,
+     phase `drive`) ou de son dernier échec (`nocloud`, `notfound`) sont affichés :
+     `done` et `browser` n'affichent rien — une reprise réussie, ou un envoi,
+     laisserait sinon sa phrase sous une ligne qui dit « pas encore là ». */
+  const trajRestoreNote = (trajPhase === 'drive' || trajPhase === 'notfound' || trajPhase === 'nocloud')
+    ? trajDriveMsg
+    : '';
 
   // Restore a previously-uploaded trajectory on (re)load, so the user does not
   // have to re-upload the .xtc/.trr/.dcd after refreshing the page. Source
@@ -1496,6 +1539,13 @@ export const MDExperimentSetupSection = ({ ctx }) => {
   trajectorySrc={trajNorm.url}
   trajectoryFile={trajectoryFile}
   trajectoryName={activeTest.trajectoryFileName || activeTest.trajectoryDriveName || ''}
+  // ⬇️ Le geste à la demande vit MAINTENANT dans la barre de lecture du viewer,
+  // à côté de la phrase qui le demande : la MÊME fonction que la tentative
+  // automatique, le constat de la recherche, et un bouton inerte tant qu'elle
+  // tourne. La phrase cessait d'être vraie (elle conseillait un bouton disparu).
+  onBringTrajectoryBack={bringTrajectoryBack}
+  bringTrajectoryNote={trajRestoreNote}
+  bringTrajectoryBusy={trajPhase === 'drive'}
   trajectoryFallbacks={trajNorm.fallbacks}
   trajectoryFormat={d.trajectoryFormat}
   moleculeType={d.moleculeType}

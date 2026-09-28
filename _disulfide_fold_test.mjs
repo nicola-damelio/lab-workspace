@@ -23,6 +23,17 @@
      • la DÉFINITION montre la liaison : la puce de paire porte un dessin S–S
        (deux atomes de soufre, la liaison, les deux numéros AFFICHÉS) et la
        bande de séquence marque les Cys appariées de la même couleur.
+     • l'interrupteur « ⚭ Disulfides: shown / hidden » du viewer (le rapport :
+       « In any case i need a button to switch the display on and off of the
+       disulfide bonds ») ne touche QUE le graphe de liaisons de la structure
+       affichée : utils/disulfideBonds.js retire les liaisons Sγ–Sγ de DEUX
+       RÉSIDUS du bond store au chargement — là où passent les deux autres règles
+       de liaisons — donc Sticks / Ball+stick / Lines ne les dessinent plus.
+       Ni le fichier, ni le texte servi par la page, ni le 📥 Download, ni la
+       copie Drive, ni « Cysteine states » ne perdent quoi que ce soit ; et le
+       compte rendu DIT la distance Sγ–Sγ de chaque pont, un pont étiré compris
+       (la réponse chiffrée à « you did not fold the structure to bring the
+       cysteines at bond distance »).
 
    Le module est pur : il est importé et EXÉCUTÉ. La géométrie réelle
    (buildProteinBackbone + placeSidechainAtoms) est extraite de NMRSections.jsx
@@ -37,6 +48,9 @@ import {
   foldProteinForDisulfides, movableResiduesFor, scoreFold,
   SS_BOND_LENGTH, SS_BOND_TOLERANCE, MAX_MOVABLE_RESIDUES, CHI1_ROTAMERS, DEFAULT_FOLD_SEED,
 } from './src/utils/disulfideFold.js';
+// ⚭ « Disulfides: shown / hidden » — la règle qui RETIRE un pont du graphe de
+// liaisons de la structure affichée (module pur, aucun import).
+import { applyDisulfideDisplay, disulfideBondIndices, SG_ATOM_NAME } from './src/utils/disulfideBonds.js';
 
 let passed = 0;
 const ok = (cond, what) => {
@@ -288,4 +302,151 @@ has(VIEW, 'flashDisulfideFoldMsg(`${built.note', 'le message affiché est CELUI 
 has(VIEW, "'⚠️ Nothing to fold: this condition has no disulphide pair (or no protein sequence).'",
   'et il dit quand il n’y a rien à détendre au lieu de ne rien faire');
 
+/* ════════════ 9. ⚭ « Disulfides: shown / hidden » : LA RÈGLE DU GRAPHE ════════════
+   Cacher un S–S ne peut pas passer par le TEXTE : la passe de distances de NGL
+   (inferBonds:'all', le défaut du parseur PDB) redessinerait le pont dès que les
+   deux Sγ sont dans la fenêtre covalente. La règle travaille donc sur le GRAPHE
+   de la structure chargée — la compaction du bond store que la maison utilise
+   déjà pour ses deux autres règles de liaisons. Ce que le test exécute : le cœur
+   pur (disulfideBondIndices) sur les VRAIS modèles construits plus haut, puis
+   l'enveloppe (applyDisulfideDisplay) sur une structure jouet dont on connaît le
+   graphe, atome par atome. */
+const RULE_SRC = read('src/utils/disulfideBonds.js');
+ok(!/^import\s/m.test(RULE_SRC), 'le module de la règle est PUR (aucun import), comme les autres utils');
+
+// Le graphe d'un modèle PDB lu par le test : les liaisons par INDICES d'atomes.
+const graphOf = (model) => {
+  const indexOf = new Map(model.atoms.map((a, i) => [a.serial, i]));
+  return {
+    atoms: model.atoms.map((a) => ({
+      name: a.name, resno: a.resSeq, chain: 'A', icode: '', resname: a.resName, pos: position(a),
+    })),
+    bonds: [...model.conectPairs].map((k) => k.split('|').map((s) => indexOf.get(Number(s)))),
+  };
+};
+const sgPairsOf = (g) => disulfideBondIndices(g.atoms, g.bonds).map((k) => g.bonds[k]);
+const pairResnos = (g, bonds) => bonds.map(([i, j]) => [g.atoms[i].resno, g.atoms[j].resno].sort((a, b) => a - b));
+
+// (a) le modèle qui porte le pont défini : UNE liaison Sγ–Sγ inter-résidus — et
+//     elle seule (les trois Cys sont là, mais Cβ–Sγ n'est pas un pont).
+const pairedGraph = graphOf(paired);
+eq(sgPairsOf(pairedGraph).length, 1, 'le modèle de la page dessine EXACTEMENT un pont (Sγ–Sγ)');
+eq(pairResnos(pairedGraph, sgPairsOf(pairedGraph)), [[3, 7]], '…entre les deux Cys définies (3 et 7), et aucune autre');
+eq(pairedGraph.atoms.filter((a) => a.name === SG_ATOM_NAME).length, 3, 'les trois Sγ du modèle sont bien lus');
+// (b) sans pont défini : aucun S–S à cacher, mêmes Sγ pourtant.
+const unpairedGraph = graphOf(unpaired);
+eq(sgPairsOf(unpairedGraph), [], 'sans paire définie, la règle ne trouve AUCUN pont (rien à cacher)');
+// (c) ce qui n'est PAS un pont : le Sγ lié à son propre Cβ, et deux SG d'un
+//     même résidu (le résidu, c'est chaîne + numéro + code d'insertion).
+const cbsg = pairedGraph.bonds.findIndex(([i, j]) => {
+  const a = pairedGraph.atoms[i];
+  const b = pairedGraph.atoms[j];
+  return a.resno === b.resno && [a.name, b.name].sort().join('|') === 'CB|SG';
+});
+ok(cbsg >= 0 && !disulfideBondIndices(pairedGraph.atoms, pairedGraph.bonds).includes(cbsg),
+  'une liaison Cβ–Sγ n’est pas un pont (ses deux atomes ne sont pas deux Sγ)');
+const sameResidue = { atoms: [{ name: 'SG', resno: 5, chain: 'A' }, { name: 'SG', resno: 5, chain: 'A' }], bonds: [[0, 1]] };
+eq(disulfideBondIndices(sameResidue.atoms, sameResidue.bonds), [], 'deux SG du MÊME résidu ne sont pas un pont');
+const twoChains = { atoms: [{ name: 'SG', resno: 5, chain: 'A' }, { name: 'SG', resno: 5, chain: 'B' }], bonds: [[0, 1]] };
+eq(disulfideBondIndices(twoChains.atoms, twoChains.bonds), [0],
+  'même numéro sur deux chaînes = deux résidus : un vrai pont');
+const spreadNames = [{ name: ' sg ', resno: 1, chain: 'A' }, { name: 'SG', resno: 2, chain: 'A' }];
+eq(disulfideBondIndices(spreadNames, [[0, 1]]), [0], 'le nom d’atome est lu comme PDB l’écrit (espaces compris)');
+eq(disulfideBondIndices([], []), [], 'sans atome ni liaison, la règle ne rend rien');
+eq(disulfideBondIndices(null, null), [], '…même quand ses arguments manquent');
+
+/* ---- (d) l'enveloppe : le bond store d'une structure jouet -----------------
+   Le même contrat que les deux autres règles : getAtomProxy pour les atomes, le
+   bond store (tableau plat + count) pour les liaisons, finalizeBonds() pour les
+   lecteurs qui passent par le bond set. */
+const fakeStructure = (atoms, bonds) => {
+  const store = {
+    atomIndex1: new Int32Array(Math.max(4, bonds.length + 2)),
+    atomIndex2: new Int32Array(Math.max(4, bonds.length + 2)),
+    bondOrder: new Int32Array(Math.max(4, bonds.length + 2)).fill(1),
+    count: bonds.length,
+  };
+  bonds.forEach(([i, j], k) => { store.atomIndex1[k] = i; store.atomIndex2[k] = j; });
+  const proxy = {
+    index: 0,
+    get atomname() { return atoms[this.index].name; },
+    get element() { return atoms[this.index].element || atoms[this.index].name[0]; },
+    get resname() { return atoms[this.index].resname || 'CYS'; },
+    get resno() { return atoms[this.index].resno; },
+    get icode() { return atoms[this.index].icode || ''; },
+    get chainname() { return atoms[this.index].chain || 'A'; },
+    get x() { return atoms[this.index].pos[0]; },
+    get y() { return atoms[this.index].pos[1]; },
+    get z() { return atoms[this.index].pos[2]; },
+  };
+  return {
+    atomCount: atoms.length,
+    bondStore: store,
+    bondCount: bonds.length,
+    finalizeCount: 0,
+    getAtomProxy: () => proxy,
+    finalizeBonds() { this.finalizeCount += 1; },
+  };
+};
+const storePairs = (s) => Array.from({ length: s.bondStore.count }, (_, k) => `${s.bondStore.atomIndex1[k]}|${s.bondStore.atomIndex2[k]}`);
+
+const toyAtoms = [
+  { name: 'CB', resno: 3, chain: 'A', pos: [0, 0, 0] },
+  { name: 'SG', resno: 3, chain: 'A', pos: [1, 0, 0] },
+  { name: 'CB', resno: 7, chain: 'A', pos: [0, 5, 0] },
+  { name: 'SG', resno: 7, chain: 'A', pos: [1, 5, 0] },
+];
+const toyBonds = [[0, 1], [1, 3], [2, 3]];        // Cβ–Sγ · LE PONT Sγ–Sγ · Cβ–Sγ
+const shownToy = fakeStructure(toyAtoms, toyBonds);
+const shownReport = applyDisulfideDisplay(shownToy, { hidden: false });
+eq(shownReport.removed, 0, 'montrés : la règle ne retire RIEN du graphe');
+eq(shownReport.bonds.length, 1, '…mais elle rapporte le pont (le bouton sait ce qu’il cachera)');
+eq([shownReport.bonds[0].resno1, shownReport.bonds[0].resno2], [3, 7], '…avec ses deux résidus');
+eq(shownReport.bonds[0].distance, 5, '…et la distance Sγ–Sγ RÉELLE de la géométrie servie (5 Å ici)');
+eq(storePairs(shownToy), ['0|1', '1|3', '2|3'], '…et le graphe est intact');
+const hiddenToy = fakeStructure(toyAtoms, toyBonds);
+const hiddenReport = applyDisulfideDisplay(hiddenToy, { hidden: true });
+eq(hiddenReport.removed, 1, 'cachés : le pont sort du graphe');
+eq(hiddenReport.bonds.length, 1, '…le compte rendu le nomme quand même (on peut donc le remettre)');
+eq(storePairs(hiddenToy), ['0|1', '2|3'], '…et seules les deux liaisons Cβ–Sγ restent');
+eq(hiddenToy.bondStore.count, 2, 'le compte du store est baissé (c’est lui qu’un lecteur voit)');
+eq(hiddenToy.bondCount, 2, '…et celui de la structure aussi');
+eq(hiddenToy.finalizeCount, 1, '…et le bond set est remis d’aplomb (finalizeBonds)');
+const noBridge = fakeStructure(toyAtoms, [[0, 1], [2, 3]]);
+eq(applyDisulfideDisplay(noBridge, { hidden: true }), { bonds: [], removed: 0 },
+  'sans pont, cacher ne change RIEN — et le dit');
+eq(storePairs(noBridge).length, 2, '…le graphe restant est intact');
+eq(applyDisulfideDisplay(null), { bonds: [], removed: 0 }, 'une structure absente ne fait pas planter la règle');
+eq(applyDisulfideDisplay({ atomCount: 0, bondStore: { count: 0 } }), { bonds: [], removed: 0 },
+  'une structure vide est ignorée');
+
+/* ---- (e) le viewer : le bouton, le geste, le compte rendu ------------------ */
+has(VIEW, "import { applyDisulfideDisplay } from '../utils/disulfideBonds';", 'le viewer importe la règle');
+has(VIEW, "import { SS_BOND_LENGTH, SS_BOND_TOLERANCE } from '../utils/disulfideFold';",
+  'la fenêtre de liaison est CELLE du repliement (une seule définition de « pont fermé »)');
+has(VIEW, 'applyDisulfideDisplay(component, { hidden: !disulfidesShownRef.current })',
+  'la règle est appliquée au CHARGEMENT, avant qu’une représentation ne lise le graphe');
+ok(VIEW.indexOf('applyDisulfideDisplay(component') > VIEW.indexOf('try { enforceCovalentProteinBonds(component); }'),
+  '…à la suite des deux autres règles de liaisons, dans le même entonnoir de chargement');
+has(VIEW, 'const [disulfidesShown, setDisulfidesShown] = useState(true);',
+  'le pont est AFFICHÉ par défaut (rien ne bouge tant que le bouton n’est pas cliqué)');
+has(VIEW, 'const toggleDisulfideBonds = () => {', 'le geste existe');
+has(VIEW, "{disulfidesShown ? '⚭ Disulfides: shown' : '⚭ Disulfides: hidden'}", 'le bouton dit SON état');
+has(VIEW, 'disabled={disulfideDrawn.bonds.length === 0}',
+  'le bouton est inactif quand la structure à l’écran ne dessine aucun pont');
+has(VIEW, "flashDisulfideShowMsg('⚠️ No disulphide bond is drawn in this model — nothing to hide.",
+  '…et le geste le DIT au lieu de ne rien faire (comme ⚭ Fold for disulfides)');
+has(VIEW, 'requestStructureLoad({ ...(loadRequest || {}), ts: Date.now() });',
+  'cacher — puis remontrer — ressert LE MÊME modèle (l’entonnoir du ⚗️ rebuild des hydrogènes)');
+has(VIEW, '⚠️ drawn but stretched (the two Sγ are not at bonding distance)',
+  'un pont dessiné mais ÉTIRÉ est dit tel : sa distance réelle, pas une promesse');
+has(VIEW, 'drawn but STRETCHED — ⚭ Fold for disulfides, right here, relaxes the chain until the two Sγ can meet.',
+  '…et le compte rendu nomme le geste qui essaie de le fermer au lieu de faire croire à une liaison');
+has(VIEW, 'const describeDisulfideBond = (b) => {', '…par une seule description, pont par pont');
+// La DÉFINITION reste à la page : le viewer ne touche pas au modèle qu’elle écrit.
+has(SEC, 'cysDisulfides.forEach(([a, b]) => emitBond(`SG@${a - 1}`, `SG@${b - 1}`));',
+  'la page écrit toujours le CONECT du pont : l’interrupteur ne touche que le DESSIN');
+
 console.log(`_disulfide_fold_test.mjs — ${passed} assertions OK`);
+
+

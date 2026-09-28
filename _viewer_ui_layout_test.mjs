@@ -302,8 +302,10 @@ gone("{shown && kind === 'lipid' && sec.id === firstLipidSectionOf(",
   '…et JAMAIS derrière la case « Draw « POPC » » (le groupe reste là quand la molécule est décochée)');
 
 has('🧫 Membrane · leaflets', 'le groupe s’appelle « Membrane · leaflets »');
-// Le bouton « Setup » a été renommé (la demande).
-has('🎨 Predefined styles', 'le bouton « Setup » s’appelle « Predefined styles »');
+// Le bouton « Setup » s'appelle « 🎨 Styles » et il est devenu une BANDE toujours
+// ouverte, sur la ligne de 🌫 Scene (la demande de la session suivante :
+// « the “predefined styles” button can be replaced by a “Styles” section »).
+has('>🎨 Styles</span>', 'la bande « 🎨 Styles » (l’ex « ⚙️ Setup », puis « 🎨 Predefined styles »)');
 has("surface: 'Surface',", '[vocabulaire] Surface');
 has("mesh: 'Mesh surface',", '[vocabulaire] Mesh (wireframe)');
 has("base: 'Slabs',", '[vocabulaire] Slabs (la représentation `base` de NGL)');
@@ -632,6 +634,70 @@ has('const [stripCollapsed, setStripCollapsed] = useState(() => {', '[séquence]
 has('localStorage.setItem(\'labViewerStripCollapsed\'', '[séquence] repli persistant');
 has("{stripCollapsed ? '▶' : '◀'}", '[séquence] bouton de repli');
 has('strip collapsed — {polyTicks.length} residues', '[séquence] bandeau replié (dit ce qui est masqué)');
+
+/* ══ 13. LE MENU RÉDUIT ET ORGANISÉ (la demande de cette session) ═════════
+   Mot pour mot : « the viewer menu must be drastically reduced and organised …
+   there is too much writing which can be substituted by information available by
+   hovering. The scene, modify and analyze subgroups are not clearly separated but
+   I do not want to use a line for each of them. The “analysis” and “modify” can
+   be in one line but clearly separated. The “predefined styles” button can be
+   replaced by a “Styles” section … The “styles” section can fit inside the line
+   of the “scene” section but it should be clear that they are separated. The
+   movie maker section can fit in the line of the general section (where you
+   upload the pdb and trajectory). The video of the trajectory can stay next to
+   the play bar of the trajectory. »
+   Chaque phrase de la demande a SA vérification ici ; les autres garde-fous
+   (_viewer_style_controls, _viewer_theme_snapshot, _viewer_keyframes) vérifient
+   le détail des gestes de la bande 🎨 Styles et de la rangée 🎞. */
+const iS2 = VIEW.indexOf('<VSection title="2 · Toolbar"');
+
+/* 13a. Le résumé d'une rangée ne s'imprime plus : il est la BULLE de son titre. */
+gone('{hint && <span className="text-[9px] text-slate-400 truncate hidden lg:inline">{hint}</span>}',
+  '[13a] la ligne grise « structure · trajectory · clear » a quitté la rangée');
+has('title={hint || undefined}>{title}</span>', '[13a] …le résumé vit dans la bulle du titre de la rangée');
+
+/* 13b. Le 🎞 Movie maker est SUR la ligne de §1 General — il n'a plus sa section. */
+const iFilm = VIEW.indexOf('>🎞 Movie maker</span>');
+const iFilmBox = VIEW.indexOf('<div className="flex flex-col gap-1 w-full">', iS1);
+ok(iFilm > iS1 && iS2 > iFilm && iFilmBox > iS1 && iS2 > iFilmBox,
+  '[13b] 🎞 Movie maker vit dans « 1 · General » (la ligne qui charge PDB et trajectoire)');
+gone('<VSection title="🎞 Movie maker"', '[13b] …il n’est plus une section à lui tout seul');
+has('＋ Capture this pose', '[13b] …et sa rangée de gestes est intacte');
+
+/* 13c. §2 tient sur DEUX lignes de groupes — 🌫 Scene │ 🎨 Styles, puis ✏️ Modify │
+   📏 Analysis │ 🧪 PyMOL — et chaque groupe est refermé dans sa propre boîte
+   teintée : « clairement séparés » ne coûte donc aucune ligne de plus. */
+const iBreak = VIEW.indexOf('<span className="basis-full h-0" aria-hidden="true" />', iS2);
+const iModifyIn2 = VIEW.indexOf('>✏️ Modify</span>', iS2);
+ok(iBreak > iS2 && iBreak < iModifyIn2, '[13c] §2 coupe la ligne entre 🎨 Styles et ✏️ Modify');
+const iSceneIn2 = VIEW.indexOf('>🌫 Scene</span>', iS2);
+ok(iSceneIn2 > iS2 && iSceneIn2 < iBreak, '[13c] 🌫 Scene et 🎨 Styles sont sur la PREMIÈRE ligne');
+ok(VIEW.indexOf('>📏 Analysis</span>', iModifyIn2) > iBreak,
+  '[13c] ✏️ Modify et 📏 Analysis sont sur la SECONDE ligne, ensemble');
+[['sky-200', '🌫 Scene'], ['teal-200', '🎨 Styles'], ['amber-200', '✏️ Modify'],
+  ['rose-200', '📏 Analysis'], ['violet-200', '🧪 PyMOL']].forEach(([tone, name]) => {
+  has(`rounded-md border border-${tone}`, `[13c] le groupe ${name} est refermé dans sa boîte`);
+});
+
+/* 13d. La 🎬 de la trajectoire reste À CÔTÉ de la barre ▶ Play. */
+const iPlay = VIEW.indexOf('<VSection title="▶ Trajectory playback"');
+const iVideo = VIEW.indexOf('>🎬 Video</span>', iPlay);
+ok(iPlay > 0 && iVideo > iPlay && iVideo < VIEW.indexOf('</VSection>', iPlay),
+  '[13d] 🎬 Video reste dans la barre de lecture, à côté de ▶ Play');
+
+/* 13e. Le pavé de prose de la 🎬 est parti dans la bulle du bouton. */
+gone('<p className="text-[10px] text-slate-500 leading-tight">', '[13e] le paragraphe sous la rangée 🎬 a disparu');
+has('🎬 The film is the 3D canvas with the vignette the screen draws over it',
+  '[13e] …et ce qu’il disait se lit en survolant « 🎬 Record the run »');
+
+/* 13f. Le panneau ⚙️ de §1 (ses DEUX jeux de cinq boutons pour les mêmes cinq
+   gestes) n'existe plus : il ne reste que la bande 🎨 Styles, et les « setups »
+   nommés de l'ancienne bande sont repris une fois comme thèmes du même nom. */
+gone('{showSetupPanel && (', '[13f] le panneau à deux jeux de boutons a disparu');
+gone('const [viewerSetups, setViewerSetups] = useState', '[13f] …et son état avec lui');
+gone('const saveCurrentSetup = () => {', '[13f] …ainsi que ses cinq gestes doublons');
+has('const legacy = loadViewerSetups();', '[13f] les setups nommés deviennent des thèmes (rien n’est perdu)');
+
 
 /* ── Bilan ───────────────────────────────────────────────────────────────── */
 console.log(`_viewer_ui_layout_test.mjs — ${passed} assertions OK`);

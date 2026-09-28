@@ -284,7 +284,10 @@ has("const VIEWER_SETUP_KEY = 'labViewerSetups';", 'une clé localStorage dédi�
 has('const VIEWER_SETUP_VERSION = 1;', 'une version, pour qu’un vieux fichier ne casse rien');
 has('const loadViewerSetups = () => {', 'lecture des setups (seuls les vrais sont gardés)');
 has('const saveViewerSetups = (map) => {', 'écriture des setups');
-has('const [viewerSetups, setViewerSetups] = useState(() => loadViewerSetups());', 'l’état des setups');
+has('const legacy = loadViewerSetups();', 'les « setups » nommés de l’ancienne bande sont RELUS une fois');
+has('merged[name] = { v: VIEWER_THEME_VERSION, name, savedAt: new Date().toISOString(), global: s, classes: s.catStyles || {} };',
+  '…et repris comme thèmes du MÊME NOM (rien d’enregistré n’est perdu)');
+has('saveViewerSetups({});', '…puis la clé est vidée : ce grand ménage ne se refait jamais');
 has('const captureViewerSetup = () => ({', 'capture de TOUT le réglage');
 has('const applyViewerSetup = (s) => {', 'application d’un setup');
 has('catStyles,', 'le setup contient les six menus (styles, rayons, couleurs)');
@@ -297,20 +300,27 @@ has('background: bgColor,', '…le fond de la scène');
 has('large: { style: largeStyle, water: showLargeWater },', '…le rendu léger des grands systèmes');
 has('const nextStyles = cloneCatStyles();', 'application : on repart des défauts puis on fusionne');
 has('saveCatLabels(nextLabels);', 'les étiquettes restaurées sont persistées');
-has('const saveCurrentSetup = () => {', '💾 Save');
-has('const loadSetup = (name) => {', '📂 Load');
-has('const deleteSetup = (name) => {', '🗑 Delete');
-has('const exportSetup = (name) => {', '⬇ Export (.json)');
-has('const importSetupFile = (file) => {', '⬆ Import (.json)');
-has('a.download = `viewer-setup-${name.replace(/[^\\w.-]+/g, \'_\')}.json`;', 'le fichier exporté est nommé d’après le setup');
-has('if (!s || typeof s !== \'object\' || !s.catStyles) throw new Error(\'not a viewer setup\');',
+has('const saveActiveEnv = () => {', '💾 Save (le mode actif : thème ou snapshot)');
+has('const loadActiveEnv = (name) => {', '📂 Load');
+has('const deleteActiveEnv = () => {', '🗑 Delete');
+has('const exportActiveEnv = (name) => {', '⬇ Export (.json)');
+has('const importActiveEnvFile = (file) => {', '⬆ Import (.json)');
+has('a.download = `viewer-${store.tag}-${name.replace(/[^\\w.-]+/g, \'_\')}.json`;', 'le fichier exporté est nommé d’après le mode ET le nom');
+has('if (!entry || typeof entry !== \'object\') throw new Error(\'not an environment file\');',
   'un fichier étranger est refusé proprement');
-has('📂 Load…', 'la liste déroulante des setups enregistrés');
-has('⬆ Import', 'le bouton d’import');
-has('🎨 Predefined styles', 'le bouton « 🎨 Predefined styles » (l’ex « ⚙️ Setup » de la demande)');
-const iSec1 = VIEW.indexOf('<VSection title="1 · General"');
-ok(iSec1 > 0 && VIEW.indexOf('🎨 Predefined styles', iSec1) > 0,
-  'le bloc « Predefined styles » vit dans « 1 · General » (la ligne qui charge / nettoie)');
+has('📂 Load…', 'la liste déroulante des styles enregistrées');
+has('⬆\n<input type="file" accept=".json,application/json"', 'le bouton d’import (une flèche : son mode d’emploi est dans la bulle)');
+has('>🎨 Styles</span>', 'la bande s’appelle « 🎨 Styles » (l’ex-bouton « 🎨 Predefined styles » de la demande)');
+/* ⚠ LA BANDE A CHANGÉ DE RANG (la demande : « the “styles” section can fit inside
+   the line of the “scene” section but it should be clear that they are
+   separated ») : elle ne vit plus dans « 1 · General » — elle est SUR LA LIGNE de
+   🌫 Scene, dans sa propre boîte, derrière un filet. */
+const iSec2Band = VIEW.indexOf('<VSection title="2 · Toolbar"');
+const iSceneBand = VIEW.indexOf('>🌫 Scene</span>');
+ok(iSec2Band > 0 && iSceneBand > iSec2Band && VIEW.indexOf('>🎨 Styles</span>', iSceneBand) > 0,
+  'la bande « 🎨 Styles » vit dans §2 · Toolbar, SUR LA LIGNE de 🌫 Scene');
+ok(VIEW.includes('aria-hidden="true" />\n<div className="flex flex-wrap items-center gap-1 rounded-md border border-teal-200'),
+  '…séparée de 🌫 Scene par un filet, et refermée dans sa propre boîte');
 
 /* ══ 8. FOND DE LA SCÈNE DANS §2 SCENE ═══════════════════════════════════ */
 has("const BG_DEFAULT = '#f8fafc';", 'le fond par défaut est nommé une fois');

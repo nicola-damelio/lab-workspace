@@ -1,65 +1,454 @@
-diff --git a/_residue_numbering_panels_test.mjs b/_residue_numbering_panels_test.mjs
-index 71044c3..2b9a920 100644
---- a/_residue_numbering_panels_test.mjs
-+++ b/_residue_numbering_panels_test.mjs
-@@ -105,14 +105,14 @@ cases.forEach(({ test, n }, ci) => {
- });
+diff --git a/_condition_page_test.mjs b/_condition_page_test.mjs
+index 85904fb..18a20d8 100644
+--- a/_condition_page_test.mjs
++++ b/_condition_page_test.mjs
+@@ -224,12 +224,11 @@ has(MD, 'trajectoryFormat={d.trajectoryFormat}',
+    menée (base du navigateur → Drive, ou « le Drive n'est pas connecté ICI »). */
+ ok(!MD.includes('The file is being brought back from this browser'),
+   '[MD] la phrase « le fichier revient de la base du navigateur » a disparu');
+-/* Les quatre états qui racontaient la recherche (phase + message) survivent sous
+-   leur nom « _ » : les fonctions de reprise — seule tentative automatique
+-   désormais, le bouton à la demande ayant disparu avec la barre — continuent de
+-   les écrire. L’ORDRE de la recherche, lui, n’a pas bougé. */
+-has(MD, "const [_trajPhase, setTrajPhase] = useState('browser');",
+-  '[MD] la reprise de la trajectoire a toujours son état lisible');
++/* Les états qui racontent la recherche (phase + message) sont de nouveau LUS pour la
++   trajectoire : le viewer les affiche sous la phrase « déclarée mais pas encore là »
++   (bouton « ⬇️ Bring it back from the cloud » : constat de la recherche + état). */
++has(MD, "const [trajPhase, setTrajPhase] = useState('browser');",
++  '[MD] l’état de la reprise de la trajectoire est de nouveau VISIBLE (le viewer le lit)');
+ has(MD, "const [_structPhase, setStructPhase] = useState('browser');",
+   '[MD] …la topologie aussi');
+ ok(!MD.includes('const trajSourceHint = trajPhase'),
+@@ -238,14 +237,65 @@ has(MD, "setTrajPhase('nocloud');",
+   '[MD] sans Drive connecté dans CE navigateur, la reprise le constate au lieu de promettre');
+ has(MD, "setTrajDriveMsg(`✅ ${restored.name} brought back from this browser.`);",
+   '[MD] …et note de quelle source le fichier est revenu');
+-ok(!MD.includes('onClick={() => { restoreTrajectoryFromDrive(); }}'),
+-  '[MD] plus de bouton « à la demande » (il vivait dans la barre retirée)');
++has(MD, 'onBringTrajectoryBack={bringTrajectoryBack}',
++  '[MD] la page branche le bouton du viewer sur son geste à la demande');
++has(MD, 'the cloud request failed',
++  '[MD] …et une reprise qui casse le DIT (le clic ne reste pas muet)');
++assert.equal(countOf(MD, 'await restoreTrajectoryFromDrive();'), 2,
++  '[MD] deux appelants, UNE seule fonction de reprise : la tentative automatique et le bouton');
++passed += 1;
+ has(MD, 'await restoreTrajectoryFromDrive();',
+   '[MD] la reprise AUTOMATIQUE reste branchée (base du navigateur → Drive)');
+ has(MD, 'await restoreStructureFromDrive();',
+   '[MD] …et pour la topologie');
+ has(MD, 'const restoreTrajectoryFromDrive = async () => {',
+   '[MD] la tentative automatique et le bouton passent par la MÊME fonction');
++
++/* ══ 5bis. « ⬇️ BRING IT BACK FROM THE CLOUD » — LE GESTE EST REVENU, LÀ OÙ LA
++   PHRASE LE DEMANDE ══════════════════════════════════════════════════════════
++   Signalé le 25/09/2026 : « quand j'ouvre une page MD la trajectoire n'est pas
++   chargée et le message dit de presser “⬇️ Bring it back from Google Drive”, mais
++   ce bouton n'existe pas ». Il avait raison : le bouton vivait dans la barre
++   « 🧬 System files » RETIRÉE, et la phrase du viewer était restée à l'ancien monde
++   — elle demandait un geste que plus rien ne portait, si bien qu'une tentative
++   automatique manquée n'avait plus AUCUN recours. Le bouton est rendu PAR LE
++   VIEWER, juste après la phrase (barre ▶ Trajectory playback), renommé
++   « ⬇️ Bring it back from the cloud » : la page ne lui fournit que sa fonction de
++   reprise — celle de sa tentative automatique — et l'état de sa recherche. */
++ok(!VIEW.includes('Bring it back from Google Drive'),
++  '[viewer] la phrase ne conseille plus un bouton qui n’existe pas (ancien nom retiré)');
++ok(!VIEW.includes('on the page (the reference copy)'),
++  '[viewer] …et n’envoie plus l’utilisateur « sur la page » chercher ce bouton');
++has(VIEW, '“⬇️ Bring it back from the cloud” (the reference copy), or pick the file here with 📂 Trajectory.',
++  '[viewer] la phrase nomme le geste tel qu’il est écrit sur le bouton');
++has(VIEW, "'⬇️ Bring it back from the cloud'",
++  '[viewer] LE BOUTON est rendu, dans la barre de lecture, à côté de la phrase');
++has(VIEW, '{onBringTrajectoryBack && (',
++  '…uniquement quand la page fournit la fonction de reprise (aucune promesse creuse)');
++has(VIEW, 'onBringTrajectoryBack = null,',
++  'le viewer accepte la fonction de reprise à la demande');
++has(VIEW, "bringTrajectoryNote = '',",
++  '…plus le constat de la recherche (affiché après le bouton)');
++has(VIEW, 'bringTrajectoryBusy = false,',
++  '…et l’état « une recherche tourne »');
++has(VIEW, 'disabled={bringTrajectoryBusy}',
++  '[viewer] un seul essai à la fois : le bouton est inerte pendant la recherche');
++has(VIEW, '{bringTrajectoryNote && (',
++  '[viewer] le constat de la recherche est AFFICHÉ (un clic sans cloud ne reste pas muet)');
++has(MD, 'const bringTrajectoryBack = async () => {',
++  '[MD] le geste à la demande est une fonction unique, dans la page');
++has(MD, 'if (trajRestoreBusyRef.current) return;',
++  '[MD] …qui refuse un second essai tant que le premier n’est pas fini');
++has(MD, 'bringTrajectoryNote={trajRestoreNote}',
++  '[MD] …et elle passe au viewer le constat de la recherche');
++has(MD, "bringTrajectoryBusy={trajPhase === 'drive'}",
++  '[MD] …ainsi que l’état « recherche en cours »');
++has(MD, "const trajRestoreNote = (trajPhase === 'drive' || trajPhase === 'notfound' || trajPhase === 'nocloud')",
++  '[MD] le constat affiché est celui d’une recherche en cours ou de son échec — jamais l’histoire d’avant');
++has(MD, "const [trajDriveMsg, setTrajDriveMsg] = useState('');",
++  '[MD] …ce qui suppose que le message de recherche ne soit plus gardé sous un « _ »');
++has(DOC, '## Le geste de reprise à la demande est revenu — renommé « ⬇️ Bring it back from the cloud » (25/09/2026)',
++  'le retour du geste à la demande et son nouveau nom sont documentés');
+ has(MD, 'const applyReloadedFile = async ({ kind, testId, wantedName, file, paint }) => {',
+   '[MD] le fichier ramené est rangé sous la clé de SA condition');
+ has(MD, "await blobStore.save(kind === 'trajectory' ? trajBlobKey(testId) : structBlobKey(testId), restored);",
+diff --git a/_disulfide_fold_test.mjs b/_disulfide_fold_test.mjs
+index 2a10c13..5e03d85 100644
+--- a/_disulfide_fold_test.mjs
++++ b/_disulfide_fold_test.mjs
+@@ -23,6 +23,17 @@
+      • la DÉFINITION montre la liaison : la puce de paire porte un dessin S–S
+        (deux atomes de soufre, la liaison, les deux numéros AFFICHÉS) et la
+        bande de séquence marque les Cys appariées de la même couleur.
++     • l'interrupteur « ⚭ Disulfides: shown / hidden » du viewer (le rapport :
++       « In any case i need a button to switch the display on and off of the
++       disulfide bonds ») ne touche QUE le graphe de liaisons de la structure
++       affichée : utils/disulfideBonds.js retire les liaisons Sγ–Sγ de DEUX
++       RÉSIDUS du bond store au chargement — là où passent les deux autres règles
++       de liaisons — donc Sticks / Ball+stick / Lines ne les dessinent plus.
++       Ni le fichier, ni le texte servi par la page, ni le 📥 Download, ni la
++       copie Drive, ni « Cysteine states » ne perdent quoi que ce soit ; et le
++       compte rendu DIT la distance Sγ–Sγ de chaque pont, un pont étiré compris
++       (la réponse chiffrée à « you did not fold the structure to bring the
++       cysteines at bond distance »).
  
- /* ════════════ 2. LA BANDE DE SÉQUENCE PORTE LE NUMÉRO AFFICHÉ ════════════ */
--has(DATA, 'export const SequencePaintStrip = ({ residues, getLetter, meta, onApply, focusIdx, charLabel, residueNo }) => {',
--  'la bande de séquence accepte le numéro affiché');
-+has(DATA, 'export const SequencePaintStrip = ({ residues, getLetter, meta, onApply, focusIdx, charLabel, residueNo, linkOf }) => {',
-+  'la bande de séquence accepte le numéro affiché (et, avec les ponts disulfure, les résidus appariés)');
- has(DATA, 'const numberAt = typeof residueNo === \'function\' ? residueNo : (i) => i + 1;',
-   '…et retombe sur le rang dans la séquence quand aucune page ne le fournit');
- has(DATA, '<div className="text-[8px] text-slate-500 font-bold">{resNo}</div>',
-   'la pastille écrit LE numéro du résidu (et non son rang)');
- has(DATA, 'const resNo = numberAt(i);', '…calculé une fois par pastille');
--has(DATA, 'title={`${r.name || r.char} ${resNo}: ${m.label}`}',
-+has(DATA, 'title={`${r.name || r.char} ${resNo}: ${m.label}${link ? ` · ⚭ disulphide with ${link.partner}` : \'\'}`}',
-   'l’infobulle donne le même numéro que la pastille (plus de « Ala1 » qui contredit « 12 »)');
- gone(DATA, '<div className="text-[8px] text-slate-500 font-bold">{i + 1}</div>',
-   'l’ancien rang de séquence n’est plus écrit sous la lettre');
-@@ -157,8 +157,8 @@ eq(count(MD, 'title="Sequence and structure"'), 2,
- has(SEC, 'import { residueNumberResolver, residueNumberOf } from \'../utils/residueNumbering\';',
-   'la page NMR lit la règle partagée');
- has(SEC, 'const residueNoOf = residueNumberResolver(activeTest);', '…et se construit le résolveur');
--has(SEC, '<SequencePaintStrip residues={d.parsedSeq} getLetter={(i) => d.getSSAt(i)} meta={SS_META} onApply={(i) => paintSSAt(i, ssBrush)} focusIdx={focusIdx} residueNo={residueNoOf} />',
--  'la bande NMR de « Sequence and structure » l’utilise');
-+has(SEC, '<SequencePaintStrip residues={d.parsedSeq} getLetter={(i) => d.getSSAt(i)} meta={SS_META} onApply={(i) => paintSSAt(i, ssBrush)} focusIdx={focusIdx} residueNo={residueNoOf}',
-+  'la bande NMR de « Sequence and structure » l’utilise (et lui passe les ponts disulfure par linkOf)');
+    Le module est pur : il est importé et EXÉCUTÉ. La géométrie réelle
+    (buildProteinBackbone + placeSidechainAtoms) est extraite de NMRSections.jsx
+@@ -37,6 +48,9 @@ import {
+   foldProteinForDisulfides, movableResiduesFor, scoreFold,
+   SS_BOND_LENGTH, SS_BOND_TOLERANCE, MAX_MOVABLE_RESIDUES, CHI1_ROTAMERS, DEFAULT_FOLD_SEED,
+ } from './src/utils/disulfideFold.js';
++// ⚭ « Disulfides: shown / hidden » — la règle qui RETIRE un pont du graphe de
++// liaisons de la structure affichée (module pur, aucun import).
++import { applyDisulfideDisplay, disulfideBondIndices, SG_ATOM_NAME } from './src/utils/disulfideBonds.js';
  
- /* ════════════ 4. LA TABLE DES DÉPLACEMENTS LIT LA MÊME RÈGLE ════════════ */
- has(SEC, 'const displayNo = residueNumberOf(activeTest, idx);',
-@@ -171,12 +171,14 @@ has(SEC, 'const resNoOf = residueNumberResolver(activeTest);',
-   'le panneau Cys se construit le résolveur de numéros');
- has(SEC, 'const noOf = (pos) => resNoOf(pos - 1);',
-   'la position 1-based de séquence est traduite en index de résidu');
--has(SEC, '<span className="font-bold text-slate-700 w-14">Cys #{noOf(pos)}</span>',
-+has(SEC, '<span className="font-bold text-slate-700 w-14 pl-1">Cys #{noOf(pos)}</span>',
-   'l’étiquette d’une cystéine porte le numéro de la structure renumérotée');
- has(SEC, '{pairTargets.map((p2) => <option key={p2} value={p2}>Cys #{noOf(p2)}</option>)}',
-   '« ⚭ couple with » propose les numéros affichés — la VALEUR stockée reste la position');
--has(SEC, 'Cys #{noOf(pair[0])} ⚭ Cys #{noOf(pair[1])}',
--  'la définition du pont disulfure s’écrit avec les numéros affichés');
-+has(SEC, '<span>Cys #{noOf(pair[0])}</span>',
-+  'la définition du pont disulfure s’écrit avec les numéros affichés (premier Cys)');
-+has(SEC, '<span>Cys #{noOf(pair[1])}</span>',
-+  '…et le second — le DESSIN S–S vit entre les deux (DisulfideBondGlyph)');
- has(SEC, 'if (p2) addPair(pos, p2);',
-   '…mais la paire enregistrée reste en POSITIONS de séquence (le modèle redox les lit)');
- has(SEC, 'cysDisulfides: [...remaining, [a, b]]', 'aucune écriture de paire n’a été convertie en numéros affichés');
+ let passed = 0;
+ const ok = (cond, what) => {
+@@ -288,4 +302,151 @@ has(VIEW, 'flashDisulfideFoldMsg(`${built.note', 'le message affiché est CELUI
+ has(VIEW, "'⚠️ Nothing to fold: this condition has no disulphide pair (or no protein sequence).'",
+   'et il dit quand il n’y a rien à détendre au lieu de ne rien faire');
+ 
++/* ════════════ 9. ⚭ « Disulfides: shown / hidden » : LA RÈGLE DU GRAPHE ════════════
++   Cacher un S–S ne peut pas passer par le TEXTE : la passe de distances de NGL
++   (inferBonds:'all', le défaut du parseur PDB) redessinerait le pont dès que les
++   deux Sγ sont dans la fenêtre covalente. La règle travaille donc sur le GRAPHE
++   de la structure chargée — la compaction du bond store que la maison utilise
++   déjà pour ses deux autres règles de liaisons. Ce que le test exécute : le cœur
++   pur (disulfideBondIndices) sur les VRAIS modèles construits plus haut, puis
++   l'enveloppe (applyDisulfideDisplay) sur une structure jouet dont on connaît le
++   graphe, atome par atome. */
++const RULE_SRC = read('src/utils/disulfideBonds.js');
++ok(!/^import\s/m.test(RULE_SRC), 'le module de la règle est PUR (aucun import), comme les autres utils');
++
++// Le graphe d'un modèle PDB lu par le test : les liaisons par INDICES d'atomes.
++const graphOf = (model) => {
++  const indexOf = new Map(model.atoms.map((a, i) => [a.serial, i]));
++  return {
++    atoms: model.atoms.map((a) => ({
++      name: a.name, resno: a.resSeq, chain: 'A', icode: '', resname: a.resName, pos: position(a),
++    })),
++    bonds: [...model.conectPairs].map((k) => k.split('|').map((s) => indexOf.get(Number(s)))),
++  };
++};
++const sgPairsOf = (g) => disulfideBondIndices(g.atoms, g.bonds).map((k) => g.bonds[k]);
++const pairResnos = (g, bonds) => bonds.map(([i, j]) => [g.atoms[i].resno, g.atoms[j].resno].sort((a, b) => a - b));
++
++// (a) le modèle qui porte le pont défini : UNE liaison Sγ–Sγ inter-résidus — et
++//     elle seule (les trois Cys sont là, mais Cβ–Sγ n'est pas un pont).
++const pairedGraph = graphOf(paired);
++eq(sgPairsOf(pairedGraph).length, 1, 'le modèle de la page dessine EXACTEMENT un pont (Sγ–Sγ)');
++eq(pairResnos(pairedGraph, sgPairsOf(pairedGraph)), [[3, 7]], '…entre les deux Cys définies (3 et 7), et aucune autre');
++eq(pairedGraph.atoms.filter((a) => a.name === SG_ATOM_NAME).length, 3, 'les trois Sγ du modèle sont bien lus');
++// (b) sans pont défini : aucun S–S à cacher, mêmes Sγ pourtant.
++const unpairedGraph = graphOf(unpaired);
++eq(sgPairsOf(unpairedGraph), [], 'sans paire définie, la règle ne trouve AUCUN pont (rien à cacher)');
++// (c) ce qui n'est PAS un pont : le Sγ lié à son propre Cβ, et deux SG d'un
++//     même résidu (le résidu, c'est chaîne + numéro + code d'insertion).
++const cbsg = pairedGraph.bonds.findIndex(([i, j]) => {
++  const a = pairedGraph.atoms[i];
++  const b = pairedGraph.atoms[j];
++  return a.resno === b.resno && [a.name, b.name].sort().join('|') === 'CB|SG';
++});
++ok(cbsg >= 0 && !disulfideBondIndices(pairedGraph.atoms, pairedGraph.bonds).includes(cbsg),
++  'une liaison Cβ–Sγ n’est pas un pont (ses deux atomes ne sont pas deux Sγ)');
++const sameResidue = { atoms: [{ name: 'SG', resno: 5, chain: 'A' }, { name: 'SG', resno: 5, chain: 'A' }], bonds: [[0, 1]] };
++eq(disulfideBondIndices(sameResidue.atoms, sameResidue.bonds), [], 'deux SG du MÊME résidu ne sont pas un pont');
++const twoChains = { atoms: [{ name: 'SG', resno: 5, chain: 'A' }, { name: 'SG', resno: 5, chain: 'B' }], bonds: [[0, 1]] };
++eq(disulfideBondIndices(twoChains.atoms, twoChains.bonds), [0],
++  'même numéro sur deux chaînes = deux résidus : un vrai pont');
++const spreadNames = [{ name: ' sg ', resno: 1, chain: 'A' }, { name: 'SG', resno: 2, chain: 'A' }];
++eq(disulfideBondIndices(spreadNames, [[0, 1]]), [0], 'le nom d’atome est lu comme PDB l’écrit (espaces compris)');
++eq(disulfideBondIndices([], []), [], 'sans atome ni liaison, la règle ne rend rien');
++eq(disulfideBondIndices(null, null), [], '…même quand ses arguments manquent');
++
++/* ---- (d) l'enveloppe : le bond store d'une structure jouet -----------------
++   Le même contrat que les deux autres règles : getAtomProxy pour les atomes, le
++   bond store (tableau plat + count) pour les liaisons, finalizeBonds() pour les
++   lecteurs qui passent par le bond set. */
++const fakeStructure = (atoms, bonds) => {
++  const store = {
++    atomIndex1: new Int32Array(Math.max(4, bonds.length + 2)),
++    atomIndex2: new Int32Array(Math.max(4, bonds.length + 2)),
++    bondOrder: new Int32Array(Math.max(4, bonds.length + 2)).fill(1),
++    count: bonds.length,
++  };
++  bonds.forEach(([i, j], k) => { store.atomIndex1[k] = i; store.atomIndex2[k] = j; });
++  const proxy = {
++    index: 0,
++    get atomname() { return atoms[this.index].name; },
++    get element() { return atoms[this.index].element || atoms[this.index].name[0]; },
++    get resname() { return atoms[this.index].resname || 'CYS'; },
++    get resno() { return atoms[this.index].resno; },
++    get icode() { return atoms[this.index].icode || ''; },
++    get chainname() { return atoms[this.index].chain || 'A'; },
++    get x() { return atoms[this.index].pos[0]; },
++    get y() { return atoms[this.index].pos[1]; },
++    get z() { return atoms[this.index].pos[2]; },
++  };
++  return {
++    atomCount: atoms.length,
++    bondStore: store,
++    bondCount: bonds.length,
++    finalizeCount: 0,
++    getAtomProxy: () => proxy,
++    finalizeBonds() { this.finalizeCount += 1; },
++  };
++};
++const storePairs = (s) => Array.from({ length: s.bondStore.count }, (_, k) => `${s.bondStore.atomIndex1[k]}|${s.bondStore.atomIndex2[k]}`);
++
++const toyAtoms = [
++  { name: 'CB', resno: 3, chain: 'A', pos: [0, 0, 0] },
++  { name: 'SG', resno: 3, chain: 'A', pos: [1, 0, 0] },
++  { name: 'CB', resno: 7, chain: 'A', pos: [0, 5, 0] },
++  { name: 'SG', resno: 7, chain: 'A', pos: [1, 5, 0] },
++];
++const toyBonds = [[0, 1], [1, 3], [2, 3]];        // Cβ–Sγ · LE PONT Sγ–Sγ · Cβ–Sγ
++const shownToy = fakeStructure(toyAtoms, toyBonds);
++const shownReport = applyDisulfideDisplay(shownToy, { hidden: false });
++eq(shownReport.removed, 0, 'montrés : la règle ne retire RIEN du graphe');
++eq(shownReport.bonds.length, 1, '…mais elle rapporte le pont (le bouton sait ce qu’il cachera)');
++eq([shownReport.bonds[0].resno1, shownReport.bonds[0].resno2], [3, 7], '…avec ses deux résidus');
++eq(shownReport.bonds[0].distance, 5, '…et la distance Sγ–Sγ RÉELLE de la géométrie servie (5 Å ici)');
++eq(storePairs(shownToy), ['0|1', '1|3', '2|3'], '…et le graphe est intact');
++const hiddenToy = fakeStructure(toyAtoms, toyBonds);
++const hiddenReport = applyDisulfideDisplay(hiddenToy, { hidden: true });
++eq(hiddenReport.removed, 1, 'cachés : le pont sort du graphe');
++eq(hiddenReport.bonds.length, 1, '…le compte rendu le nomme quand même (on peut donc le remettre)');
++eq(storePairs(hiddenToy), ['0|1', '2|3'], '…et seules les deux liaisons Cβ–Sγ restent');
++eq(hiddenToy.bondStore.count, 2, 'le compte du store est baissé (c’est lui qu’un lecteur voit)');
++eq(hiddenToy.bondCount, 2, '…et celui de la structure aussi');
++eq(hiddenToy.finalizeCount, 1, '…et le bond set est remis d’aplomb (finalizeBonds)');
++const noBridge = fakeStructure(toyAtoms, [[0, 1], [2, 3]]);
++eq(applyDisulfideDisplay(noBridge, { hidden: true }), { bonds: [], removed: 0 },
++  'sans pont, cacher ne change RIEN — et le dit');
++eq(storePairs(noBridge).length, 2, '…le graphe restant est intact');
++eq(applyDisulfideDisplay(null), { bonds: [], removed: 0 }, 'une structure absente ne fait pas planter la règle');
++eq(applyDisulfideDisplay({ atomCount: 0, bondStore: { count: 0 } }), { bonds: [], removed: 0 },
++  'une structure vide est ignorée');
++
++/* ---- (e) le viewer : le bouton, le geste, le compte rendu ------------------ */
++has(VIEW, "import { applyDisulfideDisplay } from '../utils/disulfideBonds';", 'le viewer importe la règle');
++has(VIEW, "import { SS_BOND_LENGTH, SS_BOND_TOLERANCE } from '../utils/disulfideFold';",
++  'la fenêtre de liaison est CELLE du repliement (une seule définition de « pont fermé »)');
++has(VIEW, 'applyDisulfideDisplay(component, { hidden: !disulfidesShownRef.current })',
++  'la règle est appliquée au CHARGEMENT, avant qu’une représentation ne lise le graphe');
++ok(VIEW.indexOf('applyDisulfideDisplay(component') > VIEW.indexOf('try { enforceCovalentProteinBonds(component); }'),
++  '…à la suite des deux autres règles de liaisons, dans le même entonnoir de chargement');
++has(VIEW, 'const [disulfidesShown, setDisulfidesShown] = useState(true);',
++  'le pont est AFFICHÉ par défaut (rien ne bouge tant que le bouton n’est pas cliqué)');
++has(VIEW, 'const toggleDisulfideBonds = () => {', 'le geste existe');
++has(VIEW, "{disulfidesShown ? '⚭ Disulfides: shown' : '⚭ Disulfides: hidden'}", 'le bouton dit SON état');
++has(VIEW, 'disabled={disulfideDrawn.bonds.length === 0}',
++  'le bouton est inactif quand la structure à l’écran ne dessine aucun pont');
++has(VIEW, "flashDisulfideShowMsg('⚠️ No disulphide bond is drawn in this model — nothing to hide.",
++  '…et le geste le DIT au lieu de ne rien faire (comme ⚭ Fold for disulfides)');
++has(VIEW, 'requestStructureLoad({ ...(loadRequest || {}), ts: Date.now() });',
++  'cacher — puis remontrer — ressert LE MÊME modèle (l’entonnoir du ⚗️ rebuild des hydrogènes)');
++has(VIEW, '⚠️ drawn but stretched (the two Sγ are not at bonding distance)',
++  'un pont dessiné mais ÉTIRÉ est dit tel : sa distance réelle, pas une promesse');
++has(VIEW, 'drawn but STRETCHED — ⚭ Fold for disulfides, right here, relaxes the chain until the two Sγ can meet.',
++  '…et le compte rendu nomme le geste qui essaie de le fermer au lieu de faire croire à une liaison');
++has(VIEW, 'const describeDisulfideBond = (b) => {', '…par une seule description, pont par pont');
++// La DÉFINITION reste à la page : le viewer ne touche pas au modèle qu’elle écrit.
++has(SEC, 'cysDisulfides.forEach(([a, b]) => emitBond(`SG@${a - 1}`, `SG@${b - 1}`));',
++  'la page écrit toujours le CONECT du pont : l’interrupteur ne touche que le DESSIN');
++
+ console.log(`_disulfide_fold_test.mjs — ${passed} assertions OK`);
++
++
 diff --git a/_viewer_rings_gradient_test.mjs b/_viewer_rings_gradient_test.mjs
-index 577b947..941d882 100644
+index 52f7494..7d9f2cf 100644
 --- a/_viewer_rings_gradient_test.mjs
 +++ b/_viewer_rings_gradient_test.mjs
-@@ -696,6 +696,9 @@ eq(screenPos(), before, '…et la voilà reposée sur les atomes de l’image 1'
+@@ -700,6 +700,16 @@ eq(screenPos(), before, '…et la voilà reposée sur les atomes de l’image 1'
  
  
  
++
++
++
++
++
++
++
 +
 +
 +
  /* ══ 9. LES PLAQUES SUIVENT LES IMAGES DE LA TRAJECTOIRE ═══════════════════ */
  /* LA PANNE signalée (« le immagini scorrono ma le placche restano ») : les bâtons
     des rangées nucléiques sont des représentations que NGL réécrit à chaque image
+diff --git a/_viewer_style_controls_test.mjs b/_viewer_style_controls_test.mjs
+index 5f09607..970a9f4 100644
+--- a/_viewer_style_controls_test.mjs
++++ b/_viewer_style_controls_test.mjs
+@@ -284,7 +284,10 @@ has("const VIEWER_SETUP_KEY = 'labViewerSetups';", 'une clé localStorage dédi
+ has('const VIEWER_SETUP_VERSION = 1;', 'une version, pour qu’un vieux fichier ne casse rien');
+ has('const loadViewerSetups = () => {', 'lecture des setups (seuls les vrais sont gardés)');
+ has('const saveViewerSetups = (map) => {', 'écriture des setups');
+-has('const [viewerSetups, setViewerSetups] = useState(() => loadViewerSetups());', 'l’état des setups');
++has('const legacy = loadViewerSetups();', 'les « setups » nommés de l’ancienne bande sont RELUS une fois');
++has('merged[name] = { v: VIEWER_THEME_VERSION, name, savedAt: new Date().toISOString(), global: s, classes: s.catStyles || {} };',
++  '…et repris comme thèmes du MÊME NOM (rien d’enregistré n’est perdu)');
++has('saveViewerSetups({});', '…puis la clé est vidée : ce grand ménage ne se refait jamais');
+ has('const captureViewerSetup = () => ({', 'capture de TOUT le réglage');
+ has('const applyViewerSetup = (s) => {', 'application d’un setup');
+ has('catStyles,', 'le setup contient les six menus (styles, rayons, couleurs)');
+@@ -297,20 +300,27 @@ has('background: bgColor,', '…le fond de la scène');
+ has('large: { style: largeStyle, water: showLargeWater },', '…le rendu léger des grands systèmes');
+ has('const nextStyles = cloneCatStyles();', 'application : on repart des défauts puis on fusionne');
+ has('saveCatLabels(nextLabels);', 'les étiquettes restaurées sont persistées');
+-has('const saveCurrentSetup = () => {', '💾 Save');
+-has('const loadSetup = (name) => {', '📂 Load');
+-has('const deleteSetup = (name) => {', '🗑 Delete');
+-has('const exportSetup = (name) => {', '⬇ Export (.json)');
+-has('const importSetupFile = (file) => {', '⬆ Import (.json)');
+-has('a.download = `viewer-setup-${name.replace(/[^\\w.-]+/g, \'_\')}.json`;', 'le fichier exporté est nommé d’après le setup');
+-has('if (!s || typeof s !== \'object\' || !s.catStyles) throw new Error(\'not a viewer setup\');',
++has('const saveActiveEnv = () => {', '💾 Save (le mode actif : thème ou snapshot)');
++has('const loadActiveEnv = (name) => {', '📂 Load');
++has('const deleteActiveEnv = () => {', '🗑 Delete');
++has('const exportActiveEnv = (name) => {', '⬇ Export (.json)');
++has('const importActiveEnvFile = (file) => {', '⬆ Import (.json)');
++has('a.download = `viewer-${store.tag}-${name.replace(/[^\\w.-]+/g, \'_\')}.json`;', 'le fichier exporté est nommé d’après le mode ET le nom');
++has('if (!entry || typeof entry !== \'object\') throw new Error(\'not an environment file\');',
+   'un fichier étranger est refusé proprement');
+-has('📂 Load…', 'la liste déroulante des setups enregistrés');
+-has('⬆ Import', 'le bouton d’import');
+-has('🎨 Predefined styles', 'le bouton « 🎨 Predefined styles » (l’ex « ⚙️ Setup » de la demande)');
+-const iSec1 = VIEW.indexOf('<VSection title="1 · General"');
+-ok(iSec1 > 0 && VIEW.indexOf('🎨 Predefined styles', iSec1) > 0,
+-  'le bloc « Predefined styles » vit dans « 1 · General » (la ligne qui charge / nettoie)');
++has('📂 Load…', 'la liste déroulante des styles enregistrées');
++has('⬆\n<input type="file" accept=".json,application/json"', 'le bouton d’import (une flèche : son mode d’emploi est dans la bulle)');
++has('>🎨 Styles</span>', 'la bande s’appelle « 🎨 Styles » (l’ex-bouton « 🎨 Predefined styles » de la demande)');
++/* ⚠ LA BANDE A CHANGÉ DE RANG (la demande : « the “styles” section can fit inside
++   the line of the “scene” section but it should be clear that they are
++   separated ») : elle ne vit plus dans « 1 · General » — elle est SUR LA LIGNE de
++   🌫 Scene, dans sa propre boîte, derrière un filet. */
++const iSec2Band = VIEW.indexOf('<VSection title="2 · Toolbar"');
++const iSceneBand = VIEW.indexOf('>🌫 Scene</span>');
++ok(iSec2Band > 0 && iSceneBand > iSec2Band && VIEW.indexOf('>🎨 Styles</span>', iSceneBand) > 0,
++  'la bande « 🎨 Styles » vit dans §2 · Toolbar, SUR LA LIGNE de 🌫 Scene');
++ok(VIEW.includes('aria-hidden="true" />\n<div className="flex flex-wrap items-center gap-1 rounded-md border border-teal-200'),
++  '…séparée de 🌫 Scene par un filet, et refermée dans sa propre boîte');
+ 
+ /* ══ 8. FOND DE LA SCÈNE DANS §2 SCENE ═══════════════════════════════════ */
+ has("const BG_DEFAULT = '#f8fafc';", 'le fond par défaut est nommé une fois');
+diff --git a/_viewer_theme_snapshot_test.mjs b/_viewer_theme_snapshot_test.mjs
+index 1d31c0f..fd2cf50 100644
+--- a/_viewer_theme_snapshot_test.mjs
++++ b/_viewer_theme_snapshot_test.mjs
+@@ -218,8 +218,8 @@ has('const entry = (sn.sections && sn.sections[sec.id]) || (byKey[sec.key] ? sn.
+ gone('mergeThemeClasses(nextClasses', 'le snapshot ne passe jamais par le merge du thème');
+ // Les commandes : un mode actif, un magasin, les mêmes boutons.
+ has("const activeEnvStore = () => (setupSaveMode === 'theme'", '💾 / 📂 / 🗑 / ⬇ / ⬆ servent le mode ACTIF');
+-has("{[['theme', '🎨 Theme (cumulative)'], ['snapshot', '📷 Snapshot (this scene)']].map(([m, label]) => (",
+-  'les deux modes sont deux boutons, dans le panneau « Predefined styles »');
++has("{[['theme', '🎨 Cumulative'], ['snapshot', '📷 Snapshot']].map(([m, label]) => (",
++  'les deux modes — « cumulative » et « snapshot », les mots de la demande — sont deux boutons de la bande « 🎨 Styles »');
+ has("{themeConflicts && (", 'le prompt de conflit n’apparaît que là où il y a un conflit');
+ has('const mergeThemeClasses = (prevClasses, looksByClass, choices) => {',
+   'la « regola aurea » est une fonction PURE, donc exécutable par ce garde-fou');
+diff --git a/_viewer_ui_layout_test.mjs b/_viewer_ui_layout_test.mjs
+index d07c0c8..fe75e75 100644
+--- a/_viewer_ui_layout_test.mjs
++++ b/_viewer_ui_layout_test.mjs
+@@ -302,8 +302,10 @@ gone("{shown && kind === 'lipid' && sec.id === firstLipidSectionOf(",
+   '…et JAMAIS derrière la case « Draw « POPC » » (le groupe reste là quand la molécule est décochée)');
+ 
+ has('🧫 Membrane · leaflets', 'le groupe s’appelle « Membrane · leaflets »');
+-// Le bouton « Setup » a été renommé (la demande).
+-has('🎨 Predefined styles', 'le bouton « Setup » s’appelle « Predefined styles »');
++// Le bouton « Setup » s'appelle « 🎨 Styles » et il est devenu une BANDE toujours
++// ouverte, sur la ligne de 🌫 Scene (la demande de la session suivante :
++// « the “predefined styles” button can be replaced by a “Styles” section »).
++has('>🎨 Styles</span>', 'la bande « 🎨 Styles » (l’ex « ⚙️ Setup », puis « 🎨 Predefined styles »)');
+ has("surface: 'Surface',", '[vocabulaire] Surface');
+ has("mesh: 'Mesh surface',", '[vocabulaire] Mesh (wireframe)');
+ has("base: 'Slabs',", '[vocabulaire] Slabs (la représentation `base` de NGL)');
+@@ -633,5 +635,69 @@ has('localStorage.setItem(\'labViewerStripCollapsed\'', '[séquence] repli persi
+ has("{stripCollapsed ? '▶' : '◀'}", '[séquence] bouton de repli');
+ has('strip collapsed — {polyTicks.length} residues', '[séquence] bandeau replié (dit ce qui est masqué)');
+ 
++/* ══ 13. LE MENU RÉDUIT ET ORGANISÉ (la demande de cette session) ═════════
++   Mot pour mot : « the viewer menu must be drastically reduced and organised …
++   there is too much writing which can be substituted by information available by
++   hovering. The scene, modify and analyze subgroups are not clearly separated but
++   I do not want to use a line for each of them. The “analysis” and “modify” can
++   be in one line but clearly separated. The “predefined styles” button can be
++   replaced by a “Styles” section … The “styles” section can fit inside the line
++   of the “scene” section but it should be clear that they are separated. The
++   movie maker section can fit in the line of the general section (where you
++   upload the pdb and trajectory). The video of the trajectory can stay next to
++   the play bar of the trajectory. »
++   Chaque phrase de la demande a SA vérification ici ; les autres garde-fous
++   (_viewer_style_controls, _viewer_theme_snapshot, _viewer_keyframes) vérifient
++   le détail des gestes de la bande 🎨 Styles et de la rangée 🎞. */
++const iS2 = VIEW.indexOf('<VSection title="2 · Toolbar"');
++
++/* 13a. Le résumé d'une rangée ne s'imprime plus : il est la BULLE de son titre. */
++gone('{hint && <span className="text-[9px] text-slate-400 truncate hidden lg:inline">{hint}</span>}',
++  '[13a] la ligne grise « structure · trajectory · clear » a quitté la rangée');
++has('title={hint || undefined}>{title}</span>', '[13a] …le résumé vit dans la bulle du titre de la rangée');
++
++/* 13b. Le 🎞 Movie maker est SUR la ligne de §1 General — il n'a plus sa section. */
++const iFilm = VIEW.indexOf('>🎞 Movie maker</span>');
++const iFilmBox = VIEW.indexOf('<div className="flex flex-col gap-1 w-full">', iS1);
++ok(iFilm > iS1 && iS2 > iFilm && iFilmBox > iS1 && iS2 > iFilmBox,
++  '[13b] 🎞 Movie maker vit dans « 1 · General » (la ligne qui charge PDB et trajectoire)');
++gone('<VSection title="🎞 Movie maker"', '[13b] …il n’est plus une section à lui tout seul');
++has('＋ Capture this pose', '[13b] …et sa rangée de gestes est intacte');
++
++/* 13c. §2 tient sur DEUX lignes de groupes — 🌫 Scene │ 🎨 Styles, puis ✏️ Modify │
++   📏 Analysis │ 🧪 PyMOL — et chaque groupe est refermé dans sa propre boîte
++   teintée : « clairement séparés » ne coûte donc aucune ligne de plus. */
++const iBreak = VIEW.indexOf('<span className="basis-full h-0" aria-hidden="true" />', iS2);
++const iModifyIn2 = VIEW.indexOf('>✏️ Modify</span>', iS2);
++ok(iBreak > iS2 && iBreak < iModifyIn2, '[13c] §2 coupe la ligne entre 🎨 Styles et ✏️ Modify');
++const iSceneIn2 = VIEW.indexOf('>🌫 Scene</span>', iS2);
++ok(iSceneIn2 > iS2 && iSceneIn2 < iBreak, '[13c] 🌫 Scene et 🎨 Styles sont sur la PREMIÈRE ligne');
++ok(VIEW.indexOf('>📏 Analysis</span>', iModifyIn2) > iBreak,
++  '[13c] ✏️ Modify et 📏 Analysis sont sur la SECONDE ligne, ensemble');
++[['sky-200', '🌫 Scene'], ['teal-200', '🎨 Styles'], ['amber-200', '✏️ Modify'],
++  ['rose-200', '📏 Analysis'], ['violet-200', '🧪 PyMOL']].forEach(([tone, name]) => {
++  has(`rounded-md border border-${tone}`, `[13c] le groupe ${name} est refermé dans sa boîte`);
++});
++
++/* 13d. La 🎬 de la trajectoire reste À CÔTÉ de la barre ▶ Play. */
++const iPlay = VIEW.indexOf('<VSection title="▶ Trajectory playback"');
++const iVideo = VIEW.indexOf('>🎬 Video</span>', iPlay);
++ok(iPlay > 0 && iVideo > iPlay && iVideo < VIEW.indexOf('</VSection>', iPlay),
++  '[13d] 🎬 Video reste dans la barre de lecture, à côté de ▶ Play');
++
++/* 13e. Le pavé de prose de la 🎬 est parti dans la bulle du bouton. */
++gone('<p className="text-[10px] text-slate-500 leading-tight">', '[13e] le paragraphe sous la rangée 🎬 a disparu');
++has('🎬 The film is the 3D canvas with the vignette the screen draws over it',
++  '[13e] …et ce qu’il disait se lit en survolant « 🎬 Record the run »');
++
++/* 13f. Le panneau ⚙️ de §1 (ses DEUX jeux de cinq boutons pour les mêmes cinq
++   gestes) n'existe plus : il ne reste que la bande 🎨 Styles, et les « setups »
++   nommés de l'ancienne bande sont repris une fois comme thèmes du même nom. */
++gone('{showSetupPanel && (', '[13f] le panneau à deux jeux de boutons a disparu');
++gone('const [viewerSetups, setViewerSetups] = useState', '[13f] …et son état avec lui');
++gone('const saveCurrentSetup = () => {', '[13f] …ainsi que ses cinq gestes doublons');
++has('const legacy = loadViewerSetups();', '[13f] les setups nommés deviennent des thèmes (rien n’est perdu)');
++
++
+ /* ── Bilan ───────────────────────────────────────────────────────────────── */
+ console.log(`_viewer_ui_layout_test.mjs — ${passed} assertions OK`);

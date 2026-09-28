@@ -51,6 +51,16 @@ import { enforceOneHeavyBondPerHydrogen } from '../utils/hydrogenBondRule';
 // every molecule. It never rewrites a style: a tick, and the same rows.
 import { withoutHydrogensParams } from '../utils/viewerHydrogenFilter';
 import { enforceCovalentProteinBonds } from '../utils/proteinBondRule';
+// ⚭ « Disulfides: shown / hidden » — le pont disulfure, LU DANS LE GRAPHE de la
+// structure et RETIRÉ de ce graphe quand on le cache : le seul endroit où NGL
+// laisse encore décider du dessin d'une liaison, et la même sorte de règle que
+// les deux ci-dessus (utils/disulfideBonds.js). La distance Sγ–Sγ que le bouton
+// rapporte est jugée avec la fenêtre du repliement (utils/disulfideFold.js) :
+// une seule définition de « pont fermé », pour ⚭ Fold et pour l'interrupteur.
+import { applyDisulfideDisplay } from '../utils/disulfideBonds';
+import { SS_BOND_LENGTH, SS_BOND_TOLERANCE } from '../utils/disulfideFold';
+
+
 import { readXtcFrames, countXtcFrames, countXtcFramesInFile } from '../utils/xtcDecoder';
 import { abortControl, useAbortControl } from '../utils/abortControl';
 import { loadProgress } from '../utils/loadProgress';
@@ -305,7 +315,7 @@ const LARGE_ATOM_COUNT = 25000;                 // lighter rendering above this
    Background »), persisted like Fog / Shadows / Clipping, and it is part of a
    saved setup.
 
-   SAVED SETUPS (🎨 Predefined styles, §1 General) — « Save the visualisation setup »: a NAMED
+   SAVED SETUPS (🎨 Styles, §2 · the Scene line) — « Save the visualisation setup »: a NAMED
    snapshot of the whole viewer look (the six menus with their radii and colours,
    the nucleic-acid group colours and the lipid part colours, the label switches,
    the 2°-structure and highlight colours, Fog / Shadows / Clipping / Background /
@@ -314,7 +324,7 @@ const LARGE_ATOM_COUNT = 25000;                 // lighter rendering above this
    a look can be reused on another page or another computer.
    ============================================================================ */
 const CAT_STYLE_KEY = 'labViewerCategoryStyles';
-// Saved visualisation setups (🎨 Predefined styles, §1 General). One localStorage entry holds
+// Saved visualisation setups (🎨 Styles, §2 · the Scene line). One localStorage entry holds
 // a { name → setup } map; a setup is the plain object built by captureViewerSetup
 // and read back by applyViewerSetup, with a version so an older file can never
 // break the viewer (unknown / missing keys simply keep their default).
@@ -1270,7 +1280,7 @@ const nucleicClassCounts = (structure) => {
   return { total: info ? info.nucleotides.length : 0, forms, motifs };
 };
 
-/* ---- Saved visualisation setups (🎨 Predefined styles, §1 General) ---------------------
+/* ---- Saved visualisation setups (🎨 Styles, §2 · the Scene line) ---------------------
    One localStorage entry holds a { name → setup } map. A setup is the plain
    object built by captureViewerSetup and read back by applyViewerSetup; the
    version lets a file written by another build be accepted safely — every field is
@@ -6764,23 +6774,39 @@ const stripHighlightClauses = (keys, residueTicks) => {
 
 /* ============================================================================
    TOOLBAR BUILDING BLOCKS — the viewer UI is organised in a few numbered
-   ROWS, so the command bar never eats the 3D canvas:
-     §0 Window (alone, top) · §1 General (PDB / Load / Trajectory / Clear /
-     PDB file / Predefined styles) · §2 Toolbar = Scene | Modify | Analysis |
-     PyMOL in ONE row.
-   The tool row is now the SECTION 2: the old « 2 · Molecular Styling »
-   accordion (Hide everything / ESP / Renumber) is gone, its gestures live in
-   the group they belong to (see the comment above the row), and the styling of
-   every molecule has its own bar on the RIGHT of the canvas — one space per
-   molecule (PART 4). Every row carries its own 3D-label switches (Residues /
-   Residue type / Atom names), because the old global « 4 · Labels » row is gone.
-   These tiny presentational components keep every row identical.
+   ROWS, so the command bar never eats the 3D canvas. The rows of THIS session
+   (the request: « the viewer menu must be drastically reduced and organised …
+   the “analysis” and “modify” can be in one line but clearly separated … the
+   “styles” section can fit inside the line of the “scene” section … the movie
+   maker section can fit in the line of the general section »):
+     · §1 General — what is loaded, cleared and filmed: PDB file(s) / PDB ID ·
+       Trajectory · ⬇ PDB · 🗑 Clear · 🗑 Delete PDB, AND the whole 🎞 Movie maker
+       row on the SAME line (it films the structure the row loads);
+     · §2 Toolbar — TWO lines of clearly separated groups, each one a small
+       tinted box (the separator between two boxes stays a hairline):
+         line 1:  🌫 Scene  │  🎨 Styles (the former « 🎨 Predefined styles »
+                  button: name · 🎨 Cumulative · 📷 Snapshot · 💾 · 📂 · 🗑 · ⬇ ⬆);
+         line 2:  ✏️ Modify │ 📏 Analysis │ 🧪 PyMOL;
+     · ▶ Trajectory playback — the ▶ Play bar, with 🎬 Video (the same run saved
+       as one file) right next to it.
+   The old « 2 · Molecular Styling » accordion (Hide everything / ESP /
+   Renumber) is gone, its gestures live in the group they belong to, and the
+   styling of every molecule has its own bar on the RIGHT of the canvas — one
+   space per molecule (PART 4). Every row carries its own 3D-label switches
+   (Residues / Residue type / Atom names), because the old global « 4 · Labels »
+   row is gone. These tiny presentational components keep every row identical.
    ============================================================================ */
+/* LA LIGNE DE RÉSUMÉ D'UNE RANGÉE NE S'IMPRIME PLUS (cette session : « there is too
+   much writing which can be substituted by information available by hovering »).
+   Elle vivait en gris pâle à côté du titre (« structure · trajectory · clear »,
+   « scene · modify · analysis · PyMOL »…), elle tenait de la place pour dire ce que
+   la rangée fait : elle est maintenant la BULLE du titre de la rangée. Le texte de
+   la demande n'a pas bougé d'un caractère — seul son endroit a changé, et la rangée
+   ne montre plus que ce sur quoi on peut cliquer. */
 const VSection = ({ title, hint, right = null, children }) => (
   <section className="flex flex-col gap-1 bg-slate-50/80 border border-slate-200 rounded-lg px-1.5 py-1">
     <div className="flex flex-wrap items-center gap-1.5">
-      <span className="text-[9px] font-black text-slate-700 uppercase tracking-wide whitespace-nowrap">{title}</span>
-      {hint && <span className="text-[9px] text-slate-400 truncate hidden lg:inline">{hint}</span>}
+      <span className="text-[9px] font-black text-slate-700 uppercase tracking-wide whitespace-nowrap" title={hint || undefined}>{title}</span>
       {right}
     </div>
     <div className="flex flex-wrap items-center gap-1">{children}</div>
@@ -6953,6 +6979,22 @@ structureFormat = 'auto',
 trajectorySrc,
 trajectoryFile,
 trajectoryName = '',   // nom DÉCLARÉ sur l'expérience (même si le fichier n'est pas encore là)
+// ⬇️ « Bring it back from the cloud » — LE GESTE À LA DEMANDE, LÀ OÙ ON LE CHERCHE.
+// La ligne « déclarée sur cette expérience mais pas encore dans ce navigateur »
+// conseillait un bouton qui vivait dans la barre « 🧬 System files » RETIRÉE de la
+// page MD : elle demandait donc un geste que plus rien ne portait, et l'utilisateur
+// n'avait plus AUCUN moyen de relancer une reprise que l'essai automatique avait
+// manquée (pointeur d'un ancien dataset, fichier renommé sur le Drive, Drive
+// connecté après coup). La page fournit ici LA MÊME fonction que sa tentative
+// automatique (`restoreTrajectoryFromDrive`), plus l'état de sa recherche :
+// `bringTrajectoryNote` = son constat (mot pour mot : « le Drive n'est pas connecté
+// ICI », « introuvable sous ce nom », « 🔎 … checking… ») et `bringTrajectoryBusy` =
+// une recherche tourne. Un seul chemin de code : la phrase ne peut donc pas
+// annoncer une chose et en faire une autre. Sans la fonction, aucun bouton n'est
+// rendu (aucune promesse creuse) et la phrase reste celle d'avant.
+onBringTrajectoryBack = null,
+bringTrajectoryNote = '',
+bringTrajectoryBusy = false,
 trajectoryFallbacks = [],
 trajectoryFormat = 'xtc',
 onStructureFile,
@@ -7964,19 +8006,37 @@ const [showNucleicColoursPanel, setShowNucleicColoursPanel] = useState(false);
 // lipid — headgroup · glycerol backbone · acyl chains (see the lab-lipid-groups
 // scheme). Same panel, same behaviour, amber instead of violet.
 const [showLipidColoursPanel, setShowLipidColoursPanel] = useState(false);
-// 🎨 Predefined styles (§1 General) — NAMED snapshots of the whole visualisation setup: the
-// saved map, the name being typed, the open/closed state of the panel and its
-// feedback line (see captureViewerSetup / applyViewerSetup below).
-const [showSetupPanel, setShowSetupPanel] = useState(false);
-/* THE TWO SAVE MODES (the request): which one 💾 / 📂 / 🗑 / ⬇ / ⬆ act on, the two
-   stores, and the conflict the THEME save may have to resolve first (two molecules
-   of the same class drawn differently: the user picks the class default). */
+/* 🎨 Styles (l'ex-« 🎨 Predefined styles ») — ce que la bande de §2 range : le nom
+   en cours de frappe, les DEUX magasins du mode actif, le conflit qu'un THÈME doit
+   parfois résoudre, et la ligne de retour qui s'efface toute seule. Le bouton qui
+   ouvrait le panneau n'existe plus (la bande est toujours là, cette session), donc
+   ni `showSetupPanel` ni l'état des « setups » nommés de l'ancienne bande. */
 const [setupSaveMode, setSetupSaveMode] = useState('theme');   // 'theme' | 'snapshot'
-const [viewerThemes, setViewerThemes] = useState(() => loadNamedMap(VIEWER_THEME_KEY));
+/* ⚙️ LES « SETUPS » NOMMÉS DE L'ANCIENNE BANDE (clé labViewerSetups) : la bande
+   montrait DEUX jeux de cinq boutons pour les mêmes cinq gestes — il n'en reste
+   qu'un, celui du mode actif. Ces « setups » rangeaient exactement ce qu'un THÈME
+   range (l'environnement global + les styles par classe), mais sans mode : ils sont
+   donc repris ICI, UNE SEULE FOIS, comme thèmes du MÊME NOM — rien de ce qui a été
+   enregistré n'est perdu, et ils se rechargent par 📂 Load… comme les autres. La clé
+   est vidée dans la foulée : ce grand ménage ne se refait jamais. */
+const [viewerThemes, setViewerThemes] = useState(() => {
+  const themes = loadNamedMap(VIEWER_THEME_KEY);
+  const legacy = loadViewerSetups();
+  const names = Object.keys(legacy);
+  if (!names.length) return themes;
+  const merged = { ...themes };
+  names.forEach((name) => {
+    if (merged[name]) return;   // un thème du même nom est déjà là : il gagne
+    const s = legacy[name] || {};
+    merged[name] = { v: VIEWER_THEME_VERSION, name, savedAt: new Date().toISOString(), global: s, classes: s.catStyles || {} };
+  });
+  saveNamedMap(VIEWER_THEME_KEY, merged);
+  saveViewerSetups({});
+  return merged;
+});
 const [viewerSnaps, setViewerSnaps] = useState(() => loadNamedMap(VIEWER_SNAPSHOT_KEY));
 const [themeConflicts, setThemeConflicts] = useState(null);    // [{ kind, options: [sec] }]
 const [themeChoices, setThemeChoices] = useState(null);        // kind → section id
-const [viewerSetups, setViewerSetups] = useState(() => loadViewerSetups());
 const [setupName, setSetupName] = useState('');
 const [setupMsg, setSetupMsg] = useState('');
 const setupMsgTimerRef = useRef(null);   // the “✓ saved / applied” line clears itself
@@ -8920,6 +8980,29 @@ const flashDisulfideFoldMsg = (m) => {
   clearTimeout(disulfideFoldTimerRef.current);
   disulfideFoldTimerRef.current = setTimeout(() => setDisulfideFoldMsg(''), 9000);
 };
+/* ⚭ « Disulfides: shown / hidden » — L'INTERRUPTEUR DU DESSIN DU PONT.
+   Ce qui change entre deux clics est UN booléen : quand il est faux, la règle
+   utils/disulfideBonds.js retire les S–S du graphe de liaisons de la structure,
+   au moment où elle est chargée — le seul endroit où NGL peut encore ne pas les
+   dessiner — et le modèle est resservi. `disulfideDrawn` est ce que la structure
+   À L'ÉCRAN dessine (lu pendant ce même chargement, ponts et distances Sγ–Sγ
+   compris) : c'est lui qui dit au bouton s'il a quelque chose à cacher et sous
+   quel nom le raconter. La DÉFINITION des ponts (la PAGE, « Cysteine states »),
+   le fichier, le 📥 Download et la copie Drive ne sont jamais touchés. */
+const [disulfidesShown, setDisulfidesShown] = useState(true);
+const disulfidesShownRef = useRef(true);
+disulfidesShownRef.current = disulfidesShown;
+const [disulfideDrawn, setDisulfideDrawn] = useState({ bonds: [], removed: 0 });
+const disulfideDrawnRef = useRef({ bonds: [], removed: 0 });
+const [disulfideShowMsg, setDisulfideShowMsg] = useState('');
+const disulfideShowTimerRef = useRef(null);
+const flashDisulfideShowMsg = (m) => {
+  setDisulfideShowMsg(m);
+  clearTimeout(disulfideShowTimerRef.current);
+  disulfideShowTimerRef.current = setTimeout(() => setDisulfideShowMsg(''), 9000);
+};
+
+
 // The « 🗑 Delete PDB / ↩ Restore PDB » toggle of §1 General: the button DELETES
 // while a PDB the user loaded is on screen, and RESTORES once that PDB has been
 // put aside (and nothing else has taken its place on screen since).
@@ -10860,6 +10943,25 @@ try { enforceOneHeavyBondPerHydrogen(component); } catch { /* best-effort (H-bon
 // in NMRSections (_ringClose + its ring angle at CB); this makes the drawing
 // unconditional, for any file.
 try { enforceCovalentProteinBonds(component); } catch { /* best-effort (protein-bond rule) */ }
+
+/* ⚭ LE PONT DISULFURE, DESSINÉ OU NON — la MÊME sorte de règle que les trois
+   ci-dessus, au même endroit (avant qu'une seule représentation ne lise le
+   graphe) : elle LIT ce que la structure dessine — chaque liaison entre deux Sγ
+   de deux résidus différents, qu'elle vienne d'un CONECT ou de la passe de
+   distances de NGL — et, quand l'interrupteur « ⚭ Disulfides » est sur
+   « hidden », elle la RETIRE du graphe. C'est la seule façon de cacher un S–S :
+   ngl@2.4.0 n'a aucune visibilité par liaison. Aucun TEXTE n'est requis (un
+   PDB-ID, une URL, un .cif, un .gro marchent comme le modèle de la page), et
+   rien du fichier n'est touché. `disulfideDrawn` retient ce qui a été trouvé —
+   le bouton dit ainsi ce qu'il cache, résidu par résidu, avec la distance
+   Sγ–Sγ de l'écran. */
+let disulfideDrawnNow = { bonds: [], removed: 0 };
+try {
+  disulfideDrawnNow = applyDisulfideDisplay(component, { hidden: !disulfidesShownRef.current }) || disulfideDrawnNow;
+} catch { /* best-effort (disulphide display) — un graphe qu'on ne peut pas éditer garde ses ponts */ }
+setDisulfideDrawn(disulfideDrawnNow);
+disulfideDrawnRef.current = disulfideDrawnNow;
+
 
 // Note: NGL viewer structures from PDB/SDF already contain hydrogens when generated correctly.
 // We skip addHydrogens() to prevent "is not a function" errors in this NGL version.
@@ -15370,6 +15472,61 @@ const foldForDisulfides = () => {
   flashDisulfideFoldMsg(`${built.note || '⚭ Disulphide-folded model loaded.'} (${atoms.toLocaleString()} atoms)`);
 };
 
+/* ── ✏️ Modify · « ⚭ Disulfides: shown / hidden » ─────────────────────────────
+   LE DESSIN DU PONT, PAS SA DÉFINITION. Le pont existe deux fois : dans la
+   définition (« Cysteine states », la page) et dans le graphe de liaisons de la
+   structure affichée — c'est ce graphe que NGL dessine en Sticks / Ball+stick /
+   Lines, et c'est lui seul que ce bouton touche (utils/disulfideBonds.js). Cacher
+   un S–S ne retire donc ni un atome, ni une définition, ni un enregistrement du
+   fichier : le modèle est resservi SANS ce lien (le même entonnoir de chargement
+   que le ⚗️ rebuild des hydrogènes, où la règle s'applique), et le remettre ne
+   demande rien de plus — la structure suivante apporte ses ponts tels quels.
+
+   Ce que le message dit, et pourquoi : chaque pont est nommé par ses deux
+   résidus (le NUMÉRO AFFICHÉ, le 🔢 du viewer) avec la distance Sγ–Sγ RÉELLE de
+   l'écran. Le rapport était « you displayed the disulfide bonds but you did not
+   fold the structure to bring the cysteines at bond distance » : un pont étiré
+   est donc DIT, chiffre en main, au lieu de passer pour une liaison — et
+   ⚭ Fold for disulfides, juste à côté, est le geste qui essaie de le fermer.
+   La fenêtre de liaison est celle du repliement (SS_BOND_LENGTH /
+   SS_BOND_TOLERANCE de utils/disulfideFold.js) : une seule définition de « pont
+   fermé » pour le repliement et pour ce compte rendu. */
+// « Cys 6–Cys 127: 2.04 Å ✓ bonded » / « … 18.42 Å ⚠️ drawn but stretched »
+const describeDisulfideBond = (b) => {
+  const label = (resno, chain, otherChain) => `${chain && chain !== otherChain ? `${chain} ` : ''}${displayResno(resno)}`;
+  const where = `Cys ${label(b.resno1, b.chain1, b.chain2)}–Cys ${label(b.resno2, b.chain2, b.chain1)}`;
+  if (b.distance == null) return `${where}: no Sγ coordinates`;
+  const bonded = Math.abs(b.distance - SS_BOND_LENGTH) <= SS_BOND_TOLERANCE;
+  return `${where}: ${b.distance.toFixed(2)} Å ${bonded ? '✓ bonded' : '⚠️ drawn but stretched (the two Sγ are not at bonding distance)'}`;
+};
+
+const toggleDisulfideBonds = () => {
+  const drawn = disulfideDrawnRef.current;
+  const bonds = (drawn && drawn.bonds) || [];
+  if (bonds.length === 0) {
+    flashDisulfideShowMsg('⚠️ No disulphide bond is drawn in this model — nothing to hide. NGL draws an S–S from the bond graph only (a CONECT record, or the distance between two Sγ): a file that declares SSBOND alone, with its two cysteines apart, draws none. Define the pair in “Cysteine states” — the model the page builds writes that CONECT itself.');
+    return;
+  }
+  const next = !disulfidesShownRef.current;
+  const parts = bonds.map(describeDisulfideBond).join(' · ');
+  const n = bonds.length;
+  /* Un pont DESSINÉ mais étiré est le cas du rapport (« you displayed the
+     disulfide bonds but you did not fold the structure to bring the cysteines at
+     bond distance ») : le compte rendu le dit, et il nomme le geste qui essaie de
+     le fermer — ⚭ Fold for disulfides, juste à côté. */
+  const stretched = bonds.filter((b) => b.distance != null && Math.abs(b.distance - SS_BOND_LENGTH) > SS_BOND_TOLERANCE).length;
+  const hint = stretched
+    ? ` ${stretched} of them ${stretched === 1 ? 'is' : 'are'} drawn but STRETCHED — ⚭ Fold for disulfides, right here, relaxes the chain until the two Sγ can meet.`
+    : '';
+  disulfidesShownRef.current = next;
+  setDisulfidesShown(next);
+  requestStructureLoad({ ...(loadRequest || {}), ts: Date.now() });
+  flashDisulfideShowMsg(next
+    ? `⚭ ${n} disulphide bond${n === 1 ? '' : 's'} drawn again — ${parts}.${hint}`
+    : `⚭ ${n} disulphide bond${n === 1 ? '' : 's'} hidden — every atom stays, and the definition (“Cysteine states”), the PDB file, the 📥 download and the Drive copy keep their S–S: the model simply no longer draws it. ${parts}.${hint}`);
+};
+
+
 // ---- Abort the current long-running operation (vertical-bar / global Stop) ----
 // Stops trajectory playback, closes the frame-selection modal and cancels the
 // active structure / trajectory load so the UI returns to a usable state.
@@ -16519,71 +16676,17 @@ const flashSetupMsg = (m) => {
   clearTimeout(setupMsgTimerRef.current);
   setupMsgTimerRef.current = setTimeout(() => setSetupMsg(''), 4000);
 };
-// 💾 Save the setup currently on screen under the typed name (or « Setup n »).
-const saveCurrentSetup = () => {
-  const name = String(setupName || '').trim() || `Setup ${Object.keys(viewerSetups).length + 1}`;
-  const next = { ...viewerSetups, [name]: captureViewerSetup() };
-  setViewerSetups(next);
-  saveViewerSetups(next);
-  setSetupName(name);
-  flashSetupMsg(`✓ “${name}” saved`);
-};
-const loadSetup = (name) => {
-  const s = viewerSetups[name];
-  if (!s) { flashSetupMsg('no such setup'); return; }
-  applyViewerSetup(s);
-  setSetupName(name);
-  flashSetupMsg(`✓ “${name}” applied`);
-};
-const deleteSetup = (name) => {
-  const next = { ...viewerSetups };
-  delete next[name];
-  setViewerSetups(next);
-  saveViewerSetups(next);
-  flashSetupMsg(`“${name}” deleted`);
-};
-// ⬇ Export as a .json file — re-importable on another page / another computer.
-const exportSetup = (name) => {
-  const s = viewerSetups[name];
-  if (!s) { flashSetupMsg('no such setup'); return; }
-  try {
-    const blob = new Blob([JSON.stringify({ name, setup: s }, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `viewer-setup-${name.replace(/[^\w.-]+/g, '_')}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-    flashSetupMsg(`✓ “${name}” exported`);
-  } catch { flashSetupMsg('export failed'); }
-};
-// ⬆ Import a setup file: the name inside the file wins, and the setup is applied
-// at once so the effect is visible. A file from another build is accepted (every
-// field is merged over the defaults by applyViewerSetup).
-const importSetupFile = (file) => {
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = () => {
-    try {
-      const raw = JSON.parse(String(reader.result || ''));
-      const s = raw && raw.setup ? raw.setup : raw;
-      if (!s || typeof s !== 'object' || !s.catStyles) throw new Error('not a viewer setup');
-      const name = String((raw && raw.name) || file.name.replace(/\.json$/i, '')).trim() || 'Imported setup';
-      const next = { ...viewerSetups, [name]: s };
-      setViewerSetups(next);
-      saveViewerSetups(next);
-      applyViewerSetup(s);
-      setSetupName(name);
-      flashSetupMsg(`✓ “${name}” imported and applied`);
-    } catch (err) {
-      flashSetupMsg(`import failed: ${(err && err.message) || 'bad file'}`);
-    }
-  };
-  reader.onerror = () => flashSetupMsg('import failed: could not read the file');
-  reader.readAsText(file);
-};
+/* ⚠ LES CINQ GESTES DE L'ANCIENNE BANDE (💾 Save · 📂 Load · 🗑 Delete · ⬇ Export ·
+   ⬆ Import des « setups » nommés) N'EXISTENT PLUS ICI : ils sont exactement ceux que
+   la bande « 🎨 Styles » fait déjà, sur le mode ACTIF (voir saveActiveEnv,
+   loadActiveEnv, deleteActiveEnv, exportActiveEnv, importActiveEnvFile ci-dessous).
+   Deux jeux de cinq boutons pour cinq gestes, c'était la bande dupliquée que la
+   demande de cette session a supprimée. Ce que ces « setups » contenaient a été
+   repris en thèmes du même nom (la migration vit à côté de l'état des thèmes). */
+/* ⬇ Export / ⬆ Import d'un « setup » nommé : même chose que ⬇ / ⬆ de la bande
+   « 🎨 Styles » (exportActiveEnv / importActiveEnvFile, qui écrivent un fichier
+   viewer-theme-….json ou viewer-snapshot-….json et appliquent au retour ce que le
+   fichier annonce). Le nom gagnant est celui du fichier, comme ici. */
 
 /* 📂 MODE 1 · LOAD A THEME — the PARTIAL application of the request: the global
    environment first, then every molecule whose class the theme knows. */
@@ -16812,6 +16915,18 @@ const resetLipidColours = () => setCatStyles((prev) => ({
   },
 }));
 
+/* 🎨 Styles — la liste des styles ENREGISTRÉES ne s'imprime plus dans la bande : elle
+   y tenait une ligne entière (« themes: a · b · c ») pour répéter ce que la liste
+   déroulante 📂 Load… montre déjà. Elle vit maintenant dans la bulle du groupe ET
+   dans celle de chacun de ses boutons, comme tout le reste du mode d'emploi de la
+   bande (cette session : « there is too much writing which can be substituted by
+   information available by hovering »). */
+const activeEnv = activeEnvStore();
+const stylesSavedNames = Object.keys(activeEnv.map).sort();
+const stylesSavedTitle = stylesSavedNames.length
+  ? `${activeEnv.tag === 'theme' ? 'Themes' : 'Snapshots'} saved: ${stylesSavedNames.join(' · ')}`
+  : `No ${activeEnv.tag} saved yet — type a name in the box and press 💾 Save.`;
+
 return (
 <div className="flex flex-col gap-2">
 
@@ -16934,930 +17049,15 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
 {structAsideMsg && (
 <span className="text-[10px] font-bold text-slate-600 bg-slate-50 border border-slate-200 rounded-md px-2 py-1 max-w-[380px] truncate" title={structAsideMsg}>{structAsideMsg}</span>
 )}
-{/* ⚙️ SETUP — save / load the WHOLE visualisation setup under a name (see
-    captureViewerSetup): the six menus with their radii, colours and group
-    colours, the 3D-label switches, the side-chain style, the 2°-structure and
-    highlight colours, Fog / Shadows / Clipping / Background / quality and the
-    lightweight style of a large system. Stored in localStorage (listable,
-    loadable, deletable) and exportable / importable as a .json file, so a look
-    can be reused on another page or another computer. */}
-<button type="button" onClick={() => setShowSetupPanel((v) => !v)}
-  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${showSetupPanel ? 'bg-teal-100 border-teal-400 text-teal-900' : 'bg-white border-teal-300 text-teal-700 hover:bg-teal-50'}`}
-  title={Object.keys(viewerSetups).length
-    ? `Save / load a predefined style — ${Object.keys(viewerSetups).length} saved: ${Object.keys(viewerSetups).join(' · ')}`
-    : 'Save the whole visualisation look (the styles of every molecule section, their sphere / bond radius and colours, the nucleic-acid group colours, the labels, Fog / Shadows / Clipping / Background, the ligand / water styles…) as a PREDEFINED STYLE, and load it back later — or export it as a .json file'}>
-  🎨 Predefined styles{Object.keys(viewerSetups).length ? ` (${Object.keys(viewerSetups).length})` : ''}
-</button>
-{setupMsg && (
-<span className="text-[10px] font-bold text-teal-700 bg-teal-50 border border-teal-200 rounded-md px-2 py-1">{setupMsg}</span>
-)}
-{showSetupPanel && (
-<div className="w-full bg-teal-50/50 border border-teal-200 rounded-lg px-2 py-2 flex flex-wrap items-center gap-2">
-  {/* ⚠ « I DO NOT UNDERSTAND THE USE OF PREDEFINED STYLES SAVE BUTTON » — le rapport de
-      cette session. Le panneau n'expliquait, nulle part, ce que chaque bouton range NI
-      à quoi sert le nom que l'on tape : cette ligne le dit UNE fois, en tête du bloc —
-      les cinq boutons de la rangée, puis les deux modes de sauvegarde qui décident de
-      ce qui est APPRIS. */}
-  <p className="w-full text-[10px] text-teal-900 leading-snug">
-    <b>Save / load the look of the whole viewer under a NAME.</b> Type a name in the box
-    (any name you like), then <b>💾 Save</b> stores the look that is on screen RIGHT NOW
-    — every molecule style, colour, radius, light, fog, background and clipping setting —
-    under that name; <b>📂 Load…</b> puts a stored look back on screen; <b>🗑 Delete</b>
-    removes the named one; <b>⬇ Export</b> / <b>⬆ Import</b> carry it as a .json file to
-    another page or computer. The <b>save mode</b> below says WHAT is remembered:
-    <b> 🎨 Theme</b> remembers styles BY MOLECULAR CLASS (a protein style you can reuse on
-    another file — cumulative), <b>📷 Snapshot</b> photographs THIS exact system
-    (molecule by molecule).
-  </p>
-  <span className="text-[10px] font-black text-teal-800 uppercase tracking-wide whitespace-nowrap">Predefined styles</span>
-  <input value={setupName} onChange={(e) => setSetupName(e.target.value)} placeholder="Style name"
-    title="Name of the predefined style — 💾 saves the CURRENT look under this name (an existing name is overwritten)"
-    className="border border-teal-300 rounded-md px-1.5 py-1 text-[11px] bg-white outline-none focus:border-teal-500 h-7 w-40" />
-  <button type="button" onClick={saveCurrentSetup}
-    className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-teal-400 text-teal-800 hover:bg-teal-100 h-7"
-    title="Save the setup currently on screen under this name">
-    💾 Save
-  </button>
-  <select value="" onChange={(e) => { if (e.target.value) loadSetup(e.target.value); }}
-    title="Load a predefined style — it replaces the current styles, colours, radii and scene settings"
-    className="border border-teal-300 rounded-md px-1.5 py-1 text-[11px] bg-white outline-none focus:border-teal-500 h-7 w-40">
-    <option value="">📂 Load…</option>
-    {Object.keys(viewerSetups).sort().map((n) => <option key={n} value={n}>{n}</option>)}
-  </select>
-  <button type="button"
-    onClick={() => (viewerSetups[setupName] ? deleteSetup(setupName) : flashSetupMsg('type the name of the predefined style to delete'))}
-    className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-red-300 text-red-600 hover:bg-red-50 h-7"
-    title="Delete the predefined style whose name is written on the left">
-    🗑 Delete
-  </button>
-  <button type="button"
-    onClick={() => (viewerSetups[setupName] ? exportSetup(setupName) : flashSetupMsg('type the name of the setup to export'))}
-    className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-teal-300 text-teal-700 hover:bg-teal-100 h-7"
-    title="Download this predefined style as a .json file — it can be imported on another page or another computer">
-    ⬇ Export
-  </button>
-  <label className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-teal-300 text-teal-700 hover:bg-teal-100 h-7 flex items-center gap-1 cursor-pointer"
-    title="Import a predefined-style .json file — it is saved under the name it carries and applied at once">
-    ⬆ Import
-    <input type="file" accept=".json,application/json" className="hidden"
-      onChange={(e) => { importSetupFile(e.target.files && e.target.files[0]); e.target.value = ''; }} />
-  </label>
-  <span className="text-[10px] text-slate-500 italic">
-    {Object.keys(viewerSetups).length
-      ? `saved: ${Object.keys(viewerSetups).sort().join(' · ')} — ⬇ exports the one named on the left`
-      : 'no predefined style yet — type a name and press 💾 Save'}
-  </span>
-  {/* ══ THE TWO SAVE MODES OF THE VISUALISATION ENVIRONMENT (the request) ══════
-      🎨 THEME — a dictionary of styles keyed by MOLECULAR CLASS (protein · nucleic
-      acid · lipid · sugar · ligand · water · ion), independent of the molecules on
-      screen. Saving MERGES into what the file already held: the classes of THIS
-      scene are updated or added, every class the file knew and the scene has not
-      keeps its style; two molecules of one class drawn differently and the bar ASKS
-      which one becomes the class default (themeConflicts).
-      📷 SNAPSHOT — the exact state of THIS system, section by section (« protein ·
-      chain A » …), with NO merge: one isolated file, mapped back onto those very
-      sections (by id, then by section key).
-      Both save the global environment first — lights, fog, background, clipping and
-      the ⚙ wheel — which is what applyThemeGlobal replays. */}
-  <div className="w-full border-t border-teal-200 pt-2 flex flex-wrap items-center gap-2">
-    <span className="text-[10px] font-black text-teal-800 uppercase tracking-wide whitespace-nowrap">Save mode</span>
-    {[['theme', '🎨 Theme (cumulative)'], ['snapshot', '📷 Snapshot (this scene)']].map(([m, label]) => (
-      <button key={m} type="button"
-        onClick={() => { setSetupSaveMode(m); setThemeConflicts(null); setThemeChoices(null); }}
-        className={`px-2 py-1 text-[10px] font-bold rounded border h-7 transition-colors ${setupSaveMode === m ? 'bg-teal-600 text-white border-teal-600' : 'bg-white text-teal-700 border-teal-300 hover:bg-teal-100'}`}
-        title={m === 'theme'
-          ? 'Theme: learn the styles BY MOLECULAR CLASS (protein · nucleic acid · lipid · sugar · ligand · water · ion) and MERGE them into the theme file — the classes the file already knew and this scene has not are kept. Two molecules of one class drawn differently: you are asked which one becomes the class default.'
-          : 'Snapshot: the exact state of THIS system, section by section (« protein · chain A » …), with no merge — one isolated file for these very coordinates.'}>
-        {label}
-      </button>
-    ))}
-    <button type="button" onClick={saveActiveEnv}
-      className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-teal-400 text-teal-800 hover:bg-teal-100 h-7"
-      title={setupSaveMode === 'theme'
-        ? 'Save the theme under the name written on the left: the styles of the classes on screen are learned (merged), the rest of the file is left untouched'
-        : 'Save a snapshot of this scene under the name written on the left (an existing name is overwritten — no merge)'}>
-      💾 Save {setupSaveMode === 'theme' ? 'theme' : 'snapshot'}
-    </button>
-    <select value="" onChange={(e) => loadActiveEnv(e.target.value)}
-      title={setupSaveMode === 'theme'
-        ? 'Load a theme: the global environment, then the style of every class the theme knows — a class it does not know keeps the neutral base style'
-        : 'Load a snapshot: the global environment and the styles of the very sections it photographed'}
-      className="border border-teal-300 rounded-md px-1.5 py-1 text-[11px] bg-white outline-none focus:border-teal-500 h-7 w-40">
-      <option value="">📂 Load…</option>
-      {Object.keys(activeEnvStore().map).sort().map((n) => <option key={n} value={n}>{n}</option>)}
-    </select>
-    <button type="button" onClick={deleteActiveEnv}
-      className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-red-300 text-red-600 hover:bg-red-50 h-7"
-      title="Delete the theme / snapshot whose name is written on the left">
-      🗑 Delete
-    </button>
-    <button type="button" onClick={() => exportActiveEnv(setupName)}
-      className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-teal-300 text-teal-700 hover:bg-teal-100 h-7"
-      title="Download it as a .json file — re-importable on another page or another computer">
-      ⬇ Export
-    </button>
-    <label className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-teal-300 text-teal-700 hover:bg-teal-100 h-7 flex items-center gap-1 cursor-pointer"
-      title="Import a theme / snapshot .json file: its mode is read from the file and it is applied at once">
-      ⬆ Import
-      <input type="file" accept=".json,application/json" className="hidden"
-        onChange={(e) => { importActiveEnvFile(e.target.files && e.target.files[0]); e.target.value = ''; }} />
-    </label>
-    <span className="text-[10px] text-slate-500 italic">
-      {setupSaveMode === 'theme'
-        ? `themes: ${Object.keys(viewerThemes).sort().join(' · ') || 'none yet — type a name and press 💾 Save theme'}`
-        : `snapshots: ${Object.keys(viewerSnaps).sort().join(' · ') || 'none yet — type a name and press 💾 Save snapshot'}`}
-    </span>
-    {themeConflicts && (
-      <div className="w-full bg-amber-50 border border-amber-300 rounded-lg px-2 py-1.5 flex flex-col gap-1">
-        <span className="text-[10px] font-black text-amber-800 uppercase tracking-wide">
-          {themeConflicts.length} class(es) drawn in two ways — choose the class default
-        </span>
-        {themeConflicts.map((c) => (
-          <label key={c.kind} className="flex items-center gap-1 text-[10px] text-amber-900">
-            <span className="font-bold w-24 shrink-0 truncate" title="The molecular class a theme keys its styles by">
-              {MOL_KIND_LABELS[c.kind] || c.kind}
-            </span>
-            <select value={(themeChoices && themeChoices[c.kind]) || ''}
-              onChange={(e) => setThemeChoices({ ...(themeChoices || {}), [c.kind]: e.target.value })}
-              className="border border-amber-300 rounded text-[10px] bg-white flex-1 min-w-0 h-6"
-              title="The molecule whose style becomes the default of this class in the theme">
-              {c.options.map((sec) => <option key={sec.id} value={sec.id}>{classLabelOfSection(sec)}</option>)}
-            </select>
-          </label>
-        ))}
-        <span className="text-[9px] text-amber-700">
-          Press 💾 Save theme again: the chosen style is written as the class default, and the styles of the other molecules are not touched.
-        </span>
-      </div>
-    )}
-  </div>
-</div>
-)}
-</VSection>
-
-{/* ══ 2 · TOOLBAR — Scene | Modify | Analysis | PyMOL, ONE horizontal row ════
-    This is §2 of the command bar now (the report: « quindi toolbar diventa la
-    sezione 2 e contiene separatamente scene, modify e analysis »). The four
-    groups are ONE wrapped row, each introduced by a small chip and separated by
-    a hairline; the expanded panels (⚡ ESP · Range, 🔢 Renumber, ✏️ Atom names,
-    🧪 PyMOL, the clipping sliders) are full-width children of this same section,
-    so the bar stays one row tall while nothing is open.
-    • Scene: 🌫 Fog · 🎨 Background · ◐ Shadows (+ 🌑 Darkness / 💡 Light) · 💡 Light colour · ✂ Clipping · ✨ Ray (+ resolution · ⬚ alpha · ◐ shadows)
-    • Modify: 🧬 From sequence · ✥ Move / ↻ Rotate · ⚗️ Rebuild H · ✏️ Atom names · ⚡ ESP · 🔢 Renumber
-    • Analysis: 📏 Measure · 🟢 Assigned
-    • PyMOL: 🧪 Selections & PyMOL
-    THE FOUR MOVES OF THIS REVISION (each one is a line of the report):
-      · ✨ Ray and its associates (the resolution, ⬚ alpha, ◐ shadows + strength)
-        left §1 General for the 🌫 Scene group — a still of the SCENE belongs with
-        the fog / background / shadows / clipping that define it, and the ◐
-        Shadows rig that aims the light of the still is right there;
-      · 📷 Figure is REMOVED (redundant): the very still of the scene is written
-        by ✨ Ray as a PNG on the computer, and the ★ figures of Publications &
-        Slides keep their own capture / import paths (the canvas, the Image
-        builder, the imported files);
-      · 🙈 Hide everything is REMOVED here: the Selections bar on the left keeps
-        its own « 🙈 Hide all » / « Show all » button on the SAME `hideAll` state,
-        so the gesture survives and this row no longer repeats it;
-      · ⚡ ESP and 🔢 Renumber (the button AND its list) left the old §2 for the
-        ✏️ Modify group — they modify the selected molecule's surface and the
-        numbering of the residues on screen;
-      · §2 « Molecular Styling » disappears with them: the styling of every
-        molecule has lived in the bar on the RIGHT of the canvas since PART 4
-        (one space per molecule), and the accordion only held those two gestures
-        and the Hide-everything button.
-    The lighting rig is untouched: Shadows locks NGL's single light in place and
-    the Darkness / Light sliders aim it (and now also drive the AMBIENT-OCCLUSION
-    equivalent, see applyShadowSettings). Its ONE user-changeable colour is the « 💡 Light colour » swatch, parked IMMEDIATELY BEFORE « ✂ Clipping » because that is where the request puts it (« in the molecular viewer add the possibility to change the color of the light and put it just before the clipping in the scene section of the toolbar ») — white by default, so the reference look is what an untouched swatch gives. ✂ Clipping pushed OFF sets the camera
-    bounds to the EXTREMES (near 0 · far 100000 · dist 0) so a large complex is
-    never cut. */}
-<VSection title="2 · Toolbar" hint="scene · modify · analysis · PyMOL">
-<span className="text-[9px] font-black text-sky-700 uppercase tracking-wide whitespace-nowrap">🌫 Scene</span>
-<button type="button" onClick={() => setFogEnabled((v) => !v)}
-  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 ${fogEnabled ? 'bg-sky-100 border-sky-400 text-sky-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
-  title="NGL's default depth fog fades distant atoms toward the background (a grey haze). Toggle it off for a crisp image — the setting is saved and persists across pages.">
-  🌫 Fog: {fogEnabled ? 'On' : 'Off'}
-</button>
-{/* 🎨 BACKGROUND — the colour of the 3D scene itself (§2 Scene). It is applied to
-    the live stage (stage.setParameters({ backgroundColor })), persists like the
-    fog / shadows / clipping, and travels inside a ⚙️ saved setup. The 🧪 PyMOL
-    panel writes this very same state, so the two entries never disagree. */}
-<label className="flex items-center gap-1 text-[11px] font-bold text-slate-700 whitespace-nowrap" title="Background colour of the 3D scene — the colour the depth fog fades toward. Saved and persistent across pages, and part of a ⚙️ setup.">
-  🎨 Background
-  <input type="color" value={bgColor} onChange={(e) => setBgColor(e.target.value)}
-    className="w-8 h-6 border border-slate-300 rounded cursor-pointer" aria-label="Background colour" />
-</label>
-<button type="button" onClick={() => setBgColor(BG_DEFAULT)}
-  className="px-1.5 py-1 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100"
-  title={`Back to the default background (${BG_DEFAULT})`}>
-  ↺
-</button>
-<button type="button" onClick={() => setShadowOn((v) => !v)}
-  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 ${shadowOn ? 'bg-slate-800 border-slate-800 text-white' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
-  title="Shadows: swaps NGL's flat camera-lit look for ONE fixed key light whose direction you aim (Azimuth / Elevation appear while ON), so every side of the structure that turns away from the light falls into real shade as you rotate. The Darkness slider then only raises the dark↔light contrast — the light stays pure white unless you say otherwise (the 💡 Light colour swatch that follows, immediately before ✂ Clipping, is the ONE control that tints this lamp). Shadows also switches on the AMBIENT-OCCLUSION equivalent: NGL 2.4 has no SSAO pass, so the cavity shading comes from the deep-ambient + strong-key-light rig with supersampled shading (sampleLevel), which is what makes crevices and the inner sides of a fold read as depth. (True WebGL shadow maps aren't supported by NGL — trying them made the molecule disappear. Every mesh is still flagged cast+receive shadows, see flagMeshShadows.)">
-  ◐ Shadows: {shadowOn ? 'On' : 'Off'}
-</button>
-{shadowOn && (
-  <label className="flex items-center gap-1 text-[11px] font-bold text-slate-700 whitespace-nowrap" title="Darkness — contrast only: the lit side gets brighter and the shaded side darker, with no colour change here (only the light/ambient INTENSITIES move, and the light keeps its colour — the 💡 Light colour swatch just before ✂ Clipping is where that colour is chosen, white by default). This is also what deepens the ambient-occlusion-like cavity shading.">
-    🌑 Darkness
-    <input type="range" min="0" max="100" value={Math.round(shadowDarkness * 100)} onChange={(e) => setShadowDarkness(Number(e.target.value) / 100)} className="w-20 accent-slate-700" />
-    <span className="text-[10px] text-slate-500 w-8">{Math.round(shadowDarkness * 100)}%</span>
-  </label>
-)}
-{(shadowOn || rayShadows) && (
-  <label className="flex items-center gap-1 text-[11px] font-bold text-slate-700 whitespace-nowrap" title="Light direction — aim the fixed key light (and therefore where the shadows fall). Azimuth 0° = light behind the camera (flat), 90° = screen-left, 180° = facing the camera; Elevation is the height above/below the horizon. The shade follows live while you drag. ⚠ The ✨ Ray still throws its cast shadow from THIS lamp too, so these sliders are shown whenever either the ◐ Shadows rig or the ray shadows are on — an off-axis lamp (about 90° / 45°) is what makes a cast shadow read as a shadow instead of hiding in the shade the canvas already draws. The COLOUR of this lamp is the 💡 Light colour swatch just beside it — the swatch and these two sliders own the same lamp.">
-    💡 Light
-    <input type="range" min="0" max="360" value={shadowAz} onChange={(e) => setShadowAz(Number(e.target.value))} className="w-16 accent-slate-700" aria-label="Light azimuth" />
-    <span className="text-[10px] text-slate-500 w-8">{shadowAz}°</span>
-    <span className="text-slate-400">/</span>
-    <input type="range" min="-90" max="90" value={shadowEl} onChange={(e) => setShadowEl(Number(e.target.value))} className="w-16 accent-slate-700" aria-label="Light elevation" />
-    <span className="text-[10px] text-slate-500 w-8">{shadowEl}°</span>
-  </label>
-)}
-{/* 💡 LIGHT COLOUR — the request: « in the molecular viewer add the possibility
-    to change the color of the light and put it just before the clipping in the
-    scene section of the toolbar ». It sits HERE, immediately before the ✂ Clipping
-    button, and it is the ONE control of the rig that tints anything: the KEY light
-    — the lamp NGL lights the scene with, the lamp the ◐ Shadows rig aims and the
-    ✨ Ray still re-renders with. White by default, which IS the reference look; the
-    ambient fill is deliberately left white (see nglLightParams in
-    utils/viewerLightRig.js), so the shaded side of an atom keeps the colour its
-    palette gave it and only the lit side takes the cast — the same bargain PyMOL's
-    `light_color` makes with `ambient_color`. Unlike the 💡 Light direction sliders
-    beside it (only the AIMED rig and the ray shadows need them), this swatch stays
-    visible in both modes: NGL re-reads `parameters.lightColor` on every frame
-    (Viewer.__updateLights, verified in the installed 2.4), so it also tints the
-    plain camera-linked headlight while ◐ Shadows is OFF. The value is validated by
-    the rig's own normalizeLightColor (junk → the white default), persisted like the
-    fog / shadows / clipping, and carried by a ⚙️ saved setup. */}
-  <label className="flex items-center gap-1 text-[11px] font-bold text-slate-700 whitespace-nowrap" title="Colour of the KEY light — the lamp the whole scene is lit with: the one the ◐ Shadows rig aims (Azimuth / Elevation) and the one the ✨ Ray re-renders in its still. White is the reference look. Any other colour tints the LIT side of every atom while the ambient fill stays white, so the shaded side keeps the colour its palette gave it (exactly PyMOL's light_color, which also leaves ambient_color alone). NGL re-reads the colour on every frame, so it applies with the Shadows rig ON and OFF; it is saved with the page and travels inside a ⚙️ saved setup.">
-    💡 Light colour
-    <input type="color" value={lightColor} onChange={(e) => setLightColor(normalizeLightColor(e.target.value))}
-      className="w-8 h-6 border border-slate-300 rounded cursor-pointer" aria-label="Light colour" />
-  </label>
-  <button type="button" onClick={() => setLightColor(LIGHT_COLOR_DEFAULT)}
-    className="px-1.5 py-1 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100"
-    title={`Back to the white key light (${LIGHT_COLOR_DEFAULT}) — the reference look, nothing tinted`}>
-    ↺
-  </button>
-<button type="button" onClick={() => setClipOn((v) => !v)}
-  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${clipOn ? 'bg-emerald-50 border-emerald-400 text-emerald-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
-  title="Clipping plane. NGL clips the scene with the camera near / far planes: clipNear / clipFar are percentages of the scene bounding sphere and clipDist is the closest the near plane may come to the camera — exactly what CUTS a big complex when you zoom in. OFF = the camera bounds are pushed to the EXTREMES (near 0 · far 100000 · dist 0), so nothing is ever cut at any zoom. ON = your own values below.">
-  ✂ Clipping: {clipOn ? 'On' : 'Off'}
-</button>
-{clipOn && (
-  <>
-    <label className="flex items-center gap-1 text-[11px] font-bold text-slate-700 whitespace-nowrap" title="clipNear — how much is cut in FRONT of the molecule, as a percentage of the bounding sphere. 0 cuts nothing (the near plane sits on the front edge of the sphere); positive values bring the near plane closer to the molecule.">
-      near
-      <input type="range" min="-50" max="50" step="1" value={clipNear} onChange={(e) => setClipNear(Number(e.target.value))} className="w-20 accent-emerald-600" aria-label="Clipping near" />
-      <span className="text-[10px] text-slate-500 w-10">{clipNear}%</span>
-    </label>
-    <label className="flex items-center gap-1 text-[11px] font-bold text-slate-700 whitespace-nowrap" title="clipFar — how far BEHIND the molecule the far plane sits, as a percentage of the bounding sphere. 50 = the centre of the sphere, 100 = its back edge, 150 = one radius further; « Off » uses 100000 (effectively infinite).">
-      far
-      <input type="range" min="50" max="150" step="1" value={clipFar} onChange={(e) => setClipFar(Number(e.target.value))} className="w-20 accent-emerald-600" aria-label="Clipping far" />
-      <span className="text-[10px] text-slate-500 w-10">{clipFar}%</span>
-    </label>
-    <label className="flex items-center gap-1 text-[11px] font-bold text-slate-700 whitespace-nowrap" title="clipDist — the MINIMUM distance (Å) between the camera and the near plane. NGL floors the near plane with it, which is what cuts a large complex when you zoom in: 0 removes the floor completely (that is what « Off » uses).">
-      cam. near
-      <input type="range" min="0" max="30" step="0.1" value={clipDist} onChange={(e) => setClipDist(Math.max(0, Number(e.target.value)))} className="w-20 accent-emerald-600" aria-label="Clipping camera distance" />
-      <span className="text-[10px] text-slate-500 w-12">{clipDist} Å</span>
-    </label>
-    <button type="button"
-      onClick={() => { setClipNear(CLIP_DEFAULTS.near); setClipFar(CLIP_DEFAULTS.far); setClipDist(CLIP_DEFAULTS.dist); }}
-      className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-emerald-300 text-emerald-700 hover:bg-emerald-50"
-      title="Back to the « no cut » extremes: clipNear 0 · clipFar 100000 · clipDist 0 Å">
-      ↺ No cut (0 · 100000 · 0 Å)
-    </button>
-  </>
-)}
-{/* ✨ RAY — the HIGH-RESOLUTION STILL of the scene, HERE in the 🌫 Scene group
-    (the request: « i comandi ray e i suoi associati (alpha, shadow) devono
-    essere spostati nella sezione scene »). A still belongs to the SCENE as a
-    whole, exactly like the 🌫 Fog · 🎨 Background · ◐ Shadows · ✂ Clipping beside
-    it — and the ◐ Shadows rig that AIMS the light of the still is right there,
-    so the two controls that own the light of a still are neighbours. It renders
-    with NGL's own supersampling path (utils/viewerRayImage.js) and writes ONE
-    PNG on the computer; the 📷 button that published to the Figure library is
-    gone (the request: « il pulsante figure é ridondante »).
-    WHY A « RAY » COMES BACK NOW. The report: « se clicco su ray, anche per un
-    piccolo peptide il rendering non finisce mai e non arrivo a vedere
-    l'immagine ». The still is `canvasPixels × factor` and it is not only
-    RENDERED: the cast shadows walk every pixel of it (on the CPU) and the PNG is
-    decoded and encoded once more. On a HiDPI canvas the old 40 Mpx budget meant
-    a 200 MB image copied three times — minutes inside getImageData / toBlob,
-    while the button still said « Rendering… ». The size is now capped by the
-    module (RAY_MAX_PIXELS · 16 Mpx, a 4000×4000-class still), the antialias pass
-    — FOUR times the tiles — is only asked for while the tiles stay few
-    (RAY_ANTIALIAS_MAX_FACTOR: from 3× up every tile IS a supersample), and the
-    title below says, BEFORE the click, how many pixels and how many tiles this
-    factor really costs here. */ }
-<div className="flex items-center gap-1">
-  <button
-    type="button"
-    onClick={captureRay}
-    disabled={rayBusy}
-    title={status === 'ready'
-      ? `Render a high-resolution still of the scene on screen: ${rayPlan.realWidth || 0}×${rayPlan.realHeight || 0} px${rayPlan.antialias ? ' (antialias pass)' : ''}, ${rayPlan.tiles || 0} tiles. It is NGL's own supersampling render of the very scene — every palette, the ring plates, the ESP surface, the fog and the light rig. The still is SHOWN here first (✨ Ray preview): nothing is written until you press 💾 Save PNG, which downloads exactly the image you saw. A size this GPU cannot take is reduced automatically, so the render never fails.`
-      : 'Load a structure first — ✨ Ray renders the 3D scene on screen at high resolution'}
-    className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${rayBusy ? 'bg-amber-50 border-amber-300 text-amber-700 cursor-wait' : 'bg-white border-amber-300 text-amber-700 hover:bg-amber-50'}`}
-  >
-    {rayBusy ? '✨ Rendering…' : '✨ Ray'}
-  </button>
-  <select
-    value={rayFactor}
-    onChange={(e) => setRayFactor(Number(e.target.value))}
-    title={'Supersampling multiple of the canvas — the bigger it is, the smoother and the larger the PNG. The pixel size written after the × is what the render will really produce on this screen; a size this GPU cannot take is reduced automatically.'}
-    className="border border-amber-300 rounded-md px-1 py-1 text-[11px] bg-white outline-none focus:border-amber-500 h-7"
-  >
-    {raySizes.map((o) => (
-      <option key={o.factor} value={o.factor}>
-        {o.label}{o.allowed ? '' : ` → ${o.best}×`}
-      </option>
-    ))}
-  </select>
-  <label
-    title="Transparent background: the PNG keeps an alpha channel, so the molecule can be dropped on any coloured page or slide (the interactive canvas is not affected)"
-    className="px-1.5 py-1 text-[10px] font-bold rounded-md border transition-colors h-7 flex items-center gap-1 cursor-pointer bg-white border-amber-300 text-amber-700 hover:bg-amber-50 whitespace-nowrap"
-  >
-    <input type="checkbox" checked={rayTransparent} onChange={(e) => setRayTransparent(e.target.checked)} className="accent-amber-600" />
-    ⬚ alpha
-  </label>
-  {/* ◐ CASTED SHADOWS — the report: « the ray button only takes a snapshot of the
-      image but does not introduce casted shadows ». NGL 2.4 ships no shadow-map
-      pass (see the note above `flagMeshShadows`), so the shadow of the still is
-      computed from the ATOMS — the very camera of the canvas, the very lamp of
-      the ◐ Shadows rig — and multiplied into the pixels NGL just wrote
-      (utils/viewerRayShadows.js). The PNG therefore carries a real projected
-      shadow; untick to get the plain supersampled still back. Only what is
-      DRAWN casts: a molecule this viewer has hidden (a section unticked, a look
-      set to « hide ») keeps its atoms in the structure but draws no
-      representation, and it no longer throws a shadow of itself into the still —
-      the report « I see a projected membrane, while the membrane is hidden in the
-      program » (see drawnAtomIndicesOf in that module). */}
-  <label
-    title="Casted shadows in the PNG: the shadow the molecule throws, from the very lamp of the ◐ Shadows rig (its Azimuth / Elevation — the 💡 Light sliders of « 2 · Toolbar », shown whenever these ray shadows are on). NGL cannot cast them — the shadow is computed from the atoms with the camera and the light of the scene and multiplied into the still. Untick for the plain supersampled image."
-    className={`px-1.5 py-1 text-[10px] font-bold rounded-md border transition-colors h-7 flex items-center gap-1 cursor-pointer whitespace-nowrap ${rayShadows ? 'bg-amber-100 border-amber-400 text-amber-900' : 'bg-white border-amber-300 text-amber-700 hover:bg-amber-50'}`}
-  >
-    <input type="checkbox" checked={rayShadows} onChange={(e) => setRayShadows(e.target.checked)} className="accent-amber-600" />
-    ◐ shadows
-  </label>
-  {rayShadows && (
-    <>
-      <input
-        type="range" min="0.1" max="1" step="0.05" value={rayShadowStrength}
-        onChange={(e) => setRayShadowStrength(Number(e.target.value))}
-        className="accent-amber-600 w-16 shrink-0"
-        title={`Darkness of the cast shadow — ${Math.round(rayShadowStrength * 100)} % (the DIRECTION comes from the 💡 Light sliders of « 2 · Toolbar » — Azimuth / Elevation)`}
-        aria-label="cast shadow strength"
-      />
-      {/* LA DOUCEUR DU CONTOUR — l'autre moitié réglable d'une ombre portée (sa
-          direction est celle du rig ◐). Elle multiplie la pénombre du module
-          (RAY_SHADOW_DEFAULTS.blur : 0 = contour net, 1 = les valeurs par défaut,
-          4 = très diffuse) — la noirceur ne bouge pas, et un rendu à 1 est
-          exactement celui d'avant. */}
-      <input
-        type="range" min="0" max="4" step="0.25" value={rayShadowBlur}
-        onChange={(e) => setRayShadowBlur(Number(e.target.value))}
-        className="accent-amber-600 w-16 shrink-0"
-        title={`Softness of the cast shadow — ×${Number(rayShadowBlur).toFixed(2)} of the default penumbra (0 = a hard edge, 1 = the viewer's own default, 4 = a very diffuse shadow). It widens the shadow blur AND how much that blur grows with the occluder-to-receiver distance.`}
-        aria-label="cast shadow blur"
-      />
-    </>
-  )}
-  {/* ⏹ STOP WAITING (le rapport : « start ray tracing … hangs ») : NGL ne sait pas
-      annuler un `makeImage` — le seul geste honnête est de cesser de l'attendre.
-      Le rendu abandonné n'écrira AUCUN fichier ; le module abandonne de lui-même
-      après RAY_STALL_MS de silence (voir viewerRayImage.js). */}
-  {rayBusy && (
-    <button
-      type="button"
-      onClick={abandonRay}
-      className="px-1.5 py-1 text-[10px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap bg-white border-amber-400 text-amber-800 hover:bg-amber-50"
-      title="Stop waiting for this render: the button is freed at once and this still is abandoned (NGL cannot cancel an image it has begun — no file will be written). The ✨ Ray render itself gives up on its own after 45 s without a sign of life."
-    >
-      ⏹ stop
-    </button>
-  )}
-</div>
-{rayMsg && (
-<span className="text-[10px] font-bold text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">{rayMsg}</span>
-)}
-
-{/* ── Modify ─────────────────────────────────────────────────────────────── */}
-<span className="w-px h-6 bg-slate-200 shrink-0" aria-hidden="true" />
-<span className="text-[9px] font-black text-amber-700 uppercase tracking-wide whitespace-nowrap">✏️ Modify</span>
-{/* 🧬 From sequence — the page's sequence (Proteins / DNA / RNA) becomes a 3D
-    structure at any moment, even over a loaded PDB (which is put aside: the
-    ↩ Restore PDB button of §1 General brings it back). No network round trip:
-    the page builds the backbone from the sequence and the secondary structure
-    painted on it. */}
-<button
-type="button"
-onClick={buildFromSequence}
-disabled={!sequenceStructureText}
-title="Build the 3D structure from the sequence typed in “Molecular structure and visualization” (Proteins / DNA / RNA) — the model the viewer shows whenever no PDB is loaded. What is on screen is put aside, not lost: « ↩ Back to PDB », right here, and ↩ Restore PDB (§1 General) bring it back — including the PDB this page defines."
-className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap bg-white border-emerald-300 text-emerald-700 hover:bg-emerald-50 disabled:opacity-40 disabled:cursor-not-allowed"
->
-🧬 Structure from sequence
-</button>
-{seqBuildMsg && (
-<span title={seqBuildMsg} className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-md px-2 py-1 h-7 inline-flex items-center max-w-[380px] truncate">
-{seqBuildMsg}
-</span>
-)}
-{/* ⚭ Fold for disulfides — le pont disulfure défini dans « Cysteine states »
-    est DÉJÀ dessiné (CONECT SG–SG, écrit par le modèle de la page) ; ce bouton
-    fait un pas de plus, sur demande : la chaîne est détendue pour que les deux
-    Sγ puissent se lier. Désactivé quand la page n'a rien à détendre. */}
-<button
-type="button"
-onClick={foldForDisulfides}
-disabled={typeof buildDisulfideFoldedStructure !== 'function'}
-title="Relax the sequence model (phi/psi between the two cysteines and their chi1 rotamers) until each disulphide pair defined in “Cysteine states” has its two S-gamma atoms within bonding distance — the S–S is then a real bond in Sticks / Ball+stick. The model is a chain relaxation, NOT a physical fold, and the message says the true Sγ–Sγ distance of every pair, including the ones that could not be closed."
-className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap bg-white border-amber-300 text-amber-700 hover:bg-amber-50 disabled:opacity-40 disabled:cursor-not-allowed"
->
-⚭ Fold for disulfides
-</button>
-{disulfideFoldMsg && (
-<span title={disulfideFoldMsg} className="text-[10px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1 h-7 inline-flex items-center max-w-[380px] truncate">
-{disulfideFoldMsg}
-</span>
-)}
-{/* ↩ Back to PDB — THE WAY BACK, WHERE THE GESTURE WAS MADE. §1 General's toggle
-    does exactly the same thing (ONE implementation: restoreStashedPdb), but the
-    report is explicit — the button that brings back the structure the viewer
-    showed BEFORE « 🧬 Structure from sequence » has to be there, beside it: « before
-    I had a button to come back to the structure that was present before I clicked
-    on "from sequence". Now it has disappeared. » ET LE RAPPORT DE CETTE SESSION DIT
-    QU'IL N'APPARAISSAIT TOUJOURS PAS : « the button to recall predefined PDB after
-    "from sequence" … does not appear ». Sa condition exigeait en effet que la
-    structure rangée ne soit PAS celle d'un PDB chargé (`structOrigin !== 'external'`),
-    alors que le geste de retour doit se voir DÈS QUE quelque chose est de côté — le
-    titre dit lequel. Il apparaît donc pour TOUT ce qui est rangé, y compris le PDB
-    que la page définit (voir pageStructureStash, appelé par buildFromSequence
-    quand l'écran montre déjà le modèle de la séquence). */}
-{!!stashedPdb && (
-<button
-type="button"
-onClick={restoreStashedPdb}
-title={`Bring back ${(stashedPdb && stashedPdb.name) || 'the structure'} — the file / URL / model the viewer showed before « 🧬 From sequence », with the trajectory it had.`}
-className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap bg-white border-emerald-300 text-emerald-700 hover:bg-emerald-50"
->
-↩ Back to PDB
-</button>
-)}
-{/* 🖱 PLACER UNE MOLÉCULE — les boutons ✥ Move · ↻ Rotate ont disparu avec le mode
-qu'ils armaient (le rapport : « The separated move and rotate buttons are
-impractical… ») : le geste se fait à la souris, sur la molécule que l'on attrape
-(voir installMoleculeDrag). Comme il n'y a plus de bouton pour l'apprendre, cette
-pastille LE DIT — elle ne fait rien d'autre. Le X · Y · Z tapé reste supprimé :
-un glisser dit où va une molécule, et le ↺ de son espace annule position ET
-rotation. */}
-<span
-  className="px-2 py-1 text-[10px] font-semibold rounded-md border h-7 inline-flex items-center whitespace-nowrap bg-amber-50 border-amber-200 text-amber-800"
-  title={`Drag ON a molecule to turn it about its own centre (left button) · right-drag ON it to slide it — the other molecules stay where they are, and the molecule you take hold of becomes « ${molNameOf(selectedMolKey)} »'s ★ reference (its ↺ in the styling bar puts it back). Start the drag on the background (or hold Alt) to turn the camera as before, and use the wheel to zoom. In a PDB that holds SEVERAL molecules (a complex, a receptor with its ligands, an NMR model), the molecule under the pointer is the ONE that moves: its atoms are placed inside the structure, the file is never split into copies (a split would draw every atom twice and would freeze the frame slider), and its place is written into the film's poses with the ↺ of its space putting it back.`}>
-  🖱 drag a molecule: turn · right-drag: slide{heldPart ? ` · 🖐 ${heldPart}` : ''}
-</span>
-<button
-type="button"
-onClick={rebuildHydrogensNow}
-title="Delete every hydrogen of the peptide and re-place them with ideal bond lengths and angles (N–H ≈ 1.01 Å, C–H ≈ 1.09 Å…). All atom names are kept and no heavy atom moves — the rebuild works on generated structures and on PDB files you load with the 📂 button."
-className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap bg-white border-slate-300 text-slate-700 hover:bg-indigo-50 hover:border-indigo-300 hover:text-indigo-700"
->
-⚗️ Rebuild H
-</button>
-{rebuildMsg && (
-<span title={rebuildMsg} className="text-[10px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-md px-2 py-1 h-7 inline-flex items-center max-w-[380px] truncate">
-{rebuildMsg}
-</span>
-)}
-
-{/* ✏️ Atom names (rename) — the control of the Modify group; its panel is a
-    full-width child of the toolbar so the row itself stays one line tall. */}
-<button type="button" onClick={() => setShowAtomPanel((v) => !v)}
-  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 ${showAtomPanel ? 'bg-amber-100 border-amber-400 text-amber-900' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
-  title="Rename the atoms of the 3D structure (organic molecules included): click-to-rename in the 3D view, auto-naming from the 2D formula, or edit the name list directly. The 2D formula is never touched.">
-  ✏️ Atom names{Object.keys(renames).length ? ` (${Object.keys(renames).length})` : ''}
-</button>
-{showAtomPanel && (
-  <div className="w-full bg-amber-50/40 border border-amber-200 rounded-lg p-3 flex flex-col gap-2">
-    <div className="flex flex-wrap items-center justify-between gap-2">
-      <span className="text-[10px] font-black text-amber-700 uppercase tracking-wide">Atom names (3D only — the 2D formula is not touched)</span>
-      <div className="flex flex-wrap gap-1.5">
-        <button type="button" onClick={() => setRenameMode((v) => !v)}
-          className={`px-2 py-1 text-[10px] font-bold rounded border ${renameMode ? 'bg-amber-600 text-white border-amber-600' : 'bg-white border-amber-300 text-amber-700 hover:bg-amber-100'}`}>
-          {renameMode ? '● Click an atom…' : 'Click-to-rename'}
-        </button>
-        <button type="button" onClick={autoNameFrom2D} className="px-2 py-1 text-xs font-bold rounded bg-white border border-amber-300 text-amber-700 hover:bg-amber-100">Auto-name (2D)</button>
-        <button type="button" onClick={clearRenames} className="px-2 py-1 text-xs font-bold rounded bg-white border border-red-300 text-red-600 hover:bg-red-50">Clear overrides</button>
-      </div>
-    </div>
-    <p className="text-[10px] text-slate-500">
-      {renameMode ? 'Click any atom in the 3D viewer, then type its new name below.' : 'Search the atom list and edit names directly. Changes are stored with the test and persist.'}
-    </p>
-    {renameTarget !== null && (
-      <div className="flex items-center gap-2 bg-white border border-amber-300 rounded-lg p-2">
-        <span className="text-xs font-bold text-slate-700">Atom #{renameTarget}:</span>
-        <input value={renameDraft} onChange={(e) => setRenameDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') applyRename(); }} className="border border-slate-300 rounded px-2 py-1 text-xs outline-none focus:border-amber-500" />
-        <button type="button" onClick={applyRename} className="px-2 py-1 text-xs font-bold rounded bg-amber-600 text-white">OK</button>
-        <button type="button" onClick={() => setRenameTarget(null)} className="px-2 py-1 text-[10px] font-bold rounded bg-slate-200 text-slate-700">Cancel</button>
-      </div>
-    )}
-    <div className="flex items-center gap-2">
-      <input value={atomSearch} onChange={(e) => setAtomSearch(e.target.value)} placeholder="Filter atoms…" className="border border-slate-300 rounded px-2 py-1 text-xs w-44 outline-none focus:border-amber-500" />
-      <span className="text-[10px] text-slate-400">{atomList.length} atoms</span>
-    </div>
-    <div className="max-h-48 overflow-y-auto custom-scrollbar border border-amber-200 rounded-lg bg-white">
-      <table className="w-full text-xs">
-        <thead className="sticky top-0 bg-amber-50">
-          <tr>
-            <th className="text-left px-2 py-1 text-[9px] uppercase text-amber-700">#</th>
-            <th className="text-left px-2 py-1 text-[9px] uppercase text-amber-700">El</th>
-            <th className="text-left px-2 py-1 text-[9px] uppercase text-amber-700">Current</th>
-            <th className="text-left px-2 py-1 text-[9px] uppercase text-amber-700">New name</th>
-          </tr>
-        </thead>
-        <tbody>
-          {atomList
-            .filter((a) => !atomSearch || (a.name || '').toLowerCase().includes(atomSearch.toLowerCase()) || (renames[a.idx] || '').toLowerCase().includes(atomSearch.toLowerCase()))
-            .slice(0, 200)
-            .map((a) => (
-              <tr key={a.idx} className="border-t border-amber-100">
-                <td className="px-2 py-1 text-slate-400">{a.idx}</td>
-                <td className="px-2 py-1 font-bold text-slate-600">{a.element}</td>
-                <td className="px-2 py-1 font-mono text-slate-500">{a.name}</td>
-                <td className="px-2 py-1">
-                  <input value={renames[a.idx] || a.name} onChange={(e) => { const next = { ...renames }; if (e.target.value.trim()) next[a.idx] = e.target.value; else delete next[a.idx]; persistRenames(next); }} className="w-20 border border-slate-300 rounded px-1.5 py-0.5 text-xs outline-none focus:border-amber-500" />
-                </td>
-              </tr>
-            ))}
-        </tbody>
-      </table>
-    </div>
-  </div>
-)}
-
-{/* ⚡ ESP — the electrostatic-potential surface of the molecule selected in the
-    Molecules bar. It sits in ✏️ Modify (the request: « anche il pulsante ESP
-    dovrebbe piuttosto apparire nella sezione modify »): it MODIFIES what is on
-    screen — a translucent surface coloured by the Coulomb potential of the
-    charges (red = negative, white ≈ neutral, blue = positive) — exactly like
-    ⚗️ Rebuild H or ✏️ Atom names beside it. Clicking again removes the surface,
-    and the ⚡ Range readout below appears while one is on, for the two potentials
-    that give it its colour scale (kcal/mol). */}
-<button
-type="button"
-onClick={() => espToggle(selectedMolKey)}
-disabled={!espTargetComp}
-title={espBtnTitle}
-className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed ${espOnSelected ? 'bg-fuchsia-100 border-fuchsia-400 text-fuchsia-800 hover:bg-fuchsia-200' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
->
-{espOnSelected ? '⚡ ESP: On' : '⚡ ESP'}
-</button>
-{(espOnSelected || catEspActive) && (
-  <div className="flex items-center gap-1.5 bg-white border border-fuchsia-200 rounded-lg px-2 py-1 text-[10px] text-slate-600 h-8 whitespace-nowrap" title="Electrostatic colour-scale limits in kcal/mol. Surface potentials at or below −N are drawn full RED (negative), 0 is white (neutral) and at or above +P full BLUE (positive). NGL's default ±50 is so wide that most surfaces look white — tighten the range to make the red and blue poles visible. Applies live (no surface rebuild) via Apply / Enter.">
-    <span className="font-black text-fuchsia-700 uppercase tracking-wide">⚡ Range</span>
-    <span className="font-bold text-red-600">−</span>
-    <input
-      type="number"
-      min="0.5"
-      max="500"
-      step="1"
-      value={Math.round(espLimits[0] * 10) / 10}
-      onChange={(e) => { const v = parseFloat(e.target.value); setEspLimits((p) => [Number.isFinite(v) && v > 0 ? Math.min(500, v) : p[0], p[1]]); }}
-      onKeyDown={espApplyLimitsOnEnter}
-      className="w-12 border border-slate-300 rounded px-1 py-0.5 text-right outline-none focus:border-fuchsia-400 text-[10px] font-mono"
-      aria-label="Negative ESP limit (red)"
-    />
-    <span className="text-slate-400 font-bold">0</span>
-    <span className="font-bold text-blue-600">+</span>
-    <input
-      type="number"
-      min="0.5"
-      max="500"
-      step="1"
-      value={Math.round(espLimits[1] * 10) / 10}
-      onChange={(e) => { const v = parseFloat(e.target.value); setEspLimits((p) => [p[0], Number.isFinite(v) && v > 0 ? Math.min(500, v) : p[1]]); }}
-      onKeyDown={espApplyLimitsOnEnter}
-      className="w-12 border border-slate-300 rounded px-1 py-0.5 text-right outline-none focus:border-fuchsia-400 text-[10px] font-mono"
-      aria-label="Positive ESP limit (blue)"
-    />
-    <span>kcal/mol</span>
-    <button type="button" onClick={() => espApplyLimits()} className="px-1.5 py-0.5 rounded border bg-fuchsia-50 border-fuchsia-300 text-fuchsia-700 hover:bg-fuchsia-100 font-bold">Apply</button>
-    <button type="button" onClick={() => espApplyLimits(10, 10)} className="px-1.5 py-0.5 rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-50 font-semibold" title="Preset: red ≤ −10, blue ≥ +10 kcal/mol">±10</button>
-    <button type="button" onClick={() => espApplyLimits(25, 25)} className="px-1.5 py-0.5 rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-50 font-semibold" title="Preset: red ≤ −25, blue ≥ +25 kcal/mol">±25</button>
-    <button type="button" onClick={() => espApplyLimits(50, 50)} className="px-1.5 py-0.5 rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-50 font-semibold" title="NGL's original wide range ±50 — only the strongest charges reach red/blue">±50</button>
-  </div>
-)}
-{/* 🔢 Renumber — the button AND its list live in ✏️ Modify (the request: « la
-    lista per il renumbering … dovrebbe piuttosto apparire nella sezione
-    modify »): the panel lists every residue and the number it will take, and the
-    3D labels and the residue strip follow the new numbers. The tiny 🔢 of a
-    molecule's header (in the styling bar on the right) opens THE SAME panel —
-    one implementation, see renderRenumberPanel. */}
-<button
-type="button"
-onClick={toggleRenumberPanel}
-title="🔢 Renumber the residues (the panel below lists every residue and the number it will take; the 3D labels and the residue strip follow it)"
-className="text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-md px-2 py-1.5 h-8 whitespace-nowrap"
->
-🔢 Renumber{showRenumberPanel ? ' ▲' : ' ▼'}
-</button>
-{/* The ONE renumbering panel of the viewer (see renderRenumberPanel) — the same
-    specification the 🔢 of a molecule's header opens. */}
-{renderRenumberPanel()}
-
-{/* ── Analysis ───────────────────────────────────────────────────────────── */}
-<span className="w-px h-6 bg-slate-200 shrink-0" aria-hidden="true" />
-<span className="text-[9px] font-black text-rose-700 uppercase tracking-wide whitespace-nowrap">📏 Analysis</span>
-<button
-type="button"
-onClick={toggleMeasureMode}
-title={measureMode ? '📏 Measure is ON — click any two atoms to draw the distance between them (shown in Å). Click again to stop measuring; drawn distances stay visible.' : 'Measure atom distances: click any two atoms to draw the distance between them, with a live label in Å (NGL distance representation).'}
-className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${measureMode ? 'bg-rose-50 border-rose-400 text-rose-700 ring-1 ring-rose-200' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
->
-{measureMode ? '📏 Measuring…' : '📏 Measure'}
-</button>
-{measureMode && (
-<span title={measureInfo || 'Click two atoms to measure the distance between them'} className="text-[10px] font-semibold text-rose-700 bg-rose-50 border border-rose-200 rounded-md px-2 py-1 h-7 inline-flex items-center max-w-[320px] truncate">
-{measureInfo || (measurePending ? `1st atom: ${measurePending} — click the 2nd…` : 'Click two atoms…')}
-</span>
-)}
-{(measureRepsRef.current.length > 0 || measurePending) && (
-<button
-type="button"
-onClick={clearMeasurements}
-className="px-2 py-1 text-[11px] font-bold rounded-md border border-rose-300 bg-white text-rose-700 hover:bg-rose-50 h-7 whitespace-nowrap"
-title={measurePending ? 'Cancel the pending first atom and remove all drawn distance measurements' : 'Remove all drawn distance measurements'}
->
-✕ Clear distances
-</button>
-)}
-<button
-type="button"
-onClick={() => setShowAssignedFlag(!showManualHighlight)}
-title="Show / hide the green highlight on the atoms assigned by NMR"
-className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${showManualHighlight ? 'bg-green-50 border-green-300 text-green-700' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
->
-{showManualHighlight ? '🟢 Assigned: On' : '⚪ Assigned: Off'}
-</button>
-
-{/* ── PyMOL ──────────────────────────────────────────────────────────────── */}
-<span className="w-px h-6 bg-slate-200 shrink-0" aria-hidden="true" />
-<span className="text-[9px] font-black text-violet-700 uppercase tracking-wide whitespace-nowrap">🧪 PyMOL</span>
-<button type="button" onClick={() => setShowPymolPanel((v) => !v)}
-  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 ${showPymolPanel ? 'bg-violet-100 border-violet-400 text-violet-900' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
-  title="Paste or load a PyMOL script (select / show / hide / color / set sphere_scale·transparency / bg_color / cartoon · ribbon · tube / surface / spectrum / util.ray_shadows). Every selection the script defines — and every look it creates on a raw expression — appears in the Selections bar on the LEFT of the 3D viewer (◀ collapses it).">
-  🧪 Selections & PyMOL
-</button>
-{showPymolPanel && (
-  <div className="w-full bg-violet-50/40 border border-violet-200 rounded-lg p-3 flex flex-col gap-2">
-    <div className="flex flex-wrap items-center justify-between gap-2">
-      <span className="text-[10px] font-black text-violet-700 uppercase tracking-wide">Selections & PyMOL</span>
-      <div className="flex gap-1.5">
-        <button type="button" onClick={() => applyPyMOLScript(pymolScript)} className="px-2 py-1 text-[10px] font-bold rounded bg-violet-600 text-white hover:bg-violet-700">▶ Run script</button>
-        <button type="button" onClick={clearPyMOL} className="px-2 py-1 text-xs font-bold rounded bg-white border border-red-300 text-red-600 hover:bg-red-50">Clear</button>
-      </div>
-    </div>
-    <div className="flex flex-wrap items-center gap-2">
-      <label className="text-[10px] font-bold text-slate-500 uppercase shrink-0">Load script</label>
-      <select
-        value=""
-        onChange={(e) => {
-          const n = e.target.value;
-          e.target.value = '';
-          if (!n) return;
-          const entry = getPymolScripts()[n];
-          if (entry) { setPymolScript(typeof entry === 'string' ? entry : (entry.script || '')); setPymolScriptName(n); }
-        }}
-        title="Load a script saved in the Library (Library → PyMOL Scripts) into the editor, then press Run"
-        className="border border-violet-300 rounded-md px-2 py-1 text-xs bg-white outline-none focus:border-violet-500"
-      >
-        <option value="">— Library scripts —</option>
-        {Object.entries(getPymolScripts()).map(([n]) => (
-          <option key={n} value={n}>{n}</option>
-        ))}
-      </select>
-      <span className="text-[9px] text-slate-400">saved in <b>Library → PyMOL Scripts</b></span>
-      {/* 💾 ENREGISTRER LA MACRO ÉCRITE ICI (le rapport : « It should be possible to
-          save a pymol macro written in the viewer without having to go to the
-          library page to save a new one. »). Le nom + le bouton écrivent DANS la
-          réserve de la Library (voir saveViewerPymolScript) : aucun aller-retour
-          vers la page Library, la macro est relue par la liste ci-contre à
-          l'instant, et un nom déjà pris demande confirmation avant d'être
-          remplacé. Choisir une macro dans la liste remplit le nom, donc 💾 met
-          simplement à jour celle qu'on vient de charger. */}
-      <input
-        type="text"
-        value={pymolScriptName}
-        onChange={(e) => setPymolScriptName(e.target.value)}
-        placeholder="Macro name"
-        className="border border-violet-300 rounded-md px-2 py-1 text-xs bg-white outline-none focus:border-violet-500 w-28 shrink-0"
-        title="Name of this macro — press 💾 and it is saved in the Library (Library → PyMOL Scripts) under that name; an existing name asks before being replaced" />
-      <button
-        type="button"
-        onClick={saveViewerPymolScript}
-        className="px-2 py-1 text-[10px] font-bold rounded bg-white border border-violet-400 text-violet-700 hover:bg-violet-100 shrink-0"
-        title="Save the macro written below in the Library — the same store as Library → PyMOL Scripts, with no trip to the Library page">
-        💾 Save macro
-      </button>
-      {pymolSaveMsg && (
-        <span className="text-[10px] font-bold text-violet-800">{pymolSaveMsg}</span>
-      )}
-    </div>
-    <label className="text-[10px] font-bold text-slate-500 uppercase">Paste a PyMOL script (select / show / hide / color / set sphere_scale·transparency·cartoon_ring_mode·cartoon_ring_color·cartoon_ring_transparency·cartoon_nucleic_acid_mode / bg_color / cartoon · ribbon · tube / surface / spectrum / util.ray_shadows)</label>
-    <textarea value={pymolScript} onChange={(e) => setPymolScript(e.target.value)} rows={6}
-      className="w-full border border-violet-300 rounded-lg p-2 text-xs font-mono outline-none focus:border-violet-500 bg-white"
-      placeholder={'select peptide, polymer.protein\nshow cartoon, peptide\ncolor gold, name CA and peptide\nset sphere_scale, 0.6, headgroups\nset sphere_transparency, 0.3, upper_headgroups\nbg_color white'} />
-    <div className="flex flex-wrap items-center gap-2">
-      <span className="text-[10px] font-bold text-slate-500 uppercase">Effects</span>
-      <label className="flex items-center gap-1.5 text-xs font-bold text-slate-600"><input type="checkbox" checked={autoShowSel} onChange={(e) => setAutoShowSel(e.target.checked)} className="accent-violet-600" /> Auto-show parsed selections</label>
-      <label className="flex items-center gap-1.5 text-xs font-bold text-slate-600"><input type="checkbox" checked={qualityHigh} onChange={(e) => setQualityHigh(e.target.checked)} className="accent-violet-600" /> High quality (ray-shadows approx.)</label>
-      <label className="flex items-center gap-1.5 text-xs font-bold text-slate-600">BG <input type="color" value={bgColor} onChange={(e) => setBgColor(e.target.value)} className="w-8 h-6 border border-slate-300 rounded cursor-pointer" /></label>
-    </div>
-    {pymolLog && <pre className="text-xs text-slate-700 bg-white border border-violet-200 rounded-lg p-2 whitespace-pre-wrap max-h-32 overflow-y-auto">{pymolLog}</pre>}
-    {/* 🧪 LA PORTÉE DE LA SESSION, DITE ICI — la demande de cette session : la barre
-        de sélections doit vivre dans TOUTES les instances de l'expérience et dans
-        AUCUNE autre. La ligne est là même sans sélection : c'est ce qui rend la règle
-        vérifiable à l'écran, et le titre nomme la clé qui la porte. */}
-    <p className="text-[10px] text-violet-700 leading-tight"
-      title={`A session is remembered under one key per EXPERIMENT (“${pymolSessionKeyRef.current}”): every condition of this experiment reads and writes it, and no other experiment reads it — not even one of the same type.`}>
-      🧪 Kept for {pymolScopeRef.current.text}.
-    </p>
-    {selections.length > 0 && (
-      <p className="text-[10px] text-violet-600 font-bold">
-        ✓ {selections.length} selection(s) parsed — the Selections bar is on the LEFT of the 3D viewer (◀ collapses it).
-        Touching any styling control of §2 hands the main structure back to the styling sections, so a macro never freezes them.
-      </p>
-    )}
-  </div>
-)}
-</VSection>
-
-{/* (The global Side / Backbone / Mol / Large / Water selectors and the docking
-    row that used to sit here are gone: their functionality now lives in the
-    SIX per-category menus of §2 — Large + 💧 Water inside « F · Others » —
-    and the docking controls at the top of the §2 panel. No capability was
-    removed.) */}
-
-{/* Read the trajectory bar as a BAR, not as text: the banner below must stay a
-    JSX comment (curly braces around the block comment). A bare block comment
-    sitting between two JSX expressions is rendered as LITERAL TEXT and replaces
-    the whole ▶ Play · frame slider · speed bar with its own description. */}
-
-{/* ══ ▶ TRAJECTORY PLAYBACK — ▶ Play · frame slider · speed ═════════════════
-   Sits directly above the 3D viewer (it drives it) and appears as soon as a
-   trajectory exists for the CONDITION (a loaded file, a URL, or simply the name
-   declared on the experiment): the bar is never silent, and ▶ only wakes up
-   once the frames are really in the browser. */}
-{(trajFile || trajectoryFile || trajectorySrc || declaredTrajName) && (
-<VSection title="▶ Trajectory playback" hint="▶ Play · frame slider · speed — and 🎬 the same run saved as one video file">
-<div className="flex flex-wrap items-center gap-2 bg-indigo-50 border border-indigo-200 rounded-lg px-2 py-1 w-full">
-<button
-type="button"
-onClick={togglePlay}
-disabled={trajStatus !== 'ready' || keptFrames === 0 || videoBusy}
-className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white font-bold px-3 py-1 rounded-md text-[11px] shadow-sm transition-colors inline-flex items-center gap-1 h-7 whitespace-nowrap"
->
-{playing ? '⏸ Pause' : '▶ Play'}
-</button>
-<div className="flex items-center gap-2 flex-1 min-w-[200px]">
-<span className="text-[10px] font-bold text-indigo-700 whitespace-nowrap">Frame</span>
-<input
-type="range"
-min={0}
-max={Math.max(0, keptFrames - 1)}
-value={currentFrame}
-onChange={handleFrameChange}
-disabled={trajStatus !== 'ready' || keptFrames === 0 || videoBusy}
-className="flex-1 accent-indigo-600"
-/>
-<span className="text-[10px] font-mono font-bold text-indigo-800 whitespace-nowrap">
-{currentFrame} / {Math.max(0, keptFrames - 1)}
-</span>
-</div>
-<div className="flex items-center gap-1.5">
-<label className="text-[10px] font-bold text-indigo-700 uppercase">Speed</label>
-<select
-value={speed}
-onChange={(e) => setSpeed(Number(e.target.value) || 10)}
-className="border border-indigo-300 rounded-md px-1.5 py-0.5 text-[11px] bg-white outline-none focus:border-indigo-500 h-7"
->
-{[1, 5, 10, 20, 30, 60].map((s) => <option key={s} value={s}>{s} fps</option>)}
-</select>
-</div>
-<span className="flex-1 min-w-[160px] text-[10px] font-bold leading-tight">
-{trajStatus === 'loading' && (
-  <span className="text-indigo-600">
-    ⏳ Loading trajectory ({trajectoryFormat.toUpperCase()})…
-    {numFrames > 0 && (
-      <span className="text-indigo-500 font-mono font-semibold">
-        {' '}{trajTotal > 0
-          ? `${Math.min(numFrames, trajTotal).toLocaleString()} / ${trajTotal.toLocaleString()}`
-          : `${numFrames.toLocaleString()}`} frames loaded
-      </span>
-    )}
-  </span>
-)}
-{trajStatus === 'ready' && (
-  <span className="text-emerald-600">
-    ✓ {trajectoryFormat.toUpperCase()}: {numFrames} frames total → playing {keptFrames} (stride {effStride})
-  </span>
-)}
-{trajStatus === 'error' && <span className="text-red-600">⚠️ {trajError}</span>}
-{waitingTrajFile && (
-  <span className="text-amber-700">
-    ⏳ “{declaredTrajName}” is declared on this experiment but is not loaded in this browser yet — press
-    “⬇️ Bring it back from Google Drive” on the page (the reference copy), or pick the file here with 📂 Trajectory.
-    ▶ turns on as soon as the frames are read.
-  </span>
-)}
-</span>
-</div>
-{/* ── 🎬 VIDEO — « save the run as one file » (the request: « in molecular
-    viewer allow saving videos of the trajectory »). It is the SECOND ROW of
-    this very bar, because the film is made of the frames ▶ plays and of no
-    others: the bar PLAYS the run, this row WRITES it. Everything is readable
-    BEFORE the click (the plan summary: frames, length, pixels, Mbps) and
-    nothing of the scene is touched — the frame goes back where it was when the
-    recording ends. The file is written on the computer (like the ✨ Ray PNG
-    and the frame PDB); the viewer never uploads a film anywhere. */}
-<div className="flex flex-wrap items-center gap-2 bg-violet-50 border border-violet-200 rounded-lg px-2 py-1 w-full">
-<span className="text-[9px] font-black text-violet-700 uppercase tracking-wide whitespace-nowrap">🎬 Video</span>
-<label className="flex items-center gap-1 text-[10px] font-bold text-violet-700 whitespace-nowrap">
-fps
-<select
-value={videoFps}
-onChange={(e) => setVideoFps(Number(e.target.value) || VIDEO_DEFAULT_FPS)}
-title="Frames per second of the FILM — and of the recording, which lasts as long as the film will (a canvas is sampled in real time). 10 fps is the viewer's own playback rate."
-className="border border-violet-300 rounded-md px-1.5 py-0.5 text-[11px] bg-white outline-none focus:border-violet-500 h-7"
->
-{VIDEO_FPS_CHOICES.map((f) => <option key={f} value={f}>{f} fps</option>)}
-</select>
-</label>
-<label className="flex items-center gap-1 text-[10px] font-bold text-violet-700 whitespace-nowrap">
-keep every
-<select
-value={videoStep}
-onChange={(e) => setVideoStep(Number(e.target.value) || 1)}
-title="How much of the run is filmed: 1 frame in every N is put in the film (the LAST frame of the run is always kept, so the film always ends where the run ends). The frames that are kept are the run, in order — the film is simply shorter."
-className="border border-violet-300 rounded-md px-1.5 py-0.5 text-[11px] bg-white outline-none focus:border-violet-500 h-7"
->
-{VIDEO_STEP_CHOICES.map((s) => <option key={s} value={s}>{s === 1 ? 'frame' : `${s}th frame`}</option>)}
-</select>
-of the run
-</label>
-<button
-type="button"
-onClick={recordTrajectoryVideoClick}
-disabled={videoBusy || trajStatus !== 'ready' || keptFrames === 0 || !videoReady.ok}
-title={!videoReady.ok
-  ? `🎬 ${videoReady.note}`
-  : (trajStatus !== 'ready' || keptFrames === 0
-    ? 'Load a trajectory first — the film is made of the frames the ▶ button plays'
-    : `Record the run into ONE file: ${videoPlanSummary(videoPlanNow)}. The film is taken from the 3D canvas itself, frame by frame, so it is exactly what is on screen — styles, labels, extra molecules, fog. It lasts as long as the film (the recording is real time): keep this tab in the foreground. The file is written on your computer when the run is over; ⏹ Stop ends it WITHOUT writing anything.`)}
-className="bg-violet-600 hover:bg-violet-700 disabled:opacity-40 text-white font-bold px-3 py-1 rounded-md text-[11px] shadow-sm transition-colors inline-flex items-center gap-1 h-7 whitespace-nowrap"
->
-{videoBusy ? '🎬 Recording…' : '🎬 Record the run'}
-</button>
-{videoBusy && (
-<button
-type="button"
-onClick={stopTrajectoryVideo}
-title="Stop the recording now. Nothing is written: a film of half a run is not the film of the run — record again to get the whole thing."
-className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap bg-white border-amber-400 text-amber-800 hover:bg-amber-50"
->
-⏹ Stop
-</button>
-)}
-<span className="flex-1 min-w-[220px] text-[10px] font-bold text-violet-800 leading-tight">
-{videoMsg
-  || (videoReady.ok && videoPlanNow.ok
-    ? `${videoPlanSummary(videoPlanNow)} · ▶ plays it first if you want to check it`
-    : (videoReady.ok ? videoPlanNow.reason : videoReady.note))}
-</span>
-</div>
-<p className="text-[10px] text-slate-500 leading-tight">
-🎬 The film is the 3D canvas with the vignette the screen draws over it — the molecules, the styles, the labels
-and the extra molecules exactly as they are, frame by frame, in the order ▶ plays the run. Written on your computer
-as a real video file (<b>.webm</b>, or <b>mp4</b> where the browser can encode it) — nothing is uploaded anywhere;
-<b>keep this tab in the foreground</b> while it records (a hidden tab is not painted).
-</p>
-</VSection>
-)}
-
 {/* ── 🎞 THE MOVIE MAKER — « capture the pose and the styles of a scene, morph to
-    the next, write the film ». (The section was called « 🎞 Poses & styles » until
-    this session — « rename “poses and style” as “movie maker” » — so the panel now
-    carries the name of the gesture it serves; nothing else about it moved.) A
-    keyframe is a PHOTOGRAPH of the viewer (the ⚙️ setup: menus, palettes, labels,
-    fog, shadows, clipping, background, camera, where every molecule stands) plus
-    where each molecule is TURNED (its
-    quaternion, which a setup does not carry). ▶ and 🔴 go through the SAME
-    function (applyKeyframeSample over sampleKeyframeFilm), so the film seen and
-    the film written cannot drift apart. Nothing is uploaded: the .webm and the
-    .json are written on this computer. The film is remembered between visits
-    (localStorage) exactly like the fps of the 🎬 video. */}
-<VSection title="🎞 Movie maker" hint="capture this pose · hold & morph · ▶ check · 🔴 record the film">
+    the next, write the film ». IL VIT MAINTENANT SUR LA LIGNE « 1 · General »
+    (la demande : « the movie maker section can fit in the line of the general
+    section (where you upload the pdb and trajectory) ») : il filme la structure
+    et la trajectoire qui se chargent juste à côté, donc c'est là qu'on le
+    cherche. Sa rangée de gestes n'a pas bougé d'un pixel — une ligne, pas de
+    retour à la ligne, pas de roman (voir le commentaire de la bande). */}
+<div className="flex flex-col gap-1 w-full">
+<span className="text-[9px] font-black text-fuchsia-700 uppercase tracking-wide whitespace-nowrap" title="Capture the pose and the styles of a scene, morph to the next, write the film: ＋ photographs the scene as it is, ⏸ hold / morph say how long each picture stays and how long the way to the next one takes, ▶ checks the film on screen and 🔴 writes it into one file. Every gesture explains itself in its own tooltip.">🎞 Movie maker</span>
 {/* ── UNE SEULE LIGNE DE BOUTONS (le rapport : « keep all buttons in one line.
     Remove the commentaries so that it fits in one row »). La rangée ne REVIENT PAS
     À LA LIGNE : sur un panneau étroit elle défile horizontalement, donc aucun
@@ -18078,7 +17278,917 @@ title={kfMsg || (videoReady.ok ? keyframeFilmSummary(keyframes.length, kfPlanNow
   );
   })()}
 
+</div>
 </VSection>
+
+{/* ══ 2 · TOOLBAR — Scene | Modify | Analysis | PyMOL, ONE horizontal row ════
+    This is §2 of the command bar now (the report: « quindi toolbar diventa la
+    sezione 2 e contiene separatamente scene, modify e analysis »). The four
+    groups are ONE wrapped row, each introduced by a small chip and separated by
+    a hairline; the expanded panels (⚡ ESP · Range, 🔢 Renumber, ✏️ Atom names,
+    🧪 PyMOL, the clipping sliders) are full-width children of this same section,
+    so the bar stays one row tall while nothing is open.
+    • Scene: 🌫 Fog · 🎨 Background · ◐ Shadows (+ 🌑 Darkness / 💡 Light) · 💡 Light colour · ✂ Clipping · ✨ Ray (+ resolution · ⬚ alpha · ◐ shadows)
+    • Modify: 🧬 From sequence · ✥ Move / ↻ Rotate · ⚗️ Rebuild H · ✏️ Atom names · ⚡ ESP · 🔢 Renumber
+    • Analysis: 📏 Measure · 🟢 Assigned
+    • PyMOL: 🧪 Selections & PyMOL
+    THE FOUR MOVES OF THIS REVISION (each one is a line of the report):
+      · ✨ Ray and its associates (the resolution, ⬚ alpha, ◐ shadows + strength)
+        left §1 General for the 🌫 Scene group — a still of the SCENE belongs with
+        the fog / background / shadows / clipping that define it, and the ◐
+        Shadows rig that aims the light of the still is right there;
+      · 📷 Figure is REMOVED (redundant): the very still of the scene is written
+        by ✨ Ray as a PNG on the computer, and the ★ figures of Publications &
+        Slides keep their own capture / import paths (the canvas, the Image
+        builder, the imported files);
+      · 🙈 Hide everything is REMOVED here: the Selections bar on the left keeps
+        its own « 🙈 Hide all » / « Show all » button on the SAME `hideAll` state,
+        so the gesture survives and this row no longer repeats it;
+      · ⚡ ESP and 🔢 Renumber (the button AND its list) left the old §2 for the
+        ✏️ Modify group — they modify the selected molecule's surface and the
+        numbering of the residues on screen;
+      · §2 « Molecular Styling » disappears with them: the styling of every
+        molecule has lived in the bar on the RIGHT of the canvas since PART 4
+        (one space per molecule), and the accordion only held those two gestures
+        and the Hide-everything button.
+    The lighting rig is untouched: Shadows locks NGL's single light in place and
+    the Darkness / Light sliders aim it (and now also drive the AMBIENT-OCCLUSION
+    equivalent, see applyShadowSettings). Its ONE user-changeable colour is the « 💡 Light colour » swatch, parked IMMEDIATELY BEFORE « ✂ Clipping » because that is where the request puts it (« in the molecular viewer add the possibility to change the color of the light and put it just before the clipping in the scene section of the toolbar ») — white by default, so the reference look is what an untouched swatch gives. ✂ Clipping pushed OFF sets the camera
+    bounds to the EXTREMES (near 0 · far 100000 · dist 0) so a large complex is
+    never cut. */}
+<VSection title="2 · Toolbar" hint="scene · styles · modify · analysis · PyMOL">
+{/* ── LIGNE 1 · 🌫 SCENE, SEUL DANS SA BOÎTE (la demande : « the scene, modify and
+    analyze subgroups are not clearly separated but I do not want to use a line for
+    each of them »). Chaque groupe est maintenant une petite boîte teintée à sa
+    couleur, refermée sur elle-même : la séparation ne demande aucune ligne de plus,
+    et le filet qui reste entre deux boîtes dit où finit l'une et où commence
+    l'autre. 🎨 Styles vit sur CETTE ligne, derrière son filet. */}
+<div className="flex flex-wrap items-center gap-1 rounded-md border border-sky-200 bg-sky-50/40 px-1.5 py-1">
+<span className="text-[9px] font-black text-sky-700 uppercase tracking-wide whitespace-nowrap" title="The scene the structure is drawn in: NGL's depth fog, the background colour, the shadows and the one light that casts them, the clipping plane, and the high-resolution still (✨ Ray, with its resolution, its alpha and its cast shadows).">🌫 Scene</span>
+<button type="button" onClick={() => setFogEnabled((v) => !v)}
+  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 ${fogEnabled ? 'bg-sky-100 border-sky-400 text-sky-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+  title="NGL's default depth fog fades distant atoms toward the background (a grey haze). Toggle it off for a crisp image — the setting is saved and persists across pages.">
+  🌫 Fog: {fogEnabled ? 'On' : 'Off'}
+</button>
+{/* 🎨 BACKGROUND — the colour of the 3D scene itself (§2 Scene). It is applied to
+    the live stage (stage.setParameters({ backgroundColor })), persists like the
+    fog / shadows / clipping, and travels inside a ⚙️ saved setup. The 🧪 PyMOL
+    panel writes this very same state, so the two entries never disagree. */}
+<label className="flex items-center gap-1 text-[11px] font-bold text-slate-700 whitespace-nowrap" title="Background colour of the 3D scene — the colour the depth fog fades toward. Saved and persistent across pages, and part of a ⚙️ setup.">
+  🎨 Background
+  <input type="color" value={bgColor} onChange={(e) => setBgColor(e.target.value)}
+    className="w-8 h-6 border border-slate-300 rounded cursor-pointer" aria-label="Background colour" />
+</label>
+<button type="button" onClick={() => setBgColor(BG_DEFAULT)}
+  className="px-1.5 py-1 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100"
+  title={`Back to the default background (${BG_DEFAULT})`}>
+  ↺
+</button>
+<button type="button" onClick={() => setShadowOn((v) => !v)}
+  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 ${shadowOn ? 'bg-slate-800 border-slate-800 text-white' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+  title="Shadows: swaps NGL's flat camera-lit look for ONE fixed key light whose direction you aim (Azimuth / Elevation appear while ON), so every side of the structure that turns away from the light falls into real shade as you rotate. The Darkness slider then only raises the dark↔light contrast — the light stays pure white unless you say otherwise (the 💡 Light colour swatch that follows, immediately before ✂ Clipping, is the ONE control that tints this lamp). Shadows also switches on the AMBIENT-OCCLUSION equivalent: NGL 2.4 has no SSAO pass, so the cavity shading comes from the deep-ambient + strong-key-light rig with supersampled shading (sampleLevel), which is what makes crevices and the inner sides of a fold read as depth. (True WebGL shadow maps aren't supported by NGL — trying them made the molecule disappear. Every mesh is still flagged cast+receive shadows, see flagMeshShadows.)">
+  ◐ Shadows: {shadowOn ? 'On' : 'Off'}
+</button>
+{shadowOn && (
+  <label className="flex items-center gap-1 text-[11px] font-bold text-slate-700 whitespace-nowrap" title="Darkness — contrast only: the lit side gets brighter and the shaded side darker, with no colour change here (only the light/ambient INTENSITIES move, and the light keeps its colour — the 💡 Light colour swatch just before ✂ Clipping is where that colour is chosen, white by default). This is also what deepens the ambient-occlusion-like cavity shading.">
+    🌑 Darkness
+    <input type="range" min="0" max="100" value={Math.round(shadowDarkness * 100)} onChange={(e) => setShadowDarkness(Number(e.target.value) / 100)} className="w-20 accent-slate-700" />
+    <span className="text-[10px] text-slate-500 w-8">{Math.round(shadowDarkness * 100)}%</span>
+  </label>
+)}
+{(shadowOn || rayShadows) && (
+  <label className="flex items-center gap-1 text-[11px] font-bold text-slate-700 whitespace-nowrap" title="Light direction — aim the fixed key light (and therefore where the shadows fall). Azimuth 0° = light behind the camera (flat), 90° = screen-left, 180° = facing the camera; Elevation is the height above/below the horizon. The shade follows live while you drag. ⚠ The ✨ Ray still throws its cast shadow from THIS lamp too, so these sliders are shown whenever either the ◐ Shadows rig or the ray shadows are on — an off-axis lamp (about 90° / 45°) is what makes a cast shadow read as a shadow instead of hiding in the shade the canvas already draws. The COLOUR of this lamp is the 💡 Light colour swatch just beside it — the swatch and these two sliders own the same lamp.">
+    💡 Light
+    <input type="range" min="0" max="360" value={shadowAz} onChange={(e) => setShadowAz(Number(e.target.value))} className="w-16 accent-slate-700" aria-label="Light azimuth" />
+    <span className="text-[10px] text-slate-500 w-8">{shadowAz}°</span>
+    <span className="text-slate-400">/</span>
+    <input type="range" min="-90" max="90" value={shadowEl} onChange={(e) => setShadowEl(Number(e.target.value))} className="w-16 accent-slate-700" aria-label="Light elevation" />
+    <span className="text-[10px] text-slate-500 w-8">{shadowEl}°</span>
+  </label>
+)}
+{/* 💡 LIGHT COLOUR — the request: « in the molecular viewer add the possibility
+    to change the color of the light and put it just before the clipping in the
+    scene section of the toolbar ». It sits HERE, immediately before the ✂ Clipping
+    button, and it is the ONE control of the rig that tints anything: the KEY light
+    — the lamp NGL lights the scene with, the lamp the ◐ Shadows rig aims and the
+    ✨ Ray still re-renders with. White by default, which IS the reference look; the
+    ambient fill is deliberately left white (see nglLightParams in
+    utils/viewerLightRig.js), so the shaded side of an atom keeps the colour its
+    palette gave it and only the lit side takes the cast — the same bargain PyMOL's
+    `light_color` makes with `ambient_color`. Unlike the 💡 Light direction sliders
+    beside it (only the AIMED rig and the ray shadows need them), this swatch stays
+    visible in both modes: NGL re-reads `parameters.lightColor` on every frame
+    (Viewer.__updateLights, verified in the installed 2.4), so it also tints the
+    plain camera-linked headlight while ◐ Shadows is OFF. The value is validated by
+    the rig's own normalizeLightColor (junk → the white default), persisted like the
+    fog / shadows / clipping, and carried by a ⚙️ saved setup. */}
+  <label className="flex items-center gap-1 text-[11px] font-bold text-slate-700 whitespace-nowrap" title="Colour of the KEY light — the lamp the whole scene is lit with: the one the ◐ Shadows rig aims (Azimuth / Elevation) and the one the ✨ Ray re-renders in its still. White is the reference look. Any other colour tints the LIT side of every atom while the ambient fill stays white, so the shaded side keeps the colour its palette gave it (exactly PyMOL's light_color, which also leaves ambient_color alone). NGL re-reads the colour on every frame, so it applies with the Shadows rig ON and OFF; it is saved with the page and travels inside a ⚙️ saved setup.">
+    💡 Light colour
+    <input type="color" value={lightColor} onChange={(e) => setLightColor(normalizeLightColor(e.target.value))}
+      className="w-8 h-6 border border-slate-300 rounded cursor-pointer" aria-label="Light colour" />
+  </label>
+  <button type="button" onClick={() => setLightColor(LIGHT_COLOR_DEFAULT)}
+    className="px-1.5 py-1 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100"
+    title={`Back to the white key light (${LIGHT_COLOR_DEFAULT}) — the reference look, nothing tinted`}>
+    ↺
+  </button>
+<button type="button" onClick={() => setClipOn((v) => !v)}
+  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${clipOn ? 'bg-emerald-50 border-emerald-400 text-emerald-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+  title="Clipping plane. NGL clips the scene with the camera near / far planes: clipNear / clipFar are percentages of the scene bounding sphere and clipDist is the closest the near plane may come to the camera — exactly what CUTS a big complex when you zoom in. OFF = the camera bounds are pushed to the EXTREMES (near 0 · far 100000 · dist 0), so nothing is ever cut at any zoom. ON = your own values below.">
+  ✂ Clipping: {clipOn ? 'On' : 'Off'}
+</button>
+{clipOn && (
+  <>
+    <label className="flex items-center gap-1 text-[11px] font-bold text-slate-700 whitespace-nowrap" title="clipNear — how much is cut in FRONT of the molecule, as a percentage of the bounding sphere. 0 cuts nothing (the near plane sits on the front edge of the sphere); positive values bring the near plane closer to the molecule.">
+      near
+      <input type="range" min="-50" max="50" step="1" value={clipNear} onChange={(e) => setClipNear(Number(e.target.value))} className="w-20 accent-emerald-600" aria-label="Clipping near" />
+      <span className="text-[10px] text-slate-500 w-10">{clipNear}%</span>
+    </label>
+    <label className="flex items-center gap-1 text-[11px] font-bold text-slate-700 whitespace-nowrap" title="clipFar — how far BEHIND the molecule the far plane sits, as a percentage of the bounding sphere. 50 = the centre of the sphere, 100 = its back edge, 150 = one radius further; « Off » uses 100000 (effectively infinite).">
+      far
+      <input type="range" min="50" max="150" step="1" value={clipFar} onChange={(e) => setClipFar(Number(e.target.value))} className="w-20 accent-emerald-600" aria-label="Clipping far" />
+      <span className="text-[10px] text-slate-500 w-10">{clipFar}%</span>
+    </label>
+    <label className="flex items-center gap-1 text-[11px] font-bold text-slate-700 whitespace-nowrap" title="clipDist — the MINIMUM distance (Å) between the camera and the near plane. NGL floors the near plane with it, which is what cuts a large complex when you zoom in: 0 removes the floor completely (that is what « Off » uses).">
+      cam. near
+      <input type="range" min="0" max="30" step="0.1" value={clipDist} onChange={(e) => setClipDist(Math.max(0, Number(e.target.value)))} className="w-20 accent-emerald-600" aria-label="Clipping camera distance" />
+      <span className="text-[10px] text-slate-500 w-12">{clipDist} Å</span>
+    </label>
+    <button type="button"
+      onClick={() => { setClipNear(CLIP_DEFAULTS.near); setClipFar(CLIP_DEFAULTS.far); setClipDist(CLIP_DEFAULTS.dist); }}
+      className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-emerald-300 text-emerald-700 hover:bg-emerald-50"
+      title="Back to the « no cut » extremes: clipNear 0 · clipFar 100000 · clipDist 0 Å">
+      ↺ No cut (0 · 100000 · 0 Å)
+    </button>
+  </>
+)}
+{/* ✨ RAY — the HIGH-RESOLUTION STILL of the scene, HERE in the 🌫 Scene group
+    (the request: « i comandi ray e i suoi associati (alpha, shadow) devono
+    essere spostati nella sezione scene »). A still belongs to the SCENE as a
+    whole, exactly like the 🌫 Fog · 🎨 Background · ◐ Shadows · ✂ Clipping beside
+    it — and the ◐ Shadows rig that AIMS the light of the still is right there,
+    so the two controls that own the light of a still are neighbours. It renders
+    with NGL's own supersampling path (utils/viewerRayImage.js) and writes ONE
+    PNG on the computer; the 📷 button that published to the Figure library is
+    gone (the request: « il pulsante figure é ridondante »).
+    WHY A « RAY » COMES BACK NOW. The report: « se clicco su ray, anche per un
+    piccolo peptide il rendering non finisce mai e non arrivo a vedere
+    l'immagine ». The still is `canvasPixels × factor` and it is not only
+    RENDERED: the cast shadows walk every pixel of it (on the CPU) and the PNG is
+    decoded and encoded once more. On a HiDPI canvas the old 40 Mpx budget meant
+    a 200 MB image copied three times — minutes inside getImageData / toBlob,
+    while the button still said « Rendering… ». The size is now capped by the
+    module (RAY_MAX_PIXELS · 16 Mpx, a 4000×4000-class still), the antialias pass
+    — FOUR times the tiles — is only asked for while the tiles stay few
+    (RAY_ANTIALIAS_MAX_FACTOR: from 3× up every tile IS a supersample), and the
+    title below says, BEFORE the click, how many pixels and how many tiles this
+    factor really costs here. */ }
+<div className="flex items-center gap-1">
+  <button
+    type="button"
+    onClick={captureRay}
+    disabled={rayBusy}
+    title={status === 'ready'
+      ? `Render a high-resolution still of the scene on screen: ${rayPlan.realWidth || 0}×${rayPlan.realHeight || 0} px${rayPlan.antialias ? ' (antialias pass)' : ''}, ${rayPlan.tiles || 0} tiles. It is NGL's own supersampling render of the very scene — every palette, the ring plates, the ESP surface, the fog and the light rig. The still is SHOWN here first (✨ Ray preview): nothing is written until you press 💾 Save PNG, which downloads exactly the image you saw. A size this GPU cannot take is reduced automatically, so the render never fails.`
+      : 'Load a structure first — ✨ Ray renders the 3D scene on screen at high resolution'}
+    className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${rayBusy ? 'bg-amber-50 border-amber-300 text-amber-700 cursor-wait' : 'bg-white border-amber-300 text-amber-700 hover:bg-amber-50'}`}
+  >
+    {rayBusy ? '✨ Rendering…' : '✨ Ray'}
+  </button>
+  <select
+    value={rayFactor}
+    onChange={(e) => setRayFactor(Number(e.target.value))}
+    title={'Supersampling multiple of the canvas — the bigger it is, the smoother and the larger the PNG. The pixel size written after the × is what the render will really produce on this screen; a size this GPU cannot take is reduced automatically.'}
+    className="border border-amber-300 rounded-md px-1 py-1 text-[11px] bg-white outline-none focus:border-amber-500 h-7"
+  >
+    {raySizes.map((o) => (
+      <option key={o.factor} value={o.factor}>
+        {o.label}{o.allowed ? '' : ` → ${o.best}×`}
+      </option>
+    ))}
+  </select>
+  <label
+    title="Transparent background: the PNG keeps an alpha channel, so the molecule can be dropped on any coloured page or slide (the interactive canvas is not affected)"
+    className="px-1.5 py-1 text-[10px] font-bold rounded-md border transition-colors h-7 flex items-center gap-1 cursor-pointer bg-white border-amber-300 text-amber-700 hover:bg-amber-50 whitespace-nowrap"
+  >
+    <input type="checkbox" checked={rayTransparent} onChange={(e) => setRayTransparent(e.target.checked)} className="accent-amber-600" />
+    ⬚ alpha
+  </label>
+  {/* ◐ CASTED SHADOWS — the report: « the ray button only takes a snapshot of the
+      image but does not introduce casted shadows ». NGL 2.4 ships no shadow-map
+      pass (see the note above `flagMeshShadows`), so the shadow of the still is
+      computed from the ATOMS — the very camera of the canvas, the very lamp of
+      the ◐ Shadows rig — and multiplied into the pixels NGL just wrote
+      (utils/viewerRayShadows.js). The PNG therefore carries a real projected
+      shadow; untick to get the plain supersampled still back. Only what is
+      DRAWN casts: a molecule this viewer has hidden (a section unticked, a look
+      set to « hide ») keeps its atoms in the structure but draws no
+      representation, and it no longer throws a shadow of itself into the still —
+      the report « I see a projected membrane, while the membrane is hidden in the
+      program » (see drawnAtomIndicesOf in that module). */}
+  <label
+    title="Casted shadows in the PNG: the shadow the molecule throws, from the very lamp of the ◐ Shadows rig (its Azimuth / Elevation — the 💡 Light sliders of « 2 · Toolbar », shown whenever these ray shadows are on). NGL cannot cast them — the shadow is computed from the atoms with the camera and the light of the scene and multiplied into the still. Untick for the plain supersampled image."
+    className={`px-1.5 py-1 text-[10px] font-bold rounded-md border transition-colors h-7 flex items-center gap-1 cursor-pointer whitespace-nowrap ${rayShadows ? 'bg-amber-100 border-amber-400 text-amber-900' : 'bg-white border-amber-300 text-amber-700 hover:bg-amber-50'}`}
+  >
+    <input type="checkbox" checked={rayShadows} onChange={(e) => setRayShadows(e.target.checked)} className="accent-amber-600" />
+    ◐ shadows
+  </label>
+  {rayShadows && (
+    <>
+      <input
+        type="range" min="0.1" max="1" step="0.05" value={rayShadowStrength}
+        onChange={(e) => setRayShadowStrength(Number(e.target.value))}
+        className="accent-amber-600 w-16 shrink-0"
+        title={`Darkness of the cast shadow — ${Math.round(rayShadowStrength * 100)} % (the DIRECTION comes from the 💡 Light sliders of « 2 · Toolbar » — Azimuth / Elevation)`}
+        aria-label="cast shadow strength"
+      />
+      {/* LA DOUCEUR DU CONTOUR — l'autre moitié réglable d'une ombre portée (sa
+          direction est celle du rig ◐). Elle multiplie la pénombre du module
+          (RAY_SHADOW_DEFAULTS.blur : 0 = contour net, 1 = les valeurs par défaut,
+          4 = très diffuse) — la noirceur ne bouge pas, et un rendu à 1 est
+          exactement celui d'avant. */}
+      <input
+        type="range" min="0" max="4" step="0.25" value={rayShadowBlur}
+        onChange={(e) => setRayShadowBlur(Number(e.target.value))}
+        className="accent-amber-600 w-16 shrink-0"
+        title={`Softness of the cast shadow — ×${Number(rayShadowBlur).toFixed(2)} of the default penumbra (0 = a hard edge, 1 = the viewer's own default, 4 = a very diffuse shadow). It widens the shadow blur AND how much that blur grows with the occluder-to-receiver distance.`}
+        aria-label="cast shadow blur"
+      />
+    </>
+  )}
+  {/* ⏹ STOP WAITING (le rapport : « start ray tracing … hangs ») : NGL ne sait pas
+      annuler un `makeImage` — le seul geste honnête est de cesser de l'attendre.
+      Le rendu abandonné n'écrira AUCUN fichier ; le module abandonne de lui-même
+      après RAY_STALL_MS de silence (voir viewerRayImage.js). */}
+  {rayBusy && (
+    <button
+      type="button"
+      onClick={abandonRay}
+      className="px-1.5 py-1 text-[10px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap bg-white border-amber-400 text-amber-800 hover:bg-amber-50"
+      title="Stop waiting for this render: the button is freed at once and this still is abandoned (NGL cannot cancel an image it has begun — no file will be written). The ✨ Ray render itself gives up on its own after 45 s without a sign of life."
+    >
+      ⏹ stop
+    </button>
+  )}
+</div>
+{rayMsg && (
+<span className="text-[10px] font-bold text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">{rayMsg}</span>
+)}
+</div>
+
+{/* ── 🎨 STYLES — l'ex-bouton « 🎨 Predefined styles » est devenu une BANDE
+    TOUJOURS LÀ, posée sur la ligne de 🌫 Scene et séparée d'elle par un filet
+    (la demande : « the “predefined styles” button can be replaced by a “Styles”
+    section containing the cumulative, snapshot, save, load, delete buttons and
+    the space to title the name of the file. The “styles” section can fit inside
+    the line of the “scene” section but it should be clear that they are
+    separated »). Les cinq gestes demandés, dans cet ordre : le NOM, les DEUX
+    modes d'apprentissage (🎨 Cumulative · 📷 Snapshot), puis 💾 Save · 📂 Load… ·
+    🗑 Delete — et, au bout, les deux gestes de FICHIER (⬇ · ⬆) qui emportent une
+    style sur un autre ordinateur.
+    IL N'Y A PLUS QU'UN JEU DE CES CINQ BOUTONS : la bande en montrait DEUX (les
+    « setups » nommés, puis les deux modes), donc deux pavés de prose pour
+    expliquer deux fois la même chose. Tout ce qui était écrit ici se lit
+    maintenant en survolant le bouton qui le fait — la liste des styles
+    enregistrées comprise — et la bande ne coûte plus une seule ligne de texte.
+    Les « setups » de l'ancienne bande sont repris une fois comme thèmes du même
+    nom (la migration est en tête du composant, à côté de l'état des thèmes). */}
+<span className="w-px h-6 bg-slate-200 shrink-0" aria-hidden="true" />
+<div className="flex flex-wrap items-center gap-1 rounded-md border border-teal-200 bg-teal-50/40 px-1.5 py-1">
+<span className="text-[9px] font-black text-teal-700 uppercase tracking-wide whitespace-nowrap" title={`Save / load the whole visualisation look under a NAME: every molecule style, its colour, its radii, the labels, Fog / Shadows / Clipping / Background, the light and its colour… ${stylesSavedTitle}`}>🎨 Styles</span>
+<input
+type="text"
+value={setupName}
+onChange={(e) => setSetupName(e.target.value)}
+onKeyDown={(e) => { if (e.key === 'Enter') saveActiveEnv(); }}
+placeholder="Style name"
+title="The NAME of the style — 💾 saves the look on screen under it (an existing name is overwritten, and an empty box gets a name typed for you), 🗑 Delete removes the one written here, ⬇ exports it. It is the name you will find in 📂 Load… and the name of the .json file."
+className="border border-teal-300 rounded-md px-2 py-1 text-[11px] w-28 bg-white outline-none focus:border-teal-500 h-7"
+/>
+{[['theme', '🎨 Cumulative'], ['snapshot', '📷 Snapshot']].map(([m, label]) => (
+<button key={m} type="button"
+onClick={() => { setSetupSaveMode(m); setThemeConflicts(null); setThemeChoices(null); }}
+title={m === 'theme'
+? 'Cumulative: 💾 Save learns the styles BY MOLECULAR CLASS (protein · nucleic acid · lipid · sugar · ligand · water · ion) and MERGES them into the theme — a style you can reuse on another file; a class the theme does not know keeps the neutral base style.'
+: 'Snapshot: 💾 Save photographs THIS exact scene, section by section (« protein · chain A » …), with no merge — one isolated setting for this system only.'}
+className={`px-2 py-1 text-[10px] font-bold rounded border h-7 whitespace-nowrap ${setupSaveMode === m ? 'bg-teal-600 border-teal-700 text-white' : 'bg-white border-teal-300 text-teal-800 hover:bg-teal-100'}`}>
+{label}
+</button>
+))}
+<button type="button" onClick={saveActiveEnv}
+title={setupSaveMode === 'theme'
+? `Save the theme under the name written on the left: the styles of the classes on screen are learned (merged), the rest of the file is untouched. A name is typed for you when the box is empty. ${stylesSavedTitle}`
+: `Save a snapshot of this scene under the name written on the left (an existing name is overwritten — no merge): one picture of THIS system, section by section. A name is typed for you when the box is empty. ${stylesSavedTitle}`}
+className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-teal-400 text-teal-800 hover:bg-teal-100 h-7 whitespace-nowrap">
+💾 Save {setupSaveMode === 'theme' ? 'theme' : 'snapshot'}
+</button>
+<select value="" onChange={(e) => loadActiveEnv(e.target.value)}
+title={setupSaveMode === 'theme'
+? `Put a saved theme back on screen: the global environment first, then the style of every class the theme knows — a class it does not know keeps the neutral base style. ${stylesSavedTitle}`
+: `Put a saved snapshot back on screen: the global environment and the styles of the very sections it photographed. ${stylesSavedTitle}`}
+className="border border-teal-300 rounded-md px-1.5 py-1 text-[11px] bg-white outline-none focus:border-teal-500 h-7 max-w-[10rem]">
+<option value="">📂 Load…</option>
+{Object.keys(activeEnvStore().map).sort().map((n) => <option key={n} value={n}>{n}</option>)}
+</select>
+<button type="button" onClick={deleteActiveEnv}
+title={`Delete the theme / snapshot whose name is written on the left. The scene on screen is NOT touched — deleting a saved style never changes what you see. ${stylesSavedTitle}`}
+className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-teal-300 text-teal-800 hover:bg-teal-100 h-7 whitespace-nowrap">
+🗑 Delete
+</button>
+<button type="button" onClick={() => exportActiveEnv(setupName)}
+title={`Download the style named on the left as a .json file — it can be imported on another page or another computer. ${stylesSavedTitle}`}
+className="px-1.5 py-1 text-[11px] font-bold rounded border bg-white border-teal-300 text-teal-800 hover:bg-teal-100 h-7">
+⬇
+</button>
+<label title={`Import a style .json file (written by ⬇): its mode is read from the file and it is applied at once. ${stylesSavedTitle}`}
+className="cursor-pointer px-1.5 py-1 text-[11px] font-bold rounded border bg-white border-teal-300 text-teal-800 hover:bg-teal-100 h-7 inline-flex items-center">
+⬆
+<input type="file" accept=".json,application/json"
+onChange={(e) => { importActiveEnvFile(e.target.files && e.target.files[0]); e.target.value = ''; }}
+className="hidden" />
+</label>
+{setupMsg && (
+<span className="text-[10px] font-bold text-teal-700 bg-teal-50 border border-teal-200 rounded-md px-2 py-1 max-w-[320px] truncate" title={setupMsg}>{setupMsg}</span>
+)}
+{/* Le conflit d'un THÈME (deux molécules d'une même classe dessinées autrement) :
+    le SEUL texte que la bande garde, parce qu'il attend une réponse. */}
+{themeConflicts && (
+<div className="w-full flex flex-wrap items-center gap-1.5 bg-amber-50 border border-amber-300 rounded-md px-2 py-1">
+<span className="text-[10px] font-black text-amber-800" title="A theme keys its styles by MOLECULAR CLASS: when two molecules of the same class are drawn differently, you choose which one becomes the class default — then press 💾 Save again. The styles of the other molecules are not touched.">
+{themeConflicts.length} class(es) drawn in two ways — choose the class default
+</span>
+{themeConflicts.map((c) => (
+<label key={c.kind} className="flex items-center gap-1 text-[10px] font-bold text-amber-900">
+<span title="The molecular class a theme keys its styles by">{MOL_KIND_LABELS[c.kind] || c.kind}</span>
+<select value={(themeChoices && themeChoices[c.kind]) || ''}
+onChange={(e) => setThemeChoices({ ...(themeChoices || {}), [c.kind]: e.target.value })}
+title="The molecule whose style becomes the default of this class in the theme"
+className="border border-amber-300 rounded-md px-1.5 py-1 text-[11px] bg-white outline-none focus:border-amber-500 h-7">
+{c.options.map((sec) => <option key={sec.id} value={sec.id}>{classLabelOfSection(sec)}</option>)}
+</select>
+</label>
+))}
+</div>
+)}
+</div>
+
+{/* ── LIGNE 2 · ✏️ MODIFY │ 📏 ANALYSIS │ 🧪 PYMOL : les trois partagent la
+    deuxième ligne, chacun dans sa boîte, séparés par un filet (la demande :
+    « the “analysis” and “modify” can be in one line but clearly separated »).
+    Cette barre pleine largeur est ce qui met fin à la ligne 1 : un frère qui
+    occupe toute la largeur oblige les suivants à descendre. */}
+<span className="basis-full h-0" aria-hidden="true" />
+
+{/* ── Modify ─────────────────────────────────────────────────────────────── */}
+<span className="w-px h-6 bg-slate-200 shrink-0" aria-hidden="true" />
+<div className="flex flex-wrap items-center gap-1 rounded-md border border-amber-200 bg-amber-50/40 px-1.5 py-1">
+<span className="text-[9px] font-black text-amber-700 uppercase tracking-wide whitespace-nowrap" title="Change the molecule itself: build it from the page's sequence, fold it for its disulphides, show or hide the drawn disulphide bonds, rebuild the hydrogens, rename the atoms, colour by electrostatic potential and renumber the residues.">✏️ Modify</span>
+{/* 🧬 From sequence — the page's sequence (Proteins / DNA / RNA) becomes a 3D
+    structure at any moment, even over a loaded PDB (which is put aside: the
+    ↩ Restore PDB button of §1 General brings it back). No network round trip:
+    the page builds the backbone from the sequence and the secondary structure
+    painted on it. */}
+<button
+type="button"
+onClick={buildFromSequence}
+disabled={!sequenceStructureText}
+title="Build the 3D structure from the sequence typed in “Molecular structure and visualization” (Proteins / DNA / RNA) — the model the viewer shows whenever no PDB is loaded. What is on screen is put aside, not lost: « ↩ Back to PDB », right here, and ↩ Restore PDB (§1 General) bring it back — including the PDB this page defines."
+className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap bg-white border-emerald-300 text-emerald-700 hover:bg-emerald-50 disabled:opacity-40 disabled:cursor-not-allowed"
+>
+🧬 Structure from sequence
+</button>
+{seqBuildMsg && (
+<span title={seqBuildMsg} className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-md px-2 py-1 h-7 inline-flex items-center max-w-[380px] truncate">
+{seqBuildMsg}
+</span>
+)}
+{/* ⚭ Fold for disulfides — le pont disulfure défini dans « Cysteine states »
+    est DÉJÀ dessiné (CONECT SG–SG, écrit par le modèle de la page) ; ce bouton
+    fait un pas de plus, sur demande : la chaîne est détendue pour que les deux
+    Sγ puissent se lier. Désactivé quand la page n'a rien à détendre. */}
+<button
+type="button"
+onClick={foldForDisulfides}
+disabled={typeof buildDisulfideFoldedStructure !== 'function'}
+title="Relax the sequence model (phi/psi between the two cysteines and their chi1 rotamers) until each disulphide pair defined in “Cysteine states” has its two S-gamma atoms within bonding distance — the S–S is then a real bond in Sticks / Ball+stick. The model is a chain relaxation, NOT a physical fold, and the message says the true Sγ–Sγ distance of every pair, including the ones that could not be closed."
+className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap bg-white border-amber-300 text-amber-700 hover:bg-amber-50 disabled:opacity-40 disabled:cursor-not-allowed"
+>
+⚭ Fold for disulfides
+</button>
+{disulfideFoldMsg && (
+<span title={disulfideFoldMsg} className="text-[10px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1 h-7 inline-flex items-center max-w-[380px] truncate">
+{disulfideFoldMsg}
+</span>
+)}
+{/* ⚭ Disulfides: shown / hidden — L'INTERRUPTEUR DU DESSIN, PAS DE LA DÉFINITION.
+    Le pont est écrit par la page (CONECT SG–SG) et NGL le dessine ; ngl@2.4.0
+    n'offre AUCUNE visibilité par liaison, donc cacher le pont se fait dans le
+    GRAPHE de la structure au chargement (utils/disulfideBonds.js), à côté des deux
+    autres règles de liaisons — et le modèle est resservi, le même geste que le ⚗️
+    rebuild des hydrogènes. Rien du fichier n'est touché : ni le PDB, ni le texte
+    de la page, ni le 📥 Download, ni la copie Drive, ni « Cysteine states ».
+    Inactif quand la structure à l'écran ne dessine aucun pont — et le geste le DIT
+    alors au lieu de ne rien faire, comme son voisin ⚭ Fold for disulfides. */}
+<button
+type="button"
+onClick={toggleDisulfideBonds}
+disabled={disulfideDrawn.bonds.length === 0}
+title="Show or hide the disulphide bonds the model on screen DRAWS. Hiding takes every Sγ–Sγ link between two residues out of the structure's own bond graph (utils/disulfideBonds.js), so Sticks / Ball+stick / Lines stop drawing them — nothing else changes: every atom stays, and the definition in “Cysteine states”, the PDB file, the 📥 download and the Drive copy keep their S–S. The model is then re-served, the same gesture as the ⚗️ hydrogen rebuild. Inactive when the structure on screen draws no disulphide at all: NGL draws an S–S from the bond graph only (a CONECT record, or the distance between two Sγ) — a file that declares SSBOND alone, with its two cysteines apart, draws none."
+className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap bg-white border-amber-300 text-amber-700 hover:bg-amber-50 disabled:opacity-40 disabled:cursor-not-allowed"
+>
+{disulfidesShown ? '⚭ Disulfides: shown' : '⚭ Disulfides: hidden'}
+</button>
+{/* Le compte rendu, juste à côté : chaque pont par son NUMÉRO AFFICHÉ et par la
+    distance Sγ–Sγ RÉELLE de l'écran — un pont dessiné mais étiré est dit ÉTIRÉ,
+    il n'est pas caché (c'est la distance de liaison de utils/disulfideFold.js qui
+    tranche, la seule définition de « pont fermé »). */}
+{disulfideShowMsg && (
+<span title={disulfideShowMsg} className="text-[10px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1 h-7 inline-flex items-center max-w-[380px] truncate">
+{disulfideShowMsg}
+</span>
+)}
+
+{/* ↩ Back to PDB — THE WAY BACK, WHERE THE GESTURE WAS MADE. §1 General's toggle
+    does exactly the same thing (ONE implementation: restoreStashedPdb), but the
+    report is explicit — the button that brings back the structure the viewer
+    showed BEFORE « 🧬 Structure from sequence » has to be there, beside it: « before
+    I had a button to come back to the structure that was present before I clicked
+    on "from sequence". Now it has disappeared. » ET LE RAPPORT DE CETTE SESSION DIT
+    QU'IL N'APPARAISSAIT TOUJOURS PAS : « the button to recall predefined PDB after
+    "from sequence" … does not appear ». Sa condition exigeait en effet que la
+    structure rangée ne soit PAS celle d'un PDB chargé (`structOrigin !== 'external'`),
+    alors que le geste de retour doit se voir DÈS QUE quelque chose est de côté — le
+    titre dit lequel. Il apparaît donc pour TOUT ce qui est rangé, y compris le PDB
+    que la page définit (voir pageStructureStash, appelé par buildFromSequence
+    quand l'écran montre déjà le modèle de la séquence). */}
+{!!stashedPdb && (
+<button
+type="button"
+onClick={restoreStashedPdb}
+title={`Bring back ${(stashedPdb && stashedPdb.name) || 'the structure'} — the file / URL / model the viewer showed before « 🧬 From sequence », with the trajectory it had.`}
+className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap bg-white border-emerald-300 text-emerald-700 hover:bg-emerald-50"
+>
+↩ Back to PDB
+</button>
+)}
+{/* 🖱 PLACER UNE MOLÉCULE — les boutons ✥ Move · ↻ Rotate ont disparu avec le mode
+qu'ils armaient (le rapport : « The separated move and rotate buttons are
+impractical… ») : le geste se fait à la souris, sur la molécule que l'on attrape
+(voir installMoleculeDrag). Comme il n'y a plus de bouton pour l'apprendre, cette
+pastille LE DIT — elle ne fait rien d'autre. Le X · Y · Z tapé reste supprimé :
+un glisser dit où va une molécule, et le ↺ de son espace annule position ET
+rotation. */}
+<span
+  className="px-2 py-1 text-[10px] font-semibold rounded-md border h-7 inline-flex items-center whitespace-nowrap bg-amber-50 border-amber-200 text-amber-800"
+  title={`Drag ON a molecule to turn it about its own centre (left button) · right-drag ON it to slide it — the other molecules stay where they are, and the molecule you take hold of becomes « ${molNameOf(selectedMolKey)} »'s ★ reference (its ↺ in the styling bar puts it back). Start the drag on the background (or hold Alt) to turn the camera as before, and use the wheel to zoom. In a PDB that holds SEVERAL molecules (a complex, a receptor with its ligands, an NMR model), the molecule under the pointer is the ONE that moves: its atoms are placed inside the structure, the file is never split into copies (a split would draw every atom twice and would freeze the frame slider), and its place is written into the film's poses with the ↺ of its space putting it back.`}>
+  🖱 drag a molecule: turn · right-drag: slide{heldPart ? ` · 🖐 ${heldPart}` : ''}
+</span>
+<button
+type="button"
+onClick={rebuildHydrogensNow}
+title="Delete every hydrogen of the peptide and re-place them with ideal bond lengths and angles (N–H ≈ 1.01 Å, C–H ≈ 1.09 Å…). All atom names are kept and no heavy atom moves — the rebuild works on generated structures and on PDB files you load with the 📂 button."
+className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap bg-white border-slate-300 text-slate-700 hover:bg-indigo-50 hover:border-indigo-300 hover:text-indigo-700"
+>
+⚗️ Rebuild H
+</button>
+{rebuildMsg && (
+<span title={rebuildMsg} className="text-[10px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-md px-2 py-1 h-7 inline-flex items-center max-w-[380px] truncate">
+{rebuildMsg}
+</span>
+)}
+
+{/* ✏️ Atom names (rename) — the control of the Modify group; its panel is a
+    full-width child of the toolbar so the row itself stays one line tall. */}
+<button type="button" onClick={() => setShowAtomPanel((v) => !v)}
+  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 ${showAtomPanel ? 'bg-amber-100 border-amber-400 text-amber-900' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+  title="Rename the atoms of the 3D structure (organic molecules included): click-to-rename in the 3D view, auto-naming from the 2D formula, or edit the name list directly. The 2D formula is never touched.">
+  ✏️ Atom names{Object.keys(renames).length ? ` (${Object.keys(renames).length})` : ''}
+</button>
+{showAtomPanel && (
+  <div className="w-full bg-amber-50/40 border border-amber-200 rounded-lg p-3 flex flex-col gap-2">
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <span className="text-[10px] font-black text-amber-700 uppercase tracking-wide">Atom names (3D only — the 2D formula is not touched)</span>
+      <div className="flex flex-wrap gap-1.5">
+        <button type="button" onClick={() => setRenameMode((v) => !v)}
+          className={`px-2 py-1 text-[10px] font-bold rounded border ${renameMode ? 'bg-amber-600 text-white border-amber-600' : 'bg-white border-amber-300 text-amber-700 hover:bg-amber-100'}`}>
+          {renameMode ? '● Click an atom…' : 'Click-to-rename'}
+        </button>
+        <button type="button" onClick={autoNameFrom2D} className="px-2 py-1 text-xs font-bold rounded bg-white border border-amber-300 text-amber-700 hover:bg-amber-100">Auto-name (2D)</button>
+        <button type="button" onClick={clearRenames} className="px-2 py-1 text-xs font-bold rounded bg-white border border-red-300 text-red-600 hover:bg-red-50">Clear overrides</button>
+      </div>
+    </div>
+    <p className="text-[10px] text-slate-500">
+      {renameMode ? 'Click any atom in the 3D viewer, then type its new name below.' : 'Search the atom list and edit names directly. Changes are stored with the test and persist.'}
+    </p>
+    {renameTarget !== null && (
+      <div className="flex items-center gap-2 bg-white border border-amber-300 rounded-lg p-2">
+        <span className="text-xs font-bold text-slate-700">Atom #{renameTarget}:</span>
+        <input value={renameDraft} onChange={(e) => setRenameDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') applyRename(); }} className="border border-slate-300 rounded px-2 py-1 text-xs outline-none focus:border-amber-500" />
+        <button type="button" onClick={applyRename} className="px-2 py-1 text-xs font-bold rounded bg-amber-600 text-white">OK</button>
+        <button type="button" onClick={() => setRenameTarget(null)} className="px-2 py-1 text-[10px] font-bold rounded bg-slate-200 text-slate-700">Cancel</button>
+      </div>
+    )}
+    <div className="flex items-center gap-2">
+      <input value={atomSearch} onChange={(e) => setAtomSearch(e.target.value)} placeholder="Filter atoms…" className="border border-slate-300 rounded px-2 py-1 text-xs w-44 outline-none focus:border-amber-500" />
+      <span className="text-[10px] text-slate-400">{atomList.length} atoms</span>
+    </div>
+    <div className="max-h-48 overflow-y-auto custom-scrollbar border border-amber-200 rounded-lg bg-white">
+      <table className="w-full text-xs">
+        <thead className="sticky top-0 bg-amber-50">
+          <tr>
+            <th className="text-left px-2 py-1 text-[9px] uppercase text-amber-700">#</th>
+            <th className="text-left px-2 py-1 text-[9px] uppercase text-amber-700">El</th>
+            <th className="text-left px-2 py-1 text-[9px] uppercase text-amber-700">Current</th>
+            <th className="text-left px-2 py-1 text-[9px] uppercase text-amber-700">New name</th>
+          </tr>
+        </thead>
+        <tbody>
+          {atomList
+            .filter((a) => !atomSearch || (a.name || '').toLowerCase().includes(atomSearch.toLowerCase()) || (renames[a.idx] || '').toLowerCase().includes(atomSearch.toLowerCase()))
+            .slice(0, 200)
+            .map((a) => (
+              <tr key={a.idx} className="border-t border-amber-100">
+                <td className="px-2 py-1 text-slate-400">{a.idx}</td>
+                <td className="px-2 py-1 font-bold text-slate-600">{a.element}</td>
+                <td className="px-2 py-1 font-mono text-slate-500">{a.name}</td>
+                <td className="px-2 py-1">
+                  <input value={renames[a.idx] || a.name} onChange={(e) => { const next = { ...renames }; if (e.target.value.trim()) next[a.idx] = e.target.value; else delete next[a.idx]; persistRenames(next); }} className="w-20 border border-slate-300 rounded px-1.5 py-0.5 text-xs outline-none focus:border-amber-500" />
+                </td>
+              </tr>
+            ))}
+        </tbody>
+      </table>
+    </div>
+  </div>
+)}
+
+{/* ⚡ ESP — the electrostatic-potential surface of the molecule selected in the
+    Molecules bar. It sits in ✏️ Modify (the request: « anche il pulsante ESP
+    dovrebbe piuttosto apparire nella sezione modify »): it MODIFIES what is on
+    screen — a translucent surface coloured by the Coulomb potential of the
+    charges (red = negative, white ≈ neutral, blue = positive) — exactly like
+    ⚗️ Rebuild H or ✏️ Atom names beside it. Clicking again removes the surface,
+    and the ⚡ Range readout below appears while one is on, for the two potentials
+    that give it its colour scale (kcal/mol). */}
+<button
+type="button"
+onClick={() => espToggle(selectedMolKey)}
+disabled={!espTargetComp}
+title={espBtnTitle}
+className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed ${espOnSelected ? 'bg-fuchsia-100 border-fuchsia-400 text-fuchsia-800 hover:bg-fuchsia-200' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+>
+{espOnSelected ? '⚡ ESP: On' : '⚡ ESP'}
+</button>
+{(espOnSelected || catEspActive) && (
+  <div className="flex items-center gap-1.5 bg-white border border-fuchsia-200 rounded-lg px-2 py-1 text-[10px] text-slate-600 h-8 whitespace-nowrap" title="Electrostatic colour-scale limits in kcal/mol. Surface potentials at or below −N are drawn full RED (negative), 0 is white (neutral) and at or above +P full BLUE (positive). NGL's default ±50 is so wide that most surfaces look white — tighten the range to make the red and blue poles visible. Applies live (no surface rebuild) via Apply / Enter.">
+    <span className="font-black text-fuchsia-700 uppercase tracking-wide">⚡ Range</span>
+    <span className="font-bold text-red-600">−</span>
+    <input
+      type="number"
+      min="0.5"
+      max="500"
+      step="1"
+      value={Math.round(espLimits[0] * 10) / 10}
+      onChange={(e) => { const v = parseFloat(e.target.value); setEspLimits((p) => [Number.isFinite(v) && v > 0 ? Math.min(500, v) : p[0], p[1]]); }}
+      onKeyDown={espApplyLimitsOnEnter}
+      className="w-12 border border-slate-300 rounded px-1 py-0.5 text-right outline-none focus:border-fuchsia-400 text-[10px] font-mono"
+      aria-label="Negative ESP limit (red)"
+    />
+    <span className="text-slate-400 font-bold">0</span>
+    <span className="font-bold text-blue-600">+</span>
+    <input
+      type="number"
+      min="0.5"
+      max="500"
+      step="1"
+      value={Math.round(espLimits[1] * 10) / 10}
+      onChange={(e) => { const v = parseFloat(e.target.value); setEspLimits((p) => [p[0], Number.isFinite(v) && v > 0 ? Math.min(500, v) : p[1]]); }}
+      onKeyDown={espApplyLimitsOnEnter}
+      className="w-12 border border-slate-300 rounded px-1 py-0.5 text-right outline-none focus:border-fuchsia-400 text-[10px] font-mono"
+      aria-label="Positive ESP limit (blue)"
+    />
+    <span>kcal/mol</span>
+    <button type="button" onClick={() => espApplyLimits()} className="px-1.5 py-0.5 rounded border bg-fuchsia-50 border-fuchsia-300 text-fuchsia-700 hover:bg-fuchsia-100 font-bold">Apply</button>
+    <button type="button" onClick={() => espApplyLimits(10, 10)} className="px-1.5 py-0.5 rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-50 font-semibold" title="Preset: red ≤ −10, blue ≥ +10 kcal/mol">±10</button>
+    <button type="button" onClick={() => espApplyLimits(25, 25)} className="px-1.5 py-0.5 rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-50 font-semibold" title="Preset: red ≤ −25, blue ≥ +25 kcal/mol">±25</button>
+    <button type="button" onClick={() => espApplyLimits(50, 50)} className="px-1.5 py-0.5 rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-50 font-semibold" title="NGL's original wide range ±50 — only the strongest charges reach red/blue">±50</button>
+  </div>
+)}
+{/* 🔢 Renumber — the button AND its list live in ✏️ Modify (the request: « la
+    lista per il renumbering … dovrebbe piuttosto apparire nella sezione
+    modify »): the panel lists every residue and the number it will take, and the
+    3D labels and the residue strip follow the new numbers. The tiny 🔢 of a
+    molecule's header (in the styling bar on the right) opens THE SAME panel —
+    one implementation, see renderRenumberPanel. */}
+<button
+type="button"
+onClick={toggleRenumberPanel}
+title="🔢 Renumber the residues (the panel below lists every residue and the number it will take; the 3D labels and the residue strip follow it)"
+className="text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-md px-2 py-1.5 h-8 whitespace-nowrap"
+>
+🔢 Renumber{showRenumberPanel ? ' ▲' : ' ▼'}
+</button>
+{/* The ONE renumbering panel of the viewer (see renderRenumberPanel) — the same
+    specification the 🔢 of a molecule's header opens. */}
+{renderRenumberPanel()}
+</div>
+
+{/* ── Analysis ───────────────────────────────────────────────────────────── */}
+<span className="w-px h-6 bg-slate-200 shrink-0" aria-hidden="true" />
+<div className="flex flex-wrap items-center gap-1 rounded-md border border-rose-200 bg-rose-50/40 px-1.5 py-1">
+<span className="text-[9px] font-black text-rose-700 uppercase tracking-wide whitespace-nowrap" title="Read the structure: measure the distance between two atoms (in Å), clear the drawn distances and show or hide the green highlight of the atoms assigned by NMR.">📏 Analysis</span>
+<button
+type="button"
+onClick={toggleMeasureMode}
+title={measureMode ? '📏 Measure is ON — click any two atoms to draw the distance between them (shown in Å). Click again to stop measuring; drawn distances stay visible.' : 'Measure atom distances: click any two atoms to draw the distance between them, with a live label in Å (NGL distance representation).'}
+className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${measureMode ? 'bg-rose-50 border-rose-400 text-rose-700 ring-1 ring-rose-200' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+>
+{measureMode ? '📏 Measuring…' : '📏 Measure'}
+</button>
+{measureMode && (
+<span title={measureInfo || 'Click two atoms to measure the distance between them'} className="text-[10px] font-semibold text-rose-700 bg-rose-50 border border-rose-200 rounded-md px-2 py-1 h-7 inline-flex items-center max-w-[320px] truncate">
+{measureInfo || (measurePending ? `1st atom: ${measurePending} — click the 2nd…` : 'Click two atoms…')}
+</span>
+)}
+{(measureRepsRef.current.length > 0 || measurePending) && (
+<button
+type="button"
+onClick={clearMeasurements}
+className="px-2 py-1 text-[11px] font-bold rounded-md border border-rose-300 bg-white text-rose-700 hover:bg-rose-50 h-7 whitespace-nowrap"
+title={measurePending ? 'Cancel the pending first atom and remove all drawn distance measurements' : 'Remove all drawn distance measurements'}
+>
+✕ Clear distances
+</button>
+)}
+<button
+type="button"
+onClick={() => setShowAssignedFlag(!showManualHighlight)}
+title="Show / hide the green highlight on the atoms assigned by NMR"
+className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${showManualHighlight ? 'bg-green-50 border-green-300 text-green-700' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+>
+{showManualHighlight ? '🟢 Assigned: On' : '⚪ Assigned: Off'}
+</button>
+</div>
+
+{/* ── PyMOL ──────────────────────────────────────────────────────────────── */}
+<span className="w-px h-6 bg-slate-200 shrink-0" aria-hidden="true" />
+<div className="flex flex-wrap items-center gap-1 rounded-md border border-violet-200 bg-violet-50/40 px-1.5 py-1">
+<span className="text-[9px] font-black text-violet-700 uppercase tracking-wide whitespace-nowrap" title="Write, load and keep PyMOL scripts: every selection a script defines — and every look it creates on a raw expression — appears in the Selections bar on the LEFT of the 3D viewer (◀ collapses it). The macro itself is saved in Library → PyMOL Scripts, one session per experiment.">🧪 PyMOL</span>
+<button type="button" onClick={() => setShowPymolPanel((v) => !v)}
+  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 ${showPymolPanel ? 'bg-violet-100 border-violet-400 text-violet-900' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+  title="Paste or load a PyMOL script (select / show / hide / color / set sphere_scale·transparency / bg_color / cartoon · ribbon · tube / surface / spectrum / util.ray_shadows). Every selection the script defines — and every look it creates on a raw expression — appears in the Selections bar on the LEFT of the 3D viewer (◀ collapses it).">
+  🧪 Selections & PyMOL
+</button>
+{showPymolPanel && (
+  <div className="w-full bg-violet-50/40 border border-violet-200 rounded-lg p-3 flex flex-col gap-2">
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <span className="text-[10px] font-black text-violet-700 uppercase tracking-wide">Selections & PyMOL</span>
+      <div className="flex gap-1.5">
+        <button type="button" onClick={() => applyPyMOLScript(pymolScript)} className="px-2 py-1 text-[10px] font-bold rounded bg-violet-600 text-white hover:bg-violet-700">▶ Run script</button>
+        <button type="button" onClick={clearPyMOL} className="px-2 py-1 text-xs font-bold rounded bg-white border border-red-300 text-red-600 hover:bg-red-50">Clear</button>
+      </div>
+    </div>
+    <div className="flex flex-wrap items-center gap-2">
+      <label className="text-[10px] font-bold text-slate-500 uppercase shrink-0">Load script</label>
+      <select
+        value=""
+        onChange={(e) => {
+          const n = e.target.value;
+          e.target.value = '';
+          if (!n) return;
+          const entry = getPymolScripts()[n];
+          if (entry) { setPymolScript(typeof entry === 'string' ? entry : (entry.script || '')); setPymolScriptName(n); }
+        }}
+        title="Load a script saved in the Library (Library → PyMOL Scripts) into the editor, then press Run"
+        className="border border-violet-300 rounded-md px-2 py-1 text-xs bg-white outline-none focus:border-violet-500"
+      >
+        <option value="">— Library scripts —</option>
+        {Object.entries(getPymolScripts()).map(([n]) => (
+          <option key={n} value={n}>{n}</option>
+        ))}
+      </select>
+      <span className="text-[9px] text-slate-400">saved in <b>Library → PyMOL Scripts</b></span>
+      {/* 💾 ENREGISTRER LA MACRO ÉCRITE ICI (le rapport : « It should be possible to
+          save a pymol macro written in the viewer without having to go to the
+          library page to save a new one. »). Le nom + le bouton écrivent DANS la
+          réserve de la Library (voir saveViewerPymolScript) : aucun aller-retour
+          vers la page Library, la macro est relue par la liste ci-contre à
+          l'instant, et un nom déjà pris demande confirmation avant d'être
+          remplacé. Choisir une macro dans la liste remplit le nom, donc 💾 met
+          simplement à jour celle qu'on vient de charger. */}
+      <input
+        type="text"
+        value={pymolScriptName}
+        onChange={(e) => setPymolScriptName(e.target.value)}
+        placeholder="Macro name"
+        className="border border-violet-300 rounded-md px-2 py-1 text-xs bg-white outline-none focus:border-violet-500 w-28 shrink-0"
+        title="Name of this macro — press 💾 and it is saved in the Library (Library → PyMOL Scripts) under that name; an existing name asks before being replaced" />
+      <button
+        type="button"
+        onClick={saveViewerPymolScript}
+        className="px-2 py-1 text-[10px] font-bold rounded bg-white border border-violet-400 text-violet-700 hover:bg-violet-100 shrink-0"
+        title="Save the macro written below in the Library — the same store as Library → PyMOL Scripts, with no trip to the Library page">
+        💾 Save macro
+      </button>
+      {pymolSaveMsg && (
+        <span className="text-[10px] font-bold text-violet-800">{pymolSaveMsg}</span>
+      )}
+    </div>
+    <label className="text-[10px] font-bold text-slate-500 uppercase">Paste a PyMOL script (select / show / hide / color / set sphere_scale·transparency·cartoon_ring_mode·cartoon_ring_color·cartoon_ring_transparency·cartoon_nucleic_acid_mode / bg_color / cartoon · ribbon · tube / surface / spectrum / util.ray_shadows)</label>
+    <textarea value={pymolScript} onChange={(e) => setPymolScript(e.target.value)} rows={6}
+      className="w-full border border-violet-300 rounded-lg p-2 text-xs font-mono outline-none focus:border-violet-500 bg-white"
+      placeholder={'select peptide, polymer.protein\nshow cartoon, peptide\ncolor gold, name CA and peptide\nset sphere_scale, 0.6, headgroups\nset sphere_transparency, 0.3, upper_headgroups\nbg_color white'} />
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="text-[10px] font-bold text-slate-500 uppercase">Effects</span>
+      <label className="flex items-center gap-1.5 text-xs font-bold text-slate-600"><input type="checkbox" checked={autoShowSel} onChange={(e) => setAutoShowSel(e.target.checked)} className="accent-violet-600" /> Auto-show parsed selections</label>
+      <label className="flex items-center gap-1.5 text-xs font-bold text-slate-600"><input type="checkbox" checked={qualityHigh} onChange={(e) => setQualityHigh(e.target.checked)} className="accent-violet-600" /> High quality (ray-shadows approx.)</label>
+      <label className="flex items-center gap-1.5 text-xs font-bold text-slate-600">BG <input type="color" value={bgColor} onChange={(e) => setBgColor(e.target.value)} className="w-8 h-6 border border-slate-300 rounded cursor-pointer" /></label>
+    </div>
+    {pymolLog && <pre className="text-xs text-slate-700 bg-white border border-violet-200 rounded-lg p-2 whitespace-pre-wrap max-h-32 overflow-y-auto">{pymolLog}</pre>}
+    {/* 🧪 LA PORTÉE DE LA SESSION, DITE ICI — la demande de cette session : la barre
+        de sélections doit vivre dans TOUTES les instances de l'expérience et dans
+        AUCUNE autre. La ligne est là même sans sélection : c'est ce qui rend la règle
+        vérifiable à l'écran, et le titre nomme la clé qui la porte. */}
+    <p className="text-[10px] text-violet-700 leading-tight"
+      title={`A session is remembered under one key per EXPERIMENT (“${pymolSessionKeyRef.current}”): every condition of this experiment reads and writes it, and no other experiment reads it — not even one of the same type.`}>
+      🧪 Kept for {pymolScopeRef.current.text}.
+    </p>
+    {selections.length > 0 && (
+      <p className="text-[10px] text-violet-600 font-bold">
+        ✓ {selections.length} selection(s) parsed — the Selections bar is on the LEFT of the 3D viewer (◀ collapses it).
+        Touching any styling control of §2 hands the main structure back to the styling sections, so a macro never freezes them.
+      </p>
+    )}
+  </div>
+)}
+</div>
+</VSection>
+
+{/* (The global Side / Backbone / Mol / Large / Water selectors and the docking
+    row that used to sit here are gone: their functionality now lives in the
+    SIX per-category menus of §2 — Large + 💧 Water inside « F · Others » —
+    and the docking controls at the top of the §2 panel. No capability was
+    removed.) */}
+
+{/* Read the trajectory bar as a BAR, not as text: the banner below must stay a
+    JSX comment (curly braces around the block comment). A bare block comment
+    sitting between two JSX expressions is rendered as LITERAL TEXT and replaces
+    the whole ▶ Play · frame slider · speed bar with its own description. */}
+
+{/* ══ ▶ TRAJECTORY PLAYBACK — ▶ Play · frame slider · speed ═════════════════
+   Sits directly above the 3D viewer (it drives it) and appears as soon as a
+   trajectory exists for the CONDITION (a loaded file, a URL, or simply the name
+   declared on the experiment): the bar is never silent, and ▶ only wakes up
+   once the frames are really in the browser. */}
+{(trajFile || trajectoryFile || trajectorySrc || declaredTrajName) && (
+<VSection title="▶ Trajectory playback" hint="▶ Play · frame slider · speed — and 🎬 the same run saved as one video file">
+<div className="flex flex-wrap items-center gap-2 bg-indigo-50 border border-indigo-200 rounded-lg px-2 py-1 w-full">
+<button
+type="button"
+onClick={togglePlay}
+disabled={trajStatus !== 'ready' || keptFrames === 0 || videoBusy}
+className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white font-bold px-3 py-1 rounded-md text-[11px] shadow-sm transition-colors inline-flex items-center gap-1 h-7 whitespace-nowrap"
+>
+{playing ? '⏸ Pause' : '▶ Play'}
+</button>
+<div className="flex items-center gap-2 flex-1 min-w-[200px]">
+<span className="text-[10px] font-bold text-indigo-700 whitespace-nowrap">Frame</span>
+<input
+type="range"
+min={0}
+max={Math.max(0, keptFrames - 1)}
+value={currentFrame}
+onChange={handleFrameChange}
+disabled={trajStatus !== 'ready' || keptFrames === 0 || videoBusy}
+className="flex-1 accent-indigo-600"
+/>
+<span className="text-[10px] font-mono font-bold text-indigo-800 whitespace-nowrap">
+{currentFrame} / {Math.max(0, keptFrames - 1)}
+</span>
+</div>
+<div className="flex items-center gap-1.5">
+<label className="text-[10px] font-bold text-indigo-700 uppercase">Speed</label>
+<select
+value={speed}
+onChange={(e) => setSpeed(Number(e.target.value) || 10)}
+className="border border-indigo-300 rounded-md px-1.5 py-0.5 text-[11px] bg-white outline-none focus:border-indigo-500 h-7"
+>
+{[1, 5, 10, 20, 30, 60].map((s) => <option key={s} value={s}>{s} fps</option>)}
+</select>
+</div>
+<span className="flex-1 min-w-[160px] text-[10px] font-bold leading-tight">
+{trajStatus === 'loading' && (
+  <span className="text-indigo-600">
+    ⏳ Loading trajectory ({trajectoryFormat.toUpperCase()})…
+    {numFrames > 0 && (
+      <span className="text-indigo-500 font-mono font-semibold">
+        {' '}{trajTotal > 0
+          ? `${Math.min(numFrames, trajTotal).toLocaleString()} / ${trajTotal.toLocaleString()}`
+          : `${numFrames.toLocaleString()}`} frames loaded
+      </span>
+    )}
+  </span>
+)}
+{trajStatus === 'ready' && (
+  <span className="text-emerald-600">
+    ✓ {trajectoryFormat.toUpperCase()}: {numFrames} frames total → playing {keptFrames} (stride {effStride})
+  </span>
+)}
+{trajStatus === 'error' && <span className="text-red-600">⚠️ {trajError}</span>}
+{waitingTrajFile && (
+  <span className="text-amber-700">
+    ⏳ “{declaredTrajName}” is declared on this experiment but is not loaded in this browser yet — press
+    “⬇️ Bring it back from the cloud” (the reference copy), or pick the file here with 📂 Trajectory.
+    {/* LE GESTE EST ICI, à côté de la phrase qui le demande : rendu dès que la page
+        fournit sa fonction de reprise (celle de sa tentative automatique). Il est
+        inerte pendant qu'une recherche tourne, et le constat de cette recherche
+        (bringTrajectoryNote) s'affiche juste après — un clic sans Drive connecté ne
+        doit pas rester muet. */}
+    {onBringTrajectoryBack && (
+      <button
+        type="button"
+        onClick={onBringTrajectoryBack}
+        disabled={bringTrajectoryBusy}
+        title={`Bring “${declaredTrajName}” back from the cloud (the reference copy) — the very attempt this page makes on its own, restarted on demand.`}
+        className="ml-1.5 px-2 py-0.5 text-[10px] font-bold rounded-md border transition-colors h-6 inline-flex items-center whitespace-nowrap bg-white border-amber-400 text-amber-800 hover:bg-amber-50 disabled:opacity-40 disabled:cursor-not-allowed"
+      >
+        {bringTrajectoryBusy ? '⏳ Bringing it back…' : '⬇️ Bring it back from the cloud'}
+      </button>
+    )}
+    {bringTrajectoryNote && (
+      <span className="ml-1.5 font-semibold text-amber-800">{bringTrajectoryNote}</span>
+    )}
+    ▶ turns on as soon as the frames are read.
+  </span>
+)}
+</span>
+</div>
+{/* ── 🎬 VIDEO — « save the run as one file » (the request: « in molecular
+    viewer allow saving videos of the trajectory »). It is the SECOND ROW of
+    this very bar, because the film is made of the frames ▶ plays and of no
+    others: the bar PLAYS the run, this row WRITES it. Everything is readable
+    BEFORE the click (the plan summary: frames, length, pixels, Mbps) and
+    nothing of the scene is touched — the frame goes back where it was when the
+    recording ends. The file is written on the computer (like the ✨ Ray PNG
+    and the frame PDB); the viewer never uploads a film anywhere. */}
+<div className="flex flex-wrap items-center gap-2 bg-violet-50 border border-violet-200 rounded-lg px-2 py-1 w-full">
+<span className="text-[9px] font-black text-violet-700 uppercase tracking-wide whitespace-nowrap">🎬 Video</span>
+<label className="flex items-center gap-1 text-[10px] font-bold text-violet-700 whitespace-nowrap">
+fps
+<select
+value={videoFps}
+onChange={(e) => setVideoFps(Number(e.target.value) || VIDEO_DEFAULT_FPS)}
+title="Frames per second of the FILM — and of the recording, which lasts as long as the film will (a canvas is sampled in real time). 10 fps is the viewer's own playback rate."
+className="border border-violet-300 rounded-md px-1.5 py-0.5 text-[11px] bg-white outline-none focus:border-violet-500 h-7"
+>
+{VIDEO_FPS_CHOICES.map((f) => <option key={f} value={f}>{f} fps</option>)}
+</select>
+</label>
+<label className="flex items-center gap-1 text-[10px] font-bold text-violet-700 whitespace-nowrap">
+keep every
+<select
+value={videoStep}
+onChange={(e) => setVideoStep(Number(e.target.value) || 1)}
+title="How much of the run is filmed: 1 frame in every N is put in the film (the LAST frame of the run is always kept, so the film always ends where the run ends). The frames that are kept are the run, in order — the film is simply shorter."
+className="border border-violet-300 rounded-md px-1.5 py-0.5 text-[11px] bg-white outline-none focus:border-violet-500 h-7"
+>
+{VIDEO_STEP_CHOICES.map((s) => <option key={s} value={s}>{s === 1 ? 'frame' : `${s}th frame`}</option>)}
+</select>
+of the run
+</label>
+<button
+type="button"
+onClick={recordTrajectoryVideoClick}
+disabled={videoBusy || trajStatus !== 'ready' || keptFrames === 0 || !videoReady.ok}
+title={!videoReady.ok
+  ? `🎬 ${videoReady.note}`
+  : (trajStatus !== 'ready' || keptFrames === 0
+    ? 'Load a trajectory first — the film is made of the frames the ▶ button plays'
+    : `Record the run into ONE file: ${videoPlanSummary(videoPlanNow)}. 🎬 The film is the 3D canvas with the vignette the screen draws over it — the molecules, the styles, the labels and the extra molecules exactly as they are, frame by frame, in the order ▶ plays the run. It lasts as long as the film (the recording is real time): keep this tab in the foreground, a hidden tab is not painted. The file is written on your computer when the run is over, as a real video file (.webm, or mp4 where the browser can encode it) — nothing is uploaded anywhere; ⏹ Stop ends it WITHOUT writing anything.`)}
+className="bg-violet-600 hover:bg-violet-700 disabled:opacity-40 text-white font-bold px-3 py-1 rounded-md text-[11px] shadow-sm transition-colors inline-flex items-center gap-1 h-7 whitespace-nowrap"
+>
+{videoBusy ? '🎬 Recording…' : '🎬 Record the run'}
+</button>
+{videoBusy && (
+<button
+type="button"
+onClick={stopTrajectoryVideo}
+title="Stop the recording now. Nothing is written: a film of half a run is not the film of the run — record again to get the whole thing."
+className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap bg-white border-amber-400 text-amber-800 hover:bg-amber-50"
+>
+⏹ Stop
+</button>
+)}
+<span className="flex-1 min-w-[220px] text-[10px] font-bold text-violet-800 leading-tight">
+{videoMsg
+  || (videoReady.ok && videoPlanNow.ok
+    ? `${videoPlanSummary(videoPlanNow)} · ▶ plays it first if you want to check it`
+    : (videoReady.ok ? videoPlanNow.reason : videoReady.note))}
+</span>
+</div>
+</VSection>
+)}
+
 
 {/* Residue sequence strip — click a tick to select that whole residue.
     Only POLYMER residues (protein / nucleic) are shown: water, ions and
