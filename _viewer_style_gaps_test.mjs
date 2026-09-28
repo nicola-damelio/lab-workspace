@@ -299,7 +299,7 @@ CHAIN.chainColorStore.A = CHAIN.CHAIN_COLOR_PALETTE.A;
 gone("{look.colorBy === 'chain' && (", 'la rangée « Color by » ne répète plus le ⚙ de la roue');
 has('Chains · color by chain', 'la roue ⚙ a une section À ELLE pour les chaînes');
 has('{CHAIN_COLOR_ORDER.map((c) => (', '…qui dessine la MÊME liste que le schéma');
-has('onClick={() => setChainColors({ ...CHAIN_COLOR_PALETTE })}', '…avec son ↺ Defaults');
+has("onClick={() => setChainColors(paletteDefaults('labViewerChainColors', CHAIN_COLOR_PALETTE))}", '…avec son ↺ Defaults (les couleurs ENREGISTRÉES, voir paletteDefaults)');
 has("const [chainColors, setChainColors] = useState(() => loadPalette('labViewerChainColors', CHAIN_COLOR_PALETTE));",
   'la palette de chaînes est un état persisté comme les autres');
 has("try { localStorage.setItem('labViewerChainColors', JSON.stringify(chainColors)); } catch { /* ignore */ }",

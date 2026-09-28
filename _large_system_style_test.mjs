@@ -137,8 +137,8 @@ ok(VIEWER.includes('Colour of the ${it.what} — the 2°-structure palette (heli
 // Le ↺ de la section 2° structure du ⚙ remet la PALETTE à ses défauts : c'est une
 // palette (le schéma la lit en direct, rien n'est reconstruit), pas un choix de
 // dessin — elle n'a donc pas à quitter le rendu léger.
-ok(VIEWER.includes('onClick={() => setSstrucColors({ ...SSTRUC_COLOR_DEFAULTS })}'),
-  'le ↺ de la section 2° structure du ⚙ remet les trois couleurs à leurs défauts');
+ok(VIEWER.includes("onClick={() => setSstrucColors(paletteDefaults('labViewerSstrucColors', SSTRUC_COLOR_DEFAULTS))}"),
+  'le ↺ de la section 2° structure du ⚙ remet les trois couleurs enregistrées');
 ok(VIEWER.includes('const SSTRUC_COLOR_DEFAULTS = { ...sstrucColorStore };'),
   '…et ces défauts sont ceux du store que le schéma lit');
 // La barre « Molecules · styling » a remplacé le mode de docking : c'est elle qui

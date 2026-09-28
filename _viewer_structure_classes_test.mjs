@@ -145,7 +145,9 @@ const sandbox = [
   raw('glycanCache'), raw('structureAtomRecords'), sliceFn(VIEW, 'sugarMonomersOf'),
   sliceFn(VIEW, 'glycanEntityMapFor'), sliceFn(VIEW, 'ensureGlycanBonds'),
   // Les classes de lipides (PART 2.1bis).
-  sliceObject(VIEW, 'LIPID_CLASS_ALIASES'), raw('LIPID_CLASS_SUFFIXES'), sliceFn(VIEW, 'lipidClassOf'),  // PART 4 — les palettes et les schémas que la barre de style lit.
+  sliceObject(VIEW, 'LIPID_CLASS_ALIASES'), raw('LIPID_CLASS_SUFFIXES'), sliceFn(VIEW, 'lipidClassOf'),
+  // …et LA RECONNAISSANCE par nom (le rapport : TOCL2 · DLIPE · PLPA sont des lipides).
+  sliceDecl(VIEW, 'LIPID_RESNAMES'), sliceDecl(VIEW, 'isLipidResname'),  // PART 4 — les palettes et les schémas que la barre de style lit.
   sliceObject(VIEW, 'BASE_IDENTITY_COLORS'),
   sliceDecl(VIEW, 'BASE_TYPE_ORDER'),
   sliceObject(VIEW, 'RESIDUE_COLOR_PALETTE'),
@@ -180,7 +182,7 @@ const sandbox = [
     sugarLinkBondOf, sugarLinkAtomsOf, sugarLinksByDistance, sugarLinksFromBonds, linkMonomerPair,
     sugarMonomersOf, glycanEntityMapFor, ensureGlycanBonds,
     glycanLabel, glycanEntities, LIPID_CLASS_ALIASES, LIPID_CLASS_SUFFIXES,
-    lipidClassOf ,
+    lipidClassOf , LIPID_RESNAMES, isLipidResname,
       BASE_TYPE_ORDER, RESIDUE_COLOR_PALETTE, residueColorStore, residueColorOf, defineResidueScheme, baseTypeColorStore, baseTypeColorOf, defineBaseTypeScheme, CHARGE_COLORS, chargeColorStore, ionChargeOf, chargeColorOf, defineChargeScheme, SUGAR_TYPE_COLORS, sugarTypeColorStore, SUGAR_TYPE_OF_CODE, sugarTypeOf, sugarTypeColorOf };`,
 ].join('\n');
 const H = new Function(sandbox)();
@@ -693,6 +695,13 @@ eq(native.bondStore.count, nativeBonds, '…le graphe de liaisons de NGL reste i
   ['DMPI', 'PI'], ['POPI', 'PI'],
   ['DPPA', 'PA'], ['DOPA', 'PA'],
   ['TOCL', 'CL'], ['CDL', 'CL'],
+  /* ⚠ LE RAPPORT DE CETTE SESSION : « se trovi una molecola che si chiama TOCL2
+     classificala come cardiolipina (CL) ». Un compteur en fin de code ne change pas la
+     classe — le suffixe se lit sur le code SANS son numéro final. */
+  ['TOCL2', 'CL'], ['TOCL3', 'CL'], ['CDL02', 'CL'],
+  /* …et « includi tra i lipidi anche DLIPE e PLPA » : les deux tombent dans leur classe
+     par leur fin de code, comme tous les autres. */
+  ['DLIPE', 'PE'], ['PLPA', 'PA'],
   ['PSM', 'SM'], ['SM', 'SM'],
   ['CHOL', 'Chol'], ['CLR', 'Chol'], ['ERG', 'Erg'],
   ['TAG', 'TAG'], ['TGL', 'TAG'], ['DAG', 'DAG'], ['DGA', 'DAG'], ['MAG', 'MAG'], ['MGL', 'MAG'], ['CER', 'Cer'],
@@ -704,6 +713,19 @@ eq(native.bondStore.count, nativeBonds, '…le graphe de liaisons de NGL reste i
 ].forEach(([code, cls]) => {
   eq(H.lipidClassOf(code), cls, `${code || '(vide)'} → ${cls}`);
 });
+
+/* …ET LEUR RECONNAISSANCE : sans ces noms dans LIPID_RESNAMES le résidu n'était pas un
+   LIPIDE du tout — le menu Lipids restait fermé sur lui et la molécule tombait dans un
+   espace « ligand » (voir listMoleculeSections → isLipidResname). */
+ok(H.LIPID_RESNAMES.has('TOCL') && H.LIPID_RESNAMES.has('TOCL2')
+  && H.LIPID_RESNAMES.has('DLIPE') && H.LIPID_RESNAMES.has('PLPA'),
+  'les quatre codes du rapport sont DANS la table des lipides');
+['TOCL', 'TOCL2', 'DLIPE', 'PLPA'].forEach((code) => {
+  ok(H.isLipidResname(code), `${code} est reconnu comme un LIPIDE (le menu Lipids s’ouvre sur lui)`);
+});
+ok(H.isLipidResname(' tocl2 '), '…la reconnaissance ignore la casse et les espaces, comme partout');
+ok(!H.isLipidResname('HEM') && !H.isLipidResname('ALA'),
+  '…et un ligand / un acide aminé n’entrent pas dans la liste (aucune régression)');
 
 /* ══ 7. LE CÂBLAGE DANS LE VIEWER ══════════════════════════════════════════
    Les quatre lectures sont des SCHÉMAS NGL maison enregistrés au démarrage, elles

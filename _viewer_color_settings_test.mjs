@@ -100,8 +100,8 @@ has('{ELEMENT_ORDER.map((el) => (', '[⚙] une pastille par élément de la list
 has('{SUGAR_TYPE_ORDER.map((t) => (', '[⚙] une pastille par TYPE de sucre (la liste chimique du cahier des charges)');
 has('onChange={(e) => setElementColor(el, parseInt(e.target.value.slice(1), 16))}', '[⚙] la pastille écrit la table');
 has('onChange={(e) => setSugarTypeColors((p) => ({ ...p, [t]: parseInt(e.target.value.slice(1), 16) }))}', '[⚙] …et celle des sucres (par TYPE) aussi');
-has('const resetElementColors = () => setElementColors({ ...ELEMENT_COLOR_PALETTE });', '[⚙] ↺ des éléments');
-has('const resetSugarColors = () => setSugarColors({ ...SUGAR_IDENTITY_COLORS });', '[⚙] ↺ des sucres');
+has("const resetElementColors = () => setElementColors(paletteDefaults(ELEMENT_COLORS_KEY, ELEMENT_COLOR_PALETTE));", '[⚙] ↺ des éléments — il rend les couleurs ENREGISTRÉES par ce navigateur, jamais la table du code (voir paletteDefaults)');
+has("const resetSugarColors = () => setSugarColors(paletteDefaults(SUGAR_COLORS_KEY, SUGAR_IDENTITY_COLORS));", '[⚙] ↺ des sucres');
 // Les palettes sont le CONTENU des schémas : un effet les copie dans les stores
 // vivants que lisent lab-elements / lab-sugar-identity, puis les persiste.
 has('Object.assign(elementColorStore, elementColors);', '[⚙] la table vivante des éléments est alimentée');
@@ -128,8 +128,8 @@ has('const setNucleicFormColor = (form, hex) => setNucleicFormColors((prev) => (
   '[⚙] une pastille écrit la table des formes');
 has('const setNucleicMotifColor = (motif, hex) => setNucleicMotifColors((prev) => ({ ...prev, [motif]: hex }));',
   '[⚙] …et une pastille la table des motifs');
-has('const resetNucleicFormColors = () => setNucleicFormColors({ ...DEFAULT_NUCLEIC_FORM_COLORS });', '[⚙] ↺ des formes');
-has('const resetNucleicMotifColors = () => setNucleicMotifColors({ ...DEFAULT_NUCLEIC_MOTIF_COLORS });', '[⚙] ↺ des motifs');
+has("const resetNucleicFormColors = () => setNucleicFormColors(paletteDefaults(NUCLEIC_FORM_COLORS_KEY, DEFAULT_NUCLEIC_FORM_COLORS));", '[⚙] ↺ des formes');
+has("const resetNucleicMotifColors = () => setNucleicMotifColors(paletteDefaults(NUCLEIC_MOTIF_COLORS_KEY, DEFAULT_NUCLEIC_MOTIF_COLORS));", '[⚙] ↺ des motifs');
 has('{NUC_FORM_LABELS.map((form) => (', '[⚙] une pastille par forme (la liste des six formes)');
 has("{['gquad', 'hairpin'].map((motif) => (", '[⚙] …et une par motif (G4 · hairpin)');
 has('onChange={(e) => setNucleicFormColor(form, parseInt(e.target.value.slice(1), 16))}', '[⚙] la pastille d’une forme écrit la table');

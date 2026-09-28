@@ -351,7 +351,7 @@ has('else head.push(i);', '[lipides] la tête est le RESTE : ni chaîne ni squel
 has("const LIPID_NAMED_PROBE = new Set(['P', 'N', 'C1', 'C2', 'C3']);",
   '[lipides] ce qui prouve que le fichier suit bien la nomenclature standard');
 has('const sub = lipidSubSelections(comp.structure, lipidSele);', '[lipides] le rendu part de la classification');
-has('const blank = { head: \'\', glycerol: \'\', acyl: \'\', named: true };',
+has("const blank = { head: '', glycerol: '', acyl: '', heads: '', named: true };",
   '[lipides] aucune visite d’atome (NGL pas prêt) → le drapeau garde sa valeur historique');
 has('lipidColorStore.named = sub.named;', '[lipides] …et le panneau de couleurs lit le MÊME drapeau');
 has('const col = lipidCol();', '[lipides] la couleur du menu C passe par « Colour by chemical part »');
@@ -503,7 +503,7 @@ has('onClick={toggleRenumberPanel}', '[conservé] 🔢 Renumber (le panneau uniq
 has('onClick={applyRenumberFrom}', '[conservé] « Renumber from »');
 has("onChange={(e) => setSstrucColour(it.key, parseInt(e.target.value.slice(1), 16))}",
   '[conservé] couleurs 2° structure — la palette est dans la RANGÉE dès que « Secondary structure » est choisi');
-has('onClick={() => setSstrucColors({ ...SSTRUC_COLOR_DEFAULTS })}', '[conservé] …et la roue ⚙ les remet à leurs défauts');
+has("onClick={() => setSstrucColors(paletteDefaults('labViewerSstrucColors', SSTRUC_COLOR_DEFAULTS))}", '[conservé] …et la roue ⚙ les remet aux couleurs enregistrées (voir paletteDefaults)');
 // Le contrôle de la couleur des atômes « assigned » a disparu avec les menus : la
 // couleur reste celle du réglage enregistré, et le rendu la lit toujours.
 gone('onChange={(e) => setAssignedAtomColor(parseInt(', '[supprimé] plus de pastille « couleur des assigned » dans les menus');

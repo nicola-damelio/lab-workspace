@@ -95,6 +95,25 @@ import {
 // IUPAC — exactement la convention de `torsionDeg` ci-dessous (les lecteurs χ/δ du
 // classement) : _torsion_drive_test.mjs compare les deux, chiffre à chiffre.
 import { movingSideOf, planTorsion, dihedralDeg, distanceOf } from '../utils/torsionDrive';
+// ⬇ ⚒ MODEL BUILD — LA GÉOMÉTRIE QUE LES LIAISONS IMPOSENT (utils/geometryRelax.js).
+// La demande, mot pour mot : « in Hyperchem there was a function “model build” that
+// created a chemically valid model after the bonds had been specified ; that is what I
+// was looking for after specifying the disulphide bridges. […] Better still would be an
+// energy minimisation in which the energy is a TARGET FUNCTION — the sum of the
+// deviations of the distances and angles from the normal distances and angles of
+// molecules (sp3 carbon with tetrahedral angles, sp2 with 120° and sp with 180°, and the
+// typical C–C, C–N, C–H, C–O bond lengths). The user defines the distance between two
+// atoms and the program starts moving the two atoms towards each other, step by step,
+// moving the atoms that no longer respect their angles and bonds, until the molecule has
+// moved enough to bring together the atoms that must be close. »
+// Le bouton ⚒ du panneau ✏️ Torsion fait exactement cela : deux atomes piqués, la
+// distance du champ A–D (ou la longueur que la TABLE donne à ce couple d'éléments), et
+// la descente déplace la fenêtre autour d'eux — par le MÊME chemin d'écriture qu'une
+// torsion (writeStructurePositions + le journal ↺).
+import {
+  relaxGeometry, relaxWindow, bondLengthTarget, RELAX_DEFAULT_RADIUS, RELAX_MAX_RADIUS,
+  RELAX_PAIR_TOLERANCE, RELAX_BOND_TOLERANCE, RELAX_ANGLE_TOLERANCE,
+} from '../utils/geometryRelax';
 // HETATM code → SMILES: the Chemistry Component Dictionary of the RCSB (see
 // utils/ligandSmiles.js). A PDB only names its ligand by a 3-letter code, so this
 // is where the SMILES of a hand-loaded ligand comes from.
@@ -1460,6 +1479,13 @@ const LIPID_RESNAMES = new Set([
   // glycolipids / sphingolipids / glycerides / cardiolipins / bare heads
   'MGDG', 'DGDG', 'SQDG', 'SM', 'PSM', 'CER', 'DAG', 'TAG', 'MAG', 'CL', 'CDL',
   'PA', 'PC', 'PE', 'PS', 'PG', 'PI',
+  /* ⚠ LES TROIS CODES QUE LE RAPPORT DE CETTE SESSION AJOUTE — « se trovi una molecola
+     che si chiama TOCL2 classificala come cardiolipina (CL) » et « includi tra i lipidi
+     anche DLIPE e PLPA ». Sans eux le résidu n'était PAS reconnu comme un lipide : le
+     menu Lipids restait fermé sur lui, la molécule tombait dans un espace « ligand », et
+     TOCL2 ne rejoignait même pas sa classe (voir lipidClassOf, qui lit désormais le code
+     AVANT son numéro de fin). La reconnaissance est par NOM, comme le `lipid` de PyMOL. */
+  'TOCL', 'TOCL2', 'DLIPE', 'PLPA',
   // The SHORT headgroup codes of the request — POP · DPQ name a phosphatidyl-
   // choline, EPH a phosphatidyl-ethanolamine, PGL a phosphatidyl-glycerol and
   // CLR a cholesterol. A file written by another lab may use those instead of
@@ -1500,12 +1526,27 @@ const LIPID_CLASS_SUFFIXES = ['PC', 'PE', 'PG', 'PS', 'PI', 'PA', 'SM', 'CL'];
 const lipidClassOf = (resname) => {
   const n = String(resname || '').trim().toUpperCase().replace(/\s+/g, '');
   if (!n) return 'OTHER';
-  const alias = LIPID_CLASS_ALIASES[n];
-  if (alias) return alias;
-  if (n === 'PC' || n === 'PE' || n === 'PG' || n === 'PS' || n === 'PI' || n === 'PA' || n === 'SM' || n === 'CL') return n;
-  if (/^(?:CHOL|CHL|ERG|STIG|SITO|LANO|DHC)/.test(n)) return 'Chol';
-  const hit = LIPID_CLASS_SUFFIXES.find((s) => n.length > s.length && n.endsWith(s));
-  return hit || 'OTHER';
+  /* ⚠ UN COMPTEUR EN FIN DE CODE N'EST PAS UNE CLASSE — « se trovi una molecola che si
+     chiama TOCL2 classificala come cardiolipina (CL) ». La nomenclature des fichiers
+     réels écrit TOCL2 / CDL02 (la même cardiolipine, un autre compteur) : `'TOCL2'`
+     ne finit donc PAS par sa classe et `'CDL02'` n'est pas dans la table — la molécule
+     tombait dans « autre » et la coloration par type la peignait en gris. Le code est
+     donc jugé DEUX FOIS : tel quel, puis SANS son numéro final (l'alias, le code exact,
+     le stérol et le suffixe de classe, dans le même ordre). Rien ne bouge pour un nom
+     qui n'a pas de compteur, et « CHL1 » — un vrai code CHARMM — reste un stérol : la
+     seconde lecture ne fait que RENDRE un code à sa classe, jamais l'inverse. */
+  const core = n.replace(/\d+$/, '');
+  const forms = core !== n && core.length >= 2 ? [n, core] : [n];
+  for (let i = 0; i < forms.length; i += 1) {
+    const code = forms[i];
+    const alias = LIPID_CLASS_ALIASES[code];
+    if (alias) return alias;
+    if (LIPID_CLASS_SUFFIXES.includes(code)) return code;
+    if (/^(?:CHOL|CHL|ERG|STIG|SITO|LANO|DHC)/.test(code)) return 'Chol';
+    const hit = LIPID_CLASS_SUFFIXES.find((s) => code.length > s.length && code.endsWith(s));
+    if (hit) return hit;
+  }
+  return 'OTHER';
 };
 
 // Residue names of the lipids actually present in a structure ([] when none).
@@ -1753,7 +1794,7 @@ const lipidPartIndexStore = {
 
 const lipidSubCache = new WeakMap();
 const lipidSubSelections = (structure, lipidSele) => {
-  const none = { head: '', glycerol: '', acyl: '', named: false };
+  const none = { head: '', glycerol: '', acyl: '', heads: '', named: false };
   if (!structure || !lipidSele) return none;
   let per = lipidSubCache.get(structure);
   if (!per) { per = new Map(); lipidSubCache.set(structure, per); }
@@ -1769,7 +1810,7 @@ const lipidSubSelections = (structure, lipidSele) => {
   // about the file: keep the historical default, so the menu never claims a
   // non-standard naming out of a walk that saw no atom at all.
   if (!atoms.length) {
-    const blank = { head: '', glycerol: '', acyl: '', named: true };
+    const blank = { head: '', glycerol: '', acyl: '', heads: '', named: true };
     per.set(lipidSele, blank);
     return blank;
   }
@@ -1827,10 +1868,24 @@ const lipidSubSelections = (structure, lipidSele) => {
     else if (g === 'acyl') acyl.push(i);
     else head.push(i);
   });
+  /* ⚠ LA SOUS-CATÉGORIE « heads » (le rapport de cette session) : « un'altra
+     sottocategoria … che si chiama “heads” e che contiene solo il fosforo, l'azoto ed
+     l'ossigeno degli headgroups ». Ce sont les atomes POLAIRES de la tête — P · N · O,
+     et eux seuls (le soufre d'un sulfolipide, les carbones de la choline et les
+     hydrogènes restent à la tête entière, donc les trois éléments demandés et rien de
+     plus). Le jeu est calculé ICI, avec les trois parts, donc la rangée « Heads
+     (P · N · O) » dessine EXACTEMENT les atomes que la tête classe, et les deux
+     rangées ne peuvent pas se contredire. */
+  const HEAD_ELEMENTS = new Set(['P', 'N', 'O']);
+  const heads = atoms
+    .filter(([i, n, el]) => (part.get(i) || 'head') === 'head' && HEAD_ELEMENTS.has(atomElement(n, el)))
+    .map(([i]) => i);
   const sele = (list) => (list.length ? `@${list.join(',')}` : '');
   const out = {
-    head: sele(head), glycerol: sele(glycerol), acyl: sele(acyl), named,
+    head: sele(head), glycerol: sele(glycerol), acyl: sele(acyl),
+    heads: sele(heads), named,
     headAtoms: new Set(head), glycerolAtoms: new Set(glycerol), acylAtoms: new Set(acyl),
+    headsAtoms: new Set(heads),
   };
   // The scheme colours from these very sets (see defineLipidGroupsScheme).
   lipidPartIndexStore.structure = structure;
@@ -3388,6 +3443,36 @@ const loadPartPalette = (key, defaults) => {
   return Object.fromEntries(Object.keys(defaults).map((k) => [k, { ...defaults[k] }]));
 };
 
+/* ⛭ LES VALEURS PAR DÉFAUT SONT CELLES DE L'UTILISATEUR (le rapport de cette session)
+   « i colori attualmente definiti a mano da me nel setting wheel devono essere i colori
+   di default (non quelli che avevi messo tu quando hai scritto il codice) ».
+
+   Une palette ENREGISTRÉE par le navigateur EST donc son propre défaut : les ↺ de la
+   roue ⚙ — et le bouton « ↺ Defaults » de chaque section — ramènent aux couleurs de
+   l'utilisateur, jamais aux tables du code. Celles-ci ne servent plus qu'au TOUT PREMIER
+   démarrage (aucune palette enregistrée : il n'y a alors rien d'autre à proposer) et aux
+   clés qu'un poste n'a jamais touchées, puisque la fusion garde, entrée par entrée, la
+   valeur de l'utilisateur quand elle en est une.
+
+   La photographie est prise UNE fois par chargement de page (voir paletteDefaults) :
+   les couleurs sont celles du dernier enregistrement, donc appuyer sur ↺ après avoir
+   bougé une pastille de la session revient bien aux couleurs enregistrées, et non à ce
+   qui est à l'écran (un ↺ qui ne ferait rien serait un bouton mort). */
+const paletteUserDefaults = (key, codeDefaults, merge = mergePalette) => {
+  try {
+    const raw = JSON.parse(localStorage.getItem(key) || 'null');
+    if (raw && typeof raw === 'object') return merge(codeDefaults, raw);
+  } catch { /* privé / illisible → les tables du code */ }
+  return merge(codeDefaults, null);
+};
+const paletteDefaultCache = new Map();
+const paletteDefaults = (key, codeDefaults, merge = mergePalette) => {
+  if (!paletteDefaultCache.has(key)) {
+    paletteDefaultCache.set(key, paletteUserDefaults(key, codeDefaults, merge));
+  }
+  return paletteDefaultCache.get(key);
+};
+
 /* ---- Which NGL colour SCHEME a per-molecule « Colour by » choice is ---------
    The Molecules bar offers the NGL metaphors (chain / residue / hydrophobicity)
    plus the HOUSE ones, and they all have to survive a scheme that could not be
@@ -3439,7 +3524,7 @@ const schemeForColorMode = (mode) => {
 
      • protein        → general · backbone · side chains
      • nucleic acid   → general · backbone · DNA/RNA bases · DNA/RNA ribose
-     • lipid          → general · phospholipid headgroups · acyl chains · glycerol
+     • lipid          → general · phospholipid headgroups · heads (P · N · O) · acyl chains · glycerol
      • sugar          → one row (the whole molecule)
      • ligand         → one row
      • water          → one row
@@ -3518,8 +3603,10 @@ const DEFAULT_SECTION_TINTS = {
   ligand: 0xeef1f5,    // neutral — the request names no colour for a ligand
 };
 // How much white each row of a space mixes into the base tint. The first entry is
-// the GENERAL row (the most tinted), the last one is the deepest row a kind has.
-const SECTION_TINT_STEPS = [0.45, 0.62, 0.74, 0.84];
+// the GENERAL row (the most tinted), the last one is the deepest row a kind has —
+// five entries since the Lipids menu gained its « Heads (P · N · O) » row (a kind
+// with fewer rows simply stops earlier; a kind with more reuses the last shade).
+const SECTION_TINT_STEPS = [0.45, 0.62, 0.74, 0.84, 0.9];
 // The seven kinds in the order the wheel draws their swatches.
 const SECTION_TINT_ORDER = ['protein', 'nucleic', 'lipid', 'sugar', 'water', 'ion', 'ligand'];
 const SECTION_TINT_LABELS = {
@@ -3604,6 +3691,14 @@ const STYLES = {
   bases: ['hide', 'base', 'rings', 'ball+stick', 'licorice', 'line', 'spacefill', 'sphere'],
   ribose: ['hide', 'base', 'plates', 'ball+stick', 'licorice', 'line', 'spacefill', 'sphere'],
   sidechains: ['hide', 'ball+stick', 'licorice', 'line', 'spacefill', 'sphere'],
+  /* « HEADS (P · N · O) » N'A QUE LA SPHÈRE (le rapport de cette session) : « il loro
+     stile sarà semplicemente sphere ma dovrò poter regolare la dimensione ed il
+     materiale delle spheres ». La liste est donc celle-là, et rien de plus : les deux
+     réglages demandés (R◯ = la taille des billes, le panneau de matériau du rang) sont
+     ceux que TOUTE rangée porte déjà (ATOM_DRAW_STYLES contient `sphere`, donc la
+     rangée est ancrée à sa tête et sa liaison est dessinée). `hide` reste offert comme
+     partout : une rangée qu'on ne peut pas éteindre serait un piège. */
+  heads: ['hide', 'sphere'],
   small: ['hide', 'ball+stick', 'licorice', 'line', 'spacefill', 'sphere', 'surface', 'mesh'],
   ion: ['hide', 'spacefill'],   // its spacefill IS its sphere, labelled « Sphere »
 };
@@ -3700,6 +3795,14 @@ const SECTION_SUBSECTIONS = {
   lipid: [
     { sub: 'general', label: 'General', styles: STYLES.small, colors: COLORS.lipid, def: { style: 'ball+stick', colorBy: 'lipidtype' }, sele: '' },
     { sub: 'head', label: 'Phospholipid headgroups', styles: STYLES.sidechains, colors: COLORS.lipidParts, def: { style: 'ball+stick', colorBy: 'lipidtype' }, sele: 'head' },
+    /* « HEADS (P · N · O) » — LA SOUS-CATÉGORIE DEMANDÉE PAR CE RAPPORT : les SEULS
+       atomes polaires d'un groupe de tête (le phosphore, l'azote et l'oxygène), dessinés
+       en SPHÈRES dont la taille (R◯) et le matériau se règlent comme pour toute rangée.
+       Sa couleur vient de la roue ⚙ : « Color by : Lipid type » peint ces atomes avec la
+       pastille de TÊTE (H) de LEUR classe — les couleurs de l'utilisateur —, « Solid »
+       et « Atom type » restant offerts comme sur les autres parties. Le style par défaut
+       est la sphère, et la liste des styles offerts est celle-là (`STYLES.heads`). */
+    { sub: 'heads', label: 'Heads (P · N · O)', styles: STYLES.heads, colors: COLORS.lipidParts, def: { style: 'sphere', colorBy: 'lipidtype' }, sele: 'heads' },
     { sub: 'tail', label: 'Acyl chains', styles: STYLES.sidechains, colors: COLORS.lipidParts, def: { style: 'ball+stick', colorBy: 'lipidtype' }, sele: 'tail' },
     { sub: 'glycerol', label: 'Glycerol', styles: STYLES.sidechains, colors: COLORS.lipidParts, def: { style: 'ball+stick', colorBy: 'lipidtype' }, sele: 'glycerol' },
   ],
@@ -5765,7 +5868,11 @@ const applyMaterialToRep = (el, mat) => {
    stockage : un localStorage bricolé ne peut ni inventer un style, ni écrire un
    preset inconnu, ni faire planter une reconstruction. */
 const PYMOL_SESSION_KEY = 'labViewerPymolSession';
-const PYMOL_SESSION_VERSION = 1;
+/* LA VERSION QUI ÉCRIT L'EMPREINTE DE LA SESSION (le monde qui l'a créée, voir
+   pymolSessionOwnerOf) ; `PYMOL_SESSION_V1` est la version d'AVANT, dont les entrées
+   restent lisibles — mais sous une clé de CONTEXTE seulement (pymolSessionAcceptable). */
+const PYMOL_SESSION_VERSION = 2;
+const PYMOL_SESSION_V1 = 1;
 /* ⚠⚠ LA SESSION EST CELLE D'UNE INSTANCE, PAS CELLE DE L'APPLICATION — le rapport de
    cette session : « Saving the selection window in each session was meant at each
    instance level, not general. » Une clé unique faisait revenir les fenêtres de
@@ -5925,12 +6032,18 @@ const normalizeSelOverrides = (raw) => (Array.isArray(raw) ? raw : [])
   .slice(0, 512);
 const emptyPymolSession = () => ({
   selections: [], selStyles: {}, selOverrides: [], script: '', active: false, autoShow: true, name: '',
+  /* L'EMPREINTE DE LA SESSION (voir pymolSessionOwnerOf) : le monde qui l'a créée. */
+  owner: '', scope: 'viewer',
 });
 const loadPymolSession = (key) => {
   const base = emptyPymolSession();
   try {
     const raw = JSON.parse(localStorage.getItem(key || PYMOL_SESSION_KEY) || 'null');
-    if (!raw || typeof raw !== 'object' || raw.v !== PYMOL_SESSION_VERSION) return base;
+    if (!raw || typeof raw !== 'object') return base;
+    /* LES DEUX VERSIONS SE LISENT : la 2 écrit l'empreinte, la 1 (et toute entrée sans
+       empreinte) est la mémoire d'avant — elle reste lue, mais sous une clé de CONTEXTE
+       seulement (voir pymolSessionAcceptable). Tout le reste est refusé. */
+    if (raw.v !== PYMOL_SESSION_VERSION && raw.v !== PYMOL_SESSION_V1) return base;
     return {
       selections: normalizeSelNames(raw.selections),
       selStyles: normalizeSelStyles(raw.selStyles),
@@ -5939,6 +6052,8 @@ const loadPymolSession = (key) => {
       active: raw.active === true,
       autoShow: raw.autoShow !== false,
       name: sessionText(raw.name, 128),
+      owner: sessionText(raw.owner, 200),
+      scope: (raw.scope === 'experiment' || raw.scope === 'condition') ? raw.scope : 'viewer',
     };
   } catch { return base; }
 };
@@ -5947,16 +6062,63 @@ const savePymolSession = (s, key) => {
     localStorage.setItem(key || PYMOL_SESSION_KEY, JSON.stringify({ v: PYMOL_SESSION_VERSION, ...(s || {}) }));
   } catch { /* private mode: the session simply is not remembered */ }
 };
+/* ⛭ LA SESSION PORTE SON PROPRIÉTAIRE — l'empreinte qui la rend intransportable.
+   LE RAPPORT DE CETTE SESSION : « La finestra selections che si genera facendo delle
+   selezioni con pymol, continua a comparire in tutti gli esperimenti e questo non deve
+   succedere. Deve comparire solo nelle instances dell'esperimento dove é stata creata e
+   non altrove! »
+
+   La clé de stockage dit déjà dans quel monde on écrit (expérience · condition), mais une
+   CLÉ peut se répéter : l'application groupe les instances par leur NOM, une expérience
+   sans nom n'a que sa condition, et un viewer monté hors page d'expérience n'a que la
+   clé générale. La session enregistrée porte donc, EN PLUS de sa clé, l'identité du monde
+   qui l'a créée (`owner` · `scope`), et la relecture REFUSE une session dont l'empreinte
+   n'est pas celle d'ici :
+
+     • `experiment` (projet · nom) — toutes les CONDITIONS de cette expérience la
+       partagent, et aucune autre expérience ne la voit ;
+     • `condition`  — l'expérience n'a pas de nom : elle ne vaut que pour SA condition ;
+     • `viewer`     — aucune page d'expérience : elle ne vaut que pour le viewer nu.
+
+   Une session écrite par une version ANTÉRIEURE (aucune empreinte) n'est lue que sous une
+   clé de CONTEXTE — jamais sous la clé générale quand le viewer SAIT où il est : c'est la
+   mémoire d'avant, et elle reste celle de l'expérience dont la clé la porte (rien n'est
+   perdu pour l'utilisateur, et rien n'entre dans une autre expérience).
+   PURE — elle ne lit que ce que la page donne au viewer —, donc exécutée par la sonde
+   (_pymol_selections_test.mjs) en même temps que les clés. */
+const pymolSessionOwnerOf = (instanceKey, driveNaming) => {
+  const exp = pymolSessionExperimentSlug(driveNaming);
+  if (exp) return { scope: 'experiment', owner: exp };
+  const slug = pymolSessionInstanceSlug(instanceKey, driveNaming);
+  if (slug) return { scope: 'condition', owner: slug };
+  return { scope: 'viewer', owner: '' };
+};
+/* CETTE SESSION PEUT-ELLE ÊTRE LUE ICI ? (clé + empreinte, les deux autorités) */
+const pymolSessionAcceptable = (one, key, owner) => {
+  const here = owner && typeof owner === 'object' ? owner : { scope: 'viewer', owner: '' };
+  // 1. La session DIT à qui elle appartient : c'est la seule autorité quand elle le dit.
+  if (one.owner) return here.scope !== 'viewer' && one.owner === here.owner;
+  // 2. Aucune empreinte (version antérieure) : la CLÉ décide, et la clé générale n'entre
+  //    dans aucune page d'expérience — c'est elle qui faisait apparaître les fenêtres
+  //    d'une AUTRE expérience.
+  if (key === PYMOL_SESSION_KEY && here.scope !== 'viewer') return false;
+  return true;
+};
 /* LA PREMIÈRE SESSION ENREGISTRÉE PARMI LES CLÉS, dans l'ordre de pymolSessionKeys :
    l'expérience d'abord, l'instance ensuite (et la générale seulement quand rien ne dit
    où l'on est). Une session VIDE à la clé de l'expérience ne cache donc jamais celle
    qu'une version précédente avait écrite pour cette condition, et un viewer neuf
    (deux clés vides) repart vierge. */
-const loadPymolSessionFor = (keys) => {
+const loadPymolSessionFor = (keys, owner) => {
   const list = (Array.isArray(keys) ? keys : [keys]).filter((k) => typeof k === 'string' && k);
   for (let i = 0; i < list.length; i += 1) {
     const one = loadPymolSession(list[i]);
-    if (one.selections.length || one.script || one.selOverrides.length || one.active) return one;
+    if (!one.selections.length && !one.script && !one.selOverrides.length && !one.active) continue;
+    /* ⚠ UNE SESSION D'AILLEURS N'EST PAS LUE (voir pymolSessionAcceptable) : la clé ET
+       l'empreinte doivent dire le monde où l'on est — sans quoi les fenêtres de
+       sélection d'une AUTRE expérience reviendraient, le défaut même du rapport. */
+    if (!pymolSessionAcceptable(one, list[i], owner)) continue;
+    return one;
   }
   return emptyPymolSession();
 };
@@ -7103,7 +7265,7 @@ const [sugarTypeColors, setSugarTypeColors] = useState(() => loadPalette('labVie
    white (sectionRowTintCss), so moving one swatch repaints the whole ladder. */
 const [sectionTints, setSectionTints] = useState(() => loadPalette(SECTION_TINT_KEY, DEFAULT_SECTION_TINTS));
 const setSectionTint = (kind, hex) => setSectionTints((p) => ({ ...p, [kind]: hex }));
-const resetSectionTints = () => setSectionTints({ ...DEFAULT_SECTION_TINTS });
+const resetSectionTints = () => setSectionTints(paletteDefaults(SECTION_TINT_KEY, DEFAULT_SECTION_TINTS));
 // The THREE PARTS of every lipid type (Head · Glycerol · Acyl) — the request's
 // second expansion of the ⚙ wheel. One object per class, persisted like the rest.
 const [lipidPartColors, setLipidPartColors] = useState(() => loadPartPalette('labViewerLipidPartColors', LIPID_PART_DEFAULTS));
@@ -7129,13 +7291,13 @@ const [nucleicMotifColors, setNucleicMotifColors] = useState(() => loadPalette(N
 // ONE swatch = ONE entry of the palette (the element is the key, the hex the value).
 const setElementColor = (el, hex) => setElementColors((prev) => ({ ...prev, [el]: hex }));
 const setSugarColor = (res, hex) => setSugarColors((prev) => ({ ...prev, [res]: hex }));
-const resetElementColors = () => setElementColors({ ...ELEMENT_COLOR_PALETTE });
-const resetSugarColors = () => setSugarColors({ ...SUGAR_IDENTITY_COLORS });
+const resetElementColors = () => setElementColors(paletteDefaults(ELEMENT_COLORS_KEY, ELEMENT_COLOR_PALETTE));
+const resetSugarColors = () => setSugarColors(paletteDefaults(SUGAR_COLORS_KEY, SUGAR_IDENTITY_COLORS));
 // ONE swatch of the nucleic palettes (the key is the FORM · 'gquad' · 'hairpin').
 const setNucleicFormColor = (form, hex) => setNucleicFormColors((prev) => ({ ...prev, [form]: hex }));
 const setNucleicMotifColor = (motif, hex) => setNucleicMotifColors((prev) => ({ ...prev, [motif]: hex }));
-const resetNucleicFormColors = () => setNucleicFormColors({ ...DEFAULT_NUCLEIC_FORM_COLORS });
-const resetNucleicMotifColors = () => setNucleicMotifColors({ ...DEFAULT_NUCLEIC_MOTIF_COLORS });
+const resetNucleicFormColors = () => setNucleicFormColors(paletteDefaults(NUCLEIC_FORM_COLORS_KEY, DEFAULT_NUCLEIC_FORM_COLORS));
+const resetNucleicMotifColors = () => setNucleicMotifColors(paletteDefaults(NUCLEIC_MOTIF_COLORS_KEY, DEFAULT_NUCLEIC_MOTIF_COLORS));
 
 // Message of the §1 « ⬇ PDB » button (structure / current-frame snapshot).
 const [pdbMsg, setPdbMsg] = useState('');
@@ -7412,6 +7574,14 @@ const torsionAngleDraftRef = useRef('');
 const setTorsionAngleText = (v) => { torsionAngleDraftRef.current = v; setTorsionAngleDraft(v); };
 const [torsionClosest, setTorsionClosest] = useState(null); // last unreachable distance: { deltaDeg, closest, target }
 const torsionUndoRef = useRef(null);                 // { comp, structure, idxs, base, label }
+/* ⚒ MODEL BUILD — combien de LIAISONS autour des deux atomes choisis la descente a le
+   droit de déplacer (0 = seulement ces deux atomes). C'est le seul réglage du geste :
+   la distance, elle, se tape dans le champ A–D du panneau. */
+const [relaxRadius, setRelaxRadius] = useState(RELAX_DEFAULT_RADIUS);
+const setRelaxRadiusText = (v) => {
+  const n = Math.round(Number(String(v).replace(',', '.')));
+  setRelaxRadius(Number.isFinite(n) ? Math.min(RELAX_MAX_RADIUS, Math.max(0, n)) : 0);
+};
 
 const [rebuildMsg, setRebuildMsg] = useState('');
 const rebuildMsgTimerRef = useRef(null);
@@ -8091,19 +8261,12 @@ const [themeChoices, setThemeChoices] = useState(null);        // kind → secti
 const [setupName, setSetupName] = useState('');
 const [setupMsg, setSetupMsg] = useState('');
 const setupMsgTimerRef = useRef(null);   // the “✓ saved / applied” line clears itself
-const [sstrucColors, setSstrucColors] = useState(() => {
-  try {
-    const raw = JSON.parse(localStorage.getItem('labViewerSstrucColors') || 'null');
-    if (raw && typeof raw === 'object') {
-      return {
-        helix: raw.helix || SSTRUC_COLOR_DEFAULTS.helix,
-        sheet: raw.sheet || SSTRUC_COLOR_DEFAULTS.sheet,
-        loop: raw.loop || SSTRUC_COLOR_DEFAULTS.loop,
-      };
-    }
-  } catch { /* fall through to defaults */ }
-  return { ...SSTRUC_COLOR_DEFAULTS };
-});
+/* ⛭ …ET LA MÊME LECTURE QUE TOUTES LES PALETTES (le rapport de cette session : les ↺
+   rendent les couleurs ENREGISTRÉES, voir paletteDefaults). La palette de 2° structure
+   était la SEULE à relire le stockage à la main, avec son propre `||` : elle passe par
+   loadPalette — la même garde que les dix autres (une valeur qui n'est pas une couleur
+   est écartée) et la même clé que celle que son ↺ relit. */
+const [sstrucColors, setSstrucColors] = useState(() => loadPalette('labViewerSstrucColors', SSTRUC_COLOR_DEFAULTS));
 const [selectedResidueColor, setSelectedResidueColor] = useState(() => {
   try { const v = parseInt(localStorage.getItem('labViewerSelResColor') || '', 16); if (Number.isFinite(v) && v >= 0) return v; } catch { /* default */ }
   return SELECT_COLOR_HEX;
@@ -8146,7 +8309,13 @@ if (!pymolSessionKeyRef.current) pymolSessionKeyRef.current = pymolSessionKeysRe
    intention dans un commentaire. */
 const pymolScopeRef = useRef(null);
 if (!pymolScopeRef.current) pymolScopeRef.current = pymolScopeLabelOf(instanceKey, driveNaming);
-const [pymolSession] = useState(() => loadPymolSessionFor(pymolSessionKeysRef.current));
+/* L'EMPREINTE DU MONDE OÙ L'ON EST (voir pymolSessionOwnerOf) : écrite AVEC la session et
+   relue AVANT de l'accepter. Elle est FIGÉE au montage, comme les clés : la page qu'on
+   quitte reste vivante (elles gardent chacune la leur) et la session ne peut donc pas
+   glisser d'une expérience dans une autre. */
+const pymolOwnerRef = useRef(null);
+if (!pymolOwnerRef.current) pymolOwnerRef.current = pymolSessionOwnerOf(instanceKey, driveNaming);
+const [pymolSession] = useState(() => loadPymolSessionFor(pymolSessionKeysRef.current, pymolOwnerRef.current));
 const [selections, setSelections] = useState(() => pymolSession.selections);   // [{ name, expr }]
 const [selStyles, setSelStyles] = useState(() => pymolSession.selStyles);       // key -> { cartoon, ribbon, tube, ball, stick, sphere, surface, color, colorMode, transparency, sphereScale, radiusSphere, radiusBond, hideFor, mat }
 // PyMOL's `set … , <selection>` commands are NOT looks: they are properties of
@@ -8204,6 +8373,11 @@ useEffect(() => {
     active: pymolActive,
     autoShow: autoShowSel,
     name: pymolScriptName,
+    /* L'EMPREINTE DU MONDE QUI ÉCRIT (voir pymolSessionOwnerOf) : c'est ELLE, avec la clé,
+       qui garantit que ces fenêtres de sélection ne peuvent se relire que dans les
+       instances de l'expérience où elles ont été créées. */
+    owner: pymolOwnerRef.current.owner,
+    scope: pymolOwnerRef.current.scope,
   }, pymolSessionKeyRef.current);
 }, [selections, selStyles, selOverrides, pymolScript, pymolActive, autoShowSel, pymolScriptName]);
 /* LA SESSION RELUE SE DIT DANS LE JOURNAL DU PANNEAU — c'est la seule façon de
@@ -9022,6 +9196,197 @@ const torsionPointsOf = (structure, idxs) => {
     const ap = structure.getAtomProxy();
     return idxs.map((i) => { ap.index = i; return [ap.x, ap.y, ap.z]; });
   } catch { return null; }
+};
+
+/* ── ⚒ MODEL BUILD — LES DEUX ATOMES À RAPPROCHER ────────────────────────────
+   Une torsion demande QUATRE atomes (une charnière) ; fermer une liaison en
+   demande DEUX. Le ⚒ accepte donc les deux : A et D quand les quatre sont piqués
+   — c'est le couple dont le champ « A–D » parle —, A et B quand il n'y en a que
+   deux. Rien d'autre n'est deviné : la structure, les coordonnées et le graphe
+   viennent de la structure à l'écran, comme pour la torsion. */
+const torsionPairOf = () => {
+  const slots = torsionAtomsRef.current;
+  if (slots.length < 2) {
+    return { ok: false, say: `Pick the two atoms to bring together first — ${2 - slots.length} still to go (or all four of A · B · C · D, the pair is then A and D).` };
+  }
+  const picked = slots.length >= 4 ? [slots[0], slots[3]] : [slots[0], slots[1]];
+  const comp = picked[0].comp;
+  const structure = comp && comp.structure;
+  if (!structure) return { ok: false, say: 'The structure these atoms belong to is gone — pick them again.' };
+  if (picked.some((s) => s.comp !== comp)) {
+    return { ok: false, say: 'The two atoms must belong to the SAME structure — pick them in one molecule.' };
+  }
+  const idx = picked.map((s) => Number(s.atomIndex));
+  let points = null;
+  try {
+    const ap = structure.getAtomProxy();
+    points = idx.map((i) => { ap.index = i; return [ap.x, ap.y, ap.z]; });
+  } catch { points = null; }
+  if (!points || !points.every((pt) => pt.every(Number.isFinite))) {
+    return { ok: false, say: 'The two picked atoms can no longer be read — pick them again.' };
+  }
+  return { ok: true, comp, structure, slots: picked, idx, points, label: picked.length >= 4 ? 'A–D' : 'A–B' };
+};
+
+/** LA DISTANCE DES DEUX ATOMES QUE LE ⚒ VA RAPPROCHER, relue à chaque rendu — le
+ *  « maintenant » du panneau, comme la lecture du dihèdre (null tant que le couple
+ *  n'est pas complet). */
+const torsionPairReading = () => {
+  const r = torsionPairOf();
+  if (!r.ok) return null;
+  return { label: r.label, dist: distanceOf(r.points[0], r.points[1]) };
+};
+
+/** LA MOLÉCULE TELLE QUE LE MODULE PUR LA LIT — les éléments de ses atomes, les
+ *  liaisons de SON graphe (avec l'ordre quand le fichier en déclare un) et les
+ *  coordonnées à plat (trois nombres par atome, l'ordre des atomes de la
+ *  structure : c'est ce que `positionFromArray` écrit). Un fichier sans CONECT
+ *  arrive donc avec le graphe que NGL a su lire — jamais un graphe inventé ici. */
+const geometryOfStructure = (structure) => {
+  try {
+    const count = (structure.atomStore && structure.atomStore.count) || 0;
+    if (!count) return null;
+    const ap = structure.getAtomProxy();
+    const positions = new Array(count * 3);
+    const elements = new Array(count);
+    for (let i = 0; i < count; i += 1) {
+      ap.index = i;
+      positions[i * 3] = ap.x; positions[i * 3 + 1] = ap.y; positions[i * 3 + 2] = ap.z;
+      elements[i] = ap.element;
+    }
+    const bonds = [];
+    const store = structure.bondStore;
+    const bondCount = (store && store.count) || 0;
+    for (let k = 0; k < bondCount; k += 1) {
+      const i = Number(store.atomIndex1[k]);
+      const j = Number(store.atomIndex2[k]);
+      if (!Number.isInteger(i) || !Number.isInteger(j) || i === j) continue;
+      bonds.push({ i, j, order: store.bondOrder ? Number(store.bondOrder[k]) || 1 : 1 });
+    }
+    return { count, elements, positions, bonds };
+  } catch { return null; }
+};
+
+/** POURQUOI LA DESCENTE S'EST ARRÊTÉE — une phrase par `reason` du module pur.
+ *  Le panneau n'invente aucun diagnostic : chaque ligne ici répond à une valeur
+ *  que utils/geometryRelax.js a réellement rendue. */
+const relaxWhy = (run) => ({
+  'converged': 'the descent reached the bottom of its target function',
+  'stalled': 'the descent found nowhere left to go (a LOCAL minimum: the atoms would have to cross a barrier, and this is not a force field)',
+  'max-steps': 'the step budget ran out before the target function was at its bottom',
+  'no-movable': 'no atom is allowed to move (the window is empty)',
+  'no-terms': 'this molecule has no bond the table knows and no distance was asked for — there is nothing to build',
+  'bad-points': 'the coordinates could not be read',
+}[run.reason] || 'the build stopped');
+
+/** LE RAPPORT DU ⚒, À CÔTÉ DU GESTE — tout vient du module : l'énergie avant et
+ *  après, les écarts de liaisons et d'angles qu'il a RELUS, le nombre d'atomes
+ *  déplacés, et la distance DEMANDÉE, atteinte ou non (avec la raison). Il dit
+ *  aussi ce que le geste N'EST PAS — une cible géométrique, pas un champ de
+ *  forces — pour que personne n'attende une énergie en kcal/mol. */
+const relaxReportOf = (pair, run, win) => {
+  const names = pair.slots.map((s) => s.label).join(' → ');
+  const p = run.pairs[0];
+  const verdict = !p ? ''
+    : (p.reached
+      ? `✓ ${torsionAng(p.target)} reached`
+      : `✕ ${torsionAng(p.after)} for a target of ${torsionAng(p.target)} (within ${RELAX_PAIR_TOLERANCE} Å would count as reached) — ${relaxWhy(run)}`);
+  const worstAngle = run.after.worstAngle
+    ? ` (worst ${torsionDeg(run.after.worstAngle.deg)} for ${torsionDeg(run.after.worstAngle.target)})`
+    : '';
+  const flat = run.unstuck > 0
+    ? ` · ${run.unstuck} flat angle${run.unstuck === 1 ? '' : 's'} nudged before the descent` : '';
+  const cut = win.truncated
+    ? ` · ⚠ the window was CAPPED at ${win.movable.length} atoms (the farthest ones stay put)` : '';
+  return `⚒ Model build · ${names} : ${torsionAng(p ? p.before : 0)} → ${torsionAng(p ? p.after : 0)}`
+    + `${verdict ? ` — ${verdict}` : ''}`
+    + ` · energy ${run.before.total.toFixed(1)} → ${run.after.total.toFixed(1)}`
+    + ` · bonds ${torsionAng(run.after.bondRms)} rms over ${run.terms.bonds}`
+    + ` · angles ${run.after.angleRms.toFixed(1)}° rms over ${run.terms.angles}${worstAngle}`
+    + ` · ${run.moved.length} atom${run.moved.length === 1 ? '' : 's'} moved of ${win.movable.length}`
+    + `${cut}${flat} · ${run.steps} steps, ${run.evaluations} evaluations.`
+    + ' A geometric TARGET FUNCTION (ideal bond lengths and angles, the distances you asked for) — no charges,'
+    + ' no solvent, and a LOCAL descent: what it could not do, it says instead of pretending. ↺ Undo torsion puts every atom back.';
+};
+
+/* ── ✏️ Torsion · « ⚒ Model build » — LE GESTE DE LA DEMANDE ──────────────────
+   « L'utilisateur définit la distance entre deux atomes et le programme commence à
+   rapprocher ces deux atomes pas à pas, en déplaçant les atomes qui ne respectent
+   plus leurs angles et leurs liaisons. »
+
+   La distance vient du champ A–D du panneau (ou, laissé vide, de la TABLE : deux
+   Sγ se rapprochent à 2.05 Å, un C–S à 1.82 Å — la longueur de la liaison qu'on veut
+   fermer, sans que l'utilisateur ait à la connaître) ; la fenêtre vient du champ
+   « ⇢ moves » ; et la descente, l'énergie et son gradient viennent de
+   utils/geometryRelax.js. L'écriture passe par le MÊME chemin qu'une torsion
+   (`writeStructurePositions` + le journal ↺) : le 📏, les plaques, le film et le
+   📥 Download lisent la géométrie qui est vraiment là, et « ↺ Undo torsion » la
+   remet exactement comme avant. */
+const buildModelNow = () => {
+  const pair = torsionPairOf();
+  if (!pair.ok) { setTorsionClosest(null); setTorsionMsg(`✕ ${pair.say}`); return; }
+  const { comp, structure, idx } = pair;
+  const geom = geometryOfStructure(structure);
+  if (!geom) {
+    setTorsionMsg('✕ The molecule could not be read (no atoms) — nothing was changed.');
+    return;
+  }
+  const [i, j] = idx;
+  const typed = Number(String(torsionDistDraft).replace(',', '.'));
+  const table = bondLengthTarget(geom.elements[i], geom.elements[j]);
+  const target = Number.isFinite(typed) && typed > 0 ? typed : table;
+  if (!Number.isFinite(target) || target <= 0) {
+    setTorsionMsg(`✕ Type the distance you want ${pair.label} to reach, in ångströms — the table has no length for`
+      + ` ${geom.elements[i] || '?'}–${geom.elements[j] || '?'}, so the build has nothing to aim at.`);
+    return;
+  }
+  const win = relaxWindow({ bonds: geom.bonds, seeds: [i, j], radius: relaxRadius, atomCount: geom.count });
+  if (!win.movable.length) {
+    setTorsionMsg('✕ No atom to move — pick the two atoms again.');
+    return;
+  }
+  const run = relaxGeometry({
+    positions: geom.positions,
+    elements: geom.elements,
+    bonds: geom.bonds,
+    pairs: [{ i, j, target }],
+    movable: win.movable,
+  });
+  if (!run.ok) {
+    setTorsionClosest(null);
+    setTorsionMsg(`✕ The build stopped: ${relaxWhy(run)}. Nothing was changed.`);
+    return;
+  }
+  if (!run.moved.length) {
+    setTorsionClosest(null);
+    setTorsionMsg(`✓ Already there: ${torsionAng(target)} is what ${pair.label} measures, and every bond and angle of the`
+      + ` ${win.movable.length}-atom window is within ${RELAX_BOND_TOLERANCE} Å / ${RELAX_ANGLE_TOLERANCE}° of its target. Nothing had to move.`);
+    return;
+  }
+  const flat = new Float32Array(run.moved.length * 3);
+  run.moved.forEach((k, c) => {
+    flat[c * 3] = run.positions[k * 3];
+    flat[c * 3 + 1] = run.positions[k * 3 + 1];
+    flat[c * 3 + 2] = run.positions[k * 3 + 2];
+  });
+  const before = torsionSnapshotOf(structure);       // AVANT l'écriture : le ↺
+  if (!writeStructurePositions(comp, run.moved, flat)) {
+    setTorsionClosest(null);
+    setTorsionMsg('✕ The structure refused the new coordinates — nothing was changed.');
+    return;
+  }
+  torsionUndoRef.current = {
+    comp,
+    structure,
+    count: before ? before.length / 3 : 0,
+    flat: before,
+    label: `⚒ model build ${pair.label} ${torsionAng(target)}`,
+  };
+  setTorsionClosest(null);
+  const warn = structureWasDragged(structure)
+    ? ' ⚠ this molecule had also been DRAGGED by hand: re-playing that drag (another frame, the ⏮ button) puts its placement back.'
+    : '';
+  setTorsionMsg(`${relaxReportOf(pair, run, win)}${warn}`);
 };
 
 /** LE CÔTÉ QUI TOURNE — la réponse du module (les atomes qui partent avec D), ou sa
@@ -9903,9 +10268,13 @@ const sectionRowSele = (structure, sec, sub, opts = {}) => {
     // show the bond to phosphate »: the ACYL row takes the ester oxygens it hangs
     // from (O21 · O31, of the glycerol), the GLYCEROL row the acyl carbonyls and the
     // oxygen that carries the phosphate, the HEADGROUP row the C3 of the glycerol.
+    // « Heads (P · N · O) » (le rapport de cette session) dessine, elle, les SEULS
+    // atomes polaires d'une tête — le phosphore, l'azote et l'oxygène — que la même
+    // marche a classés « head » : deux rangées, un seul classement.
     const parts = lipidSubSelections(structure, base);
     const within = anchored ? moleculeIndicesOf(structure, base) : null;
     if (sub === 'head') return anchoredPartSele(structure, parts.headAtoms, within, anchored);
+    if (sub === 'heads') return anchoredPartSele(structure, parts.headsAtoms, within, anchored);
     if (sub === 'tail') return anchoredPartSele(structure, parts.acylAtoms, within, anchored);
     if (sub === 'glycerol') return anchoredPartSele(structure, parts.glycerolAtoms, within, anchored);
   }
@@ -18284,6 +18653,7 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
 </button>
 {showTorsionPanel && (() => {
   const read = torsionReading();                        // relu à chaque rendu
+  const pairRead = torsionPairReading();                // …et le couple du ⚒ avec lui
   const part = torsionPicks();
   const dragged = part.ok ? structureWasDragged(part.structure) : false;
   return (
@@ -18311,7 +18681,9 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
       <p className="text-[10px] text-slate-500">
         {read
           ? <>Now: <b>dihedral {torsionDeg(read.deg)}</b> · <b>A–D {torsionAng(read.dist)}</b> — turn the bond by typing a dihedral (Set) or a distance (Reach).</>
-          : 'Pick the four atoms: A (the reference — it must not move), B · C (the axle bond), D (the atom whose side turns). Click the 💡 “Pick A · B · C · D” button, then click them one after the other in the 3D view.'}
+          : (pairRead
+            ? <>Now: <b>{pairRead.label} {torsionAng(pairRead.dist)}</b> — with these two atoms, ⚒ Model build relaxes the geometry around them until the distance you typed (or, with nothing typed, the length the table gives that pair of elements) is the one the molecule has. Pick two more (B · C) and the same atoms become a hinge — the four of them then mean A · B · C · D as usual.</>
+            : 'Pick the four atoms: A (the reference — it must not move), B · C (the axle bond), D (the atom whose side turns). Click the 💡 “Pick A · B · C · D” button, then click them one after the other in the 3D view.')}
       </p>
       {torsionPick > 0 && (
         <p className="text-[10px] font-bold text-amber-800">● Pick atom {TORSION_SLOT_LETTERS[torsionPick - 1]} — {TORSION_SLOT_ROLES[torsionPick - 1]}</p>
@@ -18352,6 +18724,22 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
           title="Solve the angle that brings A and D to the distance typed on the left — in closed form (cos(θ − φ) = C/Amp), never by scanning: a 1° step could not be exact, and its answer would still have to become a rotation. The nearest of the two exact solutions is applied.">
           Reach
         </button>
+        <span className="w-px h-5 bg-amber-200 shrink-0" aria-hidden="true" />
+        <label className="flex items-center gap-1 text-[10px] font-bold text-amber-800">
+          ⇢ moves
+          <input type="number" step="1" min="0" max={RELAX_MAX_RADIUS} value={relaxRadius}
+            onChange={(e) => setRelaxRadiusText(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') buildModelNow(); }}
+            aria-label="How many bonds around the two picked atoms the model build may move"
+            title="How far the build may reach: 0 = only the two atoms move, N = every atom up to N bonds away from them. The farther it reaches, the more the molecule bends around them — and the more atoms are written back. The window is capped (240 atoms) and the report says when it bit."
+            className="w-12 border border-amber-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-amber-500 text-[10px] font-mono bg-white" />
+          bonds
+        </label>
+        <button type="button" onClick={buildModelNow}
+          className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-emerald-300 text-emerald-700 hover:bg-emerald-50"
+          title="⚒ MODEL BUILD — the gesture HyperChem had: build a CHEMICALLY VALID model out of the bonds, after they are known. Two atoms picked (A and D of the four, or the only two), the distance typed in the A–D field (left empty, the length the table gives that pair of elements: S–S 2.05 Å, C–S 1.82 Å, C–C 1.54 Å…), and the atoms around them MOVE, step by step, until the molecule has moved enough for the two atoms to be that far apart. The energy it minimises is a TARGET FUNCTION: the squared deviations of every bond of the window from its typical length, of every angle from the ideal angle of its hybridisation (sp3 109.47°, sp2 120°, sp 180°, read from the bond graph — a ring is judged planar only if its own bonds are short, so benzene becomes 120° and cyclohexane stays 109.47°), of the distance you asked for, plus a light leash that keeps the change local. ⚠ It is NOT a force field: no charges, no solvent, no entropy, no atom or hydrogen added — and the descent is LOCAL and DETERMINISTIC, so a distance it cannot reach is REPORTED with the number it really got, never faked. Every atom is written back the way a molecule drag writes (positionFromArray), so 📏 Measure, the plates, the film and 📥 Download read this geometry; « ↺ Undo torsion » puts the whole molecule back exactly as it was.">
+          ⚒ Model build
+        </button>
         {torsionClosest && (
           <button type="button" onClick={applyClosestTorsion}
             className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-fuchsia-300 text-fuchsia-700 hover:bg-fuchsia-50"
@@ -18372,7 +18760,7 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
         </button>
       </div>
       <p className="text-[10px] text-slate-400">
-        ⚠ A torsion is not stored anywhere: it lives in the COORDINATES of the frame on screen, like every edit of this bar. Loading another structure, or moving the trajectory to another frame (⏮ / the player), shows that frame’s own geometry again. The atoms that turn are the ones NGL’s bond graph reaches from D without crossing B–C: a bond inside a RING has no such side, and the panel refuses it rather than deforming the ring.
+        ⚠ A torsion is not stored anywhere: it lives in the COORDINATES of the frame on screen, like every edit of this bar. Loading another structure, or moving the trajectory to another frame (⏮ / the player), shows that frame’s own geometry again. The atoms that turn are the ones NGL’s bond graph reaches from D without crossing B–C: a bond inside a RING has no such side, and the panel refuses it rather than deforming the ring. ⚒ Model build is the same kind of edit — the same coordinates, the same ↺ — except that it moves a whole WINDOW of atoms, chosen by the “⇢ moves” field, and writes back only those: everything else keeps its own numbers, to the last digit. Like the ⚭ Fold for disulfides next door it is not a physical calculation — it minimises a target function of ideal bond lengths and angles — and it says out loud what it could not do.
       </p>
       {dragged && (
         <p className="text-[10px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">
@@ -19151,6 +19539,15 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
         title="Close the settings wheel">✕</button>
     </div>
     <div className="flex-1 overflow-y-auto custom-scrollbar p-4 flex flex-col gap-4">
+      {/* ⛭ CHAQUE ↺ RAMÈNE À VOS COULEURS (le rapport de cette session : « i colori
+          attualmente definiti a mano da me nel setting wheel devono essere i colori di
+          default (non quelli che avevi messo tu quando hai scritto il codice) »). Une
+          palette enregistrée par ce navigateur EST son propre défaut : le ↺ d'une
+          section rend donc VOS pastilles, jamais la table du code — voir paletteDefaults,
+          qui prend la photographie des palettes enregistrées une fois par chargement. */}
+      <p className="text-[10px] text-slate-500 border border-slate-200 rounded-lg px-2 py-1.5 bg-slate-50">
+        <b>Every ↺ of this wheel gives YOUR colours back</b> — the palette as this browser saved it, which is what « default » means here. The viewer's own tables are only used on a browser that has never stored the palette.
+      </p>
       {/* ▲ THE ATOM-TYPE PALETTE HAS MOVED (the request). It now stands right after
           « Styling window · section backgrounds » (just below), so the two palettes of
           the WINDOW itself — its own space colours and the element colours it draws
@@ -19239,7 +19636,7 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
             everything else a side chain. */}
         <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="text-[11px] font-black uppercase tracking-wide text-slate-600">Amino acids · backbone (B) / side chains (S)</span>
-          <button type="button" onClick={() => { setResidueColors({ ...RESIDUE_COLOR_PALETTE }); setResiduePartColors(mergePartPalette(RESIDUE_PART_DEFAULTS, null)); }}
+          <button type="button" onClick={() => { setResidueColors(paletteDefaults('labViewerResidueColors', RESIDUE_COLOR_PALETTE)); setResiduePartColors(paletteDefaults('labViewerResiduePartColors', RESIDUE_PART_DEFAULTS, mergePartPalette)); }}
             className="px-2 py-0.5 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100"
             title="Put the residue's own colour back to its default — the backbone and the side-chain swatches follow it">
             ↺ Defaults
@@ -19273,7 +19670,7 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
       <section className="flex flex-col gap-1">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="text-[11px] font-black uppercase tracking-wide text-slate-600">Secondary structure · helix / sheet / loop</span>
-          <button type="button" onClick={() => setSstrucColors({ ...SSTRUC_COLOR_DEFAULTS })}
+          <button type="button" onClick={() => setSstrucColors(paletteDefaults('labViewerSstrucColors', SSTRUC_COLOR_DEFAULTS))}
             className="px-2 py-0.5 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100"
             title="Put the three 2°-structure colours back to their defaults">
             ↺ Defaults
@@ -19302,7 +19699,7 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
       <section className="flex flex-col gap-1">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="text-[11px] font-black uppercase tracking-wide text-slate-600">DNA/RNA bases · charge</span>
-          <button type="button" onClick={() => { setBaseTypeColors({ ...BASE_IDENTITY_COLORS }); setChargeColors({ ...CHARGE_COLORS }); }}
+          <button type="button" onClick={() => { setBaseTypeColors(paletteDefaults('labViewerBaseTypeColors', BASE_IDENTITY_COLORS)); setChargeColors(paletteDefaults('labViewerChargeColors', CHARGE_COLORS)); }}
             className="px-2 py-0.5 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100"
             title="Put these two palettes back to their defaults">
             ↺ Defaults
@@ -19392,7 +19789,7 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
       <section className="flex flex-col gap-1">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="text-[11px] font-black uppercase tracking-wide text-slate-600">Sugar types</span>
-          <button type="button" onClick={() => setSugarTypeColors({ ...SUGAR_TYPE_COLORS })}
+          <button type="button" onClick={() => setSugarTypeColors(paletteDefaults('labViewerSugarTypeColors', SUGAR_TYPE_COLORS))}
             className="px-2 py-0.5 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100"
             title="Put every sugar type back to its default colour">
             ↺ Defaults
@@ -19426,14 +19823,14 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
             them. Each class shows its H · G · A swatches below. */}
         <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="text-[11px] font-black uppercase tracking-wide text-slate-600">Lipid types · headgroup (H) / glycerol (G) / acyl chains (A)</span>
-          <button type="button" onClick={() => { setLipidTypeColors({ ...LIPID_CLASS_COLORS }); setLipidPartColors(mergePartPalette(LIPID_PART_DEFAULTS, null)); }}
+          <button type="button" onClick={() => { setLipidTypeColors(paletteDefaults('labViewerLipidTypeColors', LIPID_CLASS_COLORS)); setLipidPartColors(paletteDefaults('labViewerLipidPartColors', LIPID_PART_DEFAULTS, mergePartPalette)); }}
             className="px-2 py-0.5 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100"
             title="Put the headgroup, glycerol and acyl-chain colours of every lipid class back to the class's own default colour">
             ↺ Defaults
           </button>
         </div>
         <p className="text-[10px] text-slate-500">
-          What « Color by : Lipid type » paints: THREE swatches per lipid class — H its polar headgroup, G its glycerol backbone (C1 · C2 · C3), A its acyl chains. All three start at the class's own colour, so a class stays ONE colour until its parts are separated here; a class the table does not know keeps the readable grey.
+          What « Color by : Lipid type » paints: THREE swatches per lipid class — H its polar headgroup, G its glycerol backbone (C1 · C2 · C3), A its acyl chains. All three start at the class's own colour, so a class stays ONE colour until its parts are separated here; a class the table does not know keeps the readable grey. The <b>H</b> swatch is also the colour of the « Heads (P · N · O) » row of the Lipids menu — the phosphorus, nitrogen and oxygen of a headgroup, drawn as spheres.
         </p>
         <div className="mt-1 grid grid-cols-[repeat(auto-fill,minmax(7rem,1fr))] gap-1.5">
           {LIPID_TYPE_ORDER.map((k) => (
@@ -19444,7 +19841,7 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
                 <input key={`${k}-${part}`} type="color" value={numToHex(lipidPartColors[k][part])}
                   onChange={(e) => setLipidPartColors((p) => ({ ...p, [k]: { ...p[k], [part]: parseInt(e.target.value.slice(1), 16) } }))}
                   className="w-6 h-5 rounded border border-slate-300 cursor-pointer" aria-label={`${k} ${part} colour`}
-                  title={`${k} · ${part === 'head' ? 'headgroup' : part === 'glycerol' ? 'glycerol backbone' : 'acyl chains'} (${letter})`} />
+                  title={`${k} · ${part === 'head' ? 'headgroup — also the colour of the « Heads (P · N · O) » row' : part === 'glycerol' ? 'glycerol backbone' : 'acyl chains'} (${letter})`} />
               ))}
             </span>
           ))}
@@ -19460,7 +19857,7 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
       <section className="flex flex-col gap-1">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="text-[11px] font-black uppercase tracking-wide text-slate-600">Chains · color by chain</span>
-          <button type="button" onClick={() => setChainColors({ ...CHAIN_COLOR_PALETTE })}
+          <button type="button" onClick={() => setChainColors(paletteDefaults('labViewerChainColors', CHAIN_COLOR_PALETTE))}
             className="px-2 py-0.5 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100"
             title="Put the chain colours back to their defaults">
             ↺ Defaults

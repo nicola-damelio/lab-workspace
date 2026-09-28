@@ -175,8 +175,8 @@ has('const [sectionTints, setSectionTints] = useState(() => loadPalette(SECTION_
   'les fonds sont un état persisté, comme les autres palettes');
 has('const setSectionTint = (kind, hex) => setSectionTints((p) => ({ ...p, [kind]: hex }));',
   'une pastille écrit SON type');
-has('const resetSectionTints = () => setSectionTints({ ...DEFAULT_SECTION_TINTS });',
-  '…et le ↺ de la section remet les sept');
+has('const resetSectionTints = () => setSectionTints(paletteDefaults(SECTION_TINT_KEY, DEFAULT_SECTION_TINTS));',
+  '…et le ↺ de la section remet les sept (aux couleurs ENREGISTRÉES : voir paletteDefaults)');
 has('useEffect(() => { savePalette(SECTION_TINT_KEY, sectionTints); }, [sectionTints]);',
   'les fonds survivent à un rechargement');
 has('Styling window · section backgrounds', 'la roue ⚙ a une SECTION « fonds de la fenêtre de style »');
@@ -268,8 +268,8 @@ eq(SEL.subsectionsOf('nucleic').map((s) => s.sub), ['general', 'backbone', 'base
 // 3) un lipide → ses trois parties ; une sélection NON classée → General seul.
 const lip = SEL.selectedResidueSections(keysOf(4), TICKS);
 eq(lip.map((s) => s.kind), ['lipid'], 'un POPC sélectionné → un espace de type lipide');
-eq(SEL.subsectionsOf('lipid').map((s) => s.sub), ['general', 'head', 'tail', 'glycerol'],
-  'les menus d’un lipide : General · headgroups · acyl chains · glycerol');
+eq(SEL.subsectionsOf('lipid').map((s) => s.sub), ['general', 'head', 'heads', 'tail', 'glycerol'],
+  'les menus d’un lipide : General · headgroups · heads (P · N · O) · acyl chains · glycerol');
 const other = SEL.selectedResidueSections(keysOf(5), TICKS);
 eq(other.length, 1, 'une sélection qui n’est ni protéine, ni acide nucléique, ni lipide : UN espace');
 eq(other[0].kind, 'ligand', '…de type « ligand »');
@@ -405,8 +405,8 @@ has('const loadPartPalette = (key, defaults) => {', '…avec son lecteur de stoc
 ['labViewerLipidPartColors', 'labViewerBaseSugarColors', 'labViewerResiduePartColors'].forEach((k) => {
   has(`savePalette('${k}'`, `la palette ${k} est écrite dans le stockage`);
 });
-has('setLipidPartColors(mergePartPalette(LIPID_PART_DEFAULTS, null))', 'le ↺ des lipides revient aux DÉFAUTS');
-has('setResiduePartColors(mergePartPalette(RESIDUE_PART_DEFAULTS, null))', '…et celui des résidus aussi');
+has("setLipidPartColors(paletteDefaults('labViewerLipidPartColors', LIPID_PART_DEFAULTS, mergePartPalette))", 'le ↺ des lipides revient aux couleurs ENREGISTRÉES par l’utilisateur (voir paletteDefaults)');
+has("setResiduePartColors(paletteDefaults('labViewerResiduePartColors', RESIDUE_PART_DEFAULTS, mergePartPalette))", '…et celui des résidus aussi');
 // Les trois schémas lisent la PART de l'atome (exécuté dans _viewer_scheme_test.mjs).
 has('const part = lipidAtomPart(atom);', 'lab-lipid-class lit la part de chaque atome');
 has('const part = proteinAtomPart(atom && atom.atomname);', 'lab-residue lit celle de chaque atome');

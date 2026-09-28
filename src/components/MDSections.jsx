@@ -1546,6 +1546,14 @@ export const MDExperimentSetupSection = ({ ctx }) => {
 <NMRMoleculeViewer
   key={`${activeTest.id || 'md'}|${trajectoryFile ? trajectoryFile.name : 'no-traj-file'}|${d.trajectoryUrl || 'no-traj'}`}
   instanceKey={activeTest.id || null}
+  /* ⚠ LE MÊME CONTEXTE DE NOMMAGE QUE LES PAGES NMR / DOCKING (le rapport de cette
+     session : « La finestra selections che si genera facendo delle selezioni con pymol,
+     continua a comparire in tutti gli esperimenti e questo non deve succedere. Deve
+     comparire solo nelle instances dell'esperimento dove é stata creata e non altrove! »).
+     Sans lui le viewer MD ne connaissait que sa CONDITION : la session des fenêtres de
+     sélection (projet · expérience, voir pymolSessionOwnerOf) ne pouvait donc pas être
+     partagée par les autres instances de l'expérience. */
+  driveNaming={{ project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || '', instance: activeTest.instanceName || '', scientist: activeTest.operator || '', section: 'Data', subsection: 'Structure' }}
   src={activeTest.structureSrc}
   structureFileData={activeTest.structureFileData}
   structureFile={structureFile}

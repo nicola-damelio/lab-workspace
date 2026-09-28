@@ -119,8 +119,8 @@ has('Secondary structure · helix / sheet / loop',
 gone('DNA/RNA bases · secondary structure · charge',
   'la section des bases ADN/ARN ne les enterre plus sous son en-tête');
 has('DNA/RNA bases · charge', '…elle ne parle plus que des bases et de la charge');
-has('onClick={() => setSstrucColors({ ...SSTRUC_COLOR_DEFAULTS })}',
-  'le ↺ de la section réinitialise depuis les DÉFAUTS partagés');
+has("onClick={() => setSstrucColors(paletteDefaults('labViewerSstrucColors', SSTRUC_COLOR_DEFAULTS))}",
+  'le ↺ de la section réinitialise depuis les DÉFAUTS partagés — c’est-à-dire les couleurs ENREGISTRÉES (voir paletteDefaults)');
 has('title="Put these two palettes back to their defaults">',
   'le ↺ des bases / charges n’en réinitialise plus que deux');
 has('What « Color by : Secondary structure » paints', 'la section dit ce que la palette peint');
