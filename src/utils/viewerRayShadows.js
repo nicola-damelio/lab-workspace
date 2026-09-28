@@ -857,6 +857,17 @@ export const SHADOW_BLUR_MIN = 0.25;
    passes it in) — so a licorice-only still shrinks the blur along with the
    stroke instead of inheriting a target sized for the tube. */
 export const SHADOW_BLUR_STROKE_FRACTION = 0.6;
+/* The second, WIDE softening term (see the comment inside buildRayShadowMask):
+   ~4 A is comfortably bigger than one residue step (~3.8 A for a peptide
+   backbone) so it bridges exactly the gap a single hard light leaves between
+   self-shadowed peaks, without blurring across an entire secondary-structure
+   element. 0.85 keeps the blended result short of fully saturating against
+   the fine mask's own peak (1.0), leaving the crisp, stroke-accurate detail
+   distinguishable from the ambient fill layered under it. Both were tuned by
+   rendering the actual mask, not guessed: see the module's test notes. */
+export const SHADOW_AMBIENT_RADIUS_ANGSTROM = 4.0;
+export const SHADOW_AMBIENT_WEIGHT = 0.85;
+export const SHADOW_AMBIENT_RADIUS_PX_FALLBACK = 24;
 export const shadowBlurScale = (pxPerAngstrom, minStrokeRadius) => {
   const px = Number(pxPerAngstrom);
   const base = (!Number.isFinite(px) || px <= 0) ? 1 : Math.min(1, Math.max(SHADOW_BLUR_MIN, px / SHADOW_BLUR_REF));
@@ -984,6 +995,26 @@ export const buildRayShadowMask = ({ atoms, camera, light, width, height, option
     penumbra: blurOf('penumbra', o.penumbra),
     penumbraMax: blurOf('penumbraMax', o.penumbraMax),
   };
+  /* THE PATCHWORK-OF-CRESCENTS PROBLEM: a thin, gently wavy backbone (or any
+     stroke that curves at a scale much bigger than its own radius) only
+     self-occludes near the PEAKS of that curve under one hard directional
+     light — the troughs have nothing near enough to shadow them. Confirmed
+     this is not a proxy bug: neither smoothing the path (a proper spline
+     through the guide atoms, matching NGL's own geometry) nor changing the
+     light's azimuth/elevation closes the gaps — they are a genuine
+     consequence of hard single-direction shadowing on this shape, the same
+     way a real ray-tracer's shadow map would show them. What a real renderer
+     adds that this one didn't is a SECOND, much WIDER soft term (ambient
+     occlusion / an area light) that bridges exactly these gaps into
+     continuous shading, while the fine, stroke-sized blur above keeps
+     individual bonds and rings crisp. `SHADOW_AMBIENT_*` below is that second
+     term: the SAME mask, blurred again at a scale set in ångströms
+     (residue-to-residue, not atom-to-atom), then blended back in with `max`
+     so it can only ADD softness, never erase the fine detail the first blur
+     already resolved. */
+  const ambientRadiusPx = pxPerAngstrom > 0
+    ? SHADOW_AMBIENT_RADIUS_ANGSTROM * pxPerAngstrom
+    : SHADOW_AMBIENT_RADIUS_PX_FALLBACK;
   const cameraAxes = viewAxesOf(camera.view || mat4Identity());
   const lightAxes = viewAxesOf(light.view || mat4Identity());
   const cameraPass = rasterizeSpheres({
@@ -1013,8 +1044,19 @@ export const buildRayShadowMask = ({ atoms, camera, light, width, height, option
     penumbraMax: blur.penumbraMax,
     depthScale,
   });
+  // The wide pass reads the FINE mask (already resolved to bond/ring shape) —
+  // blurring it again at a much bigger radius does not need the raw PCF pass a
+  // second time, and the fine detail it is blended back against is what keeps
+  // this from washing anything out (see the `max` below).
+  const wideMask = softenMask(out.mask, mw, mh, ambientRadiusPx);
+  const blended = new Float32Array(out.mask.length);
+  for (let i = 0; i < blended.length; i += 1) {
+    const fine = out.mask[i];
+    const ambient = wideMask[i] * SHADOW_AMBIENT_WEIGHT;
+    blended[i] = ambient > fine ? ambient : fine;
+  }
   return {
-    mask: out.mask,
+    mask: blended,
     maskWidth: mw,
     maskHeight: mh,
     shadowed: out.shadowed,
