@@ -100,11 +100,33 @@ import { movingSideOf, planTorsion, dihedralDeg, distanceOf } from '../utils/tor
 // l'écran par le module PUR (le dièdre de utils/torsionDrive.js, jamais un second), les
 // classe par les polygones de la figure classique — résidu ordinaire, glycine, proline,
 // pré-proline — et dessine le graphe : les bassins en fond, un point par résidu, les
-// OUTLIERS nommés. Voir §6 de _ramachandran_test.mjs.
+// OUTLIERS nommés, les AXES gradués et nommés (φ en abscisse, ψ en ordonnée) et le
+// SURVOL d'un point qui dit le résidu et ses deux angles. Voir §6 de
+// _ramachandran_test.mjs.
 import {
   RAMA_PLOT, RAMA_PLOT_REGIONS, RAMA_REGION_COLORS, RAMA_REGION_NAMES,
-  ramachandranOf, ramaPlotPath, ramaPlotGrid,
+  RAMA_POINT,
+  ramachandranOf, ramaPlotPath, ramaPlotGrid, ramaPlotAxisLabels, ramaHoverTextOf,
 } from '../utils/ramachandran';
+// ⬇ 🧬 CALCUL DE STRUCTURE — n DÉPARTS TIRÉS AU HASARD, LE ⚒ SUR CHACUN, m RETENUES
+// (utils/structureCalc.js). La demande, mot pour mot : « Implement a structure
+// calculation button in which the user provide the distances between atom pairs and
+// selects the number of starting structures n and the number of retained structures m.
+// The program must then generate n structures by randomly assigning values of all
+// dihedral angles. From each of these n structure the protocol of “model build” is
+// applied to respect the distance constraints and the final result is scored. the best
+// m structures are retained. »
+// Le panneau 🧬 ne calcule RIEN lui-même : il lit la molécule à l'écran
+// (`geometryOfStructure`), donne ses distances, son n et son m au module PUR, et écrit
+// la structure retenue par le MÊME chemin qu'une torsion (`writeStructurePositions` +
+// le journal ↺) — donc le 📏, les plaques, le film et le 📥 Download la lisent.
+import {
+  structureAttemptOf, rankStructureAttempts,
+  STRUCTURE_CALC_DEFAULT_STARTS, STRUCTURE_CALC_MAX_STARTS,
+  STRUCTURE_CALC_DEFAULT_KEEP, STRUCTURE_CALC_MAX_KEEP,
+  STRUCTURE_CALC_SEED, STRUCTURE_CALC_PASSES, STRUCTURE_CALC_MAX_RESTRAINTS,
+  STRUCTURE_CALC_RESTRAINT_TOLERANCE,
+} from '../utils/structureCalc';
 // ⬇ ⚒ MODEL BUILD — LA GÉOMÉTRIE QUE LES LIAISONS IMPOSENT (utils/geometryRelax.js).
 // La demande, mot pour mot : « in Hyperchem there was a function “model build” that
 // created a chemically valid model after the bonds had been specified ; that is what I
@@ -7730,6 +7752,40 @@ const relaxAnimRef = useRef(null);
 const [showRamaPanel, setShowRamaPanel] = useState(false);
 const [rama, setRama] = useState(null);
 const [ramaMsg, setRamaMsg] = useState('');
+/* LE POINT SURVOLÉ — la CLEF de son résidu, pas l'objet : une nouvelle lecture (⏮, un
+   ⚒, un ✏️ Torsion) jette les anciens résidus, et une clef morte ne désigne plus rien
+   (le panneau retombe sur « survolez un point » au lieu de lire un résidu disparu). */
+const [ramaHover, setRamaHover] = useState(null);
+
+/* ── 🧬 LE CALCUL DE STRUCTURE — LES DISTANCES, n, m, ET LA FAMILLE RETENUE ────
+   « the user provide the distances between atom pairs and selects the number of
+   starting structures n and the number of retained structures m ». La liste des
+   distances se construit avec les MÊMES atomes piqués que le ⚒ (🎯 Pick A · B · C · D
+   dans ✏️ Torsion : le couple est A–B quand deux atomes sont piqués, A–D quand les
+   quatre le sont) et la distance du champ « A–D » (vide : la longueur que la table
+   donne à ce couple d'éléments, exactement comme le ⚒) ; chaque ligne reste
+   modifiable après coup. Le calcul est découpé UN DÉPART PAR TRANCHE (le même
+   `setTimeout` d'une image que le reste du viewer) avec un jeton d'annulation : un
+   ⏹ l'arrête entre deux départs, et une autre molécule chargée l'arrête aussi. */
+const [showCalcPanel, setShowCalcPanel] = useState(false);
+const [calcRestraints, setCalcRestraints] = useState([]);  // [{ key, i, j, target, label }]
+const [calcStarts, setCalcStarts] = useState(STRUCTURE_CALC_DEFAULT_STARTS);
+const [calcKeep, setCalcKeep] = useState(STRUCTURE_CALC_DEFAULT_KEEP);
+const [calcMsg, setCalcMsg] = useState('');
+const [calcProgress, setCalcProgress] = useState('');
+const [calcBusy, setCalcBusy] = useState(false);
+const [calcResult, setCalcResult] = useState(null);   // la famille classée du module
+const [calcShown, setCalcShown] = useState(0);        // le rang écrit à l'écran
+const calcRunRef = useRef(0);                         // le jeton d'annulation du ⏹
+const calcPartialRef = useRef(null);                  // { run, finish, attempts } du calcul en cours
+const setCalcStartsText = (v) => {
+  const n = Math.round(Number(String(v).replace(',', '.')));
+  setCalcStarts(Number.isFinite(n) ? Math.min(STRUCTURE_CALC_MAX_STARTS, Math.max(1, n)) : STRUCTURE_CALC_DEFAULT_STARTS);
+};
+const setCalcKeepText = (v) => {
+  const n = Math.round(Number(String(v).replace(',', '.')));
+  setCalcKeep(Number.isFinite(n) ? Math.min(STRUCTURE_CALC_MAX_KEEP, Math.max(1, n)) : STRUCTURE_CALC_DEFAULT_KEEP);
+};
 
 const [rebuildMsg, setRebuildMsg] = useState('');
 const rebuildMsgTimerRef = useRef(null);
@@ -9461,6 +9517,10 @@ const ramachandranReadingOf = (structure) => (
 const readRamachandran = () => {
   const comp = componentRef.current;
   const structure = comp && comp.structure;
+  /* Une nouvelle lecture jette les points de l'ancienne : le point survolé n'existe
+     plus, donc le survol se lève avec elle (sinon le panneau nommerait un résidu que
+     la nouvelle géométrie ne place plus là). */
+  setRamaHover(null);
   if (!structure) {
     setRama(null);
     setRamaMsg('✕ There is no molecule on screen to read — load a structure first.');
@@ -10139,6 +10199,276 @@ const writeStructurePositions = (comp, idxs, flat) => {
   refreshScenePlates();          // les plaques suivent les coordonnées, comme pour une image
   requestSceneRepaint();
   return true;
+};
+
+/* ── 🧬 CALCUL DE STRUCTURE · LES DISTANCES, n, m — LE PANNEAU NE CALCULE RIEN ───
+   « the user provide the distances between atom pairs and selects the number of
+   starting structures n and the number of retained structures m. » Ici : la liste
+   des distances (les atomes piqués + le champ A–D, et la table quand il est vide —
+   exactement le ⚒), les deux compteurs, et UN DÉPART PAR TRANCHE. Tout le reste est
+   dans utils/structureCalc.js : le tirage des dièdres, le protocole du ⚒ sur chaque
+   départ, la note, le classement et les m retenues. Le panneau écrit la structure
+   retenue par le MÊME chemin qu'une torsion, et il DIT ce que le module a fait. */
+
+/** LA DISTANCE DE DEUX ATOMES DE LA MOLÉCULE À L'ÉCRAN — le « maintenant » d'une
+ *  ligne de la liste, relu à chaque rendu (comme la lecture d'une torsion). */
+const calcDistanceIn = (geom, i, j) => (geom
+  ? distanceOf(
+    [geom.positions[i * 3], geom.positions[i * 3 + 1], geom.positions[i * 3 + 2]],
+    [geom.positions[j * 3], geom.positions[j * 3 + 1], geom.positions[j * 3 + 2]],
+  )
+  : null);
+
+/** LA MOLÉCULE ET SA GÉOMÉTRIE, TELLES QUE LE CALCUL LES LIT — la structure du
+ *  componentRef, ses éléments, SON graphe de liaisons et ses coordonnées à plat.
+ *  `null` quand il n'y a rien à l'écran : le panneau le DIT alors, il ne devine pas. */
+const calcGeometryNow = () => {
+  const comp = componentRef.current;
+  const structure = comp && comp.structure;
+  if (!comp || !structure) return null;
+  const geom = geometryOfStructure(structure);
+  return geom ? { comp, structure, geom } : null;
+};
+
+/** POURQUOI UN DÉPART S'EST ARRÊTÉ LÀ — une phrase par `reason` du module, traduite
+ *  et jamais inventée (le panneau n'a pas de diagnostic à lui). */
+const calcWhyOf = (reason) => ({
+  'converged': 'every distance you asked for is respected',
+  'stalled': 'a whole pass gained nothing more (a LOCAL minimum: this is not a force field) — the gap left is measured, not hidden',
+  'max-passes': `the ${STRUCTURE_CALC_PASSES} passes a start is allowed ran out with a distance still off`,
+  'clean': 'the preparation found nothing to fix',
+  'no-terms': 'this molecule has no bond the tables know — the descent has nothing to read',
+  'bad-points': 'the coordinates could not be read',
+  'no-prep': 'the preparation could not run',
+}[reason] || 'the start stopped');
+
+/** AJOUTER LE COUPLE PIQUÉ À LA LISTE — les deux atomes viennent des MÊMES piqués que
+ *  le ⚒ (A–B à deux atomes, A–D à quatre) et la distance du champ A–D (vide : la
+ *  longueur que la table donne à ce couple d'éléments). Un couple DÉJÀ dans la liste
+ *  est remplacé, pas doublé : le module ne lit qu'une cible par couple. */
+const calcAddRestraint = () => {
+  const now = calcGeometryNow();
+  if (!now) {
+    setCalcMsg('✕ There is no molecule on screen — load a structure first, then pick the two atoms (🎯 in ✏️ Torsion).');
+    return;
+  }
+  const pair = torsionPairOf();
+  if (!pair.ok) { setCalcMsg(`✕ ${pair.say}`); return; }
+  const { geom } = now;
+  const [i, j] = pair.idx;
+  const typed = Number(String(torsionDistDraft).replace(',', '.'));
+  const table = bondLengthTarget(geom.elements[i], geom.elements[j]);
+  const target = Number.isFinite(typed) && typed > 0 ? typed : table;
+  if (!Number.isFinite(target) || target <= 0) {
+    setCalcMsg(`✕ Type the distance you want ${pair.label} to reach, in ångströms — the table has no`
+      + ` length for ${geom.elements[i] || '?'}–${geom.elements[j] || '?'}, so this line would have nothing to aim at.`);
+    return;
+  }
+  const key = i < j ? `${i}-${j}` : `${j}-${i}`;
+  const label = `${pair.slots[0].label}–${pair.slots[1].label}`;
+  const next = [...calcRestraints.filter((r) => r.key !== key), { key, i, j, target, label }]
+    .sort((a, b) => (a.i - b.i) || (a.j - b.j));
+  setCalcRestraints(next);
+  setCalcMsg(`✓ Distance ${label} = ${torsionAng(target)} is in the list (${next.length} of`
+    + ` ${STRUCTURE_CALC_MAX_RESTRAINTS} the module accepts) — ▶ Run builds ${calcStarts} structure`
+    + `${calcStarts === 1 ? '' : 's'} and keeps the best ${calcKeep}. Every line can be edited, and ✕ drops it.`);
+};
+
+/** CHANGER LA CIBLE D'UNE LIGNE — c'est l'UTILISATEUR qui donne les distances, et il
+ *  peut les corriger après coup ; une cible illisible ou nulle est refusée sans un mot. */
+const calcSetRestraintTarget = (key, value) => {
+  const v = Number(String(value).replace(',', '.'));
+  if (!Number.isFinite(v) || v <= 0) return;
+  setCalcRestraints((list) => list.map((r) => (r.key === key ? { ...r, target: v } : r)));
+};
+
+const calcRemoveRestraint = (key) => {
+  setCalcRestraints((list) => list.filter((r) => r.key !== key));
+};
+
+/** LE RAPPORT D'UN CALCUL — les chiffres du module, mis en phrases : ce qui a été
+ *  tiré, combien de départs respectent les distances, le classement, ce que la famille
+ *  retenue mesure, et ce que ce calcul n'est PAS. Rien n'est inventé ici : tout vient
+ *  du classement que le module a rendu (`rankStructureAttempts`). */
+const calcReportOf = (retained, ranked) => {
+  if (!ranked || !retained) return '';
+  const { ranking, family } = ranked;
+  const best = ranking[0];
+  const n = ranked.tried;
+  const kept = ranked.retained.length;
+  const converged = ranking.filter((r) => r.violations === 0).length;
+  const worst = best.worst
+    ? ` (worst ${best.worst.i}–${best.worst.j} at ${torsionAng(best.worst.distance)} for ${torsionAng(best.worst.target)})`
+    : '';
+  const spread = family && family.spread;
+  const spreadLine = spread && spread.count
+    ? ` · family spread ${spread.mean.toFixed(2)} Å rmsd (worst pair #${spread.worst.a}–#${spread.worst.b} at`
+      + ` ${spread.worst.rmsd.toFixed(2)}, superposed on all ${spread.atoms} atoms)`
+    : ' · a single model was kept: there is no family spread to measure';
+  const restLine = family && family.rest && family.rest.length
+    ? ` · left out: ${family.rest.map((r) => `#${r.rank} (start ${r.index}, score ${r.score.toFixed(1)}`
+      + `${r.violations ? `, ${r.violations} distance${r.violations === 1 ? '' : 's'} off` : ''})`).join(' · ')}`
+    : '';
+  const distLine = family && family.restraints && family.restraints.length
+    ? ` · distances in the kept family: ${family.restraints.map((r) => `${r.i}–${r.j} ${torsionAng(r.mean)}`
+      + ` (${r.satisfied}/${r.models} models, spread ${torsionAng(r.spread)})`).join(' · ')}`
+    : '';
+  const drawLine = best.draw
+    ? ` · ${best.draw.turned} dihedral${best.draw.turned === 1 ? '' : 's'} drawn at random over`
+      + ` ${best.draw.channels} rotatable bond${best.draw.channels === 1 ? '' : 's'}`
+      + `${best.draw.skipped ? ` (${best.draw.skipped} without a dihedral, skipped)` : ''}`
+    : '';
+  const protocolLine = best.protocol
+    ? ` · ${best.protocol.passes} pass${best.protocol.passes === 1 ? '' : 'es'},`
+      + ` ${best.protocol.drove} distance${best.protocol.drove === 1 ? '' : 's'} driven`
+      + ` (${best.protocol.reached} on target), ${best.protocol.steps} steps`
+    : '';
+  return `✓ 🧬 Structure calculation · ${n} starting structure${n === 1 ? '' : 's'}, ${kept} kept`
+    + `${ranked.refused ? ` (${ranked.refused} refused)` : ''} · ${converged} of them respected every distance`
+    + ` · best = start #${best.index} (score ${best.score.toFixed(1)} = target function ${best.total.toFixed(1)}`
+    + ` + clash penalty ${best.clashPenalty.toFixed(1)}) · ${best.satisfied} distance${best.satisfied === 1 ? '' : 's'} respected${worst}`
+    + `${best.clashes ? ` · ⚠ ${best.clashes} atom pair${best.clashes === 1 ? '' : 's'} closer than 1.45 Å in that model`
+      : ' · ✓ no atom pair closer than 1.45 Å in it'}`
+    + ` · bonds ${best.bondRms.toFixed(4)} Å rms, angles ${best.angleRms.toFixed(2)}° rms`
+    + ` · ${best.moved} atom${best.moved === 1 ? '' : 's'} moved`
+    + `${drawLine}${protocolLine}${spreadLine}${distLine}${restLine}.`
+    + ` ${calcWhyOf(retained.reason)} — the same protocol the ⚒ applies, on each start;`
+    + ` a FIXED seed (${STRUCTURE_CALC_SEED}), so the same n and the same distances give the same family to the last digit,`
+    + ` and a distance counts as respected within ${STRUCTURE_CALC_RESTRAINT_TOLERANCE} Å.`
+    + ' ⚠ It is NOT a force field and not dynamics: no charges, no solvent, no annealing, no atom added — the randomness is'
+    + ' ONLY in the starting dihedrals, and every descent after that is the ⚒\'s own local one.'
+    + ' ⚠ A peptide C–N bond IS a rotatable dihedral for that draw: a start can come out cis, and the ⚒ has no ω target —'
+    + ' 🪢 Ramachandran is what shows it.'
+    + ' ↺ Undo torsion puts the molecule back exactly where it was before the calculation wrote anything.';
+};
+
+/** ÉCRIRE UNE STRUCTURE RETENUE DANS LA MOLÉCULE — TOUTE la molécule (c'est elle que
+ *  le calcul a construite), par le chemin d'une torsion, avec le rapport du module.
+ *  ⚠ L'ÉCRITURE EST REFUSÉE SI LA MOLÉCULE A CHANGÉ depuis le calcul : ces
+ *  coordonnées-là appartiennent aux atomes de la molécule qui les a produites, et
+ *  les écrire sur une autre serait écrire du bruit (le ↺ fait le même contrôle). */
+const calcWriteStructure = (retained, ranked) => {
+  const comp = componentRef.current;
+  const structure = comp && comp.structure;
+  if (!comp || !structure || !retained || !retained.positions) return;
+  if (ranked && ranked.comp && ranked.comp !== comp) {
+    setCalcMsg('✕ These structures were computed on ANOTHER molecule than the one on screen now — their coordinates'
+      + ' belong to its atoms. ▶ Run the calculation again on this molecule (the last family is kept above, with its scores).');
+    return;
+  }
+  const count = Math.round(retained.positions.length / 3);
+  const idxs = [];
+  for (let i = 0; i < count; i += 1) idxs.push(i);
+  if (!writeStructurePositions(comp, idxs, retained.positions)) {
+    setCalcMsg('✕ The structure refused the new coordinates — nothing was changed.');
+    return;
+  }
+  setCalcShown(retained.rank);
+  setCalcMsg(calcReportOf(retained, ranked));
+};
+
+/** LE CALCUL, UN DÉPART PAR TRANCHE — « the program must then generate n structures by
+ *  randomly assigning values of all dihedral angles », puis le protocole du ⚒ sur
+ *  chacune. Chaque tranche est un `setTimeout` : la page reste vivante, la ligne de
+ *  progression dit où on en est, et le ⏹ (ou une autre molécule chargée) arrête
+ *  l'affaire ENTRE deux départs. Le dernier mot revient au module
+ *  (`rankStructureAttempts`) : les m meilleures sont gardées, et la première est
+ *  écrite dans la structure — les autres s'écrivent une par une (⤓ Load). */
+const runStructureCalculation = () => {
+  finishRelaxPlayback();                 // un ⚒ qui joue encore est terminé d'abord
+  const live = calcGeometryNow();
+  if (!live) {
+    setCalcMsg('✕ There is no molecule on screen — load a structure first.');
+    return;
+  }
+  const { comp, structure, geom } = live;
+  const list = calcRestraints.filter((r) => r.i < geom.count && r.j < geom.count);
+  if (!list.length) {
+    setCalcMsg('✕ Nothing to respect yet: pick two atoms (🎯 Pick A · B · C · D in ✏️ Torsion), type the distance you'
+      + ' want in the A–D field if it is not the table\'s length, then press ⌖ Add the picked pair.'
+      + ' A structure calculation needs at least one distance between two atoms.');
+    return;
+  }
+  const n = Math.min(STRUCTURE_CALC_MAX_STARTS, Math.max(1, calcStarts));
+  const m = Math.min(STRUCTURE_CALC_MAX_KEEP, Math.max(1, calcKeep));
+  /* LE ↺ — la molécule d'AVANT, photographiée avant d'écrire quoi que ce soit : c'est
+     le MÊME journal que celui d'une torsion, donc le ↺ du panneau remet la molécule. */
+  const before = torsionSnapshotOf(structure);
+  torsionUndoRef.current = {
+    comp, structure, count: before ? before.length / 3 : 0, flat: before,
+    label: `🧬 structure calculation · ${list.length} distance${list.length === 1 ? '' : 's'} · n = ${n}, m = ${m}`,
+  };
+  calcRunRef.current += 1;
+  const run = calcRunRef.current;
+  const attempts = [];
+  setCalcBusy(true);
+  setCalcShown(0);
+  setCalcResult(null);
+  setCalcProgress(`🧬 start 0/${n} …`);
+  const finish = (stopped) => {
+    const ranked = rankStructureAttempts({ attempts, keep: m });
+    /* LA FAMILLE EST MARQUÉE DE SA MOLÉCULE — `comp` et `structure` : ses coordonnées
+       ne peuvent donc pas être écrites sur une autre (voir `calcWriteStructure`). */
+    setCalcResult({ ...ranked, comp, structure });
+    setCalcBusy(false);
+    setCalcProgress('');
+    if (!ranked.retained.length) {
+      setCalcMsg('✕ No structure came out of the calculation — nothing was written.');
+      return;
+    }
+    /* LE MEILLEUR S'ÉCRIT TOUT DE SUITE — les m retenues se regardent ensuite une par
+       une (⤓ Load), et chacune s'écrit par le chemin d'une torsion. */
+    calcWriteStructure(ranked.retained[0], ranked);
+    if (stopped) setCalcMsg((prev) => `⏹ Stopped between two starts: ${attempts.length} of ${n} computed, the rest is not. ${prev}`);
+  };
+  calcPartialRef.current = { run, finish, attempts };
+  const step = () => {
+    if (calcRunRef.current !== run) return;
+    /* LA MOLÉCULE À L'ÉCRAN N'EST PLUS CELLE DU CALCUL — un chargement, un dépli : le
+       calcul s'arrête de lui-même et le DIT (rien n'est écrit sur une autre molécule). */
+    if (componentRef.current !== comp) {
+      setCalcBusy(false);
+      setCalcProgress('');
+      setCalcMsg('✕ The molecule on screen changed while the calculation was running — it stopped between two starts.'
+        + ' Nothing was written: those models belong to the molecule that was there. ▶ Run it again on this one.');
+      return;
+    }
+    const attempt = structureAttemptOf({
+      positions: geom.positions, elements: geom.elements, bonds: geom.bonds,
+      restraints: list.map((r) => ({ i: r.i, j: r.j, target: r.target })),
+      index: attempts.length,
+      seed: STRUCTURE_CALC_SEED,
+      stageStep: relaxStageStep,
+      escapes: relaxEscapes,
+      /* ⟳ Le rebâtiment n'est PAS envoyé : la fenêtre est la molécule entière, donc il
+         n'y a rien hors fenêtre à reposer (le module l'explique, et le rapport du ⚒
+         n'en parle pas non plus ici). */
+      rebuild: false,
+    });
+    attempts.push(attempt);
+    const live = attempt.satisfied + attempt.violations;
+    setCalcProgress(`🧬 start ${attempts.length}/${n} — ${calcWhyOf(attempt.reason)} · score ${attempt.score.toFixed(1)}`
+      + ` · ${attempt.satisfied}/${live} distance${live === 1 ? '' : 's'} respected`
+      + `${attempt.draw ? ` · ${attempt.draw.turned} dihedral${attempt.draw.turned === 1 ? '' : 's'} drawn at random` : ''}`
+      + `${attempt.protocol && attempt.protocol.passCount > 1 ? ` · ${attempt.protocol.passCount} passes` : ''}`
+      + `${attempt.protocol ? ` · ${attempt.protocol.steps} steps` : ''}`);
+    if (attempts.length >= n) { finish(false); return; }
+    if (typeof window !== 'undefined' && window.setTimeout) window.setTimeout(step, 0);
+    else step();
+  };
+  step();
+};
+
+/** ⏹ ARRÊTER LE CALCUL — entre deux départs, et sans rien perdre : ce qui est déjà
+ *  construit est classé, ses m meilleures sont écrites, et le panneau dit combien de
+ *  départs sur n ont été faits (un calcul partiel reste un calcul). */
+const calcStop = () => {
+  const part = calcPartialRef.current;
+  calcRunRef.current += 1;
+  setCalcBusy(false);
+  if (part && part.attempts.length) { part.finish(true); return; }
+  setCalcProgress('');
+  setCalcMsg('⏹ Stopped — no start had been computed yet, so nothing was written.');
 };
 
 /** LA STRUCTURE À L'ÉCRAN A-T-ELLE ÉTÉ DÉPLACÉE À LA MAIN ? Le rapport de la torsion
@@ -19593,16 +19923,30 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
     changent la géométrie sont ✏️ Torsion et ⚒ Model build, juste au-dessus). La
     lecture est un SNAPSHOT pris par « ⟳ Read the backbone » — donc on VOIT un
     construit ⚒ bouger les points en relisant après lui — et tout le calcul (les
-    angles, la classe du résidu, la région, la place du point) vient de
-    utils/ramachandran.js : le panneau ne fait que l'écrire. */ }
+    angles, la classe du résidu, la région, la place du point, ET la place des
+    graduations d'axe) vient de utils/ramachandran.js : le panneau ne fait que
+    l'écrire. Il se SURVOLE aussi : le point sous la souris (ou atteint au Tab) est
+    nommé sous le graphe avec ses deux angles, et le module écrit cette ligne
+    (`ramaHoverTextOf`). */ }
 <button type="button"
   onClick={() => { const next = !showRamaPanel; setShowRamaPanel(next); if (next) readRamachandran(); }}
   className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${showRamaPanel ? 'bg-amber-100 border-amber-400 text-amber-900' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
-  title="🪢 RAMACHANDRAN — the φ/ψ map of the peptide backbone on screen. φ = C(i−1)·N·CA·C and ψ = N·CA·C·N(i+1), READ from the coordinates with the same signed-IUPAC dihedral reader the χ/δ readers use (utils/torsionDrive.js — there is no second dihedral in this app), one point per residue. The background is the classic contour (Ramachandran 1963, the “core” areas of Lovell 2003), and it is used BOTH to draw and to CLASSIFY, so the colour of a dot really says where it is: α right (red), β (amber), α left (green), and the points outside every basin are OUTLIERS (violet), listed with the nearest basin and how far they are. A glycine, a proline and a residue about to be a proline are classified by THEIR OWN contours — the classic figure has three of them, because a glycine's two mirrors are allowed and a proline's φ is closed by its ring — and the panel says how many of each. ⚠ It is a PLAN, not a calculation: no potential, no energy, no atom added, and a point outside the regions is not “wrong” — it is outside the regions. A residue whose neighbour is missing (a chain end, a gap in the numbering) has only one angle: it is counted and NOT drawn, because a point that was not measured would be a lie. It reads the coordinates ON SCREEN, so it shows what ⚒ Model build or ✏️ Torsion have done — press ⟳ Read the backbone again to see the new ones. This panel never writes anything.">
+  title="🪢 RAMACHANDRAN — the φ/ψ map of the peptide backbone on screen. φ = C(i−1)·N·CA·C and ψ = N·CA·C·N(i+1), READ from the coordinates with the same signed-IUPAC dihedral reader the χ/δ readers use (utils/torsionDrive.js — there is no second dihedral in this app), one point per residue. The background is the classic contour (Ramachandran 1963, the “core” areas of Lovell 2003), and it is used BOTH to draw and to CLASSIFY, so the colour of a dot really says where it is: α right (red), β (amber), α left (green), and the points outside every basin are OUTLIERS (violet), listed with the nearest basin and how far they are. A glycine, a proline and a residue about to be a proline are classified by THEIR OWN contours — the classic figure has three of them, because a glycine's two mirrors are allowed and a proline's φ is closed by its ring — and the panel says how many of each. ⚠ It is a PLAN, not a calculation: no potential, no energy, no atom added, and a point outside the regions is not “wrong” — it is outside the regions. A residue whose neighbour is missing (a chain end, a gap in the numbering) has only one angle: it is counted and NOT drawn, because a point that was not measured would be a lie. It reads the coordinates ON SCREEN, so it shows what ⚒ Model build or ✏️ Torsion have done — press ⟳ Read the backbone again to see the new ones. HOVER A POINT (Tab reaches them too) and the line under the plot names the residue and gives its two angles — φ and ψ, plus ω — with a dashed crosshair carrying the point to both axes, whose graduations and names (φ, ψ, in degrees) are drawn large. This panel never writes anything.">
   🪢 Ramachandran{rama && rama.measured ? ` (${rama.measured})` : ''}
 </button>
 {showRamaPanel && (() => {
   const grid = ramaPlotGrid();
+  /* LES GRADUATIONS ET LES TITRES D'AXE, PLACÉS PAR LE MODULE — leur texte, leur place
+     ET la taille de leurs caractères (« characteria are too small ») : le panneau
+     n'écrit ici aucun décalage, il écrit ce que `ramaPlotAxisLabels` rend. */
+  const axis = ramaPlotAxisLabels();
+  /* LE POINT SURVOLÉ — retrouvé par sa CLEF dans la lecture courante : une clef d'une
+     ancienne lecture ne désigne plus rien (le panneau retombe sur son invite au lieu
+     de nommer un point disparu), et un résidu sans point ne peut pas être survolé. */
+  const hovered = rama && ramaHover
+    ? rama.residues.find((r) => r.key === ramaHover && r.point) || null
+    : null;
+  const hoverText = ramaHoverTextOf(hovered);
   /* LES POINTS, LES OUTLIERS PAR-DESSUS — un résidu hors région se voit : il est
      dessiné en dernier (donc au-dessus) et plus gros. */
   const points = rama
@@ -19613,14 +19957,14 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
   return (
     <div className="w-full bg-amber-50/40 border border-amber-200 rounded-lg p-3 flex flex-col gap-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="text-[10px] font-black text-amber-700 uppercase tracking-wide">Ramachandran — φ (x) against ψ (y), one point per residue</span>
+        <span className="text-[11px] font-black text-amber-700 uppercase tracking-wide">Ramachandran — φ (x) against ψ (y), one point per residue · hover a point for its φ and ψ</span>
         <div className="flex flex-wrap items-center gap-1.5">
           <button type="button" onClick={readRamachandran}
             title="Read the backbone of the molecule on screen NOW: its N · CA · C atoms, the φ and ψ of every residue, the region of each one. Press it again after a ⚒ Model build or a ✏️ Torsion to see where the points moved — the plot is a snapshot of the coordinates, not a live view."
             className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-amber-300 text-amber-700 hover:bg-amber-100">
             ⟳ Read the backbone
           </button>
-          <button type="button" onClick={() => { setRama(null); setRamaMsg(''); }}
+          <button type="button" onClick={() => { setRama(null); setRamaMsg(''); setRamaHover(null); }}
             title="Empty the plot (the molecule is not touched — only the reading is dropped)."
             className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100">
             Clear
@@ -19634,7 +19978,7 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
       )}
       <div className="flex flex-wrap items-start gap-3">
         <svg viewBox={`0 0 ${RAMA_PLOT.size} ${RAMA_PLOT.size}`}
-          className="w-full max-w-[268px] h-auto bg-white rounded border border-amber-200 shrink-0">
+          className="w-full max-w-[340px] h-auto bg-white rounded border border-amber-200 shrink-0">
           {/* LES BASSINS — le contour des résidus ORDINAIRES, et les polygones que la
               classification emploie sont LES MÊMES : la couleur d'un point ne peut pas
               mentir sur la région dont on l'a tirée. */}
@@ -19649,21 +19993,59 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
           {grid.y.map((m) => (
             <line key={`gy${m.deg}`} x1={grid.pad} y1={m.at} x2={grid.size - grid.pad} y2={m.at} stroke="#e2e8f0" strokeWidth="1" />
           ))}
-          {grid.x.map((m) => (
-            <text key={`tx${m.deg}`} x={m.at} y={grid.size - grid.pad + 11} textAnchor="middle" fontSize="7" fill="#94a3b8">{m.deg}</text>
+          {/* LE REPÈRE DU POINT SURVOLÉ — deux pointillés jusqu'aux DEUX axes : on lit
+              son φ en bas et son ψ à gauche sans lâcher le point des yeux. */}
+          {hovered && (
+            <g pointerEvents="none" stroke={RAMA_REGION_COLORS.outlier} strokeWidth="1" strokeDasharray="3 3">
+              <line x1={grid.pad} y1={hovered.point.y} x2={grid.size - grid.pad} y2={hovered.point.y} />
+              <line x1={hovered.point.x} y1={grid.pad} x2={hovered.point.x} y2={grid.size - grid.pad} />
+            </g>
+          )}
+          {/* LES GRADUATIONS DES DEUX AXES — « −180 … 180 », avec le vrai moins, en 13
+              unités (elles en faisaient 7) : c'est la demande, et la place vient du module. */}
+          {axis.x.map((m) => (
+            <text key={`tx${m.deg}`} x={m.x} y={m.y} textAnchor={m.anchor} fontSize={axis.font.tick} fill="#64748b">{m.text}</text>
           ))}
-          {grid.y.map((m) => (
-            <text key={`ty${m.deg}`} x={grid.pad - 3} y={m.at + 2} textAnchor="end" fontSize="7" fill="#94a3b8">{m.deg}</text>
+          {axis.y.map((m) => (
+            <text key={`ty${m.deg}`} x={m.x} y={m.y} textAnchor={m.anchor} fontSize={axis.font.tick} fill="#64748b">{m.text}</text>
           ))}
-          {points.map((r) => (
-            <circle key={r.key} cx={r.point.x} cy={r.point.y}
-              r={r.region === 'outlier' ? 3.4 : 2.4}
-              fill={RAMA_REGION_COLORS[r.region] || RAMA_REGION_COLORS.outlier}
-              fillOpacity={r.region === 'outlier' ? 0.95 : 0.7}
-              stroke={r.region === 'outlier' ? '#5b21b6' : 'none'} strokeWidth={r.region === 'outlier' ? 0.7 : 0}>
-              <title>{`${r.label} · φ ${r.phi.toFixed(1)}° ψ ${r.psi.toFixed(1)}°${r.omega == null ? '' : ` ω ${r.omega.toFixed(1)}°`} · ${RAMA_REGION_NAMES[r.region]}${r.klass === 'general' ? '' : ` · ${r.klass} contours`}`}</title>
-            </circle>
-          ))}
+          {/* …ET LES TITRES DES AXES — φ en abscisse, ψ en ordonnée (couchée) : une
+              figure de Ramachandran se lit avec ses deux noms écrits. */}
+          <text x={axis.xTitle.x} y={axis.xTitle.y} textAnchor={axis.xTitle.anchor}
+            fontSize={axis.font.title} fontWeight="700" fill="#475569">{axis.xTitle.text}</text>
+          <text x={axis.yTitle.x} y={axis.yTitle.y} textAnchor={axis.yTitle.anchor}
+            fontSize={axis.font.title} fontWeight="700" fill="#475569"
+            transform={`rotate(${axis.yTitle.rotate} ${axis.yTitle.x} ${axis.yTitle.y})`}>{axis.yTitle.text}</text>
+          {/* UN POINT PAR RÉSIDU — dessiné avec un CERNE blanc (deux résidus voisins ne
+              se confondent pas en une tache) et doublé d'un cercle de PRISE plus large
+              que lui : le survol, et le clavier (Tab), attrapent le point sans viser au
+              pixel. Le point survolé grossit et se cercle de noir. */}
+          {points.map((r) => {
+            const isHovered = !!hovered && hovered.key === r.key;
+            const color = RAMA_REGION_COLORS[r.region] || RAMA_REGION_COLORS.outlier;
+            const radius = (r.region === 'outlier' ? RAMA_POINT.outlier : RAMA_POINT.radius)
+              + (isHovered ? 1.4 : 0);
+            return (
+              <g key={r.key}>
+                <circle cx={r.point.x} cy={r.point.y} r={RAMA_POINT.hit} fill="transparent"
+                  className="cursor-crosshair"
+                  onMouseEnter={() => setRamaHover(r.key)}
+                  onMouseLeave={() => setRamaHover((k) => (k === r.key ? null : k))}
+                  onClick={() => setRamaHover(r.key)}
+                  onFocus={() => setRamaHover(r.key)}
+                  onBlur={() => setRamaHover((k) => (k === r.key ? null : k))}
+                  tabIndex={0} role="img" aria-label={ramaHoverTextOf(r) || r.label}>
+                  <title>{`${r.label} · φ ${r.phi.toFixed(1)}° ψ ${r.psi.toFixed(1)}°${r.omega == null ? '' : ` ω ${r.omega.toFixed(1)}°`} · ${RAMA_REGION_NAMES[r.region]}${r.klass === 'general' ? '' : ` · ${r.klass} contours`}`}</title>
+                </circle>
+                <circle cx={r.point.x} cy={r.point.y} r={radius}
+                  fill={color}
+                  fillOpacity={r.region === 'outlier' || isHovered ? 0.95 : 0.75}
+                  stroke={isHovered ? '#1e293b' : (r.region === 'outlier' ? '#5b21b6' : '#ffffff')}
+                  strokeWidth={isHovered ? 1.4 : (r.region === 'outlier' ? 0.9 : RAMA_POINT.stroke)}
+                  pointerEvents="none" />
+              </g>
+            );
+          })}
         </svg>
         <div className="flex flex-col gap-1.5 min-w-[180px] flex-1">
           <p className="text-[10px] text-slate-600">
@@ -19705,6 +20087,31 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
           ) : null}
         </div>
       </div>
+      {/* CE QUE DIT LE POINT SURVOLÉ — la demande : « hovering on it tell me which angle
+          it is ». La ligne vient du module (`ramaHoverTextOf`) : le résidu, ses DEUX
+          angles lus (φ et ψ, ceux des deux axes), son ω et sa région — et pour un
+          outlier, de quel bassin il est le plus proche. Elle est TOUJOURS là, avec son
+          invite quand rien n'est survolé, pour que le panneau ne saute pas d'une ligne
+          chaque fois que la souris entre ou sort d'un point. Le clavier la remplit
+          aussi (Tab va de point en point : chaque point porte son texte en `aria-label`). */}
+      <p className="text-[12px] font-semibold rounded-md border px-2 py-1 min-h-[30px] flex items-center gap-1.5 flex-wrap bg-white border-amber-200 text-slate-700"
+        title="Hover a point — Tab also reaches them, a click (or a tap) shows it too — to read which residue it is and its exact φ and ψ. The dashed crosshair carries the point to both axes: its φ stands under it, its ψ beside it.">
+        {hovered ? (
+          <>
+            <span className="inline-block w-2.5 h-2.5 rounded-full shrink-0 border"
+              style={{
+                background: RAMA_REGION_COLORS[hovered.region] || RAMA_REGION_COLORS.outlier,
+                borderColor: hovered.region === 'outlier' ? '#5b21b6' : '#cbd5e1',
+              }} />
+            <span className="font-mono">{hoverText}</span>
+          </>
+        ) : (
+          <span className="text-slate-500 font-normal">
+            Hover a point (or reach it with Tab) to read WHICH residue it is and its exact φ and ψ —
+            the dashed crosshair carries it to the two axes.
+          </span>
+        )}
+      </p>
       <p className="text-[10px] text-slate-400">
         ⚠ What this plot is NOT: not an energy, not a potential, not a validation. The contours are the classic ones (Ramachandran–Ramakrishnan–Sasisekharan 1963; the “core” areas of Lovell et al. 2003), drawn as polygons, and they are the SAME polygons the classification uses — but they are a plan of reading: a point outside them is outside the PERMITTED REGIONS of that figure, and nothing more. No energy was evaluated here, no hydrogen added, no solvent exists in this model. φ and ψ are read on the coordinates on screen, one point per residue, with the signed dihedral reader of the app (utils/torsionDrive.js) — and a residue needs BOTH its neighbours in the same chain (number − 1 and + 1): the ends of a chain and the residues around a gap have ONE angle only, so they are COUNTED above and NOT drawn (a point that was not measured would be a lie). This panel writes nothing: the reading is a snapshot, and ⟳ Read the backbone takes it again on the coordinates of the moment — which is how a ⚒ Model build becomes visible here.
       </p>
@@ -19764,6 +20171,264 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
     <button type="button" onClick={() => espApplyLimits(50, 50)} className="px-1.5 py-0.5 rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-50 font-semibold" title="NGL's original wide range ±50 — only the strongest charges reach red/blue">±50</button>
   </div>
 )}
+{/* 🧬 LE CALCUL DE STRUCTURE — n DÉPARTS TIRÉS AU HASARD, LE ⚒ SUR CHACUN, LES m
+    MEILLEURES GARDÉES. La demande, mot pour mot : « Implement a structure calculation
+    button in which the user provide the distances between atom pairs and selects the
+    number of starting structures n and the number of retained structures m. The program
+    must then generate n structures by randomly assigning values of all dihedral angles.
+    From each of these n structure the protocol of “model build” is applied to respect
+    the distance constraints and the final result is scored. the best m structures are
+    retained. »
+    Le panneau ne calcule RIEN : la liste des distances, les deux compteurs, et le module
+    PUR (utils/structureCalc.js) fait le reste — pas une seconde descente, pas une seconde
+    table, pas un second générateur. Contrairement au 🪢 il ÉCRIT : la structure retenue,
+    par le MÊME chemin qu'une torsion (donc le 📏, les plaques, le film, le 📥 Download et
+    le ↺ la lisent et la défont). */}
+<button type="button"
+  onClick={() => setShowCalcPanel((v) => !v)}
+  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${showCalcPanel ? 'bg-indigo-100 border-indigo-400 text-indigo-900' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+  title="🧬 STRUCTURE CALCULATION — the request, verbatim: “the user provide the distances between atom pairs and selects the number of starting structures n and the number of retained structures m. The program must then generate n structures by randomly assigning values of all dihedral angles. From each of these n structure the protocol of ‘model build’ is applied to respect the distance constraints and the final result is scored. the best m structures are retained.” ① THE DISTANCES: pick two atoms with 🎯 Pick A · B · C · D in ✏️ Torsion (the pair is A–B with two atoms, A–D with four) and type the distance you want in the A–D field — left empty, the length the tables give that pair of elements is used, exactly as for ⚒ Model build; every line can be edited, and a pair is listed once. ② n AND m: how many starting structures to build, and how many to keep. ③ ▶ RUN: each of the n starts is a draw of EVERY rotatable dihedral (a bond that is a hinge: single, not inside a ring, with something on both sides) taken uniformly in (−180, 180) and APPLIED as one rigid rotation by the app's own torsion writer, so bond lengths and angles are untouched to the last digit; then the protocol of ⚒ Model build is applied to it — the automatic scan (bond lengths and hard core), then each distance you asked for driven by the very descent the ⚒ uses, stage by stage, pass after pass until nothing improves — and the result is SCORED with the ⚒'s own target function (without the leash) plus the clash penalty its escapes use. The best m are retained, ranked by that score, and the first is written into the molecule. ④ The seed is FIXED: the same molecule, the same distances and the same n give the same family to the last digit. ⏹ Stop stops between two starts and keeps what is done. ⚠ It is NOT a force field, not dynamics, not annealing: no charges, no solvent, no atom added; the randomness is only in the starting dihedrals, and a peptide C–N bond is one of them (a start can come out cis — the ⚒ has no ω target, and 🪢 Ramachandran shows what happened).">
+  🧬 Structure calculation{calcResult ? ` (${calcResult.retained.length}/${calcResult.tried})` : ''}
+</button>
+{showCalcPanel && (() => {
+  const live = calcGeometryNow();
+  const geom = live ? live.geom : null;
+  const ranked = calcResult;
+  return (
+    <div className="w-full bg-indigo-50/40 border border-indigo-200 rounded-lg p-3 flex flex-col gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-[10px] font-black text-indigo-700 uppercase tracking-wide">
+          Structure calculation — n starting structures, the ⚒ on each, the best m kept
+        </span>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <button type="button" onClick={calcAddRestraint}
+            title="Add the pair of picked atoms to the list of distances to respect. The two atoms come from the SAME picks the ⚒ uses (🎯 Pick A · B · C · D in ✏️ Torsion): with two atoms the pair is A–B, with four it is A–D. The distance is the one typed in the A–D field of that panel — left empty, it is the length the tables give that pair of elements (S–S 2.05 Å, C–C 1.54 Å…), exactly as for ⚒ Model build. A pair already in the list is REPLACED, never doubled."
+            className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-indigo-300 text-indigo-700 hover:bg-indigo-100">
+            ⌖ Add the picked pair
+          </button>
+          <button type="button" onClick={() => setCalcRestraints([])}
+            disabled={!calcRestraints.length}
+            title="Drop every distance from the list (the molecule is not touched — only the list is emptied)."
+            className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100 disabled:opacity-40">
+            Clear the list
+          </button>
+        </div>
+      </div>
+      <p className="text-[10px] text-slate-500">
+        {calcRestraints.length
+          ? <>The distances to respect — <b>{calcRestraints.length}</b> line{calcRestraints.length === 1 ? '' : 's'}, each
+            one measured on the molecule ON SCREEN right now. ⌖ adds the picked pair, ✕ drops a line, and a target can be
+            typed again at any time: it is YOUR number, not a table&apos;s.</>
+          : <>Nothing to respect yet. Pick the two atoms (🎯 Pick A · B · C · D in ✏️ Torsion), type the distance you want
+            in its A–D field if it is not the table&apos;s length, then press ⌖ Add the picked pair. This calculation exists
+            to make a molecule obey distances — without one it would only be a random draw.</>}
+      </p>
+      {ranked && ranked.comp && ranked.comp !== componentRef.current && (
+        <p className="text-[10px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">
+          ⚠ This family was computed on ANOTHER molecule than the one on screen now (it was reloaded, or another molecule
+          is shown): its scores stay readable, but ⤓ Load would write coordinates that belong to the other one and is
+          refused. ▶ Run does it again on this molecule.
+        </p>
+      )}
+      {calcRestraints.length > 0 && (
+        <div className="max-h-32 overflow-y-auto custom-scrollbar border border-indigo-200 rounded-lg bg-white">
+          <table className="w-full text-xs">
+            <thead className="sticky top-0 bg-indigo-50">
+              <tr>
+                <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">#</th>
+                <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">Pair</th>
+                <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">Want (Å)</th>
+                <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">Now</th>
+                <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">Δ</th>
+                <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700" />
+              </tr>
+            </thead>
+            <tbody>
+              {calcRestraints.map((r, k) => {
+                const at = geom ? calcDistanceIn(geom, r.i, r.j) : null;
+                const dev = Number.isFinite(at) ? at - r.target : null;
+                const good = dev != null && Math.abs(dev) <= STRUCTURE_CALC_RESTRAINT_TOLERANCE;
+                return (
+                  <tr key={r.key} className="border-t border-indigo-100">
+                    <td className="px-2 py-1 text-slate-400">{k + 1}</td>
+                    <td className="px-2 py-1 font-mono text-slate-600">
+                      <span title={`atoms ${r.i} and ${r.j} of the molecule on screen`}>
+                        {r.label || `${r.i}–${r.j}`}
+                      </span>
+                      <span className="text-slate-400"> · {r.i}–{r.j}</span>
+                    </td>
+                    <td className="px-1 py-1">
+                      <input type="number" step="0.01" min="0.01" value={r.target}
+                        onChange={(e) => calcSetRestraintTarget(r.key, e.target.value)}
+                        aria-label={`Target distance for ${r.label || `${r.i}–${r.j}`}, in ångströms`}
+                        title="The distance YOU want this pair to have, in ångströms — the protocol drives THIS number, and the report compares the model against it. Edit it as often as you like: the next ▶ Run uses the list as it stands."
+                        className="w-16 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
+                    </td>
+                    <td className="px-2 py-1 font-mono text-slate-500">{torsionAng(at)}</td>
+                    <td className={`px-2 py-1 font-mono ${good ? 'text-emerald-700' : 'text-rose-700'}`}>
+                      {dev == null ? '—' : `${dev > 0 ? '+' : ''}${dev.toFixed(2)}`}
+                    </td>
+                    <td className="px-1 py-1">
+                      <button type="button" onClick={() => calcRemoveRestraint(r.key)}
+                        title="Drop this distance from the list."
+                        className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-white border border-red-300 text-red-600 hover:bg-red-50">
+                        ✕
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <div className="flex flex-wrap items-center gap-3 text-[10px] font-bold text-indigo-800">
+        <label className="flex items-center gap-1"
+          title="n — how many structures are BUILT from scratch. Each one is a fresh random draw of every rotatable dihedral, and each one is put through the ⚒ protocol before being scored. More starts means more chances that at least one of them can obey your distances — and more time: one start costs one, two or three descents per distance.">
+          n starting
+          <input type="number" min="1" max={STRUCTURE_CALC_MAX_STARTS} value={calcStarts}
+            onChange={(e) => setCalcStartsText(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') runStructureCalculation(); }}
+            aria-label="Number of starting structures n"
+            className="w-14 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
+        </label>
+        <label className="flex items-center gap-1"
+          title="m — how many structures are KEPT once every start has been scored. The score is the ⚒'s own target function (ideal bond lengths and angles, planar rings, your distances, the hard core) plus the clash penalty its escapes use; the m best are kept IN ORDER, with their coordinates, and the first one is written into the molecule. Only the m kept structures carry their coordinates — that is what m means.">
+          m kept
+          <input type="number" min="1" max={STRUCTURE_CALC_MAX_KEEP} value={calcKeep}
+            onChange={(e) => setCalcKeepText(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') runStructureCalculation(); }}
+            aria-label="Number of retained structures m"
+            className="w-14 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
+        </label>
+        <button type="button" onClick={runStructureCalculation}
+          disabled={calcBusy || !calcRestraints.length}
+          title="Run the calculation: n starts, the ⚒ protocol on each, the best m kept, and the first one written into the molecule. The panel is updated START BY START (one per frame, so the page stays alive), and ⏹ stops between two of them. A fixed seed means the same molecule, the same distances and the same n always give the same family — press ▶ Run twice and compare."
+          className="px-2 py-1 text-[10px] font-bold rounded border bg-indigo-600 border-indigo-700 text-white hover:bg-indigo-700 disabled:opacity-40">
+          ▶ Run
+        </button>
+        {calcBusy && (
+          <button type="button" onClick={calcStop}
+            title="Stop the calculation BETWEEN two starts: what is already computed is ranked and its best m are kept (nothing is thrown away or written half-way)."
+            className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-red-300 text-red-600 hover:bg-red-50">
+            ⏹ Stop
+          </button>
+        )}
+        <span className="font-semibold text-slate-500"
+          title="The ⚒'s own settings, used by every descent of this calculation: “⇢ moves” is the radius the automatic scan reaches with, “⇉ stages” the step of the staged approach, and “🎲 escapes” the torsion kicks each descent may try when it is stuck. Set escapes to 0 for a family of n plain descents (faster), or higher for descents that try harder.">
+          ⇢ moves {relaxRadius} · ⇉ stages {relaxStageStep} · 🎲 escapes {relaxEscapes}
+        </span>
+      </div>
+      {calcProgress && (
+        <p className="text-[10px] font-semibold text-indigo-700">{calcProgress}</p>
+      )}
+      {calcMsg && (
+        <p title={calcMsg} className={`text-[10px] font-semibold rounded-md border px-2 py-1 whitespace-pre-wrap ${/^✓/.test(calcMsg) ? 'text-emerald-800 bg-emerald-50 border-emerald-200' : 'text-rose-800 bg-rose-50 border-rose-200'}`}>
+          {calcMsg}
+        </p>
+      )}
+      {ranked && ranked.ranking.length > 0 && (
+        <div className="flex flex-col gap-1.5">
+          <p className="text-[10px] text-slate-600">
+            <b>{ranked.tried}</b> start{ranked.tried === 1 ? '' : 's'} built, each scored by the ⚒&apos;s own target function
+            {ranked.refused ? ` (${ranked.refused} refused before scoring)` : ''} · the best{' '}
+            <b>{ranked.retained.length}</b> kept and ranked — the others are listed too, with their score, so nothing is
+            hidden{calcShown ? <> · on screen right now: <b>#{calcShown}</b> of the kept family</> : null}.
+          </p>
+          <div className="max-h-44 overflow-y-auto custom-scrollbar border border-indigo-200 rounded-lg bg-white">
+            <table className="w-full text-xs">
+              <thead className="sticky top-0 bg-indigo-50">
+                <tr>
+                  <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">#</th>
+                  <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">start</th>
+                  <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">score</th>
+                  <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">distances</th>
+                  <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">worst</th>
+                  <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">bonds / angles</th>
+                  <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">clashes</th>
+                  <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">moved</th>
+                  <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">how it ended</th>
+                  <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700" />
+                </tr>
+              </thead>
+              <tbody>
+                {ranked.ranking.map((r) => {
+                  const inFamily = r.rank <= ranked.retained.length;
+                  const model = inFamily ? ranked.retained.find((x) => x.rank === r.rank) : null;
+                  return (
+                    <tr key={`calc${r.rank}`} className={`border-t border-indigo-100 ${inFamily ? 'bg-emerald-50/50' : ''}`}>
+                      <td className="px-2 py-1 font-bold text-indigo-800" title={inFamily ? 'kept: this structure carries its coordinates' : 'NOT kept: it was scored, but m only keeps the first ones'}>
+                        {r.rank}{inFamily ? ' ✓' : ''}
+                      </td>
+                      <td className="px-2 py-1 font-mono text-slate-500">#{r.index}</td>
+                      <td className="px-2 py-1 font-mono text-slate-700"
+                        title={`Score ${r.score.toFixed(2)} = target function ${Number(r.total).toFixed(2)} + clash penalty ${Number(r.clashPenalty).toFixed(2)} (the ⚒'s own way of preferring a model without atoms on top of each other)`}>
+                        {r.score.toFixed(1)}
+                      </td>
+                      <td className={`px-2 py-1 font-mono ${r.violations ? 'text-rose-700' : 'text-emerald-700'}`}
+                        title={`${r.satisfied} of the ${r.satisfied + r.violations} distances are respected (within ${STRUCTURE_CALC_RESTRAINT_TOLERANCE} Å) — rms ${Number(r.rmsd).toFixed(3)} Å`}>
+                        {r.satisfied}/{r.satisfied + r.violations}
+                      </td>
+                      <td className="px-2 py-1 font-mono text-slate-500"
+                        title={r.worst ? `the distance furthest from what you asked: ${r.worst.i}–${r.worst.j} measured ${Number(r.worst.distance).toFixed(2)} Å for ${Number(r.worst.target).toFixed(2)} Å` : 'no distance to report'}>
+                        {r.worst ? `${r.worst.i}–${r.worst.j} ${torsionAng(r.worst.distance)}` : '—'}
+                      </td>
+                      <td className="px-2 py-1 font-mono text-slate-500">{r.bondRms.toFixed(3)} Å / {r.angleRms.toFixed(1)}°</td>
+                      <td className={`px-2 py-1 font-mono ${r.clashes ? 'text-rose-700' : 'text-emerald-700'}`}
+                        title={`${r.clashes} atom pair(s) closer than 1.45 Å in this model, ${r.contacts} pair(s) inside their hard core (0.6 × the two Bondi radii)`}>
+                        {r.clashes ? `⚠ ${r.clashes}` : '✓'} · {r.contacts}
+                      </td>
+                      <td className="px-2 py-1 font-mono text-slate-500" title="atoms this start moved away from the molecule you had on screen (the draw and the protocol together)">{r.moved}</td>
+                      <td className="px-2 py-1 text-slate-500" title={calcWhyOf(r.reason)}>{r.reason}</td>
+                      <td className="px-1 py-1">
+                        {model ? (
+                          <button type="button" onClick={() => calcWriteStructure(model, ranked)}
+                            title={`Write this structure into the molecule (it becomes THE molecule on screen: every atom, by the same path a torsion uses — so 📏, the plates, the film, 📥 Download and ↺ all follow it). ${r.index === 0 ? '' : ''}Undo torsion puts the previous geometry back.`}
+                            className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-white border border-indigo-300 text-indigo-700 hover:bg-indigo-50">
+                            ⤓ Load
+                          </button>
+                        ) : (
+                          <span className="text-slate-300" title="only the m kept structures carry their coordinates — raise “m kept” to keep more">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+      {ranked && ranked.family && ranked.family.restraints.length > 0 && (
+        <p className="text-[10px] text-slate-500">
+          <b>The kept family</b> —{' '}
+          {ranked.family.restraints.map((f) => `${f.i}–${f.j} ${torsionAng(f.mean)} (${f.satisfied}/${f.models} models,`
+            + ` spread ${torsionAng(f.spread)})`).join(' · ')}
+          {ranked.family.spread.count
+            ? ` · the models differ by ${ranked.family.spread.mean.toFixed(2)} Å rmsd on average, after optimal`
+              + ` superposition over all ${ranked.family.spread.atoms} atoms (worst pair #${ranked.family.spread.worst.a}–#${ranked.family.spread.worst.b}`
+              + ` at ${ranked.family.spread.worst.rmsd.toFixed(2)})`
+            : ' · a single model was kept, so there is no spread to measure'}
+          {ranked.family.rest.length
+            ? ` · left out (scored, not kept): ${ranked.family.rest.map((r) => `#${r.rank} start ${r.index} (${r.score.toFixed(1)})`).join(' · ')}`
+            : ''}
+        </p>
+      )}
+      <p className="text-[10px] text-slate-400">
+        ⚠ What this calculation is NOT: not a force field, not molecular dynamics, not simulated annealing, not a score in
+        kcal/mol — it is the ⚒&apos;s target function plus its clash penalty, comparable only inside one calculation (same
+        molecule, same distances). No charge, no solvent, no entropy, no atom or hydrogen added. The randomness is ONLY in
+        the starting dihedrals: each start is one rigid rotation per rotatable bond (single, not in a ring, with atoms on
+        both sides), so its bond lengths and angles are exactly those of the molecule you had — the draw cannot damage
+        chemistry, and that is why the protocol that follows can concentrate on your distances. ⚠ A peptide C–N bond IS one
+        of those dihedrals: a start can come out cis, and the ⚒ has no ω target — 🪢 Ramachandran is what shows it. The
+        seed is FIXED ({STRUCTURE_CALC_SEED}): stop and run again to get the same family, digit for digit, and change n or
+        the distances to get another one. ⏹ stops between two starts; ↺ Undo torsion puts back the molecule you had before
+        the first write.
+      </p>
+    </div>
+  );
+})()}
 {/* 🔢 Renumber — the button AND its list live in ✏️ Modify (the request: « la
     lista per il renumbering … dovrebbe piuttosto apparire nella sezione
     modify »): the panel lists every residue and the number it will take, and the

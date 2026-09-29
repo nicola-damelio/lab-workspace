@@ -37,6 +37,18 @@
          deux sont PURS et testés (_ramachandran_test.mjs), donc la géométrie du
          graphe ne se vérifie pas à l'œil.
 
+     4 · LES AXES ET LE SURVOL — `ramaPlotAxisLabels` place les graduations des DEUX
+         axes (leur texte, leur place, l'alignement) avec la taille de leurs caractères
+         (`RAMA_PLOT_FONT`), plus les deux titres d'axe ; `ramaHoverTextOf` écrit la
+         ligne que le survol d'un point affiche — le résidu, ses deux angles LUS (φ et
+         ψ, l'abscisse et l'ordonnée du graphe), son ω et sa région. La demande, mot
+         pour mot : « draw each point and hovering on it tell me which angle it is. Make
+         x and y axis larger (characteria are too small) » — les caractères des axes ont
+         donc grandi (7 → 13 unités) et le carré avec eux, et un point se survole (ou se
+         prend au clavier) par un cercle de prise plus large que lui. Aucun chiffre de
+         placement n'est écrit dans le JSX : le panneau écrit ce que ces fonctions
+         rendent.
+
    Module SANS React et sans NGL : il reçoit des atomes (ceux que le viewer lit avec
    `structureAtomRecords`) et rend des nombres. Voir _ramachandran_test.mjs.
    ========================================================================= */
@@ -50,8 +62,29 @@ export const RAMA_BACKBONE = ['N', 'CA', 'C'];
  *  (la convention de toutes les figures publiées). */
 export const RAMA_RANGE = { min: -180, max: 180 };
 
-/** LA TAILLE DU DESSIN, en unités du viewBox — et la marge qui porte les axes. */
-export const RAMA_PLOT = { size: 268, pad: 26 };
+/** LA TAILLE DU DESSIN, en unités du viewBox — et la marge qui porte les axes.
+ *  ⚠ La demande : « Make x and y axis larger (characteria are too small) ». Le carré
+ *  a donc grandi (268 → 340 unités, rendues à peu près 1:1) et la marge qui porte les
+ *  graduations AVEC lui (26 → 50) : les caractères des axes s'écrivent en `RAMA_PLOT_FONT`
+ *  (13 et 15 unités, contre 7 avant, soit presque du double) sans empiéter sur le carré
+ *  utile, qui reste plus grand qu'avant (216 → 240 unités). */
+export const RAMA_PLOT = { size: 340, pad: 50 };
+
+/** LA TAILLE DES CARACTÈRES DES AXES, en unités du viewBox (le SVG est rendu à peu près
+ *  1:1, donc ≈ des pixels) : `tick` = les graduations des deux axes (−180 … +180),
+ *  `title` = les titres d'axe (« φ (°) », « ψ (°) »). Ces nombres sont ICI parce que les
+ *  PLACES des textes sont calculées ici aussi (`ramaPlotAxisLabels`) : le panneau n'a
+ *  aucun décalage à écrire à la main, donc une graduation ne peut pas dériver de l'axe
+ *  qu'elle gradue. */
+export const RAMA_PLOT_FONT = { tick: 13, title: 15 };
+
+/** LA TAILLE DES POINTS — un point par résidu : son rayon, celui d'un OUTLIER (plus gros,
+ *  pour qu'il se voie), le CERNE blanc qui sépare deux points voisins (sans lui, deux
+ *  résidus proches ne font qu'une tache) et le rayon du cercle de PRISE invisible, plus
+ *  large que le point pour que le survol (et le clavier) l'attrapent sans viser au pixel. */
+export const RAMA_POINT = {
+  radius: 3.1, outlier: 4.4, stroke: 1.1, hit: 9.5,
+};
 
 /** LES COULEURS DES TROIS BASSINS — celles que le panneau et le graphe partagent
  *  (un seul endroit, donc une couleur ne peut pas diverger entre la légende et le
@@ -266,6 +299,92 @@ export const ramaPlotGrid = (opts = {}) => {
     y: marks.map((d) => ({ deg: d, at: Number(pad) + (1 - ((d - RAMA_RANGE.min) / (RAMA_RANGE.max - RAMA_RANGE.min))) * inner })),
     size, pad, inner,
   };
+};
+
+/* ── LES ÉTIQUETTES DES AXES, ET CE QU'UN SURVOL DIT ──────────────────────────── */
+
+/** L'ÉCRITURE D'UNE GRADUATION — « −180 … 180 » : le signe n'est écrit que NÉGATIF, comme
+ *  sur toutes les figures publiées (et c'est aussi la convention des lectures d'angle du
+ *  panneau : un degré positif ne porte pas de « + »), le MOINS est le vrai (U+2212), celui
+ *  que le reste de l'app emploie. */
+const fmtDeg = (d) => {
+  const n = Math.round(Number(d));
+  if (!Number.isFinite(n) || n === 0) return '0';
+  return `${n < 0 ? '−' : ''}${Math.abs(n)}`;
+};
+
+/** LE TEXTE D'UNE MESURE, en degrés — un chiffre après la virgule, signe vrai. */
+const fmtDeg1 = (v) => {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return '—';
+  return `${n < 0 ? '−' : ''}${Math.abs(n).toFixed(1)}°`;
+};
+
+/**
+ * LES ÉTIQUETTES DES AXES, PLACÉES — pour chaque graduation des deux axes : son degré,
+ * son texte (« −90 », « +90 » …), sa place dans le viewBox et son alignement ; puis les
+ * deux TITRES d'axe (« φ (°) » en abscisse, « ψ (°) » en ordonnée, couchée) et la taille
+ * de caractère à employer (`RAMA_PLOT_FONT`).
+ *
+ * Le panneau écrit ce que cette fonction rend — il ne place ni ne chiffre aucun texte
+ * lui-même. C'est le MÊME calcul que celui des points (`ramaPlotGrid`), donc une
+ * graduation ne peut pas dériver de l'axe qu'elle gradue.
+ *
+ * @param {{size?:number, pad?:number, font?:object}} [opts]
+ * @returns {{font:object, grid:object, x:object[], y:object[], xTitle:object, yTitle:object}}
+ */
+export const ramaPlotAxisLabels = (opts = {}) => {
+  const g = ramaPlotGrid(opts);
+  const font = { ...RAMA_PLOT_FONT, ...(opts.font || {}) };
+  return {
+    font,
+    grid: g,
+    /* En abscisse : sous le carré, centrées sous leur trait. En ordonnée : à gauche,
+       alignées à droite sur la marge — donc lisibles sans toucher le carré. */
+    x: g.x.map((m) => ({
+      deg: m.deg, text: fmtDeg(m.deg), x: m.at,
+      y: g.size - g.pad + font.tick + 4, anchor: 'middle',
+    })),
+    y: g.y.map((m) => ({
+      deg: m.deg, text: fmtDeg(m.deg), x: g.pad - 8,
+      y: m.at + font.tick * 0.36, anchor: 'end',
+    })),
+    xTitle: { text: 'φ (°)', x: g.pad + g.inner / 2, y: g.size - 6, anchor: 'middle' },
+    yTitle: {
+      text: 'ψ (°)', x: 14, y: g.pad + g.inner / 2, anchor: 'middle', rotate: -90,
+    },
+  };
+};
+
+/**
+ * CE QU'UN SURVOL DE POINT DIT — la demande : « hovering on it tell me which angle it
+ * is ». Une ligne, nommée : l'étiquette du résidu (`ramaLabelOf`), ses DEUX angles LUS —
+ * φ (l'abscisse du graphe) et ψ (l'ordonnée), au dixième de degré —, son ω quand la
+ * liaison peptidique existe, et la RÉGION où le point est tombé. Pour un OUTLIER, la
+ * ligne dit en plus de quel bassin il est le plus proche et de combien (la même règle
+ * que la liste du panneau : la distance au CENTRE, donc surestimée).
+ *
+ * `null` quand il n'y a pas de point : un résidu dont un angle manque n'est pas dessiné,
+ * donc il n'y a rien à survoler — et pas de ligne à inventer.
+ *
+ * @param {object} res une entrée de `ramachandranOf(...).residues` (ou un outlier)
+ * @returns {string|null}
+ */
+export const ramaHoverTextOf = (res) => {
+  if (!res || !res.point || res.phi == null || res.psi == null) return null;
+  const parts = [
+    ramaLabelOf(res),
+    /* LES DEUX ANGLES, D'UN SEUL BLOC — φ puis ψ, exactement ceux que les deux axes
+       portent : « φ −63.2° ψ −41.9° » se lit comme on lit la figure. */
+    `φ ${fmtDeg1(res.phi)} ψ ${fmtDeg1(res.psi)}`,
+  ];
+  if (res.omega != null) parts.push(`ω ${fmtDeg1(res.omega)}`);
+  parts.push(RAMA_REGION_NAMES[res.region] || RAMA_REGION_NAMES.outlier);
+  if (res.region === 'outlier' && res.nearest) {
+    parts.push(`${Math.round(res.nearest.distance)}° from ${RAMA_REGION_NAMES[res.nearest.region]}`);
+  }
+  if (res.klass && res.klass !== 'general') parts.push(`${res.klass} contours`);
+  return parts.join(' · ');
 };
 
 /* ── LE GRAPHE D'UNE MOLÉCULE ──────────────────────────────────────────────── */

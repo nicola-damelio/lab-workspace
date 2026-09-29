@@ -15,16 +15,18 @@
         mêmes bassins, le trou du milieu qui n'est permis à personne, et les
         polygones eux-mêmes (sommets dans le cadre, centroïdes) ;
      §4 LE DESSIN — `ramaPlotPoint` (les quatre coins, le centre, la borne),
-        `ramaPlotPath` (le chemin SVG) et `ramaPlotGrid` (les axes) : la géométrie
-        du graphe se vérifie par le calcul, pas à l'œil ;
+        `ramaPlotPath` (le chemin SVG), `ramaPlotGrid` (les axes) et
+        `ramaPlotAxisLabels` (le TEXTE, la PLACE et la TAILLE des graduations et des
+        deux titres d'axe) : la géométrie du graphe se vérifie par le calcul, pas à
+        l'œil — et les caractères des axes, que la demande trouvait trop petits, aussi ;
      §5 LA LECTURE D'UNE CHAÎNE, EXÉCUTÉE — une hélice α idéale construite résidu
         par résidu (φ = −57, ψ = −47 au chiffre près), un feuillet (φ = −120, ψ =
         +130), une chaîne RETOURNÉE (un outlier nommé), les ω de la liaison
         peptidique, et ce qu'un résidu sans voisin donne : RIEN, compté `breaks`
         (les deux extrémités, et un TROU dans la numérotation) ;
      §6 LE BRANCHEMENT DU VIEWER — le panneau 🪢, le bouton « ⟳ Read the backbone »,
-        le dessin SVG, la liste des outliers, et la note qui dit ce que le graphe
-        n'est pas.
+        le dessin SVG, la liste des outliers, LE SURVOL D'UN POINT (qui le nomme et dit
+        ses deux angles), et la note qui dit ce que le graphe n'est pas.
 
    Run: node _ramachandran_test.mjs
    ========================================================================= */
@@ -33,9 +35,10 @@ import { readFileSync } from 'node:fs';
 import { dihedralDeg } from './src/utils/torsionDrive.js';
 import {
   RAMA_BACKBONE, RAMA_RANGE, RAMA_PLOT, RAMA_REGION_COLORS, RAMA_REGION_NAMES,
-  RAMA_REGIONS, RAMA_PLOT_REGIONS,
+  RAMA_REGIONS, RAMA_PLOT_REGIONS, RAMA_PLOT_FONT, RAMA_POINT,
   backboneResiduesOf, ramaKlassOf, pointInPolygon, ramaRegionOf, ramaRegionCentroidsOf,
   ramaLabelOf, ramachandranOf, ramaPlotPoint, ramaPlotPath, ramaPlotGrid,
+  ramaPlotAxisLabels, ramaHoverTextOf,
 } from './src/utils/ramachandran.js';
 
 let passed = 0;
@@ -151,14 +154,79 @@ eq(ramaPlotPoint(999, -999), ramaPlotPoint(180, -180),
 const shifted = ramaPlotPoint(-180, 180, { size: 100, pad: 10 });
 near(shifted.x, 10, 'la taille et la marge sont des réglages (le panneau peut changer l\'échelle)', 1e-9);
 near(shifted.y, 10, '…et le coin haut-gauche tombe bien à la marge (ψ = +180 est EN HAUT)', 1e-9);
-eq(ramaPlotPath([[0, 0], [90, 0], [90, 90]]), 'M 134.00 134.00 L 188.00 134.00 L 188.00 80.00 Z',
+eq(ramaPlotPath([[0, 0], [90, 0], [90, 90]]), 'M 170.00 170.00 L 230.00 170.00 L 230.00 110.00 Z',
   '⚠ le chemin SVG est calculé ICI (le panneau ne refait pas la géométrie)');
 eq(ramaPlotPath([[0, 0], [90, 0]]), '', '…et un polygone dégénéré ne donne aucun chemin');
 const grid = ramaPlotGrid();
 eq(grid.marks, [-180, -90, 0, 90, 180], 'les axes portent les cinq repères classiques');
-eq(grid.x.map((m) => Math.round(m.at)), [26, 80, 134, 188, 242], '…placés par le MÊME calcul que les points');
-eq(grid.y.map((m) => Math.round(m.at)), [242, 188, 134, 80, 26], '…et l\'ordonnée descend avec ψ');
+eq(grid.x.map((m) => Math.round(m.at)), [50, 110, 170, 230, 290], '…placés par le MÊME calcul que les points');
+eq(grid.y.map((m) => Math.round(m.at)), [290, 230, 170, 110, 50], '…et l\'ordonnée descend avec ψ');
 near(grid.inner, RAMA_PLOT.size - 2 * RAMA_PLOT.pad, 'le carré utile est la taille moins deux marges', 1e-9);
+
+/* ── 4 bis · LES AXES, PLUS GRANDS, ET LE SURVOL — « Make x and y axis larger
+   (characteria are too small) » et « draw each point and hovering on it tell me which
+   angle it is ». C'est une demande de LISIBILITÉ, donc elle se vérifie par des nombres :
+   la taille des caractères, la place des textes, le fait qu'aucun texte ne sorte du
+   viewBox — et la ligne qu'un survol écrit. Le panneau, lui, n'a plus aucun décalage à
+   écrire : il écrit ceci. */
+ok(RAMA_PLOT_FONT.tick >= 12 && RAMA_PLOT_FONT.title >= RAMA_PLOT_FONT.tick,
+  `les caractères des axes sont LISIBLES (${RAMA_PLOT_FONT.tick} et ${RAMA_PLOT_FONT.title} unités, contre 7 avant la demande)`);
+ok(RAMA_PLOT.size >= 320 && RAMA_PLOT.pad >= 40,
+  `…et le carré a grandi AVEC eux (${RAMA_PLOT.size} × ${RAMA_PLOT.size}, marge ${RAMA_PLOT.pad}) : des caractères lisibles ne mangent pas le graphe`);
+ok(RAMA_PLOT.pad >= RAMA_PLOT_FONT.tick + 8 && RAMA_PLOT.pad * 2 < RAMA_PLOT.size,
+  '…la marge a la place de porter une graduation sans la coller au carré');
+ok(RAMA_POINT.radius > 0 && RAMA_POINT.outlier > RAMA_POINT.radius && RAMA_POINT.hit > RAMA_POINT.outlier,
+  'chaque point est DESSINÉ : plus gros s’il est outlier, et doublé d’un cercle de prise plus large que lui');
+const axis = ramaPlotAxisLabels();
+eq(axis.x.map((m) => m.text), ['−180', '−90', '0', '90', '180'],
+  'les graduations d’abscisse sont ÉCRITES, avec le vrai moins (U+2212, celui du reste de l’app) et sans « + » inutile');
+eq(axis.y.map((m) => m.text), ['−180', '−90', '0', '90', '180'],
+  '…celles de l’ordonnée aussi, dans l’ordre des degrés — c’est leur PLACE qui descend avec ψ');
+eq(axis.x.map((m) => m.x), grid.x.map((m) => m.at),
+  '⚠ chaque graduation X tombe SOUS son trait (le même calcul que les points)');
+eq(axis.y.map((m) => Math.round((m.y - RAMA_PLOT_FONT.tick * 0.36) * 100) / 100), grid.y.map((m) => Math.round(m.at * 100) / 100),
+  '…chaque graduation Y est centrée sur le sien');
+eq([...new Set(axis.x.map((m) => m.anchor))], ['middle'], 'les graduations d’abscisse sont centrées');
+eq([...new Set(axis.y.map((m) => m.anchor))], ['end'], '…celles d’ordonnée alignées à droite, dans la marge');
+ok(axis.x.every((m) => m.y > grid.size - grid.pad && m.y < grid.size),
+  '…et posées DANS le viewBox (une graduation qui déborde ne se lirait pas)');
+ok(axis.y.every((m) => m.x > 0 && m.x < grid.pad),
+  '…de même à gauche : elles occupent la marge, pas le carré');
+eq([axis.xTitle.text, axis.yTitle.text], ['φ (°)', 'ψ (°)'],
+  'les DEUX axes portent leur nom : φ en abscisse, ψ en ordonnée');
+near(axis.xTitle.x, RAMA_PLOT.pad + grid.inner / 2, 'le titre d’abscisse est centré sous le carré', 1e-9);
+eq(axis.yTitle.rotate, -90, '…et celui d’ordonnée est couché (une ordonnée s’écrit couchée)');
+near(axis.yTitle.y, RAMA_PLOT.pad + grid.inner / 2, '…au milieu de l’axe', 1e-9);
+ok(axis.yTitle.x + RAMA_PLOT_FONT.title < axis.y[0].x,
+  '…et son texte ne touche pas les graduations (les deux tiennent dans la marge)');
+eq(ramaPlotAxisLabels({ font: { tick: 20 } }).font.tick, 20,
+  'la taille des caractères est un RÉGLAGE (le panneau peut grossir encore)');
+
+/* LE SURVOL D'UN POINT — ce qu'il DIT, et rien d'autre : le résidu, ses deux angles, ω
+   s'il existe, la région. Aucun angle n'est recalculé ici : c'est ce que le module a lu. */
+const hoverRow = {
+  key: 'A|i2', chain: 'A', resname: 'ALA', resno: 23, residueIndex: 2,
+  klass: 'general', phi: -63.24, psi: -41.87, omega: 179.98, region: 'alpha',
+  point: ramaPlotPoint(-63.24, -41.87), label: 'A:ALA23', nearest: null,
+};
+eq(ramaHoverTextOf(hoverRow),
+  'A:ALA23 · φ −63.2° ψ −41.9° · ω 180.0° · α right',
+  '⚠ le survol nomme le résidu et donne SES DEUX angles (φ et ψ, ceux des deux axes), plus ω');
+eq(ramaHoverTextOf({ ...hoverRow, omega: null }),
+  'A:ALA23 · φ −63.2° ψ −41.9° · α right',
+  '…et ne parle pas d’un ω qui n’existe pas (une extrémité de chaîne)');
+eq(ramaHoverTextOf({ ...hoverRow, klass: 'gly' }),
+  'A:ALA23 · φ −63.2° ψ −41.9° · ω 180.0° · α right · gly contours',
+  '…en rappelant qu’une glycine est classée par SES contours quand ce n’est pas general');
+eq(ramaHoverTextOf({
+  ...hoverRow, phi: 60, psi: -60, region: 'outlier', nearest: { region: 'leftalpha', distance: 62.4 },
+}),
+  'A:ALA23 · φ 60.0° ψ −60.0° · ω 180.0° · outside · 62° from α left',
+  '…et qu’un outlier est situé : de quel bassin il est le plus proche, et de combien');
+eq(ramaHoverTextOf({ ...hoverRow, point: null }),
+  null, '⚠ un résidu sans point n’a RIEN à survoler : pas de ligne inventée');
+eq(ramaHoverTextOf(null), null, '…et sans résidu non plus');
+
 
 /* ── 5 · LA LECTURE D'UNE CHAÎNE, EXÉCUTÉE ────────────────────────────────────
    Une chaîne est CONSTRUITE résidu par résidu, avec des longueurs et des angles de
@@ -331,6 +399,37 @@ has(VIEW, 'What this plot is NOT: not an energy',
   'la note du panneau dit ce que le graphe n’est PAS (ni énergie, ni potentiel, ni validation)');
 has(VIEW, 'a point that was not measured would be a lie',
   '…et pourquoi un résidu sans ses deux angles n’est pas dessiné (compté, pas inventé)');
+/* LE SURVOL DANS LE PANNEAU — chaque point est DESSINÉ, il s'attrape au survol (et au
+   clavier) et la ligne qu'il affiche est celle du module : ni un angle ni une place
+   n'est refait dans le JSX. */
+has(VIEW, 'RAMA_POINT,',
+  'le panneau importe la table des POINTS (taille, cern, cercle de prise) — et les tailles de caractères lui viennent du module');
+ok(!VIEW.includes('fontSize="7"'),
+  '⚠ …et le 7 en dur (le « characteria are too small » de la demande) a disparu : il ne reste que les tailles du module');
+has(VIEW, 'const [ramaHover, setRamaHover] = useState(null);',
+  '…et il garde la CLEF du point survolé — pas l’objet : une nouvelle lecture jette les anciens points');
+has(VIEW, 'const axis = ramaPlotAxisLabels();',
+  '⚠ les graduations et les deux titres d’axe sont placés PAR LE MODULE (le panneau ne chiffre aucun décalage)');
+has(VIEW, 'fontSize={axis.font.tick}',
+  '…avec la taille de caractères du module (7 → 13 : c’est « characteria are too small »)');
+has(VIEW, 'fontSize={axis.font.title}', '…et les titres d’axe sont écrits plus grands encore');
+has(VIEW, '{axis.xTitle.text}', '…les deux titres d’axe (φ en abscisse, ψ en ordonnée) sont bien écrits');
+has(VIEW, 'strokeDasharray="3 3"',
+  'un point survolé est porté à ses DEUX axes par des pointillés (on lit son φ et son ψ sans le lâcher)');
+has(VIEW, 'r={RAMA_POINT.hit}',
+  '…et chaque point porte un cercle de PRISE plus large que lui (le survol n’exige pas de viser le pixel)');
+has(VIEW, 'onMouseEnter={() => setRamaHover(r.key)}', 'le survol d’un point le désigne');
+has(VIEW, 'onFocus={() => setRamaHover(r.key)}',
+  '…et le clavier aussi (Tab va de point en point : on ne dépend pas de la souris)');
+has(VIEW, 'aria-label={ramaHoverTextOf(r) || r.label}',
+  '…chaque point portant sa ligne nommée, la même que celle affichée');
+has(VIEW, 'const hoverText = ramaHoverTextOf(hovered);',
+  '⚠ la ligne sous le graphe EST la ligne du module (le panneau ne recompose aucun angle)');
+has(VIEW, 'setRamaHover(null);',
+  'une nouvelle lecture, ou Clear, LÈVE le survol : une clef morte ne nomme plus rien');
+has(VIEW, 'max-w-[340px]', '…et le graphe s’affiche plus grand (les caractères des axes y tiennent)');
+
+
 /* LE PANNEAU, DÉCOUPÉ DU VIEWER — de son commentaire d'ouverture (la DERNIÈRE
    occurrence du titre : la première est celle de l'import) jusqu'au bloc suivant
    (l'ESP). C'est CE morceau qui ne doit contenir aucun chemin d'écriture. */
@@ -347,5 +446,6 @@ has(ramaPanel, 'there is no second dihedral in this app',
   '…en rappelant que le dièdre est celui du dossier (pas un second lecteur)');
 
 console.log(`_ramachandran_test.mjs — ${passed} assertions OK (les tables, la classe des résidus, les régions et`
-  + ' leurs polygones, la géométrie du dessin, une hélice α et un feuillet CONSTRUITS et relus au chiffre près,'
+  + ' leurs polygones, la géométrie du dessin, les caractères des DEUX AXES et leurs titres, le survol qui nomme'
+  + ' un point et ses deux angles, une hélice α et un feuillet CONSTRUITS et relus au chiffre près,'
   + ' les trous de chaîne, les outliers nommés, et le panneau 🪢 du viewer)');
