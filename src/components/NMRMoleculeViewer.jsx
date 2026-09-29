@@ -109,12 +109,19 @@ import { movingSideOf, planTorsion, dihedralDeg, distanceOf } from '../utils/tor
 // Le bouton ⚒ du panneau ✏️ Torsion fait exactement cela : deux atomes piqués, la
 // distance du champ A–D (ou la longueur que la TABLE donne à ce couple d'éléments), et
 // la descente déplace la fenêtre autour d'eux — par le MÊME chemin d'écriture qu'une
-// torsion (writeStructurePositions + le journal ↺).
+// torsion (writeStructurePositions + le journal ↺). Et SANS aucun atome piqué il
+// cherche lui-même ce qu'il y a à corriger : le balayage des longueurs fausses
+// (`badDistancesOf`) puis le même protocole, une distance après l'autre
+// (`buildModelGeometry`, §8bis du module) — la demande, mot pour mot : « model build
+// should also work without defining the atoms to bring closer and their distance…
+// find the wrong distances by itself… if the protocol on the first distance has
+// generated other wrong distances, move on to the second ».
 import {
   relaxGeometry, relaxWindow, bondLengthTarget, RELAX_DEFAULT_RADIUS, RELAX_MAX_RADIUS,
-  RELAX_PAIR_TOLERANCE, RELAX_BOND_TOLERANCE, RELAX_ANGLE_TOLERANCE,
+  RELAX_PAIR_TOLERANCE, RELAX_BOND_TOLERANCE, RELAX_ANGLE_TOLERANCE, RELAX_BAD_BOND_TOLERANCE,
   RELAX_STAGE_STEP, RELAX_MAX_STAGE_STEP, RELAX_PLANAR_TOLERANCE,
   RELAX_DEFAULT_ESCAPES, RELAX_MAX_ESCAPES, RELAX_CLASH_DISTANCE, RELAX_DEFAULT_REBUILD,
+  buildModelGeometry, RELAX_AUTO_PASSES, RELAX_AUTO_MAX_DISTANCES,
 } from '../utils/geometryRelax';
 // HETATM code → SMILES: the Chemistry Component Dictionary of the RCSB (see
 // utils/ligandSmiles.js). A PDB only names its ligand by a 3-letter code, so this
@@ -9509,6 +9516,78 @@ const relaxReportOf = (pair, run, win) => {
     + ' The 🎲 escapes are torsion kicks drawn from a FIXED seed, so the same molecule and the same gesture give the same model, to the last digit. ↺ Undo torsion puts every atom back.';
 };
 
+/** LE RAPPORT DU CONSTRUIT AUTOMATIQUE — celui du ⚒ quand AUCUN atome n'a été piqué :
+ *  les longueurs qu'il a trouvées fausses tout seul, celles qu'il a conduites, celles
+ *  qu'un geste précédent avait déjà remises d'aplomb, ce que ses propres gestes ont
+ *  créé (le balayage suivant, la demande mot pour mot), et ce qui RESTE faux — chiffré,
+ *  jamais tu. Tout vient du module (`buildModelGeometry`) : le panneau n'invente aucun
+ *  diagnostic, il met en phrases les nombres qu'il a reçus. */
+const relaxAutoReportOf = (run, win) => {
+  const worst = run.worst;
+  const driven = run.distances.length;
+  const fixed = run.distances.filter((d) => d.reached).length;
+  const already = run.skipped.filter((s) => s.why === 'already-there').length;
+  const blank = run.skipped.filter((s) => s.why === 'no-window').length;
+  const first = run.passes.length ? run.passes[0] : null;
+  const verdict = run.converged
+    ? `✓ every length back${driven ? ` — ${fixed} of the ${driven} driven landed on their target` : ''}`
+    : `✕ ${run.left.length} length${run.left.length === 1 ? '' : 's'} still off`
+      + (run.left.length
+        ? ` (worst ${run.left[0].i}–${run.left[0].j} at ${torsionAng(run.left[0].distance)} for ${torsionAng(run.left[0].target)})` : '');
+  /* LA DEMANDE, DANS L'ORDRE — « se il protocollo sulla prima distanza ha generato
+     altre distanze incorrette si passa alla seconda » : les balayages du module le
+     disent chiffre par chiffre, et le panneau ne fait que le répéter. */
+  const created = first && run.passes.length > 1
+    ? run.passes[1].count
+    : 0;
+  const passes = run.passCount > 1
+    ? ` · ⟳ ${run.passCount} passes: the moves of the first one left ${created} wrong length${created === 1 ? '' : 's'} behind`
+      + `, and the next pass drove ${created === 1 ? 'it' : 'them'}${run.converged ? ' — the last scan found none left' : ''}`
+    : ' · ⟳ one pass was enough: its own moves left nothing wrong behind';
+  const worstLine = worst
+    ? ` (worst ${worst.i}–${worst.j}: ${torsionAng(worst.distance)} → ${torsionAng(worst.after)} for a target of ${torsionAng(worst.target)}${worst.reached ? ' ✓' : ''})`
+    : '';
+  const skipped = (already || blank)
+    ? ` · ${already} distance${already === 1 ? '' : 's'} were already at their length when their turn came`
+      + `${blank ? ` · ${blank} had an empty window` : ''}`
+    : '';
+  const left = run.left.length
+    ? ` · still off: ${run.left.slice(0, 4).map((d) => `${d.i}–${d.j} ${torsionAng(d.distance)}/${torsionAng(d.target)}`).join(' · ')}`
+      + ` (${run.leftSeverity.toFixed(2)} Å of total error left)` : '';
+  const rebuilt = run.rebuild && run.rebuild.used
+    ? ` · ⟳ ${run.rebuild.atoms} atom${run.rebuild.atoms === 1 ? '' : 's'} OUTSIDE each window re-built from scratch at every step`
+      + ` (${run.rebuild.drives} of the gestures): their bonds went from ${torsionAng(run.rebuild.bonds.rms.before)}`
+      + ` to ${torsionAng(run.rebuild.bonds.rms.after)} rms and their angles from ${run.rebuild.angles.rms.before.toFixed(1)}°`
+      + ` to ${run.rebuild.angles.rms.after.toFixed(1)}°` : '';
+  const kicks = run.escapes && run.escapes.used
+    ? ` · 🎲 ${run.escapes.tried} torsion kick${run.escapes.tried === 1 ? '' : 's'} (${run.escapes.improved} kept)`
+    : '';
+  const clash = run.clashes
+    ? (run.clashes.count
+      ? ` · ⚠ ${run.clashes.count} atom pair${run.clashes.count === 1 ? '' : 's'} closer than ${torsionAng(RELAX_CLASH_DISTANCE)}`
+        + ` (closest ${torsionAng(run.clashes.worst.distance)}) — no van der Waals term can pull them apart here`
+      : ` · ✓ no atom pair closer than ${torsionAng(run.clashes.minDistance)}`)
+    : '';
+  const cut = run.truncated
+    ? ` · ⚠ one pass drives at most ${RELAX_AUTO_MAX_DISTANCES} distances: the scan was capped, and the rest is what the next pass took`
+    : '';
+  const worstAngle = run.after.worstAngle
+    ? ` (worst ${torsionDeg(run.after.worstAngle.deg)} for ${torsionDeg(run.after.worstAngle.target)})` : '';
+  return `${run.converged ? '✓' : '✕'} ⚒ Model build (automatic) · ${run.found} length${run.found === 1 ? '' : 's'} further than`
+    + ` ${run.tolerance} Å from the table${worstLine}`
+    + ` · ${verdict}`
+    + ` · energy ${run.before.total.toFixed(1)} → ${run.after.total.toFixed(1)}`
+    + ` · bonds ${torsionAng(run.after.bondRms)} rms over ${run.terms.bonds}`
+    + ` · angles ${run.after.angleRms.toFixed(1)}° rms over ${run.terms.angles}${worstAngle}`
+    + ` · ${run.moved.length} atom${run.moved.length === 1 ? '' : 's'} moved of ${run.terms.positions}`
+    + ` (window ⇢ ${win.radius} bonds)`
+    + `${passes}${skipped}${left}${cut}${rebuilt}${kicks}${clash}`
+    + ` · ${run.steps} steps, ${run.evaluations} evaluations.`
+    + ' NO atom pair had to be picked: the scan reads the GRAPH the file declares, and the PROTOCOL is the same one the pair gesture uses — the wrong length is brought back BY STAGES, every stage is relaxed in place, and the part of the molecule outside the window is re-built from scratch at every step (⟳ rebuild).'
+    + ' ⚠ It invents no bond (a pair the file does not declare bonded is never pulled together; contacts too close are only MEASURED, above) and it is not a force field: no charges, no solvent — one local, deterministic descent per distance, so the same molecule always gives the same model.'
+    + ' ↺ Undo torsion puts every atom back.';
+};
+
 /* ── ⚒ MODEL BUILD · LA MOLÉCULE QUI CHANGE À CHAQUE PAS ─────────────────────
    « Sarebbe bello vedere la molecola che cambia ad ogni passo invece che il
    risultato finale di botto. » Le module PUR annonce chaque pas (`onStep` : la
@@ -9586,6 +9665,184 @@ const playRelaxFrames = ({
   return anim;
 };
 
+/* ── ⚒ MODEL BUILD · LES IMAGES DES DEUX GESTES ───────────────────────────────
+   Le geste à deux atomes et le CONSTRUIT AUTOMATIQUE (celui qui n'a besoin d'aucun
+   atome piqué : il cherche les longueurs fausses lui-même) ont la MÊME animation :
+   une image par pas, plafonnée, les 🎲 bottes toujours gardées. Un seul ramasseur,
+   donc, pour les deux — jamais deux façons de filmer le même module. */
+
+/** LE RAMASSEUR D'IMAGES DU ⚒ — un `onStep` à brancher sur le module et les images
+ *  qu'il a retenues. `fallback` = les atomes que les images portent tant que le
+ *  module n'en a pas annoncé d'autres (la fenêtre du geste à deux atomes). */
+const relaxFrameCollector = (fallback = []) => {
+  const frames = [];
+  /* LES ATOMES QUE LES IMAGES PORTENT — la fenêtre, PLUS ceux que le rebâtiment repose
+     quand il est demandé : le module les annonce lui-même (`v.loose`, la même liste à
+     chaque pas), et ils BOUGENT vraiment — si l'animation ne les portait pas, la
+     molécule se replierait d'un coup à la dernière image. Le tampon n'est donc retaillé
+     qu'à la première image (avant, aucune image n'a d'autre longueur à écrire). */
+  let frameAtoms = fallback;
+  let buffer = new Float32Array(frameAtoms.length * 3);
+  let stride = 1;
+  const keep = (v) => {
+    if (frames.length === 0 && Array.isArray(v.loose) && v.loose.length && v.loose !== frameAtoms) {
+      frameAtoms = v.loose;
+      buffer = new Float32Array(frameAtoms.length * 3);
+    }
+    for (let k = 0; k < frameAtoms.length; k += 1) {
+      const a = frameAtoms[k];
+      buffer[k * 3] = v.positions[a * 3];
+      buffer[k * 3 + 1] = v.positions[a * 3 + 1];
+      buffer[k * 3 + 2] = v.positions[a * 3 + 2];
+    }
+    frames.push({
+      flat: buffer.slice(),
+      step: v.step,
+      phase: v.phase,
+      energy: v.energy,
+      distance: v.distances.length ? v.distances[0] : 0,
+      /* LA DISTANCE EN COURS — annoncée par le seul construit automatique (l'autre
+         geste n'en conduit qu'une, celle de son couple) : la ligne du panneau peut
+         donc dire LAQUELLE des longueurs fausses il est en train de redresser. */
+      pair: v.distance || null,
+      pass: v.pass || 0,
+      stage: v.stage,
+      stages: v.stages,
+      attempt: v.attempt,
+      attempts: v.attempts,
+      clash: v.clash,
+      accepted: v.accepted,
+    });
+  };
+  const onStep = (v) => {
+    if (v.phase === 'kick' || v.phase === 'escape' || v.phase === 'final') { keep(v); return; }
+    if (frames.length < RELAX_ANIM_FRAMES) { keep(v); return; }
+    if (frames.length === RELAX_ANIM_FRAMES) {
+      const thin = frames.filter((_, k) => k % 2 === 0);
+      frames.length = 0;
+      for (const f of thin) frames.push(f);
+      stride *= 2;
+    }
+    if (v.step % stride === 0) keep(v);
+  };
+  return { frames, onStep, atoms: () => frameAtoms };
+};
+
+
+/* ── ⚒ MODEL BUILD · LE CONSTRUIT AUTOMATIQUE — AUCUN ATOME À PIOUER ──────────
+   La demande, mot pour mot : « model build should also work without defining the
+   atoms to bring closer and their distance : the function should find the wrong
+   distances by itself and apply the “bring them closer step by step”/“relax”/
+   “rebuild” protocol (the one already defined for two atoms) to impose the right
+   distances until everything is back. If the protocol on the first distance has
+   generated other wrong distances, move on to the second. »
+
+   Le geste ne demande donc RIEN : la molécule est celle de l'écran, et le module
+   fait le reste — `badDistancesOf` (§7ter) trouve seul les longueurs fausses, et
+   `buildModelGeometry` (§8bis) conduit chacune d'elles avec LE protocole du geste à
+   deux atomes (paliers, reprise, ⟳ rebâtiment, 🎲 échappées), rebalaye, et passe à
+   la suivante. Le panneau ne calcule rien : il anime les images que le module
+   annonce, et il écrit par le MÊME chemin qu'une torsion — donc le 📏, les plaques,
+   le film, le 📥 Download et le ↺ lisent et défont ce geste comme les autres. */
+
+/** POURQUOI LE CONSTRUIT AUTOMATIQUE S'EST ARRÊTÉ — une phrase par `reason` du
+ *  module (§8bis). Comme pour la descente, le panneau n'invente aucun diagnostic. */
+const relaxAutoWhy = (run) => ({
+  'clean': 'the scan found no wrong length at all — there is nothing to build',
+  'converged': 'the last scan found no wrong length left',
+  'stalled': 'the descent could not improve anything any more (a LOCAL minimum: this is not a force field) — what is left is measured in the report',
+  'max-passes': `the ${RELAX_AUTO_PASSES} scans the build is allowed ran out with lengths still off — what is left is measured in the report`,
+  'no-terms': 'this molecule has no bond the tables know, so the scan has nothing to read',
+  'no-movable': 'no atom is allowed to move',
+  'bad-points': 'the coordinates could not be read',
+}[run.reason] || 'the build stopped');
+
+const buildModelAuto = () => {
+  const comp = componentRef.current;
+  const structure = comp && comp.structure;
+  if (!comp || !structure) {
+    setTorsionClosest(null);
+    setTorsionMsg('✕ There is no molecule on screen to build — load a structure first (or pick two atoms to bring together).');
+    return;
+  }
+  const geom = geometryOfStructure(structure);
+  if (!geom) {
+    setTorsionClosest(null);
+    setTorsionMsg('✕ The molecule could not be read (no atoms) — nothing was changed.');
+    return;
+  }
+  const collector = relaxFrameCollector();
+  const run = buildModelGeometry({
+    positions: geom.positions,
+    elements: geom.elements,
+    bonds: geom.bonds,
+    radius: relaxRadius,
+    stageStep: relaxStageStep,
+    escapes: relaxEscapes,
+    /* ⟳ LE REBÂTIMENT — le même réglage que le geste à deux atomes : la partie que la
+       fenêtre n'ancre pas est reposée à chaque pas, donc toute la molécule peut suivre
+       et se resserrer au lieu de sortir étirée. */
+    rebuild: relaxRebuild,
+    onStep: collector.onStep,
+  });
+  setTorsionClosest(null);
+  if (!run.ok) {
+    setTorsionMsg(`✕ The build stopped: ${relaxAutoWhy(run)}. Nothing was changed.`);
+    return;
+  }
+  if (!run.found) {
+    setTorsionMsg(`✓ Nothing to build: the ${run.terms.bonds} bond${run.terms.bonds === 1 ? '' : 's'} the tables know`
+      + `${run.terms.unknownBonds ? ` (and ${run.terms.unknownBonds} whose pair they do not)` : ''}`
+      + ` are all within ${run.tolerance} Å of their length — bonds ${torsionAng(run.before.bondRms)} rms,`
+      + ` angles ${run.before.angleRms.toFixed(1)}° rms over ${run.terms.angles}. Nothing had to move.`);
+    return;
+  }
+  if (!run.moved.length) {
+    setTorsionMsg(`✓ Nothing had to move: ${run.found} length${run.found === 1 ? '' : 's'} were more than ${run.tolerance} Å`
+      + ` from the table, but the window around ${run.found === 1 ? 'it' : 'them'} was empty (⇢ moves = ${relaxRadius})`
+      + ` — raise “⇢ moves” and press ⚒ again.`);
+    return;
+  }
+  /* LES COORDONNÉES DU RAPPORT — les seuls atomes écrits, dans l'ordre du ↘ : c'est la
+     géométrie que la fin de l'animation laisse à l'écran, et celle que le ↺ remettra à
+     l'envers (le snapshot d'AVANT est pris juste après, avant la première image). */
+  const flat = new Float32Array(run.moved.length * 3);
+  run.moved.forEach((k, c) => {
+    flat[c * 3] = run.positions[k * 3];
+    flat[c * 3 + 1] = run.positions[k * 3 + 1];
+    flat[c * 3 + 2] = run.positions[k * 3 + 2];
+  });
+  const before = torsionSnapshotOf(structure);       // AVANT la première image : le ↺
+  torsionUndoRef.current = {
+    comp,
+    structure,
+    count: before ? before.length / 3 : 0,
+    flat: before,
+    label: `⚒ model build (automatic: ${run.found} length${run.found === 1 ? '' : 's'})`,
+  };
+  const warn = structureWasDragged(structure)
+    ? ' ⚠ this molecule had also been DRAGGED by hand: re-playing that drag (another frame, the ⏮ button) puts its placement back.'
+    : '';
+  const report = `${relaxAutoReportOf(run, { radius: relaxRadius })}${warn}`;
+  /* LA MOLÉCULE CHANGE À CHAQUE PAS — les images du module sont écrites une par image
+     affichée, et la ligne du panneau dit LAQUELLE des longueurs fausses est en train
+     d'être redressée (le module l'annonce, `frame.pair`). */
+  playRelaxFrames({
+    comp,
+    movable: collector.atoms(),
+    frames: collector.frames,
+    finalIdxs: run.moved,
+    finalFlat: flat,
+    report,
+    progressOf: (frame, at, total) => `⚒ building — image ${at}/${total} · step ${frame.step}`
+      + `${frame.pass ? ` · ⟳ pass ${frame.pass}` : ''}`
+      + `${frame.pair ? ` · length ${frame.pair.index}/${frame.pair.total} (${frame.pair.i}–${frame.pair.j} → ${torsionAng(frame.pair.target)})` : ''}`
+      + `${frame.stages ? ` · ⇉ stage ${frame.stage}/${frame.stages}` : ''}`
+      + `${frame.attempt ? ` · 🎲 kick ${frame.attempt}/${frame.attempts}` : ''}`
+      + ` · energy ${frame.energy.toFixed(1)} · now ${torsionAng(frame.distance)}`,
+  });
+};
+
 /* ── ✏️ Torsion · « ⚒ Model build » — LE GESTE DE LA DEMANDE ──────────────────
    « L'utilisateur définit la distance entre deux atomes et le programme commence à
    rapprocher ces deux atomes pas à pas, en déplaçant les atomes qui ne respectent
@@ -9605,6 +9862,11 @@ const buildModelNow = () => {
      animations en même temps sur la même structure. */
   finishRelaxPlayback();
   const pair = torsionPairOf();
+  /* AUCUN ATOME PIOUÉ — LE ⚒ SE DÉBROUILLE (voir `buildModelAuto`) : c'est la
+     demande, mot pour mot — « model build should also work without defining the
+     atoms to bring closer and their distance ». Deux atomes piqués et le geste est
+     celui de toujours ; aucun, et le construit automatique prend la main. */
+  if (!pair.ok && torsionAtomsRef.current.length < 2) { buildModelAuto(); return; }
   if (!pair.ok) { setTorsionClosest(null); setTorsionMsg(`✕ ${pair.say}`); return; }
   const { comp, structure, idx } = pair;
   const geom = geometryOfStructure(structure);
@@ -9626,58 +9888,13 @@ const buildModelNow = () => {
     setTorsionMsg('✕ No atom to move — pick the two atoms again.');
     return;
   }
-  /* ── LES IMAGES DU GESTE — `onStep` les retient au fil de la descente ─────────
-     Une image par pas (coordonnées de la FENÊTRE, énergie, distance demandée,
-     palier, botte), plafonnée à RELAX_ANIM_FRAMES : au-delà, une image sur deux
-     est jetée et le pas double, donc la chronologie tient dans la mémoire sans
-     jamais perdre les bottes des 🎲 échappées (elles sont gardées d'office, comme
-     le dernier état du module). */
+  /* ── LES IMAGES DU GESTE — le ramasseur commun aux DEUX gestes du ⚒ retient une
+     image par pas (coordonnées, énergie, distance demandée, palier, botte),
+     plafonnée à RELAX_ANIM_FRAMES : au-delà, une image sur deux est jetée et le pas
+     double, donc la chronologie tient dans la mémoire sans jamais perdre les bottes
+     des 🎲 échappées (elles sont gardées d'office, comme le dernier état du module). */
   const movable = win.movable;
-  const frames = [];
-  /* LES ATOMES QUE LES IMAGES PORTENT — la fenêtre, PLUS ceux que le rebâtiment repose
-     quand il est demandé : le module les annonce lui-même (`v.loose`, la même liste à
-     chaque pas), et ils BOUGENT vraiment — si l'animation ne les portait pas, la
-     molécule se replierait d'un coup à la dernière image. Le tampon n'est donc retaillé
-     qu'à la première image (avant, aucune image n'a d'autre longueur à écrire). */
-  let frameAtoms = movable;
-  let buffer = new Float32Array(frameAtoms.length * 3);
-  let stride = 1;
-  const keep = (v) => {
-    if (frames.length === 0 && Array.isArray(v.loose) && v.loose.length && v.loose !== frameAtoms) {
-      frameAtoms = v.loose;
-      buffer = new Float32Array(frameAtoms.length * 3);
-    }
-    for (let k = 0; k < frameAtoms.length; k += 1) {
-      const a = frameAtoms[k];
-      buffer[k * 3] = v.positions[a * 3];
-      buffer[k * 3 + 1] = v.positions[a * 3 + 1];
-      buffer[k * 3 + 2] = v.positions[a * 3 + 2];
-    }
-    frames.push({
-      flat: buffer.slice(),
-      step: v.step,
-      phase: v.phase,
-      energy: v.energy,
-      distance: v.distances.length ? v.distances[0] : 0,
-      stage: v.stage,
-      stages: v.stages,
-      attempt: v.attempt,
-      attempts: v.attempts,
-      clash: v.clash,
-      accepted: v.accepted,
-    });
-  };
-  const onStep = (v) => {
-    if (v.phase === 'kick' || v.phase === 'escape' || v.phase === 'final') { keep(v); return; }
-    if (frames.length < RELAX_ANIM_FRAMES) { keep(v); return; }
-    if (frames.length === RELAX_ANIM_FRAMES) {
-      const thin = frames.filter((_, k) => k % 2 === 0);
-      frames.length = 0;
-      for (const f of thin) frames.push(f);
-      stride *= 2;
-    }
-    if (v.step % stride === 0) keep(v);
-  };
+  const collector = relaxFrameCollector(movable);
   const run = relaxGeometry({
     positions: geom.positions,
     elements: geom.elements,
@@ -9690,8 +9907,9 @@ const buildModelNow = () => {
        panneau et utils/geometryRelax.js §7bis) : c'est ce qui empêche la molécule de
        sortir ÉTIRÉE quand la fenêtre doit se plier. */
     rebuild: relaxRebuild,
-    onStep,
+    onStep: collector.onStep,
   });
+  const { frames } = collector;
   if (!run.ok) {
     setTorsionClosest(null);
     setTorsionMsg(`✕ The build stopped: ${relaxWhy(run)}. Nothing was changed.`);
@@ -9734,8 +9952,9 @@ const buildModelNow = () => {
   playRelaxFrames({
     comp,
     /* LES IMAGES SONT ÉCRITES POUR LES ATOMES QU'ELLES PORTENT — la fenêtre, plus ceux
-       que le rebâtiment repose : c'est la liste que `keep` a retenue au premier pas. */
-    movable: frameAtoms,
+       que le rebâtiment repose : c'est la liste que le ramasseur a retenue au premier
+       pas (`collector.atoms()`). */
+    movable: collector.atoms(),
     frames,
     finalIdxs: run.moved,
     finalFlat: flat,
@@ -19114,7 +19333,7 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
           ? <>Now: <b>dihedral {torsionDeg(read.deg)}</b> · <b>A–D {torsionAng(read.dist)}</b> — turn the bond by typing a dihedral (Set) or a distance (Reach).</>
           : (pairRead
             ? <>Now: <b>{pairRead.label} {torsionAng(pairRead.dist)}</b> — with these two atoms, ⚒ Model build relaxes the geometry around them until the distance you typed (or, with nothing typed, the length the table gives that pair of elements) is the one the molecule has. Pick two more (B · C) and the same atoms become a hinge — the four of them then mean A · B · C · D as usual.</>
-            : 'Pick the four atoms: A (the reference — it must not move), B · C (the axle bond), D (the atom whose side turns). Click the 💡 “Pick A · B · C · D” button, then click them one after the other in the 3D view.')}
+            : 'Pick the four atoms: A (the reference — it must not move), B · C (the axle bond), D (the atom whose side turns). Click the 💡 “Pick A · B · C · D” button, then click them one after the other in the 3D view. With NOTHING picked at all, ⚒ Model build works all the same: it scans the bonds ITSELF, finds the lengths further than 0.2 Å from the length the tables give that pair of elements, and drives them one after the other (the worst first, stage by stage, every stage relaxed in place, the part outside the window re-built) until every length is back — and a wrong length the first one leaves behind is the next one’s job.')}
       </p>
       {torsionPick > 0 && (
         <p className="text-[10px] font-bold text-amber-800">● Pick atom {TORSION_SLOT_LETTERS[torsionPick - 1]} — {TORSION_SLOT_ROLES[torsionPick - 1]}</p>
@@ -19195,7 +19414,7 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
         </label>
         <button type="button" onClick={buildModelNow}
           className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-emerald-300 text-emerald-700 hover:bg-emerald-50"
-          title="⚒ MODEL BUILD — the gesture HyperChem had: build a CHEMICALLY VALID model out of the bonds, after they are known. Two atoms picked (A and D of the four, or the only two), the distance typed in the A–D field (left empty, the length the table gives that pair of elements: S–S 2.05 Å, C–S 1.82 Å, C–C 1.54 Å…), and the atoms around them MOVE, step by step, until the molecule has moved enough for the two atoms to be that far apart. The energy it minimises is a TARGET FUNCTION: the squared deviations of every bond of the window from its typical length, of every angle from the ideal angle of its hybridisation (sp3 109.47°, sp2 120°, sp 180°, read from the bond graph — a ring is judged planar only if its own bonds are short, so benzene becomes 120° and cyclohexane stays 109.47°), of the distance you asked for, plus a light leash that keeps the change local, and the dihedrals of every ring the file ITSELF reads as planar (five or six atoms, bonds ≤ 1.45 Å — a benzene, a base) held at zero, so a ring cannot lose its planarity without the report saying so. The pair is brought together BY STAGES (the “⇉ stages” field of the panel, 2 Å by default) and after EVERY stage the whole window is relaxed once with the distance already obtained held in place: measured, a pair 7.35 Å apart aimed at 3 Å stays at 6.94 Å in a single approach and reaches 3.11 Å in 2 Å stages. ⚠ It is NOT a force field: no charges, no solvent, no entropy, no atom or hydrogen added — and the descent is LOCAL and DETERMINISTIC, so a distance it cannot reach is REPORTED with the number it really got, never faked. Every atom is written back the way a molecule drag writes (positionFromArray), so 📏 Measure, the plates, the film and 📥 Download read this geometry; « ↺ Undo torsion » puts the whole molecule back exactly as it was. 🎲 The “escapes” field beside this button says how many TORSION KICKS the build may try when the descent has stopped in a LOCAL minimum (see its own tooltip): a rigid rotation of a part of the window about a drawn bond, then a short descent, the BEST model kept — so the result is never worse than the plain descent — and the draws taken from a FIXED seed, so the same gesture gives the same model to the last digit. And the gesture is WATCHED: the molecule CHANGES on screen at every step (240 images at most, the last one being exactly the geometry the report describes), and clicking ⚒ again while it plays finishes the gesture at once. ⟳ With the “⟳ rebuild” box ticked (its default), THE PART OF THE MOLECULE OUTSIDE THE WINDOW IS RE-BUILT FROM SCRATCH AT EVERY STEP — standard bond lengths, standard angles, the DIHEDRALS it had — so the rest of the molecule CAN move, follows the window, and the model comes out compact instead of stretched between a folded window and a frozen body. Untick it for the gesture that only moves the window (everything else returned bit-for-bit).">
+          title="⚒ MODEL BUILD — the gesture HyperChem had: build a CHEMICALLY VALID model out of the bonds, after they are known. Two atoms picked (A and D of the four, or the only two), the distance typed in the A–D field (left empty, the length the table gives that pair of elements: S–S 2.05 Å, C–S 1.82 Å, C–C 1.54 Å…), and the atoms around them MOVE, step by step, until the molecule has moved enough for the two atoms to be that far apart. The energy it minimises is a TARGET FUNCTION: the squared deviations of every bond of the window from its typical length, of every angle from the ideal angle of its hybridisation (sp3 109.47°, sp2 120°, sp 180°, read from the bond graph — a ring is judged planar only if its own bonds are short, so benzene becomes 120° and cyclohexane stays 109.47°), of the distance you asked for, plus a light leash that keeps the change local, and the dihedrals of every ring the file ITSELF reads as planar (five or six atoms, bonds ≤ 1.45 Å — a benzene, a base) held at zero, so a ring cannot lose its planarity without the report saying so. The pair is brought together BY STAGES (the “⇉ stages” field of the panel, 2 Å by default) and after EVERY stage the whole window is relaxed once with the distance already obtained held in place: measured, a pair 7.35 Å apart aimed at 3 Å stays at 6.94 Å in a single approach and reaches 3.11 Å in 2 Å stages. ⚠ It is NOT a force field: no charges, no solvent, no entropy, no atom or hydrogen added — and the descent is LOCAL and DETERMINISTIC, so a distance it cannot reach is REPORTED with the number it really got, never faked. Every atom is written back the way a molecule drag writes (positionFromArray), so 📏 Measure, the plates, the film and 📥 Download read this geometry; « ↺ Undo torsion » puts the whole molecule back exactly as it was. 🎲 The “escapes” field beside this button says how many TORSION KICKS the build may try when the descent has stopped in a LOCAL minimum (see its own tooltip): a rigid rotation of a part of the window about a drawn bond, then a short descent, the BEST model kept — so the result is never worse than the plain descent — and the draws taken from a FIXED seed, so the same gesture gives the same model to the last digit. And the gesture is WATCHED: the molecule CHANGES on screen at every step (240 images at most, the last one being exactly the geometry the report describes), and clicking ⚒ again while it plays finishes the gesture at once. ⟳ With the “⟳ rebuild” box ticked (its default), THE PART OF THE MOLECULE OUTSIDE THE WINDOW IS RE-BUILT FROM SCRATCH AT EVERY STEP — standard bond lengths, standard angles, the DIHEDRALS it had — so the rest of the molecule CAN move, follows the window, and the model comes out compact instead of stretched between a folded window and a frozen body. Untick it for the gesture that only moves the window (everything else returned bit-for-bit). ⚒ WITH NO ATOM PICKED, the same button builds ON ITS OWN — this very gesture, applied to what the molecule itself says is wrong: it scans every bond of the GRAPH whose length is further than 0.2 Å from the length the tables give that pair of elements, and drives them ONE AFTER THE OTHER with this protocol (the worst first, each one brought back BY STAGES, every stage relaxed in place, the part outside its window re-built) until every length is back where it should be. If the first one leaves NEW wrong lengths behind — a chain that had to fold — the next scan takes those: « si passa alla seconda ». The report says how many were found, driven and fixed, and what is left, with its numbers; the line above the button names the length being driven at each step.">
           ⚒ Model build
         </button>
         {torsionClosest && (
@@ -19218,7 +19437,7 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
         </button>
       </div>
       <p className="text-[10px] text-slate-400">
-        ⚠ A torsion is not stored anywhere: it lives in the COORDINATES of the frame on screen, like every edit of this bar. Loading another structure, or moving the trajectory to another frame (⏮ / the player), shows that frame’s own geometry again. The atoms that turn are the ones NGL’s bond graph reaches from D without crossing B–C: a bond inside a RING has no such side, and the panel refuses it rather than deforming the ring. ⚒ Model build is the same kind of edit — the same coordinates, the same ↺ — except that it moves a whole WINDOW of atoms, chosen by the “⇢ moves” field, and writes back only those: everything else keeps its own numbers, to the last digit. It minimises a target function of ideal bond lengths, ideal angles AND the planarity of the rings the file itself reads as planar (which is why a benzene no longer comes out of a build slightly plucked), and it brings the two atoms together BY STAGES, relaxing the whole window after each one — the “⇉ stages” field sets that step (2 Å by default, 0 = one single approach). 🎲 The “escapes” field beside it is how the build leaves a LOCAL minimum (see its tooltip: torsion kicks drawn from a fixed seed, the best model kept), and the molecule you are looking at CHANGES at every step of the gesture instead of jumping to the final geometry — the line above the button follows the steps, and the report at the end is the module’s own. Like the ⚭ Fold for disulfides next door it is not a physical calculation — it minimises a target function of ideal bond lengths and angles — and it says out loud what it could not do, contacts too short included.
+        ⚠ A torsion is not stored anywhere: it lives in the COORDINATES of the frame on screen, like every edit of this bar. Loading another structure, or moving the trajectory to another frame (⏮ / the player), shows that frame’s own geometry again. The atoms that turn are the ones NGL’s bond graph reaches from D without crossing B–C: a bond inside a RING has no such side, and the panel refuses it rather than deforming the ring. ⚒ Model build is the same kind of edit — the same coordinates, the same ↺ — except that it moves a whole WINDOW of atoms, chosen by the “⇢ moves” field, and writes back only those: everything else keeps its own numbers, to the last digit. It minimises a target function of ideal bond lengths, ideal angles AND the planarity of the rings the file itself reads as planar (which is why a benzene no longer comes out of a build slightly plucked), and it brings the two atoms together BY STAGES, relaxing the whole window after each one — the “⇉ stages” field sets that step (2 Å by default, 0 = one single approach). 🎲 The “escapes” field beside it is how the build leaves a LOCAL minimum (see its tooltip: torsion kicks drawn from a fixed seed, the best model kept), and the molecule you are looking at CHANGES at every step of the gesture instead of jumping to the final geometry — the line above the button follows the steps, and the report at the end is the module’s own. Like the ⚭ Fold for disulfides next door it is not a physical calculation — it minimises a target function of ideal bond lengths and angles — and it says out loud what it could not do, contacts too short included. ⚒ And it needs NO atom picked: press it with nothing selected and the same button scans the bonds itself — every length further than 0.2 Å from the length the tables give that pair of elements, the aromatic rings read as such — drives each wrong length with this very protocol (stages, a restore after each, ⟳ rebuild), and re-scans: a wrong length the first gesture CREATED is the next one’s job, until the molecule is back. The report says how many it found, drove and fixed, and what is left, with its numbers.
       </p>
       {dragged && (
         <p className="text-[10px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">

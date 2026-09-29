@@ -75,9 +75,11 @@ import {
   RELAX_RESTORE_STIFFNESS, RELAX_MAX_STAGES, RELAX_REBUILD, RELAX_DEFAULT_REBUILD,
   RELAX_ESCAPES, RELAX_DEFAULT_ESCAPES, RELAX_MAX_ESCAPES, RELAX_ESCAPE_STEPS,
   RELAX_KICK_DEG, RELAX_MIN_KICK_DEG, RELAX_ESCAPE_SEED, RELAX_CLASH_DISTANCE, RELAX_CLASH_WEIGHT,
+  RELAX_BOND_TOLERANCE, RELAX_BAD_BOND_TOLERANCE, RELAX_AUTO_PASSES, RELAX_AUTO_MAX_DISTANCES,
   bondLengthTarget, bondGraphOf, ringSizeThrough, ringCycleThrough, hybridOf, angleTargetOf,
   planarRingsOf, buildRelaxTerms, energyOf, pairReportOf, relaxWindow, relaxGeometry, flatPositions,
   makeRelaxRandom, bondSideOf, torsionKickOf, clashReportOf, rebuildStandardGeometry,
+  badDistancesOf, buildModelGeometry,
 } from './src/utils/geometryRelax.js';
 import { SS_BOND_LENGTH } from './src/utils/disulfideFold.js';
 
@@ -1313,8 +1315,270 @@ has(VIEW, 'OUTSIDE the window is re-built from scratch at every step',
 has(VIEW, 'so the molecule can re-compact around the window instead of being stretched by it.',
   'le champ « ⇢ moves » dit que la fenêtre borne ce qui PILOTE, pas ce qui bouge');
 has(VIEW, 'Array.isArray(v.loose)', '⚠ l’animation lit `loose` : les atomes que le module peut déplacer');
-has(VIEW, 'movable: frameAtoms,', '…et c’est LEUR liste qui est écrite à chaque image');
-has(VIEW, 'let frameAtoms = movable;', '…la fenêtre restant le point de départ de l’animation');
+has(VIEW, 'movable: collector.atoms(),', '…et c’est LEUR liste qui est écrite à chaque image');
+has(VIEW, 'let frameAtoms = fallback;', '…la fenêtre restant le point de départ de l’animation');
+
+/* ════════════ 12. LE CONSTRUIT AUTOMATIQUE ══════════════════════════════════
+   La demande, mot pour mot : « model build should also work without defining the
+   atoms to bring closer and their distance : the function should find the wrong
+   distances by itself and apply the “bring them closer step by step”/“relax”/
+   “rebuild” protocol (the one already defined for two atoms) to impose the right
+   distances until everything is back. If the protocol on the first distance has
+   generated other wrong distances, move on to the second. »
+
+   §12a LE BALAYAGE (`badDistancesOf`) : les longueurs fausses sont trouvées sans
+        que personne ne désigne rien, les cibles sont celles de la DESCENTE
+        (aromatique comprise), la plus fausse vient en tête, et ce que la table ne
+        connaît pas est COMPTÉ, jamais deviné ;
+   §12b LE PROTOCOLE, UNE DISTANCE APRÈS L'AUTRE (`buildModelGeometry`) : une chaîne
+        étirée revient à ses longueurs, la molécule reçue n'est jamais modifiée, et
+        deux appels identiques donnent le même modèle ;
+   §12c « SI PASSA ALLA SECONDA » — la demande, chiffrée : la première distance
+        conduite CRÉE des longueurs fausses (1 → 3, 1.46 → 2.45 Å d'erreur), le
+        balayage suivant les conduit, une longueur qu'un geste a déjà remise est
+        ANNONCÉE (`already-there`) au lieu d'être reconduite, et ce qui reste faux à
+        la fin est MESURÉ (`left`), jamais tu ;
+   §12d LES PLAFONDS, LA RESTRICTION ET LE PAS VU DE L'EXTÉRIEUR : `maxDistances` et
+        `passes` bornent la boucle (`truncated` le dit), la restriction de l'appelant
+        est respectée, chaque pas annonce la distance en cours et une liste d'atomes
+        STABLE, et un `onStep` qui lève n'arrête pas le construit ;
+   §12e LE BRANCHEMENT DU VIEWER : le ⚒ sans aucun atome piqué, le rapport, la ligne
+        qui nomme la longueur en cours, le journal ↺ et les textes du panneau. */
+
+/* ── 12a · LE BALAYAGE ──────────────────────────────────────────────────────── */
+const CHAIN_ELS = ['C', 'C', 'C', 'C', 'C', 'C'];
+const CHAIN_BONDS = [[0, 1], [1, 2], [2, 3], [3, 4], [4, 5]];
+/** Une chaîne de six carbones dont la liaison 1–2 est ÉTIRÉE à 3 Å : exactement le
+ *  modèle qu'un geste laisse derrière lui (une S–S déclarée sans géométrie, un
+ *  glisser de molécule) — la molécule RÉELLE du geste automatique. */
+const stretchedChain = () => {
+  const flat = [];
+  let x = 0;
+  for (let i = 0; i < 6; i += 1) { flat.push(x, 0, 0); x += i === 1 ? 3 : 1.54; }
+  return flat;
+};
+
+const scan = badDistancesOf({ elements: CHAIN_ELS, bonds: CHAIN_BONDS, positions: stretchedChain() });
+ok(scan && scan.count === 1, 'le balayage trouve UNE longueur fausse sur la chaîne étirée, sans qu’on lui désigne rien');
+eq([scan.distances[0].i, scan.distances[0].j], [1, 2], '…c’est la liaison étirée, nommée par ses deux atomes');
+near(scan.distances[0].target, 1.54, 'sa cible vient de la table (C–C 1.54 Å), pas d’une seconde table');
+near(scan.distances[0].distance, 3, 'sa longueur MESURÉE est celle de la géométrie reçue (3 Å)');
+near(scan.distances[0].dev, 1.46, 'son écart est SIGNÉ (d − d₀)');
+near(scan.severity, 1.46, '…et `severity` est la somme des |écart| : ce que la boucle regarde pour savoir si elle avance');
+eq(scan.checked, 5, 'les cinq liaisons que la table connaît sont lues');
+eq(scan.unknownBonds, 0, '…et aucune n’est hors des tables');
+ok(scan.worst && scan.worst.i === 1 && scan.worst.j === 2, 'la PIRE est nommée à part (le classement la met en tête)');
+ok(badDistancesOf({ elements: CHAIN_ELS, bonds: CHAIN_BONDS, positions: null }) === null,
+  '⚠ sans coordonnées lisibles, le balayage rend null — jamais « zéro » (une lecture sans réponse n’est pas une réponse)');
+eq(badDistancesOf({ elements: CHAIN_ELS, bonds: CHAIN_BONDS, positions: stretchedChain(), tolerance: 1.5 }).count, 0,
+  'une tolérance de 1.5 Å ne trouve plus rien (l’écart est de 1.46)');
+eq(badDistancesOf({ elements: CHAIN_ELS, bonds: CHAIN_BONDS, positions: stretchedChain(), tolerance: 1.4 }).count, 1,
+  '…et à 1.4 Å la même longueur est fausse : c’est la tolérance qui décide, et elle se règle');
+near(badDistancesOf({ elements: CHAIN_ELS, bonds: CHAIN_BONDS, positions: stretchedChain(), tolerance: 1.4 }).tolerance, 1.4,
+  '…la tolérance reçue est rendue telle quelle dans le rapport');
+
+/* LE CLASSEMENT — deux longueurs fausses, et la PLUS fausse d'abord : c'est elle qui
+   a le plus de chances d'être la CAUSE des autres. */
+const RANKED_POSITIONS = [0, 0, 0, 2.2, 0, 0, 4, 0, 0, 5.54, 0, 0];
+const RANKED_ELS = ['C', 'C', 'C', 'C'];
+const RANKED_BONDS = [[0, 1], [1, 2], [2, 3]];
+const ranked = badDistancesOf({ elements: RANKED_ELS, bonds: RANKED_BONDS, positions: RANKED_POSITIONS });
+eq(ranked.count, 2, 'deux longueurs fausses (2.20 et 1.80 Å pour un C–C de 1.54)');
+eq([ranked.distances[0].i, ranked.distances[0].j], [0, 1], '…la PLUS fausse vient en tête (2.20 Å)');
+eq([ranked.distances[1].i, ranked.distances[1].j], [1, 2], '…puis la moins fausse (1.80 Å)');
+near(ranked.severity, 0.66 + 0.26, '…et `severity` les additionne (0.66 + 0.26 Å)');
+
+/* LA MÊME TABLE QUE LA DESCENTE — un benzène est attendu à 1.39 Å, jamais à 1.54 :
+   le balayage ne peut donc pas déclarer fausse une liaison que la descente tient. */
+const autoBenzene = [];
+for (let i = 0; i < 6; i += 1) {
+  const a = (i * Math.PI) / 3;
+  autoBenzene.push(1.39 * Math.cos(a), 1.39 * Math.sin(a), 0);
+}
+const ringScan = badDistancesOf({
+  elements: CHAIN_ELS, bonds: [[0, 1], [1, 2], [2, 3], [3, 4], [4, 5], [5, 0]], positions: autoBenzene,
+});
+eq(ringScan.count, 0, '⚠ un benzène (1.39 Å) n’est PAS déclaré faux : la cible du balayage est celle de la descente');
+eq(ringScan.aromaticBonds, 6, '…ses six liaisons sont lues comme AROMATIQUES (le fichier parle lui-même)');
+const unknownScan = badDistancesOf({
+  elements: ['C', 'C', 'X'], bonds: [[0, 1], [1, 2]],
+  positions: [0, 0, 0, 1.54, 0, 0, 6, 0, 0],
+});
+eq(unknownScan.count, 0, 'une liaison dont la table ne connaît pas le couple n’est JAMAIS déclarée fausse');
+eq(unknownScan.unknownBonds, 1, '…elle est COMPTÉE (`unknownBonds`), et le rapport peut le dire');
+
+/* ── 12b · LE PROTOCOLE, UNE DISTANCE APRÈS L'AUTRE ─────────────────────────── */
+const fixed = buildModelGeometry({
+  positions: stretchedChain(), elements: CHAIN_ELS, bonds: CHAIN_BONDS, radius: 2,
+});
+ok(fixed.ok, 'le construit automatique tourne sans qu’aucun atome ne soit désigné');
+eq(fixed.reason, 'converged', 'il s’arrête quand plus rien n’est faux, et il le DIT');
+eq(fixed.converged, true, '…`converged` est vrai');
+eq(fixed.found, 1, 'il a trouvé UNE longueur fausse tout seul');
+eq(fixed.distances.length, 1, '…il en a conduit une');
+ok(fixed.distances[0].reached, '…et elle est arrivée à sa cible');
+eq(fixed.distances[0].stages, 1, '…avec le protocole de §8 : ses paliers (un seul, la cible était proche)');
+eq(fixed.distances[0].restores, 1, '…et SA reprise, qui relâche la fenêtre entière après le rapprochement');
+eq(fixed.left.length, 0, 'il ne reste RIEN de faux');
+near(fixed.leftSeverity, 0, '…et l’erreur totale qui reste est nulle');
+eq(fixed.passCount, 1, 'un seul balayage a suffi');
+eq(fixed.passes[0].after.count, 0, '…et le balayage qui suit ne trouve plus rien');
+eq(fixed.passes[0].reached, 1, '…une distance conduite, une arrivée');
+ok(fixed.moved.length > 0, 'des atomes ont bougé');
+ok(Math.abs(distOf(fixed.positions, 1, 2) - 1.54) <= RELAX_BOND_TOLERANCE,
+  'la liaison étirée est revenue à 1.54 Å, à la tolérance du module près');
+ok(fixed.after.total < fixed.before.total, 'l’énergie de la fonction cible a baissé');
+ok(fixed.terms && fixed.terms.bonds === 5 && fixed.terms.positions === 6,
+  'le rapport donne les termes qu’il a lus (les mêmes champs que `relaxGeometry`)');
+ok(fixed.clashes && fixed.clashes.count === 0, '…et les contacts trop courts du modèle rendu, mesurés');
+ok(fixed.escapes && fixed.escapes.tried >= 0, '…et le compte des 🎲 échappées de tous ses gestes');
+eq(fixed.tolerance, RELAX_BAD_BOND_TOLERANCE, '…et le seuil du balayage, tel qu’il l’a employé');
+const chainInput = stretchedChain();
+const chainCopy = chainInput.slice();
+buildModelGeometry({ positions: chainInput, elements: CHAIN_ELS, bonds: CHAIN_BONDS, radius: 2 });
+eq(chainInput, chainCopy, '⚠ les coordonnées REÇUES ne sont jamais modifiées (le module n’écrit que sa copie)');
+const again = buildModelGeometry({
+  positions: stretchedChain(), elements: CHAIN_ELS, bonds: CHAIN_BONDS, radius: 2,
+});
+eq(again.positions, fixed.positions, 'deux appels identiques donnent le MÊME modèle (déterministe, graine fixe des 🎲)');
+eq(buildModelGeometry({ positions: null, elements: CHAIN_ELS, bonds: CHAIN_BONDS }).reason, 'bad-points',
+  'sans coordonnées lisibles, le construit REFUSE au lieu de croire');
+eq(buildModelGeometry({ positions: stretchedChain(), elements: ['X', 'X', 'X', 'X', 'X', 'X'], bonds: CHAIN_BONDS }).reason,
+  'no-terms', '…et sans aucune liaison que les tables connaissent, il refuse aussi (rien n’est inventé)');
+
+/* ── 12c · « SI PASSA ALLA SECONDA » — LA DEMANDE, CHIFFRÉE ─────────────────── */
+const local = buildModelGeometry({
+  positions: stretchedChain(), elements: CHAIN_ELS, bonds: CHAIN_BONDS, radius: 0, rebuild: false,
+});
+eq(local.passes[0].count, 1, '⚒ LE PREMIER BALAYAGE ne trouve qu’une longueur fausse (la liaison 1–2, 3 Å)');
+eq(local.passes[1].count, 3, '⚠ LE PROTOCOLE SUR CETTE PREMIÈRE DISTANCE EN A CRÉÉ DEUX AUTRES (1 → 3)');
+ok(local.passes[1].severity > local.passes[0].severity,
+  '…l’erreur totale a AUGMENTÉ au passage (1.46 → 2.45 Å) : le geste a déplacé le problème');
+near(local.passes[1].severity, 2.4457, '…et le chiffre est celui de la géométrie, RELUE (2.4457 Å)', 0.01);
+eq(local.distances[0].pass, 1, 'la première distance conduite est celle du premier balayage');
+eq([local.distances[0].i, local.distances[0].j], [1, 2], '…la plus fausse d’abord (le classement du balayage)');
+ok(local.distances.some((d) => d.pass === 2), 'SI PASSA ALLA SECONDA : le balayage suivant conduit les nouvelles');
+const keptAside = local.skipped.filter((s) => s.why === 'already-there');
+ok(keptAside.length > 0, '⚠ une longueur qu’un geste précédent a DÉJÀ remise est ANNONCÉE, pas reconduite pour rien');
+eq(keptAside[0].pass, 2, '…et c’est au balayage suivant qu’elle est relue');
+ok(local.passes.length >= 3, 'la boucle a tourné plusieurs fois (radius 0 : seuls les deux atomes d’une liaison bougent)');
+eq(local.reason, 'max-passes', '⚠ elle s’arrête en le DISANT : le plafond de balayages (`RELAX_AUTO_PASSES`) a mordu');
+eq(local.converged, false, '…donc `converged` est faux : le rapport ne prétend pas que tout est réglé');
+eq(local.left.length, 3, 'ce qui reste faux est MESURÉ : trois longueurs');
+ok(local.leftSeverity < local.passes[0].severity,
+  '…et l’erreur qui reste (0.98 Å) est plus PETITE que celle du départ (1.46 Å) : la boucle a bien progressé');
+ok(local.left.every((d) => d.abs > RELAX_BAD_BOND_TOLERANCE),
+  'chaque reste est au-dessus du seuil du balayage — sinon il ne serait pas dans la liste');
+ok(local.worst && Math.abs(local.worst.after - 1.911) < 0.01,
+  'la pire distance du DÉPART est RELUE à la fin (3.00 → 1.91 Å) : mesurée, jamais promise');
+eq(local.worst.reached, false, '…et le rapport dit qu’elle n’est PAS arrivée');
+eq(local.worst.driven, true, '…qu’elle a bien été conduite, elle');
+near(local.distances[0].after, 2.4016,
+  'la première distance, conduite par ses deux atomes SEULS, s’arrête à 2.40 Å — et c’est ce chiffre-là que le rapport donne', 0.02);
+eq(local.distances.filter((d) => d.reached).length, local.passes.reduce((s, p) => s + p.reached, 0),
+  'le compte des distances arrivées est le même dans les gestes et dans le journal des balayages');
+eq(local.passes.reduce((s, p) => s + p.driven, 0), local.distances.length,
+  '…et le journal des balayages compte EXACTEMENT les gestes conduits');
+
+/* ── 12d · LES PLAFONDS, LA RESTRICTION ET LE PAS VU DE L'EXTÉRIEUR ─────────── */
+const heldAtoms = buildModelGeometry({
+  positions: stretchedChain(), elements: CHAIN_ELS, bonds: CHAIN_BONDS, radius: 2, movable: [0, 1],
+});
+eq(heldAtoms.moved, [0, 1], '⚠ la restriction de l’appelant est RESPECTÉE : deux atomes bougent, pas un de plus');
+eq(heldAtoms.left.length, 0, '…et le protocole suffit quand même à refermer la liaison (l’atome 1 suit la fenêtre)');
+ok(heldAtoms.converged, '…la molécule est d’aplomb sans que le reste ait été touché');
+const onePass = buildModelGeometry({
+  positions: stretchedChain(), elements: CHAIN_ELS, bonds: CHAIN_BONDS, radius: 0, rebuild: false, passes: 1,
+});
+eq(onePass.passCount, 1, '`passes: 1` = un seul balayage, celui qu’on lui accorde');
+eq(onePass.reason, 'max-passes', '…et le rapport dit que c’est ce plafond qui l’a arrêté');
+ok(onePass.left.length > 0, '…avec ce qui restait faux, mesuré');
+const capped = buildModelGeometry({
+  positions: RANKED_POSITIONS, elements: RANKED_ELS, bonds: RANKED_BONDS,
+  radius: 0, rebuild: false, maxDistances: 1,
+});
+ok(capped.truncated, '⚠ `maxDistances` a mordu, et le rapport le DIT (`truncated`)');
+eq(capped.found, 2, '…le balayage en avait trouvé deux');
+eq(capped.passes[0].driven, 1, '…un seul geste a été conduit dans le premier balayage');
+eq(capped.distances.length, 1, '…une seule distance a donc été CONDUITE');
+eq(capped.reason, 'converged',
+  '…et la molécule est revenue quand même : la seconde longueur partageait l’atome du geste (le rapport ne s’en vante pas, il le compte)');
+const oneAtATime = buildModelGeometry({
+  positions: stretchedChain(), elements: CHAIN_ELS, bonds: CHAIN_BONDS,
+  radius: 0, rebuild: false, maxDistances: 1,
+});
+ok(oneAtATime.truncated, 'le même plafond, sur une chaîne où chaque distance est indépendante');
+eq(oneAtATime.passes.length, oneAtATime.distances.length,
+  '⚠ un geste par balayage : le plafond ne fait perdre aucune distance, il les fait attendre');
+eq(oneAtATime.passCount, RELAX_AUTO_PASSES, '…et la boucle va jusqu’au plafond de balayages en prenant le reste à chaque fois');
+eq(oneAtATime.reason, 'max-passes', '…jusqu’à ce que ce plafond-là l’arrête, et le rapport le dit');
+ok(oneAtATime.left.length > 0 && oneAtATime.left.length <= 3, '…avec ce qui reste faux, MESURÉ');
+const framesAuto = [];
+buildModelGeometry({
+  positions: stretchedChain(), elements: CHAIN_ELS, bonds: CHAIN_BONDS, radius: 2,
+  onStep: (v) => framesAuto.push(v),
+});
+ok(framesAuto.length > 1, 'le geste ANNONCE chaque pas (`onStep`), comme celui à deux atomes');
+const firstFrame = framesAuto[0];
+eq(firstFrame.pass, 1, '…chaque pas dit de QUEL balayage il vient');
+ok(firstFrame.distance && firstFrame.distance.i === 1 && firstFrame.distance.target === 1.54,
+  '…et QUELLE longueur il est en train de conduire');
+eq(firstFrame.distance.index, 1, '…sa place dans la file du balayage (1 sur 1 ici)');
+eq(firstFrame.distance.total, 1, '…la file entière est annoncée');
+eq(firstFrame.loose, [0, 1, 2, 3, 4, 5],
+  '⚠ les images portent TOUT le modèle : le geste automatique balaye la molécule, donc n’importe quel atome peut bouger');
+eq(framesAuto[framesAuto.length - 1].phase, 'final', '…et le dernier état est toujours annoncé');
+const noisyAuto = buildModelGeometry({
+  positions: stretchedChain(), elements: CHAIN_ELS, bonds: CHAIN_BONDS, radius: 2,
+  onStep: () => { throw new Error('rapport en panne'); },
+});
+ok(noisyAuto.ok && noisyAuto.found === 1, '⚠ un `onStep` qui lève n’arrête PAS le construit automatique');
+
+/* ── 12e · LE BRANCHEMENT DU VIEWER — LE ⚒ SANS AUCUN ATOME PIOUÉ ─────────────
+   La demande, mot pour mot : « model build should also work without defining the
+   atoms to bring closer and their distance ». Le panneau, donc : le même bouton,
+   aucun atome piqué, le module qui cherche tout seul — et un rapport qui dit ce
+   qu’il a trouvé, conduit, fixé, et ce qui reste. */
+has(VIEW, 'buildModelGeometry, RELAX_AUTO_PASSES, RELAX_AUTO_MAX_DISTANCES,',
+  'le viewer importe le construit automatique et ses deux plafonds');
+has(VIEW, 'RELAX_BOND_TOLERANCE, RELAX_ANGLE_TOLERANCE, RELAX_BAD_BOND_TOLERANCE,',
+  '…et le seuil à partir duquel une longueur est dite fausse');
+has(VIEW, 'const buildModelAuto = () => {', 'le geste automatique a son handler');
+has(VIEW, 'if (!pair.ok && torsionAtomsRef.current.length < 2) { buildModelAuto(); return; }',
+  '⚠ AUCUN atome piqué : le ⚒ part en construit automatique — c’est la demande');
+has(VIEW, 'const collector = relaxFrameCollector();',
+  '…il ramasse ses images avec le MÊME ramasseur que le geste à deux atomes');
+has(VIEW, 'const run = buildModelGeometry({', '…et c’est le module qui conduit tout');
+has(VIEW, 'radius: relaxRadius,', '…la fenêtre du champ « ⇢ moves » sert pour CHAQUE longueur fausse');
+has(VIEW, 'if (!run.found) {', '⚠ quand le balayage ne trouve rien, le panneau le dit au lieu d’écrire');
+has(VIEW, 'Nothing to build: the ${run.terms.bonds} bond', '…« rien à construire », avec le nombre de liaisons lues');
+has(VIEW, 'but the window around', '⚠ …et quand la fenêtre est vide, il dit quel réglage monter');
+has(VIEW, 'label: `⚒ model build (automatic: ${run.found} length',
+  'le journal ↺ retient le geste automatique sous son nom (le même ↺ que la torsion)');
+has(VIEW, 'const relaxAutoReportOf = (run, win) => {', 'le rapport du construit automatique a sa fonction');
+has(VIEW, 'Model build (automatic)', '…il se nomme (le panneau ne peut pas confondre les deux gestes)');
+has(VIEW, 'const passes = run.passCount > 1', '…il compte les BALAYAGES');
+has(VIEW, 'the moves of the first one left ${created} wrong length',
+  '…et DIT que le premier geste a laissé des longueurs fausses : la demande, mot pour mot');
+has(VIEW, 'were already at their length when their turn came',
+  '…et annonce celles qu’un geste précédent avait déjà remises d’aplomb');
+has(VIEW, 'const left = run.left.length', '…et ce qui RESTE faux n’est jamais tu');
+has(VIEW, 'of total error left', '…avec l’erreur totale qui reste, chiffrée');
+has(VIEW, 'NO atom pair had to be picked: the scan reads the GRAPH the file declares',
+  '…et le rapport rappelle que personne n’a rien désigné');
+has(VIEW, 'a pair the file does not declare bonded is never pulled together',
+  '⚠ …ni qu’il n’invente aucune liaison (les contacts trop courts sont MESURÉS, pas corrigés)');
+has(VIEW, 'const relaxFrameCollector = (fallback = []) => {',
+  'le ramasseur d’images est commun aus DEUX gestes du ⚒ (une seule façon de filmer le module)');
+has(VIEW, 'onStep: collector.onStep,', '…les deux le branchent de la même façon');
+has(VIEW, 'length ${frame.pair.index}/${frame.pair.total}',
+  'la ligne du panneau NOMME la longueur en cours de conduite');
+has(VIEW, '· ⟳ pass ${frame.pass}', '…et le balayage d’où elle vient');
+has(VIEW, "'max-passes': `the ${RELAX_AUTO_PASSES} scans", 'la raison « max-passes » du module est traduite, comme les autres');
+has(VIEW, 'With NOTHING picked at all, ⚒ Model build works all the same',
+  'le panneau le dit en clair : le ⚒ marche sans aucun atome piqué');
+has(VIEW, '⚒ WITH NO ATOM PICKED, the same button builds ON ITS OWN', '…l’infobulle du bouton aussi');
+has(VIEW, '⚒ And it needs NO atom picked: press it with nothing selected', '…et la note du panneau aussi');
 
 /* ── Bilan ─────────────────────────────────────────────────────────────────── */
 console.log(`_geometry_relax_test.mjs — ${passed} assertions OK (les tables de la chimie, l'hybridation, les`
@@ -1322,4 +1586,7 @@ console.log(`_geometry_relax_test.mjs — ${passed} assertions OK (les tables de
   + ' la descente exécutée pas à pas, le PAS À PAS du rapprochement et ses reprises, la fenêtre,'
   + ' le REBÂTIMENT de la partie hors fenêtre (la molécule se resserre au lieu de s’étirer),'
   + ' les 🎲 ÉCHAPPÉES (la botte de torsion, les contacts trop courts, le meilleur modèle gardé),'
-  + ' le PAS VU DE L’EXTÉRIEUR (onStep), et un vrai PDB étiré reconstruit puis relu par NGL)');
+  + ' le PAS VU DE L’EXTÉRIEUR (onStep), le CONSTRUIT AUTOMATIQUE (les longueurs fausses trouvées'
+  + ' tout seul, conduites une après l’autre, le second balayage quand le premier en a créé'
+  + ' d’autres, et ce qui reste mesuré), et un vrai PDB étiré reconstruit puis relu par NGL)');
+

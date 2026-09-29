@@ -332,6 +332,41 @@ export const RELAX_ANGLE_TOLERANCE = 2;     // degrés
 export const RELAX_PLANAR_TOLERANCE = 2;    // degrés — « le cycle est resté plan »
 export const RELAX_PAIR_TOLERANCE = 0.05;   // Å
 
+/** LE CONSTRUIT AUTOMATIQUE — LE BALAYAGE DES LONGUEURS FAUSSES (voir §7ter et
+ *  `buildModelGeometry`). La demande, mot pour mot :
+ *
+ *    « model build should also work without defining the atoms to bring closer and
+ *      their distance : the function should find the wrong distances by itself and
+ *      apply the “bring them closer step by step”/“relax”/“rebuild” protocol (the
+ *      one already defined for two atoms) to impose the right distances until
+ *      everything is back. If the protocol on the first distance has generated
+ *      other wrong distances, move on to the second. »
+ *
+ *  `RELAX_BAD_BOND_TOLERANCE` est donc À PARTIR DE QUAND une longueur est DITE
+ *  fausse, et son chiffre n'est pas arbitraire : il doit rester NETTEMENT au-dessus
+ *  de `RELAX_BOND_TOLERANCE` (0.05 Å), qui est l'écart que le protocole lui-même
+ *  laisse derrière lui. Entre les deux il y a un rapport de quatre, donc une
+ *  distance conduite jusqu'à sa cible (≤ 0.05 Å) n'est JAMAIS relue comme fausse au
+ *  balayage suivant, et la boucle « conduis, rebalaye, passe à la suivante »
+ *  descend au lieu d'osciller. À 0.2 Å, une liaison simple est fausse de plus de
+ *  13 % (C–C 1.54 → 1.74), ce qui est exactement le genre d'écart qu'un modèle
+ *  laissé par un geste — une S–S déclarée mais posée à 6 Å, une chaîne étirée, une
+ *  molécule glissée à la main — porte, tandis qu'un PDB réel (ses longueurs sont à
+ *  0.01-0.03 Å de la table) ne déclenche rien du tout. */
+export const RELAX_BAD_BOND_TOLERANCE = 0.2;   // Å
+/** Combien de BALAYAGES COMPLETS le construit automatique a le droit de faire : un
+ *  balayage conduit toutes les distances fausses qu'il vient de trouver, puis
+ *  REEXAMINE la molécule — les distances qui sont apparues à cause de son propre
+ *  geste (« se il protocollo sulla prima distanza ha generato altre distanze
+ *  incorrette si passa alla seconda ») sont celles du balayage suivant. Six est le
+ *  chiffre mesuré sur une chaîne étirée et sur un repliement, avec de la marge. */
+export const RELAX_AUTO_PASSES = 6;
+/** Combien de distances un balayage conduit AU PLUS (le plafond n'est pas caché :
+ *  `truncated` le dit dans le rapport). Chaque distance coûte une descente entière
+ *  (§8), donc une protéine dont la géométrie est entièrement fausse ne doit pas
+ *  figer l'écran sans que l'utilisateur sache pourquoi. */
+export const RELAX_AUTO_MAX_DISTANCES = 24;
+
 /* ── 3 · L'ARITHMÉTIQUE ──────────────────────────────────────────────────────
    Six lignes de géométrie, comme dans utils/torsionDrive.js : un point, une
    distance, un produit scalaire. Aucune bibliothèque. */
@@ -1046,6 +1081,82 @@ export const pairReportOf = (terms, x) => terms.pairs.map((t) => {
     reached: Math.abs(d - t.target) <= RELAX_PAIR_TOLERANCE,
   };
 });
+
+/**
+ * ── 7ter · LES LONGUEURS FAUSSES, TROUVÉES TOUT SEUL ─────────────────────────
+ * « model build should also work without defining the atoms to bring closer and
+ *   their distance » : la fonction cherche donc elle-même ce qu'il y a à corriger.
+ *
+ * Ce qu'elle regarde, et rien d'autre : les LIAISONS du graphe reçu, leur longueur
+ * MESURÉE et la longueur que la table leur donne — exactement les cibles de la
+ * fonction cible, puisqu'elles viennent du même `buildRelaxTerms` que la descente
+ * (correction d'ORDRE et d'AROMATIQUE comprises : un cycle de benzène est attendu à
+ * 1.39 Å, jamais à 1.54 — la cible de la lecture et celle de la descente ne peuvent
+ * donc pas diverger, c'est la règle du dossier : jamais une seconde table). Une
+ * liaison dont la table ne connaît pas le couple (un métal) est simplement LAISSÉE
+ * hors du balayage et COMPTÉE (`unknownBonds`) : aucune longueur n'est inventée
+ * pour si peu.
+ *
+ * ⚠ Ce que le balayage ne fait PAS, et le rapport ne doit pas le laisser croire :
+ *   · il ne rapproche jamais deux atomes que le fichier ne DÉCLARE pas liés — un
+ *     contact trop court est MESURÉ (`clashReportOf`) et affiché, jamais corrigé
+ *     par une cible inventée (rien n'est deviné ici) ;
+ *   · il ne juge pas les angles ni les cycles : ce sont les termes de la descente,
+ *     elle s'en occupe pendant que chaque distance est conduite ;
+ *   · il ne touche à rien : il lit les coordonnées reçues et rend une LISTE.
+ *
+ * Le classement est par ÉCART DÉCROISSANT (`|d − d₀|`), la plus fausse d'abord —
+ * c'est elle qui a le plus de chances d'être la cause des autres —, et à écart égal
+ * par indices croissants : le même modèle donne donc toujours le même ordre, donc
+ * le même construit (le module est déterministe, c'est une règle du dossier).
+ *
+ * @param {{elements?:any[], bonds?:any[], positions?:any, tolerance?:number,
+ *          terms?:object}} spec
+ *   `tolerance` (0.2 Å par défaut, `RELAX_BAD_BOND_TOLERANCE`) = à partir de quel
+ *   écart une longueur est dite fausse ; `terms` = les termes déjà construits,
+ *   pour ne pas relire la molécule quand l'appelant les a sous la main.
+ * @returns {{tolerance:number, count:number, distances:object[], worst:object|null,
+ *            severity:number, checked:number, unknownBonds:number,
+ *            aromaticBonds:number}|null}
+ *   `distances` = `{i, j, target, distance, dev, abs, order}` de chaque liaison
+ *   fausse, la pire d'abord ; `count` = combien ; `worst` = la pire (`null` quand
+ *   tout est à sa longueur) ; `severity` = Σ |dev| — le chiffre que le construit
+ *   automatique regarde pour savoir si un balayage a AMÉLIORÉ quelque chose ;
+ *   `checked` = combien de liaisons la table connaît. `null` quand les coordonnées
+ *   sont illisibles (une lecture qui n'a pas de réponse ne rend pas zéro).
+ */
+export const badDistancesOf = ({
+  elements = [], bonds = [], positions = null, tolerance = RELAX_BAD_BOND_TOLERANCE,
+  terms = null,
+} = {}) => {
+  const read = flatPositions(positions);
+  if (!read) return null;
+  const t = terms || buildRelaxTerms({ elements, bonds, positions: read.flat });
+  const limit = Number(tolerance) >= 0 ? Number(tolerance) : RELAX_BAD_BOND_TOLERANCE;
+  const x = read.flat;
+  const pt = (i) => [x[i * 3], x[i * 3 + 1], x[i * 3 + 2]];
+  const out = {
+    tolerance: limit, count: 0, distances: [], worst: null, severity: 0,
+    checked: t.bonds.length, unknownBonds: t.unknownBonds, aromaticBonds: t.aromaticBonds,
+  };
+  for (const b of t.bonds) {
+    const distance = dist3(pt(b.i), pt(b.j));
+    const dev = distance - b.target;
+    const abs = Math.abs(dev);
+    if (!(abs > limit)) continue;
+    out.distances.push({
+      i: b.i, j: b.j, target: b.target, distance, dev, abs,
+      order: b.order == null ? 1 : b.order,
+    });
+  }
+  /* LE CLASSEMENT — la plus fausse d'abord, et les indices pour départager : deux
+     écarts égaux donnent toujours le même ordre, donc le même construit. */
+  out.distances.sort((a, b) => (b.abs - a.abs) || (a.i - b.i) || (a.j - b.j));
+  out.count = out.distances.length;
+  out.worst = out.count ? { ...out.distances[0] } : null;
+  for (const d of out.distances) out.severity += d.abs;
+  return out;
+};
 
 /**
  * LE COUP DE POUCE DES ANGLES PLATS — exécuté UNE fois, avant la descente, sur la
@@ -2514,4 +2625,340 @@ export const relaxGeometry = (spec = {}) => {
     hybrids: terms.hybrids,
   };
 };
+
+/* ── 8bis · LE CONSTRUIT AUTOMATIQUE — LES DISTANCES FAUSSES, CONDUITES L'UNE APRÈS
+   L'AUTRE, SANS QUE PERSONNE NE LES DÉSIGNE ──────────────────────────────────────
+   La demande, mot pour mot :
+
+     « model build should also work without defining the atoms to bring closer and
+       their distance : the function should find the wrong distances by itself and
+       apply the “bring them closer step by step”/“relax”/“rebuild” protocol (the
+       one already defined for two atoms) to impose the right distances until
+       everything is back. If the protocol on the first distance has generated
+       other wrong distances, move on to the second. »
+
+   Ce que ce geste fait, et rien d'autre — il emploie le protocole de §8 TEL QUEL,
+   une distance à la fois :
+
+     1. BALAYER la molécule (`badDistancesOf`, §7ter) : les liaisons du graphe dont
+        la longueur s'écarte de plus de `tolerance` (0.2 Å) de la longueur de la
+        table — cible de la descente, ordre et aromatique compris, jamais une
+        seconde table. Le classement est par écart DÉCROISSANT : la plus fausse
+        d'abord, celle qui a le plus de chances d'être la CAUSE des autres ;
+     2. CONDUIRE chacune d'elles avec LE protocole à deux atomes déjà défini —
+        `relaxGeometry` avec une seule paire, donc le rapprochement PAR PALIERS
+        (« ⇉ stages »), la REPRISE qui relâche la fenêtre entière après chaque
+        palier (`restore`), les 🎲 échappées quand la descente se pose dans une
+        buche, et le REBÂTIMENT de la partie hors fenêtre (`rebuild`, §7bis). La
+        fenêtre est celle du couple, au rayon demandé : le geste reste LOCAL ;
+     3. REEXAMINER la molécule que le geste précédent a laissée, et PASSER À LA
+        SUIVANTE. Une distance que le geste précédent a déjà mise à sa longueur est
+        donc ANNONCÉE comme telle (« déjà à sa longueur ») au lieu d'être reconduite
+        pour rien — c'est le cas le plus fréquent : un seul repliement remet souvent
+        d'aplomb toute une chaîne ;
+     4. à la fin du balayage, s'il RESTE des longueurs fausses — celles que les
+        gestes ont créées ailleurs, ce que la demande prévoit —, le balayage SUIVANT
+        les conduit à leur tour. On continue tant qu'un balayage AMÉLIORE quelque
+        chose (`RELAX_AUTO_PASSES` au plus, `RELAX_AUTO_MAX_DISTANCES` distances par
+        balayage), et on s'arrête quand plus RIEN n'est faux — ou en le DISANT, avec
+        les chiffres : `left` porte les distances qui restent fausses et leur écart
+        réel, jamais un silence.
+
+   ⚠ CE QUE CE GESTE N'EST PAS, pour que le rapport ne le laisse pas croire :
+     · il n'invente aucune liaison : un couple que le fichier ne déclare pas lié
+       n'est jamais rapproché (les contacts trop courts sont MESURÉS et affichés,
+       `clashReportOf`, comme partout ailleurs) ;
+     · il n'est pas un champ de forces ni un recuit : chaque distance est conduite
+       par la même descente locale et déterministe que le geste manuel, à graine
+       fixe, donc le même modèle donne TOUJOURS le même construit ;
+     · il ne promet pas la perfection : une chaîne fermée sur elle-même ou un cycle
+       tenu plan peut refuser une longueur, et c'est alors `left` — mesuré, chiffré,
+       affiché — qui le dit ;
+     · il ne modifie aucun argument (le dossier ne touche jamais ce qu'il reçoit) :
+       les coordonnées rendues sont une COPIE.
+
+   Le geste est ANIMABLE comme celui de §8 : chaque pas de chaque distance est
+   annoncé (`onStep`) avec, en plus, la distance en cours (`distance`, `pass`,
+   `total`) et une liste d'atomes STABLE — tout le modèle —, parce que le geste
+   automatique balaye la molécule entière et que n'importe quel atome peut donc
+   bouger (une image qui n'écrirait qu'une partie laisserait le reste à la géométrie
+   de l'image précédente).
+ */
+
+
+/**
+ * LE CONSTRUIT AUTOMATIQUE — voir §8bis pour ce qu'il fait, dans l'ordre.
+ *
+ * @param {{positions:number[]|Float32Array|number[][], elements?:any[], bonds?:any[],
+ *          movable?:number[]|null, tolerance?:number, passes?:number,
+ *          maxDistances?:number, radius?:number, steps?:number, stageStep?:number,
+ *          escapes?:number, escapeSteps?:number, kickDeg?:number, seed?:number,
+ *          rebuild?:boolean, clashDistance?:number, weights?:object,
+ *          onStep?:Function, stepEvery?:number}} spec
+ *   `positions` / `elements` / `bonds` = la molécule, comme partout dans le module.
+ *   `movable` = la restriction FACULTATIVE de l'appelant : donnée, chaque fenêtre y
+ *   est découpée (aucun atome hors de cette liste ne bouge) ; sans elle, chaque
+ *   distance a pour fenêtre ses deux atomes et leurs voisins à `radius` liaisons.
+ *   `tolerance` = à partir de quel écart une longueur est dite fausse (0.2 Å) ;
+ *   `passes` / `maxDistances` = les deux plafonds de la boucle (§8bis, point 4) ;
+ *   `radius`, `steps`, `stageStep`, `escapes`, `rebuild`, `clashDistance`, `seed`,
+ *   `weights` = les réglages du protocole de §8, passés tels quels ;
+ *   `onStep` / `stepEvery` = le pas vu de l'extérieur (voir §8).
+ * @returns {{ok:boolean, reason:string, converged:boolean, positions:number[]|null,
+ *            moved:number[], before:object|null, after:object|null, terms:object,
+ *            found:number, tolerance:number, worst:object|null, distances:object[],
+ *            skipped:object[], left:object[], leftSeverity:number, passes:object[],
+ *            passCount:number, truncated:boolean, steps:number, evaluations:number,
+ *            escapes:object, clashes:object|null, rebuild:object|null}}
+ *   `distances` = chaque distance CONDUITE, avec ce qu'elle était avant, ce qu'elle
+ *   est après, et la raison de la descente qui l'a conduite (`reached` = elle est
+ *   arrivée à sa cible) ; `skipped` = celles qu'un geste précédent avait déjà mises
+ *   à leur longueur (`already-there`), ou dont la fenêtre était vide (`no-window`) ;
+ *   `left` = celles qui RESTENT fausses à la fin, mesurées ; `passes` = le journal
+ *   des balayages (ce qu'ils ont trouvé, conduit, gagné) ; `converged` = plus une
+ *   seule longueur fausse.
+ */
+export const buildModelGeometry = (spec = {}) => {
+  const {
+    positions = null, elements = [], bonds = [], movable = null,
+    tolerance = RELAX_BAD_BOND_TOLERANCE, passes = RELAX_AUTO_PASSES,
+    maxDistances = RELAX_AUTO_MAX_DISTANCES, radius = RELAX_DEFAULT_RADIUS,
+    weights = RELAX_WEIGHTS,
+    steps = RELAX_MAX_STEPS, stageStep = RELAX_STAGE_STEP,
+    escapes = RELAX_ESCAPES, escapeSteps = RELAX_ESCAPE_STEPS,
+    kickDeg = RELAX_KICK_DEG, seed = RELAX_ESCAPE_SEED,
+    rebuild = RELAX_REBUILD, clashDistance = RELAX_CLASH_DISTANCE,
+    onStep = null, stepEvery = 1,
+  } = spec || {};
+
+  const read = flatPositions(positions);
+  if (!read) {
+    return {
+      ok: false, reason: 'bad-points', converged: false, positions: null, moved: [],
+      before: null, after: null, terms: null, found: 0, tolerance: 0, worst: null,
+      distances: [], skipped: [], left: [], leftSeverity: 0, passes: [], passCount: 0,
+      truncated: false, steps: 0, evaluations: 0, escapes: null, clashes: null, rebuild: null,
+    };
+  }
+  const count = read.count;
+  const els = Array.from(elements || []).map((e) => element(e));
+  const x0 = read.flat.slice();
+  let x = x0.slice();
+  /* LES TERMES DU RAPPORT — construits UNE fois sur la molécule REÇUE, comme dans
+     `relaxGeometry` : les énergies « avant / après » se lisent donc sur les MÊMES
+     termes, et la comparaison veut dire quelque chose. Les BALAYAGES, eux, relisent
+     la molécule à chaque passage (`badDistancesOf` sans `terms`) : c'est ce que fait
+     chaque descente, qui reconstruit ses propres termes sur ses propres
+     coordonnées — un cycle que le geste a redressé peut devenir aromatique, et les
+     deux lectures doivent rester la même lecture. */
+  const baseTerms = buildRelaxTerms({ elements: els, bonds, weights, positions: x0 });
+  const termInfo = {
+    bonds: baseTerms.bonds.length, angles: baseTerms.angles.length,
+    planars: baseTerms.planars.length,
+    rings: new Set(baseTerms.planars.map((t) => t.ring)).size,
+    pairs: 0, unstuck: 0, bondCount: baseTerms.bondCount,
+    unknownBonds: baseTerms.unknownBonds, aromaticBonds: baseTerms.aromaticBonds,
+    positions: count,
+  };
+  const refuse = (reason) => ({
+    ok: false, reason, converged: false, positions: null, moved: [], before: null,
+    after: null, terms: termInfo, found: 0, tolerance: Number(tolerance) || 0,
+    worst: null, distances: [], skipped: [], left: [], leftSeverity: 0, passes: [],
+    passCount: 0, truncated: false, steps: 0, evaluations: 0, escapes: null,
+    clashes: null, rebuild: null,
+  });
+  if (!baseTerms.bonds.length) return refuse('no-terms');
+
+  const restrict = movable == null ? null : new Set(Array.from(movable)
+    .map(Number).filter((i) => isIndex(i) && i < count));
+  if (restrict && !restrict.size) return refuse('no-movable');
+
+  /* TOUS LES ATOMES, OU LA RESTRICTION DE L'APPELANT — la liste que les images
+     écrivent (voir §8bis, dernier paragraphe) : stable d'un pas à l'autre, donc
+     l'animation du panneau n'a pas à se retailler en cours de geste. */
+  const looseAll = restrict ? [...restrict].sort((a, b) => a - b)
+    : Array.from({ length: count }, (_, i) => i);
+
+  const before = summaryOf(energyOf(baseTerms, x));
+  const gap = (arr, i, j) => dist3(
+    [arr[i * 3], arr[i * 3 + 1], arr[i * 3 + 2]],
+    [arr[j * 3], arr[j * 3 + 1], arr[j * 3 + 2]],
+  );
+
+  /* ── LE BALAYAGE, ET LE PROTOCOLE DISTANCE PAR DISTANCE ─────────────────────── */
+  const limit = Number(tolerance) >= 0 ? Number(tolerance) : RELAX_BAD_BOND_TOLERANCE;
+  const passMax = Math.max(1, Math.round(Number(passes) || RELAX_AUTO_PASSES));
+  const driveMax = Math.max(1, Math.round(Number(maxDistances) || RELAX_AUTO_MAX_DISTANCES));
+  const first = badDistancesOf({ elements: els, bonds, positions: x, tolerance: limit });
+  let left = first.distances;
+  const records = [];
+  const skipped = [];                 // ce qui n'a PAS été conduit, et pourquoi
+  const passLog = [];
+  const escapeLog = { wanted: 0, used: false, tried: 0, improved: 0, rejected: 0 };
+  let rebuildLog = null;
+  let stepsTaken = 0;
+  let evaluations = 0;
+  let truncated = first.count > driveMax;
+  let reason = first.count ? 'max-passes' : 'clean';
+
+  /* LE PAS VU DE L'EXTÉRIEUR — le même `onStep` que §8, préfixé de la distance en
+     cours : `distance`, `pass` et `index/total` répondent à « laquelle conduit-il ? »,
+     et `loose` est la liste STABLE (tout le modèle, voir §8bis). */
+  const emitOf = (info, pass) => (typeof onStep !== 'function' ? null : (v) => {
+    onStep({
+      ...v,
+      loose: looseAll,
+      pass,
+      distance: {
+        i: info.i, j: info.j, target: info.target, index: info.index, total: info.total,
+      },
+    });
+  });
+  const skip = (pass, d, at, why) => {
+    /* LE NUMÉRO DU BALAYAGE, comme dans `distances` — jamais l'objet du journal :
+       un rapport se lit champ par champ, et `pass` y est un nombre. */
+    skipped.push({ pass: pass.pass, i: d.i, j: d.j, target: d.target, distance: at, why });
+    pass.skipped += 1;
+  };
+
+  if (first.count) {
+    let found = first;
+    for (let p = 1; p <= passMax && found.count; p += 1) {
+      const planned = found.distances.slice(0, driveMax);
+      if (found.count > driveMax) truncated = true;
+      const pass = {
+        pass: p, severity: found.severity, count: found.count,
+        driven: 0, reached: 0, improved: 0, skipped: 0, after: null,
+      };
+      for (let k = 0; k < planned.length; k += 1) {
+        const d = planned[k];
+        /* LA DISTANCE EST RELUE AVANT D'ÊTRE CONDUIITE — le geste précédent l'a
+           peut-être DÉJÀ mise à sa longueur (le cas le plus fréquent : un seul
+           repliement remet d'aplomb toute une chaîne) : elle est alors ANNONCÉE comme
+           telle au lieu d'être reconduite pour rien. */
+        const at = gap(x, d.i, d.j);
+        if (Math.abs(at - d.target) <= RELAX_BOND_TOLERANCE) {
+          skip(pass, d, at, 'already-there'); continue;
+        }
+        const win = relaxWindow({ bonds, seeds: [d.i, d.j], radius, atomCount: count });
+        const winAtoms = restrict ? win.movable.filter((i) => restrict.has(i)) : win.movable;
+        if (!winAtoms.length) { skip(pass, d, at, 'no-window'); continue; }
+        /* LE PROTOCOLE DE §8, TEL QUEL — une seule paire, donc les paliers, la
+           reprise de chaque palier, les 🎲 échappées et le ⟳ rebâtiment. */
+        const run = relaxGeometry({
+          positions: x, elements: els, bonds, weights,
+          pairs: [{ i: d.i, j: d.j, target: d.target }],
+          movable: winAtoms, steps, stageStep,
+          escapes, escapeSteps, kickDeg, seed, rebuild, clashDistance,
+          onStep: emitOf({ i: d.i, j: d.j, target: d.target, index: k + 1, total: planned.length }, p),
+          stepEvery,
+        });
+        stepsTaken += Number(run.steps) || 0;
+        evaluations += Number(run.evaluations) || 0;
+        if (!run.ok) { skip(pass, d, at, run.reason || 'refused'); continue; }
+        x = run.positions;
+        const pair = run.pairs[0] || null;
+        const after = pair ? pair.after : at;
+        const dev = after - d.target;
+        pass.driven += 1;
+        if (pair && pair.reached) pass.reached += 1;
+        if (Math.abs(dev) < Math.abs(d.dev) - 1e-9) pass.improved += 1;
+        if (run.escapes) {
+          escapeLog.wanted += Number(run.escapes.wanted) || 0;
+          escapeLog.tried += Number(run.escapes.tried) || 0;
+          escapeLog.improved += Number(run.escapes.improved) || 0;
+          escapeLog.rejected += Number(run.escapes.rejected) || 0;
+          if (run.escapes.used) escapeLog.used = true;
+        }
+        /* LE ⟳ REBÂTIMENT, RÉSUMÉ DU PREMIER GESTE AU DERNIER — ce que la partie hors
+           fenêtre a gagné pendant tout le construit automatique. */
+        if (run.rebuild && run.rebuild.used) {
+          const r = run.rebuild;
+          if (!rebuildLog) {
+            rebuildLog = {
+              used: true, drives: 0, atoms: r.atoms, moved: 0, parts: r.parts,
+              untouched: r.untouched,
+              bonds: { rms: { before: r.bonds.rms.before, after: r.bonds.rms.after } },
+              angles: { rms: { before: r.angles.rms.before, after: r.angles.rms.after } },
+            };
+          }
+          rebuildLog.drives += 1;
+          rebuildLog.moved = r.moved;
+          rebuildLog.bonds.rms.after = r.bonds.rms.after;
+          rebuildLog.angles.rms.after = r.angles.rms.after;
+        }
+        records.push({
+          pass: p, i: d.i, j: d.j, target: d.target, order: d.order,
+          before: at, after, dev, reached: !!(pair && pair.reached),
+          reason: run.reason, stages: run.stages, restores: run.restorations,
+          steps: run.steps, evaluations: run.evaluations,
+          moved: run.moved.length, window: winAtoms.length,
+          kicks: run.escapes ? run.escapes.tried : 0,
+          clashes: run.clashes ? run.clashes.count : 0,
+        });
+      }
+      /* LE BALAYAGE SUIVANT — la molécule est RELUE telle que les gestes l'ont
+         laissée : les longueurs fausses qu'on y trouve (celles qu'ils ont CRÉÉES, et
+         celles qu'ils n'ont pas réussi à corriger) sont celles du balayage suivant —
+         « se il protocollo sulla prima distanza ha generato altre distanze incorrette
+         si passa alla seconda ». */
+      const next = badDistancesOf({ elements: els, bonds, positions: x, tolerance: limit });
+      pass.after = { severity: next.severity, count: next.count };
+      const moved = pass.reached > 0 || pass.improved > 0
+        || next.severity < found.severity - 1e-9;
+      passLog.push(pass);
+      if (!next.count) { reason = 'converged'; left = []; break; }
+      left = next.distances;
+      if (!moved) { reason = 'stalled'; break; }
+      if (p >= passMax) { reason = 'max-passes'; break; }
+      found = next;
+    }
+  }
+
+  /* ── LE RAPPORT — relu sur les coordonnées RÉELLEMENT obtenues, jamais supposé ──
+     `moved` est mesuré sur ces coordonnées-là (un atome que le geste a laissé à sa
+     place n'est pas annoncé comme déplacé), `worst` est la pire distance du PREMIER
+     balayage relue à la fin, et `left` sort du DERNIER balayage : ce qui reste faux
+     est donc mesuré, pas déduit de ce que les gestes ont promis. */
+  const moved = [];
+  for (let i = 0; i < count; i += 1) {
+    if (Math.abs(x[i * 3] - x0[i * 3]) + Math.abs(x[i * 3 + 1] - x0[i * 3 + 1])
+      + Math.abs(x[i * 3 + 2] - x0[i * 3 + 2]) > 1e-9) moved.push(i);
+  }
+  let worst = first.worst ? { ...first.worst } : null;
+  if (worst) {
+    worst.after = gap(x, worst.i, worst.j);
+    worst.afterDeviation = worst.after - worst.target;
+    worst.reached = Math.abs(worst.afterDeviation) <= RELAX_BOND_TOLERANCE;
+    worst.driven = records.some((r) => r.i === worst.i && r.j === worst.j);
+  }
+  let leftSeverity = 0;
+  for (const d of left) leftSeverity += d.abs;
+  return {
+    ok: true,
+    reason,
+    converged: !left.length,
+    positions: x,
+    moved,
+    before,
+    after: summaryOf(energyOf(baseTerms, x)),
+    terms: termInfo,
+    found: first.count,
+    tolerance: limit,
+    worst,
+    distances: records,
+    skipped,
+    left,
+    leftSeverity,
+    passes: passLog,
+    passCount: passLog.length,
+    truncated,
+    steps: stepsTaken,
+    evaluations,
+    escapes: escapeLog,
+    clashes: clashReportOf({ positions: x, bonds, minDistance: clashDistance }),
+    rebuild: rebuildLog,
+  };
+};
+
 
