@@ -268,8 +268,8 @@ eq(SEL.subsectionsOf('nucleic').map((s) => s.sub), ['general', 'backbone', 'base
 // 3) un lipide → ses trois parties ; une sélection NON classée → General seul.
 const lip = SEL.selectedResidueSections(keysOf(4), TICKS);
 eq(lip.map((s) => s.kind), ['lipid'], 'un POPC sélectionné → un espace de type lipide');
-eq(SEL.subsectionsOf('lipid').map((s) => s.sub), ['general', 'head', 'heads', 'tail', 'glycerol'],
-  'les menus d’un lipide : General · headgroups · heads (P · N · O) · acyl chains · glycerol');
+eq(SEL.subsectionsOf('lipid').map((s) => s.sub), ['general', 'head', 'heads', 'phosphorus', 'tail', 'glycerol'],
+  'les menus d’un lipide : General · headgroups · heads (N · O) · P · acyl chains · glycerol');
 const other = SEL.selectedResidueSections(keysOf(5), TICKS);
 eq(other.length, 1, 'une sélection qui n’est ni protéine, ni acide nucléique, ni lipide : UN espace');
 eq(other[0].kind, 'ligand', '…de type « ligand »');

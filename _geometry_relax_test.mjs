@@ -37,6 +37,13 @@
      §7bis LE PAS À PAS ET LA REPRISE — un rapprochement lointain (7.35 → 3.00 Å) qui
         n'aboutit PAS d'un seul tenant et qui aboutit par paliers de 2 Å, chacun suivi
         d'une reprise qui relâche la fenêtre entière à la distance obtenue ;
+     §7ter LE REBÂTIMENT DE LA PARTIE HORS FENÊTRE — « since you limit the number of
+        bonds and atoms to move, the molecules get stretched » : les atomes que la
+        fenêtre n'ancre pas sont REPOSÉS à chaque pas depuis la géométrie standard
+        (longueur de la table, angle de l'hybridation, DIÈDRES gardés au chiffre près),
+        donc ils bougent, la molécule se RESSERRE au lieu de rester étirée au-delà de la
+        fenêtre — et l'ancre est rendue bit à bit, la molécule tournée donne le rebâtiment
+        tourné, une liaison hors des tables n'est jamais rebâtie ;
      §8 un VRAI NGL : un PDB écrit à la main est parsé, ses liaisons viennent du
         fichier, la descente écrit dans la structure (positionFromArray), le PDB
         exporté est RELU et remesuré ;
@@ -52,8 +59,9 @@
         reprises, bottes), les chiffres de chaque pas, le dernier état toujours
         annoncé, et un rapport qui se plaint sans arrêter la descente ;
      §11 LE BRANCHEMENT DU VIEWER (le bouton, les champs « ⇢ moves », « ⇉ stages »
-        et « 🎲 escapes », l'écriture du geste, le journal ↺, et l'animation : la
-        molécule change à chaque pas au lieu du résultat de but en blanc).
+        et « 🎲 escapes », la case « ⟳ rebuild » et son rapport, l'écriture du geste, le
+        journal ↺, et l'animation : la molécule change à chaque pas au lieu du résultat
+        de but en blanc — les atomes reposés compris).
 
    Run: node _geometry_relax_test.mjs
    ========================================================================= */
@@ -64,12 +72,12 @@ import {
   HYBRID_ANGLES, IDEAL_BOND_LENGTHS, BOND_ORDER_SHORTENING, PLANAR_RING_SIZES,
   PLANAR_RING_MAX_BOND, PLANAR_RING_KEEP_MAX_BOND, RELAX_WEIGHTS, RELAX_PAIR_TOLERANCE,
   RELAX_PLANAR_TOLERANCE, RELAX_STAGE_STEP, RELAX_MAX_STAGE_STEP, RELAX_RESTORE_STEPS,
-  RELAX_RESTORE_STIFFNESS, RELAX_MAX_STAGES,
+  RELAX_RESTORE_STIFFNESS, RELAX_MAX_STAGES, RELAX_REBUILD, RELAX_DEFAULT_REBUILD,
   RELAX_ESCAPES, RELAX_DEFAULT_ESCAPES, RELAX_MAX_ESCAPES, RELAX_ESCAPE_STEPS,
   RELAX_KICK_DEG, RELAX_MIN_KICK_DEG, RELAX_ESCAPE_SEED, RELAX_CLASH_DISTANCE, RELAX_CLASH_WEIGHT,
   bondLengthTarget, bondGraphOf, ringSizeThrough, ringCycleThrough, hybridOf, angleTargetOf,
   planarRingsOf, buildRelaxTerms, energyOf, pairReportOf, relaxWindow, relaxGeometry, flatPositions,
-  makeRelaxRandom, bondSideOf, torsionKickOf, clashReportOf,
+  makeRelaxRandom, bondSideOf, torsionKickOf, clashReportOf, rebuildStandardGeometry,
 } from './src/utils/geometryRelax.js';
 import { SS_BOND_LENGTH } from './src/utils/disulfideFold.js';
 
@@ -106,6 +114,19 @@ const atomAt = (flat, i) => [flat[i * 3], flat[i * 3 + 1], flat[i * 3 + 2]];
 const distOf = (flat, i, j) => Math.hypot(
   flat[i * 3] - flat[j * 3], flat[i * 3 + 1] - flat[j * 3 + 1], flat[i * 3 + 2] - flat[j * 3 + 2],
 );
+/* LE DIÈDRE i–j–k–l, SIGNÉ (« signed IUPAC ») — la même lecture que les χ/δ du viewer,
+   écrite ici à la main pour que le rebâtiment soit jugé par un lecteur INDÉPENDANT de
+   celui qui l'a construit. */
+const dihedralDeg = (flat, i, j, k, l) => {
+  const b = (p, q) => [flat[p * 3] - flat[q * 3], flat[p * 3 + 1] - flat[q * 3 + 1], flat[p * 3 + 2] - flat[q * 3 + 2]];
+  const cross = (u, v) => [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+  const dot = (u, v) => u[0] * v[0] + u[1] * v[1] + u[2] * v[2];
+  const b1 = b(j, i); const b2 = b(k, j); const b3 = b(l, k);
+  const n1 = cross(b1, b2); const n2 = cross(b2, b3);
+  const n = Math.hypot(b2[0], b2[1], b2[2]);
+  const m = cross(n1, [b2[0] / n, b2[1] / n, b2[2] / n]);
+  return (Math.atan2(dot(m, n2), dot(n1, n2)) * 180) / Math.PI;
+};
 
 /* ════════════ 1. LES TABLES — les chiffres que la demande cite ═══════════════
    Le module est PUR (aucun import), comme tous les utils du dossier, et ses
@@ -470,6 +491,193 @@ eq(relaxWindow({ bonds: chainBonds(5), seeds: [0], radius: 99, atomCount: 5 }).r
 eq(relaxWindow({ bonds: chainBonds(5), seeds: ['a', -3, 9], atomCount: 5 }).movable, [],
   '⚠ une graine illisible ou hors molécule ne fait pas planter la fenêtre');
 eq(relaxWindow({ bonds: [], seeds: [] }).movable, [], 'sans graphe ni graine, aucune fenêtre');
+
+/* ════════════ 7ter. LE REBÂTIMENT DE LA PARTIE HORS FENÊTRE ═════════════════
+   La demande, mot pour mot : « since you limit the number of bonds and atoms to move,
+   the molecules get stretched. At every step, the relaxation should also imply forcing
+   resetting of standard distance so that the molecule can shrink because atoms not
+   included in the calculation can move. In other words it would be like rebuilding from
+   scratch the part of the molecule not included in the calculation. »
+
+   Ce qui doit rester vrai : la partie que la fenêtre n'ancre pas est REPOSÉE À CHAQUE
+   PAS (longueur et angle STANDARD, DIÈDRE gardé au chiffre près), donc ses atomes
+   BOUGENT et la molécule se RESSERRE au lieu de rester étirée au-delà de la fenêtre ;
+   l'ancre est rendue bit à bit ; la molécule tournée donne le rebâtiment tourné ; une
+   liaison hors des tables n'est jamais rebâtie ; et le rapport dit tout cela. */
+
+/* LE REBÂTIMENT PUR — une chaîne ÉTIRÉE (2.6 Å de pas), ancre = atome 0. */
+const stretched6 = chainAt(6, 2.6, 0.5);
+const pureReb = rebuildStandardGeometry({
+  positions: stretched6, elements: Array(6).fill('C'), bonds: chainBonds(6), keep: [0],
+});
+ok(pureReb.ok, 'le rebâtiment tourne');
+eq(pureReb.anchors, [0], 'l’ancre demandée est celle-là');
+eq(pureReb.placed, [1, 2, 3, 4, 5], '…et tous les autres atomes sont REPOSÉS');
+eq(pureReb.kept, [], '…aucun n’est laissé de côté (toutes les liaisons sont dans les tables)');
+eq(pureReb.roots, [], '…et aucune composante détachée : le graphe est d’un seul tenant');
+eq(pureReb.steps, 5, '…le rapport dit combien d’atomes il a posés');
+eq(atomAt(pureReb.positions, 0), atomAt(stretched6, 0), '⚠ l’ancre est rendue BIT À BIT');
+eq(stretched6, chainAt(6, 2.6, 0.5), '⚠ …et la géométrie reçue n’est JAMAIS modifiée');
+[0, 1, 2, 3, 4].forEach((i) => near(distOf(pureReb.positions, i, i + 1), 1.54,
+  `…la liaison ${i}–${i + 1} revient à la longueur de la table (1.54 Å)`, 1e-9));
+[1, 2, 3, 4].forEach((i) => near(angleDeg(
+  atomAt(pureReb.positions, i - 1), atomAt(pureReb.positions, i), atomAt(pureReb.positions, i + 1),
+), 109.47, `…l’angle en ${i} revient au tétraèdre`, 0.01));
+/* LES DIÈDRES SONT GARDÉS — c’est ce qui distingue un rebâtiment d’un démêlage : la
+   conformation ne bouge pas, seules les longueurs et les angles reviennent au standard. */
+[0, 1, 2].forEach((i) => near(dihedralDeg(pureReb.positions, i, i + 1, i + 2, i + 3), 180,
+  `…le dièdre ${i}–${i + 3} de la source (plan, 180°) est GARDÉ`, 1e-6));
+/* LE RAPPORT CHIFFRÉ — ce qu’il a trouvé, ce qu’il laisse. */
+eq(pureReb.bonds.count, 5, 'les cinq liaisons de la chaîne sont comptées');
+eq(pureReb.angles.count, 4, '…et ses quatre angles');
+near(pureReb.bonds.rms.before, 1.2457,
+  '…l’écart de liaison qu’il a TROUVÉ est mesuré (1.2457 Å rms sur cette chaîne)', 1e-4);
+near(pureReb.bonds.rms.after, 0, '…et celui qu’il laisse est nul', 1e-9);
+near(pureReb.bonds.worst.before, 1.2457, '…la pire liaison étirée est nommée', 1e-4);
+near(pureReb.bonds.worst.after, 0, '…avec ce qu’elle mesure sur le modèle rendu', 1e-9);
+eq([pureReb.bonds.worst.i, pureReb.bonds.worst.j], [0, 1], '…et c’est bien la première');
+near(pureReb.angles.rms.before, 28.455, 'l’écart d’angle de départ est mesuré (28.455°)', 0.01);
+near(pureReb.angles.rms.after, 0, '…et il est nul au bout', 1e-9);
+/* IDEMPOTENT — rebâtir un modèle déjà rebâti ne le change pas d’un chiffre. */
+const twiceReb = rebuildStandardGeometry({
+  positions: pureReb.positions, elements: Array(6).fill('C'), bonds: chainBonds(6), keep: [0],
+});
+ok(twiceReb.positions.every((v, k) => Math.abs(v - pureReb.positions[k]) < 1e-12),
+  '⚠ rebâtir un modèle DÉJÀ rebâti ne le change pas (le rebâtiment est une projection)');
+
+/* LES DIÈDRES NON NULS AUSSI — une hélice, jugée par le lecteur de dièdres du dossier. */
+const helixAt = (n) => {
+  const flat = [];
+  for (let i = 0; i < n; i += 1) flat.push(2.2 * Math.cos(i * 0.9), 2.2 * Math.sin(i * 0.9), 1.3 * i);
+  return flat;
+};
+const helix = helixAt(12);
+const helixReb = rebuildStandardGeometry({
+  positions: helix, elements: Array(12).fill('C'), bonds: chainBonds(12), keep: [0],
+});
+let worstDihedral = 0;
+for (let i = 0; i + 3 < 12; i += 1) {
+  const before = dihedralDeg(helix, i, i + 1, i + 2, i + 3);
+  const after = dihedralDeg(helixReb.positions, i, i + 1, i + 2, i + 3);
+  worstDihedral = Math.max(worstDihedral, Math.abs(((before - after + 540) % 360) - 180));
+}
+near(dihedralDeg(helix, 0, 1, 2, 3), -30.37, 'l’hélice de la sonde a bien des dièdres NON nuls', 0.01);
+ok(worstDihedral < 1e-9,
+  `⚠ tous les dièdres de la partie rebâtie sont GARDÉS (pire écart ${worstDihedral.toExponential(2)}°)`);
+[0, 1, 2].forEach((i) => near(distOf(helixReb.positions, i, i + 1), 1.54,
+  '…et ses liaisons sont à la table, elles aussi', 1e-9));
+/* AUCUNE DIRECTION PRIVILÉGIÉE — la molécule tournée donne le rebâtiment tourné. */
+const spinX = (flat, deg) => {
+  const t = (deg * Math.PI) / 180; const c = Math.cos(t); const s = Math.sin(t);
+  const out = [];
+  for (let i = 0; i < flat.length; i += 3) {
+    out.push(flat[i], flat[i + 1] * c - flat[i + 2] * s, flat[i + 1] * s + flat[i + 2] * c);
+  }
+  return out;
+};
+const spunReb = rebuildStandardGeometry({
+  positions: spinX(helix, 90), elements: Array(12).fill('C'), bonds: chainBonds(12), keep: [0],
+});
+const spun = spinX(helixReb.positions, 90);
+ok(spun.every((v, k) => Math.abs(v - spunReb.positions[k]) < 1e-12),
+  '⚠ tourner la molécule tourne le rebâtiment : le dièdre gardé n’est pas une convention devinée');
+
+/* ════════════ 7quater. CE QUI NE SUIT PAS — ET QUI LE DIT ═════════════════════ */
+const znChain = [0, 0, 0, 2.4, 0, 0, 4.8, 0, 0];
+const znReb = rebuildStandardGeometry({
+  positions: znChain, elements: ['ZN', 'ZN', 'ZN'], bonds: [[0, 1], [1, 2]], keep: [],
+});
+eq(znReb.placed, [], '⚠ une liaison que la table ne connaît pas n’est JAMAIS rebâtie');
+eq(znReb.kept, [0, 1, 2], '…ses atomes sont laissés tels quels');
+eq(znReb.positions, znChain, '…au chiffre près (rien n’est inventé pour un métal)');
+const detached = rebuildStandardGeometry({
+  positions: [...chainAt(3, 2.0, 0.3), 20, 0, 0, 22.0, 0, 0],
+  elements: Array(5).fill('C'), bonds: [[0, 1], [1, 2], [3, 4]], keep: [0],
+});
+eq(detached.placed, [1, 2, 4],
+  '⚠ une composante qu’AUCUNE liaison ne relie à la fenêtre est rebâtie, elle aussi');
+eq(detached.roots, [3], '…depuis son PREMIER atome, qui sert de racine');
+eq(detached.kept, [], '…et rien n’est laissé de côté dans cette composante');
+const water = [0, 0, 0, 1.9, 0, 0, -0.9, 1.6, 0];
+const waterReb = rebuildStandardGeometry({
+  positions: water, elements: ['O', 'H', 'H'], bonds: [[0, 1], [0, 2]], keep: [0],
+});
+near(distOf(waterReb.positions, 0, 1), 0.96, 'une eau étirée revient à O–H 0.96 Å', 1e-9);
+near(distOf(waterReb.positions, 0, 2), 0.96, '…des deux côtés', 1e-9);
+near(angleDeg(atomAt(waterReb.positions, 1), atomAt(waterReb.positions, 0), atomAt(waterReb.positions, 2)),
+  109.47, '…et l’angle H–O–H à l’angle de l’hybridation du sommet', 0.01);
+eq(rebuildStandardGeometry({
+  positions: chainAt(3, 2.0, 0.3), elements: Array(3).fill('C'), bonds: chainBonds(3),
+}).placed, [1, 2], 'sans `keep` du tout, chaque composante est rebâtie depuis son premier atome');
+eq(rebuildStandardGeometry({ positions: null }).reason, 'bad-points',
+  'sans coordonnées lisibles, le rebâtiment refuse — comme la descente');
+eq(rebuildStandardGeometry({ positions: [0, 0, 0], source: [1, 2] }).reason, 'bad-source',
+  '…et une géométrie de référence d’une autre taille aussi');
+
+/* ════════════ 7quinquies. LE REBÂTIMENT DANS LA DESCENTE ═════════════════════
+   LE cas de la demande : une chaîne étirée, une fenêtre étroite autour des atomes à
+   rapprocher — et la molécule qui RESTE ÉTIRÉE au-delà de la fenêtre, puisque rien n'y
+   bouge. Avec le rebâtiment, la même fenêtre resserre la molécule ENTIÈRE. */
+const wide8 = chainAt(8, 2.9, 0.6);
+const spec8 = { elements: Array(8).fill('C'), bonds: chainBonds(8) };
+const win3 = [0, 1, 2];
+const rebRun = relaxGeometry({
+  ...spec8, positions: wide8, movable: win3, rebuild: true, steps: 60, stageStep: 0, escapes: 0,
+});
+const noRebRun = relaxGeometry({
+  ...spec8, positions: wide8, movable: win3, steps: 60, stageStep: 0, escapes: 0,
+});
+ok(rebRun.ok, 'le geste AVEC rebâtiment tourne');
+eq(noRebRun.rebuild, null, '⚠ sans le demander, le rapport ne porte AUCUN rebâtiment (le geste d’avant)');
+eq(rebRun.rebuild.used, true, '…et demandé, il est là');
+eq(rebRun.rebuild.atoms, 5, 'il a reposé les cinq atomes hors fenêtre');
+eq(rebRun.rebuild.untouched, 0, '…et n’en a laissé aucun (toutes les liaisons sont dans les tables)');
+eq(rebRun.rebuild.parts, 0, '…aucune composante détachée');
+ok(rebRun.rebuild.passes > 0, `…il a tourné à chaque pas (${rebRun.rebuild.passes} passes)`);
+ok(rebRun.rebuild.moved > 0, `…et ses atomes ont VRAIMENT bougé (${rebRun.rebuild.moved})`);
+eq(atomAt(noRebRun.positions, 7), atomAt(wide8, 7),
+  '⚠ sans rebâtiment, le dernier atome est rendu BIT À BIT (rien ne bouge hors fenêtre)');
+ok(Math.abs(distOf(noRebRun.positions, 6, 7) - 1.54) > 0.9,
+  '⚠ …donc la molécule reste ÉTIRÉE au-delà de la fenêtre (la demande, mot pour mot)');
+near(distOf(rebRun.positions, 6, 7), 1.54,
+  '…la MÊME fenêtre, avec le rebâtiment, ramène la liaison la plus lointaine à la table', 1e-9);
+[3, 4, 5, 6].forEach((i) => near(distOf(rebRun.positions, i, i + 1), 1.54,
+  `…toute la partie hors fenêtre est au standard (liaison ${i}–${i + 1})`, 1e-9));
+ok(rebRun.moved.includes(7) && rebRun.moved.includes(5),
+  '⚠ le rapport nomme les atomes HORS fenêtre comme déplacés (ils suivent le geste)');
+ok(rebRun.rebuild.bonds.rms.before > 1 && rebRun.rebuild.bonds.rms.after < 1e-9,
+  `…et il chiffre ce qu’ils ont gagné (${rebRun.rebuild.bonds.rms.before.toFixed(3)} →`
+  + ` ${rebRun.rebuild.bonds.rms.after.toFixed(9)} Å rms)`);
+/* LE MÊME MODÈLE, DEUX FOIS — le rebâtiment ne tire rien, il ne peut pas dériver. */
+const rebAgain = relaxGeometry({
+  ...spec8, positions: wide8, movable: win3, rebuild: true, steps: 60, stageStep: 0, escapes: 0,
+});
+eq(rebAgain.positions, rebRun.positions, '⚠ deux gestes identiques rendent EXACTEMENT le même modèle');
+eq(rebAgain.rebuild.passes, rebRun.rebuild.passes, '…au même nombre de passes près');
+eq(RELAX_REBUILD, false, 'le défaut du MODULE reste le geste d’avant (les sondes du dossier le mesurent)');
+eq(RELAX_DEFAULT_REBUILD, true, '…et celui du PANNEAU est le rebâtiment (la demande, mot pour mot)');
+/* `steps: 0` NE REBÂTIT RIEN — une lecture ne touche à rien, même la case cochée. */
+const dryRun = relaxGeometry({ ...spec8, positions: wide8, movable: win3, rebuild: true, steps: 0 });
+eq(dryRun.positions, wide8, 'steps = 0 : aucune coordonnée n’est touchée, même avec le rebâtiment');
+eq(dryRun.rebuild.passes, 0, '…et le rebâtiment n’a pas tourné une seule fois');
+/* LE PAS ANNONCÉ PORTE LES ATOMES QUE LE GESTE PEUT DÉPLACER — c’est ce que l’animation
+   du panneau écrit à l’écran (si elle ne portait que la fenêtre, la molécule se replierait
+   d’un coup à la dernière image). */
+const looseSteps = [];
+relaxGeometry({
+  ...spec8, positions: wide8, movable: win3, rebuild: true, steps: 20, stageStep: 0, escapes: 0,
+  onStep: (v) => looseSteps.push(v),
+});
+eq(looseSteps[looseSteps.length - 1].loose, [0, 1, 2, 3, 4, 5, 6, 7],
+  '⚠ `onStep.loose` = la fenêtre + les atomes reposés : c’est ce que l’animation écrit');
+eq(looseSteps[looseSteps.length - 1].movable, win3, '…et `movable` reste la fenêtre, telle quelle');
+const plainSteps = [];
+relaxGeometry({
+  ...spec8, positions: wide8, movable: win3, steps: 20, stageStep: 0, escapes: 0,
+  onStep: (v) => plainSteps.push(v),
+});
+eq(plainSteps[plainSteps.length - 1].loose, win3,
+  '…et sans rebâtiment, `loose` EST la fenêtre (le geste d’avant ne change pas)');
 
 /* ════════════ 8. LES REFUS, DITS AU LIEU D’ÊTRE INVENTÉS ═══════════════════ */
 eq(relaxGeometry({ positions: null, elements: [] }).reason, 'bad-points',
@@ -1078,9 +1286,40 @@ has(VIEW, 'a rigid rotation of a part of the window about a drawn bond',
 has(VIEW, 'a bond inside a ring is refused, so no cycle is ever bent',
   '⚠ …et qu’une liaison de cycle est refusée : aucune botte ne déforme un cycle');
 
+/* ── 11ter · LE REBÂTIMENT DANS LE PANNEAU — la demande, mot pour mot ──────────
+   « since you limit the number of bonds and atoms to move, the molecules get
+   stretched. At every step, the relaxation should also imply forcing resetting of
+   standard distance so that the molecule can shrink because atoms not included in the
+   calculation can move. » Le panneau, donc : une case, le réglage qui entre dans la
+   descente, un rapport qui dit ce qui a été reposé — et une animation qui porte AUSSI
+   les atomes reposés (sinon la molécule se replierait d'un coup à la dernière image). */
+has(VIEW, 'RELAX_DEFAULT_ESCAPES, RELAX_MAX_ESCAPES, RELAX_CLASH_DISTANCE, RELAX_DEFAULT_REBUILD,',
+  'le viewer importe le réglage du rebâtiment');
+has(VIEW, 'const [relaxRebuild, setRelaxRebuild] = useState(RELAX_DEFAULT_REBUILD);',
+  'la case « ⟳ rebuild » a son état (le défaut du module : cochée)');
+has(VIEW, 'rebuild: relaxRebuild,', '⚠ le rebâtiment entre dans la descente');
+has(VIEW, 'onChange={(e) => setRelaxRebuild(e.target.checked)}', '…et la case le commande');
+has(VIEW, '⟳ rebuild', '…elle est nommée « ⟳ rebuild »');
+has(VIEW, 'the window alone moves and every other atom is returned BIT-FOR-BIT',
+  '⚠ la case dit ce qu’elle change : le geste d’avant, la fenêtre seule, le reste au chiffre près');
+has(VIEW, 'OUTSIDE the window re-built from scratch',
+  'le rapport dit combien d’atomes hors fenêtre ont été rebâtis');
+has(VIEW, 'and their angles from ${run.rebuild.angles.rms.before.toFixed(1)}° to ${run.rebuild.angles.rms.after.toFixed(1)}°',
+  '…ce que leurs liaisons ET leurs angles ont gagné');
+has(VIEW, 'left alone (no bond the tables know)',
+  '…et ce qui n’a PAS pu suivre (une liaison que la table ne connaît pas)');
+has(VIEW, 'OUTSIDE the window is re-built from scratch at every step',
+  'la note du rapport redit le geste, et comment revenir à celui d’avant');
+has(VIEW, 'so the molecule can re-compact around the window instead of being stretched by it.',
+  'le champ « ⇢ moves » dit que la fenêtre borne ce qui PILOTE, pas ce qui bouge');
+has(VIEW, 'Array.isArray(v.loose)', '⚠ l’animation lit `loose` : les atomes que le module peut déplacer');
+has(VIEW, 'movable: frameAtoms,', '…et c’est LEUR liste qui est écrite à chaque image');
+has(VIEW, 'let frameAtoms = movable;', '…la fenêtre restant le point de départ de l’animation');
+
 /* ── Bilan ─────────────────────────────────────────────────────────────────── */
 console.log(`_geometry_relax_test.mjs — ${passed} assertions OK (les tables de la chimie, l'hybridation, les`
   + ' cycles et la PLANÉITÉ tenue, le gradient mesuré par différences finies (les cycles compris),'
   + ' la descente exécutée pas à pas, le PAS À PAS du rapprochement et ses reprises, la fenêtre,'
+  + ' le REBÂTIMENT de la partie hors fenêtre (la molécule se resserre au lieu de s’étirer),'
   + ' les 🎲 ÉCHAPPÉES (la botte de torsion, les contacts trop courts, le meilleur modèle gardé),'
   + ' le PAS VU DE L’EXTÉRIEUR (onStep), et un vrai PDB étiré reconstruit puis relu par NGL)');

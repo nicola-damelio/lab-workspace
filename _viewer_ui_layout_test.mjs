@@ -351,7 +351,7 @@ has('else head.push(i);', '[lipides] la tête est le RESTE : ni chaîne ni squel
 has("const LIPID_NAMED_PROBE = new Set(['P', 'N', 'C1', 'C2', 'C3']);",
   '[lipides] ce qui prouve que le fichier suit bien la nomenclature standard');
 has('const sub = lipidSubSelections(comp.structure, lipidSele);', '[lipides] le rendu part de la classification');
-has("const blank = { head: '', glycerol: '', acyl: '', heads: '', named: true };",
+has("const blank = { head: '', glycerol: '', acyl: '', heads: '', phosphorus: '', named: true };",
   '[lipides] aucune visite d’atome (NGL pas prêt) → le drapeau garde sa valeur historique');
 has('lipidColorStore.named = sub.named;', '[lipides] …et le panneau de couleurs lit le MÊME drapeau');
 has('const col = lipidCol();', '[lipides] la couleur du menu C passe par « Colour by chemical part »');

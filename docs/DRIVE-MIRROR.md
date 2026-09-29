@@ -517,6 +517,64 @@ n'a qu'à être **glissé dans `projects/`** (même nom). La résolution suivant
 retrouve par son nom et enregistre son identifiant (`projects/<projet>`, voir
 `resolveDrivePathFromNames`) : aucun fichier à re-téléverser.
 
+## Déplacer une expérience d'un projet à un autre (28/09/2026)
+
+Demandé tel quel : « allow me to move an experiment from one project to another ».
+Une expérience **est** un test — avec ses instances de condition — et un projet ne
+la « contient » pas : il la **lie**, par une entrée par instance
+(`project.experiments[]`), tandis que le test lui-même porte la liste des projets
+auxquels il appartient (`projectNames`). Déplacer, c'est donc écrire dans **deux**
+projets d'un seul geste, et faire suivre le test.
+
+Le geste : dans « 🧪 Experiments in this project », la ligne d'une expérience porte
+un **⇄** qui ouvre « ⇄ Move to project: ». La liste ne propose que les **autres**
+projets de la page, et seulement ceux que l'utilisateur a le droit de **modifier**
+(`projectAccessFor(p, …) === 'modify'` — un déplacement écrit chez eux). Rien n'est
+déplacé à l'aveugle : le volet dit ce qui part, « Cancel » referme, et la carte
+affiche le compte rendu du dernier déplacement.
+
+Ce que le geste fait, et pourquoi dans cet ordre :
+
+| étape | ce qui est écrit | pourquoi |
+| --- | --- | --- |
+| 1 | **toutes** les entrées de ce TEST quittent le projet d'origine | une expérience = un test : déplacer une instance et laisser les autres derrière produirait deux demi-expériences, et le dossier Drive (un par nom de test) ne saurait plus où il vit |
+| 2 | ces entrées rejoignent le projet visé, avec leur **identifiant**, leur coche « Include » et leur `addedAt` | c'est un déplacement, pas une expérience neuve ; les entrées dont le test est **déjà** lié là-bas ne sont pas ajoutées (aucun doublon d'entrée) |
+| 3 | le test passe au projet visé, **en tête** de `projectNames`, le nom du projet quitté étant retiré | le premier projet de la liste est le projet PRINCIPAL : c'est lui qui décide des droits sur l'expérience (`testProjectAccess`) et de la tête du chemin Drive (`canonicalExperimentPath`) ; un test encore lié à d'autres projets les garde (le modèle est many-to-many) |
+
+Le tout passe par la règle **pure** `experimentRules.moveExperimentBetweenProjects`
+(entrées, liste des tests, et le compte rendu `moved` / `arrivals` / `duplicates`) :
+la page écrit son résultat **en une fois** — les deux projets dans la MÊME écriture,
+jamais un état intermédiaire où l'expérience n'appartiendrait à personne — puis le
+magasin (`saveProjects`) et `setTests`. Un refus (expérience inconnue, projet
+inconnu, projet identique) rend les listes **telles quelles** : rien n'est écrit.
+
+Le dossier du Drive suit en **deux temps**, avec les deux gestes déjà éprouvés :
+`moveTestFolderOutOfProject` sort le dossier du projet quitté et le dépose dans le
+bac des expériences sans projet (`projects/test/…`), puis
+`moveTestFolderIntoProject` le range sous le projet visé. Le second part après le
+premier (un dossier encore sous l'ancien projet n'est pas vu comme « hors projet »
+— `findProjectTestFolder(root, test, '')` ne cherche que le bac). Et rien n'est
+bloquant : sans Drive connecté, ou si le dossier n'existe pas encore, les deux
+gestes ne font rien — les fichiers envoyés plus tard arrivent directement dans le
+bon dossier, puisque le chemin se calcule à partir de `projectNames`.
+
+Ce qui ne change PAS, volontairement : le ✕ (« Remove from project ») reste le
+geste pour **retirer** une expérience d'un projet ; les copies Drive des projets
+restés liés ne sont pas touchées ; et l'expérience garde son identifiant d'entrée,
+donc l'historique de ses figures ⭐ et de son texte suit.
+
+### Vérifier soi-même
+
+```bash
+node _project_experiment_move_test.mjs      # 70 assertions : la règle + la page + le Drive
+```
+
+Le test fabrique deux projets (A avec deux instances d'une même expérience, B vide,
+C qui partage une autre expérience), déplace, et vérifie l'arrivée **à l'identique**
+(identifiant, « Include », date), l'ordre de `projectNames`, l'absence de doublon
+quand le projet visé est déjà lié, les trois refus qui ne touchent à rien, et
+l'ordre des deux gestes Drive.
+
 ## Les jumeaux d'INSTANCE (deux fois le même dossier d'expérience)
 
 Constaté sur le Drive réel le 20/09/2026 (expérience NMR du projet p53H) :

@@ -137,7 +137,10 @@
        de l'aromaticité d'un cycle dont les liaisons sont longues ;
      • seuls les atomes de `movable` bougent. Tout le reste est rendu BIT À BIT
        (l'ancrage d'une fenêtre est ce qui permet de refermer une boucle sans
-       déplacer la protéine entière) ;
+       déplacer la protéine entière) — SAUF quand `rebuild` est demandé : la partie
+       que la fenêtre ne bouge pas est alors REBÂTIE à chaque pas (longueurs et
+       angles standard, dièdres gardés, §7bis) donc elle SUIT le geste au lieu de
+       l'ÉTIRER ;
      • aucune fonction d'ici ne modifie ses arguments.
 
    Module PUR (aucun import) : la géométrie et le graphe sont INJECTÉS, donc une
@@ -232,6 +235,24 @@ export const RELAX_ENERGY_TOLERANCE = 1e-6;
 export const RELAX_DEFAULT_RADIUS = 6;
 export const RELAX_MAX_RADIUS = 12;
 export const RELAX_MAX_MOVABLE_ATOMS = 240;
+
+/** LE REBÂTIMENT DE LA PARTIE HORS FENÊTRE (voir `rebuildStandardGeometry`, §7bis).
+ *  La fenêtre seule bouge, donc les atomes qu'elle laisse de côté gardent leur
+ *  position — c'est ce qui rend le geste local, et c'est aussi ce qui ÉTIRE la
+ *  molécule : quand la fenêtre doit se plier pour rapprocher deux atomes, la chaîne
+ *  qui l'entoure reste où elle était, les liaisons qui enjambent le bord se tendent,
+ *  et rien ne se resserre. Le geste d'APRÈS rebâtit donc cette partie-là À CHAQUE
+ *  PAS, depuis la géométrie standard — la longueur de la table, l'angle de
+ *  l'hybridation du sommet, et le DIÈDRE qu'elle avait : elle peut bouger, la
+ *  molécule se resserre, et aucune longueur ne reste étirée.
+ *
+ *  `RELAX_REBUILD` est le défaut du MODULE (« false » : le geste d'avant, celui que
+ *  mesurent les sondes du dossier — la fenêtre seule bouge, le reste est rendu bit à
+ *  bit), `RELAX_DEFAULT_REBUILD` est celui du PANNEAU (le ⚒ rebâtit : c'est la
+ *  demande, mot pour mot — « it would be like rebuilding from scratch the part of
+ *  the molecule not included in the calculation »). */
+export const RELAX_REBUILD = false;
+export const RELAX_DEFAULT_REBUILD = true;
 
 /** LE RAPPROCHEMENT PAR ÉTAPES — « commence par 18 Å, relâche, puis 16, relâche… ».
  *  `RELAX_STAGE_STEP` est l'écart entre deux paliers de la distance DEMANDÉE (18 →
@@ -1313,7 +1334,9 @@ export const clashReportOf = ({
  *     quand la fenêtre est PLAFONNÉE (`maxAtoms`), ce sont les atomes les plus
  *     LOINTAINS qui sont laissés de côté — jamais un atome du cœur du geste ;
  *   · `truncated` le DIT (`true` quand le plafond a mordu), pour que le rapport
- *     puisse l'annoncer au lieu de faire croire à une molécule entière relâchée.
+ *     puisse l'annoncer au lieu de faire croire à une molécule entière relâchée —
+ *     sauf quand `rebuild` demande de REBÂTIR cette partie-là (§7bis) : la fenêtre
+ *     borne alors ce qui PILOTE le geste, plus ce qui a le droit de bouger.
  */
 export const relaxWindow = ({
   bonds = [], seeds = [], radius = RELAX_DEFAULT_RADIUS, atomCount = 0,
@@ -1343,6 +1366,509 @@ export const relaxWindow = ({
     size: order.length, leftOut: order.length - movable.length,
     truncated: order.length > movable.length,
     bonds: graph.count, levels: level,
+  };
+};
+
+/* ── 7bis · LE REBÂTIMENT — REBÂTIR DE ZÉRO LA PARTIE QUE LA FENÊTRE NE BOUGE PAS ─
+   La demande, mot pour mot :
+
+     « since you limit the number of bonds and atoms to move, the molecules get
+       stretched. At every step, the relaxation should also imply forcing resetting
+       of standard distance so that the molecule can shrink because atoms not
+       included in the calculation can move. In other words it would be like
+       rebuilding from scratch the part of the molecule not included in the
+       calculation. »
+
+   `relaxGeometry` ne déplace que les atomes de sa fenêtre (`relaxWindow`) et il rend
+   les autres BIT À BIT — c'est ce qui rend le geste local, et c'est aussi ce qui
+   ÉTIRE la molécule : quand la fenêtre doit se plier pour rapprocher deux atomes, la
+   chaîne qui l'entoure reste où elle était, donc les liaisons qui enjambent le bord
+   se tendent, les angles se tordent, et rien ne se resserre (« the molecules get
+   stretched »). Le remède est celui que la demande nomme : les atomes hors fenêtre
+   sont REBÂTIS À CHAQUE PAS — la molécule est « re-built from scratch » dans cette
+   partie-là, donc ses atomes PEUVENT bouger, et elle se resserre.
+
+   CE QUE LE REBÂTIMENT EST, exactement : il ne cherche rien, il POSE. Chaque atome
+   hors fenêtre est reposé
+
+     · à la longueur STANDARD de sa liaison (la table de `bondLengthTarget`, les
+       corrections d'ordre et d'aromatique comprises — donc les MÊMES cibles que la
+       fonction cible, jamais une seconde table) ;
+     · à l'angle STANDARD de l'hybridation de son sommet (109.47° · 120° · 180°) ;
+     · sous le DIÈDRE QU'IL AVAIT. C'est ce troisième point qui distingue un
+       rebâtiment d'un « démêlage » : la conformation de la partie rebâtie est
+       GARDÉE au chiffre près, seules ses longueurs et ses angles reviennent au
+       standard. Le geste est donc le « model build » d'HyperChem, pris dans l'autre
+       sens (là où ce module-ci laisse la conformation trouvée par la descente au
+       reste de la molécule, il rend à cette partie les longueurs et les angles
+       qu'un modèle valide doit avoir).
+
+   COMMENT LE DIÈDRE EST GARDÉ, sans trigonométrie de dièdre. Pour poser un atome `n`
+   depuis son parent `p`, il faut un repère : le grand-père `g` (qui donne l'angle) et
+   l'arrière-grand-père `h` (qui donne le dièdre). Le dièdre (h,g,p,n) n'est rien
+   d'autre que l'AZIMUT de `n` autour de l'axe g–p, mesuré sur le côté de `h` (la
+   perpendiculaire à l'axe dans le plan h,g,p) et orienté par le trièdre (axe, côté de
+   `h`, axe × côté de `h`). Le rebâtiment mesure donc cet azimut SUR LA SOURCE, puis le
+   repose TEL QUEL dans la géométrie d'aujourd'hui — angle standard, azimut gardé, et
+   le trièdre refait à l'identique : le dièdre est reproduit exactement, sans convention
+   à deviner, et l'atome posé SUIT le geste quand la fenêtre tourne (les atomes `h`, `g`
+   et `p` de la référence ont bougé avec elle, la référence a donc tourné aussi).
+   Sans `h` (une chaîne qui commence), il n'y a pas de côté de référence : l'azimut est
+   gardé tel qu'il est à l'instant de la pose ; sans `g`, et sans angle cible au sommet,
+   seule la LONGUEUR est reposée (la direction ne bouge pas). Une liaison que la table ne
+   connaît pas n'est jamais rebâtie : rien n'est inventé pour un couple d'éléments
+   inconnu (`terms.unknownBonds`).
+
+   QUI EST REBÂTI. Tous les atomes que la fenêtre n'ancre pas et que le graphe relie
+   à elle — et, en plus, chaque composante qu'AUCUNE liaison ne relie à la fenêtre
+   (une autre chaîne, un ligand, une eau) : celle-là ne peut pas suivre le geste,
+   mais elle est rebâtie depuis son PREMIER atome, qui sert de racine, donc son
+   étirement s'en va aussi et sa conformation est gardée. Sans `keep` du tout, tout
+   est rebâti depuis la racine de chaque composante.
+
+   ⚠ CE QUE LE REBÂTIMENT NE FAIT PAS, et le rapport le dit : il ne minimise rien
+   (la descente s'en occupe, sur la fenêtre), il ne touche JAMAIS un atome de `keep`
+   (l'ancrage est bit à bit), il ne connaît ni charges ni contacts, et il ne peut pas
+   tenir l'angle d'un sommet qui porte déjà plusieurs voisins posés — l'angle d'un
+   atome est posé vis-à-vis de SON parent, et les écarts qui restent sur la partie
+   rebâtie sont MESURÉS (`bonds.rms`, `angles.rms`) et affichés, jamais tus.
+   Voir _geometry_relax_test.mjs (une chaîne étirée dont la fenêtre se replie, les
+   dièdres de la partie rebâtie, l'atome de la fenêtre bit à bit, et l'appel du
+   panneau). */
+
+/** La direction UNITAIRE portée par le couple `i`→`j` d'un tableau plat, ou `null`
+ *  quand elle n'existe pas (atomes confondus). Sert au PLAN, qui n'est calculé
+ *  qu'une fois : le rebâtiment lui-même ne s'en sert pas (il ne fait pas d'allocations). */
+const unitOf = (flat, i, j) => {
+  const dx = flat[i * 3] - flat[j * 3];
+  const dy = flat[i * 3 + 1] - flat[j * 3 + 1];
+  const dz = flat[i * 3 + 2] - flat[j * 3 + 2];
+  const n = Math.hypot(dx, dy, dz);
+  return n > 1e-9 ? [dx / n, dy / n, dz / n] : null;
+};
+
+/**
+ * LE PLAN D'UN REBÂTIMENT — calculé UNE FOIS, appliqué tel quel à chaque pas.
+ *
+ * Le graphe et les tables ne changent pas pendant une descente : l'ordre de pose,
+ * le parent, le repère (grand-père, arrière-grand-père) et la cible de chaque
+ * liaison sont donc calculés ici, une fois pour toutes, et `applyRebuild` n'a plus
+ * qu'à les exécuter (aucune allocation, aucun parcours de graphe : le rebâtiment
+ * tourne à chaque pas d'une descente, il doit coûter O(atomes) sans déchets).
+ *
+ *   · `keep` = les atomes ANCRÉS (les coordonnées qui ne bougent pas : la fenêtre
+ *     de `relaxGeometry`). Sans `keep`, rien n'est ancré : chaque composante du
+ *     graphe est rebâtie depuis son premier atome (le « rebuild from scratch ») ;
+ *   · un atome n'est posé que si la table connaît sa liaison (`terms.bonds`) ;
+ *   · `src` = la géométrie de RÉFÉRENCE des coordonnées internes gardées (le dièdre,
+ *     l'azimut) : la molécule REÇUE. `positions` = la géométrie de DÉPART (celle que
+ *     le rebâtiment réécrit — ce peut être la même).
+ *
+ * @returns {{ok:boolean, reason?:string, count:number, src:number[], terms:object,
+ *            steps:object[], posed:number[], posedFlag:Uint8Array, roots:number[],
+ *            kept:number[], anchors:number[]}}
+ */
+const rebuildPlanOf = ({
+  elements = [], bonds = [], terms = null, positions = null, source = null,
+  weights = RELAX_WEIGHTS, keep = null,
+} = {}) => {
+  const read = flatPositions(positions);
+  if (!read) return { ok: false, reason: 'bad-points' };
+  const count = read.count;
+  const els = Array.from(elements || []).map((e) => element(e));
+  const readSrc = source == null ? read : flatPositions(source);
+  if (!readSrc || readSrc.count !== count) return { ok: false, reason: 'bad-source' };
+  const src = readSrc.flat;
+  const graph = bondGraphOf({ bonds, atomCount: count });
+  const t = terms || buildRelaxTerms({ elements: els, bonds, pairs: [], weights, positions: src });
+
+  /* LA TABLE DES LIAISONS, PAR ATOME — le voisin à poser et la longueur CIBLE de la
+     liaison, lue dans les termes de la fonction cible (donc la même cible qu'elle,
+     correction d'aromatique comprise). Une liaison absente de `terms.bonds` (un
+     couple d'éléments que la table ne connaît pas) ne fera JAMAIS partie d'un plan. */
+  const links = new Array(count).fill(null);
+  for (const b of t.bonds) {
+    if (!links[b.i]) links[b.i] = [];
+    if (!links[b.j]) links[b.j] = [];
+    if (!links[b.i].some((e) => e.n === b.j)) links[b.i].push({ n: b.j, d0: b.target });
+    if (!links[b.j].some((e) => e.n === b.i)) links[b.j].push({ n: b.i, d0: b.target });
+  }
+  /* L'ANGLE CIBLE D'UN SOMMET — celui de son hybridation, le même que la fonction
+     cible (109.47° · 120° · 180° ; `null` pour un hydrogène ou un atome terminal). */
+  const angleAt = new Array(count).fill(null);
+  for (let i = 0; i < count; i += 1) angleAt[i] = angleTargetOf(t.hybrids[i]);
+
+  const nbsOf = (i) => graph.neighbours(i).map(Number)
+    .filter((x) => isIndex(x) && x < count && x !== i);
+  const placed = new Uint8Array(count);
+  const parentOf = new Int32Array(count).fill(-1);
+  const anchors = [...new Set((keep == null ? [] : Array.from(keep)).map(Number)
+    .filter((i) => isIndex(i) && i < count))].sort((a, b) => a - b);
+  const steps = [];        // l'ordre de pose : { n, p, g, h, d0, … }
+  const posed = [];        // les atomes que le rebâtiment REPOSE
+  const roots = [];        // les composantes qu'aucune liaison ne relie à la fenêtre
+  const kept = [];         // les atomes laissés tels quels
+  const linkOf = (p, n) => {
+    const l = links[p];
+    return l ? (l.find((e) => e.n === n) || null) : null;
+  };
+  const firstPlaced = (atom, except) => {
+    for (const i of nbsOf(atom)) if (i !== except && placed[i]) return i;
+    return -1;
+  };
+
+  /* LE REPÈRE DE LA POSE — calculé ici, une fois. Un atome `n` se pose depuis son
+     parent `p`, à la LONGUEUR de la table, sous l'ANGLE de l'hybridation de `p`, et
+     sous l'AZIMUT QU'IL AVAIT autour de l'axe g–p MESURÉ SUR LE CÔTÉ DE `h` — c'est
+     cet azimut qui porte le dièdre (h,g,p,n), et le garder tel quel le reproduit sans
+     aucune trigonométrie de dièdre et sans convention à deviner : la position de `h`
+     donne la référence, le trièdre (axe, côté de `h`, axe × côté de `h`) donne le sens.
+     `pb`/`pg` sont les deux coordonnées de cet azimut dans ce repère (unitaire par
+     construction) ; sans `h` (une chaîne qui commence), il n'y a pas de référence et
+     l'azimut est gardé tel qu'il est à l'instant de la pose. */
+  const infoOf = ({ n, p, g, h, d0, angle }) => {
+    const info = {
+      n, p, g, h, d0, angle: Number(angle) > 0 ? Number(angle) : null,
+      dir0: null, cos: 0, sin: 0, pb: 0, pg: 0, az: false,
+    };
+    const dir0 = unitOf(src, n, p);
+    info.dir0 = dir0;
+    if (g < 0) return info;                        // aucun repère : la longueur seule
+    const a0 = unitOf(src, g, p);
+    if (!a0 || info.angle == null) return info;    // pas d'angle cible : la longueur seule
+    const rad = (info.angle * Math.PI) / 180;
+    info.cos = Math.cos(rad);
+    info.sin = Math.sin(rad);
+    if (h < 0 || !dir0) return info;               // sans `h` : l'azimut tel quel
+    const hx = src[h * 3] - src[p * 3];
+    const hy = src[h * 3 + 1] - src[p * 3 + 1];
+    const hz = src[h * 3 + 2] - src[p * 3 + 2];
+    const dh = hx * a0[0] + hy * a0[1] + hz * a0[2];
+    let qx = hx - dh * a0[0];
+    let qy = hy - dh * a0[1];
+    let qz = hz - dh * a0[2];
+    const nq = Math.hypot(qx, qy, qz);
+    if (!(nq > 1e-9)) return info;                 // h, g, p alignés : aucune référence
+    qx /= nq; qy /= nq; qz /= nq;
+    const dd = dir0[0] * a0[0] + dir0[1] * a0[1] + dir0[2] * a0[2];
+    let wx = dir0[0] - dd * a0[0];
+    let wy = dir0[1] - dd * a0[1];
+    let wz = dir0[2] - dd * a0[2];
+    const nw = Math.hypot(wx, wy, wz);
+    if (!(nw > 1e-9)) {
+      /* L'ANGLE EXACTEMENT PLAT : la géométrie ne donne aucune perpendiculaire — le
+         module en fabrique une, DÉTERMINISTE, comme pour le coup de pouce des angles
+         plats. L'azimut gardé est alors celui de cette perpendiculaire. */
+      const q = perpendicularTo(a0[0], a0[1], a0[2]);
+      if (!q) return info;
+      wx = q[0]; wy = q[1]; wz = q[2];
+    } else {
+      wx /= nw; wy /= nw; wz /= nw;
+    }
+    const kx = a0[1] * qz - a0[2] * qy;            // axe × côté de h
+    const ky = a0[2] * qx - a0[0] * qz;
+    const kz = a0[0] * qy - a0[1] * qx;
+    const beta = wx * qx + wy * qy + wz * qz;
+    const gamma = wx * kx + wy * ky + wz * kz;
+    const ng = Math.hypot(beta, gamma);
+    if (!(ng > 1e-9)) return info;
+    info.pb = beta / ng;
+    info.pg = gamma / ng;
+    info.az = true;
+    return info;
+  };
+  const walk = (seeds) => {
+    const queue = [...seeds];
+    for (let head = 0; head < queue.length; head += 1) {
+      const p = queue[head];
+      for (const n of nbsOf(p)) {
+        if (placed[n]) continue;
+        const link = linkOf(p, n);
+        if (!link) continue;                       // hors des tables : on ne touche pas
+        /* LE GRAND-PÈRE — celui dont `p` a été posé, ou à défaut un voisin de `p`
+           déjà posé (un atome de la fenêtre, par exemple). */
+        const g = parentOf[p] >= 0 && placed[parentOf[p]] ? parentOf[p] : firstPlaced(p, n);
+        const h = g >= 0
+          ? (parentOf[g] >= 0 && parentOf[g] !== p && placed[parentOf[g]]
+            ? parentOf[g] : firstPlaced(g, p))
+          : -1;
+        placed[n] = 1; parentOf[n] = p; posed.push(n); queue.push(n);
+        steps.push(infoOf({
+          n, p, g, h, d0: link.d0, angle: g >= 0 ? angleAt[p] : null,
+        }));
+      }
+    }
+  };
+  for (const a of anchors) placed[a] = 1;
+  walk(anchors);
+  /* LES COMPOSANTES QU'AUCUNE LIAISON NE RELIE À LA FENÊTRE — une autre chaîne, un
+     ligand, une molécule d'eau. Elles ne peuvent pas SUIVRE le geste (rien ne les y
+     attache), mais elles sont rebâties depuis leur PREMIER atome, qui sert de racine :
+     leur étirement s'en va aussi, et leur conformation est gardée. Une racine qui ne
+     pose rien (sa liaison n'est pas dans les tables) est un atome laissé tel quel. */
+  for (let r = 0; r < count; r += 1) {
+    if (placed[r]) continue;
+    if (!nbsOf(r).length) { placed[r] = 1; kept.push(r); continue; }   // un atome seul
+    placed[r] = 1;
+    const at = steps.length;
+    walk([r]);
+    if (steps.length > at) roots.push(r); else kept.push(r);
+  }
+  const posedFlag = new Uint8Array(count);
+  for (const i of posed) posedFlag[i] = 1;
+  return {
+    ok: true, count, src: src.slice(), terms: t, steps, posed, posedFlag,
+    roots, kept, anchors, placed,
+  };
+};
+
+/**
+ * LE REBÂTIMENT, APPLIQUÉ — écrit dans `out`, qui est modifié SUR PLACE (le module
+ * l'appelle à chaque pas d'une descente, sur son tableau de travail : copier 3·N
+ * nombres par pas serait payer une allocation pour rien). Aucune allocation, aucun
+ * parcours de graphe, aucune recherche : le plan a déjà tout décidé, il ne reste que
+ * des produits scalaires — la place d'un atome est
+ *
+ *     n = p + d₀ · û
+ *
+ * avec `d₀` la longueur de la table et `û` la direction idéale : celle du repère de
+ * la source transportée par la rotation (h,g,p) → (h,g,p) d'aujourd'hui quand elle
+ * existe (le dièdre est gardé), l'azimut d'aujourd'hui sinon, la direction
+ * d'aujourd'hui quand il n'y a ni angle ni repère (la longueur seule).
+ */
+const applyRebuild = (plan, out) => {
+  const steps = plan.steps;
+  for (let s = 0; s < steps.length; s += 1) {
+    const st = steps[s];
+    const n = st.n; const p = st.p;
+    const px = out[p * 3]; const py = out[p * 3 + 1]; const pz = out[p * 3 + 2];
+    let ux = 0; let uy = 0; let uz = 0; let ok = false;
+    if (st.cos || st.sin) {
+      const g = st.g;
+      const ax = out[g * 3] - px;
+      const ay = out[g * 3 + 1] - py;
+      const az = out[g * 3 + 2] - pz;
+      const na = Math.hypot(ax, ay, az);
+      if (na > 1e-9) {
+        const e1x = ax / na; const e1y = ay / na; const e1z = az / na;
+        if (st.az) {
+          /* LE CÔTÉ DE `h` DANS LA GÉOMÉTRIE D'AUJOURD'HUI — la référence de l'azimut.
+             Le trièdre (axe, côté de h, axe × côté de h) se refait à l'identique : le
+             DIÈDRE (h,g,p,n) de la source est donc reproduit, et l'atome posé suit la
+             fenêtre quand elle tourne. */
+          const h = st.h;
+          const hx = out[h * 3] - px;
+          const hy = out[h * 3 + 1] - py;
+          const hz = out[h * 3 + 2] - pz;
+          const dh = hx * e1x + hy * e1y + hz * e1z;
+          let qx = hx - dh * e1x;
+          let qy = hy - dh * e1y;
+          let qz = hz - dh * e1z;
+          const nq = Math.hypot(qx, qy, qz);
+          if (nq > 1e-9) {
+            qx /= nq; qy /= nq; qz /= nq;
+            const kx = e1y * qz - e1z * qy;
+            const ky = e1z * qx - e1x * qz;
+            const kz = e1x * qy - e1y * qx;
+            const wb = st.pb; const wg = st.pg;
+            ux = st.cos * e1x + st.sin * (wb * qx + wg * kx);
+            uy = st.cos * e1y + st.sin * (wb * qy + wg * ky);
+            uz = st.cos * e1z + st.sin * (wb * qz + wg * kz);
+            ok = true;
+          }
+        }
+        if (!ok) {
+          /* SANS ARRIÈRE-GRAND-PÈRE (ou référence dégénérée) : L'AZIMUT EST GARDÉ tel
+             qu'il est — le repli qui n'invente aucune rotation. */
+          let wx = out[n * 3] - px;
+          let wy = out[n * 3 + 1] - py;
+          let wz = out[n * 3 + 2] - pz;
+          const dot = wx * e1x + wy * e1y + wz * e1z;
+          wx -= dot * e1x; wy -= dot * e1y; wz -= dot * e1z;
+          const nw = Math.hypot(wx, wy, wz);
+          let tx = 0; let ty = 0; let tz = 0; let made = false;
+          if (nw > 1e-9) { tx = wx / nw; ty = wy / nw; tz = wz / nw; made = true; }
+          else {
+            const q = perpendicularTo(e1x, e1y, e1z);
+            if (q) { tx = q[0]; ty = q[1]; tz = q[2]; made = true; }
+          }
+          if (made) {
+            ux = st.cos * e1x + st.sin * tx;
+            uy = st.cos * e1y + st.sin * ty;
+            uz = st.cos * e1z + st.sin * tz;
+            ok = true;
+          }
+        }
+      }
+    }
+    if (!ok) {
+      /* LA LONGUEUR SEULE — la direction d'aujourd'hui, ou celle de la source quand
+         les deux atomes sont confondus (une entrée dégénérée ne fait pas échouer un
+         rebâtiment : l'atome est reposé à la longueur de la table). */
+      const dx = out[n * 3] - px;
+      const dy = out[n * 3 + 1] - py;
+      const dz = out[n * 3 + 2] - pz;
+      const nd = Math.hypot(dx, dy, dz);
+      if (nd > 1e-9) { ux = dx / nd; uy = dy / nd; uz = dz / nd; }
+      else if (st.dir0) { ux = st.dir0[0]; uy = st.dir0[1]; uz = st.dir0[2]; }
+      else { ux = 1; uy = 0; uz = 0; }
+    }
+    out[n * 3] = px + st.d0 * ux;
+    out[n * 3 + 1] = py + st.d0 * uy;
+    out[n * 3 + 2] = pz + st.d0 * uz;
+  }
+  return out;
+};
+
+/** L'ANGLE i–j–k en degrés, lu sur des coordonnées plates — `null` quand il n'existe
+ *  pas (un atome confondu avec son sommet : aucune mesure à en tirer). */
+const angleOf3 = (arr, i, j, k) => {
+  const ux = arr[i * 3] - arr[j * 3];
+  const uy = arr[i * 3 + 1] - arr[j * 3 + 1];
+  const uz = arr[i * 3 + 2] - arr[j * 3 + 2];
+  const vx = arr[k * 3] - arr[j * 3];
+  const vy = arr[k * 3 + 1] - arr[j * 3 + 1];
+  const vz = arr[k * 3 + 2] - arr[j * 3 + 2];
+  const nu = Math.hypot(ux, uy, uz); const nv = Math.hypot(vx, vy, vz);
+  if (!(nu > 1e-9) || !(nv > 1e-9)) return null;
+  const cos = Math.max(-1, Math.min(1, (ux * vx + uy * vy + uz * vz) / (nu * nv)));
+  return Math.acos(cos) * DEG;
+};
+
+/** LES ÉCARTS DE LA PARTIE REBÂTIE, terme par terme — les liaisons ET les angles qui
+ *  touchent au moins un atome reposé. C'est ce que le rapport MESURE (avant : la
+ *  molécule REÇUE ; après : le modèle rendu) au lieu de promettre que tout est
+ *  parfait : un sommet qui porte déjà plusieurs voisins posés ne peut pas tenir tous
+ *  ses angles, et le chiffre le dit au lieu de le taire. */
+const rebuildDeviationOf = (plan, arr) => {
+  const terms = plan.terms;
+  const who = plan.posedFlag;
+  const bonds = [];
+  const angles = [];
+  const pt = (i) => [arr[i * 3], arr[i * 3 + 1], arr[i * 3 + 2]];
+  for (const t of terms.bonds) {
+    if (!who[t.i] && !who[t.j]) continue;
+    const d = dist3(pt(t.i), pt(t.j));
+    bonds.push({ i: t.i, j: t.j, target: t.target, distance: d, dev: d - t.target });
+  }
+  for (const t of terms.angles) {
+    if (!who[t.i] && !who[t.j] && !who[t.k]) continue;
+    const deg = angleOf3(arr, t.i, t.j, t.k);
+    if (deg == null) continue;
+    angles.push({ i: t.i, j: t.j, k: t.k, target: t.target, deg, dev: deg - t.target });
+  }
+  const rmsOf = (list) => (list.length
+    ? Math.sqrt(list.reduce((s, e) => s + e.dev * e.dev, 0) / list.length) : 0);
+  const worstOf = (list) => list.reduce(
+    (w, e) => (!w || Math.abs(e.dev) > Math.abs(w.dev) ? e : w), null,
+  );
+  return {
+    bonds: { count: bonds.length, rms: rmsOf(bonds), worst: worstOf(bonds), list: bonds },
+    angles: { count: angles.length, rms: rmsOf(angles), worst: worstOf(angles), list: angles },
+  };
+};
+
+/** Le MÊME écart, avant et après — c'est ce que le rapport nomme (la pire liaison
+ *  étirée au départ, et ce qu'elle mesure sur le modèle rendu). */
+const rebuildWorstPair = (listBefore, listAfter) => {
+  let at = -1;
+  for (let k = 0; k < listBefore.length; k += 1) {
+    if (at < 0 || Math.abs(listBefore[k].dev) > Math.abs(listBefore[at].dev)) at = k;
+  }
+  if (at < 0) return null;
+  const e = listBefore[at];
+  const f = listAfter[at] || {};
+  const worst = {
+    i: e.i, j: e.j, target: e.target, before: e.dev, after: Number(f.dev) || 0,
+  };
+  if (e.k != null) worst.k = e.k;
+  if (e.distance != null) worst.distance = e.distance;
+  if (f.distance != null) worst.afterDistance = f.distance;
+  return worst;
+};
+
+/** LE RAPPORT D'UN REBÂTIMENT — ce qu'il repose, ce qui bouge vraiment, ce qu'il
+ *  laisse (les ancres, les atomes seuls, tout ce dont la table ne connaît pas la
+ *  liaison), et les écarts des liaisons et des angles de la partie rebâtie AVANT (la
+ *  molécule reçue) et APRÈS (le modèle rendu). `passes` = combien de fois il a tourné
+ *  (une fois par pas, dans une descente). */
+const rebuildReportOf = (plan, from, to, passes) => {
+  const before = rebuildDeviationOf(plan, from);
+  const after = rebuildDeviationOf(plan, to);
+  let moved = 0;
+  for (const i of plan.posed) {
+    if (Math.abs(to[i * 3] - from[i * 3]) + Math.abs(to[i * 3 + 1] - from[i * 3 + 1])
+      + Math.abs(to[i * 3 + 2] - from[i * 3 + 2]) > 1e-9) moved += 1;
+  }
+  return {
+    used: true,
+    passes,
+    atoms: plan.posed.length,
+    moved,
+    untouched: plan.kept.length,
+    parts: plan.roots.length,
+    steps: plan.steps.length,
+    bonds: {
+      count: before.bonds.count,
+      rms: { before: before.bonds.rms, after: after.bonds.rms },
+      worst: rebuildWorstPair(before.bonds.list, after.bonds.list),
+    },
+    angles: {
+      count: before.angles.count,
+      rms: { before: before.angles.rms, after: after.angles.rms },
+      worst: rebuildWorstPair(before.angles.list, after.angles.list),
+    },
+  };
+};
+
+/**
+ * LE REBÂTIMENT, ENTIER — « rebâtir de zéro la partie de la molécule qui n'est pas
+ * dans le calcul » (voir §7bis).
+ *
+ * Il rend une COPIE des coordonnées (aucun argument n'est modifié, comme partout
+ * dans le dossier) et le compte rendu chiffré de ce qu'il a fait : les atomes
+ * REPOSÉS, ceux qu'il a LAISSÉS (les ancres de `keep`, les atomes seuls, et tout ce
+ * dont la table ne connaît pas la liaison), les composantes rebâties depuis leur
+ * propre racine, et les écarts AVANT / APRÈS des liaisons et des angles de la partie
+ * rebâtie — mesurés, jamais promis.
+ *
+ * @param {{positions:number[]|Float32Array|number[][], source?:any, elements?:any[],
+ *          bonds?:any[], terms?:object, keep?:number[]|null, weights?:object}} spec
+ *   `keep` = les atomes ANCRÉS (les coordonnées qui ne bougent pas) : ceux de la
+ *   fenêtre relâchée, dans `relaxGeometry`. Sans `keep`, rien n'est ancré : chaque
+ *   composante du graphe est rebâtie depuis son premier atome.
+ *   `source` = la géométrie dont les DIÈDRES et les AZIMUTS sont gardés (défaut : les
+ *   coordonnées reçues) ; `terms` = les termes déjà construits (`buildRelaxTerms`),
+ *   pour ne pas les recalculer quand l'appelant les a sous la main.
+ * @returns {{ok:boolean, reason?:string, positions:number[]|null, placed:number[],
+ *            kept:number[], roots:number[], anchors:number[], steps:number,
+ *            bonds:object|null, angles:object|null}}
+ */
+export const rebuildStandardGeometry = ({
+  positions = null, source = null, elements = [], bonds = [], terms = null,
+  keep = null, weights = RELAX_WEIGHTS,
+} = {}) => {
+  const plan = rebuildPlanOf({ elements, bonds, terms, positions, source, weights, keep });
+  if (!plan.ok) {
+    return {
+      ok: false, reason: plan.reason, positions: null, placed: [], kept: [],
+      roots: [], anchors: [], steps: 0, bonds: null, angles: null,
+    };
+  }
+  const read = flatPositions(positions);
+  const out = read.flat.slice();
+  applyRebuild(plan, out);
+  const report = rebuildReportOf(plan, plan.src, out, 1);
+  return {
+    ok: true,
+    positions: out,
+    placed: [...plan.posed].sort((a, b) => a - b),
+    kept: [...plan.kept].sort((a, b) => a - b),
+    roots: [...plan.roots].sort((a, b) => a - b),
+    anchors: plan.anchors,
+    steps: plan.steps.length,
+    bonds: report.bonds,
+    angles: report.angles,
   };
 };
 
@@ -1383,7 +1909,9 @@ const summaryOf = (e) => ({
  *          restoreSteps?:number}} spec
  *   `pairs` = les distances DEMANDÉES : [{i, j, target}] ou [[i, j, d]].
  *   `movable` = les atomes qui ont le droit de bouger (par défaut : tous). Les
- *   autres sont rendus BIT À BIT, et c'est leur ancrage qui tient la molécule.
+ *   autres sont rendus BIT À BIT, et c'est leur ancrage qui tient la molécule — SAUF
+ *   quand `rebuild` est demandé : ils sont alors REPOSÉS à chaque pas (§7bis), donc
+ *   ils suivent la fenêtre au lieu de l'étirer.
  *   `stageStep` = l'écart entre deux paliers du rapprochement, en ångströms (2 par
  *   défaut, 0 = un seul palier : le geste d'avant) ; `restoreSteps` = les pas de la
  *   reprise après chaque palier (0 = aucune reprise).
@@ -1394,11 +1922,18 @@ const summaryOf = (e) => ({
  *   botte (elle décroît jusqu'à RELAX_MIN_KICK_DEG), `seed` = la graine des
  *   tirages (fixe : le même modèle donne le même construit), `clashDistance` = le
  *   seuil des contacts trop courts (voir `clashReportOf`).
+ *   `rebuild` = LE REBÂTIMENT DE LA PARTIE HORS FENÊTRE (§7bis, `false` par défaut :
+ *   le geste d'avant, celui que mesurent les sondes ; `RELAX_DEFAULT_REBUILD` = true
+ *   pour le panneau ⚒). Demandé, les atomes que la fenêtre n'ancre pas sont reposés à
+ *   chaque pas — longueur et angle standard, dièdre gardé — donc la molécule se
+ *   resserre au lieu de s'étirer, et le rapport rend `rebuild` (voir plus bas).
  *   `onStep` = LE PAS VU DE L'EXTÉRIEUR : une fonction appelée après chaque pas
  *   (une itération de descente, une botte, une reprise), avec
- *   `{phase, step, positions, movable, energy, distances, stage, stages, attempt,
+ *   `{phase, step, positions, movable, loose, energy, distances, stage, stages, attempt,
  *   attempts}` — `positions` est le tableau de travail (à COPIER pour le garder,
- *   jamais à écrire), `energy` la fonction cible à cet instant et `distances` les
+ *   jamais à écrire), `loose` les atomes que ce geste peut déplacer (la fenêtre, plus
+ *   ceux que `rebuild` repose : c'est ce que l'animation doit suivre), `energy` la
+ *   fonction cible à cet instant et `distances` les
  *   distances DEMANDÉES relues. C'est ce qui permet à l'écran de montrer la
  *   molécule QUI CHANGE, pas seulement le résultat final. `stepEvery` (1 par
  *   défaut) n'annonce qu'un pas sur N ; le dernier pas est toujours annoncé
@@ -1407,10 +1942,14 @@ const summaryOf = (e) => ({
  *            positions:number[]|null, moved:number[], before:object|null,
  *            after:object|null, pairs:object[], stages:number, stageStep:number,
  *            stagePlan:object[], restorations:number, restore:object|null,
- *            escapes:object, clashes:object,
+ *            escapes:object, clashes:object, rebuild:object|null,
  *            steps:number, evaluations:number, terms:object, hybrids:any[]}}
  *   `restore` donne les écarts moyens AVANT la première reprise et APRÈS la
  *   dernière (`bondRms`, `angleRms`, `planarRms`) : c'est la tension résorbée.
+ *   `rebuild` (voir §7bis, `null` quand le geste ne l'a pas demandé) donne ce que le
+ *   rebâtiment de la partie hors fenêtre a reposé (`atoms`, `moved`, `parts`,
+ *   `untouched`, `passes`) et les écarts de SES liaisons et de SES angles, avant (la
+ *   molécule reçue) et après (le modèle rendu).
  */
 export const relaxGeometry = (spec = {}) => {
   const {
@@ -1420,7 +1959,7 @@ export const relaxGeometry = (spec = {}) => {
     weights = RELAX_WEIGHTS, tether = null,
     stageStep = RELAX_STAGE_STEP, maxStages = RELAX_MAX_STAGES, restoreSteps = RELAX_RESTORE_STEPS,
     escapes = RELAX_ESCAPES, escapeSteps = RELAX_ESCAPE_STEPS, kickDeg = RELAX_KICK_DEG,
-    seed = RELAX_ESCAPE_SEED, clashDistance = RELAX_CLASH_DISTANCE,
+    seed = RELAX_ESCAPE_SEED, clashDistance = RELAX_CLASH_DISTANCE, rebuild = RELAX_REBUILD,
     onStep = null, stepEvery = 1,
   } = spec || {};
 
@@ -1487,6 +2026,40 @@ export const relaxGeometry = (spec = {}) => {
   const unstuck = maxSteps > 0 ? unstickFlatAngles(active, x) : 0;
   termInfo.unstuck = unstuck;
 
+  /* LE REBÂTIMENT DE LA PARTIE HORS FENÊTRE — voir §7bis et `rebuildStandardGeometry`.
+     Demandé, il repose À CHAQUE PAS les atomes que la fenêtre n'ancre pas : longueur et
+     angle STANDARD, DIÈDRE gardé — donc ces atomes peuvent bouger, la molécule se
+     resserre, et aucune liaison ne reste étirée. Sans lui, la fenêtre seule bouge et le
+     reste est rendu BIT À BIT (le geste d'avant, celui que mesurent les sondes du
+     dossier). `steps: 0` ne rebâtit rien : une lecture ne touche à rien.
+     Le PLAN est calculé une fois (le graphe et les tables ne changent pas) : `loose`
+     est donc la même liste à chaque pas, et un pas ne coûte qu'un parcours O(atomes)
+     sans allocation. */
+  const rebuildPlan = rebuild ? rebuildPlanOf({
+    elements: els, bonds, terms, positions: x0, source: x0, weights, keep: movableList,
+  }) : null;
+  const rebuildOn = !!(rebuildPlan && rebuildPlan.ok);
+  let rebuildPasses = 0;
+  const rebuildPass = (arr) => {
+    if (!rebuildOn) return;
+    applyRebuild(rebuildPlan, arr);
+    rebuildPasses += 1;
+  };
+  /* LES ATOMES QUE LE GESTE PEUT DÉPLACER — la fenêtre, plus ceux que le rebâtiment
+     repose. C'est cette liste que le rapport (et l'animation du panneau) compte : sans
+     le rebâtiment, elle EST la fenêtre, donc rien ne change pour le geste d'avant. */
+  const loose = rebuildOn
+    ? [...new Set([...movableList, ...rebuildPlan.posed])].sort((a, b) => a - b)
+    : movableList;
+  /* LES CONTACTS TROP COURTS SE REGARDENT SUR CES MÊMES ATOMES — `clashReportOf` ne
+     juge « la géométrie est-elle réalisable ? » que sur ce qu'un geste peut déplacer :
+     quand le rebâtiment repose la molécule entière, c'est donc le modèle entier qui
+     est jugé, contacts compris (sans lui, la fenêtre seule, comme avant). */
+  const clashAtoms = rebuildOn ? loose : movableList;
+  /* LE PREMIER PAS EST DÉJÀ UN REBÂTIMENT : le geste part d'une molécule aux longueurs
+     et aux angles standard, au lieu d'hériter de l'étirement qu'il vient corriger. */
+  if (rebuildOn && maxSteps > 0) rebuildPass(x);
+
   let current = energyOf(active, x, { grad, hess, ref: x0, tether: tetherWeight, movable: movableList });
   let evaluations = 2;
   let reason = 'max-steps';
@@ -1512,6 +2085,10 @@ export const relaxGeometry = (spec = {}) => {
         step: stepsEmitted,
         positions: x,
         movable: movableList,
+        /* LES ATOMES QUE CE GESTE PEUT DÉPLACER — la fenêtre, plus ceux que le
+           rebâtiment repose quand il est demandé. C'est ce que l'animation du panneau
+           suit : les atomes reposés bougent aussi, donc l'écran doit les porter. */
+        loose,
         /* L'ÉNERGIE ANNONCÉE EST CELLE DU RAPPORT — la fonction cible SANS la longe
            (`before`/`after` du rapport sont calculés sans elle) : les chiffres de
            l'animation et ceux du rapport se comparent donc directement. */
@@ -1619,6 +2196,11 @@ export const relaxGeometry = (spec = {}) => {
       for (let back = 0; back < 16; back += 1) {
         const trial = x.slice();
         for (let k = 0; k < n3; k += 1) trial[k] += dir[k] * move;
+        /* LA PARTIE HORS FENÊTRE EST REPOSÉE AVANT D'ÊTRE JUGÉE — la fenêtre a bougé,
+           donc le reste suit (voir §7bis) : l'énergie jugée est celle du modèle entier
+           tel qu'il sortirait, pas celle d'une molécule étirée entre deux jeux de
+           coordonnées. */
+        rebuildPass(trial);
         const e = energyOf(active, trial, { ref: x0, tether: tetherWeight, movable: movableList });
         evaluations += 1;
         if (e.total < wasTotal - 1e-12) {
@@ -1775,7 +2357,7 @@ export const relaxGeometry = (spec = {}) => {
        promesse « jamais moins bon que la descente ordinaire » ne serait plus vraie
        sous l'objectif de la descente elle-même. */
     const e = energyOf(active, arr, { ref: x0, tether: tetherWeight, movable: movableList });
-    const c = clashReportOf({ positions: arr, bonds, movable: movableList, minDistance: clashMin });
+    const c = clashReportOf({ positions: arr, bonds, movable: clashAtoms, minDistance: clashMin });
     return {
       total: e.total, clash: c, score: e.total + RELAX_CLASH_WEIGHT * c.severity,
       energy: e.total - (Number(e.tether) || 0),
@@ -1812,6 +2394,9 @@ export const relaxGeometry = (spec = {}) => {
       });
       if (!kick.ok) { escapeState.skip = kick.reason; break; }
       x = kick.positions.slice();
+      /* LA BOTTE TOURNE LA FENÊTRE : le reste est reposé derrière elle, donc la
+         conformation essayée est jugée sur un modèle entier, elle aussi. */
+      rebuildPass(x);
       rescore();
       emit('kick', { final: true, bond: kick.bond, angle: kick.angle, turned: kick.turned });
       const step = descend({ budget: escapeBudget, target: null, reach: false, phase: 'escape' });
@@ -1856,15 +2441,18 @@ export const relaxGeometry = (spec = {}) => {
      n'est qu'un chemin), et l'énergie est recalculée à cette cible-là. */
   active.pairs.forEach((t, i) => { t.target = pairTargets[i]; });
   const afterPairs = pairReportOf(active, x);
+  /* LES ATOMES DÉPLACÉS — ceux de `loose` (la fenêtre, plus ceux que le rebâtiment
+     repose quand il est demandé), relus sur les coordonnées obtenues : un atome que le
+     rebâtiment a laissé à sa place n'est pas annoncé comme déplacé. */
   const moved = [];
-  for (const i of movableList) {
+  for (const i of loose) {
     if (Math.abs(x[i * 3] - x0[i * 3]) + Math.abs(x[i * 3 + 1] - x0[i * 3 + 1])
       + Math.abs(x[i * 3 + 2] - x0[i * 3 + 2]) > 1e-9) moved.push(i);
   }
   const reached = afterPairs.length > 0 && afterPairs.every((p) => p.reached);
   /* LES CONTACTS TROP COURTS DU MODÈLE RENDU — le dernier mot sur la
      « réalisabilité » : le rapport l'affiche, et le panneau le dit en clair. */
-  const finalClashes = clashReportOf({ positions: x, bonds, movable: movableList, minDistance: clashMin });
+  const finalClashes = clashReportOf({ positions: x, bonds, movable: clashAtoms, minDistance: clashMin });
   /* LE DERNIER ÉTAT EST RECALCULÉ AVANT D'ÊTRE ANNONCÉ — les cibles viennent d'être
      remises à celles de l'utilisateur, donc `current` devient exactement l'énergie du
      rapport : le dernier chiffre de l'animation est celui que le panneau affiche. */
@@ -1912,6 +2500,14 @@ export const relaxGeometry = (spec = {}) => {
     /* LES CONTACTS TROP COURTS DU MODÈLE RENDU (voir `clashReportOf`) : `count: 0`
        veut dire « aucun atome passé à travers un autre » au seuil du module. */
     clashes: finalClashes,
+    /* LE REBÂTIMENT DE LA PARTIE HORS FENÊTRE (voir §7bis) — `null` quand le geste ne
+       l'a pas demandé. `passes` = combien de fois il a tourné (une fois par pas),
+       `atoms` = ses atomes reposés, `moved` = ceux qui ont vraiment bougé, `parts` =
+       les composantes qu'aucune liaison ne relie à la fenêtre (rebâties depuis leur
+       propre racine), `untouched` = ce qu'il a laissé (les ancres, les atomes seuls,
+       tout ce dont la table ne connaît pas la liaison), et `bonds`/`angles` = les
+       écarts AVANT (la molécule reçue) et APRÈS (le modèle rendu) de SA partie. */
+    rebuild: rebuildOn ? rebuildReportOf(rebuildPlan, x0, x, rebuildPasses) : null,
     steps: stepsTaken,
     evaluations,
     terms: termInfo,
