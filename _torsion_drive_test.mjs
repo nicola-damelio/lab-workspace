@@ -745,7 +745,8 @@ const Panel = (() => {
     VIEW.indexOf('⚡ ESP — the electrostatic-potential surface'),
   );
   ok(panelSrc.length > 2000, `le panneau ✏️ Torsion est bien dans le viewer (${panelSrc.length} caractères)`);
-  hasIn(panelSrc, 'onClick={() => setShowTorsionPanel((v) => !v)}', 'le panneau s’ouvre et se ferme par son bouton');
+  hasIn(panelSrc, 'onClick={() => openCalcSection(\'torsion\')}',
+    'la section ✏️ Torsion s’ouvre par son bouton (le panneau unique, onglet « torsion »)');
   hasIn(panelSrc, 'value={torsionAngleDraft}', 'le champ « dihedral » lit le brouillon de l’angle');
   hasIn(panelSrc, 'onChange={(e) => setTorsionAngleText(e.target.value)}',
     '⚠ une frappe passe par le writer du brouillon (référence + state) : l’écoute du clic 3D, posée une fois, lit la valeur COURANTE');

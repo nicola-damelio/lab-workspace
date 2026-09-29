@@ -47,9 +47,12 @@ import {
   STRUCTURE_CALC_DEFAULT_KEEP, STRUCTURE_CALC_MAX_KEEP,
   STRUCTURE_CALC_SEED, STRUCTURE_CALC_SEED_STEP, STRUCTURE_CALC_RESTRAINT_TOLERANCE,
   STRUCTURE_CALC_PASSES, STRUCTURE_CALC_ESCAPES, STRUCTURE_CALC_MAX_RESTRAINTS,
+  STRUCTURE_CALC_ANNEAL_STEPS, STRUCTURE_CALC_QUENCH_STEPS, STRUCTURE_CALC_OMEGA,
+  STRUCTURE_CALC_OMEGA_TOLERANCE, STRUCTURE_CALC_CORE_REACH,
   rotatableBondsOf, randomTorsionsOf, channelReadingsOf, restraintListOf,
   restraintReportOf, scoreStructureOf, structureAttemptOf, rankStructureAttempts,
   familySpreadOf, familyRestraintsOf, structureCalculationOf,
+  peptideOmegasOf, omegaPenaltyOf, annealTorsionsOf,
 } from './src/utils/structureCalc.js';
 
 let passed = 0;
@@ -589,6 +592,134 @@ near(reScored.score, folded.retained[0].score,
 eq([reScored.clashes.count, reScored.contacts.count], [0, 0],
   '…et cette relecture confirme : aucun empilement, ni sous 1.45 Å ni dans le cœur dur');
 
+/* ── 5ter · LE RECUIT ET LE TERME ω — LA PHYSIQUE AJOUTÉE, EXÉCUTÉE ──────────
+   Le recuit est en espace DIHÉDRAL : chaque pas est une rotation rigide d'un côté
+   autour de sa charnière, donc les longueurs et les angles ne peuvent pas bouger.
+   La sonde mesure les trois choses qu'un recuit doit prouver : il tourne, il
+   AMÉLIORE (son coût baisse), et il est DÉTERMINISTE. */
+const anChain = chainOf(24);
+const anTarget = [{ i: 0, j: 23, target: 6.0 }];
+const noAnneal = structureAttemptOf({
+  positions: anChain.positions, elements: anChain.elements, bonds: anChain.bonds,
+  restraints: anTarget, index: 0, anneal: 0,
+});
+eq(noAnneal.anneal, null, '`anneal: 0` enlève le recuit : c’est le départ tiré tel quel');
+const withAnneal = structureAttemptOf({
+  positions: anChain.positions, elements: anChain.elements, bonds: anChain.bonds,
+  restraints: anTarget, index: 0,
+});
+ok(withAnneal.anneal && withAnneal.anneal.steps === STRUCTURE_CALC_ANNEAL_STEPS,
+  `le recuit tourne ses ${STRUCTURE_CALC_ANNEAL_STEPS} paliers de température`);
+eq(withAnneal.anneal.schedule.length, STRUCTURE_CALC_ANNEAL_STEPS, '…et il les RACONTE un par un');
+ok(withAnneal.anneal.schedule[0].temperature > withAnneal.anneal.schedule[STRUCTURE_CALC_ANNEAL_STEPS - 1].temperature,
+  '⚠ la température DÉCROÎT (chaud d’abord : les conformations s’échangent ; froid à la fin : c’est un minimum local)');
+ok(withAnneal.anneal.tried > 0 && withAnneal.anneal.accepted > 0,
+  `…${withAnneal.anneal.accepted} pas acceptés sur ${withAnneal.anneal.tried} essayés`);
+ok(withAnneal.anneal.after < withAnneal.anneal.before,
+  `⚠ …et le coût BAISSE : ${withAnneal.anneal.before.toFixed(2)} → ${withAnneal.anneal.after.toFixed(2)}`
+  + ' (Metropolis ne garde que ce qui passe la barrière exp(−Δ/T))');
+ok(withAnneal.quench && withAnneal.quench.steps === STRUCTURE_CALC_QUENCH_STEPS,
+  'la TREMPE suit le protocole : un dernier recuit froid, sous longe');
+eq(withAnneal.restraint.violations, 0, '…et la distance demandée est bien respectée à l’arrivée');
+ok(withAnneal.bondRms < 0.01 && withAnneal.angleRms < 1,
+  '⚠ les liaisons et les angles sont INTACTS : un pas de recuit est une rotation rigide, pas un déplacement d’atome');
+const anAgain = structureAttemptOf({
+  positions: anChain.positions, elements: anChain.elements, bonds: anChain.bonds,
+  restraints: anTarget, index: 0,
+});
+eq(Array.from(anAgain.positions), Array.from(withAnneal.positions),
+  '⚠ deux appels rendent les MÊMES coordonnées, au chiffre près : le recuit est déterministe (graine fixe)');
+const anCalc = structureCalculationOf({
+  positions: anChain.positions, elements: anChain.elements, bonds: anChain.bonds,
+  restraints: anTarget, starts: 4, keep: 2, escapes: 0,
+});
+eq(anCalc.ranking.filter((r) => r.violations === 0).length, 4,
+  '⚠ les QUATRE départs recuits respectent la distance (le recuit est là pour cela)');
+ok(anCalc.ranking.every((r) => r.bondRms < 0.01),
+  '…sans qu’aucun n’ait cassé sa chimie');
+const anMod = annealTorsionsOf({
+  positions: anChain.positions, elements: anChain.elements, bonds: anChain.bonds,
+  restraints: anTarget, seed: 7, steps: 2,
+});
+ok(anMod.ok && anMod.channels > 0 && anMod.tried > 0,
+  `le recuit s’appelle seul (${anMod.channels} canaux, ${anMod.tried} pas essayés)`);
+eq(anMod.schedule.length, 2, '…et deux paliers demandés font deux paliers');
+eq(annealTorsionsOf({}).ok, false, 'sans coordonnées lisibles, le recuit est refusé d’emblée');
+eq(annealTorsionsOf({ positions: anChain.positions, elements: anChain.elements, bonds: anChain.bonds, channels: [], steps: 3 }).reason,
+  'no-channel', '⚠ sans canal rotatable, le recuit le DIT au lieu de tourner à vide');
+
+/* ── 5quater · LE TERME ω — UNE LIAISON PEPTIDIQUE PRÉFÈRE TRANS ──────────────
+   Le module disait avant : « le ⚒ n'a aucune cible d'ω ». Il en a une maintenant, et
+   elle se mesure sur un dipeptide : le carbonyle C=O sur un N suffit à reconnaître la
+   liaison (aucun nom d'atome lu), le plateau de ± 30° ne coûte rien, et le recuit
+   ramène vers 180° ce qu'un tirage a mis en cis — sans lâcher une distance tenue. */
+const pepPts = [[0, 0, 0], [1.45, 0, 0]];
+pepPts.push(placeWith({ a: [0, 1, 0], b: pepPts[0], c: pepPts[1], length: 1.52, angleDeg: 111, dihDeg: 120 }));
+pepPts.push(placeWith({ a: pepPts[0], b: pepPts[1], c: pepPts[2], length: 1.23, angleDeg: 120.5, dihDeg: 180 }));
+pepPts.push(placeWith({ a: pepPts[0], b: pepPts[1], c: pepPts[2], length: 1.33, angleDeg: 116, dihDeg: 180 }));
+pepPts.push(placeWith({ a: pepPts[1], b: pepPts[2], c: pepPts[4], length: 1.46, angleDeg: 121, dihDeg: 180 }));
+pepPts.push(placeWith({ a: pepPts[2], b: pepPts[4], c: pepPts[5], length: 1.52, angleDeg: 111, dihDeg: -60 }));
+pepPts.push(placeWith({ a: pepPts[4], b: pepPts[5], c: pepPts[6], length: 1.23, angleDeg: 120.5, dihDeg: -45 }));
+const pep = {
+  positions: pepPts.flat(),
+  elements: ['N', 'C', 'C', 'O', 'N', 'C', 'C', 'O'],
+  bonds: [
+    { i: 0, j: 1, order: 1 }, { i: 1, j: 2, order: 1 }, { i: 2, j: 3, order: 2 },
+    { i: 2, j: 4, order: 1 }, { i: 4, j: 5, order: 1 }, { i: 5, j: 6, order: 1 },
+    { i: 6, j: 7, order: 2 },
+  ],
+};
+const pepOmega = peptideOmegasOf({ elements: pep.elements, bonds: pep.bonds, atomCount: 8 });
+eq(pepOmega.length, 1, '⚠ la liaison peptidique est reconnue par la CHIMIE seule (un carbonyle sur un N)');
+eq(pepOmega[0].probeAtoms, [1, 2, 4, 5], '…et son dièdre est le dièdre IUPAC CA–C–N–CA');
+eq(pepOmega[0].target, STRUCTURE_CALC_OMEGA, '…visé TRANS, la seule conformation observée');
+eq(peptideOmegasOf({ elements: anChain.elements, bonds: anChain.bonds, atomCount: 24 }).length, 0,
+  '…une chaîne d’alcanes n’a aucun ω (aucune cible inventée là où il n’y a pas de peptide)');
+eq(omegaPenaltyOf({ positions: pep.positions, omegas: pepOmega }).penalty, 0,
+  'un ω plan et trans ne coûte RIEN : le plateau de ± 30° est le désordre d’une vraie chaîne');
+const pepOmegaBad = omegaPenaltyOf({
+  positions: pep.positions,
+  omegas: [{ ...pepOmega[0], probeAtoms: [3, 2, 4, 5] }],
+});
+ok(pepOmegaBad.penalty > 0 && pepOmegaBad.violations === 1,
+  `⚠ un O=C–N–CA ramené autour de 0° (le cis) COÛTE : ${pepOmegaBad.penalty.toFixed(1)}`);
+const pepRestraint = { i: 3, j: 5, target: 4.0 };
+const pepDrawn = structureAttemptOf({
+  positions: pep.positions, elements: pep.elements, bonds: pep.bonds,
+  restraints: [pepRestraint], index: 0, anneal: 0, quench: false,
+});
+const pepAnneal = structureAttemptOf({
+  positions: pep.positions, elements: pep.elements, bonds: pep.bonds,
+  restraints: [pepRestraint], index: 0,
+});
+eq(pepDrawn.omega.count, 1, 'un départ tiré relit son ω (le module DIT ce que le tirage a fait)');
+ok(pepDrawn.omega.worst.dev > STRUCTURE_CALC_OMEGA_TOLERANCE,
+  `⚠ …et ce tirage-là met la liaison peptidique en CIS (écart ${pepDrawn.omega.worst.dev.toFixed(1)}° à 180°) :`
+  + ' c’est exactement le défaut que le module annonçait et que le recuit répare');
+ok(pepAnneal.omega.worst.dev < pepDrawn.omega.worst.dev,
+  `…le recuit la RAMÈNE : écart ${pepDrawn.omega.worst.dev.toFixed(1)}° au tirage →`
+  + ` ${pepAnneal.omega.worst.dev.toFixed(1)}° après recuit`);
+ok(pepAnneal.quench.omega.penalty <= pepAnneal.quench.omegaBefore + 1e-9,
+  '⚠ et la TREMPE ne laisse jamais ω pire qu’elle ne l’a trouvé (à froid, seuls les pas qui améliorent sont gardés)');
+near(scoreStructureOf({
+  positions: pep.positions, elements: pep.elements, bonds: pep.bonds, restraints: [],
+}).omegaPenalty, 0, 'la note d’un modèle trans ne porte aucune pénalité ω', 1e-12);
+const pepScored = scoreStructureOf({
+  positions: pep.positions, elements: pep.elements, bonds: pep.bonds, restraints: [],
+});
+near(pepScored.score, pepScored.total + pepScored.clashPenalty + pepScored.omegaPenalty,
+  '⚠ le SCORE d’un modèle reste lisible : total + empilement + ω, jamais autre chose', 1e-9);
+has(MODULE, 'export const annealTorsionsOf', 'le recuit est exporté par le module');
+has(MODULE, 'export const peptideOmegasOf', '…et la lecture des liaisons peptidiques aussi');
+has(MODULE, 'export const omegaPenaltyOf', '…et le terme ω');
+has(MODULE, 'const leashOf = new Map();',
+  '⚠ …avec la LONGE de la trempe : aucune distance DÉJÀ tenue n’est lâchée pour réparer ω');
+has(MODULE, 'onStep: typeof onStep === \'function\'', 'et le recuit peut MONTRER chaque palier (onStep)');
+has(MODULE, 'step(\'draw\', x, { channels:',
+  '⚠ le départ TIRÉ est montré avant le recuit (le panneau voit la molécule se replier)');
+has(STRUCTURE_CALC_CORE_REACH > 2.1 ? MODULE : '', 'STRUCTURE_CALC_CORE_REACH',
+  'le cœur dur du recuit a sa portée, nommée et réutilisée');
+
 /* ── 6 · LE PANNEAU DU VIEWER — 🧬 LE BOUTON, LES DEUX CHAMPS, LA LISTE, LES m ─── */
 has(VIEW, "} from '../utils/structureCalc';", 'le viewer importe le module du calcul de structure');
 has(VIEW, 'structureAttemptOf, rankStructureAttempts,', '…avec les deux fonctions qui font le travail (un départ, un classement)');
@@ -597,7 +728,17 @@ for (const k of ['STRUCTURE_CALC_DEFAULT_STARTS', 'STRUCTURE_CALC_MAX_STARTS', '
   'STRUCTURE_CALC_RESTRAINT_TOLERANCE']) {
   has(VIEW, k, `…et la constante « ${k} » (aucune recopie de chiffre dans le panneau)`);
 }
-has(VIEW, 'const [showCalcPanel, setShowCalcPanel] = useState(false);', 'le panneau s’ouvre et se ferme par son bouton');
+has(VIEW, 'const [calcSection, setCalcSection] = useState(null);',
+  'le panneau s’ouvre et se ferme par son bouton (UN panneau, TROIS sections)');
+has(VIEW, 'const openCalcSection = (which) => setCalcSection((cur) => (cur === which ? null : which));',
+  '⚠ …et les trois sections s’ouvrent par le MÊME geste : ✏️ Torsion, 🪢 Ramachandran et 🧬 le calcul ne sont plus trois fenêtres');
+has(VIEW, "[['distances', '", '…et les onglets disent lesquelles : 🧬 les distances et le calcul');
+has(VIEW, "['torsion', '", '…✏️ Torsion est une section du MÊME panneau');
+has(VIEW, "['rama', '", '…et 🪢 Ramachandran aussi');
+has(VIEW, 'const [calcAnneal, setCalcAnneal] = useState(STRUCTURE_CALC_ANNEAL_STEPS);',
+  '🔥 les paliers de recuit sont un RÉGLAGE du panneau (0 = l’ancien comportement)');
+has(VIEW, 'const [calcWatch, setCalcWatch] = useState(true);',
+  '👁 …et « regarder chaque départ » aussi (l’écriture à l’écran se déconnecte)');
 has(VIEW, 'const [calcRestraints, setCalcRestraints] = useState([]);',
   '⚠ les DISTANCES sont un état du panneau (l’utilisateur les donne, elles se gardent)');
 has(VIEW, 'const [calcStarts, setCalcStarts] = useState(STRUCTURE_CALC_DEFAULT_STARTS);', 'n est un état');
@@ -613,11 +754,18 @@ const calcPanel = VIEW.slice(
   VIEW.indexOf('{/* 🔢 Renumber'),
 );
 ok(calcPanel.length > 6000, `le panneau 🧬 est bien dans le viewer (${calcPanel.length} caractères)`);
-has(calcPanel, 'onClick={() => setShowCalcPanel((v) => !v)}', 'le bouton 🧬 ouvre le panneau');
+has(calcPanel, 'onClick={() => openCalcSection(\'distances\')}', 'le bouton 🧬 ouvre la section du calcul');
 has(calcPanel, '🧬 Structure calculation', '…et il dit ce qu’il fait');
 has(calcPanel, 'title="🧬 STRUCTURE CALCULATION — the request, verbatim',
   '⚠ …en citant la demande, mot pour mot (le panneau ne se raconte pas une autre histoire)');
 has(calcPanel, '⌖ Add the picked pair', 'l’ajout d’une distance passe par le couple piqué (les mêmes 🎯 que le ⚒)');
+has(calcPanel, '➕ Add a row',
+  '⚠ …ET une ligne s’ajoute VIDE pour être TAPÉE : « define distances in a table and not only by clicking on atoms »');
+has(calcPanel, 'onClick={calcAddBlankRow}', '…ce bouton-là');
+has(calcPanel, 'aria-label={`${side === \'a\' ? \'First\' : \'Second\'} atom of line ${k + 1}`}',
+  '⚠ …et chaque ligne porte SES DEUX ATOMES, écrits à la main');
+has(calcPanel, 'onChange={(e) => calcSetRowAtom(r.key, side, e.target.value)}',
+  '…résolus à la frappe sur la molécule à l’écran');
 has(calcPanel, 'aria-label="Number of starting structures n"', 'le champ n dit ce qu’il compte');
 has(calcPanel, 'aria-label="Number of retained structures m"', '…et le champ m aussi');
 has(calcPanel, 'max={STRUCTURE_CALC_MAX_STARTS}', 'n est borné par la constante du module');
@@ -627,8 +775,8 @@ has(calcPanel, 'onChange={(e) => calcSetRestraintTarget(r.key, e.target.value)}'
   '…et une frappe la passe au module (aucun chiffre gardé en double)');
 has(calcPanel, 'onClick={() => calcRemoveRestraint(r.key)}', 'une ligne se retire (✕)');
 has(calcPanel, 'onClick={calcAddRestraint}', '…et ⌖ en ajoute une');
-has(calcPanel, 'disabled={calcBusy || !calcRestraints.length}',
-  '⚠ ▶ Run est inerte sans une seule distance : la demande est « the user provide the distances »');
+has(calcPanel, 'disabled={calcBusy || !calcUsableRows().length}',
+  '⚠ ▶ Run est inerte tant qu’aucune ligne n’a ses DEUX atomes et sa cible (une ligne à moitié écrite attend)');
 has(calcPanel, '▶ Run', 'le bouton du calcul est nommé');
 has(calcPanel, 'onClick={calcStop}', '…et le ⏹ a le sien');
 has(calcPanel, '⏹ Stop', '…nommé lui aussi');
@@ -643,9 +791,33 @@ has(calcPanel, 'const inFamily = r.rank <= ranked.retained.length;',
 has(calcPanel, '⤓ Load', '…et chacune s’écrit à l’écran par le bouton ⤓ Load');
 has(calcPanel, 'onClick={() => calcWriteStructure(model, ranked)}', '…qui passe par le writer commun');
 has(calcPanel, 'The kept family', 'la famille est décrite (ce que chaque distance y mesure, et sa dispersion)');
-has(calcPanel, 'What this calculation is NOT', '⚠ et le panneau dit ce que ce calcul n’est PAS');
+has(calcPanel, 'What it is NOT', '⚠ et le panneau dit ce que ce calcul n’est PAS');
+has(calcPanel, '🔥 <b>simulated annealing in',
+  '⚠ …en disant qu’il EST un recuit (en espace dihédral) au lieu de prétendre le contraire');
+has(calcPanel, 'aria-label="Annealing temperature steps"', '…avec le réglage des paliers de recuit');
+has(calcPanel, 'aria-label="Write each start on screen while it is computed"',
+  '⚠ …et l’interrupteur qui MONTRE le calcul (👁 watch each start)');
 has(calcPanel, 'ranked.comp !== componentRef.current',
   '⚠ …et il prévient quand la famille appartient à une AUTRE molécule que celle à l’écran');
+
+/* LES TROIS SECTIONS SONT BIEN UN SEUL PANNEAU — même enveloppe, mêmes onglets, et
+   chacune ne se rend que si ELLE est la section ouverte. */
+has(VIEW, "{calcSection === 'torsion' && (() => {", 'la section ✏️ Torsion ne se rend que quand elle est ouverte');
+has(VIEW, "{calcSection === 'rama' && (() => {", '…celle du 🪢 Ramachandran aussi');
+has(VIEW, "{calcSection === 'distances' && (() => {", '…et celle du 🧬 calcul');
+has(VIEW, 'border-t-0 border-amber-200 rounded-b-lg', '⚠ les trois corps forment UN panneau sous la barre d’onglets');
+has(VIEW, 'className="w-full flex flex-wrap items-center gap-1.5 rounded-t-lg border border-slate-300 bg-white px-2 py-1"',
+  '…dont la barre d’onglets porte les trois sections');
+
+/* LE PIQUAGE SE VOIT — l’atome cliqué est peint dans la vue 3D, de la couleur de son
+   slot (A · B · C · D), et la peinture est vérifiée avant d’être gardée. */
+has(VIEW, 'const TORSION_SLOT_COLORS = [0x16a34a, 0x2563eb, 0xf59e0b, 0xdb2777];',
+  '⚠ les quatre couleurs du piquage (A · B · C · D)');
+has(VIEW, 'const paintTorsionPicks = (slots) => {', '…peintes par une seule fonction');
+has(VIEW, "const paint = paintTorsionPicks(torsionAtomsRef.current);",
+  '⚠ …appelée à CHAQUE piquage : l’atome se colore pendant la définition, pas après');
+has(VIEW, 'rep.structureView.getAtomIndices', '…et la sélection est VÉRIFIÉE (jamais le mauvais atome peint)');
+has(VIEW, 'style={{ backgroundColor: dot }}', '…la pastille du bouton porte la même couleur que l’atome');
 
 /* LE GESTE, DANS LE SOURCE — un départ par tranche, le classement par le module, et
    l'écriture par le MÊME chemin qu'une torsion. */
@@ -659,6 +831,18 @@ has(runSrc, 'index: attempts.length', '…numéroté par son rang de tirage (c�
 has(runSrc, 'seed: STRUCTURE_CALC_SEED', '…avec la graine FIXE du dossier (le même n redonne la même famille)');
 has(runSrc, 'restraints: list.map((r) => ({ i: r.i, j: r.j, target: r.target }))',
   '…et les distances de l’utilisateur, telles quelles');
+has(runSrc, 'const list = calcUsableRows().filter(',
+  '⚠ …qui sont les lignes FINIES de la table (deux atomes résolus + une cible)');
+has(runSrc, 'const base = Array.from(geom.positions);',
+  '⚠ …et le départ est photographié : l’aperçu qui écrit à l’écran ne nourrit pas le départ suivant');
+has(runSrc, 'anneal: calcAnneal,', '🔥 …le recuit du panneau est celui qui tourne');
+has(runSrc, 'onStep: calcWatch ? (s, index) => {', '👁 …et chaque geste du module peut s’écrire à l’écran');
+has(runSrc, 'calcPreviewPositions(comp, structure, s.positions);',
+  '⚠ …par le MÊME chemin d’écriture qu’une torsion (donc 📏, plaques, film et 📥 suivent)');
+has(runSrc, 'if (calcWatch) calcPreviewPositions(comp, structure, attempt.positions);',
+  '…et la fin de chaque départ est écrite, pour que l’écran montre bien CE modèle');
+has(VIEW, 'writeStructurePositions(comp, idxs, positions);',
+  '…l’aperçu passe par le writer commun (jamais une seconde écriture)');
 has(runSrc, 'window.setTimeout(step, 0)', '⚠ un départ par tranche : la page reste vivante pendant le calcul');
 has(runSrc, 'calcRunRef.current !== run', '…et le jeton arrête la tranche suivante (⏹, ou une autre molécule)');
 has(runSrc, 'rankStructureAttempts({ attempts, keep: m })',
@@ -670,7 +854,7 @@ ok(runSrc.indexOf('torsionUndoRef.current = {') < runSrc.indexOf('step();'),
   '…la photographie du ↺ est prise avant le premier départ, pas après');
 const writeCalc = VIEW.slice(
   VIEW.indexOf('const calcWriteStructure = (retained, ranked) => {'),
-  VIEW.indexOf('const runStructureCalculation = () => {'),
+  VIEW.indexOf('const calcPreviewPositions'),
 );
 has(writeCalc, 'writeStructurePositions(comp, idxs, retained.positions)',
   'l’écriture passe par LE chemin d’une torsion (positionFromArray + un seul redessin)');

@@ -379,7 +379,8 @@ has(VIEW, 'atoms: structureAtomRecords(structure)',
 has(VIEW, 'ramachandranOf({', '⚠ …donnés au module PUR : le panneau ne calcule aucun angle lui-même');
 has(MODULE, 'export const ramachandranOf = ({ atoms = [] } = {}) => {', '…qui est bien celui du module');
 has(VIEW, 'const readRamachandran = () => {', 'le panneau a SA lecture (un bouton la reprend)');
-has(VIEW, 'if (next) readRamachandran();', '⚠ …et elle est prise à l’ouverture du panneau, pas laissée au hasard');
+has(VIEW, "onClick={() => { if (calcSection !== 'rama') readRamachandran(); openCalcSection('rama'); }}",
+  '⚠ …et elle est prise à l’ouverture de la section 🪢 du panneau unique, pas laissée au hasard');
 has(VIEW, 'no N–CA–C backbone', '…et il dit POURQUOI rien n’est dessiné (un acide nucléique n’a pas de φ/ψ)');
 has(VIEW, 'nothing was drawn rather than an empty graph', '…en refusant un graphe VIDE (qui tromperait plus qu’il n’informe)');
 has(VIEW, '⟳ Read the backbone', 'le bouton de lecture est nommé');
@@ -440,9 +441,9 @@ const ramaPanel = VIEW.slice(
 ok(ramaPanel.length > 3000, `le panneau 🪢 est bien dans le viewer (${ramaPanel.length} caractères)`);
 ok(!/writeStructurePositions|positionFromArray/.test(ramaPanel),
   '⚠ …et il n’ÉCRIT rien : aucune coordonnée n’est touchée par ce panneau (lecture seule, pour de bon)');
-has(ramaPanel, 'title="🪢 RAMACHANDRAN — the φ/ψ map of the peptide backbone on screen.',
-  'le bouton du panneau s’explique (le geste, les régions, les limites)');
-has(ramaPanel, 'there is no second dihedral in this app',
+has(ramaPanel, 'title="Open the 🪢 Ramachandran section of the 🧬 pane: the φ/ψ map of the peptide backbone on screen',
+  'le bouton de la section s’explique (le geste, les régions, les limites)');
+has(ramaPanel, 'there is no second dihedral reader in this app',
   '…en rappelant que le dièdre est celui du dossier (pas un second lecteur)');
 
 console.log(`_ramachandran_test.mjs — ${passed} assertions OK (les tables, la classe des résidus, les régions et`
