@@ -21,9 +21,10 @@
      2. LA PAGE (projectDetailModule.jsx) : le bouton ⇄ de la liste des
         expériences, la liste des projets VISÉS (droit de modification), la
         seule écriture (les deux projets ensemble + le magasin), et le dossier
-        Drive qui suit — sortie du projet quitté PUIS entrée dans le projet visé,
-        dans cet ordre ;
-     3. LES DEUX GESTES DRIVE réutilisés (utils/driveUpload.js).
+        Drive qui MIGRE sous le projet visé (déplacé, jamais copié) ;
+     3. LE GESTE DRIVE dédié (utils/driveUpload.js.moveTestFolderBetweenProjects)
+        — vérifié de bout en bout sur un faux Drive par
+        `_experiment_move_drive_test.mjs`.
    ========================================================================= */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -207,17 +208,19 @@ eq(PAGE.split('setProjects(').length - 1, 1,
   ok(res.tests === tests, '…et la liste des tests n’est pas recopiée pour rien');
 }
 
-/* Le dossier Drive suit : sortie du projet quitté PUIS entrée dans le visé. */
-has(PAGE, 'moveTestFolderOutOfProject({ testName, projectName: project.name }).catch(() => {});',
-  '…sans jamais bloquer la page (le geste reste « au mieux »)');
-has(PAGE, '    moveTestFolderOutOfProject({ testName, projectName: project.name })\n        .then(() => moveTestFolderIntoProject({ testName, projectName: targetName }))',
-  'le dossier sort du projet quitté PUIS entre dans le projet visé (dans cet ordre)');
+/* Le dossier Drive MIGRE sous le projet visé : le geste dédié reçoit les DEUX
+   projets d'un coup, donc il n'y a plus d'aller-retour par le bac. */
+has(PAGE, '      moveTestFolderBetweenProjects({\n        testName: res.name,\n        fromProjectName: project.name,\n        toProjectName: target.name\n      }).catch(() => {});',
+  'le dossier migre sous le projet visé en UN geste, avec le projet quitté ET le projet visé');
 {
   const handler = PAGE.indexOf('const moveExperimentToProject = (expId, toProjectId) => {');
-  const out = PAGE.indexOf('moveTestFolderOutOfProject({ testName, projectName: project.name })\n        .then(', handler);
-  const into = PAGE.indexOf('moveTestFolderIntoProject({ testName, projectName: targetName })', handler);
-  ok(handler > 0 && out > handler && into > out,
-    'l’entrée dans le projet visé ne part qu’APRÈS la sortie du projet quitté (un dossier encore chez A n’est pas « hors projet »)');
+  const call = PAGE.indexOf('moveTestFolderBetweenProjects({', handler);
+  ok(handler > 0 && call > handler, '…appelé depuis le geste de déplacement lui-même');
+  ok(!PAGE.slice(handler, handler + 4000).includes('moveTestFolderOutOfProject(')
+    && !PAGE.slice(handler, handler + 4000).includes('moveTestFolderIntoProject('),
+    '…et non plus en deux temps (sortir puis entrer) : le geste dédié connaît déjà les deux projets');
+  ok(PAGE.slice(handler, handler + 4000).includes('.catch(() => {});'),
+    '…sans jamais bloquer la page (le geste reste « au mieux »)');
 }
 
 /* Le bouton et le volet, dans la liste « 🧪 Experiments in this project ». */
@@ -242,15 +245,29 @@ has(PAGE, 'onClick={() => setMoveReport(\'\')}', '…et se referme');
 has(PAGE, 'Demande : « allow me to move an experiment from one project to another ».',
   'la demande est citée dans le code, à l’endroit du geste');
 
-/* ══ 3. LES DEUX GESTES DRIVE RÉUTILISÉS ══════════════════════════════════ */
-has(UPLOAD, 'export const moveTestFolderOutOfProject = async ({ testName, projectName }) => {',
-  'le dossier se sort du projet quitté avec le geste déjà testé du programme');
+/* ══ 3. LE GESTE DRIVE DÉDIÉ : LE DOSSIER MIGRE ═══════════════════════════ */
+has(UPLOAD, 'export const moveTestFolderBetweenProjects = async ({ testName, fromProjectName, toProjectName }) => {',
+  'le passage d’un projet à un autre a SON geste (il connaît le projet quitté ET le projet visé)');
+has(UPLOAD, 'await moveDriveFile(src.id, toFolderId); // DÉPLACÉ (addParents + removeParents)',
+  'le dossier est DÉPLACÉ par son identifiant — jamais recopié');
+has(UPLOAD, 'const mergeFolderInto = async (fromId, toId, depth = 0) => {',
+  'un dossier du même nom déjà dans le projet visé est FUSIONNÉ (aucun second dossier frère)');
+has(UPLOAD, 'for (const parent of [fromProjectId, bucketId, legacyBucketId, legacyProjectId, root]) {',
+  'les copies restées au bac, à l’ancien bac ou à la racine du dataset sont ramassées aussi');
+eq(UPLOAD.split('if (!getDriveToken() || !testName || !fromProjectName || !toProjectName) return report;').length - 1, 1,
+  'le geste ne fait rien sans Drive connecté (le déplacement des données, lui, a déjà eu lieu)');
+has(UPLOAD, 'if (owner && sanitizeSlug(owner) !== fromSlug) continue;',
+  'la copie Drive d’un autre projet resté lié n’est pas touchée (many-to-many)');
+/* Les deux gestes de la LIAISON (lier une expérience / la retirer) restent en
+   place : déplacer n’est ni l’un ni l’autre. */
 has(UPLOAD, 'export const moveTestFolderIntoProject = async ({ testName, projectName }) => {',
-  '…et se range dans le projet visé avec l’autre');
-eq(UPLOAD.split('if (!getDriveToken() || !testName || !projectName) return 0;').length - 1, 2,
-  'les deux gestes ne font rien sans Drive connecté (le déplacement des données, lui, a déjà eu lieu)');
-has(UPLOAD, 'rels.push(`projects/${DEFAULT_PROJECT_NAME}/${testSlug}`);',
-  'le bac des expériences sans projet est bien l’endroit où le dossier sorti est retrouvé');
+  'lier une expérience à un projet garde son geste (moveTestFolderIntoProject)');
+has(UPLOAD, 'export const moveTestFolderOutOfProject = async ({ testName, projectName }) => {',
+  '…et la retirer du projet garde le sien (moveTestFolderOutOfProject)');
+has(PAGE, 'moveTestFolderIntoProject({ testName, projectName: project.name }).catch(() => {});',
+  'la page lie toujours une expérience avec ce geste-là');
+has(PAGE, 'moveTestFolderOutOfProject({ testName, projectName: project.name }).catch(() => {});',
+  '…et la retire avec l’autre (le ✕ n’a pas changé)');
 
 /* La règle appartient au MODÈLE, pas à la page : elle reste exportée. */
 ok(typeof RULES.moveExperimentBetweenProjects === 'function',

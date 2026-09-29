@@ -67,7 +67,7 @@ import {
   applyInTextStyle, withoutBibliographySection
 } from '../../utils/referenceLinks';
 import { moveFigureTo, splitAnchoredFigures } from '../../utils/figurePlacement';
-import { markAttachmentsDeleted, renameDriveFilesFor, moveTestFolderIntoProject, moveTestFolderOutOfProject, getDriveToken, getDriveRootName, resolveDrivePathFromNames, listDriveChildren } from '../../utils/driveUpload';
+import { markAttachmentsDeleted, renameDriveFilesFor, moveTestFolderIntoProject, moveTestFolderOutOfProject, moveTestFolderBetweenProjects, getDriveToken, getDriveRootName, resolveDrivePathFromNames, listDriveChildren } from '../../utils/driveUpload';
 /* Le texte du projet est AUSSI rangé dans le dossier du projet sur le Drive
    (Lab Workspace/<dataset>/projects/<projet>/<projet>_document.json) : le
    navigateur n'est qu'un cache (voir utils/projectDocumentDrive.js). */
@@ -1876,16 +1876,16 @@ export const ProjectDetailModule = ({
      ensemble — jamais un état intermédiaire où l'expérience serait nulle part),
      l'écriture du magasin, et le dossier du Drive qui SUIT.
 
-     Le dossier du Drive fait le trajet en deux temps, exactement comme les deux
-     gestes déjà testés du programme : `moveTestFolderOutOfProject` sort le dossier
-     du projet quitté (A) et le dépose dans le bac des expériences sans projet
-     (projects/test — c'est là que `findProjectTestFolder` le cherche quand aucun
-     projet n'est donné), puis `moveTestFolderIntoProject` le range sous le projet
-     visé (B). Le second part APRÈS le premier : un dossier encore sous A n'est pas
-     vu comme « hors projet ». Rien n'est bloquant : sans Drive connecté (ou si le
-     dossier n'existe pas encore), les deux gestes ne font rien et les fichiers
-     envoyés plus tard iront directement dans le bon projet (le chemin Drive se
-     calcule à partir de `projectNames`). */
+     Le dossier du Drive MIGRE sous le projet visé — déplacé, JAMAIS copié :
+     `moveTestFolderBetweenProjects` (driveUpload.js) réunit tout ce qui porte le
+     nom de l'expérience sur le Drive (le dossier du projet quitté, le bac
+     projects/test, les emplacements hérités, jumeaux compris), le DÉPLACE sous
+     `projects/<projet visé>/`, le FUSIONNE si un dossier du même nom y attend
+     déjà, met à la corbeille les dossiers vidés (l'ancien chemin disparaît) et
+     réécrit le registre des fichiers. Rien n'est bloquant : sans Drive connecté
+     (ou si le dossier n'existe pas encore), le geste ne fait rien et les
+     fichiers envoyés plus tard iront directement dans le bon projet (le chemin
+     Drive se calcule à partir de `projectNames`). */
   const moveExperimentToProject = (expId, toProjectId) => {
     if (!canModify) return;
     const target = projectsRef.current.find((p) => p && p.id === toProjectId);
@@ -1909,11 +1909,14 @@ export const ProjectDetailModule = ({
         : ' — its Google-Drive folder will follow as soon as Drive is connected.')
     );
     if (res.name) {
-      const testName = res.name;
-      const targetName = target.name;
-      moveTestFolderOutOfProject({ testName, projectName: project.name })
-        .then(() => moveTestFolderIntoProject({ testName, projectName: targetName }))
-        .catch(() => {});
+      /* Le dossier Drive MIGRE sous le projet visé (déplacé, jamais copié, et
+         fusionné si un dossier du même nom y attend déjà). Au mieux : le
+         magasin a déjà été écrit, la page n'attend pas le Drive. */
+      moveTestFolderBetweenProjects({
+        testName: res.name,
+        fromProjectName: project.name,
+        toProjectName: target.name
+      }).catch(() => {});
     }
   };
 

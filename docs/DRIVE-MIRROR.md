@@ -548,32 +548,60 @@ jamais un état intermédiaire où l'expérience n'appartiendrait à personne �
 magasin (`saveProjects`) et `setTests`. Un refus (expérience inconnue, projet
 inconnu, projet identique) rend les listes **telles quelles** : rien n'est écrit.
 
-Le dossier du Drive suit en **deux temps**, avec les deux gestes déjà éprouvés :
-`moveTestFolderOutOfProject` sort le dossier du projet quitté et le dépose dans le
-bac des expériences sans projet (`projects/test/…`), puis
-`moveTestFolderIntoProject` le range sous le projet visé. Le second part après le
-premier (un dossier encore sous l'ancien projet n'est pas vu comme « hors projet »
-— `findProjectTestFolder(root, test, '')` ne cherche que le bac). Et rien n'est
-bloquant : sans Drive connecté, ou si le dossier n'existe pas encore, les deux
-gestes ne font rien — les fichiers envoyés plus tard arrivent directement dans le
-bon dossier, puisque le chemin se calcule à partir de `projectNames`.
+Le dossier du Drive **migre** sous le projet visé : `moveTestFolderBetweenProjects`
+(driveUpload.js) reçoit les DEUX projets et fait le trajet en un seul geste. Côté
+Drive il n'existe qu'un `files.update` avec `addParents` + `removeParents` : le
+dossier est **déplacé par son identifiant**, jamais recopié — l'ancien chemin
+disparaît, et le dossier devenu vide du projet quitté part à la corbeille.
+
+Ce geste ramasse *tout* ce qui porte le nom de l'expérience, car ce nom est le seul
+repère de son dossier (`projects/<projet>/<expérience>`, voir
+`canonicalExperimentPath`) : le dossier du projet quitté, un exemplaire resté dans
+le bac `projects/test`, dans l'ancien bac `projects/_unassigned`, à la racine du
+dataset — et les **jumeaux** d'un même emplacement. Un seul dossier resté derrière
+suffirait à ce que `findFolderByName` continue de le rendre : l'expérience vivrait
+à deux endroits.
+
+Si un dossier du **même nom** est déjà dans le projet visé (l'expérience y était
+déjà liée), son contenu est **fusionné** dedans — deux dossiers frères du même nom
+éparpilleraient les fichiers de l'expérience (le défaut des « jumeaux d'INSTANCE »,
+voir plus bas). Un **fichier** homonyme, lui, n'est jamais écrasé : il reste où il
+est, et le dossier qui le porte est compté dans le compte rendu pour que
+`_repair_drive_twins.mjs` puisse en décider.
+
+Le registre des fichiers suit (`ctx.project` devient le projet visé, chemin refait
+en `projects/<projet visé>/<expérience>/…`) : les envois suivants de l'expérience
+visent le même dossier. Rien n'est bloquant : sans Drive connecté, ou si le dossier
+n'existe pas encore, le geste ne fait rien — et il ne sème **aucun** dossier dans le
+projet visé ; les fichiers envoyés plus tard arrivent directement au bon endroit,
+puisque le chemin se calcule à partir de `projectNames`.
 
 Ce qui ne change PAS, volontairement : le ✕ (« Remove from project ») reste le
-geste pour **retirer** une expérience d'un projet ; les copies Drive des projets
-restés liés ne sont pas touchées ; et l'expérience garde son identifiant d'entrée,
-donc l'historique de ses figures ⭐ et de son texte suit.
+geste pour **retirer** une expérience d'un projet (ses deux gestes de liaison,
+`moveTestFolderIntoProject` / `moveTestFolderOutOfProject`, sont intacts) ; les
+copies Drive des projets restés liés ne sont pas touchées ; et l'expérience garde
+son identifiant d'entrée, donc l'historique de ses figures ⭐ et de son texte suit.
 
 ### Vérifier soi-même
 
 ```bash
-node _project_experiment_move_test.mjs      # 70 assertions : la règle + la page + le Drive
+node _project_experiment_move_test.mjs      # 77 assertions : la règle + la page + les contrats Drive
+node _experiment_move_drive_test.mjs        # 62 assertions : le dossier MIGRE (faux Drive fidèle)
 ```
 
-Le test fabrique deux projets (A avec deux instances d'une même expérience, B vide,
-C qui partage une autre expérience), déplace, et vérifie l'arrivée **à l'identique**
-(identifiant, « Include », date), l'ordre de `projectNames`, l'absence de doublon
-quand le projet visé est déjà lié, les trois refus qui ne touchent à rien, et
-l'ordre des deux gestes Drive.
+Le premier fabrique deux projets (A avec deux instances d'une même expérience, B
+vide, C qui partage une autre expérience), déplace, et vérifie l'arrivée **à
+l'identique** (identifiant, « Include », date), l'ordre de `projectNames`, l'absence
+de doublon quand le projet visé est déjà lié, et les trois refus qui ne touchent à
+rien.
+
+Le second branche le **vrai** `driveUpload.js` sur un faux Drive qui tient les
+parents de chaque nœud : après le déplacement, le dossier de l'expérience n'a plus
+**qu'un parent** (le projet visé) et garde son identifiant — c'est la preuve du
+« déplacé, pas copié » ; les instances, sections et fichiers suivent ; le dossier
+vidé du projet quitté part à la corbeille ; un dossier du même nom est fusionné (et
+un homonyme signalé) ; les exemplaires du bac, de l'ancien bac et de la racine sont
+ramassés ; sans Drive connecté ou sans dossier à déplacer, **rien** n'est écrit.
 
 ## Les jumeaux d'INSTANCE (deux fois le même dossier d'expérience)
 
