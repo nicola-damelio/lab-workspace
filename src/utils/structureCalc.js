@@ -16,22 +16,35 @@
         `randomTorsionsOf` en pose une valeur uniforme dans (−180, 180) par
         `planTorsion` : rotation rigide, donc longueurs et angles intacts. Le tirage
         vient de `makeRelaxRandom` (la graine du ⚒) : le même n donne les mêmes départs.
-     2. LE RECUIT, PUIS LE PROTOCOLE DU ⚒ SUR CHACUN — `annealTorsionsOf` : Metropolis
-        (exp(−Δ/T)) en espace dihédral, température décroissante, terme ω trans et cœur
-        dur. Puis EXACTEMENT le ⚒ : `buildModelGeometry` (chimie et empilements),
-        chaque distance conduite par `relaxGeometry`, un balayage après les gestes, et
-        une TREMPE froide sous longe pour réparer ce que la descente a cassé.
-     3. CHAQUE RÉSULTAT EST NOTÉ — `scoreStructureOf` : la fonction cible du ⚒ sans la
-        longe, plus la pénalité d'empilement et le terme ω. Rien n'est réinventé.
+     2. LE CHAMP DE FORCES, ET LE PROTOCOLE STANDARD SUR CHAQUE DÉPART — le champ est
+        UNE fonction (`forceFieldEnergyOf`) dont les familles se lisent une par une :
+        liaisons, angles, plans, distances demandées (le ⚒), cœur dur, plus les trois
+        potentiels de torsion sans lesquels un calcul de structure rend les
+        Ramachandran que l'utilisateur a signalés — ω trans (`omegaPenaltyOf`), les
+        bassins φ/ψ (`backboneTorsionsOf` + `ramaPenaltyOf`, les MÊMES bassins que le
+        graphe 🪢 dessine) et les trois conformères décalés de χ1 (`chiPenaltyOf`).
+        Sur chaque départ : tirage → recuit Metropolis (`annealTorsionsOf`) → le
+        protocole du ⚒ (distances conduites une par une) → **dynamique moléculaire de
+        Langevin en espace dihédral** (`molecularDynamicsOf`, chaud puis refroidi) →
+        **minimisation** (`minimizeTorsionsOf`) → TREMPE froide sous longe.
+     3. CHAQUE RÉSULTAT EST NOTÉ — `scoreStructureOf` : la fonction cible du ⚒, plus
+        l'empilement, ω, les bassins φ/ψ et χ1. Rien n'est réinventé : c'est le champ
+        de forces de l'étape 2, relu sur les coordonnées DU modèle.
      4. LES m MEILLEURES SONT GARDÉES — `rankStructureAttempts`, avec le rapport de la
         famille : ce que chaque distance y mesure, et la dispersion des m modèles après
         superposition optimale.
 
-   CE QU'IL N'EST PAS : ni dynamique moléculaire, ni champ de forces — aucune charge,
-   aucun solvant, aucune entropie, aucun atome ajouté, et le score n'est comparable qu'à
-   l'intérieur d'un même calcul. Le recuit, lui, existe : il est EN ESPACE DIHÉDRAL (un
-   pas = une rotation rigide), et c'est le terme ω ci-dessus qui tient les liaisons
-   peptidiques en trans — là où le ⚒ seul les laissait partir en cis.
+   TOUT SE REGARDE (`annealFrames`, `structureAttemptFrames`, `structureCalculationFrames`,
+   `mdFrames`, `minimizeFrames`) : le protocole est écrit comme un GÉNÉRATEUR qui rend la
+   main à chaque image. Un seul moteur, deux conducteurs — `drainFrames` (synchrone : les
+   appelants et les tests) et l'écran, qui écrit chaque image et laisse peindre la page
+   avant de reprendre. C'est ce qui permet de VOIR le tirage puis le recuit.
+
+   CE QU'IL N'EST TOUJOURS PAS : aucune charge, aucun solvant, aucune entropie, aucun
+   atome ajouté, et l'énergie n'est PAS en kcal/mol — elle est comparable à l'intérieur
+   d'un même calcul, et c'est écrit là où le panneau l'affiche. La dynamique est
+   dihédrale : un pas = une rotation rigide autour d'une charnière, donc longueurs et
+   angles sont des CONSTANTES du mouvement (elles ne peuvent pas se casser).
 
    Module PUR, comme ses voisins : il ne touche NI ses arguments NI l'écran, il ne
    connaît ni NGL ni React. Les coordonnées entrent à plat (trois nombres par atome)
@@ -52,6 +65,11 @@ import {
 /* LE dièdre du dossier (convention IUPAC signée) et LA rotation du dossier — il n'y
    a pas de second lecteur de dièdre dans cette application. */
 import { dihedralDeg, planTorsion } from './torsionDrive.js';
+/* LES BASSINS φ/ψ DU GRAPHE 🪢 — les polygones et le test d'appartenance sont ceux du
+   module du graphe : le potentiel du calcul et ce que le GRAPHE peint sont donc
+   littéralement les mêmes bassins (un point que le calcul vise est un point que le
+   graphe ne peint pas en violet). Aucun polygone n'est recopié ici. */
+import { RAMA_REGIONS, pointInPolygon, ramaRegionOf } from './ramachandran.js';
 /* La superposition optimale (kabsch, par utils/mdAnalysis.js) — pour la dispersion de
    la famille SEULEMENT : rien n'est calculé ici qui existe déjà ailleurs. */
 import { rigidTransform } from './structureFit.js';
@@ -143,6 +161,67 @@ export const STRUCTURE_CALC_CORE_REFRESH = 24;
    les mouvements qui améliorent sont gardés. */
 export const STRUCTURE_CALC_QUENCH_STEPS = 3;
 
+/* 1ter · LE CHAMP DE FORCES — LES TROIS POTENTIELS DE TORSION, ET LA DYNAMIQUE ────
+   Un calcul de structure sans potentiel de squelette rend des modèles qui respectent
+   les distances et n'ont pourtant PAS de Ramachandran défendable : rien, dans les
+   distances seules, ne distingue une hélice d'un enchaînement au hasard. Ces trois
+   familles sont ce qui manquait, et elles sont nommées comme les potentiels qu'on
+   trouve dans un protocole standard (XPLOR/CNS, CYANA) : ω trans, bassins φ/ψ, χ1
+   décalé. Aucune n'est une charge, aucune n'est un solvant, et aucune n'est inventée
+   ailleurs : `forceFieldEnergyOf` les somme avec les familles du ⚒. */
+
+/** LE POIDS DES BASSINS φ/ψ — une fois par degré² HORS bassin (0 dedans : le bassin
+ *  entier ne coûte rien, c'est la même règle que le plateau de ω). Un point à 30° du
+ *  bord coûte 45 : de l'ordre d'une distance demandée violée d'un ångström, ce qui est
+ *  l'équilibre qu'on veut entre « respecte mes distances » et « reste dans un bassin ». */
+export const STRUCTURE_CALC_RAMA_WEIGHT = 0.05;
+/** LE POIDS DE χ1 — trois conformères DÉCALÉS (60°, 180°, −60°) : V = w·(1 + cos 3χ)/2,
+ *  donc 0 pile sur un conformère et w pile entre deux. Il n'y a pas de rotamère nommé
+ *  ici : la chaîne latérale tourne, et les trois puits suffisent à ce que ses atomes ne
+ *  restent pas posés « entre deux » — c'est ce qu'un œil lit dans une famille NMR. */
+export const STRUCTURE_CALC_CHI_WEIGHT = 0.3;
+/** LA FENÊTRE D'UN CONFORMÈRE DE χ1 — un point à moins de `TOLERANCE` degrés d'un
+ *  des trois puits est DANS le puits et ne coûte rien (le même plateau que ω, en
+ *  plus étroit : la barrière de χ1 fait 3 kcal, pas 20). */
+export const STRUCTURE_CALC_CHI_TOLERANCE = 12;
+
+/** LA DYNAMIQUE MOLÉCULAIRE DIHÉDRALE (Langevin) — les chiffres du panneau et des
+ *  départs. `T` est en UNITÉS RÉDUITES (k_B = 1, l'énergie est celle du champ), jamais
+ *  en kelvins : prétendre le contraire serait mentir sur l'absence d'unités physiques.
+ *  `dt` est le pas de temps réduit, `friction` le γ de Langevin, `mass` l'inertie
+ *  d'un degré de liberté. Le plan de température est GÉOMÉTRIQUE (hot → cold), comme
+ *  un recuit simulé classique : chaud, la molécule change de bassin ; froid, elle s'y
+ *  pose. */
+export const STRUCTURE_CALC_MD_STEPS = 240;           // pas de la dynamique, par départ
+export const STRUCTURE_CALC_MD_HOT = 6;               // T du premier palier…
+export const STRUCTURE_CALC_MD_COLD = 0.05;           // …et du dernier
+export const STRUCTURE_CALC_MD_DT = 0.02;             // pas de temps réduit
+export const STRUCTURE_CALC_MD_FRICTION = 2;          // γ (1/temps réduit)
+export const STRUCTURE_CALC_MD_MASS = 1;              // inertie d'un dièdre
+export const STRUCTURE_CALC_MD_TORQUE_STEP = 1;       // ° de la différence finie du couple
+export const STRUCTURE_CALC_MD_PALIERS = 8;           // paliers du plan de température
+/** Combien de pas de dynamique entre DEUX IMAGES — c'est ce qui se regarde pendant la
+ *  dynamique : 8 pas de 0.02 font 0.16 de temps réduit par image, soit 30 images pour
+ *  240 pas. Sans cela, l'écran ne verrait que le début et la fin. */
+export const STRUCTURE_CALC_MD_FRAME = 8;
+
+/** LA MINIMISATION DIHÉDRALE (l'affinage final) — une descente en coordonnées : chaque
+ *  dièdre est essayé de part et d'autre d'un pas qui se divise par deux dès qu'un
+ *  balayage complet n'améliore plus rien. Elle part de la fin de la dynamique et
+ *  termine sur un minimum local DU MÊME champ de forces. */
+export const STRUCTURE_CALC_MIN_ROUNDS = 3;           // balayages complets avant réduction
+export const STRUCTURE_CALC_MIN_STEP = 8;             // ° du pas initial
+export const STRUCTURE_CALC_MIN_STEP_FLOOR = 0.5;     // ° du pas le plus fin
+export const STRUCTURE_CALC_MIN_TRIES = 4;            // essais par canal et par balayage
+
+/** LE MUR DE LA LONGE — ce que coûte, dans la dynamique et la minimisation, une
+ *  distance DÉJÀ tenue qui sort de sa tolérance. Le recuit de Metropolis peut REFUSER
+ *  un pas (il en essaie un autre) ; une trajectoire ne le peut pas : la longe y est
+ *  donc un MUR (zéro dans la tolérance, w·(dépassement)² au-delà). C'est ce qui
+ *  permet à la dynamique de réparer φ/ψ SANS lâcher les distances que le ⚒ vient
+ *  d'atteindre. */
+export const STRUCTURE_CALC_LEASH_WALL = 400;
+
 /* ── 2 · CE QUE L'UTILISATEUR IMPOSE : LES DISTANCES ENTRE COUPLES D'ATOMES ────
    « the user provide the distances between atom pairs ». La liste reçue est
    NORMALISÉE une fois pour toutes (les deux écritures acceptées — `[[i, j, d]]` et
@@ -160,6 +239,23 @@ const clampInt = (v, min, max, fallback) => {
 /** La distance de deux atomes d'un tableau à plat (trois nombres par atome). */
 const dist3 = (x, i, j) => Math.hypot(x[i * 3] - x[j * 3], x[i * 3 + 1] - x[j * 3 + 1], x[i * 3 + 2] - x[j * 3 + 2]);
 const wrapSeed = (v) => (Math.round(Number(v)) >>> 0) || 0;
+
+/** LE CONDUCTEUR D'UN CALCUL QUI SE REGARDE — il consomme un GÉNÉRATEUR d'images
+ *  jusqu'au bout et rend son résultat. C'est ce qui fait qu'un moteur écrit une fois
+ *  (`annealFrames`, `structureAttemptFrames`, …) se conduit de deux façons : d'un trait
+ *  ici (les appelants, les tests) ou image par image à l'écran (qui laisse peindre la
+ *  page entre deux). `onFrame` reçoit CHAQUE image — c'est exactement ce qu'un
+ *  `onStep` recevait avant, donc aucun appelant n'a changé de contrat. */
+export const drainFrames = (frames, onFrame = null) => {
+  let step = frames.next();
+  while (!step.done) {
+    if (typeof onFrame === 'function' && step.value) {
+      try { onFrame(step.value); } catch { /* un rapport qui se plaint n'arrête pas le calcul */ }
+    }
+    step = frames.next();
+  }
+  return step.value;
+};
 
 /**
  * LA LISTE DES CONTRAINTES, NORMALISÉE — `{list, dropped, count}`.
@@ -406,8 +502,20 @@ export const peptideOmegasOf = ({ elements = [], bonds = [], atomCount = 0 } = {
     const nbC = graph.neighbours(c).filter((k) => k !== n);
     const nbN = graph.neighbours(n).filter((k) => k !== c);
     if (!nbC.some((k) => els[k] === 'O')) continue;        // pas un carbonyle : pas un ω
-    const caC = nbC.find((k) => els[k] === 'C');
-    const caN = nbN.find((k) => els[k] === 'C');
+    /* ⚠ LES DEUX CARBONES SONT CHOISIS, PAS PRIS AU HASARD — une PROLINE porte son CD
+       sur le même azote que son CA, et un ω mesuré sur CD n'est plus l'angle de la
+       liaison peptidique (le cycle l'en décale d'une constante). Le CA est donc :
+       du côté du carbonyle, LE CARBONE QUI PORTE L'AZOTE DE SON RÉSIDU (son propre N,
+       distinct de l'amide de la liaison) ; du côté de l'amide, LE CARBONE QUI PORTE UN
+       CARBONYLE (le résidu suivant). Faute de mieux, le premier carbone — c'était la
+       règle d'avant, et elle n'est pas perdue. */
+    const carries = (k, want) => graph.neighbours(k).some((m) => m !== c && m !== n && want(m));
+    const isCarbonyl = (k) => els[k] === 'C' && graph.neighbours(k).some((m) => els[m] === 'O');
+    const carbonsOf = (list) => list.filter((k) => els[k] === 'C');
+    const caC = carbonsOf(nbC).find((k) => carries(k, (m) => els[m] === 'N'))
+      ?? carbonsOf(nbC)[0];
+    const caN = carbonsOf(nbN).find((k) => carries(k, isCarbonyl))
+      ?? carbonsOf(nbN)[0];
     if (!Number.isInteger(caC) || !Number.isInteger(caN)) continue;
     out.push({ i: c, j: n, c, n, probeAtoms: [caC, c, n, caN], target: STRUCTURE_CALC_OMEGA });
   }
@@ -447,19 +555,25 @@ export const omegaPenaltyOf = ({ positions = null, omegas = [] } = {}) => {
  *  (`planTorsion`) : les longueurs et les angles d'un côté ne bougent pas d'un
  *  chiffre, donc l'énergie des liaisons, des angles et des plans est une CONSTANTE
  *  pendant tout le recuit — seules les distances demandées qui TRAVERSENT la
- *  charnière, le cœur dur et le terme ω peuvent changer. C'est pour cela qu'un recuit
- *  en espace dihédral est abordable : un pas ne relit qu'une poignée de termes.
+ *  charnière, le cœur dur, ω, les bassins φ/ψ et χ1 peuvent changer. C'est pour cela
+ *  qu'un recuit en espace dihédral est abordable : un pas ne relit qu'une poignée de
+ *  termes.
  *
  *  Un pas est accepté s'il n'empire pas, ou avec la probabilité exp(−Δ/T) — la loi de
  *  Metropolis — T étant le palier courant (chaud d'abord : les conformations
  *  s'échangent ; froid à la fin : la dernière est un minimum local). Le tirage vient
  *  d'un `makeRelaxRandom(graine)` : mêmes paliers, mêmes pas, même résultat.
  *
- *  Rend `{ok, reason, positions, channels, omegas, schedule, tried, accepted,
- *  skipped, cost:{before, after}, omega}` : `schedule` porte une ligne par palier
- *  (`{step, temperature, tried, accepted, cost, of}`) — un recuit se LIT.
+ *  ⚠ C'EST UN GÉNÉRATEUR (`annealFrames`) : il rend la main à chaque image — le
+ *  palier, et `perFrame` pas à l'intérieur d'un palier — ce qui permet à l'écran de
+ *  peindre la molécule EN TRAIN de recuire. `annealTorsionsOf` est le même recuit
+ *  conduit jusqu'au bout d'un trait (voir `drainFrames`).
+ *
+ *  Rend `{ok, reason, positions, channels, omegas, rama, chi, schedule, tried,
+ *  accepted, skipped, cost:{before, after}, omega}` : `schedule` porte une ligne par
+ *  palier (`{step, temperature, tried, accepted, cost, of}`) — un recuit se LIT.
  */
-export const annealTorsionsOf = ({
+export function* annealFrames({
   positions = null, elements = [], bonds = [], restraints = [],
   channels = null, omegas = null, weights = RELAX_WEIGHTS, leash = null,
   seed = STRUCTURE_CALC_SEED, rng = null,
@@ -471,14 +585,16 @@ export const annealTorsionsOf = ({
   coreReach = STRUCTURE_CALC_CORE_REACH,
   refresh = STRUCTURE_CALC_CORE_REFRESH,
   protectOmega = false,
-  onStep = null,
-} = {}) => {
+  torsions = null,
+  ramaWeight = STRUCTURE_CALC_RAMA_WEIGHT, chiWeight = STRUCTURE_CALC_CHI_WEIGHT,
+  perFrame = 0,
+} = {}) {
   const read = flatPositions(positions);
   if (!read) {
     return {
       ok: false, reason: 'bad-points', positions: null, channels: 0, omegas: 0,
       schedule: [], tried: 0, accepted: 0, skipped: 0,
-      cost: { before: 0, after: 0 }, omega: null,
+      cost: { before: 0, after: 0 }, omega: null, rama: null, chi: null,
     };
   }
   const count = read.count;
@@ -492,10 +608,20 @@ export const annealTorsionsOf = ({
     : (channels || rotatableBondsOf({ elements: els, bonds, atomCount: count }));
   const chan = Array.from(list.channels || []);
   const omega = Array.from(omegas || peptideOmegasOf({ elements: els, bonds, atomCount: count }));
+  /* LE SQUELETTE ET LES CHAÎNES LATÉRALES — les deux potentiels que le recuit fait
+     bouger avec les distances : les bassins φ/ψ (un COUPLE φ,ψ par résidu) et les trois
+     puits de χ1. Lus une fois ; seuls les résidus dont un atome traverse la charnière
+     comptent dans un pas (voir `crossOf`). */
+  const backbone = torsions || backboneTorsionsOf({ elements: els, bonds, atomCount: count });
+  const ramaRows = ramaPairsOf(backbone).filter((r) => r.phiAtoms && r.psiAtoms);
+  const chis = Array.from(backbone.chi || []);
+  const wRama = Number.isFinite(Number(ramaWeight)) ? Math.max(0, Number(ramaWeight)) : STRUCTURE_CALC_RAMA_WEIGHT;
+  const wChi = Number.isFinite(Number(chiWeight)) ? Math.max(0, Number(chiWeight)) : STRUCTURE_CALC_CHI_WEIGHT;
   const x = read.flat.slice();
   const out = {
     ok: true, reason: 'ok', positions: x, channels: chan.length, omegas: omega.length,
-    schedule: [], tried: 0, accepted: 0, skipped: 0, cost: { before: 0, after: 0 }, omega: null,
+    schedule: [], tried: 0, accepted: 0, skipped: 0, cost: { before: 0, after: 0 },
+    omega: null, rama: null, chi: null,
   };
   const nStep = clampInt(steps, 0, 64, STRUCTURE_CALC_ANNEAL_STEPS);
   if (!chan.length || !nStep) { out.reason = chan.length ? 'no-step' : 'no-channel'; return out; }
@@ -537,6 +663,25 @@ export const annealTorsionsOf = ({
     const over = Math.max(0, Math.abs(((deg - o.target + 540) % 360) - 180)
       - STRUCTURE_CALC_OMEGA_TOLERANCE);
     return STRUCTURE_CALC_OMEGA_WEIGHT * over * over;
+  };
+  /* LES DEUX POTENTIELS DE SQUELETTE — les MÊMES fonctions que la note emploie
+     (`ramaGapOf`, la barrière à trois puits de χ1), relues sur une géométrie « à
+     plat » : un pas de recuit ne peut donc pas optimiser autre chose que ce que le
+     score juge. */
+  const ramaCost = (row, map) => {
+    const phi = dihedralDeg(at(row.phiAtoms[0], map), at(row.phiAtoms[1], map),
+      at(row.phiAtoms[2], map), at(row.phiAtoms[3], map));
+    const psi = dihedralDeg(at(row.psiAtoms[0], map), at(row.psiAtoms[1], map),
+      at(row.psiAtoms[2], map), at(row.psiAtoms[3], map));
+    if (!Number.isFinite(phi) || !Number.isFinite(psi)) return 0;
+    const gap = ramaGapOf(phi, psi, row.klass);
+    return wRama * gap * gap;
+  };
+  const chiCost = (entry, map) => {
+    const deg = dihedralDeg(at(entry.atoms[0], map), at(entry.atoms[1], map),
+      at(entry.atoms[2], map), at(entry.atoms[3], map));
+    if (!Number.isFinite(deg)) return 0;
+    return wChi * (1 + Math.cos(3 * deg * DEG2RAD)) / 2;
   };
 
   /* LE CŒUR DUR, MAINTENANT — les couples que le graphe ne lie pas (ni directement,
@@ -581,13 +726,17 @@ export const annealTorsionsOf = ({
     return pairs;
   };
   /* LES TERMES QUI TRAVERSENT UNE CHARNIÈRE — les seuls qu'un pas peut changer : un
-     couple dont UN atome tourne et l'autre non, un ω dont UN des quatre atomes tourne.
-     Lus une fois par canal (la molécule change, la liste des couples non). */
+     couple dont UN atome tourne et l'autre non, un dièdre dont UN des quatre atomes
+     tourne (ω, φ/ψ, χ1). Lus une fois par canal (la molécule change, la liste des
+     couples non). */
   const crossOf = (ch) => {
     const set = new Set(ch.moving);
+    const straddles = (atoms) => Array.from(atoms || []).some((k) => set.has(k));
     return {
       pairs: terms.pairs.filter((t) => set.has(t.i) !== set.has(t.j)),
-      omegas: omega.filter((o) => o.probeAtoms.some((k) => set.has(k))),
+      omegas: omega.filter((o) => straddles(o.probeAtoms)),
+      ramas: ramaRows.filter((r) => straddles(r.phiAtoms) || straddles(r.psiAtoms)),
+      chis: chis.filter((e) => straddles(e.atoms)),
     };
   };
   const omegaBond = new Set(omega.map((o) => (o.c < o.n ? `${o.c}-${o.n}` : `${o.n}-${o.c}`)));
@@ -597,12 +746,20 @@ export const annealTorsionsOf = ({
   for (const t of terms.pairs) cost += pairCost(t, null);
   for (const c of core) cost += coreCost(c, null);
   for (const o of omega) cost += omegaCost(o, null);
+  for (const r of ramaRows) cost += ramaCost(r, null);
+  for (const e of chis) cost += chiCost(e, null);
   out.cost.before = cost;
   const scale = Math.max(1e-6, Math.abs(cost));
   const amp = Math.max(1, Math.abs(Number(amplitude) || STRUCTURE_CALC_ANNEAL_AMPLITUDE));
   const ampO = Math.max(0.5, Math.abs(Number(omegaAmplitude) || STRUCTURE_CALC_ANNEAL_OMEGA_AMPLITUDE));
   const perStep = Math.max(1, clampInt(moves, 1, 512, STRUCTURE_CALC_ANNEAL_MOVES)) * chan.length;
   const rebuild = Math.max(1, Math.round(refresh) || STRUCTURE_CALC_CORE_REFRESH);
+  /* COMBIEN D'IMAGES PAR PALIER — 0 (le défaut) veut dire « une seule, à la fin du
+     palier » (le comportement d'avant) ; le panneau qui suit l'écran demande 4 à 8 images
+     par palier pour que le recuit se VOIE. Le pas d'image est donc déduit du nombre de
+     gestes d'un palier (`moves × canaux`), jamais inventé. */
+  const framesPerPalier = clampInt(perFrame, 0, Math.max(1, perStep), 0) || 1;
+  const frameEvery = Math.max(1, Math.floor(perStep / framesPerPalier));
   const caches = new Map();
 
   for (let s = 0; s < nStep; s += 1) {
@@ -655,6 +812,8 @@ export const annealTorsionsOf = ({
         dv += d;
         dvOmega += d;
       }
+      for (const r of ctx.ramas) dv += ramaCost(r, map) - ramaCost(r, null);
+      for (const e of ctx.chis) dv += chiCost(e, map) - chiCost(e, null);
       /* ω NE SE DÉGRADE JAMAIS (la trempe) — un pas qui abîmerait ω est refusé même
          s'il répare un empilement : il y a assez d'autres pas pour faire les deux. */
       if (protectOmega && dvOmega > 1e-12) { out.skipped += 1; continue; }
@@ -666,6 +825,15 @@ export const annealTorsionsOf = ({
       for (const [k, p] of map) { x[k * 3] = p[0]; x[k * 3 + 1] = p[1]; x[k * 3 + 2] = p[2]; }
       cost += dv;
       accepted += 1;
+      /* L'IMAGE — le pas qui vient d'être GARDÉ est montré tel quel : c'est ce que
+         l'écran écrit, donc ce qu'on regarde est la conformation qui existe vraiment,
+         pas une interpolation entre deux états. */
+      if (m % frameEvery === frameEvery - 1) {
+        yield {
+          phase: 'anneal', positions: x, step: s + 1, of: nStep, part: m + 1, parts: perStep,
+          temperature: Number(T.toFixed(6)), tried: 0, accepted: 0, cost: Number(cost.toFixed(6)),
+        };
+      }
     }
     out.tried += tried;
     out.accepted += accepted;
@@ -674,51 +842,393 @@ export const annealTorsionsOf = ({
       cost: Number(cost.toFixed(6)), of: nStep,
     };
     out.schedule.push(row);
-    if (typeof onStep === 'function') {
-      try { onStep({ phase: 'anneal', positions: x, ...row }); } catch { /* un rapport qui se plaint n'arrête pas le recuit */ }
-    }
+    yield { phase: 'anneal', positions: x, ...row, part: perStep, parts: perStep };
   }
   let finalCost = 0;
   for (const t of terms.pairs) finalCost += pairCost(t, null);
   for (const c of core) finalCost += coreCost(c, null);
   for (const o of omega) finalCost += omegaCost(o, null);
+  for (const r of ramaRows) finalCost += ramaCost(r, null);
+  for (const e of chis) finalCost += chiCost(e, null);
   out.cost.after = finalCost;
   out.omega = omegaPenaltyOf({ positions: x, omegas: omega });
+  out.rama = ramaPenaltyOf({ positions: x, torsions: backbone, weight: wRama });
+  out.chi = chiPenaltyOf({ positions: x, chis, weight: wChi });
+  return out;
+}
+
+/** LE RECUIT, D'UN TRAIT — le même générateur, conduit jusqu'au bout (les appelants
+ *  qui veulent le résultat, et les tests). `onStep` reçoit chaque image. */
+export const annealTorsionsOf = (spec = {}) => drainFrames(annealFrames(spec), spec.onStep);
+
+/* ── 3bis · LE SQUELETTE ET LES CHAÎNES LATÉRALES — φ, ψ, ω, χ1 PAR LA CHIMIE ───
+   « the final structures have very bad Ramachandran plots » : les distances seules ne
+   distinguent pas une hélice d'un enchaînement au hasard. Ce bloc lit les dièdres du
+   squelette SANS AUCUN NOM D'ATOME — un carbonyle sur une amide (la règle de
+   `peptideOmegasOf`, la même) suffit à reconnaître une liaison peptidique, et tout le
+   reste se déduit du graphe : le CA est le carbone du carbonyle qui porte l'azote de
+   son résidu, ψ est le dièdre N–CA–C–N(suivant), φ le dièdre C(précédent)–N–CA–C, χ1
+   le dièdre N–CA–CB–X du côté le plus lourd. Ce qui n'est pas lisible n'est pas
+   inventé : un résidu de bout de chaîne n'a que son ψ, et il est COMPTÉ (`partial`). */
+
+const DEG2RAD = Math.PI / 180;
+
+/** LE SQUELETTE D'UNE MOLÉCULE — `{count, residues, partial, phi, psi, omega, chi,
+ *  classes, checked}`.
+ *  `phi` / `psi` / `chi` / `omega` sont des listes de `{atoms:[a,b,c,d], ca, kind,
+ *  klass}` : le quadruplet à lire (dans l'ordre IUPAC, donc par `dihedralDeg`), le CA
+ *  du résidu (la CLEF qui apparie un φ et un ψ du MÊME résidu), et la classe de
+ *  résidu que la chimie seule permet de voir — `gly` (aucun CB), `pro` (l'azote de son
+ *  résidu porte deux carbones en plus du carbonyle précédent, donc il est dans un
+ *  cycle), `prePro` (le résidu SUIVANT est une proline : son amide porte aussi son
+ *  CD), `general`. Ce sont les mêmes classes de bassins que le graphe 🪢 distingue.
+ *  `classes` compte les résidus par classe, `residues` le nombre de résidus vus,
+ *  `partial` ceux qui n'ont qu'un des deux angles (un bout de chaîne). */
+export const backboneTorsionsOf = ({ elements = [], bonds = [], atomCount = 0 } = {}) => {
+  const els = Array.from(elements || []).map((e) => String(e == null ? '' : e).trim().toUpperCase());
+  const count = clampInt(atomCount || els.length, 0, Number.MAX_SAFE_INTEGER, 0);
+  const graph = bondGraphOf({ bonds, atomCount: count });
+  const out = {
+    count: 0, residues: 0, partial: 0,
+    phi: [], psi: [], omega: [], chi: [],
+    classes: { general: 0, gly: 0, pro: 0, prePro: 0 },
+    checked: graph.list.length,
+  };
+  const nb = (a) => graph.neighbours(a).map(Number)
+    .filter((k) => Number.isInteger(k) && k >= 0 && k < count).sort((p, q) => p - q);
+  const el = (k) => els[k] || '';
+  const carbonsOf = (a, except = -1) => nb(a).filter((k) => k !== except && el(k) === 'C');
+  const isCarbonylCarbon = (k) => el(k) === 'C' && nb(k).some((m) => el(m) === 'O');
+  /* LA LISTE DES RÉSIDUS — par leur CA, jamais deux fois : un résidu est vu par la
+     liaison peptidique qui le suit ET par celle qui le précède, et c'est le CA qui dit
+     que c'est le même. Le carbonyle du résidu vient de la même lecture. */
+  const residues = new Map();
+  for (const s of peptideOmegasOf({ elements: els, bonds, atomCount: count })) {
+    const [caC, c, n, caN] = s.probeAtoms || [];
+    if (!residues.has(caC)) residues.set(caC, { ca: caC, c });
+    const cNext = carbonsOf(caN, n).find((k) => isCarbonylCarbon(k));
+    if (Number.isInteger(cNext) && !residues.has(caN)) residues.set(caN, { ca: caN, c: cNext });
+    /* ⚠ `probeAtoms` EN PLUS DE `atoms` POUR LES ω — c'est la clef que `omegaPenaltyOf`
+       lit, donc la liste rendue ici peut se donner telle quelle au terme ω (le panneau
+       se sert du même jeu pour le rapport et pour le calcul). */
+    out.omega.push({
+      atoms: [caC, c, n, caN], probeAtoms: [caC, c, n, caN],
+      ca: caC, kind: 'omega', klass: 'general', target: STRUCTURE_CALC_OMEGA,
+    });
+  }
+  /* LE PLUS LOURD DES VOISINS — c'est lui qui définit χ1 : pour une cystéine le soufre,
+     pour une sérine ou une thréonine l'oxygène, sinon le carbone (V, I, L, K…). */
+  const HEAVY_RANK = { S: 4, O: 3, N: 2, C: 1 };
+  const heaviestOf = (list) => list
+    .slice().sort((a, b) => ((HEAVY_RANK[el(b)] || 0) - (HEAVY_RANK[el(a)] || 0)) || (a - b))[0];
+  for (const { ca, c } of residues.values()) {
+    const nI = nb(ca).find((k) => el(k) === 'N');
+    const cPrev = Number.isInteger(nI) ? carbonsOf(nI, ca).find((k) => isCarbonylCarbon(k)) : undefined;
+    const nNext = nb(c).find((k) => el(k) === 'N' && k !== nI);
+    const gly = carbonsOf(ca, c).length === 0;                    // aucun CB : une glycine
+    const pro = Number.isInteger(nI) && carbonsOf(nI, cPrev).length >= 2;   // N dans un cycle
+    const nextPro = Number.isInteger(nNext) && carbonsOf(nNext, c).length >= 2;
+    const klass = gly ? 'gly' : (pro ? 'pro' : (nextPro ? 'prePro' : 'general'));
+    out.classes[klass] = (out.classes[klass] || 0) + 1;
+    out.residues += 1;
+    const hasPhi = Number.isInteger(cPrev) && Number.isInteger(nI);
+    const hasPsi = Number.isInteger(nI) && Number.isInteger(nNext);
+    if (hasPhi) out.phi.push({ atoms: [cPrev, nI, ca, c], ca, kind: 'phi', klass });
+    if (hasPsi) out.psi.push({ atoms: [nI, ca, c, nNext], ca, kind: 'psi', klass });
+    if (!hasPhi || !hasPsi) out.partial += 1;
+    const cb = carbonsOf(ca, c)[0];
+    if (Number.isInteger(cb) && Number.isInteger(nI)) {
+      const x = heaviestOf(nb(cb).filter((k) => k !== ca));
+      if (Number.isInteger(x)) out.chi.push({ atoms: [nI, ca, cb, x], ca, kind: 'chi1', klass });
+    }
+  }
+  out.count = out.phi.length + out.psi.length + out.omega.length + out.chi.length;
   return out;
 };
 
-/* ── 4 · LA NOTE D'UN RÉSULTAT — « the final result is scored » ───────────────
-   La MÊME fonction cible que le ⚒ (`buildRelaxTerms` + `energyOf`, molécule entière,
-   distances demandées comprises), SANS la longe — n départs sont là pour explorer —,
-   plus la pénalité d'empilement des 🎲 échappées (`RELAX_CLASH_WEIGHT` × gravité) et le
-   terme ω (`omegaPenaltyOf`). Les familles de l'énergie sont rendues À PART : un score
-   n'est pas une boîte noire, il se lit. */
+/** LA DISTANCE D'UN POINT AU BORD D'UN POLYGONE (ses segments), EN DEGRÉS. */
+const pointSegmentGap = (px, py, ax, ay, bx, by) => {
+  const dx = bx - ax; const dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  const t = len2 > 0 ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len2)) : 0;
+  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+};
+const polygonGapOf = (phi, psi, polygon) => {
+  const pts = Array.from(polygon || []);
+  if (pts.length < 3) return Infinity;
+  let best = Infinity;
+  for (let a = 0; a < pts.length; a += 1) {
+    const [ax, ay] = pts[a];
+    const [bx, by] = pts[(a + 1) % pts.length];
+    const g = pointSegmentGap(phi, psi, ax, ay, bx, by);
+    if (g < best) best = g;
+  }
+  return best;
+};
+
+/** COMBIEN DE DEGRÉS SÉPARENT UN (φ, ψ) DES BASSINS DE SA CLASSE — 0 DEDANS, sinon la
+ *  distance au bord du bassin le plus proche. Les polygones sont ceux du module du
+ *  graphe 🪢 (`RAMA_REGIONS`), donc « hors bassin » ici veut dire exactement « violet
+ *  là-bas » : le calcul vise ce que le graphe reproche, et rien d'autre. */
+export const ramaGapOf = (phi, psi, klass = 'general') => {
+  const p = Number(phi); const s = Number(psi);
+  if (!Number.isFinite(p) || !Number.isFinite(s)) return 0;   // angle illisible : aucun terme inventé
+  const set = RAMA_REGIONS[klass] || RAMA_REGIONS.general;
+  let best = Infinity;
+  for (const region of Object.keys(set)) {
+    const poly = set[region];
+    if (!poly || poly.length < 3) continue;
+    if (pointInPolygon(p, s, poly)) return 0;
+    const g = polygonGapOf(p, s, poly);
+    if (g < best) best = g;
+  }
+  return Number.isFinite(best) ? best : 0;
+};
+
+/** LES RÉSIDUS À (φ, ψ) — les deux angles du MÊME résidu, appariés par leur CA : le
+ *  potentiel de Ramachandran porte sur le COUPLE, jamais sur un angle seul (un bassin
+ *  est une tache dans le plan φ×ψ). Un résidu de bout de chaîne n'a qu'un angle : il
+ *  est compté `partial` et ne porte aucun terme. */
+const ramaPairsOf = (torsions) => {
+  const t = torsions || {};
+  const byCa = new Map();
+  const add = (entry, slot) => {
+    if (!entry || !entry.atoms || !Number.isInteger(entry.ca)) return;
+    const row = byCa.get(entry.ca) || { ca: entry.ca, klass: entry.klass || 'general' };
+    row[slot] = entry.atoms;
+    byCa.set(entry.ca, row);
+  };
+  for (const e of Array.from(t.phi || [])) add(e, 'phiAtoms');
+  for (const e of Array.from(t.psi || [])) add(e, 'psiAtoms');
+  return [...byCa.values()];
+};
+
+/** CE QUE LES BASSINS φ/ψ COÛTENT SUR CES COORDONNÉES — `{count, measured, partial,
+ *  penalty, violations, worst, list, weight}`. `penalty` = `weight × (distance au
+ *  bord)²` par résidu SORTI, exactement zéro dedans (le bassin entier est un plateau,
+ *  comme les ± 30° de ω). `list` porte, par résidu : son CA, sa classe, ses deux
+ *  angles, son écart et la région où il tombe (`ramaRegionOf` du module du graphe — le
+ *  rapport du calcul nomme donc les bassins comme le graphe les nomme). */
+export const ramaPenaltyOf = ({
+  positions = null, torsions = null, weight = STRUCTURE_CALC_RAMA_WEIGHT,
+} = {}) => {
+  const read = flatPositions(positions);
+  const w = Number.isFinite(Number(weight)) ? Math.max(0, Number(weight)) : STRUCTURE_CALC_RAMA_WEIGHT;
+  const out = {
+    count: 0, measured: 0, partial: 0, penalty: 0, violations: 0, worst: null, list: [], weight: w,
+  };
+  if (!read) return out;
+  const x = read.flat;
+  const pt = (k) => [x[k * 3], x[k * 3 + 1], x[k * 3 + 2]];
+  for (const row of ramaPairsOf(torsions)) {
+    if (!row.phiAtoms || !row.psiAtoms) { out.partial += 1; continue; }
+    out.count += 1;
+    const phi = dihedralDeg(pt(row.phiAtoms[0]), pt(row.phiAtoms[1]), pt(row.phiAtoms[2]), pt(row.phiAtoms[3]));
+    const psi = dihedralDeg(pt(row.psiAtoms[0]), pt(row.psiAtoms[1]), pt(row.psiAtoms[2]), pt(row.psiAtoms[3]));
+    if (!Number.isFinite(phi) || !Number.isFinite(psi)) continue;
+    out.measured += 1;
+    const gap = ramaGapOf(phi, psi, row.klass);
+    out.penalty += w * gap * gap;
+    if (gap > 0) out.violations += 1;
+    const line = {
+      ca: row.ca, klass: row.klass, phi, psi, gap, cost: w * gap * gap,
+      region: ramaRegionOf(phi, psi, row.klass),
+    };
+    out.list.push(line);
+    if (!out.worst || gap > out.worst.gap) out.worst = line;
+  }
+  return out;
+};
+
+/** CE QUE LES TROIS CONFORMÈRES DE χ1 COÛTENT — le potentiel à trois puits du dossier,
+ *  `w·(1 + cos 3χ)/2` : il s'annule PILE sur 60°, 180° et −60° (les trois conformères
+ *  décalés) et vaut `w` pile entre deux. `violations` compte les χ1 plus loin que
+ *  `tolerance` degrés d'un des trois puits — c'est le chiffre que le panneau lit, la
+ *  forme de la barrière n'en dépend pas. `dev` est cet écart réel, en degrés. */
+export const chiPenaltyOf = ({
+  positions = null, chis = [], weight = STRUCTURE_CALC_CHI_WEIGHT,
+  tolerance = STRUCTURE_CALC_CHI_TOLERANCE,
+} = {}) => {
+  const read = flatPositions(positions);
+  const w = Number.isFinite(Number(weight)) ? Math.max(0, Number(weight)) : STRUCTURE_CALC_CHI_WEIGHT;
+  const tol = Number.isFinite(Number(tolerance)) ? Math.max(0, Number(tolerance)) : STRUCTURE_CALC_CHI_TOLERANCE;
+  const out = {
+    count: 0, measured: 0, penalty: 0, violations: 0, worst: null, list: [], weight: w, tolerance: tol,
+  };
+  if (!read) return out;
+  const x = read.flat;
+  const pt = (k) => [x[k * 3], x[k * 3 + 1], x[k * 3 + 2]];
+  for (const entry of Array.from(chis || [])) {
+    const [a, b, c, d] = entry && entry.atoms ? entry.atoms : [];
+    if (![a, b, c, d].every((k) => Number.isInteger(k))) continue;
+    out.count += 1;
+    const deg = dihedralDeg(pt(a), pt(b), pt(c), pt(d));
+    if (!Number.isFinite(deg)) continue;
+    out.measured += 1;
+    out.penalty += w * (1 + Math.cos(3 * deg * DEG2RAD)) / 2;
+    /* L'ÉCART AU PUITS LE PLUS PROCHE — les trois puits sont à 120° l'un de l'autre :
+       c'est donc l'écart au multiple de 120° le plus proche à partir de 60°. */
+    const dev = Math.abs(((deg - 60 + 180) % 120) - 60);
+    const line = { ca: entry.ca, atoms: [a, b, c, d], deg, dev, inWell: dev <= tol };
+    out.list.push(line);
+    if (!line.inWell) out.violations += 1;
+    if (!out.worst || dev > out.worst.dev) out.worst = line;
+  }
+  return out;
+};
+
+/* ── 3ter · LE CHAMP DE FORCES — LES FAMILLES, ET L'ÉNERGIE ────────────────────
+   « add the force field ». Un champ de forces, ici, c'est UNE fonction et une liste de
+   familles NOMMÉES : `forceFieldEnergyOf` somme ce que le ⚒ fournit (liaisons, angles,
+   plans de cycle, distances demandées, cœur dur) et les trois potentiels de torsion
+   (ω, bassins φ/ψ, χ1 décalé), et rend chaque famille À PART — un score n'est pas une
+   boîte noire, il se lit. Le recuit, la dynamique, la minimisation et la note lisent
+   TOUS celle-ci (aucun moteur n'a sa propre physique). `forceFieldRowsOf` rend les
+   mêmes familles en LIGNES À AFFICHER (libellé, règle, type de poids) : le panneau
+   n'écrit aucun chiffre du champ, il écrit ce que le module lui donne. */
+
+/** LES FAMILLES DU CHAMP, DANS L'ORDRE OÙ ELLES SE LISENT — l'identifiant est aussi la
+ *  clef du rapport (`forceFieldEnergyOf(...).bond`, `.angle`, …). */
+export const FORCE_FIELD_FAMILIES = [
+  'bond', 'angle', 'planar', 'pair', 'contact', 'omega', 'rama', 'chi',
+];
+
+/** LES LIGNES DU CHAMP DE FORCES POUR LE PANNEAU — `{id, icon, label, rule, weight,
+ *  unit, of}` par famille, dans l'ordre de `FORCE_FIELD_FAMILIES`. `of` dit sur QUOI
+ *  la famille porte (les liaisons, les triplets, les couples non liés, les résidus,
+ *  les χ1 …) et `unit` l'unité de la grandeur qui la viole — aucune de ces phrases
+ *  n'est écrite dans le JSX. */
+export const forceFieldRowsOf = ({
+  weights = RELAX_WEIGHTS, ramaWeight = STRUCTURE_CALC_RAMA_WEIGHT,
+  chiWeight = STRUCTURE_CALC_CHI_WEIGHT,
+} = {}) => ([
+  { id: 'bond', icon: '🔗', label: 'Bond lengths', weight: Number(weights.bond) || 0, unit: 'Å',
+    of: 'every bond of the graph', rule: 'harmonic, k·(d − d₀)²' },
+  { id: 'angle', icon: '📐', label: 'Bond angles', weight: Number(weights.angle) || 0, unit: '°',
+    of: 'every i–j–k of the graph', rule: 'harmonic, k·(θ − θ₀)², θ₀ from the hybridisation of j' },
+  { id: 'planar', icon: '▭', label: 'Planar rings', weight: Number(weights.planar) || 0, unit: '°',
+    of: 'every planar 5- or 6-ring', rule: 'harmonic on the ring dihedrals, target 0°' },
+  { id: 'pair', icon: '📏', label: 'Your distances', weight: Number(weights.pair) || 0, unit: 'Å',
+    of: 'every line of the distance table', rule: 'harmonic, k·(d − target)²' },
+  { id: 'contact', icon: '🛡', label: 'Hard core', weight: Number(weights.contact) || 0, unit: 'Å',
+    of: 'every non-bonded pair inside its contact distance',
+    rule: 'zero above the contact distance of the pair of elements, then k·overlap²' },
+  { id: 'omega', icon: '🪢', label: 'ω trans', weight: STRUCTURE_CALC_OMEGA_WEIGHT, unit: '°',
+    of: 'every peptide C–N bond (read from the chemistry)',
+    rule: `flat inside ± ${STRUCTURE_CALC_OMEGA_TOLERANCE}° of ${STRUCTURE_CALC_OMEGA}°, then k·over²` },
+  { id: 'rama', icon: '🧭', label: 'φ/ψ basins', weight: Number(ramaWeight) || 0, unit: '°',
+    of: 'every residue with both φ and ψ',
+    rule: 'zero inside a basin of the 🪢 plot (α, β, α left — the residue class decides which set), then k·(distance to the basin)²' },
+  { id: 'chi', icon: '🔀', label: 'χ1 staggered', weight: Number(chiWeight) || 0, unit: '°',
+    of: 'every residue with a χ1 (N–CA–CB–X)',
+    rule: `three staggered wells (60°, 180°, −60°): k·(1 + cos 3χ)/2, outside past ± ${STRUCTURE_CALC_CHI_TOLERANCE}° of a well` },
+]);
 
 /**
- * @returns {{ok:boolean, reason:string, score:number, total:number, bond:number,
- *            angle:number, planar:number, pair:number, contact:number,
+ * L'ÉNERGIE DU CHAMP DE FORCES SUR CES COORDONNÉES — une famille par clef, `target` =
+ * la fonction cible du ⚒ seule (liaisons, angles, plans, distances, cœur dur) et
+ * `total` = `target + omega + rama + chi` : le SEUL chiffre que les moteurs minimisent.
+ * Tout est relu ici sur les coordonnées reçues, rien n'est supposé.
+ *
+ * @returns {{ok:boolean, reason:string, total:number, target:number, bond:number,
+ *            angle:number, planar:number, pair:number, contact:number, omega:number,
+ *            rama:number, chi:number, bondRms:number, angleRms:number, planarRms:number,
+ *            contactRms:number, worstBond:object|null, worstAngle:object|null,
+ *            worstPlanar:object|null, worstContact:object|null, omegaReport:object,
+ *            ramaReport:object, chiReport:object, torsions:object, omegas:object[],
+ *            restraints:object[], rows:object[]}}
+ */
+export const forceFieldEnergyOf = ({
+  positions = null, elements = [], bonds = [], restraints = [],
+  weights = RELAX_WEIGHTS, torsions = null, omegas = null,
+  ramaWeight = STRUCTURE_CALC_RAMA_WEIGHT, chiWeight = STRUCTURE_CALC_CHI_WEIGHT,
+  chiTolerance = STRUCTURE_CALC_CHI_TOLERANCE,
+} = {}) => {
+  const read = flatPositions(positions);
+  const els = Array.from(elements || []);
+  const empty = {
+    ok: false, reason: 'bad-points', total: Infinity, target: Infinity,
+    bond: 0, angle: 0, planar: 0, pair: 0, contact: 0, omega: 0, rama: 0, chi: 0,
+    bondRms: 0, angleRms: 0, planarRms: 0, contactRms: 0,
+    worstBond: null, worstAngle: null, worstPlanar: null, worstContact: null,
+    omegaReport: omegaPenaltyOf({}), ramaReport: ramaPenaltyOf({}), chiReport: chiPenaltyOf({}),
+    torsions: backboneTorsionsOf({}), omegas: [], restraints: [],
+    rows: forceFieldRowsOf({ weights, ramaWeight, chiWeight }),
+  };
+  if (!read) return empty;
+  const x = read.flat;
+  const clean = restraintListOf({ restraints, atomCount: read.count }).list;
+  /* LES DIÈDRES SONT LUS UNE FOIS — la même liste sert à la note, au recuit et à la
+     dynamique : deux moteurs ne peuvent pas voir deux squelettes différents. */
+  const backbone = torsions || backboneTorsionsOf({ elements: els, bonds, atomCount: read.count });
+  const omegaList = Array.from(omegas || peptideOmegasOf({ elements: els, bonds, atomCount: read.count }));
+  /* LES FAMILLES DU ⚒ — `buildRelaxTerms` lit la chimie, les cycles plans et le cœur
+     dur sur CES coordonnées (c'est la fonction cible du dossier, jamais une copie). */
+  const terms = buildRelaxTerms({ elements: els, bonds, pairs: clean, weights, positions: x });
+  const e = energyOf(terms, x);
+  const om = omegaPenaltyOf({ positions: x, omegas: omegaList });
+  const ra = ramaPenaltyOf({ positions: x, torsions: backbone, weight: ramaWeight });
+  const ch = chiPenaltyOf({
+    positions: x, chis: backbone.chi, weight: chiWeight, tolerance: chiTolerance,
+  });
+  return {
+    ...empty,
+    ok: true,
+    reason: 'ok',
+    total: e.total + om.penalty + ra.penalty + ch.penalty,
+    target: e.total,
+    bond: e.bond, angle: e.angle, planar: e.planar, pair: e.pair, contact: e.contact,
+    omega: om.penalty, rama: ra.penalty, chi: ch.penalty,
+    bondRms: e.bondRms, angleRms: e.angleRms, planarRms: e.planarRms, contactRms: e.contactRms,
+    worstBond: e.worstBond, worstAngle: e.worstAngle,
+    worstPlanar: e.worstPlanar, worstContact: e.worstContact,
+    omegaReport: om, ramaReport: ra, chiReport: ch,
+    torsions: backbone, omegas: omegaList, restraints: clean,
+    rows: forceFieldRowsOf({ weights, ramaWeight, chiWeight }),
+  };
+};
+
+/* ── 4 · LA NOTE D'UN RÉSULTAT — « the final result is scored » ───────────────
+   LE CHAMP DE FORCES de §3ter (`forceFieldEnergyOf`), SANS la longe — n départs sont là
+   pour explorer —, plus la pénalité d'empilement des 🎲 échappées
+   (`RELAX_CLASH_WEIGHT` × gravité). Les familles de l'énergie sont rendues À PART : un
+   score n'est pas une boîte noire, il se lit. */
+
+/**
+ * @returns {{ok:boolean, reason:string, score:number, target:number, total:number,
+ *            bond:number, angle:number, planar:number, pair:number, contact:number,
+ *            omega:number, rama:number, chi:number, forceField:object,
  *            bondRms:number, angleRms:number, planarRms:number, contactRms:number,
  *            worstBond:object|null, worstAngle:object|null, worstPlanar:object|null,
- *            worstContact:object|null, clashPenalty:number, clashes:object,
- *            contacts:object, restraint:object}}
- *   `score` = `total + clashPenalty` — le seul chiffre du classement ; `total` = la
- *   fonction cible du ⚒ ; `restraint` = la lecture des distances demandées
- *   (`restraintReportOf`, relue sur ces coordonnées-là).
+ *            worstContact:object|null, clashPenalty:number, omegaPenalty:number,
+ *            ramaPenalty:number, chiPenalty:number, omega:object, ramaPlot:object,
+ *            chiWells:object, clashes:object, contacts:object, restraint:object}}
+ *   `score` = `total + clashPenalty` — le seul chiffre du classement ; `total` = le
+ *   CHAMP DE FORCES entier (liaisons, angles, plans, distances demandées, cœur dur, ω,
+ *   bassins φ/ψ, χ1) ; `target` = la fonction cible du ⚒ seule ; `restraint` = la
+ *   lecture des distances demandées (`restraintReportOf`, relue sur ces coordonnées).
+ *   `ramaPlot` = la lecture φ/ψ résidu par résidu : c'est ELLE que le graphe 🪢 relit
+ *   après un calcul, donc le graphe et le score ne peuvent pas parler de deux
+ *   conformations.
  */
 export const scoreStructureOf = ({
   positions = null, elements = [], bonds = [], restraints = [],
   weights = RELAX_WEIGHTS, clashDistance = RELAX_CLASH_DISTANCE,
-  tolerance = STRUCTURE_CALC_RESTRAINT_TOLERANCE, omegas = null,
+  tolerance = STRUCTURE_CALC_RESTRAINT_TOLERANCE, omegas = null, torsions = null,
+  ramaWeight = STRUCTURE_CALC_RAMA_WEIGHT, chiWeight = STRUCTURE_CALC_CHI_WEIGHT,
 } = {}) => {
   const read = flatPositions(positions);
   if (!read) {
     return {
-      ok: false, reason: 'bad-points', score: Infinity, total: Infinity,
-      bond: 0, angle: 0, planar: 0, pair: 0, contact: 0,
+      ok: false, reason: 'bad-points', score: Infinity, target: Infinity, total: Infinity,
+      bond: 0, angle: 0, planar: 0, pair: 0, contact: 0, omega: 0, rama: 0, chi: 0,
       bondRms: 0, angleRms: 0, planarRms: 0, contactRms: 0,
       worstBond: null, worstAngle: null, worstPlanar: null, worstContact: null,
-      clashPenalty: 0, omegaPenalty: 0,
+      clashPenalty: 0, omegaPenalty: 0, ramaPenalty: 0, chiPenalty: 0,
+      forceField: forceFieldEnergyOf({}),
       omega: { count: 0, penalty: 0, violations: 0, worst: null },
+      ramaPlot: { count: 0, measured: 0, partial: 0, penalty: 0, violations: 0, worst: null, list: [] },
+      chiWells: { count: 0, measured: 0, penalty: 0, violations: 0, worst: null, list: [] },
       clashes: { count: 0, worst: null, severity: 0, minDistance: clashDistance },
       contacts: { count: 0, severity: 0, worst: null, checked: 0, unknownElements: 0 },
       restraint: restraintReportOf({ positions: null, restraints, tolerance }),
@@ -726,38 +1236,59 @@ export const scoreStructureOf = ({
   }
   const x = read.flat;
   const clean = restraintListOf({ restraints, atomCount: read.count }).list;
-  /* LES TERMES SONT CEUX DU ⚒, recalculés ici sur CES coordonnées : la table des
-     longueurs, l'hybridation, les cycles que le fichier lit comme plans, les
-     distances demandées. Rien n'est réinventé — c'est le même constructeur que la
-     descente emploie. */
-  const terms = buildRelaxTerms({ elements, bonds, pairs: clean, weights, positions: x });
-  const e = energyOf(terms, x);
+  /* LE CHAMP, LU ICI SUR CES COORDONNÉES-LÀ — le même constructeur que la descente, le
+     recuit et la dynamique emploient (aucun moteur n'a sa propre physique). */
+  const field = forceFieldEnergyOf({
+    positions: x, elements, bonds, restraints: clean, weights, torsions, omegas,
+    ramaWeight, chiWeight,
+  });
   const clashes = clashReportOf({ positions: x, bonds, minDistance: clashDistance });
   const contacts = badContactsOf({
     positions: x, elements, bonds, tolerance: RELAX_CONTACT_TOLERANCE,
   }) || { count: 0, severity: 0, worst: null, checked: 0, unknownElements: 0 };
   const clashPenalty = RELAX_CLASH_WEIGHT * (Number(clashes.severity) || 0);
-  /* LE TERME ω — la part « physique » ajoutée par le recuit : une liaison peptidique
-     préférée TRANS. Elle entre dans le SCORE (elle juge un modèle fini), et elle est
-     rendue à part pour que le score reste lisible. */
-  const omegaList = omegas || peptideOmegasOf({ elements, bonds, atomCount: read.count });
-  const om = omegaPenaltyOf({ positions: x, omegas: omegaList });
+  const om = field.omegaReport;
+  const ra = field.ramaReport;
+  const ch = field.chiReport;
   return {
     ok: true,
     reason: 'ok',
-    score: e.total + clashPenalty + om.penalty,
-    total: e.total,
-    bond: e.bond, angle: e.angle, planar: e.planar, pair: e.pair, contact: e.contact,
-    bondRms: e.bondRms, angleRms: e.angleRms, planarRms: e.planarRms, contactRms: e.contactRms,
-    worstBond: e.worstBond ? { ...e.worstBond } : null,
-    worstAngle: e.worstAngle ? { ...e.worstAngle } : null,
-    worstPlanar: e.worstPlanar ? { ...e.worstPlanar } : null,
-    worstContact: e.worstContact ? { ...e.worstContact } : null,
+    score: field.total + clashPenalty,
+    total: field.total,
+    target: field.target,
+    bond: field.bond, angle: field.angle, planar: field.planar,
+    pair: field.pair, contact: field.contact,
+    /* ⚠ `omega` PLUS BAS EST LE RAPPORT (sa forme d'origine : `{count, violations,
+       worst}`), donc les trois familles de torsion sont ici des NOMBRES nommés, et le
+       champ entier est rendu tel quel (`forceField`, avec ses `omega`/`rama`/`chi`). */
+    omegaPenalty: field.omega,
+    ramaPenalty: field.rama,
+    chiPenalty: field.chi,
+    bondRms: field.bondRms, angleRms: field.angleRms,
+    planarRms: field.planarRms, contactRms: field.contactRms,
+    worstBond: field.worstBond ? { ...field.worstBond } : null,
+    worstAngle: field.worstAngle ? { ...field.worstAngle } : null,
+    worstPlanar: field.worstPlanar ? { ...field.worstPlanar } : null,
+    worstContact: field.worstContact ? { ...field.worstContact } : null,
     clashPenalty,
-    omegaPenalty: om.penalty,
+    forceField: field,
+    /* LE RAPPORT ω — le même terme que celui de la note, avec le pire écart en degrés. */
     omega: {
       count: om.count, violations: om.violations,
       worst: om.worst ? { ...om.worst } : null,
+    },
+    /* LA LECTURE φ/ψ DU MODÈLE — un point par résidu, la région où il tombe, et son
+       écart au bassin : c'est ce que le graphe 🪢 affiche, dit par le calcul. */
+    ramaPlot: {
+      count: ra.count, measured: ra.measured, partial: ra.partial,
+      penalty: ra.penalty, violations: ra.violations,
+      worst: ra.worst ? { ...ra.worst } : null,
+      list: ra.list.map((l) => ({ ...l })),
+    },
+    chiWells: {
+      count: ch.count, measured: ch.measured, penalty: ch.penalty, violations: ch.violations,
+      worst: ch.worst ? { ...ch.worst } : null,
+      list: ch.list.map((l) => ({ ...l })),
     },
     clashes: {
       count: clashes.count, severity: clashes.severity,
@@ -772,6 +1303,503 @@ export const scoreStructureOf = ({
     restraint: restraintReportOf({ positions: x, restraints: clean, tolerance }),
   };
 };
+
+/* ── 4bis · LA MÉCANIQUE DIHÉDRALE — LE MOTEUR DE LA DYNAMIQUE ET DE LA MINIMISATION ──
+   Un pas de torsion ne change QUE les termes qui traversent sa charnière : un couple
+   dont un atome tourne et l'autre non, un dièdre dont un des quatre atomes tourne.
+   Ce moteur-là rassemble, POUR une molécule, ses canaux et ses contraintes : la
+   lecture d'une géométrie « à plat » (`mapFor`), le coût des termes qui traversent une
+   charnière (`crossCost`), la liste de ces termes (`crossingOf`) et le coût total
+   (`costOf`, la même composition que le recuit de Metropolis : distances + cœur dur +
+   ω + bassins + χ1).
+   ⚠ LES FONCTIONS DE COÛT SONT CELLES DU DOSSIER (`ramaGapOf`, la barrière à trois
+   puits de χ1, le plateau de ω, `contactDistanceOf`, les poids du ⚒) : la dynamique ne
+   peut donc pas optimiser autre chose que ce que la note juge. Ce qui diffère d'avec le
+   recuit, c'est la LONGE : Metropolis peut REFUSER un pas qui casse une distance tenue
+   (il en essaie un autre) ; une trajectoire ne le peut pas, donc la longe y est un MUR
+   (`STRUCTURE_CALC_LEASH_WALL`), zéro dans la tolérance et quadratique au-delà. */
+const torsionEngineOf = ({
+  positions = null, elements = [], bonds = [], restraints = [], weights = RELAX_WEIGHTS,
+  channels = null, leash = null, torsions = null, omegas = null,
+  ramaWeight = STRUCTURE_CALC_RAMA_WEIGHT, chiWeight = STRUCTURE_CALC_CHI_WEIGHT,
+  coreReach = STRUCTURE_CALC_CORE_REACH, leashWall = STRUCTURE_CALC_LEASH_WALL,
+} = {}) => {
+  const read = flatPositions(positions);
+  if (!read) return null;
+  const count = read.count;
+  const els = Array.from(elements || []);
+  /* LES DISTANCES DEMANDÉES PORTENT LEUR POIDS — `restraintListOf` rend la cible et
+     l'ordre (ce que le panneau affiche), et le poids vient des poids du ⚒ : c'est le
+     même terme que celui de la fonction cible, donc le même nombre. */
+  const clean = restraintListOf({ restraints, atomCount: count }).list;
+  const pairTerms = clean.map((t) => ({ ...t, weight: Number(weights.pair) || 0 }));
+  const list = Array.isArray(channels)
+    ? { channels }
+    : (channels || rotatableBondsOf({ elements: els, bonds, atomCount: count }));
+  const chan = Array.from(list.channels || []);
+  const backbone = torsions || backboneTorsionsOf({ elements: els, bonds, atomCount: count });
+  const ramaRows = ramaPairsOf(backbone).filter((r) => r.phiAtoms && r.psiAtoms);
+  const chis = Array.from(backbone.chi || []);
+  const omega = Array.from(omegas || peptideOmegasOf({ elements: els, bonds, atomCount: count }));
+  const graph = bondGraphOf({ bonds, atomCount: count });
+  const wRama = Number.isFinite(Number(ramaWeight)) ? Math.max(0, Number(ramaWeight)) : STRUCTURE_CALC_RAMA_WEIGHT;
+  const wChi = Number.isFinite(Number(chiWeight)) ? Math.max(0, Number(chiWeight)) : STRUCTURE_CALC_CHI_WEIGHT;
+  const wWall = Number.isFinite(Number(leashWall)) ? Math.max(0, Number(leashWall)) : STRUCTURE_CALC_LEASH_WALL;
+  const x = read.flat.slice();
+  const at = (k, map) => (map && map.has(k) ? map.get(k) : [x[k * 3], x[k * 3 + 1], x[k * 3 + 2]]);
+  const gap = (i, j, map) => {
+    const a = at(i, map); const b = at(j, map);
+    return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+  };
+  const dihedralOf = (atoms, map) => dihedralDeg(at(atoms[0], map), at(atoms[1], map),
+    at(atoms[2], map), at(atoms[3], map));
+  /* LES TERMES — chaque famille sait se lire sur une géométrie « à plat ». */
+  const costPair = (t, map) => {
+    const dev = gap(t.i, t.j, map) - t.target;
+    return t.weight * dev * dev;
+  };
+  const costCore = (c, map) => {
+    const over = c.target - gap(c.i, c.j, map);
+    return over > 0 ? c.weight * over * over : 0;
+  };
+  const costOmega = (o, map) => {
+    const deg = dihedralOf(o.probeAtoms, map);
+    if (!Number.isFinite(deg)) return 0;
+    const over = Math.max(0, Math.abs(((deg - o.target + 540) % 360) - 180)
+      - STRUCTURE_CALC_OMEGA_TOLERANCE);
+    return STRUCTURE_CALC_OMEGA_WEIGHT * over * over;
+  };
+  const costRama = (r, map) => {
+    const phi = dihedralOf(r.phiAtoms, map);
+    const psi = dihedralOf(r.psiAtoms, map);
+    if (!Number.isFinite(phi) || !Number.isFinite(psi)) return 0;
+    const g = ramaGapOf(phi, psi, r.klass);
+    return wRama * g * g;
+  };
+  const costChi = (e, map) => {
+    const deg = dihedralOf(e.atoms, map);
+    if (!Number.isFinite(deg)) return 0;
+    return wChi * (1 + Math.cos(3 * deg * DEG2RAD)) / 2;
+  };
+  const costWall = (w, map) => {
+    const dev = gap(w.i, w.j, map) - w.target;
+    const over = Math.max(0, Math.abs(dev) - w.tolerance);
+    return wWall * over * over;
+  };
+
+  /* LE CŒUR DUR, REFAIT RÉGULIÈREMENT — les atomes bougent, la grille avec eux. */
+  const corePairs = () => {
+    const reach = Math.max(0.5, Number(coreReach) || STRUCTURE_CALC_CORE_REACH);
+    const bonded = new Set();
+    for (const b of graph.list) bonded.add(b.i < b.j ? `${b.i}-${b.j}` : `${b.j}-${b.i}`);
+    const linked = (i, j) => graph.neighbours(i).some((k) => graph.neighbours(j).includes(k));
+    const key = (a, b, c) => `${a},${b},${c}`;
+    const grid = new Map();
+    for (let i = 0; i < count; i += 1) {
+      const k = key(Math.floor(x[i * 3] / reach), Math.floor(x[i * 3 + 1] / reach),
+        Math.floor(x[i * 3 + 2] / reach));
+      const cell = grid.get(k);
+      if (cell) cell.push(i); else grid.set(k, [i]);
+    }
+    const pairs = [];
+    for (let i = 0; i < count; i += 1) {
+      const cx = Math.floor(x[i * 3] / reach); const cy = Math.floor(x[i * 3 + 1] / reach);
+      const cz = Math.floor(x[i * 3 + 2] / reach);
+      for (let dx = -1; dx <= 1; dx += 1) {
+        for (let dy = -1; dy <= 1; dy += 1) {
+          for (let dz = -1; dz <= 1; dz += 1) {
+            const cell = grid.get(key(cx + dx, cy + dy, cz + dz));
+            if (!cell) continue;
+            for (const j of cell) {
+              if (j <= i) continue;
+              if (bonded.has(`${i}-${j}`)) continue;
+              if (linked(i, j)) continue;
+              pairs.push({
+                i, j, target: contactDistanceOf(els[i], els[j]).distance,
+                weight: Number(weights.contact) || 0,
+              });
+            }
+          }
+        }
+      }
+    }
+    return pairs;
+  };
+  /* LA LONGE, EN MUR — les distances DÉJÀ tenues au moment où la dynamique part : leur
+     tolérance devient un puits (« aucune distance déjà tenue n'est lâchée »). Une
+     distance qui n'était PAS tenue n'a pas de mur : c'est la contrainte du panneau qui
+     la porte, et elle y gagne. */
+  const walls = [];
+  for (const r of Array.from(leash || [])) {
+    const li = Number(r && r.i); const lj = Number(r && r.j);
+    if (!Number.isInteger(li) || !Number.isInteger(lj)) continue;
+    const row = clean.find((t) => (t.i === li && t.j === lj) || (t.i === lj && t.j === li));
+    const target = Number.isFinite(Number(r.target)) ? Number(r.target) : (row ? row.target : NaN);
+    if (!Number.isFinite(target)) continue;
+    const tol = Number(r.tolerance);
+    walls.push({
+      i: li, j: lj, target,
+      tolerance: Number.isFinite(tol) && tol >= 0 ? tol : STRUCTURE_CALC_RESTRAINT_TOLERANCE,
+    });
+  }
+  const crossingOf = (ch) => {
+    const set = new Set(ch.moving);
+    const straddles = (atoms) => Array.from(atoms || []).some((k) => set.has(k));
+    return {
+      pairs: pairTerms.filter((t) => set.has(t.i) !== set.has(t.j)),
+      walls: walls.filter((w) => set.has(w.i) !== set.has(w.j)),
+      /* ⚠ LE CŒUR DUR COMPTE ICI AUSSI — sans lui, une trajectoire pousserait deux
+         atomes l'un dans l'autre (c'est le terme que le recuit ajoute séparément, et
+         l'oublier a un coût mesurable : des modèles qui s'empilent). */
+      cores: core.filter((c) => set.has(c.i) !== set.has(c.j)),
+      omegas: omega.filter((o) => straddles(o.probeAtoms)),
+      ramas: ramaRows.filter((r) => straddles(r.phiAtoms) || straddles(r.psiAtoms)),
+      chis: chis.filter((e) => straddles(e.atoms)),
+    };
+  };
+  const crossCost = (ctx, map) => {
+    let v = 0;
+    for (const t of ctx.pairs) v += costPair(t, map);
+    for (const w of ctx.walls) v += costWall(w, map);
+    for (const c of ctx.cores) v += costCore(c, map);
+    for (const o of ctx.omegas) v += costOmega(o, map);
+    for (const r of ctx.ramas) v += costRama(r, map);
+    for (const e of ctx.chis) v += costChi(e, map);
+    return v;
+  };
+  /* LE COÛT TOTAL — la composition du recuit (distances + cœur dur + ω + bassins + χ1),
+     sans les murs de la longe : un rapport avant/après reste donc comparable à celui
+     d'un recuit, et les murs sont rendus À PART (`wallCostOf`). */
+  let core = corePairs();
+  const costOf = () => {
+    let v = 0;
+    for (const t of pairTerms) v += costPair(t, null);
+    for (const c of core) v += costCore(c, null);
+    for (const o of omega) v += costOmega(o, null);
+    for (const r of ramaRows) v += costRama(r, null);
+    for (const e of chis) v += costChi(e, null);
+    return v;
+  };
+  const wallCostOf = () => {
+    let v = 0;
+    for (const w of walls) v += costWall(w, null);
+    return v;
+  };
+  /** LA GÉOMÉTRIE « À PLAT » D'UN CANAL PORTÉ À UN ANGLE DONNÉ — `{ok, reason, map,
+   *  positions}`. La rotation est RIGIDE (`planTorsion`) : longueurs et angles d'un
+   *  côté ne bougent pas d'un chiffre, donc rien de ce que le champ porte sur la
+   *  chimie ne change par un pas de torsion. */
+  const mapFor = (ch, angleDeg) => {
+    const probe = ch.probeAtoms.map((k) => [x[k * 3], x[k * 3 + 1], x[k * 3 + 2]]);
+    const plan = planTorsion({
+      points: probe,
+      moved: ch.moving.map((k) => [x[k * 3], x[k * 3 + 1], x[k * 3 + 2]]),
+      request: { angleDeg },
+    });
+    if (!plan.ok) return { ok: false, reason: plan.reason, map: null, positions: null };
+    const map = new Map();
+    const positions = new Float64Array(ch.moving.length * 3);
+    ch.moving.forEach((k, c) => {
+      const p = plan.positions[c];
+      map.set(k, [p[0], p[1], p[2]]);
+      positions[c * 3] = p[0]; positions[c * 3 + 1] = p[1]; positions[c * 3 + 2] = p[2];
+    });
+    return { ok: true, reason: 'ok', map, positions };
+  };
+  const commit = (map) => {
+    for (const [k, p] of map) { x[k * 3] = p[0]; x[k * 3 + 1] = p[1]; x[k * 3 + 2] = p[2]; }
+  };
+  /* LES TRAVERSÉES SONT CACHÉES PAR CANAL — la molécule change, la liste des couples
+     qui traversent une charnière non : la relire à chaque pas serait payer deux fois. */
+  const ctxCache = new Map();
+  const ctxOf = (ch) => {
+    const key = `${ch.i}-${ch.j}`;
+    let ctx = ctxCache.get(key);
+    if (!ctx) { ctx = crossingOf(ch); ctxCache.set(key, ctx); }
+    return ctx;
+  };
+  return {
+    count, els, clean, chan, backbone, ramaRows, chis, omega,
+    x, weights, wRama, wChi, wWall,
+    at, gap, dihedralOf, mapFor, commit, crossingOf, ctxOf, crossCost,
+    costOf, wallCostOf, walls,
+    coreOf: () => core,
+    /* LA GRILLE DU CŒUR DUR EST REFAITE PÉRIODIQUEMENT — les atomes ont bougé, donc les
+       couples trop serrés ne sont plus les mêmes. Les traversées CACHÉES sont jetées avec
+       elle : elles portaient l'ANCIENNE liste de couples, et une liste périmée vaut une
+       grille qui ne surveille plus rien. */
+    refreshCore: () => {
+      core = corePairs();
+      ctxCache.clear();
+      return core;
+    },
+  };
+};
+
+/* ── 4ter · LA DYNAMIQUE MOLÉCULAIRE DIHÉDRALE (Langevin) ──────────────────────
+   « add the force field and a Molecular dynamics option. this will help the final
+   energy refinement. » La dynamique se fait dans l'espace des dièdres, comme le recuit
+   et comme le protocole standard (XPLOR/CNS, CYANA) : un pas = une rotation RIGIDE
+   autour d'une charnière. Il n'y a donc pas d'atome à déplacer librement, aucune
+   liaison à recasser, et l'équation du mouvement tient en trois lignes.
+
+   LE COUPLE est lu par DIFFÉRENCE FINIE — `τ = −[E(θ+δ) − E(θ−δ)] / 2δ`, avec δ =
+   `torqueStep` degrés, sur les seuls termes qui traversent la charnière (c'est ce qui
+   rend un pas abordable). La température est celle du palier courant, l'intégration est
+   une Euler–Maruyama semi-implicite (le thermostat de Langevin : frottement γ et bruit
+   dont l'amplitude `√(2γkT·dt/m)` est la relation de fluctuation–dissipation — il n'y a
+   donc pas de second thermostat à recaler), et la masse `m` est l'inertie d'un dièdre.
+   ⚠ `T` est en UNITÉS RÉDUITES (`k_B = 1`, l'énergie étant celle du champ) : ce n'est
+   pas une température en kelvins, et le module ne prétend pas le contraire.
+   ⚠ Les canaux sont balayés EN GAUSS–SEIDEL : chaque dièdre voit la géométrie qui
+   existe au moment de son pas. C'est le choix de tous les moteurs en coordonnées
+   internes, et c'est stable à ce pas de temps.
+
+   GÉNÉRATEUR, comme le recuit : une image toutes les `perFrame` pas (et à la dernière),
+   avec la température cinétique (`kinetic`), le potentiel (`potential`, la composition
+   du recuit) et les murs de la longe rendus à part. `molecularDynamicsOf` le conduit
+   d'un trait. */
+
+/** Le refus d'un mouvement — la même forme pour la dynamique et la minimisation : les
+ *  coordonnées reçues sont rendues TELLES QUELLES (rien n'a bougé), et la raison est
+ *  celle du module (`no-channel` : aucune charnière ; `no-step` : aucun pas demandé). */
+const refusedMotion = (reason, engine = null) => ({
+  ok: false,
+  reason,
+  positions: engine ? engine.x : null,
+  channels: engine ? engine.chan.length : 0,
+  steps: 0, applied: 0, skipped: 0, moved: 0,
+  temperature: null,
+  cost: { before: engine ? engine.costOf() : 0, after: engine ? engine.costOf() : 0 },
+  walls: { before: 0, after: 0, count: 0 },
+  trace: [],
+  omega: null, rama: null, chi: null,
+});
+
+export function* mdFrames({
+  positions = null, elements = [], bonds = [], restraints = [], weights = RELAX_WEIGHTS,
+  channels = null, leash = null, torsions = null, omegas = null,
+  ramaWeight = STRUCTURE_CALC_RAMA_WEIGHT, chiWeight = STRUCTURE_CALC_CHI_WEIGHT,
+  seed = STRUCTURE_CALC_SEED, rng = null,
+  steps = STRUCTURE_CALC_MD_STEPS,
+  hot = STRUCTURE_CALC_MD_HOT, cold = STRUCTURE_CALC_MD_COLD,
+  temperature = null,
+  dt = STRUCTURE_CALC_MD_DT, friction = STRUCTURE_CALC_MD_FRICTION,
+  mass = STRUCTURE_CALC_MD_MASS, torqueStep = STRUCTURE_CALC_MD_TORQUE_STEP,
+  perFrame = STRUCTURE_CALC_MD_FRAME, coreRefresh = STRUCTURE_CALC_CORE_REFRESH,
+} = {}) {
+  const engine = torsionEngineOf({
+    positions, elements, bonds, restraints, weights, channels, leash, torsions, omegas,
+    ramaWeight, chiWeight,
+  });
+  if (!engine) return refusedMotion('bad-points');
+  const chan = engine.chan;
+  const n = clampInt(steps, 0, 1000000, STRUCTURE_CALC_MD_STEPS);
+  if (!chan.length || !n) return refusedMotion(chan.length ? 'no-step' : 'no-channel', engine);
+  const random = typeof rng === 'function' ? rng : makeRelaxRandom(wrapSeed(seed));
+  /* LE BRUIT — deux tirages uniformes par composante (Box–Muller), tirés du générateur
+     du dossier : la même graine donne donc la même trajectoire, au pas près. */
+  const gaussian = () => {
+    let u = 0; let v = 0;
+    while (u === 0) u = random();
+    while (v === 0) v = random();
+    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+  };
+  const h = Math.max(1e-4, Number(dt) || STRUCTURE_CALC_MD_DT);
+  const gamma = Math.max(0, Number(friction) || STRUCTURE_CALC_MD_FRICTION);
+  const m = Math.max(1e-6, Number(mass) || STRUCTURE_CALC_MD_MASS);
+  const delta = Math.max(0.05, Math.abs(Number(torqueStep) || STRUCTURE_CALC_MD_TORQUE_STEP));
+  /* ⚠ `temperature == null` D'ABORD — `Number(null)` vaut 0, et un thermostat à 0 °
+     réduit gèlerait la dynamique au lieu de la laisser recuire : le défaut est le PLAN
+     (hot → cold), et une température FIXE n'existe que si on la demande vraiment. */
+  const fixedT = temperature == null || !Number.isFinite(Number(temperature))
+    ? null : Math.max(0, Number(temperature));
+  /* ⚠ MÊME RÈGLE POUR LES DEUX BOUTS DU PLAN : un `null` n'est pas un zéro. */
+  const numOr = (v, fallback) => (v == null || !Number.isFinite(Number(v)) ? fallback : Number(v));
+  const hotT = Math.max(0, numOr(hot, STRUCTURE_CALC_MD_HOT));
+  const coldT = Math.max(0, numOr(cold, STRUCTURE_CALC_MD_COLD));
+  const every = Math.max(1, clampInt(perFrame, 0, Math.max(1, n), 0) || STRUCTURE_CALC_MD_FRAME);
+  const rebuildEvery = Math.max(1, Math.round(coreRefresh) || STRUCTURE_CALC_CORE_REFRESH);
+  /* LE PLAN DE TEMPÉRATURE — géométrique (chaud d'abord, froid à la fin), ou FIXE quand
+     une température est demandée : une dynamique d'équilibrage a le droit de tenir T. */
+  const targetAt = (t) => {
+    if (fixedT != null) return fixedT;
+    if (n <= 1) return coldT;
+    return hotT * Math.pow(Math.max(1e-9, coldT / Math.max(1e-9, hotT)), t / (n - 1));
+  };
+  const vel = new Float64Array(chan.length);
+  const trace = [];
+  const readAll = () => ({
+    cost: engine.costOf(),
+    walls: engine.wallCostOf(),
+    omega: omegaPenaltyOf({ positions: engine.x, omegas: engine.omega }),
+    rama: ramaPenaltyOf({ positions: engine.x, torsions: engine.backbone, weight: engine.wRama }),
+    chi: chiPenaltyOf({ positions: engine.x, chis: engine.chis, weight: engine.wChi }),
+  });
+  const before = readAll();
+  let applied = 0; let skipped = 0; let kinetic = 0;
+  for (let t = 0; t < n; t += 1) {
+    const target = targetAt(t);
+    /* LE PAS — un canal après l'autre, sur la géométrie du moment (Gauss–Seidel). */
+    for (let k = 0; k < chan.length; k += 1) {
+      const ch = chan[k];
+      const ctx = engine.ctxOf(ch);
+      const cur = engine.dihedralOf(ch.probeAtoms, null);
+      if (!Number.isFinite(cur)) { skipped += 1; continue; }
+      const up = engine.mapFor(ch, cur + delta);
+      const down = engine.mapFor(ch, cur - delta);
+      if (!up.ok || !down.ok) { skipped += 1; continue; }
+      /* LE COUPLE, PAR DIFFÉRENCE FINIE CENTRÉE — la pente du champ le long de CE
+         dièdre, prise sur les seuls termes qui le traversent. */
+      const torque = -(engine.crossCost(ctx, up.map) - engine.crossCost(ctx, down.map)) / (2 * delta);
+      const noise = Math.sqrt((2 * gamma * target * h) / m) * gaussian();
+      const v = vel[k] * (1 - gamma * h) + (torque / m) * h + noise;
+      vel[k] = v;
+      if (Math.abs(v * h) < 1e-9) continue;
+      const move = engine.mapFor(ch, ((cur + v * h + 540) % 360) - 180);
+      if (!move.ok) { skipped += 1; continue; }
+      engine.commit(move.map);
+      applied += 1;
+    }
+    if (t % rebuildEvery === rebuildEvery - 1) engine.refreshCore();
+    /* LA TEMPÉRATURE CINÉTIQUE — équipartition à `k_B = 1` : T = moyenne(m·v²). */
+    let sum = 0;
+    for (let k = 0; k < chan.length; k += 1) sum += m * vel[k] * vel[k];
+    kinetic = chan.length ? sum / chan.length : 0;
+    if (t % every === every - 1 || t === n - 1) {
+      const potential = engine.costOf();
+      const walls = engine.wallCostOf();
+      const frame = {
+        phase: 'md', positions: engine.x, step: t + 1, of: n,
+        temperature: Number(target.toFixed(6)), kinetic: Number(kinetic.toFixed(6)),
+        potential: Number(potential.toFixed(6)), walls: Number(walls.toFixed(6)),
+        total: Number((potential + walls).toFixed(6)),
+        applied, skipped, dt: h,
+      };
+      trace.push({
+        step: frame.step, temperature: frame.temperature,
+        kinetic: frame.kinetic, potential: frame.potential,
+      });
+      yield frame;
+    }
+  }
+  const after = readAll();
+  let moved = 0;
+  for (let k = 0; k < chan.length; k += 1) if (Math.abs(vel[k]) > 1e-12) moved += 1;
+  return {
+    ok: true, reason: 'ok',
+    positions: engine.x,
+    channels: chan.length,
+    steps: n, applied, skipped, moved,
+    temperature: {
+      mode: fixedT != null ? 'fixed' : 'annealed',
+      hot: fixedT != null ? fixedT : hotT, cold: fixedT != null ? fixedT : coldT,
+      kinetic: Number(kinetic.toFixed(6)),
+      mean: Number((trace.reduce((s, r) => s + r.kinetic, 0) / Math.max(1, trace.length)).toFixed(6)),
+      dt: h, friction: gamma, mass: m, torqueStep: delta,
+    },
+    cost: { before: before.cost, after: after.cost },
+    walls: { before: before.walls, after: after.walls, count: engine.walls.length },
+    before, after, trace,
+    omega: after.omega, rama: after.rama, chi: after.chi,
+  };
+}
+
+/** LA DYNAMIQUE, D'UN TRAIT — le même générateur conduit jusqu'au bout. */
+export const molecularDynamicsOf = (spec = {}) => drainFrames(mdFrames(spec), spec.onFrame);
+
+/* ── 4quater · LA MINIMISATION DIHÉDRALE — L'AFFINAGE FINAL DE L'ÉNERGIE ───────
+   « this will help the final energy refinement. » La descente se fait sur les MÊMES
+   coordonnées que la dynamique (les dièdres), donc sur le même champ : chaque charnière
+   est essayée de part et d'autre d'un pas qui se DIVISE PAR DEUX dès qu'un balayage
+   complet n'améliore plus rien. Rien n'est accepté qui empire le coût local (les termes
+   qui traversent la charnière — murs de la longe compris), et le mouvement reste une
+   rotation rigide : les longueurs et les angles ne peuvent pas se casser.
+
+   GÉNÉRATEUR comme les autres (`minimizeTorsionsOf` le conduit d'un trait), une image
+   par balayage — c'est ce qui se regarde à l'écran. */
+export function* minimizeFrames({
+  positions = null, elements = [], bonds = [], restraints = [], weights = RELAX_WEIGHTS,
+  channels = null, leash = null, torsions = null, omegas = null,
+  ramaWeight = STRUCTURE_CALC_RAMA_WEIGHT, chiWeight = STRUCTURE_CALC_CHI_WEIGHT,
+  rounds = STRUCTURE_CALC_MIN_ROUNDS, step = STRUCTURE_CALC_MIN_STEP,
+  stepFloor = STRUCTURE_CALC_MIN_STEP_FLOOR, tries = STRUCTURE_CALC_MIN_TRIES,
+} = {}) {
+  const engine = torsionEngineOf({
+    positions, elements, bonds, restraints, weights, channels, leash, torsions, omegas,
+    ramaWeight, chiWeight,
+  });
+  if (!engine) return refusedMotion('bad-points');
+  const chan = engine.chan;
+  const nRounds = clampInt(rounds, 0, 64, STRUCTURE_CALC_MIN_ROUNDS);
+  if (!chan.length || !nRounds) return refusedMotion(chan.length ? 'no-step' : 'no-channel', engine);
+  let width = Math.max(0.01, Math.abs(Number(step) || STRUCTURE_CALC_MIN_STEP));
+  const floor = Math.max(0.01, Math.abs(Number(stepFloor) || STRUCTURE_CALC_MIN_STEP_FLOOR));
+  const maxTries = clampInt(tries, 1, 64, STRUCTURE_CALC_MIN_TRIES);
+  const readAll = () => ({
+    cost: engine.costOf(),
+    walls: engine.wallCostOf(),
+    omega: omegaPenaltyOf({ positions: engine.x, omegas: engine.omega }),
+    rama: ramaPenaltyOf({ positions: engine.x, torsions: engine.backbone, weight: engine.wRama }),
+    chi: chiPenaltyOf({ positions: engine.x, chis: engine.chis, weight: engine.wChi }),
+  });
+  const before = readAll();
+  const schedule = [];
+  let sweeps = 0; let accepted = 0; let skipped = 0;
+  while (sweeps < nRounds && width >= floor) {
+    let improved = 0;
+    /* LA GRILLE DU CŒUR DUR EST REFAITE À CHAQUE BALAYAGE — un balayage déplace jusqu'à
+       tous les dièdres, donc les couples trop serrés ont changé. */
+    engine.refreshCore();
+    for (const ch of chan) {
+      const ctx = engine.ctxOf(ch);
+      let cur = engine.dihedralOf(ch.probeAtoms, null);
+      if (!Number.isFinite(cur)) { skipped += 1; continue; }
+      let local = engine.crossCost(ctx, null);
+      for (let a = 0; a < maxTries; a += 1) {
+        const up = engine.mapFor(ch, cur + width);
+        const down = engine.mapFor(ch, cur - width);
+        const cu = up.ok ? engine.crossCost(ctx, up.map) : Infinity;
+        const cd = down.ok ? engine.crossCost(ctx, down.map) : Infinity;
+        const best = Math.min(cu, cd);
+        if (!(best < local - 1e-12)) break;         // rien à gagner par ici
+        engine.commit((cu <= cd ? up : down).map);
+        local = best;
+        cur = ((cur + (cu <= cd ? width : -width) + 540) % 360) - 180;
+        improved += 1;
+        accepted += 1;
+      }
+    }
+    sweeps += 1;
+    const row = {
+      phase: 'minimise', positions: engine.x, sweep: sweeps, of: nRounds,
+      step: Number(width.toFixed(4)), improved,
+      cost: Number(engine.costOf().toFixed(6)), walls: Number(engine.wallCostOf().toFixed(6)),
+    };
+    schedule.push(row);
+    yield row;
+    /* PLUS RIEN À GAGNER À CE PAS — on le divise : c'est la descente en coordonnées du
+       dossier, et elle s'arrête quand le pas est plus fin que `stepFloor`. */
+    if (!improved) width /= 2;
+  }
+  const after = readAll();
+  return {
+    ok: true,
+    reason: width < floor ? 'converged' : 'max-rounds',
+    positions: engine.x,
+    channels: chan.length,
+    steps: sweeps * chan.length, sweeps, accepted, skipped,
+    step: Number(width.toFixed(6)),
+    schedule,
+    cost: { before: before.cost, after: after.cost },
+    walls: { before: before.walls, after: after.walls, count: engine.walls.length },
+    before, after,
+    omega: after.omega, rama: after.rama, chi: after.chi,
+  };
+}
+
+/** LA MINIMISATION, D'UN TRAIT — le même générateur conduit jusqu'au bout. */
+export const minimizeTorsionsOf = (spec = {}) => drainFrames(minimizeFrames(spec), spec.onFrame);
 
 /* ── 5 · UN DÉPART, DE BOUT EN BOUT — LE 🔥 RECUIT, PUIS LE ⚒ ──────────────────
    Le cœur de la demande : on tire les dièdres, on RECUIT (M1bis), on applique le
@@ -804,7 +1832,7 @@ export const scoreStructureOf = ({
  *   balayages (ce que chacun a conduit, ce que la préparation a trouvé, les pas et
  *   les évaluations payés).
  */
-export const structureAttemptOf = ({
+export function* structureAttemptFrames({
   positions = null, elements = [], bonds = [], restraints = [], index = 0,
   seed = STRUCTURE_CALC_SEED, tolerance = STRUCTURE_CALC_RESTRAINT_TOLERANCE,
   weights = RELAX_WEIGHTS, steps = STRUCTURE_CALC_STEPS,
@@ -815,9 +1843,16 @@ export const structureAttemptOf = ({
   buildPasses = STRUCTURE_CALC_BUILD_PASSES,
   buildDistances = STRUCTURE_CALC_BUILD_DISTANCES,
   buildContacts = STRUCTURE_CALC_BUILD_CONTACTS,
-  draw = true, onPass = null, onStep = null,
-  anneal = null, quench = true,
-} = {}) => {
+  draw = true, onPass = null,
+  anneal = null, annealPerFrame = 0,
+  /* ⚙ LA FIN DU PROTOCOLE — la dynamique (chaud → froid), la minimisation, la trempe.
+     `md: 0` ou `minimise: 0` les enlève : un appelant garde donc la main sur ce qu'un
+     départ coûte, et les trois rendent leur coût avant/après dans le rapport. */
+  md = STRUCTURE_CALC_MD_STEPS, mdPerFrame = STRUCTURE_CALC_MD_FRAME,
+  mdHot = STRUCTURE_CALC_MD_HOT, mdCold = STRUCTURE_CALC_MD_COLD,
+  minimise = STRUCTURE_CALC_MIN_ROUNDS,
+  quench = true,
+} = {}) {
   const read = flatPositions(positions);
   const k = clampInt(index, 0, Number.MAX_SAFE_INTEGER, 0);
   const startSeed = wrapSeed(wrapSeed(seed) + wrapSeed(k * STRUCTURE_CALC_SEED_STEP));
@@ -825,28 +1860,30 @@ export const structureAttemptOf = ({
   if (!read) {
     return {
       ok: false, reason: 'bad-points', index: k, seed: startSeed, score: Infinity,
-      total: Infinity, bond: 0, angle: 0, planar: 0, pair: 0, contact: 0,
+      total: Infinity, target: Infinity, bond: 0, angle: 0, planar: 0, pair: 0, contact: 0,
+      omega: 0, rama: 0, chi: 0,
       bondRms: 0, angleRms: 0, planarRms: 0, clashPenalty: 0,
+      omegaPenalty: 0, ramaPenalty: 0, chiPenalty: 0,
       clashes: { count: 0, severity: 0, worst: null, minDistance: clashDistance },
       contacts: { count: 0, severity: 0, worst: null, checked: 0, unknownElements: 0 },
       restraint: restraintReportOf({ positions: null, restraints, tolerance }),
       positions: null, moved: 0, restraints: [], restraintCount: 0, dropped: 0,
       draw: { turned: 0, channels: 0, skipped: 0, counts: null, plan: [] },
       channels: [],
-      anneal: null,
-      omega: { count: 0, penalty: 0, violations: 0, worst: null },
+      anneal: null, md: null, minimise: null, quench: null,
       protocol: { prep: null, passes: [], passCount: 0, drove: 0, reached: 0, steps: 0, evaluations: 0 },
     };
   }
   const count = read.count;
   const clean = restraintListOf({ restraints, atomCount: count });
   const x0 = read.flat.slice();
-  /* LE PAS MONTRE — un rapport par geste (le panneau écrit ces coordonnées à l'écran
-     s'il le demande) : le tirage, chaque palier du recuit, la préparation, chaque
-     distance conduite, le balayage. Aucune coordonnée n'est recalculée : c'est `x`. */
-  const step = (phase, positions, extra = null) => {
-    if (typeof onStep !== 'function') return;
-    try { onStep({ phase, positions, index: k, ...(extra || {}) }); } catch { /* un rapport qui se plaint n'arrête pas le calcul */ }
+  /* LE PAS MONTRE — une IMAGE par geste (le panneau écrit ces coordonnées à l'écran
+     s'il le demande) : le tirage, chaque pas de recuit, la préparation, chaque distance
+     conduite, le balayage, la dynamique, la minimisation, la trempe. Aucune coordonnée
+     n'est recalculée : c'est `x`. C'est un `yield` — le conducteur synchrone
+     (`structureAttemptOf`) le passe à `onStep`, l'écran écrit et laisse peindre. */
+  const step = function* (phase, positions, extra = null) {
+    yield { phase, positions, index: k, ...(extra || {}) };
   };
   /* 1 · LE TIRAGE DES DIÈDRES — le départ. `draw: false` garde la molécule reçue
      telle quelle (le ⚒ d'un seul coup, sans hasard : ce que la sonde compare). */
@@ -854,27 +1891,32 @@ export const structureAttemptOf = ({
     ? randomTorsionsOf({ positions: x0, elements: els, bonds, atomCount: count, seed: startSeed })
     : null;
   let x = drawn && drawn.ok ? Array.from(drawn.positions) : x0.slice();
-  step('draw', x, { channels: drawn ? drawn.channelCount : 0 });
+  yield* step('draw', x, { channels: drawn ? drawn.channelCount : 0 });
   /* 1bis · LE RECUIT — LA PHYSIQUE. Le tirage est un point AU HASARD dans un espace de
      très grande dimension, et le protocole qui suit est LOCAL : sans recuit, un départ
      empilé ou loin de vos distances y reste. Le recuit n'appartient donc qu'à un
      DÉPART TIRÉ : `draw: false` est le ⚒ tel quel sur la molécule reçue (aucun
      hasard), et il ne recuit pas — sauf si `anneal` le demande explicitement. La
-     barrière ω est lue ici une fois pour tout le départ (elle sert aussi à la note). */
+     barrière ω et le squelette sont lus ici une fois pour tout le départ (le même
+     champ de forces que la note, donc). */
   const omegas = peptideOmegasOf({ elements: els, bonds, atomCount: count });
+  const backbone = backboneTorsionsOf({ elements: els, bonds, atomCount: count });
   const annealSteps = clampInt(
     anneal == null ? (draw ? STRUCTURE_CALC_ANNEAL_STEPS : 0) : anneal,
     0, 64, 0,
   );
-  const annealRun = annealSteps > 0
-    ? annealTorsionsOf({
+  let annealRun = null;
+  if (annealSteps > 0) {
+    const frames = annealFrames({
       positions: x, elements: els, bonds, restraints: clean.list,
-      channels: drawn ? drawn.channels : null, omegas, weights,
+      channels: drawn ? drawn.channels : null, omegas, torsions: backbone, weights,
       seed: wrapSeed(startSeed + 7),
-      steps: annealSteps,
-      onStep: typeof onStep === 'function' ? (s) => step('anneal', s.positions, s) : null,
-    })
-    : null;
+      steps: annealSteps, perFrame: annealPerFrame,
+    });
+    let next = frames.next();
+    while (!next.done) { yield { ...next.value, index: k }; next = frames.next(); }
+    annealRun = next.value;
+  }
   if (annealRun && annealRun.ok) x = Array.from(annealRun.positions);
   /* 2 · LA PRÉPARATION — LE PROTOCOLE DU ⚒, SANS ATOME PIQUÉ : il cherche lui-même
      les longueurs fausses et les couples entrés dans leur cœur dur (un tirage peut
@@ -888,7 +1930,7 @@ export const structureAttemptOf = ({
   });
   const prepRun = scanOf(x, 0);
   if (prepRun && prepRun.ok) x = Array.from(prepRun.positions);
-  step('prep', x);
+  yield* step('prep', x);
   const prep = {
     reason: prepRun ? prepRun.reason : 'no-prep',
     converged: !!(prepRun && prepRun.converged),
@@ -941,7 +1983,7 @@ export const structureAttemptOf = ({
       if (run.ok) {
         x = Array.from(run.positions);
         if (run.reached) { entry.reached += 1; reached += 1; }
-        step('drive', x, { pass: p, pair: { i: r.i, j: r.j } });
+        yield* step('drive', x, { pass: p, pair: { i: r.i, j: r.j } });
       }
     }
     /* LE BALAYAGE DU ⚒ APRÈS LES GESTES — les mouvements viennent peut-être de créer
@@ -951,7 +1993,7 @@ export const structureAttemptOf = ({
     const scanRun = scanOf(x, p);
     if (scanRun && scanRun.ok) {
       x = Array.from(scanRun.positions);
-      step('scan', x, { pass: p, found: scanRun.found });
+      yield* step('scan', x, { pass: p, found: scanRun.found });
       entry.scan = {
         reason: scanRun.reason, converged: scanRun.converged,
         found: scanRun.found, foundContacts: scanRun.foundContacts,
@@ -972,7 +2014,43 @@ export const structureAttemptOf = ({
     if (p >= passMax) reason = 'max-passes';
   }
 
-  /* 3bis · LA TREMPE — LE PROTOCOLE A PU CASSER ω. Sa descente n'a aucune cible d'ω (le
+  /* 3ter · LA DYNAMIQUE MOLÉCULAIRE, PUIS LA MINIMISATION — L'AFFINAGE FINAL DE L'ÉNERGIE.
+     Le ⚒ a conduit chaque distance, mais sa descente ne connaît NI les bassins φ/ψ NI χ1 :
+     elle peut avoir laissé un squelette hors des bassins. C'est ici que le champ de forces
+     reprend la main — chaud, la conformation change de bassin ; froid, elle s'y pose — et
+     la minimisation finit sur un minimum local DU MÊME champ. La LONGE est celle des
+     distances DÉJÀ tenues à cet instant : aucune n'est lâchée (un MUR, pas un refus : une
+     trajectoire ne peut pas refuser un pas). `md: 0` ou `minimise: 0` enlève l'un ou
+     l'autre, et le rapport dit ce que chacun a coûté. */
+  const mdSteps = clampInt(md, 0, 100000, STRUCTURE_CALC_MD_STEPS);
+  const minRounds = clampInt(minimise, 0, 64, STRUCTURE_CALC_MIN_ROUNDS);
+  const held = restraintReportOf({ positions: x, restraints: clean.list, tolerance })
+    .list.filter((r) => r.satisfied).map((r) => ({ i: r.i, j: r.j, target: r.target }));
+  const motionOf = (arr) => ({
+    positions: arr, elements: els, bonds, restraints: clean.list, weights,
+    channels: drawn ? drawn.channels : null, torsions: backbone, omegas, leash: held,
+  });
+  let mdRun = null;
+  if (mdSteps > 0) {
+    const frames = mdFrames({
+      ...motionOf(x), seed: wrapSeed(startSeed + 23),
+      steps: mdSteps, hot: mdHot, cold: mdCold, perFrame: mdPerFrame,
+    });
+    let next = frames.next();
+    while (!next.done) { yield { ...next.value, index: k }; next = frames.next(); }
+    mdRun = next.value;
+    if (mdRun && mdRun.ok) x = Array.from(mdRun.positions);
+  }
+  let minRun = null;
+  if (minRounds > 0) {
+    const frames = minimizeFrames({ ...motionOf(x), rounds: minRounds });
+    let next = frames.next();
+    while (!next.done) { yield { ...next.value, index: k }; next = frames.next(); }
+    minRun = next.value;
+    if (minRun && minRun.ok) x = Array.from(minRun.positions);
+  }
+
+  /* 3quater · LA TREMPE — LE PROTOCOLE A PU CASSER ω. Sa descente n'a aucune cible d'ω (le
      ⚒ n'en a jamais eu) : en conduisant une distance, elle peut remettre une liaison
      peptidique en cis. Ce dernier recuit, FROID et SOUS LONGE, répare ce qu'elle a
      abîmé sans lâcher les distances qu'elle vient de respecter. `quench: false` l'enlève. */
@@ -982,17 +2060,20 @@ export const structureAttemptOf = ({
   const omegaBeforeQuench = annealSteps > 0 && quench
     ? omegaPenaltyOf({ positions: x, omegas })
     : null;
-  const quenchRun = annealSteps > 0 && quench
-    ? annealTorsionsOf({
+  let quenchRun = null;
+  if (annealSteps > 0 && quench) {
+    const frames = annealFrames({
       positions: x, elements: els, bonds, restraints: clean.list,
-      channels: drawn ? drawn.channels : null, omegas, weights,
+      channels: drawn ? drawn.channels : null, omegas, torsions: backbone, weights,
       seed: wrapSeed(startSeed + 13),
       steps: STRUCTURE_CALC_QUENCH_STEPS,
       hot: STRUCTURE_CALC_ANNEAL_COLD, cold: STRUCTURE_CALC_ANNEAL_COLD,
       leash: clean.list, protectOmega: true,
-      onStep: typeof onStep === 'function' ? (s) => step('quench', s.positions, s) : null,
-    })
-    : null;
+    });
+    let next = frames.next();
+    while (!next.done) { yield { ...next.value, phase: 'quench', index: k }; next = frames.next(); }
+    quenchRun = next.value;
+  }
   if (quenchRun && quenchRun.ok) x = Array.from(quenchRun.positions);
 
   /* LA NOTE, ET LA RElecture DES DIÈDRES — le rapport dit ce que la structure A, pas
@@ -1000,7 +2081,7 @@ export const structureAttemptOf = ({
      lecteur de dihèdre du dossier). */
   const scored = scoreStructureOf({
     positions: x, elements: els, bonds, restraints: clean.list, weights, clashDistance,
-    tolerance, omegas,
+    tolerance, omegas, torsions: backbone,
   });
   let moved = 0;
   for (let i = 0; i < count; i += 1) {
@@ -1055,12 +2136,44 @@ export const structureAttemptOf = ({
       schedule: quenchRun.schedule,
     } : null,
     omega: scored.omega,
+    /* LA DYNAMIQUE ET LA MINIMISATION, RACONTÉES — les pas, les températures, les murs de
+       la longe et le coût avant/après (le même coût que le recuit : comparable). */
+    md: mdRun && mdRun.ok ? {
+      steps: mdRun.steps,
+      channels: mdRun.channels,
+      applied: mdRun.applied,
+      skipped: mdRun.skipped,
+      temperature: mdRun.temperature,
+      before: mdRun.cost.before,
+      after: mdRun.cost.after,
+      walls: mdRun.walls,
+      rama: mdRun.rama ? mdRun.rama.penalty : 0,
+      chi: mdRun.chi ? mdRun.chi.penalty : 0,
+      trace: mdRun.trace,
+    } : null,
+    minimise: minRun && minRun.ok ? {
+      sweeps: minRun.sweeps,
+      accepted: minRun.accepted,
+      skipped: minRun.skipped,
+      reason: minRun.reason,
+      step: minRun.step,
+      before: minRun.cost.before,
+      after: minRun.cost.after,
+      walls: minRun.walls,
+      schedule: minRun.schedule,
+    } : null,
     protocol: {
       prep, passes: passesLog, passCount: passesLog.length,
       drove, reached, steps: stepsTaken, evaluations,
     },
   };
-};
+}
+
+/** UN DÉPART, D'UN TRAIT — le même générateur conduit jusqu'au bout (les appelants, les
+ *  tests, et le ⚒ d'un seul coup). `onStep` reçoit chaque image, exactement comme avant
+ *  que le protocole soit écrit en générateur. */
+export const structureAttemptOf = (spec = {}) =>
+  drainFrames(structureAttemptFrames(spec), spec.onStep);
 
 /* ── 6 · LE CLASSEMENT, ET LA FAMILLE DES m RETENUES ─────────────────────────
    « the final result is scored. the best m structures are retained. » Le classement
@@ -1169,7 +2282,30 @@ export const rankStructureAttempts = ({
     index: a.index,
     score: a.score,
     total: a.total,
+    target: a.target,
     clashPenalty: a.clashPenalty,
+    /* LES TROIS POTENTIELS DE TORSION — le tableau du panneau peut donc dire ce que le
+       score d'un modèle porte EN PLUS de la chimie : ω, bassins φ/ψ, χ1. */
+    omegaPenalty: a.omegaPenalty,
+    ramaPenalty: a.ramaPenalty,
+    chiPenalty: a.chiPenalty,
+    rama: a.ramaPlot
+      ? {
+        measured: a.ramaPlot.measured, violations: a.ramaPlot.violations,
+        partial: a.ramaPlot.partial, penalty: a.ramaPlot.penalty,
+        worst: a.ramaPlot.worst ? { ...a.ramaPlot.worst } : null,
+      }
+      : null,
+    chi: a.chiWells
+      ? { measured: a.chiWells.measured, violations: a.chiWells.violations }
+      : null,
+    md: a.md ? {
+      steps: a.md.steps, applied: a.md.applied, before: a.md.before, after: a.md.after,
+      temperature: a.md.temperature ? { ...a.md.temperature } : null,
+    } : null,
+    minimise: a.minimise
+      ? { sweeps: a.minimise.sweeps, accepted: a.minimise.accepted, before: a.minimise.before, after: a.minimise.after }
+      : null,
     bondRms: a.bondRms,
     angleRms: a.angleRms,
     moved: a.moved,
@@ -1220,10 +2356,14 @@ export const rankStructureAttempts = ({
    Les quatre gestes de la demande, dans l'ordre, en une seule fonction : n
    `structureAttemptOf` (numérotés 0…n−1, chacun avec SA graine), puis
    `rankStructureAttempts` sur les n tentatives. `indices` permet de ne calculer qu'une
-   TRANCHE (le panneau en calcule une par image, pour que la page reste vivante),
-   `onAttempt` reçoit chaque tentative dès qu'elle est finie, `shouldStop` est consulté
-   AVANT chaque départ (le bouton ⏹ du panneau), et `anneal` / `onStep` descendent tels
-   quels dans chaque `structureAttemptOf` (le recuit, et l'aperçu à l'écran). */
+   TRANCHE (un appelant qui découpe), `onAttempt` reçoit chaque tentative dès qu'elle est
+   finie, `shouldStop` est consulté AVANT chaque départ (le bouton ⏹ du panneau), et
+   tout ce qui suit (`anneal`, `md`, `minimise`, `onStep`…) descend tel quel dans chaque
+   `structureAttemptFrames`.
+   ⚠ GÉNÉRATEUR : il rend la main à CHAQUE image de chaque départ (`{phase, positions,
+   index}`, plus une image `start` avant chaque départ et `attempt-done` après). C'est ce
+   qui permet à l'écran de peindre la molécule pendant le calcul ; `structureCalculationOf`
+   est le même calcul conduit d'un trait. */
 
 const refusedCalculation = (reason, extra = {}) => ({
   ok: false,
@@ -1245,12 +2385,12 @@ const refusedCalculation = (reason, extra = {}) => ({
   ...extra,
 });
 
-export const structureCalculationOf = ({
+export function* structureCalculationFrames({
   positions = null, elements = [], bonds = [], restraints = [],
   starts = STRUCTURE_CALC_DEFAULT_STARTS, keep = STRUCTURE_CALC_DEFAULT_KEEP,
   seed = STRUCTURE_CALC_SEED, tolerance = STRUCTURE_CALC_RESTRAINT_TOLERANCE,
   indices = null, onAttempt = null, shouldStop = null, ...rest
-} = {}) => {
+} = {}) {
   const read = flatPositions(positions);
   if (!read) return refusedCalculation('bad-points');
   const n = clampInt(starts, 0, STRUCTURE_CALC_MAX_STARTS, STRUCTURE_CALC_DEFAULT_STARTS);
@@ -1270,17 +2410,24 @@ export const structureCalculationOf = ({
   let stopped = false;
   for (const index of order) {
     if (typeof shouldStop === 'function' && shouldStop()) { stopped = true; break; }
-    const attempt = structureAttemptOf({
+    /* LE DÉPART COMMENCE — l'écran le sait avant la première image (c'est ce qui fait
+       écrire « départ 3/8 » AVANT que la molécule ne bouge). */
+    yield { phase: 'start', index, of: order.length, positions: read.flat };
+    const frames = structureAttemptFrames({
       ...rest,
       positions: read.flat, elements, bonds,
       restraints: clean.list, index, seed, tolerance,
     });
+    let next = frames.next();
+    while (!next.done) { yield next.value; next = frames.next(); }
+    const attempt = next.value;
     attempts.push(attempt);
     if (typeof onAttempt === 'function') {
       try {
         onAttempt(attempt, { index, of: order.length, start: clean.count });
       } catch { /* un rapport qui se plaint n'arrête pas le calcul */ }
     }
+    yield { phase: 'attempt-done', index, of: order.length, attempt, positions: attempt.positions };
   }
   const ranked = rankStructureAttempts({ attempts, keep });
   return {
@@ -1296,4 +2443,10 @@ export const structureCalculationOf = ({
     tolerance,
     stopped,
   };
-};
+}
+
+/** LE CALCUL, D'UN TRAIT — le même générateur conduit jusqu'au bout (l'appelant qui
+ *  veut la famille classée, et les tests). `onFrame` reçoit CHAQUE image de CHAQUE
+ *  départ : c'est l'ancien `onStep`, sans une ligne de différence. */
+export const structureCalculationOf = (spec = {}) =>
+  drainFrames(structureCalculationFrames(spec), spec.onFrame);

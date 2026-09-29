@@ -49,10 +49,17 @@ import {
   STRUCTURE_CALC_PASSES, STRUCTURE_CALC_ESCAPES, STRUCTURE_CALC_MAX_RESTRAINTS,
   STRUCTURE_CALC_ANNEAL_STEPS, STRUCTURE_CALC_QUENCH_STEPS, STRUCTURE_CALC_OMEGA,
   STRUCTURE_CALC_OMEGA_TOLERANCE, STRUCTURE_CALC_CORE_REACH,
+  STRUCTURE_CALC_RAMA_WEIGHT, STRUCTURE_CALC_CHI_WEIGHT, STRUCTURE_CALC_CHI_TOLERANCE,
+  STRUCTURE_CALC_MD_STEPS, STRUCTURE_CALC_MD_HOT, STRUCTURE_CALC_MD_COLD,
+  STRUCTURE_CALC_MD_FRAME, STRUCTURE_CALC_MIN_ROUNDS, STRUCTURE_CALC_LEASH_WALL,
   rotatableBondsOf, randomTorsionsOf, channelReadingsOf, restraintListOf,
   restraintReportOf, scoreStructureOf, structureAttemptOf, rankStructureAttempts,
   familySpreadOf, familyRestraintsOf, structureCalculationOf,
   peptideOmegasOf, omegaPenaltyOf, annealTorsionsOf,
+  drainFrames, annealFrames, structureAttemptFrames, structureCalculationFrames,
+  backboneTorsionsOf, ramaGapOf, ramaPenaltyOf, chiPenaltyOf,
+  forceFieldEnergyOf, forceFieldRowsOf, FORCE_FIELD_FAMILIES,
+  mdFrames, molecularDynamicsOf, minimizeFrames, minimizeTorsionsOf,
 } from './src/utils/structureCalc.js';
 
 let passed = 0;
@@ -187,8 +194,8 @@ has(MODULE, "import { rigidTransform } from './structureFit.js';",
   '…et la dispersion de la famille passe par le solveur de superposition du dossier');
 has(RUN3, 'export const rigidTransform', '…qui est bien celui-là (kabsch de utils/mdAnalysis.js)');
 eq([...MODULE.matchAll(/from '([^']+)';/g)].map((m) => m[1]).sort(),
-  ['./geometryRelax.js', './structureCalc.js', './structureFit.js', './torsionDrive.js'].filter((p) => p !== './structureCalc.js').sort(),
-  '⚠ le module n’importe QUE le ⚒, le dièdre et la superposition — rien d’autre (aucun écran, aucun NGL)');
+  ['./geometryRelax.js', './ramachandran.js', './structureFit.js', './torsionDrive.js'].sort(),
+  '⚠ le module n’importe QUE le ⚒, les bassins du graphe 🪢, le dièdre et la superposition — rien d’autre (aucun écran, aucun NGL)');
 ok(!/(positionFromArray\(|updateRepresentations\(|document\.|window\.requestAnimationFrame)/.test(MODULE),
   'le module est PUR : il ne touche à aucun tableau de coordonnées et à aucune fenêtre');
 for (const fn of ['rotatableBondsOf', 'randomTorsionsOf', 'restraintListOf', 'restraintReportOf',
@@ -196,6 +203,21 @@ for (const fn of ['rotatableBondsOf', 'randomTorsionsOf', 'restraintListOf', 're
   'structureCalculationOf']) {
   has(MODULE, `export const ${fn} =`, `le module exporte « ${fn} »`);
 }
+/* ET LES MOTEURS ÉCRITS EN GÉNÉRATEURS — un seul moteur, deux conducteurs (le module qui
+   va jusqu'au bout, et l'écran qui peint entre deux images). */
+for (const fn of ['annealFrames', 'structureAttemptFrames', 'structureCalculationFrames',
+  'mdFrames', 'minimizeFrames']) {
+  has(MODULE, `export function* ${fn}(`, `le moteur « ${fn} » est un GÉNÉRATEUR (il rend la main à chaque image)`);
+}
+for (const fn of ['drainFrames', 'molecularDynamicsOf', 'minimizeTorsionsOf']) {
+  has(MODULE, `export const ${fn} =`, `…et « ${fn} » le conduit`);
+}
+ok(!/const step = \(phase, positions/.test(MODULE),
+  '⚠ les gestes du départ ne sont plus poussés par un rappel : ils sont YIELDÉS (§5)');
+ok(/drainFrames\(annealFrames\(spec\), spec\.onStep\)/.test(MODULE)
+  && /drainFrames\(structureAttemptFrames\(spec\), spec\.onStep\)/.test(MODULE)
+  && /drainFrames\(structureCalculationFrames\(spec\), spec\.onFrame\)/.test(MODULE),
+  '⚠ …et les trois fonctions historiques sont EXACTEMENT le même moteur, conduit d’un trait (aucun code recopié)');
 
 /* ── 2 · LE LECTEUR DES DIÈDRES, EXÉCUTÉ ───────────────────────────────────── */
 const hexane = chainOf(6);
@@ -374,9 +396,14 @@ ok(Math.max(...fixed.angles.map((d) => Math.abs(d - ANG))) < 2,
 ok(fix.bondRms < 0.01 && fix.angleRms < 1,
   `…le rapport le chiffre : liaisons ${fix.bondRms.toFixed(5)} Å rms, angles ${fix.angleRms.toFixed(3)}° rms`);
 
+/* UNE DISTANCE QUE LA GÉOMÉTRIE INTERDIT — la seule qui reste impossible maintenant que
+   la dynamique existe : une LONGUEUR DE LIAISON. Un pas de torsion est une rotation
+   rigide (il ne peut pas changer une liaison) et le terme de liaison du champ (k = 200)
+   l'emporte sur la contrainte (k = 50) : demander 1.00 Å sur un C–C de 1.54 Å ne peut pas
+   être satisfait, et c'est ce que la sonde exige — l'écart est DIT, jamais maquillé. */
 const hard = structureAttemptOf({
   positions: hexane.positions, elements: hexane.elements, bonds: hexane.bonds,
-  restraints: [{ i: 0, j: 5, target: 1.0 }], index: 0, draw: false,
+  restraints: [{ i: 0, j: 1, target: 1.0 }], index: 0, draw: false,
 });
 eq(hard.restraint.violations, 1, '⚠ une distance IMPOSSIBLE n’est pas prétendue atteinte : elle reste en défaut');
 ok(hard.restraint.worst.distance > 1.0 + STRUCTURE_CALC_RESTRAINT_TOLERANCE,
@@ -707,18 +734,339 @@ near(scoreStructureOf({
 const pepScored = scoreStructureOf({
   positions: pep.positions, elements: pep.elements, bonds: pep.bonds, restraints: [],
 });
-near(pepScored.score, pepScored.total + pepScored.clashPenalty + pepScored.omegaPenalty,
-  '⚠ le SCORE d’un modèle reste lisible : total + empilement + ω, jamais autre chose', 1e-9);
+near(pepScored.score, pepScored.total + pepScored.clashPenalty,
+  '⚠ le SCORE d’un modèle reste lisible : le champ de forces entier + l’empilement, jamais autre chose', 1e-9);
+near(pepScored.total,
+  pepScored.target + pepScored.forceField.omega + pepScored.forceField.rama + pepScored.forceField.chi,
+  '⚠ …et le champ de forces se lit famille par famille : cible du ⚒ + ω + bassins φ/ψ + χ1', 1e-9);
 has(MODULE, 'export const annealTorsionsOf', 'le recuit est exporté par le module');
 has(MODULE, 'export const peptideOmegasOf', '…et la lecture des liaisons peptidiques aussi');
 has(MODULE, 'export const omegaPenaltyOf', '…et le terme ω');
 has(MODULE, 'const leashOf = new Map();',
   '⚠ …avec la LONGE de la trempe : aucune distance DÉJÀ tenue n’est lâchée pour réparer ω');
-has(MODULE, 'onStep: typeof onStep === \'function\'', 'et le recuit peut MONTRER chaque palier (onStep)');
-has(MODULE, 'step(\'draw\', x, { channels:',
-  '⚠ le départ TIRÉ est montré avant le recuit (le panneau voit la molécule se replier)');
+/* LE RECUIT MONTRE SES PAS — par les IMAGES qu'il rend (`yield`), et c'est un seul et même
+   moteur que le conducteur synchrone conduit jusqu'au bout. */
+has(MODULE, "phase: 'anneal', positions: x, step: s + 1, of: nStep, part: m + 1, parts: perStep",
+  '⚠ le recuit rend une image PAR PALIER et `perFrame` pas à l’intérieur (le panneau voit la molécule se replier)');
+has(MODULE, "yield* step('draw', x, { channels:",
+  '⚠ …et le départ TIRÉ est montré AVANT le recuit');
 has(STRUCTURE_CALC_CORE_REACH > 2.1 ? MODULE : '', 'STRUCTURE_CALC_CORE_REACH',
   'le cœur dur du recuit a sa portée, nommée et réutilisée');
+has(MODULE, 'const frameEvery = Math.max(1, Math.floor(perStep / framesPerPalier));',
+  '⚠ `perFrame` = le nombre d’IMAGES PAR PALIER (0 = une seule) : le pas d’image est déduit des gestes du palier');
+
+/* ── 5quinquies · LE SQUELETTE, LES BASSINS φ/ψ ET χ1 — LA PHYSIQUE QUI MANQUAIT ──
+   « the final structures have very bad Ramachandran plots » : la sonde construit un
+   TRIPEPTIDE dont chaque dièdre est posé par `placeWith` (donc relu par le lecteur du
+   dossier, sans convention devinée), et vérifie les trois choses qui font qu'un
+   Ramachandran tient : les dièdres du squelette sont TROUVÉS par la chimie seule, un
+   résidu placé DANS un bassin ne coûte rien, et le même résidu hors bassin COÛTE. */
+const triOf = ({ psiA = -45, phiB = -60, psiB = -45, phiC = -60 }) => {
+  /* N0 – CA1 – C2(=O3) – N4 – CA5 – C6(=O7) – N8 – CA9 – C10(=O11) : un tripeptide
+     construit atome par atome. ⚠ `placeWith` accroche le NOUVEL atome à son TROISIÈME
+     point (`c`) : l'oxygène d'un carbonyle s'accroche donc au CARBONE, et il se pose
+     ANTI au prochain azote (dihèdre + 180°) — c'est ce qui donne un carbonyle plan et
+     un O=C–N de 121°. Un oxygène éclipsé sur l'azote (0,2 Å) ne serait pas une molécule. */
+  const n0 = [0, 0, 0];
+  const ca1 = [1.45, 0, 0];
+  const c2 = placeWith({ a: [0, 1, 0], b: n0, c: ca1, length: 1.53, angleDeg: 110, dihDeg: psiA });
+  const n4 = placeWith({ a: n0, b: ca1, c: c2, length: 1.33, angleDeg: 116, dihDeg: psiA });
+  const o3 = placeWith({ a: n0, b: ca1, c: c2, length: 1.23, angleDeg: 120.5, dihDeg: psiA + 180 });
+  const ca5 = placeWith({ a: ca1, b: c2, c: n4, length: 1.46, angleDeg: 121, dihDeg: 180 });
+  const c6 = placeWith({ a: c2, b: n4, c: ca5, length: 1.53, angleDeg: 111, dihDeg: phiB });
+  const n8 = placeWith({ a: n4, b: ca5, c: c6, length: 1.33, angleDeg: 116, dihDeg: psiB });
+  const o7 = placeWith({ a: n4, b: ca5, c: c6, length: 1.23, angleDeg: 120.5, dihDeg: psiB + 180 });
+  const ca9 = placeWith({ a: ca5, b: c6, c: n8, length: 1.46, angleDeg: 121, dihDeg: 180 });
+  const c10 = placeWith({ a: c6, b: n8, c: ca9, length: 1.53, angleDeg: 111, dihDeg: phiC });
+  const o11 = placeWith({ a: n8, b: ca9, c: c10, length: 1.23, angleDeg: 120.5, dihDeg: 180 });
+  return {
+    positions: [n0, ca1, c2, o3, n4, ca5, c6, o7, n8, ca9, c10, o11].flat(),
+    elements: ['N', 'C', 'C', 'O', 'N', 'C', 'C', 'O', 'N', 'C', 'C', 'O'],
+    bonds: [
+      { i: 0, j: 1, order: 1 }, { i: 1, j: 2, order: 1 }, { i: 2, j: 3, order: 2 },
+      { i: 2, j: 4, order: 1 }, { i: 4, j: 5, order: 1 }, { i: 5, j: 6, order: 1 },
+      { i: 6, j: 7, order: 2 }, { i: 6, j: 8, order: 1 }, { i: 8, j: 9, order: 1 },
+      { i: 9, j: 10, order: 1 }, { i: 10, j: 11, order: 2 },
+    ],
+  };
+};
+/* L'α PROPRE — ψ_B = −45°, φ_B = −60° : le résidu B tombe DANS le bassin α. */
+const triAlpha = triOf({});
+/* …et le MÊME tripeptide avec ψ_B = 0° : le couple (φ, ψ) de B sort du bassin. */
+const triBad = triOf({ psiB: 0 });
+const bbAlpha = backboneTorsionsOf({
+  elements: triAlpha.elements, bonds: triAlpha.bonds, atomCount: 12,
+});
+eq([bbAlpha.residues, bbAlpha.phi.length, bbAlpha.psi.length, bbAlpha.omega.length],
+  [3, 2, 2, 2],
+  '⚠ le squelette est TROUVÉ par la chimie seule : trois résidus, deux φ, deux ψ, deux ω'
+  + ' (les deux bouts n’ont qu’un angle — c’est `partial` qui le compte)');
+eq(bbAlpha.partial, 2, '…et les deux résidus de bout sont comptés `partial`, jamais devinés');
+eq(bbAlpha.phi[1].atoms, [6, 8, 9, 10],
+  '⚠ le φ du résidu C est le dièdre IUPAC C(précédent)–N–CA–C, lu par la chimie');
+eq(bbAlpha.psi[1].atoms, [4, 5, 6, 8], '…et le ψ du résidu B est N–CA–C–N(suivant)');
+eq(bbAlpha.omega[1].atoms, [5, 6, 8, 9], '…et l’ω de la liaison peptidique est CA–C–N–CA');
+eq(bbAlpha.chi.length, 0, 'aucune χ1 : ces trois résidus n’ont pas de CB (ce sont des glycines)');
+eq(bbAlpha.classes.gly, 3, '…et la chimie les CLASSE glycines (aucun CB), comme le graphe 🪢');
+/* LA SONDE EST UNE MOLÉCULE — deux atomes ne se superposent pas (sinon les longueurs,
+   les angles et les dièdres mesurés ne voudraient plus rien dire). */
+const closestPair = (g) => {
+  let best = Infinity;
+  for (let i = 0; i < 12; i += 1) {
+    for (let j = i + 1; j < 12; j += 1) {
+      const d = Math.hypot(
+        g.positions[i * 3] - g.positions[j * 3],
+        g.positions[i * 3 + 1] - g.positions[j * 3 + 1],
+        g.positions[i * 3 + 2] - g.positions[j * 3 + 2],
+      );
+      if (d < best) best = d;
+    }
+  }
+  return best;
+};
+ok(closestPair(triAlpha) > 1.2,
+  `⚠ deux atomes du modèle ne se superposent pas (le plus proche couple est à ${closestPair(triAlpha).toFixed(2)} Å)`);
+/* LE PONT AVEC LE DIÈDRE DU DOSSIER — le module ne mesure pas ses angles à sa façon. */
+const pt3 = (i) => [triAlpha.positions[i * 3], triAlpha.positions[i * 3 + 1], triAlpha.positions[i * 3 + 2]];
+const om0 = bbAlpha.omega[0];
+near(omegaPenaltyOf({ positions: triAlpha.positions, omegas: [om0] }).list[0].deg,
+  dihedralDeg(pt3(om0.probeAtoms[0]), pt3(om0.probeAtoms[1]), pt3(om0.probeAtoms[2]), pt3(om0.probeAtoms[3])),
+  '⚠ l’ω du rapport est le dièdre du dossier, au chiffre près', 1e-9);
+
+/* LES BASSINS — 0 dedans, la distance au bord dehors, et les classes comptent vraiment. */
+eq([ramaGapOf(-60, -45), ramaGapOf(-120, 135)], [0, 0],
+  '⚠ le centre du bassin α et celui du β ne coûtent RIEN (le bassin entier est un plateau)');
+ok(ramaGapOf(0, 0) > 25,
+  `…et un point qui n’est dans aucun bassin est LOIN du bord (${ramaGapOf(0, 0).toFixed(1)}°)`);
+eq(ramaGapOf(NaN, 12), 0, 'un angle illisible ne coûte rien : le module n’invente pas un terme');
+eq(ramaGapOf(100, 0, 'gly'), 0,
+  '⚠ une GLYCINE a ses deux miroirs permis : son α gauche s’ouvre là où un résidu ordinaire est dehors');
+ok(ramaGapOf(100, 0, 'general') > 0,
+  '…et le MÊME point est hors bassin pour la classe générale — les jeux de bassins diffèrent vraiment');
+/* LE TERME, EXÉCUTÉ — posé dans l'α, il ne coûte rien ; le même sorti, il coûte. */
+const ramaAlpha = ramaPenaltyOf({ positions: triAlpha.positions, torsions: bbAlpha });
+eq([ramaAlpha.measured, ramaAlpha.violations, ramaAlpha.penalty], [1, 0, 0],
+  '⚠ le résidu placé dans l’α ne coûte RIEN (et un seul résidu a ses DEUX angles : les bouts n’en ont qu’un)');
+eq(ramaAlpha.partial, 2, '…et les deux bouts sont comptés à part, sans terme inventé');
+const bbBad = backboneTorsionsOf({ elements: triBad.elements, bonds: triBad.bonds, atomCount: 12 });
+const ramaBad = ramaPenaltyOf({ positions: triBad.positions, torsions: bbBad });
+ok(ramaBad.penalty > 0 && ramaBad.violations === 1,
+  `⚠ le même résidu avec ψ = 0° est HORS bassin et COÛTE (${ramaBad.penalty.toFixed(2)},`
+  + ` à ${ramaBad.worst.gap.toFixed(1)}° du bord, région « ${ramaBad.worst.region} »)`);
+near(ramaBad.penalty, STRUCTURE_CALC_RAMA_WEIGHT * ramaBad.worst.gap * ramaBad.worst.gap,
+  '…et le coût est bien k × (distance au bord)², avec le k du module', 1e-9);
+eq([ramaPenaltyOf({ positions: null }).penalty, ramaPenaltyOf({}).penalty], [0, 0],
+  'sans coordonnées lisibles le terme vaut zéro — il ne lève rien et n’invente rien');
+
+/* χ1 — TROIS PUITS DÉCALÉS, ET RIEN ENTRE EUX. Un CB et un CG sont ajoutés au
+   tripeptide, et χ1 est posé par `placeWith` : 180° (un conformère) puis 0° (entre deux). */
+const triChi = (chiDeg) => {
+  const base = triOf({});
+  const pts = [];
+  for (let i = 0; i < base.positions.length; i += 3) pts.push(base.positions.slice(i, i + 3));
+  /* LE CB S'ACCROCHE AU CA5 (le troisième point de `placeWith`), puis le CG au CB : le
+     dièdre NOUVEAU est donc bien χ1 = N4–CA5–CB–CG. */
+  const cb = placeWith({ a: pts[4], b: pts[6], c: pts[5], length: 1.53, angleDeg: 110, dihDeg: 122 });
+  pts.push(cb);
+  const cg = placeWith({ a: pts[4], b: pts[5], c: cb, length: 1.53, angleDeg: 113, dihDeg: chiDeg });
+  pts.push(cg);
+  return {
+    positions: pts.flat(),
+    elements: [...base.elements, 'C', 'C'],
+    bonds: [...base.bonds, { i: 5, j: 12, order: 1 }, { i: 12, j: 13, order: 1 }],
+  };
+};
+const chiWell = triChi(180);
+const chiMid = triChi(0);
+const bbChi = backboneTorsionsOf({ elements: chiWell.elements, bonds: chiWell.bonds, atomCount: 14 });
+eq(bbChi.chi.length, 1, '⚠ χ1 est trouvé sur le résidu qui a un CB (N–CA–CB–X, X = le plus lourd)');
+eq(bbChi.chi[0].atoms, [4, 5, 12, 13], '…et son quadruplet est bien N–CA–CB–CG');
+eq(bbChi.classes.gly, 2, '…et le résidu qui a un CB n’est plus une glycine (deux sur trois)');
+const chiRead = chiPenaltyOf({ positions: chiWell.positions, chis: bbChi.chi });
+eq([chiRead.measured, chiRead.violations], [1, 0],
+  'un χ1 PILE sur un conformère décalé (180°) ne coûte rien, et n’est pas compté hors puits');
+near(chiRead.penalty, 0, '…son coût est exactement zéro', 1e-12);
+const bbChiMid = backboneTorsionsOf({ elements: chiMid.elements, bonds: chiMid.bonds, atomCount: 14 });
+const chiReadMid = chiPenaltyOf({ positions: chiMid.positions, chis: bbChiMid.chi });
+ok(chiReadMid.penalty > chiRead.penalty && chiReadMid.violations === 1,
+  `⚠ …et un χ1 à 0° est ENTRE deux puits : il coûte, et il est compté (${chiReadMid.penalty.toFixed(3)},`
+  + ` écart ${chiReadMid.worst.dev.toFixed(1)}° au puits le plus proche)`);
+ok(chiReadMid.penalty <= STRUCTURE_CALC_CHI_WEIGHT + 1e-9,
+  '…sans jamais dépasser le poids du module (la barrière à trois puits est BORNÉE)');
+
+/* ── 5sexies · LE CHAMP DE FORCES, LA DYNAMIQUE ET LA MINIMISATION — EXÉCUTÉS ────
+   Le champ est UNE fonction (`forceFieldEnergyOf`) dont on lit les familles ; la
+   dynamique et la minimisation sont le même mouvement rigidement dihédral, conduits par
+   des générateurs. Ce paragraphe mesure ce qu'on leur demande : le champ SOMME ses
+   familles, il se DÉCRIT en lignes que le panneau recopie, la dynamique RÉPOND à la
+   température, la minimisation ne remonte JAMAIS, et la LONGE tient les distances déjà
+   tenues même chaud. */
+const fieldAlpha = forceFieldEnergyOf({
+  positions: triAlpha.positions, elements: triAlpha.elements, bonds: triAlpha.bonds, restraints: [],
+});
+ok(fieldAlpha.ok, 'le champ de forces se lit sur le tripeptide');
+near(fieldAlpha.total, fieldAlpha.target + fieldAlpha.omega + fieldAlpha.rama + fieldAlpha.chi,
+  '⚠ E = la fonction cible du ⚒ + ω + bassins φ/ψ + χ1 : le champ est la SOMME de ses familles', 1e-9);
+eq(fieldAlpha.rows.length, FORCE_FIELD_FAMILIES.length,
+  '…et il se décrit en AUTANT de lignes que de familles');
+eq(fieldAlpha.rows.map((r) => r.id), FORCE_FIELD_FAMILIES,
+  '⚠ les lignes portent les familles dans l’ordre : le panneau n’en invente aucune');
+eq(fieldAlpha.rows[0].weight, 200, '…le poids des liaisons est celui du ⚒ (200)');
+eq(forceFieldRowsOf()[5].weight, 2, '…et celui d’ω est celui du module (2)');
+eq(forceFieldRowsOf()[6].weight, STRUCTURE_CALC_RAMA_WEIGHT, '…celui des bassins φ/ψ aussi');
+eq(forceFieldRowsOf()[7].weight, STRUCTURE_CALC_CHI_WEIGHT, '…et celui de χ1 avec lui');
+eq(fieldAlpha.rama, 0, 'le champ d’un modèle α ne porte AUCUN terme de bassin');
+const fieldBad = forceFieldEnergyOf({
+  positions: triBad.positions, elements: triBad.elements, bonds: triBad.bonds, restraints: [],
+});
+ok(fieldBad.rama > 0 && fieldBad.total > fieldAlpha.total,
+  `⚠ …et le même modèle hors bassin coûte plus cher (φ/ψ ${fieldBad.rama.toFixed(2)} →`
+  + ` E ${fieldBad.total.toFixed(2)} contre ${fieldAlpha.total.toFixed(2)})`);
+const fieldChi = forceFieldEnergyOf({
+  positions: chiMid.positions, elements: chiMid.elements, bonds: chiMid.bonds, restraints: [],
+});
+ok(fieldChi.chi > 0, `…et un χ1 entre deux puits entre dans le champ (${fieldChi.chi.toFixed(3)})`);
+eq([fieldChi.torsions.chi.length, fieldChi.chiReport.count], [1, 1],
+  '…le rapport du champ dit COMBIEN de χ1 ont été lus');
+eq(forceFieldEnergyOf({ positions: null }).ok, false, 'sans coordonnées lisibles le champ est refusé');
+
+/* LA DYNAMIQUE — elle tourne, elle est déterministe, et sa température CINÉTIQUE suit
+   le thermostat : c'est ce qui la distingue d'un recuit déguisé. */
+const mdSpec = {
+  positions: triBad.positions, elements: triBad.elements, bonds: triBad.bonds,
+  restraints: [], seed: 0xA11CE, steps: 60, perFrame: 12,
+};
+const mdHot = molecularDynamicsOf({ ...mdSpec, temperature: 6 });
+const mdCold = molecularDynamicsOf({ ...mdSpec, temperature: 0.2 });
+eq([mdHot.ok, mdHot.channels > 0, mdHot.steps, mdHot.applied > 0], [true, true, 60, true],
+  '🌡 la dynamique tourne ses pas, sur les canaux rotatables de la molécule');
+ok(mdHot.temperature.kinetic > mdCold.temperature.kinetic,
+  `⚠ un thermostat à T = 6 donne une température cinétique PLUS HAUTE qu’à T = 0.2`
+  + ` (${mdHot.temperature.kinetic.toFixed(2)} contre ${mdCold.temperature.kinetic.toFixed(2)})`);
+eq(mdHot.trace.length, Math.floor(60 / 12),
+  '…et elle rend une image tous les `perFrame` pas (la trajectoire se lit)');
+eq(mdHot.temperature.mode, 'fixed', '…en disant que la température était TENUE (pas un plan)');
+const mdAgain = molecularDynamicsOf({ ...mdSpec, temperature: 6 });
+eq(Array.from(mdAgain.positions), Array.from(mdHot.positions),
+  '⚠ la même graine donne EXACTEMENT la même trajectoire (aucun hasard caché)');
+eq([molecularDynamicsOf({ positions: null }).ok,
+  molecularDynamicsOf({ ...mdSpec, steps: 0 }).reason],
+[false, 'no-step'], '…et ses deux refus sont DITS (coordonnées illisibles, aucun pas demandé)');
+/* LA LONGE DE LA DYNAMIQUE — un MUR, pas un refus : même à haute température, une
+   distance DÉJÀ tenue ne sort pas de sa tolérance. */
+const leashChain = chainOf(12);
+const leashProbe = (molecule) => Math.hypot(
+  molecule.positions[0] - molecule.positions[33],
+  molecule.positions[1] - molecule.positions[34],
+  molecule.positions[2] - molecule.positions[35],
+);
+/* LA DISTANCE EST TENUE AU DÉPART — sa cible est celle qu'elle a MAINTENANT : c'est
+   exactement ce que la longe du panneau fait (« les distances déjà tenues »). */
+const leashTarget = { i: 0, j: 11, target: Number(leashProbe(leashChain).toFixed(4)) };
+const leashRun = molecularDynamicsOf({
+  positions: leashChain.positions, elements: leashChain.elements, bonds: leashChain.bonds,
+  restraints: [leashTarget], leash: [leashTarget], seed: 7, steps: 80, temperature: 6,
+});
+eq([leashRun.ok, leashRun.walls.count, Number(leashRun.walls.before.toFixed(6))], [true, 1, 0],
+  '⚠ la longe part d’une distance TENUE (le mur n’est qu’un puits autour d’elle, son coût est nul)');
+ok(Math.abs(leashProbe(leashRun) - leashTarget.target) <= STRUCTURE_CALC_RESTRAINT_TOLERANCE,
+  `…et après 80 pas à T = 6 elle la tient encore (${leashProbe(leashRun).toFixed(3)} Å`
+  + ` pour ${leashTarget.target.toFixed(2)} demandés)`);
+
+/* LA MINIMISATION — elle ne remonte JAMAIS (elle n'accepte que ce qui baisse). */
+const minSpec = {
+  positions: triBad.positions, elements: triBad.elements, bonds: triBad.bonds, restraints: [],
+};
+const minRun = minimizeTorsionsOf({ ...minSpec, rounds: 4 });
+eq([minRun.ok, minRun.sweeps], [true, 4], '⚒ la minimisation balaie ses tours');
+ok(minRun.cost.after <= minRun.cost.before + 1e-9,
+  `⚠ elle ne peut pas remonter : ${minRun.cost.before.toFixed(3)} → ${minRun.cost.after.toFixed(3)}`);
+ok(minRun.cost.after < minRun.cost.before,
+  '…et sur ce modèle hors bassin elle DESCEND vraiment (un bassin est un puits)');
+ok(minRun.awaited === undefined && minRun.accepted > 0, '…et elle dit combien de mouvements elle a gardés');
+const minAgain = minimizeTorsionsOf({ ...minSpec, rounds: 4 });
+eq(Array.from(minAgain.positions), Array.from(minRun.positions),
+  '⚠ la même minimisation redonne les mêmes coordonnées, au chiffre près');
+eq([minimizeTorsionsOf({ positions: null }).ok,
+  minimizeTorsionsOf({ ...minSpec, rounds: 0 }).reason],
+[false, 'no-step'], '…et sans coordonnées, ou sans tour demandé, elle le DIT');
+const minFrames = [];
+drainFrames(minimizeFrames({ ...minSpec, rounds: 2 }), (f) => minFrames.push(f));
+eq([minFrames.length, minFrames[0].phase, minFrames[1].sweep], [2, 'minimise', 2],
+  '…et elle rend une image PAR BALAYAGE (c’est ce qui se regarde à l’écran)');
+
+/* ── 5septies · LES IMAGES — UN SEUL MOTEUR, DEUX CONDUCTEURS ──────────────────
+   C'est ce qui répond à « I do not see the molecule changing structures during the
+   calculation » : le protocole est un GÉNÉRATEUR, le module le conduit d'un trait
+   (`drainFrames`), l'écran le conduit image par image en peignant entre deux. La sonde
+   prouve que les DEUX chemins donnent le MÊME résultat, au bit près. */
+const frameSpec = {
+  positions: triBad.positions, elements: triBad.elements, bonds: triBad.bonds,
+  restraints: [{ i: 3, j: 9, target: 4.0 }], index: 0, anneal: 2, annealPerFrame: 3,
+  md: 12, mdPerFrame: 4, minimise: 1, seed: STRUCTURE_CALC_SEED,
+};
+const walked = [];
+const viaFrames = drainFrames(structureAttemptFrames(frameSpec), (f) => walked.push(f));
+const viaCall = structureAttemptOf(frameSpec);
+eq(Array.from(viaFrames.positions), Array.from(viaCall.positions),
+  '⚠ le générateur conduit par `drainFrames` et l’appel direct donnent les MÊMES coordonnées (au bit près)');
+near(viaFrames.score, viaCall.score, '…et le même score', 1e-12);
+const phases = [...new Set(walked.map((f) => f.phase))];
+/* ⚠ `drive` et `scan` n'apparaissent QUE s'il reste quelque chose à conduire : la
+   préparation du ⚒ peut déjà satisfaire la distance, et le départ s'arrête alors sur
+   « converged » (c'est ce que le module doit faire). Les six phases ci-dessous, elles,
+   sont garanties par les réglages passés (recuit, dynamique, minimisation, trempe). */
+for (const phase of ['draw', 'anneal', 'prep', 'md', 'minimise', 'quench']) {
+  ok(phases.includes(phase), `…et les images couvrent la phase « ${phase} » (le panneau la nomme)`);
+}
+ok(walked.every((f) => f.index === 0), '…chaque image dit de quel départ elle vient');
+ok(walked.filter((f) => f.phase === 'anneal').length >= 2 * 3 + 2
+  && walked.filter((f) => f.phase === 'anneal').length <= 2 * 5,
+  '⚠ le recuit rend PLUSIEURS images par palier (le réglage du panneau), en plus de celle de chaque palier'
+  + ` — ${walked.filter((f) => f.phase === 'anneal').length} images pour 2 paliers`);
+ok(walked.filter((f) => f.phase === 'md').length === Math.floor(12 / 4),
+  '…et la dynamique en rend une tous les 4 pas');
+const anFrames = [];
+const anViaFrames = drainFrames(
+  annealFrames({
+    positions: triBad.positions, elements: triBad.elements, bonds: triBad.bonds,
+    restraints: [], steps: 2, moves: 6, perFrame: 3,
+  }),
+  (f) => anFrames.push(f),
+);
+const anViaCall = annealTorsionsOf({
+  positions: triBad.positions, elements: triBad.elements, bonds: triBad.bonds,
+  restraints: [], steps: 2, moves: 6, perFrame: 3,
+});
+ok(anFrames.length >= 2 * 3 && anFrames.length <= 2 * 5,
+  `le recuit seul rend PLUSIEURS images par palier quand on lui en demande 3 (${anFrames.length} images pour 2 paliers)`);
+eq(anFrames[0].phase, 'anneal', '…et chaque image est bien une image de recuit');
+eq(Array.from(anViaFrames.positions), Array.from(anViaCall.positions),
+  '⚠ …et les deux conducteurs du recuit donnent les mêmes coordonnées');
+near(anViaFrames.rama.penalty, anViaCall.rama.penalty,
+  '…et le recuit RELIT les bassins φ/ψ sur sa sortie (son rapport ne peut pas mentir)', 1e-12);
+near(anViaFrames.cost.after, anViaCall.cost.after,
+  '…son coût avant/après est le même, que l’on coupe le recuit en images ou non', 1e-9);
+const calcFrames = [];
+const calcViaFrames = drainFrames(
+  structureCalculationFrames({
+    positions: triBad.positions, elements: triBad.elements, bonds: triBad.bonds,
+    restraints: [{ i: 3, j: 9, target: 4.0 }], starts: 2, keep: 1, anneal: 2, md: 12, minimise: 1,
+  }),
+  (f) => calcFrames.push(f),
+);
+const calcViaCall = structureCalculationOf({
+  positions: triBad.positions, elements: triBad.elements, bonds: triBad.bonds,
+  restraints: [{ i: 3, j: 9, target: 4.0 }], starts: 2, keep: 1, anneal: 2, md: 12, minimise: 1,
+});
+eq(calcViaFrames.ranking.map((r) => r.score), calcViaCall.ranking.map((r) => r.score),
+  '⚠ le calcul ENTIER, conduit image par image, classe exactement comme l’appel d’un trait');
+eq(calcFrames.filter((f) => f.phase === 'start').length, 2,
+  '…une image « start » par départ (le panneau l’annonce avant de bouger)');
+eq(calcFrames.filter((f) => f.phase === 'attempt-done').length, 2,
+  '…et une image « attempt-done » par départ fini');
+ok(calcFrames.some((f) => f.phase === 'attempt-done' && f.attempt && Array.isArray(f.attempt.positions)),
+  '…et l’image d’un départ fini PORTE le modèle (le panneau peut l’écrire à l’écran)');
 
 /* ── 6 · LE PANNEAU DU VIEWER — 🧬 LE BOUTON, LES DEUX CHAMPS, LA LISTE, LES m ─── */
 has(VIEW, "} from '../utils/structureCalc';", 'le viewer importe le module du calcul de structure');
@@ -799,6 +1147,21 @@ has(calcPanel, 'aria-label="Write each start on screen while it is computed"',
   '⚠ …et l’interrupteur qui MONTRE le calcul (👁 watch each start)');
 has(calcPanel, 'ranked.comp !== componentRef.current',
   '⚠ …et il prévient quand la famille appartient à une AUTRE molécule que celle à l’écran');
+/* LE CHAMP DE FORCES, LA DYNAMIQUE ET LA MINIMISATION — LES RÉGLAGES DU PANNEAU. */
+for (const label of ['Annealing temperature steps', 'Images per annealing temperature step',
+  'Molecular dynamics steps per start', 'Minimisation sweeps per start',
+  'Molecular dynamics temperature, in reduced units']) {
+  has(calcPanel, `aria-label="${label}"`,
+    `…le panneau a le réglage « ${label} » (aucun chiffre n’est caché)`);
+}
+has(calcPanel, 'onClick={runMolecularDynamics}', '🌡 ▶ MD est un bouton du panneau');
+has(calcPanel, 'onClick={runMinimise}', '⚒ Minimise aussi');
+has(calcPanel, 'onClick={calcReadForceField}', '🧲 …et ⟳ Energy relit le champ sur la molécule');
+has(calcPanel, 'The three torsion families are what makes a Ramachandran plot defensible',
+  '⚠ …et le panneau DIT pourquoi ces trois familles sont là (la remarque sur les Ramachandran)');
+has(calcPanel, 'reduced units', '…en rappelant que la température est en unités réduites, pas en kelvins');
+has(calcPanel, '🧭 φ/ψ', '⚠ le tableau classé porte la lecture du squelette par modèle (colonne 🧭 φ/ψ)');
+has(calcPanel, 'r.rama ? `${r.rama.violations}/${r.rama.measured}`', '…avec les résidus hors bassin');
 
 /* LES TROIS SECTIONS SONT BIEN UN SEUL PANNEAU — même enveloppe, mêmes onglets, et
    chacune ne se rend que si ELLE est la section ouverte. */
@@ -819,15 +1182,15 @@ has(VIEW, "const paint = paintTorsionPicks(torsionAtomsRef.current);",
 has(VIEW, 'rep.structureView.getAtomIndices', '…et la sélection est VÉRIFIÉE (jamais le mauvais atome peint)');
 has(VIEW, 'style={{ backgroundColor: dot }}', '…la pastille du bouton porte la même couleur que l’atome');
 
-/* LE GESTE, DANS LE SOURCE — un départ par tranche, le classement par le module, et
-   l'écriture par le MÊME chemin qu'une torsion. */
+/* LE GESTE, DANS LE SOURCE — le MOTEUR du module conduit image par image, le classement
+   par le module, et l'écriture par le MÊME chemin qu'une torsion. */
 const runSrc = VIEW.slice(
   VIEW.indexOf('const runStructureCalculation = () => {'),
   VIEW.indexOf('const calcStop = () => {'),
 );
-ok(runSrc.length > 1500, `le calcul est bien branché (${runSrc.length} caractères)`);
-has(runSrc, 'structureAttemptOf({', '⚠ chaque départ est UN appel au module pur (aucune descente recopiée)');
-has(runSrc, 'index: attempts.length', '…numéroté par son rang de tirage (c’est ce qui fait sa graine)');
+ok(runSrc.length > 1800, `le calcul est bien branché (${runSrc.length} caractères)`);
+has(runSrc, 'const frames = structureCalculationFrames({',
+  '⚠ le calcul EST le moteur du module (`structureCalculationFrames`), conduit image par image — aucune descente recopiée');
 has(runSrc, 'seed: STRUCTURE_CALC_SEED', '…avec la graine FIXE du dossier (le même n redonne la même famille)');
 has(runSrc, 'restraints: list.map((r) => ({ i: r.i, j: r.j, target: r.target }))',
   '…et les distances de l’utilisateur, telles quelles');
@@ -835,23 +1198,66 @@ has(runSrc, 'const list = calcUsableRows().filter(',
   '⚠ …qui sont les lignes FINIES de la table (deux atomes résolus + une cible)');
 has(runSrc, 'const base = Array.from(geom.positions);',
   '⚠ …et le départ est photographié : l’aperçu qui écrit à l’écran ne nourrit pas le départ suivant');
-has(runSrc, 'anneal: calcAnneal,', '🔥 …le recuit du panneau est celui qui tourne');
-has(runSrc, 'onStep: calcWatch ? (s, index) => {', '👁 …et chaque geste du module peut s’écrire à l’écran');
-has(runSrc, 'calcPreviewPositions(comp, structure, s.positions);',
-  '⚠ …par le MÊME chemin d’écriture qu’une torsion (donc 📏, plaques, film et 📥 suivent)');
-has(runSrc, 'if (calcWatch) calcPreviewPositions(comp, structure, attempt.positions);',
-  '…et la fin de chaque départ est écrite, pour que l’écran montre bien CE modèle');
-has(VIEW, 'writeStructurePositions(comp, idxs, positions);',
-  '…l’aperçu passe par le writer commun (jamais une seconde écriture)');
-has(runSrc, 'window.setTimeout(step, 0)', '⚠ un départ par tranche : la page reste vivante pendant le calcul');
-has(runSrc, 'calcRunRef.current !== run', '…et le jeton arrête la tranche suivante (⏹, ou une autre molécule)');
-has(runSrc, 'rankStructureAttempts({ attempts, keep: m })',
-  '⚠ le classement est celui du module : le panneau ne choisit pas les m à sa place');
-has(runSrc, 'calcWriteStructure(ranked.retained[0], ranked)', 'le meilleur est écrit tout de suite');
+has(runSrc, 'anneal: calcAnneal, annealPerFrame: calcAnnealFrame,',
+  '🔥 …le recuit du panneau est celui qui tourne, avec le nombre d’images par palier du panneau');
+has(runSrc, 'md: calcMdSteps, mdPerFrame: STRUCTURE_CALC_MD_FRAME,',
+  '🌡 …et la dynamique du panneau aussi (les pas de MD de chaque départ)');
+has(runSrc, 'minimise: calcMinimise,', '⚒ …et la minimisation (l’affinage final)');
+has(runSrc, 'shouldStop: () => calcRunRef.current !== run || componentRef.current !== comp,',
+  '⚠ le ⏹ ET un changement de molécule arrêtent le module ENTRE deux départs (il le demande lui-même)');
+has(runSrc, 'try { tick = frames.next(); } catch (e) {',
+  '⚠ une erreur du moteur est DITE (et le panneau se débloque) au lieu de laisser tourner une ligne');
+has(runSrc, 'if (calcWatch && shown.positions) calcPreviewPositions(comp, structure, shown.positions);',
+  '👁 …chaque image du module est écrite à l’écran, par le MÊME chemin d’écriture qu’une torsion');
+has(runSrc, 'if (Date.now() - started > CALC_FRAME_BUDGET_MS) break;',
+  '⚠ …puis la main revient à la page (budget de quelques millisecondes) : c’est CE qui fait qu’on VOIT la molécule bouger');
+has(runSrc, 'window.setTimeout(pump, 0)', '⚠ …et la tranche suivante reprend après le rendu');
+has(runSrc, 'if (calcRunRef.current !== run) return;',
+  '…et le jeton arrête la pompe (⏹, ou une autre molécule)');
+has(runSrc, 'setCalcProgress(calcPhaseLine(shown, attempts.length, n));',
+  '…avec une ligne de progression PAR PHASE du moteur (tirage, recuit, ▷ dynamique, ⚒ minimisation, trempe)');
+has(runSrc, 'onAttempt: (attempt) => {', '⚠ chaque départ FINI est poussé par le moteur (et le panneau le dit)');
+has(runSrc, 'const family = ranked || rankStructureAttempts({ attempts, keep: m });',
+  '⚠ le classement est celui du module quand il a fini — et le panneau ne choisit pas les m à sa place');
+has(runSrc, 'calcWriteStructure(family.retained[0], family)', 'le meilleur est écrit tout de suite');
 has(runSrc, 'finishRelaxPlayback();', '⚠ …après avoir TERMINÉ un ⚒ qui jouait encore (jamais deux écritures ensemble)');
 has(runSrc, 'torsionUndoRef.current = {', '⚠ et le ↺ est armé AVANT toute écriture : la molécule d’avant est gardée');
-ok(runSrc.indexOf('torsionUndoRef.current = {') < runSrc.indexOf('step();'),
+ok(runSrc.indexOf('torsionUndoRef.current = {') < runSrc.indexOf('pump();'),
   '…la photographie du ↺ est prise avant le premier départ, pas après');
+/* LA LIGNE D'UNE IMAGE ET CELLE D'UN DÉPART — écrites une fois, pour les trois moteurs. */
+has(VIEW, 'const calcPhaseLine = (f, done, of, head = null) => {',
+  'la ligne de progression est UNE fonction de la phase du moteur');
+for (const phase of ["case 'draw':", "case 'anneal':", "case 'drive':", "case 'scan':",
+  "case 'md':", "case 'minimise':", "case 'quench':"]) {
+  has(VIEW, phase, `…qui sait dire « ${phase.slice(6, -2)} »`);
+}
+has(VIEW, 'const calcAttemptLine = (a, { done, of }) =>',
+  '⚠ et la ligne d’un départ fini aussi (recuit, dynamique, minimisation, ω, φ/ψ)');
+/* LES GESTES ⚙ — LA MÊME MÉCANIQUE D'IMAGES POUR LA DYNAMIQUE ET LA MINIMISATION. */
+has(VIEW, 'const pumpMotion = ({ frames, comp, structure, head, onEnd }) => {',
+  '⚠ la dynamique et la minimisation se conduisent avec LA MÊME pompe que le calcul (pas une seconde boucle)');
+has(VIEW, 'const runMolecularDynamics = () => {', '🌡 ▶ MD est branché');
+has(VIEW, 'frames: mdFrames({', '…sur le moteur de dynamique du module');
+has(VIEW, 'const runMinimise = () => {', '⚒ Minimise est branché');
+has(VIEW, 'frames: minimizeFrames({', '…sur le moteur de minimisation du module');
+has(VIEW, 'const held = calcHeldPairs(geom, list);',
+  '⚠ …tous deux SOUS LONGE : les distances déjà tenues sont transmises au module');
+has(VIEW, 'const calcHeldPairs = (geom, list) => list',
+  '…par une fonction qui ne garde QUE celles qui sont tenues à cet instant');
+has(VIEW, 'label: `🌡 molecular dynamics · ${calcMdSteps} steps · T = ${calcMdTemp}`,',
+  '⚠ …et le ↺ est armé AVANT d’écrire, comme pour une torsion');
+has(VIEW, "// le graphe suit ce que la dynamique vient d'écrire",
+  '⚠ le graphe 🪢 est relu après la dynamique et après la minimisation (il ne parle jamais d’une autre conformation)');
+eq(VIEW.split('if (rama) readRamachandran();').length - 1, 3,
+  '…et il est relu dans les TROIS chemins qui écrivent des coordonnées : le calcul, la dynamique, la minimisation');
+/* LE CHAMP DE FORCES ET SES FAMILLES — décrits par le module, jamais recopiés ici. */
+has(VIEW, 'const calcReadForceField = () => {', '🧲 le panneau sait RELIRE le champ de forces sur la molécule');
+has(VIEW, 'forceFieldEnergyOf({', '…avec la fonction du module');
+has(VIEW, '{forceFieldRowsOf().map((row) => (', '…et affiche les familles que le module rend');
+has(VIEW, '🧲 Force field · {FORCE_FIELD_FAMILIES.length} families',
+  '⚠ …sans écrire un seul poids à la main dans le JSX');
+has(VIEW, 'STRUCTURE_CALC_RAMA_WEIGHT', '…le poids des bassins φ/ψ vient du module');
+has(VIEW, 'STRUCTURE_CALC_CHI_WEIGHT', '…celui de χ1 aussi');
 const writeCalc = VIEW.slice(
   VIEW.indexOf('const calcWriteStructure = (retained, ranked) => {'),
   VIEW.indexOf('const calcPreviewPositions'),
@@ -872,7 +1278,7 @@ has(writeCalc, 'ranked.comp !== comp',
   '⚠ une famille ne peut pas être écrite sur une AUTRE molécule : l’écriture est refusée, et le panneau le dit');
 has(runSrc, 'if (componentRef.current !== comp) {',
   '⚠ …et un calcul en cours s’arrête de lui-même si la molécule change, en le DISANT');
-has(runSrc, 'setCalcResult({ ...ranked, comp, structure })',
+has(runSrc, 'setCalcResult({ ...family, comp, structure })',
   '…la famille est marquée de SA molécule au moment où elle est classée');
 
 console.log(`_structure_calculation_test.mjs — ${passed} assertions OK (les bornes et les emprunts du module,`

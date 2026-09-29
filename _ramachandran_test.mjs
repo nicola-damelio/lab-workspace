@@ -431,11 +431,10 @@ has(VIEW, 'setRamaHover(null);',
 has(VIEW, 'max-w-[340px]', '…et le graphe s’affiche plus grand (les caractères des axes y tiennent)');
 
 
-/* LE PANNEAU, DÉCOUPÉ DU VIEWER — de son commentaire d'ouverture (la DERNIÈRE
-   occurrence du titre : la première est celle de l'import) jusqu'au bloc suivant
-   (l'ESP). C'est CE morceau qui ne doit contenir aucun chemin d'écriture. */
+/* LE PANNEAU, DÉCOUPÉ DU VIEWER — de l'onglet 🪢 (son bouton, puis sa section) jusqu'au
+   bloc suivant (l'ESP). C'est CE morceau qui ne doit contenir aucun chemin d'écriture. */
 const ramaPanel = VIEW.slice(
-  VIEW.lastIndexOf('LE GRAPHE DE RAMACHANDRAN'),
+  VIEW.indexOf('{/* 🪢 LE GRAPHE DE RAMACHANDRAN'),
   VIEW.indexOf('{/* ⚡ ESP'),
 );
 ok(ramaPanel.length > 3000, `le panneau 🪢 est bien dans le viewer (${ramaPanel.length} caractères)`);
@@ -445,6 +444,39 @@ has(ramaPanel, 'title="Open the 🪢 Ramachandran section of the 🧬 pane: the 
   'le bouton de la section s’explique (le geste, les régions, les limites)');
 has(ramaPanel, 'there is no second dihedral reader in this app',
   '…en rappelant que le dièdre est celui du dossier (pas un second lecteur)');
+has(ramaPanel, '{ramaPlotSvg()}', '⚠ …et il dessine le graphe par le rendu PARTAGÉ (`ramaPlotSvg`)');
+has(ramaPanel, '{ramaSummaryText()}', '…dont la ligne de synthèse est la même que dans le dock');
+has(ramaPanel, '{ramaOutlierList()}', '…et la liste des outliers aussi');
+
+/* ── 7 · LE DOCK 🪢 À GAUCHE DE LA FENÊTRE 3D ────────────────────────────────
+   « The Ramachandran plot should appear at the left in the viewer window (expandible and
+   compressible). » Le graphe était une SECTION du panneau (sous la molécule) : il est
+   maintenant AUSSI une colonne collée à gauche de la vue, qui se replie en un onglet,
+   retient son état sur le poste, et fait RECADRER NGL quand elle change la largeur. */
+const ramaDock = VIEW.slice(
+  VIEW.indexOf('LE DOCK 🪢 — LE GRAPHE DE RAMACHANDRAN À GAUCHE'),
+  VIEW.indexOf('{/* Vertical resize handle'),
+);
+ok(ramaDock.length > 1200, `le dock 🪢 est bien dans la fenêtre 3D (${ramaDock.length} caractères)`);
+has(ramaDock, 'ramaPlotSvg({ wide: true })',
+  '⚠ …et il dessine LE MÊME SVG que la section 🪢 : deux fenêtres, un seul dessin');
+has(ramaDock, 'onClick={() => toggleRamaDock(false)}', '⇤ il se REPLIE par un bouton');
+has(ramaDock, 'onClick={() => toggleRamaDock(true)}', '…et se ROUVRE par l’onglet vertical');
+has(ramaDock, "writingMode: 'vertical-rl'", '…qui se lit sur la tranche (🪢 RAMACHANDRAN)');
+has(ramaDock, 'border-amber-200 rounded-xl', '…et il est visuellement à part de la vue');
+ok(!/writeStructurePositions|positionFromArray/.test(ramaDock),
+  '⚠ le dock n’écrit rien non plus : c’est un PLAN, pas un calcul');
+has(VIEW, 'const RAMA_DOCK_KEY = \'labViewerRamaDock\';', 'le choix est retenu sur le poste (une clef nommée)');
+has(VIEW, 'const [ramaDock, setRamaDock] = useState(() => {', '⚠ …par un ÉTAT du viewer');
+has(VIEW, "try { return localStorage.getItem(RAMA_DOCK_KEY) !== '0'; } catch { return true; }",
+  '…lu à l’ouverture (ouvert par défaut)');
+has(VIEW, "try { localStorage.setItem(RAMA_DOCK_KEY, next ? '1' : '0'); } catch {",
+  '…et écrit à chaque geste');
+has(VIEW, 'stageRef.current.handleResize();', '⚠ …et NGL est RECADRÉ quand le dock change la largeur de la vue');
+has(VIEW, '}, [ramaDock]);', '…par un effet qui ne dépend QUE de la position du dock');
+has(VIEW, 'if (rama || ramaMsg) return;', '⚠ le dock ouvert lit le squelette UNE SEULE FOIS (pas en boucle)');
+has(VIEW, 'if (status !== \'ready\' || !componentRef.current) return;',
+  '…quand une molécule est là, et pas avant');
 
 console.log(`_ramachandran_test.mjs — ${passed} assertions OK (les tables, la classe des résidus, les régions et`
   + ' leurs polygones, la géométrie du dessin, les caractères des DEUX AXES et leurs titres, le survol qui nomme'

@@ -109,17 +109,29 @@ import {
   ramachandranOf, ramaPlotPath, ramaPlotGrid, ramaPlotAxisLabels, ramaHoverTextOf,
 } from '../utils/ramachandran';
 // ⬇ 🧬 CALCUL DE STRUCTURE — n DÉPARTS TIRÉS AU HASARD, LE 🔥 RECUIT SUR CHACUN, m
-// RETENUES (utils/structureCalc.js). Le panneau 🧬 ne calcule RIEN lui-même : il lit la
-// molécule à l'écran, donne ses distances, son n et son m au module PUR, et écrit par le
-// MÊME chemin qu'une torsion — donc le 📏, les plaques, le film et le 📥 Download la lisent.
+// RETENUES, PUIS LA DYNAMIQUE ET LA MINIMISATION (utils/structureCalc.js). Le panneau 🧬
+// ne calcule RIEN lui-même : il lit la molécule à l'écran, donne ses distances, son n et
+// son m au module PUR, CONDUIT ses images (le calcul se regarde : la molécule est écrite
+// à chaque image, puis la page peint), et écrit par le MÊME chemin qu'une torsion —
+// donc le 📏, les plaques, le film et le 📥 Download la lisent.
+// `structureCalculationFrames` est le moteur du calcul entier (un générateur),
+// `molecularDynamicsOf` / `minimizeTorsionsOf` ceux des deux gestes ⚙ du panneau, et
+// `forceFieldRowsOf` LA description du champ de forces : le panneau écrit ces lignes au
+// lieu d'inventer un chiffre.
 import {
-  structureAttemptOf, rankStructureAttempts,
+  structureAttemptOf, rankStructureAttempts, structureCalculationFrames,
+  molecularDynamicsOf, minimizeTorsionsOf, mdFrames, minimizeFrames,
+  forceFieldRowsOf, forceFieldEnergyOf, FORCE_FIELD_FAMILIES,
   STRUCTURE_CALC_DEFAULT_STARTS, STRUCTURE_CALC_MAX_STARTS,
   STRUCTURE_CALC_DEFAULT_KEEP, STRUCTURE_CALC_MAX_KEEP,
   STRUCTURE_CALC_SEED, STRUCTURE_CALC_PASSES, STRUCTURE_CALC_MAX_RESTRAINTS,
   STRUCTURE_CALC_RESTRAINT_TOLERANCE,
   STRUCTURE_CALC_ANNEAL_STEPS, STRUCTURE_CALC_QUENCH_STEPS,
-  STRUCTURE_CALC_OMEGA, STRUCTURE_CALC_OMEGA_TOLERANCE,
+  STRUCTURE_CALC_OMEGA, STRUCTURE_CALC_OMEGA_TOLERANCE, STRUCTURE_CALC_OMEGA_WEIGHT,
+  STRUCTURE_CALC_RAMA_WEIGHT, STRUCTURE_CALC_CHI_WEIGHT, STRUCTURE_CALC_CHI_TOLERANCE,
+  STRUCTURE_CALC_MD_STEPS, STRUCTURE_CALC_MD_FRAME, STRUCTURE_CALC_MD_HOT,
+  STRUCTURE_CALC_MD_COLD, STRUCTURE_CALC_MD_DT, STRUCTURE_CALC_MD_FRICTION,
+  STRUCTURE_CALC_MIN_ROUNDS,
 } from '../utils/structureCalc';
 // ⬇ ⚒ MODEL BUILD — LA GÉOMÉTRIE QUE LES LIAISONS IMPOSENT (utils/geometryRelax.js).
 // La demande, mot pour mot : « in Hyperchem there was a function “model build” that
@@ -6595,7 +6607,12 @@ nmrAtom = match ? `${match[1]}${GREEK_MAP[match[2]]}${match[3]}` : upper;
 const tokens = [nmrAtom];
 if (moleculeType === 'dna' || moleculeType === 'rna') tokens.push(`${nmrAtom}`);
 const keys = buildKeys(ri, tokens, moleculeType, res.char);
-return { ri, keys, label: `${res.id || res.char}${resno} ${nmrAtom}`, nmrAtom };
+/* ⚠ LE NUMÉRO N'EST ÉCRIT QU'UNE FOIS — `res.id` est DÉJÀ « Cys17 » (le code à trois
+   lettres suivi de son numéro, la forme de toute l'application) : y rajouter `resno`
+   écrivait « Cys1717 SG ». Sans identifiant lisible, c'est la lettre et le numéro qui
+   le composent — et l'étiquette reste « Cys17 SG », la forme NMR standard. */
+const resTag = res.id || `${res.char || ''}${resno}`;
+return { ri, keys, label: `${resTag} ${nmrAtom}`.trim(), nmrAtom };
 };
 
 const mapAtomToNmrKeys = (atom, parsedSeq, moleculeType, namingConvention) => {
@@ -7755,6 +7772,45 @@ const relaxAnimRef = useRef(null);
    de la section), sur les coordonnées du moment. Rien n'est dérivé à chaque rendu. */
 const [rama, setRama] = useState(null);
 const [ramaMsg, setRamaMsg] = useState('');
+/* LE DOCK 🪢 À GAUCHE DE LA FENÊTRE 3D — la demande : « The Ramachandran plot should
+   appear at the left in the viewer window (expandible and compressible). » Le graphe
+   était une SECTION du panneau 🧬 (en bas, sous la molécule) ; il est ICI une colonne
+   collante à gauche de la vue, qu'on replie par un bouton (⇤ / 🪢) et qui se souvient de
+   son état. Le SVG est le MÊME que celui de la section (`ramaPlotSvg`) : deux fenêtres,
+   un seul dessin. */
+/** CE QUE LE DOCK 🪢 RETIENT — ouvert (1, le défaut) ou replié (0). Le choix voyage avec
+ *  le poste, comme le film des images clefs : rouvrir la page ne redéfait pas un geste.
+ *  ⚠ La clef est définie ICI, avant son `useState` : une constante lue par un
+ *  initialiseur doit exister quand il s'exécute. */
+const RAMA_DOCK_KEY = 'labViewerRamaDock';
+const [ramaDock, setRamaDock] = useState(() => {
+  try { return localStorage.getItem(RAMA_DOCK_KEY) !== '0'; } catch { return true; }
+});
+const toggleRamaDock = (v) => {
+  const next = typeof v === 'boolean' ? v : !ramaDock;
+  setRamaDock(next);
+  try { localStorage.setItem(RAMA_DOCK_KEY, next ? '1' : '0'); } catch { /* un dock n'est pas une donnée */ }
+};
+/* LE DOCK CHANGE LA LARGEUR DE LA VUE — NGL dessine dans un cadre : on lui dit de
+   reprendre ses mesures, sinon la molécule reste cadrée sur l'ancienne largeur. */
+useEffect(() => {
+  try {
+    if (!stageRef.current) return;
+    stageRef.current.handleResize();
+    if (stageRef.current.viewer) stageRef.current.viewer.requestRender();
+  } catch { /* pas de scène : rien à recadrer */ }
+}, [ramaDock]);
+/* LE DOCK OUVERT LIT LE SQUELETTE TOUT SEUL — un graphe ne sert à rien tant qu'il n'a
+   rien lu, et personne ne va chercher un bouton dans une colonne qu'il vient d'ouvrir.
+   ⚠ UNE SEULE TENTATIVE par structure : `ramaMsg` dit qu'une lecture a déjà eu lieu (et
+   POURQUOI il n'y a rien à dessiner — une molécule sans N–CA–C), donc on ne réessaie pas
+   en boucle ; `rama` dit qu'un graphe est là. */
+useEffect(() => {
+  if (!ramaDock) return;
+  if (rama || ramaMsg) return;
+  if (status !== 'ready' || !componentRef.current) return;
+  readRamachandran();
+}, [ramaDock, status, rama, ramaMsg]);
 /* LE POINT SURVOLÉ — la CLEF de son résidu, pas l'objet : une nouvelle lecture (⏮, un
    ⚒, un ✏️ Torsion) jette les anciens résidus, et une clef morte ne désigne plus rien
    (le panneau retombe sur « survolez un point » au lieu de lire un résidu disparu). */
@@ -7772,9 +7828,29 @@ const [calcRestraints, setCalcRestraints] = useState([]);  // [{ key, i, j, targ
 const [calcStarts, setCalcStarts] = useState(STRUCTURE_CALC_DEFAULT_STARTS);
 const [calcKeep, setCalcKeep] = useState(STRUCTURE_CALC_DEFAULT_KEEP);
 /* ⚙ CE QUI DONNE SA PHYSIQUE AU CALCUL — les paliers de recuit (0 = tirage seul, ce
-   que le module faisait avant) et le suivi à l'écran de chaque geste. */
+   que le module faisait avant), le nombre d'IMAGES par palier (le recuit se regarde),
+   les pas de DYNAMIQUE MOLÉCULAIRE et les balayages de MINIMISATION (0 = sans eux), et
+   le suivi à l'écran de chaque geste. */
 const [calcAnneal, setCalcAnneal] = useState(STRUCTURE_CALC_ANNEAL_STEPS);
+const [calcAnnealFrame, setCalcAnnealFrame] = useState(4);
+const [calcMdSteps, setCalcMdSteps] = useState(STRUCTURE_CALC_MD_STEPS);
+const [calcMinimise, setCalcMinimise] = useState(STRUCTURE_CALC_MIN_ROUNDS);
 const [calcWatch, setCalcWatch] = useState(true);
+/* COMBIEN DE MILLISECONDES DE CALCUL ENTRE DEUX IMAGES — c'est le budget d'un tour de
+   `pump` : assez court pour que la page peigne à chaque tour (≈ 15 images par seconde),
+   assez long pour que le calcul avance vraiment. Un calcul plus rapide que ça se voit
+   encore : la boucle en fait PLUSIEURS dans un tour, tant que le budget n'est pas
+   dépensé. */
+const CALC_FRAME_BUDGET_MS = 14;
+/* LA TEMPÉRATURE DE LA DYNAMIQUE (unités réduites) — un champ du panneau, borné par ce
+   qui a un sens : au-delà de 20 le bruit casse la géométrie, en dessous de 0.01 le
+   mouvement s'arrête. */
+const [calcMdTemp, setCalcMdTemp] = useState(STRUCTURE_CALC_MD_HOT);
+const setCalcMdTempText = (v) => {
+  const t = Number(String(v).replace(',', '.'));
+  setCalcMdTemp(Number.isFinite(t) ? Math.max(0.01, Math.min(20, t)) : STRUCTURE_CALC_MD_HOT);
+};
+const [calcForce, setCalcForce] = useState(null);   // le dernier champ de forces relu
 const [calcMsg, setCalcMsg] = useState('');
 const [calcProgress, setCalcProgress] = useState('');
 const [calcBusy, setCalcBusy] = useState(false);
@@ -9598,6 +9674,128 @@ const readRamachandran = () => {
       + ' structure with gaps) has nothing to plot.');
 };
 
+/** LE GRAPHE 🪢, DESSINÉ UNE SEULE FOIS — la section 🪢 du panneau ET le dock à GAUCHE
+ *  de la fenêtre 3D écrivent ce même SVG : les bassins, les graduations (avec la place
+ *  et la taille de caractères que `ramaPlotAxisLabels` donne), les points, le repère du
+ *  point survolé, et le survol lui-même. Un seul endroit à corriger, donc un graphe qui
+ *  ne peut pas diverger entre ses deux fenêtres.
+ *  `opts.wide` : le dock est plus large que la colonne du panneau — le carré prend alors
+ *  toute la largeur disponible au lieu de plafonner à la taille du dessin. */
+const ramaPlotSvg = (opts = {}) => {
+  const grid = ramaPlotGrid();
+  const axis = ramaPlotAxisLabels();
+  /* LES POINTS, LES OUTLIERS PAR-DESSUS — un résidu hors région se voit : il est dessiné
+     en dernier (donc au-dessus) et plus gros. */
+  const hovered = rama && ramaHover
+    ? rama.residues.find((r) => r.key === ramaHover && r.point) || null
+    : null;
+  const points = rama
+    ? [...rama.residues.filter((r) => r.point)].sort((a, b) => (
+      (a.region === 'outlier' ? 1 : 0) - (b.region === 'outlier' ? 1 : 0)
+    ))
+    : [];
+  return (
+    <svg viewBox={`0 0 ${RAMA_PLOT.size} ${RAMA_PLOT.size}`}
+      className={`w-full h-auto bg-white rounded border border-amber-200 shrink-0 ${opts.wide ? '' : 'max-w-[340px]'}`}>
+      {/* LES BASSINS — le contour des résidus ORDINAIRES, et les polygones que la
+          classification emploie sont LES MÊMES : la couleur d'un point ne peut pas
+          mentir sur la région dont on l'a tirée. */}
+      {['alpha', 'beta', 'leftalpha'].map((region) => (
+        <path key={region} d={ramaPlotPath(RAMA_PLOT_REGIONS[region])}
+          fill={RAMA_REGION_COLORS[region]} fillOpacity="0.13"
+          stroke={RAMA_REGION_COLORS[region]} strokeOpacity="0.4" strokeWidth="1" />
+      ))}
+      {grid.x.map((m) => (
+        <line key={`gx${m.deg}`} x1={m.at} y1={grid.pad} x2={m.at} y2={grid.size - grid.pad} stroke="#e2e8f0" strokeWidth="1" />
+      ))}
+      {grid.y.map((m) => (
+        <line key={`gy${m.deg}`} x1={grid.pad} y1={m.at} x2={grid.size - grid.pad} y2={m.at} stroke="#e2e8f0" strokeWidth="1" />
+      ))}
+      {/* LE REPÈRE DU POINT SURVOLÉ — deux pointillés jusqu'aux DEUX axes : on lit son φ
+          en bas et son ψ à gauche sans lâcher le point des yeux. */}
+      {hovered && (
+        <g pointerEvents="none" stroke={RAMA_REGION_COLORS.outlier} strokeWidth="1" strokeDasharray="3 3">
+          <line x1={grid.pad} y1={hovered.point.y} x2={grid.size - grid.pad} y2={hovered.point.y} />
+          <line x1={hovered.point.x} y1={grid.pad} x2={hovered.point.x} y2={grid.size - grid.pad} />
+        </g>
+      )}
+      {/* LES GRADUATIONS DES DEUX AXES — « −180 … 180 », avec le vrai moins, en 13 unités
+          (elles en faisaient 7) : c'est la demande, et la place vient du module. */}
+      {axis.x.map((m) => (
+        <text key={`tx${m.deg}`} x={m.x} y={m.y} textAnchor={m.anchor} fontSize={axis.font.tick} fill="#64748b">{m.text}</text>
+      ))}
+      {axis.y.map((m) => (
+        <text key={`ty${m.deg}`} x={m.x} y={m.y} textAnchor={m.anchor} fontSize={axis.font.tick} fill="#64748b">{m.text}</text>
+      ))}
+      {/* …ET LES TITRES DES AXES — φ en abscisse, ψ en ordonnée (couchée) : une figure de
+          Ramachandran se lit avec ses deux noms écrits. */}
+      <text x={axis.xTitle.x} y={axis.xTitle.y} textAnchor={axis.xTitle.anchor}
+        fontSize={axis.font.title} fontWeight="700" fill="#475569">{axis.xTitle.text}</text>
+      <text x={axis.yTitle.x} y={axis.yTitle.y} textAnchor={axis.yTitle.anchor}
+        fontSize={axis.font.title} fontWeight="700" fill="#475569"
+        transform={`rotate(${axis.yTitle.rotate} ${axis.yTitle.x} ${axis.yTitle.y})`}>{axis.yTitle.text}</text>
+      {/* UN POINT PAR RÉSIDU — un CERNE blanc (deux résidus voisins ne se confondent pas
+          en une tache) et un cercle de PRISE plus large que lui : le survol, et le
+          clavier (Tab), attrapent le point sans viser au pixel. */}
+      {points.map((r) => {
+        const isHovered = !!hovered && hovered.key === r.key;
+        const color = RAMA_REGION_COLORS[r.region] || RAMA_REGION_COLORS.outlier;
+        const radius = (r.region === 'outlier' ? RAMA_POINT.outlier : RAMA_POINT.radius)
+          + (isHovered ? 1.4 : 0);
+        return (
+          <g key={r.key}>
+            <circle cx={r.point.x} cy={r.point.y} r={RAMA_POINT.hit} fill="transparent"
+              className="cursor-crosshair"
+              onMouseEnter={() => setRamaHover(r.key)}
+              onMouseLeave={() => setRamaHover((k) => (k === r.key ? null : k))}
+              onClick={() => setRamaHover(r.key)}
+              onFocus={() => setRamaHover(r.key)}
+              onBlur={() => setRamaHover((k) => (k === r.key ? null : k))}
+              tabIndex={0} role="img" aria-label={ramaHoverTextOf(r) || r.label}>
+              <title>{`${r.label} · φ ${r.phi.toFixed(1)}° ψ ${r.psi.toFixed(1)}°${r.omega == null ? '' : ` ω ${r.omega.toFixed(1)}°`} · ${RAMA_REGION_NAMES[r.region]}${r.klass === 'general' ? '' : ` · ${r.klass} contours`}`}</title>
+            </circle>
+            <circle cx={r.point.x} cy={r.point.y} r={radius}
+              fill={color}
+              fillOpacity={r.region === 'outlier' || isHovered ? 0.95 : 0.75}
+              stroke={isHovered ? '#1e293b' : (r.region === 'outlier' ? '#5b21b6' : '#ffffff')}
+              strokeWidth={isHovered ? 1.4 : (r.region === 'outlier' ? 0.9 : RAMA_POINT.stroke)}
+              pointerEvents="none" />
+          </g>
+        );
+      })}
+    </svg>
+  );
+};
+
+/** CE QUE LE GRAPHE MESURE — la ligne de synthèse, ÉCRITE UNE FOIS (le panneau et le
+ *  dock lisent la MÊME lecture, donc ils ne peuvent pas annoncer deux chiffres). */
+const ramaSummaryText = () => (rama ? (
+  <>
+    <b>{rama.measured}</b> of {rama.count} residue{rama.count === 1 ? '' : 's'} plotted ·
+    {' '}<b style={{ color: RAMA_REGION_COLORS.alpha }}>{rama.regions.alpha} α</b> ·
+    {' '}<b style={{ color: RAMA_REGION_COLORS.beta }}>{rama.regions.beta} β</b>
+    {rama.regions.leftalpha ? <> · <b style={{ color: RAMA_REGION_COLORS.leftalpha }}>{rama.regions.leftalpha} α left</b></> : null}
+    {' '}· <b style={{ color: RAMA_REGION_COLORS.outlier }}>{rama.regions.outlier} outside</b>
+    {rama.breaks ? ` · ${rama.breaks} with one angle only (a chain end or a gap)` : ''}
+  </>
+) : 'Nothing read yet — press ⟳ Read the backbone.');
+
+/** LES OUTLIERS, EN CLAIR — la liste des résidus hors bassin (avec leur distance au
+ *  bassin le plus proche), écrite une fois pour les deux fenêtres. */
+const ramaOutlierList = () => (rama && rama.outliers.length ? (
+  <div className="max-h-28 overflow-y-auto custom-scrollbar border border-violet-200 rounded bg-violet-50 px-2 py-1">
+    <p className="text-[9px] font-black uppercase tracking-wide text-violet-700">Outside every basin</p>
+    <ul className="text-[10px] text-violet-800 font-mono">
+      {rama.outliers.map((o) => (
+        <li key={`o${o.key}`}>
+          {o.label}: φ {o.phi.toFixed(1)}° ψ {o.psi.toFixed(1)}°
+          {o.nearest ? ` — ${Math.round(o.nearest.distance)}° from the centre of ${RAMA_REGION_NAMES[o.nearest.region]}` : ''}
+        </li>
+      ))}
+    </ul>
+  </div>
+) : null);
+
 /** POURQUOI LA DESCENTE S'EST ARRÊTÉE — une phrase par `reason` du module pur.
  *  Le panneau n'invente aucun diagnostic : chaque ligne ici répond à une valeur
  *  que utils/geometryRelax.js a réellement rendue. */
@@ -10471,6 +10669,23 @@ const calcReportOf = (retained, ranked) => {
         ? ` ⚠ ${best.omega.violations} hors du plateau de ± ${STRUCTURE_CALC_OMEGA_TOLERANCE}° (la pire à ${best.omega.worst.deg.toFixed(0)}°)`
         : ` ✓ toutes dans le plateau de ± ${STRUCTURE_CALC_OMEGA_TOLERANCE}° autour de ${STRUCTURE_CALC_OMEGA}° (trans)`)
     : '';
+  /* LA FIN DU PROTOCOLE, CHIFFRÉE ELLE AUSSI — la dynamique (ses pas, sa température, son
+     énergie) et la minimisation : c'est le champ de forces qui a le dernier mot, et le
+     rapport doit pouvoir le prouver. */
+  const mdLine = best.md
+    ? ` · 🌡 dynamique ${best.md.steps} pas`
+      + `${best.md.temperature ? ` (T ${Number(best.md.temperature.hot).toFixed(2)} → ${Number(best.md.temperature.cold).toFixed(2)}, cinétique ${best.md.temperature.kinetic})` : ''}`
+      + ` : énergie ${best.md.before.toFixed(1)} → ${best.md.after.toFixed(1)}`
+      + `${best.minimise ? ` · ⚒ minimisation ${best.minimise.sweeps} balayages, ${best.minimise.before.toFixed(1)} → ${best.minimise.after.toFixed(1)}` : ''}`
+    : (best.minimise ? ` · ⚒ minimisation ${best.minimise.sweeps} balayages, ${best.minimise.before.toFixed(1)} → ${best.minimise.after.toFixed(1)}` : '');
+  /* LES BASSINS φ/ψ DU MODÈLE RETENU — le chiffre qui répond à « mes Ramachandran sont
+     mauvais » : combien de résidus sont HORS bassin, et à quelle distance du bord. */
+  const ramaLine = best.rama
+    ? ` · 🧭 bassins φ/ψ ${best.rama.measured} résidu${best.rama.measured === 1 ? '' : 's'} relu${best.rama.measured === 1 ? '' : 's'} :`
+      + (best.rama.violations
+        ? ` ⚠ ${best.rama.violations} hors bassin${best.rama.worst ? ` (le pire à ${best.rama.worst.gap.toFixed(0)}° du bord, région « ${best.rama.worst.region} »)` : ''}`
+        : ' ✓ tous dans un bassin du graphe 🪢')
+    : '';
   return `✓ 🧬 Structure calculation · ${n} starting structure${n === 1 ? '' : 's'}, ${kept} kept`
     + `${ranked.refused ? ` (${ranked.refused} refused)` : ''} · ${converged} of them respected every distance`
     + ` · best = start #${best.index} (score ${best.score.toFixed(1)} = target function ${best.total.toFixed(1)}`
@@ -10479,14 +10694,18 @@ const calcReportOf = (retained, ranked) => {
       : ' · ✓ no atom pair closer than 1.45 Å in it'}`
     + ` · bonds ${best.bondRms.toFixed(4)} Å rms, angles ${best.angleRms.toFixed(2)}° rms`
     + ` · ${best.moved} atom${best.moved === 1 ? '' : 's'} moved`
-    + `${drawLine}${annealLine}${protocolLine}${omegaLine}${spreadLine}${distLine}${restLine}.`
+    + `${drawLine}${annealLine}${protocolLine}${mdLine}${omegaLine}${ramaLine}${spreadLine}${distLine}${restLine}.`
     + ` ${calcWhyOf(retained.reason)} — the same protocol the ⚒ applies, on each start;`
     + ` a FIXED seed (${STRUCTURE_CALC_SEED}), so the same n and the same distances give the same family to the last digit,`
     + ` and a distance counts as respected within ${STRUCTURE_CALC_RESTRAINT_TOLERANCE} Å.`
-    + ' ⚠ It IS a simulated annealing, but in DIHEDRAL space only: a move is one rigid rotation about a bond, so bond'
-    + ' lengths and angles cannot change, and there is still no charge, no solvent, no atom added, and no kcal/mol.'
-    + ' ⚠ The ω potential keeps a peptide C–N bond trans (that is what the recuit added); if your own distance forces a'
-    + ' cis peptide, the LOGE lets your distance win and the report says so — 🪢 Ramachandran shows it.'
+    + ' ⚠ Every move is in DIHEDRAL space: one RIGID rotation of one side of the molecule about its hinge, so bond'
+    + ' lengths and angles cannot change — that is what makes the force field (bond lengths, angles, planar rings, your'
+    + ' distances, the hard core, ω, the φ/ψ basins, χ1) affordable here.'
+    + ' ⚠ There is still no charge, no solvent, no entropy, no atom added, and no kcal/mol: the energy is comparable'
+    + ' only inside one calculation.'
+    + ' ⚠ The φ/ψ term is what was missing before: it is ZERO inside a basin of the 🪢 plot and grows with the distance'
+    + ' to the basin, so the models you keep no longer come out with points all over the map. If one of YOUR distances'
+    + ' forces a residue out of its basin, your distance wins — and the line above says how many went out.'
     + ' ↺ Undo torsion puts the molecule back exactly where it was before the calculation wrote anything.';
 };
 
@@ -10534,13 +10753,58 @@ const calcPreviewPositions = (comp, structure, positions) => {
   writeStructurePositions(comp, idxs, positions);
 };
 
-/** LE CALCUL, UN DÉPART PAR TRANCHE — « the program must then generate n structures by
- *  randomly assigning values of all dihedral angles », puis le protocole du ⚒ sur
- *  chacune. Chaque tranche est un `setTimeout` : la page reste vivante, la ligne de
- *  progression dit où on en est, et le ⏹ (ou une autre molécule chargée) arrête
- *  l'affaire ENTRE deux départs. Le dernier mot revient au module
- *  (`rankStructureAttempts`) : les m meilleures sont gardées, et la première est
- *  écrite dans la structure — les autres s'écrivent une par une (⤓ Load). */
+/** LA LIGNE D'UNE IMAGE DU CALCUL — une phrase par phase du MOTEUR (le tirage, le recuit,
+ *  la préparation, chaque distance conduite, le balayage, la dynamique, la minimisation,
+ *  la trempe). C'est ce que la ligne de progression affiche PENDANT le calcul : elle dit
+ *  ce que la molécule est en train de faire, pas seulement qu'elle tourne. */
+const calcPhaseLine = (f, done, of, head = null) => {
+  const prefix = head || `🧬 start ${(Number(f.index) || 0) + 1}/${of}`
+    + `${done ? ` · ${done} finished` : ''}`;
+  switch (f.phase) {
+    case 'start': return `${prefix} — taking a start (draw of every rotatable dihedral)…`;
+    case 'draw': return `${prefix} — all dihedrals drawn at random (${f.channels || 0} channels)`;
+    case 'anneal': return `${prefix} — 🔥 recuit T=${Number(f.temperature).toFixed(2)}`
+      + ` · palier ${f.step}/${f.of}${f.parts ? ` (${f.part}/${f.parts})` : ''}`;
+    case 'prep': return `${prefix} — ⚒ preparation (chemistry and hard core)`;
+    case 'drive': return `${prefix} — ⚒ distance ${f.pair ? `${f.pair.i}–${f.pair.j}` : ''} driven`
+      + `${f.pass ? ` (pass ${f.pass})` : ''}`;
+    case 'scan': return `${prefix} — ⚒ scan${f.pass ? ` (pass ${f.pass})` : ''}`
+      + `${f.found ? ` · ${f.found} to fix` : ''}`;
+    case 'md': return `${prefix} — dynamics ${f.step}/${f.of}`
+      + ` · T=${Number(f.temperature).toFixed(2)} (kinetic ${Number(f.kinetic).toFixed(2)})`
+      + ` · E=${Number(f.potential).toFixed(1)}`;
+    case 'minimise': return `${prefix} — sweep ${f.sweep}/${f.of}`
+      + ` · step ${Number(f.step).toFixed(1)}° · E=${Number(f.cost).toFixed(1)}`;
+    case 'quench': return `${prefix} — 🧊 quench (frozen, leashed), step ${f.step}/${f.of}`;
+    default: return prefix;
+  }
+};
+
+/** LA LIGNE D'UN DÉPART FINI — la même phrase qu'avant, plus les trois mouvements de la
+ *  fin : le recuit, la dynamique (ses pas et sa température), la minimisation (ses
+ *  balayages et son énergie), et ce que le départ laisse comme ω et comme φ/ψ. */
+const calcAttemptLine = (a, { done, of }) => `🧬 start ${done}/${of} — ${calcWhyOf(a.reason)}`
+  + `${a.anneal ? ` · recuit ${a.anneal.accepted}/${a.anneal.tried} pas acceptés` : ''}`
+  + `${a.md ? ` · 🌡 ${a.md.steps} steps (T ${Number(a.md.temperature.hot).toFixed(2)} → ${Number(a.md.temperature.cold).toFixed(2)})` : ''}`
+  + `${a.minimise ? ` · ⚒ ${a.minimise.sweeps} sweeps` : ''}`
+  + `${a.omega && a.omega.violations ? ` · ⚠ ω ${a.omega.worst.deg.toFixed(0)}°` : ''}`
+  + `${a.ramaPlot && a.ramaPlot.violations ? ` · ⚠ φ/ψ ${a.ramaPlot.violations}/${a.ramaPlot.measured} outside` : ''}`
+  + `${a.draw ? ` · ${a.draw.turned} dihedral${a.draw.turned === 1 ? '' : 's'} drawn at random` : ''}`
+  + `${a.protocol ? ` · ${a.protocol.steps} steps` : ''}`;
+
+/** LE CALCUL, IMAGE PAR IMAGE — « the program must then generate n structures by randomly
+ *  assigning values of all dihedral angles », puis le protocole du ⚒ sur chacune, puis
+ *  la dynamique et la minimisation : c'est le MOTEUR du module qui décide de l'ordre
+ *  (`structureCalculationFrames`), et l'écran ne fait que le CONduire — il avance dans
+ *  les images pendant au plus `CALC_FRAME_BUDGET_MS` millisecondes, écrit la dernière
+ *  image dans la molécule (le MÊME chemin d'écriture qu'une torsion), met la ligne de
+ *  progression à jour, puis rend la main à la page (`setTimeout`) pour qu'elle PEIGNE.
+ *  ⚠ C'est ce qui rend le calcul REGARDABLE : un calcul poussé d'un trait bloque le fil
+ *  du navigateur, donc la molécule ne bouge qu'à la fin — c'était la remarque « I do not
+ *  see the molecule changing structures during the calculation ». Ici la molécule est
+ *  écrite à chaque image, et la page a le temps de la dessiner avant la suivante.
+ *  Le ⏹ (ou un autre chargement) avance le jeton `calcRunRef` : la boucle s'arrête au
+ *  prochain tour, et le module s'arrête lui-même ENTRE deux départs (`shouldStop`). */
 const runStructureCalculation = () => {
   finishRelaxPlayback();                 // un ⚒ qui joue encore est terminé d'abord
   const live = calcGeometryNow();
@@ -10579,27 +10843,51 @@ const runStructureCalculation = () => {
   setCalcProgress(`🧬 start 0/${n} …${half
     ? ` (${half} line${half === 1 ? '' : 's'} of the table still unfinished, left out)`
     : ''}`);
-  const finish = (stopped) => {
-    const ranked = rankStructureAttempts({ attempts, keep: m });
+  const finish = (stopped, ranked = null) => {
+    const family = ranked || rankStructureAttempts({ attempts, keep: m });
     /* LA FAMILLE EST MARQUÉE DE SA MOLÉCULE — `comp` et `structure` : ses coordonnées
        ne peuvent donc pas être écrites sur une autre (voir `calcWriteStructure`). */
-    setCalcResult({ ...ranked, comp, structure });
+    setCalcResult({ ...family, comp, structure });
     setCalcBusy(false);
     setCalcProgress('');
-    if (!ranked.retained.length) {
+    if (!family.retained.length) {
       setCalcMsg('✕ No structure came out of the calculation — nothing was written.');
       return;
     }
     /* LE MEILLEUR S'ÉCRIT TOUT DE SUITE — les m retenues se regardent ensuite une par
        une (⤓ Load), et chacune s'écrit par le chemin d'une torsion. */
-    calcWriteStructure(ranked.retained[0], ranked);
+    calcWriteStructure(family.retained[0], family);
     if (stopped) setCalcMsg((prev) => `⏹ Stopped between two starts: ${attempts.length} of ${n} computed, the rest is not. ${prev}`);
   };
   calcPartialRef.current = { run, finish, attempts };
-  const step = () => {
+  /* LE MOTEUR — le module, image par image (`onAttempt` pousse chaque départ fini dans
+     `attempts`, ce que le ⏹ classe même s'il arrête tout). */
+  const frames = structureCalculationFrames({
+    positions: base, elements: geom.elements, bonds: geom.bonds,
+    restraints: list.map((r) => ({ i: r.i, j: r.j, target: r.target })),
+    starts: n, keep: m,
+    seed: STRUCTURE_CALC_SEED,
+    stageStep: relaxStageStep,
+    escapes: relaxEscapes,
+    /* ⚙ LA PHYSIQUE — le recuit (avec ses images), la dynamique, la minimisation. */
+    anneal: calcAnneal, annealPerFrame: calcAnnealFrame,
+    md: calcMdSteps, mdPerFrame: STRUCTURE_CALC_MD_FRAME,
+    minimise: calcMinimise,
+    /* ⟳ Le rebâtiment n'est PAS envoyé : la fenêtre est la molécule entière, donc il n'y
+       a rien hors fenêtre à reposer (le module l'explique, et le rapport du ⚒ n'en parle
+       pas non plus ici). */
+    rebuild: false,
+    shouldStop: () => calcRunRef.current !== run || componentRef.current !== comp,
+    onAttempt: (attempt) => {
+      attempts.push(attempt);
+      const live2 = attempt.satisfied + attempt.violations;
+      setCalcProgress(calcAttemptLine(attempt, { done: attempts.length, of: n })
+        + ` · ${attempt.satisfied}/${live2} distance${live2 === 1 ? '' : 's'} respected`
+        + ` · score ${attempt.score.toFixed(1)}`);
+    },
+  });
+  const pump = () => {
     if (calcRunRef.current !== run) return;
-    /* LA MOLÉCULE À L'ÉCRAN N'EST PLUS CELLE DU CALCUL — un chargement, un dépli : le
-       calcul s'arrête de lui-même et le DIT (rien n'est écrit sur une autre molécule). */
     if (componentRef.current !== comp) {
       setCalcBusy(false);
       setCalcProgress('');
@@ -10607,47 +10895,31 @@ const runStructureCalculation = () => {
         + ' Nothing was written: those models belong to the molecule that was there. ▶ Run it again on this one.');
       return;
     }
-    const attempt = structureAttemptOf({
-      positions: base, elements: geom.elements, bonds: geom.bonds,
-      restraints: list.map((r) => ({ i: r.i, j: r.j, target: r.target })),
-      index: attempts.length,
-      seed: STRUCTURE_CALC_SEED,
-      stageStep: relaxStageStep,
-      escapes: relaxEscapes,
-      /* ⚙ LA PHYSIQUE — les paliers de recuit, et l'aperçu à l'écran si l'œil suit. */
-      anneal: calcAnneal,
-      onStep: calcWatch ? (s, index) => {
-        if (calcRunRef.current !== run || !s || !s.positions) return;
-        calcPreviewPositions(comp, structure, s.positions);
-        const phase = s.phase === 'anneal' ? `recuit T=${Number(s.temperature).toFixed(2)}`
-          : s.phase === 'quench' ? `trempe ${s.step}/${s.of}`
-            : s.phase === 'drive' ? `distance ${s.pair ? `${s.pair.i}–${s.pair.j}` : ''}`
-              : s.phase;
-        setCalcProgress(`🧬 start ${index + 1}/${n} — ${phase} · ${attempts.length} finished`
-          + `${s.phase === 'anneal' ? ` · ${s.accepted}/${s.tried} pas acceptés` : ''}`);
-      } : null,
-      /* ⟳ Le rebâtiment n'est PAS envoyé : la fenêtre est la molécule entière, donc il
-         n'y a rien hors fenêtre à reposer (le module l'explique, et le rapport du ⚒
-         n'en parle pas non plus ici). */
-      rebuild: false,
-    });
-    attempts.push(attempt);
-    const live = attempt.satisfied + attempt.violations;
-    /* LE DÉPART FINI S'ÉCRIT À L'ÉCRAN — le dernier geste du module a déjà été montré,
-       et écrire la fin du départ garantit que ce qu'on regarde est bien CE modèle. */
-    if (calcWatch) calcPreviewPositions(comp, structure, attempt.positions);
-    setCalcProgress(`🧬 start ${attempts.length}/${n} — ${calcWhyOf(attempt.reason)} · score ${attempt.score.toFixed(1)}`
-      + ` · ${attempt.satisfied}/${live} distance${live === 1 ? '' : 's'} respected`
-      + `${attempt.anneal ? ` · recuit ${attempt.anneal.accepted}/${attempt.anneal.tried} pas acceptés` : ''}`
-      + `${attempt.omega && attempt.omega.violations ? ` · ⚠ ω ${attempt.omega.worst.deg.toFixed(0)}°` : ''}`
-      + `${attempt.draw ? ` · ${attempt.draw.turned} dihedral${attempt.draw.turned === 1 ? '' : 's'} drawn at random` : ''}`
-      + `${attempt.protocol && attempt.protocol.passCount > 1 ? ` · ${attempt.protocol.passCount} passes` : ''}`
-      + `${attempt.protocol ? ` · ${attempt.protocol.steps} steps` : ''}`);
-    if (attempts.length >= n) { finish(false); return; }
-    if (typeof window !== 'undefined' && window.setTimeout) window.setTimeout(step, 0);
-    else step();
+    const started = Date.now();
+    let shown = null;
+    for (;;) {
+      let tick;
+      try { tick = frames.next(); } catch (e) {
+        setCalcBusy(false);
+        setCalcProgress('');
+        setCalcMsg(`✕ The calculation stopped on an error: ${(e && e.message) || e}`);
+        return;
+      }
+      if (tick.done) { finish(false, tick.value); return; }
+      shown = tick.value;
+      if (calcRunRef.current !== run) return;      // ⏹ pendant cette image : on sort
+      if (Date.now() - started > CALC_FRAME_BUDGET_MS) break;
+    }
+    /* L'IMAGE S'ÉCRIT, PUIS LA PAGE PEINT — c'est l'ordre qui fait qu'on VOIT la
+       molécule : écrire sans rendre la main ne montrerait rien. */
+    if (shown) {
+      if (calcWatch && shown.positions) calcPreviewPositions(comp, structure, shown.positions);
+      if (shown.phase !== 'attempt-done') setCalcProgress(calcPhaseLine(shown, attempts.length, n));
+    }
+    if (typeof window !== 'undefined' && window.setTimeout) window.setTimeout(pump, 0);
+    else pump();
   };
-  step();
+  pump();
 };
 
 /** ⏹ ARRÊTER LE CALCUL — entre deux départs, et sans rien perdre : ce qui est déjà
@@ -10660,6 +10932,201 @@ const calcStop = () => {
   if (part && part.attempts.length) { part.finish(true); return; }
   setCalcProgress('');
   setCalcMsg('⏹ Stopped — no start had been computed yet, so nothing was written.');
+};
+
+/** LE CHAMP DE FORCES, RELU SUR LA MOLÉCULE À L'ÉCRAN — `forceFieldEnergyOf` sur les
+ *  coordonnées DU MOMENT, avec les distances de la table comme contraintes. Le panneau
+ *  affiche alors l'énergie famille par famille (liaisons, angles, plans, distances, cœur
+ *  dur, ω, bassins φ/ψ, χ1) au lieu de dire « le calcul tourne ». */
+const calcReadForceField = () => {
+  const now = calcGeometryNow();
+  if (!now) {
+    setCalcMsg('✕ There is no molecule on screen — load a structure first.');
+    return null;
+  }
+  const { geom } = now;
+  const list = calcUsableRows().filter((r) => r.i < geom.count && r.j < geom.count);
+  const field = forceFieldEnergyOf({
+    positions: geom.positions, elements: geom.elements, bonds: geom.bonds,
+    restraints: list.map((r) => ({ i: r.i, j: r.j, target: r.target })),
+  });
+  setCalcForce(field);
+  const ra = field.ramaReport;
+  const ch = field.chiReport;
+  setCalcMsg(`🧲 Force field on the molecule as it stands: E = ${field.total.toFixed(2)}`
+    + ` (chemistry ${field.target.toFixed(2)} + ω ${field.omega.toFixed(2)} + φ/ψ ${field.rama.toFixed(2)} + χ1 ${field.chi.toFixed(2)})`
+    + ` · ${field.torsions.residues} backbone residue${field.torsions.residues === 1 ? '' : 's'}`
+    + ` (${field.torsions.phi.length} φ, ${field.torsions.psi.length} ψ, ${field.omegaReport.count} ω, ${ch.count} χ1)`
+    + `${ra.violations ? ` · ⚠ ${ra.violations} φ/ψ outside every basin${ra.worst ? ` (worst ${ra.worst.gap.toFixed(0)}° away)` : ''}` : ' · ✓ every φ/ψ inside a basin'}`
+    + `${field.omegaReport.violations ? ` · ⚠ ${field.omegaReport.violations} ω outside ± ${STRUCTURE_CALC_OMEGA_TOLERANCE}°` : ''}`
+    + `${ch.violations ? ` · ⚠ ${ch.violations} χ1 between two staggered wells` : ''}.`
+    + ' ⚠ The energy is in the app\'s own units (comparable inside one calculation) — it is NOT a kcal/mol.');
+  return field;
+};
+
+/** CONDUIRE UN MOTEUR D'IMAGES — le même budget, la même écriture, le même jeton d'arrêt
+ *  que le calcul : un seul endroit où l'écran apprend à REGARDER un générateur. `head`
+ *  remplace l'en-tête de la ligne de progression (un geste isolé n'est pas un « start i/n »). */
+const pumpMotion = ({ frames, comp, structure, head, onEnd }) => {
+  calcRunRef.current += 1;
+  const run = calcRunRef.current;
+  const pump = () => {
+    if (calcRunRef.current !== run) return;
+    if (componentRef.current !== comp) {
+      setCalcBusy(false);
+      setCalcProgress('');
+      setCalcMsg('✕ The molecule on screen changed while this was running — it stopped.'
+        + ' Nothing was written on the new one: ▶ run it again on this molecule.');
+      return;
+    }
+    const started = Date.now();
+    let shown = null;
+    for (;;) {
+      let tick;
+      try { tick = frames.next(); } catch (e) {
+        setCalcBusy(false);
+        setCalcProgress('');
+        setCalcMsg(`✕ It stopped on an error: ${(e && e.message) || e}`);
+        return;
+      }
+      if (tick.done) {
+        setCalcBusy(false);
+        setCalcProgress('');
+        if (onEnd) onEnd(tick.value);
+        return;
+      }
+      shown = tick.value;
+      if (calcRunRef.current !== run) return;
+      if (Date.now() - started > CALC_FRAME_BUDGET_MS) break;
+    }
+    if (shown) {
+      if (calcWatch && shown.positions) calcPreviewPositions(comp, structure, shown.positions);
+      setCalcProgress(calcPhaseLine(shown, 0, 1, head));
+    }
+    if (typeof window !== 'undefined' && window.setTimeout) window.setTimeout(pump, 0);
+    else pump();
+  };
+  pump();
+};
+
+/** LES DISTANCES DÉJÀ TENUES — la longe des gestes ⚙ (dynamique et minimisation) : un
+ *  couple dont la distance est DANS sa tolérance au moment du départ ne peut plus en
+ *  sortir. Une distance pas encore tenue n'est pas dans la longe : elle reste une
+ *  contrainte de la table, et le geste la conduit. */
+const calcHeldPairs = (geom, list) => list
+  .filter((r) => {
+    const d = Math.hypot(
+      geom.positions[r.i * 3] - geom.positions[r.j * 3],
+      geom.positions[r.i * 3 + 1] - geom.positions[r.j * 3 + 1],
+      geom.positions[r.i * 3 + 2] - geom.positions[r.j * 3 + 2],
+    );
+    return Math.abs(d - r.target) <= STRUCTURE_CALC_RESTRAINT_TOLERANCE;
+  })
+  .map((r) => ({ i: r.i, j: r.j, target: r.target }));
+
+/** 🌡 LA DYNAMIQUE MOLÉCULAIRE, SUR LA MOLÉCULE TELLE QU'ELLE EST — la demande :
+ *  « add the force field and a Molecular dynamics option. this will help the final
+ *  energy refinement. » Elle part des coordonnées à l'écran, prend les distances de la
+ *  table comme contraintes et les distances DÉJÀ tenues comme longe, se conduit image par
+ *  image (donc SE REGARDE), et s'écrit par le MÊME chemin qu'une torsion — le ↺ la remet.
+ *  ⚠ `T` est en unités réduites (k_B = 1) : le panneau le dit, il ne prétend pas des
+ *  kelvins. ⚠ Et c'est une CONSTANTE (pas un plan de température) : une dynamique
+ *  d'équilibrage tient sa température, c'est un recuit qui la fait descendre. */
+const runMolecularDynamics = () => {
+  finishRelaxPlayback();
+  const now = calcGeometryNow();
+  if (!now) {
+    setCalcMsg('✕ There is no molecule on screen — load a structure first.');
+    return;
+  }
+  const { comp, structure, geom } = now;
+  const list = calcUsableRows().filter((r) => r.i < geom.count && r.j < geom.count);
+  const base = Array.from(geom.positions);
+  const held = calcHeldPairs(geom, list);
+  const before = torsionSnapshotOf(structure);
+  torsionUndoRef.current = {
+    comp, structure, count: before ? before.length / 3 : 0, flat: before,
+    label: `🌡 molecular dynamics · ${calcMdSteps} steps · T = ${calcMdTemp}`,
+  };
+  setCalcBusy(true);
+  setCalcShown(0);
+  setCalcProgress('🌡 molecular dynamics …');
+  pumpMotion({
+    frames: mdFrames({
+      positions: base, elements: geom.elements, bonds: geom.bonds,
+      restraints: list.map((r) => ({ i: r.i, j: r.j, target: r.target })),
+      leash: held, steps: calcMdSteps, temperature: calcMdTemp,
+      perFrame: STRUCTURE_CALC_MD_FRAME,
+    }),
+    comp, structure,
+    head: `🌡 MD · T = ${calcMdTemp}`,
+    onEnd: (run) => {
+      if (!run || !run.ok) {
+        setCalcMsg(`✕ The dynamics refused: ${run && run.reason === 'no-channel'
+          ? 'this molecule has no rotatable bond to turn.' : 'nothing to do.'}`);
+        return;
+      }
+      setCalcForce(null);
+      setCalcMsg(`✓ 🌡 Molecular dynamics · ${run.steps} steps (${run.applied} applied) over`
+        + ` ${run.channels} channel${run.channels === 1 ? '' : 's'}`
+        + ` · T held at ${run.temperature.hot} (kinetic ${run.temperature.mean} mean)`
+        + ` · energy ${run.cost.before.toFixed(2)} → ${run.cost.after.toFixed(2)}`
+        + `${run.walls.count ? ` · ${run.walls.count} distance${run.walls.count === 1 ? '' : 's'} held by the leash (${run.walls.before.toFixed(2)} → ${run.walls.after.toFixed(2)})` : ''}`
+        + ` · ω ${run.omega ? run.omega.penalty.toFixed(2) : 0} · φ/ψ ${run.rama ? run.rama.penalty.toFixed(2) : 0}`
+        + ` (${run.rama ? run.rama.violations : 0} outside) · χ1 ${run.chi ? run.chi.penalty.toFixed(2) : 0}.`
+        + ' ⚠ T is in reduced units (k_B = 1, the energy is the force field\'s) — not kelvins.'
+        + ' ⚒ Minimise from here lands on a minimum of the same field; ↺ Undo torsion puts the molecule back.');
+      if (rama) readRamachandran();     // le graphe suit ce que la dynamique vient d'écrire
+    },
+  });
+};
+
+/** ⚒ LA MINIMISATION — l'affinage final : la même descente dihédrale que le module
+ *  applique en fin de départ (chaque charnière essayée de part et d'autre, pas divisé par
+ *  deux), sur le MÊME champ et avec la MÊME longe. Elle part d'où la molécule est. */
+const runMinimise = () => {
+  finishRelaxPlayback();
+  const now = calcGeometryNow();
+  if (!now) {
+    setCalcMsg('✕ There is no molecule on screen — load a structure first.');
+    return;
+  }
+  const { comp, structure, geom } = now;
+  const list = calcUsableRows().filter((r) => r.i < geom.count && r.j < geom.count);
+  const base = Array.from(geom.positions);
+  const held = calcHeldPairs(geom, list);
+  const before = torsionSnapshotOf(structure);
+  torsionUndoRef.current = {
+    comp, structure, count: before ? before.length / 3 : 0, flat: before,
+    label: `⚒ minimisation · ${calcMinimise} sweeps`,
+  };
+  setCalcBusy(true);
+  setCalcShown(0);
+  setCalcProgress('⚒ minimising …');
+  pumpMotion({
+    frames: minimizeFrames({
+      positions: base, elements: geom.elements, bonds: geom.bonds,
+      restraints: list.map((r) => ({ i: r.i, j: r.j, target: r.target })),
+      leash: held, rounds: calcMinimise,
+    }),
+    comp, structure,
+    head: '⚒ Minimise',
+    onEnd: (run) => {
+      if (!run || !run.ok) {
+        setCalcMsg(`✕ The minimisation refused: ${run && run.reason === 'no-channel'
+          ? 'this molecule has no rotatable bond to turn.' : 'nothing to do.'}`);
+        return;
+      }
+      setCalcForce(null);
+      setCalcMsg(`✓ ⚒ Minimisation · ${run.sweeps} sweep${run.sweeps === 1 ? '' : 's'}`
+        + ` (${run.accepted} accepted moves) · energy ${run.cost.before.toFixed(2)} → ${run.cost.after.toFixed(2)}`
+        + ` · step down to ${run.step.toFixed(2)}°`
+        + ` · ${run.reason === 'converged' ? 'it stopped on the step floor' : 'the sweep budget ran out'}`
+        + `${run.walls.count ? ` · ${run.walls.count} distance${run.walls.count === 1 ? '' : 's'} held by the leash` : ''}.`
+        + ' ↺ Undo torsion puts the molecule back exactly where it was.');
+      if (rama) readRamachandran();
+    },
+  });
 };
 
 /** LA STRUCTURE À L'ÉCRAN A-T-ELLE ÉTÉ DÉPLACÉE À LA MAIN ? Le rapport de la torsion
@@ -20138,11 +20605,6 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
   🪢 Ramachandran{rama && rama.measured ? ` (${rama.measured})` : ''}
 </button>
 {calcSection === 'rama' && (() => {
-  const grid = ramaPlotGrid();
-  /* LES GRADUATIONS ET LES TITRES D'AXE, PLACÉS PAR LE MODULE — leur texte, leur place
-     ET la taille de leurs caractères (« characteria are too small ») : le panneau
-     n'écrit ici aucun décalage, il écrit ce que `ramaPlotAxisLabels` rend. */
-  const axis = ramaPlotAxisLabels();
   /* LE POINT SURVOLÉ — retrouvé par sa CLEF dans la lecture courante : une clef d'une
      ancienne lecture ne désigne plus rien (le panneau retombe sur son invite au lieu
      de nommer un point disparu), et un résidu sans point ne peut pas être survolé. */
@@ -20150,13 +20612,6 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
     ? rama.residues.find((r) => r.key === ramaHover && r.point) || null
     : null;
   const hoverText = ramaHoverTextOf(hovered);
-  /* LES POINTS, LES OUTLIERS PAR-DESSUS — un résidu hors région se voit : il est
-     dessiné en dernier (donc au-dessus) et plus gros. */
-  const points = rama
-    ? [...rama.residues.filter((r) => r.point)].sort((a, b) => (
-      (a.region === 'outlier' ? 1 : 0) - (b.region === 'outlier' ? 1 : 0)
-    ))
-    : [];
   return (
     <div className="w-full bg-amber-50/40 border border-t-0 border-amber-200 rounded-b-lg p-3 flex flex-col gap-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -20180,89 +20635,11 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
         </p>
       )}
       <div className="flex flex-wrap items-start gap-3">
-        <svg viewBox={`0 0 ${RAMA_PLOT.size} ${RAMA_PLOT.size}`}
-          className="w-full max-w-[340px] h-auto bg-white rounded border border-amber-200 shrink-0">
-          {/* LES BASSINS — le contour des résidus ORDINAIRES, et les polygones que la
-              classification emploie sont LES MÊMES : la couleur d'un point ne peut pas
-              mentir sur la région dont on l'a tirée. */}
-          {['alpha', 'beta', 'leftalpha'].map((region) => (
-            <path key={region} d={ramaPlotPath(RAMA_PLOT_REGIONS[region])}
-              fill={RAMA_REGION_COLORS[region]} fillOpacity="0.13"
-              stroke={RAMA_REGION_COLORS[region]} strokeOpacity="0.4" strokeWidth="1" />
-          ))}
-          {grid.x.map((m) => (
-            <line key={`gx${m.deg}`} x1={m.at} y1={grid.pad} x2={m.at} y2={grid.size - grid.pad} stroke="#e2e8f0" strokeWidth="1" />
-          ))}
-          {grid.y.map((m) => (
-            <line key={`gy${m.deg}`} x1={grid.pad} y1={m.at} x2={grid.size - grid.pad} y2={m.at} stroke="#e2e8f0" strokeWidth="1" />
-          ))}
-          {/* LE REPÈRE DU POINT SURVOLÉ — deux pointillés jusqu'aux DEUX axes : on lit
-              son φ en bas et son ψ à gauche sans lâcher le point des yeux. */}
-          {hovered && (
-            <g pointerEvents="none" stroke={RAMA_REGION_COLORS.outlier} strokeWidth="1" strokeDasharray="3 3">
-              <line x1={grid.pad} y1={hovered.point.y} x2={grid.size - grid.pad} y2={hovered.point.y} />
-              <line x1={hovered.point.x} y1={grid.pad} x2={hovered.point.x} y2={grid.size - grid.pad} />
-            </g>
-          )}
-          {/* LES GRADUATIONS DES DEUX AXES — « −180 … 180 », avec le vrai moins, en 13
-              unités (elles en faisaient 7) : c'est la demande, et la place vient du module. */}
-          {axis.x.map((m) => (
-            <text key={`tx${m.deg}`} x={m.x} y={m.y} textAnchor={m.anchor} fontSize={axis.font.tick} fill="#64748b">{m.text}</text>
-          ))}
-          {axis.y.map((m) => (
-            <text key={`ty${m.deg}`} x={m.x} y={m.y} textAnchor={m.anchor} fontSize={axis.font.tick} fill="#64748b">{m.text}</text>
-          ))}
-          {/* …ET LES TITRES DES AXES — φ en abscisse, ψ en ordonnée (couchée) : une
-              figure de Ramachandran se lit avec ses deux noms écrits. */}
-          <text x={axis.xTitle.x} y={axis.xTitle.y} textAnchor={axis.xTitle.anchor}
-            fontSize={axis.font.title} fontWeight="700" fill="#475569">{axis.xTitle.text}</text>
-          <text x={axis.yTitle.x} y={axis.yTitle.y} textAnchor={axis.yTitle.anchor}
-            fontSize={axis.font.title} fontWeight="700" fill="#475569"
-            transform={`rotate(${axis.yTitle.rotate} ${axis.yTitle.x} ${axis.yTitle.y})`}>{axis.yTitle.text}</text>
-          {/* UN POINT PAR RÉSIDU — dessiné avec un CERNE blanc (deux résidus voisins ne
-              se confondent pas en une tache) et doublé d'un cercle de PRISE plus large
-              que lui : le survol, et le clavier (Tab), attrapent le point sans viser au
-              pixel. Le point survolé grossit et se cercle de noir. */}
-          {points.map((r) => {
-            const isHovered = !!hovered && hovered.key === r.key;
-            const color = RAMA_REGION_COLORS[r.region] || RAMA_REGION_COLORS.outlier;
-            const radius = (r.region === 'outlier' ? RAMA_POINT.outlier : RAMA_POINT.radius)
-              + (isHovered ? 1.4 : 0);
-            return (
-              <g key={r.key}>
-                <circle cx={r.point.x} cy={r.point.y} r={RAMA_POINT.hit} fill="transparent"
-                  className="cursor-crosshair"
-                  onMouseEnter={() => setRamaHover(r.key)}
-                  onMouseLeave={() => setRamaHover((k) => (k === r.key ? null : k))}
-                  onClick={() => setRamaHover(r.key)}
-                  onFocus={() => setRamaHover(r.key)}
-                  onBlur={() => setRamaHover((k) => (k === r.key ? null : k))}
-                  tabIndex={0} role="img" aria-label={ramaHoverTextOf(r) || r.label}>
-                  <title>{`${r.label} · φ ${r.phi.toFixed(1)}° ψ ${r.psi.toFixed(1)}°${r.omega == null ? '' : ` ω ${r.omega.toFixed(1)}°`} · ${RAMA_REGION_NAMES[r.region]}${r.klass === 'general' ? '' : ` · ${r.klass} contours`}`}</title>
-                </circle>
-                <circle cx={r.point.x} cy={r.point.y} r={radius}
-                  fill={color}
-                  fillOpacity={r.region === 'outlier' || isHovered ? 0.95 : 0.75}
-                  stroke={isHovered ? '#1e293b' : (r.region === 'outlier' ? '#5b21b6' : '#ffffff')}
-                  strokeWidth={isHovered ? 1.4 : (r.region === 'outlier' ? 0.9 : RAMA_POINT.stroke)}
-                  pointerEvents="none" />
-              </g>
-            );
-          })}
-        </svg>
+        {/* LE GRAPHE — un seul dessin pour les deux fenêtres (`ramaPlotSvg`) : la section
+            🪢 et le dock à gauche de la vue 3D montrent donc EXACTEMENT le même SVG. */}
+        {ramaPlotSvg()}
         <div className="flex flex-col gap-1.5 min-w-[180px] flex-1">
-          <p className="text-[10px] text-slate-600">
-            {rama ? (
-              <>
-                <b>{rama.measured}</b> of {rama.count} residue{rama.count === 1 ? '' : 's'} plotted ·
-                {' '}<b style={{ color: RAMA_REGION_COLORS.alpha }}>{rama.regions.alpha} α</b> ·
-                {' '}<b style={{ color: RAMA_REGION_COLORS.beta }}>{rama.regions.beta} β</b>
-                {rama.regions.leftalpha ? <> · <b style={{ color: RAMA_REGION_COLORS.leftalpha }}>{rama.regions.leftalpha} α left</b></> : null}
-                {' '}· <b style={{ color: RAMA_REGION_COLORS.outlier }}>{rama.regions.outlier} outside</b>
-                {rama.breaks ? ` · ${rama.breaks} with one angle only (a chain end or a gap)` : ''}
-              </>
-            ) : 'Nothing read yet — press ⟳ Read the backbone.'}
-          </p>
+          <p className="text-[10px] text-slate-600">{ramaSummaryText()}</p>
           {rama && (rama.gly || rama.pro || rama.prePro) ? (
             <p className="text-[10px] text-slate-500">
               {[`${rama.gly} glycine${rama.gly === 1 ? '' : 's'}`, `${rama.pro} proline${rama.pro === 1 ? '' : 's'}`,
@@ -20270,22 +20647,10 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
               {' '}— classified by their OWN contours (a glycine's two mirrors are allowed, a proline's φ is closed by its ring, a pre-proline has a wider β), not by the ones drawn behind the plot.
             </p>
           ) : null}
-          {rama && rama.outliers.length ? (
-            <div className="max-h-28 overflow-y-auto custom-scrollbar border border-violet-200 rounded bg-violet-50 px-2 py-1">
-              <p className="text-[9px] font-black uppercase tracking-wide text-violet-700">Outside every basin</p>
-              <ul className="text-[10px] text-violet-800 font-mono">
-                {rama.outliers.map((o) => (
-                  <li key={`o${o.key}`}>
-                    {o.label}: φ {o.phi.toFixed(1)}° ψ {o.psi.toFixed(1)}°
-                    {o.nearest ? ` — ${Math.round(o.nearest.distance)}° from the centre of ${RAMA_REGION_NAMES[o.nearest.region]}` : ''}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
+          {ramaOutlierList()}
           {rama && rama.outliers.some((o) => o.omega != null && Math.abs(o.omega) < 150) ? (
             <p className="text-[10px] text-amber-800">
-              ⚠ A residue above has an ω far from 180°: the PEPTIDE BOND itself is twisted (a cis amide, or a strained one). That is not a φ/ψ problem — it is a bond that does not want to be there, and the ⚒ Model build has no ω target (it is not a force field): the plot is what shows it.
+              ⚠ A residue above has an ω far from 180°: the PEPTIDE BOND itself is twisted (a cis amide, or a strained one). That is not a φ/ψ problem — it is a bond that does not want to be there, and the force field of 🧬 Structure calculation puts a target of 180° on every peptide C–N bond: run it and the ω term brings it back.
             </p>
           ) : null}
         </div>
@@ -20534,6 +20899,30 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
           <span className="font-semibold text-slate-500">paliers</span>
         </label>
         <label className="flex items-center gap-1"
+          title="🖼 HOW MANY IMAGES PER ANNEALING STEP — this is what makes the annealing VISIBLE: the module hands the screen a picture every N moves inside a temperature step (0/1 = one picture per step), and each picture is written into the molecule before the page is allowed to paint. 4 to 8 shows the fold without slowing the calculation down.">
+          🖼 frames
+          <input type="number" min="0" max="24" value={calcAnnealFrame}
+            onChange={(e) => setCalcAnnealFrame(Math.max(0, Math.min(24, Math.round(Number(e.target.value) || 0))))}
+            aria-label="Images per annealing temperature step"
+            className="w-12 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
+        </label>
+        <label className="flex items-center gap-1"
+          title="🌡 MOLECULAR DYNAMICS — how many Langevin steps each start gets after the ⚒ protocol, and how many the ▶ MD button below runs. The dynamics is in DIHEDRAL space (a step is one rigid rotation about a hinge, so bond lengths and angles cannot break), with the full force field: bonds, angles, planar rings, your distances, the hard core, ω trans, the φ/ψ basins and χ1. It is what turns a model that RESPECTS the distances into a model with a defensible Ramachandran plot. 0 = no dynamics.">
+          🌡 MD
+          <input type="number" min="0" max="5000" step="10" value={calcMdSteps}
+            onChange={(e) => setCalcMdSteps(Math.max(0, Math.min(5000, Math.round(Number(e.target.value) || 0))))}
+            aria-label="Molecular dynamics steps per start"
+            className="w-14 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
+        </label>
+        <label className="flex items-center gap-1"
+          title="⚒ MINIMISATION — how many sweeps of the dihedral minimisation each start gets after the dynamics (and how many the ⚒ Minimise button runs). Each hinge is tried on both sides of a step that halves as soon as a whole sweep improves nothing: it lands on a LOCAL MINIMUM of the same force field, which is the last energy refinement of the protocol. 0 = no minimisation.">
+          ⚒ sweeps
+          <input type="number" min="0" max="12" value={calcMinimise}
+            onChange={(e) => setCalcMinimise(Math.max(0, Math.min(12, Math.round(Number(e.target.value) || 0))))}
+            aria-label="Minimisation sweeps per start"
+            className="w-12 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
+        </label>
+        <label className="flex items-center gap-1"
           title="👁 WATCH EACH START: every gesture the module announces (the random draw, each annealing step, the preparation, each distance driven, the final quench) is written into the molecule ON SCREEN, by the same path a torsion uses — so you SEE the molecule fold instead of watching a progress line. Uncheck it for a quiet run (the final models are written all the same). ↺ Undo torsion puts back the molecule you had before the calculation wrote anything.">
           <input type="checkbox" checked={calcWatch} onChange={(e) => setCalcWatch(e.target.checked)}
             aria-label="Write each start on screen while it is computed"
@@ -20566,6 +20955,86 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
           {calcMsg}
         </p>
       )}
+      {/* ── 🧲 LE CHAMP DE FORCES — LES FAMILLES, PUIS 🌡 LA DYNAMIQUE ET ⚒ LA
+          MINIMISATION SUR LA MOLÉCULE TELLE QU'ELLE EST. Les lignes de la table du champ
+          viennent TOUTES de `forceFieldRowsOf` (aucun poids, aucune règle, aucune unité
+          n'est écrit ici) ; les énergies du moment viennent de `forceFieldEnergyOf`, relu
+          sur les coordonnées à l'écran quand on le demande (⟳ et après chaque geste). */}
+      <div className="rounded-lg border border-slate-200 bg-slate-50/60 p-2 flex flex-col gap-1.5">
+        <div className="flex flex-wrap items-center justify-between gap-1.5">
+          <span className="text-[10px] font-black text-slate-600 uppercase tracking-wide"
+            title="THE FORCE FIELD OF THIS CALCULATION — one list of named families, summed by the module. The annealing, the dynamics, the minimisation and the score all read THIS list: no engine has a physics of its own. The energy is in the app's own units (comparable inside one calculation) — it is NOT a kcal/mol.">
+            🧲 Force field · {FORCE_FIELD_FAMILIES.length} families
+          </span>
+          <span className="flex flex-wrap items-center gap-1.5">
+            <label className="flex items-center gap-1 text-[10px] font-bold text-slate-600"
+              title="The temperature of the Langevin thermostat, in REDUCED units (k_B = 1, the energy being the force field's) — not kelvins. Around 6 the backbone changes basin, around 0.05 it settles. ▶ MD runs at THIS temperature; the dynamics inside a start anneals from 6 down to 0.05 on its own.">
+              🌡 T
+              <input type="number" min="0.01" max="20" step="0.1" value={calcMdTemp}
+                onChange={(e) => setCalcMdTempText(e.target.value)}
+                aria-label="Molecular dynamics temperature, in reduced units"
+                className="w-16 border border-slate-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-slate-500 text-[10px] font-mono bg-white" />
+            </label>
+            <button type="button" onClick={runMolecularDynamics} disabled={calcBusy}
+              title="RUN MOLECULAR DYNAMICS on the molecule AS IT STANDS, at the temperature above: dihedral Langevin dynamics under the whole force field, with your distance table as restraints and every distance ALREADY held as a leash (a wall, so the trajectory cannot let one go). It is written into the molecule at every frame — you SEE it move — and ↺ Undo torsion puts the molecule back exactly as it was. The report gives the steps, the kinetic temperature, the energy before and after, and what happened to ω, φ/ψ and χ1."
+              className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-sky-400 text-sky-700 hover:bg-sky-50 disabled:opacity-40">
+              ▶ MD
+            </button>
+            <button type="button" onClick={runMinimise} disabled={calcBusy}
+              title="MINIMISE the energy from here: the dihedral descent each start ends on (every hinge tried on both sides of a step that halves as soon as a sweep improves nothing), on the same force field and with the same leash. This is the FINAL ENERGY REFINEMENT — it lands on a local minimum, not merely on a model that respects the distances. ↺ Undo torsion puts the molecule back."
+              className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-amber-400 text-amber-800 hover:bg-amber-50 disabled:opacity-40">
+              ⚒ Minimise
+            </button>
+            <button type="button" onClick={calcReadForceField}
+              title="Read the force field on the molecule as it stands — the families, the residue counts, and which φ/ψ and χ1 are outside. A reading, not a gesture: nothing is written."
+              className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100">
+              ⟳ Energy
+            </button>
+          </span>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-1">
+          {forceFieldRowsOf().map((row) => (
+            <div key={row.id} className="rounded border border-slate-200 bg-white px-1.5 py-1"
+              title={`${row.label} — ${row.of}; ${row.rule}`}>
+              <div className="text-[9px] font-black text-slate-500 uppercase tracking-wide flex items-center justify-between gap-1">
+                <span>{row.icon} {row.label}</span>
+                <span className="font-mono text-slate-400">k {row.weight}</span>
+              </div>
+              <div className="text-[9px] text-slate-500 leading-tight">{row.of}</div>
+              <div className="text-[10px] font-mono font-bold text-slate-700">
+                {calcForce ? Number(calcForce[row.id]).toFixed(2) : '—'}
+                <span className="text-slate-400 font-normal"> {row.unit === '°' ? 'deg²' : 'Å²'}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+        {calcForce && (
+          <p className="text-[10px] text-slate-600">
+            Read on the molecule on screen: <b>E = {calcForce.total.toFixed(2)}</b> =
+            {' '}chemistry {calcForce.target.toFixed(2)} + ω {calcForce.omega.toFixed(2)}
+            {' '}+ φ/ψ {calcForce.rama.toFixed(2)} + χ1 {calcForce.chi.toFixed(2)}
+            {' '}· {calcForce.torsions.residues} residue{calcForce.torsions.residues === 1 ? '' : 's'} with a backbone
+            ({calcForce.torsions.phi.length} φ, {calcForce.torsions.psi.length} ψ, {calcForce.omegaReport.count} ω, {calcForce.chiReport.count} χ1)
+            {' '}· φ/ψ outside a basin: <b>{calcForce.ramaReport.violations}</b>
+            {calcForce.ramaReport.worst ? ` (worst ${calcForce.ramaReport.worst.gap.toFixed(0)}° away, ${calcForce.ramaReport.worst.region})` : ''}
+            {' '}· χ1 between wells: <b>{calcForce.chiReport.violations}</b>
+            {' '}· ω outside ± {STRUCTURE_CALC_OMEGA_TOLERANCE}°: <b>{calcForce.omegaReport.violations}</b>.
+          </p>
+        )}
+        {/* ⚠ LA TABLE DES POIDS EST DITE TELLE QU'ELLE EST — et le fait que les trois
+            familles de torsion sont ce qui manquait aux Ramachandran « très mauvais ». */}
+        <p className="text-[9px] text-slate-500">
+          The three torsion families are what makes a Ramachandran plot defensible: ω keeps every peptide C–N bond
+          <b> trans</b> (± {STRUCTURE_CALC_OMEGA_TOLERANCE}° free, k = {STRUCTURE_CALC_OMEGA_WEIGHT}), the φ/ψ term is
+          <b> zero inside a basin of the 🪢 plot</b> (k = {STRUCTURE_CALC_RAMA_WEIGHT} per square degree outside — the
+          very polygons drawn at the left of the 3D view), and χ1 has its three <b>staggered wells</b> at 60°, 180°
+          and −60° (k = {STRUCTURE_CALC_CHI_WEIGHT}; a χ1 counts as outside past ± {STRUCTURE_CALC_CHI_TOLERANCE}° of
+          a well). ▶ Run with 🌡 MD {'>'} 0 is the standard protocol: draw the dihedrals, anneal, drive your
+          distances, then dynamics hot → cold ({STRUCTURE_CALC_MD_HOT} → {STRUCTURE_CALC_MD_COLD}, dt
+          {' '}{STRUCTURE_CALC_MD_DT}, γ {STRUCTURE_CALC_MD_FRICTION}) and minimise — and the model is scored on all
+          of it. ⚠ Reduced units throughout: the energy is comparable inside one calculation, and it is not kcal/mol.
+        </p>
+      </div>
       {ranked && ranked.ranking.length > 0 && (
         <div className="flex flex-col gap-1.5">
           <p className="text-[10px] text-slate-600">
@@ -20584,6 +21053,10 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
                   <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">distances</th>
                   <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">worst</th>
                   <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">bonds / angles</th>
+                  <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700"
+                    title="THE BACKBONE READING OF EACH MODEL — how many residues have both φ and ψ, and how many of them fall OUTSIDE every basin of the 🪢 plot (with the worst distance to a basin). Zero here is a model whose Ramachandran plot is inside the basins; the number is the φ/ψ term of the score, read back on the model.">
+                    🧭 φ/ψ
+                  </th>
                   <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">clashes</th>
                   <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">moved</th>
                   <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">how it ended</th>
@@ -20613,6 +21086,13 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
                         {r.worst ? `${r.worst.i}–${r.worst.j} ${torsionAng(r.worst.distance)}` : '—'}
                       </td>
                       <td className="px-2 py-1 font-mono text-slate-500">{r.bondRms.toFixed(3)} Å / {r.angleRms.toFixed(1)}°</td>
+                      <td className={`px-2 py-1 font-mono ${r.rama && r.rama.violations ? 'text-rose-700' : 'text-emerald-700'}`}
+                        title={r.rama
+                          ? `${r.rama.measured} residue(s) with both φ and ψ (${r.rama.partial} at a chain end have only one), ${r.rama.violations} outside every basin of the 🪢 plot${r.rama.worst ? ` — the worst is ${r.rama.worst.gap.toFixed(0)}° from the edge of a basin, in the « ${r.rama.worst.region} » region` : ''}. This is the φ/ψ term of the score (k = ${STRUCTURE_CALC_RAMA_WEIGHT}) read back on the model, and the same reading the 🪢 plot draws.`
+                          : 'no backbone residue to read in this model (no N–CA–C: a nucleic acid, a sugar, a lipid or a ligand)'}>
+                        {r.rama ? `${r.rama.violations}/${r.rama.measured}` : '—'}
+                        {r.rama && r.rama.partial ? <span className="text-slate-400">+{r.rama.partial}</span> : null}
+                      </td>
                       <td className={`px-2 py-1 font-mono ${r.clashes ? 'text-rose-700' : 'text-emerald-700'}`}
                         title={`${r.clashes} atom pair(s) closer than 1.45 Å in this model, ${r.contacts} pair(s) inside their hard core (0.6 × the two Bondi radii)`}>
                         {r.clashes ? `⚠ ${r.clashes}` : '✓'} · {r.contacts}
@@ -20657,14 +21137,20 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
         ⚙ <b>What this calculation does</b>: n random draws of every rotatable dihedral, a 🔥 <b>simulated annealing in
         dihedral space</b> on each (Metropolis, exp(−Δ/T), a cooling schedule — a step is one RIGID rotation of one side
         about its hinge, so bond lengths and angles cannot move), then the ⚒&apos;s own protocol (the automatic scan, then
-        every distance driven by the same descent the ⚒ uses), then a cold <b>quench</b> under leash that repairs what the
-        descent broke. The score is the ⚒&apos;s target function plus its clash penalty plus the <b>ω potential</b>
-        (a peptide C–N bond prefers trans), and the best m are kept.
-        ⚠ <b>What it is NOT</b>: not a force field, not molecular dynamics, no charge, no solvent, no entropy, no atom or
-        hydrogen added, and no score in kcal/mol — it is comparable only inside one calculation (same molecule, same
-        distances). The seed is FIXED ({STRUCTURE_CALC_SEED}): the same molecule, the same distances and the same n give the
-        same family, digit for digit. Set 🔥 recuit to 0 to get the old behaviour (n plain draws, no annealing).
-        ⏹ stops between two starts; ↺ Undo torsion puts back the molecule you had before the first write.
+        every distance driven by the same descent the ⚒ uses), then 🌡 <b>molecular dynamics</b> (Langevin, hot → cold)
+        and a ⚒ <b>minimisation</b> under the whole force field, then a cold <b>quench</b> under leash that repairs what
+        the descent broke. The score is that force field — the ⚒&apos;s target function (bonds, angles, planar rings,
+        your distances, the hard core) plus the <b>ω potential</b> (a peptide C–N bond prefers trans), the <b>φ/ψ
+        basins</b> (zero inside a basin of the 🪢 plot, growing with the distance to it) and <b>χ1</b> (three staggered
+        wells) — plus the clash penalty; the best m are kept, and each model carries its backbone reading (see the
+        🧭 φ/ψ column).
+        ⚠ <b>What it is NOT</b>: still no charge, no solvent, no entropy, no atom or hydrogen added, and no score in
+        kcal/mol — it is comparable only inside one calculation (same molecule, same distances). And it stays DIHEDRAL:
+        a move turns a bond, it never moves an atom freely, so the covalent geometry is a constant of the protocol.
+        The seed is FIXED ({STRUCTURE_CALC_SEED}): the same molecule, the same distances and the same n give the same
+        family, digit for digit. Set 🔥 recuit, 🌡 MD and ⚒ sweeps to 0 to get the old behaviour (n plain draws, the ⚒
+        protocol, nothing else). ⏹ stops between two starts; ↺ Undo torsion puts back the molecule you had before the
+        first write.
       </p>
     </div>
   );
@@ -21159,9 +21645,66 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
 
 {/* 3D Viewport — retractable: "⬇ Minimize" collapses it to a thin bar. The
     container stays MOUNTED (height 0) so the NGL stage, structure and
-    trajectory are preserved; only the tall canvas is hidden. */}
+    trajectory are preserved; only the tall canvas is hidden.
+
+    ⚠ IL EST DANS UNE RANGÉE avec le dock 🪢 : la colonne de gauche prend sa place, la
+    vue prend le RESTE (`flex-1 min-w-0`), et replier le dock rend la largeur entière à
+    la molécule. Le graphe ne recouvre donc jamais la structure — il la pousse. */}
+<div className="flex items-stretch gap-2">
+{/* LE DOCK 🪢 — LE GRAPHE DE RAMACHANDRAN À GAUCHE DE LA FENÊTRE 3D. Replié, il ne
+    reste qu'un onglet vertical (🪢) sur le bord : le graphe est toujours à un clic, et
+    il ne mange jamais la vue sans qu'on l'ait demandé. */}
+{ramaDock ? (
+  <div className="shrink-0 w-[360px] flex flex-col gap-1.5 bg-white border border-amber-200 rounded-xl p-2 overflow-hidden"
+    style={{ height: (viewerCollapsed ? 0 : viewH) + 'px' }}>
+    <div className="flex items-center justify-between gap-1 shrink-0">
+      <span className="text-[10px] font-black text-amber-700 uppercase tracking-wide">🪢 Ramachandran · φ against ψ</span>
+      <span className="flex items-center gap-1">
+        <button type="button" onClick={readRamachandran}
+          title="Read the backbone of the molecule on screen NOW (its N · CA · C atoms, the φ and ψ of every residue) — press it again after a ⚒ Model build, a ✏️ Torsion or a 🧬 calculation to see where the points moved. The plot is a snapshot of the coordinates, not a live view."
+          className="px-1.5 py-0.5 text-[9px] font-bold rounded border bg-white border-amber-300 text-amber-700 hover:bg-amber-100">⟳ Read</button>
+        <button type="button" onClick={() => toggleRamaDock(false)}
+          title="Collapse the Ramachandran dock — the plot folds to a thin tab on the left edge (🪢 brings it back), and the 3D view takes the whole width again. The reading is not lost."
+          className="px-1.5 py-0.5 text-[9px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100">⇤</button>
+      </span>
+    </div>
+    <div className="overflow-y-auto custom-scrollbar flex flex-col gap-1.5">
+      {ramaPlotSvg({ wide: true })}
+      <p className="text-[10px] text-slate-600">{ramaSummaryText()}</p>
+      {ramaMsg && (
+        <p title={ramaMsg} className={`text-[10px] font-semibold rounded-md border px-2 py-1 ${/^✓/.test(ramaMsg) ? 'text-emerald-800 bg-emerald-50 border-emerald-200' : 'text-rose-800 bg-rose-50 border-rose-200'}`}>
+          {ramaMsg}
+        </p>
+      )}
+      {ramaOutlierList()}
+      {/* LA LIGNE DU POINT SURVOLÉ — la même lecture que la section 🪢 : le résidu, ses
+          deux angles, son ω et sa région (le texte vient du module). */}
+      {rama && (ramaHover || null) ? (
+        <p className="text-[10px] font-semibold rounded-md border px-2 py-1 bg-amber-50 border-amber-200 text-slate-700">
+          {ramaHoverTextOf(rama.residues.find((r) => r.key === ramaHover && r.point) || null)}
+        </p>
+      ) : null}
+      {/* ⚠ CE QUE LE DOCK EST — et ce qu'il n'est pas : un plan, pas un calcul. La phrase
+          est là parce que la QUESTION (« pourquoi mes Ramachandran sont mauvais ? ») se
+          pose ici : c'est 🧬 Structure calculation qui porte les bassins comme cible. */}
+      <p className="text-[9px] text-slate-500">
+        The coloured shapes are the basins of the classic figure — the SAME polygons the
+        calculation uses as its φ/ψ potential (🧬 Structure calculation → 🧭 Force field):
+        a point here is a point the calculation would drive back inside. A plan, not a
+        calculation: this panel only reads the coordinates on screen.
+      </p>
+    </div>
+  </div>
+) : (
+  <button type="button" onClick={() => toggleRamaDock(true)}
+    title="Open the Ramachandran dock — the φ/ψ plot of the backbone, at the left of the 3D view (expandable · compressible)."
+    className="shrink-0 w-7 flex items-center justify-center gap-1 bg-white border border-amber-200 rounded-xl text-amber-700 hover:bg-amber-50"
+    style={{ height: (viewerCollapsed ? 0 : viewH) + 'px' }}>
+    <span className="text-[10px] font-black tracking-widest" style={{ writingMode: 'vertical-rl' }}>🪢 RAMACHANDRAN</span>
+  </button>
+)}
 <div
-className="relative border border-slate-200 rounded-xl overflow-hidden bg-white"
+className="relative flex-1 min-w-0 border border-slate-200 rounded-xl overflow-hidden bg-white"
 style={{ height: (viewerCollapsed ? 0 : viewH) + 'px' }}
 >
 <div ref={containerRef} className="w-full h-full" />
@@ -22023,6 +22566,7 @@ Tip: you cannot paste a local file path — use the file picker button above
 </div>
 </div>
 )}
+</div>
 </div>
 
 {/* Vertical resize handle — drag to make the 3D viewer taller/shorter */}
