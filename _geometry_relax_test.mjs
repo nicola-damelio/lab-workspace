@@ -61,7 +61,14 @@
      §11 LE BRANCHEMENT DU VIEWER (le bouton, les champs « ⇢ moves », « ⇉ stages »
         et « 🎲 escapes », la case « ⟳ rebuild » et son rapport, l'écriture du geste, le
         journal ↺, et l'animation : la molécule change à chaque pas au lieu du résultat
-        de but en blanc — les atomes reposés compris).
+        de but en blanc — les atomes reposés compris) ;
+     §12 LE CONSTRUIT AUTOMATIQUE — les longueurs fausses trouvées tout seul, conduites
+        une après l'autre, le second balayage quand le premier en a créé d'autres ;
+     §13 LE CŒUR DUR — « in the calculation you did not consider steric clashes along
+        atoms and now they are one on top of each other » : les rayons de Bondi, la
+        distance de contact (0.6 × la somme), le terme dans la fonction cible avec son
+        gradient mesuré, le REBALAYAGE pendant la descente, le coup de pouce des atomes
+        confondus, et le construit automatique qui désempile la molécule.
 
    Run: node _geometry_relax_test.mjs
    ========================================================================= */
@@ -76,10 +83,14 @@ import {
   RELAX_ESCAPES, RELAX_DEFAULT_ESCAPES, RELAX_MAX_ESCAPES, RELAX_ESCAPE_STEPS,
   RELAX_KICK_DEG, RELAX_MIN_KICK_DEG, RELAX_ESCAPE_SEED, RELAX_CLASH_DISTANCE, RELAX_CLASH_WEIGHT,
   RELAX_BOND_TOLERANCE, RELAX_BAD_BOND_TOLERANCE, RELAX_AUTO_PASSES, RELAX_AUTO_MAX_DISTANCES,
+  VDW_RADII, VDW_RADIUS_FALLBACK, RELAX_CONTACT_SCALE, RELAX_CONTACT_WEIGHT,
+  RELAX_CONTACT_MARGIN, RELAX_CONTACT_LINK_DISTANCE, RELAX_CONTACT_TOLERANCE,
+  RELAX_AUTO_MAX_CONTACTS,
   bondLengthTarget, bondGraphOf, ringSizeThrough, ringCycleThrough, hybridOf, angleTargetOf,
   planarRingsOf, buildRelaxTerms, energyOf, pairReportOf, relaxWindow, relaxGeometry, flatPositions,
   makeRelaxRandom, bondSideOf, torsionKickOf, clashReportOf, rebuildStandardGeometry,
-  badDistancesOf, buildModelGeometry,
+  badDistancesOf, buildModelGeometry, vdwRadiusOf, contactDistanceOf, contactPairsOf, badContactsOf,
+  unstickContacts, CONTACT_UNSTICK_STEP,
 } from './src/utils/geometryRelax.js';
 import { SS_BOND_LENGTH } from './src/utils/disulfideFold.js';
 
@@ -377,8 +388,9 @@ const opts = { ref: toyRef, tether: 0.5, movable: movableAll };
 const analytic = new Float64Array(toyX.length);
 const hessian = new Float64Array(toyX.length);
 const toyEnergy = energyOf(toyTerms, toyX, { ...opts, grad: analytic, hess: hessian });
-near(toyEnergy.total, toyEnergy.bond + toyEnergy.angle + toyEnergy.planar + toyEnergy.pair + toyEnergy.tether,
-  'l’énergie est la SOMME des cinq familles, sans rien d’autre', 1e-12);
+near(toyEnergy.total, toyEnergy.bond + toyEnergy.angle + toyEnergy.planar + toyEnergy.pair
+  + toyEnergy.tether + toyEnergy.contact,
+  'l’énergie est la SOMME des six familles, sans rien d’autre', 1e-12);
 ok(toyEnergy.tether > 0, 'la longe compte (son origine est ailleurs qu’aux coordonnées)');
 const h = 1e-6;
 let worstGrad = 0;
@@ -1223,8 +1235,9 @@ has(VIEW, 'held at zero, so a ring cannot lose its planarity without the report 
 has(VIEW, 'The pair is brought together BY STAGES', '…et que le rapprochement se fait par paliers');
 has(VIEW, 'which is why a benzene no longer comes out of a build slightly plucked',
   'la note du panneau dit ce que le geste corrige (un benzène plissé, 21.6° mesurés)');
-has(VIEW, 'A geometric TARGET FUNCTION (ideal bond lengths and angles, the distances you asked for, and the planarity of the rings the file itself reads as planar) — no charges,',
-  '⚠ le rapport dit ce que le geste N’EST PAS : une cible géométrique (la planéité des cycles comprise), pas un champ de forces');
+has(VIEW, 'A geometric TARGET FUNCTION (ideal bond lengths and angles, the distances you asked for, the planarity of the rings the file itself reads as planar, and ONE HARD CORE — two atoms the file does not bond may not pass through each other) — no charges,',
+  '⚠ le rapport dit ce que le geste N’EST PAS : une cible géométrique (la planéité des cycles comprise), pas un champ de forces — et il nomme le CŒUR DUR, la seule chose qui y ressemble (§2bis)');
+
 has(VIEW, 'no solvent, and a LOCAL descent: what it could not do, it says instead of pretending.',
   '…locale, et honnête sur ce qu’elle n’a pas su faire');
 has(VIEW, 'const relaxWhy = (run) => ({', 'les raisons du module pur sont TRADUITES, jamais inventées');
@@ -1550,7 +1563,7 @@ has(VIEW, 'const collector = relaxFrameCollector();',
   '…il ramasse ses images avec le MÊME ramasseur que le geste à deux atomes');
 has(VIEW, 'const run = buildModelGeometry({', '…et c’est le module qui conduit tout');
 has(VIEW, 'radius: relaxRadius,', '…la fenêtre du champ « ⇢ moves » sert pour CHAQUE longueur fausse');
-has(VIEW, 'if (!run.found) {', '⚠ quand le balayage ne trouve rien, le panneau le dit au lieu d’écrire');
+has(VIEW, 'if (!run.found && !run.foundContacts) {', '⚠ quand le balayage ne trouve ni longueur fausse ni atome empilé, le panneau le dit au lieu d’écrire');
 has(VIEW, 'Nothing to build: the ${run.terms.bonds} bond', '…« rien à construire », avec le nombre de liaisons lues');
 has(VIEW, 'but the window around', '⚠ …et quand la fenêtre est vide, il dit quel réglage monter');
 has(VIEW, 'label: `⚒ model build (automatic: ${run.found} length',
@@ -1567,7 +1580,7 @@ has(VIEW, 'of total error left', '…avec l’erreur totale qui reste, chiffrée
 has(VIEW, 'NO atom pair had to be picked: the scan reads the GRAPH the file declares',
   '…et le rapport rappelle que personne n’a rien désigné');
 has(VIEW, 'a pair the file does not declare bonded is never pulled together',
-  '⚠ …ni qu’il n’invente aucune liaison (les contacts trop courts sont MESURÉS, pas corrigés)');
+  '⚠ …ni qu’il n’invente aucune liaison (un couple non déclaré n’est jamais rapproché)');
 has(VIEW, 'const relaxFrameCollector = (fallback = []) => {',
   'le ramasseur d’images est commun aus DEUX gestes du ⚒ (une seule façon de filmer le module)');
 has(VIEW, 'onStep: collector.onStep,', '…les deux le branchent de la même façon');
@@ -1580,7 +1593,297 @@ has(VIEW, 'With NOTHING picked at all, ⚒ Model build works all the same',
 has(VIEW, '⚒ WITH NO ATOM PICKED, the same button builds ON ITS OWN', '…l’infobulle du bouton aussi');
 has(VIEW, '⚒ And it needs NO atom picked: press it with nothing selected', '…et la note du panneau aussi');
 
-/* ── Bilan ─────────────────────────────────────────────────────────────────── */
+/* ════════════ 13. LE CŒUR DUR — DEUX ATOMES NE SONT PAS AU MÊME ENDROIT ═══════
+   La demande, mot pour mot : « In the calculation you did not consider steric
+   clashes along atoms and now they are one on top of each other. » Ce qui est
+   vérifié ici, dans l'ordre :
+
+     a) LA TABLE — les rayons de Bondi, la distance de contact (0.6 × la somme), et
+        ce qui se passe quand la table ne connaît pas l'élément ;
+     b) LA CIBLE MESURÉE SUR LES CYCLES — les couples 1-3/1-4/1-5 d'un benzène et
+        d'un pentagone sont PLUS LOIN que le cœur dur : c'est ce qui permet à un
+        cycle de rester plan sans que le nouveau terme l'arrache ;
+     c) LA MARCHE — ce qu'elle exclut (1-2, 1-3), ce qu'elle retient (1-4 et plus),
+        et son MARGIN (un couple pas encore serré y est, et son terme y vaut zéro) ;
+     d) LE TERME — w·(d₀ − d)² exactement, zéro au-delà, borné en dessous, son
+        gradient ANALYTIQUE vérifié par DIFFÉRENCES FINIES (comme tous les autres),
+        sa diagonale de Gauss-Newton, et le pire couple du rapport ;
+     e) LA DESCENTE, EXÉCUTÉE — deux atomes empilés s'ÉCARTENT (0.50 → 2.03 Å) même
+        quand personne ne demande rien, une demande qui traverserait un atome est
+        REFUSÉE (et le rapport dit l'équilibre réellement obtenu) ;
+     f) LE BALAYAGE DES CONTACTS TROP COURTS — le classement, la tolérance (0.05 Å,
+        pour que la boucle descende au lieu d'osciller), la restriction `movable`,
+        les éléments inconnus comptés ;
+     g) LE CONSTRUIT AUTOMATIQUE — une molécule EMPILÉE mais aux longueurs justes
+        est désempilée ; et quand il y a les deux à faire, les LONGUEURS passent
+        d'abord, les contacts ensuite ;
+     h) LE BRANCHEMENT DU VIEWER — la lecture du panneau (⛔), le rapport, et
+        l'infobulle qui dit que le cœur dur EST dans la fonction cible. */
+eq(RELAX_CONTACT_SCALE, 0.6, 'le cœur dur est à 0.6 × la somme des deux rayons');
+eq(RELAX_CONTACT_WEIGHT, 30, '…et son poids est 30');
+eq(RELAX_WEIGHTS.contact, RELAX_CONTACT_WEIGHT,
+  '⚠ le poids du cœur dur est CELUI de RELAX_WEIGHTS : une seule table, jamais deux');
+eq(RELAX_CONTACT_LINK_DISTANCE, 2, 'deux liaisons ou moins : le couple est exclu de la marche');
+eq(RELAX_CONTACT_TOLERANCE, 0.05, '…et un contact est DIT trop court au-delà de 0.05 Å');
+eq(RELAX_CONTACT_MARGIN, 1.2, 'la marche du terme porte 1.2 Å de margin au-dessus du seuil');
+eq(RELAX_AUTO_MAX_CONTACTS, 8, 'un balayage du construit automatique conduit au plus 8 contacts');
+eq(VDW_RADII.C, 1.70, 'le rayon de van der Waals du carbone (Bondi 1964)');
+eq(VDW_RADII.H, 1.20, '…celui de l’hydrogène');
+eq(VDW_RADII.S, 1.80, '…celui du soufre');
+eq(VDW_RADIUS_FALLBACK, 1.70, 'un élément absent de la table prend le rayon du carbone');
+near(contactDistanceOf('C', 'C').distance, 2.04, 'deux carbones se touchent à 2.04 Å', 1e-12);
+near(contactDistanceOf('C', 'H').distance, 1.74, '…un carbone et un hydrogène à 1.74 Å', 1e-12);
+near(contactDistanceOf('H', 'H').distance, 1.44, '…deux hydrogènes à 1.44 Å', 1e-12);
+near(contactDistanceOf('O', 'O').distance, 1.824, '…deux oxygènes à 1.824 Å', 1e-12);
+near(contactDistanceOf('S', 'C').distance, 2.1, '…un soufre et un carbone à 2.10 Å', 1e-12);
+eq(contactDistanceOf('C', 'C').known, true, 'la table CONNAÎT le carbone');
+eq(contactDistanceOf('ZN', 'C').known, false, '⚠ …mais pas le zinc : le repli le DIT, il ne le tait pas');
+near(vdwRadiusOf('zn').radius, VDW_RADIUS_FALLBACK, '…et le rayon de repli est bien celui-là', 1e-12);
+near(vdwRadiusOf('CL').radius, 1.75, 'un élément de la table rend SON rayon', 1e-12);
+
+/* ── b) LA CIBLE, MESURÉE SUR LES CYCLES QU'ELLE NE DOIT PAS CONTREDIRE ─────── */
+const coreRing = {
+  elements: new Array(6).fill('C'), bonds: RING6, positions: flatRing(1.39).flat(),
+};
+near(distOf(coreRing.positions, 0, 2), 2.408, 'un benzène : le couple 1-3 est à 2.408 Å', 5e-4);
+near(distOf(coreRing.positions, 0, 4), 2.408,
+  '⚠ …et le couple 1-5 (QUATRE liaisons) à la même distance : la symétrie de l’hexagone', 5e-4);
+near(distOf(coreRing.positions, 0, 3), 2.780, '…le 1-4 à 2.780 Å', 5e-4);
+ok(distOf(coreRing.positions, 0, 4) > contactDistanceOf('C', 'C').distance
+  && distOf(coreRing.positions, 0, 3) > contactDistanceOf('C', 'C').distance,
+  '⚠ AUCUN de ces couples n’entre dans le cœur dur (2.04 Å) : c’est POURQUOI 0.6, et pas 1.0 — '
+  + 'à 3.40 Å (un vrai van der Waals) le terme arracherait le benzène que la planéité tient plat');
+const ringSpec = {
+  elements: coreRing.elements, bonds: coreRing.bonds, positions: coreRing.positions,
+};
+ok(contactPairsOf(ringSpec).length > 0,
+  'la MARCHE voit quand même ces couples (le margin) : le terme y vaut zéro, mais il mordra s’ils se resserrent');
+eq(energyOf(buildRelaxTerms(ringSpec), ringSpec.positions).contact, 0,
+  '…et leur énergie est EXACTEMENT nulle : le benzène reste plan, au chiffre près');
+const pentagon = (side, n = 5) => {
+  const R = side / (2 * Math.sin(Math.PI / n));
+  return Array.from({ length: n }, (_, k) => {
+    const t = (k * 2 * Math.PI) / n + Math.PI / 2;
+    return [R * Math.cos(t), R * Math.sin(t), 0];
+  }).flat();
+};
+near(distOf(pentagon(1.54), 0, 2), 2.492, 'un pentagone plan (côté 1.54) : le 1-3 à 2.492 Å', 5e-4);
+near(distOf(pentagon(1.54), 0, 3), 2.492,
+  '⚠ …et son 1-4 à la MÊME distance (la diagonale d’un pentagone) : encore au-dessus du cœur dur', 5e-4);
+ok(distOf(pentagon(1.54), 0, 3) > contactDistanceOf('C', 'C').distance,
+  '…donc un cycle à cinq reste plan lui aussi');
+
+/* ── c) LA MARCHE — CE QU'ELLE EXCLUT, CE QU'ELLE RETIENT, SON MARGIN ───────── */
+const jamTwo = { elements: ['C', 'C'], bonds: [], positions: [0, 0, 0, 1.0, 0, 0] };
+eq(contactPairsOf(jamTwo).length, 1, 'deux carbones NON liés à 1.00 Å : un couple à cœur dur');
+eq(contactPairsOf({ ...jamTwo, bonds: [[0, 1]] }).length, 0,
+  '⚠ un couple LIÉ est exclu : sa distance est l’affaire du terme de liaison (1.54 Å est sous tout cœur dur)');
+eq(contactPairsOf({
+  elements: ['C', 'C', 'C'], bonds: [[0, 1], [1, 2]], positions: [0, 0, 0, 1.5, 0, 0, 1.5, 1.0, 0],
+}).length, 0, '…et un couple 1-3 aussi : c’est le terme d’ANGLE qui répond de la sienne');
+eq(contactPairsOf({
+  elements: ['C', 'C', 'C', 'C'], bonds: [[0, 1], [1, 2], [2, 3]],
+  positions: [0, 0, 0, 1.5, 0, 0, 1.5, 1.0, 0, 0, 1.0, 0],
+}).map((t) => `${t.i}-${t.j}`).includes('0-3'), true,
+  '⚠ un couple 1-4 EST regardé : à quatre atomes, le graphe ne dit plus rien de leur distance');
+const atGap = (g) => ({
+  elements: ['C', 'C'], bonds: [], positions: [0, 0, 0, contactDistanceOf('C', 'C').distance + g, 0, 0],
+});
+eq(contactPairsOf(atGap(1.19)).length, 1, 'un couple juste DANS le margin (d₀ + 1.19 Å) est dans la liste');
+eq(contactPairsOf(atGap(1.21)).length, 0, '…et au-delà du margin (1.2 Å) il n’y est plus');
+eq(energyOf(buildRelaxTerms(atGap(0.5)), atGap(0.5).positions).contact, 0,
+  '⚠ au-dessus de son cœur dur son énergie est EXACTEMENT zéro : un PLANCHER, pas un van der Waals '
+  + '(la cible ne préfère pas deux atomes écartés, elle refuse seulement qu’ils se traversent)');
+
+/* ── d) LE TERME — SA VALEUR, SA BORNE, SON GRADIENT MESURÉ ─────────────────── */
+const jamTerms = buildRelaxTerms(jamTwo);
+const jamEnergy = energyOf(jamTerms, jamTwo.positions);
+near(jamEnergy.contact, RELAX_CONTACT_WEIGHT * 1.04 * 1.04,
+  'l’énergie du cœur dur est EXACTEMENT w·(d₀ − d)² = 30 · 1.04² = 32.448', 1e-9);
+near(jamEnergy.contact, 32.448, '…le chiffre, écrit', 1e-3);
+near(jamEnergy.total, jamEnergy.bond + jamEnergy.angle + jamEnergy.planar + jamEnergy.pair
+  + jamEnergy.tether + jamEnergy.contact, '…et il entre dans le total comme les autres familles', 1e-12);
+near(jamEnergy.worstContact.overlap, 1.04, 'le rapport nomme le couple et son recouvrement', 1e-12);
+near(jamEnergy.contactRms, 1.04, '…et le recouvrement rms avec lui', 1e-12);
+const jamHess = new Float64Array(6);
+energyOf(jamTerms, jamTwo.positions, { hess: jamHess });
+near(jamHess[0], 2 * RELAX_CONTACT_WEIGHT,
+  'la diagonale de Gauss-Newton d’un couple couché sur x vaut 2w = 60', 1e-9);
+ok(jamHess.every((v) => v >= 0), '…et elle est positive partout (le préconditionneur ne recule jamais)');
+
+/* le gradient ANALYTIQUE, par différences finies — sur TROIS atomes empilés, pour que
+   la dérivée ne soit pas seulement le long d’un axe */
+const jamTrio = {
+  elements: ['C', 'C', 'C'], bonds: [], positions: [0, 0, 0, 1.0, 0.3, 0.2, 0.4, 0.5, 0.9],
+};
+const trioTerms = buildRelaxTerms(jamTrio);
+const trioGrad = new Float64Array(9);
+energyOf(trioTerms, jamTrio.positions, { grad: trioGrad });
+eq(trioTerms.contacts.length, 3, 'trois carbones empilés : leurs TROIS couples sont sous le cœur dur');
+let worstContactGrad = 0;
+for (let k = 0; k < jamTrio.positions.length; k += 1) {
+  const up = jamTrio.positions.slice(); up[k] += h;
+  const dn = jamTrio.positions.slice(); dn[k] -= h;
+  const numeric = (energyOf(trioTerms, up).total - energyOf(trioTerms, dn).total) / (2 * h);
+  worstContactGrad = Math.max(worstContactGrad, Math.abs(numeric - trioGrad[k]));
+}
+ok(worstContactGrad < 1e-5,
+  `⚠ le gradient ANALYTIQUE du cœur dur est le vrai gradient : le pire écart aux différences finies est ${worstContactGrad.toExponential(2)}`);
+/* LA BORNE — deux atomes au MÊME endroit coûtent w·d₀², jamais l’infini (là où le 1/d¹²
+   d’un vrai van der Waals enverrait la descente au ciel) */
+const samePlace = { elements: ['C', 'C'], bonds: [], positions: [0, 0, 0, 0, 0, 0] };
+const sameTerms = buildRelaxTerms(samePlace);
+near(energyOf(sameTerms, samePlace.positions).contact,
+  RELAX_CONTACT_WEIGHT * contactDistanceOf('C', 'C').distance ** 2,
+  '⚠ deux atomes CONFONDUS coûtent w·d₀² = 124.848 : l’énergie est BORNÉE', 1e-6);
+/* LE COUP DE POUCE — sans lui un couple confondu n’a AUCUNE direction à suivre (le
+   gradient du terme est nul en 0) : `unstickContacts` lui en donne une, déterministe. */
+const nudged = samePlace.positions.slice();
+eq(unstickContacts(sameTerms, nudged), 1, 'un couple confondu reçoit son coup de pouce');
+eq(nudged.slice(3), [CONTACT_UNSTICK_STEP, 0, 0],
+  '…d’un pas FIXE le long d’une direction déterministe (ici (1, 0, 0) : l’atome est seul)');
+near(distOf(nudged, 0, 1), CONTACT_UNSTICK_STEP, '…le couple a donc une distance, donc une direction', 1e-12);
+const nudgedAgain = samePlace.positions.slice();
+unstickContacts(sameTerms, nudgedAgain);
+eq(nudgedAgain, nudged, '⚠ deux appels donnent le MÊME coup de pouce (aucun tirage)');
+eq(unstickContacts(sameTerms, samePlace.positions.slice(), { movable: [] }), 0,
+  '…et sans atome mobile, aucun coup de pouce (une constante ne se corrige pas)');
+
+/* ── e) LA DESCENTE, EXÉCUTÉE — DEUX ATOMES EMPILÉS S’ÉCARTENT ─────────────── */
+const runJam = relaxGeometry({ ...jamTwo, steps: 400 });
+near(distOf(runJam.positions, 0, 1), 2.0314,
+  '⚠ LA DESCENTE SEULE écarte deux atomes empilés (1.00 → 2.03 Å) sans qu’aucune distance lui soit demandée : '
+  + 'le cœur dur EST un terme de la fonction cible', 5e-3);
+eq(runJam.contacts.count, 0, '…et le rapport dit qu’il n’en reste aucun');
+ok(runJam.after.contact < 5e-3,
+  `…l’énergie du cœur dur retombe à ${runJam.after.contact.toExponential(1)} (le couple s’arrête 0.009 Å `
+  + 'DANS son cœur dur : sous la tolérance de 0.05 Å, donc plus compté comme trop court)');
+eq(runJam.reason, 'converged', '…la descente a convergé');
+const runSame = relaxGeometry({ ...samePlace, steps: 400 });
+eq(runSame.unstuckContacts, 1, '⚠ deux atomes CONFONDUS : le rapport dit le coup de pouce du départ');
+near(distOf(runSame.positions, 0, 1), 2.0235,
+  '…et la descente les écarte complètement (0.00 → 2.02 Å)', 5e-3);
+eq(runSame.contacts.count, 0, '…sans qu’il reste un couple sous son cœur dur');
+/* UNE DEMANDE NE TRAVERSE PAS UN ATOME : les deux termes ont leur mot à dire, et le
+   rapport dit l’équilibre RÉELLEMENT obtenu au lieu de franchir un atome */
+const ask1 = relaxGeometry({
+  elements: ['C', 'C'], bonds: [], positions: [0, 0, 0, 2.5, 0, 0],
+  pairs: [{ i: 0, j: 1, target: 1.5 }], steps: 400,
+});
+eq(ask1.pairs[0].reached, false,
+  '⚠ demander 1.50 Å entre deux carbones NON liés n’est PAS atteint : on ne traverse pas un atome');
+near(distOf(ask1.positions, 0, 1), 1.7288,
+  '…la descente s’arrête à l’équilibre des deux termes (1.73 Å, entre le 1.50 demandé et le 2.04 du cœur dur)', 3e-3);
+eq(ask1.contacts.count, 1, '…et le rapport DIT que le couple est resté dans son cœur dur');
+ok(ask1.after.contact > 0, '…avec l’énergie du cœur dur qui a tenu tête à la demande');
+const ask2 = relaxGeometry({
+  elements: ['C', 'C'], bonds: [], positions: [0, 0, 0, 1.2, 0, 0],
+  pairs: [{ i: 0, j: 1, target: contactDistanceOf('C', 'C').distance }], steps: 400,
+});
+eq(ask2.pairs[0].reached, true, '…tandis que la DISTANCE DE CONTACT, elle, est atteinte');
+near(distOf(ask2.positions, 0, 1), 2.0371, '…à 0.003 Å près', 4e-3);
+eq(ask2.contacts.count, 0, '…et le couple n’est plus compté comme trop court (0.05 Å de tolérance)');
+
+/* ── f) LE BALAYAGE DES CONTACTS TROP COURTS, LUI-MÊME ─────────────────────── */
+const crowd4 = [0, 0, 0, 0.5, 0, 0, 0, 0.5, 0, 0, 0, 0.6];
+const crowdSpec = { positions: crowd4, bonds: [], elements: new Array(4).fill('C') };
+const badCrowd = badContactsOf(crowdSpec);
+eq(badCrowd.count, 6, 'un paquet de quatre carbones : les SIX couples sont trop courts');
+near(badCrowd.worst.overlap, 2.04 - 0.5, '…le pire est nommé, avec son recouvrement (1.54 Å)', 1e-9);
+ok(badCrowd.contacts.every((c, i) => i === 0 || badCrowd.contacts[i - 1].overlap >= c.overlap),
+  '⚠ le classement est par recouvrement DÉCROISSANT : le plus empilé d’abord');
+near(badCrowd.severity, badCrowd.contacts.reduce((s, c) => s + c.overlap * c.overlap, 0),
+  '…et `severity` est la somme des recouvrements AU CARRÉ : exactement ce que le terme ajoute à la fonction cible, par unité de poids', 1e-9);
+near(badCrowd.severity, 11.7634, '…le chiffre, écrit', 1e-3);
+eq(badCrowd.contacts.length, badCrowd.count, 'tous les couples trop courts sont rendus, pas seulement le pire');
+eq(badContactsOf({ positions: [0, 0, 0, 2.0, 0, 0], bonds: [], elements: ['C', 'C'] }).count, 0,
+  '⚠ un recouvrement PLUS PETIT que la tolérance (0.04 Å) n’est pas signalé : un contact que le protocole vient '
+  + 'de conduire n’est jamais relu comme trop court, donc la boucle DESCEND au lieu d’osciller');
+eq(badContactsOf({ positions: [0, 0, 0, 1.9, 0, 0], bonds: [], elements: ['C', 'C'] }).count, 1,
+  '…à 0.14 Å de recouvrement, il l’est');
+eq(badContactsOf({ ...crowdSpec, movable: [] }).count, 0,
+  '⚠ deux atomes FIGÉS ne comptent pas : une constante ne se corrige pas (même règle que `clashReportOf`)');
+eq(badContactsOf({
+  positions: [0, 0, 0, 0.5, 0, 0], bonds: [], elements: ['C', 'ZN'],
+}).unknownElements, 1, 'un élément absent de la table de Bondi est COMPTÉ (le rayon de repli ne se tait pas)');
+eq(badContactsOf({ positions: null }), null, 'sans coordonnées, aucun balayage — et jamais une exception');
+eq(badContactsOf({ positions: [0, 0, 0, 5, 0, 0], bonds: [], elements: ['C', 'C'] }).count, 0,
+  '…et deux atomes loin l’un de l’autre ne sont pas un contact');
+eq(badContactsOf({ positions: [0, 0, 0, 5, 0, 0], bonds: [], elements: ['C', 'C'] }).worst, null,
+  '…`worst` reste vide alors (aucun couple nommé à tort)');
+
+/* ── g) LE CONSTRUIT AUTOMATIQUE DÉSEMPILE ──────────────────────────────────── */
+const jammedSpec = {
+  elements: ['C', 'C', 'C', 'C', 'C'],
+  bonds: [[0, 1], [1, 2]],
+  positions: [0, 0, 0, 1.54, 0, 0, 2.4, 1.2, 0, 8, 0, 0, 8.9, 0, 0],
+};
+const autoJam = buildModelGeometry({ ...jammedSpec, radius: 4 });
+eq(autoJam.found, 0, '⚠ la chaîne est aux longueurs de la table : aucune longueur fausse à conduire');
+eq(autoJam.foundContacts, 1, '…mais le second balayage trouve UN couple empilé (0.90 Å pour un cœur dur de 2.04)');
+eq(autoJam.contactsDriven.length, 1, '…et il le CONDUIT, avec le protocole de §8 tel quel');
+eq(autoJam.converged, true, '⚠ le construit converge : la molécule est désempilée');
+near(distOf(autoJam.positions, 3, 4), 2.036,
+  '…les deux carbones sont écartés à leur distance de contact', 5e-3);
+eq(badContactsOf({ ...jammedSpec, positions: autoJam.positions }).count, 0,
+  '…et il ne reste aucun contact trop court — RELU sur les coordonnées rendues, pas supposé');
+eq(autoJam.moved.length, 2, '…deux atomes ont bougé, ni plus ni moins');
+near(distOf(autoJam.positions, 0, 1), 1.54, 'les longueurs de la chaîne, elles, n’ont pas bougé', 1e-9);
+eq(autoJam.leftContacts.length, 0, 'ce qui RESTE empilé sort du dernier balayage (`leftContacts`)');
+eq(autoJam.leftContactSeverity, 0, '…et son recouvrement total est nul');
+eq(autoJam.contactTolerance, RELAX_CONTACT_TOLERANCE, '…le seuil employé est dit dans le rapport');
+eq(autoJam.contactsDriven[0].cleared, true, '…et le couple conduit est annoncé comme dégagé');
+/* LES LONGUEURS D’ABORD, LES CONTACTS ENSUITE — « la chimie avant le rangement » */
+const bothSpec = {
+  elements: ['C', 'C', 'C', 'C', 'C'],
+  bonds: [[0, 1], [1, 2]],
+  positions: [0, 0, 0, 3.0, 0, 0, 3.86, 1.2, 0, 9, 0, 0, 9.9, 0, 0],
+};
+const autoBoth = buildModelGeometry({ ...bothSpec, radius: 4 });
+eq([...autoBoth.distances.map((d) => `b${d.i}-${d.j}`),
+  ...autoBoth.contactsDriven.map((c) => `c${c.i}-${c.j}`)],
+  ['b0-1', 'c3-4'],
+  '⚠ LES LONGUEURS D’ABORD, LES CONTACTS ENSUITE : la chimie passe avant le rangement');
+near(distOf(autoBoth.positions, 0, 1), 1.5422, '…la liaison étirée (3.00 Å) est revenue', 2e-3);
+near(distOf(autoBoth.positions, 3, 4), 2.036, '…et les deux atomes empilés sont écartés', 5e-3);
+eq(autoBoth.converged, true, '…le balayage suivant ne trouve plus rien, ni longueur ni contact');
+eq(autoBoth.passCount, 1, '…un seul balayage a suffi');
+ok(autoBoth.after.contact < 1e-3, '…et l’énergie du cœur dur du modèle rendu est retombée à zéro');
+const cleanAuto = buildModelGeometry({
+  positions: [0, 0, 0, 1.54, 0, 0], elements: ['C', 'C'], bonds: [[0, 1]],
+});
+eq(cleanAuto.found + cleanAuto.foundContacts, 0, 'une molécule propre : rien à trouver');
+eq(cleanAuto.reason, 'clean', '…et la raison le dit (`clean`)');
+eq(cleanAuto.moved.length, 0, '…aucun atome ne bouge');
+
+/* ── h) LE BRANCHEMENT DU VIEWER ────────────────────────────────────────────── */
+has(VIEW, 'badContactsOf, contactDistanceOf, RELAX_CONTACT_SCALE, RELAX_CONTACT_TOLERANCE,',
+  'le viewer importe la marche, la cible et la tolérance du cœur dur');
+has(VIEW, 'const relaxContactReading = (structure) => {',
+  '…et il relit la molécule à l’écran avec la MÊME marche (aucune seconde table)');
+has(VIEW, 'inside their hard core right now',
+  '⚠ le panneau MONTRE les couples empilés avant tout geste — la demande : on les voit');
+has(VIEW, 'the ⚒ button with NO atom picked un-jams them',
+  '…et il dit quel bouton les écarte (le ⚒ sans atome piqué)');
+has(VIEW, 'no atom pair inside its hard core',
+  '…tandis que la molécule propre est annoncée propre');
+has(VIEW, 'inside their HARD CORE',
+  'le rapport du ⚒ à deux atomes nomme le couple qui reste empilé');
+has(VIEW, 'inside their hard core at the first scan',
+  '…et celui du construit automatique dit combien il en a trouvés, conduits, et ce qui reste');
+has(VIEW, 'It ALSO un-jams the molecule', '…en nommant le second travail du bouton');
+has(VIEW, 'contacts: the scan was capped', '…avec le plafond des contacts DIT, comme celui des longueurs');
+has(VIEW, 'the ⛔ line above tells you how many pairs of the molecule on screen are inside theirs RIGHT NOW',
+  'la note du panneau explique la ligne ⛔ et ce que le ⚒ en fait');
+has(VIEW, 'ONE HARD CORE, and it IS in the target function',
+  '⚠ l’infobulle du bouton dit que le cœur dur EST dans la fonction cible');
+has(VIEW, 'at the SAME place',
+  '…et le rapport dit les atomes CONFONDUS que la descente a dû écarter d’un coup de pouce');
+has(MODULE, 'export const unstickContacts = (terms, x,',
+  'le coup de pouce des contacts confondus vit dans le module, pas dans le panneau');
+has(MODULE, 'if (contactWalk(x)) rescore();',
+  '⚠ …et le module REBALAYE le cœur dur pendant la descente (sinon un repli crée des empilements invisibles)');
+
 console.log(`_geometry_relax_test.mjs — ${passed} assertions OK (les tables de la chimie, l'hybridation, les`
   + ' cycles et la PLANÉITÉ tenue, le gradient mesuré par différences finies (les cycles compris),'
   + ' la descente exécutée pas à pas, le PAS À PAS du rapprochement et ses reprises, la fenêtre,'
@@ -1588,5 +1891,7 @@ console.log(`_geometry_relax_test.mjs — ${passed} assertions OK (les tables de
   + ' les 🎲 ÉCHAPPÉES (la botte de torsion, les contacts trop courts, le meilleur modèle gardé),'
   + ' le PAS VU DE L’EXTÉRIEUR (onStep), le CONSTRUIT AUTOMATIQUE (les longueurs fausses trouvées'
   + ' tout seul, conduites une après l’autre, le second balayage quand le premier en a créé'
-  + ' d’autres, et ce qui reste mesuré), et un vrai PDB étiré reconstruit puis relu par NGL)');
+  + ' d’autres, et ce qui reste mesuré), le CŒUR DUR (Bondi, le terme, son gradient mesuré,'
+  + ' le rebalayage pendant la descente, et le construit automatique qui désempile la molécule),'
+  + ' et un vrai PDB étiré reconstruit puis relu par NGL)');
 

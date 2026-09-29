@@ -95,6 +95,16 @@ import {
 // IUPAC — exactement la convention de `torsionDeg` ci-dessous (les lecteurs χ/δ du
 // classement) : _torsion_drive_test.mjs compare les deux, chiffre à chiffre.
 import { movingSideOf, planTorsion, dihedralDeg, distanceOf } from '../utils/torsionDrive';
+// ⬇ 🪢 LE GRAPHE DE RAMACHANDRAN (utils/ramachandran.js). La demande : « would be nice
+// to see the Ramachandran plot. » Le panneau 🪢 lit les φ/ψ de la chaîne peptidique à
+// l'écran par le module PUR (le dièdre de utils/torsionDrive.js, jamais un second), les
+// classe par les polygones de la figure classique — résidu ordinaire, glycine, proline,
+// pré-proline — et dessine le graphe : les bassins en fond, un point par résidu, les
+// OUTLIERS nommés. Voir §6 de _ramachandran_test.mjs.
+import {
+  RAMA_PLOT, RAMA_PLOT_REGIONS, RAMA_REGION_COLORS, RAMA_REGION_NAMES,
+  ramachandranOf, ramaPlotPath, ramaPlotGrid,
+} from '../utils/ramachandran';
 // ⬇ ⚒ MODEL BUILD — LA GÉOMÉTRIE QUE LES LIAISONS IMPOSENT (utils/geometryRelax.js).
 // La demande, mot pour mot : « in Hyperchem there was a function “model build” that
 // created a chemically valid model after the bonds had been specified ; that is what I
@@ -122,6 +132,8 @@ import {
   RELAX_STAGE_STEP, RELAX_MAX_STAGE_STEP, RELAX_PLANAR_TOLERANCE,
   RELAX_DEFAULT_ESCAPES, RELAX_MAX_ESCAPES, RELAX_CLASH_DISTANCE, RELAX_DEFAULT_REBUILD,
   buildModelGeometry, RELAX_AUTO_PASSES, RELAX_AUTO_MAX_DISTANCES,
+  badContactsOf, contactDistanceOf, RELAX_CONTACT_SCALE, RELAX_CONTACT_TOLERANCE,
+  RELAX_AUTO_MAX_CONTACTS, VDW_RADIUS_FALLBACK,
 } from '../utils/geometryRelax';
 // HETATM code → SMILES: the Chemistry Component Dictionary of the RCSB (see
 // utils/ligandSmiles.js). A PDB only names its ligand by a 3-letter code, so this
@@ -7709,6 +7721,16 @@ const [relaxRebuild, setRelaxRebuild] = useState(RELAX_DEFAULT_REBUILD);
    la dernière image et rend la main, donc jamais de molécule à mi-chemin. */
 const relaxAnimRef = useRef(null);
 
+/* ── 🪢 LE GRAPHE DE RAMACHANDRAN — CE QUE LE PANNEAU A LU, ET QUAND ──────────
+   « Would be nice to see the Ramachandran plot. » La lecture est un SNAPSHOT : elle
+   est faite quand on appuie sur « ⟳ Read the backbone » (et à l'ouverture du
+   panneau), sur les coordonnées du moment — donc on VOIT un construit ⚒ changer les
+   φ/ψ en relisant après lui. Rien n'est recalculé à chaque rendu : le graphe porte
+   les nombres que le module a rendus, pas une lecture en cours de route. */
+const [showRamaPanel, setShowRamaPanel] = useState(false);
+const [rama, setRama] = useState(null);
+const [ramaMsg, setRamaMsg] = useState('');
+
 const [rebuildMsg, setRebuildMsg] = useState('');
 const rebuildMsgTimerRef = useRef(null);
 const flashRebuildMsg = (m) => {
@@ -9408,6 +9430,61 @@ const geometryOfStructure = (structure) => {
   } catch { return null; }
 };
 
+/** LES COUPLES EMPILÉS DE LA MOLÉCULE À L'ÉCRAN — relus à l'instant par la MÊME marche
+ *  que le terme de la fonction cible (§2bis de utils/geometryRelax.js) : les couples que
+ *  le graphe ne lie pas et qui sont entrés dans leur cœur dur (0.6 × la somme des deux
+ *  rayons de Bondi). C'est la réponse chiffrée à « they are one on top of each other » :
+ *  le panneau l'affiche AVANT tout geste, et le ⚒ (sans atome piqué) les écarte.
+ *  Rend `null` quand il n'y a pas de molécule. */
+const relaxContactReading = (structure) => {
+  const geom = geometryOfStructure(structure);
+  if (!geom) return null;
+  return badContactsOf({
+    positions: geom.positions, elements: geom.elements, bonds: geom.bonds,
+    tolerance: RELAX_CONTACT_TOLERANCE,
+  });
+};
+
+/** LA LECTURE DU GRAPHE DE RAMACHANDRAN — les atomes de la structure à l'écran (ceux
+ *  de `structureAtomRecords`, les mêmes que les schémas de couleurs), donnés au module
+ *  PUR (`ramachandranOf`). Rend `null` sans structure, et un graphe à ZÉRO résidu
+ *  quand la molécule n'a pas de squelette N–CA–C : le panneau dit alors pourquoi au
+ *  lieu de dessiner un carré vide (un graphe vide tromperait plus qu'il n'informe). */
+const ramachandranReadingOf = (structure) => (
+  structure ? ramachandranOf({ atoms: structureAtomRecords(structure) }) : null
+);
+
+/** LA LECTURE, DEPUIS LE PANNEAU — le bouton « ⟳ Read the backbone ». Elle prend la
+ *  structure du moment (donc les coordonnées que le ⚒ vient d'écrire), garde le
+ *  graphe, et dit dans la ligne du panneau ce QU'ELLE a trouvé : combien de résidus,
+ *  combien de points, et pourquoi rien n'est dessiné quand rien ne peut l'être. */
+const readRamachandran = () => {
+  const comp = componentRef.current;
+  const structure = comp && comp.structure;
+  if (!structure) {
+    setRama(null);
+    setRamaMsg('✕ There is no molecule on screen to read — load a structure first.');
+    return;
+  }
+  const read = ramachandranReadingOf(structure);
+  if (!read || !read.count) {
+    setRama(null);
+    setRamaMsg('✕ This molecule has no N–CA–C backbone. φ and ψ are angles of a PEPTIDE'
+      + ' chain: a nucleic acid (its atoms are N1/N9, C1′…), a sugar, a lipid or a ligand'
+      + ' has none — nothing was drawn rather than an empty graph.');
+    return;
+  }
+  setRama(read);
+  setRamaMsg(read.measured
+    ? `✓ ${read.measured} of the ${read.count} backbone residue${read.count === 1 ? '' : 's'} read`
+      + ` — ${read.regions.alpha} α, ${read.regions.beta} β, ${read.regions.leftalpha} left-α,`
+      + ` ${read.regions.outlier} outside`
+      + `${read.breaks ? ` · ${read.breaks} with only ONE angle (a chain end or a gap in the numbering), so no point` : ''}.`
+    : `✕ ${read.count} residue${read.count === 1 ? '' : 's'} of backbone found, but not ONE has both`
+      + ' angles: φ needs the residue before, ψ the one after, so a chain of one residue (or a'
+      + ' structure with gaps) has nothing to plot.');
+};
+
 /** POURQUOI LA DESCENTE S'EST ARRÊTÉE — une phrase par `reason` du module pur.
  *  Le panneau n'invente aucun diagnostic : chaque ligne ici répond à une valeur
  *  que utils/geometryRelax.js a réellement rendue. */
@@ -9440,6 +9517,12 @@ const relaxReportOf = (pair, run, win) => {
     : '';
   const flat = run.unstuck > 0
     ? ` · ${run.unstuck} flat angle${run.unstuck === 1 ? '' : 's'} nudged before the descent` : '';
+  /* DEUX ATOMES AU MÊME ENDROIT — le cas extrême du cœur dur : sans direction, le
+     gradient est nul, donc `unstickContacts` les écarte d'un coup de pouce fixe AVANT
+     la descente. Le rapport le dit, plutôt que de laisser croire que rien n'était là. */
+  const stacked = run.unstuckContacts > 0
+    ? ` · ⚠ ${run.unstuckContacts} atom pair${run.unstuckContacts === 1 ? '' : 's'} at the SAME place`
+      + ` nudged apart before the descent (0.05 Å — the hard core had no direction to follow)` : '';
   const cut = win.truncated
     ? ` · ⚠ the window was CAPPED at ${win.movable.length} atoms (the farthest ones stay put)` : '';
   /* ⟳ LE REBÂTIMENT DE LA PARTIE HORS FENÊTRE — la demande, mot pour mot (« since you
@@ -9491,14 +9574,28 @@ const relaxReportOf = (pair, run, win) => {
       + ` (${run.escapes.improved} kept — each one a DIFFERENT basin, ${run.escapes.rejected} rejected)`
     : (run.escapes && run.escapes.wanted
       ? ` · 🎲 no kick: ${run.escapes.skip}` : '');
-  /* LES CONTACTS TROP COURTS — le dernier mot sur « la géométrie est-elle
-     réalisable » : la fonction cible n'a AUCUN van der Waals, donc rien en elle ne
-     peut écarter deux atomes superposés. Le rapport le dit au lieu de le taire. */
-  const clash = run.clashes
+  /* LES CONTACTS TROP COURTS — le dernier mot sur « la géométrie est-elle réalisable ».
+     DEUX mesures, et elles ne disent pas la même chose : `run.clashes` compte les couples
+     passés à moins de 1.45 Å (un atome à travers un autre, quel que soit l'élément),
+     `run.contacts` ceux entrés dans LEUR cœur dur (§2bis : 0.6 · la somme des deux
+     rayons de Bondi — 2.04 Å pour deux carbones, 1.44 pour deux hydrogènes, et la même
+     marche que le terme de la fonction cible, donc les deux chiffres ne peuvent pas se
+     contredire). Depuis §2bis le cœur dur EST dans la fonction cible : un empilement que
+     la descente n'a pas pu défaire est un RÉSULTAT, pas une fatalité — et le rapport dit
+     lequel des deux il reste. */
+  const clashes = run.clashes
     ? (run.clashes.count
       ? ` · ⚠ ${run.clashes.count} atom pair${run.clashes.count === 1 ? '' : 's'} closer than ${torsionAng(RELAX_CLASH_DISTANCE)}`
-        + ` (closest ${torsionAng(run.clashes.worst.distance)}) — no van der Waals term can pull them apart here`
+        + ` (closest ${torsionAng(run.clashes.worst.distance)})`
       : ` · ✓ no atom pair closer than ${torsionAng(run.clashes.minDistance)}`)
+    : '';
+  const contacts = run.contacts
+    ? (run.contacts.count
+      ? ` · ⛔ ${run.contacts.count} atom pair${run.contacts.count === 1 ? '' : 's'} inside their HARD CORE`
+        + ` (${run.contacts.worst.i}–${run.contacts.worst.j} at ${torsionAng(run.contacts.worst.distance)}`
+        + ` for a contact distance of ${torsionAng(run.contacts.worst.target)})`
+        + ` — of the ${run.terms.contacts} couples the hard core watched, the descent could not separate ${run.contacts.count === 1 ? 'this one' : 'these'}`
+      : ` · ✓ no atom pair inside its hard core (0.6 × the two Bondi radii, §2bis)`)
     : '';
   return `⚒ Model build · ${names} : ${torsionAng(p ? p.before : 0)} → ${torsionAng(p ? p.after : 0)}`
     + `${verdict ? ` — ${verdict}` : ''}`
@@ -9507,8 +9604,8 @@ const relaxReportOf = (pair, run, win) => {
     + ` · angles ${run.after.angleRms.toFixed(1)}° rms over ${run.terms.angles}${worstAngle}`
     + `${rings}`
     + ` · ${run.moved.length} atom${run.moved.length === 1 ? '' : 's'} moved of ${win.movable.length}`
-    + `${cut}${rebuilt}${flat}${stages}${restored}${kicks}${clash} · ${run.steps} steps, ${run.evaluations} evaluations.`
-    + ' A geometric TARGET FUNCTION (ideal bond lengths and angles, the distances you asked for, and the planarity of the rings the file itself reads as planar) — no charges,'
+    + `${cut}${rebuilt}${flat}${stages}${restored}${kicks}${clashes}${contacts}${stacked} · ${run.steps} steps, ${run.evaluations} evaluations.`
+    + ' A geometric TARGET FUNCTION (ideal bond lengths and angles, the distances you asked for, the planarity of the rings the file itself reads as planar, and ONE HARD CORE — two atoms the file does not bond may not pass through each other) — no charges,'
     + ' no solvent, and a LOCAL descent: what it could not do, it says instead of pretending.'
     + ' ⟳ The part of the molecule OUTSIDE the window is re-built from scratch at every step'
     + ' (standard bond lengths and angles, the dihedrals it had), so it can follow the gesture instead of'
@@ -9529,11 +9626,24 @@ const relaxAutoReportOf = (run, win) => {
   const already = run.skipped.filter((s) => s.why === 'already-there').length;
   const blank = run.skipped.filter((s) => s.why === 'no-window').length;
   const first = run.passes.length ? run.passes[0] : null;
+  /* LES CONTACTS TROP COURTS — le SECOND balayage du construit automatique (§7quater) :
+     ce sont eux qui répondent à « in the calculation you did not consider steric clashes
+     along atoms and now they are one on top of each other ». Le premier balayage les
+     COMPTE, le geste les CONDUIT (à leur distance de contact), et ce qui reste est relu
+     sur le modèle rendu — chiffré, jamais tu. */
+  const contactsFound = run.foundContacts;
+  const contactsDriven = run.contactsDriven.length;
+  const contactsLeft = run.leftContacts.length;
   const verdict = run.converged
     ? `✓ every length back${driven ? ` — ${fixed} of the ${driven} driven landed on their target` : ''}`
+      + `${contactsFound ? `, and no atom pair left inside its hard core (${contactsFound} found, ${contactsDriven} driven apart)` : ', and no atom pair inside its hard core'}`
     : `✕ ${run.left.length} length${run.left.length === 1 ? '' : 's'} still off`
       + (run.left.length
-        ? ` (worst ${run.left[0].i}–${run.left[0].j} at ${torsionAng(run.left[0].distance)} for ${torsionAng(run.left[0].target)})` : '');
+        ? ` (worst ${run.left[0].i}–${run.left[0].j} at ${torsionAng(run.left[0].distance)} for ${torsionAng(run.left[0].target)})` : '')
+      + (contactsLeft
+        ? `${run.left.length ? ' and' : ''} ${contactsLeft} atom pair${contactsLeft === 1 ? '' : 's'} still inside their hard core`
+          + ` (worst ${run.leftContacts[0].i}–${run.leftContacts[0].j} at ${torsionAng(run.leftContacts[0].distance)}`
+          + ` for a contact distance of ${torsionAng(run.leftContacts[0].target)})` : '');
   /* LA DEMANDE, DANS L'ORDRE — « se il protocollo sulla prima distanza ha generato
      altre distanze incorrette si passa alla seconda » : les balayages du module le
      disent chiffre par chiffre, et le panneau ne fait que le répéter. */
@@ -9565,11 +9675,19 @@ const relaxAutoReportOf = (run, win) => {
   const clash = run.clashes
     ? (run.clashes.count
       ? ` · ⚠ ${run.clashes.count} atom pair${run.clashes.count === 1 ? '' : 's'} closer than ${torsionAng(RELAX_CLASH_DISTANCE)}`
-        + ` (closest ${torsionAng(run.clashes.worst.distance)}) — no van der Waals term can pull them apart here`
+        + ` (closest ${torsionAng(run.clashes.worst.distance)})`
       : ` · ✓ no atom pair closer than ${torsionAng(run.clashes.minDistance)}`)
     : '';
+  /* LES CONTACTS EN CHIFFRES — trouvés au premier balayage, conduits, et ce qui reste :
+     le même rapport que le verdict, avec les couples nommés. */
+  const contactLine = (contactsFound || contactsDriven || contactsLeft)
+    ? ` · ⛔ ${contactsFound} atom pair${contactsFound === 1 ? '' : 's'} inside their hard core at the first scan`
+      + ` (0.6 × the two Bondi radii: 2.04 Å for two carbons, §2bis)`
+      + `${contactsDriven ? `, ${contactsDriven} driven apart to their contact distance` : ''}`
+      + `${contactsLeft ? ` — ${contactsLeft} still overlapping (${run.leftContactSeverity.toFixed(2)} Å of total overlap left)` : ''}`
+    : ' · ✓ no atom pair inside its hard core — nothing was overlapping';
   const cut = run.truncated
-    ? ` · ⚠ one pass drives at most ${RELAX_AUTO_MAX_DISTANCES} distances: the scan was capped, and the rest is what the next pass took`
+    ? ` · ⚠ one pass drives at most ${RELAX_AUTO_MAX_DISTANCES} distances and ${RELAX_AUTO_MAX_CONTACTS} contacts: the scan was capped, and the rest is what the next pass took`
     : '';
   const worstAngle = run.after.worstAngle
     ? ` (worst ${torsionDeg(run.after.worstAngle.deg)} for ${torsionDeg(run.after.worstAngle.target)})` : '';
@@ -9581,10 +9699,11 @@ const relaxAutoReportOf = (run, win) => {
     + ` · angles ${run.after.angleRms.toFixed(1)}° rms over ${run.terms.angles}${worstAngle}`
     + ` · ${run.moved.length} atom${run.moved.length === 1 ? '' : 's'} moved of ${run.terms.positions}`
     + ` (window ⇢ ${win.radius} bonds)`
-    + `${passes}${skipped}${left}${cut}${rebuilt}${kicks}${clash}`
+    + `${passes}${skipped}${left}${cut}${rebuilt}${kicks}${clash}${contactLine}`
     + ` · ${run.steps} steps, ${run.evaluations} evaluations.`
     + ' NO atom pair had to be picked: the scan reads the GRAPH the file declares, and the PROTOCOL is the same one the pair gesture uses — the wrong length is brought back BY STAGES, every stage is relaxed in place, and the part of the molecule outside the window is re-built from scratch at every step (⟳ rebuild).'
-    + ' ⚠ It invents no bond (a pair the file does not declare bonded is never pulled together; contacts too close are only MEASURED, above) and it is not a force field: no charges, no solvent — one local, deterministic descent per distance, so the same molecule always gives the same model.'
+    + ' ⛔ It ALSO un-jams the molecule: the same protocol drives every pair the file does NOT bond that has entered its hard core (§2bis — 0.6 × the two Bondi radii, a floor and not a van der Waals) back out to that contact distance, worst overlap first, BONDS FIRST so that chemistry is settled before packing.'
+    + ' ⚠ It invents no bond (a pair the file does not declare bonded is never pulled together) and it is not a force field: no charges, no solvent — one local, deterministic descent per distance, so the same molecule always gives the same model.'
     + ' ↺ Undo torsion puts every atom back.';
 };
 
@@ -9748,11 +9867,11 @@ const relaxFrameCollector = (fallback = []) => {
 /** POURQUOI LE CONSTRUIT AUTOMATIQUE S'EST ARRÊTÉ — une phrase par `reason` du
  *  module (§8bis). Comme pour la descente, le panneau n'invente aucun diagnostic. */
 const relaxAutoWhy = (run) => ({
-  'clean': 'the scan found no wrong length at all — there is nothing to build',
-  'converged': 'the last scan found no wrong length left',
+  'clean': 'the scan found no wrong length AND no atom pair inside its hard core — there is nothing to build',
+  'converged': 'the last scan found no wrong length and no overlap left',
   'stalled': 'the descent could not improve anything any more (a LOCAL minimum: this is not a force field) — what is left is measured in the report',
   'max-passes': `the ${RELAX_AUTO_PASSES} scans the build is allowed ran out with lengths still off — what is left is measured in the report`,
-  'no-terms': 'this molecule has no bond the tables know, so the scan has nothing to read',
+  'no-terms': 'this molecule has no bond the tables know and no atom pair inside its hard core, so the scan has nothing to read',
   'no-movable': 'no atom is allowed to move',
   'bad-points': 'the coordinates could not be read',
 }[run.reason] || 'the build stopped');
@@ -9790,16 +9909,18 @@ const buildModelAuto = () => {
     setTorsionMsg(`✕ The build stopped: ${relaxAutoWhy(run)}. Nothing was changed.`);
     return;
   }
-  if (!run.found) {
+  if (!run.found && !run.foundContacts) {
     setTorsionMsg(`✓ Nothing to build: the ${run.terms.bonds} bond${run.terms.bonds === 1 ? '' : 's'} the tables know`
       + `${run.terms.unknownBonds ? ` (and ${run.terms.unknownBonds} whose pair they do not)` : ''}`
       + ` are all within ${run.tolerance} Å of their length — bonds ${torsionAng(run.before.bondRms)} rms,`
-      + ` angles ${run.before.angleRms.toFixed(1)}° rms over ${run.terms.angles}. Nothing had to move.`);
+      + ` angles ${run.before.angleRms.toFixed(1)}° rms over ${run.terms.angles} — and no atom pair is inside its hard core`
+      + ` (${run.terms.contacts} couples watched, none overlapping). Nothing had to move.`);
     return;
   }
   if (!run.moved.length) {
     setTorsionMsg(`✓ Nothing had to move: ${run.found} length${run.found === 1 ? '' : 's'} were more than ${run.tolerance} Å`
-      + ` from the table, but the window around ${run.found === 1 ? 'it' : 'them'} was empty (⇢ moves = ${relaxRadius})`
+      + ` from the table${run.foundContacts ? ` and ${run.foundContacts} atom pair${run.foundContacts === 1 ? '' : 's'} sat inside their hard core` : ''},`
+      + ` but the window around ${run.found === 1 ? 'it' : 'them'} was empty (⇢ moves = ${relaxRadius})`
       + ` — raise “⇢ moves” and press ⚒ again.`);
     return;
   }
@@ -9818,7 +9939,8 @@ const buildModelAuto = () => {
     structure,
     count: before ? before.length / 3 : 0,
     flat: before,
-    label: `⚒ model build (automatic: ${run.found} length${run.found === 1 ? '' : 's'})`,
+    label: `⚒ model build (automatic: ${run.found} length${run.found === 1 ? '' : 's'}`
+      + `${run.foundContacts ? `, ${run.foundContacts} contact${run.foundContacts === 1 ? '' : 's'}` : ''})`,
   };
   const warn = structureWasDragged(structure)
     ? ' ⚠ this molecule had also been DRAGGED by hand: re-playing that drag (another frame, the ⏮ button) puts its placement back.'
@@ -19306,6 +19428,11 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
   const pairRead = torsionPairReading();                // …et le couple du ⚒ avec lui
   const part = torsionPicks();
   const dragged = part.ok ? structureWasDragged(part.structure) : false;
+  /* LES ATOMES EMPILÉS, MAINTENANT — la lecture du cœur dur (§2bis) sur les coordonnées
+     à l'écran : c'est ce que la demande réclamait de VOIR, et c'est ce que le ⚒ (sans
+     atome piqué) va écarter. Recalculé à chaque rendu du panneau seulement. */
+  const here = componentRef.current;
+  const contactRead = here && here.structure ? relaxContactReading(here.structure) : null;
   return (
     <div className="w-full bg-amber-50/40 border border-amber-200 rounded-lg p-3 flex flex-col gap-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -19335,6 +19462,18 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
             ? <>Now: <b>{pairRead.label} {torsionAng(pairRead.dist)}</b> — with these two atoms, ⚒ Model build relaxes the geometry around them until the distance you typed (or, with nothing typed, the length the table gives that pair of elements) is the one the molecule has. Pick two more (B · C) and the same atoms become a hinge — the four of them then mean A · B · C · D as usual.</>
             : 'Pick the four atoms: A (the reference — it must not move), B · C (the axle bond), D (the atom whose side turns). Click the 💡 “Pick A · B · C · D” button, then click them one after the other in the 3D view. With NOTHING picked at all, ⚒ Model build works all the same: it scans the bonds ITSELF, finds the lengths further than 0.2 Å from the length the tables give that pair of elements, and drives them one after the other (the worst first, stage by stage, every stage relaxed in place, the part outside the window re-built) until every length is back — and a wrong length the first one leaves behind is the next one’s job.')}
       </p>
+      {contactRead && (contactRead.count ? (
+        <p title={`The HARD CORE, read on the coordinates that are on screen RIGHT NOW (see §2bis of utils/geometryRelax.js): every pair of atoms the file does NOT bond (more than two bonds apart) that has come closer than ${RELAX_CONTACT_SCALE} × the sum of the two Bondi radii — ${contactDistanceOf('C', 'C').distance.toFixed(2)} Å for two carbons, 1.44 Å for two hydrogens. It is a FLOOR, not a van der Waals: no attraction, no charges, no kcal/mol — it says only that two atoms may not sit in the same place. It is IN the target function, so the descent keeps it while it works, and ⚒ Model build (with NO atom picked) drives every pair that is still inside it back out to its contact distance, with the very protocol it uses for a wrong bond length (worst overlap first, the wrong lengths before it).${contactRead.unknownElements ? ` ⚠ ${contactRead.unknownElements} atom${contactRead.unknownElements === 1 ? '' : 's'} of this molecule have no radius in Bondi's table and took the fallback (${VDW_RADIUS_FALLBACK} Å).` : ''}`}
+          className="text-[10px] font-semibold text-rose-800 bg-rose-50 border border-rose-200 rounded-md px-2 py-1 whitespace-pre-wrap">
+          ⛔ {contactRead.count} atom pair{contactRead.count === 1 ? '' : 's'} inside their hard core right now — closest {contactRead.worst.i}–{contactRead.worst.j} at {torsionAng(contactRead.worst.distance)} for a contact distance of {torsionAng(contactRead.worst.target)}
+          {contactRead.count > 1 ? ` (tightest: ${contactRead.contacts.slice(0, 4).map((c) => `${c.i}–${c.j} ${torsionAng(c.distance)}/${torsionAng(c.target)}`).join(' · ')}${contactRead.count > 4 ? ' …' : ''})` : ''}
+          {' '}— 💡 the ⚒ button with NO atom picked un-jams them (and puts the wrong lengths right first).
+        </p>
+      ) : (
+        <p className="text-[10px] text-emerald-700">
+          ✓ no atom pair inside its hard core ({RELAX_CONTACT_SCALE} × the two Bondi radii — a floor, not a van der Waals: the descent keeps it while it works)
+        </p>
+      ))}
       {torsionPick > 0 && (
         <p className="text-[10px] font-bold text-amber-800">● Pick atom {TORSION_SLOT_LETTERS[torsionPick - 1]} — {TORSION_SLOT_ROLES[torsionPick - 1]}</p>
       )}
@@ -19414,7 +19553,7 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
         </label>
         <button type="button" onClick={buildModelNow}
           className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-emerald-300 text-emerald-700 hover:bg-emerald-50"
-          title="⚒ MODEL BUILD — the gesture HyperChem had: build a CHEMICALLY VALID model out of the bonds, after they are known. Two atoms picked (A and D of the four, or the only two), the distance typed in the A–D field (left empty, the length the table gives that pair of elements: S–S 2.05 Å, C–S 1.82 Å, C–C 1.54 Å…), and the atoms around them MOVE, step by step, until the molecule has moved enough for the two atoms to be that far apart. The energy it minimises is a TARGET FUNCTION: the squared deviations of every bond of the window from its typical length, of every angle from the ideal angle of its hybridisation (sp3 109.47°, sp2 120°, sp 180°, read from the bond graph — a ring is judged planar only if its own bonds are short, so benzene becomes 120° and cyclohexane stays 109.47°), of the distance you asked for, plus a light leash that keeps the change local, and the dihedrals of every ring the file ITSELF reads as planar (five or six atoms, bonds ≤ 1.45 Å — a benzene, a base) held at zero, so a ring cannot lose its planarity without the report saying so. The pair is brought together BY STAGES (the “⇉ stages” field of the panel, 2 Å by default) and after EVERY stage the whole window is relaxed once with the distance already obtained held in place: measured, a pair 7.35 Å apart aimed at 3 Å stays at 6.94 Å in a single approach and reaches 3.11 Å in 2 Å stages. ⚠ It is NOT a force field: no charges, no solvent, no entropy, no atom or hydrogen added — and the descent is LOCAL and DETERMINISTIC, so a distance it cannot reach is REPORTED with the number it really got, never faked. Every atom is written back the way a molecule drag writes (positionFromArray), so 📏 Measure, the plates, the film and 📥 Download read this geometry; « ↺ Undo torsion » puts the whole molecule back exactly as it was. 🎲 The “escapes” field beside this button says how many TORSION KICKS the build may try when the descent has stopped in a LOCAL minimum (see its own tooltip): a rigid rotation of a part of the window about a drawn bond, then a short descent, the BEST model kept — so the result is never worse than the plain descent — and the draws taken from a FIXED seed, so the same gesture gives the same model to the last digit. And the gesture is WATCHED: the molecule CHANGES on screen at every step (240 images at most, the last one being exactly the geometry the report describes), and clicking ⚒ again while it plays finishes the gesture at once. ⟳ With the “⟳ rebuild” box ticked (its default), THE PART OF THE MOLECULE OUTSIDE THE WINDOW IS RE-BUILT FROM SCRATCH AT EVERY STEP — standard bond lengths, standard angles, the DIHEDRALS it had — so the rest of the molecule CAN move, follows the window, and the model comes out compact instead of stretched between a folded window and a frozen body. Untick it for the gesture that only moves the window (everything else returned bit-for-bit). ⚒ WITH NO ATOM PICKED, the same button builds ON ITS OWN — this very gesture, applied to what the molecule itself says is wrong: it scans every bond of the GRAPH whose length is further than 0.2 Å from the length the tables give that pair of elements, and drives them ONE AFTER THE OTHER with this protocol (the worst first, each one brought back BY STAGES, every stage relaxed in place, the part outside its window re-built) until every length is back where it should be. If the first one leaves NEW wrong lengths behind — a chain that had to fold — the next scan takes those: « si passa alla seconda ». The report says how many were found, driven and fixed, and what is left, with its numbers; the line above the button names the length being driven at each step.">
+          title="⚒ MODEL BUILD — the gesture HyperChem had: build a CHEMICALLY VALID model out of the bonds, after they are known. Two atoms picked (A and D of the four, or the only two), the distance typed in the A–D field (left empty, the length the table gives that pair of elements: S–S 2.05 Å, C–S 1.82 Å, C–C 1.54 Å…), and the atoms around them MOVE, step by step, until the molecule has moved enough for the two atoms to be that far apart. The energy it minimises is a TARGET FUNCTION: the squared deviations of every bond of the window from its typical length, of every angle from the ideal angle of its hybridisation (sp3 109.47°, sp2 120°, sp 180°, read from the bond graph — a ring is judged planar only if its own bonds are short, so benzene becomes 120° and cyclohexane stays 109.47°), of the distance you asked for, plus a light leash that keeps the change local, and the dihedrals of every ring the file ITSELF reads as planar (five or six atoms, bonds ≤ 1.45 Å — a benzene, a base) held at zero, so a ring cannot lose its planarity without the report saying so. The pair is brought together BY STAGES (the “⇉ stages” field of the panel, 2 Å by default) and after EVERY stage the whole window is relaxed once with the distance already obtained held in place: measured, a pair 7.35 Å apart aimed at 3 Å stays at 6.94 Å in a single approach and reaches 3.11 Å in 2 Å stages. ⚠ It is NOT a force field: no charges, no solvent, no entropy, no atom or hydrogen added — but ONE HARD CORE, and it IS in the target function: two atoms the file does not bond (more than two bonds apart) may not come closer than 0.6 × the sum of their two Bondi radii (2.04 Å for two carbons, 1.44 Å for two hydrogens). That is a FLOOR, not a van der Waals — no attraction, no kcal/mol — and it is what stops a build from leaving two atoms one on top of each other. The descent is LOCAL and DETERMINISTIC, so a distance it cannot reach (or a pair it cannot separate) is REPORTED with the number it really got, never faked. Every atom is written back the way a molecule drag writes (positionFromArray), so 📏 Measure, the plates, the film and 📥 Download read this geometry; « ↺ Undo torsion » puts the whole molecule back exactly as it was. 🎲 The “escapes” field beside this button says how many TORSION KICKS the build may try when the descent has stopped in a LOCAL minimum (see its own tooltip): a rigid rotation of a part of the window about a drawn bond, then a short descent, the BEST model kept — so the result is never worse than the plain descent — and the draws taken from a FIXED seed, so the same gesture gives the same model to the last digit. And the gesture is WATCHED: the molecule CHANGES on screen at every step (240 images at most, the last one being exactly the geometry the report describes), and clicking ⚒ again while it plays finishes the gesture at once. ⟳ With the “⟳ rebuild” box ticked (its default), THE PART OF THE MOLECULE OUTSIDE THE WINDOW IS RE-BUILT FROM SCRATCH AT EVERY STEP — standard bond lengths, standard angles, the DIHEDRALS it had — so the rest of the molecule CAN move, follows the window, and the model comes out compact instead of stretched between a folded window and a frozen body. Untick it for the gesture that only moves the window (everything else returned bit-for-bit). ⚒ WITH NO ATOM PICKED, the same button builds ON ITS OWN — this very gesture, applied to what the molecule itself says is wrong: it scans every bond of the GRAPH whose length is further than 0.2 Å from the length the tables give that pair of elements, and drives them ONE AFTER THE OTHER with this protocol (the worst first, each one brought back BY STAGES, every stage relaxed in place, the part outside its window re-built) until every length is back where it should be. If the first one leaves NEW wrong lengths behind — a chain that had to fold — the next scan takes those: « si passa alla seconda ». The report says how many were found, driven and fixed, and what is left, with its numbers; the line above the button names the length being driven at each step. And it ALSO UN-JAMS the molecule: the same scan reads every pair the file does NOT bond that sits inside its hard core (the ⛔ line of this panel names them) and drives them back out to their contact distance with the very same protocol — the wrong LENGTHS FIRST, so that chemistry is settled before packing.">
           ⚒ Model build
         </button>
         {torsionClosest && (
@@ -19437,13 +19576,138 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
         </button>
       </div>
       <p className="text-[10px] text-slate-400">
-        ⚠ A torsion is not stored anywhere: it lives in the COORDINATES of the frame on screen, like every edit of this bar. Loading another structure, or moving the trajectory to another frame (⏮ / the player), shows that frame’s own geometry again. The atoms that turn are the ones NGL’s bond graph reaches from D without crossing B–C: a bond inside a RING has no such side, and the panel refuses it rather than deforming the ring. ⚒ Model build is the same kind of edit — the same coordinates, the same ↺ — except that it moves a whole WINDOW of atoms, chosen by the “⇢ moves” field, and writes back only those: everything else keeps its own numbers, to the last digit. It minimises a target function of ideal bond lengths, ideal angles AND the planarity of the rings the file itself reads as planar (which is why a benzene no longer comes out of a build slightly plucked), and it brings the two atoms together BY STAGES, relaxing the whole window after each one — the “⇉ stages” field sets that step (2 Å by default, 0 = one single approach). 🎲 The “escapes” field beside it is how the build leaves a LOCAL minimum (see its tooltip: torsion kicks drawn from a fixed seed, the best model kept), and the molecule you are looking at CHANGES at every step of the gesture instead of jumping to the final geometry — the line above the button follows the steps, and the report at the end is the module’s own. Like the ⚭ Fold for disulfides next door it is not a physical calculation — it minimises a target function of ideal bond lengths and angles — and it says out loud what it could not do, contacts too short included. ⚒ And it needs NO atom picked: press it with nothing selected and the same button scans the bonds itself — every length further than 0.2 Å from the length the tables give that pair of elements, the aromatic rings read as such — drives each wrong length with this very protocol (stages, a restore after each, ⟳ rebuild), and re-scans: a wrong length the first gesture CREATED is the next one’s job, until the molecule is back. The report says how many it found, drove and fixed, and what is left, with its numbers.
+        ⚠ A torsion is not stored anywhere: it lives in the COORDINATES of the frame on screen, like every edit of this bar. Loading another structure, or moving the trajectory to another frame (⏮ / the player), shows that frame’s own geometry again. The atoms that turn are the ones NGL’s bond graph reaches from D without crossing B–C: a bond inside a RING has no such side, and the panel refuses it rather than deforming the ring. ⚒ Model build is the same kind of edit — the same coordinates, the same ↺ — except that it moves a whole WINDOW of atoms, chosen by the “⇢ moves” field, and writes back only those: everything else keeps its own numbers, to the last digit. It minimises a target function of ideal bond lengths, ideal angles AND the planarity of the rings the file itself reads as planar (which is why a benzene no longer comes out of a build slightly plucked), and it brings the two atoms together BY STAGES, relaxing the whole window after each one — the “⇉ stages” field sets that step (2 Å by default, 0 = one single approach). 🎲 The “escapes” field beside it is how the build leaves a LOCAL minimum (see its tooltip: torsion kicks drawn from a fixed seed, the best model kept), and the molecule you are looking at CHANGES at every step of the gesture instead of jumping to the final geometry — the line above the button follows the steps, and the report at the end is the module’s own. Like the ⚭ Fold for disulfides next door it is not a physical calculation — it minimises a target function of ideal bond lengths and angles — and it says out loud what it could not do, contacts too short included — and since every pair the file does NOT bond now sits inside a HARD CORE it may not enter (0.6 × the sum of the two Bondi radii: 2.04 Å for two carbons, 1.44 Å for two hydrogens — a floor, not a van der Waals), the ⛔ line above tells you how many pairs of the molecule on screen are inside theirs RIGHT NOW, and the build drives them back out too. ⚒ And it needs NO atom picked: press it with nothing selected and the same button scans the molecule itself — every bond whose length is further than 0.2 Å from the length the tables give that pair of elements, the aromatic rings read as such, then every pair inside its hard core — drives each of them with this very protocol (stages, a restore after each, ⟳ rebuild), and re-scans: a wrong length the first gesture CREATED is the next one’s job, until the molecule is back. The report says how many it found, drove and fixed, and what is left, with its numbers.
       </p>
       {dragged && (
         <p className="text-[10px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">
           ⚠ This molecule has also been DRAGGED by hand: a frame change or ⏮ replays that drag from the coordinates it knows, so a torsion applied after the drag goes with it. The ↺ of the molecule’s own space (styling bar) resets both — drag and torsion.
         </p>
       )}
+    </div>
+  );
+})()}
+
+{/* 🪢 LE GRAPHE DE RAMACHANDRAN — les φ/ψ de la chaîne peptidique à l'écran, sur la
+    figure classique. « Would be nice to see the Ramachandran plot. » Il se LIT, il
+    n'écrit RIEN : aucune coordonnée n'est touchée par ce panneau (les gestes qui
+    changent la géométrie sont ✏️ Torsion et ⚒ Model build, juste au-dessus). La
+    lecture est un SNAPSHOT pris par « ⟳ Read the backbone » — donc on VOIT un
+    construit ⚒ bouger les points en relisant après lui — et tout le calcul (les
+    angles, la classe du résidu, la région, la place du point) vient de
+    utils/ramachandran.js : le panneau ne fait que l'écrire. */ }
+<button type="button"
+  onClick={() => { const next = !showRamaPanel; setShowRamaPanel(next); if (next) readRamachandran(); }}
+  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${showRamaPanel ? 'bg-amber-100 border-amber-400 text-amber-900' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+  title="🪢 RAMACHANDRAN — the φ/ψ map of the peptide backbone on screen. φ = C(i−1)·N·CA·C and ψ = N·CA·C·N(i+1), READ from the coordinates with the same signed-IUPAC dihedral reader the χ/δ readers use (utils/torsionDrive.js — there is no second dihedral in this app), one point per residue. The background is the classic contour (Ramachandran 1963, the “core” areas of Lovell 2003), and it is used BOTH to draw and to CLASSIFY, so the colour of a dot really says where it is: α right (red), β (amber), α left (green), and the points outside every basin are OUTLIERS (violet), listed with the nearest basin and how far they are. A glycine, a proline and a residue about to be a proline are classified by THEIR OWN contours — the classic figure has three of them, because a glycine's two mirrors are allowed and a proline's φ is closed by its ring — and the panel says how many of each. ⚠ It is a PLAN, not a calculation: no potential, no energy, no atom added, and a point outside the regions is not “wrong” — it is outside the regions. A residue whose neighbour is missing (a chain end, a gap in the numbering) has only one angle: it is counted and NOT drawn, because a point that was not measured would be a lie. It reads the coordinates ON SCREEN, so it shows what ⚒ Model build or ✏️ Torsion have done — press ⟳ Read the backbone again to see the new ones. This panel never writes anything.">
+  🪢 Ramachandran{rama && rama.measured ? ` (${rama.measured})` : ''}
+</button>
+{showRamaPanel && (() => {
+  const grid = ramaPlotGrid();
+  /* LES POINTS, LES OUTLIERS PAR-DESSUS — un résidu hors région se voit : il est
+     dessiné en dernier (donc au-dessus) et plus gros. */
+  const points = rama
+    ? [...rama.residues.filter((r) => r.point)].sort((a, b) => (
+      (a.region === 'outlier' ? 1 : 0) - (b.region === 'outlier' ? 1 : 0)
+    ))
+    : [];
+  return (
+    <div className="w-full bg-amber-50/40 border border-amber-200 rounded-lg p-3 flex flex-col gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-[10px] font-black text-amber-700 uppercase tracking-wide">Ramachandran — φ (x) against ψ (y), one point per residue</span>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <button type="button" onClick={readRamachandran}
+            title="Read the backbone of the molecule on screen NOW: its N · CA · C atoms, the φ and ψ of every residue, the region of each one. Press it again after a ⚒ Model build or a ✏️ Torsion to see where the points moved — the plot is a snapshot of the coordinates, not a live view."
+            className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-amber-300 text-amber-700 hover:bg-amber-100">
+            ⟳ Read the backbone
+          </button>
+          <button type="button" onClick={() => { setRama(null); setRamaMsg(''); }}
+            title="Empty the plot (the molecule is not touched — only the reading is dropped)."
+            className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100">
+            Clear
+          </button>
+        </div>
+      </div>
+      {ramaMsg && (
+        <p title={ramaMsg} className={`text-[10px] font-semibold rounded-md border px-2 py-1 whitespace-pre-wrap ${/^✓/.test(ramaMsg) ? 'text-emerald-800 bg-emerald-50 border-emerald-200' : 'text-rose-800 bg-rose-50 border-rose-200'}`}>
+          {ramaMsg}
+        </p>
+      )}
+      <div className="flex flex-wrap items-start gap-3">
+        <svg viewBox={`0 0 ${RAMA_PLOT.size} ${RAMA_PLOT.size}`}
+          className="w-full max-w-[268px] h-auto bg-white rounded border border-amber-200 shrink-0">
+          {/* LES BASSINS — le contour des résidus ORDINAIRES, et les polygones que la
+              classification emploie sont LES MÊMES : la couleur d'un point ne peut pas
+              mentir sur la région dont on l'a tirée. */}
+          {['alpha', 'beta', 'leftalpha'].map((region) => (
+            <path key={region} d={ramaPlotPath(RAMA_PLOT_REGIONS[region])}
+              fill={RAMA_REGION_COLORS[region]} fillOpacity="0.13"
+              stroke={RAMA_REGION_COLORS[region]} strokeOpacity="0.4" strokeWidth="1" />
+          ))}
+          {grid.x.map((m) => (
+            <line key={`gx${m.deg}`} x1={m.at} y1={grid.pad} x2={m.at} y2={grid.size - grid.pad} stroke="#e2e8f0" strokeWidth="1" />
+          ))}
+          {grid.y.map((m) => (
+            <line key={`gy${m.deg}`} x1={grid.pad} y1={m.at} x2={grid.size - grid.pad} y2={m.at} stroke="#e2e8f0" strokeWidth="1" />
+          ))}
+          {grid.x.map((m) => (
+            <text key={`tx${m.deg}`} x={m.at} y={grid.size - grid.pad + 11} textAnchor="middle" fontSize="7" fill="#94a3b8">{m.deg}</text>
+          ))}
+          {grid.y.map((m) => (
+            <text key={`ty${m.deg}`} x={grid.pad - 3} y={m.at + 2} textAnchor="end" fontSize="7" fill="#94a3b8">{m.deg}</text>
+          ))}
+          {points.map((r) => (
+            <circle key={r.key} cx={r.point.x} cy={r.point.y}
+              r={r.region === 'outlier' ? 3.4 : 2.4}
+              fill={RAMA_REGION_COLORS[r.region] || RAMA_REGION_COLORS.outlier}
+              fillOpacity={r.region === 'outlier' ? 0.95 : 0.7}
+              stroke={r.region === 'outlier' ? '#5b21b6' : 'none'} strokeWidth={r.region === 'outlier' ? 0.7 : 0}>
+              <title>{`${r.label} · φ ${r.phi.toFixed(1)}° ψ ${r.psi.toFixed(1)}°${r.omega == null ? '' : ` ω ${r.omega.toFixed(1)}°`} · ${RAMA_REGION_NAMES[r.region]}${r.klass === 'general' ? '' : ` · ${r.klass} contours`}`}</title>
+            </circle>
+          ))}
+        </svg>
+        <div className="flex flex-col gap-1.5 min-w-[180px] flex-1">
+          <p className="text-[10px] text-slate-600">
+            {rama ? (
+              <>
+                <b>{rama.measured}</b> of {rama.count} residue{rama.count === 1 ? '' : 's'} plotted ·
+                {' '}<b style={{ color: RAMA_REGION_COLORS.alpha }}>{rama.regions.alpha} α</b> ·
+                {' '}<b style={{ color: RAMA_REGION_COLORS.beta }}>{rama.regions.beta} β</b>
+                {rama.regions.leftalpha ? <> · <b style={{ color: RAMA_REGION_COLORS.leftalpha }}>{rama.regions.leftalpha} α left</b></> : null}
+                {' '}· <b style={{ color: RAMA_REGION_COLORS.outlier }}>{rama.regions.outlier} outside</b>
+                {rama.breaks ? ` · ${rama.breaks} with one angle only (a chain end or a gap)` : ''}
+              </>
+            ) : 'Nothing read yet — press ⟳ Read the backbone.'}
+          </p>
+          {rama && (rama.gly || rama.pro || rama.prePro) ? (
+            <p className="text-[10px] text-slate-500">
+              {[`${rama.gly} glycine${rama.gly === 1 ? '' : 's'}`, `${rama.pro} proline${rama.pro === 1 ? '' : 's'}`,
+                `${rama.prePro} before a proline`].filter((s) => !s.startsWith('0 ')).join(' · ')}
+              {' '}— classified by their OWN contours (a glycine's two mirrors are allowed, a proline's φ is closed by its ring, a pre-proline has a wider β), not by the ones drawn behind the plot.
+            </p>
+          ) : null}
+          {rama && rama.outliers.length ? (
+            <div className="max-h-28 overflow-y-auto custom-scrollbar border border-violet-200 rounded bg-violet-50 px-2 py-1">
+              <p className="text-[9px] font-black uppercase tracking-wide text-violet-700">Outside every basin</p>
+              <ul className="text-[10px] text-violet-800 font-mono">
+                {rama.outliers.map((o) => (
+                  <li key={`o${o.key}`}>
+                    {o.label}: φ {o.phi.toFixed(1)}° ψ {o.psi.toFixed(1)}°
+                    {o.nearest ? ` — ${Math.round(o.nearest.distance)}° from the centre of ${RAMA_REGION_NAMES[o.nearest.region]}` : ''}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+          {rama && rama.outliers.some((o) => o.omega != null && Math.abs(o.omega) < 150) ? (
+            <p className="text-[10px] text-amber-800">
+              ⚠ A residue above has an ω far from 180°: the PEPTIDE BOND itself is twisted (a cis amide, or a strained one). That is not a φ/ψ problem — it is a bond that does not want to be there, and the ⚒ Model build has no ω target (it is not a force field): the plot is what shows it.
+            </p>
+          ) : null}
+        </div>
+      </div>
+      <p className="text-[10px] text-slate-400">
+        ⚠ What this plot is NOT: not an energy, not a potential, not a validation. The contours are the classic ones (Ramachandran–Ramakrishnan–Sasisekharan 1963; the “core” areas of Lovell et al. 2003), drawn as polygons, and they are the SAME polygons the classification uses — but they are a plan of reading: a point outside them is outside the PERMITTED REGIONS of that figure, and nothing more. No energy was evaluated here, no hydrogen added, no solvent exists in this model. φ and ψ are read on the coordinates on screen, one point per residue, with the signed dihedral reader of the app (utils/torsionDrive.js) — and a residue needs BOTH its neighbours in the same chain (number − 1 and + 1): the ends of a chain and the residues around a gap have ONE angle only, so they are COUNTED above and NOT drawn (a point that was not measured would be a lie). This panel writes nothing: the reading is a snapshot, and ⟳ Read the backbone takes it again on the coordinates of the moment — which is how a ⚒ Model build becomes visible here.
+      </p>
     </div>
   );
 })()}
