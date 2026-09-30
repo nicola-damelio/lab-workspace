@@ -1475,6 +1475,12 @@ has(VIEW, 'const calcInertCount = () => calcUsableRows().filter((r) => calcWeigh
   '…et le nombre de lignes en pause, pour que les rapports puissent le DIRE');
 has(VIEW, 'const calcRestraintTermsOf = (list) => Array.from(list || []).map((r) => ({',
   '…et UNE seule fabrique de contraintes (i, j, target, weight) pour les quatre gestes');
+has(VIEW, '})).concat(stretchedDisulfideTermsOf({ bridges: disulfideDrawnRef.current.bonds }));',
+  '⚠ …et elle y ajoute les PONTS DISULFURE ÉTIRÉS (un terme de distance visé à 2.05 Å : la liaison du graphe est une famille FIGÉE du champ, donc aucun geste ne les refermerait — voir utils/disulfideFold.js)');
+has(VIEW, 'const disulfideConductedNote = () => {',
+  '…et la phrase qui DIT qu’un pont étiré est conduit (le rapport compterait sinon une distance de plus que la table)');
+eq(VIEW.split('disulfideConductedNote()}').length - 1, 3,
+  '⚠ …dite par les TROIS gestes qui bougent la molécule : ▶ Run, ▶ MD, ⚒ Minimise');
 eq(VIEW.split('restraints: calcRestraintTermsOf(list),').length - 1, 4,
   '⚠ les QUATRE gestes du champ — ▶ Run, ▶ MD, ⚒ Minimise, ⟳ Energy — portent le poids de la même façon');
 eq(VIEW.split('calcFieldRows().filter((r) => r.i < geom.count && r.j < geom.count)').length - 1, 4,
@@ -1519,8 +1525,32 @@ has(runSrc, 'mdDt: calcMdDt, mdEquilibration: calcMdEquil,',
 has(runSrc, 'mdHot: calcMdHot, mdCold: calcMdCold,',
   '🌡 …et les deux températures (K) du panneau');
 has(runSrc, 'minimise: calcMinimise,', '⚒ …et la minimisation (l’affinage final)');
-has(runSrc, 'shouldStop: () => calcRunRef.current !== run || componentRef.current !== comp,',
-  '⚠ le ⏹ ET un changement de molécule arrêtent le module ENTRE deux départs (il le demande lui-même)');
+has(runSrc, 'shouldStop: () => calcRunRef.current !== run,',
+  '⚠ le module est arrêté ENTRE deux départs par le ⏹, ET PAR LUI SEUL (il le demande lui-même)');
+/* ⚠ L'OBJET DE CETTE SESSION : LE CALCUL SURVIT AU CHANGEMENT DE PAGE / D'ONGLET. La page
+   resservant sa molécule, `componentRef.current` n'est plus le composant du départ —
+   comparer les OBJETS arrêtait le calcul (« The molecule on screen changed… ») et perdait
+   tout ce qui était fait (« Structure calculation ha un problema … se rinfresco la pagina
+   tutto è perso e bisogna ricominciare da capo »). La CLÉ de la molécule remplace cette
+   comparaison : le calcul CONTINUE sur les coordonnées photographiées au départ, seule
+   l'écriture à l'écran est suspendue, la famille est gardée, et ⤓ Load l'écrit dès que la
+   bonne molécule est revenue. */
+has(VIEW, 'const calcMoleculeKey = (comp, structure) => {',
+  '⚠ la molécule se reconnaît à sa CLÉ (nom, atomes, résidus, atomes extrêmes) — jamais à l’objet NGL, qui change à chaque fois que la page resserve son modèle');
+has(runSrc, 'const moleculeKey = calcMoleculeKey(comp, structure);',
+  '…le calcul retient donc la clé de SA molécule, une fois, au départ');
+has(runSrc, "const onScreen = calcMoleculeKey(componentRef.current, componentRef.current && componentRef.current.structure) === moleculeKey;",
+  '⚠ …l’écriture à l’écran est suspendue (puis reprise) selon cette clé, à CHAQUE image');
+ok(runSrc.indexOf('The molecule on screen changed') < 0,
+  '⚠ …et « the molecule on screen changed » n’est PLUS une raison d’arrêter : la pompe ne s’interrompt plus pour ça');
+has(runSrc, 'if (calcMoleculeKey(componentRef.current, componentRef.current && componentRef.current.structure) === moleculeKey) {',
+  '⚠ …et l’écriture du meilleur est gardée par la même clé : elle ne part que vers SA molécule');
+has(runSrc, 'The calculation went through the page change',
+  '⚠ …et quand la page a changé d’onglet pendant le calcul, le panneau DIT que la famille est gardée au lieu de perdre le travail');
+has(VIEW, 'if (ranked && ranked.moleculeKey && ranked.moleculeKey !== calcMoleculeKey(comp, structure)) {',
+  '…⤓ Load accepte la famille dès que la MÊME molécule est revenue (la clé, plus l’objet)');
+has(VIEW, 'const onScreen = calcMoleculeKey(componentRef.current, componentRef.current && componentRef.current.structure) === moleculeKey;',
+  '⚠ …et un ▶ MD / ⚒ Minimise survit au changement de page de la même façon (même clé, même garde)');
 has(runSrc, 'try { tick = frames.next(); } catch (e) {',
   '⚠ une erreur du moteur est DITE (et le panneau se débloque) au lieu de laisser tourner une ligne');
 has(runSrc, 'if (calcWatch && shown.positions) calcPreviewPositions(comp, structure, shown.positions);',
@@ -1637,12 +1667,12 @@ has(VIEW, 'part.finish(true)', '…et il CLASSE ce qui est déjà calculé au li
 has(VIEW, 'setCalcMsg((prev) => `⏹ Stopped between two starts:', '…en disant combien de départs sur n ont été faits');
 has(VIEW, 'const calcReportOf = (retained, ranked) => {', 'le rapport du calcul est une fonction (une seule mise en phrases)');
 has(VIEW, '🧬 structure calculation · ', '…et le journal ↺ nomme le geste (n, m et le nombre de distances)');
-has(writeCalc, 'ranked.comp !== comp',
-  '⚠ une famille ne peut pas être écrite sur une AUTRE molécule : l’écriture est refusée, et le panneau le dit');
-has(runSrc, 'if (componentRef.current !== comp) {',
-  '⚠ …et un calcul en cours s’arrête de lui-même si la molécule change, en le DISANT');
-has(runSrc, 'setCalcResult({ ...family, comp, structure })',
-  '…la famille est marquée de SA molécule au moment où elle est classée');
+has(writeCalc, 'ranked.moleculeKey !== calcMoleculeKey(comp, structure)',
+  '⚠ une famille ne peut pas être écrite sur une AUTRE molécule — la MÊME clé que le calcul la reconnaît : l’écriture est refusée, et le panneau le dit');
+ok(runSrc.indexOf('if (componentRef.current !== comp) {') < 0,
+  '⚠ …et un calcul en cours NE s’arrête PLUS quand la page resserve sa molécule (l’objet de cette session : le calcul survit au changement de page / d’onglet)');
+has(runSrc, 'setCalcResult({ ...family, comp, structure, moleculeKey })',
+  '…la famille est marquée de SA molécule (et de sa clé) au moment où elle est classée');
 
 console.log(`_structure_calculation_test.mjs — ${passed} assertions OK (les bornes et les emprunts du module,`
   + ' le lecteur des dièdres EXÉCUTÉ sur une chaîne, un cycle et une double liaison, le tirage REJOUÉ au'

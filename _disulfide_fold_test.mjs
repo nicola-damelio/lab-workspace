@@ -50,7 +50,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   foldProteinForDisulfides, movableResiduesFor, scoreFold,
-  SS_BOND_LENGTH, SS_BOND_TOLERANCE, MAX_MOVABLE_RESIDUES, CHI1_ROTAMERS, DEFAULT_FOLD_SEED,
+  SS_BOND_LENGTH, SS_BOND_TOLERANCE, SS_DRIVE_WEIGHT, MAX_MOVABLE_RESIDUES, CHI1_ROTAMERS, DEFAULT_FOLD_SEED,
+  stretchedDisulfideTermsOf,
 } from './src/utils/disulfideFold.js';
 // ⚭ « Disulfides: shown / hidden » — la règle qui RETIRE un pont du graphe de
 // liaisons de la structure affichée (module pur, aucun import).
@@ -431,10 +432,49 @@ eq(applyDisulfideDisplay(null), { bonds: [], removed: 0 }, 'une structure absent
 eq(applyDisulfideDisplay({ atomCount: 0, bondStore: { count: 0 } }), { bonds: [], removed: 0 },
   'une structure vide est ignorée');
 
+/* ---- (d2) LE PONT ÉTIRÉ, CONDUIT À SA LONGUEUR DE LIAISON ──────────────────
+   La demande de cette session, mot pour mot : « … When I do MD or energy minimization or
+   structure calculation this long non realistic bond does not change and forces the
+   structure in an elongated form. I only want the disulphide to be at the default bond
+   length after minimization. »
+
+   POURQUOI CE TERME EXISTE : les moteurs du champ FIGENT la famille « liaisons » (une
+   torsion rigide ne change pas une longueur — `engine.constants` de
+   utils/structureCalc.js), donc un pont à 10 Å pèse dans le score sans qu'aucun mouvement
+   ne rapproche jamais les deux Sγ. Le pont est donc porté par un terme de DISTANCE, celui
+   que les moteurs relisent à chaque image — et c'est ce que cette fonction rend. */
+const bridgesOf = (list) => list.map((b) => ({ atomIndex1: b[0], atomIndex2: b[1], distance: b[2] }));
+eq(stretchedDisulfideTermsOf(), [], 'sans pont : aucun terme — rien à conduire');
+eq(stretchedDisulfideTermsOf({ bridges: null }), [], 'une liste absente ne fait pas planter la règle');
+eq(stretchedDisulfideTermsOf({ bridges: bridgesOf([[4, 300, 10.4]]) }),
+  [{ i: 4, j: 300, target: SS_BOND_LENGTH, weight: SS_DRIVE_WEIGHT }],
+  '⚠ un pont à 10,4 Å rend UN terme de distance visé à la LONGUEUR DE LA LIAISON (2.05 Å) — jamais à la distance trouvée');
+eq(stretchedDisulfideTermsOf({ bridges: bridgesOf([[4, 300, SS_BOND_LENGTH]]) }), [],
+  '…et un pont DÉJÀ fermé n’en rend aucun : sa vraie liaison le tient, le conduire serait compter deux fois');
+eq(stretchedDisulfideTermsOf({ bridges: bridgesOf([[4, 300, SS_BOND_LENGTH + SS_BOND_TOLERANCE - 0.01]]) }), [],
+  'la fenêtre de fermeture est celle du repliement : un cheveu SOUS la limite de tolérance, le pont est encore un pont');
+eq(stretchedDisulfideTermsOf({ bridges: bridgesOf([[4, 300, SS_BOND_LENGTH + SS_BOND_TOLERANCE + 0.01]]) }).length, 1,
+  '…un cheveu au-delà, il est ÉTIRÉ et se conduit (donc les deux Sγ se rapprochent)');
+eq(stretchedDisulfideTermsOf({ bridges: bridgesOf([[4, 300, null], [4, 4, 9], ['a', 2, 9], [4, 300, 9]]) }),
+  [{ i: 4, j: 300, target: SS_BOND_LENGTH, weight: SS_DRIVE_WEIGHT }],
+  '⚠ un pont sans distance, un atome sur lui-même et un indice illisible sont ÉCARTÉS — il ne reste que le pont étiré');
+eq(stretchedDisulfideTermsOf({ bridges: bridgesOf([[1, 2, 9]]), length: 1.5, tolerance: 0.1, weight: 3 }),
+  [{ i: 1, j: 2, target: 1.5, weight: 3 }],
+  'la longueur, la fenêtre et le poids sont ceux qu’on donne (le module n’impose rien)');
+
 /* ---- (e) le viewer : le bouton, le geste, le compte rendu ------------------ */
 has(VIEW, "import { applyDisulfideDisplay } from '../utils/disulfideBonds';", 'le viewer importe la règle');
-has(VIEW, "import { SS_BOND_LENGTH, SS_BOND_TOLERANCE } from '../utils/disulfideFold';",
-  'la fenêtre de liaison est CELLE du repliement (une seule définition de « pont fermé »)');
+has(VIEW, 'SS_BOND_LENGTH, SS_BOND_TOLERANCE, stretchedDisulfideTermsOf,',
+  '⚠ …ET la fonction qui CONDUIT un pont étiré : la fenêtre de liaison est CELLE du repliement (une seule définition de « pont fermé », un seul conducteur)');
+has(VIEW, "} from '../utils/disulfideFold';", '…du module du pont, avec le reste de ses lectures');
+/* ⚠ LE PONT ÉTIRÉ EST CONDUIT PAR LES QUATRE GESTES — « I only want the disulphide to be at
+   the default bond length after minimization. » Le terme ajouté l'est dans la fabrique
+   UNIQUE des contraintes (voir _structure_calculation_test.mjs §la table), donc ▶ Run,
+   ▶ MD, ⚒ Minimise et ⟳ Energy le reçoivent ensemble, sans qu'aucun ne le recopie. */
+has(VIEW, 'stretchedDisulfideTermsOf({ bridges: disulfideDrawnRef.current.bonds })',
+  '⚠ le pont étiré entre dans les contraintes par un terme de distance (les moteurs FIGENT la famille « liaisons » : sans ce terme, les deux Sγ ne se rapprocheraient jamais)');
+has(VIEW, 'const disulfideConductedNote = () => {',
+  '…et les gestes qui le conduisent le DISENT (le rapport compte alors une distance de plus que la table)');
 has(VIEW, 'applyDisulfideDisplay(component, { hidden: !disulfidesShownRef.current })',
   'la règle est appliquée au CHARGEMENT, avant qu’une représentation ne lise le graphe');
 ok(VIEW.indexOf('applyDisulfideDisplay(component') > VIEW.indexOf('try { enforceCovalentProteinBonds(component); }'),

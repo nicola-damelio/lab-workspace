@@ -58,7 +58,14 @@ import { enforceCovalentProteinBonds } from '../utils/proteinBondRule';
 // rapporte est jugée avec la fenêtre du repliement (utils/disulfideFold.js) :
 // une seule définition de « pont fermé », pour ⚭ Fold et pour l'interrupteur.
 import { applyDisulfideDisplay } from '../utils/disulfideBonds';
-import { SS_BOND_LENGTH, SS_BOND_TOLERANCE } from '../utils/disulfideFold';
+// …ET LA RÈGLE QUI CONDUIT UN PONT ÉTIRÉ (cette session) : les moteurs du champ FIGENT la
+// famille « liaisons » (une torsion rigide ne change pas une longueur), donc un pont à
+// 10 Å ne se rapprocherait jamais. `stretchedDisulfideTermsOf` rend un terme de DISTANCE
+// par pont étiré — le mécanisme des lignes de la table — et c'est lui que les quatre gestes
+// reçoivent en plus de la table (voir `calcRestraintTermsOf`).
+import {
+  SS_BOND_LENGTH, SS_BOND_TOLERANCE, stretchedDisulfideTermsOf,
+} from '../utils/disulfideFold';
 
 
 import { readXtcFrames, countXtcFrames, countXtcFramesInFile } from '../utils/xtcDecoder';
@@ -7708,6 +7715,26 @@ const [torsionAtoms, setTorsionAtoms] = useState([]);
 const [torsionMsg, setTorsionMsg] = useState('');
 const [torsionAngleDraft, setTorsionAngleDraft] = useState('');
 const [torsionDistDraft, setTorsionDistDraft] = useState('');
+/* ── ⌖ LE COUPLE DE LA TABLE DES DISTANCES — SON PROPRE PIQUAGE ────────────────
+   La demande de cette session, mot pour mot : « dedicated pair picker ». Le ⌖ de
+   🧬 Structure calculation empruntait les atomes du piquage ✏️ Torsion (A · B · C · D) :
+   définir une torsion et un couple était un seul et même geste, et le second changement
+   défaisait le premier. Le ⌖ a donc SON piquage : DEUX atomes (A · B), peints en BLEU,
+   avec son état, sa peinture et ses phrases à lui. Les quatre atomes de la torsion ne
+   bougent pas d'un iota, et les deux gestes ne se disputent plus le clic dans la vue 3D
+   (armer l'un désarme l'autre — ses atomes à lui restent peints). */
+const PAIR_PICK_COLOR = 0x2563eb;                    // bleu : la couleur du couple de la table
+const [pairPick, setPairPick] = useState(0);         // 1..2 = le slot que le PROCHAIN clic remplit, 0 = au repos
+const pairPickRef = useRef(0);
+pairPickRef.current = pairPick;
+const pairAtomsRef = useRef([]);                     // [{ comp, atomIndex, label }] — A · B
+const pairPaintRef = useRef(null);                   // { comp, reps } de la peinture bleue en cours
+const [pairAtoms, setPairAtoms] = useState([]);
+const [pairTargetDraft, setPairTargetDraft] = useState('');
+const [pairMsg, setPairMsg] = useState('');
+/* ⚠ LA RÉFÉRENCE EST TENUE À JOUR COMME CELLE DU PIQUAGE ✏️ : l'écoute du clic 3D est
+   posée UNE fois (le grand effet du stage) et lit `pairPickRef.current` — jamais le
+   state, qui serait figé dans la fermeture du rendu qui l'a créée. */
 /* Le brouillon de l'angle, DOUBLÉ d'une référence : l'écoute du clic 3D est posée UNE
    fois (le grand effet du stage, plus bas) et doit lire la valeur COURANTE du champ —
    elle ne le pré-remplit que s'il est encore vide, et le champ, lui, se re-rend à
@@ -7968,29 +7995,72 @@ useEffect(() => {
 /* …ET LA RÉSOLUTION DES ATOMES REVENUS, dès que la molécule est là — les DEUX côtés d'une
    ligne : sans les deux, elle resterait « pas prête » jusqu'à ce qu'on la retape. Une
    ligne dont un nom ne se résout pas GARDE son texte et dit POURQUOI (comme la frappe). */
+/** CE QU'UNE FRAPPE — OU LE RETOUR DE LA MOLÉCULE — FAIT D'UN CÔTÉ DE LIGNE : le texte
+ *  écrit (`a`/`b`), l'atome que ce texte désigne s'il se lit (`i`/`j`), son libellé, et
+ *  sinon le message qui dit POURQUOI (`say`). Écrit UNE fois, parce que les DEUX chemins
+ *  qui posent un atome — la frappe (`calcSetRowAtom`) et l'effet de résolution ci-dessous
+ *  — doivent répondre exactement la même chose du même texte.
+ *
+ *  ⚠ ELLE REND LA LIGNE ELLE-MÊME QUAND RIEN NE CHANGE (même texte, même atome, même
+ *  libellé, même message). C'est ce qui ARRÊTE l'effet : sans cette comparaison, une
+ *  ligne au texte illisible recevait un objet NEUF à chaque tour, `calcRestraints`
+ *  changeait, l'effet se relançait — la page bouclait pendant qu'on tapait dans la table.
+ *  ⚠ ET ELLE GARDE LE TEXTE TAPÉ MÊME SANS MOLÉCULE (`live` null, `waiting` le dit) :
+ *  c'est le rapport de cette session, « the atom is not typed … the last character
+ *  disappears ». Un caractère écrit ne se perd plus : la ligne l'affiche tel quel, dit
+ *  qu'elle attend une structure, et l'effet la relit dès que la molécule est là.
+ *  ⚠ UNE CASE VIDÉE SE VIDE VRAIMENT : plus d'atome de ce côté, plus de message — et la
+ *  ligne redevient « pas prête », ce qui est le seul reproche utile. */
+const CALC_WAITING_SAY = 'no molecule on screen yet — the text is kept and resolves as soon as a structure is loaded';
+const calcRowAfterAtom = (row, which, text, live, waiting) => {
+  const textCol = which === 'a' ? 'a' : 'b';
+  const labelCol = which === 'a' ? 'la' : 'lb';
+  const written = String(text == null ? '' : text);
+  const hadText = String(row[textCol] == null ? '' : row[textCol]);
+  const hadLabel = String(row[labelCol] == null ? '' : row[labelCol]);
+  const known = which === 'a' ? row.i : row.j;
+  /* CE QUE LA CASE DIT, EN CLAIR — trois cas, jamais devinés : une case vide ne désigne
+     rien ; un texte écrit sans molécule ATTEND ; sinon c'est le lecteur commun de la
+     frappe et de la relecture qui tranche (`calcAtomOfText`). */
+  const read = !written ? { ok: false, say: '' }
+    : (live ? calcAtomOfText(live.structure, written) : { ok: false, say: waiting });
+  const index = read.ok ? read.index : null;
+  const label = read.ok ? read.label : '';
+  const say = read.ok ? '' : read.say;
+  if (index === known && label === hadLabel && say === row.say && written === hadText) return row;
+  const next = { ...row, [textCol]: written, say };
+  if (which === 'a') { next.i = index; next.la = label; } else { next.j = index; next.lb = label; }
+  /* LES DEUX ATOMES SONT LÀ : la ligne porte son libellé, et sa cible par défaut est la
+     longueur que les tables donnent à ce couple d'éléments (l'utilisateur peut la
+     réécrire — c'est la colonne Want). */
+  if (next.i != null && next.j != null && live) {
+    next.label = `${next.la || `#${next.i}`}–${next.lb || `#${next.j}`}`;
+    if (!(Number.isFinite(next.target) && next.target > 0)) {
+      const el = live.geom.elements;
+      next.target = bondLengthTarget(el[next.i], el[next.j]);
+    }
+  }
+  return next;
+};
 useEffect(() => {
   if (status !== 'ready' || !componentRef.current) return;
   if (!calcRestraints.some((r) => r.i == null && r.a || r.j == null && r.b)) return;
   const live = calcGeometryNow();
   if (!live) return;
-  const el = live.geom.elements;
-  const side = (row, which) => {
-    const text = which === 'a' ? row.a : row.b;
-    if (!text || (which === 'a' ? row.i != null : row.j != null)) return row;
-    const hit = calcAtomOfText(live.structure, text);
-    if (!hit.ok) return { ...row, say: hit.say };
-    const next = which === 'a'
-      ? { ...row, i: hit.index, la: hit.label, say: '' }
-      : { ...row, j: hit.index, lb: hit.label, say: '' };
-    if (next.i != null && next.j != null) {
-      next.label = `${next.la || `#${next.i}`}–${next.lb || `#${next.j}`}`;
-      if (!(Number.isFinite(next.target) && next.target > 0)) {
-        next.target = bondLengthTarget(el[next.i], el[next.j]);
-      }
-    }
-    return next;
-  };
-  setCalcRestraints((list) => list.map((r) => side(side(r, 'a'), 'b')));
+  setCalcRestraints((list) => {
+    let changed = false;
+    const next = list.map((r) => {
+      const done = calcRowAfterAtom(
+        calcRowAfterAtom(r, 'a', r.a, live, CALC_WAITING_SAY), 'b', r.b, live, CALC_WAITING_SAY,
+      );
+      if (done !== r) changed = true;
+      return done;
+    });
+    /* ⚠ RIEN DE NEUF → LA MÊME LISTE. Une liste identique ne change pas l'état, donc
+       l'effet ne se relance pas : c'est la seconde moitié de la garde ci-dessus (voir le
+       commentaire du helper). Renvoyer `next` même inchangé faisait boucler la page. */
+    return changed ? next : list;
+  });
   // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [status, calcRestraints]);
 const [calcWatch, setCalcWatch] = useState(true);
@@ -9523,6 +9593,7 @@ const toggleMeasureMode = () => {
   } else {
     torsionPickRef.current = 0;   // the ✏️ Torsion picker and 📏 Measure cannot both be armed
     setTorsionPick(0);
+    if (pairPickRef.current) clearPairPicks();   // …nor ⌖, the pair picker of the 🧬 distance table
     setMeasureInfo('📏 Measure ON — click two atoms to show the distance between them.');
   }
 };
@@ -9611,6 +9682,10 @@ const nextTorsionSlot = () => (torsionAtomsRef.current.length >= 4 ? 1 : torsion
 const armTorsionPick = (slot) => {
   const n = Math.min(4, Math.max(1, Number(slot) || 1));
   putTorsionAtoms(torsionAtomsRef.current.slice(0, n - 1));
+  /* ⚠ UN SEUL PIQUAGE ARMÉ À LA FOIS : le ⌖ de la table des distances a le SIEN (bleu,
+     deux atomes) — il est éteint ici, et ses atomes avec lui. Le contraire est vrai
+     aussi : `armPairPick` désarme celui-ci sans toucher aux atomes déjà piqués. */
+  if (pairPickRef.current) clearPairPicks();
   torsionPickRef.current = n;
   setTorsionPick(n);
   setTorsionClosest(null);
@@ -9624,6 +9699,99 @@ const clearTorsionPicks = () => {
   setTorsionPick(0);
   setTorsionClosest(null);
   setTorsionMsg('');
+};
+
+/* ── ⌖ LE PIQUAGE DU COUPLE — LE MÊME CONTRAT QUE LE PIQUAGE ✏️, SUR SES PROPRES
+   ATOMES : la peinture est VÉRIFIÉE avant d'être gardée (jamais le mauvais atome peint),
+   deux atomes suffisent, et le piquage se désarme tout seul quand la ligne est ajoutée.
+   La seule différence est la couleur : les deux atomes d'un couple sont UN geste, il n'y
+   a pas d'ordre à deviner — bleu pour les deux (TORSION_SLOT_COLORS reste aux quatre). */
+const paintPairPicks = (list) => {
+  const paint = pairPaintRef.current;
+  if (paint && paint.comp) {
+    try { paint.reps.forEach((r) => { if (r) paint.comp.removeRepresentation(r); }); } catch { /* vue déjà détruite */ }
+  }
+  pairPaintRef.current = null;
+  const slots = Array.from(list || []);
+  const comp = slots.length ? slots[0].comp : null;
+  if (!comp) return { ok: false, painted: 0 };
+  const reps = [];
+  slots.forEach((s) => {
+    if (!s || !Number.isInteger(s.atomIndex)) return;
+    try {
+      const rep = comp.addRepresentation('spacefill', {
+        sele: `${s.atomIndex}`,
+        radiusType: 'vdw', radiusScale: 0.5,
+        color: PAIR_PICK_COLOR,
+        opacity: 1, visible: true,
+      });
+      if (!rep) return;
+      const seen = rep.structureView && typeof rep.structureView.getAtomIndices === 'function'
+        ? Array.from(rep.structureView.getAtomIndices()) : null;
+      if (seen && (seen.length !== 1 || seen[0] !== s.atomIndex)) {
+        comp.removeRepresentation(rep);
+        return;
+      }
+      reps.push(rep);
+    } catch { /* une peinture refusée n'est pas gardée : la ligne dit ses atomes */ }
+  });
+  pairPaintRef.current = reps.length ? { comp, reps } : null;
+  return { ok: reps.length > 0, painted: reps.length };
+};
+
+const putPairAtoms = (list) => {
+  pairAtomsRef.current = Array.isArray(list) ? list : [];
+  paintPairPicks(pairAtomsRef.current);
+  setPairAtoms(pairAtomsRef.current);
+};
+
+/** ARMER LE PIQUAGE DU COUPLE — ses DEUX atomes à lui, sa couleur à lui. Le piquage
+ *  ✏️ Torsion est seulement DÉSARMÉ (ses atomes restent peints et listés) : les deux
+ *  gestes ne peuvent plus se disputer le même clic, et rien de ce qui était piqué n'est
+ *  perdu. */
+const armPairPick = () => {
+  if (measureModeRef.current) toggleMeasureMode();   // 📏 Measure ne pioche pas ces clics
+  putPairAtoms([]);
+  pairPickRef.current = 1;
+  setPairPick(1);
+  torsionPickRef.current = 0;
+  setTorsionPick(0);
+  setPairMsg('Click the FIRST atom of the pair in the 3D view — the two atoms of this table are painted BLUE, and they are its own: the four picks of ✏️ Torsion (A · B · C · D) are not touched.');
+};
+
+/** ÉTEINDRE LE PIQUAGE DU COUPLE — et effacer sa peinture bleue. */
+const clearPairPicks = () => {
+  putPairAtoms([]);
+  pairPickRef.current = 0;
+  setPairPick(0);
+  setPairMsg('');
+};
+
+/** LES DEUX ATOMES DU COUPLE — lus AU MOMENT du geste, jamais gardés : la structure vient
+ *  de la structure À L'ÉCRAN, comme partout ailleurs. `{ok, idx, slots, say, label}`. */
+const pairPickOf = () => {
+  const slots = pairAtomsRef.current;
+  if (slots.length < 2) {
+    return { ok: false, say: `The pair of this line is not picked yet — ⌖ arms its own picker (blue) and the SECOND click adds the line (${slots.length} of 2 picked).` };
+  }
+  const [first, second] = slots;
+  const comp = first.comp;
+  const structure = comp && comp.structure;
+  if (!structure) return { ok: false, say: 'The structure these atoms belong to is gone — pick them again with ⌖.' };
+  if (second.comp !== comp) {
+    return { ok: false, say: 'The two atoms must belong to the SAME structure — pick them in one molecule.' };
+  }
+  const idx = [Number(first.atomIndex), Number(second.atomIndex)];
+  if (idx[0] === idx[1]) return { ok: false, say: 'The two atoms of a line must be two different atoms.' };
+  let points = null;
+  try {
+    const ap = structure.getAtomProxy();
+    points = idx.map((i) => { ap.index = i; return [ap.x, ap.y, ap.z]; });
+  } catch { points = null; }
+  if (!points || !points.every((pt) => pt.every(Number.isFinite))) {
+    return { ok: false, say: 'The two picked atoms can no longer be read — pick them again with ⌖.' };
+  }
+  return { ok: true, comp, structure, idx, points, slots: [first, second], label: `${first.label}–${second.label}` };
 };
 
 /** WHY A TORSION WAS REFUSED — one sentence per `reason` of utils/torsionDrive.js.
@@ -10059,30 +10227,49 @@ const calcWhyOf = (reason) => ({
   'no-channel': 'this molecule has no rotatable dihedral',
 }[reason] || 'the start stopped');
 
-/** AJOUTER LE COUPLE PIQUÉ À LA LISTE — les deux atomes viennent des MÊMES piqués que
- *  la fenêtre ✏️ Torsion (A–B à deux atomes, A–D à quatre) et la distance du champ A–D
- *  (vide : la longueur que la table donne à ce couple d'éléments). Un couple DÉJÀ dans
- *  la liste est remplacé, pas doublé : le module ne lit qu'une cible par couple. */
+/** ⌖ ARMER (OU ÉTEINDRE) LE PIQUAGE DU COUPLE — le bouton ⌖ de la table. Au repos il
+ *  arme SON piquage : deux atomes, bleus, ses propres atomes (le piquage ✏️ Torsion est
+ *  seulement désarmé, ses quatre atomes restent ce qu'ils étaient). Pendant le piquage,
+ *  le même bouton l'éteint — c'est le SECOND clic dans la vue 3D qui ajoute la ligne
+ *  (`calcAddPairRow`), donc rien n'est ajouté à moitié. */
 const calcAddRestraint = () => {
-  const now = calcGeometryNow();
-  if (!now) {
-    setCalcMsg('✕ There is no molecule on screen — load a structure first, then pick the two atoms (🎯 in the ✏️ Torsion window).');
+  if (pairPickRef.current) {
+    clearPairPicks();
+    setCalcMsg('The pair picker of the table is OFF — nothing was added (the ✏️ Torsion picks were never touched).');
     return;
   }
-  const pair = torsionPairOf();
-  if (!pair.ok) { setCalcMsg(`✕ ${pair.say}`); return; }
+  if (!calcGeometryNow()) {
+    setCalcMsg('✕ There is no molecule on screen — load a structure first, then pick the two atoms with ⌖.');
+    return;
+  }
+  armPairPick();
+};
+
+/** AJOUTER LE COUPLE PIQUÉ À LA LISTE — les deux atomes viennent du PIQUAGE DU ⌖ (bleu,
+ *  A · B : ses propres atomes, aucun rapport avec les quatre de ✏️ Torsion) et la cible
+ *  du champ ⌖ « want » (vide : la longueur que la table donne à ce couple d'éléments).
+ *  Un couple DÉJÀ dans la liste est remplacé, pas doublé : le module ne lit qu'une cible
+ *  par couple. */
+const calcAddPairRow = () => {
+  const now = calcGeometryNow();
+  if (!now) {
+    setCalcMsg('✕ There is no molecule on screen — load a structure first, then pick the two atoms with ⌖.');
+    return;
+  }
+  const pair = pairPickOf();
+  if (!pair.ok) { setPairMsg(`⚠ ${pair.say}`); return; }
   const { geom } = now;
   const [i, j] = pair.idx;
-  const typed = Number(String(torsionDistDraft).replace(',', '.'));
+  const typed = Number(String(pairTargetDraft).replace(',', '.'));
   const table = bondLengthTarget(geom.elements[i], geom.elements[j]);
   const target = Number.isFinite(typed) && typed > 0 ? typed : table;
   if (!Number.isFinite(target) || target <= 0) {
-    setCalcMsg(`✕ Type the distance you want ${pair.label} to reach, in ångströms — the table has no`
-      + ` length for ${geom.elements[i] || '?'}–${geom.elements[j] || '?'}, so this line would have nothing to aim at.`);
+    setCalcMsg(`✕ Type the distance you want ${pair.label} to reach, in ångströms (the ⌖ want field) — the`
+      + ` table has no length for ${geom.elements[i] || '?'}–${geom.elements[j] || '?'}, so this line would have nothing to aim at.`);
     return;
   }
   const key = i < j ? `${i}-${j}` : `${j}-${i}`;
-  const label = `${pair.slots[0].label}–${pair.slots[1].label}`;
+  const label = pair.label;
   const row = {
     key, i, j, target, label, say: '',
     a: pair.slots[0].label, b: pair.slots[1].label,
@@ -10091,6 +10278,8 @@ const calcAddRestraint = () => {
   const next = [...calcRestraints.filter((r) => r.key !== key), row]
     .sort((a, b2) => ((a.i ?? 0) - (b2.i ?? 0)) || ((a.j ?? 0) - (b2.j ?? 0)));
   setCalcRestraints(next);
+  setPairMsg(`✓ ${label} = ${torsionAng(target)} is in the list (the pair is still painted BLUE). Press ⌖ again to`
+    + ' pick another pair — the two atoms of this line are already its own, the ✏️ Torsion picks never moved.');
   setCalcMsg(`✓ Distance ${label} = ${torsionAng(target)} is in the list (${next.length} of`
     + ` ${STRUCTURE_CALC_MAX_RESTRAINTS} the module accepts) — ▶ Run builds ${calcStarts} structure`
     + `${calcStarts === 1 ? '' : 's'} and keeps the best ${calcKeep}. Every line can be edited, and ✕ drops it.`);
@@ -10403,10 +10592,32 @@ const calcInertCount = () => calcUsableRows().filter((r) => calcWeightOf(r) <= 0
 
 /** CE QU'UN GESTE TRANSMET AU MODULE POUR UNE LIGNE — ses deux atomes, sa cible et son
  *  poids ⚖. Écrit UNE fois : le ▶ Run, le ▶ MD, le ⚒ Minimise, le ⟳ Energy et la
- *  sauvegarde lisent donc le même poids (une seconde copie pourrait en lire un autre). */
+ *  sauvegarde lisent donc le même poids (une seconde copie pourrait en lire un autre).
+ *
+ *  ⚠ ET AVEC ELLES, LES PONTS DISULFURE ÉTIRÉS — « I only want the disulphide to be at the
+ *  default bond length after minimization ». Un pont que le modèle DESSINE (le CONECT
+ *  SG–SG de la page) mais dont les deux Sγ sont à des dizaines d'ångströms ne se referme
+ *  JAMAIS tout seul : sa liaison est une famille FIGÉE du champ (voir le commentaire de
+ *  `stretchedDisulfideTermsOf`, utils/disulfideFold.js). Ce que les quatre gestes reçoivent
+ *  en plus de la table, ce sont donc ces ponts-là, portés par un terme de distance à la
+ *  longueur de la liaison (2.05 Å) — le même mécanisme qu'une ligne tapée, donc la même
+ *  conduite, le même puits plat et le même rapport. Un pont déjà fermé n'ajoute rien.
+ *  ⚠ C'est ICI, dans la fabrique unique, que le pont est ajouté : les quatre gestes ne
+ *  peuvent pas le conduire l'un sans l'autre, et aucun d'eux n'en sait davantage. */
 const calcRestraintTermsOf = (list) => Array.from(list || []).map((r) => ({
   i: r.i, j: r.j, target: r.target, weight: calcWeightOf(r),
-}));
+})).concat(stretchedDisulfideTermsOf({ bridges: disulfideDrawnRef.current.bonds }));
+
+/** LA PHRASE QUI DIT QU'UN PONT ÉTIRÉ EST CONDUIT — le rapport d'un geste compte alors une
+ *  distance de plus que la table n'affiche de lignes : sans cette phrase, ce chiffre
+ *  passerait pour une erreur de comptage. Rend '' quand il n'y a aucun pont à conduire (le
+ *  cas ordinaire), donc rien ne s'affiche pour rien. */
+const disulfideConductedNote = () => {
+  const count = stretchedDisulfideTermsOf({ bridges: disulfideDrawnRef.current.bonds }).length;
+  if (!count) return '';
+  return ` · ⚭ ${count} stretched disulphide bridge${count === 1 ? '' : 's'} conducted to`
+    + ` ${SS_BOND_LENGTH} Å (the two Sγ are pulled together like a distance of the table)`;
+};
 
 /** AJOUTER UNE LIGNE VIDE — la table s'écrit à la main : deux atomes, une cible. */
 const calcAddBlankRow = () => {
@@ -10421,31 +10632,35 @@ const calcAddBlankRow = () => {
 
 /** ÉCRIRE UN ATOME D'UNE LIGNE — le texte est résolu sur la molécule À L'ÉCRAN, et la
  *  ligne dit elle-même ce qu'elle n'a pas compris (`say`). La cible, elle, se tape dans
- *  sa colonne : c'est l'utilisateur qui donne les distances. */
+ *  sa colonne : c'est l'utilisateur qui donne les distances.
+ *
+ *  ⚠ LA FRAPPE N'EST JAMAIS JETÉE, MÊME SANS MOLÉCULE — le rapport de cette session :
+ *  « the atom is not typed … the last character disappears ». La ligne GARDE ce qui est
+ *  écrit et dit qu'elle attend une structure (`calcRowAfterAtom`, le helper écrit UNE
+ *  fois) ; l'effet de résolution la relit dès que la molécule est là. Avant, la frappe
+ *  était PERDUE dans ce cas : la case affichait la lettre, et le rendu suivant la
+ *  réécrivait avec le texte resté en mémoire (le même `value`) — donc le dernier
+ *  caractère disparaissait sous les doigts, et la ligne ne pouvait jamais être finie. */
 const calcSetRowAtom = (key, side, text) => {
   const live = calcGeometryNow();
-  if (!live) { setCalcMsg('✕ There is no molecule on screen — load a structure first, then type its atoms.'); return; }
+  setCalcRestraints((list) => {
+    let changed = false;
+    const next = list.map((r) => {
+      if (r.key !== key) return r;
+      const done = calcRowAfterAtom(r, side, text, live, CALC_WAITING_SAY);
+      if (done !== r) changed = true;
+      return done;
+    });
+    return changed ? next : list;
+  });
+  if (!live) {
+    setCalcMsg(`✕ ${CALC_WAITING_SAY}.`);
+    return;
+  }
   const hit = calcAtomOfText(live.structure, text);
-  setCalcRestraints((list) => list.map((r) => {
-    if (r.key !== key) return r;
-    const next = { ...r, [side]: text, say: hit.ok ? '' : hit.say };
-    if (side === 'b') {
-      next.j = hit.ok ? hit.index : null;
-      next.lb = hit.ok ? hit.label : '';
-    } else {
-      next.i = hit.ok ? hit.index : null;
-      next.la = hit.ok ? hit.label : '';
-    }
-    if (next.i != null && next.j != null) {
-      next.label = `${next.la || `#${next.i}`}–${next.lb || `#${next.j}`}`;
-      if (!(Number.isFinite(next.target) && next.target > 0)) {
-        const el = live.geom.elements;
-        next.target = bondLengthTarget(el[next.i], el[next.j]);
-      }
-    }
-    return next;
-  }));
-  if (!hit.ok) setCalcMsg(`✕ ${hit.say}.`);
+  /* Une case VIDÉE ne dit rien de plus : c'est la ligne qui redevient « pas prête », et
+     c'est tout — une case qu'on efface n'a rien à se reprocher. */
+  if (!hit.ok && String(text == null ? '' : text).trim()) setCalcMsg(`✕ ${hit.say}.`);
 };
 
 /** LE RAPPORT D'UN CALCUL — les chiffres du module, mis en phrases : ce qui a été
@@ -10558,6 +10773,27 @@ const calcReportOf = (retained, ranked) => {
     + ' ↺ Undo torsion puts the molecule back exactly where it was before the calculation wrote anything.';
 };
 
+/** ⚠ LA MOLÉCULE D'UN CALCUL SE RECONNAÎT À CE QU'ELLE EST, PAS À L'OBJET QUI LA PORTE.
+ *  L'objet de cette session : le calcul de structure doit SURVIVRE au changement de page /
+ *  d'onglet — « Structure calculation ha un problema … se rinfresco la pagina tutto è perso
+ *  e bisogna ricominciare da capo ». Or quand on quitte la page et qu'on y revient, la page
+ *  RESSERT le même modèle et NGL en refait un NOUVEAU composant : comparer les OBJETS (ce
+ *  que faisaient le ⏹ et l'écriture) arrêtait le calcul au premier aller-retour et refusait
+ *  sa famille pour toujours. La clé est donc ce qui NE BOUGE PAS quand la molécule est
+ *  resservie : son nom, son nombre d'atomes et de résidus, et les deux atomes extrêmes —
+ *  jamais ses coordonnées, puisque c'est justement elles que le calcul écrit.
+ *  Deux composants qui donnent la même clé sont LA MÊME molécule pour tout ce qui suit :
+ *  l'aperçu à l'écran, le ⏹, et l'écriture (`calcWriteStructure`, ⤓ Load). */
+const calcMoleculeKey = (comp, structure) => {
+  const st = structure || (comp && comp.structure);
+  if (!comp || !st) return '';
+  const count = Number(st.atomCount) || 0;
+  const endAtom = (i) => {
+    try { const ap = st.getAtomProxy(i); return `${ap.resname || ''}.${ap.atomname || ''}`; } catch { return '?'; }
+  };
+  return `${st.name || ''}|${count}|${Number(st.residueCount) || 0}|${endAtom(0)}|${endAtom(count - 1)}`;
+};
+
 /** ÉCRIRE UNE STRUCTURE RETENUE DANS LA MOLÉCULE — TOUTE la molécule (c'est elle que
  *  le calcul a construite), par le chemin d'une torsion, avec le rapport du module.
  *  ⚠ L'ÉCRITURE EST REFUSÉE SI LA MOLÉCULE A CHANGÉ depuis le calcul : ces
@@ -10567,7 +10803,7 @@ const calcWriteStructure = (retained, ranked) => {
   const comp = componentRef.current;
   const structure = comp && comp.structure;
   if (!comp || !structure || !retained || !retained.positions) return;
-  if (ranked && ranked.comp && ranked.comp !== comp) {
+  if (ranked && ranked.moleculeKey && ranked.moleculeKey !== calcMoleculeKey(comp, structure)) {
     setCalcMsg('✕ These structures were computed on ANOTHER molecule than the one on screen now — their coordinates'
       + ' belong to its atoms. ▶ Run the calculation again on this molecule (the last family is kept above, with its scores).');
     return;
@@ -10664,6 +10900,10 @@ const runStructureCalculation = () => {
     return;
   }
   const { comp, structure, geom } = live;
+  /* LA MOLÉCULE DU CALCUL, RETENUE SOUS SA CLÉ (`calcMoleculeKey`) : c'est elle qui dira,
+     à chaque image et à la fin, si l'écran montre encore celle sur laquelle ces modèles
+     ont été construits — donc où l'écriture est permise. */
+  const moleculeKey = calcMoleculeKey(comp, structure);
   /* ⚠ LES COORDONNÉES DE DÉPART SONT PHOTOGRAPHIÉES — les départs se tirent tous de la
      molécule telle qu'elle est MAINTENANT, et l'aperçu du calcul écrit à l'écran : sans
      cette copie, l'écriture d'une image nourrirait le départ suivant. */
@@ -10682,8 +10922,9 @@ const runStructureCalculation = () => {
       ? `✕ Every line of the table is at weight ⚖ = 0 (${paused} line${paused === 1 ? '' : 's'}):`
         + ' the protocol has no distance to drive. Type a weight ABOVE 0 in the ⚖ column of at least one'
         + ' line — a weight of 0 keeps a line listed and measured, it simply takes no part in the calculation.'
-      : '✕ Nothing to respect yet. Two ways to give a distance: pick two atoms (🎯 Pick in the'
-        + ' ✏️ Torsion window) and press ⌖, or add a row and TYPE its two atoms — “ALA 12 CA”, “12:CA” or an atom'
+      : '✕ Nothing to respect yet. Two ways to give a distance: press ⌖ and pick the pair IN THE VIEW'
+        + ' — the ⌖ picker paints its own two atoms BLUE, with nothing to do with the four picks of ✏️ Torsion,'
+        + ' and the second click adds the line — or add a row and TYPE its two atoms — “ALA 12 CA”, “12:CA” or an atom'
         + ' number — with the distance you want. A structure calculation needs at least one distance between two atoms.');
     return;
   }
@@ -10705,7 +10946,7 @@ const runStructureCalculation = () => {
   setCalcResult(null);
   setCalcProgress(`🧬 start 0/${n} …${half
     ? ` (${half} line${half === 1 ? '' : 's'} of the table still unfinished, left out)`
-    : ''}`);
+    : ''}${disulfideConductedNote()}`);
   /* LE GRAPHE 🪢, S'IL EST À L'ÉCRAN, SUIT CHAQUE DÉPART ÉCRIT (voir `pumpMotion`) : la
      MÊME question `ramaIsShown()`, posée à CHAQUE image — le 🪢 bouge donc aussi pendant un
      calcul de structure, et l'ouvrir en cours de route suffit à ce qu'il prenne la suite. */
@@ -10713,7 +10954,7 @@ const runStructureCalculation = () => {
     const family = ranked || rankStructureAttempts({ attempts, keep: m });
     /* LA FAMILLE EST MARQUÉE DE SA MOLÉCULE — `comp` et `structure` : ses coordonnées
        ne peuvent donc pas être écrites sur une autre (voir `calcWriteStructure`). */
-    setCalcResult({ ...family, comp, structure });
+    setCalcResult({ ...family, comp, structure, moleculeKey });
     setCalcBusy(false);
     setCalcProgress('');
     if (!family.retained.length) {
@@ -10721,8 +10962,22 @@ const runStructureCalculation = () => {
       return;
     }
     /* LE MEILLEUR S'ÉCRIT TOUT DE SUITE — les m retenues se regardent ensuite une par
-       une (⤓ Load), et chacune s'écrit par le chemin d'une torsion. */
-    calcWriteStructure(family.retained[0], family);
+       une (⤓ Load), et chacune s'écrit par le chemin d'une torsion.
+       ⚠ SEULEMENT SI LA MOLÉCULE DU CALCUL EST (ENCORE) CELLE DE L'ÉCRAN : les
+       coordonnées de la famille appartiennent à SES atomes, donc les écrire sur une autre
+       serait écrire du bruit (voir `calcMoleculeKey`). Quand la page a changé d'onglet
+       pendant le calcul, rien n'est écrit — mais RIEN N'EST PERDU : la famille reste
+       ci-dessous avec ses notes, et ⤓ Load l'écrit dès que la bonne molécule est revenue.
+       C'est la seconde moitié du « le calcul survit au changement de page ». */
+    if (calcMoleculeKey(componentRef.current, componentRef.current && componentRef.current.structure) === moleculeKey) {
+      calcWriteStructure(family.retained[0], family);
+    } else {
+      setCalcMsg(`✓ The calculation went through the page change — ${family.retained.length}`
+        + ` structure${family.retained.length === 1 ? '' : 's'} kept above (${attempts.length} start`
+        + `${attempts.length === 1 ? '' : 's'} computed). The molecule they were computed on is not on screen any`
+        + ' more, so nothing was written: press ⤓ Load when THAT molecule is back and the model goes in.'
+        + ' The two tables never moved.');
+    }
     if (stopped) setCalcMsg((prev) => `⏹ Stopped between two starts: ${attempts.length} of ${n} computed, the rest is not. ${prev}`);
   };
   calcPartialRef.current = { run, finish, attempts };
@@ -10754,7 +11009,13 @@ const runStructureCalculation = () => {
        retirée avec son bouton, et le protocole standard travaille sur la molécule
        ENTIÈRE — il n'y a donc rien à reposer, et le rapport du calcul n'en parle pas. */
     rebuild: false,
-    shouldStop: () => calcRunRef.current !== run || componentRef.current !== comp,
+    /* ⚠ LE JETON EST LE SEUL MAÎTRE DE L'ARRÊT — le ⏹, et un nouveau départ. Un
+       changement de PAGE ou d'ONGLET ne tue plus le calcul : c'est l'objet de cette
+       session (« se rinfresco la pagina tutto è perso e bisogna ricominciare da capo »).
+       La molécule à l'écran peut changer sous nos pieds (la page resservant son modèle) :
+       le calcul tourne sur les coordonnées PHOTOGRAPHIÉES au départ et continue ; ce qui
+       s'arrête, c'est seulement l'écriture à l'écran (voir `onScreen` dans la pompe). */
+    shouldStop: () => calcRunRef.current !== run,
     onAttempt: (attempt) => {
       attempts.push(attempt);
       const live2 = attempt.satisfied + attempt.violations;
@@ -10765,13 +11026,15 @@ const runStructureCalculation = () => {
   });
   const pump = () => {
     if (calcRunRef.current !== run) return;
-    if (componentRef.current !== comp) {
-      setCalcBusy(false);
-      setCalcProgress('');
-      setCalcMsg('✕ The molecule on screen changed while the calculation was running — it stopped between two starts.'
-        + ' Nothing was written: those models belong to the molecule that was there. ▶ Run it again on this one.');
-      return;
-    }
+    /* ⚠ LE CALCUL NE S'ARRÊTE PAS PARCE QU'ON A CHANGÉ DE PAGE — c'est le rapport de
+       cette session (« se rinfresco la pagina tutto è perso e bisogna ricominciare da
+       capo ») : la page resservant sa molécule, `componentRef.current` n'est plus le
+       composant du départ. Le calcul, lui, tourne sur les coordonnées PHOTOGRAPHIÉES au
+       départ (`base`) : il n'a besoin de rien de ce qui est affiché, donc il CONTINUE.
+       Ce qui s'arrête, c'est l'ÉCRITURE À L'ÉCRAN : on n'écrit pas les images d'une
+       molécule sur une autre (`calcMoleculeKey`) — `onScreen` reste faux tant que la
+       bonne molécule n'est pas revenue, et la ligne de progression suit quand même. */
+    const onScreen = calcMoleculeKey(componentRef.current, componentRef.current && componentRef.current.structure) === moleculeKey;
     const started = Date.now();
     let shown = null;
     for (;;) {
@@ -10808,10 +11071,12 @@ const runStructureCalculation = () => {
     /* L'IMAGE S'ÉCRIT, PUIS LA PAGE PEINT — c'est l'ordre qui fait qu'on VOIT la
        molécule : écrire sans rendre la main ne montrerait rien. */
     if (shown) {
-      if (calcWatch && shown.positions) calcPreviewPositions(comp, structure, shown.positions);
-      /* …ET LE 🪢 SUIT LE CALCUL QUAND IL EST À L'ÉCRAN (👁 watch écrit vraiment la
-         molécule : le graphe parle donc de la conformation qui est à l'écran). */
-      if (calcWatch && ramaIsShown()) readRamachandran();
+      if (onScreen) {
+        if (calcWatch && shown.positions) calcPreviewPositions(comp, structure, shown.positions);
+        /* …ET LE 🪢 SUIT LE CALCUL QUAND IL EST À L'ÉCRAN (👁 watch écrit vraiment la
+           molécule : le graphe parle donc de la conformation qui est à l'écran). */
+        if (calcWatch && ramaIsShown()) readRamachandran();
+      }
       if (shown.phase !== 'attempt-done') setCalcProgress(calcPhaseLine(shown, attempts.length, n));
     }
     if (typeof window !== 'undefined' && window.setTimeout) window.setTimeout(pump, 0);
@@ -10889,6 +11154,9 @@ const calcReadForceField = () => {
 const pumpMotion = ({ frames, comp, structure, head, onEnd }) => {
   calcRunRef.current += 1;
   const run = calcRunRef.current;
+  /* ⚠ LA MÊME CLÉ QUE LE CALCUL (`calcMoleculeKey`) : un ▶ MD ou un ⚒ Minimise survit lui
+     aussi au changement de page, et n'écrit rien sur une autre molécule. */
+  const moleculeKey = calcMoleculeKey(comp, structure);
   /* LE GRAPHE 🪢 SUIT LE MOUVEMENT — la demande : « can the ramachandran be updated while
      the molecule moves? » Oui. La lecture φ/ψ est refaite après CHAQUE image écrite
      quand la fenêtre 🪢 est à l'écran (mesuré : 0.24 ms pour 30 résidus, 1 ms pour 300),
@@ -10899,13 +11167,9 @@ const pumpMotion = ({ frames, comp, structure, head, onEnd }) => {
      fenêtre pendant que la molécule bouge la fait suivre dès l'image suivante. */
   const pump = () => {
     if (calcRunRef.current !== run) return;
-    if (componentRef.current !== comp) {
-      setCalcBusy(false);
-      setCalcProgress('');
-      setCalcMsg('✕ The molecule on screen changed while this was running — it stopped.'
-        + ' Nothing was written on the new one: ▶ run it again on this molecule.');
-      return;
-    }
+    /* ⚠ …ET LE GESTE SURVIT AU CHANGEMENT DE PAGE POUR LA MÊME RAISON (voir le calcul) :
+       la seule chose qui s'arrête est l'écriture à l'écran, pas le geste lui-même. */
+    const onScreen = calcMoleculeKey(componentRef.current, componentRef.current && componentRef.current.structure) === moleculeKey;
     const started = Date.now();
     let shown = null;
     for (;;) {
@@ -10929,7 +11193,11 @@ const pumpMotion = ({ frames, comp, structure, head, onEnd }) => {
            le 📏, les plaques, le film et le 📥 Download suivent aussi), et c'est la
            conformation dont le rapport et le 🪢 parlent ensuite. */
         const end = tick.value;
-        if (end && end.ok && end.positions) calcPreviewPositions(comp, structure, end.positions);
+        /* ⚠ ÉCRITE SEULEMENT SI LA MOLÉCULE DU GESTE EST (ENCORE) CELLE DE L'ÉCRAN — la
+           géométrie finale appartient à ses atomes. Le geste, lui, est allé au bout. */
+        if (onScreen) {
+          if (end && end.ok && end.positions) calcPreviewPositions(comp, structure, end.positions);
+        }
         if (onEnd) onEnd(end);
         return;
       }
@@ -10938,8 +11206,10 @@ const pumpMotion = ({ frames, comp, structure, head, onEnd }) => {
       if (Date.now() - started > CALC_FRAME_BUDGET_MS) break;
     }
     if (shown) {
-      if (calcWatch && shown.positions) calcPreviewPositions(comp, structure, shown.positions);
-      if (ramaIsShown()) readRamachandran();   // le 🪢 suit l'image qui vient d'être écrite
+      if (onScreen) {
+        if (calcWatch && shown.positions) calcPreviewPositions(comp, structure, shown.positions);
+        if (ramaIsShown()) readRamachandran();   // le 🪢 suit l'image qui vient d'être écrite
+      }
       setCalcProgress(calcPhaseLine(shown, 0, 1, head));
     }
     if (typeof window !== 'undefined' && window.setTimeout) window.setTimeout(pump, 0);
@@ -11005,7 +11275,7 @@ const runMolecularDynamics = () => {
   };
   setCalcBusy(true);
   setCalcShown(0);
-  setCalcProgress('🌡 molecular dynamics …');
+  setCalcProgress(`🌡 molecular dynamics …${disulfideConductedNote()}`);
   pumpMotion({
     frames: mdFrames({
       positions: base, elements: geom.elements, bonds: geom.bonds,
@@ -11090,7 +11360,7 @@ const runMinimise = () => {
   };
   setCalcBusy(true);
   setCalcShown(0);
-  setCalcProgress('⚒ minimising …');
+  setCalcProgress(`⚒ minimising …${disulfideConductedNote()}`);
   pumpMotion({
     frames: minimizeFrames({
       positions: base, elements: geom.elements, bonds: geom.bonds,
@@ -11333,6 +11603,41 @@ applyShadowSettings(); // honour the user's shadow preference (off by default)
 stage.signals.clicked.add((pickingProxy) => {
 if (!pickingProxy || !pickingProxy.atom) return;
 const atom = pickingProxy.atom;
+// ⌖ Structure calculation: the distance table has its OWN pair picker — TWO atoms (A · B),
+// painted BLUE, with its own state (pairPickRef/pairAtomsRef): the four picks of ✏️ Torsion
+// are not read here and not touched by this click. The SECOND atom completes the pair, the
+// picker disarms by itself and the line is added to the table (it can then be edited, or
+// dropped with ✕); the two blue atoms stay painted, because the line is about them.
+if (pairPickRef.current) {
+  const comp = pickingProxy.component;
+  if (!comp) return;
+  const slot = pairPickRef.current;
+  const taken = pairAtomsRef.current;
+  const first = taken[0];
+  if (first && first.comp !== comp) {
+    setPairMsg(`⚠ The two atoms of a line must belong to the SAME structure — ${first.label} and this atom are in two different molecules. Pick both in one molecule, or stop ⌖ and start again.`);
+    return;
+  }
+  const label = atomPickName(atom);
+  const next = taken.slice(0, slot - 1);
+  if (next.some((s) => s.comp === comp && s.atomIndex === atom.index)) {
+    setPairMsg(`⚠ ${label} is already one of the two atoms of this line — A and B must be two different atoms.`);
+    return;
+  }
+  next.push({ comp, atomIndex: atom.index, label });
+  putPairAtoms(next);
+  if (next.length < 2) {
+    pairPickRef.current = 2;
+    setPairPick(2);
+    setPairMsg(`1 of 2 picked (${label}) — now click atom B : the second atom of the distance.`);
+    return;
+  }
+  pairPickRef.current = 0;             // the second atom completes the pair : the picker disarms
+  setPairPick(0);
+  putPairAtoms(next);                  // les deux atomes restent BLEUS : la ligne parle d'eux
+  calcAddPairRow();
+  return;                              // picking a pair replaces atom-click selection
+}
 // ✏️ Torsion: a click fills one slot of A · B · C · D instead of selecting an atom.
 // The four slots must live in ONE structure (a torsion spans one molecule) and no atom
 // can hold two slots ; once the fourth is in, the picker disarms by itself and the
@@ -18035,10 +18340,15 @@ const toggleDisulfideBonds = () => {
   /* Un pont DESSINÉ mais étiré était le cas du rapport (« you displayed the
      disulfide bonds but you did not fold the structure to bring the cysteines at
      bond distance ») : le compte rendu le dit, et il ne nomme plus aucun bouton —
-     celui qui essayait de fermer le pont (⚭ Fold for disulfides) a été retiré. */
+     celui qui essayait de fermer le pont (⚭ Fold for disulfides) a été retiré.
+     ⚠ DEPUIS CETTE SESSION IL SE FERME TOUT SEUL, PENDANT LES GESTES : le pont étiré
+     entre dans les contraintes du ▶ Run, du ▶ MD et du ⚒ Minimise comme une distance
+     visée à 2.05 Å (voir `calcRestraintTermsOf`), donc la phrase le DIT au lieu de
+     laisser croire qu'il restera élongué. */
   const stretched = bonds.filter((b) => b.distance != null && Math.abs(b.distance - SS_BOND_LENGTH) > SS_BOND_TOLERANCE).length;
   const hint = stretched
     ? ` ${stretched} of them ${stretched === 1 ? 'is' : 'are'} drawn but STRETCHED: the two Sγ are further apart than the S–S bond length (${SS_BOND_LENGTH} ± ${SS_BOND_TOLERANCE} Å), so the link NGL draws is not a bond the geometry supports.`
+      + ` ▶ Run, ▶ MD and ⚒ Minimise CONDUCT ${stretched === 1 ? 'it' : 'them'} to ${SS_BOND_LENGTH} Å — the two Sγ are pulled together like a distance of the table, so the bridge comes in as the gesture runs (the gesture's own report says how close it got: the geometry may not allow it to close).`
     : '';
   disulfidesShownRef.current = next;
   setDisulfidesShown(next);
@@ -20421,7 +20731,7 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
 <button type="button"
   onClick={() => openCalcSection('distances')}
   className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${calcSection === 'distances' ? 'bg-indigo-100 border-indigo-400 text-indigo-900' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
-  title="🧬 STRUCTURE CALCULATION — the request, verbatim: “the user provide the distances between atom pairs and selects the number of starting structures n and the number of retained structures m. The program must then generate n structures by randomly assigning values of all dihedral angles. From each of these n structure the protocol of ‘model build’ is applied to respect the distance constraints and the final result is scored. the best m structures are retained.” ① THE DISTANCES: pick two atoms with 🎯 Pick in the ✏️ Torsion window (the pair is A–B with two atoms, A–D with four) and type the distance you want in the A–D field — left empty, the length the tables give that pair of elements is used; every line can be edited, and a pair is listed once. ② n AND m: how many starting structures to build, and how many to keep. ③ ▶ RUN: each of the n starts is a draw of EVERY rotatable dihedral (a bond that is a hinge: single, not inside a ring, with something on both sides) taken uniformly in (−180, 180) and APPLIED as one rigid rotation by the app's own torsion writer, so bond lengths and angles are untouched to the last digit; then the STANDARD protocol is applied to it — the annealing in dihedral space (Metropolis, 1500 K down to 300 K), the Langevin dynamics (an equilibration at 🌡 hot, then a cooling down to 🌡 cold), the dihedral minimisation, and a cold quench that repairs what the descent broke — and the result is SCORED with the same force field (kcal/mol: bonds, angles, planar rings, vdW, electrostatics, solvent, φ/ψ, χ1, ω, your distances), plus the clash penalty. The best m are retained, ranked by that score, and the first is written into the molecule. ④ The seed is FIXED: the same molecule, the same distances and the same n give the same family to the last digit. ⏹ Stop stops between two starts and keeps what is done. ⚠ What it is NOT: an experimental structure. The protocol is the standard one (annealing, dynamics, minimisation, quench) under the force field, but the force field is the app's OWN — partial charges from the graph, a non-polar solvent term, no explicit water, no added atoms that the file does not have. The randomness is only in the STARTING dihedrals (the score is deterministic), and a peptide C–N bond is one of them: a start can come out cis, which is exactly why the field's ω term and the cold quench are there.">
+  title="🧬 STRUCTURE CALCULATION — the request, verbatim: “the user provide the distances between atom pairs and selects the number of starting structures n and the number of retained structures m. The program must then generate n structures by randomly assigning values of all dihedral angles. From each of these n structure the protocol of ‘model build’ is applied to respect the distance constraints and the final result is scored. the best m structures are retained.” ① THE DISTANCES: press ⌖ and pick the pair IN THE VIEW — the ⌖ of this table has its OWN picker (the request, verbatim: “dedicated pair picker”): TWO atoms (A · B), painted BLUE, with nothing to do with the four picks of ✏️ Torsion (A · B · C · D), which are not read here and not touched; the SECOND click adds the line, and the distance you want is typed in the ⌖ want field next to it — left empty, the length the tables give that pair of elements is used; every line can be edited, and a pair is listed once. ② n AND m: how many starting structures to build, and how many to keep. ③ ▶ RUN: each of the n starts is a draw of EVERY rotatable dihedral (a bond that is a hinge: single, not inside a ring, with something on both sides) taken uniformly in (−180, 180) and APPLIED as one rigid rotation by the app's own torsion writer, so bond lengths and angles are untouched to the last digit; then the STANDARD protocol is applied to it — the annealing in dihedral space (Metropolis, 1500 K down to 300 K), the Langevin dynamics (an equilibration at 🌡 hot, then a cooling down to 🌡 cold), the dihedral minimisation, and a cold quench that repairs what the descent broke — and the result is SCORED with the same force field (kcal/mol: bonds, angles, planar rings, vdW, electrostatics, solvent, φ/ψ, χ1, ω, your distances), plus the clash penalty. The best m are retained, ranked by that score, and the first is written into the molecule. ④ The seed is FIXED: the same molecule, the same distances and the same n give the same family to the last digit. ⏹ Stop stops between two starts and keeps what is done. ⚠ What it is NOT: an experimental structure. The protocol is the standard one (annealing, dynamics, minimisation, quench) under the force field, but the force field is the app's OWN — partial charges from the graph, a non-polar solvent term, no explicit water, no added atoms that the file does not have. The randomness is only in the STARTING dihedrals (the score is deterministic), and a peptide C–N bond is one of them: a start can come out cis, which is exactly why the field's ω term and the cold quench are there.">
   🧬 Structure calculation{calcResult ? ` (${calcResult.retained.length}/${calcResult.tried})` : ''}
 </button>
 {/* ⚙ LES TROIS GESTES DU CHAMP, ICI — la demande : « can the MD, Minimize and Energy be
@@ -20440,11 +20750,21 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
           Structure calculation — n starting structures, the standard protocol on each, the best m kept
         </span>
         <div className="flex flex-wrap items-center gap-1.5">
+          {/* ⌖ SON PROPRE PIQUAGE — la demande : « dedicated pair picker ». Le ⌖ arme un
+              piquage À LUI : DEUX atomes (A · B) peints en BLEU, son état, ses phrases.
+              Les quatre atomes de ✏️ Torsion ne sont ni lus ni touchés : armé, le bouton
+              devient « ⌖ Picking A · B » ; une seconde pression l'éteint. */}
           <button type="button" onClick={calcAddRestraint}
-            title="Add the pair of picked atoms to the list of distances to respect. The two atoms come from the SAME picks the 🎯 button of the ✏️ Torsion window fills (A · B · C · D): with two atoms the pair is A–B, with four it is A–D. The distance is the one typed in the A–D field of that window — left empty, it is the length the tables give that pair of elements (S–S 2.05 Å, C–C 1.54 Å…). A pair already in the list is REPLACED, never doubled."
-            className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-indigo-300 text-indigo-700 hover:bg-indigo-100">
-            ⌖ Add the picked pair
+            title="THE TABLE'S OWN PAIR PICKER — the request, verbatim: “dedicated pair picker”. Press ⌖ and it arms a picker OF ITS OWN: TWO atoms (A · B), painted BLUE in the 3D view, and NOTHING to do with the four picks of ✏️ Torsion (A · B · C · D) — those are not read here and not touched, so a torsion and a pair can be picked one after the other without either undoing the other. Click the first atom, then the second: the line is added to the list with its two atoms already resolved (it can still be edited, or dropped with ✕), and the two blue atoms stay painted on the molecule the line is about. The distance is the one typed in the ⌖ want field on the right — left EMPTY (the usual case), it is the length the tables give that pair of elements (S–S 2.05 Å, C–C 1.54 Å…). A pair already in the list is REPLACED, never doubled."
+            className={`px-2 py-1 text-[10px] font-bold rounded border ${pairPick ? 'bg-blue-600 border-blue-700 text-white' : 'bg-white border-indigo-300 text-indigo-700 hover:bg-indigo-100'}`}>
+            {pairPick ? `⌖ Picking A · B (${pairAtoms.length}/2) — click the atoms, ⌖ stops` : '⌖ Add the picked pair'}
           </button>
+          <input type="text" inputMode="decimal" value={pairTargetDraft}
+            onChange={(e) => setPairTargetDraft(e.target.value)}
+            placeholder="want (Å)"
+            aria-label="Target distance of the pair picked with ⌖, in ångströms — left empty: the length the tables give that pair of elements"
+            title="⌖ WANT — the distance YOU want the pair picked with ⌖ to have, in ångströms. Left EMPTY (the usual case) the line takes the length the tables give that pair of elements; whatever you type here becomes the target of the line the SECOND click adds, and it can still be overwritten afterwards in the line's own distance column."
+            className="w-16 border border-indigo-300 rounded px-1.5 py-1 text-[10px] font-mono bg-white text-right outline-none focus:border-indigo-500" />
           <button type="button" onClick={calcAddBlankRow}
             disabled={calcRestraints.length >= STRUCTURE_CALC_MAX_RESTRAINTS}
             title="Add an EMPTY line and TYPE its two atoms — “ALA 12 CA”, “12:CA”, “CA12”, the raw file name, or simply an atom number — then its distance in ångströms. The table is how distances are defined here; picking atoms is only the shortcut. A line that is not finished yet is kept but never sent to the module, and ⌖ replaces a line it duplicates."
@@ -20506,8 +20826,9 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
             as hard and 0 leaves the line on hold (listed and measured, taking part in nothing). ▶ Run, ▶ MD,
             ⚒ Minimise and ⟳ Energy all read it; the 📏 box of the 🌡 MD window alone decides whether the dynamics
             reads the table at all.</>
-          : <>Nothing to respect yet. Two ways: pick two atoms (🎯 Pick in the ✏️ Torsion window) and press
-            ⌖, or press ➕ and TYPE a line — “ALA 12 CA” against “ALA 40 CA”, 6.0 Å. A half-written line waits for you;
+          : <>Nothing to respect yet. Two ways: press ⌖ and pick the pair IN THE VIEW (the ⌖
+            picker paints its own two atoms BLUE — no relation to the four picks of ✏️ Torsion,
+            and the second click adds the line), or press ➕ and TYPE a line — “ALA 12 CA” against “ALA 40 CA”, 6.0 Å. A half-written line waits for you;
             ▶ Run uses the finished ones, and its ⚖ column gives each line its own weight.</>}
       </p>
       {ranked && ranked.comp && ranked.comp !== componentRef.current && (
@@ -20746,6 +21067,18 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
       </div>
       {calcProgress && (
         <p className="text-[10px] font-semibold text-indigo-700">{calcProgress}</p>
+      )}
+      {/* ⌖ LA VOIX DU PIQUAGE DU COUPLE — ses phrases à LUI. Le ⌖ a son état, sa peinture
+          bleue et donc son message : il dit d'aller cliquer le PREMIER atome, il compte
+          les atomes piqués (« 1 of 2 picked »), il refuse un couple pris dans deux
+          molécules, et il dit ce qui vient d'entrer dans la table. Sans ce paragraphe,
+          tout cela était écrit dans le vide : le piquage se serait tu. Le bleu est sa
+          couleur (la même que ses deux atomes), le vert une réussite, le rose un refus —
+          la classe suit le premier caractère, comme partout ailleurs dans ce panneau. */}
+      {pairMsg && (
+        <p title={pairMsg} className={`text-[10px] font-semibold rounded-md border px-2 py-1 whitespace-pre-wrap ${/^✓/.test(pairMsg) ? 'text-emerald-800 bg-emerald-50 border-emerald-200' : /^⚠/.test(pairMsg) ? 'text-rose-800 bg-rose-50 border-rose-200' : 'text-blue-800 bg-blue-50 border-blue-200'}`}>
+          {pairMsg}
+        </p>
       )}
       {calcMsg && (
         <p title={calcMsg} className={`text-[10px] font-semibold rounded-md border px-2 py-1 whitespace-pre-wrap ${/^✓/.test(calcMsg) ? 'text-emerald-800 bg-emerald-50 border-emerald-200' : 'text-rose-800 bg-rose-50 border-rose-200'}`}>
