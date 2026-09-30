@@ -1289,6 +1289,19 @@ export const scoreStructureOf = ({
     positions: x, elements, bonds, tolerance: RELAX_CONTACT_TOLERANCE,
   }) || { count: 0, severity: 0, worst: null, checked: 0, unknownElements: 0 };
   const clashPenalty = 0;
+  /* ⚠ LES LECTURES DE LA GÉOMÉTRIE COVALENTE — `bondRms`, `angleRms`, `planarRms`,
+     `contactRms` et les quatre « pires écarts » étaient ANNONCÉS dans le contrat ci-dessus
+     et dans AUCUN champ de l'objet rendu : le rapport du 🧬 (`calcReportOf`) et le tableau
+     du panneau les lisent pourtant (`r.bondRms.toFixed(3)`), donc `undefined.toFixed`
+     tuait le calcul À LA FIN — le rapport de cette session : « The structure calculation
+     can never be completed … Cannot read properties of undefined (reading 'toFixed') ».
+     Ils sont RELUS ICI, par le même `energyOf` et les mêmes cibles du ⚒ que tout le
+     dossier (`buildRelaxTerms` : longueurs et angles des tables, cycles plans à 0°, et la
+     marche de contact du cœur dur) — donc le chiffre affiché est celui du modèle, pas une
+     seconde vérité inventée pour l'écran. */
+  const geomRead = energyOf(
+    buildRelaxTerms({ elements, bonds, pairs: [], weights, positions: x }), x,
+  );
   const om = field.omegaReport;
   const ra = field.ramaReport;
   const ch = field.chiReport;
@@ -1313,6 +1326,15 @@ export const scoreStructureOf = ({
     chiPenalty: field.chi,
     dihedralPenalty: field.dihedral,
     clashPenalty,
+    /* LES LECTURES DE LA GÉOMÉTRIE COVALENTE DU MODÈLE — le tableau du panneau en affiche
+       deux, le rapport du 🧬 deux autres (voir `geomRead` plus haut : une seule relecture,
+       avec les cibles du ⚒). */
+    bondRms: geomRead.bondRms, angleRms: geomRead.angleRms,
+    planarRms: geomRead.planarRms, contactRms: geomRead.contactRms,
+    worstBond: geomRead.worstBond ? { ...geomRead.worstBond } : null,
+    worstAngle: geomRead.worstAngle ? { ...geomRead.worstAngle } : null,
+    worstPlanar: geomRead.worstPlanar ? { ...geomRead.worstPlanar } : null,
+    worstContact: geomRead.worstContact ? { ...geomRead.worstContact } : null,
     added: field.added, charges: field.charges, surface: field.surface,
     nonbonded: field.nonbonded, rows: field.rows,
     worstVdw: field.worstVdw ? { ...field.worstVdw } : null,
@@ -2591,7 +2613,7 @@ export const familySpreadOf = ({ attempts = [] } = {}) => {
  * refused, keep}`.
  * `ranking` = TOUTES les tentatives classées (`{rank, index, score, violations,
  * satisfied, rmsd, worst, clashes, contacts, bondRms, angleRms, moved, reason, draw,
- * protocol}` : le tableau du panneau), `retained` = les `keep` premières AVEC leurs
+ * protocol, anneal, quench, omega, omegaFree}` : le tableau du panneau), `retained` = les `keep` premières AVEC leurs
  * coordonnées (`positions`) — c'est ce que le panneau écrit dans la structure —,
  * `family` = le rapport de famille (`spread` + `restraints` + ce qui est resté
  * dehors). Une tentative refusée (`ok: false`) n'est jamais classée : elle est
@@ -2627,6 +2649,15 @@ export const rankStructureAttempts = ({
     chi: a.chiWells
       ? { measured: a.chiWells.measured, violations: a.chiWells.violations }
       : null,
+    /* ⚠ LE RECUIT, LA TREMPE, ω ET LE RÉGLAGE DE ω — le rapport du 🧬 les lit
+       (`best.anneal`, `best.quench`, `best.omega`, `best.omegaFree`) et AUCUN n'était
+       transporté : le panneau disait donc « 🔥 recuit OFF (n tirages nus) » sur une famille
+       dont le recuit avait bel et bien tourné, et la ligne ω restait muette. Les quatre
+       lectures viennent de la TENTATIVE, telles quelles (aucun chiffre recalculé ici). */
+    anneal: a.anneal ? { ...a.anneal } : null,
+    quench: a.quench ? { ...a.quench } : null,
+    omega: a.omega ? { ...a.omega } : null,
+    omegaFree: !!a.omegaFree,
     md: a.md ? {
       steps: a.md.steps, applied: a.md.applied, before: a.md.before, after: a.md.after,
       temperature: a.md.temperature ? { ...a.md.temperature } : null,
@@ -2641,6 +2672,21 @@ export const rankStructureAttempts = ({
     moved: a.moved,
     reason: a.reason,
     clashes: a.clashes ? a.clashes.count : 0,
+    /* ⚠ LES LECTURES DE GÉOMÉTRIE QUE LE PANNEAU ET LE RAPPORT LISENT AUSSI — `bondRms`,
+       `angleRms` et `contacts` étaient écrits dans le contrat ci-dessus et dans AUCUN
+       champ de cette ligne : `calcReportOf` (NMRMoleculeViewer.jsx) lisait donc
+       `best.bondRms.toFixed(4)` sur `undefined` et mourait À LA FIN de chaque calcul —
+       le rapport de cette session : « The structure calculation can never be completed …
+       Cannot read properties of undefined (reading 'toFixed') ». Les quatre lectures de
+       géométrie et les pires écarts sont donc transportés ENSEMBLE, comme le tableau du
+       panneau les affiche ; `contacts` est le COMPTE (l'objet complet a quatre chiffres,
+       le panneau n'en affiche qu'un). Un test mesure que tout champ lu par le rapport
+       existe vraiment dans `ranking[i]`. */
+    bondRms: a.bondRms, angleRms: a.angleRms,
+    planarRms: a.planarRms, contactRms: a.contactRms,
+    worstBond: a.worstBond, worstAngle: a.worstAngle,
+    worstPlanar: a.worstPlanar, worstContact: a.worstContact,
+    contacts: a.contacts ? a.contacts.count : 0,
     violations: a.restraint ? a.restraint.violations : 0,
     satisfied: a.restraint ? a.restraint.satisfied : 0,
     rmsd: a.restraint ? a.restraint.rmsd : 0,

@@ -191,8 +191,10 @@ has(VIEW, 'weight: row.weight == null ? null : row.weight,',
   '⚖ …le poids d’une ligne relue arrive dans la table telle quelle (1 quand le fichier n’en porte pas)');
 has(VIEW, "w: row.weight == null ? '' : String(row.weight),",
   '…dans la case de la ligne, comme le texte de la cible');
-has(VIEW, "row.weightSay || ''].filter(Boolean).join(' · ');",
-  '⚠ …et un « w= » que le module n’a pas su lire est DIT sur la ligne (il n’est jamais tu)');
+has(VIEW, 'const sayExtra = (row && row.weightSay) || \'\';',
+  '⚠ …et un « w= » que le module n’a pas su lire est DIT, à part, sur la ligne (il n’est jamais tu)');
+has(VIEW, 'say: calcRowSayOf({ sayA, sayB, sayExtra }),',
+  '…sa plainte entre dans la phrase de la ligne par la fabrique UNIQUE (`calcRowSayOf`), avec les deux atomes NOMMÉS');
 has(VIEW, "weighted ? ` ${weighted} of them carr${weighted === 1 ? 'ies' : 'y'} a ⚖ weight of their own",
   '…le rapport de lecture dit combien de lignes ont rapporté un poids');
 has(VIEW, 'const hitA = calcAtomOfText(live.structure, row.a);',

@@ -145,8 +145,15 @@ has("loadRep.phase('Preparing the structure…');",
   '…puis la préparation de la structure (liaisons, catégories)');
 has("loadRep.phase('Building the representations…');",
   '…puis la construction des représentations');
-has("loadRep.step(ci + 1, moleculeParts.length, 'Loading the molecules…');",
-  '…et les molécules d’un complexe, qui SONT comptables (i sur N)');
+/* ⚠ CE QUI N'EST PLUS COMPTÉ, ET POURQUOI : les molécules d'un complexe ne sont plus
+   des composantes NGL au chargement — elles vivent comme SECTIONS de la barre (voir
+   le commentaire « UN ATOME N'EST DESSINÉ QUE PAR UNE COMPOSANTE » dans le viewer) :
+   la découpe en composantes gardait AUSSI la composante entière, donc la même
+   molécule était dessinée deux fois (« I have twice as much of molecules »). Il n'y a
+   donc plus de i sur N à rapporter ici, et le SEUL compteur du viewer est celui des
+   images d'une trajectoire (assertion juste en dessous). */
+eq((VIEW.match(/loadRep\.step\(/g) || []).length, 1,
+  'un seul compteur dans tout le viewer — les images d’une trajectoire : les molécules d’un complexe sont des sections de la barre, jamais des composantes à compter');
 has("loadRep.phase('Reading the residues…');",
   '…enfin la lecture des résidus (la bande de séquence)');
 
@@ -254,8 +261,3 @@ ok(registryOnly.includes('Calculate all analyses'),
 ok(registryOnly.includes('animate-pulse'), `…en pulsant, faute de compteurs\n${registryOnly}`);
 
 console.log(`_load_progress_bar_test.mjs — ${passed} assertions OK`);
-
-
-
-
-

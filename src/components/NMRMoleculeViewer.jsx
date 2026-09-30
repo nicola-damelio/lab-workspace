@@ -65,6 +65,7 @@ import { applyDisulfideDisplay } from '../utils/disulfideBonds';
 // reçoivent en plus de la table (voir `calcRestraintTermsOf`).
 import {
   SS_BOND_LENGTH, SS_BOND_TOLERANCE, stretchedDisulfideTermsOf,
+  withoutStretchedDisulfideBonds,
 } from '../utils/disulfideFold';
 
 
@@ -7948,7 +7949,7 @@ useEffect(() => {
           target: Number.isFinite(v) && v > 0 ? v : null,
           weight: Number.isFinite(wv) && wv >= 0 ? wv : null,
           w: wText,
-          a: String((r && r.a) || ''), b: String((r && r.b) || ''), t, la: '', lb: '', say: '',
+          a: String((r && r.a) || ''), b: String((r && r.b) || ''), t, la: '', lb: '', say: '', sayA: '', sayB: '',
         };
       }));
       calcRowSeqRef.current = s.rows.length;
@@ -8010,14 +8011,43 @@ useEffect(() => {
  *  disappears ». Un caractère écrit ne se perd plus : la ligne l'affiche tel quel, dit
  *  qu'elle attend une structure, et l'effet la relit dès que la molécule est là.
  *  ⚠ UNE CASE VIDÉE SE VIDE VRAIMENT : plus d'atome de ce côté, plus de message — et la
- *  ligne redevient « pas prête », ce qui est le seul reproche utile. */
+ *  ligne redevient « pas prête », ce qui est le seul reproche utile.
+ *  ⚠ ET CHAQUE PLAINTE PORTE LE NOM DE SON CÔTÉ (`sayA`/`sayB`, réunis par
+ *  `calcRowSayOf`) : une ligne dont le PREMIER atome est résolu ne peut plus afficher,
+ *  sans le dire, la plainte de son SECOND. Le rapport de cette session — « I type
+ *  “CYS 31 SG” and it answers “CYS 1 SG”. It does not see the 1. Mistery » — est
+ *  exactement cela : le ✕ appartenait à l'autre case de la ligne, et la ligne ne
+ *  disait pas laquelle ; la frappe, elle, croyait avoir été refusée. Le côté qui
+ *  redevient lisible efface SA plainte et laisse celle de l'autre intacte. */
 const CALC_WAITING_SAY = 'no molecule on screen yet — the text is kept and resolves as soon as a structure is loaded';
+/** LA PHRASE D'UNE LIGNE — SES DEUX CÔTÉS, NOMMÉS, ET RIEN D'AUTRE. Le `say` d'une
+ *  ligne est la somme de ce que ses DEUX cases ont répondu — « atom A: … », « atom B:
+ *  … » — plus ce qu'un FICHIER a dit de la ligne (`sayExtra`, le « w= » illisible de
+ *  utils/structureRestraints.js). Sans le nom du côté, la plainte d'une case se lit
+ *  comme la plainte de l'AUTRE : c'est le rapport de cette session, « I type “CYS 31
+ *  SG” and it answers “CYS 1 SG”. It does not see the 1. Mistery » — le ✕ était celui
+ *  du SECOND atome de la ligne (resté là), et rien ne disait de quel atome il parlait.
+ *  Écrite UNE fois : 📂 Load et la frappe composent donc la phrase de la MÊME façon,
+ *  et un côté qui redevient lisible efface SA plainte sans toucher à celle de l'autre. */
+const calcRowSayOf = (row) => [
+  row && row.sayA ? `atom A: ${row.sayA}` : '',
+  row && row.sayB ? `atom B: ${row.sayB}` : '',
+  (row && row.sayExtra) || '',
+].filter(Boolean).join(' · ');
+
+/** LE NOM D'UN CÔTÉ DE LIGNE, DANS LES PHRASES QUI PARLENT À L'UTILISATEUR — le même
+ *  mot que dans `say` (« atom A », « atom B ») : un message ne peut plus être attribué
+ *  à la mauvaise case. */
+const CALC_SIDE_NAME = (side) => (side === 'a' ? 'atom A' : 'atom B');
+
 const calcRowAfterAtom = (row, which, text, live, waiting) => {
   const textCol = which === 'a' ? 'a' : 'b';
   const labelCol = which === 'a' ? 'la' : 'lb';
+  const sayCol = which === 'a' ? 'sayA' : 'sayB';   // ⚠ la plainte de CE côté, jamais des deux à la fois
   const written = String(text == null ? '' : text);
   const hadText = String(row[textCol] == null ? '' : row[textCol]);
   const hadLabel = String(row[labelCol] == null ? '' : row[labelCol]);
+  const hadSay = String(row[sayCol] == null ? '' : row[sayCol]);
   const known = which === 'a' ? row.i : row.j;
   /* CE QUE LA CASE DIT, EN CLAIR — trois cas, jamais devinés : une case vide ne désigne
      rien ; un texte écrit sans molécule ATTEND ; sinon c'est le lecteur commun de la
@@ -8027,8 +8057,9 @@ const calcRowAfterAtom = (row, which, text, live, waiting) => {
   const index = read.ok ? read.index : null;
   const label = read.ok ? read.label : '';
   const say = read.ok ? '' : read.say;
-  if (index === known && label === hadLabel && say === row.say && written === hadText) return row;
-  const next = { ...row, [textCol]: written, say };
+  if (index === known && label === hadLabel && say === hadSay && written === hadText) return row;
+  const next = { ...row, [textCol]: written, [sayCol]: say };
+  next.say = calcRowSayOf(next);   // ⚠ la phrase de la ligne se recompose de SES DEUX côtés
   if (which === 'a') { next.i = index; next.la = label; } else { next.j = index; next.lb = label; }
   /* LES DEUX ATOMES SONT LÀ : la ligne porte son libellé, et sa cible par défaut est la
      longueur que les tables donnent à ce couple d'éléments (l'utilisateur peut la
@@ -10211,6 +10242,34 @@ const calcGeometryNow = () => {
   return geom ? { comp, structure, geom } : null;
 };
 
+/** LE GRAPHE QUE LES MOTEURS LISENT — la MÊME molécule, MOINS la fausse liaison d'un pont
+ *  disulfure ÉTIRÉ (les quatre gestes du champ seuls : ▶ Run, ▶ MD, ⚒ Minimise, ⟳ Energy).
+ *
+ *  ⚠ POURQUOI UNE SECONDE LECTURE DE LA MÊME MOLÉCULE — le rapport de cette session :
+ *  « when a disulphide is declared this long bond created by two far cysteines seems
+ *  blocked and can never approach the custom disulphide distance ». Le CONECT SG–SG que
+ *  la page écrit pour qu'NGL DESSINE le pont referme le graphe sur un MACROCYCLE quand
+ *  les deux Sγ sont loin ; `rotatableBondsOf` compte alors toutes les charnières du
+ *  segment entre les deux Cys comme des liaisons de CYCLE et les écarte du tirage, donc
+ *  AUCUN canal ne peut changer la distance Sγ–Sγ — mesuré sur le modèle de la page (pont
+ *  Cys3–Cys10 dessiné à 22.6 Å) : 24 canaux et aucun qui sépare les deux Sγ avec la
+ *  liaison, 47 dont 23 sans elle. Le pont ÉTIRÉ perd donc sa fausse liaison ici (il est
+ *  CONDUIT par le terme de distance de `calcRestraintTermsOf`) ; un pont FERMÉ garde la
+ *  sienne — c'est une vraie liaison S–S, et c'est elle qui tient les deux Sγ.
+ *
+ *  ⚠ TOUT LE RESTE DU PANNEAU LIT LA MOLÉCULE ENTIÈRE : les lignes de la table, la
+ *  distance « maintenant » de chacune (`calcDistanceIn`), le piquage ⌖ et la barre de
+ *  liaison passent par `calcGeometryNow` — seule la PHYSIQUE voit ce graphe-là, et le
+ *  rapport du geste dit qu'un pont étiré est conduit (`disulfideConductedNote`). */
+const calcEngineGeometry = () => {
+  const now = calcGeometryNow();
+  if (!now) return null;
+  const bonds = withoutStretchedDisulfideBonds({
+    bonds: now.geom.bonds, bridges: disulfideDrawnRef.current.bonds,
+  });
+  return { ...now, geom: { ...now.geom, bonds } };
+};
+
 /** POURQUOI UN DÉPART S'EST ARRÊTÉ LÀ — une phrase par `reason` du module, traduite
  *  et jamais inventée (le panneau n'a pas de diagnostic à lui). Le protocole standard
  *  n'a plus de balayages de contraintes : la raison d'un départ est ce qui a été
@@ -10271,7 +10330,7 @@ const calcAddPairRow = () => {
   const key = i < j ? `${i}-${j}` : `${j}-${i}`;
   const label = pair.label;
   const row = {
-    key, i, j, target, label, say: '',
+    key, i, j, target, label, say: '', sayA: '', sayB: '',
     a: pair.slots[0].label, b: pair.slots[1].label,
     la: pair.slots[0].label, lb: pair.slots[1].label,
   };
@@ -10493,11 +10552,16 @@ const calcLoadRestraintsFile = (file) => {
          « w= » du module, 1 quand la ligne n'en porte pas). Un « w= » que le module n'a pas
          su lire est DIT sur la ligne (`weightSay`, joint au reste) : la ligne court alors
          au poids par défaut — elle n'est pas jetée pour un chiffre mal écrit. */
-      const say = [!hitA.ok ? `atom A: ${hitA.say}` : (!hitB.ok ? `atom B: ${hitB.say}` : ''),
-        row.weightSay || ''].filter(Boolean).join(' · ');
+      /* ⚠ LES DEUX CÔTÉS SONT NOMMÉS ICI COMME PARTOUT AILLEURS (`calcRowSayOf`) : le ✕
+         d'un fichier dit de quel atome il parle, et le « w= » du module s'AJOUTE à la
+         phrase au lieu de la remplacer. */
+      const sayA = hitA.ok ? '' : hitA.say;
+      const sayB = hitB.ok ? '' : hitB.say;
+      const sayExtra = (row && row.weightSay) || '';
       return {
         key: i != null && j != null && i !== j ? (i < j ? `${i}-${j}` : `${j}-${i}`) : null,
-        i, j, target: row.target, say,
+        i, j, target: row.target, sayA, sayB, sayExtra,
+        say: calcRowSayOf({ sayA, sayB, sayExtra }),
         weight: row.weight == null ? null : row.weight,
         w: row.weight == null ? '' : String(row.weight),
         a: row.a, b: row.b,
@@ -10624,7 +10688,7 @@ const calcAddBlankRow = () => {
   calcRowSeqRef.current += 1;
   const key = `row-${calcRowSeqRef.current}`;
   setCalcRestraints((list) => (list.length >= STRUCTURE_CALC_MAX_RESTRAINTS ? list
-    : [...list, { key, i: null, j: null, target: null, a: '', b: '', la: '', lb: '', say: '' }]));
+    : [...list, { key, i: null, j: null, target: null, a: '', b: '', la: '', lb: '', say: '', sayA: '', sayB: '' }]));
   if (calcRestraints.length >= STRUCTURE_CALC_MAX_RESTRAINTS) {
     setCalcMsg(`✕ The module takes at most ${STRUCTURE_CALC_MAX_RESTRAINTS} distances — this line was not added.`);
   }
@@ -10640,7 +10704,11 @@ const calcAddBlankRow = () => {
  *  fois) ; l'effet de résolution la relit dès que la molécule est là. Avant, la frappe
  *  était PERDUE dans ce cas : la case affichait la lettre, et le rendu suivant la
  *  réécrivait avec le texte resté en mémoire (le même `value`) — donc le dernier
- *  caractère disparaissait sous les doigts, et la ligne ne pouvait jamais être finie. */
+ *  caractère disparaissait sous les doigts, et la ligne ne pouvait jamais être finie.
+ *  ⚠ ET CE QUI EST DIT, À CHAQUE FRAPPE, EST LE VERDICT DU TEXTE PRÉSENT (voir le bloc
+ *  `written` plus bas) : c'est lui qui a mis fin au mystère d'une case qu'on croyait
+ *  refusée alors qu'un ✕ plus ancien — ou celui de l'AUTRE atome — était resté à
+ *  l'écran. */
 const calcSetRowAtom = (key, side, text) => {
   const live = calcGeometryNow();
   setCalcRestraints((list) => {
@@ -10654,13 +10722,25 @@ const calcSetRowAtom = (key, side, text) => {
     return changed ? next : list;
   });
   if (!live) {
-    setCalcMsg(`✕ ${CALC_WAITING_SAY}.`);
+    const typed = String(text == null ? '' : text).trim();
+    setCalcMsg(typed ? `✕ ${CALC_SIDE_NAME(side)} “${typed}”: ${CALC_WAITING_SAY}.` : '');
     return;
   }
   const hit = calcAtomOfText(live.structure, text);
+  /* ⚠ LA PHRASE DE LA CASE EST CELLE DU TEXTE QUI Y EST — redite à CHAQUE frappe, et
+     jamais celle d'un essai plus ancien. Le rapport de cette session : « I type “CYS
+     31 SG” and I get “no atom … named “CYS 1 SG”” » — un ✕ FIGÉ (sur un texte corrigé
+     depuis, ou sur l'AUTRE case de la ligne) reste à l'écran et se lit comme « la
+     frappe ne marche pas », alors que la ligne est résolue. Le ✓ dit ce que la case a
+     compris ET NOMME l'atome tombé, donc on voit du même coup si le BON résidu a été
+     pris — et une case qu'on efface emporte sa plainte avec elle. */
+  const written = String(text == null ? '' : text).trim();
   /* Une case VIDÉE ne dit rien de plus : c'est la ligne qui redevient « pas prête », et
      c'est tout — une case qu'on efface n'a rien à se reprocher. */
-  if (!hit.ok && String(text == null ? '' : text).trim()) setCalcMsg(`✕ ${hit.say}.`);
+  if (!written) { setCalcMsg(''); return; }
+  setCalcMsg(hit.ok
+    ? `✓ ${CALC_SIDE_NAME(side)} “${written}” is ${hit.label} (atom #${hit.index}) — the line keeps the text exactly as typed, and this atom is resolved.`
+    : `✕ ${CALC_SIDE_NAME(side)} “${written}”: ${hit.say}.`);
 };
 
 /** LE RAPPORT D'UN CALCUL — les chiffres du module, mis en phrases : ce qui a été
@@ -10816,7 +10896,23 @@ const calcWriteStructure = (retained, ranked) => {
     return;
   }
   setCalcShown(retained.rank);
-  setCalcMsg(calcReportOf(retained, ranked));
+  /* ⚠ LE RAPPORT NE PEUT PLUS FAIRE PERDRE LA STRUCTURE ÉCRITE — les coordonnées sont DÉJÀ
+     dans la molécule quand cette ligne s'exécute, et l'exception remontait hors de la pompe
+     (le rapport de cette session : « at the end I have this error message: Cannot read
+     properties of undefined (reading 'toFixed') » — le calcul était fini, la molécule
+     écrite, et l'écran n'avait ni rapport ni explication). La CAUSE est corrigée à la
+     source (`rankStructureAttempts`, utils/structureCalc.js : `bondRms` et `angleRms` y
+     manquaient) et un test mesure que tout champ lu par ce rapport existe ; ce filet-ci dit
+     seulement ce qui s'est passé si une lecture venait encore à manquer, au lieu de perdre
+     le résultat du calcul. */
+  let report = '';
+  try {
+    report = calcReportOf(retained, ranked);
+  } catch (e) {
+    report = `✓ The structure is written into the molecule, but its report could not be built: ${(e && e.message) || e}`
+      + ' — the family above keeps every score and every model, and ⤓ Load still writes any of them.';
+  }
+  setCalcMsg(report);
   /* LE GRAPHE 🪢 SUIT CETTE ÉCRITURE — une lecture est un instantané : quand la fenêtre
      🪢 est à l'écran, la nouvelle géométrie ne peut pas laisser un graphe qui parle
      d'une autre conformation (le calcul et le graphe disent alors la MÊME chose). */
@@ -10894,7 +10990,11 @@ const calcAttemptLine = (a, { done, of }) => `🧬 start ${done}/${of} — ${cal
  *  Le ⏹ (ou un autre chargement) avance le jeton `calcRunRef` : la boucle s'arrête au
  *  prochain tour, et le module s'arrête lui-même ENTRE deux départs (`shouldStop`). */
 const runStructureCalculation = () => {
-  const live = calcGeometryNow();
+  /* ⚠ LE GRAPHE DES MOTEURS, PAS LA MOLÉCULE BRUTE : un pont disulfure ÉTIRÉ n'y porte
+     plus sa fausse liaison — sans quoi elle referme le graphe sur un cycle, aucun canal
+     ne sépare les deux Sγ, et le terme de distance du pont n'a rien à conduire (voir
+     `calcEngineGeometry`). */
+  const live = calcEngineGeometry();
   if (!live) {
     setCalcMsg('✕ There is no molecule on screen — load a structure first.');
     return;
@@ -11102,7 +11202,7 @@ const calcStop = () => {
  *  affiche alors l'énergie famille par famille (liaisons, angles, plans, distances, cœur
  *  dur, ω, bassins φ/ψ, χ1) au lieu de dire « le calcul tourne ». */
 const calcReadForceField = () => {
-  const now = calcGeometryNow();
+  const now = calcEngineGeometry();   // le graphe des moteurs (ponts ÉTIRÉS sans leur fausse liaison)
   if (!now) {
     setCalcMsg('✕ There is no molecule on screen — load a structure first.');
     return null;
@@ -11253,7 +11353,7 @@ const calcHeldPairs = (geom, list) => list
  *  charges, solvant, ω, φ/ψ, χ1). La table n'est jamais MODIFIÉE par cette case — elle
  *  est seulement lue, ou pas. */
 const runMolecularDynamics = () => {
-  const now = calcGeometryNow();
+  const now = calcEngineGeometry();   // le graphe des moteurs (ponts ÉTIRÉS sans leur fausse liaison)
   if (!now) {
     setCalcMsg('✕ There is no molecule on screen — load a structure first.');
     return;
@@ -11342,7 +11442,11 @@ const runMolecularDynamics = () => {
  *  applique en fin de départ (chaque charnière essayée de part et d'autre, pas divisé par
  *  deux), sur le MÊME champ et avec la MÊME longe. Elle part d'où la molécule est. */
 const runMinimise = () => {
-  const now = calcGeometryNow();
+  /* ⚠ LE GRAPHE DES MOTEURS ICI AUSSI — c'est le geste que la demande d'origine visait
+     (« I only want the disulphide to be at the default bond length after minimization ») :
+     la fausse liaison SG–SG d'un pont étiré en est retirée, donc les charnières entre les
+     deux Cys redeviennent des canaux et le pont se referme (voir `calcEngineGeometry`). */
+  const now = calcEngineGeometry();
   if (!now) {
     setCalcMsg('✕ There is no molecule on screen — load a structure first.');
     return;
@@ -20931,13 +21035,21 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
                 const unreadable = String(r.w == null ? '' : r.w).trim() !== '' && r.weight == null;
                 const cell = (side) => {
                   const idx = side === 'a' ? r.i : r.j;
+                  const own = side === 'a' ? r.sayA : r.sayB;   // ⚠ la plainte de CETTE case, jamais celle de l'autre
                   return (
                     <td className="px-1 py-1 whitespace-nowrap">
-                      <input type="text" value={(side === 'a' ? r.a : r.b) || ''}
+                      {/* ⚠ LE NAVIGATEUR N'A PAS LE DROIT DE RÉÉCRIRE CE QU'ON TAPE ICI —
+                          la différence entre TAPER et COLLER, c'est que le navigateur ne
+                          propose et ne corrige QUE pendant la frappe (« je tape “CYS 31
+                          SG” et il me répond “CYS 1 SG” »). Les colonnes numériques s'en
+                          gardent par `inputMode="decimal"` (voir plus bas) ; les deux
+                          atomes se gardent par ces trois attributs : le texte de la case
+                          est celui de l'utilisateur, et rien d'autre. */}
+                      <input type="text" value={(side === 'a' ? r.a : r.b) || ''} autoComplete="off" autoCorrect="off" spellCheck={false}
                         placeholder={side === 'a' ? 'atom A' : 'atom B'}
                         onChange={(e) => calcSetRowAtom(r.key, side, e.target.value)}
                         aria-label={`${side === 'a' ? 'First' : 'Second'} atom of line ${k + 1}`}
-                        title={`TYPE the ${side === 'a' ? 'first' : 'second'} atom: “ALA 12 CA”, “12:CA”, “CA12”, its raw file name, or simply its number. It is resolved on the molecule on screen, and the line SAYS what it did not understand.`}
+                        title={`TYPE the ${side === 'a' ? 'first' : 'second'} atom: “ALA 12 CA”, “12:CA”, “CA12”, its raw file name, or simply its number. It is resolved on the molecule on screen, and THIS cell says what IT did not understand — the complaint of the other atom belongs to the other cell.${own ? ` ⚠ ${own}` : ''}`}
                         className={`w-28 border rounded px-1.5 py-0.5 outline-none text-[10px] font-mono bg-white ${idx == null ? 'border-amber-400' : 'border-indigo-300 focus:border-indigo-500'}`} />
                       <span className="ml-1 text-[10px] font-mono text-slate-400">#{idx ?? '?'}</span>
                     </td>

@@ -61,3 +61,8 @@ workspace-shared-token.json.*
 # page (la page quittée gardée vivante) rendu par un vrai Chrome.
 /_render_parking/
 
+# Le harnais SSR de _persist_store_test.mjs (le magasin localStorage éprouvé au
+# quota plein, la place libérée en urgence). Le test se range lui-même derrière
+# son `finally` — s'il en reste un dossier, c'est qu'une exécution a été tuée.
+/.tmp_persist/
+

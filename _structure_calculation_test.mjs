@@ -38,7 +38,11 @@
         chemin qu'une torsion, la note qui dit ce que ce calcul n'est PAS, et SON
         EMPLACEMENT : le bouton est à côté de « 🧬 Structure from sequence », sa section
         comprise (la demande de cette session : « move the button structure calculation
-        next to the button structure from sequence and color the latter in light blue »).
+        next to the button structure from sequence and color the latter in light blue »),
+        — et LA FRAPPE DES ATOMES : ce que la table dit d'une case tapée (✓ compris, avec
+        le nom de l'atome tombé ; ✕ NOMMÉ par son côté, pour que la plainte du second
+        atome ne passe jamais pour celle du premier), et le fait que le navigateur n'a
+        pas le droit de réécrire ce qu'on écrit (taper et coller mènent au même texte).
 
    Run: node _structure_calculation_test.mjs
    ========================================================================= */
@@ -78,6 +82,12 @@ import {
   FF_COULOMB, FF_DIELECTRIC, FF_KCAL_UNITS, FF_PAIR_LIMIT, ffElementOf, FF_VDW_RADII,
 } from './src/utils/forceFieldKcal.js';
 import { ramaGapOf as ramaGapOfFromPlot } from './src/utils/ramachandran.js';
+/* ⚭ Le pont disulfure d'une Cys lointaine : sa liaison SG–SG n'est pas une liaison
+   covalente, et c'est `withoutStretchedDisulfideBonds` qui la retire du graphe des
+   moteurs (§8). */
+import {
+  SS_BOND_LENGTH, SS_BOND_TOLERANCE, withoutStretchedDisulfideBonds,
+} from './src/utils/disulfideFold.js';
 
 let passed = 0;
 const ok = (cond, what) => { assert.ok(cond, what); passed += 1; };
@@ -1302,6 +1312,39 @@ has(calcPanel, 'aria-label={`${side === \'a\' ? \'First\' : \'Second\'} atom of 
   '⚠ …et chaque ligne porte SES DEUX ATOMES, écrits à la main');
 has(calcPanel, 'onChange={(e) => calcSetRowAtom(r.key, side, e.target.value)}',
   '…résolus à la frappe sur la molécule à l’écran');
+/* ⚠ LA FRAPPE, LE ✕ QUI PARLE DE L'AUTRE ATOME, ET LE MESSAGE QUI RESTE — le rapport de
+   cette session, mot pour mot : « if I paste “CYS 31 SG” the structure calculation
+   recognises the atom but if I type “CYS 31 SG” I get “no atom of this molecule is
+   named “CYS 1 SG”. It does not see the 1. Mistery ». La ligne disait ✕ avec le texte
+   d'une AUTRE case (la seconde de la ligne, ou un essai plus ancien) sans dire de quelle
+   case elle parlait : la frappe se croyait refusée alors qu'elle venait d'être comprise
+   — et le ✕ figé du panneau survivait au texte qu'il décrivait. Ce qui doit donc
+   rester vrai : chaque plainte est NOMMÉE par son côté, la frappe n'écrit que la sienne,
+   le message du panneau dit le verdict du texte PRÉSENT (✓ compris, ✕ refusé, rien pour
+   une case vidée), et les cases demandent au navigateur de ne pas réécrire la frappe. */
+has(VIEW, 'const calcRowSayOf = (row) => [',
+  'la phrase d’une ligne est composée d’UN seul endroit (`calcRowSayOf`) — 📂 Load et la frappe la disent de la même façon');
+has(VIEW, 'row && row.sayA ? `atom A: ${row.sayA}` : \'\',',
+  '⚠ …et elle NOMME le côté : la plainte du second atome ne peut plus passer pour celle du premier');
+has(VIEW, 'const sayCol = which === \'a\' ? \'sayA\' : \'sayB\';',
+  '⚠ une frappe n’écrit QUE la plainte de son côté (`sayA`/`sayB`) : l’autre case garde la sienne intacte');
+has(VIEW, 'const hadSay = String(row[sayCol] == null ? \'\' : row[sayCol]);',
+  '…et la comparaison qui arrête la boucle d’écriture porte sur ELLE, pas sur la phrase entière');
+has(VIEW, 'next.say = calcRowSayOf(next);',
+  '…donc une case qui redevient lisible EFFACE sa plainte et laisse celle de l’autre');
+has(VIEW, 'const CALC_SIDE_NAME = (side) => (side === \'a\' ? \'atom A\' : \'atom B\');',
+  'le message du panneau nomme LUI AUSSI la case dont il parle');
+has(VIEW, '? `✓ ${CALC_SIDE_NAME(side)} “${written}” is ${hit.label} (atom #${hit.index})',
+  '⚠ …une frappe COMPRISE est DITE (✓, avec le nom de l’atome tombé : on voit si le BON résidu a été pris) ;');
+has(VIEW, ': `✕ ${CALC_SIDE_NAME(side)} “${written}”: ${hit.say}.`);',
+  '…et un refus dit LUI AUSSI de quelle case il parle : le ✕ d’un texte corrigé depuis ne peut plus rester à l’écran');
+has(VIEW, 'if (!written) { setCalcMsg(\'\'); return; }',
+  '…une case vidée emporte sa plainte, et le ✕ d’une frappe refusée est celui du texte PRÉSENT');
+has(calcPanel, 'autoComplete="off" autoCorrect="off" spellCheck={false}',
+  '⚠ …les deux cases d’atomes demandent au navigateur de NE PAS réécrire ce qu’on tape : taper et coller mènent au même texte');
+has(calcPanel, 'const own = side === \'a\' ? r.sayA : r.sayB;',
+  '…et chaque case porte SA plainte (l’infobulle de la case dit ce qui manque à CETTE case-là)');
+
 has(calcPanel, 'aria-label="Number of starting structures n"', 'le champ n dit ce qu’il compte');
 has(calcPanel, 'aria-label="Number of retained structures m"', '…et le champ m aussi');
 has(calcPanel, 'max={STRUCTURE_CALC_MAX_STARTS}', 'n est borné par la constante du module');
@@ -1674,10 +1717,123 @@ ok(runSrc.indexOf('if (componentRef.current !== comp) {') < 0,
 has(runSrc, 'setCalcResult({ ...family, comp, structure, moleculeKey })',
   '…la famille est marquée de SA molécule (et de sa clé) au moment où elle est classée');
 
+/* ── 8 · LES DEUX PANNES DE CETTE SESSION, MESURÉES ────────────────────────────
+   ① « The structure calculation can never be completed … Cannot read properties of
+      undefined (reading 'toFixed') » : le rapport du 🧬 lit des champs du classement
+      (`bondRms`, `angleRms`, `anneal`, `quench`, `omega`, `omegaFree`) que
+      `rankStructureAttempts` ne transportait PAS — il en mourait donc À LA FIN de chaque
+      calcul, après avoir écrit la molécule (le travail était fait et perdu à l'écran).
+   ② « when a disulphide is declared this long bond … seems blocked and can never
+      approach the custom disulphide distance » : la liaison SG–SG qu'écrit la page pour
+      qu'NGL dessine le pont referme le graphe sur un CYCLE, donc toutes les charnières du
+      segment entre les deux Cys passent pour des liaisons de cycle et AUCUN canal ne peut
+      plus rapprocher les deux Sγ. Le graphe des moteurs est celui de
+      `withoutStretchedDisulfideBonds` (les ponts ÉTIRÉS seulement : un pont fermé garde
+      sa vraie liaison S–S). */
+const spanOf = (geo, i, j) => Math.hypot(
+  geo.positions[i * 3] - geo.positions[j * 3],
+  geo.positions[i * 3 + 1] - geo.positions[j * 3 + 1],
+  geo.positions[i * 3 + 2] - geo.positions[j * 3 + 2],
+);
+/* La chaîne du test, refermée par la « liaison » d'un pont disulfure déclaré : huit
+   carbones, et l'arête 0–7 — ce que le CONECT SG–SG écrit entre deux Cys lointaines. */
+const bridged = (() => {
+  const base = chainOf(8);
+  return { ...base, bonds: base.bonds.concat([{ i: 0, j: 7, order: 1 }]) };
+})();
+const bridgeSpan = spanOf(bridged, 0, 7);
+ok(Math.abs(bridgeSpan - SS_BOND_LENGTH) > SS_BOND_TOLERANCE,
+  `le pont déclaré est ÉTIRÉ : les deux Sγ sont à ${bridgeSpan.toFixed(2)} Å, hors de la fenêtre de liaison`);
+const bridge = { atomIndex1: 0, atomIndex2: 7, distance: bridgeSpan };
+const engineBonds = withoutStretchedDisulfideBonds({ bonds: bridged.bonds, bridges: [bridge] });
+eq(engineBonds.length, bridged.bonds.length - 1,
+  '⚠ la fausse liaison d’un pont ÉTIRÉ est RETIRÉE du graphe des moteurs (une seule arête, rien d’autre)');
+eq(rotatableBondsOf({ elements: bridged.elements, bonds: bridged.bonds, atomCount: 8 }).count, 0,
+  '⚠ avec elle, la chaîne entière est UN CYCLE : aucune charnière — donc aucun canal ne peut rapprocher les deux Sγ');
+eq(rotatableBondsOf({ elements: bridged.elements, bonds: engineBonds, atomCount: 8 }).count, 5,
+  '…sans elle, les cinq charnières de la chaîne redeviennent des canaux');
+const closedBridge = withoutStretchedDisulfideBonds({
+  bonds: bridged.bonds, bridges: [{ atomIndex1: 0, atomIndex2: 7, distance: SS_BOND_LENGTH }],
+});
+ok(closedBridge === bridged.bonds,
+  '⚠ un pont FERMÉ garde sa liaison S–S (le cas ordinaire rend la liste reçue telle quelle, sans même la copier)');
+/* LE GESTE, EXÉCUTÉ : la même distance demandée (3 Å, plus courte que le pont), sur les
+   deux graphes. Avec la fausse liaison, la molécule ne bouge pas d’un chiffre. */
+const driveOn = (bondList) => structureCalculationOf({
+  positions: bridged.positions, elements: bridged.elements, bonds: bondList,
+  restraints: [{ i: 0, j: 7, target: 3, weight: 1 }],
+  starts: 1, keep: 1, anneal: 2, md: 40, minimise: 20,
+});
+const blockedRun = driveOn(bridged.bonds);
+const freedRun = driveOn(engineBonds);
+const endSpan = (run) => spanOf({ positions: run.retained[0].positions }, 0, 7);
+near(endSpan(blockedRun), bridgeSpan,
+  '⚠ …et le calcul ne rapproche RIEN : la distance des deux Sγ ressort telle quelle', 1e-6);
+ok(endSpan(freedRun) < endSpan(blockedRun) - 0.2,
+  `…alors qu’avec le graphe des moteurs elle DESCEND (${endSpan(blockedRun).toFixed(2)} → ${endSpan(freedRun).toFixed(2)} Å)`);
+
+/* ① bis LES LECTURES DE GÉOMÉTRIE SONT DE VRAIS NOMBRES, ET ILS MESURENT — le contrat
+   (une clé qui existe) ne suffisait pas : `bondRms`/`angleRms` étaient annoncés par le
+   module et valaient `undefined`, donc `toFixed` mourait dessus. Ces deux-là le prouvent. */
+const straightScore = scoreStructureOf({
+  positions: hexane.positions, elements: hexane.elements, bonds: hexane.bonds, restraints: [],
+});
+near(straightScore.bondRms, 0,
+  'un hexane aux longueurs de la table ne tend aucune liaison (rms 0)', 1e-6);
+const pulled = Array.from(hexane.positions);
+pulled[3] += 0.4;                       // un atome tiré de 0.4 Å : les liaisons ne sont plus à la cible
+const pulledScore = scoreStructureOf({
+  positions: pulled, elements: hexane.elements, bonds: hexane.bonds, restraints: [],
+});
+ok(pulledScore.bondRms > 0.1,
+  `…et une liaison DÉFORMÉE est mesurée (${pulledScore.bondRms.toFixed(4)} Å rms, pire écart ${Number(pulledScore.worstBond.dev).toFixed(3)} Å)`);
+ok(Number.isFinite(pulledScore.angleRms) && pulledScore.angleRms > 0,
+  `…les angles aussi (${pulledScore.angleRms.toFixed(2)}° rms : c'est ce que le tableau affiche)`);
+
+/* ① LE CONTRAT DU RAPPORT — tout champ que le rapport du 🧬 lit existe dans le classement
+   (c'est exactement ce qui manquait : il lisait des champs que `ranking` ne portait pas). */
+const reportSrc = VIEW.slice(
+  VIEW.indexOf('const calcReportOf = (retained, ranked) => {'),
+  VIEW.indexOf('const calcMoleculeKey = (comp, structure) => {'),
+);
+ok(reportSrc.length > 1000, 'le rapport du 🧬 est lu dans la source du viewer (la tranche existe)');
+const reportFields = [...new Set(Array.from(reportSrc.matchAll(/\bbest\.([A-Za-z_$][\w$]*)/g)).map((m) => m[1]))];
+ok(reportFields.length >= 12, `…et il lit ${reportFields.length} champs de la meilleure structure`);
+const topRow = rankStructureAttempts({ attempts: freedRun.attempts, keep: 1 }).ranking[0];
+for (const field of reportFields) {
+  ok(Object.prototype.hasOwnProperty.call(topRow, field),
+    `⚠ le champ « ${field} », lu par le rapport du 🧬, EXISTE dans le classement (sinon le rapport meurt sur undefined.toFixed)`);
+}
+ok(Number.isFinite(topRow.bondRms) && Number.isFinite(topRow.angleRms),
+  `…et les deux lectures de géométrie sont des NOMBRES (${Number(topRow.bondRms).toFixed(4)} Å · ${Number(topRow.angleRms).toFixed(2)}°)`);
+ok(Number.isFinite(topRow.contacts),
+  '…« contacts » aussi (le tableau du panneau affiche ce compte à côté des chocs)');
+ok(topRow.anneal !== null && topRow.anneal.steps > 0,
+  '⚠ …et le RECUIT est transporté : le rapport ne peut plus dire « recuit OFF » sur un recuit qui a tourné');
+/* LE GRAPHE DES MOTEURS, DANS LE VIEWER — les QUATRE gestes du champ lisent le même, et
+   c'est la fonction du module qui le fabrique (aucun geste ne se bricole un graphe à lui). */
+has(VIEW, 'withoutStretchedDisulfideBonds,',
+  '⚠ le viewer importe le filtre des ponts étirés (le module du pont, pas une seconde règle)');
+has(VIEW, 'const calcEngineGeometry = () => {',
+  '…et les gestes du champ lisent un graphe à part (`calcEngineGeometry`)');
+has(VIEW, 'bonds: now.geom.bonds, bridges: disulfideDrawnRef.current.bonds,',
+  '…fabriqué avec les ponts DESSINÉS de l’écran (un pont étiré perd sa fausse longueur, un pont fermé la garde)');
+eq(VIEW.split('calcEngineGeometry();').length - 1, 4,
+  '⚠ …et les QUATRE gestes — ▶ Run, ▶ MD, ⚒ Minimise, ⟳ Energy — le lisent (aucun ne garde la molécule brute)');
+eq(VIEW.split('const calcEngineGeometry').length - 1, 1,
+  'la lecture des moteurs est UNE fonction (pas quatre graphes bricolés)');
+has(writeCalc, 'report = calcReportOf(retained, ranked);',
+  '⚠ …et le rapport est construit SOUS FILET : une lecture manquante ne jette plus le calcul qui vient de finir');
+has(writeCalc, 'setCalcMsg(report);', '…et le résultat est dit au spectateur, succès ou échec de la mise en phrases');
+
 console.log(`_structure_calculation_test.mjs — ${passed} assertions OK (les bornes et les emprunts du module,`
   + ' le lecteur des dièdres EXÉCUTÉ sur une chaîne, un cycle et une double liaison, le tirage REJOUÉ au'
   + ' chiffre près (longueurs et angles intacts, côté ancré bit à bit), le protocole du ⚒ qui rapproche une'
   + ' distance demandée et qui DIT celle qu’il ne peut pas atteindre, la note qui préfère ce qui respecte la'
   + ' contrainte, n départs classés par score croissant avec les m premières GARDÉES, la dispersion de la'
   + ' famille après superposition optimale, et le panneau 🧬 du viewer : les distances, n, m, ▶ Run / ⏹ Stop,'
-  + ' le tableau classé, ⤓ Load, et l’écriture par le chemin d’une torsion)');
+  + ' le tableau classé, ⤓ Load, et l’écriture par le chemin d’une torsion ; et les deux pannes'
+  + ' mesurées de cette session — le rapport du 🧬 qui lisait des champs absents du classement'
+  + ' (il en mourait sur undefined.toFixed à la fin de chaque calcul), et le pont disulfure ÉTIRÉ'
+  + ' dont la fausse liaison refermait le graphe sur un cycle : sans aucun canal entre les deux'
+  + ' Cys, le pont ne pouvait jamais les rapprocher)');
