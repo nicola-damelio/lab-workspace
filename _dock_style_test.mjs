@@ -131,8 +131,12 @@ has('setSelectedMolKey(molKey);', '[barre] chaque espace CHOISIT sa molécule (�
    cette section vérifie, c'est que CHAQUE molécule se déplace pour son compte : la
    barre dit le geste, et c'est la molécule ATTRAPÉE — dans le fichier chargé aussi —
    qui tourne ou qui glisse (voir installMoleculeDrag et viewerMoleculeMoves). */
-has('🖱 drag a molecule: turn · right-drag: slide',
-  '…et le Move se fait désormais À LA SOURIS (plus rien à armer avant de placer)');
+/* ⚠ La pastille « 🖱 drag a molecule: turn · right-drag: slide » A ÉTÉ RETIRÉE
+   cette session (la demande : « the button “drag a molecule: turn · right-drag:
+   slide” seems useless and you can remove it ») : il n'y a donc plus aucune
+   pastille à lire, et le geste se prouve par le code, juste en dessous. */
+gone('🖱 drag a molecule: turn · right-drag: slide',
+  '…la pastille du geste a disparu (le geste, lui, ne change pas)');
 has("partStep(g, dx, dy, 'turn')",
   '…sur la molécule attrapée ELLE-MÊME : dans un PDB qui en porte plusieurs, une seule bouge');
 gone("const [mouseMode, setMouseMode] = useState('off');",

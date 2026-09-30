@@ -221,6 +221,52 @@ export const ramaRegionOf = (phi, psi, klass = 'general') => {
   return 'outlier';
 };
 
+/** LA DISTANCE D'UN POINT AU BORD D'UN SEGMENT DE POLYGONE, EN DEGRÉS. */
+const pointSegmentGap = (px, py, ax, ay, bx, by) => {
+  const dx = bx - ax; const dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  const t = len2 > 0 ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len2)) : 0;
+  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+};
+
+/** LA DISTANCE AU BORD LE PLUS PROCHE D'UN POLYGONE — 0 DEDANS. */
+const polygonGapOf = (phi, psi, polygon) => {
+  const pts = Array.from(polygon || []);
+  if (pts.length < 3) return Infinity;
+  let best = Infinity;
+  for (let a = 0; a < pts.length; a += 1) {
+    const [ax, ay] = pts[a];
+    const [bx, by] = pts[(a + 1) % pts.length];
+    const g = pointSegmentGap(phi, psi, ax, ay, bx, by);
+    if (g < best) best = g;
+  }
+  return best;
+};
+
+/** COMBIEN DE DEGRÉS SÉPARENT UN (φ, ψ) DES BASSINS DE SA CLASSE — 0 dedans, sinon la
+ *  distance au bord du bassin le plus proche (degrés). Les polygones sont ceux de
+ *  `RAMA_REGIONS`, donc « hors bassin » ici veut dire exactement « violet » sur le
+ *  graphe 🪢 : le calcul reproche à un modèle ce que le graphe lui reproche, et rien
+ *  d'autre. Un angle illisible ne rend pas une distance inventée : il rend 0.
+ *
+ *  ⚠ CETTE FONCTION EST LA MESURE, PAS L'ÉNERGIE — le calcul de structure en fait une
+ *  énergie en kcal/mol (`ffRamaCostOf` de utils/forceFieldKcal.js, k·(écart/100°)²), et
+ *  le graphe 🪢 la distance qui colore ses points. Une seule mesure, deux lecteurs. */
+export const ramaGapOf = (phi, psi, klass = 'general') => {
+  const p = Number(phi); const s = Number(psi);
+  if (!Number.isFinite(p) || !Number.isFinite(s)) return 0;
+  const set = RAMA_REGIONS[klass] || RAMA_REGIONS.general;
+  let best = Infinity;
+  for (const region of Object.keys(set)) {
+    const poly = set[region];
+    if (!poly || poly.length < 3) continue;
+    if (pointInPolygon(p, s, poly)) return 0;
+    const g = polygonGapOf(p, s, poly);
+    if (g < best) best = g;
+  }
+  return Number.isFinite(best) ? best : 0;
+};
+
 /** LE CENTRE DE CHAQUE BASSIN D'UNE CLASSE — la moyenne de ses sommets. C'est la
  *  règle de mesure des outliers : la distance à ce centre (voir `ramachandranOf`),
  *  un chiffre simple et DIT comme tel (ce n'est pas une énergie, ni une distance au

@@ -699,6 +699,10 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
                 selectedKeys={selectedKeys}
                 manualKeys={manualKeys}
                 onAtomClick={handleAtomClick}
+                /* ⛓ La structure secondaire peinte dans « Sequence and structure » (🖌️)
+                   part vers le viewer : le bouton ⛓ du panneau 🧬 en fait des
+                   contraintes de dihèdre pour le ▶ MD, le ⚒ Minimise et le ▶ Run. */
+                imposedSecondaryStructure={activeTest.secondaryStructure || ''}
                 driveNaming={{ project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || '', instance: activeTest.instanceName || '', scientist: activeTest.operator || '', section: 'Data', subsection: 'Docking' }}
                 atomRenames={activeTest.atomRenames || {}}
                 onAtomRenames={(map) => updateActiveTest({ atomRenames: map })}

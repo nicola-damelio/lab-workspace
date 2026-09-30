@@ -50,6 +50,13 @@ const has = (needle, what) => {
   assert.ok(VIEW.includes(needle), `${what}\n  introuvable : ${needle}`);
   passed += 1;
 };
+/* ⚠ `gone` — ce qui a été RETIRÉ doit le rester : la pastille du geste de
+   placement a disparu cette session (voir plus bas), et un retour silencieux
+   d'un bouton retiré est une régression qu'un `has` ne peut pas voir. */
+const gone = (needle, what) => {
+  assert.ok(!VIEW.includes(needle), `${what}\n  encore présent : ${needle}`);
+  passed += 1;
+};
 
 /* ── 1. LES MATHS ─────────────────────────────────────────────────────────── */
 {
@@ -271,8 +278,12 @@ const has = (needle, what) => {
     'le glisser-gauche écrit la molécule du FICHIER et s’arrête là');
   has("if (g && g.rec && st.transformComponent === g.comp && partStep(g, dx, dy, 'slide')) return;",
     '…le glisser-droit aussi');
-  has("🖱 drag a molecule: turn · right-drag: slide{heldPart ? ` · 🖐 ${heldPart}` : ''}",
-    'la pastille DIT la molécule que la main tient quand elle en tient une');
+  /* ⚠ LA PASTILLE « 🖱 drag a molecule … » A ÉTÉ RETIRÉE (la demande : « the button
+     “drag a molecule: turn · right-drag: slide” seems useless and you can remove
+     it ») : le geste reste celui du code ci-dessus, et c'est la ligne ★ de la barre
+     — vérifiée juste en dessous — qui dit la molécule tenue pendant qu'elle bouge. */
+  gone('🖱 drag a molecule: turn · right-drag: slide',
+    'la pastille du geste n’est plus rendue (la demande l’a retirée)');
   has("heldPart ? ` · 🖐 moving « ${heldPart} » ALONE` : ''",
     '…et la ligne ★ dit qu’elle bouge SEULE');
   has("setHeldPart((part && part.label) || '');", '…et son nom vient du NOM de la molécule, pas d’un numéro');

@@ -122,47 +122,43 @@ import {
   structureAttemptOf, rankStructureAttempts, structureCalculationFrames,
   molecularDynamicsOf, minimizeTorsionsOf, mdFrames, minimizeFrames,
   forceFieldRowsOf, forceFieldEnergyOf, FORCE_FIELD_FAMILIES,
+  structureCalcSimulationTimeOf, restraintReportOf,
   STRUCTURE_CALC_DEFAULT_STARTS, STRUCTURE_CALC_MAX_STARTS,
   STRUCTURE_CALC_DEFAULT_KEEP, STRUCTURE_CALC_MAX_KEEP,
-  STRUCTURE_CALC_SEED, STRUCTURE_CALC_PASSES, STRUCTURE_CALC_MAX_RESTRAINTS,
+  STRUCTURE_CALC_SEED, STRUCTURE_CALC_MAX_RESTRAINTS,
   STRUCTURE_CALC_RESTRAINT_TOLERANCE,
-  STRUCTURE_CALC_ANNEAL_STEPS, STRUCTURE_CALC_QUENCH_STEPS,
+  STRUCTURE_CALC_ANNEAL_STEPS, STRUCTURE_CALC_ANNEAL_HOT, STRUCTURE_CALC_ANNEAL_COLD,
+  STRUCTURE_CALC_QUENCH_STEPS, STRUCTURE_CALC_QUENCH_TEMPERATURE,
   STRUCTURE_CALC_OMEGA, STRUCTURE_CALC_OMEGA_TOLERANCE, STRUCTURE_CALC_OMEGA_WEIGHT,
+  /* 🪢 L'OPTION « ω VARIE » — son DÉFAUT vient du module (faux : les peptides restent trans). */
+  STRUCTURE_CALC_FREE_OMEGA,
   STRUCTURE_CALC_RAMA_WEIGHT, STRUCTURE_CALC_CHI_WEIGHT, STRUCTURE_CALC_CHI_TOLERANCE,
   STRUCTURE_CALC_MD_STEPS, STRUCTURE_CALC_MD_FRAME, STRUCTURE_CALC_MD_HOT,
   STRUCTURE_CALC_MD_COLD, STRUCTURE_CALC_MD_DT, STRUCTURE_CALC_MD_FRICTION,
-  STRUCTURE_CALC_MIN_ROUNDS,
+  STRUCTURE_CALC_MD_EQUILIBRATION, STRUCTURE_CALC_MIN_ROUNDS,
+  /* ⛓ LA STRUCTURE SECONDAIRE IMPOSÉE → DES CONTRAINTES DE DIHÈDRE — la conversion,
+     la relecture pour les rapports, les lettres et la fenêtre : tout vient du module
+     (aucun chiffre de φ/ψ n'est écrit dans le JSX). */
+  backboneTorsionsOf, secondaryDihedralRestraintsOf, dihedralPenaltyOf,
+  SS_DIHEDRALS, SS_DIHEDRAL_LETTERS, SS_DIHEDRAL_TOLERANCE,
 } from '../utils/structureCalc';
-// ⬇ ⚒ MODEL BUILD — LA GÉOMÉTRIE QUE LES LIAISONS IMPOSENT (utils/geometryRelax.js).
-// La demande, mot pour mot : « in Hyperchem there was a function “model build” that
-// created a chemically valid model after the bonds had been specified ; that is what I
-// was looking for after specifying the disulphide bridges. […] Better still would be an
-// energy minimisation in which the energy is a TARGET FUNCTION — the sum of the
-// deviations of the distances and angles from the normal distances and angles of
-// molecules (sp3 carbon with tetrahedral angles, sp2 with 120° and sp with 180°, and the
-// typical C–C, C–N, C–H, C–O bond lengths). The user defines the distance between two
-// atoms and the program starts moving the two atoms towards each other, step by step,
-// moving the atoms that no longer respect their angles and bonds, until the molecule has
-// moved enough to bring together the atoms that must be close. »
-// Le bouton ⚒ du panneau ✏️ Torsion fait exactement cela : deux atomes piqués, la
-// distance du champ A–D (ou la longueur que la TABLE donne à ce couple d'éléments), et
-// la descente déplace la fenêtre autour d'eux — par le MÊME chemin d'écriture qu'une
-// torsion (writeStructurePositions + le journal ↺). Et SANS aucun atome piqué il
-// cherche lui-même ce qu'il y a à corriger : le balayage des longueurs fausses
-// (`badDistancesOf`) puis le même protocole, une distance après l'autre
-// (`buildModelGeometry`, §8bis du module) — la demande, mot pour mot : « model build
-// should also work without defining the atoms to bring closer and their distance…
-// find the wrong distances by itself… if the protocol on the first distance has
-// generated other wrong distances, move on to the second ».
+// ⚒ « Model build » A ÉTÉ RETIRÉ DE L'INTERFACE cette session — la demande :
+// « The torsion section must be drastically reduced. eliminate comments and
+// eliminate the "model build" button. » Le bouton, ses réglages et son animation
+// partent donc avec lui ; le module PUR utils/geometryRelax.js reste en place, et
+// c'est LUI qui donne la longueur d'une liaison quand une ligne de la table des
+// distances n'en donne aucune (`bondLengthTarget`). Le protocole de construction
+// d'un modèle est celui du calcul de structure (`utils/structureCalc.js`).
+import { bondLengthTarget } from '../utils/geometryRelax';
+// ⬇ 💾 LA LISTE DES DISTANCES DANS UN FICHIER — le FORMAT vit dans un module PUR
+// (utils/structureRestraints.js : trois colonnes, relues telles quelles), et le
+// viewer ne fait que le brancher sur sa table du 🧬. La demande : « Allow to
+// save/upload from file the distance constraints in the structure calculation
+// section. » La résolution des noms d'atomes reste ici (calcAtomOfText) : le module
+// ne connaît aucune molécule.
 import {
-  relaxGeometry, relaxWindow, bondLengthTarget, RELAX_DEFAULT_RADIUS, RELAX_MAX_RADIUS,
-  RELAX_PAIR_TOLERANCE, RELAX_BOND_TOLERANCE, RELAX_ANGLE_TOLERANCE, RELAX_BAD_BOND_TOLERANCE,
-  RELAX_STAGE_STEP, RELAX_MAX_STAGE_STEP, RELAX_PLANAR_TOLERANCE,
-  RELAX_DEFAULT_ESCAPES, RELAX_MAX_ESCAPES, RELAX_CLASH_DISTANCE, RELAX_DEFAULT_REBUILD,
-  buildModelGeometry, RELAX_AUTO_PASSES, RELAX_AUTO_MAX_DISTANCES,
-  badContactsOf, contactDistanceOf, RELAX_CONTACT_SCALE, RELAX_CONTACT_TOLERANCE,
-  RELAX_AUTO_MAX_CONTACTS, VDW_RADIUS_FALLBACK,
-} from '../utils/geometryRelax';
+  restraintsToText, restraintsFromText, RESTRAINT_FILE_EXT, RESTRAINT_FILE_MIME,
+} from '../utils/structureRestraints';
 // HETATM code → SMILES: the Chemistry Component Dictionary of the RCSB (see
 // utils/ligandSmiles.js). A PDB only names its ligand by a 3-letter code, so this
 // is where the SMILES of a hand-loaded ligand comes from.
@@ -7271,16 +7267,15 @@ structureTextExt,
 // still wins on screen; the model simply stays one click away.
 sequenceStructureText = null,
 sequenceStructureExt = null,
-// ⚭ Fold for disulfides — LA PAGE FABRIQUE LE MODÈLE DÉTENDU, À LA DEMANDE.
-// `buildDisulfideFoldedStructure()` rend { text, ext, note } : le même modèle de
-// séquence, mais avec les φ/ψ des résidus entre chaque pont disulfure défini
-// (et les rotamères χ1 de ses deux Cys) relâchés jusqu'à ce que les deux Sγ
-// soient à une distance de liaison — et un `note` qui dit, pont par pont, la
-// distance obtenue (utils/disulfideFold.js). Le viewer ne calcule rien : il
-// charge ce texte comme celui de « 🧬 Structure from sequence » et affiche la
-// note. Rien ne bouge tant que le bouton n'est pas cliqué : le modèle servi
-// d'office reste le modèle idéal.
-buildDisulfideFoldedStructure = null,
+// ⛓ LA STRUCTURE SECONDAIRE IMPOSÉE — la chaîne de lettres peinte dans la sous-section
+// « Sequence and structure » de la page (🖌️ H hélice α, E feuillet β, C/S pelote, une
+// lettre par résidu EN ORDRE DE SÉQUENCE). Le viewer ne la peint pas et ne la modifie
+// pas : il en fait des CONTRAINTES DE DIHÈDRE à la demande (« ⛓ SS → φ/ψ » du panneau
+// 🧬 et de la rangée ▶ MD), par le module pur (`secondaryDihedralRestraintsOf`).
+// La demande : « In MD and “structure calculation” allow the conversion of the
+// secondary structure imposed in the “sequence and structure” subsection into
+// dihedral angle constraints. »
+imposedSecondaryStructure = '',
 externalLoading = false,
 externalError = null,
 structureFileData,
@@ -7684,15 +7679,21 @@ const measureRepsRef = useRef([]);      // [{ comp, elem }] NGL 'distance' repre
 // rungs, the plates, the film poses and 📥 Download all read the geometry that is
 // really there — and nothing else in the structure moves. ↺ puts the last torsion
 // back, atom by atom.
-/* ── 🧬 UN SEUL PANNEAU, TROIS ONGLETS ────────────────────────────────────────
-   ✏️ Torsion, 🪢 Ramachandran et 🧬 Structure calculation font le MÊME travail, sur
-   la MÊME molécule et les MÊMES atomes piqués (A · B · C · D) : trois fenêtres
-   séparées obligeaient à les ouvrir l'une après l'autre pour avancer. Elles sont donc
-   les trois sections d'UN panneau, et `calcSection` dit laquelle est ouverte
-   (`null` = le panneau est fermé). */
+/* ── 🧬 LA SECTION DU CALCUL ET LES DEUX FENÊTRES DU VIEWER ───────────────────
+   La demande de cette session : « when clicking on torsion do not open the section
+   inside the toolbar but open a dedicated retractable window inside the viewer as
+   for ramachandran » (et, du même rapport : « The ramachandran button will make the
+   ramachandran window inside the viewer appear or disappear »). Il n'y a donc plus
+   d'onglets : 🧬 Structure calculation garde SA section dans la barre
+   (`calcSection === 'distances'`, ouverte par son propre bouton), ✏️ Torsion ouvre
+   `torsionWindow` DANS la vue 3D, et 🪢 Ramachandran le dock `ramaDock` — les trois
+   travaillent sur la MÊME molécule et les MÊMES atomes piqués (A · B · C · D), mais
+   aucune ne pousse plus la barre de commandes. */
 const [calcSection, setCalcSection] = useState(null);
 const openCalcSection = (which) => setCalcSection((cur) => (cur === which ? null : which));
-const calcOpen = calcSection !== null;
+/* LA FENÊTRE ✏️ TORSION — ouverte par son bouton, refermée par le même bouton (et par
+   le ⇤ de son en-tête) : elle vit dans le cadre de la vue 3D, jamais dans la barre. */
+const [torsionWindow, setTorsionWindow] = useState(false);
 const [torsionPick, setTorsionPick] = useState(0);   // 1..4 = the slot the NEXT click fills, 0 = idle
 const torsionPickRef = useRef(0);
 torsionPickRef.current = torsionPick;
@@ -7715,58 +7716,6 @@ const torsionAngleDraftRef = useRef('');
 const setTorsionAngleText = (v) => { torsionAngleDraftRef.current = v; setTorsionAngleDraft(v); };
 const [torsionClosest, setTorsionClosest] = useState(null); // last unreachable distance: { deltaDeg, closest, target }
 const torsionUndoRef = useRef(null);                 // { comp, structure, idxs, base, label }
-/* ⚒ MODEL BUILD — combien de LIAISONS autour des deux atomes choisis la descente a le
-   droit de déplacer (0 = seulement ces deux atomes). C'est le seul réglage du geste :
-   la distance, elle, se tape dans le champ A–D du panneau. */
-const [relaxRadius, setRelaxRadius] = useState(RELAX_DEFAULT_RADIUS);
-const setRelaxRadiusText = (v) => {
-  const n = Math.round(Number(String(v).replace(',', '.')));
-  setRelaxRadius(Number.isFinite(n) ? Math.min(RELAX_MAX_RADIUS, Math.max(0, n)) : 0);
-};
-/* LE PAS À PAS DU ⚒ — l'écart entre deux paliers du rapprochement (2 Å par défaut :
-   18, puis 16, puis 14… jusqu'à la distance demandée), et la REPRISE qui relâche la
-   fenêtre entière après chacun. C'est ce qui empêche la molécule d'arriver à la bonne
-   distance avec une géométrie tordue — un cycle plissé, une chaîne tendue — au lieu
-   d'entasser la tension jusqu'au dernier pas. 0 = un seul palier : le geste d'avant,
-   la contrainte posée d'un bout à l'autre. C'est le second réglage du geste, avec
-   « ⇢ moves ». */
-const [relaxStageStep, setRelaxStageStep] = useState(RELAX_STAGE_STEP);
-const setRelaxStageStepText = (v) => {
-  const n = Number(String(v).replace(',', '.'));
-  setRelaxStageStep(Number.isFinite(n)
-    ? Math.min(RELAX_MAX_STAGE_STEP, Math.max(0, n))
-    : RELAX_STAGE_STEP);
-};
-/* 🎲 LES ÉCHAPPÉES DU ⚒ — combien de BOTTES DE TORSION la descente a le droit
-   d'essayer quand elle s'est arrêtée dans un creux (« e se usassi un metodo di
-   minimizzazione che esce dalle buche locali? »). Chaque botte est une rotation
-   rigide d'une partie de la fenêtre autour d'une liaison, suivie d'une descente
-   courte ; le module garde le meilleur modèle, et le résultat n'est donc JAMAIS
-   moins bon que celui de la descente seule. 0 = le geste d'avant (une seule
-   descente). Le panneau envoie 6 par défaut (RELAX_DEFAULT_ESCAPES) : la graine
-   du module est fixe, donc le même geste redonne exactement le même construit. */
-const [relaxEscapes, setRelaxEscapes] = useState(RELAX_DEFAULT_ESCAPES);
-const setRelaxEscapesText = (v) => {
-  const n = Math.round(Number(String(v).replace(',', '.')));
-  setRelaxEscapes(Number.isFinite(n) ? Math.min(RELAX_MAX_ESCAPES, Math.max(0, n)) : 0);
-};
-/* ⟳ LE REBÂTIMENT DE LA PARTIE HORS FENÊTRE — le réglage qui répond à « since you
-   limit the number of bonds and atoms to move, the molecules get stretched ». Quand
-   il est coché (le défaut du panneau), la partie que la fenêtre N'ANCRE PAS n'est pas
-   laissée figée : elle est REBÂTIE À CHAQUE PAS depuis la géométrie standard (la
-   longueur de la table, l'angle de l'hybridation du sommet) sous les DIÈDRES qu'elle
-   avait — donc ses atomes suivent le geste, la molécule se resserre au lieu de
-   s'étirer, et le rapport dit ce qu'elle a gagné. Décoché, le geste d'avant : la
-   fenêtre seule bouge et tout le reste est rendu bit à bit (l'ancrage d'une fenêtre
-   est ce qui permet de refermer une boucle sans déplacer la molécule entière). */
-const [relaxRebuild, setRelaxRebuild] = useState(RELAX_DEFAULT_REBUILD);
-/* LE GESTE, IMAGE PAR IMAGE — la mémoire de l'animation du ⚒ (voir
-   `playRelaxFrames`) : les images retenues de la dernière construction, et la
-   façon de terminer TOUT DE SUITE un geste encore en train de se jouer. Un
-   nouveau clic, un chargement, un dépli du viewer : `finishRelaxPlayback` écrit
-   la dernière image et rend la main, donc jamais de molécule à mi-chemin. */
-const relaxAnimRef = useRef(null);
-
 /* ── 🪢 LE GRAPHE DE RAMACHANDRAN — CE QUE LE PANNEAU A LU, ET QUAND ──────────
    La lecture est un SNAPSHOT : refaite par « ⟳ Read the backbone » (et à l'ouverture
    de la section), sur les coordonnées du moment. Rien n'est dérivé à chaque rendu. */
@@ -7825,6 +7774,12 @@ const [ramaHover, setRamaHover] = useState(null);
    PAR TRANCHE (le même `setTimeout` d'une image que le reste du viewer) avec un jeton
    d'annulation : un ⏹ l'arrête entre deux départs. */
 const [calcRestraints, setCalcRestraints] = useState([]);  // [{ key, i, j, target, label }]
+/* ⛓ LES CONTRAINTES DE DIHÈDRE — la conversion de la structure secondaire imposée
+   (la peinture 🖌️ de la page), tenue ICI pour être donnée au ▶ MD, au ⚒ Minimise, au
+   ▶ Run et à la lecture du champ. `calcSsReading` garde ce que la conversion a
+   trouvé (lettres, résidus lus, résidus appariés) : le rapport du panneau le dit. */
+const [calcDihedrals, setCalcDihedrals] = useState([]);
+const [calcSsReading, setCalcSsReading] = useState(null);
 const [calcStarts, setCalcStarts] = useState(STRUCTURE_CALC_DEFAULT_STARTS);
 const [calcKeep, setCalcKeep] = useState(STRUCTURE_CALC_DEFAULT_KEEP);
 /* ⚙ CE QUI DONNE SA PHYSIQUE AU CALCUL — les paliers de recuit (0 = tirage seul, ce
@@ -7833,8 +7788,27 @@ const [calcKeep, setCalcKeep] = useState(STRUCTURE_CALC_DEFAULT_KEEP);
    le suivi à l'écran de chaque geste. */
 const [calcAnneal, setCalcAnneal] = useState(STRUCTURE_CALC_ANNEAL_STEPS);
 const [calcAnnealFrame, setCalcAnnealFrame] = useState(4);
+/* ⚙ LE PROTOCOLE STANDARD — LES PAS DE DYNAMIQUE, LE PAS DE TEMPS (ps) ET LA PART
+   D'ÉQUILIBRATION. `calcMdTotal` est la DURÉE TOTALE (ps) que l'utilisateur peut taper :
+   elle et le pas de temps décident des pas (`structureCalcSimulationTimeOf` fait la
+   multiplication, dans le module). */
 const [calcMdSteps, setCalcMdSteps] = useState(STRUCTURE_CALC_MD_STEPS);
+const [calcMdDt, setCalcMdDt] = useState(STRUCTURE_CALC_MD_DT);
+const [calcMdEquil, setCalcMdEquil] = useState(Math.round(STRUCTURE_CALC_MD_EQUILIBRATION * 100));
 const [calcMinimise, setCalcMinimise] = useState(STRUCTURE_CALC_MIN_ROUNDS);
+/* 🪢 L'OPTION « ω VARIE » — la demande : « in the structure calculation allow the option to
+   vary also the omega backbone angle. » Décochée (le défaut du module), la liaison peptidique
+   est un dièdre PROTÉGÉ : le recuit, la trempe, la dynamique et la minimisation REFUSENT un pas
+   qui augmente son coût, et les peptides restent TRANS. Cochée, elle devient un dièdre
+   ORDINAIRE du protocole — sa barrière reste comptée dans le champ
+   (`STRUCTURE_CALC_OMEGA_WEIGHT` kcal/mol, nulle dans le plateau de ±
+   `STRUCTURE_CALC_OMEGA_TOLERANCE`° autour de `STRUCTURE_CALC_OMEGA`°), mais plus aucune règle
+   ne la refuse : c'est donc le champ qui décide, et un ω ne s'écarte de trans que si une
+   distance demandée, un φ/ψ imposé ou un empilement paie plus que sa barrière. Le pas reste
+   celui de la famille (12° au recuit, 4° en dynamique).
+   ⚠ LE MÊME réglage part au ▶ Run, au ▶ MD et au ⚒ Minimise : un seul état, donc le calcul de
+   structure ne peut pas porter d'autre protocole que les deux gestes ⚙ à côté de lui. */
+const [calcOmegaFree, setCalcOmegaFree] = useState(STRUCTURE_CALC_FREE_OMEGA);
 const [calcWatch, setCalcWatch] = useState(true);
 /* COMBIEN DE MILLISECONDES DE CALCUL ENTRE DEUX IMAGES — c'est le budget d'un tour de
    `pump` : assez court pour que la page peigne à chaque tour (≈ 15 images par seconde),
@@ -7842,14 +7816,35 @@ const [calcWatch, setCalcWatch] = useState(true);
    encore : la boucle en fait PLUSIEURS dans un tour, tant que le budget n'est pas
    dépensé. */
 const CALC_FRAME_BUDGET_MS = 14;
-/* LA TEMPÉRATURE DE LA DYNAMIQUE (unités réduites) — un champ du panneau, borné par ce
-   qui a un sens : au-delà de 20 le bruit casse la géométrie, en dessous de 0.01 le
-   mouvement s'arrête. */
-const [calcMdTemp, setCalcMdTemp] = useState(STRUCTURE_CALC_MD_HOT);
-const setCalcMdTempText = (v) => {
+/* LES DEUX TEMPÉRATURES DE LA DYNAMIQUE (KELVINS) — des champs du panneau, bornés par ce
+   qui a un sens : à 300 K l'énergie thermique vaut 0.6 kcal/mol (la molécule vibre), à
+   3000 K elle vaut 6 kcal/mol (elle change de bassin), et au-delà de 20000 K le bruit
+   casserait la géométrie. Le ▶ MD d'un geste isolé tient SA température (`calcMdTemp`),
+   le calcul part de `calcMdHot` et refroidit jusqu'à `calcMdCold`. */
+const clampTemp = (v, fallback) => {
   const t = Number(String(v).replace(',', '.'));
-  setCalcMdTemp(Number.isFinite(t) ? Math.max(0.01, Math.min(20, t)) : STRUCTURE_CALC_MD_HOT);
+  return Number.isFinite(t) ? Math.max(1, Math.min(20000, t)) : fallback;
 };
+const [calcMdTemp, setCalcMdTemp] = useState(STRUCTURE_CALC_MD_HOT);
+const setCalcMdTempText = (v) => setCalcMdTemp(clampTemp(v, STRUCTURE_CALC_MD_HOT));
+const [calcMdHot, setCalcMdHot] = useState(STRUCTURE_CALC_MD_HOT);
+const setCalcMdHotText = (v) => setCalcMdHot(clampTemp(v, STRUCTURE_CALC_MD_HOT));
+const [calcMdCold, setCalcMdCold] = useState(STRUCTURE_CALC_MD_COLD);
+const setCalcMdColdText = (v) => setCalcMdCold(clampTemp(v, STRUCTURE_CALC_MD_COLD));
+/* LE PAS DE TEMPS (ps) ET LA DURÉE TOTALE DE LA SIMULATION (ps) — les deux se commandent
+   l'un l'autre : taper une durée choisit les pas (`durée / dt`), taper les pas choisit la
+   durée. Le module fait la multiplication (`structureCalcSimulationTimeOf`). */
+const setCalcMdDtText = (v) => {
+  const h = Number(String(v).replace(',', '.'));
+  setCalcMdDt(Number.isFinite(h) ? Math.max(0.0001, Math.min(1, h)) : STRUCTURE_CALC_MD_DT);
+};
+const setCalcMdTotalText = (v) => {
+  const ps = Number(String(v).replace(',', '.'));
+  if (!Number.isFinite(ps) || ps <= 0) return;
+  const steps = Math.max(0, Math.min(100000, Math.round(ps / Math.max(1e-4, calcMdDt))));
+  setCalcMdSteps(steps);
+};
+const calcMdTime = structureCalcSimulationTimeOf({ steps: calcMdSteps, dt: calcMdDt });
 const [calcForce, setCalcForce] = useState(null);   // le dernier champ de forces relu
 const [calcMsg, setCalcMsg] = useState('');
 const [calcProgress, setCalcProgress] = useState('');
@@ -9546,12 +9541,12 @@ const torsionPointsOf = (structure, idxs) => {
   } catch { return null; }
 };
 
-/* ── ⚒ MODEL BUILD — LES DEUX ATOMES À RAPPROCHER ────────────────────────────
-   Une torsion demande QUATRE atomes (une charnière) ; fermer une liaison en
-   demande DEUX. Le ⚒ accepte donc les deux : A et D quand les quatre sont piqués
-   — c'est le couple dont le champ « A–D » parle —, A et B quand il n'y en a que
-   deux. Rien d'autre n'est deviné : la structure, les coordonnées et le graphe
-   viennent de la structure à l'écran, comme pour la torsion. */
+/* ── ✏️ TORSION · LE COUPLE A–D — LA DISTANCE QUE LE CHAMP A–D DU PANNEAU LIT ──
+   Une torsion demande QUATRE atomes (une charnière) ; la ligne « Now: A–D … » de la
+   fenêtre ✏️ Torsion, elle, parle d'un COUPLE : A et D quand les quatre sont piqués
+   (c'est le couple dont le champ « A–D » parle) —, A et B quand il n'y en a que deux.
+   Rien d'autre n'est deviné : la structure, les coordonnées et le graphe viennent de
+   la structure à l'écran, comme pour la torsion. */
 const torsionPairOf = () => {
   const slots = torsionAtomsRef.current;
   if (slots.length < 2) {
@@ -9576,9 +9571,9 @@ const torsionPairOf = () => {
   return { ok: true, comp, structure, slots: picked, idx, points, label: picked.length >= 4 ? 'A–D' : 'A–B' };
 };
 
-/** LA DISTANCE DES DEUX ATOMES QUE LE ⚒ VA RAPPROCHER, relue à chaque rendu — le
- *  « maintenant » du panneau, comme la lecture du dihèdre (null tant que le couple
- *  n'est pas complet). */
+/** LA DISTANCE DES DEUX ATOMES PIQUÉS, relue à chaque rendu — le « maintenant » de la
+ *  ligne du haut de la fenêtre ✏️ Torsion, comme la lecture du dihèdre (null tant que
+ *  le couple n'est pas complet). */
 const torsionPairReading = () => {
   const r = torsionPairOf();
   if (!r.ok) return null;
@@ -9615,21 +9610,6 @@ const geometryOfStructure = (structure) => {
   } catch { return null; }
 };
 
-/** LES COUPLES EMPILÉS DE LA MOLÉCULE À L'ÉCRAN — relus à l'instant par la MÊME marche
- *  que le terme de la fonction cible (§2bis de utils/geometryRelax.js) : les couples que
- *  le graphe ne lie pas et qui sont entrés dans leur cœur dur (0.6 × la somme des deux
- *  rayons de Bondi). C'est la réponse chiffrée à « they are one on top of each other » :
- *  le panneau l'affiche AVANT tout geste, et le ⚒ (sans atome piqué) les écarte.
- *  Rend `null` quand il n'y a pas de molécule. */
-const relaxContactReading = (structure) => {
-  const geom = geometryOfStructure(structure);
-  if (!geom) return null;
-  return badContactsOf({
-    positions: geom.positions, elements: geom.elements, bonds: geom.bonds,
-    tolerance: RELAX_CONTACT_TOLERANCE,
-  });
-};
-
 /** LA LECTURE DU GRAPHE DE RAMACHANDRAN — les atomes de la structure à l'écran (ceux
  *  de `structureAtomRecords`, les mêmes que les schémas de couleurs), donnés au module
  *  PUR (`ramachandranOf`). Rend `null` sans structure, et un graphe à ZÉRO résidu
@@ -9639,10 +9619,11 @@ const ramachandranReadingOf = (structure) => (
   structure ? ramachandranOf({ atoms: structureAtomRecords(structure) }) : null
 );
 
-/** LA LECTURE, DEPUIS LE PANNEAU — le bouton « ⟳ Read the backbone ». Elle prend la
- *  structure du moment (donc les coordonnées que le ⚒ vient d'écrire), garde le
- *  graphe, et dit dans la ligne du panneau ce QU'ELLE a trouvé : combien de résidus,
- *  combien de points, et pourquoi rien n'est dessiné quand rien ne peut l'être. */
+/** LA LECTURE, DEPUIS LA FENÊTRE — le bouton « ⟳ Read the backbone » du dock 🪢. Elle
+ *  prend la structure du moment (donc les coordonnées que la torsion ou un calcul
+ *  viennent d'écrire), garde le graphe, et dit dans la ligne du dock ce QU'ELLE a
+ *  trouvé : combien de résidus, combien de points, et pourquoi rien n'est dessiné
+ *  quand rien ne peut l'être. */
 const readRamachandran = () => {
   const comp = componentRef.current;
   const structure = comp && comp.structure;
@@ -9796,609 +9777,6 @@ const ramaOutlierList = () => (rama && rama.outliers.length ? (
   </div>
 ) : null);
 
-/** POURQUOI LA DESCENTE S'EST ARRÊTÉE — une phrase par `reason` du module pur.
- *  Le panneau n'invente aucun diagnostic : chaque ligne ici répond à une valeur
- *  que utils/geometryRelax.js a réellement rendue. */
-const relaxWhy = (run) => ({
-  'converged': 'the descent reached the bottom of its target function',
-  'stalled': 'the descent found nowhere left to go (a LOCAL minimum: the atoms would have to cross a barrier, and this is not a force field)',
-  'escaped': 'the descent was stuck in a local minimum and the 🎲 escapes found a DEEPER one — the model shown is the best of them (the kicks are in the report), not the descent’s own result',
-  'max-steps': 'the step budget ran out before the target function was at its bottom',
-  'no-movable': 'no atom is allowed to move (the window is empty)',
-  'no-terms': 'this molecule has no bond the table knows and no distance was asked for — there is nothing to build',
-  'bad-points': 'the coordinates could not be read',
-}[run.reason] || 'the build stopped');
-
-/** LE RAPPORT DU ⚒, À CÔTÉ DU GESTE — tout vient du module : l'énergie avant et
- *  après, les écarts de liaisons et d'angles qu'il a RELUS, les CYCLES PLANS qu'il a
- *  tenus plats (avec l'écart à la planéité qu'il reste), le nombre de PALIERS et de
- *  REPRISES du rapprochement (et ce que la reprise a redressé), le nombre d'atomes
- *  déplacés, et la distance DEMANDÉE, atteinte ou non (avec la raison). Il dit
- *  aussi ce que le geste N'EST PAS — une cible géométrique, pas un champ de
- *  forces — pour que personne n'attende une énergie en kcal/mol. */
-const relaxReportOf = (pair, run, win) => {
-  const names = pair.slots.map((s) => s.label).join(' → ');
-  const p = run.pairs[0];
-  const verdict = !p ? ''
-    : (p.reached
-      ? `✓ ${torsionAng(p.target)} reached`
-      : `✕ ${torsionAng(p.after)} for a target of ${torsionAng(p.target)} (within ${RELAX_PAIR_TOLERANCE} Å would count as reached) — ${relaxWhy(run)}`);
-  const worstAngle = run.after.worstAngle
-    ? ` (worst ${torsionDeg(run.after.worstAngle.deg)} for ${torsionDeg(run.after.worstAngle.target)})`
-    : '';
-  const flat = run.unstuck > 0
-    ? ` · ${run.unstuck} flat angle${run.unstuck === 1 ? '' : 's'} nudged before the descent` : '';
-  /* DEUX ATOMES AU MÊME ENDROIT — le cas extrême du cœur dur : sans direction, le
-     gradient est nul, donc `unstickContacts` les écarte d'un coup de pouce fixe AVANT
-     la descente. Le rapport le dit, plutôt que de laisser croire que rien n'était là. */
-  const stacked = run.unstuckContacts > 0
-    ? ` · ⚠ ${run.unstuckContacts} atom pair${run.unstuckContacts === 1 ? '' : 's'} at the SAME place`
-      + ` nudged apart before the descent (0.05 Å — the hard core had no direction to follow)` : '';
-  const cut = win.truncated
-    ? ` · ⚠ the window was CAPPED at ${win.movable.length} atoms (the farthest ones stay put)` : '';
-  /* ⟳ LE REBÂTIMENT DE LA PARTIE HORS FENÊTRE — la demande, mot pour mot (« since you
-     limit the number of bonds and atoms to move, the molecules get stretched ») : ce que
-     la fenêtre n'ancre pas a été REPOSÉ à chaque pas depuis la géométrie standard
-     (longueur de la table, angle de l'hybridation du sommet, DIÈDRES gardés), donc ces
-     atomes ont SUIVI le geste et la molécule s'est resserrée au lieu de s'étirer. Le
-     rapport dit ce qu'ils ont gagné — et ce qui n'a pas pu suivre (un atome dont la table
-     ne connaît pas la liaison, un atome seul : laissés au chiffre près). */
-  const rebuilt = run.rebuild && run.rebuild.used
-    ? ` · ⟳ ${run.rebuild.atoms} atom${run.rebuild.atoms === 1 ? '' : 's'} OUTSIDE the window re-built from scratch`
-      + ` at every step (${run.rebuild.moved} moved for good): their bonds went from`
-      + ` ${torsionAng(run.rebuild.bonds.rms.before)} to ${torsionAng(run.rebuild.bonds.rms.after)} rms`
-      + ` and their angles from ${run.rebuild.angles.rms.before.toFixed(1)}° to ${run.rebuild.angles.rms.after.toFixed(1)}°`
-      + (run.rebuild.parts
-        ? ` · ${run.rebuild.parts} detached part${run.rebuild.parts === 1 ? '' : 's'} re-built from their own first atom`
-        : '')
-      + (run.rebuild.untouched
-        ? ` · ${run.rebuild.untouched} atom${run.rebuild.untouched === 1 ? '' : 's'} left alone (no bond the tables know)`
-        : '')
-    : '';
-  /* LES CYCLES PLANS — la seule famille qui n'existait pas avant : un cycle perdait sa
-     planéité sans que rien ne le dise. Le rapport donne l'écart qu'il RESTE (moyenne
-     des dièdres du cycle) et nomme le pire quand il dépasse la tolérance. */
-  const rings = run.terms.planars
-    ? ` · ${run.terms.rings} planar ring${run.terms.rings === 1 ? '' : 's'} held flat`
-      + ` (${run.after.planarRms.toFixed(1)}° rms out of plane over ${run.terms.planars} dihedrals`
-      + `${run.after.worstPlanar && Math.abs(run.after.worstPlanar.dev) > RELAX_PLANAR_TOLERANCE
-        ? `, worst ${torsionDeg(run.after.worstPlanar.deg)}` : ''})`
-    : '';
-  /* LE PAS À PAS — combien de paliers, et la reprise qui a suivi chacun. */
-  const stages = run.stages > 1
-    ? ` · ⇉ ${run.stages} stages of ${run.stageStep} Å${run.restorations
-      ? `, each relaxed in place (${run.restorations} restores)` : ''}`
-    : (run.restorations > 0
-      ? ' · one stage, then relaxed in place (1 restore)' : '');
-  /* CE QUE LA REPRISE A REDRESSÉ — les écarts moyens avant la première reprise et
-     après la dernière : la tension résorbée, dite en chiffres. */
-  const restored = run.restore
-    ? ` · the restores brought bonds ${torsionAng(run.restore.bondRms.before)} → ${torsionAng(run.restore.bondRms.after)} rms`
-      + ` and angles ${run.restore.angleRms.before.toFixed(1)}° → ${run.restore.angleRms.after.toFixed(1)}° rms`
-      + `, moving the distance by ${run.restore.pairDrift.toFixed(3)} Å at most`
-    : '';
-  /* LES ÉCHAPPÉES — combien de bottes, combien ont été GARDÉES, et ce qu'elles ont
-     changé. Rien n'est inventé : les chiffres viennent de `run.escapes`, et quand
-     aucune botte n'a tourné le rapport DIT pourquoi (`skip`). */
-  const kicks = run.escapes && run.escapes.used
-    ? ` · 🎲 ${run.escapes.tried} torsion kick${run.escapes.tried === 1 ? '' : 's'} of ${run.escapes.wanted}`
-      + ` (${run.escapes.improved} kept — each one a DIFFERENT basin, ${run.escapes.rejected} rejected)`
-    : (run.escapes && run.escapes.wanted
-      ? ` · 🎲 no kick: ${run.escapes.skip}` : '');
-  /* LES CONTACTS TROP COURTS — le dernier mot sur « la géométrie est-elle réalisable ».
-     DEUX mesures, et elles ne disent pas la même chose : `run.clashes` compte les couples
-     passés à moins de 1.45 Å (un atome à travers un autre, quel que soit l'élément),
-     `run.contacts` ceux entrés dans LEUR cœur dur (§2bis : 0.6 · la somme des deux
-     rayons de Bondi — 2.04 Å pour deux carbones, 1.44 pour deux hydrogènes, et la même
-     marche que le terme de la fonction cible, donc les deux chiffres ne peuvent pas se
-     contredire). Depuis §2bis le cœur dur EST dans la fonction cible : un empilement que
-     la descente n'a pas pu défaire est un RÉSULTAT, pas une fatalité — et le rapport dit
-     lequel des deux il reste. */
-  const clashes = run.clashes
-    ? (run.clashes.count
-      ? ` · ⚠ ${run.clashes.count} atom pair${run.clashes.count === 1 ? '' : 's'} closer than ${torsionAng(RELAX_CLASH_DISTANCE)}`
-        + ` (closest ${torsionAng(run.clashes.worst.distance)})`
-      : ` · ✓ no atom pair closer than ${torsionAng(run.clashes.minDistance)}`)
-    : '';
-  const contacts = run.contacts
-    ? (run.contacts.count
-      ? ` · ⛔ ${run.contacts.count} atom pair${run.contacts.count === 1 ? '' : 's'} inside their HARD CORE`
-        + ` (${run.contacts.worst.i}–${run.contacts.worst.j} at ${torsionAng(run.contacts.worst.distance)}`
-        + ` for a contact distance of ${torsionAng(run.contacts.worst.target)})`
-        + ` — of the ${run.terms.contacts} couples the hard core watched, the descent could not separate ${run.contacts.count === 1 ? 'this one' : 'these'}`
-      : ` · ✓ no atom pair inside its hard core (0.6 × the two Bondi radii, §2bis)`)
-    : '';
-  return `⚒ Model build · ${names} : ${torsionAng(p ? p.before : 0)} → ${torsionAng(p ? p.after : 0)}`
-    + `${verdict ? ` — ${verdict}` : ''}`
-    + ` · energy ${run.before.total.toFixed(1)} → ${run.after.total.toFixed(1)}`
-    + ` · bonds ${torsionAng(run.after.bondRms)} rms over ${run.terms.bonds}`
-    + ` · angles ${run.after.angleRms.toFixed(1)}° rms over ${run.terms.angles}${worstAngle}`
-    + `${rings}`
-    + ` · ${run.moved.length} atom${run.moved.length === 1 ? '' : 's'} moved of ${win.movable.length}`
-    + `${cut}${rebuilt}${flat}${stages}${restored}${kicks}${clashes}${contacts}${stacked} · ${run.steps} steps, ${run.evaluations} evaluations.`
-    + ' A geometric TARGET FUNCTION (ideal bond lengths and angles, the distances you asked for, the planarity of the rings the file itself reads as planar, and ONE HARD CORE — two atoms the file does not bond may not pass through each other) — no charges,'
-    + ' no solvent, and a LOCAL descent: what it could not do, it says instead of pretending.'
-    + ' ⟳ The part of the molecule OUTSIDE the window is re-built from scratch at every step'
-    + ' (standard bond lengths and angles, the dihedrals it had), so it can follow the gesture instead of'
-    + ' leaving the molecule stretched — uncheck “⟳ rebuild” for the gesture that only moves the window.'
-    + ' The 🎲 escapes are torsion kicks drawn from a FIXED seed, so the same molecule and the same gesture give the same model, to the last digit. ↺ Undo torsion puts every atom back.';
-};
-
-/** LE RAPPORT DU CONSTRUIT AUTOMATIQUE — celui du ⚒ quand AUCUN atome n'a été piqué :
- *  les longueurs qu'il a trouvées fausses tout seul, celles qu'il a conduites, celles
- *  qu'un geste précédent avait déjà remises d'aplomb, ce que ses propres gestes ont
- *  créé (le balayage suivant, la demande mot pour mot), et ce qui RESTE faux — chiffré,
- *  jamais tu. Tout vient du module (`buildModelGeometry`) : le panneau n'invente aucun
- *  diagnostic, il met en phrases les nombres qu'il a reçus. */
-const relaxAutoReportOf = (run, win) => {
-  const worst = run.worst;
-  const driven = run.distances.length;
-  const fixed = run.distances.filter((d) => d.reached).length;
-  const already = run.skipped.filter((s) => s.why === 'already-there').length;
-  const blank = run.skipped.filter((s) => s.why === 'no-window').length;
-  const first = run.passes.length ? run.passes[0] : null;
-  /* LES CONTACTS TROP COURTS — le SECOND balayage du construit automatique (§7quater) :
-     ce sont eux qui répondent à « in the calculation you did not consider steric clashes
-     along atoms and now they are one on top of each other ». Le premier balayage les
-     COMPTE, le geste les CONDUIT (à leur distance de contact), et ce qui reste est relu
-     sur le modèle rendu — chiffré, jamais tu. */
-  const contactsFound = run.foundContacts;
-  const contactsDriven = run.contactsDriven.length;
-  const contactsLeft = run.leftContacts.length;
-  const verdict = run.converged
-    ? `✓ every length back${driven ? ` — ${fixed} of the ${driven} driven landed on their target` : ''}`
-      + `${contactsFound ? `, and no atom pair left inside its hard core (${contactsFound} found, ${contactsDriven} driven apart)` : ', and no atom pair inside its hard core'}`
-    : `✕ ${run.left.length} length${run.left.length === 1 ? '' : 's'} still off`
-      + (run.left.length
-        ? ` (worst ${run.left[0].i}–${run.left[0].j} at ${torsionAng(run.left[0].distance)} for ${torsionAng(run.left[0].target)})` : '')
-      + (contactsLeft
-        ? `${run.left.length ? ' and' : ''} ${contactsLeft} atom pair${contactsLeft === 1 ? '' : 's'} still inside their hard core`
-          + ` (worst ${run.leftContacts[0].i}–${run.leftContacts[0].j} at ${torsionAng(run.leftContacts[0].distance)}`
-          + ` for a contact distance of ${torsionAng(run.leftContacts[0].target)})` : '');
-  /* LA DEMANDE, DANS L'ORDRE — « se il protocollo sulla prima distanza ha generato
-     altre distanze incorrette si passa alla seconda » : les balayages du module le
-     disent chiffre par chiffre, et le panneau ne fait que le répéter. */
-  const created = first && run.passes.length > 1
-    ? run.passes[1].count
-    : 0;
-  const passes = run.passCount > 1
-    ? ` · ⟳ ${run.passCount} passes: the moves of the first one left ${created} wrong length${created === 1 ? '' : 's'} behind`
-      + `, and the next pass drove ${created === 1 ? 'it' : 'them'}${run.converged ? ' — the last scan found none left' : ''}`
-    : ' · ⟳ one pass was enough: its own moves left nothing wrong behind';
-  const worstLine = worst
-    ? ` (worst ${worst.i}–${worst.j}: ${torsionAng(worst.distance)} → ${torsionAng(worst.after)} for a target of ${torsionAng(worst.target)}${worst.reached ? ' ✓' : ''})`
-    : '';
-  const skipped = (already || blank)
-    ? ` · ${already} distance${already === 1 ? '' : 's'} were already at their length when their turn came`
-      + `${blank ? ` · ${blank} had an empty window` : ''}`
-    : '';
-  const left = run.left.length
-    ? ` · still off: ${run.left.slice(0, 4).map((d) => `${d.i}–${d.j} ${torsionAng(d.distance)}/${torsionAng(d.target)}`).join(' · ')}`
-      + ` (${run.leftSeverity.toFixed(2)} Å of total error left)` : '';
-  const rebuilt = run.rebuild && run.rebuild.used
-    ? ` · ⟳ ${run.rebuild.atoms} atom${run.rebuild.atoms === 1 ? '' : 's'} OUTSIDE each window re-built from scratch at every step`
-      + ` (${run.rebuild.drives} of the gestures): their bonds went from ${torsionAng(run.rebuild.bonds.rms.before)}`
-      + ` to ${torsionAng(run.rebuild.bonds.rms.after)} rms and their angles from ${run.rebuild.angles.rms.before.toFixed(1)}°`
-      + ` to ${run.rebuild.angles.rms.after.toFixed(1)}°` : '';
-  const kicks = run.escapes && run.escapes.used
-    ? ` · 🎲 ${run.escapes.tried} torsion kick${run.escapes.tried === 1 ? '' : 's'} (${run.escapes.improved} kept)`
-    : '';
-  const clash = run.clashes
-    ? (run.clashes.count
-      ? ` · ⚠ ${run.clashes.count} atom pair${run.clashes.count === 1 ? '' : 's'} closer than ${torsionAng(RELAX_CLASH_DISTANCE)}`
-        + ` (closest ${torsionAng(run.clashes.worst.distance)})`
-      : ` · ✓ no atom pair closer than ${torsionAng(run.clashes.minDistance)}`)
-    : '';
-  /* LES CONTACTS EN CHIFFRES — trouvés au premier balayage, conduits, et ce qui reste :
-     le même rapport que le verdict, avec les couples nommés. */
-  const contactLine = (contactsFound || contactsDriven || contactsLeft)
-    ? ` · ⛔ ${contactsFound} atom pair${contactsFound === 1 ? '' : 's'} inside their hard core at the first scan`
-      + ` (0.6 × the two Bondi radii: 2.04 Å for two carbons, §2bis)`
-      + `${contactsDriven ? `, ${contactsDriven} driven apart to their contact distance` : ''}`
-      + `${contactsLeft ? ` — ${contactsLeft} still overlapping (${run.leftContactSeverity.toFixed(2)} Å of total overlap left)` : ''}`
-    : ' · ✓ no atom pair inside its hard core — nothing was overlapping';
-  const cut = run.truncated
-    ? ` · ⚠ one pass drives at most ${RELAX_AUTO_MAX_DISTANCES} distances and ${RELAX_AUTO_MAX_CONTACTS} contacts: the scan was capped, and the rest is what the next pass took`
-    : '';
-  const worstAngle = run.after.worstAngle
-    ? ` (worst ${torsionDeg(run.after.worstAngle.deg)} for ${torsionDeg(run.after.worstAngle.target)})` : '';
-  return `${run.converged ? '✓' : '✕'} ⚒ Model build (automatic) · ${run.found} length${run.found === 1 ? '' : 's'} further than`
-    + ` ${run.tolerance} Å from the table${worstLine}`
-    + ` · ${verdict}`
-    + ` · energy ${run.before.total.toFixed(1)} → ${run.after.total.toFixed(1)}`
-    + ` · bonds ${torsionAng(run.after.bondRms)} rms over ${run.terms.bonds}`
-    + ` · angles ${run.after.angleRms.toFixed(1)}° rms over ${run.terms.angles}${worstAngle}`
-    + ` · ${run.moved.length} atom${run.moved.length === 1 ? '' : 's'} moved of ${run.terms.positions}`
-    + ` (window ⇢ ${win.radius} bonds)`
-    + `${passes}${skipped}${left}${cut}${rebuilt}${kicks}${clash}${contactLine}`
-    + ` · ${run.steps} steps, ${run.evaluations} evaluations.`
-    + ' NO atom pair had to be picked: the scan reads the GRAPH the file declares, and the PROTOCOL is the same one the pair gesture uses — the wrong length is brought back BY STAGES, every stage is relaxed in place, and the part of the molecule outside the window is re-built from scratch at every step (⟳ rebuild).'
-    + ' ⛔ It ALSO un-jams the molecule: the same protocol drives every pair the file does NOT bond that has entered its hard core (§2bis — 0.6 × the two Bondi radii, a floor and not a van der Waals) back out to that contact distance, worst overlap first, BONDS FIRST so that chemistry is settled before packing.'
-    + ' ⚠ It invents no bond (a pair the file does not declare bonded is never pulled together) and it is not a force field: no charges, no solvent — one local, deterministic descent per distance, so the same molecule always gives the same model.'
-    + ' ↺ Undo torsion puts every atom back.';
-};
-
-/* ── ⚒ MODEL BUILD · LA MOLÉCULE QUI CHANGE À CHAQUE PAS ─────────────────────
-   « Sarebbe bello vedere la molecola che cambia ad ogni passo invece che il
-   risultato finale di botto. » Le module PUR annonce chaque pas (`onStep` : la
-   descente, les reprises, les 🎲 bottes, le dernier état) ; les trois fonctions
-   ci-dessous en font des IMAGES et les écrivent dans la structure, une par image
-   affichée. Rien n'est réinventé ici : chaque image porte les coordonnées que le
-   module avait à cet instant, l'écriture est celle d'un geste de souris, et le
-   texte final est le rapport du module. */
-
-/** Combien d'images l'animation garde au plus (≈ 4 s à 60 i/s). Au-delà, une image
- *  sur deux est jetée et le pas double : la chronologie est conservée, un geste de
- *  3000 pas tient dans 240 images, et les bottes restent toutes là. */
-const RELAX_ANIM_FRAMES = 240;
-
-/** ÉCRIRE UNE IMAGE DU ⚒ — le MÊME chemin d'écriture qu'une torsion
- *  (`writeStructurePositions` : `positionFromArray` atome par atome + redessin),
- *  et le même refus : si la structure ne prend pas les coordonnées, le panneau le
- *  dit au lieu de croire au geste. */
-const writeRelaxFrame = (comp, movable, flat) => {
-  if (!writeStructurePositions(comp, movable, flat)) {
-    setTorsionMsg('✕ The structure refused the new coordinates — nothing was changed.');
-    return false;
-  }
-  return true;
-};
-
-/** TERMINER L'ANIMATION EN COURS — la dernière image écrite d'un coup, le rapport
- *  affiché. Appelée par un nouveau geste, par un chargement, ou par un repli du
- *  viewer : la molécule ne reste jamais à mi-chemin d'un construit. Rend true
- *  quand il y avait bien un geste à terminer. */
-const finishRelaxPlayback = () => {
-  const anim = relaxAnimRef.current;
-  if (!anim) return false;
-  relaxAnimRef.current = null;
-  anim.finish();
-  return true;
-};
-
-/** JOUER LES IMAGES DU ⚒ — une par image affichée (`requestAnimationFrame`), donc
- *  la molécule change à l'écran au lieu du résultat de but en blanc. `frames` vient
- *  de `onStep` (voir `buildModelNow`), `finalFlat` porte les coordonnées du rapport
- *  (elles sont écrites si le geste n'a produit aucune image) : la géométrie finale
- *  est TOUJOURS celle du module, à l'image près. */
-const playRelaxFrames = ({
-  comp, movable, frames, finalIdxs, finalFlat, report, progressOf,
-}) => {
-  const total = frames.length;
-  const anim = { finish: () => {} };
-  const finish = () => {
-    if (relaxAnimRef.current === anim) relaxAnimRef.current = null;
-    if (total) writeRelaxFrame(comp, movable, frames[total - 1].flat);
-    else if (finalIdxs && finalFlat) writeRelaxFrame(comp, finalIdxs, finalFlat);
-    setTorsionMsg(report);
-  };
-  anim.finish = finish;
-  if (!total) { finish(); return anim; }
-  relaxAnimRef.current = anim;
-  let at = 0;
-  const tick = () => {
-    /* ANNULÉ — un autre geste a pris la main, ou la structure à l'écran n'est plus
-       celle qu'on écrit : on s'arrête sans écrire une image de plus. */
-    if (relaxAnimRef.current !== anim || componentRef.current !== comp) return;
-    const frame = frames[at];
-    if (!writeRelaxFrame(comp, movable, frame.flat)) { relaxAnimRef.current = null; return; }
-    at += 1;
-    if (at >= total) { finish(); return; }
-    setTorsionMsg(progressOf(frames[at - 1], at, total));
-    if (typeof window !== 'undefined' && window.requestAnimationFrame) {
-      window.requestAnimationFrame(tick);
-    } else tick();
-  };
-  if (typeof window !== 'undefined' && window.requestAnimationFrame) {
-    window.requestAnimationFrame(tick);
-  } else tick();
-  return anim;
-};
-
-/* ── ⚒ MODEL BUILD · LES IMAGES DES DEUX GESTES ───────────────────────────────
-   Le geste à deux atomes et le CONSTRUIT AUTOMATIQUE (celui qui n'a besoin d'aucun
-   atome piqué : il cherche les longueurs fausses lui-même) ont la MÊME animation :
-   une image par pas, plafonnée, les 🎲 bottes toujours gardées. Un seul ramasseur,
-   donc, pour les deux — jamais deux façons de filmer le même module. */
-
-/** LE RAMASSEUR D'IMAGES DU ⚒ — un `onStep` à brancher sur le module et les images
- *  qu'il a retenues. `fallback` = les atomes que les images portent tant que le
- *  module n'en a pas annoncé d'autres (la fenêtre du geste à deux atomes). */
-const relaxFrameCollector = (fallback = []) => {
-  const frames = [];
-  /* LES ATOMES QUE LES IMAGES PORTENT — la fenêtre, PLUS ceux que le rebâtiment repose
-     quand il est demandé : le module les annonce lui-même (`v.loose`, la même liste à
-     chaque pas), et ils BOUGENT vraiment — si l'animation ne les portait pas, la
-     molécule se replierait d'un coup à la dernière image. Le tampon n'est donc retaillé
-     qu'à la première image (avant, aucune image n'a d'autre longueur à écrire). */
-  let frameAtoms = fallback;
-  let buffer = new Float32Array(frameAtoms.length * 3);
-  let stride = 1;
-  const keep = (v) => {
-    if (frames.length === 0 && Array.isArray(v.loose) && v.loose.length && v.loose !== frameAtoms) {
-      frameAtoms = v.loose;
-      buffer = new Float32Array(frameAtoms.length * 3);
-    }
-    for (let k = 0; k < frameAtoms.length; k += 1) {
-      const a = frameAtoms[k];
-      buffer[k * 3] = v.positions[a * 3];
-      buffer[k * 3 + 1] = v.positions[a * 3 + 1];
-      buffer[k * 3 + 2] = v.positions[a * 3 + 2];
-    }
-    frames.push({
-      flat: buffer.slice(),
-      step: v.step,
-      phase: v.phase,
-      energy: v.energy,
-      distance: v.distances.length ? v.distances[0] : 0,
-      /* LA DISTANCE EN COURS — annoncée par le seul construit automatique (l'autre
-         geste n'en conduit qu'une, celle de son couple) : la ligne du panneau peut
-         donc dire LAQUELLE des longueurs fausses il est en train de redresser. */
-      pair: v.distance || null,
-      pass: v.pass || 0,
-      stage: v.stage,
-      stages: v.stages,
-      attempt: v.attempt,
-      attempts: v.attempts,
-      clash: v.clash,
-      accepted: v.accepted,
-    });
-  };
-  const onStep = (v) => {
-    if (v.phase === 'kick' || v.phase === 'escape' || v.phase === 'final') { keep(v); return; }
-    if (frames.length < RELAX_ANIM_FRAMES) { keep(v); return; }
-    if (frames.length === RELAX_ANIM_FRAMES) {
-      const thin = frames.filter((_, k) => k % 2 === 0);
-      frames.length = 0;
-      for (const f of thin) frames.push(f);
-      stride *= 2;
-    }
-    if (v.step % stride === 0) keep(v);
-  };
-  return { frames, onStep, atoms: () => frameAtoms };
-};
-
-
-/* ── ⚒ MODEL BUILD · LE CONSTRUIT AUTOMATIQUE — AUCUN ATOME À PIOUER ──────────
-   La demande, mot pour mot : « model build should also work without defining the
-   atoms to bring closer and their distance : the function should find the wrong
-   distances by itself and apply the “bring them closer step by step”/“relax”/
-   “rebuild” protocol (the one already defined for two atoms) to impose the right
-   distances until everything is back. If the protocol on the first distance has
-   generated other wrong distances, move on to the second. »
-
-   Le geste ne demande donc RIEN : la molécule est celle de l'écran, et le module
-   fait le reste — `badDistancesOf` (§7ter) trouve seul les longueurs fausses, et
-   `buildModelGeometry` (§8bis) conduit chacune d'elles avec LE protocole du geste à
-   deux atomes (paliers, reprise, ⟳ rebâtiment, 🎲 échappées), rebalaye, et passe à
-   la suivante. Le panneau ne calcule rien : il anime les images que le module
-   annonce, et il écrit par le MÊME chemin qu'une torsion — donc le 📏, les plaques,
-   le film, le 📥 Download et le ↺ lisent et défont ce geste comme les autres. */
-
-/** POURQUOI LE CONSTRUIT AUTOMATIQUE S'EST ARRÊTÉ — une phrase par `reason` du
- *  module (§8bis). Comme pour la descente, le panneau n'invente aucun diagnostic. */
-const relaxAutoWhy = (run) => ({
-  'clean': 'the scan found no wrong length AND no atom pair inside its hard core — there is nothing to build',
-  'converged': 'the last scan found no wrong length and no overlap left',
-  'stalled': 'the descent could not improve anything any more (a LOCAL minimum: this is not a force field) — what is left is measured in the report',
-  'max-passes': `the ${RELAX_AUTO_PASSES} scans the build is allowed ran out with lengths still off — what is left is measured in the report`,
-  'no-terms': 'this molecule has no bond the tables know and no atom pair inside its hard core, so the scan has nothing to read',
-  'no-movable': 'no atom is allowed to move',
-  'bad-points': 'the coordinates could not be read',
-}[run.reason] || 'the build stopped');
-
-const buildModelAuto = () => {
-  const comp = componentRef.current;
-  const structure = comp && comp.structure;
-  if (!comp || !structure) {
-    setTorsionClosest(null);
-    setTorsionMsg('✕ There is no molecule on screen to build — load a structure first (or pick two atoms to bring together).');
-    return;
-  }
-  const geom = geometryOfStructure(structure);
-  if (!geom) {
-    setTorsionClosest(null);
-    setTorsionMsg('✕ The molecule could not be read (no atoms) — nothing was changed.');
-    return;
-  }
-  const collector = relaxFrameCollector();
-  const run = buildModelGeometry({
-    positions: geom.positions,
-    elements: geom.elements,
-    bonds: geom.bonds,
-    radius: relaxRadius,
-    stageStep: relaxStageStep,
-    escapes: relaxEscapes,
-    /* ⟳ LE REBÂTIMENT — le même réglage que le geste à deux atomes : la partie que la
-       fenêtre n'ancre pas est reposée à chaque pas, donc toute la molécule peut suivre
-       et se resserrer au lieu de sortir étirée. */
-    rebuild: relaxRebuild,
-    onStep: collector.onStep,
-  });
-  setTorsionClosest(null);
-  if (!run.ok) {
-    setTorsionMsg(`✕ The build stopped: ${relaxAutoWhy(run)}. Nothing was changed.`);
-    return;
-  }
-  if (!run.found && !run.foundContacts) {
-    setTorsionMsg(`✓ Nothing to build: the ${run.terms.bonds} bond${run.terms.bonds === 1 ? '' : 's'} the tables know`
-      + `${run.terms.unknownBonds ? ` (and ${run.terms.unknownBonds} whose pair they do not)` : ''}`
-      + ` are all within ${run.tolerance} Å of their length — bonds ${torsionAng(run.before.bondRms)} rms,`
-      + ` angles ${run.before.angleRms.toFixed(1)}° rms over ${run.terms.angles} — and no atom pair is inside its hard core`
-      + ` (${run.terms.contacts} couples watched, none overlapping). Nothing had to move.`);
-    return;
-  }
-  if (!run.moved.length) {
-    setTorsionMsg(`✓ Nothing had to move: ${run.found} length${run.found === 1 ? '' : 's'} were more than ${run.tolerance} Å`
-      + ` from the table${run.foundContacts ? ` and ${run.foundContacts} atom pair${run.foundContacts === 1 ? '' : 's'} sat inside their hard core` : ''},`
-      + ` but the window around ${run.found === 1 ? 'it' : 'them'} was empty (⇢ moves = ${relaxRadius})`
-      + ` — raise “⇢ moves” and press ⚒ again.`);
-    return;
-  }
-  /* LES COORDONNÉES DU RAPPORT — les seuls atomes écrits, dans l'ordre du ↘ : c'est la
-     géométrie que la fin de l'animation laisse à l'écran, et celle que le ↺ remettra à
-     l'envers (le snapshot d'AVANT est pris juste après, avant la première image). */
-  const flat = new Float32Array(run.moved.length * 3);
-  run.moved.forEach((k, c) => {
-    flat[c * 3] = run.positions[k * 3];
-    flat[c * 3 + 1] = run.positions[k * 3 + 1];
-    flat[c * 3 + 2] = run.positions[k * 3 + 2];
-  });
-  const before = torsionSnapshotOf(structure);       // AVANT la première image : le ↺
-  torsionUndoRef.current = {
-    comp,
-    structure,
-    count: before ? before.length / 3 : 0,
-    flat: before,
-    label: `⚒ model build (automatic: ${run.found} length${run.found === 1 ? '' : 's'}`
-      + `${run.foundContacts ? `, ${run.foundContacts} contact${run.foundContacts === 1 ? '' : 's'}` : ''})`,
-  };
-  const warn = structureWasDragged(structure)
-    ? ' ⚠ this molecule had also been DRAGGED by hand: re-playing that drag (another frame, the ⏮ button) puts its placement back.'
-    : '';
-  const report = `${relaxAutoReportOf(run, { radius: relaxRadius })}${warn}`;
-  /* LA MOLÉCULE CHANGE À CHAQUE PAS — les images du module sont écrites une par image
-     affichée, et la ligne du panneau dit LAQUELLE des longueurs fausses est en train
-     d'être redressée (le module l'annonce, `frame.pair`). */
-  playRelaxFrames({
-    comp,
-    movable: collector.atoms(),
-    frames: collector.frames,
-    finalIdxs: run.moved,
-    finalFlat: flat,
-    report,
-    progressOf: (frame, at, total) => `⚒ building — image ${at}/${total} · step ${frame.step}`
-      + `${frame.pass ? ` · ⟳ pass ${frame.pass}` : ''}`
-      + `${frame.pair ? ` · length ${frame.pair.index}/${frame.pair.total} (${frame.pair.i}–${frame.pair.j} → ${torsionAng(frame.pair.target)})` : ''}`
-      + `${frame.stages ? ` · ⇉ stage ${frame.stage}/${frame.stages}` : ''}`
-      + `${frame.attempt ? ` · 🎲 kick ${frame.attempt}/${frame.attempts}` : ''}`
-      + ` · energy ${frame.energy.toFixed(1)} · now ${torsionAng(frame.distance)}`,
-  });
-};
-
-/* ── ✏️ Torsion · « ⚒ Model build » — LE GESTE DE LA DEMANDE ──────────────────
-   « L'utilisateur définit la distance entre deux atomes et le programme commence à
-   rapprocher ces deux atomes pas à pas, en déplaçant les atomes qui ne respectent
-   plus leurs angles et leurs liaisons. »
-
-   La distance vient du champ A–D du panneau (ou, laissé vide, de la TABLE : deux
-   Sγ se rapprochent à 2.05 Å, un C–S à 1.82 Å — la longueur de la liaison qu'on veut
-   fermer, sans que l'utilisateur ait à la connaître) ; la fenêtre vient du champ
-   « ⇢ moves » ; et la descente, l'énergie et son gradient viennent de
-   utils/geometryRelax.js. L'écriture passe par le MÊME chemin qu'une torsion
-   (`writeStructurePositions` + le journal ↺) : le 📏, les plaques, le film et le
-   📥 Download lisent la géométrie qui est vraiment là, et « ↺ Undo torsion » la
-   remet exactement comme avant. */
-const buildModelNow = () => {
-  /* UN GESTE QUI JOUE ENCORE EST TERMINÉ D'ABORD — sa dernière image est écrite et
-     son rapport affiché avant que celui-ci ne prenne la main : jamais deux
-     animations en même temps sur la même structure. */
-  finishRelaxPlayback();
-  const pair = torsionPairOf();
-  /* AUCUN ATOME PIOUÉ — LE ⚒ SE DÉBROUILLE (voir `buildModelAuto`) : c'est la
-     demande, mot pour mot — « model build should also work without defining the
-     atoms to bring closer and their distance ». Deux atomes piqués et le geste est
-     celui de toujours ; aucun, et le construit automatique prend la main. */
-  if (!pair.ok && torsionAtomsRef.current.length < 2) { buildModelAuto(); return; }
-  if (!pair.ok) { setTorsionClosest(null); setTorsionMsg(`✕ ${pair.say}`); return; }
-  const { comp, structure, idx } = pair;
-  const geom = geometryOfStructure(structure);
-  if (!geom) {
-    setTorsionMsg('✕ The molecule could not be read (no atoms) — nothing was changed.');
-    return;
-  }
-  const [i, j] = idx;
-  const typed = Number(String(torsionDistDraft).replace(',', '.'));
-  const table = bondLengthTarget(geom.elements[i], geom.elements[j]);
-  const target = Number.isFinite(typed) && typed > 0 ? typed : table;
-  if (!Number.isFinite(target) || target <= 0) {
-    setTorsionMsg(`✕ Type the distance you want ${pair.label} to reach, in ångströms — the table has no length for`
-      + ` ${geom.elements[i] || '?'}–${geom.elements[j] || '?'}, so the build has nothing to aim at.`);
-    return;
-  }
-  const win = relaxWindow({ bonds: geom.bonds, seeds: [i, j], radius: relaxRadius, atomCount: geom.count });
-  if (!win.movable.length) {
-    setTorsionMsg('✕ No atom to move — pick the two atoms again.');
-    return;
-  }
-  /* ── LES IMAGES DU GESTE — le ramasseur commun aux DEUX gestes du ⚒ retient une
-     image par pas (coordonnées, énergie, distance demandée, palier, botte),
-     plafonnée à RELAX_ANIM_FRAMES : au-delà, une image sur deux est jetée et le pas
-     double, donc la chronologie tient dans la mémoire sans jamais perdre les bottes
-     des 🎲 échappées (elles sont gardées d'office, comme le dernier état du module). */
-  const movable = win.movable;
-  const collector = relaxFrameCollector(movable);
-  const run = relaxGeometry({
-    positions: geom.positions,
-    elements: geom.elements,
-    bonds: geom.bonds,
-    pairs: [{ i, j, target }],
-    movable,
-    stageStep: relaxStageStep,
-    escapes: relaxEscapes,
-    /* ⟳ LE REBÂTIMENT — la partie hors fenêtre est reposée à chaque pas (voir la case du
-       panneau et utils/geometryRelax.js §7bis) : c'est ce qui empêche la molécule de
-       sortir ÉTIRÉE quand la fenêtre doit se plier. */
-    rebuild: relaxRebuild,
-    onStep: collector.onStep,
-  });
-  const { frames } = collector;
-  if (!run.ok) {
-    setTorsionClosest(null);
-    setTorsionMsg(`✕ The build stopped: ${relaxWhy(run)}. Nothing was changed.`);
-    return;
-  }
-  if (!run.moved.length) {
-    setTorsionClosest(null);
-    setTorsionMsg(`✓ Already there: ${torsionAng(target)} is what ${pair.label} measures, and every bond, angle and planar ring`
-      + ` of the ${win.movable.length}-atom window is within ${RELAX_BOND_TOLERANCE} Å / ${RELAX_ANGLE_TOLERANCE}° / ${RELAX_PLANAR_TOLERANCE}° of its target. Nothing had to move.`);
-    return;
-  }
-  /* LES COORDONNÉES DU RAPPORT — les seuls atomes écrits, dans l'ordre du ↘ : c'est
-     la géométrie que la fin de l'animation laisse à l'écran, et celle que le ↺
-     remettra à l'envers (le snapshot d'AVANT est pris juste après, avant la
-     première image écrite). */
-  const flat = new Float32Array(run.moved.length * 3);
-  run.moved.forEach((k, c) => {
-    flat[c * 3] = run.positions[k * 3];
-    flat[c * 3 + 1] = run.positions[k * 3 + 1];
-    flat[c * 3 + 2] = run.positions[k * 3 + 2];
-  });
-  const before = torsionSnapshotOf(structure);       // AVANT la première image : le ↺
-  torsionUndoRef.current = {
-    comp,
-    structure,
-    count: before ? before.length / 3 : 0,
-    flat: before,
-    label: `⚒ model build ${pair.label} ${torsionAng(target)}`,
-  };
-  setTorsionClosest(null);
-  const warn = structureWasDragged(structure)
-    ? ' ⚠ this molecule had also been DRAGGED by hand: re-playing that drag (another frame, the ⏮ button) puts its placement back.'
-    : '';
-  const report = `${relaxReportOf(pair, run, win)}${warn}`;
-  /* LA MOLÉCULE CHANGE À CHAQUE PAS — les images du module sont écrites une par
-     image affichée (voir `playRelaxFrames`), en commençant par le premier pas de la
-     descente ; la dernière écrit exactement les coordonnées du rapport. Un clic de
-     plus pendant que ça joue termine le geste d'un coup, donc la molécule ne reste
-     jamais entre deux buches. */
-  playRelaxFrames({
-    comp,
-    /* LES IMAGES SONT ÉCRITES POUR LES ATOMES QU'ELLES PORTENT — la fenêtre, plus ceux
-       que le rebâtiment repose : c'est la liste que le ramasseur a retenue au premier
-       pas (`collector.atoms()`). */
-    movable: collector.atoms(),
-    frames,
-    finalIdxs: run.moved,
-    finalFlat: flat,
-    report,
-    progressOf: (frame, at, total) => `⚒ building — image ${at}/${total} · step ${frame.step}`
-      + `${frame.stages ? ` · ⇉ stage ${frame.stage}/${frame.stages}` : ''}`
-      + `${frame.attempt ? ` · 🎲 kick ${frame.attempt}/${frame.attempts}` : ''}`
-      + ` · energy ${frame.energy.toFixed(1)} · ${pair.label} ${torsionAng(frame.distance)}`,
-  });
-};
-
 /** LE CÔTÉ QUI TOURNE — la réponse du module (les atomes qui partent avec D), ou sa
  *  raison de refuser. `atomCount` vient de la structure : c'est lui qui rend un index
  *  invalide (`bad-atom`) au lieu de faire croire à un atome qui n'existe pas. */
@@ -10455,11 +9833,12 @@ const writeStructurePositions = (comp, idxs, flat) => {
 /* ── 🧬 CALCUL DE STRUCTURE · LES DISTANCES, n, m — LE PANNEAU NE CALCULE RIEN ───
    « the user provide the distances between atom pairs and selects the number of
    starting structures n and the number of retained structures m. » Ici : la liste
-   des distances (les atomes piqués + le champ A–D, et la table quand il est vide —
-   exactement le ⚒), les deux compteurs, et UN DÉPART PAR TRANCHE. Tout le reste est
-   dans utils/structureCalc.js : le tirage des dièdres, le protocole du ⚒ sur chaque
-   départ, la note, le classement et les m retenues. Le panneau écrit la structure
-   retenue par le MÊME chemin qu'une torsion, et il DIT ce que le module a fait. */
+   des distances (les atomes piqués dans la fenêtre ✏️ Torsion + le champ A–D, et la
+   table quand il est vide), les deux compteurs, et UN DÉPART PAR TRANCHE. Tout le
+   reste est dans utils/structureCalc.js : le tirage des dièdres, le protocole
+   standard sur chaque départ (recuit → dynamique → minimisation → trempe), la note,
+   le classement et les m retenues. Le panneau écrit la structure retenue par le MÊME
+   chemin qu'une torsion, et il DIT ce que le module a fait. */
 
 /** LA DISTANCE DE DEUX ATOMES DE LA MOLÉCULE À L'ÉCRAN — le « maintenant » d'une
  *  ligne de la liste, relu à chaque rendu (comme la lecture d'une torsion). */
@@ -10482,25 +9861,29 @@ const calcGeometryNow = () => {
 };
 
 /** POURQUOI UN DÉPART S'EST ARRÊTÉ LÀ — une phrase par `reason` du module, traduite
- *  et jamais inventée (le panneau n'a pas de diagnostic à lui). */
+ *  et jamais inventée (le panneau n'a pas de diagnostic à lui). Le protocole standard
+ *  n'a plus de balayages de contraintes : la raison d'un départ est ce qui a été
+ *  exécuté. */
 const calcWhyOf = (reason) => ({
+  'standard-protocol': 'the standard protocol ran to its end (draw → anneal → MD → minimise → quench)',
   'converged': 'every distance you asked for is respected',
-  'stalled': 'a whole pass gained nothing more (a LOCAL minimum: this is not a force field) — the gap left is measured, not hidden',
-  'max-passes': `the ${STRUCTURE_CALC_PASSES} passes a start is allowed ran out with a distance still off`,
-  'clean': 'the preparation found nothing to fix',
-  'no-terms': 'this molecule has no bond the tables know — the descent has nothing to read',
+  'stalled': 'a whole pass gained nothing more (a LOCAL minimum) — the gap left is measured, not hidden',
+  'max-passes': 'the pass budget ran out with a distance still off',
+  'clean': 'there was nothing to fix',
+  'no-terms': 'this molecule has no bond the tables know — nothing to read',
   'bad-points': 'the coordinates could not be read',
-  'no-prep': 'the preparation could not run',
+  'no-step': 'no dihedral could be turned',
+  'no-channel': 'this molecule has no rotatable dihedral',
 }[reason] || 'the start stopped');
 
 /** AJOUTER LE COUPLE PIQUÉ À LA LISTE — les deux atomes viennent des MÊMES piqués que
- *  le ⚒ (A–B à deux atomes, A–D à quatre) et la distance du champ A–D (vide : la
- *  longueur que la table donne à ce couple d'éléments). Un couple DÉJÀ dans la liste
- *  est remplacé, pas doublé : le module ne lit qu'une cible par couple. */
+ *  la fenêtre ✏️ Torsion (A–B à deux atomes, A–D à quatre) et la distance du champ A–D
+ *  (vide : la longueur que la table donne à ce couple d'éléments). Un couple DÉJÀ dans
+ *  la liste est remplacé, pas doublé : le module ne lit qu'une cible par couple. */
 const calcAddRestraint = () => {
   const now = calcGeometryNow();
   if (!now) {
-    setCalcMsg('✕ There is no molecule on screen — load a structure first, then pick the two atoms (🎯 in ✏️ Torsion).');
+    setCalcMsg('✕ There is no molecule on screen — load a structure first, then pick the two atoms (🎯 in the ✏️ Torsion window).');
     return;
   }
   const pair = torsionPairOf();
@@ -10542,6 +9925,194 @@ const calcRemoveRestraint = (key) => {
   setCalcRestraints((list) => list.filter((r) => r.key !== key));
 };
 
+/* ── ⛓ LA STRUCTURE SECONDAIRE IMPOSÉE → DES CONTRAINTES DE DIHÈDRE ────────────
+   La demande de cette session : « In MD and “structure calculation” allow the
+   conversion of the secondary structure imposed in the “sequence and structure”
+   subsection into dihedral angle constraints. »
+
+   Ce que la page peint (la sous-section « Sequence and structure », la chaîne
+   `imposedSecondaryStructure` : une lettre par résidu) devient une liste de φ/ψ avec
+   cible et fenêtre — calculée par le module PUR (`secondaryDihedralRestraintsOf`, qui
+   apparie les lettres au squelette LU DE LA MOLÉCULE À L'ÉCRAN, par ordre). Cette
+   liste est ensuite donnée au ▶ MD, au ⚒ Minimise, au ▶ Run et à la lecture du champ :
+   dans TOUS ces gestes, c'est le même objet, donc les quatre ne peuvent pas dire deux
+   choses différentes.
+
+   ⚠ LE BOUTON EST UN INTERRUPTEUR : premier clic = convertir, second = rendre la
+   liberté (la liste est vidée). Le rapport dit exactement ce qui a été converti, et ce
+   qui ne l'a pas été — l'appariement par ordre est DIT (une molécule dont la
+   numérotation ne suit pas la séquence de la page peut donc être vue, pas crue). */
+const calcConvertSecondaryStructure = () => {
+  if (calcDihedrals.length) {
+    setCalcDihedrals([]);
+    setCalcSsReading(null);
+    setCalcMsg('⛓ The φ/ψ constraints of the imposed secondary structure are OFF — the dynamics, the'
+      + ' minimisation and the calculation are free of them again. The painted structure itself is untouched.');
+    return;
+  }
+  const structure = String(imposedSecondaryStructure || '').replace(/\s+/g, '');
+  if (!structure) {
+    setCalcMsg('✕ No secondary structure is painted for this page: the “Sequence and structure” subsection'
+      + ' (🖌️ brush: H helix · E sheet · C coil) is where the letters come from. Paint a helix or a sheet,'
+      + ' then press ⛓ again.');
+    return;
+  }
+  const now = calcGeometryNow();
+  if (!now) {
+    setCalcMsg('✕ There is no molecule on screen — load a structure first: the letters are matched to the'
+      + ' backbone that is DISPLAYED.');
+    return;
+  }
+  const { geom } = now;
+  const backbone = backboneTorsionsOf({ elements: geom.elements, bonds: geom.bonds, atomCount: geom.count });
+  const read = secondaryDihedralRestraintsOf({
+    secondaryStructure: structure, torsions: backbone, tolerance: SS_DIHEDRAL_TOLERANCE,
+  });
+  setCalcSsReading(read);
+  if (!read.ok) {
+    setCalcDihedrals([]);
+    setCalcMsg(read.reason === 'no-backbone'
+      ? '✕ This molecule has no readable N–CA–C backbone: the letters of the painted sequence have nothing'
+        + ' to be attached to (a nucleic acid has no φ/ψ).'
+      : (read.reason === 'length-mismatch'
+        ? `✕ The painted sequence has ${read.letters} letters and this molecule has ${read.residues} readable`
+          + ' residues — the two must match, because the letters are matched BY ORDER (helix/sheet per residue).'
+        : '✕ The painted sequence has no H (helix) and no E (sheet): a coil imposes nothing, so there is'
+          + ' nothing to convert. Paint a helix or a sheet first.'));
+    return;
+  }
+  setCalcDihedrals(read.constraints);
+  const byAngle = read.constraints.length;
+  const worst = read.unmatched ? `${read.unmatched} residue${read.unmatched === 1 ? '' : 's'} of this molecule`
+    + ' got no letter (the painted sequence is shorter) and stay free' : '';
+  const recipes = SS_DIHEDRAL_LETTERS
+    .map((l) => `${l}: φ ${SS_DIHEDRALS[l].phi}° / ψ ${SS_DIHEDRALS[l].psi}°`).join(' · ');
+  setCalcMsg(`✓ ⛓ ${read.matched} residue${read.matched === 1 ? '' : 's'} of the imposed secondary structure converted`
+    + ` into ${byAngle} dihedral constraint${byAngle === 1 ? '' : 's'} (${recipes}, flat-bottom window of`
+    + ` ± ${SS_DIHEDRAL_TOLERANCE}°) — each φ and ψ is judged on its own. They now enter the ▶ MD, the`
+    + ` ⚒ Minimise, the ▶ Run and the ⟳ Energy reading of this panel. ${worst}`);
+};
+
+
+/* ── 💾 LA LISTE DES DISTANCES DANS UN FICHIER — LA DEMANDE DE CETTE SESSION ────
+   « Allow to save/upload from file the distance constraints in the structure
+   calculation section. » La table vit dans l'état du viewer : elle disparaît quand
+   la page est rechargée. Ces deux gestes l'écrivent dans un FICHIER (texte, trois
+   colonnes — le format de utils/structureRestraints.js, qui n'est PAS recopié ici :
+   le viewer ne fait que le brancher) et la RELISENT.
+
+   ⚠ CE QUI EST ÉCRIT EST CE QUE LA TABLE MONTRE (les deux colonnes d'atomes et la
+   cible), et ce qui est RELU est RÉSOLU SUR LA MOLÉCULE À L'ÉCRAN par `calcAtomOfText`
+   — le même lecteur que la frappe. Une ligne dont les atomes ne se résolvent pas est
+   GARDÉE telle quelle (elle attend d'être finie, comme une ligne tapée à moitié) et
+   le rapport dit combien de lignes le fichier portait, combien sont résolues, et
+   celles qui n'ont pas été comprises. */
+
+/** LE NOM DU FICHIER — le nom de la molécule à l'écran, réduit à ce qu'un système
+ *  de fichiers accepte, et l'extension du module (une seule définition). */
+const calcRestraintFileName = () => {
+  const what = String(molNameOf(selectedMolKey) || 'structure').replace(/[^\w.-]+/g, '_').slice(0, 40);
+  return `distances-${what}.${RESTRAINT_FILE_EXT}`;
+};
+
+const calcSaveRestraints = () => {
+  if (!calcRestraints.length) {
+    setCalcMsg('✕ There is nothing to save yet — the list is empty. Add a distance (⌖ or ➕), or load a file (📂).');
+    return;
+  }
+  const live = calcGeometryNow();
+  const ready = calcUsableRows().length;
+  try {
+    const { text, count } = restraintsToText({
+      restraints: calcRestraints,
+      note: `${calcRestraints.length} distance${calcRestraints.length === 1 ? '' : 's'} for`
+        + ` « ${molNameOf(selectedMolKey)} » — ${ready} of them resolved on this molecule`
+        + `${live ? ` (${live.geom.count} atoms)` : ''}.`,
+    });
+    const blob = new Blob([text], { type: RESTRAINT_FILE_MIME });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = calcRestraintFileName();
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    setCalcMsg(`✓ ${count} distance${count === 1 ? '' : 's'} saved to “${calcRestraintFileName()}” —`
+      + ' three columns (atom A · atom B · target in Å), reloaded by 📂 Load distances on any molecule.'
+      + ' The file is plain text: it can be edited and kept with the experiment.');
+  } catch (e) {
+    setCalcMsg(`✕ The list could not be saved: ${(e && e.message) || e}`);
+  }
+};
+
+const calcLoadRestraintsFile = (file) => {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    const live = calcGeometryNow();
+    const { rows, count, skipped } = restraintsFromText(String(reader.result || ''));
+    if (!count) {
+      setCalcMsg(`✕ Nothing was read in “${file.name || 'the file'}” — it holds no line of the form`
+        + ' “atom A · atom B · target in Å” (see the header the 💾 button writes).');
+      return;
+    }
+    if (!live) {
+      setCalcMsg('✕ There is no molecule on screen — load a structure first: the atom names of the file'
+        + ' are resolved on the molecule that is shown.');
+      return;
+    }
+    /* CHAQUE LIGNE EST RÉSOLUE ICI — sinon elle est GARDÉE avec ce que le lecteur a
+       répondu (`say`), exactement comme une ligne tapée à moitié. */
+    let unresolved = 0;
+    const incoming = rows.map((row) => {
+      const hitA = calcAtomOfText(live.structure, row.a);
+      const hitB = calcAtomOfText(live.structure, row.b);
+      const i = hitA.ok ? hitA.index : null;
+      const j = hitB.ok ? hitB.index : null;
+      if (i == null || j == null) unresolved += 1;
+      const say = !hitA.ok ? `atom A: ${hitA.say}` : (!hitB.ok ? `atom B: ${hitB.say}` : '');
+      return {
+        key: i != null && j != null && i !== j ? (i < j ? `${i}-${j}` : `${j}-${i}`) : null,
+        i, j, target: row.target, say,
+        a: row.a, b: row.b,
+        la: hitA.ok ? hitA.label : '', lb: hitB.ok ? hitB.label : '',
+        label: `${hitA.ok ? hitA.label : (row.a || `#${i}`)}–${hitB.ok ? hitB.label : (row.b || `#${j}`)}`,
+      };
+    });
+    /* LA CLEF DE CHAQUE LIGNE EST FIXÉE ICI (une ligne résolue porte sa CLÉ DE PAIR,
+       `i-j`, qui remplace la même ligne si elle y est déjà ; une ligne non résolue
+       reçoit une clef de rang, comme ➕ Add a row — elle attend d'être finie). */
+    let seq = calcRowSeqRef.current;
+    const incomingKeyed = incoming.map((row) => {
+      if (row.key) return row;
+      seq += 1;
+      return { ...row, key: `row-${seq}` };
+    });
+    calcRowSeqRef.current = seq;
+    setCalcRestraints((list) => {
+      const out = [...list];
+      incomingKeyed.forEach((row) => {
+        const at = out.findIndex((r) => r.key === row.key);
+        if (at >= 0) out[at] = row;
+        else out.push(row);
+      });
+      return out.slice(0, STRUCTURE_CALC_MAX_RESTRAINTS);
+    });
+    const kept = Math.min(STRUCTURE_CALC_MAX_RESTRAINTS, calcRestraints.length + incoming.length);
+    const droppedKb = skipped.length;
+    setCalcMsg(`✓ Read ${count} distance${count === 1 ? '' : 's'} in “${file.name || 'the file'}” —`
+      + ` ${count - unresolved} of them resolved on « ${molNameOf(selectedMolKey)} »,`
+      + ` ${unresolved} waiting for a name that this molecule does not have`
+      + `${droppedKb ? `, and ${droppedKb} line${droppedKb === 1 ? '' : 's'} not understood` : ''}.`
+      + ` The table now holds ${kept} of ${STRUCTURE_CALC_MAX_RESTRAINTS} lines.`
+      + `${droppedKb ? ` ⚠ ${skipped.slice(0, 3).map((s) => `line ${s.line}: ${s.say}`).join(' · ')}` : ''}`
+      + (count - unresolved === 0 ? ' ⚠ No name of this file matches this molecule: check the residue numbering' : ''));
+  };
+  reader.onerror = () => setCalcMsg(`✕ “${file.name || 'the file'}” could not be read.`);
+  reader.readAsText(file);
+};
+
 /* ── LA TABLE DES DISTANCES — DEUX ATOMES TAPÉS À LA MAIN ─────────────────────
    « let me define distances in a table and not only by clicking on atoms. » Une ligne
    porte donc ses DEUX ATOMES ÉCRITS (le nom que la ligne affiche, un numéro d'atome, ou
@@ -10557,8 +10128,12 @@ const calcAtomOfText = (structure, text) => {
   const want = CALC_KEY(asked);
   if (!want) return { ok: false, say: 'type an atom — “ALA 12 CA”, “12:CA”, “CA12” or its number' };
   const records = structureAtomRecords(structure);
-  if (/^\d+$/.test(asked)) {
-    const i = Number(asked);
+  /* ⚠ « #123 » est LE NUMÉRO D'ATOME ÉCRIT PAR LE FICHIER DES DISTANCES
+     (utils/structureRestraints.js, la colonne d'un atome qui n'a pas de nom écrit) :
+     il est lu comme le nombre nu. */
+  const bare = asked.replace(/^#/, '');
+  if (/^\d+$/.test(bare)) {
+    const i = Number(bare);
     const rec = records.find((r) => r.index === i);
     if (rec) return { ok: true, index: i, element: rec.element, label: calcAtomLabel(rec) };
     return { ok: false, say: `this molecule has no atom #${i} (it has ${records.length})` };
@@ -10668,6 +10243,19 @@ const calcReportOf = (retained, ranked) => {
       + (best.omega.violations
         ? ` ⚠ ${best.omega.violations} hors du plateau de ± ${STRUCTURE_CALC_OMEGA_TOLERANCE}° (la pire à ${best.omega.worst.deg.toFixed(0)}°)`
         : ` ✓ toutes dans le plateau de ± ${STRUCTURE_CALC_OMEGA_TOLERANCE}° autour de ${STRUCTURE_CALC_OMEGA}° (trans)`)
+      + (best.omegaFree
+        ? ` — 🪢 ω était LIBRE (case « ω varies » cochée) : sa barrière était comptée, pas imposée`
+        : ` — 🪢 ω protégé (aucun pas du protocole n'a pu l'abîmer)`)
+    : '';
+  /* 🪢 LA CASE « ω VARIE » — le rapport DIT avec quel réglage la famille a été calculée :
+     deux scores ne se comparent pas si l'un avait le droit de tordre les liaisons peptidiques
+     et l'autre non. Quand le modèle a effectivement payé de la barrière d'ω, la ligne ω le
+     montre déjà (les « hors du plateau » ci-dessus) ; ici on dit le RÉGLAGE. */
+  const omegaFreeLine = best.omegaFree
+    ? ' 🪢 Cette famille a été calculée avec ω LIBRE : la liaison peptidique y est un dièdre ordinaire du champ'
+      + ' (sa barrière est comptée, k = ' + STRUCTURE_CALC_OMEGA_WEIGHT + ' kcal/mol, nulle dans ± '
+      + STRUCTURE_CALC_OMEGA_TOLERANCE + '° de ' + STRUCTURE_CALC_OMEGA + '°) — les ω hors du plateau sont donc'
+      + ' un CHOIX du champ, pas un accident.'
     : '';
   /* LA FIN DU PROTOCOLE, CHIFFRÉE ELLE AUSSI — la dynamique (ses pas, sa température, son
      énergie) et la minimisation : c'est le champ de forces qui a le dernier mot, et le
@@ -10694,15 +10282,20 @@ const calcReportOf = (retained, ranked) => {
       : ' · ✓ no atom pair closer than 1.45 Å in it'}`
     + ` · bonds ${best.bondRms.toFixed(4)} Å rms, angles ${best.angleRms.toFixed(2)}° rms`
     + ` · ${best.moved} atom${best.moved === 1 ? '' : 's'} moved`
-    + `${drawLine}${annealLine}${protocolLine}${mdLine}${omegaLine}${ramaLine}${spreadLine}${distLine}${restLine}.`
-    + ` ${calcWhyOf(retained.reason)} — the same protocol the ⚒ applies, on each start;`
+    + `${drawLine}${annealLine}${protocolLine}${mdLine}${omegaLine}${omegaFreeLine}${ramaLine}${spreadLine}${distLine}${restLine}.`
+    + ` ${calcWhyOf(retained.reason)} — the standard protocol ran on each start;`
     + ` a FIXED seed (${STRUCTURE_CALC_SEED}), so the same n and the same distances give the same family to the last digit,`
     + ` and a distance counts as respected within ${STRUCTURE_CALC_RESTRAINT_TOLERANCE} Å.`
     + ' ⚠ Every move is in DIHEDRAL space: one RIGID rotation of one side of the molecule about its hinge, so bond'
-    + ' lengths and angles cannot change — that is what makes the force field (bond lengths, angles, planar rings, your'
-    + ' distances, the hard core, ω, the φ/ψ basins, χ1) affordable here.'
-    + ' ⚠ There is still no charge, no solvent, no entropy, no atom added, and no kcal/mol: the energy is comparable'
-    + ' only inside one calculation.'
+    + ' lengths and angles cannot change — that is what makes the WHOLE force field (bonds, angles, planar rings,'
+    + ' vdW, electrostatics, solvent, ω, φ/ψ, χ1, your distances) affordable here.'
+    + ' ⚠ The energy IS in kcal/mol, from the force field of this module: bond lengths, angles, planar rings,'
+    + ' vdW, the electrostatics of PARTIAL CHARGES, a NON-POLAR SOLVENT term γ·A (a 1.4 Å water probe), ω,'
+    + ' φ/ψ, χ1 and your distances — the hydrogens the field adds are part of it, and the score above is the'
+    + ' FREE energy of the model: that enthalpy plus its conformational entropy (−T·S).'
+    + ' ⚠ The solvent is IMPLICIT ONLY (charges screened by ε = 4·r): no explicit water, no counter-ion, no'
+    + ' polarisability and no ionic strength — the 🧲 force field panel and the ⟳ Energy line show the families'
+    + ' one by one.'
     + ' ⚠ The φ/ψ term is what was missing before: it is ZERO inside a basin of the 🪢 plot and grows with the distance'
     + ' to the basin, so the models you keep no longer come out with points all over the map. If one of YOUR distances'
     + ' forces a residue out of its basin, your distance wins — and the line above says how many went out.'
@@ -10763,19 +10356,20 @@ const calcPhaseLine = (f, done, of, head = null) => {
   switch (f.phase) {
     case 'start': return `${prefix} — taking a start (draw of every rotatable dihedral)…`;
     case 'draw': return `${prefix} — all dihedrals drawn at random (${f.channels || 0} channels)`;
-    case 'anneal': return `${prefix} — 🔥 recuit T=${Number(f.temperature).toFixed(2)}`
-      + ` · palier ${f.step}/${f.of}${f.parts ? ` (${f.part}/${f.parts})` : ''}`;
-    case 'prep': return `${prefix} — ⚒ preparation (chemistry and hard core)`;
-    case 'drive': return `${prefix} — ⚒ distance ${f.pair ? `${f.pair.i}–${f.pair.j}` : ''} driven`
-      + `${f.pass ? ` (pass ${f.pass})` : ''}`;
-    case 'scan': return `${prefix} — ⚒ scan${f.pass ? ` (pass ${f.pass})` : ''}`
-      + `${f.found ? ` · ${f.found} to fix` : ''}`;
+    case 'anneal': return `${prefix} — 🔥 annealing T=${Number(f.temperature).toFixed(0)} K`
+      + ` · step ${f.step}/${f.of}${f.parts ? ` (${f.part}/${f.parts})` : ''}`;
+    case 'md-equilibrate': return `${prefix} — 🌡 equilibration ${f.step}/${f.of}`
+      + ` · T=${Number(f.temperature).toFixed(0)} K (kinetic ${Number(f.kinetic).toFixed(0)} K)`
+      + ` · E=${Number(f.potential).toFixed(2)} kcal/mol`;
+    case 'md-cool': return `${prefix} — 🌡 cooling ${f.step}/${f.of}`
+      + ` · T=${Number(f.temperature).toFixed(0)} K (kinetic ${Number(f.kinetic).toFixed(0)} K)`
+      + ` · E=${Number(f.potential).toFixed(2)} kcal/mol`;
     case 'md': return `${prefix} — dynamics ${f.step}/${f.of}`
-      + ` · T=${Number(f.temperature).toFixed(2)} (kinetic ${Number(f.kinetic).toFixed(2)})`
-      + ` · E=${Number(f.potential).toFixed(1)}`;
-    case 'minimise': return `${prefix} — sweep ${f.sweep}/${f.of}`
-      + ` · step ${Number(f.step).toFixed(1)}° · E=${Number(f.cost).toFixed(1)}`;
-    case 'quench': return `${prefix} — 🧊 quench (frozen, leashed), step ${f.step}/${f.of}`;
+      + ` · T=${Number(f.temperature).toFixed(0)} K (kinetic ${Number(f.kinetic).toFixed(0)} K)`
+      + ` · E=${Number(f.potential).toFixed(2)} kcal/mol`;
+    case 'minimise': return `${prefix} — ⚒ minimisation ${f.sweep}/${f.of}`
+      + ` · step ${Number(f.step).toFixed(2)}° · E=${Number(f.cost).toFixed(2)} kcal/mol`;
+    case 'quench': return `${prefix} — 🧊 quench (frozen, leashed, ω protected), step ${f.step}/${f.of}`;
     default: return prefix;
   }
 };
@@ -10789,16 +10383,18 @@ const calcAttemptLine = (a, { done, of }) => `🧬 start ${done}/${of} — ${cal
   + `${a.minimise ? ` · ⚒ ${a.minimise.sweeps} sweeps` : ''}`
   + `${a.omega && a.omega.violations ? ` · ⚠ ω ${a.omega.worst.deg.toFixed(0)}°` : ''}`
   + `${a.ramaPlot && a.ramaPlot.violations ? ` · ⚠ φ/ψ ${a.ramaPlot.violations}/${a.ramaPlot.measured} outside` : ''}`
+  + `${a.dihedralWells && a.dihedralWells.count ? ` · ⛓ ${a.dihedralWells.satisfied}/${a.dihedralWells.count} imposed φ/ψ within ± ${a.dihedralWells.tolerance}°` : ''}`
   + `${a.draw ? ` · ${a.draw.turned} dihedral${a.draw.turned === 1 ? '' : 's'} drawn at random` : ''}`
   + `${a.protocol ? ` · ${a.protocol.steps} steps` : ''}`;
 
 /** LE CALCUL, IMAGE PAR IMAGE — « the program must then generate n structures by randomly
- *  assigning values of all dihedral angles », puis le protocole du ⚒ sur chacune, puis
- *  la dynamique et la minimisation : c'est le MOTEUR du module qui décide de l'ordre
- *  (`structureCalculationFrames`), et l'écran ne fait que le CONduire — il avance dans
- *  les images pendant au plus `CALC_FRAME_BUDGET_MS` millisecondes, écrit la dernière
- *  image dans la molécule (le MÊME chemin d'écriture qu'une torsion), met la ligne de
- *  progression à jour, puis rend la main à la page (`setTimeout`) pour qu'elle PEIGNE.
+ *  assigning values of all dihedral angles », puis le protocole standard sur chacune
+ *  (recuit, dynamique, minimisation, trempe) : c'est le MOTEUR du module qui décide de
+ *  l'ordre (`structureCalculationFrames`), et l'écran ne fait que le CONDUIRE — il
+ *  avance dans les images pendant au plus `CALC_FRAME_BUDGET_MS` millisecondes, écrit la
+ *  dernière image dans la molécule (le MÊME chemin d'écriture qu'une torsion), met la
+ *  ligne de progression à jour, puis rend la main à la page (`setTimeout`) pour qu'elle
+ *  PEIGNE.
  *  ⚠ C'est ce qui rend le calcul REGARDABLE : un calcul poussé d'un trait bloque le fil
  *  du navigateur, donc la molécule ne bouge qu'à la fin — c'était la remarque « I do not
  *  see the molecule changing structures during the calculation ». Ici la molécule est
@@ -10806,7 +10402,6 @@ const calcAttemptLine = (a, { done, of }) => `🧬 start ${done}/${of} — ${cal
  *  Le ⏹ (ou un autre chargement) avance le jeton `calcRunRef` : la boucle s'arrête au
  *  prochain tour, et le module s'arrête lui-même ENTRE deux départs (`shouldStop`). */
 const runStructureCalculation = () => {
-  finishRelaxPlayback();                 // un ⚒ qui joue encore est terminé d'abord
   const live = calcGeometryNow();
   if (!live) {
     setCalcMsg('✕ There is no molecule on screen — load a structure first.');
@@ -10820,8 +10415,8 @@ const runStructureCalculation = () => {
   const list = calcUsableRows().filter((r) => r.i < geom.count && r.j < geom.count);
   const half = calcRestraints.length - list.length;
   if (!list.length) {
-    setCalcMsg('✕ Nothing to respect yet. Two ways to give a distance: pick two atoms (🎯 Pick A · B · C · D in the'
-      + ' ✏️ Torsion section) and press ⌖, or add a row and TYPE its two atoms — “ALA 12 CA”, “12:CA” or an atom'
+    setCalcMsg('✕ Nothing to respect yet. Two ways to give a distance: pick two atoms (🎯 Pick in the'
+      + ' ✏️ Torsion window) and press ⌖, or add a row and TYPE its two atoms — “ALA 12 CA”, “12:CA” or an atom'
       + ' number — with the distance you want. A structure calculation needs at least one distance between two atoms.');
     return;
   }
@@ -10832,7 +10427,8 @@ const runStructureCalculation = () => {
   const before = torsionSnapshotOf(structure);
   torsionUndoRef.current = {
     comp, structure, count: before ? before.length / 3 : 0, flat: before,
-    label: `🧬 structure calculation · ${list.length} distance${list.length === 1 ? '' : 's'} · n = ${n}, m = ${m}`,
+    label: `🧬 structure calculation · ${list.length} distance${list.length === 1 ? '' : 's'} · n = ${n}, m = ${m}`
+      + ` · ω ${calcOmegaFree ? 'free to vary' : 'held trans'}`,
   };
   calcRunRef.current += 1;
   const run = calcRunRef.current;
@@ -10843,6 +10439,9 @@ const runStructureCalculation = () => {
   setCalcProgress(`🧬 start 0/${n} …${half
     ? ` (${half} line${half === 1 ? '' : 's'} of the table still unfinished, left out)`
     : ''}`);
+  /* LE GRAPHE 🪢, S'IL EST AFFICHÉ, SUIT CHAQUE DÉPART ÉCRIT (voir `pumpMotion`) : le
+     même `followRama`, pour que le 🪢 bouge aussi pendant un calcul de structure. */
+  const followRama = !!rama;
   const finish = (stopped, ranked = null) => {
     const family = ranked || rankStructureAttempts({ attempts, keep: m });
     /* LA FAMILLE EST MARQUÉE DE SA MOLÉCULE — `comp` et `structure` : ses coordonnées
@@ -10867,15 +10466,26 @@ const runStructureCalculation = () => {
     restraints: list.map((r) => ({ i: r.i, j: r.j, target: r.target })),
     starts: n, keep: m,
     seed: STRUCTURE_CALC_SEED,
-    stageStep: relaxStageStep,
-    escapes: relaxEscapes,
-    /* ⚙ LA PHYSIQUE — le recuit (avec ses images), la dynamique, la minimisation. */
+    /* ⛓ LES CONTRAINTES DE DIHÈDRE ISSUES DE LA STRUCTURE SECONDAIRE IMPOSÉE — les
+       MÊMES que celles que le ▶ MD et le ⚒ Minimise portent : un départ les respecte
+       dans son recuit, sa dynamique, sa minimisation et sa trempe, et sa note les
+       compte. */
+    dihedrals: calcDihedrals,
+    /* 🪢 L'OPTION « ω VARIE » — le réglage du panneau, tel quel : chaque départ le porte
+       dans son recuit, sa dynamique, sa minimisation et sa trempe (le module dit
+       `omegaFree` dans son rapport). */
+    freeOmega: calcOmegaFree,
+    /* ⚙ LE PROTOCOLE STANDARD — le recuit (avec ses images), la dynamique (équilibration
+       PUIS refroidissement : c'est `md`, `mdDt` et `mdEquil` qui la découpent, et le
+       rapport rend la DURÉE totale, pas × dt), la minimisation, la trempe. */
     anneal: calcAnneal, annealPerFrame: calcAnnealFrame,
     md: calcMdSteps, mdPerFrame: STRUCTURE_CALC_MD_FRAME,
+    mdDt: calcMdDt, mdEquilibration: calcMdEquil,
+    mdHot: calcMdHot, mdCold: calcMdCold,
     minimise: calcMinimise,
-    /* ⟳ Le rebâtiment n'est PAS envoyé : la fenêtre est la molécule entière, donc il n'y
-       a rien hors fenêtre à reposer (le module l'explique, et le rapport du ⚒ n'en parle
-       pas non plus ici). */
+    /* ⚠ Le rebâtiment d'une partie hors fenêtre n'existe plus : la fenêtre du ⚒ a été
+       retirée avec son bouton, et le protocole standard travaille sur la molécule
+       ENTIÈRE — il n'y a donc rien à reposer, et le rapport du calcul n'en parle pas. */
     rebuild: false,
     shouldStop: () => calcRunRef.current !== run || componentRef.current !== comp,
     onAttempt: (attempt) => {
@@ -10914,6 +10524,9 @@ const runStructureCalculation = () => {
        molécule : écrire sans rendre la main ne montrerait rien. */
     if (shown) {
       if (calcWatch && shown.positions) calcPreviewPositions(comp, structure, shown.positions);
+      /* …ET LE 🪢 SUIT LE CALCUL QUAND IL EST AFFICHÉ (👁 watch écrit vraiment la
+         molécule : le graphe parle donc de la conformation qui est à l'écran). */
+      if (calcWatch && followRama) readRamachandran();
       if (shown.phase !== 'attempt-done') setCalcProgress(calcPhaseLine(shown, attempts.length, n));
     }
     if (typeof window !== 'undefined' && window.setTimeout) window.setTimeout(pump, 0);
@@ -10949,18 +10562,32 @@ const calcReadForceField = () => {
   const field = forceFieldEnergyOf({
     positions: geom.positions, elements: geom.elements, bonds: geom.bonds,
     restraints: list.map((r) => ({ i: r.i, j: r.j, target: r.target })),
+    dihedrals: calcDihedrals,
+    exactSurface: true,
   });
   setCalcForce(field);
   const ra = field.ramaReport;
   const ch = field.chiReport;
-  setCalcMsg(`🧲 Force field on the molecule as it stands: E = ${field.total.toFixed(2)}`
-    + ` (chemistry ${field.target.toFixed(2)} + ω ${field.omega.toFixed(2)} + φ/ψ ${field.rama.toFixed(2)} + χ1 ${field.chi.toFixed(2)})`
+  const dh = field.dihedralReport;
+  setCalcMsg(`🧲 Force field on the molecule as it stands: E = ${field.total.toFixed(2)} kcal/mol`
+    + ` (bonds ${field.bond.toFixed(2)} + angles ${field.angle.toFixed(2)} + rings ${field.planar.toFixed(2)}`
+    + ` + vdW ${field.vdw.toFixed(2)} + µ ${field.elec.toFixed(2)} + solvent ${field.solv.toFixed(2)}`
+    + ` + φ/ψ ${field.rama.toFixed(2)} + χ1 ${field.chi.toFixed(2)} + ω ${field.omega.toFixed(2)}`
+    + ` + your distances ${field.restraint.toFixed(2)}`
+    + ` + the φ/ψ you imposed ${field.dihedral.toFixed(2)})`
+    + ` · entropy ${field.entropyReport.total.toFixed(1)} cal·mol⁻¹·K⁻¹ (−T·S = ${field.entropy.toFixed(2)} kcal/mol)`
+    + ` · ${field.added.hydrogens} hydrogens added on ${field.added.heavy} heavy atoms`
+    + ` · net charge ${field.charges.net.toFixed(3)} e (${field.charges.method})`
+    + ` · surface ${field.surface.estimate.toFixed(0)} Å² (exact ${field.surface.exact == null ? '—' : field.surface.exact.toFixed(0)} Å²)`
     + ` · ${field.torsions.residues} backbone residue${field.torsions.residues === 1 ? '' : 's'}`
     + ` (${field.torsions.phi.length} φ, ${field.torsions.psi.length} ψ, ${field.omegaReport.count} ω, ${ch.count} χ1)`
     + `${ra.violations ? ` · ⚠ ${ra.violations} φ/ψ outside every basin${ra.worst ? ` (worst ${ra.worst.gap.toFixed(0)}° away)` : ''}` : ' · ✓ every φ/ψ inside a basin'}`
     + `${field.omegaReport.violations ? ` · ⚠ ${field.omegaReport.violations} ω outside ± ${STRUCTURE_CALC_OMEGA_TOLERANCE}°` : ''}`
-    + `${ch.violations ? ` · ⚠ ${ch.violations} χ1 between two staggered wells` : ''}.`
-    + ' ⚠ The energy is in the app\'s own units (comparable inside one calculation) — it is NOT a kcal/mol.');
+    + `${ch.violations ? ` · ⚠ ${ch.violations} χ1 between two staggered wells` : ''}`
+    + `${dh.count ? ` · ⛓ ${dh.satisfied}/${dh.count} imposed φ/ψ within ± ${dh.tolerance}°`
+      + `${dh.violations ? ` (worst ${dh.worst.over.toFixed(1)}° outside)` : ''}` : ''}`
+    + `${field.nonbonded.repulsive ? ` · ⚠ ${field.nonbonded.repulsive} repulsive pair${field.nonbonded.repulsive === 1 ? '' : 's'}` : ''}.`
+    + ' ⚡ The energy is in kcal/mol, the potential is the one the calculation uses (no charge model is perfect: the charges are PEOE estimates with the formal charges the chemistry implies).');
   return field;
 };
 
@@ -10970,6 +10597,13 @@ const calcReadForceField = () => {
 const pumpMotion = ({ frames, comp, structure, head, onEnd }) => {
   calcRunRef.current += 1;
   const run = calcRunRef.current;
+  /* LE GRAPHE 🪢 SUIT LE MOUVEMENT — la demande : « can the ramachandran be updated while
+     the molecule moves? » Oui. La lecture φ/ψ est refaite après CHAQUE image écrite
+     quand le graphe est déjà à l'écran (mesuré : 0.24 ms pour 30 résidus, 1 ms pour 300),
+     donc les points sortent de leur bassin PENDANT que la dynamique tourne au lieu de
+     n'apparaître qu'à la fin. C'est la MÊME lecture que le bouton ⟳ du 🪢 : pas un
+     second lecteur, et rien à recalculer quand le graphe n'est pas affiché. */
+  const followRama = !!rama;
   const pump = () => {
     if (calcRunRef.current !== run) return;
     if (componentRef.current !== comp) {
@@ -11001,6 +10635,7 @@ const pumpMotion = ({ frames, comp, structure, head, onEnd }) => {
     }
     if (shown) {
       if (calcWatch && shown.positions) calcPreviewPositions(comp, structure, shown.positions);
+      if (followRama) readRamachandran();   // le 🪢 suit l'image qui vient d'être écrite
       setCalcProgress(calcPhaseLine(shown, 0, 1, head));
     }
     if (typeof window !== 'undefined' && window.setTimeout) window.setTimeout(pump, 0);
@@ -11033,7 +10668,6 @@ const calcHeldPairs = (geom, list) => list
  *  kelvins. ⚠ Et c'est une CONSTANTE (pas un plan de température) : une dynamique
  *  d'équilibrage tient sa température, c'est un recuit qui la fait descendre. */
 const runMolecularDynamics = () => {
-  finishRelaxPlayback();
   const now = calcGeometryNow();
   if (!now) {
     setCalcMsg('✕ There is no molecule on screen — load a structure first.');
@@ -11046,7 +10680,8 @@ const runMolecularDynamics = () => {
   const before = torsionSnapshotOf(structure);
   torsionUndoRef.current = {
     comp, structure, count: before ? before.length / 3 : 0, flat: before,
-    label: `🌡 molecular dynamics · ${calcMdSteps} steps · T = ${calcMdTemp}`,
+    label: `🌡 molecular dynamics · ${calcMdSteps} steps · T = ${calcMdTemp}`
+      + ` · ω ${calcOmegaFree ? 'free to vary' : 'held trans'}`,
   };
   setCalcBusy(true);
   setCalcShown(0);
@@ -11056,6 +10691,14 @@ const runMolecularDynamics = () => {
       positions: base, elements: geom.elements, bonds: geom.bonds,
       restraints: list.map((r) => ({ i: r.i, j: r.j, target: r.target })),
       leash: held, steps: calcMdSteps, temperature: calcMdTemp,
+      /* ⛓ …ET LES CONTRAINTES DE DIHÈDRE DE LA STRUCTURE SECONDAIRE IMPOSÉE.
+         La demande : « In MD and “structure calculation” allow the conversion of the
+         secondary structure imposed … into dihedral angle constraints. » */
+      dihedrals: calcDihedrals,
+      /* 🪢 L'OPTION « ω VARIE » — le réglage du panneau : coché, la dynamique ne refuse
+         plus un pas qui augmente le coût d'une liaison peptidique (sa barrière reste une
+         famille du champ, et c'est elle qui arbitre). */
+      freeOmega: calcOmegaFree,
       perFrame: STRUCTURE_CALC_MD_FRAME,
     }),
     comp, structure,
@@ -11067,14 +10710,34 @@ const runMolecularDynamics = () => {
         return;
       }
       setCalcForce(null);
+      /* ⚖ LES DISTANCES DEMANDÉES, RELUES SUR LES COORDONNÉES QUE LA DYNAMIQUE VIENT
+         D'ÉCRIRE — « can the MD take the distance constraints into account? » : le
+         rapport le chiffre au lieu de le promettre (combien sont dans la tolérance, et
+         de combien la plus fausse en sort). C'est `restraintReportOf`, la lecture du
+         module : le panneau ne compte rien lui-même. */
+      const rep = restraintReportOf({ positions: run.positions, restraints: list });
+      /* ⛓ LES φ/ψ IMPOSÉS, RELUS SUR LES COORDONNÉES QUE LA DYNAMIQUE VIENT D'ÉCRIRE —
+         la MÊME lecture que le champ (`dihedralPenaltyOf`), donc le rapport ne peut pas
+         annoncer autre chose que ce que la note juge. */
+      const dh = dihedralPenaltyOf({ positions: run.positions, dihedrals: calcDihedrals });
       setCalcMsg(`✓ 🌡 Molecular dynamics · ${run.steps} steps (${run.applied} applied) over`
         + ` ${run.channels} channel${run.channels === 1 ? '' : 's'}`
-        + ` · T held at ${run.temperature.hot} (kinetic ${run.temperature.mean} mean)`
-        + ` · energy ${run.cost.before.toFixed(2)} → ${run.cost.after.toFixed(2)}`
+        + ` · ${run.time.ps} ps at dt = ${run.time.dt} ps`
+        + ` · T held at ${run.temperature.hot} K (kinetic ${run.temperature.mean.toFixed(0)} K mean)`
+        + ` · energy ${run.cost.before.toFixed(2)} → ${run.cost.after.toFixed(2)} kcal/mol`
+        + `${rep.count ? ` · distances: ${rep.satisfied}/${rep.count} within ± ${rep.tolerance} Å` : ''}`
+        + `${rep.count && rep.violations ? ` (worst ${rep.worst.abs.toFixed(2)} Å outside — the ⚒ converges them, a trajectory at T does not have to)` : ''}`
         + `${run.walls.count ? ` · ${run.walls.count} distance${run.walls.count === 1 ? '' : 's'} held by the leash (${run.walls.before.toFixed(2)} → ${run.walls.after.toFixed(2)})` : ''}`
-        + ` · ω ${run.omega ? run.omega.penalty.toFixed(2) : 0} · φ/ψ ${run.rama ? run.rama.penalty.toFixed(2) : 0}`
-        + ` (${run.rama ? run.rama.violations : 0} outside) · χ1 ${run.chi ? run.chi.penalty.toFixed(2) : 0}.`
-        + ' ⚠ T is in reduced units (k_B = 1, the energy is the force field\'s) — not kelvins.'
+        + `${dh.count ? ` · ⛓ φ/ψ imposed: ${dh.satisfied}/${dh.count} within ± ${dh.tolerance}°`
+          + `${dh.violations ? ` (worst ${dh.worst.over.toFixed(1)}° outside — a trajectory at T is not obliged to land inside)` : ''}` : ''}`
+        + ` · ω ${run.omega ? run.omega.penalty.toFixed(2) : 0}`
+        + `${run.omegaFree
+          ? ` (🪢 ω was FREE to vary: the peptide bond is an ordinary dihedral here — its barrier was counted, not imposed)`
+          : ` (🪢 ω held trans: no step of this dynamics could make it worse)`}`
+        + ` · φ/ψ ${run.rama ? run.rama.penalty.toFixed(2) : 0}`
+        + ` (${run.rama ? run.rama.violations : 0} outside) · χ1 ${run.chi ? run.chi.penalty.toFixed(2) : 0}`
+        + ` · ${run.added ? run.added.hydrogens : 0} hydrogens added.`
+        + ' ⚡ Energies in kcal/mol, temperature in kelvins (R·T is the thermal energy: 0.6 kcal/mol at 300 K).'
         + ' ⚒ Minimise from here lands on a minimum of the same field; ↺ Undo torsion puts the molecule back.');
       if (rama) readRamachandran();     // le graphe suit ce que la dynamique vient d'écrire
     },
@@ -11085,7 +10748,6 @@ const runMolecularDynamics = () => {
  *  applique en fin de départ (chaque charnière essayée de part et d'autre, pas divisé par
  *  deux), sur le MÊME champ et avec la MÊME longe. Elle part d'où la molécule est. */
 const runMinimise = () => {
-  finishRelaxPlayback();
   const now = calcGeometryNow();
   if (!now) {
     setCalcMsg('✕ There is no molecule on screen — load a structure first.');
@@ -11098,7 +10760,7 @@ const runMinimise = () => {
   const before = torsionSnapshotOf(structure);
   torsionUndoRef.current = {
     comp, structure, count: before ? before.length / 3 : 0, flat: before,
-    label: `⚒ minimisation · ${calcMinimise} sweeps`,
+    label: `⚒ minimisation · ${calcMinimise} sweeps · ω ${calcOmegaFree ? 'free to vary' : 'held trans'}`,
   };
   setCalcBusy(true);
   setCalcShown(0);
@@ -11108,6 +10770,13 @@ const runMinimise = () => {
       positions: base, elements: geom.elements, bonds: geom.bonds,
       restraints: list.map((r) => ({ i: r.i, j: r.j, target: r.target })),
       leash: held, rounds: calcMinimise,
+      /* ⛓ …ET LES CONTRAINTES DE DIHÈDRE DE LA STRUCTURE SECONDAIRE IMPOSÉE : c'est la
+         minimisation qui les CONVERGE, comme les distances. */
+      dihedrals: calcDihedrals,
+      /* 🪢 L'OPTION « ω VARIE » — le réglage du panneau : coché, la descente peut PAYER un
+         peu de barrière d'ω pour gagner ailleurs (une distance demandée, un φ/ψ imposé, un
+         empilement), comme elle arbitre déjà les autres familles du champ. */
+      freeOmega: calcOmegaFree,
     }),
     comp, structure,
     head: '⚒ Minimise',
@@ -11118,10 +10787,22 @@ const runMinimise = () => {
         return;
       }
       setCalcForce(null);
+      /* LA MÊME RELECTURE DES DISTANCES ICI — c'est la minimisation qui les CONVERGE :
+         le rapport dit combien sont dans la tolérance après l'affinage. Les φ/ψ imposés
+         sont relus par la MÊME lecture que le champ (`dihedralPenaltyOf`). */
+      const rep = restraintReportOf({ positions: run.positions, restraints: list });
+      const dh = dihedralPenaltyOf({ positions: run.positions, dihedrals: calcDihedrals });
       setCalcMsg(`✓ ⚒ Minimisation · ${run.sweeps} sweep${run.sweeps === 1 ? '' : 's'}`
         + ` (${run.accepted} accepted moves) · energy ${run.cost.before.toFixed(2)} → ${run.cost.after.toFixed(2)}`
+        + `${rep.count ? ` · distances: ${rep.satisfied}/${rep.count} within ± ${rep.tolerance} Å` : ''}`
+        + `${rep.count && rep.violations ? ` (worst ${rep.worst.abs.toFixed(2)} Å outside)` : ''}`
+        + `${dh.count ? ` · ⛓ φ/ψ imposed: ${dh.satisfied}/${dh.count} within ± ${dh.tolerance}°`
+          + `${dh.violations ? ` (worst ${dh.worst.over.toFixed(1)}° outside)` : ''}` : ''}`
         + ` · step down to ${run.step.toFixed(2)}°`
         + ` · ${run.reason === 'converged' ? 'it stopped on the step floor' : 'the sweep budget ran out'}`
+        + ` · 🪢 ω ${run.omegaFree
+          ? `free to vary (the descent could trade a little ω barrier for a distance) — it cost ${run.omega ? run.omega.penalty.toFixed(2) : 0} kcal/mol`
+          : `held trans: no move could make it worse (${run.omega ? run.omega.penalty.toFixed(2) : 0} kcal/mol)`}`
         + `${run.walls.count ? ` · ${run.walls.count} distance${run.walls.count === 1 ? '' : 's'} held by the leash` : ''}.`
         + ' ↺ Undo torsion puts the molecule back exactly where it was.');
       if (rama) readRamachandran();
@@ -11147,10 +10828,6 @@ const structureWasDragged = (structure) => {
  *  n'écrit RIEN et rend la raison du module telle quelle (`torsionWhy`, qui la traduit
  *  en une phrase : jamais un diagnostic inventé ici). */
 const commitTorsion = (r, plan, label) => {
-  /* UNE TORSION APPLIQUÉE TERMINE D'ABORD L'ANIMATION DU ⚒ — sinon deux gestes
-     écriraient les mêmes coordonnées en même temps, et le dernier pas du construit
-     recouvrirait la torsion. Terminer écrit la dernière image et son rapport. */
-  finishRelaxPlayback();
   if (!r || !r.ok) {
     setTorsionClosest(null);
     setTorsionMsg(`✕ ${(r && r.say) || torsionWhy(plan && plan.reason)}`);
@@ -11260,10 +10937,6 @@ const applyClosestTorsion = () => {
 /** ↺ UNDO — la torsion défaite atome par atome, sur les coordonnées d'AVANT. Le ↺ ne
  *  touche ni les picks ni les chiffres tapés : il défait le geste, pas la question. */
 const undoLastTorsion = () => {
-  /* LE ↺ ARRÊTE D'ABORD L'ANIMATION DU ⚒ — sinon la torsion défaite serait recouverte
-     image après image par le construit en cours. Terminer maintenant, c'est annuler le
-     geste : la dernière image du ⚒ est écrite, puis le ↺ remet la géométrie d'AVANT. */
-  finishRelaxPlayback();
   const rec = torsionUndoRef.current;
   const comp = componentRef.current;
   if (!rec || !rec.flat || !rec.count) {
@@ -11476,16 +11149,6 @@ const flashSeqBuildMsg = (m) => {
   setSeqBuildMsg(m);
   clearTimeout(seqBuildTimerRef.current);
   seqBuildTimerRef.current = setTimeout(() => setSeqBuildMsg(''), 6000);
-};
-/* Le message de « ⚭ Fold for disulfides », À CÔTÉ de son bouton : il nomme les
-   ponts obtenus avec leur distance Sγ–Sγ et dit franchement quand un pont n'a
-   PAS pu être fermé (le module ne prétend jamais avoir réussi). */
-const [disulfideFoldMsg, setDisulfideFoldMsg] = useState('');
-const disulfideFoldTimerRef = useRef(null);
-const flashDisulfideFoldMsg = (m) => {
-  setDisulfideFoldMsg(m);
-  clearTimeout(disulfideFoldTimerRef.current);
-  disulfideFoldTimerRef.current = setTimeout(() => setDisulfideFoldMsg(''), 9000);
 };
 /* ⚭ « Disulfides: shown / hidden » — L'INTERRUPTEUR DU DESSIN DU PONT.
    Ce qui change entre deux clics est UN booléen : quand il est faux, la règle
@@ -18001,53 +17664,6 @@ const buildFromSequence = () => {
   flashSeqBuildMsg(`🧬 Structure rebuilt from the sequence — ${atoms.toLocaleString()} atoms, ${sequenceStructureText.length.toLocaleString()} PDB characters.`);
 };
 
-/* ── ✏️ Modify · « ⚭ Fold for disulfides » ─────────────────────────────────
-   LE PONT DISULFURE EST DÉJÀ DESSINÉ dans le modèle servi par la page (un
-   CONECT entre les deux Sγ : les styles Sticks / Ball+stick / Lines le
-   montrent). Ce bouton va plus loin — et seulement quand on le clique : la
-   page DÉTEND la chaîne (φ/ψ des résidus entre les deux Cys, rotamères χ1) pour
-   que les deux Sγ viennent à une distance de liaison, puis sert ce modèle-là.
-
-   Ce que le bouton ne fait PAS, et le message le redit : ce n'est pas un
-   repliement physique (aucune énergie, aucun solvant) — et quand la fenêtre
-   relâchée ne suffit pas à réunir deux Sγ lointaines, le modèle arrive quand
-   même, avec la distance RÉELLE dans le message au lieu d'un pont imaginaire.
-
-   Le geste range ce qui était à l'écran comme le fait « 🧬 Structure from
-   sequence » (mêmes règles, même « ↩ Back to PDB ») : le modèle détendu n'est
-   jamais une impasse. */
-const foldForDisulfides = () => {
-  if (typeof buildDisulfideFoldedStructure !== 'function') {
-    flashDisulfideFoldMsg('⚠️ No disulphide pair to fold for — define one in “Cysteine states” (Cysteine states ⚭ couple with).');
-    return;
-  }
-  let built = null;
-  try {
-    built = buildDisulfideFoldedStructure();
-  } catch (e) {
-    flashDisulfideFoldMsg(`⚠️ Disulphide folding failed: ${e?.message || e}`);
-    return;
-  }
-  if (!built || !built.text) {
-    flashDisulfideFoldMsg('⚠️ Nothing to fold: this condition has no disulphide pair (or no protein sequence).');
-    return;
-  }
-  if (!stashedPdb) {
-    const stash = lastLoadedTextRef.current === sequenceStructureText ? pageStructureStash() : pdbSourceOfCurrent();
-    if (stash && (stash.file || stash.url || stash.text)) setStashedPdb(stash);
-  }
-  abortControl.abortAll();
-  clearExtraMolecules();
-  setFile(null);
-  setPdbId('');
-  setManualOverride(false);
-  setStructOrigin('generated');
-  lastLoadedTextRef.current = built.text;
-  requestStructureLoad({ file: null, url: null, text: built.text, ext: built.ext || 'pdb', ts: Date.now() });
-  const atoms = (built.text.match(/^(ATOM|HETATM)/gm) || []).length;
-  flashDisulfideFoldMsg(`${built.note || '⚭ Disulphide-folded model loaded.'} (${atoms.toLocaleString()} atoms)`);
-};
-
 /* ── ✏️ Modify · « ⚭ Disulfides: shown / hidden » ─────────────────────────────
    LE DESSIN DU PONT, PAS SA DÉFINITION. Le pont existe deux fois : dans la
    définition (« Cysteine states », la page) et dans le graphe de liaisons de la
@@ -18063,10 +17679,14 @@ const foldForDisulfides = () => {
    l'écran. Le rapport était « you displayed the disulfide bonds but you did not
    fold the structure to bring the cysteines at bond distance » : un pont étiré
    est donc DIT, chiffre en main, au lieu de passer pour une liaison — et
-   ⚭ Fold for disulfides, juste à côté, est le geste qui essaie de le fermer.
-   La fenêtre de liaison est celle du repliement (SS_BOND_LENGTH /
-   SS_BOND_TOLERANCE de utils/disulfideFold.js) : une seule définition de « pont
-   fermé » pour le repliement et pour ce compte rendu. */
+   ⚭ « Fold for disulfides » A ÉTÉ RETIRÉ (la demande : « The “fold for disulphide”
+   button does not work and you can eliminate it but keep the “disulphide:shown/
+   hidden” button. ») : ce compte rendu nommait le bouton juste à côté, il dit
+   donc maintenant la vérité toute seule — un pont étiré est DIT, chiffre en
+   main, au lieu de passer pour une liaison. La fenêtre de liaison est celle du
+   repliement (SS_BOND_LENGTH / SS_BOND_TOLERANCE de utils/disulfideFold.js) :
+   une seule définition de « pont fermé » pour le repliement et pour ce compte
+   rendu. */
 // « Cys 6–Cys 127: 2.04 Å ✓ bonded » / « … 18.42 Å ⚠️ drawn but stretched »
 const describeDisulfideBond = (b) => {
   const label = (resno, chain, otherChain) => `${chain && chain !== otherChain ? `${chain} ` : ''}${displayResno(resno)}`;
@@ -18086,13 +17706,13 @@ const toggleDisulfideBonds = () => {
   const next = !disulfidesShownRef.current;
   const parts = bonds.map(describeDisulfideBond).join(' · ');
   const n = bonds.length;
-  /* Un pont DESSINÉ mais étiré est le cas du rapport (« you displayed the
+  /* Un pont DESSINÉ mais étiré était le cas du rapport (« you displayed the
      disulfide bonds but you did not fold the structure to bring the cysteines at
-     bond distance ») : le compte rendu le dit, et il nomme le geste qui essaie de
-     le fermer — ⚭ Fold for disulfides, juste à côté. */
+     bond distance ») : le compte rendu le dit, et il ne nomme plus aucun bouton —
+     celui qui essayait de fermer le pont (⚭ Fold for disulfides) a été retiré. */
   const stretched = bonds.filter((b) => b.distance != null && Math.abs(b.distance - SS_BOND_LENGTH) > SS_BOND_TOLERANCE).length;
   const hint = stretched
-    ? ` ${stretched} of them ${stretched === 1 ? 'is' : 'are'} drawn but STRETCHED — ⚭ Fold for disulfides, right here, relaxes the chain until the two Sγ can meet.`
+    ? ` ${stretched} of them ${stretched === 1 ? 'is' : 'are'} drawn but STRETCHED: the two Sγ are further apart than the S–S bond length (${SS_BOND_LENGTH} ± ${SS_BOND_TOLERANCE} Å), so the link NGL draws is not a bond the geometry supports.`
     : '';
   disulfidesShownRef.current = next;
   setDisulfidesShown(next);
@@ -19503,6 +19123,63 @@ const stylesSavedTitle = stylesSavedNames.length
   ? `${activeEnv.tag === 'theme' ? 'Themes' : 'Snapshots'} saved: ${stylesSavedNames.join(' · ')}`
   : `No ${activeEnv.tag} saved yet — type a name in the box and press 💾 Save.`;
 
+/* ── ⚙ LES TROIS GESTES DU CHAMP — À CÔTÉ DU BOUTON 🧬 ───────────────────────
+   La demande : « can the MD, Minimize and Energy be put next to “structure
+   calculation” button? » Ils étaient au fond du corps de la section 🧬, donc invisibles
+   tant qu'on ne l'ouvrait pas ; ils sont maintenant DANS LA RANGÉE DES BOUTONS, juste
+   après 🧬 Structure calculation, avec le champ 🌡 T qui les règle (un seul champ de
+   température pour ▶ MD, et la même pour tous). Le JSX est écrit UNE fois et rendu une
+   fois : les trois gestes restent ceux du module (`mdFrames`, `minimizeFrames`,
+   `forceFieldEnergyOf`) — il n'y a pas de second moteur caché dans le panneau. */
+const renderForceGestures = () => (
+  <span
+    className="inline-flex flex-wrap items-center gap-1.5 rounded-md border border-sky-200 bg-sky-50/50 px-1.5 py-1"
+    title="THE THREE GESTURES OF THE FORCE FIELD, ON THE MOLECULE AS IT STANDS: ▶ MD runs the dihedral Langevin dynamics, ⚒ Minimise the dihedral descent, ⟳ Energy only READS the families (a reading, nothing written). They are the same controls the 🧲 Force field block describes — put here so they are one click away from 🧬 Structure calculation, without opening any section. Each button's own tooltip says what it does to the molecule and what it reports.">
+    <label className="flex items-center gap-1 text-[10px] font-bold text-slate-600"
+      title="The temperature of the Langevin thermostat for the ▶ MD button, in KELVINS. The thermal energy is R·T: 0.6 kcal/mol at 300 K (the molecule vibrates), 6 kcal/mol at 3000 K (the backbone changes basin). The calculation's own dynamics does not use this field: it equilibrates at 🌡 hot and cools down to 🌡 cold.">
+      🌡 T
+      <input type="number" min="1" max="20000" step="100" value={calcMdTemp}
+        onChange={(e) => setCalcMdTempText(e.target.value)}
+        aria-label="Molecular dynamics temperature, in kelvins"
+        className="w-16 border border-slate-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-slate-500 text-[10px] font-mono bg-white" />
+      <span className="font-semibold text-slate-500">K</span>
+    </label>
+    <button type="button" onClick={runMolecularDynamics} disabled={calcBusy}
+      title="RUN MOLECULAR DYNAMICS on the molecule AS IT STANDS, at the temperature above: dihedral Langevin dynamics under the whole force field (kcal/mol, charges, solvent, added hydrogens), with your distance table as flat-bottom restraints — the trajectory FEELS them, and every distance ALREADY held is a leash (a wall, so it cannot be let go). It is written into the molecule at every frame — you SEE it move, and the 🪢 plot follows if it is open — and ↺ Undo torsion puts the molecule back exactly as it was. The report gives the steps, the length in ps, the kinetic temperature, the energy before and after, how many of your distances are within tolerance, and what happened to ω, φ/ψ and χ1."
+      className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-sky-400 text-sky-700 hover:bg-sky-50 disabled:opacity-40">
+      ▶ MD
+    </button>
+    <button type="button" onClick={runMinimise} disabled={calcBusy}
+      title="MINIMISE the energy from here: the dihedral descent each start ends on (every hinge tried on both sides of a step that halves as soon as a sweep improves nothing), on the same force field, with your distance table as restraints and the already-held ones as a leash. This is the FINAL ENERGY REFINEMENT — it is what CONVERGES a distance the dynamics merely approached, and it lands on a local minimum, not merely on a model that respects the distances. ↺ Undo torsion puts the molecule back."
+      className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-amber-400 text-amber-800 hover:bg-amber-50 disabled:opacity-40">
+      ⚒ Minimise
+    </button>
+    <button type="button" onClick={calcReadForceField}
+      title="Read the force field on the molecule as it stands — the families, the residue counts, and which φ/ψ and χ1 are outside. A reading, not a gesture: nothing is written."
+      className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100">
+      ⟳ Energy
+    </button>
+    {/* ⛓ LA STRUCTURE SECONDAIRE IMPOSÉE → DES CONTRAINTES DE DIHÈDRE — la demande de
+        cette session : « In MD and “structure calculation” allow the conversion of the
+        secondary structure imposed in the “sequence and structure” subsection into
+        dihedral angle constraints. » Le bouton est le MÊME que celui du panneau 🧬
+        (un seul `calcConvertSecondaryStructure`) : ce qu'on convertit ici est ce que le
+        ▶ MD, le ⚒ Minimise, le ▶ Run et le ⟳ Energy portent ensuite. */}
+    <button type="button" onClick={calcConvertSecondaryStructure}
+      className={`px-2 py-1 text-[10px] font-bold rounded border transition-colors ${calcDihedrals.length ? 'bg-emerald-50 border-emerald-400 text-emerald-800 hover:bg-emerald-100' : 'bg-white border-sky-300 text-sky-700 hover:bg-sky-50'}`}
+      title={`Convert the secondary structure painted in “Sequence and structure” (${imposedSecondaryStructure ? `${imposedSecondaryStructure.replace(/\s+/g, '').length} letters: H helix · E sheet · C coil` : 'nothing painted yet'}) into dihedral angle constraints: every H residue gives φ −57° / ψ −47°, every E residue φ −139° / ψ +135°, each as a FLAT-BOTTOM window of ± ${SS_DIHEDRAL_TOLERANCE}° (the same cost function as the distance table: nothing inside the window, k·(over)² outside). A coil imposes nothing. The letters are matched to the backbone ON SCREEN by residue order, and the report says what was matched. Press it again to remove them.`}>
+      ⛓ {calcDihedrals.length ? `${calcDihedrals.length} φ/ψ imposed — Off` : 'SS → φ/ψ'}
+    </button>
+    {!!calcDihedrals.length && (
+      <span className="text-[9px] font-semibold text-emerald-800"
+        title={`What the conversion found: ${(calcSsReading && calcSsReading.letters) || 0} letters painted, ${(calcSsReading && calcSsReading.residues) || 0} readable residues on screen,`
+          + ` ${(calcSsReading && calcSsReading.matched) || 0} matched — each matched residue carries its φ and its ψ.`}>
+        ± {SS_DIHEDRAL_TOLERANCE}° · {(calcSsReading && calcSsReading.matched) || 0} res.
+      </span>
+    )}
+  </span>
+);
+
 return (
 <div className="flex flex-col gap-2">
 
@@ -20218,7 +19895,7 @@ className="border border-amber-300 rounded-md px-1.5 py-1 text-[11px] bg-white o
 {/* ── Modify ─────────────────────────────────────────────────────────────── */}
 <span className="w-px h-6 bg-slate-200 shrink-0" aria-hidden="true" />
 <div className="flex flex-wrap items-center gap-1 rounded-md border border-amber-200 bg-amber-50/40 px-1.5 py-1">
-<span className="text-[9px] font-black text-amber-700 uppercase tracking-wide whitespace-nowrap" title="Change the molecule itself: build it from the page's sequence, fold it for its disulphides, show or hide the drawn disulphide bonds, rebuild the hydrogens, rename the atoms, colour by electrostatic potential and renumber the residues.">✏️ Modify</span>
+<span className="text-[9px] font-black text-amber-700 uppercase tracking-wide whitespace-nowrap" title="Change the molecule itself: build it from the page's sequence, show or hide the drawn disulphide bonds, rebuild the hydrogens, rename the atoms, colour by electrostatic potential and renumber the residues.">✏️ Modify</span>
 {/* 🧬 From sequence — the page's sequence (Proteins / DNA / RNA) becomes a 3D
     structure at any moment, even over a loaded PDB (which is put aside: the
     ↩ Restore PDB button of §1 General brings it back). No network round trip:
@@ -20236,24 +19913,6 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
 {seqBuildMsg && (
 <span title={seqBuildMsg} className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-md px-2 py-1 h-7 inline-flex items-center max-w-[380px] truncate">
 {seqBuildMsg}
-</span>
-)}
-{/* ⚭ Fold for disulfides — le pont disulfure défini dans « Cysteine states »
-    est DÉJÀ dessiné (CONECT SG–SG, écrit par le modèle de la page) ; ce bouton
-    fait un pas de plus, sur demande : la chaîne est détendue pour que les deux
-    Sγ puissent se lier. Désactivé quand la page n'a rien à détendre. */}
-<button
-type="button"
-onClick={foldForDisulfides}
-disabled={typeof buildDisulfideFoldedStructure !== 'function'}
-title="Relax the sequence model (phi/psi between the two cysteines and their chi1 rotamers) until each disulphide pair defined in “Cysteine states” has its two S-gamma atoms within bonding distance — the S–S is then a real bond in Sticks / Ball+stick. The model is a chain relaxation, NOT a physical fold, and the message says the true Sγ–Sγ distance of every pair, including the ones that could not be closed."
-className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap bg-white border-amber-300 text-amber-700 hover:bg-amber-50 disabled:opacity-40 disabled:cursor-not-allowed"
->
-⚭ Fold for disulfides
-</button>
-{disulfideFoldMsg && (
-<span title={disulfideFoldMsg} className="text-[10px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1 h-7 inline-flex items-center max-w-[380px] truncate">
-{disulfideFoldMsg}
 </span>
 )}
 {/* ⚭ Disulfides: shown / hidden — L'INTERRUPTEUR DU DESSIN, PAS DE LA DÉFINITION.
@@ -20307,18 +19966,14 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
 ↩ Back to PDB
 </button>
 )}
-{/* 🖱 PLACER UNE MOLÉCULE — les boutons ✥ Move · ↻ Rotate ont disparu avec le mode
-qu'ils armaient (le rapport : « The separated move and rotate buttons are
-impractical… ») : le geste se fait à la souris, sur la molécule que l'on attrape
-(voir installMoleculeDrag). Comme il n'y a plus de bouton pour l'apprendre, cette
-pastille LE DIT — elle ne fait rien d'autre. Le X · Y · Z tapé reste supprimé :
-un glisser dit où va une molécule, et le ↺ de son espace annule position ET
-rotation. */}
-<span
-  className="px-2 py-1 text-[10px] font-semibold rounded-md border h-7 inline-flex items-center whitespace-nowrap bg-amber-50 border-amber-200 text-amber-800"
-  title={`Drag ON a molecule to turn it about its own centre (left button) · right-drag ON it to slide it — the other molecules stay where they are, and the molecule you take hold of becomes « ${molNameOf(selectedMolKey)} »'s ★ reference (its ↺ in the styling bar puts it back). Start the drag on the background (or hold Alt) to turn the camera as before, and use the wheel to zoom. In a PDB that holds SEVERAL molecules (a complex, a receptor with its ligands, an NMR model), the molecule under the pointer is the ONE that moves: its atoms are placed inside the structure, the file is never split into copies (a split would draw every atom twice and would freeze the frame slider), and its place is written into the film's poses with the ↺ of its space putting it back.`}>
-  🖱 drag a molecule: turn · right-drag: slide{heldPart ? ` · 🖐 ${heldPart}` : ''}
-</span>
+{/* 🖱 LA PASTILLE « drag a molecule: turn · right-drag: slide » A ÉTÉ RETIRÉE
+    (la demande : « the button “drag a molecule: turn · right-drag: slide” seems
+    useless and you can remove it »). Le geste, lui, ne change pas : un glisser
+    SUR une molécule la tourne (bouton gauche), un glisser droit la fait glisser,
+    et un glisser qui commence sur le fond est la caméra (voir
+    installMoleculeDrag). Il n'y a donc plus de mode à armer ni d'étiquette à
+    lire : la molécule tenue est dite par la ligne ★ de son espace de style
+    (« moving « … » ALONE »), là où ses réglages vivent. */}
 <button
 type="button"
 onClick={rebuildHydrogensNow}
@@ -20398,295 +20053,35 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
   </div>
 )}
 
-{/* ── LES ONGLETS DU PANNEAU UNIQUE — DISTANCES · TORSION · RAMACHANDRAN ───────
-    Un seul panneau, trois sections, parce que les trois travaillent sur la MÊME
-    molécule et les MÊMES atomes piqués : on passe de l'une à l'autre sans refermer. */}
-{calcOpen && (
-  <div className="w-full flex flex-wrap items-center gap-1.5 rounded-t-lg border border-slate-300 bg-white px-2 py-1">
-    <span className="text-[10px] font-black text-slate-500 uppercase tracking-wide">Structure &amp; geometry</span>
-    {[['distances', '🧬 Distances & calculation'], ['torsion', '✏️ Torsion'], ['rama', '🪢 Ramachandran']].map(([id, label]) => (
-      <button key={id} type="button" onClick={() => openCalcSection(id)}
-        title="Open this section of the pane — the three sections share the same molecule and the same picked atoms A · B · C · D, so working in one is visible in the others."
-        className={`px-2 py-0.5 text-[10px] font-bold rounded border ${calcSection === id ? 'bg-slate-700 text-white border-slate-700' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-100'}`}>
-        {label}
-      </button>
-    ))}
-    <span className="text-[10px] font-mono text-slate-400 ml-auto">
-      {torsionAtoms.length ? `A · B · C · D: ${torsionQuadName(torsionAtoms)}` : 'no atom picked'}
-    </span>
-  </div>
-)}
-
-{/* ✏️ Torsion — METTRE UN DIHÈDRE — OU ATTEINDRE UNE DISTANCE — AU CHIFFRE. Quatre
-    atomes piqués dans la vue 3D (A · B · C · D — B–C est la charnière) puis UN nombre
-    tapé : l'angle est résolu en forme fermée (utils/torsionDrive.js) et le côté de D
-    tourne d'un bloc rigide, par le MÊME chemin d'écriture qu'un glisser de molécule. */}
-<button type="button" onClick={() => openCalcSection('torsion')}
-  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${calcSection === 'torsion' ? 'bg-amber-100 border-amber-400 text-amber-900' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
-  title="Open the ✏️ Torsion section of the 🧬 pane: four picked atoms A · B · C · D (B–C is the hinge) and a TYPED angle or a TYPED distance. The angle is solved in closed form (utils/torsionDrive.js) and the whole side of D turns as one rigid block, so bond lengths and angles are untouched. ↺ puts the last torsion back.">
+{/* ✏️ Torsion — LA FENÊTRE DU VIEWER, PAS UNE SECTION DE LA BARRE.
+    La demande : « when clicking on torsion do not open the section inside the
+    toolbar but open a dedicated retractable window inside the viewer as for
+    ramachandran. this window will disappear clicking again in the torsion
+    button. » Le bouton ne fait donc qu'OUVRIR/FERMER `torsionWindow` (la fenêtre
+    vit DANS le cadre de la vue 3D, voir plus bas) : rien ne s'insère plus dans la
+    barre de commandes. Quatre atomes piqués dans la vue 3D (A · B · C · D — B–C
+    est la charnière) puis UN nombre tapé : l'angle est résolu en forme fermée
+    (utils/torsionDrive.js) et le côté de D tourne d'un bloc rigide, par le MÊME
+    chemin d'écriture qu'un glisser de molécule. */}
+<button type="button" onClick={() => setTorsionWindow((v) => !v)}
+  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${torsionWindow ? 'bg-amber-100 border-amber-400 text-amber-900' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+  title="Show or hide the ✏️ Torsion window INSIDE the 3D view: four picked atoms A · B · C · D (B–C is the hinge) and a TYPED angle or a TYPED distance. The angle is solved in closed form (utils/torsionDrive.js) and the whole side of D turns as one rigid block, so bond lengths and angles are untouched. ↺ puts the last torsion back. Press the button again to close the window — the picks and the numbers typed stay.">
   ✏️ Torsion{torsionAtoms.length ? ` (${torsionAtoms.length}/4)` : ''}
 </button>
-{calcSection === 'torsion' && (() => {
-  const read = torsionReading();                        // relu à chaque rendu
-  const pairRead = torsionPairReading();                // …et le couple du ⚒ avec lui
-  const part = torsionPicks();
-  const dragged = part.ok ? structureWasDragged(part.structure) : false;
-  /* LES ATOMES EMPILÉS, MAINTENANT — la lecture du cœur dur (§2bis) sur les coordonnées
-     à l'écran : c'est ce que la demande réclamait de VOIR, et c'est ce que le ⚒ (sans
-     atome piqué) va écarter. Recalculé à chaque rendu du panneau seulement. */
-  const here = componentRef.current;
-  const contactRead = here && here.structure ? relaxContactReading(here.structure) : null;
-  return (
-    <div className="w-full bg-amber-50/40 border border-t-0 border-amber-200 rounded-b-lg p-3 flex flex-col gap-2">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="text-[10px] font-black text-amber-700 uppercase tracking-wide">Torsion — A · B · C · D (B–C is the hinge: D’s whole side turns)</span>
-        <div className="flex flex-wrap items-center gap-1">
-          {TORSION_SLOT_LETTERS.map((letter, i) => {
-            const slot = torsionAtoms[i];
-            /* LA PASTILLE DE COULEUR — la couleur de l'atome PEINT dans la vue 3D
-               (`paintTorsionPicks`) : le bouton du slot et l'atome piqué portent la
-               MÊME couleur, donc « lequel ai-je cliqué ? » se lit d'un coup d'œil. */
-            const dot = `#${TORSION_SLOT_COLORS[i % TORSION_SLOT_COLORS.length].toString(16).padStart(6, '0')}`;
-            return (
-              <button key={letter} type="button" onClick={() => armTorsionPick(i + 1)}
-                title={`Pick atom ${letter} — ${TORSION_SLOT_ROLES[i]}. Arming a slot drops the atoms picked after it; the click that fills the fourth slot disarms the picker by itself. The atom is highlighted in the 3D view in this colour (${dot}) as soon as it is picked.`}
-                className={`px-2 py-1 text-[10px] font-bold rounded border ${torsionPick === i + 1 ? 'bg-amber-600 text-white border-amber-600' : slot ? 'bg-white border-amber-300 text-amber-800' : 'bg-white border-slate-200 text-slate-400'}`}>
-                <span className="inline-block w-2 h-2 rounded-full mr-1 align-middle" style={{ backgroundColor: dot }} />
-                {letter} · {slot ? slot.label : '—'}
-              </button>
-            );
-          })}
-          <button type="button" onClick={clearTorsionPicks}
-            title="Empty the four slots, and disarm the picker with them."
-            className="px-2 py-1 text-[10px] font-bold rounded bg-white border border-red-300 text-red-600 hover:bg-red-50">
-            Clear
-          </button>
-        </div>
-      </div>
-      <p className="text-[10px] text-slate-500">
-        {read
-          ? <>Now: <b>dihedral {torsionDeg(read.deg)}</b> · <b>A–D {torsionAng(read.dist)}</b> — turn the bond by typing a dihedral (Set) or a distance (Reach).</>
-          : (pairRead
-            ? <>Now: <b>{pairRead.label} {torsionAng(pairRead.dist)}</b> — with these two atoms, ⚒ Model build relaxes the geometry around them until the distance you typed (or, with nothing typed, the length the table gives that pair of elements) is the one the molecule has. Pick two more (B · C) and the same atoms become a hinge — the four of them then mean A · B · C · D as usual.</>
-            : 'Pick the four atoms: A (the reference — it must not move), B · C (the axle bond), D (the atom whose side turns). Click the 💡 “Pick A · B · C · D” button, then click them one after the other in the 3D view. With NOTHING picked at all, ⚒ Model build works all the same: it scans the bonds ITSELF, finds the lengths further than 0.2 Å from the length the tables give that pair of elements, and drives them one after the other (the worst first, stage by stage, every stage relaxed in place, the part outside the window re-built) until every length is back — and a wrong length the first one leaves behind is the next one’s job.')}
-      </p>
-      {contactRead && (contactRead.count ? (
-        <p title={`The HARD CORE, read on the coordinates that are on screen RIGHT NOW (see §2bis of utils/geometryRelax.js): every pair of atoms the file does NOT bond (more than two bonds apart) that has come closer than ${RELAX_CONTACT_SCALE} × the sum of the two Bondi radii — ${contactDistanceOf('C', 'C').distance.toFixed(2)} Å for two carbons, 1.44 Å for two hydrogens. It is a FLOOR, not a van der Waals: no attraction, no charges, no kcal/mol — it says only that two atoms may not sit in the same place. It is IN the target function, so the descent keeps it while it works, and ⚒ Model build (with NO atom picked) drives every pair that is still inside it back out to its contact distance, with the very protocol it uses for a wrong bond length (worst overlap first, the wrong lengths before it).${contactRead.unknownElements ? ` ⚠ ${contactRead.unknownElements} atom${contactRead.unknownElements === 1 ? '' : 's'} of this molecule have no radius in Bondi's table and took the fallback (${VDW_RADIUS_FALLBACK} Å).` : ''}`}
-          className="text-[10px] font-semibold text-rose-800 bg-rose-50 border border-rose-200 rounded-md px-2 py-1 whitespace-pre-wrap">
-          ⛔ {contactRead.count} atom pair{contactRead.count === 1 ? '' : 's'} inside their hard core right now — closest {contactRead.worst.i}–{contactRead.worst.j} at {torsionAng(contactRead.worst.distance)} for a contact distance of {torsionAng(contactRead.worst.target)}
-          {contactRead.count > 1 ? ` (tightest: ${contactRead.contacts.slice(0, 4).map((c) => `${c.i}–${c.j} ${torsionAng(c.distance)}/${torsionAng(c.target)}`).join(' · ')}${contactRead.count > 4 ? ' …' : ''})` : ''}
-          {' '}— 💡 the ⚒ button with NO atom picked un-jams them (and puts the wrong lengths right first).
-        </p>
-      ) : (
-        <p className="text-[10px] text-emerald-700">
-          ✓ no atom pair inside its hard core ({RELAX_CONTACT_SCALE} × the two Bondi radii — a floor, not a van der Waals: the descent keeps it while it works)
-        </p>
-      ))}
-      {torsionPick > 0 && (
-        <p className="text-[10px] font-bold text-amber-800">● Pick atom {TORSION_SLOT_LETTERS[torsionPick - 1]} — {TORSION_SLOT_ROLES[torsionPick - 1]}</p>
-      )}
-      {torsionMsg && (
-        <p title={torsionMsg} className={`text-[10px] font-semibold rounded-md border px-2 py-1 whitespace-pre-wrap ${/^[✓↳↺]/.test(torsionMsg) ? 'text-emerald-800 bg-emerald-50 border-emerald-200' : 'text-rose-800 bg-rose-50 border-rose-200'}`}>
-          {torsionMsg}
-        </p>
-      )}
-      <div className="flex flex-wrap items-end gap-2">
-        <label className="flex items-center gap-1 text-[10px] font-bold text-amber-800">
-          dihedral
-          <input type="number" step="1" min="-180" max="180" value={torsionAngleDraft}
-            onChange={(e) => setTorsionAngleText(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') applyTorsionAngle(); }}
-            placeholder="−60" aria-label="Target dihedral A–B–C–D, in degrees"
-            title="The dihedral A–B–C–D you want, in degrees (−180 … 180). ↵ or Set turns the bond B–C — right-hand rule about B→C, the whole side of D moving as one rigid piece — until the dihedral is exactly this. The report tells the dihedral the structure HAS afterwards, read by the same signed-IUPAC reader as the χ/δ readers."
-            className="w-16 border border-amber-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-amber-500 text-[10px] font-mono bg-white" />
-          °
-        </label>
-        <button type="button" onClick={applyTorsionAngle}
-          className="px-2 py-1 text-[10px] font-bold rounded border bg-amber-600 border-amber-700 text-white hover:bg-amber-700"
-          title="Turn B–C in one rigid rotation until the dihedral A–B–C–D equals the angle typed on the left. A does not move, the two axle atoms do not move, and nothing else in the molecule is touched.">
-          Set
-        </button>
-        <label className="flex items-center gap-1 text-[10px] font-bold text-amber-800">
-          A–D
-          <input type="number" step="0.01" min="0.01" value={torsionDistDraft}
-            onChange={(e) => setTorsionDistDraft(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') applyTorsionDistance(); }}
-            placeholder="2.60" aria-label="Target distance A–D, in ångströms"
-            title="The distance |A − D| you want, in ångströms. D turns on a circle about B–C, so this has AT MOST TWO exact answers (two rotamers) and sometimes NONE — the panel then says how close the circle comes and offers ↳ Apply closest. ↵ or Reach applies the solution that turns the bond the least."
-            className="w-16 border border-amber-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-amber-500 text-[10px] font-mono bg-white" />
-          Å
-        </label>
-        <button type="button" onClick={applyTorsionDistance}
-          className="px-2 py-1 text-[10px] font-bold rounded border bg-amber-600 border-amber-700 text-white hover:bg-amber-700"
-          title="Solve the angle that brings A and D to the distance typed on the left — in closed form (cos(θ − φ) = C/Amp), never by scanning: a 1° step could not be exact, and its answer would still have to become a rotation. The nearest of the two exact solutions is applied.">
-          Reach
-        </button>
-        <span className="w-px h-5 bg-amber-200 shrink-0" aria-hidden="true" />
-        <label className="flex items-center gap-1 text-[10px] font-bold text-amber-800">
-          ⇢ moves
-          <input type="number" step="1" min="0" max={RELAX_MAX_RADIUS} value={relaxRadius}
-            onChange={(e) => setRelaxRadiusText(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') buildModelNow(); }}
-            aria-label="How many bonds around the two picked atoms the model build may move"
-            title="How far the build may reach: 0 = only the two atoms move, N = every atom up to N bonds away from them. The farther it reaches, the more the molecule bends around them — and the more atoms are written back. The window is capped (240 atoms) and the report says when it bit. ⚠ It bounds what DRIVES the gesture, not what may move: every atom outside it is re-built from scratch at every step (see “⟳ rebuild”), so the molecule can re-compact around the window instead of being stretched by it."
-            className="w-12 border border-amber-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-amber-500 text-[10px] font-mono bg-white" />
-          bonds
-        </label>
-        <label className="flex items-center gap-1 text-[10px] font-bold text-amber-800">
-          ⇉ stages
-          <input type="number" step="0.5" min="0" max={RELAX_MAX_STAGE_STEP} value={relaxStageStep}
-            onChange={(e) => setRelaxStageStepText(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') buildModelNow(); }}
-            aria-label="Largest step, in ångströms, between two stages of the model build"
-            title="How the pair is brought together, in ångströms: by STAGES of at most this much (2 by default — 18 Å, then 16, then 14… up to the distance you asked for), and after EVERY stage the whole window is relaxed once with the distance already obtained held in place (a restore). The strain of the approach is taken out before the next stage instead of piling up until the last step — measured: a pair 7.35 Å apart with a target of 3 Å stays at 6.94 Å in a single approach and reaches 3.11 Å in 2 Å stages. 0 = one single approach (the gesture this used to be). The report says how many stages and restores there were, and what they straightened."
-            className="w-12 border border-amber-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-amber-500 text-[10px] font-mono bg-white" />
-          Å
-        </label>
-        <label className="flex items-center gap-1 text-[10px] font-bold text-amber-800">
-          🎲 escapes
-          <input type="number" step="1" min="0" max={RELAX_MAX_ESCAPES} value={relaxEscapes}
-            onChange={(e) => setRelaxEscapesText(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') buildModelNow(); }}
-            aria-label="How many torsion kicks the model build may try when the descent gets stuck"
-            title="How the build gets out of a LOCAL minimum. The descent stops in the first dip of its target function and says so — on a long fold (two atoms only another conformation can bring together) that dip is a wall, and the molecule stays stretched. Each 🎲 escape is a TORSION KICK: a part of the window is turned RIGIDLY about one bond the module draws at random (a bond inside a ring is refused, so no cycle is ever bent), by an angle that shrinks from 70° to 12° as the attempts go by — the first ones explore, the last ones adjust. Bond lengths and angles of the turned part are preserved to the digit (it is a rigid rotation), then a SHORT descent (60 steps) relaxes what crosses the axle, and the BEST model of all attempts is the one kept: the result is never worse than the plain descent, and a fold the descent alone could not find can appear. 0 = the gesture as it was (one single descent). The draws come from a FIXED seed, so the same molecule and the same gesture give the same model to the last digit, and a kick that would put two unbonded atoms closer than 1.45 Å is only kept if it is much better otherwise — the report says how many such contacts remain on the model you get."
-            className="w-12 border border-amber-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-amber-500 text-[10px] font-mono bg-white" />
-          kicks
-        </label>
-        <label className="flex items-center gap-1 text-[10px] font-bold text-amber-800"
-          title="THE PART OF THE MOLECULE THE WINDOW DOES NOT ANCHOR — the answer to « since you limit the number of bonds and atoms to move, the molecules get stretched ». Ticked (the default), it is RE-BUILT FROM SCRATCH AT EVERY STEP: each atom outside the window is put back at the STANDARD length of its bond (the same tables the descent uses — C–C 1.54, C–S 1.82, S–S 2.05 Å…) and at the STANDARD angle of its vertex (sp3 109.47°, sp2 120°, sp 180°), under the DIHEDRAL IT HAD — so its conformation is kept to the digit and its lengths and angles come back to normal. Those atoms therefore CAN move, they follow the window, and the molecule comes out compact instead of stretched between a folded window and a frozen body. The report says how many atoms were re-built, how many really moved, what their bonds and angles gained — and what could not follow (an atom whose bond is not in the tables, or an atom on its own, is left exactly where it is). Unticked: the gesture as it was — the window alone moves and every other atom is returned BIT-FOR-BIT.">
-          <input type="checkbox" checked={relaxRebuild} onChange={(e) => setRelaxRebuild(e.target.checked)}
-            aria-label="Re-build the part of the molecule outside the window at every step"
-            className="w-3 h-3 accent-amber-600" />
-          ⟳ rebuild
-        </label>
-        <button type="button" onClick={buildModelNow}
-          className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-emerald-300 text-emerald-700 hover:bg-emerald-50"
-          title="⚒ MODEL BUILD — the gesture HyperChem had: build a CHEMICALLY VALID model out of the bonds, after they are known. Two atoms picked (A and D of the four, or the only two), the distance typed in the A–D field (left empty, the length the table gives that pair of elements: S–S 2.05 Å, C–S 1.82 Å, C–C 1.54 Å…), and the atoms around them MOVE, step by step, until the molecule has moved enough for the two atoms to be that far apart. The energy it minimises is a TARGET FUNCTION: the squared deviations of every bond of the window from its typical length, of every angle from the ideal angle of its hybridisation (sp3 109.47°, sp2 120°, sp 180°, read from the bond graph — a ring is judged planar only if its own bonds are short, so benzene becomes 120° and cyclohexane stays 109.47°), of the distance you asked for, plus a light leash that keeps the change local, and the dihedrals of every ring the file ITSELF reads as planar (five or six atoms, bonds ≤ 1.45 Å — a benzene, a base) held at zero, so a ring cannot lose its planarity without the report saying so. The pair is brought together BY STAGES (the “⇉ stages” field of the panel, 2 Å by default) and after EVERY stage the whole window is relaxed once with the distance already obtained held in place: measured, a pair 7.35 Å apart aimed at 3 Å stays at 6.94 Å in a single approach and reaches 3.11 Å in 2 Å stages. ⚠ It is NOT a force field: no charges, no solvent, no entropy, no atom or hydrogen added — but ONE HARD CORE, and it IS in the target function: two atoms the file does not bond (more than two bonds apart) may not come closer than 0.6 × the sum of their two Bondi radii (2.04 Å for two carbons, 1.44 Å for two hydrogens). That is a FLOOR, not a van der Waals — no attraction, no kcal/mol — and it is what stops a build from leaving two atoms one on top of each other. The descent is LOCAL and DETERMINISTIC, so a distance it cannot reach (or a pair it cannot separate) is REPORTED with the number it really got, never faked. Every atom is written back the way a molecule drag writes (positionFromArray), so 📏 Measure, the plates, the film and 📥 Download read this geometry; « ↺ Undo torsion » puts the whole molecule back exactly as it was. 🎲 The “escapes” field beside this button says how many TORSION KICKS the build may try when the descent has stopped in a LOCAL minimum (see its own tooltip): a rigid rotation of a part of the window about a drawn bond, then a short descent, the BEST model kept — so the result is never worse than the plain descent — and the draws taken from a FIXED seed, so the same gesture gives the same model to the last digit. And the gesture is WATCHED: the molecule CHANGES on screen at every step (240 images at most, the last one being exactly the geometry the report describes), and clicking ⚒ again while it plays finishes the gesture at once. ⟳ With the “⟳ rebuild” box ticked (its default), THE PART OF THE MOLECULE OUTSIDE THE WINDOW IS RE-BUILT FROM SCRATCH AT EVERY STEP — standard bond lengths, standard angles, the DIHEDRALS it had — so the rest of the molecule CAN move, follows the window, and the model comes out compact instead of stretched between a folded window and a frozen body. Untick it for the gesture that only moves the window (everything else returned bit-for-bit). ⚒ WITH NO ATOM PICKED, the same button builds ON ITS OWN — this very gesture, applied to what the molecule itself says is wrong: it scans every bond of the GRAPH whose length is further than 0.2 Å from the length the tables give that pair of elements, and drives them ONE AFTER THE OTHER with this protocol (the worst first, each one brought back BY STAGES, every stage relaxed in place, the part outside its window re-built) until every length is back where it should be. If the first one leaves NEW wrong lengths behind — a chain that had to fold — the next scan takes those: « si passa alla seconda ». The report says how many were found, driven and fixed, and what is left, with its numbers; the line above the button names the length being driven at each step. And it ALSO UN-JAMS the molecule: the same scan reads every pair the file does NOT bond that sits inside its hard core (the ⛔ line of this panel names them) and drives them back out to their contact distance with the very same protocol — the wrong LENGTHS FIRST, so that chemistry is settled before packing.">
-          ⚒ Model build
-        </button>
-        {torsionClosest && (
-          <button type="button" onClick={applyClosestTorsion}
-            className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-fuchsia-300 text-fuchsia-700 hover:bg-fuchsia-50"
-            title={`The distance you typed (${torsionAng(torsionClosest.target)}) cannot be reached: D's circle about B–C stops at ${torsionAng(torsionClosest.closest)}. This applies the rotation of exactly ${torsionDeg(torsionClosest.deltaDeg)} that comes as close as the bond can — the number comes from the same closed-form solution that refused the target.`}>
-            ↳ Apply closest ({torsionAng(torsionClosest.closest)})
-          </button>
-        )}
-        <button type="button" onClick={undoLastTorsion}
-          className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-700 hover:bg-slate-100"
-          title="Put the last torsion back: every atom of that structure is written back exactly where it was BEFORE the gesture (the four picks and the numbers typed stay — this undoes the move, not the question). With no torsion applied yet, the button says so instead of doing nothing.">
-          ↺ Undo torsion
-        </button>
-        <button type="button"
-          onClick={() => { if (measureModeRef.current) toggleMeasureMode(); armTorsionPick(torsionPick || nextTorsionSlot()); }}
-          className={`px-2 py-1 text-[10px] font-bold rounded border ${torsionPick ? 'bg-amber-600 text-white border-amber-600' : 'bg-white border-amber-300 text-amber-700 hover:bg-amber-100'}`}
-          title="Arm the click picker on the next slot: click the atoms in the 3D view, A then B then C then D. 📏 Measure is turned off if it was on (the two gestures cannot both take the clicks), and the click that fills the fourth slot disarms the picker by itself.">
-          🎯 Pick A · B · C · D
-        </button>
-      </div>
-      <p className="text-[10px] text-slate-400">
-        ⚠ A torsion is not stored anywhere: it lives in the COORDINATES of the frame on screen, like every edit of this bar. Loading another structure, or moving the trajectory to another frame (⏮ / the player), shows that frame’s own geometry again. The atoms that turn are the ones NGL’s bond graph reaches from D without crossing B–C: a bond inside a RING has no such side, and the panel refuses it rather than deforming the ring. ⚒ Model build is the same kind of edit — the same coordinates, the same ↺ — except that it moves a whole WINDOW of atoms, chosen by the “⇢ moves” field, and writes back only those: everything else keeps its own numbers, to the last digit. It minimises a target function of ideal bond lengths, ideal angles AND the planarity of the rings the file itself reads as planar (which is why a benzene no longer comes out of a build slightly plucked), and it brings the two atoms together BY STAGES, relaxing the whole window after each one — the “⇉ stages” field sets that step (2 Å by default, 0 = one single approach). 🎲 The “escapes” field beside it is how the build leaves a LOCAL minimum (see its tooltip: torsion kicks drawn from a fixed seed, the best model kept), and the molecule you are looking at CHANGES at every step of the gesture instead of jumping to the final geometry — the line above the button follows the steps, and the report at the end is the module’s own. Like the ⚭ Fold for disulfides next door it is not a physical calculation — it minimises a target function of ideal bond lengths and angles — and it says out loud what it could not do, contacts too short included — and since every pair the file does NOT bond now sits inside a HARD CORE it may not enter (0.6 × the sum of the two Bondi radii: 2.04 Å for two carbons, 1.44 Å for two hydrogens — a floor, not a van der Waals), the ⛔ line above tells you how many pairs of the molecule on screen are inside theirs RIGHT NOW, and the build drives them back out too. ⚒ And it needs NO atom picked: press it with nothing selected and the same button scans the molecule itself — every bond whose length is further than 0.2 Å from the length the tables give that pair of elements, the aromatic rings read as such, then every pair inside its hard core — drives each of them with this very protocol (stages, a restore after each, ⟳ rebuild), and re-scans: a wrong length the first gesture CREATED is the next one’s job, until the molecule is back. The report says how many it found, drove and fixed, and what is left, with its numbers.
-      </p>
-      {dragged && (
-        <p className="text-[10px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">
-          ⚠ This molecule has also been DRAGGED by hand: a frame change or ⏮ replays that drag from the coordinates it knows, so a torsion applied after the drag goes with it. The ↺ of the molecule’s own space (styling bar) resets both — drag and torsion.
-        </p>
-      )}
-    </div>
-  );
-})()}
-
-{/* 🪢 LE GRAPHE DE RAMACHANDRAN — les φ/ψ de la chaîne peptidique à l'écran. Il se
-    LIT, il n'écrit RIEN : tout vient de utils/ramachandran.js, et la lecture est un
-    SNAPSHOT pris par « ⟳ Read the backbone ». */}
+{/* 🪢 LE GRAPHE DE RAMACHANDRAN — LA FENÊTRE DU VIEWER, PLUS UNE SECTION.
+    La demande : « The ramachandran button will make the ramachandran window inside
+    the viewer appear or disappear so the large section which now opens inside the
+    tool bar will not be useful anymore. » Le bouton ne fait donc qu'OUVRIR/FERMER
+    le dock 🪢 (le MÊME état que son ⇤ et que l'onglet vertical du bord gauche), et
+    la grande section de la barre a disparu avec lui. Le graphe se LIT, il n'écrit
+    RIEN : tout vient de utils/ramachandran.js, et la lecture est un SNAPSHOT — pris
+    à l'ouverture, et repris par son ⟳ Read. */}
 <button type="button"
-  onClick={() => { if (calcSection !== 'rama') readRamachandran(); openCalcSection('rama'); }}
-  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${calcSection === 'rama' ? 'bg-amber-100 border-amber-400 text-amber-900' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
-  title="Open the 🪢 Ramachandran section of the 🧬 pane: the φ/ψ map of the peptide backbone on screen (φ = C(i−1)·N·CA·C, ψ = N·CA·C·N(i+1)), read with the same signed-IUPAC dihedral reader as the χ/δ readers — there is no second dihedral reader in this app (utils/torsionDrive.js) — one point per residue. The background is the classic contour, used both to draw AND to classify (α right, β, α left, and violet OUTLIERS listed with their distance to the nearest basin); glycine and proline get their own contours. ⚠ It is a PLAN, not a calculation: no potential, no energy, and a point outside the regions is not “wrong”, it is outside the regions. Press ⟳ Read the backbone again after a ✏️ Torsion or a 🧬 calculation to see where the points moved. This section never writes anything.">
+  onClick={() => { if (!ramaDock) readRamachandran(); toggleRamaDock(!ramaDock); }}
+  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${ramaDock ? 'bg-amber-100 border-amber-400 text-amber-900' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+  title="Show or hide the 🪢 Ramachandran window INSIDE the viewer: the φ/ψ map of the peptide backbone on screen (φ = C(i−1)·N·CA·C, ψ = N·CA·C·N(i+1)), read with the same signed-IUPAC dihedral reader as the χ/δ readers — there is no second dihedral reader in this app (utils/torsionDrive.js) — one point per residue. The window sits at the LEFT of the 3D view (expandable · compressible) and this button closes it again. ⚠ It is a PLAN, not a calculation: no potential, no energy, and a point outside the regions is not “wrong”, it is outside the regions. The reading is a snapshot of the coordinates: the window's ⟳ Read takes it again.">
   🪢 Ramachandran{rama && rama.measured ? ` (${rama.measured})` : ''}
 </button>
-{calcSection === 'rama' && (() => {
-  /* LE POINT SURVOLÉ — retrouvé par sa CLEF dans la lecture courante : une clef d'une
-     ancienne lecture ne désigne plus rien (le panneau retombe sur son invite au lieu
-     de nommer un point disparu), et un résidu sans point ne peut pas être survolé. */
-  const hovered = rama && ramaHover
-    ? rama.residues.find((r) => r.key === ramaHover && r.point) || null
-    : null;
-  const hoverText = ramaHoverTextOf(hovered);
-  return (
-    <div className="w-full bg-amber-50/40 border border-t-0 border-amber-200 rounded-b-lg p-3 flex flex-col gap-2">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="text-[11px] font-black text-amber-700 uppercase tracking-wide">Ramachandran — φ (x) against ψ (y), one point per residue · hover a point for its φ and ψ</span>
-        <div className="flex flex-wrap items-center gap-1.5">
-          <button type="button" onClick={readRamachandran}
-            title="Read the backbone of the molecule on screen NOW: its N · CA · C atoms, the φ and ψ of every residue, the region of each one. Press it again after a ⚒ Model build or a ✏️ Torsion to see where the points moved — the plot is a snapshot of the coordinates, not a live view."
-            className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-amber-300 text-amber-700 hover:bg-amber-100">
-            ⟳ Read the backbone
-          </button>
-          <button type="button" onClick={() => { setRama(null); setRamaMsg(''); setRamaHover(null); }}
-            title="Empty the plot (the molecule is not touched — only the reading is dropped)."
-            className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100">
-            Clear
-          </button>
-        </div>
-      </div>
-      {ramaMsg && (
-        <p title={ramaMsg} className={`text-[10px] font-semibold rounded-md border px-2 py-1 whitespace-pre-wrap ${/^✓/.test(ramaMsg) ? 'text-emerald-800 bg-emerald-50 border-emerald-200' : 'text-rose-800 bg-rose-50 border-rose-200'}`}>
-          {ramaMsg}
-        </p>
-      )}
-      <div className="flex flex-wrap items-start gap-3">
-        {/* LE GRAPHE — un seul dessin pour les deux fenêtres (`ramaPlotSvg`) : la section
-            🪢 et le dock à gauche de la vue 3D montrent donc EXACTEMENT le même SVG. */}
-        {ramaPlotSvg()}
-        <div className="flex flex-col gap-1.5 min-w-[180px] flex-1">
-          <p className="text-[10px] text-slate-600">{ramaSummaryText()}</p>
-          {rama && (rama.gly || rama.pro || rama.prePro) ? (
-            <p className="text-[10px] text-slate-500">
-              {[`${rama.gly} glycine${rama.gly === 1 ? '' : 's'}`, `${rama.pro} proline${rama.pro === 1 ? '' : 's'}`,
-                `${rama.prePro} before a proline`].filter((s) => !s.startsWith('0 ')).join(' · ')}
-              {' '}— classified by their OWN contours (a glycine's two mirrors are allowed, a proline's φ is closed by its ring, a pre-proline has a wider β), not by the ones drawn behind the plot.
-            </p>
-          ) : null}
-          {ramaOutlierList()}
-          {rama && rama.outliers.some((o) => o.omega != null && Math.abs(o.omega) < 150) ? (
-            <p className="text-[10px] text-amber-800">
-              ⚠ A residue above has an ω far from 180°: the PEPTIDE BOND itself is twisted (a cis amide, or a strained one). That is not a φ/ψ problem — it is a bond that does not want to be there, and the force field of 🧬 Structure calculation puts a target of 180° on every peptide C–N bond: run it and the ω term brings it back.
-            </p>
-          ) : null}
-        </div>
-      </div>
-      {/* CE QUE DIT LE POINT SURVOLÉ — la demande : « hovering on it tell me which angle
-          it is ». La ligne vient du module (`ramaHoverTextOf`) : le résidu, ses DEUX
-          angles lus (φ et ψ, ceux des deux axes), son ω et sa région — et pour un
-          outlier, de quel bassin il est le plus proche. Elle est TOUJOURS là, avec son
-          invite quand rien n'est survolé, pour que le panneau ne saute pas d'une ligne
-          chaque fois que la souris entre ou sort d'un point. Le clavier la remplit
-          aussi (Tab va de point en point : chaque point porte son texte en `aria-label`). */}
-      <p className="text-[12px] font-semibold rounded-md border px-2 py-1 min-h-[30px] flex items-center gap-1.5 flex-wrap bg-white border-amber-200 text-slate-700"
-        title="Hover a point — Tab also reaches them, a click (or a tap) shows it too — to read which residue it is and its exact φ and ψ. The dashed crosshair carries the point to both axes: its φ stands under it, its ψ beside it.">
-        {hovered ? (
-          <>
-            <span className="inline-block w-2.5 h-2.5 rounded-full shrink-0 border"
-              style={{
-                background: RAMA_REGION_COLORS[hovered.region] || RAMA_REGION_COLORS.outlier,
-                borderColor: hovered.region === 'outlier' ? '#5b21b6' : '#cbd5e1',
-              }} />
-            <span className="font-mono">{hoverText}</span>
-          </>
-        ) : (
-          <span className="text-slate-500 font-normal">
-            Hover a point (or reach it with Tab) to read WHICH residue it is and its exact φ and ψ —
-            the dashed crosshair carries it to the two axes.
-          </span>
-        )}
-      </p>
-      <p className="text-[10px] text-slate-400">
-        ⚠ What this plot is NOT: not an energy, not a potential, not a validation. The contours are the classic ones (Ramachandran–Ramakrishnan–Sasisekharan 1963; the “core” areas of Lovell et al. 2003), drawn as polygons, and they are the SAME polygons the classification uses — but they are a plan of reading: a point outside them is outside the PERMITTED REGIONS of that figure, and nothing more. No energy was evaluated here, no hydrogen added, no solvent exists in this model. φ and ψ are read on the coordinates on screen, one point per residue, with the signed dihedral reader of the app (utils/torsionDrive.js) — and a residue needs BOTH its neighbours in the same chain (number − 1 and + 1): the ends of a chain and the residues around a gap have ONE angle only, so they are COUNTED above and NOT drawn (a point that was not measured would be a lie). This panel writes nothing: the reading is a snapshot, and ⟳ Read the backbone takes it again on the coordinates of the moment — which is how a ⚒ Model build becomes visible here.
-      </p>
-    </div>
-  );
-})()}
-
 {/* ⚡ ESP — the electrostatic-potential surface of the molecule selected in the
     Molecules bar. It sits in ✏️ Modify (the request: « anche il pulsante ESP
     dovrebbe piuttosto apparire nella sezione modify »): it MODIFIES what is on
@@ -20739,25 +20134,34 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
     <button type="button" onClick={() => espApplyLimits(50, 50)} className="px-1.5 py-0.5 rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-50 font-semibold" title="NGL's original wide range ±50 — only the strongest charges reach red/blue">±50</button>
   </div>
 )}
-{/* 🧬 LE CALCUL DE STRUCTURE — n DÉPARTS TIRÉS AU HASARD, LE ⚒ SUR CHACUN, LES m
-    MEILLEURES GARDÉES. La demande, mot pour mot : « Implement a structure calculation
-    button in which the user provide the distances between atom pairs and selects the
-    number of starting structures n and the number of retained structures m. The program
-    must then generate n structures by randomly assigning values of all dihedral angles.
-    From each of these n structure the protocol of “model build” is applied to respect
-    the distance constraints and the final result is scored. the best m structures are
-    retained. »
+{/* 🧬 LE CALCUL DE STRUCTURE — n DÉPARTS TIRÉS AU HASARD, LE PROTOCOLE STANDARD SUR
+    CHACUN, LES m MEILLEURES GARDÉES. La demande, mot pour mot : « Implement a structure
+    calculation button in which the user provide the distances between atom pairs and
+    selects the number of starting structures n and the number of retained structures m.
+    The program must then generate n structures by randomly assigning values of all
+    dihedral angles. From each of these n structure the protocol of “model build” is
+    applied to respect the distance constraints and the final result is scored. the best
+    m structures are retained. »
     Le panneau ne calcule RIEN : la liste des distances, les deux compteurs, et le module
     PUR (utils/structureCalc.js) fait le reste — pas une seconde descente, pas une seconde
-    table, pas un second générateur. Contrairement au 🪢 il ÉCRIT : la structure retenue,
-    par le MÊME chemin qu'une torsion (donc le 📏, les plaques, le film, le 📥 Download et
-    le ↺ la lisent et la défont). */}
+    table, pas un second générateur. ⚠ LE PROTOCOLE DU ⚒ « MODEL BUILD » N'EST PLUS
+    CELUI DU CALCUL (le module le dit lui-même, §1 de utils/structureCalc.js, et le
+    bouton ⚒ a été retiré du viewer) : un départ suit le protocole STANDARD — tirage des
+    dièdres, recuit, dynamique d'équilibration puis de refroidissement, minimisation,
+    trempe — et le texte ci-dessous le dit tel qu'il est. Contrairement au 🪢 il ÉCRIT :
+    la structure retenue, par le MÊME chemin qu'une torsion (donc le 📏, les plaques, le
+    film, le 📥 Download et le ↺ la lisent et la défont). */}
 <button type="button"
   onClick={() => openCalcSection('distances')}
   className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${calcSection === 'distances' ? 'bg-indigo-100 border-indigo-400 text-indigo-900' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
-  title="🧬 STRUCTURE CALCULATION — the request, verbatim: “the user provide the distances between atom pairs and selects the number of starting structures n and the number of retained structures m. The program must then generate n structures by randomly assigning values of all dihedral angles. From each of these n structure the protocol of ‘model build’ is applied to respect the distance constraints and the final result is scored. the best m structures are retained.” ① THE DISTANCES: pick two atoms with 🎯 Pick A · B · C · D in ✏️ Torsion (the pair is A–B with two atoms, A–D with four) and type the distance you want in the A–D field — left empty, the length the tables give that pair of elements is used, exactly as for ⚒ Model build; every line can be edited, and a pair is listed once. ② n AND m: how many starting structures to build, and how many to keep. ③ ▶ RUN: each of the n starts is a draw of EVERY rotatable dihedral (a bond that is a hinge: single, not inside a ring, with something on both sides) taken uniformly in (−180, 180) and APPLIED as one rigid rotation by the app's own torsion writer, so bond lengths and angles are untouched to the last digit; then the protocol of ⚒ Model build is applied to it — the automatic scan (bond lengths and hard core), then each distance you asked for driven by the very descent the ⚒ uses, stage by stage, pass after pass until nothing improves — and the result is SCORED with the ⚒'s own target function (without the leash) plus the clash penalty its escapes use. The best m are retained, ranked by that score, and the first is written into the molecule. ④ The seed is FIXED: the same molecule, the same distances and the same n give the same family to the last digit. ⏹ Stop stops between two starts and keeps what is done. ⚠ It is NOT a force field, not dynamics, not annealing: no charges, no solvent, no atom added; the randomness is only in the starting dihedrals, and a peptide C–N bond is one of them (a start can come out cis — the ⚒ has no ω target, and 🪢 Ramachandran shows what happened).">
+  title="🧬 STRUCTURE CALCULATION — the request, verbatim: “the user provide the distances between atom pairs and selects the number of starting structures n and the number of retained structures m. The program must then generate n structures by randomly assigning values of all dihedral angles. From each of these n structure the protocol of ‘model build’ is applied to respect the distance constraints and the final result is scored. the best m structures are retained.” ① THE DISTANCES: pick two atoms with 🎯 Pick in the ✏️ Torsion window (the pair is A–B with two atoms, A–D with four) and type the distance you want in the A–D field — left empty, the length the tables give that pair of elements is used; every line can be edited, and a pair is listed once. ② n AND m: how many starting structures to build, and how many to keep. ③ ▶ RUN: each of the n starts is a draw of EVERY rotatable dihedral (a bond that is a hinge: single, not inside a ring, with something on both sides) taken uniformly in (−180, 180) and APPLIED as one rigid rotation by the app's own torsion writer, so bond lengths and angles are untouched to the last digit; then the STANDARD protocol is applied to it — the annealing in dihedral space (Metropolis, 1500 K down to 300 K), the Langevin dynamics (an equilibration at 🌡 hot, then a cooling down to 🌡 cold), the dihedral minimisation, and a cold quench that repairs what the descent broke — and the result is SCORED with the same force field (kcal/mol: bonds, angles, planar rings, vdW, electrostatics, solvent, φ/ψ, χ1, ω, your distances), plus the clash penalty. The best m are retained, ranked by that score, and the first is written into the molecule. ④ The seed is FIXED: the same molecule, the same distances and the same n give the same family to the last digit. ⏹ Stop stops between two starts and keeps what is done. ⚠ What it is NOT: an experimental structure. The protocol is the standard one (annealing, dynamics, minimisation, quench) under the force field, but the force field is the app's OWN — partial charges from the graph, a non-polar solvent term, no explicit water, no added atoms that the file does not have. The randomness is only in the STARTING dihedrals (the score is deterministic), and a peptide C–N bond is one of them: a start can come out cis, which is exactly why the field's ω term and the cold quench are there.">
   🧬 Structure calculation{calcResult ? ` (${calcResult.retained.length}/${calcResult.tried})` : ''}
 </button>
+{/* ⚙ LES TROIS GESTES DU CHAMP, ICI — la demande : « can the MD, Minimize and Energy be
+    put next to “structure calculation” button? » Ils s'appliquent à la molécule TELLE
+    QU'ELLE EST (aucune section à ouvrir), donc ils vivent dans la rangée du bouton 🧬,
+    avec le 🌡 T qui règle la dynamique. Voir `renderForceGestures`. */}
+{renderForceGestures()}
 {calcSection === 'distances' && (() => {
   const live = calcGeometryNow();
   const geom = live ? live.geom : null;
@@ -20766,11 +20170,11 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
     <div className="w-full bg-indigo-50/40 border border-t-0 border-indigo-200 rounded-b-lg p-3 flex flex-col gap-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <span className="text-[10px] font-black text-indigo-700 uppercase tracking-wide">
-          Structure calculation — n starting structures, the ⚒ on each, the best m kept
+          Structure calculation — n starting structures, the standard protocol on each, the best m kept
         </span>
         <div className="flex flex-wrap items-center gap-1.5">
           <button type="button" onClick={calcAddRestraint}
-            title="Add the pair of picked atoms to the list of distances to respect. The two atoms come from the SAME picks the ⚒ uses (🎯 Pick A · B · C · D in the ✏️ Torsion section): with two atoms the pair is A–B, with four it is A–D. The distance is the one typed in the A–D field of that section — left empty, it is the length the tables give that pair of elements (S–S 2.05 Å, C–C 1.54 Å…). A pair already in the list is REPLACED, never doubled."
+            title="Add the pair of picked atoms to the list of distances to respect. The two atoms come from the SAME picks the 🎯 button of the ✏️ Torsion window fills (A · B · C · D): with two atoms the pair is A–B, with four it is A–D. The distance is the one typed in the A–D field of that window — left empty, it is the length the tables give that pair of elements (S–S 2.05 Å, C–C 1.54 Å…). A pair already in the list is REPLACED, never doubled."
             className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-indigo-300 text-indigo-700 hover:bg-indigo-100">
             ⌖ Add the picked pair
           </button>
@@ -20786,6 +20190,42 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
             className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100 disabled:opacity-40">
             Clear the list
           </button>
+          {/* 💾 📂 LA TABLE DANS UN FICHIER — la demande : « Allow to save/upload from
+              file the distance constraints in the structure calculation section. »
+              Le format est celui de utils/structureRestraints.js (trois colonnes,
+              lisible à l'œil) : 💾 écrit la table TELLE QU'ELLE EST AFFICHÉE, 📂 la
+              relit et RÉSOUT les noms d'atomes sur la molécule à l'écran — une ligne
+              non résolue est gardée, avec son `say`, comme une ligne tapée à moitié. */}
+          <button type="button" onClick={calcSaveRestraints}
+            disabled={!calcRestraints.length}
+            title="Save the distance table to a FILE (plain text, three columns: atom A · atom B · target in Å, with a header that says how to read it back). The list lives in this viewer's state, so it disappears when the page is reloaded — the file is what keeps it. It can be edited by hand and reloaded with 📂 Load distances, on this molecule or on another one."
+            className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-indigo-300 text-indigo-700 hover:bg-indigo-100 disabled:opacity-40">
+            💾 Save distances
+          </button>
+          <label
+            title="Load a distance table from a FILE (the format 💾 Save distances writes: one distance per line, “atom A · atom B · target in Å”). Every atom name is resolved ON THE MOLECULE ON SCREEN — “ALA 12 CA”, “12:CA”, “CA12”, the raw file name, or “#123” (atom number) — and a line whose atoms are not found is KEPT as it is, to be finished, with the reason said on the row. A pair already in the table is replaced, never doubled."
+            className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-indigo-300 text-indigo-700 hover:bg-indigo-100 cursor-pointer">
+            📂 Load distances
+            <input type="file" accept=".txt,.csv,text/plain" className="hidden"
+              onChange={(e) => { calcLoadRestraintsFile(e.target.files && e.target.files[0]); e.target.value = ''; }} />
+          </label>
+          {/* ⛓ LA STRUCTURE SECONDAIRE IMPOSÉE → DES CONTRAINTES DE DIHÈDRE — la
+              demande, mot pour mot : « In MD and “structure calculation” allow the
+              conversion of the secondary structure imposed in the “sequence and
+              structure” subsection into dihedral angle constraints. » Le MÊME bouton
+              que celui de la rangée ▶ MD : un seul état, un seul calcul, donc le
+              calcul de structure ne peut pas porter d'autres contraintes que le ▶ MD. */}
+          <button type="button" onClick={calcConvertSecondaryStructure}
+            className={`px-2 py-1 text-[10px] font-bold rounded border transition-colors ${calcDihedrals.length ? 'bg-emerald-50 border-emerald-400 text-emerald-800 hover:bg-emerald-100' : 'bg-white border-indigo-300 text-indigo-700 hover:bg-indigo-100'}`}
+            title={`Convert the secondary structure painted in “Sequence and structure” of the page (${imposedSecondaryStructure ? `${imposedSecondaryStructure.replace(/\s+/g, '').length} letters` : 'nothing painted yet'}) into dihedral angle constraints (H → φ −57° / ψ −47°, E → φ −139° / ψ +135°, flat-bottom window ± ${SS_DIHEDRAL_TOLERANCE}°): they enter the recuit, the dynamics, the minimisation and the quench of every start, and the score counts them. Press again to remove them.`}>
+            ⛓ {calcDihedrals.length ? `${calcDihedrals.length} φ/ψ imposed — Off` : 'Secondary structure → φ/ψ'}
+          </button>
+          {!!calcDihedrals.length && (
+            <span className="text-[9px] font-semibold text-emerald-800"
+              title="What the conversion found, said by the module: the painted letters, the readable residues on screen, and how many were matched (the letters are matched BY ORDER).">
+              {(calcSsReading && calcSsReading.matched) || 0} residue{((calcSsReading && calcSsReading.matched) || 0) === 1 ? '' : 's'} converted (± {SS_DIHEDRAL_TOLERANCE}°)
+            </span>
+          )}
         </div>
       </div>
       <p className="text-[10px] text-slate-500">
@@ -20794,7 +20234,7 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
             {calcUsableRows().length === calcRestraints.length ? '' : `, ${calcUsableRows().length} ready`}, each one
             measured on the molecule ON SCREEN right now. ⌖ adds the picked pair, ➕ adds an empty line whose two atoms
             are TYPED, ✕ drops a line, and every field stays editable: the distance is YOUR number, not a table&apos;s.</>
-          : <>Nothing to respect yet. Two ways: pick two atoms (🎯 Pick A · B · C · D in the ✏️ Torsion section) and press
+          : <>Nothing to respect yet. Two ways: pick two atoms (🎯 Pick in the ✏️ Torsion window) and press
             ⌖, or press ➕ and TYPE a line — “ALA 12 CA” against “ALA 40 CA”, 6.0 Å. A half-written line waits for you;
             ▶ Run uses the finished ones.</>}
       </p>
@@ -20872,7 +20312,7 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
       )}
       <div className="flex flex-wrap items-center gap-3 text-[10px] font-bold text-indigo-800">
         <label className="flex items-center gap-1"
-          title="n — how many structures are BUILT from scratch. Each one is a fresh random draw of every rotatable dihedral, and each one is put through the ⚒ protocol before being scored. More starts means more chances that at least one of them can obey your distances — and more time: one start costs one, two or three descents per distance.">
+          title="n — how many structures are BUILT from scratch. Each one is a fresh random draw of every rotatable dihedral, and each one is put through the standard protocol (anneal → dynamics → minimise → quench) before being scored. More starts means more chances that at least one of them can obey your distances — and more time: one start costs an annealing schedule, a whole dynamics and a minimisation.">
           n starting
           <input type="number" min="1" max={STRUCTURE_CALC_MAX_STARTS} value={calcStarts}
             onChange={(e) => setCalcStartsText(e.target.value)}
@@ -20881,7 +20321,7 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
             className="w-14 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
         </label>
         <label className="flex items-center gap-1"
-          title="m — how many structures are KEPT once every start has been scored. The score is the ⚒'s own target function (ideal bond lengths and angles, planar rings, your distances, the hard core) plus the clash penalty its escapes use; the m best are kept IN ORDER, with their coordinates, and the first one is written into the molecule. Only the m kept structures carry their coordinates — that is what m means.">
+          title="m — how many structures are KEPT once every start has been scored. The score is the force field of this calculation (kcal/mol: bonds, angles, planar rings, vdW, electrostatics, solvent, φ/ψ, χ1, ω, your distances in flat-bottom wells) plus the clash penalty; the m best are kept IN ORDER, with their coordinates, and the first one is written into the molecule. Only the m kept structures carry their coordinates — that is what m means.">
           m kept
           <input type="number" min="1" max={STRUCTURE_CALC_MAX_KEEP} value={calcKeep}
             onChange={(e) => setCalcKeepText(e.target.value)}
@@ -20890,7 +20330,7 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
             className="w-14 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
         </label>
         <label className="flex items-center gap-1"
-          title="🔥 The ANNEALING — how many temperature steps each start gets. A start is a random draw of every dihedral, which is almost always stacked or far from your distances, and the ⚒ protocol that follows is LOCAL: without annealing it stays where the draw put it. The annealing moves DIHEDRALS ONLY (a rigid rotation of one side of the molecule about its hinge: bond lengths and angles cannot move), accepts a step that is worse with probability exp(−Δ/T), and cools down. 0 = no annealing, exactly what this panel did before (n plain draws + the protocol).">
+          title="🔥 The ANNEALING — how many temperature steps each start gets. A start is a random draw of every dihedral, which is almost always stacked or far from your distances, and the protocol that follows is LOCAL: without annealing it stays where the draw put it. The annealing moves DIHEDRALS ONLY (a rigid rotation of one side of the molecule about its hinge: bond lengths and angles cannot move), accepts a step that is worse with probability exp(−Δ/T), and cools down. 0 = no annealing, exactly what this panel did before (n plain draws + the rest of the protocol).">
           🔥 recuit
           <input type="number" min="0" max="24" value={calcAnneal}
             onChange={(e) => setCalcAnneal(Math.max(0, Math.min(24, Math.round(Number(e.target.value) || 0))))}
@@ -20907,13 +20347,63 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
             className="w-12 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
         </label>
         <label className="flex items-center gap-1"
-          title="🌡 MOLECULAR DYNAMICS — how many Langevin steps each start gets after the ⚒ protocol, and how many the ▶ MD button below runs. The dynamics is in DIHEDRAL space (a step is one rigid rotation about a hinge, so bond lengths and angles cannot break), with the full force field: bonds, angles, planar rings, your distances, the hard core, ω trans, the φ/ψ basins and χ1. It is what turns a model that RESPECTS the distances into a model with a defensible Ramachandran plot. 0 = no dynamics.">
+          title="🌡 MOLECULAR DYNAMICS — how many Langevin steps each start gets (and how many the ▶ MD button below runs). The dynamics is in DIHEDRAL space (a step is one rigid rotation about a hinge, so bond lengths and angles cannot break), under the WHOLE force field in kcal/mol — bonds, angles, planar rings, van der Waals, electrostatics with partial charges, non-polar solvent, your distances as flat-bottom wells, ω trans, the φ/ψ statistical potential and χ1. Each start runs an EQUILIBRATION phase at the hot temperature and then cools down to the cold one. 0 = no dynamics.">
           🌡 MD
-          <input type="number" min="0" max="5000" step="10" value={calcMdSteps}
-            onChange={(e) => setCalcMdSteps(Math.max(0, Math.min(5000, Math.round(Number(e.target.value) || 0))))}
+          <input type="number" min="0" max="20000" step="10" value={calcMdSteps}
+            onChange={(e) => setCalcMdSteps(Math.max(0, Math.min(20000, Math.round(Number(e.target.value) || 0))))}
             aria-label="Molecular dynamics steps per start"
-            className="w-14 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
+            className="w-16 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
+          <span className="font-semibold text-slate-500">steps</span>
         </label>
+        <label className="flex items-center gap-1"
+          title="⏱ THE TIMESTEP of the dynamics, in picoseconds — and with it the TOTAL SIMULATION TIME: steps × dt. Type a length here (or in the « total » field) and the number of steps follows; type steps and this length follows. 0.01 ps is the usual value for a dihedral trajectory.">
+          ⏱ dt
+          <input type="number" min="0.0001" max="1" step="0.005" value={calcMdDt}
+            onChange={(e) => setCalcMdDtText(e.target.value)}
+            aria-label="Molecular dynamics timestep, in picoseconds"
+            className="w-16 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
+          <span className="font-semibold text-slate-500">ps</span>
+        </label>
+        <label className="flex items-center gap-1"
+          title="⏱ THE TOTAL SIMULATION TIME of one start, in picoseconds — the length the whole trajectory will have (equilibration + cooling). Typing a length here sets the number of steps to length / dt; that is the only arithmetic the panel does, and the module checks it (`structureCalcSimulationTimeOf`).">
+          ⏱ total
+          <input type="number" min="0.0001" max="20000" step="0.5" value={calcMdTime.ps}
+            onChange={(e) => setCalcMdTotalText(e.target.value)}
+            aria-label="Total simulation time per start, in picoseconds"
+            className="w-20 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
+          <span className="font-semibold text-slate-500">ps</span>
+        </label>
+        <label className="flex items-center gap-1"
+          title="🌡 THE HOT TEMPERATURE of the dynamics, in KELVINS — the equilibration phase. The thermal energy is R·T (0.6 kcal/mol at 300 K, 6 kcal/mol at 3000 K), so 2000–4000 K is the range where a dihedral actually changes basin: that is the whole point of the dynamics inside a structure calculation. The ▶ MD button below keeps ONE temperature instead (its own 🌡 T field).">
+          🌡 hot
+          <input type="number" min="1" max="20000" step="100" value={calcMdHot}
+            onChange={(e) => setCalcMdHotText(e.target.value)}
+            aria-label="Hot temperature of the molecular dynamics, in kelvins"
+            className="w-16 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
+          <span className="font-semibold text-slate-500">K</span>
+        </label>
+        <label className="flex items-center gap-1"
+          title="🌡 THE COLD TEMPERATURE at the end of the cooling, in KELVINS — 300 K is room temperature (R·T = 0.6 kcal/mol): the molecule vibrates and settles, it does not jump basins any more.">
+          🌡 cold
+          <input type="number" min="1" max="20000" step="50" value={calcMdCold}
+            onChange={(e) => setCalcMdColdText(e.target.value)}
+            aria-label="Cold temperature of the molecular dynamics, in kelvins"
+            className="w-16 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
+          <span className="font-semibold text-slate-500">K</span>
+        </label>
+        <label className="flex items-center gap-1"
+          title="⚖ THE EQUILIBRATION SHARE of the dynamics, in per cent: that part runs at the HOT temperature (the conformation installs itself under your distances), the rest cools down hot → cold. 33 % is the default; 0 % starts the cooling at once.">
+          ⚖ equil
+          <input type="number" min="0" max="90" step="5" value={calcMdEquil}
+            onChange={(e) => setCalcMdEquil(Math.max(0, Math.min(90, Math.round(Number(e.target.value) || 0))))}
+            aria-label="Share of the dynamics spent equilibrating, in per cent"
+            className="w-14 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
+          <span className="font-semibold text-slate-500">%</span>
+        </label>
+        <span className="text-[10px] font-mono font-bold text-indigo-800 bg-indigo-50 border border-indigo-200 rounded px-1.5 py-0.5"
+          title="steps × dt — the nominal length of one start's trajectory, computed by the module.">
+          = {calcMdTime.ps} ps ({calcMdTime.ns} ns)
+        </span>
         <label className="flex items-center gap-1"
           title="⚒ MINIMISATION — how many sweeps of the dihedral minimisation each start gets after the dynamics (and how many the ⚒ Minimise button runs). Each hinge is tried on both sides of a step that halves as soon as a whole sweep improves nothing: it lands on a LOCAL MINIMUM of the same force field, which is the last energy refinement of the protocol. 0 = no minimisation.">
           ⚒ sweeps
@@ -20923,7 +20413,14 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
             className="w-12 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
         </label>
         <label className="flex items-center gap-1"
-          title="👁 WATCH EACH START: every gesture the module announces (the random draw, each annealing step, the preparation, each distance driven, the final quench) is written into the molecule ON SCREEN, by the same path a torsion uses — so you SEE the molecule fold instead of watching a progress line. Uncheck it for a quiet run (the final models are written all the same). ↺ Undo torsion puts back the molecule you had before the calculation wrote anything.">
+          title={`🪢 LET ω VARY — the request: « in the structure calculation allow the option to vary also the omega backbone angle. » UNCHECKED (the default) every peptide C–N bond is a PROTECTED dihedral: the annealing, the quench, the dynamics AND the minimisation refuse a step that increases its ω cost — that is what keeps peptides trans (measured: without it, an ω 0.4° off trans ended up cis after 300 dynamics steps). CHECKED, ω becomes an ORDINARY dihedral of the protocol: its barrier is still a family of the force field (k = ${STRUCTURE_CALC_OMEGA_WEIGHT} kcal/mol, zero inside the plateau of ± ${STRUCTURE_CALC_OMEGA_TOLERANCE}° around ${STRUCTURE_CALC_OMEGA}°), and the FIELD alone arbitrates — a peptide only leaves trans when a distance you asked for, an imposed φ/ψ or a clash pays more than that barrier. The step stays the family's own (12° in the annealing, 4° in the dynamics), so ω still turns by small steps and never jumps to another conformer. The setting is the SAME one for ▶ Run, ▶ MD and ⚒ Minimise.`}>
+          <input type="checkbox" checked={calcOmegaFree} onChange={(e) => setCalcOmegaFree(e.target.checked)}
+            aria-label="Let the peptide ω dihedral vary"
+            className="accent-indigo-600" />
+          🪢 ω varies
+        </label>
+        <label className="flex items-center gap-1"
+          title="👁 WATCH EACH START: every gesture the module announces (the random draw, each annealing step, the equilibration, the cooling, the minimisation, the quench) is written into the molecule ON SCREEN, by the same path a torsion uses — so you SEE the molecule fold instead of watching a progress line. Uncheck it for a quiet run (the final models are written all the same). ↺ Undo torsion puts back the molecule you had before the calculation wrote anything.">
           <input type="checkbox" checked={calcWatch} onChange={(e) => setCalcWatch(e.target.checked)}
             aria-label="Write each start on screen while it is computed"
             className="accent-indigo-600" />
@@ -20942,10 +20439,6 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
             ⏹ Stop
           </button>
         )}
-        <span className="font-semibold text-slate-500"
-          title="The ⚒'s own settings, used by every descent of this calculation: “⇢ moves” is the radius the automatic scan reaches with, “⇉ stages” the step of the staged approach, and “🎲 escapes” the torsion kicks each descent may try when it is stuck. Set escapes to 0 for a family of n plain descents (faster), or higher for descents that try harder.">
-          ⇢ moves {relaxRadius} · ⇉ stages {relaxStageStep} · 🎲 escapes {relaxEscapes}
-        </span>
       </div>
       {calcProgress && (
         <p className="text-[10px] font-semibold text-indigo-700">{calcProgress}</p>
@@ -20963,33 +20456,11 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
       <div className="rounded-lg border border-slate-200 bg-slate-50/60 p-2 flex flex-col gap-1.5">
         <div className="flex flex-wrap items-center justify-between gap-1.5">
           <span className="text-[10px] font-black text-slate-600 uppercase tracking-wide"
-            title="THE FORCE FIELD OF THIS CALCULATION — one list of named families, summed by the module. The annealing, the dynamics, the minimisation and the score all read THIS list: no engine has a physics of its own. The energy is in the app's own units (comparable inside one calculation) — it is NOT a kcal/mol.">
-            🧲 Force field · {FORCE_FIELD_FAMILIES.length} families
+            title="THE FORCE FIELD OF THIS CALCULATION — one list of named families, summed by the module, IN kcal/mol. The annealing, the dynamics, the minimisation and the score all read THIS list: no engine has a physics of its own. The charges, the non-polar solvent and the hydrogens it adds are part of it, and the panel writes what it computes. ⚙ The three gestures that PUT this field to work — ▶ MD, ⚒ Minimise and ⟳ Energy — sit in the button row above, next to 🧬 Structure calculation (they act on the molecule as it stands, so they need no section open).">
+            🧲 Force field · {FORCE_FIELD_FAMILIES.length} families · kcal/mol
           </span>
-          <span className="flex flex-wrap items-center gap-1.5">
-            <label className="flex items-center gap-1 text-[10px] font-bold text-slate-600"
-              title="The temperature of the Langevin thermostat, in REDUCED units (k_B = 1, the energy being the force field's) — not kelvins. Around 6 the backbone changes basin, around 0.05 it settles. ▶ MD runs at THIS temperature; the dynamics inside a start anneals from 6 down to 0.05 on its own.">
-              🌡 T
-              <input type="number" min="0.01" max="20" step="0.1" value={calcMdTemp}
-                onChange={(e) => setCalcMdTempText(e.target.value)}
-                aria-label="Molecular dynamics temperature, in reduced units"
-                className="w-16 border border-slate-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-slate-500 text-[10px] font-mono bg-white" />
-            </label>
-            <button type="button" onClick={runMolecularDynamics} disabled={calcBusy}
-              title="RUN MOLECULAR DYNAMICS on the molecule AS IT STANDS, at the temperature above: dihedral Langevin dynamics under the whole force field, with your distance table as restraints and every distance ALREADY held as a leash (a wall, so the trajectory cannot let one go). It is written into the molecule at every frame — you SEE it move — and ↺ Undo torsion puts the molecule back exactly as it was. The report gives the steps, the kinetic temperature, the energy before and after, and what happened to ω, φ/ψ and χ1."
-              className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-sky-400 text-sky-700 hover:bg-sky-50 disabled:opacity-40">
-              ▶ MD
-            </button>
-            <button type="button" onClick={runMinimise} disabled={calcBusy}
-              title="MINIMISE the energy from here: the dihedral descent each start ends on (every hinge tried on both sides of a step that halves as soon as a sweep improves nothing), on the same force field and with the same leash. This is the FINAL ENERGY REFINEMENT — it lands on a local minimum, not merely on a model that respects the distances. ↺ Undo torsion puts the molecule back."
-              className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-amber-400 text-amber-800 hover:bg-amber-50 disabled:opacity-40">
-              ⚒ Minimise
-            </button>
-            <button type="button" onClick={calcReadForceField}
-              title="Read the force field on the molecule as it stands — the families, the residue counts, and which φ/ψ and χ1 are outside. A reading, not a gesture: nothing is written."
-              className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100">
-              ⟳ Energy
-            </button>
+          <span className="text-[10px] font-semibold text-slate-500">
+            ⚙ ▶ MD · ⚒ Minimise · ⟳ Energy — in the row of 🧬 Structure calculation
           </span>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-1">
@@ -20998,27 +20469,38 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
               title={`${row.label} — ${row.of}; ${row.rule}`}>
               <div className="text-[9px] font-black text-slate-500 uppercase tracking-wide flex items-center justify-between gap-1">
                 <span>{row.icon} {row.label}</span>
-                <span className="font-mono text-slate-400">k {row.weight}</span>
+                <span className="font-mono text-slate-400">k {row.k} {row.id === 'elec' ? '' : row.unit}</span>
               </div>
               <div className="text-[9px] text-slate-500 leading-tight">{row.of}</div>
               <div className="text-[10px] font-mono font-bold text-slate-700">
                 {calcForce ? Number(calcForce[row.id]).toFixed(2) : '—'}
-                <span className="text-slate-400 font-normal"> {row.unit === '°' ? 'deg²' : 'Å²'}</span>
+                <span className="text-slate-400 font-normal"> kcal/mol</span>
               </div>
             </div>
           ))}
         </div>
         {calcForce && (
           <p className="text-[10px] text-slate-600">
-            Read on the molecule on screen: <b>E = {calcForce.total.toFixed(2)}</b> =
-            {' '}chemistry {calcForce.target.toFixed(2)} + ω {calcForce.omega.toFixed(2)}
+            Read on the molecule on screen: <b>E = {calcForce.total.toFixed(2)} kcal/mol</b> =
+            {' '}bonds {calcForce.bond.toFixed(2)} + angles {calcForce.angle.toFixed(2)}
+            {' '}+ rings {calcForce.planar.toFixed(2)} + vdW {calcForce.vdw.toFixed(2)}
+            {' '}+ µ {calcForce.elec.toFixed(2)} + solvent {calcForce.solv.toFixed(2)}
             {' '}+ φ/ψ {calcForce.rama.toFixed(2)} + χ1 {calcForce.chi.toFixed(2)}
+            {' '}+ ω {calcForce.omega.toFixed(2)} + your distances {calcForce.restraint.toFixed(2)}
+            {' '}· entropy {calcForce.entropyReport.total.toFixed(1)} cal·mol⁻¹·K⁻¹
+            ({calcForce.entropy.toFixed(2)} kcal/mol of −T·S)
+            {' '}· <b>{calcForce.added.hydrogens}</b> hydrogens added on {calcForce.added.heavy} heavy atoms
+            ({calcForce.added.atoms} atoms in total) · net charge {calcForce.charges.net.toFixed(3)} e
+            ({calcForce.charges.method}) · surface {calcForce.surface.estimate.toFixed(0)} Å²
+            {calcForce.surface.exact != null ? ` (exact ${calcForce.surface.exact.toFixed(0)} Å²)` : ''}
             {' '}· {calcForce.torsions.residues} residue{calcForce.torsions.residues === 1 ? '' : 's'} with a backbone
             ({calcForce.torsions.phi.length} φ, {calcForce.torsions.psi.length} ψ, {calcForce.omegaReport.count} ω, {calcForce.chiReport.count} χ1)
             {' '}· φ/ψ outside a basin: <b>{calcForce.ramaReport.violations}</b>
             {calcForce.ramaReport.worst ? ` (worst ${calcForce.ramaReport.worst.gap.toFixed(0)}° away, ${calcForce.ramaReport.worst.region})` : ''}
             {' '}· χ1 between wells: <b>{calcForce.chiReport.violations}</b>
-            {' '}· ω outside ± {STRUCTURE_CALC_OMEGA_TOLERANCE}°: <b>{calcForce.omegaReport.violations}</b>.
+            {' '}· ω outside ± {STRUCTURE_CALC_OMEGA_TOLERANCE}°: <b>{calcForce.omegaReport.violations}</b>
+            {' '}· pairs inside {calcForce.nonbonded.limit} Å: {calcForce.nonbonded.count}
+            {calcForce.nonbonded.repulsive ? `, ${calcForce.nonbonded.repulsive} repulsive` : ''}.
           </p>
         )}
         {/* ⚠ LA TABLE DES POIDS EST DITE TELLE QU'ELLE EST — et le fait que les trois
@@ -21033,12 +20515,17 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
           distances, then dynamics hot → cold ({STRUCTURE_CALC_MD_HOT} → {STRUCTURE_CALC_MD_COLD}, dt
           {' '}{STRUCTURE_CALC_MD_DT}, γ {STRUCTURE_CALC_MD_FRICTION}) and minimise — and the model is scored on all
           of it. ⚠ Reduced units throughout: the energy is comparable inside one calculation, and it is not kcal/mol.
+          {' '}🪢 <b>ω varies</b> (the checkbox in the options row) makes that peptide C–N bond an ORDINARY dihedral of
+          the protocol: the annealing, the quench, the dynamics and the minimisation then refuse nothing for it, and the
+          barrier above alone decides — a peptide only leaves trans when a distance you asked for, an imposed φ/ψ or a
+          clash pays more than it. Unticked (the default) the bond is PROTECTED: no step of any gesture may increase its
+          ω cost, so both ▶ Run and the isolated gestures keep every peptide trans, at any temperature of the protocol.
         </p>
       </div>
       {ranked && ranked.ranking.length > 0 && (
         <div className="flex flex-col gap-1.5">
           <p className="text-[10px] text-slate-600">
-            <b>{ranked.tried}</b> start{ranked.tried === 1 ? '' : 's'} built, each scored by the ⚒&apos;s own target function
+            <b>{ranked.tried}</b> start{ranked.tried === 1 ? '' : 's'} built, each scored by the force field
             {ranked.refused ? ` (${ranked.refused} refused before scoring)` : ''} · the best{' '}
             <b>{ranked.retained.length}</b> kept and ranked — the others are listed too, with their score, so nothing is
             hidden{calcShown ? <> · on screen right now: <b>#{calcShown}</b> of the kept family</> : null}.
@@ -21136,21 +20623,20 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
       <p className="text-[10px] text-slate-400">
         ⚙ <b>What this calculation does</b>: n random draws of every rotatable dihedral, a 🔥 <b>simulated annealing in
         dihedral space</b> on each (Metropolis, exp(−Δ/T), a cooling schedule — a step is one RIGID rotation of one side
-        about its hinge, so bond lengths and angles cannot move), then the ⚒&apos;s own protocol (the automatic scan, then
-        every distance driven by the same descent the ⚒ uses), then 🌡 <b>molecular dynamics</b> (Langevin, hot → cold)
-        and a ⚒ <b>minimisation</b> under the whole force field, then a cold <b>quench</b> under leash that repairs what
-        the descent broke. The score is that force field — the ⚒&apos;s target function (bonds, angles, planar rings,
-        your distances, the hard core) plus the <b>ω potential</b> (a peptide C–N bond prefers trans), the <b>φ/ψ
-        basins</b> (zero inside a basin of the 🪢 plot, growing with the distance to it) and <b>χ1</b> (three staggered
-        wells) — plus the clash penalty; the best m are kept, and each model carries its backbone reading (see the
-        🧭 φ/ψ column).
-        ⚠ <b>What it is NOT</b>: still no charge, no solvent, no entropy, no atom or hydrogen added, and no score in
-        kcal/mol — it is comparable only inside one calculation (same molecule, same distances). And it stays DIHEDRAL:
-        a move turns a bond, it never moves an atom freely, so the covalent geometry is a constant of the protocol.
-        The seed is FIXED ({STRUCTURE_CALC_SEED}): the same molecule, the same distances and the same n give the same
-        family, digit for digit. Set 🔥 recuit, 🌡 MD and ⚒ sweeps to 0 to get the old behaviour (n plain draws, the ⚒
-        protocol, nothing else). ⏹ stops between two starts; ↺ Undo torsion puts back the molecule you had before the
-        first write.
+        about its hinge, so bond lengths and angles cannot move), then the STANDARD protocol — 🌡 <b>molecular dynamics</b>
+        (Langevin, an equilibration at hot then a cooling down to cold) and a ⚒ <b>minimisation</b> under the whole force
+        field, then a cold <b>quench</b> under leash that repairs what the descent broke. The score is that force field —
+        bonds, angles, planar rings, vdW, electrostatics, non-polar solvent, your distances in flat-bottom wells, the
+        <b>ω potential</b> (a peptide C–N bond prefers trans — the 🪢 option decides whether that bond is PROTECTED or
+        simply a term of the field like any other), the <b>φ/ψ basins</b> (zero inside a basin of the 🪢 plot,
+        growing with the distance to it) and <b>χ1</b> (three staggered wells) — plus the clash penalty; the best m are
+        kept, and each model carries its backbone reading (see the 🧭 φ/ψ column).
+        ⚠ <b>What it is NOT</b>: the force field is the app&apos;s OWN — no explicit water, no added atoms the file does not
+        have — and a score in kcal/mol is comparable only inside one calculation (same molecule, same distances). And it
+        stays DIHEDRAL: a move turns a bond, it never moves an atom freely, so the covalent geometry is a constant of the
+        protocol. The seed is FIXED ({STRUCTURE_CALC_SEED}): the same molecule, the same distances and the same n give the
+        same family, digit for digit. Set 🔥 recuit, 🌡 MD and ⚒ sweeps to 0 to keep only the draws (and their score).
+        ⏹ stops between two starts; ↺ Undo torsion puts back the molecule you had before the first write.
       </p>
     </div>
   );
@@ -21661,7 +21147,7 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
       <span className="text-[10px] font-black text-amber-700 uppercase tracking-wide">🪢 Ramachandran · φ against ψ</span>
       <span className="flex items-center gap-1">
         <button type="button" onClick={readRamachandran}
-          title="Read the backbone of the molecule on screen NOW (its N · CA · C atoms, the φ and ψ of every residue) — press it again after a ⚒ Model build, a ✏️ Torsion or a 🧬 calculation to see where the points moved. The plot is a snapshot of the coordinates, not a live view."
+          title="Read the backbone of the molecule on screen NOW (its N · CA · C atoms, the φ and ψ of every residue) — press it again after a ✏️ Torsion or a 🧬 calculation to see where the points moved. The plot is a snapshot of the coordinates, not a live view."
           className="px-1.5 py-0.5 text-[9px] font-bold rounded border bg-white border-amber-300 text-amber-700 hover:bg-amber-100">⟳ Read</button>
         <button type="button" onClick={() => toggleRamaDock(false)}
           title="Collapse the Ramachandran dock — the plot folds to a thin tab on the left edge (🪢 brings it back), and the 3D view takes the whole width again. The reading is not lost."
@@ -21708,6 +21194,131 @@ className="relative flex-1 min-w-0 border border-slate-200 rounded-xl overflow-h
 style={{ height: (viewerCollapsed ? 0 : viewH) + 'px' }}
 >
 <div ref={containerRef} className="w-full h-full" />
+
+{/* ── ✏️ LA FENÊTRE DE TORSION — DANS LA VUE 3D, PAS DANS LA BARRE ────────────
+    La demande : « The torsion section must be drastically reduced. eliminate
+    comments and eliminate the "model build" button. when clicking on torsion do
+    not open the section inside the toolbar but open a dedicated retractable
+    window inside the viewer as for ramachandran. this window will disappear
+    clicking again in the torsion button. »
+    Ce qui reste, et rien d'autre : les QUATRE SLOTS (A · B · C · D, chacun dans la
+    couleur de l'atome peint dans la vue), le bouton 🎯 qui arme le piquage, la
+    lecture du moment, les DEUX nombres (dihedral · A–D), Set / Reach (et ↳ Apply
+    closest quand le cercle s'arrête avant la cible), ↺ Undo, et le rapport du
+    geste. Aucun réglage de descente, aucun ⚒, aucun paragraphe de mode d'emploi :
+    les gestes de champ (▶ MD · ⚒ Minimise · ⟳ Energy) vivent dans la rangée du
+    bouton 🧬, et le protocole de construction est celui du calcul de structure. Le
+    ⇤ de l'en-tête referme la fenêtre — le bouton ✏️ Torsion la rouvre telle quelle
+    (même état React : atomes piqués et chiffres tapés compris). */}
+{torsionWindow && (() => {
+  const read = torsionReading();
+  const pairRead = torsionPairReading();
+  const part = torsionPicks();
+  const dragged = part.ok ? structureWasDragged(part.structure) : false;
+  return (
+    <div className="absolute left-2 bottom-2 z-20 w-[330px] max-h-[75%] overflow-y-auto custom-scrollbar rounded-xl border border-amber-300 bg-white/95 shadow-lg p-2 flex flex-col gap-1.5">
+      <div className="flex flex-wrap items-center justify-between gap-1">
+        <span className="text-[10px] font-black text-amber-700 uppercase tracking-wide">✏️ Torsion · A · B · C · D (B–C is the hinge: D’s whole side turns)</span>
+        <button type="button" onClick={() => setTorsionWindow(false)}
+          title="Close the torsion window (the ✏️ Torsion button brings it back, with the picks and the numbers typed)."
+          className="px-1.5 py-0.5 text-[9px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100">⇤</button>
+      </div>
+      <div className="flex flex-wrap items-center gap-1">
+        {TORSION_SLOT_LETTERS.map((letter, i) => {
+          const slot = torsionAtoms[i];
+          const dot = `#${TORSION_SLOT_COLORS[i % TORSION_SLOT_COLORS.length].toString(16).padStart(6, '0')}`;
+          return (
+            <button key={letter} type="button" onClick={() => armTorsionPick(i + 1)}
+              title={`Pick atom ${letter} — ${TORSION_SLOT_ROLES[i]}. Arming a slot drops the atoms picked after it; the click that fills the fourth slot disarms the picker by itself. The atom is highlighted in the 3D view in this colour (${dot}) as soon as it is picked.`}
+              className={`px-1.5 py-0.5 text-[10px] font-bold rounded border ${torsionPick === i + 1 ? 'bg-amber-600 text-white border-amber-600' : slot ? 'bg-white border-amber-300 text-amber-800' : 'bg-white border-slate-200 text-slate-400'}`}>
+              <span className="inline-block w-2 h-2 rounded-full mr-1 align-middle" style={{ backgroundColor: dot }} />
+              {letter} · {slot ? slot.label : '—'}
+            </button>
+          );
+        })}
+        <button type="button"
+          onClick={() => { if (measureModeRef.current) toggleMeasureMode(); armTorsionPick(torsionPick || nextTorsionSlot()); }}
+          className={`px-1.5 py-0.5 text-[10px] font-bold rounded border ${torsionPick ? 'bg-amber-600 text-white border-amber-600' : 'bg-white border-amber-300 text-amber-700 hover:bg-amber-100'}`}
+          title="Arm the click picker on the next slot: click the atoms in the 3D view, A then B then C then D. 📏 Measure is turned off if it was on (the two gestures cannot both take the clicks), and the click that fills the fourth slot disarms the picker by itself.">
+          🎯 Pick
+        </button>
+        <button type="button" onClick={clearTorsionPicks}
+          title="Empty the four slots, and disarm the picker with them."
+          className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-white border border-red-300 text-red-600 hover:bg-red-50">
+          Clear
+        </button>
+      </div>
+      <p className="text-[10px] text-slate-500">
+        {read
+          ? <>Now: <b>dihedral {torsionDeg(read.deg)}</b> · <b>A–D {torsionAng(read.dist)}</b> — type a dihedral (Set) or a distance (Reach).</>
+          : (pairRead
+            ? <>Now: <b>{pairRead.label} {torsionAng(pairRead.dist)}</b> — pick two more atoms (B · C) and these four become A · B · C · D.</>
+            : 'Pick four atoms: A (the reference — it must not move), B · C (the axle bond), D (the atom whose side turns). 🎯 then click them one after the other in the 3D view.')}
+      </p>
+      {torsionPick > 0 && (
+        <p className="text-[10px] font-bold text-amber-800">● Pick atom {TORSION_SLOT_LETTERS[torsionPick - 1]} — {TORSION_SLOT_ROLES[torsionPick - 1]}</p>
+      )}
+      <div className="flex flex-wrap items-end gap-2">
+        <label className="flex items-center gap-1 text-[10px] font-bold text-amber-800">
+          dihedral
+          <input type="number" step="1" min="-180" max="180" value={torsionAngleDraft}
+            onChange={(e) => setTorsionAngleText(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') applyTorsionAngle(); }}
+            placeholder="−60" aria-label="Target dihedral A–B–C–D, in degrees"
+            title="The dihedral A–B–C–D you want, in degrees (−180 … 180). ↵ or Set turns the bond B–C — right-hand rule about B→C, the whole side of D moving as one rigid piece — until the dihedral is exactly this. The report tells the dihedral the structure HAS afterwards, read by the same signed-IUPAC reader as the χ/δ readers."
+            className="w-16 border border-amber-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-amber-500 text-[10px] font-mono bg-white" />
+          °
+        </label>
+        <button type="button" onClick={applyTorsionAngle}
+          className="px-2 py-1 text-[10px] font-bold rounded border bg-amber-600 border-amber-700 text-white hover:bg-amber-700"
+          title="Turn B–C in one rigid rotation until the dihedral A–B–C–D equals the angle typed on the left. A does not move, the two axle atoms do not move, and nothing else in the molecule is touched.">
+          Set
+        </button>
+        <label className="flex items-center gap-1 text-[10px] font-bold text-amber-800">
+          A–D
+          <input type="number" step="0.01" min="0.01" value={torsionDistDraft}
+            onChange={(e) => setTorsionDistDraft(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') applyTorsionDistance(); }}
+            placeholder="2.60" aria-label="Target distance A–D, in ångströms"
+            title="The distance |A − D| you want, in ångströms. D turns on a circle about B–C, so this has AT MOST TWO exact answers (two rotamers) and sometimes NONE — the window then says how close the circle comes and offers ↳ Apply closest. ↵ or Reach applies the solution that turns the bond the least."
+            className="w-16 border border-amber-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-amber-500 text-[10px] font-mono bg-white" />
+          Å
+        </label>
+        <button type="button" onClick={applyTorsionDistance}
+          className="px-2 py-1 text-[10px] font-bold rounded border bg-amber-600 border-amber-700 text-white hover:bg-amber-700"
+          title="Solve the angle that brings A and D to the distance typed on the left — in closed form (cos(θ − φ) = C/Amp), never by scanning: a 1° step could not be exact, and its answer would still have to become a rotation. The nearest of the two exact solutions is applied.">
+          Reach
+        </button>
+        {torsionClosest && (
+          <button type="button" onClick={applyClosestTorsion}
+            className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-fuchsia-300 text-fuchsia-700 hover:bg-fuchsia-50"
+            title={`The distance you typed (${torsionAng(torsionClosest.target)}) cannot be reached: D's circle about B–C stops at ${torsionAng(torsionClosest.closest)}. This applies the rotation of exactly ${torsionDeg(torsionClosest.deltaDeg)} that comes as close as the bond can — the number comes from the same closed-form solution that refused the target.`}>
+            ↳ Apply closest ({torsionAng(torsionClosest.closest)})
+          </button>
+        )}
+        <button type="button" onClick={undoLastTorsion}
+          className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-700 hover:bg-slate-100"
+          title="Put the last torsion back: every atom of that structure is written back exactly where it was BEFORE the gesture (the four picks and the numbers typed stay — this undoes the move, not the question). With no torsion applied yet, the button says so instead of doing nothing.">
+          ↺ Undo
+        </button>
+      </div>
+      {torsionMsg && (
+        <p title={torsionMsg} className={`text-[10px] font-semibold rounded-md border px-2 py-1 whitespace-pre-wrap ${/^[✓↳↺]/.test(torsionMsg) ? 'text-emerald-800 bg-emerald-50 border-emerald-200' : 'text-rose-800 bg-rose-50 border-rose-200'}`}>
+          {torsionMsg}
+        </p>
+      )}
+      {dragged && (
+        <p className="text-[10px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">
+          ⚠ This molecule has also been DRAGGED by hand: a frame change or ⏮ replays that drag from the coordinates it knows, so a torsion applied after the drag goes with it. The ↺ of the molecule’s own space (styling bar) resets both — drag and torsion.
+        </p>
+      )}
+      <p className="text-[9px] text-slate-400 leading-tight">
+        A torsion is not stored anywhere: it lives in the COORDINATES of the frame on screen, like every edit of this bar. The atoms that turn are the ones NGL’s bond graph reaches from D without crossing B–C — a bond inside a RING has no such side, and the window refuses it rather than deforming the ring.
+      </p>
+    </div>
+  );
+})()}
+
 
 {/* ⚠ PLUS DE CALQUE DE GESTE ICI. Un div plein cadre capturait la souris quand
     ✥ Move / ↻ Rotate étaient armés — c'est ce qui rendait le geste « séparé »

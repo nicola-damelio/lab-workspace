@@ -451,8 +451,13 @@ has('onChange={(e) => setSectionLabel(sec.id, k, e.target.checked)}', '[étiquet
 has('allowed: new Set(indices)', '[étiquettes] build3dLabelMap ne reçoit que les atomes de l’espace');
 has('const atomIndicesForSele = (structure, sele) => {', '[étiquettes] la sélection du menu devient une liste d’indices d’atomes');
 has('const routeCategorySelections = (sels, moleculeType) => {', '[rendu] UNE fonction de routage partagée par le rendu ET les étiquettes');
-has('🖱 drag a molecule: turn · right-drag: slide',
-  '[conservé] le placement d’une molécule, DIT au lieu d’être boutonné (✥ Move · ↻ Rotate ont disparu : ils étaient « impractical »)');
+/* ⚠ LA PASTILLE « 🖱 drag a molecule: turn · right-drag: slide » A ÉTÉ RETIRÉE
+   cette session — la demande : « the button “drag a molecule: turn · right-drag:
+   slide” seems useless and you can remove it ». Le geste, lui, est toujours
+   installé (ligne suivante) et la molécule tenue est dite par la ligne ★ de son
+   espace de style. */
+gone('🖱 drag a molecule: turn · right-drag: slide',
+  '[retiré] la pastille du geste de placement n’est plus rendue');
 has("stage.mouseControls.add('drag-left', dragRotate);",
   '[ajouté] …et installé sur les gestes de NGL (un glisser sur une molécule la tourne, les autres ne bougent pas)');
 has('onClick={rebuildHydrogensNow}', '[conservé] ⚗️ Rebuild H');

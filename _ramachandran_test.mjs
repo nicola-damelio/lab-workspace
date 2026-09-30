@@ -379,8 +379,12 @@ has(VIEW, 'atoms: structureAtomRecords(structure)',
 has(VIEW, 'ramachandranOf({', '⚠ …donnés au module PUR : le panneau ne calcule aucun angle lui-même');
 has(MODULE, 'export const ramachandranOf = ({ atoms = [] } = {}) => {', '…qui est bien celui du module');
 has(VIEW, 'const readRamachandran = () => {', 'le panneau a SA lecture (un bouton la reprend)');
-has(VIEW, "onClick={() => { if (calcSection !== 'rama') readRamachandran(); openCalcSection('rama'); }}",
-  '⚠ …et elle est prise à l’ouverture de la section 🪢 du panneau unique, pas laissée au hasard');
+has(VIEW, 'onClick={() => { if (!ramaDock) readRamachandran(); toggleRamaDock(!ramaDock); }}',
+  '⚠ …et le bouton 🪢 OUVRE/FERME la fenêtre du viewer : la demande de cette session (« The ramachandran button'
+  + ' will make the ramachandran window inside the viewer appear or disappear so the large section which now opens'
+  + ' inside the tool bar will not be useful anymore. ») — la grande section de la barre a disparu avec elle');
+ok(VIEW.indexOf("openCalcSection('rama')") < 0,
+  '…il ne passe donc plus par une section du panneau (plus d’onglet 🪢)');
 has(VIEW, 'no N–CA–C backbone', '…et il dit POURQUOI rien n’est dessiné (un acide nucléique n’a pas de φ/ψ)');
 has(VIEW, 'nothing was drawn rather than an empty graph', '…en refusant un graphe VIDE (qui tromperait plus qu’il n’informe)');
 has(VIEW, '⟳ Read the backbone', 'le bouton de lecture est nommé');
@@ -393,13 +397,15 @@ has(VIEW, '<title>{`${r.label} · φ ${r.phi.toFixed(1)}° ψ ${r.psi.toFixed(1)
 has(VIEW, 'Outside every basin', 'les outliers ont leur liste, nommés');
 has(VIEW, '${Math.round(o.nearest.distance)}° from the centre of ${RAMA_REGION_NAMES[o.nearest.region]}',
   '…avec le bassin le plus proche et la distance (la règle du module, dite telle)');
-has(VIEW, 'classified by their OWN contours', '…et la note dit que glycine, proline et pré-proline ont leurs propres contours');
-has(VIEW, 'the PEPTIDE BOND itself is twisted',
-  '⚠ …et qu’un ω loin de 180° est un AUTRE problème (que le ⚒ ne corrige pas : il n’a pas de cible d’ω)');
-has(VIEW, 'What this plot is NOT: not an energy',
-  'la note du panneau dit ce que le graphe n’est PAS (ni énergie, ni potentiel, ni validation)');
-has(VIEW, 'a point that was not measured would be a lie',
-  '…et pourquoi un résidu sans ses deux angles n’est pas dessiné (compté, pas inventé)');
+ok(VIEW.indexOf('classified by their OWN contours') < 0
+  && VIEW.indexOf('the PEPTIDE BOND itself is twisted') < 0,
+  '⚠ les deux paragraphes de la section 🪢 ont disparu avec elle (la fenêtre 🪢 du viewer est réduite à ce qu’elle'
+  + ' montre : le graphe, la synthèse, les outliers, et la ligne du point survolé — le ⚒ n’est plus un voisin à expliquer)');
+has(VIEW, 'a point here is a point the calculation would drive back inside',
+  'la fenêtre 🪢 dit ce que le graphe n’est PAS (un plan de lecture : ni énergie, ni potentiel, ni validation, et les'
+  + ' polygones sont ceux du potentiel φ/ψ du calcul)');
+ok(VIEW.indexOf('a point that was not measured would be a lie') < 0,
+  '…et la phrase « un point non mesuré serait un mensonge », elle, est restée avec la section retirée');
 /* LE SURVOL DANS LE PANNEAU — chaque point est DESSINÉ, il s'attrape au survol (et au
    clavier) et la ligne qu'il affiche est celle du module : ni un angle ni une place
    n'est refait dans le JSX. */
@@ -424,29 +430,36 @@ has(VIEW, 'onFocus={() => setRamaHover(r.key)}',
   '…et le clavier aussi (Tab va de point en point : on ne dépend pas de la souris)');
 has(VIEW, 'aria-label={ramaHoverTextOf(r) || r.label}',
   '…chaque point portant sa ligne nommée, la même que celle affichée');
-has(VIEW, 'const hoverText = ramaHoverTextOf(hovered);',
-  '⚠ la ligne sous le graphe EST la ligne du module (le panneau ne recompose aucun angle)');
+has(VIEW, 'ramaHoverTextOf(rama.residues.find((r) => r.key === ramaHover && r.point) || null)',
+  '⚠ la ligne du dock EST la ligne du module (le dock ne recompose aucun angle) — la variable `hoverText` de la'
+  + ' section retirée a disparu avec elle');
 has(VIEW, 'setRamaHover(null);',
   'une nouvelle lecture, ou Clear, LÈVE le survol : une clef morte ne nomme plus rien');
 has(VIEW, 'max-w-[340px]', '…et le graphe s’affiche plus grand (les caractères des axes y tiennent)');
 
 
-/* LE PANNEAU, DÉCOUPÉ DU VIEWER — de l'onglet 🪢 (son bouton, puis sa section) jusqu'au
-   bloc suivant (l'ESP). C'est CE morceau qui ne doit contenir aucun chemin d'écriture. */
+/* LE BOUTON 🪢 DE LA BARRE — CE QU'IL RESTE DU PANNEAU. La grande section du panneau
+   unique a été RETIRÉE cette session (la demande, mot pour mot : « The ramachandran
+   button will make the ramachran window inside the viewer appear or disappear so the
+   large section which now opens inside the tool bar will not be useful anymore. ») :
+   le bouton ne fait donc plus qu'ouvrir/fermer la fenêtre 🪢 du viewer. */
 const ramaPanel = VIEW.slice(
   VIEW.indexOf('{/* 🪢 LE GRAPHE DE RAMACHANDRAN'),
   VIEW.indexOf('{/* ⚡ ESP'),
 );
-ok(ramaPanel.length > 3000, `le panneau 🪢 est bien dans le viewer (${ramaPanel.length} caractères)`);
+ok(ramaPanel.length > 1200, `le bouton 🪢 est bien dans la barre (${ramaPanel.length} caractères)`);
+ok(!VIEW.includes("{calcSection === 'rama'"),
+  '⚠ …et la grande section du panneau unique n’existe PLUS : le bouton n’ouvre plus d’onglet');
 ok(!/writeStructurePositions|positionFromArray/.test(ramaPanel),
-  '⚠ …et il n’ÉCRIT rien : aucune coordonnée n’est touchée par ce panneau (lecture seule, pour de bon)');
-has(ramaPanel, 'title="Open the 🪢 Ramachandran section of the 🧬 pane: the φ/ψ map of the peptide backbone on screen',
-  'le bouton de la section s’explique (le geste, les régions, les limites)');
+  '⚠ …le geste n’ÉCRIT rien non plus : aucune coordonnée n’est touchée (lecture seule, pour de bon)');
+has(ramaPanel, 'title="Show or hide the 🪢 Ramachandran window INSIDE the viewer: the φ/ψ map of the peptide backbone on screen',
+  'le bouton de la fenêtre s’explique (le geste, les régions, les limites)');
 has(ramaPanel, 'there is no second dihedral reader in this app',
   '…en rappelant que le dièdre est celui du dossier (pas un second lecteur)');
-has(ramaPanel, '{ramaPlotSvg()}', '⚠ …et il dessine le graphe par le rendu PARTAGÉ (`ramaPlotSvg`)');
-has(ramaPanel, '{ramaSummaryText()}', '…dont la ligne de synthèse est la même que dans le dock');
-has(ramaPanel, '{ramaOutlierList()}', '…et la liste des outliers aussi');
+has(ramaPanel, 'this button closes it again', '…et il dit qu’un second clic REFERME la fenêtre');
+has(VIEW, '{ramaPlotSvg({ wide: true })}', '⚠ …et la fenêtre dessine le graphe par le rendu PARTAGÉ (`ramaPlotSvg`)');
+has(VIEW, '{ramaSummaryText()}', '…dont la ligne de synthèse est la même que dans le panneau 🧬');
+has(VIEW, '{ramaOutlierList()}', '…et la liste des outliers aussi');
 
 /* ── 7 · LE DOCK 🪢 À GAUCHE DE LA FENÊTRE 3D ────────────────────────────────
    « The Ramachandran plot should appear at the left in the viewer window (expandible and

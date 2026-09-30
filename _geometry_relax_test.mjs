@@ -1163,173 +1163,46 @@ const noisy = relaxGeometry({
 ok(noisy.ok && noisy.steps > 0,
   '⚠ un onStep qui lève ne fait PAS échouer le geste : la descente va au bout');
 
-/* ════════════ 11. LE BRANCHEMENT DU VIEWER ══════════════════════════════════
-   bouton, les champs de la fenêtre (« ⇢ moves », « ⇉ stages », « 🎲 escapes »), la
-   façon dont la molécule est lue (le vrai graphe de NGL), la cible prise au champ
-   A–D ou à la TABLE, le chemin d'écriture d'un geste (writeStructurePositions + le
-   journal ↺), un rapport qui dit ce qui est et ce qui n'est pas — et l'ANIMATION :
-   la molécule change à chaque pas au lieu du résultat de but en blanc. */
-has(VIEW, "} from '../utils/geometryRelax';", 'le viewer importe le module du model build');
-has(VIEW, 'relaxGeometry, relaxWindow, bondLengthTarget, RELAX_DEFAULT_RADIUS, RELAX_MAX_RADIUS,',
-  '…avec les quatre fonctions dont il se sert');
-has(VIEW, 'const [relaxRadius, setRelaxRadius] = useState(RELAX_DEFAULT_RADIUS);',
-  'la fenêtre du ⚒ a son état (le champ « ⇢ moves »)');
-has(VIEW, 'const setRelaxRadiusText = (v) => {', '…et son lecteur, qui borne la valeur au plafond du module');
-has(VIEW, 'const torsionPairOf = () => {', 'deux atomes suffisent : le couple du ⚒ a son propre lecteur');
+/* ════════════ 11. LE BRANCHEMENT DU VIEWER — CE QUI RESTE APRÈS LE RETRAIT DU ⚒ ═══
+   ⚠ LA FENÊTRE DU ⚒ A ÉTÉ RETIRÉE DE L'INTERFACE cette session — la demande, mot pour mot :
+   « The torsion section must be drastically reduced. eliminate comments and eliminate
+   the "model build" button. » Le bouton ⚒ Model build, ses champs (« ⇢ moves »,
+   « ⇉ stages », « U0001f3b2 escapes », « ⟳ rebuild »), son animation et sa ligne ⛔ sont partis
+   avec lui. Le MODULE (utils/geometryRelax.js) reste ENTIER et testé plus haut
+   (sections 1 à 12d) : c'est lui la référence du dossier, et rien n'a bougé dedans.
+   Ce que le viewer garde de ce module, et que cette section vérifie :
+     • la LONGUEUR DE LA TABLE (`bondLengthTarget`) — la table des distances du U0001f9ec s'en
+       sert pour proposer une cible quand l'utilisateur n'en tape pas ;
+     • la lecture de la molécule à l'écran (`geometryOfStructure`) et le couple de deux
+       atomes piqués (`torsionPairOf` / `torsionPairReading`), que la fenêtre ✏️ Torsion
+       affiche.
+   Ce qui n'est plus là est vérifié par son ABSENCE : un bouton retiré qui revient sans
+   crier est une régression qu'un `has` ne saurait pas voir. */
+has(VIEW, "import { bondLengthTarget } from '../utils/geometryRelax';",
+  'le viewer n’importe QUE la longueur de la table du module (plus de relaxGeometry ni de relaxWindow)');
+for (const gone of ['relaxGeometry(', 'relaxWindow(', 'buildModelNow', 'relaxReportOf',
+  'relaxAutoReportOf', 'relaxFrameCollector', 'playRelaxFrames', 'finishRelaxPlayback',
+  'relaxContactReading', 'RELAX_ANIM_FRAMES', 'relaxRadius', 'relaxStageStep', 'relaxEscapes',
+  'relaxRebuild', '⚒ Model build', '⇢ moves', '⇉ stages', '⟳ rebuild']) {
+  ok(!VIEW.includes(gone), `⚠ « ${gone} » a disparu du viewer avec le bouton ⚒ Model build`);
+}
+has(VIEW, 'const torsionPairOf = () => {', 'deux atomes suffisent pour un couple : son lecteur reste');
 has(VIEW, "const picked = slots.length >= 4 ? [slots[0], slots[3]] : [slots[0], slots[1]];",
   '⚠ QUATRE atomes piqués : le couple est A–D (celui du champ) ; DEUX seulement : A et B');
-has(VIEW, 'return { ok: true, comp, structure, slots: picked, idx, points, label: picked.length >= 4 ? \'A–D\' : \'A–B\' };',
-  '…et le rapport nomme ce qu’il a pris');
-has(VIEW, 'const torsionPairReading = () => {', 'le panneau affiche la distance A–B / A–D « maintenant »');
-has(VIEW, '{pairRead.label} {torsionAng(pairRead.dist)}', '…dans la ligne de lecture du panneau');
+has(VIEW, 'const torsionPairReading = () => {', 'la fenêtre ✏️ Torsion affiche la distance A–B / A–D « maintenant »');
+has(VIEW, '{pairRead.label} {torsionAng(pairRead.dist)}', '…dans sa ligne de lecture');
 has(VIEW, 'const geometryOfStructure = (structure) => {',
   'la molécule est lue SUR la structure à l’écran (éléments, graphe, coordonnées)');
 has(VIEW, 'bonds.push({ i, j, order: store.bondOrder ? Number(store.bondOrder[k]) || 1 : 1 });',
   '…le graphe de NGL tel quel, avec l’ordre quand le fichier en déclare un');
 const RELAX_SLICE = VIEW.slice(VIEW.indexOf('const geometryOfStructure = (structure) => {'),
-  VIEW.indexOf('const relaxReportOf = (pair, run, win) => {'));
+  VIEW.indexOf('const torsionPairOf = () => {'));
 ok(!/movingSideOf|planTorsion/.test(RELAX_SLICE),
-  '⚠ le model build n’est PAS une rotation rigide : il ne se sert ni de movingSideOf ni de planTorsion');
-has(VIEW, 'const buildModelNow = () => {', 'le geste a son handler');
-has(VIEW, 'relaxWindow({ bonds: geom.bonds, seeds: [i, j], radius: relaxRadius, atomCount: geom.count });',
-  'la fenêtre est construite sur le VRAI graphe, autour des deux atomes, au rayon du champ');
+  '⚠ la lecture du dossier n’est PAS une rotation rigide : ni movingSideOf, ni planTorsion');
 has(VIEW, 'const table = bondLengthTarget(geom.elements[i], geom.elements[j]);',
-  'la longueur de la TABLE sert de cible quand rien n’est tapé (S–S 2.05, C–S 1.82…)');
+  'la longueur de la TABLE sert de cible quand rien n’est tapé (S–S 2.05, C–S 1.82…) — ⌖ de la table U0001f9ec');
 has(VIEW, 'const target = Number.isFinite(typed) && typed > 0 ? typed : table;',
   '…et le chiffre du champ A–D l’emporte dès qu’il y en a un');
-has(VIEW, 'pairs: [{ i, j, target }],', 'la distance DEMANDÉE entre dans la fonction cible');
-has(VIEW, 'if (!run.moved.length) {', '⚠ quand rien n’a besoin de bouger, le panneau le dit au lieu d’écrire');
-has(VIEW, 'if (!writeStructurePositions(comp, movable, flat)) {',
-  'chaque image du geste passe par le MÊME chemin d’écriture qu’une torsion (positionFromArray + redessin)');
-has(VIEW, 'label: `⚒ model build ${pair.label} ${torsionAng(target)}`,',
-  '…et le journal ↺ retient le geste sous son nom (le ↺ est celui de la torsion)');
-has(VIEW, 'const report = `${relaxReportOf(pair, run, win)}${warn}`;',
-  'le rapport du module est calculé UNE fois, et c’est lui que l’animation affiche à la fin');
-has(VIEW, 'const relaxReportOf = (pair, run, win) => {', 'le rapport est construit à part (énergie, rms, atomes, verdict)');
-has(VIEW, '· energy ${run.before.total.toFixed(1)} → ${run.after.total.toFixed(1)}',
-  '…il donne l’énergie avant et après');
-has(VIEW, '· bonds ${torsionAng(run.after.bondRms)} rms over ${run.terms.bonds}',
-  '…les écarts de liaisons qu’il a RELUS');
-has(VIEW, "· angles ${run.after.angleRms.toFixed(1)}° rms over ${run.terms.angles}${worstAngle}",
-  '…les écarts d’angles, et le pire des deux');
-has(VIEW, '· ${run.moved.length} atom${run.moved.length === 1 ? \'\' : \'s\'} moved of ${win.movable.length}',
-  '…le nombre d’atomes déplacés, sur ceux de la fenêtre');
-has(VIEW, '· ⚠ the window was CAPPED at ${win.movable.length} atoms', '…et il DIT quand la fenêtre a mordu le plafond');
-has(VIEW, '${run.unstuck} flat angle${run.unstuck === 1 ? \'\' : \'s\'} nudged before the descent',
-  '…et quand des angles plats ont reçu leur coup de pouce');
-has(VIEW, 'const [relaxStageStep, setRelaxStageStep] = useState(RELAX_STAGE_STEP);',
-  'le pas à pas du ⚒ a son état (le champ « ⇉ stages »)');
-has(VIEW, 'const setRelaxStageStepText = (v) => {', '…et son lecteur, borné au plafond du module');
-has(VIEW, 'stageStep: relaxStageStep,', '⚠ le champ du pas à pas entre dans la descente');
-has(VIEW, '⇉ stages', '…et le champ est nommé « ⇉ stages »');
-has(VIEW, '· ${run.terms.rings} planar ring${run.terms.rings === 1 ? ', 'le rapport dit les cycles plans qu’il a tenus plats');
-has(VIEW, '· ⇉ ${run.stages} stages of ${run.stageStep} Å', '…et les paliers du rapprochement');
-has(VIEW, '· the restores brought bonds ${torsionAng(run.restore.bondRms.before)} → ${torsionAng(run.restore.bondRms.after)} rms',
-  '…avec ce que les reprises ont redressé');
-has(VIEW, ', moving the distance by ${run.restore.pairDrift.toFixed(3)} Å at most',
-  '…et de combien la distance a bougé au passage (le ressort de la reprise, mesuré)');
-has(VIEW, 'RELAX_STAGE_STEP, RELAX_MAX_STAGE_STEP, RELAX_PLANAR_TOLERANCE,',
-  '…et les trois constantes du pas à pas et de la planéité sont importées');
-has(VIEW, 'held at zero, so a ring cannot lose its planarity without the report saying so.',
-  '⚠ le bouton ⚒ dit que les cycles du fichier sont tenus plats (le défaut de la demande)');
-has(VIEW, 'The pair is brought together BY STAGES', '…et que le rapprochement se fait par paliers');
-has(VIEW, 'which is why a benzene no longer comes out of a build slightly plucked',
-  'la note du panneau dit ce que le geste corrige (un benzène plissé, 21.6° mesurés)');
-has(VIEW, 'A geometric TARGET FUNCTION (ideal bond lengths and angles, the distances you asked for, the planarity of the rings the file itself reads as planar, and ONE HARD CORE — two atoms the file does not bond may not pass through each other) — no charges,',
-  '⚠ le rapport dit ce que le geste N’EST PAS : une cible géométrique (la planéité des cycles comprise), pas un champ de forces — et il nomme le CŒUR DUR, la seule chose qui y ressemble (§2bis)');
-
-has(VIEW, 'no solvent, and a LOCAL descent: what it could not do, it says instead of pretending.',
-  '…locale, et honnête sur ce qu’elle n’a pas su faire');
-has(VIEW, 'const relaxWhy = (run) => ({', 'les raisons du module pur sont TRADUITES, jamais inventées');
-has(VIEW, "'stalled': 'the descent found nowhere left to go (a LOCAL minimum", '…le palier d’un minimum local');
-const BUILD_BTN = VIEW.slice(VIEW.indexOf('onClick={buildModelNow}'), VIEW.indexOf('>\n          ⚒ Model build'));
-ok(BUILD_BTN.length > 0 && !/disabled/.test(BUILD_BTN),
-  '⚠ le bouton n’est JAMAIS inactif : deux atomes piqués suffisent (il dit lui-même ce qui manque)');
-has(VIEW, '>\n          ⚒ Model build\n        </button>', 'le bouton est nommé « ⚒ Model build »');
-has(VIEW, '⇢ moves', '…et le champ de la fenêtre est nommé « ⇢ moves » bonds');
-has(VIEW, 'onKeyDown={(e) => { if (e.key === \'Enter\') buildModelNow(); }}', '↵ dans le champ de la fenêtre construit aussi');
-has(VIEW, '⚒ Model build is the same kind of edit — the same coordinates, the same ↺',
-  'la note du panneau range le geste à côté de la torsion (mêmes coordonnées, même ↺)');
-
-/* ── 11bis · LES ÉCHAPPÉES ET L'ANIMATION — la demande, mot pour mot ──────────
-   « Non funziona […] se usassi un metodo di minimizzazione che esce dalle buche
-   locali? Sarebbe bello vedere la molecola che cambia ad ogni passo invece che il
-   risultato finale di botto. » Le panneau, donc : un champ de plus, un module qui
-   annonce chaque pas, et une écriture image par image. */
-has(VIEW, 'RELAX_DEFAULT_ESCAPES, RELAX_MAX_ESCAPES, RELAX_CLASH_DISTANCE,',
-  'le viewer importe les constantes des 🎲 échappées et des contacts trop courts');
-has(VIEW, 'const [relaxEscapes, setRelaxEscapes] = useState(RELAX_DEFAULT_ESCAPES);',
-  'le champ « 🎲 escapes » a son état (six bottes par défaut)');
-has(VIEW, 'const setRelaxEscapesText = (v) => {', '…et son lecteur, borné au plafond du module');
-has(VIEW, 'escapes: relaxEscapes,', '⚠ le nombre de bottes entre dans la descente');
-has(VIEW, '🎲 escapes', '…et le champ est nommé « 🎲 escapes » kicks');
-has(VIEW, 'onStep,', '…et le module est chargé d’annoncer chaque pas');
-has(VIEW, "if (v.phase === 'kick' || v.phase === 'escape' || v.phase === 'final') { keep(v); return; }",
-  '⚠ les bottes et le dernier état sont TOUJOURS gardés : on voit le saut d’une buche à l’autre');
-has(VIEW, 'const RELAX_ANIM_FRAMES = 240;', 'l’animation est plafonnée en images (≈ 4 s à 60 i/s)');
-has(VIEW, 'stride *= 2;',
-  '…au-delà du plafond, une image sur deux est jetée et le pas double : la chronologie tient');
-has(VIEW, 'const playRelaxFrames = ({', 'l’animation a sa fonction');
-has(VIEW, 'window.requestAnimationFrame(tick);', '…et joue une image par image affichée');
-has(VIEW, 'const finishRelaxPlayback = () => {', 'un geste en train de jouer se termine D’UN COUP');
-has(VIEW, 'finishRelaxPlayback();\n  const pair = torsionPairOf();',
-  '…et le ⚒ lui-même le termine avant de recommencer : jamais deux animations sur la même structure');
-has(VIEW, 'finalIdxs: run.moved,',
-  '…la géométrie finale écrite est celle du rapport, à l’image près');
-has(VIEW, 'progressOf: (frame, at, total) => `⚒ building — image ${at}/${total} · step ${frame.step}`',
-  '…et la ligne du panneau suit les images, les paliers et les bottes');
-has(VIEW, '🎲 ${run.escapes.tried} torsion kick${run.escapes.tried === 1 ? \'\' : \'s\'} of ${run.escapes.wanted}',
-  'le rapport dit combien de bottes ont été essayées et combien gardées');
-has(VIEW, '` · 🎲 no kick: ${run.escapes.skip}`',
-  '…et POURQUOI aucune n’a tourné quand c’est le cas (jamais un silence)');
-has(VIEW, "'escaped': 'the descent was stuck in a local minimum",
-  'la raison « escaped » du module est traduite, comme les autres');
-has(VIEW, 'no atom pair closer than ${torsionAng(run.clashes.minDistance)}',
-  '⚠ le rapport dit les contacts trop courts du modèle rendu — le « geometrie irrealizzabili » de la demande');
-has(VIEW, 'atom pair${run.clashes.count === 1 ? \'\' : \'s\'} closer than ${torsionAng(RELAX_CLASH_DISTANCE)}',
-  '…et quand il en reste, il dit COMBIEN et à quelle distance (le plus court)');
-has(VIEW, 'The 🎲 escapes are torsion kicks drawn from a FIXED seed',
-  '…en rappelant que les tirages sont à graine fixe : même geste, même construit');
-has(VIEW, 'the molecule you are looking at CHANGES at every step',
-  'la note du panneau dit que la molécule CHANGE à chaque pas au lieu du résultat de but en blanc');
-has(VIEW, 'the gesture is WATCHED: the molecule CHANGES on screen at every step',
-  '…et l’infobulle du ⚒ le répète');
-has(VIEW, 'clicking ⚒ again while it plays finishes the gesture at once',
-  '…avec la façon de sauter l’animation (un clic de plus)');
-has(VIEW, 'a rigid rotation of a part of the window about a drawn bond',
-  'l’infobulle du champ 🎲 dit ce qu’est une botte : une rotation RIGIDE autour d’une liaison tirée');
-has(VIEW, 'a bond inside a ring is refused, so no cycle is ever bent',
-  '⚠ …et qu’une liaison de cycle est refusée : aucune botte ne déforme un cycle');
-
-/* ── 11ter · LE REBÂTIMENT DANS LE PANNEAU — la demande, mot pour mot ──────────
-   « since you limit the number of bonds and atoms to move, the molecules get
-   stretched. At every step, the relaxation should also imply forcing resetting of
-   standard distance so that the molecule can shrink because atoms not included in the
-   calculation can move. » Le panneau, donc : une case, le réglage qui entre dans la
-   descente, un rapport qui dit ce qui a été reposé — et une animation qui porte AUSSI
-   les atomes reposés (sinon la molécule se replierait d'un coup à la dernière image). */
-has(VIEW, 'RELAX_DEFAULT_ESCAPES, RELAX_MAX_ESCAPES, RELAX_CLASH_DISTANCE, RELAX_DEFAULT_REBUILD,',
-  'le viewer importe le réglage du rebâtiment');
-has(VIEW, 'const [relaxRebuild, setRelaxRebuild] = useState(RELAX_DEFAULT_REBUILD);',
-  'la case « ⟳ rebuild » a son état (le défaut du module : cochée)');
-has(VIEW, 'rebuild: relaxRebuild,', '⚠ le rebâtiment entre dans la descente');
-has(VIEW, 'onChange={(e) => setRelaxRebuild(e.target.checked)}', '…et la case le commande');
-has(VIEW, '⟳ rebuild', '…elle est nommée « ⟳ rebuild »');
-has(VIEW, 'the window alone moves and every other atom is returned BIT-FOR-BIT',
-  '⚠ la case dit ce qu’elle change : le geste d’avant, la fenêtre seule, le reste au chiffre près');
-has(VIEW, 'OUTSIDE the window re-built from scratch',
-  'le rapport dit combien d’atomes hors fenêtre ont été rebâtis');
-has(VIEW, 'and their angles from ${run.rebuild.angles.rms.before.toFixed(1)}° to ${run.rebuild.angles.rms.after.toFixed(1)}°',
-  '…ce que leurs liaisons ET leurs angles ont gagné');
-has(VIEW, 'left alone (no bond the tables know)',
-  '…et ce qui n’a PAS pu suivre (une liaison que la table ne connaît pas)');
-has(VIEW, 'OUTSIDE the window is re-built from scratch at every step',
-  'la note du rapport redit le geste, et comment revenir à celui d’avant');
-has(VIEW, 'so the molecule can re-compact around the window instead of being stretched by it.',
-  'le champ « ⇢ moves » dit que la fenêtre borne ce qui PILOTE, pas ce qui bouge');
-has(VIEW, 'Array.isArray(v.loose)', '⚠ l’animation lit `loose` : les atomes que le module peut déplacer');
-has(VIEW, 'movable: collector.atoms(),', '…et c’est LEUR liste qui est écrite à chaque image');
-has(VIEW, 'let frameAtoms = fallback;', '…la fenêtre restant le point de départ de l’animation');
 
 /* ════════════ 12. LE CONSTRUIT AUTOMATIQUE ══════════════════════════════════
    La demande, mot pour mot : « model build should also work without defining the
@@ -1547,51 +1420,19 @@ const noisyAuto = buildModelGeometry({
 });
 ok(noisyAuto.ok && noisyAuto.found === 1, '⚠ un `onStep` qui lève n’arrête PAS le construit automatique');
 
-/* ── 12e · LE BRANCHEMENT DU VIEWER — LE ⚒ SANS AUCUN ATOME PIOUÉ ─────────────
-   La demande, mot pour mot : « model build should also work without defining the
-   atoms to bring closer and their distance ». Le panneau, donc : le même bouton,
-   aucun atome piqué, le module qui cherche tout seul — et un rapport qui dit ce
-   qu’il a trouvé, conduit, fixé, et ce qui reste. */
-has(VIEW, 'buildModelGeometry, RELAX_AUTO_PASSES, RELAX_AUTO_MAX_DISTANCES,',
-  'le viewer importe le construit automatique et ses deux plafonds');
-has(VIEW, 'RELAX_BOND_TOLERANCE, RELAX_ANGLE_TOLERANCE, RELAX_BAD_BOND_TOLERANCE,',
-  '…et le seuil à partir duquel une longueur est dite fausse');
-has(VIEW, 'const buildModelAuto = () => {', 'le geste automatique a son handler');
-has(VIEW, 'if (!pair.ok && torsionAtomsRef.current.length < 2) { buildModelAuto(); return; }',
-  '⚠ AUCUN atome piqué : le ⚒ part en construit automatique — c’est la demande');
-has(VIEW, 'const collector = relaxFrameCollector();',
-  '…il ramasse ses images avec le MÊME ramasseur que le geste à deux atomes');
-has(VIEW, 'const run = buildModelGeometry({', '…et c’est le module qui conduit tout');
-has(VIEW, 'radius: relaxRadius,', '…la fenêtre du champ « ⇢ moves » sert pour CHAQUE longueur fausse');
-has(VIEW, 'if (!run.found && !run.foundContacts) {', '⚠ quand le balayage ne trouve ni longueur fausse ni atome empilé, le panneau le dit au lieu d’écrire');
-has(VIEW, 'Nothing to build: the ${run.terms.bonds} bond', '…« rien à construire », avec le nombre de liaisons lues');
-has(VIEW, 'but the window around', '⚠ …et quand la fenêtre est vide, il dit quel réglage monter');
-has(VIEW, 'label: `⚒ model build (automatic: ${run.found} length',
-  'le journal ↺ retient le geste automatique sous son nom (le même ↺ que la torsion)');
-has(VIEW, 'const relaxAutoReportOf = (run, win) => {', 'le rapport du construit automatique a sa fonction');
-has(VIEW, 'Model build (automatic)', '…il se nomme (le panneau ne peut pas confondre les deux gestes)');
-has(VIEW, 'const passes = run.passCount > 1', '…il compte les BALAYAGES');
-has(VIEW, 'the moves of the first one left ${created} wrong length',
-  '…et DIT que le premier geste a laissé des longueurs fausses : la demande, mot pour mot');
-has(VIEW, 'were already at their length when their turn came',
-  '…et annonce celles qu’un geste précédent avait déjà remises d’aplomb');
-has(VIEW, 'const left = run.left.length', '…et ce qui RESTE faux n’est jamais tu');
-has(VIEW, 'of total error left', '…avec l’erreur totale qui reste, chiffrée');
-has(VIEW, 'NO atom pair had to be picked: the scan reads the GRAPH the file declares',
-  '…et le rapport rappelle que personne n’a rien désigné');
-has(VIEW, 'a pair the file does not declare bonded is never pulled together',
-  '⚠ …ni qu’il n’invente aucune liaison (un couple non déclaré n’est jamais rapproché)');
-has(VIEW, 'const relaxFrameCollector = (fallback = []) => {',
-  'le ramasseur d’images est commun aus DEUX gestes du ⚒ (une seule façon de filmer le module)');
-has(VIEW, 'onStep: collector.onStep,', '…les deux le branchent de la même façon');
-has(VIEW, 'length ${frame.pair.index}/${frame.pair.total}',
-  'la ligne du panneau NOMME la longueur en cours de conduite');
-has(VIEW, '· ⟳ pass ${frame.pass}', '…et le balayage d’où elle vient');
-has(VIEW, "'max-passes': `the ${RELAX_AUTO_PASSES} scans", 'la raison « max-passes » du module est traduite, comme les autres');
-has(VIEW, 'With NOTHING picked at all, ⚒ Model build works all the same',
-  'le panneau le dit en clair : le ⚒ marche sans aucun atome piqué');
-has(VIEW, '⚒ WITH NO ATOM PICKED, the same button builds ON ITS OWN', '…l’infobulle du bouton aussi');
-has(VIEW, '⚒ And it needs NO atom picked: press it with nothing selected', '…et la note du panneau aussi');
+/* ── 12e · LE BRANCHEMENT DU VIEWER — LE CONSTRUIT AUTOMATIQUE N'EST PLUS UN BOUTON ─
+   Le SCAN lui-même (`badDistancesOf`) et le PROTOCOLE (`buildModelGeometry`) sont
+   testés juste au-dessus : ce sont eux qui rendent service au dossier. Le BOUTON qui
+   les conduisait a été retiré cette session — la fenêtre ✏️ Torsion est réduite au
+   strict nécessaire (quatre atomes, deux nombres, Set / Reach, ↺). Ce qui reste
+   branché dans le viewer se vérifie donc par son ABSENCE, et par le fait que la
+   table des distances du U0001f9ec lit toujours la longueur de la table (section 11). */
+for (const gone of ['buildModelGeometry(', 'buildModelAuto', 'relaxAutoWhy', 'onStep: collector.onStep',
+  '⚒ model build (automatic:', 'Model build (automatic)', 'RELAX_AUTO_PASSES']) {
+  ok(!VIEW.includes(gone), `⚠ « ${gone} » a disparu du viewer avec le bouton ⚒`);
+}
+has(MODULE, 'export const buildModelGeometry', '…le protocole du module reste en place (c’est lui qui est testé)');
+has(MODULE, 'export const badDistancesOf', '…et le balayage des longueurs fausses aussi');
 
 /* ════════════ 13. LE CŒUR DUR — DEUX ATOMES NE SONT PAS AU MÊME ENDROIT ═══════
    La demande, mot pour mot : « In the calculation you did not consider steric
@@ -1856,29 +1697,17 @@ eq(cleanAuto.found + cleanAuto.foundContacts, 0, 'une molécule propre : rien à
 eq(cleanAuto.reason, 'clean', '…et la raison le dit (`clean`)');
 eq(cleanAuto.moved.length, 0, '…aucun atome ne bouge');
 
-/* ── h) LE BRANCHEMENT DU VIEWER ────────────────────────────────────────────── */
-has(VIEW, 'badContactsOf, contactDistanceOf, RELAX_CONTACT_SCALE, RELAX_CONTACT_TOLERANCE,',
-  'le viewer importe la marche, la cible et la tolérance du cœur dur');
-has(VIEW, 'const relaxContactReading = (structure) => {',
-  '…et il relit la molécule à l’écran avec la MÊME marche (aucune seconde table)');
-has(VIEW, 'inside their hard core right now',
-  '⚠ le panneau MONTRE les couples empilés avant tout geste — la demande : on les voit');
-has(VIEW, 'the ⚒ button with NO atom picked un-jams them',
-  '…et il dit quel bouton les écarte (le ⚒ sans atome piqué)');
-has(VIEW, 'no atom pair inside its hard core',
-  '…tandis que la molécule propre est annoncée propre');
-has(VIEW, 'inside their HARD CORE',
-  'le rapport du ⚒ à deux atomes nomme le couple qui reste empilé');
-has(VIEW, 'inside their hard core at the first scan',
-  '…et celui du construit automatique dit combien il en a trouvés, conduits, et ce qui reste');
-has(VIEW, 'It ALSO un-jams the molecule', '…en nommant le second travail du bouton');
-has(VIEW, 'contacts: the scan was capped', '…avec le plafond des contacts DIT, comme celui des longueurs');
-has(VIEW, 'the ⛔ line above tells you how many pairs of the molecule on screen are inside theirs RIGHT NOW',
-  'la note du panneau explique la ligne ⛔ et ce que le ⚒ en fait');
-has(VIEW, 'ONE HARD CORE, and it IS in the target function',
-  '⚠ l’infobulle du bouton dit que le cœur dur EST dans la fonction cible');
-has(VIEW, 'at the SAME place',
-  '…et le rapport dit les atomes CONFONDUS que la descente a dû écarter d’un coup de pouce');
+/* ── h) LE BRANCHEMENT DU VIEWER — LE CŒUR DUR N'EST PLUS AFFICHÉ ───────────────
+   La ligne ⛔ (« N couples dans leur cœur dur, maintenant ») et la lecture qui la
+   remplissait appartenaient à la fenêtre du ⚒ : elles sont parties avec le bouton.
+   Le MODULE, lui, garde TOUT — le terme, son gradient, le balayage, le coup de pouce
+   des atomes confondus et le REBALAYAGE pendant la descente — et c'est ce qui est
+   vérifié juste en dessous. */
+ok(!VIEW.includes('inside their hard core right now'),
+  '⚠ la ligne ⛔ du panneau a disparu avec la fenêtre du ⚒');
+ok(!VIEW.includes('contactDistanceOf('),
+  '…et la lecture des couples empilés avec elle (aucun appel dans le viewer)');
+ok(!VIEW.includes('badContactsOf('), '…pour de bon : le viewer n’appelle plus la marche du cœur dur');
 has(MODULE, 'export const unstickContacts = (terms, x,',
   'le coup de pouce des contacts confondus vit dans le module, pas dans le panneau');
 has(MODULE, 'if (contactWalk(x)) rescore();',

@@ -626,11 +626,8 @@ const Panel = (() => {
   const partMoveRef = { current: new Map() };
   const componentRef = { current: null };
   const torsionUndoRef = { current: null };
-  /* L'ANIMATION DU ⚒ — un stub qui COMPTE : ce que la sonde mesure, c'est qu'une
-     torsion appliquée termine d'abord le geste en cours (deux écritures de
-     coordonnées en même temps se recouvriraient). */
-  const playbackFinishes = [];
-  const finishRelaxPlayback = () => { playbackFinishes.push(1); return true; };
+  /* ⚠ L'ANIMATION DU ⚒ N'EXISTE PLUS (le bouton « Model build » a été retiré avec la fenêtre
+     réduite) : il n'y a donc plus rien à terminer avant une écriture, ni de stub à poser. */
   const setTorsionMsg = (m) => { msgs.push(m); };
   const setTorsionClosest = (c) => { closest.push(c); };
   const writeStructurePositions = new Function(
@@ -644,17 +641,16 @@ const Panel = (() => {
   const commitTorsion = new Function(
     'torsionSnapshotOf', 'writeStructurePositions', 'torsionWhy', 'torsionReportOf',
     'torsionDeg', 'torsionAng', 'structureWasDragged', 'setTorsionMsg', 'setTorsionClosest',
-    'torsionUndoRef', 'finishRelaxPlayback',
+    'torsionUndoRef',
     `${sliceFn('const commitTorsion = (r, plan, label) => {')}\nreturn commitTorsion;`,
   )(PanelFns.torsionSnapshotOf, writeStructurePositions, PanelFns.torsionWhy,
     PanelFns.torsionReportOf, PanelFns.torsionDeg, PanelFns.torsionAng, structureWasDragged,
-    setTorsionMsg, setTorsionClosest, torsionUndoRef, finishRelaxPlayback);
+    setTorsionMsg, setTorsionClosest, torsionUndoRef);
   const undoLastTorsion = new Function(
     'componentRef', 'torsionUndoRef', 'setTorsionMsg', 'setTorsionClosest',
-    'writeStructurePositions', 'finishRelaxPlayback',
+    'writeStructurePositions',
     `${sliceFn('const undoLastTorsion = () => {')}\nreturn undoLastTorsion;`,
-  )(componentRef, torsionUndoRef, setTorsionMsg, setTorsionClosest, writeStructurePositions,
-    finishRelaxPlayback);
+  )(componentRef, torsionUndoRef, setTorsionMsg, setTorsionClosest, writeStructurePositions);
   const compFor = (structure) => ({
     structure,
     updateRepresentations(opts) { updates.push(opts); },
@@ -662,7 +658,6 @@ const Panel = (() => {
   return {
     msgs, closest, updates, scene, partMoveRef, componentRef, torsionUndoRef,
     writeStructurePositions, structureWasDragged, commitTorsion, undoLastTorsion, compFor,
-    playbackFinishes,
   };
 })();
 
@@ -715,8 +710,8 @@ const Panel = (() => {
     'et si NGL refuse les coordonnées, l’appelant l’apprend (false) au lieu de croire au geste');
   const commitSrc = sliceFn('const commitTorsion = (r, plan, label) => {');
   eq(times(commitSrc, 'writeStructurePositions('), 1, 'commitTorsion n’écrit que par ce chemin');
-  ok(times(commitSrc, 'finishRelaxPlayback();') === 1,
-    '⚠ …et il TERMINE d’abord l’animation du ⚒ : deux gestes n’écrivent jamais les mêmes coordonnées en même temps');
+  ok(!commitSrc.includes('finishRelaxPlayback'),
+    '⚠ …et il n’a plus d’animation de ⚒ à terminer : le ⚒ Model build (et son film) a été retiré du viewer');
   ok(commitSrc.indexOf('torsionSnapshotOf(r.structure)') < commitSrc.indexOf('writeStructurePositions('),
     '⚠ l’AVANT est photographié AVANT d’écrire : c’est ce que le ↺ remettra');
   ok(commitSrc.indexOf('if (!plan.ok)') < commitSrc.indexOf('writeStructurePositions(')
@@ -724,8 +719,8 @@ const Panel = (() => {
     'un plan refusé — ou sans coordonnées — sort AVANT toute écriture : rien n’est touché');
   const undoSrc = sliceFn('const undoLastTorsion = () => {');
   hasIn(undoSrc, 'writeStructurePositions(comp, idxs, rec.flat)', 'le ↺ écrit par le MÊME chemin que le geste');
-  ok(times(undoSrc, 'finishRelaxPlayback();') === 1,
-    '⚠ …et il TERMINE d’abord l’animation du ⚒ : le ↺ pendant qu’un construit se joue vaut annulation');
+  ok(!undoSrc.includes('finishRelaxPlayback'),
+    '⚠ …et il n’a plus rien à interrompre avant de remettre la géométrie d’AVANT');
   hasIn(undoSrc, 'for (let i = 0; i < rec.count; i++) idxs.push(i);',
     '…atome par atome : TOUTE la structure d’avant, pas seulement le côté de D');
   hasIn(undoSrc, 'torsionUndoRef.current = null;', '…puis il oublie la torsion défaite (un seul ↺ possible)');
@@ -741,12 +736,18 @@ const Panel = (() => {
 {
   /* ── c) LE PANNEAU EST BRANCHÉ — les champs, les boutons, le ↳, le ↺, le 🎯 ─────── */
   const panelSrc = VIEW.slice(
-    VIEW.indexOf('✏️ Torsion — METTRE UN DIHÈDRE'),
-    VIEW.indexOf('⚡ ESP — the electrostatic-potential surface'),
+    VIEW.indexOf('{torsionWindow && (() => {'),
+    VIEW.indexOf('{/* ⚠ PLUS DE CALQUE DE GESTE ICI'),
   );
-  ok(panelSrc.length > 2000, `le panneau ✏️ Torsion est bien dans le viewer (${panelSrc.length} caractères)`);
-  hasIn(panelSrc, 'onClick={() => openCalcSection(\'torsion\')}',
-    'la section ✏️ Torsion s’ouvre par son bouton (le panneau unique, onglet « torsion »)');
+  ok(panelSrc.length > 2000, `la fenêtre ✏️ Torsion est bien dans le viewer (${panelSrc.length} caractères)`);
+  ok(VIEW.indexOf("{calcSection === 'torsion'") < 0,
+    '⚠ la section ✏️ Torsion de la BARRE a disparu — la demande : « when clicking on torsion do not open the'
+    + ' section inside the toolbar but open a dedicated retractable window inside the viewer »');
+  hasIn(VIEW, 'onClick={() => setTorsionWindow((v) => !v)}',
+    '…son bouton ✏️ Torsion OUVRE et REFERME la fenêtre (le même bouton fait les deux)');
+  hasIn(panelSrc, 'onClick={() => setTorsionWindow(false)}', '…et le ⇤ de son en-tête la referme aussi');
+  ok(panelSrc.includes('absolute left-2 bottom-2 z-20'),
+    '…elle est POSÉE DANS le cadre de la vue 3D (un panneau flottant, pas une section de la barre)');
   hasIn(panelSrc, 'value={torsionAngleDraft}', 'le champ « dihedral » lit le brouillon de l’angle');
   hasIn(panelSrc, 'onChange={(e) => setTorsionAngleText(e.target.value)}',
     '⚠ une frappe passe par le writer du brouillon (référence + state) : l’écoute du clic 3D, posée une fois, lit la valeur COURANTE');
@@ -772,13 +773,13 @@ const Panel = (() => {
     'la couleur du message suit son préfixe : ✓ / ↳ / ↺ verts, ✕ rouge — jamais l’inverse');
   hasIn(panelSrc, 'if (measureModeRef.current) toggleMeasureMode();',
     'piquer une torsion DÉSARME 📏 Measure : les deux gestes ne peuvent pas prendre les clics ensemble');
-  hasIn(panelSrc, '✏️ Torsion{torsionAtoms.length ?', 'le bouton du groupe ✏️ Modify compte les atomes piqués');
-  hasIn(panelSrc, '` (${torsionAtoms.length}/4)`', '…en montrant « (2/4) » dès que deux sont piqués');
+  hasIn(VIEW, '✏️ Torsion{torsionAtoms.length ?', 'le bouton du groupe ✏️ Modify compte les atomes piqués');
+  hasIn(VIEW, '` (${torsionAtoms.length}/4)`', '…en montrant « (2/4) » dès que deux sont piqués');
   hasIn(panelSrc, 'const dragged = part.ok ? structureWasDragged(part.structure) : false;',
     'le panneau regarde, à chaque rendu, si ce molécules a aussi été GLISSÉE à la main');
   hasIn(panelSrc, '⚠ This molecule has also been DRAGGED by hand',
     '…et il le dit AVANT le geste, pas après (le ⏮ rejouerait ce glissement)');
-  hasIn(panelSrc, '⚠ A torsion is not stored anywhere',
+  hasIn(panelSrc, 'A torsion is not stored anywhere',
     '…et il dit aussi qu’une torsion ne vit que dans les coordonnées de l’image affichée');
 }
 
@@ -802,12 +803,11 @@ const Panel = (() => {
   const reset = () => {
     Panel.msgs.length = 0; Panel.updates.length = 0; Panel.closest.length = 0;
     Panel.scene.plates = 0; Panel.scene.repaints = 0; structure.writes.length = 0;
-    Panel.playbackFinishes.length = 0;
   };
   reset();
   eq(Panel.commitTorsion(r, plan, 'dihedral 0.0°'), true, 'commitTorsion applique le plan');
-  eq(Panel.playbackFinishes.length, 1,
-    '…après avoir TERMINÉ l’animation du ⚒ (un seul chemin d’écriture à la fois)');
+  ok(Panel.playbackFinishes === undefined,
+    '…et il n’y a PLUS d’animation de ⚒ à terminer : le bouton et son film ont été retirés');
   eq(structure.writes.map((w) => w.index), [3, 4],
     '⚠ il écrit EXACTEMENT les atomes du côté de D, dans l’ordre du plan — rien d’autre');
   eq(structure.writes.map((w) => w.off), [0, 3],
@@ -1178,10 +1178,7 @@ const Panel = (() => {
   /* ── LE ↺ REND LÀ AUSSI LES CHIFFRES DU FICHIER — le geste de distance était le dernier ─ */
   Panel.componentRef.current = comp;
   Panel.msgs.length = 0;
-  Panel.playbackFinishes.length = 0;
   Panel.undoLastTorsion();
-  eq(Panel.playbackFinishes.length, 1,
-    '⚠ …et le ↺ a TERMINÉ l’animation du ⚒ avant d’écrire : un seul chemin d’écriture à la fois');
   eq(readAll(), filePositions,
     '⚠ le ↺ défait la distance : les CINQ atomes sont EXACTEMENT aux chiffres du fichier, pas à ±float');
   hasIn(Panel.msgs[0], `↺ ${labelDist}`, '…et le message nomme le geste défait (la distance)');

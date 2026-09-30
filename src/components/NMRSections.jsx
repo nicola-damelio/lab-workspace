@@ -2,7 +2,7 @@ import NMRMoleculeViewer, { useShowAssignedFlag } from './NMRMoleculeViewer';
 import {
   ChartControlBar, SharedChartStylePanel, ChartInspector, brokenAxisProps, AngledTick, tickLabelOffset, cfgTickFormatter, cfgAxisLabel, cfgChartMargin, errorBarRange, instancesLinked, InstanceLinkToggle } from './SharedAnalysisTools';
 import { Icon } from './Icons';
-import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceArea, ReferenceLine, BarChart, Bar, LineChart, Line, Legend, ErrorBar, Cell
 } from 'recharts';
@@ -22,10 +22,12 @@ import { sequenceForMoleculeType, sequencePatchForMoleculeType, structureSequenc
 // viewer 🔢) : une seule règle pour la table des déplacements, la bande de
 // séquence de « Sequence and structure » et les ponts disulfure.
 import { residueNumberResolver, residueNumberOf } from '../utils/residueNumbering';
-// LE repliement demandé par le bouton « ⚭ Fold for disulfides » du viewer : la
-// détente des torsions qui amène les deux Sγ d'un pont défini à une distance de
-// liaison (module pur, la géométrie lui est injectée — voir plus bas).
-import { foldProteinForDisulfides } from '../utils/disulfideFold.js';
+// ⚭ Le repliement « Fold for disulfides » A ÉTÉ RETIRÉ de cette page avec son
+// bouton (la demande : « The “fold for disulphide” button does not work and you
+// can eliminate it ») : la fabrique `buildDisulfideFoldedStructure` qui appelait
+// utils/disulfideFold.js a disparu avec lui, et le modèle déduit de la séquence
+// est servi tel quel (l'interrupteur « ⚭ Disulfides: shown / hidden » du viewer,
+// lui, reste). Le module pur et ses tests restent en place.
 import {
   AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, CARBON_RANGE_DB,
   SS_CORRECTIONS, SS_META, DNA_FORM_OFFSETS, SUGAR_ANOMER_OFFSETS,
@@ -4994,69 +4996,13 @@ const generatedStructure = useMemo(() => {
   return sequenceStructure;
 }, [hasExplicitOverride, sequenceStructure]);
 
-  /* ── ⚭ Fold for disulfides — LE GESTE DU VIEWER, CALCULÉ ICI ──────────────
-     Le bouton du groupe Modify du viewer appelle cette fabrique : elle rend le
-     MÊME modèle de séquence, mais avec les torsions DÉTENDUES jusqu'à ce que
-     chaque pont défini dans « Cysteine states » puisse se fermer
-     (utils/disulfideFold.js : les deux Sγ visés à 2.05 Å, φ/ψ des résidus
-     entre les deux Cys + les trois rotamères χ1).
-
-     Trois propriétés qui comptent :
-       • RIEN NE BOUGE TANT QUE LE BOUTON N'EST PAS CLIQUÉ : le modèle servi
-         d'office reste le modèle idéal ci-dessus (c'est une déformation
-         explicite, pas une surprise à l'ouverture d'une condition) ;
-       • le texte rendu est celui du constructeur avec `torsions` — donc il
-         porte AUSSI le CONECT SG–SG et l'absence de HG (voir
-         proteinSequenceToPdbText) ;
-       • `note` dit ce qui a été obtenu, pont par pont, avec les NUMÉROS
-         AFFICHÉS (le 🔢 du viewer), y compris quand un pont n'a PAS pu être
-         fermé : c'est le viewer qui l'affiche tel quel. Aucune promesse de
-         repliement physique n'est faite (le module n'en fait pas non plus).
-     Rend `null` quand il n'y a rien à détendre (pas de pont, pas de
-     séquence) : le bouton du viewer est alors désactivé. */
-  const buildDisulfideFoldedStructure = useCallback(() => {
-    const pairs = (Array.isArray(activeTest.cysDisulfides) ? activeTest.cysDisulfides : [])
-      .filter((p) => Array.isArray(p) && p.length === 2 && p[0] !== p[1]);
-    if (d.moleculeType !== 'protein' || !d.seq || pairs.length === 0) return null;
-    const ssFor3D = univTestMode ? '' : (activeTest.secondaryStructure || '');
-    // Les torsions de départ SONT celles du modèle idéal : une par résidu (la
-    // même lecture que buildProteinBackbone, mais explicite ici).
-    const base = d.seq.split('').map((_, i) => {
-      const t = ssTorsionAt(ssFor3D[i] || 'C');
-      return { phi: t.phi, psi: t.psi, chi1: _deg2rad(-60) };
-    });
-    // La géométrie réelle, injectée dans le module pur : le constructeur NeRF de
-    // la page et le vrai placement du Sγ (χ1 compris).
-    const sgPositions = (torsions) => {
-      const residues = buildProteinBackbone(d.seq, torsions);
-      const sg = new Array(d.seq.length).fill(null);
-      residues.forEach((r, i) => {
-        if (d.seq[i] !== 'C') return;
-        try {
-          const sc = placeSidechainAtoms('C', r, torsions[i]);
-          const a = (sc.atoms || []).find((x) => x.name === 'SG');
-          if (a) sg[i] = a.pos;
-        } catch { /* une Cys sans Sγ ne bloque pas le repliement */ }
-      });
-      return { sg, ca: residues.map((r) => r.CA) };
-    };
-    const result = foldProteinForDisulfides({ torsions: base, pairs, sgPositions });
-    const text = proteinSequenceToPdbText(d.seq, ssFor3D, activeTest.name || 'PROTEIN', {
-      cysDisulfides: pairs, torsions: result.torsions,
-    });
-    const resNoOf = residueNumberResolver(activeTest);
-    const noOf = (pos) => resNoOf(pos - 1);
-    const parts = result.pairs.map(({ a, b, distance, bonded }) => (
-      distance === null
-        ? `Cys ${noOf(a)}–Cys ${noOf(b)}: no Sγ could be placed`
-        : `Cys ${noOf(a)}–Cys ${noOf(b)}: ${distance.toFixed(2)} Å ${bonded ? '✓ bonded' : '(not closed)'}`
-    ));
-    return {
-      text,
-      ext: 'pdb',
-      note: `${result.converged ? '⚭ Disulphide-folded model' : '⚠️ Partially folded model'} — ${parts.join(' · ')}. Chain relaxed, not a physical fold.`,
-    };
-  }, [activeTest, d.moleculeType, d.seq, univTestMode, activeTest.secondaryStructure]);
+  /* ── ⚭ Fold for disulfides — RETIRÉ : le bouton du viewer n'existe plus ─────
+     La fabrique rendait le modèle de séquence avec les φ/ψ DÉTENDUES jusqu'à ce
+     que chaque pont de « Cysteine states » puisse se fermer (utils/disulfideFold.js).
+     Elle n'avait qu'UN appelant — le bouton « ⚭ Fold for disulfides » du groupe
+     Modify — et la demande a été de le retirer : elle part donc avec lui, ainsi
+     que le module pur qu'elle seule branchait. Rien d'autre ne changeait le
+     modèle servi : celui-ci reste le modèle idéal de la séquence. */
 
   // Organic molecules with no override: fetch + validate a real 3D structure ourselves (Cactus,
   // falling back to PubChem) instead of handing NGL a raw URL to fetch on its own -- this is what
@@ -5469,7 +5415,7 @@ const generatedStructure = useMemo(() => {
         <div style={{ display: structureMode === '3d' ? 'block' : 'none' }} aria-hidden={structureMode !== '3d'}>
           {hasOpened3D && (
             <div className="flex flex-col gap-2">
-              <NMRMoleculeViewer key={(activeTest && activeTest.id) || 'molecular-structure'} instanceKey={(activeTest && activeTest.id) || null} src={structureSrc} structureText={structureText} structureTextExt={structureTextExt} sequenceStructureText={sequenceStructure?.text || null} sequenceStructureExt={sequenceStructure?.ext || null} buildDisulfideFoldedStructure={buildDisulfideFoldedStructure} externalLoading={organicFetch.loading} externalError={organicFetch.error} structureFileData={activeTest.structureFileData} structureFileName={activeTest.structureFileName} structureFile={structureFile} onStructureSrc={(v) => updateActiveTest({ structureSrc: v })} onStructureFile={handleStructureFile} moleculeType={d.moleculeType} parsedSeq={d.parsedSeq} smiles={activeTest.smiles} onLigandSmiles={(info) => { if (info && info.smiles && !activeTest.smiles && !activeTest.ligandSmiles) updateActiveTest({ ligandCode: info.code, ligandSmiles: info.smiles }); }} selectedKeys={selectedKeys} manualKeys={manualKeys} onAtomClick={handleAtomClick} residueOffset={residueOffset} atomNameMap={atomNameMap} atomRenames={activeTest.atomRenames || {}} onAtomRenames={(map) => updateActiveTest({ atomRenames: map })} resRenumber={activeTest.resRenumber || {}} onResRenumber={(map) => updateActiveTest({ resRenumber: map })} onStructureSequence={(seq, parts) => { const _nat = structureSequencePatch(activeTest, d.moleculeType, seq, parts); if (_nat) updateActiveTest(_nat); }} driveNaming={{ project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || '', instance: activeTest.instanceName || '', scientist: activeTest.operator || '', section: 'Data', subsection: 'Structure' }} labelMode={atomLabelMode} height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? '1100px' : '1000px'} />
+              <NMRMoleculeViewer key={(activeTest && activeTest.id) || 'molecular-structure'} instanceKey={(activeTest && activeTest.id) || null} src={structureSrc} structureText={structureText} structureTextExt={structureTextExt} sequenceStructureText={sequenceStructure?.text || null} sequenceStructureExt={sequenceStructure?.ext || null} imposedSecondaryStructure={univTestMode ? '' : (activeTest.secondaryStructure || '')} externalLoading={organicFetch.loading} externalError={organicFetch.error} structureFileData={activeTest.structureFileData} structureFileName={activeTest.structureFileName} structureFile={structureFile} onStructureSrc={(v) => updateActiveTest({ structureSrc: v })} onStructureFile={handleStructureFile} moleculeType={d.moleculeType} parsedSeq={d.parsedSeq} smiles={activeTest.smiles} onLigandSmiles={(info) => { if (info && info.smiles && !activeTest.smiles && !activeTest.ligandSmiles) updateActiveTest({ ligandCode: info.code, ligandSmiles: info.smiles }); }} selectedKeys={selectedKeys} manualKeys={manualKeys} onAtomClick={handleAtomClick} residueOffset={residueOffset} atomNameMap={atomNameMap} atomRenames={activeTest.atomRenames || {}} onAtomRenames={(map) => updateActiveTest({ atomRenames: map })} resRenumber={activeTest.resRenumber || {}} onResRenumber={(map) => updateActiveTest({ resRenumber: map })} onStructureSequence={(seq, parts) => { const _nat = structureSequencePatch(activeTest, d.moleculeType, seq, parts); if (_nat) updateActiveTest(_nat); }} driveNaming={{ project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || '', instance: activeTest.instanceName || '', scientist: activeTest.operator || '', section: 'Data', subsection: 'Structure' }} labelMode={atomLabelMode} height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? '1100px' : '1000px'} />
               <button onClick={downloadPdbFile} className="self-center mt-2 px-4 py-2 bg-indigo-50 border border-indigo-200 text-indigo-700 font-bold text-xs rounded-lg hover:bg-indigo-100 transition-colors shadow-sm">📥 Download 3D PDB File</button>
               {activeTest.structureFileName && (!structureFile || nmrStructRestore.message) && (
                 <div className="flex flex-wrap items-center justify-center gap-2 text-[11px]">

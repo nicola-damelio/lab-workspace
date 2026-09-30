@@ -193,10 +193,14 @@ has('{shown && subsectionsOf(kind).map((s) => renderSectionRow(sec, s.sub))}',
   '[barre] les rangées du type de la molécule, et elles seules');
 has('title="Transparency regulator of THIS row: 0 % = opaque, 100 % = invisible (NGL opacity)"',
   '[barre] la transparence d’une rangée dit ce qu’elle fait');
-has('🖱 drag a molecule: turn · right-drag: slide',
-  '[barre] la pastille DIT le geste du placement (✥ Move · ↻ Rotate ont disparu avec le mode : le rapport voulait « simply continue to move and rotate with the mouse »)');
-has('Drag ON a molecule to turn it about its own centre (left button)',
-  '[barre] …et son titre dit le geste entier : gauche = tourner, droit = glisser, fond · Alt = caméra');
+/* ⚠ La pastille du geste de placement a été RETIRÉE cette session (la demande :
+   « the button “drag a molecule: turn · right-drag: slide” seems useless and you
+   can remove it ») — avec elle, son titre. Le geste reste : il est vérifié par
+   le code (installMoleculeDrag / partStep) et par la ligne ★ de la barre. */
+ok(!VIEW.includes('🖱 drag a molecule: turn · right-drag: slide'),
+  '[barre] la pastille « 🖱 drag a molecule » n’est plus rendue (la demande l’a retirée)');
+ok(!VIEW.includes('Drag ON a molecule to turn it about its own centre (left button)'),
+  '[barre] …ni son titre, qui décrivait le geste entier');
 has('const MOL_STYLE_OPTIONS = (', '[barre] une seule liste de styles pour toutes les lignes');
 has('const MOL_COLOR_OPTIONS = (', '[barre] …et une seule liste de colorations');
 has('setMolFold((prev) => { const n = { ...prev }; delete n[id]; return n; });',

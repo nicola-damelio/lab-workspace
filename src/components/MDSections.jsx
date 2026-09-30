@@ -1586,6 +1586,10 @@ export const MDExperimentSetupSection = ({ ctx }) => {
     }
   }}
   parsedSeq={d.parsedSeq}
+  /* ⛓ La structure secondaire peinte dans « Sequence and structure » (🖌️) part vers
+     le viewer : c'est elle que le bouton ⛓ du panneau 🧬 convertit en contraintes de
+     dihèdre pour le ▶ MD, le ⚒ Minimise et le ▶ Run. */
+  imposedSecondaryStructure={activeTest.secondaryStructure || ''}
   selectedKeys={selectedKeys}
   manualKeys={manualKeys}
   onAtomClick={handleAtomClick}

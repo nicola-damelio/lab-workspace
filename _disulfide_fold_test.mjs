@@ -10,11 +10,15 @@
        autres outils ;
      • une Cys engagée dans un pont n'a PLUS d'hydrogène de thiol (HG) : un
        thiol oxydé n'a pas de proton ;
-     • le bouton « ⚭ Fold for disulfides » du viewer DÉTEND φ/ψ des résidus
-       entre les deux Cys et essaie les trois rotamères χ1 (utils/
-       disulfideFold.js) jusqu'à ce que les deux Sγ soient à une distance de
-       liaison (2.05 Å ± 0.35). Le modèle écrit alors porte RÉELLEMENT ce
-       S–S : le test relit le PDB produit et mesure la distance en 3D ;
+     • le module pur utils/disulfideFold.js DÉTEND φ/ψ des résidus entre les deux
+       Cys et essaie les trois rotamères χ1 jusqu'à ce que les deux Sγ soient à
+       une distance de liaison (2.05 Å ± 0.35). Le modèle écrit alors porte
+       RÉELLEMENT ce S–S : le test relit le PDB produit et mesure la distance en
+       3D. ⚠ LE BOUTON « ⚭ Fold for disulfides » DU VIEWER A ÉTÉ RETIRÉ cette
+       session — la demande : « The “fold for disulphide” button does not work and
+       you can eliminate it but keep the “disulphide:shown/hidden” button. » Le
+       module et la fabrique de la page sont donc partis avec lui, et les
+       assertions qui suivaient le bouton disent maintenant son ABSENCE ;
      • quand la fenêtre déplacée ne suffit pas, le module le DIT
        (`converged: false`) et rend la distance obtenue — il n'invente jamais
        un pont ;
@@ -279,11 +283,22 @@ has(SEC, 'export const disulfidePairColor = (pairIndex) =>',
 has(SEC, 'linkOf={(i) => {', 'la bande de séquence reçoit les résidus appariés');
 has(SEC, 'return { pairIndex: pi, partner: residueNoOf(partner - 1), color: disulfidePairColor(pi) };',
   '…avec le numéro AFFICHÉ du partenaire (le 🔢, pas la position de séquence)');
-has(SEC, 'buildDisulfideFoldedStructure={buildDisulfideFoldedStructure}',
-  'la fabrique du modèle détendu part vers le viewer');
-has(SEC, 'foldProteinForDisulfides({ torsions: base, pairs, sgPositions })',
-  '…et c’est bien le module pur qui détend la chaîne');
-has(SEC, 'buildProteinBackbone(d.seq, torsions)', '…en passant les torsions détendues au constructeur NeRF');
+/* ⚠ LE BOUTON « ⚭ Fold for disulfides » A ÉTÉ RETIRÉ (demande de la session) :
+   la fabrique de la page appelait le module pur, ce bouton l'appelait, et les
+   deux sont partis ensemble. Ce qui reste VRAI et continue d'être vérifié :
+   le module pur (sections 1 à 8) et l'interrupteur du DESSIN (section 9). */
+ok(!SEC.includes('const buildDisulfideFoldedStructure = useCallback'),
+  'la page ne fabrique plus de modèle détendu (la fabrique est partie avec le bouton)');
+ok(!SEC.includes('foldProteinForDisulfides({'),
+  '…et n’importe donc plus utils/disulfideFold.js');
+ok(!SEC.includes('buildDisulfideFoldedStructure={'),
+  '…et ne passe plus aucune fabrique au viewer');
+ok(!VIEW.includes('buildDisulfideFoldedStructure'),
+  'le viewer ne reçoit plus cette fabrique');
+ok(!VIEW.includes('foldForDisulfides'),
+  '…et le geste qui la sollicitait a disparu');
+ok(!VIEW.includes('⚭ Fold for disulfides\n'),
+  'le bouton ⚭ Fold for disulfides n’est plus rendu\n');
 has(SEC, '{ cysDisulfides: activeTest.cysDisulfides }',
   'les ponts entrent aussi dans le modèle servi d’office (le CONECT est là sans clic)');
 
@@ -293,14 +308,10 @@ has(DATA, "const linkAt = typeof linkOf === 'function' ? linkOf : () => null;",
 has(DATA, 'borderColor: link ? link.color : m.color', 'une Cys appariée prend la couleur de son pont');
 has(DATA, '⚭ disulphide with ${link.partner}', 'son infobulle nomme le partenaire');
 
-has(VIEW, 'buildDisulfideFoldedStructure = null,', 'le viewer reçoit la fabrique (optionnelle)');
-has(VIEW, 'const foldForDisulfides = () => {', 'et le geste qui la sollicite');
-has(VIEW, 'disabled={typeof buildDisulfideFoldedStructure !== \'function\'}',
-  'le bouton est inactif quand la page n’a aucun pont à détendre');
-has(VIEW, '⚭ Fold for disulfides', 'le bouton est nommé');
-has(VIEW, 'flashDisulfideFoldMsg(`${built.note', 'le message affiché est CELUI DE LA PAGE (distance réelle comprise)');
-has(VIEW, "'⚠️ Nothing to fold: this condition has no disulphide pair (or no protein sequence).'",
-  'et il dit quand il n’y a rien à détendre au lieu de ne rien faire');
+/* ⚠ Les six assertions du BOUTON ⚭ Fold for disulfides ont disparu avec lui : il
+   n'y a plus de prop `buildDisulfideFoldedStructure`, plus de `foldForDisulfides`,
+   plus de `flashDisulfideFoldMsg` ni de bouton à désactiver. Le gesture est
+   REDEVENU impossible — c'est la demande — et le module pur reste testé plus haut. */
 
 /* ════════════ 9. ⚭ « Disulfides: shown / hidden » : LA RÈGLE DU GRAPHE ════════════
    Cacher un S–S ne peut pas passer par le TEXTE : la passe de distances de NGL
@@ -435,13 +446,13 @@ has(VIEW, "{disulfidesShown ? '⚭ Disulfides: shown' : '⚭ Disulfides: hidden'
 has(VIEW, 'disabled={disulfideDrawn.bonds.length === 0}',
   'le bouton est inactif quand la structure à l’écran ne dessine aucun pont');
 has(VIEW, "flashDisulfideShowMsg('⚠️ No disulphide bond is drawn in this model — nothing to hide.",
-  '…et le geste le DIT au lieu de ne rien faire (comme ⚭ Fold for disulfides)');
+  '…et le geste le DIT au lieu de ne rien faire');
 has(VIEW, 'requestStructureLoad({ ...(loadRequest || {}), ts: Date.now() });',
   'cacher — puis remontrer — ressert LE MÊME modèle (l’entonnoir du ⚗️ rebuild des hydrogènes)');
 has(VIEW, '⚠️ drawn but stretched (the two Sγ are not at bonding distance)',
   'un pont dessiné mais ÉTIRÉ est dit tel : sa distance réelle, pas une promesse');
-has(VIEW, 'drawn but STRETCHED — ⚭ Fold for disulfides, right here, relaxes the chain until the two Sγ can meet.',
-  '…et le compte rendu nomme le geste qui essaie de le fermer au lieu de faire croire à une liaison');
+has(VIEW, 'drawn but STRETCHED: the two Sγ are further apart than the S–S bond length',
+  '…et le compte rendu dit qu’un pont étiré n’est PAS une liaison (le bouton qui essayait de le fermer a été retiré)');
 has(VIEW, 'const describeDisulfideBond = (b) => {', '…par une seule description, pont par pont');
 // La DÉFINITION reste à la page : le viewer ne touche pas au modèle qu’elle écrit.
 has(SEC, 'cysDisulfides.forEach(([a, b]) => emitBond(`SG@${a - 1}`, `SG@${b - 1}`));',
