@@ -119,9 +119,13 @@ const peptideOf = (n, { phi = -139, psi = 135 } = {}) => {
 const spine = peptideOf(6, { phi: -139, psi: 135 });
 const backbone = backboneTorsionsOf({ elements: spine.elements, bonds: spine.bonds, atomCount: spine.count });
 /* ════════════ 1. LES LETTRES, ET LA FENÊTRE ═════════════════════════════════ */
-eq(SS_DIHEDRAL_LETTERS.sort(), ['E', 'H'], 'les deux lettres qui IMPOSENT quelque chose sont H et E');
+eq(SS_DIHEDRAL_LETTERS.sort(), ['E', 'H', 'L'],
+  'les TROIS lettres qui IMPOSENT quelque chose sont H, L et E — les deux MAINS de l’hélice α et le feuillet');
 eq(SS_DIHEDRALS.H, { phi: -57, psi: -47 }, 'l’hélice α : φ −57° / ψ −47° (Pauling–Corey)');
 eq(SS_DIHEDRALS.E, { phi: -139, psi: 135 }, 'le feuillet β : φ −139° / ψ +135°');
+eq(SS_DIHEDRALS.L, { phi: 57, psi: 47 },
+  '⚠ l’hélice α GAUCHE : le MIROIR exact de H (φ +57° / ψ +47°) — la demande : « il bottone alfa elica'
+  + ' impone una struttura elicacea left-handed. aggiungi anche la right-handed. » Les deux mains sont peignables');
 eq(SS_DIHEDRAL_LETTERS.includes('C'), false, '⚠ C (pelote) N’IMPOSE RIEN : une pelote est le silence');
 eq(SS_DIHEDRAL_TOLERANCE, FF_DIHEDRAL_TOLERANCE,
   '⚠ la fenêtre est CELLE DU CHAMP : un seul chiffre dans tout le dossier');
@@ -305,12 +309,23 @@ has(VIEW, '⛓ φ/ψ imposed: ${dh.satisfied}/${dh.count} within ± ${dh.toleran
 has(VIEW, 'a.dihedralWells && a.dihedralWells.count', 'la ligne d’un départ fini les chiffre aussi');
 has(VIEW, 'const dh = field.dihedralReport;', 'la lecture ⟳ Energy les compte par la famille du champ');
 has(VIEW, 'the φ/ψ you imposed ${field.dihedral.toFixed(2)}', '…et son total entre dans la somme affichée');
-/* LE BOUTON EST DANS LES DEUX ENDROITS DEMANDÉS — « In MD and “structure calculation” ». */
-eq(VIEW.split('onClick={calcConvertSecondaryStructure}').length - 1, 2,
-  '⚠ DEUX boutons, UN SEUL handler : la rangée ▶ MD et le panneau 🧬 (c’est la demande : « In MD and'
-  + ' “structure calculation” »)');
-has(VIEW, 'SS → φ/ψ', '…nommé dans la rangée du ▶ MD');
-has(VIEW, 'Secondary structure → φ/ψ', '…et dans le panneau du calcul de structure');
+/* LE BOUTON VIT MAINTENANT DANS « STRUCTURE CALCULATION », ET NULLE PART AILLEURS.
+   La demande : « Il pulsante “SS to phi, psi” deve andare dentro la sezione “structure
+   calculation”. Quest'ultimo deve riempire la tabella di constraints. » UN seul bouton —
+   celui du panneau 🧬 — et la conversion ÉCRIT la table des contraintes de φ/ψ. */
+eq(VIEW.split('onClick={calcConvertSecondaryStructure}').length - 1, 1,
+  '⚠ UN SEUL bouton : celui du panneau 🧬 (la rangée ▶ MD n’en porte plus : elle porte la fenêtre de la dynamique)');
+has(VIEW, 'Secondary structure → φ/ψ', '…et c’est sous ce nom qu’il vit dans le panneau du calcul');
+eq(VIEW.includes("'SS → φ/ψ'"), false,
+  '⚠ …et le libellé « SS → φ/ψ » de la rangée ▶ MD n’existe plus (un seul bouton, dans 🧬)');
+has(VIEW, '{calcDihedrals.map((c, k) => (', '⚠ il REMPLIT la table des contraintes : une ligne par φ et par ψ');
+eq(VIEW.split('setCalcDihedrals((list) => list.filter((x) => x !== c))').length - 1, 1,
+  '…dont chaque ligne se retire seule, par un geste écrit UNE fois (φ et ψ sont jugés séparément)');
+has(VIEW, 'const [mdDock, setMdDock] = useState(false);',
+  '⚠ …et la FENÊTRE MD de la demande existe : « Il pulsante MD deve aprire una finestra collapsable a sinistra' +
+  ' all’interno del viewer »');
+has(VIEW, 'const renderMdOptions = () => (', '…ses paramètres sont écrits une fois');
+has(VIEW, 'const renderMdWindow = () => (', '…et elle-même suit le dock 🪢 (⇤, onglet vertical, même rangée)');
 has(VIEW, 'each φ and ψ is judged on its own', 'l’infobulle explique que φ et ψ sont jugés séparément');
 has(VIEW, 'a coil imposes nothing', '…et qu’une pelote n’impose rien');
 /* LES TROIS PAGES ALIMENTENT LA PROP. */

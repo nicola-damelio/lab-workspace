@@ -2690,8 +2690,28 @@ const _vecNorm = (a) => Math.sqrt(_vecDot(a, a));
 const _vecNormalize = (a) => { const n = _vecNorm(a); return n < 1e-8 ? [0,0,0] : _vecScale(a, 1/n); };
 const _deg2rad = (d) => d * Math.PI / 180;
 
+/* ⚠ LE SIGNE DE LA TORSION — LA CONVENTION IUPAC DU DOSSIER, ET RIEN D'AUTRE.
+   Ce poseur (NeRF) attachait jusqu'ici la torsion À L'ENVERS de ce que l'application
+   RELIT ensuite (`dihedralDeg` de utils/torsionDrive.js, la convention signée IUPAC
+   des lecteurs χ/δ, du graphe 🪢 et des contraintes de structure secondaire). Tout le
+   modèle de protéine sortait donc EN MIROIR. Mesuré, chiffre à chiffre, avant le
+   correctif (les deux faits sont tenus par _ss_geometry_test.mjs) :
+
+     · l'hélice α peinte (φ −57° / ψ −47°, Pauling–Corey) se construisait φ +57° /
+       ψ +47° — c'est-à-dire une hélice α GAUCHE ;
+     · le feuillet se construisait avec ses φ/ψ inversés (φ +119° / ψ −113° au lieu de
+       −119° / +113°) ;
+     · le carbone α portait la stéréochimie D au lieu de L : le carbone asymétrique du
+       modèle donnait N–CA–C–CB = +122.8° là où le vrai aminoacide L du dépôt
+       (public/structures/template_amino_acid.pdb) donne −123.1°.
+
+   Le signe est maintenant celui du fichier : la torsion DEMANDÉE est exactement celle
+   qu'on mesure ensuite. ⚠ Ce poseur n'est utilisé QUE par le modèle de protéine (le
+   squelette, `placeSidechainAtoms`, les hydrogènes du squelette) : les bâtisseurs
+   d'acides nucléiques, de sucres et de lipides ont leurs propres coordonnées et ne
+   passent pas par lui. */
 const nerfPlace = (A, B, C, bondLength, bondAngleRad, torsionRad) => {
-  const t = -torsionRad; // sign verified against a standard dihedral calculator
+  const t = torsionRad;  // ⚠ LE SIGNE DU FICHIER (IUPAC) — voir le commentaire du poseur
   const bc = _vecNormalize(_vecSub(C, B));
   const ab = _vecSub(B, A);
   const n = _vecNormalize(_vecCross(ab, bc));
@@ -2739,8 +2759,22 @@ const PROTEIN_BB = {
   OMEGA: _deg2rad(180),
 };
 const SS_TORSIONS = {
-  H: { phi: _deg2rad(-57), psi: _deg2rad(-47) },   // alpha helix
-  E: { phi: _deg2rad(-119), psi: _deg2rad(113) },  // beta strand
+  /* ⚠ CES φ/ψ SONT EXACTEMENT CEUX QU'ON MESURE ENSUITE (dihedralDeg, convention
+     signée IUPAC) : l'hélice peinte sort DROITE (φ négatif), le feuillet sort avec
+     ses φ/ψ du bon côté, et le carbone α reste L. Voir le commentaire de `nerfPlace`
+     et _ss_geometry_test.mjs, qui construit puis RELIT chaque lettre. */
+  H: { phi: _deg2rad(-57), psi: _deg2rad(-47) },   // α-helix, RIGHT-handed (Pauling–Corey)
+  /* L'ÉLICHE GAUCHE — la demande : « il bottone alfa elica impone una struttura
+     elicacea left-handed. aggiungi anche la right-handed. » Les deux mains sont
+     maintenant peignables : H = droite (le couple de Pauling–Corey), L = gauche
+     (son MIROIR exact, φ/ψ positifs). C'est la lettre L que la peinture écrit, donc
+     le chip, la contrainte de dihèdre (SS_DIHEDRALS.L) et la géométrie ci-dessous
+     parlent du même objet. */
+  L: { phi: _deg2rad(57), psi: _deg2rad(47) },     // α-helix, LEFT-handed (the mirror pair)
+  /* Le MÊME couple que la contrainte de structure secondaire (SS_DIHEDRALS.E, module
+     structureCalc) : un feuillet peint tombe donc à 0° de la cible qu'on lui impose
+     quand la page le convertit en contraintes, au lieu de 20° à côté. */
+  E: { phi: _deg2rad(-139), psi: _deg2rad(135) },  // β strand (pleated sheet)
   // Coil / extended default: polyproline-II-like (phi=-75°, psi=+145°). The old
   // "fully extended" phi=psi=180° puts every side chain straight back into the
   // previous residue's carbonyl (O...H as close as ~0.5 A for bulky residues),
@@ -3674,7 +3708,9 @@ const useNmrDerived = (activeTest, ctx = {}) => {
   const shifts = allLayerValues['cs'] || {};
   const activeValues = shifts;
   const ssRaw = activeTest.secondaryStructure || '';
-  const getSSAt = (i) => (ssRaw[i] && 'HES'.includes(ssRaw[i]) ? ssRaw[i] : 'C');
+  // ⚠ HESL — L (hélice α GAUCHE) est une lettre peignable comme les autres : sans elle
+  // ici, le chip retombait sur « C » et la peinture était effacée au rendu suivant.
+  const getSSAt = (i) => (ssRaw[i] && 'HESL'.includes(ssRaw[i]) ? ssRaw[i] : 'C');
   const formsRaw = activeTest.nucleicForms || '';
   const dnaFormDefault = activeTest.dnaForm || 'B';
   const getFormAt = (i) => (formsRaw[i] && 'ABZ'.includes(formsRaw[i]) ? formsRaw[i] : dnaFormDefault);
@@ -3811,7 +3847,9 @@ const useNmrDerived = (activeTest, ctx = {}) => {
       ? cysIsOxidized(activeTest.cysOxidized, activeTest.cysStates, activeTest.cysDisulfides, idx + 1)
       : false;
     const ssLetter = moleculeType === 'protein' ? getSSAt(idx) : 'C';
-    const ssKey = { C: 'coil', H: 'helix', E: 'sheet' }[ssLetter];
+    // ⚠ L (hélice α GAUCHE) est une HÉLICE comme H : elle prend les mêmes corrections
+    // de déplacements chimiques (`helix`), sinon la lettre tombait sur `undefined`.
+    const ssKey = { C: 'coil', H: 'helix', L: 'helix', E: 'sheet' }[ssLetter];
     const corr = SS_CORRECTIONS[ssKey];
     const estShifts = {};
     Object.keys(res.shifts || {}).forEach((a) => {
@@ -5350,7 +5388,7 @@ const generatedStructure = useMemo(() => {
         <CollapsibleSection title="Sequence and structure" icon="🖌️" defaultOpen={false}>
           <div className="flex flex-wrap gap-2 mb-3 items-center">
             <span className="text-xs font-bold text-slate-500 uppercase mr-1">🖌️ Brush:</span>
-            {['C', 'H', 'E'].map((l) => (
+            {['C', 'H', 'L', 'E'].map((l) => (
               <button key={l} onClick={() => setSSBrush(l)} className="px-3 py-1 rounded-lg text-xs font-black border transition-all"
                 style={{ backgroundColor: ssBrush === l ? SS_META[l].color : 'white', borderColor: SS_META[l].color, color: ssBrush === l ? 'white' : SS_META[l].color }}>
                 {SS_META[l].label}
@@ -5359,6 +5397,7 @@ const generatedStructure = useMemo(() => {
             <span className="mx-2 text-slate-300">|</span>
             <button onClick={() => setAllSS('C')} className="px-3 py-1 rounded-lg text-xs font-bold bg-slate-100 border border-slate-300 text-slate-600 hover:bg-slate-200">All Coil</button>
             <button onClick={() => setAllSS('H')} className="px-3 py-1 rounded-lg text-xs font-bold bg-violet-100 border border-violet-300 text-violet-700 hover:bg-violet-200">All α-Helix</button>
+            <button onClick={() => setAllSS('L')} className="px-3 py-1 rounded-lg text-xs font-bold bg-fuchsia-100 border border-fuchsia-300 text-fuchsia-700 hover:bg-fuchsia-200">All α-Helix (L)</button>
             <button onClick={() => setAllSS('E')} className="px-3 py-1 rounded-lg text-xs font-bold bg-amber-100 border border-amber-300 text-amber-700 hover:bg-amber-200">All β-Sheet</button>
           </div>
           <p className="text-xs text-slate-400 mb-3">💡 Select a brush, then click or drag across the sequence chips to paint secondary structure.</p>

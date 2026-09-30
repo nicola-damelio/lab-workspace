@@ -917,6 +917,7 @@ const ramaPairsOf = (torsions) => {
  *  ce sont les deux bassins du graphe 🪢, à leur centre :
  *
  *    H (α)  φ −57°   ψ −47°      (Pauling–Corey : l'hélice α droite)
+ *    L (α)  φ +57°   ψ +47°      (l'hélice α GAUCHE : le miroir exact de H)
  *    E (β)  φ −139°  ψ +135°     (le feuillet β parallèle/antiparallèle)
  *    C · S  aucune contrainte    (une pelote n'impose rien : c'est le silence)
  *
@@ -935,6 +936,11 @@ const ramaPairsOf = (torsions) => {
  */
 export const SS_DIHEDRALS = {
   H: { phi: -57, psi: -47 },
+  /* ⚠ L'HÉLICE α GAUCHE — la lettre L de la peinture (🖌️). C'est le MIROIR exact de H :
+     φ/ψ positifs. Elle existe parce que la demande le dit (« il bottone alfa elica impone
+     una struttura elicacea left-handed. aggiungi anche la right-handed. ») : les deux mains
+     se peignent donc, et la conversion porte la bonne cible sur chacune. */
+  L: { phi: 57, psi: 47 },
   E: { phi: -139, psi: 135 },
 };
 /** Les lettres de la peinture qui IMPOSENT quelque chose (les autres sont le silence). */

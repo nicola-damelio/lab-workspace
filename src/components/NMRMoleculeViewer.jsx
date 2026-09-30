@@ -7735,6 +7735,27 @@ const RAMA_DOCK_KEY = 'labViewerRamaDock';
 const [ramaDock, setRamaDock] = useState(() => {
   try { return localStorage.getItem(RAMA_DOCK_KEY) !== '0'; } catch { return true; }
 });
+/* ── 🌡 LA FENÊTRE MD — LE DOCK DE GAUCHE DE LA VUE 3D ─────────────────────────
+   La demande, mot pour mot : « Il pulsante MD deve aprire una finestra collapsable a
+   sinistra all'interno del viewer. nella finestra devono comparire tutti i suoi
+   parametri che adesso sono in “structure calculation” senza i parametri (n starting,
+   m kept, recuit, frames). Tale finestra si deve richiudere quando si riclicca su MD. »
+
+   Ce qu'elle est : la MÊME fenêtre à gauche de la vue 3D que le dock 🪢 (elle vit dans
+   la rangée, jamais par-dessus la molécule ; repliée, il ne reste qu'un onglet vertical
+   🌡 MD sur le bord). Elle porte les réglages de la dynamique — les paramètres que la
+   demande cite, et RIEN d'autre : n starting, m kept, 🔥 recuit et 🖼 frames restent au
+   🧬 Structure calculation (ce sont des paramètres du CALCUL, pas de la dynamique), et
+   `renderMdOptions()` les écrit une seule fois pour les deux gestes.
+
+   ⚠ UN SEUL JEU DE VALEURS : `calcMdSteps`, `calcMdHot`, `calcMdCold`, `calcMdEquil`,
+   `calcMdDt`, `calcMinimise`, `calcOmegaFree` sont les états que le ▶ Run du 🧬 lit
+   aussi. La fenêtre ne fait donc pas « un autre MD » : elle donne SON bouton à la
+   dynamique et rend ses réglages visibles sans ouvrir une section. Le bouton de la
+   barre (▶ MD), lui, ne fait plus qu'OUVRIR/FERMER cette fenêtre — c'est la demande. */
+const [mdDock, setMdDock] = useState(false);
+const toggleMdDock = (v) => setMdDock((cur) => (typeof v === 'boolean' ? v : !cur));
+
 const toggleRamaDock = (v) => {
   const next = typeof v === 'boolean' ? v : !ramaDock;
   setRamaDock(next);
@@ -7809,6 +7830,100 @@ const [calcMinimise, setCalcMinimise] = useState(STRUCTURE_CALC_MIN_ROUNDS);
    ⚠ LE MÊME réglage part au ▶ Run, au ▶ MD et au ⚒ Minimise : un seul état, donc le calcul de
    structure ne peut pas porter d'autre protocole que les deux gestes ⚙ à côté de lui. */
 const [calcOmegaFree, setCalcOmegaFree] = useState(STRUCTURE_CALC_FREE_OMEGA);
+/* ── 💾 LES DEUX TABLES SURVIVENT À UN RECHARGEMENT DE LA PAGE ─────────────────
+   La demande : « Structure calculation ha un problema. Funziona per un po' ma poi dà un
+   messaggio di errore e se rinfresco la pagina tutto è perso e bisogna ricominciare da
+   capo. » Un calcul, lui, ne peut pas survivre à un rechargement (les coordonnées sont
+   rebâties par la page) ; ce qui DOIT survivre, c'est le TRAVAIL de l'utilisateur : les
+   lignes de la table des distances TELLES QU'ELLES SONT ÉCRITES, et les réglages. Ils
+   sont donc écrits dans `localStorage` à chaque changement et relus au montage.
+   ⚠ Les ATOMES d'une ligne relue sont RÉSOLUS sur la molécule à l'écran dès qu'elle est
+   prête, par le MÊME lecteur que la frappe et que 📂 Load ; une ligne dont les noms ne
+   tombent sur rien reste telle quelle (à finir) — aucune coordonnée n'est inventée, et
+   les contraintes de φ/ψ, elles, se refont d'un clic sur ⛓ (elles sont appariées au
+   squelette AFFICHÉ : les garder en mémoire les figerait sur les atomes d'hier). */
+const CALC_STORE_KEY = 'labViewerCalcState';
+const calcRestoreRef = useRef(false);
+useEffect(() => {
+  if (calcRestoreRef.current) return;      // une seule relecture, au montage
+  calcRestoreRef.current = true;
+  try {
+    const raw = localStorage.getItem(CALC_STORE_KEY);
+    if (!raw) return;
+    const s = JSON.parse(raw) || {};
+    if (Array.isArray(s.rows) && s.rows.length) {
+      setCalcRestraints(s.rows.slice(0, STRUCTURE_CALC_MAX_RESTRAINTS).map((r, k) => {
+        const t = String((r && r.t) == null ? '' : r.t);
+        const v = Number(t.replace(',', '.'));
+        return {
+          key: `row-restored-${k + 1}`, i: null, j: null,
+          target: Number.isFinite(v) && v > 0 ? v : null,
+          a: String((r && r.a) || ''), b: String((r && r.b) || ''), t, la: '', lb: '', say: '',
+        };
+      }));
+      calcRowSeqRef.current = s.rows.length;
+    }
+    if (Number.isFinite(s.starts)) setCalcStartsText(s.starts);
+    if (Number.isFinite(s.keep)) setCalcKeepText(s.keep);
+    if (Number.isFinite(s.anneal)) setCalcAnneal(Math.max(0, Math.min(24, Math.round(s.anneal))));
+    if (Number.isFinite(s.annealFrame)) setCalcAnnealFrame(Math.max(0, Math.min(24, Math.round(s.annealFrame))));
+    if (Number.isFinite(s.mdSteps)) setCalcMdSteps(Math.max(0, Math.min(20000, Math.round(s.mdSteps))));
+    if (Number.isFinite(s.mdDt)) setCalcMdDtText(s.mdDt);
+    if (Number.isFinite(s.mdEquil)) setCalcMdEquil(Math.max(0, Math.min(90, Math.round(s.mdEquil))));
+    if (Number.isFinite(s.minimise)) setCalcMinimise(Math.max(0, Math.min(12, Math.round(s.minimise))));
+    if (Number.isFinite(s.hot)) setCalcMdHotText(s.hot);
+    if (Number.isFinite(s.cold)) setCalcMdColdText(s.cold);
+    if (Number.isFinite(s.mdTemp)) setCalcMdTempText(s.mdTemp);
+    if (typeof s.omegaFree === 'boolean') setCalcOmegaFree(s.omegaFree);
+    setCalcMsg('↩ The distance table and the settings of the last session were brought back from this browser'
+      + ' (the rows are re-resolved on the molecule as soon as it is on screen). ⛓ re-imposes the φ/ψ of the'
+      + ' painted secondary structure in one click: those constraints are matched to the backbone ON SCREEN, so'
+      + ' they are always rebuilt on the molecule you are looking at.');
+  } catch { /* un rechargement n'est pas une donnée : on repart des défauts */ }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, []);
+useEffect(() => {
+  try {
+    localStorage.setItem(CALC_STORE_KEY, JSON.stringify({
+      rows: calcRestraints.map((r) => ({
+        a: r.a || '', b: r.b || '',
+        t: r.t != null ? r.t : (r.target == null ? '' : String(r.target)),
+      })),
+      starts: calcStarts, keep: calcKeep, anneal: calcAnneal, annealFrame: calcAnnealFrame,
+      mdSteps: calcMdSteps, mdDt: calcMdDt, mdEquil: calcMdEquil, minimise: calcMinimise,
+      hot: calcMdHot, cold: calcMdCold, omegaFree: calcOmegaFree, mdTemp: calcMdTemp,
+    }));
+  } catch { /* le stockage local est un confort, pas une donnée */ }
+}, [calcRestraints, calcStarts, calcKeep, calcAnneal, calcAnnealFrame, calcMdSteps, calcMdDt,
+  calcMdEquil, calcMinimise, calcMdHot, calcMdCold, calcOmegaFree, calcMdTemp]);
+/* …ET LA RÉSOLUTION DES ATOMES REVENUS, dès que la molécule est là — les DEUX côtés d'une
+   ligne : sans les deux, elle resterait « pas prête » jusqu'à ce qu'on la retape. Une
+   ligne dont un nom ne se résout pas GARDE son texte et dit POURQUOI (comme la frappe). */
+useEffect(() => {
+  if (status !== 'ready' || !componentRef.current) return;
+  if (!calcRestraints.some((r) => r.i == null && r.a || r.j == null && r.b)) return;
+  const live = calcGeometryNow();
+  if (!live) return;
+  const el = live.geom.elements;
+  const side = (row, which) => {
+    const text = which === 'a' ? row.a : row.b;
+    if (!text || (which === 'a' ? row.i != null : row.j != null)) return row;
+    const hit = calcAtomOfText(live.structure, text);
+    if (!hit.ok) return { ...row, say: hit.say };
+    const next = which === 'a'
+      ? { ...row, i: hit.index, la: hit.label, say: '' }
+      : { ...row, j: hit.index, lb: hit.label, say: '' };
+    if (next.i != null && next.j != null) {
+      next.label = `${next.la || `#${next.i}`}–${next.lb || `#${next.j}`}`;
+      if (!(Number.isFinite(next.target) && next.target > 0)) {
+        next.target = bondLengthTarget(el[next.i], el[next.j]);
+      }
+    }
+    return next;
+  };
+  setCalcRestraints((list) => list.map((r) => side(side(r, 'a'), 'b')));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [status, calcRestraints]);
 const [calcWatch, setCalcWatch] = useState(true);
 /* COMBIEN DE MILLISECONDES DE CALCUL ENTRE DEUX IMAGES — c'est le budget d'un tour de
    `pump` : assez court pour que la page peigne à chaque tour (≈ 15 images par seconde),
@@ -9916,9 +10031,17 @@ const calcAddRestraint = () => {
 /** CHANGER LA CIBLE D'UNE LIGNE — c'est l'UTILISATEUR qui donne les distances, et il
  *  peut les corriger après coup ; une cible illisible ou nulle est refusée sans un mot. */
 const calcSetRestraintTarget = (key, value) => {
-  const v = Number(String(value).replace(',', '.'));
-  if (!Number.isFinite(v) || v <= 0) return;
-  setCalcRestraints((list) => list.map((r) => (r.key === key ? { ...r, target: v } : r)));
+  /* ⚠ CE QUI EST GARDÉ, C'EST LE TEXTE TAPÉ (`t`), ET LA CIBLE N'EST POSÉE QUE QUAND IL
+     SE LIT. Le champ était `type="number"` avec `value={r.target}` : chaque frappe
+     réécrivait la case avec le NOMBRE, donc taper « 12.5 » donnait 1 → 12 → 125 (le
+     point était mangé et le chiffre suivant s'ajoutait au dernier — le rapport : « il
+     programma non legge quello che scrivo e mi dà errore perché taglia l'ultima lettera »).
+     Le texte est maintenant la seule source du champ, la virgule décimale est acceptée,
+     et une case vidée ou illisible rend la ligne « pas prête » — elle n'est pas effacée. */
+  const text = String(value == null ? '' : value);
+  const v = Number(text.replace(',', '.'));
+  const target = Number.isFinite(v) && v > 0 ? v : null;
+  setCalcRestraints((list) => list.map((r) => (r.key === key ? { ...r, t: text, target } : r)));
 };
 
 const calcRemoveRestraint = (key) => {
@@ -10510,9 +10633,27 @@ const runStructureCalculation = () => {
     for (;;) {
       let tick;
       try { tick = frames.next(); } catch (e) {
-        setCalcBusy(false);
-        setCalcProgress('');
-        setCalcMsg(`✕ The calculation stopped on an error: ${(e && e.message) || e}`);
+        /* ⚠ UNE ERREUR NE JETTE PLUS LE TRAVAIL DÉJÀ FAIT — la demande : « Structure
+           calculation ha un problema. Funziona per un po' ma poi dà un messaggio di errore e
+           se rinfresco la pagina tutto è perso e bisogna ricominciare da capo. » Les départs
+           DÉJÀ finis (`attempts`, poussés par `onAttempt`) sont donc CLASSÉS ET GARDÉS : le
+           meilleur est écrit dans la molécule, la famille reste dans le panneau, et le message
+           dit la phase exacte où l'erreur est tombée, son texte, et combien de départs ont été
+           calculés. Les deux tables (distances et φ/ψ), elles, ne sont jamais touchées ici. */
+        const phase = (shown && shown.phase) || '';
+        const where = ` — start ${attempts.length + 1} of ${n}${phase ? `, phase "${phase}"` : ''}`;
+        if (attempts.length) {
+          finish(true);                                  // classe et écrit ce qui est fait
+          setCalcMsg(`✕ The calculation stopped on an error${where}: ${(e && e.message) || e}`
+            + ` The ${attempts.length} start${attempts.length === 1 ? '' : 's'} already computed`
+            + ' were RANKED AND KEPT anyway (the best one is on screen); your two tables are untouched.'
+            + ' ▶ Run again, or ⏹ to stop here.');
+        } else {
+          setCalcBusy(false);
+          setCalcProgress('');
+          setCalcMsg(`✕ The calculation stopped on an error${where}: ${(e && e.message) || e}`
+            + ' Nothing had been computed yet — your two tables are intact.');
+        }
         return;
       }
       if (tick.done) { finish(false, tick.value); return; }
@@ -19131,23 +19272,159 @@ const stylesSavedTitle = stylesSavedNames.length
    température pour ▶ MD, et la même pour tous). Le JSX est écrit UNE fois et rendu une
    fois : les trois gestes restent ceux du module (`mdFrames`, `minimizeFrames`,
    `forceFieldEnergyOf`) — il n'y a pas de second moteur caché dans le panneau. */
+/* ── ⚙ LES RÉGLAGES DE LA DYNAMIQUE — ÉCRITS UNE SEULE FOIS, POUR LA FENÊTRE 🌡 MD ──
+   La demande : « nella finestra devono comparire tutti i suoi parametri che adesso
+   sono in “structure calculation” senza i parametri (n starting, m kept, recuit,
+   frames). » Les voici, tels quels : pas, pas de temps, durée totale, températures
+   chaude et froide, part d'équilibration, balayages de minimisation, option 🪢 ω.
+   Ils étaient DANS le panneau 🧬 : celui-ci n'en garde AUCUNE copie (un seul endroit
+   où les régler, donc aucune divergence entre ce que la fenêtre montre et ce que le
+   ▶ Run du 🧬 lit). ⚠ Ce sont des états partagés, pas des copies. */
+const renderMdOptions = () => (
+  <>
+    <label className="flex items-center gap-1"
+      title="🌡 MOLECULAR DYNAMICS — how many Langevin steps each start gets (and how many the ▶ MD button below runs). The dynamics is in DIHEDRAL space (a step is one rigid rotation about a hinge, so bond lengths and angles cannot break), under the WHOLE force field in kcal/mol — bonds, angles, planar rings, van der Waals, electrostatics with partial charges, non-polar solvent, your distances as flat-bottom wells, ω trans, the φ/ψ statistical potential and χ1. Each start runs an EQUILIBRATION phase at the hot temperature and then cools down to the cold one. 0 = no dynamics.">
+      🌡 MD
+      <input type="number" min="0" max="20000" step="10" value={calcMdSteps}
+        onChange={(e) => setCalcMdSteps(Math.max(0, Math.min(20000, Math.round(Number(e.target.value) || 0))))}
+        aria-label="Molecular dynamics steps per start"
+        className="w-16 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
+      <span className="font-semibold text-slate-500">steps</span>
+    </label>
+    <label className="flex items-center gap-1"
+      title="⏱ THE TIMESTEP of the dynamics, in picoseconds — and with it the TOTAL SIMULATION TIME: steps × dt. Type a length here (or in the « total » field) and the number of steps follows; type steps and this length follows. 0.01 ps is the usual value for a dihedral trajectory.">
+      ⏱ dt
+      <input type="number" min="0.0001" max="1" step="0.005" value={calcMdDt}
+        onChange={(e) => setCalcMdDtText(e.target.value)}
+        aria-label="Molecular dynamics timestep, in picoseconds"
+        className="w-16 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
+      <span className="font-semibold text-slate-500">ps</span>
+    </label>
+    <label className="flex items-center gap-1"
+      title="⏱ THE TOTAL SIMULATION TIME of one start, in picoseconds — the length the whole trajectory will have (equilibration + cooling). Typing a length here sets the number of steps to length / dt; that is the only arithmetic the panel does, and the module checks it (`structureCalcSimulationTimeOf`).">
+      ⏱ total
+      <input type="number" min="0.0001" max="20000" step="0.5" value={calcMdTime.ps}
+        onChange={(e) => setCalcMdTotalText(e.target.value)}
+        aria-label="Total simulation time per start, in picoseconds"
+        className="w-20 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
+      <span className="font-semibold text-slate-500">ps</span>
+    </label>
+    <span className="text-[10px] font-mono font-bold text-indigo-800 bg-indigo-50 border border-indigo-200 rounded px-1.5 py-0.5"
+      title="steps × dt — the nominal length of one start's trajectory, computed by the module.">
+      = {calcMdTime.ps} ps ({calcMdTime.ns} ns)
+    </span>
+    <label className="flex items-center gap-1"
+      title="🌡 THE HOT TEMPERATURE of the dynamics, in KELVINS — the equilibration phase. The thermal energy is R·T (0.6 kcal/mol at 300 K, 6 kcal/mol at 3000 K), so 2000–4000 K is the range where a dihedral actually changes basin: that is the whole point of the dynamics inside a structure calculation. The ▶ MD button below keeps ONE temperature instead (its own 🌡 T field).">
+      🌡 hot
+      <input type="number" min="1" max="20000" step="100" value={calcMdHot}
+        onChange={(e) => setCalcMdHotText(e.target.value)}
+        aria-label="Hot temperature of the molecular dynamics, in kelvins"
+        className="w-16 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
+      <span className="font-semibold text-slate-500">K</span>
+    </label>
+    <label className="flex items-center gap-1"
+      title="🌡 THE COLD TEMPERATURE at the end of the cooling, in KELVINS — 300 K is room temperature (R·T = 0.6 kcal/mol): the molecule vibrates and settles, it does not jump basins any more.">
+      🌡 cold
+      <input type="number" min="1" max="20000" step="50" value={calcMdCold}
+        onChange={(e) => setCalcMdColdText(e.target.value)}
+        aria-label="Cold temperature of the molecular dynamics, in kelvins"
+        className="w-16 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
+      <span className="font-semibold text-slate-500">K</span>
+    </label>
+    <label className="flex items-center gap-1"
+      title="⚖ THE EQUILIBRATION SHARE of the dynamics, in per cent: that part runs at the HOT temperature (the conformation installs itself under your distances), the rest cools down hot → cold. 33 % is the default; 0 % starts the cooling at once.">
+      ⚖ equil
+      <input type="number" min="0" max="90" step="5" value={calcMdEquil}
+        onChange={(e) => setCalcMdEquil(Math.max(0, Math.min(90, Math.round(Number(e.target.value) || 0))))}
+        aria-label="Share of the dynamics spent equilibrating, in per cent"
+        className="w-14 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
+      <span className="font-semibold text-slate-500">%</span>
+    </label>
+    <label className="flex items-center gap-1"
+      title="⚒ MINIMISATION — how many sweeps of the dihedral minimisation each start gets after the dynamics (and how many the ⚒ Minimise button runs). Each hinge is tried on both sides of a step that halves as soon as a whole sweep improves nothing: it lands on a LOCAL MINIMUM of the same force field, which is the last energy refinement of the protocol. 0 = no minimisation.">
+      ⚒ sweeps
+      <input type="number" min="0" max="12" value={calcMinimise}
+        onChange={(e) => setCalcMinimise(Math.max(0, Math.min(12, Math.round(Number(e.target.value) || 0))))}
+        aria-label="Minimisation sweeps per start"
+        className="w-12 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
+    </label>
+    <label className="flex items-center gap-1"
+      title={`🪢 LET ω VARY — the request: « in the structure calculation allow the option to vary also the omega backbone angle. » UNCHECKED (the default) every peptide C–N bond is a PROTECTED dihedral: the annealing, the quench, the dynamics AND the minimisation refuse a step that increases its ω cost — that is what keeps peptides trans (measured: without it, an ω 0.4° off trans ended up cis after 300 dynamics steps). CHECKED, ω becomes an ORDINARY dihedral of the protocol: its barrier is still a family of the force field (k = ${STRUCTURE_CALC_OMEGA_WEIGHT} kcal/mol, zero inside the plateau of ± ${STRUCTURE_CALC_OMEGA_TOLERANCE}° around ${STRUCTURE_CALC_OMEGA}°), and the FIELD alone arbitrates — a peptide only leaves trans when a distance you asked for, an imposed φ/ψ or a clash pays more than that barrier. The step stays the family's own (12° in the annealing, 4° in the dynamics), so ω still turns by small steps and never jumps to another conformer. The setting is the SAME one for ▶ Run, ▶ MD and ⚒ Minimise.`}>
+      <input type="checkbox" checked={calcOmegaFree} onChange={(e) => setCalcOmegaFree(e.target.checked)}
+        aria-label="Let the peptide ω dihedral vary"
+        className="accent-indigo-600" />
+      🪢 ω varies
+    </label>
+  </>
+);
+
+/* ── 🌡 LA FENÊTRE MD ELLE-MÊME — LA COLONNE DE GAUCHE DE LA VUE 3D ────────────
+   Le dessin suit le dock 🪢 au pixel : même largeur, même cadre, même ⇤, et un onglet
+   vertical (🌡 MD) quand elle est repliée. Dedans : les paramètres de la dynamique
+   (`renderMdOptions`, les MÊMES états que le 🧬), le 🌡 T d'un geste isolé, et le
+   bouton ▶ MD qui la lance — « quando clicco su MD non succede praticamente niente »
+   n'était pas un défaut du moteur (le module tourne, et le rapport dit tout) : c'était
+   un geste SANS fenêtre, donc sans ses réglages ni sa progression sous les yeux. */
+const renderMdWindow = () => (
+  <div className="shrink-0 w-[340px] flex flex-col gap-1.5 bg-white border border-sky-200 rounded-xl p-2 overflow-hidden"
+    style={{ height: (viewerCollapsed ? 0 : viewH) + 'px' }}>
+    <div className="flex items-center justify-between gap-1 shrink-0">
+      <span className="text-[10px] font-black text-sky-700 uppercase tracking-wide">🌡 Molecular dynamics · its parameters</span>
+      <button type="button" onClick={() => toggleMdDock(false)}
+        title="Collapse the MD window — it folds to a thin tab on the left edge (🌡 MD brings it back), and the 3D view takes the whole width again. Nothing is lost: these are the panel's own values."
+        className="px-1.5 py-0.5 text-[9px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100">⇤</button>
+    </div>
+    <div className="overflow-y-auto custom-scrollbar flex flex-col gap-1.5">
+      <p className="text-[9px] font-black text-slate-500 uppercase tracking-wide"
+        title="THE PARAMETERS OF THE DYNAMICS — the same ones 🧬 Structure calculation runs on every start (n starting, m kept, 🔥 recuit and 🖼 frames stay there: they are parameters of the CALCULATION, not of the dynamics). One set of values for both gestures.">
+        ⚙ Steps · dt · T hot → cold · equil · ⚒ sweeps · 🪢 ω
+      </p>
+      <div className="flex flex-wrap items-center gap-1.5">{renderMdOptions()}</div>
+      <div className="flex flex-wrap items-center gap-1.5 border-t border-sky-100 pt-1.5">
+        <label className="flex items-center gap-1 text-[10px] font-bold text-slate-600"
+          title="The temperature of the Langevin thermostat for THIS gesture, in KELVINS. The thermal energy is R·T: 0.6 kcal/mol at 300 K (the molecule vibrates), 6 kcal/mol at 3000 K (the backbone changes basin). A structure calculation does not use this field: it equilibrates at 🌡 hot and cools down to 🌡 cold.">
+          🌡 T
+          <input type="number" min="1" max="20000" step="100" value={calcMdTemp}
+            onChange={(e) => setCalcMdTempText(e.target.value)}
+            aria-label="Molecular dynamics temperature, in kelvins"
+            className="w-16 border border-slate-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-slate-500 text-[10px] font-mono bg-white" />
+          <span className="font-semibold text-slate-500">K</span>
+        </label>
+        <button type="button" onClick={runMolecularDynamics} disabled={calcBusy}
+          title="RUN MOLECULAR DYNAMICS on the molecule AS IT STANDS, at the temperature above, with the parameters above: dihedral Langevin dynamics under the whole force field (kcal/mol, charges, solvent, added hydrogens), with your distance table as flat-bottom restraints — the trajectory FEELS them, and every distance ALREADY held is a leash (a wall, so it cannot be let go). It is written into the molecule at every frame — you SEE it move, and the 🪢 plot follows if it is open — and ↺ Undo torsion puts the molecule back exactly as it was. The report gives the steps, the length in ps, the kinetic temperature, the energy before and after, how many of your distances are within tolerance, and what happened to ω, φ/ψ and χ1."
+          className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-sky-400 text-sky-700 hover:bg-sky-50 disabled:opacity-40">
+          ▶ MD
+        </button>
+        {calcBusy && <span className="text-[9px] font-bold text-sky-700">running…</span>}
+      </div>
+      {calcProgress && <p className="text-[10px] font-semibold text-sky-700">{calcProgress}</p>}
+      {calcMsg && (
+        <p title={calcMsg} className={`text-[10px] font-semibold rounded-md border px-2 py-1 whitespace-pre-wrap ${/^✓/.test(calcMsg) ? 'text-emerald-800 bg-emerald-50 border-emerald-200' : 'text-rose-800 bg-rose-50 border-rose-200'}`}>
+          {calcMsg}
+        </p>
+      )}
+      <p className="text-[9px] text-slate-500">
+        ⚠ These values are the SAME ones the ▶ Run of 🧬 Structure calculation reads for every
+        start (annealing frames apart): one set of settings, two gestures. The window closes
+        with 🌡 MD, with its ⇤, and with the tab on the left edge — and closing it loses nothing.
+      </p>
+    </div>
+  </div>
+);
+
 const renderForceGestures = () => (
   <span
     className="inline-flex flex-wrap items-center gap-1.5 rounded-md border border-sky-200 bg-sky-50/50 px-1.5 py-1"
     title="THE THREE GESTURES OF THE FORCE FIELD, ON THE MOLECULE AS IT STANDS: ▶ MD runs the dihedral Langevin dynamics, ⚒ Minimise the dihedral descent, ⟳ Energy only READS the families (a reading, nothing written). They are the same controls the 🧲 Force field block describes — put here so they are one click away from 🧬 Structure calculation, without opening any section. Each button's own tooltip says what it does to the molecule and what it reports.">
-    <label className="flex items-center gap-1 text-[10px] font-bold text-slate-600"
-      title="The temperature of the Langevin thermostat for the ▶ MD button, in KELVINS. The thermal energy is R·T: 0.6 kcal/mol at 300 K (the molecule vibrates), 6 kcal/mol at 3000 K (the backbone changes basin). The calculation's own dynamics does not use this field: it equilibrates at 🌡 hot and cools down to 🌡 cold.">
-      🌡 T
-      <input type="number" min="1" max="20000" step="100" value={calcMdTemp}
-        onChange={(e) => setCalcMdTempText(e.target.value)}
-        aria-label="Molecular dynamics temperature, in kelvins"
-        className="w-16 border border-slate-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-slate-500 text-[10px] font-mono bg-white" />
-      <span className="font-semibold text-slate-500">K</span>
-    </label>
-    <button type="button" onClick={runMolecularDynamics} disabled={calcBusy}
-      title="RUN MOLECULAR DYNAMICS on the molecule AS IT STANDS, at the temperature above: dihedral Langevin dynamics under the whole force field (kcal/mol, charges, solvent, added hydrogens), with your distance table as flat-bottom restraints — the trajectory FEELS them, and every distance ALREADY held is a leash (a wall, so it cannot be let go). It is written into the molecule at every frame — you SEE it move, and the 🪢 plot follows if it is open — and ↺ Undo torsion puts the molecule back exactly as it was. The report gives the steps, the length in ps, the kinetic temperature, the energy before and after, how many of your distances are within tolerance, and what happened to ω, φ/ψ and χ1."
-      className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-sky-400 text-sky-700 hover:bg-sky-50 disabled:opacity-40">
-      ▶ MD
+    {/* 🌡 LE BOUTON MD DE LA BARRE — SON SEUL GESTE EST LA FENÊTRE. La demande : « Il
+        pulsante MD deve aprire una finestra collapsable a sinistra all'interno del viewer
+        … Tale finestra si deve richiudere quando si riclicca su MD. » Il ouvre donc le dock
+        🌡 MD (au-dessus de la vue 3D, avec TOUS les réglages de la dynamique et son propre
+        ▶ MD), et le referme quand on reclique — exactement comme le 🪢. */}
+    <button type="button" onClick={() => toggleMdDock()}
+      className={`px-2 py-1 text-[10px] font-bold rounded border transition-colors ${mdDock ? 'bg-sky-100 border-sky-400 text-sky-800 hover:bg-sky-200' : 'bg-white border-sky-400 text-sky-700 hover:bg-sky-50'}`}
+      title={`Show or hide the 🌡 MD window INSIDE the viewer: it sits at the LEFT of the 3D view, it carries ALL the parameters of the molecular dynamics (steps, dt and the total length in ps, 🌡 hot → 🌡 cold, the ⚖ equilibration share, the ⚒ minimisation sweeps and the 🪢 ω option — the very values 🧬 Structure calculation runs on every start), and it has the ▶ MD button that launches the dynamics. Press this button again to close it; ⇤ folds it to a thin tab on the left edge. Closing the window loses nothing: the parameters are the panel's own state.${mdDock ? ' — open right now.' : ''}`}>
+      ▶ MD{mdDock ? ' ⇥' : ' ⇤'}
     </button>
     <button type="button" onClick={runMinimise} disabled={calcBusy}
       title="MINIMISE the energy from here: the dihedral descent each start ends on (every hinge tried on both sides of a step that halves as soon as a sweep improves nothing), on the same force field, with your distance table as restraints and the already-held ones as a leash. This is the FINAL ENERGY REFINEMENT — it is what CONVERGES a distance the dynamics merely approached, and it lands on a local minimum, not merely on a model that respects the distances. ↺ Undo torsion puts the molecule back."
@@ -19159,24 +19436,13 @@ const renderForceGestures = () => (
       className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100">
       ⟳ Energy
     </button>
-    {/* ⛓ LA STRUCTURE SECONDAIRE IMPOSÉE → DES CONTRAINTES DE DIHÈDRE — la demande de
-        cette session : « In MD and “structure calculation” allow the conversion of the
-        secondary structure imposed in the “sequence and structure” subsection into
-        dihedral angle constraints. » Le bouton est le MÊME que celui du panneau 🧬
-        (un seul `calcConvertSecondaryStructure`) : ce qu'on convertit ici est ce que le
-        ▶ MD, le ⚒ Minimise, le ▶ Run et le ⟳ Energy portent ensuite. */}
-    <button type="button" onClick={calcConvertSecondaryStructure}
-      className={`px-2 py-1 text-[10px] font-bold rounded border transition-colors ${calcDihedrals.length ? 'bg-emerald-50 border-emerald-400 text-emerald-800 hover:bg-emerald-100' : 'bg-white border-sky-300 text-sky-700 hover:bg-sky-50'}`}
-      title={`Convert the secondary structure painted in “Sequence and structure” (${imposedSecondaryStructure ? `${imposedSecondaryStructure.replace(/\s+/g, '').length} letters: H helix · E sheet · C coil` : 'nothing painted yet'}) into dihedral angle constraints: every H residue gives φ −57° / ψ −47°, every E residue φ −139° / ψ +135°, each as a FLAT-BOTTOM window of ± ${SS_DIHEDRAL_TOLERANCE}° (the same cost function as the distance table: nothing inside the window, k·(over)² outside). A coil imposes nothing. The letters are matched to the backbone ON SCREEN by residue order, and the report says what was matched. Press it again to remove them.`}>
-      ⛓ {calcDihedrals.length ? `${calcDihedrals.length} φ/ψ imposed — Off` : 'SS → φ/ψ'}
-    </button>
-    {!!calcDihedrals.length && (
-      <span className="text-[9px] font-semibold text-emerald-800"
-        title={`What the conversion found: ${(calcSsReading && calcSsReading.letters) || 0} letters painted, ${(calcSsReading && calcSsReading.residues) || 0} readable residues on screen,`
-          + ` ${(calcSsReading && calcSsReading.matched) || 0} matched — each matched residue carries its φ and its ψ.`}>
-        ± {SS_DIHEDRAL_TOLERANCE}° · {(calcSsReading && calcSsReading.matched) || 0} res.
-      </span>
-    )}
+    {/* ⛓ LE BOUTON « SS → φ/ψ » N'EST PLUS ICI — la demande : « Il pulsante “SS to phi, psi”
+        deve andare dentro la sezione “structure calculation”. Quest'ultimo deve riempire la
+        tabella di constraints. » Il vit donc au SEUL endroit que la demande nomme : dans le
+        panneau 🧬 Structure calculation (voir son bouton ⛓, qui écrit maintenant la table
+        des contraintes de φ/ψ à côté de celle des distances). Un seul bouton, un seul état
+        (`calcDihedrals`), donc ce que la table montre EST ce que ▶ Run, ▶ MD et ⚒ Minimise
+        portent. */}
   </span>
 );
 
@@ -19900,13 +20166,17 @@ className="border border-amber-300 rounded-md px-1.5 py-1 text-[11px] bg-white o
     structure at any moment, even over a loaded PDB (which is put aside: the
     ↩ Restore PDB button of §1 General brings it back). No network round trip:
     the page builds the backbone from the sequence and the secondary structure
-    painted on it. */}
+    painted on it. ⚠ IL EST EN BLEU CLAIR — la demande de cette session : « move the
+    button structure calculation next to the button structure from sequence and
+    color the latter in light blue. » La teinte (sky) le distingue au premier coup
+    d'œil dans la rangée ✏️ Modify, sans rien changer à ce qu'il fait : le geste, son
+    infobulle et l'état « pas de séquence » (`disabled`) sont les mêmes. */}
 <button
 type="button"
 onClick={buildFromSequence}
 disabled={!sequenceStructureText}
 title="Build the 3D structure from the sequence typed in “Molecular structure and visualization” (Proteins / DNA / RNA) — the model the viewer shows whenever no PDB is loaded. What is on screen is put aside, not lost: « ↩ Back to PDB », right here, and ↩ Restore PDB (§1 General) bring it back — including the PDB this page defines."
-className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap bg-white border-emerald-300 text-emerald-700 hover:bg-emerald-50 disabled:opacity-40 disabled:cursor-not-allowed"
+className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap bg-sky-100 border-sky-400 text-sky-800 hover:bg-sky-200 disabled:opacity-40 disabled:cursor-not-allowed"
 >
 🧬 Structure from sequence
 </button>
@@ -19914,225 +20184,6 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
 <span title={seqBuildMsg} className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-md px-2 py-1 h-7 inline-flex items-center max-w-[380px] truncate">
 {seqBuildMsg}
 </span>
-)}
-{/* ⚭ Disulfides: shown / hidden — L'INTERRUPTEUR DU DESSIN, PAS DE LA DÉFINITION.
-    Le pont est écrit par la page (CONECT SG–SG) et NGL le dessine ; ngl@2.4.0
-    n'offre AUCUNE visibilité par liaison, donc cacher le pont se fait dans le
-    GRAPHE de la structure au chargement (utils/disulfideBonds.js), à côté des deux
-    autres règles de liaisons — et le modèle est resservi, le même geste que le ⚗️
-    rebuild des hydrogènes. Rien du fichier n'est touché : ni le PDB, ni le texte
-    de la page, ni le 📥 Download, ni la copie Drive, ni « Cysteine states ».
-    Inactif quand la structure à l'écran ne dessine aucun pont — et le geste le DIT
-    alors au lieu de ne rien faire, comme son voisin ⚭ Fold for disulfides. */}
-<button
-type="button"
-onClick={toggleDisulfideBonds}
-disabled={disulfideDrawn.bonds.length === 0}
-title="Show or hide the disulphide bonds the model on screen DRAWS. Hiding takes every Sγ–Sγ link between two residues out of the structure's own bond graph (utils/disulfideBonds.js), so Sticks / Ball+stick / Lines stop drawing them — nothing else changes: every atom stays, and the definition in “Cysteine states”, the PDB file, the 📥 download and the Drive copy keep their S–S. The model is then re-served, the same gesture as the ⚗️ hydrogen rebuild. Inactive when the structure on screen draws no disulphide at all: NGL draws an S–S from the bond graph only (a CONECT record, or the distance between two Sγ) — a file that declares SSBOND alone, with its two cysteines apart, draws none."
-className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap bg-white border-amber-300 text-amber-700 hover:bg-amber-50 disabled:opacity-40 disabled:cursor-not-allowed"
->
-{disulfidesShown ? '⚭ Disulfides: shown' : '⚭ Disulfides: hidden'}
-</button>
-{/* Le compte rendu, juste à côté : chaque pont par son NUMÉRO AFFICHÉ et par la
-    distance Sγ–Sγ RÉELLE de l'écran — un pont dessiné mais étiré est dit ÉTIRÉ,
-    il n'est pas caché (c'est la distance de liaison de utils/disulfideFold.js qui
-    tranche, la seule définition de « pont fermé »). */}
-{disulfideShowMsg && (
-<span title={disulfideShowMsg} className="text-[10px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1 h-7 inline-flex items-center max-w-[380px] truncate">
-{disulfideShowMsg}
-</span>
-)}
-
-{/* ↩ Back to PDB — THE WAY BACK, WHERE THE GESTURE WAS MADE. §1 General's toggle
-    does exactly the same thing (ONE implementation: restoreStashedPdb), but the
-    report is explicit — the button that brings back the structure the viewer
-    showed BEFORE « 🧬 Structure from sequence » has to be there, beside it: « before
-    I had a button to come back to the structure that was present before I clicked
-    on "from sequence". Now it has disappeared. » ET LE RAPPORT DE CETTE SESSION DIT
-    QU'IL N'APPARAISSAIT TOUJOURS PAS : « the button to recall predefined PDB after
-    "from sequence" … does not appear ». Sa condition exigeait en effet que la
-    structure rangée ne soit PAS celle d'un PDB chargé (`structOrigin !== 'external'`),
-    alors que le geste de retour doit se voir DÈS QUE quelque chose est de côté — le
-    titre dit lequel. Il apparaît donc pour TOUT ce qui est rangé, y compris le PDB
-    que la page définit (voir pageStructureStash, appelé par buildFromSequence
-    quand l'écran montre déjà le modèle de la séquence). */}
-{!!stashedPdb && (
-<button
-type="button"
-onClick={restoreStashedPdb}
-title={`Bring back ${(stashedPdb && stashedPdb.name) || 'the structure'} — the file / URL / model the viewer showed before « 🧬 From sequence », with the trajectory it had.`}
-className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap bg-white border-emerald-300 text-emerald-700 hover:bg-emerald-50"
->
-↩ Back to PDB
-</button>
-)}
-{/* 🖱 LA PASTILLE « drag a molecule: turn · right-drag: slide » A ÉTÉ RETIRÉE
-    (la demande : « the button “drag a molecule: turn · right-drag: slide” seems
-    useless and you can remove it »). Le geste, lui, ne change pas : un glisser
-    SUR une molécule la tourne (bouton gauche), un glisser droit la fait glisser,
-    et un glisser qui commence sur le fond est la caméra (voir
-    installMoleculeDrag). Il n'y a donc plus de mode à armer ni d'étiquette à
-    lire : la molécule tenue est dite par la ligne ★ de son espace de style
-    (« moving « … » ALONE »), là où ses réglages vivent. */}
-<button
-type="button"
-onClick={rebuildHydrogensNow}
-title="Delete every hydrogen of the peptide and re-place them with ideal bond lengths and angles (N–H ≈ 1.01 Å, C–H ≈ 1.09 Å…). All atom names are kept and no heavy atom moves — the rebuild works on generated structures and on PDB files you load with the 📂 button."
-className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap bg-white border-slate-300 text-slate-700 hover:bg-indigo-50 hover:border-indigo-300 hover:text-indigo-700"
->
-⚗️ Rebuild H
-</button>
-{rebuildMsg && (
-<span title={rebuildMsg} className="text-[10px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-md px-2 py-1 h-7 inline-flex items-center max-w-[380px] truncate">
-{rebuildMsg}
-</span>
-)}
-
-{/* ✏️ Atom names (rename) — the control of the Modify group; its panel is a
-    full-width child of the toolbar so the row itself stays one line tall. */}
-<button type="button" onClick={() => setShowAtomPanel((v) => !v)}
-  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 ${showAtomPanel ? 'bg-amber-100 border-amber-400 text-amber-900' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
-  title="Rename the atoms of the 3D structure (organic molecules included): click-to-rename in the 3D view, auto-naming from the 2D formula, or edit the name list directly. The 2D formula is never touched.">
-  ✏️ Atom names{Object.keys(renames).length ? ` (${Object.keys(renames).length})` : ''}
-</button>
-{showAtomPanel && (
-  <div className="w-full bg-amber-50/40 border border-amber-200 rounded-lg p-3 flex flex-col gap-2">
-    <div className="flex flex-wrap items-center justify-between gap-2">
-      <span className="text-[10px] font-black text-amber-700 uppercase tracking-wide">Atom names (3D only — the 2D formula is not touched)</span>
-      <div className="flex flex-wrap gap-1.5">
-        <button type="button" onClick={() => setRenameMode((v) => !v)}
-          className={`px-2 py-1 text-[10px] font-bold rounded border ${renameMode ? 'bg-amber-600 text-white border-amber-600' : 'bg-white border-amber-300 text-amber-700 hover:bg-amber-100'}`}>
-          {renameMode ? '● Click an atom…' : 'Click-to-rename'}
-        </button>
-        <button type="button" onClick={autoNameFrom2D} className="px-2 py-1 text-xs font-bold rounded bg-white border border-amber-300 text-amber-700 hover:bg-amber-100">Auto-name (2D)</button>
-        <button type="button" onClick={clearRenames} className="px-2 py-1 text-xs font-bold rounded bg-white border border-red-300 text-red-600 hover:bg-red-50">Clear overrides</button>
-      </div>
-    </div>
-    <p className="text-[10px] text-slate-500">
-      {renameMode ? 'Click any atom in the 3D viewer, then type its new name below.' : 'Search the atom list and edit names directly. Changes are stored with the test and persist.'}
-    </p>
-    {renameTarget !== null && (
-      <div className="flex items-center gap-2 bg-white border border-amber-300 rounded-lg p-2">
-        <span className="text-xs font-bold text-slate-700">Atom #{renameTarget}:</span>
-        <input value={renameDraft} onChange={(e) => setRenameDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') applyRename(); }} className="border border-slate-300 rounded px-2 py-1 text-xs outline-none focus:border-amber-500" />
-        <button type="button" onClick={applyRename} className="px-2 py-1 text-xs font-bold rounded bg-amber-600 text-white">OK</button>
-        <button type="button" onClick={() => setRenameTarget(null)} className="px-2 py-1 text-[10px] font-bold rounded bg-slate-200 text-slate-700">Cancel</button>
-      </div>
-    )}
-    <div className="flex items-center gap-2">
-      <input value={atomSearch} onChange={(e) => setAtomSearch(e.target.value)} placeholder="Filter atoms…" className="border border-slate-300 rounded px-2 py-1 text-xs w-44 outline-none focus:border-amber-500" />
-      <span className="text-[10px] text-slate-400">{atomList.length} atoms</span>
-    </div>
-    <div className="max-h-48 overflow-y-auto custom-scrollbar border border-amber-200 rounded-lg bg-white">
-      <table className="w-full text-xs">
-        <thead className="sticky top-0 bg-amber-50">
-          <tr>
-            <th className="text-left px-2 py-1 text-[9px] uppercase text-amber-700">#</th>
-            <th className="text-left px-2 py-1 text-[9px] uppercase text-amber-700">El</th>
-            <th className="text-left px-2 py-1 text-[9px] uppercase text-amber-700">Current</th>
-            <th className="text-left px-2 py-1 text-[9px] uppercase text-amber-700">New name</th>
-          </tr>
-        </thead>
-        <tbody>
-          {atomList
-            .filter((a) => !atomSearch || (a.name || '').toLowerCase().includes(atomSearch.toLowerCase()) || (renames[a.idx] || '').toLowerCase().includes(atomSearch.toLowerCase()))
-            .slice(0, 200)
-            .map((a) => (
-              <tr key={a.idx} className="border-t border-amber-100">
-                <td className="px-2 py-1 text-slate-400">{a.idx}</td>
-                <td className="px-2 py-1 font-bold text-slate-600">{a.element}</td>
-                <td className="px-2 py-1 font-mono text-slate-500">{a.name}</td>
-                <td className="px-2 py-1">
-                  <input value={renames[a.idx] || a.name} onChange={(e) => { const next = { ...renames }; if (e.target.value.trim()) next[a.idx] = e.target.value; else delete next[a.idx]; persistRenames(next); }} className="w-20 border border-slate-300 rounded px-1.5 py-0.5 text-xs outline-none focus:border-amber-500" />
-                </td>
-              </tr>
-            ))}
-        </tbody>
-      </table>
-    </div>
-  </div>
-)}
-
-{/* ✏️ Torsion — LA FENÊTRE DU VIEWER, PAS UNE SECTION DE LA BARRE.
-    La demande : « when clicking on torsion do not open the section inside the
-    toolbar but open a dedicated retractable window inside the viewer as for
-    ramachandran. this window will disappear clicking again in the torsion
-    button. » Le bouton ne fait donc qu'OUVRIR/FERMER `torsionWindow` (la fenêtre
-    vit DANS le cadre de la vue 3D, voir plus bas) : rien ne s'insère plus dans la
-    barre de commandes. Quatre atomes piqués dans la vue 3D (A · B · C · D — B–C
-    est la charnière) puis UN nombre tapé : l'angle est résolu en forme fermée
-    (utils/torsionDrive.js) et le côté de D tourne d'un bloc rigide, par le MÊME
-    chemin d'écriture qu'un glisser de molécule. */}
-<button type="button" onClick={() => setTorsionWindow((v) => !v)}
-  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${torsionWindow ? 'bg-amber-100 border-amber-400 text-amber-900' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
-  title="Show or hide the ✏️ Torsion window INSIDE the 3D view: four picked atoms A · B · C · D (B–C is the hinge) and a TYPED angle or a TYPED distance. The angle is solved in closed form (utils/torsionDrive.js) and the whole side of D turns as one rigid block, so bond lengths and angles are untouched. ↺ puts the last torsion back. Press the button again to close the window — the picks and the numbers typed stay.">
-  ✏️ Torsion{torsionAtoms.length ? ` (${torsionAtoms.length}/4)` : ''}
-</button>
-{/* 🪢 LE GRAPHE DE RAMACHANDRAN — LA FENÊTRE DU VIEWER, PLUS UNE SECTION.
-    La demande : « The ramachandran button will make the ramachandran window inside
-    the viewer appear or disappear so the large section which now opens inside the
-    tool bar will not be useful anymore. » Le bouton ne fait donc qu'OUVRIR/FERMER
-    le dock 🪢 (le MÊME état que son ⇤ et que l'onglet vertical du bord gauche), et
-    la grande section de la barre a disparu avec lui. Le graphe se LIT, il n'écrit
-    RIEN : tout vient de utils/ramachandran.js, et la lecture est un SNAPSHOT — pris
-    à l'ouverture, et repris par son ⟳ Read. */}
-<button type="button"
-  onClick={() => { if (!ramaDock) readRamachandran(); toggleRamaDock(!ramaDock); }}
-  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${ramaDock ? 'bg-amber-100 border-amber-400 text-amber-900' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
-  title="Show or hide the 🪢 Ramachandran window INSIDE the viewer: the φ/ψ map of the peptide backbone on screen (φ = C(i−1)·N·CA·C, ψ = N·CA·C·N(i+1)), read with the same signed-IUPAC dihedral reader as the χ/δ readers — there is no second dihedral reader in this app (utils/torsionDrive.js) — one point per residue. The window sits at the LEFT of the 3D view (expandable · compressible) and this button closes it again. ⚠ It is a PLAN, not a calculation: no potential, no energy, and a point outside the regions is not “wrong”, it is outside the regions. The reading is a snapshot of the coordinates: the window's ⟳ Read takes it again.">
-  🪢 Ramachandran{rama && rama.measured ? ` (${rama.measured})` : ''}
-</button>
-{/* ⚡ ESP — the electrostatic-potential surface of the molecule selected in the
-    Molecules bar. It sits in ✏️ Modify (the request: « anche il pulsante ESP
-    dovrebbe piuttosto apparire nella sezione modify »): it MODIFIES what is on
-    screen — a translucent surface coloured by the Coulomb potential of the
-    charges (red = negative, white ≈ neutral, blue = positive) — exactly like
-    ⚗️ Rebuild H or ✏️ Atom names beside it. Clicking again removes the surface,
-    and the ⚡ Range readout below appears while one is on, for the two potentials
-    that give it its colour scale (kcal/mol). */}
-<button
-type="button"
-onClick={() => espToggle(selectedMolKey)}
-disabled={!espTargetComp}
-title={espBtnTitle}
-className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed ${espOnSelected ? 'bg-fuchsia-100 border-fuchsia-400 text-fuchsia-800 hover:bg-fuchsia-200' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
->
-{espOnSelected ? '⚡ ESP: On' : '⚡ ESP'}
-</button>
-{(espOnSelected || catEspActive) && (
-  <div className="flex items-center gap-1.5 bg-white border border-fuchsia-200 rounded-lg px-2 py-1 text-[10px] text-slate-600 h-8 whitespace-nowrap" title="Electrostatic colour-scale limits in kcal/mol. Surface potentials at or below −N are drawn full RED (negative), 0 is white (neutral) and at or above +P full BLUE (positive). NGL's default ±50 is so wide that most surfaces look white — tighten the range to make the red and blue poles visible. Applies live (no surface rebuild) via Apply / Enter.">
-    <span className="font-black text-fuchsia-700 uppercase tracking-wide">⚡ Range</span>
-    <span className="font-bold text-red-600">−</span>
-    <input
-      type="number"
-      min="0.5"
-      max="500"
-      step="1"
-      value={Math.round(espLimits[0] * 10) / 10}
-      onChange={(e) => { const v = parseFloat(e.target.value); setEspLimits((p) => [Number.isFinite(v) && v > 0 ? Math.min(500, v) : p[0], p[1]]); }}
-      onKeyDown={espApplyLimitsOnEnter}
-      className="w-12 border border-slate-300 rounded px-1 py-0.5 text-right outline-none focus:border-fuchsia-400 text-[10px] font-mono"
-      aria-label="Negative ESP limit (red)"
-    />
-    <span className="text-slate-400 font-bold">0</span>
-    <span className="font-bold text-blue-600">+</span>
-    <input
-      type="number"
-      min="0.5"
-      max="500"
-      step="1"
-      value={Math.round(espLimits[1] * 10) / 10}
-      onChange={(e) => { const v = parseFloat(e.target.value); setEspLimits((p) => [p[0], Number.isFinite(v) && v > 0 ? Math.min(500, v) : p[1]]); }}
-      onKeyDown={espApplyLimitsOnEnter}
-      className="w-12 border border-slate-300 rounded px-1 py-0.5 text-right outline-none focus:border-fuchsia-400 text-[10px] font-mono"
-      aria-label="Positive ESP limit (blue)"
-    />
-    <span>kcal/mol</span>
-    <button type="button" onClick={() => espApplyLimits()} className="px-1.5 py-0.5 rounded border bg-fuchsia-50 border-fuchsia-300 text-fuchsia-700 hover:bg-fuchsia-100 font-bold">Apply</button>
-    <button type="button" onClick={() => espApplyLimits(10, 10)} className="px-1.5 py-0.5 rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-50 font-semibold" title="Preset: red ≤ −10, blue ≥ +10 kcal/mol">±10</button>
-    <button type="button" onClick={() => espApplyLimits(25, 25)} className="px-1.5 py-0.5 rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-50 font-semibold" title="Preset: red ≤ −25, blue ≥ +25 kcal/mol">±25</button>
-    <button type="button" onClick={() => espApplyLimits(50, 50)} className="px-1.5 py-0.5 rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-50 font-semibold" title="NGL's original wide range ±50 — only the strongest charges reach red/blue">±50</button>
-  </div>
 )}
 {/* 🧬 LE CALCUL DE STRUCTURE — n DÉPARTS TIRÉS AU HASARD, LE PROTOCOLE STANDARD SUR
     CHACUN, LES m MEILLEURES GARDÉES. La demande, mot pour mot : « Implement a structure
@@ -20150,7 +20201,15 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
     dièdres, recuit, dynamique d'équilibration puis de refroidissement, minimisation,
     trempe — et le texte ci-dessous le dit tel qu'il est. Contrairement au 🪢 il ÉCRIT :
     la structure retenue, par le MÊME chemin qu'une torsion (donc le 📏, les plaques, le
-    film, le 📥 Download et le ↺ la lisent et la défont). */}
+    film, le 📥 Download et le ↺ la lisent et la défont).
+    ⚠ EMPLACEMENT — la demande de cette session : « move the button structure calculation
+    next to the button structure from sequence and color the latter in light blue. » Le
+    bouton 🧬 est donc À CÔTÉ de « 🧬 Structure from sequence » (le premier bouton de ✏️
+    Modify) et NON PLUS au bout de la rangée : les trois gestes du champ (▶ MD · ⚒
+    Minimise · ⟳ Energy) restent collés à lui, ET SON PANNEAU EST RENDU ICI — ouvrir le
+    calcul déplie sa section juste SOUS son bouton. Les commandes qui le suivaient (⚭
+    Disulfides, ↩ Back to PDB, ⚗️ Rebuild H, ✏️ Atom names, ⚡ ESP, 🔢 Renumber) passent
+    simplement à la ligne suivante tant que la section est ouverte. */}
 <button type="button"
   onClick={() => openCalcSection('distances')}
   className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${calcSection === 'distances' ? 'bg-indigo-100 border-indigo-400 text-indigo-900' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
@@ -20245,6 +20304,58 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
           refused. ▶ Run does it again on this molecule.
         </p>
       )}
+      {/* ⛓ LA TABLE DES CONTRAINTES DE φ/ψ — la demande : « Quest'ultimo deve riempire la
+          tabella di constraints. » Elle est écrite ICI, à côté de celle des distances, et
+          chaque ligne est UN angle imposé par la peinture 🖌️ : un résidu donne son φ ET son
+          ψ, jugés séparément. La cible et la fenêtre viennent du module (`SS_DIHEDRALS`,
+          `SS_DIHEDRAL_TOLERANCE` — aucun chiffre de φ/ψ n'est écrit dans le JSX), la lettre
+          est celle qui a été PEINTE, `#n` est le CA qui porte l'angle, et ✕ rend à CE
+          résidu-là sa liberté sans toucher aux autres. */}
+      {calcDihedrals.length > 0 && (
+        <div className="max-h-32 overflow-y-auto custom-scrollbar border border-emerald-200 rounded-lg bg-white">
+          <table className="w-full text-xs">
+            <thead className="sticky top-0 bg-emerald-50">
+              <tr>
+                <th className="text-left px-2 py-1 text-[9px] uppercase text-emerald-800">#</th>
+                <th className="text-left px-2 py-1 text-[9px] uppercase text-emerald-800">residue</th>
+                <th className="text-left px-2 py-1 text-[9px] uppercase text-emerald-800">letter</th>
+                <th className="text-left px-2 py-1 text-[9px] uppercase text-emerald-800">angle</th>
+                <th className="text-left px-2 py-1 text-[9px] uppercase text-emerald-800">target</th>
+                <th className="text-left px-2 py-1 text-[9px] uppercase text-emerald-800">window</th>
+                <th className="text-left px-2 py-1 text-[9px] uppercase text-emerald-800" />
+              </tr>
+            </thead>
+            <tbody>
+              {calcDihedrals.map((c, k) => (
+                <tr key={`dh${k}`} className="border-t border-emerald-100">
+                  <td className="px-2 py-1 text-slate-400">{k + 1}</td>
+                  <td className="px-2 py-1 font-mono text-slate-500"
+                    title={`The CA of this constraint is atom #${c.ca} of the molecule on screen (the angle is the dihedral of ${(c.atoms || []).map((x) => `#${x}`).join(' · ')}).`}>
+                    #{c.ca}
+                  </td>
+                  <td className="px-2 py-1 font-black text-emerald-800"
+                    title={`The letter painted in “Sequence and structure”: ${c.letter} — the module carries its own φ/ψ target (SS_DIHEDRALS).`}>
+                    {c.letter || '—'}
+                  </td>
+                  <td className="px-2 py-1 font-mono font-bold text-slate-700"
+                    title="φ (C(i−1)–N–CA–C) or ψ (N–CA–C–N(i+1)) — each one is judged ON ITS OWN, so a residue can keep one and lose the other.">
+                    {c.kind === 'phi' ? 'φ' : 'ψ'}
+                  </td>
+                  <td className="px-2 py-1 font-mono text-slate-700">{torsionAng(c.target)}</td>
+                  <td className="px-2 py-1 font-mono text-slate-500">± {c.tolerance}°</td>
+                  <td className="px-1 py-1">
+                    <button type="button" onClick={() => setCalcDihedrals((list) => list.filter((x) => x !== c))}
+                      title="Drop THIS angle: the residue keeps the other one, and ▶ MD, ⚒ Minimise, ▶ Run and the ⟳ Energy reading stop imposing it. ⛓ puts the whole painted structure back."
+                      className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-white border border-red-300 text-red-600 hover:bg-red-50">
+                      ✕
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
       {calcRestraints.length > 0 && (
         <div className="max-h-32 overflow-y-auto custom-scrollbar border border-indigo-200 rounded-lg bg-white">
           <table className="w-full text-xs">
@@ -20286,10 +20397,14 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
                     {cell('a')}
                     {cell('b')}
                     <td className="px-1 py-1">
-                      <input type="number" step="0.01" min="0.01" value={r.target ?? ''}
+                      {/* ⚠ `type="text"` + `inputMode="decimal"` : le navigateur ne peut
+                          donc pas REFORMATER ce que l'utilisateur écrit. `value` est le
+                          TEXTE tapé (`r.t`), la cible numérique n'est qu'une conséquence
+                          (`calcSetRestraintTarget`), et taper « 12.5 » reste « 12.5 ». */}
+                      <input type="text" inputMode="decimal" value={r.t != null ? r.t : (r.target ?? '')}
                         onChange={(e) => calcSetRestraintTarget(r.key, e.target.value)}
                         aria-label={`Target distance for ${r.label || `atom ${r.i ?? '?'} and atom ${r.j ?? '?'}`}, in ångströms`}
-                        title="The distance YOU want this pair to have, in ångströms — the protocol drives THIS number, and the report compares the model against it. A line whose atoms are typed gets the length the tables give that pair of elements, and you can overwrite it."
+                        title="The distance YOU want this pair to have, in ångströms — the protocol drives THIS number, and the report compares the model against it. A line whose atoms are typed gets the length the tables give that pair of elements, and you can overwrite it. Typed text is kept as typed (a comma works as the decimal separator); a value that cannot be read leaves the line 'not ready' instead of being rewritten under your fingers."
                         className="w-16 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
                     </td>
                     <td className="px-2 py-1 font-mono text-slate-500">{ready ? torsionAng(at) : '—'}</td>
@@ -20346,79 +20461,16 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
             aria-label="Images per annealing temperature step"
             className="w-12 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
         </label>
-        <label className="flex items-center gap-1"
-          title="🌡 MOLECULAR DYNAMICS — how many Langevin steps each start gets (and how many the ▶ MD button below runs). The dynamics is in DIHEDRAL space (a step is one rigid rotation about a hinge, so bond lengths and angles cannot break), under the WHOLE force field in kcal/mol — bonds, angles, planar rings, van der Waals, electrostatics with partial charges, non-polar solvent, your distances as flat-bottom wells, ω trans, the φ/ψ statistical potential and χ1. Each start runs an EQUILIBRATION phase at the hot temperature and then cools down to the cold one. 0 = no dynamics.">
-          🌡 MD
-          <input type="number" min="0" max="20000" step="10" value={calcMdSteps}
-            onChange={(e) => setCalcMdSteps(Math.max(0, Math.min(20000, Math.round(Number(e.target.value) || 0))))}
-            aria-label="Molecular dynamics steps per start"
-            className="w-16 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
-          <span className="font-semibold text-slate-500">steps</span>
-        </label>
-        <label className="flex items-center gap-1"
-          title="⏱ THE TIMESTEP of the dynamics, in picoseconds — and with it the TOTAL SIMULATION TIME: steps × dt. Type a length here (or in the « total » field) and the number of steps follows; type steps and this length follows. 0.01 ps is the usual value for a dihedral trajectory.">
-          ⏱ dt
-          <input type="number" min="0.0001" max="1" step="0.005" value={calcMdDt}
-            onChange={(e) => setCalcMdDtText(e.target.value)}
-            aria-label="Molecular dynamics timestep, in picoseconds"
-            className="w-16 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
-          <span className="font-semibold text-slate-500">ps</span>
-        </label>
-        <label className="flex items-center gap-1"
-          title="⏱ THE TOTAL SIMULATION TIME of one start, in picoseconds — the length the whole trajectory will have (equilibration + cooling). Typing a length here sets the number of steps to length / dt; that is the only arithmetic the panel does, and the module checks it (`structureCalcSimulationTimeOf`).">
-          ⏱ total
-          <input type="number" min="0.0001" max="20000" step="0.5" value={calcMdTime.ps}
-            onChange={(e) => setCalcMdTotalText(e.target.value)}
-            aria-label="Total simulation time per start, in picoseconds"
-            className="w-20 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
-          <span className="font-semibold text-slate-500">ps</span>
-        </label>
-        <label className="flex items-center gap-1"
-          title="🌡 THE HOT TEMPERATURE of the dynamics, in KELVINS — the equilibration phase. The thermal energy is R·T (0.6 kcal/mol at 300 K, 6 kcal/mol at 3000 K), so 2000–4000 K is the range where a dihedral actually changes basin: that is the whole point of the dynamics inside a structure calculation. The ▶ MD button below keeps ONE temperature instead (its own 🌡 T field).">
-          🌡 hot
-          <input type="number" min="1" max="20000" step="100" value={calcMdHot}
-            onChange={(e) => setCalcMdHotText(e.target.value)}
-            aria-label="Hot temperature of the molecular dynamics, in kelvins"
-            className="w-16 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
-          <span className="font-semibold text-slate-500">K</span>
-        </label>
-        <label className="flex items-center gap-1"
-          title="🌡 THE COLD TEMPERATURE at the end of the cooling, in KELVINS — 300 K is room temperature (R·T = 0.6 kcal/mol): the molecule vibrates and settles, it does not jump basins any more.">
-          🌡 cold
-          <input type="number" min="1" max="20000" step="50" value={calcMdCold}
-            onChange={(e) => setCalcMdColdText(e.target.value)}
-            aria-label="Cold temperature of the molecular dynamics, in kelvins"
-            className="w-16 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
-          <span className="font-semibold text-slate-500">K</span>
-        </label>
-        <label className="flex items-center gap-1"
-          title="⚖ THE EQUILIBRATION SHARE of the dynamics, in per cent: that part runs at the HOT temperature (the conformation installs itself under your distances), the rest cools down hot → cold. 33 % is the default; 0 % starts the cooling at once.">
-          ⚖ equil
-          <input type="number" min="0" max="90" step="5" value={calcMdEquil}
-            onChange={(e) => setCalcMdEquil(Math.max(0, Math.min(90, Math.round(Number(e.target.value) || 0))))}
-            aria-label="Share of the dynamics spent equilibrating, in per cent"
-            className="w-14 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
-          <span className="font-semibold text-slate-500">%</span>
-        </label>
-        <span className="text-[10px] font-mono font-bold text-indigo-800 bg-indigo-50 border border-indigo-200 rounded px-1.5 py-0.5"
-          title="steps × dt — the nominal length of one start's trajectory, computed by the module.">
-          = {calcMdTime.ps} ps ({calcMdTime.ns} ns)
-        </span>
-        <label className="flex items-center gap-1"
-          title="⚒ MINIMISATION — how many sweeps of the dihedral minimisation each start gets after the dynamics (and how many the ⚒ Minimise button runs). Each hinge is tried on both sides of a step that halves as soon as a whole sweep improves nothing: it lands on a LOCAL MINIMUM of the same force field, which is the last energy refinement of the protocol. 0 = no minimisation.">
-          ⚒ sweeps
-          <input type="number" min="0" max="12" value={calcMinimise}
-            onChange={(e) => setCalcMinimise(Math.max(0, Math.min(12, Math.round(Number(e.target.value) || 0))))}
-            aria-label="Minimisation sweeps per start"
-            className="w-12 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
-        </label>
-        <label className="flex items-center gap-1"
-          title={`🪢 LET ω VARY — the request: « in the structure calculation allow the option to vary also the omega backbone angle. » UNCHECKED (the default) every peptide C–N bond is a PROTECTED dihedral: the annealing, the quench, the dynamics AND the minimisation refuse a step that increases its ω cost — that is what keeps peptides trans (measured: without it, an ω 0.4° off trans ended up cis after 300 dynamics steps). CHECKED, ω becomes an ORDINARY dihedral of the protocol: its barrier is still a family of the force field (k = ${STRUCTURE_CALC_OMEGA_WEIGHT} kcal/mol, zero inside the plateau of ± ${STRUCTURE_CALC_OMEGA_TOLERANCE}° around ${STRUCTURE_CALC_OMEGA}°), and the FIELD alone arbitrates — a peptide only leaves trans when a distance you asked for, an imposed φ/ψ or a clash pays more than that barrier. The step stays the family's own (12° in the annealing, 4° in the dynamics), so ω still turns by small steps and never jumps to another conformer. The setting is the SAME one for ▶ Run, ▶ MD and ⚒ Minimise.`}>
-          <input type="checkbox" checked={calcOmegaFree} onChange={(e) => setCalcOmegaFree(e.target.checked)}
-            aria-label="Let the peptide ω dihedral vary"
-            className="accent-indigo-600" />
-          🪢 ω varies
-        </label>
+        {/* ⚙ I RÉGLAGES DE LA DYNAMIQUE NE VIVENT PLUS ICI — la demande : « Il pulsante MD
+            deve aprire una finestra collapsable a sinistra all'interno del viewer. nella
+            finestra devono comparire tutti i suoi parametri che adesso sono in “structure
+            calculation” senza i parametri (n starting, m kept, recuit, frames). » Ils sont
+            écrits UNE fois, dans `renderMdOptions()` (la fenêtre 🌡 MD du bord gauche de la
+            vue 3D) : ce panneau garde ce qui décide des DÉPARTS (n, m, recuit, images) et
+            son ▶ Run lit les mêmes états que le ▶ MD — un seul jeu de valeurs pour les deux
+            gestes, donc aucune divergence possible. Voir `renderMdWindow`. */}
+
+
         <label className="flex items-center gap-1"
           title="👁 WATCH EACH START: every gesture the module announces (the random draw, each annealing step, the equilibration, the cooling, the minimisation, the quench) is written into the molecule ON SCREEN, by the same path a torsion uses — so you SEE the molecule fold instead of watching a progress line. Uncheck it for a quiet run (the final models are written all the same). ↺ Undo torsion puts back the molecule you had before the calculation wrote anything.">
           <input type="checkbox" checked={calcWatch} onChange={(e) => setCalcWatch(e.target.checked)}
@@ -20641,6 +20693,225 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
     </div>
   );
 })()}
+{/* ⚭ Disulfides: shown / hidden — L'INTERRUPTEUR DU DESSIN, PAS DE LA DÉFINITION.
+    Le pont est écrit par la page (CONECT SG–SG) et NGL le dessine ; ngl@2.4.0
+    n'offre AUCUNE visibilité par liaison, donc cacher le pont se fait dans le
+    GRAPHE de la structure au chargement (utils/disulfideBonds.js), à côté des deux
+    autres règles de liaisons — et le modèle est resservi, le même geste que le ⚗️
+    rebuild des hydrogènes. Rien du fichier n'est touché : ni le PDB, ni le texte
+    de la page, ni le 📥 Download, ni la copie Drive, ni « Cysteine states ».
+    Inactif quand la structure à l'écran ne dessine aucun pont — et le geste le DIT
+    alors au lieu de ne rien faire, comme son voisin ⚭ Fold for disulfides. */}
+<button
+type="button"
+onClick={toggleDisulfideBonds}
+disabled={disulfideDrawn.bonds.length === 0}
+title="Show or hide the disulphide bonds the model on screen DRAWS. Hiding takes every Sγ–Sγ link between two residues out of the structure's own bond graph (utils/disulfideBonds.js), so Sticks / Ball+stick / Lines stop drawing them — nothing else changes: every atom stays, and the definition in “Cysteine states”, the PDB file, the 📥 download and the Drive copy keep their S–S. The model is then re-served, the same gesture as the ⚗️ hydrogen rebuild. Inactive when the structure on screen draws no disulphide at all: NGL draws an S–S from the bond graph only (a CONECT record, or the distance between two Sγ) — a file that declares SSBOND alone, with its two cysteines apart, draws none."
+className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap bg-white border-amber-300 text-amber-700 hover:bg-amber-50 disabled:opacity-40 disabled:cursor-not-allowed"
+>
+{disulfidesShown ? '⚭ Disulfides: shown' : '⚭ Disulfides: hidden'}
+</button>
+{/* Le compte rendu, juste à côté : chaque pont par son NUMÉRO AFFICHÉ et par la
+    distance Sγ–Sγ RÉELLE de l'écran — un pont dessiné mais étiré est dit ÉTIRÉ,
+    il n'est pas caché (c'est la distance de liaison de utils/disulfideFold.js qui
+    tranche, la seule définition de « pont fermé »). */}
+{disulfideShowMsg && (
+<span title={disulfideShowMsg} className="text-[10px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1 h-7 inline-flex items-center max-w-[380px] truncate">
+{disulfideShowMsg}
+</span>
+)}
+
+{/* ↩ Back to PDB — THE WAY BACK, WHERE THE GESTURE WAS MADE. §1 General's toggle
+    does exactly the same thing (ONE implementation: restoreStashedPdb), but the
+    report is explicit — the button that brings back the structure the viewer
+    showed BEFORE « 🧬 Structure from sequence » has to be there, beside it: « before
+    I had a button to come back to the structure that was present before I clicked
+    on "from sequence". Now it has disappeared. » ET LE RAPPORT DE CETTE SESSION DIT
+    QU'IL N'APPARAISSAIT TOUJOURS PAS : « the button to recall predefined PDB after
+    "from sequence" … does not appear ». Sa condition exigeait en effet que la
+    structure rangée ne soit PAS celle d'un PDB chargé (`structOrigin !== 'external'`),
+    alors que le geste de retour doit se voir DÈS QUE quelque chose est de côté — le
+    titre dit lequel. Il apparaît donc pour TOUT ce qui est rangé, y compris le PDB
+    que la page définit (voir pageStructureStash, appelé par buildFromSequence
+    quand l'écran montre déjà le modèle de la séquence). */}
+{!!stashedPdb && (
+<button
+type="button"
+onClick={restoreStashedPdb}
+title={`Bring back ${(stashedPdb && stashedPdb.name) || 'the structure'} — the file / URL / model the viewer showed before « 🧬 From sequence », with the trajectory it had.`}
+className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap bg-white border-emerald-300 text-emerald-700 hover:bg-emerald-50"
+>
+↩ Back to PDB
+</button>
+)}
+{/* 🖱 LA PASTILLE « drag a molecule: turn · right-drag: slide » A ÉTÉ RETIRÉE
+    (la demande : « the button “drag a molecule: turn · right-drag: slide” seems
+    useless and you can remove it »). Le geste, lui, ne change pas : un glisser
+    SUR une molécule la tourne (bouton gauche), un glisser droit la fait glisser,
+    et un glisser qui commence sur le fond est la caméra (voir
+    installMoleculeDrag). Il n'y a donc plus de mode à armer ni d'étiquette à
+    lire : la molécule tenue est dite par la ligne ★ de son espace de style
+    (« moving « … » ALONE »), là où ses réglages vivent. */}
+<button
+type="button"
+onClick={rebuildHydrogensNow}
+title="Delete every hydrogen of the peptide and re-place them with ideal bond lengths and angles (N–H ≈ 1.01 Å, C–H ≈ 1.09 Å…). All atom names are kept and no heavy atom moves — the rebuild works on generated structures and on PDB files you load with the 📂 button."
+className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap bg-white border-slate-300 text-slate-700 hover:bg-indigo-50 hover:border-indigo-300 hover:text-indigo-700"
+>
+⚗️ Rebuild H
+</button>
+{rebuildMsg && (
+<span title={rebuildMsg} className="text-[10px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-md px-2 py-1 h-7 inline-flex items-center max-w-[380px] truncate">
+{rebuildMsg}
+</span>
+)}
+
+{/* ✏️ Atom names (rename) — the control of the Modify group; its panel is a
+    full-width child of the toolbar so the row itself stays one line tall. */}
+<button type="button" onClick={() => setShowAtomPanel((v) => !v)}
+  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 ${showAtomPanel ? 'bg-amber-100 border-amber-400 text-amber-900' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+  title="Rename the atoms of the 3D structure (organic molecules included): click-to-rename in the 3D view, auto-naming from the 2D formula, or edit the name list directly. The 2D formula is never touched.">
+  ✏️ Atom names{Object.keys(renames).length ? ` (${Object.keys(renames).length})` : ''}
+</button>
+{showAtomPanel && (
+  <div className="w-full bg-amber-50/40 border border-amber-200 rounded-lg p-3 flex flex-col gap-2">
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <span className="text-[10px] font-black text-amber-700 uppercase tracking-wide">Atom names (3D only — the 2D formula is not touched)</span>
+      <div className="flex flex-wrap gap-1.5">
+        <button type="button" onClick={() => setRenameMode((v) => !v)}
+          className={`px-2 py-1 text-[10px] font-bold rounded border ${renameMode ? 'bg-amber-600 text-white border-amber-600' : 'bg-white border-amber-300 text-amber-700 hover:bg-amber-100'}`}>
+          {renameMode ? '● Click an atom…' : 'Click-to-rename'}
+        </button>
+        <button type="button" onClick={autoNameFrom2D} className="px-2 py-1 text-xs font-bold rounded bg-white border border-amber-300 text-amber-700 hover:bg-amber-100">Auto-name (2D)</button>
+        <button type="button" onClick={clearRenames} className="px-2 py-1 text-xs font-bold rounded bg-white border border-red-300 text-red-600 hover:bg-red-50">Clear overrides</button>
+      </div>
+    </div>
+    <p className="text-[10px] text-slate-500">
+      {renameMode ? 'Click any atom in the 3D viewer, then type its new name below.' : 'Search the atom list and edit names directly. Changes are stored with the test and persist.'}
+    </p>
+    {renameTarget !== null && (
+      <div className="flex items-center gap-2 bg-white border border-amber-300 rounded-lg p-2">
+        <span className="text-xs font-bold text-slate-700">Atom #{renameTarget}:</span>
+        <input value={renameDraft} onChange={(e) => setRenameDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') applyRename(); }} className="border border-slate-300 rounded px-2 py-1 text-xs outline-none focus:border-amber-500" />
+        <button type="button" onClick={applyRename} className="px-2 py-1 text-xs font-bold rounded bg-amber-600 text-white">OK</button>
+        <button type="button" onClick={() => setRenameTarget(null)} className="px-2 py-1 text-[10px] font-bold rounded bg-slate-200 text-slate-700">Cancel</button>
+      </div>
+    )}
+    <div className="flex items-center gap-2">
+      <input value={atomSearch} onChange={(e) => setAtomSearch(e.target.value)} placeholder="Filter atoms…" className="border border-slate-300 rounded px-2 py-1 text-xs w-44 outline-none focus:border-amber-500" />
+      <span className="text-[10px] text-slate-400">{atomList.length} atoms</span>
+    </div>
+    <div className="max-h-48 overflow-y-auto custom-scrollbar border border-amber-200 rounded-lg bg-white">
+      <table className="w-full text-xs">
+        <thead className="sticky top-0 bg-amber-50">
+          <tr>
+            <th className="text-left px-2 py-1 text-[9px] uppercase text-amber-700">#</th>
+            <th className="text-left px-2 py-1 text-[9px] uppercase text-amber-700">El</th>
+            <th className="text-left px-2 py-1 text-[9px] uppercase text-amber-700">Current</th>
+            <th className="text-left px-2 py-1 text-[9px] uppercase text-amber-700">New name</th>
+          </tr>
+        </thead>
+        <tbody>
+          {atomList
+            .filter((a) => !atomSearch || (a.name || '').toLowerCase().includes(atomSearch.toLowerCase()) || (renames[a.idx] || '').toLowerCase().includes(atomSearch.toLowerCase()))
+            .slice(0, 200)
+            .map((a) => (
+              <tr key={a.idx} className="border-t border-amber-100">
+                <td className="px-2 py-1 text-slate-400">{a.idx}</td>
+                <td className="px-2 py-1 font-bold text-slate-600">{a.element}</td>
+                <td className="px-2 py-1 font-mono text-slate-500">{a.name}</td>
+                <td className="px-2 py-1">
+                  <input value={renames[a.idx] || a.name} onChange={(e) => { const next = { ...renames }; if (e.target.value.trim()) next[a.idx] = e.target.value; else delete next[a.idx]; persistRenames(next); }} className="w-20 border border-slate-300 rounded px-1.5 py-0.5 text-xs outline-none focus:border-amber-500" />
+                </td>
+              </tr>
+            ))}
+        </tbody>
+      </table>
+    </div>
+  </div>
+)}
+
+{/* ✏️ Torsion — LA FENÊTRE DU VIEWER, PAS UNE SECTION DE LA BARRE.
+    La demande : « when clicking on torsion do not open the section inside the
+    toolbar but open a dedicated retractable window inside the viewer as for
+    ramachandran. this window will disappear clicking again in the torsion
+    button. » Le bouton ne fait donc qu'OUVRIR/FERMER `torsionWindow` (la fenêtre
+    vit DANS le cadre de la vue 3D, voir plus bas) : rien ne s'insère plus dans la
+    barre de commandes. Quatre atomes piqués dans la vue 3D (A · B · C · D — B–C
+    est la charnière) puis UN nombre tapé : l'angle est résolu en forme fermée
+    (utils/torsionDrive.js) et le côté de D tourne d'un bloc rigide, par le MÊME
+    chemin d'écriture qu'un glisser de molécule. */}
+<button type="button" onClick={() => setTorsionWindow((v) => !v)}
+  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${torsionWindow ? 'bg-amber-100 border-amber-400 text-amber-900' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+  title="Show or hide the ✏️ Torsion window INSIDE the 3D view: four picked atoms A · B · C · D (B–C is the hinge) and a TYPED angle or a TYPED distance. The angle is solved in closed form (utils/torsionDrive.js) and the whole side of D turns as one rigid block, so bond lengths and angles are untouched. ↺ puts the last torsion back. Press the button again to close the window — the picks and the numbers typed stay.">
+  ✏️ Torsion{torsionAtoms.length ? ` (${torsionAtoms.length}/4)` : ''}
+</button>
+{/* 🪢 LE GRAPHE DE RAMACHANDRAN — LA FENÊTRE DU VIEWER, PLUS UNE SECTION.
+    La demande : « The ramachandran button will make the ramachandran window inside
+    the viewer appear or disappear so the large section which now opens inside the
+    tool bar will not be useful anymore. » Le bouton ne fait donc qu'OUVRIR/FERMER
+    le dock 🪢 (le MÊME état que son ⇤ et que l'onglet vertical du bord gauche), et
+    la grande section de la barre a disparu avec lui. Le graphe se LIT, il n'écrit
+    RIEN : tout vient de utils/ramachandran.js, et la lecture est un SNAPSHOT — pris
+    à l'ouverture, et repris par son ⟳ Read. */}
+<button type="button"
+  onClick={() => { if (!ramaDock) readRamachandran(); toggleRamaDock(!ramaDock); }}
+  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${ramaDock ? 'bg-amber-100 border-amber-400 text-amber-900' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+  title="Show or hide the 🪢 Ramachandran window INSIDE the viewer: the φ/ψ map of the peptide backbone on screen (φ = C(i−1)·N·CA·C, ψ = N·CA·C·N(i+1)), read with the same signed-IUPAC dihedral reader as the χ/δ readers — there is no second dihedral reader in this app (utils/torsionDrive.js) — one point per residue. The window sits at the LEFT of the 3D view (expandable · compressible) and this button closes it again. ⚠ It is a PLAN, not a calculation: no potential, no energy, and a point outside the regions is not “wrong”, it is outside the regions. The reading is a snapshot of the coordinates: the window's ⟳ Read takes it again.">
+  🪢 Ramachandran{rama && rama.measured ? ` (${rama.measured})` : ''}
+</button>
+{/* ⚡ ESP — the electrostatic-potential surface of the molecule selected in the
+    Molecules bar. It sits in ✏️ Modify (the request: « anche il pulsante ESP
+    dovrebbe piuttosto apparire nella sezione modify »): it MODIFIES what is on
+    screen — a translucent surface coloured by the Coulomb potential of the
+    charges (red = negative, white ≈ neutral, blue = positive) — exactly like
+    ⚗️ Rebuild H or ✏️ Atom names beside it. Clicking again removes the surface,
+    and the ⚡ Range readout below appears while one is on, for the two potentials
+    that give it its colour scale (kcal/mol). */}
+<button
+type="button"
+onClick={() => espToggle(selectedMolKey)}
+disabled={!espTargetComp}
+title={espBtnTitle}
+className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed ${espOnSelected ? 'bg-fuchsia-100 border-fuchsia-400 text-fuchsia-800 hover:bg-fuchsia-200' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+>
+{espOnSelected ? '⚡ ESP: On' : '⚡ ESP'}
+</button>
+{(espOnSelected || catEspActive) && (
+  <div className="flex items-center gap-1.5 bg-white border border-fuchsia-200 rounded-lg px-2 py-1 text-[10px] text-slate-600 h-8 whitespace-nowrap" title="Electrostatic colour-scale limits in kcal/mol. Surface potentials at or below −N are drawn full RED (negative), 0 is white (neutral) and at or above +P full BLUE (positive). NGL's default ±50 is so wide that most surfaces look white — tighten the range to make the red and blue poles visible. Applies live (no surface rebuild) via Apply / Enter.">
+    <span className="font-black text-fuchsia-700 uppercase tracking-wide">⚡ Range</span>
+    <span className="font-bold text-red-600">−</span>
+    <input
+      type="number"
+      min="0.5"
+      max="500"
+      step="1"
+      value={Math.round(espLimits[0] * 10) / 10}
+      onChange={(e) => { const v = parseFloat(e.target.value); setEspLimits((p) => [Number.isFinite(v) && v > 0 ? Math.min(500, v) : p[0], p[1]]); }}
+      onKeyDown={espApplyLimitsOnEnter}
+      className="w-12 border border-slate-300 rounded px-1 py-0.5 text-right outline-none focus:border-fuchsia-400 text-[10px] font-mono"
+      aria-label="Negative ESP limit (red)"
+    />
+    <span className="text-slate-400 font-bold">0</span>
+    <span className="font-bold text-blue-600">+</span>
+    <input
+      type="number"
+      min="0.5"
+      max="500"
+      step="1"
+      value={Math.round(espLimits[1] * 10) / 10}
+      onChange={(e) => { const v = parseFloat(e.target.value); setEspLimits((p) => [p[0], Number.isFinite(v) && v > 0 ? Math.min(500, v) : p[1]]); }}
+      onKeyDown={espApplyLimitsOnEnter}
+      className="w-12 border border-slate-300 rounded px-1 py-0.5 text-right outline-none focus:border-fuchsia-400 text-[10px] font-mono"
+      aria-label="Positive ESP limit (blue)"
+    />
+    <span>kcal/mol</span>
+    <button type="button" onClick={() => espApplyLimits()} className="px-1.5 py-0.5 rounded border bg-fuchsia-50 border-fuchsia-300 text-fuchsia-700 hover:bg-fuchsia-100 font-bold">Apply</button>
+    <button type="button" onClick={() => espApplyLimits(10, 10)} className="px-1.5 py-0.5 rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-50 font-semibold" title="Preset: red ≤ −10, blue ≥ +10 kcal/mol">±10</button>
+    <button type="button" onClick={() => espApplyLimits(25, 25)} className="px-1.5 py-0.5 rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-50 font-semibold" title="Preset: red ≤ −25, blue ≥ +25 kcal/mol">±25</button>
+    <button type="button" onClick={() => espApplyLimits(50, 50)} className="px-1.5 py-0.5 rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-50 font-semibold" title="NGL's original wide range ±50 — only the strongest charges reach red/blue">±50</button>
+  </div>
+)}
 {/* 🔢 Renumber — the button AND its list live in ✏️ Modify (the request: « la
     lista per il renumbering … dovrebbe piuttosto apparire nella sezione
     modify »): the panel lists every residue and the number it will take, and the
@@ -21140,6 +21411,17 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
 {/* LE DOCK 🪢 — LE GRAPHE DE RAMACHANDRAN À GAUCHE DE LA FENÊTRE 3D. Replié, il ne
     reste qu'un onglet vertical (🪢) sur le bord : le graphe est toujours à un clic, et
     il ne mange jamais la vue sans qu'on l'ait demandé. */}
+{/* LE DOCK 🌡 MD — LA FENÊTRE DE LA DYNAMIQUE, À GAUCHE DE LA VUE 3D. Replié, il ne
+    reste que l'onglet vertical 🌡 MD sur le bord. Les deux docks (🌡 MD et 🪢) peuvent
+    être ouverts ensemble : les colonnes POUSSENT la molécule, aucune ne la recouvre. */}
+{mdDock ? renderMdWindow() : (
+  <button type="button" onClick={() => toggleMdDock(true)}
+    title="Open the MD window — the parameters of the molecular dynamics (steps, dt, total length, hot → cold, equilibration, minimisation sweeps, 🪢 ω) and its ▶ MD button, at the left of the 3D view (expandable · compressible). The ▶ MD button of the toolbar closes it again."
+    className="shrink-0 w-7 flex items-center justify-center gap-1 bg-white border border-sky-200 rounded-xl text-sky-700 hover:bg-sky-50"
+    style={{ height: (viewerCollapsed ? 0 : viewH) + 'px' }}>
+    <span className="text-[10px] font-black tracking-widest" style={{ writingMode: 'vertical-rl' }}>🌡 MD</span>
+  </button>
+)}
 {ramaDock ? (
   <div className="shrink-0 w-[360px] flex flex-col gap-1.5 bg-white border border-amber-200 rounded-xl p-2 overflow-hidden"
     style={{ height: (viewerCollapsed ? 0 : viewH) + 'px' }}>

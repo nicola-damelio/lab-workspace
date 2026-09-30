@@ -33,7 +33,13 @@ const vNormalize = (a) => { const n = vNorm(a); return n < 1e-8 ? [0, 0, 0] : vS
 const deg2rad = (d) => d * Math.PI / 180;
 
 const nerfPlace = (A, B, C, bondLength, bondAngleRad, torsionRad) => {
-  const t = -torsionRad; // sign convention identical to the in-app builder
+  // ⚠ LE SIGNE — celui du bâtisseur de l'app depuis le correctif de `nerfPlace`
+  // (NMRSections.jsx) : le dièdre posé est celui qu'on RELIT (`dihedralDeg`,
+  // convention signée IUPAC). Avec l'ancien `-torsionRad` ce module posait les
+  // hydrogènes EN MIROIR du squelette corrigé : χ1 sortait inversé et les
+  // 72 hydrogènes de la sonde _protein_hydrogen_bonds_test ne tombaient plus sur
+  // ceux du bâtisseur. Les deux copies du poseur suivent maintenant la même règle.
+  const t = torsionRad;
   const bc = vNormalize(vSub(C, B));
   const ab = vSub(B, A);
   const n = vNormalize(vCross(ab, bc));

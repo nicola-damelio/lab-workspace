@@ -35,7 +35,10 @@
         deux après superposition optimale) ;
      §6 LE PANNEAU DU VIEWER — le bouton 🧬, les deux champs (n et m), la liste des
         distances, ▶ Run / ⏹ Stop, le tableau classé, ⤓ Load, l'écriture par le MÊME
-        chemin qu'une torsion, et la note qui dit ce que ce calcul n'est PAS.
+        chemin qu'une torsion, la note qui dit ce que ce calcul n'est PAS, et SON
+        EMPLACEMENT : le bouton est à côté de « 🧬 Structure from sequence », sa section
+        comprise (la demande de cette session : « move the button structure calculation
+        next to the button structure from sequence and color the latter in light blue »).
 
    Run: node _structure_calculation_test.mjs
    ========================================================================= */
@@ -1202,6 +1205,25 @@ has(calcPanel, 'onClick={() => openCalcSection(\'distances\')}', 'le bouton 🧬
 has(calcPanel, '🧬 Structure calculation', '…et il dit ce qu’il fait');
 has(calcPanel, 'title="🧬 STRUCTURE CALCULATION — the request, verbatim',
   '⚠ …en citant la demande, mot pour mot (le panneau ne se raconte pas une autre histoire)');
+/* ⚠ L'EMPLACEMENT DU BOUTON — la demande de cette session : « move the button structure
+   calculation next to the button structure from sequence and color the latter in light
+   blue. » Le bouton 🧬 quitte donc le FOND de la rangée ✏️ Modify (il y était le dernier,
+   après ⚡ ESP et 🔢 Renumber) : il vient JUSTE APRÈS « 🧬 Structure from sequence », et
+   SA SECTION VIENT AVEC LUI (bouton, les trois gestes du champ et le panneau sont un
+   seul bloc contigu). Les indices sont pris sur les `onClick` et sur l'ouverture du
+   panneau, pas sur les commentaires, qui citent les mêmes mots plus haut. */
+const iSeqBtn = VIEW.indexOf('onClick={buildFromSequence}');
+const iCalcBtn = VIEW.indexOf("onClick={() => openCalcSection('distances')}");
+const iCalcPanel = VIEW.indexOf("{calcSection === 'distances' && (() => {");
+const iDisulfBtn = VIEW.indexOf('onClick={toggleDisulfideBonds}');
+ok(iSeqBtn > 0 && iSeqBtn < iCalcBtn && iCalcBtn < iCalcPanel && iCalcPanel < iDisulfBtn,
+  '⚠ le bouton 🧬 ET sa section vivent maintenant entre « 🧬 Structure from sequence » et ⚭ Disulfides');
+ok(VIEW.indexOf('⚡ ESP — the electrostatic-potential surface') > iCalcPanel,
+  '…la fin de la rangée (⚡ ESP, 🔢 Renumber avec sa liste) passe donc APRÈS la section du calcul');
+has(VIEW, '⚠ EMPLACEMENT — la demande de cette session : « move the button structure',
+  '…et le déplacement est daté LÀ OÙ le bloc vit, demande citée mot par mot');
+has(VIEW, 'bg-sky-100 border-sky-400 text-sky-800 hover:bg-sky-200 disabled:opacity-40 disabled:cursor-not-allowed',
+  '…« 🧬 Structure from sequence » est en BLEU CLAIR (la seconde moitié de la demande)');
 has(calcPanel, '⌖ Add the picked pair', 'l’ajout d’une distance passe par le couple piqué (les mêmes 🎯 que le ⚒)');
 has(calcPanel, '➕ Add a row',
   '⚠ …ET une ligne s’ajoute VIDE pour être TAPÉE : « define distances in a table and not only by clicking on atoms »');
@@ -1244,30 +1266,51 @@ has(calcPanel, 'aria-label="Write each start on screen while it is computed"',
   '⚠ …et l’interrupteur qui MONTRE le calcul (👁 watch each start)');
 has(calcPanel, 'ranked.comp !== componentRef.current',
   '⚠ …et il prévient quand la famille appartient à une AUTRE molécule que celle à l’écran');
-/* LE CHAMP DE FORCES, LA DYNAMIQUE ET LA MINIMISATION — LES RÉGLAGES DU PANNEAU, ET
-   LES UNITÉS : des KELVINS pour la température, des PICOSECONDES pour le pas de temps et
-   la durée totale, des kcal/mol pour les énergies. */
-for (const label of ['Annealing temperature steps', 'Images per annealing temperature step',
-  'Molecular dynamics steps per start', 'Minimisation sweeps per start',
+/* ⚙ LES RÉGLAGES DE LA DYNAMIQUE — ILS NE SONT PLUS DANS LE PANNEAU 🧬 MAIS DANS LA
+   FENÊTRE 🌡 MD. La demande : « Il pulsante MD deve aprire una finestra collapsable a
+   sinistra all'interno del viewer. nella finestra devono comparire tutti i suoi parametri
+   che adesso sono in “structure calculation” senza i parametri (n starting, m kept,
+   recuit, frames). » Ils sont donc écrits UNE fois, dans `renderMdOptions()` — et le
+   panneau 🧬 ne garde QUE les paramètres des départs (n, m, 🔥 recuit, 🖼 frames). */
+const mdWindow = VIEW.slice(
+  VIEW.indexOf('const renderMdOptions = () => ('),
+  VIEW.indexOf('const renderForceGestures = () => ('),
+);
+ok(mdWindow.length > 3000, `la fenêtre 🌡 MD est écrite une fois (${mdWindow.length} caractères)`);
+for (const label of ['Molecular dynamics steps per start', 'Minimisation sweeps per start',
   'Hot temperature of the molecular dynamics, in kelvins',
   'Cold temperature of the molecular dynamics, in kelvins',
   'Molecular dynamics timestep, in picoseconds',
   'Total simulation time per start, in picoseconds',
   'Share of the dynamics spent equilibrating, in per cent']) {
-  has(calcPanel, `aria-label="${label}"`,
-    `…le panneau a le réglage « ${label} » (aucun chiffre n’est caché)`);
+  has(mdWindow, `aria-label="${label}"`,
+    `…la fenêtre MD a le réglage « ${label} » (aucun chiffre n’est caché)`);
 }
-/* ⚠ LE 🌡 T DU ▶ MD, LUI, A DÉMÉNAGÉ avec les trois gestes : il est donc écrit dans
-   `renderForceGestures` et non dans le corps du 🧬 — un seul champ de température. */
-has(forceGestures, 'aria-label="Molecular dynamics temperature, in kelvins"',
-  '…et le champ 🌡 T de ▶ MD est écrit avec les trois gestes, pas dans le corps du 🧬');
-has(calcPanel, '= {calcMdTime.ps} ps ({calcMdTime.ns} ns)',
-  '⚠ …et il AFFICHE la durée totale de la simulation (pas × dt), calculée par le module');
+has(mdWindow, 'aria-label="Let the peptide ω dihedral vary"', '…avec l’option 🪢 ω de la dynamique');
+for (const label of ['Annealing temperature steps', 'Images per annealing temperature step']) {
+  has(calcPanel, `aria-label="${label}"`,
+    `⚠ …et « ${label} » reste au panneau 🧬 (c’est un paramètre du CALCUL, pas de la dynamique)`);
+}
+eq(calcPanel.includes('aria-label="Molecular dynamics steps per start"'), false,
+  '⚠ …et la dynamique n’a PLUS aucun réglage dans le panneau : un seul endroit, donc aucune divergence');
+/* ⚠ LE 🌡 T ET LE ▶ MD ONT SUIVI LA FENÊTRE ; ⚒ ET ⟳ SONT RESTÉS DANS LA RANGÉE. Les
+   trois gestes demandés « next to the structure calculation button » restent donc à un
+   clic, et la dynamique porte SES réglages là où elle les montre. */
+has(mdWindow, 'aria-label="Molecular dynamics temperature, in kelvins"',
+  '…le champ 🌡 T est écrit dans la fenêtre MD (un seul champ de température)');
+has(mdWindow, '= {calcMdTime.ps} ps ({calcMdTime.ns} ns)',
+  '⚠ …et la fenêtre AFFICHE la durée totale de la simulation (pas × dt), calculée par le module');
 has(calcPanel, 'families · kcal/mol',
   '⚠ …dans les UNITÉS du champ : kcal/mol (le bloc 🧲 du panneau le dit)');
-has(forceGestures, 'onClick={runMolecularDynamics}', '🌡 ▶ MD est un bouton, écrit avec les deux autres');
-has(forceGestures, 'onClick={runMinimise}', '⚒ Minimise aussi');
-has(forceGestures, 'onClick={calcReadForceField}', '🧲 …et ⟳ Energy relit le champ sur la molécule');
+has(mdWindow, 'onClick={runMolecularDynamics}', '🌡 ▶ MD est un bouton, dans SA fenêtre');
+has(mdWindow, 'onClick={() => toggleMdDock(false)}', '…dont le ⇤ la replie');
+has(VIEW, 'onClick={() => toggleMdDock(true)}',
+  '…et l’onglet vertical 🌡 MD la rouvre (le graphe 🪢 suit le même dessin)');
+has(forceGestures, 'onClick={() => toggleMdDock()}', '⚠ …et le bouton de la barre OUVRE/FERME la fenêtre');
+eq(forceGestures.includes('onClick={runMolecularDynamics}'), false,
+  '⚠ …le ▶ MD n’y est plus : il n’existe qu’une fois, dans sa fenêtre');
+has(forceGestures, 'onClick={runMinimise}', '⚒ Minimise est resté dans la rangée');
+has(forceGestures, 'onClick={calcReadForceField}', '🧲 …et ⟳ Energy aussi');
 has(calcPanel, '{renderForceGestures()}',
   '⚠ …et les trois sont RENDUS dans le panneau (la demande : « can the MD, Minimize and Energy be put next to “structure calculation” button? »)');
 ok(calcPanel.indexOf('{renderForceGestures()}') > calcPanel.indexOf('🧬 Structure calculation'),

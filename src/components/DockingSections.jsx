@@ -130,7 +130,8 @@ const useDockingDerived = (activeTest, ctx = {}) => {
     : moleculeType === 'organic' ? 'Organic Molecule' : 'Phospholipid';
 
   const ssRaw = activeTest.secondaryStructure || '';
-  const getSSAt = (i) => (ssRaw[i] && 'HES'.includes(ssRaw[i]) ? ssRaw[i] : 'C');
+  // ⚠ HESL — L (hélice α GAUCHE) est une lettre peignable comme les autres.
+  const getSSAt = (i) => (ssRaw[i] && 'HESL'.includes(ssRaw[i]) ? ssRaw[i] : 'C');
 
   const parsedSeq = useMemo(() => {
     let chars = [];
@@ -596,7 +597,7 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
         <CollapsibleSection title="Sequence and structure" icon="🖌️" defaultOpen={false}>
           <div className="flex flex-wrap gap-2 mb-3 items-center">
             <span className="text-xs font-bold text-slate-500 uppercase mr-1">🖌️ Brush:</span>
-            {['C', 'H', 'E'].map((l) => (
+            {['C', 'H', 'L', 'E'].map((l) => (
               <button
                 key={l}
                 onClick={() => setSSBrush(l)}

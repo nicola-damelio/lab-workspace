@@ -481,7 +481,12 @@ export const SS_CORRECTIONS = {
 
 export const SS_META = {
   C: { label: 'Random coil', color: '#64748b' },
-  H: { label: 'α-Helix', color: '#8b5cf6' },
+  H: { label: 'α-Helix (right-handed)', color: '#8b5cf6' },
+  // ⚠ LA MAIN GAUCHE — la demande : « il bottone alfa elica impone una struttura elicacea
+  // left-handed. aggiungi anche la right-handed. » La peinture ÉCRIT la lettre L (voir
+  // SS_TORSIONS.L de NMRSections.jsx, et SS_DIHEDRALS.L de structureCalc.js) ; c'est son
+  // étiquette que le pinceau affiche, pour que les deux mains ne portent pas le même nom.
+  L: { label: 'α-Helix (left-handed)', color: '#c026d3' },
   E: { label: 'β-Sheet', color: '#f59e0b' }
 };
 

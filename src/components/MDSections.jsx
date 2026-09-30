@@ -488,7 +488,8 @@ const useMDDerived = (activeTest, ctx = {}) => {
 
   // ---- conformation state (identical to NMR) ----
   const ssRaw = activeTest.secondaryStructure || '';
-  const getSSAt = (i) => (ssRaw[i] && 'HES'.includes(ssRaw[i]) ? ssRaw[i] : 'C');
+  // ⚠ HESL — L (hélice α GAUCHE) est une lettre peignable comme les autres.
+  const getSSAt = (i) => (ssRaw[i] && 'HESL'.includes(ssRaw[i]) ? ssRaw[i] : 'C');
 
   const formsRaw = activeTest.nucleicForms || '';
   const dnaFormDefault = activeTest.dnaForm || 'B';
@@ -1454,7 +1455,7 @@ export const MDExperimentSetupSection = ({ ctx }) => {
         <CollapsibleSection title="Sequence and structure" icon="🖌️" defaultOpen={false}>
           <div className="flex flex-wrap gap-2 mb-3 items-center">
             <span className="text-xs font-bold text-slate-500 uppercase mr-1">🖌️ Brush:</span>
-            {['C', 'H', 'E'].map((l) => (
+            {['C', 'H', 'L', 'E'].map((l) => (
               <button key={l} onClick={() => setSSBrush(l)} className="px-3 py-1 rounded-lg text-xs font-black border transition-all"
                 style={{ backgroundColor: ssBrush === l ? SS_META[l].color : 'white', borderColor: SS_META[l].color, color: ssBrush === l ? 'white' : SS_META[l].color }}>
                 {SS_META[l].label}
@@ -1463,6 +1464,7 @@ export const MDExperimentSetupSection = ({ ctx }) => {
             <span className="mx-2 text-slate-300">|</span>
             <button onClick={() => setAllSS('C')} className="px-3 py-1 rounded-lg text-xs font-bold bg-slate-100 border border-slate-300 text-slate-600 hover:bg-slate-200">All Coil</button>
             <button onClick={() => setAllSS('H')} className="px-3 py-1 rounded-lg text-xs font-bold bg-violet-100 border border-violet-300 text-violet-700 hover:bg-violet-200">All α-Helix</button>
+            <button onClick={() => setAllSS('L')} className="px-3 py-1 rounded-lg text-xs font-bold bg-fuchsia-100 border border-fuchsia-300 text-fuchsia-700 hover:bg-fuchsia-200">All α-Helix (L)</button>
             <button onClick={() => setAllSS('E')} className="px-3 py-1 rounded-lg text-xs font-bold bg-amber-100 border border-amber-300 text-amber-700 hover:bg-amber-200">All β-Sheet</button>
           </div>
           <p className="text-xs text-slate-400 mb-3">💡 Select a brush, then click or drag across the sequence chips to paint secondary structure.</p>

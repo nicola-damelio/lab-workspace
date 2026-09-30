@@ -477,6 +477,15 @@ has('onClick={buildFromSequence}', '[modify] bouton 🧬 Structure from sequence
 has('disabled={!sequenceStructureText}', '[modify] …inactif tant qu\'aucune séquence n\'est saisie');
 has('const buildFromSequence = () => {', '[modify] …son implémentation (le PDB affiché est rangé, jamais perdu)');
 has('🧬 Structure from sequence', '[modify] libellé du bouton (renommé : il dit ce qu\'il FABRIQUE)');
+/* ── BLEU CLAIR — la demande de cette session : « move the button structure
+   calculation next to the button structure from sequence and color the latter in light
+   blue. » Le bouton de la séquence est donc en sky (bleu clair), et l'ancien blanc /
+   emerald a disparu : la couleur dit, sans lire l'infobulle, lequel des deux gestes 🧬
+   part de la séquence de la page (l'autre part des distances mesurées). */
+has('bg-sky-100 border-sky-400 text-sky-800 hover:bg-sky-200 disabled:opacity-40 disabled:cursor-not-allowed',
+  '[modify] …en BLEU CLAIR (la couleur fait partie de la demande, pas du hasard)');
+gone('bg-white border-emerald-300 text-emerald-700 hover:bg-emerald-50 disabled:opacity-40 disabled:cursor-not-allowed',
+  '[modify] …et le blanc / emerald d’avant n’est plus là (aucune trace de la couleur d’origine)');
 /* ↩ Back to PDB — LE RETOUR EST LÀ OÙ LE GESTE A ÉTÉ FAIT (le rapport : « when
    clicking on "from sequence" the viewer generates the molecule from scratch but
    before I had a button to come back to the structure that was present before I
