@@ -1567,19 +1567,41 @@ has(VIEW, 'label: `🌡 molecular dynamics · ${calcMdSteps} steps · T = ${calc
   '⚠ …et le ↺ est armé AVANT d’écrire, comme pour une torsion (avec le réglage 🪢 ω du moment ET ce que la case 📏 a décidé : le journal dit ce que la dynamique a porté)');
 has(VIEW, "// le graphe suit ce que la dynamique vient d'écrire",
   '⚠ le graphe 🪢 est relu après la dynamique et après la minimisation (il ne parle jamais d’une autre conformation)');
-eq(VIEW.split('if (rama) readRamachandran();').length - 1, 3,
-  '…et il est relu dans les TROIS chemins qui écrivent des coordonnées : le calcul, la dynamique, la minimisation');
+eq(VIEW.split('if (ramaIsShown()) readRamachandran();').length - 1, 4,
+  '…et il est relu dans les QUATRE points d’écriture d’une image : à chaque image de la dynamique, '
+  + 'à chaque image de la minimisation, à leur FIN, et quand le calcul de structure écrit son modèle');
+eq(VIEW.split('if (ramaIsShown())').length - 1, 4,
+  '…toujours par le MÊME lecteur (celui du bouton ⟳ du 🪢), jamais un second calcul de φ/ψ');
 /* LE 🪢 SUIT LE MOUVEMENT — la demande : « can the ramachandran be updated while the
-   molecule moves? » Oui : la lecture φ/ψ est refaite après CHAQUE image écrite quand le
-   graphe est déjà à l'écran (mesuré : 0.24 ms pour 30 résidus, 1 ms pour 300), dans la
+   molecule moves? » Oui : la lecture φ/ψ est refaite après CHAQUE image écrite quand la
+   fenêtre 🪢 est à l'écran (mesuré : 0.24 ms pour 30 résidus, 1 ms pour 300), dans la
    dynamique ET dans la minimisation ; et dans le calcul quand 👁 watch écrit vraiment la
-   molécule. C'est TOUJOURS le même lecteur — celui du bouton ⟳ du 🪢. */
-has(VIEW, 'const followRama = !!rama;',
-  '⚠ …et le graphe 🪢 SUIT les images écrites quand il est déjà affiché');
-eq(VIEW.split('if (followRama) readRamachandran();').length - 1, 1,
-  '…après chaque image de la dynamique et de la minimisation, sans second lecteur φ/ψ');
-eq(VIEW.split('if (calcWatch && followRama) readRamachandran();').length - 1, 1,
-  '…et après chaque départ ÉCRIT du calcul de structure (le 👁 décide, rien n’est lu d’une autre conformation)');
+   molécule. C'est TOUJOURS le même lecteur — celui du bouton ⟳ du 🪢.
+   ⚠ La demande de CETTE session : « update the ramachandran during energy minimization,
+   MD and structure calculation. » La question « la fenêtre est-elle à l'écran ? » est donc
+   posée À CHAQUE IMAGE (`ramaIsShown()`), et non une fois au clic : une boucle d'images est
+   une fermeture DÉJÀ EN VOL, elle ne verrait jamais un état mis à jour — alors que la
+   fenêtre ouverte PENDANT un ▶ MD, un ⚒ Minimise ou un ▶ Run doit suivre, elle aussi. */
+has(VIEW, 'const ramaShownRef = useRef(false);',
+  '⚠ …la réponse est tenue dans une RÉFÉRENCE (elle rend toujours la valeur COURANTE à une boucle déjà en vol)');
+has(VIEW, 'ramaShownRef.current = !!rama;',
+  '…écrite à chaque rendu, au seul endroit qui la tient : aucune autre lecture de `rama` ne peut la désynchroniser');
+has(VIEW, 'const ramaIsShown = () => ramaShownRef.current;',
+  '…et lue par UNE question, « la fenêtre 🪢 est-elle à l’écran MAINTENANT ? »');
+eq(VIEW.split('if (calcWatch && ramaIsShown()) readRamachandran();').length - 1, 1,
+  '…posée aussi après chaque départ ÉCRIT du calcul de structure (le 👁 décide, rien n’est lu d’une autre conformation)');
+/* LA DERNIÈRE COORDONNÉE EST ÉCRITE, MÊME SANS 👁 — le moteur n'annonce qu'une image tous
+   `perFrame` pas : s'arrêter à la dernière IMAGE laissait la molécule (et le 🪢) quelques pas
+   AVANT la fin, et avec le 👁 décoché elle ne bougeait pas du tout, pendant que le rapport
+   parlait de l'énergie APRÈS et que le ↺ promettait de défaire le geste. `tick.value` porte
+   l'état FINAL : il s'écrit une fois, par le même chemin qu'une image. */
+has(VIEW, 'const end = tick.value;',
+  '⚠ la fin d’une trajectoire (▶ MD, ⚒ Minimise) se lit sur le RÉSULTAT du moteur, pas sur la dernière image annoncée');
+has(VIEW, 'if (end && end.ok && end.positions) calcPreviewPositions(comp, structure, end.positions);',
+  '…et ces coordonnées FINALES s’écrivent par le MÊME chemin qu’une image (le 📏, les plaques et le 🪢 suivent)');
+ok(VIEW.indexOf('if (end && end.ok && end.positions) calcPreviewPositions(comp, structure, end.positions);')
+  < VIEW.indexOf('if (onEnd) onEnd(end);'),
+  '…AVANT le rapport : la relecture des distances et celle du 🪢 portent donc sur ce que la molécule montre');
 /* LES DISTANCES DEMANDÉES SONT RELUES APRÈS COUP — « can the MD take the distance
    constraints into account? » La réponse est DANS LE RAPPORT : combien de distances de la
    table sont dans la tolérance après le geste, et de combien la plus fausse en sort. Le

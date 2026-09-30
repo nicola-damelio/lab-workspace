@@ -7719,9 +7719,25 @@ const [torsionClosest, setTorsionClosest] = useState(null); // last unreachable 
 const torsionUndoRef = useRef(null);                 // { comp, structure, idxs, base, label }
 /* ── 🪢 LE GRAPHE DE RAMACHANDRAN — CE QUE LE PANNEAU A LU, ET QUAND ──────────
    La lecture est un SNAPSHOT : refaite par « ⟳ Read the backbone » (et à l'ouverture
-   de la section), sur les coordonnées du moment. Rien n'est dérivé à chaque rendu. */
+   de la fenêtre), sur les coordonnées du moment. Rien n'est dérivé à chaque rendu —
+   mais tout ce qui BOUGE la molécule (🧬 le calcul de structure, ▶ MD, ⚒ Minimise) la
+   REFait après chaque image écrite, tant que la fenêtre est à l'écran : voir
+   `ramaIsShown(), ci-dessous. C'est le seul cas où le graphe se redessine sans qu'on
+   le lui demande. */
 const [rama, setRama] = useState(null);
 const [ramaMsg, setRamaMsg] = useState('');
+/* …ET LA RÉFÉRENCE QUI RÉPOND « CE GRAPHE EST-IL À L'ÉCRAN MAINTENANT ? ». Trois gestes
+   BOUGENT la molécule image par image — le 🧬 calcul de structure, le ▶ MD et le ⚒ Minimise
+   — et les trois doivent relire les φ/ψ qu'ils viennent d'écrire. Ils ne peuvent pas
+   regarder `rama` : leurs boucles sont des fermetures DÉJÀ EN VOL (elles ont été créées au
+   clic sur le bouton, et elles ne verront jamais un état mis à jour ensuite), alors qu'une
+   référence, elle, rend toujours la valeur COURANTE. C'est ce qui fait qu'ouvrir la
+   fenêtre 🪢 pendant que la molécule bouge la fait suivre dès l'image suivante, au lieu de
+   la laisser sur la conformation du clic. La référence est écrite ICI, à chaque rendu :
+   c'est le seul endroit qui la tient (donc aucune autre lecture que `rama` ne peut la
+   désynchroniser). */
+const ramaShownRef = useRef(false);
+ramaShownRef.current = !!rama;
 /* LE DOCK 🪢 À GAUCHE DE LA FENÊTRE 3D — la demande : « The Ramachandran plot should
    appear at the left in the viewer window (expandible and compressible). » Le graphe
    était une SECTION du panneau 🧬 (en bas, sous la molécule) ; il est ICI une colonne
@@ -9776,6 +9792,16 @@ const ramachandranReadingOf = (structure) => (
   structure ? ramachandranOf({ atoms: structureAtomRecords(structure) }) : null
 );
 
+/** LE GRAPHE 🪢 EST-IL À L'ÉCRAN MAINTENANT ? — LA question que posent les trois gestes
+ *  qui BOUGENT la molécule image par image (🧬 le calcul de structure, ▶ MD, ⚒ Minimise)
+ *  avant de relire les φ/ψ qu'ils viennent d'écrire. Elle est posée à la RÉFÉRENCE
+ *  (`ramaShownRef`), pas à l'état : une boucle d'images est une fermeture déjà en vol,
+ *  elle ne verrait jamais un état mis à jour ensuite, alors qu'elle lit toujours la valeur
+ *  COURANTE d'une référence. Ouvrir (ou refermer) la fenêtre 🪢 pendant que la molécule
+ *  bouge la fait donc suivre — ou ne rien coûter du tout — dès l'image suivante, et
+ *  toujours par le MÊME lecteur : `readRamachandran`, ci-dessous. */
+const ramaIsShown = () => ramaShownRef.current;
+
 /** LA LECTURE, DEPUIS LA FENÊTRE — le bouton « ⟳ Read the backbone » du dock 🪢. Elle
  *  prend la structure du moment (donc les coordonnées que la torsion ou un calcul
  *  viennent d'écrire), garde le graphe, et dit dans la ligne du dock ce QU'ELLE a
@@ -10555,10 +10581,10 @@ const calcWriteStructure = (retained, ranked) => {
   }
   setCalcShown(retained.rank);
   setCalcMsg(calcReportOf(retained, ranked));
-  /* LE GRAPHE 🪢 SUIT CETTE ÉCRITURE — une lecture est un instantané : quand la section
-     🪢 en a déjà lu un, la nouvelle géométrie ne peut pas laisser un graphe qui parle
+  /* LE GRAPHE 🪢 SUIT CETTE ÉCRITURE — une lecture est un instantané : quand la fenêtre
+     🪢 est à l'écran, la nouvelle géométrie ne peut pas laisser un graphe qui parle
      d'une autre conformation (le calcul et le graphe disent alors la MÊME chose). */
-  if (rama) readRamachandran();
+  if (ramaIsShown()) readRamachandran();
 };
 
 /** ÉCRIRE UNE IMAGE DU CALCUL À L'ÉCRAN — « je veux VOIR la structure se calculer ».
@@ -10680,9 +10706,9 @@ const runStructureCalculation = () => {
   setCalcProgress(`🧬 start 0/${n} …${half
     ? ` (${half} line${half === 1 ? '' : 's'} of the table still unfinished, left out)`
     : ''}`);
-  /* LE GRAPHE 🪢, S'IL EST AFFICHÉ, SUIT CHAQUE DÉPART ÉCRIT (voir `pumpMotion`) : le
-     même `followRama`, pour que le 🪢 bouge aussi pendant un calcul de structure. */
-  const followRama = !!rama;
+  /* LE GRAPHE 🪢, S'IL EST À L'ÉCRAN, SUIT CHAQUE DÉPART ÉCRIT (voir `pumpMotion`) : la
+     MÊME question `ramaIsShown()`, posée à CHAQUE image — le 🪢 bouge donc aussi pendant un
+     calcul de structure, et l'ouvrir en cours de route suffit à ce qu'il prenne la suite. */
   const finish = (stopped, ranked = null) => {
     const family = ranked || rankStructureAttempts({ attempts, keep: m });
     /* LA FAMILLE EST MARQUÉE DE SA MOLÉCULE — `comp` et `structure` : ses coordonnées
@@ -10783,9 +10809,9 @@ const runStructureCalculation = () => {
        molécule : écrire sans rendre la main ne montrerait rien. */
     if (shown) {
       if (calcWatch && shown.positions) calcPreviewPositions(comp, structure, shown.positions);
-      /* …ET LE 🪢 SUIT LE CALCUL QUAND IL EST AFFICHÉ (👁 watch écrit vraiment la
+      /* …ET LE 🪢 SUIT LE CALCUL QUAND IL EST À L'ÉCRAN (👁 watch écrit vraiment la
          molécule : le graphe parle donc de la conformation qui est à l'écran). */
-      if (calcWatch && followRama) readRamachandran();
+      if (calcWatch && ramaIsShown()) readRamachandran();
       if (shown.phase !== 'attempt-done') setCalcProgress(calcPhaseLine(shown, attempts.length, n));
     }
     if (typeof window !== 'undefined' && window.setTimeout) window.setTimeout(pump, 0);
@@ -10865,11 +10891,12 @@ const pumpMotion = ({ frames, comp, structure, head, onEnd }) => {
   const run = calcRunRef.current;
   /* LE GRAPHE 🪢 SUIT LE MOUVEMENT — la demande : « can the ramachandran be updated while
      the molecule moves? » Oui. La lecture φ/ψ est refaite après CHAQUE image écrite
-     quand le graphe est déjà à l'écran (mesuré : 0.24 ms pour 30 résidus, 1 ms pour 300),
+     quand la fenêtre 🪢 est à l'écran (mesuré : 0.24 ms pour 30 résidus, 1 ms pour 300),
      donc les points sortent de leur bassin PENDANT que la dynamique tourne au lieu de
      n'apparaître qu'à la fin. C'est la MÊME lecture que le bouton ⟳ du 🪢 : pas un
-     second lecteur, et rien à recalculer quand le graphe n'est pas affiché. */
-  const followRama = !!rama;
+     second lecteur, et rien à recalculer quand le graphe n'est pas affiché. ⚠ La question
+     est posée À CHAQUE IMAGE (`ramaIsShown()`) et non une fois au clic : ouvrir la
+     fenêtre pendant que la molécule bouge la fait suivre dès l'image suivante. */
   const pump = () => {
     if (calcRunRef.current !== run) return;
     if (componentRef.current !== comp) {
@@ -10892,7 +10919,18 @@ const pumpMotion = ({ frames, comp, structure, head, onEnd }) => {
       if (tick.done) {
         setCalcBusy(false);
         setCalcProgress('');
-        if (onEnd) onEnd(tick.value);
+        /* ⚠ LA DERNIÈRE IMAGE ÉCRITE N'EST PAS LA DERNIÈRE COORDONNÉE — et sans 👁 elle
+           n'existe même pas. Le moteur n'annonce qu'une image tous `perFrame` pas (les
+           autres seraient trop nombreuses pour l'écran) : après un ▶ MD ou un ⚒ Minimise,
+           l'écran s'arrêtait donc quelques pas AVANT la fin, et avec le 👁 décoché la
+           molécule restait carrément où elle était — pendant que le rapport parlait de
+           l'énergie APRÈS et que le ↺ promettait de défaire le geste. `tick.value` porte
+           l'état FINAL : il s'écrit ici, une fois, par le MÊME chemin qu'une torsion (donc
+           le 📏, les plaques, le film et le 📥 Download suivent aussi), et c'est la
+           conformation dont le rapport et le 🪢 parlent ensuite. */
+        const end = tick.value;
+        if (end && end.ok && end.positions) calcPreviewPositions(comp, structure, end.positions);
+        if (onEnd) onEnd(end);
         return;
       }
       shown = tick.value;
@@ -10901,7 +10939,7 @@ const pumpMotion = ({ frames, comp, structure, head, onEnd }) => {
     }
     if (shown) {
       if (calcWatch && shown.positions) calcPreviewPositions(comp, structure, shown.positions);
-      if (followRama) readRamachandran();   // le 🪢 suit l'image qui vient d'être écrite
+      if (ramaIsShown()) readRamachandran();   // le 🪢 suit l'image qui vient d'être écrite
       setCalcProgress(calcPhaseLine(shown, 0, 1, head));
     }
     if (typeof window !== 'undefined' && window.setTimeout) window.setTimeout(pump, 0);
@@ -11025,7 +11063,7 @@ const runMolecularDynamics = () => {
         + ` · ${run.added ? run.added.hydrogens : 0} hydrogens added.`
         + ' ⚡ Energies in kcal/mol, temperature in kelvins (R·T is the thermal energy: 0.6 kcal/mol at 300 K).'
         + ' ⚒ Minimise from here lands on a minimum of the same field; ↺ Undo torsion puts the molecule back.');
-      if (rama) readRamachandran();     // le graphe suit ce que la dynamique vient d'écrire
+      if (ramaIsShown()) readRamachandran();   // le graphe suit ce que la dynamique vient d'écrire
     },
   });
 };
@@ -11093,7 +11131,7 @@ const runMinimise = () => {
           : `held trans: no move could make it worse (${run.omega ? run.omega.penalty.toFixed(2) : 0} kcal/mol)`}`
         + `${run.walls.count ? ` · ${run.walls.count} distance${run.walls.count === 1 ? '' : 's'} held by the leash` : ''}.`
         + ' ↺ Undo torsion puts the molecule back exactly where it was.');
-      if (rama) readRamachandran();
+      if (ramaIsShown()) readRamachandran();   // le graphe suit la conformation que le ⚒ vient d'écrire
     },
   });
 };
@@ -19558,7 +19596,7 @@ const renderMdWindow = () => (
           <span className="font-semibold text-slate-500">K</span>
         </label>
         <button type="button" onClick={runMolecularDynamics} disabled={calcBusy}
-          title="RUN MOLECULAR DYNAMICS on the molecule AS IT STANDS, at the temperature above, with the parameters above: dihedral Langevin dynamics under the whole force field (kcal/mol, charges, solvent, added hydrogens) — the trajectory FEELS your distances when the 📏 box above is ticked (each one with its ⚖ weight; the already-held ones are a leash, a wall, so they cannot be let go), and runs free of them when it is unticked. It is written into the molecule at every frame — you SEE it move, and the 🪢 plot follows if it is open — and ↺ Undo torsion puts the molecule back exactly as it was. The report gives the steps, the length in ps, the kinetic temperature, the energy before and after, whether the table was carried, how many of your distances are within tolerance, and what happened to ω, φ/ψ and χ1."
+          title="RUN MOLECULAR DYNAMICS on the molecule AS IT STANDS, at the temperature above, with the parameters above: dihedral Langevin dynamics under the whole force field (kcal/mol, charges, solvent, added hydrogens) — the trajectory FEELS your distances when the 📏 box above is ticked (each one with its ⚖ weight; the already-held ones are a leash, a wall, so they cannot be let go), and runs free of them when it is unticked. It is written into the molecule at every frame — you SEE it move, and the 🪢 plot follows it image by image while its window is on screen (open it WHILE the dynamics runs and it takes the next image), because the FINAL coordinates are written too even when 👁 watch is unticked: the report, the molecule and the plot then speak of the same conformation. ↺ Undo torsion puts the molecule back exactly as it was. The report gives the steps, the length in ps, the kinetic temperature, the energy before and after, whether the table was carried, how many of your distances are within tolerance, and what happened to ω, φ/ψ and χ1."
           className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-sky-400 text-sky-700 hover:bg-sky-50 disabled:opacity-40">
           ▶ MD
         </button>
@@ -19597,7 +19635,7 @@ const renderForceGestures = () => (
       ▶ MD{mdDock ? ' ⇥' : ' ⇤'}
     </button>
     <button type="button" onClick={runMinimise} disabled={calcBusy}
-      title="MINIMISE the energy from here: the dihedral descent each start ends on (every hinge tried on both sides of a step that halves as soon as a sweep improves nothing), on the same force field, with your distance table as restraints and the already-held ones as a leash. This is the FINAL ENERGY REFINEMENT — it is what CONVERGES a distance the dynamics merely approached, and it lands on a local minimum, not merely on a model that respects the distances. ↺ Undo torsion puts the molecule back."
+      title="MINIMISE the energy from here: the dihedral descent each start ends on (every hinge tried on both sides of a step that halves as soon as a sweep improves nothing), on the same force field, with your distance table as restraints and the already-held ones as a leash. This is the FINAL ENERGY REFINEMENT — it is what CONVERGES a distance the dynamics merely approached, and it lands on a local minimum, not merely on a model that respects the distances. The 🪢 plot follows the descent image by image while its window is on screen, and the minimum it lands on is written even when 👁 watch is unticked. ↺ Undo torsion puts the molecule back."
       className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-amber-400 text-amber-800 hover:bg-amber-50 disabled:opacity-40">
       ⚒ Minimise
     </button>
@@ -20686,7 +20724,7 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
 
 
         <label className="flex items-center gap-1"
-          title="👁 WATCH EACH START: every gesture the module announces (the random draw, each annealing step, the equilibration, the cooling, the minimisation, the quench) is written into the molecule ON SCREEN, by the same path a torsion uses — so you SEE the molecule fold instead of watching a progress line. Uncheck it for a quiet run (the final models are written all the same). ↺ Undo torsion puts back the molecule you had before the calculation wrote anything.">
+          title="👁 WATCH EACH START: every gesture the module announces (the random draw, each annealing step, the equilibration, the cooling, the minimisation, the quench) is written into the molecule ON SCREEN, by the same path a torsion uses — so you SEE the molecule fold instead of watching a progress line, and the 🪢 plot follows it image by image while its window is on screen. Uncheck it for a quiet run: the molecule is then written ONCE, with the FINAL coordinates — the best model of the calculation, or what ▶ MD and ⚒ Minimise landed on — so the report and the 🪢 plot still describe the structure that came out. ↺ Undo torsion puts back the molecule you had before the calculation wrote anything.">
           <input type="checkbox" checked={calcWatch} onChange={(e) => setCalcWatch(e.target.checked)}
             aria-label="Write each start on screen while it is computed"
             className="accent-indigo-600" />
@@ -20694,7 +20732,7 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
         </label>
         <button type="button" onClick={runStructureCalculation}
           disabled={calcBusy || !calcUsableRows().length}
-          title="Run the calculation: n starts, the ⚒ protocol on each, the best m kept, and the first one written into the molecule. The panel is updated START BY START (one per frame, so the page stays alive), and ⏹ stops between two of them. A fixed seed means the same molecule, the same distances and the same n always give the same family — press ▶ Run twice and compare."
+          title="Run the calculation: n starts, the ⚒ protocol on each, the best m kept, and the first one written into the molecule. The panel is updated START BY START (one per frame, so the page stays alive), and ⏹ stops between two of them. A fixed seed means the same molecule, the same distances and the same n always give the same family — press ▶ Run twice and compare. The 🪢 plot follows every start written while its window is on screen (one reader for φ/ψ, the same as its ⟳ Read)."
           className="px-2 py-1 text-[10px] font-bold rounded border bg-indigo-600 border-indigo-700 text-white hover:bg-indigo-700 disabled:opacity-40">
           ▶ Run
         </button>
@@ -21067,11 +21105,14 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
     le dock 🪢 (le MÊME état que son ⇤ et que l'onglet vertical du bord gauche), et
     la grande section de la barre a disparu avec lui. Le graphe se LIT, il n'écrit
     RIEN : tout vient de utils/ramachandran.js, et la lecture est un SNAPSHOT — pris
-    à l'ouverture, et repris par son ⟳ Read. */}
+    à l'ouverture, repris par son ⟳ Read, et REFait après chaque image des trois
+    gestes qui bougent la molécule (🧬 calcul, ▶ MD, ⚒ Minimise) tant que la
+    fenêtre est à l'écran : le graphe ne parle jamais d'une conformation qui n'y
+    est plus. */}
 <button type="button"
   onClick={() => { if (!ramaDock) readRamachandran(); toggleRamaDock(!ramaDock); }}
   className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${ramaDock ? 'bg-amber-100 border-amber-400 text-amber-900' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
-  title="Show or hide the 🪢 Ramachandran window INSIDE the viewer: the φ/ψ map of the peptide backbone on screen (φ = C(i−1)·N·CA·C, ψ = N·CA·C·N(i+1)), read with the same signed-IUPAC dihedral reader as the χ/δ readers — there is no second dihedral reader in this app (utils/torsionDrive.js) — one point per residue. The window sits at the LEFT of the 3D view (expandable · compressible) and this button closes it again. ⚠ It is a PLAN, not a calculation: no potential, no energy, and a point outside the regions is not “wrong”, it is outside the regions. The reading is a snapshot of the coordinates: the window's ⟳ Read takes it again.">
+  title="Show or hide the 🪢 Ramachandran window INSIDE the viewer: the φ/ψ map of the peptide backbone on screen (φ = C(i−1)·N·CA·C, ψ = N·CA·C·N(i+1)), read with the same signed-IUPAC dihedral reader as the χ/δ readers — there is no second dihedral reader in this app (utils/torsionDrive.js) — one point per residue. The window sits at the LEFT of the 3D view (expandable · compressible) and this button closes it again. ⚠ It is a PLAN, not a calculation: no potential, no energy, and a point outside the regions is not “wrong”, it is outside the regions. The reading is a SNAPSHOT of the coordinates — taken when the window opens, and re-taken by its ⟳ Read — and it FOLLOWS the three gestures that move the molecule (🧬 Structure calculation, ▶ MD, ⚒ Minimise): one more reading after every image they write, so the points never describe a conformation the molecule has left.">
   🪢 Ramachandran{rama && rama.measured ? ` (${rama.measured})` : ''}
 </button>
 {/* ⚡ ESP — the electrostatic-potential surface of the molecule selected in the
@@ -21643,7 +21684,7 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
       <span className="text-[10px] font-black text-amber-700 uppercase tracking-wide">🪢 Ramachandran · φ against ψ</span>
       <span className="flex items-center gap-1">
         <button type="button" onClick={readRamachandran}
-          title="Read the backbone of the molecule on screen NOW (its N · CA · C atoms, the φ and ψ of every residue) — press it again after a ✏️ Torsion or a 🧬 calculation to see where the points moved. The plot is a snapshot of the coordinates, not a live view."
+          title="Read the backbone of the molecule on screen NOW (its N · CA · C atoms, the φ and ψ of every residue). ⚠ You rarely need it: while a 🧬 Structure calculation, a ▶ MD or a ⚒ Minimise MOVES the molecule, this window re-reads the backbone by itself after every image written — the points leave their basins as the backbone turns, instead of appearing at the end. This button takes a reading at any OTHER moment: after a ✏️ Torsion, a drag, a fresh loading, or a ⌖/🎯 pick."
           className="px-1.5 py-0.5 text-[9px] font-bold rounded border bg-white border-amber-300 text-amber-700 hover:bg-amber-100">⟳ Read</button>
         <button type="button" onClick={() => toggleRamaDock(false)}
           title="Collapse the Ramachandran dock — the plot folds to a thin tab on the left edge (🪢 brings it back), and the 3D view takes the whole width again. The reading is not lost."

@@ -26,7 +26,12 @@
         (les deux extrémités, et un TROU dans la numérotation) ;
      §6 LE BRANCHEMENT DU VIEWER — le panneau 🪢, le bouton « ⟳ Read the backbone »,
         le dessin SVG, la liste des outliers, LE SURVOL D'UN POINT (qui le nomme et dit
-        ses deux angles), et la note qui dit ce que le graphe n'est pas.
+        ses deux angles), et la note qui dit ce que le graphe n'est pas ;
+     §7 LE DOCK 🪢 à gauche de la fenêtre 3D — son état retenu sur le poste, son ⇤ /
+        onglet vertical, et le RECADRAGE de NGL quand il change la largeur ;
+     §8 LE 🪢 SUIT LES GESTES QUI BOUGENT LA MOLÉCULE — 🧬 le calcul, ▶ MD et ⚒ Minimise
+        le relisent à chaque image écrite tant que la fenêtre est à l'écran (et l'ouvrir
+        PENDANT le geste suffit : la question est posée à une référence, pas à un état).
 
    Run: node _ramachandran_test.mjs
    ========================================================================= */
@@ -491,7 +496,34 @@ has(VIEW, 'if (rama || ramaMsg) return;', '⚠ le dock ouvert lit le squelette U
 has(VIEW, 'if (status !== \'ready\' || !componentRef.current) return;',
   '…quand une molécule est là, et pas avant');
 
+/* ── 8 · LE 🪢 SUIT CE QUI BOUGE LA MOLÉCULE ─────────────────────────────────
+   La demande de cette session, mot pour mot : « update the ramachandran during
+   energy minimization, MD and structure calculation. » Le graphe était un
+   instantané qu'il fallait relire à la main : il est maintenant REFait après
+   chaque image écrite par les trois gestes — 🧬 le calcul de structure, ▶ MD et
+   ⚒ Minimise — tant que la fenêtre est à l'écran, et elle peut être ouverte
+   PENDANT le geste (c'est justement ce que la référence `ramaShownRef` permet :
+   une boucle d'images est une fermeture déjà en vol, elle ne verrait jamais un
+   état mis à jour). Le lecteur reste CELUI DU BOUTON ⟳ : aucune ligne de ce §
+   n'ajoute un second calcul de φ/ψ — c'est `_structure_calculation_test.mjs` qui
+   compte les appels, et `utils/ramachandran.js` qui les calcule. */
+has(VIEW, 'const ramaShownRef = useRef(false);',
+  '⚠ le viewer tient une RÉFÉRENCE « la fenêtre 🪢 est-elle à l’écran MAINTENANT ? »');
+has(VIEW, 'ramaShownRef.current = !!rama;',
+  '…tenue à jour à chaque rendu (le seul endroit qui l’écrit, donc rien ne peut la désynchroniser)');
+has(VIEW, 'const ramaIsShown = () => ramaShownRef.current;',
+  '…et posée par UNE question, à chaque image des trois gestes');
+has(VIEW, 'if (ramaIsShown()) readRamachandran();',
+  '…toujours par le même lecteur : celui du bouton ⟳ (pas un second lecteur φ/ψ)');
+has(ramaDock, 're-reads the backbone by itself after every image written',
+  '⚠ …et le bouton ⟳ dit ce qu’il est devenu : pendant un calcul, une dynamique ou une minimisation, le graphe se relit TOUT SEUL');
+ok(VIEW.indexOf('not a live view') < 0,
+  '…donc « the plot is a snapshot of the coordinates, not a live view » a disparu : la phrase était devenue fausse');
+has(ramaPanel, 'it FOLLOWS the three gestures that move the molecule',
+  '…et le bouton 🪢 de la barre le dit aussi (🧬 calcul, ▶ MD, ⚒ minimisation)');
+
 console.log(`_ramachandran_test.mjs — ${passed} assertions OK (les tables, la classe des résidus, les régions et`
   + ' leurs polygones, la géométrie du dessin, les caractères des DEUX AXES et leurs titres, le survol qui nomme'
   + ' un point et ses deux angles, une hélice α et un feuillet CONSTRUITS et relus au chiffre près,'
-  + ' les trous de chaîne, les outliers nommés, et le panneau 🪢 du viewer)');
+  + ' les trous de chaîne, les outliers nommés, le panneau 🪢 du viewer, et le 🪢 qui SUIT'
+  + ' le calcul, la dynamique et la minimisation image par image)');
