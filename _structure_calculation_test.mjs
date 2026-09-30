@@ -72,6 +72,7 @@ import {
   hydrogenatedOf, ffHydrogensOf, partialChargesOf, ffPairListOf, ffSurfaceOf, ffSasaOf,
   ffEntropyOf, ffVdwCostOf, ffCoulombCostOf, ffRestraintCostOf, ffOmegaCostOf, ffChiCostOf,
   ffRamaCostOf, ffBondCostOf, ffAngleCostOf, ffPlanarCostOf, ffNonbondedEnergyOf,
+  ffRestraintWeightOf, ffRestraintKOf,
   FF_RESTRAINT_TOLERANCE, FF_NOE_K, FF_OMEGA_K, FF_CHI_K, FF_RAMA_K, FF_BOND_K,
   FF_ANGLE_K, FF_PLANAR_K, FF_SASA_GAMMA, FF_GAS_CONSTANT, FF_REFERENCE_TEMPERATURE,
   FF_COULOMB, FF_DIELECTRIC, FF_KCAL_UNITS, FF_PAIR_LIMIT, ffElementOf, FF_VDW_RADII,
@@ -322,6 +323,32 @@ eq(clean.dropped, 5,
 eq(clean.list[0].order, 1, '…la première ligne du rapport porte le numéro 1');
 eq(restraintListOf({ restraints: null, atomCount: 3 }).count, 0, 'une liste absente ne casse rien');
 
+/* ⚖ LE POIDS D'UNE LIGNE — la demande de cette session : « enable this option allowing
+   the user to give a weight to these constraints. This weight can be defined in the
+   table. » Le poids est une PROPRIÉTÉ de la ligne : `restraintListOf` le TRANSPORTE
+   jusqu'au moteur (1 quand il n'est pas donné, 0 permis — une ligne en pause), et c'est
+   lui qui multiplie la raideur du puits plat (`k = FF_NOE_K × poids`, voir
+   `ffRestraintWeightOf` / `ffRestraintKOf` du champ). */
+const weighted = restraintListOf({
+  restraints: [
+    { i: 0, j: 5, target: 3 }, { i: 1, j: 5, target: 3, weight: 2.5 },
+    { i: 2, j: 5, target: 3, weight: 0 }, { i: 3, j: 5, target: 3, weight: 'abc' },
+    { i: 4, j: 5, target: 3, weight: -1 }, { i: 1, j: 3, target: 3, weight: false },
+  ],
+  atomCount: 6,
+});
+eq(weighted.list.map((r) => r.weight), [1, 2.5, 0, 1, 1, 1],
+  '⚠ les poids traversent la liste NORMALISÉE : 1 par défaut, 2.5 tel quel, 0 tel quel (une mise en pause est une valeur), et un poids illisible, négatif ou booléen retombe à 1');
+eq(weighted.list.map((r) => r.order), [1, 2, 3, 4, 5, 6],
+  '…sans changer l’ordre ni la numérotation des lignes (un poids ne réordonne rien)');
+eq(ffRestraintWeightOf(undefined), 1,
+  'un poids ABSENT vaut 1 : une table écrite avant cette colonne se comporte exactement comme avant');
+eq([ffRestraintWeightOf(2), ffRestraintWeightOf('0.5'), ffRestraintWeightOf(0)], [2, 0.5, 0],
+  '…et un chiffre donné, texte ou nombre, est lu tel quel (le 0 compris)');
+eq([ffRestraintKOf(1), ffRestraintKOf(2), ffRestraintKOf(0), ffRestraintKOf(0.5)],
+  [FF_NOE_K, FF_NOE_K * 2, 0, FF_NOE_K / 2],
+  '…et `ffRestraintKOf` rend LA raideur de la ligne : k_NOE × poids, exactement — un poids de 0 rend la ligne inerte');
+
 /* ── 3 · LE TIRAGE DES DIÈDRES, EXÉCUTÉ ───────────────────────────────────────
    Une rotation autour d'une liaison est RIGIDE : elle change les dièdres et RIEN
    d'autre. C'est la seule chose qui rend « randomiser les dièdres » différent de
@@ -485,6 +512,49 @@ ok(Math.abs(good.freeEnergy - (good.enthalpy + good.entropyEnergy)) < 1e-6,
 ok(good.bond >= 0 && good.angle >= 0 && Number.isFinite(good.vdw) && Number.isFinite(good.elec),
   '…la fonction cible est bien le champ entier (liaisons, angles, vdW, électrostatique)');
 eq(scoreStructureOf({}).ok, false, 'sans coordonnées, la note est refusée (score infini) au lieu d’un zéro trompeur');
+
+/* ⚖ LE POIDS, EXÉCUTÉ — il ne décore pas le rapport : il change L'ÉNERGIE. Même couple,
+   même cible, même écart ; seule la colonne ⚖ change, et le prix suit exactement. */
+const pair = { i: 0, j: 5, target: 3.9 };
+const weightedScore = (w) => scoreStructureOf({
+  positions: hexane.positions, elements: hexane.elements, bonds: hexane.bonds,
+  restraints: [w === null ? pair : { ...pair, weight: w }],
+});
+const sOne = weightedScore(null);
+const sTwo = weightedScore(2);
+const sHalf = weightedScore(0.5);
+const sZero = weightedScore(0);
+ok(sOne.restraintEnergy > 0,
+  `…la contrainte dépassée coûte ${sOne.restraintEnergy.toFixed(3)} kcal/mol à ⚖ 1`);
+near(sTwo.restraintEnergy, sOne.restraintEnergy * 2,
+  '⚠ …DEUX FOIS plus cher à ⚖ 2 : le poids multiplie le puits plat, il ne s’y ajoute pas', 1e-5);
+near(sHalf.restraintEnergy, sOne.restraintEnergy / 2, '…et deux fois moins à ⚖ 0.5', 1e-5);
+near(sZero.restraintEnergy, 0,
+  '⚠ …et RIEN du tout à ⚖ 0 : la ligne est INERTE (elle reste dans le rapport, elle ne pèse rien)', 1e-9);
+eq(sOne.restraint.list[0].weight, 1, 'la ligne du rapport dit son poids (1 quand il n’est pas donné)');
+eq(sTwo.restraint.list[0].k, FF_NOE_K * 2,
+  '…et sa raideur, telle que le champ l’a lue (`k` par ligne, jamais recopié ailleurs)');
+near(sTwo.restraint.list[0].distance, sOne.restraint.list[0].distance,
+  '…la MESURE, elle, ne dépend pas du poids : c’est la raideur qui change', 1e-12);
+eq([sTwo.restraint.satisfied, sZero.restraint.satisfied], [0, 0],
+  '…et « respectée » reste une lecture GÉOMÉTRIQUE : c’est la tolérance qui la décide, pas le poids');
+
+/* ⚖ …ET LE MOTEUR DE TORSION LE SENT AUSSI — la note n'est pas la seule à lire le poids :
+   c'est `costRestraint` / `costWall` du moteur (la dynamique et la minimisation), donc le
+   coût de départ d'une descente est le même chiffre que celui du champ. */
+const engineCostOf = (restraints) => minimizeTorsionsOf({
+  positions: hexane.positions, elements: hexane.elements, bonds: hexane.bonds,
+  restraints, rounds: 1,
+}).cost.before;
+const costFree = engineCostOf([]);
+const costOne = engineCostOf([pair]);
+const costTwo = engineCostOf([{ ...pair, weight: 2 }]);
+const costZero = engineCostOf([{ ...pair, weight: 0 }]);
+ok(costOne - costFree > 0, `…le moteur sent la contrainte à ⚖ 1 (${(costOne - costFree).toFixed(3)} kcal/mol)`);
+near(costZero, costFree,
+  '⚠ …il ne sent PAS une ligne de poids 0 : son coût de départ est celui d’une molécule sans contrainte', 1e-9);
+near(costTwo - costFree, (costOne - costFree) * 2,
+  '…et il sent DEUX fois une ligne de poids 2 : ce que la note compte est ce que la descente minimise', 1e-5);
 
 const stacked = chainOf(6);
 for (let k = 0; k < 3; k += 1) { stacked.positions[k] = 0; stacked.positions[15 + k] = 0; }
@@ -1349,6 +1419,81 @@ has(VIEW, "const paint = paintTorsionPicks(torsionAtomsRef.current);",
 has(VIEW, 'rep.structureView.getAtomIndices', '…et la sélection est VÉRIFIÉE (jamais le mauvais atome peint)');
 has(VIEW, 'style={{ backgroundColor: dot }}', '…la pastille du bouton porte la même couleur que l’atome');
 
+/* ⚖ LE POIDS D'UNE LIGNE, ET LA CASE 📏 DE LA FENÊTRE 🌡 MD — la demande, mot pour mot :
+   « nella finestra MD aggiungi l'opzione “use constraints defined in structure calculation”
+   and enable this option allowing the user to give a weight to these constraints. This
+   weight can be defined in the table. » Ce qui doit rester vrai : la case EST dans la
+   fenêtre MD et elle commande le ▶ MD (et lui seul), le poids EST une COLONNE de la table
+   (une case par ligne), et les QUATRE gestes du champ lisent le même poids — un seul
+   lecteur (`calcWeightOf`), une seule fabrique de contraintes (`calcRestraintTermsOf`). */
+has(mdWindow, 'aria-label="Use the distance constraints defined in Structure calculation"',
+  '📏 l’option « use constraints defined in structure calculation » existe, DANS la fenêtre 🌡 MD');
+has(mdWindow, 'onChange={(e) => setCalcMdUseRestraints(e.target.checked)}',
+  '…et c’est une vraie case à cocher, branchée sur son état');
+has(mdWindow, '📏 use the constraints of 🧬 Structure calculation',
+  '…qui se lit dans l’interface (le mot de la demande, pas un glyphe à deviner)');
+has(mdWindow, '<span className="font-mono font-bold text-indigo-800">({calcFieldRows().length})</span>',
+  '…avec le nombre de lignes qui partiront VRAIMENT (complètes, et de poids non nul)');
+has(VIEW, 'const [calcMdUseRestraints, setCalcMdUseRestraints] = useState(true);',
+  '⚠ la case est un état du viewer, COCHÉE par défaut : une table ne change pas de sens sans un geste');
+has(VIEW, 'mdUseRestraints: calcMdUseRestraints,',
+  '…et le choix survit à un rechargement de la page (comme les autres réglages du 🧬)');
+has(VIEW, "if (typeof s.mdUseRestraints === 'boolean') setCalcMdUseRestraints(s.mdUseRestraints);",
+  '…il est relu au montage');
+/* LE ▶ MD LIT LA CASE — décochée : ni contrainte, ni longe, et le rapport le DIT. */
+const mdSrc = VIEW.slice(
+  VIEW.indexOf('const runMolecularDynamics = () => {'),
+  VIEW.indexOf('const runMinimise = () => {'),
+);
+ok(mdSrc.length > 1500, `la dynamique est bien branchée (${mdSrc.length} caractères)`);
+has(mdSrc, 'const list = calcMdUseRestraints',
+  '⚠ …le ▶ MD demande d’abord à la case : ce qu’il porte dépend d’elle');
+has(mdSrc, '    : [];', '…décochée, il part SANS aucune contrainte de distance');
+has(mdSrc, 'const held = list.length ? calcHeldPairs(geom, list) : [];',
+  '⚠ …et SANS longe : ni contrainte, ni mur (une dynamique libre, vraiment)');
+has(mdSrc, 'the distance table was LEFT OUT',
+  '…et le rapport dit que la table a été laissée de côté — jamais un silence');
+has(mdSrc, 'at weight 0 left out', '…ainsi que le nombre de lignes en pause, quand il y en a');
+/* LA COLONNE ⚖ DE LA TABLE DES DISTANCES — une case par ligne, à côté de sa cible. */
+has(calcPanel, '⚖ w', 'la table des distances porte la colonne ⚖ (le poids, demandé « in the table »)');
+has(calcPanel, 'onChange={(e) => calcSetRestraintWeight(r.key, e.target.value)}',
+  '…chaque ligne a SA case de poids (aucun poids global caché)');
+has(calcPanel, "aria-label={`Weight of distance ${k + 1}, in multiples of the field's k_NOE`}",
+  '…nommée pour ce qu’elle est');
+has(calcPanel, 'const paused = ready && weight === 0;',
+  '⚠ …et un poids de 0 est une MISE EN PAUSE, dite à l’écran (⏸ sur la ligne) au lieu d’être un poids comme un autre');
+has(calcPanel, '⚖ is the WEIGHT of a line', 'le panneau dit ce que cette colonne fait');
+has(calcPanel, 'k = k_NOE × weight', '…avec la formule en clair (le poids multiplie la raideur)');
+has(VIEW, 'const calcSetRestraintWeight = (key, value) => {', 'le poids se tape comme la cible');
+has(VIEW, 'const weight = Number.isFinite(v) && v >= 0 ? v : null;',
+  '…le texte tapé est gardé, la valeur n’en est que la conséquence, et un illisible vaut le DÉFAUT');
+has(VIEW, 'const calcWeightOf = (row) => restraintWeightOf(row);',
+  '⚠ UN SEUL lecteur du poids dans le viewer (les quatre gestes passent par lui)');
+has(VIEW, 'const calcFieldRows = () => calcUsableRows().filter((r) => calcWeightOf(r) > 0);',
+  '…et UNE seule définition des lignes qui entrent dans le champ');
+has(VIEW, 'const calcInertCount = () => calcUsableRows().filter((r) => calcWeightOf(r) <= 0).length;',
+  '…et le nombre de lignes en pause, pour que les rapports puissent le DIRE');
+has(VIEW, 'const calcRestraintTermsOf = (list) => Array.from(list || []).map((r) => ({',
+  '…et UNE seule fabrique de contraintes (i, j, target, weight) pour les quatre gestes');
+eq(VIEW.split('restraints: calcRestraintTermsOf(list),').length - 1, 4,
+  '⚠ les QUATRE gestes du champ — ▶ Run, ▶ MD, ⚒ Minimise, ⟳ Energy — portent le poids de la même façon');
+eq(VIEW.split('calcFieldRows().filter((r) => r.i < geom.count && r.j < geom.count)').length - 1, 4,
+  '…et ils prennent tous les mêmes lignes (complètes, poids non nul)');
+has(VIEW, "w: r.w != null ? r.w : (r.weight == null || r.weight === 1 ? '' : String(r.weight)),",
+  '⚠ …et le POIDS de chaque ligne est écrit avec la table (le texte tapé, comme la cible)');
+has(VIEW, 'weight: Number.isFinite(wv) && wv >= 0 ? wv : null,',
+  '…puis relu ligne par ligne au montage suivant');
+/* ⚠ L'ORDRE DES DÉCLARATIONS EST UN CONTRAT, PAS UN DÉTAIL DE MISE EN PAGE — le tableau
+   de dépendances de l'effet 💾 est évalué PENDANT le rendu : les états qu'il y cite
+   doivent donc être déclarés AVANT lui, sinon c'est une TDZ (« Cannot access 'calcMdHot'
+   before initialization ») qui fait JETER le viewer entier — c'est ce qu'a trouvé
+   `_viewer_render_smoke_test.mjs`, et la leçon est répétée ici pour qu'on ne la
+   réapprenne pas deux fois. */
+for (const state of ['calcMdTemp', 'calcMdHot', 'calcMdCold']) {
+  ok(VIEW.indexOf(`const [${state}, set`) < VIEW.indexOf("const CALC_STORE_KEY = 'labViewerCalcState';"),
+    `⚠ …et ${state} est déclaré AVANT l’effet 💾 qui le lit dans ses dépendances (aucune TDZ au rendu)`);
+}
+
 /* LE GESTE, DANS LE SOURCE — le MOTEUR du module conduit image par image, le classement
    par le module, et l'écriture par le MÊME chemin qu'une torsion. */
 const runSrc = VIEW.slice(
@@ -1359,10 +1504,10 @@ ok(runSrc.length > 1800, `le calcul est bien branché (${runSrc.length} caractè
 has(runSrc, 'const frames = structureCalculationFrames({',
   '⚠ le calcul EST le moteur du module (`structureCalculationFrames`), conduit image par image — aucune descente recopiée');
 has(runSrc, 'seed: STRUCTURE_CALC_SEED', '…avec la graine FIXE du dossier (le même n redonne la même famille)');
-has(runSrc, 'restraints: list.map((r) => ({ i: r.i, j: r.j, target: r.target }))',
-  '…et les distances de l’utilisateur, telles quelles');
-has(runSrc, 'const list = calcUsableRows().filter(',
-  '⚠ …qui sont les lignes FINIES de la table (deux atomes résolus + une cible)');
+has(runSrc, 'restraints: calcRestraintTermsOf(list),',
+  '…et les distances de l’utilisateur, telles quelles, AVEC LEUR POIDS ⚖ (une seule fabrique de contraintes pour les quatre gestes)');
+has(runSrc, 'const list = calcFieldRows().filter(',
+  '⚠ …qui sont les lignes FINIES de la table (deux atomes résolus + une cible) et dont le ⚖ n’est pas 0');
 has(runSrc, 'const base = Array.from(geom.positions);',
   '⚠ …et le départ est photographié : l’aperçu qui écrit à l’écran ne nourrit pas le départ suivant');
 has(runSrc, 'anneal: calcAnneal, annealPerFrame: calcAnnealFrame,',
@@ -1417,8 +1562,9 @@ has(VIEW, 'const held = calcHeldPairs(geom, list);',
 has(VIEW, 'const calcHeldPairs = (geom, list) => list',
   '…par une fonction qui ne garde QUE celles qui sont tenues à cet instant');
 has(VIEW, 'label: `🌡 molecular dynamics · ${calcMdSteps} steps · T = ${calcMdTemp}`\n'
-  + "      + ` · ω ${calcOmegaFree ? 'free to vary' : 'held trans'}`,",
-  '⚠ …et le ↺ est armé AVANT d’écrire, comme pour une torsion (avec le réglage 🪢 ω du moment)');
+  + "      + ` · ω ${calcOmegaFree ? 'free to vary' : 'held trans'}`\n"
+  + "      + ` · ${calcMdUseRestraints ? `with the ${list.length} distance${list.length === 1 ? '' : 's'} of the table` : 'without the distance table'}`,",
+  '⚠ …et le ↺ est armé AVANT d’écrire, comme pour une torsion (avec le réglage 🪢 ω du moment ET ce que la case 📏 a décidé : le journal dit ce que la dynamique a porté)');
 has(VIEW, "// le graphe suit ce que la dynamique vient d'écrire",
   '⚠ le graphe 🪢 est relu après la dynamique et après la minimisation (il ne parle jamais d’une autre conformation)');
 eq(VIEW.split('if (rama) readRamachandran();').length - 1, 3,

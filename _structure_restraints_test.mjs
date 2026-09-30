@@ -30,7 +30,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   restraintsToText, restraintsFromText, restraintRowOf, restraintLineOf,
-  RESTRAINT_FILE_EXT, RESTRAINT_FILE_MIME, RESTRAINT_FILE_HEADER,
+  restraintWeightOf, RESTRAINT_FILE_EXT, RESTRAINT_FILE_MIME, RESTRAINT_FILE_HEADER,
 } from './src/utils/structureRestraints.js';
 
 let passed = 0;
@@ -72,16 +72,51 @@ eq(restraintLineOf({ a: 'A', b: 'B', target: 0 }), 'A\tB\t', 'une cible nulle n�
 eq(restraintLineOf({ a: 'A', b: 'B' }), 'A\tB\t', '…comme une cible absente');
 eq(restraintLineOf(null), '\t\t', 'une ligne vide ne fait pas lever le module');
 
+/* ════════════ 2bis · LA QUATRIÈME COLONNE — LE POIDS ⚖ (« w= ») ══════════════
+   La demande de cette session : « enable this option allowing the user to give a weight to
+   these constraints. This weight can be defined in the table. » Le poids est une propriété
+   de la LIGNE : il voyage donc avec elle dans le fichier, sous une forme qui DIT ce qu'elle
+   est (« w=2 »), et qui ne peut pas être prise pour une cible ni pour un nom d'atome. */
+eq(restraintWeightOf({ weight: 2 }), 2, 'le module sait lire un poids');
+eq([restraintWeightOf({}), restraintWeightOf({ weight: null }), restraintWeightOf({ weight: 'abc' })],
+  [1, 1, 1], '⚠ un poids absent ou illisible vaut 1 — le défaut, exactement comme avant cette colonne');
+eq([restraintWeightOf({ weight: 0 }), restraintWeightOf({ weight: '0.5' }), restraintWeightOf({ weight: false })],
+  [0, 0.5, 1], '⚠ …un poids de 0 est une valeur (une ligne en pause), et un booléen n’est pas un poids de 0');
+eq(restraintLineOf({ a: 'ALA 12 CA', b: 'ALA 40 CA', target: 6, weight: 2 }),
+  'ALA 12 CA\tALA 40 CA\t6.00\tw=2',
+  '⚠ une ligne pondérée ÉCRIT son poids dans un champ nommé « w= », à la suite des trois colonnes');
+eq(restraintLineOf({ a: 'A', b: 'B', target: 2.05, weight: 0 }), 'A\tB\t2.05\tw=0',
+  '…et un poids de 0 s’écrit aussi (c’est la mise en pause de la ligne, pas une absence)');
+eq(restraintLineOf({ a: 'A', b: 'B', target: 2.05, weight: 1 }), 'A\tB\t2.05',
+  '⚠ …tandis qu’un poids de 1 ne s’écrit PAS : une table sans poids reste un fichier à trois colonnes');
+const w2 = restraintRowOf('ALA 12 CA\tALA 40 CA\t6.00\tw=2');
+eq([w2.a, w2.b, w2.target, w2.weight], ['ALA 12 CA', 'ALA 40 CA', 6, 2],
+  '…et la relecture rend le poids SANS toucher aux deux atomes ni à la cible');
+eq(restraintRowOf('w=0.5 ; ALA 12 CA ; ALA 40 CA ; 6.00').weight, 0.5,
+  '⚠ le champ « w= » est retiré AVANT toute autre lecture : il peut être n’importe où sur la ligne');
+eq([restraintRowOf('ALA 12 CA\tALA 40 CA\t6.00\tw=2').target,
+  restraintRowOf('ALA 12 CA\tALA 40 CA\t6.00\tw=abc').target], [6, 6],
+  '…et il ne peut jamais être pris pour la cible, même écrit « w=abc »');
+const badW = restraintRowOf('ALA 12 CA\tALA 40 CA\t6.00\tw=abc');
+eq([badW.weight, badW.weightSay.length > 0], [null, true],
+  '⚠ un « w= » illisible est DIT (`weightSay`) au lieu d’être tu : la ligne court au poids 1, elle n’est pas jetée');
+eq(restraintRowOf('ALA 12 CA\tALA 40 CA\t6.00\tand a fourth column is ignored?').weight, null,
+  '…et une quatrième colonne qui n’est pas un poids reste ignorée, comme avant');
+
 /* ════════════ 3. LE FICHIER, PUIS SA RELECTURE — L’ALLER-RETOUR ═════════════ */
 const rows = [
   { a: 'ALA 12 CA', b: 'ALA 40 CA', target: 6 },
-  { a: 'ALA 13 N', b: 'ALA 41 O', target: 3.25 },
+  /* ⚖ UNE LIGNE PONDÉRÉE DANS LA LISTE — le poids fait partie de la distance, donc il
+     doit survivre à l'aller-retour comme les atomes et la cible. */
+  { a: 'ALA 13 N', b: 'ALA 41 O', target: 3.25, weight: 2 },
   { a: 'CYS 6 SG', b: 'CYS 127 SG', target: 2.05 },
 ];
 const written = restraintsToText({ restraints: rows, note: 'three distances for « model 1 »' });
 eq(written.count, 3, 'le module dit combien de distances il a écrites');
 has(written.text, '# Lab Workspace', 'le fichier commence par sa tête en commentaires');
 has(written.text, '# three distances for « model 1 »', '…où la note de l’appelant est écrite TELLE QUELLE');
+has(written.text, 'ALA 13 N\tALA 41 O\t3.25\tw=2',
+  '⚖ …la ligne pondérée écrit SON poids, et les deux autres restent à trois colonnes');
 ok(written.text.endsWith('\n'), 'le fichier finit par une fin de ligne (un éditeur ne coupe pas la dernière)');
 const back = restraintsFromText(written.text);
 eq(back.count, 3, 'la relecture rend les trois distances');
@@ -89,8 +124,12 @@ eq(back.skipped, [], '…sans rien jeter');
 eq(back.rows.map((r) => [r.a, r.b, r.target]),
   [['ALA 12 CA', 'ALA 40 CA', 6], ['ALA 13 N', 'ALA 41 O', 3.25], ['CYS 6 SG', 'CYS 127 SG', 2.05]],
   '⚠ L’ALLER-RETOUR EST EXACT : mêmes atomes, mêmes cibles (l’identité, pas une approximation)');
-eq(back.rows.map((r) => r.line), [8, 9, 10],
-  'chaque ligne se souvient de SON numéro dans le fichier (les sept premières lignes sont des commentaires)');
+eq(back.rows.map((r) => r.weight), [null, 2, null],
+  '⚖ …ET LES POIDS AUSSI : celui qui a été écrit revient, les autres restent « pas de poids » (donc 1)');
+eq(back.weighted, 1, 'le module dit combien de lignes portaient un poids (le panneau le répète à l’utilisateur)');
+const firstDataLine = RESTRAINT_FILE_HEADER.length + 3;
+eq(back.rows.map((r) => r.line), [firstDataLine, firstDataLine + 1, firstDataLine + 2],
+  'chaque ligne se souvient de SON numéro dans le fichier (la tête, la note et le compte passé)');
 const again = restraintsFromText(written.text);
 eq(restraintsToText({ restraints: again.rows, note: 'three distances for « model 1 »' }).text, written.text,
   '⚠ …et écrire ce qu’on vient de relire redonne LE MÊME fichier, au caractère près');
@@ -130,18 +169,32 @@ eq(restraintRowOf('  '), null, 'une ligne blanche non plus');
 /* ════════════ 5. LE VIEWER BRANCHE LE MODULE ════════════════════════════════ */
 has(VIEW, "} from '../utils/structureRestraints';",
   'le viewer importe le format du fichier (le sien, pas un second)');
-has(VIEW, 'restraintsToText, restraintsFromText, RESTRAINT_FILE_EXT, RESTRAINT_FILE_MIME,',
-  '…avec les deux gestes et les deux constantes du fichier');
+has(VIEW, 'restraintsToText, restraintsFromText, restraintWeightOf,',
+  '…avec les deux gestes, les deux constantes du fichier ET le lecteur du poids ⚖ (le module, jamais une copie)');
 has(VIEW, 'const calcSaveRestraints = () => {', '💾 Save distances a son handler');
 has(VIEW, 'restraintsToText({\n      restraints: calcRestraints,',
   '…et il écrit LA TABLE DU PANNEAU, telle qu’elle est affichée (aucune copie refaite)');
+has(VIEW, 'const weighted = calcRestraints.filter((r) => calcWeightOf(r) !== 1).length;',
+  '⚖ …en comptant les lignes qui portent un poids, pour que la note du fichier le DISE');
+has(VIEW, '${weighted ? `, ${weighted} with a ⚖ weight of their own',
+  '…la note nomme les poids écrits (et celles qui sont en pause)');
+has(VIEW, '+ \' three columns (atom A · atom B · target in Å) plus a “w=” field on the lines whose\'',
+  '…et le rapport de sauvegarde dit ce que le fichier porte : trois colonnes + un champ « w= »');
 has(VIEW, 'a.download = calcRestraintFileName();', '…dans un fichier nommé d’après la molécule à l’écran');
 has(VIEW, 'const calcRestraintFileName = () => {', '…par une seule fonction de nommage');
 has(VIEW, 'const url = URL.createObjectURL(blob);',
   '…par le chemin de téléchargement du dossier (Blob + <a download>, comme l’export des thèmes)');
 has(VIEW, 'const calcLoadRestraintsFile = (file) => {', '📂 Load distances a son handler');
-has(VIEW, "const { rows, count, skipped } = restraintsFromText(String(reader.result || ''));",
-  '…et il lit le fichier par le MODULE (mêmes règles, aucune seconde analyse)');
+has(VIEW, "const { rows, count, skipped, weighted } = restraintsFromText(String(reader.result || ''));",
+  '…et il lit le fichier par le MODULE (mêmes règles, aucune seconde analyse), poids compris');
+has(VIEW, 'weight: row.weight == null ? null : row.weight,',
+  '⚖ …le poids d’une ligne relue arrive dans la table telle quelle (1 quand le fichier n’en porte pas)');
+has(VIEW, "w: row.weight == null ? '' : String(row.weight),",
+  '…dans la case de la ligne, comme le texte de la cible');
+has(VIEW, "row.weightSay || ''].filter(Boolean).join(' · ');",
+  '⚠ …et un « w= » que le module n’a pas su lire est DIT sur la ligne (il n’est jamais tu)');
+has(VIEW, "weighted ? ` ${weighted} of them carr${weighted === 1 ? 'ies' : 'y'} a ⚖ weight of their own",
+  '…le rapport de lecture dit combien de lignes ont rapporté un poids');
 has(VIEW, 'const hitA = calcAtomOfText(live.structure, row.a);',
   '⚠ …en résolvant chaque nom d’atome SUR LA MOLÉCULE À L’ÉCRAN (le lecteur de la frappe)');
 has(VIEW, 'return { ...row, key: `row-${seq}` };',

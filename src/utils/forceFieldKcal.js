@@ -42,7 +42,9 @@
      restraint Σ k_NOE·over² hors d'un PUITS PLAT de ± 0.25 Å, k = 20 kcal/mol/Å² —
                c'est le potentiel de contrainte standard d'un calcul de structure
                (XPLOR/CNS, CYANA) : la distance demandée ne coûte RIEN tant qu'elle est
-               tenue, et coûte quadratiquement dès qu'elle ne l'est plus
+               tenue, et coûte quadratiquement dès qu'elle ne l'est plus. LE POIDS ⚖
+               D'UNE LIGNE (la colonne du panneau 🧬) MULTIPLIE ce k : k = k_NOE ×
+               poids, un poids de 0 rend la ligne inerte (voir `ffRestraintWeightOf`)
 
    LES ATOMES AJOUTÉS — `hydrogenatedOf` complète la valence des atomes lourds par des
    HYDROGÈNES placés à leur géométrie idéale (longueurs de la table de `geometryRelax`,
@@ -383,6 +385,33 @@ export const ffRestraintCostOf = (d, { target, tolerance = FF_RESTRAINT_TOLERANC
   const dev = Math.abs(Number(d) - Number(target)) - Math.max(0, Number(tolerance) || 0);
   return dev > 0 && Number.isFinite(dev) ? k * dev * dev : 0;
 };
+
+/** LE POIDS D'UNE LIGNE DE LA TABLE DES DISTANCES — le facteur que la colonne ⚖ du
+ *  panneau 🧬 écrit, et que les gestes du champ (▶ MD, ⚒ Minimise, ▶ Run) lisent.
+ *
+ *  Il MULTIPLIE la raideur : `k = FF_NOE_K × poids`. Un poids de 2 rend la ligne deux
+ *  fois plus chère qu'une autre dépassée du même écart ; un poids de 0.5 l'adoucit ;
+ *  un poids de 0 la rend INERTE — elle ne pèse RIEN dans le champ (le moteur et la
+ *  note l'ignorent) même si elle est encore affichée et mesurée par la table.
+ *
+ *  ⚠ CE QUI N'EST PAS UN POIDS — un poids ABSENT, illisible, négatif ou NaN vaut 1 :
+ *  c'est le chiffre historique, donc une table sans poids se comporte EXACTEMENT comme
+ *  avant, et une frappe à moitié tapée ne peut pas rendre un calcul fou. Le module ne
+ *  borne pas le haut : 100 est permis (une ligne qui doit passer avant tout le reste),
+ *  et c'est le rapport (`weight`, `k` par ligne) qui dit ce qui a été lu. */
+export const ffRestraintWeightOf = (weight) => {
+  /* ⚠ `false` N'EST PAS UN POIDS DE 0 — un booléen est « pas de poids donné », pas une
+     mise en pause : sans ce garde, `Number(false)` vaut 0 et une case à cocher ferait
+     disparaître une contrainte du champ. */
+  if (typeof weight === 'boolean' || weight == null || weight === '') return 1;
+  const w = Number(weight);
+  return Number.isFinite(w) && w >= 0 ? w : 1;
+};
+
+/** LA RAIDEUR D'UNE LIGNE — `FF_NOE_K` multiplié par son poids ⚖ (une seule
+ *  définition : le champ et le moteur de torsion ne peuvent pas lire deux chiffres
+ *  différents pour la même ligne). */
+export const ffRestraintKOf = (weight) => FF_NOE_K * ffRestraintWeightOf(weight);
 
 /** ω — la barrière trans : nulle à moins de la tolérance de 180°, maximale à 90°. */
 export const ffOmegaCostOf = (deg, {
@@ -1009,7 +1038,7 @@ export const ffKcalRowsOf = ({
     rule: `barrier k·(1 − cos 2(ω − ${FF_OMEGA_TARGET}°))/2, zero inside ± ${FF_OMEGA_TOLERANCE}°` },
   { id: 'restraint', icon: '📏', label: 'Your distances', k: FF_NOE_K, unit: 'kcal·mol⁻¹·Å⁻²',
     of: 'every line of the distance table',
-    rule: `FLAT-BOTTOM well of ± ${FF_RESTRAINT_TOLERANCE} Å, then k·(over)² — the standard restraint of XPLOR/CNS` },
+    rule: `FLAT-BOTTOM well of ± ${FF_RESTRAINT_TOLERANCE} Å, then k·(over)² — the standard restraint of XPLOR/CNS; the ⚖ weight typed on a line multiplies this k, and a weight of 0 makes that line inert` },
   { id: 'dihedral', icon: '⛓', label: 'Secondary-structure φ/ψ', k: FF_DIHEDRAL_K, unit: 'kcal·mol⁻¹·deg⁻²',
     of: 'every φ and ψ converted from the imposed secondary structure (🖌️ H helix, E sheet)',
     rule: `FLAT-BOTTOM window of ± ${FF_DIHEDRAL_TOLERANCE}° around the ideal angle of that letter (H: φ −57°, ψ −47° · E: φ −139°, ψ +135°), then k·(over)² — nothing for a coil` },
@@ -1224,18 +1253,22 @@ export const ffKcalEnergyOf = ({
   const ramaReport = ffTorsionFamilyOf(ramaRows);
   const omegaReport = ffTorsionFamilyOf(omegaRows);
   const chiReport = ffTorsionFamilyOf(chiRows);
-  /* 9d · VOS DISTANCES — le puits plat : satisfaite = rien, au-delà = k·over². */
+  /* 9d · VOS DISTANCES — le puits plat : satisfaite = rien, au-delà = k·over². Le k
+     d'une ligne est SON k : `FF_NOE_K` multiplié par le poids ⚖ de la ligne (un poids
+     de 0 rend donc la ligne inerte — elle est encore lue, elle ne pèse rien). */
   const restraintRows = Array.from(restraints || []).map((raw) => {
     const r = Array.isArray(raw) ? { i: raw[0], j: raw[1], target: raw[2] } : (raw || {});
     const i = Number(r.i); const j = Number(r.j);
     const target = Number(r.target);
     const tolerance = Number.isFinite(Number(r.tolerance)) ? Number(r.tolerance) : FF_RESTRAINT_TOLERANCE;
+    const weight = ffRestraintWeightOf(r.weight);
+    const k = FF_NOE_K * weight;
     const d = Number.isInteger(i) && Number.isInteger(j) && i !== j ? dist(i, j) : NaN;
     const dev = Number.isFinite(d) ? d - target : NaN;
     const abs = Number.isFinite(dev) ? Math.abs(dev) : Infinity;
     return {
-      i, j, target, tolerance, distance: d, dev, abs,
-      satisfied: abs <= tolerance, cost: ffRestraintCostOf(d, { target, tolerance }),
+      i, j, target, tolerance, weight, k, distance: d, dev, abs,
+      satisfied: abs <= tolerance, cost: ffRestraintCostOf(d, { target, tolerance }, k),
     };
   });
   const restraintReport = {

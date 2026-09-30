@@ -157,7 +157,8 @@ import { bondLengthTarget } from '../utils/geometryRelax';
 // section. » La résolution des noms d'atomes reste ici (calcAtomOfText) : le module
 // ne connaît aucune molécule.
 import {
-  restraintsToText, restraintsFromText, RESTRAINT_FILE_EXT, RESTRAINT_FILE_MIME,
+  restraintsToText, restraintsFromText, restraintWeightOf,
+  RESTRAINT_FILE_EXT, RESTRAINT_FILE_MIME,
 } from '../utils/structureRestraints';
 // HETATM code → SMILES: the Chemistry Component Dictionary of the RCSB (see
 // utils/ligandSmiles.js). A PDB only names its ligand by a 3-letter code, so this
@@ -7830,6 +7831,24 @@ const [calcMinimise, setCalcMinimise] = useState(STRUCTURE_CALC_MIN_ROUNDS);
    ⚠ LE MÊME réglage part au ▶ Run, au ▶ MD et au ⚒ Minimise : un seul état, donc le calcul de
    structure ne peut pas porter d'autre protocole que les deux gestes ⚙ à côté de lui. */
 const [calcOmegaFree, setCalcOmegaFree] = useState(STRUCTURE_CALC_FREE_OMEGA);
+/* ── 📏 LA CASE « LES CONTRAINTES DU 🧬 » DE LA FENÊTRE 🌡 MD ──────────────────
+   La demande, mot pour mot : « nella finestra MD aggiungi l'opzione “use constraints
+   defined in structure calculation” and enable this option allowing the user to give a
+   weight to these constraints. This weight can be defined in the table. »
+
+   Ce qu'elle fait : le ▶ MD de la fenêtre porte la TABLE DES DISTANCES du 🧬 comme
+   contraintes (le comportement historique, donc la case est COCHÉE par défaut — rien ne
+   change tant qu'on n'y touche pas). DÉCOCHÉE, la dynamique part SANS aucune contrainte
+   de distance et SANS longe : elle ne sent que le champ de forces (liaisons, angles,
+   cycles, van der Waals, charges, solvant, ω, φ/ψ, χ1), et la table reste dans le
+   panneau, intacte — c'est ce qui permet de comparer « avec » et « sans » les distances
+   sur la MÊME molécule sans effacer ce qu'on a tapé.
+
+   ⚠ LA CASE EST À LA DYNAMIQUE, PAS AU POIDS : les ⚖ de la table sont une PROPRIÉTÉ de
+   chaque ligne (k = k_NOE × poids), donc le ⚒ Minimise, le ⟳ Energy et le ▶ Run du 🧬
+   les lisent aussi, comme ils ont toujours lu la table. Le ▶ MD est le seul geste qui
+   puisse IGNORER la table, parce que c'est le seul dont la fenêtre le propose. */
+const [calcMdUseRestraints, setCalcMdUseRestraints] = useState(true);
 /* ── 💾 LES DEUX TABLES SURVIVENT À UN RECHARGEMENT DE LA PAGE ─────────────────
    La demande : « Structure calculation ha un problema. Funziona per un po' ma poi dà un
    messaggio di errore e se rinfresco la pagina tutto è perso e bisogna ricominciare da
@@ -7842,6 +7861,26 @@ const [calcOmegaFree, setCalcOmegaFree] = useState(STRUCTURE_CALC_FREE_OMEGA);
    tombent sur rien reste telle quelle (à finir) — aucune coordonnée n'est inventée, et
    les contraintes de φ/ψ, elles, se refont d'un clic sur ⛓ (elles sont appariées au
    squelette AFFICHÉ : les garder en mémoire les figerait sur les atomes d'hier). */
+/* LES TROIS TEMPÉRATURES DE LA DYNAMIQUE (KELVINS) — des champs du panneau et des gestes,
+   bornés par ce qui a un sens : à 300 K l'énergie thermique vaut 0.6 kcal/mol (la molécule
+   vibre), à 3000 K elle vaut 6 kcal/mol (elle change de bassin), et au-delà de 20000 K le
+   bruit casserait la géométrie. Le ▶ MD d'un geste isolé tient SA température
+   (`calcMdTemp`), le calcul part de `calcMdHot` et refroidit jusqu'à `calcMdCold`.
+   ⚠ ELLES SONT DÉCLARÉES ICI, AVANT LES DEUX EFFETS DU 💾 QUI LES LISENT — un tableau de
+   dépendances est évalué PENDANT le rendu, donc citer un `const` déclaré plus bas est une
+   TDZ (« Cannot access 'calcMdHot' before initialization ») qui fait JETER TOUT LE VIEWER,
+   docking comprise : c'est exactement l'incident que `_viewer_render_smoke_test.mjs` garde
+   (il a trouvé celui-ci). L'ordre des `useState` et des `useEffect` n'est pas cosmétique. */
+const clampTemp = (v, fallback) => {
+  const t = Number(String(v).replace(',', '.'));
+  return Number.isFinite(t) ? Math.max(1, Math.min(20000, t)) : fallback;
+};
+const [calcMdTemp, setCalcMdTemp] = useState(STRUCTURE_CALC_MD_HOT);
+const setCalcMdTempText = (v) => setCalcMdTemp(clampTemp(v, STRUCTURE_CALC_MD_HOT));
+const [calcMdHot, setCalcMdHot] = useState(STRUCTURE_CALC_MD_HOT);
+const setCalcMdHotText = (v) => setCalcMdHot(clampTemp(v, STRUCTURE_CALC_MD_HOT));
+const [calcMdCold, setCalcMdCold] = useState(STRUCTURE_CALC_MD_COLD);
+const setCalcMdColdText = (v) => setCalcMdCold(clampTemp(v, STRUCTURE_CALC_MD_COLD));
 const CALC_STORE_KEY = 'labViewerCalcState';
 const calcRestoreRef = useRef(false);
 useEffect(() => {
@@ -7855,9 +7894,17 @@ useEffect(() => {
       setCalcRestraints(s.rows.slice(0, STRUCTURE_CALC_MAX_RESTRAINTS).map((r, k) => {
         const t = String((r && r.t) == null ? '' : r.t);
         const v = Number(t.replace(',', '.'));
+        /* ⚖ LE POIDS SE RELIT COMME LE RESTE — le TEXTE tapé revient tel quel et la
+           valeur numérique n'est que sa conséquence : une frappe à moitié écrite revient
+           à moitié écrite (la ligne court alors au poids par défaut, 1), et une table
+           enregistrée AVANT cette colonne (aucun `w`) revient exactement comme avant. */
+        const wText = String((r && r.w) == null ? '' : r.w);
+        const wv = Number(wText.replace(',', '.'));
         return {
           key: `row-restored-${k + 1}`, i: null, j: null,
           target: Number.isFinite(v) && v > 0 ? v : null,
+          weight: Number.isFinite(wv) && wv >= 0 ? wv : null,
+          w: wText,
           a: String((r && r.a) || ''), b: String((r && r.b) || ''), t, la: '', lb: '', say: '',
         };
       }));
@@ -7875,6 +7922,7 @@ useEffect(() => {
     if (Number.isFinite(s.cold)) setCalcMdColdText(s.cold);
     if (Number.isFinite(s.mdTemp)) setCalcMdTempText(s.mdTemp);
     if (typeof s.omegaFree === 'boolean') setCalcOmegaFree(s.omegaFree);
+    if (typeof s.mdUseRestraints === 'boolean') setCalcMdUseRestraints(s.mdUseRestraints);
     setCalcMsg('↩ The distance table and the settings of the last session were brought back from this browser'
       + ' (the rows are re-resolved on the molecule as soon as it is on screen). ⛓ re-imposes the φ/ψ of the'
       + ' painted secondary structure in one click: those constraints are matched to the backbone ON SCREEN, so'
@@ -7888,14 +7936,19 @@ useEffect(() => {
       rows: calcRestraints.map((r) => ({
         a: r.a || '', b: r.b || '',
         t: r.t != null ? r.t : (r.target == null ? '' : String(r.target)),
+        /* ⚖ Le TEXTE du poids, comme la cible : ce que l'utilisateur a écrit, pas ce
+           qu'on en a compris (`weight` se recalculera à la relecture). */
+        w: r.w != null ? r.w : (r.weight == null || r.weight === 1 ? '' : String(r.weight)),
       })),
       starts: calcStarts, keep: calcKeep, anneal: calcAnneal, annealFrame: calcAnnealFrame,
       mdSteps: calcMdSteps, mdDt: calcMdDt, mdEquil: calcMdEquil, minimise: calcMinimise,
       hot: calcMdHot, cold: calcMdCold, omegaFree: calcOmegaFree, mdTemp: calcMdTemp,
+      mdUseRestraints: calcMdUseRestraints,
     }));
   } catch { /* le stockage local est un confort, pas une donnée */ }
 }, [calcRestraints, calcStarts, calcKeep, calcAnneal, calcAnnealFrame, calcMdSteps, calcMdDt,
-  calcMdEquil, calcMinimise, calcMdHot, calcMdCold, calcOmegaFree, calcMdTemp]);
+  calcMdEquil, calcMinimise, calcMdHot, calcMdCold, calcOmegaFree, calcMdTemp,
+  calcMdUseRestraints]);
 /* …ET LA RÉSOLUTION DES ATOMES REVENUS, dès que la molécule est là — les DEUX côtés d'une
    ligne : sans les deux, elle resterait « pas prête » jusqu'à ce qu'on la retape. Une
    ligne dont un nom ne se résout pas GARDE son texte et dit POURQUOI (comme la frappe). */
@@ -7931,21 +7984,10 @@ const [calcWatch, setCalcWatch] = useState(true);
    encore : la boucle en fait PLUSIEURS dans un tour, tant que le budget n'est pas
    dépensé. */
 const CALC_FRAME_BUDGET_MS = 14;
-/* LES DEUX TEMPÉRATURES DE LA DYNAMIQUE (KELVINS) — des champs du panneau, bornés par ce
-   qui a un sens : à 300 K l'énergie thermique vaut 0.6 kcal/mol (la molécule vibre), à
-   3000 K elle vaut 6 kcal/mol (elle change de bassin), et au-delà de 20000 K le bruit
-   casserait la géométrie. Le ▶ MD d'un geste isolé tient SA température (`calcMdTemp`),
-   le calcul part de `calcMdHot` et refroidit jusqu'à `calcMdCold`. */
-const clampTemp = (v, fallback) => {
-  const t = Number(String(v).replace(',', '.'));
-  return Number.isFinite(t) ? Math.max(1, Math.min(20000, t)) : fallback;
-};
-const [calcMdTemp, setCalcMdTemp] = useState(STRUCTURE_CALC_MD_HOT);
-const setCalcMdTempText = (v) => setCalcMdTemp(clampTemp(v, STRUCTURE_CALC_MD_HOT));
-const [calcMdHot, setCalcMdHot] = useState(STRUCTURE_CALC_MD_HOT);
-const setCalcMdHotText = (v) => setCalcMdHot(clampTemp(v, STRUCTURE_CALC_MD_HOT));
-const [calcMdCold, setCalcMdCold] = useState(STRUCTURE_CALC_MD_COLD);
-const setCalcMdColdText = (v) => setCalcMdCold(clampTemp(v, STRUCTURE_CALC_MD_COLD));
+/* ⚠ LES TROIS TEMPÉRATURES DU GESTE (`calcMdTemp`, `calcMdHot`, `calcMdCold`) SONT
+   DÉCLARÉES PLUS HAUT, avec les deux effets du 💾 qui les lisent : voir le commentaire
+   là-bas — un tableau de dépendances est évalué PENDANT le rendu, donc citer un `const`
+   déclaré plus bas est une TDZ qui fait jeter le viewer entier. */
 /* LE PAS DE TEMPS (ps) ET LA DURÉE TOTALE DE LA SIMULATION (ps) — les deux se commandent
    l'un l'autre : taper une durée choisit les pas (`durée / dt`), taper les pas choisit la
    durée. Le module fait la multiplication (`structureCalcSimulationTimeOf`). */
@@ -10044,6 +10086,36 @@ const calcSetRestraintTarget = (key, value) => {
   setCalcRestraints((list) => list.map((r) => (r.key === key ? { ...r, t: text, target } : r)));
 };
 
+/** ⚖ CHANGER LE POIDS D'UNE LIGNE — la demande : « enable this option allowing the user
+ *  to give a weight to these constraints. This weight can be defined in the table. » Le
+ *  poids MULTIPLIE la raideur de la ligne (`k = k_NOE × poids`) : c'est lui qui décide
+ *  de ce qu'une distance coûte quand elle n'est pas tenue, et c'est le SEUL réglage qui
+ *  hiérarchise deux lignes de la table.
+ *
+ *  Il se tape et se relit EXACTEMENT comme la cible — le texte tapé est gardé tel quel
+ *  (`w`), la valeur numérique n'est que sa conséquence (`weight`), la virgule décimale
+ *  est acceptée. Trois choses sont DITES plutôt que devinées :
+ *    · une case VIDE = le poids par défaut, 1 — la ligne se comporte comme avant ;
+ *    · une case ILLISIBLE (lettres, nombre négatif) = le poids par défaut AUSSI (`weight`
+ *      vaut `null`, donc 1) : la ligne n'est pas jetée pour un chiffre mal tapé, et la
+ *      case passe en AMBRE avec une infobulle qui le dit ;
+ *    · un poids de 0 est une VRAIE valeur : la ligne est encore affichée et mesurée
+ *      (colonnes Now et Δ), mais elle ne pèse RIEN dans le champ, la dynamique et le
+ *      calcul — c'est la façon de mettre une ligne en pause sans perdre ses atomes. */
+const calcSetRestraintWeight = (key, value) => {
+  const text = String(value == null ? '' : value);
+  const v = Number(text.replace(',', '.'));
+  const weight = Number.isFinite(v) && v >= 0 ? v : null;
+  setCalcRestraints((list) => list.map((r) => (r.key === key ? { ...r, w: text, weight } : r)));
+};
+
+/** LE POIDS D'UNE LIGNE, EN NOMBRE — `weight` quand il est lisible, 1 sinon. C'est
+ *  l'UNIQUE lecteur du poids dans le viewer : les quatre gestes (▶ Run, ▶ MD, ⚒
+ *  Minimise, ⟳ Energy) et la sauvegarde passent par lui, donc ils ne peuvent pas lire
+ *  deux poids différents pour la même ligne. Ce que `null` veut dire est ici : une case
+ *  vidée ou illisible est le poids PAR DÉFAUT de la contrainte, pas un poids de 0. */
+const calcWeightOf = (row) => restraintWeightOf(row);
+
 const calcRemoveRestraint = (key) => {
   setCalcRestraints((list) => list.filter((r) => r.key !== key));
 };
@@ -10124,12 +10196,13 @@ const calcConvertSecondaryStructure = () => {
    colonnes — le format de utils/structureRestraints.js, qui n'est PAS recopié ici :
    le viewer ne fait que le brancher) et la RELISENT.
 
-   ⚠ CE QUI EST ÉCRIT EST CE QUE LA TABLE MONTRE (les deux colonnes d'atomes et la
-   cible), et ce qui est RELU est RÉSOLU SUR LA MOLÉCULE À L'ÉCRAN par `calcAtomOfText`
-   — le même lecteur que la frappe. Une ligne dont les atomes ne se résolvent pas est
-   GARDÉE telle quelle (elle attend d'être finie, comme une ligne tapée à moitié) et
-   le rapport dit combien de lignes le fichier portait, combien sont résolues, et
-   celles qui n'ont pas été comprises. */
+   ⚠ CE QUI EST ÉCRIT EST CE QUE LA TABLE MONTRE (les deux colonnes d'atomes, la cible,
+   et le poids ⚖ d'une ligne quand il n'est pas 1 — c'est le champ « w= » que le module
+   écrit et relit), et ce qui est RELU est RÉSOLU SUR LA MOLÉCULE À L'ÉCRAN par
+   `calcAtomOfText` — le même lecteur que la frappe. Une ligne dont les atomes ne se
+   résolvent pas est GARDÉE telle quelle (elle attend d'être finie, comme une ligne tapée
+   à moitié) et le rapport dit combien de lignes le fichier portait, combien sont
+   résolues, celles qui n'ont pas été comprises, et celles qui portaient un poids. */
 
 /** LE NOM DU FICHIER — le nom de la molécule à l'écran, réduit à ce qu'un système
  *  de fichiers accepte, et l'extension du module (une seule définition). */
@@ -10145,12 +10218,18 @@ const calcSaveRestraints = () => {
   }
   const live = calcGeometryNow();
   const ready = calcUsableRows().length;
+  /* ⚖ COMBIEN DE LIGNES PORTENT UN POIDS À ELLES — compté pour que la note du fichier
+     le dise : une liste dont les poids se sont perdus en chemin ferait un autre calcul
+     que celui qu'on vient de lire à l'écran. */
+  const weighted = calcRestraints.filter((r) => calcWeightOf(r) !== 1).length;
+  const paused = calcRestraints.filter((r) => calcWeightOf(r) === 0).length;
   try {
     const { text, count } = restraintsToText({
       restraints: calcRestraints,
       note: `${calcRestraints.length} distance${calcRestraints.length === 1 ? '' : 's'} for`
         + ` « ${molNameOf(selectedMolKey)} » — ${ready} of them resolved on this molecule`
-        + `${live ? ` (${live.geom.count} atoms)` : ''}.`,
+        + `${live ? ` (${live.geom.count} atoms)` : ''}`
+        + `${weighted ? `, ${weighted} with a ⚖ weight of their own${paused ? ` (${paused} of them at 0, on hold)` : ''}` : ''}.`,
     });
     const blob = new Blob([text], { type: RESTRAINT_FILE_MIME });
     const url = URL.createObjectURL(blob);
@@ -10162,7 +10241,8 @@ const calcSaveRestraints = () => {
     document.body.removeChild(a);
     setTimeout(() => URL.revokeObjectURL(url), 1000);
     setCalcMsg(`✓ ${count} distance${count === 1 ? '' : 's'} saved to “${calcRestraintFileName()}” —`
-      + ' three columns (atom A · atom B · target in Å), reloaded by 📂 Load distances on any molecule.'
+      + ' three columns (atom A · atom B · target in Å) plus a “w=” field on the lines whose'
+      + ' ⚖ weight is not 1, reloaded by 📂 Load distances on any molecule.'
       + ' The file is plain text: it can be edited and kept with the experiment.');
   } catch (e) {
     setCalcMsg(`✕ The list could not be saved: ${(e && e.message) || e}`);
@@ -10174,7 +10254,7 @@ const calcLoadRestraintsFile = (file) => {
   const reader = new FileReader();
   reader.onload = () => {
     const live = calcGeometryNow();
-    const { rows, count, skipped } = restraintsFromText(String(reader.result || ''));
+    const { rows, count, skipped, weighted } = restraintsFromText(String(reader.result || ''));
     if (!count) {
       setCalcMsg(`✕ Nothing was read in “${file.name || 'the file'}” — it holds no line of the form`
         + ' “atom A · atom B · target in Å” (see the header the 💾 button writes).');
@@ -10194,10 +10274,17 @@ const calcLoadRestraintsFile = (file) => {
       const i = hitA.ok ? hitA.index : null;
       const j = hitB.ok ? hitB.index : null;
       if (i == null || j == null) unresolved += 1;
-      const say = !hitA.ok ? `atom A: ${hitA.say}` : (!hitB.ok ? `atom B: ${hitB.say}` : '');
+      /* ⚖ ET LE POIDS DU FICHIER — il revient TEL QUEL dans la case du tableau (le champ
+         « w= » du module, 1 quand la ligne n'en porte pas). Un « w= » que le module n'a pas
+         su lire est DIT sur la ligne (`weightSay`, joint au reste) : la ligne court alors
+         au poids par défaut — elle n'est pas jetée pour un chiffre mal écrit. */
+      const say = [!hitA.ok ? `atom A: ${hitA.say}` : (!hitB.ok ? `atom B: ${hitB.say}` : ''),
+        row.weightSay || ''].filter(Boolean).join(' · ');
       return {
         key: i != null && j != null && i !== j ? (i < j ? `${i}-${j}` : `${j}-${i}`) : null,
         i, j, target: row.target, say,
+        weight: row.weight == null ? null : row.weight,
+        w: row.weight == null ? '' : String(row.weight),
         a: row.a, b: row.b,
         la: hitA.ok ? hitA.label : '', lb: hitB.ok ? hitB.label : '',
         label: `${hitA.ok ? hitA.label : (row.a || `#${i}`)}–${hitB.ok ? hitB.label : (row.b || `#${j}`)}`,
@@ -10228,6 +10315,7 @@ const calcLoadRestraintsFile = (file) => {
       + ` ${count - unresolved} of them resolved on « ${molNameOf(selectedMolKey)} »,`
       + ` ${unresolved} waiting for a name that this molecule does not have`
       + `${droppedKb ? `, and ${droppedKb} line${droppedKb === 1 ? '' : 's'} not understood` : ''}.`
+      + `${weighted ? ` ${weighted} of them carr${weighted === 1 ? 'ies' : 'y'} a ⚖ weight of their own (it is in the table now — a weight of 0 puts a line on hold).` : ''}`
       + ` The table now holds ${kept} of ${STRUCTURE_CALC_MAX_RESTRAINTS} lines.`
       + `${droppedKb ? ` ⚠ ${skipped.slice(0, 3).map((s) => `line ${s.line}: ${s.say}`).join(' · ')}` : ''}`
       + (count - unresolved === 0 ? ' ⚠ No name of this file matches this molecule: check the residue numbering' : ''));
@@ -10274,6 +10362,25 @@ const calcAtomOfText = (structure, text) => {
 const calcUsableRows = () => calcRestraints.filter((r) => Number.isInteger(r.i)
   && Number.isInteger(r.j) && r.i !== r.j
   && Number.isFinite(r.target) && r.target > 0);
+
+/** ⚖ LES LIGNES QUI ENTRENT DANS LE CHAMP — les lignes utilisables dont le poids n'est
+ *  pas 0. Un poids de 0 est une MISE EN PAUSE : la ligne garde ses atomes, sa cible et
+ *  ses colonnes de mesure, mais elle n'est donnée NI au ▶ Run, NI au ▶ MD, NI au ⚒
+ *  Minimise, NI au ⟳ Energy, et elle ne compte donc dans aucun rapport — « N ready »
+ *  dit combien de lignes travaillent VRAIMENT, et c'est le même N que la fenêtre 🌡 MD
+ *  affiche à côté de sa case. */
+const calcFieldRows = () => calcUsableRows().filter((r) => calcWeightOf(r) > 0);
+
+/** COMBIEN DE LIGNES SONT EN PAUSE (complètes, et de poids 0) — le chiffre que les
+ *  rapports disent au lieu de laisser croire qu'une ligne a été oubliée. */
+const calcInertCount = () => calcUsableRows().filter((r) => calcWeightOf(r) <= 0).length;
+
+/** CE QU'UN GESTE TRANSMET AU MODULE POUR UNE LIGNE — ses deux atomes, sa cible et son
+ *  poids ⚖. Écrit UNE fois : le ▶ Run, le ▶ MD, le ⚒ Minimise, le ⟳ Energy et la
+ *  sauvegarde lisent donc le même poids (une seconde copie pourrait en lire un autre). */
+const calcRestraintTermsOf = (list) => Array.from(list || []).map((r) => ({
+  i: r.i, j: r.j, target: r.target, weight: calcWeightOf(r),
+}));
 
 /** AJOUTER UNE LIGNE VIDE — la table s'écrit à la main : deux atomes, une cible. */
 const calcAddBlankRow = () => {
@@ -10535,12 +10642,23 @@ const runStructureCalculation = () => {
      molécule telle qu'elle est MAINTENANT, et l'aperçu du calcul écrit à l'écran : sans
      cette copie, l'écriture d'une image nourrirait le départ suivant. */
   const base = Array.from(geom.positions);
-  const list = calcUsableRows().filter((r) => r.i < geom.count && r.j < geom.count);
-  const half = calcRestraints.length - list.length;
+  /* ⚖ LES LIGNES QUI TRAVAILLENT — les complètes et dont le poids n'est pas 0
+     (`calcFieldRows`). Une ligne en pause n'entre donc dans AUCUN départ, et le chiffre
+     que le panneau affiche (« N ready ») est celui que le calcul reçoit. */
+  const list = calcFieldRows().filter((r) => r.i < geom.count && r.j < geom.count);
+  /* « ENCORE INACHEVÉES » = les lignes que le calcul ne reçoit pas parce qu'il leur
+     manque un atome ou une cible — les lignes de poids 0 sont COMPLÈTES (elles sont en
+     pause) : les confondre ferait dire au rapport qu'une ligne finie est à moitié écrite. */
+  const half = calcRestraints.length - calcUsableRows().length;
   if (!list.length) {
-    setCalcMsg('✕ Nothing to respect yet. Two ways to give a distance: pick two atoms (🎯 Pick in the'
-      + ' ✏️ Torsion window) and press ⌖, or add a row and TYPE its two atoms — “ALA 12 CA”, “12:CA” or an atom'
-      + ' number — with the distance you want. A structure calculation needs at least one distance between two atoms.');
+    const paused = calcInertCount();
+    setCalcMsg(paused
+      ? `✕ Every line of the table is at weight ⚖ = 0 (${paused} line${paused === 1 ? '' : 's'}):`
+        + ' the protocol has no distance to drive. Type a weight ABOVE 0 in the ⚖ column of at least one'
+        + ' line — a weight of 0 keeps a line listed and measured, it simply takes no part in the calculation.'
+      : '✕ Nothing to respect yet. Two ways to give a distance: pick two atoms (🎯 Pick in the'
+        + ' ✏️ Torsion window) and press ⌖, or add a row and TYPE its two atoms — “ALA 12 CA”, “12:CA” or an atom'
+        + ' number — with the distance you want. A structure calculation needs at least one distance between two atoms.');
     return;
   }
   const n = Math.min(STRUCTURE_CALC_MAX_STARTS, Math.max(1, calcStarts));
@@ -10586,7 +10704,7 @@ const runStructureCalculation = () => {
      `attempts`, ce que le ⏹ classe même s'il arrête tout). */
   const frames = structureCalculationFrames({
     positions: base, elements: geom.elements, bonds: geom.bonds,
-    restraints: list.map((r) => ({ i: r.i, j: r.j, target: r.target })),
+    restraints: calcRestraintTermsOf(list),
     starts: n, keep: m,
     seed: STRUCTURE_CALC_SEED,
     /* ⛓ LES CONTRAINTES DE DIHÈDRE ISSUES DE LA STRUCTURE SECONDAIRE IMPOSÉE — les
@@ -10699,10 +10817,13 @@ const calcReadForceField = () => {
     return null;
   }
   const { geom } = now;
-  const list = calcUsableRows().filter((r) => r.i < geom.count && r.j < geom.count);
+  /* ⚖ La lecture lit CE QUE LES GESTES LISENT : les lignes complètes de poids non nul
+     (`calcFieldRows`) — une ligne en pause ne doit pas apparaître dans le total du champ,
+     sinon la lecture annoncerait un chiffre que le calcul n'utilise pas. */
+  const list = calcFieldRows().filter((r) => r.i < geom.count && r.j < geom.count);
   const field = forceFieldEnergyOf({
     positions: geom.positions, elements: geom.elements, bonds: geom.bonds,
-    restraints: list.map((r) => ({ i: r.i, j: r.j, target: r.target })),
+    restraints: calcRestraintTermsOf(list),
     dihedrals: calcDihedrals,
     exactSurface: true,
   });
@@ -10710,6 +10831,9 @@ const calcReadForceField = () => {
   const ra = field.ramaReport;
   const ch = field.chiReport;
   const dh = field.dihedralReport;
+  /* ⚖ CE QUI N'ENTRE PAS DANS LE CHIFFRE — une ligne en pause (⚖ 0) n'est pas dans
+     `field.restraint` : le dire ICI évite de la croire oubliée par un défaut. */
+  const pausedRows = calcInertCount();
   setCalcMsg(`🧲 Force field on the molecule as it stands: E = ${field.total.toFixed(2)} kcal/mol`
     + ` (bonds ${field.bond.toFixed(2)} + angles ${field.angle.toFixed(2)} + rings ${field.planar.toFixed(2)}`
     + ` + vdW ${field.vdw.toFixed(2)} + µ ${field.elec.toFixed(2)} + solvent ${field.solv.toFixed(2)}`
@@ -10728,6 +10852,7 @@ const calcReadForceField = () => {
     + `${dh.count ? ` · ⛓ ${dh.satisfied}/${dh.count} imposed φ/ψ within ± ${dh.tolerance}°`
       + `${dh.violations ? ` (worst ${dh.worst.over.toFixed(1)}° outside)` : ''}` : ''}`
     + `${field.nonbonded.repulsive ? ` · ⚠ ${field.nonbonded.repulsive} repulsive pair${field.nonbonded.repulsive === 1 ? '' : 's'}` : ''}.`
+    + `${pausedRows ? ` ⚖ ${pausedRows} line${pausedRows === 1 ? '' : 's'} of the table ${pausedRows === 1 ? 'is' : 'are'} on hold (weight 0): ${field.restraintReport.count} distance${field.restraintReport.count === 1 ? '' : 's'} enter${field.restraintReport.count === 1 ? 's' : ''} the field.` : ''}`
     + ' ⚡ The energy is in kcal/mol, the potential is the one the calculation uses (no charge model is perfect: the charges are PEOE estimates with the formal charges the chemistry implies).');
   return field;
 };
@@ -10788,7 +10913,11 @@ const pumpMotion = ({ frames, comp, structure, head, onEnd }) => {
 /** LES DISTANCES DÉJÀ TENUES — la longe des gestes ⚙ (dynamique et minimisation) : un
  *  couple dont la distance est DANS sa tolérance au moment du départ ne peut plus en
  *  sortir. Une distance pas encore tenue n'est pas dans la longe : elle reste une
- *  contrainte de la table, et le geste la conduit. */
+ *  contrainte de la table, et le geste la conduit.
+ *  ⚖ ELLE PORTE SON POIDS — le mur de la longe est multiplié par le poids de la ligne
+ *  (`costWall`, dans le module) : une contrainte qui compte double est aussi gardée deux
+ *  fois plus fermement, et une ligne en pause (poids 0) n'est jamais dans cette liste
+ *  puisque les gestes ne reçoivent que `calcFieldRows`. */
 const calcHeldPairs = (geom, list) => list
   .filter((r) => {
     const d = Math.hypot(
@@ -10798,16 +10927,23 @@ const calcHeldPairs = (geom, list) => list
     );
     return Math.abs(d - r.target) <= STRUCTURE_CALC_RESTRAINT_TOLERANCE;
   })
-  .map((r) => ({ i: r.i, j: r.j, target: r.target }));
+  .map((r) => ({ i: r.i, j: r.j, target: r.target, weight: calcWeightOf(r) }));
 
 /** 🌡 LA DYNAMIQUE MOLÉCULAIRE, SUR LA MOLÉCULE TELLE QU'ELLE EST — la demande :
  *  « add the force field and a Molecular dynamics option. this will help the final
  *  energy refinement. » Elle part des coordonnées à l'écran, prend les distances de la
  *  table comme contraintes et les distances DÉJÀ tenues comme longe, se conduit image par
  *  image (donc SE REGARDE), et s'écrit par le MÊME chemin qu'une torsion — le ↺ la remet.
- *  ⚠ `T` est en unités réduites (k_B = 1) : le panneau le dit, il ne prétend pas des
- *  kelvins. ⚠ Et c'est une CONSTANTE (pas un plan de température) : une dynamique
- *  d'équilibrage tient sa température, c'est un recuit qui la fait descendre. */
+ *  ⚠ `T` est en unités réelles (KELVINS) : le panneau le dit, et le rapport donne la
+ *  température cinétique obtenue. ⚠ Et c'est une CONSTANTE (pas un plan de température) :
+ *  une dynamique d'équilibrage tient sa température, c'est un recuit qui la fait descendre.
+ *
+ *  📏 ELLE DEMANDE D'ABORD À LA CASE DE SA FENÊTRE — « use constraints defined in
+ *  structure calculation » : cochée (le défaut), elle porte la table des distances du 🧬
+ *  avec les poids ⚖ de chaque ligne ; décochée, elle part SANS contrainte de distance et
+ *  SANS longe (le champ de forces seul : liaisons, angles, cycles, van der Waals,
+ *  charges, solvant, ω, φ/ψ, χ1). La table n'est jamais MODIFIÉE par cette case — elle
+ *  est seulement lue, ou pas. */
 const runMolecularDynamics = () => {
   const now = calcGeometryNow();
   if (!now) {
@@ -10815,14 +10951,19 @@ const runMolecularDynamics = () => {
     return;
   }
   const { comp, structure, geom } = now;
-  const list = calcUsableRows().filter((r) => r.i < geom.count && r.j < geom.count);
+  /* Ce que la dynamique emporte : les lignes COMPLÈTES de poids non nul, ou RIEN. */
+  const list = calcMdUseRestraints
+    ? calcFieldRows().filter((r) => r.i < geom.count && r.j < geom.count)
+    : [];
+  const paused = calcInertCount();
   const base = Array.from(geom.positions);
-  const held = calcHeldPairs(geom, list);
+  const held = list.length ? calcHeldPairs(geom, list) : [];
   const before = torsionSnapshotOf(structure);
   torsionUndoRef.current = {
     comp, structure, count: before ? before.length / 3 : 0, flat: before,
     label: `🌡 molecular dynamics · ${calcMdSteps} steps · T = ${calcMdTemp}`
-      + ` · ω ${calcOmegaFree ? 'free to vary' : 'held trans'}`,
+      + ` · ω ${calcOmegaFree ? 'free to vary' : 'held trans'}`
+      + ` · ${calcMdUseRestraints ? `with the ${list.length} distance${list.length === 1 ? '' : 's'} of the table` : 'without the distance table'}`,
   };
   setCalcBusy(true);
   setCalcShown(0);
@@ -10830,7 +10971,7 @@ const runMolecularDynamics = () => {
   pumpMotion({
     frames: mdFrames({
       positions: base, elements: geom.elements, bonds: geom.bonds,
-      restraints: list.map((r) => ({ i: r.i, j: r.j, target: r.target })),
+      restraints: calcRestraintTermsOf(list),
       leash: held, steps: calcMdSteps, temperature: calcMdTemp,
       /* ⛓ …ET LES CONTRAINTES DE DIHÈDRE DE LA STRUCTURE SECONDAIRE IMPOSÉE.
          La demande : « In MD and “structure calculation” allow the conversion of the
@@ -10866,6 +11007,10 @@ const runMolecularDynamics = () => {
         + ` · ${run.time.ps} ps at dt = ${run.time.dt} ps`
         + ` · T held at ${run.temperature.hot} K (kinetic ${run.temperature.mean.toFixed(0)} K mean)`
         + ` · energy ${run.cost.before.toFixed(2)} → ${run.cost.after.toFixed(2)} kcal/mol`
+        + ` · 📏 ${calcMdUseRestraints
+          ? `${list.length} distance${list.length === 1 ? '' : 's'} of the table carried with their ⚖ weights`
+            + `${paused ? ` (${paused} line${paused === 1 ? '' : 's'} at weight 0 left out)` : ''}`
+          : 'the distance table was LEFT OUT (📏 unticked in this window): the dynamics ran on the force field alone, with no restraint and no leash'}`
         + `${rep.count ? ` · distances: ${rep.satisfied}/${rep.count} within ± ${rep.tolerance} Å` : ''}`
         + `${rep.count && rep.violations ? ` (worst ${rep.worst.abs.toFixed(2)} Å outside — the ⚒ converges them, a trajectory at T does not have to)` : ''}`
         + `${run.walls.count ? ` · ${run.walls.count} distance${run.walls.count === 1 ? '' : 's'} held by the leash (${run.walls.before.toFixed(2)} → ${run.walls.after.toFixed(2)})` : ''}`
@@ -10895,7 +11040,9 @@ const runMinimise = () => {
     return;
   }
   const { comp, structure, geom } = now;
-  const list = calcUsableRows().filter((r) => r.i < geom.count && r.j < geom.count);
+  /* ⚖ LA MINIMISATION AUSSI (les lignes complètes de poids non nul) : elle CONVERGE les
+     distances, donc elle doit lire exactement ce que la table pèse. */
+  const list = calcFieldRows().filter((r) => r.i < geom.count && r.j < geom.count);
   const base = Array.from(geom.positions);
   const held = calcHeldPairs(geom, list);
   const before = torsionSnapshotOf(structure);
@@ -10909,7 +11056,7 @@ const runMinimise = () => {
   pumpMotion({
     frames: minimizeFrames({
       positions: base, elements: geom.elements, bonds: geom.bonds,
-      restraints: list.map((r) => ({ i: r.i, j: r.j, target: r.target })),
+      restraints: calcRestraintTermsOf(list),
       leash: held, rounds: calcMinimise,
       /* ⛓ …ET LES CONTRAINTES DE DIHÈDRE DE LA STRUCTURE SECONDAIRE IMPOSÉE : c'est la
          minimisation qui les CONVERGE, comme les distances. */
@@ -19355,6 +19502,26 @@ const renderMdOptions = () => (
         className="accent-indigo-600" />
       🪢 ω varies
     </label>
+    {/* 📏 LA CASE DE LA DEMANDE — « nella finestra MD aggiungi l'opzione “use constraints
+        defined in structure calculation” … ». Elle est ICI, dans la fenêtre 🌡 MD, parce
+        que c'est LE geste de cette fenêtre (le ▶ MD juste en dessous) qui peut la lire :
+        cochée, la dynamique porte la table des distances du 🧬 (avec le poids ⚖ de chaque
+        ligne) ; décochée, elle n'emporte ni contrainte ni longe. Le chiffre entre
+        parenthèses est le NOMBRE de lignes qui partiront vraiment — des lignes COMPLÈTES
+        et de poids non nul — donc la case ne promet jamais plus que ce qu'il y a dans la
+        table. ⚠ Elle ne touche NI la table, NI le ⚒ Minimise, NI le ⟳ Energy, NI le ▶ Run
+        du 🧬 : eux lisent toujours la table (et les ⚖), comme avant. */}
+    <label className="flex items-center gap-1"
+      title={`USE THE CONSTRAINTS DEFINED IN 🧬 STRUCTURE CALCULATION — the dynamics launched by the ▶ MD button below carries the distance table of the 🧬 panel as restraints, each line with its own ⚖ weight (k = k_NOE × weight): that is what makes a dynamics pull the molecule towards the distances you typed. UNTICK it and the dynamics runs on the FORCE FIELD ALONE — bonds, angles, planar rings, van der Waals, electrostatics, solvent, ω, φ/ψ, χ1 — with no distance restraint and no leash, which is how you compare the same molecule with and without your distances. Either way the table is neither changed nor emptied: it is only read, or left out. The number here is how many lines will really take part (complete lines whose ⚖ weight is not 0 — a weight of 0 puts a line on hold). This box belongs to THIS window: the 🧬 ▶ Run, the ⚒ Minimise and the ⟳ Energy keep reading the table, as they always did.${calcMdUseRestraints
+        ? ` Right now ${calcFieldRows().length} distance${calcFieldRows().length === 1 ? '' : 's'} of the table ride along${calcInertCount() ? `, and ${calcInertCount()} line${calcInertCount() === 1 ? ' is' : 's are'} at weight 0 (on hold)` : ''}.`
+        : ' Right now the dynamics ignores the table.'}`}>
+      <input type="checkbox" checked={calcMdUseRestraints}
+        onChange={(e) => setCalcMdUseRestraints(e.target.checked)}
+        aria-label="Use the distance constraints defined in Structure calculation"
+        className="accent-indigo-600" />
+      📏 use the constraints of 🧬 Structure calculation
+      <span className="font-mono font-bold text-indigo-800">({calcFieldRows().length})</span>
+    </label>
   </>
 );
 
@@ -19376,8 +19543,8 @@ const renderMdWindow = () => (
     </div>
     <div className="overflow-y-auto custom-scrollbar flex flex-col gap-1.5">
       <p className="text-[9px] font-black text-slate-500 uppercase tracking-wide"
-        title="THE PARAMETERS OF THE DYNAMICS — the same ones 🧬 Structure calculation runs on every start (n starting, m kept, 🔥 recuit and 🖼 frames stay there: they are parameters of the CALCULATION, not of the dynamics). One set of values for both gestures.">
-        ⚙ Steps · dt · T hot → cold · equil · ⚒ sweeps · 🪢 ω
+        title="THE PARAMETERS OF THE DYNAMICS — the same ones 🧬 Structure calculation runs on every start (n starting, m kept, 🔥 recuit and 🖼 frames stay there: they are parameters of the CALCULATION, not of the dynamics). One set of values for both gestures. The 📏 box at the end is this window's own: it says whether the ▶ MD below carries the distance table of the 🧬 (and the ⚖ weight each line carries) or leaves it out.">
+        ⚙ Steps · dt · T hot → cold · equil · ⚒ sweeps · 🪢 ω · 📏 distances
       </p>
       <div className="flex flex-wrap items-center gap-1.5">{renderMdOptions()}</div>
       <div className="flex flex-wrap items-center gap-1.5 border-t border-sky-100 pt-1.5">
@@ -19391,7 +19558,7 @@ const renderMdWindow = () => (
           <span className="font-semibold text-slate-500">K</span>
         </label>
         <button type="button" onClick={runMolecularDynamics} disabled={calcBusy}
-          title="RUN MOLECULAR DYNAMICS on the molecule AS IT STANDS, at the temperature above, with the parameters above: dihedral Langevin dynamics under the whole force field (kcal/mol, charges, solvent, added hydrogens), with your distance table as flat-bottom restraints — the trajectory FEELS them, and every distance ALREADY held is a leash (a wall, so it cannot be let go). It is written into the molecule at every frame — you SEE it move, and the 🪢 plot follows if it is open — and ↺ Undo torsion puts the molecule back exactly as it was. The report gives the steps, the length in ps, the kinetic temperature, the energy before and after, how many of your distances are within tolerance, and what happened to ω, φ/ψ and χ1."
+          title="RUN MOLECULAR DYNAMICS on the molecule AS IT STANDS, at the temperature above, with the parameters above: dihedral Langevin dynamics under the whole force field (kcal/mol, charges, solvent, added hydrogens) — the trajectory FEELS your distances when the 📏 box above is ticked (each one with its ⚖ weight; the already-held ones are a leash, a wall, so they cannot be let go), and runs free of them when it is unticked. It is written into the molecule at every frame — you SEE it move, and the 🪢 plot follows if it is open — and ↺ Undo torsion puts the molecule back exactly as it was. The report gives the steps, the length in ps, the kinetic temperature, the energy before and after, whether the table was carried, how many of your distances are within tolerance, and what happened to ω, φ/ψ and χ1."
           className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-sky-400 text-sky-700 hover:bg-sky-50 disabled:opacity-40">
           ▶ MD
         </button>
@@ -19405,7 +19572,10 @@ const renderMdWindow = () => (
       )}
       <p className="text-[9px] text-slate-500">
         ⚠ These values are the SAME ones the ▶ Run of 🧬 Structure calculation reads for every
-        start (annealing frames apart): one set of settings, two gestures. The window closes
+        start (annealing frames apart): one set of settings, two gestures. The 📏 box is the
+        exception — it belongs to THIS window: it decides whether the ▶ MD below carries the
+        distance table of the 🧬 (and the ⚖ weight of each line, which is written in the table
+        itself), while ▶ Run, ⚒ Minimise and ⟳ Energy keep reading that table. The window closes
         with 🌡 MD, with its ⇤, and with the tab on the left edge — and closing it loses nothing.
       </p>
     </div>
@@ -20290,12 +20460,17 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
       <p className="text-[10px] text-slate-500">
         {calcRestraints.length
           ? <>The distances to respect — <b>{calcRestraints.length}</b> line{calcRestraints.length === 1 ? '' : 's'}
-            {calcUsableRows().length === calcRestraints.length ? '' : `, ${calcUsableRows().length} ready`}, each one
+            {calcUsableRows().length === calcRestraints.length ? '' : `, ${calcUsableRows().length} ready`}
+            {calcInertCount() ? ` (${calcInertCount()} at ⚖ 0, on hold)` : ''}, each one
             measured on the molecule ON SCREEN right now. ⌖ adds the picked pair, ➕ adds an empty line whose two atoms
-            are TYPED, ✕ drops a line, and every field stays editable: the distance is YOUR number, not a table&apos;s.</>
+            are TYPED, ✕ drops a line, and every field stays editable: the distance is YOUR number, not a table&apos;s.
+            ⚖ is the WEIGHT of a line — it multiplies its force constant (<b>k = k_NOE × weight</b>), so 2 pulls twice
+            as hard and 0 leaves the line on hold (listed and measured, taking part in nothing). ▶ Run, ▶ MD,
+            ⚒ Minimise and ⟳ Energy all read it; the 📏 box of the 🌡 MD window alone decides whether the dynamics
+            reads the table at all.</>
           : <>Nothing to respect yet. Two ways: pick two atoms (🎯 Pick in the ✏️ Torsion window) and press
             ⌖, or press ➕ and TYPE a line — “ALA 12 CA” against “ALA 40 CA”, 6.0 Å. A half-written line waits for you;
-            ▶ Run uses the finished ones.</>}
+            ▶ Run uses the finished ones, and its ⚖ column gives each line its own weight.</>}
       </p>
       {ranked && ranked.comp && ranked.comp !== componentRef.current && (
         <p className="text-[10px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">
@@ -20365,6 +20540,15 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
                 <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">Atom A</th>
                 <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">Atom B</th>
                 <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">Want (Å)</th>
+                {/* ⚖ LA COLONNE DU POIDS — la demande : « enable this option allowing the
+                    user to give a weight to these constraints. This weight can be defined
+                    in the table. » Elle est ICI, entre la cible et les deux colonnes de
+                    mesure, et elle ne bouge JAMAIS de place : une ligne = un poids. Le
+                    titre dit tout ce que la case accepte, y compris le 0 (mise en pause). */}
+                <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700"
+                  title="⚖ THE WEIGHT OF A LINE — the force constant of this distance is k_NOE × weight, so 2 pulls on the pair twice as hard as 1 and 0.5 twice as gently. It is written here, on the line, and it is read by ▶ Run, ▶ MD, ⚒ Minimise and ⟳ Energy alike. Type a number ≥ 0: empty or a value that cannot be read means the DEFAULT weight of 1 (as if this column did not exist), and a weight of 0 puts the line ON HOLD — it keeps its atoms, its target, its Now and its Δ, but it takes part in nothing and counts in no report. A comma works as the decimal separator.">
+                  ⚖ w
+                </th>
                 <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">Now</th>
                 <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">Δ</th>
                 <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700" />
@@ -20377,6 +20561,15 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
                 const at = ready && geom ? calcDistanceIn(geom, r.i, r.j) : null;
                 const dev = Number.isFinite(at) ? at - r.target : null;
                 const good = dev != null && Math.abs(dev) <= STRUCTURE_CALC_RESTRAINT_TOLERANCE;
+                /* ⚖ CE QUE LA LIGNE PÈSE — `0` est une mise en PAUSE (la ligne est
+                   encore mesurée et affichée, mais aucun geste ne la reçoit), et un texte
+                   illisible est le poids par DÉFAUT (1) : c'est `calcWeightOf` qui le dit,
+                   ici comme dans les quatre gestes du champ. La case passe en ambre dans
+                   les deux cas qui doivent se voir : une frappe que le module ne peut pas
+                   lire, et le 0 qui met la ligne en attente. */
+                const weight = calcWeightOf(r);
+                const paused = ready && weight === 0;
+                const unreadable = String(r.w == null ? '' : r.w).trim() !== '' && r.weight == null;
                 const cell = (side) => {
                   const idx = side === 'a' ? r.i : r.j;
                   return (
@@ -20393,7 +20586,10 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
                 };
                 return (
                   <tr key={r.key} className={`border-t border-indigo-100 ${ready ? '' : 'bg-amber-50/60'}`}>
-                    <td className="px-2 py-1 text-slate-400" title={r.say || ''}>{k + 1}{r.say ? ' ⚠' : ''}</td>
+                    <td className="px-2 py-1 text-slate-400"
+                      title={r.say || (paused ? '⏸ ON HOLD — this line weighs ⚖ 0: it is still listed and measured here, and it takes part in nothing (no ▶ Run, no ▶ MD, no ⚒ Minimise, no ⟳ Energy).' : '')}>
+                      {k + 1}{r.say ? ' ⚠' : ''}{paused ? ' ⏸' : ''}
+                    </td>
                     {cell('a')}
                     {cell('b')}
                     <td className="px-1 py-1">
@@ -20407,8 +20603,26 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
                         title="The distance YOU want this pair to have, in ångströms — the protocol drives THIS number, and the report compares the model against it. A line whose atoms are typed gets the length the tables give that pair of elements, and you can overwrite it. Typed text is kept as typed (a comma works as the decimal separator); a value that cannot be read leaves the line 'not ready' instead of being rewritten under your fingers."
                         className="w-16 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
                     </td>
+                    <td className="px-1 py-1">
+                      {/* ⚖ LA CASE DU POIDS — le MÊME contrat que la cible ci-dessus :
+                          `type="text"` + `inputMode="decimal"` (le navigateur ne peut pas
+                          reformater ce qu'on écrit), le TEXTE est la source
+                          (`calcSetRestraintWeight`), la valeur numérique n'en est que la
+                          conséquence. Le placeholder « 1 » dit le défaut, et l'infobulle dit
+                          le reste — le 0 compris, qui met la ligne en PAUSE. */}
+                      <input type="text" inputMode="decimal"
+                        value={r.w != null ? r.w : (r.weight == null || r.weight === 1 ? '' : String(r.weight))}
+                        placeholder="1"
+                        onChange={(e) => calcSetRestraintWeight(r.key, e.target.value)}
+                        aria-label={`Weight of distance ${k + 1}, in multiples of the field's k_NOE`}
+                        title={`⚖ WHAT THIS LINE WEIGHS — its force constant is k_NOE × this number, so the distance pulls harder or more gently than the other lines. 1 (or an empty box) is the default and changes nothing; 0 puts the line ON HOLD (its atoms, its target and its measures stay, but ▶ Run, ▶ MD, ⚒ Minimise and ⟳ Energy stop receiving it).${paused ? ' — This line is ON HOLD right now.' : ''}${unreadable ? ' — The value typed here cannot be read as a number: the line runs at the default weight of 1.' : ''}`}
+                        className={`w-12 border rounded px-1.5 py-0.5 text-right outline-none text-[10px] font-mono ${paused || unreadable
+                          ? 'border-amber-400 bg-amber-50 text-amber-800'
+                          : 'border-indigo-300 bg-white focus:border-indigo-500'}`} />
+                    </td>
                     <td className="px-2 py-1 font-mono text-slate-500">{ready ? torsionAng(at) : '—'}</td>
-                    <td className={`px-2 py-1 font-mono ${good ? 'text-emerald-700' : 'text-rose-700'}`}>
+                    <td className={`px-2 py-1 font-mono ${paused ? 'text-slate-500' : (good ? 'text-emerald-700' : 'text-rose-700')}`}
+                      title={paused ? 'A READING, not a verdict: this line is on hold (⚖ 0), so no gesture compares it to anything — the target and the distance are still shown as typed.' : (good ? `Inside the tolerance of ± ${STRUCTURE_CALC_RESTRAINT_TOLERANCE} Å of the target.` : `Outside the tolerance of ± ${STRUCTURE_CALC_RESTRAINT_TOLERANCE} Å — the field pays k_NOE × ⚖ per squared ångström beyond it.`)}>
                       {dev == null ? '—' : `${dev > 0 ? '+' : ''}${dev.toFixed(2)}`}
                     </td>
                     <td className="px-1 py-1">

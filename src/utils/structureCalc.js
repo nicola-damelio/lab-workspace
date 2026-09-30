@@ -81,7 +81,8 @@ import { dihedralDeg, planTorsion } from './torsionDrive.js';
    et un écart n'a qu'un prix dans ce dossier. */
 import {
   FORCE_FIELD_KCAL_FAMILIES, ffKcalRowsOf, ffKcalEnergyOf, ffTorsionFamilyOf,
-  ffRestraintCostOf, ffBondCostOf, ffAngleCostOf, ffPlanarCostOf,
+  ffRestraintCostOf, ffRestraintWeightOf, ffRestraintKOf,
+  ffBondCostOf, ffAngleCostOf, ffPlanarCostOf,
   ffOmegaCostOf, ffChiCostOf, ffRamaCostOf, ffDihedralCostOf,
   ffVdwCostOf, ffCoulombCostOf, ffSurfaceOf, ffNonbondedEnergyOf, ffPairListOf,
   hydrogenatedOf, partialChargesOf, ffEntropyOf, ffAngleDegOf, ffElementOf,
@@ -220,7 +221,8 @@ export const STRUCTURE_CALC_CORE_REFRESH = 24;
  *  distance DÉJÀ tenue qui sort de son puits plat. Le recuit de Metropolis peut REFUSER
  *  un pas (il en essaie un autre) ; une trajectoire ne le peut pas : la longe y est
  *  donc un MUR (zéro dans la tolérance, k·(dépassement)² au-delà — le MÊME k_NOE que la
- *  contrainte, donc 20 kcal/mol/Å², une fois et demie la raideur d'une liaison). */
+ *  contrainte, donc 20 kcal/mol/Å², une fois et demie la raideur d'une liaison), et il
+ *  est MULTIPLIÉ par le poids ⚖ de la ligne gardée. */
 export const STRUCTURE_CALC_LEASH_WALL = FF_NOE_K;
 
 /** LA DYNAMIQUE MOLÉCULAIRE DIHÉDRALE (Langevin) — les chiffres du panneau et des
@@ -324,10 +326,16 @@ export const drainFrames = (frames, onFrame = null) => {
 
 /**
  * LA LISTE DES CONTRAINTES, NORMALISÉE — `{list, dropped, count}`.
- * `list` = `{i, j, target, order}` dans l'ordre reçu (le numéro `order` est celui
- * que le rapport affiche : « 1 = 12–48 à 6.00 Å »), `dropped` = combien d'entrées
- * ont été écartées (mauvais indices, couple dégénéré, cible non finie ou ≤ 0,
- * doublon d'un couple déjà imposé, au-delà de STRUCTURE_CALC_MAX_RESTRAINTS).
+ * `list` = `{i, j, target, weight, order}` dans l'ordre reçu (le numéro `order` est
+ * celui que le rapport affiche : « 1 = 12–48 à 6.00 Å »), `dropped` = combien
+ * d'entrées ont été écartées (mauvais indices, couple dégénéré, cible non finie ou
+ * ≤ 0, doublon d'un couple déjà imposé, au-delà de STRUCTURE_CALC_MAX_RESTRAINTS).
+ *
+ * ⚖ `weight` = LE POIDS de la ligne, tel que la colonne du panneau 🧬 l'écrit : il
+ * MULTIPLIE la raideur du puits plat (`k = FF_NOE_K × poids`, voir
+ * `ffRestraintWeightOf`) et il est transporté jusqu'au moteur. Absent ou illisible il
+ * vaut 1 — la ligne se comporte donc exactement comme avant cette colonne — et 0 est
+ * une valeur LÉGALE : la ligne est encore mesurée et rapportée, elle ne pèse RIEN.
  */
 export const restraintListOf = ({ restraints = [], atomCount = 0 } = {}) => {
   const count = clampInt(atomCount, 0, Number.MAX_SAFE_INTEGER, 0);
@@ -345,7 +353,7 @@ export const restraintListOf = ({ restraints = [], atomCount = 0 } = {}) => {
     if (seen.has(key)) { dropped += 1; continue; }
     seen.add(key);
     if (list.length >= STRUCTURE_CALC_MAX_RESTRAINTS) { dropped += 1; continue; }
-    list.push({ i, j, target, order: list.length + 1 });
+    list.push({ i, j, target, weight: ffRestraintWeightOf(r.weight), order: list.length + 1 });
   }
   return { list, dropped, count: list.length };
 };
@@ -358,6 +366,12 @@ export const restraintListOf = ({ restraints = [], atomCount = 0 } = {}) => {
  * moyenne des écarts au carré — le seul chiffre qui résume la liste —, `severity` =
  * la somme des |écart| (le chiffre dont les balayages se servent pour savoir si un
  * passage a AMÉLIORÉ quelque chose), `worst` = la plus fausse.
+ *
+ * ⚖ Chaque entrée porte AUSSI son `weight` (le poids de la ligne, 1 par défaut) : la
+ * mesure est GÉOMÉTRIQUE (rien ici ne dépend du poids) mais le rapport dit le poids de
+ * chaque ligne, parce que c'est lui qui décide de ce qu'elle coûte — et une ligne de
+ * poids 0 est bien une ligne que le champ ne pousse pas, ce que le panneau doit
+ * pouvoir dire au lieu de faire croire à une contrainte oubliée.
  */
 export const restraintReportOf = ({
   positions = null, restraints = [], tolerance = STRUCTURE_CALC_RESTRAINT_TOLERANCE,
@@ -379,7 +393,7 @@ export const restraintReportOf = ({
     const abs = Math.abs(deviation);
     const satisfied = abs <= limit;
     const entry = {
-      i: r.i, j: r.j, order: r.order, target: r.target,
+      i: r.i, j: r.j, order: r.order, target: r.target, weight: r.weight,
       distance, deviation, abs, satisfied,
     };
     out.list.push(entry);
@@ -1418,7 +1432,10 @@ const torsionEngineOf = ({
     if (bucket) bucket.push(h.index); else hydrogensOf.set(h.parent, [h.index]);
   }
   /* LES DISTANCES DEMANDÉES PORTENT LEUR PUITS PLAT — le même `ffRestraintCostOf` que le
-     score, donc le même nombre (zéro dans la tolérance, k·over² au-delà). */
+     score, donc le même nombre (zéro dans la tolérance, k·over² au-delà), et le MÊME k :
+     `ffRestraintKOf` multiplie la raideur du champ par le poids ⚖ de la ligne (un poids
+     de 0 la rend inerte — le moteur ne peut alors pas la pousser, comme le score ne la
+     compte pas). */
   const clean = restraintListOf({ restraints, atomCount: heavyCount }).list;
   const pairTerms = clean.map((t) => ({
     ...t, tolerance: Number.isFinite(Number(t.tolerance)) ? Number(t.tolerance) : tolerance,
@@ -1464,7 +1481,7 @@ const torsionEngineOf = ({
     at(atoms[2], map), at(atoms[3], map));
   /* LES TERMES — chaque famille est LA fonction du champ (kcal/mol), relue sur une
      géométrie « à plat ». Le moteur ne peut donc pas minimiser autre chose que le score. */
-  const costRestraint = (t, map) => ffRestraintCostOf(gap(t.i, t.j, map), t);
+  const costRestraint = (t, map) => ffRestraintCostOf(gap(t.i, t.j, map), t, ffRestraintKOf(t.weight));
   const costNonbonded = (p, map) => {
     const d = gap(p.i, p.j, map);
     return ffVdwCostOf(d, p) + ffCoulombCostOf(d, p, dielectric);
@@ -1484,9 +1501,13 @@ const torsionEngineOf = ({
     return Number.isFinite(deg) ? ffChiCostOf(deg, wChi) : 0;
   };
   const costDihedral = (d, map) => ffDihedralCostOf(dihedralOf(d.atoms, map), d);
+  /* LE MUR DE LA LONGE — zéro dans la tolérance, k·over² au-delà, avec le MÊME poids ⚖
+     que la contrainte de la ligne (une ligne qui compte double est aussi gardée deux
+     fois plus fermement ; un poids de 0 n'est pas gardé du tout, ce qui est cohérent :
+     elle ne pèse rien). */
   const costWall = (w, map) => {
     const over = Math.max(0, Math.abs(gap(w.i, w.j, map) - w.target) - w.tolerance);
-    return over > 0 ? wWall * over * over : 0;
+    return over > 0 ? wWall * ffRestraintWeightOf(w.weight) * over * over : 0;
   };
 
   /* LA MARCHE DES COUPLES NON LIÉS, ET LA SURFACE — les listes du CHAMP (1-2 et 1-3
@@ -1568,6 +1589,10 @@ const torsionEngineOf = ({
     walls.push({
       i: li, j: lj, target,
       tolerance: Number.isFinite(tol) && tol >= 0 ? tol : STRUCTURE_CALC_RESTRAINT_TOLERANCE,
+      /* ⚖ LE POIDS VIENT DE LA LIGNE DE LA TABLE quand elle est là (c'est elle qui a un
+         poids), sinon de ce que l'appelant a donné : un mur ne peut donc pas être plus
+         raide ni plus mou que la contrainte qu'il garde. */
+      weight: row ? row.weight : r.weight,
     });
   }
   const crossingOf = (ch) => {
@@ -2259,7 +2284,8 @@ export function* structureAttemptFrames({
   const equilSteps = Math.round(mdSteps * equilShare);
   const coolSteps = Math.max(0, mdSteps - equilSteps);
   const held = restraintReportOf({ positions: x, restraints: clean.list, tolerance })
-    .list.filter((r) => r.satisfied).map((r) => ({ i: r.i, j: r.j, target: r.target }));
+    .list.filter((r) => r.satisfied)
+    .map((r) => ({ i: r.i, j: r.j, target: r.target, weight: r.weight }));
   const motionOf = (arr) => ({
     positions: arr, elements: els, bonds, restraints: clean.list, weights,
     channels: drawn ? drawn.channels : null, torsions: backbone, omegas, dihedrals, leash: held,
