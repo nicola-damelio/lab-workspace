@@ -406,9 +406,16 @@ ok(VIEW.indexOf('classified by their OWN contours') < 0
   && VIEW.indexOf('the PEPTIDE BOND itself is twisted') < 0,
   '⚠ les deux paragraphes de la section 🪢 ont disparu avec elle (la fenêtre 🪢 du viewer est réduite à ce qu’elle'
   + ' montre : le graphe, la synthèse, les outliers, et la ligne du point survolé — le ⚒ n’est plus un voisin à expliquer)');
-has(VIEW, 'a point here is a point the calculation would drive back inside',
-  'la fenêtre 🪢 dit ce que le graphe n’est PAS (un plan de lecture : ni énergie, ni potentiel, ni validation, et les'
-  + ' polygones sont ceux du potentiel φ/ψ du calcul)');
+/* ⚠ LE PARAGRAPHE DE PROSE A ÉTÉ RETIRÉ CETTE SESSION — la remarque : « Large commentaries are
+   still present in the windows inside the viewer. » La fenêtre 🪢 ne garde donc QUE ce qu'elle
+   MONTRE (le graphe, la synthèse, la liste des outliers, la ligne du point survolé) : la phrase
+   « a point here is a point the calculation would drive back inside » ne se rend plus, et son
+   retrait est DATÉ là où elle vivait. */
+ok(VIEW.indexOf('a point here is a point the calculation would drive back inside') < 0,
+  '⚠ le paragraphe de prose du dock 🪢 (les polygones = le potentiel φ/ψ du calcul) ne se rend plus : la remarque de'
+  + ' cette session (« Large commentaries are still present in the windows inside the viewer ») l’a retiré, et le'
+  + ' retrait est daté dans le JSX');
+has(VIEW, 'A ÉTÉ RETIRÉ', '…et le retrait est daté là où le paragraphe vivait (une remarque ne se perd pas en silence)');
 ok(VIEW.indexOf('a point that was not measured would be a lie') < 0,
   '…et la phrase « un point non mesuré serait un mensonge », elle, est restée avec la section retirée');
 /* LE SURVOL DANS LE PANNEAU — chaque point est DESSINÉ, il s'attrape au survol (et au

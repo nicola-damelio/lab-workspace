@@ -1288,8 +1288,11 @@ has(VIEW, 'const [calcDock, setCalcDock] = useState(false);',
   'la FENÊTRE 🧬 du calcul s’ouvre et se ferme par son bouton (comme le dock 🌡 MD et le dock 🪢)');
 has(VIEW, 'const toggleCalcDock = (v) => setCalcDock((cur) => (typeof v === \'boolean\' ? v : !cur));',
   '⚠ …et c’est UN seul geste : le bouton 🧬 (il n’y a plus trois onglets à faire défiler, ni de section dans la barre)');
-has(VIEW, 'const [calcConstraints, setCalcConstraints] = useState(false);',
-  '⚙ …avec le panneau « Parameters and Constraints » de la demande (replié par défaut)');
+has(VIEW, 'const [paramsDock, setParamsDock] = useState(false);',
+  '⚙ …avec la fenêtre « Parameters and Constraints » de la demande — le rapport de cette session :'
+  + ' « “Parameters and Constraints” section should be in the “modify” menu » : elle est un DOCK du viewer (replié par défaut)');
+has(VIEW, 'const toggleParamsDock = (v) => setParamsDock((cur) => (typeof v === \'boolean\' ? v : !cur));',
+  '…refermée par le même geste : le bouton ⚙ du groupe ✏️ Modify');
 ok(VIEW.indexOf("['torsion', ") < 0 && VIEW.indexOf("['rama', ") < 0 && VIEW.indexOf("['distances', ") < 0,
   '⚠ la barre d’onglets du panneau unique a DISPARU — la demande : « when clicking on torsion do not open the'
   + ' section inside the toolbar but open a dedicated retractable window inside the viewer as for ramachandran »');
@@ -1309,14 +1312,34 @@ has(VIEW, 'const [calcResult, setCalcResult] = useState(null);', '…et la famil
 has(VIEW, 'const calcRunRef = useRef(0);',
   '⚠ un JETON d’annulation : c’est lui que le ⏹ avance pour arrêter le calcul entre deux départs');
 
-/* LA FENÊTRE 🧬, DÉCOUPÉE DU VIEWER — de sa déclaration (`const renderCalcWindow`, juste
-   après `renderForceGestures`) jusqu'au `return (` du composant. C'est CE morceau que le
-   bouton 🧬 ouvre : les paramètres, les étapes du calcul, les deux tables et leurs boutons. */
+/* LES DEUX FENÊTRES, DÉCOUPÉES DU VIEWER — de la déclaration de la fenêtre ⚙
+   (`renderParamsWindow`, qui PRÉCÈDE maintenant le 🧬 dans le fichier) jusqu'au `return (`
+   du composant. ⚠ ELLES SONT DANS LE MÊME MORCEAU parce que le fichier les écrit à la
+   suite, et c'est voulu que les assertions ci-dessous les couvrent toutes les deux : le 🧬
+   porte les paramètres du calcul (n · m · 🔥 recuit · 🖼 frames), la dynamique du protocole
+   (rendue UNE fois), 👁 watch, ▶ Run / ⏹ Stop, les étapes (progression, rapport, famille
+   classée) et 💾 Save the family / Save the report ; le ⚙ porte la description du champ de
+   forces ET les deux tables avec TOUS leurs boutons — la demande de cette session :
+   « “Parameters and Constraints” section should be in the “modify” menu and should contain
+   the description of the force field (now in the structure calculation window) and the
+   constraints tables with the associated buttons (now in the structure calculation
+   window: add picked pair, add row, save distances, load distances, clear list, and
+   “secondary structure→ phi, psi”) ». `paramsPanel`, juste après, isole la SEULE fenêtre ⚙
+   (c'est elle que la demande nomme), et `modifyGroup` son bouton. */
 const calcPanel = VIEW.slice(
-  VIEW.indexOf('const renderCalcWindow = () => {'),
+  VIEW.indexOf('const renderParamsWindow = () => ('),
   VIEW.indexOf('\nreturn (\n<div className="flex flex-col gap-2">'),
 );
-ok(calcPanel.length > 6000, `la fenêtre 🧬 est bien dans le viewer (${calcPanel.length} caractères)`);
+ok(calcPanel.length > 20000, `les deux fenêtres sont bien dans le viewer (${calcPanel.length} caractères)`);
+/* LA FENÊTRE ⚙ « PARAMETERS AND CONSTRAINTS », DÉCOUPÉE DE LA MÊME FAÇON — elle est écrite
+   AVANT le 🧬 dans le fichier (`renderParamsWindow`), et c'est elle qui porte la description
+   du champ de forces ET les deux tables avec TOUS leurs boutons. */
+const paramsPanel = VIEW.slice(
+  VIEW.indexOf('const renderParamsWindow = () => ('),
+  VIEW.indexOf('const renderCalcWindow = () => {'),
+);
+ok(paramsPanel.length > 12000,
+  `la fenêtre ⚙ porte le champ de forces ET les deux tables (${paramsPanel.length} caractères)`);
 /* LE BOUTON 🧬 ET LA RANGÉE ✏️ MODIFY — du commentaire qui l’ouvre jusqu’au bloc suivant
    (⚭ Disulfides). C’est CE morceau qui porte le bouton, à côté de « 🧬 Structure from
    sequence », et les trois gestes du champ. */
@@ -1574,8 +1597,8 @@ ok(VIEW.indexOf('{renderForceGestures()}') > iCalcBtn && VIEW.indexOf('{renderFo
   'juste APRES le bouton du calcul, donc la sans ouvrir une seule fenetre');
 eq(VIEW.split('{renderForceGestures()}').length - 1, 1,
   'rendus une seule fois (aucun second exemplaire au fond de la fenetre : un seul JSX)');
-has(calcPanel, 'hydrogens added on',
-  '…et la lecture DIT les atomes ajoutés (hydrogènes), les charges et la surface');
+has(paramsPanel, 'hydrogens added on',
+  '…et la lecture du ⟳ DIT les atomes ajoutés (hydrogènes), les charges et la surface — dans la fenêtre ⚙, où la demande met la description du champ');
 /* ⚠ LES GROS COMMENTAIRES ONT ÉTÉ RETIRÉS — la demande de cette session : « Please remove
    all these large commentaries in the MD window and in the “structure calculation
    section”. » Ce qui doit rester vrai : les deux paragraphes de prose (le recuit expliqué,
@@ -1588,40 +1611,56 @@ eq(calcPanel.includes('What this calculation does'), false,
 eq(mdWindow.includes("These values are THIS window's own: they are NOT the protocol"), false,
   '⚠ ni le gros paragraphe de la fenetre MD : la demande en nommait les deux fenetres');
 has(VIEW, 'A ÉTÉ RETIRÉ', '...et le retrait est date la ou le texte vivait');
+/* ⚠ UNE SECONDE VAGUE EST PARTIE — la remarque de cette session : « Large commentaries are
+   still present in the windows inside the viewer. » Le paragraphe de prose du dock 🪢
+   Ramachandran (« The coloured shapes are the basins… ») n'est plus rendu, et le retrait est
+   daté là où il vivait. */
+eq(VIEW.includes('The coloured shapes are the basins of the classic figure'), false,
+  '⚠ le paragraphe de prose du dock 🪢 ne se rend plus (la remarque « Large commentaries are still present in the windows inside the viewer »)');
 
-/* ── ⚙ « PARAMETERS AND CONSTRAINTS » — LES DEUX TABLES DERRIÈRE UN BOUTON ────────────
-   La demande de cette session, mot pour mot : « move the structure constraint tables with
-   their buttons (add picked pair, add row, save distances, load distances, clear list, and
-   “secondary structure→ phi, psi”) into a new button “Parameters and Constraints” which if
-   clicked shows MD parameters and structural constraints tables. » Ce qui doit rester vrai :
-   le bouton existe et il commande `calcConstraints` ; la boîte qu'il ouvre porte les
-   réglages MD du protocole (`renderCalcMdOptions`) ET les deux tables avec TOUS leurs
-   boutons ; les paramètres du calcul (n · m · 🔥 recuit · 🖼 frames) et les étapes
-   (progression, rapport, famille classée, 💾) restent VISIBLES sans ouvrir la boîte. */
-has(calcPanel, 'onClick={() => setCalcConstraints((v) => !v)}', '⚙ le bouton « Parameters and Constraints » ouvre le panneau');
-has(calcPanel, "⚙ Parameters and Constraints {calcConstraints ? '▾' : '▸'}", '…et il dit son état (ouvert ▾ / fermé ▸)');
-const constraintsBox = calcPanel.slice(
-  calcPanel.indexOf('{calcConstraints && ('),
-  calcPanel.indexOf('<div className="flex flex-wrap items-center gap-3 text-[10px] font-bold text-indigo-800">'),
+/* ── ⚙ « PARAMETERS AND CONSTRAINTS » — LE GROUPE ✏️ MODIFY ET LA FENÊTRE QU'IL OUVRE ──
+   La demande de cette session, mot pour mot : « “Parameters and Constraints” section should
+   be in the “modify” menu and should contain the description of the force field (now in the
+   structure calculation window) and the constraints tables with the associated buttons (now
+   in the structure calculation window: add picked pair, add row, save distances, load
+   distances, clear list, and “secondary structure→ phi, psi”) ». Ce qui doit rester vrai : le
+   bouton vit DANS le groupe ✏️ Modify de « 2 · Toolbar » et il commande `paramsDock` ; la
+   fenêtre qu'il ouvre porte la DESCRIPTION DU CHAMP (`forceFieldRowsOf`) ET les deux tables
+   avec TOUS leurs boutons ; le protocole n'est rendu qu'UNE fois (la demande : « The
+   structure calculation window contains twice the simulated annealing parameter because one
+   set of parameters was inside the “Parameters and Constraints” but they are not necessary
+   there. »). */
+const modifyGroup = VIEW.slice(
+  VIEW.indexOf('>✏️ Modify</span>'),
+  VIEW.indexOf('{/* 🧬 LE CALCUL DE STRUCTURE'),
 );
-ok(constraintsBox.length > 4000,
-  `la boîte ⚙ porte les réglages MD ET les deux tables (${constraintsBox.length} caractères)`);
-for (const needle of ['{renderCalcMdOptions()}', '⌖ Add the picked pair', '➕ Add a row', '💾 Save distances',
-  '📂 Load distances', 'Clear the list', 'Secondary structure → φ/ψ', 'calcDihedrals.map', 'calcRestraints.map']) {
-  has(constraintsBox, needle, `⚠ …« ${needle} » est DANS la boîte ⚙ (c'est elle que la demande nomme)`);
+has(modifyGroup, 'onClick={() => toggleParamsDock()}',
+  '⚙ le bouton « Parameters and Constraints » est DANS le groupe ✏️ Modify (la demande : « should be in the “modify” menu »)');
+has(modifyGroup, "⚙ Parameters and Constraints{paramsDock ? ' ▾' : ' ▸'}",
+  '…et il dit son état (ouvert ▾ / fermé ▸)');
+has(VIEW, '{paramsDock ? renderParamsWindow() : (', '…la fenêtre ⚙ est un DOCK de la vue 3D, comme 🌡 MD et 🧬');
+for (const needle of ['forceFieldRowsOf().map', 'Read on the molecule on screen',
+  '⌖ Add the picked pair', '➕ Add a row', '💾 Save distances', '📂 Load distances',
+  'Clear the list', 'Secondary structure → φ/ψ', 'calcDihedrals.map', 'calcRestraints.map']) {
+  has(paramsPanel, needle, `⚠ …« ${needle} » est DANS la fenêtre ⚙ (c'est elle que la demande nomme)`);
 }
+eq(paramsPanel.includes('{renderCalcMdOptions()}'), false,
+  '⚠ AUCUN réglage du protocole dans la fenêtre ⚙ — la demande : « one set of parameters was inside the “Parameters and Constraints” but they are not necessary there »');
+eq(VIEW.split('{renderCalcMdOptions()}').length - 1, 1,
+  '⚠ …et `renderCalcMdOptions()` n’est rendu qu’UNE fois dans tout le viewer (le protocole ne s’écrit plus deux fois)');
 has(calcPanel, 'aria-label="Number of starting structures n"',
-  '…et les paramètres du calcul (n · m) restent dans la fenêtre, hors de la boîte');
+  '…et les paramètres du calcul (n · m) restent dans la fenêtre 🧬');
 has(calcPanel, 'aria-label="Write each start on screen while it is computed"',
-  '⚠ …tandis que 👁 watch / ▶ Run / ⏹ Stop et la famille restent HORS de la boîte (on les voit sans l’ouvrir)');
+  '⚠ …tandis que 👁 watch / ▶ Run / ⏹ Stop et la famille y restent aussi');
+has(calcPanel, '{renderCalcMdOptions()}', '…avec la dynamique du protocole, rendue là, une seule fois');
 /* LA COLONNE « residue » DIT LE RÉSIDU — le rapport de cette session : « The table of
    dihedral constraints does not report the residue number as it should but the atom
    number. » Elle écrit donc `calcResidueLabelOf(c.ca)` (le résidu du CA, tel que la
    molécule à l'écran le nomme), et l'index d'atome ne reste que dans l'infobulle. */
 has(VIEW, 'const calcResidueLabelOf = (index) => {', 'la table des φ/ψ a un lecteur de RÉSIDU');
 has(VIEW, 'structureAtomRecords(structure).find((r) => r.index === index)', '…résolu sur la molécule à l’écran');
-eq(constraintsBox.includes('#{c.ca}'), false, '⚠ la cellule ne montre plus « #numéro d’atome »');
-has(constraintsBox, '{calcResidueLabelOf(c.ca)}', '…mais le RÉSIDU (le numéro de la demande)');
+eq(paramsPanel.includes('#{c.ca}'), false, '⚠ la cellule ne montre plus « #numéro d’atome »');
+has(paramsPanel, '{calcResidueLabelOf(c.ca)}', '…mais le RÉSIDU (le numéro de la demande)');
 has(calcPanel, 'k {row.k} {row.id === \'elec\' ? \'\' : row.unit}',
   '⚠ …et chaque famille affiche son POIDS et son UNITÉ telles que le module les écrit (aucun kcal/mol recopié dans le JSX)');
 has(calcPanel, '🧭 φ/ψ', '⚠ le tableau classé porte la lecture du squelette par modèle (colonne 🧭 φ/ψ)');

@@ -7715,18 +7715,24 @@ const measureRepsRef = useRef([]);      // [{ comp, elem }] NGL 'distance' repre
    page in an internal collapsible window as that of MD or Ramachandran containing the
    calculation parameters and updates to follow the stages of the calculation but move the
    structure constraint tables with their buttons … into a new button “Parameters and
-   Constraints” » : il n'y a donc plus AUCUNE section du 🧬 dans la barre. Les TROIS
+   Constraints” » : il n'y a donc plus AUCUNE section du 🧬 dans la barre. Les QUATRE
    gestes sont des FENÊTRES de la vue 3D, poussées à sa gauche — `torsionWindow` DANS le
-   cadre, `ramaDock` et `calcDock` à côté —, ouvertes et refermées par leur propre bouton
-   de la barre, et `calcConstraints` est le panneau « ⚙ Parameters and Constraints » de la
-   fenêtre du calcul (les DEUX tables et leurs boutons y sont, avec les réglages MD du
-   protocole). */
+   cadre, `ramaDock`, `calcDock` et `paramsDock` à côté —, ouvertes et refermées par leur
+   propre bouton de la barre. ⚠ `paramsDock` A QUITTÉ LA FENÊTRE 🧬 (la demande de cette
+   session : « “Parameters and Constraints” section should be in the “modify” menu ») :
+   c'est la fenêtre « ⚙ Parameters and Constraints » du groupe ✏️ Modify de « 2 ·
+   Toolbar », et elle porte le champ de forces ET les deux tables de contraintes. */
 const [calcDock, setCalcDock] = useState(false);
 const toggleCalcDock = (v) => setCalcDock((cur) => (typeof v === 'boolean' ? v : !cur));
-/* LE PANNEAU « ⚙ PARAMETERS AND CONSTRAINTS » — replié par défaut : la fenêtre du calcul
-   montre d'abord SES paramètres (n, m, le protocole, la progression), et les DEUX tables
-   de contraintes (distances + φ/ψ) avec leurs boutons s'ouvrent d'un clic. */
-const [calcConstraints, setCalcConstraints] = useState(false);
+/* ⚙ LA FENÊTRE « PARAMETERS AND CONSTRAINTS » — la demande de cette session : «
+   “Parameters and Constraints” section should be in the “modify” menu and should contain
+   the description of the force field (now in the structure calculation window) and the
+   constraints tables with the associated buttons (now in the structure calculation
+   window) ». Elle a donc QUITTÉ la fenêtre 🧬 : son bouton vit dans le groupe ✏️ Modify de
+   « 2 · Toolbar », et ce qu'il ouvre est un dock de la vue 3D (`renderParamsWindow`) — le
+   champ de forces et les DEUX tables, rien d'autre. */
+const [paramsDock, setParamsDock] = useState(false);
+const toggleParamsDock = (v) => setParamsDock((cur) => (typeof v === 'boolean' ? v : !cur));
 /* LA FENÊTRE ✏️ TORSION — ouverte par son bouton, refermée par le même bouton (et par
    le ⇤ de son en-tête) : elle vit dans le cadre de la vue 3D, jamais dans la barre. */
 const [torsionWindow, setTorsionWindow] = useState(false);
@@ -10513,7 +10519,10 @@ const calcBoxNote = (geom) => {
        in the MD ») : la boîte entre dans la scène comme une molécule de la barre
        (`calcDrawWaterBox`), donc elle se VOIT, se style et se cache comme les autres. */
     + ' They are drawn in the view as their own molecule (« 💧 water box … » in the Molecules'
-    + ' bar: ☐ None hides them, and 🗑 removes them).';
+    + ' bar: ☐ None hides them, and 🗑 removes them) — and their ✔ IS TICKED by the gesture'
+    + ' that built the box (the remark: « I still do not see the water and the box in the MD'
+    + ' simulation »), so the box is on screen at once; untick the Water row to clear the'
+    + ' view again (the older rule kept water OFF until it was ticked).';
 };
 
 /** POURQUOI UN DÉPART S'EST ARRÊTÉ LÀ — une phrase par `reason` du module, traduite
@@ -17744,6 +17753,18 @@ const calcDrawWaterBox = async (geom) => {
     extraCompsRef.current.push({ id, name: label, comp: mol, baseReps, style: 'auto', color: '', colorMode: 'element', transparency: 0, position: [0, 0, 0] });
     setExtraMols(extraMolsSnapshot());
     setVisibleMolKeys((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
+    /* 💧 LES EAUX DE LA BOÎTE SONT MONTRÉES — la remarque de cette session : « I still do
+       not see the water and the box in the MD simulation ». La cause : KIND_VISIBLE_BY_DEFAULT
+       éteint le genre `water` (« un boîtier solvaté ne doit pas masquer la protéine »), donc la
+       boîte qu'un geste venait de construire était DESSINÉE PAR RIEN — `setVisibleMolKeys`
+       allume la MOLÉCULE de la barre, pas la RANGÉE de la fenêtre de style. Les ✔ sont donc
+       posés ici, sur les sections de la boîte que le geste vient de créer, et la reconstruction
+       est redemandée (`bumpSectionEpoch`) : la boîte se voit sur l'image qui l'a fait entrer.
+       ⚠ LE ✔ RESTE UN GESTE DE L'UTILISATEUR : ☐ None l'éteint, ☑ la rallume. */
+    const boxSections = ensureSections(mol, id);
+    boxSections.forEach((sec) => { sectionVisRef.current[sec.id] = true; });
+    setSectionVis((prev) => { const next = { ...prev }; boxSections.forEach((sec) => { next[sec.id] = true; }); return next; });
+    bumpSectionEpoch();
     return { ok: true, id };
   } catch { return { ok: false, reason: 'load-failed' }; }
 };
@@ -21111,39 +21132,61 @@ const renderForceGestures = () => (
    vivait dans la barre de commandes est donc devenu CETTE FENÊTRE : `renderCalcWindow`
    la peint (les paramètres n · m · 🔥 recuit · 🖼 frames, puis les ÉTAPES du calcul : la
    progression, le rapport, la table classée de la famille et ses boutons de
-   sauvegarde), et `renderCalcConstraints` — appelé par son bouton ⚙ — porte les DEUX
-   tables de contraintes avec TOUS leurs boutons. Rien n'a réécrit la physique : les
-   mêmes `calcRestraints`, `calcDihedrals` et module pur.
+   sauvegarde). ⚠ ELLE NE PORTE PLUS LES TABLES NI LE CHAMP — la demande de cette session :
+   « “Parameters and Constraints” section should be in the “modify” menu and should
+   contain the description of the force field (now in the structure calculation window) and
+   the constraints tables with the associated buttons (now in the structure calculation
+   window) ». Le champ de forces et les DEUX tables ont donc leur FENÊTRE
+   (`renderParamsWindow`, ouverte par le bouton ⚙ du groupe ✏️ Modify), et les réglages de
+   la dynamique du protocole ne sont rendus qu'UNE fois, ici (`renderCalcMdOptions`) : « The
+   structure calculation window contains twice the simulated annealing parameter because
+   one set of parameters was inside the “Parameters and Constraints” but they are not
+   necessary there. » Rien n'a réécrit la physique : les mêmes `calcRestraints`,
+   `calcDihedrals` et module pur.
    ⚠ SEULE LA PLACE DU PANNEAU CHANGE : la barre de commandes n'est plus poussée par une
    section pleine largeur, la vue 3D ne l'est plus non plus (le dock est à sa gauche). */
-const renderCalcWindow = () => {
-  const live = calcGeometryNow();
-  const geom = live ? live.geom : null;
-  const ranked = calcResult;
-  return (
-    <div className="shrink-0 w-[360px] flex flex-col gap-1.5 bg-white border border-indigo-200 rounded-xl p-2 overflow-hidden"
-      style={{ height: (viewerCollapsed ? 0 : viewH) + 'px' }}>
-      <div className="flex items-center justify-between gap-1 shrink-0">
-        <span className="text-[10px] font-black text-indigo-700 uppercase tracking-wide">
-          🧬 Structure calculation{ranked ? ` (${ranked.retained.length}/${ranked.tried})` : ''}
-        </span>
-        <button type="button" onClick={() => toggleCalcDock(false)}
-          title="Collapse the structure-calculation window — it folds to a thin tab on the left edge (🧬 brings it back), and the 3D view takes the whole width again. Nothing is lost: these are the panel's own values, the two constraint tables and the family."
-          className="px-1.5 py-0.5 text-[9px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100">⇤</button>
-      </div>
-      <div className="overflow-y-auto custom-scrollbar flex flex-col gap-1.5">
+/* ── ⚙ LA FENÊTRE « PARAMETERS AND CONSTRAINTS » — LE BOUTON DU MENU ✏️ MODIFY ─────
+   La demande de cette session : « “Parameters and Constraints” section should be in the
+   “modify” menu and should contain the description of the force field (now in the
+   structure calculation window) and the constraints tables with the associated buttons
+   (now in the structure calculation window: add picked pair, add row, save distances,
+   load distances, clear list, and “secondary structure → phi, psi”) ». Elle est donc
+   SORTIE de la fenêtre 🧬 : son bouton vit dans le groupe ✏️ MODIFY de « 2 · Toolbar »
+   (le même groupe que ✏️ Torsion et 🧬 Structure from sequence), et ce qu’il ouvre est
+   cette fenêtre — un dock de la vue 3D, comme 🌡 MD, 🧬 Structure calculation et 🪢
+   Ramachandran (⇤ la replie en onglet, le bouton la referme).
+   Elle porte EXACTEMENT deux choses, et rien d’autre :
+     · 🧲 LE CHAMP DE FORCES — les familles nommées, leurs k, leurs unités et la lecture
+       du ⟳ Energy (la description qui vivait dans la fenêtre du calcul) ;
+     · LES DEUX TABLES — les distances à respecter (⌖ add picked pair · ➕ add a row ·
+       💾 save distances · 📂 load distances · Clear the list) et les φ/ψ imposés (⛓
+       “secondary structure → φ/ψ”), avec la cible et le ⚖ poids de chaque ligne.
+   ⚠ AUCUN RÉGLAGE DU PROTOCOLE ICI — la demande : « The structure calculation window
+   contains twice the simulated annealing parameter because one set of parameters was
+   inside the “Parameters and Constraints” but they are not necessary there. » Les pas,
+   le dt, la durée, 🌡 hot → 🌡 cold, ⚖ equil, ⚒ sweeps, 🪢 ω et 🎯 target sont rendus
+   UNE fois, par `renderCalcMdOptions()`, dans la fenêtre 🧬 ; n · m · 🔥 recuit · 🖼
+   frames et 👁 watch y restent aussi. Les deux gestes lisent les mêmes états
+   (`calcRestraints`, `calcDihedrals`, `calcForce`) : la table montrée EST celle du
+   ▶ Run, du ▶ MD, du ⚒ Minimise et du ⟳ Energy. */
+const renderParamsWindow = () => (
+  <div className="shrink-0 w-[380px] flex flex-col gap-1.5 bg-white border border-slate-300 rounded-xl p-2 overflow-hidden"
+    style={{ height: (viewerCollapsed ? 0 : viewH) + 'px' }}>
+    <div className="flex items-center justify-between gap-1 shrink-0">
+      <span className="text-[10px] font-black text-slate-700 uppercase tracking-wide"
+        title="THE PARAMETERS AND CONSTRAINTS OF THE FORCE FIELD — the description of the families it sums, and the two constraint tables every gesture reads (▶ Run, ▶ MD, ⚒ Minimise, ⟳ Energy). It is opened from the ✏️ Modify menu and folded with ⇤, exactly like the 🌡 MD, 🧬 Structure calculation and 🪢 Ramachandran windows.">
+        ⚙ Parameters and Constraints
+      </span>
+      <button type="button" onClick={() => toggleParamsDock(false)}
+        title="Collapse this window — it folds to a thin tab on the left edge (its ✏️ Modify button brings it back), and the 3D view takes the whole width again. Nothing is lost: the tables and the field are the panel’s own state."
+        className="px-1.5 py-0.5 text-[9px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100">⇤</button>
+    </div>
+    <div className="overflow-y-auto custom-scrollbar flex flex-col gap-1.5">
       <p className="text-[9px] font-black text-slate-500 uppercase tracking-wide"
-        title="THE PARAMETERS OF THIS CALCULATION, AND WHAT FOLLOWS ITS STAGES — n · m below, then ▶ Run / ⏹ Stop and the report that says where the calculation is, then the ranked family. The two constraint tables (distances AND the imposed φ/ψ) are behind ⚙ Parameters and Constraints, with the MD parameters of the protocol.">
-        ⚙ n · m · 🔥 recuit · 🖼 frames · le protocole · les tables
+        title="🧲 the description of the force field the gestures sum (its named families, in kcal/mol) · ⌖ the distances to respect · ⛓ the imposed φ/ψ. ⚠ THE PROTOCOL IS NOT HERE: n · m · 🔥 recuit · 🖼 frames, the dynamics (steps, dt, total, 🌡 hot → 🌡 cold, ⚖ equil, ⚒ sweeps), 🪢 ω and 🎯 target stay in the 🧬 Structure calculation window, each rendered once.">
+        🧲 the force field · ⌖ the distances · ⛓ the imposed φ/ψ
       </p>
-      <button type="button" onClick={() => setCalcConstraints((v) => !v)}
-        className={`self-start px-2 py-1 text-[10px] font-bold rounded border transition-colors ${calcConstraints ? 'bg-indigo-100 border-indigo-400 text-indigo-900 hover:bg-indigo-200' : 'bg-white border-indigo-300 text-indigo-700 hover:bg-indigo-100'}`}
-        title="PARAMETERS AND CONSTRAINTS — the request, verbatim: « move the structure constraint tables with their buttons (add picked pair, add row, save distances, load distances, clear list, and “secondary structure → phi, psi”) into a new button “Parameters and Constraints” which if clicked shows MD parameters and structural constraints tables. » Open it for the MD parameters of the protocol (steps, dt, hot → cold, the equilibration share, the ⚒ sweeps, 🪢 ω, 🎯 the target function) AND the two tables: the distances to respect (⌖ / ➕ / 💾 / 📂 / Clear) and the imposed φ/ψ (⛓). Closed, the window only shows n · m and the stages of the calculation.">
-        ⚙ Parameters and Constraints {calcConstraints ? '▾' : '▸'}
-      </button>
-      {calcConstraints && (
-      <div className="rounded-lg border border-slate-200 bg-slate-50/60 p-2 flex flex-col gap-1.5">
-        <div className="flex flex-wrap items-center gap-1.5">{renderCalcMdOptions()}</div>
+      <div className="flex flex-col gap-1.5">
         <div className="flex flex-wrap items-center gap-1.5">
           {/* ⌖ SON PROPRE PIQUAGE — la demande : « dedicated pair picker ». Le ⌖ arme un
               piquage À LUI : DEUX atomes (A · B) peints en BLEU, son état, ses phrases.
@@ -21380,15 +21423,89 @@ const renderCalcWindow = () => {
           </table>
         </div>
       )}
-      {ranked && ranked.comp && ranked.comp !== componentRef.current && (
-        <p className="text-[10px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">
-          ⚠ This family was computed on ANOTHER molecule than the one on screen now (it was reloaded, or another molecule
-          is shown): its scores stay readable, but ⤓ Load would write coordinates that belong to the other one and is
-          refused. ▶ Run does it again on this molecule.
-        </p>
-      )}
       </div>
-      )}
+      <div className="flex flex-col gap-1.5">
+      <div className="rounded-lg border border-slate-200 bg-slate-50/60 p-2 flex flex-col gap-1.5">
+        <div className="flex flex-wrap items-center justify-between gap-1.5">
+          <span className="text-[10px] font-black text-slate-600 uppercase tracking-wide"
+            title="THE FORCE FIELD OF THIS CALCULATION — one list of named families, summed by the module, IN kcal/mol. The annealing, the dynamics, the minimisation and the score all read THIS list: no engine has a physics of its own. The charges, the non-polar solvent and the hydrogens it adds are part of it, and the panel writes what it computes. ⚙ The three gestures that PUT this field to work — ▶ MD, ⚒ Minimise and ⟳ Energy — sit in the button row above, next to 🧬 Structure calculation (they act on the molecule as it stands, so they need no section open).">
+            🧲 Force field · {FORCE_FIELD_FAMILIES.length} families · kcal/mol
+          </span>
+          <span className="text-[10px] font-semibold text-slate-500">
+            ⚙ ▶ MD · ⚒ Minimise · ⟳ Energy — in the row of 🧬 Structure calculation
+          </span>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-1">
+          {forceFieldRowsOf().map((row) => (
+            <div key={row.id} className="rounded border border-slate-200 bg-white px-1.5 py-1"
+              title={`${row.label} — ${row.of}; ${row.rule}`}>
+              <div className="text-[9px] font-black text-slate-500 uppercase tracking-wide flex items-center justify-between gap-1">
+                <span>{row.icon} {row.label}</span>
+                <span className="font-mono text-slate-400">k {row.k} {row.id === 'elec' ? '' : row.unit}</span>
+              </div>
+              <div className="text-[9px] text-slate-500 leading-tight">{row.of}</div>
+              <div className="text-[10px] font-mono font-bold text-slate-700">
+                {calcForce ? Number(calcForce[row.id]).toFixed(2) : '—'}
+                <span className="text-slate-400 font-normal"> kcal/mol</span>
+              </div>
+            </div>
+          ))}
+        </div>
+        {calcForce && (
+          <p className="text-[10px] text-slate-600">
+            Read on the molecule on screen: <b>E = {calcForce.total.toFixed(2)} kcal/mol</b> =
+            {' '}bonds {calcForce.bond.toFixed(2)} + angles {calcForce.angle.toFixed(2)}
+            {' '}+ rings {calcForce.planar.toFixed(2)} + vdW {calcForce.vdw.toFixed(2)}
+            {' '}+ µ {calcForce.elec.toFixed(2)} + solvent {calcForce.solv.toFixed(2)}
+            {' '}+ φ/ψ {calcForce.rama.toFixed(2)} + χ1 {calcForce.chi.toFixed(2)}
+            {' '}+ ω {calcForce.omega.toFixed(2)} + your distances {calcForce.restraint.toFixed(2)}
+            {' '}· entropy {calcForce.entropyReport.total.toFixed(1)} cal·mol⁻¹·K⁻¹
+            ({calcForce.entropy.toFixed(2)} kcal/mol of −T·S)
+            {' '}· <b>{calcForce.added.hydrogens}</b> hydrogens added on {calcForce.added.heavy} heavy atoms
+            ({calcForce.added.atoms} atoms in total) · net charge {calcForce.charges.net.toFixed(3)} e
+            ({calcForce.charges.method}) · surface {calcForce.surface.estimate.toFixed(0)} Å²
+            {calcForce.surface.exact != null ? ` (exact ${calcForce.surface.exact.toFixed(0)} Å²)` : ''}
+            {' '}· {calcForce.torsions.residues} residue{calcForce.torsions.residues === 1 ? '' : 's'} with a backbone
+            ({calcForce.torsions.phi.length} φ, {calcForce.torsions.psi.length} ψ, {calcForce.omegaReport.count} ω, {calcForce.chiReport.count} χ1)
+            {' '}· φ/ψ outside a basin: <b>{calcForce.ramaReport.violations}</b>
+            {calcForce.ramaReport.worst ? ` (worst ${calcForce.ramaReport.worst.gap.toFixed(0)}° away, ${calcForce.ramaReport.worst.region})` : ''}
+            {' '}· χ1 between wells: <b>{calcForce.chiReport.violations}</b>
+            {' '}· ω outside ± {STRUCTURE_CALC_OMEGA_TOLERANCE}°: <b>{calcForce.omegaReport.violations}</b>
+            {' '}· pairs inside {calcForce.nonbonded.limit} Å: {calcForce.nonbonded.count}
+            {calcForce.nonbonded.repulsive ? `, ${calcForce.nonbonded.repulsive} repulsive` : ''}.
+          </p>
+        )}
+        {/* ⚠ LE BLOC DE COMMENTAIRE QUI VIVAIT ICI (« les trois familles de torsion… ») A ÉTÉ
+            RETIRÉ — la demande de cette session : « Please remove all these large commentaries
+            in the MD window and in the “structure calculation section”. » Ce qu'il disait est
+            resté là où il sert : dans les infobulles des familles (🧲 ci-dessus) et dans les
+            rapports des gestes. */}
+      </div>
+      </div>
+    </div>
+  </div>
+);
+
+const renderCalcWindow = () => {
+  const live = calcGeometryNow();
+  const geom = live ? live.geom : null;
+  const ranked = calcResult;
+  return (
+    <div className="shrink-0 w-[360px] flex flex-col gap-1.5 bg-white border border-indigo-200 rounded-xl p-2 overflow-hidden"
+      style={{ height: (viewerCollapsed ? 0 : viewH) + 'px' }}>
+      <div className="flex items-center justify-between gap-1 shrink-0">
+        <span className="text-[10px] font-black text-indigo-700 uppercase tracking-wide">
+          🧬 Structure calculation{ranked ? ` (${ranked.retained.length}/${ranked.tried})` : ''}
+        </span>
+        <button type="button" onClick={() => toggleCalcDock(false)}
+          title="Collapse the structure-calculation window — it folds to a thin tab on the left edge (🧬 brings it back), and the 3D view takes the whole width again. Nothing is lost: these are the panel's own values, the two constraint tables and the family."
+          className="px-1.5 py-0.5 text-[9px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100">⇤</button>
+      </div>
+      <div className="overflow-y-auto custom-scrollbar flex flex-col gap-1.5">
+      <p className="text-[9px] font-black text-slate-500 uppercase tracking-wide"
+        title="THE PARAMETERS OF THIS CALCULATION, AND WHAT FOLLOWS ITS STAGES — n · m · 🔥 recuit · 🖼 frames here, then the dynamics of the protocol (steps, dt, total, 🌡 hot → 🌡 cold, ⚖ equil, ⚒ sweeps, 🪢 ω, 🎯 target), then ▶ Run / ⏹ Stop and the report that says where the calculation is, then the ranked family. ⚠ THE FORCE FIELD AND THE TWO CONSTRAINT TABLES ARE NOT HERE ANY MORE: they live in ⚙ Parameters and Constraints, in the ✏️ Modify menu of “2 · Toolbar” (the request: « should be in the “modify” menu »).">
+        ⚙ n · m · 🔥 recuit · 🖼 frames · la dynamique · les étapes
+      </p>
       <div className="flex flex-wrap items-center gap-3 text-[10px] font-bold text-indigo-800">
         <label className="flex items-center gap-1"
           title="n — how many structures are BUILT from scratch. Each one is a fresh random draw of every rotatable dihedral, and each one is put through the standard protocol (anneal → dynamics → minimise → quench) before being scored. More starts means more chances that at least one of them can obey your distances — and more time: one start costs an annealing schedule, a whole dynamics and a minimisation.">
@@ -21479,67 +21596,16 @@ const renderCalcWindow = () => {
           {calcMsg}
         </p>
       )}
-      {/* ── 🧲 LE CHAMP DE FORCES — LES FAMILLES, PUIS 🌡 LA DYNAMIQUE ET ⚒ LA
-          MINIMISATION SUR LA MOLÉCULE TELLE QU'ELLE EST. Les lignes de la table du champ
-          viennent TOUTES de `forceFieldRowsOf` (aucun poids, aucune règle, aucune unité
-          n'est écrit ici) ; les énergies du moment viennent de `forceFieldEnergyOf`, relu
-          sur les coordonnées à l'écran quand on le demande (⟳ et après chaque geste). */}
-      <div className="rounded-lg border border-slate-200 bg-slate-50/60 p-2 flex flex-col gap-1.5">
-        <div className="flex flex-wrap items-center justify-between gap-1.5">
-          <span className="text-[10px] font-black text-slate-600 uppercase tracking-wide"
-            title="THE FORCE FIELD OF THIS CALCULATION — one list of named families, summed by the module, IN kcal/mol. The annealing, the dynamics, the minimisation and the score all read THIS list: no engine has a physics of its own. The charges, the non-polar solvent and the hydrogens it adds are part of it, and the panel writes what it computes. ⚙ The three gestures that PUT this field to work — ▶ MD, ⚒ Minimise and ⟳ Energy — sit in the button row above, next to 🧬 Structure calculation (they act on the molecule as it stands, so they need no section open).">
-            🧲 Force field · {FORCE_FIELD_FAMILIES.length} families · kcal/mol
-          </span>
-          <span className="text-[10px] font-semibold text-slate-500">
-            ⚙ ▶ MD · ⚒ Minimise · ⟳ Energy — in the row of 🧬 Structure calculation
-          </span>
-        </div>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-1">
-          {forceFieldRowsOf().map((row) => (
-            <div key={row.id} className="rounded border border-slate-200 bg-white px-1.5 py-1"
-              title={`${row.label} — ${row.of}; ${row.rule}`}>
-              <div className="text-[9px] font-black text-slate-500 uppercase tracking-wide flex items-center justify-between gap-1">
-                <span>{row.icon} {row.label}</span>
-                <span className="font-mono text-slate-400">k {row.k} {row.id === 'elec' ? '' : row.unit}</span>
-              </div>
-              <div className="text-[9px] text-slate-500 leading-tight">{row.of}</div>
-              <div className="text-[10px] font-mono font-bold text-slate-700">
-                {calcForce ? Number(calcForce[row.id]).toFixed(2) : '—'}
-                <span className="text-slate-400 font-normal"> kcal/mol</span>
-              </div>
-            </div>
-          ))}
-        </div>
-        {calcForce && (
-          <p className="text-[10px] text-slate-600">
-            Read on the molecule on screen: <b>E = {calcForce.total.toFixed(2)} kcal/mol</b> =
-            {' '}bonds {calcForce.bond.toFixed(2)} + angles {calcForce.angle.toFixed(2)}
-            {' '}+ rings {calcForce.planar.toFixed(2)} + vdW {calcForce.vdw.toFixed(2)}
-            {' '}+ µ {calcForce.elec.toFixed(2)} + solvent {calcForce.solv.toFixed(2)}
-            {' '}+ φ/ψ {calcForce.rama.toFixed(2)} + χ1 {calcForce.chi.toFixed(2)}
-            {' '}+ ω {calcForce.omega.toFixed(2)} + your distances {calcForce.restraint.toFixed(2)}
-            {' '}· entropy {calcForce.entropyReport.total.toFixed(1)} cal·mol⁻¹·K⁻¹
-            ({calcForce.entropy.toFixed(2)} kcal/mol of −T·S)
-            {' '}· <b>{calcForce.added.hydrogens}</b> hydrogens added on {calcForce.added.heavy} heavy atoms
-            ({calcForce.added.atoms} atoms in total) · net charge {calcForce.charges.net.toFixed(3)} e
-            ({calcForce.charges.method}) · surface {calcForce.surface.estimate.toFixed(0)} Å²
-            {calcForce.surface.exact != null ? ` (exact ${calcForce.surface.exact.toFixed(0)} Å²)` : ''}
-            {' '}· {calcForce.torsions.residues} residue{calcForce.torsions.residues === 1 ? '' : 's'} with a backbone
-            ({calcForce.torsions.phi.length} φ, {calcForce.torsions.psi.length} ψ, {calcForce.omegaReport.count} ω, {calcForce.chiReport.count} χ1)
-            {' '}· φ/ψ outside a basin: <b>{calcForce.ramaReport.violations}</b>
-            {calcForce.ramaReport.worst ? ` (worst ${calcForce.ramaReport.worst.gap.toFixed(0)}° away, ${calcForce.ramaReport.worst.region})` : ''}
-            {' '}· χ1 between wells: <b>{calcForce.chiReport.violations}</b>
-            {' '}· ω outside ± {STRUCTURE_CALC_OMEGA_TOLERANCE}°: <b>{calcForce.omegaReport.violations}</b>
-            {' '}· pairs inside {calcForce.nonbonded.limit} Å: {calcForce.nonbonded.count}
-            {calcForce.nonbonded.repulsive ? `, ${calcForce.nonbonded.repulsive} repulsive` : ''}.
-          </p>
-        )}
-        {/* ⚠ LE BLOC DE COMMENTAIRE QUI VIVAIT ICI (« les trois familles de torsion… ») A ÉTÉ
-            RETIRÉ — la demande de cette session : « Please remove all these large commentaries
-            in the MD window and in the “structure calculation section”. » Ce qu'il disait est
-            resté là où il sert : dans les infobulles des familles (🧲 ci-dessus) et dans les
-            rapports des gestes. */}
-      </div>
+      {/* ⚠ CETTE FAMILLE APPARTIENT-ELLE À LA MOLÉCULE À L'ÉCRAN ? — la phrase vivait dans
+          la boîte ⚙ avant que les tables la quittent : c'est une lecture du 🧬 (les modèles,
+          leur note), donc elle est revenue ici, avec le tableau qu'elle prévient. */}
+      {ranked && ranked.comp && ranked.comp !== componentRef.current && (
+        <p className="text-[10px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">
+          ⚠ This family was computed on ANOTHER molecule than the one on screen now (it was reloaded, or another molecule
+          is shown): its scores stay readable, but ⤓ Load would write coordinates that belong to the other one and is
+          refused. ▶ Run does it again on this molecule.
+        </p>
+      )}
       {ranked && ranked.ranking.length > 0 && (
         <div className="flex flex-col gap-1.5">
           <p className="text-[10px] text-slate-600">
@@ -22378,7 +22444,16 @@ className="border border-amber-300 rounded-md px-1.5 py-1 text-[11px] bg-white o
 <span className="w-px h-6 bg-slate-200 shrink-0" aria-hidden="true" />
 <div className="flex flex-wrap items-center gap-1 rounded-md border border-amber-200 bg-amber-50/40 px-1.5 py-1">
 <span className="text-[9px] font-black text-amber-700 uppercase tracking-wide whitespace-nowrap" title="Change the molecule itself: build it from the page's sequence, show or hide the drawn disulphide bonds, rebuild the hydrogens, rename the atoms, colour by electrostatic potential and renumber the residues.">✏️ Modify</span>
-{/* 🧬 From sequence — the page's sequence (Proteins / DNA / RNA) becomes a 3D
+{/* ⚙ PARAMETERS AND CONSTRAINTS — le bouton du groupe ✏️ MODIFY (la demande de cette
+   session : « “Parameters and Constraints” section should be in the “modify” menu »). Il
+   ouvre et referme la fenêtre de gauche (`renderParamsWindow`) : le champ de forces et
+   les DEUX tables de contraintes, et rien des réglages du protocole (ceux-là sont rendus
+   une seule fois, dans la fenêtre 🧬). */}
+<button type="button" onClick={() => toggleParamsDock()}
+  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${paramsDock ? 'bg-slate-200 border-slate-400 text-slate-900 hover:bg-slate-300' : 'bg-white border-slate-400 text-slate-700 hover:bg-slate-100'}`}
+  title={`PARAMETERS AND CONSTRAINTS — the description of the force field and the two constraint tables, at the LEFT of the 3D view (${paramsDock ? 'open right now: this button closes it' : 'closed: this button opens it; ⇤ folds it to a thin tab'}). Everything of the FORCE FIELD is there: the named families the gestures sum (bonds, angles, planar rings, vdW, electrostatics, solvent, ω, φ/ψ, χ1, your distances), their k and their unit, and the ⟳ reading of the molecule on screen. And the two tables with ALL their buttons: the distances to respect (⌖ add picked pair · ➕ add a row · 💾 save distances · 📂 load distances · Clear the list) and the imposed φ/ψ (⛓ secondary structure → φ/ψ). ⚠ THE PROTOCOL IS NOT HERE: n · m · 🔥 recuit · 🖼 frames, the dynamics (steps, dt, total, 🌡 hot → 🌡 cold, ⚖ equil, ⚒ sweeps), 🪢 ω and 🎯 target live in the 🧬 Structure calculation window, rendered once.`}>
+  ⚙ Parameters and Constraints{paramsDock ? ' ▾' : ' ▸'}
+</button>{/* 🧬 From sequence — the page's sequence (Proteins / DNA / RNA) becomes a 3D
     structure at any moment, even over a loaded PDB (which is put aside: the
     ↩ Restore PDB button of §1 General brings it back). No network round trip:
     the page builds the backbone from the sequence and the secondary structure
@@ -23158,18 +23233,28 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
     vue prend le RESTE (`flex-1 min-w-0`), et replier le dock rend la largeur entière à
     la molécule. Le graphe ne recouvre donc jamais la structure — il la pousse. */}
 <div className="flex items-stretch gap-2">
-{/* LES DOCK 🌡 MD · 🧬 STRUCTURE CALCULATION · 🪢 RAMACHANDRAN — LES TROIS FENÊTRES DE LA
-    VUE 3D, À SA GAUCHE. Repliée, chacune ne laisse qu'un onglet vertical sur le bord ; les
-    trois peuvent être ouvertes ensemble : les colonnes POUSSENT la molécule, aucune ne la
-    recouvre. ⚠ LE 🧬 EN FAIT PARTIE DEPUIS CETTE SESSION — la demande : « Transform the
-    “structure calculation” page in an internal collapsible window as that of MD or
-    Ramachandran … ». Son onglet est le premier de la rangée (🧬 STRUCT.). */}
+{/* LES DOCK 🌡 MD · 🧬 STRUCTURE CALCULATION · ⚙ PARAMETERS AND CONSTRAINTS · 🪢
+    RAMACHANDRAN — LES QUATRE FENÊTRES DE LA VUE 3D, À SA GAUCHE. Repliée, chacune ne laisse
+    qu'un onglet vertical sur le bord ; elles peuvent être ouvertes ensemble : les colonnes
+    POUSSENT la molécule, aucune ne la recouvre. ⚠ LE 🧬 EN FAIT PARTIE DEPUIS LA SESSION
+    PRÉCÉDENTE — la demande : « Transform the “structure calculation” page in an internal
+    collapsible window as that of MD or Ramachandran … ». ⚠ LE ⚙, LUI, EST DE CETTE SESSION
+    — la demande : « “Parameters and Constraints” section should be in the “modify” menu » :
+    son onglet suit le 🧬, et son bouton vit dans le groupe ✏️ Modify de « 2 · Toolbar ». */}
 {calcDock ? renderCalcWindow() : (
   <button type="button" onClick={() => toggleCalcDock(true)}
-    title="Open the structure-calculation window — its parameters (n · m · 🔥 recuit · 🖼 frames), the stages of the calculation, the ranked family and 💾 Save the family / Save the report, at the LEFT of the 3D view (expandable · compressible). Its ⚙ Parameters and Constraints button holds the two constraint tables and the MD parameters of the protocol. The 🧬 button of the toolbar closes it again."
+    title="Open the structure-calculation window — its parameters (n · m · 🔥 recuit · 🖼 frames), the stages of the calculation, the ranked family and 💾 Save the family / Save the report, at the LEFT of the 3D view (expandable · compressible). Its ⚙ Parameters and Constraints button is GONE — the force field and the two constraint tables now have their OWN ⚙ window, opened from the ✏️ Modify menu (the request: « “Parameters and Constraints” section should be in the “modify” menu »). The 🧬 button of the toolbar closes it again."
     className="shrink-0 w-7 flex items-center justify-center gap-1 bg-white border border-indigo-200 rounded-xl text-indigo-700 hover:bg-indigo-50"
     style={{ height: (viewerCollapsed ? 0 : viewH) + 'px' }}>
     <span className="text-[10px] font-black tracking-widest" style={{ writingMode: 'vertical-rl' }}>🧬 STRUCT.</span>
+  </button>
+)}
+{paramsDock ? renderParamsWindow() : (
+  <button type="button" onClick={() => toggleParamsDock(true)}
+    title="Open the ⚙ Parameters and Constraints window — the description of the force field (its named families, in kcal/mol, with the ⟳ reading) and the two constraint tables with their buttons (⌖ add picked pair · ➕ add a row · 💾 save distances · 📂 load distances · Clear the list · ⛓ secondary structure → φ/ψ), at the LEFT of the 3D view. It is opened and closed by the ⚙ button of the ✏️ Modify menu (“2 · Toolbar”), and ⇤ folds it to a thin tab on the edge."
+    className="shrink-0 w-7 flex items-center justify-center gap-1 bg-white border border-slate-300 rounded-xl text-slate-700 hover:bg-slate-50"
+    style={{ height: (viewerCollapsed ? 0 : viewH) + 'px' }}>
+    <span className="text-[10px] font-black tracking-widest" style={{ writingMode: 'vertical-rl' }}>⚙ PARAM. &amp; CONSTRAINTS</span>
   </button>
 )}
 {mdDock ? renderMdWindow() : (
@@ -23220,13 +23305,11 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
       {/* ⚠ CE QUE LE DOCK EST — et ce qu'il n'est pas : un plan, pas un calcul. La phrase
           est là parce que la QUESTION (« pourquoi mes Ramachandran sont mauvais ? ») se
           pose ici : c'est 🧬 Structure calculation qui porte les bassins comme cible. */}
-      <p className="text-[9px] text-slate-500">
-        The coloured shapes are the basins of the classic figure — the SAME polygons the
-        calculation uses as its φ/ψ potential (🧬 Structure calculation → 🧭 Force field):
-        a point here is a point the calculation would drive back inside. A plan, not a
-        calculation: this panel only reads the coordinates on screen.
-      </p>
-    </div>
+      {/* ⚠ LE PARAGRAPHE QUI VIVAIT ICI (« The coloured shapes are the basins of the classic
+          figure… ») A ÉTÉ RETIRÉ — la remarque de cette session : « Large commentaries are
+          still present in the windows inside the viewer. » Ce qu'il disait est resté là où
+          il sert : dans les infobulles des familles du 🧲 Force field (la fenêtre ⚙ Parameters
+          and Constraints) et dans le rapport des gestes. */}    </div>
   </div>
 ) : (
   <button type="button" onClick={() => toggleRamaDock(true)}
