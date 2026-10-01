@@ -144,6 +144,10 @@ import {
   STRUCTURE_CALC_MD_STEPS, STRUCTURE_CALC_MD_FRAME, STRUCTURE_CALC_MD_HOT,
   STRUCTURE_CALC_MD_COLD, STRUCTURE_CALC_MD_DT, STRUCTURE_CALC_MD_FRICTION,
   STRUCTURE_CALC_MD_EQUILIBRATION, STRUCTURE_CALC_MIN_ROUNDS,
+  /* 💧 LE SOLVANT DE LA DYNAMIQUE ISOLÉE — les modèles et leur diélectrique viennent du
+     module : le viewer n'écrit aucun ε, et il ne promet pas d'eau explicite que le moteur
+     n'a pas (voir utils/structureCalc.js). */
+  STRUCTURE_CALC_SOLVENT, STRUCTURE_CALC_SOLVENTS, structureCalcSolventOf,
   /* ⛓ LA STRUCTURE SECONDAIRE IMPOSÉE → DES CONTRAINTES DE DIHÈDRE — la conversion,
      la relecture pour les rapports, les lettres et la fenêtre : tout vient du module
      (aucun chiffre de φ/ψ n'est écrit dans le JSX). */
@@ -7781,23 +7785,31 @@ const [ramaDock, setRamaDock] = useState(() => {
   try { return localStorage.getItem(RAMA_DOCK_KEY) !== '0'; } catch { return true; }
 });
 /* ── 🌡 LA FENÊTRE MD — LE DOCK DE GAUCHE DE LA VUE 3D ─────────────────────────
-   La demande, mot pour mot : « Il pulsante MD deve aprire una finestra collapsable a
-   sinistra all'interno del viewer. nella finestra devono comparire tutti i suoi
-   parametri che adesso sono in “structure calculation” senza i parametri (n starting,
-   m kept, recuit, frames). Tale finestra si deve richiudere quando si riclicca su MD. »
+   La demande qui l'a créée : « Il pulsante MD deve aprire una finestra collapsable a
+   sinistra all'interno del viewer … Tale finestra si deve richiudere quando si riclicca
+   su MD. » Celle de CETTE session : « bring back all the MD parameters related to
+   structure calculation in the settings of structure calculation … In the window
+   dedicated to MD put the parameters for an MD run (temperature, explicit, implicit
+   solvent, steps, stepinterval, duration) … This MD should be independent of structure
+   calculation. »
 
-   Ce qu'elle est : la MÊME fenêtre à gauche de la vue 3D que le dock 🪢 (elle vit dans
-   la rangée, jamais par-dessus la molécule ; repliée, il ne reste qu'un onglet vertical
-   🌡 MD sur le bord). Elle porte les réglages de la dynamique — les paramètres que la
-   demande cite, et RIEN d'autre : n starting, m kept, 🔥 recuit et 🖼 frames restent au
-   🧬 Structure calculation (ce sont des paramètres du CALCUL, pas de la dynamique), et
-   `renderMdOptions()` les écrit une seule fois pour les deux gestes.
+   ⚠ LES DEUX DYNAMIQUES SONT DONC SÉPARÉES, et c'est tout l'objet de ce bloc :
+     · le 🧬 Structure calculation a LA SIENNE — les pas, le pas de temps, la durée, les
+       deux températures (🌡 hot → 🌡 cold), la part d'équilibration et les balayages de
+       ⚒ : `calcMdSteps`, `calcMdDt`, `calcMdHot`, `calcMdCold`, `calcMdEquil`,
+       `calcMinimise`. Son ▶ Run les lit, et LUI SEUL : `renderCalcMdOptions()` les écrit
+       dans le panneau du calcul (chaque départ, c'est un recuit PUIS cette dynamique) ;
+     · cette fenêtre a LA SIENNE — `mdTemp`, `mdSolvent`, `mdSteps`, `mdDt`, `mdImage`,
+       `mdFreeOmega` — et son ▶ MD les lit sans rien demander au 🧬 : une dynamique
+       ISOLÉE, à UNE température, avec son solvant, sa durée et son intervalle d'images,
+       sur la molécule telle qu'elle est. La 📏 case est son seul pont avec le panneau,
+       et c'est une OPTION : décochée, elle part sans aucune contrainte.
 
-   ⚠ UN SEUL JEU DE VALEURS : `calcMdSteps`, `calcMdHot`, `calcMdCold`, `calcMdEquil`,
-   `calcMdDt`, `calcMinimise`, `calcOmegaFree` sont les états que le ▶ Run du 🧬 lit
-   aussi. La fenêtre ne fait donc pas « un autre MD » : elle donne SON bouton à la
-   dynamique et rend ses réglages visibles sans ouvrir une section. Le bouton de la
-   barre (▶ MD), lui, ne fait plus qu'OUVRIR/FERMER cette fenêtre — c'est la demande. */
+   ⚠ CE QUI RESTE COMMUN EST UNE DONNÉE, PAS UN RÉGLAGE : la TABLE des distances (lue par
+   la 📏 case) et les contraintes de φ/ψ imposées. Aucun des deux gestes ne peut donc lire
+   un chiffre que l'autre vient de changer.
+
+   Le bouton de la barre (▶ MD), lui, ne fait qu'OUVRIR/FERMER cette fenêtre. */
 const [mdDock, setMdDock] = useState(false);
 const toggleMdDock = (v) => setMdDock((cur) => (typeof v === 'boolean' ? v : !cur));
 
@@ -7854,10 +7866,14 @@ const [calcKeep, setCalcKeep] = useState(STRUCTURE_CALC_DEFAULT_KEEP);
    le suivi à l'écran de chaque geste. */
 const [calcAnneal, setCalcAnneal] = useState(STRUCTURE_CALC_ANNEAL_STEPS);
 const [calcAnnealFrame, setCalcAnnealFrame] = useState(4);
-/* ⚙ LE PROTOCOLE STANDARD — LES PAS DE DYNAMIQUE, LE PAS DE TEMPS (ps) ET LA PART
-   D'ÉQUILIBRATION. `calcMdTotal` est la DURÉE TOTALE (ps) que l'utilisateur peut taper :
-   elle et le pas de temps décident des pas (`structureCalcSimulationTimeOf` fait la
-   multiplication, dans le module). */
+/* ⚙ LE PROTOCOLE STANDARD DU CALCUL — LES PAS DE DYNAMIQUE, LE PAS DE TEMPS (ps) ET LA
+   PART D'ÉQUILIBRATION. Ce sont les réglages du 🧬, et ils sont écrits DANS SON PANNEAU
+   (`renderCalcMdOptions()`) : chaque départ les lit — recuit, PUIS dynamique
+   d'équilibration à 🌡 hot, refroidissement vers 🌡 cold, minimisation. La DURÉE TOTALE
+   (ps) se tape aussi et décide des pas (`structureCalcSimulationTimeOf` fait la
+   multiplication, dans le module).
+   ⚠ LA DYNAMIQUE ISOLÉE DE LA FENÊTRE 🌡 MD NE LES LIT PAS (et réciproquement) : elle a
+   ses propres états (`mdSteps`, `mdDt`, …), voir « les réglages de la dynamique isolée ». */
 const [calcMdSteps, setCalcMdSteps] = useState(STRUCTURE_CALC_MD_STEPS);
 const [calcMdDt, setCalcMdDt] = useState(STRUCTURE_CALC_MD_DT);
 const [calcMdEquil, setCalcMdEquil] = useState(Math.round(STRUCTURE_CALC_MD_EQUILIBRATION * 100));
@@ -7872,27 +7888,35 @@ const [calcMinimise, setCalcMinimise] = useState(STRUCTURE_CALC_MIN_ROUNDS);
    ne la refuse : c'est donc le champ qui décide, et un ω ne s'écarte de trans que si une
    distance demandée, un φ/ψ imposé ou un empilement paie plus que sa barrière. Le pas reste
    celui de la famille (12° au recuit, 4° en dynamique).
-   ⚠ LE MÊME réglage part au ▶ Run, au ▶ MD et au ⚒ Minimise : un seul état, donc le calcul de
-   structure ne peut pas porter d'autre protocole que les deux gestes ⚙ à côté de lui. */
+   ⚠ CE RÉGLAGE EST CELUI DU CALCUL : il part au ▶ Run (chaque départ) ET au ⚒ Minimise de
+   la barre — qui est LA descente de fin de départ du protocole (mêmes balayages, même ω),
+   donc un clic sur ⚒ ne peut pas défaire ce que ▶ Run vient de faire.
+   ⚠ …ET LA DYNAMIQUE ISOLÉE DE LA FENÊTRE 🌡 MD A LE SIEN (`mdFreeOmega`) : elle est
+   indépendante du calcul, donc elle ne peut plus changer le protocole des départs par
+   surprise. La case 🪢 est écrite dans les DEUX — chacune chez elle — et chaque infobulle
+   dit À QUEL GESTE elle s'applique. */
 const [calcOmegaFree, setCalcOmegaFree] = useState(STRUCTURE_CALC_FREE_OMEGA);
 /* ── 📏 LA CASE « LES CONTRAINTES DU 🧬 » DE LA FENÊTRE 🌡 MD ──────────────────
    La demande, mot pour mot : « nella finestra MD aggiungi l'opzione “use constraints
    defined in structure calculation” and enable this option allowing the user to give a
-   weight to these constraints. This weight can be defined in the table. »
+   weight to these constraints. This weight can be defined in the table. » — puis, cette
+   session : « I wanted the option to include the constraints but this is only an option ».
 
-   Ce qu'elle fait : le ▶ MD de la fenêtre porte la TABLE DES DISTANCES du 🧬 comme
-   contraintes (le comportement historique, donc la case est COCHÉE par défaut — rien ne
-   change tant qu'on n'y touche pas). DÉCOCHÉE, la dynamique part SANS aucune contrainte
-   de distance et SANS longe : elle ne sent que le champ de forces (liaisons, angles,
-   cycles, van der Waals, charges, solvant, ω, φ/ψ, χ1), et la table reste dans le
-   panneau, intacte — c'est ce qui permet de comparer « avec » et « sans » les distances
-   sur la MÊME molécule sans effacer ce qu'on a tapé.
+   ⚠ C'EST UNE OPTION, ET RIEN D'AUTRE : le ▶ MD de la fenêtre est INDÉPENDANT du calcul,
+   donc la seule chose qu'il puisse emprunter au 🧬, c'est ce qu'on lui prête. COCHÉE (le
+   comportement historique, donc le défaut — une table ne change pas de sens sans un
+   geste), il porte la TABLE DES DISTANCES du 🧬 comme contraintes, chaque ligne avec son
+   ⚖ (k = k_NOE × poids) : c'est une dynamique « avec vos distances ». DÉCOCHÉE, il part
+   SANS aucune contrainte de distance et SANS longe (le champ de forces seul : liaisons,
+   angles, cycles, van der Waals, charges, solvant, ω, φ/ψ, χ1) — c'est une dynamique
+   LIBRE, ce qui permet de comparer « avec » et « sans » sur la MÊME molécule. La table
+   n'est jamais MODIFIÉE par cette case : elle est lue, ou pas.
 
-   ⚠ LA CASE EST À LA DYNAMIQUE, PAS AU POIDS : les ⚖ de la table sont une PROPRIÉTÉ de
-   chaque ligne (k = k_NOE × poids), donc le ⚒ Minimise, le ⟳ Energy et le ▶ Run du 🧬
-   les lisent aussi, comme ils ont toujours lu la table. Le ▶ MD est le seul geste qui
-   puisse IGNORER la table, parce que c'est le seul dont la fenêtre le propose. */
-const [calcMdUseRestraints, setCalcMdUseRestraints] = useState(true);
+   ⚠ LA CASE EST À LA DYNAMIQUE ISOLÉE, PAS AU POIDS : les ⚖ de la table sont une
+   PROPRIÉTÉ de chaque ligne (k = k_NOE × poids), donc le ▶ Run, le ⚒ Minimise et le
+   ⟳ Energy les lisent aussi, comme ils ont toujours lu la table. Le ▶ MD est le seul
+   geste qui puisse IGNORER la table, parce que c'est le seul dont la fenêtre le propose. */
+const [mdUseRestraints, setMdUseRestraints] = useState(true);
 /* ── 💾 LES DEUX TABLES SURVIVENT À UN RECHARGEMENT DE LA PAGE ─────────────────
    La demande : « Structure calculation ha un problema. Funziona per un po' ma poi dà un
    messaggio di errore e se rinfresco la pagina tutto è perso e bisogna ricominciare da
@@ -7905,26 +7929,45 @@ const [calcMdUseRestraints, setCalcMdUseRestraints] = useState(true);
    tombent sur rien reste telle quelle (à finir) — aucune coordonnée n'est inventée, et
    les contraintes de φ/ψ, elles, se refont d'un clic sur ⛓ (elles sont appariées au
    squelette AFFICHÉ : les garder en mémoire les figerait sur les atomes d'hier). */
-/* LES TROIS TEMPÉRATURES DE LA DYNAMIQUE (KELVINS) — des champs du panneau et des gestes,
-   bornés par ce qui a un sens : à 300 K l'énergie thermique vaut 0.6 kcal/mol (la molécule
+/* LES TEMPÉRATURES DE LA DYNAMIQUE (KELVINS) — des champs de DEUX gestes différents, bornés
+   par ce qui a un sens : à 300 K l'énergie thermique vaut 0.6 kcal/mol (la molécule
    vibre), à 3000 K elle vaut 6 kcal/mol (elle change de bassin), et au-delà de 20000 K le
-   bruit casserait la géométrie. Le ▶ MD d'un geste isolé tient SA température
-   (`calcMdTemp`), le calcul part de `calcMdHot` et refroidit jusqu'à `calcMdCold`.
+   bruit casserait la géométrie. Le ▶ Run du 🧬 part de `calcMdHot` et refroidit jusqu'à
+   `calcMdCold` ; le ▶ MD ISOLÉ de la fenêtre tient UNE température, la sienne (`mdTemp`).
    ⚠ ELLES SONT DÉCLARÉES ICI, AVANT LES DEUX EFFETS DU 💾 QUI LES LISENT — un tableau de
    dépendances est évalué PENDANT le rendu, donc citer un `const` déclaré plus bas est une
    TDZ (« Cannot access 'calcMdHot' before initialization ») qui fait JETER TOUT LE VIEWER,
-   docking comprise : c'est exactement l'incident que `_viewer_render_smoke_test.mjs` garde
-   (il a trouvé celui-ci). L'ordre des `useState` et des `useEffect` n'est pas cosmétique. */
+   docking comprise : c'est exactement l'incident que `_tdz_scan_test.mjs` garde (et que
+   `_viewer_render_smoke_test.mjs` avait trouvé). L'ordre des `useState` et des `useEffect`
+   n'est pas cosmétique. */
 const clampTemp = (v, fallback) => {
   const t = Number(String(v).replace(',', '.'));
   return Number.isFinite(t) ? Math.max(1, Math.min(20000, t)) : fallback;
 };
-const [calcMdTemp, setCalcMdTemp] = useState(STRUCTURE_CALC_MD_HOT);
-const setCalcMdTempText = (v) => setCalcMdTemp(clampTemp(v, STRUCTURE_CALC_MD_HOT));
 const [calcMdHot, setCalcMdHot] = useState(STRUCTURE_CALC_MD_HOT);
 const setCalcMdHotText = (v) => setCalcMdHot(clampTemp(v, STRUCTURE_CALC_MD_HOT));
 const [calcMdCold, setCalcMdCold] = useState(STRUCTURE_CALC_MD_COLD);
 const setCalcMdColdText = (v) => setCalcMdCold(clampTemp(v, STRUCTURE_CALC_MD_COLD));
+/* ── ⚙ LES RÉGLAGES DE LA DYNAMIQUE ISOLÉE — LES ÉTATS DE LA FENÊTRE 🌡 MD ────
+   « In the window dedicated to MD put the parameters for an MD run (temperature, explicit,
+   implicit solvent, steps, stepinterval, duration)… This MD should be independent of
+   structure calculation. » Les voici, et AUCUN n'est lu par le ▶ Run du 🧬 : changer la
+   dynamique de la fenêtre ne change plus le protocole des départs, et changer les départs
+   ne change plus la dynamique.
+   ⚠ DÉCLARÉS ICI, AVANT LES DEUX EFFETS DU 💾 QUI LES LISENT (voir la TDZ plus haut). */
+const [mdTemp, setMdTemp] = useState(STRUCTURE_CALC_MD_HOT);
+const setMdTempText = (v) => setMdTemp(clampTemp(v, STRUCTURE_CALC_MD_HOT));
+const [mdSteps, setMdSteps] = useState(STRUCTURE_CALC_MD_STEPS);
+const [mdDt, setMdDt] = useState(STRUCTURE_CALC_MD_DT);
+/* 🖼 LE « STEP INTERVAL » — combien de pas entre DEUX IMAGES écrites : le moteur n'annonce
+   une image que tous ces pas (8 par défaut, la constante du module), et c'est CE rythme qui
+   rend la dynamique regardable au lieu de ne montrer que la fin. */
+const [mdImage, setMdImage] = useState(STRUCTURE_CALC_MD_FRAME);
+/* 💧 LE SOLVANT — le modèle implicite du module (`STRUCTURE_CALC_SOLVENTS`) : le
+   diélectrique que les charges voient. Aucun ε n'est écrit dans le JSX. */
+const [mdSolvent, setMdSolvent] = useState(STRUCTURE_CALC_SOLVENT);
+/* 🪢 ω VARIE — l'option de la dynamique ISOLÉE (la sienne : le calcul a `calcOmegaFree`). */
+const [mdFreeOmega, setMdFreeOmega] = useState(STRUCTURE_CALC_FREE_OMEGA);
 const CALC_STORE_KEY = 'labViewerCalcState';
 const calcRestoreRef = useRef(false);
 useEffect(() => {
@@ -7964,9 +8007,21 @@ useEffect(() => {
     if (Number.isFinite(s.minimise)) setCalcMinimise(Math.max(0, Math.min(12, Math.round(s.minimise))));
     if (Number.isFinite(s.hot)) setCalcMdHotText(s.hot);
     if (Number.isFinite(s.cold)) setCalcMdColdText(s.cold);
-    if (Number.isFinite(s.mdTemp)) setCalcMdTempText(s.mdTemp);
     if (typeof s.omegaFree === 'boolean') setCalcOmegaFree(s.omegaFree);
-    if (typeof s.mdUseRestraints === 'boolean') setCalcMdUseRestraints(s.mdUseRestraints);
+    /* ⚙ …ET LES RÉGLAGES DE LA DYNAMIQUE ISOLÉE, EUX AUSSI — sous leurs propres clefs
+       (`mdRun…`), donc les valeurs du 🧬 ci-dessus ne peuvent pas se déverser dans la
+       fenêtre, ni l'inverse. ⚠ `mdTemp` et `mdUseRestraints` sont les clefs de la fenêtre
+       DEPUIS TOUJOURS (elles ont seulement changé de nom d'état) : une session enregistrée
+       avant cette révision revient exactement où elle était. */
+    if (Number.isFinite(s.mdTemp)) setMdTempText(s.mdTemp);
+    if (typeof s.mdUseRestraints === 'boolean') setMdUseRestraints(s.mdUseRestraints);
+    if (Number.isFinite(s.mdRunTemp)) setMdTempText(s.mdRunTemp);
+    if (Number.isFinite(s.mdRunSteps)) setMdSteps(Math.max(0, Math.min(100000, Math.round(s.mdRunSteps))));
+    if (Number.isFinite(s.mdRunDt)) setMdDtText(s.mdRunDt);
+    if (Number.isFinite(s.mdRunImage)) setMdImage(Math.max(1, Math.min(20000, Math.round(s.mdRunImage))));
+    if (typeof s.mdRunSolvent === 'string') setMdSolvent(structureCalcSolventOf(s.mdRunSolvent).id);
+    if (typeof s.mdRunOmega === 'boolean') setMdFreeOmega(s.mdRunOmega);
+    if (typeof s.mdRunRestraints === 'boolean') setMdUseRestraints(s.mdRunRestraints);
     setCalcMsg('↩ The distance table and the settings of the last session were brought back from this browser'
       + ' (the rows are re-resolved on the molecule as soon as it is on screen). ⛓ re-imposes the φ/ψ of the'
       + ' painted secondary structure in one click: those constraints are matched to the backbone ON SCREEN, so'
@@ -7986,13 +8041,16 @@ useEffect(() => {
       })),
       starts: calcStarts, keep: calcKeep, anneal: calcAnneal, annealFrame: calcAnnealFrame,
       mdSteps: calcMdSteps, mdDt: calcMdDt, mdEquil: calcMdEquil, minimise: calcMinimise,
-      hot: calcMdHot, cold: calcMdCold, omegaFree: calcOmegaFree, mdTemp: calcMdTemp,
-      mdUseRestraints: calcMdUseRestraints,
+      hot: calcMdHot, cold: calcMdCold, omegaFree: calcOmegaFree,
+      /* ⚙ …ET LA FENÊTRE 🌡 MD SOUS SES PROPRES CLEFS : deux jeux de valeurs, deux
+         préfixes, donc une relecture ne peut pas les mélanger. */
+      mdRunSteps: mdSteps, mdRunDt: mdDt, mdRunImage: mdImage, mdRunSolvent: mdSolvent,
+      mdRunTemp: mdTemp, mdRunOmega: mdFreeOmega, mdRunRestraints: mdUseRestraints,
     }));
   } catch { /* le stockage local est un confort, pas une donnée */ }
 }, [calcRestraints, calcStarts, calcKeep, calcAnneal, calcAnnealFrame, calcMdSteps, calcMdDt,
-  calcMdEquil, calcMinimise, calcMdHot, calcMdCold, calcOmegaFree, calcMdTemp,
-  calcMdUseRestraints]);
+  calcMdEquil, calcMinimise, calcMdHot, calcMdCold, calcOmegaFree,
+  mdSteps, mdDt, mdImage, mdSolvent, mdTemp, mdFreeOmega, mdUseRestraints]);
 /* …ET LA RÉSOLUTION DES ATOMES REVENUS, dès que la molécule est là — les DEUX côtés d'une
    ligne : sans les deux, elle resterait « pas prête » jusqu'à ce qu'on la retape. Une
    ligne dont un nom ne se résout pas GARDE son texte et dit POURQUOI (comme la frappe). */
@@ -8101,13 +8159,17 @@ const [calcWatch, setCalcWatch] = useState(true);
    encore : la boucle en fait PLUSIEURS dans un tour, tant que le budget n'est pas
    dépensé. */
 const CALC_FRAME_BUDGET_MS = 14;
-/* ⚠ LES TROIS TEMPÉRATURES DU GESTE (`calcMdTemp`, `calcMdHot`, `calcMdCold`) SONT
-   DÉCLARÉES PLUS HAUT, avec les deux effets du 💾 qui les lisent : voir le commentaire
-   là-bas — un tableau de dépendances est évalué PENDANT le rendu, donc citer un `const`
-   déclaré plus bas est une TDZ qui fait jeter le viewer entier. */
-/* LE PAS DE TEMPS (ps) ET LA DURÉE TOTALE DE LA SIMULATION (ps) — les deux se commandent
+/* ⚠ LES TEMPÉRATURES DES DEUX GESTES (`calcMdHot`, `calcMdCold`, `mdTemp`) SONT DÉCLARÉES
+   PLUS HAUT, avec les deux effets du 💾 qui les lisent : voir le commentaire là-bas — un
+   tableau de dépendances est évalué PENDANT le rendu, donc citer un `const` déclaré plus
+   bas est une TDZ qui fait jeter le viewer entier.
+   …ET LES ÉTATS DE LA FENÊTRE 🌡 MD AUSSI (`mdSteps`, `mdDt`, `mdImage`, `mdSolvent`,
+   `mdFreeOmega`, `mdUseRestraints`) : le 💾 les enregistre, donc il les cite. */
+/* LE PAS DE TEMPS (ps) ET LA DURÉE TOTALE D'UNE SIMULATION (ps) — les deux se commandent
    l'un l'autre : taper une durée choisit les pas (`durée / dt`), taper les pas choisit la
-   durée. Le module fait la multiplication (`structureCalcSimulationTimeOf`). */
+   durée. Le module fait la multiplication (`structureCalcSimulationTimeOf`), et les DEUX
+   gestes ont leur paire, chez eux : celle du protocole du 🧬 (`calcMdDt` → `calcMdTime`)
+   et celle de la dynamique isolée de la fenêtre (`mdDt` → `mdTime`). */
 const setCalcMdDtText = (v) => {
   const h = Number(String(v).replace(',', '.'));
   setCalcMdDt(Number.isFinite(h) ? Math.max(0.0001, Math.min(1, h)) : STRUCTURE_CALC_MD_DT);
@@ -8119,6 +8181,21 @@ const setCalcMdTotalText = (v) => {
   setCalcMdSteps(steps);
 };
 const calcMdTime = structureCalcSimulationTimeOf({ steps: calcMdSteps, dt: calcMdDt });
+const setMdDtText = (v) => {
+  const h = Number(String(v).replace(',', '.'));
+  setMdDt(Number.isFinite(h) ? Math.max(0.0001, Math.min(1, h)) : STRUCTURE_CALC_MD_DT);
+};
+const setMdTotalText = (v) => {
+  const ps = Number(String(v).replace(',', '.'));
+  if (!Number.isFinite(ps) || ps <= 0) return;
+  const steps = Math.max(0, Math.min(100000, Math.round(ps / Math.max(1e-4, mdDt))));
+  setMdSteps(steps);
+};
+const mdTime = structureCalcSimulationTimeOf({ steps: mdSteps, dt: mdDt });
+/* 💧 LE MODÈLE DE SOLVANT DU MOMENT — lu UNE fois, par le geste et par son rapport : un
+   identifiant inconnu retombe sur le défaut du module (`structureCalcSolventOf` ne rend
+   jamais `undefined`), donc ni le moteur ni l'écran ne peuvent jeter pour lui. */
+const mdSolventOf = () => structureCalcSolventOf(mdSolvent);
 const [calcForce, setCalcForce] = useState(null);   // le dernier champ de forces relu
 const [calcMsg, setCalcMsg] = useState('');
 const [calcProgress, setCalcProgress] = useState('');
@@ -11201,7 +11278,7 @@ const calcStop = () => {
  *  coordonnées DU MOMENT, avec les distances de la table comme contraintes. Le panneau
  *  affiche alors l'énergie famille par famille (liaisons, angles, plans, distances, cœur
  *  dur, ω, bassins φ/ψ, χ1) au lieu de dire « le calcul tourne ». */
-const calcReadForceField = () => {
+const calcReadForceFieldNow = () => {
   const now = calcEngineGeometry();   // le graphe des moteurs (ponts ÉTIRÉS sans leur fausse liaison)
   if (!now) {
     setCalcMsg('✕ There is no molecule on screen — load a structure first.');
@@ -11244,14 +11321,46 @@ const calcReadForceField = () => {
       + `${dh.violations ? ` (worst ${dh.worst.over.toFixed(1)}° outside)` : ''}` : ''}`
     + `${field.nonbonded.repulsive ? ` · ⚠ ${field.nonbonded.repulsive} repulsive pair${field.nonbonded.repulsive === 1 ? '' : 's'}` : ''}.`
     + `${pausedRows ? ` ⚖ ${pausedRows} line${pausedRows === 1 ? '' : 's'} of the table ${pausedRows === 1 ? 'is' : 'are'} on hold (weight 0): ${field.restraintReport.count} distance${field.restraintReport.count === 1 ? '' : 's'} enter${field.restraintReport.count === 1 ? 's' : ''} the field.` : ''}`
-    + ' ⚡ The energy is in kcal/mol, the potential is the one the calculation uses (no charge model is perfect: the charges are PEOE estimates with the formal charges the chemistry implies).');
+    + ' ⚡ The energy is in kcal/mol, the potential is the one the calculation uses (no charge model is perfect: the charges are PEOE estimates with the formal charges the chemistry implies).'
+    + ' The family-by-family table of this same reading is in 🧬 Structure calculation — open that section and the families are listed there, with this number broken into them.'
+    + ' ⚠ Nothing was written: ⚡ is a READING (↺ Undo torsion has nothing to undo).');
   return field;
+};
+
+/** ⟳ LE BOUTON « ENERGY » DE LA BARRE — ET RIEN QU'UN BOUTON. Sa lecture est celle du
+ *  dessus (`calcReadForceFieldNow`), enveloppée pour une seule raison : la remarque de
+ *  cette session, « I do not understand the use of the energy button. If I click nothing
+ *  happens and nothing is written anywhere. » Deux causes, et les deux sont traitées :
+ *    · la lecture n'était écrite QUE dans le corps du 🧬, donc invisible tant que sa
+ *      section était fermée — le message est maintenant rendu SOUS les boutons, par
+ *      `renderForceGestures` (voir la ligne du message des gestes) ;
+ *    · une lecture qui jette (un chiffre en moins du côté du champ) laissait le clic SANS
+ *      réponse — elle est maintenant attrapée, DITE, et ne peut plus emporter une partie
+ *      de l'écran avec elle. */
+const calcReadForceField = () => {
+  try {
+    return calcReadForceFieldNow();
+  } catch (e) {
+    setCalcForce(null);
+    setCalcMsg(`✕ The reading of the force field failed: ${(e && e.message) || e}`
+      + ' The molecule was not touched (a reading writes nothing), and your two tables are intact.'
+      + ' 🐞 That is a defect of the field model, not of your molecule.');
+    return null;
+  }
 };
 
 /** CONDUIRE UN MOTEUR D'IMAGES — le même budget, la même écriture, le même jeton d'arrêt
  *  que le calcul : un seul endroit où l'écran apprend à REGARDER un générateur. `head`
- *  remplace l'en-tête de la ligne de progression (un geste isolé n'est pas un « start i/n »). */
-const pumpMotion = ({ frames, comp, structure, head, onEnd }) => {
+ *  remplace l'en-tête de la ligne de progression (un geste isolé n'est pas un « start i/n »).
+ *
+ *  👁 `watch` — QUI ÉCRIT LES IMAGES SUR LA MOLÉCULE. Le calcul du 🧬 passe le sien
+ *  (`calcWatch`, la case « watch each start » : on peut vouloir un calcul silencieux), mais
+ *  un geste ISOLÉ de la fenêtre 🌡 MD ou du ⚒ s'écrit TOUJOURS, image par image : la
+ *  remarque de cette session était « I see that some calculations are being performed but
+ *  the molecule and its dihedrals remain still » — elle ne venait pas du moteur, qui
+ *  tournait, mais de ce `calcWatch` non transmis qui laissait la molécule immobile jusqu'à
+ *  la dernière image. Un geste qu'on vient de lancer à la main se regarde : `watch: true`. */
+const pumpMotion = ({ frames, comp, structure, head, watch = calcWatch, onEnd }) => {
   calcRunRef.current += 1;
   const run = calcRunRef.current;
   /* ⚠ LA MÊME CLÉ QUE LE CALCUL (`calcMoleculeKey`) : un ▶ MD ou un ⚒ Minimise survit lui
@@ -11307,7 +11416,7 @@ const pumpMotion = ({ frames, comp, structure, head, onEnd }) => {
     }
     if (shown) {
       if (onScreen) {
-        if (calcWatch && shown.positions) calcPreviewPositions(comp, structure, shown.positions);
+        if (watch && shown.positions) calcPreviewPositions(comp, structure, shown.positions);
         if (ramaIsShown()) readRamachandran();   // le 🪢 suit l'image qui vient d'être écrite
       }
       setCalcProgress(calcPhaseLine(shown, 0, 1, head));
@@ -11351,7 +11460,15 @@ const calcHeldPairs = (geom, list) => list
  *  avec les poids ⚖ de chaque ligne ; décochée, elle part SANS contrainte de distance et
  *  SANS longe (le champ de forces seul : liaisons, angles, cycles, van der Waals,
  *  charges, solvant, ω, φ/ψ, χ1). La table n'est jamais MODIFIÉE par cette case — elle
- *  est seulement lue, ou pas. */
+ *  est seulement lue, ou pas.
+ *
+ *  ⚙ ELLE EST INDÉPENDANTE DU CALCUL — c'est la demande de cette session : ses réglages
+ *  sont les SIENS (`mdSteps`, `mdDt`, `mdTemp`, `mdImage`, `mdSolvent`, `mdFreeOmega` —
+ *  ceux de `renderMdOptions`, dans la fenêtre 🌡 MD), et le ▶ Run du 🧬 a les siens. Le
+ *  protocole des départs (🌡 hot → 🌡 cold, part d'équilibration, balayages de ⚒, pas de
+ *  recuit) n'est donc pas touché par ce qu'on règle ici, et réciproquement. Le 💧 solvant
+ *  est le diélectrique que les charges voient — ce moteur n'a pas d'eau explicite, et le
+ *  panneau le dit plutôt que de le laisser croire. */
 const runMolecularDynamics = () => {
   const now = calcEngineGeometry();   // le graphe des moteurs (ponts ÉTIRÉS sans leur fausse liaison)
   if (!now) {
@@ -11360,7 +11477,11 @@ const runMolecularDynamics = () => {
   }
   const { comp, structure, geom } = now;
   /* Ce que la dynamique emporte : les lignes COMPLÈTES de poids non nul, ou RIEN. */
-  const list = calcMdUseRestraints
+  /* 📏 …ET D'ABORD LA CASE DE SA FENÊTRE — elle décide SI cette dynamique porte la table
+     (`mdUseRestraints`, la case 📏 de `renderMdOptions`) : cochée elle emporte les lignes
+     complètes de poids non nul, décochée elle n'emporte RIEN (ni contrainte, ni longe).
+     C'est une OPTION, pas une règle : le ▶ Run du 🧬 lit toujours la table, lui. */
+  const list = mdUseRestraints
     ? calcFieldRows().filter((r) => r.i < geom.count && r.j < geom.count)
     : [];
   const paused = calcInertCount();
@@ -11369,9 +11490,10 @@ const runMolecularDynamics = () => {
   const before = torsionSnapshotOf(structure);
   torsionUndoRef.current = {
     comp, structure, count: before ? before.length / 3 : 0, flat: before,
-    label: `🌡 molecular dynamics · ${calcMdSteps} steps · T = ${calcMdTemp}`
-      + ` · ω ${calcOmegaFree ? 'free to vary' : 'held trans'}`
-      + ` · ${calcMdUseRestraints ? `with the ${list.length} distance${list.length === 1 ? '' : 's'} of the table` : 'without the distance table'}`,
+    label: `🌡 molecular dynamics · ${mdSteps} steps · ${mdTime.ps} ps · T = ${mdTemp} K`
+      + ` · 💧 ${mdSolventOf().label}`
+      + ` · ω ${mdFreeOmega ? 'free to vary' : 'held trans'}`
+      + ` · ${mdUseRestraints ? `with the ${list.length} distance${list.length === 1 ? '' : 's'} of the table` : 'without the distance table'}`,
   };
   setCalcBusy(true);
   setCalcShown(0);
@@ -11380,19 +11502,32 @@ const runMolecularDynamics = () => {
     frames: mdFrames({
       positions: base, elements: geom.elements, bonds: geom.bonds,
       restraints: calcRestraintTermsOf(list),
-      leash: held, steps: calcMdSteps, temperature: calcMdTemp,
+      leash: held,
+      /* ⚙ LES RÉGLAGES DE CETTE FENÊTRE, ET EUX SEULS — ses pas, son pas de temps (donc sa
+         durée : `mdTime` = pas × dt), sa température (UNE : c'est une dynamique
+         d'équilibrage, pas un recuit), son intervalle d'images et son solvant (le
+         diélectrique que les charges voient). AUCUN n'appartient au 🧬 : le ▶ Run du calcul
+         a les siens, et ce qui se règle ici ne le touche pas. */
+      steps: mdSteps, dt: mdDt, temperature: mdTemp,
+      dielectric: mdSolventOf().dielectric,
       /* ⛓ …ET LES CONTRAINTES DE DIHÈDRE DE LA STRUCTURE SECONDAIRE IMPOSÉE.
          La demande : « In MD and “structure calculation” allow the conversion of the
          secondary structure imposed … into dihedral angle constraints. » */
       dihedrals: calcDihedrals,
-      /* 🪢 L'OPTION « ω VARIE » — le réglage du panneau : coché, la dynamique ne refuse
-         plus un pas qui augmente le coût d'une liaison peptidique (sa barrière reste une
-         famille du champ, et c'est elle qui arbitre). */
-      freeOmega: calcOmegaFree,
-      perFrame: STRUCTURE_CALC_MD_FRAME,
+      /* 🪢 L'OPTION « ω VARIE » DE CETTE DYNAMIQUE — la sienne (`mdFreeOmega` ; le calcul a
+         la sienne) : cochée, elle ne refuse plus un pas qui augmente le coût d'une liaison
+         peptidique (sa barrière reste une famille du champ, et c'est elle qui arbitre). */
+      freeOmega: mdFreeOmega,
+      perFrame: mdImage,
     }),
     comp, structure,
-    head: `🌡 MD · T = ${calcMdTemp}`,
+    /* 👁 ELLE SE REGARDE TOUJOURS — c'est la remarque de cette session : « I see that some
+       calculations are being performed but the molecule and its dihedrals remain still. »
+       Le geste de la fenêtre écrit donc CHAQUE image qu'il annonce, sans dépendre du
+       👁 watch each start du 🧬 (`watch: true`) : ce qui bougeait seulement à la fin bouge
+       maintenant pas à pas, et le 🪢 suit tant que son dock est à l'écran. */
+    watch: true,
+    head: `🌡 MD · ${mdSteps} steps · ${mdTime.ps} ps · T = ${mdTemp} K · 💧 ${mdSolventOf().label}`,
     onEnd: (run) => {
       if (!run || !run.ok) {
         setCalcMsg(`✕ The dynamics refused: ${run && run.reason === 'no-channel'
@@ -11412,10 +11547,11 @@ const runMolecularDynamics = () => {
       const dh = dihedralPenaltyOf({ positions: run.positions, dihedrals: calcDihedrals });
       setCalcMsg(`✓ 🌡 Molecular dynamics · ${run.steps} steps (${run.applied} applied) over`
         + ` ${run.channels} channel${run.channels === 1 ? '' : 's'}`
-        + ` · ${run.time.ps} ps at dt = ${run.time.dt} ps`
+        + ` · ${run.time.ps} ps at dt = ${run.time.dt} ps (an image every ${mdImage} step${mdImage === 1 ? '' : 's'})`
         + ` · T held at ${run.temperature.hot} K (kinetic ${run.temperature.mean.toFixed(0)} K mean)`
+        + ` · 💧 ${mdSolventOf().label} — ${mdSolventOf().of}`
         + ` · energy ${run.cost.before.toFixed(2)} → ${run.cost.after.toFixed(2)} kcal/mol`
-        + ` · 📏 ${calcMdUseRestraints
+        + ` · 📏 ${mdUseRestraints
           ? `${list.length} distance${list.length === 1 ? '' : 's'} of the table carried with their ⚖ weights`
             + `${paused ? ` (${paused} line${paused === 1 ? '' : 's'} at weight 0 left out)` : ''}`
           : 'the distance table was LEFT OUT (📏 unticked in this window): the dynamics ran on the force field alone, with no restraint and no leash'}`
@@ -11480,6 +11616,11 @@ const runMinimise = () => {
     }),
     comp, structure,
     head: '⚒ Minimise',
+    /* 👁 LE ⚒ SE REGARDE AUSSI — sa propre infobulle promet que « the 🪢 plot follows the
+       descent image by image », et une descente de quelques balayages est courte : elle
+       s'écrit donc toujours à l'écran, comme le ▶ MD de la fenêtre, sans dépendre du 👁 du
+       🧬 (voir `pumpMotion`). */
+    watch: true,
     onEnd: (run) => {
       if (!run || !run.ok) {
         setCalcMsg(`✕ The minimisation refused: ${run && run.reason === 'no-channel'
@@ -19871,15 +20012,17 @@ const stylesSavedTitle = stylesSavedNames.length
    température pour ▶ MD, et la même pour tous). Le JSX est écrit UNE fois et rendu une
    fois : les trois gestes restent ceux du module (`mdFrames`, `minimizeFrames`,
    `forceFieldEnergyOf`) — il n'y a pas de second moteur caché dans le panneau. */
-/* ── ⚙ LES RÉGLAGES DE LA DYNAMIQUE — ÉCRITS UNE SEULE FOIS, POUR LA FENÊTRE 🌡 MD ──
-   La demande : « nella finestra devono comparire tutti i suoi parametri che adesso
-   sono in “structure calculation” senza i parametri (n starting, m kept, recuit,
-   frames). » Les voici, tels quels : pas, pas de temps, durée totale, températures
-   chaude et froide, part d'équilibration, balayages de minimisation, option 🪢 ω.
-   Ils étaient DANS le panneau 🧬 : celui-ci n'en garde AUCUNE copie (un seul endroit
-   où les régler, donc aucune divergence entre ce que la fenêtre montre et ce que le
-   ▶ Run du 🧬 lit). ⚠ Ce sont des états partagés, pas des copies. */
-const renderMdOptions = () => (
+/* ── ⚙ LE PROTOCOLE DU CALCUL — SES RÉGLAGES, DANS SON PANNEAU ────────────────
+   « bring back all the MD parameters related to structure calculation in the settings of
+   structure calculation. » Les voici, remis là où la demande les remet : pas de dynamique,
+   pas de temps, durée totale, températures chaude et froide, part d'équilibration,
+   balayages de minimisation et option 🪢 ω — le protocole STANDARD que chaque départ porte
+   (tirage → recuit → dynamique → minimisation → trempe).
+   ⚠ Le ▶ Run du 🧬 est le SEUL à lire ces états (`calcMdSteps`, `calcMdDt`, `calcMdHot`,
+   `calcMdCold`, `calcMdEquil`, `calcMinimise`, `calcOmegaFree`) : la dynamique ISOLÉE de
+   la fenêtre 🌡 MD a les siens (`renderMdOptions`), donc les deux gestes ne peuvent plus se
+   changer l'un l'autre — c'est exactement ce que la demande sépare. */
+const renderCalcMdOptions = () => (
   <>
     <label className="flex items-center gap-1"
       title="🌡 MOLECULAR DYNAMICS — how many Langevin steps each start gets (and how many the ▶ MD button below runs). The dynamics is in DIHEDRAL space (a step is one rigid rotation about a hinge, so bond lengths and angles cannot break), under the WHOLE force field in kcal/mol — bonds, angles, planar rings, van der Waals, electrostatics with partial charges, non-polar solvent, your distances as flat-bottom wells, ω trans, the φ/ψ statistical potential and χ1. Each start runs an EQUILIBRATION phase at the hot temperature and then cools down to the cold one. 0 = no dynamics.">
@@ -19895,7 +20038,7 @@ const renderMdOptions = () => (
       ⏱ dt
       <input type="number" min="0.0001" max="1" step="0.005" value={calcMdDt}
         onChange={(e) => setCalcMdDtText(e.target.value)}
-        aria-label="Molecular dynamics timestep, in picoseconds"
+        aria-label="Timestep of each start's dynamics, in picoseconds"
         className="w-16 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
       <span className="font-semibold text-slate-500">ps</span>
     </label>
@@ -19948,27 +20091,99 @@ const renderMdOptions = () => (
         className="w-12 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
     </label>
     <label className="flex items-center gap-1"
-      title={`🪢 LET ω VARY — the request: « in the structure calculation allow the option to vary also the omega backbone angle. » UNCHECKED (the default) every peptide C–N bond is a PROTECTED dihedral: the annealing, the quench, the dynamics AND the minimisation refuse a step that increases its ω cost — that is what keeps peptides trans (measured: without it, an ω 0.4° off trans ended up cis after 300 dynamics steps). CHECKED, ω becomes an ORDINARY dihedral of the protocol: its barrier is still a family of the force field (k = ${STRUCTURE_CALC_OMEGA_WEIGHT} kcal/mol, zero inside the plateau of ± ${STRUCTURE_CALC_OMEGA_TOLERANCE}° around ${STRUCTURE_CALC_OMEGA}°), and the FIELD alone arbitrates — a peptide only leaves trans when a distance you asked for, an imposed φ/ψ or a clash pays more than that barrier. The step stays the family's own (12° in the annealing, 4° in the dynamics), so ω still turns by small steps and never jumps to another conformer. The setting is the SAME one for ▶ Run, ▶ MD and ⚒ Minimise.`}>
+      title={`🪢 LET ω VARY — the request: « in the structure calculation allow the option to vary also the omega backbone angle. » UNCHECKED (the default) every peptide C–N bond is a PROTECTED dihedral: the annealing, the quench, the dynamics AND the minimisation refuse a step that increases its ω cost — that is what keeps peptides trans (measured: without it, an ω 0.4° off trans ended up cis after 300 dynamics steps). CHECKED, ω becomes an ORDINARY dihedral of the protocol: its barrier is still a family of the force field (k = ${STRUCTURE_CALC_OMEGA_WEIGHT} kcal/mol, zero inside the plateau of ± ${STRUCTURE_CALC_OMEGA_TOLERANCE}° around ${STRUCTURE_CALC_OMEGA}°), and the FIELD alone arbitrates — a peptide only leaves trans when a distance you asked for, an imposed φ/ψ or a clash pays more than that barrier. The step stays the family's own (12° in the annealing, 4° in the dynamics), so ω still turns by small steps and never jumps to another conformer. The setting is the STRUCTURE CALCULATION'S OWN: every start of ▶ Run carries it, and so does the ⚒ Minimise of the toolbar (which is the descent each start ends on). The 🌡 MD window has its OWN 🪢 box — this one does not touch it.`}>
       <input type="checkbox" checked={calcOmegaFree} onChange={(e) => setCalcOmegaFree(e.target.checked)}
-        aria-label="Let the peptide ω dihedral vary"
+        aria-label="Let the peptide ω dihedral vary in the structure calculation"
         className="accent-indigo-600" />
       🪢 ω varies
     </label>
-    {/* 📏 LA CASE DE LA DEMANDE — « nella finestra MD aggiungi l'opzione “use constraints
-        defined in structure calculation” … ». Elle est ICI, dans la fenêtre 🌡 MD, parce
-        que c'est LE geste de cette fenêtre (le ▶ MD juste en dessous) qui peut la lire :
-        cochée, la dynamique porte la table des distances du 🧬 (avec le poids ⚖ de chaque
-        ligne) ; décochée, elle n'emporte ni contrainte ni longe. Le chiffre entre
-        parenthèses est le NOMBRE de lignes qui partiront vraiment — des lignes COMPLÈTES
-        et de poids non nul — donc la case ne promet jamais plus que ce qu'il y a dans la
-        table. ⚠ Elle ne touche NI la table, NI le ⚒ Minimise, NI le ⟳ Energy, NI le ▶ Run
-        du 🧬 : eux lisent toujours la table (et les ⚖), comme avant. */}
+  </>
+);
+
+/* ── ⚙ LES RÉGLAGES DE LA DYNAMIQUE ISOLÉE — LA FENÊTRE 🌡 MD, ET ELLE SEULE ──
+   « In the window dedicated to MD put the parameters for an MD run (temperature, explicit,
+   implicit solvent, steps, stepinterval, duration)… This MD should be independent of
+   structure calculation. » Les voici, tels quels : 🌡 sa température (UNE, tenue), 💧 son
+   solvant, 🌡 ses pas, ⏱ son pas de temps (le « stepinterval »), ⏱ sa durée (pas × dt,
+   affichée à côté), 🖼 son intervalle d'images et 🪢 sa règle sur ω — et, en dernier, la 📏
+   case, qui est son seul pont vers le 🧬 (une OPTION : décochée, la dynamique part libre).
+   ⚠ AUCUN de ces états n'est lu par le ▶ Run du 🧬 (`calcMdSteps`, `calcMdHot`, … sont au
+   protocole, voir `renderCalcMdOptions`) : les deux dynamiques sont INDÉPENDANTES. */
+const renderMdOptions = () => (
+  <>
     <label className="flex items-center gap-1"
-      title={`USE THE CONSTRAINTS DEFINED IN 🧬 STRUCTURE CALCULATION — the dynamics launched by the ▶ MD button below carries the distance table of the 🧬 panel as restraints, each line with its own ⚖ weight (k = k_NOE × weight): that is what makes a dynamics pull the molecule towards the distances you typed. UNTICK it and the dynamics runs on the FORCE FIELD ALONE — bonds, angles, planar rings, van der Waals, electrostatics, solvent, ω, φ/ψ, χ1 — with no distance restraint and no leash, which is how you compare the same molecule with and without your distances. Either way the table is neither changed nor emptied: it is only read, or left out. The number here is how many lines will really take part (complete lines whose ⚖ weight is not 0 — a weight of 0 puts a line on hold). This box belongs to THIS window: the 🧬 ▶ Run, the ⚒ Minimise and the ⟳ Energy keep reading the table, as they always did.${calcMdUseRestraints
+      title={`🌡 THE TEMPERATURE OF THIS DYNAMICS, in KELVINS — ONE temperature for the whole run: this gesture does not cool down. A cooling schedule is what a structure calculation does on each start, and it has its own 🌡 hot → 🌡 cold in the 🧬 panel. The thermal energy is R·T (0.6 kcal/mol at 300 K, 6 kcal/mol at 3000 K), so 2000–4000 K is the range where a dihedral actually changes basin.`}>
+      🌡 T
+      <input type="number" min="1" max="20000" step="100" value={mdTemp}
+        onChange={(e) => setMdTempText(e.target.value)}
+        aria-label="Molecular dynamics temperature, in kelvins"
+        className="w-16 border border-sky-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-sky-500 text-[10px] font-mono bg-white" />
+      <span className="font-semibold text-slate-500">K</span>
+    </label>
+    <label className="flex items-center gap-1"
+      title={`💧 THE SOLVENT OF THIS DYNAMICS — and it is IMPLICIT, because this engine has NO water molecules: what you choose here is the DIELECTRIC the charges see (the non-polar surface term is a family of the field and never moves). ${STRUCTURE_CALC_SOLVENTS.map((s) => `${s.label} — ${s.of}`).join(' · ')}. ⚠ There is no explicit-water box in this viewer, and this box does not pretend otherwise: this dynamics turns DIHEDRALS, it could not carry a box of mobile waters. The ε values come from the module; none is written here.`}>
+      💧 solvent
+      <select value={mdSolvent} onChange={(e) => setMdSolvent(e.target.value)}
+        aria-label="Solvent of the molecular dynamics"
+        className="border border-sky-300 rounded px-1 py-0.5 text-[10px] font-mono bg-white outline-none focus:border-sky-500">
+        {STRUCTURE_CALC_SOLVENTS.map((s) => (
+          <option key={s.id} value={s.id}>{s.label}</option>
+        ))}
+      </select>
+    </label>
+    <label className="flex items-center gap-1"
+      title="🌡 HOW MANY STEPS THIS DYNAMICS RUNS — in DIHEDRAL space (a step is one rigid rotation about a hinge, so bond lengths and angles cannot break), under the WHOLE force field in kcal/mol: bonds, angles, planar rings, van der Waals, electrostatics with partial charges, solvent, your distances as flat-bottom wells when the 📏 box below is ticked, ω, the φ/ψ statistical potential and χ1. It is the length of THIS gesture and of nothing else — the structure calculation has its own steps per start. 0 = nothing to do.">
+      🌡 steps
+      <input type="number" min="0" max="20000" step="10" value={mdSteps}
+        onChange={(e) => setMdSteps(Math.max(0, Math.min(20000, Math.round(Number(e.target.value) || 0))))}
+        aria-label="Molecular dynamics steps"
+        className="w-16 border border-sky-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-sky-500 text-[10px] font-mono bg-white" />
+    </label>
+    <label className="flex items-center gap-1"
+      title="⏱ THE STEP INTERVAL of this dynamics, in picoseconds — how much time ONE step represents. With the number of steps it fixes the DURATION shown on the right (steps × dt); typing a duration below (or here) chooses the steps. That is the only arithmetic the panel does, and the module checks it (`structureCalcSimulationTimeOf`). 0.01 ps is the usual value for a dihedral trajectory.">
+      ⏱ dt
+      <input type="number" min="0.0001" max="1" step="0.005" value={mdDt}
+        onChange={(e) => setMdDtText(e.target.value)}
+        aria-label="Molecular dynamics timestep, in picoseconds"
+        className="w-16 border border-sky-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-sky-500 text-[10px] font-mono bg-white" />
+      <span className="font-semibold text-slate-500">ps</span>
+    </label>
+    <label className="flex items-center gap-1"
+      title="⏱ THE DURATION OF THIS DYNAMICS, in picoseconds — steps × dt. Type a length here and the number of steps follows (length / dt); type the steps and this length follows. The multiplication is the module's (`structureCalcSimulationTimeOf`), not the panel's.">
+      ⏱ duration
+      <input type="number" min="0.0001" max="20000" step="0.5" value={mdTime.ps}
+        onChange={(e) => setMdTotalText(e.target.value)}
+        aria-label="Duration of the molecular dynamics, in picoseconds"
+        className="w-20 border border-sky-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-sky-500 text-[10px] font-mono bg-white" />
+      <span className="font-semibold text-slate-500">ps</span>
+    </label>
+    <span className="text-[10px] font-mono font-bold text-sky-800 bg-sky-50 border border-sky-200 rounded px-1.5 py-0.5"
+      title="steps × dt — the nominal length of THIS trajectory, computed by the module.">
+      = {mdTime.ps} ps ({mdTime.ns} ns)
+    </span>
+    <label className="flex items-center gap-1"
+      title="🖼 ONE IMAGE EVERY N STEPS — this is what makes the dynamics VISIBLE: the engine announces an image every N steps (8 by default, the module's constant), each image is written into the molecule before the page is allowed to paint, and the 🪢 plot follows it while its window is on screen. 1 writes every step (the finest, the slowest), 50 is a quick glimpse.">
+      🖼 every
+      <input type="number" min="1" max="2000" step="1" value={mdImage}
+        onChange={(e) => setMdImage(Math.max(1, Math.min(2000, Math.round(Number(e.target.value) || 1))))}
+        aria-label="One image every N steps of the molecular dynamics"
+        className="w-12 border border-sky-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-sky-500 text-[10px] font-mono bg-white" />
+      <span className="font-semibold text-slate-500">steps</span>
+    </label>
+    <label className="flex items-center gap-1"
+      title={`🪢 LET ω VARY IN THIS DYNAMICS — the 🌡 MD window's OWN setting (the structure calculation has its own 🪢 box, in its panel): this one changes nothing in ▶ Run. UNCHECKED (the default) every peptide C–N bond is PROTECTED — the dynamics refuses a step that increases its ω cost, which is what keeps peptides trans (measured: without it, an ω 0.4° off trans ended up cis after 300 dynamics steps). CHECKED, ω becomes an ORDINARY dihedral: its barrier is still a family of the field (k = ${STRUCTURE_CALC_OMEGA_WEIGHT} kcal/mol, zero inside the plateau of ± ${STRUCTURE_CALC_OMEGA_TOLERANCE}° around ${STRUCTURE_CALC_OMEGA}°), and the FIELD alone arbitrates — a peptide only leaves trans when a distance you asked for, an imposed φ/ψ or a clash pays more than that barrier. Its step cap stays the family's own (4°), so ω turns by small steps and never jumps to another conformer.`}>
+      <input type="checkbox" checked={mdFreeOmega} onChange={(e) => setMdFreeOmega(e.target.checked)}
+        aria-label="Let the peptide ω dihedral vary"
+        className="accent-sky-600" />
+      🪢 ω varies
+    </label>
+    <label className="flex items-center gap-1"
+
+      title={`USE THE CONSTRAINTS DEFINED IN 🧬 STRUCTURE CALCULATION — the dynamics launched by the ▶ MD button below carries the distance table of the 🧬 panel as restraints, each line with its own ⚖ weight (k = k_NOE × weight): that is what makes a dynamics pull the molecule towards the distances you typed. UNTICK it and the dynamics runs on the FORCE FIELD ALONE — bonds, angles, planar rings, van der Waals, electrostatics, solvent, ω, φ/ψ, χ1 — with no distance restraint and no leash, which is how you compare the same molecule with and without your distances. Either way the table is neither changed nor emptied: it is only read, or left out. The number here is how many lines will really take part (complete lines whose ⚖ weight is not 0 — a weight of 0 puts a line on hold). This box belongs to THIS window: the 🧬 ▶ Run, the ⚒ Minimise and the ⟳ Energy keep reading the table, as they always did.${mdUseRestraints
         ? ` Right now ${calcFieldRows().length} distance${calcFieldRows().length === 1 ? '' : 's'} of the table ride along${calcInertCount() ? `, and ${calcInertCount()} line${calcInertCount() === 1 ? ' is' : 's are'} at weight 0 (on hold)` : ''}.`
         : ' Right now the dynamics ignores the table.'}`}>
-      <input type="checkbox" checked={calcMdUseRestraints}
-        onChange={(e) => setCalcMdUseRestraints(e.target.checked)}
+      <input type="checkbox" checked={mdUseRestraints}
+        onChange={(e) => setMdUseRestraints(e.target.checked)}
         aria-label="Use the distance constraints defined in Structure calculation"
         className="accent-indigo-600" />
       📏 use the constraints of 🧬 Structure calculation
@@ -19979,11 +20194,14 @@ const renderMdOptions = () => (
 
 /* ── 🌡 LA FENÊTRE MD ELLE-MÊME — LA COLONNE DE GAUCHE DE LA VUE 3D ────────────
    Le dessin suit le dock 🪢 au pixel : même largeur, même cadre, même ⇤, et un onglet
-   vertical (🌡 MD) quand elle est repliée. Dedans : les paramètres de la dynamique
-   (`renderMdOptions`, les MÊMES états que le 🧬), le 🌡 T d'un geste isolé, et le
-   bouton ▶ MD qui la lance — « quando clicco su MD non succede praticamente niente »
-   n'était pas un défaut du moteur (le module tourne, et le rapport dit tout) : c'était
-   un geste SANS fenêtre, donc sans ses réglages ni sa progression sous les yeux. */
+   vertical (🌡 MD) quand elle est repliée. Dedans : les réglages de la dynamique ISOLÉE
+   (`renderMdOptions` : 🌡 T, 💧 solvant, pas, dt, durée, 🖼 images, 🪢 ω, 📏 distances), le
+   bouton ▶ MD qui la lance, et son rapport. « Quando clicco su MD non succede
+   praticamente niente » n'était pas un défaut du moteur (le module tourne, et le rapport
+   dit tout) : c'était un geste SANS fenêtre — et, cette session l'a montré, un geste dont
+   les images ne s'écrivaient qu'à la fin (voir `watch` dans `pumpMotion`) : « I see that
+   some calculations are being performed but the molecule and its dihedrals remain still. »
+   Un geste qu'on lance à la main se regarde : il s'écrit image par image. */
 const renderMdWindow = () => (
   <div className="shrink-0 w-[340px] flex flex-col gap-1.5 bg-white border border-sky-200 rounded-xl p-2 overflow-hidden"
     style={{ height: (viewerCollapsed ? 0 : viewH) + 'px' }}>
@@ -19995,22 +20213,18 @@ const renderMdWindow = () => (
     </div>
     <div className="overflow-y-auto custom-scrollbar flex flex-col gap-1.5">
       <p className="text-[9px] font-black text-slate-500 uppercase tracking-wide"
-        title="THE PARAMETERS OF THE DYNAMICS — the same ones 🧬 Structure calculation runs on every start (n starting, m kept, 🔥 recuit and 🖼 frames stay there: they are parameters of the CALCULATION, not of the dynamics). One set of values for both gestures. The 📏 box at the end is this window's own: it says whether the ▶ MD below carries the distance table of the 🧬 (and the ⚖ weight each line carries) or leaves it out.">
-        ⚙ Steps · dt · T hot → cold · equil · ⚒ sweeps · 🪢 ω · 📏 distances
+        title="THE PARAMETERS OF THIS DYNAMICS — and they are ITS OWN: 🌡 one temperature (this gesture does not cool down), 💧 the solvent (an implicit dielectric: this engine has no water molecules), 🌡 the steps, ⏱ the step interval and the duration, 🖼 how often an image is written, 🪢 whether ω may leave trans, and 📏 whether the distance table of the 🧬 rides along (an OPTION, ticked by default). ⚠ These values are NOT the protocol of 🧬 Structure calculation: n, m, 🔥 recuit, 🖼 frames, 🌡 hot → 🌡 cold, the equilibration share and the ⚒ sweeps are read by its ▶ Run, in its own panel, and neither gesture can change the other. The ▶ MD below runs on the molecule AS IT STANDS.">
+        ⚙ T · 💧 solvent · steps · dt · duration · 🖼 images · 🪢 ω · 📏 distances
       </p>
       <div className="flex flex-wrap items-center gap-1.5">{renderMdOptions()}</div>
       <div className="flex flex-wrap items-center gap-1.5 border-t border-sky-100 pt-1.5">
-        <label className="flex items-center gap-1 text-[10px] font-bold text-slate-600"
-          title="The temperature of the Langevin thermostat for THIS gesture, in KELVINS. The thermal energy is R·T: 0.6 kcal/mol at 300 K (the molecule vibrates), 6 kcal/mol at 3000 K (the backbone changes basin). A structure calculation does not use this field: it equilibrates at 🌡 hot and cools down to 🌡 cold.">
-          🌡 T
-          <input type="number" min="1" max="20000" step="100" value={calcMdTemp}
-            onChange={(e) => setCalcMdTempText(e.target.value)}
-            aria-label="Molecular dynamics temperature, in kelvins"
-            className="w-16 border border-slate-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-slate-500 text-[10px] font-mono bg-white" />
-          <span className="font-semibold text-slate-500">K</span>
-        </label>
+        {/* ⚡ LE 🌡 T DE CE GESTE EST DANS LA RANGÉE DES RÉGLAGES (`renderMdOptions`) — un
+            seul champ, à côté du 💧 solvant et des pas : le laisser AUSSI ici en aurait fait
+            deux cases pour le même état (elles ne pouvaient pas diverger, mais deux cases
+            pour un chiffre se lisent comme deux chiffres). La rangée ne garde donc que les
+            gestes : ▶ MD, son témoin « running… » et le rapport. */}
         <button type="button" onClick={runMolecularDynamics} disabled={calcBusy}
-          title="RUN MOLECULAR DYNAMICS on the molecule AS IT STANDS, at the temperature above, with the parameters above: dihedral Langevin dynamics under the whole force field (kcal/mol, charges, solvent, added hydrogens) — the trajectory FEELS your distances when the 📏 box above is ticked (each one with its ⚖ weight; the already-held ones are a leash, a wall, so they cannot be let go), and runs free of them when it is unticked. It is written into the molecule at every frame — you SEE it move, and the 🪢 plot follows it image by image while its window is on screen (open it WHILE the dynamics runs and it takes the next image), because the FINAL coordinates are written too even when 👁 watch is unticked: the report, the molecule and the plot then speak of the same conformation. ↺ Undo torsion puts the molecule back exactly as it was. The report gives the steps, the length in ps, the kinetic temperature, the energy before and after, whether the table was carried, how many of your distances are within tolerance, and what happened to ω, φ/ψ and χ1."
+          title="RUN MOLECULAR DYNAMICS on the molecule AS IT STANDS — an ISOLATED dynamics, with the parameters of THIS window and nothing else: its 🌡 temperature (held), its 💧 solvent, its steps, its ⏱ step interval and duration, 🖼 one image every N steps and its 🪢 rule on ω. ⚠ It owes nothing to 🧬 Structure calculation: the protocol of the starts (n, m, recuit, 🌡 hot → 🌡 cold, the ⚖ equilibration share, the ⚒ sweeps) is read by its ▶ Run, in its own panel, and what is changed here changes nothing there. It is dihedral Langevin dynamics under the whole force field (kcal/mol, charges, solvent, added hydrogens) — and the trajectory FEELS your distances when the 📏 box below is ticked (each one with its ⚖ weight; the already-held ones are a leash, a wall, so they cannot be let go), and runs free of them when it is unticked. EVERY image the engine announces is written into the molecule — you SEE it move step by step, and the 🪢 plot follows it image by image while its window is on screen (open it WHILE the dynamics runs and it takes the next image); the FINAL coordinates are written too, so the report, the molecule and the plot always speak of the same conformation. ↺ Undo torsion puts the molecule back exactly as it was. The report gives the steps, the length in ps, the image interval, the solvent, the kinetic temperature, the energy before and after, whether the table was carried, how many of your distances are within tolerance, and what happened to ω, φ/ψ and χ1."
           className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-sky-400 text-sky-700 hover:bg-sky-50 disabled:opacity-40">
           ▶ MD
         </button>
@@ -20023,12 +20237,15 @@ const renderMdWindow = () => (
         </p>
       )}
       <p className="text-[9px] text-slate-500">
-        ⚠ These values are the SAME ones the ▶ Run of 🧬 Structure calculation reads for every
-        start (annealing frames apart): one set of settings, two gestures. The 📏 box is the
-        exception — it belongs to THIS window: it decides whether the ▶ MD below carries the
-        distance table of the 🧬 (and the ⚖ weight of each line, which is written in the table
-        itself), while ▶ Run, ⚒ Minimise and ⟳ Energy keep reading that table. The window closes
-        with 🌡 MD, with its ⇤, and with the tab on the left edge — and closing it loses nothing.
+        ⚠ These values are THIS window's own: they are NOT the protocol of 🧬 Structure
+        calculation (its n, m, 🔥 recuit, 🖼 frames, 🌡 hot → 🌡 cold, ⚖ equilibration share
+        and ⚒ sweeps live in its own panel), so changing the dynamics here cannot change the
+        calculation — nor the other way round. The 📏 box is the ONE thing this window borrows
+        from the 🧬, and it is an option: ticked, the ▶ MD below carries its distance table
+        (with the ⚖ weight of each line, which is written in the table itself); unticked, it
+        runs on the force field alone. ▶ Run, ⚒ Minimise and ⟳ Energy always read that table.
+        The window closes with 🌡 MD, with its ⇤, and with the tab on the left edge — and
+        closing it loses nothing.
       </p>
     </div>
   </div>
@@ -20045,7 +20262,7 @@ const renderForceGestures = () => (
         ▶ MD), et le referme quand on reclique — exactement comme le 🪢. */}
     <button type="button" onClick={() => toggleMdDock()}
       className={`px-2 py-1 text-[10px] font-bold rounded border transition-colors ${mdDock ? 'bg-sky-100 border-sky-400 text-sky-800 hover:bg-sky-200' : 'bg-white border-sky-400 text-sky-700 hover:bg-sky-50'}`}
-      title={`Show or hide the 🌡 MD window INSIDE the viewer: it sits at the LEFT of the 3D view, it carries ALL the parameters of the molecular dynamics (steps, dt and the total length in ps, 🌡 hot → 🌡 cold, the ⚖ equilibration share, the ⚒ minimisation sweeps and the 🪢 ω option — the very values 🧬 Structure calculation runs on every start), and it has the ▶ MD button that launches the dynamics. Press this button again to close it; ⇤ folds it to a thin tab on the left edge. Closing the window loses nothing: the parameters are the panel's own state.${mdDock ? ' — open right now.' : ''}`}>
+      title={`Show or hide the 🌡 MD window INSIDE the viewer: it sits at the LEFT of the 3D view, with the parameters of a MOLECULAR DYNAMICS RUN OF ITS OWN — 🌡 one temperature, 💧 the solvent, the steps, the ⏱ step interval and the duration, 🖼 how often an image is written, 🪢 whether ω may leave trans, and the 📏 option that makes it carry (or not) the distance table of the 🧬 — and its own ▶ MD button, which runs on the molecule AS IT STANDS and shows every image it computes. ⚠ These are NOT the protocol of 🧬 Structure calculation: n, m, 🔥 recuit, 🖼 frames, 🌡 hot → 🌡 cold, the ⚖ equilibration share and the ⚒ sweeps live in its own panel, and neither gesture can change the other. Press this button again to close the window; ⇤ folds it to a thin tab on the left edge. Closing it loses nothing: the parameters are the window's own state.${mdDock ? ' — open right now.' : ''}`}>
       ▶ MD{mdDock ? ' ⇥' : ' ⇤'}
     </button>
     <button type="button" onClick={runMinimise} disabled={calcBusy}
@@ -20054,10 +20271,22 @@ const renderForceGestures = () => (
       ⚒ Minimise
     </button>
     <button type="button" onClick={calcReadForceField}
-      title="Read the force field on the molecule as it stands — the families, the residue counts, and which φ/ψ and χ1 are outside. A reading, not a gesture: nothing is written."
-      className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100">
+      title={`⟳ ENERGY — a READING of the force field on the molecule as it stands: the families, the residue counts, which φ/ψ and χ1 are outside, the charges, the surface, the hydrogens it added. It is NOT a gesture: nothing is written (↺ Undo torsion has nothing to undo). Its answer is printed RIGHT UNDER THESE BUTTONS, so the click always says something${calcSection === 'distances'
+        ? ' — and the family-by-family table is in the 🧬 Structure calculation section, which is open right now.'
+        : ' — and the family-by-family table appears in the 🧬 Structure calculation section (open it to see this number broken into its families).'}`}>
       ⟳ Energy
     </button>
+    {/* ⚡ LA RÉPONSE DU ⟳ S'ÉCRIT ICI — la remarque de cette session : « I do not understand
+        the use of the energy button. If I click nothing happens and nothing is written
+        anywhere. » La lecture n'était écrite QUE dans le corps du 🧬 : section fermée, le
+        clic ne disait donc rien à personne. Elle apparaît maintenant SOUS les boutons qui
+        l'ont demandée — et seulement quand la section du 🧬 est fermée : ouverte, c'est
+        elle qui l'affiche (le même `calcMsg`), donc jamais deux fois le même texte. */}
+    {calcMsg && calcSection !== 'distances' && (
+      <p title={calcMsg} className={`basis-full text-[10px] font-semibold rounded-md border px-2 py-1 whitespace-pre-wrap ${/^✓/.test(calcMsg) ? 'text-emerald-800 bg-emerald-50 border-emerald-200' : /^✕/.test(calcMsg) ? 'text-rose-800 bg-rose-50 border-rose-200' : 'text-slate-700 bg-slate-50 border-slate-200'}`}>
+        {calcMsg}
+      </p>
+    )}
     {/* ⛓ LE BOUTON « SS → φ/ψ » N'EST PLUS ICI — la demande : « Il pulsante “SS to phi, psi”
         deve andare dentro la sezione “structure calculation”. Quest'ultimo deve riempire la
         tabella di constraints. » Il vit donc au SEUL endroit que la demande nomme : dans le
@@ -21146,18 +21375,21 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
             aria-label="Images per annealing temperature step"
             className="w-12 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
         </label>
-        {/* ⚙ I RÉGLAGES DE LA DYNAMIQUE NE VIVENT PLUS ICI — la demande : « Il pulsante MD
-            deve aprire una finestra collapsable a sinistra all'interno del viewer. nella
-            finestra devono comparire tutti i suoi parametri che adesso sono in “structure
-            calculation” senza i parametri (n starting, m kept, recuit, frames). » Ils sont
-            écrits UNE fois, dans `renderMdOptions()` (la fenêtre 🌡 MD du bord gauche de la
-            vue 3D) : ce panneau garde ce qui décide des DÉPARTS (n, m, recuit, images) et
-            son ▶ Run lit les mêmes états que le ▶ MD — un seul jeu de valeurs pour les deux
-            gestes, donc aucune divergence possible. Voir `renderMdWindow`. */}
+        {/* ⚙ LES RÉGLAGES DE LA DYNAMIQUE DU CALCUL SONT REVENUS ICI — la demande : « bring
+            back all the MD parameters related to structure calculation in the settings of
+            structure calculation. » Ils sont écrits UNE fois, par `renderCalcMdOptions()`,
+            et AUCUN autre geste ne les lit : ce sont les pas, le pas de temps, la durée,
+            les deux températures (🌡 hot → 🌡 cold), la part d'équilibration, les balayages
+            de ⚒ et l'option 🪢 ω — le protocole que CHAQUE DÉPART porte après son recuit.
+            La fenêtre 🌡 MD du bord gauche de la vue 3D a, elle, la dynamique ISOLÉE et ses
+            propres réglages (T, 💧 solvant, pas, dt, durée, intervalle d'images, ω), donc
+            les deux gestes ne peuvent plus se changer l'un l'autre (voir
+            `renderMdWindow`). */}
+        <div className="flex flex-wrap items-center gap-1.5">{renderCalcMdOptions()}</div>
 
 
         <label className="flex items-center gap-1"
-          title="👁 WATCH EACH START: every gesture the module announces (the random draw, each annealing step, the equilibration, the cooling, the minimisation, the quench) is written into the molecule ON SCREEN, by the same path a torsion uses — so you SEE the molecule fold instead of watching a progress line, and the 🪢 plot follows it image by image while its window is on screen. Uncheck it for a quiet run: the molecule is then written ONCE, with the FINAL coordinates — the best model of the calculation, or what ▶ MD and ⚒ Minimise landed on — so the report and the 🪢 plot still describe the structure that came out. ↺ Undo torsion puts back the molecule you had before the calculation wrote anything.">
+          title="👁 WATCH EACH START: every gesture the module announces (the random draw, each annealing step, the equilibration, the cooling, the minimisation, the quench) is written into the molecule ON SCREEN, by the same path a torsion uses — so you SEE the molecule fold instead of watching a progress line, and the 🪢 plot follows it image by image while its window is on screen. Uncheck it for a quiet run: the molecule is then written ONCE, with the FINAL coordinates — the best model of the calculation, or what ▶ MD and ⚒ Minimise landed on — so the report and the 🪢 plot still describe the structure that came out. ↺ Undo torsion puts back the molecule you had before the calculation wrote anything. ⚠ THIS BOX RULES THE CALCULATION AND NOTHING ELSE: the ▶ MD of the 🌡 MD window and the ⚒ Minimise of the toolbar always write every image they compute — they are single gestures, launched by hand, and they are there to be watched.">
           <input type="checkbox" checked={calcWatch} onChange={(e) => setCalcWatch(e.target.checked)}
             aria-label="Write each start on screen while it is computed"
             className="accent-indigo-600" />

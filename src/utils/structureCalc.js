@@ -280,6 +280,35 @@ export const structureCalcSimulationTimeOf = ({ steps = STRUCTURE_CALC_MD_STEPS,
   return { steps: n, dt: Number.isFinite(h) && h > 0 ? h : STRUCTURE_CALC_MD_DT, ps: Number(ps.toFixed(4)), ns: Number((ps / 1000).toFixed(6)) };
 };
 
+/* ── 💧 LE SOLVANT DE LA DYNAMIQUE ISOLÉE ─────────────────────────────────────
+   ⚠ CE MOTEUR N'A AUCUNE MOLÉCULE D'EAU, et il ne le prétend pas : son solvant est
+   IMPLICITE par construction. Les charges sont écrantées par un diélectrique
+   (`FF_DIELECTRIC` = 4, voir utils/forceFieldKcal.js) et la surface non polaire est une
+   FAMILLE du champ (⚗ SASA). Le seul réglage de solvant qui existe donc VRAIMENT est le
+   diélectrique que les charges voient, et c'est TOUT ce que ce choix offre — il n'y a pas
+   de boîte d'eau explicite dans ce moteur dihédral, et le panneau le dit plutôt que de
+   promettre une trajectoire dans l'eau :
+     · `implicit` — le modèle du champ, ε = 4 (le défaut : rien ne change) ;
+     · `vacuum`   — ε = 1 : aucun écrantage, les charges se voient en entier ;
+     · `water`    — ε = 80 : l'écrantage uniforme de l'eau en volume (ENCORE un modèle
+                    implicite : c'est un diélectrique, pas des molécules d'eau).
+   Le panneau écrit ces libellés tels quels : aucun ε n'est recopié dans le JSX. */
+export const STRUCTURE_CALC_SOLVENT = 'implicit';
+export const STRUCTURE_CALC_SOLVENTS = [
+  { id: 'implicit', label: 'implicit · ε = 4', dielectric: FF_DIELECTRIC,
+    of: 'the model the field already uses (charges screened by ε = 4)' },
+  { id: 'vacuum', label: 'vacuum · ε = 1', dielectric: 1,
+    of: 'no screening at all — the charges see each other in full' },
+  { id: 'water', label: 'bulk water · ε = 80', dielectric: 80,
+    of: 'uniform screening by the dielectric of bulk water' },
+];
+/** LE MODÈLE DEMANDÉ, TOUJOURS DÉFINI — un identifiant inconnu (ou absent) rend le modèle
+ *  par défaut : le panneau ne peut donc ni jeter pour un identifiant qu'il n'a pas écrit
+ *  lui-même, ni afficher un `undefined`. */
+export const structureCalcSolventOf = (id) => STRUCTURE_CALC_SOLVENTS
+  .find((s) => s.id === (id == null ? '' : String(id)))
+  || STRUCTURE_CALC_SOLVENTS.find((s) => s.id === STRUCTURE_CALC_SOLVENT);
+
 /** LA MINIMISATION DIHÉDRALE (l'affinage final) — une descente en coordonnées : chaque
  *  dièdre est essayé de part et d'autre d'un pas qui se divise par deux dès qu'un
  *  balayage complet n'améliore plus rien. Elle part de la fin de la dynamique et
@@ -1813,11 +1842,16 @@ export function* mdFrames({
   freeOmega = STRUCTURE_CALC_FREE_OMEGA,
   channelBudget = STRUCTURE_CALC_MD_CHANNELS,
   perFrame = STRUCTURE_CALC_MD_FRAME, coreRefresh = STRUCTURE_CALC_CORE_REFRESH,
+  /* 💧 LE DIÉLECTRIQUE — le seul réglage de solvant que ce moteur possède vraiment
+     (`STRUCTURE_CALC_SOLVENTS`) : il traverse le couple par `torsionEngineOf`, qui le
+     comprend depuis toujours. Le défaut est le modèle du champ (ε = 4), donc les appels
+     qui ne le demandent pas ne changent pas de physique d'un iota. */
+  dielectric = FF_DIELECTRIC,
   hydrogen = null,
 } = {}) {
   const engine = torsionEngineOf({
     positions, elements, bonds, restraints, weights, channels, leash, torsions, omegas, dihedrals,
-    ramaWeight, chiWeight, hydrogen,
+    ramaWeight, chiWeight, hydrogen, dielectric,
   });
   if (!engine) return refusedMotion('bad-points', null, freeOmega);
   const chan = engine.chan;

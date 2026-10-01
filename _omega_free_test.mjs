@@ -289,8 +289,12 @@ has(VIEWER, 'STRUCTURE_CALC_FREE_OMEGA,',
   'le panneau importe le défaut du module (aucun chiffre écrit dans le JSX)');
 has(VIEWER, 'const [calcOmegaFree, setCalcOmegaFree] = useState(STRUCTURE_CALC_FREE_OMEGA);',
   '⚠ UN ÉTAT, et son défaut vient du module');
-eq((VIEWER.match(/freeOmega: calcOmegaFree/g) || []).length, 3,
-  '⚠ le MÊME réglage part au ▶ Run, au ▶ MD et au ⚒ Minimise (trois appels, un seul état)');
+eq((VIEWER.match(/freeOmega: calcOmegaFree/g) || []).length, 2,
+  '⚠ le réglage du CALCUL part au ▶ Run et au ⚒ Minimise (deux appels, un seul état)');
+eq((VIEWER.match(/freeOmega: mdFreeOmega/g) || []).length, 1,
+  '⚠ …et la dynamique ISOLÉE de la fenêtre 🌡 MD a le SIEN : elle ne peut plus changer le protocole des départs');
+has(VIEWER, 'checked={mdFreeOmega} onChange={(e) => setMdFreeOmega(e.target.checked)}',
+  '…et la case 🪢 de la fenêtre coche CE réglage-là');
 has(VIEWER, 'checked={calcOmegaFree} onChange={(e) => setCalcOmegaFree(e.target.checked)}',
   '…et il se coche dans la rangée des réglages du 🧬');
 has(VIEWER, '🪢 ω varies', 'la case est nommée 🪢 « ω varies »');

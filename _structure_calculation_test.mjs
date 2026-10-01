@@ -1379,40 +1379,56 @@ has(calcPanel, 'aria-label="Write each start on screen while it is computed"',
   '⚠ …et l’interrupteur qui MONTRE le calcul (👁 watch each start)');
 has(calcPanel, 'ranked.comp !== componentRef.current',
   '⚠ …et il prévient quand la famille appartient à une AUTRE molécule que celle à l’écran');
-/* ⚙ LES RÉGLAGES DE LA DYNAMIQUE — ILS NE SONT PLUS DANS LE PANNEAU 🧬 MAIS DANS LA
-   FENÊTRE 🌡 MD. La demande : « Il pulsante MD deve aprire una finestra collapsable a
-   sinistra all'interno del viewer. nella finestra devono comparire tutti i suoi parametri
-   che adesso sono in “structure calculation” senza i parametri (n starting, m kept,
-   recuit, frames). » Ils sont donc écrits UNE fois, dans `renderMdOptions()` — et le
-   panneau 🧬 ne garde QUE les paramètres des départs (n, m, 🔥 recuit, 🖼 frames). */
+/* ⚙ LES DEUX DYNAMIQUES SONT SÉPARÉES — la demande de cette session : « bring back all the
+   MD parameters related to structure calculation in the settings of structure
+   calculation … In the window dedicated to MD put the parameters for an MD run
+   (temperature, explicit, implicit solvent, steps, stepinterval, duration) … This MD
+   should be independent of structure calculation. »
+   Deux blocs, donc, et DEUX JEUX D'ÉTATS : `renderCalcMdOptions()` (le protocole du 🧬,
+   rendu DANS son panneau, lu par son ▶ Run) et `renderMdOptions()` (la dynamique ISOLÉE de
+   la fenêtre 🌡 MD, lue par son ▶ MD). */
+const calcMdOptions = VIEW.slice(
+  VIEW.indexOf('const renderCalcMdOptions = () => ('),
+  VIEW.indexOf('const renderMdOptions = () => ('),
+);
+ok(calcMdOptions.length > 1500,
+  `le protocole du 🧬 est écrit une fois (${calcMdOptions.length} caractères)`);
+for (const label of ['Molecular dynamics steps per start', 'Minimisation sweeps per start',
+  'Hot temperature of the molecular dynamics, in kelvins',
+  'Cold temperature of the molecular dynamics, in kelvins',
+  'Timestep of each start\'s dynamics, in picoseconds',
+  'Total simulation time per start, in picoseconds',
+  'Share of the dynamics spent equilibrating, in per cent',
+  'Let the peptide ω dihedral vary in the structure calculation']) {
+  has(calcMdOptions, `aria-label="${label}"`,
+    `…le panneau 🧬 a retrouvé le réglage « ${label} » (le protocole de CHAQUE départ)`);
+}
+eq(calcMdOptions.includes('value={md'), false,
+  '⚠ …et il n’écrit QUE ses propres états (`calcMd*`) : aucun réglage de la fenêtre ne s’y glisse');
+has(calcPanel, '{renderCalcMdOptions()}',
+  '⚠ …et le panneau les REND, dans sa rangée de réglages (la demande : « in the settings of structure calculation »)');
 const mdWindow = VIEW.slice(
   VIEW.indexOf('const renderMdOptions = () => ('),
   VIEW.indexOf('const renderForceGestures = () => ('),
 );
 ok(mdWindow.length > 3000, `la fenêtre 🌡 MD est écrite une fois (${mdWindow.length} caractères)`);
-for (const label of ['Molecular dynamics steps per start', 'Minimisation sweeps per start',
-  'Hot temperature of the molecular dynamics, in kelvins',
-  'Cold temperature of the molecular dynamics, in kelvins',
+for (const label of ['Molecular dynamics temperature, in kelvins',
+  'Solvent of the molecular dynamics',
+  'Molecular dynamics steps',
   'Molecular dynamics timestep, in picoseconds',
-  'Total simulation time per start, in picoseconds',
-  'Share of the dynamics spent equilibrating, in per cent']) {
+  'Duration of the molecular dynamics, in picoseconds',
+  'One image every N steps of the molecular dynamics',
+  'Let the peptide ω dihedral vary',
+  'Use the distance constraints defined in Structure calculation']) {
   has(mdWindow, `aria-label="${label}"`,
-    `…la fenêtre MD a le réglage « ${label} » (aucun chiffre n’est caché)`);
+    `…la fenêtre MD a SON réglage « ${label} » (T · 💧 solvant · pas · dt · durée · images · ω · 📏)`);
 }
-has(mdWindow, 'aria-label="Let the peptide ω dihedral vary"', '…avec l’option 🪢 ω de la dynamique');
+has(mdWindow, '= {mdTime.ps} ps ({mdTime.ns} ns)',
+  '⚠ …et la fenêtre AFFICHE sa durée (pas × dt), calculée par le module');
 for (const label of ['Annealing temperature steps', 'Images per annealing temperature step']) {
   has(calcPanel, `aria-label="${label}"`,
-    `⚠ …et « ${label} » reste au panneau 🧬 (c’est un paramètre du CALCUL, pas de la dynamique)`);
+    `⚠ …et « ${label} » reste au panneau 🧬 (c’est un paramètre des départs)`);
 }
-eq(calcPanel.includes('aria-label="Molecular dynamics steps per start"'), false,
-  '⚠ …et la dynamique n’a PLUS aucun réglage dans le panneau : un seul endroit, donc aucune divergence');
-/* ⚠ LE 🌡 T ET LE ▶ MD ONT SUIVI LA FENÊTRE ; ⚒ ET ⟳ SONT RESTÉS DANS LA RANGÉE. Les
-   trois gestes demandés « next to the structure calculation button » restent donc à un
-   clic, et la dynamique porte SES réglages là où elle les montre. */
-has(mdWindow, 'aria-label="Molecular dynamics temperature, in kelvins"',
-  '…le champ 🌡 T est écrit dans la fenêtre MD (un seul champ de température)');
-has(mdWindow, '= {calcMdTime.ps} ps ({calcMdTime.ns} ns)',
-  '⚠ …et la fenêtre AFFICHE la durée totale de la simulation (pas × dt), calculée par le module');
 has(calcPanel, 'families · kcal/mol',
   '⚠ …dans les UNITÉS du champ : kcal/mol (le bloc 🧲 du panneau le dit)');
 has(mdWindow, 'onClick={runMolecularDynamics}', '🌡 ▶ MD est un bouton, dans SA fenêtre');
@@ -1424,6 +1440,24 @@ eq(forceGestures.includes('onClick={runMolecularDynamics}'), false,
   '⚠ …le ▶ MD n’y est plus : il n’existe qu’une fois, dans sa fenêtre');
 has(forceGestures, 'onClick={runMinimise}', '⚒ Minimise est resté dans la rangée');
 has(forceGestures, 'onClick={calcReadForceField}', '🧲 …et ⟳ Energy aussi');
+/* ⚡ LA RÉPONSE DU ⟳ ENERGY EST ÉCRITE LÀ OÙ LE BOUTON EST — la remarque de cette session :
+   « I do not understand the use of the energy button. If I click nothing happens and
+   nothing is written anywhere. » La lecture n’existait QUE dans le corps du 🧬 : section
+   fermée, le clic ne disait rien. Elle est maintenant rendue DANS la rangée des gestes (et
+   seulement là quand la section du 🧬 est fermée, pour ne pas écrire deux fois le même
+   texte), et l’enveloppe try/catch garantit qu’une lecture impossible est DITE. */
+has(forceGestures, "{calcMsg && calcSection !== 'distances' && (",
+  '⚠ …et sa réponse s’écrit SOUS les boutons qui l’ont demandée (le clic dit toujours quelque chose)');
+has(forceGestures, 'basis-full text-[10px] font-semibold rounded-md border',
+  '…sur toute la largeur de la rangée, donc lisible au premier coup d’œil');
+has(VIEW, 'const calcReadForceFieldNow = () => {',
+  '…la lecture du champ reste UNE seule implémentation (aucun second calcul d’énergie)');
+has(VIEW, 'const calcReadForceField = () => {\n  try {\n    return calcReadForceFieldNow();',
+  '⚠ …mais elle est enveloppée : une lecture qui jette est DITE au lieu de laisser le clic muet');
+has(VIEW, '✕ The reading of the force field failed:',
+  '…avec le texte de l’erreur, et la promesse que la molécule n’a pas bougé (une lecture n’écrit rien)');
+has(VIEW, 'The family-by-family table of this same reading is in 🧬 Structure calculation',
+  '…et le renvoi vers le tableau famille par famille du 🧬 (le chiffre s’y décompose)');
 has(calcPanel, '{renderForceGestures()}',
   '⚠ …et les trois sont RENDUS dans le panneau (la demande : « can the MD, Minimize and Energy be put next to “structure calculation” button? »)');
 ok(calcPanel.indexOf('{renderForceGestures()}') > calcPanel.indexOf('🧬 Structure calculation'),
@@ -1471,26 +1505,55 @@ has(VIEW, 'style={{ backgroundColor: dot }}', '…la pastille du bouton porte la
    lecteur (`calcWeightOf`), une seule fabrique de contraintes (`calcRestraintTermsOf`). */
 has(mdWindow, 'aria-label="Use the distance constraints defined in Structure calculation"',
   '📏 l’option « use constraints defined in structure calculation » existe, DANS la fenêtre 🌡 MD');
-has(mdWindow, 'onChange={(e) => setCalcMdUseRestraints(e.target.checked)}',
+has(mdWindow, 'onChange={(e) => setMdUseRestraints(e.target.checked)}',
   '…et c’est une vraie case à cocher, branchée sur son état');
 has(mdWindow, '📏 use the constraints of 🧬 Structure calculation',
   '…qui se lit dans l’interface (le mot de la demande, pas un glyphe à deviner)');
 has(mdWindow, '<span className="font-mono font-bold text-indigo-800">({calcFieldRows().length})</span>',
   '…avec le nombre de lignes qui partiront VRAIMENT (complètes, et de poids non nul)');
-has(VIEW, 'const [calcMdUseRestraints, setCalcMdUseRestraints] = useState(true);',
-  '⚠ la case est un état du viewer, COCHÉE par défaut : une table ne change pas de sens sans un geste');
-has(VIEW, 'mdUseRestraints: calcMdUseRestraints,',
-  '…et le choix survit à un rechargement de la page (comme les autres réglages du 🧬)');
-has(VIEW, "if (typeof s.mdUseRestraints === 'boolean') setCalcMdUseRestraints(s.mdUseRestraints);",
+has(VIEW, 'const [mdUseRestraints, setMdUseRestraints] = useState(true);',
+  '⚠ la case est un état DE LA FENÊTRE, COCHÉE par défaut : une table ne change pas de sens sans un geste');
+has(VIEW, 'mdRunRestraints: mdUseRestraints,',
+  '…et le choix survit à un rechargement de la page (sous la clef de la fenêtre)');
+has(VIEW, "if (typeof s.mdRunRestraints === 'boolean') setMdUseRestraints(s.mdRunRestraints);",
   '…il est relu au montage');
+has(VIEW, "if (typeof s.mdUseRestraints === 'boolean') setMdUseRestraints(s.mdUseRestraints);",
+  '⚠ …et une session enregistrée AVANT cette séparation retrouve la sienne (clef historique : aucun réglage perdu)');
+/* ⚙ LES RÉGLAGES DE LA FENÊTRE SONT À ELLE — les six états de la dynamique isolée, et la
+   preuve qu'ils ne sont pas ceux du 🧬 (les états du calcul s'appellent `calcMd*`). */
+for (const state of ['const [mdTemp, setMdTemp] = useState(STRUCTURE_CALC_MD_HOT);',
+  'const [mdSteps, setMdSteps] = useState(STRUCTURE_CALC_MD_STEPS);',
+  'const [mdDt, setMdDt] = useState(STRUCTURE_CALC_MD_DT);',
+  'const [mdImage, setMdImage] = useState(STRUCTURE_CALC_MD_FRAME);',
+  'const [mdSolvent, setMdSolvent] = useState(STRUCTURE_CALC_SOLVENT);',
+  'const [mdFreeOmega, setMdFreeOmega] = useState(STRUCTURE_CALC_FREE_OMEGA);']) {
+  has(VIEW, state, `…l’état de la fenêtre est là : ${state.split(' = ')[0]}`);
+}
+has(VIEW, 'const [calcMdSteps, setCalcMdSteps] = useState(STRUCTURE_CALC_MD_STEPS);',
+  '⚠ …et le protocole du 🧬 garde le SIEN (deux états, deux gestes : aucun ne lit l’autre)');
+has(VIEW, 'const mdTime = structureCalcSimulationTimeOf({ steps: mdSteps, dt: mdDt });',
+  '…la durée de la fenêtre est calculée par le module, comme celle du calcul');
+has(VIEW, 'const mdSolventOf = () => structureCalcSolventOf(mdSolvent);',
+  '💧 …et le solvant est résolu par le module (aucun ε écrit dans le JSX)');
 /* LE ▶ MD LIT LA CASE — décochée : ni contrainte, ni longe, et le rapport le DIT. */
 const mdSrc = VIEW.slice(
   VIEW.indexOf('const runMolecularDynamics = () => {'),
   VIEW.indexOf('const runMinimise = () => {'),
 );
 ok(mdSrc.length > 1500, `la dynamique est bien branchée (${mdSrc.length} caractères)`);
-has(mdSrc, 'const list = calcMdUseRestraints',
-  '⚠ …le ▶ MD demande d’abord à la case : ce qu’il porte dépend d’elle');
+has(mdSrc, 'const list = mdUseRestraints',
+  '⚠ …le ▶ MD demande d’abord à SA case : ce qu’il porte dépend d’elle');
+has(mdSrc, 'steps: mdSteps, dt: mdDt, temperature: mdTemp,',
+  '⚙ …et il passe SES réglages au moteur : ses pas, son pas de temps, sa température');
+has(mdSrc, 'dielectric: mdSolventOf().dielectric',
+  '💧 …avec SON solvant (le diélectrique que les charges voient)');
+has(mdSrc, 'perFrame: mdImage',
+  '🖼 …et SON intervalle d’images (le « stepinterval » de la demande)');
+has(mdSrc, 'freeOmega: mdFreeOmega', '🪢 …et SON option ω (le calcul a la sienne)');
+has(mdSrc, 'watch: true,',
+  '👁 …et il s’ÉCRIT toujours : la molécule bouge PENDANT la dynamique, pas seulement à la fin');
+eq(/calcMdSteps|calcMdTemp|calcMdHot|calcMdEquil|calcMinimise|calcOmegaFree|calcMdTime/.test(mdSrc), false,
+  '⚠ …en ne citant AUCUN état du calcul — et le calcul ne cite pas les siens : les deux dynamiques sont INDÉPENDANTES, comme la demande le dit');
 has(mdSrc, '    : [];', '…décochée, il part SANS aucune contrainte de distance');
 has(mdSrc, 'const held = list.length ? calcHeldPairs(geom, list) : [];',
   '⚠ …et SANS longe : ni contrainte, ni mur (une dynamique libre, vraiment)');
@@ -1538,7 +1601,8 @@ has(VIEW, 'weight: Number.isFinite(wv) && wv >= 0 ? wv : null,',
    before initialization ») qui fait JETER le viewer entier — c'est ce qu'a trouvé
    `_viewer_render_smoke_test.mjs`, et la leçon est répétée ici pour qu'on ne la
    réapprenne pas deux fois. */
-for (const state of ['calcMdTemp', 'calcMdHot', 'calcMdCold']) {
+for (const state of ['mdTemp', 'mdSteps', 'mdDt', 'mdImage', 'mdSolvent', 'mdFreeOmega',
+  'calcMdHot', 'calcMdCold', 'mdUseRestraints']) {
   ok(VIEW.indexOf(`const [${state}, set`) < VIEW.indexOf("const CALC_STORE_KEY = 'labViewerCalcState';"),
     `⚠ …et ${state} est déclaré AVANT l’effet 💾 qui le lit dans ses dépendances (aucune TDZ au rendu)`);
 }
@@ -1624,8 +1688,9 @@ for (const phase of ["case 'draw':", "case 'anneal':", "case 'md-equilibrate':",
 has(VIEW, 'const calcAttemptLine = (a, { done, of }) =>',
   '⚠ et la ligne d’un départ fini aussi (recuit, dynamique, minimisation, ω, φ/ψ)');
 /* LES GESTES ⚙ — LA MÊME MÉCANIQUE D'IMAGES POUR LA DYNAMIQUE ET LA MINIMISATION. */
-has(VIEW, 'const pumpMotion = ({ frames, comp, structure, head, onEnd }) => {',
-  '⚠ la dynamique et la minimisation se conduisent avec LA MÊME pompe que le calcul (pas une seconde boucle)');
+has(VIEW, 'const pumpMotion = ({ frames, comp, structure, head, watch = calcWatch, onEnd }) => {',
+  '⚠ la dynamique et la minimisation se conduisent avec LA MÊME pompe que le calcul (pas une seconde boucle),'
+  + ' et c’est ELLE qui porte le droit d’écrire les images (`watch`)');
 has(VIEW, 'const runMolecularDynamics = () => {', '🌡 ▶ MD est branché');
 has(VIEW, 'frames: mdFrames({', '…sur le moteur de dynamique du module');
 has(VIEW, 'const runMinimise = () => {', '⚒ Minimise est branché');
@@ -1634,10 +1699,11 @@ has(VIEW, 'const held = calcHeldPairs(geom, list);',
   '⚠ …tous deux SOUS LONGE : les distances déjà tenues sont transmises au module');
 has(VIEW, 'const calcHeldPairs = (geom, list) => list',
   '…par une fonction qui ne garde QUE celles qui sont tenues à cet instant');
-has(VIEW, 'label: `🌡 molecular dynamics · ${calcMdSteps} steps · T = ${calcMdTemp}`\n'
-  + "      + ` · ω ${calcOmegaFree ? 'free to vary' : 'held trans'}`\n"
-  + "      + ` · ${calcMdUseRestraints ? `with the ${list.length} distance${list.length === 1 ? '' : 's'} of the table` : 'without the distance table'}`,",
-  '⚠ …et le ↺ est armé AVANT d’écrire, comme pour une torsion (avec le réglage 🪢 ω du moment ET ce que la case 📏 a décidé : le journal dit ce que la dynamique a porté)');
+has(VIEW, 'label: `🌡 molecular dynamics · ${mdSteps} steps · ${mdTime.ps} ps · T = ${mdTemp} K`\n'
+  + "      + ` · 💧 ${mdSolventOf().label}`\n"
+  + "      + ` · ω ${mdFreeOmega ? 'free to vary' : 'held trans'}`\n"
+  + "      + ` · ${mdUseRestraints ? `with the ${list.length} distance${list.length === 1 ? '' : 's'} of the table` : 'without the distance table'}`,",
+  '⚠ …et le ↺ est armé AVANT d’écrire, comme pour une torsion (avec les réglages de LA FENÊTRE : pas, durée, solvant, ω — et ce que la case 📏 a décidé)');
 has(VIEW, "// le graphe suit ce que la dynamique vient d'écrire",
   '⚠ le graphe 🪢 est relu après la dynamique et après la minimisation (il ne parle jamais d’une autre conformation)');
 eq(VIEW.split('if (ramaIsShown()) readRamachandran();').length - 1, 4,
