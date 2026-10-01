@@ -8255,6 +8255,31 @@ const mdSolventOf = () => structureCalcSolventOf(mdSolvent);
 const [calcForce, setCalcForce] = useState(null);   // le dernier champ de forces relu
 const [calcMsg, setCalcMsg] = useState('');
 const [calcProgress, setCalcProgress] = useState('');
+/* ⚡ LA LIGNE DE PROGRESSION DES GESTES ISOLÉS (▶ MD et ⚒ Minimise) — la demande de cette
+   session : « Le informazioni sul progresso del calcolo sono nella finestra di MD ma
+   dovrebbero essere nella finestra di structure calculation. » Les deux gestes et le calcul
+   partageaient UNE seule ligne, écrite dans les DEUX fenêtres : lancer ▶ Run affichait donc
+   « 🧬 start 3/8 … » dans la fenêtre 🌡 MD, qui n'a rien lancé. Chaque fenêtre a maintenant
+   SON état — `calcProgress` pour le 🧬 (dans son panneau), `mdProgress` pour les deux gestes
+   de la fenêtre 🌡 MD (dans la sienne) — et aucune ligne ne s'affiche ailleurs que là où le
+   geste a été cliqué. */
+const [mdProgress, setMdProgress] = useState('');
+/* ■ LE TÉMOIN DU GESTE EN COURS — la seconde moitié de la demande de cette session :
+   « manca un pulsante di stop sia per la structure calculation che per la MD ». Le 🧬 avait
+   son ⏹ ; la fenêtre 🌡 MD n'avait RIEN — une dynamique de 20 000 pas ne pouvait que
+   s'attendre. `mdBusy` est l'état DE LA FENÊTRE, comme `mdProgress` : le 🧬 garde le sien
+   (`calcBusy`), donc le ⏹ du calcul ne s'allume plus pendant une dynamique (il s'allumait :
+   un `calcBusy` partagé le faisait apparaître dans l'AUTRE fenêtre, et le cliquer
+   re-classait un calcul déjà fini — voir `calcStop`). C'est aussi lui qui gèle les trois ▶
+   pendant qu'un geste tourne : les deux gestes et le calcul avancent le MÊME jeton
+   d'annulation (`calcRunRef`), donc ils ne peuvent pas courir ensemble.
+   ⚠ `mdPhaseRef` garde la dernière ligne annoncée par la pompe : le ■ s'arrête ENTRE deux
+   images et peut le DIRE (où en était le geste), au lieu de laisser la ligne sur « running… ».
+   ⚠ `mdRunRef` dit QUEL geste tourne : un tick en retard d'un geste qu'on vient d'arrêter ne
+   doit pas éteindre le témoin d'un geste relancé juste après (voir `mdStop`). */
+const [mdBusy, setMdBusy] = useState(false);
+const mdPhaseRef = useRef('');   // la dernière ligne annoncée par la pompe du geste
+const mdRunRef = useRef(0);      // le jeton du geste qui tourne (0 = personne)
 const [calcBusy, setCalcBusy] = useState(false);
 const [calcResult, setCalcResult] = useState(null);   // la famille classée du module
 const [calcShown, setCalcShown] = useState(0);        // le rang écrit à l'écran
@@ -11272,6 +11297,11 @@ const runStructureCalculation = () => {
     setCalcResult({ ...family, comp, structure, moleculeKey });
     setCalcBusy(false);
     setCalcProgress('');
+    /* ⚠ LA PARTIE EST CONSOMMÉE — `calcPartialRef` ne garde plus la partie d'un calcul FINI :
+       sinon tout chemin qui appelle `part.finish(true)` sur la dernière partie connue
+       re-classerait et RÉÉCRIRAIT la famille précédente (c'était le cas du ⏹ cliqué pendant
+       une dynamique, quand `calcBusy` était partagé). */
+    calcPartialRef.current = null;
     if (!family.retained.length) {
       setCalcMsg('✕ No structure came out of the calculation — nothing was written.');
       return;
@@ -11286,6 +11316,12 @@ const runStructureCalculation = () => {
        C'est la seconde moitié du « le calcul survit au changement de page ». */
     if (calcMoleculeKey(componentRef.current, componentRef.current && componentRef.current.structure) === moleculeKey) {
       calcWriteStructure(family.retained[0], family);
+      /* 🧬 …ET LES AUTRES MODÈLES DE LA FAMILLE ENTRENT DANS LA BARRE (voir
+         `calcAddFamilyToBar`) : ils deviennent des molécules ordinaires, donc on les VOIT,
+         on les style, on les cache, et 🎯 Fit to chosen superpose la famille. Le premier
+         n'est pas ajouté deux fois — il EST la molécule de l'écran (celle que la barre
+         appelle ★ main). */
+      calcAddFamilyToBar(structure, componentRef.current, family.retained).catch(() => 0);
     } else {
       setCalcMsg(`✓ The calculation went through the page change — ${family.retained.length}`
         + ` structure${family.retained.length === 1 ? '' : 's'} kept above (${attempts.length} start`
@@ -11407,9 +11443,19 @@ const runStructureCalculation = () => {
 
 /** ⏹ ARRÊTER LE CALCUL — entre deux départs, et sans rien perdre : ce qui est déjà
  *  construit est classé, ses m meilleures sont écrites, et le panneau dit combien de
- *  départs sur n ont été faits (un calcul partiel reste un calcul). */
+ *  départs sur n ont été faits (un calcul partiel reste un calcul).
+ *  ⚠ CE BOUTON EST CELUI DU 🧬 ET RIEN D'AUTRE — il n'existe que pendant un calcul
+ *  (`calcBusy`, l'état du panneau) et il ne consomme QUE la partie du calcul. Les gestes
+ *  de la fenêtre 🌡 MD ont le leur (■ `mdStop`), qui ne classe rien : un geste n'a pas de
+ *  résultats partiels, il a une conformation à l'écran. Avant cette séparation, un
+ *  `calcBusy` partagé faisait apparaître ce ⏹ dans la fenêtre du 🧬 pendant une DYNAMIQUE,
+ *  et le cliquer re-classait — et réécrivait — la famille du calcul PRÉCÉDENT. */
 const calcStop = () => {
   const part = calcPartialRef.current;
+  /* ⚠ LA PARTIE EST CONSOMMÉE ICI AUSSI (`null`) : `finish` la consomme à la fin normale,
+     et le ⏹ la consomme quand il classe lui-même — donc aucune partie finie ne traîne pour
+     être re-classée par un autre chemin. */
+  calcPartialRef.current = null;
   calcRunRef.current += 1;
   setCalcBusy(false);
   if (part && part.attempts.length) { part.finish(true); return; }
@@ -11512,6 +11558,13 @@ const calcReadForceField = () => {
 const pumpMotion = ({ frames, comp, structure, head, watch = calcWatch, onEnd }) => {
   calcRunRef.current += 1;
   const run = calcRunRef.current;
+  /* ■ LE GESTE DIT QU'IL TOURNE — c'est ce qui fait apparaître le ■ de SA fenêtre (voir
+     `mdStop`) et ce qui gèle les trois ▶. Il le dit à la SEULE fenêtre 🌡 MD : le calcul, lui,
+     a son propre témoin (`calcBusy`), donc le ⏹ du 🧬 n'apparaît jamais pendant une
+     dynamique — ni l'inverse. */
+  setMdBusy(true);
+  mdRunRef.current = run;
+  mdPhaseRef.current = '';   // rien d'annoncé : un ■ immédiat n'a pas d'image à citer
   /* ⚠ LA MÊME CLÉ QUE LE CALCUL (`calcMoleculeKey`) : un ▶ MD ou un ⚒ Minimise survit lui
      aussi au changement de page, et n'écrit rien sur une autre molécule. */
   const moleculeKey = calcMoleculeKey(comp, structure);
@@ -11524,7 +11577,15 @@ const pumpMotion = ({ frames, comp, structure, head, watch = calcWatch, onEnd })
      est posée À CHAQUE IMAGE (`ramaIsShown()`) et non une fois au clic : ouvrir la
      fenêtre pendant que la molécule bouge la fait suivre dès l'image suivante. */
   const pump = () => {
-    if (calcRunRef.current !== run) return;
+    /* ■ L'ARRÊT EST ICI — le ■ avance le jeton (voir `mdStop`), et la pompe sort avant
+       d'avancer d'une image de plus : le geste s'arrête ENTRE deux images, jamais au milieu
+       d'une écriture. ⚠ On n'éteint le témoin QUE si c'est NOTRE geste qui tournait
+       (`mdRunRef`) : un tick en retard d'un geste qu'on vient d'arrêter ne doit pas éteindre
+       le ■ d'un geste relancé juste après. */
+    if (calcRunRef.current !== run) {
+      if (mdRunRef.current === run) { mdRunRef.current = 0; setMdBusy(false); }
+      return;
+    }
     /* ⚠ …ET LE GESTE SURVIT AU CHANGEMENT DE PAGE POUR LA MÊME RAISON (voir le calcul) :
        la seule chose qui s'arrête est l'écriture à l'écran, pas le geste lui-même. */
     const onScreen = calcMoleculeKey(componentRef.current, componentRef.current && componentRef.current.structure) === moleculeKey;
@@ -11533,14 +11594,18 @@ const pumpMotion = ({ frames, comp, structure, head, watch = calcWatch, onEnd })
     for (;;) {
       let tick;
       try { tick = frames.next(); } catch (e) {
-        setCalcBusy(false);
-        setCalcProgress('');
+        /* ⚠ LE TÉMOIN DU GESTE, PAS CELUI DU CALCUL — et le geste est fini : le jeton est
+           consommé, donc un tick en retard ne rallumera rien. */
+        mdRunRef.current = 0;
+        setMdBusy(false);
+        setMdProgress('');
         setCalcMsg(`✕ It stopped on an error: ${(e && e.message) || e}`);
         return;
       }
       if (tick.done) {
-        setCalcBusy(false);
-        setCalcProgress('');
+        mdRunRef.current = 0;
+        setMdBusy(false);
+        setMdProgress('');
         /* ⚠ LA DERNIÈRE IMAGE ÉCRITE N'EST PAS LA DERNIÈRE COORDONNÉE — et sans 👁 elle
            n'existe même pas. Le moteur n'annonce qu'une image tous `perFrame` pas (les
            autres seraient trop nombreuses pour l'écran) : après un ▶ MD ou un ⚒ Minimise,
@@ -11568,12 +11633,51 @@ const pumpMotion = ({ frames, comp, structure, head, watch = calcWatch, onEnd })
         if (watch && shown.positions) calcPreviewPositions(comp, structure, shown.positions);
         if (ramaIsShown()) readRamachandran();   // le 🪢 suit l'image qui vient d'être écrite
       }
-      setCalcProgress(calcPhaseLine(shown, 0, 1, head));
+      const line = calcPhaseLine(shown, 0, 1, head);
+      setMdProgress(line);
+      mdPhaseRef.current = line;   // ■ s'arrête entre deux images : il peut CITER celle-ci
     }
     if (typeof window !== 'undefined' && window.setTimeout) window.setTimeout(pump, 0);
     else pump();
   };
   pump();
+};
+
+/** ■ ARRÊTER LE GESTE EN COURS (▶ MD ou ⚒ Minimise) — la seconde moitié de la demande de
+ *  cette session : « manca un pulsante di stop sia per la structure calculation che per la
+ *  MD ». Le 🧬 avait le sien (⏹, qui CLASSE ce qui est déjà calculé) ; la fenêtre 🌡 MD
+ *  n'avait rien, et une dynamique de 20 000 pas ne pouvait que s'attendre.
+ *
+ *  L'ARRÊT EST CELUI DU MODULE, PAS UNE INVENTION DU PANNEAU : on avance le jeton que la
+ *  pompe vérifie à chaque tour (`calcRunRef`, le même que le ⏹ du calcul), donc le geste
+ *  s'arrête ENTRE l'image qu'il vient d'écrire et la suivante — jamais au milieu d'une
+ *  écriture. Il n'y a donc pas d'état intermédiaire à ranger.
+ *
+ *  ⚠ RIEN N'EST PERDU : les images déjà écrites SONT la molécule à l'écran, et ↺ Undo torsion
+ *  défait le geste ENTIER (sa photographie a été prise au départ, avant la première image).
+ *  ⚠ MAIS LE RAPPORT DU GESTE N'EST PAS CALCULÉ — ses « énergie avant → après » décrivent un
+ *  run qui est allé au bout, et celui-ci ne l'est pas : le message le DIT au lieu de laisser
+ *  croire que l'énergie « après » est celle d'un MD fini. ⟳ Energy relit le champ sur ce qui
+ *  est là. ⚠ Et le tableau du champ est remis à zéro (`setCalcForce(null)`) : ses chiffres
+ *  parlaient d'un autre jeu de coordonnées — c'est ce que font déjà les deux gestes en fin de
+ *  course.
+ *  ⚠ `mdRunRef` (et non `calcRunRef`) pour éteindre le témoin : un tick en retard du geste
+ *  qu'on vient d'arrêter ne doit pas éteindre le ■ d'un geste relancé juste après. */
+const mdStop = () => {
+  if (!mdRunRef.current) return;   // personne ne tourne : le ■ n'est d'ailleurs pas affiché
+  const at = mdPhaseRef.current;
+  mdRunRef.current = 0;
+  calcRunRef.current += 1;         // la pompe sort au prochain tour (elle vérifie le jeton)
+  setMdBusy(false);
+  setCalcForce(null);
+  setMdProgress(at ? `■ stopped between two images — the last one written was: ${at}`
+    : '■ stopped before the first image.');
+  setCalcMsg(`■ You stopped the gesture${at ? ' between two images' : ' before its first image'}.`
+    + ' The images it had already written ARE the molecule on screen, so nothing is thrown away:'
+    + ' ↺ Undo torsion puts back the conformation you had before the gesture started, and'
+    + ' ▶ MD can be started again from here.'
+    + ' ⚠ Its own report is NOT computed — its energies "before → after" describe a run that'
+    + ' reached the end, and this one did not; ⟳ Energy re-reads the force field on what is there.');
 };
 
 /** LES DISTANCES DÉJÀ TENUES — la longe des gestes ⚙ (dynamique et minimisation) : un
@@ -11648,9 +11752,13 @@ const runMolecularDynamics = () => {
       + ` · ω ${mdFreeOmega ? 'free to vary' : 'held trans'}`
       + ` · ${mdUseRestraints ? `with the ${list.length} distance${list.length === 1 ? '' : 's'} of the table` : 'without the distance table'}`,
   };
-  setCalcBusy(true);
+  /* ■ LE GESTE ALLUME SON PROPRE TÉMOIN — `mdBusy`, l'état de la fenêtre 🌡 MD : le ⏹ du
+     calcul (`calcBusy`) n'a donc plus rien à voir avec une dynamique, et le ■ de cette
+     fenêtre n'apparaît qu'ici. `pumpMotion` le repose au départ et l'éteint à la fin (fin
+     normale, erreur, ou ■) : le geste et sa pompe parlent du même état. */
+  setMdBusy(true);
   setCalcShown(0);
-  setCalcProgress(`🌡 molecular dynamics …${disulfideConductedNote()}`);
+  setMdProgress(`🌡 molecular dynamics …${disulfideConductedNote()}`);
   pumpMotion({
     frames: mdFrames({
       positions: base, elements: geom.elements, bonds: geom.bonds,
@@ -11737,9 +11845,12 @@ const runMolecularDynamics = () => {
            DIT donc la vitesse thermique du palier (√(R·T/m)) et le plafond de couple qui la
            suit, au lieu de laisser croire que la température ne fait que se lire. */
         + ` 🌡 speed scale √(R·T/m) = ${run.temperature && Number.isFinite(run.temperature.thermal) ? run.temperature.thermal.toFixed(1) : '—'} °/ps`
-        + ` (m = ${STRUCTURE_CALC_MD_MASS}), and the field's torque obeys it (γ·m·f·√(R·T/m) =`
-        + ` ${run.torque && Number.isFinite(run.torque.dynamic) ? run.torque.dynamic.toFixed(3) : '—'} kcal/mol·deg) —`
-        + ' the temperature you asked for is what makes the atoms move, so it does not settle in a minimum.'
+        + ` (m = ${STRUCTURE_CALC_MD_MASS}), and the field's ceiling is the torque that reverses it IN ONE STEP`
+        + ` (f·√(R·T·m)/h = ${run.torque && Number.isFinite(run.torque.wall) ? run.torque.wall.toFixed(3) : '—'} kcal/mol·deg`
+        + `, capped at ${run.torque && Number.isFinite(run.torque.dynamic) ? run.torque.dynamic.toFixed(3) : '—'}) —`
+        + ' the temperature you asked for is what makes the atoms move, so it does not settle in a minimum,'
+        + ' and that ceiling is what makes a van der Waals wall a WALL (a smaller budget lets two atoms cross'
+        + ' each other: the field could not answer the thermal kick).'
         + ' ⚒ Minimise from here lands on a minimum of the same field; ↺ Undo torsion puts the molecule back.');
       if (ramaIsShown()) readRamachandran();   // le graphe suit ce que la dynamique vient d'écrire
     },
@@ -11773,9 +11884,9 @@ const runMinimise = () => {
     comp, structure, count: before ? before.length / 3 : 0, flat: before,
     label: `⚒ minimisation · ${calcMinimise} sweeps · ω ${calcOmegaFree ? 'free to vary' : 'held trans'}`,
   };
-  setCalcBusy(true);
+  setMdBusy(true);   // le témoin de LA FENÊTRE 🌡 MD (le ⏹ du 🧬 garde le sien : `calcBusy`)
   setCalcShown(0);
-  setCalcProgress(`⚒ minimising …${disulfideConductedNote()}`);
+  setMdProgress(`⚒ minimising …${disulfideConductedNote()}`);
   pumpMotion({
     frames: minimizeFrames({
       positions: base, elements: geom.elements, bonds: geom.bonds,
@@ -17210,6 +17321,103 @@ try {
 // Snapshot of the Molecules-bar entries (used by every setExtraMols call).
 const extraMolsSnapshot = () => extraCompsRef.current.map(({ id, name, style, color, colorMode, transparency, position }) => ({ id, name, style, color, colorMode, transparency, position }));
 
+/* ── 🧬 LA FAMILLE D'UN CALCUL ENTRE DANS LA BARRE DES MOLÉCULES ─────────────────────
+   La demande de cette session, verbatim : « nello structure calculation le strutture
+   devono essere salvate e incluse nella styling window in modo che possa fare “fit to
+   chosen” e visualizzare la famiglia di strutture. » Les m modèles retenus étaient
+   GARDÉS (le tableau du panneau les liste, ⤓ Load les écrit un par un) mais ils
+   n'existaient nulle part ailleurs : rien à montrer, rien à superposer, aucun fit.
+
+   Ici, chaque modèle retenu devient UNE MOLÉCULE ORDINAIRE DE LA BARRE — elle a donc son
+   ☑, ses rangées de style (§2 « Molecular Styling »), son ★ set main, son ↺, son 🗑, son
+   🔎, et 🎯 Fit to chosen la superpose sur la molécule CHOISIE avec le même Kabsch que le
+   reste de la scène. Rien n'est réinventé : le modèle entre par la MÊME porte qu'une
+   molécule chargée (`loadChainMolecule`, la même liste `extraCompsRef`), et c'est la barre
+   qui le dessine — donc les libellés, les styles et la visibilité sont ceux de tout le
+   monde.
+
+   LE TEXTE PDB DU MODÈLE est écrit par l'écrivain du dossier (`NS.PdbWriter`, celui de
+   « le PDB de l'écran », voir downloadFramePdb) : les coordonnées du modèle sont POSÉES
+   dans la structure le temps de l'écriture, puis la géométrie de l'écran est REMISE — un
+   emprunt, pas un geste, donc le ↺ n'a rien à défaire. Les atomes gardent leurs NOMS :
+   c'est ce qui fait que le fit appariera les atomes du modèle à ceux de la référence. */
+const calcFamilyPdbOf = async (structure, comp, positions) => {
+  const keep = torsionSnapshotOf(structure);
+  if (!keep || !positions || !comp) return '';
+  const n = Math.min(Math.round(positions.length / 3), Number(structure.atomCount) || 0);
+  if (!(n > 0)) return '';
+  let text = '';
+  try {
+    const NS = await ensureNGL();          // ⚠ AVANT l'emprunt : entre les deux, rien ne doit peindre
+    const ap = structure.getAtomProxy();
+    for (let k = 0; k < n; k += 1) { ap.index = k; ap.positionFromArray(positions, k * 3); }
+    text = new NS.PdbWriter(structure).getData();
+  } catch { text = ''; }
+  const all = [];
+  for (let i = 0; i < Math.round(keep.length / 3); i += 1) all.push(i);
+  writeStructurePositions(comp, all, keep);   // LA GÉOMÉTRIE DE L'ÉCRAN REVIENT, toujours
+  return text;
+};
+
+/** UNE molécule de la famille dans la barre — `{ok, id, reason}` (la raison sert au rapport). */
+const calcAddFamilyMolecule = async (structure, comp, label, positions, n) => {
+  const stage = stageRef.current;
+  if (!stage) return { ok: false, reason: 'no-stage' };
+  const text = await calcFamilyPdbOf(structure, comp, positions);
+  if (!text) return { ok: false, reason: 'no-pdb' };
+  try {
+    const mol = await stage.loadFile(new Blob([text], { type: 'text/plain' }), { ext: 'pdb' });
+    try { enforceCovalentProteinBonds(mol); } catch { /* best-effort (protein-bond rule) */ }
+    const baseReps = applyCurrentStyleTo(mol, []);
+    shadowRepsHook(mol);
+    if (shadowOnRef.current) setMeshShadows(mol);
+    const id = `fam_${Date.now()}_${n}`;
+    extraCompsRef.current.push({ id, name: label, comp: mol, baseReps, style: 'auto', color: '', colorMode: 'element', transparency: 0, position: [0, 0, 0] });
+    setExtraMols(extraMolsSnapshot());
+    /* ⚠ LA MOLÉCULE DE LA FAMILLE EST MONTRÉE — une famille qu'il faudrait déplier avant de
+       voir n'aurait rien répondu à la demande. C'est un état de la barre : ☐ None la cache
+       comme les autres, et ☑ la ramène. */
+    setVisibleMolKeys((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
+    return { ok: true, id };
+  } catch { return { ok: false, reason: 'load-failed' }; }
+};
+
+/** LA FAMILLE ENTIÈRE — les modèles APRÈS le premier (celui-là est DÉJÀ la molécule de
+ *  l'écran, écrite par `calcWriteStructure`). Rend le nombre de molécules entrées, et le
+ *  rapport du calcul le DIT (sinon le lecteur chercherait la famille sans savoir où). */
+const calcAddFamilyToBar = async (structure, comp, retained) => {
+  const models = (retained || []).slice(1);
+  if (!models.length || !structure || !comp) return 0;
+  /* ⚠ UNE SEULE FAMILLE À LA FOIS — une molécule de famille porte l'identifiant `fam_…` :
+     celles d'un calcul PRÉCÉDENT sont retirées avant que la nouvelle famille entre, sinon
+     deux ▶ Run empileraient deux familles dans la barre (et 🎯 Fit to chosen ne saurait plus
+     laquelle il superpose). Le préfixe est le SEUL critère, et il n'est donné qu'ici. */
+  const previous = extraCompsRef.current.filter((e) => String(e.id).startsWith('fam_'));
+  if (previous.length) {
+    extraCompsRef.current = extraCompsRef.current.filter((e) => !String(e.id).startsWith('fam_'));
+    previous.forEach((e) => { try { if (stageRef.current) stageRef.current.removeComponent(e.comp); } catch { /* ignore */ } });
+    setExtraMols(extraMolsSnapshot());
+    setVisibleMolKeys((prev) => { const n = new Set(prev); previous.forEach((e) => n.delete(e.id)); return n; });
+    if (previous.some((e) => e.id === selectedMolKey)) setSelectedMolKey('main');
+  }
+  let added = 0;
+  for (let k = 0; k < models.length; k += 1) {
+    const rank = Number(models[k].rank) || (k + 2);
+    const label = `🧬 model ${rank}/${retained.length}`;
+    /* eslint-disable no-await-in-loop -- un modèle après l'autre : chacun EMPRUNTE les
+       coordonnées de la structure, donc deux écritures ne peuvent pas se chevaucher. */
+    const r = await calcAddFamilyMolecule(structure, comp, label, models[k].positions, k);
+    /* eslint-enable no-await-in-loop */
+    if (r.ok) added += 1;
+  }
+  if (!added) return 0;
+  const many = added === 1;
+  setCalcMsg((prev) => `${prev ? `${prev} ` : ''}🧬 ${added} more model${many ? '' : 's'} of the family ${many ? 'is' : 'are'} now`
+    + ' a MOLECULE of the Molecules bar (it is shown, and it has its own ☑, styling rows, ★ set main, ↺ and 🗑):'
+    + ' press 🎯 Fit to chosen to superpose the family onto the reference.');
+  return added;
+};
+
 // Per-extra-structure style/color overrides. Each entry in the Molecules bar can
 // be rendered independently: "auto" follows the §2 « Molecular Styling » menus;
 // anything else rebuilds that component with ONE chosen style, colour
@@ -20433,7 +20641,9 @@ const renderMdOptions = () => (
    Le dessin suit le dock 🪢 au pixel : même largeur, même cadre, même ⇤, et un onglet
    vertical (🌡 MD) quand elle est repliée. Dedans : les réglages de la dynamique ISOLÉE
    (`renderMdOptions` : 🌡 T, 💧 solvant, pas, dt, durée, 🖼 images, 🪢 ω, 📏 distances), le
-   bouton ▶ MD qui la lance, et son rapport. « Quando clicco su MD non succede
+   bouton ▶ MD qui la lance, SON ■ Stop (qui n'est là que pendant qu'un geste tourne — la
+   demande de cette session : « manca un pulsante di stop sia per la structure calculation
+   che per la MD »), et son rapport. « Quando clicco su MD non succede
    praticamente niente » n'était pas un défaut du moteur (le module tourne, et le rapport
    dit tout) : c'était un geste SANS fenêtre — et, cette session l'a montré, un geste dont
    les images ne s'écrivaient qu'à la fin (voir `watch` dans `pumpMotion`) : « I see that
@@ -20459,17 +20669,34 @@ const renderMdWindow = () => (
             seul champ, à côté du 💧 solvant et des pas : le laisser AUSSI ici en aurait fait
             deux cases pour le même état (elles ne pouvaient pas diverger, mais deux cases
             pour un chiffre se lisent comme deux chiffres). La rangée ne garde donc que les
-            gestes : ▶ MD, son témoin « running… » et le rapport. */}
-        <button type="button" onClick={runMolecularDynamics} disabled={calcBusy}
-          title="RUN MOLECULAR DYNAMICS on the molecule AS IT STANDS — an ISOLATED dynamics, with the parameters of THIS window and nothing else: its 🌡 temperature (held), its 💧 solvent, its steps, its ⏱ step interval and duration, 🖼 one image every N steps and its 🪢 rule on ω. ⚠ It owes nothing to 🧬 Structure calculation: the protocol of the starts (n, m, recuit, 🌡 hot → 🌡 cold, the ⚖ equilibration share, the ⚒ sweeps) is read by its ▶ Run, in its own panel, and what is changed here changes nothing there. It is dihedral Langevin dynamics under the whole force field (kcal/mol, charges, solvent, added hydrogens) — and the trajectory FEELS your distances when the 📏 box below is ticked (each one with its ⚖ weight; the already-held ones are a leash, a wall, so they cannot be let go), and runs free of them when it is unticked. EVERY image the engine announces is written into the molecule — you SEE it move step by step, and the 🪢 plot follows it image by image while its window is on screen (open it WHILE the dynamics runs and it takes the next image); the FINAL coordinates are written too, so the report, the molecule and the plot always speak of the same conformation. ↺ Undo torsion puts the molecule back exactly as it was. The report gives the steps, the length in ps, the image interval, the solvent, the kinetic temperature, the energy before and after, whether the table was carried, how many of your distances are within tolerance, and what happened to ω, φ/ψ and χ1. ⚠ AND IT KEEPS MOVING — this is a Langevin thermostat, not a minimisation: a channel's thermal speed is √(R·T/m) (34.5 °/ps at 1500 K with the inertia of the module), the displacement per image scales as √T, and the energy does NOT settle into the trajectory's own minimum; the kinetic temperature the report gives is that of the VELOCITIES, so it reads at (or a little above) the 🌡 you asked for."
+            gestes : ▶ MD, SON ■ Stop (qui n'apparaît que pendant qu'il tourne), son témoin
+            « running… » et le rapport. C'est la demande de cette session : « manca un
+            pulsante di stop sia per la structure calculation che per la MD » — le 🧬 avait
+            son ⏹, cette fenêtre avait le ▶ et rien pour l'arrêter. */}
+        <button type="button" onClick={runMolecularDynamics} disabled={calcBusy || mdBusy}
+          title="RUN MOLECULAR DYNAMICS on the molecule AS IT STANDS — an ISOLATED dynamics, with the parameters of THIS window and nothing else: its 🌡 temperature (held), its 💧 solvent, its steps, its ⏱ step interval and duration, 🖼 one image every N steps and its 🪢 rule on ω. ⚠ It owes nothing to 🧬 Structure calculation: the protocol of the starts (n, m, recuit, 🌡 hot → 🌡 cold, the ⚖ equilibration share, the ⚒ sweeps) is read by its ▶ Run, in its own panel, and what is changed here changes nothing there. It is dihedral Langevin dynamics under the whole force field (kcal/mol, charges, solvent, added hydrogens) — and the trajectory FEELS your distances when the 📏 box below is ticked (each one with its ⚖ weight; the already-held ones are a leash, a wall, so they cannot be let go), and runs free of them when it is unticked. EVERY image the engine announces is written into the molecule — you SEE it move step by step, and the 🪢 plot follows it image by image while its window is on screen (open it WHILE the dynamics runs and it takes the next image); the FINAL coordinates are written too, so the report, the molecule and the plot always speak of the same conformation. ↺ Undo torsion puts the molecule back exactly as it was. The report gives the steps, the length in ps, the image interval, the solvent, the kinetic temperature, the energy before and after, whether the table was carried, how many of your distances are within tolerance, and what happened to ω, φ/ψ and χ1. ⚠ AND IT KEEPS MOVING — this is a Langevin thermostat, not a minimisation: a channel's thermal speed is √(R·T/m) (34.5 °/ps at 1500 K with the inertia of the module), the displacement per image scales as √T, and the energy does NOT settle into the trajectory's own minimum; the kinetic temperature the report gives is that of the VELOCITIES, so it reads at (or a little above) the 🌡 you asked for. ■ Stop sits right next to this button while it runs: it halts the dynamics between the image it has just written and the next one, and NOTHING is reverted — the molecule keeps the images it was given, and ↺ Undo torsion is what puts it back."
           className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-sky-400 text-sky-700 hover:bg-sky-50 disabled:opacity-40">
           ▶ MD
         </button>
-        {calcBusy && <span className="text-[9px] font-bold text-sky-700">running…</span>}
+        {/* ■ LE STOP DE CETTE FENÊTRE — il n'apparaît QUE pendant qu'un geste tourne (comme
+            le ⏹ du 🧬, qui n'existe que pendant un calcul) : un ■ toujours là laisserait
+            croire qu'il arrête le calcul, qui a le sien, dans son panneau. Il arrête le
+            geste ENTRE deux images, et rien n'est perdu : les images déjà écrites SONT la
+            molécule (↺ Undo torsion défait le geste entier). Voir `mdStop`. */}
+        {mdBusy && (
+          <button type="button" onClick={mdStop}
+            title="■ STOP THIS GESTURE — the dynamics (and ⚒ Minimise) stops BETWEEN the image it has just written and the next one: no half-written coordinates. ⚠ NOTHING IS THROWN AWAY: the images already written ARE the molecule on screen, and ↺ Undo torsion puts back the conformation you had before the gesture started (its photograph was taken before the first image), so you can start ▶ MD again from wherever you like. ⚠ The gesture's own report is NOT computed: its energies “before → after” describe a run that reached the end, and this one did not — ⟳ Energy re-reads the force field on what is actually there. ⚠ This stops THIS window's gesture, not 🧬 Structure calculation: that one has its own ⏹, in its own panel, and it is the one that RANKS what is already computed."
+            className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-red-300 text-red-600 hover:bg-red-50">
+            ■ Stop
+          </button>
+        )}
+        {mdBusy && <span className="text-[9px] font-bold text-sky-700">running…</span>}
       </div>
-      {calcProgress && <p className="text-[10px] font-semibold text-sky-700">{calcProgress}</p>}
+      {mdProgress && (
+        <p className={`text-[10px] font-semibold ${/^■/.test(mdProgress) ? 'text-rose-700' : 'text-sky-700'}`}>{mdProgress}</p>
+      )}
       {calcMsg && (
-        <p title={calcMsg} className={`text-[10px] font-semibold rounded-md border px-2 py-1 whitespace-pre-wrap ${/^✓/.test(calcMsg) ? 'text-emerald-800 bg-emerald-50 border-emerald-200' : 'text-rose-800 bg-rose-50 border-rose-200'}`}>
+        <p title={calcMsg} className={`text-[10px] font-semibold rounded-md border px-2 py-1 whitespace-pre-wrap ${/^✓/.test(calcMsg) ? 'text-emerald-800 bg-emerald-50 border-emerald-200' : /^■/.test(calcMsg) ? 'text-amber-800 bg-amber-50 border-amber-200' : 'text-rose-800 bg-rose-50 border-rose-200'}`}>
           {calcMsg}
         </p>
       )}
@@ -20483,7 +20710,9 @@ const renderMdWindow = () => (
         it runs on the force field alone — ▶ Run, ⚒ Minimise and ⟳ Energy always read the
         table), and the pair 💧 solvent / 🎯 target function (the whole field, for ▶ Run,
         ▶ MD, ⚒ Minimise and ⟳ Energy alike). The window closes with 🌡 MD, with its ⇤, and
-        with the tab on the left edge — and closing it loses nothing.
+        with the tab on the left edge — and closing it loses nothing. While a gesture runs,
+        the ■ Stop appears next to this window's ▶ MD, and it stays reachable even with the
+        window folded (it then shows in the row of the gestures, next to ⚒ Minimise).
       </p>
     </div>
   </div>
@@ -20492,7 +20721,7 @@ const renderMdWindow = () => (
 const renderForceGestures = () => (
   <span
     className="inline-flex flex-wrap items-center gap-1.5 rounded-md border border-sky-200 bg-sky-50/50 px-1.5 py-1"
-    title="THE THREE GESTURES OF THE FORCE FIELD, ON THE MOLECULE AS IT STANDS: ▶ MD runs the dihedral Langevin dynamics, ⚒ Minimise the dihedral descent, ⟳ Energy only READS the families (a reading, nothing written). They are the same controls the 🧲 Force field block describes — put here so they are one click away from 🧬 Structure calculation, without opening any section. Each button's own tooltip says what it does to the molecule and what it reports.">
+    title="THE THREE GESTURES OF THE FORCE FIELD, ON THE MOLECULE AS IT STANDS: ▶ MD runs the dihedral Langevin dynamics, ⚒ Minimise the dihedral descent, ⟳ Energy only READS the families (a reading, nothing written). They are the same controls the 🧲 Force field block describes — put here so they are one click away from 🧬 Structure calculation, without opening any section. Each button's own tooltip says what it does to the molecule and what it reports. ⚠ TWO STOPS, AND THEY ARE NOT THE SAME: the ⏹ next to ▶ Run stops the CALCULATION (it ranks what is already computed and keeps its best m); the ■ that appears next to ▶ MD — and, when the 🌡 MD window is folded, right here in this row — stops a running ▶ MD or ⚒ Minimise, which has no family to rank.">
     {/* 🌡 LE BOUTON MD DE LA BARRE — SON SEUL GESTE EST LA FENÊTRE. La demande : « Il
         pulsante MD deve aprire una finestra collapsable a sinistra all'interno del viewer
         … Tale finestra si deve richiudere quando si riclicca su MD. » Il ouvre donc le dock
@@ -20503,11 +20732,27 @@ const renderForceGestures = () => (
       title={`Show or hide the 🌡 MD window INSIDE the viewer: it sits at the LEFT of the 3D view, with the parameters of a MOLECULAR DYNAMICS RUN OF ITS OWN — 🌡 one temperature, 💧 the solvent, the steps, the ⏱ step interval and the duration, 🖼 how often an image is written, 🪢 whether ω may leave trans, and the 📏 option that makes it carry (or not) the distance table of the 🧬 — and its own ▶ MD button, which runs on the molecule AS IT STANDS and shows every image it computes. ⚠ These are NOT the protocol of 🧬 Structure calculation: n, m, 🔥 recuit, 🖼 frames, 🌡 hot → 🌡 cold, the ⚖ equilibration share and the ⚒ sweeps live in its own panel, and neither gesture can change the other. Press this button again to close the window; ⇤ folds it to a thin tab on the left edge. Closing it loses nothing: the parameters are the window's own state.${mdDock ? ' — open right now.' : ''}`}>
       ▶ MD{mdDock ? ' ⇥' : ' ⇤'}
     </button>
-    <button type="button" onClick={runMinimise} disabled={calcBusy}
-      title="MINIMISE the energy from here: the dihedral descent each start ends on (every hinge tried on both sides of a step that halves as soon as a sweep improves nothing), on the same force field, with your distance table as restraints and the already-held ones as a leash. This is the FINAL ENERGY REFINEMENT — it is what CONVERGES a distance the dynamics merely approached, and it lands on a local minimum, not merely on a model that respects the distances. The 🪢 plot follows the descent image by image while its window is on screen, and the minimum it lands on is written even when 👁 watch is unticked. ↺ Undo torsion puts the molecule back."
+    <button type="button" onClick={runMinimise} disabled={calcBusy || mdBusy}
+      title="MINIMISE the energy from here: the dihedral descent each start ends on (every hinge tried on both sides of a step that halves as soon as a sweep improves nothing), on the same force field, with your distance table as restraints and the already-held ones as a leash. This is the FINAL ENERGY REFINEMENT — it is what CONVERGES a distance the dynamics merely approached, and it lands on a local minimum, not merely on a model that respects the distances. The 🪢 plot follows the descent image by image while its window is on screen, and the minimum it lands on is written even when 👁 watch is unticked. ↺ Undo torsion puts the molecule back. ⚠ WHILE IT RUNS IT CAN BE STOPPED, and the ■ is always somewhere you can see: next to the ▶ MD of the 🌡 MD window when that window is open, or right here in this row when it is folded/closed (the same stop, the same pump) — a ⚒ Minimise is launched from this row, so its stop must not hide with the window."
       className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-amber-400 text-amber-800 hover:bg-amber-50 disabled:opacity-40">
       ⚒ Minimise
     </button>
+    {/* ■ LE STOP DES GESTES, QUAND SA FENÊTRE EST REPLIÉE — la seconde moitié de la demande
+        de cette session : « manca un pulsante di stop sia per la structure calculation che
+        per la MD ». Le ⏹ du calcul vit dans le panneau 🧬 ; le ■ des gestes vit à côté de
+        leur ▶, dans la fenêtre 🌡 MD (voir `mdStop`). Mais le ⚒ Minimise se lance ICI, et la
+        fenêtre 🌡 MD peut être repliée (⇤), fermée, ou la vue 3D entière réduite (⬇ — la
+        colonne n'a alors plus de hauteur) : le ■ apparaît alors AUSSI dans cette rangée,
+        pour qu'un geste en cours ait TOUJOURS son arrêt à l'écran. ⚠ Il n'y en a jamais
+        deux VISIBLES à la fois : la fenêtre porte le sien, celui-ci n'existe que quand elle
+        ne peut pas le montrer. */}
+    {mdBusy && (viewerCollapsed || !mdDock) && (
+      <button type="button" onClick={mdStop}
+        title="■ STOP THE RUNNING GESTURE (▶ MD or ⚒ Minimise) — it is here because the 🌡 MD window, where it normally sits right next to ▶ MD, is folded or closed at the moment. It stops the gesture BETWEEN the image it has just written and the next one: nothing is reverted (the images already written ARE the molecule on screen, and ↺ Undo torsion is what puts it back), and the gesture's own report is NOT computed — ⟳ Energy re-reads the force field on what is actually there."
+        className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-red-300 text-red-600 hover:bg-red-50">
+        ■ Stop
+      </button>
+    )}
     <button type="button" onClick={calcReadForceField}
       title={`⟳ ENERGY — a READING of the force field on the molecule as it stands: the families, the residue counts, which φ/ψ and χ1 are outside, the charges, the surface, the hydrogens it added. It is NOT a gesture: nothing is written (↺ Undo torsion has nothing to undo). Its answer is printed RIGHT UNDER THESE BUTTONS, so the click always says something${calcSection === 'distances'
         ? ' — and the family-by-family table is in the 🧬 Structure calculation section, which is open right now.'
@@ -20521,7 +20766,7 @@ const renderForceGestures = () => (
         l'ont demandée — et seulement quand la section du 🧬 est fermée : ouverte, c'est
         elle qui l'affiche (le même `calcMsg`), donc jamais deux fois le même texte. */}
     {calcMsg && calcSection !== 'distances' && (
-      <p title={calcMsg} className={`basis-full text-[10px] font-semibold rounded-md border px-2 py-1 whitespace-pre-wrap ${/^✓/.test(calcMsg) ? 'text-emerald-800 bg-emerald-50 border-emerald-200' : /^✕/.test(calcMsg) ? 'text-rose-800 bg-rose-50 border-rose-200' : 'text-slate-700 bg-slate-50 border-slate-200'}`}>
+      <p title={calcMsg} className={`basis-full text-[10px] font-semibold rounded-md border px-2 py-1 whitespace-pre-wrap ${/^✓/.test(calcMsg) ? 'text-emerald-800 bg-emerald-50 border-emerald-200' : /^■/.test(calcMsg) ? 'text-amber-800 bg-amber-50 border-amber-200' : /^✕/.test(calcMsg) ? 'text-rose-800 bg-rose-50 border-rose-200' : 'text-slate-700 bg-slate-50 border-slate-200'}`}>
         {calcMsg}
       </p>
     )}
@@ -21588,7 +21833,7 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
             className="w-14 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
         </label>
         <label className="flex items-center gap-1"
-          title="m — how many structures are KEPT once every start has been scored. The score is the force field of this calculation (kcal/mol: bonds, angles, planar rings, vdW, electrostatics, solvent, φ/ψ, χ1, ω, your distances in flat-bottom wells) plus the clash penalty; the m best are kept IN ORDER, with their coordinates, and the first one is written into the molecule. Only the m kept structures carry their coordinates — that is what m means.">
+          title="m — how many structures are KEPT once every start has been scored. The score is the force field of this calculation (kcal/mol: bonds, angles, planar rings, vdW, electrostatics, solvent, φ/ψ, χ1, ω, your distances in flat-bottom wells) plus the clash penalty; the m best are kept IN ORDER, with their coordinates, and the first one is written into the molecule. The OTHERS become MOLECULES of the Molecules bar (each shown, with its own ☑, styling rows, ★ set main, ↺ and 🗑): tick them, style them, and press 🎯 Fit to chosen to superpose the whole FAMILY onto the chosen one — the ensemble is then on screen and in the styling window, and 🗑 removes a model you do not want. Only the m kept structures carry their coordinates — that is what m means.">
           m kept
           <input type="number" min="1" max={STRUCTURE_CALC_MAX_KEEP} value={calcKeep}
             onChange={(e) => setCalcKeepText(e.target.value)}
@@ -21634,14 +21879,14 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
           👁 watch each start
         </label>
         <button type="button" onClick={runStructureCalculation}
-          disabled={calcBusy || !calcUsableRows().length}
-          title="Run the calculation: n starts, the ⚒ protocol on each, the best m kept, and the first one written into the molecule. The panel is updated START BY START (one per frame, so the page stays alive), and ⏹ stops between two of them. A fixed seed means the same molecule, the same distances and the same n always give the same family — press ▶ Run twice and compare. The 🪢 plot follows every start written while its window is on screen (one reader for φ/ψ, the same as its ⟳ Read)."
+          disabled={calcBusy || mdBusy || !calcUsableRows().length}
+          title="Run the calculation: n starts, the ⚒ protocol on each, the best m kept, and the first one written into the molecule. The panel is updated START BY START (one per frame, so the page stays alive), and ⏹ stops between two of them — ⏹ is THIS panel's stop: it RANKS what is already computed and keeps its best m, so a partial run still gives you a family. ⚠ It is not the ■ of the 🌡 MD window: that one stops the isolated ▶ MD (or a ⚒ Minimise), which has no family to rank — each stop is in the window of the gesture it stops, and while one runs the other's ▶ is greyed (they share the same single cancellation token). A fixed seed means the same molecule, the same distances and the same n always give the same family — press ▶ Run twice and compare. The 🪢 plot follows every start written while its window is on screen (one reader for φ/ψ, the same as its ⟳ Read)."
           className="px-2 py-1 text-[10px] font-bold rounded border bg-indigo-600 border-indigo-700 text-white hover:bg-indigo-700 disabled:opacity-40">
           ▶ Run
         </button>
         {calcBusy && (
           <button type="button" onClick={calcStop}
-            title="Stop the calculation BETWEEN two starts: what is already computed is ranked and its best m are kept (nothing is thrown away or written half-way)."
+            title="⏹ STOP THE CALCULATION — it stops BETWEEN two starts (never in the middle of one), and what is already computed is NOT thrown away: those starts are RANKED, their best m are kept in the family below, and the best one is written into the molecule. The line says how many starts of n were made — a partial run is still a run. ⚠ This is the CALCULATION's stop, and it only exists while the calculation runs; the isolated ▶ MD and ⚒ Minimise of the 🌡 MD window have their own ■ Stop, right in that window (a gesture has no family to rank: it has the conformation on screen, and ↺ Undo torsion is what takes it back)."
             className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-red-300 text-red-600 hover:bg-red-50">
             ⏹ Stop
           </button>
@@ -21663,7 +21908,7 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
         </p>
       )}
       {calcMsg && (
-        <p title={calcMsg} className={`text-[10px] font-semibold rounded-md border px-2 py-1 whitespace-pre-wrap ${/^✓/.test(calcMsg) ? 'text-emerald-800 bg-emerald-50 border-emerald-200' : 'text-rose-800 bg-rose-50 border-rose-200'}`}>
+        <p title={calcMsg} className={`text-[10px] font-semibold rounded-md border px-2 py-1 whitespace-pre-wrap ${/^✓/.test(calcMsg) ? 'text-emerald-800 bg-emerald-50 border-emerald-200' : /^■/.test(calcMsg) ? 'text-amber-800 bg-amber-50 border-amber-200' : 'text-rose-800 bg-rose-50 border-rose-200'}`}>
           {calcMsg}
         </p>
       )}

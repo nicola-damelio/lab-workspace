@@ -34,7 +34,10 @@
         famille est décrite (ce que chaque contrainte mesure, et sa dispersion deux à
         deux après superposition optimale) ;
      §6 LE PANNEAU DU VIEWER — le bouton 🧬, les deux champs (n et m), la liste des
-        distances, ▶ Run / ⏹ Stop, le tableau classé, ⤓ Load, l'écriture par le MÊME
+        distances, ▶ Run / ⏹ Stop (l'arrêt du CALCUL, qui classe ce qui est déjà calculé)
+        ET le ■ Stop des gestes de la fenêtre 🌡 MD (l'arrêt d'une DYNAMIQUE ou d'une
+        minimisation — la demande de cette session : « manca un pulsante di stop sia per
+        la structure calculation che per la MD »), le tableau classé, ⤓ Load, l'écriture par le MÊME
         chemin qu'une torsion, la note qui dit ce que ce calcul n'est PAS, et SON
         EMPLACEMENT : le bouton est à côté de « 🧬 Structure from sequence », sa section
         comprise (la demande de cette session : « move the button structure calculation
@@ -1376,11 +1379,26 @@ has(calcPanel, 'onChange={(e) => calcSetRestraintTarget(r.key, e.target.value)}'
   '…et une frappe la passe au module (aucun chiffre gardé en double)');
 has(calcPanel, 'onClick={() => calcRemoveRestraint(r.key)}', 'une ligne se retire (✕)');
 has(calcPanel, 'onClick={calcAddRestraint}', '…et ⌖ en ajoute une');
-has(calcPanel, 'disabled={calcBusy || !calcUsableRows().length}',
+has(calcPanel, 'disabled={calcBusy || mdBusy || !calcUsableRows().length}',
   '⚠ ▶ Run est inerte tant qu’aucune ligne n’a ses DEUX atomes et sa cible (une ligne à moitié écrite attend)');
+has(calcPanel, 'onClick={runStructureCalculation}\n          disabled={calcBusy || mdBusy',
+  '⚠ …et il l’est AUSSI pendant un geste du 🌡 MD (`mdBusy`) : le calcul et les gestes avancent le MÊME jeton d’annulation, donc un seul peut courir — un second ▶ n’a pas le droit de tuer le premier en silence');
 has(calcPanel, '▶ Run', 'le bouton du calcul est nommé');
 has(calcPanel, 'onClick={calcStop}', '…et le ⏹ a le sien');
 has(calcPanel, '⏹ Stop', '…nommé lui aussi');
+/* ■ DEUX ARRÊTS, DEUX FENÊTRES — la demande de cette session : « manca un pulsante di stop
+   sia per la structure calculation che per la MD ». Le 🧬 avait le sien ; la fenêtre 🌡 MD
+   n’avait rien. Ce qui doit rester vrai : chaque arrêt est dans LA fenêtre du geste qu’il
+   arrête, et il n’y a jamais deux ■ à l’écran. */
+has(VIEW, 'const mdStop = () => {', '■ les gestes (▶ MD et ⚒ Minimise) ont leur arrêt, `mdStop`');
+has(VIEW, '  mdRunRef.current = 0;\n  calcRunRef.current += 1;',
+  '⚠ …qui avance LE MÊME jeton que la pompe des gestes vérifie à chaque image (pas un second mécanisme)');
+has(VIEW, 'if (mdRunRef.current === run) { mdRunRef.current = 0; setMdBusy(false); }',
+  '⚠ …et un tick en retard d’un geste arrêté n’éteint pas le témoin d’un geste relancé');
+has(VIEW, 'calcPartialRef.current = null;',
+  '⚠ le ⏹ du 🧬 CONSOMME sa partie (dans `finish` et dans `calcStop`) : il ne peut plus re-classer — et réécrire — la famille d’un calcul déjà fini');
+has(VIEW, 'const [mdBusy, setMdBusy] = useState(false);',
+  '⚠ le témoin du geste est CELUI DE LA FENÊTRE 🌡 MD, comme sa ligne de progression — le 🧬 garde `calcBusy`');
 ok(calcPanel.indexOf('relaxRadius') < 0 && calcPanel.indexOf('relaxEscapes') < 0,
   '⚠ ces réglages ont disparu avec le bouton ⚒ Model build (le protocole du calcul n’en dépend plus :'
   + ' voir §1 de utils/structureCalc.js — il est STANDARD, recuit → dynamique → minimisation → trempe)');
@@ -1454,6 +1472,20 @@ for (const label of ['Annealing temperature steps', 'Images per annealing temper
 has(calcPanel, 'families · kcal/mol',
   '⚠ …dans les UNITÉS du champ : kcal/mol (le bloc 🧲 du panneau le dit)');
 has(mdWindow, 'onClick={runMolecularDynamics}', '🌡 ▶ MD est un bouton, dans SA fenêtre');
+/* ■ LE STOP DE LA FENÊTRE — la demande, mot pour mot : « manca un pulsante di stop sia per la
+   structure calculation che per la MD ». Le 🧬 avait le ⏹ ; cette fenêtre n’avait rien, et
+   une dynamique de 20 000 pas ne pouvait que s’attendre. Ce qui doit rester vrai : le ■ est
+   ICI, à côté du ▶ qu’il arrête, il n’existe QUE pendant un geste, et il n’y en a jamais deux
+   à l’écran (celui de la rangée des gestes prend le relais quand la fenêtre est repliée). */
+has(mdWindow, 'onClick={mdStop}', '■ …dont le ■ Stop, à côté du ▶ qu’il arrête');
+has(mdWindow, '■ Stop', '…nommé (le mot de la demande, pas un glyphe à deviner)');
+has(mdWindow, '{mdBusy && (', '⚠ …et il n’existe QUE pendant un geste (sinon il laisserait croire qu’il arrête le 🧬)');
+eq(mdWindow.split('onClick={mdStop}').length - 1, 1, '…une seule fois dans la fenêtre 🌡 MD');
+has(forceGestures, '{mdBusy && (viewerCollapsed || !mdDock) && (',
+  '⚠ …avec un relais DANS la rangée des gestes quand la fenêtre est repliée/fermée (et quand la vue 3D est réduite : sa colonne n’a plus de hauteur) — un ⚒ Minimise se lance là, son arrêt ne doit pas disparaître avec la fenêtre');
+has(forceGestures, 'onClick={mdStop}', '…et il appelle le MÊME arrêt');
+has(VIEW, 'setMdProgress(at ? `■ stopped between two images',
+  '⚠ l’arrêt est DIT là où la progression s’écrivait (jusqu’où le geste était allé), au lieu de laisser « running… »');
 has(mdWindow, 'onClick={() => toggleMdDock(false)}', '…dont le ⇤ la replie');
 has(VIEW, 'onClick={() => toggleMdDock(true)}',
   '…et l’onglet vertical 🌡 MD la rouvre (le graphe 🪢 suit le même dessin)');

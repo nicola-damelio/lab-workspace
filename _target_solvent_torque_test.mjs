@@ -27,7 +27,8 @@ import {
   STRUCTURE_CALC_SOLVENTS, STRUCTURE_CALC_SOLVENT, STRUCTURE_CALC_SOLVENT_BOX,
   STRUCTURE_CALC_TARGET_FUNCTION, STRUCTURE_CALC_TARGET_FUNCTIONS,
   structureCalcTargetFunctionOf, STRUCTURE_CALC_MD_MAX_RESTRAINT_TORQUE,
-  STRUCTURE_CALC_MD_MAX_TORQUE, mdFrames, rotatableBondsOf, restraintReportOf,
+  STRUCTURE_CALC_MD_MAX_TORQUE, STRUCTURE_CALC_RESTRAINT_TOLERANCE,
+  mdFrames, rotatableBondsOf, restraintReportOf,
   forceFieldEnergyOf, STRUCTURE_CALC_WATER_CLEARANCE, STRUCTURE_CALC_WATER_SPACING,
 } from './src/utils/structureCalc.js';
 import {
@@ -84,7 +85,7 @@ const peptideOf = ({ residues = 4, phi = -57, psi = -47 } = {}) => {
   const N = [0, 0, 0]; const CA = [1.46, 0, 0];
   const C = [1.46 + 1.52 * Math.cos((180 - 111) * DEG), 1.52 * Math.sin((180 - 111) * DEG), 0];
   const iN = push('N', N); const iCA = push('C', CA); const iC = push('C', C);
-  push('O', placeWith({ a: N, b: CA, c: C, length: 1.23, angleDeg: 120.5, dihDeg: 315 }));
+  push('O', placeWith({ a: N, b: CA, c: C, length: 1.23, angleDeg: 120.5, dihDeg: psi + 180 }));
   bonds.push({ i: iN, j: iCA, order: 1 }, { i: iCA, j: iC, order: 1 }, { i: iC, j: iN + 3, order: 2 });
   let lastN = N; let lastCA = CA; let lastC = C; let lastCidx = iC; let lastNidx = iN;
   for (let k = 1; k < residues; k += 1) {
@@ -94,7 +95,7 @@ const peptideOf = ({ residues = 4, phi = -57, psi = -47 } = {}) => {
     const iCA2 = push('C', ca2);
     const c2 = placeWith({ a: lastC, b: n2, c: ca2, length: 1.52, angleDeg: 111, dihDeg: phi });
     const iC2 = push('C', c2);
-    const iO2 = push('O', placeWith({ a: n2, b: ca2, c: c2, length: 1.23, angleDeg: 120.5, dihDeg: 315 }));
+    const iO2 = push('O', placeWith({ a: n2, b: ca2, c: c2, length: 1.23, angleDeg: 120.5, dihDeg: psi + 180 }));
     bonds.push({ i: lastCidx, j: iN2, order: 1 }, { i: iN2, j: iCA2, order: 1 },
       { i: iCA2, j: iC2, order: 1 }, { i: iC2, j: iO2, order: 2 });
     lastN = n2; lastCA = ca2; lastC = c2; lastCidx = iC2; lastNidx = iN2;
@@ -277,23 +278,49 @@ eq(ffWatersIn(dyRun.molecule.elements).molecules, 0, '…et aucun atome d’eau 
 ok(STRUCTURE_CALC_MD_MAX_RESTRAINT_TORQUE > STRUCTURE_CALC_MD_MAX_TORQUE,
   `⚠ le plafond des contraintes (${STRUCTURE_CALC_MD_MAX_RESTRAINT_TORQUE}) est PLUS HAUT que celui du champ (${STRUCTURE_CALC_MD_MAX_TORQUE}) — c’est la séparation qui fait mordre le poids`);
 const TARGET = Number((START * 0.7).toFixed(3));
-const runAt = (weight) => {
+/** La distance DEMANDÉE à chaque pas — c'est elle qui dit QUAND la ligne a mordu. */
+const runAt = (weight, steps = 60) => {
   const list = weight == null ? [] : [{ i: CI, j: CJ, target: TARGET, weight }];
-  const run = mdRunOf({
+  const gen = mdFrames({
     positions: MOL.positions, elements: MOL.elements, bonds: MOL.bonds,
     restraints: list, leash: list.map((r) => ({ ...r })), channels: CHANNELS.channels,
-    steps: 60, temperature: 300, seed: 0x5EEDCA1C, perFrame: 1e9,
+    steps, temperature: 300, seed: 0x5EEDCA1C, perFrame: 1,
   });
-  return { run, distance: gapOf(run.positions, CI, CJ), rep: restraintReportOf({ positions: run.positions, restraints: list }) };
+  const frames = []; let s = gen.next();
+  while (!s.done) { frames.push(s.value); s = gen.next(); }
+  const dist = frames.map((f) => gapOf(f.positions, CI, CJ));
+  return {
+    run: s.value, dist, distance: dist[dist.length - 1],
+    rep: restraintReportOf({ positions: s.value.positions, restraints: list }),
+    /* LE PAS OÙ LA LIGNE EST TENUE — le premier pas dont la distance tombe DANS la
+       tolérance du puits plat (`STRUCTURE_CALC_RESTRAINT_TOLERANCE`). C'est cela, « la
+       ligne a mordu » : le puits plat n'a plus rien à demander au-delà. */
+    heldAt: dist.findIndex((d) => Math.abs(d - TARGET) <= STRUCTURE_CALC_RESTRAINT_TOLERANCE),
+  };
 };
 ok(START > TARGET + 1, `la sonde doit demander un vrai rapprochement (${START.toFixed(2)} → ${TARGET} Å)`);
-const none = runAt(null);
-const one = runAt(1);
-const hundred = runAt(100);
+const none = runAt(null, 300);
+const one = runAt(1, 300);
+const ten = runAt(10, 300);
+const hundred = runAt(100, 300);
 const moved = (r) => START - r.distance;
+const away = (r) => Math.abs(r.distance - TARGET);
 ok(moved(one) > 0, `⚠ une ligne de poids 1 rapproche DÉJÀ les deux atomes (mesuré ${moved(one).toFixed(3)} Å)`);
-ok(moved(hundred) > moved(one) + 0.15,
-  `⚠ …et une ligne de poids 100 rapproche PLUS (poids 1 : ${moved(one).toFixed(3)} Å, poids 100 : ${moved(hundred).toFixed(3)} Å) — c’est la preuve que le poids ⚖ n’est plus écrasé par le plafond`);
+/* ⚖ CE QUE LE POIDS ⚖ DOIT PROUVER, ET QUI CHANGE DE MESURE AVEC LA CORRECTION DU PLAFOND
+   DU CHAMP (voir `STRUCTURE_CALC_MD_SPEED_FACTOR`) : la ligne, elle, AMÈNE la distance dans
+   la tolérance de son puits plat, et la première à y arriver est la plus lourde — un
+   « gain » final en Å (l'ancienne mesure) n'a plus de sens, puisque le puits plat s'arrête
+   à sa tolérance : mesuré, les trois poids finissent à |d − cible| = 0.24 Å (la tolérance
+   elle-même, le thermostat faisant fluctuer la distance dedans), tandis que SANS ligne la
+   même trajectoire ne gagne que 0.24 Å en 300 pas et reste à 0.90 Å de la cible. */
+ok(away(one) <= STRUCTURE_CALC_RESTRAINT_TOLERANCE + 1e-9,
+  `⚠ la ligne amène la distance DANS la tolérance de son puits plat (mesuré |d − cible| = ${away(one).toFixed(3)} Å ≤ ${STRUCTURE_CALC_RESTRAINT_TOLERANCE})`);
+ok(away(none) > 2 * STRUCTURE_CALC_RESTRAINT_TOLERANCE,
+  `…alors que SANS ligne la même trajectoire n'y arrive pas (mesuré ${away(none).toFixed(3)} Å, la dérive thermique seule — elle peut TRAVERSER la bande par hasard, pas y rester)`);
+ok(one.heldAt >= 0 && hundred.heldAt >= 0, `…avec une ligne : tenue (poids 1 au pas ${one.heldAt}, poids 100 au pas ${hundred.heldAt})`);
+ok(hundred.heldAt <= one.heldAt && ten.heldAt <= one.heldAt,
+  `⚠ …et la ligne PLUS LOURDE y arrive PLUS TÔT (poids 1 : pas ${one.heldAt} · poids 10 : pas ${ten.heldAt} · poids 100 : pas ${hundred.heldAt}) — c'est là que le poids ⚖ mord`);
+ok(ten.heldAt < one.heldAt, '…le poids 10 est le premier cran où le gain de temps se voit');
 eq([one.run.torque.field, one.run.torque.restraint], [STRUCTURE_CALC_MD_MAX_TORQUE, STRUCTURE_CALC_MD_MAX_RESTRAINT_TORQUE],
   '…et le rapport du geste donne LES DEUX plafonds (le champ, la table)');
 ok(none.rep.count === 0, 'la dynamique sans contrainte n’a aucune ligne à rapporter');

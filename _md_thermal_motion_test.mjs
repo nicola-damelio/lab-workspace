@@ -21,18 +21,24 @@
 
    CE QUI CHANGE — l'inertie réduite d'un dièdre (m = 0.0025, voir le module), donc la
    vitesse thermique (34.5 °/ps à 1500 K) : le moteur devient un Langevin dont la
-   température CONDUIT le mouvement, et le couple du champ est plafonné par la vitesse du
-   palier (`τ_max = γ·m·f·√(R·T/m)`, f = `STRUCTURE_CALC_MD_SPEED_FACTOR`) au lieu d'un
-   chiffre en dur qui écrasait toute température. Les contrats mesurés ici :
+   température CONDUIT le mouvement. ⚠ ET LE PLAFOND DE COUPLE N'EST PAS `γ·m·√(R·T/m)` :
+   cette expression (0.17 kcal/mol·deg) ne permettait au champ que 0.69 °/ps de réponse par
+   pas à un bruit de 6.9 °/ps, donc un mur de van der Waals était TRANSPARENT (les atomes
+   se traversaient, voir `_md_wall_test.mjs`). Le plafond est `√(R·T·m)/h` — le couple qui
+   RENVERSE la vitesse thermique en un pas (8.6 kcal/mol·deg à 1500 K) — et il suit toujours
+   T et la marge `f` (`STRUCTURE_CALC_MD_SPEED_FACTOR`). Les contrats mesurés ici :
 
-     • le mouvement par image est VISIBLE (0.28 Å à 1500 K) ;
-     • il SCALE comme √T (0.28 / 0.097 = 2.9 ≈ √(1500/300) = 2.24) ;
+     • le mouvement par image est VISIBLE (0.438 Å à 1500 K) ;
+     • il SCALE comme √T (0.438 / 0.202 = 2.17 ≈ √(1500/300) = 2.24) ;
      • le potentiel de fin reste AU-DESSUS du minimum de la trajectoire : la molécule ne
        se colle plus au fond du puits, elle l'explore ;
      • la T cinétique lue reste bornée par la température demandée (la dérive peut la
        pousser, jamais l'écraser) ;
      • la contre-épreuve : avec l'ancienne inertie (m = 1, passée à la main) le même geste
-       ne bouge plus (0.02 Å par image) — c'est le défaut d'origine, reproduit.
+       ne bouge plus (0.016 Å par image) — c'est le défaut d'origine, reproduit.
+   ⚠ LA SONDE PART D'UNE GÉOMÉTRIE PROPRE (le carbonyle est posé à ψ + 180, comme la
+   chimie le demande) : une sonde qui part d'un clash mesurerait la DÉTENTE d'une molécule
+   empilée, pas le mouvement thermique.
 
    Run: node _md_thermal_motion_test.mjs
    ========================================================================= */
@@ -95,7 +101,7 @@ const peptideOf = ({ residues = 4, phi = -57, psi = -47 } = {}) => {
   const N0 = [0, 0, 0]; const CA = [1.46, 0, 0];
   const C = [1.46 + 1.52 * Math.cos((180 - 111) * DEG), 1.52 * Math.sin((180 - 111) * DEG), 0];
   const iN = push('N', N0); const iCA = push('C', CA); const iC = push('C', C);
-  push('O', placeWith({ a: N0, b: CA, c: C, length: 1.23, angleDeg: 120.5, dihDeg: 315 }));
+  push('O', placeWith({ a: N0, b: CA, c: C, length: 1.23, angleDeg: 120.5, dihDeg: psi + 180 }));
   bonds.push({ i: iN, j: iCA, order: 1 }, { i: iCA, j: iC, order: 1 }, { i: iC, j: iN + 3, order: 2 });
   let lastN = N0; let lastCA = CA; let lastC = C; let lastCidx = iC; let lastNidx = iN;
   for (let k = 1; k < residues; k += 1) {
@@ -105,7 +111,7 @@ const peptideOf = ({ residues = 4, phi = -57, psi = -47 } = {}) => {
     const iCA2 = push('C', ca2);
     const c2 = placeWith({ a: lastC, b: n2, c: ca2, length: 1.52, angleDeg: 111, dihDeg: phi });
     const iC2 = push('C', c2);
-    const iO2 = push('O', placeWith({ a: n2, b: ca2, c: c2, length: 1.23, angleDeg: 120.5, dihDeg: 315 }));
+    const iO2 = push('O', placeWith({ a: n2, b: ca2, c: c2, length: 1.23, angleDeg: 120.5, dihDeg: psi + 180 }));
     bonds.push({ i: lastCidx, j: iN2, order: 1 }, { i: iN2, j: iCA2, order: 1 },
       { i: iCA2, j: iC2, order: 1 }, { i: iC2, j: iO2, order: 2 });
     lastN = n2; lastCA = ca2; lastC = c2; lastCidx = iC2; lastNidx = iN2;
@@ -167,8 +173,15 @@ const TH = (T) => Math.sqrt((FF_GAS_CONSTANT * T) / STRUCTURE_CALC_MD_MASS);
 near(hot.run.temperature.thermal, TH(1500), '🌡 la vitesse thermique √(R·T/m) est dite par le rapport (34.5 °/ps à 1500 K)', 1e-4);
 near(cold.run.temperature.thermal, TH(300), '…et elle suit la température du palier', 1e-4);
 near(hot.run.temperature.speed, TH(1500), '…le pas ne peut porter qu’UNE fois cette vitesse', 1e-4);
-near(hot.run.torque.dynamic, STRUCTURE_CALC_MD_FRICTION * STRUCTURE_CALC_MD_MASS * TH(1500),
-  '⚖ le couple du champ suit T et m : τ = γ·m·f·√(R·T/m)', 1e-6);
+near(hot.run.torque.dynamic, Math.min(STRUCTURE_CALC_MD_MAX_TORQUE,
+  Math.max(STRUCTURE_CALC_MD_FRICTION * STRUCTURE_CALC_MD_MASS * hot.run.temperature.speed,
+    hot.run.torque.wall)),
+  '…et le plafond du palier se recalcule : τ = max(γ·m·f·√(R·T/m), f·√(R·T·m)/h)', 1e-6);
+near(hot.run.torque.wall,
+  hot.run.torque.factor * Math.sqrt(FF_GAS_CONSTANT * 1500 * STRUCTURE_CALC_MD_MASS) / 0.01,
+  '⚠ …dont la moitié qui fait le MUR : √(R·T·m)/h, le couple qui renverse la vitesse thermique en UN pas', 1e-4);
+ok(hot.run.torque.wall > STRUCTURE_CALC_MD_FRICTION * STRUCTURE_CALC_MD_MASS * hot.run.temperature.thermal,
+  `⚠ …et c’est ELLE qui mène (${hot.run.torque.wall.toFixed(3)} contre ${(STRUCTURE_CALC_MD_FRICTION * STRUCTURE_CALC_MD_MASS * hot.run.temperature.thermal).toFixed(3)} kcal/mol·deg) : un mur doit répondre au thermostat`);
 ok(hot.run.torque.dynamic < hot.run.torque.field,
   '…et il reste SOUS le garde-fou absolu (c’est un ceiling, jamais le plafond de tous les jours)');
 ok(hot.run.temperature.kinetic > 0 && hot.run.temperature.kinetic < 3 * 1500,
@@ -209,9 +222,8 @@ ok(old.run.temperature.thermal < hot.run.temperature.thermal,
    plafond dynamique du palier, donc qu'un lecteur peut refaire le calcul du couple. */
 ok(hot.run.torque.restraint > hot.run.torque.field,
   `⚖ le budget d’une contrainte (${hot.run.torque.restraint}) reste plus large que celui du champ (${hot.run.torque.field}) : le poids ⚖ a de la place pour mordre`);
-near(hot.run.torque.dynamic, hot.run.torque.factor * STRUCTURE_CALC_MD_FRICTION
-  * STRUCTURE_CALC_MD_MASS * hot.run.temperature.thermal,
-  '…et le plafond du palier se recalcule : τ = γ·m·f·√(R·T/m)', 1e-6);
+near(hot.run.torque.dynamic, hot.run.torque.wall,
+  '…et le plafond du geste est celui du mur (voir `capsOf`)', 1e-6);
 
 /* ── 6 · CE QUI LE DIT DANS LE CODE — les contrats de source ────────────────── */
 const MODULE = read('./src/utils/structureCalc.js');
@@ -220,6 +232,8 @@ has(MODULE, 'export const STRUCTURE_CALC_MD_SPEED_FACTOR = 1;',
   '…l’échelle du moteur est une CONSTANTE nommée, décrite une seule fois');
 has(MODULE, 'const vSpeed = Math.min(maxSpeed, speedFactor * vThermal);',
   '…le plafond du palier est calculé à chaque pas (un recuit change de température)');
+has(MODULE, 'const vReverse = Math.sqrt(kT * m) / h;',
+  '⚠ …et le plafond du CHAMP est le couple qui RENVERSE la vitesse thermique en UN pas (√(R·T·m)/h) — c’est ce qui fait d’un mur de van der Waals un mur');
 has(MODULE, 'const restCap = Math.min(maxRestTorque, maxTorque * engine.crossRestraintWeightOf(ctx));',
   '⚠ la famille des distances garde son budget ABSOLU (une distance demandée est une mola dure, pas une agitation)');
 has(VIEW, 'title="RUN MOLECULAR DYNAMICS', '▶ MD est toujours le geste du panneau');
