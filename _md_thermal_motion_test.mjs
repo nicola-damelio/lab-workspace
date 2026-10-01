@@ -46,10 +46,11 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dihedralDeg } from './src/utils/torsionDrive.js';
 import {
-  mdFrames, rotatableBondsOf,
+  mdFrames, molecularDynamicsOf, rotatableBondsOf, channelReadingsOf,
   STRUCTURE_CALC_MD_MASS, STRUCTURE_CALC_MD_SPEED_FACTOR, STRUCTURE_CALC_MD_MAX_SPEED,
   STRUCTURE_CALC_MD_MAX_TORQUE, STRUCTURE_CALC_MD_MAX_RESTRAINT_TORQUE,
   STRUCTURE_CALC_MD_FRICTION, STRUCTURE_CALC_MD_STEPS,
+  STRUCTURE_CALC_MD_CHANNELS, STRUCTURE_CALC_MD_MAX_SKIP,
 } from './src/utils/structureCalc.js';
 import { FF_GAS_CONSTANT } from './src/utils/forceFieldKcal.js';
 
@@ -232,15 +233,130 @@ has(MODULE, 'export const STRUCTURE_CALC_MD_SPEED_FACTOR = 1;',
   '…l’échelle du moteur est une CONSTANTE nommée, décrite une seule fois');
 has(MODULE, 'const vSpeed = Math.min(maxSpeed, speedFactor * vThermal);',
   '…le plafond du palier est calculé à chaque pas (un recuit change de température)');
-has(MODULE, 'const vReverse = Math.sqrt(kT * m) / h;',
+has(MODULE, 'const vReverse = Math.sqrt(kT * m) / hEff;',
   '⚠ …et le plafond du CHAMP est le couple qui RENVERSE la vitesse thermique en UN pas (√(R·T·m)/h) — c’est ce qui fait d’un mur de van der Waals un mur');
 has(MODULE, 'const restCap = Math.min(maxRestTorque, maxTorque * engine.crossRestraintWeightOf(ctx));',
   '⚠ la famille des distances garde son budget ABSOLU (une distance demandée est une mola dure, pas une agitation)');
 has(VIEW, 'title="RUN MOLECULAR DYNAMICS', '▶ MD est toujours le geste du panneau');
 ok(!VIEW.includes('mass: STRUCTURE_CALC_MD_MASS'),
   '⚠ …et il ne passe AUCUNE inertie : la calibration du module EST celle du geste qu’on regarde');
+/* ── 7 · LA TAILLE DE LA MOLÉCULE NE CHANGE PLUS LE MOUVEMENT ──────────────────────────
+   La remarque de cette session, verbatim : « I think that only phi and psi are varied. all
+   the other dihedrals look blocked ». Mesuré : c’était EXACT sur une molécule GRANDE, et
+   c’était la FENÊTRE (`STRUCTURE_CALC_MD_CHANNELS`) qui le faisait. Un pas ne tourne que 24
+   dièdres : un canal était donc mis à jour tous les `canaux/24` pas et intégré comme s’il
+   avait vécu `dt` À CHAQUE pas — sa trajectoire était `canaux/24` fois plus courte que celle
+   que le rapport annonce. Sur l’ubiquitine (378 canaux, 300 pas), l’excursion TOTALE de
+   chaque χ1 valait 1.4° (médiane 0.8°, max 5.7°) pendant que le squelette atteignait 13.6° :
+   les chaînes latérales PARAIENT bloquées. Chaque canal intègre maintenant l’intervalle
+   qu’il a réellement sauté (`hEff = dt × canaux/budget`, borné par
+   `STRUCTURE_CALC_MD_MAX_SKIP`), et cette section mesure le contrat :
+   LA MÊME MOLÉCULE DONNE LA MÊME EXCURSION QU’ELLE SOIT TOURNÉE À CHAQUE PAS OU TOUS LES
+   `canaux` PAS. Sur l’ubiquitine, la même mesure donne χ1 de 1.4° → 31.3° (médiane 27.3°). */
+const chiProbeOf = ({ residues = 5, phi = -60, psi = -45 } = {}) => {
+  const els = []; const pts = []; const bonds = [];
+  const push = (el, p) => { els.push(el); pts.push(p); return pts.length - 1; };
+  const N0 = [0, 0, 0]; const CA = [1.46, 0, 0];
+  const C = [1.46 + 1.52 * Math.cos((180 - 111) * DEG), 1.52 * Math.sin((180 - 111) * DEG), 0];
+  let iN = push('N', N0); const iCA = push('C', CA); const iC = push('C', C);
+  const iO = push('O', placeWith({ a: N0, b: CA, c: C, length: 1.23, angleDeg: 120.5, dihDeg: psi + 180 }));
+  const iCB = push('C', placeWith({ a: N0, b: CA, c: C, length: 1.53, angleDeg: 110.5, dihDeg: -122 }));
+  const cb = pts[iCB];
+  const iG1 = push('C', placeWith({ a: N0, b: CA, c: cb, length: 1.52, angleDeg: 113, dihDeg: 60 }));
+  const iG2 = push('C', placeWith({ a: N0, b: CA, c: cb, length: 1.52, angleDeg: 113, dihDeg: -60 }));
+  bonds.push({ i: iN, j: iCA, order: 1 }, { i: iCA, j: iC, order: 1 }, { i: iC, j: iO, order: 2 },
+    { i: iCA, j: iCB, order: 1 }, { i: iCB, j: iG1, order: 1 }, { i: iCB, j: iG2, order: 1 });
+  let lastN = N0; let lastCA = CA; let lastC = C; let lastCidx = iC;
+  for (let k = 1; k < residues; k += 1) {
+    const n2 = placeWith({ a: lastN, b: lastCA, c: lastC, length: 1.33, angleDeg: 116, dihDeg: psi });
+    const jN = push('N', n2);
+    const ca2 = placeWith({ a: lastCA, b: lastC, c: n2, length: 1.46, angleDeg: 122, dihDeg: 180 });
+    const jCA = push('C', ca2);
+    const c2 = placeWith({ a: lastC, b: n2, c: ca2, length: 1.52, angleDeg: 111, dihDeg: phi });
+    const jC = push('C', c2);
+    const jO = push('O', placeWith({ a: n2, b: ca2, c: c2, length: 1.23, angleDeg: 120.5, dihDeg: psi + 180 }));
+    const cb2 = placeWith({ a: n2, b: ca2, c: c2, length: 1.53, angleDeg: 110.5, dihDeg: -122 });
+    const jCB = push('C', cb2);
+    const jG1 = push('C', placeWith({ a: n2, b: ca2, c: cb2, length: 1.52, angleDeg: 113, dihDeg: 60 }));
+    const jG2 = push('C', placeWith({ a: n2, b: ca2, c: cb2, length: 1.52, angleDeg: 113, dihDeg: -60 }));
+    bonds.push({ i: lastCidx, j: jN, order: 1 }, { i: jN, j: jCA, order: 1 },
+      { i: jCA, j: jC, order: 1 }, { i: jC, j: jO, order: 2 },
+      { i: jCA, j: jCB, order: 1 }, { i: jCB, j: jG1, order: 1 }, { i: jCB, j: jG2, order: 1 });
+    iN = jN; lastN = n2; lastCA = ca2; lastC = c2; lastCidx = jC;
+  }
+  return { count: els.length, elements: els, bonds, positions: pts.flat() };
+};
+
+
+const CHIP = chiProbeOf({ residues: 8 });
+const CHICH = rotatableBondsOf({ elements: CHIP.elements, bonds: CHIP.bonds, atomCount: CHIP.count });
+/* LES χ1 DE LA SONDE — l’atome de référence est un N et l’axe est CA–CB (N–CA–CB–CG) : c’est
+   EXACTEMENT le dièdre dont la remarque dit qu’il « a l’air bloqué ». */
+const CHI_AT = CHICH.channels
+  .map((ch, k) => ({ ch, k }))
+  .filter(({ ch }) => CHIP.elements[ch.probeAtoms[0]] === 'N'
+    && CHIP.elements[ch.probeAtoms[1]] === 'C' && CHIP.elements[ch.probeAtoms[2]] === 'C');
+/** L’excursion MESURÉE des χ1 — |Δ| du dièdre entre le départ et la fin de la trajectoire,
+ *  pour un budget de canaux donné (le budget EST la fenêtre : `canaux` = tous à chaque pas). */
+const chiSpanOf = (channelBudget) => {
+  const run = molecularDynamicsOf({
+    positions: Array.from(CHIP.positions), elements: CHIP.elements, bonds: CHIP.bonds,
+    steps: 100, temperature: 1500, perFrame: 100, channelBudget, seed: 7,
+  });
+  const before = channelReadingsOf({ positions: CHIP.positions, channels: CHICH.channels });
+  const after = channelReadingsOf({ positions: run.positions, channels: CHICH.channels });
+  const abs = [];
+  for (const { k } of CHI_AT) {
+    if (!Number.isFinite(before[k].deg) || !Number.isFinite(after[k].deg)) continue;
+    let d = after[k].deg - before[k].deg;
+    while (d > 180) d -= 360;
+    while (d < -180) d += 360;
+    abs.push(Math.abs(d));
+  }
+  return { run, mean: mean(abs), max: Math.max(...abs), n: abs.length };
+};
+const everyStep = chiSpanOf(CHICH.count);
+const windowed = chiSpanOf(1);
+ok(CHI_AT.length >= 3,
+  `⚠ la sonde a bien des χ1 (${CHI_AT.length} sur ${CHICH.count} canaux) — c’est le dièdre de la remarque`);
+ok(CHICH.count > STRUCTURE_CALC_MD_CHANNELS,
+  `…et elle a PLUS de canaux que la fenêtre (${CHICH.count} > ${STRUCTURE_CALC_MD_CHANNELS}) : la fenêtre mord`);
+eq(everyStep.run.windowed, false,
+  '🎛 tourné à chaque pas : le rapport le dit (`windowed: false`) et `dtEff` vaut dt');
+eq(windowed.run.windowed, true,
+  '🎛 tourné tous les `canaux` pas : le rapport le dit (`windowed: true`)');
+near(windowed.run.skip, Math.min(CHICH.count, STRUCTURE_CALC_MD_MAX_SKIP),
+  '…le nombre de pas sautés est `canaux/budget`, borné par la borne de stabilité', 1e-9);
+near(windowed.run.dtEff, 0.01 * Math.min(CHICH.count, STRUCTURE_CALC_MD_MAX_SKIP),
+  '…et le canal intègre VRAIMENT cet intervalle (`dtEff = dt × skip`)', 1e-9);
+ok(windowed.mean > everyStep.mean * 0.6 && windowed.mean < everyStep.mean * 1.8,
+  `⚠ LA TAILLE DE LA MOLÉCULE NE CHANGE PLUS LE MOUVEMENT : χ1 fait |Δ| moyen `
+  + `${windowed.mean.toFixed(2)}° en sautant ${windowed.run.skip} pas contre ${everyStep.mean.toFixed(2)}° tourné à chaque pas `
+  + '(avant ce changement : 1/√skip de la seconde, soit « bloqué »)');
+ok(windowed.mean > 10,
+  `⚠ …et les χ1 TOURNENT vraiment (${windowed.mean.toFixed(2)}° de moyenne, max ${windowed.max.toFixed(1)}°) : ce n’est plus « seulement φ et ψ »`);
+
+/* ── 8 · CE QUI LE DIT DANS LE CODE — LA FENÊTRE ET SON PAS EFFECTIF ─────────────────── */
+has(MODULE, 'export const STRUCTURE_CALC_MD_MAX_SKIP = 25;',
+  '⚠ la borne de stabilité de la fenêtre est une CONSTANTE nommée (`1 − γ·h_eff` doit rester > 0)');
+has(MODULE, 'const skip = Math.min(chan.length / Math.max(1, budget), STRUCTURE_CALC_MD_MAX_SKIP);',
+  '…et le nombre de pas sautés se lit sur la fenêtre (canaux / budget)');
+has(MODULE, 'const hEff = h * skip;',
+  '⚠ …et c’est CET intervalle que chaque canal intègre, pas `dt`');
+has(MODULE, 'Math.sqrt((2 * gamma * FF_GAS_CONSTANT * target * hEff) / m) * gaussian()',
+  '…le BRUIT porte sur l’intervalle réel (fluctuation–dissipation, à l’échelle du canal)');
+has(MODULE, 'const v = vel[k] * (1 - gamma * hEff) + (capped / m) * hEff + noise;',
+  '…la FRICTION et la RÉPONSE AU CHAMP aussi (les trois termes du même intervalle)');
+has(MODULE, 'const turn = Math.max(-cap, Math.min(cap, vel[k] * hEff));',
+  '…donc la rotation d’un pas est celle de l’intervalle intégré (et reste bornée par `maxStepDeg`)');
+has(MODULE, 'dtEff: Number(hEff.toFixed(6)),\n    windowed: skip > 1,',
+  '…et le rapport du geste DONNE l’échelle réelle (`dtEff`, `windowed`) au lieu de la cacher');
+has(VIEW, 'the window turned ${run.budget} of the ${run.channels} dihedrals per step',
+  '…le panneau l’ÉCRIT dans le rapport du ▶ MD (le module le promet depuis `STRUCTURE_CALC_MD_CHANNELS`)');
 
 console.log(`_md_thermal_motion_test.mjs — ${passed} assertions OK `
   + '(🌡 la température CONDUIT le mouvement : vitesse thermique √(R·T/m) comme échelle du moteur, '
   + 'mouvement visible et suivant √T, la molécule n’est plus collée au fond du puits, toutes les vitesses '
-  + 'bornées par la consigne, la contre-épreuve de l’ancienne inertie, et le ⚖ poids qui mord toujours)');
+  + 'bornées par la consigne, la contre-épreuve de l’ancienne inertie, le ⚖ poids qui mord toujours, '
+  + 'et LA MÊME EXCURSION POUR CHAQUE DIÈDRE QUE LA MOLÉCULE AIT 8 OU 378 CANAUX)');
+

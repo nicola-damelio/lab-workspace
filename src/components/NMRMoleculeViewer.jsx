@@ -10499,7 +10499,12 @@ const calcBoxNote = (geom) => {
   }
   return ` · 📦 ${s.molecules} rigid TIP3P water${s.molecules === 1 ? '' : 's'} in a `
     + `${s.edge} Å cube${s.skipped ? ` (${s.skipped} lattice site${s.skipped === 1 ? '' : 's'} left empty, too close to the molecule)` : ''}`
-    + ' — they screen and they push, and they never move (this engine turns dihedrals).';
+    + ' — they screen and they push, and they never move (this engine turns dihedrals).'
+    /* 💧 …ET ILS SONT DESSINÉS (la remarque de cette session : « I still do not see the water
+       in the MD ») : la boîte entre dans la scène comme une molécule de la barre
+       (`calcDrawWaterBox`), donc elle se VOIT, se style et se cache comme les autres. */
+    + ' They are drawn in the view as their own molecule (« 💧 water box … » in the Molecules'
+    + ' bar: ☐ None hides them, and 🗑 removes them).';
 };
 
 /** POURQUOI UN DÉPART S'EST ARRÊTÉ LÀ — une phrase par `reason` du module, traduite
@@ -11240,6 +11245,11 @@ const runStructureCalculation = () => {
     return;
   }
   const { comp, structure, geom } = live;
+  /* 💧 LA BOÎTE EXPLICITE SE DESSINE (voir `calcDrawWaterBox`) — la boîte est construite UNE
+     fois pour tout le ▶ Run (`calcEngineGeometry`), donc les n départs partagent le même
+     environnement : c'est CELUI-LÀ qu'on met à l'écran, et le rapport le décrit
+     (`calcBoxNote`). */
+  calcDrawWaterBox(geom).catch(() => {});
   /* LA MOLÉCULE DU CALCUL, RETENUE SOUS SA CLÉ (`calcMoleculeKey`) : c'est elle qui dira,
      à chaque image et à la fin, si l'écran montre encore celle sur laquelle ces modèles
      ont été construits — donc où l'écriture est permise. */
@@ -11729,6 +11739,11 @@ const runMolecularDynamics = () => {
     return;
   }
   const { comp, structure, geom } = now;
+  /* 💧 LA BOÎTE EXPLICITE SE DESSINE — la demande : « I still do not see the water in the
+     MD ». Elle est déjà dans `geom` (donc dans la physique de ce geste, voir
+     `calcEngineGeometry`) ; ici elle entre dans la SCÈNE comme une molécule de la barre.
+     Sans blocage : le geste part sur ses images, la boîte apparaît dès que NGL l'a lue. */
+  calcDrawWaterBox(geom).catch(() => {});
   /* Ce que la dynamique emporte : les lignes COMPLÈTES de poids non nul, ou RIEN. */
   /* 📏 …ET D'ABORD LA CASE DE SA FENÊTRE — elle décide SI cette dynamique porte la table
      (`mdUseRestraints`, la case 📏 de `renderMdOptions`) : cochée elle emporte les lignes
@@ -11819,6 +11834,16 @@ const runMolecularDynamics = () => {
         + ` · ${run.time.ps} ps at dt = ${run.time.dt} ps (an image every ${mdImage} step${mdImage === 1 ? '' : 's'})`
         + ` · T held at ${run.temperature.hot} K (kinetic ${run.temperature.mean.toFixed(0)} K mean)`
         + ` · 💧 ${mdSolventOf().label} — ${mdSolventOf().of}`
+        /* ⚠ LA FENÊTRE, DITE — c'est la demande du module (« le rapport dit le nombre de
+           canaux par pas ») et c'est ce qui explique le mouvement : une molécule qui a plus de
+           dièdres que la fenêtre voit chaque canal tourné tous les `skip` pas, donc intégré
+           sur `dt_eff = dt × skip` — sinon l'excursion d'un dièdre dépendait du NOMBRE de
+           dièdres de la molécule (mesuré : χ1 à 1.4° sur l'ubiquitine, « look blocked »). */
+        + `${run.windowed
+          ? ` · 🎛 the window turned ${run.budget} of the ${run.channels} dihedrals per step, so each`
+            + ` channel was updated every ${run.skip} steps and integrated dt_eff = ${run.dtEff} ps`
+            + ' (not dt) — that is what keeps the motion of every dihedral the same whatever the size of the molecule'
+          : ` · 🎛 every one of its ${run.channels} dihedral${run.channels === 1 ? '' : 's'} was turned at every step (they all fit in the window of ${run.budget})`}`
         + ` · energy ${run.cost.before.toFixed(2)} → ${run.cost.after.toFixed(2)} kcal/mol`
         + ` · 📏 ${mdUseRestraints
           ? `${list.length} distance${list.length === 1 ? '' : 's'} of the table carried with their ⚖ weights`
@@ -11846,7 +11871,7 @@ const runMolecularDynamics = () => {
            suit, au lieu de laisser croire que la température ne fait que se lire. */
         + ` 🌡 speed scale √(R·T/m) = ${run.temperature && Number.isFinite(run.temperature.thermal) ? run.temperature.thermal.toFixed(1) : '—'} °/ps`
         + ` (m = ${STRUCTURE_CALC_MD_MASS}), and the field's ceiling is the torque that reverses it IN ONE STEP`
-        + ` (f·√(R·T·m)/h = ${run.torque && Number.isFinite(run.torque.wall) ? run.torque.wall.toFixed(3) : '—'} kcal/mol·deg`
+        + ` (f·√(R·T·m)/${run.windowed ? 'dt_eff' : 'h'} = ${run.torque && Number.isFinite(run.torque.wall) ? run.torque.wall.toFixed(3) : '—'} kcal/mol·deg`
         + `, capped at ${run.torque && Number.isFinite(run.torque.dynamic) ? run.torque.dynamic.toFixed(3) : '—'}) —`
         + ' the temperature you asked for is what makes the atoms move, so it does not settle in a minimum,'
         + ' and that ceiling is what makes a van der Waals wall a WALL (a smaller budget lets two atoms cross'
@@ -11871,6 +11896,9 @@ const runMinimise = () => {
     return;
   }
   const { comp, structure, geom } = now;
+  /* 💧 LA BOÎTE SE DESSINE ICI AUSSI (voir `calcDrawWaterBox`) — le ⚒ descend le même champ
+     que le ▶ MD, donc il voit le même solvant, et la même boîte se met à l'écran. */
+  calcDrawWaterBox(geom).catch(() => {});
   /* ⚖ LA MINIMISATION AUSSI (les lignes complètes de poids non nul) : elle CONVERGE les
      distances, donc elle doit lire exactement ce que la table pèse. */
   const list = calcFieldRows().filter((r) => r.i < geom.count && r.j < geom.count);
@@ -17417,6 +17445,102 @@ const calcAddFamilyToBar = async (structure, comp, retained) => {
     + ' press 🎯 Fit to chosen to superpose the family onto the reference.');
   return added;
 };
+/* ── 💧 LA BOÎTE D'EAU EXPLICITE SE DESSINE ENFIN ─────────────────────────────────────
+   La demande de cette session, verbatim : « I still do not see the water in the MD ». Et
+   c'était EXACT : la boîte existait dans la PHYSIQUE (le moteur tournait bien sur les eaux,
+   le rapport les comptait — `calcBoxNote`) mais elle n'était écrite NULLE PART dans la scène.
+   Un modèle solvaté qui ne se voit pas est exactement le contraire de ce que la fenêtre
+   🌡 MD promet (« the box edge sets how many there are »).
+
+   Ici les eaux deviennent UNE MOLÉCULE ORDINAIRE DE LA BARRE — le même chemin que la
+   famille d'un calcul (`calcAddFamilyMolecule`) : son ☑, ses rangées de style, son 🗑, sa
+   visibilité. Elles entrent par un petit PDB écrit à la main (HETATM HOH · OW · HW, avec
+   l'O–H en CONECT, comme le fichier d'une boîte solvatée) : c'est ce qui fait qu'NGL les
+   reconnaît comme de l'EAU (`water`, la sélection du dossier), donc qu'elles prennent le
+   style de la catégorie « others » (boule+bâton, bleu clair) et rien d'autre.
+
+   ⚠ ELLES NE BOUGENT PAS — le rapport le dit déjà (« they screen and they push, and they
+   never move (this engine turns dihedrals) ») : la molécule est donc écrite UNE fois, au
+   départ du geste, et la trajectoire ne la relit jamais. ⚠ UNE SEULE BOÎTE À LA FOIS (le
+   préfixe `solv_`, le même critère que `fam_`) : deux ▶ MD ne peuvent pas empiler deux
+   boîtes dans la barre. ⚠ ET RIEN N'EST DESSINÉ QUAND LA BOÎTE A ÉTÉ REFUSÉE : le rapport
+   dit pourquoi (`calcBoxNote`), une boîte absente à l'écran est alors la vérité. */
+
+/** LE PDB DES EAUX — un HETATM par atome (`OW` · `HW` · `HW`), un résidu `HOH` par molécule,
+ *  et leur O–H en CONECT (les seules liaisons qu'une eau TIP3P possède). Les coordonnées
+ *  sont celles du module, sans recopie de nombre : `geom.solvent.solute` dit où finit la
+ *  molécule, donc les eaux sont la fin du tableau. */
+const calcWaterBoxPdbText = (geom) => {
+  const s = geom && geom.solvent;
+  if (!s || !s.ok || !Array.isArray(geom.elements) || !Array.isArray(geom.positions)) return '';
+  const solute = Math.max(0, Math.round(Number(s.solute) || 0));
+  const atoms = Math.max(0, Math.round(Number(s.atoms) || 0) - solute);
+  if (!(atoms > 0) || geom.positions.length < (solute + atoms) * 3) return '';
+  const num = (v) => (Number.isFinite(v) ? v.toFixed(3) : '0.000').padStart(8);
+  const lines = [];
+  const serialOf = [];
+  for (let k = 0; k < atoms; k += 1) {
+    const i = solute + k;
+    const water = Math.floor(k / 3) + 1;
+    const el = String(geom.elements[i] || '').trim().toUpperCase();
+    const name = el.startsWith('O') ? ' OW ' : ' HW ';
+    const serial = k + 1;
+    serialOf.push(serial);
+    /* ⚠ LES COLONNES DU PDB SONT UN CONTRAT — nom en 13-16, résidu en 18-20, chaîne en 22,
+       numéro de résidu en 23-26, et les coordonnées en 31-54 : d'où les QUATRE blancs entre
+       le numéro de résidu et le x (27-30 valent « pas d'altloc, pas de code d'insertion »). */
+    lines.push(`HETATM${String(serial).padStart(5)} ${name} HOH W${String(water % 10000).padStart(4)}`
+      + `    ${num(geom.positions[i * 3])}${num(geom.positions[i * 3 + 1])}${num(geom.positions[i * 3 + 2])}`
+      + '  1.00  0.00          '
+      + `${el.startsWith('O') ? 'O' : 'H'}`);
+  }
+  /* L'O–H DES EAUX — par la MÊME lecture que le graphe du module : un couple dont l'un des
+     deux atomes est une eau et l'autre son O (les liaisons ajoutées par `explicitSolventOf`
+     sont exactement `O–H`, et elles seules). */
+  const isWater = (i) => i >= solute && i < solute + atoms;
+  const bonds = Array.from(geom.bonds || []);
+  const seen = new Set();
+  for (const b of bonds) {
+    const i = Number(b && b.i); const j = Number(b && b.j);
+    if (!Number.isInteger(i) || !Number.isInteger(j) || !isWater(i) || !isWater(j)) continue;
+    const key = i < j ? `${i}-${j}` : `${j}-${i}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    lines.push(`CONECT${String(serialOf[i - solute]).padStart(5)}${String(serialOf[j - solute]).padStart(5)}`);
+  }
+  return `${lines.join('\n')}\n`;
+};
+
+/** LA BOÎTE ENTRE DANS LA SCÈNE — `{ok, id, reason}` (la raison sert au rapport). Elle est
+ *  MONTRÉE (une boîte qu'il faudrait déplier avant de voir n'aurait rien répondu) et
+ *  remplace la précédente : `solv_` est le seul identifiant de ce genre. */
+const calcDrawWaterBox = async (geom) => {
+  const stage = stageRef.current;
+  if (!stage || !geom || !geom.solvent || !geom.solvent.ok) return { ok: false, reason: 'no-box' };
+  const text = calcWaterBoxPdbText(geom);
+  if (!text) return { ok: false, reason: 'no-pdb' };
+  const previous = extraCompsRef.current.filter((e) => String(e.id).startsWith('solv_'));
+  if (previous.length) {
+    extraCompsRef.current = extraCompsRef.current.filter((e) => !String(e.id).startsWith('solv_'));
+    previous.forEach((e) => { try { if (stageRef.current) stageRef.current.removeComponent(e.comp); } catch { /* ignore */ } });
+    setVisibleMolKeys((prev) => { const n = new Set(prev); previous.forEach((e) => n.delete(e.id)); return n; });
+  }
+  const s = geom.solvent;
+  const label = `💧 water box ${s.edge} Å · ${s.molecules} TIP3P`;
+  try {
+    const mol = await stage.loadFile(new Blob([text], { type: 'text/plain' }), { ext: 'pdb' });
+    const baseReps = applyCurrentStyleTo(mol, []);
+    shadowRepsHook(mol);
+    if (shadowOnRef.current) setMeshShadows(mol);
+    const id = `solv_${Date.now()}`;
+    extraCompsRef.current.push({ id, name: label, comp: mol, baseReps, style: 'auto', color: '', colorMode: 'element', transparency: 0, position: [0, 0, 0] });
+    setExtraMols(extraMolsSnapshot());
+    setVisibleMolKeys((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
+    return { ok: true, id };
+  } catch { return { ok: false, reason: 'load-failed' }; }
+};
+
+
 
 // Per-extra-structure style/color overrides. Each entry in the Molecules bar can
 // be rendered independently: "auto" follows the §2 « Molecular Styling » menus;

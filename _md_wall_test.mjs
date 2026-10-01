@@ -187,8 +187,8 @@ ok(weak.chiTurn < now.chiTurn,
 
 /* ── 5 · CE QUI LE DIT DANS LE CODE ───────────────────────────────────────────────── */
 const MODULE = readFileSync(new URL('./src/utils/structureCalc.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
-has(MODULE, 'const vReverse = Math.sqrt(kT * m) / h;',
-  'le plafond du mur est nommé et calculé au palier courant');
+has(MODULE, 'const vReverse = Math.sqrt(kT * m) / hEff;',
+  'le plafond du mur est nommé et calculé au palier courant, sur l’intervalle RÉEL d’un canal');
 has(MODULE, 'torque: Math.min(maxTorque, Math.max(gamma * m * vSpeed, wall)),',
   '…et le plafond du geste est le PLUS GRAND des deux (le mur doit pouvoir répondre)');
 has(MODULE, 'wall: Number(endCaps.wall.toFixed(6)),',

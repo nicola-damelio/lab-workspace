@@ -388,8 +388,34 @@ has(FIELD, 'surface = true,', '⚠ …et la liste de surface reste le défaut (u
 eq([ffElementOf('OW').radius * 2, ffElementOf('OW').epsilon], [FF_TIP3P.ow.sigma, FF_TIP3P.ow.epsilon],
   '…le σ et le ε d’un oxygène d’eau sont ceux de TIP3P (r_min = σ, contrat de la table)');
 
+/* ── 5 · 💧 LA BOÎTE SE DESSINE — la remarque de cette session ───────────────────────────
+   « I still do not see the water in the MD ». Elle était EXACTE : la boîte vivait dans la
+   physique (le moteur tournait sur ses eaux, le rapport les comptait) et nulle part dans la
+   scène. Elle entre maintenant par le chemin d’une molécule ordinaire (le préfixe `solv_`, le
+   même critère que la famille `fam_`), écrite en PDB avec des HETATM HOH — donc reconnue
+   comme de l’EAU (la sélection du dossier) et stylée comme telle, sans qu’un seul atome soit
+   écrit dans le JSX. */
+has(VIEW, 'const calcWaterBoxPdbText = (geom) => {',
+  '💧 les eaux sont écrites en PDB (HETATM HOH) — NGL les reconnaît donc comme de l’EAU');
+has(VIEW, 'HETATM${String(serial).padStart(5)} ${name} HOH W',
+  '…un résidu HOH par molécule, avec OW et HW (la géométrie TIP3P du module, pas un atome écrit ici)');
+has(VIEW, 'CONECT${String(serialOf[i - solute]).padStart(5)}${String(serialOf[j - solute]).padStart(5)}',
+  '…et leur O–H en CONECT (les seules liaisons qu’une eau TIP3P possède)');
+has(VIEW, 'const calcDrawWaterBox = async (geom) => {',
+  '…et la boîte entre dans la scène comme une molécule de la barre des molécules');
+has(VIEW, "extraCompsRef.current.filter((e) => String(e.id).startsWith('solv_'))",
+  '⚠ UNE SEULE BOÎTE À LA FOIS (le préfixe `solv_`, le même critère que `fam_`)');
+has(VIEW, 'const label = `💧 water box ${s.edge} Å · ${s.molecules} TIP3P`;',
+  '…elle se nomme par ce que le module a construit (son arête, son nombre d’eaux — aucun chiffre du JSX)');
+eq(VIEW.split('calcDrawWaterBox(geom).catch(() => {});').length - 1, 3,
+  '⚠ les TROIS gestes qui construisent la boîte la dessinent (▶ Run du 🧬, ▶ MD et ⚒ Minimise)');
+has(VIEW, 'They are drawn in the view as their own molecule',
+  '…et le rapport du geste le DIT, donc le lecteur sait où regarder (et comment la cacher)');
+
+
 console.log(`_target_solvent_torque_test.mjs — ${passed} assertions OK `
-  + '(💧 la boîte d’eau explicite — géométrie TIP3P, indices d’origine intacts, sites écartés, arête refusée si trop petite ; '
+  + '(💧 la boîte d’eau explicite — géométrie TIP3P, indices d’origine intacts, sites écartés, arête refusée si trop petite, '
+  + 'ET DESSINÉE dans la vue comme une molécule de la barre (HETATM HOH, préfixe `solv_`) ; '
   + '🎯 la fonction cible DYANA — répulsion seule, sans charges, sans surface, atomes unis, lue par le champ ET par les quatre gestes ; '
   + '⚖ et le poids d’une ligne qui MORD vraiment sur la dynamique, plafond de couple séparé)');
 

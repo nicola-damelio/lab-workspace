@@ -338,6 +338,13 @@ export const STRUCTURE_CALC_MD_OMEGA_STEP_DEG = 4;
  *  C'est ce qui rend la dynamique abordable sur une protéine sans changer son
  *  thermostat — et le rapport dit le nombre de canaux par pas (`md.budget`). */
 export const STRUCTURE_CALC_MD_CHANNELS = 24;
+/** ⚠ COMBIEN DE PAS LA FENÊTRE PEUT SAUTER AVANT QUE L'INTERVALLE EFFECTIF D'UN CANAL NE
+ *  CESSE DE GRANDIR (25) — c'est une borne de STABILITÉ, pas un réglage : l'intégrateur
+ *  amortit la vitesse par `1 − γ·h_eff`, et à `h_eff = 1/γ = 25 pas` ce facteur s'annule (au
+ *  delà il change de signe et la vitesse diverge). Voir `mdFrames` : chaque canal intègre le
+ *  temps qu'il a réellement sauté (`dt × canaux/24`), donc une molécule de plus de 600
+ *  dièdres voit sa fenêtre plafonnée ici. */
+export const STRUCTURE_CALC_MD_MAX_SKIP = 25;
 /** LA LONGUEUR NOMINALE DE LA TRAJETTOIRE, en picosecondes — `pas × dt`. C'est le
  *  chiffre que le panneau affiche quand il demande « quelle est la durée totale de la
  *  simulation ? », et il est calculé ICI : le panneau ne refait pas la multiplication. */
@@ -2179,6 +2186,28 @@ export function* mdFrames({
     return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
   };
   const h = Math.max(1e-4, Number(dt) || STRUCTURE_CALC_MD_DT);
+  /* ⚠ LE PAS EFFECTIF D'UN CANAL — LE TEMPS QU'IL A RÉELLEMENT SAUTÉ.
+     La fenêtre ne tourne que `budget` canaux par pas : un canal est donc mis à jour tous les
+     `canaux/budget` pas. L'intégrer avec `dt` comme s'il avait été tourné à CHAQUE pas lui
+     fait vivre une trajectoire `canaux/budget` fois plus courte que celle que le rapport
+     annonce (« pas × dt ») — et c'est MESURÉ : sur l'ubiquitine (378 canaux, fenêtre de 24,
+     300 pas de 0.01 ps), l'excursion TOTALE de chaque dièdre pendant toute la trajectoire
+     valait 1.4° en moyenne pour les χ1 (pendant que le squelette atteignait 13.6°) — les
+     chaînes latérales paraissent BLOQUÉES, exactement la remarque de cette session (« I think
+     that only phi and psi are varied, all the other dihedrals look blocked ») et la même
+     signature que la session du plafond de couple (« χ1 figé à 5° »).
+     Chaque canal intègre donc l'intervalle qu'il a sauté, `h_eff = dt × canaux/budget`
+     (borné par `STRUCTURE_CALC_MD_MAX_SKIP`, une borne de stabilité) : le bruit, la friction
+     ET la réponse au champ portent sur le même intervalle, ce qui est cohérent au sens de
+     Langevin (le plafond de couple suit `√(R·T·m)/h_eff`, comme il suit `.../h` — c'est le
+     couple qui renverse UNE vitesse thermique EN UN pas, donc il tient encore le thermostat).
+     ⚠ AUCUN COÛT EN PLUS : c'est le même nombre d'évaluations, seule l'ÉCHELLE change. Et
+     ⚠ UNE MOLÉCULE DONT TOUS LES CANAUX TIENNENT DANS LA FENÊTRE (`canaux ≤ 24`) A
+     `h_eff = h` EXACTEMENT : sa trajectoire est, au chiffre près, celle d'avant ce
+     changement — c'est pourquoi les sondes et les tests du dossier (8 à 17 canaux) ne
+     bougent pas. */
+  const skip = Math.min(chan.length / Math.max(1, budget), STRUCTURE_CALC_MD_MAX_SKIP);
+  const hEff = h * skip;
   const gamma = Math.max(0, Number(friction) || STRUCTURE_CALC_MD_FRICTION);
   const m = Math.max(1e-6, Number(mass) || STRUCTURE_CALC_MD_MASS);
   const delta = Math.max(0.05, Math.abs(Number(torqueStep) || STRUCTURE_CALC_MD_TORQUE_STEP));
@@ -2235,8 +2264,9 @@ export function* mdFrames({
     const kT = FF_GAS_CONSTANT * Math.max(0, T);
     const vThermal = Math.sqrt(kT / m);
     const vSpeed = Math.min(maxSpeed, speedFactor * vThermal);
-    /* `√(R·T·m)/h` — le couple qui annule une vitesse thermique en UN pas. */
-    const vReverse = Math.sqrt(kT * m) / h;
+    /* `√(R·T·m)/h` — le couple qui annule une vitesse thermique en UN pas. ⚠ `hEff` (et non
+       `h`) : « un pas » veut dire l'intervalle que le canal intègre VRAIMENT (voir `hEff`). */
+    const vReverse = Math.sqrt(kT * m) / hEff;
     const wall = speedFactor * vReverse;
     return {
       vThermal, vSpeed, wall,
@@ -2291,11 +2321,13 @@ export function* mdFrames({
          c'est 0.52 kcal/mol/deg, soit la vitesse `f·√(R·T/m)` = 103 °/ps. Le garde-fou
          absolu (`maxTorque`) reste le ceiling, jamais le plafond de tous les jours. */
       const capped = clampT(torqueRest, restCap) + clampT(torque - torqueRest, caps.torque);
-      const noise = Math.sqrt((2 * gamma * FF_GAS_CONSTANT * target * h) / m) * gaussian();
-      const v = vel[k] * (1 - gamma * h) + (capped / m) * h + noise;
+      /* ⚠ `hEff` (et non `h`) DANS LES TROIS TERMES — le bruit, la friction et la réponse au
+         champ portent sur l'intervalle que ce canal a réellement sauté (voir `hEff`). */
+      const noise = Math.sqrt((2 * gamma * FF_GAS_CONSTANT * target * hEff) / m) * gaussian();
+      const v = vel[k] * (1 - gamma * hEff) + (capped / m) * hEff + noise;
       vel[k] = v;
       if (Math.abs(v) > maxSpeed) vel[k] = Math.sign(v) * maxSpeed;
-      if (Math.abs(vel[k] * h) < 1e-9) continue;
+      if (Math.abs(vel[k] * hEff) < 1e-9) continue;
       /* …ET LE PAS AUSSI — quel que soit le couple, un dièdre ne tourne pas de plus d'un
          pas MAX par itération (`maxStepDeg`) : la rotation reste une rotation, jamais un
          saut de conformation. ⚠ UNE LIAISON PEPTIDIQUE A SON PROPRE PAS (4°) : sa barrière
@@ -2304,7 +2336,7 @@ export function* mdFrames({
          C'est le même choix que le recuit, qui tourne ω par pas de 12°. */
       const cap = omegaBond.has(ch.i < ch.j ? `${ch.i}-${ch.j}` : `${ch.j}-${ch.i}`)
         ? omegaStepDeg : maxStepDeg;
-      const turn = Math.max(-cap, Math.min(cap, vel[k] * h));
+      const turn = Math.max(-cap, Math.min(cap, vel[k] * hEff));
       /* ⚠ UNE LIAISON PEPTIDIQUE NE S'ISOMÉRISE PAS DANS CETTE DYNAMIQUE — à 1500 K le
          plateau de ± 30° de ω laisse un ω franchir sa barrière par diffusion (mesuré : un ω
          à 0.4° de trans finissait CIS après 300 pas) alors qu'un vrai peptide reste trans à
@@ -2364,6 +2396,16 @@ export function* mdFrames({
     channels: chan.length,
     omegaFree: !!freeOmega,
     steps: n, applied, skipped, moved,
+    /* ⚠ LA FENÊTRE ET SON PAS EFFECTIF — `budget` canaux tournés par pas (la constante du
+       dossier), donc un canal est mis à jour tous les `skip` pas et il intègre `dtEff = dt ×
+       skip` (voir `hEff`) : le rapport peut donc dire la VRAIE échelle du moteur au lieu de
+       laisser croire que chaque canal a vécu les `steps` pas annoncés. `window: false` quand
+       tous les canaux tiennent dans la fenêtre — c'est alors la dynamique d'avant, au chiffre
+       près. */
+    budget,
+    skip: Number(skip.toFixed(6)),
+    dtEff: Number(hEff.toFixed(6)),
+    windowed: skip > 1,
     temperature: {
       mode: fixedT != null ? 'fixed' : 'annealed',
       hot: fixedT != null ? fixedT : hotT, cold: fixedT != null ? fixedT : coldT,
