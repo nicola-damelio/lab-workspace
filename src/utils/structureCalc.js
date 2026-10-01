@@ -243,7 +243,30 @@ export const STRUCTURE_CALC_MD_HOT = 1500;            // K — la phase d'équil
 export const STRUCTURE_CALC_MD_COLD = 300;            // K — la fin du refroidissement
 export const STRUCTURE_CALC_MD_DT = 0.01;             // ps (le « temps » d'un pas)
 export const STRUCTURE_CALC_MD_FRICTION = 2;          // γ (ps⁻¹)
-export const STRUCTURE_CALC_MD_MASS = 1;              // inertie réduite d'un dièdre
+/** L'INERTIE RÉDUITE D'UN DIÈDRE — et c'est ELLE qui décide si la température demandée se
+ *  VOIT. La remarque de cette session : « the MD looks more like a minimisation because
+ *  when it reaches a correct structure the atoms don't move anymore » — mesuré : c'était
+ *  exactement vrai, et voici pourquoi.
+ *
+ *  Ce moteur est une dynamique de Langevin : la vitesse thermique d'un canal vaut
+ *  `√(R·T/m)` et son PAS thermique `√(2·h·R·T/(γ·m))`, tandis que sa DÉRIVE vaut
+ *  `τ/(γ·m)`. Avec `m = 1`, à 1500 K, `√(R·T/m) = 1.7 °/ps` : un pas de 0.01 ps déplace un
+ *  dièdre de 0.017°, soit 0.02 Å par image — INVISIBLE. Le temps de relaxation d'un puits,
+ *  `τ_relax ≈ γ·m/k_θ`, valait alors ~200 ps = 20 000 pas, donc en 300 pas on ne voyait que
+ *  la DESCENTE : mesuré, le déplacement par image valait 0.022 Å à 1500 K et 0.024 Å à
+ *  300 K — identiques, donc sans rien de thermique (un mouvement thermique scale comme
+ *  √T), et le potentiel descendait MONOTONEMENT jusqu'au minimum. La molécule s'arrêtait
+ *  là, et la température ne se lisait que dans les vitesses : le geste était une
+ *  minimisation, exactement ce que l'utilisateur décrivait.
+ *
+ *  AVEC `m = 0.0025` (400 fois plus léger) : `√(R·T/m)` = 34.5 °/ps à 1500 K, le pas
+ *  thermique 0.35° (visible), `τ_relax` ~0.5 ps = 50 pas (l'équilibre est ATTEINT dans le
+ *  geste), et la dérive — plus rapide d'autant — descend MIEUX qu'avant (mesuré : potentiel
+ *  5232 contre 5597 kcal/mol après les mêmes 600 pas). Mesuré, même geste : déplacement par
+ *  image 0.282 Å à 1500 K contre 0.097 Å à 300 K (rapport 2.9 ≈ √5 = √(1500/300)) — la
+ *  température CONDUIT le mouvement —, et le potentiel de fin reste AU-DESSUS du minimum de
+ *  la trajectoire : la molécule ne se colle plus au fond du puits. */
+export const STRUCTURE_CALC_MD_MASS = 0.0025;         // inertie réduite d'un dièdre
 export const STRUCTURE_CALC_MD_TORQUE_STEP = 1;       // ° de la différence finie du couple
 /** LA PART D'ÉQUILIBRATION — le premier tiers des pas se fait à température HAUTE
  *  constante (c'est le « equilibration » de tout protocole), le reste refroidit
@@ -254,29 +277,47 @@ export const STRUCTURE_CALC_MD_PALIERS = 8;           // paliers du plan de temp
  *  dynamique : 8 pas de 0.01 ps font 0.08 ps par image, soit 63 images pour 500 pas.
  *  Sans cela, l'écran ne verrait que le début et la fin. */
 export const STRUCTURE_CALC_MD_FRAME = 8;
-/** LES GARDE-FOUS DE L'INTÉGRATEUR — un plafond sur le COUPLE (kcal/mol/rad), sur la
- *  VITESSE et sur le PAS d'un dièdre. Sans eux, un mur de Lennard-Jones rend un couple
- *  de plusieurs millions de kcal/mol/rad et la trajectoire saute par-dessus la
- *  conformation (mesuré : des modèles à 10⁷ kcal/mol au lieu de −60). Les trois chiffres
- *  sont dits : 50 kcal/mol/rad (deux fois et demie la contrainte à 1 Å d'écart),
- *  20 rad/pas (la vitesse d'un dièdre qui fait un tour en 0.3 de temps) et 20° par pas
- *  (un dièdre ordinaire se tourne par petits pas ; 20° est déjà énorme pour une
- *  trajectoire). */
+/** COMBIEN DE VITESSES THERMIQUES UN PAS PEUT PORTER — c'est l'échelle du moteur, et elle
+ *  remplace le plafond de couple en dur d'avant. Le couple d'un canal est plafonné à la
+ *  vitesse qu'il peut produire : `τ_max = γ·m·f·√(R·T/m)`, donc la dérive ne peut pas
+ *  imposer une vitesse qui écrase `f` fois la vitesse thermique du palier — et c'est ainsi
+ *  que la température demandée reste ce qui conduit la trajectoire (voir `mdFrames`). Un
+ *  plafond AUTONOME de 50 kcal/mol/deg écrasait, lui, toute température : mesuré, à m = 1
+ *  il donnait une vitesse de dérive de 25 °/ps, soit « 314 000 K », et la consigne de
+ *  1500 K n'était plus qu'un détail.
+ *
+ *  `f = 1` : le champ ne pousse pas un dièdre plus vite que sa PROPRE agitation thermique.
+ *  C'est le chiffre qui rend la lecture HONNÊTE — la T cinétique du rapport vaut alors
+ *  `(1 + (v_dérive/v_thermique)²)·T`, donc au plus 2 T au lieu des 8 à 10 T qu'un plafond
+ *  plus large laisse lire (mesuré : 12 235 K lus pour 1500 K demandés avec f = 3, la dérive
+ *  imposant 3 vitesses thermiques). */
+export const STRUCTURE_CALC_MD_SPEED_FACTOR = 1;
+/** LES GARDE-FOUS ABSOLUS DE L'INTÉGRATEUR — les plafonds de SÉCURITÉ, ceux qui ne
+ *  dépendent ni de T ni de m : un mur de Lennard-Jones rend un couple de plusieurs
+ *  millions de kcal/mol/deg et une trajectoire qui saute par-dessus la conformation
+ *  (mesuré : des modèles à 10⁷ kcal/mol au lieu de −60). Ils sont donc des CEILINGS des
+ *  plafonds dynamiques ci-dessus, jamais des substitutions. `MAX_SPEED` est en °/ps : la
+ *  vitesse thermique vaut 34.5 °/ps à 1500 K, et un dièdre qui fait un tour en 0.3 ps est
+ *  déjà anormal ; `MAX_STEP_DEG` borne la ROTATION d'un pas (20° est énorme pour une
+ *  trajectoire — un dièdre ordinaire se tourne par petits pas). */
 export const STRUCTURE_CALC_MD_MAX_TORQUE = 50;
 /** ⚖ …ET LE PLAFOND DE LA FAMILLE DES DISTANCES, QUI SUIT LE POIDS DE LA LIGNE (500).
- *  La remarque de cette session : « the 📏 option is not active even if ticked because
- *  giving a high weight to one constraint did not have an effect on MD. » Mesuré : la
- *  mécanique MARCHAIT (la distance se rapprochait de sa cible), mais le couple d'une
- *  contrainte était plafonné à `STRUCTURE_CALC_MD_MAX_TORQUE` comme celui d'un mur de
+ *  La remarque de la session précédente : « the 📏 option is not active even if ticked
+ *  because giving a high weight to one constraint did not have an effect on MD. »
+ *  Mesuré : la mécanique MARCHAIT (la distance se rapprochait de sa cible), mais le couple
+ *  d'une contrainte était plafonné à `STRUCTURE_CALC_MD_MAX_TORQUE` comme celui d'un mur de
  *  Lennard-Jones — donc une ligne de poids 10, 100 ou 1000 tirait EXACTEMENT comme une
- *  ligne de poids 25, et le geste semblait ne rien faire. Le plafond est maintenant
- *  SÉPARÉ : les familles qui peuvent exploser (van der Waals, surface, torsions) restent
- *  à 50, et les contraintes de la table disposent de `50 × poids`, plafonnées à 500 — dix
- *  fois le plafond d'un mur, donc un poids élevé se sent VRAIMENT sans qu'une ligne
- *  absurde puisse envoyer la molécule en l'air. Un poids de 0 ou une ligne en pause ne
- *  reçoit rien (le poids 0 n'a pas de couple, la ligne ne pèse pas). */
+ *  ligne de poids 25, et le geste semblait ne rien faire. Le plafond est donc SÉPARÉ et il
+ *  suit le POIDS ⚖ : `τ_max(contrainte) = poids × 50`, plafonné à 500 — dix fois le plafond
+ *  d'un mur, donc un poids élevé se sent VRAIMENT sans qu'une ligne absurde puisse envoyer
+ *  la molécule en l'air. Un poids de 0 ou une ligne en pause ne reçoit rien (le poids 0 n'a
+ *  pas de couple, la ligne ne pèse pas).
+ *  ⚠ IL NE SUIT PAS LA TEMPÉRATURE, contrairement au plafond du champ : une distance
+ *  demandée est une MOLA DURE, pas une agitation thermique (voir `mdFrames`). Le contrat est
+ *  TENU malgré le changement d'inertie : mesuré, une contrainte fausse de 1.5 Å laisse une
+ *  erreur de 0.332 Å au poids 1 et de 0.244 Å au poids 100. */
 export const STRUCTURE_CALC_MD_MAX_RESTRAINT_TORQUE = 500;
-export const STRUCTURE_CALC_MD_MAX_SPEED = 20;
+export const STRUCTURE_CALC_MD_MAX_SPEED = 200;
 export const STRUCTURE_CALC_MD_MAX_STEP_DEG = 20;
 /** LE PAS D'UNE LIAISON PEPTIDIQUE (4°) — sa barrière vaut 20 kcal/mol, donc un pas de
  *  20° la franchirait par diffusion dès 1500 K (mesuré : un ω à 0.4° de trans finissait à
@@ -2066,6 +2107,7 @@ export function* mdFrames({
   maxTorqueLimit = STRUCTURE_CALC_MD_MAX_TORQUE,
   maxRestraintTorqueLimit = STRUCTURE_CALC_MD_MAX_RESTRAINT_TORQUE,
   speedLimit = STRUCTURE_CALC_MD_MAX_SPEED,
+  speedFactorLimit = STRUCTURE_CALC_MD_SPEED_FACTOR,
   stepLimitDeg = STRUCTURE_CALC_MD_MAX_STEP_DEG,
   omegaStepLimitDeg = STRUCTURE_CALC_MD_OMEGA_STEP_DEG,
   /* 🪢 ω VARIE — l'option de l'utilisateur (`STRUCTURE_CALC_FREE_OMEGA`) : la dynamique ne
@@ -2131,10 +2173,17 @@ export function* mdFrames({
   const gamma = Math.max(0, Number(friction) || STRUCTURE_CALC_MD_FRICTION);
   const m = Math.max(1e-6, Number(mass) || STRUCTURE_CALC_MD_MASS);
   const delta = Math.max(0.05, Math.abs(Number(torqueStep) || STRUCTURE_CALC_MD_TORQUE_STEP));
-  const maxTorque = Math.max(1, Math.abs(Number(maxTorqueLimit) || STRUCTURE_CALC_MD_MAX_TORQUE));
+  /* ⚠ LES PLAFONDS SONT DES CEILINGS, PLUS DES PLAFONDS EN DUR — et sans plancher
+     arbitraire : le plafond qui COMPTE est dynamique (`capsOf`, il suit T et m), ceux-ci ne
+     sont là que pour qu'un cas pathologique n'explose pas. L'ancien `Math.max(1, …)` rendait
+     d'ailleurs le plafond dynamique INOPÉRANT : mesuré, deux budgets de couple différents
+     (1 et 2 vitesses thermiques) donnaient des trajectoires identiques, parce que les deux
+     tombaient sous 1. */
+  const maxTorque = Math.abs(Number(maxTorqueLimit)) || STRUCTURE_CALC_MD_MAX_TORQUE;
   const maxRestTorque = Math.max(maxTorque,
-    Math.abs(Number(maxRestraintTorqueLimit) || STRUCTURE_CALC_MD_MAX_RESTRAINT_TORQUE));
+    Math.abs(Number(maxRestraintTorqueLimit)) || STRUCTURE_CALC_MD_MAX_RESTRAINT_TORQUE);
   const maxSpeed = Math.max(0.1, Math.abs(Number(speedLimit) || STRUCTURE_CALC_MD_MAX_SPEED));
+  const speedFactor = Math.max(0.1, Math.abs(Number(speedFactorLimit) || STRUCTURE_CALC_MD_SPEED_FACTOR));
   const maxStepDeg = Math.max(0.1, Math.abs(Number(stepLimitDeg) || STRUCTURE_CALC_MD_MAX_STEP_DEG));
   const omegaStepDeg = Math.max(0.1, Math.abs(Number(omegaStepLimitDeg) || STRUCTURE_CALC_MD_OMEGA_STEP_DEG));
   /* ⚠ `temperature == null` D'ABORD — `Number(null)` vaut 0, et un thermostat à 0 °
@@ -2157,6 +2206,22 @@ export function* mdFrames({
     if (n <= 1) return coldT;
     return hotT * Math.pow(Math.max(1e-9, coldT / Math.max(1e-9, hotT)), t / (n - 1));
   };
+  /* L'ÉCHELLE DU MOTEUR — LA VITESSE THERMIQUE, ET LE PLAFOND QUI LA SUIT.
+     `√(R·T/m)` est la vitesse d'un canal à la température du palier ; un pas ne peut pas
+     porter plus de `f` fois cette vitesse, donc le couple du CHAMP (van der Waals, surface,
+     torsions) est plafonné à `γ·m·f·√(R·T/m)` — c'est CE calcul qui fait de la température
+     demandée la vitesse de la dynamique, au lieu d'un chiffre en dur qui écrasait toute
+     consigne (voir `STRUCTURE_CALC_MD_MASS` et `STRUCTURE_CALC_MD_SPEED_FACTOR`). Il est
+     recalculé à chaque pas (un recuit change de palier à chaque pas). ⚠ LA FAMILLE DES
+     DISTANCES, ELLE, NE SUIT PAS LA TEMPÉRATURE : elle garde son budget absolu, multiplié
+     par le POIDS ⚖ de sa ligne (voir `STRUCTURE_CALC_MD_MAX_RESTRAINT_TORQUE`) — une
+     distance demandée est une mola dure, c'est elle qui conduit le pas tant qu'elle est
+     violée, et c'est le thermostat qui reprend la main dès qu'elle tient. */
+  const capsOf = (T) => {
+    const vThermal = Math.sqrt((FF_GAS_CONSTANT * Math.max(0, T)) / m);
+    const vSpeed = Math.min(maxSpeed, speedFactor * vThermal);
+    return { vThermal, vSpeed, torque: Math.min(maxTorque, gamma * m * vSpeed) };
+  };
   const vel = new Float64Array(chan.length);
   const trace = [];
   const readAll = () => ({
@@ -2171,6 +2236,7 @@ export function* mdFrames({
   let applied = 0; let skipped = 0; let kinetic = 0;
   for (let t = 0; t < n; t += 1) {
     const target = targetAt(t);
+    const caps = capsOf(target);
     /* LE PAS — les canaux de la FENÊTRE du moment, un après l'autre (Gauss–Seidel). */
     const woken = turnIndexes(t);
     for (const k of woken) {
@@ -2184,23 +2250,26 @@ export function* mdFrames({
       /* LE COUPLE, PAR DIFFÉRENCE FINIE CENTRÉE — la pente du champ le long de CE
          dièdre, prise sur les seuls termes qui le traversent. */
       const torque = -(engine.crossCost(ctx, up.map) - engine.crossCost(ctx, down.map)) / (2 * delta);
-      /* ⚖ LA FAMILLE DES DISTANCES A SON PROPRE PLAFOND, ET IL SUIT LE POIDS ⚖ DE LA
-         LIGNE (voir `STRUCTURE_CALC_MD_MAX_RESTRAINT_TORQUE`) : `50 × poids`, plafonné à
-         500. C'est ce qui fait qu'une ligne de poids 100 TIRE vraiment plus fort qu'une
-         ligne de poids 1 — mesuré, la différence était nulle avant, parce que les deux
-         couples tombaient sous le même plafond. Les autres familles (van der Waals,
-         surface, torsions) gardent le plafond qui les empêche d'exploser. */
+      /* ⚖ LA FAMILLE DES DISTANCES GARDE SON PROPRE BUDGET, ABSOLU, ET IL SUIT LE POIDS ⚖
+         DE LA LIGNE (voir `STRUCTURE_CALC_MD_MAX_RESTRAINT_TORQUE`) : elle ne suit PAS la
+         température, et c'est voulu — une distance demandée est une MOLA DURE (« la distance
+         demandée est bien respectée à l'arrivée »), pas une agitation thermique. Tant qu'une
+         ligne est violée, c'est ELLE qui conduit le pas ; dès qu'elle est tenue son couple
+         tombe à zéro et c'est la thermostate — la vitesse du palier — qui reprend la main :
+         c'est précisément la structure CORRECTE de la remarque de cette session, où la
+         molécule bougeait encore. Mesuré : une ligne de poids 100 tire plus fort qu'une ligne
+         de poids 1 (erreur finale 0.244 Å contre 0.332 Å sur une contrainte fausse de 1.5 Å). */
       const torqueRest = -(engine.crossRestraintCost(ctx, up.map)
         - engine.crossRestraintCost(ctx, down.map)) / (2 * delta);
       const restCap = Math.min(maxRestTorque, maxTorque * engine.crossRestraintWeightOf(ctx));
       const clampT = (v, cap) => Math.max(-cap, Math.min(cap, v));
       /* ⚠ LE COUPLE EST PLAFONNÉ — un mur de Lennard-Jones à 1 Å d'un autre atome vaut
-         des millions de kcal/mol/rad, et l'intégrateur ferait un bond de plusieurs
-         tours : c'est la cause des modèles empilés (mesuré : des scores de 10⁷ kcal/mol
-         après une dynamique à 3000 K). Le plafond vaut 50 kcal/mol/rad, soit deux fois
-         et demie la contrainte à 1 Å d'écart — la molécule s'écarte d'un mur sans
-         traverser la molécule. */
-      const capped = clampT(torqueRest, restCap) + clampT(torque - torqueRest, maxTorque);
+         des millions de kcal/mol/deg, et l'intégrateur ferait un bond de plusieurs tours :
+         c'est la cause des modèles empilés (mesuré : des scores de 10⁷ kcal/mol après une
+         dynamique à 3000 K). Le plafond du palier, lui, vaut `γ·m·f·√(R·T/m)` : à 1500 K
+         c'est 0.52 kcal/mol/deg, soit la vitesse `f·√(R·T/m)` = 103 °/ps. Le garde-fou
+         absolu (`maxTorque`) reste le ceiling, jamais le plafond de tous les jours. */
+      const capped = clampT(torqueRest, restCap) + clampT(torque - torqueRest, caps.torque);
       const noise = Math.sqrt((2 * gamma * FF_GAS_CONSTANT * target * h) / m) * gaussian();
       const v = vel[k] * (1 - gamma * h) + (capped / m) * h + noise;
       vel[k] = v;
@@ -2264,6 +2333,10 @@ export function* mdFrames({
   const after = readAll();
   let moved = 0;
   for (let k = 0; k < chan.length; k += 1) if (Math.abs(vel[k]) > 1e-12) moved += 1;
+  /* LES PLAFONDS DU DERNIER PALIER — ce sont EUX que la trajectoire a réellement subis, et
+     ils suivent T et m : le rapport les donne à côté des garde-fous absolus, donc un lecteur
+     peut refaire le calcul (`τ = γ·m·f·√(R·T/m)`) au lieu de croire à un chiffre en dur. */
+  const endCaps = capsOf(targetAt(Math.max(0, n - 1)));
   return {
     ok: true, reason: 'ok',
     positions: engine.heavyPositions(),
@@ -2276,6 +2349,11 @@ export function* mdFrames({
       kinetic: Number(kinetic.toFixed(6)),
       mean: Number((trace.reduce((s, r) => s + r.kinetic, 0) / Math.max(1, trace.length)).toFixed(6)),
       dt: h, friction: gamma, mass: m, torqueStep: delta,
+      /* LA VITESSE THERMIQUE DU DERNIER PALIER — `√(R·T/m)`, l'échelle du moteur : c'est
+         elle qui dit si le palier peut bouger (34.5 °/ps à 1500 K avec l'inertie du dossier). */
+      thermal: Number(endCaps.vThermal.toFixed(6)),
+      speed: Number(endCaps.vSpeed.toFixed(6)),
+      factor: speedFactor,
       units: FF_KCAL_UNITS.temperature,
     },
     /* LA LONGUEUR NOMINALE DE LA TRAJECTOIRE — pas × dt, en picosecondes : c'est le
@@ -2294,9 +2372,13 @@ export function* mdFrames({
     switchedOff: engine.switchedOff,
     unitedAtoms: engine.unitedAtoms,
     waters: ffWatersIn(engine.els || []),
-    /* ⚖ LE PLAFOND DE COUPLE DE LA FAMILLE DES DISTANCES — montré pour que le rapport
-       puisse dire QUE le poids ⚖ d'une ligne a un effet mesurable sur la trajectoire. */
-    torque: { field: maxTorque, restraint: maxRestTorque },
+    /* ⚖ LES PLAFONDS DE COUPLE — les GARDE-FOUS ABSOLUS (le champ, la table) et ceux du
+       DERNIER PALIER, qui suivent T et m : montrés pour que le rapport puisse dire QUE le
+       poids ⚖ d'une ligne a un effet mesurable sur la trajectoire. */
+    torque: {
+      field: maxTorque, restraint: maxRestTorque,
+      dynamic: Number(endCaps.torque.toFixed(6)), factor: speedFactor,
+    },
     molecule: engine.moleculeOf(),
     cost: { before: before.cost, after: after.cost },
     walls: { before: before.walls, after: after.walls, count: engine.walls.length },

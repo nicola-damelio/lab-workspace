@@ -144,6 +144,11 @@ import {
   STRUCTURE_CALC_MD_STEPS, STRUCTURE_CALC_MD_FRAME, STRUCTURE_CALC_MD_HOT,
   STRUCTURE_CALC_MD_COLD, STRUCTURE_CALC_MD_DT, STRUCTURE_CALC_MD_FRICTION,
   STRUCTURE_CALC_MD_EQUILIBRATION, STRUCTURE_CALC_MIN_ROUNDS,
+  /* 🌡 L'INERTIE RÉDUITE D'UN DIÈDRE — c'est elle qui fait de la température la VITESSE du
+     moteur (√(R·T/m)), donc le viewer la DIT au lieu d'écrire un chiffre : la remarque de
+     cette session était « the MD looks more like a minimisation… at a certain temperature
+     the movement should be continuous » (voir le module). */
+  STRUCTURE_CALC_MD_MASS,
   /* ⚖ LE PLAFOND DE COUPLE DE LA FAMILLE DES DISTANCES — le viewer le DIT dans un rapport
      (une ligne de poids ⚖ élevé tire jusqu'à ce plafond, voir le module). */
   STRUCTURE_CALC_MD_MAX_RESTRAINT_TORQUE,
@@ -10448,7 +10453,9 @@ const calcRestraintEffect = (before, after, list) => {
     + ` total miss ${miss(before).toFixed(2)} → ${miss(after).toFixed(2)} Å,`
     + ` worst ${before.worst.abs.toFixed(2)} → ${after.worst.abs.toFixed(2)} Å`
     + ` (a line's ⚖ weight multiplies the torque it pulls with, up to ${STRUCTURE_CALC_MD_MAX_RESTRAINT_TORQUE} kcal/mol·deg —`
-    + ' a heavier line really does bite harder).';
+    + ' a heavier line really does bite harder. ⚠ The FIELD’s own cap follows the temperature and the inertia'
+    + ' (γ·m·f·√(R·T/m), so the requested T stays what drives the trajectory); this family’s does NOT — a'
+    + ' requested distance is a hard spring, not a thermal agitation, so it can win while it is violated).';
 };
 
 /** LA BOÎTE EXPLICITE, DITE EN UNE PHRASE — ce que le rapport d'un geste ajoute quand le
@@ -11725,6 +11732,14 @@ const runMolecularDynamics = () => {
         + ` (${run.rama ? run.rama.violations : 0} outside) · χ1 ${run.chi ? run.chi.penalty.toFixed(2) : 0}`
         + ` · ${run.added ? run.added.hydrogens : 0} hydrogens added.`
         + ' ⚡ Energies in kcal/mol, temperature in kelvins (R·T is the thermal energy: 0.6 kcal/mol at 300 K).'
+        /* 🌡 LA TEMPÉRATURE EST LA VITESSE DU MOTEUR — la remarque de cette session était
+           « when it reaches a correct structure the atoms don't move anymore » : le rapport
+           DIT donc la vitesse thermique du palier (√(R·T/m)) et le plafond de couple qui la
+           suit, au lieu de laisser croire que la température ne fait que se lire. */
+        + ` 🌡 speed scale √(R·T/m) = ${run.temperature && Number.isFinite(run.temperature.thermal) ? run.temperature.thermal.toFixed(1) : '—'} °/ps`
+        + ` (m = ${STRUCTURE_CALC_MD_MASS}), and the field's torque obeys it (γ·m·f·√(R·T/m) =`
+        + ` ${run.torque && Number.isFinite(run.torque.dynamic) ? run.torque.dynamic.toFixed(3) : '—'} kcal/mol·deg) —`
+        + ' the temperature you asked for is what makes the atoms move, so it does not settle in a minimum.'
         + ' ⚒ Minimise from here lands on a minimum of the same field; ↺ Undo torsion puts the molecule back.');
       if (ramaIsShown()) readRamachandran();   // le graphe suit ce que la dynamique vient d'écrire
     },
@@ -20298,7 +20313,7 @@ const renderCalcMdOptions = () => (
 const renderMdOptions = () => (
   <>
     <label className="flex items-center gap-1"
-      title={`🌡 THE TEMPERATURE OF THIS DYNAMICS, in KELVINS — ONE temperature for the whole run: this gesture does not cool down. A cooling schedule is what a structure calculation does on each start, and it has its own 🌡 hot → 🌡 cold in the 🧬 panel. The thermal energy is R·T (0.6 kcal/mol at 300 K, 6 kcal/mol at 3000 K), so 2000–4000 K is the range where a dihedral actually changes basin.`}>
+      title={`🌡 THE TEMPERATURE OF THIS DYNAMICS, in KELVINS — ONE temperature for the whole run: this gesture does not cool down. A cooling schedule is what a structure calculation does on each start, and it has its own 🌡 hot → 🌡 cold in the 🧬 panel. The thermal energy is R·T (0.6 kcal/mol at 300 K, 6 kcal/mol at 3000 K), so 2000–4000 K is the range where a dihedral actually changes basin. ⚠ WHAT IT DOES — IT IS THE SPEED OF THE ENGINE: a channel's thermal speed is √(R·T/m) (m = ${STRUCTURE_CALC_MD_MASS}, the reduced inertia of a dihedral), so 1500 K means 34.5 °/ps and the molecule KEEPS MOVING — the displacement per image scales as √T, which is what a temperature does. The torque the field may pull with is capped at the speed that produces it (γ·m·f·√(R·T/m)), so no hard-wired cap can flatten the temperature you ask for.`}>
       🌡 T
       <input type="number" min="1" max="20000" step="100" value={mdTemp}
         onChange={(e) => setMdTempText(e.target.value)}
@@ -20446,7 +20461,7 @@ const renderMdWindow = () => (
             pour un chiffre se lisent comme deux chiffres). La rangée ne garde donc que les
             gestes : ▶ MD, son témoin « running… » et le rapport. */}
         <button type="button" onClick={runMolecularDynamics} disabled={calcBusy}
-          title="RUN MOLECULAR DYNAMICS on the molecule AS IT STANDS — an ISOLATED dynamics, with the parameters of THIS window and nothing else: its 🌡 temperature (held), its 💧 solvent, its steps, its ⏱ step interval and duration, 🖼 one image every N steps and its 🪢 rule on ω. ⚠ It owes nothing to 🧬 Structure calculation: the protocol of the starts (n, m, recuit, 🌡 hot → 🌡 cold, the ⚖ equilibration share, the ⚒ sweeps) is read by its ▶ Run, in its own panel, and what is changed here changes nothing there. It is dihedral Langevin dynamics under the whole force field (kcal/mol, charges, solvent, added hydrogens) — and the trajectory FEELS your distances when the 📏 box below is ticked (each one with its ⚖ weight; the already-held ones are a leash, a wall, so they cannot be let go), and runs free of them when it is unticked. EVERY image the engine announces is written into the molecule — you SEE it move step by step, and the 🪢 plot follows it image by image while its window is on screen (open it WHILE the dynamics runs and it takes the next image); the FINAL coordinates are written too, so the report, the molecule and the plot always speak of the same conformation. ↺ Undo torsion puts the molecule back exactly as it was. The report gives the steps, the length in ps, the image interval, the solvent, the kinetic temperature, the energy before and after, whether the table was carried, how many of your distances are within tolerance, and what happened to ω, φ/ψ and χ1."
+          title="RUN MOLECULAR DYNAMICS on the molecule AS IT STANDS — an ISOLATED dynamics, with the parameters of THIS window and nothing else: its 🌡 temperature (held), its 💧 solvent, its steps, its ⏱ step interval and duration, 🖼 one image every N steps and its 🪢 rule on ω. ⚠ It owes nothing to 🧬 Structure calculation: the protocol of the starts (n, m, recuit, 🌡 hot → 🌡 cold, the ⚖ equilibration share, the ⚒ sweeps) is read by its ▶ Run, in its own panel, and what is changed here changes nothing there. It is dihedral Langevin dynamics under the whole force field (kcal/mol, charges, solvent, added hydrogens) — and the trajectory FEELS your distances when the 📏 box below is ticked (each one with its ⚖ weight; the already-held ones are a leash, a wall, so they cannot be let go), and runs free of them when it is unticked. EVERY image the engine announces is written into the molecule — you SEE it move step by step, and the 🪢 plot follows it image by image while its window is on screen (open it WHILE the dynamics runs and it takes the next image); the FINAL coordinates are written too, so the report, the molecule and the plot always speak of the same conformation. ↺ Undo torsion puts the molecule back exactly as it was. The report gives the steps, the length in ps, the image interval, the solvent, the kinetic temperature, the energy before and after, whether the table was carried, how many of your distances are within tolerance, and what happened to ω, φ/ψ and χ1. ⚠ AND IT KEEPS MOVING — this is a Langevin thermostat, not a minimisation: a channel's thermal speed is √(R·T/m) (34.5 °/ps at 1500 K with the inertia of the module), the displacement per image scales as √T, and the energy does NOT settle into the trajectory's own minimum; the kinetic temperature the report gives is that of the VELOCITIES, so it reads at (or a little above) the 🌡 you asked for."
           className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-sky-400 text-sky-700 hover:bg-sky-50 disabled:opacity-40">
           ▶ MD
         </button>

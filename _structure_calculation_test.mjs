@@ -775,9 +775,20 @@ const noAnneal = structureAttemptOf({
   restraints: anTarget, index: 0, anneal: 0,
 });
 eq(noAnneal.anneal, null, '`anneal: 0` enlève le recuit : c’est le départ tiré tel quel');
+/* ⚠ LA PRÉCISION D'UNE DISTANCE TENUE EST CELLE DU PALIER — « ± 0.25 Å » est une phrase
+   du FROID. Le moteur est un Langevin VRAIMENT thermostaté depuis la révision qui a suivi
+   la remarque « the MD looks more like a minimisation… at a certain temperature the
+   movement should be continuous » : la vitesse d'un canal à 1500 K vaut √(R·T/m) = 34.5 °/ps
+   au lieu de 1.7 °/ps, donc l'équilibration EXPLORE au lieu de descendre, et une distance
+   tenue par un puits de 20 kcal/mol/Å² fluctue de √(R·T/k) = 0.39 Å à 1500 K — PLUS que la
+   tolérance. La sonde de cette session l'a mesuré (chaîne de 24, cible 6.0 Å) : la distance
+   part de 20.5 Å, elle est TENUE (5.7–6.3 Å, elle oscille autour de la cible) et c'est le
+   bout FROID du protocole qui la pose. `minimise` est donc le nombre de balayages du
+   PANNEAU (`STRUCTURE_CALC_MIN_ROUNDS`), pas moins : le budget que l'application donne
+   vraiment à sa finition. */
 const withAnneal = structureAttemptOf({
   positions: anChain.positions, elements: anChain.elements, bonds: anChain.bonds,
-  restraints: anTarget, index: 0, md: 20, minimise: 1,
+  restraints: anTarget, index: 0, md: 20, minimise: STRUCTURE_CALC_MIN_ROUNDS,
 });
 ok(withAnneal.anneal && withAnneal.anneal.steps === STRUCTURE_CALC_ANNEAL_STEPS,
   `le recuit tourne ses ${STRUCTURE_CALC_ANNEAL_STEPS} paliers de température`);
@@ -792,11 +803,22 @@ ok(withAnneal.anneal.after < withAnneal.anneal.before,
 ok(withAnneal.quench && withAnneal.quench.steps === STRUCTURE_CALC_QUENCH_STEPS,
   'la TREMPE suit le protocole : un dernier recuit froid, sous longe');
 eq(withAnneal.restraint.violations, 0, '…et la distance demandée est bien respectée à l’arrivée');
+/* ⚠ …ET LA PRÉCISION EST CELLE DU PALIER, pas celle de la tolérance : la sonde de cette
+   session mesure l’écart final, et il vaut ~0.15 Å ici (√(R·T/k) = 0.39 Å à 1500 K). Une
+   distance TENUE oscille autour de sa cible — c’est ce qu’un moteur thermostaté fait, et
+   c’est exactement ce que la remarque demandait (« the movement should be continuous »). */
+const anGap0 = () => Math.hypot(
+  at3(withAnneal.positions, 0)[0] - at3(withAnneal.positions, 23)[0],
+  at3(withAnneal.positions, 0)[1] - at3(withAnneal.positions, 23)[1],
+  at3(withAnneal.positions, 0)[2] - at3(withAnneal.positions, 23)[2],
+);
+ok(Math.abs(anGap0() - 6) < 0.4,
+  `…dans la précision THERMIQUE du palier (√(R·T/k) ≈ 0.39 Å à 1500 K) : écart ${Math.abs(anGap0() - 6).toFixed(3)} Å`);
 ok(withAnneal.bond < 1 && withAnneal.angle < 6,
   '⚠ les liaisons et les angles sont INTACTS : un pas de recuit est une rotation rigide, pas un déplacement d’atome');
 const anAgain = structureAttemptOf({
   positions: anChain.positions, elements: anChain.elements, bonds: anChain.bonds,
-  restraints: anTarget, index: 0, md: 20, minimise: 1,
+  restraints: anTarget, index: 0, md: 20, minimise: STRUCTURE_CALC_MIN_ROUNDS,
 });
 eq(Array.from(anAgain.positions), Array.from(withAnneal.positions),
   '⚠ deux appels rendent les MÊMES coordonnées, au chiffre près : le recuit est déterministe (graine fixe)');
