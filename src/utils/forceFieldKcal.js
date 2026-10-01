@@ -103,8 +103,21 @@ export const FF_ANGLE_K = 50;        // kcal·mol⁻¹·rad⁻²
 export const FF_PLANAR_K = 20;       // kcal·mol⁻¹·rad⁻²
 /** La portée de la liste des couples non liés (Å) : au-delà, le couple n'existe pas. */
 export const FF_VDW_PAIR_LIMIT = 6.5;
-/** En dessous de cette distance un couple est illisible (deux atomes au même endroit). */
+/* ⚠ LE PLANCHER D'UN COUPLE — ET LE TROU QU'IL AVAIT CREUSÉ. La constante dit « en dessous
+   de 0.9 Å, le r⁻¹² n'est plus lu tel quel » (deux atomes au même endroit : la puissance 12
+   y devient un nombre que rien ne peut additionner sans dominer tout le champ). Elle servait
+   de SEUIL D'EXCLUSION — un couple plus court était RETIRÉ de la liste (`ffPairListOf`),
+   ignoré par la somme (`ffNonbondedEnergyOf`) et compté ZÉRO par le coût lui-même : deux
+   atomes qui se traversent s'effaçaient donc de la physique, et le champ n'avait plus rien
+   pour les séparer (le défaut rapporté : « atoms can come too close and the LJ potential is
+   not considered »). La constante reste le PLANCHER, mais c'est maintenant un plancher de
+   RAMPE : sous 0.9 Å l'énergie est ÉTENDUE LINÉAIREMENT au lieu d'être annulée, donc le mur
+   reste un mur (une pente de `FF_VDW_FLOOR_K` kcal/mol par ångström, 10⁴ fois la pente d'un
+   contact normal) et deux atomes ne peuvent plus se superposer GRATUITEMENT. */
 export const FF_VDW_SAME_ATOM = 0.9;
+/** La pente de la rampe sous le plancher (kcal·mol⁻¹·Å⁻¹) : la même pour le LJ, la répulsion
+ *  seule et la queue du puits — un seul mur, une seule pente, dite ici et lue par les trois. */
+export const FF_VDW_FLOOR_K = 1e4;
 /** Un couple 1-4 (trois liaisons entre les deux) : atténué comme dans AMBER. */
 export const FF_VDW_FOURTH_SCALE = 0.5;
 export const FF_ELEC_FOURTH_SCALE = 1 / 1.2;
@@ -254,35 +267,57 @@ export const ffNonbondedOf = (i, j, els, charges, scale = {}) => {
   };
 };
 
+/** LE MUR D'UN COUPLE SOUS LE PLANCHER — la RAMPE qui remplace l'annulation : au-dessus du
+ *  plancher, `e` tel quel (± la queue du puits) ; en dessous, la même valeur PLUS une pente
+ *  de `FF_VDW_FLOOR_K` kcal/mol par ångström parcouru vers zéro. C'est ce qui garde un
+ *  GRADIENT sous le plancher (un couple évalué à un r constant n'aurait aucune force et
+ *  deux atomes coincés resteraient coincés) tout en restant fini et continu au plancher. */
+const floorWallOf = (r, e) => (r >= FF_VDW_SAME_ATOM ? e : e + FF_VDW_FLOOR_K * (FF_VDW_SAME_ATOM - r));
+/** LA DISTANCE À LAQUELLE UN COUPLE EST LU — le plancher, jamais zéro : c'est ce qui rend
+ *  le mur continu (`floorWallOf`) au lieu de le laisser partir à l'infini ou disparaître. */
+const floorDistanceOf = (r) => (r >= FF_VDW_SAME_ATOM ? r : FF_VDW_SAME_ATOM);
+
 /** L'ÉNERGIE DE VAN DER WAALS D'UN COUPLE (kcal/mol) — Lennard-Jones 12-6 :
  *  ε·((r_min/r)¹² − 2·(r_min/r)⁶), nulle au minimum (r = r_min), répulsive en dessous,
  *  attractive au-dessus (jusqu'à −ε). C'est le MUR et le PUITS du dossier : deux atomes
  *  ne se traversent plus (l'ancien « cœur dur » était le seul terme du même genre, et il
- *  n'avait aucun puits — le champ réel en a un). */
+ *  n'avait aucun puits — le champ réel en a un).
+ *  ⚠ SOUS LE PLANCHER (`FF_VDW_SAME_ATOM`) le couple n'est PLUS une exception : la valeur
+ *  au plancher est prolongée par la rampe (`floorWallOf`), donc un empilement coûte des
+ *  millions de kcal/mol au lieu de zéro — voir la note de la constante. */
 export const ffVdwCostOf = (r, pair) => {
-  if (!pair || !Number.isFinite(r) || r <= FF_VDW_SAME_ATOM) return 0;
-  const x = (pair.rmin / r) ** 6;
-  return pair.epsilon * (x * x - 2 * x);
+  if (!pair || !Number.isFinite(r)) return 0;
+  const rr = floorDistanceOf(r);
+  const x = (pair.rmin / rr) ** 6;
+  return floorWallOf(r, pair.epsilon * (x * x - 2 * x));
 };
 
 /** L'ÉNERGIE ÉLECTROSTATIQUE D'UN COUPLE (kcal/mol) — Coulomb écranté par le
  *  diélectrique dépendant de la distance : 332.0637·q_i·q_j/(ε(0)·r²). Nulle si l'une
- *  des deux charges est nulle (aucun terme inventé pour un atome neutre). */
+ *  des deux charges est nulle (aucun terme inventé pour un atome neutre).
+ *  ⚠ LE PLANCHER S'APPLIQUE AUSSI ICI : sous `FF_VDW_SAME_ATOM` la charge est lue à la
+ *  distance du plancher, donc un couple d'ions opposés ne part pas à −∞ en se superposant
+ *  (c'est le LENNARD-JONES qui sépare, avec sa pente — la charge ne peut pas aspirer). */
 export const ffCoulombCostOf = (r, pair, dielectric = FF_DIELECTRIC) => {
-  if (!pair || !pair.cqq || !Number.isFinite(r) || r <= FF_VDW_SAME_ATOM) return 0;
+  if (!pair || !pair.cqq || !Number.isFinite(r)) return 0;
   const eps = Math.max(1e-6, Number(dielectric) || FF_DIELECTRIC);
-  return pair.cqq / (eps * r * r);
+  const rr = floorDistanceOf(r);
+  return pair.cqq / (eps * rr * rr);
 };
 
 /** LA RÉPULSION SEULE (kcal/mol) — ε·(r_min/r)¹², SANS le puits attractif et sans la
  *  charge : c'est le terme non lié du calcul de structure de type DYANA/CYANA, où deux
  *  atomes ne se traversent pas mais ne s'attirent pas. Un atome isolé n'a donc AUCUNE
  *  raison de venir se coller à un autre : ce sont les distances demandées qui assemblent
- *  la molécule, et c'est exactement la philosophie de ces programmes. */
+ *  la molécule, et c'est exactement la philosophie de ces programmes.
+ *  ⚠ MÊME MUR QUE LE LJ : la rampe sous le plancher empêche un empilement gratuit (c'est
+ *  la fonction cible de DYANA, donc celle d'une boîte d'eau explicite — deux eaux qui se
+ *  traversent doivent coûter, sinon rien ne les sépare). */
 export const ffRepulsionCostOf = (r, pair) => {
-  if (!pair || !Number.isFinite(r) || r <= FF_VDW_SAME_ATOM) return 0;
-  const x = (pair.rmin / r) ** 6;
-  return pair.epsilon * x * x;
+  if (!pair || !Number.isFinite(r)) return 0;
+  const rr = floorDistanceOf(r);
+  const x = (pair.rmin / rr) ** 6;
+  return floorWallOf(r, pair.epsilon * x * x);
 };
 
 /** LE COÛT NON LIÉ D'UN COUPLE, SELON LA FONCTION CIBLE — la SEULE définition de ce
@@ -420,7 +455,13 @@ export const ffPairListOf = ({
             const d = Math.hypot(
               x[i * 3] - x[j * 3], x[i * 3 + 1] - x[j * 3 + 1], x[i * 3 + 2] - x[j * 3 + 2],
             );
-            if (!(d <= reach) || !(d > FF_VDW_SAME_ATOM)) continue;
+            /* ⚠ PLUS DE COUPLE RETIRÉ PARCE QU'IL EST TROP COURT (le défaut rapporté :
+               « atoms can come too close and the LJ potential is not considered »). Un
+               couple plus court que `FF_VDW_SAME_ATOM` RESTE dans la liste et la somme le
+               lit au plancher, avec la rampe (`ffVdwCostOf`) : c'est ce qui fait qu'un
+               empilement coûte au lieu de s'effacer de la physique. Seule la portée
+               (`reach`) écarte un couple. */
+            if (!(d <= reach)) continue;
             /* ⚠ LA SURFACE A BESOIN DES COUPLES 1-2 ET 1-3 — ce sont EUX qui enterrent
                un atome (une liaison à 1.09 Å masque la moitié de la sphère d'un H), et
                le terme de van der Waals les exclut. La liste de surface est donc
@@ -459,7 +500,10 @@ export const ffNonbondedEnergyOf = (pairs, positions, {
     const d = Math.hypot(
       x[p.i * 3] - x[p.j * 3], x[p.i * 3 + 1] - x[p.j * 3 + 1], x[p.i * 3 + 2] - x[p.j * 3 + 2],
     );
-    if (!(d > FF_VDW_SAME_ATOM)) continue;
+    /* ⚠ AUCUN COUPLE N'EST SAUTÉ PARCE QU'IL EST TROP COURT : la somme lit un couple
+       empilé au plancher (voir `ffVdwCostOf`) et le COMPTE — sans quoi le rapport d'une
+       molécule où deux atomes se traversent aurait l'air d'une molécule propre. */
+    if (!Number.isFinite(d)) continue;
     out.count += 1;
     /* ⚠ LA FAMILLE EST CELLE DE LA FONCTION CIBLE (`ffNonbondedCostOf`) : en mode DYANA
        il n'y a NI puits attractif NI charge, donc `vdw` ne porte que la répulsion et

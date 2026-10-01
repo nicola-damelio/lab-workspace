@@ -7706,18 +7706,27 @@ const measureRepsRef = useRef([]);      // [{ comp, elem }] NGL 'distance' repre
 // rungs, the plates, the film poses and 📥 Download all read the geometry that is
 // really there — and nothing else in the structure moves. ↺ puts the last torsion
 // back, atom by atom.
-/* ── 🧬 LA SECTION DU CALCUL ET LES DEUX FENÊTRES DU VIEWER ───────────────────
-   La demande de cette session : « when clicking on torsion do not open the section
-   inside the toolbar but open a dedicated retractable window inside the viewer as
+/* ── 🧬 LA FENÊTRE DU CALCUL, ET LES DEUX AUTRES FENÊTRES DU VIEWER ───────────
+   La demande qui a créé les deux premières : « when clicking on torsion do not open the
+   section inside the toolbar but open a dedicated retractable window inside the viewer as
    for ramachandran » (et, du même rapport : « The ramachandran button will make the
-   ramachandran window inside the viewer appear or disappear »). Il n'y a donc plus
-   d'onglets : 🧬 Structure calculation garde SA section dans la barre
-   (`calcSection === 'distances'`, ouverte par son propre bouton), ✏️ Torsion ouvre
-   `torsionWindow` DANS la vue 3D, et 🪢 Ramachandran le dock `ramaDock` — les trois
-   travaillent sur la MÊME molécule et les MÊMES atomes piqués (A · B · C · D), mais
-   aucune ne pousse plus la barre de commandes. */
-const [calcSection, setCalcSection] = useState(null);
-const openCalcSection = (which) => setCalcSection((cur) => (cur === which ? null : which));
+   ramachandran window inside the viewer appear or disappear »).
+   ⚠ CELLE DE CETTE SESSION CHANGE AUSSI LE 🧬 — « Transform the “structure calculation”
+   page in an internal collapsible window as that of MD or Ramachandran containing the
+   calculation parameters and updates to follow the stages of the calculation but move the
+   structure constraint tables with their buttons … into a new button “Parameters and
+   Constraints” » : il n'y a donc plus AUCUNE section du 🧬 dans la barre. Les TROIS
+   gestes sont des FENÊTRES de la vue 3D, poussées à sa gauche — `torsionWindow` DANS le
+   cadre, `ramaDock` et `calcDock` à côté —, ouvertes et refermées par leur propre bouton
+   de la barre, et `calcConstraints` est le panneau « ⚙ Parameters and Constraints » de la
+   fenêtre du calcul (les DEUX tables et leurs boutons y sont, avec les réglages MD du
+   protocole). */
+const [calcDock, setCalcDock] = useState(false);
+const toggleCalcDock = (v) => setCalcDock((cur) => (typeof v === 'boolean' ? v : !cur));
+/* LE PANNEAU « ⚙ PARAMETERS AND CONSTRAINTS » — replié par défaut : la fenêtre du calcul
+   montre d'abord SES paramètres (n, m, le protocole, la progression), et les DEUX tables
+   de contraintes (distances + φ/ψ) avec leurs boutons s'ouvrent d'un clic. */
+const [calcConstraints, setCalcConstraints] = useState(false);
 /* LA FENÊTRE ✏️ TORSION — ouverte par son bouton, refermée par le même bouton (et par
    le ⇤ de son en-tête) : elle vit dans le cadre de la vue 3D, jamais dans la barre. */
 const [torsionWindow, setTorsionWindow] = useState(false);
@@ -10760,6 +10769,161 @@ const calcSaveRestraints = () => {
   }
 };
 
+/* ── 💾 LA FAMILLE ET LE RAPPORT D'UN CALCUL DE STRUCTURE — la demande de cette session :
+   « Allow saving the family of structures and the report. » Deux fichiers, deux formats :
+     · LA FAMILLE, en PDB MULTI-MODÈLE (`MODEL n` / `ENDMDL`) : un bloc par structure
+       RETENUE, dans l'ordre du classement (le rang 1 d'abord — celui qui est écrit dans la
+       molécule), chaque bloc écrit par `calcFamilyPdbOf` (l'écrivain du dossier, le même que
+       le 📥 Download), et des REMARK qui disent ce que chaque modèle est (son rang, son
+       départ, sa note). Le fichier se recharge ici comme dans PyMOL / Chimera, et il porte
+       les noms d'atomes qu'une superposition attend ;
+     · LE RAPPORT, en texte : les paramètres du calcul, puis CHAQUE départ (sa note et les
+       familles du champ, ses distances, sa lecture du squelette, ses contacts, comment il
+       s'est terminé), puis la famille (ce que chaque distance mesure à travers les modèles
+       retenus, et de combien ils diffèrent après superposition optimale).
+   ⚠ AUCUN CHIFFRE N'EST REFABRIQUÉ ICI : tout vient du rapport du module (`calcResult`),
+   le même que le tableau du panneau lit — un rapport qui recalculerait pourrait contredire
+   l'écran. */
+
+/** La fabrique d'un téléchargement de texte — une seule, pour les deux fichiers comme pour
+ *  la table des distances (trois `Blob` recopiés finiraient par diverger). Rend le nom écrit. */
+const calcDownloadText = (name, text, mime = 'text/plain') => {
+  const blob = new Blob([text], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return name;
+};
+
+/** LE NOM DE BASE DES FICHIERS DU CALCUL — la molécule à l'écran, réduite à ce qu'un
+ *  système de fichiers accepte. */
+const calcFamilyBaseName = () => String(molNameOf(selectedMolKey) || 'structure')
+  .replace(/[^\w.-]+/g, '_').slice(0, 40) || 'structure';
+
+/** LE RAPPORT, EN TEXTE — les paramètres, chaque départ, puis la famille. */
+const calcReportText = (ranked) => {
+  const L = [];
+  const f = (v, d = 2) => (Number.isFinite(Number(v)) ? Number(v).toFixed(d) : '—');
+  const n0 = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+  L.push('STRUCTURE CALCULATION — report');
+  L.push(`molecule            : ${molNameOf(selectedMolKey)}`);
+  L.push(`written             : ${new Date().toISOString()}`);
+  L.push(`target function     : ${calcTargetFunction} · ω ${calcOmegaFree ? 'free to vary' : 'held trans'}`);
+  L.push(`starts n / kept m   : ${ranked.starts} / ${ranked.keep}`);
+  L.push(`starts computed     : ${ranked.tried}${ranked.refused ? ` (${ranked.refused} refused before scoring)` : ''}`);
+  L.push(`annealing           : ${calcAnneal} temperature step(s), ${calcAnnealFrame} image(s) per step`);
+  L.push(`dynamics per start  : ${calcMdSteps} step(s) of ${calcMdDt} ps = ${f(calcMdTime.ps, 4)} ps, T ${calcMdHot} -> ${calcMdCold} K, equilibration ${Math.round(calcMdEquil * 100)} %`);
+  L.push(`minimisation        : ${calcMinimise} sweep(s) per start`);
+  L.push(`seed (fixed)        : ${STRUCTURE_CALC_SEED}`);
+  L.push(`constraints         : ${n0(ranked.restraintCount)} distance(s), ${n0(ranked.dihedralCount)} imposed phi/psi${ranked.dropped ? `, ${ranked.dropped} line(s) dropped (unreadable)` : ''}`);
+  L.push(`tolerance           : +/- ${STRUCTURE_CALC_RESTRAINT_TOLERANCE} A on a distance, +/- ${SS_DIHEDRAL_TOLERANCE} deg on phi/psi`);
+  L.push('');
+  L.push(`THE STARTS — ${ranked.ranking.length} scored, best score first`);
+  L.push('  rank  start    score  target   clash  distances    rms  worst distance        bonds/angles  phi/psi outside  clashes/contacts  moved  ended');
+  ranked.ranking.forEach((r) => {
+    const worst = r.worst ? `${r.worst.i}-${r.worst.j} ${f(r.worst.distance)}/${f(r.worst.target)} A` : '—';
+    const rama = r.rama ? `${r.rama.violations}/${r.rama.measured}${r.rama.partial ? ` (+${r.rama.partial} end)` : ''}` : '—';
+    L.push(`  ${String(r.rank).padStart(4)}  ${`#${r.index}`.padStart(6)}  ${f(r.score, 1).padStart(6)}  ${f(r.total, 1).padStart(6)}  ${f(r.clashPenalty, 2).padStart(6)}  `
+      + `${`${n0(r.satisfied)}/${n0(r.satisfied) + n0(r.violations)}`.padStart(8)}  ${f(r.rmsd, 3).padStart(5)}  ${worst.padEnd(20)}  `
+      + `${`${f(r.bondRms, 3)}/${f(r.angleRms, 1)}`.padStart(12)}  ${rama.padEnd(15)}  ${`${n0(r.clashes)}/${n0(r.contacts)}`.padStart(16)}  ${String(r.moved).padStart(5)}  ${r.reason}`);
+    L.push(`        · families (kcal/mol): bonds ${f(r.bond)} · angles ${f(r.angle)} · rings ${f(r.planar)} · vdW ${f(r.vdw)}`
+      + ` · mu ${f(r.elec)} · solvent ${f(r.solv)} · phi/psi ${f(r.ramaPenalty)} · chi1 ${f(r.chiPenalty)} · omega ${f(r.omegaPenalty)} · your distances ${f(r.restraint)}`);
+    if (r.worst) L.push(`        · worst distance: measured ${f(r.worst.distance)} A for ${f(r.worst.target)} A (delta ${f(n0(r.worst.distance) - n0(r.worst.target))} A)`);
+  });
+  L.push('');
+  L.push(`THE KEPT FAMILY — ${ranked.retained.length} model(s), rank 1 first`);
+  const fam = (ranked.family && ranked.family.restraints) || [];
+  if (!fam.length) L.push('  (no distance was asked: the kept models answer the dihedral constraints alone)');
+  fam.forEach((x) => {
+    L.push(`  ${x.i}-${x.j}: mean ${f(x.mean)} A over ${n0(x.models)} model(s), ${n0(x.satisfied)} inside the tolerance, spread ${f(x.spread)} A`);
+  });
+  const spread = ranked.family && ranked.family.spread;
+  if (spread && spread.count) {
+    L.push(`  the models differ by ${f(spread.mean)} A rmsd on average after optimal superposition over all ${n0(spread.atoms)} atoms`
+      + ` (worst pair #${spread.worst.a}-#${spread.worst.b} at ${f(spread.worst.rmsd)} A)`);
+  } else {
+    L.push('  a single model was kept, so there is no spread to measure');
+  }
+  const rest = (ranked.family && ranked.family.rest) || [];
+  rest.forEach((r) => {
+    L.push(`  left out (scored, not kept): rank ${r.rank} start #${r.index} (score ${f(r.score, 1)}, ${n0(r.violations)} distance(s) outside)`);
+  });
+  L.push('');
+  L.push('NOTE — the force field is the app\'s own (kcal/mol), so a score is comparable');
+  L.push('inside one calculation only (same molecule, same constraints, same n). The seed is');
+  L.push('fixed: the same molecule, the same constraints and the same n give the same family.');
+  return L.join('\n');
+};
+
+/** 💾 LA FAMILLE — un PDB multi-modèle, écrit par l'écrivain du dossier. */
+const calcSaveFamily = async () => {
+  const ranked = calcResult;
+  if (!ranked || !ranked.retained.length) {
+    setCalcMsg('✕ There is no family to save yet — run the calculation (▶ Run) first.');
+    return;
+  }
+  const comp = componentRef.current;
+  const structure = comp && comp.structure;
+  if (!structure || !comp) {
+    setCalcMsg('✕ The family cannot be written: no molecule is on screen, and its coordinates belong to the molecule it was computed on.');
+    return;
+  }
+  const models = [];
+  for (const m of ranked.retained) {
+    /* eslint-disable no-await-in-loop -- un modèle après l'autre : chacun EMPRUNTE les
+       coordonnées de la structure, donc deux écritures ne peuvent pas se chevaucher. */
+    const text = await calcFamilyPdbOf(structure, comp, m.positions);
+    /* eslint-enable no-await-in-loop */
+    if (!text) {
+      setCalcMsg('✕ The family could not be written: the coordinates of a model would not go back to the molecule.');
+      return;
+    }
+    models.push({
+      rank: Number(m.rank) || models.length + 1, index: m.index, score: m.score,
+      satisfied: m.satisfied, violations: m.violations,
+      text: String(text).split('\n').filter((l) => l.trim().toUpperCase() !== 'END').join('\n').trimEnd(),
+    });
+  }
+  const remarks = [
+    'REMARK   1 STRUCTURE CALCULATION - the family kept by the structure calculation panel',
+    `REMARK   2 ${models.length} model(s) kept, ranked by the force field score (kcal/mol), rank 1 first`,
+    ...models.map((m, k) => `REMARK   3 MODEL ${k + 1}: rank ${m.rank}, start #${m.index}, score ${Number(m.score).toFixed(2)}, distances ${m.satisfied}/${Number(m.satisfied) + Number(m.violations)}`),
+  ];
+  const body = models.map((m, k) => `MODEL     ${String(k + 1).padStart(4)}\n${m.text}\nENDMDL`).join('\n');
+  const name = `${calcFamilyBaseName()}_family.pdb`;
+  try {
+    calcDownloadText(name, `${remarks.join('\n')}\n${body}\nEND\n`, 'chemical/x-pdb');
+    setCalcMsg(`✓ ${models.length} model${models.length === 1 ? '' : 's'} saved to “${name}” — a multi-model PDB (MODEL / ENDMDL), rank 1 first:`
+      + ' the same writer as ⤓ Load and 📥 Download, so it reloads here or in PyMOL / Chimera and carries the atom names a superposition needs.'
+      + ' The molecule on screen was borrowed for the writing and put back: nothing moved.');
+  } catch (e) {
+    setCalcMsg(`✕ The family could not be saved: ${(e && e.message) || e}`);
+  }
+};
+
+/** 💾 LE RAPPORT — le texte du module, tel quel. */
+const calcSaveReport = () => {
+  const ranked = calcResult;
+  if (!ranked || !ranked.ranking.length) {
+    setCalcMsg('✕ There is no report to save yet — run the calculation (▶ Run) first.');
+    return;
+  }
+  const name = `${calcFamilyBaseName()}_structure-calculation.txt`;
+  try {
+    calcDownloadText(name, `${calcReportText(ranked)}\n`);
+    setCalcMsg(`✓ The report of ${ranked.ranking.length} start${ranked.ranking.length === 1 ? '' : 's'} is in “${name}” — the parameters, each start`
+      + ' (score and families, distances, backbone reading, contacts, how it ended) and the family (what each distance measures'
+      + ' across the kept models, and their rmsd after optimal superposition).');
+  } catch (e) {
+    setCalcMsg(`✕ The report could not be saved: ${(e && e.message) || e}`);
+  }
+};
+
 const calcLoadRestraintsFile = (file) => {
   if (!file) return;
   const reader = new FileReader();
@@ -10848,6 +11012,21 @@ const calcLoadRestraintsFile = (file) => {
    remplie se garde pour la finir plus tard, mais n'est jamais envoyée au module. */
 const CALC_KEY = (s) => String(s == null ? '' : s).toUpperCase().replace(/[^A-Z0-9]/g, '');
 const calcAtomLabel = (rec) => `${rec.resname || ''} ${rec.resno || ''} ${rec.name || ''}`.trim();
+
+/** LE RÉSIDU QUI PORTE UN ATOME — « ALA 12 », tel que la molécule à l'écran le nomme.
+ *  Le rapport de cette session : « The table of dihedral constraints does not report the
+ *  residue number as it should but the atom number. » La colonne `residue` de la table des
+ *  φ/ψ imposés écrit donc CE libellé ; le numéro d'atome reste dans l'infobulle (il sert au
+ *  piquage, et la cible est un dièdre lu sur ces atomes-là). Un atome sans résidu lisible
+ *  (rien à l'écran) se dit par son numéro : jamais un blanc. */
+const calcResidueLabelOf = (index) => {
+  const structure = componentRef.current && componentRef.current.structure;
+  const rec = Number.isInteger(index)
+    ? structureAtomRecords(structure).find((r) => r.index === index) : null;
+  if (!rec) return index == null ? '—' : `#${index}`;
+  const label = `${rec.resname || ''}${rec.resno != null ? ` ${rec.resno}` : ''}${rec.chainIndex ? ` · ${rec.chainIndex}` : ''}`.trim();
+  return label || `#${index}`;
+};
 
 /** L'ATOME DÉSIGNÉ PAR UN TEXTE — `{ok, index, element, label}` ou `{ok:false, say}`. */
 const calcAtomOfText = (structure, text) => {
@@ -11266,16 +11445,27 @@ const runStructureCalculation = () => {
      manque un atome ou une cible — les lignes de poids 0 sont COMPLÈTES (elles sont en
      pause) : les confondre ferait dire au rapport qu'une ligne finie est à moitié écrite. */
   const half = calcRestraints.length - calcUsableRows().length;
-  if (!list.length) {
+  /* ⛓ LES CONTRAINTES DE DIHÈDRE COMPTENT COMME LES DISTANCES — la demande de cette
+     session : « The structure calculation must work even if there are only dihedral
+     constraints (at present it wants at least one distance). » Un calcul qui ne porte QUE
+     des φ/ψ imposés (la structure secondaire peinte convertie par ⛓) part donc NORMALEMENT :
+     le module accepte la liste vide de distances dès qu'il a des dièdres (`structureCalc.js`,
+     `structureCalculationFrames`), et c'est le puits plat de `ffDihedralCostOf` qui assemble
+     la molécule. Il n'y a donc plus qu'UN refus possible, et il dit les DEUX manques. */
+  const dhCount = Array.from(calcDihedrals || []).length;
+  if (!list.length && !dhCount) {
     const paused = calcInertCount();
     setCalcMsg(paused
       ? `✕ Every line of the table is at weight ⚖ = 0 (${paused} line${paused === 1 ? '' : 's'}):`
         + ' the protocol has no distance to drive. Type a weight ABOVE 0 in the ⚖ column of at least one'
-        + ' line — a weight of 0 keeps a line listed and measured, it simply takes no part in the calculation.'
-      : '✕ Nothing to respect yet. Two ways to give a distance: press ⌖ and pick the pair IN THE VIEW'
+        + ' line — a weight of 0 keeps a line listed and measured, it simply takes no part in the calculation —'
+        + ' or impose φ/ψ with ⛓ (the painted secondary structure), which the calculation also obeys.'
+      : '✕ Nothing to respect yet. A structure calculation needs at least ONE constraint — a distance OR an'
+        + ' imposed dihedral. Two ways for a distance: press ⌖ and pick the pair IN THE VIEW'
         + ' — the ⌖ picker paints its own two atoms BLUE, with nothing to do with the four picks of ✏️ Torsion,'
         + ' and the second click adds the line — or add a row and TYPE its two atoms — “ALA 12 CA”, “12:CA” or an atom'
-        + ' number — with the distance you want. A structure calculation needs at least one distance between two atoms.');
+        + ' number — with the distance you want. For φ/ψ, paint the secondary structure in “Sequence and structure”'
+        + ' and press ⛓ Secondary structure → φ/ψ: a calculation with ONLY dihedral constraints is a valid one.');
     return;
   }
   const n = Math.min(STRUCTURE_CALC_MAX_STARTS, Math.max(1, calcStarts));
@@ -11285,7 +11475,7 @@ const runStructureCalculation = () => {
   const before = torsionSnapshotOf(structure);
   torsionUndoRef.current = {
     comp, structure, count: before ? before.length / 3 : 0, flat: before,
-    label: `🧬 structure calculation · ${list.length} distance${list.length === 1 ? '' : 's'} · n = ${n}, m = ${m}`
+    label: `🧬 structure calculation · ${list.length} distance${list.length === 1 ? '' : 's'}${dhCount ? ` + ${dhCount} imposed φ/ψ` : ''} · n = ${n}, m = ${m}`
       + ` · ω ${calcOmegaFree ? 'free to vary' : 'held trans'}`,
   };
   calcRunRef.current += 1;
@@ -11296,6 +11486,8 @@ const runStructureCalculation = () => {
   setCalcResult(null);
   setCalcProgress(`🧬 start 0/${n} …${half
     ? ` (${half} line${half === 1 ? '' : 's'} of the table still unfinished, left out)`
+    : ''}${!list.length && dhCount
+    ? ` (no distance: the ${dhCount} imposed φ/ψ are what this calculation obeys)`
     : ''}${disulfideConductedNote()}`);
   /* LE GRAPHE 🪢, S'IL EST À L'ÉCRAN, SUIT CHAQUE DÉPART ÉCRIT (voir `pumpMotion`) : la
      MÊME question `ramaIsShown()`, posée à CHAQUE image — le 🪢 bouge donc aussi pendant un
@@ -11332,6 +11524,22 @@ const runStructureCalculation = () => {
          n'est pas ajouté deux fois — il EST la molécule de l'écran (celle que la barre
          appelle ★ main). */
       calcAddFamilyToBar(structure, componentRef.current, family.retained).catch(() => 0);
+      /* ⚠ LA FENÊTRE DE STYLE DOIT VOIR LA FAMILLE TOUT DE SUITE — le rapport de cette
+         session : « The series of structures calculated are not immediately seen in the
+         styling window. I had to select and deselect the “hide H” button to update the
+         window. » C'était EXACT, et la cause est connue : les rangées de style d'une molécule
+         sont énumérées dans `ensureSections`, appelée par la RECONSTRUCTION de la scène —
+         qui ne part que quand `styleSignature` change (le tick « Hide H » en fait partie,
+         d'où le symptôme). Une molécule entrée par `calcAddFamilyToBar` n'existait donc dans
+         le catalogue des sections qu'à la reconstruction SUIVANTE. `bumpSectionEpoch`
+         (le geste du ↺ d'une rangée, de ✔, de 🎨 Copy) périme les signatures et redemande la
+         reconstruction : la famille est dans la barre des molécules ET dans la fenêtre de
+         style dès l'image qui l'a fait entrer. L'appel est différé d'un tour de boucle
+         (`setTimeout 0`) parce que `calcAddFamilyToBar` est asynchrone : la dernière molécule
+         n'est dans `extraCompsRef` qu'à son retour. */
+      calcAddFamilyToBar(structure, componentRef.current, family.retained)
+        .then(() => { setTimeout(bumpSectionEpoch, 0); })
+        .catch(() => setTimeout(bumpSectionEpoch, 0));
     } else {
       setCalcMsg(`✓ The calculation went through the page change — ${family.retained.length}`
         + ` structure${family.retained.length === 1 ? '' : 's'} kept above (${attempts.length} start`
@@ -20824,20 +21032,11 @@ const renderMdWindow = () => (
           {calcMsg}
         </p>
       )}
-      <p className="text-[9px] text-slate-500">
-        ⚠ These values are THIS window's own: they are NOT the protocol of 🧬 Structure
-        calculation (its n, m, 🔥 recuit, 🖼 frames, 🌡 hot → 🌡 cold, ⚖ equilibration share
-        and ⚒ sweeps live in its own panel), so changing the dynamics here cannot change the
-        calculation — nor the other way round. Two things belong to the FIELD and are read by
-        every gesture on it: the 📏 box below this window's ▶ MD (an option: ticked, that
-        gesture carries the distance table of the 🧬 with the ⚖ weight of each line; unticked
-        it runs on the force field alone — ▶ Run, ⚒ Minimise and ⟳ Energy always read the
-        table), and the pair 💧 solvent / 🎯 target function (the whole field, for ▶ Run,
-        ▶ MD, ⚒ Minimise and ⟳ Energy alike). The window closes with 🌡 MD, with its ⇤, and
-        with the tab on the left edge — and closing it loses nothing. While a gesture runs,
-        the ■ Stop appears next to this window's ▶ MD, and it stays reachable even with the
-        window folded (it then shows in the row of the gestures, next to ⚒ Minimise).
-      </p>
+      {/* ⚠ LE PARAGRAPHE QUI VIVAIT ICI (« These values are THIS window's own… ») A ÉTÉ
+          RETIRÉ — la demande de cette session : « Please remove all these large commentaries
+          in the MD window and in the “structure calculation section”. » Ce qu'il disait est
+          resté là où il sert : dans l'infobulle de chaque réglage, dans celle de la case 📏
+          et dans celle du ▶ MD. */}
     </div>
   </div>
 );
@@ -20878,9 +21077,9 @@ const renderForceGestures = () => (
       </button>
     )}
     <button type="button" onClick={calcReadForceField}
-      title={`⟳ ENERGY — a READING of the force field on the molecule as it stands: the families, the residue counts, which φ/ψ and χ1 are outside, the charges, the surface, the hydrogens it added. It is NOT a gesture: nothing is written (↺ Undo torsion has nothing to undo). Its answer is printed RIGHT UNDER THESE BUTTONS, so the click always says something${calcSection === 'distances'
-        ? ' — and the family-by-family table is in the 🧬 Structure calculation section, which is open right now.'
-        : ' — and the family-by-family table appears in the 🧬 Structure calculation section (open it to see this number broken into its families).'}`}>
+      title={`⟳ ENERGY — a READING of the force field on the molecule as it stands: the families, the residue counts, which φ/ψ and χ1 are outside, the charges, the surface, the hydrogens it added. It is NOT a gesture: nothing is written (↺ Undo torsion has nothing to undo). Its answer is printed RIGHT UNDER THESE BUTTONS, so the click always says something${calcDock
+        ? ' — and the family-by-family table is in the 🧬 Structure calculation window, which is open right now.'
+        : ' — and the family-by-family table appears in the 🧬 Structure calculation window (open it to see this number broken into its families).'}`}>
       ⟳ Energy
     </button>
     {/* ⚡ LA RÉPONSE DU ⟳ S'ÉCRIT ICI — la remarque de cette session : « I do not understand
@@ -20889,7 +21088,7 @@ const renderForceGestures = () => (
         clic ne disait donc rien à personne. Elle apparaît maintenant SOUS les boutons qui
         l'ont demandée — et seulement quand la section du 🧬 est fermée : ouverte, c'est
         elle qui l'affiche (le même `calcMsg`), donc jamais deux fois le même texte. */}
-    {calcMsg && calcSection !== 'distances' && (
+    {calcMsg && !calcDock && (
       <p title={calcMsg} className={`basis-full text-[10px] font-semibold rounded-md border px-2 py-1 whitespace-pre-wrap ${/^✓/.test(calcMsg) ? 'text-emerald-800 bg-emerald-50 border-emerald-200' : /^■/.test(calcMsg) ? 'text-amber-800 bg-amber-50 border-amber-200' : /^✕/.test(calcMsg) ? 'text-rose-800 bg-rose-50 border-rose-200' : 'text-slate-700 bg-slate-50 border-slate-200'}`}>
         {calcMsg}
       </p>
@@ -20903,6 +21102,565 @@ const renderForceGestures = () => (
         portent. */}
   </span>
 );
+/* ── 🧬 LA FENÊTRE DU CALCUL DE STRUCTURE — LE DOCK DE GAUCHE DE LA VUE 3D ─────────
+   La demande de cette session : « Transform the “structure calculation” page in an
+   internal collapsible window as that of MD or Ramachandran containing the calculation
+   parameters and updates to follow the stages of the calculation but move the structure
+   constraint tables with their buttons … into a new button “Parameters and Constraints”
+   which if clicked shows MD parameters and structural constraints tables. » Le bloc qui
+   vivait dans la barre de commandes est donc devenu CETTE FENÊTRE : `renderCalcWindow`
+   la peint (les paramètres n · m · 🔥 recuit · 🖼 frames, puis les ÉTAPES du calcul : la
+   progression, le rapport, la table classée de la famille et ses boutons de
+   sauvegarde), et `renderCalcConstraints` — appelé par son bouton ⚙ — porte les DEUX
+   tables de contraintes avec TOUS leurs boutons. Rien n'a réécrit la physique : les
+   mêmes `calcRestraints`, `calcDihedrals` et module pur.
+   ⚠ SEULE LA PLACE DU PANNEAU CHANGE : la barre de commandes n'est plus poussée par une
+   section pleine largeur, la vue 3D ne l'est plus non plus (le dock est à sa gauche). */
+const renderCalcWindow = () => {
+  const live = calcGeometryNow();
+  const geom = live ? live.geom : null;
+  const ranked = calcResult;
+  return (
+    <div className="shrink-0 w-[360px] flex flex-col gap-1.5 bg-white border border-indigo-200 rounded-xl p-2 overflow-hidden"
+      style={{ height: (viewerCollapsed ? 0 : viewH) + 'px' }}>
+      <div className="flex items-center justify-between gap-1 shrink-0">
+        <span className="text-[10px] font-black text-indigo-700 uppercase tracking-wide">
+          🧬 Structure calculation{ranked ? ` (${ranked.retained.length}/${ranked.tried})` : ''}
+        </span>
+        <button type="button" onClick={() => toggleCalcDock(false)}
+          title="Collapse the structure-calculation window — it folds to a thin tab on the left edge (🧬 brings it back), and the 3D view takes the whole width again. Nothing is lost: these are the panel's own values, the two constraint tables and the family."
+          className="px-1.5 py-0.5 text-[9px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100">⇤</button>
+      </div>
+      <div className="overflow-y-auto custom-scrollbar flex flex-col gap-1.5">
+      <p className="text-[9px] font-black text-slate-500 uppercase tracking-wide"
+        title="THE PARAMETERS OF THIS CALCULATION, AND WHAT FOLLOWS ITS STAGES — n · m below, then ▶ Run / ⏹ Stop and the report that says where the calculation is, then the ranked family. The two constraint tables (distances AND the imposed φ/ψ) are behind ⚙ Parameters and Constraints, with the MD parameters of the protocol.">
+        ⚙ n · m · 🔥 recuit · 🖼 frames · le protocole · les tables
+      </p>
+      <button type="button" onClick={() => setCalcConstraints((v) => !v)}
+        className={`self-start px-2 py-1 text-[10px] font-bold rounded border transition-colors ${calcConstraints ? 'bg-indigo-100 border-indigo-400 text-indigo-900 hover:bg-indigo-200' : 'bg-white border-indigo-300 text-indigo-700 hover:bg-indigo-100'}`}
+        title="PARAMETERS AND CONSTRAINTS — the request, verbatim: « move the structure constraint tables with their buttons (add picked pair, add row, save distances, load distances, clear list, and “secondary structure → phi, psi”) into a new button “Parameters and Constraints” which if clicked shows MD parameters and structural constraints tables. » Open it for the MD parameters of the protocol (steps, dt, hot → cold, the equilibration share, the ⚒ sweeps, 🪢 ω, 🎯 the target function) AND the two tables: the distances to respect (⌖ / ➕ / 💾 / 📂 / Clear) and the imposed φ/ψ (⛓). Closed, the window only shows n · m and the stages of the calculation.">
+        ⚙ Parameters and Constraints {calcConstraints ? '▾' : '▸'}
+      </button>
+      {calcConstraints && (
+      <div className="rounded-lg border border-slate-200 bg-slate-50/60 p-2 flex flex-col gap-1.5">
+        <div className="flex flex-wrap items-center gap-1.5">{renderCalcMdOptions()}</div>
+        <div className="flex flex-wrap items-center gap-1.5">
+          {/* ⌖ SON PROPRE PIQUAGE — la demande : « dedicated pair picker ». Le ⌖ arme un
+              piquage À LUI : DEUX atomes (A · B) peints en BLEU, son état, ses phrases.
+              Les quatre atomes de ✏️ Torsion ne sont ni lus ni touchés : armé, le bouton
+              devient « ⌖ Picking A · B » ; une seconde pression l'éteint. */}
+          <button type="button" onClick={calcAddRestraint}
+            title="THE TABLE'S OWN PAIR PICKER — the request, verbatim: “dedicated pair picker”. Press ⌖ and it arms a picker OF ITS OWN: TWO atoms (A · B), painted BLUE in the 3D view, and NOTHING to do with the four picks of ✏️ Torsion (A · B · C · D) — those are not read here and not touched, so a torsion and a pair can be picked one after the other without either undoing the other. Click the first atom, then the second: the line is added to the list with its two atoms already resolved (it can still be edited, or dropped with ✕), and the two blue atoms stay painted on the molecule the line is about. The distance is the one typed in the ⌖ want field on the right — left EMPTY (the usual case), it is the length the tables give that pair of elements (S–S 2.05 Å, C–C 1.54 Å…). A pair already in the list is REPLACED, never doubled."
+            className={`px-2 py-1 text-[10px] font-bold rounded border ${pairPick ? 'bg-blue-600 border-blue-700 text-white' : 'bg-white border-indigo-300 text-indigo-700 hover:bg-indigo-100'}`}>
+            {pairPick ? `⌖ Picking A · B (${pairAtoms.length}/2) — click the atoms, ⌖ stops` : '⌖ Add the picked pair'}
+          </button>
+          <input type="text" inputMode="decimal" value={pairTargetDraft}
+            onChange={(e) => setPairTargetDraft(e.target.value)}
+            placeholder="want (Å)"
+            aria-label="Target distance of the pair picked with ⌖, in ångströms — left empty: the length the tables give that pair of elements"
+            title="⌖ WANT — the distance YOU want the pair picked with ⌖ to have, in ångströms. Left EMPTY (the usual case) the line takes the length the tables give that pair of elements; whatever you type here becomes the target of the line the SECOND click adds, and it can still be overwritten afterwards in the line's own distance column."
+            className="w-16 border border-indigo-300 rounded px-1.5 py-1 text-[10px] font-mono bg-white text-right outline-none focus:border-indigo-500" />
+          <button type="button" onClick={calcAddBlankRow}
+            disabled={calcRestraints.length >= STRUCTURE_CALC_MAX_RESTRAINTS}
+            title="Add an EMPTY line and TYPE its two atoms — “ALA 12 CA”, “12:CA”, “CA12”, the raw file name, or simply an atom number — then its distance in ångströms. The table is how distances are defined here; picking atoms is only the shortcut. A line that is not finished yet is kept but never sent to the module, and ⌖ replaces a line it duplicates."
+            className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-indigo-300 text-indigo-700 hover:bg-indigo-100 disabled:opacity-40">
+            ➕ Add a row
+          </button>
+          <button type="button" onClick={() => setCalcRestraints([])}
+            disabled={!calcRestraints.length}
+            title="Drop every distance from the list (the molecule is not touched — only the list is emptied)."
+            className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100 disabled:opacity-40">
+            Clear the list
+          </button>
+          {/* 💾 📂 LA TABLE DANS UN FICHIER — la demande : « Allow to save/upload from
+              file the distance constraints in the structure calculation section. »
+              Le format est celui de utils/structureRestraints.js (trois colonnes,
+              lisible à l'œil) : 💾 écrit la table TELLE QU'ELLE EST AFFICHÉE, 📂 la
+              relit et RÉSOUT les noms d'atomes sur la molécule à l'écran — une ligne
+              non résolue est gardée, avec son `say`, comme une ligne tapée à moitié. */}
+          <button type="button" onClick={calcSaveRestraints}
+            disabled={!calcRestraints.length}
+            title="Save the distance table to a FILE (plain text, three columns: atom A · atom B · target in Å, with a header that says how to read it back). The list lives in this viewer's state, so it disappears when the page is reloaded — the file is what keeps it. It can be edited by hand and reloaded with 📂 Load distances, on this molecule or on another one."
+            className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-indigo-300 text-indigo-700 hover:bg-indigo-100 disabled:opacity-40">
+            💾 Save distances
+          </button>
+          <label
+            title="Load a distance table from a FILE (the format 💾 Save distances writes: one distance per line, “atom A · atom B · target in Å”). Every atom name is resolved ON THE MOLECULE ON SCREEN — “ALA 12 CA”, “12:CA”, “CA12”, the raw file name, or “#123” (atom number) — and a line whose atoms are not found is KEPT as it is, to be finished, with the reason said on the row. A pair already in the table is replaced, never doubled."
+            className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-indigo-300 text-indigo-700 hover:bg-indigo-100 cursor-pointer">
+            📂 Load distances
+            <input type="file" accept=".txt,.csv,text/plain" className="hidden"
+              onChange={(e) => { calcLoadRestraintsFile(e.target.files && e.target.files[0]); e.target.value = ''; }} />
+          </label>
+          {/* ⛓ LA STRUCTURE SECONDAIRE IMPOSÉE → DES CONTRAINTES DE DIHÈDRE — la
+              demande, mot pour mot : « In MD and “structure calculation” allow the
+              conversion of the secondary structure imposed in the “sequence and
+              structure” subsection into dihedral angle constraints. » Le MÊME bouton
+              que celui de la rangée ▶ MD : un seul état, un seul calcul, donc le
+              calcul de structure ne peut pas porter d'autres contraintes que le ▶ MD. */}
+          <button type="button" onClick={calcConvertSecondaryStructure}
+            className={`px-2 py-1 text-[10px] font-bold rounded border transition-colors ${calcDihedrals.length ? 'bg-emerald-50 border-emerald-400 text-emerald-800 hover:bg-emerald-100' : 'bg-white border-indigo-300 text-indigo-700 hover:bg-indigo-100'}`}
+            title={`Convert the secondary structure painted in “Sequence and structure” of the page (${imposedSecondaryStructure ? `${imposedSecondaryStructure.replace(/\s+/g, '').length} letters` : 'nothing painted yet'}) into dihedral angle constraints (H → φ −57° / ψ −47°, E → φ −139° / ψ +135°, flat-bottom window ± ${SS_DIHEDRAL_TOLERANCE}°): they enter the recuit, the dynamics, the minimisation and the quench of every start, and the score counts them. Press again to remove them.`}>
+            ⛓ {calcDihedrals.length ? `${calcDihedrals.length} φ/ψ imposed — Off` : 'Secondary structure → φ/ψ'}
+          </button>
+          {!!calcDihedrals.length && (
+            <span className="text-[9px] font-semibold text-emerald-800"
+              title="What the conversion found, said by the module: the painted letters, the readable residues on screen, and how many were matched (the letters are matched BY ORDER).">
+              {(calcSsReading && calcSsReading.matched) || 0} residue{((calcSsReading && calcSsReading.matched) || 0) === 1 ? '' : 's'} converted (± {SS_DIHEDRAL_TOLERANCE}°)
+            </span>
+          )}
+        </div>
+      {/* ⛓ LA TABLE DES CONTRAINTES DE φ/ψ — la demande : « Quest'ultimo deve riempire la
+          tabella di constraints. » Elle est écrite ICI, à côté de celle des distances, et
+          chaque ligne est UN angle imposé par la peinture 🖌️ : un résidu donne son φ ET son
+          ψ, jugés séparément. La cible et la fenêtre viennent du module (`SS_DIHEDRALS`,
+          `SS_DIHEDRAL_TOLERANCE` — aucun chiffre de φ/ψ n'est écrit dans le JSX), la lettre
+          est celle qui a été PEINTE, `#n` est le CA qui porte l'angle, et ✕ rend à CE
+          résidu-là sa liberté sans toucher aux autres. */}
+      {calcDihedrals.length > 0 && (
+        <div className="max-h-32 overflow-y-auto custom-scrollbar border border-emerald-200 rounded-lg bg-white">
+          <table className="w-full text-xs">
+            <thead className="sticky top-0 bg-emerald-50">
+              <tr>
+                <th className="text-left px-2 py-1 text-[9px] uppercase text-emerald-800">#</th>
+                <th className="text-left px-2 py-1 text-[9px] uppercase text-emerald-800"
+                  title="THE RESIDUE whose φ or ψ is imposed — its number, not the CA's atom index (the request: « The table of dihedral constraints does not report the residue number as it should but the atom number. »). The atom index stays in the cell's own tooltip, because the angle is a dihedral read on the four atoms around it.">
+                  residue
+                </th>
+                <th className="text-left px-2 py-1 text-[9px] uppercase text-emerald-800">letter</th>
+                <th className="text-left px-2 py-1 text-[9px] uppercase text-emerald-800">angle</th>
+                <th className="text-left px-2 py-1 text-[9px] uppercase text-emerald-800">target</th>
+                <th className="text-left px-2 py-1 text-[9px] uppercase text-emerald-800">window</th>
+                <th className="text-left px-2 py-1 text-[9px] uppercase text-emerald-800" />
+              </tr>
+            </thead>
+            <tbody>
+              {calcDihedrals.map((c, k) => (
+                <tr key={`dh${k}`} className="border-t border-emerald-100">
+                  <td className="px-2 py-1 text-slate-400">{k + 1}</td>
+                  <td className="px-2 py-1 font-mono text-slate-600"
+                    title={`THE RESIDUE of this constraint — the CA that carries the angle is atom #${c.ca} of the molecule on screen, and the angle is the dihedral of ${(c.atoms || []).map((x) => `#${x}`).join(' · ')}.`}>
+                    {calcResidueLabelOf(c.ca)}
+                  </td>
+                  <td className="px-2 py-1 font-black text-emerald-800"
+                    title={`The letter painted in “Sequence and structure”: ${c.letter} — the module carries its own φ/ψ target (SS_DIHEDRALS).`}>
+                    {c.letter || '—'}
+                  </td>
+                  <td className="px-2 py-1 font-mono font-bold text-slate-700"
+                    title="φ (C(i−1)–N–CA–C) or ψ (N–CA–C–N(i+1)) — each one is judged ON ITS OWN, so a residue can keep one and lose the other.">
+                    {c.kind === 'phi' ? 'φ' : 'ψ'}
+                  </td>
+                  <td className="px-2 py-1 font-mono text-slate-700">{torsionAng(c.target)}</td>
+                  <td className="px-2 py-1 font-mono text-slate-500">± {c.tolerance}°</td>
+                  <td className="px-1 py-1">
+                    <button type="button" onClick={() => setCalcDihedrals((list) => list.filter((x) => x !== c))}
+                      title="Drop THIS angle: the residue keeps the other one, and ▶ MD, ⚒ Minimise, ▶ Run and the ⟳ Energy reading stop imposing it. ⛓ puts the whole painted structure back."
+                      className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-white border border-red-300 text-red-600 hover:bg-red-50">
+                      ✕
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {calcRestraints.length > 0 && (
+        <div className="max-h-32 overflow-y-auto custom-scrollbar border border-indigo-200 rounded-lg bg-white">
+          <table className="w-full text-xs">
+            <thead className="sticky top-0 bg-indigo-50">
+              <tr>
+                <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">#</th>
+                <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">Atom A</th>
+                <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">Atom B</th>
+                <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">Want (Å)</th>
+                {/* ⚖ LA COLONNE DU POIDS — la demande : « enable this option allowing the
+                    user to give a weight to these constraints. This weight can be defined
+                    in the table. » Elle est ICI, entre la cible et les deux colonnes de
+                    mesure, et elle ne bouge JAMAIS de place : une ligne = un poids. Le
+                    titre dit tout ce que la case accepte, y compris le 0 (mise en pause). */}
+                <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700"
+                  title="⚖ THE WEIGHT OF A LINE — the force constant of this distance is k_NOE × weight, so 2 pulls on the pair twice as hard as 1 and 0.5 twice as gently. It is written here, on the line, and it is read by ▶ Run, ▶ MD, ⚒ Minimise and ⟳ Energy alike. Type a number ≥ 0: empty or a value that cannot be read means the DEFAULT weight of 1 (as if this column did not exist), and a weight of 0 puts the line ON HOLD — it keeps its atoms, its target, its Now and its Δ, but it takes part in nothing and counts in no report. A comma works as the decimal separator.">
+                  ⚖ w
+                </th>
+                <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">Now</th>
+                <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">Δ</th>
+                <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700" />
+              </tr>
+            </thead>
+            <tbody>
+              {calcRestraints.map((r, k) => {
+                const ready = Number.isInteger(r.i) && Number.isInteger(r.j) && r.i !== r.j
+                  && Number.isFinite(r.target) && r.target > 0;
+                const at = ready && geom ? calcDistanceIn(geom, r.i, r.j) : null;
+                const dev = Number.isFinite(at) ? at - r.target : null;
+                const good = dev != null && Math.abs(dev) <= STRUCTURE_CALC_RESTRAINT_TOLERANCE;
+                /* ⚖ CE QUE LA LIGNE PÈSE — `0` est une mise en PAUSE (la ligne est
+                   encore mesurée et affichée, mais aucun geste ne la reçoit), et un texte
+                   illisible est le poids par DÉFAUT (1) : c'est `calcWeightOf` qui le dit,
+                   ici comme dans les quatre gestes du champ. La case passe en ambre dans
+                   les deux cas qui doivent se voir : une frappe que le module ne peut pas
+                   lire, et le 0 qui met la ligne en attente. */
+                const weight = calcWeightOf(r);
+                const paused = ready && weight === 0;
+                const unreadable = String(r.w == null ? '' : r.w).trim() !== '' && r.weight == null;
+                const cell = (side) => {
+                  const idx = side === 'a' ? r.i : r.j;
+                  const own = side === 'a' ? r.sayA : r.sayB;   // ⚠ la plainte de CETTE case, jamais celle de l'autre
+                  return (
+                    <td className="px-1 py-1 whitespace-nowrap">
+                      {/* ⚠ LE NAVIGATEUR N'A PAS LE DROIT DE RÉÉCRIRE CE QU'ON TAPE ICI —
+                          la différence entre TAPER et COLLER, c'est que le navigateur ne
+                          propose et ne corrige QUE pendant la frappe (« je tape “CYS 31
+                          SG” et il me répond “CYS 1 SG” »). Les colonnes numériques s'en
+                          gardent par `inputMode="decimal"` (voir plus bas) ; les deux
+                          atomes se gardent par ces trois attributs : le texte de la case
+                          est celui de l'utilisateur, et rien d'autre. */}
+                      <input type="text" value={(side === 'a' ? r.a : r.b) || ''} autoComplete="off" autoCorrect="off" spellCheck={false}
+                        placeholder={side === 'a' ? 'atom A' : 'atom B'}
+                        onChange={(e) => calcSetRowAtom(r.key, side, e.target.value)}
+                        aria-label={`${side === 'a' ? 'First' : 'Second'} atom of line ${k + 1}`}
+                        title={`TYPE the ${side === 'a' ? 'first' : 'second'} atom: “ALA 12 CA”, “12:CA”, “CA12”, its raw file name, or simply its number. It is resolved on the molecule on screen, and THIS cell says what IT did not understand — the complaint of the other atom belongs to the other cell.${own ? ` ⚠ ${own}` : ''}`}
+                        className={`w-28 border rounded px-1.5 py-0.5 outline-none text-[10px] font-mono bg-white ${idx == null ? 'border-amber-400' : 'border-indigo-300 focus:border-indigo-500'}`} />
+                      <span className="ml-1 text-[10px] font-mono text-slate-400">#{idx ?? '?'}</span>
+                    </td>
+                  );
+                };
+                return (
+                  <tr key={r.key} className={`border-t border-indigo-100 ${ready ? '' : 'bg-amber-50/60'}`}>
+                    <td className="px-2 py-1 text-slate-400"
+                      title={r.say || (paused ? '⏸ ON HOLD — this line weighs ⚖ 0: it is still listed and measured here, and it takes part in nothing (no ▶ Run, no ▶ MD, no ⚒ Minimise, no ⟳ Energy).' : '')}>
+                      {k + 1}{r.say ? ' ⚠' : ''}{paused ? ' ⏸' : ''}
+                    </td>
+                    {cell('a')}
+                    {cell('b')}
+                    <td className="px-1 py-1">
+                      {/* ⚠ `type="text"` + `inputMode="decimal"` : le navigateur ne peut
+                          donc pas REFORMATER ce que l'utilisateur écrit. `value` est le
+                          TEXTE tapé (`r.t`), la cible numérique n'est qu'une conséquence
+                          (`calcSetRestraintTarget`), et taper « 12.5 » reste « 12.5 ». */}
+                      <input type="text" inputMode="decimal" value={r.t != null ? r.t : (r.target ?? '')}
+                        onChange={(e) => calcSetRestraintTarget(r.key, e.target.value)}
+                        aria-label={`Target distance for ${r.label || `atom ${r.i ?? '?'} and atom ${r.j ?? '?'}`}, in ångströms`}
+                        title="The distance YOU want this pair to have, in ångströms — the protocol drives THIS number, and the report compares the model against it. A line whose atoms are typed gets the length the tables give that pair of elements, and you can overwrite it. Typed text is kept as typed (a comma works as the decimal separator); a value that cannot be read leaves the line 'not ready' instead of being rewritten under your fingers."
+                        className="w-16 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
+                    </td>
+                    <td className="px-1 py-1">
+                      {/* ⚖ LA CASE DU POIDS — le MÊME contrat que la cible ci-dessus :
+                          `type="text"` + `inputMode="decimal"` (le navigateur ne peut pas
+                          reformater ce qu'on écrit), le TEXTE est la source
+                          (`calcSetRestraintWeight`), la valeur numérique n'en est que la
+                          conséquence. Le placeholder « 1 » dit le défaut, et l'infobulle dit
+                          le reste — le 0 compris, qui met la ligne en PAUSE. */}
+                      <input type="text" inputMode="decimal"
+                        value={r.w != null ? r.w : (r.weight == null || r.weight === 1 ? '' : String(r.weight))}
+                        placeholder="1"
+                        onChange={(e) => calcSetRestraintWeight(r.key, e.target.value)}
+                        aria-label={`Weight of distance ${k + 1}, in multiples of the field's k_NOE`}
+                        title={`⚖ WHAT THIS LINE WEIGHS — its force constant is k_NOE × this number, so the distance pulls harder or more gently than the other lines. 1 (or an empty box) is the default and changes nothing; 0 puts the line ON HOLD (its atoms, its target and its measures stay, but ▶ Run, ▶ MD, ⚒ Minimise and ⟳ Energy stop receiving it).${paused ? ' — This line is ON HOLD right now.' : ''}${unreadable ? ' — The value typed here cannot be read as a number: the line runs at the default weight of 1.' : ''}`}
+                        className={`w-12 border rounded px-1.5 py-0.5 text-right outline-none text-[10px] font-mono ${paused || unreadable
+                          ? 'border-amber-400 bg-amber-50 text-amber-800'
+                          : 'border-indigo-300 bg-white focus:border-indigo-500'}`} />
+                    </td>
+                    <td className="px-2 py-1 font-mono text-slate-500">{ready ? torsionAng(at) : '—'}</td>
+                    <td className={`px-2 py-1 font-mono ${paused ? 'text-slate-500' : (good ? 'text-emerald-700' : 'text-rose-700')}`}
+                      title={paused ? 'A READING, not a verdict: this line is on hold (⚖ 0), so no gesture compares it to anything — the target and the distance are still shown as typed.' : (good ? `Inside the tolerance of ± ${STRUCTURE_CALC_RESTRAINT_TOLERANCE} Å of the target.` : `Outside the tolerance of ± ${STRUCTURE_CALC_RESTRAINT_TOLERANCE} Å — the field pays k_NOE × ⚖ per squared ångström beyond it.`)}>
+                      {dev == null ? '—' : `${dev > 0 ? '+' : ''}${dev.toFixed(2)}`}
+                    </td>
+                    <td className="px-1 py-1">
+                      <button type="button" onClick={() => calcRemoveRestraint(r.key)}
+                        title="Drop this distance from the list."
+                        className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-white border border-red-300 text-red-600 hover:bg-red-50">
+                        ✕
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {ranked && ranked.comp && ranked.comp !== componentRef.current && (
+        <p className="text-[10px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">
+          ⚠ This family was computed on ANOTHER molecule than the one on screen now (it was reloaded, or another molecule
+          is shown): its scores stay readable, but ⤓ Load would write coordinates that belong to the other one and is
+          refused. ▶ Run does it again on this molecule.
+        </p>
+      )}
+      </div>
+      )}
+      <div className="flex flex-wrap items-center gap-3 text-[10px] font-bold text-indigo-800">
+        <label className="flex items-center gap-1"
+          title="n — how many structures are BUILT from scratch. Each one is a fresh random draw of every rotatable dihedral, and each one is put through the standard protocol (anneal → dynamics → minimise → quench) before being scored. More starts means more chances that at least one of them can obey your distances — and more time: one start costs an annealing schedule, a whole dynamics and a minimisation.">
+          n starting
+          <input type="number" min="1" max={STRUCTURE_CALC_MAX_STARTS} value={calcStarts}
+            onChange={(e) => setCalcStartsText(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') runStructureCalculation(); }}
+            aria-label="Number of starting structures n"
+            className="w-14 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
+        </label>
+        <label className="flex items-center gap-1"
+          title="m — how many structures are KEPT once every start has been scored. The score is the force field of this calculation (kcal/mol: bonds, angles, planar rings, vdW, electrostatics, solvent, φ/ψ, χ1, ω, your distances in flat-bottom wells) plus the clash penalty; the m best are kept IN ORDER, with their coordinates, and the first one is written into the molecule. The OTHERS become MOLECULES of the Molecules bar (each shown, with its own ☑, styling rows, ★ set main, ↺ and 🗑): tick them, style them, and press 🎯 Fit to chosen to superpose the whole FAMILY onto the chosen one — the ensemble is then on screen and in the styling window, and 🗑 removes a model you do not want. Only the m kept structures carry their coordinates — that is what m means.">
+          m kept
+          <input type="number" min="1" max={STRUCTURE_CALC_MAX_KEEP} value={calcKeep}
+            onChange={(e) => setCalcKeepText(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') runStructureCalculation(); }}
+            aria-label="Number of retained structures m"
+            className="w-14 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
+        </label>
+        <label className="flex items-center gap-1"
+          title="🔥 The ANNEALING — how many temperature steps each start gets. A start is a random draw of every dihedral, which is almost always stacked or far from your distances, and the protocol that follows is LOCAL: without annealing it stays where the draw put it. The annealing moves DIHEDRALS ONLY (a rigid rotation of one side of the molecule about its hinge: bond lengths and angles cannot move), accepts a step that is worse with probability exp(−Δ/T), and cools down. 0 = no annealing, exactly what this panel did before (n plain draws + the rest of the protocol).">
+          🔥 recuit
+          <input type="number" min="0" max="24" value={calcAnneal}
+            onChange={(e) => setCalcAnneal(Math.max(0, Math.min(24, Math.round(Number(e.target.value) || 0))))}
+            aria-label="Annealing temperature steps"
+            className="w-12 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
+          <span className="font-semibold text-slate-500">paliers</span>
+        </label>
+        <label className="flex items-center gap-1"
+          title="🖼 HOW MANY IMAGES PER ANNEALING STEP — this is what makes the annealing VISIBLE: the module hands the screen a picture every N moves inside a temperature step (0/1 = one picture per step), and each picture is written into the molecule before the page is allowed to paint. 4 to 8 shows the fold without slowing the calculation down.">
+          🖼 frames
+          <input type="number" min="0" max="24" value={calcAnnealFrame}
+            onChange={(e) => setCalcAnnealFrame(Math.max(0, Math.min(24, Math.round(Number(e.target.value) || 0))))}
+            aria-label="Images per annealing temperature step"
+            className="w-12 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
+        </label>
+        {/* ⚙ LES RÉGLAGES DE LA DYNAMIQUE DU CALCUL SONT REVENUS ICI — la demande : « bring
+            back all the MD parameters related to structure calculation in the settings of
+            structure calculation. » Ils sont écrits UNE fois, par `renderCalcMdOptions()`,
+            et AUCUN autre geste ne les lit : ce sont les pas, le pas de temps, la durée,
+            les deux températures (🌡 hot → 🌡 cold), la part d'équilibration, les balayages
+            de ⚒ et l'option 🪢 ω — le protocole que CHAQUE DÉPART porte après son recuit.
+            La fenêtre 🌡 MD du bord gauche de la vue 3D a, elle, la dynamique ISOLÉE et ses
+            propres réglages (T, 💧 solvant, pas, dt, durée, intervalle d'images, ω), donc
+            les deux gestes ne peuvent plus se changer l'un l'autre (voir
+            `renderMdWindow`). */}
+        <div className="flex flex-wrap items-center gap-1.5">{renderCalcMdOptions()}</div>
+
+
+        <label className="flex items-center gap-1"
+          title="👁 WATCH EACH START: every gesture the module announces (the random draw, each annealing step, the equilibration, the cooling, the minimisation, the quench) is written into the molecule ON SCREEN, by the same path a torsion uses — so you SEE the molecule fold instead of watching a progress line, and the 🪢 plot follows it image by image while its window is on screen. Uncheck it for a quiet run: the molecule is then written ONCE, with the FINAL coordinates — the best model of the calculation, or what ▶ MD and ⚒ Minimise landed on — so the report and the 🪢 plot still describe the structure that came out. ↺ Undo torsion puts back the molecule you had before the calculation wrote anything. ⚠ THIS BOX RULES THE CALCULATION AND NOTHING ELSE: the ▶ MD of the 🌡 MD window and the ⚒ Minimise of the toolbar always write every image they compute — they are single gestures, launched by hand, and they are there to be watched.">
+          <input type="checkbox" checked={calcWatch} onChange={(e) => setCalcWatch(e.target.checked)}
+            aria-label="Write each start on screen while it is computed"
+            className="accent-indigo-600" />
+          👁 watch each start
+        </label>
+        <button type="button" onClick={runStructureCalculation}
+          disabled={calcBusy || mdBusy || (!calcUsableRows().length && !calcDihedrals.length)}
+          title="Run the calculation: n starts, the ⚒ protocol on each, the best m kept, and the first one written into the molecule. The panel is updated START BY START (one per frame, so the page stays alive), and ⏹ stops between two of them — ⏹ is THIS panel's stop: it RANKS what is already computed and keeps its best m, so a partial run still gives you a family. ⚠ It is not the ■ of the 🌡 MD window: that one stops the isolated ▶ MD (or a ⚒ Minimise), which has no family to rank — each stop is in the window of the gesture it stops, and while one runs the other's ▶ is greyed (they share the same single cancellation token). A fixed seed means the same molecule, the same distances and the same n always give the same family — press ▶ Run twice and compare. The 🪢 plot follows every start written while its window is on screen (one reader for φ/ψ, the same as its ⟳ Read)."
+          className="px-2 py-1 text-[10px] font-bold rounded border bg-indigo-600 border-indigo-700 text-white hover:bg-indigo-700 disabled:opacity-40">
+          ▶ Run
+        </button>
+        {calcBusy && (
+          <button type="button" onClick={calcStop}
+            title="⏹ STOP THE CALCULATION — it stops BETWEEN two starts (never in the middle of one), and what is already computed is NOT thrown away: those starts are RANKED, their best m are kept in the family below, and the best one is written into the molecule. The line says how many starts of n were made — a partial run is still a run. ⚠ This is the CALCULATION's stop, and it only exists while the calculation runs; the isolated ▶ MD and ⚒ Minimise of the 🌡 MD window have their own ■ Stop, right in that window (a gesture has no family to rank: it has the conformation on screen, and ↺ Undo torsion is what takes it back)."
+            className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-red-300 text-red-600 hover:bg-red-50">
+            ⏹ Stop
+          </button>
+        )}
+      </div>
+      {calcProgress && (
+        <p className="text-[10px] font-semibold text-indigo-700">{calcProgress}</p>
+      )}
+      {/* ⌖ LA VOIX DU PIQUAGE DU COUPLE — ses phrases à LUI. Le ⌖ a son état, sa peinture
+          bleue et donc son message : il dit d'aller cliquer le PREMIER atome, il compte
+          les atomes piqués (« 1 of 2 picked »), il refuse un couple pris dans deux
+          molécules, et il dit ce qui vient d'entrer dans la table. Sans ce paragraphe,
+          tout cela était écrit dans le vide : le piquage se serait tu. Le bleu est sa
+          couleur (la même que ses deux atomes), le vert une réussite, le rose un refus —
+          la classe suit le premier caractère, comme partout ailleurs dans ce panneau. */}
+      {pairMsg && (
+        <p title={pairMsg} className={`text-[10px] font-semibold rounded-md border px-2 py-1 whitespace-pre-wrap ${/^✓/.test(pairMsg) ? 'text-emerald-800 bg-emerald-50 border-emerald-200' : /^⚠/.test(pairMsg) ? 'text-rose-800 bg-rose-50 border-rose-200' : 'text-blue-800 bg-blue-50 border-blue-200'}`}>
+          {pairMsg}
+        </p>
+      )}
+      {calcMsg && (
+        <p title={calcMsg} className={`text-[10px] font-semibold rounded-md border px-2 py-1 whitespace-pre-wrap ${/^✓/.test(calcMsg) ? 'text-emerald-800 bg-emerald-50 border-emerald-200' : /^■/.test(calcMsg) ? 'text-amber-800 bg-amber-50 border-amber-200' : 'text-rose-800 bg-rose-50 border-rose-200'}`}>
+          {calcMsg}
+        </p>
+      )}
+      {/* ── 🧲 LE CHAMP DE FORCES — LES FAMILLES, PUIS 🌡 LA DYNAMIQUE ET ⚒ LA
+          MINIMISATION SUR LA MOLÉCULE TELLE QU'ELLE EST. Les lignes de la table du champ
+          viennent TOUTES de `forceFieldRowsOf` (aucun poids, aucune règle, aucune unité
+          n'est écrit ici) ; les énergies du moment viennent de `forceFieldEnergyOf`, relu
+          sur les coordonnées à l'écran quand on le demande (⟳ et après chaque geste). */}
+      <div className="rounded-lg border border-slate-200 bg-slate-50/60 p-2 flex flex-col gap-1.5">
+        <div className="flex flex-wrap items-center justify-between gap-1.5">
+          <span className="text-[10px] font-black text-slate-600 uppercase tracking-wide"
+            title="THE FORCE FIELD OF THIS CALCULATION — one list of named families, summed by the module, IN kcal/mol. The annealing, the dynamics, the minimisation and the score all read THIS list: no engine has a physics of its own. The charges, the non-polar solvent and the hydrogens it adds are part of it, and the panel writes what it computes. ⚙ The three gestures that PUT this field to work — ▶ MD, ⚒ Minimise and ⟳ Energy — sit in the button row above, next to 🧬 Structure calculation (they act on the molecule as it stands, so they need no section open).">
+            🧲 Force field · {FORCE_FIELD_FAMILIES.length} families · kcal/mol
+          </span>
+          <span className="text-[10px] font-semibold text-slate-500">
+            ⚙ ▶ MD · ⚒ Minimise · ⟳ Energy — in the row of 🧬 Structure calculation
+          </span>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-1">
+          {forceFieldRowsOf().map((row) => (
+            <div key={row.id} className="rounded border border-slate-200 bg-white px-1.5 py-1"
+              title={`${row.label} — ${row.of}; ${row.rule}`}>
+              <div className="text-[9px] font-black text-slate-500 uppercase tracking-wide flex items-center justify-between gap-1">
+                <span>{row.icon} {row.label}</span>
+                <span className="font-mono text-slate-400">k {row.k} {row.id === 'elec' ? '' : row.unit}</span>
+              </div>
+              <div className="text-[9px] text-slate-500 leading-tight">{row.of}</div>
+              <div className="text-[10px] font-mono font-bold text-slate-700">
+                {calcForce ? Number(calcForce[row.id]).toFixed(2) : '—'}
+                <span className="text-slate-400 font-normal"> kcal/mol</span>
+              </div>
+            </div>
+          ))}
+        </div>
+        {calcForce && (
+          <p className="text-[10px] text-slate-600">
+            Read on the molecule on screen: <b>E = {calcForce.total.toFixed(2)} kcal/mol</b> =
+            {' '}bonds {calcForce.bond.toFixed(2)} + angles {calcForce.angle.toFixed(2)}
+            {' '}+ rings {calcForce.planar.toFixed(2)} + vdW {calcForce.vdw.toFixed(2)}
+            {' '}+ µ {calcForce.elec.toFixed(2)} + solvent {calcForce.solv.toFixed(2)}
+            {' '}+ φ/ψ {calcForce.rama.toFixed(2)} + χ1 {calcForce.chi.toFixed(2)}
+            {' '}+ ω {calcForce.omega.toFixed(2)} + your distances {calcForce.restraint.toFixed(2)}
+            {' '}· entropy {calcForce.entropyReport.total.toFixed(1)} cal·mol⁻¹·K⁻¹
+            ({calcForce.entropy.toFixed(2)} kcal/mol of −T·S)
+            {' '}· <b>{calcForce.added.hydrogens}</b> hydrogens added on {calcForce.added.heavy} heavy atoms
+            ({calcForce.added.atoms} atoms in total) · net charge {calcForce.charges.net.toFixed(3)} e
+            ({calcForce.charges.method}) · surface {calcForce.surface.estimate.toFixed(0)} Å²
+            {calcForce.surface.exact != null ? ` (exact ${calcForce.surface.exact.toFixed(0)} Å²)` : ''}
+            {' '}· {calcForce.torsions.residues} residue{calcForce.torsions.residues === 1 ? '' : 's'} with a backbone
+            ({calcForce.torsions.phi.length} φ, {calcForce.torsions.psi.length} ψ, {calcForce.omegaReport.count} ω, {calcForce.chiReport.count} χ1)
+            {' '}· φ/ψ outside a basin: <b>{calcForce.ramaReport.violations}</b>
+            {calcForce.ramaReport.worst ? ` (worst ${calcForce.ramaReport.worst.gap.toFixed(0)}° away, ${calcForce.ramaReport.worst.region})` : ''}
+            {' '}· χ1 between wells: <b>{calcForce.chiReport.violations}</b>
+            {' '}· ω outside ± {STRUCTURE_CALC_OMEGA_TOLERANCE}°: <b>{calcForce.omegaReport.violations}</b>
+            {' '}· pairs inside {calcForce.nonbonded.limit} Å: {calcForce.nonbonded.count}
+            {calcForce.nonbonded.repulsive ? `, ${calcForce.nonbonded.repulsive} repulsive` : ''}.
+          </p>
+        )}
+        {/* ⚠ LE BLOC DE COMMENTAIRE QUI VIVAIT ICI (« les trois familles de torsion… ») A ÉTÉ
+            RETIRÉ — la demande de cette session : « Please remove all these large commentaries
+            in the MD window and in the “structure calculation section”. » Ce qu'il disait est
+            resté là où il sert : dans les infobulles des familles (🧲 ci-dessus) et dans les
+            rapports des gestes. */}
+      </div>
+      {ranked && ranked.ranking.length > 0 && (
+        <div className="flex flex-col gap-1.5">
+          <p className="text-[10px] text-slate-600">
+            <b>{ranked.tried}</b> start{ranked.tried === 1 ? '' : 's'} built, each scored by the force field
+            {ranked.refused ? ` (${ranked.refused} refused before scoring)` : ''} · the best{' '}
+            <b>{ranked.retained.length}</b> kept and ranked — the others are listed too, with their score, so nothing is
+            hidden{calcShown ? <> · on screen right now: <b>#{calcShown}</b> of the kept family</> : null}.
+          </p>
+          <div className="max-h-44 overflow-y-auto custom-scrollbar border border-indigo-200 rounded-lg bg-white">
+            <table className="w-full text-xs">
+              <thead className="sticky top-0 bg-indigo-50">
+                <tr>
+                  <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">#</th>
+                  <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">start</th>
+                  <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">score</th>
+                  <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">distances</th>
+                  <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">worst</th>
+                  <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">bonds / angles</th>
+                  <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700"
+                    title="THE BACKBONE READING OF EACH MODEL — how many residues have both φ and ψ, and how many of them fall OUTSIDE every basin of the 🪢 plot (with the worst distance to a basin). Zero here is a model whose Ramachandran plot is inside the basins; the number is the φ/ψ term of the score, read back on the model.">
+                    🧭 φ/ψ
+                  </th>
+                  <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">clashes</th>
+                  <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">moved</th>
+                  <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">how it ended</th>
+                  <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700" />
+                </tr>
+              </thead>
+              <tbody>
+                {ranked.ranking.map((r) => {
+                  const inFamily = r.rank <= ranked.retained.length;
+                  const model = inFamily ? ranked.retained.find((x) => x.rank === r.rank) : null;
+                  return (
+                    <tr key={`calc${r.rank}`} className={`border-t border-indigo-100 ${inFamily ? 'bg-emerald-50/50' : ''}`}>
+                      <td className="px-2 py-1 font-bold text-indigo-800" title={inFamily ? 'kept: this structure carries its coordinates' : 'NOT kept: it was scored, but m only keeps the first ones'}>
+                        {r.rank}{inFamily ? ' ✓' : ''}
+                      </td>
+                      <td className="px-2 py-1 font-mono text-slate-500">#{r.index}</td>
+                      <td className="px-2 py-1 font-mono text-slate-700"
+                        title={`Score ${r.score.toFixed(2)} = target function ${Number(r.total).toFixed(2)} + clash penalty ${Number(r.clashPenalty).toFixed(2)} (the ⚒'s own way of preferring a model without atoms on top of each other)`}>
+                        {r.score.toFixed(1)}
+                      </td>
+                      <td className={`px-2 py-1 font-mono ${r.violations ? 'text-rose-700' : 'text-emerald-700'}`}
+                        title={`${r.satisfied} of the ${r.satisfied + r.violations} distances are respected (within ${STRUCTURE_CALC_RESTRAINT_TOLERANCE} Å) — rms ${Number(r.rmsd).toFixed(3)} Å`}>
+                        {r.satisfied}/{r.satisfied + r.violations}
+                      </td>
+                      <td className="px-2 py-1 font-mono text-slate-500"
+                        title={r.worst ? `the distance furthest from what you asked: ${r.worst.i}–${r.worst.j} measured ${Number(r.worst.distance).toFixed(2)} Å for ${Number(r.worst.target).toFixed(2)} Å` : 'no distance to report'}>
+                        {r.worst ? `${r.worst.i}–${r.worst.j} ${torsionAng(r.worst.distance)}` : '—'}
+                      </td>
+                      <td className="px-2 py-1 font-mono text-slate-500">{r.bondRms.toFixed(3)} Å / {r.angleRms.toFixed(1)}°</td>
+                      <td className={`px-2 py-1 font-mono ${r.rama && r.rama.violations ? 'text-rose-700' : 'text-emerald-700'}`}
+                        title={r.rama
+                          ? `${r.rama.measured} residue(s) with both φ and ψ (${r.rama.partial} at a chain end have only one), ${r.rama.violations} outside every basin of the 🪢 plot${r.rama.worst ? ` — the worst is ${r.rama.worst.gap.toFixed(0)}° from the edge of a basin, in the « ${r.rama.worst.region} » region` : ''}. This is the φ/ψ term of the score (k = ${STRUCTURE_CALC_RAMA_WEIGHT}) read back on the model, and the same reading the 🪢 plot draws.`
+                          : 'no backbone residue to read in this model (no N–CA–C: a nucleic acid, a sugar, a lipid or a ligand)'}>
+                        {r.rama ? `${r.rama.violations}/${r.rama.measured}` : '—'}
+                        {r.rama && r.rama.partial ? <span className="text-slate-400">+{r.rama.partial}</span> : null}
+                      </td>
+                      <td className={`px-2 py-1 font-mono ${r.clashes ? 'text-rose-700' : 'text-emerald-700'}`}
+                        title={`${r.clashes} atom pair(s) closer than 1.45 Å in this model, ${r.contacts} pair(s) inside their hard core (0.6 × the two Bondi radii)`}>
+                        {r.clashes ? `⚠ ${r.clashes}` : '✓'} · {r.contacts}
+                      </td>
+                      <td className="px-2 py-1 font-mono text-slate-500" title="atoms this start moved away from the molecule you had on screen (the draw and the protocol together)">{r.moved}</td>
+                      <td className="px-2 py-1 text-slate-500" title={calcWhyOf(r.reason)}>{r.reason}</td>
+                      <td className="px-1 py-1">
+                        {model ? (
+                          <button type="button" onClick={() => calcWriteStructure(model, ranked)}
+                            title={`Write this structure into the molecule (it becomes THE molecule on screen: every atom, by the same path a torsion uses — so 📏, the plates, the film, 📥 Download and ↺ all follow it). ${r.index === 0 ? '' : ''}Undo torsion puts the previous geometry back.`}
+                            className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-white border border-indigo-300 text-indigo-700 hover:bg-indigo-50">
+                            ⤓ Load
+                          </button>
+                        ) : (
+                          <span className="text-slate-300" title="only the m kept structures carry their coordinates — raise “m kept” to keep more">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+      {ranked && ranked.family && ranked.family.restraints.length > 0 && (
+        <p className="text-[10px] text-slate-500">
+          <b>The kept family</b> —{' '}
+          {ranked.family.restraints.map((f) => `${f.i}–${f.j} ${torsionAng(f.mean)} (${f.satisfied}/${f.models} models,`
+            + ` spread ${torsionAng(f.spread)})`).join(' · ')}
+          {ranked.family.spread.count
+            ? ` · the models differ by ${ranked.family.spread.mean.toFixed(2)} Å rmsd on average, after optimal`
+              + ` superposition over all ${ranked.family.spread.atoms} atoms (worst pair #${ranked.family.spread.worst.a}–#${ranked.family.spread.worst.b}`
+              + ` at ${ranked.family.spread.worst.rmsd.toFixed(2)})`
+            : ' · a single model was kept, so there is no spread to measure'}
+          {ranked.family.rest.length
+            ? ` · left out (scored, not kept): ${ranked.family.rest.map((r) => `#${r.rank} start ${r.index} (${r.score.toFixed(1)})`).join(' · ')}`
+            : ''}
+        </p>
+      )}
+      {/* 💾 LA FAMILLE ET LE RAPPORT DANS DES FICHIERS — la demande de cette session :
+          « Allow saving the family of structures and the report. » Le PDB est MULTI-MODÈLE
+          (MODEL / ENDMDL), écrit par l'écrivain du dossier (le même que ⤓ Load et le 📥
+          Download) : chaque structure retenue y est posée UNE fois, dans l'ordre du tableau
+          (le rang 1 d'abord — celui qui est écrit dans la molécule). Le rapport est du
+          TEXTE, fait des chiffres du module : rien n'y est recalculé. */}
+      <div className="flex flex-wrap items-center gap-1.5 border-t border-indigo-100 pt-1.5">
+        <button type="button" onClick={calcSaveFamily} disabled={!ranked || !ranked.retained.length}
+          title="SAVE THE FAMILY OF STRUCTURES — one multi-model PDB file (MODEL / ENDMDL), one model per retained structure, in the order of the table (rank 1 first: the one written into the molecule on screen). Written by the app's own PDB writer, so it reloads here or in PyMOL / Chimera and carries the atom names a superposition needs. The writing BORROWS the coordinates and puts the geometry of the screen back: nothing moves."
+          className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-indigo-300 text-indigo-700 hover:bg-indigo-100 disabled:opacity-40">
+          💾 Save the family{ranked && ranked.retained.length ? ` (${ranked.retained.length})` : ''}
+        </button>
+        <button type="button" onClick={calcSaveReport} disabled={!ranked || !ranked.ranking.length}
+          title="SAVE THE REPORT — a plain-text file with the whole reading of this calculation: the parameters, then each start (its score and the families of the field, its distances satisfied / violations / rms / worst, its backbone reading, its contacts, how it ended), then the family (what each distance measures across the kept models, and how far apart they are after optimal superposition). Every number comes from the module's own report."
+          className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-indigo-300 text-indigo-700 hover:bg-indigo-100 disabled:opacity-40">
+          💾 Save the report
+        </button>
+      </div>
+      </div>
+    </div>
+  );
+};
+
 
 return (
 <div className="flex flex-col gap-2">
@@ -21660,575 +22418,28 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
     trempe — et le texte ci-dessous le dit tel qu'il est. Contrairement au 🪢 il ÉCRIT :
     la structure retenue, par le MÊME chemin qu'une torsion (donc le 📏, les plaques, le
     film, le 📥 Download et le ↺ la lisent et la défont).
-    ⚠ EMPLACEMENT — la demande de cette session : « move the button structure calculation
+    ⚠ EMPLACEMENT — la demande d'une session passée : « move the button structure calculation
     next to the button structure from sequence and color the latter in light blue. » Le
     bouton 🧬 est donc À CÔTÉ de « 🧬 Structure from sequence » (le premier bouton de ✏️
-    Modify) et NON PLUS au bout de la rangée : les trois gestes du champ (▶ MD · ⚒
-    Minimise · ⟳ Energy) restent collés à lui, ET SON PANNEAU EST RENDU ICI — ouvrir le
-    calcul déplie sa section juste SOUS son bouton. Les commandes qui le suivaient (⚭
-    Disulfides, ↩ Back to PDB, ⚗️ Rebuild H, ✏️ Atom names, ⚡ ESP, 🔢 Renumber) passent
-    simplement à la ligne suivante tant que la section est ouverte. */}
+    Modify), et les trois gestes du champ (▶ MD · ⚒ Minimise · ⟳ Energy) restent collés à lui.
+    ⚠ CE PANNEAU N'EST PLUS UNE SECTION DE LA BARRE — la demande de CETTE session : « Transform
+    the “structure calculation” page in an internal collapsible window as that of MD or
+    Ramachandran … ». Le bouton 🧬 OUVRE ET REFERME la fenêtre de la vue 3D (`calcDock`,
+    `renderCalcWindow`) : une colonne à gauche de la molécule, exactement comme 🌡 MD et 🪢
+    Ramachandran, qui la POUSSENT au lieu de recouvrir la barre. Ce qui suit donc ici (⚭
+    Disulfides, ↩ Back to PDB, ⚗️ Rebuild H, ✏️ Atom names, ⚡ ESP, 🔢 Renumber) reste sur sa
+    ligne, ouverte ou fermée. */}
 <button type="button"
-  onClick={() => openCalcSection('distances')}
-  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${calcSection === 'distances' ? 'bg-indigo-100 border-indigo-400 text-indigo-900' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
-  title="🧬 STRUCTURE CALCULATION — the request, verbatim: “the user provide the distances between atom pairs and selects the number of starting structures n and the number of retained structures m. The program must then generate n structures by randomly assigning values of all dihedral angles. From each of these n structure the protocol of ‘model build’ is applied to respect the distance constraints and the final result is scored. the best m structures are retained.” ① THE DISTANCES: press ⌖ and pick the pair IN THE VIEW — the ⌖ of this table has its OWN picker (the request, verbatim: “dedicated pair picker”): TWO atoms (A · B), painted BLUE, with nothing to do with the four picks of ✏️ Torsion (A · B · C · D), which are not read here and not touched; the SECOND click adds the line, and the distance you want is typed in the ⌖ want field next to it — left empty, the length the tables give that pair of elements is used; every line can be edited, and a pair is listed once. ② n AND m: how many starting structures to build, and how many to keep. ③ ▶ RUN: each of the n starts is a draw of EVERY rotatable dihedral (a bond that is a hinge: single, not inside a ring, with something on both sides) taken uniformly in (−180, 180) and APPLIED as one rigid rotation by the app's own torsion writer, so bond lengths and angles are untouched to the last digit; then the STANDARD protocol is applied to it — the annealing in dihedral space (Metropolis, 1500 K down to 300 K), the Langevin dynamics (an equilibration at 🌡 hot, then a cooling down to 🌡 cold), the dihedral minimisation, and a cold quench that repairs what the descent broke — and the result is SCORED with the same force field (kcal/mol: bonds, angles, planar rings, vdW, electrostatics, solvent, φ/ψ, χ1, ω, your distances), plus the clash penalty. The best m are retained, ranked by that score, and the first is written into the molecule. ④ The seed is FIXED: the same molecule, the same distances and the same n give the same family to the last digit. ⏹ Stop stops between two starts and keeps what is done. ⚠ What it is NOT: an experimental structure. The protocol is the standard one (annealing, dynamics, minimisation, quench) under the force field, but the force field is the app's OWN — partial charges from the graph, a non-polar solvent term, no explicit water, no added atoms that the file does not have. The randomness is only in the STARTING dihedrals (the score is deterministic), and a peptide C–N bond is one of them: a start can come out cis, which is exactly why the field's ω term and the cold quench are there.">
-  🧬 Structure calculation{calcResult ? ` (${calcResult.retained.length}/${calcResult.tried})` : ''}
+  onClick={() => toggleCalcDock()}
+  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${calcDock ? 'bg-indigo-100 border-indigo-400 text-indigo-900 hover:bg-indigo-200' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+  title="🧬 STRUCTURE CALCULATION — OPEN OR CLOSE ITS WINDOW. The window sits at the LEFT of the 3D view (as 🌡 MD and 🪢 Ramachandran do), and this same button closes it; its ⇤ folds it to a thin tab on the edge. In it: the parameters (n · m · 🔥 recuit · 🖼 frames), the stages of the calculation (the progression, the report, the ranked family) and 💾 Save the family / 💾 Save the report. The two constraint tables and the MD parameters of the protocol are behind its ⚙ Parameters and Constraints button. ① THE DISTANCES: press ⌖ and pick the pair IN THE VIEW — the ⌖ of that table has its OWN picker (the request, verbatim: “dedicated pair picker”): TWO atoms (A · B), painted BLUE, with nothing to do with the four picks of ✏️ Torsion (A · B · C · D), which are not read here and not touched; the SECOND click adds the line, and the distance you want is typed in the ⌖ want field next to it — left empty, the length the tables give that pair of elements is used; every line can be edited, and a pair is listed once. ② n AND m: how many starting structures to build, and how many to keep. ③ ▶ RUN: each of the n starts is a draw of EVERY rotatable dihedral (a bond that is a hinge: single, not inside a ring, with something on both sides) taken uniformly in (−180, 180) and APPLIED as one rigid rotation by the app's own torsion writer, so bond lengths and angles are untouched to the last digit; then the STANDARD protocol is applied to it — the annealing in dihedral space (Metropolis, 1500 K down to 300 K), the Langevin dynamics (an equilibration at 🌡 hot, then a cooling down to 🌡 cold), the dihedral minimisation, and a cold quench that repairs what the descent broke — and the result is SCORED with the same force field (kcal/mol: bonds, angles, planar rings, vdW, electrostatics, solvent, φ/ψ, χ1, ω, your distances), plus the clash penalty. The best m are retained, ranked by that score, and the first is written into the molecule. ④ The seed is FIXED: the same molecule, the same distances and the same n give the same family to the last digit. ⏹ Stop stops between two starts and keeps what is done. ⚠ What it is NOT: an experimental structure. The protocol is the standard one (annealing, dynamics, minimisation, quench) under the force field, but the force field is the app's OWN — partial charges from the graph, a non-polar solvent term, no explicit water, no added atoms that the file does not have. The randomness is only in the STARTING dihedrals (the score is deterministic), and a peptide C–N bond is one of them: a start can come out cis, which is exactly why the field's ω term and the cold quench are there.">
+  🧬 Structure calculation{calcResult ? ` (${calcResult.retained.length}/${calcResult.tried})` : ''}{calcDock ? ' ▾' : ' ▸'}
 </button>
 {/* ⚙ LES TROIS GESTES DU CHAMP, ICI — la demande : « can the MD, Minimize and Energy be
     put next to “structure calculation” button? » Ils s'appliquent à la molécule TELLE
     QU'ELLE EST (aucune section à ouvrir), donc ils vivent dans la rangée du bouton 🧬,
     avec le 🌡 T qui règle la dynamique. Voir `renderForceGestures`. */}
 {renderForceGestures()}
-{calcSection === 'distances' && (() => {
-  const live = calcGeometryNow();
-  const geom = live ? live.geom : null;
-  const ranked = calcResult;
-  return (
-    <div className="w-full bg-indigo-50/40 border border-t-0 border-indigo-200 rounded-b-lg p-3 flex flex-col gap-2">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="text-[10px] font-black text-indigo-700 uppercase tracking-wide">
-          Structure calculation — n starting structures, the standard protocol on each, the best m kept
-        </span>
-        <div className="flex flex-wrap items-center gap-1.5">
-          {/* ⌖ SON PROPRE PIQUAGE — la demande : « dedicated pair picker ». Le ⌖ arme un
-              piquage À LUI : DEUX atomes (A · B) peints en BLEU, son état, ses phrases.
-              Les quatre atomes de ✏️ Torsion ne sont ni lus ni touchés : armé, le bouton
-              devient « ⌖ Picking A · B » ; une seconde pression l'éteint. */}
-          <button type="button" onClick={calcAddRestraint}
-            title="THE TABLE'S OWN PAIR PICKER — the request, verbatim: “dedicated pair picker”. Press ⌖ and it arms a picker OF ITS OWN: TWO atoms (A · B), painted BLUE in the 3D view, and NOTHING to do with the four picks of ✏️ Torsion (A · B · C · D) — those are not read here and not touched, so a torsion and a pair can be picked one after the other without either undoing the other. Click the first atom, then the second: the line is added to the list with its two atoms already resolved (it can still be edited, or dropped with ✕), and the two blue atoms stay painted on the molecule the line is about. The distance is the one typed in the ⌖ want field on the right — left EMPTY (the usual case), it is the length the tables give that pair of elements (S–S 2.05 Å, C–C 1.54 Å…). A pair already in the list is REPLACED, never doubled."
-            className={`px-2 py-1 text-[10px] font-bold rounded border ${pairPick ? 'bg-blue-600 border-blue-700 text-white' : 'bg-white border-indigo-300 text-indigo-700 hover:bg-indigo-100'}`}>
-            {pairPick ? `⌖ Picking A · B (${pairAtoms.length}/2) — click the atoms, ⌖ stops` : '⌖ Add the picked pair'}
-          </button>
-          <input type="text" inputMode="decimal" value={pairTargetDraft}
-            onChange={(e) => setPairTargetDraft(e.target.value)}
-            placeholder="want (Å)"
-            aria-label="Target distance of the pair picked with ⌖, in ångströms — left empty: the length the tables give that pair of elements"
-            title="⌖ WANT — the distance YOU want the pair picked with ⌖ to have, in ångströms. Left EMPTY (the usual case) the line takes the length the tables give that pair of elements; whatever you type here becomes the target of the line the SECOND click adds, and it can still be overwritten afterwards in the line's own distance column."
-            className="w-16 border border-indigo-300 rounded px-1.5 py-1 text-[10px] font-mono bg-white text-right outline-none focus:border-indigo-500" />
-          <button type="button" onClick={calcAddBlankRow}
-            disabled={calcRestraints.length >= STRUCTURE_CALC_MAX_RESTRAINTS}
-            title="Add an EMPTY line and TYPE its two atoms — “ALA 12 CA”, “12:CA”, “CA12”, the raw file name, or simply an atom number — then its distance in ångströms. The table is how distances are defined here; picking atoms is only the shortcut. A line that is not finished yet is kept but never sent to the module, and ⌖ replaces a line it duplicates."
-            className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-indigo-300 text-indigo-700 hover:bg-indigo-100 disabled:opacity-40">
-            ➕ Add a row
-          </button>
-          <button type="button" onClick={() => setCalcRestraints([])}
-            disabled={!calcRestraints.length}
-            title="Drop every distance from the list (the molecule is not touched — only the list is emptied)."
-            className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100 disabled:opacity-40">
-            Clear the list
-          </button>
-          {/* 💾 📂 LA TABLE DANS UN FICHIER — la demande : « Allow to save/upload from
-              file the distance constraints in the structure calculation section. »
-              Le format est celui de utils/structureRestraints.js (trois colonnes,
-              lisible à l'œil) : 💾 écrit la table TELLE QU'ELLE EST AFFICHÉE, 📂 la
-              relit et RÉSOUT les noms d'atomes sur la molécule à l'écran — une ligne
-              non résolue est gardée, avec son `say`, comme une ligne tapée à moitié. */}
-          <button type="button" onClick={calcSaveRestraints}
-            disabled={!calcRestraints.length}
-            title="Save the distance table to a FILE (plain text, three columns: atom A · atom B · target in Å, with a header that says how to read it back). The list lives in this viewer's state, so it disappears when the page is reloaded — the file is what keeps it. It can be edited by hand and reloaded with 📂 Load distances, on this molecule or on another one."
-            className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-indigo-300 text-indigo-700 hover:bg-indigo-100 disabled:opacity-40">
-            💾 Save distances
-          </button>
-          <label
-            title="Load a distance table from a FILE (the format 💾 Save distances writes: one distance per line, “atom A · atom B · target in Å”). Every atom name is resolved ON THE MOLECULE ON SCREEN — “ALA 12 CA”, “12:CA”, “CA12”, the raw file name, or “#123” (atom number) — and a line whose atoms are not found is KEPT as it is, to be finished, with the reason said on the row. A pair already in the table is replaced, never doubled."
-            className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-indigo-300 text-indigo-700 hover:bg-indigo-100 cursor-pointer">
-            📂 Load distances
-            <input type="file" accept=".txt,.csv,text/plain" className="hidden"
-              onChange={(e) => { calcLoadRestraintsFile(e.target.files && e.target.files[0]); e.target.value = ''; }} />
-          </label>
-          {/* ⛓ LA STRUCTURE SECONDAIRE IMPOSÉE → DES CONTRAINTES DE DIHÈDRE — la
-              demande, mot pour mot : « In MD and “structure calculation” allow the
-              conversion of the secondary structure imposed in the “sequence and
-              structure” subsection into dihedral angle constraints. » Le MÊME bouton
-              que celui de la rangée ▶ MD : un seul état, un seul calcul, donc le
-              calcul de structure ne peut pas porter d'autres contraintes que le ▶ MD. */}
-          <button type="button" onClick={calcConvertSecondaryStructure}
-            className={`px-2 py-1 text-[10px] font-bold rounded border transition-colors ${calcDihedrals.length ? 'bg-emerald-50 border-emerald-400 text-emerald-800 hover:bg-emerald-100' : 'bg-white border-indigo-300 text-indigo-700 hover:bg-indigo-100'}`}
-            title={`Convert the secondary structure painted in “Sequence and structure” of the page (${imposedSecondaryStructure ? `${imposedSecondaryStructure.replace(/\s+/g, '').length} letters` : 'nothing painted yet'}) into dihedral angle constraints (H → φ −57° / ψ −47°, E → φ −139° / ψ +135°, flat-bottom window ± ${SS_DIHEDRAL_TOLERANCE}°): they enter the recuit, the dynamics, the minimisation and the quench of every start, and the score counts them. Press again to remove them.`}>
-            ⛓ {calcDihedrals.length ? `${calcDihedrals.length} φ/ψ imposed — Off` : 'Secondary structure → φ/ψ'}
-          </button>
-          {!!calcDihedrals.length && (
-            <span className="text-[9px] font-semibold text-emerald-800"
-              title="What the conversion found, said by the module: the painted letters, the readable residues on screen, and how many were matched (the letters are matched BY ORDER).">
-              {(calcSsReading && calcSsReading.matched) || 0} residue{((calcSsReading && calcSsReading.matched) || 0) === 1 ? '' : 's'} converted (± {SS_DIHEDRAL_TOLERANCE}°)
-            </span>
-          )}
-        </div>
-      </div>
-      <p className="text-[10px] text-slate-500">
-        {calcRestraints.length
-          ? <>The distances to respect — <b>{calcRestraints.length}</b> line{calcRestraints.length === 1 ? '' : 's'}
-            {calcUsableRows().length === calcRestraints.length ? '' : `, ${calcUsableRows().length} ready`}
-            {calcInertCount() ? ` (${calcInertCount()} at ⚖ 0, on hold)` : ''}, each one
-            measured on the molecule ON SCREEN right now. ⌖ adds the picked pair, ➕ adds an empty line whose two atoms
-            are TYPED, ✕ drops a line, and every field stays editable: the distance is YOUR number, not a table&apos;s.
-            ⚖ is the WEIGHT of a line — it multiplies its force constant (<b>k = k_NOE × weight</b>), so 2 pulls twice
-            as hard and 0 leaves the line on hold (listed and measured, taking part in nothing). ▶ Run, ▶ MD,
-            ⚒ Minimise and ⟳ Energy all read it; the 📏 box of the 🌡 MD window alone decides whether the dynamics
-            reads the table at all.</>
-          : <>Nothing to respect yet. Two ways: press ⌖ and pick the pair IN THE VIEW (the ⌖
-            picker paints its own two atoms BLUE — no relation to the four picks of ✏️ Torsion,
-            and the second click adds the line), or press ➕ and TYPE a line — “ALA 12 CA” against “ALA 40 CA”, 6.0 Å. A half-written line waits for you;
-            ▶ Run uses the finished ones, and its ⚖ column gives each line its own weight.</>}
-      </p>
-      {ranked && ranked.comp && ranked.comp !== componentRef.current && (
-        <p className="text-[10px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">
-          ⚠ This family was computed on ANOTHER molecule than the one on screen now (it was reloaded, or another molecule
-          is shown): its scores stay readable, but ⤓ Load would write coordinates that belong to the other one and is
-          refused. ▶ Run does it again on this molecule.
-        </p>
-      )}
-      {/* ⛓ LA TABLE DES CONTRAINTES DE φ/ψ — la demande : « Quest'ultimo deve riempire la
-          tabella di constraints. » Elle est écrite ICI, à côté de celle des distances, et
-          chaque ligne est UN angle imposé par la peinture 🖌️ : un résidu donne son φ ET son
-          ψ, jugés séparément. La cible et la fenêtre viennent du module (`SS_DIHEDRALS`,
-          `SS_DIHEDRAL_TOLERANCE` — aucun chiffre de φ/ψ n'est écrit dans le JSX), la lettre
-          est celle qui a été PEINTE, `#n` est le CA qui porte l'angle, et ✕ rend à CE
-          résidu-là sa liberté sans toucher aux autres. */}
-      {calcDihedrals.length > 0 && (
-        <div className="max-h-32 overflow-y-auto custom-scrollbar border border-emerald-200 rounded-lg bg-white">
-          <table className="w-full text-xs">
-            <thead className="sticky top-0 bg-emerald-50">
-              <tr>
-                <th className="text-left px-2 py-1 text-[9px] uppercase text-emerald-800">#</th>
-                <th className="text-left px-2 py-1 text-[9px] uppercase text-emerald-800">residue</th>
-                <th className="text-left px-2 py-1 text-[9px] uppercase text-emerald-800">letter</th>
-                <th className="text-left px-2 py-1 text-[9px] uppercase text-emerald-800">angle</th>
-                <th className="text-left px-2 py-1 text-[9px] uppercase text-emerald-800">target</th>
-                <th className="text-left px-2 py-1 text-[9px] uppercase text-emerald-800">window</th>
-                <th className="text-left px-2 py-1 text-[9px] uppercase text-emerald-800" />
-              </tr>
-            </thead>
-            <tbody>
-              {calcDihedrals.map((c, k) => (
-                <tr key={`dh${k}`} className="border-t border-emerald-100">
-                  <td className="px-2 py-1 text-slate-400">{k + 1}</td>
-                  <td className="px-2 py-1 font-mono text-slate-500"
-                    title={`The CA of this constraint is atom #${c.ca} of the molecule on screen (the angle is the dihedral of ${(c.atoms || []).map((x) => `#${x}`).join(' · ')}).`}>
-                    #{c.ca}
-                  </td>
-                  <td className="px-2 py-1 font-black text-emerald-800"
-                    title={`The letter painted in “Sequence and structure”: ${c.letter} — the module carries its own φ/ψ target (SS_DIHEDRALS).`}>
-                    {c.letter || '—'}
-                  </td>
-                  <td className="px-2 py-1 font-mono font-bold text-slate-700"
-                    title="φ (C(i−1)–N–CA–C) or ψ (N–CA–C–N(i+1)) — each one is judged ON ITS OWN, so a residue can keep one and lose the other.">
-                    {c.kind === 'phi' ? 'φ' : 'ψ'}
-                  </td>
-                  <td className="px-2 py-1 font-mono text-slate-700">{torsionAng(c.target)}</td>
-                  <td className="px-2 py-1 font-mono text-slate-500">± {c.tolerance}°</td>
-                  <td className="px-1 py-1">
-                    <button type="button" onClick={() => setCalcDihedrals((list) => list.filter((x) => x !== c))}
-                      title="Drop THIS angle: the residue keeps the other one, and ▶ MD, ⚒ Minimise, ▶ Run and the ⟳ Energy reading stop imposing it. ⛓ puts the whole painted structure back."
-                      className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-white border border-red-300 text-red-600 hover:bg-red-50">
-                      ✕
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-      {calcRestraints.length > 0 && (
-        <div className="max-h-32 overflow-y-auto custom-scrollbar border border-indigo-200 rounded-lg bg-white">
-          <table className="w-full text-xs">
-            <thead className="sticky top-0 bg-indigo-50">
-              <tr>
-                <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">#</th>
-                <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">Atom A</th>
-                <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">Atom B</th>
-                <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">Want (Å)</th>
-                {/* ⚖ LA COLONNE DU POIDS — la demande : « enable this option allowing the
-                    user to give a weight to these constraints. This weight can be defined
-                    in the table. » Elle est ICI, entre la cible et les deux colonnes de
-                    mesure, et elle ne bouge JAMAIS de place : une ligne = un poids. Le
-                    titre dit tout ce que la case accepte, y compris le 0 (mise en pause). */}
-                <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700"
-                  title="⚖ THE WEIGHT OF A LINE — the force constant of this distance is k_NOE × weight, so 2 pulls on the pair twice as hard as 1 and 0.5 twice as gently. It is written here, on the line, and it is read by ▶ Run, ▶ MD, ⚒ Minimise and ⟳ Energy alike. Type a number ≥ 0: empty or a value that cannot be read means the DEFAULT weight of 1 (as if this column did not exist), and a weight of 0 puts the line ON HOLD — it keeps its atoms, its target, its Now and its Δ, but it takes part in nothing and counts in no report. A comma works as the decimal separator.">
-                  ⚖ w
-                </th>
-                <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">Now</th>
-                <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">Δ</th>
-                <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700" />
-              </tr>
-            </thead>
-            <tbody>
-              {calcRestraints.map((r, k) => {
-                const ready = Number.isInteger(r.i) && Number.isInteger(r.j) && r.i !== r.j
-                  && Number.isFinite(r.target) && r.target > 0;
-                const at = ready && geom ? calcDistanceIn(geom, r.i, r.j) : null;
-                const dev = Number.isFinite(at) ? at - r.target : null;
-                const good = dev != null && Math.abs(dev) <= STRUCTURE_CALC_RESTRAINT_TOLERANCE;
-                /* ⚖ CE QUE LA LIGNE PÈSE — `0` est une mise en PAUSE (la ligne est
-                   encore mesurée et affichée, mais aucun geste ne la reçoit), et un texte
-                   illisible est le poids par DÉFAUT (1) : c'est `calcWeightOf` qui le dit,
-                   ici comme dans les quatre gestes du champ. La case passe en ambre dans
-                   les deux cas qui doivent se voir : une frappe que le module ne peut pas
-                   lire, et le 0 qui met la ligne en attente. */
-                const weight = calcWeightOf(r);
-                const paused = ready && weight === 0;
-                const unreadable = String(r.w == null ? '' : r.w).trim() !== '' && r.weight == null;
-                const cell = (side) => {
-                  const idx = side === 'a' ? r.i : r.j;
-                  const own = side === 'a' ? r.sayA : r.sayB;   // ⚠ la plainte de CETTE case, jamais celle de l'autre
-                  return (
-                    <td className="px-1 py-1 whitespace-nowrap">
-                      {/* ⚠ LE NAVIGATEUR N'A PAS LE DROIT DE RÉÉCRIRE CE QU'ON TAPE ICI —
-                          la différence entre TAPER et COLLER, c'est que le navigateur ne
-                          propose et ne corrige QUE pendant la frappe (« je tape “CYS 31
-                          SG” et il me répond “CYS 1 SG” »). Les colonnes numériques s'en
-                          gardent par `inputMode="decimal"` (voir plus bas) ; les deux
-                          atomes se gardent par ces trois attributs : le texte de la case
-                          est celui de l'utilisateur, et rien d'autre. */}
-                      <input type="text" value={(side === 'a' ? r.a : r.b) || ''} autoComplete="off" autoCorrect="off" spellCheck={false}
-                        placeholder={side === 'a' ? 'atom A' : 'atom B'}
-                        onChange={(e) => calcSetRowAtom(r.key, side, e.target.value)}
-                        aria-label={`${side === 'a' ? 'First' : 'Second'} atom of line ${k + 1}`}
-                        title={`TYPE the ${side === 'a' ? 'first' : 'second'} atom: “ALA 12 CA”, “12:CA”, “CA12”, its raw file name, or simply its number. It is resolved on the molecule on screen, and THIS cell says what IT did not understand — the complaint of the other atom belongs to the other cell.${own ? ` ⚠ ${own}` : ''}`}
-                        className={`w-28 border rounded px-1.5 py-0.5 outline-none text-[10px] font-mono bg-white ${idx == null ? 'border-amber-400' : 'border-indigo-300 focus:border-indigo-500'}`} />
-                      <span className="ml-1 text-[10px] font-mono text-slate-400">#{idx ?? '?'}</span>
-                    </td>
-                  );
-                };
-                return (
-                  <tr key={r.key} className={`border-t border-indigo-100 ${ready ? '' : 'bg-amber-50/60'}`}>
-                    <td className="px-2 py-1 text-slate-400"
-                      title={r.say || (paused ? '⏸ ON HOLD — this line weighs ⚖ 0: it is still listed and measured here, and it takes part in nothing (no ▶ Run, no ▶ MD, no ⚒ Minimise, no ⟳ Energy).' : '')}>
-                      {k + 1}{r.say ? ' ⚠' : ''}{paused ? ' ⏸' : ''}
-                    </td>
-                    {cell('a')}
-                    {cell('b')}
-                    <td className="px-1 py-1">
-                      {/* ⚠ `type="text"` + `inputMode="decimal"` : le navigateur ne peut
-                          donc pas REFORMATER ce que l'utilisateur écrit. `value` est le
-                          TEXTE tapé (`r.t`), la cible numérique n'est qu'une conséquence
-                          (`calcSetRestraintTarget`), et taper « 12.5 » reste « 12.5 ». */}
-                      <input type="text" inputMode="decimal" value={r.t != null ? r.t : (r.target ?? '')}
-                        onChange={(e) => calcSetRestraintTarget(r.key, e.target.value)}
-                        aria-label={`Target distance for ${r.label || `atom ${r.i ?? '?'} and atom ${r.j ?? '?'}`}, in ångströms`}
-                        title="The distance YOU want this pair to have, in ångströms — the protocol drives THIS number, and the report compares the model against it. A line whose atoms are typed gets the length the tables give that pair of elements, and you can overwrite it. Typed text is kept as typed (a comma works as the decimal separator); a value that cannot be read leaves the line 'not ready' instead of being rewritten under your fingers."
-                        className="w-16 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
-                    </td>
-                    <td className="px-1 py-1">
-                      {/* ⚖ LA CASE DU POIDS — le MÊME contrat que la cible ci-dessus :
-                          `type="text"` + `inputMode="decimal"` (le navigateur ne peut pas
-                          reformater ce qu'on écrit), le TEXTE est la source
-                          (`calcSetRestraintWeight`), la valeur numérique n'en est que la
-                          conséquence. Le placeholder « 1 » dit le défaut, et l'infobulle dit
-                          le reste — le 0 compris, qui met la ligne en PAUSE. */}
-                      <input type="text" inputMode="decimal"
-                        value={r.w != null ? r.w : (r.weight == null || r.weight === 1 ? '' : String(r.weight))}
-                        placeholder="1"
-                        onChange={(e) => calcSetRestraintWeight(r.key, e.target.value)}
-                        aria-label={`Weight of distance ${k + 1}, in multiples of the field's k_NOE`}
-                        title={`⚖ WHAT THIS LINE WEIGHS — its force constant is k_NOE × this number, so the distance pulls harder or more gently than the other lines. 1 (or an empty box) is the default and changes nothing; 0 puts the line ON HOLD (its atoms, its target and its measures stay, but ▶ Run, ▶ MD, ⚒ Minimise and ⟳ Energy stop receiving it).${paused ? ' — This line is ON HOLD right now.' : ''}${unreadable ? ' — The value typed here cannot be read as a number: the line runs at the default weight of 1.' : ''}`}
-                        className={`w-12 border rounded px-1.5 py-0.5 text-right outline-none text-[10px] font-mono ${paused || unreadable
-                          ? 'border-amber-400 bg-amber-50 text-amber-800'
-                          : 'border-indigo-300 bg-white focus:border-indigo-500'}`} />
-                    </td>
-                    <td className="px-2 py-1 font-mono text-slate-500">{ready ? torsionAng(at) : '—'}</td>
-                    <td className={`px-2 py-1 font-mono ${paused ? 'text-slate-500' : (good ? 'text-emerald-700' : 'text-rose-700')}`}
-                      title={paused ? 'A READING, not a verdict: this line is on hold (⚖ 0), so no gesture compares it to anything — the target and the distance are still shown as typed.' : (good ? `Inside the tolerance of ± ${STRUCTURE_CALC_RESTRAINT_TOLERANCE} Å of the target.` : `Outside the tolerance of ± ${STRUCTURE_CALC_RESTRAINT_TOLERANCE} Å — the field pays k_NOE × ⚖ per squared ångström beyond it.`)}>
-                      {dev == null ? '—' : `${dev > 0 ? '+' : ''}${dev.toFixed(2)}`}
-                    </td>
-                    <td className="px-1 py-1">
-                      <button type="button" onClick={() => calcRemoveRestraint(r.key)}
-                        title="Drop this distance from the list."
-                        className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-white border border-red-300 text-red-600 hover:bg-red-50">
-                        ✕
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-      <div className="flex flex-wrap items-center gap-3 text-[10px] font-bold text-indigo-800">
-        <label className="flex items-center gap-1"
-          title="n — how many structures are BUILT from scratch. Each one is a fresh random draw of every rotatable dihedral, and each one is put through the standard protocol (anneal → dynamics → minimise → quench) before being scored. More starts means more chances that at least one of them can obey your distances — and more time: one start costs an annealing schedule, a whole dynamics and a minimisation.">
-          n starting
-          <input type="number" min="1" max={STRUCTURE_CALC_MAX_STARTS} value={calcStarts}
-            onChange={(e) => setCalcStartsText(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') runStructureCalculation(); }}
-            aria-label="Number of starting structures n"
-            className="w-14 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
-        </label>
-        <label className="flex items-center gap-1"
-          title="m — how many structures are KEPT once every start has been scored. The score is the force field of this calculation (kcal/mol: bonds, angles, planar rings, vdW, electrostatics, solvent, φ/ψ, χ1, ω, your distances in flat-bottom wells) plus the clash penalty; the m best are kept IN ORDER, with their coordinates, and the first one is written into the molecule. The OTHERS become MOLECULES of the Molecules bar (each shown, with its own ☑, styling rows, ★ set main, ↺ and 🗑): tick them, style them, and press 🎯 Fit to chosen to superpose the whole FAMILY onto the chosen one — the ensemble is then on screen and in the styling window, and 🗑 removes a model you do not want. Only the m kept structures carry their coordinates — that is what m means.">
-          m kept
-          <input type="number" min="1" max={STRUCTURE_CALC_MAX_KEEP} value={calcKeep}
-            onChange={(e) => setCalcKeepText(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') runStructureCalculation(); }}
-            aria-label="Number of retained structures m"
-            className="w-14 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
-        </label>
-        <label className="flex items-center gap-1"
-          title="🔥 The ANNEALING — how many temperature steps each start gets. A start is a random draw of every dihedral, which is almost always stacked or far from your distances, and the protocol that follows is LOCAL: without annealing it stays where the draw put it. The annealing moves DIHEDRALS ONLY (a rigid rotation of one side of the molecule about its hinge: bond lengths and angles cannot move), accepts a step that is worse with probability exp(−Δ/T), and cools down. 0 = no annealing, exactly what this panel did before (n plain draws + the rest of the protocol).">
-          🔥 recuit
-          <input type="number" min="0" max="24" value={calcAnneal}
-            onChange={(e) => setCalcAnneal(Math.max(0, Math.min(24, Math.round(Number(e.target.value) || 0))))}
-            aria-label="Annealing temperature steps"
-            className="w-12 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
-          <span className="font-semibold text-slate-500">paliers</span>
-        </label>
-        <label className="flex items-center gap-1"
-          title="🖼 HOW MANY IMAGES PER ANNEALING STEP — this is what makes the annealing VISIBLE: the module hands the screen a picture every N moves inside a temperature step (0/1 = one picture per step), and each picture is written into the molecule before the page is allowed to paint. 4 to 8 shows the fold without slowing the calculation down.">
-          🖼 frames
-          <input type="number" min="0" max="24" value={calcAnnealFrame}
-            onChange={(e) => setCalcAnnealFrame(Math.max(0, Math.min(24, Math.round(Number(e.target.value) || 0))))}
-            aria-label="Images per annealing temperature step"
-            className="w-12 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
-        </label>
-        {/* ⚙ LES RÉGLAGES DE LA DYNAMIQUE DU CALCUL SONT REVENUS ICI — la demande : « bring
-            back all the MD parameters related to structure calculation in the settings of
-            structure calculation. » Ils sont écrits UNE fois, par `renderCalcMdOptions()`,
-            et AUCUN autre geste ne les lit : ce sont les pas, le pas de temps, la durée,
-            les deux températures (🌡 hot → 🌡 cold), la part d'équilibration, les balayages
-            de ⚒ et l'option 🪢 ω — le protocole que CHAQUE DÉPART porte après son recuit.
-            La fenêtre 🌡 MD du bord gauche de la vue 3D a, elle, la dynamique ISOLÉE et ses
-            propres réglages (T, 💧 solvant, pas, dt, durée, intervalle d'images, ω), donc
-            les deux gestes ne peuvent plus se changer l'un l'autre (voir
-            `renderMdWindow`). */}
-        <div className="flex flex-wrap items-center gap-1.5">{renderCalcMdOptions()}</div>
-
-
-        <label className="flex items-center gap-1"
-          title="👁 WATCH EACH START: every gesture the module announces (the random draw, each annealing step, the equilibration, the cooling, the minimisation, the quench) is written into the molecule ON SCREEN, by the same path a torsion uses — so you SEE the molecule fold instead of watching a progress line, and the 🪢 plot follows it image by image while its window is on screen. Uncheck it for a quiet run: the molecule is then written ONCE, with the FINAL coordinates — the best model of the calculation, or what ▶ MD and ⚒ Minimise landed on — so the report and the 🪢 plot still describe the structure that came out. ↺ Undo torsion puts back the molecule you had before the calculation wrote anything. ⚠ THIS BOX RULES THE CALCULATION AND NOTHING ELSE: the ▶ MD of the 🌡 MD window and the ⚒ Minimise of the toolbar always write every image they compute — they are single gestures, launched by hand, and they are there to be watched.">
-          <input type="checkbox" checked={calcWatch} onChange={(e) => setCalcWatch(e.target.checked)}
-            aria-label="Write each start on screen while it is computed"
-            className="accent-indigo-600" />
-          👁 watch each start
-        </label>
-        <button type="button" onClick={runStructureCalculation}
-          disabled={calcBusy || mdBusy || !calcUsableRows().length}
-          title="Run the calculation: n starts, the ⚒ protocol on each, the best m kept, and the first one written into the molecule. The panel is updated START BY START (one per frame, so the page stays alive), and ⏹ stops between two of them — ⏹ is THIS panel's stop: it RANKS what is already computed and keeps its best m, so a partial run still gives you a family. ⚠ It is not the ■ of the 🌡 MD window: that one stops the isolated ▶ MD (or a ⚒ Minimise), which has no family to rank — each stop is in the window of the gesture it stops, and while one runs the other's ▶ is greyed (they share the same single cancellation token). A fixed seed means the same molecule, the same distances and the same n always give the same family — press ▶ Run twice and compare. The 🪢 plot follows every start written while its window is on screen (one reader for φ/ψ, the same as its ⟳ Read)."
-          className="px-2 py-1 text-[10px] font-bold rounded border bg-indigo-600 border-indigo-700 text-white hover:bg-indigo-700 disabled:opacity-40">
-          ▶ Run
-        </button>
-        {calcBusy && (
-          <button type="button" onClick={calcStop}
-            title="⏹ STOP THE CALCULATION — it stops BETWEEN two starts (never in the middle of one), and what is already computed is NOT thrown away: those starts are RANKED, their best m are kept in the family below, and the best one is written into the molecule. The line says how many starts of n were made — a partial run is still a run. ⚠ This is the CALCULATION's stop, and it only exists while the calculation runs; the isolated ▶ MD and ⚒ Minimise of the 🌡 MD window have their own ■ Stop, right in that window (a gesture has no family to rank: it has the conformation on screen, and ↺ Undo torsion is what takes it back)."
-            className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-red-300 text-red-600 hover:bg-red-50">
-            ⏹ Stop
-          </button>
-        )}
-      </div>
-      {calcProgress && (
-        <p className="text-[10px] font-semibold text-indigo-700">{calcProgress}</p>
-      )}
-      {/* ⌖ LA VOIX DU PIQUAGE DU COUPLE — ses phrases à LUI. Le ⌖ a son état, sa peinture
-          bleue et donc son message : il dit d'aller cliquer le PREMIER atome, il compte
-          les atomes piqués (« 1 of 2 picked »), il refuse un couple pris dans deux
-          molécules, et il dit ce qui vient d'entrer dans la table. Sans ce paragraphe,
-          tout cela était écrit dans le vide : le piquage se serait tu. Le bleu est sa
-          couleur (la même que ses deux atomes), le vert une réussite, le rose un refus —
-          la classe suit le premier caractère, comme partout ailleurs dans ce panneau. */}
-      {pairMsg && (
-        <p title={pairMsg} className={`text-[10px] font-semibold rounded-md border px-2 py-1 whitespace-pre-wrap ${/^✓/.test(pairMsg) ? 'text-emerald-800 bg-emerald-50 border-emerald-200' : /^⚠/.test(pairMsg) ? 'text-rose-800 bg-rose-50 border-rose-200' : 'text-blue-800 bg-blue-50 border-blue-200'}`}>
-          {pairMsg}
-        </p>
-      )}
-      {calcMsg && (
-        <p title={calcMsg} className={`text-[10px] font-semibold rounded-md border px-2 py-1 whitespace-pre-wrap ${/^✓/.test(calcMsg) ? 'text-emerald-800 bg-emerald-50 border-emerald-200' : /^■/.test(calcMsg) ? 'text-amber-800 bg-amber-50 border-amber-200' : 'text-rose-800 bg-rose-50 border-rose-200'}`}>
-          {calcMsg}
-        </p>
-      )}
-      {/* ── 🧲 LE CHAMP DE FORCES — LES FAMILLES, PUIS 🌡 LA DYNAMIQUE ET ⚒ LA
-          MINIMISATION SUR LA MOLÉCULE TELLE QU'ELLE EST. Les lignes de la table du champ
-          viennent TOUTES de `forceFieldRowsOf` (aucun poids, aucune règle, aucune unité
-          n'est écrit ici) ; les énergies du moment viennent de `forceFieldEnergyOf`, relu
-          sur les coordonnées à l'écran quand on le demande (⟳ et après chaque geste). */}
-      <div className="rounded-lg border border-slate-200 bg-slate-50/60 p-2 flex flex-col gap-1.5">
-        <div className="flex flex-wrap items-center justify-between gap-1.5">
-          <span className="text-[10px] font-black text-slate-600 uppercase tracking-wide"
-            title="THE FORCE FIELD OF THIS CALCULATION — one list of named families, summed by the module, IN kcal/mol. The annealing, the dynamics, the minimisation and the score all read THIS list: no engine has a physics of its own. The charges, the non-polar solvent and the hydrogens it adds are part of it, and the panel writes what it computes. ⚙ The three gestures that PUT this field to work — ▶ MD, ⚒ Minimise and ⟳ Energy — sit in the button row above, next to 🧬 Structure calculation (they act on the molecule as it stands, so they need no section open).">
-            🧲 Force field · {FORCE_FIELD_FAMILIES.length} families · kcal/mol
-          </span>
-          <span className="text-[10px] font-semibold text-slate-500">
-            ⚙ ▶ MD · ⚒ Minimise · ⟳ Energy — in the row of 🧬 Structure calculation
-          </span>
-        </div>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-1">
-          {forceFieldRowsOf().map((row) => (
-            <div key={row.id} className="rounded border border-slate-200 bg-white px-1.5 py-1"
-              title={`${row.label} — ${row.of}; ${row.rule}`}>
-              <div className="text-[9px] font-black text-slate-500 uppercase tracking-wide flex items-center justify-between gap-1">
-                <span>{row.icon} {row.label}</span>
-                <span className="font-mono text-slate-400">k {row.k} {row.id === 'elec' ? '' : row.unit}</span>
-              </div>
-              <div className="text-[9px] text-slate-500 leading-tight">{row.of}</div>
-              <div className="text-[10px] font-mono font-bold text-slate-700">
-                {calcForce ? Number(calcForce[row.id]).toFixed(2) : '—'}
-                <span className="text-slate-400 font-normal"> kcal/mol</span>
-              </div>
-            </div>
-          ))}
-        </div>
-        {calcForce && (
-          <p className="text-[10px] text-slate-600">
-            Read on the molecule on screen: <b>E = {calcForce.total.toFixed(2)} kcal/mol</b> =
-            {' '}bonds {calcForce.bond.toFixed(2)} + angles {calcForce.angle.toFixed(2)}
-            {' '}+ rings {calcForce.planar.toFixed(2)} + vdW {calcForce.vdw.toFixed(2)}
-            {' '}+ µ {calcForce.elec.toFixed(2)} + solvent {calcForce.solv.toFixed(2)}
-            {' '}+ φ/ψ {calcForce.rama.toFixed(2)} + χ1 {calcForce.chi.toFixed(2)}
-            {' '}+ ω {calcForce.omega.toFixed(2)} + your distances {calcForce.restraint.toFixed(2)}
-            {' '}· entropy {calcForce.entropyReport.total.toFixed(1)} cal·mol⁻¹·K⁻¹
-            ({calcForce.entropy.toFixed(2)} kcal/mol of −T·S)
-            {' '}· <b>{calcForce.added.hydrogens}</b> hydrogens added on {calcForce.added.heavy} heavy atoms
-            ({calcForce.added.atoms} atoms in total) · net charge {calcForce.charges.net.toFixed(3)} e
-            ({calcForce.charges.method}) · surface {calcForce.surface.estimate.toFixed(0)} Å²
-            {calcForce.surface.exact != null ? ` (exact ${calcForce.surface.exact.toFixed(0)} Å²)` : ''}
-            {' '}· {calcForce.torsions.residues} residue{calcForce.torsions.residues === 1 ? '' : 's'} with a backbone
-            ({calcForce.torsions.phi.length} φ, {calcForce.torsions.psi.length} ψ, {calcForce.omegaReport.count} ω, {calcForce.chiReport.count} χ1)
-            {' '}· φ/ψ outside a basin: <b>{calcForce.ramaReport.violations}</b>
-            {calcForce.ramaReport.worst ? ` (worst ${calcForce.ramaReport.worst.gap.toFixed(0)}° away, ${calcForce.ramaReport.worst.region})` : ''}
-            {' '}· χ1 between wells: <b>{calcForce.chiReport.violations}</b>
-            {' '}· ω outside ± {STRUCTURE_CALC_OMEGA_TOLERANCE}°: <b>{calcForce.omegaReport.violations}</b>
-            {' '}· pairs inside {calcForce.nonbonded.limit} Å: {calcForce.nonbonded.count}
-            {calcForce.nonbonded.repulsive ? `, ${calcForce.nonbonded.repulsive} repulsive` : ''}.
-          </p>
-        )}
-        {/* ⚠ LA TABLE DES POIDS EST DITE TELLE QU'ELLE EST — et le fait que les trois
-            familles de torsion sont ce qui manquait aux Ramachandran « très mauvais ». */}
-        <p className="text-[9px] text-slate-500">
-          The three torsion families are what makes a Ramachandran plot defensible: ω keeps every peptide C–N bond
-          <b> trans</b> (± {STRUCTURE_CALC_OMEGA_TOLERANCE}° free, k = {STRUCTURE_CALC_OMEGA_WEIGHT}), the φ/ψ term is
-          <b> zero inside a basin of the 🪢 plot</b> (k = {STRUCTURE_CALC_RAMA_WEIGHT} per square degree outside — the
-          very polygons drawn at the left of the 3D view), and χ1 has its three <b>staggered wells</b> at 60°, 180°
-          and −60° (k = {STRUCTURE_CALC_CHI_WEIGHT}; a χ1 counts as outside past ± {STRUCTURE_CALC_CHI_TOLERANCE}° of
-          a well). ▶ Run with 🌡 MD {'>'} 0 is the standard protocol: draw the dihedrals, anneal, drive your
-          distances, then dynamics hot → cold ({STRUCTURE_CALC_MD_HOT} → {STRUCTURE_CALC_MD_COLD}, dt
-          {' '}{STRUCTURE_CALC_MD_DT}, γ {STRUCTURE_CALC_MD_FRICTION}) and minimise — and the model is scored on all
-          of it. ⚠ Reduced units throughout: the energy is comparable inside one calculation, and it is not kcal/mol.
-          {' '}🪢 <b>ω varies</b> (the checkbox in the options row) makes that peptide C–N bond an ORDINARY dihedral of
-          the protocol: the annealing, the quench, the dynamics and the minimisation then refuse nothing for it, and the
-          barrier above alone decides — a peptide only leaves trans when a distance you asked for, an imposed φ/ψ or a
-          clash pays more than it. Unticked (the default) the bond is PROTECTED: no step of any gesture may increase its
-          ω cost, so both ▶ Run and the isolated gestures keep every peptide trans, at any temperature of the protocol.
-        </p>
-      </div>
-      {ranked && ranked.ranking.length > 0 && (
-        <div className="flex flex-col gap-1.5">
-          <p className="text-[10px] text-slate-600">
-            <b>{ranked.tried}</b> start{ranked.tried === 1 ? '' : 's'} built, each scored by the force field
-            {ranked.refused ? ` (${ranked.refused} refused before scoring)` : ''} · the best{' '}
-            <b>{ranked.retained.length}</b> kept and ranked — the others are listed too, with their score, so nothing is
-            hidden{calcShown ? <> · on screen right now: <b>#{calcShown}</b> of the kept family</> : null}.
-          </p>
-          <div className="max-h-44 overflow-y-auto custom-scrollbar border border-indigo-200 rounded-lg bg-white">
-            <table className="w-full text-xs">
-              <thead className="sticky top-0 bg-indigo-50">
-                <tr>
-                  <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">#</th>
-                  <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">start</th>
-                  <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">score</th>
-                  <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">distances</th>
-                  <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">worst</th>
-                  <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">bonds / angles</th>
-                  <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700"
-                    title="THE BACKBONE READING OF EACH MODEL — how many residues have both φ and ψ, and how many of them fall OUTSIDE every basin of the 🪢 plot (with the worst distance to a basin). Zero here is a model whose Ramachandran plot is inside the basins; the number is the φ/ψ term of the score, read back on the model.">
-                    🧭 φ/ψ
-                  </th>
-                  <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">clashes</th>
-                  <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">moved</th>
-                  <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">how it ended</th>
-                  <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700" />
-                </tr>
-              </thead>
-              <tbody>
-                {ranked.ranking.map((r) => {
-                  const inFamily = r.rank <= ranked.retained.length;
-                  const model = inFamily ? ranked.retained.find((x) => x.rank === r.rank) : null;
-                  return (
-                    <tr key={`calc${r.rank}`} className={`border-t border-indigo-100 ${inFamily ? 'bg-emerald-50/50' : ''}`}>
-                      <td className="px-2 py-1 font-bold text-indigo-800" title={inFamily ? 'kept: this structure carries its coordinates' : 'NOT kept: it was scored, but m only keeps the first ones'}>
-                        {r.rank}{inFamily ? ' ✓' : ''}
-                      </td>
-                      <td className="px-2 py-1 font-mono text-slate-500">#{r.index}</td>
-                      <td className="px-2 py-1 font-mono text-slate-700"
-                        title={`Score ${r.score.toFixed(2)} = target function ${Number(r.total).toFixed(2)} + clash penalty ${Number(r.clashPenalty).toFixed(2)} (the ⚒'s own way of preferring a model without atoms on top of each other)`}>
-                        {r.score.toFixed(1)}
-                      </td>
-                      <td className={`px-2 py-1 font-mono ${r.violations ? 'text-rose-700' : 'text-emerald-700'}`}
-                        title={`${r.satisfied} of the ${r.satisfied + r.violations} distances are respected (within ${STRUCTURE_CALC_RESTRAINT_TOLERANCE} Å) — rms ${Number(r.rmsd).toFixed(3)} Å`}>
-                        {r.satisfied}/{r.satisfied + r.violations}
-                      </td>
-                      <td className="px-2 py-1 font-mono text-slate-500"
-                        title={r.worst ? `the distance furthest from what you asked: ${r.worst.i}–${r.worst.j} measured ${Number(r.worst.distance).toFixed(2)} Å for ${Number(r.worst.target).toFixed(2)} Å` : 'no distance to report'}>
-                        {r.worst ? `${r.worst.i}–${r.worst.j} ${torsionAng(r.worst.distance)}` : '—'}
-                      </td>
-                      <td className="px-2 py-1 font-mono text-slate-500">{r.bondRms.toFixed(3)} Å / {r.angleRms.toFixed(1)}°</td>
-                      <td className={`px-2 py-1 font-mono ${r.rama && r.rama.violations ? 'text-rose-700' : 'text-emerald-700'}`}
-                        title={r.rama
-                          ? `${r.rama.measured} residue(s) with both φ and ψ (${r.rama.partial} at a chain end have only one), ${r.rama.violations} outside every basin of the 🪢 plot${r.rama.worst ? ` — the worst is ${r.rama.worst.gap.toFixed(0)}° from the edge of a basin, in the « ${r.rama.worst.region} » region` : ''}. This is the φ/ψ term of the score (k = ${STRUCTURE_CALC_RAMA_WEIGHT}) read back on the model, and the same reading the 🪢 plot draws.`
-                          : 'no backbone residue to read in this model (no N–CA–C: a nucleic acid, a sugar, a lipid or a ligand)'}>
-                        {r.rama ? `${r.rama.violations}/${r.rama.measured}` : '—'}
-                        {r.rama && r.rama.partial ? <span className="text-slate-400">+{r.rama.partial}</span> : null}
-                      </td>
-                      <td className={`px-2 py-1 font-mono ${r.clashes ? 'text-rose-700' : 'text-emerald-700'}`}
-                        title={`${r.clashes} atom pair(s) closer than 1.45 Å in this model, ${r.contacts} pair(s) inside their hard core (0.6 × the two Bondi radii)`}>
-                        {r.clashes ? `⚠ ${r.clashes}` : '✓'} · {r.contacts}
-                      </td>
-                      <td className="px-2 py-1 font-mono text-slate-500" title="atoms this start moved away from the molecule you had on screen (the draw and the protocol together)">{r.moved}</td>
-                      <td className="px-2 py-1 text-slate-500" title={calcWhyOf(r.reason)}>{r.reason}</td>
-                      <td className="px-1 py-1">
-                        {model ? (
-                          <button type="button" onClick={() => calcWriteStructure(model, ranked)}
-                            title={`Write this structure into the molecule (it becomes THE molecule on screen: every atom, by the same path a torsion uses — so 📏, the plates, the film, 📥 Download and ↺ all follow it). ${r.index === 0 ? '' : ''}Undo torsion puts the previous geometry back.`}
-                            className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-white border border-indigo-300 text-indigo-700 hover:bg-indigo-50">
-                            ⤓ Load
-                          </button>
-                        ) : (
-                          <span className="text-slate-300" title="only the m kept structures carry their coordinates — raise “m kept” to keep more">—</span>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-      {ranked && ranked.family && ranked.family.restraints.length > 0 && (
-        <p className="text-[10px] text-slate-500">
-          <b>The kept family</b> —{' '}
-          {ranked.family.restraints.map((f) => `${f.i}–${f.j} ${torsionAng(f.mean)} (${f.satisfied}/${f.models} models,`
-            + ` spread ${torsionAng(f.spread)})`).join(' · ')}
-          {ranked.family.spread.count
-            ? ` · the models differ by ${ranked.family.spread.mean.toFixed(2)} Å rmsd on average, after optimal`
-              + ` superposition over all ${ranked.family.spread.atoms} atoms (worst pair #${ranked.family.spread.worst.a}–#${ranked.family.spread.worst.b}`
-              + ` at ${ranked.family.spread.worst.rmsd.toFixed(2)})`
-            : ' · a single model was kept, so there is no spread to measure'}
-          {ranked.family.rest.length
-            ? ` · left out (scored, not kept): ${ranked.family.rest.map((r) => `#${r.rank} start ${r.index} (${r.score.toFixed(1)})`).join(' · ')}`
-            : ''}
-        </p>
-      )}
-      <p className="text-[10px] text-slate-400">
-        ⚙ <b>What this calculation does</b>: n random draws of every rotatable dihedral, a 🔥 <b>simulated annealing in
-        dihedral space</b> on each (Metropolis, exp(−Δ/T), a cooling schedule — a step is one RIGID rotation of one side
-        about its hinge, so bond lengths and angles cannot move), then the STANDARD protocol — 🌡 <b>molecular dynamics</b>
-        (Langevin, an equilibration at hot then a cooling down to cold) and a ⚒ <b>minimisation</b> under the whole force
-        field, then a cold <b>quench</b> under leash that repairs what the descent broke. The score is that force field —
-        bonds, angles, planar rings, vdW, electrostatics, non-polar solvent, your distances in flat-bottom wells, the
-        <b>ω potential</b> (a peptide C–N bond prefers trans — the 🪢 option decides whether that bond is PROTECTED or
-        simply a term of the field like any other), the <b>φ/ψ basins</b> (zero inside a basin of the 🪢 plot,
-        growing with the distance to it) and <b>χ1</b> (three staggered wells) — plus the clash penalty; the best m are
-        kept, and each model carries its backbone reading (see the 🧭 φ/ψ column).
-        ⚠ <b>What it is NOT</b>: the force field is the app&apos;s OWN — no explicit water, no added atoms the file does not
-        have — and a score in kcal/mol is comparable only inside one calculation (same molecule, same distances). And it
-        stays DIHEDRAL: a move turns a bond, it never moves an atom freely, so the covalent geometry is a constant of the
-        protocol. The seed is FIXED ({STRUCTURE_CALC_SEED}): the same molecule, the same distances and the same n give the
-        same family, digit for digit. Set 🔥 recuit, 🌡 MD and ⚒ sweeps to 0 to keep only the draws (and their score).
-        ⏹ stops between two starts; ↺ Undo torsion puts back the molecule you had before the first write.
-      </p>
-    </div>
-  );
-})()}
 {/* ⚭ Disulfides: shown / hidden — L'INTERRUPTEUR DU DESSIN, PAS DE LA DÉFINITION.
     Le pont est écrit par la page (CONECT SG–SG) et NGL le dessine ; ngl@2.4.0
     n'offre AUCUNE visibilité par liaison, donc cacher le pont se fait dans le
@@ -22947,12 +23158,20 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
     vue prend le RESTE (`flex-1 min-w-0`), et replier le dock rend la largeur entière à
     la molécule. Le graphe ne recouvre donc jamais la structure — il la pousse. */}
 <div className="flex items-stretch gap-2">
-{/* LE DOCK 🪢 — LE GRAPHE DE RAMACHANDRAN À GAUCHE DE LA FENÊTRE 3D. Replié, il ne
-    reste qu'un onglet vertical (🪢) sur le bord : le graphe est toujours à un clic, et
-    il ne mange jamais la vue sans qu'on l'ait demandé. */}
-{/* LE DOCK 🌡 MD — LA FENÊTRE DE LA DYNAMIQUE, À GAUCHE DE LA VUE 3D. Replié, il ne
-    reste que l'onglet vertical 🌡 MD sur le bord. Les deux docks (🌡 MD et 🪢) peuvent
-    être ouverts ensemble : les colonnes POUSSENT la molécule, aucune ne la recouvre. */}
+{/* LES DOCK 🌡 MD · 🧬 STRUCTURE CALCULATION · 🪢 RAMACHANDRAN — LES TROIS FENÊTRES DE LA
+    VUE 3D, À SA GAUCHE. Repliée, chacune ne laisse qu'un onglet vertical sur le bord ; les
+    trois peuvent être ouvertes ensemble : les colonnes POUSSENT la molécule, aucune ne la
+    recouvre. ⚠ LE 🧬 EN FAIT PARTIE DEPUIS CETTE SESSION — la demande : « Transform the
+    “structure calculation” page in an internal collapsible window as that of MD or
+    Ramachandran … ». Son onglet est le premier de la rangée (🧬 STRUCT.). */}
+{calcDock ? renderCalcWindow() : (
+  <button type="button" onClick={() => toggleCalcDock(true)}
+    title="Open the structure-calculation window — its parameters (n · m · 🔥 recuit · 🖼 frames), the stages of the calculation, the ranked family and 💾 Save the family / Save the report, at the LEFT of the 3D view (expandable · compressible). Its ⚙ Parameters and Constraints button holds the two constraint tables and the MD parameters of the protocol. The 🧬 button of the toolbar closes it again."
+    className="shrink-0 w-7 flex items-center justify-center gap-1 bg-white border border-indigo-200 rounded-xl text-indigo-700 hover:bg-indigo-50"
+    style={{ height: (viewerCollapsed ? 0 : viewH) + 'px' }}>
+    <span className="text-[10px] font-black tracking-widest" style={{ writingMode: 'vertical-rl' }}>🧬 STRUCT.</span>
+  </button>
+)}
 {mdDock ? renderMdWindow() : (
   <button type="button" onClick={() => toggleMdDock(true)}
     title="Open the MD window — the parameters of the molecular dynamics (steps, dt, total length, hot → cold, equilibration, minimisation sweeps, 🪢 ω) and its ▶ MD button, at the left of the 3D view (expandable · compressible). The ▶ MD button of the toolbar closes it again."
@@ -22961,6 +23180,13 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
     <span className="text-[10px] font-black tracking-widest" style={{ writingMode: 'vertical-rl' }}>🌡 MD</span>
   </button>
 )}
+{/* LE DOCK 🪢 — LE GRAPHE DE RAMACHANDRAN À GAUCHE DE LA FENÊTRE 3D. Replié, il ne
+    reste qu'un onglet vertical (🪢) sur le bord : le graphe est toujours à un clic, et
+    il ne mange jamais la vue sans qu'on l'ait demandé. ⚠ SA PLACE DANS LA RANGÉE A
+    CHANGÉ CETTE SESSION (la colonne 🧬 STRUCT. s'est ajoutée à sa gauche) : ce qu'il EST,
+    lui, n'a pas bougé — un PLAN qui LIT, jamais un calcul qui écrit. Il garde donc sa
+    propre note, distincte de celle de la rangée (voir « LES DOCK » plus haut), parce que
+    c'est l'ancre que la vue d'ensemble ne remplace pas. */}
 {ramaDock ? (
   <div className="shrink-0 w-[360px] flex flex-col gap-1.5 bg-white border border-amber-200 rounded-xl p-2 overflow-hidden"
     style={{ height: (viewerCollapsed ? 0 : viewH) + 'px' }}>

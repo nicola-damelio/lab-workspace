@@ -67,7 +67,7 @@ import {
   structureCalcSimulationTimeOf,
   rotatableBondsOf, randomTorsionsOf, channelReadingsOf, restraintListOf,
   restraintReportOf, scoreStructureOf, structureAttemptOf, rankStructureAttempts,
-  familySpreadOf, familyRestraintsOf, structureCalculationOf,
+  familySpreadOf, familyRestraintsOf, structureCalculationOf, dihedralListOf,
   peptideOmegasOf, omegaPenaltyOf, annealTorsionsOf,
   drainFrames, annealFrames, structureAttemptFrames, structureCalculationFrames,
   backboneTorsionsOf, ramaGapOf, ramaPenaltyOf, chiPenaltyOf,
@@ -654,7 +654,24 @@ eq(structureCalculationOf({ ...spec, starts: 4, keep: 0 }).retained.length, 0,
 eq(structureCalculationOf({ restraints: [{ i: 0, j: 5, target: 3.9 }] }).reason, 'bad-points',
   'sans coordonnées lisibles, le calcul est refusé');
 eq(structureCalculationOf({ ...spec, restraints: [] }).reason, 'no-restraint',
-  '⚠ SANS AUCUNE DISTANCE DEMANDÉE, il n’y a rien à respecter : le calcul est refusé (le panneau le dit avant de lancer)');
+  'sans AUCUNE contrainte (ni distance ni dihedre), il n y a rien a respecter : le calcul est refuse');
+/* ⛓ LES DIHÈDRES SEULS SUFFISENT — la demande de cette session : « The structure
+   calculation must work even if there are only dihedral constraints (at present it wants
+   at least one distance). » Un calcul SANS distance mais AVEC des φ/ψ imposés (la
+   structure secondaire peinte convertie) part donc, et son rapport le dit :
+   `restraintCount` = 0, `dihedralCount` > 0. Une ligne de dihedre ILLISIBLE (moins de
+   quatre atomes, cible absente) ne compte pas plus qu'une distance illisible. */
+const dhOnly = structureCalculationOf({
+  ...spec, restraints: [],
+  dihedrals: [{ kind: 'phi', letter: 'H', ca: 3, atoms: [1, 2, 3, 4], target: -57, tolerance: 30 }],
+});
+eq([dhOnly.ok, dhOnly.restraintCount, dhOnly.dihedralCount, dhOnly.retained.length],
+  [true, 0, 1, 2],
+  '⚠ des PHI/PSI SEULS font un calcul VALIDE (aucune distance demandee) — c est la demande de cette session');
+eq(dihedralListOf([{ atoms: [1, 2, 3, 4], target: 60 }, { atoms: [1, 2], target: 60 }, { atoms: [1, 2, 3, 4] }]).length,
+  1, '…et une contrainte de dihedre ne compte que si ses QUATRE atomes et sa cible sont lisibles');
+eq(structureCalculationOf({ ...spec, restraints: [], dihedrals: [{ atoms: [1, 2], target: 1 }] }).reason,
+  'no-restraint', '⚠ …un dihedre illisible ne fait pas repartir un calcul qui n a rien d autre');
 eq(structureCalculationOf({ ...spec, starts: 0 }).reason, 'no-start',
   '…et n = 0 aussi (aucun départ à construire)');
 const sliced = structureCalculationOf({ ...spec, indices: [3, 1, 3] });
@@ -1267,10 +1284,12 @@ for (const k of ['STRUCTURE_CALC_DEFAULT_STARTS', 'STRUCTURE_CALC_MAX_STARTS', '
   'structureCalcSimulationTimeOf']) {
   has(VIEW, k, `…et la constante « ${k} » (aucune recopie de chiffre dans le panneau)`);
 }
-has(VIEW, 'const [calcSection, setCalcSection] = useState(null);',
-  'la section 🧬 du calcul s’ouvre et se ferme par son bouton');
-has(VIEW, 'const openCalcSection = (which) => setCalcSection((cur) => (cur === which ? null : which));',
-  '⚠ …et c’est UN seul geste : le bouton U0001f9ec (il n’y a plus trois onglets à faire défiler)');
+has(VIEW, 'const [calcDock, setCalcDock] = useState(false);',
+  'la FENÊTRE 🧬 du calcul s’ouvre et se ferme par son bouton (comme le dock 🌡 MD et le dock 🪢)');
+has(VIEW, 'const toggleCalcDock = (v) => setCalcDock((cur) => (typeof v === \'boolean\' ? v : !cur));',
+  '⚠ …et c’est UN seul geste : le bouton 🧬 (il n’y a plus trois onglets à faire défiler, ni de section dans la barre)');
+has(VIEW, 'const [calcConstraints, setCalcConstraints] = useState(false);',
+  '⚙ …avec le panneau « Parameters and Constraints » de la demande (replié par défaut)');
 ok(VIEW.indexOf("['torsion', ") < 0 && VIEW.indexOf("['rama', ") < 0 && VIEW.indexOf("['distances', ") < 0,
   '⚠ la barre d’onglets du panneau unique a DISPARU — la demande : « when clicking on torsion do not open the'
   + ' section inside the toolbar but open a dedicated retractable window inside the viewer as for ramachandran »');
@@ -1290,13 +1309,23 @@ has(VIEW, 'const [calcResult, setCalcResult] = useState(null);', '…et la famil
 has(VIEW, 'const calcRunRef = useRef(0);',
   '⚠ un JETON d’annulation : c’est lui que le ⏹ avance pour arrêter le calcul entre deux départs');
 
-/* LE PANNEAU, DÉCOUPÉ DU VIEWER — du commentaire qui l’ouvre jusqu’au bloc suivant
-   (🔢 Renumber). C’est CE morceau que le bouton 🧬 et son tableau occupent. */
+/* LA FENÊTRE 🧬, DÉCOUPÉE DU VIEWER — de sa déclaration (`const renderCalcWindow`, juste
+   après `renderForceGestures`) jusqu'au `return (` du composant. C'est CE morceau que le
+   bouton 🧬 ouvre : les paramètres, les étapes du calcul, les deux tables et leurs boutons. */
 const calcPanel = VIEW.slice(
-  VIEW.lastIndexOf('{/* 🧬 LE CALCUL DE STRUCTURE'),
-  VIEW.indexOf('{/* 🔢 Renumber'),
+  VIEW.indexOf('const renderCalcWindow = () => {'),
+  VIEW.indexOf('\nreturn (\n<div className="flex flex-col gap-2">'),
 );
-ok(calcPanel.length > 6000, `le panneau 🧬 est bien dans le viewer (${calcPanel.length} caractères)`);
+ok(calcPanel.length > 6000, `la fenêtre 🧬 est bien dans le viewer (${calcPanel.length} caractères)`);
+/* LE BOUTON 🧬 ET LA RANGÉE ✏️ MODIFY — du commentaire qui l’ouvre jusqu’au bloc suivant
+   (⚭ Disulfides). C’est CE morceau qui porte le bouton, à côté de « 🧬 Structure from
+   sequence », et les trois gestes du champ. */
+const calcButtonBlock = VIEW.slice(
+  VIEW.indexOf('{/* 🧬 LE CALCUL DE STRUCTURE'),
+  VIEW.indexOf('{/* ⚭ Disulfides: shown / hidden'),
+);
+ok(calcButtonBlock.length > 1000 && calcButtonBlock.length < 8000,
+  `le bouton 🧬 et ses trois gestes sont dans la rangée ✏️ Modify (${calcButtonBlock.length} caractères, et la fenêtre n’y est PLUS)`);
 /* ⚙ LES TROIS GESTES DU CHAMP SONT ÉCRITS UNE FOIS — `renderForceGestures`, AVANT le
    `return` du composant, donc hors du panneau : c'est ce qui leur permet d'être rendus
    DANS la rangée du bouton 🧬 sans être recopiés (un seul exemplaire du JSX). */
@@ -1306,10 +1335,13 @@ const forceGestures = VIEW.slice(
 );
 ok(forceGestures.length > 800,
   `les trois gestes du champ (▶ MD · ⚒ Minimise · ⟳ Energy) sont écrits UNE fois (${forceGestures.length} caractères)`);
-has(calcPanel, 'onClick={() => openCalcSection(\'distances\')}', 'le bouton 🧬 ouvre la section du calcul');
-has(calcPanel, '🧬 Structure calculation', '…et il dit ce qu’il fait');
-has(calcPanel, 'title="🧬 STRUCTURE CALCULATION — the request, verbatim',
-  '⚠ …en citant la demande, mot pour mot (le panneau ne se raconte pas une autre histoire)');
+has(calcButtonBlock, 'onClick={() => toggleCalcDock()}',
+  'le bouton 🧬 OUVRE ET REFERME la fenêtre du calcul (le même bouton, comme 🌡 MD)');
+has(calcButtonBlock, '🧬 Structure calculation', '…et il dit ce qu’il fait');
+has(calcButtonBlock, 'title="🧬 STRUCTURE CALCULATION — OPEN OR CLOSE ITS WINDOW',
+  '⚠ …en disant d’abord que c’est une FENÊTRE (la demande : « Transform the “structure calculation” page in an internal collapsible window as that of MD or Ramachandran »)');
+eq(VIEW.includes("{calcSection === 'distances' && (() => {"), false,
+  '⚠ …et la SECTION pleine largeur de la barre a disparu : le calcul n’y tient plus qu’un bouton');
 /* ⚠ L'EMPLACEMENT DU BOUTON — la demande de cette session : « move the button structure
    calculation next to the button structure from sequence and color the latter in light
    blue. » Le bouton 🧬 quitte donc le FOND de la rangée ✏️ Modify (il y était le dernier,
@@ -1318,15 +1350,15 @@ has(calcPanel, 'title="🧬 STRUCTURE CALCULATION — the request, verbatim',
    seul bloc contigu). Les indices sont pris sur les `onClick` et sur l'ouverture du
    panneau, pas sur les commentaires, qui citent les mêmes mots plus haut. */
 const iSeqBtn = VIEW.indexOf('onClick={buildFromSequence}');
-const iCalcBtn = VIEW.indexOf("onClick={() => openCalcSection('distances')}");
-const iCalcPanel = VIEW.indexOf("{calcSection === 'distances' && (() => {");
+const iCalcBtn = VIEW.indexOf('onClick={() => toggleCalcDock()}');
+const iGestures = VIEW.indexOf('{renderForceGestures()}');       // la rangée des gestes
 const iDisulfBtn = VIEW.indexOf('onClick={toggleDisulfideBonds}');
-ok(iSeqBtn > 0 && iSeqBtn < iCalcBtn && iCalcBtn < iCalcPanel && iCalcPanel < iDisulfBtn,
-  '⚠ le bouton 🧬 ET sa section vivent maintenant entre « 🧬 Structure from sequence » et ⚭ Disulfides');
-ok(VIEW.indexOf('⚡ ESP — the electrostatic-potential surface') > iCalcPanel,
-  '…la fin de la rangée (⚡ ESP, 🔢 Renumber avec sa liste) passe donc APRÈS la section du calcul');
-has(VIEW, '⚠ EMPLACEMENT — la demande de cette session : « move the button structure',
-  '…et le déplacement est daté LÀ OÙ le bloc vit, demande citée mot par mot');
+ok(iSeqBtn > 0 && iSeqBtn < iCalcBtn && iCalcBtn < iGestures && iGestures < iDisulfBtn,
+  'le bouton, les trois gestes du champ et rien dautre : le panneau nest plus une section de la barre');
+ok(VIEW.indexOf('onClick={toggleDisulfideBonds}') > iGestures,
+  'la rangee continue normalement apres les trois gestes (Disulfides, Back to PDB, ESP, Renumber)');
+has(VIEW, 'CE PANNEAU N',
+  'et le deplacement est date la ou le bloc vit, demande citee mot pour mot');
 has(VIEW, 'bg-sky-100 border-sky-400 text-sky-800 hover:bg-sky-200 disabled:opacity-40 disabled:cursor-not-allowed',
   '…« 🧬 Structure from sequence » est en BLEU CLAIR (la seconde moitié de la demande)');
 has(calcPanel, '⌖ Add the picked pair', 'l’ajout d’une distance passe par le couple piqué (les mêmes 🎯 que le ⚒)');
@@ -1379,10 +1411,10 @@ has(calcPanel, 'onChange={(e) => calcSetRestraintTarget(r.key, e.target.value)}'
   '…et une frappe la passe au module (aucun chiffre gardé en double)');
 has(calcPanel, 'onClick={() => calcRemoveRestraint(r.key)}', 'une ligne se retire (✕)');
 has(calcPanel, 'onClick={calcAddRestraint}', '…et ⌖ en ajoute une');
-has(calcPanel, 'disabled={calcBusy || mdBusy || !calcUsableRows().length}',
-  '⚠ ▶ Run est inerte tant qu’aucune ligne n’a ses DEUX atomes et sa cible (une ligne à moitié écrite attend)');
-has(calcPanel, 'onClick={runStructureCalculation}\n          disabled={calcBusy || mdBusy',
-  '⚠ …et il l’est AUSSI pendant un geste du 🌡 MD (`mdBusy`) : le calcul et les gestes avancent le MÊME jeton d’annulation, donc un seul peut courir — un second ▶ n’a pas le droit de tuer le premier en silence');
+has(calcPanel, 'disabled={calcBusy || mdBusy || (!calcUsableRows().length && !calcDihedrals.length)}',
+  'le ▶ Run de la fenetre est inerte tant quil ny a NI ligne complete NI dihedre impose (la demande : un calcul avec les SEULS phi/psi doit partir)');
+has(calcPanel, 'onClick={runStructureCalculation}',
+  'le bouton du calcul, dans SA fenetre');
 has(calcPanel, '▶ Run', 'le bouton du calcul est nommé');
 has(calcPanel, 'onClick={calcStop}', '…et le ⏹ a le sien');
 has(calcPanel, '⏹ Stop', '…nommé lui aussi');
@@ -1411,9 +1443,33 @@ has(calcPanel, 'const inFamily = r.rank <= ranked.retained.length;',
 has(calcPanel, '⤓ Load', '…et chacune s’écrit à l’écran par le bouton ⤓ Load');
 has(calcPanel, 'onClick={() => calcWriteStructure(model, ranked)}', '…qui passe par le writer commun');
 has(calcPanel, 'The kept family', 'la famille est décrite (ce que chaque distance y mesure, et sa dispersion)');
-has(calcPanel, 'What it is NOT', '⚠ et le panneau dit ce que ce calcul n’est PAS');
-has(calcPanel, '🔥 <b>simulated annealing in',
-  '⚠ …en disant qu’il EST un recuit (en espace dihédral) au lieu de prétendre le contraire');
+/* 💾 LA FAMILLE ET LE RAPPORT DANS DES FICHIERS — la demande de cette session :
+   « Allow saving the family of structures and the report. » Deux boutons dans la fenêtre,
+   deux fichiers : un PDB MULTI-MODÈLE (un bloc par structure retenue, dans l'ordre du
+   classement) et le rapport en texte. Ce qui doit rester vrai : ils n'écrivent RIEN
+   d'inventé (le PDB passe par l'écrivain du dossier, `calcFamilyPdbOf` — le même que
+   ⤓ Load et le 📥 Download —, et le rapport lit `calcResult`), et un clic sans famille
+   le DIT au lieu de se taire. */
+has(calcPanel, 'onClick={calcSaveFamily}', '💾 la fenetre du calcul offre « Save the family »');
+has(calcPanel, 'onClick={calcSaveReport}', '...et « Save the report »');
+has(VIEW, 'const calcSaveFamily = async () => {', 'la famille s ecrit par une fonction nommee');
+has(VIEW, 'const calcFamilyPdbOf = async (structure, comp, positions) => {',
+  '...par l ecrivain du dossier (le meme que le bouton Load et le Download)');
+has(VIEW, "const body = models.map((m, k) => `MODEL     ${String(k + 1).padStart(4)}",
+  '...en PDB MULTI-MODELE : chaque structure retenue est un bloc MODEL / ENDMDL, rang 1 d abord');
+has(VIEW, 'const calcReportText = (ranked) => {', 'et le rapport a son propre composeur de texte');
+has(VIEW, 'THE KEPT FAMILY', '...qui decrit la famille retenue (moyennes, dispersion)');
+has(VIEW, 'There is no family to save yet', '⚠ un clic sans famille le DIT, au lieu de ne rien faire');
+has(VIEW, 'const calcDownloadText = (name, text, mime = \'text/plain\') => {',
+  '⚠ et les deux fichiers passent par UNE fabrique de telechargement, comme la table des distances');
+/* LA FENETRE DE STYLE VOIT LA FAMILLE TOUT DE SUITE — le rapport de cette session :
+   « The series of structures calculated are not immediately seen in the styling window.
+   I had to select and deselect the “hide H” button to update the window. » Les rangées de
+   style d'une molécule sont énumérées par la RECONSTRUCTION de la scène (`ensureSections`),
+   qui ne part que quand `styleSignature` change : il faut donc la redemander après que la
+   famille est entrée dans la barre des molécules (`calcAddFamilyToBar`, asynchrone). */
+has(VIEW, 'calcAddFamilyToBar(structure, componentRef.current, family.retained)\n        .then(() => { setTimeout(bumpSectionEpoch, 0); })',
+  '⚠ la famille entre dans la barre des molecules ET la reconstruction est redemandee (bumpSectionEpoch), sinon la fenetre de style ne la voit qu au geste suivant (« hide H »)');
 has(calcPanel, 'aria-label="Annealing temperature steps"', '…avec le réglage des paliers de recuit');
 has(calcPanel, 'aria-label="Write each start on screen while it is computed"',
   '⚠ …et l’interrupteur qui MONTRE le calcul (👁 watch each start)');
@@ -1500,7 +1556,7 @@ has(forceGestures, 'onClick={calcReadForceField}', '🧲 …et ⟳ Energy aussi'
    fermée, le clic ne disait rien. Elle est maintenant rendue DANS la rangée des gestes (et
    seulement là quand la section du 🧬 est fermée, pour ne pas écrire deux fois le même
    texte), et l’enveloppe try/catch garantit qu’une lecture impossible est DITE. */
-has(forceGestures, "{calcMsg && calcSection !== 'distances' && (",
+has(forceGestures, "{calcMsg && !calcDock && (",
   '⚠ …et sa réponse s’écrit SOUS les boutons qui l’ont demandée (le clic dit toujours quelque chose)');
 has(forceGestures, 'basis-full text-[10px] font-semibold rounded-md border',
   '…sur toute la largeur de la rangée, donc lisible au premier coup d’œil');
@@ -1512,16 +1568,60 @@ has(VIEW, '✕ The reading of the force field failed:',
   '…avec le texte de l’erreur, et la promesse que la molécule n’a pas bougé (une lecture n’écrit rien)');
 has(VIEW, 'The family-by-family table of this same reading is in 🧬 Structure calculation',
   '…et le renvoi vers le tableau famille par famille du 🧬 (le chiffre s’y décompose)');
-has(calcPanel, '{renderForceGestures()}',
-  '⚠ …et les trois sont RENDUS dans le panneau (la demande : « can the MD, Minimize and Energy be put next to “structure calculation” button? »)');
-ok(calcPanel.indexOf('{renderForceGestures()}') > calcPanel.indexOf('🧬 Structure calculation'),
-  '…juste APRÈS 🧬 Structure calculation — donc là sans ouvrir une seule section');
+has(calcButtonBlock, '{renderForceGestures()}',
+  'les trois gestes sont RENDUS dans la rangee du bouton (la demande : « can the MD, Minimize and Energy be put next to “structure calculation” button? »)');
+ok(VIEW.indexOf('{renderForceGestures()}') > iCalcBtn && VIEW.indexOf('{renderForceGestures()}') < iDisulfBtn,
+  'juste APRES le bouton du calcul, donc la sans ouvrir une seule fenetre');
 eq(VIEW.split('{renderForceGestures()}').length - 1, 1,
-  '…rendus une seule fois (aucun second exemplaire au fond du corps 🧬 : un seul JSX)');
+  'rendus une seule fois (aucun second exemplaire au fond de la fenetre : un seul JSX)');
 has(calcPanel, 'hydrogens added on',
-  '⚠ …et la lecture DIT les atomes ajoutés (hydrogènes), les charges et la surface');
-has(calcPanel, 'The three torsion families are what makes a Ramachandran plot defensible',
-  '⚠ …et le panneau DIT pourquoi ces trois familles sont là (la remarque sur les Ramachandran)');
+  '…et la lecture DIT les atomes ajoutés (hydrogènes), les charges et la surface');
+/* ⚠ LES GROS COMMENTAIRES ONT ÉTÉ RETIRÉS — la demande de cette session : « Please remove
+   all these large commentaries in the MD window and in the “structure calculation
+   section”. » Ce qui doit rester vrai : les deux paragraphes de prose (le recuit expliqué,
+   et « what this calculation does / what it is NOT ») ne sont PLUS rendus, et la même
+   décision est DATÉE dans le JSX — une remarque ne se perd pas en silence. */
+eq(calcPanel.includes('The three torsion families are what makes a Ramachandran plot defensible'), false,
+  '⚠ le paragraphe de prose sur les trois familles de torsion ne se rend plus (le gros commentaire de la fenetre a ete retire)');
+eq(calcPanel.includes('What this calculation does'), false,
+  '⚠ ni le paragraphe « what this calculation does / what it is NOT »');
+eq(mdWindow.includes("These values are THIS window's own: they are NOT the protocol"), false,
+  '⚠ ni le gros paragraphe de la fenetre MD : la demande en nommait les deux fenetres');
+has(VIEW, 'A ÉTÉ RETIRÉ', '...et le retrait est date la ou le texte vivait');
+
+/* ── ⚙ « PARAMETERS AND CONSTRAINTS » — LES DEUX TABLES DERRIÈRE UN BOUTON ────────────
+   La demande de cette session, mot pour mot : « move the structure constraint tables with
+   their buttons (add picked pair, add row, save distances, load distances, clear list, and
+   “secondary structure→ phi, psi”) into a new button “Parameters and Constraints” which if
+   clicked shows MD parameters and structural constraints tables. » Ce qui doit rester vrai :
+   le bouton existe et il commande `calcConstraints` ; la boîte qu'il ouvre porte les
+   réglages MD du protocole (`renderCalcMdOptions`) ET les deux tables avec TOUS leurs
+   boutons ; les paramètres du calcul (n · m · 🔥 recuit · 🖼 frames) et les étapes
+   (progression, rapport, famille classée, 💾) restent VISIBLES sans ouvrir la boîte. */
+has(calcPanel, 'onClick={() => setCalcConstraints((v) => !v)}', '⚙ le bouton « Parameters and Constraints » ouvre le panneau');
+has(calcPanel, "⚙ Parameters and Constraints {calcConstraints ? '▾' : '▸'}", '…et il dit son état (ouvert ▾ / fermé ▸)');
+const constraintsBox = calcPanel.slice(
+  calcPanel.indexOf('{calcConstraints && ('),
+  calcPanel.indexOf('<div className="flex flex-wrap items-center gap-3 text-[10px] font-bold text-indigo-800">'),
+);
+ok(constraintsBox.length > 4000,
+  `la boîte ⚙ porte les réglages MD ET les deux tables (${constraintsBox.length} caractères)`);
+for (const needle of ['{renderCalcMdOptions()}', '⌖ Add the picked pair', '➕ Add a row', '💾 Save distances',
+  '📂 Load distances', 'Clear the list', 'Secondary structure → φ/ψ', 'calcDihedrals.map', 'calcRestraints.map']) {
+  has(constraintsBox, needle, `⚠ …« ${needle} » est DANS la boîte ⚙ (c'est elle que la demande nomme)`);
+}
+has(calcPanel, 'aria-label="Number of starting structures n"',
+  '…et les paramètres du calcul (n · m) restent dans la fenêtre, hors de la boîte');
+has(calcPanel, 'aria-label="Write each start on screen while it is computed"',
+  '⚠ …tandis que 👁 watch / ▶ Run / ⏹ Stop et la famille restent HORS de la boîte (on les voit sans l’ouvrir)');
+/* LA COLONNE « residue » DIT LE RÉSIDU — le rapport de cette session : « The table of
+   dihedral constraints does not report the residue number as it should but the atom
+   number. » Elle écrit donc `calcResidueLabelOf(c.ca)` (le résidu du CA, tel que la
+   molécule à l'écran le nomme), et l'index d'atome ne reste que dans l'infobulle. */
+has(VIEW, 'const calcResidueLabelOf = (index) => {', 'la table des φ/ψ a un lecteur de RÉSIDU');
+has(VIEW, 'structureAtomRecords(structure).find((r) => r.index === index)', '…résolu sur la molécule à l’écran');
+eq(constraintsBox.includes('#{c.ca}'), false, '⚠ la cellule ne montre plus « #numéro d’atome »');
+has(constraintsBox, '{calcResidueLabelOf(c.ca)}', '…mais le RÉSIDU (le numéro de la demande)');
 has(calcPanel, 'k {row.k} {row.id === \'elec\' ? \'\' : row.unit}',
   '⚠ …et chaque famille affiche son POIDS et son UNITÉ telles que le module les écrit (aucun kcal/mol recopié dans le JSX)');
 has(calcPanel, '🧭 φ/ψ', '⚠ le tableau classé porte la lecture du squelette par modèle (colonne 🧭 φ/ψ)');
@@ -1530,15 +1630,17 @@ has(calcPanel, 'r.rama ? `${r.rama.violations}/${r.rama.measured}`', '…avec le
 /* LES FENÊTRES SONT SÉPARÉES — chacune se rend de son côté, et plus rien ne s’ajoute au
    panneau U0001f9ec (la barre d’onglets a disparu avec les deux autres fenêtres). */
 ok(VIEW.indexOf("{calcSection === 'torsion' && (() => {") < 0,
-  '⚠ la section ✏️ Torsion ne se rend plus dans la barre (elle est devenue la fenêtre de la vue 3D)');
+  'la section Torsion ne se rend plus dans la barre (elle est devenue la fenetre de la vue 3D)');
 ok(VIEW.indexOf("{calcSection === 'rama' && (() => {") < 0,
-  '…ni celle du U0001faa2 Ramachandran (elle est devenue le dock du viewer, ouvert par son bouton)');
-has(VIEW, "{calcSection === 'distances' && (() => {",
-  '…seule celle du U0001f9ec calcul reste une section de la barre');
+  'ni celle du Ramachandran (elle est devenue le dock du viewer, ouvert par son bouton)');
+ok(VIEW.indexOf("{calcSection === 'distances' && (() => {") < 0,
+  'ni le calcul de structure : la demande de cette session en a fait la fenetre `renderCalcWindow` (dock de la vue 3D)');
+has(VIEW, '{calcDock ? renderCalcWindow() : (',
+  'et la fenetre du calcul est bien rendue par le DOCK, comme MD et Ramachandran');
 ok(VIEW.indexOf('Structure &amp; geometry') < 0,
-  '…et la barre d’onglets elle-même a disparu (les trois sections ne partagent plus rien)');
-has(VIEW, 'className="w-full bg-indigo-50/40 border border-t-0 border-indigo-200 rounded-b-lg p-3 flex flex-col gap-2"',
-  '⚠ …et c’est LE SEUL corps de panneau : la barre d’onglets et son enveloppe partagée ont disparu avec elle');
+  'et la barre d onglets elle-meme a disparu (les trois sections ne partagent plus rien)');
+has(VIEW, 'className="shrink-0 w-[360px] flex flex-col gap-1.5 bg-white border border-indigo-200 rounded-xl p-2 overflow-hidden"',
+  'la fenetre du calcul a le MEME gabarit que le dock MD : une colonne de 360 px, poussee a gauche de la vue');
 
 /* LE PIQUAGE SE VOIT — l’atome cliqué est peint dans la vue 3D, de la couleur de son
    slot (A · B · C · D), et la peinture est vérifiée avant d’être gardée. */
@@ -1622,8 +1724,8 @@ has(calcPanel, "aria-label={`Weight of distance ${k + 1}, in multiples of the fi
   '…nommée pour ce qu’elle est');
 has(calcPanel, 'const paused = ready && weight === 0;',
   '⚠ …et un poids de 0 est une MISE EN PAUSE, dite à l’écran (⏸ sur la ligne) au lieu d’être un poids comme un autre');
-has(calcPanel, '⚖ is the WEIGHT of a line', 'le panneau dit ce que cette colonne fait');
-has(calcPanel, 'k = k_NOE × weight', '…avec la formule en clair (le poids multiplie la raideur)');
+has(calcPanel, 'THE WEIGHT OF A LINE', 'le panneau dit ce que cette colonne fait (son infobulle)');
+has(calcPanel, 'k_NOE × weight', '…avec la formule en clair (le poids multiplie la raideur)');
 has(VIEW, 'const calcSetRestraintWeight = (key, value) => {', 'le poids se tape comme la cible');
 has(VIEW, 'const weight = Number.isFinite(v) && v >= 0 ? v : null;',
   '…le texte tapé est gardé, la valeur n’en est que la conséquence, et un illisible vaut le DÉFAUT');

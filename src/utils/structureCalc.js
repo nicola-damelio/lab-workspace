@@ -3199,6 +3199,10 @@ export const rankStructureAttempts = ({
    finie, `shouldStop` est consulté AVANT chaque départ (le bouton ⏹ du panneau), et
    tout ce qui suit (`anneal`, `md`, `minimise`, `onStep`…) descend tel quel dans chaque
    `structureAttemptFrames`.
+   ⛓ LES DISTANCES NE SONT PAS OBLIGATOIRES — « The structure calculation must work even if
+   there are only dihedral constraints (at present it wants at least one distance) » : un
+   calcul qui ne porte QUE des φ/ψ imposés (`dihedrals`, la structure secondaire peinte
+   convertie) part normalement, et son rapport dit `restraintCount: 0, dihedralCount: n`.
    ⚠ GÉNÉRATEUR : il rend la main à CHAQUE image de chaque départ (`{phase, positions,
    index}`, plus une image `start` avant chaque départ et `attempt-done` après). C'est ce
    qui permet à l'écran de peindre la molécule pendant le calcul ; `structureCalculationOf`
@@ -3219,13 +3223,26 @@ const refusedCalculation = (reason, extra = {}) => ({
   family: { count: 0, spread: familySpreadOf({ attempts: [] }), restraints: [], rest: [] },
   best: null,
   restraints: [],
+  dihedrals: [],
+  dihedralCount: 0,
   dropped: 0,
   stopped: false,
   ...extra,
 });
 
+/** LES CONTRAINTES DE DIHÈDRE QUI COMPTENT — les mêmes critères que `dihedralPenaltyOf`
+ *  (quatre indices entiers et une cible lisible). C'est CE compte que le calcul lit pour
+ *  savoir s'il a quelque chose à respecter : la demande de cette session — « The structure
+ *  calculation must work even if there are only dihedral constraints (at present it wants
+ *  at least one distance) » — se joue ici, et nulle part ailleurs. */
+export const dihedralListOf = (dihedrals = []) => Array.from(dihedrals || []).filter((d) => {
+  const atoms = Array.from((d && d.atoms) || []);
+  return atoms.length === 4 && atoms.every((k) => Number.isInteger(k))
+    && Number.isFinite(Number(d && d.target));
+});
+
 export function* structureCalculationFrames({
-  positions = null, elements = [], bonds = [], restraints = [],
+  positions = null, elements = [], bonds = [], restraints = [], dihedrals = [],
   starts = STRUCTURE_CALC_DEFAULT_STARTS, keep = STRUCTURE_CALC_DEFAULT_KEEP,
   seed = STRUCTURE_CALC_SEED, tolerance = STRUCTURE_CALC_RESTRAINT_TOLERANCE,
   indices = null, onAttempt = null, shouldStop = null, ...rest
@@ -3234,7 +3251,15 @@ export function* structureCalculationFrames({
   if (!read) return refusedCalculation('bad-points');
   const n = clampInt(starts, 0, STRUCTURE_CALC_MAX_STARTS, STRUCTURE_CALC_DEFAULT_STARTS);
   const clean = restraintListOf({ restraints, atomCount: read.count });
-  if (!clean.count) {
+  /* ⛓ LES CONTRAINTES DE DIHÈDRE COMPTENT AUTANT QUE LES DISTANCES — la demande : « The
+     structure calculation must work even if there are only dihedral constraints (at
+     present it wants at least one distance) ». Un calcul qui n'a QUE des φ/ψ imposés (la
+     structure secondaire peinte convertie) a donc quelque chose à respecter : il part, et
+     c'est la force de rappel du puits plat (`ffDihedralCostOf`) qui l'assemble, exactement
+     comme les distances le font quand la table en porte. Le refus ne tombe plus que sur un
+     calcul qui n'a NI l'une NI l'autre — et il dit alors laquelle des deux manque. */
+  const dh = dihedralListOf(dihedrals);
+  if (!clean.count && !dh.length) {
     return refusedCalculation('no-restraint', { starts: n, dropped: clean.dropped });
   }
   /* LA TRANCHE — `null` = les n départs, une liste = ceux-là seulement (indices hors
@@ -3255,7 +3280,7 @@ export function* structureCalculationFrames({
     const frames = structureAttemptFrames({
       ...rest,
       positions: read.flat, elements, bonds,
-      restraints: clean.list, index, seed, tolerance,
+      restraints: clean.list, dihedrals, index, seed, tolerance,
     });
     let next = frames.next();
     while (!next.done) { yield next.value; next = frames.next(); }
@@ -3278,6 +3303,11 @@ export function* structureCalculationFrames({
     attempts,
     restraintCount: clean.count,
     restraints: clean.list,
+    /* ⛓ CE QUE LE CALCUL A PORTÉ EN PLUS DES DISTANCES — les φ/ψ imposés, tels quels : le
+       panneau les compte dans sa progression, et un calcul SANS distance (le cas que la
+       demande ouvre) se lit donc sans ambiguïté (`restraintCount` = 0, `dihedralCount` > 0). */
+    dihedrals: dh,
+    dihedralCount: dh.length,
     dropped: clean.dropped,
     tolerance,
     stopped,
