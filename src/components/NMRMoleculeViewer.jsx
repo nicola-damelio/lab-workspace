@@ -10866,7 +10866,7 @@ const calcReportText = (ranked) => {
   L.push(`starts n / kept m   : ${ranked.starts} / ${ranked.keep}`);
   L.push(`starts computed     : ${ranked.tried}${ranked.refused ? ` (${ranked.refused} refused before scoring)` : ''}`);
   L.push(`annealing           : ${calcAnneal} temperature step(s), ${calcAnnealFrame} image(s) per step`);
-  L.push(`dynamics per start  : ${calcMdSteps} step(s) of ${calcMdDt} ps = ${f(calcMdTime.ps, 4)} ps, T ${calcMdHot} -> ${calcMdCold} K, equilibration ${Math.round(calcMdEquil * 100)} %`);
+  L.push(`dynamics per start  : ${calcMdSteps} step(s) of ${calcMdDt} ps = ${f(calcMdTime.ps, 4)} ps, T ${calcMdHot} -> ${calcMdCold} K, equilibration ${calcMdEquil} %`);
   L.push(`minimisation        : ${calcMinimise} sweep(s) per start`);
   L.push(`seed (fixed)        : ${STRUCTURE_CALC_SEED}`);
   L.push(`constraints         : ${n0(ranked.restraintCount)} distance(s), ${n0(ranked.dihedralCount)} imposed phi/psi${ranked.dropped ? `, ${ranked.dropped} line(s) dropped (unreadable)` : ''}`);
@@ -11625,7 +11625,15 @@ const runStructureCalculation = () => {
        rapport rend la DURÉE totale, pas × dt), la minimisation, la trempe. */
     anneal: calcAnneal, annealPerFrame: calcAnnealFrame,
     md: calcMdSteps, mdPerFrame: STRUCTURE_CALC_MD_FRAME,
-    mdDt: calcMdDt, mdEquilibration: calcMdEquil,
+    /* ⏱ LA PART D'ÉQUILIBRATION — ⚠ **DIVISÉE PAR 100, ET C'EST UN CORRECTIF** : le panneau
+       la garde en POUR CENT (33, l'entrée `⚖ equil` dit « % »), le module la lit en FRACTION
+       (`structureAttemptFrames` : `Math.min(0.9, mdEquilibration)`). Sans la division, 33
+       tombait sur le plafond 0.9 : 90 % de la dynamique de chaque départ tournait à 🌡 hot
+       (1500 K) et il ne restait que ~30 pas (0.3 ps) pour refroidir vers 🌡 cold. C'est ce qui
+       rendait les modèles du calcul « peu helicoïdaux » alors qu'une 🌡 MD tenue à 300 K
+       gardait la même hélice : la comparaison des deux gestes n'était plus sur la même
+       échelle. La grotte du rapport (« equilibration 3300 % ») disparaît avec. */
+    mdDt: calcMdDt, mdEquilibration: calcMdEquil / 100,
     mdHot: calcMdHot, mdCold: calcMdCold,
     minimise: calcMinimise,
     /* ⚠ Le rebâtiment d'une partie hors fenêtre n'existe plus : la fenêtre du ⚒ a été
@@ -17705,7 +17713,7 @@ const calcAddFamilyToBar = async (structure, comp, retained) => {
   if (!added) return 0;
   const many = added === 1;
   setCalcMsg((prev) => `${prev ? `${prev} ` : ''}🧬 ${added} more model${many ? '' : 's'} of the family ${many ? 'is' : 'are'} now`
-    + ' a MOLECULE of the Molecules bar (it is shown, and it has its own ☑, styling rows, ★ set main, ↺ and 🗑):'
+    + ' a MOLECULE of the Molecules bar (it is shown, and it has its own ☑, styling rows, set main, ↺ and 🗑):'
     + ' press 🎯 Fit to chosen to superpose the family onto the reference.');
   return added;
 };
@@ -21109,9 +21117,16 @@ const renderMdWindow = () => (
   </div>
 );
 
+/* ⚠ LA BOÎTE BLEUE DE LA RANGÉE A DISPARU — la demande de cette session : « MD should not
+   change but it must move in line with the other commands of the “modify” section. »
+   `display: contents` fait des DEUX boutons (et de la ligne dépliée du ⚒) des enfants
+   DIRECTS de la rangée ✏️ Modify : ils se rangent donc DANS le flux des autres commandes
+   (même hauteur, même bordure), au lieu d'occuper un bloc encadré à eux seuls. La ligne
+   dépliée du ⚒ reste `basis-full`, donc elle descend sous la rangée entière, et rien ne
+   s'affiche sous les boutons tant qu'on n'a rien demandé. */
 const renderForceGestures = () => (
   <span
-    className="inline-flex flex-wrap items-center gap-1.5 rounded-md border border-sky-200 bg-sky-50/50 px-1.5 py-1"
+    className="contents"
     title="THE THREE GESTURES OF THE FORCE FIELD, ON THE MOLECULE AS IT STANDS: ▶ MD runs the dihedral Langevin dynamics, ⚒ Minimise the dihedral descent, ⟳ Energy only READS the families (a reading, nothing written). They are the same controls the 🧲 Force field block describes — put here so they are one click away from 🧬 Structure calculation, without opening any section. Each button's own tooltip says what it does to the molecule and what it reports. ⚠ TWO STOPS, AND THEY ARE NOT THE SAME: the ⏹ next to ▶ Run stops the CALCULATION (it ranks what is already computed and keeps its best m); the ■ that appears next to ▶ MD — and, when the 🌡 MD window is folded, right here in this row — stops a running ▶ MD or ⚒ Minimise, which has no family to rank.">
     {/* 🌡 LE BOUTON MD DE LA BARRE — SON SEUL GESTE EST LA FENÊTRE. La demande : « Il
         pulsante MD deve aprire una finestra collapsable a sinistra all'interno del viewer
@@ -21123,24 +21138,27 @@ const renderForceGestures = () => (
       title={`Show or hide the 🌡 MD window INSIDE the viewer: it sits at the LEFT of the 3D view, with the parameters of a MOLECULAR DYNAMICS RUN OF ITS OWN — 🌡 one temperature, 💧 the solvent, the steps, the ⏱ step interval and the duration, 🖼 how often an image is written, 🪢 whether ω may leave trans, and the 📏 option that makes it carry (or not) the distance table of the 🧬 — and its own ▶ MD button, which runs on the molecule AS IT STANDS and shows every image it computes. ⚠ These are NOT the protocol of 🧬 Structure calculation: n, m, 🔥 recuit, 🖼 frames, 🌡 hot → 🌡 cold, the ⚖ equilibration share and the ⚒ sweeps live in its own panel, and neither gesture can change the other. Press this button again to close the window; ⇤ folds it to a thin tab on the left edge. Closing it loses nothing: the parameters are the window's own state.${mdDock ? ' — open right now.' : ''}`}>
       ▶ MD{mdDock ? ' ⇥' : ' ⇤'}
     </button>
-    <button type="button" onClick={runMinimise} disabled={calcBusy || mdBusy}
-      title="MINIMISE the energy from here: the dihedral descent each start ends on (every hinge tried on both sides of a step that halves as soon as a sweep improves nothing), on the same force field, with your distance table as restraints and the already-held ones as a leash. This is the FINAL ENERGY REFINEMENT — it is what CONVERGES a distance the dynamics merely approached, and it lands on a local minimum, not merely on a model that respects the distances. The 🪢 plot follows the descent image by image while its window is on screen, and the minimum it lands on is written even when 👁 watch is unticked. ↺ Undo torsion puts the molecule back. ⚠ WHILE IT RUNS IT CAN BE STOPPED, and the ■ is always somewhere you can see: next to the ▶ MD of the 🌡 MD window when that window is open, or right here in this row when it is folded/closed (the same stop, the same pump) — a ⚒ Minimise is launched from this row, so its stop must not hide with the window."
-      className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-amber-400 text-amber-800 hover:bg-amber-50 disabled:opacity-40">
-      ⚒ Minimise
-    </button>
-    {/* ⚒ LES RÉGLAGES DE LA DESCENTE, DERRIÈRE UN BOUTON QUI LES REPLIE — la demande de
-        cette session, en deux moitiés : « Minimize should have more controls (number of
-        steps, criteria to converge, etc) » et « the comments of the buttons “minimize” and
-        “energy” should be retractable to save space ». Le ⚒ garde donc sa place dans la
-        rangée, et ses réglages n'existent QUE dépliés : la rangée ne coûte pas une ligne de
-        plus tant qu'on ne demande rien (▸ ouvre, ▾ referme).
+    {/* ⚒ MINIMIZE — UN BOUTON QUI DÉPLIE, PLUS UN BOUTON QUI PART — la demande de cette
+        session, mot pour mot : « Clicking Minimize should not immediately execute the
+        function. Instead, it expands a new row beneath the buttons. A second click collapses
+        and hides this row. » Il garde donc sa place DANS la ligne des commandes de ✏️ Modify,
+        et c'est LUI qui ouvre et referme la ligne du dessous : les quatre réglages de la
+        descente ET les deux gestes qui les lisent (⟳ Energy · ▶ Run). Replié, il ne coûte
+        rien : rien ne s'affiche sous les boutons tant qu'on n'a rien demandé.
         ⚠ `steps` EST `calcMinimise` — le ⚒ sweeps du panneau 🧬 : une seule valeur, deux
-        portes, donc le panneau du calcul et cette rangée ne peuvent pas se contredire. */}
+        portes, donc le panneau du calcul et cette ligne ne peuvent pas se contredire. */}
     <button type="button" onClick={() => setMinSettings((v) => !v)}
-      className={`px-1.5 py-1 text-[10px] font-bold rounded border transition-colors ${minSettings ? 'bg-amber-100 border-amber-400 text-amber-900' : 'bg-white border-amber-300 text-amber-700 hover:bg-amber-50'}`}
-      title={`THE SETTINGS OF THE DIHEDRAL DESCENT — the ⚒ Minimise above runs them, and they are ITS OWN: the number of sweeps (steps), the initial step, the FINEST step (the criterion that decides convergence) and how many times each hinge is tried per sweep. Folded by default so the row costs no height; press again to fold them away. ⚠ « steps » is the SAME setting as « ⚒ sweeps » of 🧬 Structure calculation (that descent is the one each start ends on), so the two boxes can never disagree.${minSettings ? ' — open right now.' : ''}`}>
-      ⚒ settings{minSettings ? ' ▾' : ' ▸'}
+      className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${minSettings ? 'bg-amber-100 border-amber-400 text-amber-900 hover:bg-amber-200' : 'bg-white border-amber-300 text-amber-700 hover:bg-amber-50'}`}
+      title={`⚒ MINIMIZE — OUVRE (▸) OU REFERME (▾) LA LIGNE DE LA DESCENTE, sous cette rangée : ses paramètres (steps, initial step, convergence floor, tries per hinge), la lecture ⟳ Energy et le ▶ Run qui la lance. La descente est celle sur laquelle chaque départ se termine — chaque charnière essayée de part et d'autre d'un pas qui se DIVISE PAR DEUX dès qu'un balayage n'améliore plus rien — sur le MÊME champ, avec votre table de distances comme contraintes et celles déjà tenues comme longe. C'est l'AFFINAGE FINAL DE L'ÉNERGIE : c'est elle qui CONVERGE une distance que la dynamique n'a fait qu'approcher, et elle atterrit sur un MINIMUM LOCAL, pas seulement sur un modèle qui « respecte » les distances. Le 🪢 suit la descente image par image tant que sa fenêtre est à l'écran, et le minimum est écrit même si 👁 est décochée. ↺ Undo torsion remet la molécule exactement comme elle était. ⚠ WHILE IT RUNS IT CAN BE STOPPED, and the ■ is always somewhere you can see: next to the ▶ MD of the 🌡 MD window when that window is open, or right here on this line when it is folded/closed (the same stop, the same pump). ⚠ « steps » EST le même réglage que « ⚒ sweeps » du 🧬 Structure calculation (cette descente est celle sur laquelle chaque départ se termine), donc les deux cases ne peuvent pas diverger.${minSettings ? ' — la ligne est ouverte en ce moment.' : ''}`}>
+      ⚒ Minimize{minSettings ? ' ▾' : ' ▸'}
     </button>
+    {/* ⚠ LE BOUTON « ⚒ settings » A DISPARU — la demande de cette session a fondu les DEUX
+        boutons du ⚒ en UN : c'est maintenant « ⚒ Minimize » lui-même qui déplie la ligne
+        (▸/▾), et la ligne qu'il ouvre porte les quatre réglages ET les deux gestes
+        (⟳ Energy · ▶ Run). Les réglages n'existent donc QUE dépliés, exactement comme avant
+        (la demande : « Minimize should have more controls (number of steps, criteria to
+        converge, etc) » et « the comments of the buttons “minimize” and “energy” should be
+        retractable to save space »), mais une seule pression suffit à les voir. */}
     {minSettings && (
       <span
         className="basis-full flex flex-wrap items-center gap-1.5 border-t border-amber-200 pt-1.5 text-[10px] font-bold text-slate-700"
@@ -21179,37 +21197,51 @@ const renderForceGestures = () => (
             aria-label="Minimisation tries per hinge per sweep"
             className="w-10 border border-amber-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-amber-500 text-[10px] font-mono bg-white" />
         </label>
+        {/* ⚡ LES DEUX GESTES DE LA LIGNE DÉPLIÉE — la demande de cette session : « When
+            expanded, this row must display the minimization parameters, an Energy button,
+            and a Run button (which triggers the actual minimization process). » Ils sont
+            donc ICI, dans la ligne que « ⚒ Minimize » ouvre, et le rapport qu'ils écrivent
+            s'affiche DIRECTEMENT SOUS elle (la boîte `calcMsg` plus bas, qui n'existe que
+            dépliée) : la rangée des commandes, elle, ne garde que les deux boutons. */}
+        <button type="button" onClick={calcReadForceField}
+          className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap bg-white border-indigo-300 text-indigo-700 hover:bg-indigo-50"
+          title="⟳ ENERGY — a READING of the force field on the molecule as it stands: the families, the residue counts, which φ/ψ and χ1 are outside, the charges, the surface, the hydrogens it added. It is NOT a gesture: nothing is written, so ↺ Undo torsion has nothing to undo. Its answer is printed RIGHT BELOW this row — and when the 🧬 Structure calculation panel is open, the family-by-family table is the one it fills there.">
+          ⟳ Energy
+        </button>
+        <button type="button" onClick={runMinimise} disabled={calcBusy || mdBusy}
+          className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap bg-amber-600 border-amber-700 text-white hover:bg-amber-700 disabled:opacity-40"
+          title="▶ RUN THE MINIMISATION — THE gesture the four settings of this row describe: the dihedral descent from where the molecule stands, under the same force field, with your distance table as restraints and the already-held ones as a leash. It is the FINAL ENERGY REFINEMENT — it CONVERGES a distance the dynamics merely approached, and it lands on a LOCAL MINIMUM. Its report is written RIGHT BELOW this row, the 🪢 plot follows it image by image while its window is on screen, and ↺ Undo torsion puts the molecule back exactly as it was.">
+          ▶ Run
+        </button>
       </span>
     )}
-    {/* ■ LE STOP DES GESTES, QUAND SA FENÊTRE EST REPLIÉE — la seconde moitié de la demande
-        de cette session : « manca un pulsante di stop sia per la structure calculation che
-        per la MD ». Le ⏹ du calcul vit dans le panneau 🧬 ; le ■ des gestes vit à côté de
-        leur ▶, dans la fenêtre 🌡 MD (voir `mdStop`). Mais le ⚒ Minimise se lance ICI, et la
-        fenêtre 🌡 MD peut être repliée (⇤), fermée, ou la vue 3D entière réduite (⬇ — la
-        colonne n'a alors plus de hauteur) : le ■ apparaît alors AUSSI dans cette rangée,
-        pour qu'un geste en cours ait TOUJOURS son arrêt à l'écran. ⚠ Il n'y en a jamais
-        deux VISIBLES à la fois : la fenêtre porte le sien, celui-ci n'existe que quand elle
-        ne peut pas le montrer. */}
+    {/* ■ LE STOP DES GESTES, QUAND SA FENÊTRE EST REPLIÉE — la seconde moitié de la demande :
+        « manca un pulsante di stop sia per la structure calculation che per la MD ». Le ⏹ du
+        calcul vit dans le panneau 🧬 ; le ■ des gestes vit à côté de leur ▶, dans la fenêtre
+        🌡 MD (voir `mdStop`). Mais le ⚒ Minimize se lance ICI, et la fenêtre 🌡 MD peut être
+        repliée (⇤), fermée, ou la vue 3D entière réduite (⬇ — la colonne n'a alors plus de
+        hauteur) : le ■ apparaît alors AUSSI sur CETTE ligne, pour qu'un geste en cours ait
+        TOUJOURS son arrêt à l'écran. ⚠ Il reste SUR la ligne des deux boutons (jamais dans la
+        ligne dépliée) : un arrêt doit être atteignable sans déplier quoi que ce soit. Et il
+        n'y en a jamais deux VISIBLES à la fois : la fenêtre porte le sien, celui-ci n'existe
+        que quand elle ne peut pas le montrer. */}
     {mdBusy && (viewerCollapsed || !mdDock) && (
       <button type="button" onClick={mdStop}
-        title="■ STOP THE RUNNING GESTURE (▶ MD or ⚒ Minimise) — it is here because the 🌡 MD window, where it normally sits right next to ▶ MD, is folded or closed at the moment. It stops the gesture BETWEEN the image it has just written and the next one: nothing is reverted (the images already written ARE the molecule on screen, and ↺ Undo torsion is what puts it back), and the gesture's own report is NOT computed — ⟳ Energy re-reads the force field on what is actually there."
-        className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-red-300 text-red-600 hover:bg-red-50">
+        title="■ STOP THE RUNNING GESTURE (▶ MD or ⚒ Minimize) — it is here because the 🌡 MD window, where it normally sits right next to ▶ MD, is folded or closed at the moment. It stops the gesture BETWEEN the image it has just written and the next one: nothing is reverted (the images already written ARE the molecule on screen, and ↺ Undo torsion is what puts it back), and the gesture's own report is NOT computed — ⟳ Energy re-reads the force field on what is actually there."
+        className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap bg-white border-red-300 text-red-600 hover:bg-red-50">
         ■ Stop
       </button>
     )}
-    <button type="button" onClick={calcReadForceField}
-      title={`⟳ ENERGY — a READING of the force field on the molecule as it stands: the families, the residue counts, which φ/ψ and χ1 are outside, the charges, the surface, the hydrogens it added. It is NOT a gesture: nothing is written (↺ Undo torsion has nothing to undo). Its answer is printed RIGHT UNDER THESE BUTTONS, so the click always says something${calcDock
-        ? ' — and the family-by-family table is in the 🧬 Structure calculation window, which is open right now.'
-        : ' — and the family-by-family table appears in the 🧬 Structure calculation window (open it to see this number broken into its families).'}`}>
-      ⟳ Energy
-    </button>
-    {/* ⚡ LA RÉPONSE DU ⟳ S'ÉCRIT ICI — la remarque de cette session : « I do not understand
-        the use of the energy button. If I click nothing happens and nothing is written
-        anywhere. » La lecture n'était écrite QUE dans le corps du 🧬 : section fermée, le
-        clic ne disait donc rien à personne. Elle apparaît maintenant SOUS les boutons qui
-        l'ont demandée — et seulement quand la section du 🧬 est fermée : ouverte, c'est
-        elle qui l'affiche (le même `calcMsg`), donc jamais deux fois le même texte. */}
-    {calcMsg && !calcDock && (
+    {/* ⚡ LA RÉPONSE DU ⟳ Energy ET DU ▶ Run S'ÉCRIT ICI — la remarque d'origine : « I do not
+        understand the use of the energy button. If I click nothing happens and nothing is
+        written anywhere. » Elle est donc écrite DIRECTEMENT SOUS la ligne que « ⚒ Minimize »
+        déplie (la demande de cette session, mot pour mot : « Any resulting comments or data
+        generated by clicking the Run or Energy buttons should appear directly below the
+        expanded parameters row. »), et ⚠ elle n'existe QUE dépliée : replier le ⚒ referme
+        aussi ce rapport (son texte n'est pas perdu — le redéplier le ramène), donc rien ne
+        traîne sous la rangée par défaut. Quand le panneau 🧬 est ouvert, c'est LUI qui
+        l'affiche (le même `calcMsg`), donc jamais deux fois le même texte. */}
+    {minSettings && calcMsg && !calcDock && (
       <div
         title={calcMsg}
         className={`basis-full text-[10px] font-semibold rounded-md border px-2 py-1 ${/^✓/.test(calcMsg) ? 'text-emerald-800 bg-emerald-50 border-emerald-200' : /^■/.test(calcMsg) ? 'text-amber-800 bg-amber-50 border-amber-200' : /^✕/.test(calcMsg) ? 'text-rose-800 bg-rose-50 border-rose-200' : 'text-slate-700 bg-slate-50 border-slate-200'}`}>
@@ -21247,8 +21279,15 @@ const renderForceGestures = () => (
         portent. */}
   </span>
 );
-/* ── 🧬 LA FENÊTRE DU CALCUL DE STRUCTURE — LE DOCK DE GAUCHE DE LA VUE 3D ─────────
-   La demande de cette session : « Transform the “structure calculation” page in an
+/* ── 🧬 LE PANNEAU DU CALCUL DE STRUCTURE — PLEINE LARGEUR, SOUS LA RANGÉE DE SON BOUTON ─
+   La demande de cette session : « La finestra struttura calculation dovrebbe essere full
+   width e retractable in alto invece che a sinistra. i parametri saranno quindi
+   distribuiti in orizzontale. » Il n'est donc PLUS un dock de la vue 3D (il ne pousse plus
+   la molécule, il ne recouvre rien et il n'y a plus d'onglet 🧬 STRUCT. sur le bord gauche) :
+   il se rend DANS le groupe ✏️ Modify, en enfant PLEINE LARGEUR (`w-full`, exactement comme
+   le panneau ⚙ Parameters and Constraints), donc SOUS la rangée entière de ses boutons. Le
+   🧬 de la rangée l'ouvre et le referme, et son ✕ le referme aussi.
+   La demande qui l'avait fait naître : « Transform the “structure calculation” page in an
    internal collapsible window as that of MD or Ramachandran containing the calculation
    parameters and updates to follow the stages of the calculation but move the structure
    constraint tables with their buttons … into a new button “Parameters and Constraints”
@@ -21267,11 +21306,13 @@ const renderForceGestures = () => (
    one set of parameters was inside the “Parameters and Constraints” but they are not
    necessary there. » Rien n'a réécrit la physique : les mêmes `calcRestraints`,
    `calcDihedrals` et module pur.
-   ⚠ SEULE LA PLACE DU PANNEAU CHANGE : la barre de commandes n'est plus poussée par une
-   section pleine largeur, et la vue 3D n'est plus poussée du tout — le champ et les tables sont
-   un PANNEAU pleine largeur sous la rangée de leurs boutons (la demande de cette session :
-   « should not open a window in the molecule space but it should [be] full width under the
-   button »), donc la molécule garde sa surface, panneau ouvert comme fermé. */
+   ⚠ SEULE LA PLACE DU PANNEAU CHANGE, ET ELLE A CHANGÉ DEUX FOIS : la barre de commandes
+   n'est plus poussée par une section pleine largeur, et la vue 3D n'est plus poussée du
+   tout. Le champ de forces et les deux tables sont devenus le panneau ⚙ (pleine largeur sous
+   la rangée ✏️ Modify — la demande : « should not open a window in the molecule space but it
+   should [be] full width under the button »), et le calcul lui-même les a suivis cette
+   session : `renderCalcWindow` est PLEINE LARGEUR, rendu sous la même rangée, avec ses
+   paramètres en tableau. La molécule garde donc sa surface, panneau ouvert comme fermé. */
 /* ── ⚙ LE PANNEAU « PARAMETERS AND CONSTRAINTS » — LE BOUTON DU MENU ✏️ MODIFY ─────
    La demande de cette session : « “Parameters and Constraints” section should be in the
    “modify” menu and should contain the description of the force field (now in the
@@ -21299,7 +21340,16 @@ const renderForceGestures = () => (
    frames et 👁 watch y restent aussi. Les deux gestes lisent les mêmes états
    (`calcRestraints`, `calcDihedrals`, `calcForce`) : la table montrée EST celle du
    ▶ Run, du ▶ MD, du ⚒ Minimise et du ⟳ Energy. */
-const renderParamsWindow = () => (
+const renderParamsWindow = () => {
+  /* ⚠ LA GÉOMÉTRIE COURANTE EST LUE ICI AUSSI — le tableau des distances vit maintenant DANS
+     ce panneau (il vivait dans celui du 🧬), et ses colonnes « Now » et « Δ » mesurent la
+     molécule TELLE QU'ELLE EST. `geom` vient donc de `calcGeometryNow()`, la MÊME lecture que
+     celle des quatre gestes du champ — aucun second calcul de distance, et aucune variable
+     supposée : sans ces deux lignes, `geom` n'existe pas dans cette portée et le tableau
+     levait un ReferenceError dès qu'une ligne de distance était écrite. */
+  const live = calcGeometryNow();
+  const geom = live ? live.geom : null;
+  return (
   <div className="w-full bg-white border border-slate-300 rounded-lg p-2 flex flex-col gap-1.5">
     <div className="flex items-center justify-between gap-1">
       <span className="text-[10px] font-black text-slate-700 uppercase tracking-wide"
@@ -21614,93 +21664,123 @@ const renderParamsWindow = () => (
     </div>
   </div>
 );
+};
 
 const renderCalcWindow = () => {
   const live = calcGeometryNow();
   const geom = live ? live.geom : null;
   const ranked = calcResult;
   return (
-    <div className="shrink-0 w-[360px] flex flex-col gap-1.5 bg-white border border-indigo-200 rounded-xl p-2 overflow-hidden"
-      style={{ height: (viewerCollapsed ? 0 : viewH) + 'px' }}>
+    <div className="w-full bg-white border border-indigo-200 rounded-lg p-2 flex flex-col gap-1.5">
       <div className="flex items-center justify-between gap-1 shrink-0">
-        <span className="text-[10px] font-black text-indigo-700 uppercase tracking-wide">
+        <span className="text-[10px] font-black text-indigo-700 uppercase tracking-wide"
+          title="🧬 STRUCTURE CALCULATION — UN PANNEAU PLEINE LARGEUR, SOUS LA RANGÉE DE SON BOUTON (la demande de cette session : « La finestra struttura calculation dovrebbe essere full width e retractable in alto invece che a sinistra. »). Il ne pousse donc plus la vue 3D et il ne laisse plus d'onglet vertical sur son bord gauche : le bouton 🧬 du groupe ✏️ Modify l'ouvre et le referme (et le ✕ ci-contre le referme aussi). Il porte les paramètres du calcul (UN tableau), les étapes (la progression, le rapport, la famille classée) et 💾 Save the family / Save the report. Le champ de forces et les deux tables de contraintes ne sont PAS ici : ils sont dans ⚙ Parameters and Constraints.">
           🧬 Structure calculation{ranked ? ` (${ranked.retained.length}/${ranked.tried})` : ''}
         </span>
         <button type="button" onClick={() => toggleCalcDock(false)}
-          title="Collapse the structure-calculation window — it folds to a thin tab on the left edge (🧬 brings it back), and the 3D view takes the whole width again. Nothing is lost: these are the panel's own values, the two constraint tables and the family."
-          className="px-1.5 py-0.5 text-[9px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100">⇤</button>
+          title="Close this panel — it is a full-width panel UNDER the ✏️ Modify row (not a window in the molecule space), so the 3D view keeps its whole surface whether it is open or closed, and nothing is lost: these are the panel's own values, the two constraint tables and the family. The 🧬 button of the row opens it again."
+          className="px-1.5 py-0.5 text-[9px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100">✕</button>
       </div>
-      <div className="overflow-y-auto custom-scrollbar flex flex-col gap-1.5">
-      <p className="text-[9px] font-black text-slate-500 uppercase tracking-wide"
-        title="THE PARAMETERS OF THIS CALCULATION, AND WHAT FOLLOWS ITS STAGES — n · m · 🔥 recuit · 🖼 frames here, then the dynamics of the protocol (steps, dt, total, 🌡 hot → 🌡 cold, ⚖ equil, ⚒ sweeps, 🪢 ω, 🎯 target), then ▶ Run / ⏹ Stop and the report that says where the calculation is, then the ranked family. ⚠ THE FORCE FIELD AND THE TWO CONSTRAINT TABLES ARE NOT HERE ANY MORE: they live in ⚙ Parameters and Constraints, in the ✏️ Modify menu of “2 · Toolbar” (the request: « should be in the “modify” menu »).">
-        ⚙ n · m · 🔥 recuit · 🖼 frames · la dynamique · les étapes
-      </p>
-      <div className="flex flex-wrap items-center gap-3 text-[10px] font-bold text-indigo-800">
-        <label className="flex items-center gap-1"
-          title="n — how many structures are BUILT from scratch. Each one is a fresh random draw of every rotatable dihedral, and each one is put through the standard protocol (anneal → dynamics → minimise → quench) before being scored. More starts means more chances that at least one of them can obey your distances — and more time: one start costs an annealing schedule, a whole dynamics and a minimisation.">
-          n starting
-          <input type="number" min="1" max={STRUCTURE_CALC_MAX_STARTS} value={calcStarts}
-            onChange={(e) => setCalcStartsText(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') runStructureCalculation(); }}
-            aria-label="Number of starting structures n"
-            className="w-14 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
-        </label>
-        <label className="flex items-center gap-1"
-          title="m — how many structures are KEPT once every start has been scored. The score is the force field of this calculation (kcal/mol: bonds, angles, planar rings, vdW, electrostatics, solvent, φ/ψ, χ1, ω, your distances in flat-bottom wells) plus the clash penalty; the m best are kept IN ORDER, with their coordinates, and the first one is written into the molecule. The OTHERS become MOLECULES of the Molecules bar (each shown, with its own ☑, styling rows, ★ set main, ↺ and 🗑): tick them, style them, and press 🎯 Fit to chosen to superpose the whole FAMILY onto the chosen one — the ensemble is then on screen and in the styling window, and 🗑 removes a model you do not want. Only the m kept structures carry their coordinates — that is what m means.">
-          m kept
-          <input type="number" min="1" max={STRUCTURE_CALC_MAX_KEEP} value={calcKeep}
-            onChange={(e) => setCalcKeepText(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') runStructureCalculation(); }}
-            aria-label="Number of retained structures m"
-            className="w-14 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
-        </label>
-        <label className="flex items-center gap-1"
-          title="🔥 The ANNEALING — how many temperature steps each start gets. A start is a random draw of every dihedral, which is almost always stacked or far from your distances, and the protocol that follows is LOCAL: without annealing it stays where the draw put it. The annealing moves DIHEDRALS ONLY (a rigid rotation of one side of the molecule about its hinge: bond lengths and angles cannot move), accepts a step that is worse with probability exp(−Δ/T), and cools down. 0 = no annealing, exactly what this panel did before (n plain draws + the rest of the protocol).">
-          🔥 recuit
-          <input type="number" min="0" max="24" value={calcAnneal}
-            onChange={(e) => setCalcAnneal(Math.max(0, Math.min(24, Math.round(Number(e.target.value) || 0))))}
-            aria-label="Annealing temperature steps"
-            className="w-12 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
-          <span className="font-semibold text-slate-500">paliers</span>
-        </label>
-        <label className="flex items-center gap-1"
-          title="🖼 HOW MANY IMAGES PER ANNEALING STEP — this is what makes the annealing VISIBLE: the module hands the screen a picture every N moves inside a temperature step (0/1 = one picture per step), and each picture is written into the molecule before the page is allowed to paint. 4 to 8 shows the fold without slowing the calculation down.">
-          🖼 frames
-          <input type="number" min="0" max="24" value={calcAnnealFrame}
-            onChange={(e) => setCalcAnnealFrame(Math.max(0, Math.min(24, Math.round(Number(e.target.value) || 0))))}
-            aria-label="Images per annealing temperature step"
-            className="w-12 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
-        </label>
-        {/* ⚙ LES RÉGLAGES DE LA DYNAMIQUE DU CALCUL SONT REVENUS ICI — la demande : « bring
-            back all the MD parameters related to structure calculation in the settings of
-            structure calculation. » Ils sont écrits UNE fois, par `renderCalcMdOptions()`,
-            et AUCUN autre geste ne les lit : ce sont les pas, le pas de temps, la durée,
-            les deux températures (🌡 hot → 🌡 cold), la part d'équilibration, les balayages
-            de ⚒ et l'option 🪢 ω — le protocole que CHAQUE DÉPART porte après son recuit.
-            La fenêtre 🌡 MD du bord gauche de la vue 3D a, elle, la dynamique ISOLÉE et ses
-            propres réglages (T, 💧 solvant, pas, dt, durée, intervalle d'images, ω), donc
-            les deux gestes ne peuvent plus se changer l'un l'autre (voir
-            `renderMdWindow`). */}
-        <div className="flex flex-wrap items-center gap-1.5">{renderCalcMdOptions()}</div>
+      <div className="flex flex-col gap-1.5">
+      {/* ⚙ LES PARAMÈTRES DU CALCUL, EN UN SEUL TABLEAU — la demande de cette session :
+          « C'è un sacco di commento sul calcolo (in francese misto a inglese) che potrebbe
+          benissimo essere messo in una tabella in maniera più chiara e pulita. » Tout ce qui
+          était une suite de libellés colorés et de paragraphes d'infobulle est donc devenu
+          UN tableau à trois colonnes : le RÉGLAGE (son icône et son nom), sa VALEUR (la case
+          qui l'écrit, exactement les mêmes états qu'avant) et CE QU'IL FAIT (une phrase
+          courte, en anglais, sans le mélange FR/EN qui rendait la lecture pénible). Aucun
+          chiffre n'est recopié : les cases lisent toujours le module (`STRUCTURE_CALC_*`). */}
+      <table className="w-full text-[10px] border border-indigo-100 rounded-md overflow-hidden">
+        <thead>
+          <tr className="bg-indigo-50/70 text-indigo-700">
+            <th className="text-left px-2 py-1 text-[9px] font-black uppercase tracking-wide w-[10.5rem]">Setting</th>
+            <th className="text-left px-2 py-1 text-[9px] font-black uppercase tracking-wide w-[21rem]">Value</th>
+            <th className="text-left px-2 py-1 text-[9px] font-black uppercase tracking-wide">What it does</th>
+          </tr>
+        </thead>
+        <tbody className="font-bold text-indigo-900">
+        <tr className="border-t border-indigo-100 align-top">
+          <td className="px-2 py-1 whitespace-nowrap"
+            title="n — how many structures are BUILT from scratch. Each one is a fresh random draw of every rotatable dihedral, and each one is put through the standard protocol (anneal → dynamics → minimise → quench) before being scored.">
+            n starting
+          </td>
+          <td className="px-2 py-1 whitespace-nowrap">
+            <input type="number" min="1" max={STRUCTURE_CALC_MAX_STARTS} value={calcStarts}
+              onChange={(e) => setCalcStartsText(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') runStructureCalculation(); }}
+              aria-label="Number of starting structures n"
+              className="w-14 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
+          </td>
+          <td className="px-2 py-1 font-normal text-slate-600">How many structures are built from scratch: each one is a random draw of every rotatable dihedral, put through the whole protocol below, then scored. More starts = more chances (and more time).</td>
+        </tr>
+        <tr className="border-t border-indigo-100 align-top">
+          <td className="px-2 py-1 whitespace-nowrap"
+            title="m — how many structures are KEPT once every start has been scored. The m best are kept IN ORDER, with their coordinates, and the first one is written into the molecule. The OTHERS become MOLECULES of the Molecules bar.">
+            m kept
+          </td>
+          <td className="px-2 py-1 whitespace-nowrap">
+            <input type="number" min="1" max={STRUCTURE_CALC_MAX_KEEP} value={calcKeep}
+              onChange={(e) => setCalcKeepText(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') runStructureCalculation(); }}
+              aria-label="Number of retained structures m"
+              className="w-14 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
+          </td>
+          <td className="px-2 py-1 font-normal text-slate-600">How many of the scored structures are KEPT, in order, with their coordinates (the first is written into the molecule; the others become models of the Molecules bar).</td>
+        </tr>
+        <tr className="border-t border-indigo-100 align-top">
+          <td className="px-2 py-1 whitespace-nowrap"
+            title="🔥 The ANNEALING — how many temperature steps each start gets. A start is a random draw of every dihedral, which is almost always stacked or far from your distances, and the protocol that follows is LOCAL: without annealing it stays where the draw put it. It moves DIHEDRALS ONLY (rigid rotations about a hinge: bond lengths and angles cannot move), accepts a worse step with probability exp(−Δ/T), and cools down. 0 = no annealing.">
+            🔥 annealing
+          </td>
+          <td className="px-2 py-1 whitespace-nowrap">
+            <input type="number" min="0" max="24" value={calcAnneal}
+              onChange={(e) => setCalcAnneal(Math.max(0, Math.min(24, Math.round(Number(e.target.value) || 0))))}
+              aria-label="Annealing temperature steps"
+              className="w-12 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
+            <span className="font-semibold text-slate-500"> temperature steps</span>
+            {' · '}
+            <input type="number" min="0" max="24" value={calcAnnealFrame}
+              onChange={(e) => setCalcAnnealFrame(Math.max(0, Math.min(24, Math.round(Number(e.target.value) || 0))))}
+              aria-label="Images per annealing temperature step"
+              className="w-12 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
+            <span className="font-semibold text-slate-500"> images per step</span>
+          </td>
+          <td className="px-2 py-1 font-normal text-slate-600">The simulated annealing each start opens with: that many temperature steps, from the hot end down to the cold end. It moves dihedrals only and accepts a worse step with probability exp(−Δ/T). The second number is how often a picture is handed to the screen inside one step (0/1 = one per step).</td>
+        </tr>
+        {/* ⚙ LA DYNAMIQUE DU PROTOCOLE — écrite UNE fois, par `renderCalcMdOptions()` (ses
+            lignes sont DANS ce tableau), et lue par le ▶ Run du 🧬 seul. La fenêtre 🌡 MD du
+            bord gauche de la vue 3D a, elle, la dynamique ISOLÉE et ses propres réglages
+            (T, 💧 solvant, pas, dt, durée, intervalle d'images, ω) : les deux gestes ne
+            peuvent donc pas se changer l'un l'autre. */}
+        {renderCalcMdOptions()}
 
 
-        <label className="flex items-center gap-1"
-          title="👁 WATCH EACH START: every gesture the module announces (the random draw, each annealing step, the equilibration, the cooling, the minimisation, the quench) is written into the molecule ON SCREEN, by the same path a torsion uses — so you SEE the molecule fold instead of watching a progress line, and the 🪢 plot follows it image by image while its window is on screen. Uncheck it for a quiet run: the molecule is then written ONCE, with the FINAL coordinates — the best model of the calculation, or what ▶ MD and ⚒ Minimise landed on — so the report and the 🪢 plot still describe the structure that came out. ↺ Undo torsion puts back the molecule you had before the calculation wrote anything. ⚠ THIS BOX RULES THE CALCULATION AND NOTHING ELSE: the ▶ MD of the 🌡 MD window and the ⚒ Minimise of the toolbar always write every image they compute — they are single gestures, launched by hand, and they are there to be watched.">
-          <input type="checkbox" checked={calcWatch} onChange={(e) => setCalcWatch(e.target.checked)}
-            aria-label="Write each start on screen while it is computed"
-            className="accent-indigo-600" />
-          👁 watch each start
-        </label>
+        <tr className="border-t border-indigo-100 align-top">
+          <td className="px-2 py-1 whitespace-nowrap"
+            title="👁 WATCH EACH START: every gesture the module announces (the random draw, each annealing step, the equilibration, the cooling, the minimisation, the quench) is written into the molecule ON SCREEN, by the same path a torsion uses — so you SEE the molecule fold instead of watching a progress line, and the 🪢 plot follows it image by image while its window is on screen. ⚠ THIS BOX RULES THE CALCULATION AND NOTHING ELSE: the ▶ MD of the 🌡 MD window and the ⚒ Minimize of the row above always write every image they compute.">
+            👁 watch
+          </td>
+          <td className="px-2 py-1 whitespace-nowrap">
+            <input type="checkbox" checked={calcWatch} onChange={(e) => setCalcWatch(e.target.checked)}
+              aria-label="Write each start on screen while it is computed"
+              className="accent-indigo-600" />
+            <span className="font-semibold text-slate-500"> each start on screen</span>
+          </td>
+          <td className="px-2 py-1 font-normal text-slate-600">Ticked, every image the module announces is written into the molecule (the same path a torsion uses), so the fold is watched live. Unticked, the molecule is written once, with the finished coordinates — the report and the 🪢 plot still describe what came out.</td>
+        </tr>
+        </tbody>
+      </table>
+      <div className="flex flex-wrap items-center gap-1.5">
         <button type="button" onClick={runStructureCalculation}
           disabled={calcBusy || mdBusy || (!calcUsableRows().length && !calcDihedrals.length)}
-          title="Run the calculation: n starts, the ⚒ protocol on each, the best m kept, and the first one written into the molecule. The panel is updated START BY START (one per frame, so the page stays alive), and ⏹ stops between two of them — ⏹ is THIS panel's stop: it RANKS what is already computed and keeps its best m, so a partial run still gives you a family. ⚠ It is not the ■ of the 🌡 MD window: that one stops the isolated ▶ MD (or a ⚒ Minimise), which has no family to rank — each stop is in the window of the gesture it stops, and while one runs the other's ▶ is greyed (they share the same single cancellation token). A fixed seed means the same molecule, the same distances and the same n always give the same family — press ▶ Run twice and compare. The 🪢 plot follows every start written while its window is on screen (one reader for φ/ψ, the same as its ⟳ Read)."
-          className="px-2 py-1 text-[10px] font-bold rounded border bg-indigo-600 border-indigo-700 text-white hover:bg-indigo-700 disabled:opacity-40">
+          title="Run the calculation: n starts, the ⚒ protocol on each, the best m kept, and the first one written into the molecule. The panel is updated START BY START (one per frame, so the page stays alive), and ⏹ stops between two of them — ⏹ is THIS panel's stop: it RANKS what is already computed and keeps its best m, so a partial run still gives you a family. ⚠ It is not the ■ of the 🌡 MD window: that one stops the isolated ▶ MD (or a ⚒ Minimize), which has no family to rank — each stop is in the window of the gesture it stops, and while one runs the other's ▶ is greyed (they share the same single cancellation token). A fixed seed means the same molecule, the same distances and the same n always give the same family — press ▶ Run twice and compare."
+          className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 bg-indigo-600 border-indigo-700 text-white hover:bg-indigo-700 disabled:opacity-40">
           ▶ Run
         </button>
         {calcBusy && (
           <button type="button" onClick={calcStop}
-            title="⏹ STOP THE CALCULATION — it stops BETWEEN two starts (never in the middle of one), and what is already computed is NOT thrown away: those starts are RANKED, their best m are kept in the family below, and the best one is written into the molecule. The line says how many starts of n were made — a partial run is still a run. ⚠ This is the CALCULATION's stop, and it only exists while the calculation runs; the isolated ▶ MD and ⚒ Minimise of the 🌡 MD window have their own ■ Stop, right in that window (a gesture has no family to rank: it has the conformation on screen, and ↺ Undo torsion is what takes it back)."
-            className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-red-300 text-red-600 hover:bg-red-50">
+            title="⏹ STOP THE CALCULATION — it stops BETWEEN two starts (never in the middle of one), and what is already computed is NOT thrown away: those starts are RANKED, their best m are kept in the family below, and the best one is written into the molecule. The line says how many starts of n were made — a partial run is still a run."
+            className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 bg-white border-red-300 text-red-600 hover:bg-red-50">
             ⏹ Stop
           </button>
         )}
@@ -22633,17 +22713,22 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
     next to the button structure from sequence and color the latter in light blue. » Le
     bouton 🧬 est donc À CÔTÉ de « 🧬 Structure from sequence » (le premier bouton de ✏️
     Modify), et les trois gestes du champ (▶ MD · ⚒ Minimise · ⟳ Energy) restent collés à lui.
-    ⚠ CE PANNEAU N'EST PLUS UNE SECTION DE LA BARRE — la demande de CETTE session : « Transform
-    the “structure calculation” page in an internal collapsible window as that of MD or
-    Ramachandran … ». Le bouton 🧬 OUVRE ET REFERME la fenêtre de la vue 3D (`calcDock`,
-    `renderCalcWindow`) : une colonne à gauche de la molécule, exactement comme 🌡 MD et 🪢
-    Ramachandran, qui la POUSSENT au lieu de recouvrir la barre. Ce qui suit donc ici (⚭
-    Disulfides, ↩ Back to PDB, ⚗️ Rebuild H, ✏️ Atom names, ⚡ ESP, 🔢 Renumber) reste sur sa
-    ligne, ouverte ou fermée. */}
+    ⚠ CE PANNEAU N'EST PLUS UNE SECTION DE LA BARRE — la demande d'une session passée :
+    « Transform the “structure calculation” page in an internal collapsible window as that of
+    MD or Ramachandran … ». Le bouton 🧬 OUVRE ET REFERME le panneau (`calcDock`,
+    `renderCalcWindow`). ⚠⚠ ET SA PLACE A ENCORE CHANGÉ — la demande de CETTE session : « La
+    finestra struttura calculation dovrebbe essere full width e retractable in alto invece che
+    a sinistra. i parametri saranno quindi distribuiti in orizzontale. » Il n'est donc plus une
+    colonne à gauche de la molécule : c'est un PANNEAU PLEINE LARGEUR rendu ICI, à la fin du
+    groupe ✏️ Modify (`{calcDock && renderCalcWindow()}`, juste après le panneau ⚙), donc SOUS
+    la rangée entière de ses boutons, exactement comme ⚙ Parameters and Constraints — la vue 3D
+    n'est plus poussée et il n'y a plus d'onglet 🧬 STRUCT. sur son bord gauche. Ce qui suit
+    donc ici (⚭ Disulfides, ↩ Back to PDB, ⚗️ Rebuild H, ✏️ Atom names, ⚡ ESP, 🔢 Renumber)
+    reste sur sa ligne, ouverte ou fermée. */}
 <button type="button"
   onClick={() => toggleCalcDock()}
   className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${calcDock ? 'bg-indigo-100 border-indigo-400 text-indigo-900 hover:bg-indigo-200' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
-  title="🧬 STRUCTURE CALCULATION — OPEN OR CLOSE ITS WINDOW. The window sits at the LEFT of the 3D view (as 🌡 MD and 🪢 Ramachandran do), and this same button closes it; its ⇤ folds it to a thin tab on the edge. In it: the parameters (n · m · 🔥 recuit · 🖼 frames), the stages of the calculation (the progression, the report, the ranked family) and 💾 Save the family / 💾 Save the report. The two constraint tables and the MD parameters of the protocol are behind its ⚙ Parameters and Constraints button. ① THE DISTANCES: press ⌖ and pick the pair IN THE VIEW — the ⌖ of that table has its OWN picker (the request, verbatim: “dedicated pair picker”): TWO atoms (A · B), painted BLUE, with nothing to do with the four picks of ✏️ Torsion (A · B · C · D), which are not read here and not touched; the SECOND click adds the line, and the distance you want is typed in the ⌖ want field next to it — left empty, the length the tables give that pair of elements is used; every line can be edited, and a pair is listed once. ② n AND m: how many starting structures to build, and how many to keep. ③ ▶ RUN: each of the n starts is a draw of EVERY rotatable dihedral (a bond that is a hinge: single, not inside a ring, with something on both sides) taken uniformly in (−180, 180) and APPLIED as one rigid rotation by the app's own torsion writer, so bond lengths and angles are untouched to the last digit; then the STANDARD protocol is applied to it — the annealing in dihedral space (Metropolis, 1500 K down to 300 K), the Langevin dynamics (an equilibration at 🌡 hot, then a cooling down to 🌡 cold), the dihedral minimisation, and a cold quench that repairs what the descent broke — and the result is SCORED with the same force field (kcal/mol: bonds, angles, planar rings, vdW, electrostatics, solvent, φ/ψ, χ1, ω, your distances), plus the clash penalty. The best m are retained, ranked by that score, and the first is written into the molecule. ④ The seed is FIXED: the same molecule, the same distances and the same n give the same family to the last digit. ⏹ Stop stops between two starts and keeps what is done. ⚠ What it is NOT: an experimental structure. The protocol is the standard one (annealing, dynamics, minimisation, quench) under the force field, but the force field is the app's OWN — partial charges from the graph, a non-polar solvent term, no explicit water, no added atoms that the file does not have. The randomness is only in the STARTING dihedrals (the score is deterministic), and a peptide C–N bond is one of them: a start can come out cis, which is exactly why the field's ω term and the cold quench are there.">
+  title="🧬 STRUCTURE CALCULATION — OPEN OR CLOSE ITS PANEL. It is a FULL-WIDTH PANEL rendered UNDER the ✏️ Modify row (the request of this session: « La finestra struttura calculation dovrebbe essere full width e retractable in alto invece che a sinistra. i parametri saranno quindi distribuiti in orizzontale. »), NOT a window in the molecule space: the 3D view keeps its whole surface, nothing is pushed aside, and there is no vertical 🧬 STRUCT. tab on its edge any more. This button opens it and the same button closes it (its ✕ too). In it: the parameters (n · m · 🔥 recuit · 🖼 frames · the dynamics of the protocol), the stages of the calculation (the progression, the report, the ranked family) and 💾 Save the family / 💾 Save the report. The force field and the two constraint tables are NOT here: they are the ⚙ Parameters and Constraints panel, opened by its own button of this same row. ① THE DISTANCES: press ⌖ and pick the pair IN THE VIEW — the ⌖ of that table has its OWN picker (the request, verbatim: “dedicated pair picker”): TWO atoms (A · B), painted BLUE, with nothing to do with the four picks of ✏️ Torsion (A · B · C · D), which are not read here and not touched; the SECOND click adds the line, and the distance you want is typed in the ⌖ want field next to it — left empty, the length the tables give that pair of elements is used; every line can be edited, and a pair is listed once. ② n AND m: how many starting structures to build, and how many to keep. ③ ▶ RUN: each of the n starts is a draw of EVERY rotatable dihedral (a bond that is a hinge: single, not inside a ring, with something on both sides) taken uniformly in (−180, 180) and APPLIED as one rigid rotation by the app's own torsion writer, so bond lengths and angles are untouched to the last digit; then the STANDARD protocol is applied to it — the annealing in dihedral space (Metropolis, 1500 K down to 300 K), the Langevin dynamics (an equilibration at 🌡 hot, then a cooling down to 🌡 cold), the dihedral minimisation, and a cold quench that repairs what the descent broke — and the result is SCORED with the same force field (kcal/mol: bonds, angles, planar rings, vdW, electrostatics, solvent, φ/ψ, χ1, ω, your distances), plus the clash penalty. The best m are retained, ranked by that score, and the first is written into the molecule. ④ The seed is FIXED: the same molecule, the same distances and the same n give the same family to the last digit. ⏹ Stop stops between two starts and keeps what is done. ⚠ What it is NOT: an experimental structure. The protocol is the standard one (annealing, dynamics, minimisation, quench) under the force field, but the force field is the app's OWN — partial charges from the graph, a non-polar solvent term, no explicit water, no added atoms that the file does not have. The randomness is only in the STARTING dihedrals (the score is deterministic), and a peptide C–N bond is one of them: a start can come out cis, which is exactly why the field's ω term and the cold quench are there.">
   🧬 Structure calculation{calcResult ? ` (${calcResult.retained.length}/${calcResult.tried})` : ''}{calcDock ? ' ▾' : ' ▸'}
 </button>
 {/* ⚙ LES TROIS GESTES DU CHAMP, ICI — la demande : « can the MD, Minimize and Energy be
@@ -22900,6 +22985,18 @@ className="text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 bord
     de la vue (l'ancien dock, dont il ne reste rien), et le bouton ⚙ du groupe le referme —
     une seconde pression le fait disparaître, comme le dit la demande. */}
 {paramsDock && renderParamsWindow()}
+{/* 🧬 STRUCTURE CALCULATION — LE PANNEAU, PAS UNE FENÊTRE DE LA VUE. La demande de cette
+    session : « La finestra struttura calculation dovrebbe essere full width e retractable in
+    alto invece che a sinistra. i parametri saranno quindi distribuiti in orizzontale. » Il est
+    donc rendu ICI, comme le panneau ⚙ juste au-dessus, en enfant PLEINE LARGEUR du groupe
+    ✏️ Modify (`w-full` : il descend sous la rangée ENTIÈRE de ses boutons — 🧬, ▶ MD,
+    ⚒ Minimize, ⚭ Disulfides, ↩ Back to PDB, ⚗️ Rebuild H, ✏️ Atom names, ⚡ ESP, 🔢 Renumber,
+    ⚙ Parameters and Constraints — et non sous le seul bouton 🧬). Ce qui change pour la vue
+    3D : RIEN ne la pousse plus (elle garde toute sa surface) et l'onglet vertical
+    « 🧬 STRUCT. » du bord gauche a disparu avec son dock. Ce qui change pour le panneau :
+    ses paramètres sont descendus d'une ligne d'infobulles en un TABLEAU de trois colonnes,
+    donc écrits EN HORIZONTAL. Le bouton 🧬 de la rangée l'ouvre et le referme, son ✕ aussi. */}
+{calcDock && renderCalcWindow()}
 </div>
 
 {/* ── Analysis ───────────────────────────────────────────────────────────── */}
@@ -23375,28 +23472,28 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
     container stays MOUNTED (height 0) so the NGL stage, structure and
     trajectory are preserved; only the tall canvas is hidden.
 
-    ⚠ IL EST DANS UNE RANGÉE avec le dock 🪢 : la colonne de gauche prend sa place, la
-    vue prend le RESTE (`flex-1 min-w-0`), et replier le dock rend la largeur entière à
-    la molécule. Le graphe ne recouvre donc jamais la structure — il la pousse. */}
+    ⚠ IL EST DANS UNE RANGÉE avec les docks 🌡 MD et 🪢 Ramachandran : la colonne de gauche
+    prend sa place, la vue prend le RESTE (`flex-1 min-w-0`), et replier un dock rend la
+    largeur entière à la molécule. Les fenêtres ne recouvrent donc jamais la structure — elles
+    la poussent. ⚠ LE 🧬 STRUCT. N'EST PLUS ICI : il est devenu un PANNEAU PLEINE LARGEUR sous
+    la rangée ✏️ Modify (voir `{calcDock && renderCalcWindow()}` dans « 2 · Toolbar »), donc la
+    vue 3D garde sa surface entière, ouverte ou fermée, et il n'y a plus d'onglet vertical 🧬
+    sur le bord. */}
 <div className="flex items-stretch gap-2">
-{/* LES DOCK 🌡 MD · 🧬 STRUCTURE CALCULATION · 🪢 RAMACHANDRAN — LES TROIS FENÊTRES DE LA VUE
-    3D, À SA GAUCHE. Repliée, chacune ne laisse qu'un onglet vertical sur le bord ; elles
-    peuvent être ouvertes ensemble : les colonnes POUSSENT la molécule, aucune ne la recouvre.
-    ⚠ LE 🧬 EN FAIT PARTIE DEPUIS LA SESSION PRÉCÉDENTE — la demande : « Transform the
-    “structure calculation” page in an internal collapsible window as that of MD or
-    Ramachandran … ». ⚠ LE ⚙ N'EN FAIT PLUS PARTIE (la demande de cette session : « The
-    “parameters and constraints” should not open a window in the molecule space but it should
-    [be] full width under the button. By clicking the button a second time it should
-    disappear. ») : son panneau est rendu DANS la rangée de ses boutons, pleine largeur sous
-    le groupe ✏️ Modify, et il n'y a donc plus d'onglet ⚙ sur le bord de la vue. */}
-{calcDock ? renderCalcWindow() : (
-  <button type="button" onClick={() => toggleCalcDock(true)}
-    title="Open the structure-calculation window — its parameters (n · m · 🔥 recuit · 🖼 frames), the stages of the calculation, the ranked family and 💾 Save the family / Save the report, at the LEFT of the 3D view (expandable · compressible). Its ⚙ Parameters and Constraints button is GONE — the force field and the two constraint tables now have their OWN ⚙ window, opened from the ✏️ Modify menu (the request: « “Parameters and Constraints” section should be in the “modify” menu »). The 🧬 button of the toolbar closes it again."
-    className="shrink-0 w-7 flex items-center justify-center gap-1 bg-white border border-indigo-200 rounded-xl text-indigo-700 hover:bg-indigo-50"
-    style={{ height: (viewerCollapsed ? 0 : viewH) + 'px' }}>
-    <span className="text-[10px] font-black tracking-widest" style={{ writingMode: 'vertical-rl' }}>🧬 STRUCT.</span>
-  </button>
-)}
+{/* LES DOCK 🌡 MD · 🪢 RAMACHANDRAN — LES DEUX FENÊTRES DE LA VUE 3D, À SA GAUCHE. Repliée,
+    chacune ne laisse qu'un onglet vertical sur le bord ; elles peuvent être ouvertes ensemble :
+    les colonnes POUSSENT la molécule, aucune ne la recouvre.
+    ⚠ LE 🧬 STRUCT. A QUITTÉ CETTE RANGÉE CETTE SESSION — la demande : « La finestra struttura
+    calculation dovrebbe essere full width e retractable in alto invece che a sinistra. i
+    parametri saranno quindi distribuiti in orizzontale. » Son onglet vertical, son bouton
+    d'ouverture et son `renderCalcWindow` sont donc remontés dans « 2 · Toolbar », à la fin du
+    groupe ✏️ Modify, où il se rend en PANNEAU pleine largeur sous la rangée (voir
+    `{calcDock && renderCalcWindow()}`). Rien du panneau n'a changé d'autre que sa place et la
+    mise en TABLEAU de ses paramètres.
+    ⚠ LE ⚙ N'EN A JAMAIS FAIT PARTIE (la demande : « The “parameters and constraints” should not
+    open a window in the molecule space but it should [be] full width under the button. ») : son
+    panneau est rendu lui aussi pleine largeur sous le groupe ✏️ Modify, et il n'y a donc
+    aucun onglet ⚙ sur le bord de la vue. */}
 {/* ⚠ LA COLONNE ⚙ « PARAM. &amp; CONSTRAINTS » A DISPARU DE LA RANGÉE DES DOCKS — la demande
     de cette session : « The “parameters and constraints” should not open a window in the
     molecule space but it should [be] full width under the button. By clicking the button a
@@ -23718,7 +23815,7 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
         simplement ATTRAPER l'autre à la souris dans la vue 3D : la molécule qu'une
         main attrape DEVIENT la référence (voir installMoleculeDrag). */}
     <p className="text-[10px] font-bold text-violet-800 shrink-0"
-      title={`Every ␣ below is ONE molecule — even when several molecules live in the SAME PDB file: each one has its own ☑, its own « ★ set main », its own styling rows and its own 🔎, so they can be ticked, styled, moved and superposed one by one. « ${molNameOf(selectedMolKey)} » is the reference right now — 🎯 Fit to chosen superposes the other shown structures onto it, and a drag that starts ON a molecule turns it (left) or slides it (right) without moving the others.`}>
+      title={`Every ␣ below is ONE molecule — even when several molecules live in the SAME PDB file: each one has its own ☑, its own « set main », its own styling rows and its own 🔎, so they can be ticked, styled, moved and superposed one by one. « ${molNameOf(selectedMolKey)} » is the reference right now — 🎯 Fit to chosen superposes the other shown structures onto it, and a drag that starts ON a molecule turns it (left) or slides it (right) without moving the others.`}>
       ★ main: {molNameOf(selectedMolKey)} · a drag on a molecule turns/slides it · 🎯 Fit to chosen superposes the others onto it{heldPart ? ` · 🖐 moving « ${heldPart} » ALONE` : ''}
     </p>
     <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-1 min-h-0">
@@ -23753,12 +23850,22 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
                   autres sur elle, et c'est elle que la souris tourne ou fait glisser
                   quand on l'attrape dans la vue 3D (voir installMoleculeDrag). La ligne
                   ★ du haut de la barre nomme toujours celle qui est choisie. */}
+              {/* ⚠ LES DEUX ★ DU MILIEU SONT PARTIES — le rapport de cette session :
+                  « in the middle of the viewer I see two stars (three in total with the
+                  correct one at the top right). they should be removed. » Ces deux ★
+                  étaient ceux de CE bouton, un par molécule de la barre, alors que la
+                  ligne ★ du HAUT de la barre NOMME déjà la référence : l'astérisque
+                  décoratif est donc retiré de chaque espace et il ne reste que les mots
+                  « main » / « set main ». Le geste, lui, ne change pas — un clic choisit
+                  toujours la molécule (chooseMol) — et le cadre violet + le mot « main »
+                  de l'espace choisi disent le reste. */}
+
               <button type="button" onClick={() => chooseMol(molKey)}
                 className={`text-[10px] font-bold px-1 rounded shrink-0 ${chosen ? 'bg-violet-600 text-white' : 'text-slate-500 hover:text-violet-700'}`}
                 title={chosen
                   ? `${entry.name} IS the main molecule (the reference): 🎯 Fit to chosen superposes every other shown structure onto it, and it is the one a drag on it turns or slides. Click another space's « set main » to change it.`
                   : `Make ${entry.name} the main molecule (the reference): 🎯 Fit to chosen then superposes every other shown structure onto it. Grabbing it in the 3D view (a drag on it) makes it the reference too.`}>
-                ★ {chosen ? 'main' : 'set main'}</button>
+                {chosen ? 'main' : 'set main'}</button>
               {extra && (
                 <button type="button" onClick={(e) => { e.stopPropagation(); deleteExtraMol(extra.id); }}
                   className="text-red-400 hover:text-red-600 font-bold text-[10px] px-1 shrink-0" title="Delete this structure">🗑</button>

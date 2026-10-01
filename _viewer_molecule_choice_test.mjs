@@ -60,9 +60,17 @@ has('const [sectionVis, setSectionVis] = useState({});', '…et les ✔ de secti
 
 /* ── 2. LE CHOIX DE LA MOLÉCULE (la référence de « 🎯 Fit to chosen ») ───── */
 has('const chooseMol = (key) => {', 'choisir une molécule est UN geste, nommé');
-has('onClick={() => chooseMol(molKey)}', '…et chaque espace a son bouton ★');
-has("★ {chosen ? 'main' : 'set main'}",
-  '…qui DIT « main » — la référence — au lieu d’un « chosen » discret (le rapport de cette session : « You say that the main is the molecule to move but there is no way to define the main. »)');
+has('onClick={() => chooseMol(molKey)}', '…et chaque espace a son bouton « main »');
+has("{chosen ? 'main' : 'set main'}</button>",
+  '…qui DIT « main » — la référence — au lieu d’un « chosen » discret (le rapport de cette session : « You say that the main is the molecule to move but there is no way to define the main. »), et l’astérisque ★ qui décorait ce bouton a été retirée depuis.');
+/* ⚠ LES ★ DES ESPACES ONT ÉTÉ RETIRÉES cette session. Le rapport, mot pour mot :
+   « in the middle of the viewer I see two stars (three in total with the correct one
+   at the top right). they should be removed. » — les deux ★ du MILIEU étaient ceux
+   des espaces de molécule (un par molécule), que la ligne ★ du HAUT de la barre
+   doublait inutilement ; l'astérisque est donc parti, le bouton et son geste restent. */
+gone("★ {chosen ? 'main' : 'set main'}", '…et les ★ du milieu ne sont plus rendues');
+has("{chosen ? 'main' : 'set main'}</button>", 'le bouton « main » / « set main » de chaque espace est intact (seul l’astérisque est partie)');
+
 has('★ main: {molNameOf(selectedMolKey)}',
   'la barre NOMME en permanence la molécule de référence (on ne peut plus se demander laquelle c’est)');
 has('★ main: {molNameOf(selectedMolKey)} · a drag on a molecule turns/slides it',
