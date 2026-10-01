@@ -15,6 +15,13 @@
        tolérance)² au-delà, l'écart étant le plus court sur le cercle), sa ligne est
        écrite par le module (`ffKcalRowsOf`), et `ffKcalEnergyOf` la SOMME dans
        `enthalpy` comme les autres ;
+     • ⚠ LE PUITS A UN FOND — une fenêtre PLATE n'a aucun minimum : dedans, la pente
+       est nulle, donc rien n'y rappelle l'idéal et la structure s'arrête où le reste
+       du champ la pousse, SUR la paroi (mesuré : φ rms 25.5° et 2 φ/ψ hors fenêtre,
+       `_kc_sweep.mjs`). `FF_DIHEDRAL_CENTRE_K` creuse donc le fond (kc·écart² dans la
+       fenêtre, kc·tolérance² constant au-delà — la forme du champ loin du but ne
+       change pas), et SANS ce chiffre `ffDihedralCostOf` est le puits plat d'avant,
+       au bit près ;
      • LA CONVERSION APPARIE PAR ORDRE — la k-ième lettre pour le k-ième résidu lu
        (CA croissants), φ et ψ SÉPARÉMENT, un bout de chaîne ne portant que l'angle
        qu'il a ; une longueur qui ne correspond pas est DITE, jamais devinée ;
@@ -37,7 +44,7 @@ import {
   STRUCTURE_CALC_SEED,
 } from './src/utils/structureCalc.js';
 import {
-  FF_DIHEDRAL_K, FF_DIHEDRAL_TOLERANCE, ffDihedralCostOf, FORCE_FIELD_KCAL_FAMILIES, ffKcalEnergyOf,
+  FF_DIHEDRAL_K, FF_DIHEDRAL_TOLERANCE, FF_DIHEDRAL_CENTRE_K, ffDihedralCostOf, FORCE_FIELD_KCAL_FAMILIES, ffKcalEnergyOf,
 } from './src/utils/forceFieldKcal.js';
 
 let passed = 0;
@@ -148,6 +155,45 @@ near(ffDihedralCostOf(5, { target: 0, tolerance: 0, k: 1 }), 25,
   '…et devient le puit carré ordinaire (k·écart²) dès qu’on la resserre');
 eq(ffDihedralCostOf(NaN, { target: -57 }), 0, 'un angle illisible ne coûte rien (il n’est pas inventé)');
 
+/* ════════════ 2bis. LE FOND DU PUITS — UNE FENÊTRE N'A PAS DE MINIMUM ═══════
+   ⚠ CE QUE LA FENÊTRE SEULE NE POUVAIT PAS FAIRE. Dedans, la pente est nulle : la
+   structure s'arrête donc là où le RESTE du champ la pousse — sur la paroi. Le chiffre
+   ci-dessous creuse le fond sans rien changer loin du but. */
+eq(FF_DIHEDRAL_CENTRE_K, 0.1, '⚠ le fond du puits a UN chiffre, choisi par balayage (`_kc_sweep.mjs`)');
+near(ffDihedralCostOf(-57 + 10, { target: -57 }), 0,
+  '⚠ SANS le chiffre, la fenêtre est PLATE : à dix degrés de la cible, toujours rien');
+near(ffDihedralCostOf(-57 + 10, { target: -57, centreK: FF_DIHEDRAL_CENTRE_K }),
+  FF_DIHEDRAL_CENTRE_K * 100, '…et AVEC lui, c’est exactement kc·écart²');
+near(ffDihedralCostOf(-57 + FF_DIHEDRAL_TOLERANCE, { target: -57, centreK: FF_DIHEDRAL_CENTRE_K }),
+  FF_DIHEDRAL_CENTRE_K * FF_DIHEDRAL_TOLERANCE ** 2,
+  '…au bord de la fenêtre, le fond vaut kc·tolérance² (90 kcal/mol au chiffre retenu)');
+/* ⚠ LE FOND EST BORNÉ — au-delà de la fenêtre, c'est un DÉCALAGE CONSTANT : le puits
+   plat PLUS kc·tolérance², donc la forme du champ loin du but est INCHANGÉE. C'est ce
+   qui permet de creuser le fond sans rien changer au recuit, qui cherche loin. */
+const farA = FF_DIHEDRAL_TOLERANCE + 10;
+const farB = FF_DIHEDRAL_TOLERANCE + 70;
+near(ffDihedralCostOf(-57 + farA, { target: -57, centreK: FF_DIHEDRAL_CENTRE_K }),
+  ffDihedralCostOf(-57 + farA, { target: -57 }) + FF_DIHEDRAL_CENTRE_K * FF_DIHEDRAL_TOLERANCE ** 2,
+  '⚠ AU-DELÀ, c’est le puits plat PLUS la constante : aucune bosse, aucun trou creusé dehors');
+near(
+  ffDihedralCostOf(-57 + farB, { target: -57, centreK: FF_DIHEDRAL_CENTRE_K })
+    - ffDihedralCostOf(-57 + farA, { target: -57, centreK: FF_DIHEDRAL_CENTRE_K }),
+  ffDihedralCostOf(-57 + farB, { target: -57 }) - ffDihedralCostOf(-57 + farA, { target: -57 }),
+  '…donc toutes les DIFFÉRENCES loin du but sont celles d’avant (le recuit cherche la même chose)');
+near(ffDihedralCostOf(-57, { target: -57, centreK: FF_DIHEDRAL_CENTRE_K }), 0,
+  '…et la cible reste le seul zéro (le fond ne creuse rien SOUS elle)');
+let sink = null;
+for (let d = -180; d <= 180; d += 1) {
+  const c = ffDihedralCostOf(-57 + d, { target: -57, centreK: FF_DIHEDRAL_CENTRE_K });
+  if (!sink || c < sink.c) sink = { d, c };
+}
+eq(sink.d, 0, '⚠ LE SEUL MINIMUM DU PUITS EST LA CIBLE (balayé au degré, −180° → +180°)');
+near(ffDihedralCostOf(-57 + 10, { target: -57, centreK: -1 }), 0,
+  '⚠ un fond NÉGATIF ne creuse pas la fenêtre (il ne descend pas sous zéro)');
+near(ffDihedralCostOf(-57 + 10, { target: -57, centreK: NaN }), 0, '…et un fond illisible non plus');
+eq(ffDihedralCostOf(NaN, { target: -57, centreK: FF_DIHEDRAL_CENTRE_K }), 0,
+  '…et un angle illisible ne coûte rien, fond ou pas');
+
 /* ════════════ 3. LA FAMILLE DU CHAMP — SOMMÉE COMME LES AUTRES ══════════════ */
 ok(FORCE_FIELD_KCAL_FAMILIES.includes('dihedral'),
   'le champ de forces a UNE FAMILLE DE PLUS : « dihedral »');
@@ -159,6 +205,9 @@ eq(row.unit, 'kcal·mol⁻¹·deg⁻²', '…et son unité');
 has(row.rule, 'FLAT-BOTTOM window', '…et la règle du puits plat');
 has(row.rule, `± ${FF_DIHEDRAL_TOLERANCE}°`, '…avec LA fenêtre, chiffrée par le module');
 has(row.rule, 'H: φ −57°, ψ −47°', '…et les deux recettes de la peinture');
+has(row.rule, `kc = ${FF_DIHEDRAL_CENTRE_K}`, '⚠ sa règle DIT le fond du puits, chiffré par le module');
+has(row.rule, `= ${Number((FF_DIHEDRAL_CENTRE_K * FF_DIHEDRAL_TOLERANCE ** 2).toFixed(6))} kcal/mol`,
+  '…et jusqu’où il monte au bord de la fenêtre (le décalage constant du dehors)');
 has(row.of, 'imposed secondary structure', 'elle dit d’où viennent ces contraintes');
 eq(rows.length, FORCE_FIELD_KCAL_FAMILIES.length, 'une ligne par famille, ni plus ni moins');
 /* ════════════ 4. LA CONVERSION — APPARIÉE PAR ORDRE ═════════════════════════ */
@@ -173,6 +222,10 @@ eq(conv.constraints.length, 10,
   '⚠ DIX contraintes pour six résidus : les deux bouts de chaîne n’ont qu’UN angle (φ pour le dernier, ψ pour le premier)');
 eq(conv.constraints.filter((c) => c.kind === 'phi').length, 5, 'cinq φ (le premier résidu n’en a pas)');
 eq(conv.constraints.filter((c) => c.kind === 'psi').length, 5, 'cinq ψ (le dernier résidu n’en a pas)');
+eq(conv.constraints.every((c) => c.centreK === FF_DIHEDRAL_CENTRE_K), true,
+  '⚠ chaque contrainte convertie PORTE le fond du puits — un moteur ne peut pas l’oublier');
+eq(conv.constraints.every((c) => c.centerK === undefined), true,
+  '…et le portent sous le nom du champ (`centreK`), pas un second nom inventé ici');
 eq(conv.constraints.filter((c) => c.letter === 'H').length, 10, 'chaque contrainte garde SA lettre');
 eq(conv.constraints.filter((c) => c.target === -57).length, 5, '…et les φ visent −57°');
 eq(conv.constraints.filter((c) => c.target === -47).length, 5, '…et les ψ visent −47°');
@@ -207,15 +260,26 @@ eq(secondaryDihedralRestraintsOf({ secondaryStructure: 'h h\nh h h h', torsions:
 eq(secondaryDihedralRestraintsOf({ secondaryStructure: 'HHHHHH', torsions: backbone, tolerance: 5 })
   .constraints.every((c) => c.tolerance === 5), true,
   'la fenêtre peut être resserrée par l’appelant (le défaut du champ reste la règle)');
+eq(secondaryDihedralRestraintsOf({ secondaryStructure: 'HHHHHH', torsions: backbone, centreK: 0.25 })
+  .constraints.every((c) => c.centreK === 0.25), true,
+  '…et le fond du puits aussi (c’est ce que le balayage utilise pour choisir le chiffre)');
+eq(secondaryDihedralRestraintsOf({ secondaryStructure: 'HHHHHH', torsions: backbone, centreK: 0 })
+  .constraints.every((c) => c.centreK === 0), true,
+  '⚠ …à 0, les contraintes redeviennent EXACTEMENT le puits plat d’avant (la régression)');
 
 /* ════════════ 5. LA LECTURE, SUR LES COORDONNÉES ════════════════════════════ */
 const sheetNow = dihedralPenaltyOf({ positions: spine.positions, dihedrals: conv.constraints });
 eq(sheetNow.count, 10, 'la lecture voit les dix contraintes');
 eq(sheetNow.satisfied, 0, '⚠ la chaîne est un FEUILLET : aucune de ses φ/ψ n’est dans la fenêtre de l’hélice');
 const manual = sheetNow.list
-  .reduce((s, l) => s + ffDihedralCostOf(l.deg, { target: l.target, tolerance: l.tolerance }), 0);
+  .reduce((s, l) => s + ffDihedralCostOf(l.deg, {
+    target: l.target, tolerance: l.tolerance, centreK: l.centreK,
+  }), 0);
 near(sheetNow.penalty, manual,
-  '…et la pénalité est la SOMME des dix, terme par terme (aucun chiffre avalé)', 1e-6);
+  '…et la pénalité est la SOMME des dix, terme par terme (aucun chiffre avalé — fond compris)', 1e-6);
+eq(sheetNow.list.every((l) => l.centreK === FF_DIHEDRAL_CENTRE_K), true,
+  '…chaque ligne relue porte le fond du puits qu’elle a coûté (le rapport est vérifiable)');
+eq(sheetNow.centreK, FF_DIHEDRAL_CENTRE_K, '…et le rapport le dit une fois, comme la fenêtre');
 ok(sheetNow.penalty > 0, '⚠ une chaîne de feuillet soumise à une hélice coûte quelque chose, et c’est dit');
 ok(sheetNow.worst.over > 0, 'le rapport dit de combien le PIRE sort de sa fenêtre');
 eq(typeof sheetNow.worst.kind, 'string', '…en nommant l’angle (φ ou ψ)');
@@ -228,6 +292,8 @@ near(fieldSheet.dihedralReport.penalty, sheetNow.penalty, '…et le rapport de l
 eq(fieldSheet.dihedralReport.count, 10, '…avec le même compte de contraintes');
 eq(fieldSheet.dihedralReport.violations, 10, '…et les mêmes hors fenêtre');
 eq(fieldSheet.dihedralReport.worst.letter, 'H', 'la pire contrainte garde sa lettre (le panneau peut la nommer)');
+eq(fieldSheet.dihedralReport.centreK, FF_DIHEDRAL_CENTRE_K,
+  '…et le rapport du champ dit AUSSI le fond du puits : un seul chiffre dans tout le dossier');
 /* ════════════ 6. EXÉCUTÉ — LA MINIMISATION RAMÈNE LA CHAÎNE DANS LES FENÊTRES ═
    La chaîne de sonde est un feuillet (φ −139° / ψ +135°) ; on lui impose les six
    lettres H, et on laisse la DESCENTE DU MODULE faire son travail. Ce qui est mesuré :

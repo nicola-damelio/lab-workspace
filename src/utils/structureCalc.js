@@ -85,6 +85,10 @@ import {
   ffBondCostOf, ffAngleCostOf, ffPlanarCostOf,
   ffOmegaCostOf, ffChiCostOf, ffRamaCostOf, ffDihedralCostOf,
   ffVdwCostOf, ffCoulombCostOf, ffSurfaceOf, ffNonbondedEnergyOf, ffPairListOf,
+  /* ⚠ LES COUPLES QU'UN PAS CRÉE (voir `stepPairsOf`) SE LISENT AVEC LES FONCTIONS DU
+     CHAMP : la topologie (`ffExclusionSetsOf`), la portée (`ffPairReachOf`) et le couple
+     lui-même (`ffPairOf`) sont les siennes — le moteur ne peut pas juger autre chose. */
+  ffPairOf, ffExclusionSetsOf, ffPairReachOf,
   hydrogenatedOf, partialChargesOf, ffEntropyOf, ffAngleDegOf, ffElementOf,
   /* 🎯 LA FONCTION CIBLE (classic / DYANA) ET LE COÛT D'UN COUPLE QU'ELLE CHOISIT — une
      seule définition (`FF_TARGET_FUNCTIONS`), lue par le champ ET par les moteurs de
@@ -93,7 +97,7 @@ import {
   FF_TIP3P, ffWatersIn,
   FF_BOND_K, FF_ANGLE_K, FF_PLANAR_K, FF_NOE_K, FF_RESTRAINT_TOLERANCE,
   FF_OMEGA_K, FF_OMEGA_TARGET, FF_OMEGA_TOLERANCE, FF_CHI_K, FF_CHI_TOLERANCE,
-  FF_DIHEDRAL_K, FF_DIHEDRAL_TOLERANCE,
+  FF_DIHEDRAL_K, FF_DIHEDRAL_TOLERANCE, FF_DIHEDRAL_CENTRE_K,
   FF_RAMA_K, FF_RAMA_SPAN, FF_SASA_GAMMA, FF_SASA_PROBE, FF_SURFACE_CAP_OVERLAP,
   FF_PAIR_LIMIT, FF_DIELECTRIC,
   FF_GAS_CONSTANT, FF_REFERENCE_TEMPERATURE, FF_KCAL_UNITS,
@@ -999,13 +1003,17 @@ export function* annealFrames({
       if (m > 0 && m % rebuild === 0) engine.refreshCore();
       const pick = Math.min(chan.length - 1, Math.floor(random() * chan.length));
       const ch = chan[pick];
-      const ctx = engine.ctxOf(ch);
       const cur = engine.dihedralOf(ch.probeAtoms, null);
       if (!Number.isFinite(cur)) { out.skipped += 1; continue; }
       const delta = (random() * 2 - 1) * (isPeptide(ch) ? ampO : amp);
       const move = engine.mapFor(ch, ((cur + delta + 540) % 360) - 180);
       tried += 1;
       if (!move.ok) { out.skipped += 1; continue; }
+      /* ⚠ LE CTX PORTE AUSSI LES COUPLES QUE CE PAS **CRÉE** (`move.map`) — les murs de la
+         longe, le coût d'ω et le coût du pas sont donc jugés sur la géométrie d'ESSAI, pas
+         sur la marche d'il y a vingt-quatre gestes. Sans cela le recuit ACCEPTE l'empilement
+         qu'il vient de poser : le couple neuf n'est pas dans le `dv`, qui reste ≤ 0. */
+      const ctx = engine.ctxOf(ch, move.map);
       /* LA LONGE D'ABORD — un pas qui ferait sortir de son puits plat une distance DÉJÀ
          respectée n'est même pas évalué (c'est ce qui permet à une trempe de réparer ω
          SANS lâcher ce qui est tenu). */
@@ -1223,17 +1231,29 @@ export const SS_DIHEDRALS = {
 };
 /** Les lettres de la peinture qui IMPOSENT quelque chose (les autres sont le silence). */
 export const SS_DIHEDRAL_LETTERS = Object.keys(SS_DIHEDRALS);
-/* Le même chiffre que le champ de forces : une seule définition de la fenêtre. */
-export { FF_DIHEDRAL_TOLERANCE as SS_DIHEDRAL_TOLERANCE, FF_DIHEDRAL_K as SS_DIHEDRAL_K };
+/* Le même chiffre que le champ de forces : une seule définition de la fenêtre — et du
+   fond du puits (`FF_DIHEDRAL_CENTRE_K` : la fenêtre seule n'a pas de minimum, donc
+   la cible s'y rappelle par un centre). */
+export {
+  FF_DIHEDRAL_TOLERANCE as SS_DIHEDRAL_TOLERANCE, FF_DIHEDRAL_K as SS_DIHEDRAL_K,
+  FF_DIHEDRAL_CENTRE_K as SS_DIHEDRAL_CENTRE_K,
+};
 
 /** LA CONVERSION — `{ ok, reason, constraints, letters, residues, unmatched, matched }`.
  *  `constraints` est prêt à être donné au champ (`dihedrals`), au recuit, à la
  *  dynamique, à la minimisation et au calcul de structure : `{kind, letter, ca, atoms,
- *  target, tolerance}`. Une lettre sans cible (C, S, un tiret, une lettre inconnue)
- *  ne produit RIEN — c'est ce qui fait d'un feuillet peint au milieu d'une hélice deux
- *  contraintes qui ne se contredisent pas. */
+ *  target, tolerance, centreK}`. Une lettre sans cible (C, S, un tiret, une lettre
+ *  inconnue) ne produit RIEN — c'est ce qui fait d'un feuillet peint au milieu d'une
+ *  hélice deux contraintes qui ne se contredisent pas.
+ *
+ *  ⚠ `centreK` N'EST PAS UNE DÉCORATION : c'est le fond du puits (`FF_DIHEDRAL_CENTRE_K`).
+ *  La fenêtre seule n'a aucun minimum — le protocole complet s'arrêtait donc SUR la
+ *  paroi (hélice défaite, voir la constante). Le centre est donné ici, à la conversion,
+ *  pour que TOUS les lecteurs d'une même contrainte (recuit, dynamique, minimisation,
+ *  note, panneau) lisent le même chiffre. */
 export const secondaryDihedralRestraintsOf = ({
   secondaryStructure = '', torsions = null, tolerance = FF_DIHEDRAL_TOLERANCE,
+  centreK = FF_DIHEDRAL_CENTRE_K,
 } = {}) => {
   const letters = String(secondaryStructure == null ? '' : secondaryStructure).toUpperCase().replace(/\s+/g, '');
   /* LES RÉSIDUS DE LA MOLÉCULE À L'ÉCRAN, DANS L'ORDRE DE LEURS CA — c'est l'ordre que
@@ -1249,9 +1269,14 @@ export const secondaryDihedralRestraintsOf = ({
   for (const e of Array.from((torsions && torsions.phi) || [])) add(e, 'phiAtoms');
   for (const e of Array.from((torsions && torsions.psi) || [])) add(e, 'psiAtoms');
   const rows = [...byCa.values()].sort((a, b) => a.ca - b.ca);
+  /* Le centre se donne en paramètre (l'appelant peut l'éteindre avec 0) mais le défaut
+     est celui du champ : une contrainte ne peut pas naître sans fond. Le rapport porte
+     le chiffre EFFECTIF, celui que les contraintes portent. */
+  const kc = Number.isFinite(Number(centreK)) && Number(centreK) > 0 ? Number(centreK) : 0;
   const out = {
     ok: false, reason: 'no-structure', constraints: [], letters: letters.length,
     residues: rows.length, matched: 0, unmatched: 0, tolerance: Number(tolerance) || FF_DIHEDRAL_TOLERANCE,
+    centreK: kc,
   };
   if (!letters) return out;
   if (!rows.length) { out.reason = 'no-backbone'; return out; }
@@ -1261,7 +1286,7 @@ export const secondaryDihedralRestraintsOf = ({
      séparément (le puits plat d'un angle ne dit rien de l'autre) ; un bout de chaîne
      n'a qu'un des deux, et il porte donc la seule contrainte qu'il puisse porter. */
   const push = (letter, ca, kind, atoms, target) => out.constraints.push({
-    kind, letter, ca, atoms, target, tolerance: tol,
+    kind, letter, ca, atoms, target, tolerance: tol, centreK: kc,
   });
   for (let k = 0; k < rows.length; k += 1) {
     const letter = letters[k] || '';
@@ -1283,7 +1308,9 @@ export const secondaryDihedralRestraintsOf = ({
  *  COORDONNÉES — `{count, satisfied, violations, penalty, tolerance, worst, list}`.
  *  Le MÊME puits plat que le champ (`ffDihedralCostOf`), relu ici pour les rapports :
  *  la dynamique et la minimisation disent donc, geste par geste, combien de φ/ψ
- *  imposés sont dans leur fenêtre — et de combien le pire en sort. */
+ *  imposés sont dans leur fenêtre — et de combien le pire en sort. Le rapport relit le
+ *  puits ENTIER : le fond du puits (`centreK`) est celui de la contrainte, donc la
+ *  relecture du panneau et la note du champ ne peuvent pas porter deux chiffres. */
 export const dihedralPenaltyOf = ({
   positions = null, dihedrals = [], tolerance = FF_DIHEDRAL_TOLERANCE,
 } = {}) => {
@@ -1291,6 +1318,10 @@ export const dihedralPenaltyOf = ({
   const out = {
     count: 0, satisfied: 0, violations: 0, penalty: 0,
     tolerance: Number.isFinite(Number(tolerance)) ? Number(tolerance) : FF_DIHEDRAL_TOLERANCE,
+    /* LE FOND DU PUITS, comme la fenêtre : c'est le défaut du champ, et chaque ligne de
+       `list` porte le sien — un appelant qui resserre la fenêtre (ou creuse le fond)
+       pour ses propres contraintes le lit donc ligne par ligne. */
+    centreK: FF_DIHEDRAL_CENTRE_K,
     worst: null, list: [],
   };
   const list = Array.from(dihedrals || []);
@@ -1304,6 +1335,7 @@ export const dihedralPenaltyOf = ({
     const target = Number(d.target);
     if (!Number.isFinite(target)) continue;
     const tol = Number.isFinite(Number(d.tolerance)) ? Number(d.tolerance) : out.tolerance;
+    const centreK = Number.isFinite(Number(d.centreK)) ? Math.max(0, Number(d.centreK)) : 0;
     out.count += 1;
     const deg = dihedralDeg(pt(atoms[0]), pt(atoms[1]), pt(atoms[2]), pt(atoms[3]));
     if (!Number.isFinite(deg)) continue;
@@ -1311,8 +1343,8 @@ export const dihedralPenaltyOf = ({
     const over = Math.max(0, dev - tol);
     const line = {
       kind: d.kind || '', letter: String(d.letter || '').toUpperCase(), ca: d.ca,
-      atoms, target, tolerance: tol, deg, dev, over,
-      satisfied: dev <= tol, cost: ffDihedralCostOf(deg, { target, tolerance: tol }),
+      atoms, target, tolerance: tol, centreK, deg, dev, over,
+      satisfied: dev <= tol, cost: ffDihedralCostOf(deg, { target, tolerance: tol, centreK }),
     };
     out.penalty += line.cost;
     if (line.satisfied) out.satisfied += 1; else out.violations += 1;
@@ -1772,6 +1804,10 @@ const torsionEngineOf = ({
       ...d,
       target: Number(d.target),
       tolerance: Number.isFinite(Number(d.tolerance)) ? Number(d.tolerance) : FF_DIHEDRAL_TOLERANCE,
+      /* ⚠ LE FOND DU PUITS PASSE AUSSI (il est déjà dans `...d`, mais il est NORMALISÉ
+         ici comme la fenêtre : un chiffre illisible ou négatif vaut le puits plat). Sans
+         lui, ce moteur s'arrêterait SUR la paroi de la fenêtre au lieu de la cible. */
+      centreK: Number.isFinite(Number(d.centreK)) && Number(d.centreK) > 0 ? Number(d.centreK) : 0,
     }));
   const omega = Array.from(omegas || peptideOmegasOf({ elements: elsHeavy, bonds: heavyBonds, atomCount: heavyCount }));
   const wRama = Number.isFinite(Number(ramaWeight)) ? Math.max(0, Number(ramaWeight)) : STRUCTURE_CALC_RAMA_WEIGHT;
@@ -1931,6 +1967,49 @@ const torsionEngineOf = ({
       dihedrals: dihedralRows.filter((d) => straddles(d.atoms)),
     };
   };
+  /* ⚠ LES COUPLES QU'UN PAS **CRÉE** — `walk` est la liste du champ, refaite tous les
+     `rebuild` gestes : entre deux, les atomes ont bougé, donc un pas peut amener deux
+     atomes à portée SANS que la marche le sache. Une décision prise sur elle seule ne peut
+     donc pas voir l'empilement qu'elle vient de poser — c'est le défaut rapporté (« atoms
+     can come too close and the LJ potential is not considered ») : le moteur gardait un
+     couple à 1.34 Å et annonçait 46 kcal/mol là où le champ en lit 4737.
+     LA RÉPONSE EST LOCALE ET EXACTE : les couples qui TRAVERSENT la charnière du pas se
+     lisent sur la GÉOMÉTRIE VIVANTE — l'atome qui bouge à sa place d'ESSAI (`map`), celui
+     qui ne bouge pas à sa place COURANTE (`x`) — et la topologie comme la portée sont
+     celles du CHAMP (`ffExclusionSetsOf`, `ffPairReachOf`) : le moteur ne peut pas juger
+     autre chose que la marche. Le coût est d'un test de distance par atome déplacé, pas
+     une reconstruction de la marche (mesuré : 3.2 ms pour la marche entière d'un peptide à
+     3.5 Å, contre quelques dizaines de µs ici — et le recuit fait 2448 pas).
+     ⚠ DEUX ATOMES DU MÊME CÔTÉ SUBISSENT LA MÊME ROTATION RIGIDE : leur distance ne bouge
+     pas d'un chiffre, c'est déjà la règle de `crossingOf` — ces couples-là n'entrent donc
+     pas ici (et la marche les porte déjà quand elle les connaît). */
+  const reach = ffPairReachOf(tf.pairLimit);
+  const excl = ffExclusionSetsOf({ bonds: bondsOf, atomCount: count });
+  const stepPairsOf = (ch, ctx, maps) => {
+    const set = new Set(ch.movingAll || ch.moving || []);
+    const known = new Set();
+    for (const p of ctx.nonbonded) known.add(p.i < p.j ? p.i * count + p.j : p.j * count + p.i);
+    const out = [];
+    const seen = new Set();
+    for (const map of maps) {
+      if (!map || !map.size) continue;
+      for (const [m, p] of map) {
+        const one = excl.nb1[m]; const two = excl.nb2[m]; const three = excl.nb3[m];
+        for (let j = 0; j < count; j += 1) {
+          if (j === m || set.has(j)) continue;
+          if (one.has(j) || two.has(j)) continue;          // 1-2, 1-3 : aucune physique
+          const i = m < j ? m : j; const k = m < j ? j : m;
+          const key = i * count + k;
+          if (known.has(key) || seen.has(key)) continue;   // déjà dans la marche
+          const d = Math.hypot(p[0] - x[j * 3], p[1] - x[j * 3 + 1], p[2] - x[j * 3 + 2]);
+          if (!(d <= reach)) continue;                     // hors portée : le champ ne le lit pas non plus
+          seen.add(key);
+          out.push(ffPairOf(i, k, els, charges, three.has(j)));
+        }
+      }
+    }
+    return out;
+  };
   /* ⚖ LE PLUS GRAND POIDS PARMI LES CONTRAINTES QUI TRAVERSENT UNE CHARNIÈRE — c'est lui
      qui décide du budget de couple que la dynamique accorde à la FAMILLE DES DISTANCES
      (voir `mdFrames`) : une ligne qui compte cent fois doit pouvoir tirer plus fort qu'une
@@ -2020,11 +2099,18 @@ const torsionEngineOf = ({
   /* LES TRAVERSÉES SONT CACHÉES PAR CANAL — la molécule change, la liste des couples
      qui traversent une charnière non : la relire à chaque pas serait payer deux fois. */
   const ctxCache = new Map();
-  const ctxOf = (ch) => {
+  const ctxOf = (ch, maps = null) => {
     const key = `${ch.i}-${ch.j}`;
     let ctx = ctxCache.get(key);
     if (!ctx) { ctx = crossingOf(ch); ctxCache.set(key, ctx); }
-    return ctx;
+    if (!maps) return ctx;
+    /* LES COUPLES DU PAS SONT AJOUTÉS À UNE COPIE — le ctx caché reste la marche du canal
+       (les couples qui la traversent, lus une fois), et la copie ne coûte qu'un tableau.
+       Le coût relu sur `null` (la géométrie ENGAGÉE) ne les compte pas : ils y sont hors de
+       portée, donc à zéro dans le champ. C'est le PAS qui est jugé, pas le passé. */
+    const extra = stepPairsOf(ch, ctx, Array.isArray(maps) ? maps : [maps]);
+    if (!extra.length) return ctx;
+    return { ...ctx, nonbonded: ctx.nonbonded.concat(extra) };
   };
   return {
     count, heavyCount, els, clean, chan, backbone, ramaRows, chis, omega, dihedralRows,
@@ -2292,12 +2378,17 @@ export function* mdFrames({
     const woken = turnIndexes(t);
     for (const k of woken) {
       const ch = chan[k];
-      const ctx = engine.ctxOf(ch);
       const cur = engine.dihedralOf(ch.probeAtoms, null);
       if (!Number.isFinite(cur)) { skipped += 1; continue; }
       const up = engine.mapFor(ch, cur + delta);
       const down = engine.mapFor(ch, cur - delta);
       if (!up.ok || !down.ok) { skipped += 1; continue; }
+      /* ⚠ LE CTX PORTE AUSSI LES COUPLES QUE CE PAS **CRÉE** (`stepPairsOf` sur les DEUX
+         pas d'essai) : le mur de van der Waals qui vient de se former est alors DANS le
+         couple, lu sur la géométrie vivante, au lieu d'attendre la réfection de la marche
+         (vingt-quatre pas). C'est lui qui repousse les deux atomes — et il est plafonné
+         comme le reste (`capped`), donc l'intégrateur ne fait pas de bond. */
+      const ctx = engine.ctxOf(ch, [up.map, down.map]);
       /* LE COUPLE, PAR DIFFÉRENCE FINIE CENTRÉE — la pente du champ le long de CE
          dièdre, prise sur les seuls termes qui le traversent. */
       const torque = -(engine.crossCost(ctx, up.map) - engine.crossCost(ctx, down.map)) / (2 * delta);
@@ -2522,8 +2613,13 @@ export function* minimizeFrames({
       for (let a = 0; a < maxTries; a += 1) {
         const up = engine.mapFor(ch, cur + width);
         const down = engine.mapFor(ch, cur - width);
-        const cu = up.ok ? engine.crossCost(ctx, up.map) : Infinity;
-        const cd = down.ok ? engine.crossCost(ctx, down.map) : Infinity;
+        /* ⚠ LE PAS EST JUGÉ SUR LA GÉOMÉTRIE D'ESSAI (`stepPairsOf`) — un pas qui POSE un
+           empilement le voit et se refuse (`best < local`), au lieu de l'accepter parce que
+           la marche ne portait pas encore le couple. `local` reste le coût de la géométrie
+           ENGAGÉE : les couples du pas y sont hors de portée, donc à zéro. */
+        const trial = engine.ctxOf(ch, [up.map, down.map]);
+        const cu = up.ok ? engine.crossCost(trial, up.map) : Infinity;
+        const cd = down.ok ? engine.crossCost(trial, down.map) : Infinity;
         const best = Math.min(cu, cd);
         if (!(best < local - 1e-12)) break;         // rien à gagner par ici
         /* ⚠ ω NE SE DÉGRADE PAS ICI NON PLUS — un pas de descente qui augmente le coût

@@ -155,6 +155,39 @@ export const FF_RESTRAINT_TOLERANCE = 0.25;
    10° dehors = 2 kcal/mol, 30° = 18 — l'ordre de grandeur de la barrière ω (20). */
 export const FF_DIHEDRAL_K = 0.02;
 export const FF_DIHEDRAL_TOLERANCE = 30;   // °
+/* ⚠ LE FOND DU PUITS — ET LE DÉFAUT QU'IL AVAIT CREUSÉ. Le puits plat dit « dans les
+   ± 30°, rien ne coûte rien » : c'est une FENÊTRE, pas un puits, et une fenêtre n'a
+   aucun minimum — partout dedans la pente est nulle, donc rien n'y rappelle l'idéal, et
+   la structure s'arrête là où le RESTE du champ la pousse : SUR la paroi. Mesuré sur le
+   protocole du dossier (12 résidus ALA peints H, `_diag_helix.mjs`) : le modèle sorti du
+   bâtisseur est une hélice exacte (écart φ 0.0°, i→i+4 O···N 3.09 Å, pénalité 0) et le
+   protocole complet la DÉFAIT — φ rms 31.7°, ψ rms 26.0°, 12 φ/ψ HORS de la fenêtre,
+   i→i+4 ≈ 6.9 Å (le rapport de l'utilisateur : « poorly helical »). La largeur de la
+   fenêtre n'est pas la cause : à ± 10° l'écart tombe à 12.0° mais les ponts H ne
+   reviennent pas, parce que la structure se pose ENCORE sur la paroi. D'où ce SECOND
+   chiffre, le CENTRE DU PUITS : kc·(écart)² à l'intérieur de la fenêtre, borné à
+   kc·tolérance² — donc, au-delà de la fenêtre, un simple DÉCALAGE CONSTANT (la forme du
+   champ loin du but, et donc la recherche du recuit, ne changent pas ; la somme des deux
+   quadratiques reste convexe et son seul minimum est la cible).
+ *
+ *  ⚠ LE CHIFFRE EST CHOISI PAR MESURE, PAS AU GOÛT — et la mesure N'EST PAS MONOTONE,
+ *  parce que la raideur se bat avec l'amplitude du recuit (180°) : un puits trop raide
+ *  rend chaque saut de 180° si cher que la marche de Metropolis REFUSE tout et que le
+ *  protocole reste sur le tirage au sort. Balayage sur le protocole complet du dossier
+ *  (draw=true, 🎯 dyana, même graine, `_kc_sweep.mjs` / `_kc_sweep_out.txt`) :
+ *      kc     φ rms   ψ rms   max φ/ψ   α      ⛓ hors fenêtre
+ *      0      25.5°   20.6°   30.2/30.9 10/12   2      ← la fenêtre plate (l'ancien)
+ *      0.02   15.4°   15.7°   41.7/47.3  9/12   2      ← un fond mou ne suffit pas
+ *      0.05    1.9°    1.8°    3.7/3.5  10/12   0
+ *      0.10    1.6°    1.3°    2.5/3.2  10/12   0      ← LE CHIFFRE RETENU
+ *      0.20   26.0°   20.7°   64.2/67.9  9/12   3      ← le recuit se bloque (trop raide)
+ *      0.50   28.1°   23.3°   75.6/77.2  9/12   3
+ *  À 0.1 l'écart résiduel (≤ 3.2°) vaut la limite de la recherche, plus celle du puits :
+ *  en dessous de 0.05 la paroi reprend la main, au-dessus de 0.2 l'amplitude du recuit
+ *  l'emporte. ⚠ 0 PAR DÉFAUT dans la FONCTION : sans ce chiffre, `ffDihedralCostOf` est
+ *  EXACTEMENT le puits plat d'avant, et toute contrainte qui ne le donne pas est
+ *  inchangée (c'est ce que fait le balayage à kc = 0, et les tests du puits plat). */
+export const FF_DIHEDRAL_CENTRE_K = 0.1;
 
 /** LES MASSES ATOMIQUES (amu) — ce qu'il faut pour l'entropie de rotation. */
 export const FF_MASSES = {
@@ -393,6 +426,49 @@ export const ffTargetFunctionOf = (id) => FF_TARGET_FUNCTIONS
   .find((t) => t.id === String(id == null ? '' : id))
   || FF_TARGET_FUNCTIONS.find((t) => t.id === 'classic');
 
+/** LA PORTÉE D'UNE MARCHE DE COUPLES NON LIÉS — le rayon réellement employé par
+ *  `ffPairListOf` (un nombre manquant ou absurde retombe sur `FF_PAIR_LIMIT`). Un moteur
+ *  qui doit lire À LA MAIN un couple hors de la marche (voir `structureCalc.js` : les
+ *  couples qu'un PAS vient de créer) prend la portée ICI : la sienne ne peut donc pas
+ *  dériver de celle du champ. */
+export const ffPairReachOf = (limit) => Math.max(1, Number(limit) || FF_PAIR_LIMIT);
+
+/** LES VOISINS JUSQU'À TROIS LIAISONS D'UNE MOLÉCULE — `{nb1, nb2, nb3}`, trois tableaux de
+ *  `Set` : `nb1[i]` les atomes liés à `i` (couple 1-2), `nb2[i]` ceux à deux liaisons (1-3),
+ *  `nb3[i]` ceux à trois (1-4). Au-delà, le couple est LIBRE, et c'est lui qui porte la
+ *  physique. C'est la topologie qu'emploie `ffPairListOf` ; elle est rendue à part pour
+ *  qu'un moteur qui juge un couple HORS de la marche juge la MÊME topologie que la marche
+ *  (`structureCalc.js`), au lieu d'en réécrire une seconde. */
+export const ffExclusionSetsOf = ({ bonds = [], atomCount = 0 } = {}) => {
+  const count = Math.max(0, Math.floor(Number(atomCount) || 0));
+  const graph = bondGraphOf({ bonds, atomCount: count });
+  const nb1 = []; const nb2 = []; const nb3 = [];
+  for (let i = 0; i < count; i += 1) nb1.push(new Set(graph.neighbours(i)));
+  for (let i = 0; i < count; i += 1) {
+    const two = new Set();
+    for (const k of nb1[i]) for (const m of nb1[k]) if (m !== i && !nb1[i].has(m)) two.add(m);
+    nb2.push(two);
+  }
+  for (let i = 0; i < count; i += 1) {
+    const three = new Set();
+    for (const k of nb1[i]) for (const m of nb1[k]) for (const n of nb1[m]) {
+      if (n !== i && !nb1[i].has(n) && !nb2[i].has(n)) three.add(n);
+    }
+    nb3.push(three);
+  }
+  return { nb1, nb2, nb3 };
+};
+
+/** LE COUPLE NON LIÉ DE DEUX ATOMES, À UN ORDRE TOPOLOGIQUE DONNÉ — le MÊME constructeur
+ *  que la marche (`ffPairListOf`), donc un moteur qui lit un couple à la main obtient
+ *  exactement le couple du champ : `fourth: true` atténue un 1-4 (voir
+ *  `FF_VDW_FOURTH_SCALE` / `FF_ELEC_FOURTH_SCALE`), `false` lit un couple libre. */
+export const ffPairOf = (i, j, elements, charges, fourth = false) => ffNonbondedOf(
+  i, j, elements, charges,
+  fourth ? { lj: FF_VDW_FOURTH_SCALE, elec: FF_ELEC_FOURTH_SCALE } : {},
+);
+
+
 /** LES COUPLES NON LIÉS D'UNE GÉOMÉTRIE — `{ok, reason, pairs, count, topology,
  *  unknown, limit}`. `pairs[k]` = `{i, j, rmin, epsilon, charges, cqq, topological,
  *  known}` ; `topological` = 3 pour un couple 1-4 (atténué), 0 sinon. `topology` compte
@@ -416,25 +492,13 @@ export const ffPairListOf = ({
   };
   if (!read || !count) return out;
   const x = read.flat;
-  const reach = Math.max(1, Number(limit) || FF_PAIR_LIMIT);
+  const reach = ffPairReachOf(limit);
   const doSurface = surface !== false;
-  const graph = bondGraphOf({ bonds, atomCount: count });
-  /* LES VOISINS JUSQU'À TROIS LIAISONS — la topologie d'un couple, une fois pour
-     toutes. Au-delà c'est un couple LIBRE, et c'est lui qui porte la physique. */
-  const nb1 = []; const nb2 = []; const nb3 = [];
-  for (let i = 0; i < count; i += 1) nb1.push(new Set(graph.neighbours(i)));
-  for (let i = 0; i < count; i += 1) {
-    const two = new Set();
-    for (const k of nb1[i]) for (const m of nb1[k]) if (m !== i && !nb1[i].has(m)) two.add(m);
-    nb2.push(two);
-  }
-  for (let i = 0; i < count; i += 1) {
-    const three = new Set();
-    for (const k of nb1[i]) for (const m of nb1[k]) for (const n of nb1[m]) {
-      if (n !== i && !nb1[i].has(n) && !nb2[i].has(n)) three.add(n);
-    }
-    nb3.push(three);
-  }
+  /* LES VOISINS JUSQU'À TROIS LIAISONS — la topologie d'un couple, une fois pour toutes,
+     lue par la fonction du CHAMP (`ffExclusionSetsOf`) : un moteur qui juge un couple HORS
+     de la marche emploie donc la même. Au-delà c'est un couple LIBRE, et c'est lui qui
+     porte la physique. */
+  const { nb1, nb2, nb3 } = ffExclusionSetsOf({ bonds, atomCount: count });
   const cell = (v) => Math.floor(v / reach);
   const key = (a, b, c) => `${a},${b},${c}`;
   const grid = new Map();
@@ -471,9 +535,7 @@ export const ffPairListOf = ({
             if (nb2[i].has(j)) { out.topology.linked += 1; continue; }
             const fourth = nb3[i].has(j);
             if (fourth) out.topology.fourth += 1; else out.topology.free += 1;
-            const pair = ffNonbondedOf(i, j, els, charges, fourth
-              ? { lj: FF_VDW_FOURTH_SCALE, elec: FF_ELEC_FOURTH_SCALE }
-              : {});
+            const pair = ffPairOf(i, j, els, charges, fourth);
             if (!pair.known) out.unknown += 1;
             out.pairs.push(pair);
           }
@@ -579,16 +641,38 @@ export const ffRestraintWeightOf = (weight) => {
  *  différents pour la même ligne). */
 export const ffRestraintKOf = (weight) => FF_NOE_K * ffRestraintWeightOf(weight);
 
-/** ω — la barrière trans : nulle à moins de la tolérance de 180°, maximale à 90°. */
+/** ω — LA BARRIÈRE TRANS, À SENS UNIQUE : nulle à moins de la tolérance de 180°, puis
+ *  STRICTEMENT CROISSANTE — elle ne redescend JAMAIS. Le point opposé à trans (le ω cis,
+ *  à 180°) paie TOUT k : c'est ce que fixe la normalisation par `1 − cos(180° − tolérance)`.
+ *
+ *  ⚠ UN cos 2 AURAIT UN SECOND MINIMUM, ET C'EST CELUI QUI A CASSÉ L'HÉLICE DE LA PAGE. Sa
+ *  valeur au cis vaut k/4 = 5 kcal/mol — MOINS que le sommet de sa propre barrière (20
+ *  kcal/mol, à 120° de trans) : le cis était donc un PUITS, pas un mur. Or les quatre
+ *  moteurs qui protègent ω (recuit, trempe, dynamique, minimisation) ne gardent qu'un pas
+ *  qui NE MONTE PAS son coût : y descendre était permis, en ressortir refusé. MESURÉ sur
+ *  l'hélice (12 résidus, protocole entier) : le tirage des dièdres pose les 11 ω
+ *  uniformément dans (−180, 180); 2 tombent du côté cis (144.6° et 152.1°), et ces 2 liens
+ *  finissaient à 180.0° EXACTEMENT après le protocole complet — 10.01 kcal/mol de barrière
+ *  payés pour rien, les ponts i→i+4 des deux bouts à 5.98 et 5.42 Å au lieu de 3.09.
+ *  Un terme monotone fait au contraire REVENIR tout ω tiré de travers : chaque degré
+ *  parcouru va vers trans, donc un pas accepté ne peut que rapprocher de la fenêtre. */
 export const ffOmegaCostOf = (deg, {
   target = FF_OMEGA_TARGET, tolerance = FF_OMEGA_TOLERANCE, k = FF_OMEGA_K,
 } = {}) => {
   const d = Number(deg);
   if (!Number.isFinite(d)) return 0;
-  const dev = Math.abs(((d - target + 540) % 360) - 180);   // écart réel, 0..180
-  if (dev <= tolerance) return 0;
-  const over = (dev - tolerance) * (Math.PI / 180);
-  return k * (1 - Math.cos(2 * over)) / 2;
+  /* LA FENÊTRE EST BORNÉE À [0°, 180°] : au-delà il n'y a plus de cercle, et un chiffre
+     illisible redonne le plateau entier — le terme ne rend jamais un NaN. */
+  const tol = Math.max(0, Math.min(Number(tolerance) || 0, 180));
+  const dev = Math.abs(((d - Number(target) + 540) % 360) - 180);   // écart réel, 0..180
+  if (!Number.isFinite(dev) || dev <= tol) return 0;
+  const over = (dev - tol) * (Math.PI / 180);
+  /* LE DÉNOMINATEUR EST LA VALEUR À L'OPPOSÉ DE TRANS (dev = 180°, le cis) : le terme y
+     vaut EXACTEMENT k, et il y monte sans jamais redescendre (`1 − cos` est croissant sur
+     (0°, 180°]). Une tolérance de 180° est déjà sortie plus haut : jamais de division par
+     zéro, et le terme tend vers k quand la fenêtre s'ouvre sur tout le cercle. */
+  const far = 1 - Math.cos((180 - tol) * (Math.PI / 180));
+  return far > 0 ? (k * (1 - Math.cos(over))) / far : 0;
 };
 
 /** ⛓ LA CONTRAINTE DE DIHÈDRE ISSUE DE LA STRUCTURE SECONDAIRE IMPOSÉE — LE PUITS
@@ -598,15 +682,26 @@ export const ffOmegaCostOf = (deg, {
  *  écrite ici UNE fois, comme celle des distances — le recuit, la dynamique et la
  *  minimisation relisent CE puits, donc aucun moteur ne minimise autre chose que ce
  *  que la note juge. L'écart est le plus court sur le cercle : une cible de −57° et
- *  un angle de +300° sont à zéro. */
+ *  un angle de +300° sont à zéro.
+ *
+ *  `centreK` AJOUTE LE FOND DU PUITS (voir `FF_DIHEDRAL_CENTRE_K`) : kc·(écart)² tant
+ *  que l'angle est DANS la fenêtre, borné à kc·tolérance² — deux quadratiques dans le
+ *  même écart, dont la somme est convexe et ne se creuse qu'à la cible. Sans `centreK`
+ *  (le défaut, 0), c'est le puits plat, au chiffre près. */
 export const ffDihedralCostOf = (deg, {
-  target = 0, tolerance = FF_DIHEDRAL_TOLERANCE, k = FF_DIHEDRAL_K,
+  target = 0, tolerance = FF_DIHEDRAL_TOLERANCE, k = FF_DIHEDRAL_K, centreK = 0,
 } = {}) => {
   const d = Number(deg);
   if (!Number.isFinite(d)) return 0;
+  const tol = Math.max(0, Number(tolerance) || 0);
   const dev = Math.abs(((d - Number(target) + 540) % 360) - 180);
-  const over = dev - Math.max(0, Number(tolerance) || 0);
-  return over > 0 ? k * over * over : 0;
+  if (!Number.isFinite(dev)) return 0;
+  const kc = Number(centreK);
+  /* LE FOND — nul si le chiffre est absent, illisible ou négatif : une contrainte sans
+     centre reste le puits plat, et un centre négatif ne peut pas CREUSER sous zéro. */
+  const floor = Number.isFinite(kc) && kc > 0 ? kc * Math.min(dev, tol) ** 2 : 0;
+  const over = dev - tol;
+  return (over > 0 ? k * over * over : 0) + floor;
 };
 
 /** χ1 — les trois conformères décalés : 1 + cos 3χ s'annule sur 60°, 180° et −60°. */
@@ -1226,7 +1321,7 @@ export const ffKcalRowsOf = ({
     rule: `FLAT-BOTTOM well of ± ${FF_RESTRAINT_TOLERANCE} Å, then k·(over)² — the standard restraint of XPLOR/CNS; the ⚖ weight typed on a line multiplies this k, and a weight of 0 makes that line inert` },
   { id: 'dihedral', icon: '⛓', label: 'Secondary-structure φ/ψ', k: FF_DIHEDRAL_K, unit: 'kcal·mol⁻¹·deg⁻²',
     of: 'every φ and ψ converted from the imposed secondary structure (🖌️ H helix, E sheet)',
-    rule: `FLAT-BOTTOM window of ± ${FF_DIHEDRAL_TOLERANCE}° around the ideal angle of that letter (H: φ −57°, ψ −47° · E: φ −139°, ψ +135°), then k·(over)² — nothing for a coil` },
+    rule: `FLAT-BOTTOM window of ± ${FF_DIHEDRAL_TOLERANCE}° around the ideal angle of that letter (H: φ −57°, ψ −47° · E: φ −139°, ψ +135°), then k·(over)² — nothing for a coil. The window alone has no bottom (every angle inside it costs the same), so the ideal is recalled by a centre of its own: kc·(dev)² inside the window, capped at kc·${FF_DIHEDRAL_TOLERANCE}² = ${Number((FF_DIHEDRAL_CENTRE_K * FF_DIHEDRAL_TOLERANCE ** 2).toFixed(6))} kcal/mol beyond it — a constant there, so the shape of the field far from the goal is unchanged. kc = ${FF_DIHEDRAL_CENTRE_K} kcal·mol⁻¹·deg⁻²` },
   { id: 'entropy', icon: '🎲', label: 'Conformational entropy', k: FF_REFERENCE_TEMPERATURE, unit: 'K',
     of: 'every torsion the field confines (φ/ψ, χ1, ω)',
     rule: `quasi-harmonic, S = R·(ln√(2π·k_B·T/k) + ½) with the curvature of its own well; read at ${temperature} K, in cal·mol⁻¹·K⁻¹ and in −T·S (kcal/mol)` },
@@ -1500,20 +1595,21 @@ export const ffKcalEnergyOf = ({
     const atoms = Array.from(d.atoms || []);
     const target = Number(d.target);
     const tolerance = Number.isFinite(Number(d.tolerance)) ? Number(d.tolerance) : FF_DIHEDRAL_TOLERANCE;
+    const centreK = Number.isFinite(Number(d.centreK)) ? Math.max(0, Number(d.centreK)) : 0;
     const deg = atoms.length === 4 ? dihedralDeg(pt(atoms[0]), pt(atoms[1]), pt(atoms[2]), pt(atoms[3])) : NaN;
     const dev = Number.isFinite(deg) && Number.isFinite(target)
       ? Math.abs(((deg - target + 540) % 360) - 180) : NaN;
     const over = Number.isFinite(dev) ? Math.max(0, dev - tolerance) : Infinity;
     return {
       kind: d.kind || '', letter: String(d.letter || '').toUpperCase(), ca: d.ca, atoms,
-      target, tolerance, deg, dev, over,
+      target, tolerance, centreK, deg, dev, over,
       satisfied: Number.isFinite(dev) ? dev <= tolerance : false,
-      cost: ffDihedralCostOf(deg, { target, tolerance }),
+      cost: ffDihedralCostOf(deg, { target, tolerance, centreK }),
     };
   });
   const dihedralReport = {
     count: dihedralRows.length, satisfied: 0, violations: 0, penalty: 0,
-    tolerance: FF_DIHEDRAL_TOLERANCE, worst: null, list: dihedralRows,
+    tolerance: FF_DIHEDRAL_TOLERANCE, centreK: FF_DIHEDRAL_CENTRE_K, worst: null, list: dihedralRows,
   };
   for (const row of dihedralRows) {
     dihedralReport.penalty += row.cost;
