@@ -144,10 +144,19 @@ import {
   STRUCTURE_CALC_MD_STEPS, STRUCTURE_CALC_MD_FRAME, STRUCTURE_CALC_MD_HOT,
   STRUCTURE_CALC_MD_COLD, STRUCTURE_CALC_MD_DT, STRUCTURE_CALC_MD_FRICTION,
   STRUCTURE_CALC_MD_EQUILIBRATION, STRUCTURE_CALC_MIN_ROUNDS,
+  /* ⚖ LE PLAFOND DE COUPLE DE LA FAMILLE DES DISTANCES — le viewer le DIT dans un rapport
+     (une ligne de poids ⚖ élevé tire jusqu'à ce plafond, voir le module). */
+  STRUCTURE_CALC_MD_MAX_RESTRAINT_TORQUE,
   /* 💧 LE SOLVANT DE LA DYNAMIQUE ISOLÉE — les modèles et leur diélectrique viennent du
      module : le viewer n'écrit aucun ε, et il ne promet pas d'eau explicite que le moteur
-     n'a pas (voir utils/structureCalc.js). */
+     n'a pas (voir utils/structureCalc.js). La demande de cette session a ajouté la BOÎTE :
+     `explicitSolventOf` la construit (les eaux TIP3P rigides), et `mdBox` en est l'arête. */
   STRUCTURE_CALC_SOLVENT, STRUCTURE_CALC_SOLVENTS, structureCalcSolventOf,
+  structureCalcSolventIsExplicit, explicitSolventOf,
+  STRUCTURE_CALC_SOLVENT_BOX, STRUCTURE_CALC_SOLVENT_BOX_MIN, STRUCTURE_CALC_SOLVENT_BOX_MAX,
+  /* 🎯 LA FONCTION CIBLE — `classic` (le champ entier) ou `dyana` : la liste des règles
+     vient du module, donc le panneau n'en invente aucune (voir STRUCTURE_CALC_TARGET_FUNCTIONS). */
+  STRUCTURE_CALC_TARGET_FUNCTION, STRUCTURE_CALC_TARGET_FUNCTIONS, structureCalcTargetFunctionOf,
   /* ⛓ LA STRUCTURE SECONDAIRE IMPOSÉE → DES CONTRAINTES DE DIHÈDRE — la conversion,
      la relecture pour les rapports, les lettres et la fenêtre : tout vient du module
      (aucun chiffre de φ/ψ n'est écrit dans le JSX). */
@@ -7813,6 +7822,20 @@ const [ramaDock, setRamaDock] = useState(() => {
 const [mdDock, setMdDock] = useState(false);
 const toggleMdDock = (v) => setMdDock((cur) => (typeof v === 'boolean' ? v : !cur));
 
+/* ⚠ …ET LE DOCK 🪢 OUVERT COMPTE AUSSI COMME « LE GRAPHE EST À L'ÉCRAN ». La référence a
+   été écrite une première fois PLUS HAUT, avant que `ramaDock` existe (il est déclaré
+   juste en dessous), et elle n'y posait que `!!rama` : une lecture VIDE laissait donc
+   `ramaShownRef.current` à faux — donc `ramaIsShown()` faux, donc plus AUCUNE relecture
+   pendant un ▶ MD, un ⚒ Minimise ou un ▶ Run. Deux cas le déclenchaient vraiment :
+     · la fenêtre 🪢 ouverte AVANT le chargement de la molécule (le premier `readRamachandran`
+       dit « il n'y a pas de molécule » et laisse `rama` à `null`) ;
+     · une molécule sans squelette N–CA–C, dont la lecture ne place aucun point.
+   La remarque de cette session : « the independent MD calculation works now very well but
+   the ramachandran does not update with the MD steps » — c'est exactement ce cas-là. Cette
+   SECONDE écriture est la DERNIÈRE du rendu, donc c'est elle qui décide : « le graphe est à
+   l'écran » = « il y a une lecture, OU la fenêtre est ouverte ». */
+ramaShownRef.current = !!rama || !!ramaDock;
+
 const toggleRamaDock = (v) => {
   const next = typeof v === 'boolean' ? v : !ramaDock;
   setRamaDock(next);
@@ -7829,15 +7852,23 @@ useEffect(() => {
 }, [ramaDock]);
 /* LE DOCK OUVERT LIT LE SQUELETTE TOUT SEUL — un graphe ne sert à rien tant qu'il n'a
    rien lu, et personne ne va chercher un bouton dans une colonne qu'il vient d'ouvrir.
-   ⚠ UNE SEULE TENTATIVE par structure : `ramaMsg` dit qu'une lecture a déjà eu lieu (et
-   POURQUOI il n'y a rien à dessiner — une molécule sans N–CA–C), donc on ne réessaie pas
-   en boucle ; `rama` dit qu'un graphe est là. */
+   ⚠ UNE TENTATIVE PAR MOLÉCULE, PAS UNE PAR PAGE : `ramaMsg` disait seulement « une
+   lecture a eu lieu » — donc une fenêtre ouverte AVANT le chargement (ou sur une molécule
+   sans squelette) ne réessayait JAMAIS, et le graphe restait vide alors que la molécule
+   était arrivée. La garde est donc la STRUCTURE elle-même (l'objet NGL) : la lecture est
+   refaite dès qu'une autre molécule est à l'écran, et jamais deux fois pour la même.
+   ⚠ `ramaMsg` N'EST PLUS une dépendance : la lecture l'écrit, donc l'y mettre ferait une
+   boucle (lire → écrire le message → relire). */
+const ramaReadStructureRef = useRef(null);
 useEffect(() => {
   if (!ramaDock) return;
-  if (rama || ramaMsg) return;
+  if (rama) return;
   if (status !== 'ready' || !componentRef.current) return;
+  const st = componentRef.current.structure;
+  if (!st || ramaReadStructureRef.current === st) return;   // une tentative par molécule
+  ramaReadStructureRef.current = st;
   readRamachandran();
-}, [ramaDock, status, rama, ramaMsg]);
+}, [ramaDock, status, rama]);
 /* LE POINT SURVOLÉ — la CLEF de son résidu, pas l'objet : une nouvelle lecture (⏮, un
    ⚒, un ✏️ Torsion) jette les anciens résidus, et une clef morte ne désigne plus rien
    (le panneau retombe sur « survolez un point » au lieu de lire un résidu disparu). */
@@ -7966,6 +7997,17 @@ const [mdImage, setMdImage] = useState(STRUCTURE_CALC_MD_FRAME);
 /* 💧 LE SOLVANT — le modèle implicite du module (`STRUCTURE_CALC_SOLVENTS`) : le
    diélectrique que les charges voient. Aucun ε n'est écrit dans le JSX. */
 const [mdSolvent, setMdSolvent] = useState(STRUCTURE_CALC_SOLVENT);
+/* 📦 L'ARÊTE DE LA BOÎTE D'EAU EXPLICITE (Å) — le « with its box » de la demande de cette
+   session : « it would be great if you could add the explicit solvent as a further option
+   with its box. » Elle ne sert QU'au modèle `explicit` (les trois modèles implicites sont
+   un diélectrique, sans géométrie) : le panneau ne l'affiche donc qu'avec lui, et
+   `explicitSolventOf` la refuse si elle ne peut pas contenir la molécule. */
+const [mdBox, setMdBox] = useState(STRUCTURE_CALC_SOLVENT_BOX);
+/* 🎯 LA FONCTION CIBLE DU CALCUL — `classic` (le champ entier, le défaut) ou `dyana`
+   (répulsion seule, sans charge ni surface, atomes unis). Les QUATRE gestes du champ (▶ Run,
+   ▶ MD, ⚒ Minimise, ⟳ Energy) la lisent, donc un modèle ne peut pas être construit sous un
+   jeu de règles et lu sous un autre ; le module en donne la liste et la description. */
+const [calcTargetFunction, setCalcTargetFunction] = useState(STRUCTURE_CALC_TARGET_FUNCTION);
 /* 🪢 ω VARIE — l'option de la dynamique ISOLÉE (la sienne : le calcul a `calcOmegaFree`). */
 const [mdFreeOmega, setMdFreeOmega] = useState(STRUCTURE_CALC_FREE_OMEGA);
 const CALC_STORE_KEY = 'labViewerCalcState';
@@ -8020,8 +8062,13 @@ useEffect(() => {
     if (Number.isFinite(s.mdRunDt)) setMdDtText(s.mdRunDt);
     if (Number.isFinite(s.mdRunImage)) setMdImage(Math.max(1, Math.min(20000, Math.round(s.mdRunImage))));
     if (typeof s.mdRunSolvent === 'string') setMdSolvent(structureCalcSolventOf(s.mdRunSolvent).id);
+    if (Number.isFinite(s.mdRunBox)) setMdBox(Math.max(STRUCTURE_CALC_SOLVENT_BOX_MIN,
+      Math.min(STRUCTURE_CALC_SOLVENT_BOX_MAX, Math.round(s.mdRunBox))));
     if (typeof s.mdRunOmega === 'boolean') setMdFreeOmega(s.mdRunOmega);
     if (typeof s.mdRunRestraints === 'boolean') setMdUseRestraints(s.mdRunRestraints);
+    /* 🎯 …ET LA FONCTION CIBLE DU CALCUL — résolue par le module (un identifiant inconnu
+       rend `classic`), donc une session ancienne revient sur le champ historique. */
+    if (typeof s.targetFunction === 'string') setCalcTargetFunction(structureCalcTargetFunctionOf(s.targetFunction).id);
     setCalcMsg('↩ The distance table and the settings of the last session were brought back from this browser'
       + ' (the rows are re-resolved on the molecule as soon as it is on screen). ⛓ re-imposes the φ/ψ of the'
       + ' painted secondary structure in one click: those constraints are matched to the backbone ON SCREEN, so'
@@ -8046,11 +8093,15 @@ useEffect(() => {
          préfixes, donc une relecture ne peut pas les mélanger. */
       mdRunSteps: mdSteps, mdRunDt: mdDt, mdRunImage: mdImage, mdRunSolvent: mdSolvent,
       mdRunTemp: mdTemp, mdRunOmega: mdFreeOmega, mdRunRestraints: mdUseRestraints,
+      /* 📦 …ET L'ARÊTE DE LA BOÎTE EXPLICITE (le réglage « de la boîte » de cette session),
+         plus 🎯 LA FONCTION CIBLE DU CALCUL : les deux survivent au rechargement. */
+      mdRunBox: mdBox, targetFunction: calcTargetFunction,
     }));
   } catch { /* le stockage local est un confort, pas une donnée */ }
 }, [calcRestraints, calcStarts, calcKeep, calcAnneal, calcAnnealFrame, calcMdSteps, calcMdDt,
   calcMdEquil, calcMinimise, calcMdHot, calcMdCold, calcOmegaFree,
-  mdSteps, mdDt, mdImage, mdSolvent, mdTemp, mdFreeOmega, mdUseRestraints]);
+  mdSteps, mdDt, mdImage, mdSolvent, mdBox, mdTemp, mdFreeOmega, mdUseRestraints,
+  calcTargetFunction]);
 /* …ET LA RÉSOLUTION DES ATOMES REVENUS, dès que la molécule est là — les DEUX côtés d'une
    ligne : sans les deux, elle resterait « pas prête » jusqu'à ce qu'on la retape. Une
    ligne dont un nom ne se résout pas GARDE son texte et dit POURQUOI (comme la frappe). */
@@ -10344,7 +10395,79 @@ const calcEngineGeometry = () => {
   const bonds = withoutStretchedDisulfideBonds({
     bonds: now.geom.bonds, bridges: disulfideDrawnRef.current.bonds,
   });
-  return { ...now, geom: { ...now.geom, bonds } };
+  const geom = { ...now.geom, bonds };
+  /* 💧 …ET LA BOÎTE D'EAU EXPLICITE, QUAND ELLE EST LE SOLVANT CHOISI — la demande de
+     cette session : « it would be great if you could add the explicit solvent as a further
+     option with its box. » Les molécules d'eau TIP3P sont construites par le module
+     (`explicitSolventOf`) et AJOUTÉES ICI, à la fin de la molécule : les indices d'origine
+     ne bougent donc pas, et les contraintes, les canaux et les résidus de l'utilisateur
+     gardent les leurs. C'est le MÊME graphe pour les quatre gestes du champ (▶ Run, ▶ MD,
+     ⚒ Minimise, ⟳ Energy) — ils lisent tous `calcEngineGeometry`, donc aucun ne voit un
+     soluté nu quand les autres voient une boîte.
+     ⚠ LA BOÎTE N'EST PAS CONSTRUITE QUAND LA MOLÉCULE NE PEUT PAS LA CONTENIR : le
+     rapport du geste le DIT (`calcBoxNote`), il ne l'agrandit pas en silence. */
+  const solvent = structureCalcSolventOf(mdSolvent);
+  if (!solvent.explicit) return { ...now, geom };
+  const box = explicitSolventOf({
+    positions: geom.positions, elements: geom.elements, bonds: geom.bonds, edge: mdBox,
+  });
+  if (!box.ok) return { ...now, geom, solvent: { ...box, asked: mdBox, ok: false } };
+  return {
+    ...now,
+    geom: {
+      ...geom,
+      positions: box.positions, elements: box.elements, bonds: box.bonds,
+      solvent: { ok: true, molecules: box.molecules, edge: box.edge, skipped: box.skipped,
+        atoms: box.atoms, solute: box.solute, needed: box.needed },
+    },
+  };
+};
+
+/** 🎯 LA FONCTION CIBLE, DITE EN UNE PHRASE — le rapport d'un geste l'écrit pour que
+ *  personne ne prenne une famille ÉTEINTE pour une famille oubliée. `classic` n'a rien
+ *  éteint : la phrase est alors celle du libellé seul. */
+const calcTargetFunctionNote = (id) => {
+  const tf = structureCalcTargetFunctionOf(id);
+  return tf.off.length
+    ? ` · 🎯 target function ${tf.label}: ${tf.of} — with ${tf.off.join(', ')} switched OFF (chosen, not forgotten)`
+    : ` · 🎯 target function ${tf.label}`;
+};
+
+/** ⚖ CE QUE LA TABLE A GAGNÉ PENDANT LE GESTE — la MÊME lecture (`restraintReportOf`) sur
+ *  les coordonnées du DÉPART et sur celles de la fin : combien de distances sont tenues,
+ *  de combien la table se trompe au total, et la plus fausse. C'est la réponse chiffrée à
+ *  la remarque de cette session : « giving a high weight to one constraint did not have an
+ *  effect on MD » — la mécanique marchait, mais le plafond de couple écrasait le poids ⚖
+ *  (voir `STRUCTURE_CALC_MD_MAX_RESTRAINT_TORQUE`), et RIEN ne montrait le déplacement.
+ *  Rend '' quand la table est vide : un geste sans contrainte n'a rien à comparer. */
+const calcRestraintEffect = (before, after, list) => {
+  if (!list.length || !before || !after || !before.count) return '';
+  const miss = (rep) => rep.list.reduce((s, r) => s + Math.abs(r.deviation), 0);
+  return ` · ⚖ the ${before.count} distance${before.count === 1 ? '' : 's'} of the table:`
+    + ` ${before.satisfied}/${before.count} within ± ${before.tolerance} Å before → ${after.satisfied}/${after.count} after,`
+    + ` total miss ${miss(before).toFixed(2)} → ${miss(after).toFixed(2)} Å,`
+    + ` worst ${before.worst.abs.toFixed(2)} → ${after.worst.abs.toFixed(2)} Å`
+    + ` (a line's ⚖ weight multiplies the torque it pulls with, up to ${STRUCTURE_CALC_MD_MAX_RESTRAINT_TORQUE} kcal/mol·deg —`
+    + ' a heavier line really does bite harder).';
+};
+
+/** LA BOÎTE EXPLICITE, DITE EN UNE PHRASE — ce que le rapport d'un geste ajoute quand le
+ *  solvant choisi est `explicit`, et RIEN quand il ne l'est pas (les modèles implicites
+ *  n'ont pas de géométrie à décrire). Une boîte refusée est DITE avec la raison du module
+ *  et l'arête qu'il faudrait : un geste qui ne solvate pas doit le dire, pas le taire. */
+const calcBoxNote = (geom) => {
+  if (!structureCalcSolventOf(mdSolvent).explicit) return '';
+  const s = geom && geom.solvent;
+  if (!s) return '';
+  if (!s.ok) {
+    return ` · 📦 the water box was NOT built (${s.reason === 'box-too-small'
+      ? `it must be at least ${s.needed} Å for this molecule` : s.reason === 'no-water'
+        ? 'no site of the lattice was free — the molecule fills it' : s.reason})`
+      + ` — the dynamics ran in ε = 1 with no water; 📦 raise the box edge.`;
+  }
+  return ` · 📦 ${s.molecules} rigid TIP3P water${s.molecules === 1 ? '' : 's'} in a `
+    + `${s.edge} Å cube${s.skipped ? ` (${s.skipped} lattice site${s.skipped === 1 ? '' : 's'} left empty, too close to the molecule)` : ''}`
+    + ' — they screen and they push, and they never move (this engine turns dihedrals).';
 };
 
 /** POURQUOI UN DÉPART S'EST ARRÊTÉ LÀ — une phrase par `reason` du module, traduite
@@ -10965,7 +11088,15 @@ const calcWriteStructure = (retained, ranked) => {
       + ' belong to its atoms. ▶ Run the calculation again on this molecule (the last family is kept above, with its scores).');
     return;
   }
-  const count = Math.round(retained.positions.length / 3);
+  /* ⚠ LA GÉOMÉTRIE CONDUITE PEUT ÊTRE PLUS LONGUE QUE LA MOLÉCULE À L'ÉCRAN — le solvant
+     EXPLICITE ajoute une boîte d'eaux à la fin (`explicitSolventOf`), et la structure NGL,
+     elle, ne connaît que le soluté : écrire au-delà de `structure.atomCount` écrirait hors
+     de la molécule. On n'écrit donc QUE ses atomes, avec la MÊME borne que
+     `calcPreviewPositions` (un seul contrat d'écriture, une seule règle). Les index sont
+     préservés par le module (les eaux sont ajoutées à la fin), donc le soluté est bien le
+     préfixe — il n'y a aucun décalage à corriger. */
+  const have = Math.round(retained.positions.length / 3);
+  const count = Math.min(have, Number(structure.atomCount) || have);
   const idxs = [];
   for (let i = 0; i < count; i += 1) idxs.push(i);
   if (!writeStructurePositions(comp, idxs, retained.positions)) {
@@ -11170,6 +11301,11 @@ const runStructureCalculation = () => {
        dans son recuit, sa dynamique, sa minimisation et sa trempe, et sa note les
        compte. */
     dihedrals: calcDihedrals,
+    /* 🎯 LA FONCTION CIBLE DU CALCUL — le réglage du panneau, tel quel : chaque départ la
+       porte dans son recuit, sa dynamique, sa minimisation et sa trempe, et SA NOTE la
+       porte aussi (un modèle ne peut pas être construit sous un jeu de règles et noté sous
+       un autre). `dyana` veut dire répulsion seule, sans charge, sans surface, atomes unis. */
+    targetFunction: calcTargetFunction,
     /* 🪢 L'OPTION « ω VARIE » — le réglage du panneau, tel quel : chaque départ le porte
        dans son recuit, sa dynamique, sa minimisation et sa trempe (le module dit
        `omegaFree` dans son rapport). */
@@ -11294,6 +11430,12 @@ const calcReadForceFieldNow = () => {
     restraints: calcRestraintTermsOf(list),
     dihedrals: calcDihedrals,
     exactSurface: true,
+    /* 🎯 …ET LA FONCTION CIBLE CHOISIE, AVEC LE SOLVANT DE LA FENÊTRE : la lecture du
+       champ lit ce que les gestes conduisent (familles éteintes comprises), sinon elle
+       annoncerait un total que le calcul n'utilise pas. `exactSurface` reste demandé :
+       c'est la mesure INDÉPENDANTE de la surface, et elle n'a de sens qu'avec la famille. */
+    targetFunction: calcTargetFunction,
+    dielectric: mdSolventOf().dielectric,
   });
   setCalcForce(field);
   const ra = field.ramaReport;
@@ -11487,6 +11629,10 @@ const runMolecularDynamics = () => {
   const paused = calcInertCount();
   const base = Array.from(geom.positions);
   const held = list.length ? calcHeldPairs(geom, list) : [];
+  /* ⚖ LA TABLE, RELUE AU DÉPART — la moitié « avant » de la comparaison que le rapport
+     donne à la fin (`calcRestraintEffect`) : c'est elle qui montre ce que le poids ⚖ et la
+     durée du geste ont réellement gagné. */
+  const restBefore = restraintReportOf({ positions: base, restraints: list });
   const before = torsionSnapshotOf(structure);
   torsionUndoRef.current = {
     comp, structure, count: before ? before.length / 3 : 0, flat: before,
@@ -11510,6 +11656,10 @@ const runMolecularDynamics = () => {
          a les siens, et ce qui se règle ici ne le touche pas. */
       steps: mdSteps, dt: mdDt, temperature: mdTemp,
       dielectric: mdSolventOf().dielectric,
+      /* 🎯 …ET LA FONCTION CIBLE — le réglage du panneau 🧬, donc la dynamique ISOLÉE et le
+         ▶ Run conduisent le même champ : `dyana` ici veut dire répulsion seule, sans
+         charge, sans surface, atomes unis (voir `STRUCTURE_CALC_TARGET_FUNCTIONS`), et le
+         rapport de ce geste DIT ce qu'elle a éteint. */
       /* ⛓ …ET LES CONTRAINTES DE DIHÈDRE DE LA STRUCTURE SECONDAIRE IMPOSÉE.
          La demande : « In MD and “structure calculation” allow the conversion of the
          secondary structure imposed … into dihedral angle constraints. » */
@@ -11519,6 +11669,7 @@ const runMolecularDynamics = () => {
          peptidique (sa barrière reste une famille du champ, et c'est elle qui arbitre). */
       freeOmega: mdFreeOmega,
       perFrame: mdImage,
+      targetFunction: calcTargetFunction,
     }),
     comp, structure,
     /* 👁 ELLE SE REGARDE TOUJOURS — c'est la remarque de cette session : « I see that some
@@ -11539,7 +11690,10 @@ const runMolecularDynamics = () => {
          D'ÉCRIRE — « can the MD take the distance constraints into account? » : le
          rapport le chiffre au lieu de le promettre (combien sont dans la tolérance, et
          de combien la plus fausse en sort). C'est `restraintReportOf`, la lecture du
-         module : le panneau ne compte rien lui-même. */
+         module : le panneau ne compte rien lui-même.
+         ⚖ ET LA MÊME LECTURE AU DÉPART (`restBefore`) : c'est la COMPARAISON qui montre
+         ce que le poids ⚖ d'une ligne a fait — la remarque de cette session était « giving
+         a high weight to one constraint did not have an effect on MD ». */
       const rep = restraintReportOf({ positions: run.positions, restraints: list });
       /* ⛓ LES φ/ψ IMPOSÉS, RELUS SUR LES COORDONNÉES QUE LA DYNAMIQUE VIENT D'ÉCRIRE —
          la MÊME lecture que le champ (`dihedralPenaltyOf`), donc le rapport ne peut pas
@@ -11557,6 +11711,9 @@ const runMolecularDynamics = () => {
           : 'the distance table was LEFT OUT (📏 unticked in this window): the dynamics ran on the force field alone, with no restraint and no leash'}`
         + `${rep.count ? ` · distances: ${rep.satisfied}/${rep.count} within ± ${rep.tolerance} Å` : ''}`
         + `${rep.count && rep.violations ? ` (worst ${rep.worst.abs.toFixed(2)} Å outside — the ⚒ converges them, a trajectory at T does not have to)` : ''}`
+        + calcRestraintEffect(restBefore, rep, list)
+        + calcBoxNote(geom)
+        + calcTargetFunctionNote(calcTargetFunction)
         + `${run.walls.count ? ` · ${run.walls.count} distance${run.walls.count === 1 ? '' : 's'} held by the leash (${run.walls.before.toFixed(2)} → ${run.walls.after.toFixed(2)})` : ''}`
         + `${dh.count ? ` · ⛓ φ/ψ imposed: ${dh.satisfied}/${dh.count} within ± ${dh.tolerance}°`
           + `${dh.violations ? ` (worst ${dh.worst.over.toFixed(1)}° outside — a trajectory at T is not obliged to land inside)` : ''}` : ''}`
@@ -11593,6 +11750,9 @@ const runMinimise = () => {
   const list = calcFieldRows().filter((r) => r.i < geom.count && r.j < geom.count);
   const base = Array.from(geom.positions);
   const held = calcHeldPairs(geom, list);
+  /* ⚖ …ET LA MÊME COMPARAISON QUE LE ▶ MD : la minimisation CONVERGE les distances, donc
+     c'est elle qui montre le plus clairement ce que le poids ⚖ d'une ligne a fait. */
+  const restBefore = restraintReportOf({ positions: base, restraints: list });
   const before = torsionSnapshotOf(structure);
   torsionUndoRef.current = {
     comp, structure, count: before ? before.length / 3 : 0, flat: before,
@@ -11613,6 +11773,11 @@ const runMinimise = () => {
          peu de barrière d'ω pour gagner ailleurs (une distance demandée, un φ/ψ imposé, un
          empilement), comme elle arbitre déjà les autres familles du champ. */
       freeOmega: calcOmegaFree,
+      /* 💧 LE MÊME DIÉLECTRIQUE QUE LE ▶ MD, ET 🎯 LA MÊME FONCTION CIBLE — le ⚒ descend
+         le champ que le panneau affiche, sinon deux gestes sur la même molécule ne
+         parleraient pas du même monde. */
+      dielectric: mdSolventOf().dielectric,
+      targetFunction: calcTargetFunction,
     }),
     comp, structure,
     head: '⚒ Minimise',
@@ -11645,6 +11810,9 @@ const runMinimise = () => {
           ? `free to vary (the descent could trade a little ω barrier for a distance) — it cost ${run.omega ? run.omega.penalty.toFixed(2) : 0} kcal/mol`
           : `held trans: no move could make it worse (${run.omega ? run.omega.penalty.toFixed(2) : 0} kcal/mol)`}`
         + `${run.walls.count ? ` · ${run.walls.count} distance${run.walls.count === 1 ? '' : 's'} held by the leash` : ''}.`
+        + calcRestraintEffect(restBefore, rep, list)
+        + calcBoxNote(geom)
+        + calcTargetFunctionNote(calcTargetFunction)
         + ' ↺ Undo torsion puts the molecule back exactly where it was.');
       if (ramaIsShown()) readRamachandran();   // le graphe suit la conformation que le ⚒ vient d'écrire
     },
@@ -20097,6 +20265,24 @@ const renderCalcMdOptions = () => (
         className="accent-indigo-600" />
       🪢 ω varies
     </label>
+    {/* 🎯 LA FONCTION CIBLE — la demande de cette session : « if the present plan is correct
+        I wouldn't throw it but I would add the option to run as Dyana as well. » Le choix
+        est celui du module (`STRUCTURE_CALC_TARGET_FUNCTIONS`) : le panneau écrit ses
+        libellés et sa description, il n'invente aucune règle. Il est lu par les QUATRE
+        gestes du champ — ▶ Run (le recuit, la dynamique, la minimisation, la trempe ET la
+        note de chaque départ), ▶ MD, ⚒ Minimise, ⟳ Energy — donc deux gestes sur la même
+        molécule ne peuvent pas conduire deux mondes différents. */}
+    <label className="flex items-center gap-1"
+      title={`🎯 THE TARGET FUNCTION — what the calculation minimises. ${STRUCTURE_CALC_TARGET_FUNCTIONS.map((t) => `${t.label}: ${t.of}${t.off.length ? ` (with ${t.off.join(', ')} switched OFF)` : ''}`).join(' · ')}. ⚠ DYANA is exactly what that program does — a REPULSIVE non-bonded term, no charges, no non-polar surface, united atoms — and the families of geometry (bonds, angles, planar rings), ω, the φ/ψ basins, χ1 and YOUR DISTANCES stay those of this module: the report of every gesture says which families are switched OFF, so nothing looks forgotten. It is also the cheapest physics of this engine (no surface term at all, a ${STRUCTURE_CALC_TARGET_FUNCTIONS[1].pairLimit} Å reach, and no added hydrogens), which is what makes an explicit water box affordable. The setting survives a reload, and a saved session that does not have it comes back on ${STRUCTURE_CALC_TARGET_FUNCTION}.`}>
+      🎯 target
+      <select value={calcTargetFunction} onChange={(e) => setCalcTargetFunction(structureCalcTargetFunctionOf(e.target.value).id)}
+        aria-label="Target function of the structure calculation"
+        className="border border-indigo-300 rounded px-1 py-0.5 text-[10px] font-mono bg-white outline-none focus:border-indigo-500">
+        {STRUCTURE_CALC_TARGET_FUNCTIONS.map((t) => (
+          <option key={t.id} value={t.id}>{t.label}</option>
+        ))}
+      </select>
+    </label>
   </>
 );
 
@@ -20121,7 +20307,7 @@ const renderMdOptions = () => (
       <span className="font-semibold text-slate-500">K</span>
     </label>
     <label className="flex items-center gap-1"
-      title={`💧 THE SOLVENT OF THIS DYNAMICS — and it is IMPLICIT, because this engine has NO water molecules: what you choose here is the DIELECTRIC the charges see (the non-polar surface term is a family of the field and never moves). ${STRUCTURE_CALC_SOLVENTS.map((s) => `${s.label} — ${s.of}`).join(' · ')}. ⚠ There is no explicit-water box in this viewer, and this box does not pretend otherwise: this dynamics turns DIHEDRALS, it could not carry a box of mobile waters. The ε values come from the module; none is written here.`}>
+      title={`💧 THE SOLVENT OF THIS DYNAMICS — two kinds of solvent, and this choice offers both. THE IMPLICIT ONES are a DIELECTRIC the charges see (the non-polar surface term is a family of the field and never moves). THE EXPLICIT ONE is a BOX: ${STRUCTURE_CALC_SOLVENTS.map((s) => `${s.label} — ${s.of}`).join(' · ')}. ⚠ WHAT THE BOX IS: this dynamics turns DIHEDRALS, and a water molecule has none — so the waters are RIGID and their position never changes during the trajectory. They are an explicit ENVIRONMENT (they screen the charges at ε = 1, they push the atoms, they are counted in every family of the field), not water that diffuses, and there is no periodic box (minimum image): it is a solvation boundary, not an infinite crystal. Build it with 📦 below. The ε values come from the module; none is written here.`}>
       💧 solvent
       <select value={mdSolvent} onChange={(e) => setMdSolvent(e.target.value)}
         aria-label="Solvent of the molecular dynamics"
@@ -20131,6 +20317,42 @@ const renderMdOptions = () => (
         ))}
       </select>
     </label>
+    {/* 📦 LA BOÎTE DE L'EAU EXPLICITE — le « with its box » de la demande de cette session :
+        « it would be great if you could add the explicit solvent as a further option with
+        its box. » Elle n'apparaît QU'AVEC le modèle `explicit` (les trois autres sont un
+        diélectrique : une arête n'y voudrait rien dire), et c'est le module qui la
+        construit (`explicitSolventOf`). Le nombre d'eaux suit l'arête — une maille vaut le
+        σ de l'eau (3.1 Å), donc une boîte de 24 Å place des eaux sur un réseau 7×7×7, moins
+        les sites qui touchent la molécule. */}
+    {structureCalcSolventIsExplicit(mdSolvent) && (
+      <label className="flex items-center gap-1"
+        title={`📦 THE EDGE OF THE EXPLICIT WATER BOX, in Å — a CUBE centred on the molecule, filled with RIGID TIP3P waters on a 3.1 Å lattice (the σ of the water: two neighbouring oxygens are at van der Waals contact, which is the density of a liquid). Every site that would come closer than 2.6 Å to one of your heavy atoms is LEFT EMPTY, so the molecule is never crossed by a water; the gesture's report says how many waters were placed and how many sites were left out. The box must be able to contain the molecule (at least its longest dimension plus ${2 * 8} Å of free water, i.e. 8 Å of hydration on each side): a box that is too small is REFUSED — the report says the edge it would need, and the dynamics then runs in ε = 1 with no water instead of silently growing what you typed. ⚠ A box is COSTLY (every water is an atom of the pair list and of the surface): a 🎯 DYANA target function makes it far cheaper, because it has no surface term and a 3.5 Å reach.`}>
+        📦 box
+        <input type="number" min={STRUCTURE_CALC_SOLVENT_BOX_MIN} max={STRUCTURE_CALC_SOLVENT_BOX_MAX} step="1"
+          value={mdBox}
+          onChange={(e) => setMdBox(Math.max(STRUCTURE_CALC_SOLVENT_BOX_MIN,
+            Math.min(STRUCTURE_CALC_SOLVENT_BOX_MAX, Math.round(Number(e.target.value) || STRUCTURE_CALC_SOLVENT_BOX))))}
+          aria-label="Edge of the explicit water box, in angstroms"
+          className="w-14 border border-sky-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-sky-500 text-[10px] font-mono bg-white" />
+        <span className="font-semibold text-slate-500">Å</span>
+        {/* ⚠ LE SOLVANT EST CELUI DU CHAMP, PAS SEULEMENT DE CETTE DYNAMIQUE — les quatre
+            gestes du champ (▶ Run, ▶ MD, ⚒ Minimise, ⟳ Energy) lisent la même géométrie
+            (`calcEngineGeometry`) et la même fonction cible : une boîte d'eau qui ne
+            serait construite que pour le ▶ MD rendrait deux gestes incohérents sur la
+            même molécule. C'est DIT ici, au lieu de laisser croire à une étanchéité qui
+            n'existe plus pour le solvant. */}
+        <span className="text-[9px] font-semibold text-sky-700"
+          title="The solvent (this dielectric, or this water box) and the 🎯 target function are properties of the FORCE FIELD, so all four gestures read them: ▶ Run, ▶ MD, ⚒ Minimise and ⟳ Energy work on exactly the same molecule. Every other setting of this window (T, steps, dt, images, ω) stays this gesture's own.">
+          (the whole field)
+        </span>
+        <button type="button"
+          onClick={() => setMdBox(STRUCTURE_CALC_SOLVENT_BOX)}
+          title={`Put the box edge back to its default (${STRUCTURE_CALC_SOLVENT_BOX} Å).`}
+          className="px-1 py-0.5 text-[9px] font-bold rounded border bg-white border-sky-300 text-sky-700 hover:bg-sky-50">
+          ↺
+        </button>
+      </label>
+    )}
     <label className="flex items-center gap-1"
       title="🌡 HOW MANY STEPS THIS DYNAMICS RUNS — in DIHEDRAL space (a step is one rigid rotation about a hinge, so bond lengths and angles cannot break), under the WHOLE force field in kcal/mol: bonds, angles, planar rings, van der Waals, electrostatics with partial charges, solvent, your distances as flat-bottom wells when the 📏 box below is ticked, ω, the φ/ψ statistical potential and χ1. It is the length of THIS gesture and of nothing else — the structure calculation has its own steps per start. 0 = nothing to do.">
       🌡 steps
@@ -20213,7 +20435,7 @@ const renderMdWindow = () => (
     </div>
     <div className="overflow-y-auto custom-scrollbar flex flex-col gap-1.5">
       <p className="text-[9px] font-black text-slate-500 uppercase tracking-wide"
-        title="THE PARAMETERS OF THIS DYNAMICS — and they are ITS OWN: 🌡 one temperature (this gesture does not cool down), 💧 the solvent (an implicit dielectric: this engine has no water molecules), 🌡 the steps, ⏱ the step interval and the duration, 🖼 how often an image is written, 🪢 whether ω may leave trans, and 📏 whether the distance table of the 🧬 rides along (an OPTION, ticked by default). ⚠ These values are NOT the protocol of 🧬 Structure calculation: n, m, 🔥 recuit, 🖼 frames, 🌡 hot → 🌡 cold, the equilibration share and the ⚒ sweeps are read by its ▶ Run, in its own panel, and neither gesture can change the other. The ▶ MD below runs on the molecule AS IT STANDS.">
+        title="THE PARAMETERS OF THIS DYNAMICS — and they are ITS OWN: 🌡 one temperature (this gesture does not cool down), 💧 the solvent (a dielectric for the implicit models, or a BOX of rigid TIP3P waters for the explicit one — see its own tip), 🌡 the steps, ⏱ the step interval and the duration, 🖼 how often an image is written, 🪢 whether ω may leave trans, and 📏 whether the distance table of the 🧬 rides along (an OPTION, ticked by default). ⚠ These values are NOT the protocol of 🧬 Structure calculation: n, m, 🔥 recuit, 🖼 frames, 🌡 hot → 🌡 cold, the equilibration share and the ⚒ sweeps are read by its ▶ Run, in its own panel, and neither gesture can change the other. ⚠ ONE EXCEPTION, and it is deliberate: the 💧 solvent (its box included) and the 🎯 target function describe the FORCE FIELD, so all four gestures read them — ▶ Run, ▶ MD, ⚒ Minimise and ⟳ Energy work on the same molecule. The ▶ MD below runs on the molecule AS IT STANDS.">
         ⚙ T · 💧 solvent · steps · dt · duration · 🖼 images · 🪢 ω · 📏 distances
       </p>
       <div className="flex flex-wrap items-center gap-1.5">{renderMdOptions()}</div>
@@ -20240,12 +20462,13 @@ const renderMdWindow = () => (
         ⚠ These values are THIS window's own: they are NOT the protocol of 🧬 Structure
         calculation (its n, m, 🔥 recuit, 🖼 frames, 🌡 hot → 🌡 cold, ⚖ equilibration share
         and ⚒ sweeps live in its own panel), so changing the dynamics here cannot change the
-        calculation — nor the other way round. The 📏 box is the ONE thing this window borrows
-        from the 🧬, and it is an option: ticked, the ▶ MD below carries its distance table
-        (with the ⚖ weight of each line, which is written in the table itself); unticked, it
-        runs on the force field alone. ▶ Run, ⚒ Minimise and ⟳ Energy always read that table.
-        The window closes with 🌡 MD, with its ⇤, and with the tab on the left edge — and
-        closing it loses nothing.
+        calculation — nor the other way round. Two things belong to the FIELD and are read by
+        every gesture on it: the 📏 box below this window's ▶ MD (an option: ticked, that
+        gesture carries the distance table of the 🧬 with the ⚖ weight of each line; unticked
+        it runs on the force field alone — ▶ Run, ⚒ Minimise and ⟳ Energy always read the
+        table), and the pair 💧 solvent / 🎯 target function (the whole field, for ▶ Run,
+        ▶ MD, ⚒ Minimise and ⟳ Energy alike). The window closes with 🌡 MD, with its ⇤, and
+        with the tab on the left edge — and closing it loses nothing.
       </p>
     </div>
   </div>

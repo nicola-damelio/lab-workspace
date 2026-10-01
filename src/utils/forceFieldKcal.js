@@ -146,6 +146,7 @@ export const FF_DIHEDRAL_TOLERANCE = 30;   // °
 /** LES MASSES ATOMIQUES (amu) — ce qu'il faut pour l'entropie de rotation. */
 export const FF_MASSES = {
   H: 1.008, D: 2.014, HE: 4.003, LI: 6.94, B: 10.81, C: 12.011, N: 14.007, O: 15.999,
+  OW: 15.9994, HW: 1.008,
   F: 18.998, NE: 20.18, NA: 22.99, MG: 24.305, AL: 26.982, SI: 28.086, P: 30.974,
   S: 32.06, CL: 35.45, AR: 39.948, K: 39.098, CA: 40.078, SE: 78.971, BR: 79.904,
   I: 126.904,
@@ -158,6 +159,7 @@ export const FF_MASS_FALLBACK = 12.011;
  *  ε_ij = √(ε_i·ε_j) — la moyenne géométrique, la règle de mélange standard. */
 export const FF_VDW_EPSILON = {
   H: 0.0157, D: 0.0157, C: 0.086, N: 0.17, O: 0.21, F: 0.061, P: 0.2, S: 0.25,
+  OW: 0.1521, HW: 0,
   CL: 0.265, BR: 0.32, I: 0.4, SI: 0.4, B: 0.09, SE: 0.29, HE: 0.021, NE: 0.072,
   NA: 0.03, MG: 0.11, K: 0.03, CA: 0.12, AL: 0.4,
 };
@@ -168,16 +170,51 @@ export const FF_VDW_EPSILON_FALLBACK = 0.1;
  *  le module n'invente pas une valence. */
 export const FF_VALENCE = {
   H: 1, D: 1, B: 3, C: 4, N: 3, O: 2, F: 1, SI: 4, P: 3, S: 2, CL: 1, SE: 2, BR: 1, I: 1,
+  /* 💧 L'EAU EXPLICITE — OW porte ses deux H (donc rien n'est ajouté) et HW n'en
+     porte aucun : un atome d'eau traversé par `hydrogenatedOf` reste intact. */
+  OW: 2, HW: 0,
 };
 
 /** LES RAYONS DE VAN DER WAALS (Å) — la table de Bondi, LA MÊME que celle de
  *  `geometryRelax.js` : une seule table dans le dossier, jamais deux. */
 export const FF_VDW_RADII = {
   H: 1.20, D: 1.20, HE: 1.40, C: 1.70, N: 1.55, O: 1.52, F: 1.47, NE: 1.54,
+  /* 💧 L'EAU EXPLICITE — rayon = σ/2 de TIP3P (voir FF_TIP3P) : le rayon d'un
+     élément n'est PAS un rayon de Bondi ici, c'est la moitié d'un σ de mélange,
+     et `ffNonbondedOf` en fait la somme r_min du couple — exactement ce que
+     TIP3P demande. HW vaut 0 : aucun rayon propre, la répulsion vient de OW. */
+  OW: 1.5753, HW: 0,
   SI: 2.10, P: 1.80, S: 1.80, CL: 1.75, AR: 1.88, B: 1.92, AL: 1.84,
   SE: 1.90, BR: 1.85, I: 1.98, LI: 1.82, NA: 2.27, K: 2.75, MG: 1.73, CA: 2.31,
 };
 export const FF_VDW_RADIUS_FALLBACK = 1.70;
+/* ── 💧 L'EAU EXPLICITE — DEUX PSEUDO-ÉLÉMENTS, TIP3P ────────────────────────
+   Le solvant EXPLICITE de la dynamique (voir `STRUCTURE_CALC_SOLVENTS`) est une
+   BOÎTE DE MOLÉCULES D'EAU RIGIDES, et leurs atomes portent `OW` et `HW` au lieu
+   de `O` et `H`. C'est ce qui permet au champ de leur donner LEURS paramètres
+   sans une seconde table : `ffElementOf` les résout comme n'importe quel
+   élément, `ffPairListOf` fabrique leurs couples, `hydrogenatedOf` ne touche pas
+   à une eau complète (valence d'OW = 2, déjà pourvue) et `partialChargesOf`
+   leur donne les charges FIXES de TIP3P au lieu d'une électroégativité.
+   ⚠ `rmin` d'un couple est une SOMME de rayons (`ffNonbondedOf`) : le rayon de
+   OW vaut donc σ/2 = 1.5753 Å (σ = 3.1506), et celui de HW zéro — l'atome d'eau
+   n'a pas de répulsion propre dans TIP3P, et c'est voulu. */
+export const FF_TIP3P = {
+  ow: { sigma: 3.1506, radius: 1.5753, epsilon: 0.1521, charge: -0.834, mass: 15.9994 },
+  hw: { sigma: 0, radius: 0, epsilon: 0, charge: 0.417, mass: 1.008 },
+  /* LA GÉOMÉTRIE RIGIDE — longueur O–H et angle H–O–H de TIP3P. */
+  oh: 0.9572, angle: 104.52,
+};
+/** LES EAUX D'UN TABLEAU D'ÉLÉMENTS — le nombre de molécules (2 H par O). */
+export const ffWatersIn = (elements = []) => {
+  let oxygens = 0; let hydrogens = 0;
+  for (const el of Array.from(elements || [])) {
+    const e = upper(el);
+    if (e === 'OW') oxygens += 1;
+    else if (e === 'HW') hydrogens += 1;
+  }
+  return { oxygens, hydrogens, molecules: oxygens };
+};
 
 const upper = (v) => String(v == null ? '' : v).trim().toUpperCase();
 const elementAt = (els, k) => upper(els && els[k] != null ? els[k] : '');
@@ -237,6 +274,31 @@ export const ffCoulombCostOf = (r, pair, dielectric = FF_DIELECTRIC) => {
   return pair.cqq / (eps * r * r);
 };
 
+/** LA RÉPULSION SEULE (kcal/mol) — ε·(r_min/r)¹², SANS le puits attractif et sans la
+ *  charge : c'est le terme non lié du calcul de structure de type DYANA/CYANA, où deux
+ *  atomes ne se traversent pas mais ne s'attirent pas. Un atome isolé n'a donc AUCUNE
+ *  raison de venir se coller à un autre : ce sont les distances demandées qui assemblent
+ *  la molécule, et c'est exactement la philosophie de ces programmes. */
+export const ffRepulsionCostOf = (r, pair) => {
+  if (!pair || !Number.isFinite(r) || r <= FF_VDW_SAME_ATOM) return 0;
+  const x = (pair.rmin / r) ** 6;
+  return pair.epsilon * x * x;
+};
+
+/** LE COÛT NON LIÉ D'UN COUPLE, SELON LA FONCTION CIBLE — la SEULE définition de ce
+ *  qu'un couple coûte, lue par le champ (`ffNonbondedEnergyOf`) ET par les moteurs de
+ *  torsion (`utils/structureCalc.js`). `repulsionOnly` remplace le Lennard-Jones 12-6
+ *  par sa seule branche répulsive ; `electrostatics: false` éteint Coulomb (ce que fait
+ *  DYANA : pas de charges, l'écrantage est le travail du solvant explicite). */
+export const ffNonbondedCostOf = (r, pair, {
+  dielectric = FF_DIELECTRIC, repulsionOnly = false, electrostatics = true,
+} = {}) => {
+  if (repulsionOnly) return ffRepulsionCostOf(r, pair);
+  return ffVdwCostOf(r, pair) + (electrostatics ? ffCoulombCostOf(r, pair, dielectric) : 0);
+};
+
+/* ── LE COÛT D'UN COUPLE SELON LA FONCTION CIBLE — voir `FF_TARGET_FUNCTIONS` plus bas
+   (déclarée après les portées du champ, qu'elle cite). */
 
 
 /* ── 2 · LES COUPLES NON LIÉS — vdW, ÉLECTROSTATIQUE, SURFACE ──────────────────
@@ -252,12 +314,63 @@ export const FF_PAIR_LIMIT = 8;
 /** La portée de la surface (Å) : r_i + r_j + 2·sonde au maximum, prise large. */
 export const FF_SURFACE_LIMIT = 2 * FF_VDW_RADIUS_FALLBACK + 2 * FF_SASA_PROBE;
 
+/* ── 🎯 LES FONCTIONS CIBLES — CE QUE LA MOLÉCULE CHERCHE À MINIMISER ──────────
+   La demande de cette session : « if the present plan is correct I wouldn't throw it but
+   I would add the option to run as Dyana as well. » Une fonction cible se décrit
+   ENTIÈREMENT ici, une fois : le champ (`ffKcalEnergyOf`), les moteurs de torsion
+   (`annealFrames`, `mdFrames`, `minimizeFrames`, `torsionEngineOf`) et le panneau lisent
+   CETTE liste — aucun d'eux ne peut donc porter un autre jeu de règles que celui affiché,
+   et le rapport d'un geste dit lequel il a conduit.
+     · `classic` — le champ du dossier, tel quel (aucun réglage ne change : c'est le
+       défaut, donc une session enregistrée et un test restent identiques) ;
+     · `dyana`   — la fonction cible de DYANA / CYANA : RÉPULSION SEULE (aucune attraction
+       de van der Waals, aucune charge), PAS de terme de surface non polaire, ATOMES UNIS
+       (aucun hydrogène ajouté : le champ lit le squelette lourd tel qu'il est) et une
+       portée de couples plus courte (3.5 Å) — la physique de ces programmes, et le plus
+       court chemin vers une dynamique rapide (la surface coûte 91 % d'un pas, mesuré).
+       Les familles de géométrie (liaisons, angles, cycles plans), ω, les bassins φ/ψ, χ1
+       et VOS DISTANCES restent celles du module : le rapport DIT lesquelles sont éteintes
+       au lieu de laisser croire qu'il a changé de programme entier.
+   ⚠ DÉCLARÉES ICI, APRÈS LES PORTÉES — `pairLimit` cite `FF_PAIR_LIMIT`, et un `const`
+   cité plus haut que sa déclaration est une TDZ : le module entier jetterait. */
+export const FF_TARGET_FUNCTION_PAIR_LIMIT = 3.5;
+export const FF_TARGET_FUNCTIONS = [
+  {
+    id: 'classic', label: 'classic · the whole field',
+    repulsionOnly: false, electrostatics: true, surface: true,
+    pairLimit: FF_PAIR_LIMIT, unitedAtoms: false,
+    of: 'bonds, angles, planar rings, van der Waals, charges, non-polar surface, ω, φ/ψ, χ1 and your distances',
+    off: [],
+  },
+  {
+    id: 'dyana', label: 'DYANA / CYANA · target function',
+    repulsionOnly: true, electrostatics: false, surface: false,
+    pairLimit: FF_TARGET_FUNCTION_PAIR_LIMIT, unitedAtoms: true,
+    of: 'bonds, angles, planar rings, ω, φ/ψ, χ1 and your distances',
+    off: ['the attraction of van der Waals', 'the charges (electrostatics)', 'the non-polar surface',
+      'the hydrogens this module adds (united atoms)'],
+  },
+];
+/** LA FONCTION CIBLE DEMANDÉE, TOUJOURS DÉFINIE — un identifiant inconnu rend le modèle
+ *  historique (`classic`) : ni un moteur ni le panneau ne peuvent jeter pour un
+ *  identifiant qu'ils n'ont pas écrit eux-mêmes. */
+export const ffTargetFunctionOf = (id) => FF_TARGET_FUNCTIONS
+  .find((t) => t.id === String(id == null ? '' : id))
+  || FF_TARGET_FUNCTIONS.find((t) => t.id === 'classic');
+
 /** LES COUPLES NON LIÉS D'UNE GÉOMÉTRIE — `{ok, reason, pairs, count, topology,
  *  unknown, limit}`. `pairs[k]` = `{i, j, rmin, epsilon, charges, cqq, topological,
  *  known}` ; `topological` = 3 pour un couple 1-4 (atténué), 0 sinon. `topology` compte
  *  `{bonded, linked, fourth, free}` — un rapport qui ne cache pas ce qu'il a écarté. */
 export const ffPairListOf = ({
   positions = null, elements = [], bonds = [], charges = null, limit = FF_PAIR_LIMIT,
+  /* ⚠ LA LISTE DE SURFACE EST UN COÛT, PAS UNE OBLIGATION — elle porte TOUS les couples de
+     la portée (1-2 et 1-3 compris) et c'est elle qui enterre un atome. Une fonction cible
+     sans terme non polaire (DYANA, voir `FF_TARGET_FUNCTIONS`) n'en a aucun besoin : elle
+     est alors vide AU LIEU d'être calculée puis jetée — c'est la moitié du travail d'un pas
+     de dynamique qui disparaît, mesuré (voir le rapport de la sonde de performance). Le
+     défaut reste `true` : la liste historique ne change pas d'un chiffre. */
+  surface = true,
 } = {}) => {
   const read = flatPositions(positions);
   const els = Array.from(elements || []);
@@ -269,6 +382,7 @@ export const ffPairListOf = ({
   if (!read || !count) return out;
   const x = read.flat;
   const reach = Math.max(1, Number(limit) || FF_PAIR_LIMIT);
+  const doSurface = surface !== false;
   const graph = bondGraphOf({ bonds, atomCount: count });
   /* LES VOISINS JUSQU'À TROIS LIAISONS — la topologie d'un couple, une fois pour
      toutes. Au-delà c'est un couple LIBRE, et c'est lui qui porte la physique. */
@@ -311,7 +425,7 @@ export const ffPairListOf = ({
                un atome (une liaison à 1.09 Å masque la moitié de la sphère d'un H), et
                le terme de van der Waals les exclut. La liste de surface est donc
                gardée à part, et elle porte TOUS les couples de la portée. */
-            out.surface.push({ i, j });
+            if (doSurface) out.surface.push({ i, j });
             if (nb1[i].has(j)) { out.topology.bonded += 1; continue; }
             if (nb2[i].has(j)) { out.topology.linked += 1; continue; }
             const fourth = nb3[i].has(j);
@@ -334,7 +448,9 @@ export const ffPairListOf = ({
  *  worstElec}` (kcal/mol). `repulsive` compte les couples dont le LJ est positif (deux
  *  atomes qui se traversent) : c'est le chiffre que le panneau nomme « clashes », et il
  *  vient du MÊME terme que l'énergie au lieu d'un compteur à part. */
-export const ffNonbondedEnergyOf = (pairs, positions, { dielectric = FF_DIELECTRIC } = {}) => {
+export const ffNonbondedEnergyOf = (pairs, positions, {
+  dielectric = FF_DIELECTRIC, repulsionOnly = false, electrostatics = true,
+} = {}) => {
   const out = { vdw: 0, elec: 0, count: 0, repulsive: 0, worstVdw: null, worstElec: null };
   const read = flatPositions(positions);
   if (!read || !Array.isArray(pairs)) return out;
@@ -345,11 +461,17 @@ export const ffNonbondedEnergyOf = (pairs, positions, { dielectric = FF_DIELECTR
     );
     if (!(d > FF_VDW_SAME_ATOM)) continue;
     out.count += 1;
-    const v = ffVdwCostOf(d, p);
-    const e = ffCoulombCostOf(d, p, dielectric);
+    /* ⚠ LA FAMILLE EST CELLE DE LA FONCTION CIBLE (`ffNonbondedCostOf`) : en mode DYANA
+       il n'y a NI puits attractif NI charge, donc `vdw` ne porte que la répulsion et
+       `elec` reste à zéro — le rapport dit la vérité de ce qu'il a sommé. */
+    const v = repulsionOnly
+      ? ffRepulsionCostOf(d, p)
+      : ffVdwCostOf(d, p);
+    const e = repulsionOnly || !electrostatics ? 0 : ffCoulombCostOf(d, p, dielectric);
     out.vdw += v;
     out.elec += e;
     if (v > 0) out.repulsive += 1;
+    if (repulsionOnly) out.repulsionOnly = true;
     if (!out.worstVdw || Math.abs(v) > Math.abs(out.worstVdw.energy)) {
       out.worstVdw = { i: p.i, j: p.j, distance: d, rmin: p.rmin, energy: v };
     }
@@ -565,6 +687,9 @@ export const partialChargesOf = ({ elements = [], bonds = [], atomCount = 0 } = 
   const out = {
     ok: false, reason: 'no-graph', charges: new Float64Array(Math.max(0, count)), net: 0,
     method: 'zero', iterations: 0, groups: [], unknown: 0, min: 0, max: 0,
+    /* 💧 LE COMPTE DES EAUX EXPLICITES — posé même quand la molécule n'a aucun graphe
+       lisible, pour que `method` et le rapport ne dépendent jamais d'un chemin de sortie. */
+    waters: ffWatersIn(els),
   };
   if (!count) return out;
   const graph = bondGraphOf({ bonds, atomCount: count });
@@ -575,6 +700,19 @@ export const partialChargesOf = ({ elements = [], bonds = [], atomCount = 0 } = 
   for (let it = 0; it < FF_PEOE_ITERATIONS; it += 1) peoeStep(q, graph, params);
   const groups = ffFormalGroupsOf({ elements: els, graph });
   for (const g of groups) for (const k of g.atoms) q[k] += g.spread;
+  /* 💧 LES EAUX EXPLICITES PORTENT LEURS CHARGES FIXES (TIP3P) — elles sont posées APRÈS
+     l'électroégativité et les groupes formels, donc rien ne peut les écraser : une eau
+     n'est pas chargée par PEOE, elle EST chargée (q_O = −0.834 e, q_H = +0.417 e). Sans
+     cela, une molécule d'eau explicite porterait les charges de son oxygène de carbonyle,
+     et le modèle ne serait plus celui qu'il annonce (voir `FF_TIP3P`). `method` le DIT. */
+  const waters = ffWatersIn(els);
+  if (waters.molecules) {
+    for (let k = 0; k < count; k += 1) {
+      const e = upper(els[k]);
+      if (e === 'OW') q[k] = FF_TIP3P.ow.charge;
+      else if (e === 'HW') q[k] = FF_TIP3P.hw.charge;
+    }
+  }
   let min = Infinity; let max = -Infinity; let net = 0;
   for (let k = 0; k < count; k += 1) {
     if (q[k] < min) min = q[k];
@@ -585,8 +723,11 @@ export const partialChargesOf = ({ elements = [], bonds = [], atomCount = 0 } = 
   out.net = Number(net.toFixed(6));
   out.min = Number(min.toFixed(6)); out.max = Number(max.toFixed(6));
   out.iterations = FF_PEOE_ITERATIONS;
-  out.method = groups.length ? 'peoe+formal' : 'peoe';
+  out.method = waters.molecules
+    ? (groups.length ? 'tip3p+peoe+formal' : 'tip3p+peoe')
+    : (groups.length ? 'peoe+formal' : 'peoe');
   out.groups = groups;
+  out.waters = waters;
   return out;
 };
 
@@ -1141,7 +1282,13 @@ export const ffKcalEnergyOf = ({
   ramaPairs = [], omegas = [], chis = [], dihedrals = [],
   hydrogenate = true, exactSurface = false,
   temperature = FF_REFERENCE_TEMPERATURE, dielectric = FF_DIELECTRIC,
+  /* 🎯 LA FONCTION CIBLE — `classic` (le défaut, le champ d'origine) ou `dyana`
+     (voir `FF_TARGET_FUNCTIONS`) : elle décide des familles non liées, du terme de
+     surface ET de l'ajout d'hydrogènes. Le reste du champ est le même dans les deux cas,
+     et le rapport DIT lequel a été lu (`targetFunction`, `switchedOff`). */
+  targetFunction = 'classic',
 } = {}) => {
+  const tf = ffTargetFunctionOf(targetFunction);
   const empty = {
     ok: false, reason: 'bad-points', total: Infinity, enthalpy: Infinity, freeEnergy: Infinity,
     bond: 0, angle: 0, planar: 0, vdw: 0, elec: 0, solv: 0, rama: 0, chi: 0, omega: 0,
@@ -1157,8 +1304,12 @@ export const ffKcalEnergyOf = ({
     restraintReport: { count: 0, satisfied: 0, violations: 0, penalty: 0, worst: null, list: [] },
     entropyReport: ffEntropyOf({}), rows: ffKcalRowsOf({ temperature }),
     worstVdw: null, worstElec: null, atoms: [], bonds: [],
+    targetFunction: tf.id, targetFunctionLabel: tf.label,
+    switchedOff: Array.from(tf.off || []), pairLimit: tf.pairLimit,
+    waters: { oxygens: 0, hydrogens: 0, molecules: 0 },
   };
-  const molecule = hydrogenate
+  const useHydrogens = hydrogenate && !tf.unitedAtoms;
+  const molecule = useHydrogens
     ? hydrogenatedOf({ positions, elements, bonds })
     : (() => {
       const read = flatPositions(positions);
@@ -1174,6 +1325,7 @@ export const ffKcalEnergyOf = ({
   const charges = partialChargesOf({ elements: els, bonds: molecule.bonds });
   const walk = ffPairListOf({
     positions: molecule.positions, elements: els, bonds: molecule.bonds, charges: charges.charges,
+    limit: tf.pairLimit, surface: tf.surface,
   });
   const x = molecule.positions;
   const pt = (k) => [x[k * 3], x[k * 3 + 1], x[k * 3 + 2]];
@@ -1213,10 +1365,16 @@ export const ffKcalEnergyOf = ({
   const bondReport = geomFamilyOf(bondRows, 'bond');
   const angleReport = geomFamilyOf(angleRows, 'angle');
   const planarReport = geomFamilyOf(planarRows, 'planar');
-  /* 9b · LES COUPLES NON LIÉS ET LA SURFACE. */
-  const nonbonded = ffNonbondedEnergyOf(walk.pairs, x, { dielectric });
-  const surface = ffSurfaceOf({ positions: x, elements: els, pairs: walk.surface });
-  const exact = exactSurface ? ffSasaOf({ positions: x, elements: els }).total : null;
+  /* 9b · LES COUPLES NON LIÉS ET LA SURFACE — SELON LA FONCTION CIBLE : `classic` lit le
+     Lennard-Jones entier et Coulomb ; `dyana` ne lit que la RÉPULSION, sans charge, et
+     n'a aucun terme de surface (celui-ci coûte 91 % du travail d'un pas, mesuré). */
+  const nonbonded = ffNonbondedEnergyOf(walk.pairs, x, {
+    dielectric, repulsionOnly: tf.repulsionOnly, electrostatics: tf.electrostatics,
+  });
+  const surface = tf.surface
+    ? ffSurfaceOf({ positions: x, elements: els, pairs: walk.surface })
+    : { total: 0, energy: 0, off: true };
+  const exact = exactSurface && tf.surface ? ffSasaOf({ positions: x, elements: els }).total : null;
   /* 9c · LES TROIS POTENTIELS DE TORSION — lus sur les listes de l'appelant. */
   const ramaRows = Array.from(ramaPairs || []).map((row) => {
     const p = row.phiAtoms || []; const s = row.psiAtoms || [];
@@ -1362,6 +1520,14 @@ export const ffKcalEnergyOf = ({
     bondReport, angleReport, planarReport,
     ramaReport, chiReport, omegaReport, restraintReport, dihedralReport, entropyReport,
     worstVdw: nonbonded.worstVdw, worstElec: nonbonded.worstElec,
+    /* 🎯 LA FONCTION CIBLE LUE, ET CE QU'ELLE A ÉTEINT — le panneau écrit cette phrase
+       telle quelle (voir `renderCalcTargetFunction`) : un lecteur voit que les charges ne
+       sont pas « oubliées », elles sont ÉTEINTES par la fonction cible qu'il a choisie. */
+    targetFunction: tf.id,
+    targetFunctionLabel: tf.label,
+    switchedOff: Array.from(tf.off || []),
+    pairLimit: walk.limit,
+    waters: ffWatersIn(els),
     rows: ffKcalRowsOf({ temperature }),
     atoms: els, bonds: molecule.bonds,
   };

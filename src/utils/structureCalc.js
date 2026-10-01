@@ -86,6 +86,11 @@ import {
   ffOmegaCostOf, ffChiCostOf, ffRamaCostOf, ffDihedralCostOf,
   ffVdwCostOf, ffCoulombCostOf, ffSurfaceOf, ffNonbondedEnergyOf, ffPairListOf,
   hydrogenatedOf, partialChargesOf, ffEntropyOf, ffAngleDegOf, ffElementOf,
+  /* 🎯 LA FONCTION CIBLE (classic / DYANA) ET LE COÛT D'UN COUPLE QU'ELLE CHOISIT — une
+     seule définition (`FF_TARGET_FUNCTIONS`), lue par le champ ET par les moteurs de
+     torsion. Et 💧 l'eau explicite : ses pseudo-éléments, sa géométrie, ses charges. */
+  ffTargetFunctionOf, ffNonbondedCostOf, FF_TARGET_FUNCTIONS,
+  FF_TIP3P, ffWatersIn,
   FF_BOND_K, FF_ANGLE_K, FF_PLANAR_K, FF_NOE_K, FF_RESTRAINT_TOLERANCE,
   FF_OMEGA_K, FF_OMEGA_TARGET, FF_OMEGA_TOLERANCE, FF_CHI_K, FF_CHI_TOLERANCE,
   FF_DIHEDRAL_K, FF_DIHEDRAL_TOLERANCE,
@@ -258,6 +263,19 @@ export const STRUCTURE_CALC_MD_FRAME = 8;
  *  (un dièdre ordinaire se tourne par petits pas ; 20° est déjà énorme pour une
  *  trajectoire). */
 export const STRUCTURE_CALC_MD_MAX_TORQUE = 50;
+/** ⚖ …ET LE PLAFOND DE LA FAMILLE DES DISTANCES, QUI SUIT LE POIDS DE LA LIGNE (500).
+ *  La remarque de cette session : « the 📏 option is not active even if ticked because
+ *  giving a high weight to one constraint did not have an effect on MD. » Mesuré : la
+ *  mécanique MARCHAIT (la distance se rapprochait de sa cible), mais le couple d'une
+ *  contrainte était plafonné à `STRUCTURE_CALC_MD_MAX_TORQUE` comme celui d'un mur de
+ *  Lennard-Jones — donc une ligne de poids 10, 100 ou 1000 tirait EXACTEMENT comme une
+ *  ligne de poids 25, et le geste semblait ne rien faire. Le plafond est maintenant
+ *  SÉPARÉ : les familles qui peuvent exploser (van der Waals, surface, torsions) restent
+ *  à 50, et les contraintes de la table disposent de `50 × poids`, plafonnées à 500 — dix
+ *  fois le plafond d'un mur, donc un poids élevé se sent VRAIMENT sans qu'une ligne
+ *  absurde puisse envoyer la molécule en l'air. Un poids de 0 ou une ligne en pause ne
+ *  reçoit rien (le poids 0 n'a pas de couple, la ligne ne pèse pas). */
+export const STRUCTURE_CALC_MD_MAX_RESTRAINT_TORQUE = 500;
 export const STRUCTURE_CALC_MD_MAX_SPEED = 20;
 export const STRUCTURE_CALC_MD_MAX_STEP_DEG = 20;
 /** LE PAS D'UNE LIAISON PEPTIDIQUE (4°) — sa barrière vaut 20 kcal/mol, donc un pas de
@@ -281,19 +299,34 @@ export const structureCalcSimulationTimeOf = ({ steps = STRUCTURE_CALC_MD_STEPS,
 };
 
 /* ── 💧 LE SOLVANT DE LA DYNAMIQUE ISOLÉE ─────────────────────────────────────
-   ⚠ CE MOTEUR N'A AUCUNE MOLÉCULE D'EAU, et il ne le prétend pas : son solvant est
-   IMPLICITE par construction. Les charges sont écrantées par un diélectrique
-   (`FF_DIELECTRIC` = 4, voir utils/forceFieldKcal.js) et la surface non polaire est une
-   FAMILLE du champ (⚗ SASA). Le seul réglage de solvant qui existe donc VRAIMENT est le
-   diélectrique que les charges voient, et c'est TOUT ce que ce choix offre — il n'y a pas
-   de boîte d'eau explicite dans ce moteur dihédral, et le panneau le dit plutôt que de
-   promettre une trajectoire dans l'eau :
-     · `implicit` — le modèle du champ, ε = 4 (le défaut : rien ne change) ;
-     · `vacuum`   — ε = 1 : aucun écrantage, les charges se voient en entier ;
-     · `water`    — ε = 80 : l'écrantage uniforme de l'eau en volume (ENCORE un modèle
-                    implicite : c'est un diélectrique, pas des molécules d'eau).
+   Le solvant d'un moteur DIHÉDRAL a deux formes, et ce choix les offre toutes les deux :
+     · UN DIÉLECTRIQUE IMPLICITE — les charges sont écrantées par ε et la surface non
+       polaire est une FAMILLE du champ (⚗ SASA) :
+         – `implicit` — le modèle du champ, ε = 4 (le défaut : rien ne change) ;
+         – `vacuum`   — ε = 1 : aucun écrantage, les charges se voient en entier ;
+         – `water`    — ε = 80 : l'écrantage uniforme de l'eau en volume ;
+     · UNE BOÎTE D'EAU EXPLICITE — la demande de cette session : « it would be great if you
+       could add the explicit solvent as a further option with its box. » `explicit` pose
+       une BOÎTE CUBIQUE de molécules d'eau TIP3P RIGIDES autour de la molécule (voir
+       `explicitSolventOf`), à ε = 1 : les charges ne sont plus écrantées par un chiffre
+       mais par des molécules, et chaque eau porte ses paramètres et ses charges fixes.
+       Le nombre d'eaux suit l'ARÊTE de la boîte, que le panneau expose comme un réglage.
+   ⚠ CE QUE LA BOÎTE EST, ET CE QU'ELLE N'EST PAS — un moteur dihédral tourne des
+   charnières : une molécule d'eau n'en a aucune, donc les eaux SONT RIGIDES et leur
+   position ne bouge pas pendant la trajectoire. C'est un ENVIRONNEMENT explicite (elles
+   écartent, elles écrantent, elles comptent dans le champ), pas une eau qui diffuse, et
+   le rapport le dit mot pour mot plutôt que de le laisser croire. Sans période (minimum
+   image), la boîte est une frontière de solvatation, pas un cristal infini.
    Le panneau écrit ces libellés tels quels : aucun ε n'est recopié dans le JSX. */
 export const STRUCTURE_CALC_SOLVENT = 'implicit';
+/** L'ARÊTE PAR DÉFAUT DE LA BOÎTE EXPLICITE (Å) — un cube de 24 Å (~38 Å³ par molécule
+   d'eau en phase condensée, donc de quoi hydrater un peptide de quelques résidus). */
+export const STRUCTURE_CALC_SOLVENT_BOX = 24;
+export const STRUCTURE_CALC_SOLVENT_BOX_MIN = 8;
+export const STRUCTURE_CALC_SOLVENT_BOX_MAX = 80;
+/** L'EAU LIBRE LAISSÉE AUTOUR DE LA MOLÉCULE, au minimum (Å) — de quoi poser une couche
+   d'hydratation : sans elle, une arête « automatique » collerait la boîte au soluté. */
+export const STRUCTURE_CALC_SOLVENT_MARGIN = 8;
 export const STRUCTURE_CALC_SOLVENTS = [
   { id: 'implicit', label: 'implicit · ε = 4', dielectric: FF_DIELECTRIC,
     of: 'the model the field already uses (charges screened by ε = 4)' },
@@ -301,6 +334,10 @@ export const STRUCTURE_CALC_SOLVENTS = [
     of: 'no screening at all — the charges see each other in full' },
   { id: 'water', label: 'bulk water · ε = 80', dielectric: 80,
     of: 'uniform screening by the dielectric of bulk water' },
+  { id: 'explicit', label: '💧 explicit water box · ε = 1', dielectric: 1, explicit: true,
+    of: 'a cubic box of RIGID TIP3P waters (O and H are real atoms of the field, with their '
+      + 'own charges at ε = 1): they screen, they push, and they are counted in every family '
+      + '— the box edge sets how many there are' },
 ];
 /** LE MODÈLE DEMANDÉ, TOUJOURS DÉFINI — un identifiant inconnu (ou absent) rend le modèle
  *  par défaut : le panneau ne peut donc ni jeter pour un identifiant qu'il n'a pas écrit
@@ -308,6 +345,140 @@ export const STRUCTURE_CALC_SOLVENTS = [
 export const structureCalcSolventOf = (id) => STRUCTURE_CALC_SOLVENTS
   .find((s) => s.id === (id == null ? '' : String(id)))
   || STRUCTURE_CALC_SOLVENTS.find((s) => s.id === STRUCTURE_CALC_SOLVENT);
+/** LE SOLVANT CHOISI EST-IL EXPLICITE ? — la question que posent les gestes du champ
+ *  avant de construire une boîte (et le panneau avant d'afficher son réglage d'arête). */
+export const structureCalcSolventIsExplicit = (id) => !!structureCalcSolventOf(id).explicit;
+
+/* ── 🎯 LA FONCTION CIBLE — CE QUE LE CALCUL CHERCHE À MINIMISER ───────────────
+   La demande de cette session : « if the present plan is correct I wouldn't throw it but
+   I would add the option to run as dyana as well. » La liste est celle du CHAMP
+   (`FF_TARGET_FUNCTIONS`, utils/forceFieldKcal.js) — le module du protocole n'en écrit pas
+   une seconde : il la réexporte, la résout, et la descend dans les quatre moteurs
+   (recuit, dynamique, minimisation, trempe) ET dans le score. Un départ, un geste et le
+   rapport parlent donc TOUJOURS de la même fonction cible. */
+export const STRUCTURE_CALC_TARGET_FUNCTIONS = FF_TARGET_FUNCTIONS;
+export const STRUCTURE_CALC_TARGET_FUNCTION = 'classic';
+export const structureCalcTargetFunctionOf = (id) => ffTargetFunctionOf(
+  id == null || String(id) === '' ? STRUCTURE_CALC_TARGET_FUNCTION : id,
+);
+
+/* ── 💧 LA BOÎTE D'EAU EXPLICITE — LA CONSTRUIRE, UNE SEULE FOIS, ICI ──────────
+   `explicitSolventOf` pose des molécules d'eau TIP3P RIGIDES sur un RÉSEAU CUBIQUE
+   centré sur la molécule, à maille 3.1 Å (le σ de l'eau : deux oxygènes voisins sont
+   donc au contact de van der Waals, ce qui est la densité d'un liquide), et ÉCARTE tout
+   site qui toucherait la molécule (O···atome lourd < 2.6 Å) ou une eau déjà posée. La
+   molécule n'est jamais traversée par une eau — un site écarté est simplement vide, et
+   le rapport dit combien l'ont été.
+   ⚠ LES ATOMES D'EAU SONT AJOUTÉS À LA FIN (`OW`, `HW`, `HW` par molécule), comme les
+   hydrogènes du champ : les indices d'origine ne bougent pas, donc les contraintes, les
+   canaux et les résidus de l'utilisateur gardent les leurs — c'est le contrat de tout
+   ajout d'atomes dans ce dossier.
+   ⚠ L'ORIENTATION EST LA MÊME POUR TOUTES LES EAUX (les deux H dans le plan du réseau) :
+   c'est un ENVIRONNEMENT, pas une dynamique d'eau, et une orientation tirée au hasard
+   rendrait le calcul non reproductible d'une exécution à l'autre. */
+export const STRUCTURE_CALC_WATER_SPACING = 3.1;      // Å entre deux oxygènes voisins
+export const STRUCTURE_CALC_WATER_CLEARANCE = 2.6;    // Å O···atome lourd, au minimum
+export const explicitSolventOf = ({
+  positions = null, elements = [], bonds = [],
+  edge = STRUCTURE_CALC_SOLVENT_BOX, margin = STRUCTURE_CALC_SOLVENT_MARGIN,
+} = {}) => {
+  const read = flatPositions(positions);
+  const out = {
+    ok: false, reason: 'bad-points', edge: 0, needed: 0, sites: 0, skipped: 0,
+    molecules: 0, atoms: 0, solute: 0, positions: null, elements: [], bonds: [], box: null,
+  };
+  if (!read || !read.count) return out;
+  const x = read.flat;
+  const count = read.count;
+  const elsOrg = Array.from(elements || []);
+  /* L'ARÊTE — celle qu'on demande, ou « la molécule + de l'eau libre » quand elle est
+     absente. ⚠ UNE BOÎTE TROP PETITE POUR CONTENIR LA MOLÉCULE EST REFUSÉE, jamais
+     agrandie en silence : le réglage de l'utilisateur doit vouloir dire quelque chose. */
+  const min = [Infinity, Infinity, Infinity];
+  const max = [-Infinity, -Infinity, -Infinity];
+  for (let k = 0; k < count; k += 1) {
+    for (let c = 0; c < 3; c += 1) {
+      const v = Number(x[k * 3 + c]);
+      if (v < min[c]) min[c] = v;
+      if (v > max[c]) max[c] = v;
+    }
+  }
+  const centre = [0, 1, 2].map((c) => (min[c] + max[c]) / 2);
+  const span = [0, 1, 2].map((c) => max[c] - min[c]);
+  const needed = Math.max(span[0], span[1], span[2]) + 2 * Math.max(0, Number(margin) || 0);
+  const asked = Number(edge);
+  const wanted = Number.isFinite(asked) && asked > 0 ? asked : needed;
+  const size = Math.min(STRUCTURE_CALC_SOLVENT_BOX_MAX,
+    Math.max(STRUCTURE_CALC_SOLVENT_BOX_MIN, wanted));
+  out.edge = size;
+  out.needed = Number(needed.toFixed(3));
+  if (size < needed - 1e-6) { out.reason = 'box-too-small'; return out; }
+  const half = size / 2;
+  out.box = {
+    centre, edge: size, half,
+    min: [0, 1, 2].map((c) => centre[c] - half),
+    max: [0, 1, 2].map((c) => centre[c] + half),
+  };
+  const step = STRUCTURE_CALC_WATER_SPACING;
+  const n = Math.max(1, Math.floor(size / step));
+  const first = [0, 1, 2].map((c) => centre[c] - ((n - 1) * step) / 2);
+  const clearance2 = STRUCTURE_CALC_WATER_CLEARANCE ** 2;
+  const spacing2 = (step * 0.95) ** 2;
+  const sites = [];
+  for (let a = 0; a < n; a += 1) {
+    for (let b = 0; b < n; b += 1) {
+      for (let c = 0; c < n; c += 1) {
+        const o = [first[0] + a * step, first[1] + b * step, first[2] + c * step];
+        /* ⚠ LE CENTRE D'UN OXYGÈNE RESTE DANS LA BOÎTE — une eau ne déborde pas de son
+           arête (sinon `edge` serait une arête « à peu près »). */
+        if ([0, 1, 2].some((k) => Math.abs(o[k] - centre[k]) > half - FF_TIP3P.ow.radius + 1e-6)) continue;
+        let take = true;
+        for (let k = 0; k < count && take; k += 1) {
+          const dx = x[k * 3] - o[0]; const dy = x[k * 3 + 1] - o[1]; const dz = x[k * 3 + 2] - o[2];
+          if (dx * dx + dy * dy + dz * dz < clearance2) take = false;
+        }
+        for (let s = 0; s < sites.length && take; s += 1) {
+          const q = sites[s];
+          const dx = q[0] - o[0]; const dy = q[1] - o[1]; const dz = q[2] - o[2];
+          if (dx * dx + dy * dy + dz * dz < spacing2) take = false;
+        }
+        if (!take) { out.skipped += 1; continue; }
+        sites.push(o);
+      }
+    }
+  }
+  out.sites = sites.length;
+  out.molecules = sites.length;
+  if (!sites.length) { out.reason = 'no-water'; return out; }
+  /* LA GÉOMÉTRIE RIGIDE — deux H à 0.9572 Å de leur O, écartés de l'angle H–O–H du
+     modèle (± θ/2 autour de l'axe X du réseau), et les liaisons O–H qui vont avec : une
+     eau est une MOLÉCULE du graphe, pas trois atomes isolés (le champ lit ses charges
+     fixes et la surface la voit entière). */
+  const pos = Array.from(x);
+  const els = elsOrg.slice();
+  const bl = Array.from(bonds || []);
+  const halfAngle = (FF_TIP3P.angle * Math.PI / 180) / 2;
+  const dx = FF_TIP3P.oh * Math.cos(halfAngle);
+  const dy = FF_TIP3P.oh * Math.sin(halfAngle);
+  for (let s = 0; s < sites.length; s += 1) {
+    const o = sites[s];
+    const base = count + s * 3;
+    pos[base * 3] = o[0]; pos[base * 3 + 1] = o[1]; pos[base * 3 + 2] = o[2];
+    pos[(base + 1) * 3] = o[0] + dx; pos[(base + 1) * 3 + 1] = o[1] + dy; pos[(base + 1) * 3 + 2] = o[2];
+    pos[(base + 2) * 3] = o[0] + dx; pos[(base + 2) * 3 + 1] = o[1] - dy; pos[(base + 2) * 3 + 2] = o[2];
+    els.push('OW', 'HW', 'HW');
+    bl.push({ i: base, j: base + 1, order: 1 }, { i: base, j: base + 2, order: 1 });
+  }
+  out.ok = true; out.reason = 'ok';
+  out.positions = pos;
+  out.elements = els;
+  out.bonds = bl;
+  out.solute = count;
+  out.atoms = count + sites.length * 3;
+  out.waters = ffWatersIn(els);
+  return out;
+};
+
 
 /** LA MINIMISATION DIHÉDRALE (l'affinage final) — une descente en coordonnées : chaque
  *  dièdre est essayé de part et d'autre d'un pas qui se divise par deux dès qu'un
@@ -701,6 +872,10 @@ export function* annealFrames({
   torsions = null,
   ramaWeight = STRUCTURE_CALC_RAMA_WEIGHT, chiWeight = STRUCTURE_CALC_CHI_WEIGHT,
   perFrame = 0, hydrogen = null,
+  /* 🎯 LA FONCTION CIBLE — la même clé pour les quatre moteurs du protocole (voir
+     `STRUCTURE_CALC_TARGET_FUNCTIONS`) : le recuit ne peut donc pas conduire un autre
+     champ que celui qu'affiche le panneau. */
+  targetFunction = STRUCTURE_CALC_TARGET_FUNCTION,
 } = {}) {
   /* ⚠ LE RECUIT TOURNE SUR LE MOTEUR DU CHAMP (`torsionEngineOf`) — il ne réimplémente
      AUCUNE physique : ses pas sont des rotations rigides (`engine.mapFor`), son énergie
@@ -709,7 +884,7 @@ export function* annealFrames({
      R·T, l'énergie thermique (0.60 kcal/mol à 300 K, 3 kcal/mol à 1500 K). */
   const engine = torsionEngineOf({
     positions, elements, bonds, restraints, channels, leash, torsions, omegas, dihedrals,
-    ramaWeight, chiWeight, hydrogen,
+    ramaWeight, chiWeight, hydrogen, targetFunction,
   });
   if (!engine) {
     return {
@@ -725,6 +900,9 @@ export function* annealFrames({
     ok: true, reason: 'ok', positions: engine.heavyPositions(), channels: chan.length,
     omegas: engine.omega.length,
     omegaFree: !!freeOmega,
+    /* 🎯 LA FONCTION CIBLE CONDUITE — chaque moteur du protocole la DIT dans son rapport. */
+    targetFunction: engine.targetFunction, switchedOff: engine.switchedOff,
+    unitedAtoms: engine.unitedAtoms,
     schedule: [], tried: 0, accepted: 0, skipped: 0, cost: { before: 0, after: 0 },
     omega: null, rama: null, chi: null,
   };
@@ -1212,6 +1390,9 @@ export const forceFieldEnergyOf = ({
   positions = null, elements = [], bonds = [], restraints = [],
   torsions = null, omegas = null, dihedrals = [], temperature = FF_REFERENCE_TEMPERATURE,
   exactSurface = false, hydrogenate = true,
+  /* 🎯 LA FONCTION CIBLE — `classic` (le défaut) ou `dyana` : le champ lu ici est celui
+     que la fonction cible décrit, et le rapport DIT ce qu'elle a éteint. */
+  targetFunction = STRUCTURE_CALC_TARGET_FUNCTION,
 } = {}) => {
   const read = flatPositions(positions);
   const els = Array.from(elements || []);
@@ -1240,7 +1421,7 @@ export const forceFieldEnergyOf = ({
   const field = ffKcalEnergyOf({
     positions: read.flat, elements: els, bonds, restraints: clean,
     ramaPairs, omegas: omegaList, chis: Array.from(backbone.chi || []),
-    dihedrals, temperature, exactSurface, hydrogenate,
+    dihedrals, temperature, exactSurface, hydrogenate, targetFunction,
   });
   return {
     ...field,
@@ -1281,6 +1462,10 @@ export const scoreStructureOf = ({
   tolerance = STRUCTURE_CALC_RESTRAINT_TOLERANCE, omegas = null, torsions = null,
   dihedrals = [],
   ramaWeight = STRUCTURE_CALC_RAMA_WEIGHT, chiWeight = STRUCTURE_CALC_CHI_WEIGHT,
+  /* 🎯 LA FONCTION CIBLE DE LA NOTE — la même que celle du départ (voir
+     `STRUCTURE_CALC_TARGET_FUNCTIONS`) : la note ne peut pas juger un autre champ que
+     celui que le protocole vient de conduire. */
+  targetFunction = STRUCTURE_CALC_TARGET_FUNCTION,
 } = {}) => {
   const read = flatPositions(positions);
   if (!read) {
@@ -1306,7 +1491,7 @@ export const scoreStructureOf = ({
      dynamique et la minimisation emploient (aucun moteur n'a sa propre physique). Tout
      est en kcal/mol. */
   const field = forceFieldEnergyOf({
-    positions: x, elements, bonds, restraints: clean, torsions, omegas, dihedrals,
+    positions: x, elements, bonds, restraints: clean, torsions, omegas, dihedrals, targetFunction,
   });
   /* ⚠ LA PÉNALITÉ D'EMPILEMENT N'EST PLUS UN TERME À PART : l'empilement a un prix DANS
      le champ (le mur répulsif du Lennard-Jones, famille `vdw`, qui rend des dizaines de
@@ -1438,7 +1623,13 @@ const torsionEngineOf = ({
   leashWall = STRUCTURE_CALC_LEASH_WALL, hydrogenate = true,
   dielectric = FF_DIELECTRIC, tolerance = STRUCTURE_CALC_RESTRAINT_TOLERANCE,
   hydrogen = null,
+  /* 🎯 LA FONCTION CIBLE — `classic` (le défaut) ou `dyana` : elle décide des familles
+     non liées, de la portée des couples, du terme de surface ET de l'ajout d'hydrogènes
+     (voir `FF_TARGET_FUNCTIONS`). ⚠ C'est le SEUL endroit où elle est lue pour les
+     moteurs : le recuit, la dynamique et la minimisation tournent tous sur ce moteur. */
+  targetFunction = STRUCTURE_CALC_TARGET_FUNCTION,
 } = {}) => {
+  const tf = structureCalcTargetFunctionOf(targetFunction);
   const read = flatPositions(positions);
   if (!read) return null;
   /* ⚠ LA MOLÉCULE DU MOTEUR EST CELLE DU CHAMP : les ATOMES AJOUTÉS (hydrogènes) y sont.
@@ -1456,6 +1647,12 @@ const torsionEngineOf = ({
   const heavyBonds = Array.from(bonds || []);
   const carried = hydrogen && Array.isArray(hydrogen.positions) && hydrogen.positions.length >= read.flat.length
     ? hydrogen : null;
+  /* 🎯 LES ATOMES UNIS — une fonction cible `dyana` ne veut AUCUN hydrogène ajouté : la
+     molécule est lue telle qu'elle est (`unitedAtoms`), donc le moteur tourne sur le
+     squelette lourd, exactement comme DYANA/CYANA. Une molécule COMPLÈTE déjà portée par
+     l'appelant (`hydrogen`) reste utilisée telle quelle : c'est elle qui a servi à
+     l'étape précédente du protocole, on ne la jette pas en route. */
+  const addHydrogens = hydrogenate && !tf.unitedAtoms;
   const mol = carried
     ? {
       ok: true, reason: 'ok', positions: Array.from(carried.positions),
@@ -1464,7 +1661,7 @@ const torsionEngineOf = ({
       atoms: (carried.elements || []).length, skipped: 0,
       hydrogens: Array.from(carried.hydrogens || []),
     }
-    : (hydrogenate
+    : (addHydrogens
       ? hydrogenatedOf({ positions: read.flat, elements: elsHeavy, bonds: heavyBonds })
       : {
         ok: true, reason: 'ok', positions: Array.from(read.flat), elements: elsHeavy.slice(),
@@ -1533,10 +1730,12 @@ const torsionEngineOf = ({
   /* LES TERMES — chaque famille est LA fonction du champ (kcal/mol), relue sur une
      géométrie « à plat ». Le moteur ne peut donc pas minimiser autre chose que le score. */
   const costRestraint = (t, map) => ffRestraintCostOf(gap(t.i, t.j, map), t, ffRestraintKOf(t.weight));
-  const costNonbonded = (p, map) => {
-    const d = gap(p.i, p.j, map);
-    return ffVdwCostOf(d, p) + ffCoulombCostOf(d, p, dielectric);
-  };
+  /* 🎯 LE COUPLE NON LIÉ SELON LA FONCTION CIBLE — le MÊME lecteur que le champ
+     (`ffNonbondedCostOf`) : en mode DYANA, la répulsion seule, sans charge, et aucune
+     attraction. Le moteur ne peut donc pas minimiser autre chose que le score. */
+  const costNonbonded = (p, map) => ffNonbondedCostOf(gap(p.i, p.j, map), p, {
+    dielectric, repulsionOnly: tf.repulsionOnly, electrostatics: tf.electrostatics,
+  });
   const costOmega = (o, map) => {
     const deg = dihedralOf(o.probeAtoms, map);
     return Number.isFinite(deg) ? ffOmegaCostOf(deg, { target: o.target }) : 0;
@@ -1565,11 +1764,17 @@ const torsionEngineOf = ({
      exclus, 1-4 atténué, portée 8 Å), refaites régulièrement : les atomes bougent, donc
      les couples qui se touchent ne sont plus les mêmes. La liste de SURFACE, elle, porte
      TOUS les couples de la portée (une liaison enterre la moitié de la sphère d'un H). */
-  let walk = ffPairListOf({ positions: x, elements: els, bonds: bondsOf, charges });
+  let walk = ffPairListOf({
+    positions: x, elements: els, bonds: bondsOf, charges,
+    limit: tf.pairLimit, surface: tf.surface,
+  });
   let surfaceNear = new Map();
   let constants = { bond: 0, angle: 0, planar: 0, total: 0 };
   const rebuild = () => {
-    walk = ffPairListOf({ positions: x, elements: els, bonds: bondsOf, charges });
+    walk = ffPairListOf({
+      positions: x, elements: els, bonds: bondsOf, charges,
+      limit: tf.pairLimit, surface: tf.surface,
+    });
     surfaceNear = new Map();
     for (const p of walk.surface) {
       const a = surfaceNear.get(p.i); if (a) a.push(p.j); else surfaceNear.set(p.i, [p.j]);
@@ -1669,6 +1874,17 @@ const torsionEngineOf = ({
       dihedrals: dihedralRows.filter((d) => straddles(d.atoms)),
     };
   };
+  /* ⚖ LE PLUS GRAND POIDS PARMI LES CONTRAINTES QUI TRAVERSENT UNE CHARNIÈRE — c'est lui
+     qui décide du budget de couple que la dynamique accorde à la FAMILLE DES DISTANCES
+     (voir `mdFrames`) : une ligne qui compte cent fois doit pouvoir tirer plus fort qu'une
+     ligne qui compte une fois, sans que le plafond protégeant des murs de van der Waals ne
+     l'en empêche. Rend 1 quand aucune contrainte ne traverse (le budget ordinaire). */
+  const crossRestraintWeightOf = (ctx) => {
+    let w = 1;
+    for (const t of ctx.restraints) w = Math.max(w, ffRestraintWeightOf(t.weight));
+    for (const x of ctx.walls) w = Math.max(w, ffRestraintWeightOf(x.weight));
+    return w;
+  };
   const crossCost = (ctx, map) => {
     let v = 0;
     for (const t of ctx.restraints) v += costRestraint(t, map);
@@ -1679,6 +1895,15 @@ const torsionEngineOf = ({
     for (const r of ctx.ramas) v += costRama(r, map);
     for (const e of ctx.chis) v += costChi(e, map);
     for (const d of ctx.dihedrals) v += costDihedral(d, map);
+    return v;
+  };
+  /** LE COÛT DES SEULES CONTRAINTES QUI TRAVERSENT — les puits plats de la table ET les
+   *  murs de la longe. Le couple de la dynamique en a besoin À PART : c'est la seule
+   *  famille dont le plafond doit suivre le POIDS ⚖ de la ligne (voir `mdFrames`). */
+  const crossRestraintCost = (ctx, map) => {
+    let v = 0;
+    for (const t of ctx.restraints) v += costRestraint(t, map);
+    for (const w of ctx.walls) v += costWall(w, map);
     return v;
   };
   /* CE QU'UN PAS FAIT AU SEUL ω — la trempe refuse tout pas qui l'abîme, même s'il
@@ -1696,7 +1921,9 @@ const torsionEngineOf = ({
     let v = 0;
     for (const t of pairTerms) v += costRestraint(t, null);
     for (const p of walk.pairs) v += costNonbonded(p, null);
-    for (let i = 0; i < count; i += 1) v += surfaceCostAt(i, null);
+    /* 🎯 SANS TERME DE SURFACE, LA BOUCLE N'EXISTE PAS — 91 % du travail d'un pas, mesuré :
+       une fonction cible qui n'a pas de famille non polaire (DYANA) ne la paie pas. */
+    if (tf.surface) for (let i = 0; i < count; i += 1) v += surfaceCostAt(i, null);
     for (const o of omega) v += costOmega(o, null);
     for (const r of ramaRows) v += costRama(r, null);
     for (const e of chis) v += costChi(e, null);
@@ -1758,8 +1985,13 @@ const torsionEngineOf = ({
       hydrogens: mol.hydrogens.map((h) => ({ parent: h.parent, index: h.index })),
     }),
     charges, added: { heavy: mol.heavy, hydrogens: mol.added, atoms: mol.atoms, skipped: mol.skipped },
+    /* 🎯 LA FONCTION CIBLE QUE CE MOTEUR A LUE — le rapport d'un geste la DIT, donc un
+       lecteur ne peut pas prendre une famille éteinte pour une famille oubliée. */
+    targetFunction: tf.id, targetFunctionLabel: tf.label, switchedOff: Array.from(tf.off || []),
+    unitedAtoms: !addHydrogens,
     nonbondedCount: () => walk.pairs.length,
     at, gap, dihedralOf, mapFor, commit, crossingOf, ctxOf, crossCost, omegaCrossCost,
+    crossRestraintCost, crossRestraintWeightOf,
     costOf, wallCostOf, walls,
     /* LA GRILLE DES COUPLES NON LIÉS EST REFaite PÉRIODIQUEMENT — les atomes ont bougé,
        donc les couples qui se touchent ne sont plus les mêmes. Les traversées CACHÉES
@@ -1832,6 +2064,7 @@ export function* mdFrames({
   dt = STRUCTURE_CALC_MD_DT, friction = STRUCTURE_CALC_MD_FRICTION,
   mass = STRUCTURE_CALC_MD_MASS, torqueStep = STRUCTURE_CALC_MD_TORQUE_STEP,
   maxTorqueLimit = STRUCTURE_CALC_MD_MAX_TORQUE,
+  maxRestraintTorqueLimit = STRUCTURE_CALC_MD_MAX_RESTRAINT_TORQUE,
   speedLimit = STRUCTURE_CALC_MD_MAX_SPEED,
   stepLimitDeg = STRUCTURE_CALC_MD_MAX_STEP_DEG,
   omegaStepLimitDeg = STRUCTURE_CALC_MD_OMEGA_STEP_DEG,
@@ -1842,16 +2075,18 @@ export function* mdFrames({
   freeOmega = STRUCTURE_CALC_FREE_OMEGA,
   channelBudget = STRUCTURE_CALC_MD_CHANNELS,
   perFrame = STRUCTURE_CALC_MD_FRAME, coreRefresh = STRUCTURE_CALC_CORE_REFRESH,
-  /* 💧 LE DIÉLECTRIQUE — le seul réglage de solvant que ce moteur possède vraiment
-     (`STRUCTURE_CALC_SOLVENTS`) : il traverse le couple par `torsionEngineOf`, qui le
-     comprend depuis toujours. Le défaut est le modèle du champ (ε = 4), donc les appels
-     qui ne le demandent pas ne changent pas de physique d'un iota. */
+  /* 💧 LE DIÉLECTRIQUE — le seul réglage de solvant que ce moteur possède vraiment,
+     plus 🎯 LA FONCTION CIBLE (classic / DYANA). Les deux traversent le couple par
+     `torsionEngineOf`, qui les comprend depuis toujours. Le défaut est le modèle du champ
+     (ε = 4, fonction `classic`), donc les appels qui ne les demandent pas ne changent pas
+     de physique d'un iota. */
   dielectric = FF_DIELECTRIC,
+  targetFunction = STRUCTURE_CALC_TARGET_FUNCTION,
   hydrogen = null,
 } = {}) {
   const engine = torsionEngineOf({
     positions, elements, bonds, restraints, weights, channels, leash, torsions, omegas, dihedrals,
-    ramaWeight, chiWeight, hydrogen, dielectric,
+    ramaWeight, chiWeight, hydrogen, dielectric, targetFunction,
   });
   if (!engine) return refusedMotion('bad-points', null, freeOmega);
   const chan = engine.chan;
@@ -1897,6 +2132,8 @@ export function* mdFrames({
   const m = Math.max(1e-6, Number(mass) || STRUCTURE_CALC_MD_MASS);
   const delta = Math.max(0.05, Math.abs(Number(torqueStep) || STRUCTURE_CALC_MD_TORQUE_STEP));
   const maxTorque = Math.max(1, Math.abs(Number(maxTorqueLimit) || STRUCTURE_CALC_MD_MAX_TORQUE));
+  const maxRestTorque = Math.max(maxTorque,
+    Math.abs(Number(maxRestraintTorqueLimit) || STRUCTURE_CALC_MD_MAX_RESTRAINT_TORQUE));
   const maxSpeed = Math.max(0.1, Math.abs(Number(speedLimit) || STRUCTURE_CALC_MD_MAX_SPEED));
   const maxStepDeg = Math.max(0.1, Math.abs(Number(stepLimitDeg) || STRUCTURE_CALC_MD_MAX_STEP_DEG));
   const omegaStepDeg = Math.max(0.1, Math.abs(Number(omegaStepLimitDeg) || STRUCTURE_CALC_MD_OMEGA_STEP_DEG));
@@ -1947,13 +2184,23 @@ export function* mdFrames({
       /* LE COUPLE, PAR DIFFÉRENCE FINIE CENTRÉE — la pente du champ le long de CE
          dièdre, prise sur les seuls termes qui le traversent. */
       const torque = -(engine.crossCost(ctx, up.map) - engine.crossCost(ctx, down.map)) / (2 * delta);
+      /* ⚖ LA FAMILLE DES DISTANCES A SON PROPRE PLAFOND, ET IL SUIT LE POIDS ⚖ DE LA
+         LIGNE (voir `STRUCTURE_CALC_MD_MAX_RESTRAINT_TORQUE`) : `50 × poids`, plafonné à
+         500. C'est ce qui fait qu'une ligne de poids 100 TIRE vraiment plus fort qu'une
+         ligne de poids 1 — mesuré, la différence était nulle avant, parce que les deux
+         couples tombaient sous le même plafond. Les autres familles (van der Waals,
+         surface, torsions) gardent le plafond qui les empêche d'exploser. */
+      const torqueRest = -(engine.crossRestraintCost(ctx, up.map)
+        - engine.crossRestraintCost(ctx, down.map)) / (2 * delta);
+      const restCap = Math.min(maxRestTorque, maxTorque * engine.crossRestraintWeightOf(ctx));
+      const clampT = (v, cap) => Math.max(-cap, Math.min(cap, v));
       /* ⚠ LE COUPLE EST PLAFONNÉ — un mur de Lennard-Jones à 1 Å d'un autre atome vaut
          des millions de kcal/mol/rad, et l'intégrateur ferait un bond de plusieurs
          tours : c'est la cause des modèles empilés (mesuré : des scores de 10⁷ kcal/mol
          après une dynamique à 3000 K). Le plafond vaut 50 kcal/mol/rad, soit deux fois
          et demie la contrainte à 1 Å d'écart — la molécule s'écarte d'un mur sans
          traverser la molécule. */
-      const capped = Math.max(-maxTorque, Math.min(maxTorque, torque));
+      const capped = clampT(torqueRest, restCap) + clampT(torque - torqueRest, maxTorque);
       const noise = Math.sqrt((2 * gamma * FF_GAS_CONSTANT * target * h) / m) * gaussian();
       const v = vel[k] * (1 - gamma * h) + (capped / m) * h + noise;
       vel[k] = v;
@@ -2040,6 +2287,16 @@ export function* mdFrames({
        constantes : `cost + constants.total` est l'enthalpie du champ. */
     constants: engine.constants,
     added: engine.added,
+    /* 🎯 LA FONCTION CIBLE CONDUITE, ET 💧 SI LE MOTEUR A LU DES EAUX EXPLICITES —
+       le rapport les écrit, donc un lecteur sait dans quel monde la trajectoire a couru. */
+    targetFunction: engine.targetFunction,
+    targetFunctionLabel: engine.targetFunctionLabel,
+    switchedOff: engine.switchedOff,
+    unitedAtoms: engine.unitedAtoms,
+    waters: ffWatersIn(engine.els || []),
+    /* ⚖ LE PLAFOND DE COUPLE DE LA FAMILLE DES DISTANCES — montré pour que le rapport
+       puisse dire QUE le poids ⚖ d'une ligne a un effet mesurable sur la trajectoire. */
+    torque: { field: maxTorque, restraint: maxRestTorque },
     molecule: engine.moleculeOf(),
     cost: { before: before.cost, after: after.cost },
     walls: { before: before.walls, after: after.walls, count: engine.walls.length },
@@ -2073,10 +2330,13 @@ export function* minimizeFrames({
      empilement) — exactement comme elle arbitre déjà les autres familles du champ. */
   freeOmega = STRUCTURE_CALC_FREE_OMEGA,
   hydrogen = null,
+  /* 🎯 LA FONCTION CIBLE — le ⚒ ne peut pas descendre un autre champ que celui du panneau
+     (voir `STRUCTURE_CALC_TARGET_FUNCTIONS`). */
+  targetFunction = STRUCTURE_CALC_TARGET_FUNCTION,
 } = {}) {
   const engine = torsionEngineOf({
     positions, elements, bonds, restraints, weights, channels, leash, torsions, omegas, dihedrals,
-    ramaWeight, chiWeight, hydrogen,
+    ramaWeight, chiWeight, hydrogen, targetFunction,
   });
   if (!engine) return refusedMotion('bad-points', null, freeOmega);
   const chan = engine.chan;
@@ -2155,6 +2415,9 @@ export function* minimizeFrames({
     positions: engine.heavyPositions(),
     channels: chan.length,
     omegaFree: !!freeOmega,
+    /* 🎯 LA FONCTION CIBLE CONDUITE — le rapport du ⚒ la DIT, comme celui du recuit. */
+    targetFunction: engine.targetFunction, switchedOff: engine.switchedOff,
+    unitedAtoms: engine.unitedAtoms,
     steps: sweeps * chan.length, sweeps, accepted, skipped,
     step: Number(width.toFixed(6)),
     schedule,
@@ -2224,6 +2487,12 @@ export function* structureAttemptFrames({
      la dynamique et la minimisation), donc un départ ne peut pas porter un autre réglage
      que celui que le panneau affiche. Voir `STRUCTURE_CALC_FREE_OMEGA`. */
   freeOmega = STRUCTURE_CALC_FREE_OMEGA,
+  /* 🎯 LA FONCTION CIBLE DU DÉPART — `classic` (le champ entier) ou `dyana` (répulsion
+     seule, pas de charge, pas de surface, atomes unis — voir `FF_TARGET_FUNCTIONS`). Elle
+     descend TELLE QUELLE dans le recuit, la dynamique, la minimisation ET la trempe du
+     protocole, et `scoreStructureOf` la reçoit aussi : un départ ne peut donc pas être
+     construit sous un jeu de règles et noté sous un autre. */
+  targetFunction = STRUCTURE_CALC_TARGET_FUNCTION,
 } = {}) {
   const read = flatPositions(positions);
   const k = clampInt(index, 0, Number.MAX_SAFE_INTEGER, 0);
@@ -2291,6 +2560,8 @@ export function* structureAttemptFrames({
       channels: drawn ? drawn.channels : null, omegas, torsions: backbone, weights, dihedrals,
       seed: wrapSeed(startSeed + 7),
       steps: annealSteps, perFrame: annealPerFrame,
+      /* 🎯 LA FONCTION CIBLE DU DÉPART — le recuit conduit exactement le champ demandé. */
+      targetFunction,
       /* ⚠ LE RECUIT PROTÈGE ω — la règle est la même qu'à la trempe : un pas qui AUGMENTE
          le coût d'une liaison peptidique est refusé (un vrai peptide reste TRANS à toute
          température de ce protocole), mais un pas qui le DIMINUE est accepté — donc un ω
@@ -2346,6 +2617,9 @@ export function* structureAttemptFrames({
     positions: arr, elements: els, bonds, restraints: clean.list, weights,
     channels: drawn ? drawn.channels : null, torsions: backbone, omegas, dihedrals, leash: held,
     dt: mdDt, hydrogen,
+    /* 🎯 LA FONCTION CIBLE — la dynamique d'équilibration, celle de refroidissement et la
+       minimisation descendent LE MÊME champ que le recuit et la note. */
+    targetFunction,
     /* 🪢 …ET LE RÉGLAGE ω DE L'UTILISATEUR, tel quel : la dynamique et la minimisation de
        chaque départ le portent, sinon le protocole ne serait pas celui qu'on a demandé. */
     freeOmega,
@@ -2425,6 +2699,8 @@ export function* structureAttemptFrames({
          plus — le champ (barrière comprise, et la LONGE) décide seul. */
       freeOmega,
       hydrogen,
+      /* 🎯 …ET LA FONCTION CIBLE : la trempe juge et répare sur le MÊME champ. */
+      targetFunction,
     });
     let next = frames.next();
     while (!next.done) { yield { ...next.value, phase: 'quench', index: k }; next = frames.next(); }
@@ -2438,6 +2714,9 @@ export function* structureAttemptFrames({
   const scored = scoreStructureOf({
     positions: x, elements: els, bonds, restraints: clean.list, weights, clashDistance,
     tolerance, omegas, torsions: backbone, dihedrals,
+    /* 🎯 LA NOTE EST CELLE DE LA FONCTION CIBLE CONDUITE — un départ ne peut pas être
+       construit sous un jeu de règles et noté sous un autre. */
+    targetFunction,
   });
   let moved = 0;
   for (let i = 0; i < count; i += 1) {
@@ -2458,6 +2737,10 @@ export function* structureAttemptFrames({
     /* 🪢 LE RÉGLAGE ω QUI A SERVI À CE DÉPART — relu par le panneau (le rapport d'un calcul
        doit dire avec quelles règles il a été fait, sinon deux familles ne se comparent pas). */
     omegaFree: !!freeOmega,
+    /* 🎯 …ET LA FONCTION CIBLE QUI A SERVI — même raison : les règles du modèle s'écrivent
+       à côté de sa note. */
+    targetFunction: structureCalcTargetFunctionOf(targetFunction).id,
+    targetFunctionLabel: structureCalcTargetFunctionOf(targetFunction).label,
     draw: {
       turned: drawn ? drawn.drawn : 0,
       channels: drawn ? drawn.channelCount : 0,

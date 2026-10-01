@@ -492,9 +492,16 @@ has(VIEW, "try { localStorage.setItem(RAMA_DOCK_KEY, next ? '1' : '0'); } catch 
   '…et écrit à chaque geste');
 has(VIEW, 'stageRef.current.handleResize();', '⚠ …et NGL est RECADRÉ quand le dock change la largeur de la vue');
 has(VIEW, '}, [ramaDock]);', '…par un effet qui ne dépend QUE de la position du dock');
-has(VIEW, 'if (rama || ramaMsg) return;', '⚠ le dock ouvert lit le squelette UNE SEULE FOIS (pas en boucle)');
+has(VIEW, 'const ramaReadStructureRef = useRef(null);',
+  '⚠ le dock ouvert lit le squelette UNE SEULE FOIS PAR MOLÉCULE (pas en boucle)');
+has(VIEW, 'if (!st || ramaReadStructureRef.current === st) return;   // une tentative par molécule',
+  '…la garde est la STRUCTURE elle-même, donc une lecture VIDE (fenêtre ouverte avant le chargement, ou molécule sans N–CA–C) est RETENTÉE dès qu’une molécule est là — c’était le défaut mesuré de cette session');
+ok(!VIEW.includes('if (rama || ramaMsg) return;'),
+  '⚠ …l’ancienne garde « une tentative par PAGE » (via `ramaMsg`) a disparu : elle bloquait à jamais une fenêtre ouverte avant le chargement');
 has(VIEW, 'if (status !== \'ready\' || !componentRef.current) return;',
   '…quand une molécule est là, et pas avant');
+has(VIEW, '}, [ramaDock, status, rama]);',
+  '…et `ramaMsg` n’est PLUS une dépendance : la lecture l’écrit, donc l’y mettre ferait une boucle');
 
 /* ── 8 · LE 🪢 SUIT CE QUI BOUGE LA MOLÉCULE ─────────────────────────────────
    La demande de cette session, mot pour mot : « update the ramachandran during
@@ -510,7 +517,9 @@ has(VIEW, 'if (status !== \'ready\' || !componentRef.current) return;',
 has(VIEW, 'const ramaShownRef = useRef(false);',
   '⚠ le viewer tient une RÉFÉRENCE « la fenêtre 🪢 est-elle à l’écran MAINTENANT ? »');
 has(VIEW, 'ramaShownRef.current = !!rama;',
-  '…tenue à jour à chaque rendu (le seul endroit qui l’écrit, donc rien ne peut la désynchroniser)');
+  '…écrite à chaque rendu avec ce que la lecture a trouvé');
+has(VIEW, 'ramaShownRef.current = !!rama || !!ramaDock;',
+  '⚠ …et COMPLÉTÉE plus bas (la dernière écriture du rendu) par le DOCK OUVERT : une lecture vide ne doit pas faire croire que le graphe n’est pas à l’écran — autrement dit que la dynamique ne le relise plus (défaut mesuré de cette session)');
 has(VIEW, 'const ramaIsShown = () => ramaShownRef.current;',
   '…et posée par UNE question, à chaque image des trois gestes');
 has(VIEW, 'if (ramaIsShown()) readRamachandran();',
