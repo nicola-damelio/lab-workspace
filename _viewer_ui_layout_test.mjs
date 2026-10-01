@@ -678,16 +678,24 @@ ok(iFilm > iS1 && iS2 > iFilm && iFilmBox > iS1 && iS2 > iFilmBox,
 gone('<VSection title="🎞 Movie maker"', '[13b] …il n’est plus une section à lui tout seul');
 has('＋ Capture this pose', '[13b] …et sa rangée de gestes est intacte');
 
-/* 13c. §2 tient sur DEUX lignes de groupes — 🌫 Scene │ 🎨 Styles, puis ✏️ Modify │
-   📏 Analysis │ 🧪 PyMOL — et chaque groupe est refermé dans sa propre boîte
-   teintée : « clairement séparés » ne coûte donc aucune ligne de plus. */
-const iBreak = VIEW.indexOf('<span className="basis-full h-0" aria-hidden="true" />', iS2);
-const iModifyIn2 = VIEW.indexOf('>✏️ Modify</span>', iS2);
-ok(iBreak > iS2 && iBreak < iModifyIn2, '[13c] §2 coupe la ligne entre 🎨 Styles et ✏️ Modify');
+/* 13c. §2 n'a PLUS de saut de ligne forcé — la demande de cette session : « between the
+   “style” section and the “modify” section there is an empty line ». Le frère vide
+   (`<span className="basis-full h-0" aria-hidden="true" />`) occupait une rangée ENTIÈRE à
+   lui tout seul — hauteur 0, mais les deux `gap` de la rangée autour — et c'est lui qui
+   faisait la bande vide entre la boîte 🎨 Styles et la boîte ✏️ Modify. Les cinq groupes
+   s'enchaînent maintenant dans l'ordre de la rangée, chacun refermé dans sa propre boîte
+   teintée et séparé de son voisin par le filet : « clairement séparés » ne coûte donc
+   aucune ligne de plus, et il n'y a plus de ligne vide du tout. */
+gone('<span className="basis-full h-0" aria-hidden="true" />',
+  '[13c] plus de frère pleine largeur entre 🎨 Styles et ✏️ Modify (la ligne vide est partie)');
 const iSceneIn2 = VIEW.indexOf('>🌫 Scene</span>', iS2);
-ok(iSceneIn2 > iS2 && iSceneIn2 < iBreak, '[13c] 🌫 Scene et 🎨 Styles sont sur la PREMIÈRE ligne');
-ok(VIEW.indexOf('>📏 Analysis</span>', iModifyIn2) > iBreak,
-  '[13c] ✏️ Modify et 📏 Analysis sont sur la SECONDE ligne, ensemble');
+const iModifyIn2 = VIEW.indexOf('>✏️ Modify</span>', iS2);
+const iStyleIn2 = VIEW.indexOf('>🎨 Styles</span>', iS2);
+const iAnalysisIn2 = VIEW.indexOf('>📏 Analysis</span>', iS2);
+const iPymolIn2 = VIEW.indexOf('>🧪 PyMOL</span>', iS2);
+ok(iSceneIn2 > iS2 && iSceneIn2 < iStyleIn2 && iStyleIn2 < iModifyIn2
+  && iModifyIn2 < iAnalysisIn2 && iAnalysisIn2 < iPymolIn2,
+  '[13c] les cinq groupes de §2 se suivent dans l’ordre de la rangée (Scene · Styles · Modify · Analysis · PyMOL)');
 [['sky-200', '🌫 Scene'], ['teal-200', '🎨 Styles'], ['amber-200', '✏️ Modify'],
   ['rose-200', '📏 Analysis'], ['violet-200', '🧪 PyMOL']].forEach(([tone, name]) => {
   has(`rounded-md border border-${tone}`, `[13c] le groupe ${name} est refermé dans sa boîte`);

@@ -1289,8 +1289,8 @@ has(VIEW, 'const [calcDock, setCalcDock] = useState(false);',
 has(VIEW, 'const toggleCalcDock = (v) => setCalcDock((cur) => (typeof v === \'boolean\' ? v : !cur));',
   '⚠ …et c’est UN seul geste : le bouton 🧬 (il n’y a plus trois onglets à faire défiler, ni de section dans la barre)');
 has(VIEW, 'const [paramsDock, setParamsDock] = useState(false);',
-  '⚙ …avec la fenêtre « Parameters and Constraints » de la demande — le rapport de cette session :'
-  + ' « “Parameters and Constraints” section should be in the “modify” menu » : elle est un DOCK du viewer (replié par défaut)');
+  '⚙ …avec « Parameters and Constraints » de la demande — le rapport :'
+  + ' « “Parameters and Constraints” section should be in the “modify” menu » : son PANNEAU est fermé par défaut');
 has(VIEW, 'const toggleParamsDock = (v) => setParamsDock((cur) => (typeof v === \'boolean\' ? v : !cur));',
   '…refermée par le même geste : le bouton ⚙ du groupe ✏️ Modify');
 ok(VIEW.indexOf("['torsion', ") < 0 && VIEW.indexOf("['rama', ") < 0 && VIEW.indexOf("['distances', ") < 0,
@@ -1638,7 +1638,27 @@ has(modifyGroup, 'onClick={() => toggleParamsDock()}',
   '⚙ le bouton « Parameters and Constraints » est DANS le groupe ✏️ Modify (la demande : « should be in the “modify” menu »)');
 has(modifyGroup, "⚙ Parameters and Constraints{paramsDock ? ' ▾' : ' ▸'}",
   '…et il dit son état (ouvert ▾ / fermé ▸)');
-has(VIEW, '{paramsDock ? renderParamsWindow() : (', '…la fenêtre ⚙ est un DOCK de la vue 3D, comme 🌡 MD et 🧬');
+/* ⚙ LE PANNEAU, PLUS UNE FENÊTRE — la demande de cette session : « The “parameters and
+   constraints” should not open a window in the molecule space but it should [be] full width
+   under the button. By clicking the button a second time it should disappear. » Le panneau
+   est donc un enfant PLEINE LARGEUR du groupe ✏️ Modify (comme le panneau ✏️ Atom names),
+   et il n'y a plus AUCUNE colonne ⚙ dans la rangée des docks de la vue 3D : la molécule
+   garde sa surface, panneau ouvert comme fermé. */
+eq(VIEW.includes('{paramsDock ? renderParamsWindow() : ('), false,
+  '⚠ …plus de colonne ⚙ dans la rangée des docks (ce n’est plus une fenêtre de la vue 3D)');
+eq(VIEW.includes('⚙ PARAM. &amp; CONSTRAINTS'), false,
+  '…et son onglet vertical sur le bord de la vue a disparu avec la colonne');
+has(VIEW, '{paramsDock && renderParamsWindow()}',
+  '…le panneau ⚙ est rendu PLEINE LARGEUR, sous la rangée de ses boutons (jamais dans l’espace de la molécule)');
+has(VIEW, 'className="w-full bg-white border border-slate-300 rounded-lg p-2 flex flex-col gap-1.5"',
+  '…sa boîte est `w-full` : elle descend sous la rangée du groupe ✏️ Modify');
+eq(VIEW.includes('w-[380px] flex flex-col gap-1.5 bg-white border border-slate-300'), false,
+  '⚠ …et son gabarit de dock (colonne de 380 px à hauteur fixe) a disparu avec lui');
+const iParamsBtn = VIEW.indexOf('onClick={() => toggleParamsDock()}');
+const iParamsPanel = VIEW.indexOf('{paramsDock && renderParamsWindow()}');
+const iAnalysisGrp = VIEW.indexOf('>📏 Analysis</span>');
+ok(iParamsBtn > 0 && iParamsPanel > iParamsBtn && iParamsPanel < iAnalysisGrp,
+  '⚠ …il est rendu APRÈS son bouton et AVANT le groupe 📏 Analysis (donc dans la rangée ✏️ Modify, sous ses boutons)');
 for (const needle of ['forceFieldRowsOf().map', 'Read on the molecule on screen',
   '⌖ Add the picked pair', '➕ Add a row', '💾 Save distances', '📂 Load distances',
   'Clear the list', 'Secondary structure → φ/ψ', 'calcDihedrals.map', 'calcRestraints.map']) {
@@ -1665,6 +1685,49 @@ has(calcPanel, 'k {row.k} {row.id === \'elec\' ? \'\' : row.unit}',
   '⚠ …et chaque famille affiche son POIDS et son UNITÉ telles que le module les écrit (aucun kcal/mol recopié dans le JSX)');
 has(calcPanel, '🧭 φ/ψ', '⚠ le tableau classé porte la lecture du squelette par modèle (colonne 🧭 φ/ψ)');
 has(calcPanel, 'r.rama ? `${r.rama.violations}/${r.rama.measured}`', '…avec les résidus hors bassin');
+
+/* ── ⚒ LES RÉGLAGES DE LA MINIMISATION, ET LE RAPPORT QUI SE REPLIE ───────────────────
+   La demande de cette session, mot pour mot : « The comments of the buttons “minimize” and
+   “energy” should be retractable to save space. Minimize should have more controls (number
+   of steps, criteria to converge, etc) ». Ce qui doit rester vrai :
+     · le ⚒ Minimise expose QUATRE réglages, derrière un bouton qui les REPLIE — `minSettings`
+       est faux au départ, donc la rangée ne coûte pas une ligne de plus tant qu'on ne demande
+       rien ;
+     · « steps » EST `calcMinimise`, le ⚒ sweeps du panneau 🧬 : UNE valeur, deux portes, donc
+       les deux cases ne peuvent pas se contredire ;
+     · les trois autres descendent TELS QUELS dans le moteur — `minimizeFrames` acceptait
+       `step`, `stepFloor` et `tries` depuis toujours, ils n'étaient pas exposés ;
+     · ils survivent au rechargement sous leurs propres clefs (`minStep`, `minStepFloor`,
+       `minTries`), bornés à la relecture comme les cases qui les écrivent ;
+     · le rapport du geste (le ✓/■/✕ écrit sous les boutons) se replie sur sa PREMIÈRE ligne
+       (`gestureMsgOpen` faux au départ, `line-clamp-1`) et s'efface (✕) — une ligne reste donc
+       toujours à l'écran, et la remarque d'origine « If I click nothing happens and nothing is
+       written anywhere » ne peut pas revenir par la porte du repli. */
+has(VIEW, 'const [minSettings, setMinSettings] = useState(false);',
+  '⚒ …les réglages de la descente sont REPLIÉS par défaut (la rangée ne grandit pas)');
+has(VIEW, 'const [gestureMsgOpen, setGestureMsgOpen] = useState(false);',
+  '⚒ …et le rapport des gestes aussi (replié sur sa première ligne)');
+has(forceGestures, 'onClick={() => setMinSettings((v) => !v)}',
+  '⚒ …ouverts par le bouton « ⚒ settings » de la rangée des gestes');
+for (const label of ['Minimisation steps', 'Minimisation initial step, in degrees',
+  'Minimisation convergence step floor, in degrees', 'Minimisation tries per hinge per sweep']) {
+  has(forceGestures, `aria-label="${label}"`,
+    `…le ⚒ a maintenant le réglage « ${label} » (la demande : « number of steps, criteria to converge, etc »)`);
+}
+has(forceGestures, '<input type="number" min="0" max="12" value={calcMinimise}',
+  '⚠ …et « steps » écrit `calcMinimise` : même valeur que le ⚒ sweeps du 🧬, jamais une seconde');
+has(VIEW, 'STRUCTURE_CALC_MIN_STEP, STRUCTURE_CALC_MIN_STEP_FLOOR, STRUCTURE_CALC_MIN_TRIES,',
+  '…les trois autres viennent du MODULE (le panneau n’invente aucun pas)');
+has(VIEW, 'step: calcMinStep, stepFloor: calcMinStepFloor, tries: calcMinTries,',
+  '…et ils descendent tels quels dans `minimizeFrames` (le moteur les lisait déjà)');
+has(VIEW, 'minStep: calcMinStep, minStepFloor: calcMinStepFloor, minTries: calcMinTries,',
+  '…ils survivent au rechargement, sous leurs propres clefs');
+has(VIEW, 'if (Number.isFinite(s.minStep)) setCalcMinStep(',
+  '…et la relecture les borne comme les cases qui les écrivent');
+has(forceGestures, "${gestureMsgOpen ? '' : 'line-clamp-1'}",
+  '⚠ le rapport se replie vraiment sur UNE ligne (`line-clamp-1`), ▸ le déplie');
+has(forceGestures, 'onClick={() => setGestureMsgOpen((v) => !v)}', '…et le ▸/▾ est à côté de lui');
+has(forceGestures, "onClick={() => setCalcMsg('')}", '…avec un ✕ qui l’efface');
 
 /* LES FENÊTRES SONT SÉPARÉES — chacune se rend de son côté, et plus rien ne s’ajoute au
    panneau U0001f9ec (la barre d’onglets a disparu avec les deux autres fenêtres). */
