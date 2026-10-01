@@ -1364,8 +1364,8 @@ ok(forceGestures.length > 800,
 has(calcButtonBlock, 'onClick={() => toggleCalcDock()}',
   'le bouton 🧬 OUVRE ET REFERME la fenêtre du calcul (le même bouton, comme 🌡 MD)');
 has(calcButtonBlock, '🧬 Structure calculation', '…et il dit ce qu’il fait');
-has(calcButtonBlock, 'title="🧬 STRUCTURE CALCULATION — OPEN OR CLOSE ITS PANEL',
-  '⚠ …en disant d’abord que c’est un PANNEAU PLEINE LARGEUR sous la rangée (la demande de cette session : « La finestra struttura calculation dovrebbe essere full width e retractable in alto invece che a sinistra. i parametri saranno quindi distribuiti in orizzontale. »)');
+has(calcButtonBlock, 'title="🧬 STRUCTURE CALCULATION — OPEN OR CLOSE ITS WINDOW',
+  '⚠ …en disant d’abord que c’est une FENÊTRE de la vue 3D, à sa gauche (la demande de cette session : « the structure calculation retractable window appearing at the left was ok. you didn’t have to change it. can you put it back as it was? »)');
 eq(VIEW.includes("{calcSection === 'distances' && (() => {"), false,
   '⚠ …et la SECTION pleine largeur de la barre a disparu : le calcul n’y tient plus qu’un bouton');
 /* ⚠ L'EMPLACEMENT DU BOUTON — la demande de cette session : « move the button structure
@@ -1740,50 +1740,37 @@ ok(VIEW.indexOf("{calcSection === 'rama' && (() => {") < 0,
   'ni celle du Ramachandran (elle est devenue le dock du viewer, ouvert par son bouton)');
 ok(VIEW.indexOf("{calcSection === 'distances' && (() => {") < 0,
   'ni le calcul de structure : la demande de cette session en a fait la fenetre `renderCalcWindow` (dock de la vue 3D)');
-/* ⚠ LE 🧬 A QUITTÉ LA RANGÉE DES DOCKS — la demande de cette session : « La finestra struttura
-   calculation dovrebbe essere full width e retractable in alto invece che a sinistra. i
-   parametri saranno quindi distribuiti in orizzontale. » Il panneau du calcul est donc rendu
-   comme celui du ⚙ : un enfant PLEINE LARGEUR du groupe ✏️ Modify, SOUS la rangée entière de
-   ses boutons (donc avant le groupe 📏 Analysis), et il ne reste RIEN du dock qu'il était :
-   ni l'onglet vertical « 🧬 STRUCT. », ni son bouton d'ouverture `toggleCalcDock(true)`. Le
-   bouton 🧬 de la rangée reste la seule porte, avec le ✕ du panneau lui-même. */
-eq(VIEW.includes('{calcDock ? renderCalcWindow() : ('), false,
-  '⚠ le panneau du calcul nest plus lune des deux branches de la rangee des docks (comme le ⚙)');
-eq(VIEW.includes('toggleCalcDock(true)'), false,
-  '…donc l’onglet vertical 🧬 STRUCT. et son bouton d’ouverture ont disparu avec le dock');
-eq(VIEW.includes('>🧬 STRUCT.</span>'), false,
-  '…il n’y a plus de colonne 🧬 sur le bord gauche de la vue 3D (aucun onglet vertical)');
-has(VIEW, '{calcDock && renderCalcWindow()}',
-  'il est rendu PLEINE LARGEUR (`w-full`), dans le groupe ✏️ Modify, comme le panneau ⚙');
-{
-  const iCalcPanel = VIEW.indexOf('{calcDock && renderCalcWindow()}');
-  const iModify = VIEW.indexOf('>✏️ Modify</span>');
-  ok(iCalcPanel > iModify && iCalcPanel < iAnalysisGrp,
-    '⚠ …APRÈS la rangée de ses boutons et AVANT le groupe 📏 Analysis (donc sous la rangée ✏️ Modify, pas à la gauche de la molécule)');
-}
+/* ⚠ LE 🧬 EST REVENU DANS LA RANGÉE DES DOCKS — la demande de cette session : « the structure
+   calculation retractable window appearing at the left was ok. you didn't have to change it.
+   can you put it back as it was? » La fenêtre du calcul est donc redevenue la TROISIÈME de la
+   vue 3D, à SA GAUCHE (comme 🌡 MD et 🪢 Ramachandran) : onglet vertical « 🧬 STRUCT. » quand
+   elle est repliée, bouton d'ouverture `toggleCalcDock(true)`, et gabarit de dock (colonne de
+   360 px à la hauteur de la vue). Le bouton 🧬 de la rangée reste la porte qui l'ouvre ET la
+   referme — c'est le MÊME `toggleCalcDock`. */
+has(VIEW, '{calcDock ? renderCalcWindow() : (',
+  'et la fenetre du calcul est bien rendue par le DOCK, comme MD et Ramachandran');
+has(VIEW, 'onClick={() => toggleCalcDock(true)}',
+  '…avec son bouton d’ouverture, qui la déplie de l’onglet vertical');
+has(VIEW, '>🧬 STRUCT.</span>',
+  '…et son onglet vertical 🧬 sur le bord gauche de la vue 3D quand elle est repliée');
+eq(VIEW.includes('{calcDock && renderCalcWindow()}'), false,
+  '⚠ …et elle n’est plus rendue en panneau pleine largeur dans le groupe ✏️ Modify');
 ok(VIEW.indexOf('Structure &amp; geometry') < 0,
   'et la barre d onglets elle-meme a disparu (les trois sections ne partagent plus rien)');
-has(VIEW, 'className="w-full bg-white border border-indigo-200 rounded-lg p-2 flex flex-col gap-1.5"',
-  'le panneau du calcul a le gabarit d’un PANNEAU (pas celui d’une colonne de dock) : `w-full`, même bordure et même arrondi que le ⚙');
-eq(VIEW.includes('className="shrink-0 w-[360px] flex flex-col gap-1.5 bg-white border border-indigo-200 rounded-xl p-2 overflow-hidden"'), false,
-  '⚠ …et le gabarit de l’ancien dock indigo du calcul (une colonne de 360 px à gauche de la vue) n’existe plus nulle part');
-/* ⚠ LES PARAMÈTRES SONT DESCENDUS EN TABLEAU — la seconde moitié de la demande : « C&#39;è un
-   sacco di commento sul calcolo (in francese misto a inglese) che potrebbe benissimo essere
-   messo in una tabella in maniera più chiara e pulita. » Les trois colonnes du tableau
-   (le réglage · sa valeur · ce qu&#39;il fait) et l&#39;en-tête sont donc dans le panneau 🧬, et la
-   rangée de libellés colorés qui les portait avant n&#39;y est plus.
-   ⚠ CE QUI EST INTERDIT, C'EST LE LIBELLÉ PEINT, PAS LE MOT ÉCRIT — le panneau ⚙ dit en toutes
-   lettres, dans SON infobulle, que le protocole n'est pas chez lui (« THE PROTOCOL IS NOT HERE:
-   n · m · 🔥 recuit · 🖼 frames … stay in the 🧬 window ») : c'est une phrase, pas un réglage. On
-   retire donc les infobulles (`title=…`) avant de chercher ce que l'utilisateur LIT. */
-for (const head of ['Setting', 'Value', 'What it does']) {
-  has(calcPanel, `>${head}</th>`, `⚠ la colonne « ${head} » du tableau des paramètres du 🧬`);
-}
-const paintedCalcPanel = calcPanel.replace(/title="[\s\S]*?"/g, '');
+has(VIEW, 'className="shrink-0 w-[360px] flex flex-col gap-1.5 bg-white border border-indigo-200 rounded-xl p-2 overflow-hidden"',
+  'la fenetre du calcul a le MEME gabarit que le dock MD : une colonne de 360 px, poussee a gauche de la vue');
+eq(VIEW.includes('className="w-full bg-white border border-indigo-200 rounded-lg p-2 flex flex-col gap-1.5"'), false,
+  '⚠ …et le gabarit de PANNEAU pleine largeur (`w-full`) qu’elle avait pris a disparu avec lui');
+/* ⚠ LA FENÊTRE A RETROUVÉ SA DISPOSITION — « put it back as it was » : le TABLEAU à trois
+   colonnes de la session précédente est reparti avec le panneau pleine largeur, et les
+   libellés colorés du panneau sont de nouveau écrits (chacun avec son infobulle). Aucun
+   réglage n'a bougé pour autant : les états (`calcStarts`, `calcKeep`, `calcAnneal`,
+   `calcAnnealFrame`) et le module sont exactement les mêmes qu'avant le passage en panneau. */
 for (const label of ['🔥 recuit', '🖼 frames', 'paliers']) {
-  eq(paintedCalcPanel.includes(label), false,
-    `⚠ …et l’ancien libellé « ${label} » ne se PEINT plus (les paramètres sont en tableau, en anglais, chacun avec sa phrase) : il ne survit que dans les infobulles`);
+  has(calcPanel, label, `⚠ …le libellé « ${label} » est de nouveau écrit dans la fenêtre du calcul`);
 }
+eq(calcPanel.includes('>Setting</th>'), false,
+  '⚠ …et l’en-tête « Setting » du tableau de la session précédente a disparu avec lui');
 
 /* LE PIQUAGE SE VOIT — l’atome cliqué est peint dans la vue 3D, de la couleur de son
    slot (A · B · C · D), et la peinture est vérifiée avant d’être gardée. */
