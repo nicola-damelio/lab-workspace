@@ -753,27 +753,32 @@ const bandBrushOf = (sections, opacity = 1) => {
 };
 
 export const bandProxiesOf = (comp) => {
-  const empty = { positions: new Float32Array(0), radii: new Float32Array(0), count: 0, reps: 0 };
+  const empty = { positions: new Float32Array(0), radii: new Float32Array(0), count: 0, reps: 0, debug: '' };
   const list = comp && comp.reprList;
-  if (!Array.isArray(list)) return empty;
+  if (!Array.isArray(list)) return { ...empty, debug: 'no reprList' };
   const brushes = [];
   let total = 0;
+  let debug = 'no flat representations found';
   list.forEach((el) => {
     try {
       const rep = (el && (el.repr || el)) || null;
       if (!rep || rep.visible === false) return;
-      if (!FLAT_STROKE_BY_TYPE[repTypeOf(rep, el)]) return;
+      const kind = repTypeOf(rep, el);
+      if (!FLAT_STROKE_BY_TYPE[kind]) { debug = `type '${kind}' not flat`; return; }
       const op = opacityOf(rep, el);
-      if (op <= INVISIBLE_OPACITY) return;
+      if (op <= INVISIBLE_OPACITY) { debug = `type '${kind}' transparent`; return; }
+      const geo = geometryOfRep(rep);
+      if (!geo) { debug = `type '${kind}' has no geometry buffer`; return; }
       const sections = bandSectionsOf(rep, el);
-      if (!sections) return;
+      if (!sections) { debug = `type '${kind}' sections failed`; return; }
       const brush = bandBrushOf(sections, op);
-      if (!brush.count) return;
+      if (!brush.count) { debug = `type '${kind}' brush empty`; return; }
       brushes.push(brush);
       total += brush.count;
-    } catch { }
+      debug = '';
+    } catch (e) { debug = `error: ${e.message}`; }
   });
-  if (!brushes.length) return empty;
+  if (!brushes.length) return { ...empty, debug };
   const positions = new Float32Array(total * 3);
   const radii = new Float32Array(total);
   let at = 0;
@@ -782,7 +787,7 @@ export const bandProxiesOf = (comp) => {
     radii.set(b.radii, at);
     at += b.count;
   });
-  return { positions, radii, count: total, reps: brushes.length };
+  return { positions, radii, count: total, reps: brushes.length, debug: '' };
 };
 
 const linkStepOf = (ra, rb) => Math.max(LINK_STEP_MIN, 0.5 * Math.min(ra, rb));
@@ -899,6 +904,7 @@ const layOut = (part, stride) => {
     edges: p === edges.length ? edges : edges.subarray(0, p),
     fills: new Int32Array(Math.max(1, p / 2)),
     band,
+    bandDebug: part.bandDebug || '',
   };
 };
 
@@ -981,9 +987,14 @@ const fillDrawnLinks = (parts, stride, maxAtoms) => {
       }
     }
   });
+  let bandDebug = '';
+  layouts.forEach((lay) => {
+    if (lay.bandDebug && !bandDebug) bandDebug = lay.bandDebug;
+  });
   return {
     positions: out, radii, count: k, filled: cost,
     bands: layouts.reduce((a, lay) => a + (lay.band ? lay.band.count : 0), 0),
+    bandDebug,
   };
 };
 
@@ -1007,7 +1018,7 @@ export const atomsFromStage = (stage, maxAtoms = RAY_SHADOW_DEFAULTS.maxAtoms) =
       const surface = drawnProxyRadiiOf(comp, n, data.radius, links);
       const bands = bandProxiesOf(comp);
       const bonds = drawnBondsOf(structure, links, n);
-      parts.push({ comp, data, n, drawn, surface, links, viewerM, bonds, bands });
+      parts.push({ comp, data, n, drawn, surface, links, viewerM, bonds, bands, bandDebug: bands.debug });
       total += drawn ? drawn.length : n;
     } catch { }
   });
@@ -1206,6 +1217,7 @@ export const buildRayShadowMask = ({ atoms, camera, light, width, height, option
     filled: Number(atoms && atoms.filled) || 0,
     strength: o.strength,
     bands: Number(atoms && atoms.bands) || 0,
+    bandDebug: atoms && atoms.bandDebug ? atoms.bandDebug : '',
     strokes: proxyStrokeSummary(atoms && atoms.radii, atoms && atoms.count),
     blur,
     rig: Number.isFinite(Number(light.width)) && Number.isFinite(Number(light.height))
@@ -1298,6 +1310,7 @@ export const rayShadowNote = (shadow, reason = '') => {
   const spheres = Number(shadow.spheres) || 0;
   const filled = Number(shadow.filled) || 0;
   const bands = Number(shadow.bands) || 0;
+  const bandDebug = shadow.bandDebug ? ` · ⚠ ribbon debug: ${shadow.bandDebug}` : '';
   const st = shadow.strokes;
   const strokes = st && st.list && st.list.length
     ? `· strokes ${st.list.map((e) => `${e.radius.toFixed(2)} Å×${e.hits}`).join(' · ')}${st.rest ? ` · +${st.rest}` : ''}`
@@ -1307,5 +1320,5 @@ export const rayShadowNote = (shadow, reason = '') => {
     : '';
   return `· cast shadows ${pct}%${covered == null ? '' : ` (${covered}% of the pixels) `}`
     + `${spheres ? ` · ${spheres} proxies${filled ? `(${filled} filling the drawn strokes)` : ''} ` : ''}`
-    + `${bands ? ` · ${bands} in the ribbon bands ` : ''}${strokes}${rig}`;
+    + `${bands ? ` · ${bands} in the ribbon bands ` : ''}${bandDebug}${strokes}${rig}`;
 };
