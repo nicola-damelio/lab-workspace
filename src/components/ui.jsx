@@ -325,7 +325,15 @@ export const useSectionMemory = (key, fallback = false) => {
 };
 
 export const CollapsibleSection = ({
-  title, icon, defaultOpen = false, children, headerExtra, className = '', openWhen = false
+  title, icon, defaultOpen = false, children, headerExtra, className = '', openWhen = false,
+  /* `keepMounted` : la section se replie, mais son contenu reste MONTÉ (masqué en
+     CSS) dès qu'elle a été ouverte une première fois — le viewer 3D s'en sert :
+     le replier ne doit pas le démonter, il relirait toute la structure au
+     dépliage. Tant qu'elle n'a jamais été ouverte, le contenu n'est pas monté du
+     tout (une section repliée ne coûte rien). `onToggle(state)` laisse la page
+     réagir : replier / déplier ne fait émettre aucun « resize » au navigateur,
+     les tracés et le viewer 3D se recalent donc par ce rappel. */
+  keepMounted = false, onToggle
 }) => {
   // Per-experiment memory (see SectionsScope above): the section reopens the
   // way the user left it when coming back to this experiment.
@@ -333,11 +341,16 @@ export const CollapsibleSection = ({
   const memoryKey = scope ? String(title || '') : null;
   const [isOpen, setIsOpen] = useState(() => readSectionOpen(scope, memoryKey, defaultOpen));
   const sectionsCmd = useSectionsCommand();
+  // Une section `keepMounted` n'est montée qu'après sa PREMIÈRE ouverture (puis
+  // elle le reste) : repliée au départ, elle ne paie rien.
+  const [everOpened, setEverOpened] = useState(isOpen);
 
   // Open/close AND remember it, so the choice survives leaving the page.
   const applyOpen = (next) => {
     setIsOpen(next);
+    if (next) setEverOpened(true);
     writeSectionOpen(scope, memoryKey, next);
+    if (onToggle) onToggle(next);
   };
 
   // Apply expand-all / collapse-all (also covers nested sections that mount
@@ -371,7 +384,9 @@ export const CollapsibleSection = ({
           </svg>
         </div>
       </div>
-      {isOpen && <div className="p-3">{children}</div>}
+      {keepMounted
+        ? (everOpened && <div className="p-3" style={{ display: isOpen ? 'block' : 'none' }}>{children}</div>)
+        : (isOpen && <div className="p-3">{children}</div>)}
     </div>
   );
 };

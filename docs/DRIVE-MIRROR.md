@@ -1569,3 +1569,158 @@ câblage réel dans `App.jsx` ; `node _library_restore_test.mjs` et
 `node _storage_drive_layout_test.mjs` — les chemins déclarés du rangement des
 documents de projet.
 
+## Page NMR : la formule 2D dans « Sequence and structure », le viewer 3D repliable, et les cases 🎯 Target nuclei (02/10/2026)
+
+Demandé mot pour mot : « remove the empty lines between the "sequence and
+structure" section and the viewer. Make the 3D Viewer section collapsible and
+independent of the 2D formula. Include the 2D formula in the "sequence and
+structure" section. the insert "target nuclei" does not act on the table as it
+should. Move its atom ticks in horizontal before the button "publication table".
+If ticked the corresponding nuclei must appear in the table. »
+
+Ce qui a changé (page NMR, `MolecularStructureSection` et `DataSection` de
+`src/components/NMRSections.jsx`) :
+
+* **Le sélecteur 2D ⇄ 3D a disparu** et personne ne cache plus personne :
+  * la **formule 2D** (l'ancien volet « 2D Formula » : `StructureSVGView` pour une
+    séquence, `OrganicViewer` pour un SMILES) vit maintenant **dans la
+    sous-section « Sequence and structure »** — celle qui porte la peinture 🖌️ et
+    sa bande de séquence —, qui est **ouverte par défaut** (c'est là que la
+    formule se voit ; `CollapsibleSection` mémorise le choix par expérience) ;
+  * le **viewer 3D a SA propre sous-section repliable** (« 🧬 3D viewer »), plus
+    bas, juste après. Une condition restée en mode 3D (`structureMode: '3d'`) la
+    rouvre toute seule : rien n'est perdu pour les expériences déjà remplies ;
+* **replier le viewer 3D ne le DÉMONTE pas** (`keepMounted` sur
+  `CollapsibleSection`, `src/components/ui.jsx`) : le contenu n'est créé qu'à la
+  première ouverture, reste monté ensuite (masqué en CSS) et la page est prévenue
+  de chaque repli / dépliage (`onToggle`) pour recaler le viewer et les tracés sur
+  la largeur — replier / déplier n'émet aucun « resize » du navigateur ;
+* **plus de grand blanc** entre la bande de séquence et le viewer : le bloc
+  `mt-6 border-t … pt-6` qui séparait la sous-section du volet 2D/3D est parti, les
+  deux sous-sections sont empilées côte à côte ;
+* le **🔍 Focus** et le **✖ Deselect** (le résidu suivi par la table 🔢, les tracés
+  et la bande de séquence) sont passés **dans l'en-tête de la sous-section 3D** :
+  ils restent accessibles même repliée, sans occuper une rangée ;
+* les cases **🎯 Target nuclei** (H / N / C / P) ont quitté leur encadré vertical du
+  haut de la page pour la **barre de la table 🔢, à l'horizontale, JUSTE AVANT le
+  bouton « 📄 Publication Table »** ;
+* **et elles agissent enfin sur la table** : une case cochée fait APPARAÎTRE les
+  lignes de ce noyau dans la table des déplacements, la décocher les retire (la
+  cellule « Residue » s'étend sur les lignes restantes). Le noyau est lu sur
+  l'étiquette que la colonne « Nucleus / Atom » affiche (`(¹H)`, `(¹³C)`, `(¹⁵N)`,
+  `(³¹P)`) par la règle `atomInSelectedNuclei` — une étiquette sans noyau reconnu
+  n'est jamais cachée, et une condition sans sélection (avant cette demande) ne
+  perd aucune ligne. Le même état `activeTest.selectedNuclei` commande toujours les
+  spectres simulés correspondants (³¹P, HSQC ¹⁵N), exactement comme avant.
+
+Ce qui n'a **pas** changé : la table des déplacements (Backbone / All Atoms,
+✨ Fill Estimated, 🗑 Empty all, 📥 Import Fitted Parameters, la sélection de
+cellules, la table de publication et sa fenêtre d'export avec ses propres cases
+« Include Nuclei »), le viewer 3D et son §1 General, le bouton **📥 Download 3D
+PDB File**, la reprise Drive du fichier de structure, et les pages MD / Docking
+(elles gardent leur sélecteur 2D / 3D).
+
+*Vérifier :* `node _nmr_nuclei_table_test.mjs` — la règle du filtre est extraite
+de la source et EXÉCUTÉE (les quatre étiquettes de noyau, cocher / décocher ³¹P
+et ¹⁵N, une étiquette sans noyau jamais cachée, une sélection absente qui ne cache
+rien), les cases sont bien dans la barre AVANT « 📄 Publication Table », l'ancien
+encadré vertical a disparu, la table filtre ses lignes avant de les dessiner, la
+formule 2D et la bande de séquence sont dans la MÊME sous-section, le viewer 3D a
+la sienne (avec `keepMounted` / `onToggle`) et plus aucun blanc ne les sépare ;
+`node _residue_numbering_panels_test.mjs`, `node _compact_sections_test.mjs`,
+`node _ss_dihedral_test.mjs`, `node _viewer_ui_layout_test.mjs` — les invariants
+des trois pages et du viewer 3D tiennent toujours.
+
+## Page NMR : « Cysteine states » à côté de la case de séquence, un quart de la page au plus (02/10/2026)
+
+Demandé mot pour mot : « Move teh "cysteine state" panel next to the "Protein
+Sequence (1-letter code)" panel. Its width shuld not be larger that 1/4 teh page
+width. »
+
+Ce qui a changé (page NMR, « Set Up » de `MolecularStructureSection`,
+`src/components/NMRSections.jsx`) :
+
+* la case **« Sequence (1-letter code) »** (son en-tête est `{d.typeLabel}` :
+  Protein, DNA ou RNA) et le panneau **« Cysteine states »** (les états −SH /
+  S−S / auto de chaque cystéine, les ponts ⚭ et la couleur de chaque pont) sont
+  désormais **côte à côte**, dans UNE SEULE rangée (`flex flex-col md:flex-row` :
+  empilés en dessous de `md`, comme avant, et côte à côte au-dessus). C'est la
+  case de séquence qui garde toute la place restante (`flex-1 min-w-0`) ;
+* le panneau est **la colonne de droite de cette rangée** et **porte lui-même sa
+  largeur** : `md:w-1/4` borné par `md:max-w-[25%]` (un quart de la page au
+  plus, jamais plus), `shrink-0` (la rangée ne peut pas l'élargir) et `min-w-0`
+  (c'est son contenu qui se replie, pas la colonne qui s'élargit). Sous `md`, il
+  reprend toute la largeur, empilé sous la case ;
+* **aucune colonne vide** : la largeur est portée par le NŒUD RENDU du panneau,
+  qui n'existe que pour une **protéine** ayant au moins une cystéine (l'IIFE
+  écrit `if (cysPositions.length === 0) return null`). En DNA / RNA, ou pour une
+  protéine sans Cys, la case de séquence reprend donc toute la rangée — ni
+  colonne fantôme, ni « gap » de flex ;
+* plus de `mt-2` de superposition : l'espacement entre la case et le panneau est
+  celui de la rangée (`gap-6`), comme entre deux colonnes normales.
+
+Ce qui n'a **pas** changé : le contenu même du panneau (défauts Reduced /
+Oxidized, les états par Cys, la définition des ponts ⚭ et leur retrait, les
+couleurs de pont, la note « oxidized Cys ¹³Cβ ≈ 39.6 ppm · reduced ≈ 28.0 ppm »,
+la numérotation 🔢 qui suit le viewer 3D, et les états comme les ponts toujours
+rangés par POSITION de séquence) ; la case de séquence (longueur, note de nature,
+avertissement « sequence is empty ») ; le SMILES d'une molécule organique ; les
+sucres et les phospholipides ; la formule 2D dans « Sequence and structure » ; le
+viewer 3D ; les pages MD et Docking.
+
+*Vérifier :* `node _cysteine_panel_layout_test.mjs` — la rangée et l'ordre des
+deux colonnes (le panneau est un FRÈRE de la case, pas dedans), la largeur lue
+dans la source puis **calculée** pour des pages de 768 à 2560 px (jamais plus
+d'un quart pour le panneau, jamais moins de trois quarts pour la case), la règle
+qui repère les cystéines extraite de la source et **exécutée** (aucune colonne
+vide sans Cys, rien en DNA / RNA), et tout ce qui n'a pas bougé ;
+`node _viewer_render_smoke_test.mjs` — le rendu réel de la page NMR (SSR) ne
+jette pas, la nouvelle rangée comprise.
+
+## Page d'expérience : « Compounds & Biological Models » à côté de « Classification » (02/10/2026)
+
+Demandé mot pour mot : « move teh "compounds and biological models" panel nxt to
+teh "classification" panel ».
+
+Ce qui a changé (bloc GENERAL de `src/components/TestShellRenderer.jsx`) :
+
+* les deux sous-sections COURTES **« Classification »** et **« Compounds &
+  Biological Models »** vivaient déjà dans la MÊME grille, mais la grille ne
+  s'ouvrait en deux colonnes qu'au palier **`xl`**. Or un palier Tailwind est en
+  **rem**, et l'application écrit la taille racine (échelle d'affichage,
+  `src/utils/uiScale.js` — **15 px par défaut**) : `xl` valait donc **1200 px**
+  (et jusqu'à 1440 px si l'échelle était agrandie). Sur un écran de portable les
+  deux volets restaient EMPILÉS l'un sous l'autre alors que la page avait la
+  place. La grille passe au palier **`md`** (`md:grid-cols-2 md:gap-x-4`), soit
+  **720 px** au grossissement par défaut et **768 px** quand le navigateur
+  reprend son 16 px : « Classification » reste la colonne de GAUCHE,
+  « Compounds & Biological Models » celle de DROITE, et sous `md` (téléphone)
+  elles s'empilent comme avant ;
+* les deux colonnes font EXACTEMENT la moitié : `grid-cols-2` vaut
+  `repeat(2, minmax(0, 1fr))`, donc aucun contenu ne peut élargir la sienne ;
+* `min-w-0` sur les DEUX boîtes (`CollapsibleSection … className="min-w-0"`)
+  garantit la même chose du côté du contenu : une boîte ne peut pas être poussée
+  plus large que sa colonne, et passer sous sa voisine ;
+* **aucune colonne vide** : la grille n'ouvre ses deux colonnes que si la
+  sous-section « Compounds & Biological Models » est RENDUE
+  (`(showCompoundsSection || CompoundsSection)`) — sans elle, la grille reste
+  `grid-cols-1` et Classification occupe toute la largeur, sans « gap » de
+  grille.
+
+Ce qui n'a **pas** changé : le contenu des deux sous-sections (le classement
+primaire / secondaire et la liste de catégories de la Library ; les listes
+« Compound / Sample Label(s) » et « Cell Lines / Biological Models », avec la
+`CompoundsSection` propre à certaines pages), leur ORDRE, leur état
+replié/déplié mémorisé par expérience, et la grille interne des deux listes
+déroulantes (`lg:grid-cols-2`).
+
+*Vérifier :* `node _compact_sections_test.mjs` — les deux sous-sections
+partagent la grille à deux colonnes, Classification en premier, les deux boîtes
+en `min-w-0`, plus aucun palier `xl:grid-cols-2`, la grille ne s'ouvre que si le
+volet Compounds est rendu, et le palier est lu dans la source puis CONVERTI en
+pixels pour les deux tailles racine possibles (720 px au grossissement par
+défaut, 768 px au 16 px du navigateur) : le remettre à `xl` remonte le seuil à
+1200 px et le test échoue. `node _viewer_render_smoke_test.mjs` — le rendu réel
+des onze pages ne jette pas, la rangée comprise.
+
+
