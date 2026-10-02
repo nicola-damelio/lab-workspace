@@ -486,7 +486,7 @@ has("requestStructureLoad({ file: null, url: null, text: sequenceStructureText, 
 has('onClick={buildFromSequence}', '[modify] bouton 🧬 Structure from sequence');
 has('disabled={!sequenceStructureText}', '[modify] …inactif tant qu\'aucune séquence n\'est saisie');
 has('const buildFromSequence = () => {', '[modify] …son implémentation (le PDB affiché est rangé, jamais perdu)');
-has('🧬 Structure from sequence', '[modify] libellé du bouton (renommé : il dit ce qu\'il FABRIQUE)');
+has('🧬 Struct from sequence', '[modify] libellé du bouton (COURT : « Struct », la demande de la session des noms courts — voir [13i])');
 /* ── BLEU CLAIR — la demande de cette session : « move the button structure
    calculation next to the button structure from sequence and color the latter in light
    blue. » Le bouton de la séquence est donc en sky (bleu clair), et l'ancien blanc /
@@ -790,18 +790,21 @@ has('const legacy = loadViewerSetups();', '[13f] les setups nommés deviennent d
        décide où la largeur se coupe — la bande vide à sa droite est ce que ✏️ Modify
        remplit maintenant ;
      · ✏️ Modify ne revient JAMAIS à la ligne (`flex-nowrap`, le gabarit de la bande 🎞 du
-       film : « sur un panneau étroit elle défile horizontalement, donc aucun contrôle n'est
-       jamais repoussé dessous ») : ses boutons restent sur UNE rangée, avec les écarts
-       resserrés (`gap-0.5`) et `max-w-full` + `overflow-x-auto` pour qu'un panneau étroit
-       fasse défiler la BOÎTE, jamais la barre entière. */
+       film) : ses boutons restent sur UNE rangée, avec les écarts resserrés (`gap-0.5`).
+   ⚠ DEPUIS CETTE SESSION, ELLE NE DÉFILE PLUS NON PLUS, ET SES NOMS SONT COURTS — la demande,
+   mot pour mot : « in MODIFY, instead of using a scrolling bar write shorter names, for example
+   “Params & Constraints” instead of “Parameters and Constraints”, “SS:shown/hidden” instead of
+   “disulphide:shown/hidden”, “Struct” instead of “Structure” ». Voir le bloc [13i]. */
 has('elimina la riga vuota tra la sezione',
   '[13h] la demande de la session est écrite dans le fichier (contrat du layout)');
 gone('<div className="flex items-center gap-1 w-full overflow-x-auto">\n<div className="flex flex-wrap items-center gap-1 rounded-md border border-teal-200',
   '[13h] ⚠ 🎨 Styles n’est PLUS dans une rangée pleine largeur (c’est elle qui laissait la bande vide)');
 has('cerca di fare entrare tutti i pulsanti di MODIFY in una sola riga',
   '[13h] …et le second point de la demande aussi');
-has('flex flex-nowrap items-center gap-0.5 rounded-md border border-amber-200 bg-amber-50/40 px-1 py-0.5 max-w-full overflow-x-auto',
+has('flex flex-nowrap items-center gap-0.5 rounded-md border border-amber-200 bg-amber-50/40 px-1 py-0.5',
   '⚠ [13h] la boîte ✏️ Modify est `flex-nowrap` : ses boutons ne peuvent plus s’empiler sur plusieurs lignes');
+gone('px-1 py-0.5 max-w-full overflow-x-auto',
+  '⚠ [13h] …et elle ne DÉFILE plus : `max-w-full` + `overflow-x-auto` (la barre de défilement de la demande suivante) ont disparu');
 gone('<div className="flex flex-wrap items-center gap-1 rounded-md border border-amber-200 bg-amber-50/40 px-1.5 py-1">',
   '⚠ [13h] …l’ancienne boîte `flex-wrap` (celle qui cassait la rangée) a disparu');
 {
@@ -810,6 +813,28 @@ gone('<div className="flex flex-wrap items-center gap-1 rounded-md border border
   ok(iModifyBox > 0 && iModifyBox < iModifyLabel && iModifyLabel - iModifyBox < 900,
     '[13h] …et c’est bien la boîte DU GROUPE ✏️ Modify (elle s’ouvre juste avant son étiquette)');
 }
+
+/* 13i. LES NOMS COURTS DE ✏️ MODIFY — la demande de CETTE session : « in MODIFY, instead of
+   using a scrolling bar write shorter names, for example “Params & Constraints” instead of
+   “Parameters and Constraints”, “SS:shown/hidden” instead of “disulphide:shown/hidden”, “Struct”
+   instead of “Structure” ». Quatre libellés, chacun vérifié — et LES INFOBULLES RESTENT LONGUES :
+   elles disent toujours tout ce que le bouton fait (seul ce qui est ÉCRIT SUR la rangée change). */
+has('in MODIFY, instead of using a scrolling bar write shorter names',
+  '[13i] la demande est écrite dans le fichier (contrat des libellés)');
+has('⚙ Params & Constraints{paramsDock ?', '[13i] le panneau ⚙ dit « Params & Constraints »');
+gone('⚙ Parameters and Constraints{paramsDock', '[13i] …son ancien libellé long a disparu de la rangée');
+has('PARAMETERS AND CONSTRAINTS — the description of the force field',
+  '[13i] …mais son infobulle dit toujours tout (elle n’a pas été raccourcie)');
+has("'⚭ SS: shown'", "[13i] l'interrupteur du pont disulfure dit « SS: shown »");
+has("'⚭ SS: hidden'", '[13i] …et « SS: hidden » dans l’autre état');
+gone("Disulfides: shown'", '[13i] …« Disulfides: shown » n’est plus écrit sur la rangée');
+has('🧬 Struct from sequence\n</button>',
+  '[13i] le modèle bâti sur la séquence dit « Struct from sequence »');
+gone('🧬 Structure from sequence\n</button>',
+  '[13i] …« Structure from sequence » a disparu de la rangée');
+has('🧬 Struct calc{calcResult ?', '[13i] le calcul dit « Struct calc » (avec son compte m/tried)');
+gone('🧬 Structure calculation{calcResult',
+  '[13i] …« Structure calculation » a disparu de la rangée');
 
 /* ── Bilan ───────────────────────────────────────────────────────────────── */
 console.log(`_viewer_ui_layout_test.mjs — ${passed} assertions OK`);

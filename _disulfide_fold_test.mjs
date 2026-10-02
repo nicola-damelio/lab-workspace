@@ -485,7 +485,7 @@ ok(VIEW.indexOf('applyDisulfideDisplay(component') > VIEW.indexOf('try { enforce
 has(VIEW, 'const [disulfidesShown, setDisulfidesShown] = useState(true);',
   'le pont est AFFICHÉ par défaut (rien ne bouge tant que le bouton n’est pas cliqué)');
 has(VIEW, 'const toggleDisulfideBonds = () => {', 'le geste existe');
-has(VIEW, "{disulfidesShown ? '⚭ Disulfides: shown' : '⚭ Disulfides: hidden'}", 'le bouton dit SON état');
+has(VIEW, "{disulfidesShown ? '⚭ SS: shown' : '⚭ SS: hidden'}", 'le bouton dit SON état (libellé COURT : la demande de la session des noms courts — « SS:shown/hidden » au lieu de « Disulfides:shown/hidden »)');
 has(VIEW, 'disabled={disulfideDrawn.bonds.length === 0}',
   'le bouton est inactif quand la structure à l’écran ne dessine aucun pont');
 has(VIEW, "flashDisulfideShowMsg('⚠️ No disulphide bond is drawn in this model — nothing to hide.",

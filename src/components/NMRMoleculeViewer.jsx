@@ -175,6 +175,12 @@ import {
      (aucun chiffre de φ/ψ n'est écrit dans le JSX). */
   backboneTorsionsOf, secondaryDihedralRestraintsOf, dihedralPenaltyOf,
   SS_DIHEDRALS, SS_DIHEDRAL_LETTERS, SS_DIHEDRAL_TOLERANCE,
+  /* 🧪 LE pH ET LA FORCE IONIQUE — les deux réglages de la CHIMIE du champ (les pKa des
+     familles, κ, la longueur de Debye, et la lecture de la charge) viennent du module : le
+     panneau n'écrit aucun pKa, aucun 3.29 et aucun chiffre d'écrantage (voir §2bis et §4bis de
+     utils/forceFieldKcal.js, réexportés par utils/structureCalc.js). */
+  ffDebyeKappaOf, ffDebyeLengthOf, partialChargesOf,
+  FF_PKA, FF_PH_DEFAULT, FF_IONIC_STRENGTH_DEFAULT, FF_DEBYE_FACTOR,
 } from '../utils/structureCalc';
 // ⚒ « Model build » A ÉTÉ RETIRÉ DE L'INTERFACE cette session — la demande :
 // « The torsion section must be drastically reduced. eliminate comments and
@@ -8079,6 +8085,83 @@ const [mdBox, setMdBox] = useState(STRUCTURE_CALC_SOLVENT_BOX);
    ▶ MD, ⚒ Minimise, ⟳ Energy) la lisent, donc un modèle ne peut pas être construit sous un
    jeu de règles et lu sous un autre ; le module en donne la liste et la description. */
 const [calcTargetFunction, setCalcTargetFunction] = useState(STRUCTURE_CALC_TARGET_FUNCTION);
+/* 🧪 LE pH ET LA FORCE IONIQUE — LA DEMANDE DE CETTE SESSION : « In MD and “structure
+   calculation” allow to define the pH and ionic strength so that the molecule can be protonated
+   or deprotonated and charge can be taken into consideration. »
+   Les deux vivent ICI, chez le CHAMP DE FORCES (le panneau ⚙ Parameters and Constraints), et
+   pas dans la fenêtre 🌡 : ce sont des propriétés de la CHIMIE, donc les QUATRE gestes (▶ Run,
+   ▶ MD, ⚒ Minimise, ⟳ Energy) les lisent — un modèle ne peut pas être construit sous une chimie
+   et lu sous une autre. Le texte tapé est la SEULE source (comme la cible d'une distance et son
+   poids) : une case vidée ou illisible vaut le défaut du module, jamais un zéro supposé. */
+const [calcPhText, setCalcPhText] = useState('');
+const [calcIonicText, setCalcIonicText] = useState('');
+/** LE pH DEMANDÉ — `null` quand la case est vide ou illisible : c'est « la chimie que le graphe
+ *  montre » (`FF_PH_DEFAULT`), PAS un pH 0 qui déprotonerait tout (le module refuse déjà le
+ *  vide ; ici c'est le même contrat, côté panneau). Les pKa du module disent ce que le pH fait :
+ *  carboxylate 3.9, phosphate 6.8, thiolate 8.3, ammonium 9.0, guanidinium 12.5. */
+const calcPhOf = () => {
+  const t = String(calcPhText == null ? '' : calcPhText).trim().replace(',', '.');
+  if (!t) return FF_PH_DEFAULT;
+  const v = Number(t);
+  return Number.isFinite(v) && v >= 0 && v <= 14 ? v : FF_PH_DEFAULT;
+};
+/** LA FORCE IONIQUE DEMANDÉE (mol/L) — une case vide ou illisible vaut 0 : « pas de sel », le
+ *  défaut du module (`FF_IONIC_STRENGTH_DEFAULT`), et κ = 0 y rend EXACTEMENT le Coulomb
+ *  d'avant cette fonctionnalité. */
+const calcIonicOf = () => {
+  const t = String(calcIonicText == null ? '' : calcIonicText).trim().replace(',', '.');
+  const v = Number(t);
+  return Number.isFinite(v) && v > 0 ? v : FF_IONIC_STRENGTH_DEFAULT;
+};
+/** 🧪 CE QUE LA CHIMIE VAUT SUR LA MOLÉCULE À L'ÉCRAN — la lecture LÉGÈRE du module
+ *  (`partialChargesOf`, LA fonction qui donne ses charges au champ) : charge nette, groupes
+ *  ionisables que le graphe montre et leur degré d'ionisation à ce pH-là, plus κ et la longueur
+ *  de Debye de la force ionique. C'est ce que le panneau écrit à côté de ses deux cases — la
+ *  MÊME lecture que les gestes, donc aucun second calcul de charges. Rend `null` sans molécule :
+ *  le panneau n'affiche alors aucun chiffre inventé. */
+const calcChemNow = () => {
+  const live = calcGeometryNow();
+  if (!live) return null;
+  const { geom } = live;
+  const ph = calcPhOf();
+  const ionicStrength = calcIonicOf();
+  const q = partialChargesOf({ elements: geom.elements, bonds: geom.bonds, ph });
+  const kappa = ffDebyeKappaOf(ionicStrength);
+  return {
+    ph: q.ph, net: q.net, method: q.method,
+    groups: (q.ionisation && q.ionisation.groups) || [],
+    atWork: !!(q.ionisation && q.ionisation.atWork),
+    ionicStrength, kappa,
+    debyeLength: kappa > 0 ? ffDebyeLengthOf(kappa) : null,
+  };
+};
+/** 🧪 LA PHRASE DE LA CHIMIE — ce qu'un geste a lu (son `chemistry`) ou ce qu'une lecture du
+ *  champ rend (`ph`, `kappa`, `charges`), mis en mots : le pH, la charge nette, les groupes
+ *  ionisables et l'écrantage ionique. `''` quand il n'y a rien à dire — un rapport sans chimie
+ *  n'a pas de ligne de chimie, et le module DIT toujours si le pH a travaillé (`atWork`). */
+const calcChemNote = (c) => {
+  if (!c) return '';
+  const groups = Array.isArray(c.groups) ? c.groups
+    : ((c.ionisation && Array.isArray(c.ionisation.groups)) ? c.ionisation.groups : []);
+  const net = Number.isFinite(Number(c.net)) ? Number(c.net)
+    : ((c.charges && Number.isFinite(Number(c.charges.net))) ? Number(c.charges.net) : null);
+  const ph = c.ph == null ? null : Number(c.ph);
+  const I = Number(c.ionicStrength) > 0 ? Number(c.ionicStrength) : 0;
+  const kappa = Number(c.kappa) > 0 ? Number(c.kappa) : 0;
+  const debye = Number(c.debyeLength) > 0 ? Number(c.debyeLength) : null;
+  const atWork = c.atWork != null ? !!c.atWork : !!(c.ionisation && c.ionisation.atWork);
+  const bits = [];
+  if (ph != null) bits.push(`🧪 pH ${ph}${atWork ? '' : ' (no ionisable group of this molecule moved)'}`);
+  if (net != null) bits.push(`net charge ${net >= 0 ? '+' : ''}${net.toFixed(2)} e`);
+  if (groups.length) {
+    const charged = groups.filter((g) => g.factor > 1e-6).length;
+    bits.push(`${charged}/${groups.length} ionisable group${groups.length === 1 ? '' : 's'} charged`);
+  }
+  bits.push(kappa > 0
+    ? `I = ${I} mol/L — the charges are screened (κ = ${kappa.toFixed(2)} Å⁻¹, Debye length ${debye} Å)`
+    : 'no ionic screening (I = 0: the charges see each other in full)');
+  return ` · ${bits.join(' · ')}`;
+};
 /* 🪢 ω VARIE — l'option de la dynamique ISOLÉE (la sienne : le calcul a `calcOmegaFree`). */
 const [mdFreeOmega, setMdFreeOmega] = useState(STRUCTURE_CALC_FREE_OMEGA);
 const CALC_STORE_KEY = 'labViewerCalcState';
@@ -8143,6 +8226,11 @@ useEffect(() => {
     if (Number.isFinite(s.mdRunBox)) setMdBox(Math.max(STRUCTURE_CALC_SOLVENT_BOX_MIN,
       Math.min(STRUCTURE_CALC_SOLVENT_BOX_MAX, Math.round(s.mdRunBox))));
     if (typeof s.mdRunOmega === 'boolean') setMdFreeOmega(s.mdRunOmega);
+    /* 🧪 …ET LA CHIMIE DU CHAMP : le pH et la force ionique tapés reviennent tels quels (le
+       TEXTE, comme la cible d'une distance). Une session enregistrée avant cette ligne n'en a
+       pas : les deux cases restent alors à leur défaut (pH « la chimie du graphe », I = 0). */
+    if (typeof s.chemPh === 'string') setCalcPhText(s.chemPh);
+    if (typeof s.chemIonic === 'string') setCalcIonicText(s.chemIonic);
     if (typeof s.mdRunRestraints === 'boolean') setMdUseRestraints(s.mdRunRestraints);
     /* 🎯 …ET LA FONCTION CIBLE DU CALCUL — résolue par le module (un identifiant inconnu
        rend `classic`), donc une session ancienne revient sur le champ historique. */
@@ -8177,13 +8265,16 @@ useEffect(() => {
       /* 📦 …ET L'ARÊTE DE LA BOÎTE EXPLICITE (le réglage « de la boîte » de cette session),
          plus 🎯 LA FONCTION CIBLE DU CALCUL : les deux survivent au rechargement. */
       mdRunBox: mdBox, targetFunction: calcTargetFunction,
+      /* 🧪 …ET LA CHIMIE DU CHAMP — le pH et la force ionique tapés (le TEXTE, comme la cible
+         d'une distance : une case à moitié écrite revient à moitié écrite). */
+      chemPh: calcPhText, chemIonic: calcIonicText,
     }));
   } catch { /* le stockage local est un confort, pas une donnée */ }
 }, [calcRestraints, calcStarts, calcKeep, calcAnneal, calcAnnealFrame, calcMdSteps, calcMdDt,
   calcMdEquil, calcMinimise, calcMinStep, calcMinStepFloor, calcMinTries,
   calcMdHot, calcMdCold, calcOmegaFree,
   mdSteps, mdDt, mdImage, mdSolvent, mdBox, mdTemp, mdFreeOmega, mdUseRestraints,
-  calcTargetFunction]);
+  calcPhText, calcIonicText, calcTargetFunction]);
 /* …ET LA RÉSOLUTION DES ATOMES REVENUS, dès que la molécule est là — les DEUX côtés d'une
    ligne : sans les deux, elle resterait « pas prête » jusqu'à ce qu'on la retape. Une
    ligne dont un nom ne se résout pas GARDE son texte et dit POURQUOI (comme la frappe). */
@@ -8523,6 +8614,53 @@ const sectionTreesOf = (sections) => {
   const out = {};
   (sections || []).forEach((s) => { out[s.id] = sectionTreeOf(s.id, s.kind); });
   return out;
+};
+/** ⚠ UNE MOLÉCULE QUI QUITTE LA SCÈNE EMPORTE SES SECTIONS — le rapport de cette session :
+ *  « After the structure calculation the styling window reports each molecule twice. In MD with
+ *  explicit solvent the water is added twice. » Les DEUX étaient exacts, et la cause est ici :
+ *  le CATALOGUE des sections (`sectionCatalog`, la source de la fenêtre de style) n'était jamais
+ *  purgé. `ensureSections` AJOUTE une entrée par molécule ; rien n'en RETIRAIT quand le
+ *  composant sortait de la scène — la famille d'un calcul que le suivant remplace (`fam_…`),
+ *  la boîte d'eau qu'un ▶ MD redessine (`solv_…`, un identifiant NEUF à chaque dessin), une
+ *  molécule ajoutée qu'on 🗑, un « 🗑 Clear ». Leurs sections RESTAIENT dans la fenêtre de style
+ *  avec leur nom, et la suivante s'ajoutait à côté : la même molécule deux fois, la même boîte
+ *  d'eau deux fois — une morte, une vivante.
+ *  Ce geste est le SEUL retrait, et il défait exactement ce qu'`ensureSections` a écrit :
+ *  l'entrée du catalogue, le look `sectionLooksRef`, le ✔ `sectionVisRef` et le nom
+ *  `molNamesRef` de la molécule — par identifiant GLOBAL de section (`<molécule>::<clé>`), donc
+ *  rien d'autre n'est effacé. La signature du catalogue est ensuite périmée et un rendu est
+ *  demandé, sans quoi l'état garderait la molécule partie.
+ *  ⚠ AUCUN composant NGL n'est touché ici : celui qui retire la molécule l'a déjà fait
+ *  (`calcRemoveWaterBox`, `calcAddFamilyToBar`) ou va le faire (le 🗑 d'une molécule ajoutée). */
+const forgetSectionMolecules = (ids) => {
+  const gone = new Set(Array.from(ids || []).map((k) => String(k)));
+  if (!gone.size) return;
+  const cat = sectionCatalogRef.current || {};
+  const next = {};
+  let changed = false;
+  Object.keys(cat).forEach((molKey) => {
+    if (gone.has(molKey)) { changed = true; return; }
+    next[molKey] = cat[molKey];
+  });
+  if (changed) {
+    sectionCatalogRef.current = next;
+    sectionCatalogSigRef.current = '';
+    setSectionCatalog(next);
+  }
+  const kills = (key) => Array.from(gone).some((molKey) => String(key).startsWith(`${molKey}::`));
+  const looks = { ...(sectionLooksRef.current || {}) };
+  const vis = { ...(sectionVisRef.current || {}) };
+  let dropped = false;
+  Object.keys(looks).forEach((k) => { if (kills(k)) { delete looks[k]; dropped = true; } });
+  Object.keys(vis).forEach((k) => { if (kills(k)) { delete vis[k]; dropped = true; } });
+  if (dropped) {
+    sectionLooksRef.current = looks;
+    sectionVisRef.current = vis;
+    setSectionLooks(looks);
+    setSectionVis(vis);
+  }
+  gone.forEach((molKey) => { delete molNamesRef.current[molKey]; });
+  bumpSectionEpoch();
 };
 // The sections switched OFF (the ✔ of the bar): a molecule of water / an ion is off
 // until its ✔ is ticked (the request: a solvated box must not block the view).
@@ -8882,6 +9020,7 @@ const pendingExtraFilesRef = useRef([]);           // [{ file, n }]
 // of any new main-structure load — NOT after it — so a freshly-selected batch
 // of files is never wiped by the main load that runs concurrently with them.
 const clearExtraMolecules = useCallback(() => {
+  forgetSectionMolecules(extraCompsRef.current.map((e) => e.id));   // leurs sections partent avec
   extraCompsRef.current.forEach(({ comp }) => {
     try { if (stageRef.current) stageRef.current.removeComponent(comp); } catch {}
   });
@@ -10731,8 +10870,16 @@ const calcAddPairRow = () => {
   }
   const key = i < j ? `${i}-${j}` : `${j}-${i}`;
   const label = pair.label;
+  /* ⚖ LE POIDS PAR DÉFAUT EST ÉCRIT, PAS SEULEMENT SUPPOSÉ — la demande de cette session :
+     « when I add a distance in parameters and constraints the program waits for the weight to
+     accept the constraints but it would be easier to give weight 1 by default. the user can then
+     decide to change it. otherwise it seems that the constraints are there but the program does
+     not take them in consideration. » La ligne entre donc avec **1** DANS SA CASE (et non une
+     case vide au-dessus d'un placeholder) : le lecteur VOIT ce que la ligne pèse, et peut le
+     changer — 2 pour qu'elle tire plus fort, 0 pour la mettre en pause. La physique, elle, n'a
+     pas changé d'un iota : `restraintWeightOf(1)` vaut 1, exactement ce que valait la case vide. */
   const row = {
-    key, i, j, target, label, say: '', sayA: '', sayB: '',
+    key, i, j, target, label, weight: 1, w: '1', say: '', sayA: '', sayB: '',
     a: pair.slots[0].label, b: pair.slots[1].label,
     la: pair.slots[0].label, lb: pair.slots[1].label,
   };
@@ -11255,12 +11402,17 @@ const disulfideConductedNote = () => {
     + ` ${SS_BOND_LENGTH} Å (the two Sγ are pulled together like a distance of the table)`;
 };
 
-/** AJOUTER UNE LIGNE VIDE — la table s'écrit à la main : deux atomes, une cible. */
+/** AJOUTER UNE LIGNE VIDE — la table s'écrit à la main : deux atomes, une cible.
+ *  ⚖ ELLE AUSSI NAÎT AVEC SON POIDS ÉCRIT (`1`) — la demande de cette session : « it would be
+ *  easier to give weight 1 by default. the user can then decide to change it. » Une case vide
+ *  affichait un placeholder « 1 » que la ligne n'avait pas : le lecteur croyait devoir le taper
+ *  pour que la contrainte soit prise en compte. La ligne porte donc 1 (et `w: '1'`, le texte
+ *  montré), et rien d'autre ne change — `restraintWeightOf(1)` vaut le défaut d'avant. */
 const calcAddBlankRow = () => {
   calcRowSeqRef.current += 1;
   const key = `row-${calcRowSeqRef.current}`;
   setCalcRestraints((list) => (list.length >= STRUCTURE_CALC_MAX_RESTRAINTS ? list
-    : [...list, { key, i: null, j: null, target: null, a: '', b: '', la: '', lb: '', say: '', sayA: '', sayB: '' }]));
+    : [...list, { key, i: null, j: null, target: null, weight: 1, w: '1', a: '', b: '', la: '', lb: '', say: '', sayA: '', sayB: '' }]));
   if (calcRestraints.length >= STRUCTURE_CALC_MAX_RESTRAINTS) {
     setCalcMsg(`✕ The module takes at most ${STRUCTURE_CALC_MAX_RESTRAINTS} distances — this line was not added.`);
   }
@@ -11404,6 +11556,10 @@ const calcReportOf = (retained, ranked) => {
     + ` + clash penalty ${best.clashPenalty.toFixed(1)}) · ${best.satisfied} distance${best.satisfied === 1 ? '' : 's'} respected${worst}`
     + `${best.clashes ? ` · ⚠ ${best.clashes} atom pair${best.clashes === 1 ? '' : 's'} closer than 1.45 Å in that model`
       : ' · ✓ no atom pair closer than 1.45 Å in it'}`
+    /* 🧪 LA CHIMIE DU CALCUL — le pH et la force ionique lus par le CHAMP qui a noté le
+       meilleur modèle (`best.chemistry`, rempli par le moteur : voir `structureAttemptFrames`),
+       donc ce que le calcul a VRAIMENT conduit — pas ce que le panneau affichait. */
+    + calcChemNote(best.chemistry)
     + ` · bonds ${best.bondRms.toFixed(4)} Å rms, angles ${best.angleRms.toFixed(2)}° rms`
     + ` · ${best.moved} atom${best.moved === 1 ? '' : 's'} moved`
     + `${drawLine}${annealLine}${protocolLine}${mdLine}${omegaLine}${omegaFreeLine}${ramaLine}${spreadLine}${distLine}${restLine}.`
@@ -11417,9 +11573,12 @@ const calcReportOf = (retained, ranked) => {
     + ' vdW, the electrostatics of PARTIAL CHARGES, a NON-POLAR SOLVENT term γ·A (a 1.4 Å water probe), ω,'
     + ' φ/ψ, χ1 and your distances — the hydrogens the field adds are part of it, and the score above is the'
     + ' FREE energy of the model: that enthalpy plus its conformational entropy (−T·S).'
-    + ' ⚠ The solvent is IMPLICIT ONLY (charges screened by ε = 4·r): no explicit water, no counter-ion, no'
-    + ' polarisability and no ionic strength — the 🧲 force field panel and the ⟳ Energy line show the families'
-    + ' one by one.'
+    + ' ⚠ The solvent is IMPLICIT ONLY (charges screened by ε = 4·r): no explicit water, no explicit counter-ion'
+    + ' and no polarisability — the 🧲 force field panel and the ⟳ Energy line show the families one by one.'
+    + ' ⚠ THE pH AND THE IONIC STRENGTH of the ⚙ panel, when they are set, ARE read by this same field (they are'
+    + ' properties of the force field, and the head of this report says what they did): the pH sets the charge of'
+    + ' the ionisable groups the bond graph shows, and the ionic strength screens the electrostatic term — neither'
+    + ' adds an atom, so the molecule on screen is untouched.'
     + ' ⚠ The φ/ψ term is what was missing before: it is ZERO inside a basin of the 🪢 plot and grows with the distance'
     + ' to the basin, so the models you keep no longer come out with points all over the map. If one of YOUR distances'
     + ' forces a residue out of its basin, your distance wins — and the line above says how many went out.'
@@ -11715,7 +11874,6 @@ const runStructureCalculation = () => {
          on les style, on les cache, et 🎯 Fit to chosen superpose la famille. Le premier
          n'est pas ajouté deux fois — il EST la molécule de l'écran (celle que la barre
          appelle ★ main). */
-      calcAddFamilyToBar(structure, componentRef.current, family.retained).catch(() => 0);
       /* ⚠ LA FENÊTRE DE STYLE DOIT VOIR LA FAMILLE TOUT DE SUITE — le rapport de cette
          session : « The series of structures calculated are not immediately seen in the
          styling window. I had to select and deselect the “hide H” button to update the
@@ -11728,7 +11886,15 @@ const runStructureCalculation = () => {
          reconstruction : la famille est dans la barre des molécules ET dans la fenêtre de
          style dès l'image qui l'a fait entrer. L'appel est différé d'un tour de boucle
          (`setTimeout 0`) parce que `calcAddFamilyToBar` est asynchrone : la dernière molécule
-         n'est dans `extraCompsRef` qu'à son retour. */
+         n'est dans `extraCompsRef` qu'à son retour.
+         ⚠⚠ UN SEUL APPEL, ET C'EST CELUI-CI — le rapport de cette session : « After the
+         structure calculation the styling window reports each molecule twice. » Il y avait DEUX
+         appels à `calcAddFamilyToBar` : celui-ci, et un `…catch(() => 0)` juste avant dont le
+         résultat n'était jamais attendu. Deux ajouts CONCURRENTS de la même famille : le second
+         relisait `previous` AVANT que le premier ait posé ses entrées, donc les deux familles
+         entraient dans la barre ET dans la fenêtre de style — chaque molécule y figurait deux
+         fois. Le doublon est parti ; le retrait des `fam_…` (`forgetSectionMolecules`) garantit
+         en plus qu'aucune famille morte ne reste dans la fenêtre. */
       calcAddFamilyToBar(structure, componentRef.current, family.retained)
         .then(() => { setTimeout(bumpSectionEpoch, 0); })
         .catch(() => setTimeout(bumpSectionEpoch, 0));
@@ -11759,6 +11925,11 @@ const runStructureCalculation = () => {
        porte aussi (un modèle ne peut pas être construit sous un jeu de règles et noté sous
        un autre). `dyana` veut dire répulsion seule, sans charge, sans surface, atomes unis. */
     targetFunction: calcTargetFunction,
+    /* 🧪 LE pH ET LA FORCE IONIQUE — le réglage du panneau ⚙ (le champ de forces), tel quel :
+       ce départ les porte dans son recuit, sa dynamique, sa minimisation, sa trempe ET sa note
+       (voir §2bis et §4bis du champ). Ils ne sont PAS des réglages du 🧬 : ils vivent chez le
+       champ, donc le ▶ Run, le ▶ MD, le ⚒ et le ⟳ lisent la même chimie. */
+    ph: calcPhOf(), ionicStrength: calcIonicOf(),
     /* 🪢 L'OPTION « ω VARIE » — le réglage du panneau, tel quel : chaque départ le porte
        dans son recuit, sa dynamique, sa minimisation et sa trempe (le module dit
        `omegaFree` dans son rapport). */
@@ -11906,6 +12077,10 @@ const calcReadForceFieldNow = () => {
        annoncerait un total que le calcul n'utilise pas. `exactSurface` reste demandé :
        c'est la mesure INDÉPENDANTE de la surface, et elle n'a de sens qu'avec la famille. */
     targetFunction: calcTargetFunction,
+    /* 🧪 LE pH ET LA FORCE IONIQUE — la lecture ⟳ tourne sur le champ que le panneau affiche,
+       donc elle porte les deux réglages de la CHIMIE : ce qu'elle montre est l'énergie de la
+       molécule TELLE QUE LE pH la fait (voir §2bis et §4bis du champ). */
+    ph: calcPhOf(), ionicStrength: calcIonicOf(),
     dielectric: mdSolventOf().dielectric,
   });
   setCalcForce(field);
@@ -11934,7 +12109,9 @@ const calcReadForceFieldNow = () => {
       + `${dh.violations ? ` (worst ${dh.worst.over.toFixed(1)}° outside)` : ''}` : ''}`
     + `${field.nonbonded.repulsive ? ` · ⚠ ${field.nonbonded.repulsive} repulsive pair${field.nonbonded.repulsive === 1 ? '' : 's'}` : ''}.`
     + `${pausedRows ? ` ⚖ ${pausedRows} line${pausedRows === 1 ? '' : 's'} of the table ${pausedRows === 1 ? 'is' : 'are'} on hold (weight 0): ${field.restraintReport.count} distance${field.restraintReport.count === 1 ? '' : 's'} enter${field.restraintReport.count === 1 ? 's' : ''} the field.` : ''}`
-    + ' ⚡ The energy is in kcal/mol, the potential is the one the calculation uses (no charge model is perfect: the charges are PEOE estimates with the formal charges the chemistry implies).'
+    + ' ⚡ The energy is in kcal/mol, the potential is the one the calculation uses (no charge model is perfect: the charges are PEOE estimates with the formal charges the chemistry implies — and, since this session, the pH and the ionic strength of the ⚙ panel, which the line below reads out).'
+    /* 🧪 LA CHIMIE DE CETTE LECTURE — le pH et la force ionique avec lesquels ⟳ vient de lire. */
+    + calcChemNote(field)
     + ' The family-by-family table of this same reading is in 🧬 Structure calculation — open that section and the families are listed there, with this number broken into them.'
     + ' ⚠ Nothing was written: ⚡ is a READING (↺ Undo torsion has nothing to undo).');
   return field;
@@ -12224,6 +12401,10 @@ const runMolecularDynamics = () => {
       freeOmega: mdFreeOmega,
       perFrame: mdImage,
       targetFunction: calcTargetFunction,
+      /* 🧪 …ET LA CHIMIE DU CHAMP — le pH et la force ionique du panneau ⚙, tels quels : cette
+         dynamique tourne donc dans la même chimie que le ▶ Run, le ⚒ et le ⟳ (voir §2bis et
+         §4bis du champ). Le rapport du geste DIT ce qui a été lu (`run.chemistry`). */
+      ph: calcPhOf(), ionicStrength: calcIonicOf(),
     }),
     comp, structure,
     /* 👁 ELLE SE REGARDE TOUJOURS — c'est la remarque de cette session : « I see that some
@@ -12284,6 +12465,10 @@ const runMolecularDynamics = () => {
         + `${rep.count && rep.violations ? ` (worst ${rep.worst.abs.toFixed(2)} Å outside — the ⚒ converges them, a trajectory at T does not have to)` : ''}`
         + calcRestraintEffect(restBefore, rep, list)
         + calcBoxNote(geom)
+        /* 🧪 CE QUE LA CHIMIE DE CE GESTE A FAIT — le pH et la force ionique lus par le MOTEUR
+           (`run.chemistry`), pas ceux qu'on espérait : charge nette, groupes ionisables et
+           écrantage. La phrase n'existe que si le moteur en a rendu une. */
+        + calcChemNote(run.chemistry)
         /* 💧 CE QUE LES EAUX ONT FAIT — la phrase n'existe que si le geste avait une boîte
            (voir `calcWaterRunNote`) : ce que le moteur a MESURÉ, pas ce qu'on espère. */
         + calcWaterRunNote(run.water, mdTemp)
@@ -12402,6 +12587,10 @@ const runMinimise = () => {
          parleraient pas du même monde. */
       dielectric: mdSolventOf().dielectric,
       targetFunction: calcTargetFunction,
+      /* 🧪 …ET LA CHIMIE DU CHAMP — la descente lit le pH et la force ionique du panneau ⚙,
+         comme le ▶ Run, le ▶ MD et le ⟳ : un minimum trouvé sous une chimie ne peut pas être
+         lu sous une autre (voir §2bis et §4bis du champ). */
+      ph: calcPhOf(), ionicStrength: calcIonicOf(),
     }),
     comp, structure,
     head: '⚒ Minimise',
@@ -12437,6 +12626,8 @@ const runMinimise = () => {
         + `${run.walls.count ? ` · ${run.walls.count} distance${run.walls.count === 1 ? '' : 's'} held by the leash` : ''}.`
         + calcRestraintEffect(restBefore, rep, list)
         + calcBoxNote(geom)
+        /* 🧪 LA CHIMIE DE CETTE DESCENTE — la même ligne que le ▶ MD (`run.chemistry`). */
+        + calcChemNote(run.chemistry)
         + calcTargetFunctionNote(calcTargetFunction)
         + ' ↺ Undo torsion puts the molecule back exactly where it was.');
       if (ramaIsShown()) readRamachandran();   // le graphe suit la conformation que le ⚒ vient d'écrire
@@ -17895,6 +18086,11 @@ const calcAddFamilyToBar = async (structure, comp, retained) => {
   if (previous.length) {
     extraCompsRef.current = extraCompsRef.current.filter((e) => !String(e.id).startsWith('fam_'));
     previous.forEach((e) => { try { if (stageRef.current) stageRef.current.removeComponent(e.comp); } catch { /* ignore */ } });
+    /* ⚠ LEURS SECTIONS AUSSI — la famille précédente quitte la scène, donc ses rangées de style
+       doivent quitter la fenêtre (voir `forgetSectionMolecules`) : sinon chaque ▶ Run laissait
+       une famille morte derrière la vivante, et la fenêtre « reportait chaque molécule deux
+       fois » — le rapport de cette session, mot pour mot. */
+    forgetSectionMolecules(previous.map((e) => e.id));
     setExtraMols(extraMolsSnapshot());
     setVisibleMolKeys((prev) => { const n = new Set(prev); previous.forEach((e) => n.delete(e.id)); return n; });
     if (previous.some((e) => e.id === selectedMolKey)) setSelectedMolKey('main');
@@ -18000,6 +18196,12 @@ const calcRemoveWaterBox = () => {
   if (!previous.length) return false;
   extraCompsRef.current = extraCompsRef.current.filter((e) => !String(e.id).startsWith('solv_'));
   previous.forEach((e) => { try { if (stage) stage.removeComponent(e.comp); } catch { /* ignore */ } });
+  /* ⚠ ET LES SECTIONS DE LA BOÎTE QUI PART — une boîte d'eau redessinée porte un identifiant
+     NEUF (`solv_<date>`), donc sa prédécesseure restait dans la fenêtre de style : c'était
+     exactement « in MD with explicit solvent the water is added twice » (voir
+     `forgetSectionMolecules`). Les ✔ et les rangs de la nouvelle boîte sont posés par
+     `calcDrawWaterBox`, donc rien de vivant n'est effacé ici. */
+  forgetSectionMolecules(previous.map((e) => e.id));
   setVisibleMolKeys((prev) => { const n = new Set(prev); previous.forEach((e) => n.delete(e.id)); return n; });
   setExtraMols(extraMolsSnapshot());   // la barre des Molecules ne garde pas d'entrée morte
   return true;
@@ -19153,6 +19355,9 @@ const deleteExtraMol = (id) => {
   const [entry] = extraCompsRef.current.splice(idx, 1);
   try { if (stageRef.current) stageRef.current.removeComponent(entry.comp); } catch {}
   espForget(id); // the ⚡ ESP overlay (if any) was destroyed with the component
+  // ⚠ ET SES SECTIONS DE STYLE AUSSI — sans ce retrait, la molécule supprimée restait dans la
+  // fenêtre de style (voir `forgetSectionMolecules`) : elle y apparaissait une fois morte.
+  forgetSectionMolecules([id]);
   setExtraMols(extraMolsSnapshot());
   setVisibleMolKeys((prev) => { const n = new Set(prev); n.delete(id); return n; });
   if (selectedMolKey === id) setSelectedMolKey('main');
@@ -21649,6 +21854,59 @@ const renderParamsWindow = () => {
         title="🧲 the description of the force field the gestures sum (its named families, in kcal/mol) · ⌖ the distances to respect · ⛓ the imposed φ/ψ. ⚠ THE PROTOCOL IS NOT HERE: n · m · 🔥 recuit · 🖼 frames, the dynamics (steps, dt, total, 🌡 hot → 🌡 cold, ⚖ equil, ⚒ sweeps), 🪢 ω and 🎯 target stay in the 🧬 Structure calculation window, each rendered once.">
         🧲 the force field · ⌖ the distances · ⛓ the imposed φ/ψ
       </p>
+      {/* 🧪 LE pH ET LA FORCE IONIQUE — LA DEMANDE DE CETTE SESSION : « In MD and “structure
+          calculation” allow to define the pH and ionic strength so that the molecule can be
+          protonated or deprotonated and charge can be taken into consideration. »
+          Les deux sont ICI, chez le champ de forces, et non dans la fenêtre 🌡 : ce sont des
+          propriétés de la CHIMIE, donc les QUATRE gestes du champ (▶ Run, ▶ MD, ⚒ Minimise,
+          ⟳ Energy) les lisent — un modèle ne peut pas être bâti sous une chimie et lu sous une
+          autre. La note à droite des cases lit la MOLÉCULE À L'ÉCRAN par la même fonction que le
+          champ (`partialChargesOf`) : aucun pKa ni aucun κ n'est écrit ici, ils viennent du
+          module (`FF_PKA`, `ffDebyeKappaOf`). */}
+      {(() => {
+        const chem = calcChemNow();
+        const pkaText = Object.keys(FF_PKA).map((k) => `${k} ${FF_PKA[k]}`).join(' · ');
+        const reading = !chem
+          ? 'no molecule on screen — the pH and the ionic strength will be read as soon as one is loaded'
+          : `${chem.ph == null
+            ? 'pH: not set — the chemistry the graph shows (each ionisable group it recognises is fully charged)'
+            : `pH ${chem.ph} — net charge ${chem.net >= 0 ? '+' : ''}${chem.net.toFixed(2)} e, ${chem.groups.filter((g) => g.factor > 1e-6).length}/${chem.groups.length} of its ionisable groups charged`}`
+            + ` · ${chem.kappa > 0
+              ? `I = ${chem.ionicStrength} mol/L — κ = ${chem.kappa.toFixed(3)} Å⁻¹, Debye length ${chem.debyeLength.toFixed(3)} Å`
+              : 'I = 0 — no ionic screening'}`;
+        return (
+          <div className="flex flex-wrap items-center gap-1.5 border border-sky-200 bg-sky-50/40 rounded-md px-1.5 py-1">
+            <span className="text-[9px] font-black text-sky-800 uppercase tracking-wide"
+              title={`🧪 THE CHEMISTRY OF THE FORCE FIELD — the two settings that say WHAT the molecule carries (pH) and HOW its charges see each other (ionic strength). ALL FOUR gestures read them (▶ Run, ▶ MD, ⚒ Minimise, ⟳ Energy), because they are properties of the field: a model can never be built under one chemistry and read under another. THE pH titrates every ionisable group the bond graph shows, by Henderson–Hasselbalch, with the module's own pKa (${pkaText}) — an empty box means “the chemistry the graph shows” (every group fully charged, exactly what this module did before), NOT pH 0. THE IONIC STRENGTH (mol/L) screens the charges with the ionic atmosphere of Debye–Hückel (the Coulomb term is multiplied by exp(−κ·r), κ = ${FF_DEBYE_FACTOR}·√I Å⁻¹ at 298 K) — 0 is the default and renders exactly the Coulomb term of before. ⚠ What is NOT modelled, and said: the imidazole of a histidine is not a group this bond graph recognises, so it stays neutral at every pH.`}>
+              🧪 pH · ionic strength
+            </span>
+            <label className="flex items-center gap-1 text-[10px] font-bold text-slate-600"
+              title={`🧪 THE pH OF THE SOLUTION — it decides the protonation state of the ionisable groups this molecule's bond graph shows (a carboxylate, a phosphate and a thiolate are ACIDS: neutral at low pH, charged at high pH; an ammonium and a guanidinium are BASES: charged at low pH, neutral at high pH). The degree of ionisation is Henderson–Hasselbalch with the module's own pKa (${pkaText}) and the group's charge is multiplied by it — at pH 2 a carboxylate is neutral (almost 0 e per oxygen instead of −0.5), at pH 7.4 it is charged. ⚠ LEFT EMPTY, the box means “the chemistry the graph shows”: every ionisable group keeps the charge this module always gave it. That is the default, and it is NOT pH 0.`}>
+              pH
+              <input type="text" inputMode="decimal" value={calcPhText}
+                onChange={(e) => setCalcPhText(e.target.value)}
+                aria-label="pH of the solution, for the protonation state of the molecule"
+                placeholder="—"
+                className="w-14 border border-slate-300 rounded px-1.5 py-1 text-[11px] bg-white outline-none focus:border-sky-500" />
+            </label>
+            <label className="flex items-center gap-1 text-[10px] font-bold text-slate-600"
+              title={`🧪 THE IONIC STRENGTH OF THE SOLUTION, in mol/L — the charges of a buffer screen each other through their ionic atmosphere: the electrostatic term of the field is multiplied by exp(−κ·r), with κ = ${FF_DEBYE_FACTOR}·√I Å⁻¹ (Debye–Hückel, 298 K). A physiological salt (0.15 mol/L) gives κ ≈ 1.27 Å⁻¹, i.e. a Debye length of about 0.79 Å: the attraction between two opposite charges is mostly gone beyond a few ångströms. ⚠ 0, or an empty box, is the default and renders EXACTLY the Coulomb term of before this setting — nothing changes. ⚠ Only the electrostatics is screened: the counter-ions that would really sit around the molecule are not added, and the van der Waals wall is not touched.`}>
+              I (mol/L)
+              <input type="text" inputMode="decimal" value={calcIonicText}
+                onChange={(e) => setCalcIonicText(e.target.value)}
+                aria-label="Ionic strength of the solution in mol per litre, screening the electrostatic term"
+                placeholder="0"
+                className="w-16 border border-slate-300 rounded px-1.5 py-1 text-[11px] bg-white outline-none focus:border-sky-500" />
+            </label>
+            <span className="text-[9px] font-semibold text-sky-900" title={reading}>{reading}</span>
+            <button type="button" onClick={() => { setCalcPhText(''); setCalcIonicText(''); }}
+              title="Put both boxes back to their default (an empty pH = the chemistry the graph shows, I = 0 = no screening). The molecule, the two tables and the parameters are NOT touched."
+              className="px-1.5 py-0.5 text-[9px] font-bold rounded border bg-white border-sky-300 text-sky-800 hover:bg-sky-100">
+              ↺ Default
+            </button>
+          </div>
+        );
+      })()}
       <div className="flex flex-col gap-1.5">
         <div className="flex flex-wrap items-center gap-1.5">
           {/* ⌖ SON PROPRE PIQUAGE — la demande : « dedicated pair picker ». Le ⌖ arme un
@@ -22989,9 +23247,21 @@ title={kfMsg || (videoReady.ok ? keyframeFilmSummary(keyframes.length, kfPlanNow
     maintenant `flex-nowrap` (le gabarit de la bande 🎞 : « la rangée ne REVIENT PAS À LA LIGNE :
     sur un panneau étroit elle défile horizontalement, donc aucun contrôle n'est jamais repoussé
     dessous »), avec les écarts et le rembourrage resserrés (`gap-0.5` · `px-1 py-0.5`) pour
-    qu'elle tienne le plus souvent sans défiler, et `max-w-full` + `overflow-x-auto` pour que le
-    défilement, s'il faut, reste DANS la boîte — jamais sur la barre entière. */}
-<div className="flex flex-nowrap items-center gap-0.5 rounded-md border border-amber-200 bg-amber-50/40 px-1 py-0.5 max-w-full overflow-x-auto">
+    qu'elle tienne le plus souvent sans défiler — et `max-w-full` + `overflow-x-auto` pour que le
+    défilement, s'il faut, reste DANS la boîte — jamais sur la barre entière.
+    ⚠⚠ LA BARRE DE DÉFILEMENT A DISPARU, ET LES NOMS ONT RACCOURCI — la demande de CETTE
+    session, mot pour mot : « in MODIFY, instead of using a scrolling bar write shorter names,
+    for example “Params & Constraints” instead of “Parameters and Constraints”, “SS:shown/hidden”
+    instead of “disulphide:shown/hidden”, “Struct” instead of “Structure” ». La boîte est donc
+    `flex-nowrap` SANS `overflow-x-auto` ni `max-w-full` — plus de rangée qui défile — et ses
+    quatre libellés longs sont devenus courts : « ⚙ Params & Constraints » (le panneau ⚙),
+    « ⚭ SS: shown / hidden » (l'interrupteur du pont disulfure, sa définition restant où elle
+    était : « Cysteine states »), « 🧬 Struct from sequence » (le modèle bâti sur la séquence) et
+    « 🧬 Struct calc » (le calcul de structure, avec son compte (m/tried)). ⚠⚠ LES INFOBULLES,
+    ELLES, N'ONT PAS ÉTÉ RACCOURCIES : chacune dit toujours tout ce que le bouton fait — seul ce
+    qui est ÉCRIT SUR la rangée a changé, et chaque lettre gagnée est une lettre que la rangée
+    n'a plus à faire défiler. */}
+<div className="flex flex-nowrap items-center gap-0.5 rounded-md border border-amber-200 bg-amber-50/40 px-1 py-0.5">
 <span className="text-[9px] font-black text-amber-700 uppercase tracking-wide whitespace-nowrap" title="Change the molecule itself: build it from the page's sequence, show or hide the drawn disulphide bonds, rebuild the hydrogens, rename the atoms, colour by electrostatic potential and renumber the residues.">✏️ Modify</span>
 {/* ⚙ PARAMETERS AND CONSTRAINTS — le bouton du groupe ✏️ MODIFY (la demande de la session
    précédente : « “Parameters and Constraints” section should be in the “modify” menu »). Il
@@ -23004,7 +23274,7 @@ title={kfMsg || (videoReady.ok ? keyframeFilmSummary(keyframes.length, kfPlanNow
 <button type="button" onClick={() => toggleParamsDock()}
   className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${paramsDock ? 'bg-slate-200 border-slate-400 text-slate-900 hover:bg-slate-300' : 'bg-white border-slate-400 text-slate-700 hover:bg-slate-100'}`}
   title={`PARAMETERS AND CONSTRAINTS — the description of the force field and the two constraint tables, in a FULL-WIDTH PANEL under this row (${paramsDock ? 'open right now: this button closes it' : 'closed: this button opens it, and a second press closes it again'}). It does NOT open a window in the molecule space — it drops UNDER the ✏️ Modify row, so the 3D view keeps its whole surface whether it is open or closed (the request of this session: « The “parameters and constraints” should not open a window in the molecule space but it should [be] full width under the button. By clicking the button a second time it should disappear. »). Everything of the FORCE FIELD is there: the named families the gestures sum (bonds, angles, planar rings, vdW, electrostatics, solvent, ω, φ/ψ, χ1, your distances), their k and their unit, and the ⟳ reading of the molecule on screen. And the two tables with ALL their buttons: the distances to respect (⌖ add picked pair · ➕ add a row · 💾 save distances · 📂 load distances · Clear the list) and the imposed φ/ψ (⛓ secondary structure → φ/ψ). ⚠ THE PROTOCOL IS NOT HERE: n · m · 🔥 recuit · 🖼 frames, the dynamics (steps, dt, total, 🌡 hot → 🌡 cold, ⚖ equil, ⚒ sweeps), 🪢 ω and 🎯 target live in the 🧬 Structure calculation window, rendered once.`}>
-  ⚙ Parameters and Constraints{paramsDock ? ' ▾' : ' ▸'}
+  ⚙ Params & Constraints{paramsDock ? ' ▾' : ' ▸'}
 </button>{/* 🧬 From sequence — the page's sequence (Proteins / DNA / RNA) becomes a 3D
     structure at any moment, even over a loaded PDB (which is put aside: the
     ↩ Restore PDB button of §1 General brings it back). No network round trip:
@@ -23021,7 +23291,7 @@ disabled={!sequenceStructureText}
 title="Build the 3D structure from the sequence typed in “Molecular structure and visualization” (Proteins / DNA / RNA) — the model the viewer shows whenever no PDB is loaded. What is on screen is put aside, not lost: « ↩ Back to PDB », right here, and ↩ Restore PDB (§1 General) bring it back — including the PDB this page defines."
 className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap bg-sky-100 border-sky-400 text-sky-800 hover:bg-sky-200 disabled:opacity-40 disabled:cursor-not-allowed"
 >
-🧬 Structure from sequence
+🧬 Struct from sequence
 </button>
 {seqBuildMsg && (
 <span title={seqBuildMsg} className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-md px-2 py-1 h-7 inline-flex items-center max-w-[380px] truncate">
@@ -23064,7 +23334,7 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
   onClick={() => toggleCalcDock()}
   className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${calcDock ? 'bg-indigo-100 border-indigo-400 text-indigo-900 hover:bg-indigo-200' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
   title="🧬 STRUCTURE CALCULATION — OPEN OR CLOSE ITS WINDOW. The window sits at the LEFT of the 3D view (as 🌡 MD and 🪢 Ramachandran do), and this same button closes it; its ⇤ folds it to a thin 🧬 STRUCT. tab on the edge. In it: the parameters (n · m · 🔥 recuit · 🖼 frames · the dynamics of the protocol), the stages of the calculation (the progression, the report, the ranked family) and 💾 Save the family / 💾 Save the report. The force field and the two constraint tables are NOT here: they are the ⚙ Parameters and Constraints panel, opened by its own button of this same row. ① THE DISTANCES: press ⌖ and pick the pair IN THE VIEW — the ⌖ of that table has its OWN picker (the request, verbatim: “dedicated pair picker”): TWO atoms (A · B), painted BLUE, with nothing to do with the four picks of ✏️ Torsion (A · B · C · D), which are not read here and not touched; the SECOND click adds the line, and the distance you want is typed in the ⌖ want field next to it — left empty, the length the tables give that pair of elements is used; every line can be edited, and a pair is listed once. ② n AND m: how many starting structures to build, and how many to keep. ③ ▶ RUN: each of the n starts is a draw of EVERY rotatable dihedral (a bond that is a hinge: single, not inside a ring, with something on both sides) taken uniformly in (−180, 180) and APPLIED as one rigid rotation by the app's own torsion writer, so bond lengths and angles are untouched to the last digit; then the STANDARD protocol is applied to it — the annealing in dihedral space (Metropolis, 1500 K down to 300 K), the Langevin dynamics (an equilibration at 🌡 hot, then a cooling down to 🌡 cold), the dihedral minimisation, and a cold quench that repairs what the descent broke — and the result is SCORED with the same force field (kcal/mol: bonds, angles, planar rings, vdW, electrostatics, solvent, φ/ψ, χ1, ω, your distances), plus the clash penalty. The best m are retained, ranked by that score, and the first is written into the molecule. ④ The seed is FIXED: the same molecule, the same distances and the same n give the same family to the last digit. ⏹ Stop stops between two starts and keeps what is done. ⚠ What it is NOT: an experimental structure. The protocol is the standard one (annealing, dynamics, minimisation, quench) under the force field, but the force field is the app's OWN — partial charges from the graph, a non-polar solvent term, no explicit water, no added atoms that the file does not have. The randomness is only in the STARTING dihedrals (the score is deterministic), and a peptide C–N bond is one of them: a start can come out cis, which is exactly why the field's ω term and the cold quench are there.">
-  🧬 Structure calculation{calcResult ? ` (${calcResult.retained.length}/${calcResult.tried})` : ''}{calcDock ? ' ▾' : ' ▸'}
+  🧬 Struct calc{calcResult ? ` (${calcResult.retained.length}/${calcResult.tried})` : ''}{calcDock ? ' ▾' : ' ▸'}
 </button>
 {/* ⚙ LES TROIS GESTES DU CHAMP, ICI — la demande : « can the MD, Minimize and Energy be
     put next to “structure calculation” button? » Ils s'appliquent à la molécule TELLE
@@ -23087,7 +23357,7 @@ disabled={disulfideDrawn.bonds.length === 0}
 title="Show or hide the disulphide bonds the model on screen DRAWS. Hiding takes every Sγ–Sγ link between two residues out of the structure's own bond graph (utils/disulfideBonds.js), so Sticks / Ball+stick / Lines stop drawing them — nothing else changes: every atom stays, and the definition in “Cysteine states”, the PDB file, the 📥 download and the Drive copy keep their S–S. The model is then re-served, the same gesture as the ⚗️ hydrogen rebuild. Inactive when the structure on screen draws no disulphide at all: NGL draws an S–S from the bond graph only (a CONECT record, or the distance between two Sγ) — a file that declares SSBOND alone, with its two cysteines apart, draws none."
 className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap bg-white border-amber-300 text-amber-700 hover:bg-amber-50 disabled:opacity-40 disabled:cursor-not-allowed"
 >
-{disulfidesShown ? '⚭ Disulfides: shown' : '⚭ Disulfides: hidden'}
+{disulfidesShown ? '⚭ SS: shown' : '⚭ SS: hidden'}
 </button>
 {/* Le compte rendu, juste à côté : chaque pont par son NUMÉRO AFFICHÉ et par la
     distance Sγ–Sγ RÉELLE de l'écran — un pont dessiné mais étiré est dit ÉTIRÉ,

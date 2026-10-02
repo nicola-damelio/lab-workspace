@@ -1363,7 +1363,9 @@ ok(forceGestures.length > 800,
   `les trois gestes du champ (▶ MD · ⚒ Minimise · ⟳ Energy) sont écrits UNE fois (${forceGestures.length} caractères)`);
 has(calcButtonBlock, 'onClick={() => toggleCalcDock()}',
   'le bouton 🧬 OUVRE ET REFERME la fenêtre du calcul (le même bouton, comme 🌡 MD)');
-has(calcButtonBlock, '🧬 Structure calculation', '…et il dit ce qu’il fait');
+has(calcButtonBlock, '🧬 Struct calc{calcResult ?',
+  '⚠ …sous son libellé COURT (« Struct calc » : la demande de la session des noms courts, la '
+  + 'rangée ✏️ Modify ne défilant plus — voir _viewer_ui_layout_test.mjs [13i])');
 has(calcButtonBlock, 'title="🧬 STRUCTURE CALCULATION — OPEN OR CLOSE ITS WINDOW',
   '⚠ …en disant d’abord que c’est une FENÊTRE de la vue 3D, à sa gauche (la demande de cette session : « the structure calculation retractable window appearing at the left was ok. you didn’t have to change it. can you put it back as it was? »)');
 eq(VIEW.includes("{calcSection === 'distances' && (() => {"), false,
@@ -1639,8 +1641,8 @@ const modifyGroup = VIEW.slice(
 );
 has(modifyGroup, 'onClick={() => toggleParamsDock()}',
   '⚙ le bouton « Parameters and Constraints » est DANS le groupe ✏️ Modify (la demande : « should be in the “modify” menu »)');
-has(modifyGroup, "⚙ Parameters and Constraints{paramsDock ? ' ▾' : ' ▸'}",
-  '…et il dit son état (ouvert ▾ / fermé ▸)');
+has(modifyGroup, "⚙ Params & Constraints{paramsDock ? ' ▾' : ' ▸'}",
+  '…et il dit son état (ouvert ▾ / fermé ▸), sous son libellé COURT (« Params & Constraints » : la demande de la session des noms courts, la rangée ✏️ Modify ne défilant plus)');
 /* ⚙ LE PANNEAU, PLUS UNE FENÊTRE — la demande de cette session : « The “parameters and
    constraints” should not open a window in the molecule space but it should [be] full width
    under the button. By clicking the button a second time it should disappear. » Le panneau

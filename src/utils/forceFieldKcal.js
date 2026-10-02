@@ -320,6 +320,36 @@ const floorWallOf = (r, e) => (r >= FF_VDW_SAME_ATOM ? e : e + FF_VDW_FLOOR_K * 
  *  le mur continu (`floorWallOf`) au lieu de le laisser partir à l'infini ou disparaître. */
 const floorDistanceOf = (r) => (r >= FF_VDW_SAME_ATOM ? r : FF_VDW_SAME_ATOM);
 
+/* ── 2bis · LA FORCE IONIQUE — L'ATMOSPHÈRE IONIQUE QUI ÉCRANTE UNE CHARGE ─────
+   LA DEMANDE : « In MD and “structure calculation” allow to define the pH and ionic strength so
+   that the molecule can be protonated or deprotonated and charge can be taken into
+   consideration. » Le pH décide de CE QUE la molécule porte (§4bis, les groupes ionisables) ;
+   la force ionique décide de COMMENT deux charges se voient dans cette solution.
+   Le modèle est celui de Debye–Hückel, et il est entier : le potentiel de Coulomb d'un couple
+   est multiplié par `exp(−κ·r)`, où κ (en Å⁻¹) vaut `3.29·√I` à 298 K pour une force ionique I
+   en mol/L — l'atmosphère ionique d'un sel 150 mM (κ ≈ 1.27 Å⁻¹, longueur de Debye ≈ 0.79 Å)
+   écrante donc une charge à courte portée, ce qui est le fait connu d'un tampon physiologique.
+   ⚠⚠ UNE SEULE RÈGLE COMPTE, ET C'EST CELLE QUI PROTÈGE LE RESTE DU DOSSIER : I = 0 (le
+   DÉFAUT) rend κ = 0, et `ffScreeningOf(0, r)` vaut **1 exactement** — le terme de Coulomb est
+   alors, AU CHIFFRE PRÈS, celui d'avant cette section (aucun test du dossier ne peut bouger,
+   aucune session enregistrée ne change de physique). Un appelant qui ne dit rien obtient donc
+   le champ d'origine. */
+export const FF_DEBYE_FACTOR = 3.29;   // κ = 3.29·√I, Å⁻¹ (I en mol/L, 298 K — Debye–Hückel)
+export const FF_IONIC_STRENGTH_DEFAULT = 0;
+/** κ DE LA FORCE IONIQUE — `0` pour toute valeur absente, nulle ou illisible (le défaut). */
+export const ffDebyeKappaOf = (ionicStrength = FF_IONIC_STRENGTH_DEFAULT) => {
+  const i = Number(ionicStrength);
+  return Number.isFinite(i) && i > 0 ? FF_DEBYE_FACTOR * Math.sqrt(i) : 0;
+};
+/** LA LONGUEUR DE DEBYE (Å) — `1/κ`, l'échelle sur laquelle une charge est écrantée. Elle
+ *  n'existe que si κ > 0 : sans sel, la réponse est `Infinity` (aucune échelle), pas un zéro
+ *  qui laisserait croire à un écrantage total. */
+export const ffDebyeLengthOf = (kappa = 0) => (Number(kappa) > 0 ? 1 / Number(kappa) : Infinity);
+/** LE FACTEUR D'ÉCRANAGE D'UN COUPLE À LA DISTANCE r — `exp(−κ·r)`, et **exactement 1** sans
+ *  sel. C'est la SEULE définition de l'écrantage ionique du dossier (le prix ET la pente d'un
+ *  couple la lisent), donc un couple ne peut pas être poussé par une force que son prix ignore. */
+export const ffScreeningOf = (kappa, r) => (!(Number(kappa) > 0) ? 1 : Math.exp(-Number(kappa) * Number(r)));
+
 /** L'ÉNERGIE DE VAN DER WAALS D'UN COUPLE (kcal/mol) — Lennard-Jones 12-6 :
  *  ε·((r_min/r)¹² − 2·(r_min/r)⁶), nulle au minimum (r = r_min), répulsive en dessous,
  *  attractive au-dessus (jusqu'à −ε). C'est le MUR et le PUITS du dossier : deux atomes
@@ -341,11 +371,14 @@ export const ffVdwCostOf = (r, pair) => {
  *  ⚠ LE PLANCHER S'APPLIQUE AUSSI ICI : sous `FF_VDW_SAME_ATOM` la charge est lue à la
  *  distance du plancher, donc un couple d'ions opposés ne part pas à −∞ en se superposant
  *  (c'est le LENNARD-JONES qui sépare, avec sa pente — la charge ne peut pas aspirer). */
-export const ffCoulombCostOf = (r, pair, dielectric = FF_DIELECTRIC) => {
+export const ffCoulombCostOf = (r, pair, dielectric = FF_DIELECTRIC, kappa = 0) => {
   if (!pair || !pair.cqq || !Number.isFinite(r)) return 0;
   const eps = Math.max(1e-6, Number(dielectric) || FF_DIELECTRIC);
   const rr = floorDistanceOf(r);
-  return pair.cqq / (eps * rr * rr);
+  /* 🌊 …ET L'ATMOSPHÈRE IONIQUE (voir §2bis) — κ = 0 (le défaut) rend 1, donc la branche du
+     haut est, au chiffre près, la formule d'avant cette section : `q·q/(ε·r²)`. */
+  if (!(Number(kappa) > 0)) return pair.cqq / (eps * rr * rr);
+  return (pair.cqq * ffScreeningOf(kappa, rr)) / (eps * rr * rr);
 };
 
 /** LA RÉPULSION SEULE (kcal/mol) — ε·(r_min/r)¹², SANS le puits attractif et sans la
@@ -377,14 +410,22 @@ export const ffRepulsionCostOf = (r, pair) => {
  *  répulsion seule, Coulomb, diélectrique, rampe) : les deux ne peuvent pas diverger.
  *  @returns {number} dV/dr (0 quand le couple n'a ni ε ni charge lisible) */
 export const ffNonbondedGradientOf = (r, pair, {
-  dielectric = FF_DIELECTRIC, repulsionOnly = false, electrostatics = true,
+  dielectric = FF_DIELECTRIC, repulsionOnly = false, electrostatics = true, kappa = 0,
 } = {}) => {
   if (!pair || !Number.isFinite(r) || r <= 0) return 0;
   if (r < FF_VDW_SAME_ATOM) return -FF_VDW_FLOOR_K;
   const x = (pair.rmin / r) ** 6;
   const dVdw = (12 * pair.epsilon * x * (repulsionOnly ? -x : (1 - x))) / r;
+  const eps = Math.max(1e-6, Number(dielectric) || FF_DIELECTRIC);
+  /* LA PENTE DE COULOMB, AVEC L'ÉCRANAGE IONIQUE — la dérivée EXACTE de ce que
+     `ffCoulombCostOf` rend : sans sel, `−2·q·q/(ε·r³)` (la formule historique, inchangée au
+     chiffre près) ; avec sel, `q·q·e^(−κ·r)·(−2/r − κ)/(ε·r²)` — la dérivée de `q·q·e^(−κr)/(εr²)`.
+     Un corps rigide d'eau lit CETTE pente : elle ne peut donc pas diverger du prix (le test
+     `_water_md_test.mjs` compare les deux, κ = 0 comme κ > 0). */
   const dElec = (!repulsionOnly && electrostatics && pair.cqq)
-    ? (-2 * pair.cqq) / (Math.max(1e-6, Number(dielectric) || FF_DIELECTRIC) * r * r * r)
+    ? ((Number(kappa) > 0)
+      ? (pair.cqq * ffScreeningOf(kappa, r) * (-2 / r - Number(kappa))) / (eps * r * r)
+      : (-2 * pair.cqq) / (eps * r * r * r))
     : 0;
   return dVdw + dElec;
 };
@@ -395,10 +436,10 @@ export const ffNonbondedGradientOf = (r, pair, {
  *  par sa seule branche répulsive ; `electrostatics: false` éteint Coulomb (ce que fait
  *  DYANA : pas de charges, l'écrantage est le travail du solvant explicite). */
 export const ffNonbondedCostOf = (r, pair, {
-  dielectric = FF_DIELECTRIC, repulsionOnly = false, electrostatics = true,
+  dielectric = FF_DIELECTRIC, repulsionOnly = false, electrostatics = true, kappa = 0,
 } = {}) => {
   if (repulsionOnly) return ffRepulsionCostOf(r, pair);
-  return ffVdwCostOf(r, pair) + (electrostatics ? ffCoulombCostOf(r, pair, dielectric) : 0);
+  return ffVdwCostOf(r, pair) + (electrostatics ? ffCoulombCostOf(r, pair, dielectric, kappa) : 0);
 };
 
 /* ── LE COÛT D'UN COUPLE SELON LA FONCTION CIBLE — voir `FF_TARGET_FUNCTIONS` plus bas
@@ -588,7 +629,7 @@ export const ffPairListOf = ({
  *  atomes qui se traversent) : c'est le chiffre que le panneau nomme « clashes », et il
  *  vient du MÊME terme que l'énergie au lieu d'un compteur à part. */
 export const ffNonbondedEnergyOf = (pairs, positions, {
-  dielectric = FF_DIELECTRIC, repulsionOnly = false, electrostatics = true,
+  dielectric = FF_DIELECTRIC, repulsionOnly = false, electrostatics = true, kappa = 0,
 } = {}) => {
   const out = { vdw: 0, elec: 0, count: 0, repulsive: 0, worstVdw: null, worstElec: null };
   const read = flatPositions(positions);
@@ -609,7 +650,7 @@ export const ffNonbondedEnergyOf = (pairs, positions, {
     const v = repulsionOnly
       ? ffRepulsionCostOf(d, p)
       : ffVdwCostOf(d, p);
-    const e = repulsionOnly || !electrostatics ? 0 : ffCoulombCostOf(d, p, dielectric);
+    const e = repulsionOnly || !electrostatics ? 0 : ffCoulombCostOf(d, p, dielectric, kappa);
     out.vdw += v;
     out.elec += e;
     if (v > 0) out.repulsive += 1;
@@ -850,13 +891,153 @@ export const ffFormalGroupsOf = ({ elements = [], graph = null } = {}) => {
   return out;
 };
 
+/* ── 4bis · LE pH — CE QUE LA MOLÉCULE PORTE VRAIMENT À CE pH-LÀ ───────────────
+   LA DEMANDE : « In MD and “structure calculation” allow to define the pH and ionic strength so
+   that the molecule can be protonated or deprotonated and charge can be taken into
+   consideration. » La force ionique est réglée plus haut (§2bis, l'écrantage) ; ici c'est la
+   CHARGE elle-même qui suit le pH.
+   Le graphe de la molécule dit quels GROUPES IONISABLES elle porte — carboxylate, phosphate,
+   thiolate, ammonium, guanidinium : c'est la lecture de `ffFormalGroupsOf`, celle qui distribuait
+   déjà la charge formelle de la chimie. Ce que le pH change, c'est son DEGRÉ D'IONISATION, par
+   Henderson–Hasselbalch :
+     · un ACIDE (carboxylate, phosphate, thiolate) est NEUTRE à pH bas et CHARGÉ à pH haut :
+       α = 1/(1+10^(pKa−pH)) ;
+     · une BASE (ammonium, guanidinium) est CHARGÉE à pH bas et NEUTRE à pH haut :
+       α = 1/(1+10^(pH−pKa)) ;
+   et la charge du groupe est multipliée par α (le carboxylate passe donc de −0.5 par oxygène à
+   pH 7 à presque 0 à pH 2 : la molécule EST protonée, la charge est prise en compte).
+   ⚠⚠ LE pKa EST UNE VALEUR MOYENNE PAR FAMILLE, ÉCRITE ICI ET NULLE PART AILLEURS — un fichier
+   ne dit pas son pKa, et ce module ne le devine pas : ce qu'il ne sait pas, il le DIT (le rapport
+   du champ rend `pka` et le nom de chaque groupe). ⚠ ET L'IMIDAZOLE D'UNE HISTIDINE N'EST PAS un
+   groupe de ce graphe : à tout pH elle reste ce que le graphe montre, exactement comme le
+   module le disait déjà de la charge formelle.
+   ⚠⚠ `ph == null` (LE DÉFAUT) VEUT DIRE « la chimie que le graphe montre » : α = 1 pour tout le
+   monde, donc les charges d'avant cette section, au chiffre près — aucun test, aucune session
+   enregistrée ne bouge tant que personne ne donne un pH. */
+export const FF_PKA = {
+  carboxylate: 3.9,    // Asp 3.9 · Glu 4.1 · C-terminal 3.1 → la moyenne de la famille
+  phosphate: 6.8,      // un phosphate d'acide nucléique, une phosphosérine
+  thiolate: 8.3,       // la cysteine
+  ammonium: 9.0,       // Lys 10.5 · N-terminal ≈ 8 → la moyenne de la famille
+  guanidinium: 12.5,   // l'arginine
+};
+/** LES FAMILLES ACIDES — celles qui sont CHARGÉES à pH HAUT (l'autre forme de la formule). */
+export const FF_PKA_ACIDS = ['carboxylate', 'phosphate', 'thiolate'];
+/** LE pH PAR DÉFAUT — `null` : aucune titration, la chimie telle que le graphe la montre
+ *  (`α = 1`). C'est le chiffre qui garantit qu'une session sans pH garde sa physique. */
+export const FF_PH_DEFAULT = null;
+/** LE DEGRÉ D'IONISATION D'UN GROUPE À UN pH — `1` quand le pH ou le pKa manque (le défaut
+ *  honnête : on ne change pas la charge d'un groupe dont on ne sait rien). */
+export const ffIonisationOf = (group = {}, ph = FF_PH_DEFAULT) => {
+  const name = String((group && group.name) || '');
+  const pka = FF_PKA[name];
+  /* ⚠ `Number(null)` VAUT 0 — un pH absent serait donc lu « pH 0 » et déprotonerait tout. La
+     lecture commence donc par refuser le vide : `null`, `undefined` et `''` valent « pas de
+     pH », c'est-à-dire le facteur 1. */
+  if (ph == null || ph === '') return 1;
+  const value = Number(ph);
+  if (!Number.isFinite(value) || !Number.isFinite(pka)) return 1;
+  const d = FF_PKA_ACIDS.includes(name) ? pka - value : value - pka;
+  return 1 / (1 + (10 ** d));
+};
+/** LA LECTURE COMPLÈTE — `{ph, factors, groups, ionised, net, atWork}` : le facteur de chaque
+ *  groupe (dans l'ordre de `ffFormalGroupsOf`), sa charge à ce pH, la charge que les groupes
+ *  ionisables apportent, et si le pH a VRAIMENT fait quelque chose (le rapport du geste s'en
+ *  sert pour dire « lu » au lieu de laisser croire à un réglage oublié). */
+export const ffIonisationReportOf = ({ groups = [], ph = FF_PH_DEFAULT } = {}) => {
+  /* ⚠ `Number(null)` VAUT 0 : `listed` se demande AVANT toute conversion (voir
+     `ffIonisationOf`) — sinon un pH absent serait rapporté « pH 0 ». */
+  const listed = !(ph == null || ph === '') && Number.isFinite(Number(ph));
+  const value = listed ? Number(ph) : NaN;
+  const factors = [];
+  const rows = [];
+  let net = 0;
+  (Array.isArray(groups) ? groups : []).forEach((g) => {
+    const raw = ffIonisationOf(g, ph);
+    /* ⚠ LA FORME ACIDE N'EST TITRÉE QUE SI UN pH EST DONNÉ (voir `ffIonisableGroupsOf`) :
+       sans pH, un carboxyle ou un thiol reste NEUTRE — le facteur 0 est donc ce qui GARDE le
+       champ d'origine quand personne n'a rien demandé. Dès qu'un pH est donné, c'est le facteur
+       de Henderson–Hasselbalch qui s'applique, comme pour la forme ionisée. */
+    const factor = (listed || (g && g.form !== 'acid')) ? raw : 0;
+    factors.push(factor);
+    const charge = Number(g && g.spread) * factor;
+    net += charge * (Array.isArray(g && g.atoms) ? g.atoms.length : 1);
+    rows.push({
+      name: String((g && g.name) || ''), pka: FF_PKA[String((g && g.name) || '')] ?? null,
+      form: String((g && g.form) || 'ionised'), factor: Number(factor.toFixed(6)),
+      charge: Number(charge.toFixed(6)), raw: Number(raw.toFixed(6)),
+    });
+  });
+  return {
+    ph: listed ? Number(value.toFixed(4)) : null,
+    listed,
+    factors, groups: rows,
+    ionised: rows.filter((r) => r.factor > 1e-6).length,
+    net: Number(net.toFixed(6)),
+    atWork: listed && rows.some((r) => (r.form === 'acid'
+      ? r.factor > 1e-9            // une forme ACIDE que le pH a chargée (elle est neutre par défaut)
+      : r.factor < 1 - 1e-9)),     // une forme IONISÉE que le pH a déchargée (elle est chargée par défaut)
+  };
+};
+
+/** LES GROUPES QUE LE pH PEUT TITRER — la réunion de ce que le graphe reconnaît DÉJÀ
+ *  (`ffFormalGroupsOf` : les formes CHARGÉES de la chimie) et des formes ACIDES que ce premier
+ *  lecteur ne voit pas parce qu'elles portent encore leur proton : un CARBOXYLE (un carbone à
+ *  deux oxygènes dont l'un porte un H) et un THIOL (un soufre à un voisin et un H).
+ *
+ *  ⚠ POURQUOI LA SECONDE LECTURE EST INDISPENSABLE — un modèle bâti par l'application est un
+ *  SQUELETTE LOURD : le module d'hydrogénation (`hydrogenatedOf`) y replace les H des fonctions,
+ *  donc la fonction acide d'un résidu Asp/Glu est un COOH, et le lecteur des formes chargées
+ *  n'y trouve AUCUN carboxylate (mesuré). Sans cette seconde lecture, un Asp resterait NEUTRE à
+ *  tout pH, et donner un pH ne changerait rien à la charge de la molécule — exactement ce que la
+ *  demande de cette session veut corriger (« so that the molecule can be protonated or
+ *  deprotonated »). Avec elle, les deux formes d'une même fonction sont titrées par le MÊME pKa
+ *  (`FF_PKA`), donc un carboxylate et un carboxyle ne peuvent pas diverger.
+ *
+ *  ⚠ CE QUE LA TITRATION CHANGE, ET CE QU'ELLE NE CHANGE PAS — elle change la CHARGE (le
+ *  déplacement des électrons), pas la GÉOMÉTRIE : ce moteur tourne des dièdres, il ne retire ni
+ *  ne pose un atome, donc l'hydrogène que le modèle a placé reste où la géométrie le met. C'est
+ *  la même convention que la charge formelle de la chimie, qui n'a jamais déplacé un H non plus.
+ *
+ *  ⚠ ET LA FORME ACIDE N'EST TITRÉE QUE SI UN pH EST DONNÉ (voir `ffIonisationReportOf`) : sans
+ *  pH — « la chimie que le graphe montre » — elle reste NEUTRE, exactement ce que ce module
+ *  faisait avant cette section. Donner un pH est donc le geste qui dit « compte les charges de
+ *  cette solution-là » ; ne rien donner laisse le champ d'origine, au chiffre près. */
+export const ffIonisableGroupsOf = ({ elements = [], graph = null } = {}) => {
+  const els = Array.from(elements || []);
+  if (!graph) return [];
+  const out = ffFormalGroupsOf({ elements: els, graph }).map((g) => ({ ...g, form: 'ionised' }));
+  const spoken = new Set();
+  out.forEach((g) => (g.atoms || []).forEach((k) => spoken.add(k)));
+  const nbs = (k) => graph.neighbours(k);
+  const isEl = (k, e) => upper(els[k]) === e;
+  const hCount = (k) => nbs(k).filter((m) => isEl(m, 'H') || isEl(m, 'D')).length;
+  for (let k = 0; k < els.length; k += 1) {
+    /* CARBOXYLE — le carbone porte DEUX oxygènes et l'un des deux a encore son proton. */
+    if (isEl(k, 'C')) {
+      const oxygens = nbs(k).filter((m) => isEl(m, 'O'));
+      if (oxygens.length === 2 && oxygens.some((m) => hCount(m) > 0)
+        && !oxygens.some((m) => spoken.has(m))) {
+        out.push({ name: 'carboxylate', charge: -1, atoms: oxygens, spread: -0.5, form: 'acid' });
+        oxygens.forEach((m) => spoken.add(m));
+      }
+    }
+    /* THIOL — le soufre du cysteine réduit : un voisin lourd et son hydrogène. */
+    if ((isEl(k, 'S') || isEl(k, 'SE')) && nbs(k).length === 2 && hCount(k) === 1 && !spoken.has(k)) {
+      out.push({ name: 'thiolate', charge: -1, atoms: [k], spread: -1, form: 'acid' });
+      spoken.add(k);
+    }
+  }
+  return out;
+};
+
 /** LES CHARGES PARTIELLES D'UNE MOLÉCULE — `{ok, reason, charges, net, method,
  *  iterations, groups, unknown, min, max}`. Les charges sont en unités de charge
  *  élémentaire (e) ; leur somme est la charge NETTE de la molécule (nulle pour une
  *  molécule neutre — un test le vérifie sur un peptide) ; et rien n'est caché : `method`
  *  vaut `peoe`, `peoe+formal` (des groupes ionisables ont été reconnus) ou `zero`
  *  (aucune liaison lisible : le module ne charge pas des atomes isolés). */
-export const partialChargesOf = ({ elements = [], bonds = [], atomCount = 0 } = {}) => {
+export const partialChargesOf = ({ elements = [], bonds = [], atomCount = 0, ph = FF_PH_DEFAULT } = {}) => {
   const els = Array.from(elements || []);
   const count = els.length || Math.max(0, Math.round(Number(atomCount) || 0));
   const out = {
@@ -865,6 +1046,9 @@ export const partialChargesOf = ({ elements = [], bonds = [], atomCount = 0 } = 
     /* 💧 LE COMPTE DES EAUX EXPLICITES — posé même quand la molécule n'a aucun graphe
        lisible, pour que `method` et le rapport ne dépendent jamais d'un chemin de sortie. */
     waters: ffWatersIn(els),
+    /* 🧪 LE pH — LU, ET DIT : `ph` nul veut dire « la chimie que le graphe montre » (§4bis), et
+       `ionisation` porte le détail (le pKa et le facteur de chaque groupe). */
+    ph: null, ionisation: ffIonisationReportOf({ groups: [], ph }), ionisable: [],
   };
   if (!count) return out;
   const graph = bondGraphOf({ bonds, atomCount: count });
@@ -874,7 +1058,18 @@ export const partialChargesOf = ({ elements = [], bonds = [], atomCount = 0 } = 
   const q = new Float64Array(count);
   for (let it = 0; it < FF_PEOE_ITERATIONS; it += 1) peoeStep(q, graph, params);
   const groups = ffFormalGroupsOf({ elements: els, graph });
-  for (const g of groups) for (const k of g.atoms) q[k] += g.spread;
+  /* 🧪 LA CHARGE SUIT LE pH (§4bis) — le graphe dit QUELLES fonctions sont ionisables
+     (`ffIonisableGroupsOf` : les formes chargées ET les formes acides qu'un squelette
+     hydrogéné porte), le pH dit À QUEL POINT elles le sont : la charge de chaque groupe est
+     multipliée par son degré d'ionisation. Sans pH (`null`), les formes ionisées gardent leur
+     facteur 1 et les formes acides le leur (0) : cette boucle est alors, au chiffre près,
+     celle d'avant cette section. */
+  const ionisable = ffIonisableGroupsOf({ elements: els, graph });
+  const ionisation = ffIonisationReportOf({ groups: ionisable, ph });
+  for (let g = 0; g < ionisable.length; g += 1) {
+    const spread = Number(ionisable[g].spread) * ionisation.factors[g];
+    for (const k of ionisable[g].atoms) q[k] += spread;
+  }
   /* 💧 LES EAUX EXPLICITES PORTENT LEURS CHARGES FIXES (TIP3P) — elles sont posées APRÈS
      l'électroégativité et les groupes formels, donc rien ne peut les écraser : une eau
      n'est pas chargée par PEOE, elle EST chargée (q_O = −0.834 e, q_H = +0.417 e). Sans
@@ -901,8 +1096,24 @@ export const partialChargesOf = ({ elements = [], bonds = [], atomCount = 0 } = 
   out.method = waters.molecules
     ? (groups.length ? 'tip3p+peoe+formal' : 'tip3p+peoe')
     : (groups.length ? 'peoe+formal' : 'peoe');
+  /* 🧪 …ET LE pH DANS LE NOM DE LA MÉTHODE QUAND IL A VRAIMENT CHANGÉ QUELQUE CHOSE — un
+     lecteur qui voit `peoe+formal+ph` sait que la charge lue n'est pas celle du graphe brut.
+     ⚠ ET « formal » AUSSI QUAND LE pH A TITRÉ DES FORMES ACIDES (un COOH n'est pas un groupe
+     formel pour `ffFormalGroupsOf`, mais la charge qu'il reçoit en est une) : sans cela le nom
+     dirait « peoe+ph », c'est-à-dire la moitié de ce qui s'est passé. Sans pH, RIEN de ceci
+     n'ajoute un mot : les quatre chaînes d'avant sont rendues telles quelles. */
+  if (ionisation.atWork && !groups.length && ionisable.length) {
+    out.method = waters.molecules ? 'tip3p+peoe+formal' : 'peoe+formal';
+  }
+  if (ionisation.atWork) out.method = `${out.method}+ph`;
   out.groups = groups;
+  /* 🧪 …ET LES FONCTIONS QUE LE pH A TITRÉES, telles quelles (elles peuvent être plus
+     nombreuses que `groups` : un COOH et un thiol sont des formes ACIDES, que le lecteur des
+     formes chargées ne voit pas). */
+  out.ionisable = ionisable;
   out.waters = waters;
+  out.ph = ionisation.ph;
+  out.ionisation = ionisation;
   return out;
 };
 
@@ -1460,6 +1671,10 @@ export const ffKcalEnergyOf = ({
   ramaPairs = [], omegas = [], chis = [], dihedrals = [],
   hydrogenate = true, exactSurface = false,
   temperature = FF_REFERENCE_TEMPERATURE, dielectric = FF_DIELECTRIC,
+  /* 🧪 LE pH ET LA FORCE IONIQUE — deux réglages de la CHIMIE du champ (voir §2bis et §4bis) :
+     le pH dit ce que la molécule porte, la force ionique comment deux charges se voient. `null`
+     et `0` sont les défauts, et ils rendent EXACTEMENT le champ d'avant ces deux sections. */
+  ph = FF_PH_DEFAULT, ionicStrength = FF_IONIC_STRENGTH_DEFAULT,
   /* 🎯 LA FONCTION CIBLE — `classic` (le défaut, le champ d'origine) ou `dyana`
      (voir `FF_TARGET_FUNCTIONS`) : elle décide des familles non liées, du terme de
      surface ET de l'ajout d'hydrogènes. Le reste du champ est le même dans les deux cas,
@@ -1467,6 +1682,9 @@ export const ffKcalEnergyOf = ({
   targetFunction = 'classic',
 } = {}) => {
   const tf = ffTargetFunctionOf(targetFunction);
+  /* 🌊 κ DE LA FORCE IONIQUE — un seul chiffre pour tout ce qui suit (le prix d'un couple, sa
+     pente, le rapport) : `ffDebyeKappaOf(0)` vaut 0, et 0 est « pas de sel ». */
+  const kappa = ffDebyeKappaOf(ionicStrength);
   const empty = {
     ok: false, reason: 'bad-points', total: Infinity, enthalpy: Infinity, freeEnergy: Infinity,
     bond: 0, angle: 0, planar: 0, vdw: 0, elec: 0, solv: 0, rama: 0, chi: 0, omega: 0,
@@ -1485,6 +1703,11 @@ export const ffKcalEnergyOf = ({
     targetFunction: tf.id, targetFunctionLabel: tf.label,
     switchedOff: Array.from(tf.off || []), pairLimit: tf.pairLimit,
     waters: { oxygens: 0, hydrogens: 0, molecules: 0 },
+    /* 🧪 LES DEUX RÉGLAGES DE LA CHIMIE, POSÉS MÊME SUR UN REFUS — un appelant qui lit
+       `field.kappa` sur une molécule sans coordonnées lit 0 (aucun sel), jamais `undefined`. */
+    ph: null, ionisation: ffIonisationReportOf({ groups: [], ph }),
+    ionicStrength: Number(ionicStrength) > 0 ? Number(ionicStrength) : 0,
+    kappa: Number(kappa.toFixed(6)), debyeLength: kappa > 0 ? Number((1 / kappa).toFixed(4)) : null,
   };
   const useHydrogens = hydrogenate && !tf.unitedAtoms;
   const molecule = useHydrogens
@@ -1500,7 +1723,7 @@ export const ffKcalEnergyOf = ({
     })();
   if (!molecule || !molecule.ok) return empty;
   const els = molecule.elements;
-  const charges = partialChargesOf({ elements: els, bonds: molecule.bonds });
+  const charges = partialChargesOf({ elements: els, bonds: molecule.bonds, ph });
   const walk = ffPairListOf({
     positions: molecule.positions, elements: els, bonds: molecule.bonds, charges: charges.charges,
     limit: tf.pairLimit, surface: tf.surface,
@@ -1547,7 +1770,7 @@ export const ffKcalEnergyOf = ({
      Lennard-Jones entier et Coulomb ; `dyana` ne lit que la RÉPULSION, sans charge, et
      n'a aucun terme de surface (celui-ci coûte 91 % du travail d'un pas, mesuré). */
   const nonbonded = ffNonbondedEnergyOf(walk.pairs, x, {
-    dielectric, repulsionOnly: tf.repulsionOnly, electrostatics: tf.electrostatics,
+    dielectric, repulsionOnly: tf.repulsionOnly, electrostatics: tf.electrostatics, kappa,
   });
   const surface = tf.surface
     ? ffSurfaceOf({ positions: x, elements: els, pairs: walk.surface })
@@ -1707,6 +1930,13 @@ export const ffKcalEnergyOf = ({
     switchedOff: Array.from(tf.off || []),
     pairLimit: walk.limit,
     waters: ffWatersIn(els),
+    /* 🧪 CE QUE LA CHIMIE A LU — le pH, l'écrantage ionique et le détail des groupes : le
+       rapport d'un geste les cite tels quels, et `ionisation.atWork` dit si le pH a changé
+       quelque chose (sinon il ne s'est rien passé, et le rapport le dit aussi). */
+    ph: charges.ph, ionisation: charges.ionisation,
+    ionicStrength: Number(ionicStrength) > 0 ? Number(ionicStrength) : 0,
+    kappa: Number(kappa.toFixed(6)),
+    debyeLength: kappa > 0 ? Number((1 / kappa).toFixed(4)) : null,
     rows: ffKcalRowsOf({ temperature }),
     atoms: els, bonds: molecule.bonds,
   };

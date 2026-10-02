@@ -104,6 +104,12 @@ import {
   FF_DIHEDRAL_K, FF_DIHEDRAL_TOLERANCE, FF_DIHEDRAL_CENTRE_K,
   FF_RAMA_K, FF_RAMA_SPAN, FF_SASA_GAMMA, FF_SASA_PROBE, FF_SURFACE_CAP_OVERLAP,
   FF_PAIR_LIMIT, FF_DIELECTRIC,
+  /* 🧪 LE pH ET LA FORCE IONIQUE — deux réglages de la CHIMIE du champ, descendus jusqu'ici
+     pour que les quatre gestes (▶ Run, ▶ MD, ⚒ Minimise, ⟳ Energy) lisent LES MÊMES : κ de
+     Debye–Hückel, la longueur de Debye, et la lecture de la charge à ce pH-là (voir §2bis et
+     §4bis de utils/forceFieldKcal.js). */
+  ffDebyeKappaOf, ffDebyeLengthOf, ffIonisationReportOf,
+  FF_PKA, FF_PKA_ACIDS, FF_PH_DEFAULT, FF_IONIC_STRENGTH_DEFAULT, FF_DEBYE_FACTOR,
   FF_GAS_CONSTANT, FF_REFERENCE_TEMPERATURE, FF_KCAL_UNITS,
 } from './forceFieldKcal.js';
 /* LES BASSINS φ/ψ DU GRAPHE 🪢 — les polygones et le test d'appartenance sont ceux du
@@ -1512,6 +1518,10 @@ export function* annealFrames({
   torsions = null,
   ramaWeight = STRUCTURE_CALC_RAMA_WEIGHT, chiWeight = STRUCTURE_CALC_CHI_WEIGHT,
   perFrame = 0, hydrogen = null,
+  /* 🧪 LE pH ET LA FORCE IONIQUE — les deux réglages de la CHIMIE du champ (voir §2bis et §4bis
+     de utils/forceFieldKcal.js) : ils descendent tels quels dans le moteur commun
+     (`torsionEngineOf`), donc le recuit ne peut pas conduire un autre monde que celui affiché. */
+  ph = FF_PH_DEFAULT, ionicStrength = FF_IONIC_STRENGTH_DEFAULT,
   /* 🎯 LA FONCTION CIBLE — la même clé pour les quatre moteurs du protocole (voir
      `STRUCTURE_CALC_TARGET_FUNCTIONS`) : le recuit ne peut donc pas conduire un autre
      champ que celui qu'affiche le panneau. */
@@ -1524,7 +1534,7 @@ export function* annealFrames({
      R·T, l'énergie thermique (0.60 kcal/mol à 300 K, 3 kcal/mol à 1500 K). */
   const engine = torsionEngineOf({
     positions, elements, bonds, restraints, channels, leash, torsions, omegas, dihedrals,
-    ramaWeight, chiWeight, hydrogen, targetFunction,
+    ramaWeight, chiWeight, hydrogen, targetFunction, ph, ionicStrength,
   });
   if (!engine) {
     return {
@@ -1654,6 +1664,8 @@ export function* annealFrames({
   out.omega = omegaPenaltyOf({ positions: x, omegas: engine.omega });  out.rama = ramaPenaltyOf({ positions: x, torsions: engine.backbone, weight: engine.wRama });
   out.chi = chiPenaltyOf({ positions: x, chis: engine.chis, weight: engine.wChi });
   out.molecule = engine.moleculeOf();
+  /* 🧪 CE QUE LA CHIMIE A LU — le recuit le DIT comme les autres moteurs (`chemistry`). */
+  out.chemistry = engine.chemistry;
   return out;
 }
 
@@ -1816,6 +1828,15 @@ export const SS_DIHEDRAL_LETTERS = Object.keys(SS_DIHEDRALS);
 export {
   FF_DIHEDRAL_TOLERANCE as SS_DIHEDRAL_TOLERANCE, FF_DIHEDRAL_K as SS_DIHEDRAL_K,
   FF_DIHEDRAL_CENTRE_K as SS_DIHEDRAL_CENTRE_K,
+  /* 🧪 …ET LES DEUX RÉGLAGES DE LA CHIMIE, réexportés — le panneau, ses tests et les gestes
+     n'importent qu'un module (`structureCalc.js`) pour lire ce que le champ a lu, comme ils le
+     font déjà du champ de forces entier. */
+  ffDebyeKappaOf, ffDebyeLengthOf, ffIonisationReportOf,
+  FF_PKA, FF_PKA_ACIDS, FF_PH_DEFAULT, FF_IONIC_STRENGTH_DEFAULT,
+  FF_DEBYE_FACTOR,
+  /* 🧪 LA CHARGE ELLE-MÊME, réexportée pour le panneau — la note à côté de ses deux cases lit
+     la molécule à l'écran sans payer le champ entier. */
+  partialChargesOf,
 };
 
 /** LA CONVERSION — `{ ok, reason, constraints, letters, residues, unmatched, matched }`.
@@ -2058,6 +2079,10 @@ export const forceFieldEnergyOf = ({
   positions = null, elements = [], bonds = [], restraints = [],
   torsions = null, omegas = null, dihedrals = [], temperature = FF_REFERENCE_TEMPERATURE,
   exactSurface = false, hydrogenate = true,
+  /* 🧪 LE pH ET LA FORCE IONIQUE — les deux réglages de la CHIMIE du champ (voir §2bis et §4bis
+     de utils/forceFieldKcal.js) : le ⟳ Energy et la note d'un modèle les portent, donc la
+     lecture à l'écran est celle du champ qui a tourné. */
+  ph = FF_PH_DEFAULT, ionicStrength = FF_IONIC_STRENGTH_DEFAULT,
   /* 🎯 LA FONCTION CIBLE — `classic` (le défaut) ou `dyana` : le champ lu ici est celui
      que la fonction cible décrit, et le rapport DIT ce qu'elle a éteint. */
   targetFunction = STRUCTURE_CALC_TARGET_FUNCTION,
@@ -2078,6 +2103,11 @@ export const forceFieldEnergyOf = ({
     entropyReport: ffEntropyOf({}),
     torsions: backboneTorsionsOf({}), omegas: [], restraints: [], rows,
     worstVdw: null, worstElec: null,
+    /* 🧪 LES DEUX RÉGLAGES DE LA CHIMIE, POSÉS MÊME SUR UN REFUS — un appelant qui lit
+       `field.kappa` sur une molécule sans coordonnées lit 0, jamais `undefined`. */
+    ph: null, ionisation: null,
+    ionicStrength: Number(ionicStrength) > 0 ? Number(ionicStrength) : 0,
+    kappa: Number(ffDebyeKappaOf(ionicStrength).toFixed(6)), debyeLength: null,
   };
   if (!read) return empty;
   /* LE SQUELETTE ET LES LIAISONS PEPTIDIQUES — lus par CE module (c'est son métier) et
@@ -2089,7 +2119,7 @@ export const forceFieldEnergyOf = ({
   const field = ffKcalEnergyOf({
     positions: read.flat, elements: els, bonds, restraints: clean,
     ramaPairs, omegas: omegaList, chis: Array.from(backbone.chi || []),
-    dihedrals, temperature, exactSurface, hydrogenate, targetFunction,
+    dihedrals, temperature, exactSurface, hydrogenate, targetFunction, ph, ionicStrength,
   });
   return {
     ...field,
@@ -2130,6 +2160,10 @@ export const scoreStructureOf = ({
   tolerance = STRUCTURE_CALC_RESTRAINT_TOLERANCE, omegas = null, torsions = null,
   dihedrals = [],
   ramaWeight = STRUCTURE_CALC_RAMA_WEIGHT, chiWeight = STRUCTURE_CALC_CHI_WEIGHT,
+  /* 🧪 LE pH ET LA FORCE IONIQUE — la note d'un modèle est prise sous le MÊME champ que son
+     protocole (voir §2bis et §4bis de utils/forceFieldKcal.js) : deux modèles d'une même
+     famille ne peuvent donc pas être notés dans deux chimies différentes. */
+  ph = FF_PH_DEFAULT, ionicStrength = FF_IONIC_STRENGTH_DEFAULT,
   /* 🎯 LA FONCTION CIBLE DE LA NOTE — la même que celle du départ (voir
      `STRUCTURE_CALC_TARGET_FUNCTIONS`) : la note ne peut pas juger un autre champ que
      celui que le protocole vient de conduire. */
@@ -2160,6 +2194,7 @@ export const scoreStructureOf = ({
      est en kcal/mol. */
   const field = forceFieldEnergyOf({
     positions: x, elements, bonds, restraints: clean, torsions, omegas, dihedrals, targetFunction,
+    ph, ionicStrength,
   });
   /* ⚠ LA PÉNALITÉ D'EMPILEMENT N'EST PLUS UN TERME À PART : l'empilement a un prix DANS
      le champ (le mur répulsif du Lennard-Jones, famille `vdw`, qui rend des dizaines de
@@ -2290,6 +2325,14 @@ const torsionEngineOf = ({
   ramaWeight = STRUCTURE_CALC_RAMA_WEIGHT, chiWeight = STRUCTURE_CALC_CHI_WEIGHT,
   leashWall = STRUCTURE_CALC_LEASH_WALL, hydrogenate = true,
   dielectric = FF_DIELECTRIC, tolerance = STRUCTURE_CALC_RESTRAINT_TOLERANCE,
+  /* 🧪 LE pH ET LA FORCE IONIQUE (voir utils/forceFieldKcal.js §2bis et §4bis) — les deux
+     réglages de la CHIMIE, lus ICI et nulle part ailleurs pour les quatre moteurs de torsion
+     (le recuit, la dynamique, la minimisation et la trempe tournent tous sur ce moteur) :
+       · `ph` dit ce que la molécule PORTE (le degré d'ionisation des groupes que le graphe
+         montre) — `null` (le défaut) veut dire « la chimie telle que le graphe la montre » ;
+       · `ionicStrength` (mol/L) dit COMMENT deux charges se voient (l'atmosphère ionique) —
+         `0` (le défaut) rend exactement le Coulomb d'avant. */
+  ph = FF_PH_DEFAULT, ionicStrength = FF_IONIC_STRENGTH_DEFAULT,
   hydrogen = null,
   /* 🎯 LA FONCTION CIBLE — `classic` (le défaut) ou `dyana` : elle décide des familles
      non liées, de la portée des couples, du terme de surface ET de l'ajout d'hydrogènes
@@ -2298,6 +2341,9 @@ const torsionEngineOf = ({
   targetFunction = STRUCTURE_CALC_TARGET_FUNCTION,
 } = {}) => {
   const tf = structureCalcTargetFunctionOf(targetFunction);
+  /* 🌊 κ DE LA FORCE IONIQUE — un seul chiffre pour tout ce moteur (le prix d'un couple, sa
+     pente dans le corps rigide d'eau, le rapport) : `ffDebyeKappaOf(0)` vaut 0. */
+  const kappa = ffDebyeKappaOf(ionicStrength);
   const read = flatPositions(positions);
   if (!read) return null;
   /* ⚠ LA MOLÉCULE DU MOTEUR EST CELLE DU CHAMP : les ATOMES AJOUTÉS (hydrogènes) y sont.
@@ -2340,7 +2386,8 @@ const torsionEngineOf = ({
   const count = mol.atoms;
   const heavyCount = read.count;
   const bondsOf = mol.bonds;
-  const charges = partialChargesOf({ elements: els, bonds: bondsOf }).charges;
+  const chargeReport = partialChargesOf({ elements: els, bonds: bondsOf, ph });
+  const charges = chargeReport.charges;
   const x = mol.positions.slice();
   const hydrogensOf = new Map();
   for (const h of mol.hydrogens) {
@@ -2406,7 +2453,7 @@ const torsionEngineOf = ({
      (`ffNonbondedCostOf`) : en mode DYANA, la répulsion seule, sans charge, et aucune
      attraction. Le moteur ne peut donc pas minimiser autre chose que le score. */
   const costNonbonded = (p, map) => ffNonbondedCostOf(gap(p.i, p.j, map), p, {
-    dielectric, repulsionOnly: tf.repulsionOnly, electrostatics: tf.electrostatics,
+    dielectric, repulsionOnly: tf.repulsionOnly, electrostatics: tf.electrostatics, kappa,
   });
   const costOmega = (o, map) => {
     const deg = dihedralOf(o.probeAtoms, map);
@@ -2707,6 +2754,19 @@ const torsionEngineOf = ({
       hydrogens: mol.hydrogens.map((h) => ({ parent: h.parent, index: h.index })),
     }),
     charges, added: { heavy: mol.heavy, hydrogens: mol.added, atoms: mol.atoms, skipped: mol.skipped },
+    /* 🧪 LA CHIMIE QUE CE MOTEUR A LUE — le pH, l'écrasage ionique et la charge NETTE, tels
+       quels : c'est ce que le rapport d'un geste cite (`chemistry`), donc un lecteur ne peut
+       pas confondre le réglage qu'il a demandé avec celui qui a tourné. */
+    chargeReport,
+    chemistry: {
+      ph: chargeReport.ph,
+      ionicStrength: Number(ionicStrength) > 0 ? Number(ionicStrength) : 0,
+      kappa: Number(kappa.toFixed(6)),
+      debyeLength: kappa > 0 ? Number(ffDebyeLengthOf(kappa).toFixed(4)) : null,
+      net: chargeReport.net, method: chargeReport.method,
+      groups: chargeReport.ionisation ? chargeReport.ionisation.groups : [],
+      atWork: !!(chargeReport.ionisation && chargeReport.ionisation.atWork),
+    },
     /* 🎯 LA FONCTION CIBLE QUE CE MOTEUR A LUE — le rapport d'un geste la DIT, donc un
        lecteur ne peut pas prendre une famille éteinte pour une famille oubliée. */
     targetFunction: tf.id, targetFunctionLabel: tf.label, switchedOff: Array.from(tf.off || []),
@@ -2719,7 +2779,7 @@ const torsionEngineOf = ({
        `bonds` est donné tel quel pour qu'une eau se reconnaisse par le GRAPHE (son O et ses
        deux H), jamais par une position devinée. */
     pairs: () => walk.pairs,
-    nonbonded: { dielectric, repulsionOnly: tf.repulsionOnly, electrostatics: tf.electrostatics },
+    nonbonded: { dielectric, repulsionOnly: tf.repulsionOnly, electrostatics: tf.electrostatics, kappa },
     bonds: bondsOf,
     at, gap, dihedralOf, mapFor, commit, crossingOf, ctxOf, crossCost, omegaCrossCost,
     crossRestraintCost, crossRestraintWeightOf,
@@ -2831,10 +2891,15 @@ export function* mdFrames({
      au chiffre près, exactement celle d'avant cette décision. */
   waterMobile = STRUCTURE_CALC_WATER_MOBILE,
   waterRefresh = STRUCTURE_CALC_WATER_REFRESH,
+  /* 🧪 LE pH ET LA FORCE IONIQUE — les deux réglages de la CHIMIE du champ (voir §2bis et §4bis
+     de utils/forceFieldKcal.js) : cette fenêtre les reçoit du panneau ⚙ et les descend au
+     moteur commun, le même que le ▶ Run et le ⚒ — un geste ne peut donc pas tourner dans une
+     autre chimie que celle que la molécule affiche. */
+  ph = FF_PH_DEFAULT, ionicStrength = FF_IONIC_STRENGTH_DEFAULT,
 } = {}) {
   const engine = torsionEngineOf({
     positions, elements, bonds, restraints, weights, channels, leash, torsions, omegas, dihedrals,
-    ramaWeight, chiWeight, hydrogen, dielectric, targetFunction,
+    ramaWeight, chiWeight, hydrogen, dielectric, targetFunction, ph, ionicStrength,
   });
   if (!engine) return refusedMotion('bad-points', null, freeOmega);
   const chan = engine.chan;
@@ -3182,6 +3247,9 @@ export function* mdFrames({
        vérification que le rapport peut citer au lieu de promettre. */
     water: waters ? waters.stats() : null,
     waterMobile: !!waters,
+    /* 🧪 LA CHIMIE DE CETTE TRAJECTOIRE — le pH lu, l'écrantage ionique et la charge nette du
+       modèle : la fenêtre 🌡 les écrit au lieu de laisser croire que le réglage a été oublié. */
+    chemistry: engine.chemistry,
     /* ⚠ LA FENÊTRE ET SON PAS EFFECTIF — `budget` canaux tournés par pas (la constante du
        dossier), donc un canal est mis à jour tous les `skip` pas et il intègre `dtEff = dt ×
        skip` (voir `hEff`) : le rapport peut donc dire la VRAIE échelle du moteur au lieu de
@@ -3283,10 +3351,13 @@ export function* minimizeFrames({
   /* 🎯 LA FONCTION CIBLE — le ⚒ ne peut pas descendre un autre champ que celui du panneau
      (voir `STRUCTURE_CALC_TARGET_FUNCTIONS`). */
   targetFunction = STRUCTURE_CALC_TARGET_FUNCTION,
+  /* 🧪 LE pH ET LA FORCE IONIQUE — la descente tourne sur le champ que le panneau affiche, donc
+     elle aussi porte les deux réglages de la CHIMIE (voir §2bis et §4bis). */
+  ph = FF_PH_DEFAULT, ionicStrength = FF_IONIC_STRENGTH_DEFAULT,
 } = {}) {
   const engine = torsionEngineOf({
     positions, elements, bonds, restraints, weights, channels, leash, torsions, omegas, dihedrals,
-    ramaWeight, chiWeight, hydrogen, targetFunction,
+    ramaWeight, chiWeight, hydrogen, targetFunction, ph, ionicStrength,
   });
   if (!engine) return refusedMotion('bad-points', null, freeOmega);
   const chan = engine.chan;
@@ -3381,6 +3452,8 @@ export function* minimizeFrames({
     before, after,
     omega: after.omega, rama: after.rama, chi: after.chi,
     molecule: engine.moleculeOf(),
+    /* 🧪 LA CHIMIE DE CETTE DESCENTE — la même ligne que la dynamique et le recuit. */
+    chemistry: engine.chemistry,
   };
 }
 
@@ -3447,6 +3520,11 @@ export function* structureAttemptFrames({
      descend TELLE QUELLE dans le recuit, la dynamique, la minimisation ET la trempe du
      protocole, et `scoreStructureOf` la reçoit aussi : un départ ne peut donc pas être
      construit sous un jeu de règles et noté sous un autre. */
+  /* 🧪 LE pH ET LA FORCE IONIQUE — les deux réglages de la CHIMIE du champ (voir §2bis et §4bis
+     de utils/forceFieldKcal.js) : il descend TELLE QUELLE dans le recuit du départ, sa dynamique,
+     sa minimisation, sa trempe ET sa note — un départ ne peut donc pas être construit sous un
+     jeu de règles et noté sous un autre. */
+  ph = FF_PH_DEFAULT, ionicStrength = FF_IONIC_STRENGTH_DEFAULT,
   targetFunction = STRUCTURE_CALC_TARGET_FUNCTION,
 } = {}) {
   const read = flatPositions(positions);
@@ -3524,6 +3602,10 @@ export function* structureAttemptFrames({
       steps: annealSteps, perFrame: annealPerFrame,
       /* 🎯 LA FONCTION CIBLE DU DÉPART — le recuit conduit exactement le champ demandé. */
       targetFunction,
+      /* 🧪 …ET LA CHIMIE DE CE CHAMP (pH et force ionique) : le recuit d'un départ est le
+         premier geste du protocole, donc il lit la MÊME chimie que la dynamique, la trempe et
+         la note (voir §2bis et §4bis de utils/forceFieldKcal.js). */
+      ph, ionicStrength,
       /* ⚠ LE RECUIT PROTÈGE ω — la règle est la même qu'à la trempe : un pas qui AUGMENTE
          le coût d'une liaison peptidique est refusé (un vrai peptide reste TRANS à toute
          température de ce protocole), mais un pas qui le DIMINUE est accepté.
@@ -3589,8 +3671,11 @@ export function* structureAttemptFrames({
     channels: drawn ? drawn.channels : null, torsions: backbone, omegas, dihedrals, leash: held,
     dt: mdDt, hydrogen,
     /* 🎯 LA FONCTION CIBLE — la dynamique d'équilibration, celle de refroidissement et la
-       minimisation descendent LE MÊME champ que le recuit et la note. */
+       minimisation descendent LE MÊME champ que le recuit et la note.
+       🧪 …ET LA CHIMIE DU CHAMP — le pH et la force ionique sont dans CE sac, donc les deux
+       phases de dynamique ET la minimisation les portent d'un seul coup (voir `motionOf`). */
     targetFunction,
+    ph, ionicStrength,
     /* 🪢 …ET LE RÉGLAGE ω DE L'UTILISATEUR, tel quel : la dynamique et la minimisation de
        chaque départ le portent, sinon le protocole ne serait pas celui qu'on a demandé. */
     freeOmega,
@@ -3672,6 +3757,8 @@ export function* structureAttemptFrames({
       hydrogen,
       /* 🎯 …ET LA FONCTION CIBLE : la trempe juge et répare sur le MÊME champ. */
       targetFunction,
+      /* 🧪 …ET LA CHIMIE DE CE CHAMP (pH et force ionique). */
+      ph, ionicStrength,
     });
     let next = frames.next();
     while (!next.done) { yield { ...next.value, phase: 'quench', index: k }; next = frames.next(); }
@@ -3686,8 +3773,10 @@ export function* structureAttemptFrames({
     positions: x, elements: els, bonds, restraints: clean.list, weights, clashDistance,
     tolerance, omegas, torsions: backbone, dihedrals,
     /* 🎯 LA NOTE EST CELLE DE LA FONCTION CIBLE CONDUITE — un départ ne peut pas être
-       construit sous un jeu de règles et noté sous un autre. */
+       construit sous un jeu de règles et noté sous un autre. 🧪 La CHIMIE du champ (pH, force
+       ionique) suit la même règle : la note est prise sous le champ qui a tourné. */
     targetFunction,
+    ph, ionicStrength,
   });
   let moved = 0;
   for (let i = 0; i < count; i += 1) {
@@ -3712,6 +3801,19 @@ export function* structureAttemptFrames({
        à côté de sa note. */
     targetFunction: structureCalcTargetFunctionOf(targetFunction).id,
     targetFunctionLabel: structureCalcTargetFunctionOf(targetFunction).label,
+    /* 🧪 LA CHIMIE DE CE DÉPART — le pH, l'écrantage ionique et la charge NETTE du modèle,
+       relus sur le champ qui vient de le noter (`scored.forceField`) : le rapport d'un calcul
+       peut donc dire ce qu'il a conduit, et pas seulement ce qu'on avait demandé. */
+    chemistry: scored.forceField ? {
+      ph: scored.forceField.ph,
+      ionicStrength: scored.forceField.ionicStrength,
+      kappa: scored.forceField.kappa,
+      debyeLength: scored.forceField.debyeLength,
+      net: scored.forceField.charges ? scored.forceField.charges.net : 0,
+      method: scored.forceField.charges ? scored.forceField.charges.method : '',
+      groups: scored.forceField.ionisation ? scored.forceField.ionisation.groups : [],
+      atWork: !!(scored.forceField.ionisation && scored.forceField.ionisation.atWork),
+    } : null,
     draw: {
       turned: drawn ? drawn.drawn : 0,
       channels: drawn ? drawn.channelCount : 0,
@@ -3907,7 +4009,7 @@ export const familySpreadOf = ({ attempts = [] } = {}) => {
  * refused, keep}`.
  * `ranking` = TOUTES les tentatives classées (`{rank, index, score, violations,
  * satisfied, rmsd, worst, clashes, contacts, bondRms, angleRms, moved, reason, draw,
- * protocol, anneal, quench, omega, omegaFree}` : le tableau du panneau), `retained` = les `keep` premières AVEC leurs
+ * protocol, anneal, quench, omega, omegaFree, chemistry}` : le tableau du panneau), `retained` = les `keep` premières AVEC leurs
  * coordonnées (`positions`) — c'est ce que le panneau écrit dans la structure —,
  * `family` = le rapport de famille (`spread` + `restraints` + ce qui est resté
  * dehors). Une tentative refusée (`ok: false`) n'est jamais classée : elle est
@@ -3965,6 +4067,14 @@ export const rankStructureAttempts = ({
     added: a.added ? { ...a.added } : null,
     moved: a.moved,
     reason: a.reason,
+    /* 🧪 LA CHIMIE DE CE DÉPART — transportée TELLE QUELLE, comme les trois potentiels de
+       torsion ci-dessus : le rapport du 🧬 lit `best.chemistry` (le pH, la force ionique, la
+       charge nette du modèle classé), donc ce champ doit vivre dans la ligne du classement —
+       sinon un rapport sans chimie parle d'un modèle dont il ne sait rien. Le champ vient du
+       DÉPART (voir `chemistry` du retour de `structureAttemptFrames`), jamais recalculé ici. */
+    chemistry: a.chemistry
+      ? { ...a.chemistry, groups: Array.isArray(a.chemistry.groups) ? a.chemistry.groups.map((g) => ({ ...g })) : [] }
+      : null,
     clashes: a.clashes ? a.clashes.count : 0,
     /* ⚠ LES LECTURES DE GÉOMÉTRIE QUE LE PANNEAU ET LE RAPPORT LISENT AUSSI — `bondRms`,
        `angleRms` et `contacts` étaient écrits dans le contrat ci-dessus et dans AUCUN
