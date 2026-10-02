@@ -429,7 +429,7 @@ const LARGE_ATOM_COUNT = 25000;                 // lighter rendering above this
    Background »), persisted like Fog / Shadows / Clipping, and it is part of a
    saved setup.
 
-   SAVED SETUPS (🎨 Styles, §2 · the Scene line) — « Save the visualisation setup »: a NAMED
+   SAVED SETUPS (🎨 Styles, §2 · its own row, above ✏️ Modify) — « Save the visualisation setup »: a NAMED
    snapshot of the whole viewer look (the six menus with their radii and colours,
    the nucleic-acid group colours and the lipid part colours, the label switches,
    the 2°-structure and highlight colours, Fog / Shadows / Clipping / Background /
@@ -438,7 +438,7 @@ const LARGE_ATOM_COUNT = 25000;                 // lighter rendering above this
    a look can be reused on another page or another computer.
    ============================================================================ */
 const CAT_STYLE_KEY = 'labViewerCategoryStyles';
-// Saved visualisation setups (🎨 Styles, §2 · the Scene line). One localStorage entry holds
+// Saved visualisation setups (🎨 Styles, §2 · its own row). One localStorage entry holds
 // a { name → setup } map; a setup is the plain object built by captureViewerSetup
 // and read back by applyViewerSetup, with a version so an older file can never
 // break the viewer (unknown / missing keys simply keep their default).
@@ -1394,7 +1394,7 @@ const nucleicClassCounts = (structure) => {
   return { total: info ? info.nucleotides.length : 0, forms, motifs };
 };
 
-/* ---- Saved visualisation setups (🎨 Styles, §2 · the Scene line) ---------------------
+/* ---- Saved visualisation setups (🎨 Styles, §2 · its own row) ------------------------
    One localStorage entry holds a { name → setup } map. A setup is the plain
    object built by captureViewerSetup and read back by applyViewerSetup; the
    version lets a file written by another build be accepted safely — every field is
@@ -7104,18 +7104,25 @@ const stripHighlightClauses = (keys, residueTicks) => {
 /* ============================================================================
    TOOLBAR BUILDING BLOCKS — the viewer UI is organised in a few numbered
    ROWS, so the command bar never eats the 3D canvas. The rows of THIS session
-   (the request: « the viewer menu must be drastically reduced and organised …
-   the “analysis” and “modify” can be in one line but clearly separated … the
-   “styles” section can fit inside the line of the “scene” section … the movie
-   maker section can fit in the line of the general section »):
-     · §1 General — what is loaded, cleared and filmed: PDB file(s) / PDB ID ·
-       Trajectory · ⬇ PDB · 🗑 Clear · 🗑 Delete PDB, AND the whole 🎞 Movie maker
-       row on the SAME line (it films the structure the row loads);
-     · §2 Toolbar — TWO lines of clearly separated groups, each one a small
-       tinted box (the separator between two boxes stays a hairline):
-         line 1:  🌫 Scene  │  🎨 Styles (the former « 🎨 Predefined styles »
-                  button: name · 🎨 Cumulative · 📷 Snapshot · 💾 · 📂 · 🗑 · ⬇ ⬆);
-         line 2:  ✏️ Modify │ 📏 Analysis │ 🧪 PyMOL;
+   (the request: « the viewer menu must be drastically reduced and organised … the
+   “analysis” and “modify” can be in one line but clearly separated … the movie maker
+   section can fit in the line of the general section … compact the commands in the
+   scene section so that they fit in one line without the need to use the scrolling
+   bar. Move the styles section in another line and add to it a Movie button. If
+   clicked the movie button must show the movie maker commands. In this way we can
+   get rid of the movie maker line and save space. »):
+     · §1 General — what is loaded and cleared: PDB file(s) / PDB ID · Trajectory ·
+       ⬇ PDB · 🗑 Clear · 🗑 Delete PDB. ⚠ THE 🎞 MOVIE MAKER ROW IS NO LONGER HERE:
+       it was the line this session removes, and it is now the panel the 🎞 Movie
+       button of 🎨 Styles opens (closed by default, so §1 costs one line, period);
+     · §2 Toolbar — ONE row per group, each one a small tinted box closed on itself
+       (the separator between two boxes is the gap alone):
+         row 1:  🌫 Scene (COMPACT — each toggle shows its state by its fill and its
+                 `aria-pressed`, and its word lives in the tooltip);
+         row 2:  🎨 Styles (the former « 🎨 Predefined styles » button: name ·
+                 🎨 Cumulative · 📷 Snapshot · 💾 · 📂 · 🗑 · ⬇ ⬆) + 🎞 Movie, the
+                 button that opens the film of poses full width UNDER this row;
+         row 3:  ✏️ Modify │ 📏 Analysis │ 🧪 PyMOL;
      · ▶ Trajectory playback — the ▶ Play bar, with 🎬 Video (the same run saved
        as one file) right next to it.
    The old « 2 · Molecular Styling » accordion (Hide everything / ESP /
@@ -9698,6 +9705,17 @@ const kfFps = kfFilm.fps;
 const [kfBusy, setKfBusy] = useState(false);          // 🔴 a film is being written
 const [kfPreview, setKfPreview] = useState(false);    // ▶ the film is playing live
 const [kfMsg, setKfMsg] = useState('');
+/* 🎞 LE PANNEAU DU FILM EST FERMÉ PAR DÉFAUT — la demande de cette session : « Move the styles
+   section in another line and add to it a Movie button. If clicked the movie button must show
+   the movie maker commands. In this way we can get rid of the movie maker line and save space. »
+   Le bouton 🎞 Movie vit dans la boîte 🎨 Styles de « 2 · Toolbar » ; ce drapeau ouvre et referme
+   le PANNEAU PLEINE LARGEUR qu'il rend SOUS cette rangée (la bande des gestes ET la colonne des
+   poses, rendues une seule fois dans le viewer, `id="viewer-movie-maker"`). Fermé, il ne coûte
+   aucun pixel : c'est la ligne entière de l'ex-« 🎞 Movie maker » de « 1 · General » qui a
+   disparu de la barre. Le compte des poses reste écrit sur le bouton, donc un film fermé ne se
+   perd jamais de vue. Il vit avec l'état du film, juste sous kfMsg — rien à voir avec les docks
+   des autres panneaux. */
+const [movieOpen, setMovieOpen] = useState(false);
 const kfRunRef = useRef(0);              // one recording at a time
 const kfCancelRef = useRef(false);       // what ⏹ writes, read by the drive loop
 const kfPreviewRef = useRef(0);          // token of the live playback (0 = not playing)
@@ -22283,14 +22301,436 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
 {structAsideMsg && (
 <span className="text-[10px] font-bold text-slate-600 bg-slate-50 border border-slate-200 rounded-md px-2 py-1 max-w-[380px] truncate" title={structAsideMsg}>{structAsideMsg}</span>
 )}
+{/* ══ 2 · TOOLBAR — Scene | Styles | Modify | Analysis | PyMOL ══════════════
+    This is §2 of the command bar now (the report: « quindi toolbar diventa la
+    sezione 2 e contiene separatamente scene, modify e analysis »). Each group is a
+    small tinted box closed on itself, and 🌫 Scene and 🎨 Styles have a ROW OF THEIR
+    OWN (the request of this session: « compact the commands in scene section so that
+    they fit in one line without the need to use the scrolling bar. Move the styles
+    section in another line ») — a row never cuts in the middle of a group, so the bar
+    costs exactly as many lines as the CONTENT decides. The expanded panels
+    (🎞 the film of poses, ⚡ ESP · Range, 🔢 Renumber, ✏️ Atom names, 🧪 PyMOL, the
+    clipping sliders, ⚙ Parameters) are full-width children of this same section, so
+    the bar stays one row tall while nothing is open.
+    • Scene: 🌫 Fog · 🎨 Background · ◐ Shadows (+ 🌑 Darkness / 💡 Light) · 💡 Light colour · ✂ Clipping · ✨ Ray (+ resolution · ⬚ alpha · ◐ shadows)
+    • Styles: the NAME · 🎨 Cumulative / 📷 Snapshot · 💾 Save · 📂 Load… · 🗑 Delete · ⬇ · ⬆ · 🎞 Movie
+    • Modify: 🧬 From sequence · ✥ Move / ↻ Rotate · ⚗️ Rebuild H · ✏️ Atom names · ⚡ ESP · 🔢 Renumber
+    • Analysis: 📏 Measure · 🟢 Assigned
+    • PyMOL: 🧪 Selections & PyMOL
+    THE FOUR MOVES OF THIS REVISION (each one is a line of the report):
+      · ✨ Ray and its associates (the resolution, ⬚ alpha, ◐ shadows + strength)
+        left §1 General for the 🌫 Scene group — a still of the SCENE belongs with
+        the fog / background / shadows / clipping that define it, and the ◐
+        Shadows rig that aims the light of the still is right there;
+      · 📷 Figure is REMOVED (redundant): the very still of the scene is written
+        by ✨ Ray as a PNG on the computer, and the ★ figures of Publications &
+        Slides keep their own capture / import paths (the canvas, the Image
+        builder, the imported files);
+      · 🙈 Hide everything is REMOVED here: the Selections bar on the left keeps
+        its own « 🙈 Hide all » / « Show all » button on the SAME `hideAll` state,
+        so the gesture survives and this row no longer repeats it;
+      · ⚡ ESP and 🔢 Renumber (the button AND its list) left the old §2 for the
+        ✏️ Modify group — they modify the selected molecule's surface and the
+        numbering of the residues on screen;
+      · §2 « Molecular Styling » disappears with them: the styling of every
+        molecule has lived in the bar on the RIGHT of the canvas since PART 4
+        (one space per molecule), and the accordion only held those two gestures
+        and the Hide-everything button.
+    The lighting rig is untouched: Shadows locks NGL's single light in place and
+    the Darkness / Light sliders aim it (and now also drive the AMBIENT-OCCLUSION
+    equivalent, see applyShadowSettings). Its ONE user-changeable colour is the « 💡 Light colour » swatch, parked IMMEDIATELY BEFORE « ✂ Clipping » because that is where the request puts it (« in the molecular viewer add the possibility to change the color of the light and put it just before the clipping in the scene section of the toolbar ») — white by default, so the reference look is what an untouched swatch gives. ✂ Clipping pushed OFF sets the camera
+    bounds to the EXTREMES (near 0 · far 100000 · dist 0) so a large complex is
+    never cut. */}
+<VSection title="2 · Toolbar" hint="scene · styles · modify · analysis · PyMOL" bare />
+{/* ── 🌫 SCENE — SA PROPRE RANGÉE, ET COMPACTE (la demande de cette session : « in the viewer
+    compact the commands in scene section so that they fit in one line without the need to use
+    the scrolling bar. Move the styles section in another line and add to it a Movie button. »).
+    Deux mouvements, un seul but — une ligne :
+      · 🎨 STYLES A QUITTÉ CETTE RANGÉE : elle a la sienne, juste en dessous, et le filet qui
+        les séparait est parti avec la rangée qu'elles partageaient (deux boîtes de teintes
+        différentes, sur deux lignes, se séparent toutes seules). La largeur de la bande teal ne
+        manque donc plus à 🌫 Scene — c'est la moitié du gain ;
+      · ET LE TEXTE REDONDANT EST PARTI. Chaque interrupteur disait son état DEUX fois
+        (« 🌫 Fog: On » : la boîte teintée le disait déjà) : il ne le dit plus qu'UNE fois, par
+        son REMPLISSAGE (teinté = ON, blanc = OFF) et par `aria-pressed` — donc un lecteur
+        d'écran l'entend comme avant —, et chaque bulle s'ouvre maintenant sur l'état
+        (« ON right now… »). Les deux pastilles de couleur (🎨 le fond de la scène, 💡 la lampe)
+        se passent de leur mot : l'émoji EST leur nom dans tout le reste du fichier
+        (🎨 Background · 💡 Light colour) et leur bulle le dit en entier — exactement la demande
+        d'origine (« too much writing which can be substituted by information available by
+        hovering »). Curseurs et valeurs raccourcis (w-14 · w-9), ↺ sans cadre : la boîte
+        fermée tient sur UNE ligne, sans barre de défilement.
+    La rangée garde `overflow-x-auto` en FILET DE SÉCURITÉ (sur un panneau vraiment étroit elle
+    défile au lieu de casser la ligne — le gabarit de la bande 🎞 du film) et sa boîte reste
+    `shrink-0`, donc le CONTENU décide de la largeur, jamais une coupure de ligne.
+    ⚠ RIEN N'A ÉTÉ RETIRÉ : mêmes sept gestes, mêmes curseurs et leurs valeurs, mêmes bulles. */}
+<div className="flex items-center gap-1 w-full overflow-x-auto">
+<div className="flex items-center gap-0.5 rounded-md border border-sky-200 bg-sky-50/40 px-1 py-0.5 shrink-0">
+<span className="text-[9px] font-black text-sky-700 uppercase tracking-wide whitespace-nowrap" title="The scene the structure is drawn in: NGL's depth fog, the background colour, the shadows and the one light that casts them, the clipping plane, and the high-resolution still (✨ Ray, with its resolution, its alpha and its cast shadows).">🌫 Scene</span>
+<button type="button" onClick={() => setFogEnabled((v) => !v)}
+  aria-pressed={fogEnabled}
+  className={`px-1.5 py-1 text-[10px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${fogEnabled ? 'bg-sky-100 border-sky-400 text-sky-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+  title={`🌫 Fog — ${fogEnabled ? 'ON right now: distant atoms still fade into the background; this button turns the haze OFF and gives every atom its full colour back.' : 'OFF right now: the haze is gone; this button turns it back ON.'} NGL's default depth fog fades distant atoms toward the background (a grey haze). The setting is saved and persists across pages.`}>
+  🌫 Fog
+</button>
+{/* 🎨 BACKGROUND — the colour of the 3D scene itself (§2 Scene). It is applied to
+    the live stage (stage.setParameters({ backgroundColor })), persists like the
+    fog / shadows / clipping, and travels inside a ⚙️ saved setup. The 🧪 PyMOL
+    panel writes this very same state, so the two entries never disagree. */}
+<label className="flex items-center gap-0.5 cursor-pointer" title={`🎨 Background — the colour of the 3D scene itself, and the colour the depth fog fades toward. Saved and persistent across pages, and part of a ⚙️ setup. The 🧪 PyMOL panel writes this very same state, so the two entries never disagree.`}>
+  <span className="text-[11px] leading-none">🎨</span>
+  <input type="color" value={bgColor} onChange={(e) => setBgColor(e.target.value)}
+    className="w-7 h-6 border border-slate-300 rounded cursor-pointer" aria-label="Background colour" />
+</label>
+<button type="button" onClick={() => setBgColor(BG_DEFAULT)}
+  className="px-0.5 py-1 text-[11px] font-bold rounded text-slate-500 hover:text-slate-900 hover:bg-slate-100"
+  title={`↺ Back to the default background (${BG_DEFAULT})`}>
+  ↺
+</button>
+<button type="button" onClick={() => setShadowOn((v) => !v)}
+  aria-pressed={shadowOn}
+  className={`px-1.5 py-1 text-[10px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${shadowOn ? 'bg-slate-800 border-slate-800 text-white' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+  title={`◐ Shadows — ${shadowOn ? 'ON right now: the scene is lit by ONE fixed key light and the 💡 Light sliders below aim it; this button hands the lighting back to NGL (flat, camera-linked).' : 'OFF right now: NGL lights the scene with its own camera-linked headlight; this button swaps that for ONE fixed key light you aim.'} Shadows: swaps NGL's flat camera-lit look for ONE fixed key light whose direction you aim (Azimuth / Elevation appear while ON), so every side of the structure that turns away from the light falls into real shade as you rotate. The Darkness slider then only raises the dark↔light contrast — the light stays pure white unless you say otherwise (the 💡 Light colour swatch that follows, immediately before ✂ Clipping, is the ONE control that tints this lamp). Shadows also switches on the AMBIENT-OCCLUSION equivalent: NGL 2.4 has no SSAO pass, so the cavity shading comes from the deep-ambient + strong-key-light rig with supersampled shading (sampleLevel), which is what makes crevices and the inner sides of a fold read as depth. (True WebGL shadow maps aren't supported by NGL — trying them made the molecule disappear. Every mesh is still flagged cast+receive shadows, see flagMeshShadows.)`}>
+  ◐ Shadows
+</button>
+{shadowOn && (
+  <label className="flex items-center gap-0.5 text-[10px] font-bold text-slate-700 whitespace-nowrap" title="Darkness — contrast only: the lit side gets brighter and the shaded side darker, with no colour change here (only the light/ambient INTENSITIES move, and the light keeps its colour — the 💡 Light colour swatch just before ✂ Clipping is where that colour is chosen, white by default). This is also what deepens the ambient-occlusion-like cavity shading.">
+    🌑 Darkness
+    <input type="range" min="0" max="100" value={Math.round(shadowDarkness * 100)} onChange={(e) => setShadowDarkness(Number(e.target.value) / 100)} className="w-14 accent-slate-700" />
+    <span className="text-[10px] text-slate-500 w-7">{Math.round(shadowDarkness * 100)}%</span>
+  </label>
+)}
+{(shadowOn || rayShadows) && (
+  <label className="flex items-center gap-0.5 text-[10px] font-bold text-slate-700 whitespace-nowrap" title="Light direction — aim the fixed key light (and therefore where the shadows fall). Azimuth 0° = light behind the camera (flat), 90° = screen-left, 180° = facing the camera; Elevation is the height above/below the horizon. The shade follows live while you drag. ⚠ The ✨ Ray still throws its cast shadow from THIS lamp too, so these sliders are shown whenever either the ◐ Shadows rig or the ray shadows are on — an off-axis lamp (about 90° / 45°) is what makes a cast shadow read as a shadow instead of hiding in the shade the canvas already draws. The COLOUR of this lamp is the 💡 Light colour swatch just beside it — the swatch and these two sliders own the same lamp.">
+    💡 Light
+    <input type="range" min="0" max="360" value={shadowAz} onChange={(e) => setShadowAz(Number(e.target.value))} className="w-14 accent-slate-700" aria-label="Light azimuth" />
+    <span className="text-[10px] text-slate-500 w-7">{shadowAz}°</span>
+    <span className="text-slate-400">/</span>
+    <input type="range" min="-90" max="90" value={shadowEl} onChange={(e) => setShadowEl(Number(e.target.value))} className="w-14 accent-slate-700" aria-label="Light elevation" />
+    <span className="text-[10px] text-slate-500 w-7">{shadowEl}°</span>
+  </label>
+)}
+{/* 💡 LIGHT COLOUR — the request: « in the molecular viewer add the possibility
+    to change the color of the light and put it just before the clipping in the
+    scene section of the toolbar ». It sits HERE, immediately before the ✂ Clipping
+    button, and it is the ONE control of the rig that tints anything: the KEY light
+    — the lamp NGL lights the scene with, the lamp the ◐ Shadows rig aims and the
+    ✨ Ray still re-renders with. White by default, which IS the reference look; the
+    ambient fill is deliberately left white (see nglLightParams in
+    utils/viewerLightRig.js), so the shaded side of an atom keeps the colour its
+    palette gave it and only the lit side takes the cast — the same bargain PyMOL's
+    `light_color` makes with `ambient_color`. Unlike the 💡 Light direction sliders
+    beside it (only the AIMED rig and the ray shadows need them), this swatch stays
+    visible in both modes: NGL re-reads `parameters.lightColor` on every frame
+    (Viewer.__updateLights, verified in the installed 2.4), so it also tints the
+    plain camera-linked headlight while ◐ Shadows is OFF. The value is validated by
+    the rig's own normalizeLightColor (junk → the white default), persisted like the
+    fog / shadows / clipping, and carried by a ⚙️ saved setup. */}
+  <label className="flex items-center gap-0.5 cursor-pointer" title={`💡 Light colour — the colour of the KEY light, the lamp the whole scene is lit with: the one the ◐ Shadows rig aims (Azimuth / Elevation) and the one the ✨ Ray re-renders in its still. White is the reference look. Any other colour tints the LIT side of every atom while the ambient fill stays white, so the shaded side keeps the colour its palette gave it (exactly PyMOL's light_color, which also leaves ambient_color alone). NGL re-reads the colour on every frame, so it applies with the Shadows rig ON and OFF; it is saved with the page and travels inside a ⚙️ saved setup.`}>
+    <span className="text-[11px] leading-none">💡</span>
+    <input type="color" value={lightColor} onChange={(e) => setLightColor(normalizeLightColor(e.target.value))}
+      className="w-7 h-6 border border-slate-300 rounded cursor-pointer" aria-label="Light colour" />
+  </label>
+  <button type="button" onClick={() => setLightColor(LIGHT_COLOR_DEFAULT)}
+    className="px-0.5 py-1 text-[11px] font-bold rounded text-slate-500 hover:text-slate-900 hover:bg-slate-100"
+    title={`↺ Back to the white key light (${LIGHT_COLOR_DEFAULT}) — the reference look, nothing tinted`}>
+    ↺
+  </button>
+<button type="button" onClick={() => setClipOn((v) => !v)}
+  aria-pressed={clipOn}
+  className={`px-1.5 py-1 text-[10px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${clipOn ? 'bg-emerald-50 border-emerald-400 text-emerald-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+  title={`✂ Clipping — ${clipOn ? 'ON right now: your own near / far / distance values below are cutting the scene; this button pushes the bounds back to the EXTREMES (nothing is ever cut).' : 'OFF right now: the camera bounds sit at the EXTREMES (near 0 · far 100000 · dist 0), so nothing is ever cut at any zoom; this button hands the scene to your own values below.'} Clipping plane. NGL clips the scene with the camera near / far planes: clipNear / clipFar are percentages of the scene bounding sphere and clipDist is the closest the near plane may come to the camera — exactly what CUTS a big complex when you zoom in.`}>
+  ✂ Clipping
+</button>
+{clipOn && (
+  <>
+    <label className="flex items-center gap-0.5 text-[10px] font-bold text-slate-700 whitespace-nowrap" title="clipNear — how much is cut in FRONT of the molecule, as a percentage of the bounding sphere. 0 cuts nothing (the near plane sits on the front edge of the sphere); positive values bring the near plane closer to the molecule.">
+      near
+      <input type="range" min="-50" max="50" step="1" value={clipNear} onChange={(e) => setClipNear(Number(e.target.value))} className="w-14 accent-emerald-600" aria-label="Clipping near" />
+      <span className="text-[10px] text-slate-500 w-9">{clipNear}%</span>
+    </label>
+    <label className="flex items-center gap-0.5 text-[10px] font-bold text-slate-700 whitespace-nowrap" title="clipFar — how far BEHIND the molecule the far plane sits, as a percentage of the bounding sphere. 50 = the centre of the sphere, 100 = its back edge, 150 = one radius further; « Off » uses 100000 (effectively infinite).">
+      far
+      <input type="range" min="50" max="150" step="1" value={clipFar} onChange={(e) => setClipFar(Number(e.target.value))} className="w-14 accent-emerald-600" aria-label="Clipping far" />
+      <span className="text-[10px] text-slate-500 w-9">{clipFar}%</span>
+    </label>
+    <label className="flex items-center gap-0.5 text-[10px] font-bold text-slate-700 whitespace-nowrap" title="clipDist — the MINIMUM distance (Å) between the camera and the near plane. NGL floors the near plane with it, which is what cuts a large complex when you zoom in: 0 removes the floor completely (that is what « Off » uses).">
+      cam. near
+      <input type="range" min="0" max="30" step="0.1" value={clipDist} onChange={(e) => setClipDist(Math.max(0, Number(e.target.value)))} className="w-14 accent-emerald-600" aria-label="Clipping camera distance" />
+      <span className="text-[10px] text-slate-500 w-9">{clipDist} Å</span>
+    </label>
+    <button type="button"
+      onClick={() => { setClipNear(CLIP_DEFAULTS.near); setClipFar(CLIP_DEFAULTS.far); setClipDist(CLIP_DEFAULTS.dist); }}
+      className="px-1.5 py-1 text-[10px] font-bold rounded border bg-white border-emerald-300 text-emerald-700 hover:bg-emerald-50 whitespace-nowrap"
+      title={`↺ Back to the « no cut » extremes: clipNear ${CLIP_DEFAULTS.near} · clipFar ${CLIP_DEFAULTS.far} · clipDist ${CLIP_DEFAULTS.dist} Å`}>
+      ↺ No cut
+    </button>
+  </>
+)}
+{/* ✨ RAY — the HIGH-RESOLUTION STILL of the scene, HERE in the 🌫 Scene group
+    (the request: « i comandi ray e i suoi associati (alpha, shadow) devono
+    essere spostati nella sezione scene »). A still belongs to the SCENE as a
+    whole, exactly like the 🌫 Fog · 🎨 Background · ◐ Shadows · ✂ Clipping beside
+    it — and the ◐ Shadows rig that AIMS the light of the still is right there,
+    so the two controls that own the light of a still are neighbours. It renders
+    with NGL's own supersampling path (utils/viewerRayImage.js) and writes ONE
+    PNG on the computer; the 📷 button that published to the Figure library is
+    gone (the request: « il pulsante figure é ridondante »).
+    WHY A « RAY » COMES BACK NOW. The report: « se clicco su ray, anche per un
+    piccolo peptide il rendering non finisce mai e non arrivo a vedere
+    l'immagine ». The still is `canvasPixels × factor` and it is not only
+    RENDERED: the cast shadows walk every pixel of it (on the CPU) and the PNG is
+    decoded and encoded once more. On a HiDPI canvas the old 40 Mpx budget meant
+    a 200 MB image copied three times — minutes inside getImageData / toBlob,
+    while the button still said « Rendering… ». The size is now capped by the
+    module (RAY_MAX_PIXELS · 16 Mpx, a 4000×4000-class still), the antialias pass
+    — FOUR times the tiles — is only asked for while the tiles stay few
+    (RAY_ANTIALIAS_MAX_FACTOR: from 3× up every tile IS a supersample), and the
+    title below says, BEFORE the click, how many pixels and how many tiles this
+    factor really costs here. */ }
+<div className="flex items-center gap-1">
+  <button
+    type="button"
+    onClick={captureRay}
+    disabled={rayBusy}
+    title={status === 'ready'
+      ? `Render a high-resolution still of the scene on screen: ${rayPlan.realWidth || 0}×${rayPlan.realHeight || 0} px${rayPlan.antialias ? ' (antialias pass)' : ''}, ${rayPlan.tiles || 0} tiles. It is NGL's own supersampling render of the very scene — every palette, the ring plates, the ESP surface, the fog and the light rig. The still is SHOWN here first (✨ Ray preview): nothing is written until you press 💾 Save PNG, which downloads exactly the image you saw. A size this GPU cannot take is reduced automatically, so the render never fails.`
+      : 'Load a structure first — ✨ Ray renders the 3D scene on screen at high resolution'}
+    className={`px-1.5 py-1 text-[10px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${rayBusy ? 'bg-amber-50 border-amber-300 text-amber-700 cursor-wait' : 'bg-white border-amber-300 text-amber-700 hover:bg-amber-50'}`}
+  >
+    {rayBusy ? '✨ Rendering…' : '✨ Ray'}
+  </button>
+  <select
+    value={rayFactor}
+    onChange={(e) => setRayFactor(Number(e.target.value))}
+    title={'Supersampling multiple of the canvas — the bigger it is, the smoother and the larger the PNG. The pixel size written after the × is what the render will really produce on this screen; a size this GPU cannot take is reduced automatically.'}
+    className="border border-amber-300 rounded-md px-1 py-0.5 text-[10px] bg-white outline-none focus:border-amber-500 h-7 max-w-[4.6rem]"
+  >
+    {raySizes.map((o) => (
+      <option key={o.factor} value={o.factor}>
+        {o.label}{o.allowed ? '' : ` → ${o.best}×`}
+      </option>
+    ))}
+  </select>
+  <label
+    title="Transparent background: the PNG keeps an alpha channel, so the molecule can be dropped on any coloured page or slide (the interactive canvas is not affected)"
+    className="px-1 py-1 text-[10px] font-bold rounded-md border transition-colors h-7 flex items-center gap-0.5 cursor-pointer bg-white border-amber-300 text-amber-700 hover:bg-amber-50 whitespace-nowrap"
+  >
+    <input type="checkbox" checked={rayTransparent} onChange={(e) => setRayTransparent(e.target.checked)} className="accent-amber-600" />
+    ⬚ alpha
+  </label>
+  {/* ◐ CASTED SHADOWS — the report: « the ray button only takes a snapshot of the
+      image but does not introduce casted shadows ». NGL 2.4 ships no shadow-map
+      pass (see the note above `flagMeshShadows`), so the shadow of the still is
+      computed from the ATOMS — the very camera of the canvas, the very lamp of
+      the ◐ Shadows rig — and multiplied into the pixels NGL just wrote
+      (utils/viewerRayShadows.js). The PNG therefore carries a real projected
+      shadow; untick to get the plain supersampled still back. Only what is
+      DRAWN casts: a molecule this viewer has hidden (a section unticked, a look
+      set to « hide ») keeps its atoms in the structure but draws no
+      representation, and it no longer throws a shadow of itself into the still —
+      the report « I see a projected membrane, while the membrane is hidden in the
+      program » (see drawnAtomIndicesOf in that module). */}
+  <label
+    title="Casted shadows in the PNG: the shadow the molecule throws, from the very lamp of the ◐ Shadows rig (its Azimuth / Elevation — the 💡 Light sliders of « 2 · Toolbar », shown whenever these ray shadows are on). NGL cannot cast them — the shadow is computed from the atoms with the camera and the light of the scene and multiplied into the still. Untick for the plain supersampled image."
+    className={`px-1 py-1 text-[10px] font-bold rounded-md border transition-colors h-7 flex items-center gap-0.5 cursor-pointer whitespace-nowrap ${rayShadows ? 'bg-amber-100 border-amber-400 text-amber-900' : 'bg-white border-amber-300 text-amber-700 hover:bg-amber-50'}`}
+  >
+    <input type="checkbox" checked={rayShadows} onChange={(e) => setRayShadows(e.target.checked)} className="accent-amber-600" />
+    ◐ shadows
+  </label>
+  {rayShadows && (
+    <>
+      <input
+        type="range" min="0.1" max="1" step="0.05" value={rayShadowStrength}
+        onChange={(e) => setRayShadowStrength(Number(e.target.value))}
+        className="accent-amber-600 w-14 shrink-0"
+        title={`Darkness of the cast shadow — ${Math.round(rayShadowStrength * 100)} % (the DIRECTION comes from the 💡 Light sliders of « 2 · Toolbar » — Azimuth / Elevation)`}
+        aria-label="cast shadow strength"
+      />
+      {/* LA DOUCEUR DU CONTOUR — l'autre moitié réglable d'une ombre portée (sa
+          direction est celle du rig ◐). Elle multiplie la pénombre du module
+          (RAY_SHADOW_DEFAULTS.blur : 0 = contour net, 1 = les valeurs par défaut,
+          4 = très diffuse) — la noirceur ne bouge pas, et un rendu à 1 est
+          exactement celui d'avant. */}
+      <input
+        type="range" min="0" max="4" step="0.25" value={rayShadowBlur}
+        onChange={(e) => setRayShadowBlur(Number(e.target.value))}
+        className="accent-amber-600 w-14 shrink-0"
+        title={`Softness of the cast shadow — ×${Number(rayShadowBlur).toFixed(2)} of the default penumbra (0 = a hard edge, 1 = the viewer's own default, 4 = a very diffuse shadow). It widens the shadow blur AND how much that blur grows with the occluder-to-receiver distance.`}
+        aria-label="cast shadow blur"
+      />
+    </>
+  )}
+  {/* ⏹ STOP WAITING (le rapport : « start ray tracing … hangs ») : NGL ne sait pas
+      annuler un `makeImage` — le seul geste honnête est de cesser de l'attendre.
+      Le rendu abandonné n'écrira AUCUN fichier ; le module abandonne de lui-même
+      après RAY_STALL_MS de silence (voir viewerRayImage.js). */}
+  {rayBusy && (
+    <button
+      type="button"
+      onClick={abandonRay}
+      className="px-1.5 py-1 text-[10px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap bg-white border-amber-400 text-amber-800 hover:bg-amber-50"
+      title="Stop waiting for this render: the button is freed at once and this still is abandoned (NGL cannot cancel an image it has begun — no file will be written). The ✨ Ray render itself gives up on its own after 45 s without a sign of life."
+    >
+      ⏹ stop
+    </button>
+  )}
+</div>
+{rayMsg && (
+<span className="text-[10px] font-bold text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">{rayMsg}</span>
+)}
+</div>
+</div>
+
+{/* ── 🎨 STYLES — SA PROPRE RANGÉE, ET ELLE PORTE LE 🎞 MOVIE (la demande de cette session :
+    « Move the styles section in another line and add to it a Movie button. If clicked the movie
+    button must show the movie maker commands. In this way we can get rid of the movie maker
+    line and save space. »). La bande teal ne partage donc plus sa largeur avec 🌫 Scene : le
+    filet qui les séparait est parti avec la rangée qu'elles partageaient (deux boîtes de teintes
+    différentes, sur deux lignes, se séparent toutes seules), et les CINQ gestes de la demande
+    d'origine restent là, dans leur ordre : le NOM, les DEUX modes d'apprentissage
+    (🎨 Cumulative · 📷 Snapshot), puis 💾 Save · 📂 Load… · 🗑 Delete — et au bout les deux
+    gestes de FICHIER (⬇ · ⬆) qui emportent un style sur un autre ordinateur.
+    🎞 MOVIE SE BRANCHE À LA SUITE : il ouvre et referme le panneau du film, rendu PLEINE
+    LARGEUR sous cette rangée (le gabarit de ⚙ Parameters and Constraints) — fermé par défaut,
+    donc bande ET colonne des poses ne coûtent rien et la ligne entière de l'ex-« 🎞 Movie
+    maker » de « 1 · General » a quitté la barre. Le compte des poses reste écrit sur le bouton
+    (« · 3 »), donc un film fermé ne se perd jamais de vue, et une écriture en cours le dit
+    (« ● ») même panneau refermé.
+    IL N'Y A TOUJOURS QU'UN JEU DE CES CINQ BOUTONS : la bande en montrait DEUX (les « setups »
+    nommés, puis les deux modes), donc deux pavés de prose pour expliquer deux fois la même
+    chose. Tout ce qui était écrit ici se lit en survolant le bouton qui le fait — la liste des
+    styles enregistrées comprise — et la bande ne coûte plus une seule ligne de texte. Les
+    « setups » de l'ancienne bande sont repris une fois comme thèmes du même nom (la migration
+    est en tête du composant, à côté de l'état des thèmes). */}
+<div className="flex items-center gap-1 w-full overflow-x-auto">
+<div className="flex flex-wrap items-center gap-1 rounded-md border border-teal-200 bg-teal-50/40 px-1.5 py-1 shrink-0">
+<span className="text-[9px] font-black text-teal-700 uppercase tracking-wide whitespace-nowrap" title={`Save / load the whole visualisation look under a NAME: every molecule style, its colour, its radii, the labels, Fog / Shadows / Clipping / Background, the light and its colour… ${stylesSavedTitle}`}>🎨 Styles</span>
+<input
+type="text"
+value={setupName}
+onChange={(e) => setSetupName(e.target.value)}
+onKeyDown={(e) => { if (e.key === 'Enter') saveActiveEnv(); }}
+placeholder="Style name"
+title="The NAME of the style — 💾 saves the look on screen under it (an existing name is overwritten, and an empty box gets a name typed for you), 🗑 Delete removes the one written here, ⬇ exports it. It is the name you will find in 📂 Load… and the name of the .json file."
+className="border border-teal-300 rounded-md px-2 py-1 text-[11px] w-28 bg-white outline-none focus:border-teal-500 h-7"
+/>
+{[['theme', '🎨 Cumulative'], ['snapshot', '📷 Snapshot']].map(([m, label]) => (
+<button key={m} type="button"
+onClick={() => { setSetupSaveMode(m); setThemeConflicts(null); setThemeChoices(null); }}
+title={m === 'theme'
+? 'Cumulative: 💾 Save learns the styles BY MOLECULAR CLASS (protein · nucleic acid · lipid · sugar · ligand · water · ion) and MERGES them into the theme — a style you can reuse on another file; a class the theme does not know keeps the neutral base style.'
+: 'Snapshot: 💾 Save photographs THIS exact scene, section by section (« protein · chain A » …), with no merge — one isolated setting for this system only.'}
+className={`px-2 py-1 text-[10px] font-bold rounded border h-7 whitespace-nowrap ${setupSaveMode === m ? 'bg-teal-600 border-teal-700 text-white' : 'bg-white border-teal-300 text-teal-800 hover:bg-teal-100'}`}>
+{label}
+</button>
+))}
+<button type="button" onClick={saveActiveEnv}
+title={setupSaveMode === 'theme'
+? `Save the theme under the name written on the left: the styles of the classes on screen are learned (merged), the rest of the file is untouched. A name is typed for you when the box is empty. ${stylesSavedTitle}`
+: `Save a snapshot of this scene under the name written on the left (an existing name is overwritten — no merge): one picture of THIS system, section by section. A name is typed for you when the box is empty. ${stylesSavedTitle}`}
+className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-teal-400 text-teal-800 hover:bg-teal-100 h-7 whitespace-nowrap">
+💾 Save {setupSaveMode === 'theme' ? 'theme' : 'snapshot'}
+</button>
+<select value="" onChange={(e) => loadActiveEnv(e.target.value)}
+title={setupSaveMode === 'theme'
+? `Put a saved theme back on screen: the global environment first, then the style of every class the theme knows — a class it does not know keeps the neutral base style. ${stylesSavedTitle}`
+: `Put a saved snapshot back on screen: the global environment and the styles of the very sections it photographed. ${stylesSavedTitle}`}
+className="border border-teal-300 rounded-md px-1.5 py-1 text-[11px] bg-white outline-none focus:border-teal-500 h-7 max-w-[10rem]">
+<option value="">📂 Load…</option>
+{Object.keys(activeEnvStore().map).sort().map((n) => <option key={n} value={n}>{n}</option>)}
+</select>
+<button type="button" onClick={deleteActiveEnv}
+title={`Delete the theme / snapshot whose name is written on the left. The scene on screen is NOT touched — deleting a saved style never changes what you see. ${stylesSavedTitle}`}
+className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-teal-300 text-teal-800 hover:bg-teal-100 h-7 whitespace-nowrap">
+🗑 Delete
+</button>
+<button type="button" onClick={() => exportActiveEnv(setupName)}
+title={`Download the style named on the left as a .json file — it can be imported on another page or another computer. ${stylesSavedTitle}`}
+className="px-1.5 py-1 text-[11px] font-bold rounded border bg-white border-teal-300 text-teal-800 hover:bg-teal-100 h-7">
+⬇
+</button>
+<label title={`Import a style .json file (written by ⬇): its mode is read from the file and it is applied at once. ${stylesSavedTitle}`}
+className="cursor-pointer px-1.5 py-1 text-[11px] font-bold rounded border bg-white border-teal-300 text-teal-800 hover:bg-teal-100 h-7 inline-flex items-center">
+⬆
+<input type="file" accept=".json,application/json"
+onChange={(e) => { importActiveEnvFile(e.target.files && e.target.files[0]); e.target.value = ''; }}
+className="hidden" />
+</label>
+{/* ── 🎞 MOVIE — LE BOUTON QUI A REMPLACÉ LA RANGÉE « Movie maker » DE §1 (la demande de cette
+    session : « add to it a Movie button. If clicked the movie button must show the movie maker
+    commands. In this way we can get rid of the movie maker line and save space. »). Un clic
+    ouvre le panneau du film SOUS cette rangée, un second le referme : la bande des gestes
+    (＋ capturer · ⏸ tenue / morphème · ▶ vérifier · 🔴 écrire · ⏹ · ⬇ · 📂 · 🗑) et la colonne
+    des poses, ENTIÈRES et pleine largeur. Fermé, il ne pousse rien — et il continue de PARLER :
+    « · 3 » dit combien de poses le film a, « ● » dit qu'une écriture est en cours (son ⏹ est
+    dans le panneau), « ▾ / ▸ » dit dans quel sens le clic ira. Sa bulle dit tout le reste, dont
+    le fait que rien n'est envoyé nulle part : le film s'écrit sur votre ordinateur. */}
+<button
+type="button"
+onClick={() => setMovieOpen((v) => !v)}
+aria-expanded={movieOpen}
+aria-controls="viewer-movie-maker"
+className={`px-2 py-1 text-[10px] font-bold rounded border h-7 whitespace-nowrap transition-colors ${movieOpen ? 'bg-fuchsia-600 border-fuchsia-700 text-white' : kfBusy ? 'bg-fuchsia-100 border-fuchsia-400 text-fuchsia-800' : 'bg-white border-fuchsia-300 text-fuchsia-700 hover:bg-fuchsia-50'}`}
+title={`🎞 THE FILM OF POSES AND STYLES — capture the pose and the styles of a scene, morph to the next, write the film. ${movieOpen ? 'Open right now: this button closes it, and the film stops costing a line of the toolbar.' : 'Closed: this button opens the whole 🎞 Movie maker under this row — its band of gestures (＋ capture this pose · hold / morph · ▶ preview the film · 🔴 record the film · ⏹ stop · ⬇ Export the film · 📂 Import a film · 🗑 Clear the film) and its column of poses — and a second press closes it again.'} The film holds ${keyframes.length} pose(s) of ${KEYFRAME_LIMITS.keys} right now${kfBusy ? ', and one is being written (its ⏹ Stop is inside the panel)' : ''}. Nothing is uploaded anywhere: the film is written as a file on your computer.`}>
+🎞 Movie {movieOpen ? '▾' : '▸'}{keyframes.length ? ` · ${keyframes.length}` : ''}{kfBusy ? ' ●' : ''}
+</button>
+{setupMsg && (
+<span className="text-[10px] font-bold text-teal-700 bg-teal-50 border border-teal-200 rounded-md px-2 py-1 max-w-[320px] truncate" title={setupMsg}>{setupMsg}</span>
+)}
+{/* Le conflit d'un THÈME (deux molécules d'une même classe dessinées autrement) :
+    le SEUL texte que la bande garde, parce qu'il attend une réponse. */}
+{themeConflicts && (
+<div className="w-full flex flex-wrap items-center gap-1.5 bg-amber-50 border border-amber-300 rounded-md px-2 py-1">
+<span className="text-[10px] font-black text-amber-800" title="A theme keys its styles by MOLECULAR CLASS: when two molecules of the same class are drawn differently, you choose which one becomes the class default — then press 💾 Save again. The styles of the other molecules are not touched.">
+{themeConflicts.length} class(es) drawn in two ways — choose the class default
+</span>
+{themeConflicts.map((c) => (
+<label key={c.kind} className="flex items-center gap-1 text-[10px] font-bold text-amber-900">
+<span title="The molecular class a theme keys its styles by">{MOL_KIND_LABELS[c.kind] || c.kind}</span>
+<select value={(themeChoices && themeChoices[c.kind]) || ''}
+onChange={(e) => setThemeChoices({ ...(themeChoices || {}), [c.kind]: e.target.value })}
+title="The molecule whose style becomes the default of this class in the theme"
+className="border border-amber-300 rounded-md px-1.5 py-1 text-[11px] bg-white outline-none focus:border-amber-500 h-7">
+{c.options.map((sec) => <option key={sec.id} value={sec.id}>{classLabelOfSection(sec)}</option>)}
+</select>
+</label>
+))}
+</div>
+)}
+</div>
+
+</div>
+
+{/* ── LES DEUX RANGÉES SE REFERMENT ICI — les deux `</div>` ci-dessus sont ceux de la boîte
+    🎨 Styles (le premier) puis de SA rangée, ouverte sur
+    `flex items-center gap-1 w-full overflow-x-auto`. 🌫 Scene a la sienne, juste au-dessus, et
+    chaque groupe de §2 vit donc dans sa propre rangée, dans l'ordre 🌫 Scene → 🎨 Styles →
+    (🎞 le panneau du film, quand il est ouvert) → ✏️ Modify → 📏 Analysis → 🧪 PyMOL. */}
+{/* ── LE SAUT DE LIGNE FORCÉ A ÉTÉ RETIRÉ — la demande : « between the “style” section and the
+    “modify” section there is an empty line ». Il s'écrivait ici : un `<span>` vide, pleine
+    largeur et SANS HAUTEUR, dont le seul effet était de couper la rangée. Ce frère occupait une
+    rangée ENTIÈRE à lui tout seul — hauteur nulle, mais les deux `gap` de la rangée autour —
+    donc une bande vide entre la boîte 🎨 Styles et la boîte ✏️ Modify, exactement la ligne que
+    le rapport décrit. Les cinq groupes de « 2 · Toolbar » s'enchaînent maintenant dans l'ordre,
+    chacun refermé dans sa boîte teintée : c'est le CONTENU qui décide où la largeur se coupe —
+    jamais un frère vide. */}
+
 {/* ── 🎞 THE MOVIE MAKER — « capture the pose and the styles of a scene, morph to
-    the next, write the film ». IL VIT MAINTENANT SUR LA LIGNE « 1 · General »
-    (la demande : « the movie maker section can fit in the line of the general
-    section (where you upload the pdb and trajectory) ») : il filme la structure
-    et la trajectoire qui se chargent juste à côté, donc c'est là qu'on le
-    cherche. Sa rangée de gestes n'a pas bougé d'un pixel — une ligne, pas de
-    retour à la ligne, pas de roman (voir le commentaire de la bande). */}
-<div className="flex flex-col gap-1 w-full">
+    the next, write the film ». IL NE VIT PLUS SUR LA LIGNE DE « 1 · General » (la demande de
+    cette session : « Move the styles section in another line and add to it a Movie button. If
+    clicked the movie button must show the movie maker commands. In this way we can get rid of
+    the movie maker line and save space. ») : la rangée de §1 charge et efface, elle ne filme
+    plus rien, et c'est le 🎞 MOVIE de la boîte 🎨 Styles qui ouvre ce panneau. Il est FERMÉ par
+    défaut (`movieOpen`), donc bande ET colonne des poses ne coûtent pas un pixel tant qu'on ne
+    le demande pas — c'est la ligne entière de l'ex-« 🎞 Movie maker » qui a quitté la barre.
+    Ouvert, il se rend PLEINE LARGEUR ici, le gabarit des autres panneaux dépliés de
+    « 2 · Toolbar » (⚙ Parameters and Constraints, ⚡ Range, ✏️ Atom names) : la rangée des
+    gestes et la colonne des poses gardent donc toute la largeur de la barre.
+    ⚠ RIEN N'A ÉTÉ RÉÉCRIT : la bande des boutons, ses bulles, ses messages et ses lignes de
+    pose sont celles d'avant, au caractère près — seul leur EMPLACEMENT a changé. */}
+{movieOpen && (
+<div id="viewer-movie-maker" className="flex flex-col gap-1 w-full">
 <span className="text-[9px] font-black text-fuchsia-700 uppercase tracking-wide whitespace-nowrap" title="Capture the pose and the styles of a scene, morph to the next, write the film: ＋ photographs the scene as it is, ⏸ hold / morph say how long each picture stays and how long the way to the next one takes, ▶ checks the film on screen and 🔴 writes it into one file. Every gesture explains itself in its own tooltip.">🎞 Movie maker</span>
 {/* ── UNE SEULE LIGNE DE BOUTONS (le rapport : « keep all buttons in one line.
     Remove the commentaries so that it fits in one row »). La rangée ne REVIENT PAS
@@ -22513,388 +22953,7 @@ title={kfMsg || (videoReady.ok ? keyframeFilmSummary(keyframes.length, kfPlanNow
   })()}
 
 </div>
-
-{/* ══ 2 · TOOLBAR — Scene | Modify | Analysis | PyMOL, ONE horizontal row ════
-    This is §2 of the command bar now (the report: « quindi toolbar diventa la
-    sezione 2 e contiene separatamente scene, modify e analysis »). The four
-    groups are ONE wrapped row, each introduced by a small chip and separated by
-    a hairline; the expanded panels (⚡ ESP · Range, 🔢 Renumber, ✏️ Atom names,
-    🧪 PyMOL, the clipping sliders) are full-width children of this same section,
-    so the bar stays one row tall while nothing is open.
-    • Scene: 🌫 Fog · 🎨 Background · ◐ Shadows (+ 🌑 Darkness / 💡 Light) · 💡 Light colour · ✂ Clipping · ✨ Ray (+ resolution · ⬚ alpha · ◐ shadows)
-    • Modify: 🧬 From sequence · ✥ Move / ↻ Rotate · ⚗️ Rebuild H · ✏️ Atom names · ⚡ ESP · 🔢 Renumber
-    • Analysis: 📏 Measure · 🟢 Assigned
-    • PyMOL: 🧪 Selections & PyMOL
-    THE FOUR MOVES OF THIS REVISION (each one is a line of the report):
-      · ✨ Ray and its associates (the resolution, ⬚ alpha, ◐ shadows + strength)
-        left §1 General for the 🌫 Scene group — a still of the SCENE belongs with
-        the fog / background / shadows / clipping that define it, and the ◐
-        Shadows rig that aims the light of the still is right there;
-      · 📷 Figure is REMOVED (redundant): the very still of the scene is written
-        by ✨ Ray as a PNG on the computer, and the ★ figures of Publications &
-        Slides keep their own capture / import paths (the canvas, the Image
-        builder, the imported files);
-      · 🙈 Hide everything is REMOVED here: the Selections bar on the left keeps
-        its own « 🙈 Hide all » / « Show all » button on the SAME `hideAll` state,
-        so the gesture survives and this row no longer repeats it;
-      · ⚡ ESP and 🔢 Renumber (the button AND its list) left the old §2 for the
-        ✏️ Modify group — they modify the selected molecule's surface and the
-        numbering of the residues on screen;
-      · §2 « Molecular Styling » disappears with them: the styling of every
-        molecule has lived in the bar on the RIGHT of the canvas since PART 4
-        (one space per molecule), and the accordion only held those two gestures
-        and the Hide-everything button.
-    The lighting rig is untouched: Shadows locks NGL's single light in place and
-    the Darkness / Light sliders aim it (and now also drive the AMBIENT-OCCLUSION
-    equivalent, see applyShadowSettings). Its ONE user-changeable colour is the « 💡 Light colour » swatch, parked IMMEDIATELY BEFORE « ✂ Clipping » because that is where the request puts it (« in the molecular viewer add the possibility to change the color of the light and put it just before the clipping in the scene section of the toolbar ») — white by default, so the reference look is what an untouched swatch gives. ✂ Clipping pushed OFF sets the camera
-    bounds to the EXTREMES (near 0 · far 100000 · dist 0) so a large complex is
-    never cut. */}
-<VSection title="2 · Toolbar" hint="scene · styles · modify · analysis · PyMOL" bare />
-{/* ── LIGNE 1 · 🌫 SCENE, SEUL DANS SA BOÎTE (la demande : « the scene, modify and
-    analyze subgroups are not clearly separated but I do not want to use a line for
-    each of them »). Chaque groupe est maintenant une petite boîte teintée à sa
-    couleur, refermée sur elle-même : la séparation ne demande aucune ligne de plus,
-    et le filet qui reste entre deux boîtes dit où finit l'une et où commence
-    l'autre. 🎨 Styles la partage aussi — et elle ne la quitte plus : le bloc suivant les met
-    dans LEUR rangée. */}
-{/* ── 🌫 SCENE │ 🎨 STYLES — UNE SEULE RANGÉE, ET ELLES LA GARDENT (la demande de cette
-    session : « Move the styles section after the scene section (as it is now but they can
-    fit together to save a line »). Les deux boîtes restent DEUX boîtes — chacune sa teinte,
-    son titre et son filet, donc la séparation que la demande précédente exigeait (« it should
-    be clear that they are separated ») reste lisible — mais elles ne sont plus deux frères de
-    la grande rangée de §2, où la seule largeur décidait si elles partageaient une ligne :
-    elles vivent dans LEUR rangée, qui ne se coupe JAMAIS. C'est le gabarit de la bande
-    🎞 Movie maker de §1 (`w-full` + défilement horizontal) : sur un panneau étroit la rangée
-    défile au lieu de repousser 🎨 Styles sous 🌫 Scene, donc les deux sections coûtent
-    TOUJOURS une seule ligne — celle que la demande voulait économiser. */}
-<div className="flex items-center gap-1 w-full overflow-x-auto">
-<div className="flex flex-wrap items-center gap-1 rounded-md border border-sky-200 bg-sky-50/40 px-1.5 py-1 shrink-0">
-<span className="text-[9px] font-black text-sky-700 uppercase tracking-wide whitespace-nowrap" title="The scene the structure is drawn in: NGL's depth fog, the background colour, the shadows and the one light that casts them, the clipping plane, and the high-resolution still (✨ Ray, with its resolution, its alpha and its cast shadows).">🌫 Scene</span>
-<button type="button" onClick={() => setFogEnabled((v) => !v)}
-  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 ${fogEnabled ? 'bg-sky-100 border-sky-400 text-sky-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
-  title="NGL's default depth fog fades distant atoms toward the background (a grey haze). Toggle it off for a crisp image — the setting is saved and persists across pages.">
-  🌫 Fog: {fogEnabled ? 'On' : 'Off'}
-</button>
-{/* 🎨 BACKGROUND — the colour of the 3D scene itself (§2 Scene). It is applied to
-    the live stage (stage.setParameters({ backgroundColor })), persists like the
-    fog / shadows / clipping, and travels inside a ⚙️ saved setup. The 🧪 PyMOL
-    panel writes this very same state, so the two entries never disagree. */}
-<label className="flex items-center gap-1 text-[11px] font-bold text-slate-700 whitespace-nowrap" title="Background colour of the 3D scene — the colour the depth fog fades toward. Saved and persistent across pages, and part of a ⚙️ setup.">
-  🎨 Background
-  <input type="color" value={bgColor} onChange={(e) => setBgColor(e.target.value)}
-    className="w-8 h-6 border border-slate-300 rounded cursor-pointer" aria-label="Background colour" />
-</label>
-<button type="button" onClick={() => setBgColor(BG_DEFAULT)}
-  className="px-1.5 py-1 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100"
-  title={`Back to the default background (${BG_DEFAULT})`}>
-  ↺
-</button>
-<button type="button" onClick={() => setShadowOn((v) => !v)}
-  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 ${shadowOn ? 'bg-slate-800 border-slate-800 text-white' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
-  title="Shadows: swaps NGL's flat camera-lit look for ONE fixed key light whose direction you aim (Azimuth / Elevation appear while ON), so every side of the structure that turns away from the light falls into real shade as you rotate. The Darkness slider then only raises the dark↔light contrast — the light stays pure white unless you say otherwise (the 💡 Light colour swatch that follows, immediately before ✂ Clipping, is the ONE control that tints this lamp). Shadows also switches on the AMBIENT-OCCLUSION equivalent: NGL 2.4 has no SSAO pass, so the cavity shading comes from the deep-ambient + strong-key-light rig with supersampled shading (sampleLevel), which is what makes crevices and the inner sides of a fold read as depth. (True WebGL shadow maps aren't supported by NGL — trying them made the molecule disappear. Every mesh is still flagged cast+receive shadows, see flagMeshShadows.)">
-  ◐ Shadows: {shadowOn ? 'On' : 'Off'}
-</button>
-{shadowOn && (
-  <label className="flex items-center gap-1 text-[11px] font-bold text-slate-700 whitespace-nowrap" title="Darkness — contrast only: the lit side gets brighter and the shaded side darker, with no colour change here (only the light/ambient INTENSITIES move, and the light keeps its colour — the 💡 Light colour swatch just before ✂ Clipping is where that colour is chosen, white by default). This is also what deepens the ambient-occlusion-like cavity shading.">
-    🌑 Darkness
-    <input type="range" min="0" max="100" value={Math.round(shadowDarkness * 100)} onChange={(e) => setShadowDarkness(Number(e.target.value) / 100)} className="w-20 accent-slate-700" />
-    <span className="text-[10px] text-slate-500 w-8">{Math.round(shadowDarkness * 100)}%</span>
-  </label>
 )}
-{(shadowOn || rayShadows) && (
-  <label className="flex items-center gap-1 text-[11px] font-bold text-slate-700 whitespace-nowrap" title="Light direction — aim the fixed key light (and therefore where the shadows fall). Azimuth 0° = light behind the camera (flat), 90° = screen-left, 180° = facing the camera; Elevation is the height above/below the horizon. The shade follows live while you drag. ⚠ The ✨ Ray still throws its cast shadow from THIS lamp too, so these sliders are shown whenever either the ◐ Shadows rig or the ray shadows are on — an off-axis lamp (about 90° / 45°) is what makes a cast shadow read as a shadow instead of hiding in the shade the canvas already draws. The COLOUR of this lamp is the 💡 Light colour swatch just beside it — the swatch and these two sliders own the same lamp.">
-    💡 Light
-    <input type="range" min="0" max="360" value={shadowAz} onChange={(e) => setShadowAz(Number(e.target.value))} className="w-16 accent-slate-700" aria-label="Light azimuth" />
-    <span className="text-[10px] text-slate-500 w-8">{shadowAz}°</span>
-    <span className="text-slate-400">/</span>
-    <input type="range" min="-90" max="90" value={shadowEl} onChange={(e) => setShadowEl(Number(e.target.value))} className="w-16 accent-slate-700" aria-label="Light elevation" />
-    <span className="text-[10px] text-slate-500 w-8">{shadowEl}°</span>
-  </label>
-)}
-{/* 💡 LIGHT COLOUR — the request: « in the molecular viewer add the possibility
-    to change the color of the light and put it just before the clipping in the
-    scene section of the toolbar ». It sits HERE, immediately before the ✂ Clipping
-    button, and it is the ONE control of the rig that tints anything: the KEY light
-    — the lamp NGL lights the scene with, the lamp the ◐ Shadows rig aims and the
-    ✨ Ray still re-renders with. White by default, which IS the reference look; the
-    ambient fill is deliberately left white (see nglLightParams in
-    utils/viewerLightRig.js), so the shaded side of an atom keeps the colour its
-    palette gave it and only the lit side takes the cast — the same bargain PyMOL's
-    `light_color` makes with `ambient_color`. Unlike the 💡 Light direction sliders
-    beside it (only the AIMED rig and the ray shadows need them), this swatch stays
-    visible in both modes: NGL re-reads `parameters.lightColor` on every frame
-    (Viewer.__updateLights, verified in the installed 2.4), so it also tints the
-    plain camera-linked headlight while ◐ Shadows is OFF. The value is validated by
-    the rig's own normalizeLightColor (junk → the white default), persisted like the
-    fog / shadows / clipping, and carried by a ⚙️ saved setup. */}
-  <label className="flex items-center gap-1 text-[11px] font-bold text-slate-700 whitespace-nowrap" title="Colour of the KEY light — the lamp the whole scene is lit with: the one the ◐ Shadows rig aims (Azimuth / Elevation) and the one the ✨ Ray re-renders in its still. White is the reference look. Any other colour tints the LIT side of every atom while the ambient fill stays white, so the shaded side keeps the colour its palette gave it (exactly PyMOL's light_color, which also leaves ambient_color alone). NGL re-reads the colour on every frame, so it applies with the Shadows rig ON and OFF; it is saved with the page and travels inside a ⚙️ saved setup.">
-    💡 Light colour
-    <input type="color" value={lightColor} onChange={(e) => setLightColor(normalizeLightColor(e.target.value))}
-      className="w-8 h-6 border border-slate-300 rounded cursor-pointer" aria-label="Light colour" />
-  </label>
-  <button type="button" onClick={() => setLightColor(LIGHT_COLOR_DEFAULT)}
-    className="px-1.5 py-1 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100"
-    title={`Back to the white key light (${LIGHT_COLOR_DEFAULT}) — the reference look, nothing tinted`}>
-    ↺
-  </button>
-<button type="button" onClick={() => setClipOn((v) => !v)}
-  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${clipOn ? 'bg-emerald-50 border-emerald-400 text-emerald-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
-  title="Clipping plane. NGL clips the scene with the camera near / far planes: clipNear / clipFar are percentages of the scene bounding sphere and clipDist is the closest the near plane may come to the camera — exactly what CUTS a big complex when you zoom in. OFF = the camera bounds are pushed to the EXTREMES (near 0 · far 100000 · dist 0), so nothing is ever cut at any zoom. ON = your own values below.">
-  ✂ Clipping: {clipOn ? 'On' : 'Off'}
-</button>
-{clipOn && (
-  <>
-    <label className="flex items-center gap-1 text-[11px] font-bold text-slate-700 whitespace-nowrap" title="clipNear — how much is cut in FRONT of the molecule, as a percentage of the bounding sphere. 0 cuts nothing (the near plane sits on the front edge of the sphere); positive values bring the near plane closer to the molecule.">
-      near
-      <input type="range" min="-50" max="50" step="1" value={clipNear} onChange={(e) => setClipNear(Number(e.target.value))} className="w-20 accent-emerald-600" aria-label="Clipping near" />
-      <span className="text-[10px] text-slate-500 w-10">{clipNear}%</span>
-    </label>
-    <label className="flex items-center gap-1 text-[11px] font-bold text-slate-700 whitespace-nowrap" title="clipFar — how far BEHIND the molecule the far plane sits, as a percentage of the bounding sphere. 50 = the centre of the sphere, 100 = its back edge, 150 = one radius further; « Off » uses 100000 (effectively infinite).">
-      far
-      <input type="range" min="50" max="150" step="1" value={clipFar} onChange={(e) => setClipFar(Number(e.target.value))} className="w-20 accent-emerald-600" aria-label="Clipping far" />
-      <span className="text-[10px] text-slate-500 w-10">{clipFar}%</span>
-    </label>
-    <label className="flex items-center gap-1 text-[11px] font-bold text-slate-700 whitespace-nowrap" title="clipDist — the MINIMUM distance (Å) between the camera and the near plane. NGL floors the near plane with it, which is what cuts a large complex when you zoom in: 0 removes the floor completely (that is what « Off » uses).">
-      cam. near
-      <input type="range" min="0" max="30" step="0.1" value={clipDist} onChange={(e) => setClipDist(Math.max(0, Number(e.target.value)))} className="w-20 accent-emerald-600" aria-label="Clipping camera distance" />
-      <span className="text-[10px] text-slate-500 w-12">{clipDist} Å</span>
-    </label>
-    <button type="button"
-      onClick={() => { setClipNear(CLIP_DEFAULTS.near); setClipFar(CLIP_DEFAULTS.far); setClipDist(CLIP_DEFAULTS.dist); }}
-      className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-emerald-300 text-emerald-700 hover:bg-emerald-50"
-      title="Back to the « no cut » extremes: clipNear 0 · clipFar 100000 · clipDist 0 Å">
-      ↺ No cut (0 · 100000 · 0 Å)
-    </button>
-  </>
-)}
-{/* ✨ RAY — the HIGH-RESOLUTION STILL of the scene, HERE in the 🌫 Scene group
-    (the request: « i comandi ray e i suoi associati (alpha, shadow) devono
-    essere spostati nella sezione scene »). A still belongs to the SCENE as a
-    whole, exactly like the 🌫 Fog · 🎨 Background · ◐ Shadows · ✂ Clipping beside
-    it — and the ◐ Shadows rig that AIMS the light of the still is right there,
-    so the two controls that own the light of a still are neighbours. It renders
-    with NGL's own supersampling path (utils/viewerRayImage.js) and writes ONE
-    PNG on the computer; the 📷 button that published to the Figure library is
-    gone (the request: « il pulsante figure é ridondante »).
-    WHY A « RAY » COMES BACK NOW. The report: « se clicco su ray, anche per un
-    piccolo peptide il rendering non finisce mai e non arrivo a vedere
-    l'immagine ». The still is `canvasPixels × factor` and it is not only
-    RENDERED: the cast shadows walk every pixel of it (on the CPU) and the PNG is
-    decoded and encoded once more. On a HiDPI canvas the old 40 Mpx budget meant
-    a 200 MB image copied three times — minutes inside getImageData / toBlob,
-    while the button still said « Rendering… ». The size is now capped by the
-    module (RAY_MAX_PIXELS · 16 Mpx, a 4000×4000-class still), the antialias pass
-    — FOUR times the tiles — is only asked for while the tiles stay few
-    (RAY_ANTIALIAS_MAX_FACTOR: from 3× up every tile IS a supersample), and the
-    title below says, BEFORE the click, how many pixels and how many tiles this
-    factor really costs here. */ }
-<div className="flex items-center gap-1">
-  <button
-    type="button"
-    onClick={captureRay}
-    disabled={rayBusy}
-    title={status === 'ready'
-      ? `Render a high-resolution still of the scene on screen: ${rayPlan.realWidth || 0}×${rayPlan.realHeight || 0} px${rayPlan.antialias ? ' (antialias pass)' : ''}, ${rayPlan.tiles || 0} tiles. It is NGL's own supersampling render of the very scene — every palette, the ring plates, the ESP surface, the fog and the light rig. The still is SHOWN here first (✨ Ray preview): nothing is written until you press 💾 Save PNG, which downloads exactly the image you saw. A size this GPU cannot take is reduced automatically, so the render never fails.`
-      : 'Load a structure first — ✨ Ray renders the 3D scene on screen at high resolution'}
-    className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${rayBusy ? 'bg-amber-50 border-amber-300 text-amber-700 cursor-wait' : 'bg-white border-amber-300 text-amber-700 hover:bg-amber-50'}`}
-  >
-    {rayBusy ? '✨ Rendering…' : '✨ Ray'}
-  </button>
-  <select
-    value={rayFactor}
-    onChange={(e) => setRayFactor(Number(e.target.value))}
-    title={'Supersampling multiple of the canvas — the bigger it is, the smoother and the larger the PNG. The pixel size written after the × is what the render will really produce on this screen; a size this GPU cannot take is reduced automatically.'}
-    className="border border-amber-300 rounded-md px-1 py-1 text-[11px] bg-white outline-none focus:border-amber-500 h-7"
-  >
-    {raySizes.map((o) => (
-      <option key={o.factor} value={o.factor}>
-        {o.label}{o.allowed ? '' : ` → ${o.best}×`}
-      </option>
-    ))}
-  </select>
-  <label
-    title="Transparent background: the PNG keeps an alpha channel, so the molecule can be dropped on any coloured page or slide (the interactive canvas is not affected)"
-    className="px-1.5 py-1 text-[10px] font-bold rounded-md border transition-colors h-7 flex items-center gap-1 cursor-pointer bg-white border-amber-300 text-amber-700 hover:bg-amber-50 whitespace-nowrap"
-  >
-    <input type="checkbox" checked={rayTransparent} onChange={(e) => setRayTransparent(e.target.checked)} className="accent-amber-600" />
-    ⬚ alpha
-  </label>
-  {/* ◐ CASTED SHADOWS — the report: « the ray button only takes a snapshot of the
-      image but does not introduce casted shadows ». NGL 2.4 ships no shadow-map
-      pass (see the note above `flagMeshShadows`), so the shadow of the still is
-      computed from the ATOMS — the very camera of the canvas, the very lamp of
-      the ◐ Shadows rig — and multiplied into the pixels NGL just wrote
-      (utils/viewerRayShadows.js). The PNG therefore carries a real projected
-      shadow; untick to get the plain supersampled still back. Only what is
-      DRAWN casts: a molecule this viewer has hidden (a section unticked, a look
-      set to « hide ») keeps its atoms in the structure but draws no
-      representation, and it no longer throws a shadow of itself into the still —
-      the report « I see a projected membrane, while the membrane is hidden in the
-      program » (see drawnAtomIndicesOf in that module). */}
-  <label
-    title="Casted shadows in the PNG: the shadow the molecule throws, from the very lamp of the ◐ Shadows rig (its Azimuth / Elevation — the 💡 Light sliders of « 2 · Toolbar », shown whenever these ray shadows are on). NGL cannot cast them — the shadow is computed from the atoms with the camera and the light of the scene and multiplied into the still. Untick for the plain supersampled image."
-    className={`px-1.5 py-1 text-[10px] font-bold rounded-md border transition-colors h-7 flex items-center gap-1 cursor-pointer whitespace-nowrap ${rayShadows ? 'bg-amber-100 border-amber-400 text-amber-900' : 'bg-white border-amber-300 text-amber-700 hover:bg-amber-50'}`}
-  >
-    <input type="checkbox" checked={rayShadows} onChange={(e) => setRayShadows(e.target.checked)} className="accent-amber-600" />
-    ◐ shadows
-  </label>
-  {rayShadows && (
-    <>
-      <input
-        type="range" min="0.1" max="1" step="0.05" value={rayShadowStrength}
-        onChange={(e) => setRayShadowStrength(Number(e.target.value))}
-        className="accent-amber-600 w-16 shrink-0"
-        title={`Darkness of the cast shadow — ${Math.round(rayShadowStrength * 100)} % (the DIRECTION comes from the 💡 Light sliders of « 2 · Toolbar » — Azimuth / Elevation)`}
-        aria-label="cast shadow strength"
-      />
-      {/* LA DOUCEUR DU CONTOUR — l'autre moitié réglable d'une ombre portée (sa
-          direction est celle du rig ◐). Elle multiplie la pénombre du module
-          (RAY_SHADOW_DEFAULTS.blur : 0 = contour net, 1 = les valeurs par défaut,
-          4 = très diffuse) — la noirceur ne bouge pas, et un rendu à 1 est
-          exactement celui d'avant. */}
-      <input
-        type="range" min="0" max="4" step="0.25" value={rayShadowBlur}
-        onChange={(e) => setRayShadowBlur(Number(e.target.value))}
-        className="accent-amber-600 w-16 shrink-0"
-        title={`Softness of the cast shadow — ×${Number(rayShadowBlur).toFixed(2)} of the default penumbra (0 = a hard edge, 1 = the viewer's own default, 4 = a very diffuse shadow). It widens the shadow blur AND how much that blur grows with the occluder-to-receiver distance.`}
-        aria-label="cast shadow blur"
-      />
-    </>
-  )}
-  {/* ⏹ STOP WAITING (le rapport : « start ray tracing … hangs ») : NGL ne sait pas
-      annuler un `makeImage` — le seul geste honnête est de cesser de l'attendre.
-      Le rendu abandonné n'écrira AUCUN fichier ; le module abandonne de lui-même
-      après RAY_STALL_MS de silence (voir viewerRayImage.js). */}
-  {rayBusy && (
-    <button
-      type="button"
-      onClick={abandonRay}
-      className="px-1.5 py-1 text-[10px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap bg-white border-amber-400 text-amber-800 hover:bg-amber-50"
-      title="Stop waiting for this render: the button is freed at once and this still is abandoned (NGL cannot cancel an image it has begun — no file will be written). The ✨ Ray render itself gives up on its own after 45 s without a sign of life."
-    >
-      ⏹ stop
-    </button>
-  )}
-</div>
-{rayMsg && (
-<span className="text-[10px] font-bold text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">{rayMsg}</span>
-)}
-</div>
-
-{/* ── 🎨 STYLES — l'ex-bouton « 🎨 Predefined styles » est devenu une BANDE
-    TOUJOURS LÀ, posée sur la ligne de 🌫 Scene et séparée d'elle par un filet
-    (la demande : « the “predefined styles” button can be replaced by a “Styles”
-    section containing the cumulative, snapshot, save, load, delete buttons and
-    the space to title the name of the file. The “styles” section can fit inside
-    the line of the “scene” section but it should be clear that they are
-    separated »). Les cinq gestes demandés, dans cet ordre : le NOM, les DEUX
-    modes d'apprentissage (🎨 Cumulative · 📷 Snapshot), puis 💾 Save · 📂 Load… ·
-    🗑 Delete — et, au bout, les deux gestes de FICHIER (⬇ · ⬆) qui emportent une
-    style sur un autre ordinateur.
-    IL N'Y A PLUS QU'UN JEU DE CES CINQ BOUTONS : la bande en montrait DEUX (les
-    « setups » nommés, puis les deux modes), donc deux pavés de prose pour
-    expliquer deux fois la même chose. Tout ce qui était écrit ici se lit
-    maintenant en survolant le bouton qui le fait — la liste des styles
-    enregistrées comprise — et la bande ne coûte plus une seule ligne de texte.
-    Les « setups » de l'ancienne bande sont repris une fois comme thèmes du même
-    nom (la migration est en tête du composant, à côté de l'état des thèmes). */}
-<span className="w-px h-6 bg-slate-200 shrink-0" aria-hidden="true" />
-<div className="flex flex-wrap items-center gap-1 rounded-md border border-teal-200 bg-teal-50/40 px-1.5 py-1 shrink-0">
-<span className="text-[9px] font-black text-teal-700 uppercase tracking-wide whitespace-nowrap" title={`Save / load the whole visualisation look under a NAME: every molecule style, its colour, its radii, the labels, Fog / Shadows / Clipping / Background, the light and its colour… ${stylesSavedTitle}`}>🎨 Styles</span>
-<input
-type="text"
-value={setupName}
-onChange={(e) => setSetupName(e.target.value)}
-onKeyDown={(e) => { if (e.key === 'Enter') saveActiveEnv(); }}
-placeholder="Style name"
-title="The NAME of the style — 💾 saves the look on screen under it (an existing name is overwritten, and an empty box gets a name typed for you), 🗑 Delete removes the one written here, ⬇ exports it. It is the name you will find in 📂 Load… and the name of the .json file."
-className="border border-teal-300 rounded-md px-2 py-1 text-[11px] w-28 bg-white outline-none focus:border-teal-500 h-7"
-/>
-{[['theme', '🎨 Cumulative'], ['snapshot', '📷 Snapshot']].map(([m, label]) => (
-<button key={m} type="button"
-onClick={() => { setSetupSaveMode(m); setThemeConflicts(null); setThemeChoices(null); }}
-title={m === 'theme'
-? 'Cumulative: 💾 Save learns the styles BY MOLECULAR CLASS (protein · nucleic acid · lipid · sugar · ligand · water · ion) and MERGES them into the theme — a style you can reuse on another file; a class the theme does not know keeps the neutral base style.'
-: 'Snapshot: 💾 Save photographs THIS exact scene, section by section (« protein · chain A » …), with no merge — one isolated setting for this system only.'}
-className={`px-2 py-1 text-[10px] font-bold rounded border h-7 whitespace-nowrap ${setupSaveMode === m ? 'bg-teal-600 border-teal-700 text-white' : 'bg-white border-teal-300 text-teal-800 hover:bg-teal-100'}`}>
-{label}
-</button>
-))}
-<button type="button" onClick={saveActiveEnv}
-title={setupSaveMode === 'theme'
-? `Save the theme under the name written on the left: the styles of the classes on screen are learned (merged), the rest of the file is untouched. A name is typed for you when the box is empty. ${stylesSavedTitle}`
-: `Save a snapshot of this scene under the name written on the left (an existing name is overwritten — no merge): one picture of THIS system, section by section. A name is typed for you when the box is empty. ${stylesSavedTitle}`}
-className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-teal-400 text-teal-800 hover:bg-teal-100 h-7 whitespace-nowrap">
-💾 Save {setupSaveMode === 'theme' ? 'theme' : 'snapshot'}
-</button>
-<select value="" onChange={(e) => loadActiveEnv(e.target.value)}
-title={setupSaveMode === 'theme'
-? `Put a saved theme back on screen: the global environment first, then the style of every class the theme knows — a class it does not know keeps the neutral base style. ${stylesSavedTitle}`
-: `Put a saved snapshot back on screen: the global environment and the styles of the very sections it photographed. ${stylesSavedTitle}`}
-className="border border-teal-300 rounded-md px-1.5 py-1 text-[11px] bg-white outline-none focus:border-teal-500 h-7 max-w-[10rem]">
-<option value="">📂 Load…</option>
-{Object.keys(activeEnvStore().map).sort().map((n) => <option key={n} value={n}>{n}</option>)}
-</select>
-<button type="button" onClick={deleteActiveEnv}
-title={`Delete the theme / snapshot whose name is written on the left. The scene on screen is NOT touched — deleting a saved style never changes what you see. ${stylesSavedTitle}`}
-className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-teal-300 text-teal-800 hover:bg-teal-100 h-7 whitespace-nowrap">
-🗑 Delete
-</button>
-<button type="button" onClick={() => exportActiveEnv(setupName)}
-title={`Download the style named on the left as a .json file — it can be imported on another page or another computer. ${stylesSavedTitle}`}
-className="px-1.5 py-1 text-[11px] font-bold rounded border bg-white border-teal-300 text-teal-800 hover:bg-teal-100 h-7">
-⬇
-</button>
-<label title={`Import a style .json file (written by ⬇): its mode is read from the file and it is applied at once. ${stylesSavedTitle}`}
-className="cursor-pointer px-1.5 py-1 text-[11px] font-bold rounded border bg-white border-teal-300 text-teal-800 hover:bg-teal-100 h-7 inline-flex items-center">
-⬆
-<input type="file" accept=".json,application/json"
-onChange={(e) => { importActiveEnvFile(e.target.files && e.target.files[0]); e.target.value = ''; }}
-className="hidden" />
-</label>
-{setupMsg && (
-<span className="text-[10px] font-bold text-teal-700 bg-teal-50 border border-teal-200 rounded-md px-2 py-1 max-w-[320px] truncate" title={setupMsg}>{setupMsg}</span>
-)}
-{/* Le conflit d'un THÈME (deux molécules d'une même classe dessinées autrement) :
-    le SEUL texte que la bande garde, parce qu'il attend une réponse. */}
-{themeConflicts && (
-<div className="w-full flex flex-wrap items-center gap-1.5 bg-amber-50 border border-amber-300 rounded-md px-2 py-1">
-<span className="text-[10px] font-black text-amber-800" title="A theme keys its styles by MOLECULAR CLASS: when two molecules of the same class are drawn differently, you choose which one becomes the class default — then press 💾 Save again. The styles of the other molecules are not touched.">
-{themeConflicts.length} class(es) drawn in two ways — choose the class default
-</span>
-{themeConflicts.map((c) => (
-<label key={c.kind} className="flex items-center gap-1 text-[10px] font-bold text-amber-900">
-<span title="The molecular class a theme keys its styles by">{MOL_KIND_LABELS[c.kind] || c.kind}</span>
-<select value={(themeChoices && themeChoices[c.kind]) || ''}
-onChange={(e) => setThemeChoices({ ...(themeChoices || {}), [c.kind]: e.target.value })}
-title="The molecule whose style becomes the default of this class in the theme"
-className="border border-amber-300 rounded-md px-1.5 py-1 text-[11px] bg-white outline-none focus:border-amber-500 h-7">
-{c.options.map((sec) => <option key={sec.id} value={sec.id}>{classLabelOfSection(sec)}</option>)}
-</select>
-</label>
-))}
-</div>
-)}
-</div>
-
-</div>
-
-{/* ⚠ LA RANGÉE DE 🌫 SCENE │ 🎨 STYLES SE REFERME ICI — le `</div>` ci-dessus est celui de
-    leur rangée (ouverte sur `flex items-center gap-1 w-full overflow-x-auto`), pas celui de la
-    boîte 🎨 Styles. Les cinq groupes de §2 restent donc dans l'ordre, mais les deux premiers ne
-    sont plus séparables par la largeur : ils coûtent une ligne, toujours une. Le filet qui dit
-    où finit 🌫 Scene et où commence 🎨 Styles est resté À L'INTÉRIEUR de cette rangée, donc la
-    séparation est intacte. */}
-{/* ── LE SAUT DE LIGNE FORCÉ A ÉTÉ RETIRÉ — la demande de cette session : « between the
-    “style” section and the “modify” section there is an empty line ». Il s'écrivait ici :
-    un `<span>` vide, pleine largeur et SANS HAUTEUR, dont le seul effet était de couper la
-    rangée. Ce frère occupait une rangée ENTIÈRE à lui tout seul — hauteur nulle, mais les
-    deux `gap` de la rangée autour — donc une bande vide entre la boîte 🎨 Styles et la boîte
-    ✏️ Modify, exactement la ligne que le rapport décrit. Les cinq groupes de
-    « 2 · Toolbar » s'enchaînent maintenant dans l'ordre de la rangée (🌫 Scene │ 🎨 Styles │
-    ✏️ Modify │ 📏 Analysis │ 🧪 PyMOL) : chacun reste refermé dans sa boîte teintée, séparé
-    de son voisin par son filet, et c'est le CONTENU qui décide où la largeur se coupe —
-    jamais un frère vide. */}
 
 {/* ── Modify ─────────────────────────────────────────────────────────────── */}
 <span className="w-px h-6 bg-slate-200 shrink-0" aria-hidden="true" />

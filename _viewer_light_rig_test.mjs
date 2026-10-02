@@ -353,7 +353,7 @@ gone('the light stays pure white, so colours are never tinted.',
 const iSec2 = VIEW.indexOf('<VSection title="2 · Toolbar"');
 const iShadowBtn = VIEW.indexOf('◐ Shadows', iSec2);
 const iColour = VIEW.indexOf('aria-label="Light colour"', iSec2);
-const iClipBtn = VIEW.indexOf('✂ Clipping: ', iSec2);
+const iClipBtn = VIEW.indexOf('✂ Clipping — ${clipOn ?', iSec2);
 const iRayBlock = VIEW.indexOf('✨ RAY — the HIGH-RESOLUTION STILL', iSec2);
 ok(iSec2 > 0 && iColour > iSec2, 'le réglage vit dans la rangée « 2 · Toolbar »');
 ok(iColour > iShadowBtn, '…dans le groupe 🌫 Scene (après ◐ Shadows / 🌑 Darkness / 💡 Light)');

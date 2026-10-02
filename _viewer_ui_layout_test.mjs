@@ -145,7 +145,9 @@ ok(VIEW.indexOf('🔢 Renumber — the button AND its list live in ✏️ Modify
   && VIEW.indexOf('🔢 Renumber — the button AND its list live in ✏️ Modify') < iAnalysisG,
   '[§2] 🔢 Renumber ET sa liste dans le groupe Modify');
 ok((VIEW.match(/rayMsg && \(/g) || []).length === 1, '[§2] un seul bloc ✨ Ray dans tout le viewer');
-ok(VIEW.indexOf('🎨 Background') < iModifyG, '[§2] 🎨 Background reste dans Scene');
+ok(VIEW.indexOf('aria-label="Background colour"', iSceneG) > 0
+  && VIEW.indexOf('aria-label="Background colour"', iSceneG) < iModifyG,
+  '[§2] 🎨 Background reste dans Scene (sa pastille, dont la bulle porte le mot)');
 
 /* ── 2ter. La barre ▶ Play n'est pas remplacée par du texte ─────────────── */
 ok(!/\n\/\* ══ ▶ TRAJECTORY PLAYBACK/.test(VIEW),
@@ -592,7 +594,8 @@ has("const r = addRow('surface', { sele: drawn, ...espColorParams(), ...SEE_THRO
 has('const CLIP_DEFAULTS = { near: 0, far: 100000, dist: 0 };',
   '[§3] « Off » = plans de la caméra aux extrêmes (0 · 100000 · 0 Å, rien n’est jamais coupé)');
 has('const [clipOn, setClipOn] = useState(() => {', '[§3] interrupteur de clipping');
-has('✂ Clipping: {clipOn ? \'On\' : \'Off\'}', '[§3] bouton Clipping On/Off');
+has('aria-pressed={clipOn}', '[§3] bouton Clipping : l’état se lit sur le bouton (remplissage + aria-pressed)');
+has('✂ Clipping — ${clipOn ?', '[§3] …et sa bulle s’ouvre sur l’état (ON / OFF), sans imprimer le mot deux fois');
 has('if (c.on) stage.setParameters({ clipNear: c.near, clipFar: c.far, clipDist: c.dist });',
   '[§3] les valeurs choisies sont poussées au stage');
 has('else stage.setParameters({ clipNear: CLIP_DEFAULTS.near, clipFar: CLIP_DEFAULTS.far, clipDist: CLIP_DEFAULTS.dist });',
@@ -601,7 +604,9 @@ has('localStorage.setItem(\'labViewerClip\'', '[§3] le réglage est persistant'
 has('aria-label="Clipping near"', '[§3] curseur near');
 has('aria-label="Clipping far"', '[§3] curseur far');
 has('aria-label="Clipping camera distance"', '[§3] curseur clipDist (la vraie cause de la coupe au zoom)');
-has('↺ No cut (0 · 100000 · 0 Å)', '[§3] retour aux valeurs extrêmes (aucune coupe)');
+has('↺ No cut', '[§3] retour aux valeurs extrêmes (aucune coupe)');
+has('clipNear ${CLIP_DEFAULTS.near} · clipFar ${CLIP_DEFAULTS.far} · clipDist ${CLIP_DEFAULTS.dist} Å',
+  '[§3] …dont la bulle donne les trois valeurs (elles n’encombrent plus le bouton)');
 has('min="0" max="30" step="0.1" value={clipDist}', '[§3] clipDist descend jusqu’à 0 (plus aucun plancher)');
 // 💡 LIGHT COLOUR — la demande : « in the molecular viewer add the possibility to
 // change the color of the light and put it just before the clipping in the scene
@@ -613,7 +618,7 @@ has('const [lightColor, setLightColor] = useState(() => {', '[§3] l’état de 
 has("localStorage.setItem('labViewerLightColor'", '[§3] …persisté comme le clipping');
 {
   const iColour = VIEW.indexOf('aria-label="Light colour"');
-  const iClip = VIEW.indexOf('✂ Clipping: ');
+  const iClip = VIEW.indexOf('✂ Clipping — ${clipOn ?');
   ok(iColour > 0 && iClip > 0 && iColour < iClip,
     '[§3] …et le swatch se trouve JUSTE AVANT ✂ Clipping, dans le groupe 🌫 Scene (la demande, mot pour mot)');
   ok(VIEW.includes('</button>\n<button type="button" onClick={() => setClipOn((v) => !v)}'),
@@ -678,11 +683,24 @@ gone('{hint && <span className="text-[9px] text-slate-400 truncate hidden lg:inl
   '[13a] la ligne grise « structure · trajectory · clear » a quitté la rangée');
 has('title={hint || undefined}>{title}</span>', '[13a] …le résumé vit dans la bulle du titre de la rangée');
 
-/* 13b. Le 🎞 Movie maker est SUR la ligne de §1 General — il n'a plus sa section. */
-const iFilm = VIEW.indexOf('>🎞 Movie maker</span>');
-const iFilmBox = VIEW.indexOf('<div className="flex flex-col gap-1 w-full">', iS1);
-ok(iFilm > iS1 && iS2 > iFilm && iFilmBox > iS1 && iS2 > iFilmBox,
-  '[13b] 🎞 Movie maker vit dans « 1 · General » (la ligne qui charge PDB et trajectoire)');
+/* 13b. LE 🎞 MOVIE MAKER N'EST PLUS SUR LA LIGNE DE §1 GENERAL — il est devenu le PANNEAU que
+   le bouton 🎞 MOVIE de la boîte 🎨 Styles ouvre (la demande de cette session : « Move the
+   styles section in another line and add to it a Movie button. If clicked the movie button
+   must show the movie maker commands. In this way we can get rid of the movie maker line and
+   save space. »). Fermé par défaut (`movieOpen`), il ne coûte plus un pixel à §1 — c'est TOUTE
+   la ligne de l'ex-« 🎞 Movie maker » qui a quitté la barre — et ouvert il se rend PLEINE
+   LARGEUR sous la rangée 🎨 Styles, avant ✏️ Modify (le gabarit des autres panneaux dépliés
+   de §2 : ⚙ Parameters, ⚡ Range, ✏️ Atom names). */
+const iMovieBtn = VIEW.indexOf('🎞 Movie {movieOpen ?');
+const iMoviePanel = VIEW.indexOf('{movieOpen && (');
+const iScene2b = VIEW.indexOf('>🌫 Scene</span>', iS2);
+const iModify2b = VIEW.indexOf('>✏️ Modify</span>', iS2);
+ok(iMovieBtn > iS2 && iMoviePanel > iMovieBtn && iScene2b < iMovieBtn && iMovieBtn < iModify2b,
+  '[13b] 🎞 Movie vit dans la boîte 🎨 Styles (entre 🌫 Scene et ✏️ Modify) et ouvre le panneau SOUS sa rangée');
+ok(iMoviePanel > iMovieBtn && iMoviePanel < iModify2b,
+  '[13b] …le panneau du film se rend juste sous la rangée 🎨 Styles (aucun groupe de §2 entre eux)');
+ok(VIEW.indexOf('>🎞 Movie maker</span>', iS1) > iS2,
+  '[13b] …et la bande du film a quitté « 1 · General » : la ligne qu’elle coûtait est bel et bien libérée');
 gone('<VSection title="🎞 Movie maker"', '[13b] …il n’est plus une section à lui tout seul');
 has('＋ Capture this pose', '[13b] …et sa rangée de gestes est intacte');
 
@@ -727,6 +745,39 @@ gone('{showSetupPanel && (', '[13f] le panneau à deux jeux de boutons a disparu
 gone('const [viewerSetups, setViewerSetups] = useState', '[13f] …et son état avec lui');
 gone('const saveCurrentSetup = () => {', '[13f] …ainsi que ses cinq gestes doublons');
 has('const legacy = loadViewerSetups();', '[13f] les setups nommés deviennent des thèmes (rien n’est perdu)');
+
+/* 13g. LA COMPACITÉ DE 🌫 SCENE ET LA RANGÉE PROPRE À 🎨 STYLES — la demande de cette
+   session : « compact the commands in scene section so that they fit in one line without the
+   need to use the scrolling bar. Move the styles section in another line and add to it a Movie
+   button. » Trois faits, chacun vérifié :
+     · §2 compte DEUX rangées `w-full` (`overflow-x-auto` + boîtes `shrink-0`) : 🌫 Scene, puis
+       🎨 Styles — les groupes ✏️ Modify │ 📏 Analysis │ 🧪 PyMOL restent, eux, les frères de la
+       grande boîte de §2, séparés par le filet comme devant ;
+     · 🌫 Scene ne dit plus l'état de ses interrupteurs DEUX fois : la boîte teintée + son
+       `aria-pressed` le disent, et la bulle s'ouvre sur « ON right now » ;
+     · les deux pastilles de couleur se passent de leur mot (l'émoji EST leur nom dans le
+       fichier) : plus de « 🎨 Background » ni de « 💡 Light colour » imprimés — la bulle les
+       nomme en entier, et le `aria-label` du sélecteur aussi. */
+{
+  const rows = VIEW.split('<div className="flex items-center gap-1 w-full overflow-x-auto">').length - 1;
+  ok(rows === 2, `[13g] §2 a deux rangées pleine largeur (🌫 Scene · 🎨 Styles) — ${rows} trouvée(s)`);
+  has('rounded-md border border-teal-200 bg-teal-50/40 px-1.5 py-1 shrink-0',
+    '[13g] la boîte 🎨 Styles est refermée de la même façon sur SA rangée');
+  has('rounded-md border border-sky-200 bg-sky-50/40 px-1 py-0.5 shrink-0',
+    '[13g] la boîte 🌫 Scene est compacte (px-1 py-0.5) et ne peut pas être coupée en deux (shrink-0)');
+  has('aria-pressed={fogEnabled}', '[13g] 🌫 Fog dit son état par son remplissage ET par aria-pressed');
+  has('aria-pressed={shadowOn}', '[13g] ◐ Shadows aussi');
+  has('aria-pressed={clipOn}', '[13g] ✂ Clipping aussi');
+  gone('🌫 Fog: {fogEnabled ? \'On\' : \'Off\'}', '[13g] …donc le mot « On/Off » ne s’imprime plus deux fois');
+  gone('◐ Shadows: {shadowOn ? \'On\' : \'Off\'}', '[13g] …ni pour les ombres');
+  gone("🎨 Background\n  <input type=\"color\"", '[13g] la pastille 🎨 se passe de son mot (la bulle le dit en entier)');
+  has('<span className="text-[11px] leading-none">🎨</span>', '[13g] …non : l’émoji EST la ligne, comme ailleurs');
+  has('aria-label="Background colour"', '[13g] …le sélecteur garde son nom accessible');
+  has('aria-label="Light colour"', '[13g] …comme celui de la lampe');
+  has('className="w-14 accent-emerald-600"', '[13g] les curseurs de clipping sont plus courts (w-14)');
+  has('className="w-14 accent-slate-700"', '[13g] ceux de la lumière aussi');
+  has('max-w-[4.6rem]', '[13g] le sélecteur de résolution de ✨ Ray est borné');
+}
 
 
 /* ── Bilan ───────────────────────────────────────────────────────────────── */

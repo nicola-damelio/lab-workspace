@@ -804,6 +804,36 @@ const kf = (over = {}) => normalizeKeyframe({
   goneIn(VIEWER, 'title="🎞 Poses & styles"', '… et plus AUCUNE section ne s’appelle « Poses & styles » : le nom a suivi la demande');
 }
 
+/* ── 15bis. LE PANNEAU 🎞 S’OUVRE PAR LE BOUTON 🎞 MOVIE DE 🎨 STYLES (la demande de cette
+   session : « Move the styles section in another line and add to it a Movie button. If clicked
+   the movie button must show the movie maker commands. In this way we can get rid of the movie
+   maker line and save space. »). Le film n’habite plus une ligne de « 1 · General » : il est un
+   PANNEAU, monté sous `movieOpen`, rendu PLEINE LARGEUR sous la rangée 🎨 Styles — donc fermé
+   il ne coûte pas un pixel, et ouvert il a toute la largeur de la barre pour sa bande de gestes
+   et sa colonne de poses. */
+{
+  const iS1 = VIEWER.indexOf('<VSection title="1 · General"');
+  const iS2 = VIEWER.indexOf('<VSection title="2 · Toolbar"');
+  const iBtn = VIEWER.indexOf('onClick={() => setMovieOpen((v) => !v)}');
+  const iPanel = VIEWER.indexOf('{movieOpen && (');
+  const iModify = VIEWER.indexOf('>✏️ Modify</span>', iS2);
+  const iBand = VIEWER.indexOf('>🎞 Movie maker</span>', iPanel);
+  hasIn(VIEWER, 'const [movieOpen, setMovieOpen] = useState(false);',
+    'l’état du panneau existe, à côté de ceux du film, et il est FERMÉ par défaut');
+  hasIn(VIEWER, 'aria-expanded={movieOpen}', 'le bouton annonce l’état du panneau');
+  hasIn(VIEWER, 'aria-controls="viewer-movie-maker"', '…et désigne le panneau qu’il commande');
+  ok(iBtn > iS2 && iPanel > iBtn && iPanel < iModify,
+    'le 🎞 Movie de 🎨 Styles ouvre le panneau juste après sa rangée, avant ✏️ Modify');
+  ok(iBand > iPanel && iBand < iModify,
+    'la bande des gestes « 🎞 Movie maker » vit DANS ce panneau (et plus dans §1)');
+  ok(VIEWER.indexOf('>🎞 Movie maker</span>', iS1) > iS2,
+    '…et §1 General ne la porte plus : la ligne qu’elle coûtait est bel et bien libérée');
+  hasIn(VIEWER, '＋ Capture this pose', 'les gestes du film sont intacts — seul leur EMPLACEMENT a changé');
+  hasIn(VIEWER, "{keyframes.length ? ` · ${keyframes.length}` : ''}",
+    'le bouton dit combien de poses le film a, même panneau fermé');
+  hasIn(VIEWER, "{kfBusy ? ' ●' : ''}", '…et un ● dit qu’une écriture est en cours (son ⏹ est dans le panneau)');
+}
+
 /* ── 16. L’ADDITIVITÉ : la 🎬 de la trajectoire est INTACTE ────────────────
    Le panneau 🎞 a été ajouté À CÔTÉ du 🎬, pas par-dessus : les deux écrivent un
    film du MÊME canvas, et c’est justement pour ça qu’ils ne doivent se disputer
