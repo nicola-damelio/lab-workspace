@@ -21810,7 +21810,11 @@ const renderMdWindow = () => (
    DIRECTS de la rangée ✏️ Modify : ils se rangent donc DANS le flux des autres commandes
    (même hauteur, même bordure), au lieu d'occuper un bloc encadré à eux seuls. La ligne
    dépliée du ⚒ reste `basis-full`, donc elle descend sous la rangée entière, et rien ne
-   s'affiche sous les boutons tant qu'on n'a rien demandé. */
+   s'affiche sous les boutons tant qu'on n'a rien demandé.
+   ⚠ DEPUIS CETTE SESSION, ELLE N'EST PLUS UN ENFANT DE LA RANGÉE : c'est justement elle qui
+   « push[ait] the bar down instead of collapsing like the movie button » (voir
+   `renderMinSettingsRow`). Seuls les boutons du geste (▶ MD · ⚒ Minimize · ■ Stop) restent
+   ici, en `display: contents`, donc dans la rangée. */
 const renderForceGestures = () => (
   <span
     className="contents"
@@ -21839,6 +21843,50 @@ const renderForceGestures = () => (
       title={`⚒ MINIMIZE — OUVRE (▸) OU REFERME (▾) LA LIGNE DE LA DESCENTE, sous cette rangée : ses paramètres (steps, initial step, convergence floor, tries per hinge), la lecture ⟳ Energy et le ▶ Run qui la lance. La descente est celle sur laquelle chaque départ se termine — chaque charnière essayée de part et d'autre d'un pas qui se DIVISE PAR DEUX dès qu'un balayage n'améliore plus rien — sur le MÊME champ, avec votre table de distances comme contraintes et celles déjà tenues comme longe. C'est l'AFFINAGE FINAL DE L'ÉNERGIE : c'est elle qui CONVERGE une distance que la dynamique n'a fait qu'approcher, et elle atterrit sur un MINIMUM LOCAL, pas seulement sur un modèle qui « respecte » les distances. Le 🪢 suit la descente image par image tant que sa fenêtre est à l'écran, et le minimum est écrit même si 👁 est décochée. ↺ Undo torsion remet la molécule exactement comme elle était. ⚠ WHILE IT RUNS IT CAN BE STOPPED, and the ■ is always somewhere you can see: next to the ▶ MD of the 🌡 MD window when that window is open, or right here on this line when it is folded/closed (the same stop, the same pump). ⚠ « steps » EST le même réglage que « ⚒ sweeps » du 🧬 Structure calculation (cette descente est celle sur laquelle chaque départ se termine), donc les deux cases ne peuvent pas diverger.${minSettings ? ' — la ligne est ouverte en ce moment.' : ''}`}>
       ⚒ Minimize{minSettings ? ' ▾' : ' ▸'}
     </button>
+    {/* ■ LE STOP DES GESTES — LE MÊME BOUTON, ÉCRIT DÉSORMAIS AVANT LA LIGNE DÉPLIÉE (elle
+        n'est plus un enfant de cette rangée — voir `renderMinSettingsRow`), pour qu'il reste
+        SUR la rangée des deux boutons : un arrêt doit être atteignable sans déplier quoi que
+        ce soit. La seconde moitié de la demande : « manca un pulsante di stop sia per la
+        structure calculation che per la MD ». Le ⏹ du calcul vit dans le panneau 🧬 ; le ■ des
+        gestes vit à côté de leur ▶, dans la fenêtre 🌡 MD (voir `mdStop`). Mais le ⚒ Minimize
+        se lance ICI, et la fenêtre 🌡 MD peut être repliée (⇤), fermée, ou la vue 3D entière
+        réduite (⬇ — la colonne n'a alors plus de hauteur) : le ■ apparaît alors AUSSI sur
+        CETTE ligne, pour qu'un geste en cours ait TOUJOURS son arrêt à l'écran. Et il n'y en a
+        jamais deux VISIBLES à la fois : la fenêtre porte le sien, celui-ci n'existe que quand
+        elle ne peut pas le montrer. */}
+    {mdBusy && (viewerCollapsed || !mdDock) && (
+      <button type="button" onClick={mdStop}
+        title="■ STOP THE RUNNING GESTURE (▶ MD or ⚒ Minimize) — it is here because the 🌡 MD window, where it normally sits right next to ▶ MD, is folded or closed at the moment. It stops the gesture BETWEEN the image it has just written and the next one: nothing is reverted (the images already written ARE the molecule on screen, and ↺ Undo torsion is what puts it back), and the gesture's own report is NOT computed — ⟳ Energy re-reads the force field on what is actually there."
+        className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap bg-white border-red-300 text-red-600 hover:bg-red-50">
+        ■ Stop
+      </button>
+    )}
+    {/* ⛓ LE BOUTON « SS → φ/ψ » N'EST PLUS ICI — la demande : « Il pulsante “SS to phi, psi”
+        deve andare dentro la sezione “structure calculation”. Quest'ultimo deve riempire la
+        tabella di constraints. » Il vit donc au SEUL endroit que la demande nomme : dans le
+        panneau 🧬 Structure calculation (voir son bouton ⛓, qui écrit maintenant la table
+        des contraintes de φ/ψ à côté de celle des distances). Un seul bouton, un seul état
+        (`calcDihedrals`), donc ce que la table montre EST ce que ▶ Run, ▶ MD et ⚒ Minimise
+        portent. */}
+  </span>
+);
+
+/* ⚒ LA DESCENTE DÉPLIÉE — LE PANNEAU, PLUS UN ENFANT DE LA RANGÉE. LE RAPPORT DE CETTE
+   SESSION, MOT POUR MOT : « the “minimize” button pushes the bar down instead of collapsing
+   like the movie button. » C'EST EXACTEMENT LE DÉFAUT que le rapport précédent décrivait pour
+   les panneaux du groupe (« they push the things to show at the right edge of the page ») :
+   la ligne dépliée du ⚒ est `basis-full`, et elle était écrite DANS la rangée `flex-nowrap` —
+   une boîte qui ne revient pas à la ligne ne peut pas laisser descendre un `basis-full` :
+   elle ÉTIRAIT la rangée, donc la barre GRANDISSAIT au lieu de se replier. Le gabarit qui
+   marche est celui du panneau 🎞 Movie sous 🎨 Styles : la ligne est rendue COMME LES AUTRES
+   PANNEAUX du groupe ✏️ Modify, en FRÈRE de la rangée (voir `renderMinSettingsRow`, appelé juste
+   après sa fermeture), donc elle descend sous la barre entière — et la seconde pression du
+   ⚒ Minimize la referme sans laisser une ligne de plus.
+   ⚠ Les DEUX boutons du geste, eux, ne bougent pas : ils restent SUR la rangée
+   (`renderForceGestures`), y compris le ■ Stop — un arrêt doit être atteignable sans déplier
+   quoi que ce soit. Rien ici ne crée d'état : c'est le MÊME `minSettings`, le même `calcMsg`. */
+const renderMinSettingsRow = () => (
+  <>
     {/* ⚠ LE BOUTON « ⚒ settings » A DISPARU — la demande de cette session a fondu les DEUX
         boutons du ⚒ en UN : c'est maintenant « ⚒ Minimize » lui-même qui déplie la ligne
         (▸/▾), et la ligne qu'il ouvre porte les quatre réglages ET les deux gestes
@@ -21902,23 +21950,6 @@ const renderForceGestures = () => (
         </button>
       </span>
     )}
-    {/* ■ LE STOP DES GESTES, QUAND SA FENÊTRE EST REPLIÉE — la seconde moitié de la demande :
-        « manca un pulsante di stop sia per la structure calculation che per la MD ». Le ⏹ du
-        calcul vit dans le panneau 🧬 ; le ■ des gestes vit à côté de leur ▶, dans la fenêtre
-        🌡 MD (voir `mdStop`). Mais le ⚒ Minimize se lance ICI, et la fenêtre 🌡 MD peut être
-        repliée (⇤), fermée, ou la vue 3D entière réduite (⬇ — la colonne n'a alors plus de
-        hauteur) : le ■ apparaît alors AUSSI sur CETTE ligne, pour qu'un geste en cours ait
-        TOUJOURS son arrêt à l'écran. ⚠ Il reste SUR la ligne des deux boutons (jamais dans la
-        ligne dépliée) : un arrêt doit être atteignable sans déplier quoi que ce soit. Et il
-        n'y en a jamais deux VISIBLES à la fois : la fenêtre porte le sien, celui-ci n'existe
-        que quand elle ne peut pas le montrer. */}
-    {mdBusy && (viewerCollapsed || !mdDock) && (
-      <button type="button" onClick={mdStop}
-        title="■ STOP THE RUNNING GESTURE (▶ MD or ⚒ Minimize) — it is here because the 🌡 MD window, where it normally sits right next to ▶ MD, is folded or closed at the moment. It stops the gesture BETWEEN the image it has just written and the next one: nothing is reverted (the images already written ARE the molecule on screen, and ↺ Undo torsion is what puts it back), and the gesture's own report is NOT computed — ⟳ Energy re-reads the force field on what is actually there."
-        className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap bg-white border-red-300 text-red-600 hover:bg-red-50">
-        ■ Stop
-      </button>
-    )}
     {/* ⚡ LA RÉPONSE DU ⟳ Energy ET DU ▶ Run S'ÉCRIT ICI — la remarque d'origine : « I do not
         understand the use of the energy button. If I click nothing happens and nothing is
         written anywhere. » Elle est donc écrite DIRECTEMENT SOUS la ligne que « ⚒ Minimize »
@@ -21957,14 +21988,7 @@ const renderForceGestures = () => (
         </div>
       </div>
     )}
-    {/* ⛓ LE BOUTON « SS → φ/ψ » N'EST PLUS ICI — la demande : « Il pulsante “SS to phi, psi”
-        deve andare dentro la sezione “structure calculation”. Quest'ultimo deve riempire la
-        tabella di constraints. » Il vit donc au SEUL endroit que la demande nomme : dans le
-        panneau 🧬 Structure calculation (voir son bouton ⛓, qui écrit maintenant la table
-        des contraintes de φ/ψ à côté de celle des distances). Un seul bouton, un seul état
-        (`calcDihedrals`), donc ce que la table montre EST ce que ▶ Run, ▶ MD et ⚒ Minimise
-        portent. */}
-  </span>
+  </>
 );
 /* ── 🧬 LE PANNEAU DU CALCUL DE STRUCTURE — PLEINE LARGEUR, SOUS LA RANGÉE DE SON BOUTON ─
    La demande de cette session : « La finestra struttura calculation dovrebbe essere full
@@ -23707,6 +23731,17 @@ className="text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 bord
     ⚠ C'EST LE CONTENU QUI DÉCIDE, pas un saut de ligne écrit : la rangée est un frère comme un
     autre, et quand aucun panneau n'est ouvert, elle est SEULE — donc une seule ligne, comme
     avant. */}
+{/* ⚒ LA LIGNE DE LA DESCENTE SE RANGE ICI, AVEC LES AUTRES PANNEAUX — LE RAPPORT DE CETTE
+    SESSION, MOT POUR MOT : « the “minimize” button pushes the bar down instead of collapsing
+    like the movie button. » Elle était encore un ENFANT de la rangée `flex-nowrap` (sa seule
+    exception), donc son `basis-full` ne pouvait pas descendre d'une ligne : il ÉTIRAIT la
+    rangée — le ⚒ changeait la hauteur de la barre au lieu de se replier. Rendue ICI, en frère
+    de la rangée, elle suit EXACTEMENT le gabarit du panneau 🎞 Movie sous 🎨 Styles : elle
+    descend sous la barre entière quand `minSettings` est vrai, et la seconde pression du
+    ⚒ Minimize la referme sans laisser une ligne de plus. Rien d'autre ne change : c'est le
+    même état, les mêmes réglages, le même ⟳ Energy, le même ▶ Run et le même rapport (voir
+    `renderMinSettingsRow`). */}
+{renderMinSettingsRow()}
 {/* The ONE renumbering panel of the viewer (see renderRenumberPanel) — the same
     specification the 🔢 of a molecule's header opens. */}
 {renderRenumberPanel()}

@@ -844,6 +844,45 @@ gone('<div className="flex flex-wrap items-center gap-1 rounded-md border border
   });
 }
 
+/* 13k. LE ⚒ MINIMIZE SE REPLIE COMME LE 🎞 MOVIE — LE RAPPORT DE CETTE SESSION, MOT POUR MOT :
+   « the “minimize” button pushes the bar down instead of collapsing like the movie button. »
+   La ligne dépliée du ⚒ était le DERNIER enfant `basis-full` resté DANS la rangée `flex-nowrap`
+   ([13j] n’avait sorti que les trois PANNEAUX) : dans une boîte qui ne revient pas à la ligne, un
+   `basis-full` ne peut pas descendre sur la sienne — il ÉTIRAIT la rangée, donc la barre
+   grandissait au lieu de se replier. Elle est maintenant écrite dans SA PROPRE fonction de rendu
+   et appelée COMME UN QUATRIÈME PANNEAU, en frère de la rangée : exactement le gabarit du panneau
+   🎞 Movie sous 🎨 Styles, celui que le rapport donne comme le bon. Le geste, lui, ne bouge pas :
+   ▶ MD, ⚒ Minimize et le ■ Stop restent SUR la rangée (un arrêt s’atteint sans rien déplier). */
+has('the “minimize” button pushes the bar down instead of collapsing',
+  '[13k] le rapport de la session est écrit dans le fichier (contrat du repli du ⚒)');
+has('const renderMinSettingsRow = () => (',
+  '[13k] la ligne dépliée du ⚒ est écrite dans sa PROPRE fonction de rendu (comme un panneau)');
+{
+  const iMinRowClose = VIEW.indexOf('</div>\n{/* ⚠ LA RANGÉE EST FERMÉE ICI');
+  const iMinPanel = VIEW.indexOf('{renderMinSettingsRow()}');
+  const iMinBoxClose = VIEW.indexOf('</div>\n\n{/* ── Analysis');
+  ok(iMinPanel > iMinRowClose && iMinPanel < iMinBoxClose,
+    '[13k] …et elle est rendue SOUS la rangée, avec les autres panneaux (jamais dedans : elle ne peut plus pousser la barre)');
+  /* ⚠ LE GESTE RESTE SUR LA RANGÉE : `renderForceGestures` porte toujours les deux boutons (et le
+     ■ Stop d’un geste en cours), et son contenu ne contient PLUS la ligne `basis-full` du ⚒. */
+  const gestures = VIEW.slice(
+    VIEW.indexOf('const renderForceGestures = () => ('),
+    VIEW.indexOf('const renderMinSettingsRow = () => ('),
+  );
+  ok(gestures.includes('onClick={() => setMinSettings((v) => !v)}') && gestures.includes('■ Stop'),
+    '[13k] le ⚒ Minimize et le ■ Stop restent SUR la rangée des commandes');
+  ok(!gestures.includes('basis-full flex flex-wrap items-center gap-1.5'),
+    '[13k] …et la ligne `basis-full` du ⚒ n’est plus un enfant de cette rangée');
+  /* ⚠ ELLE VIT DANS LA FONCTION DU PANNEAU, ENTRE SON OUVERTURE ET SA FERMETURE : c’est elle qui
+     fait la ligne pleine largeur sous la rangée (elle n’a plus besoin d’être un enfant de la
+     rangée pour cela, et elle ne peut plus l’étirer). */
+  const iSpan = VIEW.indexOf('basis-full flex flex-wrap items-center gap-1.5');
+  const iMinFn = VIEW.indexOf('const renderMinSettingsRow = () => (');
+  const iMinFnEnd = VIEW.indexOf('</>\n);\n/* ── 🧬 LE PANNEAU DU CALCUL DE STRUCTURE');
+  ok(iSpan > iMinFn && iSpan < iMinFnEnd,
+    '[13k] …elle est écrite DANS la fonction du panneau (entre son ouverture et sa fermeture)');
+}
+
 /* 13i. LES NOMS COURTS DE ✏️ MODIFY — la demande de CETTE session : « in MODIFY, instead of
    using a scrolling bar write shorter names, for example “Params & Constraints” instead of
    “Parameters and Constraints”, “SS:shown/hidden” instead of “disulphide:shown/hidden”, “Struct”
