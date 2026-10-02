@@ -2814,6 +2814,15 @@ export function* mdFrames({
      de physique d'un iota. */
   dielectric = FF_DIELECTRIC,
   targetFunction = STRUCTURE_CALC_TARGET_FUNCTION,
+  /* ⚠ LE SEUIL DES CLASH — la MÊME constante que le calcul de structure
+     (`RELAX_CLASH_DISTANCE`, 1,45 Å : « deux atomes que le graphe ne lie pas et qui se
+     retrouvent plus près que ça : ce n'est pas deux atomes côte à côte, c'est un atome
+     passé À TRAVERS un autre »). La dynamique LIT ce chiffre et l'ÉCRIT dans son rapport
+     (voir `clashes` ci-dessous) : la demande de cette session est exactement celle-là —
+     « riporta solo i clash » — parce que l'œil voit des sphères qui se compénètrent et
+     que le rapport, lui, se taisait. Un appelant peut poser un autre seuil, jamais un
+     autre lecteur : `clashReportOf` reste la seule définition d'un empilement. */
+  clashDistance = RELAX_CLASH_DISTANCE,
   hydrogen = null,
   /* 💧 LES EAUX BOUGENT — l'option du module (`STRUCTURE_CALC_WATER_MOBILE`, vraie) : s'il
      y a des eaux EXPLICITES, elles ont leurs six degrés de liberté (voir
@@ -2939,6 +2948,11 @@ export function* mdFrames({
   const coldT = Math.max(0, numOr(cold, STRUCTURE_CALC_MD_COLD));
   const every = Math.max(1, clampInt(perFrame, 0, Math.max(1, n), 0) || STRUCTURE_CALC_MD_FRAME);
   const rebuildEvery = Math.max(1, Math.round(coreRefresh) || STRUCTURE_CALC_CORE_REFRESH);
+  /* LE SEUIL DES CLASH, normalisé comme tous les réglages de ce geste — un nombre
+     illisible retombe sur la constante du module, et c'est CE chiffre-là que le rapport
+     écrit (`clashes.minDistance`), donc un lecteur ne peut pas confondre le seuil annoncé
+     avec celui qu'il a demandé. */
+  const clashMin = Number(clashDistance) > 0 ? Number(clashDistance) : RELAX_CLASH_DISTANCE;
   /* LE PLAN DE TEMPÉRATURE, EN KELVINS — géométrique (chaud d'abord, froid à la fin), ou
      FIXE quand une température est demandée : c'est la phase d'ÉQUILIBRATION d'un
      protocole standard (la dynamique tient T le temps que la conformation s'installe),
@@ -2987,8 +3001,31 @@ export function* mdFrames({
     chi: chiPenaltyOf({ positions: engine.x, chis: engine.chis, weight: engine.wChi }),
     dihedral: dihedralPenaltyOf({ positions: engine.x, dihedrals: engine.dihedralRows }),
   });
+  /* ⚠ LES CLASH DE LA DYNAMIQUE — LE MÊME LECTEUR QUE LE CALCUL DE STRUCTURE
+     (`clashReportOf`, `RELAX_CLASH_DISTANCE`), lu sur la géométrie que CE GESTE ÉCRIT :
+     `engine.heavyPositions()` est ce que l'appelant a donné (donc ce qui s'écrit à
+     l'écran et ce que le geste suivant relit), et les liaisons sont les SIENNES — le
+     graphe du fichier, jamais celui des hydrogènes que le champ ajoute pour lui. Un
+     rapport qui compterait les atomes ajoutés parlerait d'atomes que PERSONNE ne voit
+     (mesuré sur la sonde du dossier : le compte change du simple au double selon la
+     géométrie donnée) ; c'est pourquoi le chiffre rendu est celui de l'écran, et la
+     phrase du panneau le DIT (voir le rapport du 🌡 dans le viewer).
+     ⚠ CE N'EST PAS UNE CONTRAINTE : la dynamique ne refuse rien pour ça — elle MESURE
+     (la décision de cette session : « riporta solo i clash »). Le mur qui repousse les
+     atomes reste le Lennard-Jones du champ, plafonné comme avant. */
+  const clashReadingOf = () => clashReportOf({
+    positions: engine.heavyPositions(), bonds, minDistance: clashMin,
+  });
   const before = readAll();
   let applied = 0; let skipped = 0; let kinetic = 0;
+  /* COMBIEN D'IMAGES DU GESTE ONT MONTRE UN EMPILEMENT, ET LE PIRE VU PENDANT LA
+     TRAJECTOIRE — l'écran montre une image toutes les `perFrame` pas : un empilement qui
+     vit trois pas entre deux images ne se voit pas plus qu'il ne se lisait. Celui-ci se
+     compte donc AUX IMAGES, sur la même géométrie qu'elles.
+     ⚠ À DISTANCE ÉGALE, LE RAPPORT GARDE LA PREMIÈRE IMAGE (`<`, jamais `<=`) : le pas
+     cité est donc reproductible, et il ne saute pas d'une exécution à l'autre parce que
+     deux images portaient le même empilement. */
+  let clashFrames = 0; let clashImages = 0; let worstClash = null;
   for (let t = 0; t < n; t += 1) {
     const target = targetAt(t);
     const caps = capsOf(target);
@@ -3088,6 +3125,18 @@ export function* mdFrames({
     if (t % every === every - 1 || t === n - 1) {
       const potential = engine.costOf();
       const walls = engine.wallCostOf();
+      /* L'IMAGE QUI S'ÉCRIT VA ÊTRE VUE — elle est donc lue comme un empilement ELLE
+         AUSSI, par le même lecteur et sur la même géométrie (voir `clashReadingOf`) : un
+         seul `clashReportOf` par image, jamais un par pas. */
+      const seen = clashReadingOf();
+      clashImages += 1;
+      if (seen.count) clashFrames += 1;
+      if (seen.worst && (!worstClash || seen.worst.distance < worstClash.distance)) {
+        worstClash = {
+          i: seen.worst.i, j: seen.worst.j,
+          distance: seen.worst.distance, step: t + 1,
+        };
+      }
       const frame = {
         phase: 'md', positions: engine.heavyPositions(), step: t + 1, of: n,
         temperature: Number(target.toFixed(6)), kinetic: Number(kinetic.toFixed(6)),
@@ -3116,6 +3165,10 @@ export function* mdFrames({
      ils suivent T et m : le rapport les donne à côté des garde-fous absolus, donc un lecteur
      peut refaire le calcul (`τ = γ·m·f·√(R·T/m)`) au lieu de croire à un chiffre en dur. */
   const endCaps = capsOf(targetAt(Math.max(0, n - 1)));
+  /* LE CLASH DE LA GÉOMÉTRIE RENDUE — celle que ce geste laisse à l'écran et que le geste
+     suivant relira : le même lecteur que le calcul de structure, le même seuil, et la
+     géométrie que l'œil voit (voir `clashReadingOf`). */
+  const finalClashes = clashReadingOf();
   return {
     ok: true, reason: 'ok',
     positions: engine.heavyPositions(),
@@ -3177,6 +3230,22 @@ export function* mdFrames({
       field: maxTorque, restraint: maxRestTorque,
       dynamic: Number(endCaps.torque.toFixed(6)), factor: speedFactor,
       wall: Number(endCaps.wall.toFixed(6)),
+    },
+    /* ⚠ LES CLASH — CE QUE LE GESTE A LAISSÉ, ET CE QUE LA TRAJECTOIRE A MONTRÉ.
+       `count`/`worst` sont la lecture de la géométrie RENDUE (celle qui reste à l'écran) ;
+       `frames`/`images` disent combien des images du geste en portaient un ; `worstDuring`
+       est le pire vu PENDANT la trajectoire, avec le pas où il a été vu. Le LECTEUR est
+       celui du calcul de structure (`clashReportOf`) et le SEUIL est écrit ici
+       (`minDistance`), donc le panneau n'a rien à recopier : il lit ce rapport.
+       ⚠ LA DYNAMIQUE NE REFUSE RIEN POUR ÇA (décision de cette session : le geste REND le
+       chiffre, il ne change pas sa physique) — un empilement reste possible, il n'est
+       simplement plus tu. */
+    clashes: {
+      count: finalClashes.count, severity: finalClashes.severity,
+      minDistance: finalClashes.minDistance,
+      worst: finalClashes.worst ? { ...finalClashes.worst } : null,
+      frames: clashFrames, images: clashImages,
+      worstDuring: worstClash ? { ...worstClash } : null,
     },
     molecule: engine.moleculeOf(),
     cost: { before: before.cost, after: after.cost },

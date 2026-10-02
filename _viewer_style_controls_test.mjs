@@ -311,25 +311,28 @@ has('if (!entry || typeof entry !== \'object\') throw new Error(\'not an environ
 has('📂 Load…', 'la liste déroulante des styles enregistrées');
 has('⬆\n<input type="file" accept=".json,application/json"', 'le bouton d’import (une flèche : son mode d’emploi est dans la bulle)');
 has('>🎨 Styles</span>', 'la bande s’appelle « 🎨 Styles » (l’ex-bouton « 🎨 Predefined styles » de la demande)');
-/* ⚠ LA BANDE A CHANGÉ DE RANG DEUX FOIS. D'abord (demande précédente) : « the “styles”
-   section can fit inside the line of the “scene” section but it should be clear that they
-   are separated » — elle a quitté « 1 · General » pour la ligne de 🌫 Scene. Puis CETTE
-   session : « Move the styles section in another line and add to it a Movie button. » — elle
-   a donc SA PROPRE rangée, juste sous 🌫 Scene, et le filet qui les séparait est parti avec la
-   rangée qu'elles partageaient : deux boîtes de teintes différentes, sur deux lignes, se
-   séparent toutes seules. */
+/* ⚠ LA BANDE A CHANGÉ DE RANG TROIS FOIS. D'abord : « the “styles” section can fit inside
+   the line of the “scene” section but it should be clear that they are separated » — elle a
+   quitté « 1 · General » pour la ligne de 🌫 Scene. Puis : « Move the styles section in
+   another line and add to it a Movie button. » — elle a eu SA PROPRE rangée, juste sous
+   🌫 Scene. Et CETTE session : « elimina la riga vuota tra la sezione “STYLES” e “MODIFY” »
+   — sa rangée pleine largeur laissait une BANDE VIDE à sa droite, donc elle est redevenue un
+   FRÈRE ORDINAIRE des autres groupes de §2 (même `shrink-0`, sans filet) et c'est le CONTENU
+   qui décide où la largeur se coupe : ✏️ Modify vient se poser sur sa ligne et remplit cet
+   espace, au lieu de commencer une ligne plus bas. */
 const iSec2Band = VIEW.indexOf('<VSection title="2 · Toolbar"');
 const iSceneBand = VIEW.indexOf('>🌫 Scene</span>');
 ok(iSec2Band > 0 && iSceneBand > iSec2Band && VIEW.indexOf('>🎨 Styles</span>', iSceneBand) > 0,
   'la bande « 🎨 Styles » vit dans §2 · Toolbar, APRÈS 🌫 Scene');
 ok(!VIEW.includes('aria-hidden="true" />\n<div className="flex flex-wrap items-center gap-1 rounded-md border border-teal-200'),
-  '…sans filet : la séparation, c’est la RANGÉE qu’elle a maintenant pour elle seule, et sa boîte teal');
-/* ⚠ …ET CHAQUE GROUPE A SA RANGÉE QUI NE SE COUPE JAMAIS — chaque rangée est `w-full` +
-   défilement horizontal, chaque boîte `shrink-0`, donc 🌫 Scene et 🎨 Styles coûtent chacun
-   UNE ligne, et jamais plus. */
+  '…sans filet devant elle : elle suit 🌫 Scene comme ses voisines, et sa boîte teal la sépare');
+/* ⚠ SEUL 🌫 SCENE A ENCORE UNE RANGÉE QUI NE SE COUPE JAMAIS — `w-full` + défilement
+   horizontal, boîte `shrink-0`, donc UNE ligne et jamais plus. 🎨 Styles n'en a plus : c'est
+   ELLE qui laissait la bande vide que la demande de cette session supprime, et les cinq
+   groupes de §2 s'enchaînent maintenant dans l'ordre, en remplissant chaque ligne. */
 const styleRows = VIEW.split('<div className="flex items-center gap-1 w-full overflow-x-auto">').length - 1;
-ok(styleRows === 2 && VIEW.includes('<div className="flex items-center gap-1 w-full overflow-x-auto">'),
-  '⚠ 🌫 Scene et 🎨 Styles ont chacun LEUR rangée pleine largeur (l’une ne peut plus être repoussée sous l’autre)');
+ok(styleRows === 1 && VIEW.includes('<div className="flex items-center gap-1 w-full overflow-x-auto">'),
+  '⚠ seule la rangée 🌫 Scene est pleine largeur : 🎨 Styles ne laisse plus de bande vide avant ✏️ Modify');
 ok(VIEW.includes('border border-sky-200 bg-sky-50/40 px-1 py-0.5 shrink-0')
   && VIEW.includes('border border-teal-200 bg-teal-50/40 px-1.5 py-1 shrink-0'),
   '…les deux boîtes y sont `shrink-0` (le contenu décide de la largeur, jamais une coupure de ligne)');

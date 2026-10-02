@@ -746,13 +746,14 @@ gone('const [viewerSetups, setViewerSetups] = useState', '[13f] …et son état 
 gone('const saveCurrentSetup = () => {', '[13f] …ainsi que ses cinq gestes doublons');
 has('const legacy = loadViewerSetups();', '[13f] les setups nommés deviennent des thèmes (rien n’est perdu)');
 
-/* 13g. LA COMPACITÉ DE 🌫 SCENE ET LA RANGÉE PROPRE À 🎨 STYLES — la demande de cette
-   session : « compact the commands in scene section so that they fit in one line without the
-   need to use the scrolling bar. Move the styles section in another line and add to it a Movie
-   button. » Trois faits, chacun vérifié :
-     · §2 compte DEUX rangées `w-full` (`overflow-x-auto` + boîtes `shrink-0`) : 🌫 Scene, puis
-       🎨 Styles — les groupes ✏️ Modify │ 📏 Analysis │ 🧪 PyMOL restent, eux, les frères de la
-       grande boîte de §2, séparés par le filet comme devant ;
+/* 13g. LA COMPACITÉ DE 🌫 SCENE ET LA RANGÉE PROPRE À 🎨 STYLES — la demande de la
+   session d'origine : « compact the commands in scene section so that they fit in one line
+   without the need to use the scrolling bar. Move the styles section in another line and add
+   to it a Movie button. » Trois faits, chacun vérifié :
+     · §2 compte UNE SEULE rangée `w-full` (`overflow-x-auto` + boîte `shrink-0`) : 🌫 Scene
+       — 🎨 Styles, elle, n'a PLUS de rangée à elle (la demande de la session suivante,
+       §13h) : elle est un frère ordinaire des autres groupes, donc ✏️ Modify │ 📏 Analysis │
+       🧪 PyMOL se posent sur sa ligne et remplissent l'espace qui restait vide ;
      · 🌫 Scene ne dit plus l'état de ses interrupteurs DEUX fois : la boîte teintée + son
        `aria-pressed` le disent, et la bulle s'ouvre sur « ON right now » ;
      · les deux pastilles de couleur se passent de leur mot (l'émoji EST leur nom dans le
@@ -760,9 +761,9 @@ has('const legacy = loadViewerSetups();', '[13f] les setups nommés deviennent d
        nomme en entier, et le `aria-label` du sélecteur aussi. */
 {
   const rows = VIEW.split('<div className="flex items-center gap-1 w-full overflow-x-auto">').length - 1;
-  ok(rows === 2, `[13g] §2 a deux rangées pleine largeur (🌫 Scene · 🎨 Styles) — ${rows} trouvée(s)`);
+  ok(rows === 1, `[13g] §2 n'a plus qu'UNE rangée pleine largeur (🌫 Scene) — ${rows} trouvée(s)`);
   has('rounded-md border border-teal-200 bg-teal-50/40 px-1.5 py-1 shrink-0',
-    '[13g] la boîte 🎨 Styles est refermée de la même façon sur SA rangée');
+    '[13g] la boîte 🎨 Styles est refermée de la même façon que ses voisines');
   has('rounded-md border border-sky-200 bg-sky-50/40 px-1 py-0.5 shrink-0',
     '[13g] la boîte 🌫 Scene est compacte (px-1 py-0.5) et ne peut pas être coupée en deux (shrink-0)');
   has('aria-pressed={fogEnabled}', '[13g] 🌫 Fog dit son état par son remplissage ET par aria-pressed');
@@ -779,6 +780,36 @@ has('const legacy = loadViewerSetups();', '[13f] les setups nommés deviennent d
   has('max-w-[4.6rem]', '[13g] le sélecteur de résolution de ✨ Ray est borné');
 }
 
+
+/* 13h. PLUS DE LIGNE VIDE ENTRE 🎨 STYLES ET ✏️ MODIFY, ET MODIFY SUR UNE SEULE RANGÉE —
+   la demande de cette session, mot pour mot : « elimina la riga vuota tra la sezione
+   “STYLES” e “MODIFY” e cerca di fare entrare tutti i pulsanti di MODIFY in una sola
+   riga ». Deux faits, chacun vérifié sur le graphe du JSX :
+     · 🎨 Styles n'est plus ENVELOPPÉE dans une rangée pleine largeur : le `<div>` de sa
+       rangée est parti, donc la boîte teal est un frère des autres groupes et le CONTENU
+       décide où la largeur se coupe — la bande vide à sa droite est ce que ✏️ Modify
+       remplit maintenant ;
+     · ✏️ Modify ne revient JAMAIS à la ligne (`flex-nowrap`, le gabarit de la bande 🎞 du
+       film : « sur un panneau étroit elle défile horizontalement, donc aucun contrôle n'est
+       jamais repoussé dessous ») : ses boutons restent sur UNE rangée, avec les écarts
+       resserrés (`gap-0.5`) et `max-w-full` + `overflow-x-auto` pour qu'un panneau étroit
+       fasse défiler la BOÎTE, jamais la barre entière. */
+has('elimina la riga vuota tra la sezione',
+  '[13h] la demande de la session est écrite dans le fichier (contrat du layout)');
+gone('<div className="flex items-center gap-1 w-full overflow-x-auto">\n<div className="flex flex-wrap items-center gap-1 rounded-md border border-teal-200',
+  '[13h] ⚠ 🎨 Styles n’est PLUS dans une rangée pleine largeur (c’est elle qui laissait la bande vide)');
+has('cerca di fare entrare tutti i pulsanti di MODIFY in una sola riga',
+  '[13h] …et le second point de la demande aussi');
+has('flex flex-nowrap items-center gap-0.5 rounded-md border border-amber-200 bg-amber-50/40 px-1 py-0.5 max-w-full overflow-x-auto',
+  '⚠ [13h] la boîte ✏️ Modify est `flex-nowrap` : ses boutons ne peuvent plus s’empiler sur plusieurs lignes');
+gone('<div className="flex flex-wrap items-center gap-1 rounded-md border border-amber-200 bg-amber-50/40 px-1.5 py-1">',
+  '⚠ [13h] …l’ancienne boîte `flex-wrap` (celle qui cassait la rangée) a disparu');
+{
+  const iModifyBox = VIEW.indexOf('flex flex-nowrap items-center gap-0.5 rounded-md border border-amber-200');
+  const iModifyLabel = VIEW.indexOf('>✏️ Modify</span>');
+  ok(iModifyBox > 0 && iModifyBox < iModifyLabel && iModifyLabel - iModifyBox < 900,
+    '[13h] …et c’est bien la boîte DU GROUPE ✏️ Modify (elle s’ouvre juste avant son étiquette)');
+}
 
 /* ── Bilan ───────────────────────────────────────────────────────────────── */
 console.log(`_viewer_ui_layout_test.mjs — ${passed} assertions OK`);

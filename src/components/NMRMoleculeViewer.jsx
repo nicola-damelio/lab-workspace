@@ -12300,6 +12300,30 @@ const runMolecularDynamics = () => {
         + ` (${run.rama ? run.rama.violations : 0} outside) · χ1 ${run.chi ? run.chi.penalty.toFixed(2) : 0}`
         + ` · ${run.added ? run.added.hydrogens : 0} hydrogens added.`
         + ' ⚡ Energies in kcal/mol, temperature in kelvins (R·T is the thermal energy: 0.6 kcal/mol at 300 K).'
+        /* ⚠ LES CLASH — LA DEMANDE DE CETTE SESSION, mot pour mot : « all this doesn't matter,
+           just report the clashes. » Le geste REND le chiffre et ne change RIEN à sa physique
+           (aucun pas n'est refusé pour ça) : il lit avec le lecteur du calcul de structure
+           (`clashReportOf`) ET son seuil (`RELAX_CLASH_DISTANCE`), sur la géométrie qu'il
+           vient d'écrire — donc ce que l'écran montre. Sous ce seuil, ce n'est pas « deux
+           atomes côte à côte » : c'est un atome passé À TRAVERS un autre. Le rapport dit donc
+           les deux choses séparément : ce que la géométrie RENDUE porte, et ce que la
+           TRAJECTOIRE a montré en chemin (l'écran ne voit qu'une image toutes les `perFrame`
+           pas, et un empilement de trois pas peut vivre entre deux images). */
+        + (run.clashes
+          ? (run.clashes.count
+            ? ` ⚠ ${run.clashes.count} atom pair${run.clashes.count === 1 ? '' : 's'} closer than ${run.clashes.minDistance} Å in the geometry this gesture leaves`
+              + ` (worst ${Number(run.clashes.worst && run.clashes.worst.distance).toFixed(2)} Å)`
+              + ' — the SAME clash reader and the SAME threshold the 🧬 structure calculation uses: below it, one atom has passed through another.'
+            : ` ✓ no atom pair closer than ${run.clashes.minDistance} Å in the geometry this gesture leaves (the clash reader of the 🧬 structure calculation).`)
+            + (run.clashes.worstDuring
+              /* CE QUE LE GESTE A MONTRE EN CHEMIN — le chiffre qui répond à « gli atomi si
+                 attraversano » : la dynamique n'a rien refusé (elle mesure), donc la façon de
+                 les écarter est la descente ⚒, qui descend le même champ. */
+              ? ` ⚠ …and the trajectory itself went closer: ${run.clashes.frames} of its ${run.clashes.images} image${run.clashes.images === 1 ? '' : 's'} carried such a pair,`
+                + ` worst ${Number(run.clashes.worstDuring.distance).toFixed(2)} Å at step ${run.clashes.worstDuring.step}`
+                + ' — the dynamics refuses no step for that (it only reports it, as asked): ⚒ Minimise from here is what pushes them apart.'
+              : '')
+          : '')
         /* 🌡 LA TEMPÉRATURE EST LA VITESSE DU MOTEUR — la remarque de cette session était
            « when it reaches a correct structure the atoms don't move anymore » : le rapport
            DIT donc la vitesse thermique du palier (√(R·T/m)) et le plafond de couple qui la
@@ -22603,7 +22627,6 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
     styles enregistrées comprise — et la bande ne coûte plus une seule ligne de texte. Les
     « setups » de l'ancienne bande sont repris une fois comme thèmes du même nom (la migration
     est en tête du composant, à côté de l'état des thèmes). */}
-<div className="flex items-center gap-1 w-full overflow-x-auto">
 <div className="flex flex-wrap items-center gap-1 rounded-md border border-teal-200 bg-teal-50/40 px-1.5 py-1 shrink-0">
 <span className="text-[9px] font-black text-teal-700 uppercase tracking-wide whitespace-nowrap" title={`Save / load the whole visualisation look under a NAME: every molecule style, its colour, its radii, the labels, Fog / Shadows / Clipping / Background, the light and its colour… ${stylesSavedTitle}`}>🎨 Styles</span>
 <input
@@ -22700,13 +22723,15 @@ className="border border-amber-300 rounded-md px-1.5 py-1 text-[11px] bg-white o
 )}
 </div>
 
-</div>
-
-{/* ── LES DEUX RANGÉES SE REFERMENT ICI — les deux `</div>` ci-dessus sont ceux de la boîte
-    🎨 Styles (le premier) puis de SA rangée, ouverte sur
-    `flex items-center gap-1 w-full overflow-x-auto`. 🌫 Scene a la sienne, juste au-dessus, et
-    chaque groupe de §2 vit donc dans sa propre rangée, dans l'ordre 🌫 Scene → 🎨 Styles →
-    (🎞 le panneau du film, quand il est ouvert) → ✏️ Modify → 📏 Analysis → 🧪 PyMOL. */}
+{/* ── LA BOÎTE 🎨 STYLES N'A PLUS DE RANGÉE À ELLE — c'est la demande de cette session :
+    « elimina la riga vuota tra la sezione “STYLES” e “MODIFY” ». Elle s'écrivait sur SA
+    rangée pleine largeur (`flex items-center gap-1 w-full overflow-x-auto`), donc à droite
+    d'elle il ne restait RIEN : une bande vide, et ✏️ Modify en dessous. Elle est maintenant
+    un FRÈRE ordinaire des autres groupes de « 2 · Toolbar » (même `shrink-0`, séparé comme
+    eux par le filet) : c'est le CONTENU qui décide où la largeur se coupe, donc ✏️ Modify
+    vient se poser sur SA ligne et remplit l'espace qui était vide. 🌫 Scene garde la sienne
+    (elle finit par ✨ Ray et ses curseurs, qui ont besoin de la largeur), et le panneau 🎞 du
+    film, quand il est ouvert, reste pleine largeur comme les autres panneaux dépliés de §2. */}
 {/* ── LE SAUT DE LIGNE FORCÉ A ÉTÉ RETIRÉ — la demande : « between the “style” section and the
     “modify” section there is an empty line ». Il s'écrivait ici : un `<span>` vide, pleine
     largeur et SANS HAUTEUR, dont le seul effet était de couper la rangée. Ce frère occupait une
@@ -22957,7 +22982,16 @@ title={kfMsg || (videoReady.ok ? keyframeFilmSummary(keyframes.length, kfPlanNow
 
 {/* ── Modify ─────────────────────────────────────────────────────────────── */}
 <span className="w-px h-6 bg-slate-200 shrink-0" aria-hidden="true" />
-<div className="flex flex-wrap items-center gap-1 rounded-md border border-amber-200 bg-amber-50/40 px-1.5 py-1">
+{/* ⚠ TOUS LES BOUTONS DE ✏️ MODIFY SUR UNE SEULE LIGNE — la seconde moitié de la demande de
+    cette session : « cerca di fare entrare tutti i pulsanti di MODIFY in una sola riga ». La
+    boîte était `flex-wrap` : elle cassait sa ligne dès que la barre était un peu étroite, donc
+    ses gestes s'empilaient et la rangée coûtait deux ou trois lignes de hauteur. Elle est
+    maintenant `flex-nowrap` (le gabarit de la bande 🎞 : « la rangée ne REVIENT PAS À LA LIGNE :
+    sur un panneau étroit elle défile horizontalement, donc aucun contrôle n'est jamais repoussé
+    dessous »), avec les écarts et le rembourrage resserrés (`gap-0.5` · `px-1 py-0.5`) pour
+    qu'elle tienne le plus souvent sans défiler, et `max-w-full` + `overflow-x-auto` pour que le
+    défilement, s'il faut, reste DANS la boîte — jamais sur la barre entière. */}
+<div className="flex flex-nowrap items-center gap-0.5 rounded-md border border-amber-200 bg-amber-50/40 px-1 py-0.5 max-w-full overflow-x-auto">
 <span className="text-[9px] font-black text-amber-700 uppercase tracking-wide whitespace-nowrap" title="Change the molecule itself: build it from the page's sequence, show or hide the drawn disulphide bonds, rebuild the hydrogens, rename the atoms, colour by electrostatic potential and renumber the residues.">✏️ Modify</span>
 {/* ⚙ PARAMETERS AND CONSTRAINTS — le bouton du groupe ✏️ MODIFY (la demande de la session
    précédente : « “Parameters and Constraints” section should be in the “modify” menu »). Il
