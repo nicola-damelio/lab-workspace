@@ -633,66 +633,61 @@ export const bandSectionsOf = (rep, el = null) => {
   const A = geo.attributes;
   const pos = A.position && A.position.array;
   if (!pos) return null;
-  
+
   // Both cartoon and ribbon use 12 floats per segment (4 vertices × 3 coords)
   const stride = 12;
   if (pos.length % stride !== 0) return null;
   const points = pos.length / stride;
   if (points < 2) return null;
-  
+
   const sizeArr = A.size && A.size.array;
   const dirArr = A.dir && A.dir.array;
   const norArr = A.normal && A.normal.array;
   const aspect = repNumber(rep, el, 'aspectRatio') || 5;
-  
+
   const sub = (arr, i) => [arr[i], arr[i + 1], arr[i + 2]];
   const sections = [];
-  
-  // Sample every 3rd section to reduce density
-  const sampleRate = Math.max(1, Math.floor(points / 200));
-  
-  for (let v = 0; v < points; v += sampleRate) {
+
+  for (let v = 0; v < points; v += 1) {
     const p = sub(pos, v * stride);
-    
-    // Use a reasonable default size for cartoon
-    let s = 0.8;
-    if (sizeArr) {
-      const sizeIdx = v * 4;
-      if (sizeArr[sizeIdx] != null && sizeArr[sizeIdx] > 0) {
-        s = Number(sizeArr[sizeIdx]);
-      }
+
+    // Size: try explicit size array, otherwise use a reasonable default
+    let s = 0.45;
+    if (sizeArr && sizeArr.length >= points * 4) {
+      const v = Number(sizeArr[v * 4]);
+      if (Number.isFinite(v) && v > 0) s = v;
     }
-    if (!(s > 0)) s = 0.8;
-    
-    // Direction from neighbors
-    let d = dirArr && dirArr.length >= points * stride 
-      ? normalize3(sub(dirArr, v * stride)) 
+    if (!(s > 0)) s = 0.45;
+
+    // Direction: try explicit dir, otherwise compute from neighbors
+    let d = dirArr && dirArr.length >= points * stride
+      ? normalize3(sub(dirArr, v * stride))
       : null;
     if (!d || !(length3(d) > 0.5)) {
-      const next = sub(pos, Math.min(points - 1, v + sampleRate) * stride);
-      const prev = sub(pos, Math.max(0, v - sampleRate) * stride);
+      const next = sub(pos, Math.min(points - 1, v + 1) * stride);
+      const prev = sub(pos, Math.max(0, v - 1) * stride);
       const t = normalize3(sub3(next, prev));
-      const n = norArr && norArr.length >= points * stride 
-        ? normalize3(sub(norArr, v * stride)) 
+      const n = norArr && norArr.length >= points * stride
+        ? normalize3(sub(norArr, v * stride))
         : null;
       d = n ? normalize3(cross3(n, t)) : t;
       if (!d || !(length3(d) > 0.5)) d = [0, 0, 1];
     }
-    
+
     const w = kind === 'ribbon' ? s : s * aspect;
-    const t = Math.max(0.5, kind === 'ribbon' ? Math.min(0.5, w * 0.3) : s * 0.4);
+    const t = Math.max(BAND_MIN_THICKNESS, kind === 'ribbon' ? Math.min(0.25, w * 0.25) : s * 0.3);
     sections.push({ p, d, w, t });
   }
-  
+
   return sections.length >= 2 ? sections : null;
 };
 
 const bandBrushOf = (sections, opacity = 1) => {
   const outPositions = [], outRadii = [];
-  const push = (x, y, z, r) => { 
+  const push = (x, y, z, r) => {
     if (outRadii.length >= BAND_MAX_PROXIES) return;
-    outPositions.push(x, y, z); 
-    outRadii.push(r); 
+    outPositions.push(x, y, z);
+    outRadii.push(r);
   };
   for (let v = 0; v + 1 < sections.length; v += 1) {
     if (outRadii.length >= BAND_MAX_PROXIES) break;
@@ -700,15 +695,15 @@ const bandBrushOf = (sections, opacity = 1) => {
     const dx = b.p[0] - a.p[0], dy = b.p[1] - a.p[1], dz = b.p[2] - a.p[2];
     const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
     if (!(len > 0) || !(len <= LINK_MAX * 3)) continue;
-    
-    // Small fixed radius for ribbon proxy spheres
-    const r0 = Math.max(0.12, Math.min(0.35, Math.min(a.t, b.t)));
-    
-    // Target ~40% overlap between spheres
-    const stepAlong = r0 * 1.2;
-    const stepAcross = r0 * 1.2;
-    
-    const along = Math.min(BAND_MAX_ALONG, Math.max(1, Math.ceil(len / stepAlong)));
+
+    // Small radius — BAND_MIN_THICKNESS (0.15 Å) keeps spheres tiny enough
+    // to tile the ribbon without creating giant blob shadows.
+    const r0 = Math.max(BAND_MIN_THICKNESS, Math.min(a.t, b.t), len * 0.02);
+
+    // Step target: ~50% overlap between spheres along the ribbon
+    const stepTarget = r0 * 1.5;
+
+    const along = Math.min(BAND_MAX_ALONG, Math.max(1, Math.ceil(len / stepTarget)));
     for (let i = 0; i <= along; i += 1) {
       if (outRadii.length >= BAND_MAX_PROXIES) break;
       const u = i / (along + 1);
@@ -720,10 +715,10 @@ const bandBrushOf = (sections, opacity = 1) => {
       ]);
       const half = a.w + (b.w - a.w) * u;
       if (!(half > 0) || !(length3(dir) > 0.5)) continue;
-      
-      const across = Math.min(BAND_MAX_ACROSS, Math.max(1, Math.ceil((2 * half) / stepAcross)));
+
+      const across = Math.min(BAND_MAX_ACROSS, Math.max(1, Math.ceil((2 * half) / stepTarget)));
       const step = (2 * half) / across;
-      const r = Math.min(0.35, Math.max(r0, step * 0.85));
+      const r = Math.max(r0, step * 0.85);
       for (let j = 0; j < across; j += 1) {
         if (outRadii.length >= BAND_MAX_PROXIES) break;
         const off = -half + (j + 0.5) * step;
