@@ -1792,3 +1792,59 @@ défaut, 768 px au 16 px du navigateur) : le remettre à `xl` remonte le seuil �
 des onze pages ne jette pas, la rangée comprise.
 
 
+## « Under the sequence field » : la lecture d'une séquence, sous LES DEUX cases (02/10/2026)
+
+Demandé mot pour mot : « Under the sequence field please write the number of each
+type of aminoacids, the total charge at pH 7 and the estimated molar extinction
+coefficient. Keep this information compact utilising as much horizontal space.
+In the library the compound are defined with their modification, like acetylation
+or amidation. the charge should keep this into account. If the sequence is
+written directly into the sequence space, assume free termini. »
+
+**Où l'on ne la voyait pas.** La ligne (composition · charge à pH 7 · ε₂₈₀)
+avait été écrite UNE fois, dans la fiche du composé de la Librairie
+(`AppModules/compoundDefinitionSection.jsx`). Mais l'application a **deux cases
+de séquence**, et c'est la seconde que l'on remplit tous les jours : la case
+**« … Sequence (1-letter code) »** de la page NMR
+(`NMRSections.jsx`, sous-section « Molecular structure and visualization »),
+sous laquelle il n'y avait que « Length: N residues (valid: …) ». Rien à voir
+avec un bug de calcul : la ligne n'existait tout simplement pas là.
+
+Ce qui a changé :
+
+* **UN SEUL RENDU** — `src/components/SequenceReadingLine.jsx` porte la ligne
+  (les trois choses de la demande, la mise en page compacte `flex flex-wrap`
+  « utilising as much horizontal space », ses deux terminus dits en mots et sa
+  bulle d'aide). La fiche de la Librairie **et** la case de séquence de la page
+  NMR rendent CE composant : deux copies du JSX ne peuvent plus diverger ;
+* la page NMR calcule sa lecture avec **le même module pur**
+  (`utils/sequenceCharge.js` — le pKa de CHAQUE chaîne latérale, les deux
+  terminus), **le même texte de modifications** (`activeTest.modifications`,
+  celui que la fiche du composé sème dans la condition juste au-dessus) et
+  **le même pH 7** : la ligne de la Librairie, celle de la page et la charge du
+  ⚙ « Params & Constraints » ne peuvent pas se contredire. Seule une protéine a
+  une composition d'acides aminés : pour un ADN / ARN, un sucre, un lipide ou
+  une molécule organique il n'y a rien à dire, et **rien n'est rendu** ;
+* **un vrai bug corrigé dans la fiche de la Librairie** : sa case de séquence est
+  un `RichTextEditor`, donc du **HTML**. La lecture lui passait le texte BRUT, et
+  `analyzeProteinSequence` ne garde que les lettres A–Z : les lettres des
+  **balises** (« div », « br »…) se comptaient comme des acides aminés dès que la
+  case contenait un retour à la ligne ou du texte collé. Elle lit maintenant
+  `stripHtml(sequence)`, comme le calcul du poids moléculaire juste à côté.
+
+Ce qui n'a **pas** changé : la table des pKa et Henderson–Hasselbalch
+(`utils/sequenceCharge.js`), la règle des terminus (libres par défaut, retirés
+par Acetylation / Acylation / Formylation et Amidation), l'ε₂₈₀ de Pace
+(`analyzeProteinSequence`), la ligne elle-même et le ⚙ « Params &
+Constraints ». Aucune seconde roue, aucun second calcul : c'est le même modèle,
+montré à un endroit de plus.
+
+*Vérifier :* `node _sequence_charge_test.mjs` — 112 assertions : le module
+(+3,00 e pour le peptide du rapport), la ligne partagée, et les DEUX cases qui
+l'appellent. `node _sequence_line_render_test.mjs` — **la ligne RENDUE pour de
+vrai** (SSR) : « 31 aa · A 1 · F 1 · … V 2 · net +3.00 e at pH 7 · free N-term ·
+free C-term · ε₂₈₀ 0 M⁻¹cm⁻¹ », les capuchons dits, et RIEN pour une lecture
+absente. `node _viewer_render_smoke_test.mjs` — la page NMR monte et rend son
+HTML. `npx oxlint src/components/SequenceReadingLine.jsx` — 0 erreur.
+
+

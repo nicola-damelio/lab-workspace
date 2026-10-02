@@ -48,6 +48,11 @@ workspace-shared-token.json.*
 # probe et rien d'autre. Il est reconstruit à chaque exécution de la suite.
 /_render_smoke/
 
+# Idem pour la sonde de _sequence_line_render_test.mjs : la ligne sous une case
+# de séquence (composition · charge à pH 7 · ε₂₈₀) rendue pour de vrai, sous la
+# fiche du composé de la Librairie et sous la case de séquence de la page NMR.
+/_seqline_smoke/
+
 # Idem pour le probe de _approval_bc_flow_test.mjs (devis signé → BC à faire :
 # rendu réel des pages Approbation devis & BC et Achats prévus).
 /_approval_bc_render/

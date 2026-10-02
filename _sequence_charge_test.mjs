@@ -29,9 +29,11 @@
      • TOUTES LES CHAÎNES LATÉRALES COMPTENT — l'imidazole d'une histidine (que le graphe ne
        reconnaît pas) est chargé à pH 6 et neutre à pH 9, et une phosphorylation ajoute un
        phosphate (deux pKa, −1,39 e à pH 7) par unité écrite ;
-     • LES DEUX PANNEAUX SONT CÂBLÉS — la ligne sous la case de séquence (composition · charge
-       · ε₂₈₀) et la lecture du ⚙ Params & Constraints, qui DIT si elle vient de la séquence
-       ou du graphe, et qui reçoit les modifications de la fiche du composé.
+     • LES CELLULES DE SÉQUENCE SONT CÂBLÉES — la ligne sous la case (composition · charge ·
+       ε₂₈₀) est rendue par UN SEUL composant (src/components/SequenceReadingLine.jsx), sous la
+       case de la fiche du composé de la Librairie COMME sous la case « … Sequence (1-letter
+       code) » de la page NMR ; la lecture du ⚙ Params & Constraints, elle, DIT si son chiffre
+       vient de la séquence ou du graphe, et reçoit les modifications de la fiche du composé.
 
    Run: node _sequence_charge_test.mjs
    ========================================================================= */
@@ -72,6 +74,9 @@ const SEQINFO = read('./src/utils/sequenceInfo.js');
 const COMPOUND = read('./src/components/AppModules/compoundDefinitionSection.jsx');
 const VIEW = read('./src/components/NMRMoleculeViewer.jsx');
 const PAGE = read('./src/components/NMRSections.jsx');
+/* LA LIGNE SOUS UNE CASE DE SÉQUENCE — le composant PARTAGÉ par les deux cases (Librairie et
+   page NMR) : c'est lui qui porte les trois choses de la demande et leur bulle d'aide. */
+const READING = read('./src/components/SequenceReadingLine.jsx');
 /* LE PEPTIDE DU RAPPORT — 31 résidus, trois lysines, aucun acide latéral. */
 const REPORT_SEQ = 'SIIGIIMGILGNIPQVIQIIMSIVKAFKGNK';
 
@@ -257,25 +262,55 @@ const twoPhospho = sequenceChargeReportOf('SPS', 7, { modifications: 'Phosphoryl
 near(phospho.net - twoPhospho.net, acid(2.15, 7) + acid(7.20, 7),
   '…et deux unités écrites en comptent deux fois autant', 1e-5);
 
-/* ── 8 · LES DEUX PANNEAUX SONT CÂBLÉS PAR CE MODULE-LÀ ────────────────────────────────── */
-/* (a) LA LIGNE SOUS LA CASE DE SÉQUENCE — la fiche du composé, dans la Librairie. */
-has(COMPOUND,
-  "import { proteinSequenceReadingOf, compositionTextOf, AA_SIDECHAIN_PKA, TERMINUS_PKA } from '../../utils/sequenceCharge';",
+/* ── 8 · LA LIGNE ET LA SECONDE LECTURE SONT CÂBLÉES PAR CE MODULE-LÀ ───────────────────── */
+/* (a) LA LIGNE SOUS UNE CASE DE SÉQUENCE — UN SEUL RENDU POUR LES DEUX CASES : la fiche du
+   composé de la Librairie et la case « … Sequence (1-letter code) » de la page NMR. */
+has(READING, '{reading.length} aa', 'la ligne dit le NOMBRE DE RÉSIDUS');
+has(READING, 'compositionTextOf(reading.composition)',
+  '…LE NOMBRE DE CHAQUE ACIDE AMINÉ (« A 1 · F 1 · G 4 … »)');
+has(READING, "net {reading.net >= 0 ? '+' : ''}{reading.net.toFixed(2)} e at pH 7",
+  '…LA CHARGE TOTALE À pH 7');
+has(READING, 'ε₂₈₀ {Math.round(reading.epsilon).toLocaleString()} M⁻¹cm⁻¹',
+  '…et l’ε₂₈₀ estimé, en M⁻¹cm⁻¹');
+has(READING, 'flex flex-wrap items-center gap-x-3 gap-y-1',
+  '⚠ UNE ligne COMPACTE qui REMPLIT la largeur (flex-wrap, « utilising as much horizontal space »)');
+has(READING, 'free N-term', '…et les deux terminus y sont DITS (gratuits ou capuchonnés)');
+has(READING, 'if (!reading || !reading.ok) return null;',
+  '⚠ une lecture absente — ou vide — ne rend RIEN (jamais une ligne muette)');
+has(READING, 'utils/sequenceCharge.js — the pKa of EVERY side chain',
+  '…et sa bulle d’aide DIT d’où vient la charge (le module pur, jamais le graphe)');
+has(READING, '${TERMINUS_PKA.nTerm}', '…en citant les pKa des DEUX terminus du module');
+gone(READING, 'nW * 5500', '⚠ aucune règle d’ε₂₈₀ recopiée : le chiffre vient de l’analyseur du dossier');
+
+/* (a1) LA CASE DE LA LIBRAIRIE — la fiche du composé. */
+has(COMPOUND, "import { proteinSequenceReadingOf } from '../../utils/sequenceCharge';",
   'la fiche de la Librairie lit CE module (aucune charge recalculée dans le JSX)');
-has(COMPOUND, 'return proteinSequenceReadingOf(sequence, { modifications: modText, ph: 7 });',
+has(COMPOUND, "import { SequenceReadingLine } from '../SequenceReadingLine';",
+  '…et rend LA ligne partagée (une seule copie du JSX dans tout le dossier)');
+has(COMPOUND, 'return proteinSequenceReadingOf(stripHtml(sequence), { modifications: modText, ph: 7 });',
   '…avec LA SÉQUENCE ET LE TEXTE DES MODIFICATIONS, à pH 7 (la demande)');
+has(COMPOUND, '⚠ LA CASE EST DU HTML (RichTextEditor) : le module lit `stripHtml(sequence)`',
+  '⚠ la case est du HTML : la lecture passe par stripHtml (les lettres des balises ne comptent pas)');
 has(COMPOUND, 'const seqReading = useMemo(() => {',
   '…dans une lecture mémorisée (elle suit la séquence ET les modifications)');
-has(COMPOUND, '{seqReading.length} aa', 'la ligne dit le NOMBRE DE RÉSIDUS');
-has(COMPOUND, '{compositionTextOf(seqReading.composition)}',
-  '…LE NOMBRE DE CHAQUE ACIDE AMINÉ (« A 1 · F 1 · G 4 … »)');
-has(COMPOUND, "net {seqReading.net >= 0 ? '+' : ''}{seqReading.net.toFixed(2)} e at pH 7",
-  '…LA CHARGE TOTALE À pH 7');
-has(COMPOUND, 'ε₂₈₀ {Math.round(seqReading.epsilon).toLocaleString()} M⁻¹cm⁻¹',
-  '…et l’ε₂₈₀ estimé, en M⁻¹cm⁻¹');
-has(COMPOUND, 'flex flex-wrap items-center gap-x-3 gap-y-1',
-  '⚠ UNE ligne COMPACTE qui REMPLIT la largeur (flex-wrap, « utilising as much horizontal space »)');
-has(COMPOUND, 'free N-term', '…et les deux terminus y sont DITS (gratuits ou capuchonnés)');
+has(COMPOUND, '<SequenceReadingLine reading={seqReading} className="mb-4" />',
+  '…et c’est la ligne partagée qui est rendue, SOUS la case de séquence');
+
+/* (a2) LA CASE DE LA PAGE NMR — « Molecular structure and visualization », la case où l’on écrit
+   la séquence d’une condition et où la demande voulait cette information. */
+has(PAGE, "import { proteinSequenceReadingOf } from '../utils/sequenceCharge';",
+  'la case de séquence de la page NMR lit le MÊME module pur');
+has(PAGE, "import { SequenceReadingLine } from './SequenceReadingLine';",
+  '…et rend la MÊME ligne (le composant partagé, jamais une seconde copie)');
+has(PAGE, "if (d.moleculeType !== 'protein' || !raw) return null;",
+  '…seulement pour une PROTÉINE dont la case n’est pas vide');
+has(PAGE, "return proteinSequenceReadingOf(raw, { modifications: activeTest.modifications || '', ph: 7 });",
+  '…avec les modifications de la condition (celles que la fiche du composé sème) et à pH 7');
+has(PAGE, 'const seqReading = useMemo(() => {',
+  '…dans une lecture mémorisée (elle suit la séquence ET les modifications)');
+has(PAGE, '<SequenceReadingLine reading={seqReading} className="mt-1" />',
+  '…rendue SOUS la case, juste après la ligne « Length: … »');
+gone(PAGE, 'nW * 5500', '⚠ la page ne recalcule ni charge ni ε₂₈₀ : tout vient du module');
 
 /* (b) LE ⚙ PARAMS & CONSTRAINTS — la seconde lecture, qui DIT d'où vient son chiffre. */
 has(VIEW, "import { sequenceChargeReportOf, AA_SIDECHAIN_PKA } from '../utils/sequenceCharge';",
@@ -322,7 +357,8 @@ eq(proteinSequenceReadingOf('AXBKU', { ph: 7 }).composition.unknown, ['X', 'B', 
 console.log(`_sequence_charge_test.mjs — ${passed} assertions OK `
   + '(🧬 la charge d’une séquence : le pKa de CHAQUE chaîne latérale, les deux terminus GRATUITS '
   + 'par défaut et capuchonnés par la fiche du composé — +3,00 e pour le peptide du rapport —, '
-  + 'la composition en une ligne, l’ε₂₈₀, et les deux panneaux câblés sur le même module)');
+  + 'la composition en une ligne, l’ε₂₈₀, et la ligne des DEUX cases de séquence — Librairie et '
+  + 'page NMR — câblée sur le même module)');
 
 eq(phospho.groups[phospho.groups.length - 1].pka, [2.15, 7.20],
   '…le groupe phosphate PORTE ses deux pKa (aucun autre groupe n’en a deux)');

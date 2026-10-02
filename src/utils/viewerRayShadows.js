@@ -50,8 +50,8 @@ export const LINKED_KINDS = Object.freeze({ spline: 1, tube: 1, bond: 1, ball: 1
 export const BACKBONE_ONLY_KINDS = Object.freeze({ spline: 1, tube: 1 });
 export const FLAT_STROKE_BY_TYPE = Object.freeze({ cartoon: 1, ribbon: 1 });
 // Increased caps to allow denser tiling for wide ribbons
-export const BAND_MAX_ACROSS = 16;
-export const BAND_MAX_ALONG = 16;
+export const BAND_MAX_ACROSS = 10;
+export const BAND_MAX_ALONG = 12;
 export const BAND_MAX_PROXIES = 80000;
 const BAND_MIN_THICKNESS = 0.15;
 const BAND_TAPER = 1.6;
@@ -692,12 +692,6 @@ const bandBrushOf = (sections, opacity = 1) => {
     outPositions.push(x, y, z);
     outRadii.push(r);
   };
-  
-  // Target radius for ribbon proxies - small enough to avoid blobs, large enough to tile
-  const targetRadius = 0.35; 
-  const overlapFactor = 0.8; // 80% overlap for smooth tiling
-  const stepTarget = targetRadius * overlapFactor;
-
   for (let v = 0; v + 1 < sections.length; v += 1) {
     if (outRadii.length >= BAND_MAX_PROXIES) break;
     const a = sections[v], b = sections[v + 1];
@@ -705,11 +699,13 @@ const bandBrushOf = (sections, opacity = 1) => {
     const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
     if (!(len > 0) || !(len <= LINK_MAX * 3)) continue;
 
-    const r0 = Math.max(BAND_MIN_THICKNESS, Math.min(a.t, b.t));
-    
-    // Calculate density based on target radius
+    // Small base radius — keeps shadows crisp, not blobby
+    const r0 = Math.max(BAND_MIN_THICKNESS, Math.min(a.t, b.t), len * 0.02);
+
+    // Target spacing: ~60% overlap between sphere edges for smooth tiling
+    const stepTarget = r0 * 1.6;
+
     const along = Math.min(BAND_MAX_ALONG, Math.max(1, Math.ceil(len / stepTarget)));
-    
     for (let i = 0; i <= along; i += 1) {
       if (outRadii.length >= BAND_MAX_PROXIES) break;
       const u = i / (along + 1);
@@ -724,10 +720,8 @@ const bandBrushOf = (sections, opacity = 1) => {
 
       const across = Math.min(BAND_MAX_ACROSS, Math.max(1, Math.ceil((2 * half) / stepTarget)));
       const step = (2 * half) / across;
-      
-      // Radius is fixed to targetRadius to prevent huge blobs
-      const r = targetRadius;
-      
+      // Radius stays small: 65% of the step, capped at 1.3× r0
+      const r = Math.min(r0 * 1.3, step * 0.65);
       for (let j = 0; j < across; j += 1) {
         if (outRadii.length >= BAND_MAX_PROXIES) break;
         const off = -half + (j + 0.5) * step;
