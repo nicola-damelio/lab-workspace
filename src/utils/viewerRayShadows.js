@@ -634,7 +634,8 @@ export const bandSectionsOf = (rep, el = null) => {
   const pos = A.position && A.position.array;
   if (!pos) return null;
   
-  const stride = kind === 'cartoon' ? 9 : 12;
+  // Both cartoon and ribbon use 12 floats per segment (4 vertices × 3 coords)
+  const stride = 12;
   if (pos.length % stride !== 0) return null;
   const points = pos.length / stride;
   if (points < 2) return null;
@@ -647,22 +648,29 @@ export const bandSectionsOf = (rep, el = null) => {
   const sub = (arr, i) => [arr[i], arr[i + 1], arr[i + 2]];
   const sections = [];
   
-  for (let v = 0; v < points; v += 1) {
+  // Sample every 3rd section to reduce density
+  const sampleRate = Math.max(1, Math.floor(points / 200));
+  
+  for (let v = 0; v < points; v += sampleRate) {
     const p = sub(pos, v * stride);
     
-    let s = 0.45;
+    // Use a reasonable default size for cartoon
+    let s = 0.8;
     if (sizeArr) {
-      const sizeIdx = kind === 'cartoon' ? v * 3 : v * 4;
-      if (sizeArr[sizeIdx] != null && sizeArr[sizeIdx] > 0) s = Number(sizeArr[sizeIdx]);
+      const sizeIdx = v * 4;
+      if (sizeArr[sizeIdx] != null && sizeArr[sizeIdx] > 0) {
+        s = Number(sizeArr[sizeIdx]);
+      }
     }
-    if (!(s > 0)) s = 0.45;
+    if (!(s > 0)) s = 0.8;
     
+    // Direction from neighbors
     let d = dirArr && dirArr.length >= points * stride 
       ? normalize3(sub(dirArr, v * stride)) 
       : null;
     if (!d || !(length3(d) > 0.5)) {
-      const next = sub(pos, Math.min(points - 1, v + 1) * stride);
-      const prev = sub(pos, Math.max(0, v - 1) * stride);
+      const next = sub(pos, Math.min(points - 1, v + sampleRate) * stride);
+      const prev = sub(pos, Math.max(0, v - sampleRate) * stride);
       const t = normalize3(sub3(next, prev));
       const n = norArr && norArr.length >= points * stride 
         ? normalize3(sub(norArr, v * stride)) 
@@ -672,12 +680,13 @@ export const bandSectionsOf = (rep, el = null) => {
     }
     
     const w = kind === 'ribbon' ? s : s * aspect;
-    const t = Math.max(BAND_MIN_THICKNESS, kind === 'ribbon' ? Math.min(0.25, w * 0.25) : s * 0.3);
+    const t = Math.max(0.5, kind === 'ribbon' ? Math.min(0.5, w * 0.3) : s * 0.4);
     sections.push({ p, d, w, t });
   }
   
   return sections.length >= 2 ? sections : null;
 };
+
 const bandBrushOf = (sections, opacity = 1) => {
   const outPositions = [], outRadii = [];
   const push = (x, y, z, r) => { 
@@ -685,6 +694,7 @@ const bandBrushOf = (sections, opacity = 1) => {
     outPositions.push(x, y, z); 
     outRadii.push(r); 
   };
+  
   for (let v = 0; v + 1 < sections.length; v += 1) {
     if (outRadii.length >= BAND_MAX_PROXIES) break;
     const a = sections[v], b = sections[v + 1];
@@ -692,10 +702,13 @@ const bandBrushOf = (sections, opacity = 1) => {
     const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
     if (!(len > 0) || !(len <= LINK_MAX * 3)) continue;
     
-    const r0 = Math.max(BAND_MIN_THICKNESS, Math.min(a.t, b.t), len * 0.02);
-    const stepTarget = Math.max(r0, 0.3); 
+    // Use larger minimum thickness for better shadow coverage
+    const r0 = Math.max(0.5, Math.min(a.t, b.t), len * 0.05);
     
+    // Target ~70% overlap between spheres
+    const stepTarget = r0 * 0.6;
     const along = Math.min(BAND_MAX_ALONG, Math.max(1, Math.ceil(len / stepTarget)));
+    
     for (let i = 0; i <= along; i += 1) {
       if (outRadii.length >= BAND_MAX_PROXIES) break;
       const u = i / (along + 1);
@@ -710,7 +723,8 @@ const bandBrushOf = (sections, opacity = 1) => {
       
       const across = Math.min(BAND_MAX_ACROSS, Math.max(1, Math.ceil((2 * half) / stepTarget)));
       const step = (2 * half) / across;
-      const r = Math.max(r0, step * 0.9);
+      const r = Math.max(r0, step * 0.8);
+      
       for (let j = 0; j < across; j += 1) {
         if (outRadii.length >= BAND_MAX_PROXIES) break;
         const off = -half + (j + 0.5) * step;
@@ -718,6 +732,7 @@ const bandBrushOf = (sections, opacity = 1) => {
       }
     }
   }
+  
   const count = outRadii.length;
   const positions = new Float32Array(outPositions);
   const radii = new Float32Array(outRadii);
