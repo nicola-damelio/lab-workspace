@@ -49,9 +49,10 @@ export const PROXY_STROKE_BY_TYPE = Object.freeze({
 export const LINKED_KINDS = Object.freeze({ spline: 1, tube: 1, bond: 1, ball: 1 });
 export const BACKBONE_ONLY_KINDS = Object.freeze({ spline: 1, tube: 1 });
 export const FLAT_STROKE_BY_TYPE = Object.freeze({ cartoon: 1, ribbon: 1 });
-export const BAND_MAX_ACROSS = 6;
-export const BAND_MAX_ALONG = 8;
-export const BAND_MAX_PROXIES = 60000;
+// Increased caps to allow denser tiling for wide ribbons
+export const BAND_MAX_ACROSS = 16;
+export const BAND_MAX_ALONG = 16;
+export const BAND_MAX_PROXIES = 80000;
 const BAND_MIN_THICKNESS = 0.15;
 const BAND_TAPER = 1.6;
 const LINK_STEP_MIN = 0.3;
@@ -625,6 +626,7 @@ const geometryOfRep = (rep) => {
   }
   return null;
 };
+
 export const bandSectionsOf = (rep, el = null) => {
   const kind = repTypeOf(rep, el);
   if (!FLAT_STROKE_BY_TYPE[kind]) return null;
@@ -634,8 +636,7 @@ export const bandSectionsOf = (rep, el = null) => {
   const pos = A.position && A.position.array;
   if (!pos) return null;
 
-  // Both cartoon and ribbon use 12 floats per segment (4 vertices × 3 coords)
-  const stride = 12;
+  const stride = 12; // Both cartoon and ribbon use 12 floats per segment
   if (pos.length % stride !== 0) return null;
   const points = pos.length / stride;
   if (points < 2) return null;
@@ -648,24 +649,26 @@ export const bandSectionsOf = (rep, el = null) => {
   const sub = (arr, i) => [arr[i], arr[i + 1], arr[i + 2]];
   const sections = [];
 
-  for (let v = 0; v < points; v += 1) {
+  // DOWNSAMPLE: Limit total sections to prevent 100k+ proxies
+  const maxSections = 400;
+  const step = Math.max(1, Math.floor(points / maxSections));
+
+  for (let v = 0; v < points; v += step) {
     const p = sub(pos, v * stride);
 
-    // Size: try explicit size array, otherwise use a reasonable default
     let s = 0.45;
     if (sizeArr && sizeArr.length >= points * 4) {
-      const v = Number(sizeArr[v * 4]);
-      if (Number.isFinite(v) && v > 0) s = v;
+      const vSize = Number(sizeArr[v * 4]);
+      if (Number.isFinite(vSize) && vSize > 0) s = vSize;
     }
     if (!(s > 0)) s = 0.45;
 
-    // Direction: try explicit dir, otherwise compute from neighbors
     let d = dirArr && dirArr.length >= points * stride
       ? normalize3(sub(dirArr, v * stride))
       : null;
     if (!d || !(length3(d) > 0.5)) {
-      const next = sub(pos, Math.min(points - 1, v + 1) * stride);
-      const prev = sub(pos, Math.max(0, v - 1) * stride);
+      const next = sub(pos, Math.min(points - 1, v + step) * stride);
+      const prev = sub(pos, Math.max(0, v - step) * stride);
       const t = normalize3(sub3(next, prev));
       const n = norArr && norArr.length >= points * stride
         ? normalize3(sub(norArr, v * stride))
@@ -689,6 +692,12 @@ const bandBrushOf = (sections, opacity = 1) => {
     outPositions.push(x, y, z);
     outRadii.push(r);
   };
+  
+  // Target radius for ribbon proxies - small enough to avoid blobs, large enough to tile
+  const targetRadius = 0.35; 
+  const overlapFactor = 0.8; // 80% overlap for smooth tiling
+  const stepTarget = targetRadius * overlapFactor;
+
   for (let v = 0; v + 1 < sections.length; v += 1) {
     if (outRadii.length >= BAND_MAX_PROXIES) break;
     const a = sections[v], b = sections[v + 1];
@@ -696,14 +705,11 @@ const bandBrushOf = (sections, opacity = 1) => {
     const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
     if (!(len > 0) || !(len <= LINK_MAX * 3)) continue;
 
-    // Small radius — BAND_MIN_THICKNESS (0.15 Å) keeps spheres tiny enough
-    // to tile the ribbon without creating giant blob shadows.
-    const r0 = Math.max(BAND_MIN_THICKNESS, Math.min(a.t, b.t), len * 0.02);
-
-    // Step target: ~50% overlap between spheres along the ribbon
-    const stepTarget = r0 * 1.5;
-
+    const r0 = Math.max(BAND_MIN_THICKNESS, Math.min(a.t, b.t));
+    
+    // Calculate density based on target radius
     const along = Math.min(BAND_MAX_ALONG, Math.max(1, Math.ceil(len / stepTarget)));
+    
     for (let i = 0; i <= along; i += 1) {
       if (outRadii.length >= BAND_MAX_PROXIES) break;
       const u = i / (along + 1);
@@ -718,7 +724,10 @@ const bandBrushOf = (sections, opacity = 1) => {
 
       const across = Math.min(BAND_MAX_ACROSS, Math.max(1, Math.ceil((2 * half) / stepTarget)));
       const step = (2 * half) / across;
-      const r = Math.max(r0, step * 0.85);
+      
+      // Radius is fixed to targetRadius to prevent huge blobs
+      const r = targetRadius;
+      
       for (let j = 0; j < across; j += 1) {
         if (outRadii.length >= BAND_MAX_PROXIES) break;
         const off = -half + (j + 0.5) * step;
@@ -732,6 +741,7 @@ const bandBrushOf = (sections, opacity = 1) => {
   if (opacity < 1) for (let i = 0; i < count; i += 1) radii[i] *= opacity;
   return { positions, radii, count };
 };
+
 export const bandProxiesOf = (comp) => {
   const empty = { positions: new Float32Array(0), radii: new Float32Array(0), count: 0, reps: 0, debug: '' };
   const list = comp && comp.reprList;
@@ -772,6 +782,7 @@ export const bandProxiesOf = (comp) => {
   });
   return { positions, radii, count: total, reps: brushes.length, debug: '' };
 };
+
 const linkStepOf = (ra, rb) => Math.max(LINK_STEP_MIN, 0.5 * Math.min(ra, rb));
 const drawnBondsOf = (structure, links, n) => {
   if (!structure || typeof structure.eachBond !== 'function') return [];
@@ -1006,7 +1017,7 @@ export const cameraFromViewer = (viewer) => {
   const cam = (viewer && (viewer.camera || viewer.perspectiveCamera || viewer.orthographicCamera)) || null;
   const viewOffset = cam && cam.view;
   if (viewOffset && viewOffset.enabled === true) {
-    throw new Error('the camera is inside a tile of a ✨ Ray still (setViewOffset) — read it before the render');
+    throw new Error('the camera is inside a tile of a  Ray still (setViewOffset) — read it before the render');
   }
   const proj = cam ? elements16Of(cam.projectionMatrix) : null;
   const view = cam ? elements16Of(cam.matrixWorldInverse) : null;

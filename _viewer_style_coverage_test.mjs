@@ -216,6 +216,9 @@ const SCHEME_KEYS = [
   'let sstrucSchemeKey = "k-sstruc"; let sugarSchemeKey = "k-sugar"; let glycanSchemeKey = "k-glycan";',
   'let lipidClassSchemeKey = "k-lipid"; let nucleicFormSchemeKey = "k-form"; let nucleicMotifSchemeKey = "k-motif";',
   'let chargeSchemeKey = "k-charge"; let chainSchemeKey = "k-chain"; let gradientSchemeKey = "k-gradient";',
+  // « Atom charge » (la demande de cette session) : le schéma maison que la rangée doit
+  // passer à NGL en `color`, comme les autres.
+  'let atomChargeSchemeKey = "k-atom-charge";',
 ].join('\n');
 // `ATOM_EVAL` remplace le lecteur de sélection de la page (atomIndicesForSele) : le pont
 // d'une rangée (bridgeAtomIndices) et la restriction à la molécule de la section
@@ -406,7 +409,7 @@ eq(sceneOf(gesture([['protein', 'general', 'style', 'hide']])), [],
    Une coloration descend maintenant sur les rangées qui l'ont dans leur menu, et General
    garde les atomes des rangées qu'il redessine : la scène reste entière, pour tous les
    styles de la rangée du haut et toutes les colorations qu'elle offre. */
-const COLOURING_CHOICES = ['solid', 'element', 'chain', 'residue', 'sstruc', 'hydrophobicity', 'esp', 'gradient', 'rainbow'];
+const COLOURING_CHOICES = ['solid', 'element', 'atomcharge', 'chain', 'residue', 'sstruc', 'hydrophobicity', 'esp', 'gradient', 'rainbow'];
 const GENERAL_STYLES = ['cartoon', 'ball+stick', 'licorice', 'line', 'spacefill', 'sphere', 'surface'];
 GENERAL_STYLES.forEach((style) => {
   COLOURING_CHOICES.forEach((col) => {

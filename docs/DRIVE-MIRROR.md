@@ -1457,6 +1457,74 @@ Désormais (`src/utils/datasetListIndex.js`, `App.jsx`, `workspaceDrive.js`) :
   navigateur) et **vérifie** que le serveur l'a reçue (`waitForPendingWrites`) :
   sans confirmation, la barre latérale le DIT au lieu de laisser croire que tout
   est dans le cloud ;
+
+## « Color by : atom charge » dans la fenêtre de styling (02/10/2026)
+
+Demandé mot pour mot : « In the “molecule styling” window add a “color by” option:
+atom charge. »
+
+La fenêtre « Molecules · styling » tire déjà ses colorations d'UN seul endroit — le
+vocabulaire `COLOR_LABELS` et les listes `COLORS` (une par type de molécule) — donc la
+nouvelle lecture n'a été écrite qu'UNE fois, et elle apparaît sur **chaque rangée** :
+protéine (General · Backbone · Side chains), acide nucléique (General · Backbone ·
+bases · ribose), lipide (General · headgroups · heads (N · O) · P · chaînes acyle ·
+glycérol), sucre, ligand, eau, ion. La barre des SÉLECTIONS et celle de la membrane,
+qui DÉRIVENT leur menu du même vocabulaire, l'offrent du même coup.
+
+Ce qu'elle peint :
+
+* **la charge PARTIELLE de chaque atome**, lue dans la table que le ⚡ ESP construit
+  déjà pour la structure (`espChargesFor`, un parcours par structure, mis en cache) :
+  la charge du FICHIER quand il en porte une (PQR · MOL2 / SDF chargés), la table
+  CHARMM de NGL pour une protéine, la charge FORMELLE d'un ion (Na⁺ +1, Cl⁻ −1…), et
+  l'estimation par électronégativité des autres hétéro-atomes (décalée pour que le
+  résidu somme à zéro). Les deux colorations ne peuvent donc pas se contredire ;
+* sur **les trois pastilles éditables de « Charge »** de la roue ⚙ (négatif · neutre
+  · positif), et non sur une palette en plus : une couleur changée là repeint la
+  coloration. Le NEUTRE est la couleur d'une charge nulle, et |q| fait marcher
+  l'atome vers le pôle de son signe ;
+* **échelle pleine ±1 e** (`ATOM_CHARGE_DOMAIN`) : un atome à −1 e (un chlorure, un
+  carboxylate) est AU pôle négatif, un sodium AU pôle positif, et une charge formelle
+  de ±2 e (un magnésium) s'écrase sur son pôle au lieu d'inventer une quatrième
+  couleur ;
+* **le repli est le `partialcharge` de NGL lui-même** — le colormaker natif de la
+  même grandeur (rouge → blanc → bleu sur `atom.partialCharge`, domaine ±1 e) — et non
+  un aplat d'éléments : sans le schéma maison, une molécule est peinte quand même.
+
+Deux garde-fous DANS le schéma, nés des mesures de cette session :
+
+* un schéma instancié **sans structure** (la sonde du registre NGL) peint le NEUTRE
+  de la roue, jamais du noir ;
+* un atome **absent** — `atomChargeOf(null, structure)` — rend 0 et non la charge de
+  l'atome 0 : `Number(null)` vaut 0, donc la première version du garde faisait peindre
+  à un atome inexistant la charge du premier atome de la molécule. C'est la nouvelle
+  suite qui l'a attrapé — comme, avant lui, une rampe qui partait du mauvais bout (le
+  pôle, `t = 1`, rendait le NEUTRE au lieu de la pastille du signe).
+
+Ce qui n'a **pas** changé : « Charge » (le SIGNE, trois valeurs, offert sur un ion
+seul), « Electrostatic potential » (une surface ajoutée à la rangée), les palettes et
+la roue ⚙ (aucun second ⚙ dans une rangée : la rangée se contente d'ÉCRIRE que les
+trois pastilles de « Charge » sont les ancres de sa rampe), les listes de styles, et
+tous les autres vocabulaires.
+
+*Vérifier :* `node _viewer_atom_charge_test.mjs` — la rampe EXTRAITE puis EXÉCUTÉE
+(charge nulle = pastille neutre, ±1 e = les pôles, ±2 e écrasés au pôle, une charge
+illisible = neutre, les deux moitiés du signe), les pastilles de la roue VIVANTES
+(changer le pôle négatif déplace la rampe, le pôle opposé ne bouge pas), la MÊME table
+que le ⚡ ESP (l'oxygène d'un ligand est négatif, un sodium vaut +1, un atome sans
+structure / sans index / hors table vaut 0), et le schéma enregistré dans le VRAI
+NGL 2.4 puis instancié sur une structure réellement parsée (chaque atome prend la
+couleur de SA charge, un sodium prend EXACTEMENT la pastille positive, une molécule
+sans structure le neutre) ; `node _viewer_ui_layout_test.mjs` — « Atom charge »
+offert ET libellé sur chaque liste de chaque type (la liste est lue dans la source
+puis parcourue), le câblage des deux barres, l'infobulle du menu et la phrase de la
+rangée ; `node _viewer_color_settings_test.mjs` — le schéma maison d'abord, le
+`partialcharge` natif en repli ; `node _viewer_style_coverage_test.mjs` — la matrice
+« Color by » (la scène n'est jamais vide) passe la nouvelle coloration ;
+`node _verify.cjs` — les 36 suites vertes ; `node _viewer_render_smoke_test.mjs` —
+le rendu réel (SSR) ne jette pas ; `npx oxlint
+src/components/NMRMoleculeViewer.jsx` — 0 erreur.
+
 * l'index du Drive est vidé sur `pagehide` et au passage en arrière-plan.
 
 *Vérifier :* `node _dataset_index_test.mjs` — l'index sans contenu, l'union qui

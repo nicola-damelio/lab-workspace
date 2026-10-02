@@ -746,8 +746,9 @@ has("lipidtype: 'Lipid type',", '…« Lipid type »');
 // …et dans le sélecteur « Atom colour » de la BONNE catégorie de §2.
 has("charge: 'Charge',", '…« Charge » (les ions seulement)');
 has("gradient: 'Gradient (first → last)',", '…« Gradient » (premier → dernier résidu)');
-has("water: ['solid', 'element', 'hydrophobicity', 'esp'],", 'l eau n offre PAS « Lipid type » (correction du cahier des charges)');
-has("ion: ['solid', 'element', 'charge'],", 'un ion : solid · atom type · charge');
+has("water: ['solid', 'element', 'atomcharge', 'hydrophobicity', 'esp'],", 'l eau n offre PAS « Lipid type » (correction du cahier des charges)');
+has("ion: ['solid', 'element', 'atomcharge', 'charge'],", 'un ion : solid · atom type · atom charge · charge');
+has("atomcharge: 'Atom charge',", '…et « Atom charge » (la charge PARTIELLE de chaque atome) est dans le vocabulaire partagé');
 // La correspondance « Color by » → schéma NGL des quatre nouveaux modes, avec le
 // repli qui garantit qu'une molécule ne reste JAMAIS sans couleur.
 has("case 'basetype': return schemeParam(baseTypeSchemeKey, 'resname');", 'base types → lab-base-type (repli : resname)');
@@ -756,6 +757,8 @@ has("case 'nucform': return schemeParam(nucleicFormSchemeKey || sstrucSchemeKey,
   'conformations → lab-nuc-form, repli sur la 2° structure');
 has("case 'charge': return schemeParam(chargeSchemeKey || elementSchemeKey, 'element');",
   'motifs → lab-nuc-motif, repli sur la 2° structure');
+has("case 'atomcharge': return schemeParam(atomChargeSchemeKey, 'partialcharge');",
+  '« Atom charge » → le schéma maison lab-atom-charge, repli sur le `partialcharge` de NGL');
 // La roue ⚙ : les deux palettes des acides nucléiques, persistées et dans les setups.
 has("const NUCLEIC_FORM_COLORS_KEY = 'labViewerNucleicFormColors';", 'les couleurs de forme sont persistées');
 has("const NUCLEIC_MOTIF_COLORS_KEY = 'labViewerNucleicMotifColors';", 'les couleurs de motif aussi');

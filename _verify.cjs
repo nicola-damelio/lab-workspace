@@ -19,6 +19,19 @@ const tests = [
   '_viewer_scheme_test.mjs', '_viewer_style_controls_test.mjs', '_viewer_ui_layout_test.mjs',
   '_viewer_rings_gradient_test.mjs', '_dock_style_test.mjs', '_large_system_style_test.mjs',
   '_viewer_color_settings_test.mjs', '_viewer_structure_classes_test.mjs',
+  // « In the “molecule styling” window add a “color by” option: atom charge. » : la
+  // rampe de la charge PARTIELLE de chaque atome (trois pastilles éditables de la
+  // roue ⚙ : négatif · neutre · positif, ±1 e pleine échelle), la MÊME table de
+  // charges que le ⚡ ESP (la charge du fichier, la table CHARMM de NGL pour une
+  // protéine, la charge formelle d'un ion, l'estimation d'électronégativité des
+  // hétéro-atomes), et le schéma maison lab-atom-charge, enregistré dans le VRAI
+  // NGL et instancié sur une structure réellement parsée : cette suite EXÉCUTE la
+  // rampe et le schéma (l'oxygène d'un ligand peint vers le rouge, un sodium vers
+  // le bleu, un atome sans structure peint le NEUTRE), et vérifie que la liste
+  // « Color by » de CHAQUE type de molécule — et son libellé — l'offrent, la barre
+  // des sélections comprise. Sans le schéma maison, le repli est le colormaker
+  // `partialcharge` de NGL, jamais un aplat d'éléments.
+  '_viewer_atom_charge_test.mjs',
   // LA DEMANDE « styling window » DE CETTE SESSION, mesurée d'un bout à l'autre :
   // une teinte par TYPE peint l'ESPACE de la barre de style — et les rangées de cet
   // espace s'éclaircissent vers le blanc, General d'abord — toutes deux des pastilles

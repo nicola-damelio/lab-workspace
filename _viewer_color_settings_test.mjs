@@ -297,7 +297,8 @@ const buildHelpers = (keys = {}, stored = {}) => {
     `let glycanSchemeKey = ${keys.glycan === undefined ? 'null' : JSON.stringify(keys.glycan)};`,
     `let lipidClassSchemeKey = ${keys.lipidclass === undefined ? 'null' : JSON.stringify(keys.lipidclass)};`,
     `let nucleicFormSchemeKey = ${keys.nucform === undefined ? 'null' : JSON.stringify(keys.nucform)};`,
-    `let nucleicMotifSchemeKey = ${keys.motif === undefined ? 'null' : JSON.stringify(keys.motif)};`,  // PART 4 — les palettes et les schémas que la barre de style lit.
+    `let nucleicMotifSchemeKey = ${keys.motif === undefined ? 'null' : JSON.stringify(keys.motif)};`,
+    `let atomChargeSchemeKey = ${keys.atomcharge === undefined ? 'null' : JSON.stringify(keys.atomcharge)};`,  // PART 4 — les palettes et les schémas que la barre de style lit.
   `const BASE_TYPE_ORDER = ${sliceRaw('BASE_TYPE_ORDER')};`,
   sliceObject(VIEW, 'RESIDUE_COLOR_PALETTE'),
   sliceObject(VIEW, 'residueColorStore'),
@@ -332,7 +333,7 @@ const buildHelpers = (keys = {}, stored = {}) => {
   return api;
 };
 const H = buildHelpers();
-const HK = buildHelpers({ sstruc: 'lab-sstruc', elements: 'lab-elements', sugar: 'lab-sugar-identity' });
+const HK = buildHelpers({ sstruc: 'lab-sstruc', elements: 'lab-elements', sugar: 'lab-sugar-identity', atomcharge: 'lab-atom-charge' });
 
 /* ── 6a. Les deux palettes : lecture, écriture, et la garde des entrées ──── */
 eq(H.loadPalette('rien', { C: 1, N: 2 }), { C: 1, N: 2 }, 'aucune entrée enregistrée → les défauts');
@@ -424,6 +425,12 @@ eq(HK.schemeForColorMode('sugar'), 'lab-sugar-identity', 'Sugar type → la pale
 eq(H.schemeForColorMode('element'), 'element', 'schéma non enregistré → repli NGL natif');
 eq(H.schemeForColorMode('sugar'), 'element', '…idem pour les sucres : jamais de molécule sans couleur');
 eq(H.schemeForColorMode('sstruc'), 'sstruc', '…et le schéma de structure secondaire aussi');
+// « Atom charge » (la demande de cette session) : le schéma maison d'abord, et le
+// colormaker `partialcharge` de NGL en repli — la lecture la plus proche de la même
+// grandeur, jamais un aplat d'éléments qui ne dirait rien de la charge.
+eq(HK.schemeForColorMode('atomcharge'), 'lab-atom-charge', 'Atom charge → le schéma maison des charges PARTIELLES');
+eq(H.schemeForColorMode('atomcharge'), 'partialcharge',
+  '…et sans schéma maison il retombe sur le `partialcharge` NATIF de NGL');
 // Les QUATRE lectures de PART 2 / PART 3 passent par la même correspondance — et
 // les deux lectures NUCLEIC retombent sur la 2° structure, jamais sur un aplat.
 const HK2 = buildHelpers({

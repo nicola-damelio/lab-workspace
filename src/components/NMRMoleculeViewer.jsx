@@ -925,6 +925,80 @@ const registerChargeScheme = (NGL) => {
   chargeSchemeKey = registerColorScheme(NGL, 'lab-charge', defineChargeScheme());
 };
 
+/* ---- ATOM CHARGE colours (the « Atom charge » colouring) --------------------
+   THE REQUEST OF THIS SESSION, MOT POUR MOT: « In the “molecule styling” window
+   add a “color by” option: atom charge. »
+
+   « Charge » above is a SIGN of three values, and it is offered on an ION alone —
+   that is what tells a Na⁺ from a Cl⁻ in the same solvent. « ATOM CHARGE » is the
+   other half of the same idea: the PARTIAL charge of EVERY atom, painted as a RAMP.
+
+   It reads the very table the ⚡ ESP of PART 4.0 charges its atoms with
+   (`espChargesFor`, cached per structure) — the FILE's own partial charge when it
+   carries one (PQR · charged MOL2 / SDF, which NGL keeps in `atom.partialCharge`),
+   NGL's CHARMM-derived table for a protein, the formal charge of a single-atom
+   residue (Na⁺ · Cl⁻ · Mg²⁺ …), and an electronegativity estimate for any other
+   hetero atom (shifted so its residue sums to zero). The two colourings can
+   therefore never disagree about what an atom carries — and, as with the ⚡ ESP,
+   NGL's own `partialcharge` colormaker is not used as the first choice because it
+   gives every atom it knows nothing about (the hetero atoms of a PDB ligand, which
+   carries neither charges nor bonds) the charge 0, i.e. one flat neutral colour; it
+   stays the FALLBACK, for a build whose scheme could not be registered.
+
+   The three anchors of the ramp ARE the three swatches the ⚙ settings wheel edits
+   for « Charge » (negative · neutral · positive): a colour changed there repaints
+   this colouring too, exactly like every other palette of the house schemes. The
+   scale is the physical one of a partial charge, ±ATOM_CHARGE_DOMAIN e — a CHARMM
+   carbonyl oxygen sits near −0.8, an amide hydrogen near +0.26, a TIP3P water at
+   q_O = −0.834 — so an atom at −1 e (a chloride, a fully charged carboxylate
+   oxygen) is AT the negative pole and one at +1 e (a sodium) at the positive one,
+   while a formal ±2 e (a magnesium) clamps on its pole instead of inventing a
+   fourth colour. */
+const ATOM_CHARGE_DOMAIN = 1;   // e — the full scale of the ramp (±)
+// The colour of ONE partial charge: a charge of 0 IS the neutral swatch, and |q| /
+// domain says HOW FAR the atom walks from it — towards the negative swatch for a
+// negative charge, towards the positive one otherwise. PURE, so a test can run the
+// very ramp the scheme hands to NGL (it is read from the neutral end, as the wording
+// of every tooltip says).
+const atomChargeColorOf = (q) => {
+  const v = Number.isFinite(q) ? Math.max(-ATOM_CHARGE_DOMAIN, Math.min(ATOM_CHARGE_DOMAIN, q)) : 0;
+  const t = Math.abs(v) / ATOM_CHARGE_DOMAIN;
+  return v < 0
+    ? lerpHexColors(chargeColorOf('neutral'), chargeColorOf('negative'), t)
+    : lerpHexColors(chargeColorOf('neutral'), chargeColorOf('positive'), t);
+};
+// The partial charge of ONE atom, read from the table PART 4.0 built for ITS OWN
+// structure (one walk per structure, shared by the two colourings). Nothing to read —
+// no structure at all (the registry's own probe, a bare object in a test), an atom
+// without an index, a charge the table does not hold — is 0, i.e. the NEUTRAL colour:
+// a charge is never invented.
+const atomChargeOf = (atom, structure) => {
+  // ⚠ `Number(null)` VAUT 0 : sans le garde sur l'atome lui-même, un atome absent
+  // prendrait la charge de l'atome 0 — un atome qui n'existe pas serait peint.
+  if (!atom || !structure) return 0;
+  const i = Number(atom.index);
+  if (!Number.isFinite(i)) return 0;
+  const data = espChargesFor(structure);
+  const q = data && data.charges ? data.charges[i] : 0;
+  return Number.isFinite(q) ? q : 0;
+};
+// The definition of the scheme, NAMED so a test can extract and really run it. The
+// structure arrives exactly the way NGL hands it to every representation's colour
+// (StructureRepresentation#getColorParams → `structure`), never from a global — and a
+// scheme instantiated without one (the registry's probe) paints the neutral colour.
+const defineAtomChargeScheme = () => {
+  return function (params) {
+    const P = this.parameters || params || {};
+    const structure = P.structure;
+    this.atomColor = function (atom) { return atomChargeColorOf(atomChargeOf(atom, structure)); };
+  };
+};
+let atomChargeSchemeKey = null; // id returned by ColormakerRegistry.addScheme (null = unusable)
+const registerAtomChargeScheme = (NGL) => {
+  if (atomChargeSchemeKey) return;
+  atomChargeSchemeKey = registerColorScheme(NGL, 'lab-atom-charge', defineAtomChargeScheme());
+};
+
 /* ---- PART 3 · The FORM of a nucleic acid, read from the coordinates ----------
    No viewer library classifies A · B · Z DNA, A · flexible RNA — or the two
    motifs a file never annotates (a G-quadruplex, a hairpin): the geometry is
@@ -3682,6 +3756,12 @@ const schemeForColorMode = (mode) => {
      lipide. */
   if (mode === 'chain') return chainSchemeKey || 'chainid';
   if (mode === 'charge') return chargeSchemeKey || elementSchemeKey || 'element';
+  /* « Atom charge » — la charge PARTIELLE de chaque atome, la table du ⚡ ESP lue atome
+     par atome. Son repli est le colormaker `partialcharge` de NGL LUI-MÊME (la même
+     rampe rouge → blanc → bleu sur `atom.partialCharge`, ±1 e), et non un aplat
+     d'éléments : c'est la lecture la plus proche que NGL connaisse, et c'est de toute
+     façon ce qu'une version sans le schéma maison aurait montré. */
+  if (mode === 'atomcharge') return atomChargeSchemeKey || 'partialcharge';
   if (mode === 'lipidtype') return lipidClassSchemeKey || elementSchemeKey || 'element';
   return mode;
 };
@@ -3844,6 +3924,7 @@ const COLOR_LABELS = {
   gradient: 'Gradient (first → last)',
   rainbow: 'Rainbow (first → last)',
   charge: 'Charge',
+  atomcharge: 'Atom charge',
 };
 /* The style sets of the request, named after the rows that are allowed to use them.
    ⚠ LE SQUELETTE N'A PLUS DE LISTE À LUI (le rapport : « in the styling window
@@ -3905,22 +3986,29 @@ const ATOM_DRAW_STYLES = ['ball+stick', 'licorice', 'line', 'spacefill', 'sphere
 // entière disparaissait) ; c'est pourquoi un parcours ne se cède pas.
 // The « Color by » sets, one per row of the request. NOTE: « Lipid type » is NOT
 // offered on water (the request corrected exactly that), and « Charge » exists for
-// ions alone — it is what tells a Na⁺ from a Cl⁻ in the same solvent.
+// ions alone — it is what tells a Na⁺ from a Cl⁻ in the same solvent. « Atom charge »
+// (the request of this session, « In the “molecule styling” window add a “color by”
+// option: atom charge. ») is offered on EVERY row of EVERY kind: a partial charge
+// exists for every atom of every molecule — the file's own when it carries one,
+// NGL's CHARMM table for a protein, the formal charge of an ion, the
+// electronegativity estimate for anything else — so the reading says something on a
+// protein, a nucleic acid, a ligand, a lipid, a sugar, a solvent and a salt alike
+// (see the lab-atom-charge scheme below).
 const COLORS = {
-  protein: ['solid', 'element', 'chain', 'residue', 'sstruc', 'hydrophobicity', 'esp', 'gradient', 'rainbow'],
-  proteinSide: ['solid', 'element', 'chain', 'residue'],
-  nucleic: ['solid', 'element', 'chain', 'basetype', 'nucform', 'hydrophobicity', 'esp', 'gradient', 'rainbow'],
-  nucleicParts: ['solid', 'element', 'chain', 'basetype'],
-  lipid: ['solid', 'element', 'chain', 'lipidtype', 'hydrophobicity', 'esp'],
-  lipidParts: ['solid', 'element', 'lipidtype'],
-  sugar: ['solid', 'element', 'chain', 'sugar', 'hydrophobicity', 'esp'],
+  protein: ['solid', 'element', 'atomcharge', 'chain', 'residue', 'sstruc', 'hydrophobicity', 'esp', 'gradient', 'rainbow'],
+  proteinSide: ['solid', 'element', 'atomcharge', 'chain', 'residue'],
+  nucleic: ['solid', 'element', 'atomcharge', 'chain', 'basetype', 'nucform', 'hydrophobicity', 'esp', 'gradient', 'rainbow'],
+  nucleicParts: ['solid', 'element', 'atomcharge', 'chain', 'basetype'],
+  lipid: ['solid', 'element', 'atomcharge', 'chain', 'lipidtype', 'hydrophobicity', 'esp'],
+  lipidParts: ['solid', 'element', 'atomcharge', 'lipidtype'],
+  sugar: ['solid', 'element', 'atomcharge', 'chain', 'sugar', 'hydrophobicity', 'esp'],
   // A LIGAND is not a sugar: offering « Sugar type » on its row was a copy of the
   // sugar list (the report: « in the ligand menu there is color by sugar type
   // (should not be there) ») — the per-sugar identity palette only says something
   // where sugars are drawn, and the Sugars menu is the one that draws them.
-  ligand: ['solid', 'element', 'chain', 'hydrophobicity', 'esp'],
-  water: ['solid', 'element', 'hydrophobicity', 'esp'],
-  ion: ['solid', 'element', 'charge'],
+  ligand: ['solid', 'element', 'atomcharge', 'chain', 'hydrophobicity', 'esp'],
+  water: ['solid', 'element', 'atomcharge', 'hydrophobicity', 'esp'],
+  ion: ['solid', 'element', 'atomcharge', 'charge'],
 };
 
 /* ---- The « Color by » of a SELECTIONS row ------------------------------------
@@ -12989,6 +13077,7 @@ registerNucleicMotifScheme(NGL); // 🧬 G-quadruplex · hairpin over the 2° st
 registerResidueScheme(NGL);      // 🧬 one colour per residue (nucleic = its base)
 registerBaseTypeScheme(NGL);     // 🧬 one colour per BASE TYPE (A · C · G · T · U)
 registerChargeScheme(NGL);       // ⚡ − / 0 / + of an ion
+registerAtomChargeScheme(NGL);   // ⚡ the PARTIAL charge of EVERY atom (lab-atom-charge)
 const stage = new NGL.Stage(containerRef.current, { backgroundColor: '#f8fafc' });
 stageRef.current = stage;
 applyFog(); // honour the user's fog preference (off by default) right away
@@ -13423,6 +13512,12 @@ const sectionColorParams = (look, kind) => {
     case 'lipidtype': return schemeParam(lipidClassSchemeKey || elementSchemeKey, 'element');
     case 'sugar': return schemeParam(sugarSchemeKey, 'element');
     case 'charge': return schemeParam(chargeSchemeKey || elementSchemeKey, 'element');
+    // « Atom charge » — the PARTIAL charge of every atom (the very table the ⚡ ESP of
+    // PART 4.0 reads, atom by atom instead of summed over a radius), painted on the
+    // three ⚙ swatches of « Charge »: negative → neutral → positive, ±1 e full scale
+    // (see defineAtomChargeScheme above). The fallback is NGL's own `partialcharge`
+    // colormaker — the closest native reading — so a row is never left without colour.
+    case 'atomcharge': return schemeParam(atomChargeSchemeKey, 'partialcharge');
     case 'hydrophobicity': return { colorScheme: 'hydrophobicity' };
     // « Rainbow (first → last) » is the rainbow BY RESIDUE. NGL has NO `rainbow`
     // COLORMAKER — « rainbow » is one of its color SCALES (the registry only holds
@@ -18666,7 +18761,7 @@ const renderLookControls = ({
       </select>
       <select value={look.colorBy} onChange={(e) => set('colorBy', e.target.value)}
         className="border border-slate-300 rounded text-[10px] py-0.5 px-0.5 flex-1 min-w-0 bg-white"
-        title={`« Color by » of ${uid} — « Electrostatic potential » paints a surface and nothing else`}>
+        title={`« Color by » of ${uid} — « Electrostatic potential » paints a surface and nothing else; « Atom charge » paints EVERY atom by its own partial charge (negative → neutral → positive on the ⚙ swatches of « Charge », ±1 e full scale)`}>
         {colorOptions.map((c) => <option key={c} value={c}>{COLOR_LABELS[c] || c}</option>)}
       </select>
       {look.colorBy === 'solid' && (
@@ -18851,6 +18946,9 @@ const renderSectionRow = (sec, sub) => {
       )}
       {isPlates && (
         <span className="text-[9px] text-slate-400 italic">filled ring plates (a MeshBuffer the viewer builds) — the outline sticks carry the colouring above</span>
+      )}
+      {look.colorBy === 'atomcharge' && (
+        <span className="text-[9px] text-slate-400 italic">every atom by its own PARTIAL charge — the three swatches of « Charge » in the ⚙ wheel are the ramp (neutral → − / +, ±1 e full scale)</span>
       )}
       {look.colorBy === 'esp' && (
         <span className="text-[9px] text-slate-400 italic">NGL paints this colouring on a surface only — one is added on top of this row</span>
@@ -25038,7 +25136,7 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
           </button>
         </div>
         <p className="text-[10px] text-slate-500">
-          What « Color by : DNA/RNA base » of a nucleic acid — and « DNA/RNA base » in the « Atom colour » selector of its menu — paints: the five bases {BASE_TYPE_ORDER.join(' · ')} (also the colour that fills the stylized ring plates). Then what « Charge » paints on an ion: a PDB file rarely carries a formal charge, so the sign is read from the file when it has one and from the element otherwise. (The helix / sheet / loop colours of « Secondary structure » have their own section just above.)
+          What « Color by : DNA/RNA base » of a nucleic acid — and « DNA/RNA base » in the « Atom colour » selector of its menu — paints: the five bases {BASE_TYPE_ORDER.join(' · ')} (also the colour that fills the stylized ring plates). Then what « Charge » paints on an ion: a PDB file rarely carries a formal charge, so the sign is read from the file when it has one and from the element otherwise. THE SAME THREE SWATCHES ARE THE ANCHORS OF « Atom charge » : that colouring paints every atom by its own PARTIAL charge (the table of the ⚡ ESP), walking from the NEUTRAL swatch to the + pole for a positive atom and to the − pole for a negative one, ±1 e full scale — so a colour changed here repaints the site of every atom too. (The helix / sheet / loop colours of « Secondary structure » have their own section just above.)
         </p>
         <div className="mt-1 grid grid-cols-[repeat(auto-fill,minmax(4.5rem,1fr))] gap-1.5">
           {BASE_TYPE_ORDER.map((b) => (
@@ -25065,7 +25163,8 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
             </label>
           ))}
           {CHARGE_ORDER.map((c) => (
-            <label key={c} className="flex items-center gap-1 border border-slate-200 rounded px-1 py-0.5 bg-slate-50" title={`Colour of a ${c} atom / ion`}>
+            <label key={c} className="flex items-center gap-1 border border-slate-200 rounded px-1 py-0.5 bg-slate-50"
+              title={`Colour of a ${c} atom / ion — and the ${c} anchor of « Atom charge », which walks from the NEUTRAL swatch towards this pole as |q| grows`}>
               <input type="color" value={numToHex(chargeColors[c])}
                 onChange={(e) => setChargeColors((p) => ({ ...p, [c]: parseInt(e.target.value.slice(1), 16) }))}
                 className="w-6 h-5 rounded border border-slate-300 cursor-pointer" aria-label={`${c} charge colour`} />

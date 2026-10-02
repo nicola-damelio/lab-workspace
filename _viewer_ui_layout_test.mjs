@@ -905,5 +905,70 @@ has('🧬 Struct calc{calcResult ?', '[13i] le calcul dit « Struct calc » (ave
 gone('🧬 Structure calculation{calcResult',
   '[13i] …« Structure calculation » a disparu de la rangée');
 
+/* 13l. « ATOM CHARGE » — LA DEMANDE DE CETTE SESSION, MOT POUR MOT : « In the “molecule
+   styling” window add a “color by” option: atom charge. »
+   La fenêtre de styling tire son menu « Color by » de SECTION_SUBSECTIONS ← COLORS (une
+   liste par TYPE de molécule) et ses libellés de COLOR_LABELS : la nouvelle lecture est
+   donc écrite UNE fois dans ces deux vocabulaires, et elle apparaît sur CHAQUE rangée —
+   protéine, acide nucléique, leurs parties, lipide, sucre, ligand, eau, ion. Ce qu'elle
+   peint : la charge PARTIELLE de chaque atome, lue dans la MÊME table que le ⚡ ESP
+   (`espChargesFor` : la charge du fichier, la table CHARMM de NGL pour une protéine, la
+   charge formelle d'un ion, l'estimation d'électronégativité des hétéro-atomes), sur les
+   TROIS pastilles éditables de « Charge » de la roue ⚙ (négatif · neutre · positif) —
+   échelle pleine ±1 e, comme la grandeur qu'elle peint. Le repli d'un build sans le
+   schéma maison est le colormaker `partialcharge` de NGL lui-même, jamais un aplat
+   d'éléments : une molécule n'est jamais laissée sans couleur. */
+has('THE REQUEST OF THIS SESSION, MOT POUR MOT: « In the “molecule styling” window\n   add a “color by” option: atom charge. »',
+  '[13l] la demande de la session est écrite dans le fichier (contrat du vocabulaire)');
+has("charge: 'Charge',\n  atomcharge: 'Atom charge',",
+  '[13l] « Charge » (le SIGNE, offert sur un ion) et « Atom charge » (la charge partielle de CHAQUE atome) cohabitent dans le vocabulaire');
+has("const ATOM_CHARGE_DOMAIN = 1;   // e — the full scale of the ramp (±)",
+  '[13l] l’échelle de la rampe est écrite en unités de charge élémentaire (±1 e)');
+has('const v = Number.isFinite(q) ? Math.max(-ATOM_CHARGE_DOMAIN, Math.min(ATOM_CHARGE_DOMAIN, q)) : 0;',
+  '[13l] …et une charge hors échelle est ÉCRÊTÉE au pôle (un Mg²⁺ ne peut pas inventer une quatrième couleur)');
+has("? lerpHexColors(chargeColorOf('neutral'), chargeColorOf('negative'), t)\n    : lerpHexColors(chargeColorOf('neutral'), chargeColorOf('positive'), t);",
+  '[13l] la rampe part de la pastille NEUTRE et marche vers le pôle du signe (les trois pastilles ÉDITABLES de « Charge »)');
+has('const data = espChargesFor(structure);',
+  '[13l] la charge d’un atome est celle du ⚡ ESP — une SEULE table pour les deux colorations');
+has("const P = this.parameters || params || {};\n    const structure = P.structure;",
+  '[13l] la structure vient de NGL (StructureRepresentation#getColorParams), jamais d’un global');
+has('registerAtomChargeScheme(NGL);   // ⚡ the PARTIAL charge of EVERY atom (lab-atom-charge)',
+  '[13l] le schéma est enregistré au démarrage de la scène, comme les autres');
+has("atomChargeSchemeKey = registerColorScheme(NGL, 'lab-atom-charge', defineAtomChargeScheme());",
+  '[13l] …par le SEUL enregistreur de schémas maison (définition d’abord, libellé ensuite)');
+has("case 'atomcharge': return schemeParam(atomChargeSchemeKey, 'partialcharge');",
+  '[13l] une rangée le passe à NGL en `color`, avec le `partialcharge` natif en repli');
+has("if (mode === 'atomcharge') return atomChargeSchemeKey || 'partialcharge';",
+  '[13l] la barre des sélections et celle de la membrane passent par la MÊME correspondance');
+has('« Atom charge » paints EVERY atom by its own partial charge',
+  '[13l] l’infobulle du menu « Color by » dit ce que la lecture peint');
+has('every atom by its own PARTIAL charge — the three swatches of « Charge » in the ⚙ wheel are the ramp (neutral → − / +, ±1 e full scale)',
+  '[13l] la rangée le dit aussi quand elle est choisie (sans rouvrir un second ⚙)');
+has('THE SAME THREE SWATCHES ARE THE ANCHORS OF « Atom charge »',
+  '[13l] et la roue ⚙ dit que ses trois pastilles sont les ancres de la rampe');
+has('and the ${c} anchor of « Atom charge », which walks from the NEUTRAL swatch towards this pole as |q| grows',
+  '[13l] …pastille par pastille (chacune nomme son rôle dans la rampe)');
+/* LA LISTE EST LUE DANS LA SOURCE, PUIS PARCOURUE : chaque vocabulaire de rangée doit
+   offrir la nouvelle lecture ET un libellé pour chaque valeur qu’il propose (un jeton
+   sans libellé s’afficherait tel quel dans le menu). */
+{
+  const iColors = VIEW.indexOf('const COLORS = {');
+  const colorsSrc = VIEW.slice(iColors, VIEW.indexOf('\n};', iColors));
+  const lists = [...colorsSrc.matchAll(/(\w+): \[([^\]]*)\]/g)]
+    .map((m) => ({ kind: m[1], modes: m[2].split(',').map((s) => s.trim().replace(/^'|'$/g, '')).filter(Boolean) }));
+  ok(lists.length >= 10, `[13l] les listes « Color by » sont lues dans la source (${lists.length} listes)`);
+  const iLabels = VIEW.indexOf('const COLOR_LABELS = {');
+  const labels = new Map([...VIEW.slice(iLabels, VIEW.indexOf('\n};', iLabels)).matchAll(/(\w+): '([^']*)'/g)]
+    .map((m) => [m[1], m[2]]));
+  lists.forEach(({ kind, modes }) => {
+    ok(modes.includes('atomcharge'), `[13l] « Atom charge » est offert sur la rangée « ${kind} »`);
+    ok(modes.includes('solid') && modes.includes('element'),
+      `[13l] …et la rangée « ${kind} » garde « Solid » et « Atom type »`);
+    modes.forEach((mode) => ok(labels.has(mode),
+      `[13l] chaque valeur offerte sur « ${kind} » a un libellé (${mode})`));
+  });
+  ok(labels.get('atomcharge') === 'Atom charge', '[13l] …dont « Atom charge » lui-même');
+}
+
 /* ── Bilan ───────────────────────────────────────────────────────────────── */
 console.log(`_viewer_ui_layout_test.mjs — ${passed} assertions OK`);
