@@ -207,7 +207,7 @@ const solvChannels = rotatableBondsOf({
 eq(solvChannels.channels.length, CHANNELS.channels.length,
   `⚠ les ${solvated.molecules} eaux n’ajoutent AUCUN canal de torsion (soluté : ${CHANNELS.channels.length})`);
 ok(solvChannels.channels.every((ch) => ch.probeAtoms.every((k) => k < MOL.count)),
-  '…et aucune charnière ne touche un atome d’eau (les eaux ne tournent pas : ce sont un ENVIRONNEMENT)');
+  '…et aucune charnière ne touche un atome d’eau (les eaux ont leurs six degrés de liberté à elles — voir `_water_md_test.mjs` —, mais AUCUNE charnière : une liaison O–H est terminale, donc `rotatableBondsOf` l’écarte et le moteur ne tourne jamais une eau comme un dièdre)');
 const solvNoCh = mdRunOf({
   positions: solvated.positions, elements: solvated.elements, bonds: solvated.bonds,
   steps: 3, temperature: 300, seed: 0x5EEDCA1C, perFrame: 1e9, targetFunction: 'dyana',

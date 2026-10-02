@@ -164,6 +164,9 @@ import {
   STRUCTURE_CALC_SOLVENT, STRUCTURE_CALC_SOLVENTS, structureCalcSolventOf,
   structureCalcSolventIsExplicit, explicitSolventOf,
   STRUCTURE_CALC_SOLVENT_BOX, STRUCTURE_CALC_SOLVENT_BOX_MIN, STRUCTURE_CALC_SOLVENT_BOX_MAX,
+  /* 💧 …ET LE PAS MAXIMAL D'UNE EAU — le rapport le CITE quand la subdivision a eu lieu
+     (une eau rapide coûte plus cher : le lecteur doit pouvoir le lire). */
+  STRUCTURE_CALC_WATER_MAX_MOVE,
   /* 🎯 LA FONCTION CIBLE — `classic` (le champ entier) ou `dyana` : la liste des règles
      vient du module, donc le panneau n'en invente aucune (voir STRUCTURE_CALC_TARGET_FUNCTIONS). */
   STRUCTURE_CALC_TARGET_FUNCTION, STRUCTURE_CALC_TARGET_FUNCTIONS, structureCalcTargetFunctionOf,
@@ -10596,7 +10599,13 @@ const calcBoxNote = (geom) => {
   return ` · 📦 ${s.molecules} rigid TIP3P water${s.molecules === 1 ? '' : 's'} in a `
     + `${s.edge} Å cube${s.skipped ? ` (${s.skipped} lattice site${s.skipped === 1 ? '' : 's'} left empty, too close to the molecule)` : ''}`
     + `${s.grownFrom ? ` — the edge asked for (${s.grownFrom} Å) could not hold the molecule, so the box was GROWN to ${s.edge} Å; the dynamics AND the drawing use THIS one` : ''}`
-    + ' — they screen and they push, and they never move (this engine turns dihedrals).'
+    /* ⚠ LA PHRASE QUI A CHANGÉ — elle disait « they never move (this engine turns
+       dihedrals) », ce qui était VRAI de la boîte tant que le moteur ne tournait que des
+       charnières : une eau n'en a aucune. Depuis la décision de cette session (« MAKE WATER
+       MOBILE »), les eaux ont leurs SIX degrés de liberté (voir `waterRigidBodyOf`) et le
+       rapport dit ce qu'elles ont fait — sinon le lecteur croirait encore à un décor. */
+    + ' — they screen and they push, and they DO move: each one translates and rotates under'
+    + ' the same Langevin thermostat as the dihedrals (they stay rigid — TIP3P geometry holds).'
     /* 💧 …ET ILS SONT DESSINÉS (la remarque de cette session : « I still do not see the water
        in the MD ») : la boîte entre dans la scène comme une molécule de la barre
        (`calcDrawWaterBox`), donc elle se VOIT, se style et se cache comme les autres. */
@@ -10606,6 +10615,38 @@ const calcBoxNote = (geom) => {
     + ' simulation »), so the box is on screen at once; untick the Water row to clear the'
     + ' view again (the older rule kept water OFF until it was ticked).';
 };
+
+/** CE QUE LES EAUX ONT FAIT — la phrase qu'un geste ajoute quand il AVAIT une boîte :
+ *  combien de molécules, combien ont VRAIMENT bougé, de combien (déplacement net moyen et
+ *  écart quadratique moyen), de quel angle elles ont tourné en moyenne, et la température
+ *  cinétique que leur thermostat tient — translation ET rotation, mesurées séparément et
+ *  comparées à celle qui a été demandée. ⚠ Quand il n'y a pas de boîte, elle ne dit RIEN
+ *  (pas un zéro inventé) : le rapport d'un geste sans eau n'a pas de ligne d'eau. */
+const calcWaterRunNote = (w, askedK) => {
+  if (!w || !w.molecules) return '';
+  const k = w.kinetic || {};
+  const ask = Number.isFinite(Number(askedK)) ? ` (T asked ${Number(askedK).toFixed(0)} K)` : '';
+  return ` · 💧 its ${w.molecules} water${w.molecules === 1 ? '' : 's'} MOVED DURING THE RUN:`
+    + ` ${w.moved} displaced (mean ${w.net} Å net, ${Math.sqrt(Math.max(0, w.msd)).toFixed(2)} Å rms),`
+    + ` turned ${((w.turned * 180) / Math.PI).toFixed(0)}° on average`
+    + ` · kinetic temperature ${Number(k.translation).toFixed(0)} K translation,`
+    + ` ${Number(k.rotation).toFixed(0)} K rotation${ask}`
+    + `${Number.isFinite(w.closest) ? ` · closest contact reached ${w.closest} Å` : ''}`
+    + `${w.subSteps > 1 ? ` · 🧩 its motion was subdivided ${w.subSteps}× per step (no molecule moves more than ${STRUCTURE_CALC_WATER_MAX_MOVE} Å per force evaluation — that is what resolves a collision, and it is why a big box costs more than it used to)` : ' · 🧩 one force evaluation per step (nothing was fast enough to need subdividing)'}`
+    /* ⚠ CE QUE LE MODÈLE EST — dit ici, parce qu'un lecteur doit pouvoir juger les chiffres :
+       la boîte part d'un RÉSEAU (σ = 3.15 Å), pas d'un liquide équilibré, et il n'y a PAS de
+       période (minimum image) : c'est un AMAS, pas un cristal infini. Au premier pas la
+       cohésion et la répulsion du ε = 1 détendent donc ce réseau d'un coup (l'énergie « avant
+       → après » le montre), les molécules de surface n'ont personne au-dessus d'elles, et à
+       une température élevée l'amas s'évapore dans le vide. C'est la physique de ce modèle-là,
+       avec ses limites, et non un décor qui bouge. */
+    + ' — rigid TIP3P molecules (the O–H lengths and the H–O–H angle cannot move), pushed by'
+    + ' their own van der Waals and electrostatic terms at ε = 1. ⚠ The box starts as a'
+    + ' LATTICE (σ = 3.15 Å), not as an equilibrated liquid, and there is no periodic image:'
+    + ' it is a CLUSTER, so the first steps relax that lattice (the energy above shows it) and,'
+    + ' at a high temperature, the cluster flies apart.';
+};
+
 
 /** POURQUOI UN DÉPART S'EST ARRÊTÉ LÀ — une phrase par `reason` du module, traduite
  *  et jamais inventée (le panneau n'a pas de diagnostic à lui). Le protocole standard
@@ -11450,6 +11491,29 @@ const calcPreviewPositions = (comp, structure, positions) => {
   writeStructurePositions(comp, idxs, positions);
 };
 
+/** ÉCRIRE LES EAUX QUI ONT BOUGÉ — la moitié de la boîte dont le MOTEUR a déplacé les
+ *  coordonnées (voir `waterRigidBodyOf` dans utils/structureCalc.js). La molécule de l'écran
+ *  porte le SOLUTÉ, donc l'image d'une dynamique ne peut pas la mettre à jour au-delà du
+ *  premier atome du soluté (`calcPreviewPositions` s'arrête là) : les eaux vivent dans LEUR
+ *  molécule (le composant `solv_`, voir `calcDrawWaterBox`), et c'est celle-là qu'il faut
+ *  réécrire image après image — sinon la boîte DESSINÉE resterait au réseau du départ
+ *  pendant que la physique la fait diffuser.
+ *  ⚠ RIEN N'EST RÉÉCRIT SI LA BOÎTE DESSINÉE N'EST PAS CELLE DU MOTEUR (nombre d'atomes
+ *  différent, ou aucune boîte à l'écran) : une image d'un autre geste ne doit pas déformer
+ *  la boîte qui est là. `solute` est le nombre d'atomes du soluté dans la molécule du moteur
+ *  (`geom.solvent.solute`) : les eaux sont donc la FIN du tableau de positions. */
+const calcPreviewWaterPositions = (positions, solute) => {
+  if (!positions || !(solute > 0)) return false;
+  const entry = extraCompsRef.current.find((e) => String(e.id).startsWith('solv_'));
+  const count = entry && entry.comp && entry.comp.structure
+    ? Number(entry.comp.structure.atomCount) || 0 : 0;
+  if (!count) return false;
+  if (Math.round(positions.length / 3) - solute !== count) return false;
+  const idxs = [];
+  for (let i = 0; i < count; i += 1) idxs.push(i);
+  return writeStructurePositions(entry.comp, idxs, positions.slice(solute * 3));
+};
+
 /** LA LIGNE D'UNE IMAGE DU CALCUL — une phrase par phase du MOTEUR (le tirage, le recuit,
  *  la préparation, chaque distance conduite, le balayage, la dynamique, la minimisation,
  *  la trempe). C'est ce que la ligne de progression affiche PENDANT le calcul : elle dit
@@ -11874,7 +11938,7 @@ const calcReadForceField = () => {
  *  the molecule and its dihedrals remain still » — elle ne venait pas du moteur, qui
  *  tournait, mais de ce `calcWatch` non transmis qui laissait la molécule immobile jusqu'à
  *  la dernière image. Un geste qu'on vient de lancer à la main se regarde : `watch: true`. */
-const pumpMotion = ({ frames, comp, structure, head, watch = calcWatch, onEnd }) => {
+const pumpMotion = ({ frames, comp, structure, head, watch = calcWatch, water = null, onEnd }) => {
   calcRunRef.current += 1;
   const run = calcRunRef.current;
   /* ■ LE GESTE DIT QU'IL TOURNE — c'est ce qui fait apparaître le ■ de SA fenêtre (voir
@@ -11939,6 +12003,10 @@ const pumpMotion = ({ frames, comp, structure, head, watch = calcWatch, onEnd })
            géométrie finale appartient à ses atomes. Le geste, lui, est allé au bout. */
         if (onScreen) {
           if (end && end.ok && end.positions) calcPreviewPositions(comp, structure, end.positions);
+          /* 💧 …ET LA BOÎTE QUI A BOUGÉ (voir `calcPreviewWaterPositions`) : sans elle,
+             l'écran garderait la boîte du DÉPART pendant que la physique l'a fait diffuser —
+             et la dernière image est justement celle qui reste. */
+          if (end && end.ok && water) calcPreviewWaterPositions(end.positions, water.solute);
         }
         if (onEnd) onEnd(end);
         return;
@@ -11950,6 +12018,9 @@ const pumpMotion = ({ frames, comp, structure, head, watch = calcWatch, onEnd })
     if (shown) {
       if (onScreen) {
         if (watch && shown.positions) calcPreviewPositions(comp, structure, shown.positions);
+        /* 💧 LES EAUX SUIVENT L'IMAGE — la molécule de la boîte est une AUTRE molécule de
+           la scène (le composant `solv_`) : elle se réécrit par le même chemin. */
+        if (watch && water) calcPreviewWaterPositions(shown.positions, water.solute);
         if (ramaIsShown()) readRamachandran();   // le 🪢 suit l'image qui vient d'être écrite
       }
       const line = calcPhaseLine(shown, 0, 1, head);
@@ -12039,8 +12110,10 @@ const calcHeldPairs = (geom, list) => list
  *  ceux de `renderMdOptions`, dans la fenêtre 🌡 MD), et le ▶ Run du 🧬 a les siens. Le
  *  protocole des départs (🌡 hot → 🌡 cold, part d'équilibration, balayages de ⚒, pas de
  *  recuit) n'est donc pas touché par ce qu'on règle ici, et réciproquement. Le 💧 solvant
- *  est le diélectrique que les charges voient — ce moteur n'a pas d'eau explicite, et le
- *  panneau le dit plutôt que de le laisser croire. */
+ *  est le diélectrique que les charges voient, et la boîte explicite est une vraie
+ *  ENVIRONMENT depuis la décision de cette session : ses eaux ont leurs six degrés de
+ *  liberté et DIFFUSENT pendant le geste (voir `waterRigidBodyOf`), ce que le rapport
+ *  chiffre et ce que l'écran suit image après image. */
 const runMolecularDynamics = () => {
   const now = calcEngineGeometry();   // le graphe des moteurs (ponts ÉTIRÉS sans leur fausse liaison)
   if (!now) {
@@ -12117,6 +12190,13 @@ const runMolecularDynamics = () => {
        👁 watch each start du 🧬 (`watch: true`) : ce qui bougeait seulement à la fin bouge
        maintenant pas à pas, et le 🪢 suit tant que son dock est à l'écran. */
     watch: true,
+    /* 💧 LA BOÎTE DESSINÉE SUIT LE MOTEUR — `solute` est le nombre d'atomes du soluté DANS LA
+       MOLÉCULE DU MOTEUR (`explicitSolventOf` les ajoute à la fin, voir `geom.solvent`) : au-delà,
+       ce sont les eaux, et la pompe les réécrit dans LEUR composant à chaque image
+       (voir `calcPreviewWaterPositions`). Sans boîte (`solvent.ok` faux), rien n'est passé et
+       le geste est celui d'avant. */
+    water: geom.solvent && geom.solvent.ok && geom.solvent.solute
+      ? { solute: geom.solvent.solute } : null,
     head: `🌡 MD · ${mdSteps} steps · ${mdTime.ps} ps · T = ${mdTemp} K · 💧 ${mdSolventOf().label}`,
     onEnd: (run) => {
       if (!run || !run.ok) {
@@ -12162,6 +12242,10 @@ const runMolecularDynamics = () => {
         + `${rep.count && rep.violations ? ` (worst ${rep.worst.abs.toFixed(2)} Å outside — the ⚒ converges them, a trajectory at T does not have to)` : ''}`
         + calcRestraintEffect(restBefore, rep, list)
         + calcBoxNote(geom)
+        /* 💧 CE QUE LES EAUX ONT FAIT — la phrase n'existe que si le geste avait une boîte
+           (voir `calcWaterRunNote`) : ce que le moteur a MESURÉ, pas ce qu'on espère. */
+        + calcWaterRunNote(run.water, mdTemp)
+
         + calcTargetFunctionNote(calcTargetFunction)
         + `${run.walls.count ? ` · ${run.walls.count} distance${run.walls.count === 1 ? '' : 's'} held by the leash (${run.walls.before.toFixed(2)} → ${run.walls.after.toFixed(2)})` : ''}`
         + `${dh.count ? ` · ⛓ φ/ψ imposed: ${dh.satisfied}/${dh.count} within ± ${dh.tolerance}°`
@@ -17775,9 +17859,11 @@ const calcAddFamilyToBar = async (structure, comp, retained) => {
    reconnaît comme de l'EAU (`water`, la sélection du dossier), donc qu'elles prennent le
    style de la catégorie « others » (boule+bâton, bleu clair) et rien d'autre.
 
-   ⚠ ELLES NE BOUGENT PAS — le rapport le dit déjà (« they screen and they push, and they
-   never move (this engine turns dihedrals) ») : la molécule est donc écrite UNE fois, au
-   départ du geste, et la trajectoire ne la relit jamais. ⚠ UNE SEULE BOÎTE À LA FOIS (le
+   ⚠ ELLES BOUGENT MAINTENANT — la molécule est écrite UNE fois, au départ du geste (sur la
+   géométrie que le moteur lui donne, réseau compris), et c'est `calcPreviewWaterPositions`
+   qui la RÉÉCRIT à chaque image : les eaux que la physique a déplacées se voient donc
+   bouger, au lieu de rester au réseau du départ (la décision de cette session — voir
+   `waterRigidBodyOf` dans utils/structureCalc.js). ⚠ UNE SEULE BOÎTE À LA FOIS (le
    préfixe `solv_`, le même critère que `fam_`) : deux ▶ MD ne peuvent pas empiler deux
    boîtes dans la barre. ⚠ ET RIEN N'EST DESSINÉ QUAND LA BOÎTE A ÉTÉ REFUSÉE : le rapport
    dit pourquoi (`calcBoxNote`), une boîte absente à l'écran est alors la vérité. */
@@ -20992,7 +21078,7 @@ const renderMdOptions = () => (
       <span className="font-semibold text-slate-500">K</span>
     </label>
     <label className="flex items-center gap-1"
-      title={`💧 THE SOLVENT OF THIS DYNAMICS — two kinds of solvent, and this choice offers both. THE IMPLICIT ONES are a DIELECTRIC the charges see (the non-polar surface term is a family of the field and never moves). THE EXPLICIT ONE is a BOX: ${STRUCTURE_CALC_SOLVENTS.map((s) => `${s.label} — ${s.of}`).join(' · ')}. ⚠ WHAT THE BOX IS: this dynamics turns DIHEDRALS, and a water molecule has none — so the waters are RIGID and their position never changes during the trajectory. They are an explicit ENVIRONMENT (they screen the charges at ε = 1, they push the atoms, they are counted in every family of the field), not water that diffuses, and there is no periodic box (minimum image): it is a solvation boundary, not an infinite crystal. Build it with 📦 below. The ε values come from the module; none is written here.`}>
+      title={`💧 THE SOLVENT OF THIS DYNAMICS — two kinds of solvent, and this choice offers both. THE IMPLICIT ONES are a DIELECTRIC the charges see (the non-polar surface term is a family of the field and never moves). THE EXPLICIT ONE is a BOX: ${STRUCTURE_CALC_SOLVENTS.map((s) => `${s.label} — ${s.of}`).join(' · ')}. ⚠ WHAT THE BOX IS: its waters are RIGID TIP3P molecules (O–H 0.9572 Å, H–O–H 104.52° — that geometry cannot move), and this dynamics turns DIHEDRALS, so they have no hinge to turn. They therefore get the six degrees of freedom water really has instead: three TRANSLATIONS and three ROTATIONS, pushed by their own van der Waals and electrostatic terms (solute–water and water–water at ε = 1) and thermostatted by the same Langevin friction and noise as the dihedrals — so they genuinely DIFFUSE during the run, they screen the charges, and they are counted in every family of the field. The gesture's report says how many displaced, by how much, how far they turned and the kinetic temperature it really held (translation and rotation separately). ⚠ What they do NOT feel: the non-polar surface term's gradient (they are still counted in its energy), and the solute is not pushed back in Cartesian space — it moves through its own hinges (Gauss–Seidel). ⚠ And there is no periodic box (no minimum image): the edge is a solvation boundary, not an infinite crystal, so a water that leaves the cube does not come back. Build it with 📦 below. The ε values come from the module; none is written here.`}>
       💧 solvent
       <select value={mdSolvent} onChange={(e) => setMdSolvent(e.target.value)}
         aria-label="Solvent of the molecular dynamics"

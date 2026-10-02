@@ -1986,7 +1986,7 @@ for (const phase of ["case 'draw':", "case 'anneal':", "case 'md-equilibrate':",
 has(VIEW, 'const calcAttemptLine = (a, { done, of }) =>',
   '⚠ et la ligne d’un départ fini aussi (recuit, dynamique, minimisation, ω, φ/ψ)');
 /* LES GESTES ⚙ — LA MÊME MÉCANIQUE D'IMAGES POUR LA DYNAMIQUE ET LA MINIMISATION. */
-has(VIEW, 'const pumpMotion = ({ frames, comp, structure, head, watch = calcWatch, onEnd }) => {',
+has(VIEW, 'const pumpMotion = ({ frames, comp, structure, head, watch = calcWatch, water = null, onEnd }) => {',
   '⚠ la dynamique et la minimisation se conduisent avec LA MÊME pompe que le calcul (pas une seconde boucle),'
   + ' et c’est ELLE qui porte le droit d’écrire les images (`watch`)');
 has(VIEW, 'const runMolecularDynamics = () => {', '🌡 ▶ MD est branché');

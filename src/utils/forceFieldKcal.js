@@ -98,6 +98,15 @@ export const FF_COULOMB = 332.0637133;
  *  le modèle implicite le plus simple qui existe. Un couple de charges produit alors
  *  83.016·q_i·q_j/r² kcal/mol. */
 export const FF_DIELECTRIC = 4;
+/** LE PONT ENTRE L'ÉNERGIE ET L'INERTIE — 1 kcal/mol vaut 418.4 amu·Å²·ps⁻². C'est lui
+ *  qui fait de `√(k_B·T/M)` une VITESSE (Å/ps) et de `√(k_B·T/I)` une vitesse angulaire
+ *  (rad/ps) : sans lui, une dynamique de corps rigide en amu ne serait pas thermostatée.
+ *  4.184 kJ/mol ÷ 6.02214076·10²³ ÷ 1.66054·10⁻²⁷ kg = 418.4 (1 amu·Å²/ps²).
+ *  ⚠ Le moteur DIHÉDRAL du dossier n'en a pas besoin — son inertie est RÉDUITE et
+ *  calibrée pour que `√(R·T/m)` rende des degrés par picoseconde (voir
+ *  `STRUCTURE_CALC_MD_MASS`) — mais une eau TIP3P a une VRAIE masse (15.9994 + 2 × 1.008
+ *  amu) et un VRAI moment d'inertie : la conversion est donc écrite ici, une seule fois. */
+export const FF_KCAL_PER_AMU_A2_PS2 = 418.4;
 /** LES AMPLITUDES — les k de chaque famille, dans les unités dites plus haut. */
 export const FF_BOND_K = 300;        // kcal·mol⁻¹·Å⁻²
 export const FF_ANGLE_K = 50;        // kcal·mol⁻¹·rad⁻²
@@ -352,6 +361,32 @@ export const ffRepulsionCostOf = (r, pair) => {
   const rr = floorDistanceOf(r);
   const x = (pair.rmin / rr) ** 6;
   return floorWallOf(r, pair.epsilon * x * x);
+};
+
+/** LE GRADIENT NON LIÉ D'UN COUPLE — `dV/dr`, en kcal·mol⁻¹·Å⁻¹ : la dérivée EXACTE de
+ *  `ffNonbondedCostOf`, terme à terme, plancher et diélectrique compris. C'est ce dont un
+ *  corps rigide a besoin pour bouger : la force sur l'atome `i` vaut `V'(r)·û` (û allant de
+ *  `i` vers `j`), celle de `j` son opposée, donc un pas de Langevin lit UN nombre par couple
+ *  au lieu d'une différence finie par degré de liberté.
+ *   · au-dessus du plancher — LJ : `12·ε·x·(1−x)/r` (x = (r_min/r)⁶) ; répulsion seule :
+ *     `−12·ε·x²/r` ; Coulomb : `−2·q_i·q_j/(ε·r³)` ;
+ *   · SOUS le plancher (`FF_VDW_SAME_ATOM`) la pente est celle de la RAMPE,
+ *     `−FF_VDW_FLOOR_K`, pour le Lennard-Jones comme pour la répulsion (les deux passent
+ *     par `floorWallOf`), et Coulomb y est PLAT (sa distance est lue au plancher).
+ *  ⚠ Un test compare ce gradient à la dérivée NUMÉRIQUE de `ffNonbondedCostOf` (LJ,
+ *  répulsion seule, Coulomb, diélectrique, rampe) : les deux ne peuvent pas diverger.
+ *  @returns {number} dV/dr (0 quand le couple n'a ni ε ni charge lisible) */
+export const ffNonbondedGradientOf = (r, pair, {
+  dielectric = FF_DIELECTRIC, repulsionOnly = false, electrostatics = true,
+} = {}) => {
+  if (!pair || !Number.isFinite(r) || r <= 0) return 0;
+  if (r < FF_VDW_SAME_ATOM) return -FF_VDW_FLOOR_K;
+  const x = (pair.rmin / r) ** 6;
+  const dVdw = (12 * pair.epsilon * x * (repulsionOnly ? -x : (1 - x))) / r;
+  const dElec = (!repulsionOnly && electrostatics && pair.cqq)
+    ? (-2 * pair.cqq) / (Math.max(1e-6, Number(dielectric) || FF_DIELECTRIC) * r * r * r)
+    : 0;
+  return dVdw + dElec;
 };
 
 /** LE COÛT NON LIÉ D'UN COUPLE, SELON LA FONCTION CIBLE — la SEULE définition de ce

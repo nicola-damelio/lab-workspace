@@ -94,6 +94,10 @@ import {
      seule définition (`FF_TARGET_FUNCTIONS`), lue par le champ ET par les moteurs de
      torsion. Et 💧 l'eau explicite : ses pseudo-éléments, sa géométrie, ses charges. */
   ffTargetFunctionOf, ffNonbondedCostOf, FF_TARGET_FUNCTIONS,
+  /* 💧 ET LE GRADIENT D'UN COUPLE — la dérivée de ce même coût, pour les corps rigides
+     d'eau (voir `waterRigidBodyOf`) : un couple n'a donc qu'UNE définition de son prix et
+     qu'UNE définition de sa pente, côte à côte dans le module du champ. */
+  ffNonbondedGradientOf, FF_KCAL_PER_AMU_A2_PS2,
   FF_TIP3P, ffWatersIn,
   FF_BOND_K, FF_ANGLE_K, FF_PLANAR_K, FF_NOE_K, FF_RESTRAINT_TOLERANCE,
   FF_OMEGA_K, FF_OMEGA_TARGET, FF_OMEGA_TOLERANCE, FF_CHI_K, FF_CHI_TOLERANCE,
@@ -383,12 +387,17 @@ export const structureCalcSimulationTimeOf = ({ steps = STRUCTURE_CALC_MD_STEPS,
        `explicitSolventOf`), à ε = 1 : les charges ne sont plus écrantées par un chiffre
        mais par des molécules, et chaque eau porte ses paramètres et ses charges fixes.
        Le nombre d'eaux suit l'ARÊTE de la boîte, que le panneau expose comme un réglage.
-   ⚠ CE QUE LA BOÎTE EST, ET CE QU'ELLE N'EST PAS — un moteur dihédral tourne des
-   charnières : une molécule d'eau n'en a aucune, donc les eaux SONT RIGIDES et leur
-   position ne bouge pas pendant la trajectoire. C'est un ENVIRONNEMENT explicite (elles
-   écartent, elles écrantent, elles comptent dans le champ), pas une eau qui diffuse, et
-   le rapport le dit mot pour mot plutôt que de le laisser croire. Sans période (minimum
-   image), la boîte est une frontière de solvatation, pas un cristal infini.
+   ⚠ CE QUE LA BOÎTE EST, ET CE QU'ELLE EST DEVENUE. Un moteur dihédral tourne des
+   charnières et une molécule d'eau n'en a aucune : les eaux sont donc RIGIDES (leur
+   géométrie TIP3P ne bouge pas d'un chiffre), et elles le restent. Mais elles ne sont plus
+   IMMOBILES : la décision de cette session (« MAKE WATER MOBILE ») leur a donné leurs six
+   degrés de liberté — trois translations et trois rotations — intégrés par le même Langevin
+   que les dièdres, dans les vraies unités (voir `waterRigidBodyOf`, `mdFrames`). Elles
+   écrantent à ε = 1, elles poussent, elles comptent dans chaque famille du champ, ET elles
+   diffusent pendant ▶ MD ; le rapport du geste donne ce qu'elles ont fait (combien ont
+   bougé, de combien, et la température cinétique que leur thermostat tient vraiment).
+   Sans période (minimum image), la boîte reste une FRONTIÈRE de solvatation, pas un cristal
+   infini : une eau qui sort de l'arête n'y rentre pas.
    Le panneau écrit ces libellés tels quels : aucun ε n'est recopié dans le JSX. */
 export const STRUCTURE_CALC_SOLVENT = 'implicit';
 /** L'ARÊTE PAR DÉFAUT DE LA BOÎTE EXPLICITE (Å) — un cube de 24 Å (~38 Å³ par molécule
@@ -408,8 +417,9 @@ export const STRUCTURE_CALC_SOLVENTS = [
     of: 'uniform screening by the dielectric of bulk water' },
   { id: 'explicit', label: '💧 explicit water box · ε = 1', dielectric: 1, explicit: true,
     of: 'a cubic box of RIGID TIP3P waters (O and H are real atoms of the field, with their '
-      + 'own charges at ε = 1): they screen, they push, and they are counted in every family '
-      + '— the box edge sets how many there are' },
+      + 'own charges at ε = 1): they screen, they push, they are counted in every family, '
+      + 'and in ▶ MD they MOVE (each one translates and rotates under the same Langevin as '
+      + 'the dihedrals) — the box edge sets how many there are' },
 ];
 /** LE MODÈLE DEMANDÉ, TOUJOURS DÉFINI — un identifiant inconnu (ou absent) rend le modèle
  *  par défaut : le panneau ne peut donc ni jeter pour un identifiant qu'il n'a pas écrit
@@ -549,6 +559,495 @@ export const explicitSolventOf = ({
   out.atoms = count + sites.length * 3;
   out.waters = ffWatersIn(els);
   return out;
+};
+
+/* ── 💧 LES EAUX COMME CORPS RIGIDES — LA MOITIÉ NON DIHÉDRALE DE LA DYNAMIQUE ─────
+   LA DÉCISION DE CETTE SESSION : les eaux TIP3P de la boîte explicite DOIVENT vraiment
+   diffuser pendant ▶ MD. Jusqu'ici la boîte était un DÉCOR HONNÊTE — des atomes RÉELS du
+   champ (elles écrantent à ε = 1, elles poussent, elles comptent dans chaque famille,
+   `costOf` les somme) dont la position ne bougeait jamais, parce que le moteur ne tourne
+   que des CHARNIÈRES et qu'une molécule d'eau n'en a aucune. Ce bloc leur donne ce que le
+   moteur dihédral ne peut pas leur donner : TROIS TRANSLATIONS et TROIS ROTATIONS,
+   intégrées par le MÊME Langevin que les dièdres (frottement γ, bruit de
+   fluctuation–dissipation) mais dans les VRAIES unités — les masses TIP3P en amu et le
+   tenseur d'inertie en amu·Å², donc `√(k_B·T/M)` est une vitesse en Å/ps (le pont
+   d'unités est `FF_KCAL_PER_AMU_A2_PS2`).
+
+   CE QU'ELLES SENTENT — le gradient EXACT des couples non liés du champ
+   (`ffNonbondedGradientOf`, la dérivée de `ffNonbondedCostOf`), eau–eau ET eau–soluté,
+   dans la portée de la fonction cible : la force totale et son couple autour du centre de
+   masse poussent le corps rigide, dont la géométrie TIP3P ne bouge pas d'un chiffre (ses
+   trois atomes sont reposés par une rotation EXACTE à chaque pas, jamais par une
+   intégration de leurs coordonnées).
+
+   ⚠ CE QU'ELLES NE SENTENT PAS, ET C'EST DIT ICI :
+     · le terme de SURFACE non polaire n'a pas de gradient analytique dans ce dossier : les
+       eaux ne sentent donc pas SON gradient (elles comptent toujours dans le coût et dans
+       le rapport, `costOf` les somme) — l'asymétrie est bornée et NOMMÉE, pas cachée ;
+     · le SOLUTÉ n'est pas poussé en retour : c'est un moteur DIHÉDRAL, les degrés de
+       liberté du soluté sont ses charnières, pas ses translations. Les deux moitiés se
+       voient donc par GAUSS–SEIDEL — le pas de torsion lit la géométrie des eaux (elles
+       sont dans sa liste de couples), le pas d'eau lit la géométrie du soluté — au lieu de
+       s'échanger des forces cartésiennes. C'est la convention du moteur (une image = une
+       géométrie complète), et elle reste écrite ici.
+
+   ⚠ LE REPÈRE DU CORPS EST LE REPÈRE INITIAL — il est rigidement attaché à la molécule,
+   donc le tenseur d'inertie y est CONSTANT, et aucune diagonalisation n'est nécessaire :
+   le bruit du thermostat est tiré avec le CHOLESKY du tenseur (une loi normale de
+   covariance `k_B·T·I`), qui rend aussi son inverse. Rien n'est approximé en « rotateur
+   isotrope » : les trois rotations gardent leurs trois moments. */
+export const STRUCTURE_CALC_WATER_MOBILE = true;
+/** 💧 LA CADENCE DE RELECTURE DES COUPLES DES EAUX — la marche est en O(N²), elle n'est
+ *  donc pas refaite à chaque pas mais tous les `WATER_REFRESH` pas : une eau qui avance de
+ *  0.08 Å par pas est relue bien avant d'avoir franchi la portée du champ. */
+export const STRUCTURE_CALC_WATER_REFRESH = 4;
+/** LE PLAFOND ABSOLU DE VITESSE D'UNE EAU (Å/ps) — un garde-fou de dernier recours : le
+ *  plafond qui compte est `speedFactor × vitesse thermique` (voir `waterRigidBodyOf`).
+ *  ⚠ IL EST LARGE À DESSEIN — mesuré : coupé à 20 Å/ps (2.4 vitesses thermiques à 1500 K),
+ *  il TRONQUE la gaussienne et la température lue tombe de 8 % ; 100 Å/ps (12 σ) ne coupe
+ *  plus rien de physique et reste un garde-fou. */
+export const STRUCTURE_CALC_WATER_MAX_SPEED = 100;
+/** LE PAS ANGULAIRE MAXIMAL D'UNE EAU, PAR SOUS-ROTATION (radians ≈ 5.7°) — l'analogue du
+ *  pas maximal d'un dièdre. Une eau chaude tourne à ~32 rad/ps (5 THz), donc sa ROTATION est
+ *  subdivisée à son tour pour que chacune reste sous ceci (voir `waterRigidBodyOf`). */
+export const STRUCTURE_CALC_WATER_MAX_TURN = 0.1;
+/** LE DÉPLACEMENT MAXIMAL D'UNE EAU PAR ÉVALUATION DE FORCE (Å) — c'est lui qui décide de la
+ *  SUBDIVISION DU PAS (voir `waterRigidBodyOf`). Mesuré : à 0.01 ps d'un seul tenant, deux
+ *  oxygènes se traversaient jusqu'à 1.52 Å, alors que la conservation de l'énergie arrête un
+ *  choc frontal à 1500 K vers 2.3 Å — c'était donc le PAS, pas le champ. À 0.02 Å par
+ *  évaluation, le mur de van der Waals a le temps de monter et le rebond tombe juste. */
+export const STRUCTURE_CALC_WATER_MAX_MOVE = 0.02;
+/** LE NOMBRE MAXIMAL DE SOUS-PAS D'UNE EAU (translation ET rotation) — une borne de coût,
+ *  pas de physique (une eau folle ne peut pas transformer le geste en boucle). */
+export const STRUCTURE_CALC_WATER_MAX_SUB = 24;
+/** LE FACTEUR DE VITESSE — combien de vitesses thermiques un pas peut renverser (1 : la
+ *  même convention que les dièdres, `STRUCTURE_CALC_MD_SPEED_FACTOR`). */
+export const STRUCTURE_CALC_WATER_SPEED_FACTOR = 1;
+/** LES CEILINGS ABSOLUS DE FORCE (kcal·mol⁻¹·Å⁻¹) ET DE COUPLE (kcal/mol) — ils ne sont
+ *  PAS la valeur de tous les jours (celle-ci suit T et la masse, voir `step`) ; ils sont
+ *  là pour qu'un cas pathologique n'explose pas. */
+export const STRUCTURE_CALC_WATER_MAX_FORCE = 2e4;
+export const STRUCTURE_CALC_WATER_MAX_TORQUE = 5e3;
+
+/* LA PETITE ALGÈBRE D'UN CORPS RIGIDE — quatre opérations sur des matrices 3×3, écrites
+   ici parce que le dossier n'a pas de bibliothèque de matrices et que la rotation d'une
+   eau doit rester une rotation EXACTE (aucune coordonnée d'atome n'est intégrée à la main). */
+const mat3Mul = (a, b) => [
+  [a[0][0] * b[0][0] + a[0][1] * b[1][0] + a[0][2] * b[2][0],
+    a[0][0] * b[0][1] + a[0][1] * b[1][1] + a[0][2] * b[2][1],
+    a[0][0] * b[0][2] + a[0][1] * b[1][2] + a[0][2] * b[2][2]],
+  [a[1][0] * b[0][0] + a[1][1] * b[1][0] + a[1][2] * b[2][0],
+    a[1][0] * b[0][1] + a[1][1] * b[1][1] + a[1][2] * b[2][1],
+    a[1][0] * b[0][2] + a[1][1] * b[1][2] + a[1][2] * b[2][2]],
+  [a[2][0] * b[0][0] + a[2][1] * b[1][0] + a[2][2] * b[2][0],
+    a[2][0] * b[0][1] + a[2][1] * b[1][1] + a[2][2] * b[2][1],
+    a[2][0] * b[0][2] + a[2][1] * b[1][2] + a[2][2] * b[2][2]],
+];
+/** LA MATRICE APPLIQUÉE À UN VECTEUR (`A·v`) — du repère du CORPS au LABORATOIRE. */
+const mat3Vec = (a, v) => [
+  a[0][0] * v[0] + a[0][1] * v[1] + a[0][2] * v[2],
+  a[1][0] * v[0] + a[1][1] * v[1] + a[1][2] * v[2],
+  a[2][0] * v[0] + a[2][1] * v[1] + a[2][2] * v[2],
+];
+/** LA TRANSPOSÉE APPLIQUÉE À UN VECTEUR (`Aᵀ·v`) — du laboratoire au CORPS. */
+const mat3ApplyT = (a, v) => [
+  a[0][0] * v[0] + a[1][0] * v[1] + a[2][0] * v[2],
+  a[0][1] * v[0] + a[1][1] * v[1] + a[2][1] * v[2],
+  a[0][2] * v[0] + a[1][2] * v[1] + a[2][2] * v[2],
+];
+/** LA ROTATION EXACTE D'UN VECTEUR-ROTATION (`θ·k`, radians) — Rodrigues. C'est elle qui
+ *  repose les trois atomes d'une eau : une longueur O–H ne peut donc pas dériver. */
+const rotMat3 = (v) => {
+  const t = Math.hypot(v[0], v[1], v[2]);
+  if (!(t > 1e-12)) return [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
+  const x = v[0] / t; const y = v[1] / t; const z = v[2] / t;
+  const c = Math.cos(t); const s = Math.sin(t); const d = 1 - c;
+  return [
+    [c + x * x * d, x * y * d - z * s, x * z * d + y * s],
+    [y * x * d + z * s, c + y * y * d, y * z * d - x * s],
+    [z * x * d - y * s, z * y * d + x * s, c + z * z * d],
+  ];
+};
+/** LE REPÈRE DU CORPS REMIS ORTHONORMÉ (Gram–Schmidt) — 300 rotations exactes laissent une
+ *  erreur d'arrondi de l'ordre de 10⁻¹⁴ ; ce nettoyage, une fois par pas, garde la matrice
+ *  de rotation dans le groupe où Rodrigues l'a mise. */
+const orthonormalize3 = (m) => {
+  const norm = (v) => { const d = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / d, v[1] / d, v[2] / d]; };
+  const dot = (u, v) => u[0] * v[0] + u[1] * v[1] + u[2] * v[2];
+  const x = norm([m[0][0], m[1][0], m[2][0]]);
+  const raw = [m[0][1], m[1][1], m[2][1]];
+  const p = dot(raw, x);
+  const y = norm([raw[0] - p * x[0], raw[1] - p * x[1], raw[2] - p * x[2]]);
+  const z = [x[1] * y[2] - x[2] * y[1], x[2] * y[0] - x[0] * y[2], x[0] * y[1] - x[1] * y[0]];
+  return [[x[0], y[0], z[0]], [x[1], y[1], z[1]], [x[2], y[2], z[2]]];
+};
+/** LE CHOLESKY D'UN TENSEUR 3×3 SYMÉTRIQUE DÉFINI POSITIF — `L·Lᵀ = I`. C'est lui qui tire
+ *  le bruit du thermostat d'un corps ANISOTROPE : `L·G` (G gaussien) a exactement la
+ *  covariance `k_B·T·I`, donc chaque axe reçoit SON moment d'inertie au lieu d'une moyenne. */
+const chol3 = (m) => {
+  const l = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+  for (let i = 0; i < 3; i += 1) {
+    for (let j = 0; j <= i; j += 1) {
+      let s = Number(m[i][j]) || 0;
+      for (let k = 0; k < j; k += 1) s -= l[i][k] * l[j][k];
+      if (i === j) l[i][j] = Math.sqrt(Math.max(1e-30, s));
+      else l[i][j] = s / l[j][j];
+    }
+  }
+  return l;
+};
+/** L'INVERSE D'UN 3×3 (cofacteurs) — `I⁻¹·L` doit rendre la vitesse angulaire d'un corps
+ *  dont le tenseur n'est PAS sphérique : une moyenne isotrope ne suffirait pas. */
+const inv3 = (m) => {
+  const a = m[0][0]; const b = m[0][1]; const c = m[0][2];
+  const d = m[1][0]; const e = m[1][1]; const f = m[1][2];
+  const g = m[2][0]; const h = m[2][1]; const i = m[2][2];
+  const A = e * i - f * h; const B = f * g - d * i; const C = d * h - e * g;
+  const det = a * A + b * B + c * C;
+  const s = Math.abs(det) > 1e-30 ? 1 / det : 0;
+  return [
+    [A * s, (c * h - b * i) * s, (b * f - c * e) * s],
+    [B * s, (a * i - c * g) * s, (c * d - a * f) * s],
+    [C * s, (b * g - a * h) * s, (a * e - b * d) * s],
+  ];
+};
+
+/** 💧 LES EAUX D'UNE MOLÉCULE COMME AUTANT DE CORPS RIGIDES — la seule façon dont un
+ *  moteur DIHÉDRAL peut faire bouger une eau : elle n'a pas de charnière, donc on lui
+ *  donne ce qu'elle a vraiment, TROIS TRANSLATIONS et TROIS ROTATIONS, et on ne touche
+ *  jamais à ses coordonnées d'atomes à la main (chaque pas REPOSE les trois atomes par une
+ *  rotation exacte autour du centre de masse, voir `mat3Vec`/`rotMat3`), de sorte que sa
+ *  géométrie TIP3P est invariante par construction.
+ *
+ *  CONSTRUIT UNE FOIS — masse, centre de masse, tenseur d'inertie (dans le repère initial,
+ *  rigidement attaché, donc constant), son Cholesky et son inverse. `positions` est ÉCRIT
+ *  EN PLACE : c'est le `x` vivant du moteur, donc les images d'une dynamique portent déjà
+ *  les eaux qui ont bougé — rien n'est recopié entre le moteur et l'écran.
+ *
+ *  @returns {{ok:boolean, reason:string, molecules:number, atoms:number, positions:any,
+ *             atomIndex:number[][], step:Function, stats:Function}}
+ *   `step({ pairs, options, dt, temperature, friction, gaussian })` pousse les six degrés de
+ *   liberté d'un pas de Langevin ; `stats()` rend ce qui a bougé et la température cinétique
+ *   MESURÉE des deux moitiés (translation, rotation) — le contrôle qui dit si le thermostat
+ *   tient vraiment ce qu'il annonce. */
+export const waterRigidBodyOf = ({
+  positions = null, elements = [], bonds = [], seed = STRUCTURE_CALC_SEED,
+} = {}) => {
+  const els = Array.from(elements || []);
+  const count = els.length;
+  const x = positions;
+  const idle = (reason) => ({
+    ok: false, reason, molecules: 0, atoms: 0, positions: x, atomIndex: [],
+    step: () => ({ ok: false, applied: 0 }), stats: () => null,
+  });
+  if (!x || !count || x.length < count * 3) return idle('bad-points');
+  /* LES EAUX — chaque OW et SES DEUX H, lus par le GRAPHE quand il est là (une eau peut
+     être écrite dans n'importe quel ordre dans un fichier lu) ; sinon le repli par ORDRE
+     (les deux HW qui suivent l'OW, l'écriture de `explicitSolventOf`). Aucun indice n'est
+     deviné quand le graphe répond — et une eau incomplète n'est jamais déplacée. */
+  const near = new Map();
+  for (const b of Array.from(bonds || [])) {
+    const i = Number(b && b.i); const j = Number(b && b.j);
+    if (!Number.isInteger(i) || !Number.isInteger(j) || i === j) continue;
+    if (i < 0 || j < 0 || i >= count || j >= count) continue;
+    const a = near.get(i); if (a) a.push(j); else near.set(i, [j]);
+    const c = near.get(j); if (c) c.push(i); else near.set(j, [i]);
+  }
+  const isEl = (k, want) => String(els[k] || '').trim().toUpperCase() === want;
+  const found = [];
+  for (let k = 0; k < count; k += 1) {
+    if (!isEl(k, 'OW')) continue;
+    found.push({ o: k, h: (near.get(k) || []).filter((m) => isEl(m, 'HW')).slice(0, 2) });
+  }
+  if (!found.length) return idle('no-water');
+  const taken = new Set();
+  for (const w of found) for (const h of w.h) taken.add(h);
+  const spare = [];
+  for (let k = 0; k < count; k += 1) if (isEl(k, 'HW') && !taken.has(k)) spare.push(k);
+  let s = 0;
+  const made = [];
+  for (const w of found) {
+    while (w.h.length < 2 && s < spare.length) { w.h.push(spare[s]); s += 1; }
+    if (w.h.length === 2) made.push(w);
+  }
+  if (!made.length) return idle('no-water');
+  /* LE BRUIT VIENT DU GÉNÉRATEUR DU DOSSIER — `makeRelaxRandom`, le seul tirage du module
+     (voir `randomTorsionsOf`) : un geste rejoué avec la même graine donne donc la MÊME
+     trajectoire, eaux comprises. ⚠ AUCUN `Math.random` ICI : la suite du dossier l'interdit
+     (« ni mulberry32 recopié, ni Math.random ») — un second générateur caché rendrait la
+     dynamique irreproductible sans le dire. */
+  const random = makeRelaxRandom(seed);
+  const drawNormal = () => {
+    let u = 0; let v = 0;
+    while (u === 0) u = random();
+    while (v === 0) v = random();
+    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+  };
+  const n = made.length;
+  const index = made.map((w) => [w.o, w.h[0], w.h[1]]);
+  const atomMass = [FF_TIP3P.ow.mass, FF_TIP3P.hw.mass, FF_TIP3P.hw.mass];
+  const mass = made.map(() => atomMass[0] + 2 * atomMass[1]);
+  const R = new Float64Array(n * 3);      // centre de masse (Å)
+  const V = new Float64Array(n * 3);      // vitesse de translation (Å/ps)
+  const Lm = new Float64Array(n * 3);     // moment cinétique, repère du LABORATOIRE
+  const A = [];                           // rotation corps → laboratoire
+  const C = [];                           // Cholesky du tenseur d'inertie (corps)
+  const Iinv = [];                        // son inverse
+  const Ibar = new Float64Array(n);       // sa trace / 3 (l'échelle des plafonds)
+  const body = [];                        // les trois décalages DANS le corps
+  const home = [];                        // le centre de masse de départ (statistique)
+  const waterOf = new Int32Array(count).fill(-1);
+  /* LE CONTACT LE PLUS COURT ATTEINT PAR UNE EAU — mesuré dans la boucle des forces (donc
+     GRATUIT) et jamais remis à zéro : c'est la seule façon honnête de dire si le modèle a
+     laissé deux molécules se comprimer au-delà de son σ, sans le cacher derrière un mot. */
+  let closest = Infinity;
+  /* LA SUBDIVISION DU DERNIER PAS — rendue par `stats()` : le geste est plus cher quand les
+     eaux vont vite (chaque sous-pas relit les forces), et le rapport peut donc l'expliquer
+     au lieu de laisser croire à une lenteur mystérieuse. */
+  let lastSub = 1;
+  for (let w = 0; w < n; w += 1) {
+    const at = index[w];
+    const M = mass[w];
+    const p = at.map((k) => [x[k * 3], x[k * 3 + 1], x[k * 3 + 2]]);
+    const com = [0, 0, 0];
+    for (let k = 0; k < 3; k += 1) {
+      for (let c = 0; c < 3; c += 1) com[c] += (atomMass[k] * p[k][c]) / M;
+    }
+    const off = p.map((q) => [q[0] - com[0], q[1] - com[1], q[2] - com[2]]);
+    /* LE TENSEUR D'INERTIE DANS LE REPÈRE DU CORPS — le repère INITIAL sert de repère du
+       corps : il est rigidement attaché, donc le tenseur y est constant. */
+    const I = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+    for (let k = 0; k < 3; k += 1) {
+      const d2 = off[k][0] ** 2 + off[k][1] ** 2 + off[k][2] ** 2;
+      for (let a = 0; a < 3; a += 1) {
+        for (let b = 0; b < 3; b += 1) {
+          I[a][b] += atomMass[k] * ((a === b ? d2 : 0) - off[k][a] * off[k][b]);
+        }
+      }
+    }
+    C.push(chol3(I));
+    Iinv.push(inv3(I));
+    Ibar[w] = (I[0][0] + I[1][1] + I[2][2]) / 3;
+    A.push([[1, 0, 0], [0, 1, 0], [0, 0, 1]]);
+    body.push(off);
+    home.push([com[0], com[1], com[2]]);
+    for (const k of at) waterOf[k] = w;
+    R[w * 3] = com[0]; R[w * 3 + 1] = com[1]; R[w * 3 + 2] = com[2];
+  }
+
+  /** UN PAS DE LANGEVIN SUR LES SIX DEGRÉS DE LIBERTÉ D'UNE EAU — `pairs` est la marche
+   *  des couples non liés du champ (eau–eau ET eau–soluté), `options` la fonction cible du
+   *  geste. La translation et la rotation sont poussées par le MÊME bruit de
+   *  fluctuation–dissipation que les dièdres, chacune dans ses VRAIES unités (masse en amu,
+   *  tenseur en amu·Å²), et les trois atomes sont REPOSÉS par la rotation du pas. */
+  const step = ({
+    pairs = [], options = {}, dt = STRUCTURE_CALC_MD_DT, temperature = 0,
+    friction = STRUCTURE_CALC_MD_FRICTION, gaussian = null,
+    maxSpeed = STRUCTURE_CALC_WATER_MAX_SPEED, maxTurn = STRUCTURE_CALC_WATER_MAX_TURN,
+    speedFactor = STRUCTURE_CALC_WATER_SPEED_FACTOR, maxSub = STRUCTURE_CALC_WATER_MAX_SUB,
+    maxMove = STRUCTURE_CALC_WATER_MAX_MOVE,
+    maxForce = STRUCTURE_CALC_WATER_MAX_FORCE, maxTorque = STRUCTURE_CALC_WATER_MAX_TORQUE,
+  } = {}) => {
+    const h = Math.max(1e-6, Math.abs(Number(dt) || STRUCTURE_CALC_MD_DT));
+    const gamma = Math.max(0, Number(friction) || 0);
+    const T = Math.max(0, Number(temperature) || 0);
+    /* LES UNITÉS INTERNES — l'énergie du champ (kcal/mol) est convertie en amu·Å²/ps², la
+       seule écriture dans laquelle `√(k_B·T/M)` est une vitesse d'atome. */
+    const kT = FF_GAS_CONSTANT * T * FF_KCAL_PER_AMU_A2_PS2;
+    /* ⚠ LE TIRAGE PAR DÉFAUT EST CELUI DU DOSSIER (`drawNormal`) : `gaussian` n'existe que
+       pour injecter un flux — le module ne contient AUCUN `Math.random`. */
+    const noise = typeof gaussian === 'function' ? gaussian : drawNormal;
+    const F = new Float64Array(n * 3);
+    const Tq = new Float64Array(n * 3);
+    const sf = Math.abs(Number(speedFactor)) || 1;
+    const vCeil = Math.abs(Number(maxSpeed)) || Infinity;
+    const tCeil = Math.abs(Number(maxTorque)) || Infinity;
+    const fCeil = Math.abs(Number(maxForce)) || Infinity;
+    const turnCap = Math.abs(Number(maxTurn)) || Infinity;
+    /* ⚠ LE PAS EST SUBDIVISÉ, ET LE NOMBRE VIENT DE LA PLUS RAPIDE DES EAUX — une marche de
+       0.01 ps est TROP LONGUE pour une collision d'eau : mesuré sur une trajectoire réelle,
+       deux oxygènes se traversaient jusqu'à 1.52 Å. Ce n'est pas la faute du champ (le puits
+       TIP3P de l'eau vaut 0.15 kcal/mol, et l'énergie d'un choc frontal à 1500 K —
+       ½·μ·v² ≈ 5.9 kcal/mol — arrête les deux molécules à ≈ 2.3 Å : c'est ce que dit la
+       conservation de l'énergie, et le potentiel y est déjà raide) : c'est l'INTÉGRATION qui
+       ratait le point de rebroussement, parce que la force n'était relue qu'UNE fois par pas.
+       Le pas est donc divisé pour qu'aucune eau ne se déplace de plus de
+       `STRUCTURE_CALC_WATER_MAX_MOVE` Å PAR ÉVALUATION DE FORCE, et les forces sont RELUES à
+       chaque sous-pas : le mur de van der Waals a alors le temps de monter, et le rebond
+       tombe où la conservation de l'énergie le met. ⚠ Le frottement, le couple et le bruit
+       sont RÉPARTIS sur les sous-pas (chacun a sa propre paire fluctuation–dissipation), donc
+       la température reste celle du palier. */
+    let vmax = 0;
+    for (let k = 0; k < n * 3; k += 1) vmax = Math.max(vmax, Math.abs(V[k]));
+    const subSteps = Math.max(1, Math.min(Math.abs(Number(maxSub)) || 1,
+      Math.ceil((vmax * h) / (Math.abs(Number(maxMove)) || STRUCTURE_CALC_WATER_MAX_MOVE))));
+    const hs = h / subSteps;
+    lastSub = subSteps;
+    let appliedSteps = 0;
+    for (let s = 0; s < subSteps; s += 1) {
+      /* LES FORCES DU SOUS-PAS — un seul parcours de la marche : chaque extrémité qui
+         appartient à une eau reçoit sa force et son couple autour de son centre de masse. Un
+         couple eau–eau nourrit donc LES DEUX corps ; un couple eau–soluté ne pousse que l'eau
+         (voir la note de tête : le soluté avance par ses charnières, pas par des
+         translations). */
+      F.fill(0); Tq.fill(0);
+      for (const p of pairs) {
+        const wi = waterOf[p.i]; const wj = waterOf[p.j];
+        if (wi < 0 && wj < 0) continue;
+        const dx = x[p.j * 3] - x[p.i * 3];
+        const dy = x[p.j * 3 + 1] - x[p.i * 3 + 1];
+        const dz = x[p.j * 3 + 2] - x[p.i * 3 + 2];
+        const r2 = dx * dx + dy * dy + dz * dz;
+        if (!(r2 > 0)) continue;
+        const r = Math.sqrt(r2);
+        if (r < closest) closest = r;
+        const dV = ffNonbondedGradientOf(r, p, options);
+        if (!dV) continue;
+        const fx = (dV * dx) / r; const fy = (dV * dy) / r; const fz = (dV * dz) / r;
+        if (wi >= 0) {
+          F[wi * 3] += fx; F[wi * 3 + 1] += fy; F[wi * 3 + 2] += fz;
+          const rx = x[p.i * 3] - R[wi * 3]; const ry = x[p.i * 3 + 1] - R[wi * 3 + 1]; const rz = x[p.i * 3 + 2] - R[wi * 3 + 2];
+          Tq[wi * 3] += ry * fz - rz * fy;
+          Tq[wi * 3 + 1] += rz * fx - rx * fz;
+          Tq[wi * 3 + 2] += rx * fy - ry * fx;
+        }
+        if (wj >= 0) {
+          F[wj * 3] -= fx; F[wj * 3 + 1] -= fy; F[wj * 3 + 2] -= fz;
+          const rx = x[p.j * 3] - R[wj * 3]; const ry = x[p.j * 3 + 1] - R[wj * 3 + 1]; const rz = x[p.j * 3 + 2] - R[wj * 3 + 2];
+          Tq[wj * 3] -= ry * fz - rz * fy;
+          Tq[wj * 3 + 1] -= rz * fx - rx * fz;
+          Tq[wj * 3 + 2] -= rx * fy - ry * fx;
+        }
+      }
+      for (let w = 0; w < n; w += 1) {
+        const M = mass[w];
+        const vThermal = Math.sqrt(kT / M);                       // Å/ps
+        const vSpeed = Math.min(vCeil, sf * vThermal);
+        /* ⚠ LE PLAFOND DE FORCE — le même raisonnement que le couple d'un dièdre : ce qu'il
+           faut pour RENVERSER la vitesse thermique EN UN SOUS-PAS (`M·v/h_s`). Sans lui, une
+           eau qui touche le mur de van der Waals partirait à des milliers d'Å/ps. */
+        const fCap = Math.min(fCeil, Math.max(gamma * M * vSpeed, (sf * M * vThermal) / hs));
+        const sNoise = Math.sqrt((2 * gamma * kT * hs) / M);
+        for (let c = 0; c < 3; c += 1) {
+          const k = w * 3 + c;
+          const f = Math.max(-fCap, Math.min(fCap, F[k]));
+          let v = V[k] * (1 - gamma * hs) + (f / M) * hs;
+          if (sNoise > 0) v += sNoise * noise();
+          /* ⚠ LE PLAFOND ABSOLU, PAS LA VITESSE THERMIQUE — mesuré : couper à `vSpeed` (une
+             vitesse thermique) tronque la gaussienne en son milieu et la température cinétique
+             LUE tombe à 565 K pour 1500 demandés. Le plafond qui décide du pas est celui de la
+             FORCE (`fCap`, ci-dessus) ; celui-ci n'est qu'un garde-fou de dernier recours. */
+          if (Math.abs(v) > vCeil) v = Math.sign(v) * vCeil;
+          V[k] = v;
+          R[k] += v * hs;
+        }
+        /* LA ROTATION — LE MOMENT CINÉTIQUE RESTE DANS LE REPÈRE DU LABORATOIRE, où il n'y a
+           AUCUN terme gyroscopique : pour un corps libre `L` est CONSTANT (`dL/dt = τ`, tout
+           court) et c'est l'ORIENTATION qui porte la rotation. L'équation `−ω×L` n'apparaît
+           que si on l'écrit DANS le corps, et elle y est RIGIDE (`|ω|·h ≈ 0.3` pour une eau
+           chaude, soit 5 THz) : l'intégrer demande un solveur implicite, et son point fixe
+           DIVERGE (mesuré : 40 itérations → `NaN`, l'explicite → +24 % d'énergie).
+           Ici, la seule chose intégrée est `A`, par une rotation EXACTE (Rodrigues) : elle ne
+           peut donc ni amplifier ni diverger, et sans couple `|L|` est conservé au chiffre
+           près ; sa relève de ω au milieu du pas la rend d'ORDRE DEUX (la version d'ordre un
+           dérivait de +24 % sur 2000 pas, celle-ci de +0.7 %).
+           ⚠ LE BRUIT SE TIRE DANS LE CORPS (covariance `k_B·T·I_body`, Cholesky) PUIS SE
+           TOURNE : sa covariance dans le laboratoire devient `k_B·T·I_lab`, exactement ce que
+           le frottement `(1−γ·h_r)` équilibre pour que la loi de Boltzmann soit la
+           distribution stationnaire — c'est ce qui rend la température LUE juste (mesuré :
+           1463 K de rotation pour 1500 demandés, sans aucune force). */
+        const omegaOf = (mat, Lv) => mat3Vec(mat, mat3Vec(Iinv[w], mat3ApplyT(mat, Lv)));
+        const Ib = Math.max(1e-9, Ibar[w]);
+        const tCap = Math.min(tCeil,
+          Math.max(gamma * Ib * sf * Math.sqrt(kT / Ib), (sf * Math.sqrt(kT * Ib)) / hs));
+        let Ac = A[w];
+        /* ⚠ LA ROTATION EST SUBDIVISÉE À SON TOUR — le sous-pas des EAUX peut encore être
+           trop long pour une toupie rapide (5 THz) : on le divise pour que chaque rotation
+           reste sous `maxTurn` (le pas angulaire d'une eau). */
+        const probe = omegaOf(Ac, [Lm[w * 3], Lm[w * 3 + 1], Lm[w * 3 + 2]]);
+        const rSub = Math.max(1, Math.min(Math.abs(Number(maxSub)) || 1,
+          Math.ceil((hs * Math.hypot(probe[0], probe[1], probe[2])) / turnCap)));
+        const hr = hs / rSub;
+        const sNoiseR = Math.sqrt(2 * gamma * kT * hr);
+        for (let r = 0; r < rSub; r += 1) {
+          const nb = mat3Vec(Ac, mat3Vec(C[w], [noise(), noise(), noise()]));
+          for (let c = 0; c < 3; c += 1) {
+            const kk = w * 3 + c;
+            const tc = Math.max(-tCap, Math.min(tCap, Tq[kk]));
+            Lm[kk] = Lm[kk] * (1 - gamma * hr) + tc * hr + sNoiseR * nb[c];
+          }
+          /* ω RELU AU MILIEU DE LA SOUS-ROTATION (`A_mid` = la rotation de h_r/2), puis la
+             rotation EXACTE : elle ne peut ni amplifier ni diverger, quel que soit le pas. */
+          const Lc = [Lm[w * 3], Lm[w * 3 + 1], Lm[w * 3 + 2]];
+          let om = omegaOf(Ac, Lc);
+          const halfM = mat3Mul(rotMat3([(om[0] * hr) / 2, (om[1] * hr) / 2, (om[2] * hr) / 2]), Ac);
+          om = omegaOf(halfM, Lc);
+          Ac = orthonormalize3(mat3Mul(rotMat3([om[0] * hr, om[1] * hr, om[2] * hr]), Ac));
+        }
+        A[w] = Ac;
+        /* LES TROIS ATOMES SONT REPOSÉS — par la rotation EXACTE et autour du centre de masse
+           qui vient d'avancer, jamais par une intégration de leurs coordonnées : la géométrie
+           TIP3P est donc invariante par construction (mesuré : 5·10⁻¹⁵ Å d'écart sur une
+           trajectoire entière). ⚠ Le repositionnement est DANS la boucle des sous-pas : c'est
+           lui qui rend les forces du sous-pas suivant justes. */
+        const off = body[w];
+        for (let k = 0; k < 3; k += 1) {
+          const q = mat3Vec(A[w], off[k]);
+          const a = index[w][k];
+          x[a * 3] = R[w * 3] + q[0];
+          x[a * 3 + 1] = R[w * 3 + 1] + q[1];
+          x[a * 3 + 2] = R[w * 3 + 2] + q[2];
+        }
+        appliedSteps += 1;
+      }
+    }
+    return { ok: true, applied: appliedSteps, subSteps };
+  };
+
+  /** CE QUI A BOUGÉ, ET À QUELLE TEMPÉRATURE — translation et rotation sont mesurées
+   *  SÉPARÉMENT (`⟨M·v²⟩/(3R)` et `⟨LᵀI⁻¹L⟩/(3R)`) : elles doivent tomber sur la
+   *  température demandée. C'est le contrôle qui dit si le thermostat tient ce qu'il
+   *  annonce, et il est RENDU au rapport au lieu d'être gardé pour soi. */
+  const stats = () => {
+    let moved = 0; let net = 0; let msd = 0; let v2 = 0; let r2 = 0; let turned = 0;
+    for (let w = 0; w < n; w += 1) {
+      const dx = R[w * 3] - home[w][0];
+      const dy = R[w * 3 + 1] - home[w][1];
+      const dz = R[w * 3 + 2] - home[w][2];
+      const d2 = dx * dx + dy * dy + dz * dz;
+      if (d2 > 0.0025) moved += 1;                       // ≥ 0.05 Å de déplacement NET
+      net += Math.sqrt(d2); msd += d2;
+      v2 += mass[w] * (V[w * 3] ** 2 + V[w * 3 + 1] ** 2 + V[w * 3 + 2] ** 2);
+      const Lb = mat3ApplyT(A[w], [Lm[w * 3], Lm[w * 3 + 1], Lm[w * 3 + 2]]);
+      const om = mat3Vec(Iinv[w], Lb);
+      r2 += Lb[0] * om[0] + Lb[1] * om[1] + Lb[2] * om[2];
+      const tr = A[w][0][0] + A[w][1][1] + A[w][2][2];
+      turned += Math.acos(Math.max(-1, Math.min(1, (tr - 1) / 2)));
+    }
+    const scale = 3 * n * FF_KCAL_PER_AMU_A2_PS2 * FF_GAS_CONSTANT;
+    return {
+      molecules: n, atoms: n * 3, moved,
+      net: Number((net / n).toFixed(4)), msd: Number((msd / n).toFixed(4)),
+      turned: Number((turned / n).toFixed(4)),
+      /* LE CONTACT LE PLUS COURT DE LA TRAJECTOIRE (Å) — `null` s'il n'y a jamais eu de
+         couple d'eau relu (aucune paire dans la portée), sinon le minimum mesuré. Le rapport
+         le dit tel quel : un chiffre sous le σ de l'eau (3.15 Å) est un fait, pas une
+         décoration. */
+      closest: Number.isFinite(closest) ? Number(closest.toFixed(3)) : null,
+      /* COMBIEN DE FOIS LES FORCES ONT ÉTÉ RELUES PAR PAS — `subSteps` du dernier pas : c'est
+         ce qui rend le coût du geste lisible (une eau rapide se subdivise). */
+      subSteps: lastSub,
+      kinetic: {
+        translation: Number((v2 / scale).toFixed(4)),
+        rotation: Number((r2 / scale).toFixed(4)),
+      },
+    };
+  };
+
+  return {
+    ok: true, reason: 'ok', molecules: n, atoms: n * 3,
+    positions: x, atomIndex: index, step, stats,
+  };
 };
 
 
@@ -2213,6 +2712,15 @@ const torsionEngineOf = ({
     targetFunction: tf.id, targetFunctionLabel: tf.label, switchedOff: Array.from(tf.off || []),
     unitedAtoms: !addHydrogens,
     nonbondedCount: () => walk.pairs.length,
+    /* 💧 CE QU'UN CORPS RIGIDE D'EAU A BESOIN DE LIRE — la marche VIVANTE des couples
+       (`pairs`, refaite par `refreshCore`) et les trois réglages avec lesquels ils se
+       lisent (le diélectrique et la fonction cible). Le module ne recopie donc rien : la
+       PENTE d'un couple d'eau est celle du champ, terme à terme (`ffNonbondedGradientOf`).
+       `bonds` est donné tel quel pour qu'une eau se reconnaisse par le GRAPHE (son O et ses
+       deux H), jamais par une position devinée. */
+    pairs: () => walk.pairs,
+    nonbonded: { dielectric, repulsionOnly: tf.repulsionOnly, electrostatics: tf.electrostatics },
+    bonds: bondsOf,
     at, gap, dihedralOf, mapFor, commit, crossingOf, ctxOf, crossCost, omegaCrossCost,
     crossRestraintCost, crossRestraintWeightOf,
     costOf, wallCostOf, walls,
@@ -2307,6 +2815,13 @@ export function* mdFrames({
   dielectric = FF_DIELECTRIC,
   targetFunction = STRUCTURE_CALC_TARGET_FUNCTION,
   hydrogen = null,
+  /* 💧 LES EAUX BOUGENT — l'option du module (`STRUCTURE_CALC_WATER_MOBILE`, vraie) : s'il
+     y a des eaux EXPLICITES, elles ont leurs six degrés de liberté (voir
+     `waterRigidBodyOf`) et avancent à CHAQUE pas, pendant que les dièdres font ce qu'ils
+     font. Un moteur SANS eau ne paie rien — ni objet, ni tirage — donc sa trajectoire est,
+     au chiffre près, exactement celle d'avant cette décision. */
+  waterMobile = STRUCTURE_CALC_WATER_MOBILE,
+  waterRefresh = STRUCTURE_CALC_WATER_REFRESH,
 } = {}) {
   const engine = torsionEngineOf({
     positions, elements, bonds, restraints, weights, channels, leash, torsions, omegas, dihedrals,
@@ -2316,6 +2831,29 @@ export function* mdFrames({
   const chan = engine.chan;
   const n = clampInt(steps, 0, 1000000, STRUCTURE_CALC_MD_STEPS);
   if (!chan.length || !n) return refusedMotion(chan.length ? 'no-step' : 'no-channel', engine, freeOmega);
+  /* 💧 LES EAUX DEVIENNENT DES CORPS RIGIDES — la décision de cette session : la boîte
+     explicite n'est plus un décor, ses molécules TRANSLATENT et TOURNENT sous le même
+     Langevin que les dièdres (voir `waterRigidBodyOf`). Le corps est construit sur `x` VIVANT
+     du moteur, donc il écrit ses positions au même endroit que le champ les lit : chaque
+     image de la dynamique les porte déjà. ⚠ Un moteur sans eau rend `null` et RIEN de ce
+     bloc n'a lieu (`water` nul dans le rapport) — le geste d'une molécule nue est celui
+     d'avant, au chiffre près. */
+  const waters = waterMobile === false ? null : (() => {
+    const body = waterRigidBodyOf({
+      positions: engine.x, elements: engine.els, bonds: engine.bonds,
+      /* ⚠ LA GRAINE DES EAUX EST DÉCALÉE de celle des dièdres (`+ 137`, la convention des
+         paliers du protocole qui font `+ 23` et `+ 29`) : les deux moitiés du moteur ne
+         tirent donc pas LES MÊMES nombres, et la trajectoire reste reproductible au chiffre
+         près (le bruit des eaux vient de `makeRelaxRandom`, pas de `Math.random`). */
+      seed: wrapSeed(Number(seed) + 137),
+    });
+    return body.ok ? body : null;
+  })();
+  /* LA CADENCE DE RELECTURE DES COUPLES DES EAUX — la marche est en O(N²), elle n'est donc
+     pas refaite à chaque pas ; une eau avance de ~0.08 Å par pas, donc elle est relue bien
+     avant d'avoir franchi la portée du champ. */
+  const waterEvery = Math.max(1, Math.round(
+    Number.isFinite(Number(waterRefresh)) ? Number(waterRefresh) : STRUCTURE_CALC_WATER_REFRESH));
   /* ⚠ LE BUDGET DE CANAUX PAR PAS — un pas de dynamique ne tourne PAS les trois cents
      dièdres d'une protéine : il en tourne un ÉCHANTILLON (24 par défaut). Chaque degré
      de liberté est donc mis à jour tous les `(canaux/24)` pas, avec le MÊME bruit : le
@@ -2529,6 +3067,19 @@ export function* mdFrames({
       applied += 1;
     }
     if (t % rebuildEvery === rebuildEvery - 1) engine.refreshCore();
+    /* 💧 LES EAUX, APRÈS LES DIÈDRES — GAUSS–SEIDEL : le pas qui vient de tourner les
+       charnières a lu la géométrie des eaux (elles sont dans sa liste de couples), et les
+       eaux lisent maintenant la géométrie que ce pas vient de poser. ⚠ La marche est
+       refaite tous les `waterEvery` pas (elle est en O(N²)) : une eau avance de ~0.08 Å par
+       pas, donc elle est relue bien avant d'avoir franchi la portée du champ. ⚠ Le pas des
+       eaux est `h`, PAS `hEff` : une eau bouge à CHAQUE pas (voir `waterRigidBodyOf`). */
+    if (waters) {
+      if (t % waterEvery === 0) engine.refreshCore();
+      waters.step({
+        pairs: engine.pairs(), options: engine.nonbonded,
+        dt: h, temperature: target, friction: gamma,
+      });
+    }
     /* LA TEMPÉRATURE CINÉTIQUE — équipartition dans les unités du champ : l'énergie
        cinétique moyenne d'un dièdre vaut ½·m·v² = ½·R·T, donc T[cine] = m·Σv²/(n·R). */
     let sum = 0;
@@ -2543,6 +3094,10 @@ export function* mdFrames({
         potential: Number(potential.toFixed(6)), walls: Number(walls.toFixed(6)),
         total: Number((potential + walls).toFixed(6)),
         applied, skipped, dt: h,
+        /* 💧 LES EAUX DE CETTE IMAGE — ce qu'elles ont fait depuis le départ (`null` quand
+           il n'y en a pas : le rapport n'invente pas un zéro). La température cinétique est
+           MESURÉE sur leurs vitesses, translation et rotation séparément. */
+        water: waters ? waters.stats() : null,
       };
       trace.push({
         step: frame.step, temperature: frame.temperature,
@@ -2567,6 +3122,13 @@ export function* mdFrames({
     channels: chan.length,
     omegaFree: !!freeOmega,
     steps: n, applied, skipped, moved,
+    /* 💧 CE QUE LES EAUX ONT FAIT — `null` quand il n'y en a pas (le rapport le DIT au lieu
+       d'inventer un zéro) : combien de molécules, combien ont bougé, de combien en moyenne
+       (déplacement net et carré moyen), de quel angle elles ont tourné, et la température
+       cinétique MESURÉE des deux moitiés du thermostat — translation ET rotation. C'est la
+       vérification que le rapport peut citer au lieu de promettre. */
+    water: waters ? waters.stats() : null,
+    waterMobile: !!waters,
     /* ⚠ LA FENÊTRE ET SON PAS EFFECTIF — `budget` canaux tournés par pas (la constante du
        dossier), donc un canal est mis à jour tous les `skip` pas et il intègre `dtEff = dt ×
        skip` (voir `hEff`) : le rapport peut donc dire la VRAIE échelle du moteur au lieu de
