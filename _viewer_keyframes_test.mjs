@@ -615,8 +615,8 @@ const kf = (over = {}) => normalizeKeyframe({
   eq(countIn(VIEWER, 'applyKeyframeSample('), 6,
     'six endroits du viewer mettent un instant du film à l’écran (la pose, le début et la fin du ▶, chaque image du ▶, chaque image du 🔴, le retour)');
   eq(countIn(panel, 'applyKeyframeSample('), 6, '… et les six sont dans le bloc 🎞 (le panneau ne fuit pas dans le reste du viewer)');
-  eq(countIn(VIEWER, 'applyViewerSetup(sample.state)'), 1,
-    'une seule fonction écrit la PHOTOGRAPHIE d’un instant (styles, palettes, caméra, position) — et c’est celle-là');
+  eq(countIn(VIEWER, 'applyViewerSetup(filmSceneState(sample))'), 1,
+    'une seule fonction écrit la PHOTOGRAPHIE d’un instant — et c’est CELLE-LÀ, par `filmSceneState` (l’aspect d’une pose, le mélange pour ce qui glisse : voir §14)');
   eq(countIn(VIEWER, 'applyKeyframePoses(sample.pose)'), 1,
     '… et elle écrit les ORIENTATIONS au même endroit, dans le même geste (jamais l’un sans l’autre)');
   eq(countIn(VIEWER, 'sampleKeyframeFilm('), 4,
@@ -632,9 +632,9 @@ const kf = (over = {}) => normalizeKeyframe({
     return rest.slice(0, rest.indexOf('\n};'));
   };
   const sample = bodyOf('applyKeyframeSample');
-  ok(sample.length > 100 && sample.includes('applyViewerSetup(sample.state)')
+  ok(sample.length > 100 && sample.includes('applyViewerSetup(filmSceneState(sample))')
     && sample.includes('applyKeyframePoses(sample.pose)'),
-    'la fonction qui met un instant à l’écran est courte et fait les deux : la photographie, puis les orientations');
+    'la fonction qui met un instant à l’écran fait les deux : la photographie (l’aspect d’une pose, par filmSceneState), puis les orientations');
 }
 
 /* ── 13. Le panneau 🎞 (suite) : les outils partagés, le magasin, les boutons ─
@@ -731,8 +731,8 @@ const kf = (over = {}) => normalizeKeyframe({
     'le 🔴 écrit avec le MÊME enregistreur que la 🎬 (captureStream + MediaRecorder, image par image)');
   ok(recBody.includes('const back = { state: captureViewerSetup(), pose: captureKeyframePoses() };'),
     '… après avoir photographié la scène (styles ET orientations) avant de commencer');
-  ok(recBody.includes('applyKeyframeSample(back)'),
-    '… et il la remet EXACTEMENT en place dans son finally : le film ne laisse que le fichier');
+  ok(recBody.includes('applyKeyframeSample(back, false)'),
+    '… et il la remet EXACTEMENT en place dans son finally : le film ne laisse que le fichier (et `false` dit que ce retour n’est pas un MOUVEMENT : aucun fondu n’est ouvert par lui)');
   ok(recBody.includes('requestSceneRepaint'),
     'chaque image présentée est peinte avant d’être écrite (l’enregistreur photographie le canvas)');
   ok(recBody.includes('cancelled: () => kfCancelRef.current') && recBody.includes('kfRunRef.current !== run'),

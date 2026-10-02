@@ -289,6 +289,52 @@ has(VIEW, "if (typeof s.chemPh === 'string') setCalcPhText(s.chemPh);",
 has(VIEW, 'THE pH AND THE IONIC STRENGTH of the ⚙ panel, when they are set, ARE read by this same field',
   '⚠ le rapport du 🧬 ne prétend plus « no ionic strength » quand l’utilisateur en a donné une');
 
+/* ── 9 · LE PEPTIDE DU RAPPORT — 34 « AMMONIUMS » POUR 31 RÉSIDUS ─────────────────────────
+   LE RAPPORT DE CETTE SESSION, MOT POUR MOT : « The pH setting is wrong. it gives me a charge
+   of +36 at pH 7 for the peptide: SIIGIIMGILGNIPQVIQIIMSIVKAFKGNK. At pH 7 it should be +3! »
+   — et la molécule de l’utilisateur disait, chiffre en main : « pH 7 — net charge +33.66 e,
+   34/34 of its ionisable groups charged ». 34 = 31 + 3 : TOUS LES AZOTES DU SQUELETTE plus ses
+   trois lysines étaient comptés comme des ammoniums (34 × 0,990099 = 33,66). La règle était un
+   DÉCOMPTE DE VOISINS (`heavy + h >= 4 && h >= 1`), et un azote de squelette a déjà deux voisins
+   lourds et un hydrogène : il suffisait qu’un PDB ajoute UNE liaison par distance (NGL le fait,
+   `inferBonds`) — un H posé à 1,3 Å d’un azote, ce que le modèle de la page fait — pour qu’il
+   passe pour une amine protonée, à +1 par résidu.
+
+   CE QUI EST VÉRIFIÉ ICI, EXÉCUTÉ : sur LE peptide du rapport, construit par la page, le nombre
+   de fonctions que le pH peut titrer ne bouge pas d’une seule quand CHAQUE azote de squelette
+   gagne un voisin de plus — et les quatre qui restent sont ses QUATRE AMINES (trois lysines et
+   son N-terminal). */
+const REPORT_SEQ = 'SIIGIIMGILGNIPQVIQIIMSIVKAFKGNK';
+const REPORT_MOL = parsePdb(proteinSequenceToPdbText(REPORT_SEQ, ''));
+ok(REPORT_MOL.count > 400, `le peptide du rapport est bâti par la page (${REPORT_MOL.count} atomes)`);
+const reportGraph = bondGraphOf({ bonds: REPORT_MOL.bonds, atomCount: REPORT_MOL.elements.length });
+const groupsOfBonds = (bonds) => ffIonisableGroupsOf({
+  elements: REPORT_MOL.elements, graph: bondGraphOf({ bonds, atomCount: REPORT_MOL.elements.length }),
+});
+/* UN VOISIN DE PLUS SUR CHAQUE AMIDE DU SQUELETTE — ce qu’une liaison devinée par distance fait. */
+const extraBonds = [];
+REPORT_MOL.elements.forEach((e, k) => {
+  if (e !== 'N') return;
+  const used = new Set(reportGraph.neighbours(k));
+  const heavy = [...used].filter((m) => REPORT_MOL.elements[m] !== 'H');
+  if (heavy.length < 2) return;                     // une amine, pas un amide : on n’y touche pas
+  const h = REPORT_MOL.elements.findIndex((el, m) => el === 'H' && !used.has(m));
+  if (h >= 0) extraBonds.push({ i: k, j: h, order: 1 });
+});
+ok(extraBonds.length >= 25, `…et ${extraBonds.length} azotes de squelette peuvent recevoir un voisin de trop`);
+const plainGroups = groupsOfBonds(REPORT_MOL.bonds);
+const denseGroups = groupsOfBonds([...REPORT_MOL.bonds, ...extraBonds]);
+eq(plainGroups.map((g) => g.name), ['ammonium', 'ammonium', 'ammonium', 'ammonium'],
+  '⚠ SES QUATRE AMINES SEULEMENT : trois lysines et le N-terminal (le peptide du rapport en a 3)');
+eq(denseGroups.length, plainGroups.length,
+  '⚠⚠ UN VOISIN DE PLUS SUR CHAQUE AMIDE NE CHANGE RIEN — c’est le défaut mesuré (+33,66 e, 34/34)');
+eq(denseGroups.map((g) => g.name), plainGroups.map((g) => g.name), '…et ce sont les mêmes fonctions, une par une');
+const reportCharge = partialChargesOf({ elements: REPORT_MOL.elements, bonds: [...REPORT_MOL.bonds, ...extraBonds], ph: 7 });
+ok(Math.abs(reportCharge.net - 4 * ffIonisationOf({ name: 'ammonium' }, 7)) < 1e-6,
+  `⚠ la charge du peptide à pH 7 est celle de ses quatre amines (${reportCharge.net} e — et non 34)`);
+eq(reportCharge.ionisation.groups.length, 4, '…quatre fonctions ionisables dans le rapport du pH, jamais 34');
+
+
 /* ── Bilan ───────────────────────────────────────────────────────────────────────────── */
 console.log(`_chemistry_ph_ionic_test.mjs — ${passed} assertions OK `
   + '(🧪 le pH titre les fonctions ionisables — formes chargées ET formes acides qu’un squelette '

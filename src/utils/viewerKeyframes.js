@@ -507,7 +507,18 @@ export const keyframeLegs = (keyframes) => {
  *  back as captured, so a held pose is exactly what was photographed). During a
  *  MORPH it is the mix of the two poses at the eased progress. Past the end the
  *  last leg answers (the film holds its final image instead of flickering back
- *  to the first keyframe) and before the start the first leg does. */
+ *  to the first keyframe) and before the start the first leg does.
+ *
+ *  `snap` — THE APPEARANCE OF THE NEAREST POSE, BESIDE THE MIX. THE REPORT OF THIS SESSION,
+ *  VERBATIM: "In the movie, the transition between one state and the other is not smooth.
+ *  there is a fraction of time where there is nothing. It would be better to see one move
+ *  transform into the other gradually." `state` mixes everything — numbers glide (a
+ *  transparency, a radius, a colour) — and those are exactly the settings the
+ *  representation BUILDER reads: a scene deposited on every frame was therefore REBUILT on
+ *  every frame, and NGL computes a surface / a cartoon IN A WORKER, so the picture was
+ *  empty for most of the move. `snap` carries the state of ONE POSE (its own half of the
+ *  move), so the player deposits that appearance ONCE PER HALF (see `filmSceneState`) and
+ *  the change becomes a DISSOLVE (the viewer's fade layer) instead of a hole. */
 export const sampleKeyframeFilm = (keyframes, seconds) => {
   const keys = (Array.isArray(keyframes) ? keyframes : []).map((k) => ((k && typeof k === 'object') ? k : {}));
   if (!keys.length) return null;
@@ -519,7 +530,7 @@ export const sampleKeyframeFilm = (keyframes, seconds) => {
   const last = keys.length - 1;
   const from = keys[Math.min(last, Math.max(0, use.from))];
   if (use.kind !== 'morph' || use.to <= use.from) {
-    return { kind: 'hold', from: use.from, to: use.from, u, t: 0, at, totalSeconds, state: from.state, pose: from.pose };
+    return { kind: 'hold', from: use.from, to: use.from, u, t: 0, at, totalSeconds, state: from.state, snap: from.state, pose: from.pose };
   }
   const t = ease(use.easing, u);
   const to = keys[Math.min(last, use.to)];
@@ -532,8 +543,53 @@ export const sampleKeyframeFilm = (keyframes, seconds) => {
     at,
     totalSeconds,
     state: mixState(from.state, to.state, t),
+    /* L'ASPECT DE LA POSE LA PLUS PROCHE (voir le JSDoc de `snap`) : le melange pour ce qui
+       glisse (la camera, les molecules), la POSE elle-meme pour tout ce qui fait rebatir la
+       scene. C'est la moitie du mouvement au sens de `mixValue` (un mot bascule a t = 0,5). */
+    snap: t < 0.5 ? from.state : to.state,
     pose: mixPoseList(from.pose, to.pose, t),
   };
+};
+
+/* ---- CE QU'UN MOUVEMENT REPOSE D'UN COUP, ET CE QU'IL FAIT GLISSER ----------
+   LE RAPPORT DE CETTE SESSION, MOT POUR MOT : "In the movie, the transition between one
+   state and the other is not smooth. there is a fraction of time where there is nothing.
+   It would be better to see one move transform into the other gradually."
+
+   LA CAUSE. Un instant de mouvement MELANGE tout (`mixState`) : les nombres glissent, et
+   les reglages qui glissent ainsi sont ceux que le CONSTRUCTEUR de representations lit.
+   Leur valeur changeait donc a chaque image, la scene etait REBATIE a chaque image, et NGL
+   calcule une surface / un cartoon DANS UN WORKER : l'image restait vide une bonne partie
+   du mouvement ("a fraction of time where there is nothing").
+
+   LA REGLE. Ce qu'un spectateur applique est `filmSceneState` : l'ASPECT de la pose la plus
+   proche (`snap`), repose d'un seul coup, une fois par moitie de mouvement - et deux choses
+   seulement continuent de GLISSER, parce qu'elles se reposent sans rien reconstruire :
+     . LE POINT DE VUE (la camera, slerpee par `mixCamera`) ;
+     . LES CINQ REGLAGES DE L'ETAGE, appliques EN PLACE par leurs propres effets : fog,
+       shadows, clipping, background et la qualite.
+   Tout le reste fait REBATIR la scene, donc tout le reste vient d'une POSE : les styles de
+   la barre, les palettes, les rayons, les couleurs, les etiquettes. Le changement est
+   ensuite un FONDU (la couche de fondu du viewer le tient pendant ce qui reste au
+   mouvement), ce que la demande appelle "transform into the other gradually".
+   ⚠ Un champ oublie dans cette liste couterait un rebatiment de trop par image - c'est la
+   meme regle que `sceneRebuildSig` du viewer, et les deux vivent cote a cote pour que
+   l'ecart se voie : `sceneRebuildSig` dit ce qui REBATIT, celle-ci dit ce qui GLISSE. */
+export const FILM_GLIDE_KEYS = Object.freeze(['camera', 'fog', 'shadows', 'clip', 'background', 'quality']);
+
+/** L'ETAT QU'UN INSTANT DE FILM POSE VRAIMENT - l'aspect de la pose la plus proche, plus ce
+ *  qui glisse (voir FILM_GLIDE_KEYS). Sans `snap` (un instant fabrique a la main, un magasin
+ *  d'avant cette session) le melange est rendu tel quel : rien n'est invente. */
+export const filmSceneState = (sample) => {
+  if (!sample) return null;
+  const mixed = sample.state || null;
+  if (!sample.snap) return mixed;
+  const out = { ...sample.snap };
+  FILM_GLIDE_KEYS.forEach((k) => {
+    if (mixed && Object.prototype.hasOwnProperty.call(mixed, k)) out[k] = mixed[k];
+    else delete out[k];
+  });
+  return out;
 };
 
 /* ---- LE PLAN DU FILM, LU AVANT LE CLIC --------------------------------- */

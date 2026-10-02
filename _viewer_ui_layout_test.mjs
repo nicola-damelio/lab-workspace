@@ -791,6 +791,9 @@ has('const legacy = loadViewerSetups();', '[13f] les setups nommés deviennent d
        remplit maintenant ;
      · ✏️ Modify ne revient JAMAIS à la ligne (`flex-nowrap`, le gabarit de la bande 🎞 du
        film) : ses boutons restent sur UNE rangée, avec les écarts resserrés (`gap-0.5`).
+       ⚠ LA BOÎTE, ELLE, REVIENT À LA LIGNE DEPUIS CETTE SESSION — voir [13j] : un panneau
+       `w-full` ne peut pas descendre d'une ligne dans une boîte `flex-nowrap`, il y était
+       écrasé au bord droit.
    ⚠ DEPUIS CETTE SESSION, ELLE NE DÉFILE PLUS NON PLUS, ET SES NOMS SONT COURTS — la demande,
    mot pour mot : « in MODIFY, instead of using a scrolling bar write shorter names, for example
    “Params & Constraints” instead of “Parameters and Constraints”, “SS:shown/hidden” instead of
@@ -801,17 +804,44 @@ gone('<div className="flex items-center gap-1 w-full overflow-x-auto">\n<div cla
   '[13h] ⚠ 🎨 Styles n’est PLUS dans une rangée pleine largeur (c’est elle qui laissait la bande vide)');
 has('cerca di fare entrare tutti i pulsanti di MODIFY in una sola riga',
   '[13h] …et le second point de la demande aussi');
-has('flex flex-nowrap items-center gap-0.5 rounded-md border border-amber-200 bg-amber-50/40 px-1 py-0.5',
-  '⚠ [13h] la boîte ✏️ Modify est `flex-nowrap` : ses boutons ne peuvent plus s’empiler sur plusieurs lignes');
+has('flex flex-wrap items-center gap-0.5 rounded-md border border-amber-200 bg-amber-50/40 px-1 py-0.5',
+  '⚠ [13j] la boîte ✏️ Modify est `flex-wrap` : un PANNEAU peut donc descendre SOUS la rangée');
+has('<div className="flex flex-nowrap items-center gap-0.5 min-w-0">',
+  '⚠ [13j] …tandis que la RANGÉE est sa propre boîte `flex-nowrap` : ses boutons ne peuvent plus s’empiler');
+gone('flex flex-nowrap items-center gap-0.5 rounded-md border border-amber-200',
+  '⚠ [13j] …l’ancienne boîte qui était À LA FOIS la rangée et le parent des panneaux a disparu');
 gone('px-1 py-0.5 max-w-full overflow-x-auto',
   '⚠ [13h] …et elle ne DÉFILE plus : `max-w-full` + `overflow-x-auto` (la barre de défilement de la demande suivante) ont disparu');
 gone('<div className="flex flex-wrap items-center gap-1 rounded-md border border-amber-200 bg-amber-50/40 px-1.5 py-1">',
   '⚠ [13h] …l’ancienne boîte `flex-wrap` (celle qui cassait la rangée) a disparu');
 {
-  const iModifyBox = VIEW.indexOf('flex flex-nowrap items-center gap-0.5 rounded-md border border-amber-200');
+  const iModifyBox = VIEW.indexOf('flex flex-wrap items-center gap-0.5 rounded-md border border-amber-200');
+  const iRow = VIEW.indexOf('<div className="flex flex-nowrap items-center gap-0.5 min-w-0">');
   const iModifyLabel = VIEW.indexOf('>✏️ Modify</span>');
   ok(iModifyBox > 0 && iModifyBox < iModifyLabel && iModifyLabel - iModifyBox < 900,
-    '[13h] …et c’est bien la boîte DU GROUPE ✏️ Modify (elle s’ouvre juste avant son étiquette)');
+    '[13j] …et c’est bien la boîte DU GROUPE ✏️ Modify (elle s’ouvre juste avant son étiquette)');
+  ok(iRow > iModifyBox && iRow < iModifyLabel,
+    '[13j] …sa RANGÉE s’ouvre DANS la boîte, juste avant son étiquette (les boutons sont dedans, les panneaux dehors)');
+  /* ⚠ LES PANNEAUX SONT DES FRÈRES DE LA RANGÉE, PAS DES ENFANTS — LE RAPPORT DE CETTE SESSION :
+     « When i click an expandable button in the section “MODIFY” of the viewer, they do not behave
+     as for example the movie button (which works correctly) but they push the things to show at
+     the right edge of the page. » Dans la boîte `flex-nowrap` d’avant, un panneau `w-full` était
+     ÉCRASÉ au bout de la rangée. La fermeture de la rangée est donc écrite AVANT les trois
+     panneaux, et chacun des trois se rend APRÈS elle. */
+  const iRowClose = VIEW.indexOf('</div>\n{/* ⚠ LA RANGÉE EST FERMÉE ICI');
+  ok(iRowClose > iRow, '[13j] …la rangée se REFERME avant les panneaux (aucun panneau n’est son enfant)');
+  has('but they push the things to',
+    '[13j] …et le rapport de la session est écrit dans le fichier (contrat du layout)');
+  /* ⚠ ON CHERCHE CHAQUE PANNEAU APRÈS CETTE FERMETURE, ET AVANT CELLE DE LA BOÎTE : le même
+     appel existe ailleurs dans le fichier (le 🔢 de la barre de styles ouvre le MÊME panneau de
+     renumérotation), donc c’est la POSITION de l’appel DANS le groupe ✏️ Modify qui compte. */
+  const iBoxClose = VIEW.indexOf('</div>\n\n{/* ── Analysis');
+  ok(iBoxClose > iRowClose, '[13j] …et la boîte du groupe ✏️ Modify se referme APRÈS eux');
+  ['{renderRenumberPanel()}', '{paramsDock && renderParamsWindow()}', '{showAtomPanel && ('].forEach((call) => {
+    const at = VIEW.indexOf(call, iRowClose);
+    ok(at > iRowClose && at < iBoxClose,
+      `[13j] ${call} est rendu SOUS la rangée (le panneau ne peut plus être tassé au bord droit)`);
+  });
 }
 
 /* 13i. LES NOMS COURTS DE ✏️ MODIFY — la demande de CETTE session : « in MODIFY, instead of

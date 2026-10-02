@@ -879,7 +879,27 @@ export const ffFormalGroupsOf = ({ elements = [], graph = null } = {}) => {
     if (isEl(k, 'N')) {
       const heavy = nbs(k).filter((m) => !isEl(m, 'H') && !isEl(m, 'D'));
       const h = hCount(k);
-      if (heavy.length + h >= 4 && h >= 1) {
+      /* ⚠⚠ LE RAPPORT DE CETTE SESSION : « The pH setting is wrong. it gives me a charge of
+         +36 at pH 7 for the peptide: SIIGIIMGILGNIPQVIQIIMSIVKAFKGNK. At pH 7 it should be +3! »
+         — et sa molécule disait, chiffre en main : « pH 7 — net charge +33.66 e, 34/34 of its
+         ionisable groups charged ». 34 « ammoniums » pour une séquence de 31 résidus : ce sont
+         TOUS LES AZOTES DU SQUELETTE (plus les trois lysines) qui étaient comptés. LA CAUSE :
+         une amine protonée n'est pas un DÉCOMPTE DE VOISINS. Un azote AMIDE a déjà deux voisins
+         lourds (Cα et le carbone du carbonyle) et un hydrogène — donc dès qu'un graphe ajoute UNE
+         liaison (et un PDB en ajoute par distance : `inferBonds` de NGL), `heavy + h >= 4` le
+         comptait comme un ammonium : la molécule gagnait +1 PAR RÉSIDU, et le pH ne voulait plus
+         rien dire. LES TROIS CONDITIONS QUI FONT UN AMMONIUM, et qui ne dépendent pas de la façon
+         dont le fichier a deviné ses liaisons :
+           · AU MOINS DEUX HYDROGÈNES — une amine protonée en porte 2 ou 3 (le N-terminal d'un
+             peptide compris), un amide un seul (il est déjà lié à son carbonyle) ;
+           · AU PLUS DEUX VOISINS LOURDS — l'azote d'une proline N-terminale en a deux (Cα, Cδ) ;
+           · AUCUN VOISIN LOURD QUI PORTE UN OXYGÈNE — le carbonyle d'à côté : c'est ce motif, et
+             lui seul, qui sépare un AMIDE d'une AMINE (une Lys, le N-terminal, une amine d'un
+             ligand restent des ammoniums ; le squelette, une glutamine, une asparagine n'en sont
+             jamais). Un azote à quatre voisins lourds (le choline d'un lipide) n'est pas deviné
+             ici, comme avant : il ne porte aucun proton, donc `h >= 2` l'écarte. */
+      const amide = heavy.some((m) => isEl(m, 'C') && nbs(m).some((o) => isEl(o, 'O')));
+      if (!amide && h >= 2 && heavy.length <= 2) {
         out.push({ name: 'ammonium', charge: 1, atoms: [k], spread: 1 });
       }
     }

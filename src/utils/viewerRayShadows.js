@@ -631,36 +631,54 @@ export const bandSectionsOf = (rep, el = null) => {
   const geo = geometryOfRep(rep);
   if (!geo) return null;
   const A = geo.attributes;
-  const pos = A.position.array;
-  if (pos.length % 12 !== 0) return null;
-  const points = pos.length / 12;
+  const pos = A.position && A.position.array;
+  if (!pos) return null;
+  
+  // Cartoon uses 3 vertices per triangle (9 floats), ribbon uses 4 vertices per quad (12 floats)
+  const stride = kind === 'cartoon' ? 9 : 12;
+  if (pos.length % stride !== 0) return null;
+  const points = pos.length / stride;
   if (points < 2) return null;
+  
   const sizeArr = A.size && A.size.array;
-  if (!sizeArr || sizeArr.length < points * 4) return null;
-  const dirArr = A.dir && A.dir.array && A.dir.array.length >= points * 12 ? A.dir.array : null;
-  const norArr = A.normal && A.normal.array && A.normal.array.length >= points * 12 ? A.normal.array : null;
+  const dirArr = A.dir && A.dir.array;
+  const norArr = A.normal && A.normal.array;
   const aspect = repNumber(rep, el, 'aspectRatio') || 5;
-  const sub = (arr, i) => [arr[i], arr[i + 1], arr[i + 2]];
+  
+  const sub = (arr, i, step = 3) => [arr[i], arr[i + 1], arr[i + 2]];
   const sections = [];
+  
   for (let v = 0; v < points; v += 1) {
-    const p = sub(pos, v * 12);
-    const s = Number(sizeArr[v * 4]);
-    if (!(s > 0)) return null;
-    let d = dirArr ? normalize3(sub(dirArr, v * 12)) : null;
-    if (!d || !(length3(d) > 0.5)) {
-      const next = sub(pos, Math.min(points - 1, v + 1) * 12);
-      const prev = sub(pos, Math.max(0, v - 1) * 12);
-      const t = normalize3(sub3(next, prev));
-      const n = norArr ? normalize3(sub(norArr, v * 12)) : null;
-      d = n ? normalize3(cross3(n, t)) : null;
-      if (!d || !(length3(d) > 0.5)) return null;
+    const p = sub(pos, v * stride);
+    
+    // Size: try explicit size array, otherwise use default
+    let s = 0.45; // default cartoon width
+    if (sizeArr) {
+      const sizeIdx = kind === 'cartoon' ? v * 3 : v * 4;
+      if (sizeArr[sizeIdx] != null) s = Number(sizeArr[sizeIdx]);
     }
+    if (!(s > 0)) s = 0.45;
+    
+    // Direction: try explicit dir, otherwise compute from neighbors
+    let d = dirArr && dirArr.length >= points * stride 
+      ? normalize3(sub(dirArr, v * stride)) 
+      : null;
+    if (!d || !(length3(d) > 0.5)) {
+      const next = sub(pos, Math.min(points - 1, v + 1) * stride);
+      const prev = sub(pos, Math.max(0, v - 1) * stride);
+      const t = normalize3(sub3(next, prev));
+      const n = norArr && norArr.length >= points * stride 
+        ? normalize3(sub(norArr, v * stride)) 
+        : null;
+      d = n ? normalize3(cross3(n, t)) : t;
+      if (!d || !(length3(d) > 0.5)) d = [0, 0, 1];
+    }
+    
     const w = kind === 'ribbon' ? s : s * aspect;
-    const t = kind === 'ribbon'
-      ? Math.max(BAND_MIN_THICKNESS, Math.min(0.25, w * 0.25))
-      : Math.max(BAND_MIN_THICKNESS, s);
+    const t = Math.max(BAND_MIN_THICKNESS, kind === 'ribbon' ? Math.min(0.25, w * 0.25) : s * 0.3);
     sections.push({ p, d, w, t });
   }
+  
   return sections.length >= 2 ? sections : null;
 };
 const bandBrushOf = (sections, opacity = 1) => {
@@ -976,7 +994,7 @@ export const cameraFromViewer = (viewer) => {
   const cam = (viewer && (viewer.camera || viewer.perspectiveCamera || viewer.orthographicCamera)) || null;
   const viewOffset = cam && cam.view;
   if (viewOffset && viewOffset.enabled === true) {
-    throw new Error('the camera is inside a tile of a  Ray still (setViewOffset) — read it before the render');
+    throw new Error('the camera is inside a tile of a ✨ Ray still (setViewOffset) — read it before the render');
   }
   const proj = cam ? elements16Of(cam.projectionMatrix) : null;
   const view = cam ? elements16Of(cam.matrixWorldInverse) : null;

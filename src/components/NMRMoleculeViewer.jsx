@@ -36,6 +36,7 @@ import {
   keyframePlan, keyframeFilmSummary, keyframeLegs, sampleKeyframeFilm,
   keyframePoseOf, normalizeKeyframe, normalizeKeyframeFilm, parseKeyframeFilm,
   serialiseKeyframeFilm, slimKeyframeState, poseStylesForSections,
+  filmSceneState, FILM_GLIDE_KEYS,
 } from '../utils/viewerKeyframes';
 // The CAST SHADOWS of a ✨ Ray still: NGL 2.4 has no shadow-map pass at all, so
 // the shadow is computed from the ATOMS with the camera and the key light of the
@@ -708,12 +709,31 @@ const sceneRebuildSig = (s) => {
   const extras = Array.isArray(mols && mols.extras)
     ? mols.extras.map((m) => ((m && typeof m === 'object') ? { ...m, position: null } : m))
     : (mols ? mols.extras : undefined);
-  return JSON.stringify({
+  const out = {
     ...s,
     camera: null,      // le point de vue : repositionné, jamais reconstruit
     savedAt: null,     // l'horodatage d'une capture n'est pas une image
     molecules: mols ? { ...mols, main, extras } : mols,
-  });
+  };
+  /* ⚠⚠ LES CINQ RÉGLAGES DE L'ÉTAGE SONT RETIRÉS DE LA SIGNATURE — ILS NE DEMANDENT AUCUNE
+     REPRÉSENTATION, ET LES Y LAISSER COÛTAIT UNE RECONSTRUCTION PAR IMAGE DANS UN FILM.
+     LE RAPPORT DE CETTE SESSION : « In the movie, the transition between one state and the
+     other is not smooth. there is a fraction of time where there is nothing. It would be
+     better to see one move transform into the other gradually. » Ces cinq-là sont reposés
+     EN PLACE par leurs propres effets, jamais par une représentation : le fond et la
+     qualité par `stage.setParameters` / `stage.setQuality`, les ombres par le rig de
+     lumière (des uniformes), le brouillard par `fogNear`/`fogFar`, le clipping par
+     `clipNear`/`clipFar`/`clipDist` (voir `applySceneExtras`). Comme la caméra et la place
+     des molécules, ils peuvent donc CHANGER À CHAQUE IMAGE sans rien rebâtir — c'est ce qui
+     laisse un film les faire GLISSER devant la molécule qui tourne.
+     ⚠ LA LISTE EST CELLE DU MODULE DU 🎞 (`FILM_GLIDE_KEYS`, moins la caméra, déjà traitée
+     ci-dessus) : le spectateur retire de la signature EXACTEMENT ce qu'il laisse glisser,
+     donc les deux ne peuvent pas diverger sur un champ oublié d'un côté.
+     ⚠ ON LES RETIRE (`delete`) AU LIEU DE LES METTRE À `null` : une photographie qui ne
+     porte pas le champ et une qui le porte doivent donner LA MÊME signature (une capture
+     d'avant cette session n'a pas à coûter une reconstruction de plus). */
+  FILM_GLIDE_KEYS.forEach((k) => { if (k !== 'camera') delete out[k]; });
+  return JSON.stringify(out);
 };
 
 /* ---- SPHERE / BOND RADIUS of one category ---------------------------------
@@ -9860,6 +9880,103 @@ const kfCancelRef = useRef(false);       // what ⏹ writes, read by the drive l
 const kfPreviewRef = useRef(0);          // token of the live playback (0 = not playing)
 const kfPreviewTimerRef = useRef(null);  // its timer, cleared by ⏹ and by a recording
 
+/* ── 🎞 LE FONDU DU MOUVEMENT — « one move transform into the other gradually » ─────────
+   LE RAPPORT DE CETTE SESSION, MOT POUR MOT : « In the movie, the transition between one
+   state and the other is not smooth. there is a fraction of time where there is nothing. It
+   would be better to see one move transform into the other gradually. »
+
+   Les deux moitiés de la cause, et ce que chacune est devenue :
+     · LA SCÈNE ÉTAIT REBÂTIE À CHAQUE IMAGE — parce qu'un instant de mouvement mélangeait
+       les réglages que le constructeur de représentations lit (une opacité, un rayon, une
+       couleur qui glissent). Le spectateur repose maintenant l'ASPECT D'UNE POSE, une seule
+       fois par moitié de mouvement (`filmSceneState`, dans le module du 🎞) : une surface ou
+       un cartoon — que NGL calcule DANS UN WORKER — n'est donc plus détruit à chaque image,
+       et le trou a disparu pour cette raison-là.
+     · LE CHANGEMENT D'ASPECT ÉTAIT UNE COUPURE — au milieu du mouvement, l'aspect quitté
+       disparaissait d'un coup et l'autre arrivait d'un coup (et l'enveloppe calculée en
+       tâche de fond manquait les premières images : le « nothing » du rapport). Ici, les
+       représentations QUITTÉES NE SONT PAS RETIRÉES : elles s'éteignent pendant que les
+       nouvelles s'allument, sur le temps qui reste au mouvement — un FONDU, la technique du
+       cinéma. NGL fait exactement ce qu'il faut pour cela : `opacity` est un UNIFORME de
+       shader (ngl 2.4 : `RepresentationParameters.opacity` → `parameters.buffer` →
+       `BufferParameters.opacity: { uniform: true }`, posé par `setUniforms`, et
+       `transparent` suit) — `setParameters({ opacity })` ne rebâtit donc RIEN et ne relance
+       AUCUN worker (mesuré dans la source de ngl : seul un paramètre déclaré `rebuild: true`
+       appelle `build()`).
+   ⚠ POURQUOI L'ANCIEN ASPECT EST GARDÉ TEL QUEL, OPACITÉ PAR OPACITÉ : une représentation
+   peut avoir été créée déjà translucide (le curseur Transp d'une rangée, une surface à
+   0,85). Le fondu multiplie donc l'opacité DE CHAQUE REPRÉSENTATION par son propre poids,
+   lu sur elle (`Representation#opacity`) au moment où le fondu commence — jamais un chiffre
+   supposé.
+   ⚠ ET LE FONDU SE TERMINE TOUJOURS : quand le poids atteint 1, quand le film s'arrête, ou
+   quand une pose est montrée à la main (👁) — sinon des représentations à moitié éteintes
+   resteraient dans la scène pour toujours. `endFilmDissolve` remet celles qui restent à leur
+   opacité d'origine et retire celles qui partent. */
+const filmFadeRef = useRef(null);        // { dying: [{el, base, comp}], born: [{el, base}], t0 }
+const filmMoveRef = useRef(null);        // { active, t } — le dernier instant de MOUVEMENT posé
+/** L'opacité qu'une représentation porte VRAIMENT (celle avec laquelle NGL l'a construite). */
+const repOpacityOf = (el) => {
+  const r = reprOfElement(el);
+  const v = r ? Number(r.opacity) : NaN;
+  return Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 1;
+};
+/** Poser l'opacité d'une représentation — EN PLACE (aucun rebâtiment, aucun worker). */
+const setRepOpacity = (el, v) => {
+  const r = reprOfElement(el);
+  if (!r || typeof r.setParameters !== 'function') return;
+  try { r.setParameters({ opacity: Math.min(1, Math.max(0, v)) }); } catch { /* un fondu raté ne casse jamais la scène */ }
+};
+/** LA FIN DU FONDU — les représentations quittées partent, celles qui restent retrouvent
+ *  leur opacité d'origine. Rend `true` quand un fondu était en cours. */
+const endFilmDissolve = () => {
+  const f = filmFadeRef.current;
+  if (!f) return false;
+  filmFadeRef.current = null;
+  f.dying.forEach(({ el, comp }) => { try { if (comp) comp.removeRepresentation(el); } catch { /* déjà partie */ } });
+  f.born.forEach(({ el, base }) => setRepOpacity(el, base));
+  return true;
+};
+/** LE DÉBUT DU FONDU — `leaving` (l'aspect quitté, encore à l'écran) s'éteint pendant que
+ *  `arriving` (le neuf, construit juste avant) s'allume. Sans film en cours, `leaving` part
+ *  à l'instant : un geste de la barre doit se voir tout de suite. */
+const startFilmDissolve = (comp, leaving, arriving) => {
+  const move = filmMoveRef.current;
+  if (!move || !move.active || !leaving || !leaving.length) {
+    endFilmDissolve();
+    (leaving || []).forEach((el) => { try { if (comp) comp.removeRepresentation(el); } catch { /* ignore */ } });
+    return false;
+  }
+  /* ⚠ UN FONDU ENCHAÎNÉ NE REPART PAS DE ZÉRO — LE FONDU PRÉCÉDENT SE TERMINE SANS ÊTRE REMIS
+     À PLAT : ses représentations « arrivées » deviennent celles qui QUITTENT, à l'opacité où le
+     fondu les avait laissées (`repOpacityOf` les lit maintenant), donc elles s'éteignent depuis
+     là au lieu de sauter à leur valeur pleine puis de redescendre. Seules ses « quittées »
+     partent, à l'instant : elles quittaient déjà. Un fondu de film dure une moitié de
+     mouvement, donc ce cas ne se produit que sur un film dont deux mouvements se touchent. */
+  const previous = filmFadeRef.current;
+  if (previous) {
+    previous.dying.forEach(({ el, comp: c }) => { try { if (c) c.removeRepresentation(el); } catch { /* déjà partie */ } });
+    filmFadeRef.current = null;
+  }
+  filmFadeRef.current = {
+    dying: leaving.map((el) => ({ el, base: repOpacityOf(el), comp })),
+    born: (arriving || []).map((el) => ({ el, base: repOpacityOf(el) })),
+    t0: Number.isFinite(move.t) ? Math.min(1, Math.max(0, move.t)) : 0,
+  };
+  stepFilmDissolve(move.t);
+  return true;
+};
+/** L'AVANCÉE DU FONDU — le poids suit la progression du mouvement (`t`, déjà adouci par
+ *  l'easing de la pose) entre le moment du changement et la fin du mouvement. */
+const stepFilmDissolve = (t) => {
+  const f = filmFadeRef.current;
+  if (!f) return;
+  const span = Math.max(1e-6, 1 - f.t0);
+  const w = Math.min(1, Math.max(0, ((Number.isFinite(t) ? t : 1) - f.t0) / span));
+  if (w >= 1) { endFilmDissolve(); return; }
+  f.dying.forEach(({ el, base }) => setRepOpacity(el, base * (1 - w)));
+  f.born.forEach(({ el, base }) => setRepOpacity(el, base * w));
+};
+
 // Number of frames we actually step through (the trajectory's total time span is
 // preserved because we jump by `effStride` frames each step). When a "Max frames"
 // cap is set, the stride is raised automatically so the full time range still fits
@@ -15723,11 +15840,28 @@ const applyKeyframePoses = (poses) => {
 
 /* METTRE UN INSTANT DU FILM À L'ÉCRAN — la SEULE fonction que le panneau (👁), le
    ▶ de contrôle et le 🔴 enregistreur appellent : le film vu et le film écrit ne
-   peuvent pas diverger, puisque c'est le même appel qui les conduit. */
-const applyKeyframeSample = (sample) => {
+   peuvent pas diverger, puisque c'est le même appel qui les conduit.
+   ⚠ `driven = false` POUR CE QUI N'EST PAS UN MOUVEMENT DU FILM — une pose montrée à la main
+   (👁), un instant hors du 🎞, et le RETOUR de la scène à la fin d'un enregistrement : le
+   drapeau du mouvement retombe, donc un changement d'aspect à ce moment-là se pose TOUT DE
+   SUITE et un fondu encore ouvert se termine (sinon des représentations à moitié éteintes
+   resteraient dans la scène pour toujours). */
+const applyKeyframeSample = (sample, driven = true) => {
   if (!sample) return false;
-  applyViewerSetup(sample.state);       // styles, palettes, scène, caméra, positions
-  applyKeyframePoses(sample.pose);      // …et les orientations
+  /* 🎞 CE QUI SE POSE D'UN COUP, ET CE QUI GLISSE — `filmSceneState` (module du 🎞) rend
+     l'ASPECT D'UNE POSE pour tout ce qui fait rebâtir la scène, et le MÉLANGE pour ce qui se
+     repose en place (la caméra, les réglages de l'étage). C'est ce qui remplace le
+     rebâtiment à CHAQUE image par un rebâtiment PAR MOITIÉ DE MOUVEMENT — la cause du
+     « fraction of time where there is nothing » du rapport. Le fondu, lui, n'existe que
+     pendant un vrai MOUVEMENT et pendant qu'un film le conduit : une tenue est un arrivé. */
+  const moving = driven && sample.kind === 'morph';
+  const t = Number(sample.t);
+  filmMoveRef.current = { active: moving, t: moving && Number.isFinite(t) ? Math.min(1, Math.max(0, t)) : 0 };
+  if (!driven) endFilmDissolve();
+  applyViewerSetup(filmSceneState(sample));   // l'aspect de la pose, la caméra qui glisse
+  applyKeyframePoses(sample.pose);            // …et les orientations, elles, toujours mélangées
+  if (moving) stepFilmDissolve(filmMoveRef.current.t);   // l'avancée du fondu, image par image
+  else endFilmDissolve();                     // une tenue est un ARRIVÉ : le fondu se termine
   requestSceneRepaint();
   return true;
 };
@@ -15803,7 +15937,7 @@ const clearKeyframes = () => {
 const showKeyframe = (key) => {
   if (kfBusy) return;
   stopKeyframePreview(true);
-  applyKeyframeSample({ state: key.state, pose: key.pose });
+  applyKeyframeSample({ state: key.state, pose: key.pose }, false);
   setKfMsg(`👁 “${key.name}” is on screen — ${(key.pose || []).length} molecule(s) put back where they were captured.`);
 };
 
@@ -15818,6 +15952,11 @@ const stopKeyframePreview = (quiet = false) => {
   kfPreviewRef.current += 1;
   if (kfPreviewTimerRef.current != null) { clearTimeout(kfPreviewTimerRef.current); kfPreviewTimerRef.current = null; }
   setKfPreview(false);
+  /* 🎞 UN FILM QUI S'ARRÊTE NE LAISSE AUCUN FONDU OUVERT — voir endFilmDissolve : les
+     représentations quittées partent et celles qui restent retrouvent leur opacité (un fondu
+     interrompu à mi-chemin laisserait la scène à moitié éteinte sous la main de l'utilisateur). */
+  filmMoveRef.current = null;
+  endFilmDissolve();
   if (!quiet) setKfMsg('⏹ Preview stopped — the scene stays where the film had reached.');
   return true;
 };
@@ -15944,7 +16083,7 @@ const recordKeyframeFilmClick = async () => {
       setKfBusy(false);
       // The scene goes back EXACTLY where it was: styles, camera, positions and
       // orientations. The film left no trace but the file.
-      applyKeyframeSample(back);
+      applyKeyframeSample(back, false);
       const token = kfRunRef.current;
       setTimeout(() => { if (kfRunRef.current === token) setKfMsg(''); }, 15000);
     }
@@ -17079,9 +17218,19 @@ useEffect(() => {
     baseCompsRef.current.forEach((r) => { try { component.removeRepresentation(r); } catch {} });
     baseCompsRef.current = [];
   } else if (styleChanged || baseCompsRef.current.length === 0) {
-    baseCompsRef.current.forEach((r) => { try { component.removeRepresentation(r); } catch {} });
+    /* 🎞 UN FONDU QUAND C'EST LE FILM QUI CHANGE L'ASPECT, UNE COUPURE SINON — LE RAPPORT DE
+       CETTE SESSION : « In the movie, the transition between one state and the other is not
+       smooth. there is a fraction of time where there is nothing. It would be better to see one
+       move transform into the other gradually. » L'ASPECT NEUF EST DONC CONSTRUIT AVANT QUE
+       L'ANCIEN NE PARTE (`startFilmDissolve` reçoit les deux listes), et pendant un mouvement
+       du film l'ancien ne part pas du tout : il s'éteint pendant que le neuf s'allume, sur le
+       temps qui reste au mouvement. Un geste de la barre, lui, se pose à l'instant (aucun
+       fondu) — ce que l'utilisateur vient de régler doit se voir tout de suite, et c'est
+       `startFilmDissolve` qui tranche, en un seul endroit. */
+    const leaving = baseCompsRef.current;
     baseCompsRef.current = [];
     buildMainReps();
+    startFilmDissolve(component, leaving, baseCompsRef.current);
   }
   // …and the frame is asked THE MOMENT the sections exist (see requestSceneRepaint):
   // a styling gesture must not wait for a mouse move to be seen.
@@ -23261,7 +23410,8 @@ title={kfMsg || (videoReady.ok ? keyframeFilmSummary(keyframes.length, kfPlanNow
     ELLES, N'ONT PAS ÉTÉ RACCOURCIES : chacune dit toujours tout ce que le bouton fait — seul ce
     qui est ÉCRIT SUR la rangée a changé, et chaque lettre gagnée est une lettre que la rangée
     n'a plus à faire défiler. */}
-<div className="flex flex-nowrap items-center gap-0.5 rounded-md border border-amber-200 bg-amber-50/40 px-1 py-0.5">
+<div className="flex flex-wrap items-center gap-0.5 rounded-md border border-amber-200 bg-amber-50/40 px-1 py-0.5">
+<div className="flex flex-nowrap items-center gap-0.5 min-w-0">
 <span className="text-[9px] font-black text-amber-700 uppercase tracking-wide whitespace-nowrap" title="Change the molecule itself: build it from the page's sequence, show or hide the drawn disulphide bonds, rebuild the hydrogens, rename the atoms, colour by electrostatic potential and renumber the residues.">✏️ Modify</span>
 {/* ⚙ PARAMETERS AND CONSTRAINTS — le bouton du groupe ✏️ MODIFY (la demande de la session
    précédente : « “Parameters and Constraints” section should be in the “modify” menu »). Il
@@ -23415,12 +23565,100 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
 )}
 
 {/* ✏️ Atom names (rename) — the control of the Modify group; its panel is a
-    full-width child of the toolbar so the row itself stays one line tall. */}
+    full-width SIBLING of the row (a panel inside a `flex-nowrap` row is crushed at the
+    right end — see the closure of the row, further down). */}
 <button type="button" onClick={() => setShowAtomPanel((v) => !v)}
   className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 ${showAtomPanel ? 'bg-amber-100 border-amber-400 text-amber-900' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
   title="Rename the atoms of the 3D structure (organic molecules included): click-to-rename in the 3D view, auto-naming from the 2D formula, or edit the name list directly. The 2D formula is never touched.">
   ✏️ Atom names{Object.keys(renames).length ? ` (${Object.keys(renames).length})` : ''}
 </button>
+
+{/* ✏️ Torsion — LA FENÊTRE DU VIEWER, PAS UNE SECTION DE LA BARRE.
+    La demande : « when clicking on torsion do not open the section inside the
+    toolbar but open a dedicated retractable window inside the viewer as for
+    ramachandran. this window will disappear clicking again in the torsion
+    button. » Le bouton ne fait donc qu'OUVRIR/FERMER `torsionWindow` (la fenêtre
+    vit DANS le cadre de la vue 3D, voir plus bas) : rien ne s'insère plus dans la
+    barre de commandes. Quatre atomes piqués dans la vue 3D (A · B · C · D — B–C
+    est la charnière) puis UN nombre tapé : l'angle est résolu en forme fermée
+    (utils/torsionDrive.js) et le côté de D tourne d'un bloc rigide, par le MÊME
+    chemin d'écriture qu'un glisser de molécule. */}
+<button type="button" onClick={() => setTorsionWindow((v) => !v)}
+  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${torsionWindow ? 'bg-amber-100 border-amber-400 text-amber-900' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+  title="Show or hide the ✏️ Torsion window INSIDE the 3D view: four picked atoms A · B · C · D (B–C is the hinge) and a TYPED angle or a TYPED distance. The angle is solved in closed form (utils/torsionDrive.js) and the whole side of D turns as one rigid block, so bond lengths and angles are untouched. ↺ puts the last torsion back. Press the button again to close the window — the picks and the numbers typed stay.">
+  ✏️ Torsion{torsionAtoms.length ? ` (${torsionAtoms.length}/4)` : ''}
+</button>
+{/* 🪢 LE GRAPHE DE RAMACHANDRAN — LA FENÊTRE DU VIEWER, PLUS UNE SECTION.
+    La demande : « The ramachandran button will make the ramachandran window inside
+    the viewer appear or disappear so the large section which now opens inside the
+    tool bar will not be useful anymore. » Le bouton ne fait donc qu'OUVRIR/FERMER
+    le dock 🪢 (le MÊME état que son ⇤ et que l'onglet vertical du bord gauche), et
+    la grande section de la barre a disparu avec lui. Le graphe se LIT, il n'écrit
+    RIEN : tout vient de utils/ramachandran.js, et la lecture est un SNAPSHOT — pris
+    à l'ouverture, repris par son ⟳ Read, et REFait après chaque image des trois
+    gestes qui bougent la molécule (🧬 calcul, ▶ MD, ⚒ Minimise) tant que la
+    fenêtre est à l'écran : le graphe ne parle jamais d'une conformation qui n'y
+    est plus. */}
+<button type="button"
+  onClick={() => { if (!ramaDock) readRamachandran(); toggleRamaDock(!ramaDock); }}
+  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${ramaDock ? 'bg-amber-100 border-amber-400 text-amber-900' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+  title="Show or hide the 🪢 Ramachandran window INSIDE the viewer: the φ/ψ map of the peptide backbone on screen (φ = C(i−1)·N·CA·C, ψ = N·CA·C·N(i+1)), read with the same signed-IUPAC dihedral reader as the χ/δ readers — there is no second dihedral reader in this app (utils/torsionDrive.js) — one point per residue. The window sits at the LEFT of the 3D view (expandable · compressible) and this button closes it again. ⚠ It is a PLAN, not a calculation: no potential, no energy, and a point outside the regions is not “wrong”, it is outside the regions. The reading is a SNAPSHOT of the coordinates — taken when the window opens, and re-taken by its ⟳ Read — and it FOLLOWS the three gestures that move the molecule (🧬 Structure calculation, ▶ MD, ⚒ Minimise): one more reading after every image they write, so the points never describe a conformation the molecule has left.">
+  🪢 Ramachandran{rama && rama.measured ? ` (${rama.measured})` : ''}
+</button>
+{/* ⚡ ESP A DÉMÉNAGÉ — la demande de cette session : « Move the ESP button in the analysis
+    section in line with measure button. » Il vit donc dans le groupe 📏 Analysis, à côté de
+    📏 Measure (voir plus bas, son bouton ET son ⚡ Range) : c'est une LECTURE de la molécule
+    mise à l'écran — un potentiel qui se regarde, comme la distance qui se mesure — et non un
+    geste qui MODIFIE la molécule, comme ⚗️ Rebuild H ou ✏️ Atom names qui l'entouraient ici.
+    ⚠ Rien n'est perdu : c'est le MÊME bouton, le même état `espMolKeys` et la même surface; le
+    🔢 Renumber ci-dessous reste seul maître de sa liste, dans ✏️ Modify. */}
+{/* ⚡ Range (les deux bornes du dégradé, en kcal/mol) est parti AVEC le bouton, dans
+    📏 Analysis : les deux entrées ESP ne doivent jamais se séparer (voir plus bas). */}
+{/* 🔢 Renumber — the button AND its list live in ✏️ Modify (the request: « la
+    lista per il renumbering … dovrebbe piuttosto apparire nella sezione
+    modify »): the panel lists every residue and the number it will take, and the
+    3D labels and the residue strip follow the new numbers. The tiny 🔢 of a
+    molecule's header (in the styling bar on the right) opens THE SAME panel —
+    one implementation, see renderRenumberPanel. */}
+<button
+type="button"
+onClick={toggleRenumberPanel}
+title="🔢 Renumber the residues (the panel below lists every residue and the number it will take; the 3D labels and the residue strip follow it)"
+className="text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-md px-2 py-1.5 h-8 whitespace-nowrap"
+>
+🔢 Renumber{showRenumberPanel ? ' ▲' : ' ▼'}
+</button>
+</div>
+{/* ⚠ LA RANGÉE EST FERMÉE ICI, ET LES PANNEAUX SONT SES FRÈRES — LE RAPPORT DE CETTE SESSION :
+    « When i click an expandable button in the section “MODIFY” of the viewer, they do not
+    behave as for example the movie button (which works correctly) but they push the things to
+    show at the right edge of the page. » POURQUOI : les panneaux pleine largeur (`w-full`)
+    étaient des ENFANTS de la rangée, et la rangée est `flex-nowrap` (la demande de la session
+    précédente : tous les boutons sur UNE ligne, sans barre de défilement). Dans une boîte qui ne
+    revient pas à la ligne, un enfant `w-full` ne peut PAS descendre sur sa propre ligne : il est
+    ÉCRASÉ au bout de la rangée, à droite — exactement le « right edge of the page » du rapport.
+    Le gabarit qui marche est celui de 🎨 Styles : sa boîte est `flex-wrap`, donc son panneau 🎞
+    descend vraiment SOUS sa rangée. La boîte ✏️ Modify est donc devenue `flex-wrap` ELLE AUSSI,
+    avec la rangée dans sa PROPRE boîte `flex-nowrap` (les boutons restent sur une ligne, c'est
+    cette boîte-là qui ne se coupe pas — aucun défilement) et les PANNEAUX pour frères, APRÈS
+    elle : ✏️ Atom names, 🔢 Renumber et ⚙ Parameters and Constraints descendent chacun sur sa
+    ligne, pleine largeur, et la barre entière grandit au lieu de tasser le panneau à droite.
+    ⚠ C'EST LE CONTENU QUI DÉCIDE, pas un saut de ligne écrit : la rangée est un frère comme un
+    autre, et quand aucun panneau n'est ouvert, elle est SEULE — donc une seule ligne, comme
+    avant. */}
+{/* The ONE renumbering panel of the viewer (see renderRenumberPanel) — the same
+    specification the 🔢 of a molecule's header opens. */}
+{renderRenumberPanel()}
+{/* ⚙ PARAMETERS AND CONSTRAINTS — LE PANNEAU, PAS UNE FENÊTRE (la demande de cette session :
+    « The “parameters and constraints” should not open a window in the molecule space but it
+    should [be] full width under the button. By clicking the button a second time it should
+    disappear. »). Il est donc RENDU ICI, comme un enfant PLEINE LARGEUR du groupe ✏️ Modify
+    (`w-full` : il descend sous la rangée de ses boutons, exactement comme le panneau
+    ✏️ Atom names ci-dessus), et il ne pousse plus la vue 3D : la molécule garde toute sa
+    surface, qu'il soit ouvert ou fermé. C'est ce qui a remplacé sa colonne d'onglet sur le bord
+    de la vue (l'ancien dock, dont il ne reste rien), et le bouton ⚙ du groupe le referme —
+    une seconde pression le fait disparaître, comme le dit la demande. */}
+{paramsDock && renderParamsWindow()}
 {showAtomPanel && (
   <div className="w-full bg-amber-50/40 border border-amber-200 rounded-lg p-3 flex flex-col gap-2">
     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -23478,75 +23716,6 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
     </div>
   </div>
 )}
-
-{/* ✏️ Torsion — LA FENÊTRE DU VIEWER, PAS UNE SECTION DE LA BARRE.
-    La demande : « when clicking on torsion do not open the section inside the
-    toolbar but open a dedicated retractable window inside the viewer as for
-    ramachandran. this window will disappear clicking again in the torsion
-    button. » Le bouton ne fait donc qu'OUVRIR/FERMER `torsionWindow` (la fenêtre
-    vit DANS le cadre de la vue 3D, voir plus bas) : rien ne s'insère plus dans la
-    barre de commandes. Quatre atomes piqués dans la vue 3D (A · B · C · D — B–C
-    est la charnière) puis UN nombre tapé : l'angle est résolu en forme fermée
-    (utils/torsionDrive.js) et le côté de D tourne d'un bloc rigide, par le MÊME
-    chemin d'écriture qu'un glisser de molécule. */}
-<button type="button" onClick={() => setTorsionWindow((v) => !v)}
-  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${torsionWindow ? 'bg-amber-100 border-amber-400 text-amber-900' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
-  title="Show or hide the ✏️ Torsion window INSIDE the 3D view: four picked atoms A · B · C · D (B–C is the hinge) and a TYPED angle or a TYPED distance. The angle is solved in closed form (utils/torsionDrive.js) and the whole side of D turns as one rigid block, so bond lengths and angles are untouched. ↺ puts the last torsion back. Press the button again to close the window — the picks and the numbers typed stay.">
-  ✏️ Torsion{torsionAtoms.length ? ` (${torsionAtoms.length}/4)` : ''}
-</button>
-{/* 🪢 LE GRAPHE DE RAMACHANDRAN — LA FENÊTRE DU VIEWER, PLUS UNE SECTION.
-    La demande : « The ramachandran button will make the ramachandran window inside
-    the viewer appear or disappear so the large section which now opens inside the
-    tool bar will not be useful anymore. » Le bouton ne fait donc qu'OUVRIR/FERMER
-    le dock 🪢 (le MÊME état que son ⇤ et que l'onglet vertical du bord gauche), et
-    la grande section de la barre a disparu avec lui. Le graphe se LIT, il n'écrit
-    RIEN : tout vient de utils/ramachandran.js, et la lecture est un SNAPSHOT — pris
-    à l'ouverture, repris par son ⟳ Read, et REFait après chaque image des trois
-    gestes qui bougent la molécule (🧬 calcul, ▶ MD, ⚒ Minimise) tant que la
-    fenêtre est à l'écran : le graphe ne parle jamais d'une conformation qui n'y
-    est plus. */}
-<button type="button"
-  onClick={() => { if (!ramaDock) readRamachandran(); toggleRamaDock(!ramaDock); }}
-  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${ramaDock ? 'bg-amber-100 border-amber-400 text-amber-900' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
-  title="Show or hide the 🪢 Ramachandran window INSIDE the viewer: the φ/ψ map of the peptide backbone on screen (φ = C(i−1)·N·CA·C, ψ = N·CA·C·N(i+1)), read with the same signed-IUPAC dihedral reader as the χ/δ readers — there is no second dihedral reader in this app (utils/torsionDrive.js) — one point per residue. The window sits at the LEFT of the 3D view (expandable · compressible) and this button closes it again. ⚠ It is a PLAN, not a calculation: no potential, no energy, and a point outside the regions is not “wrong”, it is outside the regions. The reading is a SNAPSHOT of the coordinates — taken when the window opens, and re-taken by its ⟳ Read — and it FOLLOWS the three gestures that move the molecule (🧬 Structure calculation, ▶ MD, ⚒ Minimise): one more reading after every image they write, so the points never describe a conformation the molecule has left.">
-  🪢 Ramachandran{rama && rama.measured ? ` (${rama.measured})` : ''}
-</button>
-{/* ⚡ ESP A DÉMÉNAGÉ — la demande de cette session : « Move the ESP button in the analysis
-    section in line with measure button. » Il vit donc dans le groupe 📏 Analysis, à côté de
-    📏 Measure (voir plus bas, son bouton ET son ⚡ Range) : c'est une LECTURE de la molécule
-    mise à l'écran — un potentiel qui se regarde, comme la distance qui se mesure — et non un
-    geste qui MODIFIE la molécule, comme ⚗️ Rebuild H ou ✏️ Atom names qui l'entouraient ici.
-    ⚠ Rien n'est perdu : c'est le MÊME bouton, le même état `espMolKeys` et la même surface; le
-    🔢 Renumber ci-dessous reste seul maître de sa liste, dans ✏️ Modify. */}
-{/* ⚡ Range (les deux bornes du dégradé, en kcal/mol) est parti AVEC le bouton, dans
-    📏 Analysis : les deux entrées ESP ne doivent jamais se séparer (voir plus bas). */}
-{/* 🔢 Renumber — the button AND its list live in ✏️ Modify (the request: « la
-    lista per il renumbering … dovrebbe piuttosto apparire nella sezione
-    modify »): the panel lists every residue and the number it will take, and the
-    3D labels and the residue strip follow the new numbers. The tiny 🔢 of a
-    molecule's header (in the styling bar on the right) opens THE SAME panel —
-    one implementation, see renderRenumberPanel. */}
-<button
-type="button"
-onClick={toggleRenumberPanel}
-title="🔢 Renumber the residues (the panel below lists every residue and the number it will take; the 3D labels and the residue strip follow it)"
-className="text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-md px-2 py-1.5 h-8 whitespace-nowrap"
->
-🔢 Renumber{showRenumberPanel ? ' ▲' : ' ▼'}
-</button>
-{/* The ONE renumbering panel of the viewer (see renderRenumberPanel) — the same
-    specification the 🔢 of a molecule's header opens. */}
-{renderRenumberPanel()}
-{/* ⚙ PARAMETERS AND CONSTRAINTS — LE PANNEAU, PAS UNE FENÊTRE (la demande de cette session :
-    « The “parameters and constraints” should not open a window in the molecule space but it
-    should [be] full width under the button. By clicking the button a second time it should
-    disappear. »). Il est donc RENDU ICI, comme un enfant PLEINE LARGEUR du groupe ✏️ Modify
-    (`w-full` : il descend sous la rangée de ses boutons, exactement comme le panneau
-    ✏️ Atom names ci-dessus), et il ne pousse plus la vue 3D : la molécule garde toute sa
-    surface, qu'il soit ouvert ou fermé. C'est ce qui a remplacé sa colonne d'onglet sur le bord
-    de la vue (l'ancien dock, dont il ne reste rien), et le bouton ⚙ du groupe le referme —
-    une seconde pression le fait disparaître, comme le dit la demande. */}
-{paramsDock && renderParamsWindow()}
 {/* 🧬 LE CALCUL DE STRUCTURE N'EST PLUS RENDU ICI — il est redevenu la FENÊTRE de la vue 3D,
     à sa gauche, dans la rangée des docks (`{calcDock ? renderCalcWindow() : (` plus bas, à côté
     de 🌡 MD et 🪢 Ramachandran). La demande de cette session : « the structure calculation
