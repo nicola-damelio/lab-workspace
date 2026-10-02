@@ -1906,4 +1906,75 @@ sucre, une case vide ou des espaces seuls. Et les voisins : `_sequence_natures_t
 `npx oxlint` sur les 5 fichiers touchés — 0 erreur (et **0 avertissement** sur la
 ligne elle-même).
 
+## Viewer : 💧 H-bonds dans 📏 Analysis, et la charge de l'atome au survol (02/10/2026)
+
+Deux demandes, deux gestes dans la fenêtre 3D : « in the section analysis of the
+viewer, add a button to display H-bonds. » et « when hovering on an atom display
+not only the name but also the charge. »
+
+Ce qui a changé :
+
+* **UN BOUTON 💧 H-bonds dans le groupe 📏 Analysis**, à côté de 📏 Measure et de
+  ⚡ ESP. Il **dessine** les liaisons hydrogène de la molécule choisie dans la barre
+  des Molecules : **une seule** représentation NGL `distance` porte TOUS les couples
+  donneur → accepteur (jamais une représentation par pont), les lignes s'allument en
+  ambre et chaque ligne écrit sa distance tant qu'elles sont peu nombreuses (40) —
+  au-delà, les lignes seules, un mur de chiffres cachant la structure qu'on regarde.
+  Le bouton **dit toujours ce qu'il a fait** : « 132 H-bonds on ‹ chain A › — donor
+  N/O/S with its hydrogen: r(H···A) ≤ 2.5 Å and angle D–H···A ≥ 120° · solvent left
+  out », ou « no H-bond found on … » quand la géométrie n'en donne aucun. Il se
+  reclique pour retirer ses lignes, et **rien n'est écrit dans la molécule** : ni le
+  texte PDB, ni le graphe de liaisons, ni un style — c'est une LECTURE, comme
+  📏 Measure juste à côté ;
+* **LA RÈGLE EST UN MODULE PUR** (`utils/hydrogenBonds.js`, testable sans NGL).
+  Avec les hydrogènes de la structure : donneur = N·O·S qui porte un H, accepteur =
+  N·O·S qui n'en porte **aucun** (un groupe qui a gardé son hydrogène donne, il
+  n'accepte pas), r(H···A) ≤ **2,5 Å** ET angle D–H···A ≥ **120°**. Sans aucun
+  hydrogène (un PDB de rayons X, un ligand nu) : donneurs et accepteurs sont tous les
+  N·O·S et le critère retombe sur les lourds, r(D···A) ≤ **3,5 Å** — le repli
+  classique, et le mode appliqué est **écrit à l'écran**. Sont écartés : la paire
+  déjà liée (1-2), la paire 1-3 (le N–CA–C=O d'un peptide, à 2,4 Å), deux atomes
+  d'un **même résidu**, et le **solvant** (une coquille d'eau fait plus de ponts que
+  toute la protéine : la note le dit). Un couple donneur/accepteur ne compte qu'**une
+  fois**, et le dessin est plafonné à **600** ponts (les plus courts, tri croissant)
+  — `capped` le dit. Les accepteurs sont rangés dans une **grille de 3,5 Å**, donc
+  un donneur ne compare qu'aux 27 cellules autour de lui : sans cela, un système
+  solvaté ou une membrane (des milliers de N·O·S) ferait un balayage **quadratique**
+  — plusieurs secondes d'arrêt au clic. La grille est une optimisation, et une suite
+  le **prouve** : sur 600 atomes tirés au sort, elle rend exactement la liste d'un
+  balayage exhaustif, à cheval sur les frontières de cellules compris ;
+* **les lignes meurent avec leur molécule** : `clearHydrogenBonds()` accompagne
+  **chaque** `clearMeasurements()` du viewer (nouveau chargement, ⏹ Abort, PDB rangé,
+  🗑 Clear) — une suite le vérifie appel par appel ;
+* **LE SURVOL DIT LA CHARGE** : l'infobulle de survol écrit le nom **puis** ce que
+  l'atome porte — `ALA A 1 CB · q = −0.256 e`. La charge vient de la **même table**
+  que le ⚡ ESP et la coloration « Atom charge » (`espChargesFor`, un seul parcours
+  par structure) : le survol ne peut donc pas annoncer autre chose que ce que la
+  surface peint. La mise en forme est pure (`utils/viewerAtomReadout.js`) : millième
+  d'électron, **vrai signe moins** (−, U+2212), aucun signe sur le zéro, et **rien**
+  pour une molécule dont ni le fichier ni NGL ne décrivent les charges —
+  `atomHoverChargeOf` rend `null` là où `atomChargeOf` rend 0, parce que peindre en
+  neutre et écrire « 0 » ne disent pas la même chose.
+
+Ce qui n'a **pas** changé : 📏 Measure et ⚡ ESP (mêmes boutons, mêmes états,
+mêmes représentations), la table de charges du ⚡ ESP, les styles, les sélections, et
+le fichier PDB — le bouton H-bonds n'écrit rien. Le groupe Analysis gagne une
+infobulle à jour et la ligne du §2 les annonce tous les trois
+(`📏 Measure · 💧 H-bonds · 🟢 Assigned`).
+
+*Vérifier :* `node _viewer_hbonds_test.mjs` — **131 assertions** : la règle
+**exécutée** sur des géométries construites à la main (linéaire / trop loin / couché
+à 100° / paire 1-2 / paire 1-3 / même résidu / atomes **sans** résidu / eau / mode
+« lourds » / plafond et tri) et la **preuve de la grille** (un pont à cheval sur deux
+cellules, puis l’égalité exacte avec un balayage exhaustif sur 600 atomes), le tout
+puis appliqué à une **vraie structure parsée par NGL 2.4** (le fichier, le mode, les
+indices, l'angle, et la lecture de la structure seule comme du composant) ; le bouton
+lu dans la source (une seule représentation, le plafond d'étiquetage, la note, le
+bouton désactivé sans structure) ; et le survol, formateur pur exécuté **et** helpers
+extraits du viewer puis exécutés sur la même structure. La suite est entrée dans
+`node _verify.cjs` — **37 suites, 0 échec**.
+`npx oxlint` sur les fichiers touchés — 0 erreur et **aucun nouvel avertissement**
+(62 avant, 62 après sur `NMRMoleculeViewer.jsx`) ; `node _viewer_render_smoke_test.mjs`
+— 23 assertions, le viewer (et sa nouvelle barre) montés pour de vrai.
+
 

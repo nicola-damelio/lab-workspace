@@ -59,6 +59,22 @@ import { enforceCovalentProteinBonds } from '../utils/proteinBondRule';
 // rapporte est jugée avec la fenêtre du repliement (utils/disulfideFold.js) :
 // une seule définition de « pont fermé », pour ⚭ Fold et pour l'interrupteur.
 import { applyDisulfideDisplay } from '../utils/disulfideBonds';
+// 💧 « H-bonds: shown / hidden » — la demande de cette session : « in the section
+// analysis of the viewer, add a button to display H-bonds. » Le bouton LIT la
+// géométrie de ce qui est à l'écran (donneurs N/O/S, accepteurs, distances et
+// angles — la règle entière est dans utils/hydrogenBonds.js) et la DESSINE en UNE
+// représentation `distance` de NGL, comme 📏 Measure dessine la sienne. À la
+// différence des trois règles ci-dessus, ce bouton ne retire rien du graphe de
+// liaisons : ni le fichier PDB, ni le graphe, ni un style ne sont touchés.
+import {
+  findHydrogenBonds, hydrogenBondNoteOf, HBOND_LABEL_MAX,
+} from '../utils/hydrogenBonds';
+// 🔎 CE QU'UN ATOME PORTE, DIT AU SURVOL : le nom était déjà là, la charge
+// partielle arrive par la MÊME table que le ⚡ ESP et « Color by → Atom charge »
+// (voir `atomHoverChargeOf`, à côté de `atomChargeOf`), mise en forme par la
+// fonction pure de ce module — un survol ne peut donc pas écrire autre chose que
+// ce que la surface et la rampe peignent.
+import { hoverAtomReadout } from '../utils/viewerAtomReadout';
 // …ET LA RÈGLE QUI CONDUIT UN PONT ÉTIRÉ (cette session) : les moteurs du champ FIGENT la
 // famille « liaisons » (une torsion rigide ne change pas une longueur), donc un pont à
 // 10 Å ne se rapprocherait jamais. `stretchedDisulfideTermsOf` rend un terme de DISTANCE
@@ -981,6 +997,20 @@ const atomChargeOf = (atom, structure) => {
   const data = espChargesFor(structure);
   const q = data && data.charges ? data.charges[i] : 0;
   return Number.isFinite(q) ? q : 0;
+};
+// LA MÊME charge, mais DITE quand elle existe : le survol d'un atome écrit son nom
+// ET ce qu'il porte (« … · q = −0.412 e »). `atomChargeOf` répond 0 quand il n'y a
+// rien à lire — le bon repli pour PEINDRE (le neutre) mais pas pour ÉCRIRE : une
+// molécule dont ni le fichier ni NGL ne décrivent les charges ne se raconte pas
+// comme une molécule neutre. Ici l'absence de table rend `null`, et la phrase du
+// survol s'arrête au nom (la règle de `hoverAtomReadout`, utils/viewerAtomReadout).
+const atomHoverChargeOf = (atom, structure) => {
+  if (!atom || !structure) return null;
+  const i = Number(atom.index);
+  if (!Number.isFinite(i)) return null;
+  const data = espChargesFor(structure);
+  const q = data && data.charges ? data.charges[i] : null;
+  return Number.isFinite(q) ? q : null;
 };
 // The definition of the scheme, NAMED so a test can extract and really run it. The
 // structure arrives exactly the way NGL hands it to every representation's colour
@@ -7848,6 +7878,21 @@ measureModeRef.current = measureMode;
 const measurePendingRef = useRef(null); // { comp, atomIndex, label } of the 1st picked atom
 const measureRepsRef = useRef([]);      // [{ comp, elem }] NGL 'distance' representations that were drawn
 
+// ---- 💧 H-bonds ------------------------------------------------------------
+// LE bouton de 📏 Analysis qui DESSINE les liaisons hydrogène de la molécule
+// choisie dans la barre des Molecules. La règle (qui donne, qui accepte, quelles
+// distances et quels angles) vit dans utils/hydrogenBonds.js et n'est écrite
+// qu'une fois ; ici il n'y a que le DESSIN et sa comptabilité : une seule
+// représentation NGL 'distance' — donc un objet qui tourne, zoome, se cache avec
+// sa molécule et meurt avec elle, exactement comme les lignes de 📏 Measure (dont
+// elle suit la vie : `clearHydrogenBonds` est appelé partout où
+// `clearMeasurements` l'est). `hbondMsg` est la phrase que le bouton dit dans les
+// deux cas — ce qu'il a trouvé (nombre, règle, solvant, plafond) ou pourquoi il
+// n'a rien trouvé : un bouton qui ne dit rien ferait croire à une panne.
+const [hbondsShown, setHbondsShown] = useState(false);
+const [hbondMsg, setHbondMsg] = useState('');
+const hbondRepRef = useRef(null);   // { comp, elem } — la représentation 'distance' vivante
+
 // ---- ✏️ Set a torsion — or reach a target distance — by the numbers ---------
 // The gesture the pointer cannot make precisely: pick FOUR atoms in the 3D view
 // (A · B · C · D — B–C is the bond that turns), type the dihedral you want in
@@ -13206,7 +13251,15 @@ return;
 }
 const atom = pickingProxy.atom;
 const mapped = mapAtomToNmrKeys(atom, parsedSeqRef.current, moleculeTypeRef.current, namingConventionRef.current);
-const label = mapped ? mapped.label : `${atom.resname || ''} ${atom.resno || ''} ${displayNameRef.current(atom)}`.trim();
+const name = mapped ? mapped.label : `${atom.resname || ''} ${atom.resno || ''} ${displayNameRef.current(atom)}`.trim();
+// …ET CE QUE L'ATOME PORTE : le nom seul ne dit pas qu'un oxygène de carbonyle
+// vaut −0,5 e ni qu'un sodium vaut +1 — or c'est justement ce qu'on vient lire
+// en survolant. La charge sort de la MÊME table que le ⚡ ESP et « Atom charge »
+// (`atomHoverChargeOf` → `espChargesFor`) : une seule table, donc jamais deux
+// réponses sur le même atome. Une molécule dont rien ne décrit les charges ne
+// dit rien de plus : `hoverAtomReadout` n'écrit la charge que lorsqu'elle existe.
+const structure = (pickingProxy.component && pickingProxy.component.structure) || atom.structure || null;
+const label = hoverAtomReadout(name, atomHoverChargeOf(atom, structure));
 if (label !== lastHover) { lastHover = label; setHoverInfo(label); }
 });
 
@@ -13386,6 +13439,7 @@ if (!structureText) {
     clearExtraMolecules();
     try { if (stageRef.current) stageRef.current.removeAllComponents(); } catch {}
     clearMeasurements(); // drawn distance lines die with their component
+    clearHydrogenBonds(); // …et les lignes de 💧 H-bonds avec elle (mêmes overlays, même sort)
     componentRef.current = null;
     highlightCompRef.current = null;
     manualHighlightCompRef.current = null;
@@ -15075,6 +15129,85 @@ const espToggle = (key) => {
   else espEnable(key);
 };
 
+/* ── 💧 H-BONDS — LE BOUTON DE 📏 ANALYSIS ──────────────────────────────────
+   La demande : « in the section analysis of the viewer, add a button to display
+   H-bonds. » Une LECTURE, exactement comme 📏 Measure juste à côté et ⚡ ESP juste
+   en dessous : la règle — donneurs N · O · S, accepteurs, r(H···A) ≤ 2,5 Å et
+   angle D–H···A ≥ 120° quand la structure porte ses hydrogènes, la distance des
+   lourds (r(D···A) ≤ 3,5 Å) sinon — est celle d'utils/hydrogenBonds.js, et c'est
+   la molécule CHOISIE dans la barre des Molecules qui est lue (le même
+   `resolveMolComp` que ⚡ ESP).
+
+   Le dessin est UNE représentation `distance` de NGL portant TOUS les couples
+   donneur → accepteur : les lignes tournent, zooment et se cachent avec leur
+   molécule, et rien n'est écrit dans la géométrie. Chaque ligne est étiquetée de
+   sa distance tant qu'elles sont peu nombreuses (HBOND_LABEL_MAX) : au-delà, un
+   mur de chiffres cacherait la structure qu'on est venu regarder — les lignes
+   seules disent alors le réseau.
+
+   `clearHydrogenBonds` suit `clearMeasurements` partout : une ligne qui survit à
+   la molécule qu'elle relie serait un mensonge. */
+const HBOND_READ_OPTS = { excludeWater: true };   // le solvant noierait le reste (la note le dit)
+const HBOND_LINE_COLOR = 0xfbbf24;   // ambre : la ligne D···A de chaque pont
+const HBOND_LABEL_COLOR = 0xfde68a;  // …et le chiffre qui va avec (tant qu'il y en a peu)
+const clearHydrogenBonds = () => {
+  const rep = hbondRepRef.current;
+  hbondRepRef.current = null;
+  if (rep) {
+    try { if (rep.comp && rep.elem) rep.comp.removeRepresentation(rep.elem); } catch { /* component may already be disposed */ }
+    try { if (rep.elem && typeof rep.elem.dispose === 'function') rep.elem.dispose(); } catch { /* idempotent */ }
+    try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch { /* nothing to redraw */ }
+  }
+  setHbondsShown(false);
+  setHbondMsg('');
+};
+
+const toggleHydrogenBonds = () => {
+  if (hbondRepRef.current) { clearHydrogenBonds(); return; }   // le bouton est un interrupteur
+  const comp = resolveMolComp(selectedMolKey);
+  const name = molNameOf(selectedMolKey) || 'the structure on screen';
+  if (!comp || !comp.structure) {
+    setHbondsShown(false);
+    setHbondMsg('⚠ H-bonds — nothing to read yet: load a structure (or build one from the sequence) first.');
+    return;
+  }
+  let found = null;
+  try { found = findHydrogenBonds(comp, HBOND_READ_OPTS); } catch (e) { console.warn('H-bond search failed:', e); }
+  if (!found || found.mode === 'none') {
+    setHbondsShown(false);
+    setHbondMsg('⚠ H-bonds — the bond graph of this structure could not be read.');
+    return;
+  }
+  if (!found.bonds.length) {
+    setHbondsShown(false);                                   // rien à dessiner : le bouton le DIT
+    setHbondMsg(`💧 ${hydrogenBondNoteOf(name, found)}`);
+    return;
+  }
+  try {
+    const elem = comp.addRepresentation('distance', {
+      atomPair: found.bonds.map((b) => [b.donor, b.acceptor]),  // la ligne D···A de chaque pont
+      labelVisible: found.bonds.length <= HBOND_LABEL_MAX,     // peu de ponts : chacun dit sa distance
+      labelUnit: 'angstrom',
+      labelSize: 0.9,
+      labelColor: HBOND_LABEL_COLOR,
+      color: HBOND_LINE_COLOR,
+      linewidth: 3,
+      lineOpacity: 0.9,
+      opacity: 1,
+      visible: true,
+    });
+    if (!elem) throw new Error('NGL refused the representation');
+    hbondRepRef.current = { comp, elem };
+    setHbondsShown(true);
+    try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch { /* nothing to redraw */ }
+    setHbondMsg(`💧 ✓ ${hydrogenBondNoteOf(name, found)} — click 💧 again to hide them.`);
+  } catch (e) {
+    console.warn('H-bond overlay failed:', e);
+    setHbondsShown(false);
+    setHbondMsg('⚠ H-bonds — the overlay could not be drawn on this molecule.');
+  }
+};
+
 // Load ONE chain of a multi-chain PDB as its own (hidden) NGL component and add
 // it to the Molecules selector. Called by the main-load effect after the whole
 // structure is parsed.
@@ -15117,6 +15250,7 @@ abortRef.current = {
     setCatInfo(null);
     try { if (stageRef.current) stageRef.current.removeAllComponents(); } catch {}
     clearMeasurements(); // distance lines belong to the removed components
+    clearHydrogenBonds(); // …et les lignes de 💧 H-bonds aussi
   }
 };
 const unregisterAbort = abortControl.register('structure loading', () => {
@@ -15157,6 +15291,7 @@ const stage = await stageReadyRef.current;
 if (cancelled || !stage) return;
 stage.removeAllComponents();
 clearMeasurements(); // any previously drawn distance lines are gone too
+clearHydrogenBonds(); // …et les lignes de 💧 H-bonds aussi
 componentRef.current = null;
 espResetAll(); // every previous component (and its ⚡ ESP overlay) is gone
 highlightCompRef.current = null;
@@ -19904,6 +20039,7 @@ const handleClearViewer = () => {
   clearExtraMolecules();
   try { if (stageRef.current) stageRef.current.removeAllComponents(); } catch {}
   clearMeasurements(); // distance lines belong to the removed components
+  clearHydrogenBonds(); // …et les lignes de 💧 H-bonds aussi
   espResetAll(); // every component (and its ⚡ ESP overlay) is gone now
   componentRef.current = null;
   highlightCompRef.current = null;
@@ -20016,6 +20152,7 @@ const deleteLoadedPdb = () => {
   clearExtraMolecules();
   try { if (stageRef.current) stageRef.current.removeAllComponents(); } catch {}
   clearMeasurements();          // distance lines belong to the removed components
+  clearHydrogenBonds();         // …et les lignes de 💧 H-bonds aussi
   espResetAll();                // …and so do the ⚡ ESP overlays
   componentRef.current = null;
   highlightCompRef.current = null;
@@ -22929,7 +23066,7 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
     • Scene: 🌫 Fog · 🎨 Background · ◐ Shadows (+ 🌑 Darkness / 💡 Light) · 💡 Light colour · ✂ Clipping · ✨ Ray (+ resolution · ⬚ alpha · ◐ shadows)
     • Styles: the NAME · 🎨 Cumulative / 📷 Snapshot · 💾 Save · 📂 Load… · 🗑 Delete · ⬇ · ⬆ · 🎞 Movie
     • Modify: 🧬 From sequence · ✥ Move / ↻ Rotate · ⚗️ Rebuild H · ✏️ Atom names · ⚡ ESP · 🔢 Renumber
-    • Analysis: 📏 Measure · 🟢 Assigned
+    • Analysis: 📏 Measure · 💧 H-bonds · 🟢 Assigned
     • PyMOL: 🧪 Selections & PyMOL
     THE FOUR MOVES OF THIS REVISION (each one is a line of the report):
       · ✨ Ray and its associates (the resolution, ⬚ alpha, ◐ shadows + strength)
@@ -23926,7 +24063,7 @@ className="text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 bord
 {/* ── Analysis ───────────────────────────────────────────────────────────── */}
 <span className="w-px h-6 bg-slate-200 shrink-0" aria-hidden="true" />
 <div className="flex flex-wrap items-center gap-1 rounded-md border border-rose-200 bg-rose-50/40 px-1.5 py-1">
-<span className="text-[9px] font-black text-rose-700 uppercase tracking-wide whitespace-nowrap" title="Read the structure: measure the distance between two atoms (in Å), clear the drawn distances and show or hide the green highlight of the atoms assigned by NMR.">📏 Analysis</span>
+<span className="text-[9px] font-black text-rose-700 uppercase tracking-wide whitespace-nowrap" title="Read the structure: measure the distance between two atoms (in Å), clear the drawn distances, draw the hydrogen bonds of the chosen molecule, and show or hide the green highlight of the atoms assigned by NMR.">📏 Analysis</span>
 <button
 type="button"
 onClick={toggleMeasureMode}
@@ -23949,6 +24086,31 @@ title={measurePending ? 'Cancel the pending first atom and remove all drawn dist
 >
 ✕ Clear distances
 </button>
+)}
+{/* 💧 H-BONDS — la demande de cette session : « in the section analysis of the
+    viewer, add a button to display H-bonds. » Une LECTURE, comme 📏 Measure juste
+    au-dessus et ⚡ ESP juste en dessous : la règle (donneurs N · O · S, accepteurs,
+    r(H···A) ≤ 2.5 Å et angle D–H···A ≥ 120° quand la structure porte ses
+    hydrogènes ; la distance des lourds D···A ≤ 3.5 Å quand elle n'en porte aucun)
+    est celle d'utils/hydrogenBonds.js, et c'est la molécule CHOISIE dans la barre
+    des Molecules qui est lue — le même `resolveMolComp` que ⚡ ESP. RIEN n'est
+    modifié dans la molécule : ni le fichier PDB, ni le graphe de liaisons, ni un
+    style ; le bouton se reclique pour retirer ses lignes d'ambre. */}
+<button
+type="button"
+onClick={toggleHydrogenBonds}
+disabled={status !== 'ready'}
+title={hbondsShown
+  ? '💧 H-bonds are ON — the hydrogen bonds of the chosen molecule are drawn in amber (donor → acceptor, with the distance written on the line while there are few). Click again to hide them: nothing else about the molecule changes.'
+  : 'Display the HYDROGEN BONDS of the molecule chosen in the Molecules bar. With hydrogens on the structure: donor N/O/S whose hydrogen sits r(H···A) ≤ 2.5 Å from an acceptor N/O/S at an angle D–H···A ≥ 120°. Without any hydrogen (an X-ray PDB): the heavy atoms are judged by their distance, D···A ≤ 3.5 Å. Same-residue pairs, covalently bonded pairs and the solvent are left out, up to 600 bonds (the shortest first). Drawn as ONE distance representation over the existing scene — the PDB file, the bond graph and the styles are untouched.'}
+className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed ${hbondsShown ? 'bg-amber-100 border-amber-400 text-amber-900 ring-1 ring-amber-200' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+>
+{hbondsShown ? '💧 H-bonds: On' : '💧 H-bonds'}
+</button>
+{hbondMsg && (
+<span title={hbondMsg} className="text-[10px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1 h-7 inline-flex items-center max-w-[380px] truncate">
+{hbondMsg}
+</span>
 )}
 {/* ⚡ ESP — la surface de potentiel électrostatique de la molécule choisie dans la barre des
     Molecules. Il vit ICI depuis cette session (la demande : « Move the ESP button in the

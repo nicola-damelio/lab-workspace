@@ -32,6 +32,20 @@ const tests = [
   // des sélections comprise. Sans le schéma maison, le repli est le colormaker
   // `partialcharge` de NGL, jamais un aplat d'éléments.
   '_viewer_atom_charge_test.mjs',
+  // « in the section analysis of the viewer, add a button to display H-bonds. » et
+  // « when hovering on an atom display not only the name but also the charge. » —
+  // LES DEUX DEMANDES DE CETTE SESSION, mesurées d'un bout à l'autre : la règle des
+  // ponts hydrogène est PURE (utils/hydrogenBonds.js) et EXÉCUTÉE sur des géométries
+  // construites à la main (le N–H···O linéaire en est un, le donneur couché non ;
+  // paires 1-2 et 1-3, même résidu et solvant écartés ; le mode « lourds » sans
+  // aucun hydrogène, le plafond du dessin), puis appliquée à une VRAIE structure
+  // parsée par le NGL de la page ; le bouton de 📏 Analysis est vérifié par ses
+  // marqueurs — il ne dessine qu'UNE représentation `distance` pour TOUS les ponts,
+  // et `clearHydrogenBonds()` accompagne CHAQUE `clearMeasurements()` du viewer ; et
+  // le survol écrit le nom PUIS la charge, lue dans la MÊME table que le ⚡ ESP
+  // (helpers EXTRAITS puis EXÉCUTÉS sur la structure), une molécule sans charges ne
+  // disant rien de plus au lieu d'annoncer « 0 ».
+  '_viewer_hbonds_test.mjs',
   // LA DEMANDE « styling window » DE CETTE SESSION, mesurée d'un bout à l'autre :
   // une teinte par TYPE peint l'ESPACE de la barre de style — et les rangées de cet
   // espace s'éclaircissent vers le blanc, General d'abord — toutes deux des pastilles
