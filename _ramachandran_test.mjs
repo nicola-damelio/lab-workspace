@@ -457,7 +457,10 @@ has(VIEW, 'max-w-[340px]', '…et le graphe s’affiche plus grand (les caractè
    le bouton ne fait donc plus qu'ouvrir/fermer la fenêtre 🪢 du viewer. */
 const ramaPanel = VIEW.slice(
   VIEW.indexOf('{/* 🪢 LE GRAPHE DE RAMACHANDRAN'),
-  VIEW.indexOf('{/* ⚡ ESP'),
+  /* ⚠ LA FIN DU BLOC A CHANGÉ D'ANCRE (cette session) : elle était `{/* ⚡ ESP`, mais ⚡ ESP a
+     déménagé dans 📏 Analysis — le découpage aurait alors englouti tout le groupe ✏️ Modify et
+     la fenêtre 🧬. Le 🔢 Renumber, qui suit immédiatement le 🪢, est l'ancre stable. */
+  VIEW.indexOf('{/* 🔢 Renumber — the button'),
 );
 ok(ramaPanel.length > 1200, `le bouton 🪢 est bien dans la barre (${ramaPanel.length} caractères)`);
 ok(!VIEW.includes("{calcSection === 'rama'"),

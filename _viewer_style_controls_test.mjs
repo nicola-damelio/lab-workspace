@@ -321,6 +321,16 @@ ok(iSec2Band > 0 && iSceneBand > iSec2Band && VIEW.indexOf('>🎨 Styles</span>'
   'la bande « 🎨 Styles » vit dans §2 · Toolbar, SUR LA LIGNE de 🌫 Scene');
 ok(VIEW.includes('aria-hidden="true" />\n<div className="flex flex-wrap items-center gap-1 rounded-md border border-teal-200'),
   '…séparée de 🌫 Scene par un filet, et refermée dans sa propre boîte');
+/* ⚠ …ET LES DEUX BOÎTES PARTAGENT UNE RANGÉE QUI NE SE COUPE JAMAIS — la demande de cette
+   session : « they can fit together to save a line ». Elles ne sont plus deux frères de la
+   grande rangée de §2 (où la SEULE largeur décidait si elles tenaient ensemble) : elles vivent
+   dans leur rangée (`w-full` + défilement horizontal, le gabarit de la bande 🎞 Movie maker),
+   chacune `shrink-0`, donc 🌫 Scene et 🎨 Styles coûtent toujours une ligne — et une seule. */
+ok(VIEW.includes('<div className="flex items-center gap-1 w-full overflow-x-auto">'),
+  '⚠ 🌫 Scene et 🎨 Styles partagent UNE rangée qui ne se coupe jamais (la ligne à économiser)');
+ok(VIEW.includes('border border-sky-200 bg-sky-50/40 px-1.5 py-1 shrink-0')
+  && VIEW.includes('border border-teal-200 bg-teal-50/40 px-1.5 py-1 shrink-0'),
+  '…les deux boîtes y sont `shrink-0` (elles ne peuvent plus être repoussées l’une sous l’autre)');
 
 /* ══ 8. FOND DE LA SCÈNE DANS §2 SCENE ═══════════════════════════════════ */
 has("const BG_DEFAULT = '#f8fafc';", 'le fond par défaut est nommé une fois');
@@ -350,8 +360,9 @@ ok(VIEW.indexOf('◐ shadows', iSec2) > 0 && VIEW.indexOf('cast shadow strength'
   '…la case « ◐ shadows » et son curseur de force compris');
 ok(VIEW.indexOf('const rayPlan = rayPlanOf(stageRef.current, rayFactor);') > 0,
   '…et le plan (pixels + tuiles) du facteur choisi est lu par le bouton, AVANT le clic');
-ok(VIEW.indexOf('⚡ ESP — the electrostatic-potential surface') > iModify,
-  'le bouton ⚡ ESP a rejoint le groupe ✏️ Modify (la demande)');
+ok(VIEW.indexOf('onClick={() => espToggle(selectedMolKey)}') > VIEW.indexOf('📏 Analysis</span>', iSec2),
+  'le bouton ⚡ ESP a rejoint le groupe 📏 Analysis, à la suite de 📏 Measure (la demande de cette'
+  + ' session : « Move the ESP button in the analysis section in line with measure button. »)');
 
 
 /* ══ 9. LES HELPERS PURS, EXTRAITS DU FICHIER ET EXÉCUTÉS ═════════════════ */

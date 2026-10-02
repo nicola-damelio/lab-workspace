@@ -1732,6 +1732,24 @@ has(forceGestures, "${gestureMsgOpen ? '' : 'line-clamp-1'}",
 has(forceGestures, 'onClick={() => setGestureMsgOpen((v) => !v)}', '…et le ▸/▾ est à côté de lui');
 has(forceGestures, "onClick={() => setCalcMsg('')}", '…avec un ✕ qui l’efface');
 
+/* ■ LA PAGE BLANCHE D'UN GESTE NEUF — la remarque de cette session : « at a new run structure
+   calculation should reinitialize while I still see old messages related to previous runs. »
+   `calcMsg` est UN SEUL état pour les quatre gestes et les deux fenêtres : sans nettoyage au
+   départ, le ✓ d'un calcul fini (et jusqu'au ■ d'un geste arrêté la veille) restait à l'écran
+   pendant que la ligne de progression parlait du run qui venait de commencer — et le tableau du
+   ⟳ Energy, qui décrit une géométrie, survivait de même. Les TROIS gestes du champ effacent donc
+   le rapport ET le tableau EN ENTRANT, et le ▸/▾ repart fermé. */
+for (const [needle, what] of [
+  ["setCalcMsg('');\n  setCalcForce(null);   // le tableau du ⟳ d'avant parle d'une géométrie qui n'est plus\n  setGestureMsgOpen(false);\n  setCalcBusy(true);",
+    '🧬 ▶ Run'],
+  ["setCalcMsg('');\n  setCalcForce(null);   // la lecture du ⟳ d'avant ne décrit plus la molécule qui va bouger\n  setGestureMsgOpen(false);\n  setMdBusy(true);\n  setCalcShown(0);\n  setMdProgress(`🌡 molecular dynamics",
+    '🌡 ▶ MD'],
+  ["setCalcMsg('');\n  setCalcForce(null);   // le tableau du ⟳ d'avant parle d'une géométrie qui n'est plus\n  setGestureMsgOpen(false);\n  setMdBusy(true);   // le témoin de LA FENÊTRE 🌡 MD",
+    '⚒ Minimise'],
+]) {
+  has(VIEW, needle, `■ …${what} part d'une PAGE BLANCHE (rapport et tableau du ⟳ effacés, repli remis)`);
+}
+
 /* LES FENÊTRES SONT SÉPARÉES — chacune se rend de son côté, et plus rien ne s’ajoute au
    panneau U0001f9ec (la barre d’onglets a disparu avec les deux autres fenêtres). */
 ok(VIEW.indexOf("{calcSection === 'torsion' && (() => {") < 0,
@@ -2182,8 +2200,10 @@ has(VIEW, 'const calcEngineGeometry = () => {',
   '…et les gestes du champ lisent un graphe à part (`calcEngineGeometry`)');
 has(VIEW, 'bonds: now.geom.bonds, bridges: disulfideDrawnRef.current.bonds,',
   '…fabriqué avec les ponts DESSINÉS de l’écran (un pont étiré perd sa fausse longueur, un pont fermé la garde)');
-eq(VIEW.split('calcEngineGeometry();').length - 1, 4,
-  '⚠ …et les QUATRE gestes — ▶ Run, ▶ MD, ⚒ Minimise, ⟳ Energy — le lisent (aucun ne garde la molécule brute)');
+eq(VIEW.split('calcEngineGeometry();').length - 1, 5,
+  '⚠ …et les QUATRE gestes — ▶ Run, ▶ MD, ⚒ Minimise, ⟳ Energy — le lisent (aucun ne garde la molécule brute),'
+  + ' PLUS l’aperçu de la boîte d’eau explicite (le `useEffect` de cette session : il lit le MÊME graphe, donc'
+  + ' la boîte montrée dès le choix du solvant EST celle que les gestes recevront)');
 eq(VIEW.split('const calcEngineGeometry').length - 1, 1,
   'la lecture des moteurs est UNE fonction (pas quatre graphes bricolés)');
 has(writeCalc, 'report = calcReportOf(retained, ranked);',

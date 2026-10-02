@@ -17,8 +17,10 @@
        « Molecular Styling » (un accordéon qui ne portait que 🙈 Hide everything ·
        ⚡ ESP · 🔢 Renumber) a été dissous, et ses commandes ont rejoint les groupes
        qui leur correspondent — ✨ Ray AVEC ses associés (résolution · ⬚ alpha ·
-       ◐ shadows) dans 🌫 Scene, ⚡ ESP et 🔢 Renumber (bouton ET liste) dans
-       ✏️ Modify. Le 📷 Figure et le 🙈 Hide everything de la rangée ont disparu
+       ◐ shadows) dans 🌫 Scene, 🔢 Renumber (bouton ET liste) dans ✏️ Modify, et
+       ⚡ ESP dans 📏 Analysis, à la suite de 📏 Measure (« in line with measure
+       button » : une surface qui se lit, comme une distance). Le 📷 Figure et le
+       🙈 Hide everything de la rangée ont disparu
        (la demande : « il pulsante figure é ridondante come anche il hide
        everything ») — le geste de masquage vit dans la barre des sélections, sur
        le MÊME état `hideAll` ;
@@ -126,12 +128,19 @@ const iAnalysisG = VIEW.indexOf('>📏 Analysis</span>');
 ok(iSceneG > 0 && iSceneG < iModifyG && iModifyG < iAnalysisG,
   '[§2] scene → modify → analysis, séparément et dans cet ordre');
 // Les commandes de la « ray » (et ses associés alpha / shadows) sont DANS Scene ;
-// ⚡ ESP et 🔢 Renumber sont DANS Modify ; rien n'est monté deux fois.
+// 🔢 Renumber reste DANS Modify ; ⚡ ESP vit maintenant DANS ✏️ Modify → 📏 Analysis, À LA
+// SUITE de 📏 Measure (la demande de cette session : « Move the ESP button in the analysis
+// section in line with measure button. ») ; rien n'est monté deux fois.
 const iRayBlock = VIEW.indexOf('✨ RAY — the HIGH-RESOLUTION STILL');
 ok(iRayBlock > iSceneG && iRayBlock < iModifyG, '[§2] ✨ Ray + ⬚ alpha + ◐ shadows dans le groupe Scene');
-ok(VIEW.indexOf('⚡ ESP — the electrostatic-potential surface') > iModifyG
-  && VIEW.indexOf('⚡ ESP — the electrostatic-potential surface') < iAnalysisG,
-  '[§2] ⚡ ESP dans le groupe Modify');
+const iEspBtn = VIEW.indexOf('onClick={() => espToggle(selectedMolKey)}');
+ok(iEspBtn > iAnalysisG, '[§2] ⚡ ESP est dans le groupe 📏 Analysis');
+ok(iEspBtn > VIEW.indexOf('onClick={toggleMeasureMode}'),
+  '[§2] …À LA SUITE de 📏 Measure : une surface qui se LIT, comme une distance');
+ok(VIEW.split('onClick={() => espToggle(selectedMolKey)}').length - 1 === 1,
+  '[§2] …et il n’existe qu’UNE fois dans tout le viewer (rien n’est resté dans ✏️ Modify)');
+ok(VIEW.indexOf('⚡ ESP A DÉMÉNAGÉ') > iModifyG && VIEW.indexOf('⚡ ESP A DÉMÉNAGÉ') < iAnalysisG,
+  '[§2] …et ✏️ Modify le DIT (une note, pas un bouton fantôme)');
 ok(VIEW.indexOf('🔢 Renumber — the button AND its list live in ✏️ Modify') > iModifyG
   && VIEW.indexOf('🔢 Renumber — the button AND its list live in ✏️ Modify') < iAnalysisG,
   '[§2] 🔢 Renumber ET sa liste dans le groupe Modify');
@@ -225,11 +234,10 @@ gone('label="E · Ligands"', '[§2] …ni E · Ligands');
 gone('label="F · Others', '[§2] …ni F · Others');
 gone('grid-cols-6', '[§2] …donc plus de grille de six colonnes');
 has('className="flex flex-wrap items-center gap-1"', '[§2] sa rangée d’outils est bien une rangée, pas une grille de menus');
-// ⚡ ESP et 🔢 Renumber sont dans le groupe ✏️ Modify de cette rangée (la demande) ;
-// les panneaux qu’ils ouvrent (⚡ Range, la liste du renumbering) en sont des
-// enfants pleine largeur, donc la rangée reste haute d’une ligne quand rien n’est
-// ouvert.
-has("{espOnSelected ? '⚡ ESP: On' : '⚡ ESP'}", '[Modify] le bouton ⚡ ESP');
+// 🔢 Renumber est resté dans le groupe ✏️ Modify de cette rangée, et ⚡ ESP a rejoint 📏
+// Analysis (la demande de cette session) ; le panneau qu'il ouvre (⚡ Range) est un enfant de
+// son groupe, donc la rangée reste haute d'une ligne quand rien n'est ouvert.
+has("{espOnSelected ? '⚡ ESP: On' : '⚡ ESP'}", '[Analysis] le bouton ⚡ ESP');
 has("🔢 Renumber{showRenumberPanel ? ' ▲' : ' ▼'}", '[Modify] le bouton 🔢 Renumber');
 has('✏️ Atom names{Object.keys(renames).length', '[Modify] le bouton ✏️ Atom names');
 has('{(entry.sections || []).map((sec) => renderSection(sec))}',

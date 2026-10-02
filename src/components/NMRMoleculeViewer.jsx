@@ -8351,6 +8351,12 @@ const [mdBusy, setMdBusy] = useState(false);
 const mdPhaseRef = useRef('');   // la dernière ligne annoncée par la pompe du geste
 const mdRunRef = useRef(0);      // le jeton du geste qui tourne (0 = personne)
 const [calcBusy, setCalcBusy] = useState(false);
+/* ⚠ LE MÊME TÉMOIN, LU PAR UN CALLBACK QUI N'EST PAS UN RENDU — l'aperçu de la boîte d'eau
+   explicite (le `useEffect` posé à côté de `calcDrawWaterBox`) tourne dans un `setTimeout` :
+   la valeur d'état figée dans sa fermeture peut avoir un geste de retard, donc il lit CE ref,
+   réécrit à chaque rendu comme les autres (`sectionCatalogRef`, `mdPhaseRef`…). */
+const calcBusyRef = useRef(false);
+calcBusyRef.current = calcBusy;
 const [calcResult, setCalcResult] = useState(null);   // la famille classée du module
 const [calcShown, setCalcShown] = useState(0);        // le rang écrit à l'écran
 const calcRunRef = useRef(0);                         // le jeton d'annulation du ⏹
@@ -11638,6 +11644,17 @@ const runStructureCalculation = () => {
   calcRunRef.current += 1;
   const run = calcRunRef.current;
   const attempts = [];
+  /* ■ LE RAPPORT DE CE RUN REMPLACE CELUI DU PRÉCÉDENT — la remarque de cette session : « at a
+     new run structure calculation should reinitialize while I still see old messages related to
+     previous runs. » `calcMsg` est UN SEUL état, partagé par les quatre gestes et affiché par
+     les deux fenêtres : sans ce nettoyage au départ, lancer un ▶ Run laissait donc à l'écran le
+     ✓ d'un calcul fini — et jusqu'au ■ « You stopped the gesture… » de la séance précédente —
+     pendant que la ligne de progression parlait, elle, du run qui venait de commencer. Un geste
+     neuf part d'une page blanche ; son rapport s'écrit à la fin (ou sur son ⏹), et le ▸/✕ de la
+     boîte reste à l'utilisateur pour garder ou effacer ce qu'il veut relire. */
+  setCalcMsg('');
+  setCalcForce(null);   // le tableau du ⟳ d'avant parle d'une géométrie qui n'est plus
+  setGestureMsgOpen(false);
   setCalcBusy(true);
   setCalcShown(0);
   setCalcResult(null);
@@ -12062,12 +12079,14 @@ const mdStop = () => {
   setCalcForce(null);
   setMdProgress(at ? `■ stopped between two images — the last one written was: ${at}`
     : '■ stopped before the first image.');
-  setCalcMsg(`■ You stopped the gesture${at ? ' between two images' : ' before its first image'}.`
-    + ' The images it had already written ARE the molecule on screen, so nothing is thrown away:'
-    + ' ↺ Undo torsion puts back the conformation you had before the gesture started, and'
-    + ' ▶ MD can be started again from here.'
-    + ' ⚠ Its own report is NOT computed — its energies "before → after" describe a run that'
-    + ' reached the end, and this one did not; ⟳ Energy re-reads the force field on what is there.');
+  /* ⚠ LE MESSAGE EST COURT, ET C'EST VOULU — le rapport disait tout cela en six lignes et
+     restait à l'écran jusqu'au geste suivant (la remarque de cette session : « I always see this
+     strange message appearing »). Trois faits suffisent : ce qui est gardé, ce qui défait le
+     geste, et ce qui n'a PAS été calculé. */
+  setCalcMsg(`■ Stopped${at ? ` after the image « ${at} »` : ' before the first image'} —`
+    + ' those images ARE the molecule on screen. ↺ Undo torsion puts back the conformation from'
+    + ' before the gesture, ▶ MD can start again from here, and ⟳ Energy re-reads the field on'
+    + ' what is actually there (a stopped run has no "before → after" energies of its own).');
 };
 
 /** LES DISTANCES DÉJÀ TENUES — la longe des gestes ⚙ (dynamique et minimisation) : un
@@ -12153,6 +12172,11 @@ const runMolecularDynamics = () => {
      calcul (`calcBusy`) n'a donc plus rien à voir avec une dynamique, et le ■ de cette
      fenêtre n'apparaît qu'ici. `pumpMotion` le repose au départ et l'éteint à la fin (fin
      normale, erreur, ou ■) : le geste et sa pompe parlent du même état. */
+  /* ■ LA PAGE BLANCHE DU GESTE (voir le commentaire de `runStructureCalculation`) : le rapport
+     qui traîne à l'écran parle d'un AUTRE run, donc il part avant que celui-ci commence. */
+  setCalcMsg('');
+  setCalcForce(null);   // la lecture du ⟳ d'avant ne décrit plus la molécule qui va bouger
+  setGestureMsgOpen(false);
   setMdBusy(true);
   setCalcShown(0);
   setMdProgress(`🌡 molecular dynamics …${disulfideConductedNote()}`);
@@ -12305,6 +12329,11 @@ const runMinimise = () => {
     comp, structure, count: before ? before.length / 3 : 0, flat: before,
     label: `⚒ minimisation · ${calcMinimise} sweeps · step ${calcMinStep}° → ${calcMinStepFloor}° · ω ${calcOmegaFree ? 'free to vary' : 'held trans'}`,
   };
+  /* ■ LA MÊME PAGE BLANCHE QUE LES DEUX AUTRES GESTES — le ⚒ partage `calcMsg` avec le 🧬 et le
+     ▶ MD, donc il efface un rapport qui n'est pas le sien (voir `runStructureCalculation`). */
+  setCalcMsg('');
+  setCalcForce(null);   // le tableau du ⟳ d'avant parle d'une géométrie qui n'est plus
+  setGestureMsgOpen(false);
   setMdBusy(true);   // le témoin de LA FENÊTRE 🌡 MD (le ⏹ du 🧬 garde le sien : `calcBusy`)
   setCalcShown(0);
   setMdProgress(`⚒ minimising …${disulfideConductedNote()}`);
@@ -17913,6 +17942,27 @@ const calcWaterBoxPdbText = (geom) => {
   return `${lines.join('\n')}\n`;
 };
 
+/** LA BOÎTE SORT DE LA SCÈNE — le retrait de la seule boîte `solv_` (le même critère que la
+ *  famille `fam_`), qu'elle parte parce qu'un AUTRE dessin la remplace ou parce que le solvant
+ *  choisi n'est plus explicite (voir l'aperçu de `calcDrawWaterBox`). `true` quand une boîte
+ *  était là. ⚠ LE JETON AVANCE MÊME QUAND RIEN N'EST RETIRÉ : un `loadFile` EN VOL — dont
+ *  l'entrée n'est pas encore posée — est ainsi déclaré périmé, et il lâchera sa molécule au
+ *  lieu de la poser dans notre dos (c'était LA course de cette session : deux `loadFile`
+ *  concurrents laissaient deux boîtes empilées, ou aucune — « the water does not appear but
+ *  sometimes it appears later »). */
+const waterBoxSeqRef = useRef(0);
+const calcRemoveWaterBox = () => {
+  const stage = stageRef.current;
+  const previous = extraCompsRef.current.filter((e) => String(e.id).startsWith('solv_'));
+  waterBoxSeqRef.current += 1;
+  if (!previous.length) return false;
+  extraCompsRef.current = extraCompsRef.current.filter((e) => !String(e.id).startsWith('solv_'));
+  previous.forEach((e) => { try { if (stage) stage.removeComponent(e.comp); } catch { /* ignore */ } });
+  setVisibleMolKeys((prev) => { const n = new Set(prev); previous.forEach((e) => n.delete(e.id)); return n; });
+  setExtraMols(extraMolsSnapshot());   // la barre des Molecules ne garde pas d'entrée morte
+  return true;
+};
+
 /** LA BOÎTE ENTRE DANS LA SCÈNE — `{ok, id, reason}` (la raison sert au rapport). Elle est
  *  MONTRÉE (une boîte qu'il faudrait déplier avant de voir n'aurait rien répondu) et
  *  remplace la précédente : `solv_` est le seul identifiant de ce genre. */
@@ -17921,16 +17971,25 @@ const calcDrawWaterBox = async (geom) => {
   if (!stage || !geom || !geom.solvent || !geom.solvent.ok) return { ok: false, reason: 'no-box' };
   const text = calcWaterBoxPdbText(geom);
   if (!text) return { ok: false, reason: 'no-pdb' };
-  const previous = extraCompsRef.current.filter((e) => String(e.id).startsWith('solv_'));
-  if (previous.length) {
-    extraCompsRef.current = extraCompsRef.current.filter((e) => !String(e.id).startsWith('solv_'));
-    previous.forEach((e) => { try { if (stageRef.current) stageRef.current.removeComponent(e.comp); } catch { /* ignore */ } });
-    setVisibleMolKeys((prev) => { const n = new Set(prev); previous.forEach((e) => n.delete(e.id)); return n; });
-  }
+  /* ⚠ LA BOÎTE PRÉCÉDENTE PART, ET LE DESSIN PREND UN JETON (voir `calcRemoveWaterBox`) : si
+     deux dessins se croisent — l'aperçu du panneau et le geste qui part, ou deux clics sur
+     ▶ — le premier à REVENIR voit son jeton périmé et lâche la molécule qu'il vient de lire
+     au lieu de la poser par-dessus l'autre. Sans ce jeton, l'ordre d'arrivée des deux
+     `loadFile` décidait de ce qui restait à l'écran. */
+  calcRemoveWaterBox();
+  const seq = waterBoxSeqRef.current;
   const s = geom.solvent;
   const label = `💧 water box ${s.edge} Å · ${s.molecules} TIP3P`;
   try {
     const mol = await stage.loadFile(new Blob([text], { type: 'text/plain' }), { ext: 'pdb' });
+    /* ⚠ UN DESSIN PLUS RÉCENT A PRIS LA MAIN PENDANT LA LECTURE — celui-ci se retire : sa
+       molécule sort du stage au lieu d'être posée par-dessus la nouvelle (l'entrée n'a pas
+       encore été créée, donc il n'y a rien à défaire dans la barre). `superseded` n'est pas
+       un échec : c'est le dessin qui EST à l'écran qui compte. */
+    if (seq !== waterBoxSeqRef.current) {
+      try { if (stageRef.current) stageRef.current.removeComponent(mol); } catch { /* ignore */ }
+      return { ok: false, reason: 'superseded' };
+    }
     /* ⚠ L'ENTRÉE ENTRE DANS LA BARRE AVANT QUE RIEN NE SOIT CONSTRUIT — LE SECOND CORRECTIF
        DE CETTE SESSION. `molKeyOfComp` reconnaît une molécule par son ENTRÉE dans
        `extraCompsRef` : construite AVANT l'entrée, la boîte était prise pour la molécule
@@ -17963,6 +18022,49 @@ const calcDrawWaterBox = async (geom) => {
     return { ok: true, id };
   } catch { return { ok: false, reason: 'load-failed' }; }
 };
+
+/* 💧 LA BOÎTE SE MONTRE DÈS QU'ON LA CHOISIT — la remarque de cette session : « when I click
+   on explicit water the water does not appear but sometimes it appears later, i can never be
+   certain if it will be visible or not. » Elle était exacte : la boîte n'était construite que
+   par les TROIS gestes du champ (▶ Run du 🧬, ▶ MD, ⚒ Minimise, qui appellent
+   `calcDrawWaterBox`), donc choisir « 💧 explicit water box » dans le sélecteur du panneau
+   🌡 MD ne montrait RIEN — le solvant explicite restait une promesse jusqu'au prochain clic
+   sur ▶, et la boîte « apparaissait plus tard », parfois. C'est le CHOIX lui-même (et l'arête
+   📦) qui fait le geste, maintenant : la boîte que le module construit entre dans la scène dès
+   qu'elle est demandée, donc elle est là AVANT le geste au lieu de dépendre de lui.
+   ⚠ TROIS RÈGLES, chacune contre une façon de se tromper :
+     · 200 ms de calme avant de dessiner — on tape « 24 » chiffre par chiffre dans 📦, et un
+       dessin par frappe (des centaines d'atomes relus) serait un feu d'artifice ;
+     · pendant qu'un geste TOURNE, c'est LUI qui possède la boîte — ses images la réécrivent
+       position par position (`calcPreviewWaterPositions`) — donc l'aperçu ne la relance pas
+       sous lui : il la ramènerait au réseau du départ et effacerait la diffusion déjà écrite ;
+     · repasser à un solvant IMPLICITE RETIRE la boîte (une eau qui n'est plus dans le champ
+       n'a rien à faire à l'écran), et une boîte REFUSÉE se DIT à l'écran au lieu de laisser
+       l'utilisateur devant rien — c'était l'autre moitié de « I can never be certain ».
+   ⚠ La boîte est le MÊME objet de scène que celui des gestes (le composant `solv_`), donc elle
+   se style, se cache et se supprime comme les autres molécules de la barre. */
+useEffect(() => {
+  if (status !== 'ready') return undefined;
+  const explicit = structureCalcSolventIsExplicit(mdSolvent);
+  const timer = setTimeout(() => {
+    if (mdRunRef.current || calcBusyRef.current) return;   // un geste tourne : la boîte est à lui
+    if (!explicit) { calcRemoveWaterBox(); return; }
+    const geom = calcEngineGeometry();
+    if (!geom) return;
+    if (!geom.solvent || !geom.solvent.ok) {
+      const why = geom.solvent && geom.solvent.reason === 'box-too-small' && Number(geom.solvent.needed) > 0
+        ? `it needs an edge of at least ${geom.solvent.needed} Å for this molecule`
+        : geom.solvent && geom.solvent.reason === 'no-water'
+          ? 'no lattice site was left free — the molecule fills it'
+          : 'the module refused it';
+      setCalcMsg(`■ 💧 ${mdSolventOf().label}: the box is NOT on screen — ${why}.`
+        + ' The field stays at ε = 1, with no water: 📦 raise the edge, or choose another solvent.');
+      return;
+    }
+    calcDrawWaterBox(geom).catch(() => {});
+  }, 200);
+  return () => clearTimeout(timer);
+}, [mdSolvent, mdBox, status]);
 
 
 
@@ -22453,8 +22555,20 @@ title={kfMsg || (videoReady.ok ? keyframeFilmSummary(keyframes.length, kfPlanNow
     each of them »). Chaque groupe est maintenant une petite boîte teintée à sa
     couleur, refermée sur elle-même : la séparation ne demande aucune ligne de plus,
     et le filet qui reste entre deux boîtes dit où finit l'une et où commence
-    l'autre. 🎨 Styles vit sur CETTE ligne, derrière son filet. */}
-<div className="flex flex-wrap items-center gap-1 rounded-md border border-sky-200 bg-sky-50/40 px-1.5 py-1">
+    l'autre. 🎨 Styles la partage aussi — et elle ne la quitte plus : le bloc suivant les met
+    dans LEUR rangée. */}
+{/* ── 🌫 SCENE │ 🎨 STYLES — UNE SEULE RANGÉE, ET ELLES LA GARDENT (la demande de cette
+    session : « Move the styles section after the scene section (as it is now but they can
+    fit together to save a line »). Les deux boîtes restent DEUX boîtes — chacune sa teinte,
+    son titre et son filet, donc la séparation que la demande précédente exigeait (« it should
+    be clear that they are separated ») reste lisible — mais elles ne sont plus deux frères de
+    la grande rangée de §2, où la seule largeur décidait si elles partageaient une ligne :
+    elles vivent dans LEUR rangée, qui ne se coupe JAMAIS. C'est le gabarit de la bande
+    🎞 Movie maker de §1 (`w-full` + défilement horizontal) : sur un panneau étroit la rangée
+    défile au lieu de repousser 🎨 Styles sous 🌫 Scene, donc les deux sections coûtent
+    TOUJOURS une seule ligne — celle que la demande voulait économiser. */}
+<div className="flex items-center gap-1 w-full overflow-x-auto">
+<div className="flex flex-wrap items-center gap-1 rounded-md border border-sky-200 bg-sky-50/40 px-1.5 py-1 shrink-0">
 <span className="text-[9px] font-black text-sky-700 uppercase tracking-wide whitespace-nowrap" title="The scene the structure is drawn in: NGL's depth fog, the background colour, the shadows and the one light that casts them, the clipping plane, and the high-resolution still (✨ Ray, with its resolution, its alpha and its cast shadows).">🌫 Scene</span>
 <button type="button" onClick={() => setFogEnabled((v) => !v)}
   className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 ${fogEnabled ? 'bg-sky-100 border-sky-400 text-sky-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
@@ -22685,7 +22799,7 @@ title={kfMsg || (videoReady.ok ? keyframeFilmSummary(keyframes.length, kfPlanNow
     Les « setups » de l'ancienne bande sont repris une fois comme thèmes du même
     nom (la migration est en tête du composant, à côté de l'état des thèmes). */}
 <span className="w-px h-6 bg-slate-200 shrink-0" aria-hidden="true" />
-<div className="flex flex-wrap items-center gap-1 rounded-md border border-teal-200 bg-teal-50/40 px-1.5 py-1">
+<div className="flex flex-wrap items-center gap-1 rounded-md border border-teal-200 bg-teal-50/40 px-1.5 py-1 shrink-0">
 <span className="text-[9px] font-black text-teal-700 uppercase tracking-wide whitespace-nowrap" title={`Save / load the whole visualisation look under a NAME: every molecule style, its colour, its radii, the labels, Fog / Shadows / Clipping / Background, the light and its colour… ${stylesSavedTitle}`}>🎨 Styles</span>
 <input
 type="text"
@@ -22763,6 +22877,14 @@ className="border border-amber-300 rounded-md px-1.5 py-1 text-[11px] bg-white o
 )}
 </div>
 
+</div>
+
+{/* ⚠ LA RANGÉE DE 🌫 SCENE │ 🎨 STYLES SE REFERME ICI — le `</div>` ci-dessus est celui de
+    leur rangée (ouverte sur `flex items-center gap-1 w-full overflow-x-auto`), pas celui de la
+    boîte 🎨 Styles. Les cinq groupes de §2 restent donc dans l'ordre, mais les deux premiers ne
+    sont plus séparables par la largeur : ils coûtent une ligne, toujours une. Le filet qui dit
+    où finit 🌫 Scene et où commence 🎨 Styles est resté À L'INTÉRIEUR de cette rangée, donc la
+    séparation est intacte. */}
 {/* ── LE SAUT DE LIGNE FORCÉ A ÉTÉ RETIRÉ — la demande de cette session : « between the
     “style” section and the “modify” section there is an empty line ». Il s'écrivait ici :
     un `<span>` vide, pleine largeur et SANS HAUTEUR, dont le seul effet était de couper la
@@ -23026,58 +23148,15 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
   title="Show or hide the 🪢 Ramachandran window INSIDE the viewer: the φ/ψ map of the peptide backbone on screen (φ = C(i−1)·N·CA·C, ψ = N·CA·C·N(i+1)), read with the same signed-IUPAC dihedral reader as the χ/δ readers — there is no second dihedral reader in this app (utils/torsionDrive.js) — one point per residue. The window sits at the LEFT of the 3D view (expandable · compressible) and this button closes it again. ⚠ It is a PLAN, not a calculation: no potential, no energy, and a point outside the regions is not “wrong”, it is outside the regions. The reading is a SNAPSHOT of the coordinates — taken when the window opens, and re-taken by its ⟳ Read — and it FOLLOWS the three gestures that move the molecule (🧬 Structure calculation, ▶ MD, ⚒ Minimise): one more reading after every image they write, so the points never describe a conformation the molecule has left.">
   🪢 Ramachandran{rama && rama.measured ? ` (${rama.measured})` : ''}
 </button>
-{/* ⚡ ESP — the electrostatic-potential surface of the molecule selected in the
-    Molecules bar. It sits in ✏️ Modify (the request: « anche il pulsante ESP
-    dovrebbe piuttosto apparire nella sezione modify »): it MODIFIES what is on
-    screen — a translucent surface coloured by the Coulomb potential of the
-    charges (red = negative, white ≈ neutral, blue = positive) — exactly like
-    ⚗️ Rebuild H or ✏️ Atom names beside it. Clicking again removes the surface,
-    and the ⚡ Range readout below appears while one is on, for the two potentials
-    that give it its colour scale (kcal/mol). */}
-<button
-type="button"
-onClick={() => espToggle(selectedMolKey)}
-disabled={!espTargetComp}
-title={espBtnTitle}
-className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed ${espOnSelected ? 'bg-fuchsia-100 border-fuchsia-400 text-fuchsia-800 hover:bg-fuchsia-200' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
->
-{espOnSelected ? '⚡ ESP: On' : '⚡ ESP'}
-</button>
-{(espOnSelected || catEspActive) && (
-  <div className="flex items-center gap-1.5 bg-white border border-fuchsia-200 rounded-lg px-2 py-1 text-[10px] text-slate-600 h-8 whitespace-nowrap" title="Electrostatic colour-scale limits in kcal/mol. Surface potentials at or below −N are drawn full RED (negative), 0 is white (neutral) and at or above +P full BLUE (positive). NGL's default ±50 is so wide that most surfaces look white — tighten the range to make the red and blue poles visible. Applies live (no surface rebuild) via Apply / Enter.">
-    <span className="font-black text-fuchsia-700 uppercase tracking-wide">⚡ Range</span>
-    <span className="font-bold text-red-600">−</span>
-    <input
-      type="number"
-      min="0.5"
-      max="500"
-      step="1"
-      value={Math.round(espLimits[0] * 10) / 10}
-      onChange={(e) => { const v = parseFloat(e.target.value); setEspLimits((p) => [Number.isFinite(v) && v > 0 ? Math.min(500, v) : p[0], p[1]]); }}
-      onKeyDown={espApplyLimitsOnEnter}
-      className="w-12 border border-slate-300 rounded px-1 py-0.5 text-right outline-none focus:border-fuchsia-400 text-[10px] font-mono"
-      aria-label="Negative ESP limit (red)"
-    />
-    <span className="text-slate-400 font-bold">0</span>
-    <span className="font-bold text-blue-600">+</span>
-    <input
-      type="number"
-      min="0.5"
-      max="500"
-      step="1"
-      value={Math.round(espLimits[1] * 10) / 10}
-      onChange={(e) => { const v = parseFloat(e.target.value); setEspLimits((p) => [p[0], Number.isFinite(v) && v > 0 ? Math.min(500, v) : p[1]]); }}
-      onKeyDown={espApplyLimitsOnEnter}
-      className="w-12 border border-slate-300 rounded px-1 py-0.5 text-right outline-none focus:border-fuchsia-400 text-[10px] font-mono"
-      aria-label="Positive ESP limit (blue)"
-    />
-    <span>kcal/mol</span>
-    <button type="button" onClick={() => espApplyLimits()} className="px-1.5 py-0.5 rounded border bg-fuchsia-50 border-fuchsia-300 text-fuchsia-700 hover:bg-fuchsia-100 font-bold">Apply</button>
-    <button type="button" onClick={() => espApplyLimits(10, 10)} className="px-1.5 py-0.5 rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-50 font-semibold" title="Preset: red ≤ −10, blue ≥ +10 kcal/mol">±10</button>
-    <button type="button" onClick={() => espApplyLimits(25, 25)} className="px-1.5 py-0.5 rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-50 font-semibold" title="Preset: red ≤ −25, blue ≥ +25 kcal/mol">±25</button>
-    <button type="button" onClick={() => espApplyLimits(50, 50)} className="px-1.5 py-0.5 rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-50 font-semibold" title="NGL's original wide range ±50 — only the strongest charges reach red/blue">±50</button>
-  </div>
-)}
+{/* ⚡ ESP A DÉMÉNAGÉ — la demande de cette session : « Move the ESP button in the analysis
+    section in line with measure button. » Il vit donc dans le groupe 📏 Analysis, à côté de
+    📏 Measure (voir plus bas, son bouton ET son ⚡ Range) : c'est une LECTURE de la molécule
+    mise à l'écran — un potentiel qui se regarde, comme la distance qui se mesure — et non un
+    geste qui MODIFIE la molécule, comme ⚗️ Rebuild H ou ✏️ Atom names qui l'entouraient ici.
+    ⚠ Rien n'est perdu : c'est le MÊME bouton, le même état `espMolKeys` et la même surface; le
+    🔢 Renumber ci-dessous reste seul maître de sa liste, dans ✏️ Modify. */}
+{/* ⚡ Range (les deux bornes du dégradé, en kcal/mol) est parti AVEC le bouton, dans
+    📏 Analysis : les deux entrées ESP ne doivent jamais se séparer (voir plus bas). */}
 {/* 🔢 Renumber — the button AND its list live in ✏️ Modify (the request: « la
     lista per il renumbering … dovrebbe piuttosto apparire nella sezione
     modify »): the panel lists every residue and the number it will take, and the
@@ -23144,6 +23223,59 @@ title={measurePending ? 'Cancel the pending first atom and remove all drawn dist
 >
 ✕ Clear distances
 </button>
+)}
+{/* ⚡ ESP — la surface de potentiel électrostatique de la molécule choisie dans la barre des
+    Molecules. Il vit ICI depuis cette session (la demande : « Move the ESP button in the
+    analysis section in line with measure button ») : c'est une LECTURE de ce qui est à
+    l'écran — une carte du potentiel de Coulomb des charges (rouge = négatif, blanc ≈ neutre,
+    bleu = positif) qui se regarde, exactement comme la distance de 📏 Measure juste à côté.
+    Cliquer de nouveau RETIRE la surface, et le ⚡ Range ci-dessous n'apparaît que pendant
+    qu'une surface est allumée, pour les deux potentiels qui donnent son échelle (kcal/mol).
+    ⚠ LA SURFACE ELLE-MÊME N'A PAS BOUGÉ : ni sa représentation NGL, ni son jeu de couleurs
+    (`lab-esp`), ni son état (`espMolKeys`) — seule sa place dans la barre change. */}
+<button
+type="button"
+onClick={() => espToggle(selectedMolKey)}
+disabled={!espTargetComp}
+title={espBtnTitle}
+className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed ${espOnSelected ? 'bg-fuchsia-100 border-fuchsia-400 text-fuchsia-800 hover:bg-fuchsia-200' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+>
+{espOnSelected ? '⚡ ESP: On' : '⚡ ESP'}
+</button>
+{(espOnSelected || catEspActive) && (
+  <div className="flex items-center gap-1.5 bg-white border border-fuchsia-200 rounded-lg px-2 py-1 text-[10px] text-slate-600 h-8 whitespace-nowrap" title="Electrostatic colour-scale limits in kcal/mol. Surface potentials at or below −N are drawn full RED (negative), 0 is white (neutral) and at or above +P full BLUE (positive). NGL's default ±50 is so wide that most surfaces look white — tighten the range to make the red and blue poles visible. Applies live (no surface rebuild) via Apply / Enter.">
+    <span className="font-black text-fuchsia-700 uppercase tracking-wide">⚡ Range</span>
+    <span className="font-bold text-red-600">−</span>
+    <input
+      type="number"
+      min="0.5"
+      max="500"
+      step="1"
+      value={Math.round(espLimits[0] * 10) / 10}
+      onChange={(e) => { const v = parseFloat(e.target.value); setEspLimits((p) => [Number.isFinite(v) && v > 0 ? Math.min(500, v) : p[0], p[1]]); }}
+      onKeyDown={espApplyLimitsOnEnter}
+      className="w-12 border border-slate-300 rounded px-1 py-0.5 text-right outline-none focus:border-fuchsia-400 text-[10px] font-mono"
+      aria-label="Negative ESP limit (red)"
+    />
+    <span className="text-slate-400 font-bold">0</span>
+    <span className="font-bold text-blue-600">+</span>
+    <input
+      type="number"
+      min="0.5"
+      max="500"
+      step="1"
+      value={Math.round(espLimits[1] * 10) / 10}
+      onChange={(e) => { const v = parseFloat(e.target.value); setEspLimits((p) => [p[0], Number.isFinite(v) && v > 0 ? Math.min(500, v) : p[1]]); }}
+      onKeyDown={espApplyLimitsOnEnter}
+      className="w-12 border border-slate-300 rounded px-1 py-0.5 text-right outline-none focus:border-fuchsia-400 text-[10px] font-mono"
+      aria-label="Positive ESP limit (blue)"
+    />
+    <span>kcal/mol</span>
+    <button type="button" onClick={() => espApplyLimits()} className="px-1.5 py-0.5 rounded border bg-fuchsia-50 border-fuchsia-300 text-fuchsia-700 hover:bg-fuchsia-100 font-bold">Apply</button>
+    <button type="button" onClick={() => espApplyLimits(10, 10)} className="px-1.5 py-0.5 rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-50 font-semibold" title="Preset: red ≤ −10, blue ≥ +10 kcal/mol">±10</button>
+    <button type="button" onClick={() => espApplyLimits(25, 25)} className="px-1.5 py-0.5 rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-50 font-semibold" title="Preset: red ≤ −25, blue ≥ +25 kcal/mol">±25</button>
+    <button type="button" onClick={() => espApplyLimits(50, 50)} className="px-1.5 py-0.5 rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-50 font-semibold" title="NGL's original wide range ±50 — only the strongest charges reach red/blue">±50</button>
+  </div>
 )}
 <button
 type="button"

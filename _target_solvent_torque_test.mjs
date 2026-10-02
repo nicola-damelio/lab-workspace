@@ -407,8 +407,16 @@ has(VIEW, "extraCompsRef.current.filter((e) => String(e.id).startsWith('solv_'))
   '⚠ UNE SEULE BOÎTE À LA FOIS (le préfixe `solv_`, le même critère que `fam_`)');
 has(VIEW, 'const label = `💧 water box ${s.edge} Å · ${s.molecules} TIP3P`;',
   '…elle se nomme par ce que le module a construit (son arête, son nombre d’eaux — aucun chiffre du JSX)');
-eq(VIEW.split('calcDrawWaterBox(geom).catch(() => {});').length - 1, 3,
-  '⚠ les TROIS gestes qui construisent la boîte la dessinent (▶ Run du 🧬, ▶ MD et ⚒ Minimise)');
+has(VIEW, 'const calcRemoveWaterBox = () => {',
+  '💧 …et elle a un RETRAIT nommé (le solvant redevient implicite : une eau hors du champ ne reste pas à l’écran)');
+has(VIEW, 'const waterBoxSeqRef = useRef(0);',
+  '…protégé par un JETON de dessin : deux `loadFile` concurrents ne peuvent plus empiler deux boîtes (ni n’en laisser zéro)');
+has(VIEW, 'if (seq !== waterBoxSeqRef.current) {',
+  '…un dessin périmé LÂCHE sa molécule au lieu de la poser par-dessus la nouvelle');
+has(VIEW, 'useEffect(() => {\n  if (status !== \'ready\') return undefined;\n  const explicit = structureCalcSolventIsExplicit(mdSolvent);',
+  '⚠ …et le CHOIX du solvant explicite (et l’arête 📦) dessine la boîte TOUT SEUL, sans attendre un ▶');
+eq(VIEW.split('calcDrawWaterBox(geom).catch(() => {});').length - 1, 4,
+  '⚠ les TROIS gestes qui construisent la boîte la dessinent (▶ Run du 🧬, ▶ MD et ⚒ Minimise) — ET l’aperçu du panneau, qui la montre dès qu’on la demande');
 has(VIEW, 'They are drawn in the view as their own molecule',
   '…et le rapport du geste le DIT, donc le lecteur sait où regarder (et comment la cacher)');
 
