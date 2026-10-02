@@ -18,11 +18,11 @@ import { blobStore } from '../utils/blobStore';
 import { archiveRestoreJson, isMissingValue, placeRestorePointer, pointerStillWanted, restoreJsonFor, restoreRawFileFor, restoreStems, sameRawFileFor, takePendingRestorePointer, wantedRawNames } from '../utils/driveRestore';
 import { useDriveAutoRestore } from './useDriveAutoRestore';
 import { sequenceForMoleculeType, sequencePatchForMoleculeType, structureSequencePatch, sequenceNaturesNote } from '../utils/sequenceNatures';
-// 🧬 LA LECTURE D'UNE SÉQUENCE — le module PUR (le pKa de CHAQUE chaîne latérale et les deux
-// terminus : utils/sequenceCharge.js) et la ligne COMPACTE qui la montre SOUS une case de
-// séquence. La case « … Sequence (1-letter code) » de cette page rend la MÊME ligne que la
-// fiche du composé de la Librairie (src/components/SequenceReadingLine.jsx) : une seule copie.
-import { proteinSequenceReadingOf } from '../utils/sequenceCharge';
+/* 🧬 LA LECTURE D'UNE SÉQUENCE — la ligne COMPACTE qui la montre SOUS une case de séquence
+   (src/components/SequenceReadingLine.jsx) : c'est ELLE qui lit le module PUR (le pKa de CHAQUE
+   chaîne latérale et les deux terminus : utils/sequenceCharge.js). La case « … Sequence
+   (1-letter code) » de cette page rend la même ligne que la fiche du composé de la Librairie et
+   que les cases des pages MD et Docking : une seule copie, un seul calcul. */
 import { SequenceReadingLine } from './SequenceReadingLine';
 // LE numéro affiché d'un résidu (position + residueOffset → table resRenumber du
 // viewer 🔢) : une seule règle pour la table des déplacements, la bande de
@@ -5216,23 +5216,18 @@ const generatedStructure = useMemo(() => {
   const show2DFormula = d.moleculeType === 'organic' ? Boolean(activeTest.smiles) : Boolean(d.structure);
   const showPaintStrip = !univTestMode && d.moleculeType === 'protein' && d.parsedSeq.length > 0;
 
-  /* 🧬 LA LECTURE DE LA SÉQUENCE — SOUS LA CASE DE CETTE PAGE, EXACTEMENT COMME SOUS CELLE DE
-     LA FICHE DU COMPOSÉ : le nombre de chaque acide aminé, la charge totale à pH 7 et l'ε₂₈₀.
+  /* 🧬 LA LECTURE DE LA SÉQUENCE — SOUS LA CASE DE CETTE PAGE, EXACTEMENT COMME SOUS TOUTES LES
+     AUTRES CASES DE SÉQUENCE : le nombre de chaque acide aminé, la charge totale à pH 7 et l'ε₂₈₀.
      LA DEMANDE : « Under the sequence field please write the number of each type of aminoacids,
      the total charge at pH 7 and the estimated molar extinction coefficient. »
-     ⚠ LE MÊME MODULE ET LE MÊME TEXTE QUE PARTOUT : la charge vient de utils/sequenceCharge.js
-     (le pKa de CHAQUE chaîne latérale, les deux terminus GRATUITS par défaut — « If the
-     sequence is written directly into the sequence space, assume free termini » — puis
-     capuchonnés par le texte de modifications de la condition, celui que la définition du
-     composé a semé plus haut dans CE composant). La ligne de cette case, celle de la Librairie
-     et la charge du ⚙ Params & Constraints ne peuvent donc pas se contredire.
+     ⚠ C'EST `SequenceReadingLine` QUI CALCULE — avec le module utils/sequenceCharge.js (le pKa de
+     CHAQUE chaîne latérale, les deux terminus GRATUITS par défaut — « If the sequence is written
+     directly into the sequence space, assume free termini » —, capuchonnés par le texte de
+     modifications de la condition, celui que la définition du composé a semé plus haut dans CE
+     composant) : la ligne de cette case, celle de la Librairie et la charge du ⚙ Params &
+     Constraints ne peuvent donc pas se contredire.
      Seule une PROTÉINE a une composition d'acides aminés : pour un ADN / ARN, un sucre, un
      lipide ou une molécule organique la lecture n'existe pas et rien n'est rendu. */
-  const seqReading = useMemo(() => {
-    const raw = String(d.rawSequence || '').trim();
-    if (d.moleculeType !== 'protein' || !raw) return null;
-    return proteinSequenceReadingOf(raw, { modifications: activeTest.modifications || '', ph: 7 });
-  }, [d.moleculeType, d.rawSequence, activeTest.modifications]);
 
   return (
     <div className="flex flex-col gap-6">
@@ -5286,9 +5281,14 @@ const generatedStructure = useMemo(() => {
                 <p className="text-[10px] text-slate-400 mt-1 font-bold">Length: {d.seq.length} {d.moleculeType === 'protein' ? 'residues' : 'nucleotides'} (valid: {d.validChars.split('').join(' ')})</p>
                 {/* 🧬 LA LECTURE DE LA SÉQUENCE — sous la CASE, sur toute la largeur : le
                     nombre de chaque acide aminé, la charge totale à pH 7 et l'ε₂₈₀ estimé.
-                    Le MÊME composant que la fiche du composé de la Librairie, lu par le MÊME
-                    module pur : voir le useMemo `seqReading` ci-dessus. */}
-                <SequenceReadingLine reading={seqReading} className="mt-1" />
+                    Le MÊME composant que TOUTES les autres cases de séquence (Librairie, MD,
+                    Docking), qui lit lui-même le module pur : voir l'en-tête ci-dessus. */}
+                <SequenceReadingLine
+                  sequence={d.rawSequence}
+                  moleculeType={d.moleculeType}
+                  modifications={activeTest.modifications || ''}
+                  className="mt-1"
+                />
                 {d.seqNaturesNote && (
                   <p className="text-[10px] font-bold text-teal-800 bg-teal-50 border border-teal-200 rounded-lg px-2 py-1 mt-1">{d.seqNaturesNote}</p>
                 )}

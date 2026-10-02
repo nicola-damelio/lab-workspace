@@ -1847,4 +1847,63 @@ free C-term · ε₂₈₀ 0 M⁻¹cm⁻¹ », les capuchons dits, et RIEN pour 
 absente. `node _viewer_render_smoke_test.mjs` — la page NMR monte et rend son
 HTML. `npx oxlint src/components/SequenceReadingLine.jsx` — 0 erreur.
 
+---
+
+## « all pages » : la même lecture sous CHAQUE case de séquence — et le calcul descend dans la ligne (02/10/2026)
+
+Demandé mot pour mot, en deux temps : « Show the sequence reading line (per-AA
+counts · net charge at pH 7 · ε₂₈₀) under the sequence field **on all pages** —
+not just NMR, but MD and Docking too. »
+
+**Où l'on ne la voyait pas encore.** L'entrée précédente croyait l'application
+servie : elle parlait de « LES DEUX cases de séquence » (la fiche du composé de la
+Librairie et la case de la page NMR). L'application en a **quatre** : le même
+panneau « … Sequence (1-letter code) », écrit par `{d.typeLabel}`, vit dans
+**trois** modules de page — `NMRSections.jsx`, `MDSections.jsx` et
+`DockingSections.jsx` —, et seule la première était câblée. Un balayage du
+dossier (`grep 'Sequence (1-letter code)'`) donne la liste ; c'est ce balayage qui
+a révélé les deux cases oubliées, pas un rapport de bug.
+
+Ce qui a changé :
+
+* **LE CALCUL DESCEND DANS LA LIGNE** — `SequenceReadingLine` accepte maintenant
+  les **ingrédients** (`sequence` · `modifications` · `moleculeType`, pH 7 par
+  défaut) et fait la lecture lui-même (`useMemo`, module pur
+  `utils/sequenceCharge.js`) ; il accepte toujours un `reading` déjà fait (la
+  fiche de la Librairie, dont la case est du HTML, lui passe
+  `stripHtml(sequence)`). Conséquence : **une case de séquence s'écrit en une
+  ligne**, et elle ne peut ni oublier les modifications du composé, ni prendre un
+  autre pH, ni oublier que seules les protéines ont une composition d'acides
+  aminés. Les deux `useMemo` `seqReading` des appelants — et leurs imports du
+  module — ont disparu : une seule porte d'entrée, un seul calcul ;
+* **MD et Docking rendent la ligne** sous leur case, au même endroit que NMR :
+  juste après « Length: N residues » et avant la note de nature, avec les mêmes
+  ingrédients (`d.rawSequence`, `d.moleculeType`, `activeTest.modifications`) ;
+* **une garde pour la prochaine case** — la suite exige désormais : tout fichier
+  qui écrit « Sequence (1-letter code) » doit rendre `<SequenceReadingLine>`, et
+  **une seule fois**. Ajouter un cinquième panneau de séquence sans sa ligne
+  fera échouer `_sequence_charge_test.mjs` ;
+
+Ce qui n'a **pas** changé : le modèle (le pKa de chaque chaîne latérale, les
+terminus libres par défaut puis capuchonnés), le pH 7, l'ε₂₈₀ de Pace, la bulle
+d'aide, et le ⚙ « Params & Constraints » (qui, lui, lit ce modèle-là au pH de sa
+case). Ni la règle « rien pour un ADN / ARN / sucre / lipide » : la nature du
+composé est la porte d'entrée des DEUX façons d'appeler la ligne.
+
+*Vérifier :* `node _sequence_charge_test.mjs` — **138 assertions** : les QUATRE
+cases (Librairie, NMR, MD, Docking) et une seule porte d'entrée pour le calcul.
+`node _sequence_line_render_test.mjs` — **32 assertions, 12 cas rendus pour de
+vrai** (SSR) : les deux façons d'appeler la ligne donnent **le même texte** ; une
+séquence coupée par un retour à la ligne donne les mêmes nombres ; le **piège du
+HTML** est montré (« 37 aa » au lieu de 31 quand on passe la séquence brute d'un
+`RichTextEditor` — d'où `stripHtml` côté Librairie) ; **rien** pour un ADN, un
+sucre, une case vide ou des espaces seuls. Et les voisins : `_sequence_natures_test.mjs`
+(155), `_compact_sections_test.mjs` (211), `_condition_page_test.mjs` (123),
+`_cysteine_panel_layout_test.mjs` (50), `_residue_numbering_panels_test.mjs` (78),
+`_md_analysis_cache_test.mjs` (78), `_md_axis_cfg_test.mjs` (73),
+`_docking_scatter_card_test.mjs` (19), `_docking_sanity.cjs`,
+`_docking_scatter_test.cjs`. `node _verify.cjs` — 36 suites, **0 échec**.
+`npx oxlint` sur les 5 fichiers touchés — 0 erreur (et **0 avertissement** sur la
+ligne elle-même).
+
 

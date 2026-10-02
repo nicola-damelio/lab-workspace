@@ -11,13 +11,11 @@ import { RichTextEditor } from '../RichTextEditor';
 import { LinksManager } from './librarySections';
 import { CALC_INPUT_CLS, CALC_LABEL_CLS } from '../../utils/styles';
 import { stripHtml, calculateSequenceInfo, generateDnaFromProtein, calculateSmilesInfoAsync } from '../../utils/sequenceInfo';
-/* 🧬 LA CHARGE D'UNE SÉQUENCE (et sa composition, et son ε₂₈₀) — le module PUR qui connaît le
-   pKa de CHAQUE chaîne latérale et les deux terminus. C'est lui qui écrit la ligne sous la
-   case de séquence, et lui que le ⚙ « Params & Constraints » lit pour le pH (la demande de
-   cette session). */
-import { proteinSequenceReadingOf } from '../../utils/sequenceCharge';
-/* 🧬 LA LIGNE SOUS LA CASE DE SÉQUENCE — le MÊME rendu que la case de séquence de la page NMR
-   (une seule copie du JSX, voir src/components/SequenceReadingLine.jsx). */
+/* 🧬 LA LIGNE SOUS LA CASE DE SÉQUENCE — la composition, la charge à pH 7 et l'ε₂₈₀. Le
+   composant partagé (src/components/SequenceReadingLine.jsx) la calcule lui-même avec le
+   module PUR des pKa (utils/sequenceCharge.js) : la MÊME ligne sous TOUTES les cases de
+   séquence de l'application (cette fiche, et les cases des pages NMR, MD et Docking), et le
+   MÊME modèle que le ⚙ « Params & Constraints » lit pour le pH. */
 import { SequenceReadingLine } from '../SequenceReadingLine';
 import { getMolecularWeightFromFormula } from '../DefinitionsExtra';
 
@@ -97,16 +95,13 @@ export const CompoundDefinitionSection = ({
       modifications: modText
     });
   }, [type, sequence, modText]);
-  /* 🧬 LA LECTURE DE LA SÉQUENCE — la composition, la charge à pH 7 et l'ε₂₈₀, recalculées avec
-     la séquence ET le texte des modifications (un capuchon change la charge). Rien n'est
-     calculé pour un type qui n'a pas d'acides aminés : la ligne n'existerait pas.
-     ⚠ LA CASE EST DU HTML (RichTextEditor) : le module lit `stripHtml(sequence)` — sinon les
+  /* 🧬 LA LECTURE DE LA SÉQUENCE — la composition, la charge à pH 7 et l'ε₂₈₀ : c'est
+     `SequenceReadingLine` qui la calcule (le module pur des pKa) avec la séquence ET le texte
+     des modifications (un capuchon change la charge), et rien du tout pour un type qui n'a pas
+     d'acides aminés.
+     ⚠ LA CASE EST DU HTML (RichTextEditor) : on lui passe `stripHtml(sequence)` — sinon les
      lettres des BALISES (« div », « br »…) se compteraient comme des acides aminés. */
-  const seqReading = useMemo(() => {
-    if (type !== 'protein') return null;
-    if (!stripHtml(sequence).trim()) return null;
-    return proteinSequenceReadingOf(stripHtml(sequence), { modifications: modText, ph: 7 });
-  }, [type, sequence, modText]);
+
 
   const dnaPreview = useMemo(() => {
     if (type !== 'protein' || !stripHtml(sequence).trim()) return '';
@@ -455,11 +450,17 @@ export const CompoundDefinitionSection = ({
           et les deux terminus GRATUITS par défaut (la règle : « If the sequence is written
           directly into the sequence space, assume free termini »), retirés quand les
           Modifications le disent. C'est la MÊME lecture que le pH du ⚙ Params & Constraints.
-          ⚠ ET LA MÊME LIGNE QUE CELLE DE LA CASE DE SÉQUENCE DE LA PAGE NMR : le rendu et son
-          explication vivent dans SequenceReadingLine (src/components/SequenceReadingLine.jsx)
-          — une seule copie, donc deux cases qui ne peuvent pas diverger. Ici la séquence est
-          encore du HTML (RichTextEditor) : le module lit `stripHtml(sequence)`. */}
-      <SequenceReadingLine reading={seqReading} className="mb-4" />
+          ⚠ ET LA MÊME LIGNE QUE TOUTES LES AUTRES CASES DE SÉQUENCE : le rendu, le calcul et
+          son explication vivent dans SequenceReadingLine (src/components/SequenceReadingLine.jsx,
+          qui lit lui-même le module pur) — une seule copie, donc des cases qui ne peuvent pas
+          diverger. Ici la séquence est encore du HTML (RichTextEditor) : on lui passe
+          `stripHtml(sequence)`. */}
+      <SequenceReadingLine
+        sequence={stripHtml(sequence)}
+        moleculeType={type}
+        modifications={modText}
+        className="mb-4"
+      />
 
       <div className="grid grid-cols-1 mb-4">
         <label className={CALC_LABEL_CLS}>Additional Notes</label>

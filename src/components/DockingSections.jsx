@@ -9,6 +9,13 @@ import { storeJson, loadJson } from '../utils/pdbStore';
 import { archiveRestoreJson, placeRestorePointer, restoreJsonFor, restoreStems, takePendingRestorePointer } from '../utils/driveRestore';
 import { useDriveAutoRestore } from './useDriveAutoRestore';
 import { sequenceForMoleculeType, sequencePatchForMoleculeType, structureSequencePatch, sequenceNaturesNote } from '../utils/sequenceNatures';
+/* 🧬 LA LIGNE SOUS LA CASE DE SÉQUENCE — le nombre de chaque acide aminé, la charge totale à
+   pH 7 et l'ε₂₈₀. Le composant partagé (src/components/SequenceReadingLine.jsx) calcule la
+   lecture lui-même avec le module PUR des pKa (utils/sequenceCharge.js) et le texte de
+   modifications de la condition : la MÊME ligne sous TOUTES les cases de séquence (les pages
+   NMR, MD et Docking, et la fiche du composé de la Librairie), et le MÊME modèle que le ⚙
+   « Params & Constraints » lit pour le pH. */
+import { SequenceReadingLine } from './SequenceReadingLine';
 // LE numéro affiché d'un résidu (position + residueOffset → table 🔢 du viewer) :
 // les pastilles de « Sequence and structure » montrent les mêmes numéros que le
 // viewer 3D et que la table des déplacements.
@@ -527,6 +534,17 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
               <p className="text-[10px] text-slate-400 mt-1 font-bold">
                 Length: {d.seq.length} {d.moleculeType === 'protein' ? 'residues' : 'nucleotides'}
               </p>
+              {/* 🧬 LA LECTURE DE LA SÉQUENCE — sous la CASE : le nombre de chaque acide aminé,
+                  la charge totale à pH 7 et l'ε₂₈₀ estimé. La MÊME ligne que sous les cases des
+                  pages NMR, MD et de la fiche du composé : elle la calcule elle-même avec le
+                  module pur des pKa, les modifications de la condition et des terminus GRATUITS
+                  par défaut. Rien pour un ADN / ARN (aucune composition d'acides aminés à dire). */}
+              <SequenceReadingLine
+                sequence={d.rawSequence}
+                moleculeType={d.moleculeType}
+                modifications={activeTest.modifications || ''}
+                className="mt-1"
+              />
               {d.seqNaturesNote && (
                 <p className="text-[10px] font-bold text-teal-800 bg-teal-50 border border-teal-200 rounded-lg px-2 py-1 mt-1">{d.seqNaturesNote}</p>
               )}

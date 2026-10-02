@@ -49,8 +49,12 @@ export const PROXY_STROKE_BY_TYPE = Object.freeze({
 export const LINKED_KINDS = Object.freeze({ spline: 1, tube: 1, bond: 1, ball: 1 });
 export const BACKBONE_ONLY_KINDS = Object.freeze({ spline: 1, tube: 1 });
 export const FLAT_STROKE_BY_TYPE = Object.freeze({ cartoon: 1, ribbon: 1 });
-export const BAND_MAX_PROXIES = 60000;
+// Increased caps to allow dense tiling of wide ribbons
+export const BAND_MAX_ACROSS = 20;
+export const BAND_MAX_ALONG = 20;
+export const BAND_MAX_PROXIES = 80000;
 const BAND_MIN_THICKNESS = 0.15;
+const BAND_TAPER = 1.6;
 const LINK_STEP_MIN = 0.3;
 const LINK_MAX = 4.2;
 
@@ -676,11 +680,8 @@ export const bandSectionsOf = (rep, el = null) => {
   return sections.length >= 2 ? sections : null;
 };
 
-// ============================================================================
-// NEW METHOD: TUBE APPROXIMATION
-// Instead of tiling the ribbon with tiny spheres, we approximate it as a tube
-// by placing spheres along the spine with radius = ribbon width.
-// ============================================================================
+// FIXED: Tile the ribbon with SMALL spheres (0.25 Å radius) at HIGH DENSITY
+// to create a smooth shadow that matches the ribbon width, not a giant blob.
 const bandBrushOf = (sections, opacity = 1) => {
   const outPositions = [], outRadii = [];
   const push = (x, y, z, r) => {
@@ -689,37 +690,39 @@ const bandBrushOf = (sections, opacity = 1) => {
     outRadii.push(r);
   };
   
+  // Small fixed radius for ribbon proxy spheres - matches the actual ribbon thickness
+  const r0 = 0.25;
+  // Target spacing for ~50% overlap between spheres
+  const stepTarget = 0.3;
+  
   for (let v = 0; v + 1 < sections.length; v += 1) {
     if (outRadii.length >= BAND_MAX_PROXIES) break;
     const a = sections[v], b = sections[v + 1];
     const dx = b.p[0] - a.p[0], dy = b.p[1] - a.p[1], dz = b.p[2] - a.p[2];
     const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
     if (!(len > 0) || !(len <= LINK_MAX * 3)) continue;
-
-    // Tube Approximation:
-    // Use the average width of the segment to determine spacing.
-    const avgHalf = (a.w + b.w) / 2;
-    // Minimum radius 0.5 Å to avoid tiny dots, max 3.0 Å to avoid huge blobs
-    const r0 = Math.max(0.5, Math.min(3.0, avgHalf));
     
-    // Target spacing: ~60% of radius for heavy overlap (smooth tube)
-    const stepTarget = r0 * 0.6;
-    const along = Math.max(1, Math.ceil(len / stepTarget));
-    
+    const along = Math.min(BAND_MAX_ALONG, Math.max(1, Math.ceil(len / stepTarget)));
     for (let i = 0; i <= along; i += 1) {
       if (outRadii.length >= BAND_MAX_PROXIES) break;
-      // Use i/along to cover the full segment including endpoints
-      const u = i / along;
+      const u = i / (along + 1);
       const px = a.p[0] + dx * u, py = a.p[1] + dy * u, pz = a.p[2] + dz * u;
-      
-      // Interpolate width
+      const dir = normalize3([
+        a.d[0] + (b.d[0] - a.d[0]) * u,
+        a.d[1] + (b.d[1] - a.d[1]) * u,
+        a.d[2] + (b.d[2] - a.d[2]) * u,
+      ]);
       const half = a.w + (b.w - a.w) * u;
+      if (!(half > 0) || !(length3(dir) > 0.5)) continue;
       
-      // Radius is the full half-width (creating a tube)
-      // Clamp to reasonable bounds
-      const r = Math.max(0.5, Math.min(3.0, half));
-      
-      push(px, py, pz, r);
+      const across = Math.min(BAND_MAX_ACROSS, Math.max(1, Math.ceil((2 * half) / stepTarget)));
+      const step = (2 * half) / across;
+      const r = r0;
+      for (let j = 0; j < across; j += 1) {
+        if (outRadii.length >= BAND_MAX_PROXIES) break;
+        const off = -half + (j + 0.5) * step;
+        push(px + dir[0] * off, py + dir[1] * off, pz + dir[2] * off, r);
+      }
     }
   }
   const count = outRadii.length;

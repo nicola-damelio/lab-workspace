@@ -30,10 +30,12 @@
        reconnaît pas) est chargé à pH 6 et neutre à pH 9, et une phosphorylation ajoute un
        phosphate (deux pKa, −1,39 e à pH 7) par unité écrite ;
      • LES CELLULES DE SÉQUENCE SONT CÂBLÉES — la ligne sous la case (composition · charge ·
-       ε₂₈₀) est rendue par UN SEUL composant (src/components/SequenceReadingLine.jsx), sous la
-       case de la fiche du composé de la Librairie COMME sous la case « … Sequence (1-letter
-       code) » de la page NMR ; la lecture du ⚙ Params & Constraints, elle, DIT si son chiffre
-       vient de la séquence ou du graphe, et reçoit les modifications de la fiche du composé.
+       ε₂₈₀) est rendue par UN SEUL composant (src/components/SequenceReadingLine.jsx), QUI LA
+       CALCULE AUSSI (pH 7, modifications, protéines seulement) : sous la case de la fiche du
+       composé de la Librairie ET sous la case « … Sequence (1-letter code) » des pages NMR, MD
+       et Docking — une case de séquence n'a donc rien à savoir du modèle, et ne peut pas
+       diverger des autres. La lecture du ⚙ Params & Constraints, elle, DIT si son chiffre vient
+       de la séquence ou du graphe, et reçoit les modifications de la fiche du composé.
 
    Run: node _sequence_charge_test.mjs
    ========================================================================= */
@@ -74,9 +76,15 @@ const SEQINFO = read('./src/utils/sequenceInfo.js');
 const COMPOUND = read('./src/components/AppModules/compoundDefinitionSection.jsx');
 const VIEW = read('./src/components/NMRMoleculeViewer.jsx');
 const PAGE = read('./src/components/NMRSections.jsx');
-/* LA LIGNE SOUS UNE CASE DE SÉQUENCE — le composant PARTAGÉ par les deux cases (Librairie et
-   page NMR) : c'est lui qui porte les trois choses de la demande et leur bulle d'aide. */
+/* LA LIGNE SOUS UNE CASE DE SÉQUENCE — le composant PARTAGÉ par TOUTES les cases (la fiche du
+   composé de la Librairie et les cases « … Sequence (1-letter code) » des pages NMR, MD et
+   Docking) : c'est lui qui porte les trois choses de la demande, leur bulle d'aide — et le
+   calcul, fait une seule fois pour tout le dossier. */
 const READING = read('./src/components/SequenceReadingLine.jsx');
+/* LES TROIS PAGES QUI ÉCRIVENT UNE CASE DE SÉQUENCE — « all pages » : chacune doit rendre la
+   ligne sous sa case (aucune ne recalcule la charge). */
+const MD = read('./src/components/MDSections.jsx');
+const DOCK = read('./src/components/DockingSections.jsx');
 /* LE PEPTIDE DU RAPPORT — 31 résidus, trois lysines, aucun acide latéral. */
 const REPORT_SEQ = 'SIIGIIMGILGNIPQVIQIIMSIVKAFKGNK';
 
@@ -263,54 +271,105 @@ near(phospho.net - twoPhospho.net, acid(2.15, 7) + acid(7.20, 7),
   '…et deux unités écrites en comptent deux fois autant', 1e-5);
 
 /* ── 8 · LA LIGNE ET LA SECONDE LECTURE SONT CÂBLÉES PAR CE MODULE-LÀ ───────────────────── */
-/* (a) LA LIGNE SOUS UNE CASE DE SÉQUENCE — UN SEUL RENDU POUR LES DEUX CASES : la fiche du
-   composé de la Librairie et la case « … Sequence (1-letter code) » de la page NMR. */
-has(READING, '{reading.length} aa', 'la ligne dit le NOMBRE DE RÉSIDUS');
-has(READING, 'compositionTextOf(reading.composition)',
+/* (a) LA LIGNE SOUS UNE CASE DE SÉQUENCE — UN SEUL COMPOSANT POUR TOUTES LES CASES : la fiche
+   du composé de la Librairie et les cases « … Sequence (1-letter code) » des pages NMR, MD et
+   Docking. ⚠ ET C'EST LUI QUI CALCULE : une case de séquence n'a rien à connaître du modèle. */
+has(READING, "import { proteinSequenceReadingOf, compositionTextOf, AA_SIDECHAIN_PKA, TERMINUS_PKA } from '../utils/sequenceCharge';",
+  'la ligne lit ELLE-MÊME le module pur (le pKa de chaque chaîne latérale : aucune table recopiée)');
+has(READING, 'const resolved = useMemo(',
+  '…dans une lecture mémorisée (elle suit la séquence, la nature ET les modifications)');
+has(READING, 'proteinSequenceReadingOf(sequence, { modifications, ph })',
+  '…calculée avec LA SÉQUENCE et LE TEXTE DES MODIFICATIONS de l’appelant');
+has(READING, "moleculeType = 'protein', modifications = '', ph = 7",
+  '⚠ pH 7 et nature « protéine » par défaut — une case n’a pas à les répéter');
+has(READING, "{\n    if (moleculeType !== 'protein') return null;\n    if (reading !== undefined) return reading;",
+  '⚠ seule une PROTÉINE a une composition d’acides aminés : la nature est la porte d’entrée des DEUX chemins');
+has(READING, 'return proteinSequenceReadingOf(sequence, { modifications, ph });',
+  '…sinon le composant calcule LUI-MÊME la lecture, à pH 7, avec les modifications reçues');
+has(READING, 'if (!resolved || !resolved.ok) return null;',
+  '⚠ une lecture absente — ou vide — ne rend RIEN (jamais une ligne muette)');
+has(READING, '{resolved.length} aa', 'la ligne dit le NOMBRE DE RÉSIDUS');
+has(READING, 'compositionTextOf(resolved.composition)',
   '…LE NOMBRE DE CHAQUE ACIDE AMINÉ (« A 1 · F 1 · G 4 … »)');
-has(READING, "net {reading.net >= 0 ? '+' : ''}{reading.net.toFixed(2)} e at pH 7",
+has(READING, "net {resolved.net >= 0 ? '+' : ''}{resolved.net.toFixed(2)} e at pH 7",
   '…LA CHARGE TOTALE À pH 7');
-has(READING, 'ε₂₈₀ {Math.round(reading.epsilon).toLocaleString()} M⁻¹cm⁻¹',
+has(READING, 'ε₂₈₀ {Math.round(resolved.epsilon).toLocaleString()} M⁻¹cm⁻¹',
   '…et l’ε₂₈₀ estimé, en M⁻¹cm⁻¹');
 has(READING, 'flex flex-wrap items-center gap-x-3 gap-y-1',
   '⚠ UNE ligne COMPACTE qui REMPLIT la largeur (flex-wrap, « utilising as much horizontal space »)');
 has(READING, 'free N-term', '…et les deux terminus y sont DITS (gratuits ou capuchonnés)');
-has(READING, 'if (!reading || !reading.ok) return null;',
-  '⚠ une lecture absente — ou vide — ne rend RIEN (jamais une ligne muette)');
 has(READING, 'utils/sequenceCharge.js — the pKa of EVERY side chain',
   '…et sa bulle d’aide DIT d’où vient la charge (le module pur, jamais le graphe)');
 has(READING, '${TERMINUS_PKA.nTerm}', '…en citant les pKa des DEUX terminus du module');
 gone(READING, 'nW * 5500', '⚠ aucune règle d’ε₂₈₀ recopiée : le chiffre vient de l’analyseur du dossier');
 
-/* (a1) LA CASE DE LA LIBRAIRIE — la fiche du composé. */
-has(COMPOUND, "import { proteinSequenceReadingOf } from '../../utils/sequenceCharge';",
-  'la fiche de la Librairie lit CE module (aucune charge recalculée dans le JSX)');
+/* LE BLOC DE LA LIGNE, dans un appelant — de `<SequenceReadingLine` à son `/>` : c’est là que
+   doivent se lire la séquence, la nature et les modifications. */
+const lineBlockOf = (src) => {
+  const start = src.indexOf('<SequenceReadingLine');
+  if (start < 0) return '';
+  return src.slice(start, src.indexOf('/>', start));
+};
+const lineOf = (src, name) => {
+  eq(src.split('<SequenceReadingLine').length - 1, 1,
+    `[${name}] UNE seule ligne sous la case de séquence (jamais deux copies)`);
+  return lineBlockOf(src);
+};
+
+/* (a1) LA CASE DE LA LIBRAIRIE — la fiche du composé (sa case est du HTML). */
+const LIB_LINE = lineOf(COMPOUND, 'Librairie');
 has(COMPOUND, "import { SequenceReadingLine } from '../SequenceReadingLine';",
-  '…et rend LA ligne partagée (une seule copie du JSX dans tout le dossier)');
-has(COMPOUND, 'return proteinSequenceReadingOf(stripHtml(sequence), { modifications: modText, ph: 7 });',
-  '…avec LA SÉQUENCE ET LE TEXTE DES MODIFICATIONS, à pH 7 (la demande)');
-has(COMPOUND, '⚠ LA CASE EST DU HTML (RichTextEditor) : le module lit `stripHtml(sequence)`',
-  '⚠ la case est du HTML : la lecture passe par stripHtml (les lettres des balises ne comptent pas)');
-has(COMPOUND, 'const seqReading = useMemo(() => {',
-  '…dans une lecture mémorisée (elle suit la séquence ET les modifications)');
-has(COMPOUND, '<SequenceReadingLine reading={seqReading} className="mb-4" />',
-  '…et c’est la ligne partagée qui est rendue, SOUS la case de séquence');
+  '[Librairie] le composant partagé est importé');
+has(LIB_LINE, 'sequence={stripHtml(sequence)}',
+  '⚠ [Librairie] la séquence DÉBALISÉE (RichTextEditor : les lettres des balises ne sont pas des acides aminés)');
+has(LIB_LINE, 'moleculeType={type}', '…la nature du composé (rien à dire pour un sucre ou un lipide)');
+has(LIB_LINE, 'modifications={modText}', '…et LE TEXTE DES MODIFICATIONS de la fiche (un capuchon change la charge)');
+has(LIB_LINE, 'className="mb-4"', '…sous la case, avec la marge de la fiche');
+gone(COMPOUND, 'proteinSequenceReadingOf', '⚠ [Librairie] la fiche ne calcule plus rien : le modèle vit dans la ligne');
+gone(COMPOUND, 'const seqReading = useMemo', '…plus de seconde lecture à tenir synchronisée');
 
 /* (a2) LA CASE DE LA PAGE NMR — « Molecular structure and visualization », la case où l’on écrit
    la séquence d’une condition et où la demande voulait cette information. */
-has(PAGE, "import { proteinSequenceReadingOf } from '../utils/sequenceCharge';",
-  'la case de séquence de la page NMR lit le MÊME module pur');
+const NMR_LINE = lineOf(PAGE, 'NMR');
 has(PAGE, "import { SequenceReadingLine } from './SequenceReadingLine';",
-  '…et rend la MÊME ligne (le composant partagé, jamais une seconde copie)');
-has(PAGE, "if (d.moleculeType !== 'protein' || !raw) return null;",
-  '…seulement pour une PROTÉINE dont la case n’est pas vide');
-has(PAGE, "return proteinSequenceReadingOf(raw, { modifications: activeTest.modifications || '', ph: 7 });",
-  '…avec les modifications de la condition (celles que la fiche du composé sème) et à pH 7');
-has(PAGE, 'const seqReading = useMemo(() => {',
-  '…dans une lecture mémorisée (elle suit la séquence ET les modifications)');
-has(PAGE, '<SequenceReadingLine reading={seqReading} className="mt-1" />',
-  '…rendue SOUS la case, juste après la ligne « Length: … »');
-gone(PAGE, 'nW * 5500', '⚠ la page ne recalcule ni charge ni ε₂₈₀ : tout vient du module');
+  '[NMR] la case de séquence rend le MÊME composant (le composant partagé, jamais une seconde copie)');
+has(NMR_LINE, 'sequence={d.rawSequence}', '[NMR] …la séquence tapée dans la case');
+has(NMR_LINE, 'moleculeType={d.moleculeType}', '…la nature choisie au-dessus (Protein · DNA · RNA …)');
+has(NMR_LINE, "modifications={activeTest.modifications || ''}",
+  '…et les modifications de la condition (celles que la fiche du composé sème)');
+has(NMR_LINE, 'className="mt-1"', '…rendue sous la case');
+ok(PAGE.indexOf('<SequenceReadingLine') > PAGE.indexOf('Length: {d.seq.length}'),
+  '[NMR] la ligne est juste APRÈS la ligne « Length: … » de la case de séquence');
+gone(PAGE, 'proteinSequenceReadingOf', '⚠ [NMR] la page ne recalcule ni charge ni ε₂₈₀ : tout vient du composant');
+
+/* (a3) LA CASE DE LA PAGE MD — la même case de séquence, sous « Molecular structure ». */
+const MD_LINE = lineOf(MD, 'MD');
+has(MD, "import { SequenceReadingLine } from './SequenceReadingLine';",
+  '[MD] la case de séquence rend le MÊME composant (la demande : « all pages »)');
+has(MD_LINE, 'sequence={d.rawSequence}', '[MD] …la séquence tapée dans la case');
+has(MD_LINE, 'moleculeType={d.moleculeType}', '…la nature choisie au-dessus');
+has(MD_LINE, "modifications={activeTest.modifications || ''}", '…et les modifications de la condition');
+ok(MD.indexOf('<SequenceReadingLine') > MD.indexOf('Length: {d.seq.length}'),
+  '[MD] la ligne est juste APRÈS la ligne « Length: … » de la case de séquence');
+
+/* (a4) LA CASE DE LA PAGE DOCKING — la même case encore (la séquence du récepteur). */
+const DOCK_LINE = lineOf(DOCK, 'Docking');
+has(DOCK, "import { SequenceReadingLine } from './SequenceReadingLine';",
+  '[Docking] la case de séquence rend le MÊME composant');
+has(DOCK_LINE, 'sequence={d.rawSequence}', '[Docking] …la séquence tapée dans la case');
+has(DOCK_LINE, 'moleculeType={d.moleculeType}', '…la nature choisie au-dessus');
+has(DOCK_LINE, "modifications={activeTest.modifications || ''}", '…et les modifications de la condition');
+ok(DOCK.indexOf('<SequenceReadingLine') > DOCK.indexOf('Length: {d.seq.length}'),
+  '[Docking] la ligne est juste APRÈS la ligne « Length: … » de la case de séquence');
+gone(DOCK, 'proteinSequenceReadingOf', '⚠ [Docking] la page ne recalcule rien non plus');
+
+/* ⚠ TOUTES LES CASES DE SÉQUENCE DE L’APPLICATION SONT SERVIES : le fichier qui écrit la case
+   (« … Sequence (1-letter code) ») doit rendre la ligne — un panneau qui l’oublierait se voit ICI. */
+[['NMRSections', PAGE], ['MDSections', MD], ['DockingSections', DOCK],
+  ['compoundDefinitionSection', COMPOUND]].forEach(([name, src]) => {
+  if (name !== 'compoundDefinitionSection' && !src.includes('Sequence (1-letter code)')) return;
+  ok(src.includes('<SequenceReadingLine'), `⚠ ${name} écrit une case de séquence : la ligne doit y être`);
+});
 
 /* (b) LE ⚙ PARAMS & CONSTRAINTS — la seconde lecture, qui DIT d'où vient son chiffre. */
 has(VIEW, "import { sequenceChargeReportOf, AA_SIDECHAIN_PKA } from '../utils/sequenceCharge';",
@@ -357,8 +416,8 @@ eq(proteinSequenceReadingOf('AXBKU', { ph: 7 }).composition.unknown, ['X', 'B', 
 console.log(`_sequence_charge_test.mjs — ${passed} assertions OK `
   + '(🧬 la charge d’une séquence : le pKa de CHAQUE chaîne latérale, les deux terminus GRATUITS '
   + 'par défaut et capuchonnés par la fiche du composé — +3,00 e pour le peptide du rapport —, '
-  + 'la composition en une ligne, l’ε₂₈₀, et la ligne des DEUX cases de séquence — Librairie et '
-  + 'page NMR — câblée sur le même module)');
+  + 'la composition en une ligne, l’ε₂₈₀, et la ligne sous TOUTES les cases de séquence — '
+  + 'Librairie, NMR, MD et Docking — calculée par un seul composant sur le même module)');
 
 eq(phospho.groups[phospho.groups.length - 1].pka, [2.15, 7.20],
   '…le groupe phosphate PORTE ses deux pKa (aucun autre groupe n’en a deux)');
