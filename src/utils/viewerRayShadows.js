@@ -673,12 +673,9 @@ const bandBrushOf = (sections, opacity = 1) => {
     if (!(len > 0) || !(len <= LINK_MAX * 3)) continue;
     
     const r0 = Math.max(BAND_MIN_THICKNESS, Math.min(a.t, b.t), len * 0.02);
-    const avgHalf = (a.w + b.w) / 2;
-    const estAcross = Math.max(1, Math.ceil((2 * avgHalf) / (2 * r0 * 0.8)));
-    const estStep = (2 * avgHalf) / estAcross;
-    const estR = Math.max(r0, estStep / 1.2);
-    const along = Math.max(1, Math.ceil(len / (2 * estR * 0.8)));
-    
+    // Target step size for ~50% overlap between spheres
+    const stepTarget = r0 * 1.0; 
+    const along = Math.max(1, Math.ceil(len / stepTarget));
     for (let i = 0; i <= along; i += 1) {
       const u = i / (along + 1);
       const px = a.p[0] + dx * u, py = a.p[1] + dy * u, pz = a.p[2] + dz * u;
@@ -689,9 +686,9 @@ const bandBrushOf = (sections, opacity = 1) => {
       ]);
       const half = a.w + (b.w - a.w) * u;
       if (!(half > 0) || !(length3(dir) > 0.5)) continue;
-      const across = Math.max(1, Math.ceil((2 * half) / (2 * r0 * 0.8)));
+      const across = Math.max(1, Math.ceil((2 * half) / stepTarget));
       const step = (2 * half) / across;
-      const r = Math.max(r0, step / 1.2);
+      const r = Math.max(r0, step * 0.9);
       for (let j = 0; j < across; j += 1) {
         const off = -half + (j + 0.5) * step;
         push(px + dir[0] * off, py + dir[1] * off, pz + dir[2] * off, r);
@@ -712,12 +709,14 @@ export const bandProxiesOf = (comp) => {
   const brushes = [];
   let total = 0;
   let debug = '';
+  let foundFlat = false;
   list.forEach((el) => {
     try {
       const rep = (el && (el.repr || el)) || null;
       if (!rep || rep.visible === false) return;
       const kind = repTypeOf(rep, el);
-      if (!FLAT_STROKE_BY_TYPE[kind]) return;
+      if (!FLAT_STROKE_BY_TYPE[kind]) return; // Skip non-flat representations silently
+      foundFlat = true;
       const op = opacityOf(rep, el);
       if (op <= INVISIBLE_OPACITY) { if (!debug) debug = `type '${kind}' transparent`; return; }
       const geo = geometryOfRep(rep);
@@ -728,10 +727,10 @@ export const bandProxiesOf = (comp) => {
       if (!brush.count) { if (!debug) debug = `type '${kind}' brush empty`; return; }
       brushes.push(brush);
       total += brush.count;
-      debug = '';
+      debug = ''; // Success, clear any previous debug message
     } catch (e) { if (!debug) debug = `error: ${e.message}`; }
   });
-  if (!debug && !brushes.length) debug = 'no flat representations found';
+  if (!foundFlat && !debug) debug = 'no flat representations found';
   if (!brushes.length) return { ...empty, debug };
   const positions = new Float32Array(total * 3);
   const radii = new Float32Array(total);
@@ -977,7 +976,7 @@ export const cameraFromViewer = (viewer) => {
   const cam = (viewer && (viewer.camera || viewer.perspectiveCamera || viewer.orthographicCamera)) || null;
   const viewOffset = cam && cam.view;
   if (viewOffset && viewOffset.enabled === true) {
-    throw new Error('the camera is inside a tile of a ✨ Ray still (setViewOffset) — read it before the render');
+    throw new Error('the camera is inside a tile of a  Ray still (setViewOffset) — read it before the render');
   }
   const proj = cam ? elements16Of(cam.projectionMatrix) : null;
   const view = cam ? elements16Of(cam.matrixWorldInverse) : null;
