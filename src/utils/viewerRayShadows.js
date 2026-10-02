@@ -1,28 +1,7 @@
 /* =========================================================================
-  viewerRayShadows.js
+  src/utils/viewerRayShadows.js
   CAST SHADOWS for the « ✨ Ray » still.
-  
-  ARCHITECTURAL FIXES FOR "SPHERICAL SHADOWS":
-  1. FLAT BAND PROXIES: Reads the actual geometry buffer of cartoons/ribbons 
-     to generate a flat brush of proxies. Ribbons cast ribbon-shaped shadows, 
-     not "partial moons".
-  2. BOND-GRAPH LINK FILLING: Walks the structure's real bond graph to 
-     interpolate proxies along sticks and tubes, preventing the "string of 
-     beads" artifact.
-  3. STROKE-AWARE RADII: Assigns proxy radii based on the representation's 
-     actual drawing stroke (0.25 Å for licorice, thin tube for cartoon) 
-     rather than the 1.7 Å vdW radius.
-  4. FITTED LIGHT RIG: Orthographic shadow camera fitted tightly to the 
-     molecule's bounding box to prevent depth precision loss.
-  5. FOOTPRINT-AWARE PCF: Shadow test samples the receiver's own pixel 
-     footprint, ensuring thin lines don't miss their own shadows.
-  6. AMBIENT NEAR/FAR BLUR: Bridges residue-to-residue and atom-to-atom gaps 
-     to eliminate the "patchwork of crescents" on smooth backbones and rings.
 ========================================================================= */
-
-// ============================================================================
-// 1. CONFIGURATION & CONSTANTS
-// ============================================================================
 
 export const RAY_SHADOW_MAX_PIXELS = 20e6;
 
@@ -89,7 +68,7 @@ const LINK_STEP_MIN = 0.3;
 const LINK_MAX = 4.2;
 
 // ============================================================================
-// 2. MATH UTILITIES
+// 1. MATH UTILITIES
 // ============================================================================
 
 export const sub3 = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
@@ -215,7 +194,7 @@ export const boxCornersOf = ({ min, max } = {}, out = []) => {
 };
 
 // ============================================================================
-// 3. RASTERIZATION & SHADOW TESTING
+// 2. RASTERIZATION & SHADOW TESTING
 // ============================================================================
 
 export const rasterizeSpheres = ({
@@ -459,7 +438,7 @@ export const applyShadowToPixels = (data, width, height, mask, maskWidth, maskHe
 };
 
 // ============================================================================
-// 4. LIGHT RIG & SCENE PARSING
+// 3. LIGHT RIG & SCENE PARSING
 // ============================================================================
 
 export const lightDepthScale = ({ distance, radius, near, far } = {}) => {
@@ -1066,7 +1045,7 @@ export const rayShadowInputsOf = (stage, { lightDir = [0, 0, 1], options = {} } 
 };
 
 // ============================================================================
-// 5. OPTIONS, BLUR SCALING & DOM INTEGRATION
+// 4. OPTIONS, BLUR SCALING & DOM INTEGRATION
 // ============================================================================
 
 export const rayShadowOptions = (options = {}) => {
