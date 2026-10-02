@@ -289,7 +289,7 @@ has(VIEW, "if (typeof s.chemPh === 'string') setCalcPhText(s.chemPh);",
 has(VIEW, 'THE pH AND THE IONIC STRENGTH of the ⚙ panel, when they are set, ARE read by this same field',
   '⚠ le rapport du 🧬 ne prétend plus « no ionic strength » quand l’utilisateur en a donné une');
 
-/* ── 9 · LE PEPTIDE DU RAPPORT — 34 « AMMONIUMS » POUR 31 RÉSIDUS ─────────────────────────
+/* ── 9 · LE PEPTIDE DU RAPPORT — +3 À pH 7, ET NON 34 « AMMONIUMS » POUR 31 RÉSIDUS ──────
    LE RAPPORT DE CETTE SESSION, MOT POUR MOT : « The pH setting is wrong. it gives me a charge
    of +36 at pH 7 for the peptide: SIIGIIMGILGNIPQVIQIIMSIVKAFKGNK. At pH 7 it should be +3! »
    — et la molécule de l’utilisateur disait, chiffre en main : « pH 7 — net charge +33.66 e,
@@ -298,12 +298,21 @@ has(VIEW, 'THE pH AND THE IONIC STRENGTH of the ⚙ panel, when they are set, AR
    DÉCOMPTE DE VOISINS (`heavy + h >= 4 && h >= 1`), et un azote de squelette a déjà deux voisins
    lourds et un hydrogène : il suffisait qu’un PDB ajoute UNE liaison par distance (NGL le fait,
    `inferBonds`) — un H posé à 1,3 Å d’un azote, ce que le modèle de la page fait — pour qu’il
-   passe pour une amine protonée, à +1 par résidu.
+   passe pour une amine protonée, à +1 par résidu. La règle est désormais CHIMIQUE (voir
+   `ffFormalGroupsOf`) : un ammonium a PLUSIEURS hydrogènes et AUCUN voisin lourd porteur
+   d’oxygène ; un amide a les deux — il ne peut donc plus y passer, quel que soit le graphe.
 
-   CE QUI EST VÉRIFIÉ ICI, EXÉCUTÉ : sur LE peptide du rapport, construit par la page, le nombre
-   de fonctions que le pH peut titrer ne bouge pas d’une seule quand CHAQUE azote de squelette
-   gagne un voisin de plus — et les quatre qui restent sont ses QUATRE AMINES (trois lysines et
-   son N-terminal). */
+   ET LE SECOND DÉFAUT, LE DERNIER −1 QUI MANQUAIT : la chaîne bâtie par la page n’avait AUCUN
+   acide — son carboxyle C-terminal (l’atome OXT) n’était pas écrit —, si bien que ce peptide ne
+   pouvait PAS descendre sous ses quatre bases : « +4 e » quel que soit le pH, et le « +3 » du
+   rapport inatteignable. Le terminus est bâti depuis (voir buildProteinBackbone, et le CONECT
+   C–OXT de proteinSequenceToPdbText) : le peptide vaut donc ce qu’un peptide de cette séquence
+   vaut vraiment — trois lysines (+1), son N-terminal (+1) et son carboxyle terminal (−1) → +3.
+
+   CE QUI EST VÉRIFIÉ ICI, EXÉCUTÉ, sur LE peptide du rapport construit par la page :
+     • ses CINQ fonctions ionisables sont ses quatre AMINES et son CARBOXYLE TERMINAL ;
+     • un voisin de trop sur CHAQUE azote de squelette ne change RIEN (le défaut mesuré : 34/34) ;
+     • la charge nette vaut +3 à pH 7 (2,961 e : 4 × 0,990099 − 0,999206) ET +3 sans pH. */
 const REPORT_SEQ = 'SIIGIIMGILGNIPQVIQIIMSIVKAFKGNK';
 const REPORT_MOL = parsePdb(proteinSequenceToPdbText(REPORT_SEQ, ''));
 ok(REPORT_MOL.count > 400, `le peptide du rapport est bâti par la page (${REPORT_MOL.count} atomes)`);
@@ -324,15 +333,28 @@ REPORT_MOL.elements.forEach((e, k) => {
 ok(extraBonds.length >= 25, `…et ${extraBonds.length} azotes de squelette peuvent recevoir un voisin de trop`);
 const plainGroups = groupsOfBonds(REPORT_MOL.bonds);
 const denseGroups = groupsOfBonds([...REPORT_MOL.bonds, ...extraBonds]);
-eq(plainGroups.map((g) => g.name), ['ammonium', 'ammonium', 'ammonium', 'ammonium'],
-  '⚠ SES QUATRE AMINES SEULEMENT : trois lysines et le N-terminal (le peptide du rapport en a 3)');
+eq(plainGroups.map((g) => g.name), ['ammonium', 'ammonium', 'ammonium', 'carboxylate', 'ammonium'],
+  '⚠ SES QUATRE AMINES *ET* SON CARBOXYLE TERMINAL : trois lysines, son N-terminal, et le COO⁻ '
+  + 'que le peptide doit à sa dernière liaison (le carboxyle vient sur l’axe des atomes, entre les '
+  + 'deux dernières lysines)');
 eq(denseGroups.length, plainGroups.length,
   '⚠⚠ UN VOISIN DE PLUS SUR CHAQUE AMIDE NE CHANGE RIEN — c’est le défaut mesuré (+33,66 e, 34/34)');
 eq(denseGroups.map((g) => g.name), plainGroups.map((g) => g.name), '…et ce sont les mêmes fonctions, une par une');
 const reportCharge = partialChargesOf({ elements: REPORT_MOL.elements, bonds: [...REPORT_MOL.bonds, ...extraBonds], ph: 7 });
-ok(Math.abs(reportCharge.net - 4 * ffIonisationOf({ name: 'ammonium' }, 7)) < 1e-6,
-  `⚠ la charge du peptide à pH 7 est celle de ses quatre amines (${reportCharge.net} e — et non 34)`);
-eq(reportCharge.ionisation.groups.length, 4, '…quatre fonctions ionisables dans le rapport du pH, jamais 34');
+const ammoniumAt7 = ffIonisationOf({ name: 'ammonium' }, 7);
+const carboxylateAt7 = ffIonisationOf({ name: 'carboxylate' }, 7);
+near(reportCharge.net, 4 * ammoniumAt7 - carboxylateAt7,
+  `la charge à pH 7 est celle de ses fonctions : 4 amines (${ammoniumAt7.toFixed(6)} chacune, pKa `
+  + `${FF_PKA.ammonium}) moins son carboxyle terminal (${carboxylateAt7.toFixed(6)}, pKa ${FF_PKA.carboxylate})`,
+  1e-6);
+ok(Math.abs(reportCharge.net - 3) < 0.05,
+  `⚠⚠ LE PEPTIDE VAUT +3 À pH 7 (${reportCharge.net.toFixed(2)} e) — exactement le chiffre que le rapport `
+  + 'demandait, et non +36, ni +33,66, ni même +4');
+eq(reportCharge.ionisation.groups.length, 5, '…CINQ fonctions ionisables dans le rapport du pH, jamais 34');
+/* SANS pH — « la chimie que le graphe montre » : quatre bases et un carboxyle, dont la charge
+   est celle qu’un COO⁻ a par défaut (voir la forme du groupe écrit par la page : sans proton). */
+const reportNoPh = partialChargesOf({ elements: REPORT_MOL.elements, bonds: REPORT_MOL.bonds, ph: null });
+eq(reportNoPh.net, 3, '⚠ …et +3 e SANS pH aussi (4 × (+1) + (−1)) — la case vide ne peut pas mentir sur ce peptide');
 
 
 /* ── Bilan ───────────────────────────────────────────────────────────────────────────── */

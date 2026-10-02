@@ -682,6 +682,10 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
                 structureTextExt="pdb"
                 moleculeType={d.moleculeType}
                 parsedSeq={d.parsedSeq}
+                /* 🧪 …ET LA DÉFINITION DES MODIFICATIONS DU COMPOSÉ (Acetylation · Amidation · …) :
+                   le ⚙ Params & Constraints lit la charge de la SÉQUENCE avec elle
+                   (utils/sequenceCharge.js). */
+                sequenceModifications={activeTest.modifications || ''}
                 // The ligand's SMILES travels with the run: the Molecules bar shows
                 // it (folded, with 📋) so the docked ligand can be identified and
                 // pasted without leaving the page. It is read from the derived

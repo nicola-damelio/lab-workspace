@@ -116,7 +116,7 @@ const impossibleBonds = ({ atoms, bondsOf }) => {
 const seq = 'ACDEFGHIKLMNPQRSTVWY';
 const pdb = proteinSequenceToPdbText(seq, '');
 const model = parsePdb(pdb);
-ok(model.atoms.length === 324, 'builder atoms = ' + model.atoms.length + ' (expected 324)');
+ok(model.atoms.length === 325, 'builder atoms = ' + model.atoms.length + ' (expected 325: the 324 of before plus the C-terminal OXT)');
 
 const bad = impossibleBonds(model);
 ok(bad.length === 0, 'no hydrogen sits inside a bond window of a second heavy atom (' + bad.length + ')'

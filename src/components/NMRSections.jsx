@@ -3174,6 +3174,24 @@ const buildProteinBackbone = (seq, ssString) => {
     const r = residues[i];
     const psiI = torsionAt(i).psi;
     r.O = nerfPlace(r.N, r.CA, r.C, B.C_O, B.ANG_CA_C_O, psiI - Math.PI);
+    /* ⚠⚠ LE CARBOXYLE C-TERMINAL — le SECOND oxygène (OXT) de la fonction ACIDE du dernier
+       résidu. LE RAPPORT DE CETTE SESSION : « The pH setting is wrong. it gives me a charge of
+       +36 at pH 7 for the peptide: SIIGIIMGILGNIPQVIQIIMSIVKAFKGNK. At pH 7 it should be +3! »
+       — et la chaîne bâtie ici n'avait AUCUN acide : ses trois lysines et son N-terminal sont
+       des bases (+1 chacune, +4 sans pH) et le carboxyle qui termine un peptide n'existait pas,
+       si bien qu'aucun pH, aucun pKa et aucune case du panneau ne pouvait faire autre chose que
+       compter +4. Un peptide réel finit en COO⁻ (pKa ≈ 3,1) : c'est ce groupe-là qui manquait
+       pour tomber à +3.
+       GÉOMÉTRIE — la MÊME longueur et le MÊME angle que l'oxygène du carbonyle (B.C_O,
+       B.ANG_CA_C_O) et le dièdre retourné de 180° (ψ au lieu de ψ − 180°) : par cette rotation
+       autour de l'axe CA–C les deux C–O se retrouvent à cos(2θ) l'un de l'autre, soit
+       O–C–OXT ≈ 119,5° — un carboxyle PLAN, la géométrie d'un vrai terminus.
+       ⚠ AUCUN PROTON SUR OXT — comme les carboxyles d'Asp et Glu (voir placeSidechainAtoms) :
+       ce bâtisseur écrit les formes IONISÉES des acides et les formes PROTONÉES des bases (la
+       chimie du modèle idéal), et c'est le pH qui titre ensuite ce groupe. Un H écrit ici
+       aurait fait lire le terminus comme un COOH : neutre à la lecture par défaut (+4) au lieu
+       du −1 que le panneau annonce — le peptide n'aurait jamais affiché « +3 ». */
+    if (i === n - 1) r.OXT = nerfPlace(r.N, r.CA, r.C, B.C_O, B.ANG_CA_C_O, psiI);
     if (seq[i] !== 'G') r.CB = nerfPlace(r.C, r.N, r.CA, B.CA_CB, _deg2rad(110.5), _deg2rad(-122.5));
   }
   return residues;
@@ -3187,6 +3205,12 @@ const buildProteinBackbone = (seq, ssString) => {
    jamais un numéro affiché), et `opts.torsions` = le tableau de torsions
    détendues rendu par utils/disulfideFold.js (« ⚭ Fold for disulfides »), ou
    null pour le modèle idéal habituel.
+
+   LE TERMINUS C EST UN CARBOXYLE (l'atome OXT, écrit SANS proton) : c'est la seule fonction
+   acide d'un peptide qui ne soit pas dans une chaîne latérale, et son absence faisait lire une
+   chaîne à +4 e — voir buildProteinBackbone, où sa géométrie est posée. Le record CONECT
+   C–OXT est écrit comme tous les autres, sans quoi le carboxyle ne serait pas un groupe pour
+   le champ (et le pH n'aurait rien à y titrer).
 
    Trois choses, et rien d'autre, quand des ponts sont définis :
     1. les deux Sγ d'une paire sont joints par un CONECT — LE record que NGL lit
@@ -3268,7 +3292,10 @@ const proteinSequenceToPdbText = (seq, ssString, title = 'GENERATED', opts = {})
       console.warn(`Side-chain generation failed for residue ${i + 1} (${char}), keeping backbone only:`, e);
     }
     const ordered = [];
-    ['N', 'CA', 'C', 'O', 'CB'].forEach((nm) => { if (r[nm]) ordered.push({ name: nm, pos: r[nm] }); });
+    /* `OXT` n'existe que sur le dernier résidu (voir buildProteinBackbone) : la boucle le
+       laisse donc passer inaperçu partout ailleurs. Il est écrit JUSTE APRÈS l'O du
+       carbonyle — la place d'un second oxygène de carboxyle dans un PDB. */
+    ['N', 'CA', 'C', 'O', 'OXT', 'CB'].forEach((nm) => { if (r[nm]) ordered.push({ name: nm, pos: r[nm] }); });
     bbH.forEach((a) => ordered.push(a));
     (sidechain.atoms || []).forEach((a) => ordered.push(a));
     ordered.forEach((a) => {
@@ -3301,6 +3328,11 @@ const proteinSequenceToPdbText = (seq, ssString, title = 'GENERATED', opts = {})
     emitBond(`N@${i}`, `CA@${i}`);
     emitBond(`CA@${i}`, `C@${i}`);
     emitBond(`C@${i}`, `O@${i}`);
+    /* …ET LE SECOND OXYGÈNE DU CARBOXYLE C-TERMINAL, quand ce résidu est le dernier (voir
+       buildProteinBackbone) : sans ce record, NGL ne dessinerait pas la liaison C–OXT et le
+       module du champ ne verrait aucun carboxyle au bout de la chaîne — le peptide du rapport
+       resterait à +4 e quel que soit le pH. */
+    if (r.OXT) emitBond(`C@${i}`, `OXT@${i}`);
     if (r.CB) emitBond(`CA@${i}`, `CB@${i}`);
     emitBond(`CA@${i}`, `HA@${i}`);
     if (i === 0) {
@@ -4771,6 +4803,17 @@ export const MolecularStructureSection = ({ ctx }) => {
           updates.moleculeType = meta.type || 'protein';
           needsUpdate = true;
         }
+        /* 🧪 …ET SA DÉFINITION DE MODIFICATIONS (Acetylation · Amidation · Phosphorylation) —
+           elle ne change ni les atomes ni la séquence, mais elle change la CHARGE : un
+           composé acétylé n'a pas d'ammonium N-terminal, un composé amidé pas de carboxyle
+           C-terminal. Le ⚙ Params & Constraints lit la charge de la SÉQUENCE (le module
+           utils/sequenceCharge.js) : sans ce texte il supposerait des terminus LIBRES — la
+           règle d'une séquence écrite directement, mais pas celle d'un composé qui dit le
+           contraire. Copiée ici, elle suit la condition comme la séquence et le type. */
+        if ((meta.modifications || '') !== (activeTest.modifications || '')) {
+          updates.modifications = meta.modifications || '';
+          needsUpdate = true;
+        }
         if (needsUpdate) {
           updateActiveTest(updates);
         }
@@ -5484,7 +5527,7 @@ const generatedStructure = useMemo(() => {
             bouge : le piquage d'un atome (formule 2D ou vue 3D) souligne toujours sa cellule
             de tableau, seule la ligne qui le disait a disparu. */}
         <div className="flex flex-col gap-2">
-          <NMRMoleculeViewer key={(activeTest && activeTest.id) || 'molecular-structure'} instanceKey={(activeTest && activeTest.id) || null} src={structureSrc} structureText={structureText} structureTextExt={structureTextExt} sequenceStructureText={sequenceStructure?.text || null} sequenceStructureExt={sequenceStructure?.ext || null} imposedSecondaryStructure={univTestMode ? '' : (activeTest.secondaryStructure || '')} externalLoading={organicFetch.loading} externalError={organicFetch.error} structureFileData={activeTest.structureFileData} structureFileName={activeTest.structureFileName} structureFile={structureFile} onStructureSrc={(v) => updateActiveTest({ structureSrc: v })} onStructureFile={handleStructureFile} moleculeType={d.moleculeType} parsedSeq={d.parsedSeq} smiles={activeTest.smiles} onLigandSmiles={(info) => { if (info && info.smiles && !activeTest.smiles && !activeTest.ligandSmiles) updateActiveTest({ ligandCode: info.code, ligandSmiles: info.smiles }); }} selectedKeys={selectedKeys} manualKeys={manualKeys} onAtomClick={handleAtomClick} residueOffset={residueOffset} atomNameMap={atomNameMap} atomRenames={activeTest.atomRenames || {}} onAtomRenames={(map) => updateActiveTest({ atomRenames: map })} resRenumber={activeTest.resRenumber || {}} onResRenumber={(map) => updateActiveTest({ resRenumber: map })} onStructureSequence={(seq, parts) => { const _nat = structureSequencePatch(activeTest, d.moleculeType, seq, parts); if (_nat) updateActiveTest(_nat); }} driveNaming={{ project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || '', instance: activeTest.instanceName || '', scientist: activeTest.operator || '', section: 'Data', subsection: 'Structure' }} labelMode={atomLabelMode} height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? '1100px' : '1000px'} />
+          <NMRMoleculeViewer key={(activeTest && activeTest.id) || 'molecular-structure'} instanceKey={(activeTest && activeTest.id) || null} src={structureSrc} structureText={structureText} structureTextExt={structureTextExt} sequenceStructureText={sequenceStructure?.text || null} sequenceStructureExt={sequenceStructure?.ext || null} imposedSecondaryStructure={univTestMode ? '' : (activeTest.secondaryStructure || '')} externalLoading={organicFetch.loading} externalError={organicFetch.error} structureFileData={activeTest.structureFileData} structureFileName={activeTest.structureFileName} structureFile={structureFile} onStructureSrc={(v) => updateActiveTest({ structureSrc: v })} onStructureFile={handleStructureFile} moleculeType={d.moleculeType} parsedSeq={d.parsedSeq} sequenceModifications={activeTest.modifications || ''} smiles={activeTest.smiles} onLigandSmiles={(info) => { if (info && info.smiles && !activeTest.smiles && !activeTest.ligandSmiles) updateActiveTest({ ligandCode: info.code, ligandSmiles: info.smiles }); }} selectedKeys={selectedKeys} manualKeys={manualKeys} onAtomClick={handleAtomClick} residueOffset={residueOffset} atomNameMap={atomNameMap} atomRenames={activeTest.atomRenames || {}} onAtomRenames={(map) => updateActiveTest({ atomRenames: map })} resRenumber={activeTest.resRenumber || {}} onResRenumber={(map) => updateActiveTest({ resRenumber: map })} onStructureSequence={(seq, parts) => { const _nat = structureSequencePatch(activeTest, d.moleculeType, seq, parts); if (_nat) updateActiveTest(_nat); }} driveNaming={{ project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || '', instance: activeTest.instanceName || '', scientist: activeTest.operator || '', section: 'Data', subsection: 'Structure' }} labelMode={atomLabelMode} height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? '1100px' : '1000px'} />
           <button onClick={downloadPdbFile} className="self-center mt-2 px-4 py-2 bg-indigo-50 border border-indigo-200 text-indigo-700 font-bold text-xs rounded-lg hover:bg-indigo-100 transition-colors shadow-sm">📥 Download 3D PDB File</button>
           {activeTest.structureFileName && (!structureFile || nmrStructRestore.message) && (
             <div className="flex flex-wrap items-center justify-center gap-2 text-[11px]">

@@ -4,6 +4,11 @@
    ========================================================================= */
 
 import { getMolecularWeightFromFormula } from '../components/DefinitionsExtra';
+/* ⚠ LA TABLE DES MODIFICATIONS ET SON LECTEUR VIVENT DANS utils/modifications.js — un
+   module PUR (aucun JSX en tête), donc importable par un test et par un autre module pur
+   (la charge d'une séquence : utils/sequenceCharge.js). Ici on ne fait que LIRE, en liant
+   la fonction de pesée d'une formule chimique (un fallback du lecteur). */
+import { parseModificationsOf, modificationMassOf, normalizeKey as normalizeKeyOf } from './modifications.js';
 
 /* =========================================================
    MOLECULE / CALCULATION UTILITIES
@@ -78,76 +83,23 @@ export const POLY_TOKENS = {
   SIALICACID: 291.26
 };
 
-export const MODIFICATIONS = [
-  { id: 'acetylation', label: 'Acetylation', delta: 42.0106, aliases: ['ac', 'acetyl'] },
-  { id: 'acylation', label: 'Acylation', delta: 42.0106, aliases: ['acyl'] },
-  { id: 'phosphorylation', label: 'Phosphorylation', delta: 79.9664, aliases: ['phos', 'p'] },
-  { id: 'amidation', label: 'Amidation', delta: -0.984, aliases: ['amide', 'nh2'] },
-  { id: 'methylation', label: 'Methylation', delta: 14.0157, aliases: ['me'] },
-  { id: 'dimethylation', label: 'Dimethylation', delta: 28.0313, aliases: ['me2'] },
-  { id: 'trimethylation', label: 'Trimethylation', delta: 42.047, aliases: ['me3'] },
-  { id: 'formylation', label: 'Formylation', delta: 27.9949, aliases: ['formyl'] },
-  { id: 'succinylation', label: 'Succinylation', delta: 100.016, aliases: ['succinyl'] },
-  { id: 'palmitoylation', label: 'Palmitoylation', delta: 238.2297, aliases: ['palmitoyl'] },
-  { id: 'biotinylation', label: 'Biotinylation', delta: 226.0779, aliases: ['biotin'] }
-];
+/* LA TABLE DES MODIFICATIONS — elle vit dans utils/modifications.js et se RÉEXPORTE ici :
+   une seule copie dans le dossier, et les lecteurs purs n'ont plus à tirer du JSX. */
+export { MODIFICATIONS } from './modifications.js';
 
 export const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
-export const normalizeKey = (s) => String(s || '').toLowerCase().replace(/[\s_-]+/g, '');
+/* LA CLÉ DE COMPARAISON des libellés/alias — celle du lecteur, réexportée. */
+export const normalizeKey = normalizeKeyOf;
 
 export const stripHtml = (str) => String(str || '').replace(/<[^>]*>?/gm, '').replace(/&nbsp;/g, ' ');
 
-export const parseModifications = (input = '') => {
-  if (!input) return [];
-
-  return String(input)
-    .split(/[,;\n]+/)
-    .map((s) => s.trim())
-    .filter(Boolean)
-    .flatMap((token) => {
-      // Improved regex to catch multipliers even with spaces, e.g. "Amidation: 2" or "Phos x 3"
-      const match = token.match(/^(.*?)(?:[:*x]\s*(\d+))?$/i);
-      const rawName = (match?.[1] || token).trim();
-      const parsedCount = parseInt(match?.[2] || '1', 10);
-      const count = Number.isFinite(parsedCount) && parsedCount >= 0 ? parsedCount : 1;
-
-      const norm = normalizeKey(rawName);
-
-      const found = MODIFICATIONS.find((m) => {
-        const idNorm = normalizeKey(m.id);
-        const labelNorm = normalizeKey(m.label);
-        const aliasNorms = (m.aliases || []).map(normalizeKey);
-        return idNorm === norm || labelNorm === norm || aliasNorms.includes(norm);
-      });
-
-      let delta = 0;
-      let known = false;
-      let label = rawName;
-
-      if (found) {
-        delta = found.delta;
-        known = true;
-        label = found.label;
-      } else {
-        // Fallback: If it's a custom chemical formula (e.g. C2H3O), calculate its MW!
-        const formulaMw = getMolecularWeightFromFormula(rawName);
-        if (formulaMw && !isNaN(parseFloat(formulaMw))) {
-          delta = parseFloat(formulaMw);
-          known = true;
-        }
-      }
-
-      return Array.from({ length: count }, () => ({
-        label,
-        delta,
-        known
-      }));
-    });
-};
-
-export const modificationMass = (mods = []) => {
-  return mods.reduce((sum, m) => sum + (Number(m.delta) || 0), 0);
-};
+/* LE LECTEUR DES MODIFICATIONS — celui de utils/modifications.js, lié à la fonction qui
+   pèse une formule écrite à la place d'un nom (DefinitionsExtra, un fichier .jsx) :
+   `parseModifications(text)` garde donc exactement le contrat d'avant, formule comprise. */
+export const parseModifications = (input = '') => parseModificationsOf(input, {
+  formulaMassOf: getMolecularWeightFromFormula,
+});
+export const modificationMass = (mods = []) => modificationMassOf(mods);
 
 export const calculateSequenceInfo = ({ type = 'protein', sequence = '', modifications = '' }) => {
   const mods = parseModifications(modifications);

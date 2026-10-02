@@ -11,6 +11,11 @@ import { RichTextEditor } from '../RichTextEditor';
 import { LinksManager } from './librarySections';
 import { CALC_INPUT_CLS, CALC_LABEL_CLS } from '../../utils/styles';
 import { stripHtml, calculateSequenceInfo, generateDnaFromProtein, calculateSmilesInfoAsync } from '../../utils/sequenceInfo';
+/* 🧬 LA CHARGE D'UNE SÉQUENCE (et sa composition, et son ε₂₈₀) — le module PUR qui connaît le
+   pKa de CHAQUE chaîne latérale et les deux terminus. C'est lui qui écrit la ligne sous la
+   case de séquence, et lui que le ⚙ « Params & Constraints » lit pour le pH (la demande de
+   cette session). */
+import { proteinSequenceReadingOf, compositionTextOf, AA_SIDECHAIN_PKA, TERMINUS_PKA } from '../../utils/sequenceCharge';
 import { getMolecularWeightFromFormula } from '../DefinitionsExtra';
 
 export const CompoundDefinitionSection = ({
@@ -88,6 +93,14 @@ export const CompoundDefinitionSection = ({
       sequence,
       modifications: modText
     });
+  }, [type, sequence, modText]);
+  /* 🧬 LA LECTURE DE LA SÉQUENCE — la composition, la charge à pH 7 et l'ε₂₈₀, recalculées avec
+     la séquence ET le texte des modifications (un capuchon change la charge). Rien n'est
+     calculé pour un type qui n'a pas d'acides aminés : la ligne n'existerait pas. */
+  const seqReading = useMemo(() => {
+    if (type !== 'protein') return null;
+    if (!stripHtml(sequence).trim()) return null;
+    return proteinSequenceReadingOf(sequence, { modifications: modText, ph: 7 });
   }, [type, sequence, modText]);
 
   const dnaPreview = useMemo(() => {
@@ -426,6 +439,34 @@ export const CompoundDefinitionSection = ({
         </div>
       )}
       
+      {/* 🧬 LA LECTURE DE LA SÉQUENCE — SOUS LA CASE DE SÉQUENCE, SUR TOUTE LA LARGEUR : le
+          nombre de chaque acide aminé, la charge totale à pH 7 et l'ε₂₈₀ estimé. LA DEMANDE DE
+          CETTE SESSION, MOT POUR MOT : « Under the sequence field please write the number of
+          each type of aminoacids, the total charge at pH 7 and the estimated molar extinction
+          coefficient. Keep this information compact utilising as much horizontal space. »
+          ⚠ La charge est celle de utils/sequenceCharge.js — le pKa de CHAQUE chaîne latérale,
+          et les deux terminus GRATUITS par défaut (la règle : « If the sequence is written
+          directly into the sequence space, assume free termini »), retirés quand les
+          Modifications le disent. C'est la MÊME lecture que le pH du ⚙ Params & Constraints. */}
+      {seqReading && seqReading.ok && (
+        <div
+          className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-emerald-200 bg-emerald-50/60 px-3 py-2 font-mono text-[11px] text-emerald-900"
+          title={`🧬 THE SEQUENCE READ AS A MOLECULE — how many of each amino acid it holds (only those present: a zero teaches nothing), the TOTAL CHARGE AT pH 7, and the ESTIMATED MOLAR EXTINCTION COEFFICIENT ε₂₈₀ (the Pace rule of the cloning panel: Trp 5500 · Tyr 1490 · cystine 125, so a sequence with no Trp, no Tyr and no Cys reads 0 — it really absorbs nothing at 280 nm). ⚠ THIS CHARGE IS NOT THE BOND GRAPH'S: it is utils/sequenceCharge.js — the pKa of EVERY side chain (${Object.keys(AA_SIDECHAIN_PKA).map((aa) => `${aa} ${AA_SIDECHAIN_PKA[aa]}`).join(' · ')}) and of the two termini (N-term ${TERMINUS_PKA.nTerm} · C-term ${TERMINUS_PKA.cTerm}), which is what knows about a histidine's imidazole. TERMINI ARE FREE BY DEFAULT — the rule of this session: « If the sequence is written directly into the sequence space, assume free termini » — and each one is removed when the Modifications box says so: Acetylation / Acylation / Formylation cap the N-terminus (an amide carries no charge), Amidation caps the C-terminus. Phosphorylation adds one phosphate per unit written (−1,39 e at pH 7). The ⚙ Params & Constraints panel reads this same model at the pH you set there.`}
+        >
+          <span className="font-bold">{seqReading.length} aa</span>
+          <span>{compositionTextOf(seqReading.composition)}</span>
+          <span className="font-bold">
+            net {seqReading.net >= 0 ? '+' : ''}{seqReading.net.toFixed(2)} e at pH 7
+          </span>
+          <span className="text-emerald-700">
+            {seqReading.effects.terminus.nTerm === 'free' ? 'free N-term' : seqReading.effects.terminus.nTerm}
+            {' · '}
+            {seqReading.effects.terminus.cTerm === 'free' ? 'free C-term' : seqReading.effects.terminus.cTerm}
+          </span>
+          <span>ε₂₈₀ {Math.round(seqReading.epsilon).toLocaleString()} M⁻¹cm⁻¹</span>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 mb-4">
         <label className={CALC_LABEL_CLS}>Additional Notes</label>
         <textarea

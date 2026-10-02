@@ -207,6 +207,11 @@ import {
 import { cachedLigandSmiles, fetchLigandSmiles } from '../utils/ligandSmiles';
 import { archiveFileToDrive } from '../utils/driveUpload';
 import { getPymolScripts, setPymolScript as savePymolScriptToLibrary } from '../utils/pymolScripts';
+/* 🧪 LA CHARGE D'UNE SÉQUENCE — la lecture du ⚙ Params & Constraints quand l'écran montre le
+   modèle bâti par la page : le pKa de CHAQUE chaîne latérale et les deux terminus (voir
+   utils/sequenceCharge.js). Le graphe reste la lecture d'un PDB chargé, et le panneau DIT
+   toujours laquelle des deux il a lue. */
+import { sequenceChargeReportOf, AA_SIDECHAIN_PKA } from '../utils/sequenceCharge';
 /* La table des natures (une nature, un champ) ET ce qu'il faut pour CHOISIR
    quand un fichier porte plusieurs séquences : ses candidates (une par chaîne
    polymère), les natures ambiguës (plus d'une chaîne pour le même champ) et les
@@ -7402,6 +7407,12 @@ smiles = '',
 ligandSmiles = '',
 onLigandSmiles,
 parsedSeq = [],
+/* 🧪 LA DÉFINITION DU COMPOSÉ, QUAND ELLE TOUCHE LES TERMINUS — le texte de « Modifications »
+   de la fiche de la Librairie (Acetylation · Amidation · Phosphorylation…). Le ⚙ lit la
+   charge de la SÉQUENCE avec lui (utils/sequenceCharge.js) : une amidation ne se devine pas
+   d'un atome, et sans ce texte le panneau supposerait des terminus LIBRES — la règle de la
+   séquence écrite directement, mais pas celle d'un composé qui dit le contraire. */
+sequenceModifications = '',
 residueOffset = 0,
 atomRenames,
 onAtomRenames,
@@ -8147,13 +8158,51 @@ const calcChemNow = () => {
   const ionicStrength = calcIonicOf();
   const q = partialChargesOf({ elements: geom.elements, bonds: geom.bonds, ph });
   const kappa = ffDebyeKappaOf(ionicStrength);
+  const groups = (q.ionisation && q.ionisation.groups) || [];
   return {
     ph: q.ph, net: q.net, method: q.method,
-    groups: (q.ionisation && q.ionisation.groups) || [],
+    groups,
+    /* 🧪 LES DEUX COMPTES QUE LA PHRASE DU PANNEAU LIT — « combien de ses fonctions ionisables
+       le pH a chargées », compté de la MÊME façon pour les deux lectures du panneau (le graphe
+       ici, la séquence dans `calcSeqChemNow`), pour que la phrase ne change jamais de règle. */
+    ionised: groups.filter((g) => g.factor > 1e-6).length,
+    total: groups.length,
     atWork: !!(q.ionisation && q.ionisation.atWork),
     ionicStrength, kappa,
     debyeLength: kappa > 0 ? ffDebyeLengthOf(kappa) : null,
   };
+};
+/** 🧪 LA SECONDE LECTURE — CE QUE LA SÉQUENCE DIT, ELLE, À CE pH-LÀ.
+
+    LA DEMANDE DE CETTE SESSION, MOT POUR MOT : « If the sequence is written directly into the
+    sequence space, assume free termini. this is valid not only for this writing but also for
+    the calculation of the charge based on pH in the “params and constraints” section. In that
+    case, to calculate the charge based on pH you need to know the pka of all aminoacids side
+    chains. I guess you know them already. »
+
+    LE PANNEAU DU ⚙ A DONC DEUX LECTURES, ET IL DIT TOUJOURS LAQUELLE IL MONTRE :
+      · LA MOLÉCULE BÂTIE PAR LA PAGE SUR SA SÉQUENCE (le modèle que la page fournit —
+        `sequenceStructureText` —, celui que « 🧬 Struct from sequence » rebâtit) : la charge
+        vient du module PUR des séquences (`sequenceChargeReportOf`, utils/sequenceCharge.js),
+        qui connaît le pKa de CHAQUE chaîne latérale — y compris l'imidazole d'une histidine,
+        que le graphe ne reconnaît pas — et les DEUX TERMINUS, gratuits par défaut, retirés
+        quand la définition du composé le dit (`sequenceModifications` : acétylation, amidation,
+        phosphorylation) ;
+      · TOUT LE RESTE — un PDB chargé, un fichier, une molécule organique, un ligand : la
+        lecture du GRAPHE (`calcChemNow`), qui est celle du fichier réellement affiché, avec
+        ses pKa de famille.
+    Rend `null` quand la séquence n'est PAS ce qui est à l'écran : le panneau retombe alors sur
+    le graphe, jamais sur un chiffre qui ne décrirait pas la molécule montrée. */
+const calcSeqChemNow = () => {
+  if (moleculeType !== 'protein') return null;
+  if (!sequenceStructureText || lastLoadedTextRef.current !== sequenceStructureText) return null;
+  const seq = (Array.isArray(parsedSeq) ? parsedSeq : [])
+    .map((r) => (r && r.char) || '')
+    .join('')
+    .replace(/[^A-Za-z]/g, '');
+  if (!seq) return null;
+  const report = sequenceChargeReportOf(seq, calcPhOf(), { modifications: sequenceModifications });
+  return { ...report, seq, modifications: sequenceModifications };
 };
 /** 🧪 LA PHRASE DE LA CHIMIE — ce qu'un geste a lu (son `chemistry`) ou ce qu'une lecture du
  *  champ rend (`ph`, `kappa`, `charges`), mis en mots : le pH, la charge nette, les groupes
@@ -22014,19 +22063,31 @@ const renderParamsWindow = () => {
           module (`FF_PKA`, `ffDebyeKappaOf`). */}
       {(() => {
         const chem = calcChemNow();
+        const seqChem = calcSeqChemNow();
         const pkaText = Object.keys(FF_PKA).map((k) => `${k} ${FF_PKA[k]}`).join(' · ');
+        const seqPkaText = Object.keys(AA_SIDECHAIN_PKA)
+          .map((aa) => `${aa} ${AA_SIDECHAIN_PKA[aa]}`).join(' · ');
+        /* 🧪 LA MÊME PHRASE POUR LES DEUX LECTURES — le pH, la charge nette, les fonctions
+           titrées —, puis D'OÙ VIENT LE CHIFFRE : de la SÉQUENCE (le modèle de la page, dont on
+           connaît chaque résidu) ou du GRAPHE (le fichier affiché). La phrase ne présente
+           jamais l'une pour l'autre : c'est le point de la demande (« assume free termini …
+           also for the calculation of the charge based on pH in the “params and constraints”
+           section »). */
+        const netPhraseOf = (c) => (c.ph == null
+          ? 'pH: not set — the chemistry that reading shows (each ionisable group it recognises is fully charged)'
+          : `pH ${c.ph} — net charge ${c.net >= 0 ? '+' : ''}${c.net.toFixed(2)} e, ${c.ionised}/${c.total} of its ionisable groups charged`);
         const reading = !chem
           ? 'no molecule on screen — the pH and the ionic strength will be read as soon as one is loaded'
-          : `${chem.ph == null
-            ? 'pH: not set — the chemistry the graph shows (each ionisable group it recognises is fully charged)'
-            : `pH ${chem.ph} — net charge ${chem.net >= 0 ? '+' : ''}${chem.net.toFixed(2)} e, ${chem.groups.filter((g) => g.factor > 1e-6).length}/${chem.groups.length} of its ionisable groups charged`}`
+          : (seqChem
+            ? `${netPhraseOf(seqChem)} · read from the SEQUENCE (${seqChem.effects.terminus.nTerm} N-term · ${seqChem.effects.terminus.cTerm} C-term, ${seqChem.total} side-chain/terminus functions)`
+            : `${netPhraseOf(chem)} · read from the BOND GRAPH`)
             + ` · ${chem.kappa > 0
               ? `I = ${chem.ionicStrength} mol/L — κ = ${chem.kappa.toFixed(3)} Å⁻¹, Debye length ${chem.debyeLength.toFixed(3)} Å`
               : 'I = 0 — no ionic screening'}`;
         return (
           <div className="flex flex-wrap items-center gap-1.5 border border-sky-200 bg-sky-50/40 rounded-md px-1.5 py-1">
             <span className="text-[9px] font-black text-sky-800 uppercase tracking-wide"
-              title={`🧪 THE CHEMISTRY OF THE FORCE FIELD — the two settings that say WHAT the molecule carries (pH) and HOW its charges see each other (ionic strength). ALL FOUR gestures read them (▶ Run, ▶ MD, ⚒ Minimise, ⟳ Energy), because they are properties of the field: a model can never be built under one chemistry and read under another. THE pH titrates every ionisable group the bond graph shows, by Henderson–Hasselbalch, with the module's own pKa (${pkaText}) — an empty box means “the chemistry the graph shows” (every group fully charged, exactly what this module did before), NOT pH 0. THE IONIC STRENGTH (mol/L) screens the charges with the ionic atmosphere of Debye–Hückel (the Coulomb term is multiplied by exp(−κ·r), κ = ${FF_DEBYE_FACTOR}·√I Å⁻¹ at 298 K) — 0 is the default and renders exactly the Coulomb term of before. ⚠ What is NOT modelled, and said: the imidazole of a histidine is not a group this bond graph recognises, so it stays neutral at every pH.`}>
+              title={`🧪 THE CHEMISTRY OF THE FORCE FIELD — the two settings that say WHAT the molecule carries (pH) and HOW its charges see each other (ionic strength). ALL FOUR gestures read them (▶ Run, ▶ MD, ⚒ Minimise, ⟳ Energy), because they are properties of the field: a model can never be built under one chemistry and read under another. ⚠ THE READING NEXT TO THE BOXES COMES FROM ONE OF TWO MODELS, AND IT SAYS WHICH: • for the molecule the PAGE builds from its SEQUENCE (the model on screen after “🧬 Struct from sequence”), the net charge is the SEQUENCE model — utils/sequenceCharge.js — i.e. the pKa of EVERY side chain (${seqPkaText}), the two termini FREE by default (the rule of this session: « If the sequence is written directly into the sequence space, assume free termini ») and capped only when the compound's Modifications say so (Acetylation / Acylation / Formylation on the N-terminus, Amidation on the C-terminus), which is also what knows a histidine's imidazole; • for a LOADED structure, a file or a ligand, it is the BOND GRAPH — partialChargesOf —, whose pKa are the field's families (${pkaText}), because a file does not declare the identity of every residue. THE pH titrates those groups by Henderson–Hasselbalch — an empty box means “the chemistry that model shows” (every group fully charged, exactly what this module did before), NOT pH 0. THE IONIC STRENGTH (mol/L) screens the charges with the ionic atmosphere of Debye–Hückel (the Coulomb term is multiplied by exp(−κ·r), κ = ${FF_DEBYE_FACTOR}·√I Å⁻¹ at 298 K) — 0 is the default and renders exactly the Coulomb term of before.`}>
               🧪 pH · ionic strength
             </span>
             <label className="flex items-center gap-1 text-[10px] font-bold text-slate-600"

@@ -1588,6 +1588,9 @@ export const MDExperimentSetupSection = ({ ctx }) => {
     }
   }}
   parsedSeq={d.parsedSeq}
+  /* 🧪 …ET LA DÉFINITION DES MODIFICATIONS DU COMPOSÉ (Acetylation · Amidation · …) : le ⚙
+     Params & Constraints lit la charge de la SÉQUENCE avec elle (utils/sequenceCharge.js). */
+  sequenceModifications={activeTest.modifications || ''}
   /* ⛓ La structure secondaire peinte dans « Sequence and structure » (🖌️) part vers
      le viewer : c'est elle que le bouton ⛓ du panneau 🧬 convertit en contraintes de
      dihèdre pour le ▶ MD, le ⚒ Minimise et le ▶ Run. */
