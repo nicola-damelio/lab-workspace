@@ -865,9 +865,24 @@ export const SHADOW_BLUR_STROKE_FRACTION = 0.6;
    the fine mask's own peak (1.0), leaving the crisp, stroke-accurate detail
    distinguishable from the ambient fill layered under it. Both were tuned by
    rendering the actual mask, not guessed: see the module's test notes. */
-export const SHADOW_AMBIENT_RADIUS_ANGSTROM = 4.0;
-export const SHADOW_AMBIENT_WEIGHT = 0.85;
-export const SHADOW_AMBIENT_RADIUS_PX_FALLBACK = 24;
+/* FAR term: bridges residue-to-residue gaps on a curving backbone. ~4 A is
+   comfortably bigger than one residue step (~3.8 A for a peptide backbone) so
+   it reaches across the gap a single hard light leaves between self-shadowed
+   peaks, without blurring across an entire secondary-structure element. */
+export const SHADOW_AMBIENT_FAR_RADIUS_ANGSTROM = 4.0;
+export const SHADOW_AMBIENT_FAR_WEIGHT = 0.85;
+export const SHADOW_AMBIENT_FAR_RADIUS_PX_FALLBACK = 24;
+/* NEAR term: bridges atom-to-atom gaps within one ring or branch point. Scaled
+   off the stroke's own radius (not a fixed distance) so it closes the gap
+   between bonded neighbours specifically, not between any two atoms that
+   happen to be a similar distance apart. ~2.4x a 0.25 A licorice stroke is
+   ~0.6 A — comparable to one aromatic C-C bond length, enough to merge a
+   ring's own atoms without reaching past it into unrelated geometry. Tuned by
+   rendering an aromatic ring's actual mask at a realistic Ray-still framing,
+   not guessed. */
+export const SHADOW_AMBIENT_NEAR_RADIUS_FRACTION = 2.4;
+export const SHADOW_AMBIENT_NEAR_WEIGHT = 0.85;
+export const SHADOW_AMBIENT_NEAR_RADIUS_PX_FALLBACK = 8;
 export const shadowBlurScale = (pxPerAngstrom, minStrokeRadius) => {
   const px = Number(pxPerAngstrom);
   const base = (!Number.isFinite(px) || px <= 0) ? 1 : Math.min(1, Math.max(SHADOW_BLUR_MIN, px / SHADOW_BLUR_REF));
@@ -995,26 +1010,45 @@ export const buildRayShadowMask = ({ atoms, camera, light, width, height, option
     penumbra: blurOf('penumbra', o.penumbra),
     penumbraMax: blurOf('penumbraMax', o.penumbraMax),
   };
-  /* THE PATCHWORK-OF-CRESCENTS PROBLEM: a thin, gently wavy backbone (or any
-     stroke that curves at a scale much bigger than its own radius) only
-     self-occludes near the PEAKS of that curve under one hard directional
-     light — the troughs have nothing near enough to shadow them. Confirmed
+  /* THE PATCHWORK-OF-CRESCENTS PROBLEM, AT TWO DIFFERENT SCALES. Every sphere
+     in the proxy chain has its own curvature, so under one hard directional
+     light it shows its own local "terminator" crescent — the lit side bright,
+     the far side dark — the same way any lit sphere does. Densely overlapping
+     spheres along a smooth path mostly hide this (their crescents line up
+     into one continuous dark side), but two distinct situations break that:
+
+     FAR: a stroke that curves at a scale much bigger than its own radius (a
+     gently wavy backbone, say) only self-occludes near the PEAKS of that
+     curve — the troughs have nothing near enough to shadow them. Confirmed
      this is not a proxy bug: neither smoothing the path (a proper spline
      through the guide atoms, matching NGL's own geometry) nor changing the
-     light's azimuth/elevation closes the gaps — they are a genuine
-     consequence of hard single-direction shadowing on this shape, the same
-     way a real ray-tracer's shadow map would show them. What a real renderer
-     adds that this one didn't is a SECOND, much WIDER soft term (ambient
-     occlusion / an area light) that bridges exactly these gaps into
-     continuous shading, while the fine, stroke-sized blur above keeps
-     individual bonds and rings crisp. `SHADOW_AMBIENT_*` below is that second
-     term: the SAME mask, blurred again at a scale set in ångströms
-     (residue-to-residue, not atom-to-atom), then blended back in with `max`
-     so it can only ADD softness, never erase the fine detail the first blur
-     already resolved. */
-  const ambientRadiusPx = pxPerAngstrom > 0
-    ? SHADOW_AMBIENT_RADIUS_ANGSTROM * pxPerAngstrom
-    : SHADOW_AMBIENT_RADIUS_PX_FALLBACK;
+     light's azimuth/elevation closes the gaps — a real ray-tracer's shadow
+     map would show the same thing. Bridged by `SHADOW_AMBIENT_FAR_*`, scaled
+     in ångströms at roughly one residue step, so it reaches across the gap
+     between one residue's self-shadow and the next.
+
+     NEAR: several atoms crowded together at a scale close to their OWN
+     radius — a ring, a branch point — each still shows its own separate
+     crescent even after the far pass, because they are too close together
+     for a residue-scale blur to treat as anything but one blob (confirmed by
+     rendering an aromatic ring's own mask directly: a cluster of distinct
+     per-atom crescents, not a hexagon, at both a whole-molecule framing and a
+     several-residue crop matching a typical Ray still). Bridged by
+     `SHADOW_AMBIENT_NEAR_*`, scaled off the STROKE's own radius instead of a
+     fixed distance, so it closes the gap between one atom's crescent and its
+     bonded neighbour's without washing out two unrelated strokes that simply
+     happen to be the same few ångströms apart elsewhere in the structure.
+
+     Both read the SAME fine mask independently and blend back in with `max`,
+     so either can only ADD softness, never erase the detail the fine pass
+     already resolved; neither depends on the other. */
+  const minStrokeRadius = minStrokeRadiusOf(atoms);
+  const farRadiusPx = pxPerAngstrom > 0
+    ? SHADOW_AMBIENT_FAR_RADIUS_ANGSTROM * pxPerAngstrom
+    : SHADOW_AMBIENT_FAR_RADIUS_PX_FALLBACK;
+  const nearRadiusPx = pxPerAngstrom > 0 && minStrokeRadius > 0
+    ? SHADOW_AMBIENT_NEAR_RADIUS_FRACTION * minStrokeRadius * pxPerAngstrom
+    : SHADOW_AMBIENT_NEAR_RADIUS_PX_FALLBACK;
   const cameraAxes = viewAxesOf(camera.view || mat4Identity());
   const lightAxes = viewAxesOf(light.view || mat4Identity());
   const cameraPass = rasterizeSpheres({
@@ -1044,16 +1078,21 @@ export const buildRayShadowMask = ({ atoms, camera, light, width, height, option
     penumbraMax: blur.penumbraMax,
     depthScale,
   });
-  // The wide pass reads the FINE mask (already resolved to bond/ring shape) —
-  // blurring it again at a much bigger radius does not need the raw PCF pass a
-  // second time, and the fine detail it is blended back against is what keeps
-  // this from washing anything out (see the `max` below).
-  const wideMask = softenMask(out.mask, mw, mh, ambientRadiusPx);
+  // Both passes read the FINE mask (already resolved to bond/ring shape) —
+  // blurring it again, at each term's own radius, does not need the raw PCF
+  // pass a second time, and the fine detail both are blended back against is
+  // what keeps this from washing anything out.
+  const nearMask = softenMask(out.mask, mw, mh, nearRadiusPx);
+  const farMask = softenMask(out.mask, mw, mh, farRadiusPx);
   const blended = new Float32Array(out.mask.length);
   for (let i = 0; i < blended.length; i += 1) {
     const fine = out.mask[i];
-    const ambient = wideMask[i] * SHADOW_AMBIENT_WEIGHT;
-    blended[i] = ambient > fine ? ambient : fine;
+    const near = nearMask[i] * SHADOW_AMBIENT_NEAR_WEIGHT;
+    const far = farMask[i] * SHADOW_AMBIENT_FAR_WEIGHT;
+    let v = fine;
+    if (near > v) v = near;
+    if (far > v) v = far;
+    blended[i] = v;
   }
   return {
     mask: blended,
