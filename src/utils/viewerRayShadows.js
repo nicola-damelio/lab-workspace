@@ -1,10 +1,8 @@
 /* =========================================================================
-  src/utils/viewerRayShadows.js
-  CAST SHADOWS for the « ✨ Ray » still.
+src/utils/viewerRayShadows.js
+CAST SHADOWS for the « ✨ Ray » still.
 ========================================================================= */
-
 export const RAY_SHADOW_MAX_PIXELS = 20e6;
-
 export const RAY_SHADOW_DEFAULTS = Object.freeze({
   strength: 0.55,
   softness: 1.6,
@@ -18,23 +16,18 @@ export const RAY_SHADOW_DEFAULTS = Object.freeze({
   penumbraMax: 8,
   blur: 1,
 });
-
 export const SHADOW_TAPS_PER_PIXEL = 2.5;
 export const SHADOW_MAX_TAPS = 64;
 export const SHADOW_BLUR_REF = 20;
 export const SHADOW_BLUR_MIN = 0.25;
 export const SHADOW_BLUR_STROKE_FRACTION = 0.6;
-
 export const SHADOW_AMBIENT_FAR_RADIUS_ANGSTROM = 4.0;
 export const SHADOW_AMBIENT_FAR_WEIGHT = 0.85;
 export const SHADOW_AMBIENT_FAR_RADIUS_PX_FALLBACK = 24;
-
 export const SHADOW_AMBIENT_NEAR_RADIUS_FRACTION = 2.4;
 export const SHADOW_AMBIENT_NEAR_WEIGHT = 0.85;
 export const SHADOW_AMBIENT_NEAR_RADIUS_PX_FALLBACK = 8;
-
 export const INVISIBLE_OPACITY = 0.02;
-
 export const PROXY_STROKE_BY_TYPE = Object.freeze({
   sphere: { kind: 'vdw', min: 0.12 },
   spacefill: { kind: 'vdw', min: 0.12 },
@@ -53,24 +46,20 @@ export const PROXY_STROKE_BY_TYPE = Object.freeze({
   rope: { kind: 'spline', base: 0.3, scale: 1, min: 0.2 },
   trace: { kind: 'spline', base: 0.35, scale: 1, min: 0.2 },
 });
-
 export const LINKED_KINDS = Object.freeze({ spline: 1, tube: 1, bond: 1, ball: 1 });
 export const BACKBONE_ONLY_KINDS = Object.freeze({ spline: 1, tube: 1 });
 export const FLAT_STROKE_BY_TYPE = Object.freeze({ cartoon: 1, ribbon: 1 });
-
 export const BAND_MAX_ACROSS = 6;
 export const BAND_MAX_ALONG = 8;
 export const BAND_MAX_PROXIES = 60000;
 const BAND_MIN_THICKNESS = 0.15;
 const BAND_TAPER = 1.6;
-
 const LINK_STEP_MIN = 0.3;
 const LINK_MAX = 4.2;
 
 // ============================================================================
 // 1. MATH UTILITIES
 // ============================================================================
-
 export const sub3 = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 export const cross3 = (a, b) => [
   a[1] * b[2] - a[2] * b[1],
@@ -83,7 +72,6 @@ export const normalize3 = (a) => {
   const l = length3(a);
   return l > 1e-9 ? [a[0] / l, a[1] / l, a[2] / l] : [0, 0, 1];
 };
-
 export const mat4Multiply = (a, b, out = new Array(16)) => {
   for (let c = 0; c < 4; c += 1) {
     for (let r = 0; r < 4; r += 1) {
@@ -95,7 +83,6 @@ export const mat4Multiply = (a, b, out = new Array(16)) => {
   }
   return out;
 };
-
 export const mat4TransformPoint = (m, p, out = new Array(4)) => {
   out[0] = m[0] * p[0] + m[4] * p[1] + m[8] * p[2] + m[12];
   out[1] = m[1] * p[0] + m[5] * p[1] + m[9] * p[2] + m[13];
@@ -103,7 +90,6 @@ export const mat4TransformPoint = (m, p, out = new Array(4)) => {
   out[3] = m[3] * p[0] + m[7] * p[1] + m[11] * p[2] + m[15];
   return out;
 };
-
 export const clipToScreen = (clip, width, height, out = new Array(3)) => {
   if (!(Math.abs(clip[3]) > 1e-9)) return null;
   const x = clip[0] / clip[3];
@@ -115,15 +101,12 @@ export const clipToScreen = (clip, width, height, out = new Array(3)) => {
   out[2] = z;
   return out;
 };
-
 export const viewAxesOf = (view) => ({
   right: [view[0], view[4], view[8]],
   up: [view[1], view[5], view[9]],
   back: [view[2], view[6], view[10]],
 });
-
 export const mat4Identity = () => [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
-
 export const mat4LookAt = (eye, target, up) => {
   const zAxis = normalize3(sub3(eye, target));
   const xAxis = normalize3(cross3(up, zAxis));
@@ -135,7 +118,6 @@ export const mat4LookAt = (eye, target, up) => {
     -dot3(xAxis, eye), -dot3(yAxis, eye), -dot3(zAxis, eye), 1,
   ];
 };
-
 export const mat4Orthographic = (left, right, bottom, top, near, far) => [
   2 / (right - left), 0, 0, 0,
   0, 2 / (top - bottom), 0, 0,
@@ -145,7 +127,6 @@ export const mat4Orthographic = (left, right, bottom, top, near, far) => [
   -(far + near) / (far - near),
   1,
 ];
-
 export const boundsOf = (positions, count) => {
   const n = Math.max(0, Math.min(count || positions.length / 3, positions.length / 3));
   if (!n) return { center: [0, 0, 0], radius: 1 };
@@ -161,7 +142,6 @@ export const boundsOf = (positions, count) => {
   const radius = Math.max(1e-3, 0.5 * Math.sqrt((maxX - minX) ** 2 + (maxY - minY) ** 2 + (maxZ - minZ) ** 2));
   return { center, radius };
 };
-
 export const boundsBoxOf = (positions, count) => {
   const n = Math.max(0, Math.min(count || positions.length / 3, positions.length / 3));
   if (!n) return { min: [-1, -1, -1], max: [1, 1, 1] };
@@ -180,7 +160,6 @@ export const boundsBoxOf = (positions, count) => {
   }
   return { min, max };
 };
-
 export const boxCornersOf = ({ min, max } = {}, out = []) => {
   const lo = min || [-1, -1, -1];
   const hi = max || [1, 1, 1];
@@ -196,7 +175,6 @@ export const boxCornersOf = ({ min, max } = {}, out = []) => {
 // ============================================================================
 // 2. RASTERIZATION & SHADOW TESTING
 // ============================================================================
-
 export const rasterizeSpheres = ({
   positions, radii, count = 0, clip, width, height,
   radiusScale = 1, axisUp = [0, 1, 0], needWorld = true, needReach = false,
@@ -214,19 +192,16 @@ export const rasterizeSpheres = ({
   const reach = needReach
     ? (out.reach && out.reach.length === w * h ? out.reach : new Float32Array(w * h))
     : null;
-
   const clipPt = new Array(4);
   const scr = new Array(3);
   const scrEdge = new Array(3);
   const maxRadius = Math.max(w, h) * 2;
-
   for (let i = 0; i < n; i += 1) {
     const x = positions[i * 3], y = positions[i * 3 + 1], z = positions[i * 3 + 2];
     if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) continue;
     const r = Math.max(0.1, (radii ? radii[i] : 1.7) * radiusScale);
     const c = clipToScreen(mat4TransformPoint(clip, [x, y, z], clipPt), w, h, scr);
     if (!c) continue;
-
     let rad = 1;
     const edge = clipToScreen(mat4TransformPoint(clip, [
       x + axisUp[0] * r, y + axisUp[1] * r, z + axisUp[2] * r,
@@ -236,14 +211,12 @@ export const rasterizeSpheres = ({
       rad = Math.sqrt(dx * dx + dy * dy);
     }
     rad = Math.max(1, Math.min(rad, maxRadius));
-
     const cx = c[0], cy = c[1], cz = c[2];
     const x0 = Math.max(0, Math.floor(cx - rad));
     const x1 = Math.min(w - 1, Math.ceil(cx + rad));
     const y0 = Math.max(0, Math.floor(cy - rad));
     const y1 = Math.min(h - 1, Math.ceil(cy + rad));
     const r2 = rad * rad;
-
     for (let py = y0; py <= y1; py += 1) {
       const dy = py + 0.5 - cy;
       const row = py * w;
@@ -265,7 +238,6 @@ export const rasterizeSpheres = ({
   }
   return { depth, hit, world, width: w, height: h, count: n };
 };
-
 export const softenMask = (mask, width, height, radius) => {
   const w = Math.max(1, Math.round(width));
   const h = Math.max(1, Math.round(height));
@@ -303,7 +275,6 @@ export const softenMask = (mask, width, height, radius) => {
   }
   return out;
 };
-
 export const pcfDiscOf = (taps) => {
   const n = Math.max(1, Math.round(Number(taps) || 1));
   const out = new Float32Array(n * 2);
@@ -316,12 +287,10 @@ export const pcfDiscOf = (taps) => {
   }
   return out;
 };
-
 export const pcfRotationOf = (x, y) => {
   const h = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
   return (h - Math.floor(h)) * Math.PI * 2;
 };
-
 export const shadowMaskOf = ({
   camera, light, width, height, biasNdc = 0, softness = 0,
   taps = 1, penumbra = 0, penumbraMax = 0, depthScale = 0,
@@ -346,7 +315,6 @@ export const shadowMaskOf = ({
   const clipPt = new Array(4);
   const scr = new Array(3);
   let shadowed = 0, penumbraRadius = 0, maxTaps = 0;
-
   for (let y = 0; y < h; y += 1) {
     for (let x = 0; x < w; x += 1) {
       const idx = y * w + x;
@@ -365,7 +333,6 @@ export const shadowMaskOf = ({
         ? Math.min(cap, base + (gap > 0 ? grow * gap * perAngstrom : 0))
         : 0;
       const radius = footprint + grown;
-
       if (!(radius > 0)) {
         if (met && p[2] > nearest + biasNdc) {
           mask[idx] = 1;
@@ -399,7 +366,6 @@ export const shadowMaskOf = ({
     taps: discTaps, tapsMax: maxTaps, penumbraRadius,
   };
 };
-
 export const sampleMaskBilinear = (mask, mw, mh, nx, ny) => {
   const width = Math.max(1, Math.round(mw));
   const height = Math.max(1, Math.round(mh));
@@ -412,7 +378,6 @@ export const sampleMaskBilinear = (mask, mw, mh, nx, ny) => {
   const c = mask[y1 * width + x0], d = mask[y1 * width + x1];
   return (a * (1 - fx) + b * fx) * (1 - fy) + (c * (1 - fx) + d * fx) * fy;
 };
-
 export const applyShadowToPixels = (data, width, height, mask, maskWidth, maskHeight, strength) => {
   const s = Math.min(1, Math.max(0, Number(strength) || 0));
   if (!(s > 0) || !data || !mask) return 0;
@@ -440,13 +405,11 @@ export const applyShadowToPixels = (data, width, height, mask, maskWidth, maskHe
 // ============================================================================
 // 3. LIGHT RIG & SCENE PARSING
 // ============================================================================
-
 export const lightDepthScale = ({ distance, radius, near, far } = {}) => {
   const n = Number.isFinite(Number(near)) ? Number(near) : 0.01;
   const f = Number.isFinite(Number(far)) ? Number(far) : Math.max(0.02, Number(distance) * 2 + Number(radius) * 2);
   return 2 / Math.max(1e-6, f - n);
 };
-
 export const shadowRigOf = ({
   dir, bounds = null, center = [0, 0, 0], radius = 1, distance = null,
   margin = RAY_SHADOW_DEFAULTS.fitMargin,
@@ -493,16 +456,13 @@ export const shadowRigOf = ({
     center: c, radius: r, distance: d, margin: m,
   };
 };
-
 export const lightMatricesOf = (setup) => shadowRigOf(setup);
 export const lightClipMatrix = (setup) => lightMatricesOf(setup).clip;
-
 const elements16Of = (matrix) => {
   const e = matrix && matrix.elements ? matrix.elements : matrix;
   if (!e || typeof e.length !== 'number' || e.length !== 16) return null;
   return Array.from(e);
 };
-
 export const viewerMatrixOf = (stage) => {
   const viewer = stage && stage.viewer;
   if (!viewer) return null;
@@ -516,7 +476,6 @@ export const viewerMatrixOf = (stage) => {
   t[12] = tx; t[13] = ty; t[14] = tz;
   return rot ? mat4Multiply(rot, t) : t;
 };
-
 const drawnAtomIndicesOf = (comp, atomCount) => {
   const list = comp && comp.reprList;
   if (!Array.isArray(list)) return null;
@@ -536,7 +495,6 @@ const drawnAtomIndicesOf = (comp, atomCount) => {
   if (set.size && atomCount && set.size >= atomCount) return null;
   return [...set].sort((a, b) => a - b);
 };
-
 export const repTypeOf = (rep, el = null) => {
   let fromEl = '';
   if (el) {
@@ -545,12 +503,10 @@ export const repTypeOf = (rep, el = null) => {
   const raw = (rep && rep.type) || fromEl || (rep && rep.parameters && rep.parameters.type) || '';
   return String(raw).toLowerCase();
 };
-
 export const repKindOf = (rep, el = null) => {
   const stroke = PROXY_STROKE_BY_TYPE[repTypeOf(rep, el)];
   return stroke ? stroke.kind : '';
 };
-
 const repNumber = (rep, el, ...keys) => {
   const sources = [rep, el && el.parameters, rep && rep.parameters];
   for (let s = 0; s < sources.length; s += 1) {
@@ -563,7 +519,6 @@ const repNumber = (rep, el, ...keys) => {
   }
   return 0;
 };
-
 export const proxyRadiusOf = (rep, vdwRadius = 1.7, el = null) => {
   const stroke = PROXY_STROKE_BY_TYPE[repTypeOf(rep, el)];
   if (!stroke) return null;
@@ -594,7 +549,6 @@ export const proxyRadiusOf = (rep, vdwRadius = 1.7, el = null) => {
   }
   return Math.max(0.05, Math.max(stroke.min, r));
 };
-
 const atomProxyOf = (structure) => {
   try {
     if (!structure || typeof structure.getAtomProxy !== 'function') return null;
@@ -602,7 +556,6 @@ const atomProxyOf = (structure) => {
     return ap && typeof ap.isBackbone === 'function' ? ap : null;
   } catch { return null; }
 };
-
 const drawsBackboneOf = (ap, idx) => {
   if (!ap) return false;
   try {
@@ -615,7 +568,6 @@ const drawsBackboneOf = (ap, idx) => {
   } catch { return false; }
   return false;
 };
-
 export const drawnProxyRadiiOf = (comp, atomCount, vdw = null, links = null) => {
   const list = comp && comp.reprList;
   if (!Array.isArray(list)) return null;
@@ -653,7 +605,6 @@ export const drawnProxyRadiiOf = (comp, atomCount, vdw = null, links = null) => 
   });
   return out;
 };
-
 export const opacityOf = (rep, el = null) => {
   const sources = [rep, el && el.parameters, rep && rep.parameters];
   for (let s = 0; s < sources.length; s += 1) {
@@ -664,7 +615,6 @@ export const opacityOf = (rep, el = null) => {
   }
   return 1;
 };
-
 const geometryOfRep = (rep) => {
   const list = rep && rep.bufferList;
   if (!Array.isArray(list)) return null;
@@ -675,7 +625,6 @@ const geometryOfRep = (rep) => {
   }
   return null;
 };
-
 export const bandSectionsOf = (rep, el = null) => {
   const kind = repTypeOf(rep, el);
   if (!FLAT_STROKE_BY_TYPE[kind]) return null;
@@ -714,7 +663,6 @@ export const bandSectionsOf = (rep, el = null) => {
   }
   return sections.length >= 2 ? sections : null;
 };
-
 const bandBrushOf = (sections, opacity = 1) => {
   const outPositions = [], outRadii = [];
   const push = (x, y, z, r) => { outPositions.push(x, y, z); outRadii.push(r); };
@@ -723,8 +671,14 @@ const bandBrushOf = (sections, opacity = 1) => {
     const dx = b.p[0] - a.p[0], dy = b.p[1] - a.p[1], dz = b.p[2] - a.p[2];
     const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
     if (!(len > 0) || !(len <= LINK_MAX * 3)) continue;
+    
     const r0 = Math.max(BAND_MIN_THICKNESS, Math.min(a.t, b.t), len * 0.02);
-    const along = Math.min(BAND_MAX_ALONG, Math.max(1, Math.ceil(len / (2 * r0))));
+    const avgHalf = (a.w + b.w) / 2;
+    const estAcross = Math.max(1, Math.ceil((2 * avgHalf) / (2 * r0 * 0.8)));
+    const estStep = (2 * avgHalf) / estAcross;
+    const estR = Math.max(r0, estStep / 1.2);
+    const along = Math.max(1, Math.ceil(len / (2 * estR * 0.8)));
+    
     for (let i = 0; i <= along; i += 1) {
       const u = i / (along + 1);
       const px = a.p[0] + dx * u, py = a.p[1] + dy * u, pz = a.p[2] + dz * u;
@@ -735,9 +689,9 @@ const bandBrushOf = (sections, opacity = 1) => {
       ]);
       const half = a.w + (b.w - a.w) * u;
       if (!(half > 0) || !(length3(dir) > 0.5)) continue;
-      const across = Math.min(BAND_MAX_ACROSS, Math.max(1, Math.ceil((2 * half) / (2 * r0))));
+      const across = Math.max(1, Math.ceil((2 * half) / (2 * r0 * 0.8)));
       const step = (2 * half) / across;
-      const r = Math.max(r0, step / BAND_TAPER);
+      const r = Math.max(r0, step / 1.2);
       for (let j = 0; j < across; j += 1) {
         const off = -half + (j + 0.5) * step;
         push(px + dir[0] * off, py + dir[1] * off, pz + dir[2] * off, r);
@@ -751,33 +705,33 @@ const bandBrushOf = (sections, opacity = 1) => {
   if (opacity < 1) for (let i = 0; i < count; i += 1) radii[i] *= opacity;
   return { positions, radii, count };
 };
-
 export const bandProxiesOf = (comp) => {
   const empty = { positions: new Float32Array(0), radii: new Float32Array(0), count: 0, reps: 0, debug: '' };
   const list = comp && comp.reprList;
   if (!Array.isArray(list)) return { ...empty, debug: 'no reprList' };
   const brushes = [];
   let total = 0;
-  let debug = 'no flat representations found';
+  let debug = '';
   list.forEach((el) => {
     try {
       const rep = (el && (el.repr || el)) || null;
       if (!rep || rep.visible === false) return;
       const kind = repTypeOf(rep, el);
-      if (!FLAT_STROKE_BY_TYPE[kind]) { debug = `type '${kind}' not flat`; return; }
+      if (!FLAT_STROKE_BY_TYPE[kind]) return;
       const op = opacityOf(rep, el);
-      if (op <= INVISIBLE_OPACITY) { debug = `type '${kind}' transparent`; return; }
+      if (op <= INVISIBLE_OPACITY) { if (!debug) debug = `type '${kind}' transparent`; return; }
       const geo = geometryOfRep(rep);
-      if (!geo) { debug = `type '${kind}' has no geometry buffer`; return; }
+      if (!geo) { if (!debug) debug = `type '${kind}' has no geometry buffer`; return; }
       const sections = bandSectionsOf(rep, el);
-      if (!sections) { debug = `type '${kind}' sections failed`; return; }
+      if (!sections) { if (!debug) debug = `type '${kind}' sections failed`; return; }
       const brush = bandBrushOf(sections, op);
-      if (!brush.count) { debug = `type '${kind}' brush empty`; return; }
+      if (!brush.count) { if (!debug) debug = `type '${kind}' brush empty`; return; }
       brushes.push(brush);
       total += brush.count;
       debug = '';
-    } catch (e) { debug = `error: ${e.message}`; }
+    } catch (e) { if (!debug) debug = `error: ${e.message}`; }
   });
+  if (!debug && !brushes.length) debug = 'no flat representations found';
   if (!brushes.length) return { ...empty, debug };
   const positions = new Float32Array(total * 3);
   const radii = new Float32Array(total);
@@ -789,9 +743,7 @@ export const bandProxiesOf = (comp) => {
   });
   return { positions, radii, count: total, reps: brushes.length, debug: '' };
 };
-
 const linkStepOf = (ra, rb) => Math.max(LINK_STEP_MIN, 0.5 * Math.min(ra, rb));
-
 const drawnBondsOf = (structure, links, n) => {
   if (!structure || typeof structure.eachBond !== 'function') return [];
   let linked = false;
@@ -828,7 +780,6 @@ const drawnBondsOf = (structure, links, n) => {
   }
   return out;
 };
-
 const layOut = (part, stride) => {
   const slotOf = new Map();
   const own = elements16Of(part.comp.matrix);
@@ -907,7 +858,6 @@ const layOut = (part, stride) => {
     bandDebug: part.bandDebug || '',
   };
 };
-
 const countFills = (lay, scale) => {
   const edges = lay.edges;
   let cost = 0;
@@ -930,7 +880,6 @@ const countFills = (lay, scale) => {
   }
   return cost;
 };
-
 const fillDrawnLinks = (parts, stride, maxAtoms) => {
   const layouts = parts.map((part) => layOut(part, stride));
   const slotsOf = (list) => list.reduce((a, lay) => a + lay.len + (lay.band ? lay.band.count : 0), 0);
@@ -997,7 +946,6 @@ const fillDrawnLinks = (parts, stride, maxAtoms) => {
     bandDebug,
   };
 };
-
 export const atomsFromStage = (stage, maxAtoms = RAY_SHADOW_DEFAULTS.maxAtoms) => {
   const comps = (stage && stage.compList) || [];
   const viewerM = viewerMatrixOf(stage);
@@ -1025,7 +973,6 @@ export const atomsFromStage = (stage, maxAtoms = RAY_SHADOW_DEFAULTS.maxAtoms) =
   const stride = total > maxAtoms ? Math.ceil(total / maxAtoms) : 1;
   return { ...fillDrawnLinks(parts, stride, maxAtoms), stride, total };
 };
-
 export const cameraFromViewer = (viewer) => {
   const cam = (viewer && (viewer.camera || viewer.perspectiveCamera || viewer.orthographicCamera)) || null;
   const viewOffset = cam && cam.view;
@@ -1037,7 +984,6 @@ export const cameraFromViewer = (viewer) => {
   if (!proj || !view) throw new Error('the viewer has no camera to cast a shadow from');
   return { projection: proj, view, clip: mat4Multiply(proj, view), type: (cam && cam.type) || 'Camera' };
 };
-
 export const rayShadowInputsOf = (stage, { lightDir = [0, 0, 1], options = {} } = {}) => {
   const o = rayShadowOptions(options);
   const viewer = stage && stage.viewer;
@@ -1058,7 +1004,6 @@ export const rayShadowInputsOf = (stage, { lightDir = [0, 0, 1], options = {} } 
 // ============================================================================
 // 4. OPTIONS, BLUR SCALING & DOM INTEGRATION
 // ============================================================================
-
 export const rayShadowOptions = (options = {}) => {
   const d = RAY_SHADOW_DEFAULTS;
   const num = (v, fallback) => (Number.isFinite(Number(v)) ? Number(v) : fallback);
@@ -1079,7 +1024,6 @@ export const rayShadowOptions = (options = {}) => {
     blur,
   };
 };
-
 export const rayShadowMaskSize = (width, height, options = {}) => {
   const o = rayShadowOptions(options);
   const w = Math.max(1, Math.round(Number(width) || 0));
@@ -1091,7 +1035,6 @@ export const rayShadowMaskSize = (width, height, options = {}) => {
     scale,
   };
 };
-
 export const shadowBlurScale = (pxPerAngstrom, minStrokeRadius) => {
   const px = Number(pxPerAngstrom);
   const base = (!Number.isFinite(px) || px <= 0) ? 1 : Math.min(1, Math.max(SHADOW_BLUR_MIN, px / SHADOW_BLUR_REF));
@@ -1102,7 +1045,6 @@ export const shadowBlurScale = (pxPerAngstrom, minStrokeRadius) => {
   const capPx = r * SHADOW_BLUR_STROKE_FRACTION * px;
   return base * Math.min(1, capPx / refPx);
 };
-
 const minStrokeRadiusOf = (atoms) => {
   const radii = atoms && atoms.radii;
   const n = Math.max(0, Math.min(Number(atoms && atoms.count) || 0, radii ? radii.length : 0));
@@ -1113,7 +1055,6 @@ const minStrokeRadiusOf = (atoms) => {
   }
   return Number.isFinite(min) ? min : 0;
 };
-
 export const maskScalePerAngstrom = ({ clip, view, bounds, width, height } = {}) => {
   if (!clip || !view) return 0;
   const w = Math.max(1, Math.round(Number(width) || 0));
@@ -1140,7 +1081,6 @@ export const maskScalePerAngstrom = ({ clip, view, bounds, width, height } = {})
   const scale = Math.min(sx, sy);
   return Number.isFinite(scale) && scale > 0 ? scale : 0;
 };
-
 export const proxyStrokeSummary = (radii, count, max = 4) => {
   const n = Math.max(0, Math.min(Math.round(Number(count) || 0), radii ? radii.length : 0));
   const bins = new Map();
@@ -1158,7 +1098,6 @@ export const proxyStrokeSummary = (radii, count, max = 4) => {
     count: n,
   };
 };
-
 export const buildRayShadowMask = ({ atoms, camera, light, width, height, options = {} }) => {
   const o = rayShadowOptions(options);
   const { width: mw, height: mh } = rayShadowMaskSize(width, height, o);
@@ -1226,7 +1165,6 @@ export const buildRayShadowMask = ({ atoms, camera, light, width, height, option
     penumbra: { taps: out.taps, radius: blur.softness, grow: blur.penumbra, reached: out.penumbraRadius },
   };
 };
-
 const defaultDecode = async (blob) => {
   if (typeof createImageBitmap === 'function') return createImageBitmap(blob);
   if (typeof document === 'undefined') throw new Error('no decoder for the still');
@@ -1243,7 +1181,6 @@ const defaultDecode = async (blob) => {
     setTimeout(() => { try { URL.revokeObjectURL(url); } catch { } }, 4000);
   }
 };
-
 const canvasOf = (width, height) => {
   if (typeof OffscreenCanvas === 'function') return new OffscreenCanvas(width, height);
   if (typeof document === 'undefined') throw new Error('no canvas to write the still on');
@@ -1251,7 +1188,6 @@ const canvasOf = (width, height) => {
   canvas.width = width; canvas.height = height;
   return canvas;
 };
-
 const toPngBlob = (canvas) => new Promise((resolve, reject) => {
   if (typeof canvas.convertToBlob === 'function') {
     canvas.convertToBlob({ type: 'image/png' }).then(resolve, reject);
@@ -1259,7 +1195,6 @@ const toPngBlob = (canvas) => new Promise((resolve, reject) => {
   }
   canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('the still could not be encoded'))), 'image/png');
 });
-
 export const shadowImageData = (imageData, shadow) => {
   if (!imageData || !shadow || !shadow.mask) return 0;
   return applyShadowToPixels(
@@ -1267,7 +1202,6 @@ export const shadowImageData = (imageData, shadow) => {
     shadow.mask, shadow.maskWidth, shadow.maskHeight, shadow.strength,
   );
 };
-
 export const addCastShadowsToBlob = async (blob, { shadow, decode = null, encode = null } = {}) => {
   if (!blob || !shadow || !shadow.mask || shadow.applied) return blob;
   try {
@@ -1296,7 +1230,6 @@ export const addCastShadowsToBlob = async (blob, { shadow, decode = null, encode
     return blob;
   }
 };
-
 export const rayShadowNote = (shadow, reason = '') => {
   if (!shadow || !shadow.mask) {
     return reason ? `· no cast shadows — ${reason}` : '';
@@ -1310,7 +1243,7 @@ export const rayShadowNote = (shadow, reason = '') => {
   const spheres = Number(shadow.spheres) || 0;
   const filled = Number(shadow.filled) || 0;
   const bands = Number(shadow.bands) || 0;
-  const bandDebug = shadow.bandDebug ? ` · ⚠ ribbon debug: ${shadow.bandDebug}` : '';
+  const bandDebug = shadow.bandDebug ? `· ⚠ ribbon debug: ${shadow.bandDebug}` : '';
   const st = shadow.strokes;
   const strokes = st && st.list && st.list.length
     ? `· strokes ${st.list.map((e) => `${e.radius.toFixed(2)} Å×${e.hits}`).join(' · ')}${st.rest ? ` · +${st.rest}` : ''}`
@@ -1318,7 +1251,7 @@ export const rayShadowNote = (shadow, reason = '') => {
   const rig = shadow.rig && Number.isFinite(Number(shadow.rig.width))
     ? `· rig ${Math.round(shadow.rig.width)}×${Math.round(shadow.rig.height)} Å`
     : '';
-  return `· cast shadows ${pct}%${covered == null ? '' : ` (${covered}% of the pixels) `}`
-    + `${spheres ? ` · ${spheres} proxies${filled ? `(${filled} filling the drawn strokes)` : ''} ` : ''}`
-    + `${bands ? ` · ${bands} in the ribbon bands ` : ''}${bandDebug}${strokes}${rig}`;
+  return `· cast shadows ${pct}%${covered == null ? '' : ` (${covered}% of the pixels)`}`
+    + `${spheres ? ` · ${spheres} proxies${filled ? `(${filled} filling the drawn strokes)` : ''}` : ''}`
+    + `${bands ? ` · ${bands} in the ribbon bands` : ''}${bandDebug}${strokes}${rig}`;
 };
