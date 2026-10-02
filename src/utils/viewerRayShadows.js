@@ -694,7 +694,6 @@ const bandBrushOf = (sections, opacity = 1) => {
     outPositions.push(x, y, z); 
     outRadii.push(r); 
   };
-  
   for (let v = 0; v + 1 < sections.length; v += 1) {
     if (outRadii.length >= BAND_MAX_PROXIES) break;
     const a = sections[v], b = sections[v + 1];
@@ -702,13 +701,14 @@ const bandBrushOf = (sections, opacity = 1) => {
     const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
     if (!(len > 0) || !(len <= LINK_MAX * 3)) continue;
     
-    // Use larger minimum thickness for better shadow coverage
-    const r0 = Math.max(0.5, Math.min(a.t, b.t), len * 0.05);
+    // Small fixed radius for ribbon proxy spheres
+    const r0 = Math.max(0.12, Math.min(0.35, Math.min(a.t, b.t)));
     
-    // Target ~70% overlap between spheres
-    const stepTarget = r0 * 0.6;
-    const along = Math.min(BAND_MAX_ALONG, Math.max(1, Math.ceil(len / stepTarget)));
+    // Target ~40% overlap between spheres
+    const stepAlong = r0 * 1.2;
+    const stepAcross = r0 * 1.2;
     
+    const along = Math.min(BAND_MAX_ALONG, Math.max(1, Math.ceil(len / stepAlong)));
     for (let i = 0; i <= along; i += 1) {
       if (outRadii.length >= BAND_MAX_PROXIES) break;
       const u = i / (along + 1);
@@ -721,10 +721,9 @@ const bandBrushOf = (sections, opacity = 1) => {
       const half = a.w + (b.w - a.w) * u;
       if (!(half > 0) || !(length3(dir) > 0.5)) continue;
       
-      const across = Math.min(BAND_MAX_ACROSS, Math.max(1, Math.ceil((2 * half) / stepTarget)));
+      const across = Math.min(BAND_MAX_ACROSS, Math.max(1, Math.ceil((2 * half) / stepAcross)));
       const step = (2 * half) / across;
-      const r = Math.max(r0, step * 0.8);
-      
+      const r = Math.min(0.35, Math.max(r0, step * 0.85));
       for (let j = 0; j < across; j += 1) {
         if (outRadii.length >= BAND_MAX_PROXIES) break;
         const off = -half + (j + 0.5) * step;
@@ -732,7 +731,6 @@ const bandBrushOf = (sections, opacity = 1) => {
       }
     }
   }
-  
   const count = outRadii.length;
   const positions = new Float32Array(outPositions);
   const radii = new Float32Array(outRadii);
