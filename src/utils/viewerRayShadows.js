@@ -634,7 +634,6 @@ export const bandSectionsOf = (rep, el = null) => {
   const pos = A.position && A.position.array;
   if (!pos) return null;
   
-  // Cartoon uses 3 vertices per triangle (9 floats), ribbon uses 4 vertices per quad (12 floats)
   const stride = kind === 'cartoon' ? 9 : 12;
   if (pos.length % stride !== 0) return null;
   const points = pos.length / stride;
@@ -645,21 +644,19 @@ export const bandSectionsOf = (rep, el = null) => {
   const norArr = A.normal && A.normal.array;
   const aspect = repNumber(rep, el, 'aspectRatio') || 5;
   
-  const sub = (arr, i, step = 3) => [arr[i], arr[i + 1], arr[i + 2]];
+  const sub = (arr, i) => [arr[i], arr[i + 1], arr[i + 2]];
   const sections = [];
   
   for (let v = 0; v < points; v += 1) {
     const p = sub(pos, v * stride);
     
-    // Size: try explicit size array, otherwise use default
-    let s = 0.45; // default cartoon width
+    let s = 0.45;
     if (sizeArr) {
       const sizeIdx = kind === 'cartoon' ? v * 3 : v * 4;
-      if (sizeArr[sizeIdx] != null) s = Number(sizeArr[sizeIdx]);
+      if (sizeArr[sizeIdx] != null && sizeArr[sizeIdx] > 0) s = Number(sizeArr[sizeIdx]);
     }
     if (!(s > 0)) s = 0.45;
     
-    // Direction: try explicit dir, otherwise compute from neighbors
     let d = dirArr && dirArr.length >= points * stride 
       ? normalize3(sub(dirArr, v * stride)) 
       : null;
@@ -683,18 +680,24 @@ export const bandSectionsOf = (rep, el = null) => {
 };
 const bandBrushOf = (sections, opacity = 1) => {
   const outPositions = [], outRadii = [];
-  const push = (x, y, z, r) => { outPositions.push(x, y, z); outRadii.push(r); };
+  const push = (x, y, z, r) => { 
+    if (outRadii.length >= BAND_MAX_PROXIES) return;
+    outPositions.push(x, y, z); 
+    outRadii.push(r); 
+  };
   for (let v = 0; v + 1 < sections.length; v += 1) {
+    if (outRadii.length >= BAND_MAX_PROXIES) break;
     const a = sections[v], b = sections[v + 1];
     const dx = b.p[0] - a.p[0], dy = b.p[1] - a.p[1], dz = b.p[2] - a.p[2];
     const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
     if (!(len > 0) || !(len <= LINK_MAX * 3)) continue;
     
     const r0 = Math.max(BAND_MIN_THICKNESS, Math.min(a.t, b.t), len * 0.02);
-    // Target step size for ~50% overlap between spheres
-    const stepTarget = r0 * 1.0; 
-    const along = Math.max(1, Math.ceil(len / stepTarget));
+    const stepTarget = Math.max(r0, 0.3); 
+    
+    const along = Math.min(BAND_MAX_ALONG, Math.max(1, Math.ceil(len / stepTarget)));
     for (let i = 0; i <= along; i += 1) {
+      if (outRadii.length >= BAND_MAX_PROXIES) break;
       const u = i / (along + 1);
       const px = a.p[0] + dx * u, py = a.p[1] + dy * u, pz = a.p[2] + dz * u;
       const dir = normalize3([
@@ -704,15 +707,16 @@ const bandBrushOf = (sections, opacity = 1) => {
       ]);
       const half = a.w + (b.w - a.w) * u;
       if (!(half > 0) || !(length3(dir) > 0.5)) continue;
-      const across = Math.max(1, Math.ceil((2 * half) / stepTarget));
+      
+      const across = Math.min(BAND_MAX_ACROSS, Math.max(1, Math.ceil((2 * half) / stepTarget)));
       const step = (2 * half) / across;
       const r = Math.max(r0, step * 0.9);
       for (let j = 0; j < across; j += 1) {
+        if (outRadii.length >= BAND_MAX_PROXIES) break;
         const off = -half + (j + 0.5) * step;
         push(px + dir[0] * off, py + dir[1] * off, pz + dir[2] * off, r);
       }
     }
-    if (outRadii.length > BAND_MAX_PROXIES) break;
   }
   const count = outRadii.length;
   const positions = new Float32Array(outPositions);
@@ -733,7 +737,7 @@ export const bandProxiesOf = (comp) => {
       const rep = (el && (el.repr || el)) || null;
       if (!rep || rep.visible === false) return;
       const kind = repTypeOf(rep, el);
-      if (!FLAT_STROKE_BY_TYPE[kind]) return; // Skip non-flat representations silently
+      if (!FLAT_STROKE_BY_TYPE[kind]) return;
       foundFlat = true;
       const op = opacityOf(rep, el);
       if (op <= INVISIBLE_OPACITY) { if (!debug) debug = `type '${kind}' transparent`; return; }
@@ -745,7 +749,7 @@ export const bandProxiesOf = (comp) => {
       if (!brush.count) { if (!debug) debug = `type '${kind}' brush empty`; return; }
       brushes.push(brush);
       total += brush.count;
-      debug = ''; // Success, clear any previous debug message
+      debug = '';
     } catch (e) { if (!debug) debug = `error: ${e.message}`; }
   });
   if (!foundFlat && !debug) debug = 'no flat representations found';
