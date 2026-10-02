@@ -11280,6 +11280,7 @@ const calcReportOf = (retained, ranked) => {
   const drawLine = best.draw
     ? ` · ${best.draw.turned} dihedral${best.draw.turned === 1 ? '' : 's'} drawn at random over`
       + ` ${best.draw.channels} rotatable bond${best.draw.channels === 1 ? '' : 's'}`
+      + `${best.draw.omegaLocked ? `, ${best.draw.omegaLocked} peptide ω held trans (not drawn)` : ''}`
       + `${best.draw.skipped ? ` (${best.draw.skipped} without a dihedral, skipped)` : ''}`
     : '';
   const protocolLine = best.protocol
@@ -11303,7 +11304,7 @@ const calcReportOf = (retained, ranked) => {
         : ` ✓ toutes dans le plateau de ± ${STRUCTURE_CALC_OMEGA_TOLERANCE}° autour de ${STRUCTURE_CALC_OMEGA}° (trans)`)
       + (best.omegaFree
         ? ` — 🪢 ω était LIBRE (case « ω varies » cochée) : sa barrière était comptée, pas imposée`
-        : ` — 🪢 ω protégé (aucun pas du protocole n'a pu l'abîmer)`)
+        : ` — 🪢 ω protégé (le tirage l'a posé trans, et aucun pas du protocole n'a pu l'abîmer)`)
     : '';
   /* 🪢 LA CASE « ω VARIE » — le rapport DIT avec quel réglage la famille a été calculée :
      deux scores ne se comparent pas si l'un avait le droit de tordre les liaisons peptidiques
@@ -11487,7 +11488,8 @@ const calcAttemptLine = (a, { done, of }) => `🧬 start ${done}/${of} — ${cal
   + `${a.omega && a.omega.violations ? ` · ⚠ ω ${a.omega.worst.deg.toFixed(0)}°` : ''}`
   + `${a.ramaPlot && a.ramaPlot.violations ? ` · ⚠ φ/ψ ${a.ramaPlot.violations}/${a.ramaPlot.measured} outside` : ''}`
   + `${a.dihedralWells && a.dihedralWells.count ? ` · ⛓ ${a.dihedralWells.satisfied}/${a.dihedralWells.count} imposed φ/ψ within ± ${a.dihedralWells.tolerance}°` : ''}`
-  + `${a.draw ? ` · ${a.draw.turned} dihedral${a.draw.turned === 1 ? '' : 's'} drawn at random` : ''}`
+  + `${a.draw ? ` · ${a.draw.turned} dihedral${a.draw.turned === 1 ? '' : 's'} drawn at random`
+    + `${a.draw.omegaLocked ? ` (${a.draw.omegaLocked} peptide ω held trans, not drawn)` : ''}` : ''}`
   + `${a.protocol ? ` · ${a.protocol.steps} steps` : ''}`;
 
 /** LE CALCUL, IMAGE PAR IMAGE — « the program must then generate n structures by randomly
@@ -20942,7 +20944,7 @@ const renderCalcMdOptions = () => (
         className="w-12 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
     </label>
     <label className="flex items-center gap-1"
-      title={`🪢 LET ω VARY — the request: « in the structure calculation allow the option to vary also the omega backbone angle. » UNCHECKED (the default) every peptide C–N bond is a PROTECTED dihedral: the annealing, the quench, the dynamics AND the minimisation refuse a step that increases its ω cost — that is what keeps peptides trans (measured: without it, an ω 0.4° off trans ended up cis after 300 dynamics steps). CHECKED, ω becomes an ORDINARY dihedral of the protocol: its barrier is still a family of the force field (k = ${STRUCTURE_CALC_OMEGA_WEIGHT} kcal/mol, zero inside the plateau of ± ${STRUCTURE_CALC_OMEGA_TOLERANCE}° around ${STRUCTURE_CALC_OMEGA}°), and the FIELD alone arbitrates — a peptide only leaves trans when a distance you asked for, an imposed φ/ψ or a clash pays more than that barrier. The step stays the family's own (12° in the annealing, 4° in the dynamics), so ω still turns by small steps and never jumps to another conformer. The setting is the STRUCTURE CALCULATION'S OWN: every start of ▶ Run carries it, and so does the ⚒ Minimise of the toolbar (which is the descent each start ends on). The 🌡 MD window has its OWN 🪢 box — this one does not touch it.`}>
+      title={`🪢 LET ω VARY — the request: « in the structure calculation allow the option to vary also the omega backbone angle. » UNCHECKED (the default) every peptide C–N bond is a PROTECTED dihedral: the annealing, the quench, the dynamics AND the minimisation refuse a step that increases its ω cost — that is what keeps peptides trans (measured: without it, an ω started from the plateau's edge, at ω = 150°, ends at 119° — 61° out of the plateau — after 300 dynamics steps at 3000 K — and at 81° after 3000 steps at 3000 K, 85° at 2000 K). THE RANDOM DRAW OF A START OBEYS IT TOO — and that was the hole: the draw used to give EVERY hinge a uniform angle, the peptide C–N included, so a start could be handed a cis ω (near 0°). The field does TIRE it back — its ω barrier is ONE-WAY (zero inside the plateau, k = ${STRUCTURE_CALC_OMEGA_WEIGHT} kcal/mol at the cis, never a second minimum) — but that is a PREFERENCE, judged with the rest of the field, and nothing guarantees it wins over a distance you asked for: MEASURED, a start at 0.4° from the cis came back to 92° of deviation from trans after six sweeps, and to 77° after 3000 dynamics steps at 2000 K — out of the plateau, still paying its barrier. The draw was the only place that could hand such a start out, so it is where the lock is: it no longer DRAWS a peptide, it POSES it trans, and it pulls a cis one back to trans. CHECKED, ω becomes an ORDINARY dihedral of the protocol: the draw pulls it at random like any other hinge, its barrier is still a family of the force field (k = ${STRUCTURE_CALC_OMEGA_WEIGHT} kcal/mol, zero inside the plateau of ± ${STRUCTURE_CALC_OMEGA_TOLERANCE}° around ${STRUCTURE_CALC_OMEGA}°), and the FIELD alone arbitrates — a peptide only leaves trans when a distance you asked for, an imposed φ/ψ or a clash pays more than that barrier. The step stays the family's own (12° in the annealing, 4° in the dynamics), so ω still turns by small steps and never jumps to another conformer. The setting is the STRUCTURE CALCULATION'S OWN: every start of ▶ Run carries it, and so does the ⚒ Minimise of the toolbar (which is the descent each start ends on). The 🌡 MD window has its OWN 🪢 box — this one does not touch it.`}>
       <input type="checkbox" checked={calcOmegaFree} onChange={(e) => setCalcOmegaFree(e.target.checked)}
         aria-label="Let the peptide ω dihedral vary in the structure calculation"
         className="accent-indigo-600" />
@@ -21076,7 +21078,7 @@ const renderMdOptions = () => (
       <span className="font-semibold text-slate-500">steps</span>
     </label>
     <label className="flex items-center gap-1"
-      title={`🪢 LET ω VARY IN THIS DYNAMICS — the 🌡 MD window's OWN setting (the structure calculation has its own 🪢 box, in its panel): this one changes nothing in ▶ Run. UNCHECKED (the default) every peptide C–N bond is PROTECTED — the dynamics refuses a step that increases its ω cost, which is what keeps peptides trans (measured: without it, an ω 0.4° off trans ended up cis after 300 dynamics steps). CHECKED, ω becomes an ORDINARY dihedral: its barrier is still a family of the field (k = ${STRUCTURE_CALC_OMEGA_WEIGHT} kcal/mol, zero inside the plateau of ± ${STRUCTURE_CALC_OMEGA_TOLERANCE}° around ${STRUCTURE_CALC_OMEGA}°), and the FIELD alone arbitrates — a peptide only leaves trans when a distance you asked for, an imposed φ/ψ or a clash pays more than that barrier. Its step cap stays the family's own (4°), so ω turns by small steps and never jumps to another conformer.`}>
+      title={`🪢 LET ω VARY IN THIS DYNAMICS — the 🌡 MD window's OWN setting (the structure calculation has its own 🪢 box, in its panel): this one changes nothing in ▶ Run. UNCHECKED (the default) every peptide C–N bond is PROTECTED — the dynamics refuses a step that increases its ω cost, which is what keeps peptides trans (MEASURED: an ω sitting at the plateau's edge, ω = 150°, is still 150.0° — cost 0 — after 3000 dynamics steps at 2000 K, while the SAME run with ω free walks out of the plateau: 119° after 300 steps at 3000 K, and 85° / 81° after 3000 steps at 2000 K / 3000 K. Note also what this protection is NOT: the barrier is ONE-WAY — strictly rising from the plateau up to k at the cis — so nothing is ever TOWED towards the cis and there is no cis basin to fall into; a free ω leaves trans only when the thermal noise and your own distances outbid the barrier). CHECKED, ω becomes an ORDINARY dihedral: its barrier is still a family of the field (k = ${STRUCTURE_CALC_OMEGA_WEIGHT} kcal/mol — ONE-WAY: zero inside the plateau of ± ${STRUCTURE_CALC_OMEGA_TOLERANCE}° around ${STRUCTURE_CALC_OMEGA}°, then strictly rising to k at the cis, never a second minimum), and the FIELD alone arbitrates — a peptide only leaves trans when a distance you asked for, an imposed φ/ψ or a clash pays more than that barrier. Its step cap stays the family's own (4°), so ω turns by small steps and never jumps to another conformer.`}>
       <input type="checkbox" checked={mdFreeOmega} onChange={(e) => setMdFreeOmega(e.target.checked)}
         aria-label="Let the peptide ω dihedral vary"
         className="accent-sky-600" />

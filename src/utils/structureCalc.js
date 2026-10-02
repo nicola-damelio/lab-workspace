@@ -74,7 +74,7 @@ import {
 } from './geometryRelax.js';
 /* LE dièdre du dossier (convention IUPAC signée) et LA rotation du dossier — il n'y
    a pas de second lecteur de dièdre dans cette application. */
-import { dihedralDeg, planTorsion } from './torsionDrive.js';
+import { dihedralDeg, planTorsion, wrapDeg } from './torsionDrive.js';
 /* LE CHAMP DE FORCES RÉEL — en kcal/mol, avec les charges, le solvant, l'entropie et
    les atomes ajoutés (`utils/forceFieldKcal.js`). Le recuit, la dynamique, la
    minimisation et le score lisent SES fonctions : aucun moteur n'a sa propre physique,
@@ -185,8 +185,9 @@ export const STRUCTURE_CALC_OMEGA_WEIGHT = FF_OMEGA_K;
    peptidique est un dièdre PROTÉGÉ, et trois moteurs le protègent chacun : le recuit et la
    trempe REFUSENT un pas qui augmente son coût (`protectOmega`), la dynamique refuse le même pas
    sur ce canal-là, la minimisation aussi. C'est la bonne règle quand ω n'est qu'une CONSÉQUENCE
-   (on veut des peptides TRANS), et c'est ce qui a été mesuré : sans elle, un ω posé à 0.4° de
-   trans finissait CIS après 300 pas de dynamique.
+   (on veut des peptides TRANS), et c'est ce qui a été mesuré : sans elle, la MÊME dynamique
+   chaude (3000 K) partie du plateau le quitte — ω finit à 119° après 300 pas (61° hors du
+   plateau) et à 85° après 3000 (95°), au lieu de rester dans la fenêtre.
    L'option fait de ω un dièdre ORDINAIRE du protocole : plus aucune de ces trois règles ne le
    refuse, la barrière du champ reste comptée comme toutes les autres familles
    (`ffOmegaCostOf`, k = 20 kcal/mol, NULLE dans le plateau de ± 30° autour de 180°), et c'est
@@ -194,7 +195,17 @@ export const STRUCTURE_CALC_OMEGA_WEIGHT = FF_OMEGA_K;
    distance demandée, un φ/ψ imposé, un empilement) paie plus que sa barrière. Le PAS reste celui
    de la famille (12° au recuit, 4° en dynamique) : ω continue de se tourner par PETITS pas, il
    ne saute pas d'un conformère à l'autre, et il ne peut pas franchement s'isomériser sans que
-   le champ le paie. */
+   le champ le paie.
+   ⚠ ET LE VERROU EST AUSSI DANS LE TIRAGE (`randomTorsionsOf`) : FAUSSE, la case interdit le
+   seul geste que la protection ne pouvait pas rattraper. Le tirage donnait un angle uniforme à
+   TOUTES les charnières, liaison peptidique comprise, et un ω tombé près de 0° n'était attrapé
+   par RIEN ensuite : le terme ω du champ (`ffOmegaCostOf`) est MONOTONE (nul dans le plateau,
+   k = 20 kcal/mol au cis, un seul minimum) — il TIRE donc bien vers trans, mais c'est une
+   PRÉFÉRENCE jugée avec le reste du champ. Mesuré : avec une distance demandée qui ne se tient
+   qu'en pliant ω, un départ à 0.4° de cis n'en revient qu'à 92° d'écart (et 77° après 3000 pas
+   de dynamique) — hors du plateau, à payer sa barrière. Le tirage ne tire donc plus un peptide :
+   il le POSE trans, et il le corrige même s'il arrive cis (voir `randomTorsionsOf`). Cochée, il
+   le tire au hasard comme les autres. */
 export const STRUCTURE_CALC_FREE_OMEGA = false;
 /** Le poids du potentiel statistique φ/ψ (kcal/mol à 100° hors du bassin). */
 export const STRUCTURE_CALC_RAMA_WEIGHT = FF_RAMA_K;
@@ -734,18 +745,37 @@ export const rotatableBondsOf = ({ elements = [], bonds = [], atomCount = 0 } = 
  * que `planTorsion` a refusé (`skipped`, avec sa raison — un quadruplet aligné n'a
  * pas de dièdre, et un nombre inventé vaudrait moins que ce silence).
  *
+ * 🪢 LA LIAISON PEPTIDIQUE N'EST PAS TIRÉE. Un canal dont la liaison est un ω
+ * (`peptideOmegasOf` : un C qui porte un O lié à un N) n'est pas un canal comme les
+ * autres : quand `freeOmega` est faux — le défaut — l'angle ne lui est plus TIRÉ, il
+ * lui est POSÉ, à la valeur TRANS de cette liaison, et un ω reçu cis est RAMENÉ à
+ * trans. C'est le seul endroit qui pouvait le faire, et voici pourquoi, depuis que le
+ * terme ω du champ est MONOTONE (`ffOmegaCostOf` : nul dans le plateau de ± 30°,
+ * k = 20 kcal/mol au cis, aucun second minimum) : le champ TIRE donc un ω tiré de
+ * travers vers trans, mais c'est une PRÉFÉRENCE jugée avec le reste du champ — rien ne
+ * garantit qu'elle l'emporte sur une distance demandée, et MESURÉ, un départ cis n'en
+ * revient qu'à 92° d'écart après six balayages (77° après 3000 pas de dynamique). Le
+ * tirage ne laisse donc plus un départ NAÎTRE hors du plateau : il naît trans, et y
+ * reste — le plateau est un CLIQUET, son coût y est nul et la protection refuse tout
+ * pas qui le monterait. Le rapport le dit canal par canal (`locked`, `omegaTarget`,
+ * `omegaBefore`, `omegaAfter`), et `omegaLocked` en donne le compte. La case cochée
+ * (`freeOmega` vrai) rend ω au tirage comme les autres charnières.
+ *
  * `rng` permet d'injecter un tirage ; sans lui, `makeRelaxRandom(graine)` — le
- * générateur du ⚒, il n'y en a pas d'autre dans le dossier.
+ * générateur du ⚒, il n'y en a pas d'autre dans le dossier. Le générateur est appelé
+ * pour TOUS les canaux, verrouillés compris : la suite qu'il rend ne dépend donc pas du
+ * verrou, et un tirage garde ses autres dièdres au chiffre près.
  */
 export const randomTorsionsOf = ({
   positions = null, elements = [], bonds = [], atomCount = 0,
   seed = STRUCTURE_CALC_SEED, rng = null, channels = null,
+  omegas = null, freeOmega = STRUCTURE_CALC_FREE_OMEGA,
 } = {}) => {
   const read = flatPositions(positions);
   if (!read) {
     return {
       ok: false, reason: 'bad-points', positions: null, channels: [], channelCount: 0,
-      counts: null, turned: [], skipped: [], drawn: 0,
+      counts: null, turned: [], skipped: [], drawn: 0, omegaLocked: 0, omegaFree: !!freeOmega,
     };
   }
   const count = read.count;
@@ -758,28 +788,78 @@ export const randomTorsionsOf = ({
   });
   const chan = Array.from(list.channels || []);
   const draw = typeof rng === 'function' ? rng : makeRelaxRandom(wrapSeed(seed));
+  /* 🪢 LES CANAUX ω, RETROUVÉS PAR LEUR LIAISON — un canal est un couple d'atomes (i, j),
+     un ω aussi : la clé les apparie. Sans `omegas` fourni, on les relit du graphe comme
+     partout ailleurs, sur le MÊME `atomCount` que les charnières (sinon le verrou
+     ignorerait un ω que le tirage, lui, tourne). */
+  const omegaKeyOf = (i, j) => (i < j ? `${i}-${j}` : `${j}-${i}`);
+  const omegaByBond = new Map();
+  if (!freeOmega) {
+    const bound = asked > 0 ? Math.min(asked, count) : count;
+    const listOmega = omegas
+      ? Array.from(omegas)
+      : peptideOmegasOf({ elements, bonds, atomCount: bound });
+    for (const o of listOmega) omegaByBond.set(omegaKeyOf(o.i, o.j), o);
+  }
   const x = read.flat.slice();
   const pt = (i) => [x[i * 3], x[i * 3 + 1], x[i * 3 + 2]];
   const turned = [];
   const skipped = [];
+  let locked = 0;
   for (const ch of chan) {
     /* ARRONDI AU MILLIÈME DE DEGRÉ — un rapport se lit, et rien d'autre ne change :
-       le même tirage donne le même nombre pour tout le monde. */
+       le même tirage donne le même nombre pour tout le monde. Le tirage est demandé même
+       quand le canal est VERROUILLÉ : l'angle est jeté, mais le générateur a bien avancé
+       d'un cran, donc la suite reste celle qu'elle aurait été sans le verrou. */
     const angle = Number((draw() * 360 - 180).toFixed(3));
+    const omega = omegaByBond.get(omegaKeyOf(ch.i, ch.j)) || null;
+    /* LE QUADRUPLET ET L'ANGLE DEMANDÉS — un canal ordinaire demande au tirage son propre
+       dièdre ; un canal ω demande SA liaison peptidique, à la valeur TRANS. */
+    const follows = omega ? ch.moving.indexOf(omega.probeAtoms[3]) >= 0 : false;
+    const points = !omega
+      ? ch.probeAtoms
+      : (follows
+        ? omega.probeAtoms
+        : [omega.probeAtoms[3], omega.probeAtoms[2], omega.probeAtoms[1], omega.probeAtoms[0]]);
+    const request = !omega
+      ? { angleDeg: angle }
+      : { angleDeg: follows ? omega.target : wrapDeg(-omega.target) };
+    const [A, B, C, D] = ch.probeAtoms;
+    const before = omega ? dihedralDeg(pt(A), pt(B), pt(C), pt(D)) : null;
     const plan = planTorsion({
-      points: ch.probeAtoms.map(pt),
+      points: points.map(pt),
       moved: ch.moving.map(pt),
-      request: { angleDeg: angle },
+      request,
     });
     if (!plan.ok) { skipped.push({ i: ch.i, j: ch.j, why: plan.reason }); continue; }
     ch.moving.forEach((k, c) => {
       const p = plan.positions[c];
       x[k * 3] = p[0]; x[k * 3 + 1] = p[1]; x[k * 3 + 2] = p[2];
     });
+    if (!omega) {
+      turned.push({
+        i: ch.i, j: ch.j, axis: ch.axis, atoms: ch.movingCount,
+        drawn: angle, before: plan.beforeDeg, after: plan.afterDeg,
+        turned: Number(plan.deltaDeg.toFixed(3)),
+      });
+      continue;
+    }
+    /* LE CANAL VERROUILLÉ, RACONTÉ — ce que la liaison peptidique vaut MAINTENANT, relu
+       par le MÊME lecteur que le rapport ω (`dihedralDeg` sur les coordonnées écrites),
+       ce qu'elle valait, et ce que le canal porte. Le quadruplet retourné (le côté mobile
+       porte le CA de l'amide) lit l'ω changé de signe : `omegaVal` le remet dans la
+       convention de l'amide, pour que le rapport dise un ω et pas son reflet. */
+    locked += 1;
+    const omegaVal = (deg) => (deg == null ? null : wrapDeg(follows ? deg : -deg));
+    const after = dihedralDeg(pt(A), pt(B), pt(C), pt(D));
     turned.push({
       i: ch.i, j: ch.j, axis: ch.axis, atoms: ch.movingCount,
-      drawn: angle, before: plan.beforeDeg, after: plan.afterDeg,
-      turned: Number(plan.deltaDeg.toFixed(3)),
+      drawn: after == null ? null : Number(after.toFixed(3)),
+      before, after,
+      turned: before == null || after == null ? null : Number(wrapDeg(after - before).toFixed(3)),
+      locked: true, omegaTarget: omega.target, omegaFollows: follows,
+      omegaBefore: omegaVal(plan.beforeDeg), omegaAfter: omegaVal(plan.afterDeg),
+      omegaTurned: omegaVal(plan.deltaDeg),
     });
   }
   return {
@@ -789,7 +869,7 @@ export const randomTorsionsOf = ({
       ring: list.ring || 0, multiple: list.multiple || 0,
       terminal: list.terminal || 0, unknown: list.unknown || 0,
     },
-    turned, skipped, drawn: turned.length,
+    turned, skipped, drawn: turned.length, omegaLocked: locked, omegaFree: !!freeOmega,
   };
 };
 
@@ -2776,10 +2856,18 @@ export function* structureAttemptFrames({
   const step = function* (phase, positions, extra = null) {
     yield { phase, positions, index: k, ...(extra || {}) };
   };
+  /* 🪢 LE RÉGLAGE ω, LU AVANT LE TIRAGE — le tirage a besoin des ω de la molécule ET de la
+     case « ω varie » : FAUSSE (le défaut), il ne TIRE pas les liaisons peptidiques, il les
+     POSE trans (voir `randomTorsionsOf`). Lu ici pour tout le départ, comme la barrière du
+     recuit : c'est la même liste qui sert au tirage, au recuit, à la dynamique et à la note. */
+  const omegas = peptideOmegasOf({ elements: els, bonds, atomCount: count });
   /* 1 · LE TIRAGE DES DIÈDRES — le départ. `draw: false` garde la molécule reçue
      telle quelle (le ⚒ d'un seul coup, sans hasard : ce que la sonde compare). */
   const drawn = draw
-    ? randomTorsionsOf({ positions: x0, elements: els, bonds, atomCount: count, seed: startSeed })
+    ? randomTorsionsOf({
+      positions: x0, elements: els, bonds, atomCount: count, seed: startSeed,
+      omegas, freeOmega,
+    })
     : null;
   let x = drawn && drawn.ok ? Array.from(drawn.positions) : x0.slice();
   yield* step('draw', x, { channels: drawn ? drawn.channelCount : 0 });
@@ -2790,7 +2878,6 @@ export function* structureAttemptFrames({
      hasard), et il ne recuit pas — sauf si `anneal` le demande explicitement. La
      barrière ω et le squelette sont lus ici une fois pour tout le départ (le même
      champ de forces que la note, donc). */
-  const omegas = peptideOmegasOf({ elements: els, bonds, atomCount: count });
   const backbone = backboneTorsionsOf({ elements: els, bonds, atomCount: count });
   const annealSteps = clampInt(
     anneal == null ? (draw ? STRUCTURE_CALC_ANNEAL_STEPS : 0) : anneal,
@@ -2808,8 +2895,17 @@ export function* structureAttemptFrames({
       targetFunction,
       /* ⚠ LE RECUIT PROTÈGE ω — la règle est la même qu'à la trempe : un pas qui AUGMENTE
          le coût d'une liaison peptidique est refusé (un vrai peptide reste TRANS à toute
-         température de ce protocole), mais un pas qui le DIMINUE est accepté — donc un ω
-         tiré de travers REVIENT vers trans, il ne s'en éloigne jamais.
+         température de ce protocole), mais un pas qui le DIMINUE est accepté.
+         ⚠ C'EST UN CLIQUET, PAS UN RAPPEL VERS TRANS. Le terme ω du champ est monotone
+         (`ffOmegaCostOf`, un seul minimum) : tout pas ACCEPTÉ rapproche de trans. Mais la
+         règle ne garde que les pas qui ne MONTENT pas le coût, et une force concurrente (une
+         distance demandée) peut donc retenir ω HORS du plateau — mesuré sur la sonde : un
+         départ cis n'en revient qu'à 92° d'écart après six balayages, 77° après 3000 pas de
+         dynamique à 2000 K. Ce que la protection garantit ici est donc plus étroit, et c'est
+         exactement ce qu'il faut : un ω parti DU PLATEAU y reste (son coût y est nul, le pas
+         qui l'en sortirait le monterait, il est refusé). C'est pourquoi le TIRAGE ne laisse
+         plus partir un peptide de travers (le verrou est dans `randomTorsionsOf`, plus haut) :
+         naître dans le plateau, c'est y rester.
          🪢 …et il ne la protège plus quand l'utilisateur a demandé que ω VARIE (`freeOmega`) :
          la barrière d'ω reste comptée dans le champ, donc c'est elle qui arbitre. */
       protectOmega: true,
@@ -2991,6 +3087,12 @@ export function* structureAttemptFrames({
       skipped: drawn ? drawn.skipped.length : 0,
       counts: drawn ? drawn.counts : null,
       plan: drawn ? drawn.turned : [],
+      /* 🪢 CE QUE LE TIRAGE A FAIT DES ω — combien de liaisons peptidiques il a POSÉES trans
+         au lieu de les tirer (et si la case les rendait au hasard). Un rapport de tirage qui
+         tairait ça laisserait croire que TOUS les dièdres de la ligne « tirés au hasard » le
+         sont : ce n'est plus vrai, et c'est justement le correctif. */
+      omegaLocked: drawn ? (drawn.omegaLocked || 0) : 0,
+      omegaFree: drawn ? !!drawn.omegaFree : !!freeOmega,
     },
     channels: channelReadingsOf({ positions: x, channels: drawn ? drawn.channels : [] }),
     /* LE RECUIT, RACONTÉ — le plan de température pas à pas, ce qu'il a essayé, ce

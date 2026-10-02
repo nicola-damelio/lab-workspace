@@ -239,8 +239,8 @@ has(RELAX, 'export const buildModelGeometry', '…le protocole « model build »
 has(RELAX, 'export const makeRelaxRandom', '…et le générateur du ⚒ est le seul générateur du dossier');
 ok(!/(mulberry32\s*=|function mulberry32|Math\.random\()/.test(MODULE),
   '⚠ donc AUCUN second générateur ici — ni mulberry32 recopié, ni Math.random (le nom n’apparaît que pour dire d’où vient le tirage)');
-has(MODULE, "import { dihedralDeg, planTorsion } from './torsionDrive.js';",
-  'le dièdre se RELIT et se POSE avec les deux fonctions du dossier');
+has(MODULE, "import { dihedralDeg, planTorsion, wrapDeg } from './torsionDrive.js';",
+  'le dièdre se RELIT, se POSE et se RAMÈNE dans (−180, 180] avec les fonctions du dossier');
 has(MODULE, "import { rigidTransform } from './structureFit.js';",
   '…et la dispersion de la famille passe par le solveur de superposition du dossier');
 has(RUN3, 'export const rigidTransform', '…qui est bien celui-là (kabsch de utils/mdAnalysis.js)');

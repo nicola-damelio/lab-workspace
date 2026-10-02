@@ -38,7 +38,8 @@
                DU GRAPHE 🪢 (aucun polygone recopié) — c'est le potentiel statistique du
                squelette, en kcal/mol
      chi       Σ k_χ·(1 + cos 3χ)/2, k = 1.5 kcal/mol — les trois conformères décalés
-     omega     Σ k_ω·(1 − cos 2(ω − 180°))/2, k = 20 kcal/mol — la barrière trans
+     omega     Σ k_ω·(1 − cos(over))/(1 − cos(180° − tolérance)), k = 20 kcal/mol AU CIS,
+               NULLE dans le plateau de ± 30° — la barrière trans à SENS UNIQUE
      restraint Σ k_NOE·over² hors d'un PUITS PLAT de ± 0.25 Å, k = 20 kcal/mol/Å² —
                c'est le potentiel de contrainte standard d'un calcul de structure
                (XPLOR/CNS, CYANA) : la distance demandée ne coûte RIEN tant qu'elle est
@@ -1185,11 +1186,14 @@ const STANDARD_PRESSURE = 1e5;                    // Pa (1 bar)
 
 /** LA COURBURE DES POTENTIELS DE TORSION (kcal·mol⁻¹·rad⁻²) — la dérivée seconde du
  *  terme au fond de son puits : 2k/(Δ)² pour le bassin φ/ψ, 9k/2 pour le cos 3χ de χ1,
- *  2k pour la barrière cos 2 de ω. C'est ce que l'entropie quasi-harmonique lit. */
+ *  k_ω/(1 − cos(180° − tolérance)) pour la barrière trans de ω — la SEULE courbure non
+ *  nulle du terme ω, prise là où il commence à mordre (le bord du plateau) : dedans il
+ *  est exactement plat. L'ancien cos 2 en valait 2k = 40, une raideur que le terme actuel
+ *  n'a nulle part. C'est ce que l'entropie quasi-harmonique lit. */
 export const FF_ENTROPY_CURVATURE = {
   rama: (2 * FF_RAMA_K) / ((FF_RAMA_SPAN * RAD) ** 2),
   chi: 4.5 * FF_CHI_K,
-  omega: 2 * FF_OMEGA_K,
+  omega: FF_OMEGA_K / (1 - Math.cos((180 - FF_OMEGA_TOLERANCE) * RAD)),
 };
 
 
@@ -1315,7 +1319,7 @@ export const ffKcalRowsOf = ({
     rule: `three staggered wells (60°, 180°, −60°): k·(1 + cos 3χ)/2, outside past ± ${FF_CHI_TOLERANCE}° of a well` },
   { id: 'omega', icon: '🪢', label: 'ω trans', k: FF_OMEGA_K, unit: 'kcal/mol',
     of: 'every peptide C–N bond (read from the chemistry)',
-    rule: `barrier k·(1 − cos 2(ω − ${FF_OMEGA_TARGET}°))/2, zero inside ± ${FF_OMEGA_TOLERANCE}°` },
+    rule: `ONE-WAY barrier: k·(1 − cos(over))/(1 − cos(180° − ${FF_OMEGA_TOLERANCE}°)), ZERO inside ± ${FF_OMEGA_TOLERANCE}° of ${FF_OMEGA_TARGET}°, then strictly rising to k = ${FF_OMEGA_K} kcal/mol at the cis — never a second minimum` },
   { id: 'restraint', icon: '📏', label: 'Your distances', k: FF_NOE_K, unit: 'kcal·mol⁻¹·Å⁻²',
     of: 'every line of the distance table',
     rule: `FLAT-BOTTOM well of ± ${FF_RESTRAINT_TOLERANCE} Å, then k·(over)² — the standard restraint of XPLOR/CNS; the ⚖ weight typed on a line multiplies this k, and a weight of 0 makes that line inert` },

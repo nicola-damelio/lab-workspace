@@ -1,12 +1,16 @@
 /* =========================================================================
    _omega_trace.mjs — SCRATCH (diagnostic, not a test).
 
-   OÙ le ω cis apparaît-il ? Le tirage tire TOUTES les charnières
-   (`rotatableBondsOf`, liaison peptidique C–N comprise) à une valeur uniforme ;
-   les trois moteurs « protégés » (recuit, dynamique, minimisation) ne refusent
-   qu'un pas qui AUGMENTE le coût d'ω — donc un ω tombé du côté cis ne peut plus
-   revenir. Ce script mesure : (a) les ω imposés par le tirage, (b) l'écart à 180°
-   après CHAQUE étape du protocole, (c) ce que le rapport du module en dit.
+   OÙ le ω cis apparaissait-il ? Le tirage donnait à TOUTES les charnières
+   (`rotatableBondsOf`, liaison peptidique C–N comprise) une valeur uniforme, et les trois
+   moteurs « protégés » (recuit, dynamique, minimisation) ne refusent qu'un pas qui AUGMENTE
+   le coût d'ω. Le terme ω du champ est MONOTONE (nul dans le plateau, k au cis, AUCUN second
+   minimum) : il TIRE donc un ω tiré de travers vers trans — mais c'est une PRÉFÉRENCE jugée
+   avec le reste du champ, et une distance demandée peut le retenir HORS du plateau. LE VERROU
+   EST DONC DANS LE TIRAGE : `randomTorsionsOf` POSE les ω trans (et ramène à trans un ω reçu
+   cis) quand `freeOmega` est faux. Ce script mesure : (a) ce que le tirage fait des ω
+   (verrouillé, puis LIBRE pour montrer ce qu'il donnait avant), (b) l'écart à
+   180° après CHAQUE étape du protocole, (c) ce que le rapport du module en dit.
 
    Run: node _omega_trace.mjs   (rapport écrit dans _omega_trace_out.txt)
    ========================================================================= */
@@ -16,7 +20,7 @@ import {
   backboneTorsionsOf, peptideOmegasOf, randomTorsionsOf, structureAttemptFrames,
   omegaPenaltyOf, secondaryDihedralRestraintsOf, SS_DIHEDRAL_TOLERANCE,
 } from './src/utils/structureCalc.js';
-import { FF_DIHEDRAL_CENTRE_K } from './src/utils/forceFieldKcal.js';
+import { FF_DIHEDRAL_CENTRE_K, FF_OMEGA_K, ffOmegaCostOf } from './src/utils/forceFieldKcal.js';
 
 const LINES = [];
 const say = (s = '') => { LINES.push(s); console.log(s); };
@@ -122,21 +126,38 @@ say('');
 const drawn = randomTorsionsOf({
   positions: start, elements, bonds, atomCount: count, seed: 20261001,
 });
+/* …ET LE TIRAGE D'AVANT — `freeOmega: true`, c'est-à-dire la case 🪢 cochée : c'est là que
+   le tirage pouvait ouvrir n'importe quel ω, et c'est ce que le verrou empêche par défaut. */
+const drawnFree = randomTorsionsOf({
+  positions: start, elements, bonds, atomCount: count, seed: 20261001, freeOmega: true,
+});
 const turnedOmega = drawn.turned.filter((t) => omegaKeys.has(key(t.i, t.j)));
 say('§ 1 · LE TIRAGE DES DIÈDRES');
-say(`  charnières tournées : ${drawn.drawn} · dont des liaisons PEPTIDIQUES : ${turnedOmega.length}`);
-say('  angles IMPOSÉS à ces ω (uniforme dans (−180, 180)) :');
-say(`    ${turnedOmega.map((t) => t.drawn.toFixed(1).padStart(7)).join(' ')}`);
-say(`  ω après le tirage : ${show(drawn.positions)}`);
+say(`  charnières tournées : ${drawn.drawn} · dont des liaisons PEPTIDIQUES POSEES TRANS :`
+  + ` ${drawn.omegaLocked} (verrou, cible ${omegas.length ? omegas[0].target : '?'}°)`);
+say('  ω posés par le verrou (relus sur les coordonnées, lus par le même dihedralDeg) :');
+say(`    ${turnedOmega.map((t) => (t.omegaAfter == null ? '   —   ' : t.omegaAfter.toFixed(2).padStart(7))).join(' ')}`);
+say(`  ω après le tirage VERROUILLÉ : ${show(drawn.positions)}`);
 const afterDraw = devsOf(drawn.positions);
 const outside = afterDraw.filter((v) => v > 30).length;
 const cisSide = afterDraw.filter((v) => v > 120).length;
 say(`    ${outside}/${omegas.length} hors du plateau (± 30°) · ${cisSide} DU CÔTÉ CIS (au-delà de 120°)`);
-say('  le coût ω du champ (k = 20, cos 2) à ces écarts :');
-say(`    ${afterDraw.map((v) => (v == null ? '  —  '
-  : (20 * (1 - Math.cos(2 * (v - 30) * Math.PI / 180)) / 2).toFixed(1).padStart(5))).join(' ')}`);
-say('  ⇒ à 180° (cis) il vaut 5.0 : MOINS que le sommet de la barrière (20.0 à 120°) —');
-say('    c\'est un SECOND minimum, et les moteurs protégés n\'acceptent que de DESCENDRE.');
+say('  ⇒ le verrou les POSE : aucun ω tiré ne peut plus naître HORS du plateau.');
+say('');
+say('  POUR MÉMOIRE — ce que le tirage donne quand ω est LIBRE (`freeOmega: true`) :');
+say(`    ${drawnFree.drawn} charnières tirées, ${drawnFree.omegaLocked} verrouillée(s) ·`
+  + ` ω après : ${show(drawnFree.positions)}`);
+const freeDevs = devsOf(drawnFree.positions);
+say(`    ${freeDevs.filter((v) => v > 30).length}/${omegas.length} hors du plateau ·`
+  + ` ${freeDevs.filter((v) => v > 120).length} DU CÔTÉ CIS — c'est ce que la protection`
+  + ' seule ne rattrape qu\'à moitié.');
+say(`  coût ω du champ (MONOTONE, k = ${FF_OMEGA_K} kcal/mol au cis) à ces écarts :`);
+say(`    ${freeDevs.map((v) => (v == null ? '  —  '
+  : ffOmegaCostOf(180 - v).toFixed(1).padStart(5))).join(' ')}`);
+say('  ⇒ le terme est à SENS UNIQUE : 0 dans le plateau, puis STRICTEMENT croissant jusqu\'à 20.0');
+say(`    au cis (écart 180°) — il n\'y a PAS de second minimum, donc le champ TIRE ces ω vers trans.`);
+say('    Mais la protection ne garde que les pas qui ne MONTENT pas le coût, et une distance');
+say('    demandée peut le retenir hors du plateau : c\'est pourquoi le TIRAGE, lui, les POSE.');
 say('');
 
 /* ── (2) LE PROTOCOLE, ÉTAPE PAR ÉTAPE ─────────────────────────────────────── */

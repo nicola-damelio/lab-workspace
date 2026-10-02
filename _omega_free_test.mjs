@@ -8,6 +8,13 @@
 
      • LE DÉFAUT EST FAUX — `STRUCTURE_CALC_FREE_OMEGA` vaut `false` : un calcul qui ne
        demande rien garde les peptides TRANS, exactement comme avant l'option ;
+     • LE VERROU EST DANS LE TIRAGE — `randomTorsionsOf` ne TIRE plus une liaison
+       peptidique : il la POSE trans (`omegaLocked`), et ramène à trans un ω reçu cis.
+       Le terme ω du champ est MONOTONE (un seul minimum, k = 20 kcal/mol au cis, zéro dans
+       le plateau), donc il TIRE bien un ω de travers vers trans — mais c'est une PRÉFÉRENCE
+       jugée avec le reste du champ, et mesuré, un départ cis n'en revient qu'à 92° d'écart
+       (77° après 3000 pas de dynamique) : hors du plateau, sa barrière payée pour rien. Le
+       verrou fait donc NAÎTRE le départ DANS le plateau, d'où il ne peut plus sortir ;
      • LE PLATEAU EST GARANTI QUAND ELLE EST FAUSSE — exécuté : un ω placé dans le plateau
        (± 30° de 180°) y reste, quelle que soit la force qui tire ailleurs, parce que le
        recuit, la trempe, la dynamique ET la minimisation refusent chacun un pas qui
@@ -30,7 +37,7 @@ import { dihedralDeg } from './src/utils/torsionDrive.js';
 import {
   STRUCTURE_CALC_FREE_OMEGA, STRUCTURE_CALC_OMEGA, STRUCTURE_CALC_OMEGA_TOLERANCE,
   STRUCTURE_CALC_OMEGA_WEIGHT,
-  peptideOmegasOf, rotatableBondsOf, omegaPenaltyOf,
+  peptideOmegasOf, rotatableBondsOf, omegaPenaltyOf, randomTorsionsOf,
   minimizeTorsionsOf, mdFrames, annealTorsionsOf,
   structureAttemptOf, structureCalculationOf,
 } from './src/utils/structureCalc.js';
@@ -169,9 +176,9 @@ eq(STRUCTURE_CALC_FREE_OMEGA, false,
   '⚠ `STRUCTURE_CALC_FREE_OMEGA` vaut FAUX : qui ne demande rien garde les peptides TRANS');
 has(MODULE, 'export const STRUCTURE_CALC_FREE_OMEGA = false;',
   '…et le module le dit à côté des constantes du protocole');
-eq((MODULE.match(/freeOmega = STRUCTURE_CALC_FREE_OMEGA,/g) || []).length, 4,
-  '⚠ LES QUATRE fonctions qui reçoivent le réglage le prennent au défaut du module'
-  + ' (recuit, dynamique, minimisation, et un départ)');
+eq((MODULE.match(/freeOmega = STRUCTURE_CALC_FREE_OMEGA,/g) || []).length, 5,
+  '⚠ LES CINQ fonctions qui reçoivent le réglage le prennent au défaut du module'
+  + ' (le TIRAGE, le recuit, la dynamique, la minimisation, et un départ)');
 has(MODULE, 'if (protectOmega && !freeOmega', 'le RECUIT lâche sa protection de ω avec l’option');
 has(MODULE, 'if (isPeptideCh && !freeOmega) {',
   '⚠ …la DYNAMIQUE lâche la sienne sur ce canal-là (c’est elle qui refusait le pas qui abîme ω)');
@@ -185,6 +192,169 @@ has(MODULE, 'freeOmega,\n  });\n  let mdRun = null;',
   '…et à la DYNAMIQUE et à la MINIMISATION de chaque départ (le même objet `motionOf`)');
 has(MODULE, 'omegaFree: !!freeOmega,',
   'chaque moteur DIT le réglage qu’il a suivi (`omegaFree`) — un rapport qui le taît ne se relit pas');
+
+/* ════════════ 1bis · LE VERROU AU TIRAGE — CE QUE LE DÉPART AVAIT LE DROIT D'OUVRIR ═══════
+   ⚠ LA CONTRE-ÉPREUVE D'ABORD, MESURÉE. Le terme ω du champ est MONOTONE : nul dans le
+   plateau (± 30° de trans), STRICTEMENT croissant jusqu'à k = 20 kcal/mol au cis (0°) — un
+   seul minimum, donc le champ TIRE vers trans un ω tiré de travers. Mais c'est une
+   PRÉFÉRENCE, pas une garantie : elle est jugée AVEC le reste du champ, et une distance
+   demandée qui ne peut se tenir qu'en pliant ω le retient HORS du plateau. Mesuré ici sur la
+   sonde (une distance à 3.063 Å — la géométrie de ω = 60° — et la seule charnière ω) :
+   depuis ω = 0.4°, le coût d'ω BAISSE bien (20 → 5.75 kcal/mol en six balayages), mais ω
+   finit à −87.6°, soit 92.4° d'écart à trans, HORS du plateau ; 3000 pas de dynamique à
+   2000 K ne le ramènent qu'à 77.1°. Un départ tiré cis n'est donc pas perdu, il est
+   DÉFECTUEUX : le protocole dépense ses pas à le remonter et peut ne jamais retrouver le
+   plateau. C'est ce que le verrou supprime à la source — et la preuve inverse est juste
+   après : un ω qui COMMENCE dans le plateau n'en sort plus jamais. */
+const CIS = peptideOf(0.4);
+const CIS_BASE = {
+  positions: CIS.positions, elements: CIS.elements, bonds: CIS.bonds,
+  restraints: RESTRAINTS, channels: OMEGA_CHANNELS,
+};
+const cisPenalty0 = omegaOf(CIS.positions);
+const cisMin = minimizeTorsionsOf({ ...CIS_BASE, rounds: 6 });
+const cisMd = mdRunOf({ ...CIS_BASE, steps: 3000, temperature: 2000 });
+ok(cisPenalty0.list[0].dev > 170,
+  `le départ est FRANCHEMENT cis : ω = ${cisPenalty0.list[0].deg.toFixed(1)}°, coût`
+  + ` ${cisPenalty0.list[0].cost.toFixed(2)} kcal/mol — le MAXIMUM du terme ω`);
+ok(cisMin.omega.list[0].cost < cisPenalty0.list[0].cost,
+  '⚠ …et le champ l\'a bien TIRÉ vers trans : le coût d\'ω a BAISSI'
+  + ` (${cisPenalty0.list[0].cost.toFixed(2)} → ${cisMin.omega.list[0].cost.toFixed(2)} kcal/mol)`);
+ok(cisMin.omega.violations === 1
+  && cisMin.omega.list[0].dev > STRUCTURE_CALC_OMEGA_TOLERANCE + 30,
+  '…mais il l\'a laissé HORS du plateau : la descente protégée finit à'
+  + ` ${cisMin.omega.list[0].deg.toFixed(1)}° (écart ${cisMin.omega.list[0].dev.toFixed(1)}°),`
+  + ' retenue par la distance demandée — le terme ω est une préférence, pas une garantie');
+ok(cisMd.omega.violations === 1
+  && cisMd.omega.list[0].dev > STRUCTURE_CALC_OMEGA_TOLERANCE
+  && cisMd.omega.list[0].dev < 170,
+  '…et 3000 pas de dynamique à 2000 K l\'en rapprochent sans l\'y mettre :'
+  + ` ω = ${cisMd.omega.list[0].deg.toFixed(1)}° (écart ${cisMd.omega.list[0].dev.toFixed(1)}°)`);
+
+/* LA PREUVE INVERSE — LE PLATEAU EST UN CLIQUET. Le coût d'ω y est NUL (sur ± 30° de trans) et
+   la protection refuse tout pas qui le MONTERAIT : un ω qui commence dans le plateau ne peut
+   donc plus en sortir, quelle que soit la distance qui tire. C'est ce que le verrou donne au
+   départ — il COMMENCE dedans. */
+const inPlateau = mdRunOf({ ...EDGE_BASE, steps: 3000, temperature: 2000 });
+eq(inPlateau.omega.violations, 0,
+  '⚠ un ω DÉJÀ dans le plateau y reste (3000 pas de dynamique à 2000 K, avec la distance de'
+  + ' ω = 60° qui tire) : le plateau ne se quitte pas — le verrou y fait naître le départ');
+near(inPlateau.omega.list[0].cost, 0, '…à coût NUL, mesuré', 1e-12);
+
+/* LE CORRECTIF, EXÉCUTÉ — le tirage ne TIRE plus un peptide : il le POSE trans, d'où que la
+   molécule parte (même d'un ω franchement cis, 0.4°). */
+const drawPeptide = (omegaDeg, freeOmega) => {
+  const M = peptideOf(omegaDeg);
+  const rows = peptideOmegasOf({ elements: M.elements, bonds: M.bonds, atomCount: M.count });
+  const draw = randomTorsionsOf({
+    positions: M.positions, elements: M.elements, bonds: M.bonds, seed: 20260202,
+    omegas: rows, freeOmega,
+  });
+  return {
+    M, rows, draw,
+    pen: omegaPenaltyOf({ positions: draw.positions, omegas: rows }),
+    row: draw.turned.find((t) => (t.i === M.C1 && t.j === M.N2)) || null,
+  };
+};
+/* LES DEUX SONDES DE LA RIGIDITÉ — `bondSpreadOf` mesure l'écart maximal sur les LIAISONS (aucune
+   n'est jamais coupée par une rotation : la seule que le côté mobile sépare est la charnière
+   elle-même, dont les deux atomes sont SUR l'axe), `pairChangeOf` et `stepOf` servent la preuve
+   canal par canal (une paire qui traverse la charnière change, un atome du côté tourné garde sa
+   distance aux deux atomes de l'axe et se déplace tout de même de la corde de son arc). */
+const bondSpreadOf = (p, q, bonds) => Math.max(
+  ...bonds.map((b) => Math.abs(gapOf(p, b.i, b.j) - gapOf(q, b.i, b.j))),
+);
+const pairChangeOf = (p, q, i, j) => Math.abs(gapOf(p, i, j) - gapOf(q, i, j));
+const stepOf = (p, q, k) => Math.hypot(
+  p[k * 3] - q[k * 3], p[k * 3 + 1] - q[k * 3 + 1], p[k * 3 + 2] - q[k * 3 + 2],
+);
+for (const omegaDeg of [0.4, 60, 150, 180]) {
+  const { draw, pen, row } = drawPeptide(omegaDeg, false);
+  eq(draw.omegaLocked, 1, `depuis ω = ${omegaDeg}° : la liaison peptidique est VERROUILLÉE (un seul ω)`);
+  ok(row && row.locked === true, '…et sa ligne le DIT (`locked`) au lieu de faire croire à un tirage');
+  near(row.omegaTarget, STRUCTURE_CALC_OMEGA, '…avec la valeur TRANS du module comme cible');
+  ok(Math.abs(Math.abs(row.omegaAfter) - STRUCTURE_CALC_OMEGA) < 1e-6,
+    `…et ce que les coordonnées portent APRÈS est bien trans (ω = ${row.omegaAfter})`);
+  near(pen.list[0].dev, 0, '…l\'écart à trans relu par le rapport ω est NUL : aucune tolérance invoquée', 1e-9);
+  eq(pen.violations, 0, '…donc AUCUN ω hors du plateau AVANT le premier pas du protocole');
+  eq(draw.drawn, 4, '…et les quatre charnières sont « tournées » (ω compris : il est POSÉ)');
+}
+
+/* LE VERROU EST UNE ROTATION, PAS UNE RECONSTRUCTION — une rotation de dièdre ne coupe aucune
+   liaison : la seule que le côté mobile sépare est la charnière elle-même, dont les deux atomes
+   sont SUR l'axe. Les 7 liaisons du dipeptide ressortent donc du tirage au chiffre près, dans le
+   cas facile (ω = 180°) comme dans celui qui tourne de 180° (ω = 0.4°) — une reconstruction
+   depuis des coordonnées internes ne laisserait pas cette trace-là. */
+const drawnTrans = drawPeptide(180, false);
+const drawnCis = drawPeptide(0.4, false);
+eq(MOL.bonds.length, 7, 'la sonde a 7 liaisons pour 8 atomes');
+near(bondSpreadOf(drawnTrans.draw.positions, drawnTrans.M.positions, MOL.bonds), 0,
+  '⚠ à ω = 180° : les 7 liaisons sont intactes après le tirage verrouillé — aucune n’est coupée', 1e-9);
+near(bondSpreadOf(drawnCis.draw.positions, drawnCis.M.positions, MOL.bonds), 0,
+  '…y compris quand le verrou RAMÈNE un ω cis à trans : il TOURNE, il ne reconstruit pas', 1e-9);
+
+/* …ET LA ROTATION EST RIGIDE AUTOUR DE LA CHARNIÈRE — VÉRIFIÉ SUR LE SEUL CANAL ω (les autres
+   charnières mises de côté, `channels` réduit à la liaison C1–N2), depuis le départ cis. Trois
+   choses, et elles suffisent à dire « rotation » : un atome du côté mobile garde sa distance AUX
+   DEUX atomes de la liaison — deux distances à deux points de l'axe, c'est exactement une
+   rotation autour de cet axe —, le reste de la molécule ne bouge pas d'un chiffre, et le côté
+   mobile a bel et bien tourné (de ~180°, de quoi le voir à l'œil). */
+const cisOnly = peptideOf(0.4);
+const cisOnlyChans = omegaChannelOf(cisOnly);
+const cisOnlyDraw = randomTorsionsOf({
+  positions: cisOnly.positions, elements: cisOnly.elements, bonds: cisOnly.bonds,
+  channels: { channels: cisOnlyChans }, omegas: OMEGAS, seed: 20260202,
+});
+const omegaCh = cisOnlyChans[0];
+const onAxis = [omegaCh.i, omegaCh.j];
+const turnedAtoms = Array.from(omegaCh.moving);
+const stillAtoms = [];
+for (let k = 0; k < cisOnly.count; k += 1) if (!turnedAtoms.includes(k)) stillAtoms.push(k);
+eq(cisOnlyDraw.omegaLocked, 1, 'le canal ω SEUL est bien celui que le verrou a posé');
+ok(Math.abs(Math.abs(cisOnlyDraw.turned[0].omegaAfter) - STRUCTURE_CALC_OMEGA) < 1e-6,
+  `…et il l’a posé à trans depuis 0.4° (ω = ${cisOnlyDraw.turned[0].omegaAfter}° après)`);
+near(Math.max(...turnedAtoms.flatMap((k) => onAxis.map((h) =>
+  pairChangeOf(cisOnlyDraw.positions, cisOnly.positions, k, h)))), 0,
+  '⚠ …chaque atome du côté mobile garde sa distance AUX DEUX atomes de la charnière : c’est une'
+  + ' rotation autour de l’axe C1–N2, au chiffre près', 1e-9);
+near(Math.max(...stillAtoms.map((k) => stepOf(cisOnlyDraw.positions, cisOnly.positions, k))), 0,
+  '…et RIEN de l’autre côté ne bouge : le verrou ne touche que le côté qu’il tourne', 1e-12);
+const turnedSpread = Math.max(...turnedAtoms.map((k) => stepOf(cisOnlyDraw.positions, cisOnly.positions, k)));
+ok(turnedSpread > 1.5,
+  `…et ce côté-là a bel et bien TOURNÉ : ${turnedSpread.toFixed(2)} Å de déplacement`);
+
+/* LA CASE COCHÉE — le tirage redevient un tirage, ω compris : c'est l'option demandée, et ce
+   correctif ne la retire pas (c'est alors le champ qui paie, section 3). */
+const freeDrawn = drawPeptide(180, true);
+eq(freeDrawn.draw.omegaLocked, 0, '⚠ la case cochée ne verrouille plus RIEN');
+eq(freeDrawn.draw.omegaFree, true, '…et le tirage DIT qu\'il était libre');
+ok(freeDrawn.row && freeDrawn.row.locked === undefined,
+  '…la ligne du canal ω est une ligne de tirage ordinaire (pas de `locked`)');
+near(freeDrawn.row.after, freeDrawn.row.drawn, '…et elle porte bien l\'angle TIRÉ (relu par le lecteur)', 1e-9);
+ok(freeDrawn.pen.list[0].dev > STRUCTURE_CALC_OMEGA_TOLERANCE,
+  `…ω est même sorti du plateau par le hasard seul (${freeDrawn.pen.list[0].deg.toFixed(1)}°, écart`
+  + ` ${freeDrawn.pen.list[0].dev.toFixed(1)}°) : tirer ω au hasard reste permis à qui le demande`);
+
+/* …ET UN DÉPART ENTIER, TIRÉ D'UN ω FRANCHEMENT CIS, PART TRANS. */
+const cisStart = peptideOf(0.4);
+const cisAttempt = structureAttemptOf({
+  positions: cisStart.positions, elements: cisStart.elements, bonds: cisStart.bonds,
+  restraints: RESTRAINTS, seed: 20260202, draw: true,
+  anneal: 0, md: 0, minimise: 0, quench: false, freeOmega: false,
+});
+eq(cisAttempt.draw.omegaLocked, 1, 'un ▶ départ dit `draw.omegaLocked: 1`');
+eq(cisAttempt.draw.omegaFree, false,
+  '…et `draw.omegaFree: false` : un rapport de tirage qui tairait ça laisserait croire que TOUT est tiré');
+eq(omegaOf(cisAttempt.positions).violations, 0,
+  '…et la structure de départ est DANS le plateau : un départ ne naît plus de travers');
+
+/* LE MODULE LE FAIT — le tirage reçoit les ω ET la case, et le rapport du départ le dit. */
+has(MODULE, 'omegas = null, freeOmega = STRUCTURE_CALC_FREE_OMEGA,',
+  '⚠ `randomTorsionsOf` porte le réglage ω : c\'est LUI qui verrouille les peptides');
+has(MODULE, 'seed: startSeed,\n      omegas, freeOmega,',
+  '…et chaque DÉPART lui passe les ω de la molécule ET la case de l\'utilisateur');
+has(MODULE, 'omegaLocked: drawn ? (drawn.omegaLocked || 0) : 0,',
+  '…et le rapport du départ compte les ω POSÉS (sinon la ligne « tirés au hasard » mentirait)');
 
 /* ════════════ 2. LE PLATEAU, QUAND L'OPTION EST FAUSSE ══════════════════════
    La règle est DURE : le pas qui augmente le coût d'ω est REFUSÉ. Un ω posé à 180° (trans) ne
@@ -213,8 +383,9 @@ ok(distOf(minHeld.positions) > CA_TARGET + 0.5,
 /* ════════════ 3. ω VARIE, QUAND LA CASE EST COCHÉE (EXÉCUTÉ) ════════════════
    La MÊME molécule, la MÊME distance demandée, les MÊMES moteurs : seul le réglage change. Ce
    qui doit se voir, c'est le TRADE — le champ paie de la barrière d'ω et gagne plus ailleurs
-   (elle vaut k·(1 − cos 2·over)/2, donc 0.87 kcal/mol à 12° hors du plateau, 20 au maximum :
-   c'est un PRIX, pas un mur). */
+   (elle vaut k·(1 − cos over)/(1 − cos(180° − tolérance)) : NULLE dans le plateau, puis
+   STRICTEMENT croissante jusqu'à k = 20 kcal/mol au cis — c'est un PRIX, pas un mur, et il n'y a
+   aucun second minimum dans lequel tomber). */
 const minFree = minimizeTorsionsOf({ ...BASE, rounds: 6, freeOmega: true });
 const mdFree = mdRunOf({ ...EDGE_BASE, steps: 6000, temperature: 3000, freeOmega: true });
 const annealFree = annealTorsionsOf({
@@ -301,9 +472,16 @@ has(VIEWER, '🪢 ω varies', 'la case est nommée 🪢 « ω varies »');
 has(VIEWER, 'aria-label="Let the peptide ω dihedral vary"', '…avec son étiquette pour les lecteurs d’écran');
 has(VIEWER, 'best.omegaFree', 'le rapport du calcul DIT avec quel réglage la famille a été calculée');
 has(VIEWER, 'run.omegaFree', '…les rapports du ▶ MD et du ⚒ Minimise aussi');
+has(VIEWER, 'peptide ω held trans (not drawn)',
+  '⚠ la ligne du TIRAGE dit les ω que le calcul a POSÉS — sinon « drawn at random » mentirait sur eux');
+has(VIEWER, 'peptide ω held trans, not drawn',
+  '…et la ligne de chaque départ le redit');
 
 console.log(`_omega_free_test.mjs — ${passed} assertions OK (l'option 🪢 « ω varie » : son défaut FAUX,`
-  + ' les trois moteurs qui lâchent chacun leur protection, le plateau GARANTI quand elle est fausse,'
+  + ' le VERROU DU TIRAGE qui pose les peptides trans au lieu de les tirer (et qui ramène un ω'
+  + ' cis dans le plateau, d\'où la protection seule ne le ramène qu\'à moitié — mesuré), les trois'
+  + ' moteurs qui lâchent'
+  + ' chacun leur protection, le plateau GARANTI quand elle est fausse (un cliquet : on n\'en sort pas),'
   + ' le TRADE exécuté quand elle est vraie — ω sort du plateau, paie sa barrière, la distance se'
   + ' rapproche et le coût TOTAL baisse —, le protocole entier du calcul de structure qui la porte,'
   + ' et le panneau qui la branche sur ▶ Run, ▶ MD et ⚒ Minimise)')
