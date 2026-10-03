@@ -21,6 +21,13 @@
         JAMAIS TOUCHÉ (zéro pixel de fond modifié) — le « ça salit la molécule ».
      3. LA FORME : l'ombre n'est pas un voile (une part du dessin seulement
         s'assombrit) — le masque n'est plus la carte de toute l'image.
+     4. LA COUCHE VIVANTE (la demande suivante : « will it be possible to see it
+        while the molecule is moving and not only as a still picture? ») : le
+        noir d'alpha `s·m` que le direct POSE sur la scène (son chemin, décrit
+        dans src/utils/viewerRayShadowLive.js) rejoue l'ombre du still sur les
+        MÊMES pixels WebGL — écart maximal d'une poignée d'unités par canal,
+        aucun pixel à plus de deux, fond toujours intact. C'est ce qui autorise
+        la couche à peindre la vue image par image.
 
    COMMENT (zéro dépendance : ni Playwright ni Puppeteer dans ce dépôt)
    Un serveur 127.0.0.1 sert la page, `ngl.js` (le MÊME dist UMD 2.4.0 que charge
@@ -203,6 +210,30 @@ async function main () {
   check(px.imageShare < 0.25,
     `…et elle n'occupe qu'une part de l'image (${Math.round(px.imageShare * 100)} %), pas la carte entière`,
     String(px.imageShare));
+
+  console.log('\n--- 4. LA COUCHE VIVANTE (le direct, sur LES MÊMES pixels) ---');
+  /* LA PARITÉ DU DIRECT ET DU PNG, mesurée là où elle compte : sur ce que NGL a
+     vraiment rendu. La couche du direct est un noir d'alpha `s·m` posé sur la
+     scène (viewerRayShadowLive.js) ; `applyShadowToPixels` multiplie chaque canal
+     par `1 − s·m`. Si l'ombre vivante n'était pas la même ombre, c'est ICI que
+     ça se verrait — pas dans une relecture de source. */
+  const lv = px.live || {};
+  check(lv.painted > 0, 'la couche du direct peint les pixels du masque', String(lv.painted));
+  check(lv.changed > 0 && Math.abs(lv.changed - px.touched) <= Math.max(20, px.touched * 0.01),
+    `…et elle assombrit les MÊMES pixels que le still (${lv.changed} contre ${px.touched} : l'écart est le liseré que le bilinéaire du navigateur et celui du module ne découpent pas au même pixel)`,
+    JSON.stringify({ live: lv.changed, still: px.touched }));
+  check(lv.maxDiff <= 3,
+    `la même ombre, au pixel près : écart maximal de ${lv.maxDiff} unité(s) par canal (moyenne ${lv.meanDiff})`,
+    JSON.stringify({ maxDiff: lv.maxDiff, meanDiff: lv.meanDiff, over2: lv.over2 }));
+  check(lv.over2 === 0,
+    "…aucun pixel ne s'en écarte de plus de deux unités : la parité n'est pas une moyenne",
+    String(lv.over2));
+  check(lv.bgVisibleDirt === 0,
+    `la couche ne salit pas le fond non plus : 0 pixel blanc assombri de plus de 8 unités (${lv.bgVisibleDirt})`,
+    String(lv.bgVisibleDirt));
+  check(lv.maskWidth >= 400 && lv.maskHeight >= 300,
+    "le masque du direct a la taille de l'image (donc rien n'est agrandi depuis un timbre-poste)",
+    lv.maskWidth + '×' + lv.maskHeight);
 
   const bad = CHECKS.filter((c) => !c.ok);
   console.log('\n' + (bad.length

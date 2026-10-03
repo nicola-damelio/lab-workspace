@@ -494,6 +494,60 @@ async function main () {
   }
   OUT.pixels.bgMaxDrop = Math.round(bgMaxDrop * 10) / 10;
   OUT.pixels.bgVisibleDirt = bgVisibleDirt;
+  /* ── LA COUCHE VIVANTE, SUR LES MÊMES PIXELS ──────────────────────────────
+     Le direct ne réécrit pas `v·(1 − s·m)` DANS l'image : il POSE une toile
+     noire d'alpha `s·m` par-dessus (voir viewerRayShadowLive.js). On refait ici
+     exactement ce geste — une toile 2D recopiée de la scène, puis la couche
+     étirée dessus — et on compare, canal par canal, le résultat à `after`, qui
+     est l'image du still. C'est la parité du direct ET du PNG, sur de VRAIS
+     pixels WebGL, et pas sur un banc. */
+  const liveCv = document.createElement('canvas');
+  liveCv.width = bmp.width;
+  liveCv.height = bmp.height;
+  const liveCtx = liveCv.getContext('2d');
+  liveCtx.drawImage(bmp, 0, 0);
+  const layerCv = document.createElement('canvas');
+  layerCv.width = shadow.maskWidth;
+  layerCv.height = shadow.maskHeight;
+  const layerCtx = layerCv.getContext('2d');
+  const layerImg = layerCtx.createImageData(shadow.maskWidth, shadow.maskHeight);
+  let layerPainted = 0;
+  for (let i = 0, j = 0; i < shadow.mask.length; i += 1, j += 4) {
+    const a = shadow.strength * shadow.mask[i];
+    layerImg.data[j] = 0;
+    layerImg.data[j + 1] = 0;
+    layerImg.data[j + 2] = 0;
+    layerImg.data[j + 3] = a <= 0 ? 0 : (a >= 1 ? 255 : (a * 255) | 0);
+    if (layerImg.data[j + 3] > 0) layerPainted += 1;
+  }
+  layerCtx.putImageData(layerImg, 0, 0);
+  liveCtx.drawImage(layerCv, 0, 0, shadow.maskWidth, shadow.maskHeight, 0, 0, bmp.width, bmp.height);
+  const liveData = liveCtx.getImageData(0, 0, bmp.width, bmp.height).data;
+  let liveMaxDiff = 0;
+  let liveSum = 0;
+  let liveOver2 = 0;
+  let liveChanged = 0;
+  let liveBgDirt = 0;
+  for (let i = 0; i < before.length; i += 4) {
+    const d = Math.max(
+      Math.abs(after[i] - liveData[i]),
+      Math.abs(after[i + 1] - liveData[i + 1]),
+      Math.abs(after[i + 2] - liveData[i + 2]),
+    );
+    if (d > liveMaxDiff) liveMaxDiff = d;
+    liveSum += d;
+    if (d > 2) liveOver2 += 1;
+    if (Math.max(before[i], before[i + 1], before[i + 2]) !== Math.max(liveData[i], liveData[i + 1], liveData[i + 2])) liveChanged += 1;
+    if (isBg(before, i) && luma(before, i) - luma(liveData, i) > 8) liveBgDirt += 1;
+  }
+  OUT.pixels.live = {
+    painted: layerPainted, changed: liveChanged, maxDiff: liveMaxDiff,
+    meanDiff: Math.round((liveSum / (bmp.width * bmp.height)) * 100) / 100,
+    over2: liveOver2, bgVisibleDirt: liveBgDirt,
+    maskWidth: shadow.maskWidth, maskHeight: shadow.maskHeight,
+  };
+  log('couche vivante : ' + JSON.stringify(OUT.pixels.live));
+  await post('live');
   /* L'ÉPAISSEUR DU LISERÉ, EN PIXELS : une transformée de distance (chamfer 2 passes)
      depuis la silhouette. Un liseré d'UN pixel n'existe que parce que le masque est
      échantillonné en bilinéaire ; une tache à 10 px serait le défaut du rapport. */

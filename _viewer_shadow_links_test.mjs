@@ -416,7 +416,6 @@ ok(MODULE.includes('if (out.length === 0) {'),
 ok(MODULE.includes('if (links[a] !== 1 || links[b] !== 1) return;'),
   '…et une liaison n’est un lien que si les DEUX atomes sont dessinés par un trait');
 ok(MODULE.includes('if (!isBond(a, b)) return;'),
-  '…comme une liaison plus longue que LINK_MAX n’en est pas une : aucun trait en travers de la molécule');
 /* ⚠ LA CHAÎNE D'UNE SPLINE — mesurée dans Chrome : un cartoon/ribbon/tube est une
    surface CONTINUE le long de la TRACE, mais le graphe de liaisons d'une structure
    joint C(i) à N(i+1) — deux atomes par lesquels le ruban ne passe pas (ils sont à

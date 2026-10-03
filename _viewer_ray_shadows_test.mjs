@@ -1252,8 +1252,14 @@ hasRay('console.warn(\'✨ Ray: no cast shadows —\', shadowSkip)',
   'une ombre impossible est TRACÉE, plus jamais avalée en silence');
 hasRay('rayShadowNote(null, shadowSkip)',
   '…et la raison de l’échec voyage jusqu’au message de la « ray »');
-has('{(shadowOn || rayShadows) && (',
+has('{(shadowOn || rayShadows || rayLiveOn) && (',
   'les curseurs 💡 Light (Azimuth / Elevation) sont atteignables dès que les ombres du « ray » sont allumées : c’est la lampe que l’ombre utilise');
+/* ⚠ LE MÊME BLOC SERT MAINTENANT AUSSI L'OMBRE VIVANTE (`|| rayLiveOn`, la
+   demande de cette session : la voir « while the molecule is moving ») : les
+   curseurs pilotent sa lampe comme celle du PNG, donc ils doivent être là dans
+   les deux cas. Le bloc d'origine (◐ Shadows / ✨ ray) est ce que la ligne
+   ci-dessus mesure — avec le troisième terme. */
+has('{(shadowOn || rayShadows || rayLiveOn) && (', '…et cette lampe est AUSSI celle de la couche vivante');
 
 
 ok(MODULE.includes('PCSS'), '…la pénombre PCF élargie par l’écart receveur / occulteur (PCSS)');

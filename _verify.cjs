@@ -1,4 +1,4 @@
-// Les trente-cinq suites du VIEWER 3D seul — les plus rapides à relancer après une
+// Les trente-neuf suites du VIEWER 3D seul — les plus rapides à relancer après une
 // retouche de src/components/NMRMoleculeViewer.jsx (l'ensemble du dépôt, c'est
 // _run_all.cjs). _viewer_render_smoke_test.mjs est la SEULE ICI qui exécute un
 // vrai rendu : elle construit son probe en SSR et monte la page docking, chaque
@@ -217,6 +217,17 @@ const tests = [
   // l'ADDITIVITÉ : le 📷 publie toujours dans la bibliothèque, ✨ Ray écrit
   // seulement un PNG sur l'ordinateur, et aucune représentation n'est touchée.
   '_viewer_ray_test.mjs',
+  // …ET L'OMBRE VIVANTE DE LA MÊME « ray » (la demande de cette session :
+  // « wow! it works! will it be possible to see it while the molecule is moving
+  // and not only as a still picture? »). Le fichier mesure la POLITIQUE sans
+  // navigateur (la parité calculée entre le produit du PNG et la toile noire
+  // d'alpha `s·m`, les trois régimes et leur défaut `auto`, la pose, la
+  // signature de la scène, la couche peinte avec un faux contexte 2D, le pilote
+  // conduit avec des doublures), puis le CÂBLAGE dans le viewer — la couche dans
+  // le JSX, le signal `rendered`, la préférence mémorisée et la composition dans
+  // les DEUX films (🎬 trajectoire et film de poses). La parité sur de VRAIS
+  // pixels WebGL est mesurée juste après, par la sonde des ombres portées.
+  '_viewer_ray_shadow_live_test.mjs',
   // Les DEUX MODES d'enregistrement de l'environnement (la demande) : le THÈME
   // cumulatif par classe moléculaire (merge verrouillé par le fichier, prompt de
   // conflit) et le SNAPSHOT exact de la scène, clé par section.

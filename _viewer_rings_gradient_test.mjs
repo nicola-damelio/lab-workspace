@@ -699,6 +699,7 @@ eq((CODE.match(/const (markRingPlates|addRingPlateRep|refreshRingPlates|refreshS
   'chaque helper des plaques n’existe qu’UNE fois (aucune copie oubliée)');
 eq((CODE.match(/__platesHook/g) || []).length, 2, 'l’accroche ne peut être posée qu’UNE fois par structure');
 
+
 /* ══ 9. LES PLAQUES SUIVENT LES IMAGES DE LA TRAJECTOIRE ═══════════════════ */
 /* LA PANNE signalée (« le immagini scorrono ma le placche restano ») : les bâtons
    des rangées nucléiques sont des représentations que NGL réécrit à chaque image

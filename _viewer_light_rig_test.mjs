@@ -364,8 +364,13 @@ ok(VIEW.includes('</button>\n<button type="button" onClick={() => setClipOn((v) 
 // Le swatch reste VISIBLE quand ◐ Shadows est éteint : le bloc conditionnel des
 // curseurs Azimuth / Elevation est refermé avant lui (NGL relit `lightColor` dans
 // les deux modes — la lampe liée à la caméra en profite aussi).
-const beforeColour = VIEW.slice(VIEW.lastIndexOf('{(shadowOn || rayShadows) && (', iColour), iColour);
+// ⚠ Le bloc couvre AUSSI l'ombre vivante (`|| rayLiveOn`, la demande de cette
+// session) : ses curseurs pilotent la lampe du direct comme celle du PNG — le
+// swatch, lui, reste HORS du bloc dans tous les cas.
+const beforeColour = VIEW.slice(VIEW.lastIndexOf('{(shadowOn || rayShadows || rayLiveOn) && (', iColour), iColour);
 ok(beforeColour.includes(')}'), 'le swatch est HORS du bloc conditionnel : il reste là même sans les ombres');
+ok(VIEW.includes('{(shadowOn || rayShadows || rayLiveOn) && ('),
+  '…et ce bloc s’ouvre aussi pour l’ombre VIVANTE : ces curseurs sont sa lampe');
 has('· 💡 Light colour · ✂ Clipping ·', 'la doc d’en-tête de la rangée Scene le liste à sa place');
 
 /* ── Bilan ───────────────────────────────────────────────────────────────── */

@@ -104,6 +104,28 @@ export const SHADOW_BLUR_REF = 20;
 export const SHADOW_BLUR_MIN = 0.25;
 export const SHADOW_BLUR_STROKE_FRACTION = 0.6;
 export const INVISIBLE_OPACITY = 0.02;
+/* THE NARROWEST STROKE WE EVER DRAW, in ångströms: below it a proxy is a hairline
+   no mask pixel could hold. ⚠ IT IS A FLOOR FOR A RADIUS WE CANNOT MEASURE, NEVER
+   FOR ONE THE DRAWING REALLY DECLARES. A shadow whose stroke is FATTER than the
+   ink it follows is the report « la grosseur de la liaison ne reflète pas la
+   grosseur de l'ombre »: the 0,15 Å stick of a ball+stick was floored to 0,2 Å,
+   and its 0,165 Å ball too, so both came out at 0,2 Å — two shapes, one width, and
+   no ball ever showed (« en boules et bâtons, seuls les bâtons ont une ombre »). */
+export const STROKE_FLOOR = 0.05;
+/* WHAT EVERY KIND OF DRAWING IS MADE OF — and the TWO radii a shadow needs, which
+   are not the same radius (see `proxyRadiiOf`):
+     vdw    → ONE ball, in van der Waals radii (sphere · spacefill · surface)
+     ball   → a STICK of `core` Å AND a BALL of `core × aspectRatio` around it
+              (NGL's ball+stick family: verified in the installed build,
+              `getAtomRadius = aspectRatio × super.getAtomRadius`)
+     bond   → a STICK only, no ball at all (licorice · base · backbone)
+     spline → the band itself, in `radiusScale` units, drawn along its own chain
+              (cartoon · ribbon · rope · trace)
+     tube   → the same, with a round section in ångströms
+     hair   → a line (line · wireframe): its own nominal radius, no tube
+   `core` is the radius a stick / ball is drawn with when the representation says
+   nothing (NGL's own default), `min` the stroke assumed when NOTHING is
+   readable — the value a `hair` line is drawn at. */
 export const PROXY_STROKE_BY_TYPE = Object.freeze({
   sphere: { kind: 'vdw', min: 0.12 },
   spacefill: { kind: 'vdw', min: 0.12 },
@@ -892,7 +914,16 @@ const repNumber = (rep, el, ...keys) => {
   }
   return 0;
 };
-export const proxyRadiusOf = (rep, vdwRadius = 1.7, el = null) => {
+/* THE TWO RADII OF A DRAWING. A shadow is made of spheres and capsules, and the
+   shapes a representation draws do NOT share one radius: NGL's ball+stick draws a
+   BALL of `aspectRatio × radiusSize` around a STICK of `radiusSize` (its own
+   `getAtomRadius` returns `aspectRatio × super.getAtomRadius`), licorice draws a
+   stick and NO ball, sphere / spacefill a ball and no stick. `ball` and `link` are
+   those two radii, in ångströms, 0 when the drawing has no such shape — the
+   report « la grosseur de la liaison ne reflète pas la grosseur de l'ombre » and
+   the missing ball of a ball+stick both came from ONE radius answering for both.
+   `min` is the kind's assumed stroke (`hair` is DRAWN at it). */
+export const proxyRadiiOf = (rep, vdwRadius = 1.7, el = null) => {
   const stroke = PROXY_STROKE_BY_TYPE[repTypeOf(rep, el)];
   if (!stroke) return null;
   const vdw = Math.max(0.1, Number(vdwRadius) || 1.7);
@@ -906,21 +937,39 @@ export const proxyRadiusOf = (rep, vdwRadius = 1.7, el = null) => {
     if (radiusScale > 0) return vdw * radiusScale;
     return fallback;
   };
-  let r;
+  /* A MEASURED radius is kept AS IT IS (no `stroke.min` inflation: the shadow
+     follows the ink — see STROKE_FLOOR); only a value we could not read falls
+     back on the kind's own numbers. */
+  const kept = (v) => (v > 0 ? Math.max(STROKE_FLOOR, v) : 0);
+  let ball = 0;
+  let link = 0;
   switch (stroke.kind) {
-    case 'vdw': r = core(vdw); break;
-    case 'ball': r = core(stroke.core) * (aspect || stroke.aspect); break;
-    case 'bond': r = core(stroke.core); break;
+    case 'vdw': ball = core(vdw); break;
+    case 'ball':
+      link = core(stroke.core);
+      ball = link * (aspect || stroke.aspect);
+      break;
+    case 'bond': link = core(stroke.core); break;
     case 'spline':
-      r = radiusScale > 0 ? stroke.base * (radiusScale / stroke.scale) : stroke.base;
-      if (radiusSize > 0 && sizeType) r = Math.max(r, radiusSize);
+      link = radiusScale > 0 ? stroke.base * (radiusScale / stroke.scale) : stroke.base;
+      if (radiusSize > 0 && sizeType) link = Math.max(link, radiusSize);
       break;
     case 'tube':
-      r = sizeType && radiusSize > 0 ? radiusSize : (radiusScale > 0 ? stroke.base * radiusScale : stroke.base);
+      link = sizeType && radiusSize > 0 ? radiusSize : (radiusScale > 0 ? stroke.base * radiusScale : stroke.base);
       break;
-    default: r = stroke.min;
+    default: ball = stroke.min;    // 'hair' — the line ITSELF is the drawing
   }
-  return Math.max(0.05, Math.max(stroke.min, r));
+  return { ball: kept(ball), link: kept(link), min: stroke.min };
+};
+/* THE BIGGEST SHAPE DRAWN AT AN ATOM — what says « this atom is drawn at all »,
+   and the radius of the sphere the proxy stands in for it (a stick's own stroke
+   when the drawing has no ball there: the round cap of the capsule is that same
+   width, so it adds nothing). Byte for byte the value this function always
+   returned: `max(ball, link)`. */
+export const proxyRadiusOf = (rep, vdwRadius = 1.7, el = null) => {
+  const two = proxyRadiiOf(rep, vdwRadius, el);
+  if (!two) return null;
+  return Math.max(two.ball, two.link);
 };
 const atomProxyOf = (structure) => {
   try {
@@ -950,8 +999,13 @@ const drawsBackboneOf = (ap, idx) => {
    only, asking the very question NGL asks itself (`AtomProxy#isBackbone()` →
    `residueType.backboneIndexList`, the list the cartoon and the tube build their
    geometry from): the other atoms of the list it shares with the sticks are drawn by the sticks,
-   at THEIR own stroke. */
-export const drawnProxyRadiiOf = (comp, atomCount, vdw = null, links = null, splines = null, covered = null) => {
+   at THEIR own stroke.
+   ⚠ TWO ARRAYS LEAVE THIS FUNCTION, because a drawing is made of two shapes with
+   two different radii: the RETURNED array is the biggest shape per atom (the ball
+   of a ball+stick, the stick of a licorice, the band of a cartoon) — the radius of
+   the SPHERE; the optional `linkRadii` argument receives the radius of the STICK
+   drawn along the bonds, which is what `rasterizeCapsules` must use. */
+export const drawnProxyRadiiOf = (comp, atomCount, vdw = null, links = null, splines = null, covered = null, linkRadii = null) => {
   const list = comp && comp.reprList;
   if (!Array.isArray(list)) return null;
   const out = new Float32Array(Math.max(0, Math.round(Number(atomCount) || 0)));
@@ -996,10 +1050,21 @@ export const drawnProxyRadiiOf = (comp, atomCount, vdw = null, links = null, spl
           if (!(ap.residue && ap.residue.traceAtomIndex === a)) continue;
           if (splines) splines[a] = 1;
         }
-        const per = proxyRadiusOf(rep, vdw ? vdw[a] : 1.7, el);
+        const per = proxyRadiiOf(rep, vdw ? vdw[a] : 1.7, el);
         if (per == null) continue;
-        const seen = op < 1 ? per * op : per;
-        if (!(out[a] >= seen)) out[a] = seen;
+        const seen = Math.max(per.ball, per.link);
+        const drawn = op < 1 ? seen * op : seen;
+        if (!(out[a] >= drawn)) out[a] = drawn;
+        /* …ET LE TRAIT DU LIEN, À PART. `out` répond « quelle est la plus grosse
+           forme posée sur cet atome » (la bille d'un ball+stick, le bâton d'un
+           licorice, le ruban d'un cartoon) : c'est le rayon de la SPHÈRE. Le
+           rayon de la CAPSULE qui joint deux atomes est celui du BÂTON, qui n'est
+           PAS celui de la bille (ball+stick : radiusSize contre aspectRatio ×
+           radiusSize) — cf. `capsuleRadiiOf`. */
+        if (linkRadii && per.link > 0) {
+          const stroke = op < 1 ? per.link * op : per.link;
+          if (!(linkRadii[a] >= stroke)) linkRadii[a] = stroke;
+        }
         /* A SPLINE DOES NOT DRAW BONDS: its links are its own chain (see
            drawnBondsOf), so it never marks an atom as a stick's endpoint. */
         if (linked && links && !chainOnly) links[a] = 1;
@@ -1181,6 +1246,9 @@ const fillDrawnLinks = (parts, stride, maxAtoms) => {
   const capacity = Math.max(1, Math.min(slots, maxAtoms || slots));
   const out = new Float32Array(capacity * 3);
   const radii = new Float32Array(capacity);
+  /* LE RAYON DES CAPSULES — celui du BÂTON de chaque atome, pas celui de sa bille
+     (voir `capsuleRadiiOf`) : les deux tableaux vont de pair, index par index. */
+  const linkRadii = new Float32Array(capacity);
 
   const totalEdges = layouts.reduce((a, lay) => a + (lay.edges ? lay.edges.length : 0), 0);
   const edges = new Int32Array(totalEdges);
@@ -1194,6 +1262,7 @@ const fillDrawnLinks = (parts, stride, maxAtoms) => {
       out[k * 3 + 1] = lay.wpos[e * 3 + 1];
       out[k * 3 + 2] = lay.wpos[e * 3 + 2];
       radii[k] = lay.wrad[e];
+      linkRadii[k] = lay.wradLink ? lay.wradLink[e] : lay.wrad[e];
       k += 1;
     }
     if (lay.edges) {
@@ -1202,7 +1271,10 @@ const fillDrawnLinks = (parts, stride, maxAtoms) => {
       }
     }
   });
-  return { positions: out, radii, count: k, edges, filled: Math.floor(edges.length / 2) };
+  return {
+    positions: out, radii, count: k, edges, linkRadii,
+    filled: Math.floor(edges.length / 2),
+  };
 };
 /* THE TRIANGLES OF THE WHOLE SCENE, merged and budgeted. One accumulator for
    every component; `stride` thins the list when a system is huge (the same
@@ -1366,7 +1438,7 @@ const layOut = (part, stride) => {
     ? (part.viewerM ? mat4Multiply(part.viewerM, own) : own)
     : elements16Of(part.comp.group && part.comp.group.matrixWorld);
   const pos = part.data.position, rad = part.data.radius;
-  const surface = part.surface, links = part.links;
+  const surface = part.surface, links = part.links, lrad = part.linkRadii;
   let measurable = false;
   if (surface) {
     for (let i = 0; i < surface.length && !measurable; i += 1) {
@@ -1377,6 +1449,8 @@ const layOut = (part, stride) => {
   const len = Math.max(0, Math.ceil(count / stride));
   const wpos = new Float32Array(Math.max(1, len) * 3);
   const wrad = new Float32Array(Math.max(1, len));
+  /* LE RAYON DE LA CAPSULE, à part de celui de la bille (voir `capsuleRadiiOf`). */
+  const wradLink = new Float32Array(Math.max(1, len));
   const wlink = new Uint8Array(Math.max(1, len));
   let e = 0;
   for (let c = 0; c < count && e < len; c += stride) {
