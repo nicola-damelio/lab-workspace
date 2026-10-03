@@ -58,7 +58,8 @@ import {
   rasterizeSpheres, shadowMaskOf, softenMask, sampleMaskBilinear, applyShadowToPixels,
   lightDepthScale, lightMatricesOf, shadowRigOf, buildRayShadowMask, atomsFromStage,
   cameraFromViewer, viewerMatrixOf, rayShadowInputsOf, shadowImageData, addCastShadowsToBlob, rayShadowNote,
-  pcfDiscOf, pcfRotationOf, PROXY_STROKE_BY_TYPE, repTypeOf, proxyRadiusOf, drawnProxyRadiiOf,
+  pcfDiscOf, pcfRotationOf, PROXY_STROKE_BY_TYPE, repTypeOf, proxyRadiusOf, proxyRadiiOf,
+  drawnProxyRadiiOf, capsuleRadiiOf, STROKE_FLOOR, unionBoxOf,
   opacityOf, INVISIBLE_OPACITY, IMPOSTOR_TYPES, compactAttribute, trianglesOfGeometry,
   worldTrianglesOf, viewAxesOf, expandBoxOf, rasterizeCapsules, rasterizeTriangles,
 } from './src/utils/viewerRayShadows.js';
@@ -781,8 +782,26 @@ near(proxyRadiusOf(realRep('spacefill', { radiusType: 'size', radiusSize: 0.6 })
 near(proxyRadiusOf(realRep('licorice', { radiusType: 'size', radiusSize: 0.25 }), 1.7), 0.25, 1e-9,
   'licorice : le proxy EST le `radiusSize` du bâton (0,25 Å dans ce viewer)');
 near(proxyRadiusOf(realRep('ball+stick', { radiusType: 'size', radiusSize: 0.15, aspectRatio: 1.1 }),
-  1.7), 0.2, 1e-9,
-  'ball+stick : la bille vaut aspectRatio × radiusSize (0,165 Å), planchée à 0,2 Å');
+  1.7), 0.165, 1e-9,
+  'ball+stick : la bille vaut aspectRatio × radiusSize (0,165 Å) — SANS planchement : l’ombre suit l’encre');
+/* ⚠ DEUX RAYONS, DEUX FORMES. Le rapport « la grosseur de la liaison ne reflète pas
+   la grosseur de l’ombre » vient d’ici : un seul rayon répondait pour la BILLE et
+   pour le BÂTON, si bien que les bâtons de l’ombre prenaient la largeur des billes
+   (et son planchement de 0,2 Å) — et, les deux formes étant alors identiques, « en
+   boules et bâtons, seuls les bâtons ont une ombre ». */
+const twoShapes = proxyRadiiOf(realRep('ball+stick', { radiusType: 'size', radiusSize: 0.15, aspectRatio: 1.1 }), 1.7);
+near(twoShapes.ball, 0.165, 1e-9, 'ball+stick : la BILLE dessinée vaut aspectRatio × radiusSize (0,165 Å)');
+near(twoShapes.link, 0.15, 1e-9, '…et son BÂTON vaut radiusSize : 0,15 Å, pas le rayon de la bille');
+eq(proxyRadiiOf(realRep('ball+stick'), 1.7), { ball: 0.3, link: 0.15, min: 0.2 },
+  '…aux défauts d’NGL (radiusSize 0,15 et aspectRatio 2), exactement ce que son `getAtomRadius` dessine');
+near(proxyRadiiOf(realRep('licorice', { radiusType: 'size', radiusSize: 0.25 }), 1.7).ball, 0, 1e-9,
+  'un licorice n’a AUCUNE bille : il ne dessine que des bâtons');
+near(proxyRadiiOf(realRep('spacefill', { radiusType: 'vdw', radiusScale: 0.6 }), 1.7).link, 0, 1e-9,
+  '…et un spacefill aucun bâton : deux formes qui ne se confondent plus');
+near(proxyRadiiOf(realRep('licorice', {}), 1.7).link, 0.25, 1e-9,
+  '…un licorice sans réglage garde le `core` de la table (0,25 Å), pas un planchement');
+ok(STROKE_FLOOR === 0.05 && proxyRadiiOf(realRep('licorice', { radiusSize: 0.01 }), 1.7).link === STROKE_FLOOR,
+  'un trait plus fin que le plancher de sécurité (0,05 Å) y est ramené — et c’est le seul planchement qui reste');
 eq(PROXY_STROKE_BY_TYPE[repTypeOf(realRep('licorice'), realElement('licorice', realRep('licorice')))].kind,
   'bond', '…et c’est bien la table des traits qui répond à une représentation réelle');
 
@@ -1600,4 +1619,96 @@ ok(MODULE.includes('the aromatic rings do not project their'),
   '…et le module porte le rapport, pour que la prochaine lecture sache POURQUOI les triangles sont là');
 
 
-console.log(`_viewer_ray_shadows_test.mjs — ${passed} assertions OK (ombres portées)`);
+/* ── 22. LA GROSSEUR DE L'OMBRE EST CELLE DU BÂTON ─────────────────────────────
+   LE rapport, mesuré comme l'œil le voit : un bâton de 0,15 Å projette une bande de
+   2 × 0,15 Å sur un plateau (34,3 pixels par ångström, caméra orthographique), et
+   quand la BILLE des mêmes atomes fait 0,6 Å, la bande ne doit PAS prendre 1,2 Å.
+   Avant, `rasterizeCapsules` lisait `atoms.radii` — le rayon de la bille : les
+   bâtons de l'ombre étaient donc aussi gras que les billes, et « en boules et
+   bâtons, seuls les bâtons ont une ombre ». */
+const BOND_ID = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+const BOND_SIDE = 3.5;                        // le demi-cadre de la caméra, en Å
+const BOND_PX = 240;                          // la carte d'ombre, en pixels
+const BOND_PER_A = BOND_PX / (2 * BOND_SIDE); // l'échelle EXACTE d'une caméra ortho
+const bondProj = mat4Orthographic(-BOND_SIDE, BOND_SIDE, -BOND_SIDE, BOND_SIDE, -20, 20);
+/* Le plateau (le receveur) : un quad dans le plan z = −2, face à la caméra. */
+const bondPlate = {
+  positions: Float32Array.from([-4, -3, -2, 4, -3, -2, 4, 3, -2, -4, 3, -2]),
+  normals: Float32Array.from([0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1]),
+  indices: Uint32Array.from([0, 1, 2, 0, 2, 3]),
+  count: 2, vertexCount: 4, stride: 1, plates: 0, kinds: 'buffer', reps: 1,
+};
+/* Le bâton : deux atomes écartés sur l'axe x, une BILLE large (0,6 Å) et un BÂTON
+   fin (0,15 Å). La lampe est à 45° dans le plan y–z, donc l'ombre du bâton tombe
+   2 Å PLUS BAS — À L'ÉCART de sa propre silhouette, où rien ne la recouvre. */
+const BOND_POS = Float32Array.from([-2, 0, 0, 2, 0, 0]);
+const BOND_EDGES = Int32Array.from([0, 1]);
+const bondMaskOf = ({ balls, tubes }) => {
+  const atoms = {
+    positions: BOND_POS, radii: balls, linkRadii: tubes, count: 2,
+    edges: BOND_EDGES, tris: bondPlate,
+  };
+  const box = unionBoxOf(
+    boundsBoxOf(bondPlate.positions, 4),
+    expandBoxOf(boundsBoxOf(BOND_POS, 2), balls[0]),
+  );
+  const center = [
+    (box.min[0] + box.max[0]) / 2, (box.min[1] + box.max[1]) / 2, (box.min[2] + box.max[2]) / 2,
+  ];
+  const radius = Math.max(1e-3, 0.5 * Math.hypot(
+    box.max[0] - box.min[0], box.max[1] - box.min[1], box.max[2] - box.min[2],
+  ));
+  const dir = (() => { const l = Math.hypot(1, 1); return [0, 1 / l, 1 / l]; })();
+  const light = {
+    dir, center, radius, distance: radius * 100, bounds: box,
+    ...shadowRigOf({ dir, bounds: box, center, radius, distance: radius * 100 }),
+  };
+  return buildRayShadowMask({
+    atoms,
+    camera: { projection: bondProj, view: BOND_ID, clip: bondProj },
+    light,
+    width: BOND_PX, height: BOND_PX,
+    options: { softness: 0, penumbra: 0, penumbraMax: 0, bias: 0.35 },
+  });
+};
+/* La PLUS LONGUE bande sombre d'une COLONNE — celle du milieu, à 2 Å de l'axe des
+   atomes : elle ne coupe que l'ombre du bâton (les billes, à ±2 Å, n'y sont pas),
+   et la face sombre du bâton lui-même est un second trait, plus court. */
+const longestBand = (mask) => {
+  const mw = mask.maskWidth;
+  const mh = mask.maskHeight;
+  const x = Math.round(mw / 2);
+  let best = 0;
+  let run = 0;
+  for (let y = 0; y < mh; y += 1) {
+    if (mask.mask[y * mw + x] > 0.002) { run += 1; if (run > best) best = run; } else run = 0;
+  }
+  return best;
+};
+const thinBond = bondMaskOf({ balls: Float32Array.from([0.6, 0.6]), tubes: Float32Array.from([0.15, 0.15]) });
+const fatBond = bondMaskOf({ balls: Float32Array.from([0.6, 0.6]), tubes: Float32Array.from([0.6, 0.6]) });
+const noTubes = bondMaskOf({ balls: Float32Array.from([0.6, 0.6]), tubes: undefined });
+const thinBand = longestBand(thinBond);
+const fatBand = longestBand(fatBond);
+/* LA LARGEUR ATTENDUE EST CELLE DE LA GÉOMÉTRIE, pas une constante : la lampe est à
+   45° dans le plan y–z, donc l'ombre d'un bâton de rayon r est étirée de
+   1/cos 45° = √2 — 2√2·r en pixels. Pour 0,15 Å à 34,3 px/Å : 14,6 px. */
+const wantedBand = 2 * Math.SQRT2 * 0.15 * BOND_PER_A;
+ok(thinBond.shadowed > 0,
+  `le bâton projette bien une ombre sur le plateau (${thinBond.shadowed} pixels ombrés)`);
+ok(Math.abs(thinBand - wantedBand) <= 3,
+  `l’ombre d’un bâton de 0,15 Å est large de 2√2 × 0,15 Å : ${thinBand} px mesurés contre ${wantedBand.toFixed(1)} attendus (34,3 px/Å)`);
+ok(fatBand > 3.5 * thinBand,
+  `…avec le rayon de la BILLE (0,6 Å) la bande quadruple (${fatBand} px) : c’est le bug du rapport, et il est bien mesuré`);
+eq(Array.from(noTubes.mask), Array.from(fatBond.mask),
+  'un appelant qui ne fournit que `radii` (les sondes, les bancs) garde le masque d’avant, pixel pour pixel');
+ok(MODULE.includes('const tubeRadii = capsuleRadiiOf(atoms);')
+  && MODULE.includes('positions: atoms.positions, radii: tubeRadii, edges: atoms.edges,')
+  && MODULE.includes('linkRadii[k] = lay.wradLink ? lay.wradLink[e] : lay.wrad[e];'),
+  '…et les capsules des DEUX passes lisent ce rayon-là, du proxy à la carte');
+console.log(`bâton de 0,15 Å : bande d’ombre ${thinBand} px (2√2 × 0,15 Å = ${wantedBand.toFixed(1)} px à ${BOND_PER_A.toFixed(1)} px/Å)`
+  + ` · bille de 0,6 Å : ${fatBand} px (l’ancien rayon, celui du rapport)`);
+
+
+console.log(`_viewer_ray_shadows_test.mjs — ${passed} assertions OK (ombres portées · deux rayons : bille et bâton)`);
+

@@ -46,7 +46,12 @@ NGL draws is rasterized here, twice, in the two frames that matter.
       — a SPHERE per atom and a CAPSULE per bond, ANALYTIC (NGL draws those as
         screen-space impostors — verified: their buffers carry `radius`,
         `position1`/`position2` and NO normal — so a sphere/capsule of the
-        given radius IS the drawn shape, per pixel, exactly);
+        given radius IS the drawn shape, per pixel, exactly), EACH AT ITS OWN
+        RADIUS: a ball+stick draws a BALL of `aspectRatio × radiusSize` around a
+        STICK of `radiusSize`, a licorice a stick and no ball, a sphere a ball and
+        no stick. `atoms.radii` is the ball, `atoms.linkRadii` the stick
+        (`capsuleRadiiOf`) — one radius for both made the sticks as fat as the
+        balls, and no ball ever showed in the shadow;
       — the REAL TRIANGLES of every buffer that carries a `normal` attribute:
         cartoon · ribbon · tube · rope · surface · and the RING PLATES (the
         hexagons), which is what makes an aromatic ring project its hexagon.
@@ -1470,6 +1475,13 @@ const layOut = (part, stride) => {
     const drawn = Number.isFinite(stroke) && stroke > 0;
     wrad[e] = drawn ? stroke : vdw;
     wlink[e] = drawn && links && links[i] === 1 ? 1 : 0;
+    /* ⚠ LA CAPSULE SUIT LE BÂTON, PAS LA BILLE. `wrad` est la plus grosse forme de
+       l'atome (la bille d'un ball+stick : `atoms.radii` alimente rasterizeSpheres),
+       `wradLink` le trait de son BÂTON (`atoms.linkRadii` alimente
+       rasterizeCapsules). Sans relevé de bâton — un appelant qui ne passe que des
+       rayons — on garde la valeur d'avant, index par index. */
+    const tube = lrad && Number.isFinite(lrad[i]) ? lrad[i] : 0;
+    wradLink[e] = wlink[e] === 1 && tube > 0 ? tube : wrad[e];
     slotOf.set(i, e);
     e += 1;
   }
@@ -1486,7 +1498,7 @@ const layOut = (part, stride) => {
     }
   }
   return {
-    wpos, wrad, wlink, len: e,
+    wpos, wrad, wradLink, wlink, len: e,
     edges: p === edges.length ? edges : edges.subarray(0, p),
   };
 };
@@ -1516,9 +1528,12 @@ export const atomsFromStage = (stage, maxAtoms = RAY_SHADOW_DEFAULTS.maxAtoms, m
       if (drawn && !drawn.length) return;
       const links = new Uint8Array(n);
       const splines = new Uint8Array(n);
-      const surface = drawnProxyRadiiOf(comp, n, data.radius, links, splines, new Set(tris.surfaces || []));
+      /* LE SECOND RAYON : celui du BÂTON de chaque atome, à part de celui de sa
+         bille (voir drawnProxyRadiiOf / capsuleRadiiOf). */
+      const linkRadii = new Float32Array(n);
+      const surface = drawnProxyRadiiOf(comp, n, data.radius, links, splines, new Set(tris.surfaces || []), linkRadii);
       const bonds = drawnBondsOf(structure, links, n, data.position, splines);
-      parts.push({ comp, data, n, drawn, surface, links, viewerM, bonds, tris });
+      parts.push({ comp, data, n, drawn, surface, links, splines, linkRadii, viewerM, bonds, tris });
       total += drawn ? drawn.length : n;
     } catch { }
   });
@@ -1643,6 +1658,22 @@ export const maxStrokeRadiusOf = (atoms) => {
   }
   return max;
 };
+/* ⚠ LES DEUX TABLEAUX DE RAYONS NE SE CONFONDENT PAS, ET C'EST TOUT LE SUJET.
+   `atoms.radii` est la plus grosse forme posée sur chaque atome — la BILLE d'un
+   ball+stick (`aspectRatio × radiusSize`), le BÂTON d'un licorice, le ruban d'un
+   cartoon : c'est le rayon de la SPHÈRE (`rasterizeSpheres`). `atoms.linkRadii` est
+   le rayon du BÂTON réellement dessiné le long des liaisons — le STICK d'un
+   ball+stick, qui vaut `radiusSize` et NON le rayon de sa bille. Le rapport :
+   « la grosseur de la liaison ne reflète pas la grosseur de l'ombre », et « en
+   boules et bâtons, seuls les bâtons ont une ombre » — une seule largeur servait
+   les deux formes, donc aucune bille ne se voyait. Un appelant qui ne fournit que
+   `radii` (les sondes, les bancs) garde exactement l'ancien comportement. */
+export const capsuleRadiiOf = (atoms) => {
+  const link = atoms && atoms.linkRadii;
+  const ball = atoms && atoms.radii;
+  if (link && link.length && (!ball || link.length === ball.length)) return link;
+  return ball;
+};
 export const maskScalePerAngstrom = ({ clip, view, bounds, width, height } = {}) => {
   if (!clip || !view) return 0;
   const w = Math.max(1, Math.round(Number(width) || 0));
@@ -1704,6 +1735,9 @@ export const buildRayShadowMask = ({ atoms, camera, light, width, height, option
   const cameraAxes = viewAxesOf(camera.view || mat4Identity());
   const lightAxes = viewAxesOf(light.view || mat4Identity());
   const tris = atoms && atoms.tris && atoms.tris.count ? atoms.tris : null;
+  /* LES CAPSULES SONT DESSINÉES AU RAYON DE LEUR BÂTON (`atoms.linkRadii`), les
+     sphères au rayon de leur bille (`atoms.radii`) — voir `capsuleRadiiOf`. */
+  const tubeRadii = capsuleRadiiOf(atoms);
 
   /* THE CAMERA'S PASS — the receiver. It keeps, per pixel, the point of the
      surface the viewer really sees and its normal. Nothing else: the depth is
@@ -1715,7 +1749,7 @@ export const buildRayShadowMask = ({ atoms, camera, light, width, height, option
   });
   if (atoms.edges && atoms.edges.length) {
     rasterizeCapsules({
-      positions: atoms.positions, radii: atoms.radii, edges: atoms.edges,
+      positions: atoms.positions, radii: tubeRadii, edges: atoms.edges,
       clip: camera.clip, width: mw, height: mh, radiusScale: o.sphereScale,
       right: cameraAxes.right, up: cameraAxes.up, back: cameraAxes.back,
     }, cameraPass);
@@ -1740,7 +1774,7 @@ export const buildRayShadowMask = ({ atoms, camera, light, width, height, option
   });
   if (atoms.edges && atoms.edges.length) {
     rasterizeCapsules({
-      positions: atoms.positions, radii: atoms.radii, edges: atoms.edges,
+      positions: atoms.positions, radii: tubeRadii, edges: atoms.edges,
       clip: light.clip, width: mw, height: mh, radiusScale: o.sphereScale,
       right: lightAxes.right, up: lightAxes.up, back: lightAxes.back,
       needWorld: false, needNormal: false,

@@ -338,7 +338,7 @@ async function main () {
   });
   if (inputs.atoms.edges.length) {
     mod.rasterizeCapsules({
-      positions: inputs.atoms.positions, radii: inputs.atoms.radii, edges: inputs.atoms.edges,
+      positions: inputs.atoms.positions, radii: mod.capsuleRadiiOf(inputs.atoms), edges: inputs.atoms.edges,
       clip: inputs.camera.clip, width: shadow.maskWidth, height: shadow.maskHeight, needWorld: false,
       right: camAxes.right, up: camAxes.up, back: camAxes.back,
     }, covPass);
@@ -653,7 +653,7 @@ async function main () {
     right: camAxes.right, up: camAxes.up, back: camAxes.back,
   });
   const capsOnly = mod.rasterizeCapsules({
-    positions: inputs.atoms.positions, radii: inputs.atoms.radii, edges: inputs.atoms.edges,
+    positions: inputs.atoms.positions, radii: mod.capsuleRadiiOf(inputs.atoms), edges: inputs.atoms.edges,
     clip: inputs.camera.clip, width: shadow.maskWidth, height: shadow.maskHeight, needWorld: false,
     right: camAxes.right, up: camAxes.up, back: camAxes.back,
   });
