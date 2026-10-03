@@ -6,13 +6,14 @@
 // attrapé le « Cannot access 'extraMols' before initialization » de la page
 // docking). Résultat : EXIT + dernière ligne de chacune, sur la console et dans
 // _verify.txt.
-// Le SEUL garde-fou qui LIT DE VRAIS PIXELS WebGL est le dernier de la liste
-// (_viewer_surface_seethrough_pixels_test.cjs) : il ouvre Chrome en
-// --headless=new et rend quatre surfaces identiques — c'est lui qui a prouvé que
-// SEE_THROUGH_SURFACE (`opaqueBack: false`) laisse vraiment voir le fond à
-// travers la paroi arrière d'une surface translucide (luminance du centre 184.4
-// contre 161.9 pour le défaut NGL). ≈8 s, et SAUTÉ (exit 0) sur une machine sans
-// Chrome ni Edge.
+// Les DEUX garde-fous qui LISENT DE VRAIS PIXELS WebGL sont les derniers de la liste
+// (_viewer_surface_seethrough_pixels_test.cjs et _viewer_ray_shadow_pixels_test.cjs) :
+// ils ouvrent Chrome en --headless=new et rendent une vraie scène — c'est le premier
+// qui a prouvé que SEE_THROUGH_SURFACE (`opaqueBack: false`) laisse vraiment voir le
+// fond à travers la paroi arrière d'une surface translucide (luminance du centre
+// 184.4 contre 161.9 pour le défaut NGL), et le second que les ombres du « ✨ Ray »
+// se posent sur le dessin sans toucher UN SEUL pixel du fond blanc. ≈8 s et ≈15 s,
+// et SAUTÉS (exit 0) sur une machine sans Chrome ni Edge.
 const { spawnSync } = require('child_process');
 const fs = require('fs');
 const tests = [
@@ -269,6 +270,15 @@ const tests = [
   // qui remettrait le paramètre au défaut NGL) y casse la mesure du fond qui
   // traverse la paroi arrière, alors qu'aucune lecture de source ne la voit.
   '_viewer_surface_seethrough_pixels_test.cjs',
+  // …ET LE MÊME VERDICT DE PIXELS POUR LES OMBRES PORTÉES DU « ✨ Ray » (≈15 s) :
+  // une VRAIE scène NGL (un ruban, des bâtons, la PLAQUE d'un cycle aromatique), et
+  // les pixels du PNG que NGL a rendu avant/après l'ombre. Il prouve les trois
+  // faits que le rapport contestait : le maillage d'un cartoon est INDEXÉ et LU
+  // (l'ancien lecteur y voyait « 12 flottants par sommet », rendait `null`, et un
+  // cartoon NE PROJETAIT RIEN), la plaque d'un cycle est lue (un MeshBuffer sans
+  // `structureView`) et l'ombre tombe vraiment sur le dessin — pendant que LE FOND
+  // BLANC N'EST PAS TOUCHÉ D'UN SEUL PIXEL (c'est le « ça salit la molécule »).
+  '_viewer_ray_shadow_pixels_test.cjs',
   // …ET LE MÊME MÉCANISME DE PLACES DE PAGE, MESURÉ PAR UN VRAI NAVIGATEUR
   // (≈10 s) : le seul garde-fou qui prouve ce que React fait vraiment des places
   // (keyed siblings) — la page quittée garde LE MÊME nœud DOM, continue de vivre

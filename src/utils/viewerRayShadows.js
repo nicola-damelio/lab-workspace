@@ -68,6 +68,13 @@ NGL draws is rasterized here, twice, in the two frames that matter.
     legible on a ribbon's side walls. The mask is ZERO outside the receiver's
     own coverage, so the background — and every pixel the molecule does not
     own — is never touched. That is what stops the « dirt ».
+
+WHAT A SHADOW CANNOT DO IN NGL 2.4. The interactive canvas has NO shadow pass at
+all (verified in the installed build: no shadow map, no SSAO — only an unused
+three.js AO-map chunk that nothing binds), so a ✨ Ray still is the ONLY place a
+cast shadow can exist in this viewer. It is computed here and multiplied into the
+pixels NGL has just written, after the fact: the scene itself is never touched.
+
 ======================================================================== */
 export const RAY_SHADOW_MAX_PIXELS = 20e6;
 export const RAY_SHADOW_DEFAULTS = Object.freeze({
@@ -241,6 +248,21 @@ export const unionBoxOf = (a, b) => {
     max: [Math.max(a.max[0], b.max[0]), Math.max(a.max[1], b.max[1]), Math.max(a.max[2], b.max[2])],
   };
 };
+/* ⚠ THE FRAME MUST HOLD WHAT THE SHAPES *OCCUPY*, NOT WHERE THEIR CENTRES ARE.
+   A ball is a SOLID: its surface reaches `radius` beyond its centre, and the
+   lamp's frustum is fitted to this box (shadowRigOf). Fitted to the centres, the
+   near hemisphere of every atom sitting at the edge of the box fell OUTSIDE the
+   frustum — and an occluder the lamp never rasterized is a shadow that vanishes
+   without a word (the « no cast shadow » of the report, in the corner of every
+   scene). The box is therefore widened by the largest drawn stroke. */
+export const expandBoxOf = (box, margin = 0) => {
+  const m = Math.max(0, Number(margin) || 0);
+  if (!box || !box.min || !box.max) return { min: [-m, -m, -m], max: [m, m, m] };
+  return {
+    min: [box.min[0] - m, box.min[1] - m, box.min[2] - m],
+    max: [box.max[0] + m, box.max[1] + m, box.max[2] + m],
+  };
+};
 export const boxCornersOf = ({ min, max } = {}, out = []) => {
   const lo = min || [-1, -1, -1];
   const hi = max || [1, 1, 1];
@@ -286,27 +308,37 @@ const writePixel = (out, idx, z, x, y, z2, nx, ny, nz2, scale, needN) => {
   }
   return true;
 };
-const surfaceBuffer = (out, length, w, h) => {
-  const depth = out.depth && out.depth.length === w * h ? out.depth : new Float32Array(w * h);
-  depth.fill(2);
-  const hit = out.hit && out.hit.length === w * h ? out.hit : new Uint8Array(w * h);
-  hit.fill(0);
-  const world = out.world && out.world.length === w * h * 3 ? out.world : new Float32Array(w * h * 3);
-  const normal = out.normal && out.normal.length === w * h * 3 ? out.normal : new Float32Array(w * h * 3);
-  if (!out.world) out.world = world;
-  if (!out.normal) out.normal = normal;
-  return { depth, hit, world, normal };
+/* THE BUFFERS OF ONE PASS, ALLOCATED ONCE AND THEN SHARED. A single pass is
+   built by SEVERAL rasterizers that all draw into the SAME depth map — the balls
+   first, then the capsules that fill the links between them, then the REAL
+   TRIANGLES (a band, a plate) — each of them keeping whatever is nearer. They are
+   therefore initialised WHEN THEY ARE ALLOCATED and never cleared again: wiping
+   them here would erase the balls the moment the capsules arrived.
+   ⚠ The buffers must also live ON `out`, which is what `writePixel` reads: the
+   first version built them locally and only published `world` / `normal`, so a
+   fresh pass had `out.depth === undefined` and every ball threw on the very first
+   writePixel. */
+const surfaceBuffer = (out, w, h, needWorld = true, needNormal = true) => {
+  const size = w * h;
+  if (!out.depth || out.depth.length !== size) {
+    out.depth = new Float32Array(size);
+    out.depth.fill(2);
+    out.hit = new Uint8Array(size);
+    out.hit.fill(0);
+  }
+  if (needWorld && (!out.world || out.world.length !== size * 3)) out.world = new Float32Array(size * 3);
+  if (needNormal && (!out.normal || out.normal.length !== size * 3)) out.normal = new Float32Array(size * 3);
+  return out;
 };
 export const rasterizeSpheres = ({
   positions, radii, count = 0, clip, width, height,
   radiusScale = 1, right = [1, 0, 0], up = [0, 1, 0], back = [0, 0, 1],
-  needNormal = true,
+  needNormal = true, needWorld = true,
 }, out = {}) => {
   const w = Math.max(1, Math.round(width));
   const h = Math.max(1, Math.round(height));
   const n = Math.max(0, Math.min(count || Math.floor(positions.length / 3), Math.floor(positions.length / 3)));
-  const buf = surfaceBuffer(out, n, w, h);
-  const { depth, hit } = buf;
+  surfaceBuffer(out, w, h, needWorld, needNormal);
   const clipPt = new Array(4);
   const scr = new Array(3);
   const scrEdge = new Array(3);
@@ -354,21 +386,21 @@ export const rasterizeSpheres = ({
         writePixel(out, row + px, ndcZOf(clip, wx, wy, wz), wx, wy, wz,
           right[0] * u + up[0] * v + back[0] * nd,
           right[1] * u + up[1] * v + back[1] * nd,
-          right[2] * u + up[2] * v + back[2] * nd, r, true);
+          right[2] * u + up[2] * v + back[2] * nd, r, needNormal);
       }
     }
   }
-  return { depth, hit, world: buf.world, normal: buf.normal, width: w, height: h, count: n };
+  return { ...out, width: w, height: h, count: n };
 };
 
 export const rasterizeCapsules = ({
   positions, radii, edges, clip, width, height,
   radiusScale = 1, right = [1, 0, 0], up = [0, 1, 0], back = [0, 0, 1],
-  needNormal = true,
+  needNormal = true, needWorld = true,
 }, out = {}) => {
   const w = Math.max(1, Math.round(width));
   const h = Math.max(1, Math.round(height));
-  surfaceBuffer(out, 0, w, h);
+  surfaceBuffer(out, w, h, needWorld, needNormal);
   if (!out.depth) return out;
 
   const clipPt = new Array(4);
@@ -452,10 +484,11 @@ export const rasterizeCapsules = ({
    plate hide the ribbon behind it in the shape of its hexagon. */
 export const rasterizeTriangles = ({
   positions, normals = null, indices, count = 0, clip, width, height, stride = 1,
+  needWorld = true, needNormal = true,
 }, out = {}) => {
   const w = Math.max(1, Math.round(width));
   const h = Math.max(1, Math.round(height));
-  surfaceBuffer(out, 0, w, h);
+  surfaceBuffer(out, w, h, needWorld, needNormal);
   if (!out.depth) return out;
   const total = Math.max(0, Math.min(
     count || Math.floor(indices.length / 3),
@@ -522,7 +555,7 @@ export const rasterizeTriangles = ({
           ny = m0 * normals[ia + 1] + m1 * normals[ib + 1] + m2 * normals[ic + 1];
           nz = m0 * normals[ia + 2] + m1 * normals[ib + 2] + m2 * normals[ic + 2];
         }
-        writePixel(out, idx, zNdc, wx, wy, wz, nx, ny, nz, 1, !!normals);
+        writePixel(out, idx, zNdc, wx, wy, wz, nx, ny, nz, 1, needNormal && !!normals);
       }
     }
   }
@@ -582,13 +615,13 @@ export const pcfRotationOf = (x, y) => {
   const h = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
   return (h - Math.floor(h)) * Math.PI * 2;
 };
-/* THE TEST, AND THE DARKNESS. Every pixel the camera's pass covered owns a
-   WORLD POINT and a NORMAL — the patch of skin the viewer really sees. That
-   point is pushed into the lamp's frame and compared with what the lamp saw
-   FIRST at that pixel. The receiver is in its own depth map, so it occludes
-   itself by exactly zero and no « footprint » trick is needed to keep a shadow
-   off its own edges — that trick, plus a wide « ambient » blur of the mask, is
-   what made the first version dirty the molecule.
+/* SELF-SHADOWING ON THE MOLECULE ITSELF — AND WHY THERE IS NONE. Every pixel the
+   camera's pass covered owns a WORLD POINT and a NORMAL — the patch of skin the
+   viewer really sees. That point is pushed into the lamp's frame and compared with
+   what the lamp saw FIRST at that pixel. The receiver is in its own depth map, so
+   it occludes itself by exactly zero and no « footprint » trick is needed to keep
+   a shadow off its own edges — that trick, plus a wide « ambient » blur of the
+   mask, is what made the first version dirty the molecule.
    What is written is the OCCLUSION WEIGHTED BY THE LAMP'S SHARE:
    `occlusion · (floor + (1 − floor)·|N·L|)`. A face fully under the lamp keeps
    all of the shadow, a face the lamp grazes keeps a little (so the shadow
@@ -632,10 +665,19 @@ export const shadowMaskOf = ({
       const lx = clipX(Math.floor(p[0]));
       const ly = clipY(Math.floor(p[1]));
       const nearest = light.depth[ly * w + lx];
-      if (!(nearest < 2)) continue;
-      const gap = p[2] - nearest;
-      if (!(gap > biasNdc)) continue;
-      const radius = grow > 0 ? Math.min(cap, grow * gap * perAngstrom) : 0;
+      /* ⚠ THE CENTRE RAY IS NOT A GATE. A penumbra is precisely the case where the
+         centre ray MISSES the occluder while the rays around it hit it: skipping
+         the pixel here would erase the whole soft edge — and with it the shadow of
+         anything thinner than the disc. The DISC decides; the centre ray only
+         measures the GAP that PCSS grows the disc by. */
+      const gap = nearest < 2 ? p[2] - nearest : 0;
+      /* THE DISC IS THE SOFTNESS, PLUS WHAT THE GAP ADDS (PCSS). A soft edge is a
+         WIDTH the user chose; the depth gap between the receiver and the occluder
+         only pushes the disc further (PCSS: a contact shadow stays crisp while a
+         cast shadow spreads). `blur: 0` therefore gives the hard step of a plain
+         shadow map — the radius is 0 and the centre ray decides. */
+      const radius = Math.min(cap > 0 ? cap : Infinity,
+        base + (grow > 0 && gap > biasNdc ? grow * gap * perAngstrom : 0));
       let occluded = 0;
       if (radius > 0) {
         if (radius > penumbraRadius) penumbraRadius = radius;
@@ -653,6 +695,7 @@ export const shadowMaskOf = ({
           if (d < 2 && p[2] > d + biasNdc) occluded += invTaps;
         }
       } else {
+        if (!(gap > biasNdc)) continue;
         occluded = 1;
       }
       if (!(occluded > 0)) continue;
@@ -667,8 +710,20 @@ export const shadowMaskOf = ({
       if (occluded >= 0.5) shadowed += 1;
     }
   }
+  /* ⚠ LA COUVERTURE EST UNE FRONTIÈRE, PAS UN DÉCOR. `softenMask` étale le trait de
+     quelques pixels ; hors du dessin, ces pixels n'ont AUCUN point du monde, et le
+     masque y multiplierait un fond blanc — le liseré sombre du rapport, mesuré :
+     3 538 pixels de fond assombris sur une scène réelle. Le masque est donc ramené
+     à ZÉRO partout où la passe caméra n'a rien vu : une ombre n'existe que SUR une
+     surface, jamais à côté. */
+  const softened = softenMask(mask, w, h, base);
+  if (base > 0) {
+    for (let i = 0; i < softened.length; i += 1) {
+      if (!camera.hit[i]) softened[i] = 0;
+    }
+  }
   return {
-    mask: softenMask(mask, w, h, base), width: w, height: h, shadowed,
+    mask: softened, width: w, height: h, shadowed,
     taps: discTaps, tapsMax: maxTaps, penumbraRadius,
     facing: {
       floor,
@@ -787,6 +842,13 @@ export const viewerMatrixOf = (stage) => {
   t[12] = tx; t[13] = ty; t[14] = tz;
   return rot ? mat4Multiply(rot, t) : t;
 };
+/* WHAT IS DRAWN, AND ONLY THAT. This viewer hides a molecule by NOT building its
+   representations, while the component itself stays `visible` and its Structure
+   still holds every atom. Reading the structure therefore made a hidden membrane
+   cast a shadow of itself — « I see a projected membrane although the membrane is
+   NOT visible » — so the shadow reads the `structureView` of the living
+   representations instead: a molecule that has been hidden draws nothing, so it casts nothing.
+   `null` means "everything is drawn" (the caller keeps the atoms, never invents a hole). */
 const drawnAtomIndicesOf = (comp, atomCount) => {
   const list = comp && comp.reprList;
   if (!Array.isArray(list)) return null;
@@ -879,7 +941,17 @@ const drawsBackboneOf = (ap, idx) => {
   } catch { return false; }
   return false;
 };
-export const drawnProxyRadiiOf = (comp, atomCount, vdw = null, links = null) => {
+/* ⚠ A STROKE OWNS ONLY WHAT IT DRAWS — « spheric shadows for bonds » was the
+   report, and on the picture the round balls fell exactly on the CYCLES and on the
+   BRANCHES of the side chains. The cause: NGL's Tube of the backbone and the
+   Licorice of the side chains SHARE ONE SELECTION, and `StructureView#getAtomIndices`
+   returns the WHOLE list of that selection, side chains included. A « chain » kind
+   (BACKBONE_ONLY_KINDS — spline / tube) therefore answers for the backbone atoms
+   only, asking the very question NGL asks itself (`AtomProxy#isBackbone()` →
+   `residueType.backboneIndexList`, the list the cartoon and the tube build their
+   geometry from): the other atoms of the list it shares with the sticks are drawn by the sticks,
+   at THEIR own stroke. */
+export const drawnProxyRadiiOf = (comp, atomCount, vdw = null, links = null, splines = null, covered = null) => {
   const list = comp && comp.reprList;
   if (!Array.isArray(list)) return null;
   const out = new Float32Array(Math.max(0, Math.round(Number(atomCount) || 0)));
@@ -890,6 +962,14 @@ export const drawnProxyRadiiOf = (comp, atomCount, vdw = null, links = null) => 
     try {
       const rep = (el && (el.repr || el)) || null;
       if (!rep || rep.visible === false) return;
+      /* ⚠ A REPRESENTATION WHOSE REAL TRIANGLES WERE READ NEEDS NO PROXY. The
+         triangles ARE the drawn shape (see worldTrianglesOf) — a ball at an atom or
+         a capsule along a link would only ADD a rim the drawing does not have.
+         Measured in Chrome: without this, the 0.45 Å balls of a cartoon put 1 756
+         fully shadowed pixels on the white background, up to 6 px from the ribbon.
+         The proxy stays for the case it was made for: a draw whose geometry cannot
+         be read yet (a build still in NGL's queue). */
+      if (covered && covered.has(el)) return;
       const op = opacityOf(rep, el);
       if (op <= INVISIBLE_OPACITY) return;
       const sv = rep.structureView;
@@ -904,13 +984,25 @@ export const drawnProxyRadiiOf = (comp, atomCount, vdw = null, links = null) => 
         if (!(a >= 0 && a < out.length)) continue;
         if (chainOnly) {
           ap.index = a;
-          if (!ap.isBackbone()) continue;
+          if (!ap.isBackbone()) continue;    // the spline does not draw here
+          /* ⚠ A SPLINE RUNS THROUGH THE *TRACE* ATOMS, NOT THROUGH THE BACKBONE
+             BLOCK. A cartoon is a surface built on the trace (the CA of a protein,
+             `residue.traceAtomIndex`); a ball on the N or the C sits ~1.2 Å off that
+             path and therefore OUTSIDE the drawn ribbon. Measured on a real NGL
+             stage in Chrome: those balls put 1 335 fully shadowed pixels on the
+             white background, up to 2 Å away from the ribbon — the « dirt » of the
+             report. Only the trace atom is the drawn shape of a spline, and it is
+             the only one the trace chain below links. */
+          if (!(ap.residue && ap.residue.traceAtomIndex === a)) continue;
+          if (splines) splines[a] = 1;
         }
         const per = proxyRadiusOf(rep, vdw ? vdw[a] : 1.7, el);
         if (per == null) continue;
         const seen = op < 1 ? per * op : per;
         if (!(out[a] >= seen)) out[a] = seen;
-        if (linked && links) links[a] = 1;
+        /* A SPLINE DOES NOT DRAW BONDS: its links are its own chain (see
+           drawnBondsOf), so it never marks an atom as a stick's endpoint. */
+        if (linked && links && !chainOnly) links[a] = 1;
       }
     } catch { }
   });
@@ -925,16 +1017,6 @@ export const opacityOf = (rep, el = null) => {
     if (Number.isFinite(v)) return Math.min(1, Math.max(0, v));
   }
   return 1;
-};
-const geometryOfRep = (rep) => {
-  const list = rep && rep.bufferList;
-  if (!Array.isArray(list)) return null;
-  for (let i = 0; i < list.length; i += 1) {
-    const g = list[i] && list[i].geometry;
-    const arr = g && g.attributes && g.attributes.position && g.attributes.position.array;
-    if (arr && arr.length >= 12) return g;
-  }
-  return null;
 };
 /* A COMPACT VIEW OF ONE ATTRIBUTE. NGL does interleave some buffers; a reader
    that assumes `array[i * 3]` while the buffer really holds `array[i * stride +
@@ -992,7 +1074,7 @@ export const trianglesOfGeometry = (geometry, type = '') => {
 export const worldTrianglesOf = (comp, viewerM = null) => {
   const empty = {
     positions: new Float32Array(0), normals: new Float32Array(0), indices: new Uint32Array(0),
-    count: 0, vertexCount: 0, reps: 0, plates: 0, kinds: '', debug: '',
+    count: 0, vertexCount: 0, reps: 0, plates: 0, kinds: '', debug: '', surfaces: [],
   };
   const list = comp && comp.reprList;
   if (!Array.isArray(list)) return { ...empty, debug: 'no reprList' };
@@ -1003,6 +1085,7 @@ export const worldTrianglesOf = (comp, viewerM = null) => {
   const chunks = [];
   const seen = new Set();
   const kinds = [];
+  const surfaces = [];
   let total = 0, plates = 0, found = 0, debug = '';
   const takeGeometry = (geometry, type, isPlate) => {
     if (!geometry || seen.has(geometry)) return;
@@ -1021,12 +1104,24 @@ export const worldTrianglesOf = (comp, viewerM = null) => {
       const type = repTypeOf(rep, el);
       const mark = el && el.__plates && el.__plates.mesh && el.__plates.mesh.geometry;
       const before = total;
-      if (Array.isArray(rep.bufferList)) {
-        rep.bufferList.forEach((b) => { if (b && b.geometry) takeGeometry(b.geometry, type, !!mark && b.geometry === mark); });
+      /* ⚠ TWO PLACES, AND BOTH ARE REAL. `StructureRepresentation#attach` copies
+         what `create()` built in `dataList` into `bufferList` and hands it to the
+         viewer (measured in the installed build), so an ATTACHED representation
+         holds its meshes in `bufferList` — but one whose build is still queued
+         (a still asked right after a load) holds them in `dataList` ONLY, and a
+         reader that knew just one of the two would silently cast nothing. Reading
+         both, deduplicating by geometry, is the same set of triangles either way. */
+      const chunks = Array.isArray(rep.bufferList) ? rep.bufferList.slice() : [];
+      if (Array.isArray(rep.dataList)) {
+        rep.dataList.forEach((data) => {
+          if (data && Array.isArray(data.bufferList)) data.bufferList.forEach((b) => chunks.push(b));
+        });
       }
+      chunks.forEach((b) => { if (b && b.geometry) takeGeometry(b.geometry, type, !!mark && b.geometry === mark); });
       if (mark) takeGeometry(mark, type, true);
       if (total > before) {
         found += 1;
+        surfaces.push(el);
         if (type && !kinds.includes(type)) kinds.push(type);
       }
     } catch (e) { if (!debug) debug = `error: ${e.message}`; }
@@ -1066,7 +1161,7 @@ export const worldTrianglesOf = (comp, viewerM = null) => {
   return {
     positions, normals, indices,
     count: total, vertexCount: at, reps: found, plates,
-    kinds: kinds.join('·'), debug: '',
+    kinds: kinds.join('·'), debug: '', surfaces,
   };
 };
 export const emptyTriangles = () => ({
@@ -1076,7 +1171,10 @@ export const emptyTriangles = () => ({
 
 /* THE ATOM PROXIES, AS ONE SET OF BALLS AND CAPSULES. (The old version also
    merged a « band brush » in here; the bands are REAL TRIANGLES now — see
-   `fillTriangles` below — so nothing is re-derived from the atoms any more.) */
+   `fillTriangles` below — so nothing is re-derived from the atoms any more.)
+   `count` is the number of BALLS — one per drawn atom — and `filled` the number
+   of CAPSULES that join them along a real bond: the two halves of a stroke's
+   shadow, both drawn by `rasterizeCapsules` in each pass. */
 const fillDrawnLinks = (parts, stride, maxAtoms) => {
   const layouts = parts.filter((part) => part.data && part.data.position).map((part) => layOut(part, stride));
   const slots = layouts.reduce((a, lay) => a + lay.len, 0);
@@ -1104,7 +1202,7 @@ const fillDrawnLinks = (parts, stride, maxAtoms) => {
       }
     }
   });
-  return { positions: out, radii, count: k, edges, filled: 0 };
+  return { positions: out, radii, count: k, edges, filled: Math.floor(edges.length / 2) };
 };
 /* THE TRIANGLES OF THE WHOLE SCENE, merged and budgeted. One accumulator for
    every component; `stride` thins the list when a system is huge (the same
@@ -1148,38 +1246,114 @@ const fillTriangles = (parts, maxTriangles) => {
   };
 };
 
-const drawnBondsOf = (structure, links, n) => {
+/* THE GRAPH OF LINKS BETWEEN THE DRAWN ATOMS. It is read from the STRUCTURE
+   (`eachBond` → `atomIndex1` / `atomIndex2`, which NGL builds from the residue
+   templates AND from the peptide bond it checks by distance) and never invented
+   out of "the next atom of the list": that list is the whole selection, so the
+   atom after a backbone oxygen is a side-chain carbon, and filling it drew the
+   ghost disc of the report.
+   A pair is a link only when BOTH its atoms are drawn by a stroke, and only when
+   it is a BOND — closer than LINK_MAX (a residue template can join two CAs two
+   residues apart, and a stroke drawn across the molecule is a link no eye sees).
+   A stroke drawn without its links alone leaves holes ångströms wide that no ray can hit
+   — measured: 0 shadowed pixels on 3655, against 3160 on 12247 once the links are
+   filled — and THAT is the graph of the structure that is followed here
+   (`eachBond`), never « the next atom of the list », which filled ghost bonds.
+   When the structure declares no graph at all, the only fallback is the polymer
+   TRACE (the trace atom of CONSECUTIVE residues), which is where a ribbon's
+   continuity actually lives. */
+const drawnBondsOf = (structure, links, n, positions = null, splines = null) => {
   if (!structure || typeof structure.eachBond !== 'function') return [];
-  let linked = false;
-  for (let i = 0; i < n && !linked; i += 1) linked = links[i] === 1;
-  if (!linked) return [];
   const out = [];
   const seen = new Set();
+  const isBond = (a, b) => {
+    if (!positions) return true;
+    const dx = positions[a * 3] - positions[b * 3];
+    const dy = positions[a * 3 + 1] - positions[b * 3 + 1];
+    const dz = positions[a * 3 + 2] - positions[b * 3 + 2];
+    return dx * dx + dy * dy + dz * dz <= LINK_MAX * LINK_MAX;
+  };
   const addBond = (a, b) => {
     if (!(a >= 0 && a < n && b >= 0 && b < n) || a === b) return;
     if (links[a] !== 1 || links[b] !== 1) return;
+    if (!isBond(a, b)) return;
     const key = a < b ? a * n + b : b * n + a;
     if (seen.has(key)) return;
     seen.add(key);
     out.push(a, b);
   };
-  try {
-    structure.eachBond((bond) => { addBond(bond.atomIndex1, bond.atomIndex2); });
-  } catch { }
-  if (out.length === 0) {
+  let linked = false;
+  for (let i = 0; i < n && !linked; i += 1) linked = links[i] === 1;
+  if (linked) {
     try {
-      if (typeof structure.eachPolymer === 'function') {
-        structure.eachPolymer((p) => {
-          let prevTrace = -1;
-          p.eachResidue((r) => {
-            const trace = r.traceAtomIndex;
-            if (trace !== undefined && trace >= 0) {
-              if (prevTrace >= 0) addBond(prevTrace, trace);
-              prevTrace = trace;
-            }
+      structure.eachBond((bond) => { addBond(bond.atomIndex1, bond.atomIndex2); });
+    } catch { }
+    if (out.length === 0) {
+      try {
+        if (typeof structure.eachPolymer === 'function') {
+          structure.eachPolymer((p) => {
+            let prevTrace = -1;
+            p.eachResidue((r) => {
+              const trace = r.traceAtomIndex;
+              if (trace !== undefined && trace >= 0) {
+                if (prevTrace >= 0) addBond(prevTrace, trace);
+                prevTrace = trace;
+              }
+            });
           });
+        }
+      } catch { }
+    }
+  }
+  /* AND THE SPLINE'S OWN CHAIN, ALWAYS — a cartoon/ribbon/tube draws a CONTINUOUS
+     surface along the trace atoms, so those atoms are linked to each other whether
+     or not the structure's bond graph happens to join them (it joins C(i) to N(i+1),
+     two atoms the ribbon does not pass through). `splines` is the mark
+     `drawnProxyRadiiOf` leaves on the atoms a spline really draws. */
+  let anySpline = false;
+  if (splines) {
+    for (let i = 0; i < n && !anySpline; i += 1) anySpline = splines[i] === 1;
+  }
+  if (anySpline) {
+    const addTrace = (a, b) => {
+      if (!(splines[a] === 1 && splines[b] === 1)) return;
+      if (!isBond(a, b)) return;
+      const key = a < b ? a * n + b : b * n + a;
+      if (seen.has(key)) return;
+      seen.add(key);
+      out.push(a, b);
+    };
+    /* ⚠ ON MARCHE LES CHAÎNES, PAS LES POLYMÈRES. `eachPolymer` ne rend un polymère
+       que pour un enchaînement RÉEL de résidus (mesuré : RIEN pour un dipeptide dont
+       les coordonnées ne font pas une liaison peptidique parfaite), alors qu'un ruban
+       se dessine sur n'importe quelle chaîne de résidus. La marche est donc faite
+       chaîne par chaîne — un changement de chaîne ROMPT le trait — et la trace d'un
+       résidu sans atome de trace le rompt aussi. */
+    const linkChain = (traces) => {
+      let prev = -1;
+      traces.forEach((trace) => {
+        if (trace === undefined || trace < 0) { prev = -1; return; }
+        if (prev >= 0) addTrace(prev, trace);
+        prev = trace;
+      });
+    };
+    try {
+      const chains = [];
+      if (typeof structure.eachChain === 'function') {
+        structure.eachChain((chain) => {
+          const traces = [];
+          if (chain && typeof chain.eachResidue === 'function') {
+            chain.eachResidue((r) => traces.push(r.traceAtomIndex));
+          }
+          chains.push(traces);
         });
       }
+      if (!chains.length && typeof structure.eachResidue === 'function') {
+        const traces = [];
+        structure.eachResidue((r) => traces.push(r.traceAtomIndex));
+        chains.push(traces);
+      }
+      chains.forEach(linkChain);
     } catch { }
   }
   return out;
@@ -1267,8 +1441,9 @@ export const atomsFromStage = (stage, maxAtoms = RAY_SHADOW_DEFAULTS.maxAtoms, m
       const drawn = drawnAtomIndicesOf(comp, structure.atomCount || n);
       if (drawn && !drawn.length) return;
       const links = new Uint8Array(n);
-      const surface = drawnProxyRadiiOf(comp, n, data.radius, links);
-      const bonds = drawnBondsOf(structure, links, n);
+      const splines = new Uint8Array(n);
+      const surface = drawnProxyRadiiOf(comp, n, data.radius, links, splines, new Set(tris.surfaces || []));
+      const bonds = drawnBondsOf(structure, links, n, data.position, splines);
       parts.push({ comp, data, n, drawn, surface, links, viewerM, bonds, tris });
       total += drawn ? drawn.length : n;
     } catch { }
@@ -1299,9 +1474,12 @@ export const rayShadowInputsOf = (stage, { lightDir = [0, 0, 1], options = {} } 
   const tris = atoms.tris || emptyTriangles();
   if (!atoms.count && !tris.count) throw new Error('nothing to cast a shadow from');
   const camera = cameraFromViewer(viewer);
-  /* THE FRAME HOLDS EVERYTHING THAT CASTS OR RECEIVES: the balls, and the real
+  /* THE FRAME HOLDS EVERYTHING THAT CASTS OR RECEIVES: the balls (WIDENED BY THEIR
+     OWN RADII — a solid reaches past its centre, see expandBoxOf) and the real
      triangles (a band or a plate can stick out of the atoms' box). */
-  const boxA = atoms.count ? boundsBoxOf(atoms.positions, atoms.count) : null;
+  const boxA = atoms.count
+    ? expandBoxOf(boundsBoxOf(atoms.positions, atoms.count), maxStrokeRadiusOf(atoms) * o.sphereScale)
+    : null;
   const boxB = tris.count ? boundsBoxOf(tris.positions, tris.vertexCount) : null;
   const bounds = unionBoxOf(boxA, boxB);
   const center = [
@@ -1378,6 +1556,18 @@ const minStrokeRadiusOf = (atoms) => {
     if (v > 0 && v < min) min = v;
   }
   return Number.isFinite(min) ? min : 0;
+};
+/* THE OTHER END OF THE SAME MEASURE — the WIDEST stroke drawn, which is how far a
+   ball reaches past its own centre (see expandBoxOf). */
+export const maxStrokeRadiusOf = (atoms) => {
+  const radii = atoms && atoms.radii;
+  const n = Math.max(0, Math.min(Number(atoms && atoms.count) || 0, radii ? radii.length : 0));
+  let max = 0;
+  for (let i = 0; i < n; i += 1) {
+    const v = radii[i];
+    if (v > max) max = v;
+  }
+  return max;
 };
 export const maskScalePerAngstrom = ({ clip, view, bounds, width, height } = {}) => {
   if (!clip || !view) return 0;
@@ -1464,23 +1654,29 @@ export const buildRayShadowMask = ({ atoms, camera, light, width, height, option
   }
 
   /* THE LAMP'S PASS — the same shapes, orthographic, keeping the depth of the
-     same surface points. */
+     same surface points. ⚠ ONLY ITS DEPTH IS KEPT: the lamp is asked where the
+     light stops, never which way a surface faces (that is the CAMERA's normal),
+     so the world points and the normals of a megapixel map are not built at
+     all — two Float32Arrays of `w × h × 3` that nothing would read. */
   const lightPass = rasterizeSpheres({
     positions: atoms.positions, radii: atoms.radii, count: atoms.count,
     clip: light.clip, width: mw, height: mh, radiusScale: o.sphereScale,
     right: lightAxes.right, up: lightAxes.up, back: lightAxes.back,
+    needWorld: false, needNormal: false,
   });
   if (atoms.edges && atoms.edges.length) {
     rasterizeCapsules({
       positions: atoms.positions, radii: atoms.radii, edges: atoms.edges,
       clip: light.clip, width: mw, height: mh, radiusScale: o.sphereScale,
       right: lightAxes.right, up: lightAxes.up, back: lightAxes.back,
+      needWorld: false, needNormal: false,
     }, lightPass);
   }
   if (tris) {
     rasterizeTriangles({
       positions: tris.positions, normals: tris.normals, indices: tris.indices,
       count: tris.count, clip: light.clip, width: mw, height: mh, stride: tris.stride || 1,
+      needWorld: false, needNormal: false,
     }, lightPass);
   }
 
@@ -1498,7 +1694,7 @@ export const buildRayShadowMask = ({ atoms, camera, light, width, height, option
   return {
     mask: out.mask, maskWidth: mw, maskHeight: mh,
     shadowed: out.shadowed, spheres: cameraPass.count,
-    filled: 0,
+    filled: atoms && atoms.edges ? Math.floor(atoms.edges.length / 2) : 0,
     strength: o.strength,
     /* THE SHAPES THAT CAST: the balls/capsules, and the REAL triangles — with
        the ring plates called out, since they are what the report asked for (« the
@@ -1593,8 +1789,14 @@ export const rayShadowNote = (shadow, reason = '') => {
     ? Math.round((px / (shadow.imageWidth * shadow.imageHeight)) * 100)
     : null;
   const spheres = Number(shadow.spheres) || 0;
-  const bands = Number(shadow.bands) || 0;
-  const bandDebug = shadow.bandDebug ? `· ⚠ ribbon debug: ${shadow.bandDebug}` : '';
+  const links = Number(shadow.filled) || 0;
+  const triangles = Number(shadow.triangles) || 0;
+  const plates = Number(shadow.plates) || 0;
+  const kinds = triangles && shadow.kinds ? ` · ${shadow.kinds}` : '';
+  const f = shadow.facing;
+  const faces = f && Number.isFinite(Number(f.mean))
+    ? ` · lamp facing ${Number(f.mean).toFixed(2)} (floor ${Number(f.floor).toFixed(2)})`
+    : '';
   const st = shadow.strokes;
   const strokes = st && st.list && st.list.length
     ? `· strokes ${st.list.map((e) => `${e.radius.toFixed(2)} Å×${e.hits}`).join(' · ')}${st.rest ? ` · +${st.rest}` : ''}`
@@ -1604,5 +1806,7 @@ export const rayShadowNote = (shadow, reason = '') => {
     : '';
   return `· cast shadows ${pct}%${covered == null ? '' : ` (${covered}% of the pixels)`}`
     + `${spheres ? ` · ${spheres} proxies` : ''}`
-    + `${bands ? ` · ${bands} in the ribbon bands` : ''}${bandDebug}${strokes}${rig}`;
+    + `${links ? ` · ${links} link capsules` : ''}`
+    + `${triangles ? ` · ${triangles} triangles${plates ? ` (${plates} ring plates)` : ''}${kinds}` : ''}`
+    + `${faces}${strokes}${rig}`;
 };

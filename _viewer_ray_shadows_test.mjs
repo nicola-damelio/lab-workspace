@@ -59,7 +59,8 @@ import {
   lightDepthScale, lightMatricesOf, shadowRigOf, buildRayShadowMask, atomsFromStage,
   cameraFromViewer, viewerMatrixOf, rayShadowInputsOf, shadowImageData, addCastShadowsToBlob, rayShadowNote,
   pcfDiscOf, pcfRotationOf, PROXY_STROKE_BY_TYPE, repTypeOf, proxyRadiusOf, drawnProxyRadiiOf,
-  opacityOf, INVISIBLE_OPACITY, FLAT_STROKE_BY_TYPE, bandSectionsOf, bandProxiesOf,
+  opacityOf, INVISIBLE_OPACITY, IMPOSTOR_TYPES, compactAttribute, trianglesOfGeometry,
+  worldTrianglesOf, viewAxesOf, expandBoxOf, rasterizeCapsules, rasterizeTriangles,
 } from './src/utils/viewerRayShadows.js';
 
 let passed = 0;
@@ -86,10 +87,12 @@ ok(MODULE.includes('decode = null, encode = null'),
   'les deux moitiés du rendu (décoder / encoder) sont INJECTABLES — donc testables hors navigateur');
 ok(MODULE.includes("typeof document === 'undefined'"),
   'sans DOM, l’écriture de l’image est gardée au lieu d’exploser');
-ok(MODULE.includes('The proxy is drawn from the atoms AND from what their'),
-  'le module dit ce que le proxy est vraiment : les atomes ET le trait qui les relie (un tuyau continu, pas une poussière de billes)');
-ok(MODULE.includes('LINKED_KINDS') && MODULE.includes('camera.reach'),
-  '…et il nomme les deux moitiés de l’ombre d’un dessin fin : le proxy qui bouche ses liens, et la surface du receveur qui est échantillonnée');
+ok(MODULE.includes('a SPHERE per atom and a CAPSULE per bond, ANALYTIC'),
+  'le module dit ce que le proxy est vraiment : une bille par atome, une capsule par liaison — un tuyau continu, pas une poussière de billes');
+ok(MODULE.includes('LINKED_KINDS') && MODULE.includes('rasterizeCapsules'),
+  '…et il nomme les deux moitiés de l’ombre d’un dessin fin : la capsule qui bouche le lien, et le rasterizer qui la dessine');
+ok(MODULE.includes('a buffer with normals is a surface'),
+  '…avec le discriminant MESURÉ des surfaces : un tampon qui porte des normales est une surface, un tampon sans normales est un imposteur');
 
 /* ── 2. LES OPTIONS ET LA TAILLE DU MASQUE ─────────────────────────────── */
 eq(rayShadowOptions({}), { ...RAY_SHADOW_DEFAULTS }, 'sans option, ce sont les valeurs par défaut');
@@ -160,38 +163,68 @@ const camera = {
   clip: mat4Multiply(camProj, camView),
   type: 'PerspectiveCamera',
 };
-const positions = new Float32Array([0, 0, 1, 0, 0, -1]);
-const radii = new Float32Array([1, 1]);
+const positions = new Float32Array([0, 0, 2, 0, 0, -1]);
+/* A est une GROSSE bille (2 Å) et B une petite (0,5 Å) : l'ombre de A couvre
+   largement B, donc la mesure ne dépend pas d'un pixel pris sur une silhouette. */
+const radii = new Float32Array([2, 0.5]);
 const atoms = { positions, radii, count: 2 };
-const scene = boundsOf(positions, 2);
 const dir = [0, 0, 1];
 const light = {
-  dir, center: scene.center, radius: scene.radius, distance: scene.radius * 100,
-  ...lightMatricesOf({ dir, center: scene.center, radius: scene.radius, distance: scene.radius * 100 }),
+  dir, distance: 100,
+  ...lightMatricesOf({
+    dir,
+    /* ⚠ LA BOÎTE CONTIENT LES SOLIDES, PAS SEULEMENT LEURS CENTRES (expandBoxOf) :
+       sans elle, la calotte AVANT de A tombait hors du frustum de la lampe — un
+       occluteur que la lampe n'a pas rasterisé est une ombre qui disparaît. */
+    bounds: expandBoxOf(boundsBoxOf(positions, 2), 2),
+    distance: 100,
+  }),
 };
 
-const shadow = buildRayShadowMask({ atoms, camera, light, width: 128, height: 128, options: { softness: 0 } });
+const shadow = buildRayShadowMask({ atoms, camera, light, width: 128, height: 128, options: { softness: 0, penumbra: 0 } });
 const w = shadow.maskWidth;
 const h = shadow.maskHeight;
 ok(shadow.mask.length === w * h, 'le masque a la taille annoncée');
 ok(shadow.spheres === 2, 'les deux atomes servent de proxy');
 
-/* Où tombent les deux atomes sur l'image, et ce que le masque y dit. */
+/* Où tombent les deux billes sur l'image, et ce que le masque y dit. Le pixel retenu
+   est celui qui est le plus près du centre PROJETÉ de chaque bille : les deux disques
+   ne se recouvrent pas, donc chacun a le sien. */
+const camAxes = viewAxesOf(camera.view);
 const pass = rasterizeSpheres({
   positions, radii, count: 2, clip: camera.clip, width: w, height: h,
-  axisUp: [0, 1, 0],
+  right: camAxes.right, up: camAxes.up, back: camAxes.back,
 });
+const projA = clipToScreen(mat4TransformPoint(camera.clip, [0, 0, 2, 1]), w, h);
+const projB = clipToScreen(mat4TransformPoint(camera.clip, [0, 0, -1, 1]), w, h);
 let idxA = -1;
 let idxB = -1;
+let bestA = Infinity;
+let bestB = Infinity;
 for (let i = 0; i < w * h; i += 1) {
   if (!pass.hit[i]) continue;
-  if (pass.world[i * 3 + 2] > 0) idxA = i; else idxB = i;
+  const px = i % w;
+  const py = Math.floor(i / w);
+  const dA = Math.hypot(px + 0.5 - projA[0], py + 0.5 - projA[1]);
+  const dB = Math.hypot(px + 0.5 - projB[0], py + 0.5 - projB[1]);
+  if (dA < bestA) { bestA = dA; idxA = i; }
+  if (dB < bestB) { bestB = dB; idxB = i; }
 }
-ok(idxA >= 0 && idxB >= 0, 'les deux atomes ont laissé des pixels (le rasterizer les a vus)');
-eq([pass.world[idxA * 3], pass.world[idxA * 3 + 1], pass.world[idxA * 3 + 2]], [0, 0, 1],
-  '…et le point du monde gardé est bien le centre de l’atome');
+ok(idxA >= 0 && idxB >= 0, 'les deux billes ont laissé des pixels (le rasterizer les a vues)');
+/* ⚠ LE POINT DU MONDE EST CELUI DE LA SURFACE, PAS LE CENTRE DE LA BILLE. C'est la
+   correction qui rend l'ombre honnête : c'est le morceau de peau que la caméra
+   filme qui est interrogé, jamais le milieu de l'atome (l'ancien « billboard », qui
+   faisait s'auto-ombrer le bord d'une bille). */
+near(Math.hypot(pass.world[idxA * 3], pass.world[idxA * 3 + 1], pass.world[idxA * 3 + 2] - 2), 2, 1e-3,
+  '…et le point du monde gardé est SUR la bille A (à son rayon du centre)');
+ok(pass.world[idxA * 3] > 0,
+  '…du côté que la caméra voit : un vrai point de surface, pas le centre de l’atome');
 ok(shadow.mask[idxA] < 0.15, 'A, que la lampe voit en premier, est ÉCLAIRÉ');
-near(shadow.mask[idxB], 1, 0.35, 'B, derrière A le long de la lampe, est À L’OMBRE');
+/* ⚠ L’OMBRE EST PONDÉRÉE PAR LA PART DE LAMPE QUE LA SURFACE REÇOIT (voir
+   `facingFloor`) : B est franchement ombré, mais la paroi mesurée reçoit encore la
+   part plancher — une face rasante sous la lampe n’a pas de lumière à perdre. */
+ok(shadow.mask[idxB] > 0.3,
+  `B, derrière A le long de la lampe, est À L’OMBRE (${shadow.mask[idxB].toFixed(2)} — la part de lampe que sa paroi reçoit encore)`);
 ok(shadow.shadowed > 0, '…et le compte des pixels ombrés le dit');
 /* La pénombre : le test brut donne 0 / 1, le flou donne des valeurs entre les deux. */
 const blurred = softenMask(shadow.mask, w, h, 3);
@@ -606,25 +639,27 @@ const ribbonStage = {
   }],
 };
 const ribbon = atomsFromStage(ribbonStage, 100);
-/* ⚠ LE PROXY EST LA GÉOMÉTRIE DESSINÉE, pas une poussière de billes : les deux
-   atomes dessinés sont reliés par les proxies qui REMPLISSENT le lien (un cartoon
-   marche la chaîne comme un TUYAU continu ; le banc DÉCLARE cette chaîne — voir
-   `chainOf`). Sans ce remplissage, un dessin fin ne projette RIEN DU TOUT —
-   mesuré : 0 pixel ombré sur 3655, contre 3160 sur 12247 avec les trous bouchés.
-   2 atomes à 1 Å, un trait de 0,45 Å → un pas de 0,3 Å → 3 proxies entre eux, donc
-   5. */
-eq(ribbon.count, 5, 'seuls les atomes DESSINÉS sont lus, ET les proxies qui bouchent leur lien');
-eq(ribbon.filled, 3, '…soit 3 proxies de remplissage pour le lien d’1 Å du ruban');
-near(ribbon.radii[0], 0.45, 1e-6, '…et leur proxy a l’épaisseur du RUBAN, plus celle d’une sphère de van der Waals');
+/* ⚠ LE PROXY EST LA GÉOMÉTRIE DESSINÉE, pas une poussière de billes. Il a
+   désormais DEUX moitiés, toutes deux rasterisées dans les DEUX passes : une BILLE
+   (`count` : un sommet par atome dessiné) et une CAPSULE PAR LIAISON (`edges` :
+   les deux atomes qu’elle relie — aucune position n’est inventée entre eux). La
+   capsule EST le remplissage : un cartoon marche la chaîne comme un TUYAU continu
+   (le banc DÉCLARE cette chaîne — voir `chainOf`). Sans ce trait, un dessin fin ne
+   projette RIEN DU TOUT — mesuré dans un vrai navigateur : 0 pixel ombré sur 3655. */
+eq(ribbon.count, 2, 'seuls les atomes DESSINÉS sont lus : une bille par atome, rien de plus');
+eq(ribbon.filled, 1, '…et le lien qui les joint est UNE capsule (le tuyau est continu, pas troué)');
+eq(ribbon.edges.length, 2, '…décrite par les DEUX atomes qu’elle relie, jamais par une position inventée');
+near(ribbon.radii[0], 0.45, 1e-6, '…et le proxy a l’épaisseur du RUBAN, plus celle d’une sphère de van der Waals');
 near(ribbon.radii[1], 0.45, 1e-6, '…pour chaque atome du ruban');
-near(ribbon.radii[2], 0.45, 1e-6, '…comme pour les proxies de remplissage (même trait)');
-/* LES ATOMES D’ABORD, puis les proxies qui remplissent chaque lien : l’ordre n’a
-   aucune importance pour la carte d’ombre (elle garde, par pixel, la sphère la
-   plus proche de chaque rayon), mais il rend la liste lisible — chaque atome est
-   émis avant ce qui le relie. Les 3 remplissages du lien tombent ENTRE les deux. */
-const ribbonFills = [...Array(ribbon.count - 2)].map((_, i) => ribbon.positions[(i + 2) * 3 + 1]);
-eq(ribbonFills.map((y) => Number(y.toFixed(3))), [0.25, 0.5, 0.75],
-  '…et ils tombent ENTRE les deux atomes, dans l’ordre (le tuyau est continu, pas troué)');
+/* LA CAPSULE PORTE L’ÉPAISSEUR DE SES DEUX BOUTS : `rasterizeCapsules` interpole
+   le rayon le long de l’axe, donc le trait ne s’amincit ni ne s’évase. */
+const capPass = rasterizeCapsules({
+  positions: ribbon.positions, radii: ribbon.radii, edges: ribbon.edges,
+  clip: mat4Orthographic(-2, 2, -2, 2, -10, 10),
+  width: 64, height: 64,
+});
+ok(capPass.hit.some((v) => v === 1),
+  '…et cette capsule couvre vraiment des pixels : c’est elle qui bouche le lien entre les deux atomes');
 /* Une BILLE n’est pas une ligne : un spacefill ne remplit rien. */
 const ballStage = {
   compList: [{
@@ -642,9 +677,14 @@ eq(atomsFromStage(ballStage, 100).count, 2,
    et un plafond impossible rend les trous (les atomes seuls). */
 const capped = atomsFromStage(ribbonStage, 3);
 ok(capped.count <= 3, `un plafond de 3 proxies n’est jamais dépassé (count ${capped.count})`);
+/* …et les CAPSULES NE COÛTENT RIEN AU BUDGET DES BILLES : elles réutilisent les
+   sommets des atomes qu’elles relient (`edges`), donc un plafond serré sur les
+   billes laisse quand même le trait entier — un budget n’ouvre plus de trou. */
 const jammed = atomsFromStage(ribbonStage, 2);
-ok(jammed.count <= 2 && jammed.filled === 0,
-  `sans place du tout, le module retombe sur les atomes seuls (count ${jammed.count}, remplissage ${jammed.filled})`);
+ok(jammed.count <= 2,
+  `sans place du tout, les BILLES tiennent dans le budget (count ${jammed.count})`);
+eq(jammed.filled, 1,
+  '…et le lien reste entier : une capsule ne consomme pas un proxy (elle relie des atomes déjà émis)');
 /* …et UN ATOME QUE RIEN NE DESSINE NE PROJETTE PLUS DE BILLE. Le rapport : « the cast
    shadows appear as large spheres (1,7 Å Van der Waals radius) for all atoms in the
    selection (including side chains), instead of just following the thin ribbon
@@ -777,9 +817,9 @@ const realStage = {
   }],
 };
 const realRibbon = atomsFromStage(realStage, 100);
-eq(realRibbon.count, 6,
-  'une représentation qui couvre TOUTE la structure dessine tous ses atomes, ET le tube qui les relie');
-eq(realRibbon.filled, 4, '…4 proxies de 0,45 Å pour le lien d’1,5 Å du tube (un pas de 0,3 Å)');
+eq(realRibbon.count, 2,
+  'une représentation qui couvre TOUTE la structure dessine ses atomes : une bille chacun, rien de plus');
+eq(realRibbon.filled, 1, '…et le lien d’1,5 Å du tube est UNE capsule (le tuyau est continu, pas une poussière)');
 near(realRibbon.radii[0], 0.45, 1e-6,
   'de bout en bout : un vrai cartoon donne des proxies de 0,45 Å — l’ombre colle au ruban');
 near(realRibbon.radii[1], 0.45, 1e-6, '…et non des sphères de van der Waals de 1,7 Å');
@@ -843,18 +883,17 @@ const staleBox = bboxOf(staleMask.mask, staleMask.maskWidth, staleMask.maskHeigh
 ok(cleanBox.count > 0 && staleBox.count > 0,
   'les deux masques ombrent bien quelque chose (deux ombres réelles sont comparées)');
 /* ⚠ CE QUE LA CAMÉRA D'UNE TUILE FAIT VRAIMENT, mesuré (et non supposé) : elle
-   MONTRE une fenêtre de la scène, grossie n× et posée au centre de l'image. L'ombre
-   de la molécule n'est donc pas « détachée » d'un quart d'image — elle est ÉNORME
-   (elle remplit presque tout le masque : 16 198 des 16 384 pixels contre 14 218 pour
-   l'ombre juste) et son centre est celui de la FENÊTRE (0,50) au lieu de celui de la
-   molécule (0,54). C'est la « grosse tache » du rapport, et c'est ce qui rend la
-   « ray » inutilisable tant que la caméra n'est pas refusée. */
-ok(staleBox.count > cleanBox.count * 1.05,
-  'la tache de la caméra restée dans la tuile est plus GROSSE : le sous-frustum la magnifie');
-ok(staleBox.count > 0.9 * staleMask.maskWidth * staleMask.maskHeight,
-  '…au point de remplir le masque ENTIER — une fenêtre de tuile grossie ne laisse plus voir la molécule');
-ok(Math.abs(staleBox.cx - cleanBox.cx) > 0.02,
-  `…et son centre est celui de la FENÊTRE, pas celui de la molécule : ${staleBox.cx.toFixed(2)}/${staleBox.cy.toFixed(2)} contre ${cleanBox.cx.toFixed(2)}/${cleanBox.cy.toFixed(2)} sur la molécule`);
+   MONTRE une fenêtre de la scène, grossie n× et posée au centre de l'image. Le
+   masque du module suit cette fenêtre — et comme il n'existe QUE sur le dessin de
+   SA caméra (voir §15), la carte d'une tuile est une AUTRE carte : mesuré, 295
+   pixels ombrés au lieu de 1206, et surtout un centre à (0,21 ; 0,05) au lieu de
+   (0,48 ; 0,50). C'est la « tache détachée » du rapport : l'ombre tombe au mauvais
+   endroit parce que la caméra n'est plus celle de l'image. D'où le garde-fou qui
+   suit, et qui REFUSE une caméra restée dans une tuile. */
+ok(staleBox.count !== cleanBox.count,
+  `la carte d’une tuile n’est pas celle de l’image (${staleBox.count} pixels ombrés contre ${cleanBox.count})`);
+ok(Math.abs(staleBox.cx - cleanBox.cx) > 0.02 && Math.abs(staleBox.cy - cleanBox.cy) > 0.02,
+  `…et surtout elle est DÉCALÉE : centre (${staleBox.cx.toFixed(2)} ; ${staleBox.cy.toFixed(2)}) au lieu de (${cleanBox.cx.toFixed(2)} ; ${cleanBox.cy.toFixed(2)}) sur la molécule`);
 
 // Le garde-fou : une caméra en pleine tuile est refusée, jamais lue en silence.
 const throws = (fn, re, what) => {
@@ -964,7 +1003,7 @@ const helixShadow = (rep, az, el) => {
   const mask = buildRayShadowMask({ atoms, camera: cam, light, width: W, height: H, options: {} });
   const cover = rasterizeSpheres({
     positions: atoms.positions, radii: atoms.radii, count: atoms.count,
-    clip: cam.clip, width: mask.maskWidth, height: mask.maskHeight, axisUp: [0, 1, 0], needWorld: false,
+    clip: cam.clip, width: mask.maskWidth, height: mask.maskHeight, needWorld: false,
   });
   let drawn = 0;
   let occ = 0;
@@ -1121,7 +1160,7 @@ const sceneShadowOf = ({ groups, compShift = [0, 0, 0], az = 120, el = 15 }) => 
   const draw = rasterizeSpheres({
     positions: world, radii, count: drawnCount,
     clip: inputs.camera.clip, width: mask.maskWidth, height: mask.maskHeight,
-    axisUp: [0, 1, 0], needWorld: false,
+    needWorld: false,
   });
   let drawn = 0;
   let onDrawing = 0;
@@ -1134,7 +1173,25 @@ const sceneShadowOf = ({ groups, compShift = [0, 0, 0], az = 120, el = 15 }) => 
     }
     if (draw.hit[i]) drawn += 1;
   }
-  return { drawn, onDrawing, shadowAll, shadowed: mask.shadowed, proxies: inputs.atoms.count };
+  /* LA COUVERTURE DU MODULE ELLE-MÊME — les balles ET les capsules, la passe
+     caméra telle qu'il la construit. Le receveur EST cette couverture : un pixel
+     qu'elle ne touche pas n'a pas de point du monde, donc ne peut pas être ombré.
+     C'est ce qui rend impossible la « salissure » du rapport (le fond, un liseré). */
+  const cov = rasterizeSpheres({
+    positions: inputs.atoms.positions, radii: inputs.atoms.radii, count: inputs.atoms.count,
+    clip: inputs.camera.clip, width: mask.maskWidth, height: mask.maskHeight,
+  });
+  if (inputs.atoms.edges.length) {
+    rasterizeCapsules({
+      positions: inputs.atoms.positions, radii: inputs.atoms.radii, edges: inputs.atoms.edges,
+      clip: inputs.camera.clip, width: mask.maskWidth, height: mask.maskHeight,
+    }, cov);
+  }
+  let dust = 0;
+  for (let i = 0; i < mask.mask.length; i += 1) {
+    if (mask.mask[i] > 0.002 && !cov.hit[i]) dust += 1;
+  }
+  return { drawn, onDrawing, shadowAll, dust, shadowed: mask.shadowed, proxies: inputs.atoms.count };
 };
 const noFrame = sceneShadowOf({ groups: false });
 const withFrame = sceneShadowOf({ groups: true });
@@ -1142,20 +1199,23 @@ ok(noFrame.onDrawing === 0,
   `sans le repère de la scène, le masque ne touche AUCUN pixel du dessin (${noFrame.onDrawing} sur ${noFrame.drawn} dessinés ; ${noFrame.shadowAll} pixels d'ombre au total, ${noFrame.proxies} proxies) — le « no cast shadow » du rapport`);
 ok(withFrame.drawn > 0 && withFrame.shadowAll > 0,
   `avec le repère, l'ombre existe ET le dessin est dans le cadre (${withFrame.shadowAll} pixels d'ombre pour ${withFrame.drawn} dessinés)`);
-/* ⚠ CE QUE LE MASQUE EST VRAIMENT (mesuré : 188 020 pixels inkhés sur 39 965 dessinés) :
-   une carte d'ombre de TOUTE l'image — le volume d'ombre derrière la molécule s'étend
-   jusqu'au bord. Le contrat du module n'est donc PAS « un pixel ombré est un pixel
-   dessiné », c'est : l'ALPHA de l'image n'est jamais touchée (`applyShadowToPixels`
-   ne réécrit que le RGB), donc un fond transparent reste transparent et l'ombre ne
-   peut pas « fuir » hors du dessin. Ce qui doit être vrai, et qui l'est, c'est que le
-   DESSIN reçoive l'ombre EN ENTIER — c'est ce qu'on mesure ici. */
-ok(withFrame.onDrawing === withFrame.drawn && withFrame.onDrawing > 0,
-  `…et elle tombe sur TOUT le dessin (${withFrame.onDrawing}/${withFrame.drawn} pixels dessinés) — le masque couvre toute l'image, c'est l'alpha qui décide de ce qui se voit`);
+/* ⚠ LE MASQUE EST ZÉRO HORS DU DESSIN — c'est la fin du « ça salit la molécule ».
+   La première version multipliait le masque PARTOUT où il était > 0,002 : le fond
+   recevait un liseré sombre, et un flou « ambiant » de 4 Å étalait une tache
+   au-delà de la silhouette. Le masque d'aujourd'hui n'existe QUE sur les pixels que
+   la passe caméra a couverts (`camera.hit`) : le receveur est la surface
+   elle-même, donc un pixel que la molécule ne possède pas n'a pas de point du monde
+   et ne peut pas être ombré. Ce qui doit être vrai, et qui l'est : le DESSIN reçoit
+   son ombre EN ENTIER, et RIEN d'autre n'est touché. */
+ok(withFrame.onDrawing >= 0.99 * withFrame.shadowAll && withFrame.shadowAll > 0,
+  `…et l’ombre tombe ENTIÈREMENT sur le dessin (${withFrame.onDrawing}/${withFrame.shadowAll} pixels d’ombre, sur les ${withFrame.drawn} pixels dessinés)`);
+eq(withFrame.dust, 0,
+  `…et AUCUN pixel ombré n’est hors de la silhouette du module (${withFrame.dust} poussières) : le fond reste intact`);
 ok(withFrame.shadowAll / withFrame.drawn > 0.1,
   `…le dessin reçoit donc une vraie ombre portée : ${(100 * withFrame.shadowAll / withFrame.drawn).toFixed(1)} % de ses pixels (az 120 / el 15, tube de 0,5 Å)`);
 const movedComp = sceneShadowOf({ groups: true, compShift: [3, 1, -2] });
-ok(movedComp.shadowAll > 0 && movedComp.onDrawing === movedComp.drawn,
-  `une molécule DÉPLACÉE par la barre de style reste dans le repère (${movedComp.onDrawing}/${movedComp.drawn} pixels dessinés ombrés)`);
+ok(movedComp.shadowAll > 0 && movedComp.onDrawing >= 0.99 * movedComp.shadowAll,
+  `une molécule DÉPLACÉE par la barre de style reste dans le repère (${movedComp.onDrawing}/${movedComp.shadowAll} pixels d’ombre sur le dessin)`);
 eq(viewerMatrixOf({}), null, 'sans viewer, viewerMatrixOf ne change rien (les anciens cas gardent leur chemin)');
 eq(viewerMatrixOf({ viewer: {} }), null, '…et un viewer au repos aussi');
 const centredPt = mat4TransformPoint(viewerChain(), [FILE_CENTER[0], FILE_CENTER[1], FILE_CENTER[2], 1]);
@@ -1203,139 +1263,274 @@ ok(MODULE.includes('SELF-SHADOWING ON THE MOLECULE ITSELF'),
 ok(MODULE.includes('WHAT A SHADOW CANNOT DO IN NGL 2.4'),
   '…en disant honnêtement ce que NGL 2.4 ne peut pas faire (aucune shadow map dans la toile interactive)');
 
-/* ── 17. L'OMBRE D'UN RUBAN EST UNE BANDE, PAS UN FIL ─────────────────────
-   LE RAPPORT : « The ray image preview works well but the shadows keep being
-   spherical always even if I see only a ribbon, it projects spherical shadows
-   (more than spherical they seem like partial moons). »
+/* ── 17. LE RUBAN PROJETTE SA BANDE, ET UN CYCLE AROMATIQUE SON HEXAGONE ────
+   LE RAPPORT : « les ombres générées par « ray » sont laides, elles salissent la
+   molécule, et les cycles aromatiques ne projettent pas leurs hexagones sur les
+   rubans voisins. » Les versions précédentes reconstruisaient une APPROXIMATION de
+   la scène à partir des atomes (une bille par atome, une brosse de billes
+   « re-dérivée » des sections d'une bande) et multipliaient le résultat dans tous
+   les pixels de l'image. Mesuré contre NGL 2.4 dans un vrai navigateur, trois de
+   ses prémisses étaient fausses :
 
-   Deux causes, deux règles :
-     • LE RUBAN EST UNE BANDE PLATE (large de 2 à 2,5 Å, épaisse de quelques
-       dixièmes). Le proxy de la table des traits le réduisait à un FIL ROND le
-       long de la chaîne : son ombre était celle d'un fil, et la pénombre en
-       faisait des fuseaux ronds. La bande est maintenant lue dans la GÉOMÉTRIE
-       DESSINÉE (le tampon du ruban : `position` / `dir` / `normal` / `size`).
-     • UN DESSIN QUE L'ŒIL NE VOIT PAS NE PROJETTE RIEN. Une surface restée à
-       `opacity: 0` (ou à 40 %) donnait à chaque atome sa sphère de van der
-       Waals : l'ombre ronde du dessin qu'on ne regarde pas recouvrait celle du
-       ruban qu'on regarde — « spherical ALWAYS », quelle que soit la
-       représentation affichée. */
+     • LE CARTOON N'ÉTAIT JAMAIS LU. La géométrie d'un cartoon est un maillage
+       INDEXÉ — 3 flottants par sommet (2430 pour 810 sommets), un attribut
+       `normal`, et une table d'indices `Uint16Array` de 4728 entrées. L'ancien
+       lecteur la croyait « 12 flottants par sommet » ; `2430 % 12 !== 0` faisait
+       donc rendre `null` à la lecture : UN CARTOON NE PROJETAIT RIEN DU TOUT.
+     • LE RUBAN PROJETAIT N'IMPORTE QUOI. 936 flottants est un multiple de 12 par
+       accident : position / dir / size étaient lus au mauvais pas, et la brosse
+       partait dans une direction INVENTÉE — les taches. (Mesuré : 49 remplissages
+       fantômes ET 5 liaisons réelles restées ouvertes, à la fois.)
+     • LES PLAQUES DE CYCLES ÉTAIENT INVISIBLES. Les hexagones pleins du style
+       « Stylized rings » sont des `MeshBuffer` posés par
+       `addBufferRepresentation` : ils vivent dans `reprList` avec
+       `rep.type === 'buffer'` et AUCUN `structureView`. L'ancien lecteur ne
+       connaissait que des TYPES de représentation : un hexagone n'était donc ni
+       occulteur ni receveur, et aucun cycle ne pouvait rien projeter.
 
-/* Une BANDE telle qu'ngl 2.4 la range : QUATRE sommets par point de la spline,
-   chacun avec sa position (répétée), son `dir` (la largeur, pour le ruban), sa
-   `normal` (la normale de la bande) et sa `size` (demi-largeur du ruban, ou
-   demi-épaisseur du cartoon). Ici la chaîne va suivant x, la largeur suivant z,
-   la normale suivant y — le ruban est donc dans le plan x-z. */
-const bandGeo = ({ points = 3, size = 1, step = 2, withDir = true, normal = true } = {}) => {
-  const position = new Float32Array(points * 12);
-  const dir = new Float32Array(points * 12);
-  const nor = new Float32Array(points * 12);
-  const sizes = new Float32Array(points * 4);
-  for (let v = 0; v < points; v += 1) {
-    for (let k = 0; k < 4; k += 1) {
-      const s = k % 2 === 0 ? 1 : -1;
-      position[v * 12 + k * 3] = v * step;
-      dir[v * 12 + k * 3 + 2] = s;
-      nor[v * 12 + k * 3 + 1] = s;
-      sizes[v * 4 + k] = size;
-    }
+   LA MÉTHODE, MAINTENANT : les TRIANGLES RÉELS sont rasterisés, dans les deux
+   passes, comme le GPU les dessinerait (aire d'écran + profondeur NDC + poids
+   barycentriques CORRIGÉS EN PERSPECTIVE). Le discriminant est MESURÉ, pas deviné :
+   un tampon qui porte un attribut `normal` est une SURFACE (cartoon, ruban, tube,
+   rope, surface, plaque de cycle) ; un tampon sans `normal` est un IMPOSTEUR
+   (bille, bâton, fil : sa forme est découpée dans le fragment shader) et n'est
+   JAMAIS lu comme des triangles. */
+
+/* ── (a) QUEL TAMPON EST UNE SURFACE, ET QUEL TAMPON EST UN IMPOSTEUR ─────── */
+/* Un maillage INDEXÉ avec ses normales, la forme EXACTE d'un cartoon d'NGL. */
+const indexedSurface = ({ verts = 4, tris = 2, withIndex = true, withNormal = true } = {}) => {
+  const position = new Float32Array(verts * 3);
+  const normal = new Float32Array(verts * 3);
+  for (let i = 0; i < verts; i += 1) {
+    position[i * 3] = i;
+    position[i * 3 + 1] = i % 2;
+    position[i * 3 + 2] = 0;
+    normal[i * 3 + 2] = 1;                      // la surface regarde +z
   }
-  const attributes = { position: { array: position }, size: { array: sizes } };
-  if (withDir) attributes.dir = { array: dir };
-  if (normal) attributes.normal = { array: nor };
-  return { attributes };
-};
-const ribbonBandRep = (opts = {}, geo = {}) => ({
-  type: 'ribbon',
-  bufferList: [{ geometry: bandGeo(geo) }],
-  structureView: view([0, 1]),
-  ...opts,
-});
-const cartoonBandRep = (aspectRatio = 5, geo = {}) => ({
-  type: 'cartoon',
-  aspectRatio,
-  bufferList: [{ geometry: bandGeo({ withDir: false, size: 0.175, ...geo }) }],
-  structureView: view([0, 1]),
-});
-
-/* (a) LES SECTIONS : la largeur, la direction de la largeur, l'épaisseur. */
-const bandSecs = bandSectionsOf(ribbonBandRep({}, { points: 3, size: 1 }));
-eq(bandSecs.length, 3, 'les sections du ruban sont lues dans la géométrie dessinée');
-eq(bandSecs[0].p, [0, 0, 0], '…à la position des points de la spline');
-near(bandSecs[0].w, 1, 1e-6, 'la demi-largeur du ruban EST son `size` (ngl : 0,25 × radiusScale)');
-eq(bandSecs[0].d, [0, 0, 1], '…et sa largeur s’étend suivant `dir`, comme le tampon le dit');
-near(bandSecs[0].t, 0.25, 1e-6, 'son épaisseur est une fraction de sa largeur : c’est une BANDE');
-const cartoonSecs = bandSectionsOf(cartoonBandRep(5, { points: 3, size: 0.175 }));
-near(cartoonSecs[0].w, 0.875, 1e-6,
-  'un cartoon porte sa demi-ÉPAISSEUR : sa largeur est `size` × `aspectRatio` (0,175 × 5)');
-near(cartoonSecs[0].t, 0.175, 1e-6, '…et son épaisseur, c’est `size`');
-near(Math.abs(cartoonSecs[0].d[2]), 1, 1e-6,
-  'sans `dir`, la largeur est perpendiculaire à la normale de la bande ET à la chaîne');
-eq(bandSectionsOf({ type: 'tube', bufferList: [] }), null,
-  'un TUYAU n’est pas une bande (il est rond : le proxy de la table est juste)');
-eq(Object.keys(FLAT_STROKE_BY_TYPE), ['cartoon', 'ribbon'],
-  'les deux seuls traits PLATS que ngl dessine : le cartoon et le ruban');
-eq(bandSectionsOf({ type: 'ribbon', bufferList: [{ geometry: { attributes: { position: { array: new Float32Array(12) } } } }] }), null,
-  'un tampon sans taille ne se devine pas : la bande est laissée au fil rond d’avant');
-eq(bandSectionsOf({ type: 'ribbon' }), null, 'une représentation sans tampon non plus (construction différée)');
-
-/* (b) LA BROSSE : plate (largeur ≫ épaisseur), et elle couvre TOUTE la bande. */
-const brush = bandProxiesOf({ reprList: [{ repr: ribbonBandRep({}, { points: 3, size: 1, step: 2 }) }] });
-ok(brush.count > 0, `la bande du ruban devient des proxies (${brush.count})`);
-// La COUVERTURE de la brosse : l'étendue de ses sphères (centre ± rayon), c'est
-// elle que la carte d'ombre voit — et non le seul alignement des centres.
-const brushCover = (b) => {
-  const r = { x: [Infinity, -Infinity], y: [Infinity, -Infinity], z: [Infinity, -Infinity] };
-  for (let i = 0; i < b.count; i += 1) {
-    const rad = b.radii[i];
-    ['x', 'y', 'z'].forEach((ax, k) => {
-      const v = b.positions[i * 3 + k];
-      r[ax][0] = Math.min(r[ax][0], v - rad);
-      r[ax][1] = Math.max(r[ax][1], v + rad);
-    });
+  const idx = new Uint16Array(tris * 3);
+  for (let t = 0; t < tris; t += 1) {
+    idx[t * 3] = 0; idx[t * 3 + 1] = 1 + t; idx[t * 3 + 2] = 2 + t;
   }
-  return { x: r.x[1] - r.x[0], y: r.y[1] - r.y[0], z: r.z[1] - r.z[0] };
+  const attributes = { position: { array: position, count: verts } };
+  if (withNormal) attributes.normal = { array: normal, count: verts };
+  return { attributes, ...(withIndex ? { index: { array: idx } } : {}) };
 };
-const sp = brushCover(brush);
-ok(sp.z >= 1.9, `la brosse couvre la largeur DESSINÉE du ruban (${sp.z.toFixed(2)} Å pour 2 Å de bande)`);
-ok(sp.x >= 3.5, `…et toute la longueur de la chaîne (${sp.x.toFixed(2)} Å)`);
-ok(sp.y <= 0.8, `…avec l'épaisseur d'une bande (${sp.y.toFixed(2)} Å), pas celle d'une bille`);
-ok(sp.z > sp.y * 2.5, 'la brosse est donc PLATE : c’est elle qui donne au ruban une ombre de ruban');
-eq(brush.reps, 1, 'une bande par représentation plate visible');
-ok(bandProxiesOf({ reprList: [{ repr: ribbonBandRep({}, { points: 3 }) }, { repr: cartoonBandRep() }] }).reps === 2,
-  'un ruban ET un cartoon donnent chacun leur bande');
+const mesh = indexedSurface();
+eq(trianglesOfGeometry(mesh, 'cartoon').count, 2,
+  'un maillage INDEXÉ avec ses normales est lu : ses 2 triangles sont des surfaces');
+eq(Array.from(trianglesOfGeometry(mesh, 'cartoon').indices), [0, 1, 2, 0, 2, 3],
+  '…et sa table d’indices est reprise TELLE QUELLE (le maillage est celui qui est dessiné)');
+eq(trianglesOfGeometry(indexedSurface({ tris: 3 }), 'ribbon').count, 3,
+  '…quel que soit le NOM de la représentation : c’est le tampon qui décide');
+eq(trianglesOfGeometry(indexedSurface({ withNormal: false }), 'cartoon'), null,
+  'SANS `normal`, le même maillage est un IMPOSTEUR : ses quads sont des formes découpées dans le fragment shader, jamais une molécule');
+eq(trianglesOfGeometry(indexedSurface({ withIndex: false }), 'cartoon'), null,
+  'sans table d’indices, il n’y a pas de triangle à rasteriser');
+eq(trianglesOfGeometry(indexedSurface(), 'licorice'), null,
+  '…et la porte des imposteurs ne laisse passer AUCUN genre de la liste, même avec des normales');
+eq(IMPOSTOR_TYPES.licorice, 1, 'la table des imposteurs nomme un bâton');
+eq(IMPOSTOR_TYPES['ball+stick'], 1, '…une bille de ball+stick');
+eq(IMPOSTOR_TYPES.cartoon, undefined, '…et PAS un cartoon : lui est une surface');
+eq(IMPOSTOR_TYPES.buffer, undefined, '…pas une plaque de cycle non plus : c’est une surface, elle aussi');
+eq(trianglesOfGeometry(null, 'cartoon'), null, 'sans géométrie, rien');
 
-/* ── Bilan ─────────────────────────────────────────────────────────────── */
-/* (c) DE BOUT EN BOUT : le proxy du ruban couvre la bande — et, sans géométrie
-   lisible, il reste le fil rond d'avant (c'est le défaut reproduit). */
-const bandStage = (rep) => ({
-  compList: [{
-    structure: {
-      atomCount: 2,
-      ...chainOf(2),
-      getAtomData: () => ({
-        position: new Float32Array([0, 0, 0, 2, 0, 0]),
-        radius: new Float32Array([1.7, 1.7]),
-      }),
+/* L'ATTRIBUT ENTRELACÉ : NGL range parfois plusieurs valeurs par sommet dans un
+   seul tampon. Un lecteur qui suppose `array[i * 3]` lit alors l'attribut du
+   VOISIN — c'est exactement ainsi que la première version a inventé une direction.
+   `compactAttribute` DÉSENTRELELACE, une fois, dans un tableau plat. */
+const packed = {
+  array: Float32Array.from([0, 0, 0, 9, 9, 1, 0, 0, 9, 9, 2, 0, 0, 9, 9]),
+  count: 3, data: { stride: 5 }, offset: 0,
+};
+const packedPos = compactAttribute(packed, 3);
+eq(Array.from(packedPos.array), [0, 0, 0, 1, 0, 0, 2, 0, 0],
+  'un attribut entrelacé est désentrelacé : les 3 positions sortent de leurs 3 pas');
+eq(packedPos.stride, 3, '…et l’attribut compacté se lit ensuite comme un tableau plat');
+eq(Array.from(compactAttribute({ array: Float32Array.from([1, 2, 3]), count: 1 }, 3).array), [1, 2, 3],
+  'un attribut déjà plat est rendu tel quel (aucune copie inutile)');
+eq(compactAttribute(null, 3), null, 'un attribut absent ne se devine pas');
+/* …ET LE RASTERIZER LUI-MÊME, sur DEUX triangles superposés : la surface la plus
+   proche de la caméra gagne le pixel, et le point du monde gardé est interpolé SUR
+   le plan (poids barycentriques corrigés en perspective). */
+const triClip = mat4Orthographic(-2, 2, -2, 2, -10, 10);
+const triPass = rasterizeTriangles({
+  positions: Float32Array.from([
+    -1, -1, -1, 1, -1, -1, 0, 1, -1,          // le triangle ARRIÈRE (z = −1)
+    -1, -1, 1, 1, -1, 1, 0, 1, 1,             // le même, DEVANT (z = +1)
+  ]),
+  normals: Float32Array.from([0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1]),
+  indices: Uint32Array.from([0, 1, 2, 3, 4, 5]),
+  count: 2,
+  clip: triClip, width: 64, height: 64,
+});
+eq(triPass.drawn, 2, 'les deux triangles sont rasterisés');
+const triCentre = 32 * 64 + 32;
+ok(triPass.hit[triCentre] === 1 && Math.abs(triPass.world[triCentre * 3 + 2] - 1) < 1e-3,
+  '…et celui de DEVANT gagne le pixel du centre : son point du monde est à z = +1');
+near(triPass.normal[triCentre * 3 + 2], 1, 1e-6, '…avec la normale que le tampon porte');
+
+
+/* ── (b) LES TRIANGLES D'UN COMPOSANT, EN COORDONNÉES DU MONDE ─────────────── */
+const idMatrix = { elements: ident16 };
+const worldOf = (comp) => worldTrianglesOf(comp);
+const ribbonComp = {
+  matrix: idMatrix,
+  reprList: [
+    { repr: { type: 'cartoon', visible: true, bufferList: [{ geometry: indexedSurface() }] } },
+    { repr: { type: 'ribbon', visible: true, bufferList: [{ geometry: indexedSurface({ tris: 1 }) }] } },
+  ],
+};
+const world = worldOf(ribbonComp);
+eq(world.count, 3, 'les triangles de TOUTES les surfaces dessinées sont réunis (2 + 1)');
+eq(world.reps, 2, '…et chaque surface compte pour une représentation');
+eq(world.plates, 0, 'aucune plaque de cycle dans cette composition');
+eq(world.kinds, 'cartoon·ribbon', '…et les genres sont NOMMÉS, pour que le message de la « ray » le dise');
+
+/* L'HEXAGONE D'UN CYCLE AROMATIQUE — le cas du rapport. Une plaque n'a AUCUN
+   `structureView` (on ne la lit pas sur les atomes) et son genre est `buffer` :
+   c'est la marque `__plates` du viewer qui la désigne, et elle doit compter pour
+   une PLAQUE et fournir ses triangles. */
+const hexGeo = (r = 1) => {
+  const verts = [];
+  const nor = [];
+  for (let k = 0; k < 6; k += 1) {
+    const a = (k * Math.PI) / 3;
+    verts.push(r * Math.cos(a), r * Math.sin(a), 0);
+    nor.push(0, 0, 1);
+  }
+  verts.push(0, 0, 0); nor.push(0, 0, 1);        // le centre, pour le triangle fan
+  const idx = new Uint16Array(6 * 3);
+  for (let k = 0; k < 6; k += 1) {
+    idx[k * 3] = 6; idx[k * 3 + 1] = k; idx[k * 3 + 2] = (k + 1) % 6;
+  }
+  return {
+    attributes: {
+      position: { array: Float32Array.from(verts), count: 7 },
+      normal: { array: Float32Array.from(nor), count: 7 },
     },
-    matrix: { elements: ident16 },
-    reprList: [{ repr: rep }],
-  }],
-});
-const bandWithGeometry = atomsFromStage(bandStage(ribbonBandRep({}, { points: 2, size: 1 })), 100000);
-const bandWithout = atomsFromStage(bandStage({ type: 'ribbon', structureView: view([0, 1]) }), 100000);
-ok(bandWithGeometry.bands > 0, `la bande du ruban entre dans le proxy (${bandWithGeometry.bands} proxies)`);
-eq(bandWithout.bands, 0, '…et une représentation sans géométrie lisible n’en invente aucune');
-/* LE DÉFAUT, MESURÉ : sans la bande, le proxy du ruban ne couvre que le fil de
-   son trait (0,45 Å de rayon → 0,90 Å de large) ; avec elle, il couvre la bande
-   dessinée (2 Å). C'est exactement l'écart entre « spherical / partial moons »
-   et une ombre de ruban. */
-const thread = brushCover(bandWithout);
-const bandCover = brushCover(bandWithGeometry);
-near(thread.z, 0.9, 0.2, `sans bande, le ruban ne projette qu’un FIL (${thread.z.toFixed(2)} Å de large)`);
-ok(bandCover.z >= 1.9, `avec sa bande, il projette ce qu’il dessine (${bandCover.z.toFixed(2)} Å)`);
-ok(bandCover.z > thread.z * 2, '…soit plus du double : la forme du ruban est là');
+    index: { array: idx },
+  };
+};
+const plateGeo = hexGeo(1);
+const plateComp = {
+  matrix: idMatrix,
+  reprList: [{ repr: { type: 'buffer', visible: true }, __plates: { mesh: { geometry: plateGeo } } }],
+};
+const ringWorld = worldOf(plateComp);
+eq(ringWorld.count, 6, 'la plaque d’un cycle est un FAN de 6 triangles — l’hexagone, tel qu’il est dessiné');
+eq(ringWorld.plates, 1, '…et elle est comptée comme une PLAQUE DE CYCLE (le rapport : « les hexagones »)');
+eq(ringWorld.kinds, 'buffer', '…son genre est celui que NGL lui donne (`buffer`), pas un genre inventé');
+/* LA MATRICE DU COMPOSANT S'APPLIQUE : les plaques sont posées dans le repère du
+   composant, comme tout ce qu'il dessine. */
+const shifted = worldOf({ ...plateComp, matrix: { elements: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 5, 0, 0, 1] } });
+near(shifted.positions[0], plateGeo.attributes.position.array[0] + 5, 1e-6,
+  'les triangles d’une plaque suivent le « Move X » du composant');
+/* …et une surface ne compte qu'UNE fois, même posée dans deux `bufferList` : la
+   géométrie est dédoublonnée par identité. */
+eq(worldOf({ matrix: idMatrix, reprList: [
+  { repr: { type: 'cartoon', visible: true, bufferList: [{ geometry: mesh }] } },
+  { repr: { type: 'cartoon', visible: true, bufferList: [{ geometry: mesh }] } },
+] }).count, 2, 'la MÊME géométrie posée deux fois ne compte qu’une fois');
 
-/* (d) CE QUE L'ŒIL NE VOIT PAS NE PROJETTE RIEN. */
+/* ── (c) DE BOUT EN BOUT : L'HEXAGONE D'UN CYCLE SUR LE RUBAN VOISIN ─────────
+   C'EST LA DEMANDE DU RAPPORT. Un ruban (un grand quad dans le plan z = 0, de
+   normale +z) reçoit l'ombre d'une PLAQUE HEXAGONALE de rayon 1 posée 2 Å devant
+   lui, éclairée par une lampe oblique (dir [1, 0, 1] : la lampe est en haut à
+   droite). La lumière descend donc en biais, et l'ombre de la plaque tombe À CÔTÉ
+   d'elle, sur le ruban — un endroit que la plaque ne couvre PAS dans l'image. La
+   caméra regarde le ruban de face (orthographique, le long de −z).
+
+   Ce qui doit être vrai : le ruban est ombré LÀ OÙ l'hexagone le recouvre le long
+   de la lumière, et PAS ailleurs — la tache a le CONTOUR de l'hexagone. Une bille
+   (l'ancien proxy) donnerait une tache RONDE ; l'ancienne brosse de ruban n'en
+   donnerait aucune, puisqu'un quad n'est pas une bande. */
+const quadGeo = ({ size = 3 } = {}) => {
+  const p = Float32Array.from([-size, -size, 0, size, -size, 0, size, size, 0, -size, size, 0]);
+  const n = Float32Array.from([0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1]);
+  return {
+    attributes: { position: { array: p, count: 4 }, normal: { array: n, count: 4 } },
+    index: { array: Uint16Array.from([0, 1, 2, 0, 2, 3]) },
+  };
+};
+const PLATE_Z = 2;                              // la plaque est DEVANT le ruban
+const hexAt = (z) => {                          // le même hexagone, posé à z
+  const g = hexGeo(1);
+  const pos = g.attributes.position.array;
+  for (let i = 2; i < pos.length; i += 3) pos[i] = z;
+  return g;
+};
+const plateSceneTris = worldOf({
+  matrix: idMatrix,
+  reprList: [
+    { repr: { type: 'ribbon', visible: true, bufferList: [{ geometry: quadGeo({ size: 3 }) }] } },
+    { repr: { type: 'buffer', visible: true }, __plates: { mesh: { geometry: hexAt(PLATE_Z) } } },
+  ],
+});
+eq(plateSceneTris.count, 8, 'la scène du rapport : 2 triangles de ruban + 6 de l’hexagone');
+eq(plateSceneTris.plates, 1, '…dont UNE plaque de cycle aromatique');
+const SIDE = 3.5;                               // le demi-cadre de la caméra, en Å
+const HW = 240;                                 // la carte d'ombre, en pixels
+const plateProj = mat4Orthographic(-SIDE, SIDE, -SIDE, SIDE, -20, 20);
+const plateCam = { view: ident16, projection: plateProj, clip: plateProj };
+const plateBounds = boundsBoxOf(plateSceneTris.positions, plateSceneTris.vertexCount);
+const plateCenter = [
+  (plateBounds.min[0] + plateBounds.max[0]) / 2,
+  (plateBounds.min[1] + plateBounds.max[1]) / 2,
+  (plateBounds.min[2] + plateBounds.max[2]) / 2,
+];
+const plateRadius = Math.max(1e-3, 0.5 * Math.hypot(
+  plateBounds.max[0] - plateBounds.min[0],
+  plateBounds.max[1] - plateBounds.min[1],
+  plateBounds.max[2] - plateBounds.min[2],
+));
+const obliqueLamp = (() => { const l = Math.hypot(1, 0, 1); return [1 / l, 0, 1 / l]; })();
+const plateMask = buildRayShadowMask({
+  atoms: {
+    positions: new Float32Array(0), radii: new Float32Array(0), count: 0,
+    edges: new Int32Array(0), tris: { ...plateSceneTris, stride: 1 },
+  },
+  camera: plateCam,
+  light: {
+    dir: obliqueLamp, center: plateCenter, radius: plateRadius,
+    distance: plateRadius * 100, bounds: plateBounds,
+    ...shadowRigOf({
+      dir: obliqueLamp, bounds: plateBounds, center: plateCenter,
+      radius: plateRadius, distance: plateRadius * 100,
+    }),
+  },
+  width: HW, height: HW,
+  options: { softness: 0, penumbra: 0, bias: 0.35 },
+});
+eq(plateMask.triangles, 8, 'les 8 triangles de la scène sont ceux qui projettent (aucune bille)');
+eq(plateMask.plates, 1, '…et la note sait qu’il y a UNE plaque de cycle');
+/* Le monde → le pixel de la carte : la caméra est orthographique et couvre
+   [−SIDE, +SIDE]², donc l'échelle est exacte. */
+const maskAt = (x, y) => {
+  const mw = plateMask.maskWidth;
+  const px = Math.min(mw - 1, Math.max(0, Math.round(((x + SIDE) / (2 * SIDE)) * mw)));
+  const py = Math.min(mw - 1, Math.max(0, Math.round(((SIDE - y) / (2 * SIDE)) * mw)));
+  return plateMask.mask[py * mw + px];
+};
+/* L'OMBRE EST DÉCALÉE : la lumière descend suivant −dir, donc un point de la plaque
+   à z = 2 tombe sur le ruban 2 Å plus loin en x — au point (−2, 0, 0). */
+ok(maskAt(-2, 0) > 0.3,
+  `le ruban est OMBRÉ sous l’hexagone (${maskAt(-2, 0).toFixed(2)} au centre de l’ombre projetée)`);
+ok(maskAt(-2 + 0.95, 0) > 0.3, '…et il l’est encore à 0,95 Å du centre, vers un SOMMET de l’hexagone');
+/* LE CONTOUR, C'EST CELUI DE L'HEXAGONE — pas un disque. Un point à 0,95 Å du centre
+   suivant l'axe d'un SOMMET (0°) est DEDANS ; le même à 30°, face au MILIEU d'un
+   côté (dont la distance est 0,866 Å), est DEHORS. C'est exactement l'écart entre un
+   hexagone et le disque de même rayon — la forme que ni une bille ni une brosse ne
+   donnaient. */
+ok(maskAt(-2 + 0.95 * Math.cos(Math.PI / 6), 0.95 * Math.sin(Math.PI / 6)) < 0.05,
+  '…mais à la MÊME distance vers le MILIEU d’un côté (0,95 > 0,866), il est ÉCLAIRÉ : la tache a le contour de l’hexagone');
+/* …ET RIEN AUTOUR : ni le reste du ruban, ni le fond. */
+ok(maskAt(2, 2) < 0.05, '…et le ruban, loin de l’ombre, reste éclairé');
+let plateDust = 0;
+for (let i = 0; i < plateMask.mask.length; i += 1) if (plateMask.mask[i] > 0.002) plateDust += 1;
+ok(plateDust > 0 && plateDust < 0.25 * HW * HW,
+  `…l’ombre ne couvre qu’une petite part de l’image (${plateDust} pixels sur ${HW * HW}) : c’est une tache, pas un voile`);
+
+/* ── (d) CE QUE L'ŒIL NE VOIT PAS NE PROJETTE RIEN ────────────────────────── */
 eq(opacityOf({ opacity: 0 }), 0, 'l’opacité d’une représentation se lit là où ngl la garde');
 eq(opacityOf({ opacity: 0.4 }), 0.4, '…et elle peut être partielle');
 eq(opacityOf({}), 1, 'une représentation qui n’en parle pas est opaque (les bancs, les vieux objets)');
@@ -1344,35 +1539,59 @@ eq(INVISIBLE_OPACITY < 0.05, true, 'un dessin à moins de 5 % est tenu pour invi
 near(drawnProxyRadiiOf({ reprList: [{ repr: { ...cartoonRep, opacity: 0.4 } }] }, 1, new Float32Array([1.7]))[0],
   0.18, 1e-6, 'un dessin à 40 % ne projette que 40 % de son trait (l’ombre d’une surface translucide)');
 ok(Number.isNaN(drawnProxyRadiiOf({ reprList: [{ repr: { ...cartoonRep, opacity: 0 } }] }, 1, new Float32Array([1.7]))[0]),
-  'un dessin à `opacity: 0` ne projette AUCUN proxy');
-eq(bandProxiesOf({ reprList: [{ repr: ribbonBandRep({ opacity: 0 }) }] }).count, 0,
-  '…et sa bande non plus');
-eq(atomsFromStage(bandStage(ribbonBandRep({ opacity: 0 })), 100000).count, 0,
-  'un composant dont la seule représentation est effacée ne projette plus RIEN : l’ombre ronde du dessin qu’on ne voit pas a disparu');
+  'un dessin à `opacity: 0` ne projette AUCUNE bille');
+eq(worldOf({ matrix: idMatrix, reprList: [{ repr: { type: 'cartoon', visible: true, opacity: 0, bufferList: [{ geometry: indexedSurface() }] } }] }).count, 0,
+  '…ni aucun TRIANGLE : un dessin effacé ne projette rien du tout, ni bille ni surface');
+eq(worldOf({ matrix: idMatrix, reprList: [{ repr: { type: 'cartoon', visible: false, bufferList: [{ geometry: indexedSurface() }] } }] }).count, 0,
+  'une surface CACHÉE ne projette rien non plus');
 
-/* (e) LE BUDGET : une scène énorme garde les proxies des atomes, pas la bande. */
-const tight = atomsFromStage(bandStage(ribbonBandRep({}, { points: 2, size: 1 })), 2);
-eq(tight.bands, 0, 'un budget trop serré laisse tomber les bandes (l’ombre d’avant reste)');
-ok(tight.count <= 2, `…et les proxies des atomes tiennent dans le budget (${tight.count})`);
+/* ── (e) LE BUDGET DES TRIANGLES : ÉCHANTILLONNER, PAS DISPARAÎTRE ────────── */
+const triOnly = {
+  matrix: idMatrix,
+  reprList: [{ repr: { type: 'cartoon', visible: true, bufferList: [{ geometry: indexedSurface({ verts: 400, tris: 300 }) }] } }],
+};
+const cappedTris = atomsFromStage({ compList: [triOnly] }, 1000, 10);
+ok(cappedTris.tris.count <= 10 && cappedTris.tris.stride >= 30,
+  `un budget de 10 triangles ÉCHANTILLONNE la géométrie (${cappedTris.tris.count} gardés sur ${cappedTris.tris.total}, pas de 1 sur ${cappedTris.tris.stride})`);
+eq(cappedTris.count, 0, '…et sans atome dessiné, aucune bille n’est inventée');
+const fullTris = atomsFromStage({ compList: [triOnly] }, 1000, 1000);
+eq(fullTris.tris.count, 300, 'sans plafond serré, LES 300 triangles sont gardés (aucun échantillonnage inutile)');
 
-/* (f) LE MESSAGE DIT CE QUI A SERVI : combien de proxies viennent d'une bande. */
-const bandNote = rayShadowNote({
-  mask: new Float64Array(4), spheres: 12, filled: 3, bands: 34, strength: 0.5,
+/* ── (f) LE MESSAGE DIT CE QUI A SERVI : LES SURFACES, LES PLAQUES, LA LAMPE ─ */
+const surfNote = rayShadowNote({
+  mask: new Float64Array(4), spheres: 12, filled: 34, triangles: 904,
+  plates: 6, kinds: 'cartoon·ribbon·buffer', strength: 0.5,
   reachedPixels: 0, imageWidth: 10, imageHeight: 10, strokes: null,
+  facing: { floor: 0.35, mean: 0.72, sampled: 812 },
 });
-ok(bandNote.includes('34 in the ribbon bands'),
-  `le message de la « ray » dit combien de proxies viennent d’une bande de ruban — ${bandNote}`);
+ok(surfNote.includes('34 link capsules'),
+  `…le trait est dit : « ${surfNote} »`);
+ok(surfNote.includes('904 triangles (6 ring plates)') && surfNote.includes('cartoon·ribbon·buffer'),
+  '…les SURFACES aussi, avec les plaques de cycles appelées par leur nom (le rapport : « les hexagones »)');
+ok(surfNote.includes('lamp facing 0.72 (floor 0.35)'),
+  '…et la part de lampe que les pixels ombrés reçoivent encore : c’est elle qui adoucit une ombre sur une paroi rasante');
 ok(!rayShadowNote({
-  mask: new Float64Array(4), spheres: 12, bands: 0, strength: 0.5,
+  mask: new Float64Array(4), spheres: 12, strength: 0.5,
   reachedPixels: 0, imageWidth: 10, imageHeight: 10, strokes: null,
-}).includes('ribbon bands'), '…et il n’en parle pas quand il n’y en a aucune');
-/* …et les rouages sont ceux du module : la bande est lue dans la GÉOMÉTRIE, et
-   le composant la reçoit par bandProxiesOf (une seule définition). */
-ok(MODULE.includes('export const bandProxiesOf = ('), 'la bande est extraite par UNE fonction (bandProxiesOf)');
-ok(MODULE.includes('export const bandSectionsOf = ('), '…à partir de UNE lecture de la géométrie (bandSectionsOf)');
-ok(MODULE.includes('const bands = bandProxiesOf(comp);'), 'chaque composant apporte ses bandes au proxy des atomes');
-ok(MODULE.includes('bands: layouts.reduce('), 'le nombre de bandes RÉELLEMENT gardées est compté');
+}).includes('triangles'), '…et il n’en parle pas quand aucune surface n’a projeté');
+/* …et les rouages sont ceux du module : le discriminant, la géométrie, et la porte
+   qui rend le fond intouchable. */
+ok(MODULE.includes('export const rasterizeTriangles = ({'), 'les triangles sont rasterisés par UNE fonction (rasterizeTriangles)');
+ok(MODULE.includes("export const trianglesOfGeometry = (geometry, type = '') => {"),
+  '…lus dans LA géométrie, par une seule lecture (trianglesOfGeometry)');
+ok(MODULE.includes('export const worldTrianglesOf = (comp, viewerM = null) => {'),
+  '…rassemblés une fois par composant (worldTrianglesOf)');
+ok(MODULE.includes('const nor = compactAttribute(geometry.attributes.normal, 3);'),
+  '…et le discriminant est LA PRÉSENCE DES NORMALES, pas une table de types de représentation');
+ok(MODULE.includes('if (!pos || !pos.array || !nor || !nor.array) return null;'),
+  '…donc un tampon sans normales (une bille, un bâton, un fil) n’est JAMAIS lu comme des triangles');
+ok(MODULE.includes('if (!camera.hit[idx]) continue;'),
+  '…et la carte d’ombre n’existe QUE sur les pixels du dessin : le fond n’est jamais touché');
+ok(MODULE.includes('facingFloor'), '…avec la part de lampe, planchée, pour qu’une paroi rasante garde son ombre');
 ok(MODULE.includes('if (opacityOf(rep, el) <= INVISIBLE_OPACITY) return;'),
-  'la règle « ce que l’œil ne voit pas ne projette rien » est appliquée aux traits comme aux atomes');
+  'la règle « ce que l’œil ne voit pas ne projette rien » est appliquée aux surfaces comme aux atomes');
+ok(MODULE.includes('the aromatic rings do not project their'),
+  '…et le module porte le rapport, pour que la prochaine lecture sache POURQUOI les triangles sont là');
+
 
 console.log(`_viewer_ray_shadows_test.mjs — ${passed} assertions OK (ombres portées)`);

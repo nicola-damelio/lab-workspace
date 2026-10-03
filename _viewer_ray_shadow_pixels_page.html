@@ -1,0 +1,692 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Sonde NGL — les ombres portées du « ray » (pixels réels)</title>
+<style>
+  html, body { margin:0; padding:0; background:#fff; font:12px/1.45 monospace; color:#111; }
+  #log { padding:8px; white-space:pre-wrap; }
+  #host { position:absolute; left:-10000px; top:0; width:900px; height:600px; }
+</style>
+</head>
+<body>
+<pre id="log">chargement de ngl.js…</pre>
+<div id="host"></div>
+<script src="/ngl.js"></script>
+<script type="module">
+'use strict';
+/* ---------------------------------------------------------------------------
+   Sonde : la méthode d'ombres portées de src/utils/viewerRayShadows.js, sur une
+   VRAIE scène NGL 2.4 et de VRAIS pixels WebGL.
+
+   Pilotée par _viewer_ray_shadow_pixels_test.cjs, qui la sert en 127.0.0.1 avec
+   ngl.js (le dist UMD 2.4.0 que charge src/utils/ngl.js) et le SOURCE du module
+   d'ombres (jamais une copie), puis lit le verdict JSON qu'elle POSTe. Elle
+   n'est jamais ouverte à la main.
+
+   CE QU'ELLE MESURE, ET POURQUOI CES TROIS-LÀ
+    1. LES FAITS DE GÉOMÉTRIE, sur les tampons RÉELS d'NGL : le maillage d'un
+       cartoon est INDEXÉ (position 3 flottants par sommet, une `normal`, une
+       table d'indices) — l'ancien lecteur y voyait « 12 flottants par sommet »,
+       rendait `null` et un CARTOON NE PROJETAIT RIEN. Même question pour la
+       plaque d'un cycle aromatique (un MeshBuffer sans `structureView`).
+    2. LES PIXELS : l'ombre DÉCOLLE du dessin (des pixels du dessin
+       s'assombrissent vraiment) ET LE FOND BLANC N'EST JAMAIS TOUCHÉ — c'est le
+       « elles salissent la molécule » du rapport, mesuré sur le fond.
+    3. LA FORME DE LA MÉTHODE : l'ombre n'est PAS un voile global (une part du
+       dessin seulement s'assombrit), donc le masque n'est pas la carte de toute
+       l'image qu'était la première version.
+   La forme HEXAGONALE d'une ombre de cycle, elle, se mesure exactement sur un
+   banc orthographique déterministe (_viewer_ray_shadows_test.mjs §17c) : ici on
+   prouve la chaîne complète NGL → pixels, pas la géométrie du banc.
+   --------------------------------------------------------------------------- */
+const OUT = { log: [], facts: {}, pixels: {}, errors: [] };
+const log = (...a) => {
+  OUT.log.push(a.map((v) => (typeof v === 'string' ? v : JSON.stringify(v))).join(' '));
+  document.getElementById('log').textContent = OUT.log.join('\n');
+};
+const post = (stage, extra) => fetch('/result', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(Object.assign({ stage, log: OUT.log, facts: OUT.facts, pixels: OUT.pixels, errors: OUT.errors }, extra || {})),
+});
+window.addEventListener('error', (e) => { OUT.errors.push('window.error: ' + (e.message || e)); });
+window.addEventListener('unhandledrejection', (e) => {
+  OUT.errors.push('rejet: ' + ((e.reason && e.reason.message) || e.reason));
+});
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/* ---- UNE HÉLICE, SES CHAÎNES LATÉRALES, ET UN CYCLE AROMATIQUE -------------
+   ⚠ LA LIAISON PEPTIDIQUE DOIT ÊTRE VRAIE. NGL ne construit une spline (donc un
+   cartoon) que pour les POLYMÈRES, et son `Chain#eachPolymer` ne réunit deux
+   résidus que si le carboxyle C(i) est RÉELLEMENT LIÉ à l'azote N(i+1)
+   (`AtomProxy#connectedTo` sur le graphe des liaisons, mesuré dans le dist
+   installé). Une hélice dessinée « à la main » sans cette liaison ne produit donc
+   AUCUN cartoon — un banc qui mentirait sur la scène du rapport. Les N sont posés
+   à 1,4 Å du C du résidu précédent, comme dans un vrai peptide. */
+const pad = (v, w) => { let s = String(v); while (s.length < w) s = ' ' + s; return s; };
+const f8 = (v) => { let s = v.toFixed(3); while (s.length < 8) s = ' ' + s; return s; };
+const HELIX_N = 20;
+const R = 2.3;
+function helixPdb () {
+  const names = ['N', 'CA', 'C', 'O', 'CB'];
+  const atoms = [];
+  for (let i = 0; i < HELIX_N; i += 1) {
+    for (let k = 0; k < names.length; k += 1) {
+      const a = ((i * 100 + k * 30) * Math.PI) / 180;
+      atoms.push({ res: i + 1, name: names[k], xyz: [R * Math.cos(a), i * 1.5, R * Math.sin(a)] });
+    }
+  }
+  /* LA LIAISON PEPTIDIQUE : N(i+1) recolle au C(i) à la distance du peptide. */
+  for (let i = 0; i < HELIX_N - 1; i += 1) {
+    const cAt = atoms[i * 5 + 2].xyz;
+    const nAt = atoms[(i + 1) * 5].xyz;
+    let dx = nAt[0] - cAt[0];
+    let dy = nAt[1] - cAt[1];
+    let dz = nAt[2] - cAt[2];
+    const d = Math.hypot(dx, dy, dz) || 1;
+    dx /= d; dy /= d; dz /= d;
+    atoms[(i + 1) * 5].xyz = [cAt[0] + 1.4 * dx, cAt[1] + 1.4 * dy, cAt[2] + 1.4 * dz];
+  }
+  const lines = ['HEADER    SONDE OMBRES PORTEES'];
+  let serial = 0;
+  atoms.forEach((a) => {
+    serial += 1;
+    lines.push('ATOM  ' + pad(serial, 5) + ' ' + pad(a.name, 4) + ' ' + 'ALA' + ' A' + pad(a.res, 4)
+      + '    ' + f8(a.xyz[0]) + f8(a.xyz[1]) + f8(a.xyz[2]) + '  1.00  0.00          ' + a.name[0]);
+  });
+  /* Un cycle aromatique bien à côté de l'hélice, là où la lampe le fera tomber
+     SUR le ruban : six carbones en hexagone. */
+  const cy = HELIX_N * 0.75;
+  const ring = [];
+  for (let k = 0; k < 6; k += 1) {
+    const a = (k * Math.PI) / 3;
+    ring.push([R + 1.6 + 1.4 * (Math.cos(a) - 1), cy + 1.4 * Math.sin(a), 0]);
+  }
+  const first = serial + 1;
+  ring.forEach((p, k) => {
+    serial += 1;
+    lines.push('HETATM' + pad(serial, 5) + ' ' + pad('C' + k, 4) + ' ' + 'LIG' + ' B' + pad(1, 4)
+      + '    ' + f8(p[0]) + f8(p[1]) + f8(p[2]) + '  1.00  0.00          ' + 'C');
+  });
+  lines.push('CONECT' + pad(first, 5) + pad(first + 1, 5) + pad(first + 5, 5));
+  for (let k = 1; k < 6; k += 1) {
+    lines.push('CONECT' + pad(first + k, 5) + pad(first + ((k + 1) % 6), 5));
+  }
+  lines.push(`HELIX    1   1 ALA A${pad(1, 4)}  ALA A${pad(HELIX_N, 4)}  1${pad(HELIX_N, 36)}`);
+  return lines.join('\n') + '\nEND\n';
+}
+
+/* ---- LA PLAQUE DE L'ANNEAU, comme le viewer la construit ------------------- */
+function ringPlate (positions) {
+  const n = positions.length / 3;
+  const cx = [0, 0, 0];
+  for (let i = 0; i < n; i += 1) { cx[0] += positions[i * 3]; cx[1] += positions[i * 3 + 1]; cx[2] += positions[i * 3 + 2]; }
+  cx[0] /= n; cx[1] /= n; cx[2] /= n;
+  const pos = [];
+  const nor = [];
+  const push = (v) => { pos.push(v[0], v[1], v[2]); nor.push(0, 0, 1); };
+  push(cx);
+  for (let i = 0; i < n; i += 1) push([positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]]);
+  const idx = [];
+  for (let i = 0; i < n; i += 1) idx.push(0, 1 + i, 1 + ((i + 1) % n));
+  return {
+    position: new Float32Array(pos),
+    normal: new Float32Array(nor),
+    color: new Float32Array(n * 3).fill(0.2),
+    index: new Uint16Array(idx),
+  };
+}
+async function main () {
+  if (typeof NGL === 'undefined') throw new Error('ngl.js non chargé');
+  const mod = await import('/shadow-module.js');
+  log('module importé : ' + Object.keys(mod).length + ' exports');
+  const { atomsFromStage, buildRayShadowMask, rayShadowInputsOf, trianglesOfGeometry } = mod;
+
+  const host = document.getElementById('host');
+  const stage = new NGL.Stage(host, { backgroundColor: 'white' });
+  stage.handleResize();
+  const comp = await stage.loadFile(new Blob([helixPdb()], { type: 'text/plain' }), { ext: 'pdb' });
+  if (!comp) throw new Error('le PDB n a pas été lu');
+  /* LA scène du rapport : un ruban, des bâtons (le ligand), et la PLAQUE du
+     cycle — exactement les trois genres dont l'ombre doit sortir. */
+  comp.addRepresentation('cartoon', { sele: 'polymer', colorScheme: 'uniform', colorValue: 0x33bb44 });
+  comp.addRepresentation('licorice', { sele: 'hetero and not water', colorScheme: 'uniform', colorValue: 0x3377ff, radiusSize: 0.25 });
+  const pos = [];
+  comp.structure.eachAtom((a) => { if (a.resname === 'LIG') pos.push(a.x, a.y, a.z); });
+  const mesh = new NGL.MeshBuffer(ringPlate(new Float32Array(pos)));
+  const el = comp.addBufferRepresentation(mesh, { opacity: 1, side: 'double' });
+  if (el) el.__plates = { mesh };                  // la marque que le viewer pose
+  OUT.facts.ringAtoms = pos.length / 3;
+
+  stage.autoView(0);
+  /* ⚠ IL FAUT ATTENDRE QUE LES REPRÉSENTATIONS SOIENT CONSTRUITES. NGL remplit le
+     maillage d'un cartoon dans `attach()` (asynchrone, via sa file de tâches) ;
+     lire `bufferList` tout de suite donne un maillage VIDE — ce qui ferait croire
+     qu'un cartoon ne projette rien alors que l'application, elle, lit la scène
+     des dizaines de secondes après le chargement. Le module lit `bufferList` ET
+     `dataList` (voir worldTrianglesOf), donc il trouve la géométrie dans les deux
+     états ; la sonde attend le premier pour mesurer le cas réel. */
+  const meshesOf = (e) => {
+    const rep = (e && (e.repr || e)) || {};
+    const lists = [rep.bufferList || []];
+    (rep.dataList || []).forEach((d) => lists.push((d && d.bufferList) || []));
+    return lists.reduce((n, l) => n + l.filter((b) => {
+      const g = b && b.geometry;
+      const p = g && g.attributes && g.attributes.position;
+      return !!(p && p.count > 0);
+    }).length, 0);
+  };
+  const meshCount = () => (comp.reprList || []).reduce((a, e) => a + meshesOf(e), 0);
+  const t0 = Date.now();
+  while (Date.now() - t0 < 20000 && meshCount() < 3) await sleep(150);
+  OUT.facts.waitedMs = Date.now() - t0;
+  OUT.facts.bufferCount = meshCount();
+  log('représentations construites après ' + OUT.facts.waitedMs + ' ms : ' + OUT.facts.bufferCount + ' maillages');
+
+  /* ── 1. LES FAITS DE GÉOMÉTRIE, sur les tampons RÉELS ──────────────────── */
+  OUT.facts.reprs = (comp.reprList || []).map((e) => {
+    const rep = (e && (e.repr || e)) || {};
+    return {
+      type: rep.type || null,
+      name: (e && e.name) || null,
+      hasView: !!rep.structureView,
+      viewAtoms: rep.structureView && typeof rep.structureView.atomCount === 'number' ? rep.structureView.atomCount : null,
+      sele: (rep.parameters && rep.parameters.sele) || null,
+      dataListLen: Array.isArray(rep.dataList) ? rep.dataList.length : null,
+      bufferListLen: Array.isArray(rep.bufferList) ? rep.bufferList.length : null,
+      needsBuild: rep.needsBuild === undefined ? null : rep.needsBuild,
+      marked: !!(e && e.__plates),
+      buffers: (rep.bufferList || []).map((b) => {
+        const g = b && b.geometry;
+        const attrs = (g && g.attributes) || {};
+        const p = attrs.position;
+        const tri = trianglesOfGeometry(g, rep.type);
+        let posBBox = null;
+        let firstPos = null;
+        let firstSize = null;
+        let firstNormal = null;
+        if (p && p.array) {
+          let mn = [Infinity, Infinity, Infinity];
+          let mx = [-Infinity, -Infinity, -Infinity];
+          for (let i = 0; i + 2 < p.array.length; i += 3) {
+            for (let k = 0; k < 3; k += 1) {
+              const v = p.array[i + k];
+              if (v < mn[k]) mn[k] = v;
+              if (v > mx[k]) mx[k] = v;
+            }
+          }
+          posBBox = [mn, mx];
+          firstPos = Array.from(p.array.slice(0, 12));
+        }
+        if (attrs.size && attrs.size.array) firstSize = Array.from(attrs.size.array.slice(0, 8));
+        if (attrs.normal && attrs.normal.array) firstNormal = Array.from(attrs.normal.array.slice(0, 12));
+        if (attrs.binormal && attrs.binormal.array && !firstNormal) firstNormal = Array.from(attrs.binormal.array.slice(0, 12));
+        return {
+          posLen: p && p.array ? p.array.length : 0,
+          vertices: p ? p.count : 0,
+          itemSize: p ? p.itemSize : null,
+          attrKeys: Object.keys(attrs),
+          hasNormal: !!attrs.normal,
+          hasSize: !!attrs.size,
+          hasTangent: !!attrs.tangent,
+          hasBinormal: !!attrs.binormal,
+          hasIndex: !!(g && g.index && g.index.array),
+          indexLen: g && g.index && g.index.array ? g.index.array.length : 0,
+          indexCtor: g && g.index && g.index.array ? g.index.array.constructor.name : null,
+          tris: tri ? tri.count : null,
+          posBBox,
+          firstPos,
+          firstSize,
+          firstNormal,
+        };
+      }),
+    };
+  });
+  const atoms = atomsFromStage(stage);
+  OUT.facts.atoms = atoms.count;
+  OUT.facts.links = atoms.edges ? atoms.edges.length / 2 : 0;
+  OUT.facts.triCount = atoms.tris ? atoms.tris.count : 0;
+  OUT.facts.plates = atoms.tris ? atoms.tris.plates : 0;
+  OUT.facts.kinds = atoms.tris ? atoms.tris.kinds : '';
+  /* Pourquoi un cartoon peut n'avoir AUCUN maillage : NGL ne construit une spline
+     que pour les POLYMÈRES d'une sélection (`eachPolymer` → `residueCount >= 4`).
+     Ces comptes disent si la chaîne a été reconnue comme un polymère. */
+  OUT.facts.store = {
+    atoms: comp.structure.atomStore ? comp.structure.atomStore.count : null,
+    residues: comp.structure.residueStore ? comp.structure.residueStore.count : null,
+    polymers: comp.structure.polymerStore ? comp.structure.polymerStore.count : null,
+  };
+  const polys = [];
+  try {
+    comp.structure.eachPolymer((p) => polys.push({ residues: p.residueCount, atoms: p.atomCount, moleculeType: p.moleculeType }));
+  } catch (e) { polys.push('err ' + e.message); }
+  OUT.facts.polymers = polys;
+  try {
+    const ap = comp.structure.getAtomProxy(1);
+    OUT.facts.atom1 = {
+      name: ap.atomname, res: ap.resname,
+      isPolymer: ap.isPolymer ? ap.isPolymer() : null,
+      isBackbone: ap.isBackbone ? ap.isBackbone() : null,
+      trace: ap.residue ? ap.residue.traceAtomIndex : null,
+      ss: ap.residue ? ap.residue.sstruc : null,
+    };
+  } catch (e) { OUT.facts.atom1 = 'err ' + e.message; }
+  log('géométrie réelle : ' + JSON.stringify(OUT.facts));
+  await post('geometry');
+
+  /* ── 2. LE RIG, LU AVANT LE RENDU (comme le fait captureRayImage) ───────── */
+  const W = 900;
+  const H = 600;
+  const lightDir = [0.52, 0.42, 0.74];
+  const inputs = rayShadowInputsOf(stage, { lightDir, options: { strength: 0.55 } });
+  /* ⚠ NGL SUPER-ÉCHANTILLONNE EN POSANT LA CAMÉRA DANS UNE TUILE, ET SA
+     `_finalize()` REMET `view` À NULL SANS `updateProjectionMatrix()` (mesuré dans
+     le dist) : la matrice de projection peut donc rester CELLE DE LA DERNIÈRE TUILE
+     après n'importe quel rendu — 2× grossie pour une grille 2 × 2. On lit donc la
+     projection AVANT, et on mesure AUSSI ce que serait le cadre avec la matrice
+     rafraîchie : c'est la comparaison des deux qui dit si la caméra du module est
+     celle de l'image. */
+  const projBefore = Array.from(inputs.camera.projection);
+  try {
+    stage.viewer.camera.updateProjectionMatrix();
+    OUT.facts.reprojected = true;
+  } catch (e) { OUT.facts.reprojected = 'err ' + e.message; }
+  const inputs2 = rayShadowInputsOf(stage, { lightDir, options: { strength: 0.55 } });
+  OUT.facts.projSame = projBefore.every((v, i) => Math.abs(v - inputs2.camera.projection[i]) < 1e-9);
+  OUT.facts.projBefore0 = projBefore.slice(0, 4).map((v) => Math.round(v * 1000) / 1000);
+  OUT.facts.projAfter0 = inputs2.camera.projection.slice(0, 4).map((v) => Math.round(v * 1000) / 1000);
+  const shadow = buildRayShadowMask(Object.assign({}, inputs, { width: W, height: H, options: { strength: 0.55 } }));
+  OUT.facts.spheres = shadow.spheres;
+  OUT.facts.filled = shadow.filled;
+  OUT.facts.triangles = shadow.triangles;
+  OUT.facts.maskPlates = shadow.plates;
+  OUT.facts.maskKinds = shadow.kinds;
+  OUT.facts.facing = shadow.facing;
+  OUT.facts.rig = shadow.rig;
+  log('masque : ' + JSON.stringify({
+    spheres: shadow.spheres, filled: shadow.filled, triangles: shadow.triangles,
+    plates: shadow.plates, kinds: shadow.kinds, rig: shadow.rig,
+  }));
+  /* LA COUVERTURE DU MODULE ELLE-MÊME, recalculée ici avec SES rasterizers : le
+     masque ne doit pas exister en dehors (c'est `camera.hit`). Deux comptes, donc :
+     la couverture du receveur et l'étendue réelle du masque. */
+  const camAxes = mod.viewAxesOf(inputs.camera.view);
+  OUT.facts.camAxes = camAxes;
+  /* LA COUVERTURE EST-ELLE AU BON ENDROIT ? Une bille posée à côté de la molécule
+     ne se voit pas dans un compteur : on compare donc les BORNES de la couverture
+     du module et celles de la molécule RÉELLEMENT dessinée (luma <= 250). Un écart
+     systématique serait l'ombre « détachée » du rapport. */
+  const bboxOfMask = (isIn) => {
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity, n = 0;
+    for (let y = 0; y < shadow.maskHeight; y += 1) {
+      for (let x = 0; x < shadow.maskWidth; x += 1) {
+        if (!isIn(y * shadow.maskWidth + x)) continue;
+        n += 1;
+        if (x < x0) x0 = x;
+        if (x > x1) x1 = x;
+        if (y < y0) y0 = y;
+        if (y > y1) y1 = y;
+      }
+    }
+    return { n, x0, x1, y0, y1 };
+  };
+  const covPass = mod.rasterizeSpheres({
+    positions: inputs.atoms.positions, radii: inputs.atoms.radii, count: inputs.atoms.count,
+    clip: inputs.camera.clip, width: shadow.maskWidth, height: shadow.maskHeight, needWorld: false,
+    right: camAxes.right, up: camAxes.up, back: camAxes.back,
+  });
+  if (inputs.atoms.edges.length) {
+    mod.rasterizeCapsules({
+      positions: inputs.atoms.positions, radii: inputs.atoms.radii, edges: inputs.atoms.edges,
+      clip: inputs.camera.clip, width: shadow.maskWidth, height: shadow.maskHeight, needWorld: false,
+      right: camAxes.right, up: camAxes.up, back: camAxes.back,
+    }, covPass);
+  }
+  const covTris = inputs.atoms.tris && inputs.atoms.tris.count ? inputs.atoms.tris : null;
+  if (covTris) {
+    mod.rasterizeTriangles({
+      positions: covTris.positions, normals: covTris.normals, indices: covTris.indices,
+      count: covTris.count, clip: inputs.camera.clip, width: shadow.maskWidth, height: shadow.maskHeight,
+      stride: covTris.stride || 1, needWorld: false, needNormal: false,
+    }, covPass);
+  }
+  let covCount = 0;
+  let maskCount = 0;
+  let maskOutside = 0;
+  for (let i = 0; i < shadow.mask.length; i += 1) {
+    if (covPass.hit[i]) covCount += 1;
+    if (shadow.mask[i] > 0.002) {
+      maskCount += 1;
+      if (!covPass.hit[i]) maskOutside += 1;
+    }
+  }
+  OUT.facts.coverage = covCount;
+  OUT.facts.maskNonZero = maskCount;
+  OUT.facts.maskOutsideCoverage = maskOutside;
+  log('couverture ' + covCount + ', masque ' + maskCount + ', hors couverture ' + maskOutside);
+  await post('mask');
+
+  /* ── 3. LE RENDU, PUIS LES PIXELS ──────────────────────────────────────── */
+  const blob = await stage.makeImage({ factor: 1, antialias: true, trim: false, transparent: false });
+  if (!blob) throw new Error('makeImage n a rien rendu');
+  const bmp = await createImageBitmap(blob);
+  const cv = document.createElement('canvas');
+  cv.width = bmp.width; cv.height = bmp.height;
+  const ctx = cv.getContext('2d');
+  ctx.drawImage(bmp, 0, 0);
+  const img = ctx.getImageData(0, 0, bmp.width, bmp.height);
+  const before = Uint8ClampedArray.from(img.data);
+  const after = Uint8ClampedArray.from(img.data);
+  const touched = mod.applyShadowToPixels(
+    after, bmp.width, bmp.height, shadow.mask, shadow.maskWidth, shadow.maskHeight, shadow.strength,
+  );
+  /* LE FOND : un pixel « de fond » est BLANC dans l'image que NGL vient
+     d'écrire. Aucun ne doit changer — c'est le « ça salit la molécule ». */
+  const luma = (d, i) => 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2];
+  /* LE FOND, C EST UN PIXEL BLANC — pas un pixel clair. Un ruban éclairé peut
+     dépasser 250 de luminance tout en étant VERT : le compter comme fond ferait
+     croire à une salissure. Un pixel de fond a donc ses trois canaux ÉGAUX
+     (gris) ET une luminance haute. */
+  const isBg = (d, i) => {
+    const r = d[i];
+    const g = d[i + 1];
+    const b = d[i + 2];
+    return Math.max(r, g, b) - Math.min(r, g, b) <= 12
+      && 0.2126 * r + 0.7152 * g + 0.0722 * b > 250;
+  };
+  /* COMBIEN DE PIXELS DE CHAQUE GENRE l'image contient : le ruban est vert,
+     les bâtons du ligand sont bleus (couleurs imposées ci-dessus). Cela dit si le
+     cartoon est VRAIMENT dessiné, ce que le verdict a besoin de savoir. */
+  let greenish = 0;
+  let blueish = 0;
+  for (let i = 0; i < before.length; i += 4) {
+    const r = before[i];
+    const g = before[i + 1];
+    const b = before[i + 2];
+    if (g - r > 25 && g - b > 25) greenish += 1;
+    else if (b - r > 25 && b - g > 25) blueish += 1;
+  }
+  let bgPixels = 0;
+  let bgTouched = 0;
+  let molPixels = 0;
+  let molChanged = 0;
+  let maxDrop = 0;
+  for (let i = 0; i < before.length; i += 4) {
+    const l0 = luma(before, i);
+    const drop = l0 - luma(after, i);
+    if (l0 > 250) {
+      bgPixels += 1;
+      if (drop > 1) bgTouched += 1;
+    } else {
+      molPixels += 1;
+      if (drop > 1) molChanged += 1;
+    }
+    if (drop > maxDrop) maxDrop = drop;
+  }
+  let bgFar = 0;
+  let bgNear = 0;
+  const isMol = (x, y) => {
+    if (x < 0 || y < 0 || x >= bmp.width || y >= bmp.height) return false;
+    return !isBg(before, (y * bmp.width + x) * 4);
+  };
+  for (let y = 0; y < bmp.height; y += 1) {
+    for (let x = 0; x < bmp.width; x += 1) {
+      const i = (y * bmp.width + x) * 4;
+      if (!(isBg(before, i))) continue;
+      if (!(luma(before, i) - luma(after, i) > 1)) continue;
+      let near = false;
+      for (let dy = -4; dy <= 4 && !near; dy += 1) {
+        for (let dx = -4; dx <= 4 && !near; dx += 1) near = isMol(x + dx, y + dy);
+      }
+      if (near) bgNear += 1; else bgFar += 1;
+    }
+  }
+  OUT.pixels = {
+    width: bmp.width, height: bmp.height, touched, bgPixels, bgTouched, molPixels, molChanged,
+    greenish, blueish, bgNear, bgFar,
+    maxDrop: Math.round(maxDrop * 10) / 10,
+    molChangedShare: molPixels ? Math.round((molChanged / molPixels) * 1000) / 1000 : 0,
+    imageShare: Math.round((molChanged / (bmp.width * bmp.height)) * 1000) / 1000,
+  };
+  /* LA « SALISSURE » SE MESURE LOIN DE LA SILHOUETTE. Un pixel de fond COLLÉ à la
+     molécule est un pixel de BORD : l'échantillonnage bilinéaire du masque y vaut
+     encore un peu quelque chose, et dans une image antialiasée ce pixel est déjà à
+     moitié molécule — l'assombrir est juste. Le défaut du rapport, lui, était une
+     tache à des dizaines de pixels du trait. On compte donc séparément :
+       bgTouched  tout pixel blanc assombri (diagnostic) ;
+       bgDirt     ceux qui n'ont AUCUN voisin non blanc — une vraie tache de fond. */
+  let bgDirt = 0;
+  for (let y = 0; y < bmp.height; y += 1) {
+    for (let x = 0; x < bmp.width; x += 1) {
+      const i = (y * bmp.width + x) * 4;
+      if (!(isBg(before, i))) continue;
+      if (!(luma(before, i) - luma(after, i) > 1)) continue;
+      let touch = false;
+      for (let dy = -1; dy <= 1 && !touch; dy += 1) {
+        for (let dx = -1; dx <= 1 && !touch; dx += 1) {
+          const nx2 = x + dx;
+          const ny2 = y + dy;
+          if (nx2 < 0 || ny2 < 0 || nx2 >= bmp.width || ny2 >= bmp.height) continue;
+          if (luma(before, (ny2 * bmp.width + nx2) * 4) <= 250) touch = true;
+        }
+      }
+      if (!touch) bgDirt += 1;
+    }
+  }
+  OUT.pixels.bgDirt = bgDirt;
+  /* ET DE COMBIEN CES PIXELS DE FOND SONT-ILS ASSOMBRIS ? Le liseré d'un pixel qui
+     suit le contour d'un dessin antialiasé vaut 1 à 3 unités de luminance — il est
+     INVISIBLE, et c'est la signature du tramage, pas une salissure. Une vraie tache
+     se voit : on compte donc les pixels de fond assombris de plus de 8 unités, et
+     on retient la chute maximale. */
+  let bgMaxDrop = 0;
+  let bgVisibleDirt = 0;
+  for (let y = 0; y < bmp.height; y += 1) {
+    for (let x = 0; x < bmp.width; x += 1) {
+      const i = (y * bmp.width + x) * 4;
+      const l0 = luma(before, i);
+      if (!(l0 > 250)) continue;
+      const drop = l0 - luma(after, i);
+      if (drop > bgMaxDrop) bgMaxDrop = drop;
+      if (drop > 8) bgVisibleDirt += 1;
+    }
+  }
+  OUT.pixels.bgMaxDrop = Math.round(bgMaxDrop * 10) / 10;
+  OUT.pixels.bgVisibleDirt = bgVisibleDirt;
+  /* L'ÉPAISSEUR DU LISERÉ, EN PIXELS : une transformée de distance (chamfer 2 passes)
+     depuis la silhouette. Un liseré d'UN pixel n'existe que parce que le masque est
+     échantillonné en bilinéaire ; une tache à 10 px serait le défaut du rapport. */
+  const BIG = 10000;
+  const dist = new Int32Array(bmp.width * bmp.height);
+  for (let i = 0; i < dist.length; i += 1) dist[i] = !isBg(before, i * 4) ? 0 : BIG;
+  for (let y = 0; y < bmp.height; y += 1) {
+    for (let x = 0; x < bmp.width; x += 1) {
+      const i = y * bmp.width + x;
+      const up = y > 0 ? dist[i - bmp.width] + 1 : BIG;
+      const left = x > 0 ? dist[i - 1] + 1 : BIG;
+      const upLeft = (y > 0 && x > 0) ? dist[i - bmp.width - 1] + 1 : BIG;
+      const upRight = (y > 0 && x < bmp.width - 1) ? dist[i - bmp.width + 1] + 1 : BIG;
+      const m = Math.min(dist[i], up, left, upLeft, upRight);
+      if (m < dist[i]) dist[i] = m;
+    }
+  }
+  for (let y = bmp.height - 1; y >= 0; y -= 1) {
+    for (let x = bmp.width - 1; x >= 0; x -= 1) {
+      const i = y * bmp.width + x;
+      const down = y < bmp.height - 1 ? dist[i + bmp.width] + 1 : BIG;
+      const right = x < bmp.width - 1 ? dist[i + 1] + 1 : BIG;
+      const downRight = (y < bmp.height - 1 && x < bmp.width - 1) ? dist[i + bmp.width + 1] + 1 : BIG;
+      const downLeft = (y < bmp.height - 1 && x > 0) ? dist[i + bmp.width - 1] + 1 : BIG;
+      const m = Math.min(dist[i], down, right, downRight, downLeft);
+      if (m < dist[i]) dist[i] = m;
+    }
+  }
+  const hist = {};
+  for (let y = 0; y < bmp.height; y += 1) {
+    for (let x = 0; x < bmp.width; x += 1) {
+      const i = y * bmp.width + x;
+      if (!(isBg(before, i * 4))) continue;
+      if (!(luma(before, i * 4) - luma(after, i * 4) > 1)) continue;
+      const d = Math.min(9, dist[i]);
+      hist[d] = (hist[d] || 0) + 1;
+    }
+  }
+  OUT.pixels.fringeHistogram = hist;
+  /* LA CHUTE MAXIMALE PAR DISTANCE : un liseré de silhouette (1 px) tombe à 0 dès la
+     distance 2 ; une tache, non. C'est ce qui sépare le tramage de la salissure. */
+  const fringeMax = {};
+  {
+    for (let y = 0; y < bmp.height; y += 1) {
+      for (let x = 0; x < bmp.width; x += 1) {
+        const i = y * bmp.width + x;
+        if (!isBg(before, i * 4)) continue;
+        const drop = luma(before, i * 4) - luma(after, i * 4);
+        if (drop <= 0) continue;
+        const d = Math.min(9, dist[i]);
+        if (!fringeMax[d] || drop > fringeMax[d]) fringeMax[d] = Math.round(drop * 10) / 10;
+      }
+    }
+  }
+  OUT.pixels.fringeMax = fringeMax;
+  /* OÙ EST LA PARTIE DE LA COUVERTURE QUE LE DESSIN N'A PAS ? On isole les pixels
+     « couverture seule » à 4 px ou plus de tout pixel dessiné et on donne leurs
+     bornes : une bille posée à côté se voit immédiatement. */
+  {
+    let n = 0, x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    for (let y = 0; y < bmp.height; y += 1) {
+      for (let x = 0; x < bmp.width; x += 1) {
+        const i = y * bmp.width + x;
+        if (!covPass.hit[i]) continue;
+        if (!isBg(before, i * 4)) continue;
+        if (dist[i] < 4) continue;
+        n += 1;
+        if (x < x0) x0 = x;
+        if (x > x1) x1 = x;
+        if (y < y0) y0 = y;
+        if (y > y1) y1 = y;
+      }
+    }
+    OUT.pixels.coverOnlyFar = { n, x0, x1, y0, y1 };
+  }
+  /* LES TRANCHES EXACTES d'une bande de lignes : les intervalles de x couverts par
+     le module (cov) et par le dessin (mol) — la forme du « en trop » y est lisible. */
+  const runsOf = (y, isIn) => {
+    const out = [];
+    let start = -1;
+    for (let x = 0; x < bmp.width; x += 1) {
+      const on = isIn(y * bmp.width + x);
+      if (on && start < 0) start = x;
+      if (!on && start >= 0) { out.push([start, x - 1]); start = -1; }
+    }
+    if (start >= 0) out.push([start, bmp.width - 1]);
+    return out;
+  };
+  const bands = [];
+  /* …ET QUELLE MOITIÉ DE LA MÉTHODE LA PRODUIT ? On refait la couverture en trois
+     morceaux : les TRIANGLES seuls, les BILLES seules, les CAPSULES seules. */
+  const triOnlyPass = mod.rasterizeTriangles({
+    positions: covTris ? covTris.positions : new Float32Array(0),
+    normals: covTris ? covTris.normals : new Float32Array(0),
+    indices: covTris ? covTris.indices : new Uint32Array(0),
+    count: covTris ? covTris.count : 0,
+    clip: inputs.camera.clip, width: shadow.maskWidth, height: shadow.maskHeight,
+    stride: covTris && covTris.stride ? covTris.stride : 1, needWorld: false, needNormal: false,
+  });
+  const ballsOnly = mod.rasterizeSpheres({
+    positions: inputs.atoms.positions, radii: inputs.atoms.radii, count: inputs.atoms.count,
+    clip: inputs.camera.clip, width: shadow.maskWidth, height: shadow.maskHeight, needWorld: false,
+    right: camAxes.right, up: camAxes.up, back: camAxes.back,
+  });
+  const capsOnly = mod.rasterizeCapsules({
+    positions: inputs.atoms.positions, radii: inputs.atoms.radii, edges: inputs.atoms.edges,
+    clip: inputs.camera.clip, width: shadow.maskWidth, height: shadow.maskHeight, needWorld: false,
+    right: camAxes.right, up: camAxes.up, back: camAxes.back,
+  });
+  for (let y = 258; y <= 290; y += 4) {
+    bands.push({
+      y,
+      cov: runsOf(y, (i) => covPass.hit[i] === 1),
+      mol: runsOf(y, (i) => !isBg(before, i * 4)),
+      shad: runsOf(y, (i) => shadow.mask[i] > 0.002),
+      tri: runsOf(y, (i) => triOnlyPass.hit[i] === 1),
+      ball: runsOf(y, (i) => ballsOnly.hit[i] === 1),
+      cap: runsOf(y, (i) => capsOnly.hit[i] === 1),
+    });
+  }
+  OUT.pixels.bands = bands;
+  OUT.pixels.maskSize = shadow.maskWidth + 'x' + shadow.maskHeight;
+  /* LES DEUX BORNES, côte à côte : la couverture du module et la molécule dessinée. */
+  OUT.pixels.coverBox = bboxOfMask((i) => covPass.hit[i] === 1);
+  OUT.pixels.molBox = bboxOfMask((i) => !isBg(before, i * 4));
+  /* RANGÉE PAR RANGÉE : l'étendue horizontale de la couverture et celle du dessin.
+     Un écart constant = un décalage de repère ; un écart croissant = une échelle. */
+  const rows = [];
+  for (let y = 90; y <= 510; y += 60) {
+    let cx0 = Infinity, cx1 = -Infinity, mx0 = Infinity, mx1 = -Infinity;
+    for (let x = 0; x < bmp.width; x += 1) {
+      const i = y * bmp.width + x;
+      if (covPass.hit[i]) { if (x < cx0) cx0 = x; if (x > cx1) cx1 = x; }
+      if (!isBg(before, i * 4)) { if (x < mx0) mx0 = x; if (x > mx1) mx1 = x; }
+    }
+    rows.push({ y, cover: [cx0, cx1], mol: [mx0, mx1] });
+  }
+  OUT.pixels.rowSpans = rows;
+  /* DEUX CARTES CÔTE À CÔTE : la couverture du module (#) et la molécule dessinée
+     (·), 6 px par cellule. Ce que la couverture a EN PLUS se voit d'un coup d'œil. */
+  const cov2 = [];
+  for (let cy2 = 0; cy2 < 600; cy2 += 12) {
+    let row = '';
+    for (let cx2 = 0; cx2 < 900; cx2 += 6) {
+      let cov = 0;
+      let mol = 0;
+      for (let y = cy2; y < cy2 + 12 && y < bmp.height; y += 1) {
+        for (let x = cx2; x < cx2 + 6 && x < bmp.width; x += 1) {
+          const i = y * bmp.width + x;
+          if (covPass.hit[i]) cov += 1;
+          if (!isBg(before, i * 4)) mol += 1;
+        }
+      }
+      row += (cov && mol) ? '#' : (cov ? 'X' : (mol ? '.' : ' '));
+    }
+    cov2.push(row);
+  }
+  OUT.pixels.covMap = cov2;
+  /* OÙ SONT CES PIXELS DE FOND TOUCHÉS ? Une carte grossière (90 × 60 cellules de
+     10 px) montre d'un coup d'œil s'il s'agit d'un liseré autour de la molécule ou
+     d'une tache détachée — la « salissure » du rapport était une tache. */
+  const dirtMap = [];
+  for (let cy2 = 0; cy2 < 60; cy2 += 1) {
+    let row = '';
+    for (let cx2 = 0; cx2 < 90; cx2 += 1) {
+      let dirty = 0;
+      for (let y = cy2 * 10; y < (cy2 + 1) * 10 && y < bmp.height; y += 1) {
+        for (let x = cx2 * 10; x < (cx2 + 1) * 10 && x < bmp.width; x += 1) {
+          const i = (y * bmp.width + x) * 4;
+          if (isBg(before, i) && luma(before, i) - luma(after, i) > 1) dirty += 1;
+        }
+      }
+      row += dirty ? (dirty > 50 ? '#' : (dirty > 10 ? '+' : '.')) : ' ';
+    }
+    dirtMap.push(row);
+  }
+  OUT.pixels.dirtMap = dirtMap;
+  log('pixels : ' + JSON.stringify(OUT.pixels));
+  /* Les deux images restent sur le disque pour l'œil humain. */
+  try {
+    await fetch('/save?name=shadow_after', { method: 'POST', body: cv.toDataURL('image/png') });
+    const cv2 = document.createElement('canvas');
+    cv2.width = bmp.width; cv2.height = bmp.height;
+    cv2.getContext('2d').putImageData(new ImageData(before, bmp.width, bmp.height), 0, 0);
+    await fetch('/save?name=shadow_before', { method: 'POST', body: cv2.toDataURL('image/png') });
+  } catch (e) { log('sauvegarde impossible : ' + e.message); }
+  await post('done');
+}
+main().catch(async (e) => {
+  OUT.errors.push('fatal: ' + ((e && e.stack) || e));
+  await post('fatal');
+});
+
+</script>
+</body>
+</html>
