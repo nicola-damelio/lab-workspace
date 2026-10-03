@@ -290,6 +290,17 @@ const tests = [
   // `structureView`) et l'ombre tombe vraiment sur le dessin — pendant que LE FOND
   // BLANC N'EST PAS TOUCHÉ D'UN SEUL PIXEL (c'est le « ça salit la molécule »).
   '_viewer_ray_shadow_pixels_test.cjs',
+  // …ET LE GESTE QUI NE BOUGE RIEN (le rapport de cette session : « the auto mode
+  // for live rendering of ray is good but it reinitializes the view even if i move
+  // the mouse without moving the molecule », ≈20 s). La politique du pilote se
+  // mesure sans navigateur ; ce qui ne se mesure QUE dans un vrai Chrome, c'est
+  // combien d'images NGL lui parviennent pour un simple passage de souris. La
+  // sonde promène le pointeur (mousemove sans bouton, avec des pauses qui
+  // franchissent idleMs ET staleMs) sur une vraie scène NGL, prouve que la pose ET
+  // les atomes n'ont pas bougé, et exige ZÉRO reconstruction du masque — puis
+  // rétablit les DEUX témoins : la scène déplacée (brouillon pendant, net après) et
+  // des ATOMES glissés sans caméra (le filet, dans le régime du repos).
+  '_viewer_ray_shadow_idle_test.cjs',
   // …ET LE MÊME MÉCANISME DE PLACES DE PAGE, MESURÉ PAR UN VRAI NAVIGATEUR
   // (≈10 s) : le seul garde-fou qui prouve ce que React fait vraiment des places
   // (keyed siblings) — la page quittée garde LE MÊME nœud DOM, continue de vivre

@@ -51,6 +51,20 @@
    (`filmCanvasFor` / `beforeCapture`), et la couche y entre par un
    `drawImage`. Le 🎬 de la trajectoire porte donc l'ombre par la même raison et
    par le même chemin, pas par un second mécanisme.
+
+   ⚠ UNE IMAGE RENDUE N'EST PAS UN MOUVEMENT (le rapport de cette session :
+   « the auto mode for live rendering of ray is good but it reinitializes the
+   view even if i move the mouse without moving the molecule »). Le pilote
+   s'accroche au signal `rendered` d'NGL, et NGL rend une image pour bien des
+   raisons qui ne bougent rien : la souris qui passe (son observateur émet
+   `hovered` et l'application redemande une image), un picking, un repaint de la
+   barre. Mesuré dans un vrai Chrome (_viewer_ray_shadow_idle_test.cjs) : 40
+   images rendues pour 40 `mousemove`, molécule immobile — l'horloge seule en
+   refaisait 6 fois le masque (3 brouillons + 3 passes nettes). La règle est donc
+   double : LA VUE a-t-elle bougé (`sceneSignatureOf` — un geste : brouillon puis
+   net), et sinon LES ENTRÉES DU MASQUE ont-elles changé
+   (`maskInputsSignatureOf` — pas un geste : on repeint dans le régime du repos).
+   Deux images identiques, désormais, ne peignent plus rien du tout.
    ========================================================================= */
 import { rayShadowInputsOf, buildRayShadowMask, rayShadowOptions } from './viewerRayShadows.js';
 
@@ -74,14 +88,19 @@ export const RAY_LIVE_DEFAULTS = Object.freeze({
   /* Deux poses sont « la même » sous cette différence : une caméra au repos
      n'écrit pas des matrices exactement égales d'une image à l'autre. */
   poseEpsilon: 1e-4,
-  /* LE FILET. Ce qui bouge sans changer ni la pose ni la signature (une torsion
-     pincée, une section cachée, une représentation construite) n'est pas
-     visible gratuitement image par image : toute image rendue plus de 400 ms
-     après la dernière ombre en redemande une. C'est un plancher de 2,5 Hz, pas
-     une boucle : une scène immobile qui se rend pour rien ne recalcule pas.
+  /* LE FILET — SA FRÉQUENCE, PAS SA DÉCISION. Ce qui bouge sans changer ni la
+     pose ni la signature (une torsion pincée, une section cachée, une
+     représentation construite) se voit en DEMANDANT aux entrées du masque si
+     elles ont changé (maskInputsSignatureOf) : cette lecture coûte de 1 à 16 ms
+     et n'a donc PAS lieu à chaque image — au plus une fois par `staleMs`, soit
+     un plancher de 2,5 Hz. `staleMs` ne dit donc plus « on refait l'ombre »,
+     mais « on regarde » : c'est toute la différence qui a éteint le défaut du
+     rapport de cette session (« the auto mode … reinitializes the view even if
+     i move the mouse without moving the molecule »), mesuré par
+     _viewer_ray_shadow_idle_test.cjs dans un vrai Chrome.
      `0` DÉSACTIVE le filet (c'est ainsi que la politique se mesure seule, dans
      _viewer_ray_shadow_live_test.mjs) — sans quoi « 0 ms » voudrait dire
-     « recalcule à chaque image », soit exactement l'inverse du but. */
+     « regarde à chaque image », soit exactement l'inverse du but. */
   staleMs: 400,
 });
 
@@ -215,6 +234,90 @@ export const sceneSignatureOf = (stage) => {
   return parts.join(',');
 };
 
+/* ---- LA SIGNATURE DES ENTRÉES DU MASQUE ------------------------------------
+   LE DÉFAUT QU'ELLE ÉTEINT (le rapport de cette session : « the auto mode for
+   live rendering of ray is good but it reinitializes the view even if i move the
+   mouse without moving the molecule »). NGL rend une image pour BIEN des raisons
+   qui ne bougent rien : la souris qui passe (son observateur émet `hovered`, et
+   l'application redemande une image), un picking, un repaint de la barre. MESURÉ
+   dans un vrai Chrome sur une vraie scène (_viewer_ray_shadow_idle_test.cjs) :
+   40 images rendues pour 40 `mousemove`, pose ET atomes immobiles — et l'ancien
+   filet, qui ne jugeait que sur l'horloge (« toute image rendue plus de `staleMs`
+   après la dernière ombre en redemande une »), refaisait le masque 6 fois pour
+   rien : 3 brouillons + 3 passes nettes. C'est cela, « la vue se réinitialise ».
+
+   LA RÉPONSE : au lieu de DEVINER sur le temps écoulé, on DEMANDE aux entrées du
+   masque si elles ont changé. Elles sont peu nombreuses et disent tout ce qu'un
+   masque peut voir changer sans la caméra : les positions MONDIALES (la pose y
+   est déjà transformée), les deux rayons de chaque atome (la bille ET le bâton,
+   donc aussi un changement de style), le nombre et le dessin des arêtes, les
+   triangles (une représentation reconstruite, une plaque de cycle), la lampe
+   (direction, centre, rayon) et la taille de la toile (un redimensionnement).
+   Une empreinte de tout cela tient en quelques nombres, se calcule en UN passage
+   sur des tableaux typés (des microsecondes, à côté des 1 à 16 ms de la lecture
+   elle-même) et se compare à celle du dernier masque peint : ÉGALE → on ne peint
+   rien.
+
+   ⚠ ELLE N'EST PAS `sceneSignatureOf`, ET LES DEUX SONT NÉCESSAIRES.
+   `sceneSignatureOf` dit « LA VUE A BOUGÉ » (caméra, groupes, trajectoire, un
+   composant) : c'est un GESTE — brouillon pendant, passe nette après. Cette
+   empreinte-ci dit « LE MASQUE N'EST PLUS LE MÊME » : ce n'est PAS un geste (une
+   représentation qui se construit, un atome glissé sans caméra), donc on repeint
+   DANS LE RÉGIME DU REPOS — ni brouillon, ni passe nette en double.
+
+   LE PAS DE LECTURE. Les positions d'atomes sont lues EN ENTIER (un seul atome
+   déplacé — la « torsion pincée » — doit se voir). Les tableaux qui se
+   reconstruisent EN BLOC (les triangles et leurs indices d'un maillage, les
+   arêtes d'un graphe de liaisons) sont échantillonnés : un maillage ne change
+   jamais d'un seul sommet, et cela garde la sonde à quelques dixièmes de
+   milliseconde sur les grosses scènes. */
+const sigRound = (v) => Math.round((Number(v) || 0) * 1000);
+const sigAppend = (parts, arr, count, step = 1) => {
+  const n = Math.max(0, Math.round(Number(count) || 0));
+  if (!arr || !n || !arr.length) { parts.push(0, 0, 0, 0); return parts; }
+  let sum = 0;
+  let weighted = 0;
+  let peak = 0;
+  let last = 0;
+  let k = 0;
+  for (let i = 0; i < arr.length && k < n; i += step, k += 1) {
+    const v = sigRound(arr[i]);
+    sum += v;
+    weighted += v * (k + 1);
+    if (Math.abs(v) > Math.abs(peak)) peak = v;
+    last = v;
+  }
+  parts.push(n, sum % 2147483647, weighted % 2147483647, peak, last);
+  return parts;
+};
+export const maskInputsSignatureOf = ({ atoms, light } = {}, size = null) => {
+  const parts = [];
+  const a = atoms || {};
+  const balls = Math.round(Number(a.count) || 0);
+  parts.push(balls, Math.round(Number(a.filled) || 0));
+  sigAppend(parts, a.positions, balls * 3);
+  sigAppend(parts, a.radii, balls);
+  sigAppend(parts, a.linkRadii, balls);
+  sigAppend(parts, a.edges, a.edges ? a.edges.length : 0, 4);
+  const t = a.tris || {};
+  parts.push(
+    String(t.kinds || ''),
+    Math.round(Number(t.count) || 0),
+    Math.round(Number(t.reps) || 0),
+    Math.round(Number(t.plates) || 0),
+  );
+  sigAppend(parts, t.positions, Math.round(Number(t.vertexCount) || 0) * 3, 3);
+  sigAppend(parts, t.indices, t.indices ? t.indices.length : 0, 8);
+  const l = light || {};
+  [l.dir, l.center].forEach((dir) => {
+    const d = dir || [];
+    parts.push(sigRound(d[0]), sigRound(d[1]), sigRound(d[2]));
+  });
+  parts.push(sigRound(l.radius), sigRound(l.distance));
+  if (size) parts.push(Math.round(Number(size[0]) || 0), Math.round(Number(size[1]) || 0));
+  return parts.join(',');
+};
+
 /* ---- LA COUCHE, DANS LE DOM ----------------------------------------------
    La toile est FOURNIE par l'appelant (le viewer la rend dans son propre JSX,
    au-dessus de la toile WebGL, `pointer-events: none` et étirée en CSS) : ce
@@ -306,12 +409,33 @@ export const attachRayShadowLive = ({
   let pose = null;
   let scene = null;
   let movedAt = 0;
+  let lastCheckedAt = 0;
   let lastBuiltAt = 0;
+  let builtSig = null;
   let timer = null;
   let stopped = false;
 
   const stats = () => ({ ...state });
   const publish = () => { if (typeof onStats === 'function') { try { onStats(stats()); } catch { /* le diagnostic ne casse jamais la vue */ } } };
+
+  /* Une ombre impossible (plus rien à projeter, un rig refusé) : on EFFACE la
+     couche — jamais l'ombre de l'image d'avant — et on le DIT. La même fin sert
+     au filet, qui lit les entrées avant de peindre : l'erreur d'une lecture est
+     traitée comme l'erreur d'une peinture.
+     ⚠ ET ON OUBLIE CE QUI ÉTAIT PEINT (`builtSig`) : la couche est vide, donc la
+     prochaine lecture RÉUSSIE doit repeindre au lieu de croire que « rien n'a
+     changé » — sinon une lecture qui échoue une fois laisserait la vue sans
+     ombre pour toujours. C'est la seule façon dont ce filet peut se soigner
+     tout seul. */
+  const failBuild = (err) => {
+    state.error = (err && err.message) || String(err);
+    overlay.clear();
+    builtSig = null;
+    lastBuiltAt = now();               // une erreur persistante ne doit pas boucler à chaque image
+    lastCheckedAt = lastBuiltAt;
+    publish();
+    return false;
+  };
 
   const buildNow = (mode) => {
     const canvas = viewer.renderer && viewer.renderer.domElement;
@@ -327,26 +451,29 @@ export const attachRayShadowLive = ({
     });
     const t0 = now();
     let shadow = null;
+    let inputs = null;
     try {
-      const inputs = readInputs(stage, { lightDir: read(light), options: opts });
+      inputs = readInputs(stage, { lightDir: read(light), options: opts });
       shadow = buildMask({
         atoms: inputs.atoms, camera: inputs.camera, light: inputs.light,
         width, height, options: opts,
       });
     } catch (err) {
-      state.error = (err && err.message) || String(err);
-      overlay.clear();
-      lastBuiltAt = now();               // une erreur persistante ne doit pas boucler à chaque image
-      publish();
-      return false;
+      return failBuild(err);
     }
     const ms = now() - t0;
     state.painted = overlay.paint(shadow);
     state.error = '';
     state.mode = mode;
+    /* ⚠ CE QUI VIENT D'ÊTRE PEINT, POUR LE FILET : l'empreinte des ENTRÉES qui
+       ont alimenté ce masque. Le filet compare la sienne à celle-ci — c'est ce
+       qui lui permet de ne plus confondre « le temps a passé » (une souris qui
+       passe) avec « le masque n'est plus le même » (un atome glissé). */
+    builtSig = maskInputsSignatureOf(inputs, [width, height]);
     state.lastMs = Math.round(ms);
     state.builds += 1;
     lastBuiltAt = now();
+    lastCheckedAt = lastBuiltAt;
     if (mode === 'draft') {
       state.drafts += 1;
       state.draftMs = Math.round(ms);
@@ -390,25 +517,71 @@ export const attachRayShadowLive = ({
     return decision;
   };
 
-  /* La scène a été rendue : a-t-elle BOUGÉ ? Deux réponses, et une seule
-     question — la caméra (la pose), puis ce qui bouge sans elle (la signature
-     de la scène : la trajectoire, un composant tourné, le groupe de la vue).
-     Le FILET, lui, couvre ce qui n'est visible ni dans l'une ni dans l'autre
-     (une torsion pincée, une section cachée) : toute image rendue plus de
-     `staleMs` après la dernière ombre en redemande une. */
+  /* LE RÉGIME DU REPOS : celui qu'une image immobile doit peindre (le net en
+     `auto` / `full`, le brouillon en `draft`). C'est `rayLiveDecision` qui le
+     dit — UNE politique, jamais une seconde règle écrite ici. On l'interroge
+     sans geste et sans attente (`moving: false`, `lastMode: null`) : la réponse
+     est toujours la passe nette, ou le brouillon si c'est le régime demandé. */
+  const restingModeOf = () => rayLiveDecision({
+    quality: state.quality, moving: false, sinceMoveMs: Infinity, idleMs: 0, lastMode: null,
+  }).mode;
+
+  /* LES ENTRÉES DU MASQUE, LUES SANS PEINDRE : ce que le filet demande quand ni
+     la pose ni la signature n'ont bougé. Mêmes options que le régime du repos
+     (le brouillon ne change que la TAILLE du masque, jamais ce qui est lu). */
+  const inputsSignatureOf = () => {
+    const canvas = viewer.renderer && viewer.renderer.domElement;
+    const width = Math.max(1, Math.round(Number(canvas && canvas.width) || 0));
+    const height = Math.max(1, Math.round(Number(canvas && canvas.height) || 0));
+    const opts = rayLiveShadowOptions(read(options), restingModeOf(), {
+      draftMaskWidth: state.draftWidth,
+      draftTaps: defaults.draftTaps,
+    });
+    const inputs = readInputs(stage, { lightDir: read(light), options: opts });
+    return maskInputsSignatureOf(inputs, [width, height]);
+  };
+
+  /* La scène a été rendue : a-t-elle BOUGÉ ? Deux questions, et deux seulement.
+     D'abord la caméra (la pose), puis ce qui bouge sans elle (la signature de la
+     scène : la trajectoire, un composant tourné, le groupe de la vue). Si l'une
+     des deux a changé, c'est un GESTE : brouillon tout de suite, passe nette à
+     l'arrêt (le régime `auto`).
+
+     SINON — ET C'EST LE RAPPORT DE CETTE SESSION — on ne peint RIEN tant que les
+     entrées du masque n'ont pas changé. Une image rendue pour rien (la souris qui
+     passe, un picking, un repaint de la barre) laisse donc la couche EXACTEMENT
+     comme elle était : ni brouillon, ni passe nette, ni « la vue se réinitialise ».
+     Le filet garde son travail — ce qui bouge sans changer ni la pose ni la
+     signature (un atome glissé, une représentation qui se construit) — mais il le
+     fait en REGARDANT (`inputsSignatureOf`, au plus une fois par `staleMs`), et
+     il repeint DANS LE RÉGIME DU REPOS : la qualité ne clignote jamais pour une
+     image qui n'était pas un geste. */
   const onRendered = () => {
     if (stopped) return;
     const view = poseOf(viewer);
     if (!view) return;
     const signature = sceneSignatureOf(stage);
-    const moved = !samePose(view, pose, defaults.poseEpsilon) || signature !== scene;
-    const staleGap = Math.max(0, Number(defaults.staleMs) || 0);
-    const stale = !moved && staleGap > 0 && (now() - lastBuiltAt) >= staleGap;
-    if (!moved && !stale) return;
+    if (!samePose(view, pose, defaults.poseEpsilon) || signature !== scene) {
+      pose = view;
+      scene = signature;
+      movedAt = now();
+      step(true);
+      return;
+    }
+    const gap = Math.max(0, Number(defaults.staleMs) || 0);
+    if (!(gap > 0) || (now() - lastCheckedAt) < gap) return;
+    lastCheckedAt = now();
+    let signatureNow = null;
+    try {
+      signatureNow = inputsSignatureOf();
+    } catch (err) {
+      failBuild(err);
+      return;
+    }
+    if (signatureNow === builtSig) return;
     pose = view;
     scene = signature;
-    if (moved) movedAt = now();
-    step(true);
+    buildNow(restingModeOf());
   };
 
   const signal = viewer.signals && viewer.signals.rendered;

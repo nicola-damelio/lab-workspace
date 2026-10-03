@@ -25,6 +25,15 @@
      7. LE PILOTE, conduit avec des doublures : brouillon pendant le geste,
         UNE passe nette à l'arrêt, rien tant que rien ne bouge, et la couche
         effacée (jamais une ombre périmée) quand la scène ne projette rien.
+     7b. LA SIGNATURE DES ENTRÉES DU MASQUE (maskInputsSignatureOf) : c'est ce
+        que le filet LIT pour décider s'il doit repeindre — un atome glissé, un
+        rayon de bille ou de bâton, une arête, un maillage reconstruit, la lampe
+        ou la taille de la toile changent l'empreinte ; deux lectures des mêmes
+        entrées ne la changent pas. Le rapport de cette session (« the auto mode
+        for live rendering of ray is good but it reinitializes the view even if i
+        move the mouse without moving the molecule ») est mesuré en pixels réels
+        par _viewer_ray_shadow_idle_test.cjs : 40 images rendues pour 40
+        `mousemove`, molécule immobile, ZÉRO reconstruction du masque.
      8. LE CÂBLAGE DANS LE VIEWER : la couche dans le JSX (`pointer-events:
         none`, au-dessus de la toile d'NGL), le pilote attaché au signal
         `rendered`, la préférence mémorisée, et la composition dans les DEUX
@@ -36,7 +45,7 @@ import {
   RAY_LIVE_DEFAULTS, RAY_LIVE_QUALITIES, RAY_LIVE_SETTINGS,
   rayLiveQualityOf, rayLiveSettingOf, rayLiveShadowOptions, rayLiveDecision,
   nextDraftWidth, maskAlphaInto, poseOf, samePose, sceneSignatureOf,
-  createRayShadowOverlay, attachRayShadowLive,
+  maskInputsSignatureOf, createRayShadowOverlay, attachRayShadowLive,
 } from './src/utils/viewerRayShadowLive.js';
 import { rayShadowOptions, applyShadowToPixels } from './src/utils/viewerRayShadows.js';
 
@@ -206,6 +215,62 @@ eq(sceneSignatureOf(stageWith().stage), sig0, 'deux lectures d’une scène immo
 eq(sceneSignatureOf(null), '0', 'sans stage, la signature est vide mais stable (jamais d’exception)');
 
 
+/* ── 7b. LA SIGNATURE DES ENTRÉES DU MASQUE ─────────────────────────────────
+   CE QUE LE FILET LIT (le rapport de cette session : « the auto mode for live
+   rendering of ray is good but it reinitializes the view even if i move the
+   mouse without moving the molecule »). Une image rendue par NGL n’est pas un
+   geste : au lieu de refaire le masque parce que le temps a passé, le pilote
+   demande aux entrées si elles ont changé — et cette empreinte-ci est ce qu’il
+   compare. Elle doit donc voir TOUT ce qui change une ombre sans la caméra, et
+   RIEN d’autre. */
+const atomsIn = (over = {}) => ({
+  count: 2, filled: 1,
+  positions: new Float32Array([0, 0, 0, 1, 0, 0]),
+  radii: new Float32Array([1.5, 1.5]),
+  linkRadii: new Float32Array([0.2, 0.2]),
+  edges: new Int32Array([0, 1]),
+  tris: {
+    count: 6, vertexCount: 4, reps: 1, plates: 1, kinds: 'cartoon',
+    positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 1, 0]),
+    indices: new Uint32Array([0, 1, 2, 0, 2, 3]),
+  },
+  ...over,
+});
+const lightIn = (over = {}) => ({ dir: [0, 0, 1], center: [0, 0, 0], radius: 10, distance: 1000, ...over });
+const SIZE900 = [900, 600];
+const sigOf = (atoms, light = lightIn(), size = SIZE900) => maskInputsSignatureOf({ atoms, light }, size);
+const sigBase = sigOf(atomsIn());
+eq(sigOf(atomsIn()), sigBase, 'deux lectures des mêmes entrées donnent la MÊME empreinte (donc rien à repeindre)');
+{
+  const slide = atomsIn();
+  slide.positions = Float32Array.from(slide.positions);
+  slide.positions[3] = 0.5;                     // un seul atome, sur un seul axe
+  ok(sigOf(slide) !== sigBase,
+    'UN atome déplacé de 0,5 Å change l’empreinte : la « torsion pincée » se voit, elle');
+}
+ok(sigOf(atomsIn({ radii: new Float32Array([2.5, 1.5]) })) !== sigBase,
+  '…un rayon de BILLE aussi (un style qui change la silhouette)');
+ok(sigOf(atomsIn({ linkRadii: new Float32Array([0.6, 0.2]) })) !== sigBase,
+  '…un rayon de BÂTON aussi : les deux rayons d’un atome comptent');
+ok(sigOf(atomsIn({ count: 1 })) !== sigBase, '…un atome en plus (ou en moins) aussi');
+ok(sigOf(atomsIn({ edges: new Int32Array([0, 1, 1, 2]) })) !== sigBase,
+  '…une arête en plus (le graphe des liaisons) aussi');
+{
+  const rebuilt = atomsIn();
+  rebuilt.tris = { ...rebuilt.tris, positions: new Float32Array([9, 9, 9, 1, 0, 0, 0, 1, 0, 1, 1, 0]) };
+  ok(sigOf(rebuilt) !== sigBase, 'un maillage RECONSTRUIT (les triangles) change l’empreinte');
+  const bigger = atomsIn();
+  bigger.tris = { ...bigger.tris, count: 12, vertexCount: 8, positions: new Float32Array(24), indices: new Uint32Array(12) };
+  ok(sigOf(bigger) !== sigBase, '…et un maillage plus gros aussi');
+}
+ok(sigOf(atomsIn(), lightIn({ dir: [0, 0.2, 1] })) !== sigBase, 'la LAMPE entre dans l’empreinte (sa direction)');
+ok(sigOf(atomsIn(), lightIn({ radius: 12 })) !== sigBase, '…et son rayon (la boîte a changé)');
+ok(sigOf(atomsIn(), lightIn(), [900, 601]) !== sigBase,
+  'la TAILLE de la toile aussi : un redimensionnement refait le masque');
+eq(sigOf(atomsIn(), lightIn(), null) === sigBase, false, '« pas de taille » n’est pas « la même taille »');
+ok(maskInputsSignatureOf({}, null).length > 0, 'des entrées vides donnent quand même une empreinte (jamais une exception)');
+
+
 /* ── 8. LE PILOTE, CONDUIT AVEC DES DOUBLURES ──────────────────────────────
    Ni NGL ni navigateur : le rig et le masque sont injectés (comme le décodeur
    et l'encodeur du module du « Ray »), le temps est une variable, et la couche
@@ -226,6 +291,20 @@ const makePilot = ({
     },
   };
   const paints = [];
+  /* LES ENTRÉES DU MASQUE, MUABLES : c’est ce que le filet LIT pour décider. Un
+     atome glissé, un rayon changé ou un maillage reconstruit se mesurent donc ici
+     sans NGL (voir §8, le filet). */
+  const atoms = {
+    count: 1, filled: 0,
+    positions: new Float32Array([0, 0, 0]),
+    radii: new Float32Array([1.5]),
+    linkRadii: new Float32Array([0.2]),
+  };
+  const inputs = { atoms, camera: {}, light: { dir: [0, 0, 1], center: [0, 0, 0], radius: 10, distance: 1000 } };
+  /* UNE LECTURE QUI ÉCHOUE PUIS RÉUSSIT (le §8 la fait basculer) : la caméra
+     d'un still « ✨ Ray » fait jeter `cameraFromViewer`, et le filet doit s'en
+     remettre — une lecture ratée une fois ne peut pas laisser la vue sans ombre. */
+  let failing = false;
   const overlay = {
     paint: (shadow) => { paints.push(shadow); return shadow && shadow.mask ? shadow.mask.length : 0; },
     clear: () => { paints.push('clear'); },
@@ -240,8 +319,8 @@ const makePilot = ({
     now: () => clock,
     onStats: reported ? (s) => reported.push(s) : null,
     readInputs: () => {
-      if (fail) throw new Error('nothing to cast a shadow from');
-      return { atoms: { count: 1 }, camera: {}, light: {} };
+      if (fail || failing) throw new Error('nothing to cast a shadow from');
+      return inputs;
     },
     buildMask: ({ width, height, options }) => {
       clock += costMs;
@@ -253,8 +332,13 @@ const makePilot = ({
     pilot,
     paints,
     handlers,
+    inputs,
     turn: (v) => { stage.viewer.camera.matrixWorldInverse.elements = mat16(v); },
     frame: (v) => { stage.compList[0].currentFrame = v; },
+    /* LE GESTE DU FILET : des atomes qui bougent SANS que la caméra ni la
+       signature ne changent (c’est exactement ce que le filet doit attraper). */
+    slide: (dx) => { atoms.positions[0] += dx; },
+    failReads: (v) => { failing = v; },
     render: () => [...handlers].forEach((h) => h()),
   };
 };
@@ -331,6 +415,13 @@ eq(E.pilot.stats().error, 'nothing to cast a shadow from', 'une scène sans rien
 ok(E.paints.includes('clear'), '…et la couche est EFFACÉE : jamais l’ombre de l’image d’avant');
 eq(E.pilot.stats().builds, 0, '…sans compter comme une construction');
 
+/* LE FILET — CE QU'IL DEMANDE, ET CE QU'IL NE DEMANDE PLUS. Le rapport de cette
+   session : « the auto mode for live rendering of ray is good but it
+   reinitializes the view even if i move the mouse without moving the molecule ».
+   NGL rend une image pour un survol, un picking, un repaint de la barre — la
+   MESURE est dans _viewer_ray_shadow_idle_test.cjs (40 images rendues pour 40
+   `mousemove`, molécule immobile). Une image rendue n'étant pas un geste, le
+   filet ne juge plus sur l'horloge seule : il LIT les entrées du masque. */
 const N = makePilot({ staleMs: 400 });
 N.pilot.refresh({ force: true });
 const buildsN = N.pilot.stats().builds;
@@ -338,8 +429,44 @@ N.render();
 eq(N.pilot.stats().builds, buildsN, 'dans la fenêtre du filet, une image rendue POUR RIEN ne recalcule pas');
 clock += 1000;
 N.render();
-eq(N.pilot.stats().builds, buildsN + 1,
-  '…mais passée la fenêtre (staleMs), l’ombre est refaite : c’est le filet qui rattrape ce qui bouge sans changer ni la pose ni la signature');
+eq(N.pilot.stats().builds, buildsN,
+  '…et même PASSÉE la fenêtre (staleMs), une image rendue alors que RIEN n’a changé ne recalcule pas : c’est le survol, et c’est exactement lui qui « réinitialisait la vue »');
+eq(N.pilot.stats().mode, 'full', '…la couche reste dans le RÉGIME DU REPOS : aucun brouillon parasite');
+eq(N.pilot.stats().drafts, 0, '…donc aucun brouillon n’a été peint pour une image qui n’était pas un geste');
+
+/* …ET LE FILET GARDE SON TRAVAIL : ce qui bouge sans changer ni la pose ni la
+   signature (un atome glissé, une représentation reconstruite) est vu. */
+const ND = makePilot({ staleMs: 400 });
+ND.pilot.refresh({ force: true });
+const nd0 = ND.pilot.stats();
+ND.slide(0.6);                                    // des atomes ont bougé, la caméra non
+clock += 1000;
+ND.render();
+eq(ND.pilot.stats().builds, nd0.builds + 1,
+  'passée la fenêtre, des ATOMES glissés sont rattrapés : le filet fait bien son travail');
+eq(ND.pilot.stats().mode, 'full', '…et il les rattrape DANS LE RÉGIME DU REPOS');
+eq(ND.pilot.stats().drafts, nd0.drafts, '…sans AUCUN brouillon : la qualité ne clignote pas hors geste');
+eq(ND.pilot.stats().fulls, nd0.fulls + 1, '…et par UNE seule passe nette (l’ancien filet en faisait deux : un brouillon, puis le net)');
+
+/* LE FILET SE SOIGNE TOUT SEUL. Une lecture qui échoue (la caméra d’un still
+   « ✨ Ray », un rig refusé) VIDE la couche — jamais l’ombre de l’image d’avant —
+   et OUBLIE ce qui était peint : la lecture suivante, réussie, doit donc
+   repeindre. Sans cela, une seule lecture ratée laisserait la vue sans ombre
+   pour toujours. */
+const NH = makePilot({ staleMs: 400 });
+NH.pilot.refresh({ force: true });
+const nh0 = NH.pilot.stats();
+NH.failReads(true);
+clock += 1000;
+NH.render();
+eq(NH.pilot.stats().error, 'nothing to cast a shadow from', 'une lecture qui échoue est DITE, pas avalée');
+ok(NH.paints.includes('clear'), '…et la couche est effacée (aucune ombre périmée ne reste)');
+NH.failReads(false);
+clock += 1000;
+NH.render();
+eq(NH.pilot.stats().builds, nh0.builds + 1,
+  '…et la lecture RÉUSSIE suivante repeint toute seule : le filet ne reste pas muet');
+eq(NH.pilot.stats().error, '', '…en effaçant l’erreur d’avant');
 
 const Q = makePilot();
 Q.pilot.refresh({ force: true });
@@ -439,5 +566,5 @@ has('filmCanvasFor(canvas, vignetteDarkness, bgColor, rayLiveOn ? rayShadowCanva
 has(': Number.NaN, bgColor, rayLiveOn ? rayShadowCanvasRef.current : null);',
   '…et le film de poses aussi (les deux films se ressemblent)');
 
-console.log(`_viewer_ray_shadow_live_test.mjs — ${passed} assertions OK (ombre vivante : parité PNG · 3 régimes · politique auto · pose · signature · couche · films)`);
+console.log(`_viewer_ray_shadow_live_test.mjs — ${passed} assertions OK (ombre vivante : parité PNG · 3 régimes · politique auto · pose · signature de la scène · signature des entrées du masque · couche · films)`);
 
