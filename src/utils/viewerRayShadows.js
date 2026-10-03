@@ -49,13 +49,10 @@ export const PROXY_STROKE_BY_TYPE = Object.freeze({
 export const LINKED_KINDS = Object.freeze({ spline: 1, tube: 1, bond: 1, ball: 1 });
 export const BACKBONE_ONLY_KINDS = Object.freeze({ spline: 1, tube: 1 });
 export const FLAT_STROKE_BY_TYPE = Object.freeze({ cartoon: 1, ribbon: 1 });
-// Increased caps to allow dense tiling of wide ribbons
-export const BAND_MAX_ACROSS = 20;
-export const BAND_MAX_ALONG = 20;
-export const BAND_MAX_PROXIES = 80000;
+export const BAND_MAX_ACROSS = 40;
+export const BAND_MAX_ALONG = 40;
+export const BAND_MAX_PROXIES = 150000;
 const BAND_MIN_THICKNESS = 0.15;
-const BAND_TAPER = 1.6;
-const LINK_STEP_MIN = 0.3;
 const LINK_MAX = 4.2;
 
 // ============================================================================
@@ -197,6 +194,7 @@ export const rasterizeSpheres = ({
   const scr = new Array(3);
   const scrEdge = new Array(3);
   const maxRadius = Math.max(w, h) * 2;
+  
   for (let i = 0; i < n; i += 1) {
     const x = positions[i * 3], y = positions[i * 3 + 1], z = positions[i * 3 + 2];
     if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) continue;
@@ -218,6 +216,7 @@ export const rasterizeSpheres = ({
     const y0 = Math.max(0, Math.floor(cy - rad));
     const y1 = Math.min(h - 1, Math.ceil(cy + rad));
     const r2 = rad * rad;
+    
     for (let py = y0; py <= y1; py += 1) {
       const dy = py + 0.5 - cy;
       const row = py * w;
@@ -239,6 +238,7 @@ export const rasterizeSpheres = ({
   }
   return { depth, hit, world, width: w, height: h, count: n };
 };
+
 export const rasterizeCapsules = ({
   positions, radii, edges, clip, width, height,
   radiusScale = 1, axisUp = [0, 1, 0], needWorld = true, needReach = false,
@@ -279,20 +279,25 @@ export const rasterizeCapsules = ({
     const x1 = Math.min(w - 1, Math.ceil(Math.max(cA[0], cB[0]) + maxR));
     const y0 = Math.max(0, Math.floor(Math.min(cA[1], cB[1]) - maxR));
     const y1 = Math.min(h - 1, Math.ceil(Math.max(cA[1], cB[1]) + maxR));
-    const len2 = (cB[0] - cA[0])**2 + (cB[1] - cA[1])**2;
+
+    const dx = cB[0] - cA[0];
+    const dy = cB[1] - cA[1];
+    const len2 = dx * dx + dy * dy;
 
     for (let py = y0; py <= y1; py += 1) {
       const row = py * w;
+      const deltaY = py + 0.5 - cA[1];
       for (let px = x0; px <= x1; px += 1) {
+        const deltaX = px + 0.5 - cA[0];
         let t = 0;
         if (len2 > 0) {
-          t = Math.max(0, Math.min(1, ((px - cA[0]) * (cB[0] - cA[0]) + (py - cA[1]) * (cB[1] - cA[1])) / len2));
+          t = Math.max(0, Math.min(1, (deltaX * dx + deltaY * dy) / len2));
         }
-        const cx = cA[0] + t * (cB[0] - cA[0]);
-        const cy = cA[1] + t * (cB[1] - cA[1]);
         
+        const dist2 = (deltaX - t * dx)**2 + (deltaY - t * dy)**2;
         const radAtT = pxRadA + t * (pxRadB - pxRadA);
-        if ((px - cx)**2 + (py - cy)**2 > radAtT * radAtT) continue;
+        
+        if (dist2 > radAtT * radAtT) continue;
 
         const cz = cA[2] + t * (cB[2] - cA[2]);
         const idx = row + px;
@@ -311,7 +316,6 @@ export const rasterizeCapsules = ({
   }
   return out;
 };
-
 
 export const softenMask = (mask, width, height, radius) => {
   const w = Math.max(1, Math.round(width));
@@ -754,19 +758,6 @@ export const bandSectionsOf = (rep, el = null) => {
   return sections.length >= 2 ? sections : null;
 };
 
-export const bandQuadsOf = (sections) => {
-  const bands = [];
-  for (let v = 0; v + 1 < sections.length; v += 1) {
-    bands.push({
-      pA: sections[v].p, pB: sections[v+1].p,
-      dA: sections[v].d, dB: sections[v+1].d,
-      wA: sections[v].w, wB: sections[v+1].w,
-      t: sections[v].t
-    });
-  }
-  return bands;
-};
-
 const bandBrushOf = (sections, opacity = 1) => {
   const outPositions = [], outRadii = [];
   const push = (x, y, z, r) => {
@@ -776,7 +767,6 @@ const bandBrushOf = (sections, opacity = 1) => {
   };
   
   const r0 = 0.25;
-  // Densità incrementata (da 0.3 a 0.15) per un nastro completamente fluido senza buchi
   const stepTarget = 0.15; 
   
   for (let v = 0; v + 1 < sections.length; v += 1) {
@@ -857,12 +847,6 @@ export const bandProxiesOf = (comp) => {
   return { positions, radii, count: total, reps: brushes.length, debug: '' };
 };
 
-const countFills = (lay, scale) => {
-  // Disattiviamo del tutto la generazione di sfere intermedie per i legami
-  if (lay.fills) lay.fills.fill(0);
-  return 0;
-};
-
 const fillDrawnLinks = (parts, stride, maxAtoms) => {
   const layouts = parts.map((part) => layOut(part, stride));
   const slotsOf = (list) => list.reduce((a, lay) => a + lay.len + (lay.band ? lay.band.count : 0), 0);
@@ -876,7 +860,6 @@ const fillDrawnLinks = (parts, stride, maxAtoms) => {
   const out = new Float32Array(capacity * 3);
   const radii = new Float32Array(capacity);
   
-  // Raccogliamo esclusivamente la lista vettoriale dei legami da inviare a rasterizeCapsules
   const totalEdges = layouts.reduce((a, lay) => a + (lay.edges ? lay.edges.length : 0), 0);
   const edges = new Int32Array(totalEdges);
   let edgeK = 0;
@@ -916,7 +899,7 @@ const fillDrawnLinks = (parts, stride, maxAtoms) => {
     bandDebug,
   };
 };
-const linkStepOf = (ra, rb) => Math.max(LINK_STEP_MIN, 0.5 * Math.min(ra, rb));
+
 const drawnBondsOf = (structure, links, n) => {
   if (!structure || typeof structure.eachBond !== 'function') return [];
   let linked = false;
@@ -953,6 +936,7 @@ const drawnBondsOf = (structure, links, n) => {
   }
   return out;
 };
+
 const layOut = (part, stride) => {
   const slotOf = new Map();
   const own = elements16Of(part.comp.matrix);
@@ -1026,7 +1010,6 @@ const layOut = (part, stride) => {
   return {
     wpos, wrad, wlink, len: e,
     edges: p === edges.length ? edges : edges.subarray(0, p),
-    fills: new Int32Array(Math.max(1, p / 2)),
     band,
     bandDebug: part.bandDebug || '',
   };
@@ -1184,6 +1167,7 @@ export const proxyStrokeSummary = (radii, count, max = 4) => {
     count: n,
   };
 };
+
 export const buildRayShadowMask = ({ atoms, camera, light, width, height, options = {} }) => {
   const o = rayShadowOptions(options);
   const { width: mw, height: mh } = rayShadowMaskSize(width, height, o);
@@ -1270,6 +1254,7 @@ export const buildRayShadowMask = ({ atoms, camera, light, width, height, option
     penumbra: { taps: out.taps, radius: blur.softness, grow: blur.penumbra, reached: out.penumbraRadius },
   };
 };
+
 const defaultDecode = async (blob) => {
   if (typeof createImageBitmap === 'function') return createImageBitmap(blob);
   if (typeof document === 'undefined') throw new Error('no decoder for the still');
@@ -1346,7 +1331,6 @@ export const rayShadowNote = (shadow, reason = '') => {
     ? Math.round((px / (shadow.imageWidth * shadow.imageHeight)) * 100)
     : null;
   const spheres = Number(shadow.spheres) || 0;
-  const filled = Number(shadow.filled) || 0;
   const bands = Number(shadow.bands) || 0;
   const bandDebug = shadow.bandDebug ? `· ⚠ ribbon debug: ${shadow.bandDebug}` : '';
   const st = shadow.strokes;
@@ -1357,6 +1341,6 @@ export const rayShadowNote = (shadow, reason = '') => {
     ? `· rig ${Math.round(shadow.rig.width)}×${Math.round(shadow.rig.height)} Å`
     : '';
   return `· cast shadows ${pct}%${covered == null ? '' : ` (${covered}% of the pixels)`}`
-    + `${spheres ? ` · ${spheres} proxies${filled ? `(${filled} filling the drawn strokes)` : ''}` : ''}`
+    + `${spheres ? ` · ${spheres} proxies` : ''}`
     + `${bands ? ` · ${bands} in the ribbon bands` : ''}${bandDebug}${strokes}${rig}`;
 };
