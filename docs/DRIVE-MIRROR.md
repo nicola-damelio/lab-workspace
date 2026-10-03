@@ -2163,3 +2163,97 @@ initialization » ligne 603, sa déclaration étant ligne 710) : ses 37 assertio
 d'origine n'ont jamais été exécutées depuis. Aucun fichier de cette session n'y touche
 — cette sonde n'extrait que `NMRMoleculeViewer.jsx`, qu'elle n'importe même pas.
 
+
+## Un fichier DÉPOSÉ À LA MAIN dans le dossier de l'expérience est enfin lisible (03/10/2026)
+
+**Défaut signalé.** « *Il y a des expériences qui existent en Drive et dans le programme mais
+elles ne chargent pas la trajectoire même si je mets le fichier de trajectoire dans le bon
+dossier.* »
+
+C'était exact, et ce n'était pas un problème de dossier : **la reprise automatique ne sait pas
+LIRE un dossier**. Elle ne cherche un fichier brut que par ce qui est ÉCRIT quelque part —
+le nom déclaré sur la condition (`trajectoryFileName`), le nom porté par le pointeur
+(`trajectoryDrive = { id, name, url }`), le nom déposé à l'envoi
+(`<radical>_<scientifique>.<ext>`), ou le registre local des envois
+(`utils/driveRestore.js` : pointeur → registre → recherche `name contains '<radical>'`).
+Un fichier **posé à la main** dans le dossier canonique n'a **aucun** de ces noms :
+son identifiant n'est dans aucun pointeur, aucun registre local ne l'a jamais vu, et son
+radical ne ressemble à rien de déclaré. La page annonçait donc, à juste titre mais à tort,
+« *pas dans ce navigateur ni sur Google Drive* » — alors que le fichier était là, exactement
+où il fallait.
+
+Le second symptôme (« *des expériences existent dans le programme mais pas dans Drive, et
+pourtant elles s'ouvrent, même la trajectoire* ») dit la même mécanique vue de l'autre bout :
+ce qui voyage dans le dataset, c'est la **description** de l'expérience (elle vit dans le
+document du dataset et dans son miroir `_workspace/datasets/ds_<id>.json`) ; ses **fichiers**,
+eux, ne sont nulle part ailleurs que là où ils ont été déposés. Quand l'envoi n'a pas abouti
+(Drive non connecté au moment de l'import), les octets restent dans la base de CE navigateur
+(IndexedDB / file de reprise) — c'est pour cela que la page les rouvre ici et pas ailleurs, et
+c'est pourquoi l'ordre « base du navigateur → Drive » reste ce qu'il est. Un **dossier
+d'expérience n'existe sur le Drive que parce qu'un fichier y est entré** : rien ne le fabrique
+à l'avance.
+
+
+
+### Le geste ajouté : LIRE LE DOSSIER DE L'EXPÉRIENCE
+
+Nouveau module **`src/utils/driveExperimentFiles.js`**, et son interface
+**`src/components/DriveExperimentFiles.jsx`** (`DriveExperimentFilePicker`). Les deux boutons
+📂 **Topology from Drive folder** et 📂 **Trajectory from Drive folder** vivent dans le volet
+3D de la page MD (au-dessus du viewer) ; la page NMR a le même, pour son PDB (📂 **PDB from
+Drive folder**, sous la vue 3D).
+
+Ce que la lecture fait, et ce qu'elle ne fait pas :
+
+* elle part du dossier **canonique** de l'expérience — celui que l'archivage fabrique
+  (`canonicalExperimentPath` : `projects/<projet>/<expérience>/<instance?>/<section?>/<sous-section?>`)
+  — puis **remonte d'un cran à la fois** : la sous-section, la section, l'instance, le dossier
+  de l'expérience. Un fichier posé « un peu plus haut » (dans le dossier de la section, ou
+  celui de la condition) est donc trouvé lui aussi ;
+* **rien n'est créé** : le dossier est CHERCHÉ (`resolveDrivePathFromNames(path, { create: false })`,
+  la règle de tous les gestes de rangement du dépôt) ;
+* **on ne sort jamais de l'expérience** : le conteneur `projects/` et la racine du dataset ne
+  sont jamais lus, et une expérience VOISINE ne l'est pas non plus — la limite est vérifiée par
+  la suite ;
+* les **dossiers** ne sont pas des fichiers : seuls les enfants de type fichier dont
+  l'extension correspond (topologie `.pdb/.gro/.cif/…`, trajectoire `.xtc/.trr/.dcd/.nc/…`,
+  structure `.pdb/.cif/…` — les listes du module) sont proposés ;
+* le résultat dit **où** chaque fichier a été vu (le chemin réel sur le Drive), donc
+  l'utilisateur sait où déposer les suivants ; la lecture s'arrête au premier dossier qui porte
+  une correspondance (une requête dans le cas normal) ;
+* **Google Drive uniquement** : Nextcloud n'a pas de lecture de dossier par identifiant dans
+  l'application, et on ne fait pas semblant (`getCloudProvider() === 'nextcloud'` ⇒ liste vide).
+
+### « Quel fichier doit s'ouvrir par défaut, pour CETTE instance » — c'est le geste qui le dit
+
+Choisir un fichier dans la liste l'OUVRE **et le DÉCLARE** : la page écrit le **nom déclaré**
+(`structureFileName` / `trajectoryFileName`) **et le pointeur** (`structureDrive` /
+`trajectoryDrive` = `{ id, name, url }`) sur **la condition affichée** — celle de l'instance
+ouverte. C'est exactement ce que lit la reprise automatique au prochain affichage, ici comme
+sur un autre poste : **le fichier choisi devient donc le fichier par défaut de cette
+expérience et de cette instance**, sans nouvelle règle. Trois détails qui comptent :
+
+* **rien n'est renvoyé au Drive** : le fichier y est déjà — on l'ouvre (le geste ne
+  re-téléverse pas, ne renomme pas, ne déplace pas) ;
+* l'ancien **data URL** de la condition (`structureFileData`) et l'ancienne **source texte**
+  (`structureSrc` / `pdbId` — un code PDB ou une URL d'hier) sont **écartés** : ils ne décrivent
+  plus le fichier déclaré, et sans cela l'ancienne source pouvait l'emporter à l'écran ;
+* le nom déclaré devient **celui du fichier choisi** (pas celui d'hier) : c'est ce nom qui
+
+*Vérifier :* `node _experiment_folder_files_test.mjs` — **92 assertions**, la suite de cette
+retouche : la logique pure (extensions, chemins candidats du plan canonique et des DEUX
+branches de nommage `Setup` / `Data`, tri du plus récent, pointeur), puis la LECTURE sur un
+faux Drive — le fichier du dossier exact, celui posé UN CRAN plus haut, la trajectoire déposée
+à la main sous un nom qui ne ressemble à rien (le défaut signalé : `driveFetch` du faux Drive
+ne rend JAMAIS rien par nom), les sous-dossiers et les autres fichiers écartés, `create: false`
+à chaque résolution (aucun dossier fabriqué), la limite de l'expérience (jamais `projects/`,
+jamais l'expérience voisine), Drive éteint / aucune extension / Nextcloud ⇒ liste vide sans
+requête, le doublon d'un même fichier vu dans deux dossiers, et le câblage des deux pages
+(les deux boutons de la page MD, celui de la page NMR, les deux gestionnaires qui écrivent nom
++ pointeur, et la reprise automatique inchangée). `node _condition_page_test.mjs` (123),
+`node _drive_restore_test.mjs` (250), `node _workspace_drive_test.mjs` (58),
+`node _drive_mirror_test.mjs` (78) et `node _experiment_drive_root_test.mjs` (41) restent
+verts ; `npx oxlint` — **0 erreur**, et exactement les mêmes avertissements qu'avant sur
+`MDSections.jsx` + `NMRSections.jsx` (41 contre 41, vérifié sur les copies de `HEAD`).
+
+  repart vers les autres postes et qui fait correspondre la copie de la base du navigateur.

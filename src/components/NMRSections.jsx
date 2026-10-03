@@ -17,6 +17,13 @@ import { storeJson, loadJson } from '../utils/pdbStore';
 import { blobStore } from '../utils/blobStore';
 import { archiveRestoreJson, isMissingValue, placeRestorePointer, pointerStillWanted, restoreJsonFor, restoreRawFileFor, restoreStems, sameRawFileFor, takePendingRestorePointer, wantedRawNames } from '../utils/driveRestore';
 import { useDriveAutoRestore } from './useDriveAutoRestore';
+/* 📂 LIRE LE DOSSIER DE L'EXPÉRIENCE (voir utils/driveExperimentFiles.js) : un
+   PDB DÉPOSÉ À LA MAIN dans le dossier de l'expérience n'a aucun nom que la
+   reprise automatique puisse reconnaître (elle cherche par nom / pointeur). Le
+   geste manquant est une lecture du dossier ; le fichier choisi devient le PDB
+   déclaré de la condition (nom + pointeur). */
+import { DriveExperimentFilePicker } from './DriveExperimentFiles';
+import { experimentFilePointer, STRUCTURE_FILE_EXTS } from '../utils/driveExperimentFiles';
 import { sequenceForMoleculeType, sequencePatchForMoleculeType, structureSequencePatch, sequenceNaturesNote } from '../utils/sequenceNatures';
 /* 🧬 LA LECTURE D'UNE SÉQUENCE — la ligne COMPACTE qui la montre SOUS une case de séquence
    (src/components/SequenceReadingLine.jsx) : c'est ELLE qui lit le module PUR (le pKa de CHAQUE
@@ -5118,6 +5125,41 @@ export const MolecularStructureSection = ({ ctx }) => {
     };
   };
 
+  /* ── 📂 PRENDRE LE PDB DANS LE DOSSIER DE L'EXPÉRIENCE ────────────────────
+     Le même geste que sur la page MD (voir utils/driveExperimentFiles.js) : le
+     dossier canonique de l'expérience est LU (`projects/<projet>/<expérience>/
+     <instance>/Data/Structure`, et un cran plus haut si besoin), et le fichier
+     choisi devient le PDB DÉCLARÉ de cette condition — nom + pointeur — donc
+     celui qui sera rouvert par défaut, ici comme sur un autre poste. C'est ce
+     qui rend lisible un PDB POSÉ À LA MAIN dans le dossier : la reprise
+     automatique cherche par nom et par pointeur, elle ne le voit pas. Rien
+     n'est renvoyé au Drive : le fichier y est déjà, on l'ouvre. */
+  const pickNmrStructureFromFolder = async (file, meta) => {
+    const testId = activeTest.id;
+    const restored = new File(
+      [file],
+      file.name || 'structure.pdb',
+      { type: file.type || 'application/octet-stream' }
+    );
+    try { await blobStore.save(nmrStructBlobKey(testId), restored); } catch { /* base indisponible : le fichier reste en mémoire */ }
+    const cache = nmrLocalFileCache.get(testId) || {};
+    nmrLocalFileCache.set(testId, { ...cache, structure: restored });
+    // L'écran ne bouge que si c'est TOUJOURS cette condition qui est affichée
+    // (les onglets ne remontent pas la page) : le fichier est rangé sous la clé
+    // de la condition lue, et la suivante le reprendra de son cache.
+    if (nmrStructPageIdRef.current === testId) setStructureFile(restored);
+    const pointer = experimentFilePointer(meta);
+    updateActiveTest({
+      structureFileName: restored.name,
+      structureFileData: null,     // le fichier déclaré a changé : l'ancien data URL ne le décrit plus
+      structureSrc: null,          // un code PDB / une URL d'hier ne doit pas l'emporter sur le fichier choisi
+      pdbId: null,
+      structureDriveName: meta.name || restored.name,
+      ...(pointer ? { structureDrive: pointer } : {})
+    }, testId);
+  };
+
+
   const nmrStructRestore = useDriveAutoRestore({
     kind: NMR_STRUCT_KIND,
     testId: activeTest.id,
@@ -5728,6 +5770,23 @@ const generatedStructure = useMemo(() => {
             bouge : le piquage d'un atome (formule 2D ou vue 3D) souligne toujours sa cellule
             de tableau, seule la ligne qui le disait a disparu. */}
         <div className="flex flex-col gap-2">
+          {/* 📂 CE QUE LE DOSSIER DE L'EXPÉRIENCE CONTIENT VRAIMENT (même geste
+              que sur la page MD) : un PDB déposé à la main dans le dossier de
+              l'expérience n'a aucun nom que la reprise automatique reconnaisse.
+              Choisir ici l'OUVRE et le DÉCLARE pour cette condition. */}
+          <div className="flex flex-wrap items-center gap-2">
+            <DriveExperimentFilePicker
+              label="📂 PDB from Drive folder"
+              titleText="List the .pdb / .cif files that are in THIS experiment's Drive folder (even one you deposited by hand) and open one of them as this condition's structure"
+              ctx={nmrStructDriveCtx(activeTest)}
+              exts={STRUCTURE_FILE_EXTS}
+              declaredName={activeTest.structureFileName || activeTest.structureDriveName || ''}
+              onPick={pickNmrStructureFromFolder}
+            />
+            <span className="text-[10px] text-slate-400">
+              Choosing a file here opens it AND declares it: this condition will reopen it by default. Nothing is uploaded again.
+            </span>
+          </div>
           <NMRMoleculeViewer key={(activeTest && activeTest.id) || 'molecular-structure'} instanceKey={(activeTest && activeTest.id) || null} src={structureSrc} structureText={structureText} structureTextExt={structureTextExt} sequenceStructureText={sequenceStructure?.text || null} sequenceStructureExt={sequenceStructure?.ext || null} imposedSecondaryStructure={univTestMode ? '' : (activeTest.secondaryStructure || '')} externalLoading={organicFetch.loading} externalError={organicFetch.error} structureFileData={activeTest.structureFileData} structureFileName={activeTest.structureFileName} structureFile={structureFile} onStructureSrc={(v) => updateActiveTest({ structureSrc: v })} onStructureFile={handleStructureFile} moleculeType={d.moleculeType} parsedSeq={d.parsedSeq} sequenceModifications={activeTest.modifications || ''} smiles={activeTest.smiles} onLigandSmiles={(info) => { if (info && info.smiles && !activeTest.smiles && !activeTest.ligandSmiles) updateActiveTest({ ligandCode: info.code, ligandSmiles: info.smiles }); }} selectedKeys={selectedKeys} manualKeys={manualKeys} onAtomClick={handleAtomClick} residueOffset={residueOffset} atomNameMap={atomNameMap} atomRenames={activeTest.atomRenames || {}} onAtomRenames={(map) => updateActiveTest({ atomRenames: map })} resRenumber={activeTest.resRenumber || {}} onResRenumber={(map) => updateActiveTest({ resRenumber: map })} onStructureSequence={(seq, parts) => { const _nat = structureSequencePatch(activeTest, d.moleculeType, seq, parts); if (_nat) updateActiveTest(_nat); }} driveNaming={{ project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || '', instance: activeTest.instanceName || '', scientist: activeTest.operator || '', section: 'Data', subsection: 'Structure' }} labelMode={atomLabelMode} height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? '1100px' : '1000px'} />
           <button onClick={downloadPdbFile} className="self-center mt-2 px-4 py-2 bg-indigo-50 border border-indigo-200 text-indigo-700 font-bold text-xs rounded-lg hover:bg-indigo-100 transition-colors shadow-sm">📥 Download 3D PDB File</button>
           {activeTest.structureFileName && (!structureFile || nmrStructRestore.message) && (

@@ -59,6 +59,13 @@ import {
   mdTrajectoryFingerprint
 } from '../utils/mdAnalysisCache';
 import { placeRestorePointer, pointerStillWanted, restoreRawFileFor, sameRawFileFor, takePendingRestorePointer, wantedRawNames } from '../utils/driveRestore';
+/* 📂 LIRE LE DOSSIER DE L'EXPÉRIENCE (voir utils/driveExperimentFiles.js) : la
+   reprise automatique cherche par NOM ; un fichier DÉPOSÉ À LA MAIN dans le
+   dossier de l'expérience n'a aucun nom à reconnaître. Le geste manquant est
+   donc une lecture du dossier, et le fichier choisi devient celui que la
+   condition rouvre par défaut (nom déclaré + pointeur). */
+import { DriveExperimentFilePicker } from './DriveExperimentFiles';
+import { experimentFilePointer, MD_TOPOLOGY_EXTS, MD_TRAJECTORY_EXTS } from '../utils/driveExperimentFiles';
 
 // Cache to retain local File objects when switching tabs within the same session
 const localFileCache = new Map();
@@ -1070,6 +1077,73 @@ export const MDExperimentSetupSection = ({ ctx }) => {
     return restored;
   };
 
+  /* ── 📂 PRENDRE LE FICHIER DANS LE DOSSIER DE L'EXPÉRIENCE ────────────────
+     Ce que la reprise automatique NE PEUT PAS faire : elle cherche par NOM
+     (nom déclaré, nom déposé, pointeur — voir driveRestore.js). Un fichier
+     DéPOSÉ À LA MAIN dans le dossier canonique de l'expérience, ou envoyé sous
+     un autre nom, n'a aucun de ces noms : la page annonçait alors « pas dans ce
+     navigateur ni sur le Drive » alors que le fichier était là (défaut
+     signalé). Le geste manquant est une LECTURE DU DOSSIER (voir
+     utils/driveExperimentFiles.js) : l'utilisateur VOIT ce que l'expérience
+     contient et choisit.
+
+     LE FICHIER CHOISI DEVIENT CELUI DE LA CONDITION : son nom est déclaré
+     (`structureFileName` / `trajectoryFileName`) ET son pointeur est posé
+     (`structureDrive` / `trajectoryDrive` = id + nom + url). C'est exactement ce
+     que lit la reprise au prochain affichage, ici comme sur un autre poste —
+     choisir ici, c'est donc DÉFINIR le fichier par défaut de l'instance.
+     Rien n'est renvoyé au Drive : le fichier y est déjà, on l'ouvre. */
+  const mdFolderCtx = (subsection, section = 'Setup') => ({
+    project: (activeTest.projectNames || [])[0] || '',
+    test: activeTest.name || '',
+    instance: activeTest.instanceName || '',
+    scientist: activeTest.operator || '',
+    section,
+    subsection
+  });
+  /* DEUX BRANCHES : la page archive la topologie sous `Setup`, les commandes du
+     viewer 3D sous `Data` — un fichier déposé dans l'une OU dans l'autre doit
+     être vu (le premier dossier qui porte une correspondance gagne). */
+  const mdFolderCtxs = (subsection) => [mdFolderCtx(subsection, 'Data')];
+
+  const pickStructureFromFolder = async (file, meta) => {
+    const testId = activeTest.id;
+    const paint = restoreTargetStillShown(testId);
+    // `wantedName: ''` : on installe le fichier choisi sous SON nom — le
+    // renommer au nom déclaré d'hier ferait croire que les deux décrivent le
+    // même fichier (c'est la règle de applyReloadedFile quand les radicaux
+    // concordent seulement).
+    const restored = await applyReloadedFile({ kind: 'structure', testId, wantedName: '', file, paint });
+    const pointer = experimentFilePointer(meta);
+    updateActiveTest({
+      structureFileName: restored.name,
+      structureFileData: null,          // le fichier déclaré a changé : l'ancien data URL ne le décrit plus
+      structureSrc: null,               // un PDB ID / une URL d'hier ne doit pas l'emporter sur le fichier choisi
+      structureDriveName: meta.name || restored.name,
+      ...(pointer ? { structureDrive: pointer } : {})
+    }, testId);
+    if (paint) {
+      setStructPhase('done');
+      setStructRestoreMsg(`✅ ${restored.name} taken from the experiment folder on Google Drive.`);
+    }
+  };
+
+  const pickTrajectoryFromFolder = async (file, meta) => {
+    const testId = activeTest.id;
+    const paint = restoreTargetStillShown(testId);
+    const restored = await applyReloadedFile({ kind: 'trajectory', testId, wantedName: '', file, paint });
+    const pointer = experimentFilePointer(meta);
+    updateActiveTest({
+      trajectoryFileName: restored.name,
+      trajectoryDriveName: meta.name || restored.name,
+      ...(pointer ? { trajectoryDrive: pointer } : {})
+    }, testId);
+    if (paint) {
+      setTrajPhase('done');
+      setTrajDriveMsg(`✅ ${restored.name} taken from the experiment folder on Google Drive.`);
+    }
+  };
+
   const restoreTrajectoryFromDrive = async () => {
     const declared = activeTest.trajectoryFileName || '';
     const driveName = activeTest.trajectoryDriveName || '';
@@ -1580,6 +1654,35 @@ export const MDExperimentSetupSection = ({ ctx }) => {
           <p className="text-xs text-slate-400 mb-2">💡 Click an atom in the {structureMode === '2d' ? 'formula' : '3D viewer'} to highlight its cell in the atom table.</p>
 
           <div style={{ display: structureMode === '3d' ? 'block' : 'none' }} aria-hidden={structureMode !== '3d'}>
+            {/* 📂 CE QUE LE DOSSIER DE L'EXPÉRIENCE CONTIENT VRAIMENT.
+                Un bouton par fichier : il LISTE le dossier canonique de
+                l'expérience sur le Drive (par extension) et installe le fichier
+                choisi comme celui que CETTE condition rouvre par défaut. Geste
+                de LECTURE seule — le fichier est déjà sur le Drive, rien n'y est
+                renvoyé (voir utils/driveExperimentFiles.js). */}
+            <div className="flex flex-wrap items-start gap-2 mb-2">
+              <DriveExperimentFilePicker
+                label="📂 Topology from Drive folder"
+                titleText="List the .gro / .pdb / .cif files that are in THIS experiment's Drive folder (even one you deposited by hand) and open one of them as this condition's topology"
+                ctx={mdFolderCtx('Structure')}
+                ctxs={mdFolderCtxs('Structure')}
+                exts={MD_TOPOLOGY_EXTS}
+                declaredName={activeTest.structureFileName || activeTest.structureDriveName || ''}
+                onPick={pickStructureFromFolder}
+              />
+              <DriveExperimentFilePicker
+                label="📂 Trajectory from Drive folder"
+                titleText="List the .xtc / .trr / .dcd files that are in THIS experiment's Drive folder (even one you deposited by hand) and make one of them the trajectory of this condition"
+                ctx={mdFolderCtx('Trajectory')}
+                ctxs={mdFolderCtxs('Trajectory')}
+                exts={MD_TRAJECTORY_EXTS}
+                declaredName={activeTest.trajectoryFileName || activeTest.trajectoryDriveName || ''}
+                onPick={pickTrajectoryFromFolder}
+              />
+              <span className="text-[10px] text-slate-400 leading-relaxed max-w-[340px]">
+                Choosing a file here opens it AND declares it: this condition will reopen it by default, on every computer. Nothing is uploaded again.
+              </span>
+            </div>
             {hasOpened3D && (
               
 <NMRMoleculeViewer
