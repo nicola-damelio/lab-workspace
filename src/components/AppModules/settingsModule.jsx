@@ -14,6 +14,7 @@ import { FigureStylePanel } from '../FigureStylePanel';
 import { normalizeOperators } from '../../utils/auth';
 import { openDrive } from '../../utils/driveNaming';
 import { UI_SCALE_PRESETS, readUiScale, saveUiScale } from '../../utils/uiScale';
+import { UI_SKIN_DEFAULT, UI_SKINS, readUiSkin, saveUiSkin } from '../../utils/uiSkin';
 
 /* ── Display scale ─────────────────────────────────────────────────────────
    Tailwind v4 computes every text size and every spacing step from the ROOT
@@ -55,6 +56,70 @@ const DisplayScaleControl = () => {
   );
 };
 
+/* ── Interface skin ────────────────────────────────────────────────────────
+   A skin is ONLY a set of CSS variables (src/index.css, one block per skin id)
+   that Tailwind's colour utilities all read — `bg-slate-800` really is
+   `var(--color-slate-800)`, `text-white` really is `var(--color-white)`. So a
+   skin repaints the whole program without touching one component, and the
+   SAME attribute re-paints any element: the miniature below carries
+   `data-skin` and is drawn with the very classes of the real interface
+   (a chrome bar, a card, an accent button), so what the button shows IS what
+   the program will look like. The value is per-browser (the machine and the
+   eyes in front of it, not the dataset) and main.jsx applies it before the
+   first paint; uiSkin.js holds it. Every user sees the control. */
+const SkinMiniature = ({ skin }) => (
+  <span
+    data-skin={skin.id === UI_SKIN_DEFAULT ? undefined : skin.id}
+    className="flex w-40 flex-col gap-1 rounded-lg border border-slate-200 bg-slate-50 p-2 no-print"
+  >
+    <span className="rounded bg-slate-800 px-1.5 py-1 text-center text-[10px] font-bold text-white">
+      Lab Workspace
+    </span>
+    <span className="rounded-md border border-slate-200 bg-white p-1.5">
+      <span className="block text-[10px] font-bold text-slate-700">Experiment 12</span>
+      <span className="block text-[10px] text-slate-400">2026-10-03</span>
+      <span className="mt-1 block rounded bg-blue-600 px-1.5 py-0.5 text-center text-[10px] font-bold text-white">
+        Save
+      </span>
+    </span>
+  </span>
+);
+
+const SkinControl = () => {
+  const [skin, setSkin] = React.useState(() => readUiSkin());
+  const pick = (id) => { setSkin(id); saveUiSkin(id); };
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-wrap gap-3">
+        {UI_SKINS.map((s) => (
+          <button
+            key={s.id}
+            type="button"
+            onClick={() => pick(s.id)}
+            title={`${s.label} — ${s.hint}. Repaints every page of the program at once, and is remembered for this browser.`}
+            className={`flex flex-col items-center gap-2 rounded-xl border-2 p-2 shadow-sm transition-colors ${
+              skin === s.id
+                ? 'border-blue-600 bg-blue-50'
+                : 'border-slate-300 bg-white hover:border-slate-400'
+            }`}
+          >
+            <SkinMiniature skin={s} />
+            <span className="flex flex-col items-center">
+              <span className="text-xs font-bold text-slate-700">{s.label}</span>
+              <span className="text-[10px] text-slate-500">{s.hint}</span>
+            </span>
+          </button>
+        ))}
+      </div>
+      <p className="text-xs text-slate-500 leading-relaxed">
+        The choice applies <b>immediately to every page</b> and is remembered for this browser
+        only. It repaints the program — colours, inks, borders — and nothing else: the layout,
+        the display scale, the printed documents and the figures keep their own settings.
+      </p>
+    </div>
+  );
+};
+
 export const SettingsModule = ({
   operators, setOperators, authSettings, setAuthSettings,
   currentUser, tests, setTests, handleSetCustomFields,
@@ -85,6 +150,14 @@ export const SettingsModule = ({
                     defaultOpen={false}
                   >
                     <DisplayScaleControl />
+                  </CollapsibleSection>
+
+                  <CollapsibleSection
+                    title="Interface skin — the colours of the whole program"
+                    subtitle="Repaints every page, modal, table and badge at once — the neutral greys, the ink and the accent colour — by restating the palette Tailwind's classes read. Graphite drops the blue cast, Warm paper turns the greys warm, Indigo and Violet move the accent, Dimmed softens the white for long sessions and High contrast deepens every ink and border. The choice is immediate, remembered for this browser only, and every user sees it."
+                    defaultOpen={false}
+                  >
+                    <SkinControl />
                   </CollapsibleSection>
 
                   <CollapsibleSection

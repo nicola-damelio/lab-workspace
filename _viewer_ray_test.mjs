@@ -481,7 +481,8 @@ has('onClick={captureRay}', 'le bouton ✨ Ray est branché sur ce gestionnaire'
 has("{rayBusy ? '✨ Rendering…' : '✨ Ray'}", 'son libellé dit quand il travaille');
 has('disabled={rayBusy}', '…et il est réellement désactivé pendant le rendu');
 has('⬚ alpha', 'la case du fond transparent est dans la barre, à côté du sélecteur');
-has('label: file ? file.name : (pdbId || \'structure\')', 'le nom du fichier vient de la structure chargée (fichier, sinon PDB)');
+has("const stillLabel = file ? file.name : (pdbId || 'structure');", 'le nom du fichier vient de la structure chargée (fichier, sinon PDB)');
+has('label: stillLabel,', '…et il est celui que la still porte — et que le ✨ Ray REPREND quand la rampe ⬚ recompose l’image');
 
 /* L’APERÇU — la demande : « Would it be possible to see on the screen the result of
    ray before deciding to generate the image? » Le rendu est MONTRÉ (l’objet URL de
@@ -527,7 +528,8 @@ ok(rayBody.includes('RAY_SLOW_HINT_MS'),
    image ». Aucun téléchargement ne part donc sans le geste de l’utilisateur. */
 ok(!rayBody.includes('downloadBlob('),
   'le rendu lui-même N’ÉCRIT RIEN : l’écriture est un geste de plus, après le regard');
-ok(rayBody.includes('showRayPreview(out)'), '…le résultat part vers l’APERÇU, qui le met à l’écran');
+ok(rayBody.includes('showRayPreview(still)'),
+  '…le résultat part vers l’APERÇU, qui le met à l’écran (⬚ « still » : la still COMPOSÉE quand le fond est un dégradé, le rendu lui-même sinon)');
 
 /* LE 📷 FIGURE A ÉTÉ RETIRÉ (la demande : « il pulsante figure é redundant ») —
    le handler, son message et l’import de la bibliothèque de figures ont disparu

@@ -112,6 +112,7 @@ const setup = {
   sidechainStyle: 'ball+stick', sstrucColors: { helix: 1, sheet: 2, loop: 3 },
   selectedResidueColor: 255, assignedAtomColor: 65280,
   fog: true, shadows: { on: true }, clip: { on: false }, background: '#101010',
+  backgroundGradient: { on: true, to: '#202020', angle: 90 },
   quality: true, large: { style: 'line' }, generalLook: { foo: 'bar' },
   palettes: { elements: {} }, ray: { factor: 3, transparent: false }, esp: [15, 15],
   savedAt: 'hier',
@@ -119,6 +120,8 @@ const setup = {
 const glob = H.captureThemeGlobal(setup);
 ok(glob.fog === true && glob.background === '#101010' && glob.clip && glob.shadows,
   'la capture garde la scène : brouillard · fond · clipping · ombres');
+ok(glob.backgroundGradient && glob.backgroundGradient.on === true && glob.backgroundGradient.to === '#202020',
+  '…et la RAMPE du fond (⬚ sa seconde couleur, son angle et son interrupteur), qui prolonge cette couleur');
 ok(glob.generalLook && glob.palettes && glob.sstrucColors && glob.catStyles,
   '…et la roue ⚙ (palettes + look général), les couleurs de 2°-structure et les menus');
 ok(glob.ray && glob.esp,

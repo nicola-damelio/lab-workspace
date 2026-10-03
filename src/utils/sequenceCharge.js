@@ -55,7 +55,7 @@
    sites ne sont pas devinés d'une lettre).
    ========================================================================= */
 
-import { parseModificationsOf } from './modifications.js';
+import { parseModificationsOf, modificationMassOf } from './modifications.js';
 import { analyzeProteinSequence } from '../components/cloningUtils.js';
 
 
@@ -154,6 +154,14 @@ export const modificationEffectsOf = (modifications = '') => {
     acetylated,
     amidated,
     phospho: list.filter((m) => m && m.label === PHOSPHO_LABEL).length,
+    /* LE POIDS QUE LES MODIFICATIONS AJOUTENT — la somme des deltas de la table
+       (utils/modifications.js), une unité à la fois. C'est ce que la LIGNE sous
+       la case ajoute à la masse des résidus : « In the description add the
+       molecular weight » veut dire la masse de la MOLÉCULE décrite — un peptide
+       acétylé pèse 42,01 Da de plus que ses résidus, et une amidation en enlève
+       0,98. La charge, elle, s'en sert déjà (les capuchons) : les deux chiffres
+       de la ligne viennent donc du même texte de modifications. */
+    mass: Number(modificationMassOf(list).toFixed(2)),
     /* LES DEUX TERMINUS, EN MOTS — ce qu'une ligne de panneau peut CITER sans le
        réinterpréter : `free` (la règle de la séquence écrite directement), `acetylated`,
        `amidated`. */
@@ -252,14 +260,21 @@ export const compositionTextOf = (composition) => {
     case de séquence, réunies : la COMPOSITION, la CHARGE (au pH donné, 7 par défaut) et
     l'ε₂₈₀. `length`, `mw` et `epsilon` viennent d'`analyzeProteinSequence` (UNE seule règle
     d'ε₂₈₀ dans le dossier : Pace — Trp 5500 · Tyr 1490 · cystine 125, cystine supposée
-    appariée), donc rien n'est recopié ici. */
+    appariée), donc rien n'est recopié ici.
+    ⚠ `mw` EST LA MASSE DE LA MOLÉCULE, MODIFICATIONS COMPRISES (« In the description add the
+    molecular weight ») : les résidus (et l'eau d'un peptide libre) sont pesés par
+    `analyzeProteinSequence`, et le texte des modifications ajoute ses deltas
+    (`modificationEffectsOf.mass`). Un peptide « Acetylation, Amidation » pèse donc
+    42,01 − 0,98 Da de plus que ses résidus, exactement comme sa charge est celle d'un
+    peptide capuchonné : les deux chiffres de la ligne viennent du même texte. */
 export const proteinSequenceReadingOf = (seq, { modifications = '', ph = SEQUENCE_PH } = {}) => {
   const analysis = analyzeProteinSequence(seq);
   const charge = sequenceChargeReportOf(seq, ph, { modifications });
+  const modMass = Number(charge.effects && charge.effects.mass) || 0;
   return {
     ok: analysis.length > 0,
     length: analysis.length,
-    mw: analysis.mw,
+    mw: Number((analysis.mw + modMass).toFixed(2)),
     epsilon: analysis.eps280,
     counts: analysis.counts,
     composition: charge.composition,

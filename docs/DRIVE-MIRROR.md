@@ -2529,3 +2529,312 @@ compte d'avant la retouche, aucun symbole nouveau nommé.
 
 
 
+## Le viewer MD : la phrase en trop retirée, les deux 📂 du dossier sur la ligne des fichiers (03/10/2026)
+
+**Deux demandes, mot pour mot.** « *in the viewer remove the sentence “Click an atom in the
+3D viewer to highlight its cell in the atom table.” so that we save a line.* » — et, dans le
+même message, « *the “topology from Drive folder” and “trajectory from drive folder”
+buttons should be in the same line as “PDB file” and “trajectory” buttons.* »
+
+### ① Le 💡 de la formule a disparu (une ligne de gagnée)
+
+La formule 2D de la page MD fermait son bloc par une rangée `flex flex-wrap
+justify-between` : la phrase « 💡 Click an atom in the formula (or in the 3D viewer below) to
+highlight its cell in the atom table. » d'un côté, le 📓 **Formula → Notebook** de l'autre.
+Elle était trop longue pour tenir à côté du bouton : la rangée coûtait donc **DEUX lignes**.
+Elle est RETIRÉE, et le 📓 reste seul dans sa rangée, à droite (`flex justify-end`, la place
+qu'il occupait déjà).
+
+Ce qui ne change **pas** : piquer un atome — dans la formule 2D comme dans la vue 3D —
+souligne toujours sa cellule du tableau d'atomes ; seul le texte qui le disait est parti.
+(Sur la page NMR, la pastille équivalente de la carte 3D avait déjà été retirée ; la ligne
+de la formule y reste, la demande ne portait pas sur elle.)
+
+### ② Les deux 📂 du dossier de l'expérience sont passés DANS la rangée des fichiers
+
+Les boutons **📂 Topology from Drive folder** et **📂 Trajectory from Drive folder**
+(`utils/driveExperimentFiles.js`) faisaient une rangée à eux, au-dessus du viewer : deux
+lignes de commandes de fichiers. Ils n'en font plus qu'**UNE** :
+
+* leur définition est écrite **une seule fois** — `folderFilePickers`, dans la page MD ;
+* elle part au viewer par une prop **nouvelle**, `fileRowExtra` — **`null` par défaut**,
+  donc les pages NMR et Docking ne voient **aucun** changement ;
+* le viewer la rend dans sa **rangée §1 General**, juste après 📂 **PDB file(s)** et
+  📂 **Trajectory** (et avant ⬇ PDB) : c'est la même ligne, celle des deux fichiers du
+  poste, exactement ce que la demande décrit ;
+* la phrase qui les accompagnait (« *Choosing a file here opens it AND declares it: this
+  condition will reopen it by default, on every computer. Nothing is uploaded again.* »)
+  est passée **dans leurs infobulles** : l'information n'est pas perdue, elle ne coûte plus
+  une ligne à elle seule.
+
+Le geste lui-même est **inchangé** : c'est toujours une **LECTURE** du dossier canonique de
+l'expérience (rien n'y est envoyé, rien n'y est créé — `{ create: false }`), et le fichier
+choisi devient celui que la condition rouvre par défaut, ici et sur les autres postes.
+
+*Vérifier :* `node _structure_windows_test.mjs` — **107 assertions** : le 💡 de la formule
+MD n'existe plus (le 📓 reste seul, `flex justify-end`), les deux 📂 du dossier n'ont qu'UNE
+définition et partent au viewer par `fileRowExtra={folderFilePickers}`, la rangée des
+fichiers du viewer accepte les commandes de la page (`fileRowExtra = null,` par défaut,
+rendu ENTRE 📂 Trajectory et ⬇ PDB), et **aucune** page NMR / Docking ne passe cette prop.
+`node _viewer_ui_layout_test.mjs` — **494 assertions** : la prop et son site de rendu sont
+dans §1 General, à côté de 📂 PDB file(s) / 📂 Trajectory.
+
+## Les peaux de l'interface (Settings → « Interface skin ») (03/10/2026)
+
+**La demande.** « *in settings implement different skins for the program interface* » — un
+choix, dans ⚙️ Settings, qui repeint **tout** le programme.
+
+### ① Pourquoi c'était possible sans toucher un seul composant
+
+Tailwind v4 **n'écrit pas ses couleurs en dur** : `bg-slate-800` est compilé en
+`background-color: var(--color-slate-800)`, `text-white` en `color: var(--color-white)`, et
+ces variables vivent dans `@layer theme` (`:root, :host`). Il suffit donc de **redire** ces
+variables sous un attribut pour que **chaque page, chaque modale, chaque pastille, chaque
+bouton, chaque tableau** change de palette — sans éditer une classe, sans toucher un
+composant. C'est la même famille de mécanisme que l'échelle d'affichage : **une seule
+décision globale au lieu de 13 476 utilitaires de couleur recopiés**.
+
+Trois propriétés ont été mises à profit, et chacune est vérifiée dans un vrai navigateur :
+
+* les blocs de `src/index.css` sont **NON calqués sur une `@layer`** — une règle hors couche
+  gagne toujours sur une règle de couche, donc `[data-skin="dim"]` bat `@layer theme` sans un
+  seul `!important` ;
+* ils sont posés sur `[data-skin="…"]` et **non sur `:root`** : les propriétés personnalisées
+  sont **héritées**, donc l'attribut peut aussi bien être posé sur `<html>` (tout le
+  programme, par `main.jsx`, **avant la première peinture**) que sur un simple `<div>` ;
+* c'est ce dernier point qui donne la **miniature vivante** de Settings : chaque bouton
+  contient une carte dessinée avec les **vraies classes** de l'interface (barre de chrome
+  `bg-slate-800`, carte `bg-white`, légende `text-slate-400`, bouton `bg-blue-600
+  text-white`) et porte `data-skin="…"` — ce que le bouton montre **est** ce que le
+  programme sera, pas une vignette dessinée à la main.
+
+### ② Les sept peaux, et la règle qui les rend sûres
+
+Une peau n'invente **aucune** couleur : elle **échange deux rampes de Tailwind** ou **redit
+une rampe cran par cran**. C'est ce qui garantit que les 1 340 `bg-white`, les 479
+`text-white` et les 7 281 `slate-*` du programme restent lisibles sans les relire un par un.
+
+| peau | ce qu'elle fait | source des valeurs |
+| --- | --- | --- |
+| **Slate & blue** | la référence : **aucun bloc** (`applyUiSkin` retire l'attribut) | la palette livrée |
+| **Graphite** | l'échelle neutre devient **Zinc** : gris pur, le bleu de slate disparaît | Zinc, cran par cran |
+| **Warm paper** | l'échelle neutre devient **Stone** : encre et bordures chaudes | Stone, cran par cran |
+| **Indigo** | les **deux bleus s'échangent** : l'accent principal devient indigo (un cran plus sombre, donc tous les libellés blancs y gagnent) et les accents indigo du programme deviennent bleus | les deux rampes, échangées cran par cran |
+| **Violet** | le même échange, un ton plus loin | idem (1,7 point d'écart de clarté au pire) |
+| **Dimmed** | le blanc **#fff** devient **#f1f4f6**, la page passe **sous** les cartes (slate-50 plus sombre que le blanc), l'accent perd de la chroma, bordures et légendes **gagnent** un cran : le même écran, sans éblouissement | rampe redessinée |
+| **High contrast** | toutes les encres et toutes les bordures font un pas vers le noir (la légende qui était à **2,63:1** passe à **6,82:1**), l'accent s'assombrit, et les encres des pastilles d'état (succès · danger · alerte) descendent de **6 points de clarté OKLCH** | rampe redessinée + 10 familles d'état |
+
+### ③ Le garde-fou : les maths, pas l'œil
+
+`_ui_skin_test.cjs` relit **les rampes de Tailwind elles-mêmes**
+(`node_modules/tailwindcss/theme.css` — c'est la référence, jamais recopiée), applique les
+redirections de chaque peau, puis **recalcule en OKLCH → sRGB → WCAG** les neuf couples que
+le programme écrit réellement (`text-700` sur `bg-50`, `text-800` sur `bg-100`, blanc sur
+`bg-600`, `text-600/700/500/400` sur blanc, `border-300` sur blanc, blanc sur `bg-800`)
+**famille par famille** (16 familles : slate, les 8 accents, les 7 états). Une peau est
+refusée si **un seul** de ces couples perd plus de **1,5 cran de contraste** par rapport à la
+palette livrée, si une rampe cesse d'être **strictement monotone** en clarté (des crans qui
+se croisent rendraient un survol invisible), ou si un **échange de teinte** déplace un cran
+de plus de **4 points de clarté OKLCH**. Mesures de cette session : le pire écart toutes
+peaux confondues est **−1,25** (indigo, blanc sur `indigo-800` devenu `blue-800`), `dim` et
+`contrast` **améliorent** tous les couples qu'elles touchent, et les deux échanges de teinte
+restent à 3,8 et 1,7 point du pire cran.
+
+### ④ Le verdict en pixels (et ce qu'il a appris)
+
+`_ui_skin_pixel_test.cjs` sert le **CSS compilé de l'application** (`dist/assets/index-*.css`,
+celui de `npx vite build`) à Chrome en `--headless=new`, pose les vraies classes de
+l'interface, et demande au moteur ce qu'il a calculé — puis va jusqu'au **pixel** : une toile
+1×1 remplie de la couleur relue en `ImageData` (le moteur rend la couleur calculée **dans son
+espace d'origine**, un `oklch(…)` pour tout ce qui vient des variables, et le canvas la
+redonne telle quelle — d'où la lecture au pixel plutôt qu'à la chaîne). 44 vérifications,
+dont les plus utiles :
+
+* pour **les sept peaux**, la couleur de `bg-slate-800` est **exactement** celle de
+  `var(--color-slate-800)` — et idem pour `bg-white` / `--color-white` et `bg-blue-600` /
+  `--color-blue-600` : c'est toute la chaîne « classe → variable → bloc » qui est prouvée, pas
+  seulement la présence du bloc dans la feuille ;
+* la **référence** rend la palette livrée au pixel : `#ffffff`, `#155dfc` (blue-600),
+  `#1d293d` (slate-800) ;
+* chaque peau **change ce qu'elle annonce** : `dim` est la seule à reprendre le blanc
+  (`#ffffff` → `#f1f4f6`) et le fond de page (`#f8fafc` → `#e8ebef`), `graphite` et `warm` ne
+  touchent pas au blanc, `indigo` et `violet` ne touchent pas à l'échelle neutre, et
+  `contrast` fonce la légende du programme de **35 % à 10 % de luminance** ;
+* les trois **identités** de couleur sont mesurées : le chrome « graphite » est bien neutre
+  (39/39/42), « warm » est bien chaud (41/37/36), et l'accent violet porte largement plus de
+  rouge que le bleu livré ;
+* la **miniature** ne fuit pas : sous les sept peaux, la carte du `<div data-skin="dim">` est
+  toujours `#f1f4f6` et son chrome toujours `#172336`, tandis que le frère **sans** attribut
+  suit, lui, la peau de `<html>` — c'est exactement l'invariant dont dépend la page Settings.
+
+### ⑤ Ce que ça ne fait pas (dit franchement)
+
+**Pas de vrai mode sombre.** Le programme porte **1 775 couleurs écrites en dur** dans 62
+fichiers — 264 dans `utils/chartStyle.js` à lui seul, puis les modules de tracés
+(`MDMembraneContacts.js`, `NMRSections.jsx`, `CDSections.jsx`, `ssNMRSections.jsx`…). Ce sont
+les encres des **graphiques, spectres, profils et cartes** : une peau qui inverse la
+luminosité laisserait une encre sombre sur une carte sombre, c'est-à-dire des figures
+illisibles. Un vrai mode sombre demande donc **d'abord** que ces modules lisent les jetons
+(`var(--color-…)`) au lieu de leurs hexadécimaux — c'est un chantier à part, et c'est pour
+cela que les peaux livrées ici restent **claires** (la plus sombre, `dim`, abaisse le blanc et
+les bordures sans jamais inverser). Les figures, les documents imprimés/exportés et le
+presse-papiers gardent leurs propres réglages : une peau est un réglage d'**écran**, gardé
+**par navigateur** (`localStorage`), jamais dans le dataset ni dans le Doc — comme l'échelle
+d'affichage — et **chaque** utilisateur la voit (pas seulement le superutilisateur).
+
+*Vérifier :* `node _ui_skin_test.cjs` — **91 vérifications** : le registre (7 peaux, ids
+uniques, 4 pastilles), le repli sur la référence pour un nom inconnu, l'attribut posé sur
+`<html>` et **retiré** pour la référence, `main.jsx` qui l'applique **avant**
+`ReactDOM.createRoot`, la section et la miniature dans Settings (avant le bloc réservé au
+superutilisateur), un bloc CSS **par** peau (aucun pour la référence, aucun orphelin, formes
+complètes — 11 crans, ou les 4 crans d'état), **aucun `!important`**, aucun `html[data-skin]`
+(la miniature en dépend), puis les maths de contraste décrites au ③.
+`node _ui_skin_pixel_test.cjs` — **44 vérifications dans Chrome** sur le CSS compilé
+(SAUTÉE, exit 0, sans Chrome/Edge ou sans `npx vite build`).
+Régressions relancées : `_ui_scale_test.cjs` **61/61** (le voisin de la section),
+`_chart_dblclick_test.cjs` **124/124** (seule autre suite à lire `index.css`),
+`_figure_style_test.mjs` **71/71** (elle lit `settingsModule.jsx`), `_tdz_scan_test.mjs`
+**18 assertions** (247 fichiers). `npx vite build` — ✓ ; `npx oxlint` sur les trois fichiers
+touchés — **0 avertissement, 0 erreur**.
+
+
+
+
+## Le fond du viewer : une rampe de deux couleurs, et son panneau (03/10/2026)
+
+**La demande.** « *in the background of the viewer allow gradients of two colors and their
+direction (clicking on background should display the options underneath and disappear when
+background is clicked again)* ».
+
+### ① Le fait NGL qui rend la rampe presque gratuite
+
+NGL 2.4 ne sait peindre **qu'une** couleur de fond, et son `setBackground`
+(`viewer.setBackground`, `_ngl_src/viewer__viewer.ts:842`) fait exactement trois choses :
+
+```ts
+this.setFog(p.backgroundColor)
+this.renderer.setClearColor(p.backgroundColor, 0)                     // ALPHA ZÉRO
+this.renderer.domElement.style.backgroundColor = p.backgroundColor.getStyle()
+```
+
+Le fond que l'on **voit** à l'écran n'est donc pas dans la toile WebGL : c'est la **couleur CSS
+du canvas**, vue **à travers** une toile transparente — le fait que le film 🎬 avait déjà dû
+contourner (`filmBackdropColor`, voir la section du film). Une `background-image` posée sur ce
+même canvas se peint donc **par-dessus** la couleur, et elle est composée par le moteur : le
+dégradé vit dans le CSS, **aucune représentation n'est reconstruite**, aucune surface n'est
+recalculée, la caméra ne bouge pas. C'est ce que la sonde mesure (voir ④) : `clearAlpha = 0`,
+`style.backgroundColor = rgb(255,0,0)`, et la rampe calculée par le moteur est
+`linear-gradient(rgb(255, 0, 0) 0%, rgb(0, 0, 255) 100%)`.
+
+**Un seul module, `src/utils/viewerBackground.js`**, porte toute la mécanique — les deux couleurs
+validées (`#rrggbb` ou le secours, jamais du noir), l'angle normalisé dans `[0, 360[`, la
+**spécification** `{ on, from, to, angle }`, le CSS de l'écran, les maths de la ligne de rampe
+(la règle CSS : la ligne passe par le **centre**, sa direction est `(sin θ, −cos θ)` — l'axe Y
+d'un canvas descend — et sa longueur est `|W·sin θ| + |H·cos θ|`), la peinture d'une toile 2D, et
+la composition de la still du ✨ Ray.
+
+### ② Le panneau, et le clic qui l'ouvre (puis le referme)
+
+Le clic sur le fond n'est **pas** un geste à nous : NGL dispatche `clicked` **même quand rien
+n'a été piqué** (`PickingControls._onClick` fait `stage.signals.clicked.dispatch(pickingProxy)`
+sans condition, ngl 2.4). Un `pickingProxy` **sans atome** est donc un clic sur le fond — et
+c'est la branche du viewer qui **bascule un seul état** (`setBgPanelOpen((v) => !v)`) : le clic
+suivant, n'importe où sur le fond, referme le panneau. La sonde le mesure deux fois : deux clics
+dans un coin vide d'une scène **chargée**, deux fois reçus, **zéro** atome piqué.
+
+Deux garde-fous :
+
+* **un seul des deux gestes à la fois** — pendant un piquage (⌖ la paire, ✏️ la torsion,
+  📏 Measure, ✎ Rename) les clics appartiennent au piquage, même quand ils tombent **à côté**
+  d'un atome (c'est justement ainsi qu'on vise le fond sans piquer l'atome voisin) : aucun
+  d'eux n'ouvre le panneau ;
+* **le panneau ne prend aucun clic destiné à la scène** — il vit **à côté** du div d'NGL, pas
+  dedans, et son ⇤ le referme aussi.
+
+Le panneau (`id="viewer-background"`, posé **dans la vue**, en bas du fond) porte : l'interrupteur
+**⬚ Gradient** (`aria-pressed`), les **deux couleurs** — **A**, qui *est* la couleur de la
+scène, et **B** — le bouton **⇄** qui les échange, les **huit directions** d'un clic (↓ ↑ → ←
+et les quatre diagonales, rendues depuis `BG_DIRECTIONS`, jamais recopiées), le **curseur
+d'angle** (0–360°, nommé), **↺** (la rampe d'origine, dégradé éteint) et **⇤**. La ligne du bas
+**nomme** la direction choisie (« from the top to the bottom »), ou dit ses degrés quand l'angle
+est libre. Le bouton **⬚** de **§2 Toolbar → 🌫 Scene** fait le même geste depuis la barre (donc
+au clavier, et sans viser le fond) : `aria-expanded` + `aria-controls`.
+
+### ③ Un seul fond dans le viewer : A **est** la couleur de la scène
+
+Le piège aurait été de tenir **deux** fonds — la couleur du 🎨 et celle de la rampe — et de les
+laisser diverger. Il n'y en a qu'un : la **première** couleur de la rampe **est** `bgColor`,
+c'est-à-dire la couleur que le 🎨 de §2 Scene écrit, que le panneau 🧪 PyMOL écrit, que le
+brouillard prend pour cible (`setBackground` fait `setFog(couleur)`), et que les ⚙️ setups et les
+thèmes emportent sous la clé `background`. `backgroundGradient` (`{ on, to, angle }`, sous
+`localStorage['labViewerBgGradient']`) transporte **le reste**, et il a rejoint `THEME_GLOBAL_KEYS` :
+une figure enregistrée revient avec **sa** rampe, comme elle revient avec son brouillard et ses
+ombres. Un fichier écrit **avant** cette fonctionnalité n'a pas le champ : il ne change donc
+rien au fond (le lecteur ne touche pas à l'état), et un objet bricolé (une couleur nommée, un
+angle infini) est revalidé par `bgGradientOf` — jamais un fond cassé.
+
+Le panneau est **fermé au chargement** : la demande dit « un clic l'ouvre, un clic le referme »,
+et un panneau qui se rouvrirait tout seul au rechargement irait contre ça. La **rampe**, elle,
+est persistante (par navigateur, comme la couleur qu'elle prolonge).
+
+### ④ Les trois consommateurs, et ce que les pixels disent
+
+| consommateur | ce qu'il fait | la preuve |
+| --- | --- | --- |
+| **l'écran** | `backgroundImage` du canvas NGL, posée **après** `stage.setParameters({ backgroundColor })` (sinon NGL la recouvrirait) ; éteinte, la chaîne vide rend la main à la couleur d'NGL | sonde : `clearAlpha = 0`, `css = rgb(255, 0, 0)`, la rampe calculée à 180° **et** à 90° (Chrome omet l'angle quand c'est son défaut, il l'écrit sinon), deux arrêts, `none` quand elle est éteinte |
+| **les films 🎬🎞** | la toile de film, qui n'a pas d'alpha, peint la **couleur** puis la **rampe** (comme le CSS empile `backgroundImage` sur `backgroundColor`), **avant** la scène | sonde : haut `254,0,0` → bas `1,0,255`, milieu `126,0,128` ; à 90° gauche `254,0,0` → droite `0,0,254` ; sans rampe, la toile reste **vidée** (alpha 0 — le film d'avant, au pixel près) |
+| **la still ✨ Ray** | NGL rend le still d'un seul tenant avec un fond **opaque** et d'**une** couleur (`makeImage` fait `setClearAlpha(s?0:1)`) : la still est donc rendue **transparente** quand la rampe est allumée (jamais contre le choix « ⬚ alpha » de l'utilisateur), et `underlayBackdrop` peint la rampe **sous** elle (`destination-over`) ; le nom du fichier est refait sans « _transparent », puisque le fond est de nouveau opaque | sonde : la « molécule » garde `0,255,0`, le fond prend `254,0,0` en haut et `1,0,255` en bas ; sans rampe, la composition ne fait **rien** |
+
+Un navigateur sans toile 2D garde la still **telle quelle** (jamais un rendu perdu), et le
+rapport du rendu ajoute « · gradient background » à côté de « · transparent ».
+
+### ⑤ Ce que ça ne fait pas (dit franchement)
+
+* **Ce n'est pas un dégradé de SCÈNE.** Le brouillard (🌫) continue de tendre vers **une**
+  couleur — celle de A, la même que le 🎨 — parce que NGL n'en connaît qu'une ; un halos
+  dégradé dans la profondeur demanderait un `fogColor` par fragment, c'est-à-dire un shader.
+* **La rampe ne voyage pas dans un fichier.** Un `.pdb`, un `.cif`, une capture PNG d'un autre
+  outil ne portent rien de tout cela : c'est un réglage d'**image**, gardé par navigateur et
+  emporté par les ⚙️ setups/photographies du viewer.
+* **Elle n'est peinte QUE là où le canvas est transparent.** Une molécule qui remplit la vue
+  laisse donc voir peu de rampe — c'est le fond, pas un calque par-dessus la scène (rien n'est
+  assombri, aucun pixel de la molécule n'est touché).
+
+
+*Vérifier :* `node _viewer_background_test.mjs` — **144 assertions** : les deux couleurs et
+l'angle (validation : `#rrggbb`, l'angle ramené dans `[0, 360[`, `on` strictement vrai), ce que
+localStorage et un ⚙️ setup rendent (chaîne JSON, objet, magasin illisible), le CSS exact de la
+rampe, les **maths de la ligne** (↓ → ↑ ← et une diagonale — la ligne est plus longue que la
+boîte, c'est la règle CSS), la **peinture** d'une toile 2D (les deux arrêts, le rectangle, et
+RIEN pour une simple couleur), les **huit directions** nommées (`bgDirectionOf`), le film qui lit
+la spécification (`filmBackdropColor` accepte l'objet **et** l'ancienne chaîne, inchangée), et
+tout le **câblage du viewer** : l'état, le magasin, le CSS du canvas posé **après** NGL, le clic
+sans atome et son garde-fou de piquage, le panneau (une seule fois, `aria-*`, les deux couleurs,
+⇄, les huit boutons, l'angle, ↺, ⇤, la ligne qui nomme la direction), le bouton ⬚ de §2, les
+⚙️ setups et `THEME_GLOBAL_KEYS`, la toile de film (couleur puis rampe, **avant** la scène) et la
+recomposition de la still du ✨ Ray.
+
+`node _viewer_background_pixels_test.cjs` — **29/29 assertions dans Chrome** (`--headless=new`,
+SwiftShader), sur **le module servi comme module** et un **vrai** canvas NGL : la rampe peinte
+dans une toile 2D (les deux bords, le milieu, la direction), le fond CSS à travers une toile
+d'alpha zéro, le clic de fond reçu **deux fois sans atome**, et la still du ✨ Ray (la molécule
+intacte, la rampe dessous). Les deux PNG de la sonde restent sur le disque
+(`_tmp_bg_probe_film.png`, `_tmp_bg_probe_still.png`). SAUTÉE (exit 0) sans Chrome/Edge.
+
+Régressions relancées (`node _verify.cjs`, les 44 suites du viewer) : **44 suites, 1 seule
+rouge** — `_viewer_rings_gradient_test.mjs`, déjà rouge **avant** cette fonctionnalité
+(zone morte HF) et sans rapport avec le fond. Les suites qui touchent les lignes modifiées ont
+été **mises à jour** sur la vérité nouvelle de la source, et rien d'autre n'a bougé :
+`_viewer_ray_test.mjs` **189 assertions** (le nom de la still passe par `stillLabel` — le ✨ Ray
+REPREND ce nom quand la rampe recompose l'image — et le résultat part vers l'aperçu par
+`showRayPreview(still)`), `_viewer_film_match_test.mjs` **79 assertions** (les deux enregistreurs
+passent la **spécification** du fond ; ses deux aiguilles sur `filmCanvasFor` étaient **déjà
+périmées** par la couche d'ombre vivante, elles sont revenues sur la vérité d'aujourd'hui),
+`_viewer_ray_shadow_live_test.mjs` **166 assertions** (le 🎬 et le 🎞 des poses, même
+spécification), `_viewer_theme_snapshot_test.mjs` **67 assertions** (`backgroundGradient` dans
+l'environnement global), `_viewer_style_controls_test.mjs` **494** et `_viewer_ui_layout_test.mjs`
+**494** (le réglage 🎨 et la rangée 🌫 Scene n'ont pas bougé d'un caractère).
+`npx vite build` — ✓ ; `npx oxlint` sur les trois fichiers touchés — **0 erreur** (62
+avertissements, tous préexistants dans le viewer).
+
+

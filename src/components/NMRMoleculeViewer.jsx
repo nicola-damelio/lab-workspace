@@ -12,8 +12,20 @@ import { LIGHT_COLOR_DEFAULT, LIGHT_RIG, nglKeyLightDirection, nglLightParams, n
 // ✨ Ray from turning into a render that never comes back.
 import {
   RAY_FACTORS, RAY_DEFAULT_FACTOR, rayFactorOptions, rayPlanOf, rayProgressText,
-  previewRayImage, previewUrlOf, releasePreviewUrl, downloadBlob,
+  previewRayImage, previewUrlOf, releasePreviewUrl, downloadBlob, rayFileName,
 } from '../utils/viewerRayImage';
+// ⬚ LE FOND DE LA SCÈNE — une couleur, ou une RAMPE de deux couleurs et sa
+// direction (sa propre spec, voir src/utils/viewerBackground.js). NGL ne sait
+// peindre QU'une couleur (`setBackground` → `setClearColor(couleur, 0)` + la
+// couleur en `style.backgroundColor` du canvas) : la rampe vit donc dans le CSS
+// du canvas pour l'écran, dans la toile de film pour 🎬🎞, et SOUS le PNG
+// transparent du ✨ Ray. Les deux couleurs sont 'A' (la couleur de la scène, le
+// 🎨 de §2 Scene) et 'B', plus l'angle ; tout est validé par le module.
+import {
+  BG_DIRECTIONS, BG_GRADIENT_DEFAULT_ANGLE, BG_GRADIENT_DEFAULT_TO,
+  backgroundCss, backgroundSpecOf, bgDirectionOf, bgGradientOf,
+  paintViewerBackground, readBgGradient, underlayBackdrop,
+} from '../utils/viewerBackground';
 // 🎬 The VIDEO OF A TRAJECTORY — the run the ▶ button plays, written as one file
 // (its own module, see src/utils/viewerTrajectoryVideo.js). It records the very
 // canvas NGL is drawing into (`canvas.captureStream` + `MediaRecorder`), frame
@@ -1637,7 +1649,7 @@ const saveNamedMap = (key, map) => {
    written by another build is merged over the defaults and can never break the
    viewer. */
 const THEME_GLOBAL_KEYS = [
-  'fog', 'shadows', 'clip', 'background', 'quality', 'large', 'generalLook', 'palettes',
+  'fog', 'shadows', 'clip', 'background', 'backgroundGradient', 'quality', 'large', 'generalLook', 'palettes',
   'catStyles', 'catLabels', 'sidechainStyle', 'sstrucColors', 'selectedResidueColor', 'assignedAtomColor',
   // ⚠ ✨ Ray (facteur · fond transparent · ombre portée) et ⚡ ESP (les bornes du
   // dégradé) font partie de « l'environnement global » des deux modes : ce sont des
@@ -3111,6 +3123,16 @@ const MANUAL_COLOR_HEX = 0x16a34a;
 // live stage with `stage.setParameters({ backgroundColor })`, and part of a saved
 // setup — while the 🧪 PyMOL panel writes the same state (so both entries agree).
 const BG_DEFAULT = '#f8fafc';
+/* ⬚ LA RAMPE DU FOND — les DEUX couleurs et la DIRECTION de la demande de cette
+   session : « in the background of the viewer allow gradients of two colors and
+   their direction ». La PREMIÈRE couleur n'est pas gardée ici : c'est `bgColor`
+   (le 🎨 ci-dessus, que le panneau 🧪 PyMOL écrit aussi), donc il n'y a jamais
+   deux « fonds » à tenir d'accord — la rampe PART de la couleur de la scène.
+   Le reste — la seconde couleur, l'angle, l'interrupteur — vit sous cette clé,
+   en JSON, et il est VALIDÉ à chaque lecture par utils/viewerBackground (comme
+   le brouillard ou le fond : une valeur bricolée retombe sur le défaut par
+   défaut, jamais sur un fond cassé). */
+const BG_GRADIENT_KEY = 'labViewerBgGradient';
 
 // ---- Customisable viewer colours (persisted) --------------------------------
 // NGL's built-in "sstruc" colour scheme uses hard-coded colours. To let the user
@@ -7617,6 +7639,15 @@ trajectoryFormat = 'xtc',
 onStructureFile,
 onStructureSrc,
 onTrajectoryFile,
+// 📂 CE QUE LA PAGE AJOUTE À LA RANGÉE DES FICHIERS (§1 General) — la page MD y
+// pose ses deux boutons « 📂 Topology / 📂 Trajectory from Drive folder » (le
+// dossier de l'expérience sur le Drive, voir DriveExperimentFiles.jsx) pour
+// qu'ils soient SUR LA MÊME LIGNE que 📂 PDB file(s) et 📂 Trajectory. La demande,
+// mot pour mot : « the "topology from drive folder" and "trajectory from drive
+// folder" buttons should be in the same line as "PDB file" and "trajectory"
+// buttons ». Défaut `null` : les pages qui n'en fournissent pas (NMR, Docking) ne
+// voient AUCUN changement.
+fileRowExtra = null,
 driveNaming = null,   // naming context → archive chosen structure files to Drive
 onAtomClick,
 selectedKeys,
@@ -9712,6 +9743,32 @@ const [bgColor, setBgColor] = useState(() => {
   return BG_DEFAULT;
 });
 const [qualityHigh, setQualityHigh] = useState(false);
+/* ⬚ L'ÉTAT DE LA RAMPE (voir BG_GRADIENT_KEY) : relu au chargement comme le
+   fond, et VALIDÉ par le module — un magasin d'un autre build, ou bricolé à la
+   main, ne peut donner ni une couleur qui n'en est pas une ni un angle infini.
+   `bgPanelOpen` n'est PAS persisté : la demande veut qu'un clic sur le fond
+   fasse APPARAÎTRE le panneau et qu'un second clic le fasse partir — un
+   panneau qui se rouvrirait tout seul au rechargement irait contre ça. */
+const [bgGradient, setBgGradient] = useState(() => {
+  try { return readBgGradient(localStorage.getItem(BG_GRADIENT_KEY)); } catch { return readBgGradient(null); }
+});
+const [bgPanelOpen, setBgPanelOpen] = useState(false);
+/* LA SEULE ÉCRITURE : chaque contrôle du panneau (l'interrupteur, la couleur B,
+   l'angle, une direction, ⇄, ↺) passe par ici — donc par le validateur du
+   module, qui normalise l'angle et les deux couleurs d'un même geste. */
+const patchBgGradient = (patch) => setBgGradient((g) => bgGradientOf({ ...g, ...patch }));
+
+/* ⬚ LE FOND VIVANT — la rampe est une `backgroundImage` posée sur le canvas
+   NGL, PAR-DESSUS la couleur qu'NGL vient d'y écrire (voir le module : c'est
+   là que le fond de l'écran vit, la toile ayant un clear d'alpha zéro). Rien
+   n'est reconstruit, aucune représentation ne bouge. Éteinte, la chaîne vide
+   rend la main à la couleur de NGL — le fond uni d'avant, au pixel près. */
+const applyBackgroundGradient = useCallback(() => {
+  const stage = stageRef.current;
+  const el = stage && stage.viewer && stage.viewer.renderer ? stage.viewer.renderer.domElement : null;
+  if (!el || !el.style) return;
+  try { el.style.backgroundImage = backgroundCss(backgroundSpecOf(bgColor, bgGradient)); } catch { /* ignore */ }
+}, [bgColor, bgGradient]);
 
 // ---- Depth fog ----
 // NGL's default depth fog (fogNear 50 / fogFar 100) fades distant atoms toward
@@ -13348,7 +13405,23 @@ applyClip(); // honour the user's clipping-plane preference (off by default)
 applyShadowSettings(); // honour the user's shadow preference (off by default)
 
 stage.signals.clicked.add((pickingProxy) => {
-if (!pickingProxy || !pickingProxy.atom) return;
+/* ⬚ LE CLIC SUR LE FOND — la demande : « clicking on background should display
+   the options underneath and disappear when background is clicked again ». NGL
+   dispatche `clicked` MÊME quand rien n'a été piqué (PickingControls._onClick
+   fait `stage.signals.clicked.dispatch(pickingProxy)` sans condition, ngl 2.4) :
+   un pickingProxy SANS atome est un clic sur le fond, et il fait les deux gestes
+   de la demande — un clic ouvre le panneau du fond, le suivant le referme (un
+   seul état, donc un seul `setBgPanelOpen((v) => !v)`).
+   ⚠ UN SEUL DES DEUX GESTES À LA FOIS : pendant un piquage (⌖ la paire, ✏️ la
+   torsion, 📏 Measure, ✎ Rename) les clics appartiennent au piquage — même
+   quand ils tombent À CÔTÉ d'un atome, puisque c'est justement ainsi qu'on
+   vise le fond sans piquer l'atome voisin — donc aucun d'eux n'ouvre le
+   panneau du fond. */
+if (!pickingProxy || !pickingProxy.atom) {
+  if (pairPickRef.current || torsionPickRef.current || measureModeRef.current || renameModeRef.current) return;
+  setBgPanelOpen((v) => !v);
+  return;
+}
 const atom = pickingProxy.atom;
 // ⌖ Structure calculation: the distance table has its OWN pair picker — TWO atoms (A · B),
 // painted BLUE, with its own state (pairPickRef/pairAtomsRef): the four picks of ✏️ Torsion
@@ -16287,6 +16360,12 @@ const filmCanvasFor = (source, vignetteDarkness, background, shadowLayer = null)
            l'écran est blanc (voir le commentaire de la fabrique plus haut). */
         ctx.fillStyle = backdrop;
         ctx.fillRect(0, 0, w, h);
+        /* ⬚ …PUIS LA RAMPE, QUAND IL Y EN A UNE. Exactement comme le CSS empile
+           `backgroundImage` sur `backgroundColor` : la couleur reste dessous, la
+           rampe est peinte par-dessus — et `paintViewerBackground` ne fait RIEN
+           quand le fond est uni (le film d'avant, au pixel près). Le film suit
+           donc l'écran, dégradé compris : c'est tout le sujet de cette toile. */
+        paintViewerBackground(ctx, w, h, background);
         ctx.drawImage(source, 0, 0, w, h);
         /* ◐ L'OMBRE VIVANTE — la MÊME couche qui est à l'écran, et par le même
            chemin que la vignette : un `captureStream` ne voit pas une couche
@@ -16350,7 +16429,7 @@ const recordTrajectoryVideoClick = async () => {
   const vignetteDarkness = shadowOn
     ? (Number.isFinite(Number(shadowDarkness)) ? Number(shadowDarkness) : 0)
     : Number.NaN;
-  const film = filmCanvasFor(canvas, vignetteDarkness, bgColor, rayLiveOn ? rayShadowCanvasRef.current : null);
+  const film = filmCanvasFor(canvas, vignetteDarkness, backgroundSpecOf(bgColor, bgGradient), rayLiveOn ? rayShadowCanvasRef.current : null);
   // ONE driver of the frame at a time, and the scene is put back where it was.
   setPlaying(false);
   videoCancelRef.current = false;
@@ -16684,7 +16763,7 @@ const recordKeyframeFilmClick = async () => {
      viewer se ressembleraient seulement l'un à l'autre. */
   const kfFilmCanvas = filmCanvasFor(canvas, shadowOn
     ? (Number.isFinite(Number(shadowDarkness)) ? Number(shadowDarkness) : 0)
-    : Number.NaN, bgColor, rayLiveOn ? rayShadowCanvasRef.current : null);
+    : Number.NaN, backgroundSpecOf(bgColor, bgGradient), rayLiveOn ? rayShadowCanvasRef.current : null);
   const back = { state: captureViewerSetup(), pose: captureKeyframePoses() };
   const label = (file && file.name) || (trajFile && trajFile.name) || declaredTrajName || 'scene';
   setKfMsg(`${keyframeFilmSummary(keys.length, plan)}${plan.long ? ' · long film — keep this tab in the foreground' : ''}`);
@@ -18238,11 +18317,16 @@ useEffect(() => {
   const stage = stageRef.current;
   if (!stage) return;
   try { stage.setParameters({ backgroundColor: bgColor }); } catch {}
+  // ⬚ …ET LA RAMPE PAR-DESSUS CETTE COULEUR. NGL vient d'écrire la couleur sur
+  // son canvas (`setBackground`) : la rampe se pose dans le CSS du même canvas,
+  // donc APRÈS lui — et l'éteindre remet la chaîne vide, c'est-à-dire la
+  // couleur de NGL telle quelle.
+  applyBackgroundGradient();
   try { stage.setQuality(qualityHigh ? 'high' : 'medium'); } catch {}
   // setBackground re-colours the fog; re-apply the user's fog preference after
   // any background/quality change so a toggled-off fog stays off.
   applyFog();
-}, [bgColor, qualityHigh, status, applyFog]);
+}, [bgColor, qualityHigh, status, applyFog, applyBackgroundGradient]);
 
 // Persist the background colour of the scene (§3 Scene → 🎨 Background) so the
 // chosen colour survives a reload / another page — the effect above pushes it to
@@ -18250,6 +18334,14 @@ useEffect(() => {
 useEffect(() => {
   try { localStorage.setItem('labViewerBg', bgColor); } catch { /* ignore */ }
 }, [bgColor]);
+
+/* ⬚ LA RAMPE SE SOUVIENT D'ELLE AUSSI — la seconde couleur et la direction
+   (l'interrupteur compris), sous UNE clé JSON. C'est le même contrat que la
+   couleur qu'elle prolonge : une scène réglée est là au rechargement suivant,
+   sur n'importe quelle page. */
+useEffect(() => {
+  try { localStorage.setItem(BG_GRADIENT_KEY, JSON.stringify(bgGradient)); } catch { /* ignore */ }
+}, [bgGradient]);
 
 // Persist the fog preference and apply it to the live stage whenever it changes.
 useEffect(() => {
@@ -20792,6 +20884,24 @@ const rebuildHydrogensNow = async () => {
   flashRebuildMsg(`⚗️ Hydrogens rebuilt across ${result.residues} residues (${result.rebuilt} re-placed, names kept) — ${suffix}.`);
 };
 
+/* ⬚ LE PNG DU ✨ RAY QUAND LE FOND EST UN DÉGRADÉ — la rampe est peinte SOUS le
+   still rendu transparent (utils/viewerBackground : `underlayBackdrop`). Le
+   NOUVEAU PNG reprend le nom du fichier de la still : sa taille et sa date ne
+   bougent pas, et son suffixe « _transparent » disparaît puisque le fond est de
+   nouveau OPAQUE (la rampe). Si le navigateur ne sait pas décoder ou ré-encoder
+   l'image, la still d'origine est gardée TELLE QUELLE : un rendu n'est jamais
+   perdu pour un fond, et rien de tout cela ne lève jamais. */
+const rayStillWithBackdrop = async (out, backdrop, label) => {
+  const png = await underlayBackdrop(out.blob, backdrop);
+  if (!png) return out;
+  return {
+    ...out,
+    blob: png,
+    transparent: false,
+    fileName: rayFileName({ label, width: out.width, height: out.height, transparent: false }),
+  };
+};
+
 /* ---- ✨ Ray — the high-resolution STILL of the current scene -----------------
    Its OWN button and its own handler: ✨ Ray renders the scene on screen — every
    palette, the ring plates, the ESP overlays, the clipping plane, the fog, the
@@ -20831,10 +20941,21 @@ const captureRay = async () => {
     // Elevation, see nglKeyLightDirection) and the strength chosen in the bar.
     // `shadows: false` is the plain supersampled still NGL drew before.
     const lamp = nglKeyLightDirection(shadowAz, shadowEl);
+    const stillLabel = file ? file.name : (pdbId || 'structure');
+    /* ⬚ LE FOND DÉGRADÉ ET LE ✨ RAY. NGL rend le still d'un seul tenant, avec un
+       fond OPAQUE (`makeImage` fait `setClearAlpha(s?0:1)`, ngl 2.4) et d'UNE
+       seule couleur : une still de fond dégradé sortirait donc UNIE — la couleur
+       A. La still est donc rendue TRANSPARENTE quand la rampe est allumée (et
+       seulement alors, et jamais si l'utilisateur a déjà demandé « ⬚ alpha » :
+       dans ce cas sa transparence est sa réponse, on n'y touche pas), puis
+       `underlayBackdrop` peint la rampe SOUS le PNG (voir utils/viewerBackground) :
+       le fichier montre alors exactement ce que l'écran montre, coin par coin. */
+    const backdrop = backgroundSpecOf(bgColor, bgGradient);
+    const gradientStill = !!backdrop.on && !rayTransparent;
     const out = await previewRayImage(stage, {
-      label: file ? file.name : (pdbId || 'structure'),
+      label: stillLabel,
       factor: rayFactor,
-      transparent: rayTransparent,
+      transparent: rayTransparent || gradientStill,
       onProgress: (done, total) => {
         if (rayRunRef.current !== run) return;
         const slow = Date.now() - startedAt > RAY_SLOW_HINT_MS;
@@ -20857,9 +20978,13 @@ const captureRay = async () => {
        est à l'écran (showRayPreview), et les deux seuls gestes qui restent sont
        le 💾 de l'aperçu (saveRayPreviewFile — le fichier que l'aperçu montre) et
        sa fermeture, qui n'écrit rien. Le message dit la taille RÉELLE, la
-       transparence et ce qu'ont coûté les ombres portées. */
-    showRayPreview(out);
-    setRayMsg(`✓ ${out.width}×${out.height} px rendered${out.transparent ? ' · transparent' : ''}${out.shadowNote ? ` ${out.shadowNote}` : ''}${out.queueNote ? ` ${out.queueNote}` : ''} — the preview is on screen: 💾 Save PNG writes the file`);
+       transparence et ce qu'ont coûté les ombres portées.
+       ⬚ Une still de fond DÉGRADÉ est passée par rayStillWithBackdrop AVANT
+       d'être montrée : ce qui est à l'écran EST le fichier, rampe comprise. */
+    const still = gradientStill ? await rayStillWithBackdrop(out, backdrop, stillLabel) : out;
+    if (rayRunRef.current !== run) return;
+    showRayPreview(still);
+    setRayMsg(`✓ ${still.width}×${still.height} px rendered${still.transparent ? ' · transparent' : ''}${gradientStill ? ' · gradient background' : ''}${out.shadowNote ? ` ${out.shadowNote}` : ''}${out.queueNote ? ` ${out.queueNote}` : ''} — the preview is on screen: 💾 Save PNG writes the file`);
   } catch (err) {
     if (rayRunRef.current === run) {
       /* LE CONSEIL VIENT DU MODULE quand il en a un (`err.hint` : contexte WebGL
@@ -21359,6 +21484,12 @@ const captureViewerSetup = () => ({
   shadows: { on: shadowOn, darkness: shadowDarkness, az: shadowAz, el: shadowEl, color: lightColor },
   clip: { on: clipOn, near: clipNear, far: clipFar, dist: clipDist },
   background: bgColor,
+  /* ⬚ …ET LA RAMPE QUI PART DE CETTE COULEUR (la seconde couleur, l'angle,
+     l'interrupteur) : la demande dit « two colors and their direction », donc
+     une figure enregistrée doit revenir avec SA rampe — comme elle revient avec
+     son brouillard et ses ombres. Le lecteur la revalide (bgGradientOf) : un
+     fichier d'un autre build, ou bricolé, ne peut pas peindre un fond cassé. */
+  backgroundGradient: bgGradient,
   quality: qualityHigh,
   large: { style: largeStyle, water: showLargeWater },
   // The ⚙ settings wheel belongs to « the whole visualisation setup » too: the two
@@ -21599,6 +21730,14 @@ const applyViewerSetup = (s) => {
   if (Number.isFinite(cl.far)) setClipFar(cl.far);
   if (Number.isFinite(cl.dist)) setClipDist(cl.dist);
   if (typeof s.background === 'string' && /^#[0-9a-fA-F]{6}$/.test(s.background)) setBgColor(s.background);
+  /* ⬚ LA RAMPE DU FOND, relue par le VALIDATEUR du module (bgGradientOf) : un
+     fichier qui n'en a pas laisse le dégradé où il est — c'est ce qui fait
+     qu'un setup écrit AVANT cette fonctionnalité ne change rien au fond — et un
+     objet bricolé (une couleur nommée, un angle infini) retombe sur les
+     valeurs sûres au lieu de peindre un fond cassé. Le champ est DANS
+     THEME_GLOBAL_KEYS : les ⚙️ thèmes cumulatifs et les photographies
+     l'emportent, comme le fond uni qu'il prolonge. */
+  if (s.backgroundGradient && typeof s.backgroundGradient === 'object') setBgGradient(bgGradientOf(s.backgroundGradient));
   if (typeof s.quality === 'boolean') setQualityHigh(s.quality);
   const lg = s.large || {};
   if (typeof lg.style === 'string') setLargeStyle(lg.style);
@@ -23595,6 +23734,11 @@ className="hidden"
 {(trajFile || trajectoryFile).name}
 </span>
 )}
+{/* 📂 CE QUE LA PAGE AJOUTE À CETTE RANGÉE (voir `fileRowExtra`) — sur la page
+    MD, les deux boutons « 📂 Topology / 📂 Trajectory from Drive folder ». Ils
+    sont posés JUSTE APRÈS 📂 PDB file(s) et 📂 Trajectory : c'est la même ligne,
+    et un seul `null` pour les pages qui n'en passent pas (NMR, Docking). */}
+{fileRowExtra}
 {/* ⬇ PDB — the structure as a file, with the coordinates of the frame the
     ▶ playback bar is displaying right now (a trajectory snapshot); without a
     trajectory it simply saves the loaded structure. Depuis cette session, le fichier
@@ -23730,6 +23874,20 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
   className="px-0.5 py-1 text-[11px] font-bold rounded text-slate-500 hover:text-slate-900 hover:bg-slate-100"
   title={`↺ Back to the default background (${BG_DEFAULT})`}>
   ↺
+</button>
+{/* ⬚ LE BOUTON DU FOND-DÉGRADÉ — la demande de cette session : « in the
+    background of the viewer allow gradients of two colors and their direction ».
+    Le panneau s'ouvre d'un CLIC SUR LE FOND de la vue (voir le signal `clicked`) ;
+    ce bouton est le MÊME geste depuis la barre — donc au clavier aussi, et sans
+    avoir à viser le fond — et il dit son état (`aria-expanded` + `aria-controls`,
+    la teinte bleue pour le dégradé ALLUMÉ). Il ne change rien à lui seul : c'est
+    l'interrupteur ⬚ Gradient du panneau qui peint la rampe. */}
+<button type="button" onClick={() => setBgPanelOpen((v) => !v)}
+  aria-expanded={bgPanelOpen}
+  aria-controls="viewer-background"
+  className={`px-1 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 ${bgGradient.on ? 'bg-sky-100 border-sky-400 text-sky-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+  title={`⬚ Background options — ${bgPanelOpen ? 'OPEN right now: this button closes them (so does a click on the background of the 3D view).' : 'CLOSED right now: this button opens them under the 3D view — two colours and their direction — and so does a click on the background itself.'} ${bgGradient.on ? `The gradient is ON (A ${bgColor} → B ${bgGradient.to}, ${bgGradient.angle}°).` : 'The gradient is OFF: the scene keeps its flat colour (A), which the 🎨 swatch beside this button sets.'} The ramp never touches the scene: NGL paints one colour and the ramp lives in the CSS of its canvas, so no representation is rebuilt — and the 🎬🎞 films and the ✨ Ray still take the very same ramp.`}>
+  ⬚
 </button>
 <button type="button" onClick={() => setShadowOn((v) => !v)}
   aria-pressed={shadowOn}
@@ -25356,6 +25514,86 @@ style={{ height: (viewerCollapsed ? 0 : viewH) + 'px' }}
             style={{ display: rayLiveOn ? 'block' : 'none' }}
           />
 
+{/* ⬚ LE PANNEAU DU FOND — LA DEMANDE DE CETTE SESSION : « clicking on background
+    should display the options underneath and disappear when background is clicked
+    again ». Il est posé DANS la vue, en bas de la rangée du fond : le clic qui
+    l'ouvre tombe sur le fond, et le clic suivant — n'importe où sur le fond — le
+    referme (voir le signal `clicked` d'NGL). Il ne prend AUCUN clic destiné à la
+    scène : il est À CÔTÉ du div d'NGL, jamais dedans, et son ⇤ le referme aussi.
+    Ce qu'il porte, et rien d'autre : l'interrupteur de la rampe, ses DEUX couleurs
+    (A = la couleur de la scène, celle du 🎨 de §2 Scene et du panneau 🧪 PyMOL ;
+    B = l'autre bout), ⇄ pour les échanger, les HUIT directions d'un clic, le
+    curseur d'angle (0–360°) et ↺ pour revenir à la rampe d'origine. */}
+{bgPanelOpen && (
+  <div id="viewer-background"
+    role="group" aria-label="Background of the 3D scene — one colour, or a gradient of two colours with its direction"
+    className="absolute left-2 right-2 bottom-2 z-30 flex flex-wrap items-center gap-1.5 rounded-xl border border-sky-300 bg-white/95 px-2 py-1.5 shadow-lg">
+    <span className="text-[10px] font-black text-sky-700 uppercase tracking-wide whitespace-nowrap"
+      title="The background of the 3D scene itself. NGL can only paint ONE colour, so the gradient lives in the CSS of the canvas (the canvas is cleared with alpha 0 — the colour you see through it IS its CSS background): turning it on therefore changes nothing in the scene, no representation is rebuilt, and the ✨ Ray still and the 🎬🎞 films take the same ramp. Saved with the page like the fog and the shadows, and carried by a ⚙️ saved setup.">⬚ Background</span>
+    <button type="button" onClick={() => patchBgGradient({ on: !bgGradient.on })}
+      aria-pressed={bgGradient.on}
+      className={`px-1.5 py-1 h-7 text-[10px] font-bold rounded-md border whitespace-nowrap transition-colors ${bgGradient.on ? 'bg-sky-100 border-sky-400 text-sky-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+      title={bgGradient.on
+        ? 'ON right now: the scene is painted with the two-colour ramp below (A → B, in the direction of the arrow you picked). This button puts the flat colour back (A alone — the 🎨 of §2 Scene).'
+        : 'OFF right now: the scene is painted with the FLAT colour A (the 🎨 of §2 Scene). This button paints the two-colour ramp instead, in the direction of the arrow you pick.'}>
+      ⬚ Gradient
+    </button>
+    <label className="flex items-center gap-0.5 cursor-pointer whitespace-nowrap"
+      title="A — the FIRST colour of the ramp, and the colour the scene has on its own: it is the very same value as the 🎨 of §2 Scene and of the 🧪 PyMOL panel (one single state, so the two can never disagree). It is also the colour the depth fog fades toward, and the colour an OFF gradient paints the scene with.">
+      <span className="text-[10px] font-black text-slate-500">A</span>
+      <input type="color" value={bgColor} onChange={(e) => setBgColor(e.target.value)}
+        className="w-7 h-6 border border-slate-300 rounded cursor-pointer" aria-label="Background colour (first colour of the ramp)" />
+    </label>
+    <button type="button" onClick={() => { const a = bgColor; setBgColor(bgGradient.to); patchBgGradient({ to: a }); }}
+      className="px-1.5 py-1 h-7 text-[11px] font-bold rounded-md border bg-white border-slate-300 text-slate-600 hover:bg-slate-100"
+      title="⇄ Swap the two ends of the ramp: A becomes B and B becomes A — the colours change places, the direction does not. The scene's own colour (🎨 of §2 Scene) follows, because A IS that colour.">
+      ⇄
+    </button>
+    <label className="flex items-center gap-0.5 cursor-pointer whitespace-nowrap"
+      title="B — the SECOND colour of the ramp, the end the arrow points at. Ignored while ⬚ Gradient is OFF (the scene is then painted with A alone), kept ready for the next time you turn it on.">
+      <span className="text-[10px] font-black text-slate-500">B</span>
+      <input type="color" value={bgGradient.to} onChange={(e) => patchBgGradient({ to: e.target.value })}
+        className="w-7 h-6 border border-slate-300 rounded cursor-pointer" aria-label="Background gradient second colour" />
+    </label>
+    <span className="flex items-center gap-0.5" role="group" aria-label="Gradient direction">
+      {BG_DIRECTIONS.map((d) => (
+        <button key={d.key} type="button" onClick={() => patchBgGradient({ angle: d.angle })}
+          aria-pressed={bgGradient.angle === d.angle}
+          className={`w-6 h-7 text-[11px] font-black rounded-md border transition-colors ${bgGradient.angle === d.angle ? 'bg-sky-100 border-sky-400 text-sky-800' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-100'}`}
+          title={`Paint the ramp ${d.what} (${d.angle}°) — A sits at the starting end, B at the end the arrow points at.`}>
+          {d.glyph}
+        </button>
+      ))}
+    </span>
+    <label className="flex items-center gap-0.5 whitespace-nowrap"
+      title="The exact angle of the ramp, in the CSS convention: 0° runs from the BOTTOM to the TOP, 90° from the left to the right, 180° from the top to the bottom, 270° from the right to the left. The eight arrows on the left are the eight angles you can also reach here by hand.">
+      <span className="text-[10px] font-bold text-slate-700">angle</span>
+      <input type="range" min="0" max="360" step="1" value={bgGradient.angle}
+        onChange={(e) => patchBgGradient({ angle: Number(e.target.value) })}
+        className="w-20 accent-sky-600" aria-label="Gradient angle in degrees" />
+      <span className="text-[10px] text-slate-500 w-8">{bgGradient.angle}°</span>
+    </label>
+    <button type="button" onClick={() => patchBgGradient({ on: false, to: BG_GRADIENT_DEFAULT_TO, angle: BG_GRADIENT_DEFAULT_ANGLE })}
+      className="px-1.5 py-1 h-7 text-[10px] font-bold rounded-md border bg-white border-slate-300 text-slate-600 hover:bg-slate-100 whitespace-nowrap"
+      title={`↺ Back to the ramp as it comes (B ${BG_GRADIENT_DEFAULT_TO}, ↓ top → bottom) and ⬚ Gradient OFF — a flat background. The colour A (the 🎨 of §2 Scene) is NOT touched: use its own ↺ for that.`}>
+      ↺
+    </button>
+    <button type="button" onClick={() => setBgPanelOpen(false)}
+      className="ml-auto px-1.5 py-1 h-7 text-[10px] font-bold rounded-md border bg-white border-slate-300 text-slate-600 hover:bg-slate-100"
+      title="Close these options — a click on the background of the 3D view brings them back (and so does the ⬚ button of §2 Toolbar → 🌫 Scene). Closing them changes nothing to the scene.">
+      ⇤
+    </button>
+    {/* LA LIGNE QUI DIT LA RAMPE — elle n'apparaît que quand elle est ALLUMÉE :
+        éteint, le panneau n'imprime rien de ce qui ne se voit pas. Le nom de la
+        direction vient des mêmes huit entrées que les boutons (bgDirectionOf) :
+        un angle libre n'a pas de nom, et dit alors ses degrés. */}
+    {bgGradient.on && (
+      <span className="w-full text-[9px] text-slate-500 leading-tight">
+        The ramp runs {bgDirectionOf(bgGradient.angle)?.what || `${bgGradient.angle}°`} — A <b>{bgColor}</b> → B <b>{bgGradient.to}</b>. It paints the screen, the 🎬🎞 films and the ✨ Ray still; a click on the background closes these options.
+      </span>
+    )}
+  </div>
+)}
 {/* ── ✏️ LA FENÊTRE DE TORSION — DANS LA VUE 3D, PAS DANS LA BARRE ────────────
     La demande : « The torsion section must be drastically reduced. eliminate
     comments and eliminate the "model build" button. when clicking on torsion do

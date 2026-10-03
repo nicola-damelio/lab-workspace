@@ -16,6 +16,10 @@ import { sequenceForMoleculeType, sequencePatchForMoleculeType, structureSequenc
    NMR, MD et Docking, et la fiche du composé de la Librairie), et le MÊME modèle que le ⚙
    « Params & Constraints » lit pour le pH. */
 import { SequenceReadingLine } from './SequenceReadingLine';
+/* 🎨 LA CASE DE SÉQUENCE, LETTRES COLORÉES (la demande) — le même composant que les pages NMR
+   et MD : les cinq lettres de utils/sequenceHighlight.js y sont PEINTES (K · R bleu, E · D
+   rouge, C orange) dans une couche sous un vrai `<textarea>`. */
+import { SequenceField } from './SequenceField';
 // LE numéro affiché d'un résidu (position + residueOffset → table 🔢 du viewer) :
 // les pastilles de « Sequence and structure » montrent les mêmes numéros que le
 // viewer 3D et que la table des déplacements.
@@ -591,11 +595,14 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
               <label className="block text-xs font-bold text-slate-500 uppercase mb-2">
                 {d.typeLabel} Sequence (1-letter code)
               </label>
-              <textarea
+              {/* 🎨 LA CASE COLORÉE (la demande) — le même composant que les pages NMR et MD :
+                  SequenceField peint K · R en bleu, E · D en rouge, C en orange dans une couche
+                  SOUS un vrai `<textarea>` (saisie, curseur, sélection, collage et
+                  annuler/rétablir inchangés), et l'écriture passe toujours par le même patch. */}
+              <SequenceField
                 value={d.rawSequence}
-                onChange={(e) => updateActiveTest(sequencePatchForMoleculeType(activeTest, d.moleculeType, e.target.value))}
-                className="w-full border border-slate-300 rounded-lg p-3 font-mono text-sm tracking-widest outline-none focus:border-blue-500 uppercase h-24 shadow-inner"
-                placeholder={d.moleculeType === 'protein' ? 'e.g. MKWVTFISLL...' : 'e.g. ATGCGTAC...'}
+                onChange={(v) => updateActiveTest(sequencePatchForMoleculeType(activeTest, d.moleculeType, v))}
+                moleculeType={d.moleculeType}
               />
               <p className="text-[10px] text-slate-400 mt-1 font-bold">
                 Length: {d.seq.length} {d.moleculeType === 'protein' ? 'residues' : 'nucleotides'}

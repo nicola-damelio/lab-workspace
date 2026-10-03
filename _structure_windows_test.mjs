@@ -31,6 +31,12 @@
        carte 3D (« sans occuper une rangée »), et les commandes de fichiers du
        dossier de l'expérience (📂 Topologie / 📂 Trajectoire) vivent DANS la
        carte du viewer ;
+     • ET DEPUIS CETTE SESSION : le 💡 « Click an atom in the formula (or in the
+       3D viewer below) … » de la page MD a été RETIRÉ (la rangée formule + 📓
+       coûtait deux lignes), et les DEUX 📂 du dossier de l'expérience ne font
+       plus une rangée À EUX au-dessus du viewer : ils sont passés au viewer
+       (prop `fileRowExtra`) pour tenir SUR LA LIGNE de 📂 PDB file(s) et
+       📂 Trajectory (§1 General) ;
      • sur Docking, le champ « Receptor topology (PDB ID / URL) » — qui
        n'apparaissait qu'en mode 3D — vit lui aussi dans la carte du viewer, et le
        rappel « No structure to display yet » de l'ancien volet 2D reste dit ;
@@ -47,6 +53,7 @@ const read = (p) => readFileSync(p, 'utf8').replace(/\r\n/g, '\n');
 const MD = read('src/components/MDSections.jsx');
 const DOCK = read('src/components/DockingSections.jsx');
 const SEC = read('src/components/NMRSections.jsx');
+const VIEW = read('src/components/NMRMoleculeViewer.jsx');
 const UI = read('src/components/ui.jsx');
 
 let passed = 0;
@@ -101,9 +108,17 @@ const mdFormulaBody = MD.slice(mdFormula, mdFormulaEnd);
 has(mdFormulaBody, '<OrganicViewer smiles={activeTest.smiles || activeTest.ligandSmiles}',
   '[MD] un SMILES est dessiné par OrganicViewer (comme l’ancien volet « 2D Formula »)');
 has(mdFormulaBody, '<StructureSVGView', '[MD] une séquence / un sucre / un lipide par StructureSVGView');
-has(mdFormulaBody, '💡 Click an atom in the formula (or in the 3D viewer below)',
-  '[MD] …avec le 💡 de la formule, qui dit maintenant où sont les deux dessins');
 has(mdFormulaBody, '📓 Formula → Notebook', '[MD] …et le 📓 de la formule, qui agit sur elle');
+/* ⚠ LE 💡 « Click an atom in the formula (or in the 3D viewer below) to highlight
+   its cell in the atom table. » A ÉTÉ RETIRÉ (demande de cette session, mot pour
+   mot : « in the viewer remove the sentence “Click an atom in the 3D viewer to
+   highlight its cell in the atom table.” so that we save a line ») : trop longue
+   pour tenir à côté du 📓, elle faisait coûter DEUX lignes à la rangée. Rien
+   d'autre ne bouge : piquer un atome (formule 2D ou vue 3D) souligne toujours sa
+   cellule de tableau. */
+gone(MD, '<p className="text-xs text-slate-400">💡 Click an atom in the formula',
+  '[MD] le 💡 de la formule a été RETIRÉ (une ligne de gagnée)');
+has(mdFormulaBody, 'flex justify-end', '[MD] …le 📓 reste seul dans sa rangée, à droite comme avant');
 
 eq(count(MD, 'title="Sequence and structure"'), 2,
   '[MD] deux cartes « Sequence and structure » (protéine / acide nucléique)');
@@ -161,11 +176,36 @@ has(md3Dcard, '🔍 Focus', '[MD] le 🔍 Focus vit dans l’en-tête de la cart
 has(md3Dcard, '✖ Deselect', '[MD] …avec le ✖ Deselect');
 has(md3Dcard, 'onClick={() => updateActiveTest({ selectedAtomKeys: [] })}',
   '[MD] …qui déselectionne comme avant');
-has(md3Dcard, '📂 Topology from Drive folder', '[MD] la topologie du dossier se choisit DANS la carte 3D');
-has(md3Dcard, '📂 Trajectory from Drive folder', '[MD] …la trajectoire aussi');
+has(md3Dcard, 'fileRowExtra={folderFilePickers}', '[MD] les deux 📂 du dossier de l’expérience partent AU VIEWER');
 has(md3Dcard, '<NMRMoleculeViewer', '[MD] …et le viewer est dans la même carte');
 has(MD, 'const [viewerOpen, setViewerOpen] = useState(false);', '[MD] `viewerOpen` ne pilote plus le montage');
 has(MD, '}, [viewerOpen]);', '[MD] …il ne sert qu’à recaler le viewer sur la largeur réelle');
+
+/* ════════════ 2ter. LES DEUX 📂 DU DOSSIER SUR LA LIGNE DES FICHIERS ═════════ */
+/* Demande, mot pour mot : « the "topology from Drive folder" and "trajectory from
+   drive folder" buttons should be in the same line as "PDB file" and "trajectory"
+   buttons ». Les deux boutons ne font donc plus une rangée À EUX au-dessus du
+   viewer : ils sont définis UNE fois (`folderFilePickers`) et passés au viewer, qui
+   les rend DANS sa rangée §1 General — celle de 📂 PDB file(s) et de 📂 Trajectory.
+   Rien n'est perdu : la phrase « Choosing a file here opens it AND declares it… »
+   est passée dans leurs infobulles. */
+has(MD, 'const folderFilePickers = (', '[MD] les deux 📂 du dossier ont UNE définition');
+has(MD, 'label="📂 Topology from Drive folder"', '[MD] …la topologie du dossier');
+has(MD, 'label="📂 Trajectory from Drive folder"', '[MD] …et la trajectoire du dossier');
+has(MD, 'Nothing is uploaded again.', '[MD] …leurs infobulles disent ce que la phrase disait (rien n’est perdu)');
+gone(MD, '<div className="flex flex-wrap items-start gap-2 mb-2">',
+  '[MD] plus de rangée à eux deux (elle coûtait une ligne au-dessus du viewer)');
+has(VIEW, 'fileRowExtra = null,', '[viewer] la rangée §1 General accepte les commandes de la PAGE');
+has(VIEW, '{fileRowExtra}', '[viewer] …et elle les rend dans la rangée des fichiers');
+{
+  const iExtra = VIEW.indexOf('{fileRowExtra}');
+  const iTraj = VIEW.lastIndexOf('📂 Trajectory', iExtra);
+  const iPdb = VIEW.indexOf('⬇ PDB{trajStatus', iExtra);
+  ok(iExtra > 0 && iTraj > 0 && iPdb > iExtra,
+    '[viewer] …JUSTE après 📂 PDB file(s) / 📂 Trajectory et AVANT ⬇ PDB : la même ligne');
+}
+eq(count(SEC, 'fileRowExtra'), 0, '[NMR] la page NMR n’en passe pas : le défaut `null` ne rend rien');
+eq(count(DOCK, 'fileRowExtra'), 0, '[Docking] …la page Docking non plus');
 
 const dkFlex = at(DOCK, '<div className="flex flex-col">', '[Docking] les deux cartes sont dans UN empilement');
 const dk3D = at(DOCK, 'title="3D viewer"', '[Docking] le viewer 3D a SA sous-section repliable');

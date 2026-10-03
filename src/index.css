@@ -111,3 +111,241 @@ table td .text-xs, table th .text-xs {
 .cite-ref:hover {
   text-decoration: underline;
 }
+
+
+/* ===========================================================================
+   INTERFACE SKINS — the whole program re-painted from one attribute.
+
+   Tailwind v4 compiles every colour utility to a THEME VARIABLE
+   (`bg-slate-800` → `background-color: var(--color-slate-800)`,
+   `text-white` → `color: var(--color-white)`), and those variables live in
+   @layer theme. The blocks below are UNLAYERED, so they win over that layer,
+   and they are keyed on `[data-skin="…"]` instead of `:root`: the custom
+   properties inherited by every descendant, a skin can therefore be applied to
+   <html> (the whole program, see src/utils/uiSkin.js + main.jsx) AND to any
+   small element — which is how Settings shows a live miniature of each skin.
+
+   Choosing a skin changes NO class and NO component: the neutral scale, the
+   accent and (for `dim`) the white are restated, so every page, modal, badge,
+   button, table and chip of the program follows at once.
+
+   The values are not invented: each skin either SWAPS two of Tailwind's own
+   ramps or restates a ramp stop for stop, and the probe test
+   (node _ui_skin_test.cjs) recomputes the WCAG contrast of the pairs the
+   program actually writes — no skin may cost more than 1.5 steps of contrast
+   against the shipped palette, anywhere.
+
+   The reference skin (Slate & blue) has NO block: it IS Tailwind's values, and
+   applying it removes the attribute.
+   ========================================================================= */
+
+/* ── Graphite — the neutral scale of ZINC: the blue cast slate carries
+   everywhere is gone, pure grey chrome on the same blue accent. */
+[data-skin="graphite"] {
+  --color-slate-50: oklch(98.5% 0 0);
+  --color-slate-100: oklch(96.7% 0.001 286.375);
+  --color-slate-200: oklch(92% 0.004 286.32);
+  --color-slate-300: oklch(87.1% 0.006 286.286);
+  --color-slate-400: oklch(70.5% 0.015 286.067);
+  --color-slate-500: oklch(55.2% 0.016 285.938);
+  --color-slate-600: oklch(44.2% 0.017 285.786);
+  --color-slate-700: oklch(37% 0.013 285.805);
+  --color-slate-800: oklch(27.4% 0.006 286.033);
+  --color-slate-900: oklch(21% 0.006 285.885);
+  --color-slate-950: oklch(14.1% 0.005 285.823);
+}
+
+/* ── Warm paper — the neutral scale of STONE: warm grey ink and borders, a
+   “paper” page, on the same blue accent. */
+[data-skin="warm"] {
+  --color-slate-50: oklch(98.5% 0.001 106.423);
+  --color-slate-100: oklch(97% 0.001 106.424);
+  --color-slate-200: oklch(92.3% 0.003 48.717);
+  --color-slate-300: oklch(86.9% 0.005 56.366);
+  --color-slate-400: oklch(70.9% 0.01 56.259);
+  --color-slate-500: oklch(55.3% 0.013 58.071);
+  --color-slate-600: oklch(44.4% 0.011 73.639);
+  --color-slate-700: oklch(37.4% 0.01 67.558);
+  --color-slate-800: oklch(26.8% 0.007 34.298);
+  --color-slate-900: oklch(21.6% 0.006 56.043);
+  --color-slate-950: oklch(14.7% 0.004 49.25);
+}
+
+/* ── Indigo — the accent of INDIGO. The two blues SWAP places (the app's own
+   indigo accents are its secondary accent): the primary turns indigo — one
+   stop darker, so every white-on-blue label gains a step — and every indigo
+   accent turns blue. */
+[data-skin="indigo"] {
+  --color-blue-50: oklch(96.2% 0.018 272.314);
+  --color-blue-100: oklch(93% 0.034 272.788);
+  --color-blue-200: oklch(87% 0.065 274.039);
+  --color-blue-300: oklch(78.5% 0.115 274.713);
+  --color-blue-400: oklch(67.3% 0.182 276.935);
+  --color-blue-500: oklch(58.5% 0.233 277.117);
+  --color-blue-600: oklch(51.1% 0.262 276.966);
+  --color-blue-700: oklch(45.7% 0.24 277.023);
+  --color-blue-800: oklch(39.8% 0.195 277.366);
+  --color-blue-900: oklch(35.9% 0.144 278.697);
+  --color-blue-950: oklch(25.7% 0.09 281.288);
+  --color-indigo-50: oklch(97% 0.014 254.604);
+  --color-indigo-100: oklch(93.2% 0.032 255.585);
+  --color-indigo-200: oklch(88.2% 0.059 254.128);
+  --color-indigo-300: oklch(80.9% 0.105 251.813);
+  --color-indigo-400: oklch(70.7% 0.165 254.624);
+  --color-indigo-500: oklch(62.3% 0.214 259.815);
+  --color-indigo-600: oklch(54.6% 0.245 262.881);
+  --color-indigo-700: oklch(48.8% 0.243 264.376);
+  --color-indigo-800: oklch(42.4% 0.199 265.638);
+  --color-indigo-900: oklch(37.9% 0.146 265.522);
+  --color-indigo-950: oklch(28.2% 0.091 267.935);
+}
+
+/* ── Violet — the accent of VIOLET: the same swap one hue further, violet
+   primary and blue secondary. The two ramps are 1:1 in lightness, so the
+   contrast of every label on an accent is exactly what the program had. */
+[data-skin="violet"] {
+  --color-blue-50: oklch(96.9% 0.016 293.756);
+  --color-blue-100: oklch(94.3% 0.029 294.588);
+  --color-blue-200: oklch(89.4% 0.057 293.283);
+  --color-blue-300: oklch(81.1% 0.111 293.571);
+  --color-blue-400: oklch(70.2% 0.183 293.541);
+  --color-blue-500: oklch(60.6% 0.25 292.717);
+  --color-blue-600: oklch(54.1% 0.281 293.009);
+  --color-blue-700: oklch(49.1% 0.27 292.581);
+  --color-blue-800: oklch(43.2% 0.232 292.759);
+  --color-blue-900: oklch(38% 0.189 293.745);
+  --color-blue-950: oklch(28.3% 0.141 291.089);
+  --color-violet-50: oklch(97% 0.014 254.604);
+  --color-violet-100: oklch(93.2% 0.032 255.585);
+  --color-violet-200: oklch(88.2% 0.059 254.128);
+  --color-violet-300: oklch(80.9% 0.105 251.813);
+  --color-violet-400: oklch(70.7% 0.165 254.624);
+  --color-violet-500: oklch(62.3% 0.214 259.815);
+  --color-violet-600: oklch(54.6% 0.245 262.881);
+  --color-violet-700: oklch(48.8% 0.243 264.376);
+  --color-violet-800: oklch(42.4% 0.199 265.638);
+  --color-violet-900: oklch(37.9% 0.146 265.522);
+  --color-violet-950: oklch(28.2% 0.091 267.935);
+}
+
+/* ── Dimmed — a pared-back white, for long sessions in front of the screen.
+   The glaring #fff becomes a soft #f1f4f6, the page sits BELOW the cards
+   (slate-50 is now darker than the white, which is what makes the layout read
+   at night), the accent loses part of its chroma, and borders and captions
+   GAIN a step: nothing is inverted, so every chart, canvas and figure keeps
+   the ink it was drawn with. */
+[data-skin="dim"] {
+  --color-white: oklch(96.5% 0.004 250);
+  --color-slate-50: oklch(94% 0.006 250);
+  --color-slate-100: oklch(91.5% 0.008 250);
+  --color-slate-200: oklch(85% 0.012 252);
+  --color-slate-300: oklch(78% 0.018 253);
+  --color-slate-400: oklch(63% 0.03 256);
+  --color-slate-500: oklch(52% 0.04 257);
+  --color-slate-600: oklch(42% 0.04 257);
+  --color-slate-700: oklch(34% 0.04 257);
+  --color-slate-800: oklch(25.5% 0.04 260);
+  --color-slate-900: oklch(19% 0.04 264);
+  --color-slate-950: oklch(12% 0.04 264);
+  --color-blue-50: oklch(94% 0.02 254);
+  --color-blue-100: oklch(89% 0.04 255);
+  --color-blue-200: oklch(83% 0.07 254);
+  --color-blue-300: oklch(75% 0.11 252);
+  --color-blue-400: oklch(66% 0.15 255);
+  --color-blue-500: oklch(58% 0.18 260);
+  --color-blue-600: oklch(50.5% 0.17 262);
+  --color-blue-700: oklch(45% 0.16 264);
+  --color-blue-800: oklch(39% 0.14 266);
+  --color-blue-900: oklch(35% 0.11 266);
+  --color-blue-950: oklch(26% 0.08 268);
+}
+
+/* ── High contrast — WCAG-leaning ink and borders. Every ink and every border
+   takes a step towards black (the captions that were #94a3b8 — 2.6:1 on white
+   — now clear 6.8:1), the accent deepens, and the status inks of the warning /
+   success / danger chips deepen by 6 points of OKLCH lightness: the same
+   hues, one or two steps stronger, and NO pair of the program loses a step. */
+[data-skin="contrast"] {
+  --color-slate-50: oklch(99% 0.002 250);
+  --color-slate-100: oklch(97.5% 0.003 250);
+  --color-slate-200: oklch(72% 0.015 255);
+  --color-slate-300: oklch(65% 0.03 256);
+  --color-slate-400: oklch(47% 0.04 257);
+  --color-slate-500: oklch(38% 0.04 257);
+  --color-slate-600: oklch(29% 0.04 257);
+  --color-slate-700: oklch(21% 0.04 257);
+  --color-slate-800: oklch(15% 0.04 260);
+  --color-slate-900: oklch(11% 0.04 264);
+  --color-slate-950: oklch(7% 0.04 264);
+  --color-blue-50: oklch(95% 0.03 254);
+  --color-blue-100: oklch(90% 0.05 255);
+  --color-blue-200: oklch(82% 0.09 254);
+  --color-blue-300: oklch(70% 0.14 252);
+  --color-blue-400: oklch(58% 0.19 255);
+  --color-blue-500: oklch(50% 0.22 258);
+  --color-blue-600: oklch(44% 0.23 261);
+  --color-blue-700: oklch(38% 0.21 263);
+  --color-blue-800: oklch(32% 0.18 265);
+  --color-blue-900: oklch(28% 0.14 266);
+  --color-blue-950: oklch(20% 0.1 268);
+  /* the same 6-point deepening of the status inks (600 → 900 of each family) */
+  --color-red-600: oklch(51.7% 0.245 27.325);
+  --color-red-700: oklch(44.5% 0.213 27.518);
+  --color-red-800: oklch(38.4% 0.177 26.899);
+  --color-red-900: oklch(33.6% 0.141 25.723);
+  --color-orange-600: oklch(58.6% 0.222 41.116);
+  --color-orange-700: oklch(49.3% 0.195 38.402);
+  --color-orange-800: oklch(41% 0.157 37.304);
+  --color-orange-900: oklch(34.8% 0.123 38.172);
+  --color-amber-600: oklch(60.6% 0.179 58.318);
+  --color-amber-700: oklch(49.5% 0.163 48.998);
+  --color-amber-800: oklch(41.3% 0.137 46.201);
+  --color-amber-900: oklch(35.4% 0.112 45.904);
+  --color-yellow-600: oklch(62.1% 0.162 75.834);
+  --color-yellow-700: oklch(49.4% 0.135 66.442);
+  --color-yellow-800: oklch(41.6% 0.114 61.907);
+  --color-yellow-900: oklch(36.1% 0.095 57.708);
+  --color-green-600: oklch(56.7% 0.194 149.214);
+  --color-green-700: oklch(46.7% 0.154 150.069);
+  --color-green-800: oklch(38.8% 0.119 151.328);
+  --color-green-900: oklch(33.3% 0.095 152.535);
+  --color-emerald-600: oklch(53.6% 0.145 163.225);
+  --color-emerald-700: oklch(44.8% 0.118 165.612);
+  --color-emerald-800: oklch(37.2% 0.095 166.913);
+  --color-emerald-900: oklch(31.8% 0.077 168.94);
+  --color-rose-600: oklch(52.6% 0.253 17.585);
+  --color-rose-700: oklch(45.4% 0.222 16.935);
+  --color-rose-800: oklch(39.5% 0.188 13.697);
+  --color-rose-900: oklch(35% 0.159 10.272);
+  --color-teal-600: oklch(54% 0.118 184.704);
+  --color-teal-700: oklch(45.1% 0.096 186.391);
+  --color-teal-800: oklch(37.7% 0.078 188.216);
+  --color-teal-900: oklch(32.6% 0.063 188.416);
+  --color-sky-600: oklch(52.8% 0.158 241.966);
+  --color-sky-700: oklch(44% 0.134 242.749);
+  --color-sky-800: oklch(38.3% 0.11 240.79);
+  --color-sky-900: oklch(33.1% 0.09 240.876);
+  --color-cyan-600: oklch(54.9% 0.126 221.723);
+  --color-cyan-700: oklch(46% 0.105 223.128);
+  --color-cyan-800: oklch(39% 0.085 224.283);
+  --color-cyan-900: oklch(33.8% 0.07 227.392);
+}
+
+/* ---------------------------------------------------------------------------
+   THE SEQUENCE FIELD — the selection of a COLOURED field stays readable.
+   `SequenceField` (src/components/SequenceField.jsx) renders the letters in a
+   layer BEHIND the textarea and makes the textarea's own ink transparent, so
+   the five marked letters (K · R blue, E · D red, C orange, see
+   src/utils/sequenceHighlight.js) show through. The browser's default
+   selection is an OPAQUE block painted ON TOP of that layer: it would hide
+   the very text being selected. This rule is the one thing the layer cannot
+   carry itself — a translucent highlight, so the letters stay legible inside
+   the selection.
+   ------------------------------------------------------------------------- */
+.lab-seq-field::selection {
+  background: rgb(56 189 248 / 0.35);   /* sky-400, see-through */
+}
+.lab-seq-field::-moz-selection {
+  background: rgb(56 189 248 / 0.35);
+}
+

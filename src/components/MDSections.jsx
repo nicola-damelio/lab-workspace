@@ -38,6 +38,10 @@ import { sequenceForMoleculeType, sequencePatchForMoleculeType, structureSequenc
    NMR, MD et Docking, et la fiche du composé de la Librairie), et le MÊME modèle que le ⚙
    « Params & Constraints » lit pour le pH. */
 import { SequenceReadingLine } from './SequenceReadingLine';
+/* 🎨 LA CASE DE SÉQUENCE, LETTRES COLORÉES (la demande) — le même composant que les pages NMR
+   et Docking : les cinq lettres de utils/sequenceHighlight.js y sont PEINTES (K · R bleu,
+   E · D rouge, C orange) dans une couche sous un vrai `<textarea>`. */
+import { SequenceField } from './SequenceField';
 // LE numéro affiché d'un résidu (position + residueOffset → table 🔢 du viewer) :
 // les pastilles de « Sequence and structure » montrent les mêmes numéros que le
 // viewer 3D et que la table des déplacements.
@@ -1489,11 +1493,56 @@ export const MDExperimentSetupSection = ({ ctx }) => {
           height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? `${Math.max(360, d.parsedSeq.length * 250 + 120)}px` : '300px'}
         />
       ) : null}
-      <div className="flex flex-wrap items-center justify-between gap-2 mt-1">
-        <p className="text-xs text-slate-400">💡 Click an atom in the formula (or in the 3D viewer below) to highlight its cell in the atom table.</p>
+      {/* ⚠ LA PHRASE « 💡 Click an atom in the formula (or in the 3D viewer
+          below) to highlight its cell in the atom table. » A ÉTÉ RETIRÉE — la
+          demande : « in the viewer remove the sentence “Click an atom in the 3D
+          viewer to highlight its cell in the atom table.” so that we save a
+          line ». Elle était trop longue pour tenir à côté du 📓 : la rangée
+          coûtait donc DEUX lignes. Rien d'autre ne bouge — piquer un atome
+          (dans la formule 2D comme dans la vue 3D) souligne toujours sa cellule
+          de tableau, seul le texte qui le disait est parti — et le 📓 reste à sa
+          place, à droite de la formule. */}
+      <div className="flex justify-end mt-1">
         <button onClick={exportFormulaToNotebook} className="px-2 py-1 rounded-lg text-xs font-bold bg-indigo-50 border border-indigo-300 text-indigo-700 hover:bg-indigo-100" title="Append this formula (SVG) to the Lab Notebook notes">📓 Formula → Notebook</button>
       </div>
     </div>
+  );
+
+  /* 📂 CE QUE LE DOSSIER DE L'EXPÉRIENCE CONTIENT VRAIMENT — POSÉ DANS LA RANGÉE
+     DES FICHIERS DU VIEWER. Un bouton par fichier : il LISTE le dossier canonique
+     de l'expérience sur le Drive (par extension) et installe le fichier choisi
+     comme celui que CETTE condition rouvre par défaut. Geste de LECTURE seule —
+     le fichier est déjà sur le Drive, rien n'y est renvoyé (voir
+     utils/driveExperimentFiles.js).
+     Ces deux boutons ne font plus une rangée À EUX au-dessus du viewer : la
+     demande, mot pour mot, est « the "topology from Drive folder" and "trajectory
+     from drive folder" buttons should be in the same line as "PDB file" and
+     "trajectory" buttons ». Ils partent donc au viewer (`fileRowExtra`), qui les
+     rend dans sa rangée §1 General — la ligne même de 📂 PDB file(s) et
+     📂 Trajectory. La phrase qui les accompagnait (« Choosing a file here opens it
+     AND declares it… ») est passée dans leurs infobulles : rien n'est perdu, et
+     elle ne coûte plus une ligne à elle seule. */
+  const folderFilePickers = (
+    <>
+      <DriveExperimentFilePicker
+        label="📂 Topology from Drive folder"
+        titleText="List the .gro / .pdb / .cif files that are in THIS experiment's Drive folder (even one you deposited by hand) and open one of them as this condition's topology. Choosing a file here opens it AND declares it: this condition will reopen it by default, on every computer. Nothing is uploaded again."
+        ctx={mdFolderCtx('Structure')}
+        ctxs={mdFolderCtxs('Structure')}
+        exts={MD_TOPOLOGY_EXTS}
+        declaredName={activeTest.structureFileName || activeTest.structureDriveName || ''}
+        onPick={pickStructureFromFolder}
+      />
+      <DriveExperimentFilePicker
+        label="📂 Trajectory from Drive folder"
+        titleText="List the .xtc / .trr / .dcd files that are in THIS experiment's Drive folder (even one you deposited by hand) and make one of them the trajectory of this condition. Choosing a file here opens it AND declares it: this condition will reopen it by default, on every computer. Nothing is uploaded again."
+        ctx={mdFolderCtx('Trajectory')}
+        ctxs={mdFolderCtxs('Trajectory')}
+        exts={MD_TRAJECTORY_EXTS}
+        declaredName={activeTest.trajectoryFileName || activeTest.trajectoryDriveName || ''}
+        onPick={pickTrajectoryFromFolder}
+      />
+    </>
   );
 
   const trajNorm = normalizeTrajectoryUrl(d.trajectoryUrl) || { url: null, fallbacks: [] };
@@ -1566,11 +1615,15 @@ export const MDExperimentSetupSection = ({ ctx }) => {
           ) : d.isPolymer ? (
             <>
               <label className="block text-xs font-bold text-slate-500 uppercase mb-2">{d.typeLabel} Sequence (1-letter code)</label>
-              <textarea 
-                value={d.rawSequence} 
-                onChange={(e) => updateActiveTest(sequencePatchForMoleculeType(activeTest, d.moleculeType, e.target.value))}
-                className="w-full border border-slate-300 rounded-lg p-3 font-mono text-sm tracking-widest outline-none focus:border-blue-500 uppercase h-24 custom-scrollbar shadow-inner"
-                placeholder={d.moleculeType === 'protein' ? 'e.g. MKWVTFISLL...' : d.moleculeType === 'dna' ? 'e.g. ATGCGTAC...' : 'e.g. AUGCGUAC...'} 
+              {/* 🎨 LA CASE COLORÉE (la demande : « when the sequence is inserted in the
+                  sequence field automatically color K and R in blue, E and D in red and C in
+                  orange ») : SequenceField peint les cinq lettres dans une couche SOUS le
+                  champ — le champ reste un vrai `<textarea>` (curseur, sélection, collage,
+                  annuler/rétablir) et l'écriture passe toujours par le patch de nature. */}
+              <SequenceField
+                value={d.rawSequence}
+                onChange={(v) => updateActiveTest(sequencePatchForMoleculeType(activeTest, d.moleculeType, v))}
+                moleculeType={d.moleculeType}
               />
               <p className="text-[10px] text-slate-400 mt-1 font-bold">Length: {d.seq.length} {d.moleculeType === 'protein' ? 'residues' : 'nucleotides'} (valid: {d.validChars.split('').join(' ')})</p>
               {/* 🧬 LA LECTURE DE LA SÉQUENCE — sous la CASE : le nombre de chaque acide aminé,
@@ -1726,41 +1779,21 @@ export const MDExperimentSetupSection = ({ ctx }) => {
               continuent exactement comme avant. */}
 
           {/* (Le 💡 « Click an atom in the formula (or in the 3D viewer below) … »
-              est passé DANS la sous-section « Sequence and structure », avec la
-              formule qu'il commente — même place que sur la page NMR. Et le volet
-              que l'ancien mode 2D ⇄ 3D masquait d'un `display: none` a disparu :
-              plus personne ne cache plus personne, la carte repliable s'en
-              charge.) */}
+              de CETTE page a été RETIRÉ à la demande (voir la formule, dans
+              « Sequence and structure ») ; le volet que l'ancien mode 2D ⇄ 3D
+              masquait d'un `display: none` a disparu lui aussi : plus personne ne
+              cache plus personne, la carte repliable s'en charge.) */}
 
-            {/* 📂 CE QUE LE DOSSIER DE L'EXPÉRIENCE CONTIENT VRAIMENT.
-                Un bouton par fichier : il LISTE le dossier canonique de
-                l'expérience sur le Drive (par extension) et installe le fichier
-                choisi comme celui que CETTE condition rouvre par défaut. Geste
-                de LECTURE seule — le fichier est déjà sur le Drive, rien n'y est
-                renvoyé (voir utils/driveExperimentFiles.js). */}
-            <div className="flex flex-wrap items-start gap-2 mb-2">
-              <DriveExperimentFilePicker
-                label="📂 Topology from Drive folder"
-                titleText="List the .gro / .pdb / .cif files that are in THIS experiment's Drive folder (even one you deposited by hand) and open one of them as this condition's topology"
-                ctx={mdFolderCtx('Structure')}
-                ctxs={mdFolderCtxs('Structure')}
-                exts={MD_TOPOLOGY_EXTS}
-                declaredName={activeTest.structureFileName || activeTest.structureDriveName || ''}
-                onPick={pickStructureFromFolder}
-              />
-              <DriveExperimentFilePicker
-                label="📂 Trajectory from Drive folder"
-                titleText="List the .xtc / .trr / .dcd files that are in THIS experiment's Drive folder (even one you deposited by hand) and make one of them the trajectory of this condition"
-                ctx={mdFolderCtx('Trajectory')}
-                ctxs={mdFolderCtxs('Trajectory')}
-                exts={MD_TRAJECTORY_EXTS}
-                declaredName={activeTest.trajectoryFileName || activeTest.trajectoryDriveName || ''}
-                onPick={pickTrajectoryFromFolder}
-              />
-              <span className="text-[10px] text-slate-400 leading-relaxed max-w-[340px]">
-                Choosing a file here opens it AND declares it: this condition will reopen it by default, on every computer. Nothing is uploaded again.
-              </span>
-            </div>
+            {/* 📂 LES DEUX BOUTONS DU DOSSIER SONT PASSÉS AU VIEWER — ils vivent
+                maintenant dans SA rangée de fichiers (§1 General), donc sur la
+                MÊME ligne que 📂 PDB file(s) et 📂 Trajectory (demande :
+                « the "topology from Drive folder" and "trajectory from drive
+                folder" buttons should be in the same line as "PDB file" and
+                "trajectory" buttons »). Leur définition est `folderFilePickers`,
+                plus haut, et elle part par `fileRowExtra`. Rien d'autre ne
+                change : c'est toujours un geste de LECTURE seule — le fichier est
+                déjà sur le Drive, rien n'y est renvoyé (voir
+                utils/driveExperimentFiles.js). */}
             {/* (L'ancien montage conditionnel du viewer a disparu : c'est la carte
                 repliable `keepMounted` qui le monte à sa PREMIÈRE ouverture et le
                 garde monté ensuite — les fichiers du dossier se choisissent donc
@@ -1821,6 +1854,12 @@ export const MDExperimentSetupSection = ({ ctx }) => {
   onStructureFile={handleStructureFile}
   onStructureSrc={(v) => updateActiveTest({ structureSrc: v })}
   onTrajectoryFile={handleTrajectoryFile}
+  /* 📂 LES DEUX BOUTONS DU DOSSIER DE L'EXPÉRIENCE → LA RANGÉE DES FICHIERS DU
+     VIEWER (§1 General, sur la ligne de 📂 PDB file(s) / 📂 Trajectory) : c'est
+     `fileRowExtra` du viewer qui les rend, et `folderFilePickers` qui les définit
+     (voir plus haut — la demande : les deux 📂 du dossier sur la MÊME ligne que
+     les deux 📂 du poste). */
+  fileRowExtra={folderFilePickers}
   residueOffset={residueOffset}
   atomNameMap={atomNameMap}
   atomRenames={activeTest.atomRenames || {}}

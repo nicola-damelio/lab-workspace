@@ -1,4 +1,4 @@
-// Les quarante et une suites du VIEWER 3D seul — les plus rapides à relancer après une
+// Les suites du VIEWER 3D seul — les plus rapides à relancer après une
 // retouche de src/components/NMRMoleculeViewer.jsx (l'ensemble du dépôt, c'est
 // _run_all.cjs). _viewer_render_smoke_test.mjs est la SEULE ICI qui exécute un
 // vrai rendu : elle construit son probe en SSR et monte la page docking, chaque
@@ -6,14 +6,16 @@
 // attrapé le « Cannot access 'extraMols' before initialization » de la page
 // docking). Résultat : EXIT + dernière ligne de chacune, sur la console et dans
 // _verify.txt.
-// Les DEUX garde-fous qui LISENT DE VRAIS PIXELS WebGL sont les derniers de la liste
-// (_viewer_surface_seethrough_pixels_test.cjs et _viewer_ray_shadow_pixels_test.cjs) :
-// ils ouvrent Chrome en --headless=new et rendent une vraie scène — c'est le premier
-// qui a prouvé que SEE_THROUGH_SURFACE (`opaqueBack: false`) laisse vraiment voir le
-// fond à travers la paroi arrière d'une surface translucide (luminance du centre
-// 184.4 contre 161.9 pour le défaut NGL), et le second que les ombres du « ✨ Ray »
-// se posent sur le dessin sans toucher UN SEUL pixel du fond blanc. ≈8 s et ≈15 s,
-// et SAUTÉS (exit 0) sur une machine sans Chrome ni Edge.
+// Les garde-fous qui LISENT DE VRAIS PIXELS sont GROUPÉS À LA FIN de la liste
+// (_viewer_surface_seethrough_pixels_test.cjs, _viewer_ray_shadow_pixels_test.cjs,
+// _viewer_ray_shadow_idle_test.cjs, _page_parking_render_test.cjs et
+// _viewer_background_pixels_test.cjs) : ils ouvrent Chrome en --headless=new et
+// rendent une vraie scène — c'est le premier qui a prouvé que SEE_THROUGH_SURFACE
+// (`opaqueBack: false`) laisse vraiment voir le fond à travers la paroi arrière
+// d'une surface translucide (luminance du centre 184.4 contre 161.9 pour le défaut
+// NGL), et le dernier que le fond du viewer est du CSS vu à travers une toile
+// transparente (une rampe de deux couleurs, et le clic de fond qui ouvre le
+// panneau). ≈8 s à ≈20 s chacun, et SAUTÉS (exit 0) sur une machine sans Chrome.
 const { spawnSync } = require('child_process');
 const fs = require('fs');
 const tests = [
@@ -232,6 +234,18 @@ const tests = [
   // cumulatif par classe moléculaire (merge verrouillé par le fichier, prompt de
   // conflit) et le SNAPSHOT exact de la scène, clé par section.
   '_viewer_theme_snapshot_test.mjs',
+  // ⬚ LE FOND DU VIEWER — UNE RAMPE DE DEUX COULEURS ET SA DIRECTION (la demande
+  // de cette session : « in the background of the viewer allow gradients of two
+  // colors and their direction (clicking on background should display the
+  // options underneath and disappear when background is clicked again) »). Le
+  // module utils/viewerBackground est EXÉCUTÉ : les maths de la rampe CSS (la
+  // ligne de l'angle, ses deux arrêts, la peinture d'une toile 2D), la
+  // validation de ce que localStorage et un ⚙️ setup rendent, les huit directions.
+  // Puis le CÂBLAGE du viewer est lu : le CSS du canvas, le clic sans atome qui
+  // ouvre et referme le panneau, les deux couleurs, ⇄, ↺, ⇤, la barre, les ⚙️
+  // thèmes, la toile de film 🎬🎞 et le PNG du ✨ Ray. Les PIXELS de tout cela
+  // sont mesurés juste après par la sonde du fond.
+  '_viewer_background_test.mjs',
   // 🎨 LE STYLE QU'UNE EXPÉRIENCE RETIENT (la demande : « when an experiment opens,
   // after bringing back to live its files (pdb, trajectory etc) it should remember
   // also the style file (called snapshot or in its absence the cumulative) of the
@@ -343,6 +357,17 @@ const tests = [
   // conditionnel — est monté à côté et se fait bien détruire/recréer, sinon la
   // sonde serait verte sans rien mesurer. SAUTÉE (exit 0) sans Chrome ni Edge.
   '_page_parking_render_test.cjs',
+  // ⬚ …ET LES PIXELS DU FOND DÉGRADÉ, MESURÉS PAR UN VRAI NAVIGATEUR (≈10 s) :
+  // le module SERVI COMME MODULE peint une rampe dans une toile 2D (le coin du
+  // haut est A, celui du bas est B, et la direction les échange), un VRAI canvas
+  // NGL prouve le fait qui rend tout cela gratuit — le fond est du CSS
+  // (`style.backgroundColor`) vu à travers une toile vidée d'ALPHA ZÉRO, donc la
+  // rampe est une `background-image` que le moteur compose sans qu'une seule
+  // représentation soit rebâtie — un clic sur le FOND arrive à `signals.clicked`
+  // avec un pickingProxy SANS atome (le geste du panneau, deux fois : il ouvre,
+  // puis il referme), et la still du ✨ Ray reçoit la rampe SOUS son PNG
+  // transparent sans perdre un pixel de la molécule. SAUTÉE (exit 0) sans Chrome.
+  '_viewer_background_pixels_test.cjs',
 ];
 const rows = tests.map((t) => {
   const r = spawnSync(process.execPath, [t], { encoding: 'utf8' });

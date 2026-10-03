@@ -94,9 +94,10 @@ eq(FILM_BACKDROP_DEFAULT, '#f8fafc', 'le défaut du module EST le fond par défa
 has('const backdrop = filmBackdropColor(background);', 'la toile de film valide la couleur de la scène');
 has('ctx.fillStyle = backdrop;\n        ctx.fillRect(0, 0, w, h);',
   '…et REMPLIT son fond avant de recopier la scène');
-has('const film = filmCanvasFor(canvas, vignetteDarkness, bgColor);',
-  'le 🎬 de la trajectoire passe la couleur de la scène');
-has(': Number.NaN, bgColor);', 'le 🎞 des poses aussi (les deux films ont le même fond)');
+has('const film = filmCanvasFor(canvas, vignetteDarkness, backgroundSpecOf(bgColor, bgGradient), rayLiveOn ? rayShadowCanvasRef.current : null);',
+  'le 🎬 de la trajectoire passe la SPÉCIFICATION du fond (la couleur de la scène ET la rampe ⬚, voir utils/viewerBackground)');
+has(': Number.NaN, backgroundSpecOf(bgColor, bgGradient), rayLiveOn ? rayShadowCanvasRef.current : null);',
+  'le 🎞 des poses aussi (les deux films ont le même fond)');
 /* L'ORDRE DU COMPOSITE est ce qui fait qu'une ombre assombrit le fond au lieu de le
    couvrir : le fond, puis la scène, puis la vignette. */
 ok(VIEW.indexOf('ctx.fillStyle = backdrop;') < VIEW.indexOf('ctx.drawImage(source, 0, 0, w, h);'),
@@ -153,7 +154,7 @@ eq(broken.out.frames, 3, 'une composition qui échoue N’ARRÊTE PAS le film (l
 
 /* ── 3. LE BRANCHEMENT DANS LE VIEWER, ET LE PARAGRAPHE RACCOURCI ─────────── */
 has('filmVignetteGeometry, filmVignetteStops,', 'le viewer prend la géométrie et les arrêts du module 🎬');
-has('const filmCanvasFor = (source, vignetteDarkness, background) => {', 'la toile de film est construite par le viewer');
+has('const filmCanvasFor = (source, vignetteDarkness, background, shadowLayer = null) => {', 'la toile de film est construite par le viewer');
 has("ctx.globalCompositeOperation = 'multiply';", 'la vignette est PEINTE en « multiply », comme le mix-blend-mode du CSS');
 has('canvas: film ? film.canvas : canvas,', 'le 🎬 de la trajectoire enregistre la toile de film');
 has('beforeCapture: film ? film.composite : undefined,', '…et compose la vignette à chaque image');

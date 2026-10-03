@@ -649,9 +649,9 @@ has('filmCanvasFor = (source, vignetteDarkness, background, shadowLayer = null) 
 has('if (shadowLayer && shadowLayer.width > 1 && shadowLayer.height > 1) {',
   '…et une couche vidée (1×1) n’est pas peinte dans le film');
 has('ctx.drawImage(shadowLayer, 0, 0, w, h);', '…par le même geste que la vignette : un drawImage par image');
-has('filmCanvasFor(canvas, vignetteDarkness, bgColor, rayLiveOn ? rayShadowCanvasRef.current : null)',
+has('filmCanvasFor(canvas, vignetteDarkness, backgroundSpecOf(bgColor, bgGradient), rayLiveOn ? rayShadowCanvasRef.current : null)',
   'le 🎬 de la trajectoire compose l’ombre vivante');
-has(': Number.NaN, bgColor, rayLiveOn ? rayShadowCanvasRef.current : null);',
+has(': Number.NaN, backgroundSpecOf(bgColor, bgGradient), rayLiveOn ? rayShadowCanvasRef.current : null);',
   '…et le film de poses aussi (les deux films se ressemblent)');
 /* ◐ …ET LES COORDONNÉES QUI BOUGENT LE DISENT — le rapport de cette session :
    « when I start a MD run the shadow detaches from the molecule and remains

@@ -163,6 +163,15 @@ has('placeholder="PDB ID or URL"', '[§1] champ PDB ID / URL');
 has('onClick={handlePdbIdLoad}', '[§1] bouton Load');
 has('📂 Trajectory', '[§1] bouton Trajectory');
 has('if (f) handleTrajFileChosen(f);', '[§1] …branché sur handleTrajFileChosen');
+/* 📂 LA PAGE PEUT AJOUTER SES PROPRES COMMANDES À CETTE RANGÉE (prop
+   `fileRowExtra`) : la page MD y pose ses deux boutons « 📂 Topology / 📂 Trajectory
+   from Drive folder » (le dossier de l'expérience sur le Drive) pour qu'ils soient
+   SUR LA MÊME LIGNE que 📂 PDB file(s) et 📂 Trajectory — la demande de cette
+   session : « the "topology from Drive folder" and "trajectory from drive folder"
+   buttons should be in the same line as "PDB file" and "trajectory" buttons ».
+   Défaut `null` : les pages NMR et Docking ne voient AUCUN changement. */
+has('fileRowExtra = null,', '[§1] la rangée des fichiers accepte les commandes de la PAGE');
+has('{fileRowExtra}', '[§1] …et les rend DANS la même rangée (après 📂 PDB file(s) / 📂 Trajectory)');
 has('onClick={handleClearViewer}', '[§1] bouton Clear');
 /* 🗑 Delete PDB / ↩ Restore PDB — UN bouton, deux états : le PDB chargé dans
    CETTE section est mis de côté (jamais perdu : le même bouton le ressuscite,

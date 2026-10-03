@@ -31,6 +31,11 @@ import { sequenceForMoleculeType, sequencePatchForMoleculeType, structureSequenc
    (1-letter code) » de cette page rend la même ligne que la fiche du composé de la Librairie et
    que les cases des pages MD et Docking : une seule copie, un seul calcul. */
 import { SequenceReadingLine } from './SequenceReadingLine';
+/* 🎨 LA CASE DE SÉQUENCE, LETTRES COLORÉES (la demande) — le même composant pour les trois
+   pages : les cinq lettres de utils/sequenceHighlight.js y sont PEINTES (K · R bleu, E · D
+   rouge, C orange) dans une couche sous un vrai `<textarea>`, donc la saisie, le curseur, la
+   sélection, le collage et l'annuler/rétablir ne changent pas. */
+import { SequenceField } from './SequenceField';
 // LE numéro affiché d'un résidu (position + residueOffset → table resRenumber du
 // viewer 🔢) : une seule règle pour la table des déplacements, la bande de
 // séquence de « Sequence and structure » et les ponts disulfure.
@@ -5469,9 +5474,17 @@ const generatedStructure = useMemo(() => {
             <div className="flex flex-col md:flex-row gap-6 items-start w-full">
               <div className="flex-1 w-full min-w-0">
                 <label className="block text-xs font-bold text-slate-500 uppercase mb-2">{d.typeLabel} Sequence (1-letter code)</label>
-                <textarea value={d.rawSequence} onChange={(e) => updateActiveTest(sequencePatchForMoleculeType(activeTest, d.moleculeType, e.target.value))}
-                  className="w-full border border-slate-300 rounded-lg p-3 font-mono text-sm tracking-widest outline-none focus:border-blue-500 uppercase h-24 custom-scrollbar shadow-inner"
-                  placeholder={d.moleculeType === 'protein' ? 'e.g. MKWVTFISLL...' : d.moleculeType === 'dna' ? 'e.g. ATGCGTAC...' : 'e.g. AUGCGUAC...'} />
+                {/* 🎨 LA CASE COLORÉE (la demande : « when the sequence is inserted in the
+                    sequence field automatically color K and R in blue, E and D in red and C in
+                    orange ») : c'est SequenceField qui peint les cinq lettres, dans une couche
+                    SOUS le champ — le champ reste un vrai `<textarea>`, donc la saisie, le
+                    curseur, la sélection, le collage et l'annuler/rétablir sont inchangés, et
+                    l'écriture dans la condition passe toujours par le même patch de nature. */}
+                <SequenceField
+                  value={d.rawSequence}
+                  onChange={(v) => updateActiveTest(sequencePatchForMoleculeType(activeTest, d.moleculeType, v))}
+                  moleculeType={d.moleculeType}
+                />
                 <p className="text-[10px] text-slate-400 mt-1 font-bold">Length: {d.seq.length} {d.moleculeType === 'protein' ? 'residues' : 'nucleotides'} (valid: {d.validChars.split('').join(' ')})</p>
                 {/* 🧬 LA LECTURE DE LA SÉQUENCE — sous la CASE, sur toute la largeur : le
                     nombre de chaque acide aminé, la charge totale à pH 7 et l'ε₂₈₀ estimé.
