@@ -408,25 +408,18 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
     }
   };
 
-  // When the calculation-directory importer brought cluster structures, the 3D
-  // viewer's own card opens by itself so they are actually visible (instead of a
-  // plain protein) — see `openWhen` on that card below.
+  // When the calculation-directory importer brought cluster structures, open the
+  // 3D viewer by default so they are actually visible (instead of a plain protein).
   const structureMode = activeTest.structureMode || (hasDockStructs ? '3d' : '2d');
-  /* ── LE VIEWER 3D A SA PROPRE SOUS-SECTION REPLIABLE (comme la page NMR) ────
-     `keepMounted` (src/components/ui.jsx) fait que replier NE DÉMONTE PAS le
-     viewer : son contenu n'est créé qu'à la PREMIÈRE ouverture, reste monté
-     ensuite (masqué en CSS). `viewerOpen` ne décide donc plus si le viewer
-     existe — c'est SA carte qui s'en charge — mais sert à faire recaler le
-     viewer sur la largeur RÉELLE à chaque repli / dépliage (aucun « resize »
-     n'est émis par le navigateur dans ce geste). */
-  const [viewerOpen, setViewerOpen] = useState(false);
+  const [hasOpened3D, setHasOpened3D] = useState(structureMode === '3d');
   const [expandedPanel, setExpandedPanel] = useState(null);
   const [ssBrush, setSSBrush] = useState('H');
 
+  useEffect(() => { if (structureMode === '3d') setHasOpened3D(true); }, [structureMode]);
   useEffect(() => {
     const t = setTimeout(() => window.dispatchEvent(new Event('resize')), 100);
     return () => clearTimeout(t);
-  }, [viewerOpen]);
+  }, [structureMode, hasOpened3D]);
 
   // Auto-fill sequence / SMILES from compound metadata when a compound is selected
   const firstSelectedCmp = activeTest.selectedCompounds?.[0];
@@ -511,49 +504,6 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
       .catch(() => {});
     return () => { cancelled = true; };
   }, [structKey, activeTest.dockingStructures]);
-
-  /* ── CE QUE LA SOUS-SECTION « SEQUENCE AND STRUCTURE » A À MONTRER ──────────
-     La FORMULE 2D (l'ancien volet « 2D Formula » du sélecteur 2D / 3D) et la
-     peinture 🖌️ de sa bande forment UNE carte, OUVERTE par défaut (c'est là que
-     la formule se voit ; CollapsibleSection mémorise le choix, ouvert / replié,
-     par expérience). C'est l'organisation de la page NMR, mot pour mot (la
-     demande : « use the same separation and organization of 2D formula and 3D
-     viewer. and the same compressible windows that you used in NMR page ») : le
-     VIEWER 3D a SA propre sous-section repliable, juste après.
-     La carte se rend aussi pour un récepteur encore VIDE (aucune formule à
-     dessiner) : elle porte alors le rappel « No structure to display yet » qui
-     vivait dans l'ancien volet 2D — l'écran ne perd pas son repère. */
-  const show2DFormula = Boolean(d.structure);
-  const showPaintStrip = d.moleculeType === 'protein' && d.parsedSeq.length > 0;
-  const showFormulaBlock = show2DFormula || d.isPolymer;
-  const formulaBlock = (
-    <div className="mb-3">
-      {d.structure ? (
-        <StructureSVGView
-          structure={d.structure}
-          minWidth={d.moleculeType === 'protein' && d.parsedSeq.length > 3 ? `${d.parsedSeq.length * 120}px` : '100%'}
-          isExpanded={expandedPanel === 'formula'}
-          onToggleExpand={() => setExpandedPanel(expandedPanel === 'formula' ? null : 'formula')}
-          selectedKeys={selectedKeys}
-          manualKeys={manualKeys}
-          onAtomClick={handleAtomClick}
-          height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? `${Math.max(360, d.parsedSeq.length * 250 + 120)}px` : '300px'}
-        />
-      ) : (
-        <div className="flex items-center justify-center bg-slate-50 border border-dashed border-slate-300 rounded-xl p-6 text-center w-full">
-          <div>
-            <div className="text-2xl mb-1">🧬</div>
-            <p className="text-xs font-bold text-slate-500">No structure to display yet</p>
-            <p className="text-[11px] text-slate-400 mt-1 max-w-md">
-              Enter the receptor sequence above (or select a compound that has sequence / SMILES metadata)
-              to generate the 2D formula.
-            </p>
-          </div>
-        </div>
-      )}
-      <p className="text-xs text-slate-400 mt-1">💡 Click an atom in the formula (or in the 3D viewer below) to highlight its cell in the atom table.</p>
-    </div>
-  );
 
   return (
     <div className="flex flex-col gap-6">
@@ -674,19 +624,11 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
         </div>
       </div>
 
-      {/* ══ L'ORGANISATION DE LA PAGE NMR, ICI AUSSI ═══════════════════════════
-          « Sequence and structure » porte la FORMULE 2D ET la peinture 🖌️ de sa
-          bande, et elle est OUVERTE par défaut (c'est là que la formule se voit :
-          CollapsibleSection mémorise le choix, ouvert / replié, par expérience) ;
-          le VIEWER 3D a SA PROPRE carte repliable, plus bas, dans le MÊME
-          empilement — plus aucun sélecteur 2D ⇄ 3D, et aucun grand blanc entre
-          les deux. Exactement comme la page NMR (la demande). */}
-      <div className="flex flex-col">
-      {showFormulaBlock && (
-        <CollapsibleSection title="Sequence and structure" icon="🖌️" defaultOpen>
-          {formulaBlock}
-          {showPaintStrip && (
-            <>
+      {/* Secondary structure paint (protein only) — Issue #10 : regroupée avec la
+          bande de séquence dans une sous-section « Sequence and structure »
+          repliée par défaut (CollapsibleSection mémorise le choix). */}
+      {d.moleculeType === 'protein' && d.parsedSeq.length > 0 && (
+        <CollapsibleSection title="Sequence and structure" icon="🖌️" defaultOpen={false}>
           <div className="flex flex-wrap gap-2 mb-3 items-center">
             <span className="text-xs font-bold text-slate-500 uppercase mr-1">🖌️ Brush:</span>
             {['C', 'H', 'L', 'E', 'T'].map((l) => (
@@ -713,55 +655,60 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
             residueNo={residueNoOf}
             sheetOf={(i) => sheetMarkAt(sheetPairs, i + 1)}
           />
-            </>
-          )}
         </CollapsibleSection>
       )}
 
-      {/* ── LE VIEWER 3D : SA PROPRE SOUS-SECTION REPLIABLE ────────────────────
-          Replier NE DÉMONTE PAS le viewer (`keepMounted`) : son contenu n'est créé
-          qu'à la PREMIÈRE ouverture, puis reste monté et masqué en CSS — le
-          dépliage ne relit donc pas les structures — et `onToggle` fait recaler
-          le viewer sur la largeur réelle. La carte s'OUVRE toute seule quand une
-          structure de cluster est là (structureMode '3d') ou qu'une condition
-          garde l'ancien sélecteur en mode 3D : les structures importées restent
-          visibles sans un clic. */}
-      <CollapsibleSection
-        title="3D viewer"
-        icon="🧬"
-        defaultOpen={false}
-        openWhen={structureMode === '3d'}
-        keepMounted
-        onToggle={setViewerOpen}
-      >
-        <div className="flex flex-col gap-2">
-          {/* (Le « Receptor topology (PDB ID / URL) » vivait dans la rangée du
-              sélecteur 2D / 3D et n'apparaissait QU'en mode 3D : il est
-              maintenant DANS la carte du viewer, qui est l'endroit d'où l'on
-              charge la structure — c'est ce champ qui écrit `structureSrc`, le
-              même que les commandes du viewer.) */}
-          <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5">
-            <label className="text-[10px] font-bold text-slate-500 uppercase whitespace-nowrap">Receptor topology (PDB ID / URL)</label>
-            <input
-              type="text"
-              value={activeTest.structureSrc || ''}
-              onChange={(e) => updateActiveTest({ structureSrc: e.target.value })}
-              placeholder="e.g. 1UBQ"
-              className="flex-1 min-w-0 border border-slate-300 rounded-md px-2 py-1 text-xs bg-white outline-none focus:border-blue-500"
-            />
+      {/* 2D / 3D structure view */}
+      <div>
+        <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
+            <div className="flex bg-slate-200 p-1 rounded-lg">
+              <button
+                onClick={() => updateActiveTest({ structureMode: '2d' })}
+                className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${
+                  structureMode === '2d' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500'
+                }`}
+              >
+                2D Formula
+              </button>
+              <button
+                onClick={() => updateActiveTest({ structureMode: '3d' })}
+                className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${
+                  structureMode === '3d' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500'
+                }`}
+              >
+                3D Viewer
+              </button>
+            </div>
           </div>
-          {selectedStruct && (
-            <div className="flex flex-wrap items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
-              <span className="text-[10px] font-black text-slate-600 uppercase">8_seletopclusts structure</span>
-              <select value={structIdx} onChange={(e) => setStructIdx(Number(e.target.value))}
-                className="border border-slate-300 rounded px-2 py-1 text-xs bg-white max-w-[260px]">
-                {structList.map((s, i) => <option key={s.name} value={i}>{s.name}</option>)}
-              </select>
-              {selectedStruct.driveUrl && (
-                <a href={selectedStruct.driveUrl} target="_blank" rel="noreferrer" className="text-[10px] font-bold text-sky-700 hover:underline">☁️ Drive</a>
-              )}
+
+          {structureMode === '3d' && (
+            <div className="mb-2 flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5">
+              <label className="text-[10px] font-bold text-slate-500 uppercase whitespace-nowrap">Receptor topology (PDB ID / URL)</label>
+              <input
+                type="text"
+                value={activeTest.structureSrc || ''}
+                onChange={(e) => updateActiveTest({ structureSrc: e.target.value })}
+                placeholder="e.g. 1UBQ"
+                className="flex-1 min-w-0 border border-slate-300 rounded-md px-2 py-1 text-xs bg-white outline-none focus:border-blue-500"
+              />
             </div>
           )}
+
+          <div style={{ display: structureMode === '3d' ? 'block' : 'none' }}>
+            {hasOpened3D && (
+              <>
+                {selectedStruct && (
+                  <div className="mb-2 flex flex-wrap items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+                    <span className="text-[10px] font-black text-slate-600 uppercase">8_seletopclusts structure</span>
+                    <select value={structIdx} onChange={(e) => setStructIdx(Number(e.target.value))}
+                      className="border border-slate-300 rounded px-2 py-1 text-xs bg-white max-w-[260px]">
+                      {structList.map((s, i) => <option key={s.name} value={i}>{s.name}</option>)}
+                    </select>
+                    {selectedStruct.driveUrl && (
+                      <a href={selectedStruct.driveUrl} target="_blank" rel="noreferrer" className="text-[10px] font-bold text-sky-700 hover:underline">☁️ Drive</a>
+                    )}
+                  </div>
+                )}
               <NMRMoleculeViewer
                 key={((activeTest && activeTest.id) || 'docking') + (selectedStruct ? '::' + selectedStruct.name : '')}
                 instanceKey={(activeTest && activeTest.id) || null}
@@ -810,16 +757,36 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
                 }}
                 height="480px"
               />
+              </>
+            )}
+          </div>
 
-          {/* (Le second volet — `display: structureMode === '2d'` : la formule 2D
-              cachée derrière l'ancien sélecteur 2D ⇄ 3D — a disparu, ainsi que le
-              « {hasOpened3D && ( … )} » : c'est la carte repliable `keepMounted`
-              qui monte le viewer à sa PREMIÈRE ouverture et le garde monté
-              ensuite. La formule vit DANS « Sequence and structure » ci-dessus,
-              comme sur la page NMR : une seule définition (`formulaBlock`).) */}
+          <div style={{ display: structureMode === '2d' ? 'block' : 'none' }}>
+            {d.structure ? (
+              <StructureSVGView
+                structure={d.structure}
+                minWidth={d.moleculeType === 'protein' && d.parsedSeq.length > 3 ? `${d.parsedSeq.length * 120}px` : '100%'}
+                isExpanded={expandedPanel === 'formula'}
+                onToggleExpand={() => setExpandedPanel(expandedPanel === 'formula' ? null : 'formula')}
+                selectedKeys={selectedKeys}
+                manualKeys={manualKeys}
+                onAtomClick={handleAtomClick}
+                height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? `${Math.max(360, d.parsedSeq.length * 250 + 120)}px` : '300px'}
+              />
+            ) : (
+              <div className="flex items-center justify-center bg-slate-50 border border-dashed border-slate-300 rounded-xl p-6 text-center w-full">
+                <div>
+                  <div className="text-2xl mb-1">🧬</div>
+                  <p className="text-xs font-bold text-slate-500">No structure to display yet</p>
+                  <p className="text-[11px] text-slate-400 mt-1 max-w-md">
+                    Enter a receptor sequence below (or select a compound that has sequence / SMILES metadata)
+                    to generate the 2D formula.
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
-      </CollapsibleSection>
-      </div>
     </div>
   );
 };

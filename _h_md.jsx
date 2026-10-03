@@ -822,16 +822,8 @@ export const MDExperimentSetupSection = ({ ctx }) => {
     try { return activeTest.atomNameMap ? JSON.parse(activeTest.atomNameMap) : {}; } catch { return {}; }
   }, [activeTest.atomNameMap]);
 
-  /* ── LE VIEWER 3D A SA PROPRE SOUS-SECTION REPLIABLE (comme la page NMR) ────
-     `keepMounted` (src/components/ui.jsx) fait que replier NE DÉMONTE PAS le
-     viewer : son contenu n'est créé qu'à la PREMIÈRE ouverture, reste monté
-     ensuite (masqué en CSS) et le dépliage ne relit donc pas la structure.
-     `viewerOpen` ne décide plus si le viewer existe — c'est SA carte qui s'en
-     charge — mais sert à faire recaler le viewer et les tracés sur la largeur
-     RÉELLE à chaque repli / dépliage (aucun « resize » n'est émis par le
-     navigateur dans ce geste). */
-  const [viewerOpen, setViewerOpen] = useState(false);
-
+  const [hasOpened3D, setHasOpened3D] = useState(structureMode === '3d');
+  
   const [trajectoryFile, setTrajectoryFile] = useState(() => localFileCache.get(activeTest.id)?.trajectory || null);
   const [structureFile, setStructureFile] = useState(() => localFileCache.get(activeTest.id)?.structure || null);
   // OÙ LA RECHERCHE EN EST VRAIMENT, et ce qu'elle a répondu. Ces quatre états
@@ -1393,15 +1385,12 @@ export const MDExperimentSetupSection = ({ ctx }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTest.id, activeTest.structureFileName, activeTest.structureDriveName, structPointerId, fileEpoch, driveConnectedAt]);
   
-  /* Le viewer 3D et les tracés se recalent sur la largeur RÉELLE après chaque
-     repli / dépliage : replié, le viewer reste MONTÉ (masqué en CSS) et le
-     navigateur n'émet alors aucun « resize ». La carte « 3D viewer » réouvre SA
-     sous-section toute seule pour une condition restée en mode 3D (openWhen),
-     donc aucun état de montage n'a plus à être surveillé ici. */
+  useEffect(() => { if (structureMode === '3d') setHasOpened3D(true); }, [structureMode]);
+
   useEffect(() => {
-    const t = setTimeout(() => { window.dispatchEvent(new Event('resize')); }, 100);
+    const t = setTimeout(() => window.dispatchEvent(new Event('resize')), 100);
     return () => clearTimeout(t);
-  }, [viewerOpen]);
+  }, [structureMode, hasOpened3D]);
 
   const focusIdx = activeTest.focusIdx !== undefined ? activeTest.focusIdx : 'ALL';
   const setFocusIdx = (val) => updateActiveTest({ focusIdx: val });
@@ -1455,46 +1444,6 @@ export const MDExperimentSetupSection = ({ ctx }) => {
     updateActiveTest({ comments: currentComments + (currentComments ? '<br/>' : '') + html });
     alert('Chemical formula appended to the Lab Notebook notes.');
   };
-
-  /* ── CE QUE LA SOUS-SECTION « SEQUENCE AND STRUCTURE » A À MONTRER ──────────
-     La FORMULE 2D (l'ancien volet « 2D Formula » du sélecteur 2D / 3D) et, dans
-     la MÊME carte, la peinture 🖌️ de sa bande — exactement l'organisation de la
-     page NMR (la demande : « use the same separation and organization of 2D
-     formula and 3D viewer. and the same compressible windows that you used in NMR
-     page »). Le VIEWER 3D, lui, a SA propre sous-section repliable plus bas.
-     Deux cartes portent ce titre (l'une pour une protéine ou une petite molécule,
-     l'autre pour un acide nucléique — sa peinture est celle des formes A/B/Z) et
-     EXACTEMENT UNE se rend selon le type de molécule. */
-  const isNucleic = d.moleculeType === 'dna' || d.moleculeType === 'rna';
-  const show2DFormula = d.moleculeType === 'organic' ? Boolean(activeTest.smiles) : Boolean(d.structure);
-  const showProteinStrip = d.moleculeType === 'protein' && d.parsedSeq.length > 0;
-  const showNucleicStrip = isNucleic && d.parsedSeq.length > 0;
-  /* LA FORMULE, ÉCRITE UNE FOIS : c'est le même bloc que les deux cartes
-     affichent, la formule ne peut donc pas diverger de l'une à l'autre. Le
-     💡 et le 📓 de la formule vivent avec elle (le 🔍 Focus et le ✖ Deselect,
-     eux, sont dans l'en-tête de la carte 3D — ils restent accessibles repliée). */
-  const formulaBlock = (
-    <div className="mb-3">
-      {d.moleculeType === 'organic' && activeTest.smiles ? (
-        <OrganicViewer smiles={activeTest.smiles || activeTest.ligandSmiles} selectedKeys={selectedKeys} onAtomClick={handleAtomClick} />
-      ) : d.structure ? (
-        <StructureSVGView
-          structure={d.structure}
-          minWidth={d.moleculeType === 'protein' && d.parsedSeq.length > 3 ? `${d.parsedSeq.length * 120}px` : '100%'}
-          isExpanded={expandedPanel === 'formula'}
-          onToggleExpand={() => setExpandedPanel(expandedPanel === 'formula' ? null : 'formula')}
-          selectedKeys={selectedKeys}
-          manualKeys={manualKeys}
-          onAtomClick={handleAtomClick}
-          height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? `${Math.max(360, d.parsedSeq.length * 250 + 120)}px` : '300px'}
-        />
-      ) : null}
-      <div className="flex flex-wrap items-center justify-between gap-2 mt-1">
-        <p className="text-xs text-slate-400">💡 Click an atom in the formula (or in the 3D viewer below) to highlight its cell in the atom table.</p>
-        <button onClick={exportFormulaToNotebook} className="px-2 py-1 rounded-lg text-xs font-bold bg-indigo-50 border border-indigo-300 text-indigo-700 hover:bg-indigo-100" title="Append this formula (SVG) to the Lab Notebook notes">📓 Formula → Notebook</button>
-      </div>
-    </div>
-  );
 
   const trajNorm = normalizeTrajectoryUrl(d.trajectoryUrl) || { url: null, fallbacks: [] };
 
@@ -1607,19 +1556,12 @@ export const MDExperimentSetupSection = ({ ctx }) => {
         </div>
       </div>
 
-      {/* ══ L'ORGANISATION DE LA PAGE NMR, ICI AUSSI ═══════════════════════════
-          « Sequence and structure » porte la FORMULE 2D ET la peinture 🖌️ de sa
-          bande, et elle est OUVERTE par défaut (c'est là que la formule se voit :
-          CollapsibleSection mémorise le choix, ouvert / replié, par expérience) ;
-          le VIEWER 3D a SA PROPRE carte repliable, plus bas, dans le MÊME
-          empilement — plus aucun sélecteur 2D ⇄ 3D, et aucun grand blanc entre
-          les deux. Exactement comme la page NMR (la demande). */}
-      <div className="flex flex-col">
-      {!isNucleic && (show2DFormula || showProteinStrip) && (
-        <CollapsibleSection title="Sequence and structure" icon="🖌️" defaultOpen>
-          {formulaBlock}
-          {showProteinStrip && (
-            <>
+      {/* Sequence and structure (Issue #10) — la peinture 🖌️ et la bande de
+          séquence sont regroupées dans UNE sous-section repliée par défaut : les
+          cartes de résultats restent en tête de page, et CollapsibleSection
+          mémorise le choix (ouvert / replié) par expérience. */}
+      {d.moleculeType === 'protein' && d.parsedSeq.length > 0 && (
+        <CollapsibleSection title="Sequence and structure" icon="🖌️" defaultOpen={false}>
           <div className="flex flex-wrap gap-2 mb-3 items-center">
             <span className="text-xs font-bold text-slate-500 uppercase mr-1">🖌️ Brush:</span>
             {['C', 'H', 'L', 'E', 'T'].map((l) => (
@@ -1645,16 +1587,11 @@ export const MDExperimentSetupSection = ({ ctx }) => {
             residueNo={residueNoOf}
             sheetOf={(i) => sheetMarkAt(sheetPairs, i + 1)}
           />
-            </>
-          )}
         </CollapsibleSection>
       )}
 
-      {isNucleic && (show2DFormula || showNucleicStrip) && (
-        <CollapsibleSection title="Sequence and structure" icon="🖌️" defaultOpen>
-          {formulaBlock}
-          {showNucleicStrip && (
-            <>
+      {(d.moleculeType === 'dna' || d.moleculeType === 'rna') && d.parsedSeq.length > 0 && (
+        <CollapsibleSection title="Sequence and structure" icon="🖌️" defaultOpen={false}>
           <div className="flex flex-wrap gap-2 mb-3 items-center">
             <span className="text-xs font-bold text-slate-500 uppercase mr-1">🖌️ Brush:</span>
             {['A', 'B', 'Z'].map((l) => (
@@ -1676,42 +1613,31 @@ export const MDExperimentSetupSection = ({ ctx }) => {
             focusIdx={focusIdx}
             residueNo={residueNoOf}
           />
-            </>
-          )}
         </CollapsibleSection>
       )}
 
-      {/* ── LE VIEWER 3D : SA PROPRE SOUS-SECTION REPLIABLE ────────────────────
-          Replier NE DÉMONTE PAS le viewer (`keepMounted`) : son contenu n'est créé
-          qu'à la PREMIÈRE ouverture, puis reste monté et masqué en CSS — le
-          dépliage ne relit donc pas la structure — et `onToggle` fait recaler le
-          viewer et les tracés sur la largeur réelle. Une condition restée en mode
-          3D (structureMode: '3d', l'ancien sélecteur 2D / 3D) rouvre SA carte toute
-          seule : rien n'est perdu pour les expériences déjà remplies. Le 🔍 Focus et
-          le ✖ Deselect sont passés dans SON en-tête : ils restent accessibles même
-          repliée, sans occuper une rangée. */}
-      <CollapsibleSection
-        title="3D viewer"
-        icon="🧬"
-        defaultOpen={false}
-        openWhen={structureMode === '3d'}
-        keepMounted
-        onToggle={setViewerOpen}
-        headerExtra={(
-          <div className="flex items-center gap-2 flex-wrap justify-end">
-            <label className="text-[10px] font-bold text-slate-500 uppercase">🔍 Focus</label>
-            <select value={focusIdx} onChange={(e) => setFocusIdx(e.target.value === 'ALL' ? 'ALL' : Number(e.target.value))}
-              className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 max-w-[180px]">
-              <option value="ALL">All residues</option>
-              {d.parsedSeq.map((r, i) => <option key={i} value={i}>{r.id} — {r.name}</option>)}
-            </select>
-            {selectedKeys && (
-              <button onClick={() => updateActiveTest({ selectedAtomKeys: [] })} className="px-2 py-1 rounded-lg text-xs font-bold bg-amber-100 border border-amber-400 text-amber-800">✖ Deselect ({selectionLabel(d, selectedKeys)})</button>
-            )}
+      <div>
+        <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
+          <div className="flex bg-slate-200 p-1 rounded-lg">
+            <button onClick={() => updateActiveTest({ structureMode: '2d' })}
+              className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${structureMode === '2d' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>2D Formula</button>
+            <button onClick={() => updateActiveTest({ structureMode: '3d' })}
+              className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${structureMode === '3d' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>3D Viewer + Trajectory</button>
           </div>
-        )}
-      >
-        <div className="flex flex-col gap-2">
+
+            <div className="flex items-center gap-2 flex-wrap justify-end">
+              <label className="text-[10px] font-bold text-slate-500 uppercase">🔍 Focus</label>
+              <select value={focusIdx} onChange={(e) => setFocusIdx(e.target.value === 'ALL' ? 'ALL' : Number(e.target.value))}
+                className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 max-w-[180px]">
+                <option value="ALL">All residues</option>
+                {d.parsedSeq.map((r, i) => <option key={i} value={i}>{r.id} — {r.name}</option>)}
+              </select>
+              {selectedKeys && (
+                <button onClick={() => updateActiveTest({ selectedAtomKeys: [] })} className="px-2 py-1 rounded-lg text-xs font-bold bg-amber-100 border border-amber-400 text-amber-800">✖ Deselect ({selectionLabel(d, selectedKeys)})</button>
+              )}
+              <button onClick={exportFormulaToNotebook} className="px-2 py-1 rounded-lg text-xs font-bold bg-indigo-50 border border-indigo-300 text-indigo-700 hover:bg-indigo-100" title="Append this formula (SVG) to the Lab Notebook notes">📓 Formula → Notebook</button>
+            </div>
+          </div>
 
           {/* La barre d'état des deux fichiers (« System files », au-dessus du
               viewer) — état des fichiers, boutons de reprise Drive, réglages de
@@ -1725,12 +1651,9 @@ export const MDExperimentSetupSection = ({ ctx }) => {
               ou de l'URL) et les restaurations Drive automatiques (useDriveAutoRestore)
               continuent exactement comme avant. */}
 
-          {/* (Le 💡 « Click an atom in the formula (or in the 3D viewer below) … »
-              est passé DANS la sous-section « Sequence and structure », avec la
-              formule qu'il commente — même place que sur la page NMR. Et le volet
-              `display: structureMode …` a disparu : plus personne ne cache plus
-              personne, la carte repliable s'en charge.) */}
+          <p className="text-xs text-slate-400 mb-2">💡 Click an atom in the {structureMode === '2d' ? 'formula' : '3D viewer'} to highlight its cell in the atom table.</p>
 
+          <div style={{ display: structureMode === '3d' ? 'block' : 'none' }} aria-hidden={structureMode !== '3d'}>
             {/* 📂 CE QUE LE DOSSIER DE L'EXPÉRIENCE CONTIENT VRAIMENT.
                 Un bouton par fichier : il LISTE le dossier canonique de
                 l'expérience sur le Drive (par extension) et installe le fichier
@@ -1760,10 +1683,8 @@ export const MDExperimentSetupSection = ({ ctx }) => {
                 Choosing a file here opens it AND declares it: this condition will reopen it by default, on every computer. Nothing is uploaded again.
               </span>
             </div>
-            {/* (Le « {hasOpened3D && ( … )} » a disparu : c'est la carte repliable
-                `keepMounted` qui monte le viewer à sa PREMIÈRE ouverture et le
-                garde monté ensuite — les fichiers du dossier se choisissent donc
-                ici, dans la même carte, sans second état à tenir.) */}
+            {hasOpened3D && (
+              
 <NMRMoleculeViewer
   key={`${activeTest.id || 'md'}|${trajectoryFile ? trajectoryFile.name : 'no-traj-file'}|${d.trajectoryUrl || 'no-traj'}`}
   instanceKey={activeTest.id || null}
@@ -1836,15 +1757,26 @@ export const MDExperimentSetupSection = ({ ctx }) => {
   labelMode={atomLabelMode}
   height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? '1100px' : '1000px'}
 />
+            )}
+          </div>
 
-          {/* (Le second volet — `display: structureMode === '2d'` : la formule 2D
-              cachée derrière l'ancien sélecteur 2D ⇄ 3D — a disparu. La formule vit
-              désormais DANS la sous-section « Sequence and structure » ci-dessus,
-              comme sur la page NMR : une seule définition (`formulaBlock`), aucun
-              volet à masquer.) */}
+          <div style={{ display: structureMode === '2d' ? 'block' : 'none' }} aria-hidden={structureMode !== '2d'}>
+            {d.moleculeType === 'organic' && activeTest.smiles ? (
+               <OrganicViewer smiles={activeTest.smiles || activeTest.ligandSmiles} selectedKeys={selectedKeys} onAtomClick={handleAtomClick} />
+            ) : d.structure ? (
+              <StructureSVGView
+                structure={d.structure}
+                minWidth={d.moleculeType === 'protein' && d.parsedSeq.length > 3 ? `${d.parsedSeq.length * 120}px` : '100%'}
+                isExpanded={expandedPanel === 'formula'}
+                onToggleExpand={() => setExpandedPanel(expandedPanel === 'formula' ? null : 'formula')}
+                selectedKeys={selectedKeys}
+                manualKeys={manualKeys}
+                onAtomClick={handleAtomClick}
+                height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? `${Math.max(360, d.parsedSeq.length * 250 + 120)}px` : '300px'}
+              />
+            ) : null}
+          </div>
         </div>
-      </CollapsibleSection>
-      </div>
     </div>
   );
 };
