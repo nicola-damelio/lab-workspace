@@ -27,6 +27,22 @@
         par les suivre — et dans le RÉGIME DU REPOS (`full`), pas en brouillon :
         une image rendue pour rien ne doit pas faire clignoter la qualité.
 
+     4. LA DYNAMIQUE QUI ÉCRIT, ET QUI LE DIT (`moved()`). LE RAPPORT DE CETTE
+        SESSION : « when I start a MD run the shadow detaches from the molecule and
+        remains detached ». Une ▶ MD n'écrit que des COORDONNÉES : la pose et la
+        signature de la scène ne bougent pas, donc l'image qu'elle demande était
+        jugée « rendue pour rien », le filet ne la regardait qu'au plus une fois par
+        `staleMs`, et la DERNIÈRE écriture tombait dans cette fenêtre — après quoi
+        plus rien n'est rendu : la couche restait sur la géométrie d'avant. La page
+        joue le geste comme le viewer (`pilot.moved()` après chaque écriture) et le
+        verdict est le SEUL qui compte : le dernier masque peint tombe sur la
+        géométrie d'ARRIVÉE (écart en pixels de son centre de gravité), la passe
+        nette étant venue d'une MINUTERIE — aucune image n'étant rendue après la
+        dernière écriture.
+
+     5. LE TÉMOIN NÉGATIF : la MÊME dynamique, sans le mot du geste. Aucun
+        brouillon, et la couche RESTE à côté : le défaut rapporté, mesuré.
+
    COMMENT (zéro dépendance : ni Playwright ni Puppeteer dans ce dépôt)
    Un serveur 127.0.0.1 sert la page, `ngl.js` (le MÊME dist UMD 2.4.0 que charge
    src/utils/ngl.js) et le SOURCE des deux modules (jamais une copie) ; Chrome
@@ -170,11 +186,46 @@ async function main () {
     '…et il les suit DANS LE RÉGIME DU REPOS (aucun brouillon pour une image rendue hors geste)',
     JSON.stringify({ drafts: a.drafts, netMode: a.netMode }));
 
+  /* ---- 5/6. LA DYNAMIQUE : le geste DIT par celui qui écrit, et son témoin
+     négatif. Le rapport de cette session : « when I start a MD run the shadow
+     detaches from the molecule and remains detached ». */
+  console.log('\n--- 5. L\'ÉCRITURE DE LA DYNAMIQUE (le geste dit : moved()) ---');
+  const md = r.mdWrite || {};
+  check(md.atomsMoved === true && md.poseMoved === false,
+    'la dynamique a écrit des COORDONNÉES sans toucher à la caméra (c\'est le cas du rapport)',
+    JSON.stringify({ atomsMoved: md.atomsMoved, poseMoved: md.poseMoved }));
+  check(md.renders > 0, 'ses écritures ont bien demandé des images', String(md.renders));
+  check(md.drafts >= 1,
+    'l\'image rendue qui suit une écriture est un GESTE : la couche est repeinte en BROUILLON pendant le mouvement',
+    JSON.stringify({ drafts: md.drafts, builds: md.builds, fulls: md.fulls }));
+  check(md.mode === 'full' && md.fulls >= 1,
+    '…puis la passe NETTE de l\'arrêt arrive', JSON.stringify({ mode: md.mode, fulls: md.fulls }));
+  check(md.sharpDelayMs !== null && md.sharpDelayMs >= md.idleWindow,
+    '…et elle est arrivée APRÈS `idleMs` : c\'est la MINUTERIE de l\'arrêt, pas une image rendue (qui serait là dans la frame)',
+    JSON.stringify({ sharpDelayMs: md.sharpDelayMs, idleMs: md.idleWindow, rendersAfterWrites: md.rendersAfterWrites }));
+  check(md.gapPx !== null && md.gapPx <= 2,
+    '…si bien que l\'ombre FINIT POSÉE sur la molécule (écart du centre de gravité du dernier masque peint, en px)',
+    JSON.stringify({ gapPx: md.gapPx, painted: md.paintedSize, fresh: md.freshSize }));
+
+  console.log('\n--- 6. LE TÉMOIN NÉGATIF (la même dynamique SANS le mot du geste) ---');
+  const st = r.mdStale || {};
+  check(st.atomsMoved === true && st.poseMoved === false,
+    'les coordonnées ont bougé, la caméra non', JSON.stringify({ atomsMoved: st.atomsMoved, poseMoved: st.poseMoved }));
+  check(st.ms < st.staleWindow,
+    '⚠ le témoin négatif a tenu DANS la fenêtre du filet (sinon il ne mesurerait plus rien)',
+    JSON.stringify({ ms: st.ms, staleMs: st.staleWindow }));
+  check(st.drafts === 0,
+    'sans le mot du geste, aucune image n\'est traitée comme un GESTE : aucun brouillon, la couche ne suit pas le mouvement',
+    JSON.stringify({ builds: st.builds, drafts: st.drafts, fulls: st.fulls, renders: st.renders }));
+  check(st.gapPx !== null && st.gapPx > 2,
+    '…et elle RESTE détachée : la couche garde la géométrie d\'avant (le « remains detached » du rapport)',
+    JSON.stringify({ gapPx: st.gapPx, painted: st.paintedSize, fresh: st.freshSize }));
+
   const bad = CHECKS.filter((c) => !c.ok);
   console.log('\n' + (bad.length
     ? `ÉCHEC  ${bad.length} assertion(s) rouge(s) sur ${CHECKS.length}`
     : 'OK    ' + CHECKS.length + ' assertions vertes'));
-  console.log(`_viewer_ray_shadow_idle_test.cjs — ${CHECKS.length - bad.length}/${CHECKS.length} assertions OK (souris qui passe · geste · filet)`);
+  console.log(`_viewer_ray_shadow_idle_test.cjs — ${CHECKS.length - bad.length}/${CHECKS.length} assertions OK (souris qui passe · geste · filet · la dynamique qui ÉCRIT (moved) · son témoin négatif)`);
   process.exit(bad.length ? 1 : 0);
 }
 

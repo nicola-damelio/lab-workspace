@@ -1,4 +1,4 @@
-// Les trente-neuf suites du VIEWER 3D seul — les plus rapides à relancer après une
+// Les quarante et une suites du VIEWER 3D seul — les plus rapides à relancer après une
 // retouche de src/components/NMRMoleculeViewer.jsx (l'ensemble du dépôt, c'est
 // _run_all.cjs). _viewer_render_smoke_test.mjs est la SEULE ICI qui exécute un
 // vrai rendu : elle construit son probe en SSR et monte la page docking, chaque
@@ -232,6 +232,17 @@ const tests = [
   // cumulatif par classe moléculaire (merge verrouillé par le fichier, prompt de
   // conflit) et le SNAPSHOT exact de la scène, clé par section.
   '_viewer_theme_snapshot_test.mjs',
+  // 🎨 LE STYLE QU'UNE EXPÉRIENCE RETIENT (la demande : « when an experiment opens,
+  // after bringing back to live its files (pdb, trajectory etc) it should remember
+  // also the style file (called snapshot or in its absence the cumulative) of the
+  // viewer and apply it automatically. ») : les règles PURES et exécutées du
+  // fichier de style (nom canonique par mode, préférence snapshot → cumulatif,
+  // format du ⬇ Export, mémoire par instance dans utils/viewerStyleFile.js), puis
+  // LES DEUX GESTES DU VIEWER sortis de la source et exécutés avec des doublures —
+  // retenir (mémoire + fichier dans le dossier Drive de l'expérience, à côté des
+  // .pdb et des .xtc) et rappeler (la mémoire du poste d'abord, sans aucune
+  // requête ; le fichier du dossier ensuite, sur un poste vierge).
+  '_viewer_style_recall_test.mjs',
   // LES QUATRE RÉGLAGES DE CETTE SESSION, du côté du viewer : la couleur unie de
   // General qui descend sur les parties de la molécule (« the solid color is not
   // transferred to the subsections backbone, sidechains, etc. »), la section qui
@@ -300,6 +311,16 @@ const tests = [
   // les atomes n'ont pas bougé, et exige ZÉRO reconstruction du masque — puis
   // rétablit les DEUX témoins : la scène déplacée (brouillon pendant, net après) et
   // des ATOMES glissés sans caméra (le filet, dans le régime du repos).
+  // …ET LA DYNAMIQUE QUI ÉCRIT, ELLE AUSSI (le rapport de la session suivante :
+  // « when I start a MD run the shadow detaches from the molecule and remains
+  // detached »). Une ▶ MD n'écrit que des COORDONNÉES : ni la pose ni la signature
+  // de la scène ne bougent, donc l'image qu'elle demande était jugée « rendue pour
+  // rien » et le filet ne la regardait qu'au plus une fois par `staleMs`. La sonde
+  // joue le geste comme le viewer (`pilot.moved()` après chaque écriture) et son
+  // verdict est un ÉCART EN PIXELS : le dernier masque peint contre le masque de la
+  // géométrie d'ARRIVÉE — 0,0 px avec le mot du geste (et la passe nette venue de la
+  // minuterie d'`idleMs`, pas d'une image), 16,2 px sans lui, où la couche RESTE à
+  // côté : le défaut rapporté, mesuré, avec son témoin négatif.
   '_viewer_ray_shadow_idle_test.cjs',
   // …ET LE MÊME MÉCANISME DE PLACES DE PAGE, MESURÉ PAR UN VRAI NAVIGATEUR
   // (≈10 s) : le seul garde-fou qui prouve ce que React fait vraiment des places

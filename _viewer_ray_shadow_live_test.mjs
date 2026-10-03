@@ -34,6 +34,17 @@
         move the mouse without moving the molecule ») est mesuré en pixels réels
         par _viewer_ray_shadow_idle_test.cjs : 40 images rendues pour 40
         `mousemove`, molécule immobile, ZÉRO reconstruction du masque.
+     7c. LES COORDONNÉES QUI BOUGENT SANS LA CAMÉRA (`moved()`) : le rapport de
+        cette session est « when I start a MD run the shadow detaches from the
+        molecule and remains detached ». Une DYNAMIQUE ÉCRIT des coordonnées — ni la
+        pose ni la signature de la scène ne bougent — donc l'image qu'elle demande
+        était jugée « rendue pour rien », et le filet ne la regardait qu'au plus une
+        fois par `staleMs` : la dernière écriture tombait dans cette fenêtre, et la
+        couche restait accrochée à la géométrie d'avant. Mesuré ici : SANS le mot du
+        geste rien n'est repeint ; AVEC lui l'image qui suit est un brouillon, la
+        passe nette de l'arrêt arrive sans qu'AUCUNE autre image ne soit rendue, dix
+        écritures entre deux images ne coûtent qu'un masque, et le mot est inerte
+        sur un pilote arrêté.
      8. LE CÂBLAGE DANS LE VIEWER : la couche dans le JSX (`pointer-events:
         none`, au-dessus de la toile d'NGL), le pilote attaché au signal
         `rendered`, la préférence mémorisée, et la composition dans les DEUX
@@ -74,6 +85,14 @@ ok(MODULE.includes("typeof element.getContext !== 'function'"),
 ok(MODULE.includes("typeof signal.add === 'function'"), 'le pilote s’accroche au signal `rendered` s’il existe');
 ok(MODULE.includes('readInputs = rayShadowInputsOf') && MODULE.includes('buildMask = buildRayShadowMask'),
   'les deux moitiés (le rig, le masque) sont INJECTABLES — la politique se mesure donc sans navigateur');
+/* ◐ LE MOT DU GESTE DES COORDONNÉES (le rapport « when I start a MD run the shadow
+   detaches from the molecule and remains detached ») : `moved()` marque l'image
+   rendue qui suit, et cette marque est LUE à côté de la pose et de la signature —
+   sinon le mot existerait sans que personne ne l'écoute. */
+ok(MODULE.includes('moved () {') && MODULE.includes('stirred = true;'),
+  'le pilote expose `moved()` (le geste des coordonnées, dit par celui qui écrit)');
+ok(MODULE.includes('if (stirred || !samePose(view, pose, defaults.poseEpsilon) || signature !== scene)'),
+  '…et l’image rendue le LIT : trois témoins d’un geste — la pose, la signature de la scène, les coordonnées');
 
 /* ── 2. LES TROIS RÉGIMES, ET LE DÉFAUT ──────────────────────────────────── */
 eq(RAY_LIVE_QUALITIES, ['auto', 'full', 'draft'], 'trois régimes : le direct (auto), la qualité du PNG, le brouillon');
@@ -448,6 +467,75 @@ eq(ND.pilot.stats().mode, 'full', '…et il les rattrape DANS LE RÉGIME DU REPO
 eq(ND.pilot.stats().drafts, nd0.drafts, '…sans AUCUN brouillon : la qualité ne clignote pas hors geste');
 eq(ND.pilot.stats().fulls, nd0.fulls + 1, '…et par UNE seule passe nette (l’ancien filet en faisait deux : un brouillon, puis le net)');
 
+/* ── 8c. LES COORDONNÉES QUI BOUGENT SANS LA CAMÉRA — `moved()` ─────────────
+   LE RAPPORT DE CETTE SESSION : « when I start a MD run the shadow detaches from
+   the molecule and remains detached ». Une dynamique ÉCRIT des coordonnées : ni la
+   pose ni la signature de la scène ne bougent, donc l’image rendue qu’elle demande
+   était jugée « rendue pour rien » — le filet ne la regardait qu’au plus une fois
+   par `staleMs`, et la DERNIÈRE écriture tombait dans cette fenêtre : la couche
+   restait posée sur la géométrie d’avant. `moved()` est le mot que dit l’écrivain
+   (voir writeStructurePositions dans le viewer) ; les faits qui le rendent vrai se
+   mesurent ici, avec les mêmes doublures que le reste du pilote. */
+
+/* a) LE DÉFAUT, tel qu’il a été rapporté : la MÊME image rendue, sans le mot. */
+const MV = makePilot({ staleMs: 400 });
+MV.pilot.refresh({ force: true });
+const mv0 = MV.pilot.stats();
+MV.slide(0.5);                                    // une écriture de dynamique : les atomes ont bougé
+MV.render();                                      // …et l’image qu’elle a demandée, SANS le mot du geste
+eq(MV.pilot.stats().builds, mv0.builds,
+  '⚠ sans le mot du geste, cette image ne repeint RIEN : l’ombre reste sur la géométrie d’avant (le défaut rapporté)');
+
+/* b) LE MOT DU GESTE : l’image qui suit est un brouillon, puis la passe nette. */
+const MOW = makePilot({ staleMs: 400 });
+MOW.pilot.refresh({ force: true });
+const mow0 = MOW.pilot.stats();
+MOW.slide(0.5);
+MOW.pilot.moved();                                // ← ce que fait writeStructurePositions
+eq(MOW.pilot.stats().builds, mow0.builds,
+  'moved() ne peint rien tout de suite : il MARQUE l’image qui suit (un masque par image affichée, jamais un par écriture)');
+MOW.render();
+eq(MOW.pilot.stats().drafts, mow0.drafts + 1, 'l’image qui suit est un GESTE : elle est peinte en BROUILLON');
+eq(MOW.pilot.stats().fulls, mow0.fulls, '…et pas d’un coup en passe nette : un geste se durcit à l’ARRÊT');
+await sleep(15);
+eq(MOW.pilot.stats().mode, 'full',
+  '…puis la passe NETTE arrive toute seule (la minuterie d’idleMs, pas un signal) : l’ombre se pose sur la géométrie d’arrivée');
+
+/* c) LE CŒUR DU RAPPORT — la DERNIÈRE écriture, que plus AUCUNE image ne suit.
+   NGL ne rend que sur demande : si la passe nette dépendait d’une image rendue, la
+   couche resterait accrochée à la géométrie d’avant, pour toujours (« remains
+   detached »). C’est la MINUTERIE qui la pose. */
+const MZ = makePilot({ staleMs: 400 });
+MZ.pilot.refresh({ force: true });
+const mz0 = MZ.pilot.stats();
+MZ.slide(0.7);
+MZ.pilot.moved();
+MZ.render();                                      // la dernière image du geste…
+await sleep(15);                                  // …et plus AUCUNE n’est rendue ensuite
+eq(MZ.pilot.stats().fulls, mz0.fulls + 1,
+  'la dernière image d’un geste finit en passe nette sans qu’une seule autre image ne soit rendue');
+const mz1 = MZ.pilot.stats();
+clock += 1000;
+MZ.render();
+eq(MZ.pilot.stats().builds, mz1.builds,
+  '…et l’image rendue POUR RIEN qui suit ne recoiffe pas la couche (le filet garde son travail)');
+
+/* d) LE MOT EST CONSOMMÉ PAR UNE IMAGE, PAS PAR UNE ÉCRITURE : dix pas de
+   dynamique entre deux images affichées ne coûtent qu’UN masque — et il est bâti
+   sur les coordonnées les PLUS RÉCENTES. */
+const MR = makePilot({ staleMs: 400 });
+MR.pilot.refresh({ force: true });
+const mr0 = MR.pilot.stats();
+for (let i = 0; i < 10; i += 1) { MR.slide(0.1); MR.pilot.moved(); }
+MR.render();
+eq(MR.pilot.stats().builds, mr0.builds + 1, 'dix écritures entre deux images ne coûtent QU’UN masque (un par image affichée)');
+
+/* e) INERTE QUAND LE PILOTE EST ARRÊTÉ : aucune fuite, aucun geste fantôme. */
+const MS = makePilot();
+MS.pilot.refresh({ force: true });
+MS.pilot.stop();
+eq(MS.pilot.moved(), false, 'un pilote arrêté ne marque plus rien : moved() rend false');
+
 /* LE FILET SE SOIGNE TOUT SEUL. Une lecture qui échoue (la caméra d’un still
    « ✨ Ray », un rig refusé) VIDE la couche — jamais l’ombre de l’image d’avant —
    et OUBLIE ce qui était peint : la lecture suivante, réussie, doit donc
@@ -565,6 +653,24 @@ has('filmCanvasFor(canvas, vignetteDarkness, bgColor, rayLiveOn ? rayShadowCanva
   'le 🎬 de la trajectoire compose l’ombre vivante');
 has(': Number.NaN, bgColor, rayLiveOn ? rayShadowCanvasRef.current : null);',
   '…et le film de poses aussi (les deux films se ressemblent)');
+/* ◐ …ET LES COORDONNÉES QUI BOUGENT LE DISENT — le rapport de cette session :
+   « when I start a MD run the shadow detaches from the molecule and remains
+   detached ». Le mot est dit par les écritures de coordonnées du viewer, et par
+   elles seules (la même règle que `refreshScenePlates` / `refreshHydrogenBonds`) :
+   une image de trajectoire n'en a pas besoin, son `currentFrame` EST dans la
+   signature de la scène, donc le pilote la voit comme un geste par lui-même. */
+has('const rayShadowMoleculeMoved = () => {',
+  'l’ombre vivante apprend que la MOLÉCULE a bougé : une entrée dédiée, pas une seconde politique');
+has("if (!pilot || typeof pilot.moved !== 'function') return;",
+  '…tolérante : sans pilote (ou avec un module plus ancien) elle ne fait STRICTEMENT rien');
+has("// ◐ …et l'OMBRE VIVANTE apprend que la molécule a bougé",
+  'writeStructurePositions le dit : chaque image d’un ▶ MD, d’un ⚒ Minimise, d’un 🧬 calcul, d’une ✏️ torsion');
+has("// ◐ …et l'ombre vivante : un glisser de molécule est un geste, lui aussi",
+  'applyPartMove aussi : une molécule déplacée à la main est un geste');
+has('est un geste comme un autre',
+  '…et le ↺ de restorePartMoves, qui écrit des coordonnées lui aussi');
+eq(VIEW.split('rayShadowMoleculeMoved();').length - 1, 3,
+  '⚠ TROIS appels, et trois seulement : les trois écrivains de coordonnées (jamais un quatrième chemin inventé)');
 
-console.log(`_viewer_ray_shadow_live_test.mjs — ${passed} assertions OK (ombre vivante : parité PNG · 3 régimes · politique auto · pose · signature de la scène · signature des entrées du masque · couche · films)`);
+console.log(`_viewer_ray_shadow_live_test.mjs — ${passed} assertions OK (ombre vivante : parité PNG · 3 régimes · politique auto · pose · signature de la scène · signature des entrées du masque · geste des coordonnées (moved) · couche · films)`);
 

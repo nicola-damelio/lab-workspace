@@ -234,8 +234,28 @@ import {
 // utils/ligandSmiles.js). A PDB only names its ligand by a 3-letter code, so this
 // is where the SMILES of a hand-loaded ligand comes from.
 import { cachedLigandSmiles, fetchLigandSmiles } from '../utils/ligandSmiles';
-import { archiveFileToDrive } from '../utils/driveUpload';
+import { archiveFileToDrive, downloadDriveFileText, getDriveToken, uploadLocalFile } from '../utils/driveUpload';
 import { getPymolScripts, setPymolScript as savePymolScriptToLibrary } from '../utils/pymolScripts';
+/* 🎨 LE STYLE QU'UNE EXPÉRIENCE RETIENT — la demande de cette session : « when an
+   experiment opens, after bringing back to live its files (pdb, trajectory etc) it
+   should remember also the style file (called snapshot or in its absence the
+   cumulative) of the viewer and apply it automatically. »
+   Le style voyage donc comme les fichiers : un fichier JSON dans le dossier Drive
+   de l'expérience (`viewer-style-snapshot.json` / `viewer-style-cumulative.json`,
+   à côté des .pdb et des .xtc — l'écriture est celle des fichiers déjà envoyés par
+   le viewer, `uploadLocalFile` avec le contexte de nommage de la page), lu à
+   l'ouverture par la lecture du dossier de l'expérience
+   (utils/driveExperimentFiles.js, le geste déjà offert par les boutons
+   « 📂 … from Drive folder » des pages), et une mémoire par instance qui rend le
+   rappel instantané et hors ligne. Les règles — nom canonique par mode, préférence
+   snapshot → cumulatif, format du fichier, mémoire — sont PURES et vivent dans
+   utils/viewerStyleFile.js. */
+import {
+  VIEWER_STYLE_EXT, loadViewerStyleMemory, parseViewerStyleFile, pickViewerStyleFile,
+  saveViewerStyleMemory, viewerStyleEntryOf, viewerStyleFilePayload, viewerStyleFileName,
+  viewerStyleMemoryKey,
+} from '../utils/viewerStyleFile';
+import { listExperimentFiles } from '../utils/driveExperimentFiles';
 /* 🧪 LA CHARGE D'UNE SÉQUENCE — la lecture du ⚙ Params & Constraints quand l'écran montre le
    modèle bâti par la page : le pKa de CHAQUE chaîne latérale et les deux terminus (voir
    utils/sequenceCharge.js). Le graphe reste la lecture d'un PDB chargé, et le panneau DIT
@@ -9586,6 +9606,26 @@ if (!pymolScopeRef.current) pymolScopeRef.current = pymolScopeLabelOf(instanceKe
    glisser d'une expérience dans une autre. */
 const pymolOwnerRef = useRef(null);
 if (!pymolOwnerRef.current) pymolOwnerRef.current = pymolSessionOwnerOf(instanceKey, driveNaming);
+/* 🎨 LA MÉMOIRE DE STYLE DE CETTE INSTALLATION (la demande de cette session, voir
+   utils/viewerStyleFile.js) : le MÊME repère que la session 🧪 — l'expérience
+   d'abord (projet · nom, ses conditions la partagent), la condition ensuite (une
+   mémoire écrite avant ce correctif reste lisible), la clé générale en dernier
+   recours. Le monde est FIGÉ au montage, comme les clés ci-dessus : la page qu'on
+   quitte garde le sien, et le style d'une expérience ne peut pas glisser dans une
+   autre. Deux drapeaux : `styleRecallRef` = le rappel n'a lieu qu'UNE fois par
+   montage, `styleTouchedRef` = un geste de l'utilisateur (enregistrer, charger,
+   importer) le clôt — le style qu'il vient de choisir n'est jamais écrasé par un
+   rappel qui arrive après. */
+const styleMemoryKeysRef = useRef(null);
+if (!styleMemoryKeysRef.current) {
+  const slugs = [pymolSessionExperimentSlug(driveNaming), pymolSessionInstanceSlug(instanceKey, driveNaming)]
+    .filter(Boolean);
+  styleMemoryKeysRef.current = [...slugs.map(viewerStyleMemoryKey), viewerStyleMemoryKey('')];
+}
+const styleMemoryKeyRef = useRef(null);
+if (!styleMemoryKeyRef.current) styleMemoryKeyRef.current = styleMemoryKeysRef.current[0];
+const styleRecallRef = useRef(false);
+const styleTouchedRef = useRef(false);
 const [pymolSession] = useState(() => loadPymolSessionFor(pymolSessionKeysRef.current, pymolOwnerRef.current));
 const [selections, setSelections] = useState(() => pymolSession.selections);   // [{ name, expr }]
 const [selStyles, setSelStyles] = useState(() => pymolSession.selStyles);       // key -> { cartoon, ribbon, tube, ball, stick, sphere, surface, color, colorMode, transparency, sphereScale, radiusSphere, radiusBond, hideFor, mat }
@@ -11076,6 +11116,7 @@ const writeStructurePositions = (comp, idxs, flat) => {
   refreshScenePlates();          // les plaques suivent les coordonnées, comme pour une image
   refreshHydrogenBonds(comp);    // …et le réseau de 💧 se relit LÀ OÙ les coordonnées arrivent
   requestSceneRepaint();
+  rayShadowMoleculeMoved();      // ◐ …et l'OMBRE VIVANTE apprend que la molécule a bougé (voir son commentaire)
   return true;
 };
 
@@ -17543,6 +17584,42 @@ const requestSceneRepaint = () => {
   } catch { /* ignore */ }
 };
 
+/* ── ◐ L'OMBRE VIVANTE SUIT AUSSI LES COORDONNÉES ───────────────────────────
+   LE RAPPORT DE CETTE SESSION : « when I start a MD run the shadow detaches from
+   the molecule and remains detached ». Le pilote de l'ombre vivante
+   (utils/viewerRayShadowLive.js) s'accroche au signal `rendered` d'NGL et ne juge
+   un GESTE que sur deux choses : la POSE de la caméra et la signature de la scène
+   (`sceneSignatureOf` — les groupes de la vue, la visibilité d'un composant, son
+   `currentFrame`, sa matrice, le nombre de ses représentations). Une DYNAMIQUE
+   MOLÉCULAIRE n'y touche pas : elle ÉCRIT des coordonnées, comme une torsion ou un
+   glisser de molécule. Le filet du pilote finissait bien par les voir, mais AU PLUS
+   UNE FOIS PAR `staleMs` (400 ms) — et la DERNIÈRE écriture d'un geste tombe
+   presque toujours dans cette fenêtre : après elle, plus rien n'est rendu (NGL ne
+   rend que sur demande), donc la couche restait posée sur la géométrie d'avant,
+   définitivement. C'est ce que dit « remains detached ».
+
+   Ici l'écrivain DIT que la molécule a bougé (`moved()`) : l'image rendue qui suit
+   est un GESTE — brouillon pendant, passe nette à l'arrêt — et la passe nette est
+   armée par une MINUTERIE, donc elle arrive même quand plus aucune image n'est
+   rendue. C'est ce qui fait que l'ombre FINIT exactement sur la molécule.
+
+   QUI L'APPELLE — les écritures de coordonnées du viewer, et elles seules, à côté
+   de `refreshScenePlates()` / `refreshHydrogenBonds()` : `writeStructurePositions`
+   (chaque image d'un ▶ MD, d'un ⚒ Minimise, d'un 🧬 calcul de structure, d'une
+   ✏️ torsion, du 📥 PDB de l'écran), `applyPartMove` / `restorePartMoves` (les
+   molécules déplacées à la main). Une image de TRAJECTOIRE n'a pas besoin de ce
+   mot : NGL écrit ses coordonnées sans nous et son `currentFrame` EST dans la
+   signature de la scène (le pilote la voit comme un geste, par lui-même).
+
+   Rien n'est peint ici, rien n'est obligatoire : sans couche vivante (`off`), sans
+   pilote, ou si le module est plus ancien, l'appel ne fait STRICTEMENT rien — et
+   il ne peut jamais casser un geste de la molécule. */
+const rayShadowMoleculeMoved = () => {
+  const pilot = rayShadowLiveRef.current;
+  if (!pilot || typeof pilot.moved !== 'function') return;
+  try { pilot.moved(); } catch { /* l'ombre ne casse jamais un geste de la molécule */ }
+};
+
 /* ── LES PLAQUES DE LA SCÈNE SUIVENT LES COORDONNÉES ─────────────────────────
    `refreshRingPlates` réécrit la géométrie de chaque plaque marquée (voir
    addRingPlateRep) avec les coordonnées que la structure a MAINTENANT ; ici on
@@ -17656,6 +17733,7 @@ const applyPartMove = (comp, rec) => {
   refreshScenePlates();          // les plaques suivent les coordonnées, comme pour une image
   refreshHydrogenBonds(comp);    // …et le réseau de 💧 suit le geste qui vient de déplacer la molécule
   requestSceneRepaint();
+  rayShadowMoleculeMoved();      // ◐ …et l'ombre vivante : un glisser de molécule est un geste, lui aussi
   return true;
 };
 
@@ -17718,6 +17796,7 @@ const restorePartMoves = (comp) => {
     refreshScenePlates();
     refreshHydrogenBonds(comp);    // …et le réseau de 💧 : un ↺ a redonné la géométrie de départ
     requestSceneRepaint();
+    rayShadowMoleculeMoved();      // ◐ …et l'ombre vivante : ce ↺ est un geste comme un autre
   }
   return n;
 };
@@ -21796,8 +21875,17 @@ const importActiveEnvFile = (file) => {
       saveNamedMap(store.key, map);
       setSetupSaveMode(store.tag);
       setSetupName(name);
-      if (store.tag === 'theme') loadTheme(name);
-      else loadSnapshot(name);
+      /* ⚠ L'ENTRÉE QUI VIENT D'ARRIVER S'APPLIQUE DIRECTEMENT (applyThemeEntry /
+         applySnapshotEntry), et non par `loadTheme(name)` / `loadSnapshot(name)` :
+         ces lecteurs relisent le MAGASIN, qui n'a pas encore ce nom dans cet état
+         (setViewerThemes / setViewerSnaps sont asynchrones) — un ⬆ Import annonçait
+         donc « no such theme » et n'appliquait RIEN. C'est aussi ce que fait le
+         rappel automatique de l'ouverture (voir recallViewerStyle). */
+      if (store.tag === 'theme') applyThemeEntry(entry, name);
+      else applySnapshotEntry(entry, name);
+      // …ET L'EXPÉRIENCE S'EN SOUVIENT : un fichier de style importé à la main est
+      // déposé dans le dossier Drive de l'expérience, comme celui du 💾.
+      rememberViewerStyle(store.tag, name, entry);
     } catch (err) {
       flashSetupMsg(`import failed: ${(err && err.message) || 'bad file'}`);
     }
@@ -21825,9 +21913,8 @@ const flashSetupMsg = (m) => {
 
 /* 📂 MODE 1 · LOAD A THEME — the PARTIAL application of the request: the global
    environment first, then every molecule whose class the theme knows. */
-const loadTheme = (name) => {
-  const th = viewerThemes[name];
-  if (!th) { flashSetupMsg('no such theme'); return; }
+const applyThemeEntry = (th, name) => {
+  if (!th) { flashSetupMsg('no such theme'); return false; }
   applyThemeGlobal(th.global);
   const classes = th.classes || {};
   // 1. La couche PERSISTÉE par classe : un système chargé (ou ajouté) PLUS TARD
@@ -21855,6 +21942,17 @@ const loadTheme = (name) => {
   leaveLightMode();
   try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch { /* ignore */ }
   flashSetupMsg(`✓ theme “${name}” applied — ${known} section(s) styled, ${neutral} on the neutral base`);
+  return true;
+};
+/* 📂 LE GESTE DE L'UTILISATEUR — ET L'EXPÉRIENCE S'EN SOUVIENT : la mémoire du
+   poste (rappel instantané à la prochaine ouverture) et le fichier du dossier
+   Drive, qui le ramène sur un autre poste (voir rememberViewerStyle). Le corps du
+   chargement vit dans applyThemeEntry : le RAPPEL automatique de l'ouverture
+   applique une entrée qu'il vient d'adopter ou de lire sur le Drive, sans repasser
+   par le magasin ni par le fichier (voir recallViewerStyle). */
+const loadTheme = (name) => {
+  const th = viewerThemes[name];
+  if (applyThemeEntry(th, name)) rememberViewerStyle('theme', name, th);
 };
 
 /* 💾 MODE 2 · SAVE A SNAPSHOT — deterministic overwrite, keyed by the SECTION (the
@@ -21886,14 +21984,18 @@ const saveSnapshot = (name) => {
   setViewerSnaps(map);
   saveNamedMap(VIEWER_SNAPSHOT_KEY, map);
   flashSetupMsg(`✓ snapshot “${name}” — ${Object.keys(sections).length} section(s)`);
+  // …ET L'EXPÉRIENCE S'EN SOUVIENT : la mémoire du poste (rappel instantané à la
+  // prochaine ouverture) et le fichier du dossier Drive, à côté des .pdb et des
+  // .xtc (voir rememberViewerStyle). Un 💾 hors d'une expérience — un viewer monté
+  // seul — n'a rien à qui l'attacher : la mémoire générale suffit alors.
+  rememberViewerStyle('snapshot', name, map[name]);
 };
 
 /* 📂 MODE 2 · LOAD A SNAPSHOT — the environment, then the styles back onto the very
    same sections: by ID first, by the section KEY (protein|A) when the ids of a
    reloaded file differ. A section the file does not know keeps its own look. */
-const loadSnapshot = (name) => {
-  const sn = viewerSnaps[name];
-  if (!sn) { flashSetupMsg('no such snapshot'); return; }
+const applySnapshotEntry = (sn, name) => {
+  if (!sn) { flashSetupMsg('no such snapshot'); return false; }
   applyThemeGlobal(sn.global);
   const byKey = {};
   Object.keys(sn.sections || {}).forEach((id) => {
@@ -21918,7 +22020,157 @@ const loadSnapshot = (name) => {
   leaveLightMode();
   try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch { /* ignore */ }
   flashSetupMsg(`✓ snapshot “${name}” applied — ${hit} section(s)${miss ? `, ${miss} unknown (their look is kept)` : ''}`);
+  return true;
 };
+// LE GESTE DE L'UTILISATEUR — le pendant de loadTheme : le snapshot appliqué est
+// RETENU par l'expérience ouverte (mémoire du poste + fichier du dossier Drive).
+const loadSnapshot = (name) => {
+  const sn = viewerSnaps[name];
+  if (applySnapshotEntry(sn, name)) rememberViewerStyle('snapshot', name, sn);
+};
+
+/* ══ 🎨 LE STYLE QU'UNE EXPÉRIENCE RETIENT — LES TROIS GESTES DU VIEWER ═══════
+   La demande : « when an experiment opens, after bringing back to live its files
+   (pdb, trajectory etc) it should remember also the style file (called snapshot or
+   in its absence the cumulative) of the viewer and apply it automatically. »
+   Le format du fichier, les noms canoniques et la règle « snapshot, sinon
+   cumulatif » vivent dans utils/viewerStyleFile.js (purs, et EXÉCUTÉS par
+   _viewer_style_recall_test.mjs) ; ici, ce que le viewer en fait :
+     1. RETENIR (rememberViewerStyle) — un style APPLIQUÉ ou ENREGISTRÉ pour cette
+        installation écrit la mémoire du poste (instantanée, hors ligne) ET dépose
+        le fichier JSON dans le dossier Drive de l'expérience, à côté des .pdb et
+        des .xtc : c'est ce fichier qui ramène le style sur un autre poste ;
+     2. RAPPELER (recallViewerStyle, déclenché par l'effet qui suit) — à
+        l'ouverture, une fois les fichiers là (`status === 'ready'` et des sections
+        à l'écran), la mémoire du poste est appliquée ; si elle ne suffit pas
+        (autre poste, navigateur vidé, style supprimé depuis), le dossier de
+        l'expérience est lu et son fichier est adopté puis appliqué ;
+     3. SE TAIRE — rien n'est écrit, rien n'est dit, rien n'est appliqué quand
+        l'expérience n'a aucun style : le viewer garde son style de base, exactement
+        comme avant cette demande. */
+
+/* Le fichier du dossier de l'expérience : le format du ⬇ Export du viewer
+   (`{ mode, name, entry }`, voir utils/viewerStyleFile.js), déposé SOUS LE NOM
+   CANONIQUE de son mode — un seul fichier par mode (réenregistrer REMPLACE le
+   contenu : `uploadLocalFile` ne fabrique pas de doublon). Rend le nom déposé, ou
+   '' hors Drive / en échec — l'appelant peut alors le DIRE au lieu de promettre un
+   voyage. */
+const archiveViewerStyle = async (mode, name, entry) => {
+  if (!driveNaming || !getDriveToken() || !entry) return '';
+  const fileName = viewerStyleFileName(mode);
+  try {
+    const text = JSON.stringify(viewerStyleFilePayload({
+      mode, name, entry, instance: pymolSessionInstanceSlug(instanceKey, driveNaming)
+    }), null, 2);
+    const res = await uploadLocalFile({
+      name: fileName,
+      mimeType: 'application/json',
+      file: new Blob([text], { type: 'application/json' }),
+      ctx: driveNaming
+    });
+    return (res && res.name) || '';
+  } catch { return ''; }
+};
+
+/* LE GESTE COMPLET : la mémoire du poste tout de suite, le fichier du dossier
+   ensuite — et le message nomme celui des deux qui a VRAIMENT eu lieu (sans Drive
+   connecté, la mémoire locale reste et rien n'est promis). */
+const rememberViewerStyle = (mode, name, entry) => {
+  styleTouchedRef.current = true;      // le style de l'utilisateur est désormais le sien
+  saveViewerStyleMemory(styleMemoryKeyRef.current, { mode, name });
+  const label = mode === 'theme' ? 'cumulative theme' : 'snapshot';
+  archiveViewerStyle(mode, name, entry).then((filed) => {
+    if (filed) flashSetupMsg(`✓ ${label} “${name}” — remembered for this experiment (filed as ${filed})`);
+  });
+};
+
+/* LE FICHIER DU DOSSIER → LE MAGASIN → LA SCÈNE : l'entrée lue est d'abord ADOPTÉE
+   sous son nom (l'écriture du ⬆ Import, dans le magasin de son mode), sinon les
+   lecteurs ci-dessus ne trouveraient pas, dans l'état, un nom qui vient d'arriver. */
+const adoptViewerStyleEntry = (mode, name, entry) => {
+  if (mode === 'theme') {
+    const map = { ...viewerThemes, [name]: entry };
+    setViewerThemes(map);
+    saveNamedMap(VIEWER_THEME_KEY, map);
+  } else {
+    const map = { ...viewerSnaps, [name]: entry };
+    setViewerSnaps(map);
+    saveNamedMap(VIEWER_SNAPSHOT_KEY, map);
+  }
+};
+
+/* LE RAPPEL — la mémoire du poste d'abord (instantanée, hors ligne), le fichier du
+   dossier de l'expérience ensuite (c'est lui qui sauve un poste vierge : la même
+   expérience rouverte ailleurs retrouve son style, comme elle retrouve ses .pdb et
+   ses .xtc). LE SNAPSHOT GAGNE, LE CUMULATIF S'APPLIQUE EN SON ABSENCE : la
+   mémoire le dit (`mode`), et dans le dossier c'est `pickViewerStyleFile` qui
+   applique exactement cette préférence (voir utils/viewerStyleFile.js). */
+const recallViewerStyle = async () => {
+  if (styleTouchedRef.current) return null;            // un geste de l'utilisateur a tranché
+  const key = styleMemoryKeyRef.current;
+  /* Ce que CE poste a retenu — sous la clé de l'expérience, puis celle de la
+     condition (la mémoire des versions précédentes), puis la générale. Une mémoire
+     qui désigne un style qu'on a supprimé depuis ne rappelle rien (voir
+     viewerStyleEntryOf) : le fichier du dossier aura donc sa chance. */
+  for (const memoryKey of styleMemoryKeysRef.current) {
+    const target = viewerStyleEntryOf(loadViewerStyleMemory(memoryKey), {
+      snapshots: Object.keys(viewerSnaps), themes: Object.keys(viewerThemes)
+    });
+    if (!target) continue;
+    if (target.mode === 'theme') applyThemeEntry(viewerThemes[target.name], target.name);
+    else applySnapshotEntry(viewerSnaps[target.name], target.name);
+    flashSetupMsg(`✓ ${target.mode === 'theme' ? 'cumulative theme' : 'snapshot'} “${target.name}” applied — the style this experiment remembers`);
+    return { ...target, from: 'browser' };
+  }
+  // Le poste n'a rien (ou plus) : LE FICHIER DU DOSSIER DE L'EXPÉRIENCE.
+  if (!driveNaming || !getDriveToken()) return null;
+  let found = null;
+  try {
+    const listed = await listExperimentFiles({
+      ctx: { ...driveNaming },
+      ctxs: [{ ...driveNaming, section: 'Setup' }],
+      exts: [VIEWER_STYLE_EXT]
+    });
+    found = pickViewerStyleFile(listed.files);
+  } catch { found = null; }
+  if (!found || styleTouchedRef.current) return null;  // l'utilisateur a choisi entre-temps
+  const text = await downloadDriveFileText(found.id).catch(() => '');
+  const parsed = parseViewerStyleFile(text);
+  if (!parsed) return null;                            // ce .json n'est pas un style : on ne devine pas
+  adoptViewerStyleEntry(parsed.mode, parsed.name, parsed.entry);
+  saveViewerStyleMemory(key, { mode: parsed.mode, name: parsed.name });
+  if (parsed.mode === 'theme') applyThemeEntry(parsed.entry, parsed.name);
+  else applySnapshotEntry(parsed.entry, parsed.name);
+  flashSetupMsg(`✓ ${parsed.mode === 'theme' ? 'cumulative theme' : 'snapshot'} “${parsed.name}” applied — brought back from this experiment's Drive folder (${found.name})`);
+  return { mode: parsed.mode, name: parsed.name, from: 'drive' };
+};
+
+/* L'EFFET DU RAPPEL — « after bringing back to live its files » : il attend que les
+   fichiers soient LÀ (`status === 'ready'`) et que la scène ait ses sections (un
+   snapshot se rejoue SUR elles, voir applySnapshotEntry), puis n'a lieu qu'UNE
+   fois par montage. La page remonte le viewer à chaque changement d'instance
+   (`key={activeTest.id}`) : « une fois par montage » est donc « une fois par
+   expérience ouverte ».
+   ⚠ LE COURT DÉLAI N'EST PAS DU CONFORT : les molécules ANNEXES (un ligand, une
+   eau) arrivent APRÈS le fichier principal, et un snapshot se rejoue section par
+   section — laisser la scène se POSER évite d'appliquer le style avant que la
+   dernière molécule soit là (le catalogue et le compteur de gestes sont dans les
+   dépendances : chaque arrivée repousse l'échéance). */
+const VIEWER_STYLE_RECALL_DELAY_MS = 400;
+useEffect(() => {
+  if (styleRecallRef.current) return;
+  if (status !== 'ready') return;
+  if (!Object.keys(sectionCatalog || {}).length) return;
+  const timer = setTimeout(() => {
+    if (styleRecallRef.current) return;
+    styleRecallRef.current = true;
+    // Le rappel ne doit JAMAIS devenir une promesse non tenue : un style illisible ou
+    // un Drive qui répond mal laisse simplement la scène telle qu'elle est.
+    recallViewerStyle().catch(() => {});
+  }, VIEWER_STYLE_RECALL_DELAY_MS);
+  return () => clearTimeout(timer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [status, instanceKey, sectionEpoch, sectionCatalog]);
 
 /* ══ THE TWO SAVE MODES OF THE VISUALISATION ENVIRONMENT (the request) ═══════
    MODE 1 · THEME (cumulative) and MODE 2 · SNAPSHOT (exact scene): the two stores
@@ -21987,6 +22239,10 @@ const saveTheme = (name, choices) => {
   setThemeChoices(null);
   const kept = Object.keys(nextClasses).filter((k) => !kinds.includes(k));
   flashSetupMsg(`✓ theme “${name}” — ${learned.length} class(es) learned${kept.length ? `, ${kept.length} kept (${kept.join(' · ')})` : ''}`);
+  // …ET L'EXPÉRIENCE S'EN SOUVIENT (voir rememberViewerStyle) : le thème cumulatif
+  // enregistré ici est celui que l'expérience rouvrira — et « en l'absence d'un
+  // snapshot » c'est LUI qui s'appliquera, exactement la règle de la demande.
+  rememberViewerStyle('theme', name, map[name]);
 };
 
 // A swatch of the 🔬 nucleic-acid panel: it sets the colour AND switches « Colour

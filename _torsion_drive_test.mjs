@@ -622,7 +622,7 @@ const Panel = (() => {
   const msgs = [];
   const closest = [];
   const updates = [];
-  const scene = { plates: 0, repaints: 0 };
+  const scene = { plates: 0, repaints: 0, hbonds: 0, shadows: 0 };
   const partMoveRef = { current: new Map() };
   const componentRef = { current: null };
   const torsionUndoRef = { current: null };
@@ -631,9 +631,10 @@ const Panel = (() => {
   const setTorsionMsg = (m) => { msgs.push(m); };
   const setTorsionClosest = (c) => { closest.push(c); };
   const writeStructurePositions = new Function(
-    'refreshScenePlates', 'requestSceneRepaint',
+    'refreshScenePlates', 'requestSceneRepaint', 'refreshHydrogenBonds', 'rayShadowMoleculeMoved',
     `${sliceFn('const writeStructurePositions = (comp, idxs, flat) => {')}\nreturn writeStructurePositions;`,
-  )(() => { scene.plates += 1; }, () => { scene.repaints += 1; });
+  )(() => { scene.plates += 1; }, () => { scene.repaints += 1; }, () => { scene.hbonds += 1; },
+    () => { scene.shadows += 1; });
   const structureWasDragged = new Function(
     'partMoveRef', 'isIdentityMove',
     `${sliceFn('const structureWasDragged = (structure) => {')}\nreturn structureWasDragged;`,

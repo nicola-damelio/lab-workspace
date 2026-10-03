@@ -2257,3 +2257,186 @@ verts ; `npx oxlint` — **0 erreur**, et exactement les mêmes avertissements q
 `MDSections.jsx` + `NMRSections.jsx` (41 contre 41, vérifié sur les copies de `HEAD`).
 
   repart vers les autres postes et qui fait correspondre la copie de la base du navigateur.
+
+
+## Viewer : pendant une ▶ MD, l'ombre vivante suit la MOLÉCULE (03/10/2026)
+
+**Défaut signalé.** « *the shadow created by ray is now solved but when I start a MD run the
+shadow detaches from the molecule and remains detached.* »
+
+Le « maintenant résolu » est l'ombre portée de l'image fixe (✨ Ray) : elle se pose bien sur le
+dessin. Ce qui se décrochait, c'est la **couche vivante** (◐) — la même ombre, mais peinte dans
+une toile 2D posée au-dessus de la vue, à chaque image.
+
+**La cause, en une phrase :** le pilote de cette couche ne reconnaissait un GESTE que par la
+**pose de la caméra** et par la **signature de la scène** (`sceneSignatureOf` : les groupes de
+la vue, la visibilité d'un composant, son `currentFrame`, sa matrice, le nombre de ses
+représentations) — et **aucune des deux ne contient les coordonnées des atomes**. Une ▶ MD,
+elle, n'ÉCRIT que des coordonnées (`writeStructurePositions`, le chemin d'une ✏️ torsion) :
+l'image qu'elle demande était donc jugée « rendue pour rien ». Le filet du pilote finissait bien
+par la voir (la signature des entrées du masque, positions comprises), mais **au plus une fois
+par `staleMs`** (400 ms) — et la DERNIÈRE écriture d'un geste tombe presque toujours dans cette
+fenêtre. Après elle, plus rien n'est rendu (NGL ne rend que sur demande) : la couche restait
+accrochée à la géométrie d'avant, **définitivement**. C'est le « remains detached », et il est
+maintenant mesuré.
+
+**Ce qui a changé — un mot, dit par celui qui ÉCRIT :**
+
+* `viewerRayShadowLive.js` expose **`moved()`** : il ne peint rien, il MARQUE l'image rendue qui
+  suit — celle que l'écriture a elle-même demandée — pour qu'elle soit jugée comme un GESTE
+  (brouillon tout de suite, passe nette à l'arrêt) au lieu d'une image rendue pour rien. Le
+  drapeau est **consommé par cette image**, donc dix écritures entre deux images affichées ne
+  coûtent **qu'un masque** — et il est bâti sur les coordonnées les plus récentes ;
+* `moved()` **arme aussi la passe nette** (`armRefine`) : si plus rien n'est rendu après la
+  dernière écriture — le cas exact du rapport — la **minuterie** d'`idleMs` peint quand même
+  l'ombre nette, sur la géométrie d'ARRIVÉE ;
+* le viewer dit le mot dans **`rayShadowMoleculeMoved()`**, appelée par les **trois écrivains de
+  coordonnées** et par eux seuls, à côté de `refreshScenePlates()` / `refreshHydrogenBonds()` :
+  `writeStructurePositions` (chaque image d'un ▶ MD, d'un ⚒ Minimise, d'un 🧬 calcul de
+  structure, d'une ✏️ torsion, du 📥 PDB de l'écran), `applyPartMove` (un glisser de molécule) et
+  `restorePartMoves` (le ↺). Une image de TRAJECTOIRE n'a pas besoin du mot : NGL écrit ses
+  coordonnées sans nous et son `currentFrame` EST dans la signature de la scène.
+
+Ce qui n'a **pas** changé : la souris qui passe ne repeint toujours **rien** (40 images rendues,
+0 reconstruction : la mesure de la session précédente), les trois régimes `auto` / `sharp` /
+`draft` et le `off`, la parité de la couche avec le PNG, la trajectoire, et l'ombre de l'image
+fixe ✨ Ray. Le filet garde son travail pour ce qui n'est PAS une écriture (une représentation
+qui se construit, un atome glissé à la main).
+
+**Mesuré, dans un vrai Chrome** (`_viewer_ray_shadow_idle_test.cjs`, toile 900×600, peptide de
+12 résidus en licorice — la scène des autres sondes), sur une dynamique de 20 pas :
+
+* **avec le mot** : 19 images rendues, **19 brouillons** (la couche suit chaque image
+  affichée), la passe nette arrive **340 ms après la dernière écriture** (≥ `idleMs` = 220 :
+  c'est la minuterie, pas la frame qui suit une image), et l'écart entre le centre de gravité du
+  **dernier masque peint** et celui du masque de la géométrie d'ARRIVÉE tombe à **0,0 px** —
+  l'ombre est POSÉE sur la molécule ;
+* **sans le mot — le témoin négatif, le même geste** : **0 brouillon**, et l'écart reste à
+  **16,2 px** : la couche garde la géométrie d'avant, à côté. C'est le défaut du rapport,
+  reproduit et chiffré.
+
+*Vérifier :* `node _viewer_ray_shadow_live_test.mjs` — **166 assertions** (contre 149) : la
+politique mesurée sans navigateur (les cinq faits du mot du geste — la même image rendue ne
+repeint RIEN sans lui, un brouillon puis la passe nette avec lui, la passe nette de la dernière
+image **sans qu'aucune autre image ne soit rendue**, dix écritures pour un seul masque, et
+`moved()` inerte sur un pilote arrêté), plus le câblage (trois appels, dans les trois écrivains,
+et nulle part ailleurs). `node _viewer_ray_shadow_idle_test.cjs` — **24/24** en images et en
+pixels réels (contre 15), avec les chiffres ci-dessus. `node _verify.cjs` — **40 suites, 1
+échec** : le seul rouge est `_viewer_rings_gradient_test.mjs`, déjà rouge AVANT cette retouche
+(la sonde elle-même meurt sur « Cannot access 'HF' before initialization », ligne 603 contre
+710 — vérifié en remettant `HEAD` le temps d'un essai), et rien de cette session n'y touche.
+`node _torsion_drive_test.mjs` — **652 assertions**, dont le banc qui EXÉCUTE le vrai
+`writeStructurePositions` : il reçoit maintenant ses quatre dépendances (`refreshScenePlates`,
+`requestSceneRepaint`, `refreshHydrogenBonds` — qu'il ne passait plus depuis la session 💧 — et
+`rayShadowMoleculeMoved`). `node _structure_calculation_test.mjs` (768),
+`node _viewer_hbonds_test.mjs` (184), `node _viewer_molecule_moves_test.mjs` (131),
+`node _ramachandran_test.mjs` (234) et `node _viewer_ray_shadows_test.mjs` (333) restent verts.
+`npx vite build` — ✓ 6,4 s. `npx oxlint` sur les deux fichiers touchés — **0 erreur**, et
+**62 avertissements avant comme après** (mesuré sur `HEAD` remis le temps d'un essai).
+
+---
+
+## 🎨 Le style du viewer voyage avec l'expérience (snapshot, sinon cumulatif)
+
+La demande : *« when an experiment opens, after bringing back to live its files (pdb,
+trajectory etc) it should remember also the style file (called snapshot or in its absence
+the cumulative) of the viewer and apply it automatically. »*
+
+Ce qui manquait : les deux styles du viewer — 🎨 **Cumulative** (un dictionnaire de styles par
+**classe** moléculaire) et 📷 **Snapshot** (la photographie d'**une** scène, clé par section) —
+ne vivaient que dans le **navigateur** (`labViewerThemes` / `labViewerSnapshots`, localStorage).
+Les fichiers, eux, revenaient du Drive (nom déclaré + pointeur) : la même expérience rouverte sur
+un autre poste rendait l'image **brute** — bon `.pdb`, bon `.xtc`, style perdu.
+
+### Ce que le viewer dépose maintenant
+
+Le style voyage donc **comme un fichier**, dans le dossier de l'expérience, à côté des `.pdb` et
+des `.xtc` :
+
+| Geste du viewer | Ce qui est écrit |
+| --- | --- |
+| 💾 Save (mode 📷 Snapshot) | la mémoire du poste **et** `<dossier>/…/viewer-style-snapshot.json` |
+| 💾 Save (mode 🎨 Cumulative) | la mémoire du poste **et** `…/viewer-style-cumulative.json` |
+| 📂 Load (l'un ou l'autre) | la mémoire du poste **et** le fichier du mode appliqué |
+| ⬆ Import d'un fichier de style | la mémoire du poste **et** le fichier du mode importé |
+| 📂 Load d'une **trajectoire** / `currentFrame`, une image de film | rien (aucun style ne change) |
+
+* **Le nom est canonique et FIXE**, un par mode : `viewer-style-snapshot.json` /
+  `viewer-style-cumulative.json`. Un ré-enregistrement **remplace** le contenu — `uploadLocalFile`
+  ne fabrique pas de doublon — et le mode se choisit en **lisant la liste**, sans rien télécharger.
+* **Le contenu est celui du ⬇ Export du viewer** (`{ mode, name, entry }`), plus
+  `app: 'lab-viewer-style'`, une `version`, l'`instance` (la condition qui l'a déposé, pour un
+  humain qui ouvre le dossier) et la date. Le ⬆ Import le relit donc tel quel.
+* **Le dossier est celui de la page** : `ctx = driveNaming` (`projects/<projet>/<expérience>/
+  <condition>/Data/Structure`) — le **même contexte** que les `.pdb` que le viewer archive déjà
+  (`archiveFileToDrive({ file, ctx: driveNaming })`), donc le même dossier que les fichiers.
+
+### À l'ouverture — la règle de la demande, dans cet ordre
+
+1. **Ce que ce poste a retenu** (`labViewerStyle::<projet|expérience>`, puis la condition, puis la
+   clé générale) : appliqué **sans aucune requête**. Une mémoire qui désigne un style **supprimé
+   depuis** ne rappelle rien et laisse la place à l'étape suivante.
+2. **Le fichier du dossier de l'expérience** (lecture du dossier, `utils/driveExperimentFiles.js`)
+   quand la mémoire ne suffit pas — autre poste, navigateur vidé. **LE SNAPSHOT GAGNE, LE
+   CUMULATIF S'APPLIQUE EN SON ABSENCE** ; dans un même mode, le plus récent.
+3. **Rien** quand l'expérience n'a aucun style : aucun fichier lu, aucun message, le viewer garde
+   son style de base — exactement comme avant cette demande.
+
+L'entrée lue est **adoptée** dans son magasin (l'écriture du ⬆ Import, sans le geste) puis
+appliquée par le **même lecteur** que 📂 Load (`applySnapshotEntry` / `applyThemeEntry`) ; la
+mémoire est écrite au passage, donc la **prochaine** ouverture ne touche plus le Drive. Un `.json`
+**étranger** du dossier n'est jamais appliqué (le lecteur refuse tout ce qui ne porte pas de
+style), et un style que l'utilisateur vient de charger ou d'enregistrer **n'est jamais écrasé**
+par le rappel (`styleTouchedRef`).
+
+Le rappel attend que les fichiers soient **là** (`status === 'ready'`, « after bringing back to
+live its files ») et que la scène ait ses **sections** (un snapshot se rejoue sur elles), laisse la
+scène **se poser 400 ms** (les molécules annexes — un ligand, une eau — arrivent après le fichier
+principal) et n'a lieu qu'**une fois par montage** : la page remonte le viewer à chaque changement
+d'instance (`key={activeTest.id}`), donc « une fois par montage » = « une fois par expérience
+ouverte ».
+
+### Le mécanisme vit en UN endroit
+
+`src/utils/viewerStyleFile.js` (PUR, **aucun import** — donc importable et exécutable par la
+sonde) porte les règles : les deux noms canoniques, la reconnaissance d'un nom renommé à la main,
+**la préférence** (`VIEWER_STYLE_PREFERENCE = ['snapshot', 'theme']`), le format du fichier
+(écriture et relecture, tolérante comme le ⬆ Import, stricte sur ce qui n'est PAS un style), la
+mémoire par instance (`labViewerStyle::<slug>`, la règle du slug restant celle de la session 🧪,
+`pymolSessionInstanceSlug`) et `viewerStyleEntryOf` (une mémoire ne rappelle que ce qui existe
+encore). Le viewer ne fait plus que **trois gestes** : `rememberViewerStyle` (mémoire + fichier),
+`recallViewerStyle` (mémoire d'abord, dossier ensuite) et l'effet d'ouverture.
+
+Le style d'une expérience ne peut pas glisser dans une autre : la mémoire est **clé par
+expérience** (projet · nom, ses conditions la partagent), les clés sont **figées au montage**, et
+la page remonte le viewer à chaque changement d'instance.
+
+### Le ⬆ Import réparé au passage
+
+`importActiveEnvFile` appliquait le fichier importé par `loadTheme(name)` / `loadSnapshot(name)` —
+des lecteurs qui relisent le **magasin**, lequel n'a pas encore ce nom dans cet état
+(`setViewerThemes` / `setViewerSnaps` sont asynchrones) : un ⬆ Import annonçait donc « no such
+theme » et n'appliquait **rien**. Il applique maintenant l'entrée qui vient d'arriver
+(`applyThemeEntry` / `applySnapshotEntry`, le corps extrait des deux lecteurs) — et la retient pour
+l'expérience ouverte, comme 💾.
+
+### Vérifier
+
+* `node _viewer_style_recall_test.mjs` — **119 assertions**, tout exécuté : les règles du fichier
+  (noms, préférence, format), la mémoire (sur un `localStorage` de poche), puis **les deux gestes
+  du viewer sortis de la source** avec des doublures — `rememberViewerStyle` (le nom déposé, le
+  contexte de dossier, le contenu exact du fichier, le message qui dit VRAI, et le cas « Drive
+  éteint » qui n'envoie rien mais retient) et `recallViewerStyle` sur un faux Drive (mémoire
+  d'abord **sans aucune requête**, snapshot gagnant sur un cumulatif plus récent, cumulatif seul,
+  `.json` étranger jamais téléchargé, style de l'utilisateur jamais écrasé).
+* `node _verify.cjs` — **41 suites, 1 échec** : le seul rouge reste `_viewer_rings_gradient_test.mjs`,
+  déjà rouge avant cette retouche.
+* `npx vite build` — ✓ ; `npx oxlint` sur les deux fichiers touchés — **0 erreur**.
+
+*Reste à faire à la main* (c'est un geste de Drive, pas un calcul) : ouvrir une expérience MD,
+charger un style, le 💾 enregistrer, fermer, rouvrir — le style doit revenir tout seul ; puis le
+même essai sur un autre poste (ou après un nettoyage du navigateur), où c'est le **fichier du
+dossier** qui le ramène.
+
+
+

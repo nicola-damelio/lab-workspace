@@ -44,6 +44,23 @@
    ou une scène qui dépasse le budget d'une image est ramenée dedans en
    rétrécissant le masque, au lieu de laisser la vue saccader.
 
+   LES COORDONNÉES QUI BOUGENT SANS LA CAMÉRA — LE GESTE DOIT SE DIRE. L'ombre
+   suivait déjà une caméra qui tourne (la pose change : c'est un geste) et une
+   TRAJECTOIRE qui joue (`currentFrame` est dans la signature de la scène). Une
+   DYNAMIQUE MOLÉCULAIRE, elle, ne change NI la pose NI cette signature : elle
+   ÉCRIT des coordonnées — exactement comme une torsion ou un glisser de molécule.
+   Le rapport de cette session : « when I start a MD run the shadow detaches from
+   the molecule and remains detached ». Le filet finissait bien par la voir (la
+   signature des entrées du masque, voir maskInputsSignatureOf), mais AU PLUS UNE
+   FOIS PAR `staleMs` — et la DERNIÈRE écriture d'un geste tombe presque toujours
+   dans cette fenêtre, après quoi plus rien n'est rendu (NGL ne rend que sur
+   demande) : la couche restait alors accrochée à la géométrie d'avant, pour
+   toujours. C'est l'entrée `moved()` qui répond : celui qui ÉCRIT les coordonnées
+   DIT que la molécule a bougé (voir writeStructurePositions / applyPartMove /
+   restorePartMoves dans le viewer), et l'image rendue qui suit est traitée comme
+   un GESTE — brouillon pendant, passe nette à l'arrêt — au lieu d'être prise pour
+   une image rendue pour rien.
+
    CE QU'IL NE FAIT PAS, ET QUI EST DIT. NGL 2.4 n'a AUCUNE passe d'ombre : la
    couche est donc une toile 2D PAR-DESSUS la toile WebGL. Un `captureStream`
    ne la verrait jamais — c'est déjà vrai de la vignette 🌑 Darkness, et c'est
@@ -414,6 +431,12 @@ export const attachRayShadowLive = ({
   let builtSig = null;
   let timer = null;
   let stopped = false;
+  /* ◐ LES COORDONNÉES ONT BOUGÉ (voir `moved()`) — la pose et la signature de la
+     scène ne le diront JAMAIS : c'est l'écrivain qui le dit, et l'image rendue qui
+     suit en fait un geste. Le drapeau est CONSOMMÉ par cette image, donc dix
+     écritures entre deux images ne coûtent qu'un masque (le dernier, sur les
+     coordonnées les plus récentes) — et la dernière image d'un geste est vue. */
+  let stirred = false;
 
   const stats = () => ({ ...state });
   const publish = () => { if (typeof onStats === 'function') { try { onStats(stats()); } catch { /* le diagnostic ne casse jamais la vue */ } } };
@@ -561,7 +584,15 @@ export const attachRayShadowLive = ({
     const view = poseOf(viewer);
     if (!view) return;
     const signature = sceneSignatureOf(stage);
-    if (!samePose(view, pose, defaults.poseEpsilon) || signature !== scene) {
+    /* ⚠ `stirred` EST LE TROISIÈME TÉMOIN, ET C'EST CELUI DES COORDONNÉES (voir
+       `moved`) : l'image rendue après une écriture de dynamique est un GESTE, même
+       si la pose et la signature n'ont pas bougé d'un iota. C'est ce témoin qui a
+       éteint le rapport de cette session — « when I start a MD run the shadow
+       detaches from the molecule and remains detached » — sans lui, cette image
+       était confondue avec un survol, et le filet ne la regardait qu'au plus une
+       fois par `staleMs`. */
+    if (stirred || !samePose(view, pose, defaults.poseEpsilon) || signature !== scene) {
+      stirred = false;
       pose = view;
       scene = signature;
       movedAt = now();
@@ -609,6 +640,31 @@ export const attachRayShadowLive = ({
       }
       armRefine();
       return decision;
+    },
+    /* ◐ LES COORDONNÉES ONT BOUGÉ, LA CAMÉRA NON — LE GESTE, DIT PAR CELUI QUI
+       ÉCRIT (voir « les coordonnées qui bougent sans la caméra », en tête de ce
+       fichier : c'est le rapport « when I start a MD run the shadow detaches from
+       the molecule and remains detached »).
+       Ce n'est PAS un `refresh` : rien n'est peint ici. On MARQUE l'image rendue
+       qui suit — celle que l'écriture a elle-même demandée (`requestSceneRepaint`)
+       — pour qu'elle soit jugée comme un GESTE (brouillon tout de suite, passe
+       nette à l'arrêt) au lieu d'une image rendue pour rien. Une dynamique ÉCRIT
+       beaucoup plus vite qu'elle ne S'AFFICHE : marquer au lieu de peindre, c'est
+       un masque par IMAGE, jamais un par écriture — et il est toujours bâti sur
+       les coordonnées les plus récentes, puisque plusieurs écritures partagent la
+       même image.
+       ⚠ ET LA PASSE NETTE EST ARMÉE ICI, PAS SEULEMENT PAR L'IMAGE : si plus rien
+       n'est rendu après la dernière écriture — c'est exactement le cas du rapport,
+       NGL ne rend que sur demande — la minuterie d'`idleMs` peint quand même la
+       passe nette, sur la géométrie d'ARRIVÉE (`armRefine` ne dépend d'aucun
+       signal). C'est ce qui fait que l'ombre FINIT posée sur la molécule au lieu
+       de rester détachée. */
+    moved () {
+      if (stopped) return false;
+      stirred = true;
+      movedAt = now();
+      armRefine();
+      return true;
     },
     setQuality (value) {
       state.quality = rayLiveQualityOf(typeof value === 'function' ? value() : value);
