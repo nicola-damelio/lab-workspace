@@ -1819,6 +1819,13 @@ export const SS_DIHEDRALS = {
      se peignent donc, et la conversion porte la bonne cible sur chacune. */
   L: { phi: 57, psi: 47 },
   E: { phi: -139, psi: 135 },
+  /* ⚠ LE TOUR — la lettre T de la peinture. C'est la conformation du TOUR γ de la
+     littérature (Rose–Matthews, φ +75° / ψ −65°) : la seule conformation de tour
+     qu'UN résidu puisse imposer, et celle dont le modèle bâti fait vraiment le pont
+     C7 (O(i)···N(i+2) = 2,72 Å mesuré, contre 3,77 Å pour une pelote). Le couple est
+     le MÊME que SS_TORSIONS.T de NMRSections.jsx : un tour peint se construit à 0° de
+     la cible que cette conversion lui impose (la règle déjà tenue pour E). */
+  T: { phi: 75, psi: -65 },
 };
 /** Les lettres de la peinture qui IMPOSENT quelque chose (les autres sont le silence). */
 export const SS_DIHEDRAL_LETTERS = Object.keys(SS_DIHEDRALS);

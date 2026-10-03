@@ -38,8 +38,14 @@ import {
   AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, CARBON_RANGE_DB,
   SS_CORRECTIONS, SS_META, DNA_FORM_OFFSETS, SUGAR_ANOMER_OFFSETS,
   RESIDUE_COLORS, RANDOM_COIL_DB, CYS_OXIDIZED_RC, CYS_OXIDIZED_CARBON_RANGE, TICKS_1H, TICKS_13C, TICKS_15N,
-  SequencePaintStrip
+  SequencePaintStrip, BetaSheetEditor
 } from './NMRData';
+// 🧵 LE FEUILLET β — la déclaration du panneau 🧵 (« Pair them ») et sa géométrie :
+// un seul module PUR pour les trois lecteurs (le panneau, le repliement du modèle de
+// séquence et l'écrivain PDB). Voir l'en-tête de utils/betaSheetFold.js.
+import {
+  betaSheetPairsOf, foldBetaSheets, sheetGeometryOf, sheetMarkAt,
+} from '../utils/betaSheetFold';
 export { VIS_PALETTES };
 
 // Session cache + IndexedDB key for a structure FILE picked in the 3D viewer
@@ -2781,6 +2787,18 @@ const SS_TORSIONS = {
      structureCalc) : un feuillet peint tombe donc à 0° de la cible qu'on lui impose
      quand la page le convertit en contraintes, au lieu de 20° à côté. */
   E: { phi: _deg2rad(-139), psi: _deg2rad(135) },  // β strand (pleated sheet)
+  /* ⚠ LE TOUR — la demande : « add the possibility to impose turns ». La lettre T
+     porte la conformation du TOUR γ de la littérature (Rose–Matthews : φ +75° /
+     ψ −65°), la seule conformation de tour qu'UN SEUL résidu puisse imposer. Elle
+     COURBE donc la chaîne : mesuré sur le modèle de la page, le carbonyle d'un
+     résidu T vient à 2,72 Å de l'amide du résidu i+2 — c'est le pont hydrogène C7
+     du tour γ lui-même, que le réseau 💧 du viewer trouve alors tout seul, là où une
+     pelote (PPII, φ −75 / ψ +145) laisse 3,77 Å et aucune courbure.
+     Le couple est le MÊME que SS_DIHEDRALS.T du module structureCalc (la règle tenue
+     pour E) : la peinture, la géométrie construite et la contrainte de dihèdre
+     parlent du même objet. Entre deux brins E, un T (ou deux) est la boucle que le
+     feuillet déclaré vient ensuite refermer (utils/betaSheetFold.js). */
+  T: { phi: _deg2rad(75), psi: _deg2rad(-65) },    // γ-turn (C7 — the one-residue turn)
   // Coil / extended default: polyproline-II-like (phi=-75°, psi=+145°). The old
   // "fully extended" phi=psi=180° puts every side chain straight back into the
   // previous residue's carbonyl (O...H as close as ~0.5 A for bulky residues),
@@ -3232,10 +3250,41 @@ const buildProteinBackbone = (seq, ssString) => {
    ---------------------------------------------------------------------------- */
 const proteinSequenceToPdbText = (seq, ssString, title = 'GENERATED', opts = {}) => {
   const relaxTorsions = Array.isArray(opts.torsions) ? opts.torsions : null;
-  // Le squelette suit les torsions DÉTENDUES quand il y en a (et non plus la
-  // structure secondaire) : c'est tout l'objet du repliement — χ1 seul ne
-  // rapprocherait jamais deux Sγ que φ/ψ séparent.
-  const residues = buildProteinBackbone(seq, relaxTorsions || ssString);
+  /* 🧵 LES FEUILLETS DÉCLARÉS — la déclaration du panneau 🧵 (« Pair them », en
+     positions de séquence), relue par le module pur : les fourchettes hors séquence,
+     trop courtes ou qui se recouvrent sont COMPTÉES (`rejected`), jamais devinées.
+     Quand l'appelant n'a pas déjà fourni ses torsions, la chaîne est REPLIÉE ICI par
+     utils/betaSheetFold.js : deux brins peints E que la chaîne n'avait pas rapprochés
+     sortent alors côte à côte, dans le sens demandé, avec leurs ponts N–H···O=C.
+     Le squelette suit donc, dans l'ordre : les torsions données (ponts disulfure ou
+     appelant), celles du repliement de feuillet, et enfin la structure secondaire. */
+  /* ⚠ LES TROIS LECTEURS DU FEUILLET SONT FACULTATIFS ICI — et c'est ce qui garde
+     cette fabrique EXTRACTIBLE : sept sondes du dossier la reconstruisent par
+     `new Function` (le motif de _sequence_charge_test.mjs) sans lui passer le
+     module. Un `typeof` sur un nom non déclaré ne jette pas : dans une sonde, le
+     bloc du feuillet est donc INERTE et le fichier sort exactement comme avant
+     (aucun record SHEET) ; dans la page, l'import est là — `_ss_sheet_test.mjs`
+     compare les deux (les noms sont bien des fonctions) — et tout le bloc s'exécute. */
+  const sheetFoldApi = (typeof betaSheetPairsOf === 'function'
+    && typeof foldBetaSheets === 'function' && typeof sheetGeometryOf === 'function')
+    ? { pairsOf: betaSheetPairsOf, fold: foldBetaSheets, geometry: sheetGeometryOf }
+    : null;
+  const sheetRead = sheetFoldApi
+    ? sheetFoldApi.pairsOf({
+      secondaryStructure: typeof ssString === 'string' ? ssString : '',
+      sheets: opts.sheets,
+      sequenceLength: seq.length,
+    })
+    : { pairs: [], rejected: 0 };
+  const sheetFold = (sheetFoldApi && !relaxTorsions && typeof ssString === 'string' && sheetRead.pairs.length)
+    ? sheetFoldApi.fold({
+      sequence: seq,
+      torsions: seq.split('').map((_, i) => ssTorsionAt(ssString[i] || 'C')),
+      pairs: sheetRead.pairs,
+      build: (cand) => buildProteinBackbone(seq, cand),
+    })
+    : null;
+  const residues = buildProteinBackbone(seq, relaxTorsions || (sheetFold ? sheetFold.torsions : null) || ssString);
   const cysDisulfides = (Array.isArray(opts.cysDisulfides) ? opts.cysDisulfides : [])
     .filter((p) => Array.isArray(p) && p.length === 2 && Number.isInteger(p[0]) && Number.isInteger(p[1]))
     .filter((p) => p[0] >= 1 && p[0] <= seq.length && p[1] >= 1 && p[1] <= seq.length && p[0] !== p[1])
@@ -3259,6 +3308,57 @@ const proteinSequenceToPdbText = (seq, ssString, title = 'GENERATED', opts = {})
     const pad = (s, w) => String(s).padStart(w);
     lines.push(`SSBOND${pad(k + 1, 3)} CYS A${pad(a, 4)}${' '.repeat(10)} CYS A${pad(b, 4)}${' '.repeat(12)}2.05`);
   });
+  /* 🧵 LES RECORDS DU FEUILLET — ce qui a été écrit au-dessus est DIT ici : un record
+     SHEET par brin déclaré (la convention PDB) et un REMARK par paire. La géométrie
+     RÉELLEMENT obtenue est mesurée sur `residues` — c'est-à-dire sur le modèle que ce
+     fichier écrit — par le lecteur partagé `sheetGeometryOf` : aucun des trois
+     lecteurs (panneau, repliement, écrivain) ne peut donc annoncer autre chose que
+     les coordonnées. */
+  if (sheetFoldApi && (sheetRead.pairs.length || sheetRead.rejected)) {
+    /* ⚠ LE COMPTE EST ÉCRIT MÊME QUAND AUCUNE PAIRE NE RESTE : une déclaration
+       devenue invalide (peinture effacée, fourchette hors séquence) est DITE dans le
+       fichier, jamais passée sous silence — c'est la même règle que le panneau. */
+    lines.push(`REMARK 950 BETA-SHEET(S) IMPOSED BY THE SEQUENCE DEFINITION: ${sheetRead.pairs.length}`
+      + `${sheetRead.rejected ? ` (+${sheetRead.rejected} declaration(s) that no longer match the sequence)` : ''}`);
+  }
+  if (sheetFoldApi && sheetRead.pairs.length) {
+    const res3 = (pos) => AA_1_TO_3[seq[pos - 1]] || 'UNK';
+    /* Format SHEET (spécification PDB, exemple officiel) :
+       « SHEET    1   A 4 ASNA 102  THRA 105  0 » — identifiant du feuillet en 10,
+       chaîne en 14, nombre de brins en 16, premier résidu (nom + chaîne) en 18-21,
+       son numéro en 22-25, dernier résidu en 28-31, son numéro en 32-35, et le SENS
+       en 36-38 (0 = premier brin, +1 = parallèle, −1 = antiparallèle). */
+    const sheetLine = (id, numStrands, init, end, sense) => 'SHEET'
+      + String(id).padStart(5)
+      + '   A'
+      + ` ${numStrands}`
+      + ` ${res3(init)}A`
+      + String(init).padStart(4)
+      + `  ${res3(end)}A`
+      + String(end).padStart(4)
+      /* Le SENS, signé : « +1 » parallèle, «-1 » antiparallèle, 0 pour le premier
+         brin (la convention du record SHEET). */
+      + String(sense > 0 ? `+${sense}` : sense).padStart(3);
+    const geometry = sheetFoldApi.geometry({ residues, pairs: sheetRead.pairs });
+    sheetRead.pairs.forEach((pair, k) => {
+      const sense = pair.sense === 'parallel' ? 1 : -1;
+      /* Le PREMIER brin du feuillet porte le sens 0 (la convention : la première ligne
+         d'un feuillet n'a pas d'antécédent), le second son sens signé. */
+      lines.push(sheetLine(k + 1, 2, pair.a.start, pair.a.end, 0));
+      lines.push(sheetLine(k + 1, 2, pair.b.start, pair.b.end, sense));
+    });
+    lines.push(`REMARK 950 BETA-SHEET(S) IMPOSED BY THE SEQUENCE DEFINITION: ${sheetRead.pairs.length}`
+      + `${sheetRead.rejected ? ` (+${sheetRead.rejected} declaration(s) that no longer match the sequence)` : ''}`);
+    geometry.forEach((g) => {
+      lines.push(`REMARK 951 ${g.label}: strand ${g.a.start}-${g.a.end} / strand ${g.b.start}-${g.b.end}`
+        + ` ${g.sense === 'parallel' ? 'PARALLEL' : 'ANTIPARALLEL'}`
+        + ` (measured strand axes cos = ${g.direction.toFixed(2)}`
+        + `${g.senseOk ? '' : ', WRONG DIRECTION'}); the two strands were folded face to face`
+        + ` (CA-CA ${[...g.ca, ...g.caB].map((d) => d.toFixed(1)).join(' ')} A)`
+        + ` and ${g.hbonds.length} N-H...O=C hydrogen bond(s) are present.`
+        + `${g.converged ? '' : ' The fold did NOT fully converge: this is the best conformation found.'}`);
+    });
+  }
   let serial = 1;
   const serialOf = new Map();       // `${atomName}@${residueIndex}` → serial
   const residueBondPairs = [];      // [{ i, bonds: [[an, bn], ...] }]
@@ -3746,9 +3846,10 @@ const useNmrDerived = (activeTest, ctx = {}) => {
   const shifts = allLayerValues['cs'] || {};
   const activeValues = shifts;
   const ssRaw = activeTest.secondaryStructure || '';
-  // ⚠ HESL — L (hélice α GAUCHE) est une lettre peignable comme les autres : sans elle
-  // ici, le chip retombait sur « C » et la peinture était effacée au rendu suivant.
-  const getSSAt = (i) => (ssRaw[i] && 'HESL'.includes(ssRaw[i]) ? ssRaw[i] : 'C');
+  // ⚠ HESLT — L (hélice α GAUCHE) et T (tour β) sont des lettres peignables comme les
+  // autres : sans elles ici, le chip retombait sur « C » et la peinture était effacée au
+  // rendu suivant.
+  const getSSAt = (i) => (ssRaw[i] && 'HESLT'.includes(ssRaw[i]) ? ssRaw[i] : 'C');
   const formsRaw = activeTest.nucleicForms || '';
   const dnaFormDefault = activeTest.dnaForm || 'B';
   const getFormAt = (i) => (formsRaw[i] && 'ABZ'.includes(formsRaw[i]) ? formsRaw[i] : dnaFormDefault);
@@ -3887,7 +3988,12 @@ const useNmrDerived = (activeTest, ctx = {}) => {
     const ssLetter = moleculeType === 'protein' ? getSSAt(idx) : 'C';
     // ⚠ L (hélice α GAUCHE) est une HÉLICE comme H : elle prend les mêmes corrections
     // de déplacements chimiques (`helix`), sinon la lettre tombait sur `undefined`.
-    const ssKey = { C: 'coil', H: 'helix', L: 'helix', E: 'sheet' }[ssLetter];
+    // ⚠ T (tour β) n'a AUCUNE correction propre : la table des corrections (SS_CORRECTIONS)
+    // n'a pas d'entrée « tour » — un tour n'est ni une hélice ni un feuillet —, il prend
+    // donc la ligne `coil` (le silence), comme la lettre T du DSSP reste une boucle dans
+    // la lecture à trois couleurs de la 2° structure. C'est le même choix que la carte
+    // `sstrucAtomColorOf` du viewer (h/g/i → hélice, e/b → feuillet, le reste → boucle).
+    const ssKey = { C: 'coil', H: 'helix', L: 'helix', E: 'sheet', T: 'coil' }[ssLetter];
     const corr = SS_CORRECTIONS[ssKey];
     const estShifts = {};
     Object.keys(res.shifts || {}).forEach((a) => {
@@ -5036,6 +5142,35 @@ export const MolecularStructureSection = ({ ctx }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTest.id, activeTest.structureFileName]);
 
+  /* 🧵 LES FEUILLETS DÉCLARÉS — ce que la définition de séquence demande (« Pair
+     them » : deux brins E, parallèles ou antiparallèles), relu UNE fois ici :
+       • `betaSheetRead` — les brins peints et les paires VALIDES (les déclarations
+         qui ne correspondent plus à la séquence sont comptées, jamais devinées ;
+         voir betaSheetPairsOf) ;
+       • `sheetFold` — le repliement du modèle de séquence : la recherche locale de
+         utils/betaSheetFold.js sur les φ/ψ des deux brins et de la boucle qui les
+         sépare, jusqu'à ce que les deux brins se fassent face avec leurs ponts
+         N–H···O=C. DÉTERMINISTE (graine fixe) : la même définition donne toujours le
+         même modèle, et le rapport de la note sous le panneau dit ce qui a été
+         obtenu (échelons CA–CA mesurés, nombre de ponts, convergence).
+     Le mode 🎓 University test n'en replie AUCUN : le modèle montrerait la réponse
+     (c'est la même règle que ssFor3D, qui part vide dans ce mode). */
+  const betaSheetRead = useMemo(() => betaSheetPairsOf({
+    secondaryStructure: activeTest.secondaryStructure || '',
+    sheets: activeTest.betaSheets,
+    sequenceLength: (d.seq || '').length,
+  }), [activeTest.secondaryStructure, activeTest.betaSheets, d.seq]);
+  const sheetFold = useMemo(() => {
+    if (univTestMode || d.moleculeType !== 'protein' || !d.seq || !betaSheetRead.pairs.length) return null;
+    const ss = activeTest.secondaryStructure || '';
+    return foldBetaSheets({
+      sequence: d.seq,
+      torsions: d.seq.split('').map((_, i) => ssTorsionAt(ss[i] || 'C')),
+      pairs: betaSheetRead.pairs,
+      build: (cand) => buildProteinBackbone(d.seq, cand),
+    });
+  }, [univTestMode, d.moleculeType, d.seq, activeTest.secondaryStructure, betaSheetRead.pairs]);
+
   // Locally-generated structures (no network round trip): idealized protein backbone from
   // sequence + secondary structure (or fully-extended fallback), and a simplified extended
   // sugar-phosphate backbone trace for DNA/RNA.
@@ -5062,9 +5197,24 @@ const sequenceStructure = useMemo(() => {
       const ssFor3D = univTestMode ? '' : (activeTest.secondaryStructure || '');
       // Les ponts disulfure définis dans « Cysteine states » entrent dans le
       // modèle : CONECT SG–SG (le pont se voit en Sticks / Ball+stick) + le
-      // proton HG retiré des Cys engagées. Le squelette reste le modèle idéal
-      // tant que « ⚭ Fold for disulfides » n'est pas cliqué (voir plus bas).
-      return { text: proteinSequenceToPdbText(d.seq, ssFor3D, activeTest.name || 'PROTEIN', { cysDisulfides: activeTest.cysDisulfides }), ext: 'pdb' };
+      // proton HG retiré des Cys engagées.
+      // 🧵 ET LES FEUILLETS DÉCLARÉS dans « Sequence and structure » (« Pair them ») :
+      // `sheetFold` (calculé plus haut) a déjà replié les φ/ψ des deux brins et de
+      // leur boucle — ses torsions sont données TELLES QUELLES au bâtisseur, qui
+      // n'a donc plus rien à chercher, et les records SHEET / REMARK du fichier
+      // décrivent ce modèle-là (mesuré, jamais promis).
+      return {
+        text: proteinSequenceToPdbText(d.seq, ssFor3D, activeTest.name || 'PROTEIN', {
+          cysDisulfides: activeTest.cysDisulfides,
+          /* ⚠ LA DÉCLARATION BRUTE, pas les paires résolues : proteinSequenceToPdbText
+             relit lui-même `opts.sheets` (betaSheetPairsOf) pour écrire ses records —
+             il attend donc la forme du panneau, { a: [start, end], b: [start, end],
+             sense }, et il compte lui-même les déclarations devenues invalides. */
+          sheets: activeTest.betaSheets,
+          torsions: sheetFold ? sheetFold.torsions : null,
+        }),
+        ext: 'pdb',
+      };
     }
 
     if ((d.moleculeType === 'dna' || d.moleculeType === 'rna') && d.seq) {
@@ -5078,7 +5228,8 @@ const sequenceStructure = useMemo(() => {
   }
 
   return null;
-}, [d.moleculeType, d.seq, activeTest.secondaryStructure, activeTest.name, univTestMode, activeTest.cysDisulfides]);
+}, [d.moleculeType, d.seq, activeTest.secondaryStructure, activeTest.name, univTestMode, activeTest.cysDisulfides,
+  activeTest.betaSheets, sheetFold]);
 
 const generatedStructure = useMemo(() => {
   if (hasExplicitOverride) {
@@ -5198,7 +5349,8 @@ const generatedStructure = useMemo(() => {
       // Fallback: build it fresh even if organicFetch/generatedStructure hasn't populated yet
       try {
         const text = d.moleculeType === 'protein'
-          ? proteinSequenceToPdbText(d.seq, univTestMode ? '' : (activeTest.secondaryStructure || ''), activeTest.name || 'PROTEIN', { cysDisulfides: activeTest.cysDisulfides })
+          ? proteinSequenceToPdbText(d.seq, univTestMode ? '' : (activeTest.secondaryStructure || ''), activeTest.name || 'PROTEIN',
+            { cysDisulfides: activeTest.cysDisulfides, sheets: activeTest.betaSheets, torsions: sheetFold ? sheetFold.torsions : null })
           : nucleicSequenceToPdbText(d.seq, d.moleculeType, activeTest.name || 'NUCLEIC_ACID');
         triggerDownload(text, `${pdbBase}.pdb`);
       } catch (e) {
@@ -5479,7 +5631,7 @@ const generatedStructure = useMemo(() => {
             <>
             <div className="flex flex-wrap gap-2 mb-3 items-center">
               <span className="text-xs font-bold text-slate-500 uppercase mr-1">🖌️ Brush:</span>
-              {['C', 'H', 'L', 'E'].map((l) => (
+              {['C', 'H', 'L', 'E', 'T'].map((l) => (
                 <button key={l} onClick={() => setSSBrush(l)} className="px-3 py-1 rounded-lg text-xs font-black border transition-all"
                   style={{ backgroundColor: ssBrush === l ? SS_META[l].color : 'white', borderColor: SS_META[l].color, color: ssBrush === l ? 'white' : SS_META[l].color }}>
                   {SS_META[l].label}
@@ -5490,9 +5642,14 @@ const generatedStructure = useMemo(() => {
               <button onClick={() => setAllSS('H')} className="px-3 py-1 rounded-lg text-xs font-bold bg-violet-100 border border-violet-300 text-violet-700 hover:bg-violet-200">All α-Helix</button>
               <button onClick={() => setAllSS('L')} className="px-3 py-1 rounded-lg text-xs font-bold bg-fuchsia-100 border border-fuchsia-300 text-fuchsia-700 hover:bg-fuchsia-200">All α-Helix (L)</button>
               <button onClick={() => setAllSS('E')} className="px-3 py-1 rounded-lg text-xs font-bold bg-amber-100 border border-amber-300 text-amber-700 hover:bg-amber-200">All β-Sheet</button>
+              <button onClick={() => setAllSS('T')} className="px-3 py-1 rounded-lg text-xs font-bold bg-teal-100 border border-teal-300 text-teal-700 hover:bg-teal-200">All γ-Turn</button>
             </div>
-            <p className="text-xs text-slate-400 mb-3">💡 Select a brush, then click or drag across the sequence chips to paint secondary structure.</p>
+            <p className="text-xs text-slate-400 mb-3">💡 Select a brush, then click or drag across the sequence chips to paint secondary structure. Paint two runs of β-strand (E) — a turn (T) between them holds the hairpin — then pair them as a β-sheet below.</p>
             <SequencePaintStrip residues={d.parsedSeq} getLetter={(i) => d.getSSAt(i)} meta={SS_META} onApply={(i) => paintSSAt(i, ssBrush)} focusIdx={focusIdx} residueNo={residueNoOf}
+              /* 🧵 Le repère d'un brin de feuillet déclaré (la lettre de la paire et son
+                 numéro 1 / 2) : il vient du MÊME lecteur que le panneau 🧵 ci-dessous,
+                 sur les POSITIONS de séquence (la clé), et s'affiche sous le numéro du 🔢. */
+              sheetOf={(i) => sheetMarkAt(betaSheetRead.pairs, i + 1)}
               /* Les Cys d'un pont disulfure portent un repère de la MÊME couleur que
                  la puce du pont dans « Cysteine states » : la bande de séquence
                  montre donc la liaison, elle aussi (le dessin S–S complet est dans la
@@ -5505,6 +5662,21 @@ const generatedStructure = useMemo(() => {
                 const partner = pairs[pi][0] === pos ? pairs[pi][1] : pairs[pi][0];
                 return { pairIndex: pi, partner: residueNoOf(partner - 1), color: disulfidePairColor(pi) };
               }} />
+            {/* 🧵 LA DÉFINITION DU FEUILLET — la seconde moitié de la demande : deux
+                brins E appariés, parallèles ou antiparallèles. Le panneau écrit la
+                DÉCLARATION (activeTest.betaSheets, en positions de séquence), et la
+                note qu'il affiche est le rapport du modèle RÉELLEMENT bâti
+                (`sheetFold`, mesuré par le même lecteur que l'écrivain PDB). */}
+            {d.moleculeType === 'protein' && (
+              <BetaSheetEditor
+                secondaryStructure={activeTest.secondaryStructure || ''}
+                sequenceLength={(d.seq || '').length}
+                sheets={activeTest.betaSheets}
+                onChange={(next) => updateActiveTest({ betaSheets: next })}
+                residueNo={residueNoOf}
+                fold={sheetFold}
+              />
+            )}
             </>
           )}
         </CollapsibleSection>

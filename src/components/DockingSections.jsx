@@ -73,6 +73,9 @@ import NMRMoleculeViewer from './NMRMoleculeViewer';
 // utils/ligandSmiles.js). The viewer does the same on its own structure and
 // reports the answer back through onLigandSmiles.
 import { fetchLigandSmiles, ligandCodesFromPdbText } from '../utils/ligandSmiles';
+// 🧵 Le feuillet déclaré (la déclaration du panneau 🧵 de la page NMR) : la bande de
+// séquence de cette page le marque avec le MÊME lecteur (utils/betaSheetFold.js).
+import { betaSheetPairsOf, sheetMarkAt } from '../utils/betaSheetFold';
 import {AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, SS_META, RESIDUE_COLORS, buildProteinStructure, buildNucleicStructure, buildSugarStructure, buildLipidStructure, elementsToSVG, StructureSVGView, CollapsibleSection, SequencePaintStrip, getSelectedKeys, getManualKeys, DOCKING_METRICS, DOCKING_PIPELINE_STAGES, parseDockingValue, getProgramInfo, parseDockingFile, parseCapriTsv, posesFromCapri, parseTomlSimple, extractDockedMolecules, getDockingInstances, getDockingActiveInstance, getDockingLayers, getDockingActiveLayerKey, getDockingLayerValues, writeDockingCellValue, generateDockingPoses, generateHADDOCKPoses, DEFAULT_DOCKING_CHART_STYLE, dockChartBoxStyle, dockDom, DOCK_CHART_MARGIN, dockingMetricOf, poseMetricValue, capriColumnMetricKey, chartEnergyMetricKey, poseChartValue, poseDeviation, poseRawColumnValue, deviationColumnOf, energyColumnOf, plotSourceOptions, plotSourceLabel, plotSourceValue, PLOT_SOURCE_PREFIX, PLOT_SOURCE_ALL, DEVIATION_PLOT_KEYS, dockingMetricLabel, HADDOCK_SCORE_TERM_KEYS, haddockScoreTerms} from './DockingData';
 
 
@@ -137,8 +140,9 @@ const useDockingDerived = (activeTest, ctx = {}) => {
     : moleculeType === 'organic' ? 'Organic Molecule' : 'Phospholipid';
 
   const ssRaw = activeTest.secondaryStructure || '';
-  // ⚠ HESL — L (hélice α GAUCHE) est une lettre peignable comme les autres.
-  const getSSAt = (i) => (ssRaw[i] && 'HESL'.includes(ssRaw[i]) ? ssRaw[i] : 'C');
+  // ⚠ HESLT — L (hélice α GAUCHE) et T (tour β) sont des lettres peignables comme
+  // les autres.
+  const getSSAt = (i) => (ssRaw[i] && 'HESLT'.includes(ssRaw[i]) ? ssRaw[i] : 'C');
 
   const parsedSeq = useMemo(() => {
     let chars = [];
@@ -456,6 +460,18 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
     updateActiveTest({ secondaryStructure: arr.join('') });
   };
 
+  /* 🧵 LES BRINS DE FEUILLET DÉCLARÉS — la déclaration vit dans « Sequence and
+     structure » de la page NMR (« Pair them », activeTest.betaSheets), mais la bande
+     de séquence de CETTE page la marque elle aussi : même module pur
+     (utils/betaSheetFold.js), donc une seule lecture d'un feuillet. */
+  const sheetPairs = Array.isArray(activeTest.betaSheets) && activeTest.betaSheets.length
+    ? betaSheetPairsOf({
+      secondaryStructure: activeTest.secondaryStructure || '',
+      sheets: activeTest.betaSheets,
+      sequenceLength: (d.seq || '').length,
+    }).pairs
+    : [];
+
   const structureSrc = useMemo(() => {
     const raw = (activeTest.structureSrc || '').trim();
     if (!raw) {
@@ -615,7 +631,7 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
         <CollapsibleSection title="Sequence and structure" icon="🖌️" defaultOpen={false}>
           <div className="flex flex-wrap gap-2 mb-3 items-center">
             <span className="text-xs font-bold text-slate-500 uppercase mr-1">🖌️ Brush:</span>
-            {['C', 'H', 'L', 'E'].map((l) => (
+            {['C', 'H', 'L', 'E', 'T'].map((l) => (
               <button
                 key={l}
                 onClick={() => setSSBrush(l)}
@@ -637,6 +653,7 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
             onApply={(i) => paintSSAt(i, ssBrush)}
             focusIdx="ALL"
             residueNo={residueNoOf}
+            sheetOf={(i) => sheetMarkAt(sheetPairs, i + 1)}
           />
         </CollapsibleSection>
       )}

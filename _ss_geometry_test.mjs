@@ -130,14 +130,13 @@ ok2(META.includes("H: { label: 'α-Helix (right-handed)'"), '…et H dit qu\'il 
 for (const page of ['src/components/NMRSections.jsx', 'src/components/MDSections.jsx',
   'src/components/DockingSections.jsx']) {
   const p = read(page);
-  ok2(p.includes("'HESL'.includes"), `${page.split('/').pop()} accepte la lettre L dans getSSAt`);
-  ok2(p.includes("{['C', 'H', 'L', 'E'].map((l) => ("), '…et son pinceau la propose');
+  ok2(p.includes("'HESLT'.includes"), `${page.split('/').pop()} accepte la lettre L (et T) dans getSSAt`);
+  ok2(p.includes("{['C', 'H', 'L', 'E', 'T'].map((l) => ("), '…et son pinceau la propose');
 }
 const MODULE = read('src/utils/structureCalc.js');
 ok2(MODULE.includes('L: { phi: 57, psi: 47 },'), 'la conversion SS → φ/ψ connaît L (SS_DIHEDRALS)');
-ok2(src.includes("const ssKey = { C: 'coil', H: 'helix', L: 'helix', E: 'sheet' }[ssLetter];"),
-  '⚠ …et L prend les corrections de déplacements chimiques de l\'hélice'
-  + ' (sans quoi la lettre tombait sur `undefined`)');
+ok2(src.includes("const ssKey = { C: 'coil', H: 'helix', L: 'helix', E: 'sheet', T: 'coil' }[ssLetter];"),
+  '⚠ …et L prend les corrections de déplacements chimiques de l\'hélice, T celles de la pelote (le tour γ n\'a pas de table propre : le DSSP lit T comme une boucle)');
 ok2(src.includes('SS_CORRECTIONS[ssKey]'), '…les corrections, lues par la clé du tableau');
 
 console.log(`\n_ss_geometry_test.mjs — ${passed} assertions OK${failures ? `, ${failures} ÉCHECS` : ''}`);

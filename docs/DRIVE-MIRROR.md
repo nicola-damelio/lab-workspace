@@ -1475,8 +1475,12 @@ Ce qu'elle peint :
 
 * **la charge PARTIELLE de chaque atome**, lue dans la table que le ⚡ ESP construit
   déjà pour la structure (`espChargesFor`, un parcours par structure, mis en cache) :
-  la charge du FICHIER quand il en porte une (PQR · MOL2 / SDF chargés), la table
-  CHARMM de NGL pour une protéine, la charge FORMELLE d'un ion (Na⁺ +1, Cl⁻ −1…), et
+  la charge du FICHIER quand il en porte une (PQR · MOL2 / SDF chargés), **le modèle de
+  charges de la PAGE** pour une protéine (`partialChargesOf` sur le graphe de la
+  structure — PEOE plus les groupes formels que le graphe montre : la lecture même du
+  panneau ⚙ ; depuis le 03/10/2026 il remplace la table CHARMM de NGL, qui laissait un
+  hydrogène de squelette et l'`OXT` à **zéro**), la charge FORMELLE d'un ion
+  (Na⁺ +1, Cl⁻ −1…), et
   l'estimation par électronégativité des autres hétéro-atomes (décalée pour que le
   résidu somme à zéro). Les deux colorations ne peuvent donc pas se contredire ;
 * sur **les trois pastilles éditables de « Charge »** de la roue ⚙ (négatif · neutre
@@ -1950,7 +1954,10 @@ Ce qui a changé :
   l'atome porte — `ALA A 1 CB · q = −0.256 e`. La charge vient de la **même table**
   que le ⚡ ESP et la coloration « Atom charge » (`espChargesFor`, un seul parcours
   par structure) : le survol ne peut donc pas annoncer autre chose que ce que la
-  surface peint. La mise en forme est pure (`utils/viewerAtomReadout.js`) : millième
+  surface peint. (⚠ La moitié protéique de cette table est devenue, le 03/10/2026, le
+  modèle de charges de la page : un hydrogène de squelette et l'`OXT` du terminus C,
+  que NGL laissait à 0, y portent enfin une charge — voir la section du 03/10/2026.)
+  La mise en forme est pure (`utils/viewerAtomReadout.js`) : millième
   d'électron, **vrai signe moins** (−, U+2212), aucun signe sur le zéro, et **rien**
   pour une molécule dont ni le fichier ni NGL ne décrivent les charges —
   `atomHoverChargeOf` rend `null` là où `atomChargeOf` rend 0, parce que peindre en
@@ -1977,4 +1984,182 @@ extraits du viewer puis exécutés sur la même structure. La suite est entrée 
 (62 avant, 62 après sur `NMRMoleculeViewer.jsx`) ; `node _viewer_render_smoke_test.mjs`
 — 23 assertions, le viewer (et sa nouvelle barre) montés pour de vrai.
 
+## Viewer : la charge de la PROTÉINE (H explicites · `OXT`) et le réseau de 💧 qui suit la géométrie (03/10/2026)
+
+Deux défauts constatés à l'usage, dans la continuité de la session précédente :
+
+1. « explicit protein H and OXT read 0 » — le survol annonçait `q = 0.000 e` sur un
+   hydrogène de squelette et sur l'`OXT` d'un terminus C, et la surface ⚡ ESP y était
+   **blanche** : les atomes qui portent justement les pôles amide et carboxylate ;
+2. « the H-bonds should follow the geometry during MD » — le réseau de 💧 était calculé
+   **une fois au clic** : les lignes suivaient bien leurs deux atomes (c'est NGL qui les
+   place), mais le CHOIX des couples restait gelé — un pont qui se forme pendant une
+   dynamique n'apparaissait jamais, un pont qui casse restait dessiné.
+
+Ce qui a changé :
+
+* **la table de charges de la PROTÉINE est celle de la PAGE, plus celle de NGL.** La
+  cause était dans le bundle : la table CHARMM de NGL (`electrostatic-colormaker.ts`)
+  n'a que les atomes LOURDS du squelette et des chaînes latérales — ni `H`, ni `OXT` :
+  `chargeForAtom` y rend **0**. `espChargesFor` lit maintenant, pour tout atome
+  protéique, **`partialChargesOf`** (utils/forceFieldKcal : PEOE sur le graphe, plus la
+  charge des groupes formels que le graphe montre) — la fonction qui donne ses charges
+  au champ et dont le panneau ⚙ lit sa charge nette, appliquée au graphe lu sur la
+  structure (`geometryOfStructure`). Mesuré sur une alanine N/C-terminale complète : les
+  trois H de l'ammonium passent de 0 à **+0.113 e**, l'`OXT` de 0 à **−0.736 e**,
+  l'azote du terminus prend la charge du groupe **ammonium** (+0.659 e) et le carboxyle
+  celle du **carboxylate** — la somme de la molécule reste nulle. Ce que NGL dit
+  encore : le fichier d'abord (PQR · MOL2 / SDF — rien ne l'écrase), les **hydrogènes
+  d'amide placés** par NGL (`hHash` / `hCharges`, son potentiel de surface, gardés tels
+  quels), les ions (charge formelle) et l'estimation d'électronégativité des
+  hétéro-atomes d'un ligand (décalée pour que le résidu somme à zéro : un ligand n'est
+  pas un ion). Le coût est **mesuré** — 27 ms à 2 000 atomes, 193 ms à 40 000 — et il
+  est payé **une fois** par structure et par modèle (la table est mise en cache), au
+  premier lecteur : le survol, la rampe « Atom charge » ou ⚡ ESP ;
+* **le modèle est DÉPOSÉ, pas deviné** : `espChargesFor` vit au niveau du **module**
+  (les schémas NGL enregistrés une fois le lisent) et ne peut donc pas voir l'état React
+  du ⚙. D'où `espChargeModelStore` — un magasin du module, le **jumeau de
+  `chargeColorStore`** — que le viewer remplit dans un effet, avec le lecteur du graphe
+  et **le pH de la case ⚙**. Conséquences voulues : la table est **celle du panneau**
+  (mêmes charges à la même chimie), l'entrée de cache porte **le modèle et le pH**
+  (changer le pH refait le parcours au lieu de resservir la table d'avant), et **sans
+  modèle la table de NGL revient telle quelle** — le repli, jamais un vide ;
+* **le réseau de 💧 est RELU là où les coordonnées arrivent** (`refreshHydrogenBonds`,
+  à côté de `refreshScenePlates`), et nulle part ailleurs : les trois écritures de
+  coordonnées du viewer (`writeStructurePositions` — chaque image d'un ▶ MD, d'un
+  ⚒ Minimise, d'un 🧬 calcul de structure, d'une ✏️ torsion, d'un glisser d'atome —,
+  `applyPartMove`, `restorePartMoves`) et l'**écouteur du signal `refreshed`** (une image
+  de TRAJECTOIRE, que NGL écrit sans passer par nous). Une seule représentation NGL est
+  **reconstruite en place** (`atomPair` est déclaré `{ rebuild: true }` dans
+  distance-representation.ts), jamais une seconde ;
+* **le rythme est réglé par le coût, pas par une horloge fixe** : 200 ms entre deux
+  balayages (≈5 Hz), l'intervalle **double** quand un balayage coûte plus de 8 ms
+  (jusqu'à 1 s) et retombe au minimum quand il redevient bon ; éteindre 💧 remet tout à
+  zéro. Et avant toute écriture NGL, l'**EMPREINTE** du réseau (son mode, son nombre de
+  ponts et une somme roulante FNV-1a des couples donneur → accepteur) est comparée : une
+  image qui ne change pas un seul pont ne coûte **ni reconstruction NGL, ni rendu
+  React** — la phrase du bouton, elle, n'est réécrite que si son TEXTE change ;
+* **le réseau n'appartient qu'à UNE molécule** : `refreshHydrogenBonds(comp)` compare la
+  molécule qui vient de bouger à celle du bouton — la boîte de solvant d'un ▶ MD ou une
+  molécule extra qui bougent ne le touchent pas.
+
+Ce qui n'a **pas** changé : 📏 Measure, ⚡ ESP (mêmes boutons, mêmes surfaces : ⚡ ESP
+partage la table, il n'a jamais été gelé), les styles, les sélections, le fichier PDB —
+💧 n'écrit toujours rien. Le ligand et l'ion gardent exactement leurs charges d'avant
+(vérifié : le résidu du ligand somme à zéro, le sodium vaut +1).
+
+*Vérifier :* `node _viewer_hbonds_test.mjs` — **184 assertions** (contre 131) : le
+rafraîchissement est **exécuté** sur une vraie structure NGL avec une fausse
+représentation qui enregistre ce que NGL recevrait — 💧 éteint ne balaie pas, une autre
+molécule non plus, un réseau qui change est écrit **dans la même** représentation, deux
+images identiques n'écrivent rien (empreinte), deux appels rapprochés ne balaient qu'une
+fois (rythme), un balayage lent fait doubler l'intervalle jusqu'au plafond puis un
+balayage redevenu bon le ramène au minimum, un pont qui casse voit ses lignes partir
+(`atomPair: []`) — et l'empreinte vérifiée à part (même réseau ⇔ même empreinte).
+`node _viewer_style_gaps_test.mjs` — **267 assertions** (contre 240) : la table de la
+protéine est comparée **atome par atome** à `partialChargesOf` sur le même graphe, la
+table de NGL n'est plus qu'un **repli** (retiré le modèle, elle revient telle quelle), le
+pH est dans la clé du cache, et l'alanine N/C-terminale **prouve** le défaut corrigé
+(NGL : `0` sur H1 · H2 · H3 · OXT ; le modèle : +0.113 / −0.736, ammonium et carboxylate
+reconnus, somme nulle). `node _viewer_atom_charge_test.mjs` — 135 assertions.
+`node _verify.cjs` — **37 suites, 0 échec** (`_viewer_rings_gradient_test.mjs` inclus :
+son écouteur du signal `refreshed` exécute le VRAI `refreshHydrogenBonds`, qui sort sur
+son premier garde — 💧 est éteint dans une suite de plaques).
+`npx oxlint src/components/NMRMoleculeViewer.jsx` — **0 erreur** et **aucun nouvel
+avertissement** (62 avant, 62 après : l'effet qui dépose le modèle est annoté comme les
+onze autres effets de palettes du fichier).
+
+
+
+## Définition de séquence : le TOUR imposé (lettre T) et les FEUILLETS β déclarés, parallèles ou antiparallèles (03/10/2026)
+
+La demande, mot pour mot : **« In the sequence definition, beyond, alpha helix right and
+left, coil and beta strands, add the possibility to impose turns and to associate beta
+strands to make a beta sheet, parallel or antiparallel. »** Les deux moitiés sont faites,
+et chacune a sa mesure.
+
+**1 · LE TOUR — une lettre de plus dans la définition (`T`).**
+
+* `SS_META.T = { label: 'γ-Turn (C7)', color: '#14b8a6' }` : le pinceau 🖌️ l'affiche
+  après C · H · L · E, dans les **trois** pages (NMR, MD, Docking), et la page NMR et la
+  page MD ont le bouton « All γ-Turn » ;
+* `SS_TORSIONS.T = φ +75° / ψ −65°` (la géométrie CONSTRUITE) et
+  `SS_DIHEDRALS.T = { phi: 75, psi: -65 }` (la contrainte de dihèdre) portent **le même
+  couple** : un tour peint tombe à 0° de la cible que « ⛓ SS → φ/ψ » lui impose — la
+  règle déjà tenue pour E. C'est le **tour γ de la littérature** (Rose–Matthews), la
+  seule conformation de tour qu'UN résidu puisse imposer ;
+* il **fait** quelque chose, et c'est mesuré sur le modèle de la page : le carbonyle d'un
+  résidu T vient à **2,72 Å** de l'amide du résidu i+2 — le pont C7 du tour γ lui-même,
+  que le réseau 💧 du viewer trouve alors tout seul — contre 3,77 Å pour une pelote, et
+  il **courbe** la chaîne (CA(i)–CA(i+2) = 5,52 Å contre 6,55 Å pour la pelote) ;
+* `getSSAt` (les trois pages) accepte la lettre (`'HESLT'`), et les corrections de
+  déplacements chimiques l'envoient sur la ligne `coil` : un tour n'est ni une hélice ni
+  un feuillet, c'est le choix que fait déjà la 2° structure à trois couleurs du viewer.
+
+**2 · LE FEUILLET — deux brins E appariés, parallèles ou antiparallèles.**
+
+Le module neuf et pur **`src/utils/betaSheetFold.js`** est la seconde moitié :
+
+* il **relit** la déclaration (`{ a: [3, 5], b: [8, 13], sense }`, en **positions de
+  séquence** 1-based comme `cysDisulfides`) : les brins sont les suites de `E` de la
+  peinture, et tout ce qui ne correspond plus (fourchette hors séquence, brin d'un
+  résidu, deux fourchettes qui se recouvrent, sens inconnu, doublon) est **compté**
+  (`rejected`) au lieu d'être deviné ;
+* il **replie** le modèle de séquence : une recherche locale déterministe (graine fixe,
+  bibliothèque des tours β, budget d'évaluations) sur les φ/ψ des deux brins et de la
+  boucle qui les sépare, avec un objectif qui ne demande AUCUN registre écrit en dur —
+  chaque résidu doit trouver un partenaire CA à 4,85 Å, un pont N···O à 2,9 Å, les deux
+  axes doivent être opposés (antiparallèle) ou de même sens (parallèle), et l'alignement
+  des deux brins est trouvé par **programmation dynamique** (un feuillet cisaillé coûte
+  donc cher). Ce qu'il ne peut pas faire, il le DIT : `converged`, ou `best-effort` avec
+  les chiffres réellement obtenus ;
+* `sheetGeometryOf` est le **lecteur partagé** : l'écrivain PDB s'en sert pour les REMARK,
+  la sonde, le panneau et le repliement lisent donc tous la MÊME géométrie ;
+* le **fichier** l'écrit : un record `SHEET` par brin (identifiant en colonne 10, chaîne
+  en 14, nombre de brins en 16, fourchettes, et le **sens signé** +1 / −1), `REMARK 950`
+  (combien de feuillets, combien de déclarations devenues invalides) et un `REMARK 951`
+  par paire **avec les élongations CA–CA et le nombre de ponts mesurés sur les
+  coordonnées écrites** ;
+* l'**interface** est un panneau 🧵 dans « Sequence and structure » de la page NMR : les
+  brins peints y sont proposés par leurs numéros du 🔢, on en apparie deux, on choisit le
+  sens, et la note sous les puces dit ce que le modèle a donné (échelons, ponts,
+  convergence). La bande de séquence marque les résidus appariés (un petit repère du
+  glyphe et du rang du brin) — dans les **trois** pages, par le même lecteur.
+
+Ce qui n'a pas changé : sans déclaration, le modèle sort exactement comme avant (les deux
+brins à plus de 8 Å l'un de l'autre), `proteinSequenceToPdbText` reste **extractible**
+(le bloc du feuillet est inerte quand une sonde reconstruit la fabrique par
+`new Function`), et le mode 🎓 University test ne replie **aucun** feuillet (le modèle
+dirait la réponse, comme il ne peint déjà aucune structure secondaire).
+
+Les limites, dites franchement : une boucle de **deux** résidus entre les brins ne suffit
+pas toujours à les refermer (`best-effort`, avec les ponts obtenus annoncés), et une
+déclaration qui ne correspond plus à la séquence ne replie rien — elle est comptée dans
+le panneau **et** dans le fichier, jamais cachée. Le repliement d'un feuillet ne touche
+QUE la fenêtre des deux brins et de leur boucle : une hélice qui vit ailleurs garde ses
+φ/ψ au bit près.
+
+*Vérifier :* `node _ss_sheet_test.mjs` — **143 assertions**, la neuvième suite de la
+session : les quatre tables de la lettre T et les trois pages, le tour γ **mesuré** sur
+le vrai bâtisseur (pont C7 ≤ 2,9 Å, courbure, cible de dihèdre exécutée), la relecture de
+la déclaration (les sept refus comptés), le repliement antiparallèle ET parallèle
+(convergence, échelons, ponts, cosinus des axes), la **déterminisme** (deux appels
+identiques), l'hélice hors fenêtre **intacte au bit près**, les trois raisons honnêtes
+(`no-pair`, `no-model`, `already-sheeted` avec une seule évaluation), et le fichier
+**relu** : deux records `SHEET` dont le second porte −1 (ou +1), et les chiffres des
+`REMARK 951` comparés à ceux mesurés sur les coordonnées ÉCRITES (et, sans déclaration,
+aucun record et les deux brins à plus de 8 Å). Les **treize suites touchées par la
+session** passent toutes (`EXIT=0`, 0 échec) — dont les **sept sondes** qui
+reconstruisent la fabrique PDB par extraction (`new Function`), qui n'ont eu besoin
+d'AUCUNE retouche : le bloc du feuillet y est inerte. `node _viewer_render_smoke_test.mjs`
+(23 assertions, le rendu SSR des pages) et `npx vite build` (✓ 4,5 s) : les pages
+montent. `npx oxlint` sur les six fichiers touchés — **0 erreur** (45 avertissements de
+style, tous préexistants).
+*Reste rouge, et ce n'est PAS cette session :* `_verify.cjs` rend **36/37** — l'unique
+échec est `_viewer_rings_gradient_test.mjs`, dont l'édition NON COMMITÉE de la session
+précédente a déplacé `const HF = buildHelpers(…)` (et `fakeComp` · `before` ·
+`screenPos`) APRÈS leur premier usage (le fichier meurt sur « Cannot access 'HF' before
+initialization » ligne 603, sa déclaration étant ligne 710) : ses 37 assertions
+d'origine n'ont jamais été exécutées depuis. Aucun fichier de cette session n'y touche
+— cette sonde n'extrait que `NMRMoleculeViewer.jsx`, qu'elle n'importe même pas.
 

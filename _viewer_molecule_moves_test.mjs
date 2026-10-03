@@ -254,8 +254,8 @@ const gone = (needle, what) => {
   has('comp.updateRepresentations({ position: true })',
     '…et demande à NGL de redessiner, exactement comme `panAtom` et comme une image de trajectoire');
   has('const reapplyPartMoves = (comp) => {', 'un changement d’image REJOUE les molécules déplacées');
-  has('sig.add(() => { reapplyPartMoves(comp); refreshScenePlates(); });',
-    '…au MÊME signal que les plaques, et AVANT elles (elles lisent les coordonnées)');
+  has('sig.add(() => { reapplyPartMoves(comp); refreshScenePlates(); refreshHydrogenBonds(comp); });',
+    '…au MÊME signal que les plaques, et AVANT elles (elles lisent les coordonnées) — le réseau de 💧 vient en dernier, il lit les mêmes');
   has('const restorePartMoves = (comp) => {', 'les coordonnées d’origine peuvent revenir (le ↺)');
   has('if (comp) restorePartMoves(comp);', '…et le ↺ de la structure chargée les remet TOUTES');
   has('const partPosesForPose = () => {', 'une pose de film emporte les molécules déplacées');

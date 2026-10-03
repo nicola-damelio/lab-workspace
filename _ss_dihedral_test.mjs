@@ -126,8 +126,8 @@ const peptideOf = (n, { phi = -139, psi = 135 } = {}) => {
 const spine = peptideOf(6, { phi: -139, psi: 135 });
 const backbone = backboneTorsionsOf({ elements: spine.elements, bonds: spine.bonds, atomCount: spine.count });
 /* ════════════ 1. LES LETTRES, ET LA FENÊTRE ═════════════════════════════════ */
-eq(SS_DIHEDRAL_LETTERS.sort(), ['E', 'H', 'L'],
-  'les TROIS lettres qui IMPOSENT quelque chose sont H, L et E — les deux MAINS de l’hélice α et le feuillet');
+eq(SS_DIHEDRAL_LETTERS.sort(), ['E', 'H', 'L', 'T'],
+  'les QUATRE lettres qui IMPOSENT quelque chose sont H, L, E et T — les deux MAINS de l’hélice α, le feuillet et le tour γ (la session « impose turns and associate beta strands » a ajouté T)');
 eq(SS_DIHEDRALS.H, { phi: -57, psi: -47 }, 'l’hélice α : φ −57° / ψ −47° (Pauling–Corey)');
 eq(SS_DIHEDRALS.E, { phi: -139, psi: 135 }, 'le feuillet β : φ −139° / ψ +135°');
 eq(SS_DIHEDRALS.L, { phi: 57, psi: 47 },

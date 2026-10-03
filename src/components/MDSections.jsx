@@ -26,6 +26,9 @@ import {
 import { AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, SS_META, FORM_META, RESIDUE_COLORS, buildKeys, buildProteinStructure, buildNucleicStructure, buildSugarStructure, buildLipidStructure, elementsToSVG, StructureSVGView, SequencePaintStrip, getSelectedKeys, selectionLabel, getManualKeys, FORCE_FIELDS, WATER_MODELS, MD_ENSEMBLES, MD_INTEGRATORS, MD_THERMOSTATS, MD_BAROSTATS, parseMDValue, getForceFieldInfo, getFFVersions, getWaterModelInfo, getFFBackboneAtoms, normalizeTrajectoryUrl, detectTrajectoryFormat, getTrajectoryFormatInfo, getMDInstances, getMDActiveInstance, getMDLayers, getMDActiveLayerKey, getMDLayerValues, writeMDCellValue, MD_ANALYSIS_LAYERS, DEFAULT_MD_CHART_STYLE, mdDom} from './MDData';
 import { DriveUploadButton } from './DriveUpload';
 import { suggestDriveFileName } from '../utils/driveNaming';
+// 🧵 Le feuillet déclaré (la déclaration du panneau 🧵 de la page NMR) : la bande de
+// séquence de cette page le marque avec le MÊME lecteur (utils/betaSheetFold.js).
+import { betaSheetPairsOf, sheetMarkAt } from '../utils/betaSheetFold';
 import { archiveFileToDrive, archiveFileToDriveWithPointer, getDriveToken, getDriveFileRegistry, driveFetch } from '../utils/driveUpload';
 import { sequenceForMoleculeType, sequencePatchForMoleculeType, structureSequencePatch, sequenceNaturesNote } from '../utils/sequenceNatures';
 /* 🧬 LA LIGNE SOUS LA CASE DE SÉQUENCE — le nombre de chaque acide aminé, la charge totale à
@@ -495,8 +498,9 @@ const useMDDerived = (activeTest, ctx = {}) => {
 
   // ---- conformation state (identical to NMR) ----
   const ssRaw = activeTest.secondaryStructure || '';
-  // ⚠ HESL — L (hélice α GAUCHE) est une lettre peignable comme les autres.
-  const getSSAt = (i) => (ssRaw[i] && 'HESL'.includes(ssRaw[i]) ? ssRaw[i] : 'C');
+  // ⚠ HESLT — L (hélice α GAUCHE) et T (tour β) sont des lettres peignables comme
+  // les autres.
+  const getSSAt = (i) => (ssRaw[i] && 'HESLT'.includes(ssRaw[i]) ? ssRaw[i] : 'C');
 
   const formsRaw = activeTest.nucleicForms || '';
   const dnaFormDefault = activeTest.dnaForm || 'B';
@@ -1339,6 +1343,18 @@ export const MDExperimentSetupSection = ({ ctx }) => {
 
   const setAllSS = (letter) => updateActiveTest({ secondaryStructure: d.seq.split('').map(() => letter).join('') });
 
+  /* 🧵 LES BRINS DE FEUILLET DÉCLARÉS — la déclaration vit dans « Sequence and
+     structure » de la page NMR (« Pair them », activeTest.betaSheets), mais la bande
+     de séquence de CETTE page la marque elle aussi : le lecteur est le même module pur
+     (utils/betaSheetFold.js), il n'y a donc pas deux façons de lire un feuillet. */
+  const sheetPairs = Array.isArray(activeTest.betaSheets) && activeTest.betaSheets.length
+    ? betaSheetPairsOf({
+      secondaryStructure: activeTest.secondaryStructure || '',
+      sheets: activeTest.betaSheets,
+      sequenceLength: (d.seq || '').length,
+    }).pairs
+    : [];
+
   const paintFormAt = (i, letter) => {
     const arr = d.seq.split('').map((_, j) => d.getFormAt(j));
     arr[i] = letter;
@@ -1474,7 +1490,7 @@ export const MDExperimentSetupSection = ({ ctx }) => {
         <CollapsibleSection title="Sequence and structure" icon="🖌️" defaultOpen={false}>
           <div className="flex flex-wrap gap-2 mb-3 items-center">
             <span className="text-xs font-bold text-slate-500 uppercase mr-1">🖌️ Brush:</span>
-            {['C', 'H', 'L', 'E'].map((l) => (
+            {['C', 'H', 'L', 'E', 'T'].map((l) => (
               <button key={l} onClick={() => setSSBrush(l)} className="px-3 py-1 rounded-lg text-xs font-black border transition-all"
                 style={{ backgroundColor: ssBrush === l ? SS_META[l].color : 'white', borderColor: SS_META[l].color, color: ssBrush === l ? 'white' : SS_META[l].color }}>
                 {SS_META[l].label}
@@ -1485,6 +1501,7 @@ export const MDExperimentSetupSection = ({ ctx }) => {
             <button onClick={() => setAllSS('H')} className="px-3 py-1 rounded-lg text-xs font-bold bg-violet-100 border border-violet-300 text-violet-700 hover:bg-violet-200">All α-Helix</button>
             <button onClick={() => setAllSS('L')} className="px-3 py-1 rounded-lg text-xs font-bold bg-fuchsia-100 border border-fuchsia-300 text-fuchsia-700 hover:bg-fuchsia-200">All α-Helix (L)</button>
             <button onClick={() => setAllSS('E')} className="px-3 py-1 rounded-lg text-xs font-bold bg-amber-100 border border-amber-300 text-amber-700 hover:bg-amber-200">All β-Sheet</button>
+            <button onClick={() => setAllSS('T')} className="px-3 py-1 rounded-lg text-xs font-bold bg-teal-100 border border-teal-300 text-teal-700 hover:bg-teal-200">All γ-Turn</button>
           </div>
           <p className="text-xs text-slate-400 mb-3">💡 Select a brush, then click or drag across the sequence chips to paint secondary structure.</p>
           <SequencePaintStrip
@@ -1494,6 +1511,7 @@ export const MDExperimentSetupSection = ({ ctx }) => {
             onApply={(i) => paintSSAt(i, ssBrush)}
             focusIdx={focusIdx}
             residueNo={residueNoOf}
+            sheetOf={(i) => sheetMarkAt(sheetPairs, i + 1)}
           />
         </CollapsibleSection>
       )}

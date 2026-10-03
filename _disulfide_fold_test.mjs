@@ -303,10 +303,10 @@ ok(!VIEW.includes('foldForDisulfides'),
   '…et le geste qui la sollicitait a disparu');
 ok(!VIEW.includes('⚭ Fold for disulfides\n'),
   'le bouton ⚭ Fold for disulfides n’est plus rendu\n');
-has(SEC, '{ cysDisulfides: activeTest.cysDisulfides }',
+has(SEC, 'cysDisulfides: activeTest.cysDisulfides,',
   'les ponts entrent aussi dans le modèle servi d’office (le CONECT est là sans clic)');
 
-has(DATA, 'residueNo, linkOf }', 'la bande de séquence partagée accepte les ponts');
+has(DATA, 'residueNo, linkOf, sheetOf }', 'la bande de séquence partagée accepte les ponts — et les brins de feuillet');
 has(DATA, "const linkAt = typeof linkOf === 'function' ? linkOf : () => null;",
   'sans la prop, la bande ne marque rien (MD et Docking sont intacts)');
 has(DATA, 'borderColor: link ? link.color : m.color', 'une Cys appariée prend la couleur de son pont');

@@ -1,753 +1,1070 @@
-diff --git a/src/App.jsx b/src/App.jsx
-index cdc9af2..7a37f4b 100644
---- a/src/App.jsx
-+++ b/src/App.jsx
-@@ -39,6 +39,11 @@ import { repairBoxPlacements } from './utils/storageBoxes';
- import { setActiveProjectId, readLibrary, readAllProjectLibraries, mergeLibraryFromSnapshot, refreshLibraryFromStorage } from './utils/figuresLibrary';
- import { clearDriveToken, testDriveAccess, getConfiguredDriveClientId, connectDriveWithGis, sharedWorkspaceMode, getWorkspaceServerIssue, getLastDriveConnectError, driveBootstrapRequestedAtLoad, setDriveRootContext, ensureDriveFolder, getDriveToken, uploadWorkspaceFile, cleanupWorkspaceRootFolders, cloudBackendAvailable } from './utils/driveUpload';
- import { migrateCommonLibraryOnce } from './utils/commonLibraryMigrate';
-+/* Les DOCUMENTS DE SECTION d'une page projet vivaient dans un dossier au nom du
-+   projet POSÉ À LA RACINE du dataset (« <projet>/<section> ») : ce déménagement
-+   les range dans `projects/<projet>/<section>`, à côté des expériences, des
-+   figures et du document du projet (voir utils/projectRootMigrate.js). */
-+import { migrateProjectRootFoldersOnce } from './utils/projectRootMigrate';
- /* ── LE DRIVE EST LE MIROIR DU PROGRAMME (et le même sur chaque poste) ──────
-    driveMirror.js : supprimer ou renommer un dataset / un projet se répercute
-    sur Drive (dossier mis à la corbeille, dossier renommé — jamais de doublon).
-@@ -1311,6 +1316,11 @@ if (customType === 'dosy') {
-            la lecture continue de fonctionner sur les anciens emplacements
-            entre-temps (voir utils/commonLibraryMigrate.js). */
-         .then(() => migrateCommonLibraryOnce())
-+        /* LES DOSSIERS DE PROJET POSÉS À LA RACINE DU DATASET (« <projet> », où
-+           allaient les documents de section d'une page projet) rentrent dans
-+           `projects/<projet>` : même endroit, une fois par dataset, et le chemin
-+           abandonné est mis en pierre tombale (voir utils/projectRootMigrate.js). */
-+        .then(() => migrateProjectRootFoldersOnce())
-         .catch(() => {});
-     }, 800);
-     return () => {
-diff --git a/src/administration/adminSchema.js b/src/administration/adminSchema.js
-index e292a5e..c5e3920 100644
---- a/src/administration/adminSchema.js
-+++ b/src/administration/adminSchema.js
-@@ -70,6 +70,12 @@ export const ADMIN_SETTINGS_DOC = 'global';
-          achats prévus transférés depuis « OM prévus / souhaités » et « Achats
-          prévus / souhaités » (création de devis « Approbation devis & BC » et de
-          fiches du registre Remboursements).
-+       • SUPPRESSION des lignes de suivi des achats (« Achats prévus / souhaités »
-+         et « Approbation devis & BC ») : ouverte au superutilisateur ET à la
-+         fonction Achats (« Responsable d'achats ») — elle corrige un doublon ou
-+         une saisie erronée sans attendre une décision du superutilisateur ; un
-+         membre ne supprime que ses propres demandes. Règle unique :
-+         ownScope.js › scopeCanDeleteAchatLines (les deux pages l'appliquent).
-      • Personnel → superutilisateur uniquement.
-       • Page Setup → ouverte à tout membre connecté (changement de son propre
-           mot de passe) ; gestion des comptes et réglages avancés réservés au
-@@ -89,10 +95,10 @@ export const ADMIN_PAGES = [
-     blurb: 'Ordres de mission prévus / souhaités : dates, demandeur, destination, coûts, statut (En attente / Acceptée…). Un OM « Acceptée » peut être transféré en dépense réelle (page Dépenses › onglet OM). Le statut « Test » compte l’OM dans les prévisions des Recettes sans l’accepter réellement.',
-     fields: ['Description', 'Demandeur', 'Date de demande · Départ · Retour', 'Destination', 'Transport · Hébergement · Repas · Inscription', 'Coût total (calculé)', 'Statut : En attente / Acceptée / Test / Refusée / Terminée', 'Estimé vs Exact', 'Ligne budgétaire liée (Recette)', 'Commentaires'] },
-   { id: 'desiderate', label: 'Achats prévus / souhaités', icon: '🛒', superuserOnly: false, kind: 'desiderate',
--    blurb: 'Achats prévus / souhaités de l’équipe : coût estimé et frais de port saisis par le demandeur, décision réservée au superutilisateur (Approuvé / En attente / Test / Pas maintenant). Le statut « Test » compte le montant dans les prévisions des Recettes sans que la demande soit réellement acceptée.',
-+    blurb: 'Achats prévus / souhaités de l’équipe : coût estimé et frais de port saisis par le demandeur, décision réservée au superutilisateur (Approuvé / En attente / Test / Pas maintenant). Le statut « Test » compte le montant dans les prévisions des Recettes sans que la demande soit réellement acceptée. Suppression d’une ligne (🗑) : superutilisateur et responsable d’achats (fonction « Achats ») — doublon ou saisie erronée corrigés sans attendre la décision.',
-     fields: ['Décision — réservée au superutilisateur : Approuvé / En attente / Test / Pas maintenant', 'Souhait d’achat', 'Urgence : Urgent / Important / Souhaitable', 'Demandeur', 'Fournisseur', 'Ligne budgétaire suggérée', 'Coût estimé', 'Frais de port', 'N° devis · Lien du devis (Drive, facultatif) · Code produit', 'Date de demande', 'Commentaires'] },
-   { id: 'devisBc', label: 'Approbation devis & BC', icon: '📝', superuserOnly: false, kind: 'devisBc',
--    blurb: 'Deux sections seulement. « Devis à approuver » : les devis pas encore signés (visibles par les Permanents ; le Gestionnaire et le Responsable d’achats voient toutes les demandes ; les lignes demandées par « Service » sont visibles par tout le monde). « BC à faire et à approuver » : d’un côté les devis SIGNÉS dont le bon de commande reste à faire — on clique leur ligne pour déposer le BC (le devis y est déjà rattaché), de l’autre les BC déposés à approuver. Un devis signé quitte donc « Devis à approuver » et n’en finit qu’à la signature de son BC. Les fichiers sont téléversés dans Budget_labo/<année>/Devis|BC avec un nom qui reprend le N°, les attributs de la ligne ET l’objet (description) après un « _ » à la fin du titre ; l’approbation d’un devis le valide, et celle du BC lié crée la dépense « BC signé » correspondante dans la page Dépenses (catégorie, ligne budgétaire, N° SIFAC/D.A. et date de signature transmis automatiquement). À l’approbation d’un fichier PDF, une copie signée « …_approuvé_signé.pdf » est créée (image de signature du superutilisateur en bas de la dernière page) et devient le fichier officiel — l’original reste intact.',
-+    blurb: 'Deux sections seulement. « Devis à approuver » : les devis pas encore signés (visibles par les Permanents ; le Gestionnaire et le Responsable d’achats voient toutes les demandes ; les lignes demandées par « Service » sont visibles par tout le monde). « BC à faire et à approuver » : d’un côté les devis SIGNÉS dont le bon de commande reste à faire — on clique leur ligne pour déposer le BC (le devis y est déjà rattaché), de l’autre les BC déposés à approuver. Un devis signé quitte donc « Devis à approuver » et n’en finit qu’à la signature de son BC. Les fichiers sont téléversés dans Budget_labo/<année>/Devis|BC avec un nom qui reprend le N°, les attributs de la ligne ET l’objet (description) après un « _ » à la fin du titre ; l’approbation d’un devis le valide, et celle du BC lié crée la dépense « BC signé » correspondante dans la page Dépenses (catégorie, ligne budgétaire, N° SIFAC/D.A. et date de signature transmis automatiquement). À l’approbation d’un fichier PDF, une copie signée « …_approuvé_signé.pdf » est créée (image de signature du superutilisateur en bas de la dernière page) et devient le fichier officiel — l’original reste intact. La suppression d’une ligne (🗑) est ouverte au superutilisateur ET à la responsable d’achats (fonction « Achats ») : un doublon ou une saisie erronée se corrige donc sans attendre une décision.',
-     fields: ['Statut : En attente / Approuvé / Refusé (décision réservée au superutilisateur)', 'Type : Devis ou BC', 'Description', 'Fournisseur', 'N° devis · N° BC · Catégorie · N° SIFAC/D.A.', 'Montant (optionnel)', 'Fichier téléversé (Budget_labo/<année>/Devis ou /BC)', 'Déposant', 'Date de dépôt', 'Dépense « BC signé » créée automatiquement à l’approbation du BC'] },
-   { id: 'budget', label: 'Budget overview', icon: '💶', superuserOnly: false, kind: null,
-     blurb: 'Graphiques personnels de suivi budgétaire : dépenses découpées comme les onglets de la page Dépenses (Achats / Prestations internes / OM / Rémunérations de stage), lignes budgétaires & soldes (page Recettes), OM, souhaits, Remboursements (avec états liquidatifs) et devis & BC à approuver — chaque membre enregistre ses propres graphiques.',
-@@ -598,7 +604,7 @@ export const ADMIN_FONCTIONS = ['AP', 'Gestionnaire', 'Achats'];
- export const ADMIN_FONCTION_META = {
-   AP: { label: 'AP', hint: 'Agent de prévention → ajoute Dépenses, Budget overview + Hygiène & Sécurité.' },
-   Gestionnaire: { label: 'Gestionnaire', hint: '→ ajoute Recettes (création de lignes budgétaires), Dépenses, Budget overview, Questions ouvertes + Approbation devis & BC (toutes les demandes).' },
--  Achats: { label: "Responsable d'achats", hint: "→ ajoute Recettes (création de lignes budgétaires), Dépenses, Budget overview + Approbation devis & BC (toutes les demandes) ; reçoit les OM / achats prévus transférés et est notifié par e-mail quand un devis est créé." },
-+  Achats: { label: "Responsable d'achats", hint: "→ ajoute Recettes (création de lignes budgétaires), Dépenses, Budget overview + Approbation devis & BC (toutes les demandes) ; reçoit les OM / achats prévus transférés et est notifié par e-mail quand un devis est créé ; supprime les lignes de « Achats prévus / souhaités » et d'« Approbation devis & BC » (doublon, saisie erronée)." },
- };
+diff --git a/src/components/DockingSections.jsx b/src/components/DockingSections.jsx
+index 3dd2a5f..768d6ac 100644
+--- a/src/components/DockingSections.jsx
++++ b/src/components/DockingSections.jsx
+@@ -73,6 +73,9 @@ import NMRMoleculeViewer from './NMRMoleculeViewer';
+ // utils/ligandSmiles.js). The viewer does the same on its own structure and
+ // reports the answer back through onLigandSmiles.
+ import { fetchLigandSmiles, ligandCodesFromPdbText } from '../utils/ligandSmiles';
++// 🧵 Le feuillet déclaré (la déclaration du panneau 🧵 de la page NMR) : la bande de
++// séquence de cette page le marque avec le MÊME lecteur (utils/betaSheetFold.js).
++import { betaSheetPairsOf, sheetMarkAt } from '../utils/betaSheetFold';
+ import {AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, SS_META, RESIDUE_COLORS, buildProteinStructure, buildNucleicStructure, buildSugarStructure, buildLipidStructure, elementsToSVG, StructureSVGView, CollapsibleSection, SequencePaintStrip, getSelectedKeys, getManualKeys, DOCKING_METRICS, DOCKING_PIPELINE_STAGES, parseDockingValue, getProgramInfo, parseDockingFile, parseCapriTsv, posesFromCapri, parseTomlSimple, extractDockedMolecules, getDockingInstances, getDockingActiveInstance, getDockingLayers, getDockingActiveLayerKey, getDockingLayerValues, writeDockingCellValue, generateDockingPoses, generateHADDOCKPoses, DEFAULT_DOCKING_CHART_STYLE, dockChartBoxStyle, dockDom, DOCK_CHART_MARGIN, dockingMetricOf, poseMetricValue, capriColumnMetricKey, chartEnergyMetricKey, poseChartValue, poseDeviation, poseRawColumnValue, deviationColumnOf, energyColumnOf, plotSourceOptions, plotSourceLabel, plotSourceValue, PLOT_SOURCE_PREFIX, PLOT_SOURCE_ALL, DEVIATION_PLOT_KEYS, dockingMetricLabel, HADDOCK_SCORE_TERM_KEYS, haddockScoreTerms} from './DockingData';
  
- /** Synonymes acceptés pour chaque fonction : libellé affiché, saisie libre,
-diff --git a/src/administration/approbationPage.jsx b/src/administration/approbationPage.jsx
-index 204551d..b62165e 100644
---- a/src/administration/approbationPage.jsx
-+++ b/src/administration/approbationPage.jsx
-@@ -32,8 +32,11 @@
-            Recettes dès que sa date de signature est renseignée ;
-          – une décision envoie un e-mail au(x) gestionnaire(s) (et au
-            déposant quand son e-mail figure dans sa fiche Personnel) ;
--     · seul le superutilisateur peut supprimer une ligne ; un déposant peut
--       modifier sa propre ligne tant qu'elle est « En attente ».
-+     · la suppression d'une ligne est ouverte au superutilisateur ET à la
-+       responsable d'achats (fonction « Achats » — règle partagée
-+       `scopeCanDeleteAchatLines`, voir ownScope.js) : elle corrige ainsi un
-+       doublon ou une saisie erronée sans attendre une décision ; un déposant
-+       peut modifier sa propre ligne tant qu'elle est « En attente ».
  
-    Modèle stocké (collection `devisBc`) :
-      devis : { kind:'devis', description, fournisseur, ligneBudgetaire,
-@@ -75,7 +78,7 @@ import { fileBudgetDocs, hasApprovedSuffix, withApprovedSuffix } from './driveFi
- import {
-   buildSignedDeposit, budgetLaboPath, depositDocDriveNameOf, renameDepositDriveFileTo,
- } from './depositSigning';
--import { scopeFonctions } from './ownScope';
-+import { scopeCanDeleteAchatLines, scopeFonctions } from './ownScope';
- import {
-   sendAdminMail, personEmailOf, personnelEmailsMatching, superuserEmailsOf, mergeEmails,
-   notificationTargetOf,
-@@ -288,6 +291,14 @@ export const ApprobationPage = () => {
-   })();
-   const isAchatsRole = currentFonctions.indexOf('Gestionnaire') !== -1
-     || currentFonctions.indexOf('Achats') !== -1;
-+  /* ── Suppression d'une ligne (devis / BC) ─────────────────────────────────
-+     Ouverte au superutilisateur ET à la RESPONSABLE D'ACHATS (fonction
-+     « Achats ») : elle suit l'ensemble des demandes et corrige donc un doublon
-+     ou une saisie erronée sans attendre une décision. La règle vit dans
-+     ownScope.js (`scopeCanDeleteAchatLines`) — la page « Achats prévus /
-+     souhaités » applique exactement la même, et une ligne supprimée disparaît
-+     des deux côtés. */
-+  const canRemoveRow = scopeCanDeleteAchatLines(access);
-   /* Visibilité : le superutilisateur, la gestionnaire et la responsable
-      d’achats voient TOUTES les lignes. Les autres membres ne voient que
-      leurs propres éléments (déposés par eux, demandés à leur nom ou créés
-@@ -892,9 +903,9 @@ export const ApprobationPage = () => {
-     });
+@@ -137,8 +140,9 @@ const useDockingDerived = (activeTest, ctx = {}) => {
+     : moleculeType === 'organic' ? 'Organic Molecule' : 'Phospholipid';
+ 
+   const ssRaw = activeTest.secondaryStructure || '';
+-  // ⚠ HESL — L (hélice α GAUCHE) est une lettre peignable comme les autres.
+-  const getSSAt = (i) => (ssRaw[i] && 'HESL'.includes(ssRaw[i]) ? ssRaw[i] : 'C');
++  // ⚠ HESLT — L (hélice α GAUCHE) et T (tour β) sont des lettres peignables comme
++  // les autres.
++  const getSSAt = (i) => (ssRaw[i] && 'HESLT'.includes(ssRaw[i]) ? ssRaw[i] : 'C');
+ 
+   const parsedSeq = useMemo(() => {
+     let chars = [];
+@@ -456,6 +460,18 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
+     updateActiveTest({ secondaryStructure: arr.join('') });
    };
  
--  /* ── Suppression (superutilisateur uniquement) ────────────────────────── */
-+  /* ── Suppression (superutilisateur et responsable d'achats) ───────────── */
-   const removeRow = (rec) => {
--    if (!rec || !rec.id || !isSuper) return;
-+    if (!rec || !rec.id || !canRemoveRow) return;
-     const ref = txt(rec.numBC) || txt(rec.numDevis) || txt(rec.description) || rec.id;
-     if (!window.confirm(`Supprimer définitivement cette ligne « ${ref} » ?`)) return;
-     /* Un devis supprimé ne doit pas laisser un BC orphelin : les bons de
-@@ -955,6 +966,7 @@ export const ApprobationPage = () => {
-         if (generated && currentName && isAchatsRole) return true;
-         return !!(txt(r.deposant) && currentName && sameName(r.deposant, currentName));
-       },
-+      canRemove: canRemoveRow,
-       onDecide: decideRow,
-       onEdit: (r) => setModal({ mode: 'edit', kind: activeKind, rec: r }),
-       onMakeBc: openBcDeposit,
-@@ -963,7 +975,7 @@ export const ApprobationPage = () => {
-       onSendBack: returnToAchats,
-     }),
-     // eslint-disable-next-line react-hooks/exhaustive-deps
--    [activeKind, isSuper, busyId, devisById, activeRows, currentName, isAchatsRole, showTreated, sendForSignature, returnToAchats]
-+    [activeKind, isSuper, busyId, devisById, activeRows, currentName, isAchatsRole, canRemoveRow, showTreated, sendForSignature, returnToAchats]
-   );
- 
-   const pendingCount = (kind) => visibleRows.filter((r) => r.kind === kind && isApprovalPending(r.statut)).length;
-@@ -1129,6 +1141,12 @@ export const ApprobationPage = () => {
-               <>
-                 👁 Vous voyez <b>toutes</b> les demandes déposées (suivi des achats — Gestionnaire /
-                 Responsable d’achats) : les devis &amp; BC de tous les membres sont listés ici.
-+                {canRemoveRow ? (
-+                  <>
-+                    {' '}La <b>suppression</b> d’une ligne (🗑) vous est ouverte : elle corrige un
-+                    doublon ou une saisie erronée sans attendre la décision du superutilisateur.
-+                  </>
-+                ) : null}
-               </>
-             ) : currentName ? (
-               <>
-@@ -1301,7 +1319,7 @@ export const ApprobationPage = () => {
- /* ── Colonnes de la table active (devis ou BC) ──────────────────────────── */
- const buildColumns = ({
-   kind, isSuper, busyId, devisById,
--  canEdit, onDecide, onEdit, onMakeBc, onRemove, onSendForSignature, onSendBack,
-+  canEdit, canRemove, onDecide, onEdit, onMakeBc, onRemove, onSendForSignature, onSendBack,
- }) => {
-   /* La section « BC à faire et à approuver » mélange DEUX natures de lignes :
-      le devis SIGNÉ dont le bon de commande reste à faire, puis les bons de
-@@ -1550,7 +1568,9 @@ const buildColumns = ({
-       value: () => '',
-       display: (r) => {
-         const editable = canEdit(r);
--        const deletable = isSuper;
-+        /* Suppression : superutilisateur et responsable d'achats (`canRemove`,
-+           calculé plus haut par `scopeCanDeleteAchatLines`). */
-+        const deletable = !!canRemove;
-         if (!editable && !deletable) return <span className="text-slate-300 text-xs">—</span>;
-         return (
-           <div className="flex items-center gap-1 justify-end">
-@@ -1564,7 +1584,7 @@ const buildColumns = ({
-             {deletable && (
++  /* 🧵 LES BRINS DE FEUILLET DÉCLARÉS — la déclaration vit dans « Sequence and
++     structure » de la page NMR (« Pair them », activeTest.betaSheets), mais la bande
++     de séquence de CETTE page la marque elle aussi : même module pur
++     (utils/betaSheetFold.js), donc une seule lecture d'un feuillet. */
++  const sheetPairs = Array.isArray(activeTest.betaSheets) && activeTest.betaSheets.length
++    ? betaSheetPairsOf({
++      secondaryStructure: activeTest.secondaryStructure || '',
++      sheets: activeTest.betaSheets,
++      sequenceLength: (d.seq || '').length,
++    }).pairs
++    : [];
++
+   const structureSrc = useMemo(() => {
+     const raw = (activeTest.structureSrc || '').trim();
+     if (!raw) {
+@@ -615,7 +631,7 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
+         <CollapsibleSection title="Sequence and structure" icon="🖌️" defaultOpen={false}>
+           <div className="flex flex-wrap gap-2 mb-3 items-center">
+             <span className="text-xs font-bold text-slate-500 uppercase mr-1">🖌️ Brush:</span>
+-            {['C', 'H', 'L', 'E'].map((l) => (
++            {['C', 'H', 'L', 'E', 'T'].map((l) => (
                <button
-                 type="button"
--                onClick={() => onRemove(r)} title="Supprimer (réservé au superutilisateur)"
-+                onClick={() => onRemove(r)} title="Supprimer cette ligne (superutilisateur et responsable d’achats)"
-                 className="w-7 h-7 rounded-lg border border-slate-200 text-slate-400 hover:bg-red-50 hover:text-red-600 text-xs"
-               >🗑</button>
-             )}
-diff --git a/src/administration/desiderataPage.jsx b/src/administration/desiderataPage.jsx
-index c87443b..2b512f5 100644
---- a/src/administration/desiderataPage.jsx
-+++ b/src/administration/desiderataPage.jsx
-@@ -50,7 +50,7 @@ import { budgetDocPath, budgetDocFileName } from './driveFiling';
-    immédiatement (copie « …_approuvé_signé.pdf »), exactement comme avec le
-    bouton ✓ de la page « Approbation devis & BC ». */
- import { buildSignedDeposit, renameDepositDriveFileTo } from './depositSigning';
--import { scopeMeNames, scopeMePersonId, scopeCanSeeItem, scopePersonIdForName, scopeSeesAllRows, scopeFonctions } from './ownScope';
-+import { scopeCanDeleteAchatLines, scopeMeNames, scopeMePersonId, scopeCanSeeItem, scopePersonIdForName, scopeSeesAllRows, scopeFonctions } from './ownScope';
- import {
-   TRANSFER_TARGETS, targetMetaOf, TRANSFER_MODES,
-   devisPatchFromDesiderata, desiderataTransferStatus, isDepenseBcSigne,
-@@ -963,6 +963,12 @@ export const DesiderataPage = () => {
-     : `Fonctions reconnues sur votre fiche Personnel : ${scopeFonctions(access).join(', ') || 'aucune'}. `
-       + (seesAllRows
-         ? 'Le suivi des achats (Gestionnaire / Responsable d’achats) affiche toutes les demandes.'
-+          /* La RESPONSABLE D'ACHATS supprime en plus toutes les lignes (voir
-+             ownScope.js › scopeCanDeleteAchatLines) : le dire ici, sinon le 🗑
-+             proposé sur la demande d’un autre membre étonne. */
-+          + (scopeCanDeleteAchatLines(access)
-+            ? ' La suppression d’une ligne (🗑) est ouverte à la responsable d’achats : elle corrige un doublon ou une saisie erronée.'
-+            : '')
-         : 'Seules vos propres demandes sont affichées ici. Pour voir toutes les demandes, cochez « Gestionnaire » ou « Responsable d’achats » sur votre fiche dans Administration › Personnel.');
-   const meNames = useMemo(() => scopeMeNames(access, currentUser), [access, currentUser]);
-   const mePersonId = useMemo(() => scopeMePersonId(access), [access]);
-@@ -1141,9 +1147,19 @@ export const DesiderataPage = () => {
-     }
-   };
- 
-+  /* ── Suppression d'une ligne ─────────────────────────────────────────────
-+     Ouverte au superutilisateur, à la RESPONSABLE D'ACHATS (fonction
-+     « Achats » — elle suit l'ensemble des demandes et corrige donc un doublon
-+     ou une saisie erronée : voir ownScope.js › scopeCanDeleteAchatLines) et,
-+     pour les autres membres, à leurs PROPRES demandes — les seules qu'ils
-+     voient. */
-+  const canDeleteRow = (rec) => isSuper
-+    || scopeCanDeleteAchatLines(access)
-+    || scopeCanSeeItem(rec, { isSuper, meNames, mePersonId });
-+
-   const onRemove = (rec) => {
-     if (!rec) return;
--    if (!isSuper && !scopeCanSeeItem(rec, { isSuper, meNames, mePersonId })) return;
-+    if (!canDeleteRow(rec)) return;
-     const label = txt(rec.description) || rec.id;
-     if (!window.confirm(`Supprimer l’achat prévu / souhaité « ${label} » ?\nCette action est définitive.`)) return;
-     removeRecord('desiderate', rec);
-@@ -1721,12 +1737,19 @@ export const DesiderataPage = () => {
-               title="Modifier l’achat prévu / souhaité"
-               className="text-[11px] font-black px-2 py-1 rounded-lg border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 transition-colors"
-             >✏️ Modifier</button>
--          <button
--            type="button"
--            onClick={() => onRemove(r)}
--            title="Supprimer l’achat prévu / souhaité"
--            className="text-[11px] font-black px-2 py-1 rounded-lg border border-red-200 bg-red-50 text-red-500 hover:bg-red-100 transition-colors"
--          >🗑️</button>
-+            {/* La suppression n'est proposée qu'à qui en a le DROIT : la
-+                responsable d'achats (fonction « Achats ») et le superutilisateur
-+                sur toutes les lignes, chaque autre membre sur les siennes.
-+                Sans cette condition, un Gestionnaire — qui voit tout — aurait un
-+                bouton sans effet (la garde d’onRemove refusait la suppression). */}
-+            {canDeleteRow(r) ? (
-+              <button
-+                type="button"
-+                onClick={() => onRemove(r)}
-+                title="Supprimer l’achat prévu / souhaité"
-+                className="text-[11px] font-black px-2 py-1 rounded-lg border border-red-200 bg-red-50 text-red-500 hover:bg-red-100 transition-colors"
-+              >🗑️</button>
-+            ) : null}
-         </div>
-       );
-       },
-diff --git a/src/administration/ownScope.js b/src/administration/ownScope.js
-index 9a92928..3ce8eac 100644
---- a/src/administration/ownScope.js
-+++ b/src/administration/ownScope.js
-@@ -14,6 +14,12 @@
-        verrouillé sur soi-même pour les membres), sinon par correspondance de
-        nom normalisée avec la colonne « demandeur » (anciens imports Google
-        Sheets) puis par l’enveloppe d’audit `createdBy`.
-+
-+   Suppression (voir `scopeCanDeleteAchatLines` plus bas) : le superutilisateur
-+   et la fonction « Achats » — c’est-à-dire la RESPONSABLE D’ACHATS, qui suit
-+   l’ensemble des demandes — peuvent retirer une ligne de « Achats prévus /
-+   souhaités » et de « Approbation devis & BC » (doublon, saisie erronée) ;
-+   chaque autre membre ne supprime que ses propres demandes.
-    ========================================================================= */
- 
- import { adminFonctionCode } from './adminSchema';
-@@ -67,6 +73,25 @@ export const scopeSeesAllRows = (access) => {
-   return fonctions.indexOf('Gestionnaire') !== -1 || fonctions.indexOf('Achats') !== -1;
- };
- 
-+/** Le membre connecté peut-il SUPPRIMER une ligne de suivi des achats — une
-+ *  ligne « Achats prévus / souhaités » (collection desiderate) ou une ligne de
-+ *  devis / BC (page « Approbation devis & BC ») ?
-+ *
-+ *  Oui pour le superutilisateur, et pour la fonction « Achats » — c’est-à-dire
-+ *  la RESPONSABLE D’ACHATS : elle suit l’ENSEMBLE des demandes (voir
-+ *  scopeSeesAllRows) et corrige donc un doublon ou une saisie erronée sans
-+ *  attendre une décision du superutilisateur. Les autres membres ne suppriment
-+ *  que leurs PROPRES demandes (`scopeCanSeeItem`).
-+ *
-+ *  La règle vit ICI, en un seul endroit testable, et les deux pages l’importent
-+ *  — une ligne supprimée disparaît des deux côtés (le souhait transféré et son
-+ *  devis « Approbation devis & BC »). */
-+export const scopeCanDeleteAchatLines = (access) => {
-+  const a = access || {};
-+  if (a.isSuperuser) return true;
-+  return scopeFonctions(a).indexOf('Achats') !== -1;
-+};
-+
- /** Noms d’identité du membre connecté : fiche Personnel liée d’abord, nom du
-  *  compte opérateur sinon (les deux sont conservés s’ils diffèrent). */
- export const scopeMeNames = (access, currentUser) => {
-diff --git a/src/components/AppModules/projectDetailModule.jsx b/src/components/AppModules/projectDetailModule.jsx
-index 255693e..7c9757c 100644
---- a/src/components/AppModules/projectDetailModule.jsx
-+++ b/src/components/AppModules/projectDetailModule.jsx
-@@ -1414,9 +1414,12 @@ export const ProjectDetailModule = ({
- 
-   /* ── Où les documents d'une section vont-ils sur le Drive ? ───────────────
-      La chaîne de dossiers est celle de l'envoi lui-même
--     (driveNaming.projectSectionFolderPath → <projet>/<section>, à l'intérieur
--     du dossier du dataset) : l'étiquette affichée et le dossier réellement créé
--     ne peuvent donc pas diverger. */
-+     (driveNaming.projectSectionFolderPath → projects/<projet>/<section>) : le
-+     document d'une section vit DANS le dossier du projet, comme ses expériences,
-+     ses figures et son document de texte — l'étiquette affichée et le dossier
-+     réellement créé ne peuvent donc pas diverger. Un Drive où les documents
-+     étaient encore dans `<projet>/<section>`, À LA RACINE du dataset, est rangé
-+     par utils/projectRootMigrate.js au démarrage. */
-   const sectionDrivePath = (label) => projectSectionFolderPath(project.name || '', label);
-   const sectionDriveLabel = (label) =>
-     projectSectionFolderLabel(project.name || '', label, getDriveRootName());
+                 key={l}
+                 onClick={() => setSSBrush(l)}
+@@ -637,6 +653,7 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
+             onApply={(i) => paintSSAt(i, ssBrush)}
+             focusIdx="ALL"
+             residueNo={residueNoOf}
++            sheetOf={(i) => sheetMarkAt(sheetPairs, i + 1)}
+           />
+         </CollapsibleSection>
+       )}
 diff --git a/src/components/MDSections.jsx b/src/components/MDSections.jsx
-index d76674f..acb1710 100644
+index 2d0a3f6..b7b34a0 100644
 --- a/src/components/MDSections.jsx
 +++ b/src/components/MDSections.jsx
-@@ -971,10 +971,23 @@ export const MDExperimentSetupSection = ({ ctx }) => {
-     // fichier reste dans le dataset : c'est lui qui le ramène sur un autre poste.
-     setTrajDriveMsg(`⬆️ Archiving ${file.name} to Google Drive…`);
-     (async () => {
--      const { name: driveName, pointer } = await archiveFileToDriveWithPointer({
-+      /* L'AVANCEMENT EST MONTRÉ. Une trajectoire part maintenant PAR MORCEAUX
-+         (session « resumable » — voir utils/driveChunkUpload.js) : sans le
-+         pourcentage, un envoi de plusieurs Go restait muet pendant des minutes et
-+         on ne pouvait pas distinguer « ça travaille » de « c'est perdu ». */
-+      let lastPct = -1;
-+      const onProgress = (sent, total) => {
-+        if (!total) return;
-+        const pct = Math.min(100, Math.round((sent / total) * 100));
-+        if (pct === lastPct) return;
-+        lastPct = pct;
-+        setTrajDriveMsg(`⬆️ Archiving ${file.name} to Google Drive… ${pct}%`);
-+      };
-+      const { name: driveName, pointer, error } = await archiveFileToDriveWithPointer({
-         file,
-         ctx: { project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || '', instance: activeTest.instanceName || '', scientist: activeTest.operator || '', section: 'Setup', subsection: 'Trajectory' },
--        suffix: 'trajectory'
-+        suffix: 'trajectory',
-+        onProgress
-       }).catch(() => null);
-       if (!driveName) return;
-       placeRestorePointer({
-@@ -984,9 +997,15 @@ export const MDExperimentSetupSection = ({ ctx }) => {
-         activeKey: mdActiveIdRef.current,
-         patch: updateActiveTest
-       });
-+      /* L'ÉCHEC SE DIT, AVEC SA RAISON. « archivé » ne doit jamais être annoncé
-+         quand le fichier n'est pas sur le Drive (c'est ce qui a fait croire, le
-+         25/09/2026, qu'une trajectoire de plusieurs Go était en sécurité alors que
-+         ni le Drive ni l'autre poste ne l'avaient). Le geste de reprise nommé est
-+         celui qui EXISTE sur la page (« Choose XTC / TRR » ré-archive le fichier) :
-+         renvoyer à un bouton imaginaire ne répare rien. */
-       setTrajDriveMsg(pointer
-         ? `✅ ${file.name} archived to Google Drive.`
--        : `⚠️ ${file.name} was loaded, but the Drive upload failed. Use “Archive trajectory to Drive” to retry (check the Drive connection first).`);
-+        : `⚠️ ${file.name} was loaded, but the Drive upload failed${error ? ` — ${error}` : ''}. Use “Choose XTC / TRR” to pick the file again (the upload archives it once more) once the Drive connection is back.`);
-     })();
-     setTrajectoryFile(file);
-     updateActiveTest({ trajectoryFileName: file.name });
-diff --git a/src/utils/driveMirror.js b/src/utils/driveMirror.js
-index de9be83..617b5d9 100644
---- a/src/utils/driveMirror.js
-+++ b/src/utils/driveMirror.js
-@@ -217,11 +217,13 @@ const findProjectFolder = async ({ datasetId = '', datasetName = '', projectName
-   return findFolderByName(sanitizeSlug(projectName), projectsFolderId);
- };
+@@ -26,6 +26,9 @@ import {
+ import { AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, SS_META, FORM_META, RESIDUE_COLORS, buildKeys, buildProteinStructure, buildNucleicStructure, buildSugarStructure, buildLipidStructure, elementsToSVG, StructureSVGView, SequencePaintStrip, getSelectedKeys, selectionLabel, getManualKeys, FORCE_FIELDS, WATER_MODELS, MD_ENSEMBLES, MD_INTEGRATORS, MD_THERMOSTATS, MD_BAROSTATS, parseMDValue, getForceFieldInfo, getFFVersions, getWaterModelInfo, getFFBackboneAtoms, normalizeTrajectoryUrl, detectTrajectoryFormat, getTrajectoryFormatInfo, getMDInstances, getMDActiveInstance, getMDLayers, getMDActiveLayerKey, getMDLayerValues, writeMDCellValue, MD_ANALYSIS_LAYERS, DEFAULT_MD_CHART_STYLE, mdDom} from './MDData';
+ import { DriveUploadButton } from './DriveUpload';
+ import { suggestDriveFileName } from '../utils/driveNaming';
++// 🧵 Le feuillet déclaré (la déclaration du panneau 🧵 de la page NMR) : la bande de
++// séquence de cette page le marque avec le MÊME lecteur (utils/betaSheetFold.js).
++import { betaSheetPairsOf, sheetMarkAt } from '../utils/betaSheetFold';
+ import { archiveFileToDrive, archiveFileToDriveWithPointer, getDriveToken, getDriveFileRegistry, driveFetch } from '../utils/driveUpload';
+ import { sequenceForMoleculeType, sequencePatchForMoleculeType, structureSequencePatch, sequenceNaturesNote } from '../utils/sequenceNatures';
+ /* 🧬 LA LIGNE SOUS LA CASE DE SÉQUENCE — le nombre de chaque acide aminé, la charge totale à
+@@ -495,8 +498,9 @@ const useMDDerived = (activeTest, ctx = {}) => {
  
--/** Le dossier de PROJET À LA RACINE du dataset (« <dataset>/<projet> »), celui
-- *  qui porte les DOCUMENTS DE SECTION (<projet>/<section> — le dossier affiché
-- *  sous « 📁 Drive location » de chaque section de la page projet). Il n'est pas
-- *  dans « projects/ » : c'est un SECOND dossier de projet, et c'est lui qui
-- *  restait sur le Drive après la suppression d'un projet. '' s'il n'existe pas. */
-+/** Le dossier de PROJET À LA RACINE du dataset (« <dataset>/<projet> ») — le
-+ *  chemin HISTORIQUE des DOCUMENTS DE SECTION (<projet>/<section>, voir
-+ *  driveNaming.projectSectionFolderPath, qui les range aujourd'hui dans
-+ *  `projects/<projet>/<section>`). Il n'est donc plus créé, mais il reste SUIVI :
-+ *  c'est lui qui restait sur le Drive après la suppression d'un projet, et c'est
-+ *  lui que range utils/projectRootMigrate.js quand il existe encore.
-+ *  '' s'il n'existe pas. */
- const findProjectRootFolder = async ({ datasetId = '', datasetName = '', projectName = '' }) => {
-   /* Le chemin vient de la MÊME liste que les tombes (projectFolderPaths) : un
-      projet nommé comme un dossier partagé du dataset (« projects »…) n'a donc
-@@ -236,12 +238,13 @@ const findProjectRootFolder = async ({ datasetId = '', datasetName = '', project
+   // ---- conformation state (identical to NMR) ----
+   const ssRaw = activeTest.secondaryStructure || '';
+-  // ⚠ HESL — L (hélice α GAUCHE) est une lettre peignable comme les autres.
+-  const getSSAt = (i) => (ssRaw[i] && 'HESL'.includes(ssRaw[i]) ? ssRaw[i] : 'C');
++  // ⚠ HESLT — L (hélice α GAUCHE) et T (tour β) sont des lettres peignables comme
++  // les autres.
++  const getSSAt = (i) => (ssRaw[i] && 'HESLT'.includes(ssRaw[i]) ? ssRaw[i] : 'C');
  
- /**
-  * Supprimer un projet : SES DEUX dossiers Drive partent à la corbeille — les
-- * expériences, figures et le document (`projects/<projet>`) ET le dossier des
-- * documents de section (`<projet>`, à la racine du dataset, voir
-- * driveNaming.projectSectionFolderPath). Les deux chemins sont mis en pierre
-- * tombale, donc ni l'un ni l'autre ne se recrée, et un autre poste ne les voit
-- * plus. Le compte rendu dit ce qui a été trouvé (`missing`) : un dossier absent
-- * (déjà supprimé, ou projet jamais envoyé sur le Drive) n'est pas une erreur.
-+ * expériences, figures et le document (`projects/<projet>`) ET l'éventuel dossier
-+ * de documents de SECTION resté à la racine du dataset (`<projet>` — le chemin
-+ * historique, voir driveNaming.projectSectionFolderPath et
-+ * utils/projectRootMigrate.js). Les deux chemins sont mis en pierre tombale, donc
-+ * ni l'un ni l'autre ne se recrée, et un autre poste ne les voit plus. Le compte
-+ * rendu dit ce qui a été trouvé (`missing`) : un dossier absent (déjà supprimé, ou
-+ * projet jamais envoyé sur le Drive) n'est pas une erreur.
-  */
- export const mirrorDeleteProject = async ({ datasetId = '', datasetName = '', projectName = '' } = {}) => {
-   const paths = projectFolderPaths(projectName);
-diff --git a/src/utils/driveMirrorStore.js b/src/utils/driveMirrorStore.js
-index 7065263..e57243e 100644
---- a/src/utils/driveMirrorStore.js
-+++ b/src/utils/driveMirrorStore.js
-@@ -207,13 +207,15 @@ const pathUnder = (path, base) => {
- export const projectFolderPath = (projectName) =>
-   `projects/${sanitizeSlug(projectName) || '_unassigned'}`;
+   const formsRaw = activeTest.nucleicForms || '';
+   const dnaFormDefault = activeTest.dnaForm || 'B';
+@@ -1339,6 +1343,18 @@ export const MDExperimentSetupSection = ({ ctx }) => {
  
--/** Le chemin Drive du dossier de PROJET À LA RACINE DU DATASET (« <projet> ») :
-- *  c'est là que vivent les DOCUMENTS DE SECTION (<projet>/<section>, voir
-- *  driveNaming.projectSectionFolderPath — « 📁 Drive location » de chaque
-- *  section de la page projet). Un projet a donc DEUX dossiers sur le Drive, et
-- *  supprimer le projet doit emporter les deux : n'en mettre qu'un à la
-- *  corbeille laissait l'autre sur le Drive (« si je supprime un projet, son
-- *  dossier reste »). */
-+/** Le chemin Drive du dossier de PROJET À LA RACINE DU DATASET (« <projet> »).
-+ *  C'EST UN CHEMIN HISTORIQUE : jusqu'au 25/09/2026 les DOCUMENTS DE SECTION
-+ *  d'une page projet partaient là (`<projet>/<section>`, voir
-+ *  driveNaming.projectSectionFolderPath), donc un projet avait DEUX dossiers sur
-+ *  le Drive. Les nouveaux envois vont dans `projects/<projet>/<section>`, mais ce
-+ *  chemin reste suivi pour deux raisons : un Drive d'avant le déménagement garde
-+ *  son dossier (utils/projectRootMigrate.js le range au démarrage), et un projet
-+ *  qui n'aurait pas encore été visité depuis doit pouvoir être supprimé PROPREMENT
-+ *  (les deux chemins partent à la corbeille). Voir projectFolderPaths. */
- export const projectRootFolderPath = (projectName) => sanitizeSlug(projectName);
+   const setAllSS = (letter) => updateActiveTest({ secondaryStructure: d.seq.split('').map(() => letter).join('') });
  
- /** Les dossiers Drive d'un projet, du plus imbriqué au plus haut — ceux qu'une
-diff --git a/src/utils/driveNaming.js b/src/utils/driveNaming.js
-index 16355a9..e9fc1b0 100644
---- a/src/utils/driveNaming.js
-+++ b/src/utils/driveNaming.js
-@@ -69,6 +69,24 @@ export const projectSectionFolderAlias = (label) => {
-   return PROJECT_SECTION_FOLDER_ALIASES[raw.toLowerCase()] || raw;
- };
- 
-+/** LES NOMS HISTORIQUES des dossiers de SECTION d'un projet (les cinq sections de
-+ *  la page projet + le titre complet de « Scientific background »). Ils servent à
-+ *  RECONNAÎTRE, sur un Drive déjà touché, un dossier de projet resté à la racine
-+ *  du dataset : son contenu est fait de ces dossiers-là (voir
-+ *  utils/projectRootMigrate.js). PUR. */
-+export const PROJECT_SECTION_FOLDER_NAMES = [
-+  'Background', 'Scientific background', 'Discussion', 'Results and discussion',
-+  'Conclusions', 'Funding', 'Supporting information'
-+];
++  /* 🧵 LES BRINS DE FEUILLET DÉCLARÉS — la déclaration vit dans « Sequence and
++     structure » de la page NMR (« Pair them », activeTest.betaSheets), mais la bande
++     de séquence de CETTE page la marque elle aussi : le lecteur est le même module pur
++     (utils/betaSheetFold.js), il n'y a donc pas deux façons de lire un feuillet. */
++  const sheetPairs = Array.isArray(activeTest.betaSheets) && activeTest.betaSheets.length
++    ? betaSheetPairsOf({
++      secondaryStructure: activeTest.secondaryStructure || '',
++      sheets: activeTest.betaSheets,
++      sequenceLength: (d.seq || '').length,
++    }).pairs
++    : [];
 +
-+/** Vrai quand un dossier porte le nom d'une SECTION de projet (comparaison sans
-+ *  casse ni espaces). PUR. */
-+export const isProjectSectionFolderName = (name) => {
-+  const slug = sanitizeSlug(name).toLowerCase();
-+  if (!slug) return false;
-+  return PROJECT_SECTION_FOLDER_NAMES.some((n) => sanitizeSlug(n).toLowerCase() === slug);
+   const paintFormAt = (i, letter) => {
+     const arr = d.seq.split('').map((_, j) => d.getFormAt(j));
+     arr[i] = letter;
+@@ -1474,7 +1490,7 @@ export const MDExperimentSetupSection = ({ ctx }) => {
+         <CollapsibleSection title="Sequence and structure" icon="🖌️" defaultOpen={false}>
+           <div className="flex flex-wrap gap-2 mb-3 items-center">
+             <span className="text-xs font-bold text-slate-500 uppercase mr-1">🖌️ Brush:</span>
+-            {['C', 'H', 'L', 'E'].map((l) => (
++            {['C', 'H', 'L', 'E', 'T'].map((l) => (
+               <button key={l} onClick={() => setSSBrush(l)} className="px-3 py-1 rounded-lg text-xs font-black border transition-all"
+                 style={{ backgroundColor: ssBrush === l ? SS_META[l].color : 'white', borderColor: SS_META[l].color, color: ssBrush === l ? 'white' : SS_META[l].color }}>
+                 {SS_META[l].label}
+@@ -1485,6 +1501,7 @@ export const MDExperimentSetupSection = ({ ctx }) => {
+             <button onClick={() => setAllSS('H')} className="px-3 py-1 rounded-lg text-xs font-bold bg-violet-100 border border-violet-300 text-violet-700 hover:bg-violet-200">All α-Helix</button>
+             <button onClick={() => setAllSS('L')} className="px-3 py-1 rounded-lg text-xs font-bold bg-fuchsia-100 border border-fuchsia-300 text-fuchsia-700 hover:bg-fuchsia-200">All α-Helix (L)</button>
+             <button onClick={() => setAllSS('E')} className="px-3 py-1 rounded-lg text-xs font-bold bg-amber-100 border border-amber-300 text-amber-700 hover:bg-amber-200">All β-Sheet</button>
++            <button onClick={() => setAllSS('T')} className="px-3 py-1 rounded-lg text-xs font-bold bg-teal-100 border border-teal-300 text-teal-700 hover:bg-teal-200">All γ-Turn</button>
+           </div>
+           <p className="text-xs text-slate-400 mb-3">💡 Select a brush, then click or drag across the sequence chips to paint secondary structure.</p>
+           <SequencePaintStrip
+@@ -1494,6 +1511,7 @@ export const MDExperimentSetupSection = ({ ctx }) => {
+             onApply={(i) => paintSSAt(i, ssBrush)}
+             focusIdx={focusIdx}
+             residueNo={residueNoOf}
++            sheetOf={(i) => sheetMarkAt(sheetPairs, i + 1)}
+           />
+         </CollapsibleSection>
+       )}
+diff --git a/src/components/NMRData.jsx b/src/components/NMRData.jsx
+index 502cb08..12a08d5 100644
+--- a/src/components/NMRData.jsx
++++ b/src/components/NMRData.jsx
+@@ -4,6 +4,10 @@ import {
+   ReferenceArea, BarChart, Bar, LineChart, Line, Legend
+ } from 'recharts';
+ import { FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, CHART_MARGIN_1D, SELECT_COLOR, MANUAL_COLOR, LINE_COLORS } from '../utils/chartStyle';
++import {
++  SHEET_SENSES, SHEET_SENSE_GLYPHS, SHEET_SENSE_LABELS, SHEET_CA_DISTANCE, SHEET_MIN_STRAND,
++  betaSheetPairsOf, sheetFoldSentenceOf,
++} from '../utils/betaSheetFold';
+ 
+ /* ============================================================================
+    NMRData — shared NMR building blocks imported by NMRSections.jsx
+@@ -487,9 +491,18 @@ export const SS_META = {
+   // SS_TORSIONS.L de NMRSections.jsx, et SS_DIHEDRALS.L de structureCalc.js) ; c'est son
+   // étiquette que le pinceau affiche, pour que les deux mains ne portent pas le même nom.
+   L: { label: 'α-Helix (left-handed)', color: '#c026d3' },
+-  E: { label: 'β-Sheet', color: '#f59e0b' }
++  E: { label: 'β-Sheet (strand)', color: '#f59e0b' },
++  /* ⚠ LE TOUR — la demande : « In the sequence definition, beyond, alpha helix right
++     and left, coil and beta strands, add the possibility to impose turns… ». La lettre T
++     porte la conformation du TOUR γ (φ +75° / ψ −65°, voir SS_TORSIONS.T de
++     NMRSections.jsx et SS_DIHEDRALS.T de structureCalc.js) : son chip, la contrainte de
++     dihèdre et la géométrie parlent du même objet, et le modèle bâti y fait vraiment le
++     pont C7 du tour. Elle se peint entre deux brins E pour que le feuillet déclaré
++     (utils/betaSheetFold.js) referme son épingle. */
++  T: { label: 'γ-Turn (C7)', color: '#14b8a6' }
+ };
+ 
++
+ export const FORM_META = {
+   A: { label: 'A-form', color: '#0ea5e9' },
+   B: { label: 'B-form', color: '#22c55e' },
+@@ -1584,10 +1597,17 @@ export const MultiSelectDropdown = ({ options, selected, onToggle, placeholder }
+ // pont et son infobulle nomme le partenaire — la même couleur que la puce du
+ // pont dans « Cysteine states ». Aucune mesure de DOM ni d'arc entre les chips :
+ // le dessin S–S complet vit dans la définition, ici c'est le repère de paire.
+-export const SequencePaintStrip = ({ residues, getLetter, meta, onApply, focusIdx, charLabel, residueNo, linkOf }) => {
++// `sheetOf(i)` (optionnel) = LE BRIN DE FEUILLET du résidu i, ou null :
++// { pairIndex, strand, label, sense, senseLabel, glyph, color, partner, last } —
++// posé par les trois pages quand la définition déclare un feuillet β
++// (`activeTest.betaSheets`, relu par sheetMarkAt de utils/betaSheetFold.js). Le chip
++// porte alors le repère du brin (sa lettre de paire et son numéro 1 / 2) dans LA
++// couleur de la paire — la même que la puce du panneau 🧵 « β-sheet ».
++export const SequencePaintStrip = ({ residues, getLetter, meta, onApply, focusIdx, charLabel, residueNo, linkOf, sheetOf }) => {
+   const [painting, setPainting] = useState(false);
+   const numberAt = typeof residueNo === 'function' ? residueNo : (i) => i + 1;
+   const linkAt = typeof linkOf === 'function' ? linkOf : () => null;
++  const sheetAt = typeof sheetOf === 'function' ? sheetOf : () => null;
+   useEffect(() => {
+     const up = () => setPainting(false);
+     window.addEventListener('mouseup', up);
+@@ -1601,6 +1621,7 @@ export const SequencePaintStrip = ({ residues, getLetter, meta, onApply, focusId
+         const dim = focusIdx !== 'ALL' && focusIdx !== i;
+         const resNo = numberAt(i);
+         const link = linkAt(i);
++        const sheet = sheetAt(i);
+         return (
+           <button
+             key={i}
+@@ -1608,7 +1629,7 @@ export const SequencePaintStrip = ({ residues, getLetter, meta, onApply, focusId
+             onDragStart={(e) => e.preventDefault()}
+             onMouseDown={(e) => { e.preventDefault(); setPainting(true); onApply(i); }}
+             onMouseEnter={() => { if (painting) onApply(i); }}
+-            title={`${r.name || r.char} ${resNo}: ${m.label}${link ? ` · ⚭ disulphide with ${link.partner}` : ''}`}
++            title={`${r.name || r.char} ${resNo}: ${m.label}${link ? ` · ⚭ disulphide with ${link.partner}` : ''}${sheet ? ` · 🧵 ${sheet.label} strand ${sheet.strand}, ${String(sheet.senseLabel).toLowerCase()} sheet with ${sheet.partner}` : ''}`}
+             className="relative w-11 py-1 rounded-md border text-center leading-tight transition-all"
+             style={{
+               backgroundColor: m.color + '22',
+@@ -1624,6 +1645,15 @@ export const SequencePaintStrip = ({ residues, getLetter, meta, onApply, focusId
+                 title={`⚭ Disulphide with ${link.partner}`}
+               />
+             )}
++            {sheet && (
++              <span
++                className="absolute -bottom-1 -left-1 px-1 rounded text-[7px] font-black text-white leading-[10px]"
++                style={{ backgroundColor: sheet.color }}
++                title={`🧵 ${sheet.label}: strand ${sheet.strand} of a ${String(sheet.senseLabel).toLowerCase()} β-sheet with ${sheet.partner}`}
++              >
++                {sheet.glyph}{sheet.strand}
++              </span>
++            )}
+             <div className="text-[8px] text-slate-500 font-bold">{resNo}</div>
+             <div className="text-sm font-black text-slate-800">{charLabel ? charLabel(r) : r.char}</div>
+             <div className="text-[10px] font-black" style={{ color: m.color }}>{l}</div>
+@@ -1634,6 +1664,121 @@ export const SequencePaintStrip = ({ residues, getLetter, meta, onApply, focusId
+   );
+ };
+ 
++// ================= 🧵 β-SHEET PAIRING (the sequence definition) =================
++// La demande : « … add the possibility to impose turns and to associate beta strands
++// to make a beta sheet, parallel or antiparallel. » Ce panneau EST la seconde moitié
++// de cette demande : il liste les BRINS peints (les suites de E de la définition,
++// avec leurs numéros AFFICHÉS) et laisse en apparier deux, dans l'un des deux sens.
++//
++// Ce qu'il écrit est une DÉCLARATION (`sheets` = [{ a: [start, end], b: [start, end],
++// sense }], en POSITIONS DE SÉQUENCE 1-based — la clé du modèle, comme
++// `cysDisulfides`) : la géométrie, elle, est faite par utils/betaSheetFold.js, et le
++// rapport affiché sous les puces est celui du modèle RÉELLEMENT bâti (le lecteur
++// sheetGeometryOf, le même que l'écrivain PDB) — jamais une promesse.
++//
++// Props : `secondaryStructure` (la peinture), `sheets` (les déclarations en cours),
++// `onChange(next)`, `residueNo(pos)` (le NUMÉRO AFFICHÉ d'une position de séquence) et
++// `fold` (le rapport du repliement de la page, affiché en note).
++export const BetaSheetEditor = ({
++  secondaryStructure = '', sequenceLength = 0, sheets = [], onChange, residueNo, fold = null,
++}) => {
++  const read = useMemo(
++    () => betaSheetPairsOf({ secondaryStructure, sheets, sequenceLength }),
++    [secondaryStructure, sheets, sequenceLength],
++  );
++  const noOf = typeof residueNo === 'function' ? residueNo : (pos) => pos;
++  const [selA, setSelA] = useState(0);
++  const [selB, setSelB] = useState(1);
++  const [selSense, setSelSense] = useState(SHEET_SENSES[0]);
++  const strands = read.strands;
++  const clean = Array.isArray(sheets) ? sheets : [];
++  const add = () => {
++    const a = strands[selA]; const b = strands[selB];
++    if (!a || !b || a.index === b.index || typeof onChange !== 'function') return;
++    onChange([...clean, { a: [a.start, a.end], b: [b.start, b.end], sense: selSense }]);
++  };
++  const remove = (sheetIndex) => {
++    if (typeof onChange === 'function') onChange(clean.filter((_, i) => i !== sheetIndex));
++  };
++  const strandLabel = (s) => `Strand ${s.index + 1}: ${noOf(s.start)}–${noOf(s.end)}`;
++  const selectCls = 'border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 font-semibold';
++  return (
++    <div className="border-t border-slate-200 pt-2 flex flex-col gap-2">
++      <div className="flex flex-wrap items-center gap-2">
++        <span className="text-xs font-bold text-slate-500 uppercase mr-1">🧵 β-sheet:</span>
++        {strands.length >= 2 ? (
++          <>
++            <select value={selA} onChange={(e) => setSelA(Number(e.target.value))} className={selectCls}
++              title="First β-strand — one run of residues painted E in the sequence above">
++              {strands.map((s, k) => <option key={s.index} value={k}>{strandLabel(s)}</option>)}
++            </select>
++            <select value={selB} onChange={(e) => setSelB(Number(e.target.value))} className={selectCls}
++              title="Second β-strand — the one it must pair with">
++              {strands.map((s, k) => <option key={s.index} value={k}>{strandLabel(s)}</option>)}
++            </select>
++            <select value={selSense} onChange={(e) => setSelSense(e.target.value)} className={selectCls}
++              title="Antiparallel = the two strands run in opposite directions (a β-hairpin when they are neighbours); parallel = the same direction (the chain crosses over). The direction is MEASURED on the built model, never assumed.">
++              {SHEET_SENSES.map((s) => <option key={s} value={s}>{SHEET_SENSE_GLYPHS[s]} {SHEET_SENSE_LABELS[s]}</option>)}
++            </select>
++            <button type="button" onClick={add}
++              className="px-3 py-1 rounded-lg text-xs font-black bg-teal-100 border border-teal-300 text-teal-800 hover:bg-teal-200"
++              title="Declare that these two strands form one β-sheet: the model of the sequence is folded so the two strands really face each other">
++              Pair them
++            </button>
++          </>
++        ) : (
++          <span className="text-[11px] text-slate-500 italic">
++            Paint at least TWO runs of β-strand (E) with the brush above, then pair them here.
++          </span>
++        )}
++      </div>
++      <BetaSheetChips pairs={read.pairs} rejected={read.rejected} noOf={noOf} onRemove={remove} />
++      {fold && (
++        <p className="text-[10px] font-bold text-teal-800 bg-teal-50 border border-teal-200 rounded-lg px-2 py-1">
++          🧵 {sheetFoldSentenceOf(fold)}
++        </p>
++      )}
++      <p className="text-[10px] text-slate-400">
++        The pairing is stored as SEQUENCE positions (like the disulphide bonds): renumbering the molecule in the 🔢
++        panel never rewrites it. The fold is deterministic (fixed seed) — the same definition always gives the same model.
++      </p>
++    </div>
++  );
 +};
 +
- /* ── Le rangement d'un STORAGE et de ses BOÎTES ─────────────────────────────
-    Une boîte de stockage n'est PAS une expérience : c'est un EMPLACEMENT. Elle
-    ne suit donc pas l'architecture d'une expérience (ni « instance », ni
-@@ -166,13 +184,25 @@ export const driveFolderPath = (ctx = {}) => {
-     return protoSlug ? ['protocols', protoSlug] : ['protocols'];
-   }
-   const segs = [];
--  if (ctx.project) segs.push(ctx.project);
--  if (ctx.test) {
--    // Test files: Project/Test/Instance/Section
--    segs.push(ctx.test);
-+  const test = String(ctx.test || '').trim();
-+  const projectSeg = sanitizeSlug(ctx.project);
-+  if (test) {
-+    // Test files: Project/Test/Instance/Section (l'ordre historique de cette
-+    // fonction — le chemin d'une EXPÉRIENCE, conteneur `projects/` compris, est
-+    // celui de canonicalExperimentPath, qui est la route réellement utilisée).
-+    if (projectSeg) segs.push(projectSeg);
-+    segs.push(test);
-     if (ctx.instance) segs.push(ctx.instance);
-+  } else if (projectSeg) {
-+    /* UN DOCUMENT DE PROJET (aucune expérience) : il vit DANS le dossier du
-+       projet, comme ses expériences, ses figures, son document de texte et ses
-+       `useful_files` — jamais dans un dossier au nom du projet POSÉ À LA RACINE
-+       du dataset (défaut signalé le 25/09/2026 : « je trouve des dossiers au nom
-+       d'un projet en dehors du dossier projects »). C'est aussi ce que rend
-+       projectSectionFolderPath. */
-+    segs.push(PROJECTS_CONTAINER, projectSeg);
-   }
--  if (ctx.section) segs.push(ctx.test ? ctx.section : projectSectionFolderAlias(ctx.section));
-+  if (ctx.section) segs.push(test ? ctx.section : projectSectionFolderAlias(ctx.section));
-   return segs.map(sanitizeSlug).filter(Boolean);
- };
- 
-@@ -386,10 +416,17 @@ export const projectImagesFolderPath = (projectName) => (sanitizeSlug(projectNam
- /** Canonical Drive folder NAMES (relative to the dataset folder) of a PROJECT
-  *  DOCUMENT attached to one of the project page's sections (Scientific
-  *  background / Discussion / Conclusions …):
-- *      <project>/<section>
-- *  Exactly the routing driveFolderPath({ project, section }) gives an upload
-- *  carrying that naming context, so the label shown in the interface and the
-- *  folder where the file really lands can never drift apart. */
-+ *      projects/<project>/<section>
-+ *  Le dossier du PROJET d'abord, exactement comme ses expériences
-+ *  (`projects/<projet>/<expérience>/…`), ses figures (`…/images`), son document
-+ *  de texte (`<projet>_document.json`) et ses `useful_files` : un projet n'a
-+ *  qu'UN dossier sur le Drive. Avant le 25/09/2026 cette route était
-+ *  `<projet>/<section>`, donc un dossier au nom du projet POSÉ À LA RACINE du
-+ *  dataset, à côté de `projects/` (deux dossiers par projet, dont un orphelin
-+ *  quand le projet était renommé) ; utils/projectRootMigrate.js déplace ce qui
-+ *  existe déjà. La chaîne est exactement celle de l'envoi
-+ *  (`driveFolderPath({ project, section })`, voir projectDetailModule.jsx) : le
-+ *  libellé affiché et le dossier réellement créé ne peuvent pas diverger. */
- export const projectSectionFolderPath = (projectName, section) =>
-   driveFolderPath({ project: projectName, section });
- 
-diff --git a/src/utils/driveUpload.js b/src/utils/driveUpload.js
-index 74bbed3..892c827 100644
---- a/src/utils/driveUpload.js
-+++ b/src/utils/driveUpload.js
-@@ -101,6 +101,11 @@ import {
- import { pickCanonicalFolder, emptyTwinIds, isCanonicalDatasetDir } from './datasetDirTwins';
- import { oncePerFolder, folderCreateKey } from './folderRace';
- import { getCloudProvider, nextcloudConfigured, ncUploadFile } from './nextcloud';
-+/* L'ENVOI DES GROS FICHIERS PAR MORCEAUX (session « resumable ») : au-delà de
-+   `RESUMABLE_MIN_BYTES`, une seule requête multipart n'a aucun point de reprise —
-+   une trajectoire MD de plusieurs Go arrivait alors « à moitié » (l'arborescence
-+   créée, le fichier absent : voir driveChunkUpload.js). */
-+import { shouldChunkUpload, uploadBlobInChunks } from './driveChunkUpload';
++// Les puces d'un feuillet déclaré — la lettre de la paire, ses deux fourchettes
++// (dans les NUMÉROS AFFICHÉS), son glyphe de sens, et le ✕ qui la retire. Le compte
++// des déclarations invalides est DIT, jamais caché (voir betaSheetPairsOf).
++const BetaSheetChips = ({ pairs, rejected, noOf, onRemove }) => (
++  <>
++    {pairs.length > 0 && (
++      <div className="flex flex-wrap items-center gap-2">
++        <span className="text-[10px] font-bold text-slate-500 uppercase">Declared sheets</span>
++        {pairs.map((p) => (
++          <span key={p.index}
++            className="inline-flex items-center gap-1 rounded-full border bg-white pl-2 pr-1 py-0.5 text-[11px] font-bold"
++            style={{ borderColor: p.color, color: p.color }}
++            title={`β-sheet ${p.label}: strand ${noOf(p.a.start)}–${noOf(p.a.end)} ${SHEET_SENSE_GLYPHS[p.sense]} strand ${noOf(p.b.start)}–${noOf(p.b.end)} (${p.senseLabel.toLowerCase()}) — the model of the sequence is folded so the two strands face each other at ${SHEET_CA_DISTANCE} Å, with their N–H···O=C hydrogen bonds.`}>
++            <span>{p.label}</span>
++            <span>{noOf(p.a.start)}–{noOf(p.a.end)}</span>
++            <span className="font-black">{SHEET_SENSE_GLYPHS[p.sense]}</span>
++            <span>{noOf(p.b.start)}–{noOf(p.b.end)}</span>
++            <span className="text-[9px] uppercase">{p.senseLabel}</span>
++            <button type="button" onClick={() => onRemove(p.sheetIndex)} className="text-slate-400 hover:text-red-600 font-black ml-0.5"
++              title="Remove this β-sheet">×</button>
++          </span>
++        ))}
++      </div>
++    )}
++    {rejected > 0 && (
++      <p className="text-[10px] font-bold text-amber-700">
++        ⚠ {rejected} declared sheet{rejected === 1 ? '' : 's'} no longer match the sequence (a strand shorter than{' '}
++        {SHEET_MIN_STRAND} residues, a range outside it, or the two ranges overlapping): it folds nothing, and it is NOT hidden.
++      </p>
++    )}
++  </>
++);
++
+ // ================= CUSTOM TICKS / TOOLTIP =================
+ export const CustomXTick1H = ({ x, y, payload, isZoomed }) => {
+   const numVal = Number(payload.value);
+diff --git a/src/components/NMRMoleculeViewer.jsx b/src/components/NMRMoleculeViewer.jsx
+index bc64272..edecb38 100644
+--- a/src/components/NMRMoleculeViewer.jsx
++++ b/src/components/NMRMoleculeViewer.jsx
+@@ -66,6 +66,9 @@ import { applyDisulfideDisplay } from '../utils/disulfideBonds';
+ // représentation `distance` de NGL, comme 📏 Measure dessine la sienne. À la
+ // différence des trois règles ci-dessus, ce bouton ne retire rien du graphe de
+ // liaisons : ni le fichier PDB, ni le graphe, ni un style ne sont touchés.
++// …ET LE RÉSEAU EST RELU PENDANT UN MOUVEMENT (voir refreshHydrogenBonds) : un pont
++// qui se forme apparaît pendant la dynamique, un pont qui casse s'en va — les lignes
++// ne racontent jamais une conformation qui n'est plus à l'écran.
  import {
-   enqueuePendingUpload, removePendingUpload, listPendingUploads,
-   touchPendingUpload, notifyPendingChanged,
-@@ -214,14 +219,24 @@ export const driveFetch = async (path, opts = {}) => {
-   // be aborted after 20 seconds. File-content DOWNLOADS (`alt=media`) get the
-   // same long timeout by default, since the bytes are streamed as the response.
-   const isFileDownload = typeof path === 'string' && path.includes('alt=media');
--  const { timeout: timeoutMs = isFileDownload ? 10 * 60 * 1000 : 20000, ...rest } = opts;
-+  const { timeout: timeoutMs = isFileDownload ? 10 * 60 * 1000 : 20000, accept = null, ...rest } = opts;
-+  /* UN CHEMIN ABSOLU EST UTILISÉ TEL QUEL : l'URL d'une session d'envoi
-+     « resumable » est rendue par Drive dans l'en-tête `Location` et ne se
-+     reconstruit pas (elle porte un `upload_id`). Les appels ordinaires — chemins
-+     relatifs — sont préfixés comme avant. */
-+  const isAbsolute = typeof path === 'string' && /^https?:\/\//i.test(path);
-+  const url = isAbsolute ? path : `https://www.googleapis.com${path}`;
-+  /* `accept` : des statuts NON-ok qui ont un sens ici — 308 pendant un envoi
-+     par morceaux (« le morceau est passé, la session continue »). Ils ne sont
-+     donc pas convertis en erreur (voir driveChunkUpload.js). */
-+  const accepted = Array.isArray(accept) ? accept : [];
+   findHydrogenBonds, hydrogenBondNoteOf, HBOND_LABEL_MAX,
+ } from '../utils/hydrogenBonds';
+@@ -952,7 +955,11 @@ const registerChargeScheme = (NGL) => {
+    It reads the very table the ⚡ ESP of PART 4.0 charges its atoms with
+    (`espChargesFor`, cached per structure) — the FILE's own partial charge when it
+    carries one (PQR · charged MOL2 / SDF, which NGL keeps in `atom.partialCharge`),
+-   NGL's CHARMM-derived table for a protein, the formal charge of a single-atom
++   the PAGE's OWN charge model for a protein (`partialChargesOf` over the graph of
++   the structure, plus the formal groups the graph shows — see
++   `espProteinChargesOf`: it is what finally gives an explicit protein hydrogen and
++   the C-terminal `OXT` a charge, and what makes this table the panel's own
++   reading), the formal charge of a single-atom
+    residue (Na⁺ · Cl⁻ · Mg²⁺ …), and an electronegativity estimate for any other
+    hetero atom (shifted so its residue sums to zero). The two colourings can
+    therefore never disagree about what an atom carries — and, as with the ⚡ ESP,
+@@ -4771,10 +4778,21 @@ const registerGradientScheme = (NGL) => {
+    ramp and the same ± limits — but gives EVERY atom a charge:
  
-   const perform = async (tok, attempt) => {
-     const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-     const timeout = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
-     let res;
-     try {
--      res = await fetch(`https://www.googleapis.com${path}`, {
-+      res = await fetch(url, {
-         ...rest,
-         signal: controller ? controller.signal : undefined,
-         headers: { Authorization: `Bearer ${tok}`, ...(rest.headers || {}) }
-@@ -264,7 +279,7 @@ export const driveFetch = async (path, opts = {}) => {
-     if (res.status === 403) {
-       throwCode('TOKEN_EXPIRED', 'Google Drive denied the request (scope or permissions). Please reconnect Google Drive from the sidebar.');
-     }
--    if (!res.ok) {
-+    if (!res.ok && !accepted.includes(res.status)) {
-       let msg = `Drive error (HTTP ${res.status})`;
-       try {
-         const j = await res.json();
-@@ -1306,7 +1321,7 @@ export const moveTestFolderOutOfProject = async ({ testName, projectName }) => {
-  *  `path` is an explicit path array or `ctx` still describes a legacy folder
-  *  (non-experiment uploads such as library figures or project documents).
-  *  @returns {{ id:string, name:string, driveUrl:string }} */
--const uploadDriveFileToFolderOnce = async ({ name, mimeType, file, ctx = null, path = null, folderNames = null, folderId = '' }) => {
-+const uploadDriveFileToFolderOnce = async ({ name, mimeType, file, ctx = null, path = null, folderNames = null, folderId = '', onProgress = null }) => {
-   // ── Nextcloud provider ─────────────────────────────────────────────────────
-   // Mirror the Drive folder layout on the WebDAV tree:
-   //   <user>/Lab Workspace/<dataset>/<project>/<test>/<page section>/[<subsection>]
-@@ -1388,22 +1403,43 @@ const uploadDriveFileToFolderOnce = async ({ name, mimeType, file, ctx = null, p
-     ? { name, mimeType: type }
-     : { name, mimeType: type, parents: [targetId] });
+      1. the FILE's own partial charge when it carries one (PQR · charged MOL2 /
+-        SDF — NGL keeps it in `atom.partialCharge`), and NGL's CHARMM-derived
+-        table for a protein, read from NGL's OWN instance so the protein map of
+-        the viewer does not move by a thousandth;
+-     2. an ESTIMATE for everything else, read from the ELEMENT alone — a ligand
++        SDF — NGL keeps it in `atom.partialCharge`) : le fichier gagne toujours ;
++     2. pour une PROTÉINE, LE MODÈLE DE CHARGES DE LA PAGE — `partialChargesOf`
++        (utils/forceFieldKcal), la fonction même qui donne ses charges au champ
++        et dont le panneau ⚙ lit sa charge nette, appliquée au GRAPHE LU SUR LA
++        STRUCTURE (voir `espProteinChargesOf`). C'est le correctif de cette
++        session : la table de NGL ne décrit que les atomes LOURDS du squelette
++        (CHARMM), donc un HYDROGÈNE protéique explicite et l'`OXT` du terminus C
++        y valent 0 — la surface était blanche sur les atomes qui portent
++        justement les pôles amide et carboxylate, et le survol annonçait
++        « q = 0.000 e » pour un atome qui porte +0.2 e. Le modèle de la page
++        connaît tout atome du graphe ET les groupes formels que le graphe montre
++        (un N-terminal protoné est un ammonium, un C-terminal déprotoné un
++        carboxylate) : la moitié protéique de la table est donc désormais la
++        lecture du panneau, au chiffre près ;
++     3. an ESTIMATE for everything else, read from the ELEMENT alone — a ligand
+         usually ships neither charges nor bonds (no CONECT in a PDB), so nothing
+         else can be read. The estimate is the electronegativity difference to the
+         carbon / hydrogen frame of an organic molecule, q = 0.35 × (2.50 − χ), the
+@@ -4782,13 +4800,18 @@ const registerGradientScheme = (NGL) => {
+         (an alcohol oxygen −0.28, an amide hydrogen +0.26, a carbonyl oxygen
+         −0.55). The charges of ONE residue are then shifted so the residue sums to
+         zero — a ligand is not an ion;
+-     3. and for a SINGLE-ATOM residue a formal charge is the honest answer (Na⁺
++     4. and for a SINGLE-ATOM residue a formal charge is the honest answer (Na⁺
+         +1, Cl⁻ −1, Mg²⁺ +2 …), which is what makes the salt of a membrane system
+         show its real pole.
  
--  const pre = new Blob(
--    [`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n--${boundary}\r\nContent-Type: ${type}\r\n\r\n`],
--    { type: 'multipart/related' }
--  );
--  const post = new Blob([`\r\n--${boundary}--\r\n`], { type: 'multipart/related' });
--  const body = new Blob([pre, blob, post], { type: `multipart/related; boundary=${boundary}` });
--
--  const res = await driveFetch(
--    existingId
--      ? `/upload/drive/v3/files/${existingId}?uploadType=multipart&fields=id,name`
--      : `/upload/drive/v3/files?uploadType=multipart&fields=id,name`,
--    // Large raw files (trajectories, videos, …) can take minutes to upload —
--    // never abort them with the short interactive-request timeout.
--    { method: existingId ? 'PATCH' : 'POST', headers: { 'Content-Type': `multipart/related; boundary=${boundary}` }, body, timeout: 10 * 60 * 1000 }
--  );
--  const fileMeta = await res.json();
-+  /* LES GROS FICHIERS PARTENT PAR MORCEAUX (session « resumable »). Une seule
-+     requête multipart n'a aucun point de reprise : une trajectoire de plusieurs Go
-+     laissait ses dossiers sur le Drive SANS son fichier, et rien ne pouvait plus
-+     la restaurer sur un autre poste (défaut signalé le 25/09/2026). Même nom,
-+     même dossier, même remplacement d'un fichier existant : seule la façon de
-+     transporter les octets change. Une session refusée (`Location` illisible,
-+     p. ex. une réponse CORS sans en-tête exposé) rend `null` et l'envoi en une
-+     seule requête ci-dessous reste le repli — un échec de TRANSFERT, lui, remonte
-+     (il doit se dire, pas se doubler d'un second envoi complet). */
-+  let fileMeta = null;
-+  if (shouldChunkUpload(blob.size)) {
-+    fileMeta = await uploadBlobInChunks({
-+      blob, name, mimeType: type, targetId, existingId, driveFetch, onProgress
-+    });
-+    if (!fileMeta) {
-+      console.warn(`Resumable session unavailable for “${name}” (${Math.round(blob.size / 1048576)} MB) — single-request upload.`);
+    The estimate is APPROXIMATE — as approximate as NGL's own, which says so in its
+    own source — but it is not zero: a red pole sits on every oxygen, a blue one on
+-   every sodium. A file that carries charges is never estimated. */
++   every sodium. A file that carries charges is never estimated.
++   ⚠ LE MODÈLE DE LA PAGE EST DÉPOSÉ, PAS DEVINÉ — `espChargesFor` vit au niveau du
++   MODULE (les schémas NGL le lisent), donc il ne voit pas l'état React du ⚙ : le
++   viewer écrit le modèle dans `espChargeModelStore` (voir plus bas), exactement
++   comme les palettes de la roue passent par `chargeColorStore`. Sans ce dépôt,
++   la table retombe sur celle de NGL — le comportement d'avant, jamais un vide. */
+ const ESP_MAX_RADIUS = 12;            // Å — the cutoff NGL's own scheme uses
+ const ESP_KCAL = 332;                 // e²/(Å·kcal/mol) — NGL's own conversion factor
+ const ESP_NEUTRAL_REFERENCE = 2.50;   // the carbon / hydrogen frame of an organic molecule
+@@ -4819,21 +4842,72 @@ const espHeteroChargeOf = (element) => {
+   if (!Number.isFinite(x)) return 0;
+   return Math.max(-1, Math.min(1, ESP_CHARGE_PER_UNIT * (ESP_NEUTRAL_REFERENCE - x)));
+ };
+-// The charges of ONE structure — the file's / the protein's (NGL) + the estimate.
+-// Cached per structure: the walk is O(atoms) and a rebuild must never repeat it.
++/* 🧪 LE MODÈLE DE CHARGES DU CHAMP, VU DEPUIS LES SCHÉMAS — `espChargesFor` vit au
++   niveau du MODULE (les schémas NGL, enregistrés une fois pour toutes, le lisent),
++   donc il ne voit pas l'état React du panneau ⚙ — et pourtant la table qu'il rend
++   doit être CELLE DU CHAMP, sinon la surface, la rampe « Atom charge » et le survol
++   diraient autre chose que la charge nette du panneau. D'où ce magasin, le jumeau de
++   `chargeColorStore` : le viewer le remplit pendant ses rendus (voir l'effet qui le
++   remplit, à côté des autres magasins de palettes) et les schémas le lisent tel quel.
++     · `geometryOf`      — le lecteur du GRAPHE de la structure (`geometryOfStructure`,
++       le même que les quatre gestes du champ : éléments, liaisons, coordonnées) ;
++     · `partialChargesOf` — la lecture PURE du module (utils/forceFieldKcal) ;
++     · `ph`              — le pH de la case ⚙ (`null` = « la chimie que le graphe
++       montre », le défaut du module) : deux tables ne peuvent pas être peintes sous
++       deux pH différents.
++   ⚠ Modèle absent (null) : la table de NGL reste seule juge — le comportement d'avant
++   ce correctif, jamais un vide. C'est aussi ce qui rend la fonction testable telle
++   quelle : la suite y dépose le VRAI lecteur et le VRAI module. */
++const espChargeModelStore = { geometryOf: null, partialChargesOf: null, ph: null };
++/** 🧪 LA TABLE DE CHARGES D'UNE PROTÉINE, PAR LE MODÈLE DE LA PAGE — le graphe de la
++ *  structure (éléments + liaisons, lus par le viewer) donné à `partialChargesOf`, le
++ *  même appel que le panneau ⚙ : PEOE sur les atomes, plus la charge des groupes
++ *  formels que le graphe montre (ammonium d'un N-terminal protoné, carboxylate d'un
++ *  C-terminal déprotoné, guanidinium, phosphate…). C'est LUI qui donne enfin une
++ *  charge aux hydrogènes protéiques et à l'`OXT`, que la table de NGL laissait à 0.
++ *  Rend `null` — jamais une table inventée — quand le modèle n'est pas déposé, quand
++ *  la structure n'a pas de graphe lisible (un fichier sans CONECT : NGL reste alors
++ *  seul juge, exactement comme avant), ou quand le module refuse de charger des
++ *  atomes isolés (`method: 'zero'`).
++ *  ⚠ CE QUE ÇA COÛTE, MESURÉ : PEOE sur un graphe linéaire synthétique — **27 ms** à
++ *  2 000 atomes, **119 ms** à 20 000, **193 ms** à 40 000. C'est UNE fois par structure
++ *  et par modèle (l'entrée est mise en cache, voir espChargeCache), au premier lecteur
++ *  — le survol, la rampe « Atom charge » ou ⚡ ESP —, et c'est le même appel que le
++ *  panneau ⚙ fait déjà sur la molécule à l'écran. */
++const espProteinChargesOf = (structure, model) => {
++  const m = model || null;
++  if (!m || typeof m.partialChargesOf !== 'function' || typeof m.geometryOf !== 'function') return null;
++  const geom = m.geometryOf(structure);
++  if (!geom || !geom.bonds || !geom.bonds.length) return null;
++  let read = null;
++  try { read = m.partialChargesOf({ elements: geom.elements, bonds: geom.bonds, ph: m.ph }); } catch { read = null; }
++  if (!read || !read.charges || read.method === 'zero') return null;
++  return read.charges;
++};
++// The charges of ONE structure — the file's / the field's (a protein) / NGL's + the
++// estimate. Cached per structure AND per model: the walk is O(atoms) and a rebuild
++// must never repeat it, but a pH change (or the model arriving a render late) MUST
++// recompute it — hence `ph` / `modelled` in the entry, which are what the hit checks.
+ const espChargeCache = new WeakMap();
+ const espChargesFor = (structure) => {
++  const model = espChargeModelStore;
++  const ph = model.ph == null ? null : Number(model.ph);
++  const modelled = typeof model.partialChargesOf === 'function' && typeof model.geometryOf === 'function';
+   const hit = espChargeCache.get(structure);
+-  if (hit) return hit;
++  if (hit && hit.ph === ph && hit.modelled === modelled) return hit;
+   const NG = typeof window !== 'undefined' ? window.NGL : null;
+   if (!NG || !structure || typeof structure.eachAtom !== 'function') return null;
+-  // NGL's OWN instance first: its `charges` array already holds the file's partial
+-  // charges AND its CHARMM values for every protein atom, so the protein map of the
+-  // viewer is kept to the digit (its dummy amide hydrogens included).
++  // NGL's OWN instance first: its `charges` array already holds the FILE's partial
++  // charges for the atoms that carry one, and its dummy amide hydrogens (a protein
++  // nitrogen that has no explicit H gets a placed one) — that map is kept as it is.
+   let base = null;
+   try { base = NG.ColormakerRegistry.getScheme({ scheme: 'electrostatic', structure }); } catch { base = null; }
+   if (!base || !base.charges) return null;
+   const charges = new Float32Array(base.charges);
++  /* 🧪 LA PROTÉINE PASSE AU MODÈLE DE LA PAGE (voir espProteinChargesOf) : la table
++     de NGL ne décrit que les atomes lourds du squelette, celle-ci décrit tout atome
++     du graphe — H explicites et OXT compris. */
++  const field = modelled ? espProteinChargesOf(structure, model) : null;
+   // …then the atoms NGL left at zero that no file charge describes: the hetero
+   // atoms. Two passes, because the estimate of ONE residue is shifted so that the
+   // residue sums to zero (an ion is excepted — it keeps its formal charge).
+@@ -4843,7 +4917,11 @@ const espChargesFor = (structure) => {
+   structure.eachAtom((a) => {
+     const pc = a.partialCharge;
+     if (pc !== null && pc !== undefined) return;               // the file's own charge
+-    if (a.isProtein && a.isProtein()) return;                  // NGL's CHARMM table
++    if (a.isProtein && a.isProtein()) {
++      const q = field ? field[a.index] : null;                 // le modèle de la page…
++      if (Number.isFinite(q)) charges[a.index] = q;            // …sinon la table de NGL
++      return;
 +    }
-+  }
-+
-+  if (!fileMeta) {
-+    const pre = new Blob(
-+      [`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n--${boundary}\r\nContent-Type: ${type}\r\n\r\n`],
-+      { type: 'multipart/related' }
-+    );
-+    const post = new Blob([`\r\n--${boundary}--\r\n`], { type: 'multipart/related' });
-+    const body = new Blob([pre, blob, post], { type: `multipart/related; boundary=${boundary}` });
-+
-+    const res = await driveFetch(
-+      existingId
-+        ? `/upload/drive/v3/files/${existingId}?uploadType=multipart&fields=id,name`
-+        : `/upload/drive/v3/files?uploadType=multipart&fields=id,name`,
-+      // Large raw files (trajectories, videos, …) can take minutes to upload —
-+      // never abort them with the short interactive-request timeout.
-+      { method: existingId ? 'PATCH' : 'POST', headers: { 'Content-Type': `multipart/related; boundary=${boundary}` }, body, timeout: 10 * 60 * 1000 }
-+    );
-+    fileMeta = await res.json();
-+  }
-   if (!fileMeta || !fileMeta.id) throwCode('DRIVE_ERROR', 'Drive returned no file.');
+     const name = String(a.resname || '').trim().toUpperCase();
+     const heavy = String(a.element || '').toUpperCase() !== 'H';
+     const formal = heavy ? ESP_ION_CHARGES[name] : undefined;   // Na⁺ · Cl⁻ …
+@@ -4856,7 +4934,7 @@ const espChargesFor = (structure) => {
+   own.forEach(([index, resno, q]) => {
+     charges[index] = resno === null ? q : q - (sum.get(resno) || 0) / Math.max(1, count.get(resno) || 1);
+   });
+-  const out = { charges, base, hetero: own.length };
++  const out = { charges, base, hetero: own.length, ph, modelled };
+   espChargeCache.set(structure, out);
+   return out;
+ };
+@@ -7892,6 +7970,13 @@ const measureRepsRef = useRef([]);      // [{ comp, elem }] NGL 'distance' repre
+ const [hbondsShown, setHbondsShown] = useState(false);
+ const [hbondMsg, setHbondMsg] = useState('');
+ const hbondRepRef = useRef(null);   // { comp, elem } — la représentation 'distance' vivante
++/* ⏱ LE RYTHME DU RÉSEAU DE 💧 — voir refreshHydrogenBonds : quand le dernier
++   balayage a eu lieu, l'intervalle à respecter, l'empreinte du réseau qu'il a trouvé
++   et la phrase déjà écrite. Un REF (jamais un état React) : la boucle d'images d'un
++   ▶ MD lit où elle en est sans attendre un rendu, et l'écrire ne re-rend rien.
++   `gap: 0` veut dire « l'intervalle minimum » (la constante est déclarée avec le
++   bouton, plus bas dans ce fichier : un `useRef` ne peut pas la lire ici). */
++const hbondLiveRef = useRef({ at: 0, gap: 0, sig: '', msg: '' });
  
-   // Make it readable via the link so the app can show thumbnails / others can open it.
-@@ -1500,7 +1536,7 @@ export const saveUploadForRetry = async ({ name, mimeType, file, ctx = null, pat
-  *  Non-experiment uploads (protocols, publications, figures, imports that pass
-  *  an explicit `path`) are routed exactly as before.
-  */
--export const uploadLocalFile = async ({ name, mimeType, file, ctx = null, path = null, skipQueue = false, folderId = '' }) => {
-+export const uploadLocalFile = async ({ name, mimeType, file, ctx = null, path = null, skipQueue = false, folderId = '', onProgress = null }) => {
-   const folderCtxs = [];
-   if (ctx && typeof ctx === 'object' && String(ctx.test || '').trim() && ctx.protocol === undefined) {
-     const projects = projectNamesOf(ctx);
-@@ -1538,7 +1574,8 @@ export const uploadLocalFile = async ({ name, mimeType, file, ctx = null, path =
-         /* Le dossier résolu par IDENTIFIANT ne vaut que pour une SEULE cible (les
-            figures d'un projet). Un fichier déposé dans plusieurs projets a un
-            chemin PAR PROJET : il n'y a alors pas d'identifiant unique à viser. */
--        folderId: folderCtxs.length === 1 ? folderId : ''
-+        folderId: folderCtxs.length === 1 ? folderId : '',
-+        onProgress
-       });
-       if (res) last = res;
-     } catch (err) {
-@@ -2276,22 +2313,41 @@ export const driveFilePointer = (res, fallbackName = '') => (
- );
+ // ---- ✏️ Set a torsion — or reach a target distance — by the numbers ---------
+ // The gesture the pointer cannot make precisely: pick FOUR atoms in the 3D view
+@@ -9831,6 +9916,21 @@ useEffect(() => {
+   try { localStorage.setItem('labViewerChargeColors', JSON.stringify(chargeColors)); } catch { /* ignore */ }
+   Object.keys(CHARGE_COLORS).forEach((k) => { if (Number.isFinite(chargeColors[k])) chargeColorStore[k] = chargeColors[k]; });
+ }, [chargeColors]);
++/* 🧪 LE MODÈLE DE CHARGES DU CHAMP DÉPOSÉ DANS LE MAGASIN DU MODULE (voir
++   espChargeModelStore, à côté de espChargesFor) : les schémas NGL lisent la table des
++   charges AU NIVEAU DU MODULE, donc c'est ici — et nulle part ailleurs — que le pH de
++   la case ⚙ rejoint `partialChargesOf` et le lecteur du graphe. Le pH est une
++   DÉPENDANCE : le changer refait la table au lieu de resservir celle du pH précédent
++   (l'entrée de cache la porte, voir espChargesFor), et le survol comme la rampe
++   « Atom charge » disent donc la chimie que le panneau affiche. Rien d'autre n'est
++   alimenté : le lecteur du graphe et le module des charges sont des constantes
++   (geometryOfStructure, l'import de utils/forceFieldKcal). */
++useEffect(() => {
++  espChargeModelStore.geometryOf = geometryOfStructure;
++  espChargeModelStore.partialChargesOf = partialChargesOf;
++  espChargeModelStore.ph = calcPhOf();
++  // eslint-disable-next-line react-hooks/exhaustive-deps
++}, [calcPhText]);
+ useEffect(() => {
+   try { localStorage.setItem('labViewerLipidTypeColors', JSON.stringify(lipidTypeColors)); } catch { /* ignore */ }
+   Object.keys(LIPID_CLASS_COLORS).forEach((k) => { if (Number.isFinite(lipidTypeColors[k])) lipidClassColorStore[k] = lipidTypeColors[k]; });
+@@ -10898,6 +10998,7 @@ const writeStructurePositions = (comp, idxs, flat) => {
+     if (typeof comp.updateRepresentations === 'function') comp.updateRepresentations({ position: true });
+   } catch { return false; }
+   refreshScenePlates();          // les plaques suivent les coordonnées, comme pour une image
++  refreshHydrogenBonds(comp);    // …et le réseau de 💧 se relit LÀ OÙ les coordonnées arrivent
+   requestSceneRepaint();
+   return true;
+ };
+@@ -15146,13 +15247,28 @@ const espToggle = (key) => {
+    seules disent alors le réseau.
  
- /** Comme `archiveFileToDrive`, mais rend de quoi écrire un POINTEUR de
-- *  restauration : `{ name, pointer }`. Le nom (celui du Drive) est rendu même
-- *  quand l'envoi échoue — c'est lui que cherchera la restauration par nom sur un
-- *  poste vierge ; `pointer` est null dans ce cas (rien à viser par id).
-+ *  restauration : `{ name, pointer, error }`. Le nom (celui du Drive) est rendu
-+ *  même quand l'envoi échoue — c'est lui que cherchera la restauration par nom
-+ *  sur un poste vierge ; `pointer` est null dans ce cas (rien à viser par id) et
-+ *  `error` dit POURQUOI l'envoi n'a pas abouti (l'appelant l'affiche : un échec
-+ *  muet laissait croire à une archive qui n'existait pas).
-+ *  `onProgress(octetsConfirmés, total)` est passé à l'envoi : les gros fichiers
-+ *  partant par morceaux, l'interface peut annoncer leur avancement.
-  *  Le nommage reste EXACTEMENT celui d'`archiveFileToDrive` : rien ne change
-  *  dans l'arborescence du Drive.
-- *  @returns {Promise<{ name: string, pointer: {id:string,name:string,url:string}|null }>} */
--export const archiveFileToDriveWithPointer = async ({ file, ctx = {}, title = '', suffix = 'file' }) => {
-+ *  @returns {Promise<{ name: string, pointer: {id:string,name:string,url:string}|null, error: string }>} */
-+export const archiveFileToDriveWithPointer = async ({ file, ctx = {}, title = '', suffix = 'file', onProgress = null }) => {
-   const name = archiveFileDriveName({ file, ctx, title, suffix });
--  if (!file || !getDriveToken()) return { name, pointer: null };
-+  if (!file || !getDriveToken()) {
-+    return { name, pointer: null, error: 'Google Drive is not connected in this browser.' };
-+  }
-   const base = title || String(file.name || '').replace(/\.[^/.]+$/, '');
-   try {
--    const res = await uploadLocalFile({ name, mimeType: file.type || 'application/octet-stream', file, ctx: { ...ctx, title: base, suffix } });
--    return { name, pointer: driveFilePointer(res, name) };
-+    const res = await uploadLocalFile({ name, mimeType: file.type || 'application/octet-stream', file, ctx: { ...ctx, title: base, suffix }, onProgress });
-+    const pointer = driveFilePointer(res, name);
-+    if (pointer) return { name, pointer, error: '' };
-+    /* L'ÉCHEC SE DIT : la copie de référence du fichier n'est PAS sur le Drive,
-+       donc elle n'existe que dans ce navigateur. Un fichier plus gros que la file
-+       de reprise (MAX_SINGLE_BYTES) n'y est même pas mis : c'est écrit noir sur
-+       blanc au lieu d'un « archivé » trompeur. */
-+    const tooLarge = Number(file.size || 0) > MAX_SINGLE_BYTES;
-+    return {
-+      name,
-+      pointer: null,
-+      error: tooLarge
-+        ? `the file is too large for the retry queue (${Math.round(MAX_SINGLE_BYTES / 1048576)} MB max) — keep this browser open and press again`
-+        : 'the upload did not complete (network, session or permission) — it is queued and retried on its own'
+    `clearHydrogenBonds` suit `clearMeasurements` partout : une ligne qui survit à
+-   la molécule qu'elle relie serait un mensonge. */
++   la molécule qu'elle relie serait un mensonge.
++
++   …ET LE RÉSEAU SUIT LA GÉOMÉTRIE (la demande de cette session : « the H-bonds
++   should follow the geometry during MD »). Un réseau calculé UNE FOIS au clic est
++   faux dès la première image d'un ▶ MD : les lignes, elles, suivent leurs deux
++   atomes, mais le CHOIX des couples restait gelé — un pont qui se forme
++   n'apparaissait jamais, un pont qui casse restait dessiné. `refreshHydrogenBonds`
++   (juste après le geste du bouton) relit donc le réseau là où les coordonnées
++   arrivent, à un rythme réglé par le coût de la scène. */
+ const HBOND_READ_OPTS = { excludeWater: true };   // le solvant noierait le reste (la note le dit)
+ const HBOND_LINE_COLOR = 0xfbbf24;   // ambre : la ligne D···A de chaque pont
+ const HBOND_LABEL_COLOR = 0xfde68a;  // …et le chiffre qui va avec (tant qu'il y en a peu)
+ const clearHydrogenBonds = () => {
+   const rep = hbondRepRef.current;
+   hbondRepRef.current = null;
++  /* ⏱ LE RYTHME REPART À ZÉRO (voir refreshHydrogenBonds) : l'intervalle, l'instant
++     du dernier balayage, l'empreinte du réseau et la phrase écrite. Rallumer 💧
++     balaie donc TOUT DE SUITE, et la première image d'un nouveau geste n'hérite pas
++     de l'intervalle lent de la scène précédente. Aucun écouteur à retirer : le
++     réseau n'en a jamais posé (il se fait relire par le viewer, voir les trois
++     appels). */
++  hbondLiveRef.current = { at: 0, gap: 0, sig: '', msg: '' };
+   if (rep) {
+     try { if (rep.comp && rep.elem) rep.comp.removeRepresentation(rep.elem); } catch { /* component may already be disposed */ }
+     try { if (rep.elem && typeof rep.elem.dispose === 'function') rep.elem.dispose(); } catch { /* idempotent */ }
+@@ -15198,6 +15314,13 @@ const toggleHydrogenBonds = () => {
+     });
+     if (!elem) throw new Error('NGL refused the representation');
+     hbondRepRef.current = { comp, elem };
++    /* ⏱ LE RYTHME PART DE CE QUE LE CLIC VIENT DE LIRE (voir refreshHydrogenBonds) :
++       l'empreinte du réseau que la représentation porte déjà — une première image
++       identique ne reconstruira donc rien — et l'instant de ce balayage, pour que
++       l'intervalle soit respecté dès le premier mouvement. */
++    hbondLiveRef.current = {
++      at: Date.now(), gap: HBOND_LIVE_MIN_MS, sig: hbondSignatureOf(found), msg: '',
 +    };
-   } catch (err) {
-     console.warn('Drive archive failed:', err && err.message);
--    return { name, pointer: null };
-+    return { name, pointer: null, error: String((err && err.message) || 'Drive upload failed.') };
+     setHbondsShown(true);
+     try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch { /* nothing to redraw */ }
+     setHbondMsg(`💧 ✓ ${hydrogenBondNoteOf(name, found)} — click 💧 again to hide them.`);
+@@ -15208,6 +15331,108 @@ const toggleHydrogenBonds = () => {
    }
  };
  
-@@ -2352,21 +2408,31 @@ export const uploadWorkspaceFile = async ({ name, mimeType, file, folder = 'back
-       ? { name, mimeType: type }
-       : { name, mimeType: type, parents: [folderId] });
- 
--    const pre = new Blob(
--      [`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n--${boundary}\r\nContent-Type: ${type}\r\n\r\n`],
--      { type: 'multipart/related' }
--    );
--    const post = new Blob([`\r\n--${boundary}--\r\n`], { type: 'multipart/related' });
--    const body = new Blob([pre, blob, post], { type: `multipart/related; boundary=${boundary}` });
--
--    const res = await driveFetch(
--      existingId
--        ? `/upload/drive/v3/files/${existingId}?uploadType=multipart&fields=id,name`
--        : `/upload/drive/v3/files?uploadType=multipart&fields=id,name`,
--      // Weekly backup HTML files can be several MB — allow a long transfer time.
--      { method: existingId ? 'PATCH' : 'POST', headers: { 'Content-Type': `multipart/related; boundary=${boundary}` }, body, timeout: 10 * 60 * 1000 }
--    );
--    const fileMeta = await res.json();
-+    /* Même règle que pour les envois d'expérience : au-delà de
-+       `RESUMABLE_MIN_BYTES` (une sauvegarde HTML hebdomadaire peut peser
-+       plusieurs Mo), le fichier part par MORCEAUX — avec reprise — et l'envoi en
-+       une seule requête reste le repli si la session est refusée. */
-+    let fileMeta = null;
-+    if (shouldChunkUpload(blob.size)) {
-+      fileMeta = await uploadBlobInChunks({ blob, name, mimeType: type, targetId: folderId, existingId, driveFetch });
-+    }
-+    if (!fileMeta) {
-+      const pre = new Blob(
-+        [`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n--${boundary}\r\nContent-Type: ${type}\r\n\r\n`],
-+        { type: 'multipart/related' }
-+      );
-+      const post = new Blob([`\r\n--${boundary}--\r\n`], { type: 'multipart/related' });
-+      const body = new Blob([pre, blob, post], { type: `multipart/related; boundary=${boundary}` });
++/* ── ⏱ LE RÉSEAU SUIT LA GÉOMÉTRIE PENDANT UN MOUVEMENT ───────────────────────
++   LA DEMANDE DE CETTE SESSION, MOT POUR MOT : « the H-bonds should follow the
++   geometry during MD. » Le geste du bouton lit le réseau UNE fois ; les lignes qu'il
++   dessine suivent bien leurs deux atomes (c'est NGL qui les place à chaque rendu),
++   mais le CHOIX des couples, lui, était gelé : un pont qui se forme pendant la
++   dynamique n'apparaissait jamais, un pont qui casse restait dessiné à sa place — la
++   vue racontait une conformation qui n'était plus à l'écran.
 +
-+      const res = await driveFetch(
-+        existingId
-+          ? `/upload/drive/v3/files/${existingId}?uploadType=multipart&fields=id,name`
-+          : `/upload/drive/v3/files?uploadType=multipart&fields=id,name`,
-+        // Weekly backup HTML files can be several MB — allow a long transfer time.
-+        { method: existingId ? 'PATCH' : 'POST', headers: { 'Content-Type': `multipart/related; boundary=${boundary}` }, body, timeout: 10 * 60 * 1000 }
-+      );
-+      fileMeta = await res.json();
-+    }
-     if (!fileMeta || !fileMeta.id) return null;
-     return { id: String(fileMeta.id), name: String(fileMeta.name || name) };
-   } catch (err) {
++   QUI L'APPELLE — les écritures de coordonnées du viewer, et elles seules : le
++   `refreshScenePlates()` de `writeStructurePositions` (chaque image d'un ▶ MD, d'un
++   ⚒ Minimise, d'un 🧬 calcul de structure, d'un ✏️ Set torsion, d'un glisser
++   d'atome), ceux de `applyPartMove` / `restorePartMoves` (les molécules déplacées à
++   la main) et l'écouteur du signal `refreshed` de la structure (une image de
++   TRAJECTOIRE, que NGL écrit sans passer par nous). Une seule règle : le réseau est
++   relu LÀ OÙ les coordonnées arrivent — jamais par une horloge, jamais par un état
++   React.
++
++   ⚠ CE QUE ÇA COÛTE, ET POURQUOI LE RYTHME EST RÉGLÉ ICI : `findHydrogenBonds`
++   parcourt la structure entière (grille de 3,5 Å, mais un objet par atome) — quelques
++   millisecondes sur une protéine, beaucoup plus sur un système solvaté. Une boucle
++   d'images ne peut pas payer ça à chaque image :
++     · HBOND_LIVE_MIN_MS entre deux balayages (≈5 Hz), l'intervalle par défaut ;
++     · un balayage qui coûte plus de HBOND_LIVE_SLOW_MS fait DOUBLER l'intervalle
++       (jusqu'à HBOND_LIVE_MAX_MS) — une grosse scène se rafraîchit moins souvent,
++       mais elle se rafraîchit ;
++     · un balayage redevenu bon repose l'intervalle au minimum, et éteindre 💧 remet
++       tout à zéro (`clearHydrogenBonds`) : rallumer repart d'un balayage neuf ;
++     · l'EMPREINTE du réseau est comparée AVANT toute écriture — une image qui ne
++       change pas un seul pont ne coûte ni reconstruction NGL ni rendu React.
++
++   ⚠ ON NE REFAIT QUE LES COUPLES, ET RIEN D'AUTRE : `atomPair` est déclaré
++   `{ type: 'hidden', rebuild: true }` dans distance-representation.ts, donc
++   `elem.setParameters({ atomPair })` fait reconstruire le bond store et les buffers
++   EN PLACE (la même UNE représentation pour tout le réseau, jamais un objet par
++   pont) — et l'étiquetage suit la même règle qu'au clic (HBOND_LABEL_MAX).
++   ⚠ `comp` NOMME LA MOLÉCULE QUI VIENT DE BOUGER : le réseau appartient à UNE seule
++   (celle du bouton, `hbondRepRef`), donc une autre molécule qui bouge — la boîte de
++   solvant d'un ▶ MD, une molécule extra — ne le touche pas. */
++const HBOND_LIVE_MIN_MS = 200;      // ≈5 balayages par seconde : le rythme de croisière
++const HBOND_LIVE_MAX_MS = 1000;     // …et son plafond, pour une scène qui coûte cher
++const HBOND_LIVE_SLOW_MS = 8;       // au-delà de ce coût, l'intervalle double
++/** L'EMPREINTE D'UN RÉSEAU — son mode, son nombre de ponts et une somme roulante
++ *  (FNV-1a, 32 bits) des couples donneur → accepteur. PURE, donc exécutable par une
++ *  suite : deux réseaux qui ne portent pas les mêmes ponts ne peuvent pas avoir la
++ *  même empreinte, et la comparer coûte O(ponts) sans rien allouer. Le réseau VIDE a
++ *  donc son empreinte (`…:0:…`) : un réseau qui se vide est un changement comme un
++ *  autre, et les lignes d'un pont disparu s'en vont. */
++const hbondSignatureOf = (found) => {
++  const bonds = (found && found.bonds) || [];
++  let h = 2166136261;
++  for (let k = 0; k < bonds.length; k += 1) {
++    const b = bonds[k] || {};
++    h = Math.imul(h ^ (Number(b.donor) + 1), 16777619);
++    h = Math.imul(h ^ (Number(b.acceptor) + 1), 16777619);
++  }
++  return `${(found && found.mode) || '?'}:${bonds.length}:${(h >>> 0).toString(36)}`;
++};
++/** RELIRE LE RÉSEAU APRÈS UNE ÉCRITURE DE COORDONNÉES — voir le pourquoi ci-dessus.
++ *  Le rythme (intervalle + empreinte) vit dans `hbondLiveRef`, remis à zéro par
++ *  `clearHydrogenBonds` : ce n'est donc PAS un état React, et deux images peuvent
++ *  s'enchaîner sans que rien ne se re-rende tant que le réseau ne change pas.
++ *  @returns {boolean} true quand NGL a réellement reçu une nouvelle liste de ponts. */
++const refreshHydrogenBonds = (comp) => {
++  const rep = hbondRepRef.current;
++  if (!rep || !rep.elem) return false;                       // 💧 est éteint : rien à suivre
++  if (!comp || rep.comp !== comp) return false;              // c'est une AUTRE molécule
++  if (!comp.structure) return false;
++  const live = hbondLiveRef.current;
++  const gap = live.gap > 0 ? live.gap : HBOND_LIVE_MIN_MS;
++  const now = Date.now();
++  if (live.at && now - live.at < gap) return false;           // trop tôt : cette image passe
++  live.at = now;
++  const t0 = Date.now();
++  let found = null;
++  try { found = findHydrogenBonds(comp, HBOND_READ_OPTS); } catch { return false; }
++  // Le coût du balayage règle le rythme du suivant (voir le pourquoi ci-dessus).
++  live.gap = (Date.now() - t0) > HBOND_LIVE_SLOW_MS
++    ? Math.min(HBOND_LIVE_MAX_MS, gap * 2)
++    : HBOND_LIVE_MIN_MS;
++  if (!found || found.mode === 'none') return false;
++  const sig = hbondSignatureOf(found);
++  if (sig === live.sig) return false;                         // rien n'a bougé : ni NGL, ni React
++  live.sig = sig;
++  try {
++    rep.elem.setParameters({
++      atomPair: found.bonds.map((b) => [b.donor, b.acceptor]),
++      labelVisible: found.bonds.length > 0 && found.bonds.length <= HBOND_LABEL_MAX,
++    });
++  } catch { return false; }
++  /* LA PHRASE SUIT LE RÉSEAU, ELLE AUSSI — le compte et la règle peuvent changer en
++     direct (« 12 H-bonds … » puis « 9 … »). On ne la réécrit que si le TEXTE change :
++     sur un réseau qui se réorganise sans changer de compte ni de règle, aucun rendu
++     React n'est demandé — la seule dépense est la reconstruction NGL, ci-dessus. */
++  const name = molNameOf(selectedMolKey) || 'the structure on screen';
++  const msg = found.bonds.length
++    ? `💧 ✓ ${hydrogenBondNoteOf(name, found)} — followed while the molecule moves.`
++    : `💧 ${hydrogenBondNoteOf(name, found)}`;
++  if (msg !== live.msg) { live.msg = msg; setHbondMsg(msg); }
++  requestSceneRepaint();
++  return true;
++};
++
+ // Load ONE chain of a multi-chain PDB as its own (hidden) NGL component and add
+ // it to the Molecules selector. Called by the main-load effect after the whole
+ // structure is parsed.
+@@ -17325,6 +17550,7 @@ const applyPartMove = (comp, rec) => {
+     if (typeof comp.updateRepresentations === 'function') comp.updateRepresentations({ position: true });
+   } catch { return false; }
+   refreshScenePlates();          // les plaques suivent les coordonnées, comme pour une image
++  refreshHydrogenBonds(comp);    // …et le réseau de 💧 suit le geste qui vient de déplacer la molécule
+   requestSceneRepaint();
+   return true;
+ };
+@@ -17386,6 +17612,7 @@ const restorePartMoves = (comp) => {
+   if (n) {
+     try { comp.updateRepresentations({ position: true }); } catch { /* best-effort */ }
+     refreshScenePlates();
++    refreshHydrogenBonds(comp);    // …et le réseau de 💧 : un ↺ a redonné la géométrie de départ
+     requestSceneRepaint();
+   }
+   return n;
+@@ -17449,13 +17676,18 @@ const applyPartPoses = (poses) => {
+    une molécule posée à côté de la protéine doit y RESTER quand la trajectoire avance,
+    donc le rejeu doit précéder les plaques (qui lisent les coordonnées). Les deux
+    passent par le MÊME signal, et notre écriture à nous ne redispatch rien — donc aucun
+-   va-et-vient possible entre les deux. */
++   va-et-vient possible entre les deux.
++   ⚠ ET LE RÉSEAU DE 💧 EST RELU ICI AUSSI (voir refreshHydrogenBonds) : une image de
++   TRAJECTOIRE est écrite par NGL (`updatePosition` → `refreshPosition`), donc elle ne
++   passe JAMAIS par `writeStructurePositions` — sans cet appel, les lignes de ponts
++   resteraient celles de la première image lue. Les ponts viennent en DERNIER parce
++   qu'ils lisent les mêmes coordonnées que les plaques. */
+ const hookStructurePlates = (comp) => {
+   try {
+     const sig = comp && comp.structure && comp.structure.signals && comp.structure.signals.refreshed;
+     if (!sig || typeof sig.add !== 'function' || comp.__platesHook) return;
+     comp.__platesHook = true;
+-    sig.add(() => { reapplyPartMoves(comp); refreshScenePlates(); });
++    sig.add(() => { reapplyPartMoves(comp); refreshScenePlates(); refreshHydrogenBonds(comp); });
+   } catch { /* best-effort: une structure sans signal ne casse rien */ }
+ };
+ 
+diff --git a/src/components/NMRSections.jsx b/src/components/NMRSections.jsx
+index db3f663..955bfec 100644
+--- a/src/components/NMRSections.jsx
++++ b/src/components/NMRSections.jsx
+@@ -38,8 +38,14 @@ import {
+   AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, CARBON_RANGE_DB,
+   SS_CORRECTIONS, SS_META, DNA_FORM_OFFSETS, SUGAR_ANOMER_OFFSETS,
+   RESIDUE_COLORS, RANDOM_COIL_DB, CYS_OXIDIZED_RC, CYS_OXIDIZED_CARBON_RANGE, TICKS_1H, TICKS_13C, TICKS_15N,
+-  SequencePaintStrip
++  SequencePaintStrip, BetaSheetEditor
+ } from './NMRData';
++// 🧵 LE FEUILLET β — la déclaration du panneau 🧵 (« Pair them ») et sa géométrie :
++// un seul module PUR pour les trois lecteurs (le panneau, le repliement du modèle de
++// séquence et l'écrivain PDB). Voir l'en-tête de utils/betaSheetFold.js.
++import {
++  betaSheetPairsOf, foldBetaSheets, sheetGeometryOf, sheetMarkAt,
++} from '../utils/betaSheetFold';
+ export { VIS_PALETTES };
+ 
+ // Session cache + IndexedDB key for a structure FILE picked in the 3D viewer
+@@ -2781,6 +2787,18 @@ const SS_TORSIONS = {
+      structureCalc) : un feuillet peint tombe donc à 0° de la cible qu'on lui impose
+      quand la page le convertit en contraintes, au lieu de 20° à côté. */
+   E: { phi: _deg2rad(-139), psi: _deg2rad(135) },  // β strand (pleated sheet)
++  /* ⚠ LE TOUR — la demande : « add the possibility to impose turns ». La lettre T
++     porte la conformation du TOUR γ de la littérature (Rose–Matthews : φ +75° /
++     ψ −65°), la seule conformation de tour qu'UN SEUL résidu puisse imposer. Elle
++     COURBE donc la chaîne : mesuré sur le modèle de la page, le carbonyle d'un
++     résidu T vient à 2,72 Å de l'amide du résidu i+2 — c'est le pont hydrogène C7
++     du tour γ lui-même, que le réseau 💧 du viewer trouve alors tout seul, là où une
++     pelote (PPII, φ −75 / ψ +145) laisse 3,77 Å et aucune courbure.
++     Le couple est le MÊME que SS_DIHEDRALS.T du module structureCalc (la règle tenue
++     pour E) : la peinture, la géométrie construite et la contrainte de dihèdre
++     parlent du même objet. Entre deux brins E, un T (ou deux) est la boucle que le
++     feuillet déclaré vient ensuite refermer (utils/betaSheetFold.js). */
++  T: { phi: _deg2rad(75), psi: _deg2rad(-65) },    // γ-turn (C7 — the one-residue turn)
+   // Coil / extended default: polyproline-II-like (phi=-75°, psi=+145°). The old
+   // "fully extended" phi=psi=180° puts every side chain straight back into the
+   // previous residue's carbonyl (O...H as close as ~0.5 A for bulky residues),
+@@ -3232,10 +3250,41 @@ const buildProteinBackbone = (seq, ssString) => {
+    ---------------------------------------------------------------------------- */
+ const proteinSequenceToPdbText = (seq, ssString, title = 'GENERATED', opts = {}) => {
+   const relaxTorsions = Array.isArray(opts.torsions) ? opts.torsions : null;
+-  // Le squelette suit les torsions DÉTENDUES quand il y en a (et non plus la
+-  // structure secondaire) : c'est tout l'objet du repliement — χ1 seul ne
+-  // rapprocherait jamais deux Sγ que φ/ψ séparent.
+-  const residues = buildProteinBackbone(seq, relaxTorsions || ssString);
++  /* 🧵 LES FEUILLETS DÉCLARÉS — la déclaration du panneau 🧵 (« Pair them », en
++     positions de séquence), relue par le module pur : les fourchettes hors séquence,
++     trop courtes ou qui se recouvrent sont COMPTÉES (`rejected`), jamais devinées.
++     Quand l'appelant n'a pas déjà fourni ses torsions, la chaîne est REPLIÉE ICI par
++     utils/betaSheetFold.js : deux brins peints E que la chaîne n'avait pas rapprochés
++     sortent alors côte à côte, dans le sens demandé, avec leurs ponts N–H···O=C.
++     Le squelette suit donc, dans l'ordre : les torsions données (ponts disulfure ou
++     appelant), celles du repliement de feuillet, et enfin la structure secondaire. */
++  /* ⚠ LES TROIS LECTEURS DU FEUILLET SONT FACULTATIFS ICI — et c'est ce qui garde
++     cette fabrique EXTRACTIBLE : sept sondes du dossier la reconstruisent par
++     `new Function` (le motif de _sequence_charge_test.mjs) sans lui passer le
++     module. Un `typeof` sur un nom non déclaré ne jette pas : dans une sonde, le
++     bloc du feuillet est donc INERTE et le fichier sort exactement comme avant
++     (aucun record SHEET) ; dans la page, l'import est là — `_ss_sheet_test.mjs`
++     compare les deux (les noms sont bien des fonctions) — et tout le bloc s'exécute. */
++  const sheetFoldApi = (typeof betaSheetPairsOf === 'function'
++    && typeof foldBetaSheets === 'function' && typeof sheetGeometryOf === 'function')
++    ? { pairsOf: betaSheetPairsOf, fold: foldBetaSheets, geometry: sheetGeometryOf }
++    : null;
++  const sheetRead = sheetFoldApi
++    ? sheetFoldApi.pairsOf({
++      secondaryStructure: typeof ssString === 'string' ? ssString : '',
++      sheets: opts.sheets,
++      sequenceLength: seq.length,
++    })
++    : { pairs: [], rejected: 0 };
++  const sheetFold = (sheetFoldApi && !relaxTorsions && typeof ssString === 'string' && sheetRead.pairs.length)
++    ? sheetFoldApi.fold({
++      sequence: seq,
++      torsions: seq.split('').map((_, i) => ssTorsionAt(ssString[i] || 'C')),
++      pairs: sheetRead.pairs,
++      build: (cand) => buildProteinBackbone(seq, cand),
++    })
++    : null;
++  const residues = buildProteinBackbone(seq, relaxTorsions || (sheetFold ? sheetFold.torsions : null) || ssString);
+   const cysDisulfides = (Array.isArray(opts.cysDisulfides) ? opts.cysDisulfides : [])
+     .filter((p) => Array.isArray(p) && p.length === 2 && Number.isInteger(p[0]) && Number.isInteger(p[1]))
+     .filter((p) => p[0] >= 1 && p[0] <= seq.length && p[1] >= 1 && p[1] <= seq.length && p[0] !== p[1])
+@@ -3259,6 +3308,57 @@ const proteinSequenceToPdbText = (seq, ssString, title = 'GENERATED', opts = {})
+     const pad = (s, w) => String(s).padStart(w);
+     lines.push(`SSBOND${pad(k + 1, 3)} CYS A${pad(a, 4)}${' '.repeat(10)} CYS A${pad(b, 4)}${' '.repeat(12)}2.05`);
+   });
++  /* 🧵 LES RECORDS DU FEUILLET — ce qui a été écrit au-dessus est DIT ici : un record
++     SHEET par brin déclaré (la convention PDB) et un REMARK par paire. La géométrie
++     RÉELLEMENT obtenue est mesurée sur `residues` — c'est-à-dire sur le modèle que ce
++     fichier écrit — par le lecteur partagé `sheetGeometryOf` : aucun des trois
++     lecteurs (panneau, repliement, écrivain) ne peut donc annoncer autre chose que
++     les coordonnées. */
++  if (sheetFoldApi && (sheetRead.pairs.length || sheetRead.rejected)) {
++    /* ⚠ LE COMPTE EST ÉCRIT MÊME QUAND AUCUNE PAIRE NE RESTE : une déclaration
++       devenue invalide (peinture effacée, fourchette hors séquence) est DITE dans le
++       fichier, jamais passée sous silence — c'est la même règle que le panneau. */
++    lines.push(`REMARK 950 BETA-SHEET(S) IMPOSED BY THE SEQUENCE DEFINITION: ${sheetRead.pairs.length}`
++      + `${sheetRead.rejected ? ` (+${sheetRead.rejected} declaration(s) that no longer match the sequence)` : ''}`);
++  }
++  if (sheetFoldApi && sheetRead.pairs.length) {
++    const res3 = (pos) => AA_1_TO_3[seq[pos - 1]] || 'UNK';
++    /* Format SHEET (spécification PDB, exemple officiel) :
++       « SHEET    1   A 4 ASNA 102  THRA 105  0 » — identifiant du feuillet en 10,
++       chaîne en 14, nombre de brins en 16, premier résidu (nom + chaîne) en 18-21,
++       son numéro en 22-25, dernier résidu en 28-31, son numéro en 32-35, et le SENS
++       en 36-38 (0 = premier brin, +1 = parallèle, −1 = antiparallèle). */
++    const sheetLine = (id, numStrands, init, end, sense) => 'SHEET'
++      + String(id).padStart(5)
++      + '   A'
++      + ` ${numStrands}`
++      + ` ${res3(init)}A`
++      + String(init).padStart(4)
++      + `  ${res3(end)}A`
++      + String(end).padStart(4)
++      /* Le SENS, signé : « +1 » parallèle, «-1 » antiparallèle, 0 pour le premier
++         brin (la convention du record SHEET). */
++      + String(sense > 0 ? `+${sense}` : sense).padStart(3);
++    const geometry = sheetFoldApi.geometry({ residues, pairs: sheetRead.pairs });
++    sheetRead.pairs.forEach((pair, k) => {
++      const sense = pair.sense === 'parallel' ? 1 : -1;
++      /* Le PREMIER brin du feuillet porte le sens 0 (la convention : la première ligne
++         d'un feuillet n'a pas d'antécédent), le second son sens signé. */
++      lines.push(sheetLine(k + 1, 2, pair.a.start, pair.a.end, 0));
++      lines.push(sheetLine(k + 1, 2, pair.b.start, pair.b.end, sense));
++    });
++    lines.push(`REMARK 950 BETA-SHEET(S) IMPOSED BY THE SEQUENCE DEFINITION: ${sheetRead.pairs.length}`
++      + `${sheetRead.rejected ? ` (+${sheetRead.rejected} declaration(s) that no longer match the sequence)` : ''}`);
++    geometry.forEach((g) => {
++      lines.push(`REMARK 951 ${g.label}: strand ${g.a.start}-${g.a.end} / strand ${g.b.start}-${g.b.end}`
++        + ` ${g.sense === 'parallel' ? 'PARALLEL' : 'ANTIPARALLEL'}`
++        + ` (measured strand axes cos = ${g.direction.toFixed(2)}`
++        + `${g.senseOk ? '' : ', WRONG DIRECTION'}); the two strands were folded face to face`
++        + ` (CA-CA ${[...g.ca, ...g.caB].map((d) => d.toFixed(1)).join(' ')} A)`
++        + ` and ${g.hbonds.length} N-H...O=C hydrogen bond(s) are present.`
++        + `${g.converged ? '' : ' The fold did NOT fully converge: this is the best conformation found.'}`);
++    });
++  }
+   let serial = 1;
+   const serialOf = new Map();       // `${atomName}@${residueIndex}` → serial
+   const residueBondPairs = [];      // [{ i, bonds: [[an, bn], ...] }]
+@@ -3746,9 +3846,10 @@ const useNmrDerived = (activeTest, ctx = {}) => {
+   const shifts = allLayerValues['cs'] || {};
+   const activeValues = shifts;
+   const ssRaw = activeTest.secondaryStructure || '';
+-  // ⚠ HESL — L (hélice α GAUCHE) est une lettre peignable comme les autres : sans elle
+-  // ici, le chip retombait sur « C » et la peinture était effacée au rendu suivant.
+-  const getSSAt = (i) => (ssRaw[i] && 'HESL'.includes(ssRaw[i]) ? ssRaw[i] : 'C');
++  // ⚠ HESLT — L (hélice α GAUCHE) et T (tour β) sont des lettres peignables comme les
++  // autres : sans elles ici, le chip retombait sur « C » et la peinture était effacée au
++  // rendu suivant.
++  const getSSAt = (i) => (ssRaw[i] && 'HESLT'.includes(ssRaw[i]) ? ssRaw[i] : 'C');
+   const formsRaw = activeTest.nucleicForms || '';
+   const dnaFormDefault = activeTest.dnaForm || 'B';
+   const getFormAt = (i) => (formsRaw[i] && 'ABZ'.includes(formsRaw[i]) ? formsRaw[i] : dnaFormDefault);
+@@ -3887,7 +3988,12 @@ const useNmrDerived = (activeTest, ctx = {}) => {
+     const ssLetter = moleculeType === 'protein' ? getSSAt(idx) : 'C';
+     // ⚠ L (hélice α GAUCHE) est une HÉLICE comme H : elle prend les mêmes corrections
+     // de déplacements chimiques (`helix`), sinon la lettre tombait sur `undefined`.
+-    const ssKey = { C: 'coil', H: 'helix', L: 'helix', E: 'sheet' }[ssLetter];
++    // ⚠ T (tour β) n'a AUCUNE correction propre : la table des corrections (SS_CORRECTIONS)
++    // n'a pas d'entrée « tour » — un tour n'est ni une hélice ni un feuillet —, il prend
++    // donc la ligne `coil` (le silence), comme la lettre T du DSSP reste une boucle dans
++    // la lecture à trois couleurs de la 2° structure. C'est le même choix que la carte
++    // `sstrucAtomColorOf` du viewer (h/g/i → hélice, e/b → feuillet, le reste → boucle).
++    const ssKey = { C: 'coil', H: 'helix', L: 'helix', E: 'sheet', T: 'coil' }[ssLetter];
+     const corr = SS_CORRECTIONS[ssKey];
+     const estShifts = {};
+     Object.keys(res.shifts || {}).forEach((a) => {
+@@ -5036,6 +5142,35 @@ export const MolecularStructureSection = ({ ctx }) => {
+     // eslint-disable-next-line react-hooks/exhaustive-deps
+   }, [activeTest.id, activeTest.structureFileName]);
+ 
++  /* 🧵 LES FEUILLETS DÉCLARÉS — ce que la définition de séquence demande (« Pair
++     them » : deux brins E, parallèles ou antiparallèles), relu UNE fois ici :
++       • `betaSheetRead` — les brins peints et les paires VALIDES (les déclarations
++         qui ne correspondent plus à la séquence sont comptées, jamais devinées ;
++         voir betaSheetPairsOf) ;
++       • `sheetFold` — le repliement du modèle de séquence : la recherche locale de
++         utils/betaSheetFold.js sur les φ/ψ des deux brins et de la boucle qui les
++         sépare, jusqu'à ce que les deux brins se fassent face avec leurs ponts
++         N–H···O=C. DÉTERMINISTE (graine fixe) : la même définition donne toujours le
++         même modèle, et le rapport de la note sous le panneau dit ce qui a été
++         obtenu (échelons CA–CA mesurés, nombre de ponts, convergence).
++     Le mode 🎓 University test n'en replie AUCUN : le modèle montrerait la réponse
++     (c'est la même règle que ssFor3D, qui part vide dans ce mode). */
++  const betaSheetRead = useMemo(() => betaSheetPairsOf({
++    secondaryStructure: activeTest.secondaryStructure || '',
++    sheets: activeTest.betaSheets,
++    sequenceLength: (d.seq || '').length,
++  }), [activeTest.secondaryStructure, activeTest.betaSheets, d.seq]);
++  const sheetFold = useMemo(() => {
++    if (univTestMode || d.moleculeType !== 'protein' || !d.seq || !betaSheetRead.pairs.length) return null;
++    const ss = activeTest.secondaryStructure || '';
++    return foldBetaSheets({
++      sequence: d.seq,
++      torsions: d.seq.split('').map((_, i) => ssTorsionAt(ss[i] || 'C')),
++      pairs: betaSheetRead.pairs,
++      build: (cand) => buildProteinBackbone(d.seq, cand),
++    });
++  }, [univTestMode, d.moleculeType, d.seq, activeTest.secondaryStructure, betaSheetRead.pairs]);
++
+   // Locally-generated structures (no network round trip): idealized protein backbone from
+   // sequence + secondary structure (or fully-extended fallback), and a simplified extended
+   // sugar-phosphate backbone trace for DNA/RNA.
+@@ -5062,9 +5197,24 @@ const sequenceStructure = useMemo(() => {
+       const ssFor3D = univTestMode ? '' : (activeTest.secondaryStructure || '');
+       // Les ponts disulfure définis dans « Cysteine states » entrent dans le
+       // modèle : CONECT SG–SG (le pont se voit en Sticks / Ball+stick) + le
+-      // proton HG retiré des Cys engagées. Le squelette reste le modèle idéal
+-      // tant que « ⚭ Fold for disulfides » n'est pas cliqué (voir plus bas).
+-      return { text: proteinSequenceToPdbText(d.seq, ssFor3D, activeTest.name || 'PROTEIN', { cysDisulfides: activeTest.cysDisulfides }), ext: 'pdb' };
++      // proton HG retiré des Cys engagées.
++      // 🧵 ET LES FEUILLETS DÉCLARÉS dans « Sequence and structure » (« Pair them ») :
++      // `sheetFold` (calculé plus haut) a déjà replié les φ/ψ des deux brins et de
++      // leur boucle — ses torsions sont données TELLES QUELLES au bâtisseur, qui
++      // n'a donc plus rien à chercher, et les records SHEET / REMARK du fichier
++      // décrivent ce modèle-là (mesuré, jamais promis).
++      return {
++        text: proteinSequenceToPdbText(d.seq, ssFor3D, activeTest.name || 'PROTEIN', {
++          cysDisulfides: activeTest.cysDisulfides,
++          /* ⚠ LA DÉCLARATION BRUTE, pas les paires résolues : proteinSequenceToPdbText
++             relit lui-même `opts.sheets` (betaSheetPairsOf) pour écrire ses records —
++             il attend donc la forme du panneau, { a: [start, end], b: [start, end],
++             sense }, et il compte lui-même les déclarations devenues invalides. */
++          sheets: activeTest.betaSheets,
++          torsions: sheetFold ? sheetFold.torsions : null,
++        }),
++        ext: 'pdb',
++      };
+     }
+ 
+     if ((d.moleculeType === 'dna' || d.moleculeType === 'rna') && d.seq) {
+@@ -5078,7 +5228,8 @@ const sequenceStructure = useMemo(() => {
+   }
+ 
+   return null;
+-}, [d.moleculeType, d.seq, activeTest.secondaryStructure, activeTest.name, univTestMode, activeTest.cysDisulfides]);
++}, [d.moleculeType, d.seq, activeTest.secondaryStructure, activeTest.name, univTestMode, activeTest.cysDisulfides,
++  activeTest.betaSheets, sheetFold]);
+ 
+ const generatedStructure = useMemo(() => {
+   if (hasExplicitOverride) {
+@@ -5198,7 +5349,8 @@ const generatedStructure = useMemo(() => {
+       // Fallback: build it fresh even if organicFetch/generatedStructure hasn't populated yet
+       try {
+         const text = d.moleculeType === 'protein'
+-          ? proteinSequenceToPdbText(d.seq, univTestMode ? '' : (activeTest.secondaryStructure || ''), activeTest.name || 'PROTEIN', { cysDisulfides: activeTest.cysDisulfides })
++          ? proteinSequenceToPdbText(d.seq, univTestMode ? '' : (activeTest.secondaryStructure || ''), activeTest.name || 'PROTEIN',
++            { cysDisulfides: activeTest.cysDisulfides, sheets: activeTest.betaSheets, torsions: sheetFold ? sheetFold.torsions : null })
+           : nucleicSequenceToPdbText(d.seq, d.moleculeType, activeTest.name || 'NUCLEIC_ACID');
+         triggerDownload(text, `${pdbBase}.pdb`);
+       } catch (e) {
+@@ -5479,7 +5631,7 @@ const generatedStructure = useMemo(() => {
+             <>
+             <div className="flex flex-wrap gap-2 mb-3 items-center">
+               <span className="text-xs font-bold text-slate-500 uppercase mr-1">🖌️ Brush:</span>
+-              {['C', 'H', 'L', 'E'].map((l) => (
++              {['C', 'H', 'L', 'E', 'T'].map((l) => (
+                 <button key={l} onClick={() => setSSBrush(l)} className="px-3 py-1 rounded-lg text-xs font-black border transition-all"
+                   style={{ backgroundColor: ssBrush === l ? SS_META[l].color : 'white', borderColor: SS_META[l].color, color: ssBrush === l ? 'white' : SS_META[l].color }}>
+                   {SS_META[l].label}
+@@ -5490,9 +5642,14 @@ const generatedStructure = useMemo(() => {
+               <button onClick={() => setAllSS('H')} className="px-3 py-1 rounded-lg text-xs font-bold bg-violet-100 border border-violet-300 text-violet-700 hover:bg-violet-200">All α-Helix</button>
+               <button onClick={() => setAllSS('L')} className="px-3 py-1 rounded-lg text-xs font-bold bg-fuchsia-100 border border-fuchsia-300 text-fuchsia-700 hover:bg-fuchsia-200">All α-Helix (L)</button>
+               <button onClick={() => setAllSS('E')} className="px-3 py-1 rounded-lg text-xs font-bold bg-amber-100 border border-amber-300 text-amber-700 hover:bg-amber-200">All β-Sheet</button>
++              <button onClick={() => setAllSS('T')} className="px-3 py-1 rounded-lg text-xs font-bold bg-teal-100 border border-teal-300 text-teal-700 hover:bg-teal-200">All γ-Turn</button>
+             </div>
+-            <p className="text-xs text-slate-400 mb-3">💡 Select a brush, then click or drag across the sequence chips to paint secondary structure.</p>
++            <p className="text-xs text-slate-400 mb-3">💡 Select a brush, then click or drag across the sequence chips to paint secondary structure. Paint two runs of β-strand (E) — a turn (T) between them holds the hairpin — then pair them as a β-sheet below.</p>
+             <SequencePaintStrip residues={d.parsedSeq} getLetter={(i) => d.getSSAt(i)} meta={SS_META} onApply={(i) => paintSSAt(i, ssBrush)} focusIdx={focusIdx} residueNo={residueNoOf}
++              /* 🧵 Le repère d'un brin de feuillet déclaré (la lettre de la paire et son
++                 numéro 1 / 2) : il vient du MÊME lecteur que le panneau 🧵 ci-dessous,
++                 sur les POSITIONS de séquence (la clé), et s'affiche sous le numéro du 🔢. */
++              sheetOf={(i) => sheetMarkAt(betaSheetRead.pairs, i + 1)}
+               /* Les Cys d'un pont disulfure portent un repère de la MÊME couleur que
+                  la puce du pont dans « Cysteine states » : la bande de séquence
+                  montre donc la liaison, elle aussi (le dessin S–S complet est dans la
+@@ -5505,6 +5662,21 @@ const generatedStructure = useMemo(() => {
+                 const partner = pairs[pi][0] === pos ? pairs[pi][1] : pairs[pi][0];
+                 return { pairIndex: pi, partner: residueNoOf(partner - 1), color: disulfidePairColor(pi) };
+               }} />
++            {/* 🧵 LA DÉFINITION DU FEUILLET — la seconde moitié de la demande : deux
++                brins E appariés, parallèles ou antiparallèles. Le panneau écrit la
++                DÉCLARATION (activeTest.betaSheets, en positions de séquence), et la
++                note qu'il affiche est le rapport du modèle RÉELLEMENT bâti
++                (`sheetFold`, mesuré par le même lecteur que l'écrivain PDB). */}
++            {d.moleculeType === 'protein' && (
++              <BetaSheetEditor
++                secondaryStructure={activeTest.secondaryStructure || ''}
++                sequenceLength={(d.seq || '').length}
++                sheets={activeTest.betaSheets}
++                onChange={(next) => updateActiveTest({ betaSheets: next })}
++                residueNo={residueNoOf}
++                fold={sheetFold}
++              />
++            )}
+             </>
+           )}
+         </CollapsibleSection>
+diff --git a/src/utils/structureCalc.js b/src/utils/structureCalc.js
+index 33355a8..90f350b 100644
+--- a/src/utils/structureCalc.js
++++ b/src/utils/structureCalc.js
+@@ -1819,6 +1819,13 @@ export const SS_DIHEDRALS = {
+      se peignent donc, et la conversion porte la bonne cible sur chacune. */
+   L: { phi: 57, psi: 47 },
+   E: { phi: -139, psi: 135 },
++  /* ⚠ LE TOUR — la lettre T de la peinture. C'est la conformation du TOUR γ de la
++     littérature (Rose–Matthews, φ +75° / ψ −65°) : la seule conformation de tour
++     qu'UN résidu puisse imposer, et celle dont le modèle bâti fait vraiment le pont
++     C7 (O(i)···N(i+2) = 2,72 Å mesuré, contre 3,77 Å pour une pelote). Le couple est
++     le MÊME que SS_TORSIONS.T de NMRSections.jsx : un tour peint se construit à 0° de
++     la cible que cette conversion lui impose (la règle déjà tenue pour E). */
++  T: { phi: 75, psi: -65 },
+ };
+ /** Les lettres de la peinture qui IMPOSENT quelque chose (les autres sont le silence). */
+ export const SS_DIHEDRAL_LETTERS = Object.keys(SS_DIHEDRALS);

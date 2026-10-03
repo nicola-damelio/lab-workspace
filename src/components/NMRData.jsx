@@ -4,6 +4,10 @@ import {
   ReferenceArea, BarChart, Bar, LineChart, Line, Legend
 } from 'recharts';
 import { FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, CHART_MARGIN_1D, SELECT_COLOR, MANUAL_COLOR, LINE_COLORS } from '../utils/chartStyle';
+import {
+  SHEET_SENSES, SHEET_SENSE_GLYPHS, SHEET_SENSE_LABELS, SHEET_CA_DISTANCE, SHEET_MIN_STRAND,
+  betaSheetPairsOf, sheetFoldSentenceOf,
+} from '../utils/betaSheetFold';
 
 /* ============================================================================
    NMRData — shared NMR building blocks imported by NMRSections.jsx
@@ -487,8 +491,17 @@ export const SS_META = {
   // SS_TORSIONS.L de NMRSections.jsx, et SS_DIHEDRALS.L de structureCalc.js) ; c'est son
   // étiquette que le pinceau affiche, pour que les deux mains ne portent pas le même nom.
   L: { label: 'α-Helix (left-handed)', color: '#c026d3' },
-  E: { label: 'β-Sheet', color: '#f59e0b' }
+  E: { label: 'β-Sheet (strand)', color: '#f59e0b' },
+  /* ⚠ LE TOUR — la demande : « In the sequence definition, beyond, alpha helix right
+     and left, coil and beta strands, add the possibility to impose turns… ». La lettre T
+     porte la conformation du TOUR γ (φ +75° / ψ −65°, voir SS_TORSIONS.T de
+     NMRSections.jsx et SS_DIHEDRALS.T de structureCalc.js) : son chip, la contrainte de
+     dihèdre et la géométrie parlent du même objet, et le modèle bâti y fait vraiment le
+     pont C7 du tour. Elle se peint entre deux brins E pour que le feuillet déclaré
+     (utils/betaSheetFold.js) referme son épingle. */
+  T: { label: 'γ-Turn (C7)', color: '#14b8a6' }
 };
+
 
 export const FORM_META = {
   A: { label: 'A-form', color: '#0ea5e9' },
@@ -1584,10 +1597,17 @@ export const MultiSelectDropdown = ({ options, selected, onToggle, placeholder }
 // pont et son infobulle nomme le partenaire — la même couleur que la puce du
 // pont dans « Cysteine states ». Aucune mesure de DOM ni d'arc entre les chips :
 // le dessin S–S complet vit dans la définition, ici c'est le repère de paire.
-export const SequencePaintStrip = ({ residues, getLetter, meta, onApply, focusIdx, charLabel, residueNo, linkOf }) => {
+// `sheetOf(i)` (optionnel) = LE BRIN DE FEUILLET du résidu i, ou null :
+// { pairIndex, strand, label, sense, senseLabel, glyph, color, partner, last } —
+// posé par les trois pages quand la définition déclare un feuillet β
+// (`activeTest.betaSheets`, relu par sheetMarkAt de utils/betaSheetFold.js). Le chip
+// porte alors le repère du brin (sa lettre de paire et son numéro 1 / 2) dans LA
+// couleur de la paire — la même que la puce du panneau 🧵 « β-sheet ».
+export const SequencePaintStrip = ({ residues, getLetter, meta, onApply, focusIdx, charLabel, residueNo, linkOf, sheetOf }) => {
   const [painting, setPainting] = useState(false);
   const numberAt = typeof residueNo === 'function' ? residueNo : (i) => i + 1;
   const linkAt = typeof linkOf === 'function' ? linkOf : () => null;
+  const sheetAt = typeof sheetOf === 'function' ? sheetOf : () => null;
   useEffect(() => {
     const up = () => setPainting(false);
     window.addEventListener('mouseup', up);
@@ -1601,6 +1621,7 @@ export const SequencePaintStrip = ({ residues, getLetter, meta, onApply, focusId
         const dim = focusIdx !== 'ALL' && focusIdx !== i;
         const resNo = numberAt(i);
         const link = linkAt(i);
+        const sheet = sheetAt(i);
         return (
           <button
             key={i}
@@ -1608,7 +1629,7 @@ export const SequencePaintStrip = ({ residues, getLetter, meta, onApply, focusId
             onDragStart={(e) => e.preventDefault()}
             onMouseDown={(e) => { e.preventDefault(); setPainting(true); onApply(i); }}
             onMouseEnter={() => { if (painting) onApply(i); }}
-            title={`${r.name || r.char} ${resNo}: ${m.label}${link ? ` · ⚭ disulphide with ${link.partner}` : ''}`}
+            title={`${r.name || r.char} ${resNo}: ${m.label}${link ? ` · ⚭ disulphide with ${link.partner}` : ''}${sheet ? ` · 🧵 ${sheet.label} strand ${sheet.strand}, ${String(sheet.senseLabel).toLowerCase()} sheet with ${sheet.partner}` : ''}`}
             className="relative w-11 py-1 rounded-md border text-center leading-tight transition-all"
             style={{
               backgroundColor: m.color + '22',
@@ -1624,6 +1645,15 @@ export const SequencePaintStrip = ({ residues, getLetter, meta, onApply, focusId
                 title={`⚭ Disulphide with ${link.partner}`}
               />
             )}
+            {sheet && (
+              <span
+                className="absolute -bottom-1 -left-1 px-1 rounded text-[7px] font-black text-white leading-[10px]"
+                style={{ backgroundColor: sheet.color }}
+                title={`🧵 ${sheet.label}: strand ${sheet.strand} of a ${String(sheet.senseLabel).toLowerCase()} β-sheet with ${sheet.partner}`}
+              >
+                {sheet.glyph}{sheet.strand}
+              </span>
+            )}
             <div className="text-[8px] text-slate-500 font-bold">{resNo}</div>
             <div className="text-sm font-black text-slate-800">{charLabel ? charLabel(r) : r.char}</div>
             <div className="text-[10px] font-black" style={{ color: m.color }}>{l}</div>
@@ -1633,6 +1663,121 @@ export const SequencePaintStrip = ({ residues, getLetter, meta, onApply, focusId
     </div>
   );
 };
+
+// ================= 🧵 β-SHEET PAIRING (the sequence definition) =================
+// La demande : « … add the possibility to impose turns and to associate beta strands
+// to make a beta sheet, parallel or antiparallel. » Ce panneau EST la seconde moitié
+// de cette demande : il liste les BRINS peints (les suites de E de la définition,
+// avec leurs numéros AFFICHÉS) et laisse en apparier deux, dans l'un des deux sens.
+//
+// Ce qu'il écrit est une DÉCLARATION (`sheets` = [{ a: [start, end], b: [start, end],
+// sense }], en POSITIONS DE SÉQUENCE 1-based — la clé du modèle, comme
+// `cysDisulfides`) : la géométrie, elle, est faite par utils/betaSheetFold.js, et le
+// rapport affiché sous les puces est celui du modèle RÉELLEMENT bâti (le lecteur
+// sheetGeometryOf, le même que l'écrivain PDB) — jamais une promesse.
+//
+// Props : `secondaryStructure` (la peinture), `sheets` (les déclarations en cours),
+// `onChange(next)`, `residueNo(pos)` (le NUMÉRO AFFICHÉ d'une position de séquence) et
+// `fold` (le rapport du repliement de la page, affiché en note).
+export const BetaSheetEditor = ({
+  secondaryStructure = '', sequenceLength = 0, sheets = [], onChange, residueNo, fold = null,
+}) => {
+  const read = useMemo(
+    () => betaSheetPairsOf({ secondaryStructure, sheets, sequenceLength }),
+    [secondaryStructure, sheets, sequenceLength],
+  );
+  const noOf = typeof residueNo === 'function' ? residueNo : (pos) => pos;
+  const [selA, setSelA] = useState(0);
+  const [selB, setSelB] = useState(1);
+  const [selSense, setSelSense] = useState(SHEET_SENSES[0]);
+  const strands = read.strands;
+  const clean = Array.isArray(sheets) ? sheets : [];
+  const add = () => {
+    const a = strands[selA]; const b = strands[selB];
+    if (!a || !b || a.index === b.index || typeof onChange !== 'function') return;
+    onChange([...clean, { a: [a.start, a.end], b: [b.start, b.end], sense: selSense }]);
+  };
+  const remove = (sheetIndex) => {
+    if (typeof onChange === 'function') onChange(clean.filter((_, i) => i !== sheetIndex));
+  };
+  const strandLabel = (s) => `Strand ${s.index + 1}: ${noOf(s.start)}–${noOf(s.end)}`;
+  const selectCls = 'border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 font-semibold';
+  return (
+    <div className="border-t border-slate-200 pt-2 flex flex-col gap-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs font-bold text-slate-500 uppercase mr-1">🧵 β-sheet:</span>
+        {strands.length >= 2 ? (
+          <>
+            <select value={selA} onChange={(e) => setSelA(Number(e.target.value))} className={selectCls}
+              title="First β-strand — one run of residues painted E in the sequence above">
+              {strands.map((s, k) => <option key={s.index} value={k}>{strandLabel(s)}</option>)}
+            </select>
+            <select value={selB} onChange={(e) => setSelB(Number(e.target.value))} className={selectCls}
+              title="Second β-strand — the one it must pair with">
+              {strands.map((s, k) => <option key={s.index} value={k}>{strandLabel(s)}</option>)}
+            </select>
+            <select value={selSense} onChange={(e) => setSelSense(e.target.value)} className={selectCls}
+              title="Antiparallel = the two strands run in opposite directions (a β-hairpin when they are neighbours); parallel = the same direction (the chain crosses over). The direction is MEASURED on the built model, never assumed.">
+              {SHEET_SENSES.map((s) => <option key={s} value={s}>{SHEET_SENSE_GLYPHS[s]} {SHEET_SENSE_LABELS[s]}</option>)}
+            </select>
+            <button type="button" onClick={add}
+              className="px-3 py-1 rounded-lg text-xs font-black bg-teal-100 border border-teal-300 text-teal-800 hover:bg-teal-200"
+              title="Declare that these two strands form one β-sheet: the model of the sequence is folded so the two strands really face each other">
+              Pair them
+            </button>
+          </>
+        ) : (
+          <span className="text-[11px] text-slate-500 italic">
+            Paint at least TWO runs of β-strand (E) with the brush above, then pair them here.
+          </span>
+        )}
+      </div>
+      <BetaSheetChips pairs={read.pairs} rejected={read.rejected} noOf={noOf} onRemove={remove} />
+      {fold && (
+        <p className="text-[10px] font-bold text-teal-800 bg-teal-50 border border-teal-200 rounded-lg px-2 py-1">
+          🧵 {sheetFoldSentenceOf(fold)}
+        </p>
+      )}
+      <p className="text-[10px] text-slate-400">
+        The pairing is stored as SEQUENCE positions (like the disulphide bonds): renumbering the molecule in the 🔢
+        panel never rewrites it. The fold is deterministic (fixed seed) — the same definition always gives the same model.
+      </p>
+    </div>
+  );
+};
+
+// Les puces d'un feuillet déclaré — la lettre de la paire, ses deux fourchettes
+// (dans les NUMÉROS AFFICHÉS), son glyphe de sens, et le ✕ qui la retire. Le compte
+// des déclarations invalides est DIT, jamais caché (voir betaSheetPairsOf).
+const BetaSheetChips = ({ pairs, rejected, noOf, onRemove }) => (
+  <>
+    {pairs.length > 0 && (
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-[10px] font-bold text-slate-500 uppercase">Declared sheets</span>
+        {pairs.map((p) => (
+          <span key={p.index}
+            className="inline-flex items-center gap-1 rounded-full border bg-white pl-2 pr-1 py-0.5 text-[11px] font-bold"
+            style={{ borderColor: p.color, color: p.color }}
+            title={`β-sheet ${p.label}: strand ${noOf(p.a.start)}–${noOf(p.a.end)} ${SHEET_SENSE_GLYPHS[p.sense]} strand ${noOf(p.b.start)}–${noOf(p.b.end)} (${p.senseLabel.toLowerCase()}) — the model of the sequence is folded so the two strands face each other at ${SHEET_CA_DISTANCE} Å, with their N–H···O=C hydrogen bonds.`}>
+            <span>{p.label}</span>
+            <span>{noOf(p.a.start)}–{noOf(p.a.end)}</span>
+            <span className="font-black">{SHEET_SENSE_GLYPHS[p.sense]}</span>
+            <span>{noOf(p.b.start)}–{noOf(p.b.end)}</span>
+            <span className="text-[9px] uppercase">{p.senseLabel}</span>
+            <button type="button" onClick={() => onRemove(p.sheetIndex)} className="text-slate-400 hover:text-red-600 font-black ml-0.5"
+              title="Remove this β-sheet">×</button>
+          </span>
+        ))}
+      </div>
+    )}
+    {rejected > 0 && (
+      <p className="text-[10px] font-bold text-amber-700">
+        ⚠ {rejected} declared sheet{rejected === 1 ? '' : 's'} no longer match the sequence (a strand shorter than{' '}
+        {SHEET_MIN_STRAND} residues, a range outside it, or the two ranges overlapping): it folds nothing, and it is NOT hidden.
+      </p>
+    )}
+  </>
+);
 
 // ================= CUSTOM TICKS / TOOLTIP =================
 export const CustomXTick1H = ({ x, y, payload, isZoomed }) => {

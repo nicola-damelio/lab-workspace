@@ -31,7 +31,21 @@
         ⚡ ESP (exécutée sur la même structure NGL), et une molécule dont RIEN ne
         décrit les charges n'écrit pas « 0 » — `atomHoverChargeOf` rend null là où
         `atomChargeOf` rend 0, parce que peindre en neutre et écrire « 0 » ne disent
-        pas la même chose.
+        pas la même chose. LA TABLE EST CELLE DU CHAMP dès que le viewer a déposé son
+        modèle (espChargeModelStore, exécuté ici comme la page le remplit) : un
+        hydrogène de squelette et l'`OXT` du terminus C — que NGL laisse à ZÉRO —
+        portent alors la charge du modèle de la page, et le survol le dit.
+     5. LE RÉSEAU SUIT LA GÉOMÉTRIE (la seconde demande de cette session : « the
+        H-bonds should follow the geometry during MD ») : `refreshHydrogenBonds` est
+        appelé par les écritures de coordonnées du viewer (les trois `refreshScenePlates`
+        de writeStructurePositions / applyPartMove / restorePartMoves et l'écouteur du
+        signal `refreshed`), il ne balaie QU'une molécule à la fois (celle du bouton),
+        il respecte un rythme (200 ms, doublé quand un balayage coûte plus de 8 ms,
+        plafonné à 1 s) et il ne touche à NGL que si l'EMPREINTE du réseau a changé.
+        Tout cela est EXÉCUTÉ ici : le vrai `findHydrogenBonds` sur une vraie
+        structure NGL, une fausse représentation qui enregistre `setParameters`, et une
+        horloge qu'on force (`hbondLiveRef.current.at = 0`) pour mesurer le rythme
+        sans attendre.
    ========================================================================= */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -42,6 +56,11 @@ import {
   WATER_RESNAMES, hydrogenBondElementOf,
 } from './src/utils/hydrogenBonds.js';
 import { atomChargeText, hoverAtomReadout, ATOM_CHARGE_DECIMALS } from './src/utils/viewerAtomReadout.js';
+// 🧪 LE MODÈLE DE CHARGES DU CHAMP — le MÊME module que le viewer importe
+// (utils/structureCalc réexporte utils/forceFieldKcal) : la table que la page peint
+// est celle-ci, donc c'est celle-ci que cette suite dépose dans le magasin du viewer
+// et mesure. Aucune valeur n'est recopiée dans ce fichier.
+import { partialChargesOf } from './src/utils/structureCalc.js';
 
 const require = createRequire(import.meta.url);
 const NGL = require('ngl');
@@ -376,7 +395,38 @@ has('resolveMolComp(selectedMolKey)', '…sur la molécule CHOISIE dans la barre
     '…la représentation vivante est retenue pour pouvoir être retirée');
   ok(sliceFn(VIEW, 'clearHydrogenBonds').includes('hbondRepRef.current = null'),
     'le retrait oublie la référence (le bouton se rallume sans laisser de ligne orpheline)');
+  ok(sliceFn(VIEW, 'clearHydrogenBonds').includes("hbondLiveRef.current = { at: 0, gap: 0, sig: '', msg: '' };"),
+    '…et le RYTHME du rafraîchissement repart à zéro : rallumer 💧 balaie tout de suite');
 }
+/* ── 3bis. LE RÉSEAU EST RELU PENDANT UN MOUVEMENT ───────────────────────────
+   « the H-bonds should follow the geometry during MD » : le geste lit UNE fois, donc
+   il faut quelqu'un pour relire là où les coordonnées arrivent. Ces marqueurs-là
+   disent QUI (l'écriture de coordonnées du viewer, celle des molécules déplacées, le
+   ↺, et le signal `refreshed` des images de trajectoire). */
+has('const refreshHydrogenBonds = (comp) => {', 'le rafraîchissement du réseau est nommé, donc testable');
+has('const hbondSignatureOf = (found) => {', '…et l’empreinte du réseau (ce qui évite de tout refaire pour rien)');
+has('refreshHydrogenBonds(comp);    // …et le réseau de 💧 se relit LÀ OÙ les coordonnées arrivent',
+  'chaque écriture de coordonnées (MD · minimise · calcul · torsion) relit le réseau');
+has('refreshHydrogenBonds(comp);    // …et le réseau de 💧 suit le geste qui vient de déplacer la molécule',
+  '…le glisser d’une molécule aussi');
+has('refreshHydrogenBonds(comp);    // …et le réseau de 💧 : un ↺ a redonné la géométrie de départ',
+  '…et le ↺ qui remet les coordonnées d’origine');
+has('sig.add(() => { reapplyPartMoves(comp); refreshScenePlates(); refreshHydrogenBonds(comp); });',
+  '…et l’écouteur du signal `refreshed` (une image de trajectoire ne passe pas par writeStructurePositions)');
+{
+  const live = sliceFn(VIEW, 'refreshHydrogenBonds');
+  ok(live.includes('if (!comp || rep.comp !== comp) return false;'),
+    '⚠ le réseau n’appartient qu’à UNE molécule : une autre qui bouge ne le touche pas');
+  ok(live.includes('rep.elem.setParameters({'),
+    '⚠ NGL reconstruit la MÊME représentation (`atomPair` est déclaré `rebuild: true`) — jamais une par pont');
+  ok(live.includes('found.bonds.map((b) => [b.donor, b.acceptor])'), '…avec la liste de couples du moment');
+  ok(live.includes('if (sig === live.sig) return false;'), '…et rien n’est touché si l’empreinte n’a pas changé');
+  ok(live.includes('live.gap = (Date.now() - t0) > HBOND_LIVE_SLOW_MS'),
+    '…le rythme se règle sur le coût du balayage (voir la section 5, exécutée)');
+}
+has('const HBOND_LIVE_MIN_MS = 200;', 'le rythme de croisière est écrit (≈5 balayages par seconde)');
+has('const HBOND_LIVE_MAX_MS = 1000;', '…avec son plafond');
+has('const HBOND_LIVE_SLOW_MS = 8;', '…et le coût au-delà duquel l’intervalle double');
 // LA VIE DES LIGNES : chaque `clearMeasurements()` du fichier est suivi du sien —
 // sinon un pont survivrait à la molécule qu’il relie (nouveau chargement, PDB
 // rangé, viewer vidé).
@@ -413,11 +463,14 @@ const APP = new Function('NGL', [
   sliceObject(VIEW, 'ESP_ELECTRONEGATIVITY'),
   sliceObject(VIEW, 'ESP_ION_CHARGES'),
   sliceFn(VIEW, 'espHeteroChargeOf'),
+  sliceDecl(VIEW, 'espChargeModelStore'),
+  sliceFn(VIEW, 'espProteinChargesOf'),
   sliceDecl(VIEW, 'espChargeCache'),
   sliceFn(VIEW, 'espChargesFor'),
   sliceFn(VIEW, 'atomChargeOf'),
   sliceFn(VIEW, 'atomHoverChargeOf'),
-  'return { espChargesFor, atomChargeOf, atomHoverChargeOf };',
+  sliceFn(VIEW, 'geometryOfStructure'),
+  'return { espChargesFor, atomChargeOf, atomHoverChargeOf, espChargeModelStore, espProteinChargesOf, geometryOfStructure };',
 ].join('\n'))(NGL);
 const table = APP.espChargesFor(st);
 ok(!!table, 'la table de charges du ⚡ ESP se calcule sur la structure de test');
@@ -429,6 +482,23 @@ eq(APP.atomHoverChargeOf({}, st), null, 'un atome sans index : rien à dire — 
 eq(APP.atomHoverChargeOf({ index: 0 }, null), null, 'sans structure : rien à dire');
 eq(APP.atomChargeOf({ index: 0 }, null), 0,
   '…là où la lecture de PEINTURE rend 0 : le neutre est le bon repli d’une couleur, pas d’une phrase');
+/* 🧪 …ET LE MODÈLE DE CHARGES DU CHAMP, DÉPOSÉ COMME LA PAGE LE FAIT : la lecture PURE
+   du module (utils/forceFieldKcal, importé ici) et le lecteur de graphe DU VIEWER
+   (geometryOfStructure, extrait de la même source). Sans ce dépôt, la table retombe
+   sur celle de NGL — le repli, pas la règle. */
+const baseCharges = NGL.ColormakerRegistry.getScheme({ scheme: 'electrostatic', structure: st }).charges;
+eq(baseCharges[1], 0, 'la table de NGL laisse l’HYDROGÈNE du squelette à ZÉRO — c’est le défaut corrigé');
+APP.espChargeModelStore.geometryOf = APP.geometryOfStructure;
+APP.espChargeModelStore.partialChargesOf = partialChargesOf;
+APP.espChargeModelStore.ph = null;
+const modelled = APP.espChargesFor(st);
+ok(modelled !== table, 'déposer le modèle refait la table (l’entrée de cache porte le modèle)');
+eq(APP.atomHoverChargeOf({ index: 1 }, st), modelled.charges[1],
+  'le survol suit la table du MODÈLE, comme la rampe « Atom charge »');
+ok(modelled.charges[1] > 0.05 && modelled.charges[1] < 0.3,
+  `…et l’hydrogène du squelette y porte enfin une charge positive (${modelled.charges[1].toFixed(3)} e)`);
+ok(hoverAtomReadout('ALA A 1 H', APP.atomHoverChargeOf({ index: 1 }, st)) !== 'ALA A 1 H',
+  'la phrase du survol ne s’arrête donc plus au nom sur un atome protéique');
 ok(hoverAtomReadout('ALA A 1 N', APP.atomHoverChargeOf({ index: 0 }, st)).startsWith('ALA A 1 N · q = '),
   'sur la vraie structure, le survol écrit le nom ET la charge, dans cet ordre');
 // Le câblage du survol dans le viewer : le nom existait, la charge s’y ajoute.
@@ -438,5 +508,114 @@ has('const structure = (pickingProxy.component && pickingProxy.component.structu
   '…la structure de l’atome survolé est celle du composant piqué');
 has('const atomHoverChargeOf = (atom, structure) => {', 'la lecture « charge au survol » est nommée, donc testable');
 has("{hoverInfo && status === 'ready' && (", 'la lecture ne s’affiche que sur une scène prête');
+
+/* ══ 5. LE RÉSEAU SUIT LA GÉOMÉTRIE — LE RAFRAÎCHISSEMENT, EXÉCUTÉ ════════════
+   Le geste du bouton lit UNE fois ; c'est `refreshHydrogenBonds` qui relit. Il est
+   ici exécuté pour de vrai, sur une VRAIE structure NGL, avec une fausse
+   représentation qui enregistre ce que NGL recevrait — et un balayage qu'on peut
+   compter ou ralentir à volonté (c'est le SEUL point où l'horloge est forcée :
+   `hbondLiveRef.current.at = 0` veut dire « l'intervalle est écoulé »).
+   Ce qui est mesuré : 💧 éteint ne coûte rien, une autre molécule non plus, un
+   réseau qui change est écrit DANS la même représentation, un réseau identique
+   n'écrit rien, deux appels rapprochés ne balaient qu'une fois, un balayage lent
+   espace le suivant (et le plafond tient), et un pont qui casse voit ses lignes
+   partir. */
+const LIVE = new Function('NGL', 'realFind', 'hydrogenBondNoteOf', 'HBOND_LABEL_MAX', [
+  'const window = { NGL };',
+  'const evidence = { msgs: [], repaints: 0, params: [], scans: 0 };',
+  'let scanOf = realFind;   // le balayage : le vrai, compté, ou un balayage lent',
+  'const findHydrogenBonds = (comp, opts) => { evidence.scans += 1; return scanOf(comp, opts); };',
+  'const molNameOf = () => "main";',
+  'const selectedMolKey = "main";',
+  'const setHbondMsg = (m) => evidence.msgs.push(m);',
+  'const requestSceneRepaint = () => { evidence.repaints += 1; };',
+  'const hbondRepRef = { current: null };',
+  'const hbondLiveRef = { current: { at: 0, gap: 0, sig: "", msg: "" } };',
+  sliceDecl(VIEW, 'HBOND_READ_OPTS'),
+  sliceDecl(VIEW, 'HBOND_LINE_COLOR'),
+  sliceDecl(VIEW, 'HBOND_LABEL_COLOR'),
+  sliceDecl(VIEW, 'HBOND_LIVE_MIN_MS'),
+  sliceDecl(VIEW, 'HBOND_LIVE_MAX_MS'),
+  sliceDecl(VIEW, 'HBOND_LIVE_SLOW_MS'),
+  sliceFn(VIEW, 'hbondSignatureOf'),
+  sliceFn(VIEW, 'refreshHydrogenBonds'),
+  'return { evidence, hbondRepRef, hbondLiveRef, hbondSignatureOf, refreshHydrogenBonds,',
+  '  setScan: (fn) => { scanOf = fn; } };',
+].join('\n'))(NGL, findHydrogenBonds, hydrogenBondNoteOf, HBOND_LABEL_MAX);
+const stLive = await parsePdb(hbondPdb('O1', 'LIG', true));
+const liveParams = [];
+const fakeElem = { setParameters: (p) => liveParams.push(p) };
+eq(LIVE.refreshHydrogenBonds(stLive), false, '💧 éteint : rien à suivre');
+eq(LIVE.evidence.scans, 0, '…et pas même un balayage (un bouton éteint ne coûte rien)');
+LIVE.hbondRepRef.current = { comp: { structure: stLive }, elem: fakeElem };
+eq(LIVE.refreshHydrogenBonds({ structure: stLive }), false, 'une AUTRE molécule qui bouge ne touche pas le réseau de 💧');
+eq(LIVE.evidence.scans, 0, '…et elle ne déclenche aucun balayage (le réseau n’appartient qu’à une)');
+const liveComp = { structure: stLive };
+LIVE.hbondRepRef.current = { comp: liveComp, elem: fakeElem };
+eq(LIVE.refreshHydrogenBonds(liveComp), true, 'un réseau qui apparaît est écrit dans NGL');
+eq(LIVE.evidence.scans, 1, '…après UN seul balayage');
+eq(liveParams.length, 1, '…et UNE seule reconstruction de la représentation');
+eq(liveParams[0].atomPair, [[0, 3]], '…avec le couple donneur → accepteur du pont trouvé');
+eq(liveParams[0].labelVisible, true, '…et l’étiquette (peu de ponts, comme au clic)');
+ok(LIVE.evidence.msgs.length === 1 && LIVE.evidence.msgs[0].includes('1 H-bond')
+  && LIVE.evidence.msgs[0].includes('followed while the molecule moves'),
+  `…la phrase du bouton compte les ponts et dit qu’ils sont suivis (« ${LIVE.evidence.msgs[0]} »)`);
+eq(LIVE.evidence.repaints, 1, '…et la scène est repeinte');
+// LE RYTHME, PUIS L'EMPREINTE — deux images identiques ne paient rien.
+eq(LIVE.refreshHydrogenBonds(liveComp), false, 'deux appels rapprochés : la seconde image passe son tour');
+eq(LIVE.evidence.scans, 1, '…sans même un balayage');
+LIVE.hbondLiveRef.current.at = 0;                    // l’intervalle est écoulé
+eq(LIVE.refreshHydrogenBonds(liveComp), false, '…et une fois l’intervalle écoulé, un réseau identique n’écrit rien');
+eq(LIVE.evidence.scans, 2, '…le balayage a bien eu lieu : c’est l’EMPREINTE qui a arrêté la suite');
+eq(liveParams.length, 1, '…aucune reconstruction NGL pour un réseau qui n’a pas bougé');
+eq(LIVE.evidence.msgs.length, 1, '…et aucune phrase réécrite (donc aucun rendu React)');
+eq(LIVE.hbondLiveRef.current.gap, 200, 'un balayage rapide laisse l’intervalle au minimum (200 ms)');
+// LE PONT CASSE : l’accepteur s’éloigne à 4,5 Å — ses lignes doivent partir.
+stLive.atomStore.x[3] = 4.5;
+LIVE.hbondLiveRef.current.at = 0;
+eq(LIVE.refreshHydrogenBonds(liveComp), true, 'un pont qui casse est retiré du dessin');
+eq(liveParams.length, 2, '…par la MÊME représentation (jamais une seconde)');
+eq(liveParams[1].atomPair, [], '…avec la liste VIDE : les lignes du pont disparu s’en vont');
+eq(liveParams[1].labelVisible, false, '…et plus aucune étiquette');
+ok(LIVE.evidence.msgs[1].includes('no H-bond found'),
+  `…et la phrase le dit au lieu de garder le compte d’avant (« ${LIVE.evidence.msgs[1]} »)`);
+// LE REPLI — un balayage qui COÛTE espace le suivant, jusqu’au plafond, et un
+// balayage redevenu bon le ramène au minimum. (Le seul balayage lent de cette suite.)
+const slowScan = (c, o) => {
+  const t = Date.now();
+  while (Date.now() - t < 12) { /* un balayage qui coûte, comme une grosse scène */ }
+  return findHydrogenBonds(c, o);
+};
+LIVE.setScan(slowScan);
+LIVE.hbondLiveRef.current.at = 0;
+LIVE.refreshHydrogenBonds(liveComp);
+eq(LIVE.hbondLiveRef.current.gap, 400, 'un balayage de plus de 8 ms fait DOUBLER l’intervalle (200 → 400 ms)');
+LIVE.hbondLiveRef.current.at = 0;
+LIVE.refreshHydrogenBonds(liveComp);
+eq(LIVE.hbondLiveRef.current.gap, 800, '…puis 800 ms');
+LIVE.hbondLiveRef.current.at = 0;
+LIVE.refreshHydrogenBonds(liveComp);
+eq(LIVE.hbondLiveRef.current.gap, 1000, '…et le plafond d’une seconde tient, jamais au-delà');
+LIVE.setScan(findHydrogenBonds);
+LIVE.hbondLiveRef.current.at = 0;
+LIVE.refreshHydrogenBonds(liveComp);
+eq(LIVE.hbondLiveRef.current.gap, 200, '…un balayage redevenu bon ramène l’intervalle au minimum');
+/* L'EMPREINTE, PRISE À PART : elle ne dépend que du MODE et des couples (dans
+   l'ordre où le module les trie — un ordre différent sous-entend une géométrie
+   différente, donc une reconstruction légitime). */
+eq(LIVE.hbondSignatureOf({ mode: 'explicit', bonds: [{ donor: 0, acceptor: 3 }] }),
+  LIVE.hbondSignatureOf({ mode: 'explicit', bonds: [{ donor: 0, acceptor: 3 }] }),
+  'deux fois le même réseau : la même empreinte');
+ok(LIVE.hbondSignatureOf({ mode: 'explicit', bonds: [{ donor: 0, acceptor: 3 }] })
+  !== LIVE.hbondSignatureOf({ mode: 'explicit', bonds: [{ donor: 0, acceptor: 4 }] }),
+  'un couple différent : une empreinte différente');
+ok(LIVE.hbondSignatureOf({ mode: 'explicit', bonds: [{ donor: 0, acceptor: 3 }] })
+  !== LIVE.hbondSignatureOf({ mode: 'heavy', bonds: [{ donor: 0, acceptor: 3 }] }),
+  '…et un autre MODE (la règle appliquée a changé) aussi');
+ok(LIVE.hbondSignatureOf({ mode: 'explicit', bonds: [] }) !== LIVE.hbondSignatureOf({ mode: 'explicit', bonds: [{ donor: 0, acceptor: 3 }] }),
+  'le réseau vide a SON empreinte : se vider est un changement comme un autre');
+ok(LIVE.hbondSignatureOf({ mode: 'explicit', bonds: [] }).includes(':0:'), '…et elle dit le compte');
+ok(LIVE.hbondSignatureOf(null).startsWith('?'), 'une lecture absente ne jette pas (empreinte de prudence)');
+
 
 console.log(`_viewer_hbonds_test.mjs — ${passed} assertions OK`);

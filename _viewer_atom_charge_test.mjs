@@ -176,6 +176,12 @@ const APP = new Function('NGL', [
   sliceObject(VIEW, 'ESP_ELECTRONEGATIVITY'),
   sliceObject(VIEW, 'ESP_ION_CHARGES'),
   sliceFn(VIEW, 'espHeteroChargeOf'),
+  // 🧪 Le magasin du MODÈLE DE CHARGES DU CHAMP (voir espChargeModelStore dans le
+  // viewer) : il est ici laissé VIDE — le repli est alors la table de NGL, qui est
+  // exactement ce que cette suite mesure (la rampe peint la charge de la table). La
+  // suite _viewer_hbonds_test.mjs, elle, y dépose le modèle et mesure la table du champ.
+  sliceDecl(VIEW, 'espChargeModelStore'),
+  sliceFn(VIEW, 'espProteinChargesOf'),
   sliceDecl(VIEW, 'espChargeCache'),
   sliceFn(VIEW, 'espChargesFor'),
   sliceObject(VIEW, 'CHARGE_COLORS'),

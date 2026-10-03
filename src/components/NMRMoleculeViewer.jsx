@@ -66,6 +66,9 @@ import { applyDisulfideDisplay } from '../utils/disulfideBonds';
 // représentation `distance` de NGL, comme 📏 Measure dessine la sienne. À la
 // différence des trois règles ci-dessus, ce bouton ne retire rien du graphe de
 // liaisons : ni le fichier PDB, ni le graphe, ni un style ne sont touchés.
+// …ET LE RÉSEAU EST RELU PENDANT UN MOUVEMENT (voir refreshHydrogenBonds) : un pont
+// qui se forme apparaît pendant la dynamique, un pont qui casse s'en va — les lignes
+// ne racontent jamais une conformation qui n'est plus à l'écran.
 import {
   findHydrogenBonds, hydrogenBondNoteOf, HBOND_LABEL_MAX,
 } from '../utils/hydrogenBonds';
@@ -952,7 +955,11 @@ const registerChargeScheme = (NGL) => {
    It reads the very table the ⚡ ESP of PART 4.0 charges its atoms with
    (`espChargesFor`, cached per structure) — the FILE's own partial charge when it
    carries one (PQR · charged MOL2 / SDF, which NGL keeps in `atom.partialCharge`),
-   NGL's CHARMM-derived table for a protein, the formal charge of a single-atom
+   the PAGE's OWN charge model for a protein (`partialChargesOf` over the graph of
+   the structure, plus the formal groups the graph shows — see
+   `espProteinChargesOf`: it is what finally gives an explicit protein hydrogen and
+   the C-terminal `OXT` a charge, and what makes this table the panel's own
+   reading), the formal charge of a single-atom
    residue (Na⁺ · Cl⁻ · Mg²⁺ …), and an electronegativity estimate for any other
    hetero atom (shifted so its residue sums to zero). The two colourings can
    therefore never disagree about what an atom carries — and, as with the ⚡ ESP,
@@ -4771,10 +4778,21 @@ const registerGradientScheme = (NGL) => {
    ramp and the same ± limits — but gives EVERY atom a charge:
 
      1. the FILE's own partial charge when it carries one (PQR · charged MOL2 /
-        SDF — NGL keeps it in `atom.partialCharge`), and NGL's CHARMM-derived
-        table for a protein, read from NGL's OWN instance so the protein map of
-        the viewer does not move by a thousandth;
-     2. an ESTIMATE for everything else, read from the ELEMENT alone — a ligand
+        SDF — NGL keeps it in `atom.partialCharge`) : le fichier gagne toujours ;
+     2. pour une PROTÉINE, LE MODÈLE DE CHARGES DE LA PAGE — `partialChargesOf`
+        (utils/forceFieldKcal), la fonction même qui donne ses charges au champ
+        et dont le panneau ⚙ lit sa charge nette, appliquée au GRAPHE LU SUR LA
+        STRUCTURE (voir `espProteinChargesOf`). C'est le correctif de cette
+        session : la table de NGL ne décrit que les atomes LOURDS du squelette
+        (CHARMM), donc un HYDROGÈNE protéique explicite et l'`OXT` du terminus C
+        y valent 0 — la surface était blanche sur les atomes qui portent
+        justement les pôles amide et carboxylate, et le survol annonçait
+        « q = 0.000 e » pour un atome qui porte +0.2 e. Le modèle de la page
+        connaît tout atome du graphe ET les groupes formels que le graphe montre
+        (un N-terminal protoné est un ammonium, un C-terminal déprotoné un
+        carboxylate) : la moitié protéique de la table est donc désormais la
+        lecture du panneau, au chiffre près ;
+     3. an ESTIMATE for everything else, read from the ELEMENT alone — a ligand
         usually ships neither charges nor bonds (no CONECT in a PDB), so nothing
         else can be read. The estimate is the electronegativity difference to the
         carbon / hydrogen frame of an organic molecule, q = 0.35 × (2.50 − χ), the
@@ -4782,13 +4800,18 @@ const registerGradientScheme = (NGL) => {
         (an alcohol oxygen −0.28, an amide hydrogen +0.26, a carbonyl oxygen
         −0.55). The charges of ONE residue are then shifted so the residue sums to
         zero — a ligand is not an ion;
-     3. and for a SINGLE-ATOM residue a formal charge is the honest answer (Na⁺
+     4. and for a SINGLE-ATOM residue a formal charge is the honest answer (Na⁺
         +1, Cl⁻ −1, Mg²⁺ +2 …), which is what makes the salt of a membrane system
         show its real pole.
 
    The estimate is APPROXIMATE — as approximate as NGL's own, which says so in its
    own source — but it is not zero: a red pole sits on every oxygen, a blue one on
-   every sodium. A file that carries charges is never estimated. */
+   every sodium. A file that carries charges is never estimated.
+   ⚠ LE MODÈLE DE LA PAGE EST DÉPOSÉ, PAS DEVINÉ — `espChargesFor` vit au niveau du
+   MODULE (les schémas NGL le lisent), donc il ne voit pas l'état React du ⚙ : le
+   viewer écrit le modèle dans `espChargeModelStore` (voir plus bas), exactement
+   comme les palettes de la roue passent par `chargeColorStore`. Sans ce dépôt,
+   la table retombe sur celle de NGL — le comportement d'avant, jamais un vide. */
 const ESP_MAX_RADIUS = 12;            // Å — the cutoff NGL's own scheme uses
 const ESP_KCAL = 332;                 // e²/(Å·kcal/mol) — NGL's own conversion factor
 const ESP_NEUTRAL_REFERENCE = 2.50;   // the carbon / hydrogen frame of an organic molecule
@@ -4819,21 +4842,72 @@ const espHeteroChargeOf = (element) => {
   if (!Number.isFinite(x)) return 0;
   return Math.max(-1, Math.min(1, ESP_CHARGE_PER_UNIT * (ESP_NEUTRAL_REFERENCE - x)));
 };
-// The charges of ONE structure — the file's / the protein's (NGL) + the estimate.
-// Cached per structure: the walk is O(atoms) and a rebuild must never repeat it.
+/* 🧪 LE MODÈLE DE CHARGES DU CHAMP, VU DEPUIS LES SCHÉMAS — `espChargesFor` vit au
+   niveau du MODULE (les schémas NGL, enregistrés une fois pour toutes, le lisent),
+   donc il ne voit pas l'état React du panneau ⚙ — et pourtant la table qu'il rend
+   doit être CELLE DU CHAMP, sinon la surface, la rampe « Atom charge » et le survol
+   diraient autre chose que la charge nette du panneau. D'où ce magasin, le jumeau de
+   `chargeColorStore` : le viewer le remplit pendant ses rendus (voir l'effet qui le
+   remplit, à côté des autres magasins de palettes) et les schémas le lisent tel quel.
+     · `geometryOf`      — le lecteur du GRAPHE de la structure (`geometryOfStructure`,
+       le même que les quatre gestes du champ : éléments, liaisons, coordonnées) ;
+     · `partialChargesOf` — la lecture PURE du module (utils/forceFieldKcal) ;
+     · `ph`              — le pH de la case ⚙ (`null` = « la chimie que le graphe
+       montre », le défaut du module) : deux tables ne peuvent pas être peintes sous
+       deux pH différents.
+   ⚠ Modèle absent (null) : la table de NGL reste seule juge — le comportement d'avant
+   ce correctif, jamais un vide. C'est aussi ce qui rend la fonction testable telle
+   quelle : la suite y dépose le VRAI lecteur et le VRAI module. */
+const espChargeModelStore = { geometryOf: null, partialChargesOf: null, ph: null };
+/** 🧪 LA TABLE DE CHARGES D'UNE PROTÉINE, PAR LE MODÈLE DE LA PAGE — le graphe de la
+ *  structure (éléments + liaisons, lus par le viewer) donné à `partialChargesOf`, le
+ *  même appel que le panneau ⚙ : PEOE sur les atomes, plus la charge des groupes
+ *  formels que le graphe montre (ammonium d'un N-terminal protoné, carboxylate d'un
+ *  C-terminal déprotoné, guanidinium, phosphate…). C'est LUI qui donne enfin une
+ *  charge aux hydrogènes protéiques et à l'`OXT`, que la table de NGL laissait à 0.
+ *  Rend `null` — jamais une table inventée — quand le modèle n'est pas déposé, quand
+ *  la structure n'a pas de graphe lisible (un fichier sans CONECT : NGL reste alors
+ *  seul juge, exactement comme avant), ou quand le module refuse de charger des
+ *  atomes isolés (`method: 'zero'`).
+ *  ⚠ CE QUE ÇA COÛTE, MESURÉ : PEOE sur un graphe linéaire synthétique — **27 ms** à
+ *  2 000 atomes, **119 ms** à 20 000, **193 ms** à 40 000. C'est UNE fois par structure
+ *  et par modèle (l'entrée est mise en cache, voir espChargeCache), au premier lecteur
+ *  — le survol, la rampe « Atom charge » ou ⚡ ESP —, et c'est le même appel que le
+ *  panneau ⚙ fait déjà sur la molécule à l'écran. */
+const espProteinChargesOf = (structure, model) => {
+  const m = model || null;
+  if (!m || typeof m.partialChargesOf !== 'function' || typeof m.geometryOf !== 'function') return null;
+  const geom = m.geometryOf(structure);
+  if (!geom || !geom.bonds || !geom.bonds.length) return null;
+  let read = null;
+  try { read = m.partialChargesOf({ elements: geom.elements, bonds: geom.bonds, ph: m.ph }); } catch { read = null; }
+  if (!read || !read.charges || read.method === 'zero') return null;
+  return read.charges;
+};
+// The charges of ONE structure — the file's / the field's (a protein) / NGL's + the
+// estimate. Cached per structure AND per model: the walk is O(atoms) and a rebuild
+// must never repeat it, but a pH change (or the model arriving a render late) MUST
+// recompute it — hence `ph` / `modelled` in the entry, which are what the hit checks.
 const espChargeCache = new WeakMap();
 const espChargesFor = (structure) => {
+  const model = espChargeModelStore;
+  const ph = model.ph == null ? null : Number(model.ph);
+  const modelled = typeof model.partialChargesOf === 'function' && typeof model.geometryOf === 'function';
   const hit = espChargeCache.get(structure);
-  if (hit) return hit;
+  if (hit && hit.ph === ph && hit.modelled === modelled) return hit;
   const NG = typeof window !== 'undefined' ? window.NGL : null;
   if (!NG || !structure || typeof structure.eachAtom !== 'function') return null;
-  // NGL's OWN instance first: its `charges` array already holds the file's partial
-  // charges AND its CHARMM values for every protein atom, so the protein map of the
-  // viewer is kept to the digit (its dummy amide hydrogens included).
+  // NGL's OWN instance first: its `charges` array already holds the FILE's partial
+  // charges for the atoms that carry one, and its dummy amide hydrogens (a protein
+  // nitrogen that has no explicit H gets a placed one) — that map is kept as it is.
   let base = null;
   try { base = NG.ColormakerRegistry.getScheme({ scheme: 'electrostatic', structure }); } catch { base = null; }
   if (!base || !base.charges) return null;
   const charges = new Float32Array(base.charges);
+  /* 🧪 LA PROTÉINE PASSE AU MODÈLE DE LA PAGE (voir espProteinChargesOf) : la table
+     de NGL ne décrit que les atomes lourds du squelette, celle-ci décrit tout atome
+     du graphe — H explicites et OXT compris. */
+  const field = modelled ? espProteinChargesOf(structure, model) : null;
   // …then the atoms NGL left at zero that no file charge describes: the hetero
   // atoms. Two passes, because the estimate of ONE residue is shifted so that the
   // residue sums to zero (an ion is excepted — it keeps its formal charge).
@@ -4843,7 +4917,11 @@ const espChargesFor = (structure) => {
   structure.eachAtom((a) => {
     const pc = a.partialCharge;
     if (pc !== null && pc !== undefined) return;               // the file's own charge
-    if (a.isProtein && a.isProtein()) return;                  // NGL's CHARMM table
+    if (a.isProtein && a.isProtein()) {
+      const q = field ? field[a.index] : null;                 // le modèle de la page…
+      if (Number.isFinite(q)) charges[a.index] = q;            // …sinon la table de NGL
+      return;
+    }
     const name = String(a.resname || '').trim().toUpperCase();
     const heavy = String(a.element || '').toUpperCase() !== 'H';
     const formal = heavy ? ESP_ION_CHARGES[name] : undefined;   // Na⁺ · Cl⁻ …
@@ -4856,7 +4934,7 @@ const espChargesFor = (structure) => {
   own.forEach(([index, resno, q]) => {
     charges[index] = resno === null ? q : q - (sum.get(resno) || 0) / Math.max(1, count.get(resno) || 1);
   });
-  const out = { charges, base, hetero: own.length };
+  const out = { charges, base, hetero: own.length, ph, modelled };
   espChargeCache.set(structure, out);
   return out;
 };
@@ -7892,6 +7970,13 @@ const measureRepsRef = useRef([]);      // [{ comp, elem }] NGL 'distance' repre
 const [hbondsShown, setHbondsShown] = useState(false);
 const [hbondMsg, setHbondMsg] = useState('');
 const hbondRepRef = useRef(null);   // { comp, elem } — la représentation 'distance' vivante
+/* ⏱ LE RYTHME DU RÉSEAU DE 💧 — voir refreshHydrogenBonds : quand le dernier
+   balayage a eu lieu, l'intervalle à respecter, l'empreinte du réseau qu'il a trouvé
+   et la phrase déjà écrite. Un REF (jamais un état React) : la boucle d'images d'un
+   ▶ MD lit où elle en est sans attendre un rendu, et l'écrire ne re-rend rien.
+   `gap: 0` veut dire « l'intervalle minimum » (la constante est déclarée avec le
+   bouton, plus bas dans ce fichier : un `useRef` ne peut pas la lire ici). */
+const hbondLiveRef = useRef({ at: 0, gap: 0, sig: '', msg: '' });
 
 // ---- ✏️ Set a torsion — or reach a target distance — by the numbers ---------
 // The gesture the pointer cannot make precisely: pick FOUR atoms in the 3D view
@@ -9831,6 +9916,21 @@ useEffect(() => {
   try { localStorage.setItem('labViewerChargeColors', JSON.stringify(chargeColors)); } catch { /* ignore */ }
   Object.keys(CHARGE_COLORS).forEach((k) => { if (Number.isFinite(chargeColors[k])) chargeColorStore[k] = chargeColors[k]; });
 }, [chargeColors]);
+/* 🧪 LE MODÈLE DE CHARGES DU CHAMP DÉPOSÉ DANS LE MAGASIN DU MODULE (voir
+   espChargeModelStore, à côté de espChargesFor) : les schémas NGL lisent la table des
+   charges AU NIVEAU DU MODULE, donc c'est ici — et nulle part ailleurs — que le pH de
+   la case ⚙ rejoint `partialChargesOf` et le lecteur du graphe. Le pH est une
+   DÉPENDANCE : le changer refait la table au lieu de resservir celle du pH précédent
+   (l'entrée de cache la porte, voir espChargesFor), et le survol comme la rampe
+   « Atom charge » disent donc la chimie que le panneau affiche. Rien d'autre n'est
+   alimenté : le lecteur du graphe et le module des charges sont des constantes
+   (geometryOfStructure, l'import de utils/forceFieldKcal). */
+useEffect(() => {
+  espChargeModelStore.geometryOf = geometryOfStructure;
+  espChargeModelStore.partialChargesOf = partialChargesOf;
+  espChargeModelStore.ph = calcPhOf();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [calcPhText]);
 useEffect(() => {
   try { localStorage.setItem('labViewerLipidTypeColors', JSON.stringify(lipidTypeColors)); } catch { /* ignore */ }
   Object.keys(LIPID_CLASS_COLORS).forEach((k) => { if (Number.isFinite(lipidTypeColors[k])) lipidClassColorStore[k] = lipidTypeColors[k]; });
@@ -10898,6 +10998,7 @@ const writeStructurePositions = (comp, idxs, flat) => {
     if (typeof comp.updateRepresentations === 'function') comp.updateRepresentations({ position: true });
   } catch { return false; }
   refreshScenePlates();          // les plaques suivent les coordonnées, comme pour une image
+  refreshHydrogenBonds(comp);    // …et le réseau de 💧 se relit LÀ OÙ les coordonnées arrivent
   requestSceneRepaint();
   return true;
 };
@@ -15146,13 +15247,28 @@ const espToggle = (key) => {
    seules disent alors le réseau.
 
    `clearHydrogenBonds` suit `clearMeasurements` partout : une ligne qui survit à
-   la molécule qu'elle relie serait un mensonge. */
+   la molécule qu'elle relie serait un mensonge.
+
+   …ET LE RÉSEAU SUIT LA GÉOMÉTRIE (la demande de cette session : « the H-bonds
+   should follow the geometry during MD »). Un réseau calculé UNE FOIS au clic est
+   faux dès la première image d'un ▶ MD : les lignes, elles, suivent leurs deux
+   atomes, mais le CHOIX des couples restait gelé — un pont qui se forme
+   n'apparaissait jamais, un pont qui casse restait dessiné. `refreshHydrogenBonds`
+   (juste après le geste du bouton) relit donc le réseau là où les coordonnées
+   arrivent, à un rythme réglé par le coût de la scène. */
 const HBOND_READ_OPTS = { excludeWater: true };   // le solvant noierait le reste (la note le dit)
 const HBOND_LINE_COLOR = 0xfbbf24;   // ambre : la ligne D···A de chaque pont
 const HBOND_LABEL_COLOR = 0xfde68a;  // …et le chiffre qui va avec (tant qu'il y en a peu)
 const clearHydrogenBonds = () => {
   const rep = hbondRepRef.current;
   hbondRepRef.current = null;
+  /* ⏱ LE RYTHME REPART À ZÉRO (voir refreshHydrogenBonds) : l'intervalle, l'instant
+     du dernier balayage, l'empreinte du réseau et la phrase écrite. Rallumer 💧
+     balaie donc TOUT DE SUITE, et la première image d'un nouveau geste n'hérite pas
+     de l'intervalle lent de la scène précédente. Aucun écouteur à retirer : le
+     réseau n'en a jamais posé (il se fait relire par le viewer, voir les trois
+     appels). */
+  hbondLiveRef.current = { at: 0, gap: 0, sig: '', msg: '' };
   if (rep) {
     try { if (rep.comp && rep.elem) rep.comp.removeRepresentation(rep.elem); } catch { /* component may already be disposed */ }
     try { if (rep.elem && typeof rep.elem.dispose === 'function') rep.elem.dispose(); } catch { /* idempotent */ }
@@ -15198,6 +15314,13 @@ const toggleHydrogenBonds = () => {
     });
     if (!elem) throw new Error('NGL refused the representation');
     hbondRepRef.current = { comp, elem };
+    /* ⏱ LE RYTHME PART DE CE QUE LE CLIC VIENT DE LIRE (voir refreshHydrogenBonds) :
+       l'empreinte du réseau que la représentation porte déjà — une première image
+       identique ne reconstruira donc rien — et l'instant de ce balayage, pour que
+       l'intervalle soit respecté dès le premier mouvement. */
+    hbondLiveRef.current = {
+      at: Date.now(), gap: HBOND_LIVE_MIN_MS, sig: hbondSignatureOf(found), msg: '',
+    };
     setHbondsShown(true);
     try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch { /* nothing to redraw */ }
     setHbondMsg(`💧 ✓ ${hydrogenBondNoteOf(name, found)} — click 💧 again to hide them.`);
@@ -15206,6 +15329,108 @@ const toggleHydrogenBonds = () => {
     setHbondsShown(false);
     setHbondMsg('⚠ H-bonds — the overlay could not be drawn on this molecule.');
   }
+};
+
+/* ── ⏱ LE RÉSEAU SUIT LA GÉOMÉTRIE PENDANT UN MOUVEMENT ───────────────────────
+   LA DEMANDE DE CETTE SESSION, MOT POUR MOT : « the H-bonds should follow the
+   geometry during MD. » Le geste du bouton lit le réseau UNE fois ; les lignes qu'il
+   dessine suivent bien leurs deux atomes (c'est NGL qui les place à chaque rendu),
+   mais le CHOIX des couples, lui, était gelé : un pont qui se forme pendant la
+   dynamique n'apparaissait jamais, un pont qui casse restait dessiné à sa place — la
+   vue racontait une conformation qui n'était plus à l'écran.
+
+   QUI L'APPELLE — les écritures de coordonnées du viewer, et elles seules : le
+   `refreshScenePlates()` de `writeStructurePositions` (chaque image d'un ▶ MD, d'un
+   ⚒ Minimise, d'un 🧬 calcul de structure, d'un ✏️ Set torsion, d'un glisser
+   d'atome), ceux de `applyPartMove` / `restorePartMoves` (les molécules déplacées à
+   la main) et l'écouteur du signal `refreshed` de la structure (une image de
+   TRAJECTOIRE, que NGL écrit sans passer par nous). Une seule règle : le réseau est
+   relu LÀ OÙ les coordonnées arrivent — jamais par une horloge, jamais par un état
+   React.
+
+   ⚠ CE QUE ÇA COÛTE, ET POURQUOI LE RYTHME EST RÉGLÉ ICI : `findHydrogenBonds`
+   parcourt la structure entière (grille de 3,5 Å, mais un objet par atome) — quelques
+   millisecondes sur une protéine, beaucoup plus sur un système solvaté. Une boucle
+   d'images ne peut pas payer ça à chaque image :
+     · HBOND_LIVE_MIN_MS entre deux balayages (≈5 Hz), l'intervalle par défaut ;
+     · un balayage qui coûte plus de HBOND_LIVE_SLOW_MS fait DOUBLER l'intervalle
+       (jusqu'à HBOND_LIVE_MAX_MS) — une grosse scène se rafraîchit moins souvent,
+       mais elle se rafraîchit ;
+     · un balayage redevenu bon repose l'intervalle au minimum, et éteindre 💧 remet
+       tout à zéro (`clearHydrogenBonds`) : rallumer repart d'un balayage neuf ;
+     · l'EMPREINTE du réseau est comparée AVANT toute écriture — une image qui ne
+       change pas un seul pont ne coûte ni reconstruction NGL ni rendu React.
+
+   ⚠ ON NE REFAIT QUE LES COUPLES, ET RIEN D'AUTRE : `atomPair` est déclaré
+   `{ type: 'hidden', rebuild: true }` dans distance-representation.ts, donc
+   `elem.setParameters({ atomPair })` fait reconstruire le bond store et les buffers
+   EN PLACE (la même UNE représentation pour tout le réseau, jamais un objet par
+   pont) — et l'étiquetage suit la même règle qu'au clic (HBOND_LABEL_MAX).
+   ⚠ `comp` NOMME LA MOLÉCULE QUI VIENT DE BOUGER : le réseau appartient à UNE seule
+   (celle du bouton, `hbondRepRef`), donc une autre molécule qui bouge — la boîte de
+   solvant d'un ▶ MD, une molécule extra — ne le touche pas. */
+const HBOND_LIVE_MIN_MS = 200;      // ≈5 balayages par seconde : le rythme de croisière
+const HBOND_LIVE_MAX_MS = 1000;     // …et son plafond, pour une scène qui coûte cher
+const HBOND_LIVE_SLOW_MS = 8;       // au-delà de ce coût, l'intervalle double
+/** L'EMPREINTE D'UN RÉSEAU — son mode, son nombre de ponts et une somme roulante
+ *  (FNV-1a, 32 bits) des couples donneur → accepteur. PURE, donc exécutable par une
+ *  suite : deux réseaux qui ne portent pas les mêmes ponts ne peuvent pas avoir la
+ *  même empreinte, et la comparer coûte O(ponts) sans rien allouer. Le réseau VIDE a
+ *  donc son empreinte (`…:0:…`) : un réseau qui se vide est un changement comme un
+ *  autre, et les lignes d'un pont disparu s'en vont. */
+const hbondSignatureOf = (found) => {
+  const bonds = (found && found.bonds) || [];
+  let h = 2166136261;
+  for (let k = 0; k < bonds.length; k += 1) {
+    const b = bonds[k] || {};
+    h = Math.imul(h ^ (Number(b.donor) + 1), 16777619);
+    h = Math.imul(h ^ (Number(b.acceptor) + 1), 16777619);
+  }
+  return `${(found && found.mode) || '?'}:${bonds.length}:${(h >>> 0).toString(36)}`;
+};
+/** RELIRE LE RÉSEAU APRÈS UNE ÉCRITURE DE COORDONNÉES — voir le pourquoi ci-dessus.
+ *  Le rythme (intervalle + empreinte) vit dans `hbondLiveRef`, remis à zéro par
+ *  `clearHydrogenBonds` : ce n'est donc PAS un état React, et deux images peuvent
+ *  s'enchaîner sans que rien ne se re-rende tant que le réseau ne change pas.
+ *  @returns {boolean} true quand NGL a réellement reçu une nouvelle liste de ponts. */
+const refreshHydrogenBonds = (comp) => {
+  const rep = hbondRepRef.current;
+  if (!rep || !rep.elem) return false;                       // 💧 est éteint : rien à suivre
+  if (!comp || rep.comp !== comp) return false;              // c'est une AUTRE molécule
+  if (!comp.structure) return false;
+  const live = hbondLiveRef.current;
+  const gap = live.gap > 0 ? live.gap : HBOND_LIVE_MIN_MS;
+  const now = Date.now();
+  if (live.at && now - live.at < gap) return false;           // trop tôt : cette image passe
+  live.at = now;
+  const t0 = Date.now();
+  let found = null;
+  try { found = findHydrogenBonds(comp, HBOND_READ_OPTS); } catch { return false; }
+  // Le coût du balayage règle le rythme du suivant (voir le pourquoi ci-dessus).
+  live.gap = (Date.now() - t0) > HBOND_LIVE_SLOW_MS
+    ? Math.min(HBOND_LIVE_MAX_MS, gap * 2)
+    : HBOND_LIVE_MIN_MS;
+  if (!found || found.mode === 'none') return false;
+  const sig = hbondSignatureOf(found);
+  if (sig === live.sig) return false;                         // rien n'a bougé : ni NGL, ni React
+  live.sig = sig;
+  try {
+    rep.elem.setParameters({
+      atomPair: found.bonds.map((b) => [b.donor, b.acceptor]),
+      labelVisible: found.bonds.length > 0 && found.bonds.length <= HBOND_LABEL_MAX,
+    });
+  } catch { return false; }
+  /* LA PHRASE SUIT LE RÉSEAU, ELLE AUSSI — le compte et la règle peuvent changer en
+     direct (« 12 H-bonds … » puis « 9 … »). On ne la réécrit que si le TEXTE change :
+     sur un réseau qui se réorganise sans changer de compte ni de règle, aucun rendu
+     React n'est demandé — la seule dépense est la reconstruction NGL, ci-dessus. */
+  const name = molNameOf(selectedMolKey) || 'the structure on screen';
+  const msg = found.bonds.length
+    ? `💧 ✓ ${hydrogenBondNoteOf(name, found)} — followed while the molecule moves.`
+    : `💧 ${hydrogenBondNoteOf(name, found)}`;
+  if (msg !== live.msg) { live.msg = msg; setHbondMsg(msg); }
+  requestSceneRepaint();
+  return true;
 };
 
 // Load ONE chain of a multi-chain PDB as its own (hidden) NGL component and add
@@ -17325,6 +17550,7 @@ const applyPartMove = (comp, rec) => {
     if (typeof comp.updateRepresentations === 'function') comp.updateRepresentations({ position: true });
   } catch { return false; }
   refreshScenePlates();          // les plaques suivent les coordonnées, comme pour une image
+  refreshHydrogenBonds(comp);    // …et le réseau de 💧 suit le geste qui vient de déplacer la molécule
   requestSceneRepaint();
   return true;
 };
@@ -17386,6 +17612,7 @@ const restorePartMoves = (comp) => {
   if (n) {
     try { comp.updateRepresentations({ position: true }); } catch { /* best-effort */ }
     refreshScenePlates();
+    refreshHydrogenBonds(comp);    // …et le réseau de 💧 : un ↺ a redonné la géométrie de départ
     requestSceneRepaint();
   }
   return n;
@@ -17449,13 +17676,18 @@ const applyPartPoses = (poses) => {
    une molécule posée à côté de la protéine doit y RESTER quand la trajectoire avance,
    donc le rejeu doit précéder les plaques (qui lisent les coordonnées). Les deux
    passent par le MÊME signal, et notre écriture à nous ne redispatch rien — donc aucun
-   va-et-vient possible entre les deux. */
+   va-et-vient possible entre les deux.
+   ⚠ ET LE RÉSEAU DE 💧 EST RELU ICI AUSSI (voir refreshHydrogenBonds) : une image de
+   TRAJECTOIRE est écrite par NGL (`updatePosition` → `refreshPosition`), donc elle ne
+   passe JAMAIS par `writeStructurePositions` — sans cet appel, les lignes de ponts
+   resteraient celles de la première image lue. Les ponts viennent en DERNIER parce
+   qu'ils lisent les mêmes coordonnées que les plaques. */
 const hookStructurePlates = (comp) => {
   try {
     const sig = comp && comp.structure && comp.structure.signals && comp.structure.signals.refreshed;
     if (!sig || typeof sig.add !== 'function' || comp.__platesHook) return;
     comp.__platesHook = true;
-    sig.add(() => { reapplyPartMoves(comp); refreshScenePlates(); });
+    sig.add(() => { reapplyPartMoves(comp); refreshScenePlates(); refreshHydrogenBonds(comp); });
   } catch { /* best-effort: une structure sans signal ne casse rien */ }
 };
 
