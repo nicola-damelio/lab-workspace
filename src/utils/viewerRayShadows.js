@@ -317,10 +317,16 @@ export const ndcZOf = (clip, x, y, z) => {
   if (!(Math.abs(cw) > 1e-9)) return 2;
   return (clip[2] * x + clip[6] * y + clip[10] * z + clip[14]) / cw;
 };
-const writePixel = (out, idx, z, x, y, z2, nx, ny, nz2, scale, needN) => {
+/* ⚠ CHAQUE FORME ÉCRIT AUSSI SON NOM. `id` est l'identité de la forme qui gagne
+   le pixel — une bille, une capsule, un triangle — et c'est elle qui permet au
+   test d'ombrage de refuser qu'un receveur soit son PROPRE occulteur (voir
+   shadowMaskOf). Deux passes qui rastérisent les mêmes tableaux dans le même
+   ordre écrivent donc les mêmes noms : c'est ce qui les rend comparables. */
+const writePixel = (out, idx, z, x, y, z2, nx, ny, nz2, scale, needN, id = 0) => {
   if (!(z < out.depth[idx])) return false;
   out.depth[idx] = z;
   out.hit[idx] = 1;
+  if (out.id) out.id[idx] = id;
   if (out.world) {
     out.world[idx * 3] = x;
     out.world[idx * 3 + 1] = y;
@@ -353,6 +359,9 @@ const surfaceBuffer = (out, w, h, needWorld = true, needNormal = true) => {
     out.hit = new Uint8Array(size);
     out.hit.fill(0);
   }
+  /* L'IDENTITÉ DES FORMES — un entier par pixel, alloué avec les autres
+     tampons (voir writePixel et shadowMaskOf). */
+  if (!out.id || out.id.length !== size) out.id = new Int32Array(size);
   if (needWorld && (!out.world || out.world.length !== size * 3)) out.world = new Float32Array(size * 3);
   if (needNormal && (!out.normal || out.normal.length !== size * 3)) out.normal = new Float32Array(size * 3);
   return out;
@@ -360,7 +369,7 @@ const surfaceBuffer = (out, w, h, needWorld = true, needNormal = true) => {
 export const rasterizeSpheres = ({
   positions, radii, count = 0, clip, width, height,
   radiusScale = 1, right = [1, 0, 0], up = [0, 1, 0], back = [0, 0, 1],
-  needNormal = true, needWorld = true,
+  needNormal = true, needWorld = true, idBase = 0,
 }, out = {}) => {
   const w = Math.max(1, Math.round(width));
   const h = Math.max(1, Math.round(height));
@@ -413,7 +422,7 @@ export const rasterizeSpheres = ({
         writePixel(out, row + px, ndcZOf(clip, wx, wy, wz), wx, wy, wz,
           right[0] * u + up[0] * v + back[0] * nd,
           right[1] * u + up[1] * v + back[1] * nd,
-          right[2] * u + up[2] * v + back[2] * nd, r, needNormal);
+          right[2] * u + up[2] * v + back[2] * nd, r, needNormal, idBase + i);
       }
     }
   }
@@ -423,7 +432,7 @@ export const rasterizeSpheres = ({
 export const rasterizeCapsules = ({
   positions, radii, edges, clip, width, height,
   radiusScale = 1, right = [1, 0, 0], up = [0, 1, 0], back = [0, 0, 1],
-  needNormal = true, needWorld = true,
+  needNormal = true, needWorld = true, idBase = 0,
 }, out = {}) => {
   const w = Math.max(1, Math.round(width));
   const h = Math.max(1, Math.round(height));
@@ -494,7 +503,7 @@ export const rasterizeCapsules = ({
         writePixel(out, row + px, ndcZOf(clip, wx, wy, wz), wx, wy, wz,
           right[0] * u + up[0] * v + back[0] * nd,
           right[1] * u + up[1] * v + back[1] * nd,
-          right[2] * u + up[2] * v + back[2] * nd, rr, needNormal);
+          right[2] * u + up[2] * v + back[2] * nd, rr, needNormal, idBase + (i >> 1));
       }
     }
   }
@@ -511,7 +520,7 @@ export const rasterizeCapsules = ({
    plate hide the ribbon behind it in the shape of its hexagon. */
 export const rasterizeTriangles = ({
   positions, normals = null, indices, count = 0, clip, width, height, stride = 1,
-  needWorld = true, needNormal = true,
+  needWorld = true, needNormal = true, idBase = 0,
 }, out = {}) => {
   const w = Math.max(1, Math.round(width));
   const h = Math.max(1, Math.round(height));
@@ -582,7 +591,7 @@ export const rasterizeTriangles = ({
           ny = m0 * normals[ia + 1] + m1 * normals[ib + 1] + m2 * normals[ic + 1];
           nz = m0 * normals[ia + 2] + m1 * normals[ib + 2] + m2 * normals[ic + 2];
         }
-        writePixel(out, idx, zNdc, wx, wy, wz, nx, ny, nz, 1, needNormal && !!normals);
+        writePixel(out, idx, zNdc, wx, wy, wz, nx, ny, nz, 1, needNormal && !!normals, idBase + t);
       }
     }
   }
@@ -642,19 +651,29 @@ export const pcfRotationOf = (x, y) => {
   const h = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
   return (h - Math.floor(h)) * Math.PI * 2;
 };
-/* SELF-SHADOWING ON THE MOLECULE ITSELF — AND WHY THERE IS NONE. Every pixel the
-   camera's pass covered owns a WORLD POINT and a NORMAL — the patch of skin the
-   viewer really sees. That point is pushed into the lamp's frame and compared with
-   what the lamp saw FIRST at that pixel. The receiver is in its own depth map, so
-   it occludes itself by exactly zero and no « footprint » trick is needed to keep
-   a shadow off its own edges — that trick, plus a wide « ambient » blur of the
-   mask, is what made the first version dirty the molecule.
-   What is written is the OCCLUSION WEIGHTED BY THE LAMP'S SHARE:
-   `occlusion · (floor + (1 − floor)·|N·L|)`. A face fully under the lamp keeps
-   all of the shadow, a face the lamp grazes keeps a little (so the shadow
-   stays legible on a ribbon's side wall), a face the lamp never lights keeps
-   only the floor — and the mask is ZERO outside the receiver's own coverage, so
-   the background is never touched. */
+/* SELF-SHADOWING ON THE MOLECULE ITSELF — AND THE NAME THAT KEEPS IT HONEST.
+   Every pixel the camera's pass covered owns a WORLD POINT and a NORMAL — the
+   patch of skin the viewer really sees. That point is pushed into the lamp's
+   frame and compared with what the lamp saw FIRST at that pixel.
+   ⚠ « LE RECEVEUR EST DANS SA PROPRE CARTE, DONC IL S'OCCULTE DE ZÉRO » ÉTAIT
+   FAUX, ET C'EST LE DÉFAUT DE CE RAPPORT (« white and black spheres » sur un
+   cartoon, « CPK […] look as transparent with inside smaller white and black
+   spheres »). Pour un pixel dont la peau REGARDE AILLEURS que la lampe, la
+   première surface que la lampe rencontre sur ce rayon EST le flanc éclairé de
+   la même bille, plus près d'elle que le point vu : l'écart n'est pas nul, et le
+   masque noircissait donc la moitié non éclairée de CHAQUE bille. MESURÉ sur une
+   bille SEULE (aucun voisin) : 3 849 pixels noircis (max 0,997), tous sur la
+   moitié opposée à la lampe, tous occulturés par la bille elle-même (0 pixel par
+   une autre forme) — et 1 000 pixels de plus que le seul disque PCF, puisque le
+   défaut survit à `blur: 0`. C'est la même chose que NGL ombre DÉJÀ : une bille
+   n'a pas besoin d'une seconde couche sombre sur son côté sombre.
+   LA RÈGLE : les deux passes écrivent le NOM de la forme qui gagne le pixel
+   (`writePixel`), et un pixel n'est jamais ombré par son propre nom — ni par le
+   rayon central, ni par un échantillon du disque PCF. Une ombre VOISINE, un pli
+   de ruban, un hexagone de cycle : tout cela vient d'un AUTRE nom, donc reste.
+   La comparaison par nom est aussi ce qui distingue deux rayons d'un même
+   bâtonnet (un lien de licorice en croise un autre) d'un bâtonnet qui se voit
+   lui-même. */
 export const shadowMaskOf = ({
   camera, light, lightDir = [0, 0, 1], width, height, biasNdc = 0, softness = 0,
   taps = 1, penumbra = 0, penumbraMax = 0, depthScale = 0, facingFloor = 0,
@@ -667,6 +686,13 @@ export const shadowMaskOf = ({
   const cap = Math.max(0, Number(penumbraMax) || 0);
   const perAngstrom = Number(depthScale) > 0 ? 1 / Number(depthScale) : 0;
   const normals = camera.normal || null;
+  /* LES NOMS DES FORMES, quand l'appelant les a relevés (`writePixel`) : le
+     receveur ne s'ombre jamais lui-même (voir le commentaire ci-dessus). Un
+     appelant qui n'en donne pas — un banc qui fabrique sa carte à la main —
+     garde exactement l'ancien comportement. */
+  const ownIds = camera.id || null;
+  const lampIds = (light && light.ids) || null;
+  const named = !!(ownIds && lampIds);
   const floor = Math.min(1, Math.max(0, Number(facingFloor) || 0));
   const L = normalize3(lightDir);
   const discCache = new Map();
@@ -680,7 +706,7 @@ export const shadowMaskOf = ({
   const clipY = (y) => Math.min(h - 1, Math.max(0, y));
   const clipPt = new Array(4);
   const scr = new Array(3);
-  let shadowed = 0, penumbraRadius = 0, maxTaps = 0, facingSum = 0, facingCount = 0;
+  let shadowed = 0, penumbraRadius = 0, maxTaps = 0, facingSum = 0, facingCount = 0, selfShadow = 0;
   for (let y = 0; y < h; y += 1) {
     for (let x = 0; x < w; x += 1) {
       const idx = y * w + x;
@@ -691,13 +717,22 @@ export const shadowMaskOf = ({
       if (!p) continue;
       const lx = clipX(Math.floor(p[0]));
       const ly = clipY(Math.floor(p[1]));
-      const nearest = light.depth[ly * w + lx];
+      const centre = ly * w + lx;
+      const nearest = light.depth[centre];
+      /* LE NOM DU RECEVEUR, ET CELUI QUE LA LAMPE A RENCONTRÉ ICI. S'ils sont
+         égaux, la lumière a rencontré la forme du receveur ELLE-MÊME : aucun
+         occulteur, donc aucun écart — c'est le côté non éclairé d'une bille
+         convexe, que NGL ombre déjà (mesuré : 3 849 px noircis sur une bille
+         SEULE avant cette règle). Le compteur le dit, la note peut le rapporter. */
+      const own = named ? ownIds[idx] : -1;
+      const selfHit = named && lampIds[centre] === own;
+      if (selfHit) selfShadow += 1;
       /* ⚠ THE CENTRE RAY IS NOT A GATE. A penumbra is precisely the case where the
          centre ray MISSES the occluder while the rays around it hit it: skipping
          the pixel here would erase the whole soft edge — and with it the shadow of
          anything thinner than the disc. The DISC decides; the centre ray only
          measures the GAP that PCSS grows the disc by. */
-      const gap = nearest < 2 ? p[2] - nearest : 0;
+      const gap = nearest < 2 && !selfHit ? p[2] - nearest : 0;
       /* THE DISC IS THE SOFTNESS, PLUS WHAT THE GAP ADDS (PCSS). A soft edge is a
          WIDTH the user chose; the depth gap between the receiver and the occluder
          only pushes the disc further (PCSS: a contact shadow stays crisp while a
@@ -718,8 +753,11 @@ export const shadowMaskOf = ({
           const ox = disc[t] * radius, oy = disc[t + 1] * radius;
           const sx = clipX(Math.round(lx + ox * cs - oy * sn));
           const sy = clipY(Math.round(ly + ox * sn + oy * cs));
-          const d = light.depth[sy * w + sx];
-          if (d < 2 && p[2] > d + biasNdc) occluded += invTaps;
+          const tap = sy * w + sx;
+          const d = light.depth[tap];
+          /* …ET UN ÉCHANTILLON QUI RENCONTRE LA FORME DU RECEVEUR NE COMPTE PAS
+             NON PLUS : c'est le bord de la même bille, pas une ombre. */
+          if (d < 2 && !(named && lampIds[tap] === own) && p[2] > d + biasNdc) occluded += invTaps;
         }
       } else {
         if (!(gap > biasNdc)) continue;
@@ -750,7 +788,7 @@ export const shadowMaskOf = ({
     }
   }
   return {
-    mask: softened, width: w, height: h, shadowed,
+    mask: softened, width: w, height: h, shadowed, selfShadow,
     taps: discTaps, tapsMax: maxTaps, penumbraRadius,
     facing: {
       floor,
@@ -1742,6 +1780,13 @@ export const buildRayShadowMask = ({ atoms, camera, light, width, height, option
   /* THE CAMERA'S PASS — the receiver. It keeps, per pixel, the point of the
      surface the viewer really sees and its normal. Nothing else: the depth is
      only the tie-breaker between two shapes that overlap on screen. */
+  /* LES NOMS DES FORMES, POUR LES DEUX PASSES. Les billes d'abord, puis les
+     capsules (à partir du nombre de billes), puis les triangles : le MÊME
+     numéro désigne la même forme dans les deux passes (elles rastérisent les
+     mêmes tableaux, dans le même ordre), donc `shadowMaskOf` peut refuser qu'un
+     receveur soit son propre occulteur. */
+  const capsuleCount = atoms && atoms.edges ? Math.floor(atoms.edges.length / 2) : 0;
+  const triBase = atoms.count + capsuleCount;
   const cameraPass = rasterizeSpheres({
     positions: atoms.positions, radii: atoms.radii, count: atoms.count,
     clip: camera.clip, width: mw, height: mh, radiusScale: o.sphereScale,
@@ -1752,12 +1797,14 @@ export const buildRayShadowMask = ({ atoms, camera, light, width, height, option
       positions: atoms.positions, radii: tubeRadii, edges: atoms.edges,
       clip: camera.clip, width: mw, height: mh, radiusScale: o.sphereScale,
       right: cameraAxes.right, up: cameraAxes.up, back: cameraAxes.back,
+      idBase: atoms.count,
     }, cameraPass);
   }
   if (tris) {
     rasterizeTriangles({
       positions: tris.positions, normals: tris.normals, indices: tris.indices,
       count: tris.count, clip: camera.clip, width: mw, height: mh, stride: tris.stride || 1,
+      idBase: triBase,
     }, cameraPass);
   }
 
@@ -1777,21 +1824,21 @@ export const buildRayShadowMask = ({ atoms, camera, light, width, height, option
       positions: atoms.positions, radii: tubeRadii, edges: atoms.edges,
       clip: light.clip, width: mw, height: mh, radiusScale: o.sphereScale,
       right: lightAxes.right, up: lightAxes.up, back: lightAxes.back,
-      needWorld: false, needNormal: false,
+      needWorld: false, needNormal: false, idBase: atoms.count,
     }, lightPass);
   }
   if (tris) {
     rasterizeTriangles({
       positions: tris.positions, normals: tris.normals, indices: tris.indices,
       count: tris.count, clip: light.clip, width: mw, height: mh, stride: tris.stride || 1,
-      needWorld: false, needNormal: false,
+      needWorld: false, needNormal: false, idBase: triBase,
     }, lightPass);
   }
 
   const depthScale = Number(light.depthScale) > 0 ? light.depthScale : lightDepthScale(light);
   const out = shadowMaskOf({
     camera: cameraPass,
-    light: { clip: light.clip, depth: lightPass.depth },
+    light: { clip: light.clip, depth: lightPass.depth, ids: lightPass.id },
     lightDir: light.dir,
     width: mw, height: mh,
     biasNdc: o.bias * depthScale,
@@ -1802,6 +1849,10 @@ export const buildRayShadowMask = ({ atoms, camera, light, width, height, option
   return {
     mask: out.mask, maskWidth: mw, maskHeight: mh,
     shadowed: out.shadowed, spheres: cameraPass.count,
+    /* COMBIEN DE PIXELS ONT RENCONTRÉ LEUR PROPRE FORME (donc ne s'ombrent
+       pas) : c'est le chiffre qui dit que la règle a servi, et il est mesuré
+       par la suite « une bille ne s'ombre pas elle-même ». */
+    selfShadow: out.selfShadow,
     filled: atoms && atoms.edges ? Math.floor(atoms.edges.length / 2) : 0,
     strength: o.strength,
     /* THE SHAPES THAT CAST: the balls/capsules, and the REAL triangles — with

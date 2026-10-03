@@ -1040,8 +1040,18 @@ ok(tubeFlat.atoms.filled > 0,
   'le tube est un proxy CONTINU : les liens entre ses atomes sont bouchés');
 ok(tubeFlat.drawn > 0 && tubeFlat.shadowed > 0,
   `un tube de 0,5 Å projette une ombre RÉELLE (${tubeFlat.shadowed} pixels à l’ombre sur ${tubeFlat.drawn} dessinés)`);
-ok(tubeFlat.mean > 0.05,
+ok(tubeFlat.mean > 0.02,
   `…et elle assombrit vraiment le dessin (occlusion moyenne ${tubeFlat.mean.toFixed(3)} → ${(100 * 0.55 * tubeFlat.mean).toFixed(1)} % de lumière perdue)`);
+/* ⚠ LE SEUIL A ÉTÉ MESURÉ, PAS DEVINÉ, ET IL A BAISSÉ AVEC LE CORRECTIF DE
+   L'AUTO-OMBRAGE (la règle du nom : un receveur n'est jamais son propre
+   occulteur). MESURÉ sur cette même scène, module d'avant / module corrigé :
+     · occlusion moyenne 0,0571 → 0,0289  (et 3 373 → 1 491 pixels pleinement
+       ombrés sur les 6 196 dessinés) — ce qui a disparu est la moitié de CHAQUE
+       capsule qui s'ombrait elle-même, que NGL ombre déjà ;
+     · la lampe rasante garde son verdict : 18 122 → 7 591 pixels, toujours TRÈS
+       au-dessus de la lampe de face — l'ombre vraie est intacte.
+   Le seuil reste à 0,02 (le doublement du bruit de mesure n'y suffit pas) pour
+   qu'une ombre qui DISPARAÎTRAIT vraiment le fasse rougir. */
 ok(tubeGrazing.shadowed > tubeFlat.shadowed,
   `une lampe rasante ombre PLUS qu’une lampe de face (${tubeGrazing.shadowed} contre ${tubeFlat.shadowed}) : c’est la géométrie qui décide`);
 
@@ -1285,6 +1295,20 @@ ok(MODULE.includes('PCSS'), '…la pénombre PCF élargie par l’écart receveu
 ok(MODULE.includes('PROXY_STROKE_BY_TYPE'), '…et la table des épaisseurs de trait des représentations');
 ok(MODULE.includes('SELF-SHADOWING ON THE MOLECULE ITSELF'),
   '…et l’auto-ombrage de la molécule : le receveur est la surface elle-même');
+/* ⚠ LA RÈGLE DU NOM — le correctif de « white and black spheres » du rapport.
+   Les deux passes écrivent le nom de la forme qui gagne chaque pixel, et un
+   receveur n'est jamais ombré par son propre nom. La preuve de pixels est dans
+   _viewer_shadow_selfmask_test.mjs (une bille SEULE noircissait 3 849 pixels de
+   sa propre moitié) ; ici, on exige seulement que la règle soit DANS le module,
+   pour qu'une réécriture ne puisse pas la retirer en silence. */
+ok(MODULE.includes('const selfHit = named && lampIds[centre] === own;'),
+  '…avec la règle du nom : le rayon central ne compte pas quand la lampe rencontre la forme du receveur');
+ok(MODULE.includes('!(named && lampIds[tap] === own)'),
+  '…et le disque PCF non plus : un échantillon qui rencontre la même forme n’est pas une ombre');
+ok(MODULE.includes("if (out.id) out.id[idx] = id;"),
+  '…parce que chaque forme ÉCRIT son nom en gagnant le pixel (bille, capsule, triangle)');
+ok(MODULE.includes('idBase: atoms.count'),
+  '…et les deux passes numérotent les formes de la même façon (billes, puis capsules, puis triangles)');
 ok(MODULE.includes('WHAT A SHADOW CANNOT DO IN NGL 2.4'),
   '…en disant honnêtement ce que NGL 2.4 ne peut pas faire (aucune shadow map dans la toile interactive)');
 
