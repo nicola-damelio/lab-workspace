@@ -130,7 +130,21 @@ export const STROKE_FLOOR = 0.05;
      hair   → a line (line · wireframe): its own nominal radius, no tube
    `core` is the radius a stick / ball is drawn with when the representation says
    nothing (NGL's own default), `min` the stroke assumed when NOTHING is
-   readable — the value a `hair` line is drawn at. */
+   readable — the value a `hair` line is drawn at.
+   ⚠ LE RAYON D'UNE BILLE EST `radiusScale`, ET RIEN D'AUTRE. Mesuré dans le
+   paquet installé (NGL 2.4) : `SpacefillRepresentation` fabrique `data.radius`
+   avec `StructureRepresentation#getRadiusParams()`, qui ne rend que
+   `{ type, scale: this.radiusScale, size: this.radiusSize, data }`, et
+   `RadiusFactory#atomRadius` rend `min(r × this.scale, 10)` — soit, pour un
+   `radiusType` « vdw » (le défaut), `min(radiusVdW × radiusScale, 10)`. Le
+   paramètre `scale` N'EXISTE PAS : il n'est ni dans `this.parameters` (d'où
+   `Representation#setParameters` le saute — `if (tp[name] == undefined)
+   continue`), ni dans un uniforme (le shader `SphereImpostor.vert` lit
+   `attribute float radius`, et son fragment ne déclare aucun `scale`). Un
+   `addRepresentation('spacefill', { scale: 0.25 })` dessine donc des billes de
+   PLEIN rayon de van der Waals. C'est pourquoi le viewer écrit la taille d'une
+   sphère en `radiusScale` — le même champ que ce proxy lit : l'ombre ne peut
+   plus être d'une autre taille que l'encre. */
 export const PROXY_STROKE_BY_TYPE = Object.freeze({
   sphere: { kind: 'vdw', min: 0.12 },
   spacefill: { kind: 'vdw', min: 0.12 },
@@ -143,6 +157,20 @@ export const PROXY_STROKE_BY_TYPE = Object.freeze({
   backbone: { kind: 'bond', core: 0.15, min: 0.2 },
   line: { kind: 'hair', min: 0.15 },
   wireframe: { kind: 'hair', min: 0.15 },
+  /* ⚠ « DOTS » SONT DES `point` — ET UN POINT NE PÈSE RIEN, DONC IL NE DEVIENT
+     JAMAIS UNE BILLE DE vdW. NGL 2.4 n'enregistre AUCUNE représentation `dot`
+     (le registre du paquet installé : angle · axes · ball+stick · backbone · base
+     · cartoon · contact · dihedral · distance · helixorient · hyperball · label ·
+     licorice · line · point · ribbon · rocket · rope · surface · trace · tube ·
+     unitcell · validation) : demander `dot` LÈVE, et le `try` du viewer ne
+     dessine alors RIEN. Les trois « pointillés » du viewer (le style léger
+     « dots », les ions et l'eau en « dots » de l'ancien menu Others) demandent
+     donc `point` (voir NMRMoleculeViewer). Sa forme est un POINT ÉCRAN
+     (`pointSize`, aucun rayon en ångströms) : le proxy ne peut pas dire mieux
+     qu'un cheveu — et surtout pas les 1,7 Å du repli vdW, qui remplissaient
+     l'ombre d'une nuée de billes pour un dessin de points à peine visibles
+     (« a shadow on a plane »). */
+  point: { kind: 'hair', min: 0.15 },
   cartoon: { kind: 'spline', base: 0.45, scale: 0.7, min: 0.3 },
   ribbon: { kind: 'spline', base: 0.45, scale: 4, min: 0.3 },
   tube: { kind: 'tube', base: 0.5, min: 0.2 },

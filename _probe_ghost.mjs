@@ -86,24 +86,36 @@ report('D. licorice AVANT le cartoon (maillage LU) — ordre indifférent',
    il ne reste plus AUCUN atome à replier — `measurable` reste faux (aucune valeur
    finie > 0) mais les NaN du `dot` ont été REMPLACÉS par ce zéro. C'est le
    comportement voulu : le maillage DESSINE déjà ces atomes, une bille de vdW les
-   doublerait (c'est le fantôme du rapport), et un `dot` ne pose qu'un point — rien
-   qu'on puisse distinguer sous le ruban. La scène réelle du viewer ne superpose
-   jamais les deux : `dot` est réservé à `sele: 'ion'` / `sele: 'water'`, des
-   ensembles DISJOINTS du cartoon (voir le banc, section 8). */
+   doublerait (c'est le fantôme du rapport). ⚠ `dot` n'est plus le style de
+   pointillés du viewer (NGL 2.4 ne l'enregistre même pas — c'est `point`, voir F) :
+   il ne reste ici que comme le PROTOTYPE d'un genre que la table ne sait pas
+   mesurer. */
 report('E. cartoon (maillage LU) + dot sur les MÊMES atomes → aucun proxy (le maillage dessine déjà)',
   atomsFromStage(stageOf([
     el('cartoon', { type: 'cartoon', visible: true, radiusScale: 0.7, radiusType: 'sstruc', structureView: view, bufferList: [{ geometry: indexedSurface() }] }),
     el('dot', { type: 'dot', visible: true, radiusScale: 1, structureView: view }),
   ]), 100000));
 
-/* F. LA SCÈNE RÉELLE : le ruban sur [0, 1] (maillage LU) et les dots sur [2, 3].
-   Les deux ensembles sont disjoints, comme `cartoon` (protéine) + `dot` (`water`
-   ou `ion`) dans le viewer : les dots gardent leur repli vdW, le ruban n'ajoute
-   aucune bille. C'est cette scène-là que le banc garde (section 8). */
-report('F. cartoon (maillage LU, [0,1]) + dot ([2,3]) — la scène du viewer',
+/* F. LA SCÈNE RÉELLE : le ruban sur [0, 1] (maillage LU) et les POINTILLÉS sur
+   [2, 3]. Les deux ensembles sont disjoints, comme `cartoon` (protéine) + les
+   points des eaux / ions dans le viewer. ⚠ CES POINTILLÉS SONT DES `point` — NGL
+   2.4 n'enregistre aucune représentation `dot` (la demander LÈVE, et le `try` du
+   viewer ne dessinait alors RIEN). Le point est un POINT ÉCRAN : sa seule ombre
+   honnête est un cheveu (0,15 Å), jamais la bille de 1,7 Å du repli vdW qui
+   remplissait l'ombre d'une nuée de billes (« a shadow on a plane »). C'est cette
+   scène-là que le banc garde (sections 8 et 8b). */
+report('F. cartoon (maillage LU, [0,1]) + point ([2,3]) — la scène du viewer',
   atomsFromStage(stageOf([
     el('cartoon', { type: 'cartoon', visible: true, radiusScale: 0.7, radiusType: 'sstruc', structureView: { getAtomIndices: () => Uint32Array.from([0, 1]) }, bufferList: [{ geometry: indexedSurface() }] }),
-    el('dot', { type: 'dot', visible: true, radiusScale: 1, structureView: { getAtomIndices: () => Uint32Array.from([2, 3]) } }),
+    el('point', { type: 'point', visible: true, pointSize: 2, structureView: { getAtomIndices: () => Uint32Array.from([2, 3]) } }),
+  ]), 100000));
+
+/* G. LE STYLE LÉGER « dots » D'UN GRAND SYSTÈME : TOUT est en points, et rien
+   d'autre (voir `ls === 'dots'` d'addDefaultReps). C'était la scène où le repli
+   vdW faisait le plus de dégâts — 100 % des atomes y tombaient. */
+report('G. point seul (le style léger « dots ») → un cheveu par atome, aucune bille',
+  atomsFromStage(stageOf([
+    el('point', { type: 'point', visible: true, pointSize: 2, structureView: view }),
   ]), 100000));
 
 

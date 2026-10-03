@@ -29,9 +29,14 @@
      · L'ORDRE DES REPRÉSENTATIONS NE COMPTE PAS — le licorice AVANT le ruban donne
        le même proxy que l'inverse : le zéro du maillage ne mange jamais un trait
        mesuré (il ne s'écrit que sur un `NaN`) ;
-     · LA SCÈNE DU VIEWER — ruban (protéine) + `dot` (`sele: 'ion'` / `'water'`,
-       deux ensembles DISJOINTS) : les dots gardent leur ombre vdW, le ruban n'y
-       ajoute aucune bille de 1,7 Å.
+     · LA SCÈNE DU VIEWER — ruban (protéine) + les POINTILLÉS des eaux / ions
+       (`point`, `sele: 'ion'` / `'water'`, deux ensembles DISJOINTS) : les
+       pointillés portent leur CHEVEU, jamais la bille de vdW, et le ruban n'y
+       ajoute aucune bille de 1,7 Å. C'est la règle du style léger « dots » d'un
+       grand système (§8b), où TOUT est en points.
+   ⚠ CE QUE LA TABLE NE CONNAÎT PAS garde le repli vdW (une `dot` d'un vieux
+   script — NGL 2.4 n'enregistre aucune représentation `dot`). Les sections 4 et 5
+   mesurent ce repli-là, avec un genre qui n'existe pas, exprès.
    ========================================================================= */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -102,6 +107,11 @@ eq(mixed.count, 2, 'un ruban lu PLUS ses chaînes latérales : seules les chaîn
 [...mixed.radii].forEach((r) => near(r, 0.25, 1e-6, '…au trait du licorice (0,25 Å), pas au rayon du ruban'));
 
 /* ── 4. LE REPLI QUI DOIT RESTER : UN GENRE QUE LA TABLE NE CONNAÎT PAS ───── */
+/* ⚠ `dot` EST ICI UN GENRE *FICTIF* — NGL 2.4 n'enregistre aucune représentation
+   de ce nom, et le viewer demande donc `point` partout où il veut des pointillés
+   (voir §8 et PROXY_STROKE_BY_TYPE). Ce qu'on mesure ici est la RÈGLE, pas le
+   viewer : un genre dont la table ne dit rien garde le rayon de van der Waals de
+   l'atome — le repli d'un dessin qu'on ne sait pas mesurer. */
 const dot = atomsFromStage(stageOf([el('dot', {
   type: 'dot', visible: true, radiusScale: 1, structureView: allAtoms,
 })]), 100000);
@@ -214,26 +224,42 @@ eq(mixedReversed.count, mixed.count,
   '…et le même trait de 0,25 Å : le zéro du maillage ne mange pas un trait mesuré'));
 
 /* ── 8. LA SCÈNE RÉELLE : LE RUBAN LU PLUS LES « DOTS » DES EAUX / IONS ───── */
-/* Le viewer met un `dot` sur `sele: 'ion'` / `sele: 'water'` (voir
+/* Le viewer met des POINTILLÉS sur `sele: 'ion'` / `sele: 'water'` (voir
    NMRMoleculeViewer, bloc « Others ») et un cartoon sur la protéine : deux
-   ENSEMBLES D'ATOMES DISJOINTS. Le ruban ne doit plus doubler ses atomes d'une
-   bille de vdW, mais les dots — un genre que la table ne sait pas mesurer — DOIVENT
-   garder leur repli : c'est leur seule ombre. Les deux règles vivent donc dans la
-   MÊME scène sans se contredire. */
+   ENSEMBLES D'ATOMES DISJOINTS. ⚠ CES POINTILLÉS SONT DES `point`, PAS DES `dot` :
+   NGL 2.4 n'enregistre aucune représentation `dot` (demander `dot` LÈVE, et le
+   `try` du viewer ne dessinait alors RIEN), et un point est un POINT ÉCRAN — sans
+   rayon en ångströms. Sa seule ombre honnête est donc un cheveu (0,15 Å), JAMAIS
+   la bille de 1,7 Å du repli vdW, qui remplissait l'ombre d'une nuée de billes sur
+   un dessin de points à peine visibles (« a shadow on a plane »). Le ruban, lui,
+   ne double plus ses atomes d'une bille. Les deux règles vivent dans la MÊME scène
+   sans se contredire. */
 const waters = { getAtomIndices: () => Uint32Array.from([2, 3]) };
 const ribbonPlusDots = atomsFromStage(stageOf([
   cartoon({
     structureView: { getAtomIndices: () => Uint32Array.from([0, 1]) },
     bufferList: [{ geometry: indexedSurface() }],
   }),
-  el('dot', { type: 'dot', visible: true, radiusScale: 1, structureView: waters }),
+  el('point', { type: 'point', visible: true, pointSize: 2, structureView: waters }),
 ]), 100000);
 eq(ribbonPlusDots.count, 2,
-  'ruban lu + dots des eaux : seuls les dots émettent un proxy (2 atomes), pas le ruban');
-ok(maxStrokeRadiusOf(ribbonPlusDots) > 1,
-  '…et ces dots gardent leur repli de van der Waals : un genre illisible ne perd pas son ombre');
-ok([...ribbonPlusDots.radii].every((r) => !(Number.isFinite(r) && r > 0 && r < 1)),
-  '…tandis qu’aucune bille de ruban (0,45 Å) ne s’est glissée dans la scène');
+  'ruban lu + pointillés des eaux : seuls les pointillés émettent un proxy (2 atomes), pas le ruban');
+[...ribbonPlusDots.radii].forEach((r) => near(r, 0.15, 1e-6,
+  '…et ce proxy est un CHEVEU (0,15 Å) : un point ne pèse rien, il ne se replie jamais sur 1,7 Å'));
+ok([...ribbonPlusDots.radii].every((r) => !(Number.isFinite(r) && r > 1)),
+  '…donc aucune bille de vdW : ni celle du point, ni celle du ruban');
+
+/* 8b. LE MÊME POINTILLÉ SEUL — le style léger « dots » d'un GRAND SYSTÈME (tout
+   est en points, et rien d'autre : voir `ls === 'dots'` d'addDefaultReps). C'est
+   la scène où le repli vdW faisait le plus de dégâts : 100 % des atomes y
+   tombaient, et l'ombre d'un nuage de points devenait une nappe de billes de
+   1,7 Å. Le cheveu est la seule réponse qui ne mente pas sur l'encre. */
+const dotsOnly = atomsFromStage(stageOf([
+  el('point', { type: 'point', visible: true, pointSize: 2, structureView: allAtoms }),
+]), 100000);
+eq(dotsOnly.count, N, 'un système tout en pointillés émet quand même ses atomes (ils sont dessinés)');
+ok(maxStrokeRadiusOf(dotsOnly) <= 0.2,
+  '…et AUCUN d’eux ne prend le rayon de van der Waals : l’ombre d’un point reste un point');
 
 /* ── 9. LA RÈGLE, ÉCRITE DANS LE MODULE ───────────────────────────────────── */
 ok(MODULE.includes('const coveredHere = !!(covered && covered.has(el));'),

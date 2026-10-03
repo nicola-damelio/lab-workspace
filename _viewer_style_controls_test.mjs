@@ -122,7 +122,7 @@ has("const stickGeom = (cat, naturalBond) => ({ radiusSize: naturalBond * catRad
   'le rayon des bâtons part dans NGL en radiusSize (Å), multiplié');
 has("const lineGeom = (cat) => ({ linewidth: Math.max(1, Math.round(2 * catRadii(cs[cat]).bond)) });",
   'un style « Lines » suit le rayon des bâtons via linewidth');
-has('radiusScale: g.sphere, scale: 0.6', 'spacefill : rayon des sphères = radiusScale (× le rayon de van der Waals)');
+has('radiusScale: g.sphere * 0.6', 'spacefill : rayon des sphères = radiusScale × 0,6 (× le rayon de van der Waals) — le SEUL champ qu’NGL lit');
 has('aspectRatio: 1.1 * g.sphere', 'ball+stick : rayon des sphères = aspectRatio');
 // Les chaînes latérales sont une RANGÉE de la protéine (licorice par défaut), et le
 // rendeur les recolle au squelette avec la même règle qu'autrefois (sectionRowSele).

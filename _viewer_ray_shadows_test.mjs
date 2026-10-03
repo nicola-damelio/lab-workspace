@@ -567,8 +567,20 @@ ok(pcfRotationOf(4, 7) !== discAngle, '…et différent du voisin : les échanti
    éclairé. Le proxy (qui REÇOIT et qui PROJETTE) suit donc le trait. */
 eq(proxyRadiusOf({ parameters: { type: 'spacefill' } }, 1.7), 1.7,
   'spacefill : la bille EST le rayon de van der Waals');
+/* ⚠ UN `scale` LU COMME REPLI, JAMAIS COMME NGL. Mesuré dans le paquet installé :
+   NGL 2.4 n'a AUCUN paramètre `scale` — il n'est pas dans la table de la
+   représentation (`Representation#setParameters` le saute), et le rayon d'une bille
+   vient de `RadiusFactory#atomRadius` = `min(r × radiusScale, 10)`. Le viewer écrit
+   donc la taille de ses sphères en `radiusScale` (voir _viewer_sphere_size_test.mjs,
+   qui l'interdit autrement) et cette ligne-ci ne sert que le cas restant : un
+   appelant EXTÉRIEUR qui honore `scale` lui-même (le `set sphere_scale` de PyMOL).
+   Quand les deux sont là, c'est `radiusScale` qui décide — c'est l'ordre des clés de
+   `repNumber`, et c'est ce qui fait que l'ombre d'une bille du viewer mesure
+   exactement son encre. */
 eq(proxyRadiusOf({ parameters: { type: 'sphere', scale: 0.6 } }, 1.7), 1.7 * 0.6,
-  'sphere : « set sphere_scale, 0.6 » réduit le proxy comme il réduit le dessin');
+  'sphere : un `scale` posé par l’APPELANT est suivi (NGL, lui, ne le lit pas)');
+eq(proxyRadiusOf({ parameters: { type: 'sphere', radiusScale: 0.6, scale: 0.2 } }, 1.7), 1.7 * 0.6,
+  '…et `radiusScale` l’emporte sur lui : c’est le seul champ qu’NGL sait lire');
 eq(proxyRadiusOf({ parameters: { type: 'sphere', radius: 2.4 } }, 1.7), 2.4,
   '…et un rayon numérique l’emporte sur le rayon de van der Waals');
 eq(proxyRadiusOf({ parameters: { type: 'ball+stick' } }, 1.7), 0.3,

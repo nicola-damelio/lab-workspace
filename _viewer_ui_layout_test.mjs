@@ -289,8 +289,8 @@ has("small: ['hide', 'ball+stick', 'licorice', 'line', 'spacefill', 'sphere', 's
   '…y compris les petites molécules (ligand · sucre)');
 has("const ATOM_DRAW_STYLES = ['ball+stick', 'licorice', 'line', 'spacefill', 'sphere'];",
   '« sphere » dessine des atomes : il compte pour les ancres de chaîne latérale');
-has("case 'sphere': return [{ type: 'spacefill', params: { radiusScale: sphere, scale: 1 } }];",
-  '« Sphere » = le même spacefill NGL, au rayon de Van der Waals entier');
+has("case 'sphere': return [{ type: 'spacefill', params: { radiusScale: sphere } }];",
+  '« Sphere » = le même spacefill NGL, au rayon de Van der Waals entier — écrit en `radiusScale`, le seul champ qu’NGL lit (voir _viewer_sphere_size_test.mjs)');
 has("const styleFamiliesOf = (style) => [...new Set((STYLE_FAMILY_REPS[style] || [])",
   'la rangée de STYLING nomme la famille de matériau qu’elle atteint, comme les rangées de sélection');
 // Les deux feuillets : ils ont QUITTÉ la boîte Membrane de GAUCHE, puis la boîte

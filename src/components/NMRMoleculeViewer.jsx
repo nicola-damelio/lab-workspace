@@ -13788,12 +13788,21 @@ const sectionStyleReps = (style, kind, look) => {
     case 'ball+stick': return [{ type: 'ball+stick', params: { multipleBond: true, aspectRatio: 1.1 * sphere, radiusSize: BALLSTICK_BOND_RADIUS * bond } }];
     case 'licorice': return [{ type: 'licorice', params: { radiusSize: LICORICE_BOND_RADIUS * bond } }];
     case 'line': return [{ type: 'line', params: { linewidth: Math.max(1, Math.round(2 * bond)) } }];
+    /* ⚠ LA TAILLE D'UNE BILLE S'ÉCRIT `radiusScale`, JAMAIS `scale`. Mesuré sur le
+       paquet installé : NGL 2.4 n'a PAS de paramètre `scale` — il n'est pas dans la
+       table de la représentation, donc `Representation#setParameters` le saute, et
+       le rayon vient de `RadiusFactory#atomRadius` = `min(rayonVdW × radiusScale,
+       10)`. « CPK » demandait `scale: 0.6` depuis toujours : il dessinait donc des
+       sphères de PLEIN rayon de van der Waals, et l'ombre, elle, les mesurait à
+       0,6 Å — l'écart exact du rapport « spheric shadows ». Le facteur est
+       maintenant multiplié DANS `radiusScale`, le seul champ que NGL lit ET que le
+       proxy des ombres lit : l'ombre et l'encre ne peuvent plus différer. */
     // « CPK » IS spacefill, and an ION's « sphere » is the same representation
     // drawn at its full Van der Waals radius (an ion has no bonds to speak of).
-    case 'spacefill': return [{ type: 'spacefill', params: { radiusScale: sphere, scale: kind === 'ion' ? 1 : 0.6 } }];
+    case 'spacefill': return [{ type: 'spacefill', params: { radiusScale: sphere * (kind === 'ion' ? 1 : 0.6) } }];
     // « Sphere » = PyMOL's « show spheres »: the SAME NGL spacefill, drawn at the
     // FULL Van der Waals radius — the row's R◯ multiplies it like any other style.
-    case 'sphere': return [{ type: 'spacefill', params: { radiusScale: sphere, scale: 1 } }];
+    case 'sphere': return [{ type: 'spacefill', params: { radiusScale: sphere } }];
     case 'base': return [{ type: 'base', params: { radiusSize: BASE_BOND_RADIUS * bond } }];
     case 'surface': return [{ type: 'surface', params: { surfaceType: 'av', opacity: Number((1 - Math.min(1, Math.max(0, (look && look.opacity) || 0))).toFixed(3)), ...SEE_THROUGH_SURFACE } }];
     case 'mesh': return [{ type: 'surface', params: { surfaceType: 'av', wireframe: true, opacity: 1 } }];
@@ -14876,7 +14885,7 @@ const buildCategoryReps = (comp) => {
     // and sticks share ONE radius, so the Bond radius is what acts on it.
     else if (bb === 'licorice') add('licorice', { sele: sels.protein, ...atomCol('protein'), ...stickGeom('protein', LICORICE_BOND_RADIUS) });
     else if (bb === 'lines') add('line', { sele: sels.protein, ...atomCol('protein'), ...lineGeom('protein') });
-    else if (bb === 'spheres') add('spacefill', { sele: sels.protein, ...atomCol('protein'), radiusScale: g.sphere, scale: 0.6 });
+    else if (bb === 'spheres') add('spacefill', { sele: sels.protein, ...atomCol('protein'), radiusScale: g.sphere * 0.6 });
     addSurface(sels.protein, 'protein', cs.protein.surfaceOpacity);
   }
 
@@ -14896,7 +14905,7 @@ const buildCategoryReps = (comp) => {
     else if (nb === 'licorice') add('licorice', { sele: sels.nucleic, ...stickCol, ...stickGeom('nucleic', LICORICE_BOND_RADIUS) });
     else if (nb === 'ball+stick') add('ball+stick', { sele: sels.nucleic, ...stickCol, multipleBond: true, aspectRatio: 1.1 * g.sphere, ...stickGeom('nucleic', BALLSTICK_BOND_RADIUS) });
     else if (nb === 'lines') add('line', { sele: sels.nucleic, ...stickCol, ...lineGeom('nucleic') });
-    else if (nb === 'spheres') add('spacefill', { sele: sels.nucleic, ...stickCol, radiusScale: g.sphere, scale: 0.6 });
+    else if (nb === 'spheres') add('spacefill', { sele: sels.nucleic, ...stickCol, radiusScale: g.sphere * 0.6 });
     // Bases: NGL's own `base` representation draws the filled base rungs (the
     // slabs / boxes of the DNA / RNA ladder); when the group colouring is ON the
     // rungs take the panel's « Bases » colour instead of the resname palette.
@@ -14924,7 +14933,7 @@ const buildCategoryReps = (comp) => {
     // old add('stick', …) threw and the sticks never appeared at all.
     else if (bases === 'sticks') add('licorice', { sele: 'nucleic and sidechain', ...stickCol, ...stickGeom('nucleic', LICORICE_BOND_RADIUS) });
     else if (bases === 'lines') add('line', { sele: 'nucleic and sidechain', ...stickCol, ...lineGeom('nucleic') });
-    else if (bases === 'spheres') add('spacefill', { sele: 'nucleic and sidechain', ...stickCol, radiusScale: g.sphere, scale: 0.6 });
+    else if (bases === 'spheres') add('spacefill', { sele: 'nucleic and sidechain', ...stickCol, radiusScale: g.sphere * 0.6 });
     addSurface(sels.nucleic, 'nucleic', cs.nucleic.surfaceOpacity);
   }
 
@@ -14953,8 +14962,8 @@ const buildCategoryReps = (comp) => {
       // the old add('stick', …) threw, so « Sticks » really means licorice.
       else if (style === 'stick' || style === 'sticks') add('licorice', { sele, ...col, ...stickGeom('lipid', LICORICE_BOND_RADIUS) });
       else if (style === 'lines' || style === 'line') add('line', { sele, ...col, ...lineGeom('lipid') });
-      else if (style === 'spheres') add('spacefill', { sele, ...col, radiusScale: g.sphere, scale: 0.4 });
-      else add('spacefill', { sele, ...col, radiusScale: g.sphere, scale: 0.6 });
+      else if (style === 'spheres') add('spacefill', { sele, ...col, radiusScale: g.sphere * 0.4 });
+      else add('spacefill', { sele, ...col, radiusScale: g.sphere * 0.6 });
     };
     // Headgroups = EVERY atom that is neither an acyl-chain atom nor a backbone
     // atom (the phosphate, the choline / ethanolamine part and their hydrogens).
@@ -14982,9 +14991,9 @@ const buildCategoryReps = (comp) => {
     // « Sticks » = licorice: NGL registers no `stick` representation (a `stick`
     // style silently drew NOTHING before this).
     else if (st === 'sticks') add('licorice', { sele: sugarSele, ...col, ...stickGeom('sugar', LICORICE_BOND_RADIUS) });
-    else if (st === 'spacefill') add('spacefill', { sele: sugarSele, ...col, radiusScale: g.sphere, scale: 0.7 });
+    else if (st === 'spacefill') add('spacefill', { sele: sugarSele, ...col, radiusScale: g.sphere * 0.7 });
     else if (st === 'lines') add('line', { sele: sugarSele, ...col, ...lineGeom('sugar') });
-    else if (st === 'spheres') add('spacefill', { sele: sugarSele, ...col, radiusScale: g.sphere, scale: 0.6 });
+    else if (st === 'spheres') add('spacefill', { sele: sugarSele, ...col, radiusScale: g.sphere * 0.6 });
     else if (st === 'surface') add('surface', { sele: sugarSele, ...col });
     addSurface(sugarSele, 'sugar', cs.sugar.surfaceOpacity);
   }
@@ -14998,9 +15007,9 @@ const buildCategoryReps = (comp) => {
     else if (st === 'licorice') add('licorice', { sele: organicSele, ...col, ...stickGeom('organic', LICORICE_BOND_RADIUS) });
     // « Sticks » = licorice (NGL registers no `stick` representation).
     else if (st === 'sticks') add('licorice', { sele: organicSele, ...col, ...stickGeom('organic', LICORICE_BOND_RADIUS) });
-    else if (st === 'spacefill') add('spacefill', { sele: organicSele, ...col, radiusScale: g.sphere, scale: 0.7 });
+    else if (st === 'spacefill') add('spacefill', { sele: organicSele, ...col, radiusScale: g.sphere * 0.7 });
     else if (st === 'lines') add('line', { sele: organicSele, ...col, ...lineGeom('organic') });
-    else if (st === 'spheres') add('spacefill', { sele: organicSele, ...col, radiusScale: g.sphere, scale: 0.6 });
+    else if (st === 'spheres') add('spacefill', { sele: organicSele, ...col, radiusScale: g.sphere * 0.6 });
     else if (st === 'surface') add('surface', { sele: organicSele, ...col });
     addSurface(organicSele, 'organic', cs.organic.surfaceOpacity);
   }
@@ -15010,15 +15019,24 @@ const buildCategoryReps = (comp) => {
     const ion = cs.other.ion || 'spheres';
     const col = atomCol('other');
     const g = catRadii(cs.other);
-    if (ion === 'spheres') add('spacefill', { sele: 'ion', ...col, radiusScale: g.sphere, scale: 0.8 });
+    if (ion === 'spheres') add('spacefill', { sele: 'ion', ...col, radiusScale: g.sphere * 0.8 });
     else if (ion === 'ball+stick') add('ball+stick', { sele: 'ion', ...col, multipleBond: true, aspectRatio: 2.0 * g.sphere, ...stickGeom('other', BALLSTICK_BOND_RADIUS) });
     else if (ion === 'lines') add('line', { sele: 'ion', ...col, ...lineGeom('other') });
-    else if (ion === 'dots') add('dot', { sele: 'ion', ...col });
+    /* ⚠ « DOTS » SONT DES `point` : NGL 2.4 n'enregistre AUCUNE représentation
+       `dot` (le registre du paquet installé s'arrête à … · line · point · ribbon
+       …), et demander `dot` LÈVE — le `try` d'`add` avalait l'erreur, donc les
+       trois « pointillés » du viewer ne dessinaient RIEN DU TOUT (les ions, l'eau,
+       et tout le style léger « dots » d'un grand système, qui apparaissait vide).
+       Un point est un point ÉCRAN (`pointSize`, `sizeAttenuation`), sans rayon en
+       ångströms : le module des ombres le traite en cheveu (voir `point` dans
+       PROXY_STROKE_BY_TYPE) au lieu de lui donner la bille de 1,7 Å du repli vdW,
+       qui remplissait l'ombre d'une nuée de billes — « a shadow on a plane ». */
+    else if (ion === 'dots') add('point', { sele: 'ion', ...col, pointSize: 1.5 * g.sphere, sizeAttenuation: true });
     const water = cs.other.water || 'hidden';
-    if (water === 'dots') add('dot', { sele: 'water', ...col });
+    if (water === 'dots') add('point', { sele: 'water', ...col, pointSize: 1.5 * g.sphere, sizeAttenuation: true });
     else if (water === 'points') add('point', { sele: 'water', ...col, pointSize: 1 * g.sphere, sizeAttenuation: true });
     else if (water === 'lines') add('line', { sele: 'water', ...col, ...lineGeom('other') });
-    else if (water === 'spheres') add('spacefill', { sele: 'water', ...col, radiusScale: g.sphere, scale: 0.25 });
+    else if (water === 'spheres') add('spacefill', { sele: 'water', ...col, radiusScale: g.sphere * 0.25 });
     else if (water === 'ball+stick') add('ball+stick', { sele: 'water', ...col, multipleBond: true, aspectRatio: 2.0 * g.sphere, ...stickGeom('other', BALLSTICK_BOND_RADIUS) });
   }
   // Water SURFACE — applied on its own, never inside the block above: the solvent
@@ -15078,8 +15096,8 @@ const addDefaultReps = (component, molKey = 'main') => {
        système : « in all molecules » est la demande, et le drapeau est le même. */
     const lightParams = (extra) => withoutHydrogensParams({ sele, colorScheme: 'element', ...extra }, hideHydrogensRef.current === true);
     try {
-      if (ls === 'spheres') trackBase(component.addRepresentation('spacefill', lightParams({ scale: 0.25, quality: 'low' })));
-      else if (ls === 'dots') trackBase(component.addRepresentation('dot', lightParams({})));
+      if (ls === 'spheres') trackBase(component.addRepresentation('spacefill', lightParams({ radiusScale: 0.25, quality: 'low' })));
+      else if (ls === 'dots') trackBase(component.addRepresentation('point', lightParams({ pointSize: 1.5, sizeAttenuation: true })));
       else trackBase(component.addRepresentation('line', lightParams({})));
     } catch { /* lightweight style best-effort */ }
     return;
@@ -17985,7 +18003,7 @@ useEffect(() => {
     // a ribbon): its `radius` is an ångström value, which makes it the one spline
     // style the R— knob regulates like the sticks (see TUBE_RADIUS).
     if (st.tube) addWithOverrides('tube', 'tube', { colorScheme, opacity, radius: TUBE_RADIUS * rB }, false);
-    if (st.sphere) addWithOverrides('spacefill', 'sphere', { scale: (st.sphereScale || 1) * rS, colorScheme, opacity, multipleBond: true }, true);
+    if (st.sphere) addWithOverrides('spacefill', 'sphere', { radiusScale: (st.sphereScale || 1) * rS, colorScheme, opacity, multipleBond: true }, true);
     if (st.ball) addWithOverrides('ball+stick', 'ball', {
       colorScheme, opacity, multipleBond: true, aspectRatio: 1.3 * rS,
       // A radius the user really asked for (R—): when the knob has not been
@@ -18579,7 +18597,7 @@ fontStyle: 'normal',
 fontWeight: 'bold',
 // Larger, uniform text size (was radius 1.0) with a constant on-screen
 // size so labels stay readable at any zoom level.
-radiusType: 'size', radius: 1.6, scale: 1.0,
+radiusType: 'size', radius: 1.6,   // ⚠ pas de `scale:` : NGL ne lit pas ce paramètre
 fixedSize: true,
 // Billboard sprites always face the camera; depth testing off plus a
 // slight forward push keep them clear of the VdW spheres and bonds.
@@ -19095,7 +19113,7 @@ const restyleExtraMol = (id) => {
       else if (style === 'ball+stick') reps.push(comp.addRepresentation('ball+stick', { ...opts, multipleBond: true, aspectRatio: 1.3 }));
       else if (style === 'sticks') reps.push(comp.addRepresentation('licorice', { ...opts, multipleBond: true, radiusSize: LICORICE_BOND_RADIUS }));
       else if (style === 'lines') reps.push(comp.addRepresentation('line', { ...opts }));
-      else if (style === 'spheres') reps.push(comp.addRepresentation('spacefill', { ...opts, scale: 0.6 }));
+      else if (style === 'spheres') reps.push(comp.addRepresentation('spacefill', { ...opts, radiusScale: 0.6 }));
       // The surface is the ONE style here whose transparency needs
       // SEE_THROUGH_SURFACE: it is the only one with a far wall to paint.
       else if (style === 'surface') reps.push(comp.addRepresentation('surface', { ...opts, ...SEE_THROUGH_SURFACE }));

@@ -380,8 +380,9 @@ ok(appRadii.every((r) => r < 0.6),
 
 
 /* Le MÊME peptide, dessiné par une représentation que la table ne connaît pas
-   (`dot` — le style léger du viewer) : les atomes sont DESSINÉS, donc émis, mais
-   aucun trait ne leur est reconnu — ils gardent leur rayon de vdW. C'est
+   (`dot` — un nom qu'NGL 2.4 n'enregistre pas, donc un genre *fictif* depuis que le
+   viewer demande `point` pour ses pointillés) : les atomes sont DESSINÉS, donc
+   émis, mais aucun trait ne leur est reconnu — ils gardent leur rayon de vdW. C'est
    exactement la forme des « spheric shadows », et le diagnostic doit le DIRE. */
 const dotAtoms = atomsFromStage(bench([element('dot', {
   type: 'dot', visible: true, radiusScale: 1, structureView: viewOf('protein'),
@@ -390,6 +391,16 @@ const dotSummary = proxyStrokeSummary(dotAtoms.radii, dotAtoms.count, 64);
 const dotMax = Math.max(...dotSummary.list.map((e) => e.radius));
 ok(dotMax > 0.6,
   `une représentation inconnue rend les atomes à leur rayon de vdW (${dotMax.toFixed(2)} Å) — et c’est ÉCRIT dans la note, plus jamais deviné`);
+/* …ET LE POINTILLÉ DU VIEWER, LUI, N'EST PLUS UNE REPRÉSENTATION INCONNUE. Les
+   points du style léger « dots » et des rangées eau / ions sont des `point` : la
+   table les connaît (un cheveu), donc ils ne peuvent plus remplir l'ombre d'une
+   nuée de billes de 1,7 Å — le défaut que ce diagnostic servait à nommer. */
+const pointAtoms = atomsFromStage(bench([element('point', {
+  type: 'point', visible: true, pointSize: 2, structureView: viewOf('protein'),
+})]), 100000);
+const pointMax = Math.max(...proxyStrokeSummary(pointAtoms.radii, pointAtoms.count, 64).list.map((e) => e.radius));
+ok(pointMax <= 0.2,
+  `les pointillés du viewer portent un CHEVEU (${pointMax.toFixed(2)} Å), jamais le rayon de van der Waals`);
 
 /* ── 6. LA NOTE DE LA « RAY » DIT LES TRAITS ───────────────────────────────── */
 const noteOf = (strokes) => rayShadowNote({

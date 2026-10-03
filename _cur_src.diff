@@ -1,236 +1,205 @@
 diff --git a/src/components/NMRMoleculeViewer.jsx b/src/components/NMRMoleculeViewer.jsx
-index edecb38..1b25c26 100644
+index 1b25c26..39c38d4 100644
 --- a/src/components/NMRMoleculeViewer.jsx
 +++ b/src/components/NMRMoleculeViewer.jsx
-@@ -43,6 +43,16 @@ import {
- // scene (utils/viewerRayShadows.js) — its own toggle and strength live in the Ray
- // controls of the 🌫 Scene group, next to the resolution and the alpha.
- import { RAY_SHADOW_DEFAULTS } from '../utils/viewerRayShadows';
-+// ◐ LA MÊME OMBRE, MAIS VIVANTE — la demande : « wow! it works! will it be
-+// possible to see it while the molecule is moving and not only as a still
-+// picture? » L'ombre du « ✨ Ray » n'est pas un effet du PNG : c'est une fonction
-+// pure de (atomes, caméra, lampe, taille, options). Ce module la calcule pour
-+// la VUE — une toile 2D posée sur la toile WebGL, peinte du même masque — avec
-+// trois régimes (le direct, la qualité du PNG, le brouillon) et une largeur de
-+// brouillon qui s'adapte au temps réel (utils/viewerRayShadowLive.js).
-+import {
-+  RAY_LIVE_DEFAULTS, rayLiveSettingOf, createRayShadowOverlay, attachRayShadowLive,
-+} from '../utils/viewerRayShadowLive';
- import { computeSmiles3DNameMap } from '../utils/atomNameSync';
- import { rebuildProteinHydrogenCoords } from '../utils/rebuildProteinHydrogens';
- import { enforceOneHeavyBondPerHydrogen } from '../utils/hydrogenBondRule';
-@@ -7845,6 +7855,27 @@ const [rayShadowBlur, setRayShadowBlur] = useState(() => {
-     return Number.isFinite(v) && v > 0 ? Math.min(4, v / 100) : 1;
-   } catch { return 1; }
- });
-+/* ◐ L'OMBRE VIVANTE — la demande de cette session : « will it be possible to see
-+   it while the molecule is moving and not only as a still picture? »
-+   Le RÉGLAGE est à quatre états : `off`, et les trois régimes du module
-+   (auto = brouillon pendant le geste puis la qualité du PNG à l'arrêt, full =
-+   la qualité du PNG à chaque image, draft = le brouillon toujours). `auto` est
-+   le défaut. Il est MÉMORISÉ à part de la case ◐ shadows du « ✨ Ray » : la
-+   couche vivante de la vue et les ombres du PNG sont deux choses distinctes,
-+   et l'une peut vivre sans l'autre. */
-+const RAY_LIVE_KEY = 'labViewerRayShadowLive';
-+const [rayShadowLive, setRayShadowLive] = useState(() => {
-+  try { return rayLiveSettingOf(localStorage.getItem(RAY_LIVE_KEY)); } catch { return RAY_LIVE_DEFAULTS.quality; }
-+});
-+const rayLiveOn = rayShadowLive !== 'off';
-+/* La TOILE de la couche (rendue plus bas, au-dessus de celle d'NGL) et le
-+   PILOTE qui la peint : une référence chacun, comme le Stage lui-même. Les
-+   RÉGLAGES vivants (lampe, noirceur, douceur) passent par une référence aussi
-+   — le pilote les LIT au moment où il peint, donc un curseur n'a pas à le
-+   recréer (et un `useEffect` sans cette référence lirait une valeur figée). */
-+const rayShadowCanvasRef = useRef(null);
-+const rayShadowLiveRef = useRef(null);
-+const rayLiveParamsRef = useRef({ az: 0, el: 0, strength: RAY_SHADOW_DEFAULTS.strength, blur: 1 });
- const [rayBusy, setRayBusy] = useState(false);
- const [rayMsg, setRayMsg] = useState('');
- // One token per render: a slow ray that is superseded by a second click may
-@@ -7900,6 +7931,9 @@ useEffect(() => {
- useEffect(() => {
-   try { localStorage.setItem('labViewerRayShadows', rayShadows ? `on:${Math.round(rayShadowStrength * 100)}:${Math.round(rayShadowBlur * 100)}` : 'off'); } catch { /* ignore */ }
- }, [rayShadows, rayShadowStrength, rayShadowBlur]);
-+useEffect(() => {
-+  try { localStorage.setItem(RAY_LIVE_KEY, rayShadowLive); } catch { /* ignore */ }
-+}, [rayShadowLive]);
- /* The resolution list of the ✨ Ray selector is written in PIXELS (`3× · 4800×
-    2700 px`), so it is rebuilt when the canvas really changes size — a window
-    resize, a new structure — and never shows a size another screen would give.
-@@ -9762,6 +9796,48 @@ const shadowDirRef = useRef({ az: shadowAz, el: shadowEl });
- shadowOnRef.current = shadowOn;
- shadowDarknessRef.current = shadowDarkness;
- shadowDirRef.current = { az: shadowAz, el: shadowEl };
-+/* ◐ L'OMBRE VIVANTE (voir le bloc de ses états, plus haut) lit ces réglages au
-+   moment où elle peint : sa référence est tenue à jour ICI, avec celles du rig —
-+   à cet endroit du corps, `shadowAz` / `shadowEl` sont déclarées (plus haut,
-+   elles seraient encore dans leur zone morte). */
-+rayLiveParamsRef.current = { az: shadowAz, el: shadowEl, strength: rayShadowStrength, blur: rayShadowBlur };
-+/* ◐ LE PILOTE DE L'OMBRE VIVANTE s'accroche au signal `rendered` d'NGL : la
-+   pose de la caméra est comparée à la précédente, le régime vient de la
-+   politique du module, et rien n'est recalculé quand rien ne bouge. Il est
-+   recréé quand le RÉGLAGE change (et seulement là : la lampe, la noirceur et la
-+   douceur lui arrivent en FONCTIONS, lues au moment de peindre, pour qu'un
-+   curseur ne le recrée pas — et pour qu'il ne lise jamais une valeur figée).
-+   ⚠ CES DEUX EFFETS SONT ICI, PAS À CÔTÉ DES ÉTATS : un tableau de dépendances
-+   est ÉVALUÉ au rendu, donc `[shadowAz, shadowEl]` écrit plus haut dans le corps
-+   lèverait « Cannot access 'shadowAz' before initialization » — mesuré par
-+   _viewer_render_smoke_test.mjs, corrigé en descendant le bloc. */
-+useEffect(() => {
-+  if (!rayLiveOn || status !== 'ready') return undefined;
-+  const stage = stageRef.current;
-+  const canvas = rayShadowCanvasRef.current;
-+  if (!stage || !stage.viewer || !canvas) return undefined;
-+  const overlay = createRayShadowOverlay(canvas);
-+  if (!overlay) return undefined;
-+  const pilot = attachRayShadowLive({
-+    stage,
-+    overlay,
-+    light: () => { const p = rayLiveParamsRef.current; const l = nglKeyLightDirection(p.az, p.el); return [l.x, l.y, l.z]; },
-+    options: () => { const p = rayLiveParamsRef.current; return { strength: p.strength, blur: p.blur }; },
-+    quality: rayShadowLive,
-+  });
-+  rayShadowLiveRef.current = pilot;
-+  /* La première image n'attend pas un geste : la scène est déjà là. */
-+  if (pilot) pilot.refresh({ force: true });
-+  return () => {
-+    if (rayShadowLiveRef.current) rayShadowLiveRef.current.stop();
-+    rayShadowLiveRef.current = null;
-+  };
-+}, [status, rayLiveOn, rayShadowLive]);
-+/* Un réglage touché PENDANT que la couche vit : on repeint dans le régime de
-+   l'instant (le module réarme lui-même la passe nette si c'était un brouillon). */
-+useEffect(() => {
-+  if (rayShadowLiveRef.current) rayShadowLiveRef.current.refresh({ force: true });
-+}, [rayShadowStrength, rayShadowBlur, shadowAz, shadowEl]);
- 
- // ---- 💡 Light colour (Scene, JUST BEFORE « ✂ Clipping ») --------------------
- // The request: « in the molecular viewer add the possibility to change the color
-@@ -16118,7 +16194,7 @@ const bestVideoMime = () => {
-    Elle renvoie `null` quand un contexte 2D n'est pas disponible : le film est
-    alors la toile de NGL elle-même, comme avant — une composition impossible ne
-    casse jamais l'enregistrement. */
--const filmCanvasFor = (source, vignetteDarkness, background) => {
-+const filmCanvasFor = (source, vignetteDarkness, background, shadowLayer = null) => {
-   try {
-     if (!source || typeof document === 'undefined' || typeof document.createElement !== 'function') return null;
-     const w = Math.max(1, Math.round(Number(source.width) || 0));
-@@ -16153,6 +16229,16 @@ const filmCanvasFor = (source, vignetteDarkness, background) => {
-         ctx.fillStyle = backdrop;
-         ctx.fillRect(0, 0, w, h);
-         ctx.drawImage(source, 0, 0, w, h);
-+        /* ◐ L'OMBRE VIVANTE — la MÊME couche qui est à l'écran, et par le même
-+           chemin que la vignette : un `captureStream` ne voit pas une couche
-+           HTML, donc l'image TENUE par le film doit la porter. C'est un noir
-+           d'alpha `s·m` posé en `source-over`, soit `dst·(1 − a)` — le produit
-+           exact du PNG du « ✨ Ray ». Une couche vidée fait 1×1 (voir
-+           createRayShadowOverlay) : elle ne peint rien. */
-+        if (shadowLayer && shadowLayer.width > 1 && shadowLayer.height > 1) {
-+          ctx.globalCompositeOperation = 'source-over';
-+          ctx.drawImage(shadowLayer, 0, 0, w, h);
-+        }
-         if (!gradient) return;
-         /* `multiply` + une ellipse : exactement le `mix-blend-mode: multiply` et le
-            `radial-gradient(ellipse at 50% 40%, …)` de la couche de l'écran. */
-@@ -16205,7 +16291,7 @@ const recordTrajectoryVideoClick = async () => {
-   const vignetteDarkness = shadowOn
-     ? (Number.isFinite(Number(shadowDarkness)) ? Number(shadowDarkness) : 0)
-     : Number.NaN;
--  const film = filmCanvasFor(canvas, vignetteDarkness, bgColor);
-+  const film = filmCanvasFor(canvas, vignetteDarkness, bgColor, rayLiveOn ? rayShadowCanvasRef.current : null);
-   // ONE driver of the frame at a time, and the scene is put back where it was.
-   setPlaying(false);
-   videoCancelRef.current = false;
-@@ -16539,7 +16625,7 @@ const recordKeyframeFilmClick = async () => {
-      viewer se ressembleraient seulement l'un à l'autre. */
-   const kfFilmCanvas = filmCanvasFor(canvas, shadowOn
-     ? (Number.isFinite(Number(shadowDarkness)) ? Number(shadowDarkness) : 0)
--    : Number.NaN, bgColor);
-+    : Number.NaN, bgColor, rayLiveOn ? rayShadowCanvasRef.current : null);
-   const back = { state: captureViewerSetup(), pose: captureKeyframePoses() };
-   const label = (file && file.name) || (trajFile && trajFile.name) || declaredTrajName || 'scene';
-   setKfMsg(`${keyframeFilmSummary(keys.length, plan)}${plan.long ? ' · long film — keep this tab in the foreground' : ''}`);
-@@ -21210,7 +21296,7 @@ const captureViewerSetup = () => ({
-   /* ✨ Ray (le facteur, le fond transparent, l'ombre portée avec sa force et son flou)
-      et ⚡ ESP (les deux bornes du dégradé) font partie de l'image d'une figure : ils
-      voyagent avec elle. */
--  ray: { factor: rayFactor, transparent: rayTransparent, shadows: rayShadows, strength: rayShadowStrength, blur: rayShadowBlur },
-+  ray: { factor: rayFactor, transparent: rayTransparent, shadows: rayShadows, strength: rayShadowStrength, blur: rayShadowBlur, live: rayShadowLive },
-   esp: espLimits,
-   // …et tout ce qui est propre à CETTE scène (voir captureSceneExtras).
-   ...captureSceneExtras(),
-@@ -21451,6 +21537,7 @@ const applyViewerSetup = (s) => {
-   if (typeof ry.shadows === 'boolean') setRayShadows(ry.shadows);
-   if (Number.isFinite(ry.strength)) setRayShadowStrength(Math.min(1, Math.max(0.1, ry.strength)));
-   if (Number.isFinite(ry.blur)) setRayShadowBlur(Math.min(4, Math.max(0, ry.blur)));
-+  if (typeof ry.live === 'string') setRayShadowLive(rayLiveSettingOf(ry.live));
-   if (Array.isArray(s.esp) && s.esp.length === 2 && s.esp.every((n) => Number.isFinite(n) && n > 0)) {
-     setEspLimits([Math.min(500, Math.max(0.5, s.esp[0])), Math.min(500, Math.max(0.5, s.esp[1]))]);
+@@ -13788,12 +13788,21 @@ const sectionStyleReps = (style, kind, look) => {
+     case 'ball+stick': return [{ type: 'ball+stick', params: { multipleBond: true, aspectRatio: 1.1 * sphere, radiusSize: BALLSTICK_BOND_RADIUS * bond } }];
+     case 'licorice': return [{ type: 'licorice', params: { radiusSize: LICORICE_BOND_RADIUS * bond } }];
+     case 'line': return [{ type: 'line', params: { linewidth: Math.max(1, Math.round(2 * bond)) } }];
++    /* ⚠ LA TAILLE D'UNE BILLE S'ÉCRIT `radiusScale`, JAMAIS `scale`. Mesuré sur le
++       paquet installé : NGL 2.4 n'a PAS de paramètre `scale` — il n'est pas dans la
++       table de la représentation, donc `Representation#setParameters` le saute, et
++       le rayon vient de `RadiusFactory#atomRadius` = `min(rayonVdW × radiusScale,
++       10)`. « CPK » demandait `scale: 0.6` depuis toujours : il dessinait donc des
++       sphères de PLEIN rayon de van der Waals, et l'ombre, elle, les mesurait à
++       0,6 Å — l'écart exact du rapport « spheric shadows ». Le facteur est
++       maintenant multiplié DANS `radiusScale`, le seul champ que NGL lit ET que le
++       proxy des ombres lit : l'ombre et l'encre ne peuvent plus différer. */
+     // « CPK » IS spacefill, and an ION's « sphere » is the same representation
+     // drawn at its full Van der Waals radius (an ion has no bonds to speak of).
+-    case 'spacefill': return [{ type: 'spacefill', params: { radiusScale: sphere, scale: kind === 'ion' ? 1 : 0.6 } }];
++    case 'spacefill': return [{ type: 'spacefill', params: { radiusScale: sphere * (kind === 'ion' ? 1 : 0.6) } }];
+     // « Sphere » = PyMOL's « show spheres »: the SAME NGL spacefill, drawn at the
+     // FULL Van der Waals radius — the row's R◯ multiplies it like any other style.
+-    case 'sphere': return [{ type: 'spacefill', params: { radiusScale: sphere, scale: 1 } }];
++    case 'sphere': return [{ type: 'spacefill', params: { radiusScale: sphere } }];
+     case 'base': return [{ type: 'base', params: { radiusSize: BASE_BOND_RADIUS * bond } }];
+     case 'surface': return [{ type: 'surface', params: { surfaceType: 'av', opacity: Number((1 - Math.min(1, Math.max(0, (look && look.opacity) || 0))).toFixed(3)), ...SEE_THROUGH_SURFACE } }];
+     case 'mesh': return [{ type: 'surface', params: { surfaceType: 'av', wireframe: true, opacity: 1 } }];
+@@ -14876,7 +14885,7 @@ const buildCategoryReps = (comp) => {
+     // and sticks share ONE radius, so the Bond radius is what acts on it.
+     else if (bb === 'licorice') add('licorice', { sele: sels.protein, ...atomCol('protein'), ...stickGeom('protein', LICORICE_BOND_RADIUS) });
+     else if (bb === 'lines') add('line', { sele: sels.protein, ...atomCol('protein'), ...lineGeom('protein') });
+-    else if (bb === 'spheres') add('spacefill', { sele: sels.protein, ...atomCol('protein'), radiusScale: g.sphere, scale: 0.6 });
++    else if (bb === 'spheres') add('spacefill', { sele: sels.protein, ...atomCol('protein'), radiusScale: g.sphere * 0.6 });
+     addSurface(sels.protein, 'protein', cs.protein.surfaceOpacity);
    }
-@@ -23383,8 +23470,8 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors
-     <span className="text-[10px] text-slate-500 w-7">{Math.round(shadowDarkness * 100)}%</span>
-   </label>
- )}
--{(shadowOn || rayShadows) && (
--  <label className="flex items-center gap-0.5 text-[10px] font-bold text-slate-700 whitespace-nowrap" title="Light direction — aim the fixed key light (and therefore where the shadows fall). Azimuth 0° = light behind the camera (flat), 90° = screen-left, 180° = facing the camera; Elevation is the height above/below the horizon. The shade follows live while you drag. ⚠ The ✨ Ray still throws its cast shadow from THIS lamp too, so these sliders are shown whenever either the ◐ Shadows rig or the ray shadows are on — an off-axis lamp (about 90° / 45°) is what makes a cast shadow read as a shadow instead of hiding in the shade the canvas already draws. The COLOUR of this lamp is the 💡 Light colour swatch just beside it — the swatch and these two sliders own the same lamp.">
-+{(shadowOn || rayShadows || rayLiveOn) && (
-+  <label className="flex items-center gap-0.5 text-[10px] font-bold text-slate-700 whitespace-nowrap" title="Light direction — aim the fixed key light (and therefore where the shadows fall). Azimuth 0° = light behind the camera (flat), 90° = screen-left, 180° = facing the camera; Elevation is the height above/below the horizon. The shade follows live while you drag. ⚠ The ✨ Ray still AND the ◐ live layer throw their cast shadow from THIS lamp too, so these sliders are shown whenever either the ◐ Shadows rig, the ray shadows or the live layer are on — an off-axis lamp (about 90° / 45°) is what makes a cast shadow read as a shadow instead of hiding in the shade the canvas already draws. The COLOUR of this lamp is the 💡 Light colour swatch just beside it — the swatch and these two sliders own the same lamp.">
-     💡 Light
-     <input type="range" min="0" max="360" value={shadowAz} onChange={(e) => setShadowAz(Number(e.target.value))} className="w-14 accent-slate-700" aria-label="Light azimuth" />
-     <span className="text-[10px] text-slate-500 w-7">{shadowAz}°</span>
-@@ -23544,6 +23631,34 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors
-       />
-     </>
-   )}
-+  {/* ◐ L'OMBRE VIVANTE — la demande : « will it be possible to see it while the
-+      molecule is moving and not only as a still picture? » OUI. C'est la MÊME
-+      ombre que celle du PNG (une fonction pure de la caméra, de la lampe et des
-+      atomes), peinte dans une couche 2D posée sur la vue : on la voit donc
-+      pendant qu'on tourne, et elle est dans le film 🎬 comme la vignette 🌑.
-+      Trois régimes, mesurés image par image sur un peptide / une grosse
-+      protéine : `auto` (DÉFAUT) = brouillon pendant le geste puis la qualité du
-+      PNG dès que ça s'arrête ≈ 100 / 20 img/s, `sharp` = la qualité du PNG à
-+      chaque image ≈ 18 / 7,5 img/s, `draft` = le brouillon toujours (le plus
-+      léger, un peu plus doux que le PNG). Le réglage ◐ shadows du « ✨ Ray »
-+      ci-dessus reste celui du FICHIER : les deux sont indépendants. */}
-+  <span
-+    title={'The cast shadow IN THE 3D VIEW, live: the very shadow of the ✨ Ray still (same camera, same lamp of the ◐ Shadows rig, same atoms), painted in a 2D layer over the canvas. It follows the molecule while you drag, spin or play a trajectory, and it lands in the 🎬 video too (the film canvas composes it, like the 🌑 Darkness vignette).\n• auto (default): a draft shadow while it moves (≤ 420 px mask, 4 taps), then the FULL ✨ Ray quality the moment the movement stops (~0.2 s) — 100 img/s on a small molecule, ~20 on a large one.\n• sharp: the ✨ Ray quality on every frame (~18 img/s on a small molecule, ~7 on a big cartoon).\n• draft: always the light version — the quickest and the smoothest, ever so slightly softer than the still.\n• off: no shadow in the view (the PNG of ✨ Ray keeps its own ◐ shadows setting).'}
-+    className={`px-1 py-1 text-[10px] font-bold rounded-md border transition-colors h-7 flex items-center gap-0.5 whitespace-nowrap ${rayLiveOn ? 'bg-amber-100 border-amber-400 text-amber-900' : 'bg-white border-amber-300 text-amber-700 hover:bg-amber-50'}`}
-+  >
-+    ◐ live
-+    <select
-+      value={rayShadowLive}
-+      onChange={(e) => setRayShadowLive(rayLiveSettingOf(e.target.value))}
-+      className="border border-amber-300 rounded-md px-1 py-0.5 text-[10px] bg-white outline-none focus:border-amber-500 h-7"
-+      aria-label="live cast shadow quality"
-+    >
-+      <option value="auto">auto</option>
-+      <option value="full">sharp</option>
-+      <option value="draft">draft</option>
-+      <option value="off">off</option>
-+    </select>
-+  </span>
-   {/* ⏹ STOP WAITING (le rapport : « start ray tracing … hangs ») : NGL ne sait pas
-       annuler un `makeImage` — le seul geste honnête est de cesser de l'attendre.
-       Le rendu abandonné n'écrira AUCUN fichier ; le module abandonne de lui-même
-@@ -24952,6 +25067,20 @@ className="relative flex-1 min-w-0 border border-slate-200 rounded-xl overflow-h
- style={{ height: (viewerCollapsed ? 0 : viewH) + 'px' }}
- >
- <div ref={containerRef} className="w-full h-full" />
-+          {/* ◐ L'OMBRE VIVANTE — la couche du module viewerRayShadowLive.js :
-+              une toile 2D AU-DESSUS de celle d'NGL, étirée en CSS sur la même
-+              boîte (sa taille EST celle du mask, que le navigateur agrandit
-+              d'un bilinéaire, comme `applyShadowToPixels` échantillonne le
-+              sien). Elle ne prend AUCUN clic (`pointer-events: none`) et ne
-+              change rien à la scène : elle assombrit ce qui est déjà dessiné.
-+              Le 🌑 Darkness reste AU-DESSUS d'elle dans le DOM, donc l'ordre de
-+              l'écran est celui de l'image. */}
-+          <canvas
-+            ref={rayShadowCanvasRef}
-+            aria-hidden="true"
-+            className="absolute inset-0 w-full h-full pointer-events-none"
-+            style={{ display: rayLiveOn ? 'block' : 'none' }}
-+          />
  
- {/* ── ✏️ LA FENÊTRE DE TORSION — DANS LA VUE 3D, PAS DANS LA BARRE ────────────
-     La demande : « The torsion section must be drastically reduced. eliminate
+@@ -14896,7 +14905,7 @@ const buildCategoryReps = (comp) => {
+     else if (nb === 'licorice') add('licorice', { sele: sels.nucleic, ...stickCol, ...stickGeom('nucleic', LICORICE_BOND_RADIUS) });
+     else if (nb === 'ball+stick') add('ball+stick', { sele: sels.nucleic, ...stickCol, multipleBond: true, aspectRatio: 1.1 * g.sphere, ...stickGeom('nucleic', BALLSTICK_BOND_RADIUS) });
+     else if (nb === 'lines') add('line', { sele: sels.nucleic, ...stickCol, ...lineGeom('nucleic') });
+-    else if (nb === 'spheres') add('spacefill', { sele: sels.nucleic, ...stickCol, radiusScale: g.sphere, scale: 0.6 });
++    else if (nb === 'spheres') add('spacefill', { sele: sels.nucleic, ...stickCol, radiusScale: g.sphere * 0.6 });
+     // Bases: NGL's own `base` representation draws the filled base rungs (the
+     // slabs / boxes of the DNA / RNA ladder); when the group colouring is ON the
+     // rungs take the panel's « Bases » colour instead of the resname palette.
+@@ -14924,7 +14933,7 @@ const buildCategoryReps = (comp) => {
+     // old add('stick', …) threw and the sticks never appeared at all.
+     else if (bases === 'sticks') add('licorice', { sele: 'nucleic and sidechain', ...stickCol, ...stickGeom('nucleic', LICORICE_BOND_RADIUS) });
+     else if (bases === 'lines') add('line', { sele: 'nucleic and sidechain', ...stickCol, ...lineGeom('nucleic') });
+-    else if (bases === 'spheres') add('spacefill', { sele: 'nucleic and sidechain', ...stickCol, radiusScale: g.sphere, scale: 0.6 });
++    else if (bases === 'spheres') add('spacefill', { sele: 'nucleic and sidechain', ...stickCol, radiusScale: g.sphere * 0.6 });
+     addSurface(sels.nucleic, 'nucleic', cs.nucleic.surfaceOpacity);
+   }
+ 
+@@ -14953,8 +14962,8 @@ const buildCategoryReps = (comp) => {
+       // the old add('stick', …) threw, so « Sticks » really means licorice.
+       else if (style === 'stick' || style === 'sticks') add('licorice', { sele, ...col, ...stickGeom('lipid', LICORICE_BOND_RADIUS) });
+       else if (style === 'lines' || style === 'line') add('line', { sele, ...col, ...lineGeom('lipid') });
+-      else if (style === 'spheres') add('spacefill', { sele, ...col, radiusScale: g.sphere, scale: 0.4 });
+-      else add('spacefill', { sele, ...col, radiusScale: g.sphere, scale: 0.6 });
++      else if (style === 'spheres') add('spacefill', { sele, ...col, radiusScale: g.sphere * 0.4 });
++      else add('spacefill', { sele, ...col, radiusScale: g.sphere * 0.6 });
+     };
+     // Headgroups = EVERY atom that is neither an acyl-chain atom nor a backbone
+     // atom (the phosphate, the choline / ethanolamine part and their hydrogens).
+@@ -14982,9 +14991,9 @@ const buildCategoryReps = (comp) => {
+     // « Sticks » = licorice: NGL registers no `stick` representation (a `stick`
+     // style silently drew NOTHING before this).
+     else if (st === 'sticks') add('licorice', { sele: sugarSele, ...col, ...stickGeom('sugar', LICORICE_BOND_RADIUS) });
+-    else if (st === 'spacefill') add('spacefill', { sele: sugarSele, ...col, radiusScale: g.sphere, scale: 0.7 });
++    else if (st === 'spacefill') add('spacefill', { sele: sugarSele, ...col, radiusScale: g.sphere * 0.7 });
+     else if (st === 'lines') add('line', { sele: sugarSele, ...col, ...lineGeom('sugar') });
+-    else if (st === 'spheres') add('spacefill', { sele: sugarSele, ...col, radiusScale: g.sphere, scale: 0.6 });
++    else if (st === 'spheres') add('spacefill', { sele: sugarSele, ...col, radiusScale: g.sphere * 0.6 });
+     else if (st === 'surface') add('surface', { sele: sugarSele, ...col });
+     addSurface(sugarSele, 'sugar', cs.sugar.surfaceOpacity);
+   }
+@@ -14998,9 +15007,9 @@ const buildCategoryReps = (comp) => {
+     else if (st === 'licorice') add('licorice', { sele: organicSele, ...col, ...stickGeom('organic', LICORICE_BOND_RADIUS) });
+     // « Sticks » = licorice (NGL registers no `stick` representation).
+     else if (st === 'sticks') add('licorice', { sele: organicSele, ...col, ...stickGeom('organic', LICORICE_BOND_RADIUS) });
+-    else if (st === 'spacefill') add('spacefill', { sele: organicSele, ...col, radiusScale: g.sphere, scale: 0.7 });
++    else if (st === 'spacefill') add('spacefill', { sele: organicSele, ...col, radiusScale: g.sphere * 0.7 });
+     else if (st === 'lines') add('line', { sele: organicSele, ...col, ...lineGeom('organic') });
+-    else if (st === 'spheres') add('spacefill', { sele: organicSele, ...col, radiusScale: g.sphere, scale: 0.6 });
++    else if (st === 'spheres') add('spacefill', { sele: organicSele, ...col, radiusScale: g.sphere * 0.6 });
+     else if (st === 'surface') add('surface', { sele: organicSele, ...col });
+     addSurface(organicSele, 'organic', cs.organic.surfaceOpacity);
+   }
+@@ -15010,15 +15019,24 @@ const buildCategoryReps = (comp) => {
+     const ion = cs.other.ion || 'spheres';
+     const col = atomCol('other');
+     const g = catRadii(cs.other);
+-    if (ion === 'spheres') add('spacefill', { sele: 'ion', ...col, radiusScale: g.sphere, scale: 0.8 });
++    if (ion === 'spheres') add('spacefill', { sele: 'ion', ...col, radiusScale: g.sphere * 0.8 });
+     else if (ion === 'ball+stick') add('ball+stick', { sele: 'ion', ...col, multipleBond: true, aspectRatio: 2.0 * g.sphere, ...stickGeom('other', BALLSTICK_BOND_RADIUS) });
+     else if (ion === 'lines') add('line', { sele: 'ion', ...col, ...lineGeom('other') });
+-    else if (ion === 'dots') add('dot', { sele: 'ion', ...col });
++    /* ⚠ « DOTS » SONT DES `point` : NGL 2.4 n'enregistre AUCUNE représentation
++       `dot` (le registre du paquet installé s'arrête à … · line · point · ribbon
++       …), et demander `dot` LÈVE — le `try` d'`add` avalait l'erreur, donc les
++       trois « pointillés » du viewer ne dessinaient RIEN DU TOUT (les ions, l'eau,
++       et tout le style léger « dots » d'un grand système, qui apparaissait vide).
++       Un point est un point ÉCRAN (`pointSize`, `sizeAttenuation`), sans rayon en
++       ångströms : le module des ombres le traite en cheveu (voir `point` dans
++       PROXY_STROKE_BY_TYPE) au lieu de lui donner la bille de 1,7 Å du repli vdW,
++       qui remplissait l'ombre d'une nuée de billes — « a shadow on a plane ». */
++    else if (ion === 'dots') add('point', { sele: 'ion', ...col, pointSize: 1.5 * g.sphere, sizeAttenuation: true });
+     const water = cs.other.water || 'hidden';
+-    if (water === 'dots') add('dot', { sele: 'water', ...col });
++    if (water === 'dots') add('point', { sele: 'water', ...col, pointSize: 1.5 * g.sphere, sizeAttenuation: true });
+     else if (water === 'points') add('point', { sele: 'water', ...col, pointSize: 1 * g.sphere, sizeAttenuation: true });
+     else if (water === 'lines') add('line', { sele: 'water', ...col, ...lineGeom('other') });
+-    else if (water === 'spheres') add('spacefill', { sele: 'water', ...col, radiusScale: g.sphere, scale: 0.25 });
++    else if (water === 'spheres') add('spacefill', { sele: 'water', ...col, radiusScale: g.sphere * 0.25 });
+     else if (water === 'ball+stick') add('ball+stick', { sele: 'water', ...col, multipleBond: true, aspectRatio: 2.0 * g.sphere, ...stickGeom('other', BALLSTICK_BOND_RADIUS) });
+   }
+   // Water SURFACE — applied on its own, never inside the block above: the solvent
+@@ -15078,8 +15096,8 @@ const addDefaultReps = (component, molKey = 'main') => {
+        système : « in all molecules » est la demande, et le drapeau est le même. */
+     const lightParams = (extra) => withoutHydrogensParams({ sele, colorScheme: 'element', ...extra }, hideHydrogensRef.current === true);
+     try {
+-      if (ls === 'spheres') trackBase(component.addRepresentation('spacefill', lightParams({ scale: 0.25, quality: 'low' })));
+-      else if (ls === 'dots') trackBase(component.addRepresentation('dot', lightParams({})));
++      if (ls === 'spheres') trackBase(component.addRepresentation('spacefill', lightParams({ radiusScale: 0.25, quality: 'low' })));
++      else if (ls === 'dots') trackBase(component.addRepresentation('point', lightParams({ pointSize: 1.5, sizeAttenuation: true })));
+       else trackBase(component.addRepresentation('line', lightParams({})));
+     } catch { /* lightweight style best-effort */ }
+     return;
+@@ -17985,7 +18003,7 @@ useEffect(() => {
+     // a ribbon): its `radius` is an ångström value, which makes it the one spline
+     // style the R— knob regulates like the sticks (see TUBE_RADIUS).
+     if (st.tube) addWithOverrides('tube', 'tube', { colorScheme, opacity, radius: TUBE_RADIUS * rB }, false);
+-    if (st.sphere) addWithOverrides('spacefill', 'sphere', { scale: (st.sphereScale || 1) * rS, colorScheme, opacity, multipleBond: true }, true);
++    if (st.sphere) addWithOverrides('spacefill', 'sphere', { radiusScale: (st.sphereScale || 1) * rS, colorScheme, opacity, multipleBond: true }, true);
+     if (st.ball) addWithOverrides('ball+stick', 'ball', {
+       colorScheme, opacity, multipleBond: true, aspectRatio: 1.3 * rS,
+       // A radius the user really asked for (R—): when the knob has not been
+@@ -18579,7 +18597,7 @@ fontStyle: 'normal',
+ fontWeight: 'bold',
+ // Larger, uniform text size (was radius 1.0) with a constant on-screen
+ // size so labels stay readable at any zoom level.
+-radiusType: 'size', radius: 1.6, scale: 1.0,
++radiusType: 'size', radius: 1.6,   // ⚠ pas de `scale:` : NGL ne lit pas ce paramètre
+ fixedSize: true,
+ // Billboard sprites always face the camera; depth testing off plus a
+ // slight forward push keep them clear of the VdW spheres and bonds.
+@@ -19095,7 +19113,7 @@ const restyleExtraMol = (id) => {
+       else if (style === 'ball+stick') reps.push(comp.addRepresentation('ball+stick', { ...opts, multipleBond: true, aspectRatio: 1.3 }));
+       else if (style === 'sticks') reps.push(comp.addRepresentation('licorice', { ...opts, multipleBond: true, radiusSize: LICORICE_BOND_RADIUS }));
+       else if (style === 'lines') reps.push(comp.addRepresentation('line', { ...opts }));
+-      else if (style === 'spheres') reps.push(comp.addRepresentation('spacefill', { ...opts, scale: 0.6 }));
++      else if (style === 'spheres') reps.push(comp.addRepresentation('spacefill', { ...opts, radiusScale: 0.6 }));
+       // The surface is the ONE style here whose transparency needs
+       // SEE_THROUGH_SURFACE: it is the only one with a far wall to paint.
+       else if (style === 'surface') reps.push(comp.addRepresentation('surface', { ...opts, ...SEE_THROUGH_SURFACE }));
+diff --git a/src/utils/viewerRayShadows.js b/src/utils/viewerRayShadows.js
+index a3ebdb2..5704a20 100644
+--- a/src/utils/viewerRayShadows.js
++++ b/src/utils/viewerRayShadows.js
+@@ -130,7 +130,21 @@ export const STROKE_FLOOR = 0.05;
+      hair   → a line (line · wireframe): its own nominal radius, no tube
+    `core` is the radius a stick / ball is drawn with when the representation says
+    nothing (NGL's own default), `min` the stroke assumed when NOTHING is
+-   readable — the value a `hair` line is drawn at. */
++   readable — the value a `hair` line is drawn at.
++   ⚠ LE RAYON D'UNE BILLE EST `radiusScale`, ET RIEN D'AUTRE. Mesuré dans le
++   paquet installé (NGL 2.4) : `SpacefillRepresentation` fabrique `data.radius`
++   avec `StructureRepresentation#getRadiusParams()`, qui ne rend que
++   `{ type, scale: this.radiusScale, size: this.radiusSize, data }`, et
++   `RadiusFactory#atomRadius` rend `min(r × this.scale, 10)` — soit, pour un
++   `radiusType` « vdw » (le défaut), `min(radiusVdW × radiusScale, 10)`. Le
++   paramètre `scale` N'EXISTE PAS : il n'est ni dans `this.parameters` (d'où
++   `Representation#setParameters` le saute — `if (tp[name] == undefined)
++   continue`), ni dans un uniforme (le shader `SphereImpostor.vert` lit
++   `attribute float radius`, et son fragment ne déclare aucun `scale`). Un
++   `addRepresentation('spacefill', { scale: 0.25 })` dessine donc des billes de
++   PLEIN rayon de van der Waals. C'est pourquoi le viewer écrit la taille d'une
++   sphère en `radiusScale` — le même champ que ce proxy lit : l'ombre ne peut
++   plus être d'une autre taille que l'encre. */
+ export const PROXY_STROKE_BY_TYPE = Object.freeze({
+   sphere: { kind: 'vdw', min: 0.12 },
+   spacefill: { kind: 'vdw', min: 0.12 },
+@@ -143,6 +157,20 @@ export const PROXY_STROKE_BY_TYPE = Object.freeze({
+   backbone: { kind: 'bond', core: 0.15, min: 0.2 },
+   line: { kind: 'hair', min: 0.15 },
+   wireframe: { kind: 'hair', min: 0.15 },
++  /* ⚠ « DOTS » SONT DES `point` — ET UN POINT NE PÈSE RIEN, DONC IL NE DEVIENT
++     JAMAIS UNE BILLE DE vdW. NGL 2.4 n'enregistre AUCUNE représentation `dot`
++     (le registre du paquet installé : angle · axes · ball+stick · backbone · base
++     · cartoon · contact · dihedral · distance · helixorient · hyperball · label ·
++     licorice · line · point · ribbon · rocket · rope · surface · trace · tube ·
++     unitcell · validation) : demander `dot` LÈVE, et le `try` du viewer ne
++     dessine alors RIEN. Les trois « pointillés » du viewer (le style léger
++     « dots », les ions et l'eau en « dots » de l'ancien menu Others) demandent
++     donc `point` (voir NMRMoleculeViewer). Sa forme est un POINT ÉCRAN
++     (`pointSize`, aucun rayon en ångströms) : le proxy ne peut pas dire mieux
++     qu'un cheveu — et surtout pas les 1,7 Å du repli vdW, qui remplissaient
++     l'ombre d'une nuée de billes pour un dessin de points à peine visibles
++     (« a shadow on a plane »). */
++  point: { kind: 'hair', min: 0.15 },
+   cartoon: { kind: 'spline', base: 0.45, scale: 0.7, min: 0.3 },
+   ribbon: { kind: 'spline', base: 0.45, scale: 4, min: 0.3 },
+   tube: { kind: 'tube', base: 0.5, min: 0.2 },
