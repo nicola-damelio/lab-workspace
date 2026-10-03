@@ -312,68 +312,7 @@ export const rasterizeCapsules = ({
   return out;
 };
 
-export const rasterizeQuads = ({
-  bands, clip, width, height, axisUp = [0, 1, 0], needWorld = true, needReach = false,
-}, out = {}) => {
-  const w = Math.max(1, Math.round(width));
-  const h = Math.max(1, Math.round(height));
-  const clipPt = new Array(4), scr = new Array(3);
 
-  const project = (px, py, pz) => clipToScreen(mat4TransformPoint(clip, [px, py, pz], clipPt), w, h, scr) ? [...scr] : null;
-  const edgeFunc = (ax, ay, bx, by, px, py) => (px - ax) * (by - ay) - (py - ay) * (bx - ax);
-
-  for (let b = 0; b < (bands ? bands.length : 0); b++) {
-    const { pA, pB, dA, dB, wA, wB, t } = bands[b];
-    const v3D = [
-      [pA[0] + dA[0]*wA, pA[1] + dA[1]*wA, pA[2] + dA[2]*wA],
-      [pA[0] - dA[0]*wA, pA[1] - dA[1]*wA, pA[2] - dA[2]*wA],
-      [pB[0] - dB[0]*wB, pB[1] - dB[1]*wB, pB[2] - dB[2]*wB],
-      [pB[0] + dB[0]*wB, pB[1] + dB[1]*wB, pB[2] + dB[2]*wB]
-    ];
-    
-    const v2D = v3D.map(v => project(v[0], v[1], v[2]));
-    if (v2D.some(v => !v)) continue;
-
-    const tris = [[0, 1, 2], [0, 2, 3]];
-    tris.forEach(indices => {
-      const p0 = v2D[indices[0]], p1 = v2D[indices[1]], p2 = v2D[indices[2]];
-      const w0 = v3D[indices[0]], w1 = v3D[indices[1]], w2 = v3D[indices[2]];
-
-      const x0 = Math.max(0, Math.floor(Math.min(p0[0], p1[0], p2[0])));
-      const x1 = Math.min(w - 1, Math.ceil(Math.max(p0[0], p1[0], p2[0])));
-      const y0 = Math.max(0, Math.floor(Math.min(p0[1], p1[1], p2[1])));
-      const y1 = Math.min(h - 1, Math.ceil(Math.max(p0[1], p1[1], p2[1])));
-
-      const area = edgeFunc(p0[0], p0[1], p1[0], p1[1], p2[0], p2[1]);
-      if (Math.abs(area) < 1e-5) return;
-
-      for (let py = y0; py <= y1; py++) {
-        const row = py * w;
-        for (let px = x0; px <= x1; px++) {
-          let u = edgeFunc(p1[0], p1[1], p2[0], p2[1], px, py) / area;
-          let v = edgeFunc(p2[0], p2[1], p0[0], p0[1], px, py) / area;
-          let k = edgeFunc(p0[0], p0[1], p1[0], p1[1], px, py) / area;
-
-          if (u < 0 || v < 0 || k < 0) continue;
-
-          const cz = p0[2]*u + p1[2]*v + p2[2]*k;
-          const idx = row + px;
-          if (cz >= out.depth[idx]) continue;
-
-          out.depth[idx] = cz;
-          out.hit[idx] = 1;
-          if (needReach) out.reach[idx] = Math.max(2, t * 10);
-          if (needWorld) {
-            out.world[idx * 3] = w0[0]*u + w1[0]*v + w2[0]*k;
-            out.world[idx * 3 + 1] = w0[1]*u + w1[1]*v + w2[1]*k;
-            out.world[idx * 3 + 2] = w0[2]*u + w1[2]*v + w2[2]*k;
-          }
-        }
-      }
-    });
-  }
-  return out;
-};
 export const softenMask = (mask, width, height, radius) => {
   const w = Math.max(1, Math.round(width));
   const h = Math.max(1, Math.round(height));
@@ -828,60 +767,153 @@ export const bandQuadsOf = (sections) => {
   return bands;
 };
 
-export const bandProxiesOf = (comp) => {
-  const list = comp && comp.reprList;
-  if (!Array.isArray(list)) return { bands: [], debug: 'no reprList' };
-  let allBands = [];
-  let debug = '';
+const bandBrushOf = (sections, opacity = 1) => {
+  const outPositions = [], outRadii = [];
+  const push = (x, y, z, r) => {
+    if (outRadii.length >= BAND_MAX_PROXIES * 2) return;
+    outPositions.push(x, y, z);
+    outRadii.push(r);
+  };
   
+  const r0 = 0.25;
+  // Densità incrementata (da 0.3 a 0.15) per un nastro completamente fluido senza buchi
+  const stepTarget = 0.15; 
+  
+  for (let v = 0; v + 1 < sections.length; v += 1) {
+    if (outRadii.length >= BAND_MAX_PROXIES * 2) break;
+    const a = sections[v], b = sections[v + 1];
+    const dx = b.p[0] - a.p[0], dy = b.p[1] - a.p[1], dz = b.p[2] - a.p[2];
+    const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    if (!(len > 0) || !(len <= LINK_MAX * 3)) continue;
+    
+    const along = Math.min(BAND_MAX_ALONG * 2, Math.max(1, Math.ceil(len / stepTarget)));
+    for (let i = 0; i <= along; i += 1) {
+      if (outRadii.length >= BAND_MAX_PROXIES * 2) break;
+      const u = i / (along + 1);
+      const px = a.p[0] + dx * u, py = a.p[1] + dy * u, pz = a.p[2] + dz * u;
+      const dir = normalize3([
+        a.d[0] + (b.d[0] - a.d[0]) * u,
+        a.d[1] + (b.d[1] - a.d[1]) * u,
+        a.d[2] + (b.d[2] - a.d[2]) * u,
+      ]);
+      const half = a.w + (b.w - a.w) * u;
+      if (!(half > 0) || !(length3(dir) > 0.5)) continue;
+      
+      const across = Math.min(BAND_MAX_ACROSS * 2, Math.max(1, Math.ceil((2 * half) / stepTarget)));
+      const step = (2 * half) / across;
+      const r = r0;
+      for (let j = 0; j < across; j += 1) {
+        if (outRadii.length >= BAND_MAX_PROXIES * 2) break;
+        const off = -half + (j + 0.5) * step;
+        push(px + dir[0] * off, py + dir[1] * off, pz + dir[2] * off, r);
+      }
+    }
+  }
+  const count = outRadii.length;
+  const positions = new Float32Array(outPositions);
+  const radii = new Float32Array(outRadii);
+  if (opacity < 1) for (let i = 0; i < count; i += 1) radii[i] *= opacity;
+  return { positions, radii, count };
+};
+
+export const bandProxiesOf = (comp) => {
+  const empty = { positions: new Float32Array(0), radii: new Float32Array(0), count: 0, reps: 0, debug: '' };
+  const list = comp && comp.reprList;
+  if (!Array.isArray(list)) return { ...empty, debug: 'no reprList' };
+  const brushes = [];
+  let total = 0;
+  let debug = '';
+  let foundFlat = false;
   list.forEach((el) => {
     try {
       const rep = (el && (el.repr || el)) || null;
       if (!rep || rep.visible === false) return;
       const kind = repTypeOf(rep, el);
       if (!FLAT_STROKE_BY_TYPE[kind]) return;
-      if (opacityOf(rep, el) <= INVISIBLE_OPACITY) return;
-      
+      foundFlat = true;
+      const op = opacityOf(rep, el);
+      if (op <= INVISIBLE_OPACITY) { if (!debug) debug = `type '${kind}' transparent`; return; }
+      const geo = geometryOfRep(rep);
+      if (!geo) { if (!debug) debug = `type '${kind}' has no geometry buffer`; return; }
       const sections = bandSectionsOf(rep, el);
-      if (sections) {
-        allBands = allBands.concat(bandQuadsOf(sections));
-      } else {
-        if (!debug) debug = `type '${kind}' sections failed`;
-      }
+      if (!sections) { if (!debug) debug = `type '${kind}' sections failed`; return; }
+      const brush = bandBrushOf(sections, op);
+      if (!brush.count) { if (!debug) debug = `type '${kind}' brush empty`; return; }
+      brushes.push(brush);
+      total += brush.count;
+      debug = '';
     } catch (e) { if (!debug) debug = `error: ${e.message}`; }
   });
-  return { bands: allBands, debug };
+  if (!foundFlat && !debug) debug = 'no flat representations found';
+  if (!brushes.length) return { ...empty, debug };
+  const positions = new Float32Array(total * 3);
+  const radii = new Float32Array(total);
+  let at = 0;
+  brushes.forEach((b) => {
+    positions.set(b.positions, at * 3);
+    radii.set(b.radii, at);
+    at += b.count;
+  });
+  return { positions, radii, count: total, reps: brushes.length, debug: '' };
+};
+
+const countFills = (lay, scale) => {
+  // Disattiviamo del tutto la generazione di sfere intermedie per i legami
+  if (lay.fills) lay.fills.fill(0);
+  return 0;
 };
 
 const fillDrawnLinks = (parts, stride, maxAtoms) => {
   const layouts = parts.map((part) => layOut(part, stride));
+  const slotsOf = (list) => list.reduce((a, lay) => a + lay.len + (lay.band ? lay.band.count : 0), 0);
+  let slots = slotsOf(layouts);
+  if (slots > maxAtoms) {
+    layouts.forEach((lay) => { lay.band = null; });
+    slots = slotsOf(layouts);
+  }
   
-  const capacity = layouts.reduce((a, lay) => a + lay.len, 0);
+  const capacity = Math.max(1, slots);
   const out = new Float32Array(capacity * 3);
   const radii = new Float32Array(capacity);
-  const edges = [];
-  let allBands = [];
   
+  // Raccogliamo esclusivamente la lista vettoriale dei legami da inviare a rasterizeCapsules
+  const totalEdges = layouts.reduce((a, lay) => a + (lay.edges ? lay.edges.length : 0), 0);
+  const edges = new Int32Array(totalEdges);
+  let edgeK = 0;
+
   let k = 0;
   layouts.forEach((lay) => {
-    const startIndex = k;
-    for (let e = 0; e < lay.len; e += 1) {
+    const startK = k;
+    for (let e = 0; e < lay.len && k < capacity; e += 1) {
       out[k * 3] = lay.wpos[e * 3];
       out[k * 3 + 1] = lay.wpos[e * 3 + 1];
       out[k * 3 + 2] = lay.wpos[e * 3 + 2];
       radii[k] = lay.wrad[e];
       k += 1;
     }
-    for (let p = 0; p < lay.edges.length; p += 2) {
-      edges.push(startIndex + lay.edges[p], startIndex + lay.edges[p + 1]);
+    if (lay.edges) {
+      for (let p = 0; p < lay.edges.length; p += 1) {
+        edges[edgeK++] = lay.edges[p] + startK;
+      }
     }
-    if (lay.band && lay.band.bands) allBands = allBands.concat(lay.band.bands);
+    if (lay.band) {
+      for (let i = 0; i < lay.band.count && k < capacity; i += 1) {
+        out[k * 3] = lay.band.positions[i * 3];
+        out[k * 3 + 1] = lay.band.positions[i * 3 + 1];
+        out[k * 3 + 2] = lay.band.positions[i * 3 + 2];
+        radii[k] = lay.band.radii[i];
+        k += 1;
+      }
+    }
   });
-
+  let bandDebug = '';
+  layouts.forEach((lay) => {
+    if (lay.bandDebug && !bandDebug) bandDebug = lay.bandDebug;
+  });
   return {
-    positions: out, radii, edges, bands: allBands, count: k,
-    bandsCount: allBands.length,
-    bandDebug: layouts.reduce((a, lay) => a || lay.bandDebug, '')
+    positions: out, radii, count: k, edges, filled: 0,
+    bands: layouts.reduce((a, lay) => a + (lay.band ? lay.band.count : 0), 0),
+    bandDebug,
   };
 };
 const linkStepOf = (ra, rb) => Math.max(LINK_STEP_MIN, 0.5 * Math.min(ra, rb));
@@ -998,28 +1030,6 @@ const layOut = (part, stride) => {
     band,
     bandDebug: part.bandDebug || '',
   };
-};
-const countFills = (lay, scale) => {
-  const edges = lay.edges;
-  let cost = 0;
-  for (let k = 0; k + 1 < edges.length; k += 2) {
-    const a = edges[k], b = edges[k + 1];
-    let n = 0;
-    if (lay.wlink[a] && lay.wlink[b]) {
-      const dx = lay.wpos[b * 3] - lay.wpos[a * 3];
-      const dy = lay.wpos[b * 3 + 1] - lay.wpos[a * 3 + 1];
-      const dz = lay.wpos[b * 3 + 2] - lay.wpos[a * 3 + 2];
-      const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
-      if (Number.isFinite(d) && d > 0 && d <= LINK_MAX) {
-        const step = linkStepOf(lay.wrad[a], lay.wrad[b]) * scale;
-        n = Math.max(0, Math.ceil(d / step) - 1);
-        if (!Number.isFinite(n)) n = 0;
-      }
-    }
-    lay.fills[k / 2] = n;
-    cost += n;
-  }
-  return cost;
 };
 
 export const atomsFromStage = (stage, maxAtoms = RAY_SHADOW_DEFAULTS.maxAtoms) => {
@@ -1202,17 +1212,13 @@ export const buildRayShadowMask = ({ atoms, camera, light, width, height, option
     radiusScale: o.sphereScale, axisUp: cameraAxes.up, needWorld: true, needReach: true,
   });
   
-  rasterizeCapsules({
-    positions: atoms.positions, radii: atoms.radii, edges: atoms.edges,
-    clip: camera.clip, width: mw, height: mh, radiusScale: o.sphereScale,
-    axisUp: cameraAxes.up, needWorld: true, needReach: true
-  }, cameraPass);
-
-  rasterizeQuads({
-    bands: atoms.bands, clip: camera.clip, width: mw, height: mh, 
-    axisUp: cameraAxes.up, needWorld: true, needReach: true
-  }, cameraPass);
-
+  if (atoms.edges && atoms.edges.length) {
+    rasterizeCapsules({
+      positions: atoms.positions, radii: atoms.radii, edges: atoms.edges,
+      clip: camera.clip, width: mw, height: mh, radiusScale: o.sphereScale,
+      axisUp: cameraAxes.up, needWorld: true, needReach: true
+    }, cameraPass);
+  }
 
   const lightPass = rasterizeSpheres({
     positions: atoms.positions, radii: atoms.radii, count: atoms.count,
@@ -1220,17 +1226,13 @@ export const buildRayShadowMask = ({ atoms, camera, light, width, height, option
     radiusScale: o.sphereScale, axisUp: lightAxes.up, needWorld: false,
   });
 
-  rasterizeCapsules({
-    positions: atoms.positions, radii: atoms.radii, edges: atoms.edges,
-    clip: light.clip, width: mw, height: mh, radiusScale: o.sphereScale,
-    axisUp: lightAxes.up, needWorld: false
-  }, lightPass);
-
-  rasterizeQuads({
-    bands: atoms.bands, clip: light.clip, width: mw, height: mh, 
-    axisUp: lightAxes.up, needWorld: false
-  }, lightPass);
-
+  if (atoms.edges && atoms.edges.length) {
+    rasterizeCapsules({
+      positions: atoms.positions, radii: atoms.radii, edges: atoms.edges,
+      clip: light.clip, width: mw, height: mh, radiusScale: o.sphereScale,
+      axisUp: lightAxes.up, needWorld: false
+    }, lightPass);
+  }
 
   const depthScale = Number(light.depthScale) > 0 ? light.depthScale : lightDepthScale(light);
   const out = shadowMaskOf({
@@ -1256,9 +1258,9 @@ export const buildRayShadowMask = ({ atoms, camera, light, width, height, option
   return {
     mask: blended, maskWidth: mw, maskHeight: mh,
     shadowed: out.shadowed, spheres: cameraPass.count,
-    filled: Number(atoms && atoms.filled) || 0,
+    filled: 0,
     strength: o.strength,
-    bands: Number(atoms && atoms.bandsCount) || 0,
+    bands: Number(atoms && atoms.bands) || 0,
     bandDebug: atoms && atoms.bandDebug ? atoms.bandDebug : '',
     strokes: proxyStrokeSummary(atoms && atoms.radii, atoms && atoms.count),
     blur,
