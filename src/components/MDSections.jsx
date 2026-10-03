@@ -1685,8 +1685,8 @@ export const MDExperimentSetupSection = ({ ctx }) => {
           Replier NE DÉMONTE PAS le viewer (`keepMounted`) : son contenu n'est créé
           qu'à la PREMIÈRE ouverture, puis reste monté et masqué en CSS — le
           dépliage ne relit donc pas la structure — et `onToggle` fait recaler le
-          viewer et les tracés sur la largeur réelle. Une condition restée en mode
-          3D (structureMode: '3d', l'ancien sélecteur 2D / 3D) rouvre SA carte toute
+          viewer et les tracés sur la largeur réelle. Une condition restée en mode 3D
+          (l'ancien sélecteur l'avait laissée en mode 3D) rouvre SA carte toute
           seule : rien n'est perdu pour les expériences déjà remplies. Le 🔍 Focus et
           le ✖ Deselect sont passés dans SON en-tête : ils restent accessibles même
           repliée, sans occuper une rangée. */}
@@ -1728,8 +1728,9 @@ export const MDExperimentSetupSection = ({ ctx }) => {
           {/* (Le 💡 « Click an atom in the formula (or in the 3D viewer below) … »
               est passé DANS la sous-section « Sequence and structure », avec la
               formule qu'il commente — même place que sur la page NMR. Et le volet
-              `display: structureMode …` a disparu : plus personne ne cache plus
-              personne, la carte repliable s'en charge.) */}
+              que l'ancien mode 2D ⇄ 3D masquait d'un `display: none` a disparu :
+              plus personne ne cache plus personne, la carte repliable s'en
+              charge.) */}
 
             {/* 📂 CE QUE LE DOSSIER DE L'EXPÉRIENCE CONTIENT VRAIMENT.
                 Un bouton par fichier : il LISTE le dossier canonique de
@@ -1760,8 +1761,8 @@ export const MDExperimentSetupSection = ({ ctx }) => {
                 Choosing a file here opens it AND declares it: this condition will reopen it by default, on every computer. Nothing is uploaded again.
               </span>
             </div>
-            {/* (Le « {hasOpened3D && ( … )} » a disparu : c'est la carte repliable
-                `keepMounted` qui monte le viewer à sa PREMIÈRE ouverture et le
+            {/* (L'ancien montage conditionnel du viewer a disparu : c'est la carte
+                repliable `keepMounted` qui le monte à sa PREMIÈRE ouverture et le
                 garde monté ensuite — les fichiers du dossier se choisissent donc
                 ici, dans la même carte, sans second état à tenir.) */}
 <NMRMoleculeViewer
@@ -1837,11 +1838,11 @@ export const MDExperimentSetupSection = ({ ctx }) => {
   height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? '1100px' : '1000px'}
 />
 
-          {/* (Le second volet — `display: structureMode === '2d'` : la formule 2D
-              cachée derrière l'ancien sélecteur 2D ⇄ 3D — a disparu. La formule vit
-              désormais DANS la sous-section « Sequence and structure » ci-dessus,
-              comme sur la page NMR : une seule définition (`formulaBlock`), aucun
-              volet à masquer.) */}
+          {/* (L'ancien SECOND volet — la formule 2D que le sélecteur 2D ⇄ 3D
+              cachait d'un `display: none` — a disparu. La formule vit désormais
+              DANS la sous-section « Sequence and structure » ci-dessus, comme sur
+              la page NMR : une seule définition (`formulaBlock`), aucun volet à
+              masquer.) */}
         </div>
       </CollapsibleSection>
       </div>

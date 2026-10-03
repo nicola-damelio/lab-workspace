@@ -1690,7 +1690,9 @@ Ce qui n'a **pas** changé : la table des déplacements (Backbone / All Atoms,
 cellules, la table de publication et sa fenêtre d'export avec ses propres cases
 « Include Nuclei »), le viewer 3D et son §1 General, le bouton **📥 Download 3D
 PDB File**, la reprise Drive du fichier de structure, et les pages MD / Docking
-(elles gardent leur sélecteur 2D / 3D).
+(elles gardaient alors leur sélecteur 2D / 3D — **la même organisation leur a
+depuis été donnée**, voir « Pages MD et Docking : la même organisation que la page
+NMR » plus bas).
 
 *Vérifier :* `node _nmr_nuclei_table_test.mjs` — la règle du filtre est extraite
 de la source et EXÉCUTÉE (les quatre étiquettes de noyau, cocher / décocher ³¹P
@@ -2437,6 +2439,93 @@ l'expérience ouverte, comme 💾.
 charger un style, le 💾 enregistrer, fermer, rouvrir — le style doit revenir tout seul ; puis le
 même essai sur un autre poste (ou après un nettoyage du navigateur), où c'est le **fichier du
 dossier** qui le ramène.
+
+## Pages MD et Docking : la même organisation que la page NMR — la formule 2D dans « Sequence and structure », le viewer 3D repliable (03/10/2026)
+
+Demandé mot pour mot : « You did not apply the same structure of the NMR page to
+the other pages of the viewer (MD and docking). use the same separation and
+organization of 2D formula and 3D viewer. and the same compressible windows that
+you used in NMR page. »
+
+La page NMR avait reçu cette organisation le 02/10/2026 (voir « Page NMR : la
+formule 2D dans “Sequence and structure”, le viewer 3D repliable… »), les pages
+**MD et Docking** gardaient le vieux **sélecteur 2D ⇄ 3D**. Elles ont maintenant
+exactement la même structure :
+
+* **le sélecteur 2D ⇄ 3D a disparu** des deux pages : plus de boutons
+  « 2D Formula » / « 3D Viewer », et plus aucun volet masqué par un `display: none`
+  ou un `aria-hidden` piloté par ce mode. `activeTest.structureMode` reste
+  seulement *lu* (`openWhen`) pour les conditions déjà remplies ;
+* **la FORMULE 2D vit DANS la sous-section « Sequence and structure »** — celle
+  qui porte la peinture 🖌️ et sa bande de séquence —, qui est désormais **OUVERTE
+  par défaut** (c'est là que la formule se voit ; `CollapsibleSection` mémorise le
+  choix par expérience) ;
+  * sur **MD**, la formule est écrite **UNE fois** (`formulaBlock`, dans
+    `MDExperimentSetupSection` : `OrganicViewer` pour un SMILES, `StructureSVGView`
+    pour une séquence / un sucre / un lipide) et rendue par les DEUX cartes qui
+    portent ce titre — celle des protéines / petites molécules et celle des acides
+    nucléiques (formes A/B/Z). Leurs conditions s'excluent
+    (`!isNucleic && (show2DFormula || showProteinStrip)` d'un côté,
+    `isNucleic && (show2DFormula || showNucleicStrip)` de l'autre) : **une seule
+    carte est à l'écran, la formule ne se montre jamais deux fois** ;
+  * sur **Docking**, `formulaBlock` porte la formule ET le rappel
+    « No structure to display yet » de l'ancien volet 2D (un récepteur encore vide
+    garde son repère, et le texte renvoie à la case de séquence qui est **au-dessus**
+    — il disait « below », ce qui n'était plus vrai) ;
+* **le VIEWER 3D a SA PROPRE sous-section repliable** (« 🧬 3D viewer »), juste
+  après, dans le **même empilement** (`<div className="flex flex-col">`) : aucun
+  grand blanc ne les sépare ;
+  * `defaultOpen={false}` (il reste replié, comme sur la page NMR) ;
+  * `openWhen={structureMode === '3d'}` — une condition restée en mode 3D la
+    rouvre toute seule, et **les structures de cluster d'un docking importé
+    restent visibles sans un clic** (son mode par défaut est 3D dès qu'il y a des
+    structures) ;
+  * `keepMounted` — **replier ne DÉMONTE PAS le viewer** : le contenu n'est créé
+    qu'à la première ouverture, reste monté (masqué en CSS) et le dépliage ne
+    relit donc pas la structure ;
+  * `onToggle={setViewerOpen}` — la page est prévenue de chaque repli / dépliage
+    pour recaler le viewer (et les tracés MD) sur la largeur réelle : replier /
+    déplier n'émet **aucun** « resize » du navigateur ;
+* **plus de montage conditionnel** : `hasOpened3D` a disparu des deux pages —
+  c'est `everOpened` de `CollapsibleSection` qui monte le contenu à sa première
+  ouverture ;
+* sur **MD**, le **🔍 Focus** et le **✖ Deselect** sont passés **dans l'en-tête de
+  la carte 3D** (comme sur la page NMR : ils restent accessibles même repliée,
+  sans occuper une rangée), et le **📓 Formula → Notebook** vit avec la formule
+  qu'il exporte ; les commandes de fichiers du dossier de l'expérience
+  (**📂 Topology / 📂 Trajectory from Drive folder**) et le viewer sont DANS la
+  carte du viewer ;
+* sur **Docking**, le champ **« Receptor topology (PDB ID / URL) »** — qui
+  n'apparaissait QU'en mode 3D — vit lui aussi DANS la carte du viewer, avec le
+  choix de la structure de cluster (8_seletopclusts) et son lien ☁️ Drive.
+
+Ce qui n'a **pas** changé : la peinture 🖌️ et ses deux bandes de séquence (avec
+le résolveur de numéros 🔢, le feuillet déclaré et le 💡 « Select a brush… »), le
+SMILES du ligand, le champ de séquence et sa lecture 🧬, l'ordre des cartes de
+résultats, les restaurations Drive (topologie, trajectoire, structures de
+docking), le contexte de nommage des sélections PyMOL, le bouton 📥 Download 3D
+PDB File, et le comportement de `CollapsibleSection` pour les AUTRES sections
+(montées / démontées).
+
+*Vérifier :* `node _structure_windows_test.mjs` — 97 assertions : plus aucun
+bouton ne réécrit le mode 2D / 3D, plus aucun volet n'est masqué par ce mode,
+plus aucun `hasOpened3D` ; la formule est dans la carte « Sequence and structure »
+(ouverte par défaut, `{formulaBlock}` dedans pour MD **et** Docking, une seule
+définition de la formule, un 💡 et un 📓 avec elle) ; la carte « 3D viewer » vient
+après, dans le même empilement, avec `defaultOpen={false}` / `openWhen` /
+`keepMounted` / `onToggle={setViewerOpen}` ; le 🔍 Focus, le ✖ Deselect, les 📂 du
+dossier, le viewer MD et le champ « Receptor topology » du Docking sont DANS cette
+carte ; `viewerOpen` ne sert qu'au recalage, et le geste replié / déplié de
+`ui.jsx` est vérifié aussi. `node _residue_numbering_panels_test.mjs` (79),
+`node _nmr_nuclei_table_test.mjs` (67), `node _ss_dihedral_test.mjs` (128),
+`node _ss_sheet_test.mjs` (143), `node _compact_sections_test.mjs` (211),
+`node _condition_page_test.mjs` (123), `node _cysteine_panel_layout_test.mjs`
+(50) — les invariants des trois pages tiennent. `node _verify.cjs` — **41 suites,
+1 échec** : le seul rouge reste `_viewer_rings_gradient_test.mjs`, déjà rouge
+avant cette retouche. `npx vite build` — ✓ ; `npx oxlint` sur les deux fichiers
+touchés — **10 avertissements `exhaustive-deps`, 0 erreur** : exactement le
+compte d'avant la retouche, aucun symbole nouveau nommé.
+
 
 
 

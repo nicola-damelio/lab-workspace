@@ -243,6 +243,19 @@ const tests = [
   // .pdb et des .xtc) et rappeler (la mémoire du poste d'abord, sans aucune
   // requête ; le fichier du dossier ensuite, sur un poste vierge).
   '_viewer_style_recall_test.mjs',
+  // LA MÊME ORGANISATION QUE LA PAGE NMR SUR LES PAGES MD ET DOCKING (la
+  // demande : « You did not apply the same structure of the NMR page to the
+  // other pages of the viewer (MD and docking). use the same separation and
+  // organization of 2D formula and 3D viewer. and the same compressible windows
+  // that you used in NMR page. ») : le sélecteur 2D ⇄ 3D a disparu des deux
+  // pages, la formule 2D (écrite UNE fois, `formulaBlock`) vit DANS la
+  // sous-section « Sequence and structure » — ouverte par défaut — et le viewer
+  // 3D a SA carte repliable (« 🧬 3D viewer » : `defaultOpen={false}`,
+  // `openWhen`, `keepMounted`, `onToggle`) dans le même empilement, le 🔍 Focus
+  // / ✖ Deselect dans son en-tête, les 📂 fichiers du dossier DANS la carte et
+  // — sur Docking — le champ « Receptor topology » avec elle. Vérifié sur le
+  // TEXTE des deux pages, plus le geste replié/déplié de ui.jsx.
+  '_structure_windows_test.mjs',
   // LES QUATRE RÉGLAGES DE CETTE SESSION, du côté du viewer : la couleur unie de
   // General qui descend sur les parties de la molécule (« the solid color is not
   // transferred to the subsections backbone, sidechains, etc. »), la section qui

@@ -811,12 +811,12 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
                 height="480px"
               />
 
-          {/* (Le second volet — `display: structureMode === '2d'` : la formule 2D
-              cachée derrière l'ancien sélecteur 2D ⇄ 3D — a disparu, ainsi que le
-              « {hasOpened3D && ( … )} » : c'est la carte repliable `keepMounted`
-              qui monte le viewer à sa PREMIÈRE ouverture et le garde monté
-              ensuite. La formule vit DANS « Sequence and structure » ci-dessus,
-              comme sur la page NMR : une seule définition (`formulaBlock`).) */}
+          {/* (L'ancien SECOND volet — la formule 2D que le sélecteur 2D ⇄ 3D
+              cachait d'un `display: none` — a disparu, ainsi que le montage
+              conditionnel du viewer : c'est la carte repliable `keepMounted` qui
+              le monte à sa PREMIÈRE ouverture et le garde monté ensuite. La
+              formule vit DANS « Sequence and structure » ci-dessus, comme sur la
+              page NMR : une seule définition (`formulaBlock`).) */}
         </div>
       </CollapsibleSection>
       </div>
