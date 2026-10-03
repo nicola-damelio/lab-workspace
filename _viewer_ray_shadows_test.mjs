@@ -715,8 +715,10 @@ near(listed.radii[0], 0.45, 1e-6, '…seul le trait du ruban reste : 0,45 Å');
 near(listed.radii[1], 0.45, 1e-6, '…pour chacun des atomes que le ruban dessine vraiment');
 ok([...listed.radii].every((r) => !(r > 1)),
   '…plus une seule bille de van der Waals dans l’ombre d’un ruban (c’était la tache du rapport)');
-ok(MODULE.includes('if (surface && measurable && !(Number.isFinite(stroke) && stroke > 0)) continue;'),
-  '…c’est la règle de layOut : un atome dont le trait est illisible est laissé hors du proxy');
+ok(MODULE.includes('if (surface && measured && !(stroke > 0)) continue;'),
+  '…c’est la première règle de layOut : un atome que le MAILLAGE dessine (un rayon FINI nul, « aucun proxy ») est laissé hors du proxy — jamais une bille de vdW');
+ok(MODULE.includes('if (surface && !measured && measurable) continue;'),
+  '…la seconde, d’avant : un atome LISTÉ mais dessiné par personne n’entre pas non plus, tant que la scène a des traits lisibles ailleurs');
 ok(MODULE.includes('measurable = Number.isFinite(surface[i]) && surface[i] > 0;'),
   '…et elle ne touche PAS le repli : `measurable` garde les rayons de van der Waals quand rien n’est mesurable');
 // …et le repli reste : quand AUCUN trait n'est mesurable (une représentation dont la

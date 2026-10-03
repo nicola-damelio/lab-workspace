@@ -1066,13 +1066,33 @@ export const drawnProxyRadiiOf = (comp, atomCount, vdw = null, links = null, spl
          fully shadowed pixels on the white background, up to 6 px from the ribbon.
          The proxy stays for the case it was made for: a draw whose geometry cannot
          be read yet (a build still in NGL's queue). */
-      if (covered && covered.has(el)) return;
+      /* ⚠ LE MAILLAGE LE DESSINE : le proxy n'existe pas, et il faut le DIRE.
+         La version d'avant se contentait de sortir sans rien écrire : ces atomes
+         restaient `NaN`, exactement comme ceux d'un genre que la table ne sait
+         pas mesurer — deux cas que `layOut` ne pouvait donc pas distinguer, et
+         qu'il réglait tous les deux par le repli vdW (voir le ZÉRO ci-dessous). */
+      const coveredHere = !!(covered && covered.has(el));
       const op = opacityOf(rep, el);
       if (op <= INVISIBLE_OPACITY) return;
       const sv = rep.structureView;
       if (!sv || typeof sv.getAtomIndices !== 'function') return;
       const idx = sv.getAtomIndices();
       if (!idx || !idx.length) return;
+      if (coveredHere) {
+        /* LE ZÉRO EST LE MARQUEUR « DESSINÉ PAR LE MAILLAGE, AUCUN PROXY ».
+           Fini et nul, il dit à `layOut` d'écarter l'atome ; un `NaN` dit au
+           contraire « personne ne sait le mesurer » et garde le repli vdW. Sans
+           cette distinction, la scène d'un CARTOON SEUL (les chaînes latérales
+           cachées — le style change et le ruban reste) se remplissait de billes
+           de 1,7 Å que rien ne dessine : mesuré, 3 644 pixels d'ombre, TOUS hors
+           du ruban. C'est la « shadow on a plane » du rapport. */
+        for (let i = 0; i < idx.length; i += 1) {
+          const a = idx[i];
+          if (!(a >= 0 && a < out.length)) continue;
+          if (!(out[a] >= 0)) out[a] = 0;
+        }
+        return;
+      }
       const kind = repKindOf(rep, el);
       const linked = LINKED_KINDS[kind] === 1;
       const chainOnly = BACKBONE_ONLY_KINDS[kind] === 1 && drawsBackboneOf(ap, idx);
@@ -1482,6 +1502,7 @@ const layOut = (part, stride) => {
     : elements16Of(part.comp.group && part.comp.group.matrixWorld);
   const pos = part.data.position, rad = part.data.radius;
   const surface = part.surface, links = part.links, lrad = part.linkRadii;
+  /* LE TRAIT LE PLUS FIN DE LA SCÈNE EST-IL LISIBLE ? (voir layOut plus bas) */
   let measurable = false;
   if (surface) {
     for (let i = 0; i < surface.length && !measurable; i += 1) {
@@ -1508,9 +1529,39 @@ const layOut = (part, stride) => {
       wpos[e * 3] = x; wpos[e * 3 + 1] = y; wpos[e * 3 + 2] = z;
     }
     const vdw = rad && Number.isFinite(rad[i]) ? rad[i] : 1.7;
-    const stroke = surface ? surface[i] : NaN;
-    if (surface && measurable && !(Number.isFinite(stroke) && stroke > 0)) continue;
-    const drawn = Number.isFinite(stroke) && stroke > 0;
+    /* ⚠ TROIS CAS, ET LE ZÉRO EST LE TROISIÈME (voir `drawnProxyRadiiOf`) :
+       · `surface` absent — un appelant qui ne passe que des rayons — → repli vdW ;
+       · un rayon FINI > 0 → la forme mesurée (la bille d'un ball+stick, le bâton
+         d'un licorice, le ruban d'un cartoon) ;
+       · un rayon FINI NUL → le MAILLAGE dessine cet atome : aucun proxy. C'est le
+         cas d'une surface dont les triangles ont été lus, et il ne doit JAMAIS
+         retomber sur le repli vdW — sinon la bille de 1,7 Å revient en fantôme
+         (mesuré : 3 644 pixels d'ombre sur une scène où un cartoon est la seule
+         représentation dessinée, TOUS hors du ruban : « a shadow on a plane ») ;
+       · un rayon NaN → aucune représentation ne sait le mesurer (un genre que la
+         table ne connaît pas, un `dot`) → repli vdW, exactement comme avant.
+       ⚠ LE ZÉRO EST TESTÉ PAR ATOME, PAS PAR SCÈNE. La version d'avant cherchait
+       un seul atome mesurable et, s'il n'y en avait aucun, repliait TOUS les NaN
+       sur le vdW : c'est ce qui a ramené la nuée de billes le jour où le ruban
+       est resté seul. */
+    const stroke = surface ? surface[i] : null;
+    const measured = surface ? Number.isFinite(stroke) : false;
+    /* DEUX FILTRES, ET ILS NE DISENT PAS LA MÊME CHOSE :
+       · `measured && !(stroke > 0)` — un ZÉRO FINI : le maillage dessine cet
+         atome, il n'a aucun proxy. C'est le cas d'une surface dont les triangles
+         ont été lus (voir `drawnProxyRadiiOf`) et il ne doit JAMAIS retomber sur
+         le repli vdW, sinon la bille de 1,7 Å revient en fantôme — mesuré : 3 644
+         pixels d'ombre sur une scène où un cartoon est la seule représentation
+         dessinée, TOUS hors du ruban : « a shadow on a plane » ;
+       · `!measured && measurable` — un NaN alors que la scène a des traits
+         lisibles ailleurs : l'atome est LISTÉ mais il n'est dessiné par personne
+         (une représentation cachée, un intérieur de cycle), donc pas de proxy.
+       Un NaN dans une scène où RIEN n'est mesurable garde, lui, son rayon de
+       van der Waals : c'est le repli d'un genre que la table ne connaît pas
+       (le `dot` du viewer), et il est voulu. */
+    if (surface && measured && !(stroke > 0)) continue;
+    if (surface && !measured && measurable) continue;
+    const drawn = measured && stroke > 0;
     wrad[e] = drawn ? stroke : vdw;
     wlink[e] = drawn && links && links[i] === 1 ? 1 : 0;
     /* ⚠ LA CAPSULE SUIT LE BÂTON, PAS LA BILLE. `wrad` est la plus grosse forme de
