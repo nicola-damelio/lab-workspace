@@ -59,6 +59,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 /* ── 1. Ce qui voyage, et ce qui ne voyage JAMAIS ───────────────────────── */
 ok(K.isSyncableKey('labWorkspace_publications'), 'les listes de l’application voyagent');
 ok(K.isSyncableKey('labFiguresLib_global'), '…la bibliothèque de figures aussi');
+/* LA PEAU DE L'INTERFACE appartient à l'OPÉRATEUR (voir utils/uiSkin.js) : sa
+   clé porte l'identifiant du propriétaire et voyage donc comme les autres —
+   c'est ce qui fait qu'il retrouve sa palette d'un poste à l'autre. */
+ok(K.isSyncableKey('labWorkspace_uiSkin_op_1712'), 'la peau d’un opérateur voyage aussi');
+ok(K.isSyncableKey('labWorkspace_uiSkinCustom_op_1712'), '…et l’accent qu’il a choisi');
 ok(!K.isSyncableKey('labDriveAccessToken'), 'un jeton Google ne voyage JAMAIS');
 ok(!K.isSyncableKey('labNcAppPassword'), '…ni un mot de passe Nextcloud');
 ok(!K.isSyncableKey('labDriveMirror'), '…ni ce qui est déjà synchronisé par un autre fichier');

@@ -1,254 +1,359 @@
-diff --git a/_large_system_style_test.mjs b/_large_system_style_test.mjs
-index 00de8da..db9d910 100644
---- a/_large_system_style_test.mjs
-+++ b/_large_system_style_test.mjs
-@@ -56,7 +56,9 @@ ok(/const sele = showLargeWaterRef\.current \? 'all' : 'not water';/.test(block)
-   'l’eau n’est dessinée que si 💧 Water est cochée (sinon la sélection est « not water »)');
- ok(/addRepresentation\('line'/.test(block), 'le style « lines » existe');
- ok(/addRepresentation\('spacefill'/.test(block), 'le style « spheres » existe');
--ok(/addRepresentation\('dot'/.test(block), 'le style « dots » existe');
-+ok(/addRepresentation\('point'/.test(block), 'le style « dots » existe — et c’est `point`, la seule représentation de points qu’NGL 2.4 enregistre');
-+ok(/radiusScale: 0\.25/.test(block), 'le style « spheres » écrit sa taille en `radiusScale` (le seul champ qu’NGL lit — `scale` est ignoré)');
-+gone("addRepresentation('dot'", 'plus jamais `dot` : ce nom n’est pas dans le registre d’NGL 2.4, la vue devenait VIDE');
- ok(!/addRepresentation\('cartoon'/.test(block),
-   'la protéine n’est PLUS forcée en cartoon : « tout en lines » s’applique à tous les atomes');
- ok(!/'hetero and not water'/.test(block),
-diff --git a/_probe_ghost.mjs b/_probe_ghost.mjs
-index 8266a16..ffc152c 100644
---- a/_probe_ghost.mjs
-+++ b/_probe_ghost.mjs
-@@ -86,24 +86,36 @@ report('D. licorice AVANT le cartoon (maillage LU) — ordre indifférent',
-    il ne reste plus AUCUN atome à replier — `measurable` reste faux (aucune valeur
-    finie > 0) mais les NaN du `dot` ont été REMPLACÉS par ce zéro. C'est le
-    comportement voulu : le maillage DESSINE déjà ces atomes, une bille de vdW les
--   doublerait (c'est le fantôme du rapport), et un `dot` ne pose qu'un point — rien
--   qu'on puisse distinguer sous le ruban. La scène réelle du viewer ne superpose
--   jamais les deux : `dot` est réservé à `sele: 'ion'` / `sele: 'water'`, des
--   ensembles DISJOINTS du cartoon (voir le banc, section 8). */
-+   doublerait (c'est le fantôme du rapport). ⚠ `dot` n'est plus le style de
-+   pointillés du viewer (NGL 2.4 ne l'enregistre même pas — c'est `point`, voir F) :
-+   il ne reste ici que comme le PROTOTYPE d'un genre que la table ne sait pas
-+   mesurer. */
- report('E. cartoon (maillage LU) + dot sur les MÊMES atomes → aucun proxy (le maillage dessine déjà)',
-   atomsFromStage(stageOf([
-     el('cartoon', { type: 'cartoon', visible: true, radiusScale: 0.7, radiusType: 'sstruc', structureView: view, bufferList: [{ geometry: indexedSurface() }] }),
-     el('dot', { type: 'dot', visible: true, radiusScale: 1, structureView: view }),
-   ]), 100000));
+diff --git a/_experiment_folder_files_test.mjs b/_experiment_folder_files_test.mjs
+index 303ac18..2996bdd 100644
+--- a/_experiment_folder_files_test.mjs
++++ b/_experiment_folder_files_test.mjs
+@@ -16,9 +16,13 @@
+        instance → expérience) ;
+      • RIEN N'EST CRÉÉ (`{ create: false }`) et on ne sort JAMAIS de
+        l'expérience (jamais `projects/`, jamais une expérience voisine) ;
+-     • LE SEUL GESTE QUI FABRIQUE est EXPLICITE (`createExperimentFolder`) :
+-       il crée le dossier de l'EXPÉRIENCE — projects/<projet>/<expérience>
+-       [/<instance>] — avec `{ create: true }`, une seule fois (idempotent) ;
++     • LE SEUL GESTE QUI FABRIQUE est EXPLICITE (`createExperimentFolder`) : il
++       crée le chemin ENTIER — projects/<projet>/<expérience>[/<instance>] PUIS
++       les deux sous-sections `experiment_setup/Structure` et
++       `experiment_setup/Trajectory` (la demande : « datasetname/projects/
++       projectname/experimentname/instancename/subsection/file ») — avec
++       `{ create: true }`, une seule fois (idempotent), et CHAQUE segment créé
++       est VÉRIFIÉ : un échec partiel se DIT, il ne passe plus pour un succès ;
+      • seuls les FICHIERS des extensions voulues : les dossiers et les autres
+        fichiers de la même boîte sont écartés ;
+      • le fichier choisi devient le DÉFAUT de la condition : la page écrit le
+@@ -87,6 +91,9 @@ addFolder(['projects', 'MD project', 'Other exp', 'cond3'], [
+ globalThis.__driveTestMocks = {
+   driveToken: 'fake-token',
+   cloud: true,
++  // Le nom du dossier de DATASET ouvert : c'est lui la TÊTE du chemin complet
++  // que le bouton de création montre (« datasetname/projects/… »).
++  driveRootName: 'Dataset A',
+   resolveDrivePathFromNames: async (names, opts) => {
+     const key = (names || []).map(slug).join('/');
+     requested.push(key);
+@@ -109,6 +116,10 @@ const MDSRC = readFileSync('src/components/MDSections.jsx', 'utf8');
+ const PICKER_SRC = readFileSync('src/components/DriveExperimentFiles.jsx', 'utf8');
+ const NMRSRC = readFileSync('src/components/NMRSections.jsx', 'utf8');
+ const MODULE_SRC = readFileSync('src/utils/driveExperimentFiles.js', 'utf8');
++/* Le bouton qui CRÉE le dossier est rendu par le VIEWER (la demande : « …must be
++   placed in the same line of "PDB file" button always ») : sa source est donc
++   lue ici aussi. */
++const VIEWSRC = readFileSync('src/components/NMRMoleculeViewer.jsx', 'utf8');
  
--/* F. LA SCÈNE RÉELLE : le ruban sur [0, 1] (maillage LU) et les dots sur [2, 3].
--   Les deux ensembles sont disjoints, comme `cartoon` (protéine) + `dot` (`water`
--   ou `ion`) dans le viewer : les dots gardent leur repli vdW, le ruban n'ajoute
--   aucune bille. C'est cette scène-là que le banc garde (section 8). */
--report('F. cartoon (maillage LU, [0,1]) + dot ([2,3]) — la scène du viewer',
-+/* F. LA SCÈNE RÉELLE : le ruban sur [0, 1] (maillage LU) et les POINTILLÉS sur
-+   [2, 3]. Les deux ensembles sont disjoints, comme `cartoon` (protéine) + les
-+   points des eaux / ions dans le viewer. ⚠ CES POINTILLÉS SONT DES `point` — NGL
-+   2.4 n'enregistre aucune représentation `dot` (la demander LÈVE, et le `try` du
-+   viewer ne dessinait alors RIEN). Le point est un POINT ÉCRAN : sa seule ombre
-+   honnête est un cheveu (0,15 Å), jamais la bille de 1,7 Å du repli vdW qui
-+   remplissait l'ombre d'une nuée de billes (« a shadow on a plane »). C'est cette
-+   scène-là que le banc garde (sections 8 et 8b). */
-+report('F. cartoon (maillage LU, [0,1]) + point ([2,3]) — la scène du viewer',
-   atomsFromStage(stageOf([
-     el('cartoon', { type: 'cartoon', visible: true, radiusScale: 0.7, radiusType: 'sstruc', structureView: { getAtomIndices: () => Uint32Array.from([0, 1]) }, bufferList: [{ geometry: indexedSurface() }] }),
--    el('dot', { type: 'dot', visible: true, radiusScale: 1, structureView: { getAtomIndices: () => Uint32Array.from([2, 3]) } }),
-+    el('point', { type: 'point', visible: true, pointSize: 2, structureView: { getAtomIndices: () => Uint32Array.from([2, 3]) } }),
-+  ]), 100000));
+ /* ══ 1. LA LOGIQUE PURE ════════════════════════════════════════════════════ */
+ 
+@@ -153,6 +164,35 @@ eq(FILES.experimentFolderPathOf({ protocol: 'Some protocol', section: 'Data' }),
+   'un protocole vit dans son propre conteneur (protocols/) : rien à créer sous projects/');
+ eq(FILES.experimentFolderPathOf(null), [], '…et aucun contexte ne fabrique un chemin');
+ 
++/* LE DOSSIER D'UN TYPE DE FICHIER — la demande, mot pour mot : « …subsection is
++   experiment_setup/trajectory for trajectory files and experiment_setup/Structure
++   for pdb files ». */
++eq(FILES.EXPERIMENT_FILE_SUBSECTIONS, ['Structure', 'Trajectory'],
++  'les deux sous-sections où les fichiers se déposent sont déclarées UNE fois');
++eq(FILES.experimentFileFolderPathOf(MD_CTX, 'Structure'),
++  ['projects', 'MD_project', 'Exp_1', 'cond1', 'experiment setup', 'Structure'],
++  'la topologie / le PDB vit dans …/experiment_setup/Structure (le dossier écrit sur le Drive)');
++eq(FILES.experimentFileFolderPathOf(MD_CTX, 'trajectory'),
++  ['projects', 'MD_project', 'Exp_1', 'cond1', 'experiment setup', 'trajectory'],
++  '…et une trajectoire dans …/experiment_setup/trajectory');
++eq(FILES.drivePathText(FILES.experimentFileFolderPathOf(MD_CTX, 'Structure')),
++  'projects/MD_project/Exp_1/cond1/experiment_setup/Structure',
++  '…et le TEXTE du chemin est celui du Drive (`experiment setup` y est le dossier `experiment_setup`)');
++eq(FILES.experimentFileFolderPathOf({ project: 'MD project' }, 'Structure'), [],
++  'un contexte sans expérience ne désigne aucun dossier de fichier');
++eq(FILES.fullDrivePathText('Dataset A', ['projects', 'MD project']), 'Dataset_A/projects/MD_project',
++  'le chemin complet commence par le dossier du DATASET (slugué comme le Drive le fait)');
++eq(FILES.fullDrivePathText('', ['projects']), 'projects',
++  'sans nom de dataset connu, le chemin est montré seul (jamais un « // » inventé)');
++eq(FILES.firstMissingSegment({ path: [{ id: 'a' }, { id: '' }] }, ['x', 'y']), 'y',
++  'le premier segment SANS identifiant est celui qui est nommé dans l’échec');
++eq(FILES.firstMissingSegment({ path: [{ id: 'a' }, { id: 'b' }] }, ['x', 'y']), '',
++  '…et rien n’est nommé quand la chaîne est complète');
++ok(FILES.driveCreateError(null, ['projects', 'X'], 'projects').includes('did not create'),
++  'une création partielle DIT ce qui n’a pas été créé (le défaut signalé)');
++ok(FILES.driveCreateError({ code: 'PATH_DELETED', message: 'boom' }, ['projects', 'Y']).includes('never recreated'),
++  '…et un chemin supprimé dans le programme s’explique au lieu d’un « failed » muet');
 +
-+/* G. LE STYLE LÉGER « dots » D'UN GRAND SYSTÈME : TOUT est en points, et rien
-+   d'autre (voir `ls === 'dots'` d'addDefaultReps). C'était la scène où le repli
-+   vdW faisait le plus de dégâts — 100 % des atomes y tombaient. */
-+report('G. point seul (le style léger « dots ») → un cheveu par atome, aucune bille',
-+  atomsFromStage(stageOf([
-+    el('point', { type: 'point', visible: true, pointSize: 2, structureView: view }),
-   ]), 100000));
+ /* Les DEUX branches de nommage (page MD « Setup » / viewer 3D « Data »). */
+ const DATA_CTX = { ...MD_CTX, section: 'Data' };
+ eq(FILES.experimentFolderCandidates({ ctx: MD_CTX, ctxs: [DATA_CTX] }), [
+@@ -298,38 +338,61 @@ globalThis.__driveTestMocks.resolveDrivePathFromNames = async (names, opts) => {
+   return { leafId: `F_${key}`, path: names.map((n) => ({ name: slug(n), id: `F_${key}` })) };
+ };
  
- 
-diff --git a/_viewer_ray_shadows_test.mjs b/_viewer_ray_shadows_test.mjs
-index 29793ba..4d0c8b8 100644
---- a/_viewer_ray_shadows_test.mjs
-+++ b/_viewer_ray_shadows_test.mjs
-@@ -567,8 +567,20 @@ ok(pcfRotationOf(4, 7) !== discAngle, '…et différent du voisin : les échanti
-    éclairé. Le proxy (qui REÇOIT et qui PROJETTE) suit donc le trait. */
- eq(proxyRadiusOf({ parameters: { type: 'spacefill' } }, 1.7), 1.7,
-   'spacefill : la bille EST le rayon de van der Waals');
-+/* ⚠ UN `scale` LU COMME REPLI, JAMAIS COMME NGL. Mesuré dans le paquet installé :
-+   NGL 2.4 n'a AUCUN paramètre `scale` — il n'est pas dans la table de la
-+   représentation (`Representation#setParameters` le saute), et le rayon d'une bille
-+   vient de `RadiusFactory#atomRadius` = `min(r × radiusScale, 10)`. Le viewer écrit
-+   donc la taille de ses sphères en `radiusScale` (voir _viewer_sphere_size_test.mjs,
-+   qui l'interdit autrement) et cette ligne-ci ne sert que le cas restant : un
-+   appelant EXTÉRIEUR qui honore `scale` lui-même (le `set sphere_scale` de PyMOL).
-+   Quand les deux sont là, c'est `radiusScale` qui décide — c'est l'ordre des clés de
-+   `repNumber`, et c'est ce qui fait que l'ombre d'une bille du viewer mesure
-+   exactement son encre. */
- eq(proxyRadiusOf({ parameters: { type: 'sphere', scale: 0.6 } }, 1.7), 1.7 * 0.6,
--  'sphere : « set sphere_scale, 0.6 » réduit le proxy comme il réduit le dessin');
-+  'sphere : un `scale` posé par l’APPELANT est suivi (NGL, lui, ne le lit pas)');
-+eq(proxyRadiusOf({ parameters: { type: 'sphere', radiusScale: 0.6, scale: 0.2 } }, 1.7), 1.7 * 0.6,
-+  '…et `radiusScale` l’emporte sur lui : c’est le seul champ qu’NGL sait lire');
- eq(proxyRadiusOf({ parameters: { type: 'sphere', radius: 2.4 } }, 1.7), 2.4,
-   '…et un rayon numérique l’emporte sur le rayon de van der Waals');
- eq(proxyRadiusOf({ parameters: { type: 'ball+stick' } }, 1.7), 0.3,
-diff --git a/_viewer_selection_toggle_test.mjs b/_viewer_selection_toggle_test.mjs
-index 40d8b5a..2763a89 100644
---- a/_viewer_selection_toggle_test.mjs
-+++ b/_viewer_selection_toggle_test.mjs
-@@ -325,7 +325,7 @@ has("set('sphere', Number(e.target.value))", '…le R◯ de la ligne écrit son
- has("sphere: 'radiusSphere',", '…par le champ commun des deux barres, mappé sur radiusSphere');
- has("set('bond', Number(e.target.value))", '…et son R— le sien');
- has("bond: 'radiusBond',", '…par le même adaptateur, mappé sur radiusBond');
--has('{ scale: (st.sphereScale || 1) * rS, colorScheme, opacity, multipleBond: true }',
-+has('{ radiusScale: (st.sphereScale || 1) * rS, colorScheme, opacity, multipleBond: true }',
-   'R◯ multiplie la taille des sphères (un `set sphere_scale` du macro reste une propriété d’ATOMES qui multiplie celle-ci)');
- has('aspectRatio: 1.3 * rS,', 'R◯ multiplie aussi les sphères des ball+stick');
- has('radiusSize: LICORICE_BOND_RADIUS * rB }', 'R— multiplie l’épaisseur des bâtons (licorice)');
-diff --git a/_viewer_shadow_blur_test.mjs b/_viewer_shadow_blur_test.mjs
-index 24f4999..01f37db 100644
---- a/_viewer_shadow_blur_test.mjs
-+++ b/_viewer_shadow_blur_test.mjs
-@@ -380,8 +380,9 @@ ok(appRadii.every((r) => r < 0.6),
- 
- 
- /* Le MÊME peptide, dessiné par une représentation que la table ne connaît pas
--   (`dot` — le style léger du viewer) : les atomes sont DESSINÉS, donc émis, mais
--   aucun trait ne leur est reconnu — ils gardent leur rayon de vdW. C'est
-+   (`dot` — un nom qu'NGL 2.4 n'enregistre pas, donc un genre *fictif* depuis que le
-+   viewer demande `point` pour ses pointillés) : les atomes sont DESSINÉS, donc
-+   émis, mais aucun trait ne leur est reconnu — ils gardent leur rayon de vdW. C'est
-    exactement la forme des « spheric shadows », et le diagnostic doit le DIRE. */
- const dotAtoms = atomsFromStage(bench([element('dot', {
-   type: 'dot', visible: true, radiusScale: 1, structureView: viewOf('protein'),
-@@ -390,6 +391,16 @@ const dotSummary = proxyStrokeSummary(dotAtoms.radii, dotAtoms.count, 64);
- const dotMax = Math.max(...dotSummary.list.map((e) => e.radius));
- ok(dotMax > 0.6,
-   `une représentation inconnue rend les atomes à leur rayon de vdW (${dotMax.toFixed(2)} Å) — et c’est ÉCRIT dans la note, plus jamais deviné`);
-+/* …ET LE POINTILLÉ DU VIEWER, LUI, N'EST PLUS UNE REPRÉSENTATION INCONNUE. Les
-+   points du style léger « dots » et des rangées eau / ions sont des `point` : la
-+   table les connaît (un cheveu), donc ils ne peuvent plus remplir l'ombre d'une
-+   nuée de billes de 1,7 Å — le défaut que ce diagnostic servait à nommer. */
-+const pointAtoms = atomsFromStage(bench([element('point', {
-+  type: 'point', visible: true, pointSize: 2, structureView: viewOf('protein'),
-+})]), 100000);
-+const pointMax = Math.max(...proxyStrokeSummary(pointAtoms.radii, pointAtoms.count, 64).list.map((e) => e.radius));
-+ok(pointMax <= 0.2,
-+  `les pointillés du viewer portent un CHEVEU (${pointMax.toFixed(2)} Å), jamais le rayon de van der Waals`);
- 
- /* ── 6. LA NOTE DE LA « RAY » DIT LES TRAITS ───────────────────────────────── */
- const noteOf = (strokes) => rayShadowNote({
-diff --git a/_viewer_shadow_ghost_test.mjs b/_viewer_shadow_ghost_test.mjs
-index c6a7681..818c3ec 100644
---- a/_viewer_shadow_ghost_test.mjs
-+++ b/_viewer_shadow_ghost_test.mjs
-@@ -29,9 +29,14 @@
-      · L'ORDRE DES REPRÉSENTATIONS NE COMPTE PAS — le licorice AVANT le ruban donne
-        le même proxy que l'inverse : le zéro du maillage ne mange jamais un trait
-        mesuré (il ne s'écrit que sur un `NaN`) ;
--     · LA SCÈNE DU VIEWER — ruban (protéine) + `dot` (`sele: 'ion'` / `'water'`,
--       deux ensembles DISJOINTS) : les dots gardent leur ombre vdW, le ruban n'y
--       ajoute aucune bille de 1,7 Å.
-+     · LA SCÈNE DU VIEWER — ruban (protéine) + les POINTILLÉS des eaux / ions
-+       (`point`, `sele: 'ion'` / `'water'`, deux ensembles DISJOINTS) : les
-+       pointillés portent leur CHEVEU, jamais la bille de vdW, et le ruban n'y
-+       ajoute aucune bille de 1,7 Å. C'est la règle du style léger « dots » d'un
-+       grand système (§8b), où TOUT est en points.
-+   ⚠ CE QUE LA TABLE NE CONNAÎT PAS garde le repli vdW (une `dot` d'un vieux
-+   script — NGL 2.4 n'enregistre aucune représentation `dot`). Les sections 4 et 5
-+   mesurent ce repli-là, avec un genre qui n'existe pas, exprès.
-    ========================================================================= */
- import assert from 'node:assert/strict';
- import { readFileSync } from 'node:fs';
-@@ -102,6 +107,11 @@ eq(mixed.count, 2, 'un ruban lu PLUS ses chaînes latérales : seules les chaîn
- [...mixed.radii].forEach((r) => near(r, 0.25, 1e-6, '…au trait du licorice (0,25 Å), pas au rayon du ruban'));
- 
- /* ── 4. LE REPLI QUI DOIT RESTER : UN GENRE QUE LA TABLE NE CONNAÎT PAS ───── */
-+/* ⚠ `dot` EST ICI UN GENRE *FICTIF* — NGL 2.4 n'enregistre aucune représentation
-+   de ce nom, et le viewer demande donc `point` partout où il veut des pointillés
-+   (voir §8 et PROXY_STROKE_BY_TYPE). Ce qu'on mesure ici est la RÈGLE, pas le
-+   viewer : un genre dont la table ne dit rien garde le rayon de van der Waals de
-+   l'atome — le repli d'un dessin qu'on ne sait pas mesurer. */
- const dot = atomsFromStage(stageOf([el('dot', {
-   type: 'dot', visible: true, radiusScale: 1, structureView: allAtoms,
- })]), 100000);
-@@ -214,26 +224,42 @@ eq(mixedReversed.count, mixed.count,
-   '…et le même trait de 0,25 Å : le zéro du maillage ne mange pas un trait mesuré'));
- 
- /* ── 8. LA SCÈNE RÉELLE : LE RUBAN LU PLUS LES « DOTS » DES EAUX / IONS ───── */
--/* Le viewer met un `dot` sur `sele: 'ion'` / `sele: 'water'` (voir
-+/* Le viewer met des POINTILLÉS sur `sele: 'ion'` / `sele: 'water'` (voir
-    NMRMoleculeViewer, bloc « Others ») et un cartoon sur la protéine : deux
--   ENSEMBLES D'ATOMES DISJOINTS. Le ruban ne doit plus doubler ses atomes d'une
--   bille de vdW, mais les dots — un genre que la table ne sait pas mesurer — DOIVENT
--   garder leur repli : c'est leur seule ombre. Les deux règles vivent donc dans la
--   MÊME scène sans se contredire. */
-+   ENSEMBLES D'ATOMES DISJOINTS. ⚠ CES POINTILLÉS SONT DES `point`, PAS DES `dot` :
-+   NGL 2.4 n'enregistre aucune représentation `dot` (demander `dot` LÈVE, et le
-+   `try` du viewer ne dessinait alors RIEN), et un point est un POINT ÉCRAN — sans
-+   rayon en ångströms. Sa seule ombre honnête est donc un cheveu (0,15 Å), JAMAIS
-+   la bille de 1,7 Å du repli vdW, qui remplissait l'ombre d'une nuée de billes sur
-+   un dessin de points à peine visibles (« a shadow on a plane »). Le ruban, lui,
-+   ne double plus ses atomes d'une bille. Les deux règles vivent dans la MÊME scène
-+   sans se contredire. */
- const waters = { getAtomIndices: () => Uint32Array.from([2, 3]) };
- const ribbonPlusDots = atomsFromStage(stageOf([
-   cartoon({
-     structureView: { getAtomIndices: () => Uint32Array.from([0, 1]) },
-     bufferList: [{ geometry: indexedSurface() }],
-   }),
--  el('dot', { type: 'dot', visible: true, radiusScale: 1, structureView: waters }),
-+  el('point', { type: 'point', visible: true, pointSize: 2, structureView: waters }),
- ]), 100000);
- eq(ribbonPlusDots.count, 2,
--  'ruban lu + dots des eaux : seuls les dots émettent un proxy (2 atomes), pas le ruban');
--ok(maxStrokeRadiusOf(ribbonPlusDots) > 1,
--  '…et ces dots gardent leur repli de van der Waals : un genre illisible ne perd pas son ombre');
--ok([...ribbonPlusDots.radii].every((r) => !(Number.isFinite(r) && r > 0 && r < 1)),
--  '…tandis qu’aucune bille de ruban (0,45 Å) ne s’est glissée dans la scène');
-+  'ruban lu + pointillés des eaux : seuls les pointillés émettent un proxy (2 atomes), pas le ruban');
-+[...ribbonPlusDots.radii].forEach((r) => near(r, 0.15, 1e-6,
-+  '…et ce proxy est un CHEVEU (0,15 Å) : un point ne pèse rien, il ne se replie jamais sur 1,7 Å'));
-+ok([...ribbonPlusDots.radii].every((r) => !(Number.isFinite(r) && r > 1)),
-+  '…donc aucune bille de vdW : ni celle du point, ni celle du ruban');
+-/* (a) L'expérience n'a AUCUN dossier sur le Drive : le geste le crée, au bon
+-   chemin — celui de l'EXPÉRIENCE (project/test/instance), pas la
+-   sous-section d'un bouton. */
++/* (a) L'expérience n'a AUCUN dossier sur le Drive : le geste crée la CHAÎNE
++   ENTIÈRE — la tête de l'expérience ET les deux sous-sections où les fichiers
++   se déposent (la demande, mot pour mot : « for a trajectory it must be
++   datasetname/projects/projectname/experimentname/instancename/subsection/file
++   where subsection is experiment_setup/trajectory for trajectory files and
++   experiment_setup/Structure for pdb files »). */
++const STRUCT_LEAF_KEYS = [
++  'projects/MD_project/Exp_1/cond8/experiment_setup/Structure',
++  'projects/MD_project/Exp_1/cond8/experiment_setup/Trajectory'
++];
+ trace();
+ const made = await FILES.createExperimentFolder({ ctx: mdCtx('cond8', 'Structure') });
+ eq(made.ok, true, 'la création réussit');
+-eq(made.path, ['projects', 'MD_project', 'Exp_1', 'cond8'],
+-  'le dossier créé est celui de l’EXPÉRIENCE — ni section (« Setup ») ni sous-section (« Structure »)');
+-eq(made.pathText, 'projects/MD_project/Exp_1/cond8', '…et le chemin est MONTRÉ tel qu’il est écrit sur le Drive');
+-eq(made.folderId, 'F_projects/MD_project/Exp_1/cond8', '…avec l’identifiant du dossier');
+-eq(made.folderUrl, 'https://drive.google.com/drive/folders/F_projects/MD_project/Exp_1/cond8',
+-  '…et de quoi l’ouvrir dans le Drive');
+ eq(made.error, '', 'aucune erreur signalée');
+-eq(created, ['projects/MD_project/Exp_1/cond8'], 'UN SEUL dossier est créé');
+-eq(createFlags[createFlags.length - 1], true, '…avec le drapeau create:true (le seul geste du module qui fabrique)');
+-eq(requested.length, 1, 'une seule résolution : le chemin de l’expérience est connu d’avance, rien n’est cherché à côté');
+-
+-/* (b) Le dossier existe DÉJÀ : le geste est IDEMPOTENT (jamais de doublon). */
++eq(made.datasetName, 'Dataset A', 'le nom du dataset est rendu : c’est la tête du chemin COMPLET');
++eq(made.experimentPath, ['projects', 'MD_project', 'Exp_1', 'cond8'],
++  'la tête créée est celle de l’EXPÉRIENCE (project/test/instance)');
++eq(made.experimentPathText, 'projects/MD_project/Exp_1/cond8',
++  '…et son texte est celui qui est écrit sur le Drive');
++eq(made.path, made.experimentPath, 'l’ancien contrat (`path` = dossier de l’expérience) reste vrai');
++eq(made.entries.map((e) => e.pathText), STRUCT_LEAF_KEYS,
++  'DEUX dossiers de fichiers sont créés : experiment_setup/Structure (le .pdb) et experiment_setup/Trajectory (les .xtc)');
++eq(made.entries.map((e) => e.subsection), ['Structure', 'Trajectory'], '…chacun nommé par sa sous-section');
++eq(made.entries[0].fullText, 'Dataset_A/projects/MD_project/Exp_1/cond8/experiment_setup/Structure',
++  'le chemin MONTRÉ part du dossier du dataset — il est enfin COMPLET (défaut signalé)');
++eq(made.entries[1].fullText, 'Dataset_A/projects/MD_project/Exp_1/cond8/experiment_setup/Trajectory',
++  '…et pour les deux dossiers');
++eq(made.folderId, `F_${STRUCT_LEAF_KEYS[0]}`, '…le premier dossier créé est celui qu’ouvre le bouton');
++eq(made.folderUrl, `https://drive.google.com/drive/folders/F_${STRUCT_LEAF_KEYS[0]}`,
++  '…et de quoi l’ouvrir dans le Drive');
++eq(made.entries[1].folderUrl, `https://drive.google.com/drive/folders/F_${STRUCT_LEAF_KEYS[1]}`,
++  '…un lien par dossier (l’utilisateur ouvre celui qu’il veut)');
++eq(created, STRUCT_LEAF_KEYS, 'les deux dossiers sont VRAIMENT créés, dans cet ordre');
++eq(createFlags, [true, true], '…avec le drapeau create:true (le seul geste du module qui fabrique)');
++eq(requested, STRUCT_LEAF_KEYS,
++  'deux résolutions, à des chemins connus d’avance : rien n’est cherché à côté');
 +
-+/* 8b. LE MÊME POINTILLÉ SEUL — le style léger « dots » d'un GRAND SYSTÈME (tout
-+   est en points, et rien d'autre : voir `ls === 'dots'` d'addDefaultReps). C'est
-+   la scène où le repli vdW faisait le plus de dégâts : 100 % des atomes y
-+   tombaient, et l'ombre d'un nuage de points devenait une nappe de billes de
-+   1,7 Å. Le cheveu est la seule réponse qui ne mente pas sur l'encre. */
-+const dotsOnly = atomsFromStage(stageOf([
-+  el('point', { type: 'point', visible: true, pointSize: 2, structureView: allAtoms }),
-+]), 100000);
-+eq(dotsOnly.count, N, 'un système tout en pointillés émet quand même ses atomes (ils sont dessinés)');
-+ok(maxStrokeRadiusOf(dotsOnly) <= 0.2,
-+  '…et AUCUN d’eux ne prend le rayon de van der Waals : l’ombre d’un point reste un point');
++/* (b) Les dossiers existent DÉJÀ : le geste est IDEMPOTENT (jamais de doublon). */
+ trace();
+ const again = await FILES.createExperimentFolder({ ctx: mdCtx('cond8', 'Structure') });
+-eq(again.ok, true, 'presser à nouveau sur un dossier déjà créé réussit');
+-eq(created, ['projects/MD_project/Exp_1/cond8'], '…et ne fabrique AUCUN dossier de plus');
+-eq(again.folderId, 'F_projects/MD_project/Exp_1/cond8', 'le dossier existant est simplement retrouvé');
+-eq(createFlags, [true], '…toujours par le MÊME geste (create:true, qui trouve ou crée)');
++eq(again.ok, true, 'presser à nouveau sur des dossiers déjà créés réussit');
++eq(created, STRUCT_LEAF_KEYS, '…et ne fabrique AUCUN dossier de plus');
++eq(again.entries.map((e) => e.subsection), ['Structure', 'Trajectory'], 'les deux dossiers existants sont simplement retrouvés');
++eq(again.entries[0].folderId, `F_${STRUCT_LEAF_KEYS[0]}`, '…avec leur identifiant');
++eq(createFlags, [true, true], '…toujours par le MÊME geste (create:true, qui trouve ou crée)');
  
- /* ── 9. LA RÈGLE, ÉCRITE DANS LE MODULE ───────────────────────────────────── */
- ok(MODULE.includes('const coveredHere = !!(covered && covered.has(el));'),
-diff --git a/_viewer_style_controls_test.mjs b/_viewer_style_controls_test.mjs
-index 98344e0..c1add9a 100644
---- a/_viewer_style_controls_test.mjs
-+++ b/_viewer_style_controls_test.mjs
-@@ -122,7 +122,7 @@ has("const stickGeom = (cat, naturalBond) => ({ radiusSize: naturalBond * catRad
-   'le rayon des bâtons part dans NGL en radiusSize (Å), multiplié');
- has("const lineGeom = (cat) => ({ linewidth: Math.max(1, Math.round(2 * catRadii(cs[cat]).bond)) });",
-   'un style « Lines » suit le rayon des bâtons via linewidth');
--has('radiusScale: g.sphere, scale: 0.6', 'spacefill : rayon des sphères = radiusScale (× le rayon de van der Waals)');
-+has('radiusScale: g.sphere * 0.6', 'spacefill : rayon des sphères = radiusScale × 0,6 (× le rayon de van der Waals) — le SEUL champ qu’NGL lit');
- has('aspectRatio: 1.1 * g.sphere', 'ball+stick : rayon des sphères = aspectRatio');
- // Les chaînes latérales sont une RANGÉE de la protéine (licorice par défaut), et le
- // rendeur les recolle au squelette avec la même règle qu'autrefois (sectionRowSele).
-diff --git a/_viewer_ui_layout_test.mjs b/_viewer_ui_layout_test.mjs
-index b44b833..ca30001 100644
---- a/_viewer_ui_layout_test.mjs
-+++ b/_viewer_ui_layout_test.mjs
-@@ -289,8 +289,8 @@ has("small: ['hide', 'ball+stick', 'licorice', 'line', 'spacefill', 'sphere', 's
-   '…y compris les petites molécules (ligand · sucre)');
- has("const ATOM_DRAW_STYLES = ['ball+stick', 'licorice', 'line', 'spacefill', 'sphere'];",
-   '« sphere » dessine des atomes : il compte pour les ancres de chaîne latérale');
--has("case 'sphere': return [{ type: 'spacefill', params: { radiusScale: sphere, scale: 1 } }];",
--  '« Sphere » = le même spacefill NGL, au rayon de Van der Waals entier');
-+has("case 'sphere': return [{ type: 'spacefill', params: { radiusScale: sphere } }];",
-+  '« Sphere » = le même spacefill NGL, au rayon de Van der Waals entier — écrit en `radiusScale`, le seul champ qu’NGL lit (voir _viewer_sphere_size_test.mjs)');
- has("const styleFamiliesOf = (style) => [...new Set((STYLE_FAMILY_REPS[style] || [])",
-   'la rangée de STYLING nomme la famille de matériau qu’elle atteint, comme les rangées de sélection');
- // Les deux feuillets : ils ont QUITTÉ la boîte Membrane de GAUCHE, puis la boîte
+ /* (c) Ce que le bouton crée est bien ce que la LECTURE lit : on y dépose un
+    fichier (comme l'utilisateur) et la lecture le trouve. */
+ childrenOf.set(created[0], [fileNode('GRO9', 'made.gro', 42, '2026-01-08T00:00:00Z')]);
+ trace();
+ const afterCreate = await FILES.listExperimentFiles({ ctx: mdCtx('cond8', 'Structure'), exts: FILES.MD_TOPOLOGY_EXTS });
+-eq(afterCreate.files.map((f) => f.name), ['made.gro'], 'un fichier déposé dans le dossier CRÉÉ est trouvé par la lecture');
+-eq(afterCreate.path, ['projects', 'MD_project', 'Exp_1', 'cond8'], '…dans ce dossier-là (le plus précis)');
++eq(afterCreate.files.map((f) => f.name), ['made.gro'],
++  'un fichier déposé dans le dossier CRÉÉ (experiment_setup/Structure) est trouvé par la lecture');
++eq(afterCreate.path, ['projects', 'MD_project', 'Exp_1', 'cond8', 'experiment setup', 'Structure'],
++  '…dans ce dossier-là (le plus précis)');
+ eq(createFlags.every((c) => c === false), true, '…et cette lecture-là ne crée rien du tout');
+ 
+ /* (d) Rien à créer : le contexte ne décrit pas une expérience. */
+@@ -338,6 +401,7 @@ const nowhere = await FILES.createExperimentFolder({ ctx: { project: 'MD project
+ eq(nowhere.ok, false, 'sans nom d’expérience, il n’y a pas de dossier à créer');
+ ok(nowhere.error.length > 0, '…et l’échec est DIT (jamais un succès muet)');
+ eq(nowhere.folderUrl, '', 'rien n’est ouvert : aucune adresse inventée');
++eq(nowhere.entries, [], '…et aucun dossier annoncé');
+ eq(requested, [], '…sans même toucher au Drive');
+ 
+ /* (e) Drive éteint : la création le DIT (elle n’invente pas un dossier). */
+@@ -359,6 +423,31 @@ eq(onNc.ok, false, 'Nextcloud non configuré : la création le DIT (jamais un fa
+ ok(onNc.error.includes('Nextcloud'), '…et le message nomme le fournisseur');
+ eq(requested, [], '…et l’API Drive n’est pas appelée pour un dossier Nextcloud');
+ 
++/* (g) LE DÉFAUT SIGNALÉ — « This button did not create the folder » : une chaîne
++   créée À MOITIÉ ne passe plus pour un succès, et l'échec NOMME le segment. */
++const fullResolver = globalThis.__driveTestMocks.resolveDrivePathFromNames;
++globalThis.__driveTestMocks.resolveDrivePathFromNames = async (names) =>
++  ({ leafId: '', path: (names || []).slice(0, 4).map((n) => ({ name: slug(n), id: 'F_part' })) });
++trace();
++const partial = await FILES.createExperimentFolder({ ctx: mdCtx('cond9', 'Structure') });
++eq(partial.ok, false, 'un segment non créé fait ÉCHOUER le geste (jamais un faux succès)');
++ok(partial.error.includes('did not create'), '…et le message dit ce qui n’a pas été créé');
++ok(partial.error.includes('experiment_setup'), '…en NOMMANT le dossier manquant');
++eq(partial.entries, [], 'aucune entrée annoncée tant que rien n’est complet');
++
++/* (h) Un chemin SUPPRIMÉ dans le programme (code PATH_DELETED) : le geste
++   l'explique au lieu d'un « échec » qui ne dit rien. */
++globalThis.__driveTestMocks.resolveDrivePathFromNames = async () => {
++  const err = new Error('The Drive folder “projects/MD_project/Exp_1/cond10/experiment_setup/Structure” was deleted — it is not recreated.');
++  err.code = 'PATH_DELETED';
++  throw err;
++};
++trace();
++const blocked = await FILES.createExperimentFolder({ ctx: mdCtx('cond10', 'Structure') });
++eq(blocked.ok, false, 'un dossier supprimé dans le programme n’est pas recréé');
++ok(blocked.error.includes('never recreated'), '…et le message explique pourquoi (et quoi faire)');
++ok(blocked.error.includes('cond10'), '…en nommant le chemin concerné');
++
+ globalThis.__driveTestMocks.resolveDrivePathFromNames = previousResolver;
+ 
+ /* ══ 4. LE CÂBLAGE DES MODULES ══════════════════════════════════════════════ */
+@@ -384,8 +473,10 @@ ok(PICKER_SRC.includes('↻ Reload'),
+ ok(PICKER_SRC.includes('Google Drive is not connected in this browser'),
+   '…et dit quand Drive est éteint (une lecture impossible ne se lit pas « le dossier est vide »)');
+ 
+-ok(MDSRC.includes("import { DriveExperimentFilePicker, DriveExperimentFolderCreator } from './DriveExperimentFiles';"),
+-  'la page MD monte les DEUX gestes : lire le dossier de l’expérience, et le CRÉER');
++ok(MDSRC.includes("import { DriveExperimentFilePicker } from './DriveExperimentFiles';"),
++  'la page MD monte la LECTURE du dossier de l’expérience (le bouton qui CRÉE est rendu par le viewer)');
++ok(MDSRC.includes("import { DriveExperimentFilePicker, DriveExperimentFolderCreator } from './DriveExperimentFiles';") === false,
++  '…et n’importe plus le geste de création : il a UNE place, celle du viewer');
+ ok(MDSRC.includes('import { experimentFilePointer, MD_TOPOLOGY_EXTS, MD_TRAJECTORY_EXTS } from \'../utils/driveExperimentFiles\';'),
+   '…avec les extensions de topologie et de trajectoire du module');
+ eq((MDSRC.match(/<DriveExperimentFilePicker/g) || []).length, 2,
+@@ -414,8 +505,10 @@ ok(MDSRC.includes('await restoreTrajectoryFromDrive();') && MDSRC.includes('awai
+   '…et les deux reprises automatiques sont toujours branchées');
+ 
+ /* La MÊME lecture sert le PDB de la page NMR (structure). */
+-ok(NMRSRC.includes("import { DriveExperimentFilePicker, DriveExperimentFolderCreator } from './DriveExperimentFiles';"),
+-  'la page NMR monte le même geste (le PDB de la condition), création comprise');
++ok(NMRSRC.includes("import { DriveExperimentFilePicker } from './DriveExperimentFiles';"),
++  'la page NMR monte le même geste de LECTURE (le PDB de la condition) — la création vient du viewer');
++ok(NMRSRC.includes("import { DriveExperimentFilePicker, DriveExperimentFolderCreator } from './DriveExperimentFiles';") === false,
++  '…et n’importe plus le geste de création non plus');
+ eq((NMRSRC.match(/<DriveExperimentFilePicker/g) || []).length, 1, 'un bouton : le PDB, sous la vue 3D');
+ ok(NMRSRC.includes('const pickNmrStructureFromFolder = async (file, meta) => {'),
+   '…et la page NMR installe le PDB choisi');
+@@ -428,35 +521,54 @@ ok(/pickNmrStructureFromFolder = async[\s\S]{0,2000}?await blobStore\.save\(nmrS
+ ok(NMRSRC.includes('ctx={nmrStructDriveCtx(activeTest)}'),
+   'la lecture part du dossier canonique de l’expérience NMR (Data/Structure)');
+ 
+-/* ── LA CRÉATION, CÔTÉ CODE : le module qui sait créer, le composant qui le
+-   donne à l'utilisateur, les deux pages qui le montent. ──────────────────── */
++/* ── LA CRÉATION, CÔTÉ CODE : le module qui crée le CHEMIN ENTIER, le composant
++   qui le donne à l'utilisateur, et le VIEWER qui le pose sur la ligne de
++   📂 PDB file(s). ───────────────────────────────────────────────────────────── */
++ok(MODULE_SRC.includes("export const EXPERIMENT_FILE_SUBSECTIONS = ['Structure', 'Trajectory'];"),
++  'les deux sous-sections où les fichiers se déposent sont nommées UNE fois (Structure, Trajectory)');
+ ok(MODULE_SRC.includes('export const experimentFolderPathOf = (ctx = {}) => {'),
+-  'le module sait QUEL dossier créer (celui de l’EXPÉRIENCE seule : ni section ni sous-section)');
+-ok(MODULE_SRC.includes('export const createExperimentFolder = async ({ ctx = null } = {}) => {'),
+-  'la création est un geste à part entière (explicite, jamais un effet de bord d’une lecture)');
+-ok(MODULE_SRC.includes('const resolved = await resolveDrivePathFromNames(path, { create: true });'),
+-  '…qui CRÉE pour de bon (create:true), à un chemin connu d’avance');
+-ok(MODULE_SRC.includes('if (!path.length) {'), 'sans expérience décrite, il refuse et le DIT');
++  'le module sait QUEL dossier d’expérience créer (la tête commune)');
++ok(MODULE_SRC.includes("export const experimentFileFolderPathOf = (ctx = {}, subsection = '') => {"),
++  '…et le dossier d’un TYPE de fichier (…/experiment_setup/Structure ou /Trajectory)');
++ok(MODULE_SRC.includes('export const createExperimentFolder = async ({ ctx = null, subsections = EXPERIMENT_FILE_SUBSECTIONS } = {}) => {'),
++  'la création est un geste à part entière (explicite, jamais un effet de bord d’une lecture) et crée les DEUX sous-sections par défaut');
++ok(MODULE_SRC.includes('resolved = await resolveDrivePathFromNames(leaf, { create: true });'),
++  '…qui CRÉE pour de bon (create:true), à des chemins connus d’avance');
++ok(MODULE_SRC.includes('const missing = firstMissingSegment(resolved, leaf);'),
++  '…et VÉRIFIE chaque segment : une chaîne à moitié créée ne passe plus pour un succès');
++ok(MODULE_SRC.includes('return fail(driveCreateError(null, leaf, missing));'),
++  '…elle DIT le segment manquant (le défaut « did not create the folder »)');
++ok(MODULE_SRC.includes('if (!experimentPath.length) {'), 'sans expérience décrite, il refuse et le DIT');
+ ok(MODULE_SRC.includes('if (!getDriveToken()) {'), 'Drive éteint : il le dit, plutôt que d’inventer un succès');
+-ok(MODULE_SRC.includes('await ncEnsureFolders(path);'),
+-  'Nextcloud : le dossier s’y crée par WebDAV (le MÊME geste que l’envoi)');
++ok(MODULE_SRC.includes('await ncEnsureFolders(leaf);'),
++  'Nextcloud : les dossiers s’y créent par WebDAV (le MÊME geste que l’envoi)');
++ok(MODULE_SRC.includes('export const fullDrivePathText = (datasetName = \'\', path = []) => {'),
++  'le chemin COMPLET (dataset compris) a UNE définition, dans le module');
+ 
+ ok(PICKER_SRC.includes('export const DriveExperimentFolderCreator = ({'),
+-  'le geste a son composant dédié (rangée des boutons de fichiers)');
++  'le geste a son composant dédié');
++ok(PICKER_SRC.includes("label = '📁 Create drive folder'"),
++  '…au libellé COURT demandé (« to save space you can rename it "Create drive folder" »)');
+ ok(PICKER_SRC.includes('const res = await createExperimentFolder({ ctx });'), '…qui appelle la création du module');
+-ok(PICKER_SRC.includes('Experiment folder ready:'), '…et DIT ce qui vient d’être créé (chemin compris)');
+-ok(PICKER_SRC.includes('Open in Drive'), '…en proposant de l’ouvrir');
++ok(PICKER_SRC.includes('const targets = EXPERIMENT_FILE_SUBSECTIONS'),
++  '…il annonce les chemins visés AVANT le clic — la description dit enfin OÙ il crée');
++ok(PICKER_SRC.includes('fullDrivePathText(datasetName, experimentFileFolderPathOf(ctx, sub))'),
++  '…par les helpers du module (une seule définition du chemin, dataset compris)');
++ok(PICKER_SRC.includes('const datasetName = getDriveRootName();'), '…le nom du dataset ouvert vient du contexte Drive');
++ok(PICKER_SRC.includes('✅ Ready: deposit the files in'), '…et il DIT ce qui vient d’être créé');
++ok(PICKER_SRC.includes('Open ↗'), '…en proposant de l’ouvrir (un lien par dossier)');
+ ok(PICKER_SRC.includes('could not be created'), '…ou dit l’échec : jamais un succès muet');
+ 
+-eq((MDSRC.match(/<DriveExperimentFolderCreator/g) || []).length, 1,
+-  'la page MD monte la création UNE fois, dans la rangée des boutons de fichiers');
+-ok(MDSRC.includes("ctx={mdFolderCtx('Structure')}")
+-  && /<DriveExperimentFolderCreator[\s\S]{0,200}?mdFolderCtx\('Structure'\)/.test(MDSRC),
+-  '…au contexte de nommage de l’expérience (project/test/instance : la section ne joue pas)');
+-eq((NMRSRC.match(/<DriveExperimentFolderCreator/g) || []).length, 1,
+-  'la page NMR monte le même geste (le dossier de l’expérience NMR)');
+-ok(/<DriveExperimentFolderCreator[\s\S]{0,200}?nmrStructDriveCtx\(activeTest\)/.test(NMRSRC),
+-  '…avec le contexte canonique de l’expérience NMR');
++eq((MDSRC.match(/<DriveExperimentFolderCreator/g) || []).length, 0,
++  'la page MD ne monte PLUS la création : le viewer s’en charge, sur la ligne de 📂 PDB file(s)');
++eq((NMRSRC.match(/<DriveExperimentFolderCreator/g) || []).length, 0,
++  '…et la page NMR non plus : la place ne dépend plus d’une page');
++ok(VIEWSRC.includes("import { DriveExperimentFilePicker, DriveExperimentFolderCreator } from './DriveExperimentFiles';"),
++  'c’est le VIEWER qui monte le geste (une fois, pour les trois pages à viewer) — et le 📂 du style avec lui');
++ok(/fileRowExtra\}[\s\S]{0,1400}?<DriveExperimentFolderCreator ctx=\{driveNaming\} \/>/.test(VIEWSRC),
++  '…TOUJOURS juste après la rangée des fichiers — la ligne de 📂 PDB file(s)');
++ok(VIEWSRC.includes('{driveNaming ? <DriveExperimentFolderCreator ctx={driveNaming} /> : null}'),
++  '…et seulement quand l’expérience est nommée (aucun bouton creux sur un viewer nu)');
+ 
+ const TESTS = readFileSync('probe_tests.txt', 'utf8');
+ ok(TESTS.includes('_experiment_folder_files_test.mjs'),
+diff --git a/_viewer_style_recall_test.mjs b/_viewer_style_recall_test.mjs
+index 8f04e18..609563c 100644
+--- a/_viewer_style_recall_test.mjs
++++ b/_viewer_style_recall_test.mjs
+@@ -89,8 +89,12 @@ eq(FILES.viewerStyleModeOfName('viewer-style-cumulative.json'), 'theme', 'celui
+ eq(FILES.viewerStyleModeOfName('Viewer style snapshot (2026).json'), 'snapshot',
+   'un fichier RENOMMÉ à la main reste reconnu (séparateurs et majuscules neutralisés)');
+ eq(FILES.viewerStyleModeOfName('viewer-style-snapshot-2.json'), 'snapshot', 'un suffixe ajouté ne le cache pas');
+-eq(FILES.viewerStyleModeOfName('viewer-theme-My_theme.json'), '',
+-  'un fichier du ⬇ Export du viewer (viewer-theme-…) n’est PAS un fichier d’expérience');
++eq(FILES.VIEWER_STYLE_EXPORT_STEMS.snapshot, 'viewer-snapshot', 'les noms que le viewer donne à ses exports sont écrits noir sur blanc');
++eq(FILES.VIEWER_STYLE_EXPORT_STEMS.theme, 'viewer-theme', '…les deux');
++eq(FILES.viewerStyleModeOfName('viewer-theme-My_theme.json'), 'theme',
++  'un fichier du ⬇ Export du viewer (viewer-theme-…) EST reconnu — c’est le défaut signalé : « the styles file is not read automatically »');
++eq(FILES.viewerStyleModeOfName('viewer-snapshot-My scene.json'), 'snapshot', '…et un snapshot exporté aussi');
++eq(FILES.isViewerStyleFile('viewer-theme-My_theme.json'), true, 'isViewerStyleFile suit la même règle');
+ eq(FILES.viewerStyleModeOfName('ms_struct_7.pdb'), '', 'un .pdb n’en est pas un');
+ eq(FILES.viewerStyleModeOfName('run3.xtc'), '', 'une trajectoire non plus');
+ eq(FILES.viewerStyleModeOfName(''), '', 'un nom vide ne dit rien');
+@@ -363,6 +367,20 @@ has('const archiveViewerStyle = async (mode, name, entry) => {', 'l’écriture
+ has('found = pickViewerStyleFile(listed.files);', 'le rappel applique LA règle de préférence du module (snapshot, sinon cumulatif)');
+ has('const parsed = parseViewerStyleFile(text);', '…et ne lit que des fichiers de style (le module refuse le reste)');
+ has('ctxs: [{ ...driveNaming, section: \'Setup\' }],', 'les deux branches de dossier d’une page (Data et Setup) sont regardées');
++
++/* LA SECONDE MOITIÉ DE LA DEMANDE — « nor I have the possibility to define which
++   file must be read (but it could be simply the last that was used) » : la picker
++   du dossier de l'expérience, dans la rangée des fichiers du viewer. */
++has('const pickStyleFileFromFolder = async (file) => {',
++  'le viewer offre de CHOISIR le fichier de style du dossier (pas seulement le rappel automatique)');
++has('await file.text()', '…il lit le fichier téléchargé tel quel');
++has("if (!parsed) { flashSetupMsg(`“${file.name}” is not a viewer style — nothing was applied.`); return; }",
++  '…sans deviner : un .json étranger est refusé, et ça se dit');
++has('rememberViewerStyle(parsed.mode, parsed.name, parsed.entry);',
++  '…et le fichier choisi est RETENU (mémoire + fichier canonique) : c’est donc « simply the last that was used » que la prochaine ouverture applique');
++has('label="📂 Style from folder"', 'la picker a son bouton dans la rangée des fichiers du viewer');
++has("ctxs={[{ ...driveNaming, section: 'Setup' }]}", '…et regarde les DEUX branches de dossier que le rappel regarde');
++has('exts={[VIEWER_STYLE_EXT]}', '…seuls les .json de l’expérience sont listés');
+ eq(countOf(/applyThemeEntry\(/g) >= 3 && countOf(/applySnapshotEntry\(/g) >= 3, true,
+   'les corps des deux modes servent aux trois chemins : charger, adopter depuis le Drive, appliquer au rappel');
+ eq(countOf(/const loadTheme = \(name\)/g), 1, 'un seul loadTheme (le rappel ne le double pas)');
+diff --git a/_workspace_keys_test.mjs b/_workspace_keys_test.mjs
+index fbfde21..9c9c914 100644
+--- a/_workspace_keys_test.mjs
++++ b/_workspace_keys_test.mjs
+@@ -59,6 +59,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+ /* ── 1. Ce qui voyage, et ce qui ne voyage JAMAIS ───────────────────────── */
+ ok(K.isSyncableKey('labWorkspace_publications'), 'les listes de l’application voyagent');
+ ok(K.isSyncableKey('labFiguresLib_global'), '…la bibliothèque de figures aussi');
++/* LA PEAU DE L'INTERFACE appartient à l'OPÉRATEUR (voir utils/uiSkin.js) : sa
++   clé porte l'identifiant du propriétaire et voyage donc comme les autres —
++   c'est ce qui fait qu'il retrouve sa palette d'un poste à l'autre. */
++ok(K.isSyncableKey('labWorkspace_uiSkin_op_1712'), 'la peau d’un opérateur voyage aussi');
++ok(K.isSyncableKey('labWorkspace_uiSkinCustom_op_1712'), '…et l’accent qu’il a choisi');
+ ok(!K.isSyncableKey('labDriveAccessToken'), 'un jeton Google ne voyage JAMAIS');
+ ok(!K.isSyncableKey('labNcAppPassword'), '…ni un mot de passe Nextcloud');
+ ok(!K.isSyncableKey('labDriveMirror'), '…ni ce qui est déjà synchronisé par un autre fichier');

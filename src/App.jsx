@@ -70,6 +70,11 @@ import { readDriveMirror, isDatasetMirrorDeleted } from './utils/driveMirrorStor
    (voir workspaceKeyStore.js). Sans cela, deux postes n'affichaient pas la même
    chose et vider le navigateur effaçait des données sans copie. */
 import { installKeyObserver, adoptKeysFromDrive, installKeyAutosave, writeKeyState } from './utils/workspaceKeyStore';
+/* LA PEAU DE L'INTERFACE appartient à l'OPÉRATEUR : elle se pose sur <html> à
+   chaque changement d'identité (voir l'effet « LA PEAU SUIT L'OPÉRATEUR » plus
+   bas), et ses clés voyagent avec celles du navigateur ci-dessus — un opérateur
+   retrouve donc sa peau d'un poste à l'autre. */
+import { applyStoredUiSkin } from './utils/uiSkin';
 
 /** Les datasets VISIBLES sur ce poste : ceux qui ne portent pas de pierre
  *  tombale. Une suppression est définitive PARTOUT : la tombe est écrite ici,
@@ -1354,6 +1359,15 @@ if (customType === 'dosy') {
   const sessionJustSignedInRef = useRef(false);
   useEffect(() => { operatorsRef.current = operators; }, [operators]);
   useEffect(() => { identityRef.current = currentUser; }, [currentUser]);
+  /* ── LA PEAU SUIT L'OPÉRATEUR ────────────────────────────────────────────
+     La peau (et son accent personnalisé) est gardée PAR OPÉRATEUR dans le
+     navigateur, la copie du POSTE servant de départ et de repli (voir
+     utils/uiSkin.js). Se connecter, fermer sa session ou passer d'un opérateur
+     à l'autre repeint donc le programme : sur un poste partagé, chacun retrouve
+     la sienne. Le premier rendu n'attend pas cet effet — main.jsx pose déjà la
+     peau de l'opérateur de la session de l'onglet avant de peindre (sinon un
+     rechargement afficherait un éclair de la palette du poste). */
+  useEffect(() => { applyStoredUiSkin(currentUser); }, [currentUser]);
 
   /* Identité canonique d'une session + mémorisation (voir memberIdentity).
      Les DEUX écrans de connexion ET l'écouteur d'état Firebase passent par

@@ -70,14 +70,24 @@ export const viewerStyleStem = (name = '') => String(name || '')
   .replace(/[^a-z0-9]+/g, '-')
   .replace(/^-+|-+$/g, '');
 
+/** LES NOMS QUE LE VIEWER DONNE LUI-MÊME À SES EXPORTS (⬇ Export de la bande
+ *  🎨 Styles) : `viewer-snapshot-<nom>.json` / `viewer-theme-<nom>.json` (voir
+ *  exportActiveEnv dans NMRMoleculeViewer.jsx). Un style EXPORTÉ puis DÉPOSÉ
+ *  dans le dossier de l'expérience est donc reconnu par le rappel automatique —
+ *  c'est le cas signalé : « the styles file is not read automatically ». */
+export const VIEWER_STYLE_EXPORT_STEMS = { snapshot: 'viewer-snapshot', theme: 'viewer-theme' };
+
 /** LE MODE d'un fichier d'après SON NOM — '' quand ce n'est pas un fichier de
- *  style du viewer. PUR. */
+ *  style du viewer. Les DEUX noms canoniques, un nom renommé à la main qui les
+ *  commence, ET les deux noms d'export du viewer. PUR. */
 export const viewerStyleModeOfName = (name = '') => {
   const stem = viewerStyleStem(name);
   if (!stem) return '';
   for (const mode of VIEWER_STYLE_PREFERENCE) {
     const known = VIEWER_STYLE_FILE_STEMS[mode];
+    const exported = VIEWER_STYLE_EXPORT_STEMS[mode];
     if (stem === known || stem.startsWith(`${known}-`)) return mode;
+    if (stem === exported || stem.startsWith(`${exported}-`)) return mode;
   }
   return '';
 };

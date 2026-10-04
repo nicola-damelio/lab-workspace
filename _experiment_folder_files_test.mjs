@@ -16,9 +16,13 @@
        instance → expérience) ;
      • RIEN N'EST CRÉÉ (`{ create: false }`) et on ne sort JAMAIS de
        l'expérience (jamais `projects/`, jamais une expérience voisine) ;
-     • LE SEUL GESTE QUI FABRIQUE est EXPLICITE (`createExperimentFolder`) :
-       il crée le dossier de l'EXPÉRIENCE — projects/<projet>/<expérience>
-       [/<instance>] — avec `{ create: true }`, une seule fois (idempotent) ;
+     • LE SEUL GESTE QUI FABRIQUE est EXPLICITE (`createExperimentFolder`) : il
+       crée le chemin ENTIER — projects/<projet>/<expérience>[/<instance>] PUIS
+       les deux sous-sections `experiment_setup/Structure` et
+       `experiment_setup/Trajectory` (la demande : « datasetname/projects/
+       projectname/experimentname/instancename/subsection/file ») — avec
+       `{ create: true }`, une seule fois (idempotent), et CHAQUE segment créé
+       est VÉRIFIÉ : un échec partiel se DIT, il ne passe plus pour un succès ;
      • seuls les FICHIERS des extensions voulues : les dossiers et les autres
        fichiers de la même boîte sont écartés ;
      • le fichier choisi devient le DÉFAUT de la condition : la page écrit le
@@ -87,6 +91,9 @@ addFolder(['projects', 'MD project', 'Other exp', 'cond3'], [
 globalThis.__driveTestMocks = {
   driveToken: 'fake-token',
   cloud: true,
+  // Le nom du dossier de DATASET ouvert : c'est lui la TÊTE du chemin complet
+  // que le bouton de création montre (« datasetname/projects/… »).
+  driveRootName: 'Dataset A',
   resolveDrivePathFromNames: async (names, opts) => {
     const key = (names || []).map(slug).join('/');
     requested.push(key);
@@ -109,6 +116,10 @@ const MDSRC = readFileSync('src/components/MDSections.jsx', 'utf8');
 const PICKER_SRC = readFileSync('src/components/DriveExperimentFiles.jsx', 'utf8');
 const NMRSRC = readFileSync('src/components/NMRSections.jsx', 'utf8');
 const MODULE_SRC = readFileSync('src/utils/driveExperimentFiles.js', 'utf8');
+/* Le bouton qui CRÉE le dossier est rendu par le VIEWER (la demande : « …must be
+   placed in the same line of "PDB file" button always ») : sa source est donc
+   lue ici aussi. */
+const VIEWSRC = readFileSync('src/components/NMRMoleculeViewer.jsx', 'utf8');
 
 /* ══ 1. LA LOGIQUE PURE ════════════════════════════════════════════════════ */
 
@@ -152,6 +163,35 @@ eq(FILES.experimentFolderPathOf({ project: 'MD project' }), [], 'un document de 
 eq(FILES.experimentFolderPathOf({ protocol: 'Some protocol', section: 'Data' }), [],
   'un protocole vit dans son propre conteneur (protocols/) : rien à créer sous projects/');
 eq(FILES.experimentFolderPathOf(null), [], '…et aucun contexte ne fabrique un chemin');
+
+/* LE DOSSIER D'UN TYPE DE FICHIER — la demande, mot pour mot : « …subsection is
+   experiment_setup/trajectory for trajectory files and experiment_setup/Structure
+   for pdb files ». */
+eq(FILES.EXPERIMENT_FILE_SUBSECTIONS, ['Structure', 'Trajectory'],
+  'les deux sous-sections où les fichiers se déposent sont déclarées UNE fois');
+eq(FILES.experimentFileFolderPathOf(MD_CTX, 'Structure'),
+  ['projects', 'MD_project', 'Exp_1', 'cond1', 'experiment setup', 'Structure'],
+  'la topologie / le PDB vit dans …/experiment_setup/Structure (le dossier écrit sur le Drive)');
+eq(FILES.experimentFileFolderPathOf(MD_CTX, 'trajectory'),
+  ['projects', 'MD_project', 'Exp_1', 'cond1', 'experiment setup', 'trajectory'],
+  '…et une trajectoire dans …/experiment_setup/trajectory');
+eq(FILES.drivePathText(FILES.experimentFileFolderPathOf(MD_CTX, 'Structure')),
+  'projects/MD_project/Exp_1/cond1/experiment_setup/Structure',
+  '…et le TEXTE du chemin est celui du Drive (`experiment setup` y est le dossier `experiment_setup`)');
+eq(FILES.experimentFileFolderPathOf({ project: 'MD project' }, 'Structure'), [],
+  'un contexte sans expérience ne désigne aucun dossier de fichier');
+eq(FILES.fullDrivePathText('Dataset A', ['projects', 'MD project']), 'Dataset_A/projects/MD_project',
+  'le chemin complet commence par le dossier du DATASET (slugué comme le Drive le fait)');
+eq(FILES.fullDrivePathText('', ['projects']), 'projects',
+  'sans nom de dataset connu, le chemin est montré seul (jamais un « // » inventé)');
+eq(FILES.firstMissingSegment({ path: [{ id: 'a' }, { id: '' }] }, ['x', 'y']), 'y',
+  'le premier segment SANS identifiant est celui qui est nommé dans l’échec');
+eq(FILES.firstMissingSegment({ path: [{ id: 'a' }, { id: 'b' }] }, ['x', 'y']), '',
+  '…et rien n’est nommé quand la chaîne est complète');
+ok(FILES.driveCreateError(null, ['projects', 'X'], 'projects').includes('did not create'),
+  'une création partielle DIT ce qui n’a pas été créé (le défaut signalé)');
+ok(FILES.driveCreateError({ code: 'PATH_DELETED', message: 'boom' }, ['projects', 'Y']).includes('never recreated'),
+  '…et un chemin supprimé dans le programme s’explique au lieu d’un « failed » muet');
 
 /* Les DEUX branches de nommage (page MD « Setup » / viewer 3D « Data »). */
 const DATA_CTX = { ...MD_CTX, section: 'Data' };
@@ -298,38 +338,61 @@ globalThis.__driveTestMocks.resolveDrivePathFromNames = async (names, opts) => {
   return { leafId: `F_${key}`, path: names.map((n) => ({ name: slug(n), id: `F_${key}` })) };
 };
 
-/* (a) L'expérience n'a AUCUN dossier sur le Drive : le geste le crée, au bon
-   chemin — celui de l'EXPÉRIENCE (project/test/instance), pas la
-   sous-section d'un bouton. */
+/* (a) L'expérience n'a AUCUN dossier sur le Drive : le geste crée la CHAÎNE
+   ENTIÈRE — la tête de l'expérience ET les deux sous-sections où les fichiers
+   se déposent (la demande, mot pour mot : « for a trajectory it must be
+   datasetname/projects/projectname/experimentname/instancename/subsection/file
+   where subsection is experiment_setup/trajectory for trajectory files and
+   experiment_setup/Structure for pdb files »). */
+const STRUCT_LEAF_KEYS = [
+  'projects/MD_project/Exp_1/cond8/experiment_setup/Structure',
+  'projects/MD_project/Exp_1/cond8/experiment_setup/Trajectory'
+];
 trace();
 const made = await FILES.createExperimentFolder({ ctx: mdCtx('cond8', 'Structure') });
 eq(made.ok, true, 'la création réussit');
-eq(made.path, ['projects', 'MD_project', 'Exp_1', 'cond8'],
-  'le dossier créé est celui de l’EXPÉRIENCE — ni section (« Setup ») ni sous-section (« Structure »)');
-eq(made.pathText, 'projects/MD_project/Exp_1/cond8', '…et le chemin est MONTRÉ tel qu’il est écrit sur le Drive');
-eq(made.folderId, 'F_projects/MD_project/Exp_1/cond8', '…avec l’identifiant du dossier');
-eq(made.folderUrl, 'https://drive.google.com/drive/folders/F_projects/MD_project/Exp_1/cond8',
-  '…et de quoi l’ouvrir dans le Drive');
 eq(made.error, '', 'aucune erreur signalée');
-eq(created, ['projects/MD_project/Exp_1/cond8'], 'UN SEUL dossier est créé');
-eq(createFlags[createFlags.length - 1], true, '…avec le drapeau create:true (le seul geste du module qui fabrique)');
-eq(requested.length, 1, 'une seule résolution : le chemin de l’expérience est connu d’avance, rien n’est cherché à côté');
+eq(made.datasetName, 'Dataset A', 'le nom du dataset est rendu : c’est la tête du chemin COMPLET');
+eq(made.experimentPath, ['projects', 'MD_project', 'Exp_1', 'cond8'],
+  'la tête créée est celle de l’EXPÉRIENCE (project/test/instance)');
+eq(made.experimentPathText, 'projects/MD_project/Exp_1/cond8',
+  '…et son texte est celui qui est écrit sur le Drive');
+eq(made.path, made.experimentPath, 'l’ancien contrat (`path` = dossier de l’expérience) reste vrai');
+eq(made.entries.map((e) => e.pathText), STRUCT_LEAF_KEYS,
+  'DEUX dossiers de fichiers sont créés : experiment_setup/Structure (le .pdb) et experiment_setup/Trajectory (les .xtc)');
+eq(made.entries.map((e) => e.subsection), ['Structure', 'Trajectory'], '…chacun nommé par sa sous-section');
+eq(made.entries[0].fullText, 'Dataset_A/projects/MD_project/Exp_1/cond8/experiment_setup/Structure',
+  'le chemin MONTRÉ part du dossier du dataset — il est enfin COMPLET (défaut signalé)');
+eq(made.entries[1].fullText, 'Dataset_A/projects/MD_project/Exp_1/cond8/experiment_setup/Trajectory',
+  '…et pour les deux dossiers');
+eq(made.folderId, `F_${STRUCT_LEAF_KEYS[0]}`, '…le premier dossier créé est celui qu’ouvre le bouton');
+eq(made.folderUrl, `https://drive.google.com/drive/folders/F_${STRUCT_LEAF_KEYS[0]}`,
+  '…et de quoi l’ouvrir dans le Drive');
+eq(made.entries[1].folderUrl, `https://drive.google.com/drive/folders/F_${STRUCT_LEAF_KEYS[1]}`,
+  '…un lien par dossier (l’utilisateur ouvre celui qu’il veut)');
+eq(created, STRUCT_LEAF_KEYS, 'les deux dossiers sont VRAIMENT créés, dans cet ordre');
+eq(createFlags, [true, true], '…avec le drapeau create:true (le seul geste du module qui fabrique)');
+eq(requested, STRUCT_LEAF_KEYS,
+  'deux résolutions, à des chemins connus d’avance : rien n’est cherché à côté');
 
-/* (b) Le dossier existe DÉJÀ : le geste est IDEMPOTENT (jamais de doublon). */
+/* (b) Les dossiers existent DÉJÀ : le geste est IDEMPOTENT (jamais de doublon). */
 trace();
 const again = await FILES.createExperimentFolder({ ctx: mdCtx('cond8', 'Structure') });
-eq(again.ok, true, 'presser à nouveau sur un dossier déjà créé réussit');
-eq(created, ['projects/MD_project/Exp_1/cond8'], '…et ne fabrique AUCUN dossier de plus');
-eq(again.folderId, 'F_projects/MD_project/Exp_1/cond8', 'le dossier existant est simplement retrouvé');
-eq(createFlags, [true], '…toujours par le MÊME geste (create:true, qui trouve ou crée)');
+eq(again.ok, true, 'presser à nouveau sur des dossiers déjà créés réussit');
+eq(created, STRUCT_LEAF_KEYS, '…et ne fabrique AUCUN dossier de plus');
+eq(again.entries.map((e) => e.subsection), ['Structure', 'Trajectory'], 'les deux dossiers existants sont simplement retrouvés');
+eq(again.entries[0].folderId, `F_${STRUCT_LEAF_KEYS[0]}`, '…avec leur identifiant');
+eq(createFlags, [true, true], '…toujours par le MÊME geste (create:true, qui trouve ou crée)');
 
 /* (c) Ce que le bouton crée est bien ce que la LECTURE lit : on y dépose un
    fichier (comme l'utilisateur) et la lecture le trouve. */
 childrenOf.set(created[0], [fileNode('GRO9', 'made.gro', 42, '2026-01-08T00:00:00Z')]);
 trace();
 const afterCreate = await FILES.listExperimentFiles({ ctx: mdCtx('cond8', 'Structure'), exts: FILES.MD_TOPOLOGY_EXTS });
-eq(afterCreate.files.map((f) => f.name), ['made.gro'], 'un fichier déposé dans le dossier CRÉÉ est trouvé par la lecture');
-eq(afterCreate.path, ['projects', 'MD_project', 'Exp_1', 'cond8'], '…dans ce dossier-là (le plus précis)');
+eq(afterCreate.files.map((f) => f.name), ['made.gro'],
+  'un fichier déposé dans le dossier CRÉÉ (experiment_setup/Structure) est trouvé par la lecture');
+eq(afterCreate.path, ['projects', 'MD_project', 'Exp_1', 'cond8', 'experiment setup', 'Structure'],
+  '…dans ce dossier-là (le plus précis)');
 eq(createFlags.every((c) => c === false), true, '…et cette lecture-là ne crée rien du tout');
 
 /* (d) Rien à créer : le contexte ne décrit pas une expérience. */
@@ -338,6 +401,7 @@ const nowhere = await FILES.createExperimentFolder({ ctx: { project: 'MD project
 eq(nowhere.ok, false, 'sans nom d’expérience, il n’y a pas de dossier à créer');
 ok(nowhere.error.length > 0, '…et l’échec est DIT (jamais un succès muet)');
 eq(nowhere.folderUrl, '', 'rien n’est ouvert : aucune adresse inventée');
+eq(nowhere.entries, [], '…et aucun dossier annoncé');
 eq(requested, [], '…sans même toucher au Drive');
 
 /* (e) Drive éteint : la création le DIT (elle n’invente pas un dossier). */
@@ -358,6 +422,31 @@ delete globalThis.localStorage;
 eq(onNc.ok, false, 'Nextcloud non configuré : la création le DIT (jamais un faux succès)');
 ok(onNc.error.includes('Nextcloud'), '…et le message nomme le fournisseur');
 eq(requested, [], '…et l’API Drive n’est pas appelée pour un dossier Nextcloud');
+
+/* (g) LE DÉFAUT SIGNALÉ — « This button did not create the folder » : une chaîne
+   créée À MOITIÉ ne passe plus pour un succès, et l'échec NOMME le segment. */
+const fullResolver = globalThis.__driveTestMocks.resolveDrivePathFromNames;
+globalThis.__driveTestMocks.resolveDrivePathFromNames = async (names) =>
+  ({ leafId: '', path: (names || []).slice(0, 4).map((n) => ({ name: slug(n), id: 'F_part' })) });
+trace();
+const partial = await FILES.createExperimentFolder({ ctx: mdCtx('cond9', 'Structure') });
+eq(partial.ok, false, 'un segment non créé fait ÉCHOUER le geste (jamais un faux succès)');
+ok(partial.error.includes('did not create'), '…et le message dit ce qui n’a pas été créé');
+ok(partial.error.includes('experiment_setup'), '…en NOMMANT le dossier manquant');
+eq(partial.entries, [], 'aucune entrée annoncée tant que rien n’est complet');
+
+/* (h) Un chemin SUPPRIMÉ dans le programme (code PATH_DELETED) : le geste
+   l'explique au lieu d'un « échec » qui ne dit rien. */
+globalThis.__driveTestMocks.resolveDrivePathFromNames = async () => {
+  const err = new Error('The Drive folder “projects/MD_project/Exp_1/cond10/experiment_setup/Structure” was deleted — it is not recreated.');
+  err.code = 'PATH_DELETED';
+  throw err;
+};
+trace();
+const blocked = await FILES.createExperimentFolder({ ctx: mdCtx('cond10', 'Structure') });
+eq(blocked.ok, false, 'un dossier supprimé dans le programme n’est pas recréé');
+ok(blocked.error.includes('never recreated'), '…et le message explique pourquoi (et quoi faire)');
+ok(blocked.error.includes('cond10'), '…en nommant le chemin concerné');
 
 globalThis.__driveTestMocks.resolveDrivePathFromNames = previousResolver;
 
@@ -384,8 +473,10 @@ ok(PICKER_SRC.includes('↻ Reload'),
 ok(PICKER_SRC.includes('Google Drive is not connected in this browser'),
   '…et dit quand Drive est éteint (une lecture impossible ne se lit pas « le dossier est vide »)');
 
-ok(MDSRC.includes("import { DriveExperimentFilePicker, DriveExperimentFolderCreator } from './DriveExperimentFiles';"),
-  'la page MD monte les DEUX gestes : lire le dossier de l’expérience, et le CRÉER');
+ok(MDSRC.includes("import { DriveExperimentFilePicker } from './DriveExperimentFiles';"),
+  'la page MD monte la LECTURE du dossier de l’expérience (le bouton qui CRÉE est rendu par le viewer)');
+ok(MDSRC.includes("import { DriveExperimentFilePicker, DriveExperimentFolderCreator } from './DriveExperimentFiles';") === false,
+  '…et n’importe plus le geste de création : il a UNE place, celle du viewer');
 ok(MDSRC.includes('import { experimentFilePointer, MD_TOPOLOGY_EXTS, MD_TRAJECTORY_EXTS } from \'../utils/driveExperimentFiles\';'),
   '…avec les extensions de topologie et de trajectoire du module');
 eq((MDSRC.match(/<DriveExperimentFilePicker/g) || []).length, 2,
@@ -414,8 +505,10 @@ ok(MDSRC.includes('await restoreTrajectoryFromDrive();') && MDSRC.includes('awai
   '…et les deux reprises automatiques sont toujours branchées');
 
 /* La MÊME lecture sert le PDB de la page NMR (structure). */
-ok(NMRSRC.includes("import { DriveExperimentFilePicker, DriveExperimentFolderCreator } from './DriveExperimentFiles';"),
-  'la page NMR monte le même geste (le PDB de la condition), création comprise');
+ok(NMRSRC.includes("import { DriveExperimentFilePicker } from './DriveExperimentFiles';"),
+  'la page NMR monte le même geste de LECTURE (le PDB de la condition) — la création vient du viewer');
+ok(NMRSRC.includes("import { DriveExperimentFilePicker, DriveExperimentFolderCreator } from './DriveExperimentFiles';") === false,
+  '…et n’importe plus le geste de création non plus');
 eq((NMRSRC.match(/<DriveExperimentFilePicker/g) || []).length, 1, 'un bouton : le PDB, sous la vue 3D');
 ok(NMRSRC.includes('const pickNmrStructureFromFolder = async (file, meta) => {'),
   '…et la page NMR installe le PDB choisi');
@@ -428,35 +521,54 @@ ok(/pickNmrStructureFromFolder = async[\s\S]{0,2000}?await blobStore\.save\(nmrS
 ok(NMRSRC.includes('ctx={nmrStructDriveCtx(activeTest)}'),
   'la lecture part du dossier canonique de l’expérience NMR (Data/Structure)');
 
-/* ── LA CRÉATION, CÔTÉ CODE : le module qui sait créer, le composant qui le
-   donne à l'utilisateur, les deux pages qui le montent. ──────────────────── */
+/* ── LA CRÉATION, CÔTÉ CODE : le module qui crée le CHEMIN ENTIER, le composant
+   qui le donne à l'utilisateur, et le VIEWER qui le pose sur la ligne de
+   📂 PDB file(s). ───────────────────────────────────────────────────────────── */
+ok(MODULE_SRC.includes("export const EXPERIMENT_FILE_SUBSECTIONS = ['Structure', 'Trajectory'];"),
+  'les deux sous-sections où les fichiers se déposent sont nommées UNE fois (Structure, Trajectory)');
 ok(MODULE_SRC.includes('export const experimentFolderPathOf = (ctx = {}) => {'),
-  'le module sait QUEL dossier créer (celui de l’EXPÉRIENCE seule : ni section ni sous-section)');
-ok(MODULE_SRC.includes('export const createExperimentFolder = async ({ ctx = null } = {}) => {'),
-  'la création est un geste à part entière (explicite, jamais un effet de bord d’une lecture)');
-ok(MODULE_SRC.includes('const resolved = await resolveDrivePathFromNames(path, { create: true });'),
-  '…qui CRÉE pour de bon (create:true), à un chemin connu d’avance');
-ok(MODULE_SRC.includes('if (!path.length) {'), 'sans expérience décrite, il refuse et le DIT');
+  'le module sait QUEL dossier d’expérience créer (la tête commune)');
+ok(MODULE_SRC.includes("export const experimentFileFolderPathOf = (ctx = {}, subsection = '') => {"),
+  '…et le dossier d’un TYPE de fichier (…/experiment_setup/Structure ou /Trajectory)');
+ok(MODULE_SRC.includes('export const createExperimentFolder = async ({ ctx = null, subsections = EXPERIMENT_FILE_SUBSECTIONS } = {}) => {'),
+  'la création est un geste à part entière (explicite, jamais un effet de bord d’une lecture) et crée les DEUX sous-sections par défaut');
+ok(MODULE_SRC.includes('resolved = await resolveDrivePathFromNames(leaf, { create: true });'),
+  '…qui CRÉE pour de bon (create:true), à des chemins connus d’avance');
+ok(MODULE_SRC.includes('const missing = firstMissingSegment(resolved, leaf);'),
+  '…et VÉRIFIE chaque segment : une chaîne à moitié créée ne passe plus pour un succès');
+ok(MODULE_SRC.includes('return fail(driveCreateError(null, leaf, missing));'),
+  '…elle DIT le segment manquant (le défaut « did not create the folder »)');
+ok(MODULE_SRC.includes('if (!experimentPath.length) {'), 'sans expérience décrite, il refuse et le DIT');
 ok(MODULE_SRC.includes('if (!getDriveToken()) {'), 'Drive éteint : il le dit, plutôt que d’inventer un succès');
-ok(MODULE_SRC.includes('await ncEnsureFolders(path);'),
-  'Nextcloud : le dossier s’y crée par WebDAV (le MÊME geste que l’envoi)');
+ok(MODULE_SRC.includes('await ncEnsureFolders(leaf);'),
+  'Nextcloud : les dossiers s’y créent par WebDAV (le MÊME geste que l’envoi)');
+ok(MODULE_SRC.includes('export const fullDrivePathText = (datasetName = \'\', path = []) => {'),
+  'le chemin COMPLET (dataset compris) a UNE définition, dans le module');
 
 ok(PICKER_SRC.includes('export const DriveExperimentFolderCreator = ({'),
-  'le geste a son composant dédié (rangée des boutons de fichiers)');
+  'le geste a son composant dédié');
+ok(PICKER_SRC.includes("label = '📁 Create drive folder'"),
+  '…au libellé COURT demandé (« to save space you can rename it "Create drive folder" »)');
 ok(PICKER_SRC.includes('const res = await createExperimentFolder({ ctx });'), '…qui appelle la création du module');
-ok(PICKER_SRC.includes('Experiment folder ready:'), '…et DIT ce qui vient d’être créé (chemin compris)');
-ok(PICKER_SRC.includes('Open in Drive'), '…en proposant de l’ouvrir');
+ok(PICKER_SRC.includes('const targets = EXPERIMENT_FILE_SUBSECTIONS'),
+  '…il annonce les chemins visés AVANT le clic — la description dit enfin OÙ il crée');
+ok(PICKER_SRC.includes('fullDrivePathText(datasetName, experimentFileFolderPathOf(ctx, sub))'),
+  '…par les helpers du module (une seule définition du chemin, dataset compris)');
+ok(PICKER_SRC.includes('const datasetName = getDriveRootName();'), '…le nom du dataset ouvert vient du contexte Drive');
+ok(PICKER_SRC.includes('✅ Ready: deposit the files in'), '…et il DIT ce qui vient d’être créé');
+ok(PICKER_SRC.includes('Open ↗'), '…en proposant de l’ouvrir (un lien par dossier)');
 ok(PICKER_SRC.includes('could not be created'), '…ou dit l’échec : jamais un succès muet');
 
-eq((MDSRC.match(/<DriveExperimentFolderCreator/g) || []).length, 1,
-  'la page MD monte la création UNE fois, dans la rangée des boutons de fichiers');
-ok(MDSRC.includes("ctx={mdFolderCtx('Structure')}")
-  && /<DriveExperimentFolderCreator[\s\S]{0,200}?mdFolderCtx\('Structure'\)/.test(MDSRC),
-  '…au contexte de nommage de l’expérience (project/test/instance : la section ne joue pas)');
-eq((NMRSRC.match(/<DriveExperimentFolderCreator/g) || []).length, 1,
-  'la page NMR monte le même geste (le dossier de l’expérience NMR)');
-ok(/<DriveExperimentFolderCreator[\s\S]{0,200}?nmrStructDriveCtx\(activeTest\)/.test(NMRSRC),
-  '…avec le contexte canonique de l’expérience NMR');
+eq((MDSRC.match(/<DriveExperimentFolderCreator/g) || []).length, 0,
+  'la page MD ne monte PLUS la création : le viewer s’en charge, sur la ligne de 📂 PDB file(s)');
+eq((NMRSRC.match(/<DriveExperimentFolderCreator/g) || []).length, 0,
+  '…et la page NMR non plus : la place ne dépend plus d’une page');
+ok(VIEWSRC.includes("import { DriveExperimentFilePicker, DriveExperimentFolderCreator } from './DriveExperimentFiles';"),
+  'c’est le VIEWER qui monte le geste (une fois, pour les trois pages à viewer) — et le 📂 du style avec lui');
+ok(/fileRowExtra\}[\s\S]{0,1400}?<DriveExperimentFolderCreator ctx=\{driveNaming\} \/>/.test(VIEWSRC),
+  '…TOUJOURS juste après la rangée des fichiers — la ligne de 📂 PDB file(s)');
+ok(VIEWSRC.includes('{driveNaming ? <DriveExperimentFolderCreator ctx={driveNaming} /> : null}'),
+  '…et seulement quand l’expérience est nommée (aucun bouton creux sur un viewer nu)');
 
 const TESTS = readFileSync('probe_tests.txt', 'utf8');
 ok(TESTS.includes('_experiment_folder_files_test.mjs'),

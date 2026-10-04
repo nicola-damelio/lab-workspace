@@ -1,205 +1,1327 @@
+diff --git a/src/App.jsx b/src/App.jsx
+index 7a37f4b..90353c0 100644
+--- a/src/App.jsx
++++ b/src/App.jsx
+@@ -70,6 +70,11 @@ import { readDriveMirror, isDatasetMirrorDeleted } from './utils/driveMirrorStor
+    (voir workspaceKeyStore.js). Sans cela, deux postes n'affichaient pas la même
+    chose et vider le navigateur effaçait des données sans copie. */
+ import { installKeyObserver, adoptKeysFromDrive, installKeyAutosave, writeKeyState } from './utils/workspaceKeyStore';
++/* LA PEAU DE L'INTERFACE appartient à l'OPÉRATEUR : elle se pose sur <html> à
++   chaque changement d'identité (voir l'effet « LA PEAU SUIT L'OPÉRATEUR » plus
++   bas), et ses clés voyagent avec celles du navigateur ci-dessus — un opérateur
++   retrouve donc sa peau d'un poste à l'autre. */
++import { applyStoredUiSkin } from './utils/uiSkin';
+ 
+ /** Les datasets VISIBLES sur ce poste : ceux qui ne portent pas de pierre
+  *  tombale. Une suppression est définitive PARTOUT : la tombe est écrite ici,
+@@ -1354,6 +1359,15 @@ if (customType === 'dosy') {
+   const sessionJustSignedInRef = useRef(false);
+   useEffect(() => { operatorsRef.current = operators; }, [operators]);
+   useEffect(() => { identityRef.current = currentUser; }, [currentUser]);
++  /* ── LA PEAU SUIT L'OPÉRATEUR ────────────────────────────────────────────
++     La peau (et son accent personnalisé) est gardée PAR OPÉRATEUR dans le
++     navigateur, la copie du POSTE servant de départ et de repli (voir
++     utils/uiSkin.js). Se connecter, fermer sa session ou passer d'un opérateur
++     à l'autre repeint donc le programme : sur un poste partagé, chacun retrouve
++     la sienne. Le premier rendu n'attend pas cet effet — main.jsx pose déjà la
++     peau de l'opérateur de la session de l'onglet avant de peindre (sinon un
++     rechargement afficherait un éclair de la palette du poste). */
++  useEffect(() => { applyStoredUiSkin(currentUser); }, [currentUser]);
+ 
+   /* Identité canonique d'une session + mémorisation (voir memberIdentity).
+      Les DEUX écrans de connexion ET l'écouteur d'état Firebase passent par
+diff --git a/src/components/AppModules/settingsModule.jsx b/src/components/AppModules/settingsModule.jsx
+index 032290c..75c3f32 100644
+--- a/src/components/AppModules/settingsModule.jsx
++++ b/src/components/AppModules/settingsModule.jsx
+@@ -14,7 +14,10 @@ import { FigureStylePanel } from '../FigureStylePanel';
+ import { normalizeOperators } from '../../utils/auth';
+ import { openDrive } from '../../utils/driveNaming';
+ import { UI_SCALE_PRESETS, readUiScale, saveUiScale } from '../../utils/uiScale';
+-import { UI_SKIN_DEFAULT, UI_SKINS, readUiSkin, saveUiSkin } from '../../utils/uiSkin';
++import {
++  UI_CUSTOM_ACCENTS, UI_CUSTOM_NEUTRALS, UI_SKIN_CUSTOM, UI_SKIN_DEFAULT, UI_SKINS,
++  readUiCustomSkin, readUiSkin, saveUiCustomSkin, saveUiSkin, uiSkinCustomVars
++} from '../../utils/uiSkin';
+ 
+ /* ── Display scale ─────────────────────────────────────────────────────────
+    Tailwind v4 computes every text size and every spacing step from the ROOT
+@@ -64,12 +67,17 @@ const DisplayScaleControl = () => {
+    SAME attribute re-paints any element: the miniature below carries
+    `data-skin` and is drawn with the very classes of the real interface
+    (a chrome bar, a card, an accent button), so what the button shows IS what
+-   the program will look like. The value is per-browser (the machine and the
+-   eyes in front of it, not the dataset) and main.jsx applies it before the
+-   first paint; uiSkin.js holds it. Every user sees the control. */
+-const SkinMiniature = ({ skin }) => (
++   the program will look like. The value belongs to the OPERATOR who chose it
++   (utils/uiSkin.js; the skin of the COMPUTER is its fallback, and the starter
++   value for an operator who has never chosen one), and main.jsx applies the
++   one of the session before the first paint. Every user sees the control — and
++   the choice follows HIM from one computer to the next, like the other browser
++   keys. */
++const SkinMiniature = ({ skin, tone = '', style = null }) => (
+   <span
+     data-skin={skin.id === UI_SKIN_DEFAULT ? undefined : skin.id}
++    data-tone={tone || undefined}
++    style={style || undefined}
+     className="flex w-40 flex-col gap-1 rounded-lg border border-slate-200 bg-slate-50 p-2 no-print"
+   >
+     <span className="rounded bg-slate-800 px-1.5 py-1 text-center text-[10px] font-bold text-white">
+@@ -85,9 +93,26 @@ const SkinMiniature = ({ skin }) => (
+   </span>
+ );
+ 
+-const SkinControl = () => {
+-  const [skin, setSkin] = React.useState(() => readUiSkin());
+-  const pick = (id) => { setSkin(id); saveUiSkin(id); };
++/* `operator` = l'opérateur connecté (null quand personne ne l'est) : LA PEAU
++   LUI APPARTIENT (utils/uiSkin.js) — on lit et on écrit donc SA clé, et sur un
++   poste partagé chacun retrouve la sienne après s'être connecté. */
++const SkinControl = ({ operator = null }) => {
++  const [skin, setSkin] = React.useState(() => readUiSkin(operator));
++  /* LE RÉGLAGE DE LA PEAU PERSONNALISÉE (accent + famille neutre) : lu une fois,
++     écrit à chaque clic — `saveUiCustomSkin` applique AUSSITÔT quand c'est la
++     peau en service, donc la miniature et le programme bougent ensemble. */
++  const [custom, setCustom] = React.useState(() => readUiCustomSkin(operator));
++  /* L'opérateur peut changer PENDANT que le panneau est ouvert (connexion, puis
++     fermeture de session, depuis la barre latérale) : la commande se relit alors
++     sur la peau du nouvel opérateur — sinon elle afficherait celle du poste à
++     côté de pages peintes avec la sienne. */
++  React.useEffect(() => {
++    setSkin(readUiSkin(operator));
++    setCustom(readUiCustomSkin(operator));
++  }, [operator]);
++  const pick = (id) => { setSkin(id); saveUiSkin(id, operator); };
++  const setAccent = (color) => setCustom(saveUiCustomSkin({ ...custom, accent: color }, operator));
++  const setNeutral = (neutral) => setCustom(saveUiCustomSkin({ ...custom, neutral }, operator));
+   return (
+     <div className="flex flex-col gap-3">
+       <div className="flex flex-wrap gap-3">
+@@ -96,14 +121,18 @@ const SkinControl = () => {
+             key={s.id}
+             type="button"
+             onClick={() => pick(s.id)}
+-            title={`${s.label} — ${s.hint}. Repaints every page of the program at once, and is remembered for this browser.`}
++            title={`${s.label} — ${s.hint}. Repaints every page of the program at once, and is remembered for the operator who picks it.`}
+             className={`flex flex-col items-center gap-2 rounded-xl border-2 p-2 shadow-sm transition-colors ${
+               skin === s.id
+                 ? 'border-blue-600 bg-blue-50'
+                 : 'border-slate-300 bg-white hover:border-slate-400'
+             }`}
+           >
+-            <SkinMiniature skin={s} />
++            <SkinMiniature
++              skin={s}
++              tone={s.id === UI_SKIN_CUSTOM ? custom.neutral : ''}
++              style={s.id === UI_SKIN_CUSTOM ? uiSkinCustomVars(custom) : null}
++            />
+             <span className="flex flex-col items-center">
+               <span className="text-xs font-bold text-slate-700">{s.label}</span>
+               <span className="text-[10px] text-slate-500">{s.hint}</span>
+@@ -111,9 +140,78 @@ const SkinControl = () => {
+           </button>
+         ))}
+       </div>
++      {skin === UI_SKIN_CUSTOM && (
++        <div className="flex flex-col gap-2 rounded-xl border-2 border-slate-300 bg-white p-3">
++          <span className="text-xs font-bold text-slate-700">Custom skin — the accent</span>
++          <div className="flex flex-wrap items-center gap-2">
++            {UI_CUSTOM_ACCENTS.map((a) => (
++              <button
++                key={a.id}
++                type="button"
++                onClick={() => setAccent(a.color)}
++                title={`${a.label} accent — the whole accent ramp is derived from this one colour`}
++                className={`h-7 w-7 rounded-full border-2 shadow-sm ${
++                  custom.accent === a.color ? 'border-slate-800' : 'border-white'
++                }`}
++                style={{ backgroundColor: a.color }}
++              />
++            ))}
++            <label
++              title="Any colour at all: the eleven accent stops are derived from it, so the palette stays coherent."
++              className="flex items-center gap-1.5 text-[11px] font-bold text-slate-600"
++            >
++              <input
++                type="color"
++                value={custom.accent}
++                onChange={(e) => setAccent(e.target.value)}
++                className="h-7 w-10 cursor-pointer rounded border border-slate-300 bg-white"
++              />
++              {custom.accent}
++            </label>
++          </div>
++          <span className="text-xs font-bold text-slate-700">…and the neutral family</span>
++          <div className="flex flex-wrap gap-2">
++            {UI_CUSTOM_NEUTRALS.map((n) => (
++              <button
++                key={n.id}
++                type="button"
++                onClick={() => setNeutral(n.id)}
++                title={`Neutral family: ${n.label} — it repaints the pages, the cards, the borders and the inks.`}
++                className={`rounded-lg border px-2 py-1 text-[11px] font-bold ${
++                  custom.neutral === n.id
++                    ? 'border-blue-600 bg-blue-50 text-blue-700'
++                    : 'border-slate-300 bg-white text-slate-600 hover:border-slate-400'
++                }`}
++              >
++                {n.label}
++              </button>
++            ))}
++          </div>
++          <span className="text-[10px] text-slate-500 leading-relaxed">
++            The accent repaints every button, link, highlight and chip; the neutral family repaints the
++            pages, the cards, the borders and the inks. The eleven accent stops are <b>derived from the
++            one colour</b> you pick — the same shape as the shipped ramp — so a custom skin keeps the
++            contrast of the program instead of producing an unreadable mix.
++          </span>
++        </div>
++      )}
+       <p className="text-xs text-slate-500 leading-relaxed">
+-        The choice applies <b>immediately to every page</b> and is remembered for this browser
+-        only. It repaints the program — colours, inks, borders — and nothing else: the layout,
++        The choice applies <b>immediately to every page</b> and is remembered{' '}
++        {operator ? (
++          <>
++            <b>for {operator.name || 'the signed-in operator'}</b> — on every computer he signs in
++            to, and it changes nothing for anybody else who uses this one.
++          </>
++        ) : (
++          <>
++            for this <b>computer</b>: nobody is signed in, so this is the palette of the entry
++            screen. An operator who signs in gets HIS own skin back, and the skin he chooses is
++            kept for him, not for the machine.
++          </>
++        )}
++      </p>
++      <p className="text-xs text-slate-500 leading-relaxed">
++        A skin repaints the program — colours, inks, borders — and nothing else: the layout,
+         the display scale, the printed documents and the figures keep their own settings.
+       </p>
+     </div>
+@@ -154,10 +252,10 @@ export const SettingsModule = ({
+ 
+                   <CollapsibleSection
+                     title="Interface skin — the colours of the whole program"
+-                    subtitle="Repaints every page, modal, table and badge at once — the neutral greys, the ink and the accent colour — by restating the palette Tailwind's classes read. Graphite drops the blue cast, Warm paper turns the greys warm, Indigo and Violet move the accent, Dimmed softens the white for long sessions and High contrast deepens every ink and border. The choice is immediate, remembered for this browser only, and every user sees it."
++                    subtitle="Repaints every page, modal, table and badge at once — the neutral greys, the ink and the accent colour — by restating the palette Tailwind's classes read. Graphite drops the blue cast, Warm paper turns the greys warm, Indigo, Violet, Purple, Red and Rose move the accent, Dimmed softens the white for long sessions, High contrast deepens every ink and border, and Custom lets you pick your own accent and neutral family. The choice is immediate, belongs to the OPERATOR who picks it (each one has his own, on every computer he signs in to; when nobody is signed in it is the skin of this computer), and every user sees it."
+                     defaultOpen={false}
+                   >
+-                    <SkinControl />
++                    <SkinControl operator={currentUser} />
+                   </CollapsibleSection>
+ 
+                   <CollapsibleSection
+diff --git a/src/components/DriveExperimentFiles.jsx b/src/components/DriveExperimentFiles.jsx
+index 5072db8..9205623 100644
+--- a/src/components/DriveExperimentFiles.jsx
++++ b/src/components/DriveExperimentFiles.jsx
+@@ -26,16 +26,21 @@
+    LE SEUL GESTE QUI FABRIQUE vit ici aussi : `DriveExperimentFolderCreator`.
+    Quand l'expérience n'a PAS encore de dossier sur le Drive, la lecture ne
+    peut rien montrer — la demande est alors « allow me to create it with the
+-   correct path », et ce bouton le fait (voir
+-   utils/driveExperimentFiles.createExperimentFolder : le chemin canonique de
+-   l'expérience, jamais la sous-section d'un bouton). Il est posé dans la MÊME
+-   rangée que les boutons 📂, donc sur la ligne des commandes de fichiers.
++   correct path », puis « …datasetname/projects/projectname/experimentname/
++   instancename/subsection/file » : ce bouton crée donc le chemin ENTIER,
++   jusqu'aux sous-sections `experiment_setup/Structure` et
++   `experiment_setup/Trajectory` (voir
++   utils/driveExperimentFiles.createExperimentFolder). COURT (« 📁 Create drive
++   folder ») et TOUJOURS dans la rangée des fichiers — la ligne de
++   📂 PDB file(s) — c'est le VIEWER qui le rend là (voir NMRMoleculeViewer,
++   juste après `fileRowExtra`), donc sur les trois pages qui ont un viewer et un
++   contexte de nommage : MD, NMR et Docking.
+    ========================================================================= */
+ 
+ import { useState } from 'react';
+ import { downloadCloudFile, sameRawFileFor } from '../utils/driveRestore';
+-import { createExperimentFolder, describeDriveFileSize, drivePathText, listExperimentFiles, normalizeFileExts } from '../utils/driveExperimentFiles';
+-import { getDriveToken } from '../utils/driveUpload';
++import { createExperimentFolder, describeDriveFileSize, drivePathText, experimentFileFolderPathOf, EXPERIMENT_FILE_SUBSECTIONS, fullDrivePathText, listExperimentFiles, normalizeFileExts } from '../utils/driveExperimentFiles';
++import { getDriveRootName, getDriveToken } from '../utils/driveUpload';
+ 
+ const BTN = 'bg-white hover:bg-slate-50 border border-indigo-300 text-indigo-700 font-bold py-1.5 px-3 rounded-lg text-xs cursor-pointer shadow-sm transition-colors inline-flex items-center gap-1.5 disabled:opacity-50';
+ const ROW = 'flex items-center gap-2 px-2 py-1 rounded border border-slate-200 bg-white';
+@@ -163,39 +168,57 @@ export const DriveExperimentFilePicker = ({
+ };
+ 
+ /**
+- * CRÉER le dossier de l'expérience sur le Drive — le SEUL geste d'écriture de
++ * CRÉER les dossiers de l'expérience sur le Drive — le SEUL geste d'écriture de
+  * la rangée des fichiers (les 📂, eux, ne font que LIRE).
+  *
+  * Défaut visé (signalé) : « If the experiment does not exist in drive, allow
+  * me to create it with the correct path. » Un geste de lecture ne fabrique
+  * jamais d'arborescence : quand le dossier n'existe pas, les 📂 ne montrent
+  * rien. Ce bouton-ci est donc EXPLICITE — l'utilisateur demande la création —
+- * et il la fait au chemin canonique de l'expérience (project/test/instance),
+- * une seule fois, sans doublon (la création est idempotente).
++ * et il crée le CHEMIN ENTIER où les fichiers se déposent vraiment :
+  *
+- * Rien n'est inventé à l'écran : le chemin créé est montré tel qu'il est écrit
+- * sur le Drive (`pathText`) et un lien l'ouvre, ou l'échec est DIT (Drive
+- * éteint, quota, Nextcloud non configuré).
++ *     <dataset>/projects/<projet>/<expérience>/<instance?>/experiment_setup/Structure
++ *     <dataset>/projects/<projet>/<expérience>/<instance?>/experiment_setup/Trajectory
++ *
++ * La demande, mot pour mot : « for a trajectory it must be datasetname/projects/
++ * projectname/experimentname/instancename/subsection/file where subsection is
++ * experiment_setup/trajectory for trajectory files and experiment_setup/
++ * Structure for pdb files ». La création est IDEMPOTENTE (un dossier déjà
++ * présent est simplement retrouvé) et CHAQUE segment est vérifié : l'échec DIT
++ * ce qui n'a pas été créé (voir createExperimentFolder).
++ *
++ * Le bouton est COURT — « 📁 Create drive folder » : il partage la rangée des
++ * fichiers (celle de 📂 PDB file(s)) et n'a qu'une place étroite — mais il
++ * montre les chemins COMPLETS, dataset compris, dans son infobulle ET après
++ * coup, avec un lien par dossier (la demande : « the description on where it
++ * would do it is not complete »).
+  *
+  * @param {object}   props
+  * @param {object}   props.ctx          contexte de nommage de la page (project/test/instance)
+  * @param {string}   [props.label]      texte du bouton
+  * @param {string}   [props.titleText]  infobulle (ce que le geste fait exactement)
+- * @param {string}   [props.note]       phrase d'aide affichée à droite du bouton
+  * @param {boolean}  [props.disabled]
+  * @param {Function} [props.onCreated]  async (result) => void — la page peut recharger ses listes
+  */
+ export const DriveExperimentFolderCreator = ({
+-  ctx = null, label = '📁 Create experiment folder on Drive', titleText = '',
+-  note = '', disabled = false, onCreated = null
++  ctx = null, label = '📁 Create drive folder', titleText = '',
++  disabled = false, onCreated = null
+ }) => {
+   const [busy, setBusy] = useState(false);
+   const [msg, setMsg] = useState('');
+-  const [made, setMade] = useState(null);      // { pathText, folderUrl }
++  const [made, setMade] = useState(null);      // [{ fullText, folderUrl }]
++
++  /* LES CHEMINS VISÉS, dits AVANT le clic : le bouton annonce où il crée, le
++     nom du dataset compris — sinon « create the folder » ne dit pas lequel. */
++  const datasetName = getDriveRootName();
++  const targets = EXPERIMENT_FILE_SUBSECTIONS
++    .map((sub) => fullDrivePathText(datasetName, experimentFileFolderPathOf(ctx, sub)))
++    .filter(Boolean);
++  const where = targets.join('   ·   ');
+ 
+   const create = async () => {
+     setBusy(true);
+-    setMsg('📁 Creating the experiment folder on Google Drive…');
++    setMsg('📁 Creating the experiment folders on Google Drive…');
+     const res = await createExperimentFolder({ ctx });
+     setBusy(false);
+     if (!res || !res.ok) {
+@@ -203,28 +226,34 @@ export const DriveExperimentFolderCreator = ({
+       setMsg(`⚠️ ${(res && res.error) || 'The experiment folder could not be created.'}`);
+       return;
+     }
+-    setMade({ pathText: res.pathText, folderUrl: res.folderUrl });
+-    setMsg(`✅ Experiment folder ready: ${res.pathText} — deposit your files there, then press the 📂 buttons above.`);
++    const entries = (res.entries || []).map((e) => ({ fullText: e.fullText, folderUrl: e.folderUrl }));
++    setMade(entries);
++    setMsg(`✅ Ready: deposit the files in ${entries.map((e) => e.fullText).join(' · ')} — the 📂 buttons above then read them.`);
+     try { await onCreated?.(res); } catch { /* l'appelant décide quoi en faire */ }
+   };
+ 
++  const title = titleText || `Create THIS experiment's Drive folders so its files can be deposited there: ${where}. Idempotent — a folder that is already there is simply found — and nothing else is created.`;
++
+   return (
+     <div className="flex flex-col gap-1">
+       <div className="flex items-center gap-2 flex-wrap">
+         <button type="button" onClick={create} disabled={disabled || busy}
+-          title={titleText || "Create THIS experiment's Drive folder (projects/<project>/<experiment>) so files can be deposited there — the 📂 buttons above then read it. Nothing else is created."}
+-          className={BTN}>
++          title={title} className={BTN}>
+           {busy ? '⏳ Creating…' : label}
+         </button>
+-        {note && <span className="text-[10px] text-slate-400">{note}</span>}
+       </div>
+       {msg && (
+-        <div className="flex items-center gap-2 flex-wrap">
++        <div className="flex flex-col gap-0.5">
+           <span className="text-[10px] text-slate-600">{msg}</span>
+-          {made?.folderUrl && (
+-            <a href={made.folderUrl} target="_blank" rel="noreferrer"
+-              className="text-[10px] font-bold text-indigo-700 hover:text-indigo-900">Open in Drive ↗</a>
+-          )}
++          {(made || []).map((e) => (
++            <span key={e.fullText} className="flex items-center gap-1 text-[10px] text-slate-500">
++              <span className="truncate" title={e.fullText}>📁 {e.fullText}</span>
++              {e.folderUrl && (
++                <a href={e.folderUrl} target="_blank" rel="noreferrer"
++                  className="shrink-0 font-bold text-indigo-700 hover:text-indigo-900">Open ↗</a>
++              )}
++            </span>
++          ))}
+         </div>
+       )}
+     </div>
+diff --git a/src/components/MDSections.jsx b/src/components/MDSections.jsx
+index 71e2e23..482e44f 100644
+--- a/src/components/MDSections.jsx
++++ b/src/components/MDSections.jsx
+@@ -68,7 +68,7 @@ import { placeRestorePointer, pointerStillWanted, restoreRawFileFor, sameRawFile
+    dossier de l'expérience n'a aucun nom à reconnaître. Le geste manquant est
+    donc une lecture du dossier, et le fichier choisi devient celui que la
+    condition rouvre par défaut (nom déclaré + pointeur). */
+-import { DriveExperimentFilePicker, DriveExperimentFolderCreator } from './DriveExperimentFiles';
++import { DriveExperimentFilePicker } from './DriveExperimentFiles';
+ import { experimentFilePointer, MD_TOPOLOGY_EXTS, MD_TRAJECTORY_EXTS } from '../utils/driveExperimentFiles';
+ 
+ // Cache to retain local File objects when switching tabs within the same session
+@@ -1523,15 +1523,20 @@ export const MDExperimentSetupSection = ({ ctx }) => {
+      AND declares it… ») est passée dans leurs infobulles : rien n'est perdu, et
+      elle ne coûte plus une ligne à elle seule.
+ 
+-     ⚠ LE TROISIÈME BOUTON DE LA RANGÉE — 📁 Create experiment folder on Drive —
+-     répond à l'autre moitié du même défaut : « If the experiment does not exist
+-     in drive, allow me to create it with the correct path ». Les 📂 NE CRÉENT
++     ⚠ LE BOUTON QUI CRÉE LE DOSSIER — 📁 « Create drive folder » — répond à
++     l'autre moitié du même défaut : « If the experiment does not exist in
++     drive, allow me to create it with the correct path ». Les 📂 NE CRÉENT
+      RIEN (un geste de lecture ne fabrique jamais d'arborescence) : quand le
+-     dossier de l'expérience n'existe pas, ils ne peuvent rien montrer. Ce
+-     bouton-ci est donc EXPLICITE, et il crée la TÊTE COMMUNE à tous les
+-     fichiers de l'expérience — projects/<projet>/<expérience>/<instance>
+-     (voir utils/driveExperimentFiles.createExperimentFolder ; la création est
+-     idempotente : un dossier déjà présent est simplement retrouvé). */
++     dossier de l'expérience n'existe pas, ils ne peuvent rien montrer.
++     IL N'EST PLUS DÉFINI ICI : la demande de cette session, mot pour mot, est
++     « the "create experiment folder on drive" must be placed in the same line
++     of "PDB file" button always. to save space you can rename it "Create drive
++     folder". » — il est donc rendu par le VIEWER lui-même, dans cette même
++     rangée (§1 General, la ligne de 📂 PDB file(s)), sur les trois pages à
++     viewer (voir NMRMoleculeViewer, juste après `fileRowExtra`). Il crée le
++     chemin ENTIER — …/experiment_setup/Structure et …/experiment_setup/
++     Trajectory (voir utils/driveExperimentFiles.createExperimentFolder,
++     idempotent, et chaque segment vérifié). */
+   const folderFilePickers = (
+     <>
+       <DriveExperimentFilePicker
+@@ -1555,13 +1560,11 @@ export const MDExperimentSetupSection = ({ ctx }) => {
+       {/* LE SEUL GESTE QUI FABRIQUE de la rangée : les deux 📂 ci-dessus NE
+           CRÉENT RIEN (un geste de lecture ne fabrique jamais d'arborescence).
+           Quand l'expérience n'a pas encore de dossier sur le Drive, ils n'ont
+-          donc rien à montrer — ce bouton-ci crée ce dossier, au chemin
+-          canonique de l'expérience (project/test/instance), la tête commune à
+-          la topologie ET à la trajectoire. */}
+-      <DriveExperimentFolderCreator
+-        ctx={mdFolderCtx('Structure')}
+-        note="(only if this experiment has no Drive folder yet)"
+-      />
++          donc rien à montrer — et le bouton qui crée ce dossier n'est plus
++          écrit ICI : c'est le VIEWER qui le rend, dans CETTE rangée, juste
++          après ces deux 📂 (la demande : « the "create experiment folder on
++          drive" must be placed in the same line of "PDB file" button always »).
++          Voir NMRMoleculeViewer, à côté de `fileRowExtra`. */}
+     </>
+   );
+ 
+@@ -1878,7 +1881,12 @@ export const MDExperimentSetupSection = ({ ctx }) => {
+      VIEWER (§1 General, sur la ligne de 📂 PDB file(s) / 📂 Trajectory) : c'est
+      `fileRowExtra` du viewer qui les rend, et `folderFilePickers` qui les définit
+      (voir plus haut — la demande : les deux 📂 du dossier sur la MÊME ligne que
+-     les deux 📂 du poste). */
++     les deux 📂 du poste).
++     ⚠ « 📁 Create drive folder » n'est PAS passé ici : le VIEWER le rend lui-même
++     dans cette rangée dès qu'il a un contexte de nommage (`driveNaming`, quatre
++     lignes plus bas) — la demande, mot pour mot : « the "create experiment
++     folder on drive" must be placed in the same line of "PDB file" button
++     always ». La place ne dépend donc plus d'une page. */
+   fileRowExtra={folderFilePickers}
+   residueOffset={residueOffset}
+   atomNameMap={atomNameMap}
 diff --git a/src/components/NMRMoleculeViewer.jsx b/src/components/NMRMoleculeViewer.jsx
-index 1b25c26..39c38d4 100644
+index 82db80f..0be06bc 100644
 --- a/src/components/NMRMoleculeViewer.jsx
 +++ b/src/components/NMRMoleculeViewer.jsx
-@@ -13788,12 +13788,21 @@ const sectionStyleReps = (style, kind, look) => {
-     case 'ball+stick': return [{ type: 'ball+stick', params: { multipleBond: true, aspectRatio: 1.1 * sphere, radiusSize: BALLSTICK_BOND_RADIUS * bond } }];
-     case 'licorice': return [{ type: 'licorice', params: { radiusSize: LICORICE_BOND_RADIUS * bond } }];
-     case 'line': return [{ type: 'line', params: { linewidth: Math.max(1, Math.round(2 * bond)) } }];
-+    /* ⚠ LA TAILLE D'UNE BILLE S'ÉCRIT `radiusScale`, JAMAIS `scale`. Mesuré sur le
-+       paquet installé : NGL 2.4 n'a PAS de paramètre `scale` — il n'est pas dans la
-+       table de la représentation, donc `Representation#setParameters` le saute, et
-+       le rayon vient de `RadiusFactory#atomRadius` = `min(rayonVdW × radiusScale,
-+       10)`. « CPK » demandait `scale: 0.6` depuis toujours : il dessinait donc des
-+       sphères de PLEIN rayon de van der Waals, et l'ombre, elle, les mesurait à
-+       0,6 Å — l'écart exact du rapport « spheric shadows ». Le facteur est
-+       maintenant multiplié DANS `radiusScale`, le seul champ que NGL lit ET que le
-+       proxy des ombres lit : l'ombre et l'encre ne peuvent plus différer. */
-     // « CPK » IS spacefill, and an ION's « sphere » is the same representation
-     // drawn at its full Van der Waals radius (an ion has no bonds to speak of).
--    case 'spacefill': return [{ type: 'spacefill', params: { radiusScale: sphere, scale: kind === 'ion' ? 1 : 0.6 } }];
-+    case 'spacefill': return [{ type: 'spacefill', params: { radiusScale: sphere * (kind === 'ion' ? 1 : 0.6) } }];
-     // « Sphere » = PyMOL's « show spheres »: the SAME NGL spacefill, drawn at the
-     // FULL Van der Waals radius — the row's R◯ multiplies it like any other style.
--    case 'sphere': return [{ type: 'spacefill', params: { radiusScale: sphere, scale: 1 } }];
-+    case 'sphere': return [{ type: 'spacefill', params: { radiusScale: sphere } }];
-     case 'base': return [{ type: 'base', params: { radiusSize: BASE_BOND_RADIUS * bond } }];
-     case 'surface': return [{ type: 'surface', params: { surfaceType: 'av', opacity: Number((1 - Math.min(1, Math.max(0, (look && look.opacity) || 0))).toFixed(3)), ...SEE_THROUGH_SURFACE } }];
-     case 'mesh': return [{ type: 'surface', params: { surfaceType: 'av', wireframe: true, opacity: 1 } }];
-@@ -14876,7 +14885,7 @@ const buildCategoryReps = (comp) => {
-     // and sticks share ONE radius, so the Bond radius is what acts on it.
-     else if (bb === 'licorice') add('licorice', { sele: sels.protein, ...atomCol('protein'), ...stickGeom('protein', LICORICE_BOND_RADIUS) });
-     else if (bb === 'lines') add('line', { sele: sels.protein, ...atomCol('protein'), ...lineGeom('protein') });
--    else if (bb === 'spheres') add('spacefill', { sele: sels.protein, ...atomCol('protein'), radiusScale: g.sphere, scale: 0.6 });
-+    else if (bb === 'spheres') add('spacefill', { sele: sels.protein, ...atomCol('protein'), radiusScale: g.sphere * 0.6 });
-     addSurface(sels.protein, 'protein', cs.protein.surfaceOpacity);
-   }
+@@ -268,6 +268,14 @@ import {
+   viewerStyleMemoryKey,
+ } from '../utils/viewerStyleFile';
+ import { listExperimentFiles } from '../utils/driveExperimentFiles';
++/* 📁 LE SEUL GESTE QUI FABRIQUE UN DOSSIER (voir DriveExperimentFiles.jsx). La
++   demande, mot pour mot : « the "create experiment folder on drive" must be
++   placed in the same line of "PDB file" button always. to save space you can
++   rename it "Create drive folder". » Le viewer le rend donc LUI-MÊME, dans sa
++   rangée §1 General — la ligne même de 📂 PDB file(s) — dès qu'un contexte de
++   nommage lui est fourni (`driveNaming` : MD, NMR, Docking) : aucune page ne
++   peut l'oublier, ni le poser deux rangées plus haut. */
++import { DriveExperimentFilePicker, DriveExperimentFolderCreator } from './DriveExperimentFiles';
+ /* 🧪 LA CHARGE D'UNE SÉQUENCE — la lecture du ⚙ Params & Constraints quand l'écran montre le
+    modèle bâti par la page : le pKa de CHAQUE chaîne latérale et les deux terminus (voir
+    utils/sequenceCharge.js). Le graphe reste la lecture d'un PDB chargé, et le panneau DIT
+@@ -22284,6 +22292,35 @@ const recallViewerStyle = async () => {
+   return { mode: parsed.mode, name: parsed.name, from: 'drive' };
+ };
  
-@@ -14896,7 +14905,7 @@ const buildCategoryReps = (comp) => {
-     else if (nb === 'licorice') add('licorice', { sele: sels.nucleic, ...stickCol, ...stickGeom('nucleic', LICORICE_BOND_RADIUS) });
-     else if (nb === 'ball+stick') add('ball+stick', { sele: sels.nucleic, ...stickCol, multipleBond: true, aspectRatio: 1.1 * g.sphere, ...stickGeom('nucleic', BALLSTICK_BOND_RADIUS) });
-     else if (nb === 'lines') add('line', { sele: sels.nucleic, ...stickCol, ...lineGeom('nucleic') });
--    else if (nb === 'spheres') add('spacefill', { sele: sels.nucleic, ...stickCol, radiusScale: g.sphere, scale: 0.6 });
-+    else if (nb === 'spheres') add('spacefill', { sele: sels.nucleic, ...stickCol, radiusScale: g.sphere * 0.6 });
-     // Bases: NGL's own `base` representation draws the filled base rungs (the
-     // slabs / boxes of the DNA / RNA ladder); when the group colouring is ON the
-     // rungs take the panel's « Bases » colour instead of the resname palette.
-@@ -14924,7 +14933,7 @@ const buildCategoryReps = (comp) => {
-     // old add('stick', …) threw and the sticks never appeared at all.
-     else if (bases === 'sticks') add('licorice', { sele: 'nucleic and sidechain', ...stickCol, ...stickGeom('nucleic', LICORICE_BOND_RADIUS) });
-     else if (bases === 'lines') add('line', { sele: 'nucleic and sidechain', ...stickCol, ...lineGeom('nucleic') });
--    else if (bases === 'spheres') add('spacefill', { sele: 'nucleic and sidechain', ...stickCol, radiusScale: g.sphere, scale: 0.6 });
-+    else if (bases === 'spheres') add('spacefill', { sele: 'nucleic and sidechain', ...stickCol, radiusScale: g.sphere * 0.6 });
-     addSurface(sels.nucleic, 'nucleic', cs.nucleic.surfaceOpacity);
-   }
++/* 📂 LE FICHIER DE STYLE DU DOSSIER, CHOISI À LA MAIN — la seconde moitié de la
++   demande, mot pour mot : « when I open an experiment still the styles file is
++   not read automatically NOR I have the possibility to define which file must be
++   read (but it could be simply the last that was used) ». Deux réponses :
++     · le rappel ci-dessus lit désormais AUSSI les fichiers que le viewer a
++       exportés (`viewer-snapshot-*.json` / `viewer-theme-*.json`, voir
++       utils/viewerStyleFile.js) : un style exporté puis déposé dans le dossier
++       de l'expérience est ramené TOUT SEUL ;
++     · ce geste-ci dit LEQUEL lire — la picker LISTE les .json du dossier (le
++       MÊME composant que les 📂 Topology / PDB : une seule définition), et le
++       fichier désigné est appliqué PUIS RETENU (mémoire du poste + fichier
++       canonique du dossier). C'est donc lui — « simply the last that was used »
++       — que la prochaine ouverture appliquera, ici comme sur un autre poste. */
++const pickStyleFileFromFolder = async (file) => {
++  if (!file) return;
++  const text = await file.text().catch(() => '');
++  const parsed = parseViewerStyleFile(text);
++  if (!parsed) { flashSetupMsg(`“${file.name}” is not a viewer style — nothing was applied.`); return; }
++  styleTouchedRef.current = true;      // c'est un geste de l'utilisateur : le rappel ne le doublera pas
++  adoptViewerStyleEntry(parsed.mode, parsed.name, parsed.entry);
++  if (parsed.mode === 'theme') applyThemeEntry(parsed.entry, parsed.name);
++  else applySnapshotEntry(parsed.entry, parsed.name);
++  /* RETENU comme un 💾 : mémoire du poste ET fichier canonique du dossier de
++     l'expérience — un style renommé à la main est donc re-déposé sous son nom
++     canonique, et le rappel automatique le retrouve ensuite, sur tout poste. */
++  rememberViewerStyle(parsed.mode, parsed.name, parsed.entry);
++  flashSetupMsg(`✓ ${parsed.mode === 'theme' ? 'cumulative theme' : 'snapshot'} “${parsed.name}” applied — read from ${file.name} in this experiment's Drive folder`);
++};
++
+ /* L'EFFET DU RAPPEL — « after bringing back to live its files » : il attend que les
+    fichiers soient LÀ (`status === 'ready'`) et que la scène ait ses sections (un
+    snapshot se rejoue SUR elles, voir applySnapshotEntry), puis n'a lieu qu'UNE
+@@ -23739,6 +23776,31 @@ className="hidden"
+     sont posés JUSTE APRÈS 📂 PDB file(s) et 📂 Trajectory : c'est la même ligne,
+     et un seul `null` pour les pages qui n'en passent pas (NMR, Docking). */}
+ {fileRowExtra}
++{/* 📁 « Create drive folder » — LE SEUL GESTE QUI FABRIQUE UN DOSSIER, et il est
++    TOUJOURS ICI, sur la ligne de 📂 PDB file(s) (la demande, mot pour mot :
++    « the "create experiment folder on drive" must be placed in the same line of
++    "PDB file" button always »). Rendue par le viewer lui-même dès qu'un
++    contexte de nommage est fourni (`driveNaming` : MD, NMR, Docking) : aucune
++    page ne peut donc l'oublier, ni le déplacer dans une rangée à part. Le
++    libellé est court (« 📁 Create drive folder ») pour tenir dans la rangée, et
++    l'infobulle dit où il crée — dataset compris : …/experiment_setup/Structure
++    et …/experiment_setup/Trajectory (voir DriveExperimentFiles.jsx). */}
++{driveNaming ? <DriveExperimentFolderCreator ctx={driveNaming} /> : null}
++{/* 📂 LE FICHIER DE STYLE DU DOSSIER — la demande : « nor I have the possibility
++    to define which file must be read ». MÊME geste que les 📂 du dossier (une
++    seule définition, DriveExperimentFilePicker) sur les .json de l'expérience :
++    le fichier désigné est appliqué ET RETENU, donc rappelé à la prochaine
++    ouverture (voir pickStyleFileFromFolder). */}
++{driveNaming ? (
++  <DriveExperimentFilePicker
++    label="📂 Style from folder"
++    titleText="List the .json files of THIS experiment's Drive folder and apply one of them as the style of this scene. The file you choose is remembered — the browser's memory AND the canonical style file of the folder — so this experiment reopens with it, on every computer."
++    ctx={driveNaming}
++    ctxs={[{ ...driveNaming, section: 'Setup' }]}
++    exts={[VIEWER_STYLE_EXT]}
++    onPick={pickStyleFileFromFolder}
++  />
++) : null}
+ {/* ⬇ PDB — the structure as a file, with the coordinates of the frame the
+     ▶ playback bar is displaying right now (a trajectory snapshot); without a
+     trajectory it simply saves the loaded structure. Depuis cette session, le fichier
+diff --git a/src/components/NMRSections.jsx b/src/components/NMRSections.jsx
+index 08f5ebd..317a09f 100644
+--- a/src/components/NMRSections.jsx
++++ b/src/components/NMRSections.jsx
+@@ -22,7 +22,7 @@ import { useDriveAutoRestore } from './useDriveAutoRestore';
+    reprise automatique puisse reconnaître (elle cherche par nom / pointeur). Le
+    geste manquant est une lecture du dossier ; le fichier choisi devient le PDB
+    déclaré de la condition (nom + pointeur). */
+-import { DriveExperimentFilePicker, DriveExperimentFolderCreator } from './DriveExperimentFiles';
++import { DriveExperimentFilePicker } from './DriveExperimentFiles';
+ import { experimentFilePointer, STRUCTURE_FILE_EXTS } from '../utils/driveExperimentFiles';
+ import { sequenceForMoleculeType, sequencePatchForMoleculeType, structureSequencePatch, sequenceNaturesNote } from '../utils/sequenceNatures';
+ /* 🧬 LA LECTURE D'UNE SÉQUENCE — la ligne COMPACTE qui la montre SOUS une case de séquence
+@@ -5788,9 +5788,13 @@ const generatedStructure = useMemo(() => {
+               l'expérience n'a aucun nom que la reprise automatique reconnaisse.
+               Choisir ici l'OUVRE et le DÉCLARE pour cette condition.
  
-@@ -14953,8 +14962,8 @@ const buildCategoryReps = (comp) => {
-       // the old add('stick', …) threw, so « Sticks » really means licorice.
-       else if (style === 'stick' || style === 'sticks') add('licorice', { sele, ...col, ...stickGeom('lipid', LICORICE_BOND_RADIUS) });
-       else if (style === 'lines' || style === 'line') add('line', { sele, ...col, ...lineGeom('lipid') });
--      else if (style === 'spheres') add('spacefill', { sele, ...col, radiusScale: g.sphere, scale: 0.4 });
--      else add('spacefill', { sele, ...col, radiusScale: g.sphere, scale: 0.6 });
-+      else if (style === 'spheres') add('spacefill', { sele, ...col, radiusScale: g.sphere * 0.4 });
-+      else add('spacefill', { sele, ...col, radiusScale: g.sphere * 0.6 });
-     };
-     // Headgroups = EVERY atom that is neither an acyl-chain atom nor a backbone
-     // atom (the phosphate, the choline / ethanolamine part and their hydrogens).
-@@ -14982,9 +14991,9 @@ const buildCategoryReps = (comp) => {
-     // « Sticks » = licorice: NGL registers no `stick` representation (a `stick`
-     // style silently drew NOTHING before this).
-     else if (st === 'sticks') add('licorice', { sele: sugarSele, ...col, ...stickGeom('sugar', LICORICE_BOND_RADIUS) });
--    else if (st === 'spacefill') add('spacefill', { sele: sugarSele, ...col, radiusScale: g.sphere, scale: 0.7 });
-+    else if (st === 'spacefill') add('spacefill', { sele: sugarSele, ...col, radiusScale: g.sphere * 0.7 });
-     else if (st === 'lines') add('line', { sele: sugarSele, ...col, ...lineGeom('sugar') });
--    else if (st === 'spheres') add('spacefill', { sele: sugarSele, ...col, radiusScale: g.sphere, scale: 0.6 });
-+    else if (st === 'spheres') add('spacefill', { sele: sugarSele, ...col, radiusScale: g.sphere * 0.6 });
-     else if (st === 'surface') add('surface', { sele: sugarSele, ...col });
-     addSurface(sugarSele, 'sugar', cs.sugar.surfaceOpacity);
+-              Et comme la lecture NE CRÉE RIEN : le bouton 📁 ci-dessous crée le
+-              dossier de l'expérience quand il n'existe pas encore (même geste
+-              que sur la page MD). */}
++              Et comme la lecture NE CRÉE RIEN : le bouton « 📁 Create drive
++              folder » crée le dossier de l'expérience quand il n'existe pas
++              encore. Il n'est PLUS écrit ici : le VIEWER le rend lui-même, sur
++              la ligne de 📂 PDB file(s) (la demande, mot pour mot : « …must be
++              placed in the same line of "PDB file" button always », voir
++              NMRMoleculeViewer — et le `driveNaming` du viewer, plus bas, le lui
++              donne aussi). */}
+           <div className="flex flex-wrap items-center gap-2">
+             <DriveExperimentFilePicker
+               label="📂 PDB from Drive folder"
+@@ -5800,10 +5804,6 @@ const generatedStructure = useMemo(() => {
+               declaredName={activeTest.structureFileName || activeTest.structureDriveName || ''}
+               onPick={pickNmrStructureFromFolder}
+             />
+-            <DriveExperimentFolderCreator
+-              ctx={nmrStructDriveCtx(activeTest)}
+-              note="(only if this experiment has no Drive folder yet)"
+-            />
+             <span className="text-[10px] text-slate-400">
+               Choosing a file here opens it AND declares it: this condition will reopen it by default. Nothing is uploaded again.
+             </span>
+diff --git a/src/index.css b/src/index.css
+index d7e2fd2..edbc6cc 100644
+--- a/src/index.css
++++ b/src/index.css
+@@ -331,6 +331,97 @@ table td .text-xs, table th .text-xs {
+   --color-cyan-900: oklch(33.8% 0.07 227.392);
+ }
+ 
++/* ── Purple / Red / Rose — the accent of PURPLE, RED and ROSE. La demande de
++   cette session : « the skins in the setup are all too similar ». Les trois
++   dégradés sont ceux de Tailwind, cran pour cran, et leur structure de
++   luminosité reste à moins de 4 points de celle du bleu (ce qu'un échange de
++   teinte a le droit de déplacer) : chaque libellé blanc-sur-accent garde donc
++   son contraste, et les accents proposés sont enfin franchement différents. */
++[data-skin="purple"] {
++  --color-blue-50: oklch(97.7% 0.014 308.299);
++  --color-blue-100: oklch(94.6% 0.033 307.174);
++  --color-blue-200: oklch(90.2% 0.063 306.703);
++  --color-blue-300: oklch(82.7% 0.119 306.383);
++  --color-blue-400: oklch(71.4% 0.203 305.504);
++  --color-blue-500: oklch(62.7% 0.265 303.9);
++  --color-blue-600: oklch(55.8% 0.288 302.321);
++  --color-blue-700: oklch(49.6% 0.265 301.924);
++  --color-blue-800: oklch(43.8% 0.218 303.724);
++  --color-blue-900: oklch(38.1% 0.176 304.987);
++  --color-blue-950: oklch(29.1% 0.149 302.717);
++}
++
++/* ── Red — l'accent ROUGE. */
++[data-skin="red"] {
++  --color-blue-50: oklch(97.1% 0.013 17.38);
++  --color-blue-100: oklch(93.6% 0.032 17.717);
++  --color-blue-200: oklch(88.5% 0.062 18.334);
++  --color-blue-300: oklch(80.8% 0.114 19.571);
++  --color-blue-400: oklch(70.4% 0.191 22.216);
++  --color-blue-500: oklch(63.7% 0.237 25.331);
++  --color-blue-600: oklch(57.7% 0.245 27.325);
++  --color-blue-700: oklch(50.5% 0.213 27.518);
++  --color-blue-800: oklch(44.4% 0.177 26.899);
++  --color-blue-900: oklch(39.6% 0.141 25.723);
++  --color-blue-950: oklch(25.8% 0.092 26.042);
++}
++
++/* ── Rose — l'accent ROSE. */
++[data-skin="rose"] {
++  --color-blue-50: oklch(96.9% 0.015 12.422);
++  --color-blue-100: oklch(94.1% 0.03 12.58);
++  --color-blue-200: oklch(89.2% 0.058 10.001);
++  --color-blue-300: oklch(81% 0.117 11.638);
++  --color-blue-400: oklch(71.2% 0.194 13.428);
++  --color-blue-500: oklch(64.5% 0.246 16.439);
++  --color-blue-600: oklch(58.6% 0.253 17.585);
++  --color-blue-700: oklch(51.4% 0.222 16.935);
++  --color-blue-800: oklch(45.5% 0.188 13.697);
++  --color-blue-900: oklch(41% 0.159 10.272);
++  --color-blue-950: oklch(27.1% 0.105 12.094);
++}
++
++/* ── Custom — LA PEAU QUE L'UTILISATEUR POSSÈDE. Ses onze crans d'accent ne
++   sont PAS ici : ils dépendent de la couleur choisie dans ⚙ Settings, donc
++   src/utils/uiSkin.js les écrit EN LIGNE sur <html> — dérivés d'UNE couleur,
++   dans la forme même du dégradé livré. Ce bloc ne porte que l'accent de repli,
++   pour qu'une peau personnalisée jamais réglée soit le bleu du programme. */
++[data-skin="custom"] {
++  --lab-accent: #155dfc;
++}
++
++/* …et la famille NEUTRE, restituée cran pour cran : le gris pur (les valeurs de
++   la peau Graphite) et le chaud (celles de Warm paper). La peau personnalisée
++   les emprunte par `data-tone`, donc les pages, les bordures et les encres
++   changent aussi — c'est la seconde moitié du « not customizable ». */
++[data-skin="custom"][data-tone="zinc"] {
++  --color-slate-50: oklch(98.5% 0 0);
++  --color-slate-100: oklch(96.7% 0.001 286.375);
++  --color-slate-200: oklch(92% 0.004 286.32);
++  --color-slate-300: oklch(87.1% 0.006 286.286);
++  --color-slate-400: oklch(70.5% 0.015 286.067);
++  --color-slate-500: oklch(55.2% 0.016 285.938);
++  --color-slate-600: oklch(44.2% 0.017 285.786);
++  --color-slate-700: oklch(37% 0.013 285.805);
++  --color-slate-800: oklch(27.4% 0.006 286.033);
++  --color-slate-900: oklch(21% 0.006 285.885);
++  --color-slate-950: oklch(14.1% 0.005 285.823);
++}
++
++[data-skin="custom"][data-tone="stone"] {
++  --color-slate-50: oklch(98.5% 0.001 106.423);
++  --color-slate-100: oklch(97% 0.001 106.424);
++  --color-slate-200: oklch(92.3% 0.003 48.717);
++  --color-slate-300: oklch(86.9% 0.005 56.366);
++  --color-slate-400: oklch(70.9% 0.01 56.259);
++  --color-slate-500: oklch(55.3% 0.013 58.071);
++  --color-slate-600: oklch(44.4% 0.011 73.639);
++  --color-slate-700: oklch(37.4% 0.01 67.558);
++  --color-slate-800: oklch(26.8% 0.007 34.298);
++  --color-slate-900: oklch(21.6% 0.006 56.043);
++  --color-slate-950: oklch(14.7% 0.004 49.25);
++}
++
+ /* ---------------------------------------------------------------------------
+    THE SEQUENCE FIELD — the selection of a COLOURED field stays readable.
+    `SequenceField` (src/components/SequenceField.jsx) renders the letters in a
+diff --git a/src/main.jsx b/src/main.jsx
+index 7340a0b..02a31fc 100644
+--- a/src/main.jsx
++++ b/src/main.jsx
+@@ -4,17 +4,21 @@ import App from './App.jsx'
+ import AppErrorBoundary from './components/AppErrorBoundary.jsx'
+ import './index.css'
+ import { applyStoredUiScale } from './utils/uiScale'
+-import { applyStoredUiSkin } from './utils/uiSkin'
++import { applyStoredUiSkinForSession } from './utils/uiSkin'
+ 
+ // Display scale (Settings → “Display scale”): set the root character size the
+ // whole program is computed from BEFORE the first paint, otherwise the first
+ // frame would show the pages at the wrong size. See src/utils/uiScale.js.
+ applyStoredUiScale()
+ 
+-// Interface skin (Settings → “Interface skin”): put the chosen palette on
+-// <html> BEFORE the first paint too — a skin is only CSS variables (see
+-// src/index.css), so the first frame is already painted with it. uiSkin.js.
+-applyStoredUiSkin()
++// Interface skin (Settings → “Interface skin”): put the palette on <html>
++// BEFORE the first paint too — a skin is only CSS variables (see
++// src/index.css), so the first frame is already painted with it. The skin
++// belongs to the OPERATOR (utils/uiSkin.js), so the one applied here is that of
++// the operator remembered in THIS tab's session; App.jsx re-applies it whenever
++// the identity changes, and with nobody signed in it is the skin of this
++// computer.
++applyStoredUiSkinForSession()
+ 
+ ReactDOM.createRoot(document.getElementById('root')).render(
+   <React.StrictMode>
+diff --git a/src/utils/driveExperimentFiles.js b/src/utils/driveExperimentFiles.js
+index 145336a..72837c6 100644
+--- a/src/utils/driveExperimentFiles.js
++++ b/src/utils/driveExperimentFiles.js
+@@ -23,13 +23,16 @@
+          → { paths, path, folderId, files: [{ id, name, size, modifiedTime,
+                                               url, folderPath, folderPathText }] }
+ 
+-   Ce module porte AUSSI le seul geste qui FABRIQUE : CRÉER le dossier de
++   Ce module porte AUSSI le seul geste qui FABRIQUE : CRÉER les dossiers de
+    l'expérience. Il est EXPLICITE (`createExperimentFolder`, appelé par un
+    bouton — la demande : « If the experiment does not exist in drive, allow me
+-   to create it with the correct path »), et il crée la tête commune à TOUS les
+-   fichiers de l'expérience (`projects/<projet>/<expérience>[/<instance>]`),
+-   pas la sous-section d'un bouton : la topologie et la trajectoire s'y
+-   déposent ensuite.
++   to create it with the correct path », puis, mot pour mot, « for a trajectory
++   it must be datasetname/projects/projectname/experimentname/instancename/
++   subsection/file where subsection is experiment_setup/trajectory for
++   trajectory files and experiment_setup/Structure for pdb files »), et il crée
++   la CHAÎNE ENTIÈRE : la tête commune (`projects/<projet>/<expérience>/
++   [<instance>]`) ET les deux sous-sections où les fichiers se déposent
++   (`experiment_setup/Structure`, `experiment_setup/Trajectory`).
+ 
+    Règles tenues ici :
+      • LA LECTURE NE CRÉE RIEN : le dossier est CHERCHÉ (`{ create: false }`) ;
+@@ -53,9 +56,12 @@
+    faux Drive).
+    ========================================================================= */
+ 
+-import { canonicalExperimentPath, PROJECTS_CONTAINER, sanitizeSlug } from './driveNaming';
++import {
++  canonicalExperimentPath, canonicalPageSection, canonicalSubSection, datasetFolderSlug,
++  PROJECTS_CONTAINER, sanitizeSlug
++} from './driveNaming';
+ import { getCloudProvider, ncEnsureFolders } from './nextcloud';
+-import { getDriveToken, listDriveChildren, resolveDrivePathFromNames } from './driveUpload';
++import { getDriveRootName, getDriveToken, listDriveChildren, resolveDrivePathFromNames } from './driveUpload';
+ 
+ /** Type MIME d'un dossier Google Drive (un dossier n'est PAS un fichier). */
+ export const GOOGLE_FOLDER_MIME = 'application/vnd.google-apps.folder';
+@@ -163,6 +169,83 @@ export const drivePathText = (path = []) => (
+   (Array.isArray(path) ? path : []).map((seg) => sanitizeSlug(seg)).join('/')
+ );
+ 
++/** LA SECTION où les fichiers d'une expérience se déposent : le dossier Drive
++ *  s'appelle `experiment_setup` (« experiment setup » y est slugué par
++ *  `resolveDrivePathFromNames`). */
++export const EXPERIMENT_SETUP_SECTION = 'Setup';
++
++/** LES SOUS-SECTIONS d'une expérience où ses fichiers se déposent vraiment —
++ *  `experiment_setup/Structure` (topologie, .pdb, .cif) et
++ *  `experiment_setup/Trajectory` (.xtc, .trr, .dcd). Ce sont les noms que
++ *  l'envoi utilise déjà (section `Setup`, sous-section `Structure` /
++ *  `Trajectory`, voir MDSections) : le bouton qui crée le dossier de
++ *  l'expérience crée donc ces DEUX dossiers-là, pas un dossier vague au-dessus. */
++export const EXPERIMENT_FILE_SUBSECTIONS = ['Structure', 'Trajectory'];
++
++/** Le dossier d'UN TYPE de fichier de l'expérience :
++ *      <dataset>/projects/<projet>/<expérience>/<instance?>/experiment_setup/<sous-section>
++ *  `experimentFolderPathOf` donne la tête (projects/<projet>/<expérience>/
++ *  <instance?>), puis la section `experiment_setup` et la sous-section —
++ *  EXACTEMENT le chemin qu'un fichier déposé à la main doit avoir pour que les
++ *  📂 le retrouvent. Rend [] quand le contexte ne décrit pas une expérience.
++ *  PUR. */
++export const experimentFileFolderPathOf = (ctx = {}, subsection = '') => {
++  const base = experimentFolderPathOf(ctx);
++  if (!base.length) return [];
++  const sub = canonicalSubSection(subsection);
++  if (!sub) return base;
++  /* La section est la MÊME que celle de la lecture (`canonicalPageSection`
++   * rend l'étiquette « experiment setup ») : le chemin créé et les dossiers
++   * que les 📂 cherchent sont donc la MÊME liste, sans conversion
++   * supplémentaire. C'est `drivePathText` / `resolveDrivePathFromNames` qui
++   * sluguent au moment d'écrire ou d'afficher (« experiment_setup »). */
++  return [...base, canonicalPageSection(EXPERIMENT_SETUP_SECTION), sub].filter(Boolean);
++};
++
++/** Le chemin COMPLET tel qu'il s'ÉCRIT sur le Drive : le dossier du DATASET
++ *  d'abord, puis les segments —
++ *      « My_dataset/projects/CD_project/Exp_1/cond1/experiment_setup/Structure »
++ *  C'est le texte que l'interface montre : celui qu'un humain retrouve dans son
++ *  navigateur de fichiers, dataset compris (« datasetname/… », la demande).
++ *  Le nom du dataset est slugué comme `datasetFolderSlug` le fait pour le
++ *  dossier réel. PUR. */
++export const fullDrivePathText = (datasetName = '', path = []) => {
++  const body = drivePathText(path);
++  const ds = String(datasetName || '').trim();
++  if (!body) return ds ? datasetFolderSlug(ds) : '';
++  return ds ? `${datasetFolderSlug(ds)}/${body}` : body;
++};
++
++/** Le PREMIER segment qu'une création n'a PAS pu produire ('' quand la chaîne
++ *  est complète) : c'est lui qui est NOMMÉ dans l'échec, au lieu d'un « la
++ *  création a échoué » qui ne dit pas où. PUR. */
++export const firstMissingSegment = (resolved, path = []) => {
++  const got = (resolved && Array.isArray(resolved.path)) ? resolved.path : [];
++  const wanted = Array.isArray(path) ? path : [];
++  for (let i = 0; i < wanted.length; i += 1) {
++    if (!got[i] || !got[i].id) return wanted[i];
++  }
++  return '';
++};
++
++/** Le message d'un échec de création — il DIT ce qui s'est passé : un chemin
++ *  supprimé dans le programme (code PATH_DELETED : un dossier effacé n'est
++ *  JAMAIS recréé, voir driveMirrorStore), un segment que le Drive n'a pas créé
++ *  (tout ce qui est dessous manque aussi), ou l'erreur du fournisseur telle
++ *  quelle. PUR. */
++export const driveCreateError = (err, path = [], missing = '') => {
++  const text = drivePathText(path);
++  if (err && err.code === 'PATH_DELETED') {
++    return `Drive refuses to recreate “${text}”: this folder was deleted in the program and a deleted folder is never recreated. Restore it in Drive, or give the experiment another name.`;
++  }
++  if (missing) {
++    // Le segment est nommé TEL QU'IL EST ÉCRIT sur le Drive (« experiment setup »
++    // → `experiment_setup`) : c'est le nom que l'utilisateur retrouve là-bas.
++    return `Google Drive did not create “${sanitizeSlug(missing)}” on the way to “${text}”, so nothing below it exists either. Connect Drive, then press again: a folder that is already there is simply found.`;
++  }
++  return (err && err.message) || `Google Drive could not create “${text}”.`;
++};
++
+ /** Un fichier de Drive tel que la LISTE le rend (les octets, eux, se
+  *  téléchargent par `driveRestore.downloadCloudFile`). PUR. */
+ export const experimentFileRecord = (node = {}, folderPath = []) => {
+@@ -276,58 +359,122 @@ export const listExperimentFiles = async ({
+  *  sans créer, voir listExperimentFiles).
+  *
+  *  Défaut visé (signalé) : « If the experiment does not exist in drive, allow
+- *  me to create it with the correct path. » Le chemin créé est celui de
+- *  l'expérience (`experimentFolderPathOf` — la tête commune à TOUS ses
+- *  fichiers), pas la sous-section d'un bouton : la topologie et la trajectoire
+- *  se déposent ensuite dans ce même dossier, et les 📂 le liront.
++ *  me to create it with the correct path », puis, mot pour mot : « for a
++ *  trajectory it must be datasetname/projects/projectname/experimentname/
++ *  instancename/subsection/file where subsection is experiment_setup/trajectory
++ *  for trajectory files and experiment_setup/Structure for pdb files ». Le
++ *  dossier de l'expérience ne suffisait donc pas : ce geste crée la CHAÎNE
++ *  ENTIÈRE jusqu'aux sous-sections où les fichiers se déposent vraiment
++ *  (`experimentFileFolderPathOf` — `<dataset>/projects/<projet>/<expérience>/
++ *  <instance?>/experiment_setup/Structure` et `…/experiment_setup/Trajectory`,
++ *  les mêmes dossiers que l'envoi et que les 📂 lisent).
+  *
+  *  Le geste est IDEMPOTENT : `resolveDrivePathFromNames(..., { create: true })`
+  *  TROUVE le dossier s'il existe déjà et le crée sinon — jamais de doublon.
+  *
+- *  @param {object} opts
+- *  @param {object} [opts.ctx] contexte de nommage de la page (project/test/instance)
+- *  @returns {Promise<{ok:boolean, path:string[], pathText:string, folderId:string,
+- *                     folderUrl:string, error:string}>}
++ *  Rien n'est promis en l'air : CHAQUE segment créé est VÉRIFIÉ (son
++ *  identifiant doit exister) et l'échec NOMME ce qui n'a pas été créé — y
++ *  compris le cas d'un chemin supprimé dans le programme (code PATH_DELETED :
++ *  un dossier effacé n'est jamais recréé, voir driveMirrorStore). C'est la
++ *  réponse au défaut signalé : « This button did not create the folder ».
++ *
++ *  @param {object}   opts
++ *  @param {object}   [opts.ctx]         contexte de nommage de la page (project/test/instance)
++ *  @param {string[]} [opts.subsections] sous-sections à créer (défaut :
++ *                                       EXPERIMENT_FILE_SUBSECTIONS — Structure ET Trajectory)
++ *  @returns {Promise<{ok:boolean, error:string, datasetName:string,
++ *                     path:string[], pathText:string, folderId:string, folderUrl:string,
++ *                     experimentPath:string[], experimentPathText:string,
++ *                     entries:Array<{subsection:string, path:string[], pathText:string,
++ *                                    fullText:string, folderId:string, folderUrl:string}>}>}
+  *          `ok:false` + `error` quand la création n'a pas pu avoir lieu —
+- *          jamais un succès muet.
++ *          jamais un succès muet ; `entries` porte, pour CHAQUE dossier créé,
++ *          son chemin complet (dataset compris) et son lien Drive.
+  *  Google Drive et Nextcloud (là, par le MÊME geste que l'envoi :
+  *  ncEnsureFolders) ; aucun autre fournisseur. */
+-export const createExperimentFolder = async ({ ctx = null } = {}) => {
+-  const path = experimentFolderPathOf(ctx);
+-  const text = drivePathText(path);
+-  const fail = (error) => ({ ok: false, path, pathText: text, folderId: '', folderUrl: '', error });
+-  if (!path.length) {
++/** Le nom du dossier de DATASET ouvert ('' quand il n'y en a pas) : la tête du
++ *  chemin, celle que `drivePathText` ne peut pas montrer seul. Impur (lit le
++ *  contexte Drive courant). */
++const datasetRootName = () => {
++  try { return String(getDriveRootName() || '').trim(); } catch { return ''; }
++};
++
++export const createExperimentFolder = async ({ ctx = null, subsections = EXPERIMENT_FILE_SUBSECTIONS } = {}) => {
++  const experimentPath = experimentFolderPathOf(ctx);
++  const experimentPathText = drivePathText(experimentPath);
++  const datasetName = datasetRootName();
++  /** Une entrée créée : son chemin, son texte COMPLET (dataset compris) et son
++   *  lien Drive quand le fournisseur en rend un. */
++  const entry = (path, resolved) => {
++    const folderId = String((resolved && resolved.leafId) || '');
++    return {
++      subsection: String(path[path.length - 1] || ''),
++      path,
++      pathText: drivePathText(path),
++      fullText: fullDrivePathText(datasetName, path),
++      folderId,
++      folderUrl: folderId ? `https://drive.google.com/drive/folders/${folderId}` : ''
++    };
++  };
++  const fail = (error) => ({
++    ok: false, error, datasetName,
++    path: experimentPath, pathText: experimentPathText, folderId: '', folderUrl: '',
++    experimentPath, experimentPathText, entries: []
++  });
++  const ok = (entries) => ({
++    ok: true, error: '', datasetName,
++    path: experimentPath, pathText: experimentPathText,
++    folderId: (entries[0] && entries[0].folderId) || '',
++    folderUrl: (entries[0] && entries[0].folderUrl) || '',
++    experimentPath, experimentPathText, entries
++  });
++  if (!experimentPath.length) {
+     return fail('This experiment has no Drive folder yet — the experiment needs a name (and a project) before its folder can be created.');
    }
-@@ -14998,9 +15007,9 @@ const buildCategoryReps = (comp) => {
-     else if (st === 'licorice') add('licorice', { sele: organicSele, ...col, ...stickGeom('organic', LICORICE_BOND_RADIUS) });
-     // « Sticks » = licorice (NGL registers no `stick` representation).
-     else if (st === 'sticks') add('licorice', { sele: organicSele, ...col, ...stickGeom('organic', LICORICE_BOND_RADIUS) });
--    else if (st === 'spacefill') add('spacefill', { sele: organicSele, ...col, radiusScale: g.sphere, scale: 0.7 });
-+    else if (st === 'spacefill') add('spacefill', { sele: organicSele, ...col, radiusScale: g.sphere * 0.7 });
-     else if (st === 'lines') add('line', { sele: organicSele, ...col, ...lineGeom('organic') });
--    else if (st === 'spheres') add('spacefill', { sele: organicSele, ...col, radiusScale: g.sphere, scale: 0.6 });
-+    else if (st === 'spheres') add('spacefill', { sele: organicSele, ...col, radiusScale: g.sphere * 0.6 });
-     else if (st === 'surface') add('surface', { sele: organicSele, ...col });
-     addSurface(organicSele, 'organic', cs.organic.surfaceOpacity);
+-  // Nextcloud : les dossiers s'y créent par WebDAV. Non configuré, l'erreur
+-  // est DITE telle quelle (jamais un faux succès).
++  /* LES CIBLES — une par sous-section demandée (par défaut `experiment_setup/
++   * Structure` ET `experiment_setup/Trajectory` : les dossiers où les .pdb et
++   * les .xtc se déposent vraiment). Aucune sous-section demandée ⇒ le dossier
++   * de l'expérience seul, pour qu'un appelant sans type de fichier garde un
++   * geste qui a un sens. */
++  const wanted = (Array.isArray(subsections) ? subsections : [subsections])
++    .map((sub) => canonicalSubSection(sub))
++    .filter(Boolean);
++  const leafs = wanted.length
++    ? wanted.map((sub) => experimentFileFolderPathOf(ctx, sub))
++    : [experimentPath];
++  // Nextcloud : les dossiers s'y créent par WebDAV (le MÊME geste que l'envoi).
++  // Non configuré, l'erreur est DITE telle quelle (jamais un faux succès).
+   if (getCloudProvider() === 'nextcloud') {
+-    try {
+-      await ncEnsureFolders(path);
+-    } catch (err) {
+-      return fail((err && err.message) || 'Nextcloud could not create the folder.');
++    const entries = [];
++    for (const leaf of leafs) {
++      try {
++        await ncEnsureFolders(leaf);
++      } catch (err) {
++        return fail((err && err.message) || 'Nextcloud could not create the folders.');
++      }
++      entries.push(entry(leaf, null));
+     }
+-    return { ok: true, path, pathText: text, folderId: '', folderUrl: '', error: '' };
++    return ok(entries);
    }
-@@ -15010,15 +15019,24 @@ const buildCategoryReps = (comp) => {
-     const ion = cs.other.ion || 'spheres';
-     const col = atomCol('other');
-     const g = catRadii(cs.other);
--    if (ion === 'spheres') add('spacefill', { sele: 'ion', ...col, radiusScale: g.sphere, scale: 0.8 });
-+    if (ion === 'spheres') add('spacefill', { sele: 'ion', ...col, radiusScale: g.sphere * 0.8 });
-     else if (ion === 'ball+stick') add('ball+stick', { sele: 'ion', ...col, multipleBond: true, aspectRatio: 2.0 * g.sphere, ...stickGeom('other', BALLSTICK_BOND_RADIUS) });
-     else if (ion === 'lines') add('line', { sele: 'ion', ...col, ...lineGeom('other') });
--    else if (ion === 'dots') add('dot', { sele: 'ion', ...col });
-+    /* ⚠ « DOTS » SONT DES `point` : NGL 2.4 n'enregistre AUCUNE représentation
-+       `dot` (le registre du paquet installé s'arrête à … · line · point · ribbon
-+       …), et demander `dot` LÈVE — le `try` d'`add` avalait l'erreur, donc les
-+       trois « pointillés » du viewer ne dessinaient RIEN DU TOUT (les ions, l'eau,
-+       et tout le style léger « dots » d'un grand système, qui apparaissait vide).
-+       Un point est un point ÉCRAN (`pointSize`, `sizeAttenuation`), sans rayon en
-+       ångströms : le module des ombres le traite en cheveu (voir `point` dans
-+       PROXY_STROKE_BY_TYPE) au lieu de lui donner la bille de 1,7 Å du repli vdW,
-+       qui remplissait l'ombre d'une nuée de billes — « a shadow on a plane ». */
-+    else if (ion === 'dots') add('point', { sele: 'ion', ...col, pointSize: 1.5 * g.sphere, sizeAttenuation: true });
-     const water = cs.other.water || 'hidden';
--    if (water === 'dots') add('dot', { sele: 'water', ...col });
-+    if (water === 'dots') add('point', { sele: 'water', ...col, pointSize: 1.5 * g.sphere, sizeAttenuation: true });
-     else if (water === 'points') add('point', { sele: 'water', ...col, pointSize: 1 * g.sphere, sizeAttenuation: true });
-     else if (water === 'lines') add('line', { sele: 'water', ...col, ...lineGeom('other') });
--    else if (water === 'spheres') add('spacefill', { sele: 'water', ...col, radiusScale: g.sphere, scale: 0.25 });
-+    else if (water === 'spheres') add('spacefill', { sele: 'water', ...col, radiusScale: g.sphere * 0.25 });
-     else if (water === 'ball+stick') add('ball+stick', { sele: 'water', ...col, multipleBond: true, aspectRatio: 2.0 * g.sphere, ...stickGeom('other', BALLSTICK_BOND_RADIUS) });
+   if (!getDriveToken()) {
+     return fail('Google Drive is not connected in this browser — connect it (sidebar, “Connect Google Drive”) and press again.');
    }
-   // Water SURFACE — applied on its own, never inside the block above: the solvent
-@@ -15078,8 +15096,8 @@ const addDefaultReps = (component, molKey = 'main') => {
-        système : « in all molecules » est la demande, et le drapeau est le même. */
-     const lightParams = (extra) => withoutHydrogensParams({ sele, colorScheme: 'element', ...extra }, hideHydrogensRef.current === true);
-     try {
--      if (ls === 'spheres') trackBase(component.addRepresentation('spacefill', lightParams({ scale: 0.25, quality: 'low' })));
--      else if (ls === 'dots') trackBase(component.addRepresentation('dot', lightParams({})));
-+      if (ls === 'spheres') trackBase(component.addRepresentation('spacefill', lightParams({ radiusScale: 0.25, quality: 'low' })));
-+      else if (ls === 'dots') trackBase(component.addRepresentation('point', lightParams({ pointSize: 1.5, sizeAttenuation: true })));
-       else trackBase(component.addRepresentation('line', lightParams({})));
-     } catch { /* lightweight style best-effort */ }
-     return;
-@@ -17985,7 +18003,7 @@ useEffect(() => {
-     // a ribbon): its `radius` is an ångström value, which makes it the one spline
-     // style the R— knob regulates like the sticks (see TUBE_RADIUS).
-     if (st.tube) addWithOverrides('tube', 'tube', { colorScheme, opacity, radius: TUBE_RADIUS * rB }, false);
--    if (st.sphere) addWithOverrides('spacefill', 'sphere', { scale: (st.sphereScale || 1) * rS, colorScheme, opacity, multipleBond: true }, true);
-+    if (st.sphere) addWithOverrides('spacefill', 'sphere', { radiusScale: (st.sphereScale || 1) * rS, colorScheme, opacity, multipleBond: true }, true);
-     if (st.ball) addWithOverrides('ball+stick', 'ball', {
-       colorScheme, opacity, multipleBond: true, aspectRatio: 1.3 * rS,
-       // A radius the user really asked for (R—): when the knob has not been
-@@ -18579,7 +18597,7 @@ fontStyle: 'normal',
- fontWeight: 'bold',
- // Larger, uniform text size (was radius 1.0) with a constant on-screen
- // size so labels stay readable at any zoom level.
--radiusType: 'size', radius: 1.6, scale: 1.0,
-+radiusType: 'size', radius: 1.6,   // ⚠ pas de `scale:` : NGL ne lit pas ce paramètre
- fixedSize: true,
- // Billboard sprites always face the camera; depth testing off plus a
- // slight forward push keep them clear of the VdW spheres and bonds.
-@@ -19095,7 +19113,7 @@ const restyleExtraMol = (id) => {
-       else if (style === 'ball+stick') reps.push(comp.addRepresentation('ball+stick', { ...opts, multipleBond: true, aspectRatio: 1.3 }));
-       else if (style === 'sticks') reps.push(comp.addRepresentation('licorice', { ...opts, multipleBond: true, radiusSize: LICORICE_BOND_RADIUS }));
-       else if (style === 'lines') reps.push(comp.addRepresentation('line', { ...opts }));
--      else if (style === 'spheres') reps.push(comp.addRepresentation('spacefill', { ...opts, scale: 0.6 }));
-+      else if (style === 'spheres') reps.push(comp.addRepresentation('spacefill', { ...opts, radiusScale: 0.6 }));
-       // The surface is the ONE style here whose transparency needs
-       // SEE_THROUGH_SURFACE: it is the only one with a far wall to paint.
-       else if (style === 'surface') reps.push(comp.addRepresentation('surface', { ...opts, ...SEE_THROUGH_SURFACE }));
-diff --git a/src/utils/viewerRayShadows.js b/src/utils/viewerRayShadows.js
-index a3ebdb2..5704a20 100644
---- a/src/utils/viewerRayShadows.js
-+++ b/src/utils/viewerRayShadows.js
-@@ -130,7 +130,21 @@ export const STROKE_FLOOR = 0.05;
-      hair   → a line (line · wireframe): its own nominal radius, no tube
-    `core` is the radius a stick / ball is drawn with when the representation says
-    nothing (NGL's own default), `min` the stroke assumed when NOTHING is
--   readable — the value a `hair` line is drawn at. */
-+   readable — the value a `hair` line is drawn at.
-+   ⚠ LE RAYON D'UNE BILLE EST `radiusScale`, ET RIEN D'AUTRE. Mesuré dans le
-+   paquet installé (NGL 2.4) : `SpacefillRepresentation` fabrique `data.radius`
-+   avec `StructureRepresentation#getRadiusParams()`, qui ne rend que
-+   `{ type, scale: this.radiusScale, size: this.radiusSize, data }`, et
-+   `RadiusFactory#atomRadius` rend `min(r × this.scale, 10)` — soit, pour un
-+   `radiusType` « vdw » (le défaut), `min(radiusVdW × radiusScale, 10)`. Le
-+   paramètre `scale` N'EXISTE PAS : il n'est ni dans `this.parameters` (d'où
-+   `Representation#setParameters` le saute — `if (tp[name] == undefined)
-+   continue`), ni dans un uniforme (le shader `SphereImpostor.vert` lit
-+   `attribute float radius`, et son fragment ne déclare aucun `scale`). Un
-+   `addRepresentation('spacefill', { scale: 0.25 })` dessine donc des billes de
-+   PLEIN rayon de van der Waals. C'est pourquoi le viewer écrit la taille d'une
-+   sphère en `radiusScale` — le même champ que ce proxy lit : l'ombre ne peut
-+   plus être d'une autre taille que l'encre. */
- export const PROXY_STROKE_BY_TYPE = Object.freeze({
-   sphere: { kind: 'vdw', min: 0.12 },
-   spacefill: { kind: 'vdw', min: 0.12 },
-@@ -143,6 +157,20 @@ export const PROXY_STROKE_BY_TYPE = Object.freeze({
-   backbone: { kind: 'bond', core: 0.15, min: 0.2 },
-   line: { kind: 'hair', min: 0.15 },
-   wireframe: { kind: 'hair', min: 0.15 },
-+  /* ⚠ « DOTS » SONT DES `point` — ET UN POINT NE PÈSE RIEN, DONC IL NE DEVIENT
-+     JAMAIS UNE BILLE DE vdW. NGL 2.4 n'enregistre AUCUNE représentation `dot`
-+     (le registre du paquet installé : angle · axes · ball+stick · backbone · base
-+     · cartoon · contact · dihedral · distance · helixorient · hyperball · label ·
-+     licorice · line · point · ribbon · rocket · rope · surface · trace · tube ·
-+     unitcell · validation) : demander `dot` LÈVE, et le `try` du viewer ne
-+     dessine alors RIEN. Les trois « pointillés » du viewer (le style léger
-+     « dots », les ions et l'eau en « dots » de l'ancien menu Others) demandent
-+     donc `point` (voir NMRMoleculeViewer). Sa forme est un POINT ÉCRAN
-+     (`pointSize`, aucun rayon en ångströms) : le proxy ne peut pas dire mieux
-+     qu'un cheveu — et surtout pas les 1,7 Å du repli vdW, qui remplissaient
-+     l'ombre d'une nuée de billes pour un dessin de points à peine visibles
-+     (« a shadow on a plane »). */
-+  point: { kind: 'hair', min: 0.15 },
-   cartoon: { kind: 'spline', base: 0.45, scale: 0.7, min: 0.3 },
-   ribbon: { kind: 'spline', base: 0.45, scale: 4, min: 0.3 },
-   tube: { kind: 'tube', base: 0.5, min: 0.2 },
+-  let leafId = '';
+-  try {
+-    const resolved = await resolveDrivePathFromNames(path, { create: true });
+-    leafId = String((resolved && resolved.leafId) || '');
+-  } catch (err) {
+-    return fail((err && err.message) || 'Google Drive could not create the folder.');
++  const entries = [];
++  for (const leaf of leafs) {
++    let resolved = null;
++    try {
++      resolved = await resolveDrivePathFromNames(leaf, { create: true });
++    } catch (err) {
++      return fail(driveCreateError(err, leaf));
++    }
++    // CHAQUE segment est vérifié : une chaîne créée à moitié (dossier du
++    // dataset ou `projects/` indisponible) se DIT, au lieu de passer pour un
++    // succès — c'était le défaut signalé (« did not create the folder »).
++    const missing = firstMissingSegment(resolved, leaf);
++    if (missing) return fail(driveCreateError(null, leaf, missing));
++    entries.push(entry(leaf, resolved));
+   }
+-  if (!leafId) return fail('Google Drive did not create the folder — try again in a moment.');
+-  return {
+-    ok: true,
+-    path,
+-    pathText: text,
+-    folderId: leafId,
+-    folderUrl: `https://drive.google.com/drive/folders/${leafId}`,
+-    error: ''
+-  };
++  return ok(entries);
+ };
+ 
+ 
+diff --git a/src/utils/uiSkin.js b/src/utils/uiSkin.js
+index c437100..28d2b94 100644
+--- a/src/utils/uiSkin.js
++++ b/src/utils/uiSkin.js
+@@ -12,21 +12,62 @@
+    be set on ANY element: custom properties are inherited, so Settings shows a
+    LIVE miniature of the interface by wrapping a small demo in the attribute.
+ 
+-   Stored per BROWSER (localStorage): how the program looks is a property of
+-   the machine and of the eyes in front of it, never of the dataset — so it is
+-   deliberately not part of the dataset or of the Doc, and EVERY user sees the
+-   control (like the display scale, see utils/uiScale.js).
++   OWNED BY THE OPERATOR (see « À QUI APPARTIENT LA PEAU » below): how the
++   program looks follows the SIGNED-IN OPERATOR — on a shared computer, signing
++   in as somebody else repaints the program with HIS skin, and the skin travels
++   with him to another computer (the `labWorkspace_uiSkin*` keys ride along with
++   the other browser keys, see utils/workspaceKeyStore.js). It is still never
++   part of the dataset or of the Doc, and EVERY user sees the control (like the
++   display scale, see utils/uiScale.js).
+ 
+    The default skin is the shipped palette itself: applying it REMOVES the
+    attribute (nothing is restated for it, so it can never drift away from
+    Tailwind's own values).
+    ========================================================================= */
+ 
++import { opNameKey } from './auth.js';
++
+ export const UI_SKIN_KEY = 'labWorkspace_uiSkin';
+ 
+ /* The reference — the colours the program ships with: no override at all. */
+ export const UI_SKIN_DEFAULT = 'slate';
+ 
++/* LA PEAU PERSONNALISÉE — son id est déclaré ICI parce que le registre ci-dessous
++   le référence (voir la section « LA PEAU PERSONNALISÉE », plus bas, pour tout le
++   reste : l'accent, la famille neutre, la dérivation des onze crans). */
++export const UI_SKIN_CUSTOM = 'custom';
++
++/* ── À QUI APPARTIENT LA PEAU ───────────────────────────────────────────────
++   « the skin must be associated to the operator as each operator must be able
++   to choose his own preferred skin » : la peau n'est donc plus celle du POSTE,
++   mais celle de l'OPÉRATEUR qui l'a choisie.
++
++   DEUX ÉTAGES, parce qu'il y a deux échelles :
++     · `labWorkspace_uiSkin_<propriétaire>` — la peau de CET opérateur ;
++     · `labWorkspace_uiSkin` — celle du POSTE : ce qu'on voit quand personne
++       n'est connecté (écran d'entrée, session fermée), ET la valeur de départ
++       d'un opérateur qui n'a encore rien choisi — un poste neuf ne change donc
++       pas de couleur sous les yeux de celui qui s'assied devant.
++
++   Le PROPRIÉTAIRE est l'identifiant de l'opérateur (`currentUser.id`, celui de
++   la liste des comptes) ou, tant qu'il n'y en a pas, son nom replié (opNameKey,
++   voir utils/auth.js) : l'appariement des identités de ce programme se fait par
++   le NOM (`operatorForName`, `memberIdentity`), donc ce repli désigne le même
++   opérateur d'un chemin de connexion à l'autre. */
++export const uiSkinOwnerOf = (operator) => {
++  const op = operator && typeof operator === 'object' ? operator : {};
++  const id = String(op.id == null ? '' : op.id).trim();
++  return id || opNameKey(op.name);
++};
++
++/** La clé du navigateur qui porte la peau d'un opérateur — celle du POSTE quand
++ *  on n'en connaît aucun. `base` nomme le réglage (la peau, son accent…) : le
++ *  suffixe du propriétaire est le même pour tous. PUR. */
++export const uiSkinKeyOf = (operator = null, base = UI_SKIN_KEY) => {
++  const owner = uiSkinOwnerOf(operator);
++  return owner ? `${base}_${owner}` : base;
++};
++
+ /* ── The skins ──────────────────────────────────────────────────────────────
+    `kind` is how the palette is derived, and the probe test holds each kind to
+    its own rule: a `hue` skin SWAPS one accent family with another (so it may
+@@ -42,43 +83,231 @@ export const UI_SKINS = [
+   { id: 'warm', kind: 'tone', label: 'Warm paper', hint: 'warm neutrals', swatch: ['#fafaf9', '#44403b', '#292524', '#155dfc'] },
+   { id: 'indigo', kind: 'hue', label: 'Indigo', hint: 'indigo accents', swatch: ['#f8fafc', '#314158', '#1d293d', '#4f39f6'] },
+   { id: 'violet', kind: 'hue', label: 'Violet', hint: 'violet accents', swatch: ['#f8fafc', '#314158', '#1d293d', '#7f22fe'] },
++  { id: 'purple', kind: 'hue', label: 'Purple', hint: 'purple accents', swatch: ['#fafafc', '#3b3355', '#241a3d', '#9810fa'] },
++  { id: 'red', kind: 'hue', label: 'Red', hint: 'red accents', swatch: ['#faf7f6', '#4a3230', '#2b1b1a', '#e7000b'] },
++  { id: 'rose', kind: 'hue', label: 'Rose', hint: 'rose accents', swatch: ['#fbf7f7', '#4a2f33', '#2c1a1d', '#ec003f'] },
+   { id: 'dim', kind: 'tone', label: 'Dimmed', hint: 'softer light', swatch: ['#e8ebef', '#2b394d', '#172336', '#295dc4'] },
+-  { id: 'contrast', kind: 'tone', label: 'High contrast', hint: 'bolder ink', swatch: ['#fbfcfd', '#0c192a', '#030b1c', '#003dce'] }
++  { id: 'contrast', kind: 'tone', label: 'High contrast', hint: 'bolder ink', swatch: ['#fbfcfd', '#0c192a', '#030b1c', '#003dce'] },
++  /* ── LA PEAU QUE L'UTILISATEUR POSSÈDE ─────────────────────────────────────
++     La demande de cette session : « the skins in the setup are all too similar
++     and NOT customizable ». Celle-ci répond aux deux : l'accent est CELUI QUE
++     L'UTILISATEUR CHOISIT (huit propositions + une pipette libre) et la famille
++     neutre se choisit aussi (celle du programme, le gris pur, le chaud). Les
++     onze crans de l'accent sont DÉRIVÉS d'une seule couleur (voir
++     uiSkinCustomRamp) : la palette garde la forme de celle du programme. */
++  { id: UI_SKIN_CUSTOM, kind: 'hue', label: 'Custom…', hint: 'your accent + neutral', swatch: ['#f8fafc', '#314158', '#1d293d', '#009689'] }
++];
++
++/* ── LA PEAU PERSONNALISÉE ────────────────────────────────────────────────── */
++
++/* (`UI_SKIN_CUSTOM` est déclaré plus haut, avec la référence : le registre le
++   référence.) Ses onze crans d'accent ne vivent PAS dans index.css — ils sont
++   écrits EN LIGNE par `applyUiSkin`, à partir d'UNE couleur (voir
++   uiSkinCustomRamp). */
++
++/** Clé localStorage du réglage — par OPÉRATEUR, comme la peau elle-même (voir
++ *  uiSkinKeyOf) : deux opérateurs peuvent donc avoir chacun SON accent. */
++export const UI_CUSTOM_KEY = 'labWorkspace_uiSkinCustom';
++
++/** La clé qui porte l'accent + la famille neutre d'un opérateur (celle du POSTE
++ *  quand on n'en connaît aucun). PUR. */
++export const uiCustomSkinKeyOf = (operator = null) => uiSkinKeyOf(operator, UI_CUSTOM_KEY);
++
++/** L'accent livré : le bleu du programme, pour qu'une peau personnalisée jamais
++ *  réglée ressemble à la référence. */
++export const UI_CUSTOM_ACCENT_DEFAULT = '#155dfc';
++
++/** Le cran qui REÇOIT la couleur choisie. */
++export const UI_CUSTOM_ACCENT_STOP = 600;
++
++/** Les huit accents proposés — les hexadécimaux EXACTS des crans 600 de la
++ *  palette que Tailwind livre (relevés dans son thème, pas inventés). */
++export const UI_CUSTOM_ACCENTS = [
++  { id: 'blue', label: 'Blue', color: '#155dfc' },
++  { id: 'teal', label: 'Teal', color: '#009689' },
++  { id: 'emerald', label: 'Emerald', color: '#009966' },
++  { id: 'cyan', label: 'Cyan', color: '#0092b8' },
++  { id: 'purple', label: 'Purple', color: '#9810fa' },
++  { id: 'rose', label: 'Rose', color: '#ec003f' },
++  { id: 'orange', label: 'Orange', color: '#f54900' },
++  { id: 'pink', label: 'Pink', color: '#e60076' }
++];
++
++/** Les familles NEUTRES empruntables : celle du programme, le gris pur (les
++ *  valeurs de la peau Graphite) et le chaud (celles de Warm paper). Le choix
++ *  pose `data-tone` sur <html>, et index.css porte les valeurs. */
++export const UI_CUSTOM_NEUTRALS = [
++  { id: 'slate', label: 'Slate (shipped)' },
++  { id: 'zinc', label: 'Zinc (pure grey)' },
++  { id: 'stone', label: 'Stone (warm)' }
++];
++export const UI_CUSTOM_NEUTRAL_DEFAULT = 'slate';
++
++/** LA FORME DU DÉGRADÉ LIVRÉ — les onze crans de bleu (L et C de chacun). C'est
++ *  cette forme que la couleur choisie recolore : un accent personnalisé garde
++ *  donc la STRUCTURE de luminosité de la référence, contraste compris. */
++const BLUE_SHAPE = [
++  [50, 97.0, 0.014], [100, 93.2, 0.032], [200, 88.2, 0.059], [300, 80.9, 0.105],
++  [400, 70.7, 0.165], [500, 62.3, 0.214], [600, 54.6, 0.245], [700, 48.8, 0.243],
++  [800, 42.4, 0.199], [900, 37.9, 0.146], [950, 28.2, 0.091]
+ ];
+ 
++/** sRGB hex → OKLCH (Ottosson) : l'inverse exact de ce qu'index.css écrit.
++ *  `null` quand ce n'est pas une couleur hexadécimale à six chiffres. PUR. */
++export const hexToOklch = (hex) => {
++  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || '').trim());
++  if (!m) return null;
++  const n = parseInt(m[1], 16);
++  const [r, g, b] = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => {
++    const c = v / 255;
++    return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
++  });
++  const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
++  const mm = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
++  const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
++  const L = 0.2104542553 * l + 0.7936177850 * mm - 0.0040720468 * s;
++  const A = 1.9779984951 * l - 2.4285922050 * mm + 0.4505937099 * s;
++  const B = 0.0259040371 * l + 0.7827717662 * mm - 0.8086757660 * s;
++  return { L: L * 100, C: Math.sqrt(A * A + B * B), H: ((Math.atan2(B, A) * 180) / Math.PI + 360) % 360 };
++};
++
++/** LES ONZE CRANS d'une couleur d'accent : le cran 600 EST la couleur choisie,
++ *  et les dix autres gardent la forme du dégradé livré (même écart de
++ *  luminosité, chroma proportionnel au cran 600). PUR. */
++export const uiSkinCustomRamp = (accent = UI_CUSTOM_ACCENT_DEFAULT) => {
++  const okl = hexToOklch(accent) || hexToOklch(UI_CUSTOM_ACCENT_DEFAULT);
++  const dL = okl.L - 54.6;
++  const k = okl.C / 0.245;
++  const out = {};
++  BLUE_SHAPE.forEach(([stop, l, c]) => {
++    const L = Math.max(6, Math.min(99, l + dL));
++    out[`--color-blue-${stop}`] = `oklch(${L.toFixed(1)}% ${Math.max(0, c * k).toFixed(3)} ${okl.H.toFixed(1)})`;
++  });
++  return out;
++};
++
++/** Le réglage retenu, toujours utilisable (une couleur illisible ou une famille
++ *  inconnue retombent sur le défaut livré). PUR. */
++export const uiCustomSkinOf = (raw) => ({
++  accent: (raw && /^#[0-9a-f]{6}$/i.test(String(raw.accent || '')))
++    ? String(raw.accent).toLowerCase() : UI_CUSTOM_ACCENT_DEFAULT,
++  neutral: UI_CUSTOM_NEUTRALS.some((n) => n.id === (raw && raw.neutral))
++    ? raw.neutral : UI_CUSTOM_NEUTRAL_DEFAULT
++});
++
++/** Les variables d'une peau personnalisée : les onze crans de l'accent, plus
++ *  `--lab-tone` (la famille neutre, pour la miniature ET pour <html>). PUR. */
++export const uiSkinCustomVars = (raw) => {
++  const custom = uiCustomSkinOf(raw);
++  return { ...uiSkinCustomRamp(custom.accent), '--lab-tone': custom.neutral };
++};
++
++/** Le réglage stocké (localStorage indisponible ⇒ le défaut livré) — celui de
++ *  CET opérateur, sinon celui du POSTE, comme pour la peau elle-même. */
++export const readUiCustomSkin = (operator = null) => {
++  try {
++    const own = uiCustomSkinKeyOf(operator);
++    const raw = localStorage.getItem(own);
++    if (raw !== null) return uiCustomSkinOf(JSON.parse(raw || 'null'));
++    if (own !== UI_CUSTOM_KEY) return uiCustomSkinOf(JSON.parse(localStorage.getItem(UI_CUSTOM_KEY) || 'null'));
++    return uiCustomSkinOf(null);
++  } catch { return uiCustomSkinOf(null); }
++};
++
++/** Écrire le réglage — et APPLIQUER tout de suite quand la peau personnalisée
++ *  est celle en service (sinon le réglage resterait sans effet). */
++export const saveUiCustomSkin = (raw, operator = null) => {
++  const custom = uiCustomSkinOf(raw);
++  try { localStorage.setItem(uiCustomSkinKeyOf(operator), JSON.stringify(custom)); } catch { /* ignore */ }
++  if (readUiSkin(operator) === UI_SKIN_CUSTOM) applyUiSkin(UI_SKIN_CUSTOM, operator);
++  return custom;
++};
++
+ /* The skin an id names, or the reference — so a name written by an older (or
+    newer) build can never leave the program unstyled. */
+ export const uiSkinById = (id) => UI_SKINS.find((s) => s.id === id) || UI_SKINS[0];
+ 
+ /* The stored skin, always usable: anything unreadable or unknown falls back to
+-   the reference (localStorage may be unavailable — private mode). */
+-export const readUiSkin = () => {
++   the reference (localStorage may be unavailable — private mode).
++
++   `operator` = the operator whose skin we want. When he has never chosen one,
++   the COMPUTER's skin is the starter value (a machine that was already painted
++   stays painted the same way the first time somebody signs in on it); without
++   any operator at all, this IS the computer's skin. */
++export const readUiSkin = (operator = null) => {
+   try {
+-    const raw = localStorage.getItem(UI_SKIN_KEY);
+-    if (raw === null) return UI_SKIN_DEFAULT;
+-    return uiSkinById(raw).id;
++    const own = uiSkinKeyOf(operator);
++    const raw = localStorage.getItem(own);
++    if (raw !== null) return uiSkinById(raw).id;
++    if (own !== UI_SKIN_KEY) {
++      const device = localStorage.getItem(UI_SKIN_KEY);
++      if (device !== null) return uiSkinById(device).id;
++    }
++    return UI_SKIN_DEFAULT;
+   } catch {
+     return UI_SKIN_DEFAULT;
+   }
+ };
+ 
+ /* `id` = the reference ⇒ the attribute is REMOVED (the shipped palette comes
+-   back exactly as Tailwind defines it). */
+-export const applyUiSkin = (id) => {
++   back exactly as Tailwind defines it). The custom skin is the one case whose
++   accent ramp is NOT in the stylesheet: its eleven stops depend on a colour the
++   user picked, so they are written INLINE on <html> — and cleared for every
++   other skin, or they would outlive the choice.
++   `operator` : l'accent lu (peau personnalisée) est celui de CET opérateur. */
++export const applyUiSkin = (id, operator = null) => {
+   if (typeof document === 'undefined') return; // unit tests (node) have no DOM
+   const root = document.documentElement;
+   if (!root) return;
+   const skin = uiSkinById(id);
+   if (!root.dataset) return;
++  const customKeys = [...Object.keys(uiSkinCustomRamp(UI_CUSTOM_ACCENT_DEFAULT)), '--lab-tone'];
++  const clearCustom = () => {
++    if (root.style) customKeys.forEach((k) => root.style.removeProperty(k));
++    delete root.dataset.tone;
++  };
++  if (skin.id === UI_SKIN_CUSTOM) {
++    const custom = readUiCustomSkin(operator);
++    if (root.style) Object.entries(uiSkinCustomVars(custom)).forEach(([k, v]) => root.style.setProperty(k, v));
++    root.dataset.tone = custom.neutral;
++    root.dataset.skin = UI_SKIN_CUSTOM;
++    return;
++  }
++  clearCustom();
+   if (skin.id === UI_SKIN_DEFAULT) delete root.dataset.skin;
+   else root.dataset.skin = skin.id;
+ };
+ 
+-export const saveUiSkin = (id) => {
++/* Écrire la peau — celle de CET opérateur quand on en connaît un, celle du
++   POSTE sinon (et c'est celle-ci qui sert de départ à tout opérateur : c'est
++   donc aussi le geste de l'écran d'entrée, avant toute connexion). */
++export const saveUiSkin = (id, operator = null) => {
+   const skin = uiSkinById(id);
+-  try { localStorage.setItem(UI_SKIN_KEY, skin.id); } catch { /* ignore */ }
+-  applyUiSkin(skin.id);
++  try { localStorage.setItem(uiSkinKeyOf(operator), skin.id); } catch { /* ignore */ }
++  applyUiSkin(skin.id, operator);
+ };
+ 
+-/* Called once by main.jsx, before React renders. */
+-export const applyStoredUiSkin = () => applyUiSkin(readUiSkin());
++/* L'identité de l'onglet telle qu'App.jsx la mémorise (sessionStorage) : la peau
++   de l'opérateur connecté peut donc être posée AVANT le premier rendu, sans
++   attendre React — sinon un rechargement peindrait d'abord la palette du poste
++   avant de revenir à la sienne. */
++export const SESSION_OPERATOR_KEY = 'labCurrentUser';
++
++/** L'opérateur de CETTE session, tel que l'application l'a mémorisé (null quand
++ *  personne n'est connecté, ou quand la mémoire est illisible). Ne lit que
++ *  sessionStorage — aucun effet de bord. */
++export const sessionOperator = () => {
++  try {
++    const raw = sessionStorage.getItem(SESSION_OPERATOR_KEY);
++    const parsed = raw ? JSON.parse(raw) : null;
++    return parsed && typeof parsed === 'object' ? parsed : null;
++  } catch { return null; }
++};
++
++/* Called once by main.jsx, before React renders — with the operator of the tab
++   session when there is one. */
++export const applyStoredUiSkin = (operator = null) => applyUiSkin(readUiSkin(operator), operator);
++
++/* …et l'appel de main.jsx : la peau de l'opérateur de la session, sinon celle du
++   poste. */
++export const applyStoredUiSkinForSession = () => applyStoredUiSkin(sessionOperator());
+diff --git a/src/utils/viewerStyleFile.js b/src/utils/viewerStyleFile.js
+index 29666b0..99696a1 100644
+--- a/src/utils/viewerStyleFile.js
++++ b/src/utils/viewerStyleFile.js
+@@ -70,14 +70,24 @@ export const viewerStyleStem = (name = '') => String(name || '')
+   .replace(/[^a-z0-9]+/g, '-')
+   .replace(/^-+|-+$/g, '');
+ 
++/** LES NOMS QUE LE VIEWER DONNE LUI-MÊME À SES EXPORTS (⬇ Export de la bande
++ *  🎨 Styles) : `viewer-snapshot-<nom>.json` / `viewer-theme-<nom>.json` (voir
++ *  exportActiveEnv dans NMRMoleculeViewer.jsx). Un style EXPORTÉ puis DÉPOSÉ
++ *  dans le dossier de l'expérience est donc reconnu par le rappel automatique —
++ *  c'est le cas signalé : « the styles file is not read automatically ». */
++export const VIEWER_STYLE_EXPORT_STEMS = { snapshot: 'viewer-snapshot', theme: 'viewer-theme' };
++
+ /** LE MODE d'un fichier d'après SON NOM — '' quand ce n'est pas un fichier de
+- *  style du viewer. PUR. */
++ *  style du viewer. Les DEUX noms canoniques, un nom renommé à la main qui les
++ *  commence, ET les deux noms d'export du viewer. PUR. */
+ export const viewerStyleModeOfName = (name = '') => {
+   const stem = viewerStyleStem(name);
+   if (!stem) return '';
+   for (const mode of VIEWER_STYLE_PREFERENCE) {
+     const known = VIEWER_STYLE_FILE_STEMS[mode];
++    const exported = VIEWER_STYLE_EXPORT_STEMS[mode];
+     if (stem === known || stem.startsWith(`${known}-`)) return mode;
++    if (stem === exported || stem.startsWith(`${exported}-`)) return mode;
+   }
+   return '';
+ };

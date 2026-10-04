@@ -22,7 +22,7 @@ import { useDriveAutoRestore } from './useDriveAutoRestore';
    reprise automatique puisse reconnaître (elle cherche par nom / pointeur). Le
    geste manquant est une lecture du dossier ; le fichier choisi devient le PDB
    déclaré de la condition (nom + pointeur). */
-import { DriveExperimentFilePicker, DriveExperimentFolderCreator } from './DriveExperimentFiles';
+import { DriveExperimentFilePicker } from './DriveExperimentFiles';
 import { experimentFilePointer, STRUCTURE_FILE_EXTS } from '../utils/driveExperimentFiles';
 import { sequenceForMoleculeType, sequencePatchForMoleculeType, structureSequencePatch, sequenceNaturesNote } from '../utils/sequenceNatures';
 /* 🧬 LA LECTURE D'UNE SÉQUENCE — la ligne COMPACTE qui la montre SOUS une case de séquence
@@ -5788,9 +5788,13 @@ const generatedStructure = useMemo(() => {
               l'expérience n'a aucun nom que la reprise automatique reconnaisse.
               Choisir ici l'OUVRE et le DÉCLARE pour cette condition.
 
-              Et comme la lecture NE CRÉE RIEN : le bouton 📁 ci-dessous crée le
-              dossier de l'expérience quand il n'existe pas encore (même geste
-              que sur la page MD). */}
+              Et comme la lecture NE CRÉE RIEN : le bouton « 📁 Create drive
+              folder » crée le dossier de l'expérience quand il n'existe pas
+              encore. Il n'est PLUS écrit ici : le VIEWER le rend lui-même, sur
+              la ligne de 📂 PDB file(s) (la demande, mot pour mot : « …must be
+              placed in the same line of "PDB file" button always », voir
+              NMRMoleculeViewer — et le `driveNaming` du viewer, plus bas, le lui
+              donne aussi). */}
           <div className="flex flex-wrap items-center gap-2">
             <DriveExperimentFilePicker
               label="📂 PDB from Drive folder"
@@ -5799,10 +5803,6 @@ const generatedStructure = useMemo(() => {
               exts={STRUCTURE_FILE_EXTS}
               declaredName={activeTest.structureFileName || activeTest.structureDriveName || ''}
               onPick={pickNmrStructureFromFolder}
-            />
-            <DriveExperimentFolderCreator
-              ctx={nmrStructDriveCtx(activeTest)}
-              note="(only if this experiment has no Drive folder yet)"
             />
             <span className="text-[10px] text-slate-400">
               Choosing a file here opens it AND declares it: this condition will reopen it by default. Nothing is uploaded again.

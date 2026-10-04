@@ -331,6 +331,97 @@ table td .text-xs, table th .text-xs {
   --color-cyan-900: oklch(33.8% 0.07 227.392);
 }
 
+/* ── Purple / Red / Rose — the accent of PURPLE, RED and ROSE. La demande de
+   cette session : « the skins in the setup are all too similar ». Les trois
+   dégradés sont ceux de Tailwind, cran pour cran, et leur structure de
+   luminosité reste à moins de 4 points de celle du bleu (ce qu'un échange de
+   teinte a le droit de déplacer) : chaque libellé blanc-sur-accent garde donc
+   son contraste, et les accents proposés sont enfin franchement différents. */
+[data-skin="purple"] {
+  --color-blue-50: oklch(97.7% 0.014 308.299);
+  --color-blue-100: oklch(94.6% 0.033 307.174);
+  --color-blue-200: oklch(90.2% 0.063 306.703);
+  --color-blue-300: oklch(82.7% 0.119 306.383);
+  --color-blue-400: oklch(71.4% 0.203 305.504);
+  --color-blue-500: oklch(62.7% 0.265 303.9);
+  --color-blue-600: oklch(55.8% 0.288 302.321);
+  --color-blue-700: oklch(49.6% 0.265 301.924);
+  --color-blue-800: oklch(43.8% 0.218 303.724);
+  --color-blue-900: oklch(38.1% 0.176 304.987);
+  --color-blue-950: oklch(29.1% 0.149 302.717);
+}
+
+/* ── Red — l'accent ROUGE. */
+[data-skin="red"] {
+  --color-blue-50: oklch(97.1% 0.013 17.38);
+  --color-blue-100: oklch(93.6% 0.032 17.717);
+  --color-blue-200: oklch(88.5% 0.062 18.334);
+  --color-blue-300: oklch(80.8% 0.114 19.571);
+  --color-blue-400: oklch(70.4% 0.191 22.216);
+  --color-blue-500: oklch(63.7% 0.237 25.331);
+  --color-blue-600: oklch(57.7% 0.245 27.325);
+  --color-blue-700: oklch(50.5% 0.213 27.518);
+  --color-blue-800: oklch(44.4% 0.177 26.899);
+  --color-blue-900: oklch(39.6% 0.141 25.723);
+  --color-blue-950: oklch(25.8% 0.092 26.042);
+}
+
+/* ── Rose — l'accent ROSE. */
+[data-skin="rose"] {
+  --color-blue-50: oklch(96.9% 0.015 12.422);
+  --color-blue-100: oklch(94.1% 0.03 12.58);
+  --color-blue-200: oklch(89.2% 0.058 10.001);
+  --color-blue-300: oklch(81% 0.117 11.638);
+  --color-blue-400: oklch(71.2% 0.194 13.428);
+  --color-blue-500: oklch(64.5% 0.246 16.439);
+  --color-blue-600: oklch(58.6% 0.253 17.585);
+  --color-blue-700: oklch(51.4% 0.222 16.935);
+  --color-blue-800: oklch(45.5% 0.188 13.697);
+  --color-blue-900: oklch(41% 0.159 10.272);
+  --color-blue-950: oklch(27.1% 0.105 12.094);
+}
+
+/* ── Custom — LA PEAU QUE L'UTILISATEUR POSSÈDE. Ses onze crans d'accent ne
+   sont PAS ici : ils dépendent de la couleur choisie dans ⚙ Settings, donc
+   src/utils/uiSkin.js les écrit EN LIGNE sur <html> — dérivés d'UNE couleur,
+   dans la forme même du dégradé livré. Ce bloc ne porte que l'accent de repli,
+   pour qu'une peau personnalisée jamais réglée soit le bleu du programme. */
+[data-skin="custom"] {
+  --lab-accent: #155dfc;
+}
+
+/* …et la famille NEUTRE, restituée cran pour cran : le gris pur (les valeurs de
+   la peau Graphite) et le chaud (celles de Warm paper). La peau personnalisée
+   les emprunte par `data-tone`, donc les pages, les bordures et les encres
+   changent aussi — c'est la seconde moitié du « not customizable ». */
+[data-skin="custom"][data-tone="zinc"] {
+  --color-slate-50: oklch(98.5% 0 0);
+  --color-slate-100: oklch(96.7% 0.001 286.375);
+  --color-slate-200: oklch(92% 0.004 286.32);
+  --color-slate-300: oklch(87.1% 0.006 286.286);
+  --color-slate-400: oklch(70.5% 0.015 286.067);
+  --color-slate-500: oklch(55.2% 0.016 285.938);
+  --color-slate-600: oklch(44.2% 0.017 285.786);
+  --color-slate-700: oklch(37% 0.013 285.805);
+  --color-slate-800: oklch(27.4% 0.006 286.033);
+  --color-slate-900: oklch(21% 0.006 285.885);
+  --color-slate-950: oklch(14.1% 0.005 285.823);
+}
+
+[data-skin="custom"][data-tone="stone"] {
+  --color-slate-50: oklch(98.5% 0.001 106.423);
+  --color-slate-100: oklch(97% 0.001 106.424);
+  --color-slate-200: oklch(92.3% 0.003 48.717);
+  --color-slate-300: oklch(86.9% 0.005 56.366);
+  --color-slate-400: oklch(70.9% 0.01 56.259);
+  --color-slate-500: oklch(55.3% 0.013 58.071);
+  --color-slate-600: oklch(44.4% 0.011 73.639);
+  --color-slate-700: oklch(37.4% 0.01 67.558);
+  --color-slate-800: oklch(26.8% 0.007 34.298);
+  --color-slate-900: oklch(21.6% 0.006 56.043);
+  --color-slate-950: oklch(14.7% 0.004 49.25);
+}
+
 /* ---------------------------------------------------------------------------
    THE SEQUENCE FIELD — the selection of a COLOURED field stays readable.
    `SequenceField` (src/components/SequenceField.jsx) renders the letters in a

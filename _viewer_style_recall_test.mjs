@@ -89,8 +89,12 @@ eq(FILES.viewerStyleModeOfName('viewer-style-cumulative.json'), 'theme', 'celui 
 eq(FILES.viewerStyleModeOfName('Viewer style snapshot (2026).json'), 'snapshot',
   'un fichier RENOMMÉ à la main reste reconnu (séparateurs et majuscules neutralisés)');
 eq(FILES.viewerStyleModeOfName('viewer-style-snapshot-2.json'), 'snapshot', 'un suffixe ajouté ne le cache pas');
-eq(FILES.viewerStyleModeOfName('viewer-theme-My_theme.json'), '',
-  'un fichier du ⬇ Export du viewer (viewer-theme-…) n’est PAS un fichier d’expérience');
+eq(FILES.VIEWER_STYLE_EXPORT_STEMS.snapshot, 'viewer-snapshot', 'les noms que le viewer donne à ses exports sont écrits noir sur blanc');
+eq(FILES.VIEWER_STYLE_EXPORT_STEMS.theme, 'viewer-theme', '…les deux');
+eq(FILES.viewerStyleModeOfName('viewer-theme-My_theme.json'), 'theme',
+  'un fichier du ⬇ Export du viewer (viewer-theme-…) EST reconnu — c’est le défaut signalé : « the styles file is not read automatically »');
+eq(FILES.viewerStyleModeOfName('viewer-snapshot-My scene.json'), 'snapshot', '…et un snapshot exporté aussi');
+eq(FILES.isViewerStyleFile('viewer-theme-My_theme.json'), true, 'isViewerStyleFile suit la même règle');
 eq(FILES.viewerStyleModeOfName('ms_struct_7.pdb'), '', 'un .pdb n’en est pas un');
 eq(FILES.viewerStyleModeOfName('run3.xtc'), '', 'une trajectoire non plus');
 eq(FILES.viewerStyleModeOfName(''), '', 'un nom vide ne dit rien');
@@ -363,6 +367,20 @@ has('const archiveViewerStyle = async (mode, name, entry) => {', 'l’écriture 
 has('found = pickViewerStyleFile(listed.files);', 'le rappel applique LA règle de préférence du module (snapshot, sinon cumulatif)');
 has('const parsed = parseViewerStyleFile(text);', '…et ne lit que des fichiers de style (le module refuse le reste)');
 has('ctxs: [{ ...driveNaming, section: \'Setup\' }],', 'les deux branches de dossier d’une page (Data et Setup) sont regardées');
+
+/* LA SECONDE MOITIÉ DE LA DEMANDE — « nor I have the possibility to define which
+   file must be read (but it could be simply the last that was used) » : la picker
+   du dossier de l'expérience, dans la rangée des fichiers du viewer. */
+has('const pickStyleFileFromFolder = async (file) => {',
+  'le viewer offre de CHOISIR le fichier de style du dossier (pas seulement le rappel automatique)');
+has('await file.text()', '…il lit le fichier téléchargé tel quel');
+has("if (!parsed) { flashSetupMsg(`“${file.name}” is not a viewer style — nothing was applied.`); return; }",
+  '…sans deviner : un .json étranger est refusé, et ça se dit');
+has('rememberViewerStyle(parsed.mode, parsed.name, parsed.entry);',
+  '…et le fichier choisi est RETENU (mémoire + fichier canonique) : c’est donc « simply the last that was used » que la prochaine ouverture applique');
+has('label="📂 Style from folder"', 'la picker a son bouton dans la rangée des fichiers du viewer');
+has("ctxs={[{ ...driveNaming, section: 'Setup' }]}", '…et regarde les DEUX branches de dossier que le rappel regarde');
+has('exts={[VIEWER_STYLE_EXT]}', '…seuls les .json de l’expérience sont listés');
 eq(countOf(/applyThemeEntry\(/g) >= 3 && countOf(/applySnapshotEntry\(/g) >= 3, true,
   'les corps des deux modes servent aux trois chemins : charger, adopter depuis le Drive, appliquer au rappel');
 eq(countOf(/const loadTheme = \(name\)/g), 1, 'un seul loadTheme (le rappel ne le double pas)');

@@ -26,16 +26,21 @@
    LE SEUL GESTE QUI FABRIQUE vit ici aussi : `DriveExperimentFolderCreator`.
    Quand l'expérience n'a PAS encore de dossier sur le Drive, la lecture ne
    peut rien montrer — la demande est alors « allow me to create it with the
-   correct path », et ce bouton le fait (voir
-   utils/driveExperimentFiles.createExperimentFolder : le chemin canonique de
-   l'expérience, jamais la sous-section d'un bouton). Il est posé dans la MÊME
-   rangée que les boutons 📂, donc sur la ligne des commandes de fichiers.
+   correct path », puis « …datasetname/projects/projectname/experimentname/
+   instancename/subsection/file » : ce bouton crée donc le chemin ENTIER,
+   jusqu'aux sous-sections `experiment_setup/Structure` et
+   `experiment_setup/Trajectory` (voir
+   utils/driveExperimentFiles.createExperimentFolder). COURT (« 📁 Create drive
+   folder ») et TOUJOURS dans la rangée des fichiers — la ligne de
+   📂 PDB file(s) — c'est le VIEWER qui le rend là (voir NMRMoleculeViewer,
+   juste après `fileRowExtra`), donc sur les trois pages qui ont un viewer et un
+   contexte de nommage : MD, NMR et Docking.
    ========================================================================= */
 
 import { useState } from 'react';
 import { downloadCloudFile, sameRawFileFor } from '../utils/driveRestore';
-import { createExperimentFolder, describeDriveFileSize, drivePathText, listExperimentFiles, normalizeFileExts } from '../utils/driveExperimentFiles';
-import { getDriveToken } from '../utils/driveUpload';
+import { createExperimentFolder, describeDriveFileSize, drivePathText, experimentFileFolderPathOf, EXPERIMENT_FILE_SUBSECTIONS, fullDrivePathText, listExperimentFiles, normalizeFileExts } from '../utils/driveExperimentFiles';
+import { getDriveRootName, getDriveToken } from '../utils/driveUpload';
 
 const BTN = 'bg-white hover:bg-slate-50 border border-indigo-300 text-indigo-700 font-bold py-1.5 px-3 rounded-lg text-xs cursor-pointer shadow-sm transition-colors inline-flex items-center gap-1.5 disabled:opacity-50';
 const ROW = 'flex items-center gap-2 px-2 py-1 rounded border border-slate-200 bg-white';
@@ -163,39 +168,57 @@ export const DriveExperimentFilePicker = ({
 };
 
 /**
- * CRÉER le dossier de l'expérience sur le Drive — le SEUL geste d'écriture de
+ * CRÉER les dossiers de l'expérience sur le Drive — le SEUL geste d'écriture de
  * la rangée des fichiers (les 📂, eux, ne font que LIRE).
  *
  * Défaut visé (signalé) : « If the experiment does not exist in drive, allow
  * me to create it with the correct path. » Un geste de lecture ne fabrique
  * jamais d'arborescence : quand le dossier n'existe pas, les 📂 ne montrent
  * rien. Ce bouton-ci est donc EXPLICITE — l'utilisateur demande la création —
- * et il la fait au chemin canonique de l'expérience (project/test/instance),
- * une seule fois, sans doublon (la création est idempotente).
+ * et il crée le CHEMIN ENTIER où les fichiers se déposent vraiment :
  *
- * Rien n'est inventé à l'écran : le chemin créé est montré tel qu'il est écrit
- * sur le Drive (`pathText`) et un lien l'ouvre, ou l'échec est DIT (Drive
- * éteint, quota, Nextcloud non configuré).
+ *     <dataset>/projects/<projet>/<expérience>/<instance?>/experiment_setup/Structure
+ *     <dataset>/projects/<projet>/<expérience>/<instance?>/experiment_setup/Trajectory
+ *
+ * La demande, mot pour mot : « for a trajectory it must be datasetname/projects/
+ * projectname/experimentname/instancename/subsection/file where subsection is
+ * experiment_setup/trajectory for trajectory files and experiment_setup/
+ * Structure for pdb files ». La création est IDEMPOTENTE (un dossier déjà
+ * présent est simplement retrouvé) et CHAQUE segment est vérifié : l'échec DIT
+ * ce qui n'a pas été créé (voir createExperimentFolder).
+ *
+ * Le bouton est COURT — « 📁 Create drive folder » : il partage la rangée des
+ * fichiers (celle de 📂 PDB file(s)) et n'a qu'une place étroite — mais il
+ * montre les chemins COMPLETS, dataset compris, dans son infobulle ET après
+ * coup, avec un lien par dossier (la demande : « the description on where it
+ * would do it is not complete »).
  *
  * @param {object}   props
  * @param {object}   props.ctx          contexte de nommage de la page (project/test/instance)
  * @param {string}   [props.label]      texte du bouton
  * @param {string}   [props.titleText]  infobulle (ce que le geste fait exactement)
- * @param {string}   [props.note]       phrase d'aide affichée à droite du bouton
  * @param {boolean}  [props.disabled]
  * @param {Function} [props.onCreated]  async (result) => void — la page peut recharger ses listes
  */
 export const DriveExperimentFolderCreator = ({
-  ctx = null, label = '📁 Create experiment folder on Drive', titleText = '',
-  note = '', disabled = false, onCreated = null
+  ctx = null, label = '📁 Create drive folder', titleText = '',
+  disabled = false, onCreated = null
 }) => {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
-  const [made, setMade] = useState(null);      // { pathText, folderUrl }
+  const [made, setMade] = useState(null);      // [{ fullText, folderUrl }]
+
+  /* LES CHEMINS VISÉS, dits AVANT le clic : le bouton annonce où il crée, le
+     nom du dataset compris — sinon « create the folder » ne dit pas lequel. */
+  const datasetName = getDriveRootName();
+  const targets = EXPERIMENT_FILE_SUBSECTIONS
+    .map((sub) => fullDrivePathText(datasetName, experimentFileFolderPathOf(ctx, sub)))
+    .filter(Boolean);
+  const where = targets.join('   ·   ');
 
   const create = async () => {
     setBusy(true);
-    setMsg('📁 Creating the experiment folder on Google Drive…');
+    setMsg('📁 Creating the experiment folders on Google Drive…');
     const res = await createExperimentFolder({ ctx });
     setBusy(false);
     if (!res || !res.ok) {
@@ -203,28 +226,34 @@ export const DriveExperimentFolderCreator = ({
       setMsg(`⚠️ ${(res && res.error) || 'The experiment folder could not be created.'}`);
       return;
     }
-    setMade({ pathText: res.pathText, folderUrl: res.folderUrl });
-    setMsg(`✅ Experiment folder ready: ${res.pathText} — deposit your files there, then press the 📂 buttons above.`);
+    const entries = (res.entries || []).map((e) => ({ fullText: e.fullText, folderUrl: e.folderUrl }));
+    setMade(entries);
+    setMsg(`✅ Ready: deposit the files in ${entries.map((e) => e.fullText).join(' · ')} — the 📂 buttons above then read them.`);
     try { await onCreated?.(res); } catch { /* l'appelant décide quoi en faire */ }
   };
+
+  const title = titleText || `Create THIS experiment's Drive folders so its files can be deposited there: ${where}. Idempotent — a folder that is already there is simply found — and nothing else is created.`;
 
   return (
     <div className="flex flex-col gap-1">
       <div className="flex items-center gap-2 flex-wrap">
         <button type="button" onClick={create} disabled={disabled || busy}
-          title={titleText || "Create THIS experiment's Drive folder (projects/<project>/<experiment>) so files can be deposited there — the 📂 buttons above then read it. Nothing else is created."}
-          className={BTN}>
+          title={title} className={BTN}>
           {busy ? '⏳ Creating…' : label}
         </button>
-        {note && <span className="text-[10px] text-slate-400">{note}</span>}
       </div>
       {msg && (
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex flex-col gap-0.5">
           <span className="text-[10px] text-slate-600">{msg}</span>
-          {made?.folderUrl && (
-            <a href={made.folderUrl} target="_blank" rel="noreferrer"
-              className="text-[10px] font-bold text-indigo-700 hover:text-indigo-900">Open in Drive ↗</a>
-          )}
+          {(made || []).map((e) => (
+            <span key={e.fullText} className="flex items-center gap-1 text-[10px] text-slate-500">
+              <span className="truncate" title={e.fullText}>📁 {e.fullText}</span>
+              {e.folderUrl && (
+                <a href={e.folderUrl} target="_blank" rel="noreferrer"
+                  className="shrink-0 font-bold text-indigo-700 hover:text-indigo-900">Open ↗</a>
+              )}
+            </span>
+          ))}
         </div>
       )}
     </div>

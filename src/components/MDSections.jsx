@@ -68,7 +68,7 @@ import { placeRestorePointer, pointerStillWanted, restoreRawFileFor, sameRawFile
    dossier de l'expérience n'a aucun nom à reconnaître. Le geste manquant est
    donc une lecture du dossier, et le fichier choisi devient celui que la
    condition rouvre par défaut (nom déclaré + pointeur). */
-import { DriveExperimentFilePicker, DriveExperimentFolderCreator } from './DriveExperimentFiles';
+import { DriveExperimentFilePicker } from './DriveExperimentFiles';
 import { experimentFilePointer, MD_TOPOLOGY_EXTS, MD_TRAJECTORY_EXTS } from '../utils/driveExperimentFiles';
 
 // Cache to retain local File objects when switching tabs within the same session
@@ -1523,15 +1523,20 @@ export const MDExperimentSetupSection = ({ ctx }) => {
      AND declares it… ») est passée dans leurs infobulles : rien n'est perdu, et
      elle ne coûte plus une ligne à elle seule.
 
-     ⚠ LE TROISIÈME BOUTON DE LA RANGÉE — 📁 Create experiment folder on Drive —
-     répond à l'autre moitié du même défaut : « If the experiment does not exist
-     in drive, allow me to create it with the correct path ». Les 📂 NE CRÉENT
+     ⚠ LE BOUTON QUI CRÉE LE DOSSIER — 📁 « Create drive folder » — répond à
+     l'autre moitié du même défaut : « If the experiment does not exist in
+     drive, allow me to create it with the correct path ». Les 📂 NE CRÉENT
      RIEN (un geste de lecture ne fabrique jamais d'arborescence) : quand le
-     dossier de l'expérience n'existe pas, ils ne peuvent rien montrer. Ce
-     bouton-ci est donc EXPLICITE, et il crée la TÊTE COMMUNE à tous les
-     fichiers de l'expérience — projects/<projet>/<expérience>/<instance>
-     (voir utils/driveExperimentFiles.createExperimentFolder ; la création est
-     idempotente : un dossier déjà présent est simplement retrouvé). */
+     dossier de l'expérience n'existe pas, ils ne peuvent rien montrer.
+     IL N'EST PLUS DÉFINI ICI : la demande de cette session, mot pour mot, est
+     « the "create experiment folder on drive" must be placed in the same line
+     of "PDB file" button always. to save space you can rename it "Create drive
+     folder". » — il est donc rendu par le VIEWER lui-même, dans cette même
+     rangée (§1 General, la ligne de 📂 PDB file(s)), sur les trois pages à
+     viewer (voir NMRMoleculeViewer, juste après `fileRowExtra`). Il crée le
+     chemin ENTIER — …/experiment_setup/Structure et …/experiment_setup/
+     Trajectory (voir utils/driveExperimentFiles.createExperimentFolder,
+     idempotent, et chaque segment vérifié). */
   const folderFilePickers = (
     <>
       <DriveExperimentFilePicker
@@ -1555,13 +1560,11 @@ export const MDExperimentSetupSection = ({ ctx }) => {
       {/* LE SEUL GESTE QUI FABRIQUE de la rangée : les deux 📂 ci-dessus NE
           CRÉENT RIEN (un geste de lecture ne fabrique jamais d'arborescence).
           Quand l'expérience n'a pas encore de dossier sur le Drive, ils n'ont
-          donc rien à montrer — ce bouton-ci crée ce dossier, au chemin
-          canonique de l'expérience (project/test/instance), la tête commune à
-          la topologie ET à la trajectoire. */}
-      <DriveExperimentFolderCreator
-        ctx={mdFolderCtx('Structure')}
-        note="(only if this experiment has no Drive folder yet)"
-      />
+          donc rien à montrer — et le bouton qui crée ce dossier n'est plus
+          écrit ICI : c'est le VIEWER qui le rend, dans CETTE rangée, juste
+          après ces deux 📂 (la demande : « the "create experiment folder on
+          drive" must be placed in the same line of "PDB file" button always »).
+          Voir NMRMoleculeViewer, à côté de `fileRowExtra`. */}
     </>
   );
 
@@ -1878,7 +1881,12 @@ export const MDExperimentSetupSection = ({ ctx }) => {
      VIEWER (§1 General, sur la ligne de 📂 PDB file(s) / 📂 Trajectory) : c'est
      `fileRowExtra` du viewer qui les rend, et `folderFilePickers` qui les définit
      (voir plus haut — la demande : les deux 📂 du dossier sur la MÊME ligne que
-     les deux 📂 du poste). */
+     les deux 📂 du poste).
+     ⚠ « 📁 Create drive folder » n'est PAS passé ici : le VIEWER le rend lui-même
+     dans cette rangée dès qu'il a un contexte de nommage (`driveNaming`, quatre
+     lignes plus bas) — la demande, mot pour mot : « the "create experiment
+     folder on drive" must be placed in the same line of "PDB file" button
+     always ». La place ne dépend donc plus d'une page. */
   fileRowExtra={folderFilePickers}
   residueOffset={residueOffset}
   atomNameMap={atomNameMap}

@@ -2679,8 +2679,10 @@ illisibles. Un vrai mode sombre demande donc **d'abord** que ces modules lisent 
 cela que les peaux livrées ici restent **claires** (la plus sombre, `dim`, abaisse le blanc et
 les bordures sans jamais inverser). Les figures, les documents imprimés/exportés et le
 presse-papiers gardent leurs propres réglages : une peau est un réglage d'**écran**, gardé
-**par navigateur** (`localStorage`), jamais dans le dataset ni dans le Doc — comme l'échelle
-d'affichage — et **chaque** utilisateur la voit (pas seulement le superutilisateur).
+**par OPÉRATEUR** dans le navigateur (`localStorage` — la clé du POSTE lui sert de repli et de
+valeur de départ, voir « La peau appartient à l'OPÉRATEUR » plus bas), jamais dans le dataset ni
+dans le Doc, et **chaque** utilisateur la voit — et choisit **la sienne** (pas seulement le
+superutilisateur).
 
 *Vérifier :* `node _ui_skin_test.cjs` — **91 vérifications** : le registre (7 peaux, ids
 uniques, 4 pastilles), le repli sur la référence pour un nom inconnu, l'attribut posé sur
@@ -2838,3 +2840,264 @@ l'environnement global), `_viewer_style_controls_test.mjs` **494** et `_viewer_u
 avertissements, tous préexistants dans le viewer).
 
 
+
+## Le bouton qui crée le dossier de l'expérience : sur la ligne de 📂 PDB file(s), et le chemin ENTIER (04/10/2026)
+
+**Les demandes, mot pour mot.** « *the "create experiment folder on drive" must be placed in the
+same line of "PDB file" button always. to save space you can rename it "Create drive folder".
+This button did not create the folder and the description on where it would do it it is not
+complete. for a trajctory it must be datasetname/projects/projectname/experimentname/instancename/
+subsection/file where subsection is experiment_setup/trajectory for trajectory files and
+experiment_setup/Structure for pdb files.* »
+
+### ① Une seule place, et c'est le VIEWER qui la donne
+
+`DriveExperimentFolderCreator` était monté par la page MD (dans `folderFilePickers`, à côté des
+deux 📂) et par la page NMR (dans sa propre rangée, au-dessus du viewer). La place dépendait donc
+d'une page — et sur NMR le bouton voisinait « 📂 PDB from Drive folder », pas le bouton
+**📂 PDB file(s)** du viewer.
+
+Désormais **c'est le viewer qui le rend**, dans sa rangée §1 General, juste après `fileRowExtra` :
+
+```jsx
+{fileRowExtra}
+{driveNaming ? <DriveExperimentFolderCreator ctx={driveNaming} /> : null}
+```
+
+Donc sur **MD, NMR et Docking** — les trois pages qui passent un `driveNaming` — le bouton est
+TOUJOURS sur la même ligne que 📂 PDB file(s) / 📂 Trajectory, et aucune page ne peut l'oublier ni
+le déplacer. Le libellé est **court** (« 📁 Create drive folder ») parce qu'il partage une rangée
+étroite, et les deux pages ont **perdu** leur import du composant.
+
+### ② « This button did not create the folder » — chaque segment est maintenant VÉRIFIÉ
+
+Le geste appelait `resolveDrivePathFromNames(..., { create: true })` et ne regardait que
+`leafId` : une chaîne créée **à moitié** (dossier du dataset indisponible, `projects/` non résolu)
+rendait un `leafId` vide — ou pire, un identifiant de dossier **au mauvais niveau** — et l'échec se
+lisait « Google Drive did not create the folder » sans dire **où**. Ce qui change :
+
+* `firstMissingSegment(resolved, path)` rend le **premier cran sans identifiant**, et
+  `driveCreateError` le NOMME tel qu'il est écrit sur le Drive (« Google Drive did not create
+  “experiment_setup” on the way to … »), avec ce qu'il faut faire ;
+* un chemin supprimé dans le programme (code `PATH_DELETED`, voir `driveMirrorStore`) est
+  expliqué — un dossier effacé n'est **jamais** recréé — au lieu d'un « failed » muet ;
+* `ok:false` ne porte **jamais** d'entrée : rien n'est annoncé comme créé tant que la chaîne n'est
+  pas complète.
+
+### ③ Le chemin créé est celui où les fichiers se déposent VRAIMENT
+
+Le geste ne créait que la tête (`projects/<projet>/<expérience>/<instance>`). La demande est
+explicite — `<dataset>/projects/<projet>/<expérience>/<instance>/experiment_setup/<Structure|trajectory>`
+— donc `createExperimentFolder({ ctx, subsections })` crée **la chaîne entière**, par défaut les
+**deux** sous-sections que l'envoi utilise déjà (section `Setup`, voir `MDSections` : sous-section
+`Structure` / `Trajectory`) :
+
+    <dataset>/projects/<projet>/<expérience>/<instance?>/experiment_setup/Structure
+    <dataset>/projects/<projet>/<expérience>/<instance?>/experiment_setup/Trajectory
+
+Deux helpers PURS portent la règle, une seule fois : **`experimentFileFolderPathOf(ctx, sub)`** (le
+dossier d'un TYPE de fichier — il réutilise `canonicalPageSection('Setup')`, donc la section créée
+et celle que les 📂 cherchent sont **la même liste**) et **`fullDrivePathText(datasetName, path)`**
+(le chemin COMPLET, dossier du dataset compris, slugué comme le Drive le nomme).
+
+⚠ Deux choses dites franchement :
+
+* la sous-section des trajectoires s'écrit **`Trajectory`** (majuscule), parce que c'est le nom que
+  l'archive de la page MD écrit depuis toujours (`subsection: 'Trajectory'`) — créer `trajectory`
+  en plus aurait semé deux dossiers jumeaux. `sanitizeSlug` ne change pas la casse, et le lecteur
+  cherche exactement ce nom ;
+* la description est **dite AVANT le clic** : l'infobulle du bouton porte les deux chemins complets
+  (dataset compris), et le message de succès les répète avec **un lien par dossier**.
+
+*Vérifier :* `node _experiment_folder_files_test.mjs` — **178 assertions** (contre 139) : les deux
+cibles créées et leur ordre, l'idempotence (deux appels, zéro dossier de plus), le fichier déposé
+dans `experiment_setup/Structure` retrouvé par les 📂, `fullDrivePathText` qui préfixe le dataset,
+`firstMissingSegment`/`driveCreateError` sur une chaîne à moitié créée et sur un chemin supprimé
+(code `PATH_DELETED`), Nextcloud et Drive éteint, puis le câblage : **aucune** page ne monte plus le
+bouton (`eq(...length, 0)` pour MD et NMR) et c'est le viewer qui le rend, **juste après**
+`fileRowExtra` et seulement avec un `driveNaming`. Régressions relancées :
+`_structure_windows_test.mjs` **107**, `_viewer_ui_layout_test.mjs` **494**, `_drive_restore_test.mjs`,
+`_drive_mirror_test.mjs`, `_compact_sections_test.mjs` **211**, `_condition_page_test.mjs` **123**,
+`_viewer_render_smoke_test.mjs` **23** (build Vite + montage réel des 11 pages) — tout vert.
+`npx vite build` — ✓ ; `npx oxlint` sur les fichiers touchés — **0 erreur**, aucun avertissement ne
+nomme un symbole nouveau.
+
+## Le style d'une expérience : le fichier EXPORTÉ est ramené tout seul, et on peut CHOISIR lequel lire (04/10/2026)
+
+**La demande, mot pour mot.** « *when I open an experiment still the styles file is not read
+automatically nor I have the possibility to define which file must be read (but it could be simply
+the last that was used).* »
+
+### ① Pourquoi le rappel automatique ne lisait rien
+
+Le rappel (`recallViewerStyle`) existait et fonctionnait — mais il ne reconnaissait que les noms
+**canoniques** (`viewer-style-snapshot.json`, `viewer-style-cumulative.json`) et ceux qui les
+commencent. Or le **⬇ Export** de la bande 🎨 Styles nomme ses fichiers
+`viewer-snapshot-<nom>.json` / `viewer-theme-<nom>.json` (voir `exportActiveEnv`) : un style
+EXPORTÉ puis déposé dans le dossier de l'expérience n'était donc **jamais** reconnu — exactement le
+défaut signalé. `VIEWER_STYLE_EXPORT_STEMS` (dans `src/utils/viewerStyleFile.js`, PUR) déclare ces
+deux noms, et `viewerStyleModeOfName` les reconnaît à côté des canoniques. Le refus du reste ne
+bouge pas : un `.json` étranger n'est ni téléchargé ni deviné.
+
+### ② Choisir LEQUEL lire — et « simplement le dernier utilisé »
+
+La rangée des fichiers du viewer (celle de 📂 PDB file(s), qui porte déjà le bouton de création)
+gagne un **📂 Style from folder** : c'est le **même composant** que les 📂 Topology / PDB
+(`DriveExperimentFilePicker`, une seule définition), sur les `.json` de l'expérience, avec les deux
+branches de dossier que le rappel regarde (Data et Setup). Le fichier désigné est **appliqué PUIS
+RETENU** (`rememberViewerStyle` : mémoire du poste **et** fichier canonique du dossier) : c'est donc
+bien « simplement le dernier utilisé » que la prochaine ouverture appliquera, ici comme sur un autre
+poste. Un `.json` qui n'est pas un style est refusé **en le disant** (jamais un écran qui ne bouge
+pas sans explication).
+
+*Vérifier :* `node _viewer_style_recall_test.mjs` — **130 assertions** (contre 119) : les deux noms
+d'export reconnus (`viewer-theme-…` → `theme`), l'assertion inverse de la session précédente
+retournée, puis le câblage du geste (`pickStyleFileFromFolder`, la lecture du texte, l'adoption,
+l'application, la mémoire + l'archive, le refus d'un `.json` étranger, la picker sur
+`exts={[VIEWER_STYLE_EXT]}` et les deux branches `Data`/`Setup`). Régressions relancées :
+`_viewer_style_controls_test.mjs` **494**, `_viewer_style_coverage_test.mjs` **738**,
+`_viewer_ui_layout_test.mjs` **494**, `_viewer_render_smoke_test.mjs` **23**.
+
+## Les peaux : trois accents de plus, et une peau que l'utilisateur POSSÈDE (04/10/2026)
+
+**La demande, mot pour mot.** « *the skins in the setup are all too similar and not
+customizable.* »
+
+### ① Trois accents de plus — la règle de la maison d'abord
+
+`indigo` et `violet` échangeaient l'accent ; on ajoute **`purple`, `red` et `rose`**, chacun
+restituant **cran pour cran** le dégradé que Tailwind livre (relevé dans son thème, jamais inventé).
+Ces trois familles sont les seules, avec indigo et violet, à rester **à moins de 4 points de
+luminosité OKLCH** du bleu livré : c'est la garde que `_ui_skin_test.cjs` fait respecter à un échange
+de teinte, et c'est pour cela que `teal` / `emerald` / `amber` (franchement plus clairs au même cran)
+n'entrent PAS dans la liste fixe — ils sont en revanche accessibles par la peau personnalisée, où la
+garde est le contraste.
+
+### ② « Custom… » : l'accent ET la famille neutre
+
+`UI_SKIN_CUSTOM` (`custom`) n'a **pas** de dégradé dans `index.css` : ses onze crans dépendent d'une
+couleur choisie, donc `src/utils/uiSkin.js` les écrit **en ligne sur `<html>`** — et les retire dès
+qu'une autre peau est choisie (sinon ils survivraient au choix). Le réglage est gardé, comme la peau
+elle-même, **par OPÉRATEUR** (`labWorkspace_uiSkinCustom_<propriétaire>`, la clé du POSTE servant de
+repli et de valeur de départ — voir « La peau appartient à l'OPÉRATEUR » plus bas), et il porte :
+
+* **l'accent** : huit propositions (les hexadécimaux exacts des crans 600 de Tailwind) **et une
+  pipette libre** — n'importe quelle couleur ;
+* **la famille neutre** : celle du programme, le gris pur (les valeurs de Graphite) ou le chaud
+  (celles de Warm paper), empruntées par `data-tone` — les deux blocs portent DEUX attributs
+  (`[data-skin="custom"][data-tone="…"]`).
+
+`uiSkinCustomRamp(accent)` (PUR, donc exécutable par la sonde) convertit le hex en OKLCH
+(`hexToOklch`, l'inverse exact de ce qu'`index.css` écrit) et recolore la **forme** du dégradé livré :
+le cran 600 **est** la couleur choisie, les dix autres gardent l'écart de luminosité du bleu. Une peau
+personnalisée ne peut donc pas casser la palette — et la garde est mesurée, pas promise : pour les huit
+propositions, le libellé blanc du cran 600 reste ≥ 3.5 (le seuil de la maison pour l'accent) et le
+dégradé ne se déplace jamais de plus de 12 points de luminosité. Dans ⚙ Settings, le panneau n'apparaît
+**que** pour cette peau, et la miniature vivante reçoit les mêmes variables en ligne — ce que le bouton
+montre **est** ce que le programme sera.
+
+*Vérifier :* `node _ui_skin_test.cjs` — **143/143** (contre **91**) : le registre à **10 peaux** plus la
+référence, un bloc complet par peau (11 crans), les maths de contraste inchangées pour les peaux
+livrées, puis la section 6 — les deux blocs neutres comparés **valeur par valeur** aux blocs
+Graphite / Warm paper, la dérivation (le 600 est la couleur choisie, les onze crans descendent,
+contraste et déplacement de luminosité bornés pour chaque proposition), `hexToOklch` sur blanc et noir,
+un réglage illisible nettoyé, l'aller-retour `localStorage`, les onze variables écrites en ligne puis
+**retirées** au changement de peau. Régressions relancées : `_ui_scale_test.cjs` **61/61**,
+`_chart_dblclick_test.cjs` **124/124** (seule autre suite à lire `index.css`), `_figure_style_test.mjs`
+(elle lit `settingsModule.jsx`), `_tdz_scan_test.mjs` **18 assertions** (250 fichiers).
+`npx vite build` — ✓ ; `npx oxlint` — **0 erreur, 0 avertissement** sur `uiSkin.js` et
+`settingsModule.jsx`.
+
+⚠ Ce que cette peau ne fait pas, dit franchement : **pas de vrai mode sombre** (les raisons sont celles
+de la section « Les peaux de l'interface » plus haut — 1 775 couleurs écrites en dur dans les modules de
+tracés), et `_ui_skin_pixel_test.cjs` (Chrome, 44 vérifications) garde sa liste de **sept** peaux : les
+trois nouvelles sont couvertes par `_ui_skin_test.cjs` (blocs complets + maths de contraste), pas
+encore par la sonde au pixel.
+
+
+
+
+
+
+---
+
+## La peau de l'interface appartient à l'OPÉRATEUR, plus au navigateur (04/10/2026)
+
+**La demande, mot pour mot.** « *the skin must be associated to the operator as each operator must
+be able to choose his own preferred skin* ».
+
+### ① Le défaut : une palette par POSTE
+
+La peau vivait dans **une** clé du navigateur (`labWorkspace_uiSkin`). Sur un poste partagé — la
+paillasse, le PC de la salle — la palette était donc celle du **dernier** qui avait cliqué : le
+suivant retrouvait les couleurs d'un autre, et devait les refaire. Deux postes n'avaient pas non
+plus les mêmes couleurs pour un même scientifique.
+
+### ② Deux étages, parce qu'il y a deux échelles
+
+`src/utils/uiSkin.js` distingue maintenant :
+
+| clé | à qui elle appartient | quand elle sert |
+| --- | --- | --- |
+| `labWorkspace_uiSkin_<propriétaire>` | à UN OPÉRATEUR | dès qu'il est connecté |
+| `labWorkspace_uiSkin` | au POSTE | écran d'entrée, session fermée — **et valeur de départ** d'un opérateur qui n'a jamais rien choisi |
+
+`<propriétaire>` est l'**identifiant** de l'opérateur (`currentUser.id`, celui de la liste des
+comptes — le même que celui du profil d'administration et du magasin de courbes par utilisateur de
+`budgetPage`) ou, tant qu'il n'en a pas, son **nom replié** (`opNameKey` : accents retirés, casse et
+ordre des mots ignorés). C'est déjà la règle d'appariement des identités du programme
+(`operatorForName`, `memberIdentity`), donc ce repli désigne le **même** opérateur d'un chemin de
+connexion à l'autre. `uiSkinOwnerOf` et `uiSkinKeyOf` sont **PURS** (donc exécutés par la sonde, pas
+seulement relus).
+
+L'accent personnalisé suit **exactement** la même règle (`labWorkspace_uiSkinCustom_<propriétaire>`) :
+deux opérateurs peuvent avoir chacun SON accent et SA famille neutre, sans se marcher dessus.
+
+### ③ Qui pose la peau, et quand
+
+* **`main.jsx` — avant la première peinture.** `applyStoredUiSkinForSession()` lit l'identité que
+  l'application a mémorisée pour CET onglet (`sessionStorage.labCurrentUser`, la clé que remplit
+  déjà `adoptIdentity`) et pose **sa** peau. Un rechargement ne montre donc pas un éclair de la
+  palette du poste avant de revenir à la sienne.
+* **`App.jsx` — un effet sur `currentUser`** (`applyStoredUiSkin(currentUser)`) suit les
+  CHANGEMENTS : connexion, fermeture de session, passage d'un opérateur à un autre. Sur un poste
+  partagé, se connecter suffit à repeindre le programme ; l'écran d'entrée revient à la peau du
+  poste.
+* **`settingsModule.jsx` — ⚙ Settings** écrit la clé de l'opérateur connecté
+  (`saveUiSkin(id, operator)` / `saveUiCustomSkin(raw, operator)`), **relit** la sienne si
+  l'identité change pendant que le panneau est ouvert, et **dit** à qui la peau appartient (le nom
+  de l'opérateur, ou « this computer » quand personne n'est connecté).
+
+### ④ Ce qui n'a pas changé
+
+* **Jamais dans le dataset ni dans le Doc** : c'est toujours un réglage d'écran (localStorage) ;
+* la **peau du poste** existe toujours — celle de l'écran d'entrée, et celle dont part un nouvel
+  opérateur (un poste ne change donc pas de couleur sous les yeux de celui qui s'assied devant) ;
+* l'**échelle d'affichage** (`utils/uiScale.js`) reste, elle, **par navigateur** : la taille d'un
+  écran est une propriété de la machine, pas d'une personne ;
+* les **dix peaux** et leurs blocs `index.css` : rien à toucher — une peau ne change qu'**une clé**.
+
+### ⑤ Elles voyagent (sans Firestore)
+
+`labWorkspace_uiSkin_<propriétaire>` commence par « lab » et n'est pas un secret : le miroir des
+clés (`_workspace/keys.json`, voir `workspaceKeyStore.js`) la dépose donc sur le Drive **avec les
+autres**, et la fusion par horodatage — par clé — garantit qu'un opérateur ne peut pas écraser la
+peau d'un autre. Résultat : chacun retrouve sa palette **sur n'importe quel poste**, sans compte
+supplémentaire et sans une ligne de Firestore en plus.
+
+*Vérifier :* `node _ui_skin_test.cjs` — **158/158** : la section 7 **exécute** l'appartenance (le
+propriétaire est l'id, sinon le nom replié — accents, casse et ordre des mots) ; deux opérateurs
+écrivent et relisent des peaux **DIFFÉRENTES** ; une lecture ne rend **jamais** celle d'un autre ;
+le poste garde la sienne ; un nouvel opérateur **part** de celle du poste ; deux accents
+personnalisés distincts ; la peau de la session posée **avant le premier rendu**, et celle du poste
+quand la session est vide. `node _workspace_keys_test.mjs` — **39** : les deux clés d'opérateur
+sont acceptées par le miroir. Régressions : `_ui_scale_test.cjs` **61/61**,
+`_auth_identity_test.mjs` **39 assertions** (l'identité et l'onglet n'ont pas bougé),
+`_tdz_scan_test.mjs` **18 assertions** (250 fichiers). `npx vite build` — ✓ ; `npx oxlint` sur les
+quatre fichiers touchés (`uiSkin.js`, `App.jsx`, `main.jsx`, `settingsModule.jsx`) — **0 erreur, 0
+avertissement**.
+
+⚠ Ce que ce découpage ne fait pas, dit franchement : la peau n'est **pas** dans Firestore — elle
+voyage par le Drive, donc elle manque tant que le miroir n'a pas parlé (le poste garde alors sa
+propre copie, et le choix reste dans ce navigateur) ; et un opérateur **renommé** dont le nom n'a
+pas encore d'id change de clé — il retombe sur la peau du poste jusqu'à son premier clic.

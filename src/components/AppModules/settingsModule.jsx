@@ -14,7 +14,10 @@ import { FigureStylePanel } from '../FigureStylePanel';
 import { normalizeOperators } from '../../utils/auth';
 import { openDrive } from '../../utils/driveNaming';
 import { UI_SCALE_PRESETS, readUiScale, saveUiScale } from '../../utils/uiScale';
-import { UI_SKIN_DEFAULT, UI_SKINS, readUiSkin, saveUiSkin } from '../../utils/uiSkin';
+import {
+  UI_CUSTOM_ACCENTS, UI_CUSTOM_NEUTRALS, UI_SKIN_CUSTOM, UI_SKIN_DEFAULT, UI_SKINS,
+  readUiCustomSkin, readUiSkin, saveUiCustomSkin, saveUiSkin, uiSkinCustomVars
+} from '../../utils/uiSkin';
 
 /* ── Display scale ─────────────────────────────────────────────────────────
    Tailwind v4 computes every text size and every spacing step from the ROOT
@@ -64,12 +67,17 @@ const DisplayScaleControl = () => {
    SAME attribute re-paints any element: the miniature below carries
    `data-skin` and is drawn with the very classes of the real interface
    (a chrome bar, a card, an accent button), so what the button shows IS what
-   the program will look like. The value is per-browser (the machine and the
-   eyes in front of it, not the dataset) and main.jsx applies it before the
-   first paint; uiSkin.js holds it. Every user sees the control. */
-const SkinMiniature = ({ skin }) => (
+   the program will look like. The value belongs to the OPERATOR who chose it
+   (utils/uiSkin.js; the skin of the COMPUTER is its fallback, and the starter
+   value for an operator who has never chosen one), and main.jsx applies the
+   one of the session before the first paint. Every user sees the control — and
+   the choice follows HIM from one computer to the next, like the other browser
+   keys. */
+const SkinMiniature = ({ skin, tone = '', style = null }) => (
   <span
     data-skin={skin.id === UI_SKIN_DEFAULT ? undefined : skin.id}
+    data-tone={tone || undefined}
+    style={style || undefined}
     className="flex w-40 flex-col gap-1 rounded-lg border border-slate-200 bg-slate-50 p-2 no-print"
   >
     <span className="rounded bg-slate-800 px-1.5 py-1 text-center text-[10px] font-bold text-white">
@@ -85,9 +93,26 @@ const SkinMiniature = ({ skin }) => (
   </span>
 );
 
-const SkinControl = () => {
-  const [skin, setSkin] = React.useState(() => readUiSkin());
-  const pick = (id) => { setSkin(id); saveUiSkin(id); };
+/* `operator` = l'opérateur connecté (null quand personne ne l'est) : LA PEAU
+   LUI APPARTIENT (utils/uiSkin.js) — on lit et on écrit donc SA clé, et sur un
+   poste partagé chacun retrouve la sienne après s'être connecté. */
+const SkinControl = ({ operator = null }) => {
+  const [skin, setSkin] = React.useState(() => readUiSkin(operator));
+  /* LE RÉGLAGE DE LA PEAU PERSONNALISÉE (accent + famille neutre) : lu une fois,
+     écrit à chaque clic — `saveUiCustomSkin` applique AUSSITÔT quand c'est la
+     peau en service, donc la miniature et le programme bougent ensemble. */
+  const [custom, setCustom] = React.useState(() => readUiCustomSkin(operator));
+  /* L'opérateur peut changer PENDANT que le panneau est ouvert (connexion, puis
+     fermeture de session, depuis la barre latérale) : la commande se relit alors
+     sur la peau du nouvel opérateur — sinon elle afficherait celle du poste à
+     côté de pages peintes avec la sienne. */
+  React.useEffect(() => {
+    setSkin(readUiSkin(operator));
+    setCustom(readUiCustomSkin(operator));
+  }, [operator]);
+  const pick = (id) => { setSkin(id); saveUiSkin(id, operator); };
+  const setAccent = (color) => setCustom(saveUiCustomSkin({ ...custom, accent: color }, operator));
+  const setNeutral = (neutral) => setCustom(saveUiCustomSkin({ ...custom, neutral }, operator));
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap gap-3">
@@ -96,14 +121,18 @@ const SkinControl = () => {
             key={s.id}
             type="button"
             onClick={() => pick(s.id)}
-            title={`${s.label} — ${s.hint}. Repaints every page of the program at once, and is remembered for this browser.`}
+            title={`${s.label} — ${s.hint}. Repaints every page of the program at once, and is remembered for the operator who picks it.`}
             className={`flex flex-col items-center gap-2 rounded-xl border-2 p-2 shadow-sm transition-colors ${
               skin === s.id
                 ? 'border-blue-600 bg-blue-50'
                 : 'border-slate-300 bg-white hover:border-slate-400'
             }`}
           >
-            <SkinMiniature skin={s} />
+            <SkinMiniature
+              skin={s}
+              tone={s.id === UI_SKIN_CUSTOM ? custom.neutral : ''}
+              style={s.id === UI_SKIN_CUSTOM ? uiSkinCustomVars(custom) : null}
+            />
             <span className="flex flex-col items-center">
               <span className="text-xs font-bold text-slate-700">{s.label}</span>
               <span className="text-[10px] text-slate-500">{s.hint}</span>
@@ -111,9 +140,78 @@ const SkinControl = () => {
           </button>
         ))}
       </div>
+      {skin === UI_SKIN_CUSTOM && (
+        <div className="flex flex-col gap-2 rounded-xl border-2 border-slate-300 bg-white p-3">
+          <span className="text-xs font-bold text-slate-700">Custom skin — the accent</span>
+          <div className="flex flex-wrap items-center gap-2">
+            {UI_CUSTOM_ACCENTS.map((a) => (
+              <button
+                key={a.id}
+                type="button"
+                onClick={() => setAccent(a.color)}
+                title={`${a.label} accent — the whole accent ramp is derived from this one colour`}
+                className={`h-7 w-7 rounded-full border-2 shadow-sm ${
+                  custom.accent === a.color ? 'border-slate-800' : 'border-white'
+                }`}
+                style={{ backgroundColor: a.color }}
+              />
+            ))}
+            <label
+              title="Any colour at all: the eleven accent stops are derived from it, so the palette stays coherent."
+              className="flex items-center gap-1.5 text-[11px] font-bold text-slate-600"
+            >
+              <input
+                type="color"
+                value={custom.accent}
+                onChange={(e) => setAccent(e.target.value)}
+                className="h-7 w-10 cursor-pointer rounded border border-slate-300 bg-white"
+              />
+              {custom.accent}
+            </label>
+          </div>
+          <span className="text-xs font-bold text-slate-700">…and the neutral family</span>
+          <div className="flex flex-wrap gap-2">
+            {UI_CUSTOM_NEUTRALS.map((n) => (
+              <button
+                key={n.id}
+                type="button"
+                onClick={() => setNeutral(n.id)}
+                title={`Neutral family: ${n.label} — it repaints the pages, the cards, the borders and the inks.`}
+                className={`rounded-lg border px-2 py-1 text-[11px] font-bold ${
+                  custom.neutral === n.id
+                    ? 'border-blue-600 bg-blue-50 text-blue-700'
+                    : 'border-slate-300 bg-white text-slate-600 hover:border-slate-400'
+                }`}
+              >
+                {n.label}
+              </button>
+            ))}
+          </div>
+          <span className="text-[10px] text-slate-500 leading-relaxed">
+            The accent repaints every button, link, highlight and chip; the neutral family repaints the
+            pages, the cards, the borders and the inks. The eleven accent stops are <b>derived from the
+            one colour</b> you pick — the same shape as the shipped ramp — so a custom skin keeps the
+            contrast of the program instead of producing an unreadable mix.
+          </span>
+        </div>
+      )}
       <p className="text-xs text-slate-500 leading-relaxed">
-        The choice applies <b>immediately to every page</b> and is remembered for this browser
-        only. It repaints the program — colours, inks, borders — and nothing else: the layout,
+        The choice applies <b>immediately to every page</b> and is remembered{' '}
+        {operator ? (
+          <>
+            <b>for {operator.name || 'the signed-in operator'}</b> — on every computer he signs in
+            to, and it changes nothing for anybody else who uses this one.
+          </>
+        ) : (
+          <>
+            for this <b>computer</b>: nobody is signed in, so this is the palette of the entry
+            screen. An operator who signs in gets HIS own skin back, and the skin he chooses is
+            kept for him, not for the machine.
+          </>
+        )}
+      </p>
+      <p className="text-xs text-slate-500 leading-relaxed">
+        A skin repaints the program — colours, inks, borders — and nothing else: the layout,
         the display scale, the printed documents and the figures keep their own settings.
       </p>
     </div>
@@ -154,10 +252,10 @@ export const SettingsModule = ({
 
                   <CollapsibleSection
                     title="Interface skin — the colours of the whole program"
-                    subtitle="Repaints every page, modal, table and badge at once — the neutral greys, the ink and the accent colour — by restating the palette Tailwind's classes read. Graphite drops the blue cast, Warm paper turns the greys warm, Indigo and Violet move the accent, Dimmed softens the white for long sessions and High contrast deepens every ink and border. The choice is immediate, remembered for this browser only, and every user sees it."
+                    subtitle="Repaints every page, modal, table and badge at once — the neutral greys, the ink and the accent colour — by restating the palette Tailwind's classes read. Graphite drops the blue cast, Warm paper turns the greys warm, Indigo, Violet, Purple, Red and Rose move the accent, Dimmed softens the white for long sessions, High contrast deepens every ink and border, and Custom lets you pick your own accent and neutral family. The choice is immediate, belongs to the OPERATOR who picks it (each one has his own, on every computer he signs in to; when nobody is signed in it is the skin of this computer), and every user sees it."
                     defaultOpen={false}
                   >
-                    <SkinControl />
+                    <SkinControl operator={currentUser} />
                   </CollapsibleSection>
 
                   <CollapsibleSection

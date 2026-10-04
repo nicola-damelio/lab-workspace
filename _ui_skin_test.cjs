@@ -1,16 +1,19 @@
 /* Validates the “Interface skin” — the palette of the whole program.
  *
  *   src/utils/uiSkin.js   the choice itself: the registry of the skins, the
- *      reference (the shipped palette, which restates NOTHING), per-browser
- *      storage, and the attribute put on <html>.
+ *      reference (the shipped palette, which restates NOTHING), PER-OPERATOR
+ *      storage (his own key, and the COMPUTER's as the fallback and the starter
+ *      value), and the attribute put on <html>.
  *   src/index.css         ONE block per skin: the Tailwind theme variables
  *      restated under `[data-skin="…"]`. Tailwind v4 compiles every colour
  *      utility to those variables, so a block repaints the program without
  *      touching a component — and, because custom properties are INHERITED,
  *      the same attribute paints any element (the Settings miniature).
- *   src/main.jsx          applies the stored skin BEFORE the first render.
- *   settingsModule.jsx    offers the skins to EVERY user, with a LIVE
- *      miniature drawn from the real classes of the interface.
+ *   src/main.jsx          applies the skin of the SESSION's operator BEFORE the
+ *      first render.
+ *   settingsModule.jsx    offers the skins to EVERY user and writes the key of
+ *      the one signed in, with a LIVE miniature drawn from the real classes of
+ *      the interface.
  *
  * The palette half of this suite is the real guardrail: it re-reads Tailwind's
  * own ramps (node_modules/tailwindcss/theme.css — the reference), runs the
@@ -18,6 +21,12 @@
  * refuses any skin that costs more than 1.5 steps of contrast anywhere, any
  * ramp that stops being monotonic in lightness, and any hue swap that moves a
  * stop by more than 4 points of OKLCH lightness.
+ *
+ * The OWNERSHIP half (section 7) holds the other rule: a skin belongs to the
+ * OPERATOR, not to the browser — his own key, the COMPUTER's key as the fallback
+ * and the starter value, and an accent that follows the same rule — so a shared
+ * computer hands each one back HIS palette, and reading one operator's choice
+ * can never return another's.
  */
 const fs = require('fs');
 const path = require('path');
@@ -114,7 +123,21 @@ const ROLES = [
     setItem: (k, v) => { store.set(k, String(v)); },
     removeItem: (k) => { store.delete(k); }
   };
-  global.document = { documentElement: { dataset: {} } };
+  global.document = {
+    documentElement: {
+      dataset: {},
+      /* LE STYLE EN LIGNE : la peau personnalisée y écrit ses onze crans d'accent
+         (ils ne peuvent pas vivre dans la feuille — ils dépendent d'une couleur
+         choisie par l'utilisateur), et les retire quand une autre peau est
+         choisie. Sans ce petit objet, ce nettoyage ne serait pas testable. */
+      style: {
+        props: {},
+        setProperty(k, v) { this.props[k] = String(v); },
+        removeProperty(k) { delete this.props[k]; },
+        getPropertyValue(k) { return this.props[k] || ''; }
+      }
+    }
+  };
 
   const UI = await import(pathToFileURL(path.join(ROOT, 'src/utils/uiSkin.js')).href);
   const KEY = 'labWorkspace_uiSkin';
@@ -125,7 +148,14 @@ const ROLES = [
      ══════════════════════════════════════════════════════════════════════════ */
   frag('uiSkin.js declares the storage key', UTIL, `export const UI_SKIN_KEY = '${KEY}';`);
   frag('…and the reference skin', UTIL, "export const UI_SKIN_DEFAULT = 'slate';");
-  ok('1a the helper is a PURE module (no import at all)', !/^import /m.test(UTIL));
+  /* Le module a maintenant UN import : le pliage des noms d'opérateurs
+     (`opNameKey`), lui-même sans la moindre dépendance — c'est ce qui permet
+     d'attacher la peau à un opérateur. Aucune bibliothèque, aucun effet. */
+  ok('1a the helper imports only the pure name helper (no library, one import)',
+    /^import \{ opNameKey \} from '\.\/auth\.js';$/m.test(UTIL)
+    && (UTIL.match(/^import /gm) || []).length === 1);
+  frag('…et les clés par opérateur sont déclarées ici', UTIL,
+    'export const uiSkinKeyOf = (operator = null, base = UI_SKIN_KEY) => {');
   check('1b the reference is one of the skins', UI.UI_SKINS.some((s) => s.id === UI.UI_SKIN_DEFAULT), true);
   check('1c the ids are unique', new Set(UI.UI_SKINS.map((s) => s.id)).size, UI.UI_SKINS.length);
   check('1d every skin carries a label, a hint, a kind and four swatches',
@@ -162,10 +192,10 @@ const ROLES = [
   /* ══════════════════════════════════════════════════════════════════════════
      2) main.jsx — applied BEFORE the first paint
      ══════════════════════════════════════════════════════════════════════════ */
-  frag('main.jsx imports the helper', MAIN, "import { applyStoredUiSkin } from './utils/uiSkin'");
-  ok('2a …and applies it', MAIN.includes('\napplyStoredUiSkin()'));
-  check('2b …before React renders', MAIN.indexOf('applyStoredUiSkin()') > 0
-    && MAIN.indexOf('applyStoredUiSkin()') < MAIN.indexOf('ReactDOM.createRoot'), true);
+  frag('main.jsx imports the helper', MAIN, "import { applyStoredUiSkinForSession } from './utils/uiSkin'");
+  ok('2a …and applies it', MAIN.includes('\napplyStoredUiSkinForSession()'));
+  check('2b …before React renders', MAIN.indexOf('applyStoredUiSkinForSession()') > 0
+    && MAIN.indexOf('applyStoredUiSkinForSession()') < MAIN.indexOf('ReactDOM.createRoot'), true);
   check('2c the display scale is applied too (the two settings are neighbours)',
     MAIN.indexOf('applyStoredUiScale()') > 0, true);
 
@@ -173,9 +203,15 @@ const ROLES = [
      3) THE CONTROL — Settings, visible to every user, with a live miniature
      ══════════════════════════════════════════════════════════════════════════ */
   frag('settingsModule imports the registry', SET,
-    "import { UI_SKIN_DEFAULT, UI_SKINS, readUiSkin, saveUiSkin } from '../../utils/uiSkin';");
-  frag('settingsModule defines the control', SET, 'const SkinControl = () => {');
-  frag('…writes through the shared setter', SET, 'const pick = (id) => { setSkin(id); saveUiSkin(id); };');
+    'UI_CUSTOM_ACCENTS, UI_CUSTOM_NEUTRALS, UI_SKIN_CUSTOM, UI_SKIN_DEFAULT, UI_SKINS,');
+  frag('…with the custom-skin helpers (accent, neutral, apply, read/write)',
+    SET, 'readUiCustomSkin, readUiSkin, saveUiCustomSkin, saveUiSkin, uiSkinCustomVars');
+  frag('…and the custom panel appears only for that skin', SET, '{skin === UI_SKIN_CUSTOM && (');
+  frag('…offering the eight accents and the pipette', SET, '{UI_CUSTOM_ACCENTS.map((a) => (');
+  frag('…and the neutral families', SET, '{UI_CUSTOM_NEUTRALS.map((n) => (');
+  frag('settingsModule defines the control', SET, 'const SkinControl = ({ operator = null }) => {');
+  frag('…writes through the shared setter, POUR CET OPÉRATEUR',
+    SET, 'const pick = (id) => { setSkin(id); saveUiSkin(id, operator); };');
   frag('…offers the registry', SET, '{UI_SKINS.map((s) => (');
   frag('the miniature carries the attribute', SET,
     'data-skin={skin.id === UI_SKIN_DEFAULT ? undefined : skin.id}');
@@ -183,12 +219,13 @@ const ROLES = [
     SET.includes('rounded bg-slate-800') && SET.includes('border border-slate-200 bg-white')
     && SET.includes('rounded bg-blue-600') && SET.includes('text-white'), true);
   frag('…and the page shows it', SET, 'title="Interface skin — the colours of the whole program"');
-  frag('…with the control inside', SET, '<SkinControl />');
-  ok('3b the section sits after the display scale', SET.indexOf('<DisplayScaleControl />') < SET.indexOf('<SkinControl />'));
-  ok('3c …and BEFORE the superuser-only block', SET.indexOf('<SkinControl />') < SET.indexOf('{isSuper && ('));
+  const SKIN_CTL = '<SkinControl operator={currentUser} />';
+  frag('…with the control inside, branchée sur l’opérateur connecté', SET, SKIN_CTL);
+  ok('3b the section sits after the display scale', SET.indexOf('<DisplayScaleControl />') < SET.indexOf(SKIN_CTL));
+  ok('3c …and BEFORE the superuser-only block', SET.indexOf(SKIN_CTL) < SET.indexOf('{isSuper && ('));
   ok('3d …so it is not reserved to the superuser', SET.indexOf('<ScientistsOperatorsManager') > 0);
-  frag('…the choice never touches the dataset (localStorage only)', UTIL,
-    'localStorage.setItem(UI_SKIN_KEY, skin.id)');
+  frag('…the choice never touches the dataset (browser storage only, under the operator’s key)', UTIL,
+    'localStorage.setItem(uiSkinKeyOf(operator), skin.id)');
 
   /* ══════════════════════════════════════════════════════════════════════════
      4) THE BLOCKS — one per skin, keyed on the attribute, unlayered
@@ -273,7 +310,11 @@ const ROLES = [
   } else {
     check('5a the shipped palette IS the reference (blue-600 and slate-50 spot-check)',
       SHIPPED.blue['600'].L > 54 && SHIPPED.blue['600'].L < 55 && SHIPPED.slate['50'].L > 98, true);
-    for (const id of others) {
+    /* LA PEAU PERSONNALISÉE EST JUGÉE À PART (section 6, plus bas) : ses onze
+       crans d'accent ne sont pas dans la feuille — ils dépendent d'une couleur
+       choisie par l'utilisateur — donc les maths ci-dessus ne verraient que la
+       palette livrée et ne prouveraient rien. */
+    for (const id of others.filter((s) => s !== UI.UI_SKIN_CUSTOM)) {
       const worst = worstVsShipped(id);
       ok(`5b ${id}: no pair of the program loses more than 1.5 contrast steps (worst ${worst.d.toFixed(2)} on ${worst.fam} · ${worst.role})`,
         worst.d > -1.5);
@@ -313,6 +354,143 @@ const ROLES = [
       Object.entries(blockVars.contrast).filter(([f]) => !['slate', 'blue'].includes(f))
         .every(([f, stops]) => Object.entries(stops).every(([s, v]) => SHIPPED[f][s].L - v.L >= 3)));
   }
+
+  /* ══════════════════════════════════════════════════════════════════════════
+     6) LA PEAU PERSONNALISÉE — « all too similar AND NOT customizable »
+     ══════════════════════════════════════════════════════════════════════════ */
+  check('6a the custom skin is in the registry (and is not the reference)',
+    UI.UI_SKINS.some((s) => s.id === UI.UI_SKIN_CUSTOM) && UI.UI_SKIN_CUSTOM !== UI.UI_SKIN_DEFAULT, true);
+  check('6b the eight offered accents are real hexes',
+    UI.UI_CUSTOM_ACCENTS.every((a) => /^#[0-9a-f]{6}$/.test(a.color)), true);
+  check('6c …all different', new Set(UI.UI_CUSTOM_ACCENTS.map((a) => a.color)).size, UI.UI_CUSTOM_ACCENTS.length);
+  check('6d the three neutral families are declared', UI.UI_CUSTOM_NEUTRALS.map((n) => n.id), ['slate', 'zinc', 'stone']);
+  frag('6e the fallback accent (and the block) are in the stylesheet', CSS, '[data-skin="custom"] {');
+  frag('…carrying the delivered accent', CSS, '--lab-accent: #155dfc;');
+
+  /* Les deux familles neutres empruntées sont les MÊMES dégradés que les peaux
+     Graphite / Warm paper : la couture est vérifiée valeur par valeur (les blocs
+     portent DEUX attributs — `[data-skin="custom"][data-tone="…"]` — donc ils
+     échappent volontairement au relevé des blocs d'une seule peau). */
+  const toneBlock = (tone) => {
+    const m = new RegExp(`\\[data-skin="custom"\\]\\[data-tone="${tone}"\\]\\s*\\{([\\s\\S]*?)\\}`).exec(CSS);
+    return m ? rampsOf(m[1]) : null;
+  };
+  const zinc = toneBlock('zinc');
+  const stone = toneBlock('stone');
+  check('6f the zinc ramp is complete (11 stops — pure greys)', zinc ? Object.keys(zinc.slate).length : 0, 11);
+  check('6g …and it IS the Graphite ramp, stop for stop',
+    zinc && blockVars.graphite && JSON.stringify(zinc.slate) === JSON.stringify(blockVars.graphite.slate), true);
+  check('6h the stone ramp is complete (11 stops — warm greys)', stone ? Object.keys(stone.slate).length : 0, 11);
+  check('6i …and it IS the Warm paper ramp, stop for stop',
+    stone && blockVars.warm && JSON.stringify(stone.slate) === JSON.stringify(blockVars.warm.slate), true);
+
+  /* LA DÉRIVATION — le cran 600 EST la couleur choisie, la forme est celle du
+     dégradé livré, et le contraste d'un libellé blanc tient pour CHAQUE
+     proposition : c'est ce qui garantit qu'une peau personnalisée ne peut pas
+     casser la palette du programme. */
+  const rampOf = (hexc) => Object.fromEntries(Object.entries(UI.uiSkinCustomRamp(hexc))
+    .map(([k, v]) => {
+      const m = /oklch\(([\d.]+)%\s+([\d.]+)\s+([\d.]+)\)/.exec(v);
+      return [k.replace('--color-blue-', ''), { L: +m[1], C: +m[2], H: +m[3] }];
+    }));
+  const delivered = rampOf(UI.UI_CUSTOM_ACCENT_DEFAULT);
+  ok(`6j the delivered accent reproduces the shipped ramp (the 600 stop is L=${delivered['600'].L} vs blue-600 ${SHIPPED.blue['600'].L})`,
+    Math.abs(delivered['600'].L - SHIPPED.blue['600'].L) <= 0.2
+    && Math.abs(delivered['600'].H - SHIPPED.blue['600'].H) < 1);
+  ok('6k …and the eleven stops descend in lightness',
+    STOPS.every((s, i) => i === 0 || delivered[String(s)].L < delivered[String(STOPS[i - 1])].L));
+  ok(`6l every offered accent keeps a white label readable (worst white-on-600 = ${Math.min(...UI.UI_CUSTOM_ACCENTS.map((a) => ratio('white', rampOf(a.color)['600']))).toFixed(2)} ≥ 3.5)`,
+    UI.UI_CUSTOM_ACCENTS.every((a) => ratio('white', rampOf(a.color)['600']) >= 3.5));
+  ok(`6m …and never moves the ramp more than 12 points of lightness (worst = ${Math.max(...UI.UI_CUSTOM_ACCENTS.map((a) => Math.max(...STOPS.map((s) => Math.abs(rampOf(a.color)[String(s)].L - SHIPPED.blue[String(s)].L))))).toFixed(1)})`,
+    UI.UI_CUSTOM_ACCENTS.every((a) => Math.max(...STOPS.map((s) => Math.abs(rampOf(a.color)[String(s)].L - SHIPPED.blue[String(s)].L))) <= 12));
+  check('6n sRGB and OKLCH agree (white is L=100 C=0, black is L=0)',
+    [Math.round(UI.hexToOklch('#ffffff').L), Math.round(UI.hexToOklch('#ffffff').C), Math.round(UI.hexToOklch('#000000').L)],
+    [100, 0, 0]);
+  check('6o a colour that is not a hex is refused', UI.hexToOklch('red'), null);
+  check('6p a garbage setting is sanitised (accent and neutral)',
+    UI.uiCustomSkinOf({ accent: 'red', neutral: 'neon' }),
+    { accent: UI.UI_CUSTOM_ACCENT_DEFAULT, neutral: UI.UI_CUSTOM_NEUTRAL_DEFAULT });
+  check('6q the setting round-trips through localStorage', (() => {
+    UI.saveUiCustomSkin({ accent: '#009689', neutral: 'zinc' });
+    return [store.get(UI.UI_CUSTOM_KEY), UI.readUiCustomSkin()];
+  })(), [JSON.stringify({ accent: '#009689', neutral: 'zinc' }), { accent: '#009689', neutral: 'zinc' }]);
+
+  /* L'APPLICATION — les onze crans en ligne, et AUCUNE fuite vers une autre peau. */
+  UI.saveUiSkin(UI.UI_SKIN_CUSTOM);
+  check('6r the attribute names the custom skin', root.dataset.skin, UI.UI_SKIN_CUSTOM);
+  check('6s …the neutral family rides with it', root.dataset.tone, 'zinc');
+  check('6t …and the ELEVEN accent stops are written inline',
+    Object.keys(root.style.props).filter((k) => k.startsWith('--color-blue-')).length, 11);
+  check('6u …the 600 stop really is the chosen colour (teal)',
+    root.style.props['--color-blue-600'], UI.uiSkinCustomRamp('#009689')['--color-blue-600']);
+  UI.saveUiSkin('violet');
+  check('6v another skin REMOVES them (they cannot outlive the choice)',
+    [Object.keys(root.style.props), root.dataset.tone || ''], [[], '']);
+  check('6w …and the attribute is the new skin', root.dataset.skin, 'violet');
+  UI.saveUiSkin(UI.UI_SKIN_DEFAULT);
+
+  /* ══════════════════════════════════════════════════════════════════════════
+     7 — LA PEAU APPARTIENT À L'OPÉRATEUR
+     « the skin must be associated to the operator as each operator must be able
+     to choose his own preferred skin » : la clé porte le propriétaire (son id,
+     ou son nom replié tant qu'il n'en a pas), le POSTE garde la sienne — celle
+     de l'écran d'entrée, et celle dont part un opérateur qui n'a jamais rien
+     choisi — et l'accent personnalisé suit exactement la même règle.
+     ═══════════════════════════════════════════════════════════════════════ */
+  const ALICE = { id: 'op_alice', name: 'Alice Martin', role: 'user' };
+  const BOB = { id: 'op_bob', name: 'Bob Durand', role: 'user' };
+  const ELISE = { id: '', name: 'Élise  Müller' };           // pas encore d'id
+
+  check('7a the owner of a skin is the operator id', UI.uiSkinOwnerOf(ALICE), 'op_alice');
+  check('7b …and the folded name while he has none (accents, case and word order fall)',
+    UI.uiSkinOwnerOf(ELISE), UI.uiSkinOwnerOf({ id: '', name: 'muller elise' }));
+  check('7c nobody ⇒ the key of the COMPUTER', UI.uiSkinKeyOf(null), KEY);
+  check('7d …while each operator has his own, for each setting',
+    [UI.uiSkinKeyOf(BOB), UI.uiCustomSkinKeyOf(BOB)],
+    [`${KEY}_op_bob`, `${UI.UI_CUSTOM_KEY}_op_bob`]);
+
+  store.clear();
+  UI.saveUiSkin('red', ALICE);
+  UI.saveUiSkin('warm', BOB);
+  check('7e each operator keeps HIS skin, under his own key',
+    [store.get(`${KEY}_op_alice`), store.get(`${KEY}_op_bob`)], ['red', 'warm']);
+  check('7f …and reading one never returns the other',
+    [UI.readUiSkin(ALICE), UI.readUiSkin(BOB)], ['red', 'warm']);
+  check('7g the computer itself was not touched (the shipped palette)',
+    [store.get(KEY), UI.readUiSkin()], [null, UI.UI_SKIN_DEFAULT]);
+
+  UI.saveUiSkin('violet');                                   // réglée sans être connecté
+  check('7h …its own choice goes under the plain key', [store.get(KEY), UI.readUiSkin()], ['violet', 'violet']);
+  check('7i a NEWCOMER on this machine starts from the computer’s skin',
+    UI.readUiSkin(ELISE), 'violet');
+
+  UI.saveUiSkin('graphite', ELISE);                          // …puis choisit la sienne
+  check('7j …which is then HIS (the machine keeps its own, under the folded name)',
+    [UI.readUiSkin(ELISE), UI.readUiSkin(), store.get(`${KEY}_elise muller`)],
+    ['graphite', 'violet', 'graphite']);
+
+  UI.saveUiCustomSkin({ accent: '#009689', neutral: 'zinc' }, ALICE);
+  UI.saveUiCustomSkin({ accent: '#e60076', neutral: 'stone' }, BOB);
+  check('7k two operators can each have their own accent and neutral family',
+    [UI.readUiCustomSkin(ALICE), UI.readUiCustomSkin(BOB)],
+    [{ accent: '#009689', neutral: 'zinc' }, { accent: '#e60076', neutral: 'stone' }]);
+  check('7l …and the computer’s own accent was never borrowed from one of them',
+    UI.readUiCustomSkin(), UI.uiCustomSkinOf(null));
+
+  /* main.jsx pose la peau AVANT le premier rendu, en la lisant dans la session
+     de l'onglet : un rechargement ne doit donc pas peindre la palette du poste
+     avant celle de l'opérateur connecté. */
+  global.sessionStorage = {
+    getItem: (k) => (k === UI.SESSION_OPERATOR_KEY ? JSON.stringify(ALICE) : null),
+    setItem: () => {}, removeItem: () => {}
+  };
+  UI.saveUiSkin('contrast', ALICE);
+  UI.applyStoredUiSkinForSession();
+  check('7m the skin of the session’s operator is the one applied before the first paint',
+    root.dataset.skin, 'contrast');
+  global.sessionStorage = null;                              // personne n'est connecté
+  UI.applyStoredUiSkinForSession();
+  check('7n …and with nobody in the session it is the computer’s skin', root.dataset.skin, 'violet');
 
   /* ══════════════════════════════════════════════════════════════════════════ */
   const failed = results.filter((r) => !r.ok);
