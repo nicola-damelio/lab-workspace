@@ -368,12 +368,34 @@ export const readUiCustomSkin = (operator = null) => {
   } catch { return uiCustomSkinOf(null); }
 };
 
+/* ── LA PEAU EN SERVICE — celle qu'`applyUiSkin` a posée en dernier ──────────
+   `saveUiCustomSkin` s'en sert pour décider s'il doit appliquer, et c'est la
+   bonne question à poser : « la peau personnalisée est-elle celle en service ? »
+   RE-LIRE le stockage pour y répondre serait faux — et c'est le défaut que ce
+   bloc corrige. L'écriture peut être REFUSÉE (quota dépassé, navigation privée),
+   la clé peut porter une valeur que le module ne reconnaît pas (une peau écrite
+   par une autre version, ou par la synchronisation entre postes), ou la clé
+   d'opérateur peut n'être pas la même au moment du clic : dans les trois cas la
+   relecture ne dit pas « custom », et le réglage qu'on vient de choisir
+   demeurait sans effet. C'est très exactement le symptôme rapporté — « les peaux
+   livrées marchent, mais si je clique sur Custom et que je change les couleurs,
+   rien ne se passe » : une peau livrée, elle, n'a rien à relire (saveUiSkin). */
+let appliedSkinId = null;
+
+/** La peau qu'`applyUiSkin` a posée en dernier (null tant qu'aucune ne l'a été).
+ *  PUR — et la seule réponse honnête à « qu'est-ce qui est en service ? ». */
+export const appliedUiSkinId = () => appliedSkinId;
+
 /** Écrire le réglage — et APPLIQUER tout de suite quand la peau personnalisée
- *  est celle en service (sinon le réglage resterait sans effet). */
+ *  est celle en service (sinon le réglage resterait sans effet). On applique CE
+ *  QU'ON VIENT DE CHOISIR, jamais ce qu'on relit : c'est ce que le clic veut
+ *  dire, et c'est vrai même si le stockage a refusé d'en garder la trace. */
 export const saveUiCustomSkin = (raw, operator = null) => {
   const custom = uiCustomSkinOf(raw);
-  try { localStorage.setItem(uiCustomSkinKeyOf(operator), JSON.stringify(custom)); } catch { /* ignore */ }
-  if (readUiSkin(operator) === UI_SKIN_CUSTOM) applyUiSkin(UI_SKIN_CUSTOM, operator);
+  try { localStorage.setItem(uiCustomSkinKeyOf(operator), JSON.stringify(custom)); } catch { /* le stockage peut refuser : le choix s'applique quand même */ }
+  if (appliedSkinId === UI_SKIN_CUSTOM || readUiSkin(operator) === UI_SKIN_CUSTOM) {
+    applyUiSkin(UI_SKIN_CUSTOM, operator, custom);
+  }
   return custom;
 };
 
@@ -410,8 +432,11 @@ export const readUiSkin = (operator = null) => {
    INLINE on <html> — and cleared for every other skin, or they would outlive
    the choice. The PATTERN is the stylesheet's job (index.css): here we only
    raise or drop `data-pattern` on <html>, which paints every page at once.
-   `operator` : l'accent lu (peau personnalisée) est celui de CET opérateur. */
-export const applyUiSkin = (id, operator = null) => {
+   `operator` : l'accent lu (peau personnalisée) est celui de CET opérateur.
+   `custom` : le réglage qu'on vient d'écrire, quand on le connaît — le poser
+   tel quel évite de relire un stockage qui a pu REFUSER l'écriture (voir
+   `saveUiCustomSkin`). Il est retenu : c'est « la peau en service ». */
+export const applyUiSkin = (id, operator = null, custom = null) => {
   if (typeof document === 'undefined') return; // unit tests (node) have no DOM
   const root = document.documentElement;
   if (!root) return;
@@ -430,24 +455,26 @@ export const applyUiSkin = (id, operator = null) => {
     delete root.dataset.pattern;
   };
   if (skin.id === UI_SKIN_CUSTOM) {
-    const custom = readUiCustomSkin(operator);
+    const settings = uiCustomSkinOf(custom || readUiCustomSkin(operator));
     /* ON EFFACE D'ABORD : un fond qu'on vient de retirer (ou l'accent d'un autre
        opérateur) doit disparaître des variables en ligne, sinon l'écriture qui
        suit ne ferait qu'ajouter le réglage courant À l'ancien — la page
        resterait peinte avec la couleur qu'on vient d'abandonner. */
     clearCustom();
-    if (root.style) Object.entries(uiSkinCustomVars(custom)).forEach(([k, v]) => root.style.setProperty(k, v));
-    root.dataset.tone = custom.neutral;
+    if (root.style) Object.entries(uiSkinCustomVars(settings)).forEach(([k, v]) => root.style.setProperty(k, v));
+    root.dataset.tone = settings.neutral;
     /* le motif : « none » (le défaut) n'écrit AUCUN attribut, donc la feuille
        ne peint rien et l'attribut ne traîne pas dans le DOM. */
-    if (custom.pattern === UI_BG_PATTERN_DEFAULT) delete root.dataset.pattern;
-    else root.dataset.pattern = custom.pattern;
+    if (settings.pattern === UI_BG_PATTERN_DEFAULT) delete root.dataset.pattern;
+    else root.dataset.pattern = settings.pattern;
     root.dataset.skin = UI_SKIN_CUSTOM;
+    appliedSkinId = UI_SKIN_CUSTOM;
     return;
   }
   clearCustom();
   if (skin.id === UI_SKIN_DEFAULT) delete root.dataset.skin;
   else root.dataset.skin = skin.id;
+  appliedSkinId = skin.id;
 };
 
 /* Écrire la peau — celle de CET opérateur quand on en connaît un, celle du

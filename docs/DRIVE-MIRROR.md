@@ -3309,3 +3309,54 @@ nouvelle taille, en passe nette, une seule fois, et le retour à l'ancienne tail
 `node _viewer_light_rig_test.mjs`, `node _viewer_render_smoke_test.mjs` **23**, `npx vite build` ✓,
 `npx oxlint` sur les deux fichiers touchés — **0 erreur**, et **exactement les mêmes 62
 avertissements qu'à HEAD** (vérifié sur la version de `HEAD`).
+
+## « Changer la couleur de fond ou le motif n'a aucun effet » (04/10/2026)
+
+**La demande, mot pour mot.** « *changing the background color or pattern does not have any effect* »,
+précisée ensuite : « *if I click on your predefined styles they work but if I click on custom and change
+the colors nothing happens* ».
+
+**Le constat, mesuré avant toute correction.** Le mécanisme n'était pas en cause. Dans Chrome, sur le
+build réel, un réglage enregistré (`bg: #22c55e` + motif `grid`) **peint bien les pages** : `<html>` porte
+`data-skin="custom" data-tone="stone" data-pattern="grid"`, les deux crans de page sont écrits en ligne
+(`--color-slate-50: oklch(95.5% 0.030 149.6)`), le cadre de page du programme calcule
+`background-color: oklch(0.955 0.03 149.6)` **et** `background-image: linear-gradient(…)` sur `24px 24px`,
+et le `<body>` suit. Deux captures (`_bg_shot_custom.png` / `_bg_shot_none.png`) le montrent côte à côte.
+Le défaut était donc dans le **clic** — et la seconde phrase de l'utilisateur le désignait déjà : les
+peaux livrées marchent, le custom non.
+
+**Pourquoi les deux chemins ne se ressemblent pas.** `saveUiSkin` (peau livrée) applique **toujours** ce
+qu'on vient de cliquer : elle n'a rien à relire. `saveUiCustomSkin` (accent, famille neutre, couleur de
+page, motif) décidait d'appliquer ou non en **relisant le stockage** (`readUiSkin(operator) === 'custom'`).
+Or cette relecture peut ne pas répondre « custom » : `localStorage.setItem` peut être **refusé** (quota
+dépassé, navigation privée) ; la clé peut porter une valeur que le module ne reconnaît pas (écrite par une
+autre version, ou passée par la synchronisation des clés entre postes) ; la clé d'**opérateur** peut n'être
+pas la même au moment du clic. Dans les trois cas le réglage tout juste choisi restait sans effet, **en
+silence** — la miniature, elle, bougeait (elle lit l'objet rendu, pas le stockage), ce qui donnait très
+exactement l'impression que rien ne se passe.
+
+### ① La peau « en service », plutôt qu'une relecture
+
+`uiSkin.js` retient maintenant la peau qu'`applyUiSkin` a réellement posée (`appliedSkinId`, exposé par
+`appliedUiSkinId()`), et `saveUiCustomSkin` applique le réglage si **cette** peau est la personnalisée —
+le stockage n'est plus consulté pour décider. Mieux : c'est **l'objet qui vient d'être choisi** qui est
+posé (`applyUiSkin(id, operator, custom)`), jamais une valeur relue : un stockage qui refuse d'écrire ne
+peut donc plus annuler un clic.
+
+*Vérifier :* `node _ui_bg_apply_test.cjs` — **9/9** (contre **6/9** avant correction : « le stockage
+refuse d'écrire » et « la clé d'opérateur a changé » échouaient). La sonde ouvre le vrai module servi par
+Vite dans Chrome, joue les clics (`saveUiSkin('custom')` puis `saveUiCustomSkin(…)`) et lit `<html>` après
+chacun ; elle porte aussi le **témoin négatif** — sur une peau livrée, un réglage custom ne repeint rien.
+`node _ui_bg_live_test.cjs custom` — **12/12** et `… none` — **7/7** : le build réel, ce que le moteur
+peint sur les pages réelles, avec et sans réglage. `node _ui_skin_test.cjs` — **229/229**,
+`node _workspace_keys_test.mjs` — **39**, `node _tdz_scan_test.mjs`, `node _ui_scale_test.cjs`,
+`node _auth_identity_test.mjs` — inchangés ; `npx vite build` ✓.
+
+⚠ Ce que cela ne fait pas, dit franchement : si le navigateur **refuse d'écrire** dans son stockage, le
+choix s'applique mais n'est **pas retenu** après un rechargement — un réglage d'écran n'a pas d'autre
+mémoire (hors dataset et hors Doc, par construction). Et la **bande de lisibilité** reste ce qu'elle est :
+une couleur franche est peinte en pastel (`#22c55e` → `#e3f6e6`), les trois teintes neutres offertes
+(Slate, Zinc, Stone) sont à un ou deux points du blanc livré, `Slate` **est** la teinte livrée, et le
+premier motif de la liste est `none` — donc les toutes premières pastilles essayées ne peuvent, par
+construction, rien changer.
+
