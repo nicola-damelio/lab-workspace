@@ -22,11 +22,19 @@
    Le dossier où chaque candidat a été trouvé est affiché tel quel
    (`folderPathText`) : l'utilisateur sait où déposer les fichiers suivants, et
    la remontée « un cran plus haut » de la lecture n'est jamais muette.
+
+   LE SEUL GESTE QUI FABRIQUE vit ici aussi : `DriveExperimentFolderCreator`.
+   Quand l'expérience n'a PAS encore de dossier sur le Drive, la lecture ne
+   peut rien montrer — la demande est alors « allow me to create it with the
+   correct path », et ce bouton le fait (voir
+   utils/driveExperimentFiles.createExperimentFolder : le chemin canonique de
+   l'expérience, jamais la sous-section d'un bouton). Il est posé dans la MÊME
+   rangée que les boutons 📂, donc sur la ligne des commandes de fichiers.
    ========================================================================= */
 
 import { useState } from 'react';
 import { downloadCloudFile, sameRawFileFor } from '../utils/driveRestore';
-import { describeDriveFileSize, drivePathText, listExperimentFiles, normalizeFileExts } from '../utils/driveExperimentFiles';
+import { createExperimentFolder, describeDriveFileSize, drivePathText, listExperimentFiles, normalizeFileExts } from '../utils/driveExperimentFiles';
 import { getDriveToken } from '../utils/driveUpload';
 
 const BTN = 'bg-white hover:bg-slate-50 border border-indigo-300 text-indigo-700 font-bold py-1.5 px-3 rounded-lg text-xs cursor-pointer shadow-sm transition-colors inline-flex items-center gap-1.5 disabled:opacity-50';
@@ -153,4 +161,74 @@ export const DriveExperimentFilePicker = ({
     </div>
   );
 };
+
+/**
+ * CRÉER le dossier de l'expérience sur le Drive — le SEUL geste d'écriture de
+ * la rangée des fichiers (les 📂, eux, ne font que LIRE).
+ *
+ * Défaut visé (signalé) : « If the experiment does not exist in drive, allow
+ * me to create it with the correct path. » Un geste de lecture ne fabrique
+ * jamais d'arborescence : quand le dossier n'existe pas, les 📂 ne montrent
+ * rien. Ce bouton-ci est donc EXPLICITE — l'utilisateur demande la création —
+ * et il la fait au chemin canonique de l'expérience (project/test/instance),
+ * une seule fois, sans doublon (la création est idempotente).
+ *
+ * Rien n'est inventé à l'écran : le chemin créé est montré tel qu'il est écrit
+ * sur le Drive (`pathText`) et un lien l'ouvre, ou l'échec est DIT (Drive
+ * éteint, quota, Nextcloud non configuré).
+ *
+ * @param {object}   props
+ * @param {object}   props.ctx          contexte de nommage de la page (project/test/instance)
+ * @param {string}   [props.label]      texte du bouton
+ * @param {string}   [props.titleText]  infobulle (ce que le geste fait exactement)
+ * @param {string}   [props.note]       phrase d'aide affichée à droite du bouton
+ * @param {boolean}  [props.disabled]
+ * @param {Function} [props.onCreated]  async (result) => void — la page peut recharger ses listes
+ */
+export const DriveExperimentFolderCreator = ({
+  ctx = null, label = '📁 Create experiment folder on Drive', titleText = '',
+  note = '', disabled = false, onCreated = null
+}) => {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  const [made, setMade] = useState(null);      // { pathText, folderUrl }
+
+  const create = async () => {
+    setBusy(true);
+    setMsg('📁 Creating the experiment folder on Google Drive…');
+    const res = await createExperimentFolder({ ctx });
+    setBusy(false);
+    if (!res || !res.ok) {
+      setMade(null);
+      setMsg(`⚠️ ${(res && res.error) || 'The experiment folder could not be created.'}`);
+      return;
+    }
+    setMade({ pathText: res.pathText, folderUrl: res.folderUrl });
+    setMsg(`✅ Experiment folder ready: ${res.pathText} — deposit your files there, then press the 📂 buttons above.`);
+    try { await onCreated?.(res); } catch { /* l'appelant décide quoi en faire */ }
+  };
+
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center gap-2 flex-wrap">
+        <button type="button" onClick={create} disabled={disabled || busy}
+          title={titleText || "Create THIS experiment's Drive folder (projects/<project>/<experiment>) so files can be deposited there — the 📂 buttons above then read it. Nothing else is created."}
+          className={BTN}>
+          {busy ? '⏳ Creating…' : label}
+        </button>
+        {note && <span className="text-[10px] text-slate-400">{note}</span>}
+      </div>
+      {msg && (
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-[10px] text-slate-600">{msg}</span>
+          {made?.folderUrl && (
+            <a href={made.folderUrl} target="_blank" rel="noreferrer"
+              className="text-[10px] font-bold text-indigo-700 hover:text-indigo-900">Open in Drive ↗</a>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
 

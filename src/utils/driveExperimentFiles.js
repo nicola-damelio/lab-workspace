@@ -23,9 +23,17 @@
          → { paths, path, folderId, files: [{ id, name, size, modifiedTime,
                                               url, folderPath, folderPathText }] }
 
+   Ce module porte AUSSI le seul geste qui FABRIQUE : CRÉER le dossier de
+   l'expérience. Il est EXPLICITE (`createExperimentFolder`, appelé par un
+   bouton — la demande : « If the experiment does not exist in drive, allow me
+   to create it with the correct path »), et il crée la tête commune à TOUS les
+   fichiers de l'expérience (`projects/<projet>/<expérience>[/<instance>]`),
+   pas la sous-section d'un bouton : la topologie et la trajectoire s'y
+   déposent ensuite.
+
    Règles tenues ici :
-     • RIEN N'EST CRÉÉ : le dossier est CHERCHÉ (`{ create: false }`) ; un
-       dossier absent est simplement absent (un geste de lecture ne fabrique
+     • LA LECTURE NE CRÉE RIEN : le dossier est CHERCHÉ (`{ create: false }`) ;
+       un dossier absent est simplement absent (un geste de lecture ne fabrique
        jamais d'arborescence) ;
      • on ne sort JAMAIS de l'expérience : le conteneur `projects/` et la racine
        du dataset ne sont jamais lus (le plus large candidat est le dossier de
@@ -45,8 +53,8 @@
    faux Drive).
    ========================================================================= */
 
-import { canonicalExperimentPath, sanitizeSlug } from './driveNaming';
-import { getCloudProvider } from './nextcloud';
+import { canonicalExperimentPath, PROJECTS_CONTAINER, sanitizeSlug } from './driveNaming';
+import { getCloudProvider, ncEnsureFolders } from './nextcloud';
 import { getDriveToken, listDriveChildren, resolveDrivePathFromNames } from './driveUpload';
 
 /** Type MIME d'un dossier Google Drive (un dossier n'est PAS un fichier). */
@@ -128,6 +136,22 @@ export const experimentFolderCandidates = ({ ctx = null, ctxs = [], levels = 4 }
     });
   });
   return out;
+};
+
+/** Le dossier de l'EXPÉRIENCE — la tête canonique que TOUS ses fichiers
+ *  partagent : `projects/<projet>/<expérience>[/<instance>]`, SANS section ni
+ *  sous-section. C'est ce dossier que crée `createExperimentFolder` : un
+ *  dossier créé une fois sert aussi bien à la topologie (rangée sous `Setup`)
+ *  qu'à la trajectoire (rangée sous `Data`).
+ *  Rend [] quand le contexte ne décrit pas une expérience (aucun nom
+ *  d'expérience, protocole, document de projet). PUR. */
+export const experimentFolderPathOf = (ctx = {}) => {
+  const base = canonicalExperimentPath(ctx);
+  // Deux gardes : un chemin d'expérience commence par le conteneur `projects/`,
+  // et il lui faut au moins projects/<projet>/<expérience>.
+  if (base.length < 3 || base[0] !== PROJECTS_CONTAINER) return [];
+  const instance = String((ctx && ctx.instance) || '').trim();
+  return instance ? base.slice(0, 4) : base.slice(0, 3);
 };
 
 /** Le texte d'un chemin de dossiers TEL QU'IL EST ÉCRIT sur le Drive : chaque
@@ -244,4 +268,66 @@ export const listExperimentFiles = async ({
     files: sortExperimentFiles(files)
   };
 };
+
+/* ── LA CRÉATION — LE SEUL GESTE QUI FABRIQUE ────────────────────────────── */
+
+/** CRÉER le dossier de l'expérience (le SEUL geste de ce module qui FABRIQUE
+ *  quelque chose — et il est EXPLICITE : la lecture, elle, cherche toujours
+ *  sans créer, voir listExperimentFiles).
+ *
+ *  Défaut visé (signalé) : « If the experiment does not exist in drive, allow
+ *  me to create it with the correct path. » Le chemin créé est celui de
+ *  l'expérience (`experimentFolderPathOf` — la tête commune à TOUS ses
+ *  fichiers), pas la sous-section d'un bouton : la topologie et la trajectoire
+ *  se déposent ensuite dans ce même dossier, et les 📂 le liront.
+ *
+ *  Le geste est IDEMPOTENT : `resolveDrivePathFromNames(..., { create: true })`
+ *  TROUVE le dossier s'il existe déjà et le crée sinon — jamais de doublon.
+ *
+ *  @param {object} opts
+ *  @param {object} [opts.ctx] contexte de nommage de la page (project/test/instance)
+ *  @returns {Promise<{ok:boolean, path:string[], pathText:string, folderId:string,
+ *                     folderUrl:string, error:string}>}
+ *          `ok:false` + `error` quand la création n'a pas pu avoir lieu —
+ *          jamais un succès muet.
+ *  Google Drive et Nextcloud (là, par le MÊME geste que l'envoi :
+ *  ncEnsureFolders) ; aucun autre fournisseur. */
+export const createExperimentFolder = async ({ ctx = null } = {}) => {
+  const path = experimentFolderPathOf(ctx);
+  const text = drivePathText(path);
+  const fail = (error) => ({ ok: false, path, pathText: text, folderId: '', folderUrl: '', error });
+  if (!path.length) {
+    return fail('This experiment has no Drive folder yet — the experiment needs a name (and a project) before its folder can be created.');
+  }
+  // Nextcloud : les dossiers s'y créent par WebDAV. Non configuré, l'erreur
+  // est DITE telle quelle (jamais un faux succès).
+  if (getCloudProvider() === 'nextcloud') {
+    try {
+      await ncEnsureFolders(path);
+    } catch (err) {
+      return fail((err && err.message) || 'Nextcloud could not create the folder.');
+    }
+    return { ok: true, path, pathText: text, folderId: '', folderUrl: '', error: '' };
+  }
+  if (!getDriveToken()) {
+    return fail('Google Drive is not connected in this browser — connect it (sidebar, “Connect Google Drive”) and press again.');
+  }
+  let leafId = '';
+  try {
+    const resolved = await resolveDrivePathFromNames(path, { create: true });
+    leafId = String((resolved && resolved.leafId) || '');
+  } catch (err) {
+    return fail((err && err.message) || 'Google Drive could not create the folder.');
+  }
+  if (!leafId) return fail('Google Drive did not create the folder — try again in a moment.');
+  return {
+    ok: true,
+    path,
+    pathText: text,
+    folderId: leafId,
+    folderUrl: `https://drive.google.com/drive/folders/${leafId}`,
+    error: ''
+  };
+};
+
 
