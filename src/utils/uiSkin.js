@@ -107,7 +107,7 @@ export const UI_SKINS = [
      neutre se choisit aussi (celle du programme, le gris pur, le chaud). Les
      onze crans de l'accent sont DÉRIVÉS d'une seule couleur (voir
      uiSkinCustomRamp) : la palette garde la forme de celle du programme. */
-  { id: UI_SKIN_CUSTOM, kind: 'hue', label: 'Custom…', hint: 'your accent + neutral', swatch: ['#f8fafc', '#314158', '#1d293d', '#009689'] }
+  { id: UI_SKIN_CUSTOM, kind: 'hue', label: 'Custom…', hint: 'your accent, your page', swatch: ['#f8fafc', '#314158', '#1d293d', '#009689'] }
 ];
 
 /* ── LA PEAU PERSONNALISÉE ────────────────────────────────────────────────── */
@@ -155,6 +155,44 @@ export const UI_CUSTOM_NEUTRALS = [
 ];
 export const UI_CUSTOM_NEUTRAL_DEFAULT = 'slate';
 
+/* ── LA PAGE : LE JOUR OU LA NUIT ───────────────────────────────────────────
+   « la pagina resta molto chiara » : la peau personnalisée ne savait peindre
+   que des pages CLAIRES. Le réglage ci-dessous ajoute le second régime — et il
+   n'invente rien : la page sombre reprend la PROFONDEUR des peaux livrées
+   (`night`, `carbon`, voir « NUIT » dans src/index.css), l'encre du motif passe
+   du côté clair, et la palette neutre retournée est CELLE DE CES PEAUX,
+   réutilisée par index.css (aucun nombre écrit deux fois).
+   `day` est le défaut : le réglage ne pose alors aucun attribut. */
+export const UI_BG_PAGE_MODES = [
+  { id: 'day', label: 'Day pages', hint: 'the light pages the program ships' },
+  { id: 'night', label: 'Night pages', hint: 'dark pages, light ink' }
+];
+export const UI_BG_PAGE_MODE_DEFAULT = 'day';
+export const UI_BG_PAGE_MODE_DARK = 'night';
+
+/* LA BANDE SOMBRE D'UNE PAGE CHOISIE — la bande claire [95.5, 99] ramenée dans
+   [12, 16], plus l'écart de son cran 100 (3.5) : les nombres de la peau Night.
+   La page livrée (slate-50) y tombe à 15.3 % contre 15.0 pour Night, et le cran
+   qui la suit à 18.8 contre 18.5 — mesuré par la sonde. Une couleur choisie
+   plus sombre que la bande claire donne la page la plus sombre de la bande
+   sombre, jamais une page grise au point de perdre l'encre claire. */
+export const UI_BG_DARK_LO = 12;
+export const UI_BG_DARK_HI = 16;
+export const UI_BG_DARK_GAP = 3.5;
+export const UI_BG_DARK_CAP = 0.06;
+
+/* LA RECETTE SOMBRE D'UN ACCENT — les deux bandes de la palette NUIT : ses
+   surfaces de couleur (29 → 45) puis ses encres (57 → 100). Au bleu livré,
+   elle redonne le bleu de la peau `night` cran pour cran, et la sonde le
+   compare plutôt que de le croire. */
+export const UI_DARK_COLOUR_SURFACES = [29, 45];
+export const UI_DARK_COLOUR_INKS = [57, 100];
+
+/** Une bande : la valeur `v` d'une rampe source ramenée LINÉAIREMENT de
+ *  `[from, to]` vers `[lo, hi]`. C'est la seule opération de la recette sombre,
+ *  et c'est elle que la sonde rejoue. PUR. */
+export const bandOf = (v, from, to, lo, hi) => lo + (hi - lo) * (v - from) / (to - from);
+
 /** LA FORME DU DÉGRADÉ LIVRÉ — les onze crans de bleu (L et C de chacun). C'est
  *  cette forme que la couleur choisie recolore : un accent personnalisé garde
  *  donc la STRUCTURE de luminosité de la référence, contraste compris. */
@@ -183,17 +221,33 @@ export const hexToOklch = (hex) => {
   return { L: L * 100, C: Math.sqrt(A * A + B * B), H: ((Math.atan2(B, A) * 180) / Math.PI + 360) % 360 };
 };
 
-/** LES ONZE CRANS d'une couleur d'accent : le cran 600 EST la couleur choisie,
- *  et les dix autres gardent la forme du dégradé livré (même écart de
- *  luminosité, chroma proportionnel au cran 600). PUR. */
-export const uiSkinCustomRamp = (accent = UI_CUSTOM_ACCENT_DEFAULT) => {
+/** LES ONZE CRANS d'une couleur d'accent. En clair : le cran 600 EST la couleur
+ *  choisie, et les dix autres gardent la forme du dégradé livré. De NUIT : la
+ *  même forme RETOURNÉE par la recette des peaux sombres — les quatre crans de
+ *  surface dans `UI_DARK_COLOUR_SURFACES`, les sept crans d'encre dans
+ *  `UI_DARK_COLOUR_INKS` —, avec le chroma ramené dans le gamut sRGB quand la
+ *  lumière descend (comme le fait le moteur, CSS Color 4) : une couleur jamais
+ *  écrite ne peut donc pas être une couleur jamais peinte. PUR. */
+export const uiSkinCustomRamp = (accent = UI_CUSTOM_ACCENT_DEFAULT, pageMode = UI_BG_PAGE_MODE_DEFAULT) => {
   const okl = hexToOklch(accent) || hexToOklch(UI_CUSTOM_ACCENT_DEFAULT);
   const dL = okl.L - 54.6;
   const k = okl.C / 0.245;
+  const dark = pageMode === UI_BG_PAGE_MODE_DARK;
   const out = {};
-  BLUE_SHAPE.forEach(([stop, l, c]) => {
-    const L = Math.max(6, Math.min(99, l + dL));
-    out[`--color-blue-${stop}`] = `oklch(${L.toFixed(1)}% ${Math.max(0, c * k).toFixed(3)} ${okl.H.toFixed(1)})`;
+  BLUE_SHAPE.forEach(([stop, l, c], i) => {
+    /* la lumière : la forme livrée décalée avec la couleur choisie, ou — de
+       nuit — les deux bandes de la palette NUIT, appliquées à la forme livrée
+       (au bleu livré, c'est donc le bleu de la peau `night`, cran pour cran). */
+    const L = dark
+      ? bandOf(l,
+        i < 4 ? BLUE_SHAPE[0][1] : BLUE_SHAPE[4][1],
+        i < 4 ? BLUE_SHAPE[3][1] : BLUE_SHAPE[10][1],
+        ...(i < 4 ? UI_DARK_COLOUR_SURFACES : UI_DARK_COLOUR_INKS))
+      : Math.max(6, Math.min(99, l + dL));
+    const C = dark
+      ? sRGBChroma({ L, C: c * k, H: okl.H })
+      : Math.max(0, c * k);
+    out[`--color-blue-${stop}`] = `oklch(${L.toFixed(1)}% ${C.toFixed(3)} ${okl.H.toFixed(1)})`;
   });
   return out;
 };
@@ -245,34 +299,58 @@ export const UI_BG_GAP = 1.6;     /* l'écart livré entre la page et son cran 1
  *  place, et changer de famille neutre change AUSSI la page. */
 export const UI_BG_DEFAULT = '';
 
-/** LES DOUZE MOTIFS — tous des dégradés CSS répétés (aucune image, aucun octet
- *  à charger, et rien à l'impression : voir `@media screen`, index.css), tous
- *  volontairement discrets : des filets et des points, jamais un dessin.
+/** LES VINGT MOTIFS — tous des dégradés CSS répétés (aucune image, aucun octet
+ *  à charger, et rien à l'impression : voir `@media screen`, index.css).
+ *
+ *  DEUX FAMILLES, parce que « i motivi sono sempre linee » : douze Trames de
+ *  papier (des filets, des points — des repères pour écrire) et huit MOTIFS
+ *  DESSINÉS (des vagues, des écailles, un nid d'abeille, un zigzag, un damier,
+ *  un tartan, des bulles, des confettis) qui courbent la ligne ou se peignent
+ *  en PLUSIEURS couleurs.
  *
  *  LA GÉOMÉTRIE N'EST PAS ICI : elle vit dans index.css (un bloc par motif,
  *  `[data-pattern="…"]`), et c'est la même règle qui peint une page entière ET
  *  la pastille de ⚙ Settings — une pastille ne peut donc pas mentir. Ici on ne
- *  garde que ce qui se CHOISIT : le nom, ce qu'il montre, et ses deux réglages
- *  — la FORCE de l'encre (`UI_BG_PATTERN_INKS`) et l'ÉCHELLE de la trame
- *  (`UI_BG_PATTERN_SCALES`), deux variables écrites EN LIGNE par
- *  `applyUiSkin`, que la feuille multiplie à sa propre géométrie.
+ *  garde que ce qui se CHOISIT : le nom, la famille, ce qu'il montre, et ses
+ *  deux réglages — la FORCE de l'encre (`UI_BG_PATTERN_INKS`) et l'ÉCHELLE de
+ *  la trame (`UI_BG_PATTERN_SCALES`), deux variables écrites EN LIGNE par
+ *  `applyUiSkin`, que la feuille multiplie à sa propre géométrie. Les motifs
+ *  dessinés, eux, lisent en plus les trois ENCRES (`--lab-page-ink*`), elles
+ *  aussi écrites en ligne : le filet neutre, la teinte de l'accent choisi, et
+ *  le complémentaire de cette teinte (voir `uiBgInkRgb`).
  *
  *  `none` est le défaut, et ne pose donc rien. */
 export const UI_BG_PATTERNS = [
-  { id: 'none', label: 'None', hint: 'the plain page' },
-  { id: 'grid', label: 'Grid', hint: 'hairline squares' },
-  { id: 'fine', label: 'Fine grid', hint: 'a fine graph paper' },
-  { id: 'graph', label: 'Graph paper', hint: 'fine squares, one in five bolder' },
-  { id: 'dots', label: 'Dots', hint: 'a dotted sheet' },
-  { id: 'dense', label: 'Dense dots', hint: 'a tighter dotted sheet' },
-  { id: 'rules', label: 'Ruled', hint: 'lines to write on' },
-  { id: 'diagonal', label: 'Diagonal', hint: 'slanted hairlines' },
-  { id: 'cross', label: 'Hatch', hint: 'crossed hairlines' },
-  { id: 'weave', label: 'Weave', hint: 'a linen texture' },
-  { id: 'herringbone', label: 'Herringbone', hint: 'a two-way zigzag' },
-  { id: 'triangles', label: 'Triangles', hint: 'an isometric lattice' }
+  { id: 'none', label: 'None', hint: 'the plain page', group: 'texture' },
+  { id: 'grid', label: 'Grid', hint: 'hairline squares', group: 'texture' },
+  { id: 'fine', label: 'Fine grid', hint: 'a fine graph paper', group: 'texture' },
+  { id: 'graph', label: 'Graph paper', hint: 'fine squares, one in five bolder', group: 'texture' },
+  { id: 'dots', label: 'Dots', hint: 'a dotted sheet', group: 'texture' },
+  { id: 'dense', label: 'Dense dots', hint: 'a tighter dotted sheet', group: 'texture' },
+  { id: 'rules', label: 'Ruled', hint: 'lines to write on', group: 'texture' },
+  { id: 'diagonal', label: 'Diagonal', hint: 'slanted hairlines', group: 'texture' },
+  { id: 'cross', label: 'Hatch', hint: 'crossed hairlines', group: 'texture' },
+  { id: 'weave', label: 'Weave', hint: 'a linen texture', group: 'texture' },
+  { id: 'herringbone', label: 'Herringbone', hint: 'a two-way zigzag', group: 'texture' },
+  { id: 'triangles', label: 'Triangles', hint: 'an isometric lattice', group: 'texture' },
+  { id: 'waves', label: 'Waves', hint: 'a running line that curves', group: 'motif' },
+  { id: 'scales', label: 'Scales', hint: 'fish scales, two colours', group: 'motif' },
+  { id: 'zigzag', label: 'Chevrons', hint: 'teeth of two colours', group: 'motif' },
+  { id: 'honeycomb', label: 'Honeycomb', hint: 'a woven hexagon lattice', group: 'motif' },
+  { id: 'bubbles', label: 'Bubbles', hint: 'round dots of three sizes and colours', group: 'motif' },
+  { id: 'confetti', label: 'Confetti', hint: 'three colours, scattered', group: 'motif' },
+  { id: 'checker', label: 'Checker', hint: 'a two-colour chessboard', group: 'motif' },
+  { id: 'plaid', label: 'Plaid', hint: 'bands of two colours crossing', group: 'motif' }
 ];
 export const UI_BG_PATTERN_DEFAULT = 'none';
+
+/** Les deux familles du catalogue, dans l'ordre où ⚙ Settings les montre : les
+ *  Trames de papier d'abord (des repères discrets), les motifs DESSINÉS
+ *  ensuite. PUR. */
+export const UI_BG_PATTERN_GROUPS = [
+  { id: 'texture', label: 'Paper' },
+  { id: 'motif', label: 'Drawn' }
+];
 
 /** LA FORCE DE L'ENCRE DU MOTIF — un seul facteur, l'alpha du filet. Le motif
  *  reste un repère de papier : même « Bold » ne descend pas sous le quart de
@@ -328,8 +406,11 @@ export const oklchToLin = ({ L, C, H }) => {
 };
 
 /** Le chroma le plus élevé qui TIENT dans le gamut sRGB à cette lumière et
- *  cette teinte (dichotomie, comme la réduction de chroma du CSS Color 4) :
- *  c'est ce qui garantit que la page ÉCRITE est la page PEINTE. PUR. */
+ *  cette teinte (dichotomie, comme la réduction de chroma du CSS Color 4),
+ *  ARRONDI VERS LE BAS au millième : c'est le nombre de décimales que la chaîne
+ *  écrite porte (`C.toFixed(3)`), donc la valeur ÉCRITE ne peut pas sortir du
+ *  gamut d'un millième de trop — entre une couleur écrite et une couleur peinte,
+ *  il n'y a pas de place pour un doute. PUR. */
 export const sRGBChroma = (col) => {
   const inside = (c) => oklchToLin({ ...col, C: c }).every((v) => v >= -1e-4 && v <= 1 + 1e-4);
   if (inside(col.C)) return col.C;
@@ -338,7 +419,7 @@ export const sRGBChroma = (col) => {
     const mid = (lo + hi) / 2;
     if (inside(mid)) lo = mid; else hi = mid;
   }
-  return lo;
+  return Math.floor(lo * 1000) / 1000;
 };
 
 /** OKLCH → hexadécimal sRGB : le chemin inverse de `hexToOklch`, pour les
@@ -371,12 +452,67 @@ export const UI_BG_PRESETS = [
 /** LES DEUX CRANS D'UNE PAGE CHOISIE — la couleur ramenée dans la bande, et le
  *  cran 100 DÉRIVÉ (même teinte, même chroma, `UI_BG_GAP` de luminosité en
  *  moins). Une couleur illisible retombe sur la page livrée ; le réglage vide
- *  (`UI_BG_DEFAULT`) rend donc, lui aussi, la page livrée. PUR. */
-export const uiBgStops = (hex) => {
+ *  (`UI_BG_DEFAULT`) rend donc, lui aussi, la page livrée.
+ *  DE NUIT, la même couleur tombe dans LA BANDE SOMBRE (voir plus haut) : le
+ *  cran 100, lui, monte cet coup-ci (`UI_BG_DARK_GAP`) — sur une page sombre,
+ *  c'est le panneau qui est PLUS CLAIR que la page, comme dans les peaux
+ *  livrées. PUR. */
+export const uiBgStops = (hex, pageMode = UI_BG_PAGE_MODE_DEFAULT) => {
   const pick = hexToOklch(hex) || UI_BG_SHIPPED_OKLCH;
+  if (pageMode === UI_BG_PAGE_MODE_DARK) {
+    /* où tombe la couleur choisie DANS la bande des pages claires : la page
+       livrée (98.4 %) est presque au sommet, une page sombre choisie est au
+       plancher — et c'est cette position qui est reportée dans la bande sombre,
+       donc aucune couleur ne peut éclairer la page au point de perdre l'encre. */
+    const t = Math.min(1, Math.max(0, (pick.L - UI_BG_FLOOR) / (UI_BG_CEIL - UI_BG_FLOOR)));
+    const L = UI_BG_DARK_LO + (UI_BG_DARK_HI - UI_BG_DARK_LO) * t;
+    const C = sRGBChroma({ L, C: Math.min(UI_BG_DARK_CAP, pick.C), H: pick.H });
+    return { page: { L, C, H: pick.H }, card: { L: L + UI_BG_DARK_GAP, C, H: pick.H } };
+  }
   const L = Math.min(UI_BG_CEIL, Math.max(UI_BG_FLOOR, pick.L));
   const C = sRGBChroma({ L, C: Math.min(UI_BG_CAP, pick.C), H: pick.H });
   return { page: { L, C, H: pick.H }, card: { L: L - UI_BG_GAP, C, H: pick.H } };
+};
+
+/* ── LES TROIS ENCRES D'UN MOTIF ────────────────────────────────────────────
+   « i motivi sono sempre linee » : les motifs DESSINÉS (vagues, écailles,
+   damier, tartan, bulles, confettis…) ne se contentent plus d'un filet. Ils
+   lisent TROIS couleurs — et ces trois couleurs ne sont pas un catalogue de
+   plus : elles se DÉRIVENT de l'accent que l'opérateur a choisi, exactement
+   comme les onze crans de sa peau.
+     · l'encre du filet : le neutre de la page (slate-900 au jour, slate-200 de
+       nuit) — le motif reste donc un repère, même colorié ;
+     · la teinte de l'accent (`UI_BG_INK_TURNS[0]`, soit 0°) ;
+     · son complémentaire (`UI_BG_INK_TURNS[1]`, soit +150°, le « split
+       complement » des nuanciers) — d'où le multicolore, et il suit la peau.
+   Les deux teintes sont posées à la MÊME LUMIÈRE que le filet neutre (44 % au
+   jour, 84 % de nuit, un chroma de pastel ramené dans le gamut sRGB) : changer
+   d'accent change les couleurs du motif sans changer son poids sur la page —
+   c'est ce que la sonde mesure, à l'alpha près. */
+export const UI_BG_INK_DAY = '15 23 42';       /* l'encre livrée des filets */
+export const UI_BG_INK_NIGHT = '226 232 240';  /* la même, claire, de nuit */
+export const UI_BG_INK_TINT = { day: { L: 44, C: 0.13 }, night: { L: 84, C: 0.075 } };
+export const UI_BG_INK_TURNS = [0, 150];
+
+/** Un hexadécimal de six chiffres écrit comme `rgb()` l'attend : « 42 78 153 »,
+ *  ce que `rgb(var(--lab-page-ink) / 0.06)` recopie tel quel. PUR. */
+export const rgbTriplet = (hex) => [1, 3, 5]
+  .map((i) => parseInt(String(hex).slice(i, i + 2), 16))
+  .join(' ');
+
+/** LES TROIS ENCRES retenues pour un accent et un régime de page — dans l'ordre
+ *  où la feuille les lit (`--lab-page-ink`, `-2`, `-3`). PUR. */
+export const uiBgInkRgb = (accent, pageMode = UI_BG_PAGE_MODE_DEFAULT) => {
+  const okl = hexToOklch(accent) || hexToOklch(UI_CUSTOM_ACCENT_DEFAULT);
+  const night = pageMode === UI_BG_PAGE_MODE_DARK;
+  const tint = night ? UI_BG_INK_TINT.night : UI_BG_INK_TINT.day;
+  return [
+    night ? UI_BG_INK_NIGHT : UI_BG_INK_DAY,
+    ...UI_BG_INK_TURNS.map((turn) => {
+      const H = (okl.H + turn) % 360;
+      return rgbTriplet(oklchToHex({ L: tint.L, C: sRGBChroma({ L: tint.L, C: tint.C, H }), H }));
+    })
+  ];
 };
 
 /** Le réglage retenu, toujours utilisable (une couleur illisible, une famille ou
@@ -386,6 +522,10 @@ export const uiCustomSkinOf = (raw) => ({
     ? String(raw.accent).toLowerCase() : UI_CUSTOM_ACCENT_DEFAULT,
   neutral: UI_CUSTOM_NEUTRALS.some((n) => n.id === (raw && raw.neutral))
     ? raw.neutral : UI_CUSTOM_NEUTRAL_DEFAULT,
+  /* le régime des pages — le jour (livré) ou la nuit. Il ne sert à rien sans
+     couleur de page ni motif, mais il se garde, comme le reste du réglage. */
+  pageMode: UI_BG_PAGE_MODES.some((m) => m.id === (raw && raw.pageMode))
+    ? raw.pageMode : UI_BG_PAGE_MODE_DEFAULT,
   bg: (raw && /^#[0-9a-f]{6}$/i.test(String(raw.bg || '')))
     ? String(raw.bg).toLowerCase() : UI_BG_DEFAULT,
   pattern: UI_BG_PATTERNS.some((p) => p.id === (raw && raw.pattern))
@@ -399,29 +539,37 @@ export const uiCustomSkinOf = (raw) => ({
     ? raw.scale : UI_BG_SCALE_DEFAULT
 });
 
-/** Les variables d'une peau personnalisée : les onze crans de l'accent, plus
- *  `--lab-tone` (la famille neutre, pour la miniature ET pour <html>), plus —
- *  quand un fond a été choisi — LES DEUX CRANS DE LA PAGE, ramenés dans la
- *  bande (utils : `uiBgStops`), plus — quand un motif a été choisi — la force de
- *  son encre (`--lab-page-alpha`) et l'échelle de sa trame (`--lab-page-scale`).
+/** Les variables d'une peau personnalisée : les onze crans de l'accent (ceux du
+ *  RÉGIME de page choisi — de jour la couleur reste la couleur, de nuit elle se
+ *  retourne par la recette des peaux sombres), plus `--lab-tone` (la famille
+ *  neutre, pour la miniature ET pour <html>), plus — quand un fond a été choisi
+ *  — LES DEUX CRANS DE LA PAGE, ramenés dans la bande du régime (utils :
+ *  `uiBgStops`), plus — quand un motif a été choisi — la force de son encre
+ *  (`--lab-page-alpha`), l'échelle de sa trame (`--lab-page-scale`) ET SES TROIS
+ *  ENCRES (`--lab-page-ink`, `-2`, `-3` : le filet neutre puis les deux teintes
+ *  tirées de l'accent, voir `uiBgInkRgb`).
  *  Écrites EN LIGNE, donc au-dessus du bloc de la famille neutre : un fond
  *  choisi l'emporte sur le `tone` qu'on lit à côté.
- *  Le NOM du motif, lui, n'est pas une variable : c'est l'attribut
- *  `data-pattern`. PUR. */
+ *  Le NOM du motif, lui, n'est pas une variable : c'est l'attribut `data-pattern`
+ *  — et le RÉGIME des pages, lui non plus : c'est `data-pagemode`. PUR. */
 export const uiSkinCustomVars = (raw) => {
   const custom = uiCustomSkinOf(raw);
-  const vars = { ...uiSkinCustomRamp(custom.accent), '--lab-tone': custom.neutral };
+  const vars = { ...uiSkinCustomRamp(custom.accent, custom.pageMode), '--lab-tone': custom.neutral };
   if (custom.bg) {
-    const { page, card } = uiBgStops(custom.bg);
+    const { page, card } = uiBgStops(custom.bg, custom.pageMode);
     vars['--color-slate-50'] = oklchCss(page);
     vars['--color-slate-100'] = oklchCss(card);
   }
-  /* La feuille multiplie SES pas par ces deux nombres : la géométrie des douze
+  /* La feuille multiplie SES pas par ces deux nombres : la géométrie des vingt
      motifs n'est donc écrite qu'une fois (index.css). Sans motif, rien n'est
      écrit — une variable qui ne sert à rien ne doit pas traîner sur <html>. */
   if (custom.pattern !== UI_BG_PATTERN_DEFAULT) {
     vars['--lab-page-alpha'] = String(uiBgPatternAlpha(custom.ink));
     vars['--lab-page-scale'] = String(uiBgPatternScale(custom.scale));
+    const inks = uiBgInkRgb(custom.accent, custom.pageMode);
+    vars['--lab-page-ink'] = inks[0];
+    vars['--lab-page-ink-2'] = inks[1];
+    vars['--lab-page-ink-3'] = inks[2];
   }
   return vars;
 };
@@ -513,18 +661,20 @@ export const applyUiSkin = (id, operator = null, custom = null) => {
   const skin = uiSkinById(id);
   if (!root.dataset) return;
   /* les clés à effacer : TOUTE la rampe d'accent, `--lab-tone`, les deux crans
-     de la page et les deux réglages du motif — qu'un fond ou un motif aient été
-     choisis ou non (sinon un fond posé hier survivrait au passage à une autre
-     peau). */
+     de la page, le régime des pages et les réglages du motif — qu'un fond ou un
+     motif aient été choisis ou non (sinon un fond posé hier survivrait au
+     passage à une autre peau). */
   const customKeys = [
     ...Object.keys(uiSkinCustomRamp(UI_CUSTOM_ACCENT_DEFAULT)),
     '--lab-tone', '--color-slate-50', '--color-slate-100',
-    '--lab-page-alpha', '--lab-page-scale'
+    '--lab-page-alpha', '--lab-page-scale',
+    '--lab-page-ink', '--lab-page-ink-2', '--lab-page-ink-3'
   ];
   const clearCustom = () => {
     if (root.style) customKeys.forEach((k) => root.style.removeProperty(k));
     delete root.dataset.tone;
     delete root.dataset.pattern;
+    delete root.dataset.pagemode;
   };
   if (skin.id === UI_SKIN_CUSTOM) {
     const settings = uiCustomSkinOf(custom || readUiCustomSkin(operator));
@@ -535,6 +685,12 @@ export const applyUiSkin = (id, operator = null, custom = null) => {
     clearCustom();
     if (root.style) Object.entries(uiSkinCustomVars(settings)).forEach(([k, v]) => root.style.setProperty(k, v));
     root.dataset.tone = settings.neutral;
+    /* le régime des pages : « day » (le défaut) n'écrit AUCUN attribut — la
+       feuille garde alors ses pages claires, et l'attribut ne traîne pas dans
+       le DOM. De nuit, c'est index.css qui retourne la palette (la sienne, celle
+       des peaux livrées) : le JavaScript n'en écrit pas un seul cran. */
+    if (settings.pageMode === UI_BG_PAGE_MODE_DEFAULT) delete root.dataset.pagemode;
+    else root.dataset.pagemode = settings.pageMode;
     /* le motif : « none » (le défaut) n'écrit AUCUN attribut, donc la feuille
        ne peint rien et l'attribut ne traîne pas dans le DOM. */
     if (settings.pattern === UI_BG_PATTERN_DEFAULT) delete root.dataset.pattern;

@@ -441,7 +441,12 @@ table td .text-xs, table th .text-xs {
 
 @media screen {
 
-[data-skin="night"] {
+[data-skin="night"],
+/* ── ET LA MÊME PEAU POUR LA PEAU PERSONNALISÉE DE NUIT : le bloc est PARTAGÉ,
+   pas recopié — voir « LA NUIT D'UNE PEAU PERSONNALISÉE », plus bas. Le bleu
+   ci-dessous n'est qu'un repli : l'accent de l'opérateur est écrit EN LIGNE et
+   l'emporte. */
+[data-skin="custom"][data-pagemode="night"] {
   color-scheme: dark;
   --color-white: oklch(22.0% 0.000 0.0);
   --color-slate-50: oklch(15.0% 0.003 247.9);
@@ -622,7 +627,10 @@ table td .text-xs, table th .text-xs {
   --color-rose-950: oklch(100.0% 0.000 12.1);
 }
 
-[data-skin="carbon"] {
+[data-skin="carbon"],
+/* …et la famille GRISE, de nuit (les gris purs de Zinc, un cran plus bas — les
+   mêmes nombres que `carbon`, la teinte de l'opérateur en plus). */
+[data-skin="custom"][data-tone="zinc"][data-pagemode="night"] {
   color-scheme: dark;
   --color-white: oklch(19.0% 0.000 0.0);
   --color-slate-50: oklch(13.0% 0.000 0.0);
@@ -845,26 +853,96 @@ table td .text-xs, table th .text-xs {
   --color-slate-950: oklch(14.7% 0.004 49.25);
 }
 
+/* ── LA NUIT D'UNE PEAU PERSONNALISÉE — « la pagina resta molto chiara ».
+   La peau personnalisée ne peignait que des pages CLAIRES : le réglage
+   « Night pages » de ⚙ Settings pose `data-pagemode="night"` sur <html>, et la
+   palette se retourne — SANS UNE LIGNE DE PLUS ICI. Le bloc de la peau `night`
+   et celui de `carbon` portent simplement un SECOND sélecteur (plus haut), donc
+   une peau personnalisée de nuit EST la peau livrée correspondante : mêmes
+   nombres, une seule source, et l'accent de l'opérateur par-dessus (écrit en
+   ligne, il l'emporte sur le bleu de repli).
+
+   Reste la famille CHAUDE, que ces deux peaux n'ont pas : la voici, et c'est la
+   même recette — les onze crans NEUTRES de `night` (15 la page, 40 le cran fort,
+   57 la première encre, 99 la dernière) appliqués à la rampe de Stone, qui a la
+   profondeur de celle de Slate (98.5 % contre 98.4 %, 14.7 contre 12.9). Onze
+   crans seulement : les COULEURS de la famille — les puces d'alerte, les liens —
+   restent celles du bloc partagé, et la sonde rejoue la recette plutôt que de
+   croire ces nombres. */
+@media screen {
+
+[data-skin="custom"][data-tone="stone"][data-pagemode="night"] {
+  --color-slate-50: oklch(15.0% 0.001 106.4);
+  --color-slate-100: oklch(18.2% 0.001 106.4);
+  --color-slate-200: oklch(28.4% 0.003 48.7);
+  --color-slate-300: oklch(40.0% 0.005 56.4);
+  --color-slate-400: oklch(57.0% 0.010 56.3);
+  --color-slate-500: oklch(68.7% 0.013 58.1);
+  --color-slate-600: oklch(76.8% 0.011 73.6);
+  --color-slate-700: oklch(82.0% 0.010 67.6);
+  --color-slate-800: oklch(90.0% 0.007 34.3);
+  --color-slate-900: oklch(93.8% 0.006 56.0);
+  --color-slate-950: oklch(99.0% 0.004 49.3);
+}
+
+}
+
+/* L'IMPRESSION. Une page sombre est une intention d'écran, et ça reste vrai
+   quand la page a été CHOISIE : la couleur, l'accent et l'encre du motif sont
+   écrits EN LIGNE (ils dépendent du réglage), donc aucune règle d'écran ne peut
+   les défaire — sauf la seule qu'un auteur puisse opposer à du style en ligne :
+   `!important`. Ce garde rend donc au papier les deux crans CLAIRS de la
+   famille (le motif, lui, ne s'imprime de toute façon jamais : `@media screen`).
+   Ce qui reste imprimé du réglage de nuit, c'est l'accent et son échelle : c'est
+   écrit dans ⚙ Settings. */
+@media print {
+  [data-skin="custom"][data-pagemode="night"] {
+    --color-slate-50: oklch(98.4% 0.003 247.858) !important;
+    --color-slate-100: oklch(96.8% 0.007 247.896) !important;
+  }
+  [data-skin="custom"][data-tone="zinc"][data-pagemode="night"] {
+    --color-slate-50: oklch(98.5% 0 0) !important;
+    --color-slate-100: oklch(96.7% 0.001 286.375) !important;
+  }
+  [data-skin="custom"][data-tone="stone"][data-pagemode="night"] {
+    --color-slate-50: oklch(98.5% 0.001 106.423) !important;
+    --color-slate-100: oklch(97% 0.001 106.424) !important;
+  }
+}
+
 /* ── LE FOND DES PAGES — LE MOTIF CHOISI DANS ⚙ SETTINGS.
    LA COULEUR n'est pas ici : elle dépend d'un choix, donc src/utils/uiSkin.js
    l'écrit EN LIGNE sur <html> (`--color-slate-50` et `--color-slate-100`,
    ramenés dans une bande de lisibilité — voir « LA BANDE », là-bas). Le MOTIF,
    lui, ne dépend que d'un NOM : `data-pattern`, posé sur <html> par le même
    appel, est décrit ici une seule fois pour toutes les pages du programme, et
-   SES DEUX RÉGLAGES (la force de l'encre, l'échelle de la trame) sont deux
-   variables que le même appel écrit EN LIGNE — la feuille n'a donc qu'à
-   multiplier ses propres pas : `calc(24px * var(--lab-page-scale, 1))`. La
+   SES RÉGLAGES — la force de l'encre, l'échelle de la trame et les TROIS ENCRES
+   des motifs dessinés — sont des variables que le même appel écrit EN LIGNE : la
+   feuille n'a donc qu'à multiplier ses propres pas (`calc(24px *
+   var(--lab-page-scale, 1))`) et à décaler les siens (`--lab-page-position`). La
    géométrie d'un motif n'est donc écrite qu'UNE fois, et changer l'échelle
    depuis ⚙ Settings ne demande aucun nombre au JavaScript.
 
-   DOUZE MOTIFS, tous des dégradés CSS répétés — aucun octet à charger, aucun
+   VINGT MOTIFS, TOUS des dégradés CSS répétés — aucun octet à charger, aucun
    composant à toucher, et RIEN À L'IMPRESSION : les règles vivent dans
-   `@media screen`, donc un document imprimé garde sa page blanche.
+   `@media screen`, donc un document imprimé garde sa page blanche. Il y en a de
+   deux familles (voir `UI_BG_PATTERN_GROUPS`, src/utils/uiSkin.js) : douze
+   TRAMES de papier — des filets, des points — et huit MOTIFS DESSINÉS, qui
+   courbent la ligne (des vagues, des écailles, un nid d'abeille, un damier) et
+   se peignent en PLUSIEURS COULEURS.
 
-   L'ENCRE EST UN SEUL FILET DILUÉ, et sa force est un alpha : même « Bold »
-   (0.11) reste à plus de 1.1:1 de la page qu'il décore — un repère de papier,
-   jamais une gêne pour la lecture (la sonde le mesure, voir
-   `_ui_skin_test.cjs`).
+   LA NUIT. La même couleur de page tombe dans une bande SOMBRE quand le réglage
+   est « Night pages » (`data-pagemode="night"`) : la palette se retourne alors
+   par les blocs plus haut — ceux de `night` et de `carbon`, qui portent un
+   second sélecteur — et l'encre des motifs est écrite CLAIRE par le même appel
+   JavaScript. Une page sombre n'est donc pas une seconde feuille de style.
+
+   L'ENCRE EST UN FILET DILUÉ, et sa force est un alpha : même « Bold » (0.11)
+   reste à 1.12:1 de la page claire qu'il décore — un repère de papier, jamais
+   une gêne pour la lecture (la sonde le mesure, voir `_ui_skin_test.cjs`). Sur
+   une page SOMBRE, le même filet clair monte à 1.6:1 (Standard) et 2.7:1
+   (Bold) : il se voit, et il reste sous les 4.2:1 de la légende la plus pâle
+   que le programme y écrit.
 
    Elles ne peignent qu'un élément qui porte la classe de la page
    (`bg-slate-50`) ou la classe d'une PASTILLE (`.lab-page-chip`, la miniature
@@ -873,12 +951,17 @@ table td .text-xs, table th .text-xs {
 
 @media screen {
 
-  /* l'encre du motif — écrite UNE fois, les douze motifs la partagent : seule
-     sa FORCE change, et elle vient de `--lab-page-alpha`. `…-strong` est le
+  /* LES TROIS ENCRES du motif — écrites UNE fois, les vingt motifs les
+     partagent : seule leur FORCE change, et elle vient de `--lab-page-alpha`.
+     L'encre NEUTRE (`--lab-page-ink`) est celle des filets ; de nuit c'est la
+     version claire (voir `uiBgInkRgb` dans src/utils/uiSkin.js), donc le même
+     motif se peint sur une page sombre sans une règle de plus. `…-strong` est le
      filet marqué du papier millimétré, au double de la force choisie. */
   [data-pattern] {
-    --lab-page-line: rgb(15 23 42 / var(--lab-page-alpha, 0.06));
-    --lab-page-line-strong: rgb(15 23 42 / calc(var(--lab-page-alpha, 0.06) * 2));
+    --lab-page-line: rgb(var(--lab-page-ink, 15 23 42) / var(--lab-page-alpha, 0.06));
+    --lab-page-line-strong: rgb(var(--lab-page-ink, 15 23 42) / calc(var(--lab-page-alpha, 0.06) * 2));
+    --lab-page-line-2: rgb(var(--lab-page-ink-2, 15 23 42) / var(--lab-page-alpha, 0.06));
+    --lab-page-line-3: rgb(var(--lab-page-ink-3, 15 23 42) / var(--lab-page-alpha, 0.06));
   }
 
   /* LA PASTILLE D'UN MOTIF : la miniature d'une page, peinte par la règle du
@@ -1011,15 +1094,195 @@ table td .text-xs, table th .text-xs {
     --lab-page-size: auto;
   }
 
+  /* ══ LES HUIT MOTIFS DESSINÉS ══════════════════════════════════════════════
+     « mai motivi ondulati o multicolore » : les douze trames ci-dessus sont des
+     FILEts — des repères pour écrire. Ceux-ci sont des DESSINS : ils courbent la
+     ligne (arcs de cercle, conique, toiles) et se peignent avec les TROIS ENCRES
+     écrites en ligne (`--lab-page-ink`, `-2`, `-3` — le neutre, la teinte de
+     l'accent choisi, son complémentaire : voir `uiBgInkRgb`). Même géométrie
+     ici, mêmes deux réglages (la force, l'échelle), même `@media screen` : rien
+     à télécharger, rien à imprimer, et une pastille qui ne peut pas mentir. */
+
+  /* LES VAGUES — deux familles d'arcs de cercle, l'une ouverte vers le bas,
+     l'autre vers le haut, à une demi-période l'une de l'autre : la ligne court
+     donc en ondulant, sans qu'une seule courbe soit écrite. */
+  [data-pattern="waves"] {
+    --lab-page-image:
+      radial-gradient(circle at 25% 0,
+        transparent calc(7px * var(--lab-page-scale, 1)),
+        var(--lab-page-line) calc(7px * var(--lab-page-scale, 1)),
+        var(--lab-page-line) calc(7px * var(--lab-page-scale, 1) + 1px),
+        transparent calc(7px * var(--lab-page-scale, 1) + 1px)),
+      radial-gradient(circle at 75% 100%,
+        transparent calc(7px * var(--lab-page-scale, 1)),
+        var(--lab-page-line) calc(7px * var(--lab-page-scale, 1)),
+        var(--lab-page-line) calc(7px * var(--lab-page-scale, 1) + 1px),
+        transparent calc(7px * var(--lab-page-scale, 1) + 1px));
+    --lab-page-size:
+      calc(28px * var(--lab-page-scale, 1)) calc(14px * var(--lab-page-scale, 1)),
+      calc(28px * var(--lab-page-scale, 1)) calc(14px * var(--lab-page-scale, 1));
+  }
+
+  /* LES ÉCAILLES — un rang d'arcs, puis le demi-disque de la teinte de l'accent
+     dans le rang suivant, une demi-tuile plus bas : c'est le recouvrement des
+     écailles, en deux couleurs. Le rang d'arcs est peint EN DERNIER (première
+     image de la liste) : il passe donc sur la teinte. */
+  [data-pattern="scales"] {
+    --lab-page-image:
+      radial-gradient(circle at 50% 100%,
+        transparent calc(10px * var(--lab-page-scale, 1)),
+        var(--lab-page-line) calc(10px * var(--lab-page-scale, 1)),
+        var(--lab-page-line) calc(10px * var(--lab-page-scale, 1) + 1px),
+        transparent calc(10px * var(--lab-page-scale, 1) + 1px)),
+      radial-gradient(circle at 50% 0,
+        var(--lab-page-line-2) calc(10px * var(--lab-page-scale, 1)),
+        transparent calc(10px * var(--lab-page-scale, 1) + 1px));
+    --lab-page-size:
+      calc(20px * var(--lab-page-scale, 1)) calc(20px * var(--lab-page-scale, 1)),
+      calc(20px * var(--lab-page-scale, 1)) calc(20px * var(--lab-page-scale, 1));
+    --lab-page-position:
+      0 0,
+      calc(10px * var(--lab-page-scale, 1)) calc(10px * var(--lab-page-scale, 1));
+  }
+
+  /* LES CHEVRONS — les deux familles d'angles droits, décalées d'une demi-tuile :
+     les dents du haut dans l'encre neutre, celles du bas dans la teinte. Ce n'est
+     pas un filet de plus, c'est une DENT. */
+  [data-pattern="zigzag"] {
+    --lab-page-image:
+      linear-gradient(135deg, var(--lab-page-line) 25%, transparent 25%),
+      linear-gradient(225deg, var(--lab-page-line) 25%, transparent 25%),
+      linear-gradient(45deg, var(--lab-page-line-2) 25%, transparent 25%),
+      linear-gradient(315deg, var(--lab-page-line-2) 25%, transparent 25%);
+    --lab-page-size:
+      calc(20px * var(--lab-page-scale, 1)) calc(20px * var(--lab-page-scale, 1)),
+      calc(20px * var(--lab-page-scale, 1)) calc(20px * var(--lab-page-scale, 1)),
+      calc(20px * var(--lab-page-scale, 1)) calc(20px * var(--lab-page-scale, 1)),
+      calc(20px * var(--lab-page-scale, 1)) calc(20px * var(--lab-page-scale, 1));
+    --lab-page-position:
+      calc(-10px * var(--lab-page-scale, 1)) 0,
+      calc(-10px * var(--lab-page-scale, 1)) 0,
+      0 0,
+      0 0;
+  }
+
+  /* LE NID D'ABEILLE — l'alvéole : quatre familles à 30°/150° pour les parois,
+     deux à 60° pour le fond, la seconde teinte une demi-tuile plus loin — le
+     treillis se referme sur lui-même. */
+  [data-pattern="honeycomb"] {
+    --lab-page-image:
+      linear-gradient(30deg, var(--lab-page-line) 12%, transparent 12.5%, transparent 87%, var(--lab-page-line) 87.5%, var(--lab-page-line)),
+      linear-gradient(150deg, var(--lab-page-line) 12%, transparent 12.5%, transparent 87%, var(--lab-page-line) 87.5%, var(--lab-page-line)),
+      linear-gradient(30deg, var(--lab-page-line) 12%, transparent 12.5%, transparent 87%, var(--lab-page-line) 87.5%, var(--lab-page-line)),
+      linear-gradient(150deg, var(--lab-page-line) 12%, transparent 12.5%, transparent 87%, var(--lab-page-line) 87.5%, var(--lab-page-line)),
+      linear-gradient(60deg, var(--lab-page-line-2) 25%, transparent 25.5%, transparent 75%, var(--lab-page-line-2) 75%, var(--lab-page-line-2)),
+      linear-gradient(60deg, var(--lab-page-line-2) 25%, transparent 25.5%, transparent 75%, var(--lab-page-line-2) 75%, var(--lab-page-line-2));
+    --lab-page-size:
+      calc(40px * var(--lab-page-scale, 1)) calc(70px * var(--lab-page-scale, 1)),
+      calc(40px * var(--lab-page-scale, 1)) calc(70px * var(--lab-page-scale, 1)),
+      calc(40px * var(--lab-page-scale, 1)) calc(70px * var(--lab-page-scale, 1)),
+      calc(40px * var(--lab-page-scale, 1)) calc(70px * var(--lab-page-scale, 1)),
+      calc(40px * var(--lab-page-scale, 1)) calc(70px * var(--lab-page-scale, 1)),
+      calc(40px * var(--lab-page-scale, 1)) calc(70px * var(--lab-page-scale, 1));
+    --lab-page-position:
+      0 0,
+      0 0,
+      calc(20px * var(--lab-page-scale, 1)) calc(35px * var(--lab-page-scale, 1)),
+      calc(20px * var(--lab-page-scale, 1)) calc(35px * var(--lab-page-scale, 1)),
+      0 0,
+      calc(20px * var(--lab-page-scale, 1)) calc(35px * var(--lab-page-scale, 1));
+  }
+
+  /* LES BULLES — trois disques de trois tailles et de trois couleurs, chacun sur
+     sa propre trame et décalé des autres : le semis n'est jamais régulier à
+     l'œil, alors qu'il l'est au pixel. */
+  [data-pattern="bubbles"] {
+    --lab-page-image:
+      radial-gradient(circle at 22% 30%,
+        var(--lab-page-line) calc(3px * var(--lab-page-scale, 1)),
+        transparent calc(3px * var(--lab-page-scale, 1) + 1px)),
+      radial-gradient(circle at 70% 72%,
+        var(--lab-page-line-2) calc(5px * var(--lab-page-scale, 1)),
+        transparent calc(5px * var(--lab-page-scale, 1) + 1px)),
+      radial-gradient(circle at 80% 20%,
+        var(--lab-page-line-3) calc(2px * var(--lab-page-scale, 1)),
+        transparent calc(2px * var(--lab-page-scale, 1) + 1px));
+    --lab-page-size:
+      calc(34px * var(--lab-page-scale, 1)) calc(34px * var(--lab-page-scale, 1)),
+      calc(34px * var(--lab-page-scale, 1)) calc(34px * var(--lab-page-scale, 1)),
+      calc(34px * var(--lab-page-scale, 1)) calc(34px * var(--lab-page-scale, 1));
+    --lab-page-position:
+      0 0,
+      calc(11px * var(--lab-page-scale, 1)) calc(-7px * var(--lab-page-scale, 1)),
+      calc(-8px * var(--lab-page-scale, 1)) calc(13px * var(--lab-page-scale, 1));
+  }
+
+  /* LES CONFETTIS — deux obliques courtes (un bout de bande, pas une ligne qui
+     traverse la page) dans les deux teintes, plus un grain rond dans l'encre
+     neutre, chacun sur sa trame : trois couleurs semées. */
+  [data-pattern="confetti"] {
+    --lab-page-image:
+      linear-gradient(45deg, transparent 44%, var(--lab-page-line-2) 44%, var(--lab-page-line-2) 56%, transparent 56%),
+      linear-gradient(-45deg, transparent 44%, var(--lab-page-line-3) 44%, var(--lab-page-line-3) 56%, transparent 56%),
+      radial-gradient(circle at 50% 50%,
+        var(--lab-page-line) calc(2px * var(--lab-page-scale, 1)),
+        transparent calc(2px * var(--lab-page-scale, 1) + 1px));
+    --lab-page-size:
+      calc(26px * var(--lab-page-scale, 1)) calc(26px * var(--lab-page-scale, 1)),
+      calc(34px * var(--lab-page-scale, 1)) calc(34px * var(--lab-page-scale, 1)),
+      calc(16px * var(--lab-page-scale, 1)) calc(16px * var(--lab-page-scale, 1));
+    --lab-page-position:
+      0 0,
+      calc(13px * var(--lab-page-scale, 1)) calc(9px * var(--lab-page-scale, 1)),
+      calc(5px * var(--lab-page-scale, 1)) calc(11px * var(--lab-page-scale, 1));
+  }
+
+  /* LE DAMIER — une conique répétée : quatre quadrants, deux encres. Les carrés
+     sont donc des angles, pas des filets, et la seconde couleur n'est pas une
+     variante de la première : c'est la teinte de l'accent. */
+  [data-pattern="checker"] {
+    --lab-page-image: repeating-conic-gradient(
+      var(--lab-page-line) 0 25%,
+      var(--lab-page-line-2) 0 50%);
+    --lab-page-size:
+      calc(20px * var(--lab-page-scale, 1)) calc(20px * var(--lab-page-scale, 1));
+  }
+
+  /* LE TARTAN — deux largeurs de bandes dans les deux sens, chacune dans une
+     teinte : là où elles se croisent, les deux alpha s'ajoutent et la troisième
+     couleur apparaît toute seule. */
+  [data-pattern="plaid"] {
+    --lab-page-image:
+      repeating-linear-gradient(to right,
+        var(--lab-page-line-2) 0, var(--lab-page-line-2) calc(6px * var(--lab-page-scale, 1)),
+        transparent calc(6px * var(--lab-page-scale, 1)), transparent calc(30px * var(--lab-page-scale, 1))),
+      repeating-linear-gradient(to bottom,
+        var(--lab-page-line-2) 0, var(--lab-page-line-2) calc(6px * var(--lab-page-scale, 1)),
+        transparent calc(6px * var(--lab-page-scale, 1)), transparent calc(30px * var(--lab-page-scale, 1))),
+      repeating-linear-gradient(to right,
+        var(--lab-page-line-3) 0, var(--lab-page-line-3) calc(2px * var(--lab-page-scale, 1)),
+        transparent calc(2px * var(--lab-page-scale, 1)), transparent calc(10px * var(--lab-page-scale, 1))),
+      repeating-linear-gradient(to bottom,
+        var(--lab-page-line-3) 0, var(--lab-page-line-3) calc(2px * var(--lab-page-scale, 1)),
+        transparent calc(2px * var(--lab-page-scale, 1)), transparent calc(10px * var(--lab-page-scale, 1)));
+    --lab-page-size: auto;
+  }
+
   /* LA PAGE — et la PASTILLE d'un motif, qui doit montrer exactement la même
      chose qu'elle. `background-image` ne touche pas `background-color` : la
      teinte choisie reste, le motif se pose dessus. Et
      `var(--lab-page-image, none)` laisse intacte une page sans motif — aucun
-     attribut, aucun dessin. */
+     attribut, aucun dessin.
+     LA POSITION est la troisième variable d'un motif : les vagues et les écailles
+     décalent une famille d'arcs d'une demi-tuile, et ce décalage est un
+     `background-position` — lui aussi multiplié par l'échelle choisie, jamais un
+     nombre écrit deux fois. Un motif qui n'en a pas besoin la laisse à `0 0`,
+     qui est le défaut du moteur. */
   [class~="bg-slate-50"],
   .lab-page-chip {
     background-image: var(--lab-page-image, none);
     background-size: var(--lab-page-size, auto);
+    background-position: var(--lab-page-position, 0 0);
   }
 }
 

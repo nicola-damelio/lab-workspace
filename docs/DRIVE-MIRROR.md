@@ -3401,12 +3401,29 @@ une carte éclaircie elles tombent à **3,62:1** (`night`) et **3,87:1** (`carbo
 sombre (`#334155`, 1,66:1) reste la limite connue qu'elle signale déjà.
 
 
-### ② Les motifs : de quatre à douze, avec leur encre et leur trame
+### ② Les motifs : de quatre à vingt — douze trames, huit dessins
 
-`UI_BG_PATTERNS` en compte désormais douze : `none`, `grid`, `fine`, `graph` (papier millimétré : trame
-fine et filet marqué tous les cinq), `dots`, `dense`, `rules`, `diagonal`, `cross`, `weave`, `herringbone`,
-`triangles`. Tous sont des dégradés CSS répétés : aucun octet à charger, et leurs règles vivent dans
-`@media screen` — un document imprimé garde sa page blanche.
+`UI_BG_PATTERNS` en compte désormais **vingt**, en deux familles (`UI_BG_PATTERN_GROUPS`) :
+
+* **douze TRAMES de papier** — `none`, `grid`, `fine`, `graph` (papier millimétré : trame fine et filet
+  marqué tous les cinq), `dots`, `dense`, `rules`, `diagonal`, `cross`, `weave`, `herringbone`,
+  `triangles` — des filets et des points, des repères pour écrire ;
+* **huit MOTIFS DESSINÉS** — `waves` (vagues : des arcs de cercle décalés d'une demi-période, la ligne
+  court en ondulant), `scales` (écailles bicolores), `zigzag` (chevrons), `honeycomb` (nid d'abeille),
+  `bubbles` (bulles de trois tailles et de trois couleurs), `confetti` (semis multicolore), `checker`
+  (damier, en `repeating-conic-gradient`) et `plaid` (tartan : les croisements des deux alpha font la
+  troisième couleur).
+
+Tous sont des dégradés CSS répétés : aucun octet à charger, et leurs règles vivent dans `@media screen` —
+un document imprimé garde sa page blanche. Ils ont maintenant **trois variables de plus** : la
+**position** d'une famille d'arcs (`--lab-page-position`, décalée par l'échelle comme le reste) et les
+**trois encres** des motifs dessinés.
+
+**Les trois encres ne sont pas un catalogue de plus : elles se dérivent de l'accent choisi**, exactement
+comme les onze crans de la peau — le filet neutre (slate-900 au jour, slate-200 de nuit), la teinte de
+l'accent, et son complémentaire (+150°, le *split complement* des nuanciers), les deux teintes posées à la
+MÊME lumière que le filet et ramenées dans le gamut sRGB. Changer d'accent change donc les couleurs du
+motif sans changer son poids sur la page : c'est mesuré, à l'alpha près.
 
 Chaque motif a deux réglages de plus, dans le MÊME objet que l'accent et la couleur de page :
 
@@ -3424,30 +3441,75 @@ page CHOISIE, ramenée dans la bande. La sonde au pixel compare les deux, image 
 identiques. Et la pastille « None » reste nue même sous une page qui porte un motif, parce qu'elle remet le
 motif à zéro avant — une variable s'hérite, un attribut non.
 
-### ③ Ce qui est vérifié, et ce qui ne l'est pas
+### ③ La page peut être SOMBRE — « la pagina resta molto chiara »
+
+La peau personnalisée ne savait peindre que des pages CLAIRES : un réglage de plus, `pageMode`, et
+`data-pagemode="night"` retourne la palette. Il n'invente rien, et c'est là toute sa force : **le bloc de la
+peau `night` et celui de `carbon` portent un SECOND sélecteur**
+
+```css
+[data-skin="night"],
+[data-skin="custom"][data-pagemode="night"] { /* 176 crans, une seule source */ }
+[data-skin="carbon"],
+[data-skin="custom"][data-tone="zinc"][data-pagemode="night"] { /* idem, pour la famille GRISE */ }
+```
+
+Donc une page de nuit personnalisée **EST** la peau livrée correspondante — mêmes nombres, une seule
+source, l'accent de l'opérateur par-dessus (écrit en ligne, il l'emporte sur le bleu de repli). La famille
+CHAUDE, que ces deux peaux n'ont pas, rejoue la MÊME recette sur la rampe de Stone (onze crans neutres :
+15 la page contre 15 pour Night, 18,2 le panneau contre 18,5, 99 la dernière encre) — et la sonde relit les
+quatre bornes dans le bloc de `night` au lieu de les croire.
+
+Ce qui change pour le motif, et pourquoi rien n'a été réécrit : la même couleur de page tombe dans une
+**bande sombre** (12–16 %, l'écart de 3,5 de la peau Night pour le cran 100 — la page livrée y atterrit à
+**15,3 % contre 15,0**, mesuré), et `uiBgInkRgb` écrit alors les trois encres **CLAIRES**. La géométrie des
+vingt motifs, elle, ne bouge pas d'un pixel : elle lit `--lab-page-ink`, qui a seulement changé de côté.
+
+⚠ **Le seul endroit où une page choisie pourrait partir sur le papier** : la couleur, l'accent et les
+encres sont écrits EN LIGNE (ils dépendent du réglage), donc aucune règle d'écran ne peut les défaire — sauf
+la seule qu'un auteur puisse opposer à du style en ligne, `!important`. Un garde `@media print` rend donc au
+papier les deux crans CLAIRS de chaque famille (six déclarations, pas une de plus) ; le motif, lui, ne
+s'imprime de toute façon jamais. Ce qui reste imprimé du réglage de nuit, c'est l'accent et l'échelle de sa
+rampe : c'est écrit dans ⚙ Settings.
+
+### ④ Ce qui est vérifié, et ce qui ne l'est pas
 
 * **Que le motif ne discute jamais avec le texte** : le filet le plus appuyé, composé sur toutes les pages
   qu'un utilisateur peut obtenir (les 72 teintes saturées du cercle, les extrêmes, les huit pages
-  proposées), coûte au pire **1,12:1** de la page qu'il décore (`#ffffff`, encre `bold`) ; sur la page
-  verte `#22c55e` essayée dans cette session : 1,034 / 1,060 / 1,115 pour les trois forces. Un repère de
-  papier, jamais une gêne.
+  proposées), **et pour les trois encres des huit accents**, coûte au pire **1,12:1** de la page claire
+  qu'il décore ; sur la page verte `#22c55e` essayée dans cette session : 1,034 / 1,060 / 1,115 pour les
+  trois forces. Un repère de papier, jamais une gêne.
+* **Que la nuit ne cache pas le motif non plus** : sur une page sombre, le même filet clair coûte **1,63:1 à
+  Standard et 2,71:1 à Bold** — il se VOIT —, et il reste sous les **4,2:1** de la légende la plus pâle que
+  le programme y écrit. Ce sont deux mesures, pas deux espérances.
+* **Que l'accent retourné est la recette** : au bleu livré, `uiSkinCustomRamp(accent, 'night')` redonne le
+  bleu de la peau `night` **lumière pour lumière** (onze crans, 29,0 → 100,0), et il reste dans le gamut
+  sRGB au millième d'écriture près ; les trois paires que le programme écrit gardent le plancher d'une page
+  sombre **pour chacun des huit accents** (le pire cas est mesuré, pas supposé).
 * **Que l'échelle multiplie vraiment** : dans Chrome, sur la feuille compilée, la tuile de `grid` passe de
   24 px à **48 px** (`--lab-page-scale: 2`) et à **12 px** (`0.5`) ; sur l'application réelle, la page de
   `graph` à `broad` calcule `12.8px 12.8px, 12.8px 12.8px, 64px 64px, 64px 64px`.
-* **Que rien ne s'écrit sans motif** : sans motif choisi, `--lab-page-alpha` et `--lab-page-scale` ne sont
-  PAS sur `<html>` (mesuré dans le vrai programme), et la page garde son motif à zéro.
+* **Que la page de nuit est bien celle des peaux livrées** : dans Chrome, sur le CSS compilé, la page
+  personnalisée de nuit vaut `#0a0b0c` (Night), `#070707` (Carbon pour la famille grise) et `#0b0b0b`
+  (Stone) ; dans l'application réelle, la page de `#4f46e5` de nuit se peint en `oklch(0.12 0.06 277)` avec
+  le motif `confetti` composé en `rgba(145, 219, 208, 0.11)` — les encres claires de l'accent teal.
+* **Que rien ne s'écrit sans motif** : sans motif choisi, `--lab-page-alpha`, `--lab-page-scale` ET les trois
+  `--lab-page-ink*` ne sont PAS sur `<html>` (mesuré dans le vrai programme), et la page garde son motif à
+  zéro.
 
-⚠ Les limites, dites franchement : les motifs ne se peignent que sur une page CLAIRE — `night` et `carbon`
-gardent leur fond uni (une page sombre demanderait une encre de motif par mode, que ces peaux n'ont pas) ;
-le chrome d'une peau sombre reste CLAIR (c'est le retournement de la palette, pas un oubli) ; et si le
-navigateur refuse d'écrire dans son stockage, un réglage s'applique mais n'est pas retenu après
-rechargement.
+⚠ Les limites, dites franchement : **les motifs se peignent aussi sur une page sombre désormais** — c'est ce
+que la bande sombre et les encres claires viennent de régler —, mais les Trames de papier n'y sont pas
+inversées : ce sont les mêmes filets, simplement clairs. Le chrome d'une peau sombre reste CLAIR (c'est le
+retournement de la palette, pas un oubli), ce qui reste imprimé d'une page de nuit personnalisée est
+l'accent, et si le navigateur refuse d'écrire dans son stockage, un réglage s'applique mais n'est pas retenu
+après rechargement.
 
-*Vérifier :* `node _ui_skin_test.cjs` — **248/248** (contre **229** : la section 9 mesure les douze motifs,
-les deux réglages, la pastille et le pire filet) ; `node _ui_skin_pixel_test.cjs` — **83** vérifications OK
-dans Chrome sur le CSS compilé (dont la profondeur des deux peaux sombres, et les douze motifs peints) ;
-`node _ui_bg_live_test.cjs custom` — **14/14** et `… none` — **9/9** (le build réel, ce que le moteur peint
-sur les pages réelles : couleur, motif, encre et trame) ; `node _ui_bg_apply_test.cjs` — **9/9** ;
+*Vérifier :* `node _ui_skin_test.cjs` — **271/271** (contre **229** : la section 9 mesure les vingt motifs,
+les deux familles, les trois encres, la page de nuit, la recette retournée et les planchers des huit
+accents) ; `node _ui_skin_pixel_test.cjs` — **93** vérifications OK dans Chrome sur le CSS compilé (les 20
+motifs peints, la pastille qui ne ment pas, et la page de nuit : `#0a0b0c` contre celle de Night) ;
+`node _ui_bg_live_test.cjs custom` — **17/17**, `… night` — **18/18** et `… none` — **11/11** (le build
+réel, ce que le moteur peint sur les pages réelles) ; `node _ui_bg_apply_test.cjs` — **9/9** ;
 `node _ui_scale_test.cjs` — **61/61** ; `node _workspace_keys_test.mjs` — **39** ;
 `node _auth_identity_test.mjs` — **39** ; `node _tdz_scan_test.mjs` — **18** (250 fichiers) ;
-`npx oxlint` sur les deux fichiers touchés — **0 avertissement** ; `npx vite build` ✓.
+`npx oxlint` sur les trois fichiers touchés — **0 avertissement** ; `npx vite build` ✓.

@@ -152,12 +152,13 @@ for (const s of SKINS) {
   out[s].preview = { card: bg('pcard'), chrome: bg('pchrome'), outside: bg('outside') };
 }
 delete document.documentElement.dataset.skin;
-/* LES DOUZE MOTIFS — mesurés sur la feuille COMPILÉE. Une PASTILLE porte la
+/* LES VINGT MOTIFS — mesurés sur la feuille COMPILÉE. Une PASTILLE porte la
    classe d'une page (lab-page-chip, qui peint la couleur de page et remet le
    motif à zéro) et l'attribut du motif ; une PAGE porte la classe de la page et
    rien d'autre — c'est <html> qui lui donne le motif. Les deux doivent peindre
    la MÊME image, sinon une pastille pourrait montrer autre chose que la page. */
-const PATTERNS = ['none', 'grid', 'fine', 'graph', 'dots', 'dense', 'rules', 'diagonal', 'cross', 'weave', 'herringbone', 'triangles'];
+const PATTERNS = ['none', 'grid', 'fine', 'graph', 'dots', 'dense', 'rules', 'diagonal', 'cross', 'weave', 'herringbone', 'triangles',
+  'waves', 'scales', 'zigzag', 'honeycomb', 'bubbles', 'confetti', 'checker', 'plaid'];
 const chipEl = (id, attrs) => {
   const el = document.createElement('div');
   el.className = 'lab-page-chip';
@@ -166,7 +167,7 @@ const chipEl = (id, attrs) => {
   for (const k in (attrs || {})) el.style.setProperty(k, attrs[k]);
   document.body.appendChild(el);
   const cs = getComputedStyle(el);
-  const v = { image: cs.backgroundImage === 'none' ? 'none' : cs.backgroundImage, size: cs.backgroundSize, line: cs.getPropertyValue('--lab-page-line').trim() };
+  const v = { image: cs.backgroundImage === 'none' ? 'none' : cs.backgroundImage, size: cs.backgroundSize, pos: cs.backgroundPosition, line: cs.getPropertyValue('--lab-page-line').trim() };
   el.remove();
   return v;
 };
@@ -196,8 +197,40 @@ const scaled = chipEl('grid', { '--lab-page-scale': '2' }).size;
 const scaledHalf = chipEl('grid', { '--lab-page-scale': '0.5' }).size;
 const lines = {};
 for (const a of ['0.035', '0.06', '0.11']) lines[a] = chipEl('grid', { '--lab-page-alpha': a }).line;
+/* LES TROIS ENCRES : celles que le JavaScript écrit en ligne (le filet neutre,
+   la teinte de l'accent, son complémentaire) — ici posées à la main, comme
+   uiSkinCustomVars les pose sur <html>. */
+const tints = chipEl('confetti', { '--lab-page-alpha': '0.06', '--lab-page-ink-2': '42 78 153', '--lab-page-ink-3': '129 61 0' });
+/* LA PAGE DE NUIT : la peau personnalisée RETOURNÉE par deux attributs
+   (data-skin="custom" + data-pagemode="night"), les encres claires étant
+   écrites en ligne. Peu importe ce qui l'a écrite : ce qui compte est ce que le
+   MOTEUR peint. */
+const nightEl = (cls, id, attrs, tone, mode) => {
+  const el = document.createElement('div');
+  el.className = cls;
+  el.dataset.skin = 'custom';
+  if (mode) el.dataset.pagemode = mode;
+  if (tone) el.dataset.tone = tone;
+  if (id && id !== 'none') el.dataset.pattern = id;
+  for (const k in (attrs || {})) el.style.setProperty(k, attrs[k]);
+  document.body.appendChild(el);
+  const cs = getComputedStyle(el);
+  const v = { bg: px(cs.backgroundColor), image: cs.backgroundImage === 'none' ? 'none' : cs.backgroundImage,
+    size: cs.backgroundSize, pos: cs.backgroundPosition, line: cs.getPropertyValue('--lab-page-line').trim() };
+  el.remove();
+  return v;
+};
+const NIGHT_INKS = { '--lab-page-ink': '226 232 240', '--lab-page-ink-2': '177 203 252', '--lab-page-ink-3': '243 190 157' };
+const dark = {
+  day: nightEl('bg-slate-50', 'grid', null, '', ''),
+  page: nightEl('bg-slate-50', 'none', null, '', 'night'),
+  drawn: nightEl('bg-slate-50', 'confetti', { '--lab-page-alpha': '0.11', ...NIGHT_INKS }, '', 'night'),
+  chip: nightEl('lab-page-chip', 'confetti', { '--lab-page-alpha': '0.11', ...NIGHT_INKS }, '', 'night'),
+  zinc: nightEl('bg-slate-50', 'none', null, 'zinc', 'night'),
+  stone: nightEl('bg-slate-50', 'none', null, 'stone', 'night')
+};
 fetch('/result', { method: 'POST', body: JSON.stringify({ stage: 'done', skins: out,
-  patterns: { chips, pages, noneUnderGrid, plainPageUnderGrid, scaled, scaledHalf, lines } }) });
+  patterns: { chips, pages, noneUnderGrid, plainPageUnderGrid, scaled, scaledHalf, lines, tints, dark } }) });
 </script>`;
 
 const CHECKS = [];
@@ -385,14 +418,14 @@ const contrast = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - 
   check(need.every((s) => S[s].preview.outside === S[s].chrome),
     'le frère SANS attribut, lui, suit la peau de <html> pour chaque peau');
 
-  console.log('\n--- LES DOUZE MOTIFS : ce que le moteur peint (sur la feuille compilée) ---');
+  console.log('\n--- LES VINGT MOTIFS : ce que le moteur peint (sur la feuille compilée) ---');
   const P = d.patterns || {};
   const ids = Object.keys(P.chips || {});
   const badImage = ids.filter((id) => id !== 'none' && !/gradient\(/.test(P.chips[id].image));
   const lying = ids.filter((id) => P.chips[id].image !== P.pages[id].image || P.chips[id].size !== P.pages[id].size);
-  check(ids.length === 12, 'les douze motifs sont mesurés', ids.join(' '));
+  check(ids.length === 20, 'les vingt motifs sont mesurés', ids.join(' '));
   check(P.chips.none.image === 'none', 'la pastille « None » reste NUE (aucun motif)', String(P.chips.none.image));
-  check(badImage.length === 0, '…et les onze autres peignent bien un dégradé', badImage.join() || 'tous');
+  check(badImage.length === 0, '…et les dix-neuf autres peignent bien un dégradé', badImage.join() || 'tous');
   check(lying.length === 0, 'la pastille et la page peignent la MÊME image, à la même trame',
     lying.length ? lying.join() : P.chips.grid.size);
   check(P.noneUnderGrid.image === 'none',
@@ -412,15 +445,49 @@ const contrast = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - 
     'chaque motif a bien SA trame (24 · 12 · 18 · 10 px)',
     `${P.chips.grid.size} · ${P.chips.fine.size} · ${P.chips.dots.size} · ${P.chips.dense.size}`);
   const isAuto = (s) => /^auto(, auto)*$/.test(s);
-  const inGradient = ['rules', 'diagonal', 'cross', 'weave', 'herringbone', 'triangles']
+  const inGradient = ['rules', 'diagonal', 'cross', 'weave', 'herringbone', 'triangles', 'plaid']
     .filter((id) => !isAuto(P.chips[id].size) || !/gradient/.test(P.chips[id].image));
-  check(inGradient.length === 0, '…et les six motifs à trame répétée la portent DANS le dégradé',
+  check(inGradient.length === 0, '…et les sept motifs à trame répétée la portent DANS le dégradé',
     inGradient.length ? inGradient.join() : P.chips.triangles.size);
+  check(/rgba?\(42[, ]+78[, ]+153/.test(P.tints.image) && /rgba?\(129[, ]+61[, ]+0/.test(P.tints.image),
+    'les motifs DESSINÉS lisent les trois encres : le confetti porte la teinte de l’accent ET son complémentaire',
+    P.tints.image.slice(0, 80));
+  check(/^0px 0px, 10px 10px/.test(P.chips.scales.pos),
+    'la POSITION d’une famille d’arcs est écrite une fois et multipliée par l’échelle (écailles : 0 0, 10 px 10 px)',
+    P.chips.scales.pos);
+  check(/^(0px 0px)(, 0px 0px)*$/.test(P.chips.waves.pos) && /^(0px 0px)(, 0px 0px)*$/.test(P.chips.grid.pos),
+    '…et un motif qui n’en a pas besoin laisse la position au défaut du moteur',
+    `${P.chips.waves.pos} / ${P.chips.grid.pos}`);
+
+  console.log('\n--- LA PAGE DE NUIT : la peau personnalisée retournée (mesurée dans le moteur) ---');
+  const D = d.patterns.dark || {};
+  const inkOf = (s) => {
+    const m = /rgba?\(([\d.]+)[, ]+([\d.]+)[, ]+([\d.]+)/.exec(String(s));
+    return m ? '#' + [1, 2, 3].map((i) => Number(m[i]).toString(16).padStart(2, '0')).join('') : '';
+  };
+  const inkHex = inkOf(D.drawn ? D.drawn.line : '');
+  check(contrast(D.page.bg, D.day.bg) > 8 && contrast(D.day.bg, S.slate.page) < 1.02,
+    'le même attribut SANS le régime garde la page claire, AVEC lui la page est SOMBRE',
+    `${D.day.bg} → ${D.page.bg}`);
+  check(contrast(D.page.bg, S.night.page) < 1.05,
+    '…et c’est EXACTEMENT la page de la peau Night (réutilisée, pas recopiée)',
+    `${D.page.bg} / ${S.night.page}`);
+  check(contrast(D.zinc.bg, S.carbon.page) < 1.05,
+    'la famille grise prend la profondeur de Carbon', `${D.zinc.bg} / ${S.carbon.page}`);
+  check(contrast(D.stone.bg, S.night.page) < 1.05,
+    '…et la chaude celle de Night, sur la rampe de Stone', `${D.stone.bg} / ${S.night.page}`);
+  check(/gradient/.test(D.drawn.image) && D.drawn.image === D.chip.image && D.drawn.size === D.chip.size,
+    'un motif se peint sur la page sombre, et sa pastille montre la MÊME image', D.drawn.size);
+  check(/226[, ]+232[, ]+240/.test(D.drawn.line) && lum(inkHex) > 8 * lum(D.drawn.bg),
+    'l’encre y est CLAIRE (slate-200) et bien plus claire que la page : le motif se voit sur le fond sombre',
+    `${D.drawn.line} sur ${D.drawn.bg}`);
+  check(/15[, ]+23[, ]+42/.test(D.day.line),
+    '…alors que le filet du JOUR reste le slate-900 livré (le régime est le seul changement)', D.day.line);
 
   const failed = CHECKS.filter((c) => !c.ok);
   console.log(failed.length
     ? `\n❌ ${failed.length} vérification(s) en échec`
-    : `\n_ui_skin_pixel_test.cjs — ${CHECKS.length} vérifications OK (les 9 peaux mesurées dans Chrome, sur le CSS compilé)`);
+    : `\n_ui_skin_pixel_test.cjs — ${CHECKS.length} vérifications OK (les 9 peaux, les 20 motifs et la page de nuit, mesurés dans Chrome sur le CSS compilé)`);
   process.exit(failed.length ? 1 : 0);
 })();
 

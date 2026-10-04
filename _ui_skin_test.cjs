@@ -99,13 +99,26 @@ try {
 } catch { shippedRead = false; }
 
 /* the blocks of our own stylesheet, keyed by skin id (comments stripped for the
-   structural checks, so a comment can never masquerade as a rule) */
+   structural checks, so a comment can never masquerade as a rule).
+   UNE RÈGLE PEUT NOMMER PLUSIEURS PEAUX — c'est ainsi qu'une page de nuit
+   PERSONNALISÉE rejoue la palette de `night` (ou de `carbon`) sans en recopier
+   un seul cran : le corps de la règle appartient alors à CHAQUE nom qu'elle
+   cite, et c'est ce que la section 9 vérifie (`RULES`, `bodyOf`). */
 const CSS_CODE = CSS.replace(/\/\*[\s\S]*?\*\//g, '');
 const blocks = {};
 const blockVars = {};
-for (const m of CSS.matchAll(/\[data-skin="([a-z-]+)"\]\s*\{([\s\S]*?)\}/g)) {
-  blocks[m[1]] = m[2];
-  blockVars[m[1]] = rampsOf(m[2]);
+/* un corps de règle ne contient jamais d'accolade : le motif ci-dessous ne
+   retient donc QUE les règles, jamais la règle @media qui les enveloppe. */
+const RULES = [...CSS_CODE.matchAll(/([^{}]*?)\{([^{}]*)\}/g)]
+  .map((m) => ({ prelude: m[1].trim(), body: m[2] }))
+  .filter((r) => /\[data-skin="/.test(r.prelude));
+/** Les règles dont le sélecteur nomme `needle` (parmi d'autres ou seule). PUR. */
+const ruleOfSkin = (needle, more = '') => RULES.filter((r) => r.prelude.includes(needle) && r.prelude.includes(more));
+for (const { prelude, body } of RULES) {
+  const first = /\[data-skin="([a-z-]+)"\]/.exec(prelude);
+  if (!first || blocks[first[1]] !== undefined) continue;   /* la première règle DÉCLARE la peau */
+  blocks[first[1]] = body;
+  blockVars[first[1]] = rampsOf(body);
 }
 
 const STOPS = [50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950];
@@ -517,9 +530,10 @@ const ROLES = [
     [Math.round(UI.hexToOklch('#ffffff').L), Math.round(UI.hexToOklch('#ffffff').C), Math.round(UI.hexToOklch('#000000').L)],
     [100, 0, 0]);
   check('6o a colour that is not a hex is refused', UI.hexToOklch('red'), null);
-  check('6p a garbage setting is sanitised (accent, neutral, page and motif)',
-    UI.uiCustomSkinOf({ accent: 'red', neutral: 'neon', bg: 'red', pattern: 'stripes', ink: 'x', scale: 'y' }),
+  check('6p a garbage setting is sanitised (accent, neutral, page, regime and motif)',
+    UI.uiCustomSkinOf({ accent: 'red', neutral: 'neon', bg: 'red', pattern: 'stripes', ink: 'x', scale: 'y', pageMode: 'dusk' }),
     { accent: UI.UI_CUSTOM_ACCENT_DEFAULT, neutral: UI.UI_CUSTOM_NEUTRAL_DEFAULT,
+      pageMode: UI.UI_BG_PAGE_MODE_DEFAULT,
       bg: UI.UI_BG_DEFAULT, pattern: UI.UI_BG_PATTERN_DEFAULT,
       ink: UI.UI_BG_INK_DEFAULT, scale: UI.UI_BG_SCALE_DEFAULT });
   const TEAL_PAGE = { accent: '#009689', neutral: 'zinc', bg: '#eef2ff', pattern: 'dots' };
@@ -702,7 +716,7 @@ const ROLES = [
      couleur : les deux pastilles sont dessinées par les MÊMES variables que la
      page (la miniature porte `data-skin` / `data-pattern`, donc elle ment pas). */
   frag('the control offers the pages', SET, '{UI_BG_PRESETS.map((p) => (');
-  frag('…and the motifs', SET, '{UI_BG_PATTERNS.map((p) => (');
+  frag('…and the motifs, in the two families the catalogue declares', SET, '{UI_BG_PATTERNS.map((p, i) => (');
   frag('…the free colour picker is there too', SET, 'onChange={(e) => setBg(e.target.value)}');
   frag('…and falls back on the shipped page when nothing is chosen', SET,
     'value={custom.bg || oklchToHex(uiBgStops(UI_BG_DEFAULT).page)}');
@@ -778,13 +792,15 @@ const ROLES = [
     presetPairs.every((p) => Math.abs(p.loss) < 1));
 
   /* ══════════════════════════════════════════════════════════════════════════
-     9 — LES DOUZE MOTIFS, LEUR ENCRE ET LEUR ÉCHELLE.
-     « i patterns sono davvero pochi » : les quatre motifs livrés deviennent
-     DOUZE, et chacun a désormais sa FORCE d'encre et son ÉCHELLE de trame. Ce
-     qui est vérifié ici n'est pas le catalogue mais le MÉCANISME : la géométrie
-     des douze vit dans index.css (un bloc par motif, dans `@media screen`,
-     aucun `url()` — rien à télécharger, rien à imprimer), l'encre et l'échelle
-     sont deux variables écrites EN LIGNE, et la feuille multiplie SES propres
+     9 — LES VINGT MOTIFS, LEURS TROIS ENCRES ET LEUR ÉCHELLE.
+     « i patterns sono davvero pochi » puis « i motivi sono sempre linee » : les
+     quatre motifs livrés deviennent DOUZE TRAMES de papier, puis VINGT en tout
+     avec huit MOTIFS DESSINÉS — chacun avec sa FORCE d'encre et son ÉCHELLE de
+     trame, et les dessinés avec trois encres tirées de l'accent. Ce qui est
+     vérifié ici n'est pas le catalogue mais le MÉCANISME : la géométrie des
+     vingt vit dans index.css (un bloc par motif, dans `@media screen`, aucun
+     `url()` — rien à télécharger, rien à imprimer), l'encre et l'échelle
+     sont des variables écrites EN LIGNE, et la feuille multiplie SES propres
      pas (`calc(… * var(--lab-page-scale, 1))`) — donc une page et sa pastille
      ne peuvent pas diverger, et changer l'échelle ne demande aucun nombre au
      JavaScript.
@@ -807,14 +823,16 @@ const ROLES = [
     }), []);
   ok('9b …and each of them really draws a trame (its lines are inside the gradient or its tile)',
     ['grid', 'fine', 'dots', 'dense'].every((id) => /--lab-page-size:[\s\S]*calc\(/.test(ruleOf(id)))
-    && ['rules', 'diagonal', 'cross', 'weave', 'herringbone', 'triangles'].every((id) => /calc\(/.test(ruleOf(id))));
+    && ['rules', 'diagonal', 'cross', 'weave', 'herringbone', 'triangles', 'plaid'].every((id) => /calc\(/.test(ruleOf(id))));
   check('9c every motif obeys the two inline knobs (its trame, its ink)',
     UI.UI_BG_PATTERNS.filter((p) => p.id !== UI.UI_BG_PATTERN_DEFAULT)
       .filter((p) => !ruleOf(p.id).includes('var(--lab-page-scale, 1)')).map((p) => p.id), []);
-  ok('9d the ink is written ONCE, for all twelve (a force, not a colour)',
-    /--lab-page-line: rgb\(15 23 42 \/ var\(--lab-page-alpha, 0\.06\)\)/.test(CSS));
+  ok('9d the ink is written ONCE, for all twenty (three inks and a force — not a colour)',
+    /--lab-page-line: rgb\(var\(--lab-page-ink, 15 23 42\) \/ var\(--lab-page-alpha, 0\.06\)\)/.test(CSS)
+    && /--lab-page-line-2: rgb\(var\(--lab-page-ink-2, 15 23 42\) \/ var\(--lab-page-alpha, 0\.06\)\)/.test(CSS)
+    && /--lab-page-line-3: rgb\(var\(--lab-page-ink-3, 15 23 42\) \/ var\(--lab-page-alpha, 0\.06\)\)/.test(CSS));
   ok('9e …and the marked line of the graph paper is twice that force',
-    /--lab-page-line-strong: rgb\(15 23 42 \/ calc\(var\(--lab-page-alpha, 0\.06\) \* 2\)\)/.test(CSS));
+    /--lab-page-line-strong: rgb\(var\(--lab-page-ink, 15 23 42\) \/ calc\(var\(--lab-page-alpha, 0\.06\) \* 2\)\)/.test(CSS));
   check('9f the three forces and the three trames are declared once each',
     [new Set(INKS.map((i) => i.id)).size, new Set(SCALES.map((s) => s.id)).size, INKS.length, SCALES.length],
     [3, 3, 3, 3]);
@@ -834,25 +852,34 @@ const ROLES = [
     });
   };
   const lumLin = ([r, g, b]) => 0.2126 * r + 0.7152 * g + 0.0722 * b;
-  const lineRatio = (hex, alpha) => {
-    const page = clampLin(UI.uiBgStops(hex).page);
-    const ink = linOf('#0f172a');                       /* l'encre de index.css */
+  /** Le filet d'un motif COMPOSÉ sur sa page : son contraste WCAG. PUR. */
+  const lineRatio = (pageCol, inkHex, alpha) => {
+    const page = clampLin(pageCol);
+    const ink = linOf(inkHex);
     const over = ink.map((v, i) => alpha * v + (1 - alpha) * page[i]);
     const [x, y] = [lumLin(over), lumLin(page)].sort((p, q) => q - p);
     return (x + 0.05) / (y + 0.05);
   };
-  let worstLine = { v: 0, hex: '', ink: '' };
-  for (const ink of INKS) for (const hex of PROBES) {
-    const v = lineRatio(hex, ink.alpha);
-    if (v > worstLine.v) worstLine = { v, hex, ink: ink.id };
+  /** Les trois encres qu'un motif reçoit, en hexadécimal — celles que
+   *  `uiBgInkRgb` écrit et que la feuille compose. PUR. */
+  const inksOf = (accent, mode) => UI.uiBgInkRgb(accent, mode)
+    .map((t) => '#' + t.split(' ').map((v) => Number(v).toString(16).padStart(2, '0')).join(''));
+  const ACCENTS = UI.UI_CUSTOM_ACCENTS.map((a) => a.color);
+  const PAGES = PROBES.concat(UI.UI_BG_PRESETS.map((p) => p.hex));
+  let worstLine = { v: 0, hex: '', ink: '', force: '' };
+  for (const accent of ACCENTS) for (const ink of inksOf(accent, 'day')) {
+    for (const page of PAGES) for (const force of INKS) {
+      const v = lineRatio(UI.uiBgStops(page).page, ink, force.alpha);
+      if (v > worstLine.v) worstLine = { v, hex: page, ink, force: force.id };
+    }
   }
-  ok(`9h a pattern never fights the text: the boldest ink over the worst page costs ${worstLine.v.toFixed(2)}:1 (page ${worstLine.hex}, ink ${worstLine.ink})`,
+  ok(`9h a pattern never fights the text: the boldest ink over the worst light page costs ${worstLine.v.toFixed(2)}:1 (page ${worstLine.hex}, ink ${worstLine.ink}, ${worstLine.force})`,
     worstLine.v <= 1.25);
 
-  check('9i the two knobs ride IN LINE with the rest of the setting — and only with a pattern',
+  check('9i the knobs — and the three inks — ride IN LINE with the rest of the setting, and only with a pattern',
     [Object.keys(UI.uiSkinCustomVars({ pattern: 'grid' })).filter((k) => k.startsWith('--lab-page-')),
       Object.keys(UI.uiSkinCustomVars({ pattern: UI.UI_BG_PATTERN_DEFAULT })).filter((k) => k.startsWith('--lab-page-'))],
-    [['--lab-page-alpha', '--lab-page-scale'], []]);
+    [['--lab-page-alpha', '--lab-page-scale', '--lab-page-ink', '--lab-page-ink-2', '--lab-page-ink-3'], []]);
   check('9j …at their shipped value by default, at the chosen one otherwise',
     [UI.uiSkinCustomVars({ pattern: 'grid' })['--lab-page-alpha'],
       UI.uiSkinCustomVars({ pattern: 'grid' })['--lab-page-scale'],
@@ -876,7 +903,7 @@ const ROLES = [
   ok('9m …and the chip resets the motif BEFORE the motifs are declared (a patterned chip wins, “None” stays plain)',
     chipAt > 0 && chipAt < firstPattern && CSS.slice(chipAt, chipAt + 160).includes('--lab-page-image: none;')
     && CSS.slice(chipAt, chipAt + 160).includes('background-color: var(--color-slate-50);'));
-  frag('the control offers the twelve motifs, each with its live chip', SET,
+  frag('the control offers the twenty motifs, each with its live chip', SET,
     'className="lab-page-chip h-8 w-12 rounded border border-slate-300"');
   frag('…painted by the attribute of a page', SET,
     'data-pattern={p.id === UI_BG_PATTERN_DEFAULT ? undefined : p.id}');
@@ -886,6 +913,183 @@ const ROLES = [
     'const setInk = (ink) => setCustom(saveUiCustomSkin({ ...custom, ink }, operator));');
   frag('…with the trame written the same way', SET,
     'const setScale = (scale) => setCustom(saveUiCustomSkin({ ...custom, scale }, operator));');
+
+  /* ══════════════════════════════════════════════════════════════════════════
+     9 (suite) — DEUX FAMILLES, TROIS ENCRES.
+     « i motivi sono sempre linee » : le catalogue passe de douze à VINGT, en
+     deux familles, et les huit MOTIFS DESSINÉS se peignent avec des encres que
+     l'accent de l'opérateur choisit — sans une règle de plus : même géométrie
+     dans index.css, mêmes deux réglages écrits en ligne.
+     ═════════════════════════════════════════════════════════════════════════ */
+  const DRAWN = UI.UI_BG_PATTERNS.filter((p) => p.group === 'motif');
+  const PAPER = UI.UI_BG_PATTERNS.filter((p) => p.group === 'texture');
+  check('9n the catalogue has two families — twelve paper trames and eight drawn motifs',
+    [PAPER.length, DRAWN.length, UI.UI_BG_PATTERN_GROUPS.map((g) => g.id), UI.UI_BG_PATTERNS.length],
+    [12, 8, ['texture', 'motif'], 20]);
+  check('9o …and every drawn motif either CURVES the line or paints a second colour',
+    DRAWN.filter((p) => !/radial-gradient\(|conic-gradient\(/.test(ruleOf(p.id))
+      && !/--lab-page-line-[23]/.test(ruleOf(p.id))).map((p) => p.id), []);
+  check('9p …while the twelve paper trames stay the neutral hairline work they were',
+    PAPER.filter((p) => p.id !== UI.UI_BG_PATTERN_DEFAULT && !ruleOf(p.id).includes('var(--lab-page-line)')).map((p) => p.id), []);
+  check('9q …and none of them borrows the accent (its two tinted inks belong to the drawn motifs)',
+    PAPER.filter((p) => p.id !== UI.UI_BG_PATTERN_DEFAULT && /--lab-page-line-[23]/.test(ruleOf(p.id))).map((p) => p.id), []);
+  /* LES TROIS ENCRES : elles se DÉRIVENT de l'accent — le filet neutre, la teinte
+     de l'accent, son complémentaire —, donc changer d'accent change VRAIMENT les
+     couleurs du motif, et le filet, lui, ne bouge pas. */
+  check('9r the three inks follow the accent — a neutral filet, its hue, its complement',
+    [inksOf('#155dfc', 'day')[0] === inksOf('#f54900', 'day')[0],
+      new Set(inksOf('#155dfc', 'day')).size,
+      inksOf('#155dfc', 'day')[1] !== inksOf('#f54900', 'day')[1],
+      inksOf('#155dfc', 'day')[2] !== inksOf('#155dfc', 'day')[1]],
+    [true, 3, true, true]);
+  check('9s …and the filet itself goes from slate-900 (day) to slate-200 (night)',
+    [inksOf('#155dfc', 'day')[0], inksOf('#155dfc', 'night')[0], UI.UI_BG_INK_DAY, UI.UI_BG_INK_NIGHT],
+    ['#0f172a', '#e2e8f0', '15 23 42', '226 232 240']);
+
+  /* ══════════════════════════════════════════════════════════════════════════
+     9 (fin) — LA NUIT D'UNE PEAU PERSONNALISÉE.
+     « la pagina resta molto chiara » : la page ne savait pas devenir sombre. Ce
+     qui est vérifié ici n'est pas l'existence d'un attribut, mais l'ÉGALITÉ qui
+     le rend sûr : une page de nuit personnalisée EST la palette de la peau
+     livrée correspondante — rejouée par un SECOND sélecteur sur son bloc — et
+     l'accent se retourne par la recette sombre, appliquée à sa propre forme.
+     ═════════════════════════════════════════════════════════════════════════ */
+  const sharedWith = (selector, skin) => RULES.filter((r) => r.prelude.includes(`[data-skin="${skin}"],`)
+    && r.prelude.includes(selector));
+  const nightShared = sharedWith('[data-skin="custom"][data-pagemode="night"]', 'night');
+  const nightSharedRamp = nightShared.length === 1 ? rampsOf(nightShared[0].body) : {};
+  check('9t night pages REUSE the whole palette of the shipped Night skin (one rule, two selectors)',
+    [nightShared.length, Object.keys(nightSharedRamp).length,
+      nightShared.length ? STOPS.filter((s) => !nightSharedRamp.slate || !nightSharedRamp.slate[String(s)]).length : -1,
+      nightShared.length ? /color-scheme: dark/.test(nightShared[0].body) : false],
+    [1, 17, 0, true]);
+  const zincShared = sharedWith('[data-skin="custom"][data-tone="zinc"][data-pagemode="night"]', 'carbon');
+  const zincRamp = zincShared.length === 1 ? rampsOf(zincShared[0].body) : {};
+  ok('9u …and the GREY family (Zinc) reuses the one of the shipped Carbon skin',
+    zincShared.length === 1 && STOPS.every((s) => zincRamp.slate && zincRamp.slate[String(s)]
+      && Math.abs(zincRamp.slate[String(s)].L - blockVars.carbon.slate[String(s)].L) < 1e-9));
+  /* LE CHAUD : ces deux peaux n'ont pas de famille chaude, donc Stone rejoue la
+     MÊME recette — les onze crans NEUTRES de Night appliqués à sa rampe. La
+     sonde relit les QUATRE BORNES dans le bloc de `night` (son 50, son 300, son
+     400, son 950) au lieu de les croire ici. */
+  const stoneRules = ruleOfSkin('[data-skin="custom"][data-tone="stone"][data-pagemode="night"]');
+  const stoneRamp = stoneRules.length ? rampsOf(stoneRules[0].body) : {};
+  const nS = blockVars.night.slate;
+  const surfBand = [nS['50'].L, nS['300'].L], inkBand = [nS['400'].L, nS['950'].L];
+  const stoneWant = STOPS.map((s) => {
+    const src = SHIPPED.stone, isSurface = [50, 100, 200, 300].includes(s);
+    const from = src[isSurface ? '50' : '400'].L, to = src[isSurface ? '300' : '950'].L;
+    const [lo, hi] = isSurface ? surfBand : inkBand;
+    return lo + (hi - lo) * (src[String(s)].L - from) / (to - from);
+  });
+  check(`9v …et la rampe CHAUDE de nuit est la même recette sur Stone (page ${stoneWant[0].toFixed(1)} % contre ${surfBand[0].toFixed(1)} pour Night)`,
+    STOPS.filter((s, i) => {
+      const got = stoneRamp.slate && stoneRamp.slate[String(s)];
+      return !got || Math.abs(got.L - stoneWant[i]) > 0.051
+        || Math.abs(got.C - SHIPPED.stone[String(s)].C) > 0.0006;
+    }), []);
+  const darkShipped = UI.uiBgStops(UI.oklchToHex(UI.UI_BG_SHIPPED_OKLCH), 'night');
+  ok(`9w a night page stays IN the dark band (${UI.UI_BG_DARK_LO}–${UI.UI_BG_DARK_HI} %) whatever is chosen, and the shipped page lands on Night's own (${darkShipped.page.L.toFixed(1)} contre 15.0, ${darkShipped.card.L.toFixed(1)} contre 18.5)`,
+    PAGES.every((hex) => {
+      const p = UI.uiBgStops(hex, 'night').page;
+      return p.L >= UI.UI_BG_DARK_LO - 0.001 && p.L <= UI.UI_BG_DARK_HI + 0.001;
+    })
+    && UI.uiBgStops('#000000', 'night').page.L === UI.UI_BG_DARK_LO
+    && UI.uiBgStops('#ffffff', 'night').page.L === UI.UI_BG_DARK_HI
+    && Math.abs(darkShipped.page.L - 15) <= 0.5 && Math.abs(darkShipped.card.L - 18.5) <= 0.5);
+
+  check('9x the regime is a setting like the others: it rides in the stored object, and a name nobody knows falls back to the day',
+    [UI.uiCustomSkinOf({ pageMode: 'night' }).pageMode, UI.uiCustomSkinOf({ pageMode: 'dusk' }).pageMode,
+      UI.uiSkinCustomVars({ bg: '#22c55e', pageMode: 'night' })['--color-slate-50'],
+      UI.uiSkinCustomVars({ bg: '#22c55e' })['--color-slate-50']],
+    ['night', 'day', UI.oklchCss(UI.uiBgStops('#22c55e', 'night').page), UI.oklchCss(UI.uiBgStops('#22c55e').page)]);
+  /* L'ACCENT RETOURNÉ : au bleu livré, la recette redonne le bleu de la peau
+     Night — sa LUMIÈRE cran pour cran (la teinte, elle, est celle de
+     l'opérateur) —, et aucun accent ne sort du gamut sRGB. */
+  const rampOfAccent = (accent) => rampsOf(Object.entries(UI.uiSkinCustomRamp(accent, 'night'))
+    .map(([k, v]) => `${k}: ${v};`).join('\n')).blue;
+  const blueOff = STOPS.filter((s) => Math.abs(rampOfAccent(UI.UI_CUSTOM_ACCENT_DEFAULT)[String(s)].L - blockVars.night.blue[String(s)].L) > 0.051);
+  const outOfGamut = ACCENTS.filter((accent) => STOPS.filter((s) => {
+    const m = UI.uiSkinCustomRamp(accent, 'night')[`--color-blue-${s}`].match(/oklch\(([\d.]+)% ([\d.]+) ([\d.]+)\)/);
+    /* LE MILLIÈME D'ÉCRITURE : la lumière est écrite au dixième et le chroma au
+       millième, donc un canal peut dépasser d'un ou deux millièmes — que le
+       moteur écrête. On le mesure plutôt que de le taire. */
+    return !UI.oklchToLin({ L: +m[1], C: +m[2], H: +m[3] }).every((v) => v >= -3e-3 && v <= 1 + 3e-3);
+  }).length);
+  ok("9y the accent turned over IS the recipe (at the shipped blue it is Night's blue family, L for L) and every accent stays in the sRGB gamut at the written millesimal",
+    blueOff.length === 0 && outOfGamut.length === 0);
+  const darkFloors = [
+    ['a chip (text-700 on bg-50) ≥ 4.5', (r) => ratio(r(700), r(50)), 4.5],
+    ['a stronger chip (text-800 on bg-100) ≥ 4.5', (r) => ratio(r(800), r(100)), 4.5],
+    ['the label of an accent (white on bg-600) ≥ 3.5', (r) => ratio(blockVars.night.white.base, r(600)), 3.5]
+  ];
+  let worstFloor = { v: Infinity, share: Infinity, accent: '', label: '' };
+  for (const accent of ACCENTS) {
+    const blue = rampOfAccent(accent);
+    for (const [label, fn, floor] of darkFloors) {
+      const v = fn((stop) => blue[String(stop)]);
+      if (v / floor < worstFloor.share) worstFloor = { v, share: v / floor, accent, label };
+    }
+  }
+  ok(`9z …and every accent of the list clears the dark-page floors (worst ${worstFloor.v.toFixed(2)}:1 — ${worstFloor.label}, accent ${worstFloor.accent})`,
+    worstFloor.share >= 1);
+
+  /* ══════════════════════════════════════════════════════════════════════════
+     10 — CE QUE LE MOTEUR PEINT À LA NUIT, ET CE QUI VA À L'IMPRESSION.
+     ═════════════════════════════════════════════════════════════════════════ */
+  /* LE MOTIF SUR UNE PAGE DE NUIT : le filet clair doit SE VOIR (≥ 1.35:1 à
+     Standard, sur tout ce qu'un opérateur peut choisir) sans jamais approcher
+     l'encre la plus pâle que le programme y écrit — la légende d'une carte
+     sombre est à 4.2:1, donc un motif sous 3:1 reste un motif, jamais un texte. */
+  let nightLine = { v: 0, hex: '', ink: '', force: '' }, palest = { v: 9, hex: '' };
+  for (const accent of ACCENTS) for (const page of PAGES) {
+    const dark = UI.uiBgStops(page, 'night').page;
+    for (const ink of inksOf(accent, 'night')) for (const force of INKS) {
+      const v = lineRatio(dark, ink, force.alpha);
+      if (v > nightLine.v) nightLine = { v, hex: UI.oklchToHex(dark), ink, force: force.id };
+    }
+    const v6 = lineRatio(dark, inksOf(accent, 'night')[0], 0.06);
+    if (v6 < palest.v) palest = { v: v6, hex: UI.oklchToHex(dark) };
+  }
+  ok(`10a on a night page the motif shows without shouting: ${nightLine.v.toFixed(2)}:1 at its boldest (${palest.v.toFixed(2)}:1 at Standard, page ${nightLine.hex})`,
+    nightLine.v > 1.2 && nightLine.v < 3 && palest.v >= 1.35);
+
+  /* L'IMPRESSION — le seul endroit où une page choisie POURRAIT partir sur le
+     papier : la couleur, l'accent et les encres sont écrits EN LIGNE, donc il
+     faut `!important` pour les défaire, et c'est ce que fait le garde. */
+  const printGuard = [...CSS.matchAll(/@media print\s*\{([\s\S]*?)\n\}/g)].map((m) => m[1]).join('\n');
+  ok('10b …and the paper guard: a night page prints LIGHT, whatever was written inline',
+    /\[data-skin="custom"\]\[data-pagemode="night"\] \{[\s\S]*--color-slate-50: oklch\(98\.4% 0\.003 247\.858\) !important/.test(printGuard)
+    && (printGuard.match(/!important/g) || []).length === 6
+    && printGuard.includes('--color-slate-50: oklch(98.5% 0.001 106.423) !important'));
+  frag('…and the pages have a DAY and a NIGHT, offered like the rest', SET, '{UI_BG_PAGE_MODES.map((m) => (');
+  frag('…with their own setter, writing the same setting as the accent and the page', SET,
+    'const setPageMode = (pageMode) => setCustom(saveUiCustomSkin({ ...custom, pageMode }, operator));');
+  frag('…the miniature carries the regime too (so it shows the dark page)', SET, 'data-pagemode={pageMode || undefined}');
+  frag('…and the catalogue announces its two families', SET, 'UI_BG_PATTERN_GROUPS.find((g) => g.id === p.group)');
+
+  /* L'APPLICATION — ce qui est réellement posé sur <html>. */
+  store.clear();
+  UI.saveUiSkin(UI.UI_SKIN_CUSTOM);
+  const nightSetting = { accent: '#009689', neutral: 'zinc', bg: '#22c55e', pattern: 'confetti', pageMode: 'night' };
+  UI.saveUiCustomSkin(nightSetting);
+  const nightVars = UI.uiSkinCustomVars(nightSetting);
+  check('10c the night page is written IN LINE, with the attribute that turns the palette over',
+    [root.dataset.pagemode, root.style.props['--color-slate-50'], root.style.props['--lab-page-ink']],
+    ['night', nightVars['--color-slate-50'], nightVars['--lab-page-ink']]);
+  ok('10d …and what it writes is the DARK page of the band (the chosen colour darkened, not the pastel)',
+    root.style.props['--color-slate-50'] === UI.oklchCss(UI.uiBgStops('#22c55e', 'night').page)
+    && UI.uiBgStops('#22c55e', 'night').page.L < 17 && UI.uiBgStops('#22c55e').page.L > 95);
+  UI.saveUiCustomSkin({ ...nightSetting, pageMode: 'day' });
+  check('10e back to the day: the attribute goes, the page is light again, the inks are the day ones',
+    [root.dataset.pagemode || '', root.style.props['--color-slate-50'] === UI.oklchCss(UI.uiBgStops('#22c55e').page),
+      root.style.props['--lab-page-ink']],
+    ['', true, UI.UI_BG_INK_DAY]);
+  UI.saveUiSkin('violet');
+  check('10f another skin takes the night away with the rest (nothing outlives the choice)',
+    [Object.keys(root.style.props), root.dataset.pagemode || '', root.dataset.pattern || ''],
+    [[], '', '']);
+  UI.saveUiSkin(UI.UI_SKIN_DEFAULT);
 
   const failed = results.filter((r) => !r.ok);
   if (failed.length) for (const f of failed) console.error(`✗ ${f.name}\n     got ${f.got}\n    want ${f.want}`);
