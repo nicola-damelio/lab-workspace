@@ -23,7 +23,8 @@ import {
    `saveUiCustomSkin` l'écrit et l'applique, et `uiSkinCustomVars` le pose sur la
    miniature comme sur <html>. */
 import {
-  UI_BG_DEFAULT, UI_BG_PATTERN_DEFAULT, UI_BG_PATTERNS, UI_BG_PRESETS,
+  UI_BG_DEFAULT, UI_BG_PATTERN_DEFAULT, UI_BG_PATTERN_INKS,
+  UI_BG_PATTERN_SCALES, UI_BG_PATTERNS, UI_BG_PRESETS,
   oklchToHex, uiBgStops
 } from '../../utils/uiSkin';
 
@@ -128,6 +129,12 @@ const SkinControl = ({ operator = null }) => {
      neutre choisie, c'est-à-dire celle que le programme livre. */
   const setBg = (bg) => setCustom(saveUiCustomSkin({ ...custom, bg }, operator));
   const setPattern = (pattern) => setCustom(saveUiCustomSkin({ ...custom, pattern }, operator));
+  /* LA FORCE DE L'ENCRE DU MOTIF et L'ÉCHELLE DE SA TRAME — deux réglages, deux
+     noms (uiSkin.js les traduit en un alpha et un facteur), écrits en ligne avec
+     le reste : la feuille multiplie alors SES propres pas, donc la géométrie des
+     douze motifs n'est écrite qu'une fois. */
+  const setInk = (ink) => setCustom(saveUiCustomSkin({ ...custom, ink }, operator));
+  const setScale = (scale) => setCustom(saveUiCustomSkin({ ...custom, scale }, operator));
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap gap-3">
@@ -250,15 +257,63 @@ const SkinControl = ({ operator = null }) => {
                 type="button"
                 onClick={() => setPattern(p.id)}
                 title={`${p.label} — ${p.hint}. A few CSS hairlines (nothing to download), painted on the pages only, and never on a printed document.`}
-                className={`rounded-lg border px-2 py-1 text-[11px] font-bold ${
+                className={`flex flex-col items-center gap-1 rounded-lg border px-2 py-1 text-[10px] font-bold ${
                   custom.pattern === p.id
                     ? 'border-blue-600 bg-blue-50 text-blue-700'
                     : 'border-slate-300 bg-white text-slate-600 hover:border-slate-400'
                 }`}
               >
+                {/* LA PASTILLE — et pas une illustration : elle porte la classe
+                    d'une page et l'attribut du motif, donc c'est la règle de
+                    index.css qui la peint, avec la couleur de page CHOISIE
+                    (ramenée dans la bande), l'encre et l'échelle choisies. */}
+                <span
+                  aria-hidden="true"
+                  data-pattern={p.id === UI_BG_PATTERN_DEFAULT ? undefined : p.id}
+                  className="lab-page-chip h-8 w-12 rounded border border-slate-300"
+                />
                 {p.label}
               </button>
             ))}
+          </div>
+          <span className="text-xs font-bold text-slate-700">
+            …the ink of the pattern, and the trame
+          </span>
+          <div className="flex flex-wrap items-center gap-2">
+            {UI_BG_PATTERN_INKS.map((i) => (
+              <button
+                key={i.id}
+                type="button"
+                onClick={() => setInk(i.id)}
+                title={`Pattern ink: ${i.label} — ${i.hint}. The hairlines stay a paper guide: even the boldest ink keeps the page readable.`}
+                className={`rounded-lg border px-2 py-1 text-[11px] font-bold ${
+                  custom.ink === i.id
+                    ? 'border-blue-600 bg-blue-50 text-blue-700'
+                    : 'border-slate-300 bg-white text-slate-600 hover:border-slate-400'
+                }`}
+              >
+                {i.label}
+              </button>
+            ))}
+            <span className="text-slate-300">·</span>
+            {UI_BG_PATTERN_SCALES.map((s) => (
+              <button
+                key={s.id}
+                type="button"
+                onClick={() => setScale(s.id)}
+                title={`Pattern trame: ${s.label} — ${s.hint}. The stylesheet multiplies its own steps, so a page and its chip always agree.`}
+                className={`rounded-lg border px-2 py-1 text-[11px] font-bold ${
+                  custom.scale === s.id
+                    ? 'border-blue-600 bg-blue-50 text-blue-700'
+                    : 'border-slate-300 bg-white text-slate-600 hover:border-slate-400'
+                }`}
+              >
+                {s.label}
+              </button>
+            ))}
+            {custom.pattern === UI_BG_PATTERN_DEFAULT && (
+              <span className="text-[10px] text-slate-500">(they act as soon as a pattern is chosen)</span>
+            )}
           </div>
           <span className="text-[10px] text-slate-500 leading-relaxed">
             The accent repaints every button, link, highlight and chip; the neutral family repaints the
@@ -268,7 +323,9 @@ const SkinControl = ({ operator = null }) => {
             colour you can pick freely: whatever you choose is <b>pulled back into a legible band</b>
             (lightness, chroma, sRGB gamut), and the panels that sit on the page follow it, so the titles
             and captions the program writes there stay readable. The pattern is a few CSS hairlines drawn
-            on the page — and never on a printed document.
+            on the page — <b>twelve</b> to choose from, with their own <b>ink</b> (how present the lines
+            are) and <b>trame</b> (how far apart) — and never on a printed document. Every chip above is
+            painted by the same stylesheet rule as the pages themselves, so it shows the page you will get.
           </span>
         </div>
       )}

@@ -8,9 +8,10 @@
    le câblage de ⚙ Settings — aucune ne charge l'application RÉELLE avec un
    réglage enregistré pour regarder ce que le moteur peint. Celle-ci le fait :
    elle sert dist/ (le build), amorce localStorage comme une session qui a déjà
-   choisi sa page (couleur #22c55e + motif grid), ouvre l'app dans
-   Chrome --headless=new, et lit les attributs, les variables EN LIGNE, et le
-   `background-color` / `background-image` CALCULÉS sur le vrai cadre de page.
+   choisi sa page (couleur #22c55e, motif graph, encre bold, trame broad), ouvre
+   l'app dans Chrome --headless=new, et lit les attributs, les variables EN
+   LIGNE, et le `background-color` / `background-image` / `background-size`
+   CALCULÉS sur le vrai cadre de page.
 
    Ce que la sonde rapporte est comparé ici ; `--shot` écrit en plus une capture
    (`_bg_shot_custom.png`) qui montre la page peinte.
@@ -39,7 +40,9 @@ const CHROME = [
 ].filter((p) => p && fs.existsSync(p))[0];
 
 const CHOSEN_BG = '#22c55e';
-const CHOSEN_PATTERN = 'grid';
+const CHOSEN_PATTERN = 'graph';
+const CHOSEN_INK = 'bold';
+const CHOSEN_SCALE = 'broad';
 
 const CHECKS = [];
 const ok = (cond, label, detail) => {
@@ -52,7 +55,8 @@ const BOOT = `<!doctype html><meta charset="utf-8"><title>boot</title><script>
   if (${SEED}) {
     localStorage.setItem('labWorkspace_uiSkin', 'custom');
     localStorage.setItem('labWorkspace_uiSkinCustom', JSON.stringify({
-      accent: '#009689', neutral: 'stone', bg: '${CHOSEN_BG}', pattern: '${CHOSEN_PATTERN}'
+      accent: '#009689', neutral: 'stone', bg: '${CHOSEN_BG}', pattern: '${CHOSEN_PATTERN}',
+      ink: '${CHOSEN_INK}', scale: '${CHOSEN_SCALE}'
     }));
   } else {
     localStorage.clear();
@@ -88,7 +92,9 @@ const measure = () => {
     inline: {
       slate50: html.style.getPropertyValue('--color-slate-50'),
       slate100: html.style.getPropertyValue('--color-slate-100'),
-      blue600: html.style.getPropertyValue('--color-blue-600')
+      blue600: html.style.getPropertyValue('--color-blue-600'),
+      alpha: html.style.getPropertyValue('--lab-page-alpha'),
+      scale: html.style.getPropertyValue('--lab-page-scale')
     },
     htmlImage: cs.getPropertyValue('--lab-page-image').trim().slice(0, 60),
     body: getComputedStyle(document.body).backgroundColor,
@@ -173,10 +179,19 @@ const main = async () => {
     ok(last.inline.slate50 === '', 'sans couleur choisie, aucune variable EN LIGNE', JSON.stringify(last.inline.slate50));
   }
 
+  /* les deux réglages du motif voyagent avec lui, et disparaissent sans lui */
+  ok(SEED ? last.inline.alpha === '0.11' : last.inline.alpha === '',
+    'la FORCE de l\u2019encre est \u00e9crite EN LIGNE avec le motif (bold = 0.11), et dispara\u00eet sans lui',
+    String(last.inline.alpha));
+  ok(SEED ? last.inline.scale === '1.6' : last.inline.scale === '',
+    '\u2026et l\u2019\u00c9CHELLE de la trame aussi (broad = \u00d71.6)', String(last.inline.scale));
+
   /* ── CE QUE LA PAGE PEINT ────────────────────────────────────────────────── */
   if (SEED) {
     ok(/gradient/.test(painted.image), 'la page est PEINTE du motif choisi (background-image calculé)', painted.image);
-    ok(painted.size.indexOf('24px') === 0, '…à la trame du motif (grid = 24 px)', painted.size);
+    ok(/12\.8px/.test(painted.size) && /64px/.test(painted.size),
+      '…à la trame CHOISIE (graph : 8 px et 40 px × 1.6 = 12.8 px et 64 px — c’est la feuille qui multiplie ses propres pas)',
+      painted.size);
     ok(/0\.955/.test(painted.color), '…sur la couleur choisie (le plancher de la bande), pas celle livrée', painted.color);
     ok(/oklch|rgb\(/.test(last.body), 'le fond du document suit la même couleur', last.body);
   } else {

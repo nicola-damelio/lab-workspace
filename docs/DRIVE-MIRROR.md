@@ -3360,3 +3360,94 @@ une couleur franche est peinte en pastel (`#22c55e` → `#e3f6e6`), les trois te
 premier motif de la liste est `none` — donc les toutes premières pastilles essayées ne peuvent, par
 construction, rien changer.
 
+
+## « tutta la pagina é nera » : les motifs passent de quatre à douze, et la nuit prend de la profondeur (04/10/2026)
+
+**La demande, mot pour mot.** « *adesso reagisce ma mente nello stile preselezionato nero tutta la pagina
+é nera, nel custom posso regolare solo la pagina di sfondo. inoltre i patterns sono davvero pochi. sono
+convinto che puoi fare molto meglio!* » — trois reproches, et le premier n'était pas une impression :
+il se mesure.
+
+### ① La nuit n'était qu'un seul noir — mesuré sur le build réel
+
+`night` posait une page à **13 %** de luminosité OKLCH, un panneau à **15,4 %** et une carte à **17 %** :
+quatre points entre le fond et les cartes, deux et demi entre le fond et les panneaux. À ces luminosités
+l'œil ne sépare plus rien, et la capture de l'écran d'entrée montrait exactement ce que la demande décrit :
+deux dalles noires à peine distinctes.
+
+Les deux peaux sombres ont donc été RECALCULÉES avec les mêmes règles qu'avant (la recette « NUIT » : la
+rampe livrée de chaque famille est normalisée sur deux bandes, surfaces et encres) mais avec des bandes
+ÉTALÉES — et, dans le même geste, des encres PLUS CLAIRES, parce qu'une carte qui monte mange le contraste
+de ce qui s'écrit dessus :
+
+| | fond | panneau | carte | filet | cran fort | encre 700 |
+|---|---|---|---|---|---|---|
+| `night` avant | 13 | 15,4 | 17 | 21,1 | 30 | 78,3 |
+| `night` après | **15** | **18,5** | **22** | **27** | **40** | **81,3** |
+| `carbon` avant | 11 | 13,7 | 15 | 20,7 | 28 | 78,7 |
+| `carbon` après | **13** | **16,8** | **19** | **26,7** | **37** | **79,1** |
+
+L'écart fond→carte passe de **4 à 7 points** (et de 8,1 à 12 pour le filet) ; au pixel, sur le build réel,
+la carte porte maintenant **3,3 ×** la luminance du fond (`night` : carte 1,10 % · page 0,33 %). La sonde
+EXIGE désormais ce rapport (≥ 2 ×) et que la page ne soit pas le noir pur. Les neuf planchers de
+lisibilité des peaux sombres, la part de 75 % du contraste clair et les paires de la maison restent tenus :
+c'est la recette, rejouée cran par cran par la sonde, qui l'affirme.
+
+**Le seul plancher qui bouge, dit franchement.** Les graduations des graphiques sont écrites EN DUR
+(`#64748b`, dans les options de Chart.js et les tracés SVG — la palette ne peut pas les repeindre) : sur
+une carte éclaircie elles tombent à **3,62:1** (`night`) et **3,87:1** (`carbon`), sous l'ancien plancher de
+4. C'est la SEULE paire que ces peaux ne savent pas replier, et 3,5 est le plancher d'un OBJET GRAPHIQUE
+(WCAG 1.4.11) : c'est donc là, et nulle part ailleurs, que la sonde a été ajustée. Le titre d'axe le plus
+sombre (`#334155`, 1,66:1) reste la limite connue qu'elle signale déjà.
+
+
+### ② Les motifs : de quatre à douze, avec leur encre et leur trame
+
+`UI_BG_PATTERNS` en compte désormais douze : `none`, `grid`, `fine`, `graph` (papier millimétré : trame
+fine et filet marqué tous les cinq), `dots`, `dense`, `rules`, `diagonal`, `cross`, `weave`, `herringbone`,
+`triangles`. Tous sont des dégradés CSS répétés : aucun octet à charger, et leurs règles vivent dans
+`@media screen` — un document imprimé garde sa page blanche.
+
+Chaque motif a deux réglages de plus, dans le MÊME objet que l'accent et la couleur de page :
+
+* **la force de l'encre** — `faint` 0.035, `standard` 0.06, `bold` 0.11 — écrite EN LIGNE
+  (`--lab-page-alpha`) ; l'encre elle-même (le filet, et le filet marqué du papier millimétré, au double)
+  est écrite une seule fois, dans la feuille ;
+* **l'échelle de la trame** — `fine` ×0.6, `standard` ×1, `broad` ×1.6 — écrite EN LIGNE
+  (`--lab-page-scale`) et **multipliée par la feuille à ses propres pas**
+  (`calc(24px * var(--lab-page-scale, 1))`) : aucun nombre n'est écrit deux fois, et changer l'échelle ne
+  demande aucun nombre au JavaScript.
+
+**Les pastilles de ⚙ Settings sont des pages en miniature**, pas des illustrations : elles portent la classe
+d'une page et l'attribut du motif, donc c'est la MÊME règle de index.css qui les peint — avec la couleur de
+page CHOISIE, ramenée dans la bande. La sonde au pixel compare les deux, image par image : elles sont
+identiques. Et la pastille « None » reste nue même sous une page qui porte un motif, parce qu'elle remet le
+motif à zéro avant — une variable s'hérite, un attribut non.
+
+### ③ Ce qui est vérifié, et ce qui ne l'est pas
+
+* **Que le motif ne discute jamais avec le texte** : le filet le plus appuyé, composé sur toutes les pages
+  qu'un utilisateur peut obtenir (les 72 teintes saturées du cercle, les extrêmes, les huit pages
+  proposées), coûte au pire **1,12:1** de la page qu'il décore (`#ffffff`, encre `bold`) ; sur la page
+  verte `#22c55e` essayée dans cette session : 1,034 / 1,060 / 1,115 pour les trois forces. Un repère de
+  papier, jamais une gêne.
+* **Que l'échelle multiplie vraiment** : dans Chrome, sur la feuille compilée, la tuile de `grid` passe de
+  24 px à **48 px** (`--lab-page-scale: 2`) et à **12 px** (`0.5`) ; sur l'application réelle, la page de
+  `graph` à `broad` calcule `12.8px 12.8px, 12.8px 12.8px, 64px 64px, 64px 64px`.
+* **Que rien ne s'écrit sans motif** : sans motif choisi, `--lab-page-alpha` et `--lab-page-scale` ne sont
+  PAS sur `<html>` (mesuré dans le vrai programme), et la page garde son motif à zéro.
+
+⚠ Les limites, dites franchement : les motifs ne se peignent que sur une page CLAIRE — `night` et `carbon`
+gardent leur fond uni (une page sombre demanderait une encre de motif par mode, que ces peaux n'ont pas) ;
+le chrome d'une peau sombre reste CLAIR (c'est le retournement de la palette, pas un oubli) ; et si le
+navigateur refuse d'écrire dans son stockage, un réglage s'applique mais n'est pas retenu après
+rechargement.
+
+*Vérifier :* `node _ui_skin_test.cjs` — **248/248** (contre **229** : la section 9 mesure les douze motifs,
+les deux réglages, la pastille et le pire filet) ; `node _ui_skin_pixel_test.cjs` — **83** vérifications OK
+dans Chrome sur le CSS compilé (dont la profondeur des deux peaux sombres, et les douze motifs peints) ;
+`node _ui_bg_live_test.cjs custom` — **14/14** et `… none` — **9/9** (le build réel, ce que le moteur peint
+sur les pages réelles : couleur, motif, encre et trame) ; `node _ui_bg_apply_test.cjs` — **9/9** ;
+`node _ui_scale_test.cjs` — **61/61** ; `node _workspace_keys_test.mjs` — **39** ;
+`node _auth_identity_test.mjs` — **39** ; `node _tdz_scan_test.mjs` — **18** (250 fichiers) ;
+`npx oxlint` sur les deux fichiers touchés — **0 avertissement** ; `npx vite build` ✓.

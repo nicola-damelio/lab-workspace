@@ -365,8 +365,8 @@ const ROLES = [
            allow visibility » : l'encre a suivi le fond, et elle reste lisible. */
     const NIGHT_SURFACES = [50, 100, 200, 300];
     const NIGHT_RECIPE = {
-      night: { neutral: 'slate', surfaces: [13, 30], inks: [50, 99], white: 17, colourSurfaces: [26, 38], colourInks: [49, 100] },
-      carbon: { neutral: 'zinc', surfaces: [11, 28], inks: [52, 97], white: 15, colourSurfaces: [24, 36], colourInks: [49, 97] }
+      night: { neutral: 'slate', surfaces: [15, 40], inks: [57, 99], white: 22, colourSurfaces: [29, 45], colourInks: [57, 100] },
+      carbon: { neutral: 'zinc', surfaces: [13, 37], inks: [53, 97], white: 19, colourSurfaces: [27, 42], colourInks: [53, 97] }
     };
     const inGamut = (col) => toLin(col).every((c) => c >= -1e-4 && c <= 1 + 1e-4);
     const chromaInto = (col) => {
@@ -518,9 +518,10 @@ const ROLES = [
     [100, 0, 0]);
   check('6o a colour that is not a hex is refused', UI.hexToOklch('red'), null);
   check('6p a garbage setting is sanitised (accent, neutral, page and motif)',
-    UI.uiCustomSkinOf({ accent: 'red', neutral: 'neon', bg: 'red', pattern: 'stripes' }),
+    UI.uiCustomSkinOf({ accent: 'red', neutral: 'neon', bg: 'red', pattern: 'stripes', ink: 'x', scale: 'y' }),
     { accent: UI.UI_CUSTOM_ACCENT_DEFAULT, neutral: UI.UI_CUSTOM_NEUTRAL_DEFAULT,
-      bg: UI.UI_BG_DEFAULT, pattern: UI.UI_BG_PATTERN_DEFAULT });
+      bg: UI.UI_BG_DEFAULT, pattern: UI.UI_BG_PATTERN_DEFAULT,
+      ink: UI.UI_BG_INK_DEFAULT, scale: UI.UI_BG_SCALE_DEFAULT });
   const TEAL_PAGE = { accent: '#009689', neutral: 'zinc', bg: '#eef2ff', pattern: 'dots' };
   check('6q the setting round-trips through localStorage (accent, neutral, page and motif)', (() => {
     UI.saveUiCustomSkin(TEAL_PAGE);
@@ -647,7 +648,7 @@ const ROLES = [
     && pageRule.includes('background-image: var(--lab-page-image, none)')
     && pageRule.includes('background-size: var(--lab-page-size, auto)'));
   ok('8h …and the motifs themselves are declared in that same screen-only block',
-    ['grid', 'dots', 'rules', 'diagonal'].every((id) => {
+    UI.UI_BG_PATTERNS.filter((p) => p.id !== UI.UI_BG_PATTERN_DEFAULT).map((p) => p.id).every((id) => {
       const at = CSS.indexOf(`[data-pattern="${id}"]`);
       return at > pageFrom && at < pageAt && !CSS.slice(pageFrom, at).includes('\n}');
     }));
@@ -775,6 +776,116 @@ const ROLES = [
   const worstPreset = presetPairs.reduce((a, b) => (b.loss < a.loss ? b : a));
   ok(`8w …while the eight offered pages cost the ink at most ONE step of it — worst ${worstPreset.loss.toFixed(2)} (${worstPreset.family}, page ${worstPreset.hex})`,
     presetPairs.every((p) => Math.abs(p.loss) < 1));
+
+  /* ══════════════════════════════════════════════════════════════════════════
+     9 — LES DOUZE MOTIFS, LEUR ENCRE ET LEUR ÉCHELLE.
+     « i patterns sono davvero pochi » : les quatre motifs livrés deviennent
+     DOUZE, et chacun a désormais sa FORCE d'encre et son ÉCHELLE de trame. Ce
+     qui est vérifié ici n'est pas le catalogue mais le MÉCANISME : la géométrie
+     des douze vit dans index.css (un bloc par motif, dans `@media screen`,
+     aucun `url()` — rien à télécharger, rien à imprimer), l'encre et l'échelle
+     sont deux variables écrites EN LIGNE, et la feuille multiplie SES propres
+     pas (`calc(… * var(--lab-page-scale, 1))`) — donc une page et sa pastille
+     ne peuvent pas diverger, et changer l'échelle ne demande aucun nombre au
+     JavaScript.
+     ═════════════════════════════════════════════════════════════════════════ */
+  const ruleOf = (id) => {
+    const at = CSS.indexOf(`[data-pattern="${id}"]`);
+    return at < 0 ? '' : CSS.slice(at, CSS.indexOf('\n  }', at));
+  };
+  const INKS = UI.UI_BG_PATTERN_INKS;
+  const SCALES = UI.UI_BG_PATTERN_SCALES;
+
+  check('9a every motif paints with CSS gradients only — nothing to download, nothing to print',
+    UI.UI_BG_PATTERNS.filter((p) => p.id !== UI.UI_BG_PATTERN_DEFAULT).flatMap((p) => {
+      const rule = ruleOf(p.id);
+      const bad = [];
+      if (!/gradient\(/.test(rule)) bad.push(`${p.id}:pas-de-degrade`);
+      if (/url\(/.test(rule)) bad.push(`${p.id}:url`);
+      if (/!important/.test(rule)) bad.push(`${p.id}:!important`);
+      return bad;
+    }), []);
+  ok('9b …and each of them really draws a trame (its lines are inside the gradient or its tile)',
+    ['grid', 'fine', 'dots', 'dense'].every((id) => /--lab-page-size:[\s\S]*calc\(/.test(ruleOf(id)))
+    && ['rules', 'diagonal', 'cross', 'weave', 'herringbone', 'triangles'].every((id) => /calc\(/.test(ruleOf(id))));
+  check('9c every motif obeys the two inline knobs (its trame, its ink)',
+    UI.UI_BG_PATTERNS.filter((p) => p.id !== UI.UI_BG_PATTERN_DEFAULT)
+      .filter((p) => !ruleOf(p.id).includes('var(--lab-page-scale, 1)')).map((p) => p.id), []);
+  ok('9d the ink is written ONCE, for all twelve (a force, not a colour)',
+    /--lab-page-line: rgb\(15 23 42 \/ var\(--lab-page-alpha, 0\.06\)\)/.test(CSS));
+  ok('9e …and the marked line of the graph paper is twice that force',
+    /--lab-page-line-strong: rgb\(15 23 42 \/ calc\(var\(--lab-page-alpha, 0\.06\) \* 2\)\)/.test(CSS));
+  check('9f the three forces and the three trames are declared once each',
+    [new Set(INKS.map((i) => i.id)).size, new Set(SCALES.map((s) => s.id)).size, INKS.length, SCALES.length],
+    [3, 3, 3, 3]);
+  ok('9g …the force is an alpha that never reaches the ink of a caption, the trame a multiplier around 1',
+    INKS.every((i) => i.alpha > 0 && i.alpha <= 0.12) && SCALES.every((s) => s.factor > 0.4 && s.factor < 2)
+    && INKS.some((i) => i.id === UI.UI_BG_INK_DEFAULT) && SCALES.some((s) => s.id === UI.UI_BG_SCALE_DEFAULT));
+
+  /* LA MESURE QUI COMPTE : un motif ne discute jamais avec le texte. On compose
+     l'encre de index.css (`rgb(15 23 42 / α)`) SUR la page la plus claire et la
+     plus foncée qu'un utilisateur puisse obtenir, et on exige que le filet le
+     plus appuyé reste à moins de 1.25:1 de la page qu'il décore. */
+  const linOf = (hex) => {
+    const n = parseInt(hex.slice(1), 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => {
+      const c = v / 255;
+      return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+    });
+  };
+  const lumLin = ([r, g, b]) => 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  const lineRatio = (hex, alpha) => {
+    const page = clampLin(UI.uiBgStops(hex).page);
+    const ink = linOf('#0f172a');                       /* l'encre de index.css */
+    const over = ink.map((v, i) => alpha * v + (1 - alpha) * page[i]);
+    const [x, y] = [lumLin(over), lumLin(page)].sort((p, q) => q - p);
+    return (x + 0.05) / (y + 0.05);
+  };
+  let worstLine = { v: 0, hex: '', ink: '' };
+  for (const ink of INKS) for (const hex of PROBES) {
+    const v = lineRatio(hex, ink.alpha);
+    if (v > worstLine.v) worstLine = { v, hex, ink: ink.id };
+  }
+  ok(`9h a pattern never fights the text: the boldest ink over the worst page costs ${worstLine.v.toFixed(2)}:1 (page ${worstLine.hex}, ink ${worstLine.ink})`,
+    worstLine.v <= 1.25);
+
+  check('9i the two knobs ride IN LINE with the rest of the setting — and only with a pattern',
+    [Object.keys(UI.uiSkinCustomVars({ pattern: 'grid' })).filter((k) => k.startsWith('--lab-page-')),
+      Object.keys(UI.uiSkinCustomVars({ pattern: UI.UI_BG_PATTERN_DEFAULT })).filter((k) => k.startsWith('--lab-page-'))],
+    [['--lab-page-alpha', '--lab-page-scale'], []]);
+  check('9j …at their shipped value by default, at the chosen one otherwise',
+    [UI.uiSkinCustomVars({ pattern: 'grid' })['--lab-page-alpha'],
+      UI.uiSkinCustomVars({ pattern: 'grid' })['--lab-page-scale'],
+      UI.uiSkinCustomVars({ pattern: 'grid', ink: 'bold', scale: 'broad' })['--lab-page-alpha'],
+      UI.uiSkinCustomVars({ pattern: 'grid', ink: 'bold', scale: 'broad' })['--lab-page-scale']],
+    ['0.06', '1', '0.11', '1.6']);
+  check('9k a force or a trame that does not exist falls back to the shipped one',
+    [UI.uiCustomSkinOf({ ink: 'neon', scale: 'gigantic' }), UI.uiCustomSkinOf({ ink: 'faint', scale: 'fine' })],
+    [UI.uiCustomSkinOf(null), UI.uiCustomSkinOf({ ink: 'faint', scale: 'fine' })]);
+
+  /* LA PASTILLE — la miniature d'un motif dans ⚙ Settings : c'est la MÊME règle
+     qui peint les pages, donc elle ne peut pas mentir. Deux détails la rendent
+     vraie : elle porte l'attribut du motif, et elle remet d'abord le motif à
+     ZÉRO (sinon la pastille « None » hériterait celui de la page). */
+  const paintAt = CSS.indexOf('[class~="bg-slate-50"],');
+  const chipAt = CSS.indexOf('.lab-page-chip {');
+  const firstPattern = Math.min(...UI.UI_BG_PATTERNS.filter((p) => p.id !== 'none').map((p) => CSS.indexOf(`[data-pattern="${p.id}"]`)));
+  ok('9l the page and the chip are painted by ONE rule (the chip cannot lie)',
+    paintAt > 0 && CSS.slice(paintAt, paintAt + 220).includes('.lab-page-chip {')
+    && CSS.slice(paintAt, paintAt + 220).includes('background-image: var(--lab-page-image, none)'));
+  ok('9m …and the chip resets the motif BEFORE the motifs are declared (a patterned chip wins, “None” stays plain)',
+    chipAt > 0 && chipAt < firstPattern && CSS.slice(chipAt, chipAt + 160).includes('--lab-page-image: none;')
+    && CSS.slice(chipAt, chipAt + 160).includes('background-color: var(--color-slate-50);'));
+  frag('the control offers the twelve motifs, each with its live chip', SET,
+    'className="lab-page-chip h-8 w-12 rounded border border-slate-300"');
+  frag('…painted by the attribute of a page', SET,
+    'data-pattern={p.id === UI_BG_PATTERN_DEFAULT ? undefined : p.id}');
+  frag('…the three forces', SET, '{UI_BG_PATTERN_INKS.map((i) => (');
+  frag('…the three trames', SET, '{UI_BG_PATTERN_SCALES.map((s) => (');
+  frag('…and their own setters, like the accent and the page', SET,
+    'const setInk = (ink) => setCustom(saveUiCustomSkin({ ...custom, ink }, operator));');
+  frag('…with the trame written the same way', SET,
+    'const setScale = (scale) => setCustom(saveUiCustomSkin({ ...custom, scale }, operator));');
 
   const failed = results.filter((r) => !r.ok);
   if (failed.length) for (const f of failed) console.error(`✗ ${f.name}\n     got ${f.got}\n    want ${f.want}`);

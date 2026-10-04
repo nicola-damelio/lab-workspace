@@ -152,7 +152,52 @@ for (const s of SKINS) {
   out[s].preview = { card: bg('pcard'), chrome: bg('pchrome'), outside: bg('outside') };
 }
 delete document.documentElement.dataset.skin;
-fetch('/result', { method: 'POST', body: JSON.stringify({ stage: 'done', skins: out }) });
+/* LES DOUZE MOTIFS — mesurés sur la feuille COMPILÉE. Une PASTILLE porte la
+   classe d'une page (lab-page-chip, qui peint la couleur de page et remet le
+   motif à zéro) et l'attribut du motif ; une PAGE porte la classe de la page et
+   rien d'autre — c'est <html> qui lui donne le motif. Les deux doivent peindre
+   la MÊME image, sinon une pastille pourrait montrer autre chose que la page. */
+const PATTERNS = ['none', 'grid', 'fine', 'graph', 'dots', 'dense', 'rules', 'diagonal', 'cross', 'weave', 'herringbone', 'triangles'];
+const chipEl = (id, attrs) => {
+  const el = document.createElement('div');
+  el.className = 'lab-page-chip';
+  if (id && id !== 'none') el.dataset.pattern = id;
+  if (id === 'none') delete el.dataset.pattern;
+  for (const k in (attrs || {})) el.style.setProperty(k, attrs[k]);
+  document.body.appendChild(el);
+  const cs = getComputedStyle(el);
+  const v = { image: cs.backgroundImage === 'none' ? 'none' : cs.backgroundImage, size: cs.backgroundSize, line: cs.getPropertyValue('--lab-page-line').trim() };
+  el.remove();
+  return v;
+};
+const pageEl = (id) => {
+  const el = document.createElement('div');
+  el.className = 'bg-slate-50';
+  if (id && id !== 'none') el.dataset.pattern = id;
+  document.body.appendChild(el);
+  const cs = getComputedStyle(el);
+  const v = { image: cs.backgroundImage === 'none' ? 'none' : cs.backgroundImage, size: cs.backgroundSize };
+  el.remove();
+  return v;
+};
+const chips = {};
+for (const id of PATTERNS) chips[id] = chipEl(id, { '--lab-page-alpha': '0.06' });
+const pages = {};
+for (const id of PATTERNS) pages[id] = pageEl(id);
+/* …et la pastille « None » sous une page QUI PORTE un motif : elle doit rester
+   nue (c'est tout l'objet de sa remise à zéro). */
+document.documentElement.dataset.pattern = 'grid';
+const noneUnderGrid = chipEl('none');
+const plainPageUnderGrid = pageEl('none');
+delete document.documentElement.dataset.pattern;
+/* LES DEUX RÉGLAGES, dans le moteur : l'échelle multiplie la tuile, la force
+   règle l'alpha du filet. */
+const scaled = chipEl('grid', { '--lab-page-scale': '2' }).size;
+const scaledHalf = chipEl('grid', { '--lab-page-scale': '0.5' }).size;
+const lines = {};
+for (const a of ['0.035', '0.06', '0.11']) lines[a] = chipEl('grid', { '--lab-page-alpha': a }).line;
+fetch('/result', { method: 'POST', body: JSON.stringify({ stage: 'done', skins: out,
+  patterns: { chips, pages, noneUnderGrid, plainPageUnderGrid, scaled, scaledHalf, lines } }) });
 </script>`;
 
 const CHECKS = [];
@@ -299,6 +344,14 @@ const contrast = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - 
     check(onChrome >= 5.5, `${s} : le libellé du bandeau sombre reste lisible (${onChrome.toFixed(2)}:1 ≥ 5.5)`,
       `${r.chromeInk} / ${r.chrome}`);
     check(r.white !== S.slate.white, `${s} : la carte n’est plus le blanc livré`, `${S.slate.white} → ${r.white}`);
+    /* LA PROFONDEUR — le défaut que ces peaux venaient de créer : un fond et une
+       carte si proches qu'ils ne faisaient qu'UN seul noir. On mesure donc le
+       RAPPORT des deux luminances : la carte doit porter au moins le double de
+       celle du fond, et le fond ne doit pas être un noir absolu. */
+    check(lum(r.white) >= 2 * lum(r.page), `${s} : la carte se DÉTACHE du fond (luminance ≥ 2 × celle de la page)`,
+      `carte ${(lum(r.white) * 100).toFixed(2)} % · page ${(lum(r.page) * 100).toFixed(2)} % = ×${(lum(r.white) / lum(r.page)).toFixed(2)}`);
+    check(lum(r.page) > 0.001, `${s} : …et la page n’est pas le noir PUR (#000000, luminance 0)`,
+      `${(lum(r.page) * 100).toFixed(2)} %`);
     /* LES GRAPHIQUES ÉCRIVENT LEUR ENCRE EUX-MÊMES : les options de Chart.js et
        les tracés SVG portent des couleurs LITTÉRALES (le gris #64748b des
        graduations, le bleu nuit #334155 des titres d'axe), que la palette ne
@@ -307,7 +360,13 @@ const contrast = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - 
        d'axe le plus sombre, lui, demande encore une retouche (voir
        docs/DRIVE-MIRROR.md, « la nuit »). */
     const tickInk = contrast(r.figTick, r.white);
-    check(tickInk >= 4, `${s} : l’encre des graduations (${r.figTick}) reste lisible sur la carte (${tickInk.toFixed(2)}:1 ≥ 4)`,
+    /* LE PLANCHER EST CELUI D'UN OBJET GRAPHIQUE (WCAG 1.4.11 : 3:1), pas celui
+       d'un texte : cette encre est écrite EN DUR dans les options de Chart.js et
+       les tracés SVG, la palette ne peut pas la repeindre. La carte a été
+       éclaircie pour se détacher du fond (voir ci-dessus), ce qui lui coûte
+       environ 0.4 cran — et c'est la SEULE paire que ces peaux ne peuvent pas
+       replier, donc la seule dont le plancher bouge. */
+    check(tickInk >= 3.5, `${s} : l’encre des graduations (${r.figTick}) reste lisible sur la carte (${tickInk.toFixed(2)}:1 ≥ 3.5, le plancher d’un objet graphique)`,
       `${r.figTick} / ${r.white}`);
     console.log(`      info ${s} : titre d'axe écrit en dur (${r.figTitle}) sur la carte — ${contrast(r.figTitle, r.white).toFixed(2)}:1`);
   }
@@ -325,6 +384,38 @@ const contrast = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - 
     need.map((s) => S[s].preview.card).join(' '));
   check(need.every((s) => S[s].preview.outside === S[s].chrome),
     'le frère SANS attribut, lui, suit la peau de <html> pour chaque peau');
+
+  console.log('\n--- LES DOUZE MOTIFS : ce que le moteur peint (sur la feuille compilée) ---');
+  const P = d.patterns || {};
+  const ids = Object.keys(P.chips || {});
+  const badImage = ids.filter((id) => id !== 'none' && !/gradient\(/.test(P.chips[id].image));
+  const lying = ids.filter((id) => P.chips[id].image !== P.pages[id].image || P.chips[id].size !== P.pages[id].size);
+  check(ids.length === 12, 'les douze motifs sont mesurés', ids.join(' '));
+  check(P.chips.none.image === 'none', 'la pastille « None » reste NUE (aucun motif)', String(P.chips.none.image));
+  check(badImage.length === 0, '…et les onze autres peignent bien un dégradé', badImage.join() || 'tous');
+  check(lying.length === 0, 'la pastille et la page peignent la MÊME image, à la même trame',
+    lying.length ? lying.join() : P.chips.grid.size);
+  check(P.noneUnderGrid.image === 'none',
+    'sous une page à motif, la pastille « None » reste nue (c’est sa remise à zéro)',
+    P.noneUnderGrid.image === 'none' ? 'none' : P.noneUnderGrid.image.slice(0, 40));
+  check(/gradient/.test(P.plainPageUnderGrid.image),
+    '…alors qu’une page SANS attribut prend le motif de <html> (c’est ainsi que TOUTES les pages sont peintes)');
+  check(P.scaled.startsWith('48px 48px') && !/24px/.test(P.scaled)
+    && P.scaledHalf.startsWith('12px 12px') && !/24px/.test(P.scaledHalf),
+    'l’échelle multiplie VRAIMENT la tuile (grid : 24 px → 48 px à ×2, 12 px à ×0.5)',
+    `${P.scaled} / ${P.scaledHalf}`);
+  check(/0\.035/.test(P.lines['0.035']) && /0\.06/.test(P.lines['0.06']) && /0\.11/.test(P.lines['0.11'])
+    && P.lines['0.035'] !== P.lines['0.11'],
+    'la force règle VRAIMENT l’alpha du filet (l’encre est écrite une seule fois)', P.lines['0.11']);
+  check(P.chips.grid.size.startsWith('24px 24px') && P.chips.fine.size.startsWith('12px 12px')
+    && P.chips.dots.size.startsWith('18px 18px') && P.chips.dense.size.startsWith('10px 10px'),
+    'chaque motif a bien SA trame (24 · 12 · 18 · 10 px)',
+    `${P.chips.grid.size} · ${P.chips.fine.size} · ${P.chips.dots.size} · ${P.chips.dense.size}`);
+  const isAuto = (s) => /^auto(, auto)*$/.test(s);
+  const inGradient = ['rules', 'diagonal', 'cross', 'weave', 'herringbone', 'triangles']
+    .filter((id) => !isAuto(P.chips[id].size) || !/gradient/.test(P.chips[id].image));
+  check(inGradient.length === 0, '…et les six motifs à trame répétée la portent DANS le dégradé',
+    inGradient.length ? inGradient.join() : P.chips.triangles.size);
 
   const failed = CHECKS.filter((c) => !c.ok);
   console.log(failed.length

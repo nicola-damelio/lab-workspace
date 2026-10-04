@@ -98,8 +98,8 @@ export const UI_SKINS = [
      de page, les cartes, les panneaux et les bordures deviennent sombres, et
      l'encre qui s'écrivait dessus devient claire — par la même opération, pour
      chaque famille, donc sans qu'aucun composant n'ait à s'en occuper. */
-  { id: 'night', kind: 'night', label: 'Night', hint: 'dark pages, light ink', swatch: ['#070708', '#a7bad5', '#c2d3ed', '#6095ff'] },
-  { id: 'carbon', kind: 'night', label: 'Carbon', hint: 'dark, pure greys', swatch: ['#040404', '#b9b9c2', '#d2d2d6', '#5b91ff'] },
+  { id: 'night', kind: 'night', label: 'Night', hint: 'dark pages, light ink', swatch: ['#0a0b0c', '#b0c3df', '#c8d9f3', '#7aa7ff'] },
+  { id: 'carbon', kind: 'night', label: 'Carbon', hint: 'dark, pure greys', swatch: ['#070707', '#babac3', '#d2d2d7', '#679aff'] },
   /* ── LA PEAU QUE L'UTILISATEUR POSSÈDE ─────────────────────────────────────
      La demande de cette session : « the skins in the setup are all too similar
      and NOT customizable ». Celle-ci répond aux deux : l'accent est CELUI QUE
@@ -245,17 +245,70 @@ export const UI_BG_GAP = 1.6;     /* l'écart livré entre la page et son cran 1
  *  place, et changer de famille neutre change AUSSI la page. */
 export const UI_BG_DEFAULT = '';
 
-/** LES QUATRE MOTIFS — tous des dégradés CSS répétés (aucune image, aucun octet
+/** LES DOUZE MOTIFS — tous des dégradés CSS répétés (aucune image, aucun octet
  *  à charger, et rien à l'impression : voir `@media screen`, index.css), tous
- *  volontairement discrets. `none` est le défaut, et ne pose donc rien. */
+ *  volontairement discrets : des filets et des points, jamais un dessin.
+ *
+ *  LA GÉOMÉTRIE N'EST PAS ICI : elle vit dans index.css (un bloc par motif,
+ *  `[data-pattern="…"]`), et c'est la même règle qui peint une page entière ET
+ *  la pastille de ⚙ Settings — une pastille ne peut donc pas mentir. Ici on ne
+ *  garde que ce qui se CHOISIT : le nom, ce qu'il montre, et ses deux réglages
+ *  — la FORCE de l'encre (`UI_BG_PATTERN_INKS`) et l'ÉCHELLE de la trame
+ *  (`UI_BG_PATTERN_SCALES`), deux variables écrites EN LIGNE par
+ *  `applyUiSkin`, que la feuille multiplie à sa propre géométrie.
+ *
+ *  `none` est le défaut, et ne pose donc rien. */
 export const UI_BG_PATTERNS = [
   { id: 'none', label: 'None', hint: 'the plain page' },
   { id: 'grid', label: 'Grid', hint: 'hairline squares' },
+  { id: 'fine', label: 'Fine grid', hint: 'a fine graph paper' },
+  { id: 'graph', label: 'Graph paper', hint: 'fine squares, one in five bolder' },
   { id: 'dots', label: 'Dots', hint: 'a dotted sheet' },
-  { id: 'rules', label: 'Rules', hint: 'ruled lines' },
-  { id: 'diagonal', label: 'Diagonal', hint: 'slanted hairlines' }
+  { id: 'dense', label: 'Dense dots', hint: 'a tighter dotted sheet' },
+  { id: 'rules', label: 'Ruled', hint: 'lines to write on' },
+  { id: 'diagonal', label: 'Diagonal', hint: 'slanted hairlines' },
+  { id: 'cross', label: 'Hatch', hint: 'crossed hairlines' },
+  { id: 'weave', label: 'Weave', hint: 'a linen texture' },
+  { id: 'herringbone', label: 'Herringbone', hint: 'a two-way zigzag' },
+  { id: 'triangles', label: 'Triangles', hint: 'an isometric lattice' }
 ];
 export const UI_BG_PATTERN_DEFAULT = 'none';
+
+/** LA FORCE DE L'ENCRE DU MOTIF — un seul facteur, l'alpha du filet. Le motif
+ *  reste un repère de papier : même « Bold » ne descend pas sous le quart de
+ *  l'encre du texte le plus pâle de la page (un filet à 0.11 d'alpha sur une
+ *  page à 95.5 % de luminosité reste à plus de 1.1:1 de la page, mesuré par
+ *  `_ui_skin_test.cjs`), donc il décore sans jamais gêner une lecture. */
+export const UI_BG_PATTERN_INKS = [
+  { id: 'faint', label: 'Faint', hint: 'barely there', alpha: 0.035 },
+  { id: 'standard', label: 'Standard', hint: 'the sober default', alpha: 0.06 },
+  { id: 'bold', label: 'Bold', hint: 'clearly drawn', alpha: 0.11 }
+];
+export const UI_BG_INK_DEFAULT = 'standard';
+
+/** L'ÉCHELLE DE LA TRAME — un facteur multiplicateur, appliqué par la feuille à
+ *  SES propres pas (`calc(24px * var(--lab-page-scale, 1))`) : aucun nombre
+ *  n'est donc écrit deux fois, et la pastille montre exactement la page. */
+export const UI_BG_PATTERN_SCALES = [
+  { id: 'fine', label: 'Fine', hint: 'a tight trame', factor: 0.6 },
+  { id: 'standard', label: 'Standard', hint: 'the shipped trame', factor: 1 },
+  { id: 'broad', label: 'Broad', hint: 'a wide trame', factor: 1.6 }
+];
+export const UI_BG_SCALE_DEFAULT = 'standard';
+
+/** L'alpha retenu pour un nom de force (le défaut livré si le nom est inconnu).
+ *  PUR. */
+export const uiBgPatternAlpha = (id) => {
+  const ink = UI_BG_PATTERN_INKS.find((i) => i.id === id);
+  return (ink || UI_BG_PATTERN_INKS.find((i) => i.id === UI_BG_INK_DEFAULT)).alpha;
+};
+
+/** Le facteur retenu pour un nom d'échelle (le défaut livré si le nom est
+ *  inconnu). PUR. */
+export const uiBgPatternScale = (id) => {
+  const scale = UI_BG_PATTERN_SCALES.find((s) => s.id === id);
+  return (scale || UI_BG_PATTERN_SCALES.find((s) => s.id === UI_BG_SCALE_DEFAULT)).factor;
+};
 
 /** OKLCH → sRGB LINÉAIRE : le retour exact de `hexToOklch` (mêmes matrices,
  *  inversées). Sert à savoir si une couleur TIENT dans le gamut sRGB. PUR. */
@@ -326,8 +379,8 @@ export const uiBgStops = (hex) => {
   return { page: { L, C, H: pick.H }, card: { L: L - UI_BG_GAP, C, H: pick.H } };
 };
 
-/** Le réglage retenu, toujours utilisable (une couleur illisible ou une famille
- *  inconnue retombent sur le défaut livré). PUR. */
+/** Le réglage retenu, toujours utilisable (une couleur illisible, une famille ou
+ *  un motif inconnus retombent sur le défaut livré). PUR. */
 export const uiCustomSkinOf = (raw) => ({
   accent: (raw && /^#[0-9a-f]{6}$/i.test(String(raw.accent || '')))
     ? String(raw.accent).toLowerCase() : UI_CUSTOM_ACCENT_DEFAULT,
@@ -336,15 +389,25 @@ export const uiCustomSkinOf = (raw) => ({
   bg: (raw && /^#[0-9a-f]{6}$/i.test(String(raw.bg || '')))
     ? String(raw.bg).toLowerCase() : UI_BG_DEFAULT,
   pattern: UI_BG_PATTERNS.some((p) => p.id === (raw && raw.pattern))
-    ? raw.pattern : UI_BG_PATTERN_DEFAULT
+    ? raw.pattern : UI_BG_PATTERN_DEFAULT,
+  /* les deux réglages du motif : la force de son encre et l'échelle de sa
+     trame. Ils ne servent à rien sans motif — mais ils se gardent, comme la
+     couleur de page se garde pendant qu'on regarde une autre peau. */
+  ink: UI_BG_PATTERN_INKS.some((i) => i.id === (raw && raw.ink))
+    ? raw.ink : UI_BG_INK_DEFAULT,
+  scale: UI_BG_PATTERN_SCALES.some((s) => s.id === (raw && raw.scale))
+    ? raw.scale : UI_BG_SCALE_DEFAULT
 });
 
 /** Les variables d'une peau personnalisée : les onze crans de l'accent, plus
  *  `--lab-tone` (la famille neutre, pour la miniature ET pour <html>), plus —
  *  quand un fond a été choisi — LES DEUX CRANS DE LA PAGE, ramenés dans la
- *  bande (utils : `uiBgStops`). Écrites EN LIGNE, donc au-dessus du bloc de la
- *  famille neutre : un fond choisi l'emporte sur le `tone` qu'on lit à côté.
- *  Le MOTIF n'est pas une variable : c'est l'attribut `data-pattern`. PUR. */
+ *  bande (utils : `uiBgStops`), plus — quand un motif a été choisi — la force de
+ *  son encre (`--lab-page-alpha`) et l'échelle de sa trame (`--lab-page-scale`).
+ *  Écrites EN LIGNE, donc au-dessus du bloc de la famille neutre : un fond
+ *  choisi l'emporte sur le `tone` qu'on lit à côté.
+ *  Le NOM du motif, lui, n'est pas une variable : c'est l'attribut
+ *  `data-pattern`. PUR. */
 export const uiSkinCustomVars = (raw) => {
   const custom = uiCustomSkinOf(raw);
   const vars = { ...uiSkinCustomRamp(custom.accent), '--lab-tone': custom.neutral };
@@ -352,6 +415,13 @@ export const uiSkinCustomVars = (raw) => {
     const { page, card } = uiBgStops(custom.bg);
     vars['--color-slate-50'] = oklchCss(page);
     vars['--color-slate-100'] = oklchCss(card);
+  }
+  /* La feuille multiplie SES pas par ces deux nombres : la géométrie des douze
+     motifs n'est donc écrite qu'une fois (index.css). Sans motif, rien n'est
+     écrit — une variable qui ne sert à rien ne doit pas traîner sur <html>. */
+  if (custom.pattern !== UI_BG_PATTERN_DEFAULT) {
+    vars['--lab-page-alpha'] = String(uiBgPatternAlpha(custom.ink));
+    vars['--lab-page-scale'] = String(uiBgPatternScale(custom.scale));
   }
   return vars;
 };
@@ -442,12 +512,14 @@ export const applyUiSkin = (id, operator = null, custom = null) => {
   if (!root) return;
   const skin = uiSkinById(id);
   if (!root.dataset) return;
-  /* les clés à effacer : TOUTE la rampe d'accent, `--lab-tone`, et les deux
-     crans de la page — qu'un fond ait été choisi ou non (sinon un fond posé
-     hier survivrait au passage à une autre peau). */
+  /* les clés à effacer : TOUTE la rampe d'accent, `--lab-tone`, les deux crans
+     de la page et les deux réglages du motif — qu'un fond ou un motif aient été
+     choisis ou non (sinon un fond posé hier survivrait au passage à une autre
+     peau). */
   const customKeys = [
     ...Object.keys(uiSkinCustomRamp(UI_CUSTOM_ACCENT_DEFAULT)),
-    '--lab-tone', '--color-slate-50', '--color-slate-100'
+    '--lab-tone', '--color-slate-50', '--color-slate-100',
+    '--lab-page-alpha', '--lab-page-scale'
   ];
   const clearCustom = () => {
     if (root.style) customKeys.forEach((k) => root.style.removeProperty(k));
