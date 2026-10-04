@@ -517,13 +517,15 @@ const ROLES = [
     [Math.round(UI.hexToOklch('#ffffff').L), Math.round(UI.hexToOklch('#ffffff').C), Math.round(UI.hexToOklch('#000000').L)],
     [100, 0, 0]);
   check('6o a colour that is not a hex is refused', UI.hexToOklch('red'), null);
-  check('6p a garbage setting is sanitised (accent and neutral)',
-    UI.uiCustomSkinOf({ accent: 'red', neutral: 'neon' }),
-    { accent: UI.UI_CUSTOM_ACCENT_DEFAULT, neutral: UI.UI_CUSTOM_NEUTRAL_DEFAULT });
-  check('6q the setting round-trips through localStorage', (() => {
-    UI.saveUiCustomSkin({ accent: '#009689', neutral: 'zinc' });
-    return [store.get(UI.UI_CUSTOM_KEY), UI.readUiCustomSkin()];
-  })(), [JSON.stringify({ accent: '#009689', neutral: 'zinc' }), { accent: '#009689', neutral: 'zinc' }]);
+  check('6p a garbage setting is sanitised (accent, neutral, page and motif)',
+    UI.uiCustomSkinOf({ accent: 'red', neutral: 'neon', bg: 'red', pattern: 'stripes' }),
+    { accent: UI.UI_CUSTOM_ACCENT_DEFAULT, neutral: UI.UI_CUSTOM_NEUTRAL_DEFAULT,
+      bg: UI.UI_BG_DEFAULT, pattern: UI.UI_BG_PATTERN_DEFAULT });
+  const TEAL_PAGE = { accent: '#009689', neutral: 'zinc', bg: '#eef2ff', pattern: 'dots' };
+  check('6q the setting round-trips through localStorage (accent, neutral, page and motif)', (() => {
+    UI.saveUiCustomSkin(TEAL_PAGE);
+    return [JSON.parse(store.get(UI.UI_CUSTOM_KEY)), UI.readUiCustomSkin()];
+  })(), [UI.uiCustomSkinOf(TEAL_PAGE), UI.uiCustomSkinOf(TEAL_PAGE)]);
 
   /* L'APPLICATION — les onze crans en ligne, et AUCUNE fuite vers une autre peau. */
   UI.saveUiSkin(UI.UI_SKIN_CUSTOM);
@@ -579,11 +581,12 @@ const ROLES = [
     [UI.readUiSkin(ELISE), UI.readUiSkin(), store.get(`${KEY}_elise muller`)],
     ['graphite', 'violet', 'graphite']);
 
-  UI.saveUiCustomSkin({ accent: '#009689', neutral: 'zinc' }, ALICE);
+  UI.saveUiCustomSkin({ accent: '#009689', neutral: 'zinc', bg: '#eef2ff', pattern: 'grid' }, ALICE);
   UI.saveUiCustomSkin({ accent: '#e60076', neutral: 'stone' }, BOB);
-  check('7k two operators can each have their own accent and neutral family',
+  check('7k two operators can each have their own accent, neutral family and page',
     [UI.readUiCustomSkin(ALICE), UI.readUiCustomSkin(BOB)],
-    [{ accent: '#009689', neutral: 'zinc' }, { accent: '#e60076', neutral: 'stone' }]);
+    [UI.uiCustomSkinOf({ accent: '#009689', neutral: 'zinc', bg: '#eef2ff', pattern: 'grid' }),
+      UI.uiCustomSkinOf({ accent: '#e60076', neutral: 'stone' })]);
   check('7l …and the computer’s own accent was never borrowed from one of them',
     UI.readUiCustomSkin(), UI.uiCustomSkinOf(null));
 
@@ -603,6 +606,176 @@ const ROLES = [
   check('7n …and with nobody in the session it is the computer’s skin', root.dataset.skin, 'violet');
 
   /* ══════════════════════════════════════════════════════════════════════════ */
+  /* ══════════════════════════════════════════════════════════════════════════
+     8 — LE FOND DES PAGES — « let the user choose the background color, with
+     sober patterns ». Une page peut prendre n'importe quelle TEINTE, jamais
+     n'importe quelle LUMIÈRE : la couleur choisie est ramenée dans une bande
+     (luminosité `UI_BG_FLOOR`–`UI_BG_CEIL`, chroma ≤ `UI_BG_CAP`, chroma
+     ramené dans le gamut sRGB), et le cran 100 qui porte les panneaux en est
+     DÉRIVÉ (même teinte, même chroma, `UI_BG_GAP` de luminosité en moins).
+     C'est ce qui garantit que l'encre que le programme écrit SUR une page — le
+     titre d'une carte (text-700 sur bg-50) et l'encre des panneaux (text-800 sur
+     bg-100) — ne perd jamais plus de 1.5 cran de contraste. La bande, le gamut,
+     la dérivation et les deux paires sont donc MESURÉS ici, contre la palette
+     livrée : sur les huit pages proposées et sur les 72 teintes saturées qu'un
+     utilisateur peut saisir (le pire cas possible).
+     ═══════════════════════════════════════════════════════════════════════ */
+  ok('8a the offered pages are real hexes, all different',
+    UI.UI_BG_PRESETS.every((p) => /^#[0-9a-f]{6}$/.test(p.hex))
+    && new Set(UI.UI_BG_PRESETS.map((p) => p.hex)).size === UI.UI_BG_PRESETS.length);
+  check('8b …and every one of them IS a stop of the shipped palette (nothing invented)',
+    UI.UI_BG_PRESETS.filter((p) => !SHIPPED[p.id]
+      || JSON.stringify(SHIPPED[p.id]['50']) !== JSON.stringify(p.oklch)).map((p) => p.id), []);
+  check('8c the offered motifs are declared once each',
+    new Set(UI.UI_BG_PATTERNS.map((p) => p.id)).size, UI.UI_BG_PATTERNS.length);
+  check('8d …“none” is the default, and it is the first (the plain page)',
+    UI.UI_BG_PATTERN_DEFAULT, UI.UI_BG_PATTERNS[0].id);
+  check('8e …while the stylesheet paints exactly the others',
+    UI.UI_BG_PATTERNS.filter((p) => p.id !== UI.UI_BG_PATTERN_DEFAULT)
+      .filter((p) => !CSS.includes(`[data-pattern="${p.id}"]`)).map((p) => p.id), []);
+  ok('8f …and has NO rule for the default (an attribute nobody needs to set)',
+    !CSS.includes(`[data-pattern="${UI.UI_BG_PATTERN_DEFAULT}"]`));
+
+  /* Le motif est peint — et il ne peut PAS s'imprimer : la règle qui touche au
+     fond doit vivre DANS un `@media screen` (on n'imprime pas un quadrillage
+     derrière du texte), et ne viser que la classe des pages, `bg-slate-50`. */
+  const pageAt = CSS.indexOf('[class~="bg-slate-50"]');
+  const pageFrom = pageAt < 0 ? -1 : CSS.lastIndexOf('@media screen {', pageAt);
+  const pageRule = pageAt < 0 ? '' : CSS.slice(pageAt, pageAt + 300);
+  ok('8g the pattern is painted on the page class, from inside @media screen (nothing printed)',
+    pageAt > 0 && pageFrom > 0 && !/\n\}/.test(CSS.slice(pageFrom, pageAt))
+    && pageRule.includes('background-image: var(--lab-page-image, none)')
+    && pageRule.includes('background-size: var(--lab-page-size, auto)'));
+  ok('8h …and the motifs themselves are declared in that same screen-only block',
+    ['grid', 'dots', 'rules', 'diagonal'].every((id) => {
+      const at = CSS.indexOf(`[data-pattern="${id}"]`);
+      return at > pageFrom && at < pageAt && !CSS.slice(pageFrom, at).includes('\n}');
+    }));
+
+  /* L'APPLICATION — la page choisie est écrite EN LIGNE (comme l'accent), donc
+     elle est lue par les variables que les classes `bg-slate-50` / `bg-slate-100`
+     du programme lisent vraiment : c'est CE lien qui repeint les pages. */
+  check('8i the two stops a page is made of are the very ones Tailwind reads',
+    Object.keys(UI.uiSkinCustomVars({ bg: '#ff0000' })).filter((k) => k.startsWith('--color-slate-')),
+    ['--color-slate-50', '--color-slate-100']);
+  check('8j …and with no chosen page they are NOT written (the neutral family keeps serving the page)',
+    Object.keys(UI.uiSkinCustomVars({ bg: UI.UI_BG_DEFAULT })).filter((k) => k.startsWith('--color-slate-')),
+    []);
+  const plain = UI.uiCustomSkinOf(null);
+  check('8k a colour that is not a hex, and a motif that does not exist, are refused',
+    UI.uiCustomSkinOf({ bg: 'red', pattern: 'stripes' }),
+    { ...plain, bg: UI.UI_BG_DEFAULT, pattern: UI.UI_BG_PATTERN_DEFAULT });
+  ok('8l …and a page nobody chose falls back to the SHIPPED one (slate-50)',
+    JSON.stringify(UI.uiBgStops(UI.UI_BG_DEFAULT)) === JSON.stringify({
+      page: { ...UI.UI_BG_SHIPPED_OKLCH },
+      card: { ...UI.UI_BG_SHIPPED_OKLCH, L: UI.UI_BG_SHIPPED_OKLCH.L - UI.UI_BG_GAP }
+    })
+    && UI.uiBgStops('not-a-colour').page.L === UI.uiBgStops(UI.UI_BG_DEFAULT).page.L);
+
+  store.clear();
+  UI.saveUiSkin(UI.UI_SKIN_CUSTOM);
+  UI.saveUiCustomSkin({ accent: '#009689', neutral: 'zinc', bg: '#ff0000', pattern: 'grid' });
+  const stopped = UI.uiBgStops('#ff0000');
+  check('8m the chosen page is written inline, clamped — not the colour that was typed',
+    [root.style.props['--color-slate-50'], root.style.props['--color-slate-100']],
+    [UI.oklchCss(stopped.page), UI.oklchCss(stopped.card)]);
+  ok('8n …the two stops really are a PASTEL (the pipe dream of a red page, made legible)',
+    stopped.page.L === UI.UI_BG_FLOOR && stopped.page.C > 0 && stopped.page.H > 0
+    && root.style.props['--color-slate-50'].startsWith('oklch('));
+  check('8o the motif rides with it, as one attribute on <html> (every page at once)',
+    root.dataset.pattern, 'grid');
+  check('8p the setting round-trips (accent, neutral, page and motif)',
+    UI.readUiCustomSkin(),
+    UI.uiCustomSkinOf({ accent: '#009689', neutral: 'zinc', bg: '#ff0000', pattern: 'grid' }));
+  UI.saveUiCustomSkin({ accent: '#009689', neutral: 'zinc', bg: UI.UI_BG_DEFAULT, pattern: UI.UI_BG_PATTERN_DEFAULT });
+  check('8q back to the plain page: the two stops AND the attribute are gone',
+    [Object.keys(root.style.props).filter((k) => k.startsWith('--color-slate-')), 'pattern' in root.dataset],
+    [[], false]);
+  UI.saveUiCustomSkin({ accent: '#009689', neutral: 'zinc', bg: '#ff0000', pattern: 'dots' });
+  UI.saveUiSkin('violet');
+  check('8r another skin REMOVES the page too (it cannot outlive the choice)',
+    [Object.keys(root.style.props), root.dataset.pattern || '', root.dataset.tone || ''], [[], '', '']);
+  UI.saveUiSkin(UI.UI_SKIN_DEFAULT);
+
+  /* …et ⚙ Settings les offre, avec une miniature qui montre le motif ET la
+     couleur : les deux pastilles sont dessinées par les MÊMES variables que la
+     page (la miniature porte `data-skin` / `data-pattern`, donc elle ment pas). */
+  frag('the control offers the pages', SET, '{UI_BG_PRESETS.map((p) => (');
+  frag('…and the motifs', SET, '{UI_BG_PATTERNS.map((p) => (');
+  frag('…the free colour picker is there too', SET, 'onChange={(e) => setBg(e.target.value)}');
+  frag('…and falls back on the shipped page when nothing is chosen', SET,
+    'value={custom.bg || oklchToHex(uiBgStops(UI_BG_DEFAULT).page)}');
+  frag('…clearing the page is offered', SET, 'onClick={() => setBg(UI_BG_DEFAULT)}');
+  frag('the colour is applied through the same setter as the accent', SET,
+    'const setBg = (bg) => setCustom(saveUiCustomSkin({ ...custom, bg }, operator));');
+  frag('…and the motif through its own', SET,
+    'const setPattern = (pattern) => setCustom(saveUiCustomSkin({ ...custom, pattern }, operator));');
+  frag('the miniature carries the motif', SET,
+    'data-pattern={pattern && pattern !== UI_BG_PATTERN_DEFAULT ? pattern : undefined}');
+  frag('…and only for the custom skin', SET, 'pattern={s.id === UI_SKIN_CUSTOM ? custom.pattern : \'\'}');
+  frag('…it is drawn from the very variables the page uses', SET,
+    'style={s.id === UI_SKIN_CUSTOM ? uiSkinCustomVars(custom) : null}');
+
+  /* ── LA MESURE ────────────────────────────────────────────────────────────
+     D'abord la question de confiance : la réduction de chroma de l'util
+     (`oklchToLin`) est-elle bien le même calcul que celui avec lequel cette
+     sonde mesure TOUTE la palette (section 5) ? Même matrice, mêmes constantes :
+     sinon la bande serait mesurée dans un espace et écrite dans un autre. */
+  check('8s the colour maths of the util IS the one this suite measures with (same matrix)',
+    [UI.oklchToLin(SHIPPED.blue['600']), UI.oklchToLin({ L: 0, C: 0, H: 0 })]
+      .map((v) => v.map((n) => +n.toFixed(6))),
+    [toLin(SHIPPED.blue['600']), toLin({ L: 0, C: 0, H: 0 })].map((v) => v.map((n) => +n.toFixed(6))));
+
+  /* …puis la bande : 90 couleurs que la pipette peut donner (chaque teinte du
+     cercle à sa lumière la plus violente), les extrêmes (noir, blanc, primaires
+     vives, néon), et les huit pages proposées. Aucune ne doit sortir de la
+     bande, du gamut sRGB, ni de la dérivation du cran 100. */
+  const HUE_PROBES = [];
+  for (let h = 0; h < 360; h += 5) HUE_PROBES.push(UI.oklchToHex({ L: 50, C: 1, H: h }));
+  const PROBES = ['#000000', '#ffffff', '#ff0000', '#00ff00', '#0000ff', '#00ffff', '#ff00ff',
+    '#ffff00', '#ff8a00', '#7f00ff', '#123456', '#aabbcc', '#eeeeee', '#010203',
+    ...HUE_PROBES, ...UI.UI_BG_PRESETS.map((p) => p.hex)];
+  const inGamut = (col) => UI.oklchToLin(col).every((c) => c >= -1e-4 && c <= 1 + 1e-4);
+  check('8t every page a user can pick is pulled into the band, in sRGB, at the shipped gap',
+    PROBES.flatMap((hex) => {
+      const { page, card } = UI.uiBgStops(hex);
+      const bad = [];
+      if (!(page.L >= UI.UI_BG_FLOOR && page.L <= UI.UI_BG_CEIL)) bad.push(`${hex}:L`);
+      if (page.C > UI.UI_BG_CAP + 1e-9) bad.push(`${hex}:C`);
+      if (!inGamut(page) || !inGamut(card)) bad.push(`${hex}:gamut`);
+      if (Math.abs((page.L - card.L) - UI.UI_BG_GAP) > 1e-9 || card.H !== page.H || card.C !== page.C)
+        bad.push(`${hex}:derive`);
+      return bad;
+    }), []);
+
+  /* …et enfin CE QUI COMPTE : l'encre que le programme écrit SUR la page. Les
+     deux paires, mesurées famille neutre par famille neutre (l'ardoise, le
+     zinc, le gris chaud — le programme sait servir les trois) contre ce que la
+     palette livrée donne : aucune ne perd plus de 1.5 cran, et les deux restent
+     très au-dessus du plancher d'un texte courant (4.5). */
+  const pairsOf = (family, hex) => {
+    const { page, card } = UI.uiBgStops(hex);
+    const title = ratio(SHIPPED[family]['700'], page);
+    const panel = ratio(SHIPPED[family]['800'], card);
+    return {
+      title,
+      panel,
+      loss: Math.min(title - ratio(SHIPPED[family]['700'], SHIPPED[family]['50']),
+        panel - ratio(SHIPPED[family]['800'], SHIPPED[family]['100']))
+    };
+  };
+  const PAIRS = ['slate', 'zinc', 'stone']
+    .flatMap((family) => PROBES.map((hex) => ({ family, hex, ...pairsOf(family, hex) })));
+  const worstPair = PAIRS.reduce((a, b) => (b.loss < a.loss ? b : a));
+  ok(`8u a chosen page never costs the ink on it more than 1.5 step of contrast — worst ${worstPair.loss.toFixed(2)} (${worstPair.family}, page ${worstPair.hex})`,
+    PAIRS.every((p) => p.loss > -1.5));
+  ok(`8v …and both pairs stay far above the 4.5 of a body text (worst title ${Math.min(...PAIRS.map((p) => p.title)).toFixed(1)}, panel ${Math.min(...PAIRS.map((p) => p.panel)).toFixed(1)})`,
+    PAIRS.every((p) => p.title >= 4.5 && p.panel >= 4.5));
+  const presetPairs = PAIRS.filter((p) => UI.UI_BG_PRESETS.some((q) => q.hex === p.hex));
+  const worstPreset = presetPairs.reduce((a, b) => (b.loss < a.loss ? b : a));
+  ok(`8w …while the eight offered pages cost the ink at most ONE step of it — worst ${worstPreset.loss.toFixed(2)} (${worstPreset.family}, page ${worstPreset.hex})`,
+    presetPairs.every((p) => Math.abs(p.loss) < 1));
+
   const failed = results.filter((r) => !r.ok);
   if (failed.length) for (const f of failed) console.error(`✗ ${f.name}\n     got ${f.got}\n    want ${f.want}`);
   console.log(failed.length

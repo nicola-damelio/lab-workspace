@@ -198,20 +198,162 @@ export const uiSkinCustomRamp = (accent = UI_CUSTOM_ACCENT_DEFAULT) => {
   return out;
 };
 
+/* ── LE FOND DES PAGES — LA COULEUR CHOISIE, ET SON MOTIF ────────────────────
+   « let the user choose the background color, with sober patterns ». Le fond
+   vit ICI, à côté de l'accent, et pas dans index.css : la couleur dépend d'un
+   CHOIX, donc c'est `applyUiSkin` qui l'écrit EN LIGNE sur <html>, exactement
+   comme les onze crans de l'accent. Le MOTIF, lui, est une affaire de feuille
+   (src/index.css, `[data-pattern="…"]`) : le même appel pose l'attribut.
+
+   CHAQUE COULEUR EST RAMENÉE DANS UNE BANDE (c'est le garde-fou de cette
+   section). Une page peut prendre n'importe quelle TEINTE, jamais n'importe
+   quelle LUMIÈRE : les deux paires que le programme écrit SUR une page —
+   `text-slate-700` sur `bg-slate-50` (le titre d'une carte, 7 281 fois) et
+   `text-slate-800` sur `bg-slate-100` (les panneaux posés sur la page) —
+   doivent garder au pire 1.5 cran de contraste de moins que ce que la palette
+   livrée donne ; c'est la règle que la sonde impose déjà à toute peau.
+   En OKLCH c'est une bande simple : la luminosité reste entre 95.5 et 99, le
+   chroma sous 0.03 — et, parce qu'un chroma élevé sur une page aussi claire
+   sortirait du gamut sRGB (le moteur le réduirait lui-même, et la page ne
+   serait plus la couleur qu'on a mesurée), le chroma est RAMENÉ DANS LE GAMUT
+   par dichotomie, comme le fait le CSS Color 4. Toutes les teintes passent, y
+   compris les pastels qu'on attend d'un fond de page ; aucune ne descend sous
+   le plancher de lisibilité.
+
+   LE SECOND CRAN DE LA PAGE (le 100 : les panneaux, les entêtes de tableau)
+   est DÉRIVÉ du premier — même teinte, même chroma, 1.6 point de luminosité en
+   moins, l'écart exact que la palette livrée a entre ses deux crans. */
+
+/** Le fond de page LIVRÉ (slate-50, la référence) : ce que le réglage vide veut
+ *  dire, et la valeur de repli d'une couleur illisible. */
+export const UI_BG_SHIPPED_OKLCH = { L: 98.4, C: 0.003, H: 247.858 };
+
+/* LA BANDE — les valeurs que la sonde mesure. Le PLANCHER est celui des trois
+   familles neutres que le programme sait servir, pas seulement de l'ardoise :
+   une page rose vif (le pire cas possible, L=50 ramené au plancher, chroma au
+   plafond) coûte 1.56 cran de contraste sur la paire des panneaux avec le gris
+   CHAUD (stone, dont l'encre et les crans 100/800 donnent la paire la plus
+   serrée), donc 95 ne suffisait pas — 95.5 ramène le pire cas à 1.37. Les
+   changer sans les remesurer casserait la garantie. */
+export const UI_BG_FLOOR = 95.5;  /* L minimum d'une page choisie */
+export const UI_BG_CEIL = 99;     /* L maximum (100 = blanc pur, aveuglant) */
+export const UI_BG_CAP = 0.03;    /* chroma maximum — un pastel, jamais plus */
+export const UI_BG_GAP = 1.6;     /* l'écart livré entre la page et son cran 100 */
+
+/** Le réglage vide : « la page de la famille neutre choisie ». Rien n'est
+ *  écrit, donc le cran 50 du thème livré — ou celui du `data-tone` — reste en
+ *  place, et changer de famille neutre change AUSSI la page. */
+export const UI_BG_DEFAULT = '';
+
+/** LES QUATRE MOTIFS — tous des dégradés CSS répétés (aucune image, aucun octet
+ *  à charger, et rien à l'impression : voir `@media screen`, index.css), tous
+ *  volontairement discrets. `none` est le défaut, et ne pose donc rien. */
+export const UI_BG_PATTERNS = [
+  { id: 'none', label: 'None', hint: 'the plain page' },
+  { id: 'grid', label: 'Grid', hint: 'hairline squares' },
+  { id: 'dots', label: 'Dots', hint: 'a dotted sheet' },
+  { id: 'rules', label: 'Rules', hint: 'ruled lines' },
+  { id: 'diagonal', label: 'Diagonal', hint: 'slanted hairlines' }
+];
+export const UI_BG_PATTERN_DEFAULT = 'none';
+
+/** OKLCH → sRGB LINÉAIRE : le retour exact de `hexToOklch` (mêmes matrices,
+ *  inversées). Sert à savoir si une couleur TIENT dans le gamut sRGB. PUR. */
+export const oklchToLin = ({ L, C, H }) => {
+  const h = (H * Math.PI) / 180;
+  const a = C * Math.cos(h);
+  const b = C * Math.sin(h);
+  const l_ = L / 100 + 0.3963377774 * a + 0.2158037573 * b;
+  const m_ = L / 100 - 0.1055613458 * a - 0.0638541728 * b;
+  const s_ = L / 100 - 0.0894841775 * a - 1.2914855480 * b;
+  const l = l_ ** 3, m = m_ ** 3, s = s_ ** 3;
+  return [
+    4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+    -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+    -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s
+  ];
+};
+
+/** Le chroma le plus élevé qui TIENT dans le gamut sRGB à cette lumière et
+ *  cette teinte (dichotomie, comme la réduction de chroma du CSS Color 4) :
+ *  c'est ce qui garantit que la page ÉCRITE est la page PEINTE. PUR. */
+export const sRGBChroma = (col) => {
+  const inside = (c) => oklchToLin({ ...col, C: c }).every((v) => v >= -1e-4 && v <= 1 + 1e-4);
+  if (inside(col.C)) return col.C;
+  let lo = 0, hi = col.C;
+  for (let i = 0; i < 40; i++) {
+    const mid = (lo + hi) / 2;
+    if (inside(mid)) lo = mid; else hi = mid;
+  }
+  return lo;
+};
+
+/** OKLCH → hexadécimal sRGB : le chemin inverse de `hexToOklch`, pour les
+ *  pastilles de ⚙ Settings (chaque canal est écrêté, comme le fait le
+ *  moteur). PUR. */
+export const oklchToHex = (col) => `#${oklchToLin(col).map((v) => {
+  const c = Math.min(1, Math.max(0, v));
+  const g = c <= 0.0031308 ? 12.92 * c : 1.055 * Math.pow(c, 1 / 2.4) - 0.055;
+  return Math.round(255 * g).toString(16).padStart(2, '0');
+}).join('')}`;
+
+/** Un OKLCH écrit comme index.css l'écrit — donc relu tel quel par la sonde et
+ *  compris tel quel par le moteur. PUR. */
+export const oklchCss = ({ L, C, H }) => `oklch(${L.toFixed(1)}% ${C.toFixed(3)} ${H.toFixed(1)})`;
+
+/** LES FONDS PROPOSÉS — les crans 50 de la palette que Tailwind livre (relevés
+ *  dans son thème, pas inventés), donc TOUS déjà dans la bande : ce que la
+ *  pastille montre est exactement ce que la page prendra. */
+export const UI_BG_PRESETS = [
+  { id: 'slate', label: 'Slate', oklch: UI_BG_SHIPPED_OKLCH },
+  { id: 'zinc', label: 'Zinc', oklch: { L: 98.5, C: 0, H: 0 } },
+  { id: 'stone', label: 'Stone', oklch: { L: 98.5, C: 0.001, H: 106.423 } },
+  { id: 'sky', label: 'Sky', oklch: { L: 97.7, C: 0.013, H: 236.62 } },
+  { id: 'emerald', label: 'Emerald', oklch: { L: 97.9, C: 0.021, H: 166.113 } },
+  { id: 'amber', label: 'Amber', oklch: { L: 98.7, C: 0.022, H: 95.277 } },
+  { id: 'rose', label: 'Rose', oklch: { L: 96.9, C: 0.015, H: 12.422 } },
+  { id: 'violet', label: 'Violet', oklch: { L: 96.9, C: 0.016, H: 293.756 } }
+].map((p) => ({ ...p, hex: oklchToHex(p.oklch) }));
+
+/** LES DEUX CRANS D'UNE PAGE CHOISIE — la couleur ramenée dans la bande, et le
+ *  cran 100 DÉRIVÉ (même teinte, même chroma, `UI_BG_GAP` de luminosité en
+ *  moins). Une couleur illisible retombe sur la page livrée ; le réglage vide
+ *  (`UI_BG_DEFAULT`) rend donc, lui aussi, la page livrée. PUR. */
+export const uiBgStops = (hex) => {
+  const pick = hexToOklch(hex) || UI_BG_SHIPPED_OKLCH;
+  const L = Math.min(UI_BG_CEIL, Math.max(UI_BG_FLOOR, pick.L));
+  const C = sRGBChroma({ L, C: Math.min(UI_BG_CAP, pick.C), H: pick.H });
+  return { page: { L, C, H: pick.H }, card: { L: L - UI_BG_GAP, C, H: pick.H } };
+};
+
 /** Le réglage retenu, toujours utilisable (une couleur illisible ou une famille
  *  inconnue retombent sur le défaut livré). PUR. */
 export const uiCustomSkinOf = (raw) => ({
   accent: (raw && /^#[0-9a-f]{6}$/i.test(String(raw.accent || '')))
     ? String(raw.accent).toLowerCase() : UI_CUSTOM_ACCENT_DEFAULT,
   neutral: UI_CUSTOM_NEUTRALS.some((n) => n.id === (raw && raw.neutral))
-    ? raw.neutral : UI_CUSTOM_NEUTRAL_DEFAULT
+    ? raw.neutral : UI_CUSTOM_NEUTRAL_DEFAULT,
+  bg: (raw && /^#[0-9a-f]{6}$/i.test(String(raw.bg || '')))
+    ? String(raw.bg).toLowerCase() : UI_BG_DEFAULT,
+  pattern: UI_BG_PATTERNS.some((p) => p.id === (raw && raw.pattern))
+    ? raw.pattern : UI_BG_PATTERN_DEFAULT
 });
 
 /** Les variables d'une peau personnalisée : les onze crans de l'accent, plus
- *  `--lab-tone` (la famille neutre, pour la miniature ET pour <html>). PUR. */
+ *  `--lab-tone` (la famille neutre, pour la miniature ET pour <html>), plus —
+ *  quand un fond a été choisi — LES DEUX CRANS DE LA PAGE, ramenés dans la
+ *  bande (utils : `uiBgStops`). Écrites EN LIGNE, donc au-dessus du bloc de la
+ *  famille neutre : un fond choisi l'emporte sur le `tone` qu'on lit à côté.
+ *  Le MOTIF n'est pas une variable : c'est l'attribut `data-pattern`. PUR. */
 export const uiSkinCustomVars = (raw) => {
   const custom = uiCustomSkinOf(raw);
-  return { ...uiSkinCustomRamp(custom.accent), '--lab-tone': custom.neutral };
+  const vars = { ...uiSkinCustomRamp(custom.accent), '--lab-tone': custom.neutral };
+  if (custom.bg) {
+    const { page, card } = uiBgStops(custom.bg);
+    vars['--color-slate-50'] = oklchCss(page);
+    vars['--color-slate-100'] = oklchCss(card);
+  }
+  return vars;
 };
 
 /** Le réglage stocké (localStorage indisponible ⇒ le défaut livré) — celui de
@@ -263,9 +405,11 @@ export const readUiSkin = (operator = null) => {
 
 /* `id` = the reference ⇒ the attribute is REMOVED (the shipped palette comes
    back exactly as Tailwind defines it). The custom skin is the one case whose
-   accent ramp is NOT in the stylesheet: its eleven stops depend on a colour the
-   user picked, so they are written INLINE on <html> — and cleared for every
-   other skin, or they would outlive the choice.
+   accent ramp — and the page colour the user chose — is NOT in the stylesheet:
+   its eleven stops depend on a colour the user picked, so they are written
+   INLINE on <html> — and cleared for every other skin, or they would outlive
+   the choice. The PATTERN is the stylesheet's job (index.css): here we only
+   raise or drop `data-pattern` on <html>, which paints every page at once.
    `operator` : l'accent lu (peau personnalisée) est celui de CET opérateur. */
 export const applyUiSkin = (id, operator = null) => {
   if (typeof document === 'undefined') return; // unit tests (node) have no DOM
@@ -273,15 +417,31 @@ export const applyUiSkin = (id, operator = null) => {
   if (!root) return;
   const skin = uiSkinById(id);
   if (!root.dataset) return;
-  const customKeys = [...Object.keys(uiSkinCustomRamp(UI_CUSTOM_ACCENT_DEFAULT)), '--lab-tone'];
+  /* les clés à effacer : TOUTE la rampe d'accent, `--lab-tone`, et les deux
+     crans de la page — qu'un fond ait été choisi ou non (sinon un fond posé
+     hier survivrait au passage à une autre peau). */
+  const customKeys = [
+    ...Object.keys(uiSkinCustomRamp(UI_CUSTOM_ACCENT_DEFAULT)),
+    '--lab-tone', '--color-slate-50', '--color-slate-100'
+  ];
   const clearCustom = () => {
     if (root.style) customKeys.forEach((k) => root.style.removeProperty(k));
     delete root.dataset.tone;
+    delete root.dataset.pattern;
   };
   if (skin.id === UI_SKIN_CUSTOM) {
     const custom = readUiCustomSkin(operator);
+    /* ON EFFACE D'ABORD : un fond qu'on vient de retirer (ou l'accent d'un autre
+       opérateur) doit disparaître des variables en ligne, sinon l'écriture qui
+       suit ne ferait qu'ajouter le réglage courant À l'ancien — la page
+       resterait peinte avec la couleur qu'on vient d'abandonner. */
+    clearCustom();
     if (root.style) Object.entries(uiSkinCustomVars(custom)).forEach(([k, v]) => root.style.setProperty(k, v));
     root.dataset.tone = custom.neutral;
+    /* le motif : « none » (le défaut) n'écrit AUCUN attribut, donc la feuille
+       ne peint rien et l'attribut ne traîne pas dans le DOM. */
+    if (custom.pattern === UI_BG_PATTERN_DEFAULT) delete root.dataset.pattern;
+    else root.dataset.pattern = custom.pattern;
     root.dataset.skin = UI_SKIN_CUSTOM;
     return;
   }

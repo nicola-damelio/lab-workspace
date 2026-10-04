@@ -833,6 +833,66 @@ table td .text-xs, table th .text-xs {
   --color-slate-950: oklch(14.7% 0.004 49.25);
 }
 
+/* ── LE FOND DES PAGES — LE MOTIF CHOISI DANS ⚙ SETTINGS.
+   LA COULEUR n'est pas ici : elle dépend d'un choix, donc src/utils/uiSkin.js
+   l'écrit EN LIGNE sur <html> (`--color-slate-50` et `--color-slate-100`,
+   ramenés dans une bande de lisibilité — voir « LA BANDE », là-bas). Le MOTIF,
+   lui, ne dépend que d'un NOM : `data-pattern`, posé sur <html> par le même
+   appel, est décrit ici une seule fois pour toutes les pages du programme.
+   Quatre dégradés CSS répétés — aucun octet à charger, aucun composant à
+   toucher, et RIEN À L'IMPRESSION : les règles vivent dans `@media screen`,
+   donc un document imprimé garde sa page blanche.
+
+   Elles ne peignent qu'un élément qui porte la classe de la page
+   (`bg-slate-50`) — le seul repère qui dise « ceci EST une page » (le grand
+   cadre de l'application, le conteneur d'une page, le fond de ⚙ Settings, la
+   miniature). `--lab-page-line` est une encre neutre diluée, assez pâle pour ne
+   jamais gêner une lecture : les quatre motifs se contentent de filets et de
+   points, jamais d'une image. */
+
+@media screen {
+
+  /* l'encre du motif — écrite UNE fois, les quatre motifs la partagent */
+  [data-pattern] {
+    --lab-page-line: rgb(15 23 42 / 0.06);
+  }
+
+  [data-pattern="grid"] {
+    --lab-page-image:
+      linear-gradient(to right, var(--lab-page-line) 1px, transparent 1px),
+      linear-gradient(to bottom, var(--lab-page-line) 1px, transparent 1px);
+    --lab-page-size: 24px 24px;
+  }
+
+  [data-pattern="dots"] {
+    --lab-page-image: radial-gradient(var(--lab-page-line) 1px, transparent 1.1px);
+    --lab-page-size: 18px 18px;
+  }
+
+  [data-pattern="rules"] {
+    --lab-page-image: repeating-linear-gradient(to bottom,
+      var(--lab-page-line) 0, var(--lab-page-line) 1px,
+      transparent 1px, transparent 28px);
+    --lab-page-size: auto;
+  }
+
+  [data-pattern="diagonal"] {
+    --lab-page-image: repeating-linear-gradient(45deg,
+      var(--lab-page-line) 0, var(--lab-page-line) 1px,
+      transparent 1px, transparent 12px);
+    --lab-page-size: auto;
+  }
+
+  /* LA PAGE — un élément peint avec le fond des pages. `background-image` ne
+     touche pas `background-color` : la teinte choisie reste, le motif se pose
+     dessus. Et `var(--lab-page-image, none)` laisse intacte une page sans
+     motif — aucun attribut, aucun dessin. */
+  [class~="bg-slate-50"] {
+    background-image: var(--lab-page-image, none);
+    background-size: var(--lab-page-size, auto);
+  }
+}
+
 /* ---------------------------------------------------------------------------
    THE SEQUENCE FIELD — the selection of a COLOURED field stays readable.
    `SequenceField` (src/components/SequenceField.jsx) renders the letters in a

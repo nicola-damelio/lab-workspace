@@ -18,6 +18,14 @@ import {
   UI_CUSTOM_ACCENTS, UI_CUSTOM_NEUTRALS, UI_SKIN_CUSTOM, UI_SKIN_DEFAULT, UI_SKINS,
   readUiCustomSkin, readUiSkin, saveUiCustomSkin, saveUiSkin, uiSkinCustomVars
 } from '../../utils/uiSkin';
+/* LE FOND DES PAGES voyage avec l'accent : il vit dans le MÊME réglage (une
+   couleur et un nom de motif, à côté de l'accent et de la famille neutre), donc
+   `saveUiCustomSkin` l'écrit et l'applique, et `uiSkinCustomVars` le pose sur la
+   miniature comme sur <html>. */
+import {
+  UI_BG_DEFAULT, UI_BG_PATTERN_DEFAULT, UI_BG_PATTERNS, UI_BG_PRESETS,
+  oklchToHex, uiBgStops
+} from '../../utils/uiSkin';
 
 /* ── Display scale ─────────────────────────────────────────────────────────
    Tailwind v4 computes every text size and every spacing step from the ROOT
@@ -73,10 +81,11 @@ const DisplayScaleControl = () => {
    one of the session before the first paint. Every user sees the control — and
    the choice follows HIM from one computer to the next, like the other browser
    keys. */
-const SkinMiniature = ({ skin, tone = '', style = null }) => (
+const SkinMiniature = ({ skin, tone = '', pattern = '', style = null }) => (
   <span
     data-skin={skin.id === UI_SKIN_DEFAULT ? undefined : skin.id}
     data-tone={tone || undefined}
+    data-pattern={pattern && pattern !== UI_BG_PATTERN_DEFAULT ? pattern : undefined}
     style={style || undefined}
     className="flex w-40 flex-col gap-1 rounded-lg border border-slate-200 bg-slate-50 p-2 no-print"
   >
@@ -113,6 +122,12 @@ const SkinControl = ({ operator = null }) => {
   const pick = (id) => { setSkin(id); saveUiSkin(id, operator); };
   const setAccent = (color) => setCustom(saveUiCustomSkin({ ...custom, accent: color }, operator));
   const setNeutral = (neutral) => setCustom(saveUiCustomSkin({ ...custom, neutral }, operator));
+  /* LE FOND DES PAGES : une couleur (n'importe laquelle — elle est RAMENÉE DANS
+     LA BANDE de lisibilité par uiSkin.js, donc la page ne peut pas devenir
+     illisible) et un motif sobre. `UI_BG_DEFAULT` = la page de la famille
+     neutre choisie, c'est-à-dire celle que le programme livre. */
+  const setBg = (bg) => setCustom(saveUiCustomSkin({ ...custom, bg }, operator));
+  const setPattern = (pattern) => setCustom(saveUiCustomSkin({ ...custom, pattern }, operator));
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap gap-3">
@@ -131,6 +146,7 @@ const SkinControl = ({ operator = null }) => {
             <SkinMiniature
               skin={s}
               tone={s.id === UI_SKIN_CUSTOM ? custom.neutral : ''}
+              pattern={s.id === UI_SKIN_CUSTOM ? custom.pattern : ''}
               style={s.id === UI_SKIN_CUSTOM ? uiSkinCustomVars(custom) : null}
             />
             <span className="flex flex-col items-center">
@@ -187,11 +203,72 @@ const SkinControl = ({ operator = null }) => {
               </button>
             ))}
           </div>
+          <span className="text-xs font-bold text-slate-700">…and the page background</span>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setBg(UI_BG_DEFAULT)}
+              title={`The page the program ships with — the lightest grey of the neutral family above (${custom.neutral}).`}
+              className={`rounded-lg border px-2 py-1 text-[11px] font-bold ${
+                custom.bg === UI_BG_DEFAULT
+                  ? 'border-blue-600 bg-blue-50 text-blue-700'
+                  : 'border-slate-300 bg-white text-slate-600 hover:border-slate-400'
+              }`}
+            >
+              {custom.neutral} page
+            </button>
+            {UI_BG_PRESETS.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => setBg(p.hex)}
+                title={`${p.label} page — a pastel page, kept light enough for the ink the program writes on it.`}
+                className={`h-7 w-7 rounded-full border-2 shadow-sm ${
+                  custom.bg === p.hex ? 'border-slate-800' : 'border-white'
+                }`}
+                style={{ backgroundColor: p.hex }}
+              />
+            ))}
+            <label
+              title="Any colour at all: it is pulled back into a legible band (lightness, chroma, and the sRGB gamut), so the writing on the page always stays readable."
+              className="flex items-center gap-1.5 text-[11px] font-bold text-slate-600"
+            >
+              <input
+                type="color"
+                value={custom.bg || oklchToHex(uiBgStops(UI_BG_DEFAULT).page)}
+                onChange={(e) => setBg(e.target.value)}
+                className="h-7 w-10 cursor-pointer rounded border border-slate-300 bg-white"
+              />
+              {custom.bg || 'page colour'}
+            </label>
+          </div>
+          <span className="text-xs font-bold text-slate-700">…and a sober pattern</span>
+          <div className="flex flex-wrap gap-2">
+            {UI_BG_PATTERNS.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => setPattern(p.id)}
+                title={`${p.label} — ${p.hint}. A few CSS hairlines (nothing to download), painted on the pages only, and never on a printed document.`}
+                className={`rounded-lg border px-2 py-1 text-[11px] font-bold ${
+                  custom.pattern === p.id
+                    ? 'border-blue-600 bg-blue-50 text-blue-700'
+                    : 'border-slate-300 bg-white text-slate-600 hover:border-slate-400'
+                }`}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
           <span className="text-[10px] text-slate-500 leading-relaxed">
             The accent repaints every button, link, highlight and chip; the neutral family repaints the
             pages, the cards, the borders and the inks. The eleven accent stops are <b>derived from the
             one colour</b> you pick — the same shape as the shipped ramp — so a custom skin keeps the
-            contrast of the program instead of producing an unreadable mix.
+            contrast of the program instead of producing an unreadable mix. The page background is the one
+            colour you can pick freely: whatever you choose is <b>pulled back into a legible band</b>
+            (lightness, chroma, sRGB gamut), and the panels that sit on the page follow it, so the titles
+            and captions the program writes there stay readable. The pattern is a few CSS hairlines drawn
+            on the page — and never on a printed document.
           </span>
         </div>
       )}
@@ -255,7 +332,7 @@ export const SettingsModule = ({
 
                   <CollapsibleSection
                     title="Interface skin — the colours of the whole program"
-                    subtitle="Repaints every page, modal, table and badge at once — the neutral greys, the ink and the accent colour — by restating the palette Tailwind's classes read. Graphite drops the blue cast, Warm paper turns the greys warm, Indigo, Violet, Purple, Red and Rose move the accent, Dimmed softens the white for long sessions, High contrast deepens every ink and border, and Custom lets you pick your own accent and neutral family. The choice is immediate, belongs to the OPERATOR who picks it (each one has his own, on every computer he signs in to; when nobody is signed in it is the skin of this computer), and every user sees it."
+                    subtitle="Repaints every page, modal, table and badge at once — the neutral greys, the ink and the accent colour — by restating the palette Tailwind's classes read. Graphite drops the blue cast, Warm paper turns the greys warm, Indigo, Violet, Purple, Red and Rose move the accent, Dimmed softens the white for long sessions, High contrast deepens every ink and border, and Custom lets you pick your own accent and neutral family. The choice is immediate, belongs to the OPERATOR who picks it (each one has his own, on every computer he signs in to; when nobody is signed in it is the skin of this computer), and every user sees it. The PAGE BACKGROUND, too: pick the colour of the pages — any colour, since it is pulled back into a band that keeps the writing readable — and a sober pattern (grid, dots, ruled lines, slanted hairlines) drawn with CSS, on screen only."
                     defaultOpen={false}
                   >
                     <SkinControl operator={currentUser} />

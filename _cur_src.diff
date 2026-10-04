@@ -1,486 +1,425 @@
 diff --git a/src/components/AppModules/settingsModule.jsx b/src/components/AppModules/settingsModule.jsx
-index 75c3f32..b3fdac0 100644
+index b3fdac0..45fbaee 100644
 --- a/src/components/AppModules/settingsModule.jsx
 +++ b/src/components/AppModules/settingsModule.jsx
-@@ -213,6 +213,9 @@ const SkinControl = ({ operator = null }) => {
-       <p className="text-xs text-slate-500 leading-relaxed">
-         A skin repaints the program — colours, inks, borders — and nothing else: the layout,
-         the display scale, the printed documents and the figures keep their own settings.
-+        A <b>dark</b> skin (Night, Carbon) repaints the <b>pages themselves</b>: the
-+        background goes dark and the writing turns light so it stays readable, while
-+        printing still goes out on white paper.
-       </p>
-     </div>
-   );
+@@ -18,6 +18,14 @@ import {
+   UI_CUSTOM_ACCENTS, UI_CUSTOM_NEUTRALS, UI_SKIN_CUSTOM, UI_SKIN_DEFAULT, UI_SKINS,
+   readUiCustomSkin, readUiSkin, saveUiCustomSkin, saveUiSkin, uiSkinCustomVars
+ } from '../../utils/uiSkin';
++/* LE FOND DES PAGES voyage avec l'accent : il vit dans le MÊME réglage (une
++   couleur et un nom de motif, à côté de l'accent et de la famille neutre), donc
++   `saveUiCustomSkin` l'écrit et l'applique, et `uiSkinCustomVars` le pose sur la
++   miniature comme sur <html>. */
++import {
++  UI_BG_DEFAULT, UI_BG_PATTERN_DEFAULT, UI_BG_PATTERNS, UI_BG_PRESETS,
++  oklchToHex, uiBgStops
++} from '../../utils/uiSkin';
+ 
+ /* ── Display scale ─────────────────────────────────────────────────────────
+    Tailwind v4 computes every text size and every spacing step from the ROOT
+@@ -73,10 +81,11 @@ const DisplayScaleControl = () => {
+    one of the session before the first paint. Every user sees the control — and
+    the choice follows HIM from one computer to the next, like the other browser
+    keys. */
+-const SkinMiniature = ({ skin, tone = '', style = null }) => (
++const SkinMiniature = ({ skin, tone = '', pattern = '', style = null }) => (
+   <span
+     data-skin={skin.id === UI_SKIN_DEFAULT ? undefined : skin.id}
+     data-tone={tone || undefined}
++    data-pattern={pattern && pattern !== UI_BG_PATTERN_DEFAULT ? pattern : undefined}
+     style={style || undefined}
+     className="flex w-40 flex-col gap-1 rounded-lg border border-slate-200 bg-slate-50 p-2 no-print"
+   >
+@@ -113,6 +122,12 @@ const SkinControl = ({ operator = null }) => {
+   const pick = (id) => { setSkin(id); saveUiSkin(id, operator); };
+   const setAccent = (color) => setCustom(saveUiCustomSkin({ ...custom, accent: color }, operator));
+   const setNeutral = (neutral) => setCustom(saveUiCustomSkin({ ...custom, neutral }, operator));
++  /* LE FOND DES PAGES : une couleur (n'importe laquelle — elle est RAMENÉE DANS
++     LA BANDE de lisibilité par uiSkin.js, donc la page ne peut pas devenir
++     illisible) et un motif sobre. `UI_BG_DEFAULT` = la page de la famille
++     neutre choisie, c'est-à-dire celle que le programme livre. */
++  const setBg = (bg) => setCustom(saveUiCustomSkin({ ...custom, bg }, operator));
++  const setPattern = (pattern) => setCustom(saveUiCustomSkin({ ...custom, pattern }, operator));
+   return (
+     <div className="flex flex-col gap-3">
+       <div className="flex flex-wrap gap-3">
+@@ -131,6 +146,7 @@ const SkinControl = ({ operator = null }) => {
+             <SkinMiniature
+               skin={s}
+               tone={s.id === UI_SKIN_CUSTOM ? custom.neutral : ''}
++              pattern={s.id === UI_SKIN_CUSTOM ? custom.pattern : ''}
+               style={s.id === UI_SKIN_CUSTOM ? uiSkinCustomVars(custom) : null}
+             />
+             <span className="flex flex-col items-center">
+@@ -187,11 +203,72 @@ const SkinControl = ({ operator = null }) => {
+               </button>
+             ))}
+           </div>
++          <span className="text-xs font-bold text-slate-700">…and the page background</span>
++          <div className="flex flex-wrap items-center gap-2">
++            <button
++              type="button"
++              onClick={() => setBg(UI_BG_DEFAULT)}
++              title={`The page the program ships with — the lightest grey of the neutral family above (${custom.neutral}).`}
++              className={`rounded-lg border px-2 py-1 text-[11px] font-bold ${
++                custom.bg === UI_BG_DEFAULT
++                  ? 'border-blue-600 bg-blue-50 text-blue-700'
++                  : 'border-slate-300 bg-white text-slate-600 hover:border-slate-400'
++              }`}
++            >
++              {custom.neutral} page
++            </button>
++            {UI_BG_PRESETS.map((p) => (
++              <button
++                key={p.id}
++                type="button"
++                onClick={() => setBg(p.hex)}
++                title={`${p.label} page — a pastel page, kept light enough for the ink the program writes on it.`}
++                className={`h-7 w-7 rounded-full border-2 shadow-sm ${
++                  custom.bg === p.hex ? 'border-slate-800' : 'border-white'
++                }`}
++                style={{ backgroundColor: p.hex }}
++              />
++            ))}
++            <label
++              title="Any colour at all: it is pulled back into a legible band (lightness, chroma, and the sRGB gamut), so the writing on the page always stays readable."
++              className="flex items-center gap-1.5 text-[11px] font-bold text-slate-600"
++            >
++              <input
++                type="color"
++                value={custom.bg || oklchToHex(uiBgStops(UI_BG_DEFAULT).page)}
++                onChange={(e) => setBg(e.target.value)}
++                className="h-7 w-10 cursor-pointer rounded border border-slate-300 bg-white"
++              />
++              {custom.bg || 'page colour'}
++            </label>
++          </div>
++          <span className="text-xs font-bold text-slate-700">…and a sober pattern</span>
++          <div className="flex flex-wrap gap-2">
++            {UI_BG_PATTERNS.map((p) => (
++              <button
++                key={p.id}
++                type="button"
++                onClick={() => setPattern(p.id)}
++                title={`${p.label} — ${p.hint}. A few CSS hairlines (nothing to download), painted on the pages only, and never on a printed document.`}
++                className={`rounded-lg border px-2 py-1 text-[11px] font-bold ${
++                  custom.pattern === p.id
++                    ? 'border-blue-600 bg-blue-50 text-blue-700'
++                    : 'border-slate-300 bg-white text-slate-600 hover:border-slate-400'
++                }`}
++              >
++                {p.label}
++              </button>
++            ))}
++          </div>
+           <span className="text-[10px] text-slate-500 leading-relaxed">
+             The accent repaints every button, link, highlight and chip; the neutral family repaints the
+             pages, the cards, the borders and the inks. The eleven accent stops are <b>derived from the
+             one colour</b> you pick — the same shape as the shipped ramp — so a custom skin keeps the
+-            contrast of the program instead of producing an unreadable mix.
++            contrast of the program instead of producing an unreadable mix. The page background is the one
++            colour you can pick freely: whatever you choose is <b>pulled back into a legible band</b>
++            (lightness, chroma, sRGB gamut), and the panels that sit on the page follow it, so the titles
++            and captions the program writes there stay readable. The pattern is a few CSS hairlines drawn
++            on the page — and never on a printed document.
+           </span>
+         </div>
+       )}
+@@ -255,7 +332,7 @@ export const SettingsModule = ({
+ 
+                   <CollapsibleSection
+                     title="Interface skin — the colours of the whole program"
+-                    subtitle="Repaints every page, modal, table and badge at once — the neutral greys, the ink and the accent colour — by restating the palette Tailwind's classes read. Graphite drops the blue cast, Warm paper turns the greys warm, Indigo, Violet, Purple, Red and Rose move the accent, Dimmed softens the white for long sessions, High contrast deepens every ink and border, and Custom lets you pick your own accent and neutral family. The choice is immediate, belongs to the OPERATOR who picks it (each one has his own, on every computer he signs in to; when nobody is signed in it is the skin of this computer), and every user sees it."
++                    subtitle="Repaints every page, modal, table and badge at once — the neutral greys, the ink and the accent colour — by restating the palette Tailwind's classes read. Graphite drops the blue cast, Warm paper turns the greys warm, Indigo, Violet, Purple, Red and Rose move the accent, Dimmed softens the white for long sessions, High contrast deepens every ink and border, and Custom lets you pick your own accent and neutral family. The choice is immediate, belongs to the OPERATOR who picks it (each one has his own, on every computer he signs in to; when nobody is signed in it is the skin of this computer), and every user sees it. The PAGE BACKGROUND, too: pick the colour of the pages — any colour, since it is pulled back into a band that keeps the writing readable — and a sober pattern (grid, dots, ruled lines, slanted hairlines) drawn with CSS, on screen only."
+                     defaultOpen={false}
+                   >
+                     <SkinControl operator={currentUser} />
 diff --git a/src/index.css b/src/index.css
-index edbc6cc..904d5a5 100644
+index 904d5a5..8cbd1d6 100644
 --- a/src/index.css
 +++ b/src/index.css
-@@ -126,14 +126,20 @@ table td .text-xs, table th .text-xs {
-    small element — which is how Settings shows a live miniature of each skin.
- 
-    Choosing a skin changes NO class and NO component: the neutral scale, the
--   accent and (for `dim`) the white are restated, so every page, modal, badge,
--   button, table and chip of the program follows at once.
-+   accent and (for `dim`, and for the night skins) the white are restated, so
-+   every page, modal, badge, button, table and chip of the program follows at
-+   once. The document itself follows too, on the two colours index.html's
-+   `body` reads from those same variables.
- 
-    The values are not invented: each skin either SWAPS two of Tailwind's own
-    ramps or restates a ramp stop for stop, and the probe test
-    (node _ui_skin_test.cjs) recomputes the WCAG contrast of the pairs the
-    program actually writes — no skin may cost more than 1.5 steps of contrast
--   against the shipped palette, anywhere.
-+   against the shipped palette, anywhere. A `night` skin (see « NUIT », below)
-+   cannot be judged that way — it turns the palette over, so it answers to its
-+   own RECIPE (every stop is the recipe applied to Tailwind's ramp) and to a
-+   FLOOR per pair (the nine pairs the program writes keep their readability,
-+   family by family, on a dark page).
- 
-    The reference skin (Slate & blue) has NO block: it IS Tailwind's values, and
-    applying it removes the attribute.
-@@ -381,6 +387,411 @@ table td .text-xs, table th .text-xs {
-   --color-blue-950: oklch(27.1% 0.105 12.094);
+@@ -833,6 +833,66 @@ table td .text-xs, table th .text-xs {
+   --color-slate-950: oklch(14.7% 0.004 49.25);
  }
  
-+/* ── NUIT — LA PAGE DEVIENT SOMBRE, ET L'ENCRE SUIT. ────────────────────────
-+   Les peaux ci-dessus déplacent la TEINTE ou l'ENCRE, jamais la LUMIÈRE : la
-+   page reste claire — c'est ce que « the skins do not change the background
-+   color » reprochait. Une peau `night` fait le contraire : elle RETOURNE
-+   l'échelle, donc le fond de page, les cartes, les panneaux et les bordures
-+   deviennent sombres — et, par la même opération, l'encre qui s'écrivait dessus
-+   devient claire : « for dark color the writing must change color to allow
-+   visibility » est satisfait par construction, pas au cas par cas.
++/* ── LE FOND DES PAGES — LE MOTIF CHOISI DANS ⚙ SETTINGS.
++   LA COULEUR n'est pas ici : elle dépend d'un choix, donc src/utils/uiSkin.js
++   l'écrit EN LIGNE sur <html> (`--color-slate-50` et `--color-slate-100`,
++   ramenés dans une bande de lisibilité — voir « LA BANDE », là-bas). Le MOTIF,
++   lui, ne dépend que d'un NOM : `data-pattern`, posé sur <html> par le même
++   appel, est décrit ici une seule fois pour toutes les pages du programme.
++   Quatre dégradés CSS répétés — aucun octet à charger, aucun composant à
++   toucher, et RIEN À L'IMPRESSION : les règles vivent dans `@media screen`,
++   donc un document imprimé garde sa page blanche.
 +
-+   LA RECETTE (rejouée valeur par valeur par la sonde, node _ui_skin_test.cjs) —
-+   chaque famille garde sa TEINTE et son chroma (ramené dans le gamut sRGB, la
-+   réduction de chroma du CSS Color 4), et sa LUMINOSITÉ est rejouée sur les
-+   deux segments que le programme sépare lui-même :
-+     · les SURFACES — crans 50 à 300 : le fond, les panneaux, les bordures ;
-+     · les ENCRES   — crans 400 à 950 : les légendes, les libellés, les titres.
-+   La rampe livrée de la famille est NORMALISÉE sur la bande voulue, de son
-+   cran 50 à son cran 300 pour les surfaces et de son cran 400 à son 950 pour
-+   les encres : `night` rejoue ses neutres sur [13, 30] et [50, 99], ses
-+   couleurs sur [26, 38] et [49, 100] ; `carbon` emprunte les gris PURS de Zinc
-+   et descend d'un cran — [11, 28] et [52, 97] pour ses neutres, [24, 36] et
-+   [49, 97] pour ses couleurs. Une famille garde donc l'écart de luminosité
-+   qu'elle avait ENTRE ses crans : c'est ce qui fait tenir, après le
-+   retournement, les paires que le programme écrit (une puce `bg-blue-50` +
-+   `text-blue-700`, un libellé blanc sur `bg-blue-600`, un filet
-+   `border-slate-200` sur une carte).
-+
-+   LA SONDE VÉRIFIE (et pas autre chose) que chaque cran EST la recette
-+   appliquée à la rampe de Tailwind — aucune valeur n'est inventée ; que la
-+   rampe MONTE (le cran 50 est la surface, le 950 l'encre : l'inverse de la
-+   rampe livrée) ; et que neuf paires écrites par le programme gardent, POUR
-+   CHAQUE FAMILLE, le plancher de lisibilité d'une page sombre — de 1.25:1 pour
-+   un filet à 4.5:1 pour une encre. La lisibilité n'y est donc pas une
-+   espérance : c'est une mesure.
-+
-+   ÉCRAN SEULEMENT — `@media screen` : une page sombre est une intention
-+   d'écran. Sur le papier (window.print, les documents, les figures), le
-+   programme reprend la palette livrée : un tirage ne doit pas envoyer une page
-+   noire à l'imprimante, et les documents ont de toute façon leur propre encre.
-+   ========================================================================= */
++   Elles ne peignent qu'un élément qui porte la classe de la page
++   (`bg-slate-50`) — le seul repère qui dise « ceci EST une page » (le grand
++   cadre de l'application, le conteneur d'une page, le fond de ⚙ Settings, la
++   miniature). `--lab-page-line` est une encre neutre diluée, assez pâle pour ne
++   jamais gêner une lecture : les quatre motifs se contentent de filets et de
++   points, jamais d'une image. */
 +
 +@media screen {
 +
-+[data-skin="night"] {
-+  color-scheme: dark;
-+  --color-white: oklch(17.0% 0.000 0.0);
-+  --color-slate-50: oklch(13.0% 0.003 247.9);
-+  --color-slate-100: oklch(15.4% 0.007 247.9);
-+  --color-slate-200: oklch(21.1% 0.013 255.5);
-+  --color-slate-300: oklch(30.0% 0.022 252.9);
-+  --color-slate-400: oklch(50.0% 0.040 256.8);
-+  --color-slate-500: oklch(62.8% 0.046 257.4);
-+  --color-slate-600: oklch(72.0% 0.043 257.3);
-+  --color-slate-700: oklch(78.3% 0.044 257.3);
-+  --color-slate-800: oklch(86.2% 0.041 260.0);
-+  --color-slate-900: oklch(92.3% 0.037 265.8);
-+  --color-slate-950: oklch(99.0% 0.005 264.7);
-+  --color-blue-50: oklch(26.0% 0.014 254.6);
-+  --color-blue-100: oklch(28.8% 0.032 255.6);
-+  --color-blue-200: oklch(32.6% 0.059 254.1);
-+  --color-blue-300: oklch(38.0% 0.105 251.8);
-+  --color-blue-400: oklch(49.0% 0.159 254.6);
-+  --color-blue-500: oklch(59.1% 0.214 259.8);
-+  --color-blue-600: oklch(68.3% 0.166 262.9);
-+  --color-blue-700: oklch(75.3% 0.126 264.4);
-+  --color-blue-800: oklch(83.0% 0.084 265.6);
-+  --color-blue-900: oklch(88.4% 0.056 265.5);
-+  --color-blue-950: oklch(100.0% 0.000 267.9);
-+  --color-indigo-50: oklch(26.0% 0.018 272.3);
-+  --color-indigo-100: oklch(28.2% 0.034 272.8);
-+  --color-indigo-200: oklch(32.2% 0.065 274.0);
-+  --color-indigo-300: oklch(38.0% 0.115 274.7);
-+  --color-indigo-400: oklch(49.0% 0.182 276.9);
-+  --color-indigo-500: oklch(59.8% 0.221 277.1);
-+  --color-indigo-600: oklch(68.9% 0.165 277.0);
-+  --color-indigo-700: oklch(75.5% 0.127 277.0);
-+  --color-indigo-800: oklch(82.7% 0.087 277.4);
-+  --color-indigo-900: oklch(87.5% 0.062 278.7);
-+  --color-indigo-950: oklch(100.0% 0.000 281.3);
-+  --color-sky-50: oklch(26.0% 0.013 236.6);
-+  --color-sky-100: oklch(28.1% 0.026 236.8);
-+  --color-sky-200: oklch(32.1% 0.058 230.9);
-+  --color-sky-300: oklch(38.0% 0.076 230.3);
-+  --color-sky-400: oklch(49.0% 0.101 232.7);
-+  --color-sky-500: oklch(55.9% 0.123 237.3);
-+  --color-sky-600: oklch(66.8% 0.158 242.0);
-+  --color-sky-700: oklch(76.7% 0.130 242.7);
-+  --color-sky-800: oklch(83.1% 0.093 240.8);
-+  --color-sky-900: oklch(89.0% 0.060 240.9);
-+  --color-sky-950: oklch(100.0% 0.000 243.2);
-+  --color-teal-50: oklch(26.0% 0.014 180.7);
-+  --color-teal-100: oklch(28.9% 0.051 180.8);
-+  --color-teal-200: oklch(32.9% 0.060 180.4);
-+  --color-teal-300: oklch(38.0% 0.069 181.1);
-+  --color-teal-400: oklch(49.0% 0.088 181.9);
-+  --color-teal-500: oklch(56.4% 0.101 182.5);
-+  --color-teal-600: oklch(67.1% 0.118 184.7);
-+  --color-teal-700: oklch(76.1% 0.096 186.4);
-+  --color-teal-800: oklch(83.7% 0.078 188.2);
-+  --color-teal-900: oklch(88.9% 0.063 188.4);
-+  --color-teal-950: oklch(100.0% 0.000 192.5);
-+  --color-violet-50: oklch(26.0% 0.016 293.8);
-+  --color-violet-100: oklch(28.0% 0.029 294.6);
-+  --color-violet-200: oklch(31.7% 0.057 293.3);
-+  --color-violet-300: oklch(38.0% 0.111 293.6);
-+  --color-violet-400: oklch(49.0% 0.183 293.5);
-+  --color-violet-500: oklch(60.7% 0.236 292.7);
-+  --color-violet-600: oklch(68.6% 0.183 293.0);
-+  --color-violet-700: oklch(74.7% 0.143 292.6);
-+  --color-violet-800: oklch(81.9% 0.100 292.8);
-+  --color-violet-900: oklch(88.2% 0.064 293.7);
-+  --color-violet-950: oklch(100.0% 0.000 291.1);
-+  --color-purple-50: oklch(26.0% 0.014 308.3);
-+  --color-purple-100: oklch(28.5% 0.033 307.2);
-+  --color-purple-200: oklch(32.0% 0.063 306.7);
-+  --color-purple-300: oklch(38.0% 0.119 306.4);
-+  --color-purple-400: oklch(49.0% 0.203 305.5);
-+  --color-purple-500: oklch(59.5% 0.265 303.9);
-+  --color-purple-600: oklch(67.8% 0.207 302.3);
-+  --color-purple-700: oklch(75.3% 0.153 301.9);
-+  --color-purple-800: oklch(82.3% 0.109 303.7);
-+  --color-purple-900: oklch(89.1% 0.066 305.0);
-+  --color-purple-950: oklch(100.0% 0.000 302.7);
-+  --color-cyan-50: oklch(26.0% 0.019 200.9);
-+  --color-cyan-100: oklch(28.8% 0.045 203.4);
-+  --color-cyan-200: oklch(32.8% 0.056 205.0);
-+  --color-cyan-300: oklch(38.0% 0.065 207.1);
-+  --color-cyan-400: oklch(49.0% 0.085 211.5);
-+  --color-cyan-500: oklch(56.7% 0.100 215.2);
-+  --color-cyan-600: oklch(67.9% 0.125 221.7);
-+  --color-cyan-700: oklch(77.2% 0.105 223.1);
-+  --color-cyan-800: oklch(84.5% 0.085 224.3);
-+  --color-cyan-900: oklch(89.9% 0.063 227.4);
-+  --color-cyan-950: oklch(100.0% 0.000 229.7);
-+  --color-fuchsia-50: oklch(26.0% 0.017 320.1);
-+  --color-fuchsia-100: oklch(28.1% 0.037 318.9);
-+  --color-fuchsia-200: oklch(32.2% 0.076 319.6);
-+  --color-fuchsia-300: oklch(38.0% 0.145 321.4);
-+  --color-fuchsia-400: oklch(49.0% 0.233 322.2);
-+  --color-fuchsia-500: oklch(57.3% 0.272 322.1);
-+  --color-fuchsia-600: oklch(66.0% 0.293 322.9);
-+  --color-fuchsia-700: oklch(74.3% 0.239 323.9);
-+  --color-fuchsia-800: oklch(81.9% 0.166 324.6);
-+  --color-fuchsia-900: oklch(87.7% 0.113 325.6);
-+  --color-fuchsia-950: oklch(100.0% 0.000 325.7);
-+  --color-emerald-50: oklch(26.0% 0.021 166.1);
-+  --color-emerald-100: oklch(28.6% 0.052 163.1);
-+  --color-emerald-200: oklch(32.6% 0.070 164.2);
-+  --color-emerald-300: oklch(38.0% 0.080 165.0);
-+  --color-emerald-400: oklch(49.0% 0.106 163.2);
-+  --color-emerald-500: oklch(56.0% 0.122 162.5);
-+  --color-emerald-600: oklch(66.1% 0.143 163.2);
-+  --color-emerald-700: oklch(75.1% 0.118 165.6);
-+  --color-emerald-800: oklch(82.8% 0.095 166.9);
-+  --color-emerald-900: oklch(88.2% 0.077 168.9);
-+  --color-emerald-950: oklch(100.0% 0.000 172.6);
-+  --color-green-50: oklch(26.0% 0.018 155.8);
-+  --color-green-100: oklch(28.2% 0.044 156.7);
-+  --color-green-200: oklch(32.2% 0.078 156.0);
-+  --color-green-300: oklch(38.0% 0.095 154.4);
-+  --color-green-400: oklch(49.0% 0.130 151.7);
-+  --color-green-500: oklch(55.7% 0.155 149.6);
-+  --color-green-600: oklch(65.0% 0.183 149.2);
-+  --color-green-700: oklch(74.7% 0.154 150.1);
-+  --color-green-800: oklch(82.4% 0.119 151.3);
-+  --color-green-900: oklch(87.7% 0.095 152.5);
-+  --color-green-950: oklch(100.0% 0.000 152.9);
-+  --color-amber-50: oklch(26.0% 0.022 95.3);
-+  --color-amber-100: oklch(28.8% 0.059 95.6);
-+  --color-amber-200: oklch(33.0% 0.068 95.7);
-+  --color-amber-300: oklch(38.0% 0.078 91.6);
-+  --color-amber-400: oklch(49.0% 0.101 84.4);
-+  --color-amber-500: oklch(54.5% 0.118 70.1);
-+  --color-amber-600: oklch(64.0% 0.153 58.3);
-+  --color-amber-700: oklch(74.4% 0.163 49.0);
-+  --color-amber-800: oklch(82.0% 0.109 46.2);
-+  --color-amber-900: oklch(87.5% 0.072 45.9);
-+  --color-amber-950: oklch(100.0% 0.000 45.6);
-+  --color-yellow-50: oklch(26.0% 0.026 102.2);
-+  --color-yellow-100: oklch(28.0% 0.059 103.2);
-+  --color-yellow-200: oklch(32.1% 0.067 101.5);
-+  --color-yellow-300: oklch(38.0% 0.079 98.1);
-+  --color-yellow-400: oklch(49.0% 0.100 91.9);
-+  --color-yellow-500: oklch(54.1% 0.111 86.0);
-+  --color-yellow-600: oklch(64.4% 0.135 75.8);
-+  --color-yellow-700: oklch(75.9% 0.135 66.4);
-+  --color-yellow-800: oklch(82.9% 0.114 61.9);
-+  --color-yellow-900: oklch(87.8% 0.078 57.7);
-+  --color-yellow-950: oklch(100.0% 0.000 53.8);
-+  --color-orange-50: oklch(26.0% 0.016 73.7);
-+  --color-orange-100: oklch(28.2% 0.038 75.2);
-+  --color-orange-200: oklch(32.6% 0.071 70.7);
-+  --color-orange-300: oklch(38.0% 0.085 66.3);
-+  --color-orange-400: oklch(49.0% 0.120 55.9);
-+  --color-orange-500: oklch(53.7% 0.147 47.6);
-+  --color-orange-600: oklch(60.0% 0.184 41.1);
-+  --color-orange-700: oklch(69.8% 0.195 38.4);
-+  --color-orange-800: oklch(78.5% 0.128 37.3);
-+  --color-orange-900: oklch(85.0% 0.084 38.2);
-+  --color-orange-950: oklch(100.0% 0.000 36.3);
-+  --color-red-50: oklch(26.0% 0.013 17.4);
-+  --color-red-100: oklch(28.6% 0.032 17.7);
-+  --color-red-200: oklch(32.3% 0.062 18.3);
-+  --color-red-300: oklch(38.0% 0.114 19.6);
-+  --color-red-400: oklch(49.0% 0.191 22.2);
-+  --color-red-500: oklch(56.7% 0.230 25.3);
-+  --color-red-600: oklch(63.5% 0.245 27.3);
-+  --color-red-700: oklch(71.8% 0.176 27.5);
-+  --color-red-800: oklch(78.7% 0.123 26.9);
-+  --color-red-900: oklch(84.2% 0.087 25.7);
-+  --color-red-950: oklch(100.0% 0.000 26.0);
-+  --color-rose-50: oklch(26.0% 0.015 12.4);
-+  --color-rose-100: oklch(28.1% 0.030 12.6);
-+  --color-rose-200: oklch(31.8% 0.058 10.0);
-+  --color-rose-300: oklch(38.0% 0.117 11.6);
-+  --color-rose-400: oklch(49.0% 0.194 13.4);
-+  --color-rose-500: oklch(56.7% 0.227 16.4);
-+  --color-rose-600: oklch(63.6% 0.252 17.6);
-+  --color-rose-700: oklch(71.9% 0.177 16.9);
-+  --color-rose-800: oklch(78.7% 0.125 13.7);
-+  --color-rose-900: oklch(83.9% 0.091 10.3);
-+  --color-rose-950: oklch(100.0% 0.000 12.1);
++  /* l'encre du motif — écrite UNE fois, les quatre motifs la partagent */
++  [data-pattern] {
++    --lab-page-line: rgb(15 23 42 / 0.06);
++  }
++
++  [data-pattern="grid"] {
++    --lab-page-image:
++      linear-gradient(to right, var(--lab-page-line) 1px, transparent 1px),
++      linear-gradient(to bottom, var(--lab-page-line) 1px, transparent 1px);
++    --lab-page-size: 24px 24px;
++  }
++
++  [data-pattern="dots"] {
++    --lab-page-image: radial-gradient(var(--lab-page-line) 1px, transparent 1.1px);
++    --lab-page-size: 18px 18px;
++  }
++
++  [data-pattern="rules"] {
++    --lab-page-image: repeating-linear-gradient(to bottom,
++      var(--lab-page-line) 0, var(--lab-page-line) 1px,
++      transparent 1px, transparent 28px);
++    --lab-page-size: auto;
++  }
++
++  [data-pattern="diagonal"] {
++    --lab-page-image: repeating-linear-gradient(45deg,
++      var(--lab-page-line) 0, var(--lab-page-line) 1px,
++      transparent 1px, transparent 12px);
++    --lab-page-size: auto;
++  }
++
++  /* LA PAGE — un élément peint avec le fond des pages. `background-image` ne
++     touche pas `background-color` : la teinte choisie reste, le motif se pose
++     dessus. Et `var(--lab-page-image, none)` laisse intacte une page sans
++     motif — aucun attribut, aucun dessin. */
++  [class~="bg-slate-50"] {
++    background-image: var(--lab-page-image, none);
++    background-size: var(--lab-page-size, auto);
++  }
 +}
 +
-+[data-skin="carbon"] {
-+  color-scheme: dark;
-+  --color-white: oklch(15.0% 0.000 0.0);
-+  --color-slate-50: oklch(11.0% 0.000 0.0);
-+  --color-slate-100: oklch(13.7% 0.001 286.4);
-+  --color-slate-200: oklch(20.7% 0.004 286.3);
-+  --color-slate-300: oklch(28.0% 0.006 286.3);
-+  --color-slate-400: oklch(52.0% 0.015 286.1);
-+  --color-slate-500: oklch(64.2% 0.016 285.9);
-+  --color-slate-600: oklch(73.0% 0.017 285.8);
-+  --color-slate-700: oklch(78.7% 0.013 285.8);
-+  --color-slate-800: oklch(86.4% 0.006 286.0);
-+  --color-slate-900: oklch(91.5% 0.006 285.9);
-+  --color-slate-950: oklch(97.0% 0.005 285.8);
-+  --color-blue-50: oklch(24.0% 0.014 254.6);
-+  --color-blue-100: oklch(26.8% 0.032 255.6);
-+  --color-blue-200: oklch(30.6% 0.059 254.1);
-+  --color-blue-300: oklch(36.0% 0.105 251.8);
-+  --color-blue-400: oklch(49.0% 0.159 254.6);
-+  --color-blue-500: oklch(58.5% 0.214 259.8);
-+  --color-blue-600: oklch(67.2% 0.173 262.9);
-+  --color-blue-700: oklch(73.7% 0.135 264.4);
-+  --color-blue-800: oklch(81.0% 0.095 265.6);
-+  --color-blue-900: oklch(86.0% 0.068 265.5);
-+  --color-blue-950: oklch(97.0% 0.014 267.9);
-+  --color-indigo-50: oklch(24.0% 0.018 272.3);
-+  --color-indigo-100: oklch(26.2% 0.034 272.8);
-+  --color-indigo-200: oklch(30.2% 0.065 274.0);
-+  --color-indigo-300: oklch(36.0% 0.115 274.7);
-+  --color-indigo-400: oklch(49.0% 0.182 276.9);
-+  --color-indigo-500: oklch(59.2% 0.225 277.1);
-+  --color-indigo-600: oklch(67.7% 0.172 277.0);
-+  --color-indigo-700: oklch(73.9% 0.136 277.0);
-+  --color-indigo-800: oklch(80.7% 0.098 277.4);
-+  --color-indigo-900: oklch(85.2% 0.074 278.7);
-+  --color-indigo-950: oklch(97.0% 0.014 281.3);
-+  --color-sky-50: oklch(24.0% 0.013 236.6);
-+  --color-sky-100: oklch(26.1% 0.026 236.8);
-+  --color-sky-200: oklch(30.1% 0.058 230.9);
-+  --color-sky-300: oklch(36.0% 0.072 230.3);
-+  --color-sky-400: oklch(49.0% 0.101 232.7);
-+  --color-sky-500: oklch(55.5% 0.122 237.3);
-+  --color-sky-600: oklch(65.7% 0.156 242.0);
-+  --color-sky-700: oklch(75.1% 0.134 242.7);
-+  --color-sky-800: oklch(81.1% 0.105 240.8);
-+  --color-sky-900: oklch(86.6% 0.073 240.9);
-+  --color-sky-950: oklch(97.0% 0.015 243.2);
-+  --color-teal-50: oklch(24.0% 0.014 180.7);
-+  --color-teal-100: oklch(26.9% 0.049 180.8);
-+  --color-teal-200: oklch(30.9% 0.056 180.4);
-+  --color-teal-300: oklch(36.0% 0.065 181.1);
-+  --color-teal-400: oklch(49.0% 0.088 181.9);
-+  --color-teal-500: oklch(56.0% 0.100 182.5);
-+  --color-teal-600: oklch(66.0% 0.117 184.7);
-+  --color-teal-700: oklch(74.5% 0.096 186.4);
-+  --color-teal-800: oklch(81.6% 0.078 188.2);
-+  --color-teal-900: oklch(86.5% 0.063 188.4);
-+  --color-teal-950: oklch(97.0% 0.043 192.5);
-+  --color-violet-50: oklch(24.0% 0.016 293.8);
-+  --color-violet-100: oklch(26.0% 0.029 294.6);
-+  --color-violet-200: oklch(29.7% 0.057 293.3);
-+  --color-violet-300: oklch(36.0% 0.111 293.6);
-+  --color-violet-400: oklch(49.0% 0.183 293.5);
-+  --color-violet-500: oklch(60.0% 0.240 292.7);
-+  --color-violet-600: oklch(67.4% 0.190 293.0);
-+  --color-violet-700: oklch(73.2% 0.153 292.6);
-+  --color-violet-800: oklch(79.9% 0.111 292.8);
-+  --color-violet-900: oklch(85.9% 0.077 293.7);
-+  --color-violet-950: oklch(97.0% 0.015 291.1);
-+  --color-purple-50: oklch(24.0% 0.014 308.3);
-+  --color-purple-100: oklch(26.5% 0.033 307.2);
-+  --color-purple-200: oklch(30.0% 0.063 306.7);
-+  --color-purple-300: oklch(36.0% 0.119 306.4);
-+  --color-purple-400: oklch(49.0% 0.203 305.5);
-+  --color-purple-500: oklch(58.9% 0.265 303.9);
-+  --color-purple-600: oklch(66.7% 0.215 302.3);
-+  --color-purple-700: oklch(73.7% 0.164 301.9);
-+  --color-purple-800: oklch(80.3% 0.122 303.7);
-+  --color-purple-900: oklch(86.8% 0.081 305.0);
-+  --color-purple-950: oklch(97.0% 0.017 302.7);
-+  --color-cyan-50: oklch(24.0% 0.019 200.9);
-+  --color-cyan-100: oklch(26.8% 0.045 203.4);
-+  --color-cyan-200: oklch(30.8% 0.053 205.0);
-+  --color-cyan-300: oklch(36.0% 0.062 207.1);
-+  --color-cyan-400: oklch(49.0% 0.085 211.5);
-+  --color-cyan-500: oklch(56.3% 0.100 215.2);
-+  --color-cyan-600: oklch(66.7% 0.123 221.7);
-+  --color-cyan-700: oklch(75.5% 0.105 223.1);
-+  --color-cyan-800: oklch(82.4% 0.085 224.3);
-+  --color-cyan-900: oklch(87.5% 0.070 227.4);
-+  --color-cyan-950: oklch(97.0% 0.018 229.7);
-+  --color-fuchsia-50: oklch(24.0% 0.017 320.1);
-+  --color-fuchsia-100: oklch(26.1% 0.037 318.9);
-+  --color-fuchsia-200: oklch(30.2% 0.076 319.6);
-+  --color-fuchsia-300: oklch(36.0% 0.145 321.4);
-+  --color-fuchsia-400: oklch(49.0% 0.233 322.2);
-+  --color-fuchsia-500: oklch(56.8% 0.270 322.1);
-+  --color-fuchsia-600: oklch(65.0% 0.293 322.9);
-+  --color-fuchsia-700: oklch(72.8% 0.253 323.9);
-+  --color-fuchsia-800: oklch(79.9% 0.186 324.6);
-+  --color-fuchsia-900: oklch(85.4% 0.135 325.6);
-+  --color-fuchsia-950: oklch(97.0% 0.026 325.7);
-+  --color-emerald-50: oklch(24.0% 0.021 166.1);
-+  --color-emerald-100: oklch(26.6% 0.052 163.1);
-+  --color-emerald-200: oklch(30.6% 0.065 164.2);
-+  --color-emerald-300: oklch(36.0% 0.076 165.0);
-+  --color-emerald-400: oklch(49.0% 0.106 163.2);
-+  --color-emerald-500: oklch(55.6% 0.121 162.5);
-+  --color-emerald-600: oklch(65.1% 0.140 163.2);
-+  --color-emerald-700: oklch(73.5% 0.118 165.6);
-+  --color-emerald-800: oklch(80.8% 0.095 166.9);
-+  --color-emerald-900: oklch(85.9% 0.077 168.9);
-+  --color-emerald-950: oklch(97.0% 0.042 172.6);
-+  --color-green-50: oklch(24.0% 0.018 155.8);
-+  --color-green-100: oklch(26.2% 0.044 156.7);
-+  --color-green-200: oklch(30.2% 0.073 156.0);
-+  --color-green-300: oklch(36.0% 0.090 154.4);
-+  --color-green-400: oklch(49.0% 0.130 151.7);
-+  --color-green-500: oklch(55.3% 0.154 149.6);
-+  --color-green-600: oklch(64.1% 0.180 149.2);
-+  --color-green-700: oklch(73.2% 0.154 150.1);
-+  --color-green-800: oklch(80.4% 0.119 151.3);
-+  --color-green-900: oklch(85.4% 0.095 152.5);
-+  --color-green-950: oklch(97.0% 0.047 152.9);
-+  --color-amber-50: oklch(24.0% 0.022 95.3);
-+  --color-amber-100: oklch(26.8% 0.055 95.6);
-+  --color-amber-200: oklch(31.0% 0.064 95.7);
-+  --color-amber-300: oklch(36.0% 0.074 91.6);
-+  --color-amber-400: oklch(49.0% 0.101 84.4);
-+  --color-amber-500: oklch(54.2% 0.117 70.1);
-+  --color-amber-600: oklch(63.2% 0.151 58.3);
-+  --color-amber-700: oklch(72.9% 0.163 49.0);
-+  --color-amber-800: oklch(80.0% 0.123 46.2);
-+  --color-amber-900: oklch(85.2% 0.087 45.9);
-+  --color-amber-950: oklch(97.0% 0.016 45.6);
-+  --color-yellow-50: oklch(24.0% 0.026 102.2);
-+  --color-yellow-100: oklch(26.0% 0.055 103.2);
-+  --color-yellow-200: oklch(30.1% 0.063 101.5);
-+  --color-yellow-300: oklch(36.0% 0.075 98.1);
-+  --color-yellow-400: oklch(49.0% 0.100 91.9);
-+  --color-yellow-500: oklch(53.8% 0.110 86.0);
-+  --color-yellow-600: oklch(63.5% 0.134 75.8);
-+  --color-yellow-700: oklch(74.3% 0.135 66.4);
-+  --color-yellow-800: oklch(80.9% 0.114 61.9);
-+  --color-yellow-900: oklch(85.6% 0.094 57.7);
-+  --color-yellow-950: oklch(97.0% 0.017 53.8);
-+  --color-orange-50: oklch(24.0% 0.016 73.7);
-+  --color-orange-100: oklch(26.2% 0.038 75.2);
-+  --color-orange-200: oklch(30.6% 0.066 70.7);
-+  --color-orange-300: oklch(36.0% 0.080 66.3);
-+  --color-orange-400: oklch(49.0% 0.120 55.9);
-+  --color-orange-500: oklch(53.5% 0.147 47.6);
-+  --color-orange-600: oklch(59.3% 0.182 41.1);
-+  --color-orange-700: oklch(68.5% 0.195 38.4);
-+  --color-orange-800: oklch(76.8% 0.141 37.3);
-+  --color-orange-900: oklch(82.9% 0.098 38.2);
-+  --color-orange-950: oklch(97.0% 0.015 36.3);
-+  --color-red-50: oklch(24.0% 0.013 17.4);
-+  --color-red-100: oklch(26.6% 0.032 17.7);
-+  --color-red-200: oklch(30.3% 0.062 18.3);
-+  --color-red-300: oklch(36.0% 0.114 19.6);
-+  --color-red-400: oklch(49.0% 0.191 22.2);
-+  --color-red-500: oklch(56.2% 0.228 25.3);
-+  --color-red-600: oklch(62.7% 0.245 27.3);
-+  --color-red-700: oklch(70.4% 0.188 27.5);
-+  --color-red-800: oklch(77.0% 0.136 26.9);
-+  --color-red-900: oklch(82.1% 0.100 25.7);
-+  --color-red-950: oklch(97.0% 0.015 26.0);
-+  --color-rose-50: oklch(24.0% 0.015 12.4);
-+  --color-rose-100: oklch(26.1% 0.030 12.6);
-+  --color-rose-200: oklch(29.8% 0.058 10.0);
-+  --color-rose-300: oklch(36.0% 0.117 11.6);
-+  --color-rose-400: oklch(49.0% 0.194 13.4);
-+  --color-rose-500: oklch(56.3% 0.225 16.4);
-+  --color-rose-600: oklch(62.7% 0.251 17.6);
-+  --color-rose-700: oklch(70.6% 0.188 16.9);
-+  --color-rose-800: oklch(77.0% 0.138 13.7);
-+  --color-rose-900: oklch(81.9% 0.104 10.3);
-+  --color-rose-950: oklch(97.0% 0.015 12.1);
-+}
-+}
-+
- /* ── Custom — LA PEAU QUE L'UTILISATEUR POSSÈDE. Ses onze crans d'accent ne
-    sont PAS ici : ils dépendent de la couleur choisie dans ⚙ Settings, donc
-    src/utils/uiSkin.js les écrit EN LIGNE sur <html> — dérivés d'UNE couleur,
+ /* ---------------------------------------------------------------------------
+    THE SEQUENCE FIELD — the selection of a COLOURED field stays readable.
+    `SequenceField` (src/components/SequenceField.jsx) renders the letters in a
 diff --git a/src/utils/uiSkin.js b/src/utils/uiSkin.js
-index 28d2b94..bbe9ba8 100644
+index bbe9ba8..efd93d4 100644
 --- a/src/utils/uiSkin.js
 +++ b/src/utils/uiSkin.js
-@@ -73,7 +73,9 @@ export const uiSkinKeyOf = (operator = null, base = UI_SKIN_KEY) => {
-    its own rule: a `hue` skin SWAPS one accent family with another (so it may
-    never move a stop by more than 4 points of OKLCH lightness), a `tone` skin
-    restates a ramp stop for stop (`dim`, `contrast`) or borrows another neutral
--   family (`graphite`, `warm`).
-+   family (`graphite`, `warm`), and a `night` skin TURNS THE PALETTE OVER —
-+   the page goes dark and the ink goes light (see « NUIT » in src/index.css),
-+   so its ramps ASCEND where every other skin's descend.
-    `swatch` is only the picture of the four chips shown in Settings (page ·
-    ink · chrome · accent) — the colours that PAINT the program live in
-    src/index.css, one block per skin id. */
-@@ -88,6 +90,16 @@ export const UI_SKINS = [
-   { id: 'rose', kind: 'hue', label: 'Rose', hint: 'rose accents', swatch: ['#fbf7f7', '#4a2f33', '#2c1a1d', '#ec003f'] },
-   { id: 'dim', kind: 'tone', label: 'Dimmed', hint: 'softer light', swatch: ['#e8ebef', '#2b394d', '#172336', '#295dc4'] },
-   { id: 'contrast', kind: 'tone', label: 'High contrast', hint: 'bolder ink', swatch: ['#fbfcfd', '#0c192a', '#030b1c', '#003dce'] },
-+  /* ── LES PEAUX SOMBRES ─────────────────────────────────────────────────────
-+     « the skins do not change the background color. for dark color the writing
-+     must change color to allow visibility » : les dix peaux ci-dessus déplacent
-+     la teinte ou l'encre, jamais la LUMIÈRE — la page reste claire sous toutes.
-+     Celles-ci RETOURNENT la palette (voir « NUIT » dans src/index.css) : le fond
-+     de page, les cartes, les panneaux et les bordures deviennent sombres, et
-+     l'encre qui s'écrivait dessus devient claire — par la même opération, pour
-+     chaque famille, donc sans qu'aucun composant n'ait à s'en occuper. */
-+  { id: 'night', kind: 'night', label: 'Night', hint: 'dark pages, light ink', swatch: ['#070708', '#a7bad5', '#c2d3ed', '#6095ff'] },
-+  { id: 'carbon', kind: 'night', label: 'Carbon', hint: 'dark, pure greys', swatch: ['#040404', '#b9b9c2', '#d2d2d6', '#5b91ff'] },
-   /* ── LA PEAU QUE L'UTILISATEUR POSSÈDE ─────────────────────────────────────
-      La demande de cette session : « the skins in the setup are all too similar
-      and NOT customizable ». Celle-ci répond aux deux : l'accent est CELUI QUE
+@@ -198,20 +198,162 @@ export const uiSkinCustomRamp = (accent = UI_CUSTOM_ACCENT_DEFAULT) => {
+   return out;
+ };
+ 
++/* ── LE FOND DES PAGES — LA COULEUR CHOISIE, ET SON MOTIF ────────────────────
++   « let the user choose the background color, with sober patterns ». Le fond
++   vit ICI, à côté de l'accent, et pas dans index.css : la couleur dépend d'un
++   CHOIX, donc c'est `applyUiSkin` qui l'écrit EN LIGNE sur <html>, exactement
++   comme les onze crans de l'accent. Le MOTIF, lui, est une affaire de feuille
++   (src/index.css, `[data-pattern="…"]`) : le même appel pose l'attribut.
++
++   CHAQUE COULEUR EST RAMENÉE DANS UNE BANDE (c'est le garde-fou de cette
++   section). Une page peut prendre n'importe quelle TEINTE, jamais n'importe
++   quelle LUMIÈRE : les deux paires que le programme écrit SUR une page —
++   `text-slate-700` sur `bg-slate-50` (le titre d'une carte, 7 281 fois) et
++   `text-slate-800` sur `bg-slate-100` (les panneaux posés sur la page) —
++   doivent garder au pire 1.5 cran de contraste de moins que ce que la palette
++   livrée donne ; c'est la règle que la sonde impose déjà à toute peau.
++   En OKLCH c'est une bande simple : la luminosité reste entre 95.5 et 99, le
++   chroma sous 0.03 — et, parce qu'un chroma élevé sur une page aussi claire
++   sortirait du gamut sRGB (le moteur le réduirait lui-même, et la page ne
++   serait plus la couleur qu'on a mesurée), le chroma est RAMENÉ DANS LE GAMUT
++   par dichotomie, comme le fait le CSS Color 4. Toutes les teintes passent, y
++   compris les pastels qu'on attend d'un fond de page ; aucune ne descend sous
++   le plancher de lisibilité.
++
++   LE SECOND CRAN DE LA PAGE (le 100 : les panneaux, les entêtes de tableau)
++   est DÉRIVÉ du premier — même teinte, même chroma, 1.6 point de luminosité en
++   moins, l'écart exact que la palette livrée a entre ses deux crans. */
++
++/** Le fond de page LIVRÉ (slate-50, la référence) : ce que le réglage vide veut
++ *  dire, et la valeur de repli d'une couleur illisible. */
++export const UI_BG_SHIPPED_OKLCH = { L: 98.4, C: 0.003, H: 247.858 };
++
++/* LA BANDE — les valeurs que la sonde mesure. Le PLANCHER est celui des trois
++   familles neutres que le programme sait servir, pas seulement de l'ardoise :
++   une page rose vif (le pire cas possible, L=50 ramené au plancher, chroma au
++   plafond) coûte 1.56 cran de contraste sur la paire des panneaux avec le gris
++   CHAUD (stone, dont l'encre et les crans 100/800 donnent la paire la plus
++   serrée), donc 95 ne suffisait pas — 95.5 ramène le pire cas à 1.37. Les
++   changer sans les remesurer casserait la garantie. */
++export const UI_BG_FLOOR = 95.5;  /* L minimum d'une page choisie */
++export const UI_BG_CEIL = 99;     /* L maximum (100 = blanc pur, aveuglant) */
++export const UI_BG_CAP = 0.03;    /* chroma maximum — un pastel, jamais plus */
++export const UI_BG_GAP = 1.6;     /* l'écart livré entre la page et son cran 100 */
++
++/** Le réglage vide : « la page de la famille neutre choisie ». Rien n'est
++ *  écrit, donc le cran 50 du thème livré — ou celui du `data-tone` — reste en
++ *  place, et changer de famille neutre change AUSSI la page. */
++export const UI_BG_DEFAULT = '';
++
++/** LES QUATRE MOTIFS — tous des dégradés CSS répétés (aucune image, aucun octet
++ *  à charger, et rien à l'impression : voir `@media screen`, index.css), tous
++ *  volontairement discrets. `none` est le défaut, et ne pose donc rien. */
++export const UI_BG_PATTERNS = [
++  { id: 'none', label: 'None', hint: 'the plain page' },
++  { id: 'grid', label: 'Grid', hint: 'hairline squares' },
++  { id: 'dots', label: 'Dots', hint: 'a dotted sheet' },
++  { id: 'rules', label: 'Rules', hint: 'ruled lines' },
++  { id: 'diagonal', label: 'Diagonal', hint: 'slanted hairlines' }
++];
++export const UI_BG_PATTERN_DEFAULT = 'none';
++
++/** OKLCH → sRGB LINÉAIRE : le retour exact de `hexToOklch` (mêmes matrices,
++ *  inversées). Sert à savoir si une couleur TIENT dans le gamut sRGB. PUR. */
++export const oklchToLin = ({ L, C, H }) => {
++  const h = (H * Math.PI) / 180;
++  const a = C * Math.cos(h);
++  const b = C * Math.sin(h);
++  const l_ = L / 100 + 0.3963377774 * a + 0.2158037573 * b;
++  const m_ = L / 100 - 0.1055613458 * a - 0.0638541728 * b;
++  const s_ = L / 100 - 0.0894841775 * a - 1.2914855480 * b;
++  const l = l_ ** 3, m = m_ ** 3, s = s_ ** 3;
++  return [
++    4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
++    -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
++    -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s
++  ];
++};
++
++/** Le chroma le plus élevé qui TIENT dans le gamut sRGB à cette lumière et
++ *  cette teinte (dichotomie, comme la réduction de chroma du CSS Color 4) :
++ *  c'est ce qui garantit que la page ÉCRITE est la page PEINTE. PUR. */
++export const sRGBChroma = (col) => {
++  const inside = (c) => oklchToLin({ ...col, C: c }).every((v) => v >= -1e-4 && v <= 1 + 1e-4);
++  if (inside(col.C)) return col.C;
++  let lo = 0, hi = col.C;
++  for (let i = 0; i < 40; i++) {
++    const mid = (lo + hi) / 2;
++    if (inside(mid)) lo = mid; else hi = mid;
++  }
++  return lo;
++};
++
++/** OKLCH → hexadécimal sRGB : le chemin inverse de `hexToOklch`, pour les
++ *  pastilles de ⚙ Settings (chaque canal est écrêté, comme le fait le
++ *  moteur). PUR. */
++export const oklchToHex = (col) => `#${oklchToLin(col).map((v) => {
++  const c = Math.min(1, Math.max(0, v));
++  const g = c <= 0.0031308 ? 12.92 * c : 1.055 * Math.pow(c, 1 / 2.4) - 0.055;
++  return Math.round(255 * g).toString(16).padStart(2, '0');
++}).join('')}`;
++
++/** Un OKLCH écrit comme index.css l'écrit — donc relu tel quel par la sonde et
++ *  compris tel quel par le moteur. PUR. */
++export const oklchCss = ({ L, C, H }) => `oklch(${L.toFixed(1)}% ${C.toFixed(3)} ${H.toFixed(1)})`;
++
++/** LES FONDS PROPOSÉS — les crans 50 de la palette que Tailwind livre (relevés
++ *  dans son thème, pas inventés), donc TOUS déjà dans la bande : ce que la
++ *  pastille montre est exactement ce que la page prendra. */
++export const UI_BG_PRESETS = [
++  { id: 'slate', label: 'Slate', oklch: UI_BG_SHIPPED_OKLCH },
++  { id: 'zinc', label: 'Zinc', oklch: { L: 98.5, C: 0, H: 0 } },
++  { id: 'stone', label: 'Stone', oklch: { L: 98.5, C: 0.001, H: 106.423 } },
++  { id: 'sky', label: 'Sky', oklch: { L: 97.7, C: 0.013, H: 236.62 } },
++  { id: 'emerald', label: 'Emerald', oklch: { L: 97.9, C: 0.021, H: 166.113 } },
++  { id: 'amber', label: 'Amber', oklch: { L: 98.7, C: 0.022, H: 95.277 } },
++  { id: 'rose', label: 'Rose', oklch: { L: 96.9, C: 0.015, H: 12.422 } },
++  { id: 'violet', label: 'Violet', oklch: { L: 96.9, C: 0.016, H: 293.756 } }
++].map((p) => ({ ...p, hex: oklchToHex(p.oklch) }));
++
++/** LES DEUX CRANS D'UNE PAGE CHOISIE — la couleur ramenée dans la bande, et le
++ *  cran 100 DÉRIVÉ (même teinte, même chroma, `UI_BG_GAP` de luminosité en
++ *  moins). Une couleur illisible retombe sur la page livrée ; le réglage vide
++ *  (`UI_BG_DEFAULT`) rend donc, lui aussi, la page livrée. PUR. */
++export const uiBgStops = (hex) => {
++  const pick = hexToOklch(hex) || UI_BG_SHIPPED_OKLCH;
++  const L = Math.min(UI_BG_CEIL, Math.max(UI_BG_FLOOR, pick.L));
++  const C = sRGBChroma({ L, C: Math.min(UI_BG_CAP, pick.C), H: pick.H });
++  return { page: { L, C, H: pick.H }, card: { L: L - UI_BG_GAP, C, H: pick.H } };
++};
++
+ /** Le réglage retenu, toujours utilisable (une couleur illisible ou une famille
+  *  inconnue retombent sur le défaut livré). PUR. */
+ export const uiCustomSkinOf = (raw) => ({
+   accent: (raw && /^#[0-9a-f]{6}$/i.test(String(raw.accent || '')))
+     ? String(raw.accent).toLowerCase() : UI_CUSTOM_ACCENT_DEFAULT,
+   neutral: UI_CUSTOM_NEUTRALS.some((n) => n.id === (raw && raw.neutral))
+-    ? raw.neutral : UI_CUSTOM_NEUTRAL_DEFAULT
++    ? raw.neutral : UI_CUSTOM_NEUTRAL_DEFAULT,
++  bg: (raw && /^#[0-9a-f]{6}$/i.test(String(raw.bg || '')))
++    ? String(raw.bg).toLowerCase() : UI_BG_DEFAULT,
++  pattern: UI_BG_PATTERNS.some((p) => p.id === (raw && raw.pattern))
++    ? raw.pattern : UI_BG_PATTERN_DEFAULT
+ });
+ 
+ /** Les variables d'une peau personnalisée : les onze crans de l'accent, plus
+- *  `--lab-tone` (la famille neutre, pour la miniature ET pour <html>). PUR. */
++ *  `--lab-tone` (la famille neutre, pour la miniature ET pour <html>), plus —
++ *  quand un fond a été choisi — LES DEUX CRANS DE LA PAGE, ramenés dans la
++ *  bande (utils : `uiBgStops`). Écrites EN LIGNE, donc au-dessus du bloc de la
++ *  famille neutre : un fond choisi l'emporte sur le `tone` qu'on lit à côté.
++ *  Le MOTIF n'est pas une variable : c'est l'attribut `data-pattern`. PUR. */
+ export const uiSkinCustomVars = (raw) => {
+   const custom = uiCustomSkinOf(raw);
+-  return { ...uiSkinCustomRamp(custom.accent), '--lab-tone': custom.neutral };
++  const vars = { ...uiSkinCustomRamp(custom.accent), '--lab-tone': custom.neutral };
++  if (custom.bg) {
++    const { page, card } = uiBgStops(custom.bg);
++    vars['--color-slate-50'] = oklchCss(page);
++    vars['--color-slate-100'] = oklchCss(card);
++  }
++  return vars;
+ };
+ 
+ /** Le réglage stocké (localStorage indisponible ⇒ le défaut livré) — celui de
+@@ -263,9 +405,11 @@ export const readUiSkin = (operator = null) => {
+ 
+ /* `id` = the reference ⇒ the attribute is REMOVED (the shipped palette comes
+    back exactly as Tailwind defines it). The custom skin is the one case whose
+-   accent ramp is NOT in the stylesheet: its eleven stops depend on a colour the
+-   user picked, so they are written INLINE on <html> — and cleared for every
+-   other skin, or they would outlive the choice.
++   accent ramp — and the page colour the user chose — is NOT in the stylesheet:
++   its eleven stops depend on a colour the user picked, so they are written
++   INLINE on <html> — and cleared for every other skin, or they would outlive
++   the choice. The PATTERN is the stylesheet's job (index.css): here we only
++   raise or drop `data-pattern` on <html>, which paints every page at once.
+    `operator` : l'accent lu (peau personnalisée) est celui de CET opérateur. */
+ export const applyUiSkin = (id, operator = null) => {
+   if (typeof document === 'undefined') return; // unit tests (node) have no DOM
+@@ -273,15 +417,31 @@ export const applyUiSkin = (id, operator = null) => {
+   if (!root) return;
+   const skin = uiSkinById(id);
+   if (!root.dataset) return;
+-  const customKeys = [...Object.keys(uiSkinCustomRamp(UI_CUSTOM_ACCENT_DEFAULT)), '--lab-tone'];
++  /* les clés à effacer : TOUTE la rampe d'accent, `--lab-tone`, et les deux
++     crans de la page — qu'un fond ait été choisi ou non (sinon un fond posé
++     hier survivrait au passage à une autre peau). */
++  const customKeys = [
++    ...Object.keys(uiSkinCustomRamp(UI_CUSTOM_ACCENT_DEFAULT)),
++    '--lab-tone', '--color-slate-50', '--color-slate-100'
++  ];
+   const clearCustom = () => {
+     if (root.style) customKeys.forEach((k) => root.style.removeProperty(k));
+     delete root.dataset.tone;
++    delete root.dataset.pattern;
+   };
+   if (skin.id === UI_SKIN_CUSTOM) {
+     const custom = readUiCustomSkin(operator);
++    /* ON EFFACE D'ABORD : un fond qu'on vient de retirer (ou l'accent d'un autre
++       opérateur) doit disparaître des variables en ligne, sinon l'écriture qui
++       suit ne ferait qu'ajouter le réglage courant À l'ancien — la page
++       resterait peinte avec la couleur qu'on vient d'abandonner. */
++    clearCustom();
+     if (root.style) Object.entries(uiSkinCustomVars(custom)).forEach(([k, v]) => root.style.setProperty(k, v));
+     root.dataset.tone = custom.neutral;
++    /* le motif : « none » (le défaut) n'écrit AUCUN attribut, donc la feuille
++       ne peint rien et l'attribut ne traîne pas dans le DOM. */
++    if (custom.pattern === UI_BG_PATTERN_DEFAULT) delete root.dataset.pattern;
++    else root.dataset.pattern = custom.pattern;
+     root.dataset.skin = UI_SKIN_CUSTOM;
+     return;
+   }
