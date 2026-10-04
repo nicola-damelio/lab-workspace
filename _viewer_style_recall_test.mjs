@@ -368,19 +368,28 @@ has('found = pickViewerStyleFile(listed.files);', 'le rappel applique LA règle 
 has('const parsed = parseViewerStyleFile(text);', '…et ne lit que des fichiers de style (le module refuse le reste)');
 has('ctxs: [{ ...driveNaming, section: \'Setup\' }],', 'les deux branches de dossier d’une page (Data et Setup) sont regardées');
 
-/* LA SECONDE MOITIÉ DE LA DEMANDE — « nor I have the possibility to define which
-   file must be read (but it could be simply the last that was used) » : la picker
-   du dossier de l'expérience, dans la rangée des fichiers du viewer. */
-has('const pickStyleFileFromFolder = async (file) => {',
-  'le viewer offre de CHOISIR le fichier de style du dossier (pas seulement le rappel automatique)');
-has('await file.text()', '…il lit le fichier téléchargé tel quel');
-has("if (!parsed) { flashSetupMsg(`“${file.name}” is not a viewer style — nothing was applied.`); return; }",
-  '…sans deviner : un .json étranger est refusé, et ça se dit');
-has('rememberViewerStyle(parsed.mode, parsed.name, parsed.entry);',
-  '…et le fichier choisi est RETENU (mémoire + fichier canonique) : c’est donc « simply the last that was used » que la prochaine ouverture applique');
-has('label="📂 Style from folder"', 'la picker a son bouton dans la rangée des fichiers du viewer');
-has("ctxs={[{ ...driveNaming, section: 'Setup' }]}", '…et regarde les DEUX branches de dossier que le rappel regarde');
-has('exts={[VIEWER_STYLE_EXT]}', '…seuls les .json de l’expérience sont listés');
+/* ⚠ LE GESTE MANUEL A ÉTÉ RETIRÉ — la demande de cette session, mot pour mot :
+   « Style from folder should not be there. The last file style should be read
+   automatically. » Le RAPPEL AUTOMATIQUE ci-dessus est donc le SEUL lecteur du
+   style du dossier, et rien n'a été perdu : ce que la picker faisait de plus
+   (désigner un fichier) n'existe plus, mais la règle de préférence du module
+   reste la sienne (pickViewerStyleFile), et le fichier CANONIQUE qu'elle
+   appliquait est réécrit par CHAQUE geste qui retient un style — le dossier porte
+   donc toujours « simply the last that was used ». */
+ok(!VIEW.includes('label="📂 Style from folder"'),
+  'plus de bouton 📂 Style from folder dans la rangée des fichiers du viewer');
+ok(!VIEW.includes('const pickStyleFileFromFolder'),
+  '…ni de gestionnaire « fichier choisi à la main » : aucun code mort');
+ok(!VIEW.includes("import { DriveExperimentFilePicker"),
+  '…et le viewer n’importe même plus la picker (une seule définition, celle des pages)');
+has('if (!parsed) return null;', 'le rappel refuse toujours un .json qui n’est pas un style (rien n’est deviné)');
+has('exts: [VIEWER_STYLE_EXT]', '…et c’est LUI qui liste les .json de l’expérience (la même extension qu’avant)');
+has('adoptViewerStyleEntry(parsed.mode, parsed.name, parsed.entry);',
+  'un fichier adopté du dossier entre dans le magasin du poste SOUS SON NOM (sinon les lecteurs ne le trouveraient pas)');
+has('saveViewerStyleMemory(key, { mode: parsed.mode, name: parsed.name });',
+  '…et la mémoire du poste est écrite pour l’ouverture suivante (hors ligne d’abord)');
+has('flashSetupMsg(`✓ ${parsed.mode === \'theme\' ? \'cumulative theme\' : \'snapshot\'} “${parsed.name}” applied — brought back from this experiment\'s Drive folder (${found.name})`);',
+  '…et le message nomme le fichier lu dans le dossier : le rappel n’est jamais muet');
 eq(countOf(/applyThemeEntry\(/g) >= 3 && countOf(/applySnapshotEntry\(/g) >= 3, true,
   'les corps des deux modes servent aux trois chemins : charger, adopter depuis le Drive, appliquer au rappel');
 eq(countOf(/const loadTheme = \(name\)/g), 1, 'un seul loadTheme (le rappel ne le double pas)');

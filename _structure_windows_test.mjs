@@ -198,11 +198,21 @@ gone(MD, '<div className="flex flex-wrap items-start gap-2 mb-2">',
 has(VIEW, 'fileRowExtra = null,', '[viewer] la rangée §1 General accepte les commandes de la PAGE');
 has(VIEW, '{fileRowExtra}', '[viewer] …et elle les rend dans la rangée des fichiers');
 {
+  /* L'ORDRE DE LA RANGÉE (la demande de cette session, mot pour mot : « in the
+     following order: PDB files, URL, Load, Trajectory, download pdb, clear,
+     Create drive folder, Pdb from folder, trajectory from folder. Style from
+     folder should not be there. »). Les DEUX fichiers du poste d'abord, puis ce
+     qu'on fait de l'écran (⬇ PDB · 🗑 Clear), puis les commandes DU DOSSIER :
+     le geste qui le CRÉE, et les 📂 de la page — qui FERMENT donc la rangée. */
+  const iPdb = VIEW.indexOf('⬇ PDB{trajStatus');
+  const iClear = VIEW.indexOf('onClick={handleClearViewer}');
+  const iCreate = VIEW.indexOf('<DriveExperimentFolderCreator ctx={driveNaming} />');
   const iExtra = VIEW.indexOf('{fileRowExtra}');
-  const iTraj = VIEW.lastIndexOf('📂 Trajectory', iExtra);
-  const iPdb = VIEW.indexOf('⬇ PDB{trajStatus', iExtra);
-  ok(iExtra > 0 && iTraj > 0 && iPdb > iExtra,
-    '[viewer] …JUSTE après 📂 PDB file(s) / 📂 Trajectory et AVANT ⬇ PDB : la même ligne');
+  const iTraj = VIEW.lastIndexOf('📂 Trajectory', iPdb);
+  ok(iTraj > 0 && iTraj < iPdb && iPdb < iClear && iClear < iCreate && iCreate < iExtra,
+    '[viewer] …sur la ligne des fichiers, dans l’ordre : 📂 PDB file(s) · 📂 Trajectory · ⬇ PDB · 🗑 Clear · 📁 Create drive folder · les 📂 de la page');
+  ok(VIEW.indexOf('label="📂 Style from folder"') === -1,
+    '[viewer] …et plus de 📂 Style from folder : le style du dossier est lu par le rappel automatique');
 }
 eq(count(SEC, 'fileRowExtra'), 0, '[NMR] la page NMR n’en passe pas : le défaut `null` ne rend rien');
 eq(count(DOCK, 'fileRowExtra'), 0, '[Docking] …la page Docking non plus');

@@ -22,6 +22,14 @@
  * ramp that stops being monotonic in lightness, and any hue swap that moves a
  * stop by more than 4 points of OKLCH lightness.
  *
+ * A NIGHT skin (the page goes dark and the ink goes light, see « NUIT » in
+ * src/index.css) cannot be judged that way — it TURNS the palette over, so a
+ * pair's contrast is not preserved, it is mirrored. It answers to two other
+ * rules, both checked here: every stop must BE the recipe of src/index.css
+ * applied to Tailwind's own ramp (nothing invented), and the nine pairs the
+ * program writes must clear, family by family, the readability FLOOR of a dark
+ * page — the writing that follows the background must stay visible, measured.
+ *
  * The OWNERSHIP half (section 7) holds the other rule: a skin belongs to the
  * OPERATOR, not to the browser — his own key, the COMPUTER's key as the fallback
  * and the starter value, and an accent that follows the same rule — so a shared
@@ -51,7 +59,6 @@ const ok = (name, got) => checkTrue(name, got);
 const frag = (name, hay, needle) => checkTrue(`${name}: ${needle.slice(0, 44)}…`, hay.includes(needle));
 
 /* ══ the palette maths — OKLCH → sRGB (Ottosson) → WCAG contrast ═══════════ */
-const srgb = (c) => (c <= 0.0031308 ? 12.92 * c : 1.055 * Math.pow(c, 1 / 2.4) - 0.055);
 const toLin = ({ L, C, H }) => {
   const h = (H * Math.PI) / 180, a = C * Math.cos(h), b = C * Math.sin(h);
   const l_ = L / 100 + 0.3963377774 * a + 0.2158037573 * b;
@@ -60,11 +67,15 @@ const toLin = ({ L, C, H }) => {
   const l = l_ ** 3, m = m_ ** 3, s = s_ ** 3;
   return [+4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
     -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
-    -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s].map((c) => Math.min(1, Math.max(0, c)));
+    -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s];
 };
+/* `toLin` rend les trois canaux LINÉAIRES, SANS écrêtage : c'est lui qui dit si
+   une couleur sort du gamut sRGB (voir la recette des peaux `night`, section 5).
+   Le contraste, lui, écrite ce qui dépasse — c'est `clampLin`. */
+const clampLin = (col) => toLin(col).map((c) => Math.min(1, Math.max(0, c)));
 const lum = (col) => {
   if (col === 'white') return 1;
-  const [r, g, b] = toLin(col);
+  const [r, g, b] = clampLin(col);
   return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 };
 const ratio = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p); return (x + 0.05) / (y + 0.05); };
@@ -159,7 +170,7 @@ const ROLES = [
   check('1b the reference is one of the skins', UI.UI_SKINS.some((s) => s.id === UI.UI_SKIN_DEFAULT), true);
   check('1c the ids are unique', new Set(UI.UI_SKINS.map((s) => s.id)).size, UI.UI_SKINS.length);
   check('1d every skin carries a label, a hint, a kind and four swatches',
-    UI.UI_SKINS.every((s) => s.label && s.hint && ['tone', 'hue'].includes(s.kind)
+    UI.UI_SKINS.every((s) => s.label && s.hint && ['tone', 'hue', 'night'].includes(s.kind)
       && Array.isArray(s.swatch) && s.swatch.length === 4), true);
   check('1e the swatches are real colours',
     UI.UI_SKINS.every((s) => s.swatch.every((c) => /^#[0-9a-f]{6}$/.test(c))), true);
@@ -294,12 +305,17 @@ const ROLES = [
     }
     return worst;
   };
+  const kindOf = (id) => (UI.UI_SKINS.find((s) => s.id === id) || {}).kind;
+  /* Un skin `night` RETOURNE la rampe : ses crans MONTENT (le 50 est la
+     surface, le 950 l'encre) là où tous les autres descendent. */
   const monotonic = (id) => {
     const r = effOf(id);
+    const night = kindOf(id) === 'night';
     const bad = [];
     for (const fam of FAMILIES) {
       for (let i = 1; i < STOPS.length; i++) {
-        if (!(r(fam, STOPS[i]).L < r(fam, STOPS[i - 1]).L)) bad.push(`${fam}-${STOPS[i]}`);
+        const [a, b] = [r(fam, STOPS[i]).L, r(fam, STOPS[i - 1]).L];
+        if (night ? !(a > b) : !(a < b)) bad.push(`${fam}-${STOPS[i]}`);
       }
     }
     return bad;
@@ -315,17 +331,111 @@ const ROLES = [
        choisie par l'utilisateur — donc les maths ci-dessus ne verraient que la
        palette livrée et ne prouveraient rien. */
     for (const id of others.filter((s) => s !== UI.UI_SKIN_CUSTOM)) {
-      const worst = worstVsShipped(id);
-      ok(`5b ${id}: no pair of the program loses more than 1.5 contrast steps (worst ${worst.d.toFixed(2)} on ${worst.fam} · ${worst.role})`,
-        worst.d > -1.5);
+      const kind = kindOf(id);
+      /* Un skin `night` retourne la palette : il ne peut pas « perdre » moins de
+         1.5 crans de contraste, il échange le fond et l'encre. Il a donc ses
+         propres règles (5o et suivantes, plus bas) — et c'est 5c (la rampe est
+         monotone, dans le sens que la peau annonce) qui continue de le tenir. */
+      if (kind !== 'night') {
+        const worst = worstVsShipped(id);
+        ok(`5b ${id}: no pair of the program loses more than 1.5 contrast steps (worst ${worst.d.toFixed(2)} on ${worst.fam} · ${worst.role})`,
+          worst.d > -1.5);
+      }
       check(`5c ${id}: every ramp stays monotonic in lightness`, monotonic(id), []);
       const moved = maxDeltaL(id);
       ok(`5d ${id}: the skin really changes something (max ΔL ${moved.d.toFixed(1)} on ${moved.fam}-${moved.stop})`,
         moved.d >= 1);
-      if (UI.UI_SKINS.find((s) => s.id === id).kind === 'hue') {
+      if (kind === 'hue') {
         ok(`5e ${id}: a hue swap never moves a stop by more than 4 points of OKLCH lightness (${moved.d.toFixed(1)})`,
           moved.d <= 4);
       }
+    }
+    /* ── LES PEAUX SOMBRES : LA RECETTE ET LES PLANCHERS ─────────────────────
+       Un skin `night` n'est pas jugé « contre la palette livrée » (5b) : il la
+       RETOURNE, donc une paire n'y garde pas son contraste, elle l'échange. Il
+       est jugé sur deux choses, toutes deux mesurées ici :
+         · chaque cran EST la recette de src/index.css appliquée à la rampe de
+           Tailwind — même partage surfaces/encres, mêmes bandes, même famille
+           neutre, même chroma (ramené dans le gamut sRGB comme le fait le
+           moteur, CSS Color 4). Aucune valeur n'est inventée : changer la
+           feuille sans changer la recette fait échouer cette vérification ;
+         · les neuf paires que le programme écrit vraiment gardent, POUR CHAQUE
+           FAMILLE, le plancher de lisibilité d'une page sombre. C'est la
+           réponse mesurée à « for dark color the writing must change color to
+           allow visibility » : l'encre a suivi le fond, et elle reste lisible. */
+    const NIGHT_SURFACES = [50, 100, 200, 300];
+    const NIGHT_RECIPE = {
+      night: { neutral: 'slate', surfaces: [13, 30], inks: [50, 99], white: 17, colourSurfaces: [26, 38], colourInks: [49, 100] },
+      carbon: { neutral: 'zinc', surfaces: [11, 28], inks: [52, 97], white: 15, colourSurfaces: [24, 36], colourInks: [49, 97] }
+    };
+    const inGamut = (col) => toLin(col).every((c) => c >= -1e-4 && c <= 1 + 1e-4);
+    const chromaInto = (col) => {
+      if (inGamut(col)) return col.C;
+      let lo = 0, hi = col.C;
+      for (let i = 0; i < 40; i++) { const mid = (lo + hi) / 2; if (inGamut({ ...col, C: mid })) lo = mid; else hi = mid; }
+      return lo;
+    };
+    const bandOf = (v, from, to, lo, hi) => lo + (hi - lo) * (v - from) / (to - from);
+    const recipeStop = (recipe, fam, stop) => {
+      const isNeutral = fam === 'slate';
+      const src = SHIPPED[isNeutral ? recipe.neutral : fam];
+      const s = src[String(stop)];
+      const isSurface = NIGHT_SURFACES.includes(stop);
+      const [lo, hi] = isNeutral
+        ? (isSurface ? recipe.surfaces : recipe.inks)
+        : (isSurface ? recipe.colourSurfaces : recipe.colourInks);
+      const L = bandOf(s.L, isSurface ? src['50'].L : src['400'].L, isSurface ? src['300'].L : src['950'].L, lo, hi);
+      return { L, C: chromaInto({ L, C: s.C, H: s.H }), H: s.H };
+    };
+    /* les neuf paires écrites par le programme, et le plancher d'une page sombre */
+    const FLOORS = [
+      ['a chip (text-700 on bg-50) stays ≥ 4.5', (r, f) => ratio(r(f, 700), r(f, 50)), 4.5],
+      ['a stronger chip (text-800 on bg-100) stays ≥ 4.5', (r, f) => ratio(r(f, 800), r(f, 100)), 4.5],
+      ['the label of an accent (white on bg-600) stays ≥ 3.5', (r, f) => ratio(r('white'), r(f, 600)), 3.5],
+      ['a link on a card (text-600 on white) stays ≥ 4', (r, f) => ratio(r(f, 600), r('white')), 4],
+      ['an emphasis (text-700 on white) stays ≥ 4.5', (r, f) => ratio(r(f, 700), r('white')), 4.5],
+      ['a caption (text-500 on white) stays ≥ 3.5', (r, f) => ratio(r(f, 500), r('white')), 3.5],
+      ['a date, a hint (text-400 on white) stays ≥ 2.4', (r, f) => ratio(r(f, 400), r('white')), 2.4],
+      ['an edge (border-300 on white) stays ≥ 1.25', (r, f) => ratio(r(f, 300), r('white')), 1.25],
+      ['a label on the chrome (white on bg-800) stays ≥ 4.5', (r, f) => ratio(r('white'), r(f, 800)), 4.5]
+    ];
+    for (const id of ids.filter((k) => kindOf(k) === 'night')) {
+      const recipe = NIGHT_RECIPE[id];
+      ok(`5o ${id}: the recipe of src/index.css is the one declared here (bands, neutral family, white)`, !!recipe);
+      if (!recipe) continue;
+      /* 1) la recette — 176 crans, L, C et H compris */
+      const wrong = [];
+      for (const fam of FAMILIES) for (const stop of STOPS) {
+        const want = recipeStop(recipe, fam, stop);
+        const got = blockVars[id][fam] && blockVars[id][fam][String(stop)];
+        const hd = got ? Math.min(Math.abs(got.H - want.H), 360 - Math.abs(got.H - want.H)) : 99;
+        if (!got || Math.abs(got.L - want.L) > 0.051 || Math.abs(got.C - want.C) > 0.0006 || hd > 0.051) {
+          wrong.push(`${fam}-${stop}`);
+        }
+      }
+      check(`5p ${id}: every one of the ${FAMILIES.length * STOPS.length} stops IS the recipe on Tailwind's ramp (L, C and H)`, wrong, []);
+      const w = blockVars[id].white.base;
+      ok(`5q ${id}: the card (--color-white) is the value the recipe gives it (L ${w.L})`,
+        Math.abs(w.L - recipe.white) <= 0.051 && w.C <= 0.001);
+      /* 2) la lisibilité — le plancher de chaque paire, famille par famille */
+      const r = effOf(id);
+      for (const [label, fn, floor] of FLOORS) {
+        let worst = { v: Infinity, fam: '' };
+        for (const fam of FAMILIES) { const v = fn(r, fam); if (v < worst.v) worst = { v, fam }; }
+        ok(`5r ${id}: ${label} — worst ${worst.fam} ${worst.v.toFixed(2)}`, worst.v >= floor);
+      }
+      /* 3) la bascule est réelle : la page est sombre, l'encre claire */
+      ok(`5s ${id}: the page IS dark and the ink IS light (page ${r('slate', 50).L}, card ${r('white').L}, ink ${r('slate', 700).L})`,
+        r('slate', 50).L < 25 && r('white').L < 25 && r('slate', 700).L > 70);
+      /* 4) et elle ne coûte jamais la moitié d'une paire */
+      const lightRef = (f, stop) => (f === 'white' ? 'white' : SHIPPED[f][String(stop)]);
+      let worstShare = { s: Infinity, role: '', fam: '' };
+      for (const [role, fn] of ROLES) for (const fam of FAMILIES) {
+        const s = fn(r, fam) / fn(lightRef, fam);
+        if (s < worstShare.s) worstShare = { s, role, fam };
+      }
+      ok(`5t ${id}: no pair falls below 75 % of what the light palette gave it (worst ${worstShare.s.toFixed(2)} on ${worstShare.fam} · ${worstShare.role})`,
+        worstShare.s >= 0.75);
     }
     /* the ink the program writes 7 281 times, and the chrome it writes 271 times */
     for (const id of ids) {

@@ -15,9 +15,10 @@
 
    COMMENT (zéro dépendance : ni Playwright ni Puppeteer dans ce dépôt)
    Un serveur 127.0.0.1 sert la page de sonde et le CSS compilé. La page
-   construit six éléments avec les VRAIES classes de l'interface (chrome, carte,
-   légende, bouton d'accent, fond de page, plus une miniature imbriquée), lit
-   `getComputedStyle` pour chaque peau, puis POSTe son verdict JSON.
+   construit neuf éléments avec les VRAIES classes de l'interface (chrome, carte,
+   encre de la carte, légende, bouton d'accent avec son libellé, fond de page,
+   encre de la page, plus une miniature imbriquée), lit `getComputedStyle` pour
+   chaque peau, puis POSTe son verdict JSON.
 
    CE QUI EST VÉRIFIÉ, sans recopier une seule valeur de la palette :
      · pour chaque peau, la couleur calculée de `bg-slate-800` / `bg-white` /
@@ -26,7 +27,14 @@
        (c'est toute la chaîne « utile → variable → bloc ») ;
      · chaque peau CHANGE ce qu'elle annonce (une peau ne peut pas être un
        mensonge) : graphite/warm/dim/contrast bougent l'échelle neutre, indigo /
-       violet bougent l'accent, dim est la seule à bouger le blanc ;
+       violet bougent l'accent, dim, `night` et `carbon` bougent le blanc ;
+     · LA PAGE SOMBRE — « the skins do not change the background color. for dark
+       color the writing must change color to allow visibility » : pour `night`
+       et `carbon`, le fond de page et les cartes sont mesurés SOMBRES, l'encre
+       mesurée CLAIRE, et chaque paire écrite (encre sur le fond, encre sur la
+       carte, une date, le libellé du bouton, le libellé du bandeau) doit garder
+       son plancher de lisibilité — un contraste WCAG calculé sur les pixels
+       rendus par le moteur, pas sur la feuille de style ;
      · la RÉFÉRENCE (aucun attribut) rend la palette livrée, pixel pour pixel ;
      · la miniature imbriquée (`[data-skin]` sur un <div>) reprend la peau pour
        ELLE SEULE : un frère à côté garde la peau de <html> ;
@@ -71,9 +79,11 @@ const CSS_FILE = fs.existsSync(distDir)
 const PAGE = `<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/skin.css"></head>
 <body class="bg-slate-50">
   <div id="chrome" class="bg-slate-800 text-white">chrome</div>
-  <div id="card" class="bg-white border border-slate-200"><span id="caption" class="text-slate-400">2026-10-03</span></div>
+  <div id="card" class="bg-white border border-slate-200"><span id="caption" class="text-slate-400">2026-10-03</span><span id="cardink" class="text-slate-700">Data</span>
+    <svg id="fig" viewBox="0 0 120 30" width="120" height="30"><text id="figtick" x="0" y="12" fill="#64748b" font-size="8">tick</text><text id="figtitle" x="0" y="26" fill="#334155" font-size="8">axis title</text></svg>
+  </div>
   <button id="accent" class="bg-blue-600 text-white">Save</button>
-  <div id="pagebg" class="bg-slate-50"></div>
+  <div id="pagebg" class="bg-slate-50"><span id="ink" class="text-slate-700">Overview</span></div>
   <div id="outside" class="bg-slate-800"></div>
   <div id="preview" data-skin="dim"><div id="pcard" class="bg-white"></div><div id="pchrome" class="bg-slate-800"></div></div>
   <div id="probe" style="display:none"></div>
@@ -100,7 +110,7 @@ const server = http.createServer((req, res) => {
 /* le script de la page : pour chaque peau, ce que le MOTEUR a calculé */
 const PAGE_SCRIPT = `
 <script>
-const SKINS = ['slate', 'graphite', 'warm', 'indigo', 'violet', 'dim', 'contrast'];
+const SKINS = ['slate', 'graphite', 'warm', 'indigo', 'violet', 'dim', 'contrast', 'night', 'carbon'];
 /* Le moteur rend la couleur CALCULÉE dans son espace d'origine — un oklch(…)
    pour tout ce qui vient des variables de Tailwind, et le canvas la redonne
    telle quelle. On va donc jusqu'au PIXEL : une toile 1×1 remplie de cette
@@ -119,6 +129,7 @@ const px = (col) => {
 };
 const bg = (id) => px(getComputedStyle(document.getElementById(id)).backgroundColor);
 const fg = (id) => px(getComputedStyle(document.getElementById(id)).color);
+const fillOf = (id) => px(getComputedStyle(document.getElementById(id)).fill);
 const varOf = (name) => {
   const el = document.getElementById('probe');
   el.style.background = 'var(' + name + ')';
@@ -128,6 +139,8 @@ const varOf = (name) => {
 };
 const read = () => ({
   chrome: bg('chrome'), white: bg('card'), caption: fg('caption'), accent: bg('accent'), page: bg('pagebg'),
+  ink: fg('ink'), cardInk: fg('cardink'), chromeInk: fg('chrome'), accentInk: fg('accent'),
+  figTick: fillOf('figtick'), figTitle: fillOf('figtitle'),
   vChrome: varOf('--color-slate-800'), vWhite: varOf('--color-white'), vAccent: varOf('--color-blue-600')
 });
 const out = {};
@@ -162,6 +175,8 @@ const lum = (s) => {
   });
   return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 };
+/* le contraste WCAG de deux couleurs MESURÉES (deux pixels du moteur) */
+const contrast = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p); return (x + 0.05) / (y + 0.05); };
 
 (async () => {
   if (!CSS_FILE) {
@@ -205,9 +220,9 @@ const lum = (s) => {
   }
   const d = last;
   const S = d.skins || {};
-  const need = ['slate', 'graphite', 'warm', 'indigo', 'violet', 'dim', 'contrast'];
+  const need = ['slate', 'graphite', 'warm', 'indigo', 'violet', 'dim', 'contrast', 'night', 'carbon'];
   check(d.stage === 'done', 'la page a rendu son verdict', String(d.stage));
-  check(need.every((s) => S[s]), 'les sept peaux ont été mesurées', need.filter((s) => !S[s]).join() || 'toutes');
+  check(need.every((s) => S[s]), 'les neuf peaux ont été mesurées', need.filter((s) => !S[s]).join() || 'toutes');
 
   console.log('\n--- la chaîne « classe → variable → bloc » (aucune valeur recopiée) ---');
   for (const s of need) {
@@ -230,7 +245,7 @@ const lum = (s) => {
     `${S.slate.chrome} → ${S.graphite.chrome}`);
   check(S.graphite.white === S.slate.white, '…sans toucher au blanc (échelle neutre seule)', S.graphite.white);
   check(S.warm.chrome !== S.slate.chrome, 'warm repeint le chrome', S.warm.chrome);
-  check(S.dim.white !== S.slate.white, 'dim est la seule à repeindre le blanc',
+  check(S.dim.white !== S.slate.white, 'dim repeint le blanc (une page moins éblouissante)',
     `${S.slate.white} → ${S.dim.white}`);
   check(S.dim.page !== S.slate.page, '…et le fond de page avec lui', `${S.slate.page} → ${S.dim.page}`);
   check(S.graphite.white === S.slate.white && S.contrast.white === S.slate.white,
@@ -255,6 +270,51 @@ const lum = (s) => {
   check(rgb(S.violet.accent)[0] > rgb(S.slate.accent)[0] + 40,
     'l’accent violet porte beaucoup plus de rouge que le bleu livré', S.violet.accent);
 
+  console.log('\n--- LES PEAUX SOMBRES : le fond a changé, et l’encre a suivi ---');
+  /* « the skins do not change the background color. for dark color the writing
+     must change color to allow visibility » : ici, la promesse est MESURÉE pixel
+     par pixel — le fond est sombre, l’encre est claire, et chaque paire que le
+     programme écrit garde son plancher de lisibilité, calculé sur ce que le
+     moteur a réellement rendu (aucune valeur de la palette n’est recopiée). */
+  const DARK = ['night', 'carbon'];
+  for (const s of DARK) {
+    const r = S[s];
+    check(lum(r.page) < 0.05 && lum(r.white) < 0.05,
+      `${s} : le FOND de page et les CARTES sont sombres`, `page ${r.page} · carte ${r.white}`);
+    check(lum(r.ink) > 0.35 && lum(r.cardInk) > 0.35,
+      `${s} : l’ENCRE de la page et celle de la carte sont claires`, `${r.ink} / ${r.cardInk}`);
+    const onPage = contrast(r.ink, r.page);
+    const onCard = contrast(r.cardInk, r.white);
+    const caption = contrast(r.caption, r.white);
+    const label = contrast(r.accentInk, r.accent);
+    const onChrome = contrast(r.chromeInk, r.chrome);
+    check(onPage >= 7, `${s} : l’encre reste lisible sur le fond sombre (${onPage.toFixed(2)}:1 ≥ 7)`,
+      `${r.ink} / ${r.page}`);
+    check(onCard >= 7, `${s} : l’encre reste lisible sur la carte (${onCard.toFixed(2)}:1 ≥ 7)`,
+      `${r.cardInk} / ${r.white}`);
+    check(caption >= 2.4, `${s} : une date reste lisible sur la carte (${caption.toFixed(2)}:1 ≥ 2.4)`,
+      `${r.caption} / ${r.white}`);
+    check(label >= 3.5, `${s} : le libellé du bouton reste lisible (${label.toFixed(2)}:1 ≥ 3.5)`,
+      `${r.accentInk} / ${r.accent}`);
+    check(onChrome >= 5.5, `${s} : le libellé du bandeau sombre reste lisible (${onChrome.toFixed(2)}:1 ≥ 5.5)`,
+      `${r.chromeInk} / ${r.chrome}`);
+    check(r.white !== S.slate.white, `${s} : la carte n’est plus le blanc livré`, `${S.slate.white} → ${r.white}`);
+    /* LES GRAPHIQUES ÉCRIVENT LEUR ENCRE EUX-MÊMES : les options de Chart.js et
+       les tracés SVG portent des couleurs LITTÉRALES (le gris #64748b des
+       graduations, le bleu nuit #334155 des titres d'axe), que la palette ne
+       touche pas. On la mesure donc ici, pour que la limite soit chiffrée : la
+       graduation (la plus fréquente du programme) reste lisible ; le titre
+       d'axe le plus sombre, lui, demande encore une retouche (voir
+       docs/DRIVE-MIRROR.md, « la nuit »). */
+    const tickInk = contrast(r.figTick, r.white);
+    check(tickInk >= 4, `${s} : l’encre des graduations (${r.figTick}) reste lisible sur la carte (${tickInk.toFixed(2)}:1 ≥ 4)`,
+      `${r.figTick} / ${r.white}`);
+    console.log(`      info ${s} : titre d'axe écrit en dur (${r.figTitle}) sur la carte — ${contrast(r.figTitle, r.white).toFixed(2)}:1`);
+  }
+  check(DARK.every((s) => lum(S[s].page) < lum(S.dim.page)) && lum(S.dim.page) > 0.7,
+    'aucune autre peau n’assombrit vraiment la page (dim se contente de l’adoucir)',
+    `dim ${S.dim.page} · ${DARK.map((s) => `${s} ${S[s].page}`).join(' · ')}`);
+
   console.log('\n--- la miniature : la peau d’un <div> ne déborde pas ---');
   check(S.slate.preview.card === S.dim.white,
     'la miniature suit SA peau (dim), même sous la référence', `${S.slate.preview.card} / ${S.dim.white}`);
@@ -269,7 +329,7 @@ const lum = (s) => {
   const failed = CHECKS.filter((c) => !c.ok);
   console.log(failed.length
     ? `\n❌ ${failed.length} vérification(s) en échec`
-    : `\n_ui_skin_pixel_test.cjs — ${CHECKS.length} vérifications OK (les 7 peaux mesurées dans Chrome, sur le CSS compilé)`);
+    : `\n_ui_skin_pixel_test.cjs — ${CHECKS.length} vérifications OK (les 9 peaux mesurées dans Chrome, sur le CSS compilé)`);
   process.exit(failed.length ? 1 : 0);
 })();
 

@@ -275,7 +275,7 @@ import { listExperimentFiles } from '../utils/driveExperimentFiles';
    rangée §1 General — la ligne même de 📂 PDB file(s) — dès qu'un contexte de
    nommage lui est fourni (`driveNaming` : MD, NMR, Docking) : aucune page ne
    peut l'oublier, ni le poser deux rangées plus haut. */
-import { DriveExperimentFilePicker, DriveExperimentFolderCreator } from './DriveExperimentFiles';
+import { DriveExperimentFolderCreator } from './DriveExperimentFiles';
 /* 🧪 LA CHARGE D'UNE SÉQUENCE — la lecture du ⚙ Params & Constraints quand l'écran montre le
    modèle bâti par la page : le pKa de CHAQUE chaîne latérale et les deux terminus (voir
    utils/sequenceCharge.js). Le graphe reste la lecture d'un PDB chargé, et le panneau DIT
@@ -7812,6 +7812,39 @@ useEffect(() => {
     }
   } catch { /* ignore */ }
 }, [viewerCollapsed]);
+
+/* ◐ LA VUE SUIT SON CADRE — QUEL QUE SOIT LE GESTE QUI L'A CHANGÉ.
+   La vue 3D n'est pas seule : elle partage sa rangée avec les docks de GAUCHE
+   (🧬 Structure calculation, ▶ MD, 🪢 Ramachandran), qui PRENNENT la largeur quand
+   ils s'ouvrent (voir le commentaire de la rangée, plus bas : « la colonne de
+   gauche prend sa place, la vue prend le RESTE »). NGL ne s'en aperçoit pas tout
+   seul — il n'écoute que la FENÊTRE — et une toile qui garde son ancienne largeur
+   laisse la molécule cadrée pour un cadre qui n'existe plus, tandis que la couche
+   de l'ombre vivante, elle, est étirée en CSS sur la boîte (elle, elle rétrécit) :
+   c'est le rapport de cette session, mot pour mot — « as soon as I click on the MD
+   window (without running it) or "structure calculation" (without even running
+   it), this strange shadow detached from the molecule appears ».
+   Un ResizeObserver sur la boîte d'NGL dit donc au moteur de reprendre ses mesures
+   à CHAQUE changement de taille — un dock, la poignée de hauteur, un repli de la
+   barre des résidus, la fenêtre, la barre latérale — au lieu des trois effets qui
+   devinaient lesquels (viewH, viewerCollapsed, ramaDock : ils restent, ils agissent
+   AVANT le navigateur ; l'observateur, lui, ne peut plus rien oublier).
+   ⚠ Repliée (0 px de haut), la boîte n'a rien à mesurer : NGL garde sa dernière
+   taille, et le 🔎 « Expand viewer » recale tout par son propre effet ci-dessus. */
+useEffect(() => {
+  const host = containerRef.current;
+  if (!host || typeof ResizeObserver === 'undefined') return undefined;
+  const ro = new ResizeObserver(() => {
+    const box = host.getBoundingClientRect();
+    if (!(box.width > 1) || !(box.height > 1)) return;
+    try {
+      if (stageRef.current) stageRef.current.handleResize();
+      if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender();
+    } catch { /* pas de scène : rien à recadrer */ }
+  });
+  ro.observe(host);
+  return () => ro.disconnect();
+}, []);
 
 const containerRef = useRef(null);
 const stageRef = useRef(null);
@@ -22292,34 +22325,23 @@ const recallViewerStyle = async () => {
   return { mode: parsed.mode, name: parsed.name, from: 'drive' };
 };
 
-/* 📂 LE FICHIER DE STYLE DU DOSSIER, CHOISI À LA MAIN — la seconde moitié de la
-   demande, mot pour mot : « when I open an experiment still the styles file is
-   not read automatically NOR I have the possibility to define which file must be
-   read (but it could be simply the last that was used) ». Deux réponses :
-     · le rappel ci-dessus lit désormais AUSSI les fichiers que le viewer a
-       exportés (`viewer-snapshot-*.json` / `viewer-theme-*.json`, voir
-       utils/viewerStyleFile.js) : un style exporté puis déposé dans le dossier
-       de l'expérience est ramené TOUT SEUL ;
-     · ce geste-ci dit LEQUEL lire — la picker LISTE les .json du dossier (le
-       MÊME composant que les 📂 Topology / PDB : une seule définition), et le
-       fichier désigné est appliqué PUIS RETENU (mémoire du poste + fichier
-       canonique du dossier). C'est donc lui — « simply the last that was used »
-       — que la prochaine ouverture appliquera, ici comme sur un autre poste. */
-const pickStyleFileFromFolder = async (file) => {
-  if (!file) return;
-  const text = await file.text().catch(() => '');
-  const parsed = parseViewerStyleFile(text);
-  if (!parsed) { flashSetupMsg(`“${file.name}” is not a viewer style — nothing was applied.`); return; }
-  styleTouchedRef.current = true;      // c'est un geste de l'utilisateur : le rappel ne le doublera pas
-  adoptViewerStyleEntry(parsed.mode, parsed.name, parsed.entry);
-  if (parsed.mode === 'theme') applyThemeEntry(parsed.entry, parsed.name);
-  else applySnapshotEntry(parsed.entry, parsed.name);
-  /* RETENU comme un 💾 : mémoire du poste ET fichier canonique du dossier de
-     l'expérience — un style renommé à la main est donc re-déposé sous son nom
-     canonique, et le rappel automatique le retrouve ensuite, sur tout poste. */
-  rememberViewerStyle(parsed.mode, parsed.name, parsed.entry);
-  flashSetupMsg(`✓ ${parsed.mode === 'theme' ? 'cumulative theme' : 'snapshot'} “${parsed.name}” applied — read from ${file.name} in this experiment's Drive folder`);
-};
+/* ⚠ LE GESTE MANUEL « 📂 Style from folder » A ÉTÉ RETIRÉ — la demande de cette
+   session, mot pour mot : « Style from folder should not be there. The last file
+   style should be read automatically. » Les deux moitiés de la demande 🧪 sont
+   donc devenues UNE seule : le RAPPEL AUTOMATIQUE (recallViewerStyle, plus haut)
+   est le SEUL lecteur du style du dossier. Et il lit bien « the last file
+   style » : chaque geste qui RETIENT un style (💾 Save, 📂 Load d'un nom du
+   magasin, ⬆ Import) réécrit le fichier CANONIQUE de son mode dans le dossier de
+   l'expérience (rememberViewerStyle → archiveViewerStyle), donc le dossier porte
+   toujours le dernier utilisé — c'est lui que l'ouverture suivante applique,
+   ici comme sur un autre poste. La règle de préférence reste celle du module pur
+   (utils/viewerStyleFile.js : pickViewerStyleFile — le snapshot de l'expérience,
+   sinon le cumulatif, le plus récent du mode), et rien n'est deviné : un .json
+   qui n'est pas un style est refusé (`parseViewerStyleFile` rend null).
+   Ce que le bouton faisait de plus — adopter un .json renommé à la main sous son
+   nom canonique — n'a plus de porte d'entrée : le rappel ne reconnaît que les
+   noms canoniques et ceux que le viewer exporte lui-même
+   (viewer-snapshot-*.json / viewer-theme-*.json). */
 
 /* L'EFFET DU RAPPEL — « after bringing back to live its files » : il attend que les
    fichiers soient LÀ (`status === 'ready'`) et que la scène ait ses sections (un
@@ -23771,36 +23793,6 @@ className="hidden"
 {(trajFile || trajectoryFile).name}
 </span>
 )}
-{/* 📂 CE QUE LA PAGE AJOUTE À CETTE RANGÉE (voir `fileRowExtra`) — sur la page
-    MD, les deux boutons « 📂 Topology / 📂 Trajectory from Drive folder ». Ils
-    sont posés JUSTE APRÈS 📂 PDB file(s) et 📂 Trajectory : c'est la même ligne,
-    et un seul `null` pour les pages qui n'en passent pas (NMR, Docking). */}
-{fileRowExtra}
-{/* 📁 « Create drive folder » — LE SEUL GESTE QUI FABRIQUE UN DOSSIER, et il est
-    TOUJOURS ICI, sur la ligne de 📂 PDB file(s) (la demande, mot pour mot :
-    « the "create experiment folder on drive" must be placed in the same line of
-    "PDB file" button always »). Rendue par le viewer lui-même dès qu'un
-    contexte de nommage est fourni (`driveNaming` : MD, NMR, Docking) : aucune
-    page ne peut donc l'oublier, ni le déplacer dans une rangée à part. Le
-    libellé est court (« 📁 Create drive folder ») pour tenir dans la rangée, et
-    l'infobulle dit où il crée — dataset compris : …/experiment_setup/Structure
-    et …/experiment_setup/Trajectory (voir DriveExperimentFiles.jsx). */}
-{driveNaming ? <DriveExperimentFolderCreator ctx={driveNaming} /> : null}
-{/* 📂 LE FICHIER DE STYLE DU DOSSIER — la demande : « nor I have the possibility
-    to define which file must be read ». MÊME geste que les 📂 du dossier (une
-    seule définition, DriveExperimentFilePicker) sur les .json de l'expérience :
-    le fichier désigné est appliqué ET RETENU, donc rappelé à la prochaine
-    ouverture (voir pickStyleFileFromFolder). */}
-{driveNaming ? (
-  <DriveExperimentFilePicker
-    label="📂 Style from folder"
-    titleText="List the .json files of THIS experiment's Drive folder and apply one of them as the style of this scene. The file you choose is remembered — the browser's memory AND the canonical style file of the folder — so this experiment reopens with it, on every computer."
-    ctx={driveNaming}
-    ctxs={[{ ...driveNaming, section: 'Setup' }]}
-    exts={[VIEWER_STYLE_EXT]}
-    onPick={pickStyleFileFromFolder}
-  />
-) : null}
 {/* ⬇ PDB — the structure as a file, with the coordinates of the frame the
     ▶ playback bar is displaying right now (a trajectory snapshot); without a
     trajectory it simply saves the loaded structure. Depuis cette session, le fichier
@@ -23851,6 +23843,45 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
 {structAsideMsg && (
 <span className="text-[10px] font-bold text-slate-600 bg-slate-50 border border-slate-200 rounded-md px-2 py-1 max-w-[380px] truncate" title={structAsideMsg}>{structAsideMsg}</span>
 )}
+{/* ══ L'ORDRE DE CETTE RANGÉE EST CELUI DE LA DEMANDE DE CETTE SESSION ═══════
+    « pdb from drive button should stay in the same line as PDB files, and in
+    the following order: PDB files, URL, Load, Trajectory, download pdb, clear,
+    Create drive folder, Pdb from folder, trajectory from folder. Style from
+    folder should not be there. The last file style should be read
+    automatically. »
+    Les DEUX fichiers du poste d'abord (📂 PDB file(s) · PDB ID / URL · Load ·
+    📂 Trajectory), puis ce qu'on fait de CE QUI EST À L'ÉCRAN (⬇ PDB · 🗑 Clear ·
+    🗑 Delete PDB ⇄ ↩ Restore PDB), puis les commandes DU DOSSIER de
+    l'expérience : le geste qui le CRÉE, et les 📂 de la PAGE (`fileRowExtra` :
+    « 📂 Topology from Drive folder » et « 📂 Trajectory from Drive folder » sur
+    MD, rien sur NMR / Docking — le défaut `null` ne rend rien). Un seul `null`,
+    donc, et toujours sur la ligne de 📂 PDB file(s) : aucune page ne peut
+    oublier ces boutons ni les mettre dans une rangée à part.
+    ⚠ « 📂 Style from folder » A ÉTÉ RETIRÉ de cette rangée à la demande (« Style
+    from folder should not be there ») : le style du dossier n'a plus de geste
+    manuel — c'est le RAPPEL AUTOMATIQUE qui le lit à l'ouverture
+    (`recallViewerStyle` : la mémoire de ce poste, puis le dossier de
+    l'expérience et son fichier canonique, le plus récent du mode — voir
+    utils/viewerStyleFile.js). Comme chaque 💾 / 📂 / ⬆ RETIENT le style utilisé
+    en réécrivant ce fichier canonique, le dossier porte TOUJOURS le dernier
+    utilisé : c'est donc bien « the last file style » que l'ouverture suivante
+    applique, sans qu'aucune commande n'ait à le désigner. */}
+{/* 📁 « Create drive folder » — LE SEUL GESTE QUI FABRIQUE UN DOSSIER, et il est
+    TOUJOURS ICI, sur la ligne de 📂 PDB file(s) (la demande, mot pour mot :
+    « the "create experiment folder on drive" must be placed in the same line of
+    "PDB file" button always »). Rendue par le viewer lui-même dès qu'un
+    contexte de nommage est fourni (`driveNaming` : MD, NMR, Docking) : aucune
+    page ne peut donc l'oublier, ni le déplacer dans une rangée à part. Le
+    libellé est court (« 📁 Create drive folder ») pour tenir dans la rangée, et
+    l'infobulle dit où il crée — dataset compris : …/experiment_setup/Structure
+    et …/experiment_setup/Trajectory (voir DriveExperimentFiles.jsx). */}
+{driveNaming ? <DriveExperimentFolderCreator ctx={driveNaming} /> : null}
+{/* 📂 CE QUE LA PAGE AJOUTE À CETTE RANGÉE (voir `fileRowExtra`) — sur la page
+    MD, les deux boutons « 📂 Topology / 📂 Trajectory from Drive folder » ; ils
+    sont posés APRÈS le geste de création, donc en fin de rangée, exactement
+    l'ordre demandé (« … Create drive folder, Pdb from folder, trajectory from
+    folder »). */}
+{fileRowExtra}
 {/* ══ 2 · TOOLBAR — Scene | Styles | Modify | Analysis | PyMOL ══════════════
     This is §2 of the command bar now (the report: « quindi toolbar diventa la
     sezione 2 e contiene separatamente scene, modify e analysis »). Each group is a

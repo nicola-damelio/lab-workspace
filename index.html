@@ -10,10 +10,24 @@
     <!-- Manteniamo Tailwind via CDN per massima semplicità -->
         <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-        body { background-color: #f8fafc; font-family: 'Inter', sans-serif; color: #334155; margin: 0; overflow: hidden; }
+        /* LA PEAU PORTE AUSSI LE FOND DU DOCUMENT : ces deux couleurs étaient
+           écrites en dur (#f8fafc, #334155), donc `body` gardait la page
+           claire sous toutes les peaux — c'est la moitié du « the skins do not
+           change the background color ». Elles lisent maintenant les variables
+           de thème de Tailwind, que les peaux de src/index.css restituent : le
+           fond et l'encre de secours (avant React, derrière l'écran d'entrée)
+           suivent la peau, `night` comprise. Les valeurs littérales ne servent
+           que de filet quand la feuille n'est pas encore là. */
+        body {
+            background-color: var(--color-slate-50, #f8fafc);
+            color: var(--color-slate-700, #334155);
+            font-family: 'Inter', sans-serif;
+            margin: 0;
+            overflow: hidden;
+        }
         .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
         .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: var(--color-slate-300, #cbd5e1); border-radius: 4px; }
         /* Aggiungi qui gli altri stili CSS globali che avevi nell'head */
     </style>
   </head>

@@ -73,7 +73,9 @@ export const uiSkinKeyOf = (operator = null, base = UI_SKIN_KEY) => {
    its own rule: a `hue` skin SWAPS one accent family with another (so it may
    never move a stop by more than 4 points of OKLCH lightness), a `tone` skin
    restates a ramp stop for stop (`dim`, `contrast`) or borrows another neutral
-   family (`graphite`, `warm`).
+   family (`graphite`, `warm`), and a `night` skin TURNS THE PALETTE OVER —
+   the page goes dark and the ink goes light (see « NUIT » in src/index.css),
+   so its ramps ASCEND where every other skin's descend.
    `swatch` is only the picture of the four chips shown in Settings (page ·
    ink · chrome · accent) — the colours that PAINT the program live in
    src/index.css, one block per skin id. */
@@ -88,6 +90,16 @@ export const UI_SKINS = [
   { id: 'rose', kind: 'hue', label: 'Rose', hint: 'rose accents', swatch: ['#fbf7f7', '#4a2f33', '#2c1a1d', '#ec003f'] },
   { id: 'dim', kind: 'tone', label: 'Dimmed', hint: 'softer light', swatch: ['#e8ebef', '#2b394d', '#172336', '#295dc4'] },
   { id: 'contrast', kind: 'tone', label: 'High contrast', hint: 'bolder ink', swatch: ['#fbfcfd', '#0c192a', '#030b1c', '#003dce'] },
+  /* ── LES PEAUX SOMBRES ─────────────────────────────────────────────────────
+     « the skins do not change the background color. for dark color the writing
+     must change color to allow visibility » : les dix peaux ci-dessus déplacent
+     la teinte ou l'encre, jamais la LUMIÈRE — la page reste claire sous toutes.
+     Celles-ci RETOURNENT la palette (voir « NUIT » dans src/index.css) : le fond
+     de page, les cartes, les panneaux et les bordures deviennent sombres, et
+     l'encre qui s'écrivait dessus devient claire — par la même opération, pour
+     chaque famille, donc sans qu'aucun composant n'ait à s'en occuper. */
+  { id: 'night', kind: 'night', label: 'Night', hint: 'dark pages, light ink', swatch: ['#070708', '#a7bad5', '#c2d3ed', '#6095ff'] },
+  { id: 'carbon', kind: 'night', label: 'Carbon', hint: 'dark, pure greys', swatch: ['#040404', '#b9b9c2', '#d2d2d6', '#5b91ff'] },
   /* ── LA PEAU QUE L'UTILISATEUR POSSÈDE ─────────────────────────────────────
      La demande de cette session : « the skins in the setup are all too similar
      and NOT customizable ». Celle-ci répond aux deux : l'accent est CELUI QUE

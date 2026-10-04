@@ -2559,9 +2559,10 @@ lignes de commandes de fichiers. Ils n'en font plus qu'**UNE** :
 * leur définition est écrite **une seule fois** — `folderFilePickers`, dans la page MD ;
 * elle part au viewer par une prop **nouvelle**, `fileRowExtra` — **`null` par défaut**,
   donc les pages NMR et Docking ne voient **aucun** changement ;
-* le viewer la rend dans sa **rangée §1 General**, juste après 📂 **PDB file(s)** et
-  📂 **Trajectory** (et avant ⬇ PDB) : c'est la même ligne, celle des deux fichiers du
-  poste, exactement ce que la demande décrit ;
+* le viewer la rend dans sa **rangée §1 General** : c'est LA MÊME LIGNE que 📂 **PDB file(s)** et
+  📂 **Trajectory** — celle des deux fichiers du poste, exactement ce que la demande décrit.
+  ⚠ **Sa place dans cette rangée a changé depuis** (04/10/2026 : les commandes du dossier ferment
+  la rangée, après ⬇ PDB et 🗑 Clear — voir « L'ordre de la rangée des fichiers » plus bas).
 * la phrase qui les accompagnait (« *Choosing a file here opens it AND declares it: this
   condition will reopen it by default, on every computer. Nothing is uploaded again.* »)
   est passée **dans leurs infobulles** : l'information n'est pas perdue, elle ne coûte plus
@@ -2857,12 +2858,16 @@ deux 📂) et par la page NMR (dans sa propre rangée, au-dessus du viewer). La 
 d'une page — et sur NMR le bouton voisinait « 📂 PDB from Drive folder », pas le bouton
 **📂 PDB file(s)** du viewer.
 
-Désormais **c'est le viewer qui le rend**, dans sa rangée §1 General, juste après `fileRowExtra` :
+Désormais **c'est le viewer qui le rend**, dans sa rangée §1 General :
 
 ```jsx
-{fileRowExtra}
 {driveNaming ? <DriveExperimentFolderCreator ctx={driveNaming} /> : null}
+{fileRowExtra}
 ```
+
+⚠ **L'ordre EXACT a été fixé depuis** (04/10/2026) : le geste de création vient APRÈS ⬇ PDB et
+🗑 Clear, et `fileRowExtra` (les 📂 de la page) le suit — voir « L'ordre de la rangée des
+fichiers » plus bas.
 
 Donc sur **MD, NMR et Docking** — les trois pages qui passent un `driveNaming` — le bouton est
 TOUJOURS sur la même ligne que 📂 PDB file(s) / 📂 Trajectory, et aucune page ne peut l'oublier ni
@@ -2941,6 +2946,14 @@ bouge pas : un `.json` étranger n'est ni téléchargé ni deviné.
 
 ### ② Choisir LEQUEL lire — et « simplement le dernier utilisé »
 
+⚠ **CE QUI SUIT A ÉTÉ RETIRÉ LE 04/10/2026** — la demande : « *Style from folder should not be
+there. The last file style should be read automatically.* » Le **bouton** 📂 Style from folder et
+son geste (`pickStyleFileFromFolder`) n'existent plus : c'est le **rappel automatique** de ① qui
+est le seul lecteur du style du dossier, et il lit bien le DERNIER UTILISÉ, puisque chaque geste
+qui retient un style (💾 Save, 📂 Load, ⬆ Import) réécrit le fichier canonique de son mode dans le
+dossier. Ce paragraphe reste ici parce qu'il dit ce que la picker faisait, et pourquoi sa
+suppression ne perd rien.
+
 La rangée des fichiers du viewer (celle de 📂 PDB file(s), qui porte déjà le bouton de création)
 gagne un **📂 Style from folder** : c'est le **même composant** que les 📂 Topology / PDB
 (`DriveExperimentFilePicker`, une seule définition), sur les `.json` de l'expérience, avec les deux
@@ -3008,11 +3021,12 @@ un réglage illisible nettoyé, l'aller-retour `localStorage`, les onze variable
 `npx vite build` — ✓ ; `npx oxlint` — **0 erreur, 0 avertissement** sur `uiSkin.js` et
 `settingsModule.jsx`.
 
-⚠ Ce que cette peau ne fait pas, dit franchement : **pas de vrai mode sombre** (les raisons sont celles
-de la section « Les peaux de l'interface » plus haut — 1 775 couleurs écrites en dur dans les modules de
-tracés), et `_ui_skin_pixel_test.cjs` (Chrome, 44 vérifications) garde sa liste de **sept** peaux : les
-trois nouvelles sont couvertes par `_ui_skin_test.cjs` (blocs complets + maths de contraste), pas
-encore par la sonde au pixel.
+⚠ Ce que cette section ne disait pas encore, à ce moment-là : **pas de vrai mode sombre** (les raisons
+sont celles de la section « Les peaux de l'interface » plus haut — 1 775 couleurs écrites en dur dans les
+modules de tracés), et la sonde au pixel gardait sa liste de **sept** peaux, la peau personnalisée n'étant
+couverte que par `_ui_skin_test.cjs`. **C'est fait depuis** — voir « La nuit — quand la peau retourne la
+page, l'encre suit », en fin de fichier : `night` et `carbon`, le fond du document qui suit enfin la peau,
+et la sonde au pixel portée à **neuf** peaux mesurées.
 
 
 
@@ -3101,3 +3115,197 @@ avertissement**.
 voyage par le Drive, donc elle manque tant que le miroir n'a pas parlé (le poste garde alors sa
 propre copie, et le choix reste dans ce navigateur) ; et un opérateur **renommé** dont le nom n'a
 pas encore d'id change de clé — il retombe sur la peau du poste jusqu'à son premier clic.
+## La nuit — quand la peau retourne la page, l'encre suit (04/10/2026)
+
+**La demande, mot pour mot.** « *the skins do not change the background color. for dark color the writing
+must change color to allow visibility* ».
+
+**Le constat, d'abord : c'était exact, et pour deux raisons distinctes.**
+
+| ce qu'on voyait | pourquoi |
+| --- | --- |
+| le fond de page restait clair sous **toutes** les peaux | les dix peaux livrées déplacent la **teinte** (Graphite, Warm paper), l'**accent** (Indigo, Violet, Red…) ou l'**encre** (Dimmed, High contrast) — aucune ne déplace la **lumière**. Et le `<body>` était peint en dur (`background-color: #f8fafc` dans `index.html`) : la page restait claire **sous chaque peau**, écran d'entrée et premier rendu compris |
+| aucune encre ne suivait un fond sombre | il n'y avait pas de fond sombre à suivre : l'échelle neutre livrée est claire par construction |
+
+### ① Deux peaux sombres, et un retournement plutôt qu'un cas par cas
+
+`night` (les gris de Slate) et `carbon` (les gris purs de Zinc, plus profonds). Elles ne se contentent pas
+de repeindre la page : elles **retournent la palette** — et c'est le retournement qui fait suivre l'encre,
+sans qu'aucun composant n'ait à s'en occuper. La recette, écrite dans `src/index.css` (« NUIT ») et
+**rejouée valeur par valeur** par la sonde :
+
+* chaque famille garde sa teinte et son chroma — ramené dans le gamut sRGB, comme le fait le moteur
+  (CSS Color 4) — et sa **luminosité** est rejouée sur les deux segments que le programme sépare
+  lui-même : les **surfaces** (crans 50–300 : le fond, les panneaux, les bordures) et les **encres**
+  (crans 400–950 : les légendes, les libellés, les titres) ;
+* la rampe livrée de chaque famille est **normalisée** sur la bande voulue — de son cran 50 à son 300,
+  puis de son 400 à son 950. Une famille garde donc l'**écart de luminosité** qu'elle avait entre ses
+  crans : c'est ce qui fait tenir, après le retournement, les paires que le programme écrit (une puce
+  `bg-blue-50` + `text-blue-700`, un libellé blanc sur `bg-blue-600`, un filet `border-slate-200` sur une
+  carte) ;
+* `--color-white` (la carte) prend la valeur de la recette, `color-scheme: dark` suit (contrôles natifs,
+  barres de défilement), et les deux blocs sont dans `@media screen` : **le papier reste clair** au tirage
+  (`window.print`, les documents, les figures ont de toute façon leur propre encre et leur propre fond).
+
+### ② Le fond du document suit enfin la peau
+
+`index.html` portait deux couleurs en dur (`#f8fafc` pour le fond, `#334155` pour l'encre de secours) : le
+`<body>` restait donc clair quoi qu'on choisisse — c'est la moitié du constat. Il lit maintenant
+`var(--color-slate-50)` et `var(--color-slate-700)`, les variables que les blocs de peau restituent, avec
+les valeurs littérales en **filet** (le premier instant, avant que la feuille soit là). La barre de
+défilement fine suit la même règle (`var(--color-slate-300)`).
+
+### ③ Ce que la sonde exige d'une peau sombre
+
+Une peau `night` ne peut pas être jugée « contre la palette livrée » — elle l'échange, donc une paire n'y
+garde pas son contraste, elle le **mirroite**. Elle répond à deux règles, toutes deux mesurées.
+
+* **La recette** (`_ui_skin_test.cjs` §5o–5t) : chacun des **176** crans doit **être** la recette
+  appliquée à la rampe de Tailwind — L, C et H, la carte comprise. Changer la feuille sans changer la
+  recette fait échouer la vérification : aucune valeur n'est inventée. La rampe doit **monter** (le cran
+  50 est la surface, le 950 l'encre : l'inverse de la rampe livrée), et aucune paire ne doit tomber sous
+  **75 %** de ce que la palette claire lui donnait.
+* **Les planchers** : les neuf paires que le programme écrit vraiment gardent, **pour chaque famille**, le
+  plancher de lisibilité d'une page sombre — 1.25:1 pour un filet, 2.4:1 pour une date, 3.5:1 pour le
+  libellé d'un accent, 4:1 pour un lien, 4.5:1 pour une puce et pour une encre. L'encre a suivi le fond,
+  et elle reste lisible : c'est la réponse mesurée à la seconde moitié de la demande.
+* **Au pixel** (`_ui_skin_pixel_test.cjs`, Chrome, sur le CSS compilé) : la sonde mesure désormais **neuf**
+  peaux. Pour `night` et `carbon`, elle vérifie sur les couleurs que le moteur a réellement rendues que le
+  fond de page et les cartes sont **sombres**, que l'encre est **claire**, et calcule les contrastes sur
+  ces pixels — encre sur le fond **10.2:1**, encre sur la carte **9.7:1**, une date sur la carte
+  **3.2:1**, le libellé d'un bouton **6.6:1**, le libellé d'un bandeau sombre **12.6:1** (chiffres de
+  `night` ; `carbon` est du même ordre).
+
+*Vérifier :* `node _ui_skin_test.cjs` — **196/196** (contre **158**), `node _ui_skin_pixel_test.cjs` —
+**69** vérifications OK (contre **44**), `npx vite build` ✓, `npx oxlint` sur les fichiers touchés —
+0 erreur, 0 avertissement.
+
+⚠ Ce que ces peaux ne font pas, dit franchement : **les graphiques et les figures écrivent leur encre
+eux-mêmes**. Les options de Chart.js et les tracés SVG portent des couleurs **littérales** (le gris
+`#64748b` des graduations, le bleu nuit `#334155` de certains titres d'axe) que la palette ne touche pas :
+sur une carte sombre la graduation reste lisible (**4.0:1**, mesuré au pixel) mais le titre d'axe le plus
+sombre tombe à **1.9:1**. Le corriger demande de **résoudre l'encre à l'affichage** (lire la variable de
+thème au moment du rendu) sans toucher aux exports — les documents et les figures ont leur propre papier
+blanc, et c'est *cette* encre-là qui doit rester. La sonde chiffre désormais les deux cas, pour que la
+suite soit mesurable. Les autres peaux, elles, ne changent pas d'un pixel : une peau n'est qu'un bloc de
+variables.
+
+## L'ordre de la rangée des fichiers du viewer, et le style lu TOUT SEUL (04/10/2026)
+
+**La demande, mot pour mot.** « *pdb from drive button should stay in the same line as PDB files, and
+in the following order: PDB files, URL, Load, Trajectory, download pdb, clear, Create drive folder,
+Pdb from folder, trajectory from folder. Style from folder should not be there. The last file style
+should be read automatically.* »
+
+### ① Une seule rangée, et son ordre est celui-là
+
+Rien n'a été retiré de la rangée §1 General du viewer : elle a été **réordonnée**, et les commandes
+du **dossier de l'expérience** l'ont rejointe en fin de ligne (elles y étaient déjà pour la page MD,
+mais AVANT ⬇ PDB et 🗑 Clear). Ce qui reste vrai : c'est le viewer qui rend le geste de création et
+`fileRowExtra` (les 📂 de la page), donc **aucune page** ne peut les oublier ni les déplacer.
+
+| # | Commande | Ce qu'elle fait |
+|---|----------|-----------------|
+| 1 | 📂 **PDB file(s)** | le fichier principal (+ les molécules annexes) du poste |
+| 2 | **PDB ID or URL** + **Load** | la même chose, par code ou par lien |
+| 3 | 📂 **Trajectory** | la trajectoire du poste |
+| 4 | ⬇ **PDB** | ce qui est à l'écran, dans UN fichier (la frame affichée) |
+| 5 | 🗑 **Clear** | vide la vue |
+| 6 | 🗑 **Delete PDB ⇄ ↩ Restore PDB** | met le PDB de côté / le ressuscite (conditionnel) |
+| 7 | 📁 **Create drive folder** | le seul geste qui FABRIQUE l'arborescence de l'expérience |
+| 8 | `{fileRowExtra}` | les 📂 de la PAGE : 📂 Topology / 📂 Trajectory from Drive folder (MD), rien sur NMR / Docking |
+
+⚠ **« 📂 Style from folder » a disparu** (« *Style from folder should not be there* ») et son geste
+`pickStyleFileFromFolder` avec lui : aucun code mort, et le viewer n'importe même plus
+`DriveExperimentFilePicker` (la seule définition qui reste est celle des pages).
+
+### ② Le style du dossier se lit TOUT SEUL — et c'est bien le dernier utilisé
+
+La seconde moitié de la demande était déjà là (session 🧪) : à l'ouverture d'une expérience, le
+spectateur applique **la mémoire de ce poste**, et si elle ne suffit pas (autre poste, navigateur
+vidé), il **lit le dossier** de l'expérience et applique son fichier de style. Ce qui a changé ici,
+c'est que ce rappel automatique est désormais le **SEUL** lecteur : plus de bouton pour désigner un
+fichier à la main.
+
+Pourquoi « the last file style » est tout de même respecté : **chaque geste qui retient un style
+réécrit le fichier CANONIQUE de son mode** dans le dossier (`rememberViewerStyle` → `archiveViewerStyle`,
+un fichier par mode, réécrit et non dupliqué) — 💾 Save, 📂 Load d'un nom du magasin, ⬆ Import, et
+l'ancien 📂 Style from folder. Le dossier porte donc **toujours le dernier utilisé**, et la règle de
+préférence du module pur reste celle de la demande d'origine (`pickViewerStyleFile` : le snapshot de
+l'expérience, sinon le cumulatif, le plus récent du mode).
+
+*Vérifier :* `node _viewer_ui_layout_test.mjs` — **501 assertions** (contre 494) : l'ordre demandé est
+mesuré comme une **suite de positions** (📂 PDB file(s) < URL < Load < 📂 Trajectory < ⬇ PDB <
+🗑 Clear < 📁 Create drive folder < les 📂 de la page), et ni « Style from folder » ni
+`pickStyleFileFromFolder` n'existent plus. `node _structure_windows_test.mjs` — **108** (contre 107) :
+le même ordre, vu du viewer. `node _experiment_folder_files_test.mjs` — **181** : c'est bien le
+viewer qui rend les deux commandes du dossier, la création AVANT les 📂 de la page, et sur la ligne
+de §1 General. `node _viewer_style_recall_test.mjs` — **131** (contre 130) : le rappel automatique
+reste seul lecteur, il refuse un `.json` qui n'est pas un style, il adopte le nom lu, il écrit la
+mémoire du poste et il le DIT. Régressions : `node _viewer_general_row_test.mjs` **189**,
+`node _viewer_render_smoke_test.mjs` **23**, `node _viewer_row_bridges_test.mjs` **69**,
+`node _viewer_style_controls_test.mjs` **494**.
+
+## Viewer : l'ombre ne se détache plus quand le CADRE change de taille (04/10/2026)
+
+**Le défaut signalé.** « *As for the ray shadows, as soon as I click on the MD window (without
+running it) or "structure calculation" (without even running it), this strange shadow detached from
+the molecule appears.* »
+
+**La cause, en une phrase :** ouvrir une **fenêtre de gauche** (🧬 Structure calculation, ▶ MD, 🪢
+Ramachandran) RÉTRÉCIT la vue — la rangée du viewer partage sa largeur avec ces docks (« la colonne de
+gauche prend sa place, la vue prend le RESTE ») — mais **NGL ne l'apprenait pas** : sa toile gardait
+ses 900 px, donc la molécule ne bougeait pas d'un pixel, tandis que la **couche de l'ombre vivante**
+(`absolute inset-0 w-full h-full`) était étirée en CSS sur la nouvelle boîte. Un masque bâti pour 900
+affiché sur 700, c'est l'ombre **décalée** de ~105 px : « detached from the molecule ». Seul
+`ramaDock` prévenait NGL (un effet dédié, écrit quand le dock 🪢 est né) ; `calcDock` et `mdDock`,
+non.
+
+### Le remède, en DEUX moitiés (l'une sans l'autre ne suffit pas)
+
+1. **Le viewer dit à NGL de reprendre ses mesures.** Un **`ResizeObserver`** observe la boîte de la
+   vue et appelle `stage.handleResize()` + une image à CHAQUE changement de taille — un dock, la
+   poignée de hauteur, la fenêtre, la barre latérale, un repli de la rangée des résidus — au lieu des
+   trois effets qui devinaient lesquels (`viewH`, `viewerCollapsed`, `ramaDock` : ils restent, ils
+   agissent AVANT le navigateur, l'observateur ne peut plus rien oublier). Une vue **repliée** (0 px)
+   n'est pas mesurée : NGL garde sa dernière taille et le 🔎 « Expand viewer » recale par son effet.
+2. **Le pilote de l'ombre lit la TAILLE comme il lit la pose.** `viewerRayShadowLive.js` expose
+   `canvasSizeOf`, retient la taille du dernier masque peint (`builtSize`) et la compare à **chaque
+   image rendue**, AVANT la pose et la signature (un redimensionnement n'est ni l'un ni l'autre :
+   l'aspect vit dans la matrice de PROJECTION, pas dans `matrixWorldInverse`). Une taille nouvelle
+   fait donc **repeindre tout de suite**, dans le régime du repos (aucun brouillon : la qualité ne
+   clignote pas) — au lieu d'attendre `staleMs`, après quoi, souvent, plus rien n'est rendu du tout
+   (NGL ne rend que sur demande). Un masque impossible (`failBuild`) l'oublie, comme la signature : le
+   filet continue de se soigner tout seul.
+
+### Ce qui est MESURÉ (et comment)
+
+`_viewer_ray_shadow_resize_test.cjs` joue la scène dans un vrai Chrome : une rangée avec un dock qui
+s'ouvre, la vraie toile NGL 2.4, **le vrai pilote** et une mesure en **pixels affichés** — le centre
+de gravité de la MOLÉCULE (les atomes projetés par `camera.clip`, la même matrice que le masque) contre
+celui de l'OMBRE (le dernier masque peint, ramené par la taille CSS de la couche). Leur écart est un
+décalage de projection : constant tant que la couche tombe juste.
+
+| instant | boîte | toile | masque | couche étirée | écart ombre − molécule |
+|---------|-------|-------|--------|---------------|------------------------|
+| la scène posée | 900 | 900 | 900 | non (1,00) | **+22,0 px** |
+| le dock s'ouvre, **NGL est prévenu** | 700 | **700** | **700** | non (1,00) | **+14,6 px** (la pénombre, ≤ 10 px) |
+| le dock se referme | 900 | 900 | 900 | non (1,00) | **+22,0 px** (au pixel près) |
+| le dock s'ouvre, **sans rien dire à NGL** | 700 | **900** | 900 | **oui (0,78)** | **−83,2 px** → **105 px de côté** |
+
+Et le témoin négatif prouve le « detached » sans discussion : la **boîte projetée de la molécule est
+identique au pixel près** (même centre, même taille : elle n'a pas bougé) pendant que l'ombre, elle,
+glisse de plus de **100 px** — exactement le décalage qu'impose l'étirement 700/900.
+
+*Vérifier :* `node _viewer_ray_shadow_resize_test.cjs` — **20/20** assertions dans un vrai Chrome
+(≈20 s) : la couche n'est jamais étirée (facteur 1), la toile suit la boîte quand on le lui dit, le
+masque est refait POUR la taille observée, la molécule ne change ni de taille ni de place, l'écart ne
+bouge que de la poignée de pixels de la pénombre (≤ 10 px) — et le témoin négatif, lui, mesure les
+105 px du défaut rapporté. `node _viewer_ray_shadow_live_test.mjs` — **183 assertions** (contre 175) :
+la politique du pilote, sans navigateur, avec le quatrième témoin (`resize` → un masque pour la
+nouvelle taille, en passe nette, une seule fois, et le retour à l'ancienne taille aussi).
+`node _viewer_ui_layout_test.mjs` — **501** : le `ResizeObserver`, son garde-fou (0 px) et son
+`observe` sont dans le viewer. Régressions : `node _viewer_ray_shadows_test.mjs`,
+`node _viewer_light_rig_test.mjs`, `node _viewer_render_smoke_test.mjs` **23**, `npx vite build` ✓,
+`npx oxlint` sur les deux fichiers touchés — **0 erreur**, et **exactement les mêmes 62
+avertissements qu'à HEAD** (vérifié sur la version de `HEAD`).

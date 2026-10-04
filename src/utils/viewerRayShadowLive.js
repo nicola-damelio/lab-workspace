@@ -251,6 +251,29 @@ export const sceneSignatureOf = (stage) => {
   return parts.join(',');
 };
 
+/* ---- LA TAILLE DE LA TOILE FAIT PARTIE DE CE QUI CHANGE LA COUCHE ----------
+   Un cadre qui change de largeur — un dock qui s'ouvre à gauche de la vue (🧬
+   Structure calculation, ▶ MD, 🪢 Ramachandran), la poignée de hauteur, la
+   fenêtre — ne touche NI la pose NI la signature de la scène : l'aspect vit dans
+   la matrice de PROJECTION, pas dans `matrixWorldInverse` que `poseOf` lit, et
+   aucun groupe de la vue ne bouge. Sans ce témoin, l'image rendue après un
+   redimensionnement était jugée « rendue pour rien », et le filet ne pouvait en
+   reparler qu'après `staleMs` — donc, quand plus rien n'est rendu ensuite (NGL
+   ne rend que sur demande), JAMAIS. Le masque bâti pour l'ancienne toile restait
+   alors étiré en CSS sur la nouvelle boîte : c'est l'ombre DÉTACHÉE de la
+   molécule — le rapport de cette session, mot pour mot : « as soon as I click on
+   the MD window (without running it) or "structure calculation" (without even
+   running it), this strange shadow detached from the molecule appears ». La
+   taille est donc lue comme la pose et la signature : à chaque image, et
+   comparée à celle du dernier masque peint. */
+export const canvasSizeOf = (viewer) => {
+  const canvas = viewer && viewer.renderer && viewer.renderer.domElement;
+  return [
+    Math.max(1, Math.round(Number(canvas && canvas.width) || 0)),
+    Math.max(1, Math.round(Number(canvas && canvas.height) || 0)),
+  ];
+};
+
 /* ---- LA SIGNATURE DES ENTRÉES DU MASQUE ------------------------------------
    LE DÉFAUT QU'ELLE ÉTEINT (le rapport de cette session : « the auto mode for
    live rendering of ray is good but it reinitializes the view even if i move the
@@ -429,6 +452,10 @@ export const attachRayShadowLive = ({
   let lastCheckedAt = 0;
   let lastBuiltAt = 0;
   let builtSig = null;
+  /* ⚠ LA TAILLE DU DERNIER MASQUE PEINT (voir `canvasSizeOf`) : c'est le témoin
+     du CADRE (un dock qui s'ouvre, la fenêtre, la poignée de hauteur), que ni la
+     pose ni la signature ne portent. */
+  let builtSize = null;
   let timer = null;
   let stopped = false;
   /* ◐ LES COORDONNÉES ONT BOUGÉ (voir `moved()`) — la pose et la signature de la
@@ -454,6 +481,7 @@ export const attachRayShadowLive = ({
     state.error = (err && err.message) || String(err);
     overlay.clear();
     builtSig = null;
+    builtSize = null;
     lastBuiltAt = now();               // une erreur persistante ne doit pas boucler à chaque image
     lastCheckedAt = lastBuiltAt;
     publish();
@@ -493,6 +521,7 @@ export const attachRayShadowLive = ({
        qui lui permet de ne plus confondre « le temps a passé » (une souris qui
        passe) avec « le masque n'est plus le même » (un atome glissé). */
     builtSig = maskInputsSignatureOf(inputs, [width, height]);
+    builtSize = [width, height];
     state.lastMs = Math.round(ms);
     state.builds += 1;
     lastBuiltAt = now();
@@ -584,6 +613,21 @@ export const attachRayShadowLive = ({
     const view = poseOf(viewer);
     if (!view) return;
     const signature = sceneSignatureOf(stage);
+    /* ⚠ LE CADRE A CHANGÉ DE TAILLE — c'est le rapport de cette session, et il
+       passe AVANT la pose : un dock qui s'ouvre ne bouge ni la caméra ni la
+       scène, mais la toile d'NGL, elle, se recale (le viewer le lui dit par son
+       ResizeObserver) — et la couche, elle, est étirée en CSS sur la NOUVELLE
+       boîte, donc le masque de l'ancienne toile ne tombe plus sur la molécule.
+       On repeint donc DÈS CETTE IMAGE, dans le régime du repos (aucun brouillon :
+       un redimensionnement n'est pas un geste), au lieu d'attendre `staleMs` —
+       délai après lequel, souvent, plus rien n'est rendu du tout. */
+    const size = canvasSizeOf(viewer);
+    if (builtSize && (size[0] !== builtSize[0] || size[1] !== builtSize[1])) {
+      pose = view;
+      scene = signature;
+      buildNow(restingModeOf());
+      return;
+    }
     /* ⚠ `stirred` EST LE TROISIÈME TÉMOIN, ET C'EST CELUI DES COORDONNÉES (voir
        `moved`) : l'image rendue après une écriture de dynamique est un GESTE, même
        si la pose et la signature n'ont pas bougé d'un iota. C'est ce témoin qui a

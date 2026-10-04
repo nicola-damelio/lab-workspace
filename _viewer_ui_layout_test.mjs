@@ -171,8 +171,44 @@ has('if (f) handleTrajFileChosen(f);', '[§1] …branché sur handleTrajFileChos
    buttons should be in the same line as "PDB file" and "trajectory" buttons ».
    Défaut `null` : les pages NMR et Docking ne voient AUCUN changement. */
 has('fileRowExtra = null,', '[§1] la rangée des fichiers accepte les commandes de la PAGE');
-has('{fileRowExtra}', '[§1] …et les rend DANS la même rangée (après 📂 PDB file(s) / 📂 Trajectory)');
+has('{fileRowExtra}', '[§1] …et les rend DANS la même rangée (la ligne de 📂 PDB file(s))');
 has('onClick={handleClearViewer}', '[§1] bouton Clear');
+/* ── L'ORDRE DE LA RANGÉE (la demande de cette session, mot pour mot) : « in the
+   following order: PDB files, URL, Load, Trajectory, download pdb, clear, Create
+   drive folder, Pdb from folder, trajectory from folder. Style from folder
+   should not be there. The last file style should be read automatically. »
+   ⚠ C'EST UN ORDRE, DONC C'EST UNE SUITE DE POSITIONS — mesurée, pas racontée. */
+{
+  const rowStart = VIEW.indexOf('<VSection title="1 · General"');
+  const at = (needle, from = rowStart) => VIEW.indexOf(needle, from);
+  const iFiles = at('📂 PDB file(s)');
+  const iUrl = at('placeholder="PDB ID or URL"');
+  const iLoad = at('onClick={handlePdbIdLoad}');
+  const iTraj = at('📂 Trajectory', iLoad);
+  const iPdb = at('onClick={downloadFramePdb}');
+  const iClear = at('onClick={handleClearViewer}');
+  const iCreate = at('<DriveExperimentFolderCreator ctx={driveNaming} />');
+  const iExtra = at('{fileRowExtra}', iCreate);
+  ok(iFiles > 0 && iFiles < iUrl && iUrl < iLoad && iLoad < iTraj && iTraj < iPdb
+    && iPdb < iClear && iClear < iCreate && iCreate < iExtra,
+    '[§1] la rangée suit l’ordre demandé : 📂 PDB file(s) · URL · Load · 📂 Trajectory · ⬇ PDB · 🗑 Clear · 📁 Create drive folder · les 📂 de la page');
+  ok(VIEW.indexOf('label="📂 Style from folder"') === -1,
+    '[§1] …et « Style from folder » n’y est plus : le style du dossier est lu par le rappel automatique');
+  ok(VIEW.indexOf('const pickStyleFileFromFolder') === -1,
+    '[§1] …la picker du style a donc disparu du viewer (aucun code mort)');
+}
+/* ◐ LA VUE SUIT SON CADRE — le rapport de cette session : « as soon as I click on
+   the MD window (without running it) or "structure calculation" (without even
+   running it), this strange shadow detached from the molecule appears ». Les docks
+   de gauche (🧬 · ▶ MD · 🪢) rétrécissent la vue sans bouger la caméra : un
+   ResizeObserver dit donc à NGL de reprendre ses mesures à chaque changement de
+   taille, et le pilote de l'ombre refait son masque sur la taille observée. */
+has('const ro = new ResizeObserver(() => {', '[§0] la boîte d’NGL est observée (un dock qui s’ouvre n’est plus oublié)');
+has("if (!host || typeof ResizeObserver === 'undefined') return undefined;",
+  '[§0] …sans dépendre du navigateur (aucun ResizeObserver = aucune erreur)');
+has('ro.observe(host);', '[§0] …et c’est bien la boîte de la vue qui est observée');
+has('if (!(box.width > 1) || !(box.height > 1)) return;',
+  '[§0] …mais une vue REPLIÉE (0 px) n’est pas mesurée : NGL garde sa dernière taille');
 /* 🗑 Delete PDB / ↩ Restore PDB — UN bouton, deux états : le PDB chargé dans
    CETTE section est mis de côté (jamais perdu : le même bouton le ressuscite,
    sa trajectoire avec lui) et la structure de la séquence de la page reprend la

@@ -213,6 +213,9 @@ const SkinControl = ({ operator = null }) => {
       <p className="text-xs text-slate-500 leading-relaxed">
         A skin repaints the program — colours, inks, borders — and nothing else: the layout,
         the display scale, the printed documents and the figures keep their own settings.
+        A <b>dark</b> skin (Night, Carbon) repaints the <b>pages themselves</b>: the
+        background goes dark and the writing turns light so it stays readable, while
+        printing still goes out on white paper.
       </p>
     </div>
   );

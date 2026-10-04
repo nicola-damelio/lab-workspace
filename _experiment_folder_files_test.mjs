@@ -563,12 +563,20 @@ eq((MDSRC.match(/<DriveExperimentFolderCreator/g) || []).length, 0,
   'la page MD ne monte PLUS la création : le viewer s’en charge, sur la ligne de 📂 PDB file(s)');
 eq((NMRSRC.match(/<DriveExperimentFolderCreator/g) || []).length, 0,
   '…et la page NMR non plus : la place ne dépend plus d’une page');
-ok(VIEWSRC.includes("import { DriveExperimentFilePicker, DriveExperimentFolderCreator } from './DriveExperimentFiles';"),
-  'c’est le VIEWER qui monte le geste (une fois, pour les trois pages à viewer) — et le 📂 du style avec lui');
-ok(/fileRowExtra\}[\s\S]{0,1400}?<DriveExperimentFolderCreator ctx=\{driveNaming\} \/>/.test(VIEWSRC),
-  '…TOUJOURS juste après la rangée des fichiers — la ligne de 📂 PDB file(s)');
+ok(VIEWSRC.includes("import { DriveExperimentFolderCreator } from './DriveExperimentFiles';"),
+  'c’est le VIEWER qui monte le geste (une fois, pour les trois pages à viewer)');
 ok(VIEWSRC.includes('{driveNaming ? <DriveExperimentFolderCreator ctx={driveNaming} /> : null}'),
-  '…et seulement quand l’expérience est nommée (aucun bouton creux sur un viewer nu)');
+  '…sur la ligne des fichiers, la ligne de 📂 PDB file(s)');
+ok(VIEWSRC.indexOf('{driveNaming ? <DriveExperimentFolderCreator ctx={driveNaming} /> : null}')
+  < VIEWSRC.indexOf('{fileRowExtra}'),
+  '…AVANT les 📂 de la page : l’ordre demandé (créer le dossier, puis en lire un fichier)');
+ok(!VIEWSRC.includes('import { DriveExperimentFilePicker'),
+  '⚠ …et le 📂 du style a quitté la rangée (« Style from folder should not be there ») : le rappel automatique lit le style du dossier');
+ok(/\{driveNaming \? <DriveExperimentFolderCreator ctx=\{driveNaming\} \/> : null\}[\s\S]{0,900}?\{fileRowExtra\}/.test(VIEWSRC),
+  '…et les deux commandes du dossier se suivent, à la fin de la rangée (§1 General)');
+ok(VIEWSRC.indexOf('{fileRowExtra}') > VIEWSRC.indexOf('<VSection title="1 · General"')
+  && VIEWSRC.indexOf('{fileRowExtra}') < VIEWSRC.indexOf('<VSection title="2 · Toolbar"'),
+  '…sur la ligne de 📂 PDB file(s), pas dans une boîte à part');
 
 const TESTS = readFileSync('probe_tests.txt', 'utf8');
 ok(TESTS.includes('_experiment_folder_files_test.mjs'),

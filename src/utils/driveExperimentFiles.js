@@ -34,6 +34,13 @@
    [<instance>]`) ET les deux sous-sections où les fichiers se déposent
    (`experiment_setup/Structure`, `experiment_setup/Trajectory`).
 
+   …ET IL LES REMPLIT : le même geste COPIE dedans les fichiers que ce poste a
+   en main (`depositExperimentFiles` — la demande : « the "Create drive folder"
+   button does not copy the files in the folder it creates but this is the most
+   important thing »). Un fichier déjà là, sous son nom attendu (l'un des noms
+   que l'archivage emploie), n'est PAS recopié, et un dossier déjà là n'est
+   jamais recréé : le geste entier est idempotent.
+
    Règles tenues ici :
      • LA LECTURE NE CRÉE RIEN : le dossier est CHERCHÉ (`{ create: false }`) ;
        un dossier absent est simplement absent (un geste de lecture ne fabrique
@@ -61,7 +68,15 @@ import {
   PROJECTS_CONTAINER, sanitizeSlug
 } from './driveNaming';
 import { getCloudProvider, ncEnsureFolders } from './nextcloud';
-import { getDriveRootName, getDriveToken, listDriveChildren, resolveDrivePathFromNames } from './driveUpload';
+/* Le PRÉDICAT « c'est le MÊME fichier » de l'application (`sameRawFileFor` : même
+   extension, et radicaux identiques ou l'un préfixe de l'autre) — c'est lui qui
+   reconnaît un fichier DÉJÀ déposé, même quand le nom porté sur le Drive est plus
+   long que le nom local (`<radical>_<scientifique>.<ext>`). */
+import { sameRawFileFor } from './driveRestore';
+import {
+  archiveFileDriveName, getDriveRootName, getDriveToken, listDriveChildren,
+  resolveDrivePathFromNames, uploadLocalFile
+} from './driveUpload';
 
 /** Type MIME d'un dossier Google Drive (un dossier n'est PAS un fichier). */
 export const GOOGLE_FOLDER_MIME = 'application/vnd.google-apps.folder';
@@ -200,6 +215,36 @@ export const experimentFileFolderPathOf = (ctx = {}, subsection = '') => {
    * supplémentaire. C'est `drivePathText` / `resolveDrivePathFromNames` qui
    * sluguent au moment d'écrire ou d'afficher (« experiment_setup »). */
   return [...base, canonicalPageSection(EXPERIMENT_SETUP_SECTION), sub].filter(Boolean);
+};
+
+/** LA SOUS-SECTION où un fichier de l'expérience se dépose, d'après son
+ *  extension : une trajectoire va dans `Trajectory`, TOUT LE RESTE (topologie,
+ *  structure, modèle) dans `Structure` — les deux dossiers que le geste de
+ *  création fabrique et que les 📂 lisent. PUR. */
+export const experimentSubsectionForFile = (name = '') => (
+  fileHasExt(name, MD_TRAJECTORY_EXTS) ? 'Trajectory' : 'Structure'
+);
+
+/** LES DOSSIERS OÙ UN FICHIER DE L'EXPÉRIENCE PEUT DÉJÀ VIVRE — celui que le
+ *  geste de création fabrique (`experiment_setup/<sous-section>`) ET celui de la
+ *  SECTION de la page (`<section>/<sous-section>` : `data/Structure` pour le
+ *  viewer NMR et pour les commandes 3D, `data/Trajectory` pour les mêmes en MD).
+ *  Un fichier trouvé dans l'UN OU L'AUTRE est « déjà là » : le geste de copie ne
+ *  le redépose pas. PUR. */
+export const experimentFileBranches = (ctx = null, subsection = '') => {
+  const sub = canonicalSubSection(subsection);
+  if (!sub) return [];
+  const out = [];
+  const push = (path) => {
+    if (!Array.isArray(path) || !path.length) return;
+    const key = path.join('/');
+    if (!out.some((p) => p.join('/') === key)) out.push(path);
+  };
+  push(experimentFileFolderPathOf(ctx, sub));
+  const base = experimentFolderPathOf(ctx);
+  const section = canonicalPageSection((ctx && ctx.section) || '');
+  if (base.length && section) push([...base, section, sub]);
+  return out;
 };
 
 /** Le chemin COMPLET tel qu'il s'ÉCRIT sur le Drive : le dossier du DATASET
@@ -475,6 +520,87 @@ export const createExperimentFolder = async ({ ctx = null, subsections = EXPERIM
     entries.push(entry(leaf, resolved));
   }
   return ok(entries);
+};
+
+/* ── LA COPIE DES FICHIERS — l'autre moitié de « Create drive folder » ──────
+   La demande, mot pour mot : « the "Create drive folder" button does not copy
+   the files in the folder it creates but this is the most important thing. If
+   the folder already exists it should not create another and if the files
+   already exist (with the expected names) it should not copy them. »
+
+   Le geste de création ne fabriquait que des DOSSIERS VIDES : il fallait
+   ensuite les remplir à la main. Or le poste a DÉJÀ les fichiers — c'est même
+   lui qui les montre à l'écran (`NMRMoleculeViewer` : le fichier de structure,
+   les molécules annexes reçues avec lui, la trajectoire). Ce geste les COPIE
+   donc dans les dossiers qu'il vient de créer :
+
+     • le fichier de structure (`.pdb`, `.cif`, `.gro`…) → `experiment_setup/Structure`
+     • la trajectoire (`.xtc`, `.trr`, `.dcd`…)           → `experiment_setup/Trajectory`
+
+   Trois règles, et ce sont celles de la demande :
+     1. le dossier visé est CELUI QUE LA CRÉATION VIENT DE RÉSOUDRE (`folders` :
+        les entrées de `createExperimentFolder`) — le geste ne fabrique donc
+        jamais un dossier de plus ; sans cette liste il résout le chemin
+        canonique, toujours avec `create: true` (une résolution qui trouve est
+        la règle de l'envoi) ;
+     2. le fichier est cherché AVANT d'être envoyé : un fichier du MÊME nom
+        attendu, dans l'une des branches de l'expérience (`experiment_setup/
+        <sous-section>` et `<section>/<sous-section>` — un fichier déposé hier
+        par l'archivage, dans `data/Structure` par exemple), est « déjà là » et
+        n'est PAS recopié (`sameRawFileFor` : le nom plus long du Drive, ou le
+        nom local, désignent le même fichier) ;
+     3. le nom déposé est EXACTEMENT celui de l'archivage
+        (`archiveFileDriveName` → `<radical>_<scientifique>.<ext>`) : la
+        recherche de ② et l'archivage regardent donc le même nom, et re-presser
+        le bouton ne recopie rien.
+
+   Rien n'est promis en l'air : `copied` / `already` / `failed` sont comptés et
+   chaque fichier est rendu avec son état, son nom et son lien. */
+
+/** Le nom que PORTERA sur le Drive un fichier déposé par ce geste — celui de
+ *  l'archivage, ou celui que l'appelant impose (`name`). PUR. */
+export const experimentDepositName = ({ file = null, ctx = null, name = '' } = {}) => (
+  String(name || '').trim()
+  || archiveFileDriveName({ file, ctx: { ...(ctx || {}) } })
+);
+
+/** Une entrée de dépôt normalisée — `{ file, fileName, subsection, name }`, ou
+ *  `null` quand il n'y a rien à copier (aucun fichier, ou un fichier sans nom :
+ *  un nom est ce sans quoi ni la recherche ② ni l'envoi ne peuvent rien faire).
+ *  Accepte aussi un `File` NU (l'appelant qui n'a qu'un fichier à donner). PUR. */
+const depositEntryOf = (item = null) => {
+  const raw = (item && typeof item === 'object' && item.file) ? item : { file: item };
+  const file = raw.file;
+  if (!file || typeof file.name !== 'string' || !file.name.trim()) return null;
+  return {
+    file,
+    fileName: String(file.name),
+    subsection: canonicalSubSection(raw.subsection || ''),
+    name: String(raw.name || '').trim()
+  };
+};
+
+/** Le fichier DÉJÀ LÀ qui décrit le même fichier que `name` — cherché dans les
+ *  branches de l'expérience (`experimentFileBranches`), sans RIEN créer. Rend
+ *  `null` quand il n'y est pas (ou quand le Drive ne peut pas être lu : on
+ *  n'invente ni une présence ni une absence). */
+const existingDepositFor = async ({ ctx = null, subsection = '', name = '' } = {}) => {
+  const paths = experimentFileBranches(ctx, subsection);
+  const ext = driveFileExt(name);
+  if (!paths.length || !name || !ext) return null;
+  const listed = await listExperimentFiles({
+    paths, exts: [ext], stopWhenFound: false
+  }).catch(() => null);
+  const files = (listed && listed.files) || [];
+  return files.find((f) => sameRawFileFor(f.name, name)) || null;
+};
+
+/** Le dossier déjà résolu par la CRÉATION pour une sous-section (`null` s'il n'y
+ *  est pas : le dépôt résoudra alors le chemin canonique lui-même). PUR. */
+const createdFolderFor = (folders = [], subsection = '') => {
+  const sub = canonicalSubSection(subsection);
+  if (!sub || !Array.isArray(folders)) return null;
+  return folders.find((f) => canonicalSubSection(f && f.subsection) === sub) || null;
 };
 
 

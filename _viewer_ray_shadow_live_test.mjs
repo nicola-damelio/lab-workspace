@@ -357,6 +357,11 @@ const makePilot = ({
     /* LE GESTE DU FILET : des atomes qui bougent SANS que la caméra ni la
        signature ne changent (c’est exactement ce que le filet doit attraper). */
     slide: (dx) => { atoms.positions[0] += dx; },
+    /* ◐ LE CADRE CHANGE DE TAILLE — ce que fait NGL quand le viewer lui dit de
+       reprendre ses mesures (`handleResize`) : la toile n'a plus les mêmes
+       dimensions, et c'est TOUT ce que le pilote peut en voir (ni la pose ni la
+       signature ne bougent). */
+    resize: (w, h) => { stage.viewer.renderer.domElement.width = w; stage.viewer.renderer.domElement.height = h; },
     failReads: (v) => { failing = v; },
     render: () => [...handlers].forEach((h) => h()),
   };
@@ -530,6 +535,32 @@ for (let i = 0; i < 10; i += 1) { MR.slide(0.1); MR.pilot.moved(); }
 MR.render();
 eq(MR.pilot.stats().builds, mr0.builds + 1, 'dix écritures entre deux images ne coûtent QU’UN masque (un par image affichée)');
 
+/* f) LE CADRE CHANGE DE TAILLE — LE QUATRIÈME TÉMOIN, ET LE RAPPORT DE CETTE
+   SESSION : « as soon as I click on the MD window (without running it) or
+   "structure calculation" (without even running it), this strange shadow
+   detached from the molecule appears ». Ouvrir un dock de gauche rétrécit la vue
+   SANS toucher ni la pose ni la signature : seule la TAILLE de la toile le dit.
+   La couche doit donc être refaite DÈS l'image qui suit — et en passe NETTE, car
+   un redimensionnement n'est pas un geste : aucune qualité qui clignote. */
+const MRZ = makePilot({ staleMs: 400 });
+MRZ.pilot.refresh({ force: true });
+const mrz0 = MRZ.pilot.stats();
+MRZ.resize(60, 30);                               // le dock s’ouvre : NGL se recale
+MRZ.render();
+eq(MRZ.pilot.stats().builds, mrz0.builds + 1,
+  'une image rendue sur une taille NOUVELLE refait le masque TOUT DE SUITE');
+eq(MRZ.pilot.stats().mode, 'full',
+  '…en passe NETTE : un cadre qui change de taille n’est pas un geste, aucun brouillon');
+eq(MRZ.pilot.stats().drafts, mrz0.drafts, '…donc la qualité ne clignote pas');
+eq(MRZ.paints[MRZ.paints.length - 1].maskWidth, 60,
+  '…et le masque est bâti pour la taille OBSERVÉE (60 px de large, pas les 40 d’avant)');
+MRZ.render();
+eq(MRZ.pilot.stats().builds, mrz0.builds + 1, '…une seule fois : la même taille ne se refait pas');
+MRZ.resize(40, 20);                               // le dock se referme
+MRZ.render();
+eq(MRZ.pilot.stats().builds, mrz0.builds + 2, '…et le retour à l’ancienne taille refait le masque aussi');
+eq(MRZ.paints[MRZ.paints.length - 1].maskWidth, 40, '…à SA taille (40 px) : le masque n’est jamais étiré');
+
 /* e) INERTE QUAND LE PILOTE EST ARRÊTÉ : aucune fuite, aucun geste fantôme. */
 const MS = makePilot();
 MS.pilot.refresh({ force: true });
@@ -672,5 +703,34 @@ has('est un geste comme un autre',
 eq(VIEW.split('rayShadowMoleculeMoved();').length - 1, 3,
   '⚠ TROIS appels, et trois seulement : les trois écrivains de coordonnées (jamais un quatrième chemin inventé)');
 
-console.log(`_viewer_ray_shadow_live_test.mjs — ${passed} assertions OK (ombre vivante : parité PNG · 3 régimes · politique auto · pose · signature de la scène · signature des entrées du masque · geste des coordonnées (moved) · couche · films)`);
+/* ◐ LE CADRE QUI CHANGE DE TAILLE — LE RAPPORT DE CETTE SESSION, ET SON REMÈDE
+   DANS SES DEUX MOITIÉS. (a) Le VIEWER dit à NGL de reprendre ses mesures dès que
+   sa boîte change (un dock de GAUCHE qui s'ouvre — 🧬 Structure calculation, ▶ MD,
+   🪢 — la poignée de hauteur, la fenêtre, la barre latérale) : c'est le
+   ResizeObserver sur la boîte d'NGL, plus `handleResize` et une image. (b) Le
+   PILOTE, lui, lit la TAILLE de la toile comme il lit la pose et la signature :
+   sinon l'image qui suit un redimensionnement serait « rendue pour rien », et,
+   comme plus rien n'est rendu ensuite (NGL ne rend que sur demande), la couche
+   resterait étirée en CSS sur la nouvelle boîte — l'ombre DÉTACHÉE de la molécule
+   du rapport : « as soon as I click on the MD window (without running it) or
+   "structure calculation" (without even running it), this strange shadow detached
+   from the molecule appears ». */
+ok(MODULE.includes('export const canvasSizeOf = (viewer) => {'),
+  'la taille de la toile se lit par UNE fonction (canvasSizeOf), à côté de la pose et de la signature');
+ok(MODULE.includes('let builtSize = null;'), 'le pilote retient la taille du dernier masque peint');
+ok((MODULE.match(/builtSize = null;/g) || []).length === 2,
+  '…et il l’OUBLIE quand la couche est effacée (un masque impossible) : le filet se soigne tout seul');
+ok(MODULE.includes('builtSize = [width, height];'), '…il l’écrit à chaque masque peint');
+ok(MODULE.includes('if (builtSize && (size[0] !== builtSize[0] || size[1] !== builtSize[1])) {'),
+  '…et la compare à CHAQUE image : un cadre qui a changé de taille repeint tout de suite');
+ok(MODULE.indexOf('const size = canvasSizeOf(viewer);') < MODULE.indexOf('if (stirred || !samePose('),
+  '⚠ …AVANT la pose et la signature : un redimensionnement n’est ni l’un ni l’autre');
+has('const ro = new ResizeObserver(() => {', 'le viewer observe la boîte d’NGL (un dock de gauche n’est plus oublié)');
+has('ro.observe(host);', '…c’est bien la boîte de la vue qui est observée');
+has("if (!host || typeof ResizeObserver === 'undefined') return undefined;",
+  '…et sans ResizeObserver (un vieux navigateur) le viewer ne casse pas');
+has('if (!(box.width > 1) || !(box.height > 1)) return;',
+  '…une vue repliée (0 px) n’est pas mesurée : NGL garde sa dernière taille');
+
+console.log(`_viewer_ray_shadow_live_test.mjs — ${passed} assertions OK (ombre vivante : parité PNG · 3 régimes · politique auto · pose · signature de la scène · signature des entrées du masque · geste des coordonnées (moved) · cadre redimensionné · couche · films)`);
 
