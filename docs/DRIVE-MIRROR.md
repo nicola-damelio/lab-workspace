@@ -3361,7 +3361,7 @@ premier motif de la liste est `none` — donc les toutes premières pastilles es
 construction, rien changer.
 
 
-## « tutta la pagina é nera » : les motifs passent de quatre à douze, et la nuit prend de la profondeur (04/10/2026)
+## « tutta la pagina é nera » : les motifs passent de quatre à vingt, et la nuit prend de la profondeur (04/10/2026)
 
 **La demande, mot pour mot.** « *adesso reagisce ma mente nello stile preselezionato nero tutta la pagina
 é nera, nel custom posso regolare solo la pagina di sfondo. inoltre i patterns sono davvero pochi. sono
