@@ -38,7 +38,7 @@ import {
 import { scopeMeNames, scopeMePersonId, scopeCanSeeItem, scopePersonIdForName, scopeSeesAllRows, scopeFonctions } from './ownScope';
 import {
   TRANSFER_TARGETS, targetMetaOf, partModeOf, omTransferSummary,
-  devisPatchFromOmPart, reimbPatchFromOm, omTransferStatus, TRANSFER_MODES, isDevisGestion,
+  devisPatchFromOmPart, reimbPatchFromOm, omTransferStatus, TRANSFER_MODES,
 } from './transferAchats';
 
 /* ── Petites aides ─────────────────────────────────────────────────────── */
@@ -1342,21 +1342,6 @@ export const OmPage = () => {
         const transferred = !!r.transfert;
         const metaT = r.transfert ? targetMetaOf(r.transfert.cible) : null;
         const readyAll = !omTransferSummary(r).commande.some((p) => !omPartComplete(r, p.key));
-        const chip = (p) => {
-          if (p.mode === 'bc') {
-            if (p.devis && isDevisGestion(p.devis)) return <span className="text-orange-600 whitespace-nowrap" title="Devis « En gestion » : N° devis / fichier à compléter dans « Approbation devis & BC »">… en gestion</span>;
-            if (p.state === 'bc-signe') return <span className="text-emerald-600 font-black whitespace-nowrap" title="BC signé (date de signature BC dans Dépenses)">✓ BC signé</span>;
-            if (p.state === 'bc-en-cours') return <span className="text-blue-600 whitespace-nowrap" title="Devis signé, BC non signé">… BC à signer</span>;
-            if (p.state === 'bc-devis-attente') return <span className="text-amber-600 whitespace-nowrap" title="Devis en attente de signature dans « Approbation devis & BC »">… en attente de signature</span>;
-            return <span className="text-slate-300 whitespace-nowrap">devis à créer</span>;
-          }
-          if (p.fiche) {
-            return p.fiche.aCorriger
-              ? <span className="text-amber-600 whitespace-nowrap" title="Montants estimés à corriger une fois les justificatifs réels connus">… À corriger</span>
-              : <span className="text-emerald-600 font-black whitespace-nowrap" title="Fiche Remboursement corrigée">✓ remboursé</span>;
-          }
-          return <span className="text-slate-300 whitespace-nowrap">fiche à créer</span>;
-        };
         const transferButton = (mode, tone, label, hint, disabled = false) => (
           <button
             type="button"
@@ -1428,15 +1413,10 @@ export const OmPage = () => {
               </div>
             ) : null}
             {!transferred && !approved && !pendingDecision && !inTest ? <span className="text-[10px] text-slate-300">OM refusée</span> : null}
-            {st && st.parts.length ? st.parts.map((p) => (
-              <div key={p.key} className="flex items-center gap-1.5 text-[10px] leading-tight">
-                <span className="shrink-0">{p.icon}</span>
-                <span className="text-slate-500 shrink-0">{p.label}</span>
-                <span className="text-[10px] text-slate-400 tabular-nums whitespace-nowrap">{p.montant !== null && p.montant !== undefined ? euro.format(p.montant) : '—'}</span>
-                {transferred ? chip(p) : <span className={`text-[9px] font-black uppercase px-1 rounded whitespace-nowrap ${p.mode === 'bc' ? 'text-blue-600 bg-blue-50' : 'text-amber-600 bg-amber-50'}`}>{p.mode === 'bc' ? 'BC' : 'Remb.'}</span>}
-              </div>
-            )) : null}
-            {st && !st.hasCosts ? <span className="text-[10px] text-slate-300">aucun poste chiffré</span> : null}
+            {/* Plus de récapitulatif des postes sous les boutons (libellé ·
+               montant · « BC » / « Remb. ») : chaque poste a sa colonne de
+               montant et le suivi d’un transfert se lit dans « Approbation
+               devis & BC » et « Dépenses › Remboursements ». */}
           </div>
         );
       },

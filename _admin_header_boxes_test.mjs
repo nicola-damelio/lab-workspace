@@ -19,6 +19,17 @@
    infobulles : celle de « Pour signature » (ce qu’il faut pour l’activer) et
    celle de « ✎ Révision » (la voie à suivre quand des devis manquent).
 
+   Un cran plus loin, la cellule « Gestion des frais » de cette page empilait,
+   SOUS la rangée des trois boutons de transfert, une ligne par poste de coût —
+   icône · libellé · montant · étiquette « BC » / « Remb. », puis l’état du
+   devis / du remboursement — et une ligne grise « aucun poste chiffré ». Ces
+   lignes doublonnaient les colonnes de montant (Voyage / Logement / Repas /
+   Inscription, et le total « Coût total (calculé) ») tout en faisant grandir
+   chaque ligne du tableau : elles ont été retirées elles aussi. La colonne ne
+   garde que ce qui n’est dit nulle part ailleurs : le badge d’ensemble
+   (« ⏳ en cours » / « ✓ Soldé »), le badge « 🧪 en test », le mot
+   « OM refusée », et l’action à faire.
+
    Vérifications : le SOURCE des quatre pages — les pavés ont disparu ET ce qui
    doit rester (titre, barre d’action, états vides, câblage du tableau
    « hauteur d’écran ») est intact.
@@ -147,4 +158,33 @@ has(
   'OM prévus : l’infobulle de « ✎ Révision » dit la voie à suivre pour compléter',
 );
 
-console.log(`_admin_header_boxes_test.mjs — ${passed} assertions OK (pavés d’explication retirés des pages OM prévus, Achats prévus, Congés et Budget overview ; aide verrou retirée sous les boutons de transfert d’OM prévus)`);
+/* ── 5. OM prévus : plus de récapitulatif des postes sous les boutons ───────
+   La cellule « Gestion des frais » empilait une ligne par poste de coût
+   (icône · libellé · montant · étiquette « BC » / « Remb. », puis l’état du
+   devis / du remboursement) et une ligne « aucun poste chiffré » : elles
+   doublonnaient les colonnes de montant (Voyage / Logement / Repas /
+   Inscription, « Coût total (calculé) ») et faisaient grandir chaque ligne du
+   tableau. Le helper de rendu par poste (`chip`) et l’import `isDevisGestion`,
+   qui n’existaient que pour cela, sont partis avec elles. */
+gone(om, '{st && st.parts.length ? st.parts.map((p) => (', 'OM prévus : le récapitulatif des postes sous les boutons a disparu');
+gone(om, 'aucun poste chiffré', 'OM prévus : …et sa ligne « aucun poste chiffré »');
+gone(om, 'devis à créer', 'OM prévus : …et l’état de poste « devis à créer »');
+gone(om, 'fiche à créer', 'OM prévus : …et l’état de poste « fiche à créer »');
+gone(om, '… en gestion', 'OM prévus : …et l’état de poste « … en gestion »');
+gone(om, '… BC à signer', 'OM prévus : …et l’état de poste « … BC à signer »');
+gone(om, '✓ remboursé', 'OM prévus : …et l’état de poste « ✓ remboursé »');
+gone(om, 'const chip = (p) => {', 'OM prévus : le rendu par poste (`chip`) a été retiré');
+gone(om, 'isDevisGestion', 'OM prévus : l’import devenu inutile a été retiré');
+
+/* Ce qui RESTE dans la cellule, et le pourquoi du retrait (gardé en
+   commentaire) : la colonne ne porte plus que l’état résumé et l’action. */
+has(om, '{/* Plus de récapitulatif des postes sous les boutons', 'OM prévus : le pourquoi du retrait est écrit dans la cellule');
+has(om, '💸 Remb.', 'OM prévus : le bouton « Remb. » reste');
+has(om, '📨 Pour signature', 'OM prévus : le bouton « Pour signature » reste');
+has(om, '🔧 Pour révision', 'OM prévus : le bouton « Pour révision » reste');
+has(om, '⏳ en cours', 'OM prévus : le badge d’ensemble « en cours » reste');
+has(om, '✓ Soldé', 'OM prévus : le badge d’ensemble « Soldé » reste');
+has(om, '🧪 en test', 'OM prévus : le badge « en test » reste');
+has(om, 'OM refusée', 'OM prévus : le mot « OM refusée » reste');
+
+console.log(`_admin_header_boxes_test.mjs — ${passed} assertions OK (pavés d’explication retirés des pages OM prévus, Achats prévus, Congés et Budget overview ; aide verrou ET récapitulatif des postes retirés sous les boutons de transfert d’OM prévus)`);
