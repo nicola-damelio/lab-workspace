@@ -1875,25 +1875,6 @@ export const DesiderataPage = () => {
         </div>
       )}
 
-      <div className="rounded-xl border border-teal-100 bg-teal-50/60 px-4 py-2.5 text-[11px] text-slate-600 leading-relaxed">
-        <b>Achats prévus / souhaités :</b> chaque membre déclare ses achats souhaités et ne voit QUE ses propres demandes
-        (description, ligne budgétaire, fournisseur, coût estimé, frais de port — le N° devis et le fichier du devis sont facultatifs
-        à la soumission) — PLUS les demandes déposées au nom du <b>demandeur collectif « Service »</b>, visibles par tout le monde.
-        Au formulaire, le champ <b>« Demandeur »</b> propose donc « vous-même » ou <b>« Service »</b> (au nom de l’équipe) ;
-        le superutilisateur, qui décide et transfère, voit tout. La <b>première colonne « Décision »</b> affiche la
-        décision du superutilisateur : <b>Approuvé / En attente / Test / Pas maintenant</b> (personnalisable dans Setup › Options des listes
-        déroulantes). La décision <b>« Test »</b> compte la demande dans les prévisions <b>« Achats prévus »</b> de la page Recettes sans
-        l’accepter réellement (aucune notification, aucun transfert). Décider <b>« Approuvé »</b> n’envoie <b>aucun e-mail à la
-        gestionnaire</b> : elle n’est prévenue qu’au transfert ci-dessous (ou à la signature du devis / BC dans « Approbation devis & BC »).
-        Pour toute demande en attente, la colonne <b>« Transfert »</b> propose au directeur : <b>« ✓ Signature et BC »</b>
-        (documents complets — le devis est <b>signé immédiatement</b> et arrive dans la section <b>« BC à faire et à approuver »</b>
-        de la page « Approbation devis &amp; BC » : il n’y reste qu’à déposer puis approuver le bon de commande) ou <b>« ✎ Révision »</b>
-        (documents manquants — un devis « En gestion » est créé pour être complété par la responsable d'achats, puis envoyé pour
-        signature). La demande transférée <b>disparaît de cette liste</b> (rétablie via « Afficher les transférées ») et son montant est
-        suivi dans les colonnes <b>« Devis en signature / signé »</b> de la page Recettes jusqu'à la signature du BC. Le <b>fournisseur</b>,
-        la <b>ligne budgétaire</b> et le <b>demandeur</b> sont des liens vers la Librerie et les fiches Personnel.
-      </div>
-
       {visibleSorted.length === 0 ? (
         <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-10 text-center">
           <div className="text-4xl mb-2">🛒</div>

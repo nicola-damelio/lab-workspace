@@ -1532,25 +1532,6 @@ export const OmPage = () => {
 
       {notice && <Notice tone={notice.tone} text={notice.text} mailto={notice.mailto} consoleUrl={notice.consoleUrl} onClose={() => setNotice(null)} />}
 
-      <div className="rounded-xl border border-blue-100 bg-blue-50/60 px-4 py-2.5 text-[11px] text-slate-600 leading-relaxed">
-        <b>OM prévus / souhaités :</b> chaque OM décrit une mission à préparer. Chaque membre ne voit que ses propres OM
-        (demandeur = lui-même, verrouillé) — le superutilisateur, qui accepte et transfère, voit tout. La <b>première colonne « Statut »</b>
-        (En attente / Acceptée / Test / Refusée / Terminée) n’est modifiable que par le superutilisateur. Le statut <b>« Test »</b> compte l’OM
-        dans les prévisions <b>« OM prévus »</b> de la page Recettes sans l’accepter réellement (aucune notification, aucun transfert).
-        Marquer une OM <b>« Acceptée »</b> n’envoie <b>aucun e-mail à la gestionnaire</b> : elle n’est prévenue qu’au transfert
-        <b>« ✓ Signature »</b> / <b>« ✎ Révision »</b> (ou à la signature du devis / BC dans « Approbation devis & BC »). Dans le formulaire,
-        chaque <b>poste de coût</b> est étiqueté <b>« BC »</b> (commandé par le laboratoire : devis dans « Approbation
-        devis & BC ») ou <b>« Remb. »</b> (frais avancés par le membre puis remboursés : fiche dans Dépenses ›
-        Remboursements). Pour une demande en attente, la colonne <b>« Gestion des frais »</b> propose au directeur
-        <b>« ✓ Signature »</b> ou <b>« ✎ Révision »</b> : l'OM est acceptée, des devis « en attente de signature »
-        (postes complets) ou « En gestion » (à compléter) sont créés par poste « Commande », et la fiche Remboursement
-        « À corriger » pour les postes « Remb. ». Le bouton <b>« 💸 Remb. »</b> transfère quant à lui <b>tous les postes</b>
-        en remboursement (frais avancés : 1 fiche dans Dépenses › Remboursements, montant déduit du solde). L’OM transférée
-        <b>disparaît de la liste</b> et son montant est suivi dans les colonnes <b>« OM en signature / signé »</b> de la page
-        Recettes jusqu'à la signature des BC.
-        « ✏️ Modifier » ouvre la fiche, « 🗑️ » supprime, « 📥 Importer » rejoue la feuille « ENT / Prix / Description » du classeur.
-      </div>
-
       {visibleRows.length === 0 ? (
         <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-10 text-center">
           <div className="text-4xl mb-2">✈️</div>
