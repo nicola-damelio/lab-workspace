@@ -247,6 +247,13 @@ export const ApprobationPage = () => {
     () => (Array.isArray(data.recettes) ? data.recettes : []),
     [data.recettes]
   );
+  /* Index des lignes budgétaires : la colonne « Ligne budgétaire » de la table
+     affiche l’intitulé à jour, même si la fiche devis / BC ne porte que l’id de
+     sa recette (`recetteId`) et pas l’intitulé (`ligneBudgetaire`). */
+  const recettesById = useMemo(
+    () => new Map(recettesList.map((r) => [r && r.id, r])),
+    [recettesList]
+  );
   const categorieOptions = useMemo(() => {
     const set = new Set(['Fonctionnement', 'Investissement', 'Salaire']);
     recettesList.forEach((r) => {
@@ -955,6 +962,7 @@ export const ApprobationPage = () => {
       isSuper,
       busyId,
       devisById,
+      recettesById,
       canEdit: (r) => {
         if (isSuper) return true;
         if (!isApprovalPending(r && r.statut)) return false;
@@ -975,7 +983,7 @@ export const ApprobationPage = () => {
       onSendBack: returnToAchats,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [activeKind, isSuper, busyId, devisById, activeRows, currentName, isAchatsRole, canRemoveRow, showTreated, sendForSignature, returnToAchats]
+    [activeKind, isSuper, busyId, devisById, recettesById, activeRows, currentName, isAchatsRole, canRemoveRow, showTreated, sendForSignature, returnToAchats]
   );
 
   const pendingCount = (kind) => visibleRows.filter((r) => r.kind === kind && isApprovalPending(r.statut)).length;
@@ -1282,7 +1290,7 @@ export const ApprobationPage = () => {
         columns={columns}
         rows={activeRows}
         minWidth="1350px"
-        quickFilters={['description', 'fournisseur']}
+        quickFilters={['description', 'fournisseur', 'ligne']}
         searchPlaceholder={`Rechercher un ${activeKind === 'bc' ? 'BC ou un devis signé' : 'devis'}, un fournisseur, une description…`}
         emptyLabel={activeKind === 'bc' ? 'Aucun BC à faire ni à approuver' : 'Aucun devis déposé'}
         noMatchLabel={`Aucun ${activeKind === 'bc' ? 'BC / devis signé' : 'devis'} ne correspond aux filtres.`}
@@ -1318,7 +1326,7 @@ export const ApprobationPage = () => {
 
 /* ── Colonnes de la table active (devis ou BC) ──────────────────────────── */
 const buildColumns = ({
-  kind, isSuper, busyId, devisById,
+  kind, isSuper, busyId, devisById, recettesById,
   canEdit, canRemove, onDecide, onEdit, onMakeBc, onRemove, onSendForSignature, onSendBack,
 }) => {
   /* La section « BC à faire et à approuver » mélange DEUX natures de lignes :
@@ -1329,6 +1337,14 @@ const buildColumns = ({
   const rowKind = (r) => (r && r.kind === 'devis' ? 'devis' : 'bc');
   /** Devis signé listé dans la section BC : son BC reste à déposer. */
   const isTodoDevis = (r) => kind === 'bc' && rowKind(r) === 'devis';
+  /* Ligne budgétaire d'une ligne devis / BC : l'intitulé ENREGISTRÉ sur la
+     fiche, sinon l'intitulé à jour de la recette liée (recettesById) — la
+     colonne « Ligne budgétaire » doit rester lisible même sur une ancienne
+     ligne qui ne portait que l'id de sa recette. */
+  const ligneLabelOf = (r) => {
+    const found = r && r.recetteId && recettesById ? recettesById.get(r.recetteId) : null;
+    return txt(found && (found.ligne || found.ligneBudgetaire)) || txt(r && r.ligneBudgetaire);
+  };
   const statutTone = (r) => {
     if (r && r.statut === APPROVAL_NOT_RETAINED) return 'violet';
     if (r && r.statut === APPROVAL_GESTION) return 'orange';
@@ -1468,6 +1484,18 @@ const buildColumns = ({
       key: 'fournisseur', label: 'Fournisseur', filter: 'facet',
       value: (r) => txt(r.fournisseur),
       display: (r) => (txt(r.fournisseur) ? <span className="whitespace-nowrap text-xs font-semibold text-slate-600">{r.fournisseur}</span> : <span className="text-slate-300">—</span>),
+    },
+    {
+      /* Ligne budgétaire (Recettes) sur laquelle le devis / BC est imputé :
+         elle alimente la dépense créée à la signature du BC. */
+      key: 'ligne', label: 'Ligne budgétaire', filter: 'facet',
+      value: (r) => ligneLabelOf(r),
+      display: (r) => {
+        const label = ligneLabelOf(r);
+        return label
+          ? <span className="block max-w-[220px] truncate text-xs font-semibold text-slate-600" title={label}>{label}</span>
+          : <span className="text-slate-300">—</span>;
+      },
     },
     {
       key: 'montant', label: 'Montant HT + port', numeric: true, align: 'right', nowrap: true,

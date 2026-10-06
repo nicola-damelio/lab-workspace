@@ -22,7 +22,7 @@
    chaque autre membre ne supprime que ses propres demandes.
    ========================================================================= */
 
-import { adminFonctionCode } from './adminSchema';
+import { adminFonctionCode, SERVICE_DEMANDEUR } from './adminSchema';
 
 const norm = (s) => String(s || '')
   .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
@@ -168,4 +168,18 @@ export const scopeCanSeeItem = (rec, { isSuper, meNames = [], mePersonId = null 
   if (!mine.length) return false;
   const theirs = scopeRecordNames(rec).map(scopeNameKey).filter(Boolean);
   return theirs.some((k) => mine.indexOf(k) !== -1);
+};
+
+/**
+ * La ligne est-elle portée par le demandeur COLLECTIF « Service » ?
+ *  · une demande déposée « au nom du Service » n’appartient pas à une personne :
+ *    elle est donc VISIBLE PAR TOUS les membres (le Service travaille pour le
+ *    laboratoire), en plus de leurs propres demandes. Même règle que la page
+ *    « Approbation devis & BC » (devis / BC demandés par « Service »).
+ *  · testé sur les colonnes « demandeur » / « porteur » (jamais sur un nom de
+ *    personne : « Service » est un libellé collectif, pas une fiche Personnel).
+ */
+export const scopeIsServiceDemandeur = (rec) => {
+  const r = rec || {};
+  return [r.demandeur, r.porteur].some((n) => scopeSameName(n, SERVICE_DEMANDEUR));
 };

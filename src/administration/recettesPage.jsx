@@ -908,7 +908,12 @@ export const RecettesPage = () => {
   ];
 
   return (
-    <div className="max-w-full mx-auto flex flex-col gap-4">
+    /* La page occupe EXACTEMENT la hauteur de l’écran (h-full + min-h-0) : le
+       tableau, seul élément extensible (fillHeight), s’arrête au bas de la vue
+       et sa barre de défilement HORIZONTALE reste donc toujours visible, sans
+       avoir à faire défiler la page entière pour la rejoindre. Même convention
+       que la page « Dépenses ». */
+    <div className="h-full min-h-0 w-full min-w-0 mx-auto flex flex-col gap-4">
       {linkRepair.report && (
         <div
           className={`rounded-xl border px-4 py-2.5 text-xs flex items-start justify-between gap-3 shadow-sm ${
@@ -1035,17 +1040,23 @@ export const RecettesPage = () => {
           </p>
         </div>
       ) : (
-        <SmartTable
-          key={tab}
-          columns={recetteCols}
-          rows={recetteRows}
-          minWidth="1600px"
-          searchPlaceholder="Rechercher une ligne, un porteur, une note…"
-          emptyLabel="Aucune ligne budgétaire pour le moment"
-          noMatchLabel={tab === 'salaires'
-            ? 'Aucune ligne « salaires » ne correspond aux filtres.'
-            : 'Aucune ligne budgétaire ne correspond aux filtres.'}
-        />
+        /* fillHeight : le tableau prend la hauteur restante de l’écran, donc sa
+           barre de défilement horizontale (qui est à son bas) est toujours
+           visible — plus besoin de faire défiler la page pour l’atteindre. */
+        <div className="flex-1 min-h-[280px] flex flex-col">
+          <SmartTable
+            key={tab}
+            columns={recetteCols}
+            rows={recetteRows}
+            minWidth="1600px"
+            fillHeight
+            searchPlaceholder="Rechercher une ligne, un porteur, une note…"
+            emptyLabel="Aucune ligne budgétaire pour le moment"
+            noMatchLabel={tab === 'salaires'
+              ? 'Aucune ligne « salaires » ne correspond aux filtres.'
+              : 'Aucune ligne budgétaire ne correspond aux filtres.'}
+          />
+        </div>
       )}
 
       {importOpen && <AdminImportModal kind="recettes" onClose={() => setImportOpen(false)} />}
