@@ -8,6 +8,16 @@
    Demande : « nella pagina recettes elimina i riquadri in alto con il totale
    delle varie linee budgetarie, lascia solo i pulsanti e la tabella grande ».
 
+   Deuxième passe, sur la même page :
+     • la table « Lignes budgétaires » TIENT DANS LA PAGE — sa boîte s'arrête
+       dans l'écran (plus de plancher de 280 px), donc sa BARRE DE DÉFILEMENT
+       HORIZONTALE, seul chemin vers les colonnes de droite, reste visible
+       (demande : « la tabella lignes budgetaire va fatta entrare nella
+       pagina perche non si vede la barra orizzontale di scorrimento ») ;
+     • les commentaires d'explication de la tête de page ont été retirés,
+       pavé d'en-tête du fichier compris (demande : « togli i commenti nel
+       riquadro in alto che spiega les lignes budgétaires »).
+
    Ce qui doit rester vrai :
      • plus aucune carte de synthèse NI le calcul d’agrégats qui les alimentait
        (`const totals = useMemo(...)`, composant local `SummaryCard`) ;
@@ -71,8 +81,19 @@ gone(PAGE, 'Chaque ligne affiche ses montants', 'la phrase d’aide de la barre 
 gone(PAGE, 'survolez une case pour le détail', 'aucun reste de la phrase d’aide (2e moitié)');
 has(PAGE, 'flex items-center justify-end gap-3 flex-wrap',
   'la barre d’actions n’a plus que ses boutons, alignés à droite');
-has(PAGE, 'Plus de bandeau de TOTAUX en tête de page',
-  'un commentaire explique pourquoi la page n’a plus de bandeau de totaux');
+gone(PAGE, 'Plus de bandeau de TOTAUX en tête de page',
+  'le commentaire d’explication du bandeau de totaux a été retiré');
+gone(PAGE, 'Sélecteur d’onglet :', 'le commentaire du sélecteur d’onglet a disparu');
+gone(PAGE, 'Table des lignes budgétaires', 'le libellé de section au-dessus de la table a disparu');
+gone(PAGE, 'Barre d’actions — seuls les BOUTONS restent', 'le commentaire de la barre d’actions a disparu');
+gone(PAGE, 'Page « Recettes » — lignes budgétaires.',
+  'le pavé d’en-tête du fichier n’explique plus les lignes budgétaires');
+const HEAD_REGION = PAGE.slice(
+  PAGE.indexOf('<div className="h-full min-h-0 w-full min-w-0 mx-auto flex flex-col gap-4">'),
+  PAGE.indexOf('<SmartTable'),
+);
+eq((HEAD_REGION.match(/\{\/\*/g) || []).length, 0,
+  'aucun commentaire JSX en tête de page (de la racine jusqu’à la table)');
 
 /* ── 3. Les actions restent (les « pulsanti » de la demande) ─────────────── */
 has(PAGE, '<span className="text-base leading-none">📥</span> Importer',
@@ -91,8 +112,9 @@ has(PAGE, "{ id: 'salaires', icon: '👤', label: 'Salaires', count: salaires.le
   'l’onglet « Salaires » (avec son compteur) est intact');
 has(PAGE, '<div className="h-full min-h-0 w-full min-w-0 mx-auto flex flex-col gap-4">',
   'la page occupe toujours exactement la hauteur de l’écran');
-has(PAGE, '<div className="flex-1 min-h-[280px] flex flex-col">',
-  'la table garde son enveloppe « hauteur restante » (barre de défilement visible)');
+has(PAGE, '<div className="flex-1 min-h-0 flex flex-col">',
+  'la table cède de la place plutôt que de déborder : sa barre horizontale reste à l’écran');
+gone(PAGE, 'min-h-[280px]', 'plus aucun plancher de 280 px qui pousserait la table sous l’écran');
 has(PAGE, 'columns={recetteCols}', 'la table reçoit toujours ses colonnes');
 has(PAGE, 'rows={recetteRows}', 'la table reçoit toujours ses lignes enrichies');
 has(PAGE, 'minWidth="1600px"', 'la table garde sa largeur minimale (aucune colonne perdue)');
@@ -111,9 +133,9 @@ ok(count(PAGE, /euro\.format\(/g) >= 10,
 ok(count(PAGE, /__agg/g) >= 20, 'les cellules agrégées (__agg) alimentent toujours la table');
 
 /* ── 6. Entre les onglets et la table, plus rien d’autre ────────────────── */
-const between = PAGE.slice(PAGE.indexOf("id: 'budgets'"), PAGE.indexOf('{/* Table des lignes budgétaires */}'));
+const between = PAGE.slice(PAGE.indexOf("id: 'budgets'"), PAGE.indexOf('<SmartTable'));
 ok(!between.includes('SummaryCard') && !between.includes('grid'),
   'entre les onglets et la table il ne reste aucune carte ni grille de synthèse');
 
 /* ── Bilan ────────────────────────────────────────────────────────────── */
-console.log(`_recettes_no_totals_banner_test.mjs — ${passed} assertions OK (page Recettes : plus de bandeau de totaux, seulement les boutons et la table)`);
+console.log(`_recettes_no_totals_banner_test.mjs — ${passed} assertions OK (page Recettes : plus de bandeau de totaux ni de commentaires en tête, et une table qui tient dans la page : seulement les boutons et la table)`);

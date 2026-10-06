@@ -629,8 +629,15 @@ export const SmartTable = ({
       {/* Cellules dont la valeur chiffrée vaut zéro : affichées en gris clair.
           Comportement commun à toutes les tables SmartTable. La règle passe en
           !important car certaines cellules « montant » définissent leur propre
-          couleur de texte. */}
-      <style>{`td.st-zero, td.st-zero * { color: #94a3b8 !important; }`}</style>
+          couleur de texte. La barre de défilement (classe .st-scroll) est elle
+          aussi rendue VISIBLE — 14 px, pouce slate-400 : la barre horizontale
+          de 6 px passait inaperçue, et c’est elle qui mène aux colonnes de
+          droite. */}
+      <style>{`td.st-zero, td.st-zero * { color: #94a3b8 !important; }
+.st-scroll::-webkit-scrollbar { height: 14px; }
+.st-scroll::-webkit-scrollbar-track { background: #f1f5f9; border-radius: 7px; }
+.st-scroll::-webkit-scrollbar-thumb { background: #94a3b8; border-radius: 7px; }
+.st-scroll::-webkit-scrollbar-thumb:hover { background: #64748b; }`}</style>
       {/* Barre d’outils */}
       <div className="shrink-0 px-3 py-2 border-b border-slate-200 flex flex-wrap items-center gap-2">
         <div className="flex items-center gap-1.5 min-w-[220px] flex-1">
@@ -740,7 +747,7 @@ export const SmartTable = ({
         </div>
       ) : (
         <div
-          className={`overflow-auto custom-scrollbar overscroll-contain ${fillHeight ? 'flex-1 min-h-0' : ''}`}
+          className={`overflow-auto custom-scrollbar overscroll-contain st-scroll ${fillHeight ? 'flex-1 min-h-0' : ''}`}
           ref={scrollRef}
           style={!fillHeight && maxHeight ? { maxHeight } : undefined}
         >

@@ -12,6 +12,10 @@
       défilant prend alors la hauteur restante et sa barre horizontale reste à
       l’écran.
 
+      La page « Recettes » n’a plus ce plancher de 280 px : la table cède de
+      la place plutôt que de pousser sa barre horizontale sous l’écran (les
+      deux autres pages gardent la convention).
+
    2. ACHATS PRÉVUS : le champ « Demandeur » propose « Service » (demandeur
       collectif) et une demande déposée à ce nom est VISIBLE PAR TOUS les
       membres — même règle que la page « Approbation devis & BC ». La règle vit
@@ -65,14 +69,25 @@ const schema = SRC('src/administration/adminSchema.js');
 eq(SERVICE_DEMANDEUR, 'Service', 'le demandeur collectif s’appelle bien « Service »');
 
 const FILL_WRAP = '<div className="flex-1 min-h-[280px] flex flex-col">';
+const FIT_WRAP = '<div className="flex-1 min-h-0 flex flex-col">';
 const PAGE_ROOT = 'h-full min-h-0 w-full min-w-0 mx-auto flex flex-col gap-4';
 const OLD_ROOT = '<div className="max-w-full mx-auto flex flex-col gap-4">';
 
 [['Recettes', recettes], ['OM prévus', om], ['Achats prévus', desiderata]].forEach(([label, src]) => {
   has(src, PAGE_ROOT, `${label} : la page occupe exactement la hauteur de l’écran (h-full + min-h-0)`);
   gone(src, OLD_ROOT, `${label} : l’ancienne racine (hauteur libre) a disparu`);
-  has(src, FILL_WRAP, `${label} : le tableau est le seul élément extensible (flex-1 min-h-[280px])`);
   has(src, 'fillHeight', `${label} : le tableau reçoit fillHeight (la barre horizontale reste à l’écran)`);
+});
+
+/* Le tableau est le seul élément extensible. La page « Recettes » n’a PLUS de
+   plancher de 280 px : sur une fenêtre courte, ce plancher poussait le bas de la
+   table — et donc SA BARRE HORIZONTALE — sous l’écran, et il fallait faire
+   défiler la page pour la rejoindre. Sans plancher, la table cède de la place et
+   sa barre reste dans la vue. Les deux autres pages gardent le plancher. */
+has(recettes, FIT_WRAP, 'Recettes : la table s’arrête DANS l’écran (plus de plancher de 280 px)');
+gone(recettes, FILL_WRAP, 'Recettes : l’ancien plancher de 280 px a disparu');
+[['OM prévus', om], ['Achats prévus', desiderata]].forEach(([label, src]) => {
+  has(src, FILL_WRAP, `${label} : le tableau est le seul élément extensible (flex-1 min-h-[280px])`);
 });
 
 /* Le mode fillHeight est bien celui qui garde la barre horizontale visible :

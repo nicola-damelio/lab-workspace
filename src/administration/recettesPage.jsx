@@ -1,14 +1,5 @@
 /* =========================================================================
    src/administration/recettesPage.jsx
-   Page « Recettes » — lignes budgétaires.
-   Chaque ligne : type Fonctionnement / Investissement, porteur, budget total,
-   montant mis à disposition par l’université, dépenses déjà ordonnées
-   (BC signés), ordres de mission (acceptés / à prévoir — y compris ceux
-   marqués « Test », comptés en prévision sans être acceptés), souhaits d’achat
-   liés, solde calculé, date de fin d’engagement et commentaires.
-   Les agrégats sont calculés depuis les collections depenses / om /
-   desiderate / reimbursements de la même base (liaison par recetteId /
-   recetteSuggereeId).
    ========================================================================= */
 import React, { useEffect, useMemo, useState } from 'react';
 import { useAdmin } from './AdminContext';
@@ -892,11 +883,6 @@ export const RecettesPage = () => {
   ];
 
   return (
-    /* La page occupe EXACTEMENT la hauteur de l’écran (h-full + min-h-0) : le
-       tableau, seul élément extensible (fillHeight), s’arrête au bas de la vue
-       et sa barre de défilement HORIZONTALE reste donc toujours visible, sans
-       avoir à faire défiler la page entière pour la rejoindre. Même convention
-       que la page « Dépenses ». */
     <div className="h-full min-h-0 w-full min-w-0 mx-auto flex flex-col gap-4">
       {linkRepair.report && (
         <div
@@ -945,11 +931,6 @@ export const RecettesPage = () => {
           </span>
         </div>
       )}
-      {/* Barre d’actions — seuls les BOUTONS restent à l’écran : la phrase d’aide
-          « chaque ligne affiche ses montants… » a été retirée, l’information
-          étant déjà portée par les infobulles des en-têtes et des cases. Les
-          boutons restent alignés à droite, comme sur « OM prévus » et
-          « Achats prévus ». */}
       <div className="flex items-center justify-end gap-3 flex-wrap">
         <button
           onClick={() => setImportOpen(true)}
@@ -966,8 +947,6 @@ export const RecettesPage = () => {
         </button>
       </div>
 
-      {/* Sélecteur d’onglet : Lignes budgétaires (Fonctionnement / Investissement)
-          · Salaires (lignes de rémunération, type « Salaire » — « Autres » historique). */}
       <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-xl p-1 shadow-sm w-fit flex-wrap">
         {[
           { id: 'budgets', icon: '📈', label: 'Lignes budgétaires', count: budgets.length },
@@ -988,13 +967,6 @@ export const RecettesPage = () => {
         ))}
       </div>
 
-      {/* Plus de bandeau de TOTAUX en tête de page : les montants de la ligne
-          budgétaire — et de tout ce qui y est rattaché (dépenses / BC, OM payés,
-          OM prévus, achats prévus, remboursements, soldes) — se lisent sur sa
-          LIGNE du tableau, avec le détail au survol de chaque case. La page se
-          résume donc à ses actions et à sa table. */}
-
-      {/* Table des lignes budgétaires */}
       {recettes.length === 0 ? (
         <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-10 text-center">
           <div className="text-4xl mb-2">📈</div>
@@ -1016,10 +988,7 @@ export const RecettesPage = () => {
           </p>
         </div>
       ) : (
-        /* fillHeight : le tableau prend la hauteur restante de l’écran, donc sa
-           barre de défilement horizontale (qui est à son bas) est toujours
-           visible — plus besoin de faire défiler la page pour l’atteindre. */
-        <div className="flex-1 min-h-[280px] flex flex-col">
+        <div className="flex-1 min-h-0 flex flex-col">
           <SmartTable
             key={tab}
             columns={recetteCols}
