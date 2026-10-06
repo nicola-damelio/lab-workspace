@@ -32,7 +32,9 @@
      • SANS DÉCLARATION, RIEN NE CHANGE — le même modèle sort droit (les deux brins à
        plus de 8 Å), donc le feuillet déclaré est bien ce qui les rapproche ;
      • LES TROIS PAGES — pinceau T, « All γ-Turn » (NMR, MD), bande de séquence
-       marquée par le MÊME lecteur, et le panneau 🧵 branché sur la page NMR.
+       marquée par le MÊME lecteur, et le panneau 🧵 branché sur les TROIS pages
+       (NMR, MD et Docking) depuis UNE seule définition — le crochet partagé
+       `useSequenceStructureModel`, qui rend aussi le modèle PDB au viewer 3D.
 
    Run: node _ss_sheet_test.mjs
    ========================================================================= */
@@ -451,13 +453,42 @@ has(SECTION, 'sheetOf={(i) => sheetMarkAt(betaSheetRead.pairs, i + 1)}',
 has(META_SRC, '`sheetOf(i)` (optionnel)', 'la bande de séquence partagée DOCUMENTE le repère de feuillet');
 has(META_SRC, '{sheet.glyph}{sheet.strand}', "…et l'écrit sur le chip (le glyphe du sens et le rang du brin)");
 has(META_SRC, 'linkOf, sheetOf }) => {', '…en le recevant comme la prop `linkOf` des ponts disulfure');
+/* ── LES TROIS PAGES, UNE SEULE DÉFINITION DE SÉQUENCE ──────────────────────────
+   La demande : le panneau 🧵 — apparier deux brins E peints, la SECONDE MOITIÉ de la
+   définition de séquence — doit être PRÉSENT sur les trois pages (NMR, MD, Docking),
+   et la définition qui en sort doit se voir dans le viewer 3D. Une seule lecture,
+   donc : le crochet `useSequenceStructureModel` de NMRSections.jsx, appelé par les
+   trois pages, et le MÊME panneau branché dans les trois « Sequence and structure ». */
+const HOOK_AT = SECTION.indexOf('export const useSequenceStructureModel =');
+ok(HOOK_AT > 0, 'le crochet partagé useSequenceStructureModel vit avec le bâtisseur PDB');
+const HOOK = SECTION.slice(HOOK_AT);
+has(HOOK, 'const betaSheetRead = useMemo(() => betaSheetPairsOf({',
+  '…il relit la déclaration UNE fois (les brins peints et les paires valides)');
+has(HOOK, 'const sheetFold = useMemo(() => {', '…il replie le modèle de séquence une fois');
+has(HOOK, 'const sequenceStructure = useMemo(() => {',
+  '…et il fabrique le PDB du modèle (feuillets déclarés compris) une fois');
+has(HOOK, 'return { betaSheetRead, sheetFold, sequenceStructure };', '…et rend les trois ensemble');
+has(SECTION, 'const { betaSheetRead, sheetFold, sequenceStructure } = useSequenceStructureModel({',
+  'la page NMR appelle le crochet (elle ne relit plus la déclaration elle-même)');
 for (const [name, src] of [['MDSections.jsx', MD_SRC], ['DockingSections.jsx', DOCK_SRC]]) {
-  has(src, 'sheetOf={(i) => sheetMarkAt(sheetPairs, i + 1)}', `${name} marque elle aussi les brins de feuillet déclarés`);
-  has(src, "import { betaSheetPairsOf, sheetMarkAt } from '../utils/betaSheetFold';",
-    `…avec le module pur, sans second lecteur (${name})`);
-  has(src, 'const sheetPairs = Array.isArray(activeTest.betaSheets) && activeTest.betaSheets.length',
-    `…lu UNE fois par rendu, pas chip par chip (${name})`);
+  has(src, 'const { betaSheetRead, sheetFold, sequenceStructure } = useSequenceStructureModel({',
+    `${name} appelle le MÊME crochet — aucune seconde lecture de la définition`);
+  has(src, 'BetaSheetEditor, useSequenceStructureModel,',
+    `${name} importe le panneau 🧵 et le crochet par son module de données`);
+  has(src, 'sheetOf={(i) => sheetMarkAt(betaSheetRead.pairs, i + 1)}',
+    `${name} marque les brins de feuillet déclarés avec la MÊME lecture`);
+  has(src, '<BetaSheetEditor', `${name} BRANCHE le panneau 🧵 dans « Sequence and structure »`);
+  has(src, 'sheets={activeTest.betaSheets}', `${name} écrit la MÊME déclaration que la page NMR`);
+  has(src, 'onChange={(next) => updateActiveTest({ betaSheets: next })}', `${name} …par la même écriture`);
+  has(src, 'fold={sheetFold}', `${name} affiche le rapport du modèle RÉELLEMENT bâti`);
+  has(src, 'sequenceStructureText={sequenceStructure?.text || null}',
+    `${name} confie le modèle replié à son viewer 3D (le feuillet déclaré s y voit)`);
+  has(src, 'sequenceStructureExt={sequenceStructure?.ext || null}', `${name} …avec son extension`);
 }
+has(read('./src/components/MDData.jsx'), "export { useSequenceStructureModel } from './NMRSections';",
+  'le crochet partagé est ré-exporté par le module de données de la page MD');
+has(read('./src/components/DockingData.jsx'), "export { useSequenceStructureModel } from './NMRSections';",
+  '…et par celui de la page Docking');
 has(read('./_run_all.cjs'), '/^_.*\\.(test\\.)?(cjs|mjs)$/',
   'la suite est reprise par le lanceur global (le glob des fichiers de sonde, aucun ajout à faire)');
 

@@ -2529,6 +2529,90 @@ compte d'avant la retouche, aucun symbole nouveau nommé.
 
 
 
+## Le feuillet déclaré 🧵 sur les TROIS pages : une seule définition de séquence, et le modèle replié servi par le viewer (04/10/2026)
+
+La demande, mot pour mot : **« I am still missing the second part of the section
+sequence and structure where with the brush I define elements of secondary structure to
+impose in the 3D viewer »**, puis, à la question « quelle page ? », la réponse : **« the
+pairing should be present in all three pages (NMR, MD and Docking). »**
+
+La **seconde moitié** de la définition de séquence — le panneau 🧵 qui apparie deux brins
+**E** peints, parallèles ou antiparallèles — n'existait que sur la page **NMR**. Les pages
+**MD** et **Docking** connaissaient la déclaration, mais seulement pour **marquer la
+bande** (`sheetOf`, `sheetMarkAt`) : on pouvait y peindre deux brins, pas les apparier.
+C'est ce qui manquait.
+
+**1 · UNE SEULE LECTURE DE LA DÉFINITION — `useSequenceStructureModel`.**
+
+Le crochet neuf **`useSequenceStructureModel({ activeTest, d, univTestMode })`** vit dans
+**`src/components/NMRSections.jsx`**, avec le bâtisseur PDB dont il se sert, et il est
+appelé par les **trois** pages (ré-exporté par `MDData.jsx` et `DockingData.jsx`, donc
+importé exactement comme les autres blocs partagés) :
+
+* il **relit** la déclaration (`activeTest.betaSheets`, en positions de séquence — la clé
+  commune, comme `cysDisulfides`) : `betaSheetRead` rend les brins peints et les paires
+  VALIDES, et compte (`rejected`) tout ce qui ne correspond plus à la séquence ;
+* il **replie** le modèle (`sheetFold`, la recherche locale de `utils/betaSheetFold.js`) et
+  rend le rapport RÉELLEMENT obtenu (échelons CA–CA, ponts N–H···O=C, convergence) — le
+  panneau l'affiche sous ses puces, sur les trois pages ;
+* il **fabrique** le texte PDB (`sequenceStructure`) avec les torsions du repliement, les
+  **records `SHEET`** et les `REMARK 950 / 951` écrits par le MÊME écrivain que le fichier
+  téléchargé.
+* ⚠ le mode 🎓 **University test** n'en replie AUCUN et n'en peint AUCUNE (le modèle dirait
+  la réponse) — et le panneau 🧵 n'est pas montré dans ce mode, sur aucune des trois pages.
+
+La page NMR, elle, ne relit plus rien : elle appelle le crochet et reçoit les trois mêmes
+choses (le refactor déplace son code **tel quel** — les suites qui lisent ses lignes
+« `const sheetFold = useMemo(() => {` », `sheets: activeTest.betaSheets,` ×3,
+`torsions: sheetFold ? sheetFold.torsions : null` ×2 restent vraies, par construction).
+
+**2 · LE PANNEAU 🧵 DANS LES TROIS « Sequence and structure ».**
+
+Les pages **MD** et **Docking** branchent le MÊME composant (`BetaSheetEditor`, partagé par
+`NMRData.jsx`) sous leur bande de séquence, avec la même déclaration et la même écriture
+(`sheets={activeTest.betaSheets}` / `onChange={(next) => updateActiveTest({ betaSheets: next })}`) :
+apparier un feuillet sur une page l'apparie donc sur les trois (c'est le même test), et la
+bande de chaque page le marque par le même lecteur. La page Docking, qui n'avait aucun 💡
+sous son pinceau, reçoit la MÊME phrase que les deux autres (« Paint two runs of β-strand
+(E) … then pair them as a β-sheet below. »).
+
+**3 · LE FEUILLET S'IMPOSE DANS LE VIEWER 3D — sur les trois pages.**
+
+Le modèle replié (`sequenceStructure`) part désormais au viewer des pages **MD** et
+**Docking** (`sequenceStructureText` / `sequenceStructureExt`), exactement comme sur la
+page NMR : le viewer le sert **dès que RIEN n'est chargé sur la page** — et « 🧬 Structure
+from sequence » le reconstruit à la demande, ce que ces deux pages ne savaient pas faire
+(le bouton répondait « No sequence on this page »). Ce qui était chargé garde la priorité,
+inchangé : un PDB (📂 / PDB ID · URL / la topologie d'un dossier Drive), la structure de
+cluster choisie sur la page Docking. C'est ce qui rend la définition **visible en 3D** :
+la peinture 🖌️ ET le feuillet déclaré 🧵 sont le modèle que le viewer montre.
+
+*Ce qui n'a **pas** changé :* la déclaration reste additive (aucun PDB chargé n'est
+réécrit), le repliement ne touche QUE la fenêtre des deux brins et de leur boucle, la
+bande de séquence et le résolveur de numéros 🔢, les cartes de résultats, les
+restaurations Drive, et le mode 🎓 University test.
+
+*Vérifier :* **`node _ss_sheet_test.mjs` — 163 assertions** (143 + les 20 neuves) : le
+crochet partagé existe et rend `{ betaSheetRead, sheetFold, sequenceStructure }`, les trois
+pages l'appellent, les trois branchent `BetaSheetEditor` dans « Sequence and structure »,
+les trois reçoivent `sequenceStructureText` / `sequenceStructureExt`, et le repliement
+reste MESURÉ sur le vrai bâtisseur (pont C7 du tour γ, feuillets parallèle ET
+antiparallèle, records `SHEET` relus). `node _structure_windows_test.mjs` (108),
+`node _residue_numbering_panels_test.mjs` (79), `node _condition_page_test.mjs` (123),
+`node _ss_dihedral_test.mjs` (128), `node _compact_sections_test.mjs` (211),
+`node _viewer_render_smoke_test.mjs` (23) — les invariants des trois pages tiennent, et les
+comptes de tests qui DISAIENT « le panneau n'existe que sur la NMR » ont été mis à jour
+(le résolveur 🔢 part à 7 endroits : les 4 bandes + les 3 panneaux 🧵). `node _verify.cjs` —
+**1 échec** : `_viewer_rings_gradient_test.mjs`, déjà rouge avant cette retouche.
+`npx vite build` ✓. `npx oxlint` sur les cinq fichiers touchés — **42 avertissements,
+0 erreur** (aucun symbole nouveau nommé, les mêmes `exhaustive-deps` préexistants).
+
+*Rouge AVANT cette retouche, et pas à cause d'elle :* `node _cysteine_panel_layout_test.mjs`
+cherche la case de séquence de la page NMR par un `<textarea value={d.rawSequence}` qui
+n'existe plus **dans HEAD non plus** (0 occurrence dans les deux arbres) depuis que la case
+est le composant `SequenceField` : la sonde a une aiguille périmée.
+
+
 ## Le viewer MD : la phrase en trop retirée, les deux 📂 du dossier sur la ligne des fichiers (03/10/2026)
 
 **Deux demandes, mot pour mot.** « *in the viewer remove the sentence “Click an atom in the

@@ -77,10 +77,11 @@ import NMRMoleculeViewer from './NMRMoleculeViewer';
 // utils/ligandSmiles.js). The viewer does the same on its own structure and
 // reports the answer back through onLigandSmiles.
 import { fetchLigandSmiles, ligandCodesFromPdbText } from '../utils/ligandSmiles';
-// 🧵 Le feuillet déclaré (la déclaration du panneau 🧵 de la page NMR) : la bande de
-// séquence de cette page le marque avec le MÊME lecteur (utils/betaSheetFold.js).
-import { betaSheetPairsOf, sheetMarkAt } from '../utils/betaSheetFold';
-import {AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, SS_META, RESIDUE_COLORS, buildProteinStructure, buildNucleicStructure, buildSugarStructure, buildLipidStructure, elementsToSVG, StructureSVGView, CollapsibleSection, SequencePaintStrip, getSelectedKeys, getManualKeys, DOCKING_METRICS, DOCKING_PIPELINE_STAGES, parseDockingValue, getProgramInfo, parseDockingFile, parseCapriTsv, posesFromCapri, parseTomlSimple, extractDockedMolecules, getDockingInstances, getDockingActiveInstance, getDockingLayers, getDockingActiveLayerKey, getDockingLayerValues, writeDockingCellValue, generateDockingPoses, generateHADDOCKPoses, DEFAULT_DOCKING_CHART_STYLE, dockChartBoxStyle, dockDom, DOCK_CHART_MARGIN, dockingMetricOf, poseMetricValue, capriColumnMetricKey, chartEnergyMetricKey, poseChartValue, poseDeviation, poseRawColumnValue, deviationColumnOf, energyColumnOf, plotSourceOptions, plotSourceLabel, plotSourceValue, PLOT_SOURCE_PREFIX, PLOT_SOURCE_ALL, DEVIATION_PLOT_KEYS, dockingMetricLabel, HADDOCK_SCORE_TERM_KEYS, haddockScoreTerms} from './DockingData';
+// 🧵 La définition de séquence (le pinceau 🖌️ et les feuillets déclarés) est la
+// MÊME sur les trois pages : la bande de séquence marque ses brins avec le MÊME
+// lecteur que le panneau 🧵 et le repliement (utils/betaSheetFold.js).
+import { sheetMarkAt } from '../utils/betaSheetFold';
+import {AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, SS_META, RESIDUE_COLORS, buildProteinStructure, buildNucleicStructure, buildSugarStructure, buildLipidStructure, elementsToSVG, StructureSVGView, CollapsibleSection, SequencePaintStrip, BetaSheetEditor, useSequenceStructureModel, getSelectedKeys, getManualKeys, DOCKING_METRICS, DOCKING_PIPELINE_STAGES, parseDockingValue, getProgramInfo, parseDockingFile, parseCapriTsv, posesFromCapri, parseTomlSimple, extractDockedMolecules, getDockingInstances, getDockingActiveInstance, getDockingLayers, getDockingActiveLayerKey, getDockingLayerValues, writeDockingCellValue, generateDockingPoses, generateHADDOCKPoses, DEFAULT_DOCKING_CHART_STYLE, dockChartBoxStyle, dockDom, DOCK_CHART_MARGIN, dockingMetricOf, poseMetricValue, capriColumnMetricKey, chartEnergyMetricKey, poseChartValue, poseDeviation, poseRawColumnValue, deviationColumnOf, energyColumnOf, plotSourceOptions, plotSourceLabel, plotSourceValue, PLOT_SOURCE_PREFIX, PLOT_SOURCE_ALL, DEVIATION_PLOT_KEYS, dockingMetricLabel, HADDOCK_SCORE_TERM_KEYS, haddockScoreTerms} from './DockingData';
 
 
 /* ============================================================================
@@ -471,17 +472,17 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
     updateActiveTest({ secondaryStructure: arr.join('') });
   };
 
-  /* 🧵 LES BRINS DE FEUILLET DÉCLARÉS — la déclaration vit dans « Sequence and
-     structure » de la page NMR (« Pair them », activeTest.betaSheets), mais la bande
-     de séquence de CETTE page la marque elle aussi : même module pur
-     (utils/betaSheetFold.js), donc une seule lecture d'un feuillet. */
-  const sheetPairs = Array.isArray(activeTest.betaSheets) && activeTest.betaSheets.length
-    ? betaSheetPairsOf({
-      secondaryStructure: activeTest.secondaryStructure || '',
-      sheets: activeTest.betaSheets,
-      sequenceLength: (d.seq || '').length,
-    }).pairs
-    : [];
+  /* 🧵 LA DÉFINITION DE SÉQUENCE — le pinceau 🖌️, les feuillets déclarés et le modèle
+     replié : le crochet partagé `useSequenceStructureModel` (défini avec le bâtisseur
+     PDB, dans NMRSections.jsx) est LA seule lecture de cette définition, la même pour
+     les trois pages. `betaSheetRead` marque les brins sur la bande de séquence
+     ci-dessous, `sheetFold` est le rapport du modèle pour le panneau 🧵, et
+     `sequenceStructure` est le texte PDB que CETTE page confie à son viewer 3D — servi
+     dès que RIEN n'est chargé ici (la structure du cluster, elle, garde la priorité). */
+  const univTestMode = Boolean(activeTest.universityTest);
+  const { betaSheetRead, sheetFold, sequenceStructure } = useSequenceStructureModel({
+    activeTest, d, univTestMode,
+  });
 
   const structureSrc = useMemo(() => {
     const raw = (activeTest.structureSrc || '').trim();
@@ -711,6 +712,7 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
               </button>
             ))}
           </div>
+          <p className="text-xs text-slate-400 mb-3">💡 Select a brush, then click or drag across the sequence chips to paint secondary structure. Paint two runs of β-strand (E) — a turn (T) between them holds the hairpin — then pair them as a β-sheet below.</p>
           <SequencePaintStrip
             residues={d.parsedSeq}
             getLetter={(i) => d.getSSAt(i)}
@@ -718,8 +720,26 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
             onApply={(i) => paintSSAt(i, ssBrush)}
             focusIdx="ALL"
             residueNo={residueNoOf}
-            sheetOf={(i) => sheetMarkAt(sheetPairs, i + 1)}
+            sheetOf={(i) => sheetMarkAt(betaSheetRead.pairs, i + 1)}
           />
+          {/* 🧵 LA DÉFINITION DU FEUILLET — la seconde moitié de la définition de
+              séquence, ICI comme sur les pages NMR et MD : deux brins peints E
+              appariés, parallèles ou antiparallèles. Le panneau écrit la DÉCLARATION
+              (`activeTest.betaSheets`, en positions de séquence — la clé commune aux
+              trois pages), et la note qu'il affiche est le rapport du modèle RÉELLEMENT
+              bâti (`sheetFold` : échelons CA–CA et ponts N–H···O=C mesurés par le même
+              lecteur que l'écrivain PDB). Le modèle replié part au viewer 3D par
+              `sequenceStructure`. */}
+          {!univTestMode && (
+            <BetaSheetEditor
+              secondaryStructure={activeTest.secondaryStructure || ''}
+              sequenceLength={(d.seq || '').length}
+              sheets={activeTest.betaSheets}
+              onChange={(next) => updateActiveTest({ betaSheets: next })}
+              residueNo={residueNoOf}
+              fold={sheetFold}
+            />
+          )}
             </>
           )}
         </CollapsibleSection>
@@ -775,6 +795,14 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
                 src={selectedStruct ? '' : structureSrc}
                 structureText={selectedStruct ? selectedStruct.pdb : undefined}
                 structureTextExt="pdb"
+                /* 🧬 LE MODÈLE DE LA SÉQUENCE (le crochet `useSequenceStructureModel`
+                   ci-dessus) : peinture 🖌️, FEUILLETS DÉCLARÉS (records SHEET + REMARK
+                   950 / 951) et ponts disulfure ⚭ compris. Le viewer le sert dès que RIEN
+                   n'est chargé ici — exactement le comportement de la page NMR — et
+                   « 🧬 Structure from sequence » le reconstruit à la demande ; la
+                   structure de cluster sélectionnée, elle, reste prioritaire. */
+                sequenceStructureText={sequenceStructure?.text || null}
+                sequenceStructureExt={sequenceStructure?.ext || null}
                 moleculeType={d.moleculeType}
                 parsedSeq={d.parsedSeq}
                 /* 🧪 …ET LA DÉFINITION DES MODIFICATIONS DU COMPOSÉ (Acetylation · Amidation · …) :

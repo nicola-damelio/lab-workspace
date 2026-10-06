@@ -23,12 +23,13 @@ import {
   computeSecondaryStructure, SS_CODE_ORDER, SS_COLORS, SS_GROUP_COLORS
 } from './MDSecondaryStructure';
 
-import { AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, SS_META, FORM_META, RESIDUE_COLORS, buildKeys, buildProteinStructure, buildNucleicStructure, buildSugarStructure, buildLipidStructure, elementsToSVG, StructureSVGView, SequencePaintStrip, getSelectedKeys, selectionLabel, getManualKeys, FORCE_FIELDS, WATER_MODELS, MD_ENSEMBLES, MD_INTEGRATORS, MD_THERMOSTATS, MD_BAROSTATS, parseMDValue, getForceFieldInfo, getFFVersions, getWaterModelInfo, getFFBackboneAtoms, normalizeTrajectoryUrl, detectTrajectoryFormat, getTrajectoryFormatInfo, getMDInstances, getMDActiveInstance, getMDLayers, getMDActiveLayerKey, getMDLayerValues, writeMDCellValue, MD_ANALYSIS_LAYERS, DEFAULT_MD_CHART_STYLE, mdDom} from './MDData';
+import { AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, SS_META, FORM_META, RESIDUE_COLORS, buildKeys, buildProteinStructure, buildNucleicStructure, buildSugarStructure, buildLipidStructure, elementsToSVG, StructureSVGView, SequencePaintStrip, BetaSheetEditor, useSequenceStructureModel, getSelectedKeys, selectionLabel, getManualKeys, FORCE_FIELDS, WATER_MODELS, MD_ENSEMBLES, MD_INTEGRATORS, MD_THERMOSTATS, MD_BAROSTATS, parseMDValue, getForceFieldInfo, getFFVersions, getWaterModelInfo, getFFBackboneAtoms, normalizeTrajectoryUrl, detectTrajectoryFormat, getTrajectoryFormatInfo, getMDInstances, getMDActiveInstance, getMDLayers, getMDActiveLayerKey, getMDLayerValues, writeMDCellValue, MD_ANALYSIS_LAYERS, DEFAULT_MD_CHART_STYLE, mdDom} from './MDData';
 import { DriveUploadButton } from './DriveUpload';
 import { suggestDriveFileName } from '../utils/driveNaming';
-// 🧵 Le feuillet déclaré (la déclaration du panneau 🧵 de la page NMR) : la bande de
-// séquence de cette page le marque avec le MÊME lecteur (utils/betaSheetFold.js).
-import { betaSheetPairsOf, sheetMarkAt } from '../utils/betaSheetFold';
+// 🧵 Le feuillet déclaré (la définition de séquence des TROIS pages) : la bande de
+// séquence de cette page le marque avec le MÊME lecteur que le panneau 🧵 et le
+// repliement (utils/betaSheetFold.js — un seul lecteur, aucune seconde lecture).
+import { sheetMarkAt } from '../utils/betaSheetFold';
 import { archiveFileToDrive, archiveFileToDriveWithPointer, getDriveToken, getDriveFileRegistry, driveFetch } from '../utils/driveUpload';
 import { sequenceForMoleculeType, sequencePatchForMoleculeType, structureSequencePatch, sequenceNaturesNote } from '../utils/sequenceNatures';
 /* 🧬 LA LIGNE SOUS LA CASE DE SÉQUENCE — le nombre de chaque acide aminé, la charge totale à
@@ -1432,17 +1433,17 @@ export const MDExperimentSetupSection = ({ ctx }) => {
 
   const setAllSS = (letter) => updateActiveTest({ secondaryStructure: d.seq.split('').map(() => letter).join('') });
 
-  /* 🧵 LES BRINS DE FEUILLET DÉCLARÉS — la déclaration vit dans « Sequence and
-     structure » de la page NMR (« Pair them », activeTest.betaSheets), mais la bande
-     de séquence de CETTE page la marque elle aussi : le lecteur est le même module pur
-     (utils/betaSheetFold.js), il n'y a donc pas deux façons de lire un feuillet. */
-  const sheetPairs = Array.isArray(activeTest.betaSheets) && activeTest.betaSheets.length
-    ? betaSheetPairsOf({
-      secondaryStructure: activeTest.secondaryStructure || '',
-      sheets: activeTest.betaSheets,
-      sequenceLength: (d.seq || '').length,
-    }).pairs
-    : [];
+  /* 🧵 LA DÉFINITION DE SÉQUENCE — le pinceau 🖌️, les feuillets déclarés et le modèle
+     replié : le crochet partagé `useSequenceStructureModel` (défini avec le bâtisseur
+     PDB, dans NMRSections.jsx) est LA seule lecture de cette définition, la même pour
+     les trois pages. `betaSheetRead` marque les brins sur la bande de séquence
+     ci-dessous, `sheetFold` est le rapport du modèle pour le panneau 🧵, et
+     `sequenceStructure` est le texte PDB que CETTE page confie à son viewer 3D — servi
+     dès que RIEN n'est chargé ici (un PDB chargé, lui, garde la priorité). */
+  const univTestMode = Boolean(activeTest.universityTest);
+  const { betaSheetRead, sheetFold, sequenceStructure } = useSequenceStructureModel({
+    activeTest, d, univTestMode,
+  });
 
   const paintFormAt = (i, letter) => {
     const arr = d.seq.split('').map((_, j) => d.getFormAt(j));
@@ -1711,7 +1712,7 @@ export const MDExperimentSetupSection = ({ ctx }) => {
             <button onClick={() => setAllSS('E')} className="px-3 py-1 rounded-lg text-xs font-bold bg-amber-100 border border-amber-300 text-amber-700 hover:bg-amber-200">All β-Sheet</button>
             <button onClick={() => setAllSS('T')} className="px-3 py-1 rounded-lg text-xs font-bold bg-teal-100 border border-teal-300 text-teal-700 hover:bg-teal-200">All γ-Turn</button>
           </div>
-          <p className="text-xs text-slate-400 mb-3">💡 Select a brush, then click or drag across the sequence chips to paint secondary structure.</p>
+          <p className="text-xs text-slate-400 mb-3">💡 Select a brush, then click or drag across the sequence chips to paint secondary structure. Paint two runs of β-strand (E) — a turn (T) between them holds the hairpin — then pair them as a β-sheet below.</p>
           <SequencePaintStrip
             residues={d.parsedSeq}
             getLetter={(i) => d.getSSAt(i)}
@@ -1719,8 +1720,26 @@ export const MDExperimentSetupSection = ({ ctx }) => {
             onApply={(i) => paintSSAt(i, ssBrush)}
             focusIdx={focusIdx}
             residueNo={residueNoOf}
-            sheetOf={(i) => sheetMarkAt(sheetPairs, i + 1)}
+            sheetOf={(i) => sheetMarkAt(betaSheetRead.pairs, i + 1)}
           />
+            {/* 🧵 LA DÉFINITION DU FEUILLET — la seconde moitié de la définition de
+                séquence, ICI comme sur les pages NMR et Docking : deux brins peints E
+                appariés, parallèles ou antiparallèles. Le panneau écrit la
+                DÉCLARATION (`activeTest.betaSheets`, en positions de séquence — la clé
+                commune aux trois pages), et la note qu'il affiche est le rapport du
+                modèle RÉELLEMENT bâti (`sheetFold` : les échelons CA–CA et les ponts
+                N–H···O=C mesurés par le même lecteur que l'écrivain PDB). Le modèle
+                replié part au viewer 3D par `sequenceStructure`. */}
+            {!univTestMode && (
+              <BetaSheetEditor
+                secondaryStructure={activeTest.secondaryStructure || ''}
+                sequenceLength={(d.seq || '').length}
+                sheets={activeTest.betaSheets}
+                onChange={(next) => updateActiveTest({ betaSheets: next })}
+                residueNo={residueNoOf}
+                fold={sheetFold}
+              />
+            )}
             </>
           )}
         </CollapsibleSection>
@@ -1839,6 +1858,13 @@ export const MDExperimentSetupSection = ({ ctx }) => {
   structureFormat={activeTest.structureFormat || 'auto'}
   structureText={typeof organicFetch !== 'undefined' ? organicFetch.text : null}
   structureTextExt={typeof organicFetch !== 'undefined' ? organicFetch.ext : null}
+  /* 🧬 LE MODÈLE DE LA SÉQUENCE (le crochet `useSequenceStructureModel` ci-dessus) :
+     la peinture 🖌️, les FEUILLETS DÉCLARÉS (records SHEET + REMARK 950 / 951) et les
+     ponts disulfure ⚭ compris. Le viewer le sert dès que RIEN n'est chargé ici —
+     exactement le comportement de la page NMR — et « 🧬 Structure from sequence » le
+     reconstruit à la demande ; un PDB chargé, lui, reste prioritaire. */
+  sequenceStructureText={sequenceStructure?.text || null}
+  sequenceStructureExt={sequenceStructure?.ext || null}
   externalLoading={typeof organicFetch !== 'undefined' ? organicFetch.loading : false}
   externalError={typeof organicFetch !== 'undefined' ? organicFetch.error : null}
   trajectorySrc={trajNorm.url}

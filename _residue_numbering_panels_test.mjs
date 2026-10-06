@@ -1,4 +1,4 @@
-﻿/* =========================================================================
+/* =========================================================================
    _residue_numbering_panels_test.mjs — LE NUMÉRO D'UN RÉSIDU, PARTOUT.
 
    Ce qui doit rester vrai :
@@ -140,20 +140,20 @@ eq([0, 1, 2].map(makeNumberAt(undefined)), [1, 2, 3],
 const PAGES = DOCK + MD + SEC;
 eq(count(PAGES, '<SequencePaintStrip'), 4,
   'quatre bandes de séquence : Docking + MD (protéine, acide nucléique) + NMR');
-eq(count(PAGES, 'residueNo={residueNoOf}'), 5,
-  '…et les quatre bandes — plus le panneau 🧵 du feuillet, qui écrit lui aussi des numéros affichés — reçoivent le résolveur de la page');
+eq(count(PAGES, 'residueNo={residueNoOf}'), 7,
+  '…et les quatre bandes — plus les TROIS panneaux 🧵 du feuillet (NMR, MD, Docking), qui écrivent eux aussi des numéros affichés — reçoivent le résolveur de la page');
 
 has(DOCK, 'import { residueNumberResolver } from \'../utils/residueNumbering\';',
   'la page Docking lit la règle partagée');
 has(DOCK, 'const residueNoOf = residueNumberResolver(activeTest);',
   '…et se construit le résolveur de la condition');
-eq(count(DOCK, 'residueNo={residueNoOf}'), 1, 'la bande du Docking l’utilise');
+eq(count(DOCK, 'residueNo={residueNoOf}'), 2, 'la bande du Docking ET son panneau 🧵 l’utilisent');
 
 has(MD, 'import { residueNumberResolver } from \'../utils/residueNumbering\';',
   'la page MD lit la règle partagée');
 has(MD, 'const residueNoOf = residueNumberResolver(activeTest);', '…et se construit le résolveur');
-eq(count(MD, 'residueNo={residueNoOf}'), 2,
-  'les deux bandes MD (peinture secondaire ET formes A/B/Z) l’utilisent');
+eq(count(MD, 'residueNo={residueNoOf}'), 3,
+  'les deux bandes MD (peinture secondaire ET formes A/B/Z) et son panneau 🧵 l’utilisent');
 eq(count(MD, 'title="Sequence and structure"'), 2,
   '…ce sont bien les deux sous-sections « Sequence and structure »');
 

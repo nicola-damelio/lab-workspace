@@ -4870,6 +4870,104 @@ const renderSvg = (heightStyle) => {
   );
 };
 
+/* ══════════════════════════════════════════════════════════════════════════════
+   🧵 LA DÉFINITION DE SÉQUENCE → LE MODÈLE REPLIÉ, POUR LES TROIS PAGES
+
+   La MÊME définition de séquence vit sur les trois pages du viewer (NMR, MD et
+   Docking) : le pinceau 🖌️ peint une lettre par résidu (C · H · L · E · T), et le
+   panneau 🧵 apparie DEUX brins E — parallèles ou antiparallèles — pour IMPOSER un
+   feuillet. Ce crochet est la SEULE lecture de cette définition : les trois pages
+   l'appellent et en font la même chose — la bande de séquence marque les brins
+   (`betaSheetRead`), le panneau 🧵 affiche le rapport du modèle RÉELLEMENT bâti
+   (`sheetFold`), et le viewer 3D sert le texte PDB du modèle (`sequenceStructure`)
+   dès que RIEN n'est chargé sur la page (un PDB chargé, lui, reste prioritaire).
+
+     • `betaSheetRead` — les brins peints et les paires VALIDES. Tout ce qui ne
+       correspond plus à la séquence (fourchette hors séquence, brin d'un résidu,
+       deux fourchettes qui se recouvrent, sens inconnu, doublon) est COMPTÉ
+       (`rejected`), jamais deviné (voir utils/betaSheetFold.js) ;
+     • `sheetFold` — le repliement du modèle : la recherche locale de
+       utils/betaSheetFold.js sur les φ/ψ des deux brins ET de la boucle qui les
+       sépare, jusqu'à ce que les deux brins se fassent face avec leurs ponts
+       N–H···O=C. DÉTERMINISTE (graine fixe) : la même définition donne toujours le
+       même modèle, et le rapport de la note sous le panneau dit ce qui a été
+       obtenu (échelons CA–CA mesurés, nombre de ponts, convergence) ;
+     • `sequenceStructure` — { text, ext } du PDB : le modèle de la séquence, ponts
+       disulfure ⚭ et feuillets déclarés compris (les records SHEET et les REMARK
+       950 / 951 sont écrits par le MÊME écrivain que le fichier téléchargé), avec
+       les torsions du repliement. Les résidus HORS de la fenêtre du feuillet
+       gardent leurs φ/ψ au bit près — un feuillet déclaré ne défait jamais une
+       hélice qui vit ailleurs.
+
+   ⚠ Le mode 🎓 University test n'en replie AUCUN et n'en peint AUCUNE (le modèle
+   montrerait la réponse : c'est la même règle que ssFor3D, qui part vide).
+   ══════════════════════════════════════════════════════════════════════════════ */
+export const useSequenceStructureModel = ({ activeTest = {}, d = {}, univTestMode = false } = {}) => {
+  const betaSheetRead = useMemo(() => betaSheetPairsOf({
+    secondaryStructure: activeTest.secondaryStructure || '',
+    sheets: activeTest.betaSheets,
+    sequenceLength: (d.seq || '').length,
+  }), [activeTest.secondaryStructure, activeTest.betaSheets, d.seq]);
+  const sheetFold = useMemo(() => {
+    if (univTestMode || d.moleculeType !== 'protein' || !d.seq || !betaSheetRead.pairs.length) return null;
+    const ss = activeTest.secondaryStructure || '';
+    return foldBetaSheets({
+      sequence: d.seq,
+      torsions: d.seq.split('').map((_, i) => ssTorsionAt(ss[i] || 'C')),
+      pairs: betaSheetRead.pairs,
+      build: (cand) => buildProteinBackbone(d.seq, cand),
+    });
+  }, [univTestMode, d.moleculeType, d.seq, activeTest.secondaryStructure, betaSheetRead.pairs]);
+  const sequenceStructure = useMemo(() => {
+    try {
+      console.log('🔄 3D Generation attempt. moleculeType:', d.moleculeType, 'seq length:', d.seq?.length);
+
+      if (d.moleculeType === 'protein' && d.seq) {
+        console.log('✅ Generating protein structure...');
+        // University test mode: the molecule must NOT fold from the secondary
+        // structure painted with the brush (that would leak the answer). An
+        // empty secondary structure yields the fully-extended chain.
+        const ssFor3D = univTestMode ? '' : (activeTest.secondaryStructure || '');
+        // Les ponts disulfure définis dans « Cysteine states » entrent dans le
+        // modèle : CONECT SG–SG (le pont se voit en Sticks / Ball+stick) + le
+        // proton HG retiré des Cys engagées.
+        // 🧵 ET LES FEUILLETS DÉCLARÉS dans « Sequence and structure » (« Pair them ») :
+        // `sheetFold` (calculé plus haut) a déjà replié les φ/ψ des deux brins et de
+        // leur boucle — ses torsions sont données TELLES QUELLES au bâtisseur, qui
+        // n'a donc plus rien à chercher, et les records SHEET / REMARK du fichier
+        // décrivent ce modèle-là (mesuré, jamais promis).
+        return {
+          text: proteinSequenceToPdbText(d.seq, ssFor3D, activeTest.name || 'PROTEIN', {
+            cysDisulfides: activeTest.cysDisulfides,
+            /* ⚠ LA DÉCLARATION BRUTE, pas les paires résolues : proteinSequenceToPdbText
+               relit lui-même `opts.sheets` (betaSheetPairsOf) pour écrire ses records —
+               il attend donc la forme du panneau, { a: [start, end], b: [start, end],
+               sense }, et il compte lui-même les déclarations devenues invalides. */
+            sheets: activeTest.betaSheets,
+            torsions: sheetFold ? sheetFold.torsions : null,
+          }),
+          ext: 'pdb',
+        };
+      }
+
+      if ((d.moleculeType === 'dna' || d.moleculeType === 'rna') && d.seq) {
+        console.log('✅ Generating nucleic acid structure...');
+        return { text: nucleicSequenceToPdbText(d.seq, d.moleculeType, activeTest.name || 'NUCLEIC_ACID'), ext: 'pdb' };
+      }
+
+      console.log('ℹ️ 3D Generation skipped: No valid sequence provided for this molecule type.');
+    } catch (e) {
+      console.error('❌ 3D structure generation failed with error:', e);
+    }
+
+    return null;
+  }, [d.moleculeType, d.seq, activeTest.secondaryStructure, activeTest.name, univTestMode, activeTest.cysDisulfides,
+    activeTest.betaSheets, sheetFold]);
+
+  return { betaSheetRead, sheetFold, sequenceStructure };
+};
+
+
 // ================= MOLECULAR STRUCTURE SECTION =================
 export const MolecularStructureSection = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
@@ -5189,34 +5287,15 @@ export const MolecularStructureSection = ({ ctx }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTest.id, activeTest.structureFileName]);
 
-  /* 🧵 LES FEUILLETS DÉCLARÉS — ce que la définition de séquence demande (« Pair
-     them » : deux brins E, parallèles ou antiparallèles), relu UNE fois ici :
-       • `betaSheetRead` — les brins peints et les paires VALIDES (les déclarations
-         qui ne correspondent plus à la séquence sont comptées, jamais devinées ;
-         voir betaSheetPairsOf) ;
-       • `sheetFold` — le repliement du modèle de séquence : la recherche locale de
-         utils/betaSheetFold.js sur les φ/ψ des deux brins et de la boucle qui les
-         sépare, jusqu'à ce que les deux brins se fassent face avec leurs ponts
-         N–H···O=C. DÉTERMINISTE (graine fixe) : la même définition donne toujours le
-         même modèle, et le rapport de la note sous le panneau dit ce qui a été
-         obtenu (échelons CA–CA mesurés, nombre de ponts, convergence).
-     Le mode 🎓 University test n'en replie AUCUN : le modèle montrerait la réponse
-     (c'est la même règle que ssFor3D, qui part vide dans ce mode). */
-  const betaSheetRead = useMemo(() => betaSheetPairsOf({
-    secondaryStructure: activeTest.secondaryStructure || '',
-    sheets: activeTest.betaSheets,
-    sequenceLength: (d.seq || '').length,
-  }), [activeTest.secondaryStructure, activeTest.betaSheets, d.seq]);
-  const sheetFold = useMemo(() => {
-    if (univTestMode || d.moleculeType !== 'protein' || !d.seq || !betaSheetRead.pairs.length) return null;
-    const ss = activeTest.secondaryStructure || '';
-    return foldBetaSheets({
-      sequence: d.seq,
-      torsions: d.seq.split('').map((_, i) => ssTorsionAt(ss[i] || 'C')),
-      pairs: betaSheetRead.pairs,
-      build: (cand) => buildProteinBackbone(d.seq, cand),
-    });
-  }, [univTestMode, d.moleculeType, d.seq, activeTest.secondaryStructure, betaSheetRead.pairs]);
+  /* 🧵 LA DÉFINITION DE SÉQUENCE — LES FEUILLETS DÉCLARÉS ET LE MODÈLE REPLIÉ.
+     Une SEULE définition pour les TROIS pages (NMR, MD, Docking) : le crochet
+     `useSequenceStructureModel` (défini avec le bâtisseur PDB, plus haut) relit la
+     déclaration du panneau 🧵 (`activeTest.betaSheets`), replie le modèle de
+     séquence, et rend le texte PDB — celui que le viewer 3D sert dès que RIEN
+     n'est chargé ici, exactement comme sur les pages MD et Docking. */
+  const { betaSheetRead, sheetFold, sequenceStructure } = useSequenceStructureModel({
+    activeTest, d, univTestMode,
+  });
 
   // Locally-generated structures (no network round trip): idealized protein backbone from
   // sequence + secondary structure (or fully-extended fallback), and a simplified extended
@@ -5225,58 +5304,13 @@ export const MolecularStructureSection = ({ ctx }) => {
   // LE MODÈLE EST TOUJOURS FABRIQUÉ, même quand un PDB est déclaré plus bas : une
   // séquence tapée dans « Molecular structure and visualization » doit pouvoir donner
   // sa structure. Deux sorties, deux rôles :
-  //   • `sequenceStructure` — le modèle déduit de la séquence, disponible en
-  //     permanence ; c'est lui que le viewer 3D sert dès que RIEN n'est chargé dans
-  //     cette section, et que le bouton « 🧬 Build from sequence » (groupe Modify du
-  //     viewer) reconstruit à la demande ;
+  //   • `sequenceStructure` — le modèle déduit de la séquence (le crochet ci-dessus),
+  //     disponible en permanence ; c'est lui que le viewer 3D sert dès que RIEN n'est
+  //     chargé dans cette section, et que le bouton « 🧬 Build from sequence » (groupe
+  //     Modify du viewer) reconstruit à la demande ;
   //   • `generatedStructure` — ce que la PAGE sert d'elle-même : quand un PDB est
   //     déclaré (structureSrc / pdbId / structureFileName), ce PDB gagne et la page
   //     ne pousse rien, comme avant.
-const sequenceStructure = useMemo(() => {
-  try {
-    console.log('🔄 3D Generation attempt. moleculeType:', d.moleculeType, 'seq length:', d.seq?.length);
-
-    if (d.moleculeType === 'protein' && d.seq) {
-      console.log('✅ Generating protein structure...');
-      // University test mode: the molecule must NOT fold from the secondary
-      // structure painted with the brush (that would leak the answer). An
-      // empty secondary structure yields the fully-extended chain.
-      const ssFor3D = univTestMode ? '' : (activeTest.secondaryStructure || '');
-      // Les ponts disulfure définis dans « Cysteine states » entrent dans le
-      // modèle : CONECT SG–SG (le pont se voit en Sticks / Ball+stick) + le
-      // proton HG retiré des Cys engagées.
-      // 🧵 ET LES FEUILLETS DÉCLARÉS dans « Sequence and structure » (« Pair them ») :
-      // `sheetFold` (calculé plus haut) a déjà replié les φ/ψ des deux brins et de
-      // leur boucle — ses torsions sont données TELLES QUELLES au bâtisseur, qui
-      // n'a donc plus rien à chercher, et les records SHEET / REMARK du fichier
-      // décrivent ce modèle-là (mesuré, jamais promis).
-      return {
-        text: proteinSequenceToPdbText(d.seq, ssFor3D, activeTest.name || 'PROTEIN', {
-          cysDisulfides: activeTest.cysDisulfides,
-          /* ⚠ LA DÉCLARATION BRUTE, pas les paires résolues : proteinSequenceToPdbText
-             relit lui-même `opts.sheets` (betaSheetPairsOf) pour écrire ses records —
-             il attend donc la forme du panneau, { a: [start, end], b: [start, end],
-             sense }, et il compte lui-même les déclarations devenues invalides. */
-          sheets: activeTest.betaSheets,
-          torsions: sheetFold ? sheetFold.torsions : null,
-        }),
-        ext: 'pdb',
-      };
-    }
-
-    if ((d.moleculeType === 'dna' || d.moleculeType === 'rna') && d.seq) {
-      console.log('✅ Generating nucleic acid structure...');
-      return { text: nucleicSequenceToPdbText(d.seq, d.moleculeType, activeTest.name || 'NUCLEIC_ACID'), ext: 'pdb' };
-    }
-
-    console.log('ℹ️ 3D Generation skipped: No valid sequence provided for this molecule type.');
-  } catch (e) {
-    console.error('❌ 3D structure generation failed with error:', e);
-  }
-
-  return null;
-}, [d.moleculeType, d.seq, activeTest.secondaryStructure, activeTest.name, univTestMode, activeTest.cysDisulfides,
-  activeTest.betaSheets, sheetFold]);
 
 const generatedStructure = useMemo(() => {
   if (hasExplicitOverride) {

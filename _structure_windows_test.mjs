@@ -255,8 +255,10 @@ has(UI, ': (isOpen && <div className="p-3">{children}</div>)}',
 
 /* ════════════ 6. RIEN D’AUTRE N’A BOUGÉ ════════════════════════════════════ */
 has(MD, 'const residueNoOf = residueNumberResolver(activeTest);', '[MD] le résolveur de numéros est toujours là');
-eq(count(MD, 'residueNo={residueNoOf}'), 2, '[MD] …les deux bandes le reçoivent');
-eq(count(MD, 'sheetOf={(i) => sheetMarkAt(sheetPairs, i + 1)}'), 1, '[MD] le feuillet déclaré marque toujours la bande');
+eq(count(MD, 'residueNo={residueNoOf}'), 3,
+  '[MD] …les deux bandes ET le panneau 🧵 du feuillet le reçoivent (le panneau écrit lui aussi des numéros affichés)');
+eq(count(MD, 'sheetOf={(i) => sheetMarkAt(betaSheetRead.pairs, i + 1)}'), 1,
+  '[MD] le feuillet déclaré marque toujours la bande — par le lecteur PARTAGÉ du crochet');
 has(MD, "imposedSecondaryStructure={activeTest.secondaryStructure || ''}",
   '[MD] la structure peinte part toujours vers le viewer');
 has(DOCK, "imposedSecondaryStructure={activeTest.secondaryStructure || ''}",
