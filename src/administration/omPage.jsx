@@ -1425,12 +1425,6 @@ export const OmPage = () => {
                   )}
                   {reimbButton(!(st && st.parts.length))}
                 </div>
-                {!readyAll && (
-                  <span className="text-[9px] font-bold text-amber-600 leading-tight max-w-[300px]">
-                    🔒 « Pour signature » est inactif tant que TOUS les postes « Commande » n’ont pas un N° de devis + un fichier.
-                    Utilisez « ✎ Révision » : les devis partent « En gestion » pour être complétés par la responsable d’achats, puis signés.
-                  </span>
-                )}
               </div>
             ) : null}
             {!transferred && !approved && !pendingDecision && !inTest ? <span className="text-[10px] text-slate-300">OM refusée</span> : null}

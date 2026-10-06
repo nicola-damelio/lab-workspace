@@ -11,6 +11,14 @@
    La page s’ouvre donc directement sur sa barre d’action, puis le tableau /
    les graphiques.
 
+   Dans la même passe, la page « OM prévus » a perdu l’aide verrou qui
+   doublonnait l’infobulle de ses boutons de transfert : « 🔒 “Pour signature”
+   est inactif tant que TOUS les postes “Commande” n’ont pas un N° de devis +
+   un fichier… ». Le VERROU reste (le bouton reste désactivé tant que les postes
+   « Commande » sont incomplets) et il reste EXPLIQUÉ, une fois, par les deux
+   infobulles : celle de « Pour signature » (ce qu’il faut pour l’activer) et
+   celle de « ✎ Révision » (la voie à suivre quand des devis manquent).
+
    Vérifications : le SOURCE des quatre pages — les pavés ont disparu ET ce qui
    doit rester (titre, barre d’action, états vides, câblage du tableau
    « hauteur d’écran ») est intact.
@@ -108,4 +116,35 @@ const FILL_WRAP = '<div className="flex-1 min-h-[280px] flex flex-col">';
   has(src, 'fillHeight', `${label} : la table reçoit toujours fillHeight`);
 });
 
-console.log(`_admin_header_boxes_test.mjs — ${passed} assertions OK (pavés d’explication retirés des pages OM prévus, Achats prévus, Congés et Budget overview)`);
+/* ── 4. OM prévus : plus d’aide verrou sous les boutons de transfert ───────
+   La ligne ambre « 🔒 “Pour signature” est inactif tant que… » a été retirée :
+   elle répétait, en clair, ce que disent déjà les infobulles des deux boutons. */
+gone(om, '🔒 « Pour signature » est inactif', 'OM prévus : l’aide verrou de la cellule Transfert a disparu');
+gone(om, 'TOUS les postes « Commande » n’ont pas un N° de devis + un fichier', 'OM prévus : …et sa première phrase');
+gone(om, 'Utilisez « ✎ Révision » : les devis partent', 'OM prévus : …et sa dernière phrase');
+gone(om, 'leading-tight max-w-[300px]', 'OM prévus : le pavé ambre qui la portait a disparu');
+
+/* Le VERROU, lui, reste en place : « Pour signature » est toujours désactivé
+   tant que les postes « Commande » sont incomplets (dernier argument de
+   transferButton). */
+has(
+  om,
+  'const readyAll = !omTransferSummary(r).commande.some((p) => !omPartComplete(r, p.key));',
+  'OM prévus : le calcul « tous les postes Commande sont complets » reste',
+);
+has(om, '!readyAll,', 'OM prévus : le bouton « Pour signature » reste verrouillé tant que les postes ne sont pas complets');
+
+/* …et il reste EXPLIQUÉ : les infobulles des deux boutons couvrent les deux cas
+   (« tout est complet » → signature ; « il manque des devis » → révision). */
+has(
+  om,
+  'Tous les postes « Commande » ont un N° devis + fichier : créés « en attente de signature »',
+  'OM prévus : l’infobulle de « Pour signature » dit ce qu’il faut pour l’activer',
+);
+has(
+  om,
+  'Les postes sans N° devis / fichier partent « En gestion » pour être complétés',
+  'OM prévus : l’infobulle de « ✎ Révision » dit la voie à suivre pour compléter',
+);
+
+console.log(`_admin_header_boxes_test.mjs — ${passed} assertions OK (pavés d’explication retirés des pages OM prévus, Achats prévus, Congés et Budget overview ; aide verrou retirée sous les boutons de transfert d’OM prévus)`);
