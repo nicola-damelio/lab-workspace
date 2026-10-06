@@ -30,7 +30,11 @@
        `onChange`, jamais l'Événement React : c'est lui qui faisait écrire
        « [object Object] » dans la condition (ce texte s'affichait à la place de
        la séquence, et le bandeau 🖌️ de la structure secondaire — qui lit
-       `parsedSeq` — n'avait plus de résidus à peindre).
+       `parsedSeq` — n'avait plus de résidus à peindre) ;
+     • LA PAGE ÉCRIT *ET* RELIT PAR LE MODULE PARTAGÉ — `libraryCsvText` pour
+       l'export, `parseLibrarySections` pour l'import sélectif (« je choisis la
+       sous-catégorie ou les éléments ») : les deux vivent dans
+       utils/libraryCsv.js, il n'y a pas de seconde copie du contrat.
    ========================================================================= */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -185,8 +189,8 @@ eq(CSV.parseLibraryCsv('--- CELL LINES ---\nName,Organism,Tissue,Medium,Notes\nH
   'un fichier sans section « COMPOUNDS » ne rend AUCUN composé (et le dit à l’écran)');
 
 /* ── 6. LES DEUX MOITIÉS SONT CELLES DU MODULE PARTAGÉ ─────────────────────── */
-has(LIBRARY, "import { libraryCsvText } from '../../utils/libraryCsv';",
-  'la page Librairie écrit son fichier avec le module partagé');
+has(LIBRARY, "import { libraryCsvText, parseLibrarySections } from '../../utils/libraryCsv';",
+  'la page Librairie ÉCRIT et RELIT son fichier avec le module partagé');
 has(LIBRARY, 'const text = libraryCsvText({', '…et lui passe ses listes');
 gone(LIBRARY, 'csv.push(', '…plus une seule ligne de CSV fabriquée à la main dans la page');
 gone(LIBRARY, 'const escapeCsv =', '…ni son propre échappement de CSV');

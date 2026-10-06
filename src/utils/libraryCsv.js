@@ -317,5 +317,271 @@ export const parseLibraryCsv = (text) => {
   };
 };
 
+/* ══════════════════════════════════════════════════════════════════════════
+   3. LA RELECTURE PAR SECTION — « je choisis ce que j'importe »
+
+   LA DEMANDE, MOT POUR MOT : « when i load a library I must be able to choose
+   which subcategory or even elements I decide to upload ».
+
+   `parseLibraryCsv` (ci-dessus) rend les COMPOSÉS : c'est tout ce que demande
+   le bouton « Import CSV » de la fiche du composé. La page Librairie, elle,
+   propose le fichier ENTIER : on y coche des SOUS-CATÉGORIES (« Compounds »,
+   « Buffers »…) ou, dedans, des ÉLÉMENTS un par un. Ce module-ci rend cette
+   lecture-là — les neuf sections du fichier, chacune dans la forme que la page
+   attend (les mêmes champs que les fiches : `organism` / `tissue` /
+   `cultureMedium` pour une lignée, `description` pour un tampon, `nuclei` en
+   LISTE pour une expérience RMN…) — puis `libraryPlanPatch`, qui l'applique.
+
+   ⚠ L'IMPORT EST ADDITIF — même règle que la relecture d'une sauvegarde (voir
+   _library_restore_test.mjs) : il AJOUTE et COMPLÈTE par nom, il ne supprime
+   JAMAIS, et un champ que le fichier ne porte pas garde sa valeur d'avant.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/** UN NOMBRE DE FICHIER — « 3 496,28 », « 600 », « 1,1 »… Le TEXTE est gardé
+ *  tel quel quand on ne peut pas en faire un nombre (une unité collée au
+ *  chiffre, par exemple), et une cellule vide rend « rien ». C'est `massOf`
+ *  (ci-dessus) qui décide de ce qui est un nombre : une seule règle. */
+const scalarOf = (raw) => {
+  const s = String(raw == null ? '' : raw).trim();
+  if (!s) return '';
+  const n = massOf(s);
+  return n == null ? s : n;
+};
+
+/** LES LIGNES D'UNE SECTION ORDINAIRE — reconnues PAR LEUR EN-TÊTE. Les huit
+ *  sections autres que « COMPOUNDS » n'ont jamais existé sans en-tête : c'est
+ *  l'export qui les écrit. Une cellule VIDE n'entre pas dans la ligne : elle ne
+ *  peut donc pas écraser, à l'import, la valeur déjà en place. Un nom déjà vu
+ *  est remplacé par la ligne suivante (la dernière gagne). */
+const rowsByHeader = (rows, fields) => {
+  const seen = new Map();
+  let columns = null;
+  rows.forEach((raw) => {
+    const cells = raw.map((c) => String(c == null ? '' : c).trim());
+    if (isHeaderRow(cells)) {
+      columns = cells.map((h) => {
+        const rule = fields.find(([re]) => re.test(h));
+        return rule ? rule[1] : null;
+      });
+      return;
+    }
+    if (!columns) return;
+    const at = (key) => { const i = columns.indexOf(key); return i >= 0 ? cells[i] : ''; };
+    const name = at('name');
+    if (!name) return;
+    const row = { name };
+    columns.forEach((key, i) => { if (key && key !== 'name' && cells[i] !== '') row[key] = cells[i]; });
+    seen.set(name, row);
+  });
+  return [...seen.values()];
+};
+
+/** LES CHAMPS D'EN-TÊTE PARTAGÉS PAR PLUSIEURS SECTIONS. */
+const NAME_FIELD = [/^name$/i, 'name'];
+const COMMENTS_FIELD = [/^(notes?|comments?|remarques?)$/i, 'comments'];
+const MW_FIELD = [/^(mw|molecular\s*weight|masse)$/i, 'molecularWeight'];
+
+/** LES NEUF SOUS-CATÉGORIES DE LA LIBRAIRIE, dans l'ordre du fichier. `match`
+ *  reconnaît le nom de section écrit par l'export, `fields` les en-têtes des
+ *  colonnes, `clean` achève la conversion (nombres, listes) : chaque ligne sort
+ *  dans la forme de la fiche, jamais dans celle du fichier. */
+const LIBRARY_SECTIONS = [
+  {
+    key: 'compounds', label: 'Compounds', unit: 'compound', match: /^compounds?$/i,
+    rows: (rows) => compoundsFromRows(rows),
+  },
+  {
+    key: 'cellLines', label: 'Cell Lines', unit: 'cell line', match: /^cell\s*lines?$/i,
+    fields: [NAME_FIELD, [/^organism$/i, 'organism'], [/^tissue$/i, 'tissue'], [/^(medium|culture\s*medium)$/i, 'cultureMedium'], COMMENTS_FIELD],
+    clean: (row) => ({ ...row, notes: row.notes || '' }),
+  },
+  {
+    key: 'plasmids', label: 'Plasmids', unit: 'plasmid', match: /^plasmids?$/i,
+    fields: [NAME_FIELD, [/^backbone$/i, 'backbone'], [/^promoter$/i, 'promoter'], [/^marker$/i, 'marker'], MW_FIELD, COMMENTS_FIELD],
+    clean: (row) => ({ ...row, molecularWeight: massOf(row.molecularWeight) }),
+  },
+  {
+    key: 'solvents', label: 'Solvents & Media', unit: 'solvent', match: /^solvents?/i,
+    fields: [NAME_FIELD, [/^density$/i, 'density'], MW_FIELD, COMMENTS_FIELD],
+    clean: (row) => ({ ...row, density: scalarOf(row.density), molecularWeight: massOf(row.molecularWeight) }),
+  },
+  {
+    key: 'buffers', label: 'Buffers', unit: 'buffer', match: /^buffers?$/i,
+    fields: [NAME_FIELD, [/^description$/i, 'description'], MW_FIELD, COMMENTS_FIELD],
+    clean: (row) => ({ ...row, molecularWeight: massOf(row.molecularWeight) }),
+  },
+  {
+    key: 'additives', label: 'Additives', unit: 'additive', match: /^additives?$/i,
+    fields: [NAME_FIELD, [/^description$/i, 'description'], MW_FIELD, COMMENTS_FIELD],
+    clean: (row) => ({ ...row, molecularWeight: massOf(row.molecularWeight) }),
+  },
+  {
+    key: 'nmrInstruments', label: 'NMR Instruments', unit: 'instrument', match: /^nmr\s*instruments?$/i,
+    fields: [NAME_FIELD, [/^frequency/i, 'frequency'], [/^manufacturer$/i, 'manufacturer'], COMMENTS_FIELD],
+    clean: (row) => ({ ...row, frequency: scalarOf(row.frequency) }),
+  },
+  {
+    key: 'nmrProbes', label: 'NMR Probes', unit: 'probe', match: /^nmr\s*probes?$/i,
+    fields: [NAME_FIELD, [/^type$/i, 'type'], [/^field/i, 'field'], COMMENTS_FIELD],
+    /* UNE SEULE CASE POUR DEUX CHAMPS — l'export écrit « HCN / cryo » (type et
+       sous-type joints) : la relecture les sépare pour retrouver la fiche. */
+    clean: (row) => {
+      const parts = String(row.type || '').split(/\s*\/\s*/).map((x) => x.trim()).filter(Boolean);
+      const out = { ...row, field: scalarOf(row.field) };
+      delete out.type;
+      if (parts[0]) out.type = parts[0];
+      if (parts[1]) out.subtype = parts[1];
+      return out;
+    },
+  },
+  {
+    key: 'nmrExperiments', label: 'NMR Experiments / Pulse Programs', unit: 'experiment', match: /^nmr\s*experiments?/i,
+    fields: [NAME_FIELD, [/^dimension/i, 'dimensions'], [/^nuclei$/i, 'nuclei'], COMMENTS_FIELD],
+    /* LES NOYAUX SONT UNE LISTE dans la fiche (`nuclei: ['H', 'N']`) et un texte
+       dans le fichier (« H, N ») : on repart de la liste, jamais du texte. */
+    clean: (row) => {
+      const nuclei = String(row.nuclei || '').split(/[,;/]/).map((x) => x.trim()).filter(Boolean);
+      const out = { ...row };
+      delete out.nuclei;
+      if (nuclei.length) out.nuclei = nuclei;
+      return out;
+    },
+  },
+];
+
+/** LE FICHIER LU PAR SOUS-CATÉGORIE —
+ *
+ *    { sections: [{ key, label, unit, rows }], sectioned, total }
+ *
+ *  Seules les sections NON VIDES sont rendues : on ne propose jamais de cocher
+ *  une sous-catégorie que le fichier ne porte pas. Un fichier SANS section (une
+ *  simple liste de composés, le cas d'avant) est lu comme « COMPOUNDS »,
+ *  exactement comme `parseLibraryCsv` le fait. */
+export const parseLibrarySections = (text) => {
+  const rows = parseCsvRows(text);
+  const buckets = new Map();      // clé de section → lignes brutes
+  let current = null;             // section courante (null : inconnue, ou à venir)
+  let sectioned = false;
+  const push = (def, row) => {
+    if (!buckets.has(def.key)) buckets.set(def.key, []);
+    buckets.get(def.key).push(row);
+  };
+  rows.forEach((row) => {
+    if (isSectionRow(row)) {
+      sectioned = true;
+      const label = sectionLabelOf(row);
+      current = LIBRARY_SECTIONS.find((d) => d.match.test(label)) || null;
+      return;
+    }
+    if (!sectioned) { push(LIBRARY_SECTIONS[0], row); return; }
+    if (current) push(current, row);
+  });
+  const sections = LIBRARY_SECTIONS
+    .filter((def) => buckets.has(def.key))
+    .map((def) => {
+      const raw = buckets.get(def.key);
+      const rowsOf = def.rows ? def.rows(raw)
+        : rowsByHeader(raw, def.fields).map((row) => (def.clean ? def.clean(row) : row));
+      return { key: def.key, label: def.label, unit: def.unit, rows: rowsOf };
+    })
+    .filter((s) => s.rows.length > 0);
+  return { sections, sectioned, total: sections.reduce((n, s) => n + s.rows.length, 0) };
+};
+
+/* ── LA FUSION — additive, par nom, jamais destructrice ─────────────────── */
+
+/** LES SEULS CHAMPS QUE LE FICHIER PORTE : une cellule vide (ou absente) ne
+ *  fait pas partie de la ligne — elle ne peut donc rien écraser. */
+const carriedOf = (row) => Object.fromEntries(
+  Object.entries(row || {}).filter(([key, value]) => key !== 'name' && value !== '' && value != null)
+);
+
+/** FUSION PAR NOM d'une LISTE d'objets (solvants, tampons, additifs, sondes,
+ *  instruments, expériences) : l'élément connu est COMPLÉTÉ, l'inconnu est
+ *  AJOUTÉ, rien n'est retiré. Un élément arrivé par un fichier prend le nom
+ *  pour identifiant — c'est aussi ce qui le rend retrouvable à l'écran. */
+const mergeListByName = (current, incoming) => {
+  const out = listOf(current).map((it) => (typeof it === 'string' ? { id: it, name: it } : { ...it }));
+  listOf(incoming).forEach((row) => {
+    if (!row || !row.name) return;
+    const carried = carriedOf(row);
+    const at = out.findIndex((it) => (it.name || '') === row.name);
+    if (at >= 0) out[at] = { ...out[at], ...carried };
+    else out.push({ id: row.name, ...carried, name: row.name });
+  });
+  return out;
+};
+
+/** FUSION PAR NOM d'un OBJET indexé par le nom (fiches lignées, plasmides). */
+const mergeMetaByName = (current, incoming) => {
+  const out = { ...(current && typeof current === 'object' ? current : {}) };
+  listOf(incoming).forEach((row) => {
+    if (!row || !row.name) return;
+    const before = out[row.name] && typeof out[row.name] === 'object' ? out[row.name] : {};
+    out[row.name] = { ...before, ...carriedOf(row), name: row.name, updatedAt: Date.now() };
+  });
+  return out;
+};
+
+/** LES COMPOSÉS DU FICHIER DANS LEUR FICHE — même règle que l'« Import CSV » de
+ *  la fiche du composé (nom, type, séquence / SMILES / formule, notes, et la
+ *  masse du fichier ou, à défaut, celle d'avant) : un seul comportement pour
+ *  les deux boutons. */
+const mergeCompoundRows = (current, incoming) => {
+  const out = { ...(current && typeof current === 'object' ? current : {}) };
+  listOf(incoming).forEach((row) => {
+    if (!row || !row.name) return;
+    const before = out[row.name] || {};
+    out[row.name] = {
+      ...before,
+      name: row.name,
+      type: row.type,
+      sequence: row.sequence,
+      smiles: row.smiles,
+      formula: row.formula,
+      notes: row.notes,
+      molecularWeight: row.molecularWeight == null ? (before.molecularWeight ?? null) : row.molecularWeight,
+      updatedAt: Date.now(),
+    };
+  });
+  return out;
+};
+
+/** LES NOMS AJOUTÉS À UNE LISTE DE NOMS (composés / lignées personnalisés) —
+ *  jamais deux fois, jamais en écrasant une entrée en forme d'objet. */
+const addNamesToList = (current, names) => {
+  const out = listOf(current).slice();
+  const has = (name) => out.some((c) => (typeof c === 'string' ? c : (c && c.name)) === name);
+  listOf(names).forEach((name) => { if (name && !has(name)) out.push(name); });
+  return out;
+};
+
+/** LE PLAN APPLIQUÉ — `libraryPlanPatch(state, plan)` rend UNIQUEMENT les clés
+ *  qui changent, prêtes pour les setters de la page Librairie. Le plan vient du
+ *  panneau de sélection : lui seul sait ce qui a été coché (une sous-catégorie
+ *  entière, ou les éléments choisis un par un). */
+export const libraryPlanPatch = (state, plan) => {
+  const src = state && typeof state === 'object' ? state : {};
+  const p = plan && typeof plan === 'object' ? plan : {};
+  const namesOf = (rows) => listOf(rows).map((r) => r && r.name).filter(Boolean);
+  const patch = {};
+  if (listOf(p.compounds).length) {
+    patch.compoundMeta = mergeCompoundRows(src.compoundMeta, p.compounds);
+    patch.customCmpds = addNamesToList(src.customCmpds, namesOf(p.compounds));
+  }
+  if (listOf(p.cellLines).length) {
+    patch.cellLineMeta = mergeMetaByName(src.cellLineMeta, p.cellLines);
+    patch.customCellLines = addNamesToList(src.customCellLines, namesOf(p.cellLines));
+  }
+  if (listOf(p.plasmids).length) patch.plasmidMeta = mergeMetaByName(src.plasmidMeta, p.plasmids);
+  if (listOf(p.solvents).length) patch.solvents = mergeListByName(src.solvents, p.solvents);
+  if (listOf(p.buffers).length) patch.buffers = mergeListByName(src.buffers, p.buffers);
+  if (listOf(p.additives).length) patch.additives = mergeListByName(src.additives, p.additives);
+  if (listOf(p.nmrInstruments).length) patch.nmrInstruments = mergeListByName(src.nmrInstruments, p.nmrInstruments);
+  if (listOf(p.nmrProbes).length) patch.nmrProbes = mergeListByName(src.nmrProbes, p.nmrProbes);
+  if (listOf(p.nmrExperiments).length) patch.nmrExperiments = mergeListByName(src.nmrExperiments, p.nmrExperiments);
+  return patch;
+};
+
 export default parseLibraryCsv;
 

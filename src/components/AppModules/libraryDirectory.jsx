@@ -1,16 +1,43 @@
 /* =========================================================================
    src/components/AppModules/libraryDirectory.jsx
    Library directory listing component (extracted from App.jsx).
+
+   TROIS GESTES SUR LA MÊME LISTE :
+     • CLIQUER une ligne ouvre la fiche de l'élément (comportement d'origine) ;
+     • COCHER des lignes — dans une sous-catégorie ou dans plusieurs — puis
+       « 🗑 Delete selected » les supprime EN UNE SEULE FOIS (la demande :
+       « selezionare più voci nella libreria per cancellarle in un colpo
+       solo »). Rien ne part sans confirmation, et chaque suppression passe par
+       `onDeleteResources`, qui seul connaît les setters de la page ;
+     • « 📥 Export Full Library (CSV) » écrit TOUTES les sous-catégories (le
+       texte vient de utils/libraryCsv.js — un seul contrat d'écriture), et
+       « 📤 Import Library (CSV) » relit un fichier exporté en laissant choisir
+       la sous-catégorie ou les éléments (LibraryImportModal).
    ========================================================================= */
 
-import React from 'react';
+import React, { useState } from 'react';
 import { LibraryTable } from './librarySections';
-import { libraryCsvText } from '../../utils/libraryCsv';
+import { LibraryImportModal } from './libraryImportModal';
+import { libraryCsvText, parseLibrarySections } from '../../utils/libraryCsv';
+
+/* LE VOCABULAIRE DES SOUS-CATÉGORIES — les mêmes titres que la page, pour les
+   messages de suppression : une seule liste, donc un seul endroit à corriger. */
+const TABLE_LABELS = {
+  compound: 'Compounds',
+  cellLine: 'Cell Lines',
+  plasmid: 'Plasmids',
+  solvent: 'Solvents & Media',
+  buffer: 'Buffers',
+  additive: 'Additives',
+  nmrInstrument: 'NMR Instruments',
+  nmrProbe: 'NMR Probes',
+  nmrExperiment: 'NMR Experiments / Pulse Programs',
+};
 
 export const LibraryDirectory = ({ 
   compoundMeta, cellLineMeta, plasmidMeta, customCmpds, customCellLines, customPlasmids,
   solvents, buffers, additives, nmrProbes, nmrInstruments, nmrExperiments, 
-  onSelectResource 
+  onSelectResource, onDeleteResources, onImportLibrary
 }) => {
   const compounds = [...new Set([...(customCmpds || []), ...Object.keys(compoundMeta || {})])].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
   const cellLines = [...new Set([...(customCellLines || []), ...Object.keys(cellLineMeta || {})])].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
@@ -152,6 +179,96 @@ export const LibraryDirectory = ({
     links: Array.isArray(e.links) ? e.links : []
   }));
 
+  /* ── LA SÉLECTION — cochée sur les tables, tenue ICI ──────────────────────
+     `picked` : la liste des NOMS cochés, par sous-catégorie (les noms, parce
+     que c'est par le nom que les fiches et les gestionnaires suppriment — voir
+     Delete des CompoundDefinitionSection / SolventsManager / …). Elle vit dans
+     la page, pas dans une table : c'est ce qui permet de cocher dans PLUSIEURS
+     sous-catégories et de tout supprimer d'un coup depuis l'en-tête. */
+  const [picked, setPicked] = useState({});
+  const [pendingImport, setPendingImport] = useState(null);   // fichier relu, à confirmer
+
+  const pickedOf = (type) => (Array.isArray(picked[type]) ? picked[type] : []);
+  const totalPicked = Object.values(picked).reduce((n, list) => n + (Array.isArray(list) ? list.length : 0), 0);
+
+  const togglePick = (type, name) => setPicked((prev) => {
+    const list = Array.isArray(prev[type]) ? prev[type] : [];
+    return { ...prev, [type]: list.includes(name) ? list.filter((x) => x !== name) : [...list, name] };
+  });
+
+  /** « All » / « None » d'une table : RIEN ne déborde sur les autres. */
+  const togglePickAll = (type, names, on) => setPicked((prev) => ({
+    ...prev,
+    [type]: on ? [...new Set([...(Array.isArray(prev[type]) ? prev[type] : []), ...names])] : [],
+  }));
+
+  const dropPicks = (type) => setPicked((prev) => ({ ...prev, [type]: [] }));
+
+  /** UN COUP D'ŒIL SUR CE QUI VA PARTIR — les huit premiers noms, puis le
+   *  reste en nombre : une sélection de cent lignes ne fait pas une fenêtre de
+   *  confirmation de cent lignes. */
+  const namesPreview = (names) => names.slice(0, 8).join(' · ')
+    + (names.length > 8 ? ` … (+${names.length - 8})` : '');
+
+  /** 🗑 SUPPRIMER LES LIGNES COCHÉES D'UNE SOUS-CATÉGORIE — une confirmation,
+   *  un seul appel : la page retire les noms d'un coup (une écriture, donc pas
+   *  de suppression « une fois sur deux »). */
+  const deletePicked = (type) => {
+    const names = pickedOf(type);
+    if (!names.length || !onDeleteResources) return;
+    const label = TABLE_LABELS[type] || type;
+    const ok = window.confirm(
+      `Delete ${names.length} entr${names.length > 1 ? 'ies' : 'y'} from ${label}?\n\n${namesPreview(names)}`
+    );
+    if (!ok) return;
+    onDeleteResources(type, names);
+    dropPicks(type);
+  };
+
+  /** 🗑 …ET TOUTES LES SOUS-CATÉGORIES D'UN SEUL COUP (bouton de l'en-tête,
+   *  affiché dès qu'une case est cochée, où qu'elle soit). */
+  const deleteEveryPick = () => {
+    const groups = Object.entries(picked).filter(([, list]) => Array.isArray(list) && list.length);
+    if (!groups.length || !onDeleteResources) return;
+    const total = groups.reduce((n, [, list]) => n + list.length, 0);
+    const detail = groups.map(([type, list]) => `• ${TABLE_LABELS[type] || type} : ${list.length}`).join('\n');
+    const ok = window.confirm(
+      `Delete ${total} selected entr${total > 1 ? 'ies' : 'y'}?\n\n${detail}`
+    );
+    if (!ok) return;
+    groups.forEach(([type, list]) => onDeleteResources(type, list));
+    setPicked({});
+  };
+
+  /** 📤 IMPORTER UN FICHIER DE LIBRAIRIE — le fichier est RELU par
+   *  sous-catégorie (`parseLibrarySections`) puis montré : c'est la fenêtre qui
+   *  décide de ce qui entre, rien n'est importé avant le clic. Un fichier dont
+   *  aucune ligne n'est lisible le dit et ne change RIEN. */
+  const handleImportFile = (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const parsed = parseLibrarySections(event.target.result);
+      if (!parsed.sections.length) {
+        alert('No entry could be read in this file — nothing was changed.');
+        return;
+      }
+      setPendingImport(parsed);
+    };
+    reader.readAsText(file);
+    e.target.value = '';   // le même fichier peut être réimporté aussitôt
+  };
+
+  /** LES PROPS DE SÉLECTION D'UNE TABLE — une seule définition, neuf usages. */
+  const tableSelection = (type, rows) => ({
+    selectable: true,
+    selectedNames: pickedOf(type),
+    onToggleSelect: (name) => togglePick(type, name),
+    onToggleAll: (on) => togglePickAll(type, rows.map((r) => r.name), on),
+    onDeleteSelected: () => deletePicked(type),
+  });
+
   const linksCell = (row) =>
     row.linkCount > 0 ? (
       <div className="flex flex-col gap-1">
@@ -187,15 +304,39 @@ export const LibraryDirectory = ({
   return (
     <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col gap-6">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center border-b pb-3 gap-3">
-        <h3 className="text-sm font-bold text-slate-700 uppercase">
-          Defined Resources Library
-        </h3>
-        <button 
-          onClick={handleExportCSV}
-          className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold py-1.5 px-3 rounded-lg text-xs shadow-sm transition-colors flex items-center gap-2"
-        >
-          📥 Export Full Library (CSV)
-        </button>
+        <div className="min-w-0">
+          <h3 className="text-sm font-bold text-slate-700 uppercase">
+            Defined Resources Library
+          </h3>
+          <p className="text-[11px] text-slate-400 mt-0.5">
+            Click a row to open its card · tick rows to delete several at once · the export keeps every
+            subcategory, the import lets you choose what comes in.
+          </p>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          {totalPicked > 0 && (
+            <button
+              onClick={deleteEveryPick}
+              title="Delete every ticked entry, in every subcategory"
+              className="bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 font-bold py-1.5 px-3 rounded-lg text-xs shadow-sm transition-colors flex items-center gap-2"
+            >
+              🗑 Delete selected ({totalPicked})
+            </button>
+          )}
+          <label
+            title="Read a library file (CSV / TSV) and choose the subcategories — or the single entries — to bring in"
+            className="bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 font-bold py-1.5 px-3 rounded-lg text-xs shadow-sm transition-colors flex items-center gap-2 cursor-pointer"
+          >
+            📤 Import Library (CSV)
+            <input type="file" accept=".csv,.tsv,.txt" onChange={handleImportFile} className="hidden" />
+          </label>
+          <button
+            onClick={handleExportCSV}
+            className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold py-1.5 px-3 rounded-lg text-xs shadow-sm transition-colors flex items-center gap-2"
+          >
+            📥 Export Full Library (CSV)
+          </button>
+        </div>
       </div>
 
       {/* COMPOUND / CELL LINE / PLASMID — always stacked, never side by side */}
@@ -212,6 +353,7 @@ export const LibraryDirectory = ({
             rows={compoundRows}
             onRowClick={(row) => onSelectResource(row.name, 'compound')}
             emptyLabel="No compounds defined yet."
+            {...tableSelection('compound', compoundRows)}
           />
         </div>
 
@@ -227,6 +369,7 @@ export const LibraryDirectory = ({
             rows={cellLineRows}
             onRowClick={(row) => onSelectResource(row.name, 'cellLine')}
             emptyLabel="No cell lines defined yet."
+            {...tableSelection('cellLine', cellLineRows)}
           />
         </div>
 
@@ -243,6 +386,7 @@ export const LibraryDirectory = ({
             rows={plasmidRows}
             onRowClick={(row) => onSelectResource(row.name, 'plasmid')}
             emptyLabel="No plasmids defined yet."
+            {...tableSelection('plasmid', plasmidRows)}
           />
         </div>
       </div>
@@ -262,6 +406,7 @@ export const LibraryDirectory = ({
             rows={solventRows}
             onRowClick={(row) => onSelectResource(row.name, 'solvent')}
             emptyLabel="No solvents defined yet."
+            {...tableSelection('solvent', solventRows)}
           />
         </div>
 
@@ -278,6 +423,7 @@ export const LibraryDirectory = ({
             rows={bufferRows}
             onRowClick={(row) => onSelectResource(row.name, 'buffer')}
             emptyLabel="No buffers defined yet."
+            {...tableSelection('buffer', bufferRows)}
           />
         </div>
 
@@ -294,6 +440,7 @@ export const LibraryDirectory = ({
             rows={additiveRows}
             onRowClick={(row) => onSelectResource(row.name, 'additive')}
             emptyLabel="No additives defined yet."
+            {...tableSelection('additive', additiveRows)}
           />
         </div>
       </div>
@@ -313,6 +460,7 @@ export const LibraryDirectory = ({
             rows={nmrInstrumentRows}
             onRowClick={(row) => onSelectResource(row.name, 'nmrInstrument')}
             emptyLabel="No NMR instruments defined yet."
+            {...tableSelection('nmrInstrument', nmrInstrumentRows)}
           />
         </div>
 
@@ -329,6 +477,7 @@ export const LibraryDirectory = ({
             rows={nmrProbeRows}
             onRowClick={(row) => onSelectResource(row.name, 'nmrProbe')}
             emptyLabel="No NMR probes defined yet."
+            {...tableSelection('nmrProbe', nmrProbeRows)}
           />
         </div>
 
@@ -345,9 +494,24 @@ export const LibraryDirectory = ({
             rows={nmrExperimentRows}
             onRowClick={(row) => onSelectResource(row.name, 'nmrExperiment')}
             emptyLabel="No NMR experiments defined yet."
+            {...tableSelection('nmrExperiment', nmrExperimentRows)}
           />
         </div>
       </div>
+
+      {/* 📤 LA FENÊTRE D'IMPORT — montée seulement quand un fichier a été relu :
+          elle montre les sous-catégories du fichier et laisse cocher ce qui
+          entre (sous-catégorie entière, ou éléments un par un). */}
+      {pendingImport && (
+        <LibraryImportModal
+          parsed={pendingImport}
+          onCancel={() => setPendingImport(null)}
+          onImport={(plan) => {
+            setPendingImport(null);
+            if (onImportLibrary) onImportLibrary(plan);
+          }}
+        />
+      )}
     </div>
   );
 };

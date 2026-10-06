@@ -11,6 +11,7 @@ import { CellLineDefinitionSection, PlasmidDefinitionSection } from './librarySe
 import { CompoundDefinitionSection } from './compoundDefinitionSection';
 import { SolventsManager, BuffersManager, AdditivesManager, NMRProbesManager, NMRInstrumentsManager, NMRExperimentsManager } from '../DefinitionsExtra';
 import { PyMOLScriptsSection } from './PyMOLScriptsSection';
+import { libraryPlanPatch } from '../../utils/libraryCsv';
 
 export const LibraryModule = ({
   allCmpds, setActiveLibrarySelection, activeLibrarySelection,
@@ -20,7 +21,71 @@ export const LibraryModule = ({
   customCellLines, setCustomCellLines,
   solvents, setSolvents, buffers, setBuffers, additives, setAdditives,
   nmrProbes, setNmrProbes, nmrInstruments, setNmrInstruments, nmrExperiments, setNmrExperiments
-}) => (
+}) => {
+  /* ── 🗑 SUPPRIMER PLUSIEURS ENTRÉES D'UN COUP ────────────────────────────
+     La page Librairie envoie le TYPE de la sous-catégorie et les NOMS cochés :
+     la suppression se fait ICI, le seul endroit qui tient les setters et les
+     listes — une écriture par liste, donc pas de suppression « une fois sur
+     deux ». La règle est celle des fiches et des gestionnaires : un élément se
+     retire PAR SON NOM (SolventsManager, NMRProbesManager… font exactement
+     `list.filter(it => it.name !== nom)`), et une fiche (composé, lignée,
+     plasmide) quitte AUSSI sa liste « personnalisée ». */
+  const deleteResources = (type, names) => {
+    const list = Array.isArray(names) ? names : [];
+    if (!list.length) return;
+    const map = new Set(list);
+    const dropNames = (current) => (Array.isArray(current) ? current : [])
+      .filter((it) => !map.has(typeof it === 'string' ? it : (it && it.name)));
+    const dropMeta = (current) => {
+      const next = { ...(current && typeof current === 'object' ? current : {}) };
+      list.forEach((name) => { delete next[name]; });
+      return next;
+    };
+    if (type === 'compound') { setCompoundMeta(dropMeta); setCustomCmpds(dropNames); return; }
+    if (type === 'cellLine') { setCellLineMeta(dropMeta); setCustomCellLines(dropNames); return; }
+    if (type === 'plasmid') { setPlasmidMeta(dropMeta); return; }
+    if (type === 'solvent') { setSolvents(dropNames); return; }
+    if (type === 'buffer') { setBuffers(dropNames); return; }
+    if (type === 'additive') { setAdditives(dropNames); return; }
+    if (type === 'nmrInstrument') { setNmrInstruments(dropNames); return; }
+    if (type === 'nmrProbe') { setNmrProbes(dropNames); return; }
+    if (type === 'nmrExperiment') { setNmrExperiments(dropNames); return; }
+  };
+
+  /* ── 📤 IMPORTER CE QUI A ÉTÉ COCHÉ DANS LE FICHIER ─────────────────────
+     `libraryPlanPatch` (utils/libraryCsv.js) fait la FUSION — additive, par
+     nom, jamais destructrice — et ne rend QUE les listes qui changent ; ici on
+     pose ces listes dans l'état, puis on dit à l'écran ce qui est entré. Les
+     compteurs viennent du plan (ce que l'utilisateur a coché), pas du fichier :
+     une sous-catégorie décochée n'entre pas d'un seul élément. */
+  const importLibrary = (plan) => {
+    const patch = libraryPlanPatch({
+      compoundMeta, customCmpds, cellLineMeta, customCellLines, plasmidMeta,
+      solvents, buffers, additives, nmrInstruments, nmrProbes, nmrExperiments,
+    }, plan);
+    if (patch.compoundMeta) { setCompoundMeta(patch.compoundMeta); setCustomCmpds(patch.customCmpds); }
+    if (patch.cellLineMeta) { setCellLineMeta(patch.cellLineMeta); setCustomCellLines(patch.customCellLines); }
+    if (patch.plasmidMeta) setPlasmidMeta(patch.plasmidMeta);
+    if (patch.solvents) setSolvents(patch.solvents);
+    if (patch.buffers) setBuffers(patch.buffers);
+    if (patch.additives) setAdditives(patch.additives);
+    if (patch.nmrInstruments) setNmrInstruments(patch.nmrInstruments);
+    if (patch.nmrProbes) setNmrProbes(patch.nmrProbes);
+    if (patch.nmrExperiments) setNmrExperiments(patch.nmrExperiments);
+
+    const UNITS = {
+      compounds: 'compound', cellLines: 'cell line', plasmids: 'plasmid', solvents: 'solvent',
+      buffers: 'buffer', additives: 'additive', nmrInstruments: 'NMR instrument',
+      nmrProbes: 'NMR probe', nmrExperiments: 'NMR experiment',
+    };
+    const summary = Object.entries(UNITS).map(([key, unit]) => {
+      const n = plan && Array.isArray(plan[key]) ? plan[key].length : 0;
+      return n ? `${n} ${unit}${n > 1 ? 's' : ''}` : '';
+    }).filter(Boolean).join(' · ');
+    if (summary) alert(`Imported into the library: ${summary}.`);
+  };
+
+  return (
 
               <div className="h-full min-h-0 overflow-y-auto custom-scrollbar p-4 md:p-6 bg-slate-50">
                 <div className="max-w-6xl mx-auto flex flex-col gap-4 pb-10">
@@ -47,6 +112,8 @@ export const LibraryModule = ({
                           }
                         }, 150);
                       }}
+                      onDeleteResources={deleteResources}
+                      onImportLibrary={importLibrary}
                     />
                   </CollapsibleSection>
 
@@ -113,4 +180,5 @@ export const LibraryModule = ({
 
                 </div>
               </div>
-);
+  );
+};
