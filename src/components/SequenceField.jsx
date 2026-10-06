@@ -25,6 +25,15 @@
    ⚠ LE DÉFILEMENT SUIT : une séquence plus longue que la case défile ; la
    couche est recollée au champ à chaque `scroll` (sans quoi les couleurs
    glisseraient d'une ligne à l'autre sur une longue séquence).
+   ⚠ LE CONTRAT DE `onChange` EST LA VALEUR TAPÉE, PAS L'ÉVÉNEMENT — et c'est
+   `emitValue`, ci-dessous, qui le tient. Le champ est un VRAI `<textarea>` :
+   React lui donne un Événement, alors que les trois pages qui posent cette case
+   écrivent `updateActiveTest(sequencePatchForMoleculeType(activeTest,
+   d.moleculeType, v))` — elles attendent donc le TEXTE. Tant que l'événement
+   descendait jusqu'au patch, `String(événement)` y écrivait « [object Object] » :
+   la case affichait ce texte à la place de la séquence (la saisie était perdue)
+   et le bandeau 🖌️ de la structure secondaire, qui lit `parsedSeq`, n'avait plus
+   rien à peindre. Une seule conversion, ici, pour les trois pages.
    ========================================================================= */
 import React, { useRef } from 'react';
 import { colourRunsOf, RESIDUE_COLOUR_CLASSES } from '../utils/sequenceHighlight';
@@ -67,6 +76,15 @@ export const SequenceField = ({
     mirror.scrollTop = area.scrollTop;
     mirror.scrollLeft = area.scrollLeft;
   };
+  /* LE TEXTE, JAMAIS L'ÉVÉNEMENT — le champ est un `<textarea>` : React lui
+     donne un Événement, les appelants (NMR · MD · Docking) attendent la valeur
+     tapée. La conversion se fait ICI, une seule fois pour les trois cases. Un
+     appelant qui donne déjà un texte (une sonde, un banc) reste servi : la garde
+     `e && e.target` le laisse passer tel quel. */
+  const emitValue = (e) => {
+    if (typeof onChange !== 'function') return;
+    onChange(e && e.target ? e.target.value : e);
+  };
   const runs = colourRunsOf(value);
   return (
     <div className="relative bg-white rounded-lg">
@@ -78,7 +96,7 @@ export const SequenceField = ({
       <textarea
         ref={areaRef}
         value={value}
-        onChange={onChange}
+        onChange={emitValue}
         onScroll={followScroll}
         readOnly={readOnly}
         spellCheck={false}

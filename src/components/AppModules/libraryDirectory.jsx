@@ -5,6 +5,7 @@
 
 import React from 'react';
 import { LibraryTable } from './librarySections';
+import { libraryCsvText } from '../../utils/libraryCsv';
 
 export const LibraryDirectory = ({ 
   compoundMeta, cellLineMeta, plasmidMeta, customCmpds, customCellLines, customPlasmids,
@@ -30,110 +31,20 @@ export const LibraryDirectory = ({
   };
 
   // --- FULL CSV EXPORT LOGIC ---
+  /* 📤 LE FICHIER DE LA LIBRAIRIE — le texte vient de utils/libraryCsv.js, la
+     MOITIÉ ÉCRITURE d'un contrat unique : l'« Import CSV » de la fiche du
+     composé est l'autre moitié, et elle relit exactement ces colonnes-là (son
+     en-tête de module dit tout : sections, en-têtes, valeurs citées). Le format
+     n'a donc plus qu'UNE définition — avant, chaque moitié portait la sienne et
+     elles avaient divergé (l'export écrivait « Name,Type,Sequence/Formula,MW,
+     Notes », l'import lisait nom, séquence, type : à l'aller-retour, tous les
+     champs glissaient d'une colonne). */
   const handleExportCSV = () => {
-    let csv = [];
-    
-    // Helper to escape commas and quotes for CSV format
-    const escapeCsv = (str) => {
-      if (str === null || str === undefined) return '';
-      const s = String(str).replace(/"/g, '""');
-      return `"${s}"`;
-    };
-
-    // Strip HTML from rich text sequences before exporting
-    const stripHtml = (str) => String(str || '').replace(/<[^>]*>?/gm, '').replace(/&nbsp;/g, ' ');
-
-    csv.push("--- COMPOUNDS ---");
-    csv.push("Name,Type,Sequence/Formula,MW,Notes");
-    compounds.forEach(name => {
-      const m = compoundMeta[name] || {};
-      const seq = stripHtml(m.sequence || m.formula || m.smiles || '');
-      csv.push(`${escapeCsv(name)},${escapeCsv(m.type)},${escapeCsv(seq)},${escapeCsv(m.molecularWeight)},${escapeCsv(m.notes)}`);
+    const text = libraryCsvText({
+      compounds, compoundMeta, cellLines, cellLineMeta, plasmids, plasmidMeta,
+      solvents, buffers, additives, nmrInstruments, nmrProbes, nmrExperiments,
     });
-
-    csv.push("");
-    csv.push("--- CELL LINES ---");
-    csv.push("Name,Organism,Tissue,Medium,Notes");
-    cellLines.forEach(name => {
-      const m = cellLineMeta[name] || {};
-      csv.push(`${escapeCsv(name)},${escapeCsv(m.organism)},${escapeCsv(m.tissue)},${escapeCsv(m.cultureMedium)},${escapeCsv(m.notes)}`);
-    });
-
-    csv.push("");
-    csv.push("--- PLASMIDS ---");
-    csv.push("Name,Backbone,Promoter,Marker,MW,Notes");
-    plasmids.forEach(name => {
-      const m = plasmidMeta[name] || {};
-      csv.push(`${escapeCsv(name)},${escapeCsv(m.backbone)},${escapeCsv(m.promoter)},${escapeCsv(m.marker)},${escapeCsv(m.molecularWeight)},${escapeCsv(m.notes)}`);
-    });
-
-    csv.push("");
-    csv.push("--- SOLVENTS ---");
-    csv.push("Name,Density,MW,Comments");
-    (solvents || []).forEach(s => {
-      const name = typeof s === 'string' ? s : s.name;
-      const den = typeof s === 'string' ? '' : s.density;
-      const mw = typeof s === 'string' ? '' : s.molecularWeight;
-      const comments = typeof s === 'string' ? '' : s.comments;
-      csv.push(`${escapeCsv(name)},${escapeCsv(den)},${escapeCsv(mw)},${escapeCsv(comments)}`);
-    });
-
-    csv.push("");
-    csv.push("--- BUFFERS ---");
-    csv.push("Name,Description,MW,Comments");
-    (buffers || []).forEach(b => {
-      const name = typeof b === 'string' ? b : b.name;
-      const desc = typeof b === 'string' ? '' : b.description;
-      const mw = typeof b === 'string' ? '' : b.molecularWeight;
-      const comments = typeof b === 'string' ? '' : b.comments;
-      csv.push(`${escapeCsv(name)},${escapeCsv(desc)},${escapeCsv(mw)},${escapeCsv(comments)}`);
-    });
-
-    csv.push("");
-    csv.push("--- ADDITIVES ---");
-    csv.push("Name,Description,MW,Comments");
-    (additives || []).forEach(a => {
-      const name = typeof a === 'string' ? a : a.name;
-      const desc = typeof a === 'string' ? '' : a.description;
-      const mw = typeof a === 'string' ? '' : a.molecularWeight;
-      const comments = typeof a === 'string' ? '' : a.comments;
-      csv.push(`${escapeCsv(name)},${escapeCsv(desc)},${escapeCsv(mw)},${escapeCsv(comments)}`);
-    });
-
-    csv.push("");
-    csv.push("--- NMR INSTRUMENTS ---");
-    csv.push("Name,Frequency (MHz),Manufacturer,Comments");
-    (nmrInstruments || []).forEach(i => {
-      const name = typeof i === 'string' ? i : i.name;
-      const freq = typeof i === 'string' ? '' : i.frequency;
-      const man = typeof i === 'string' ? '' : i.manufacturer;
-      const comments = typeof i === 'string' ? '' : i.comments;
-      csv.push(`${escapeCsv(name)},${escapeCsv(freq)},${escapeCsv(man)},${escapeCsv(comments)}`);
-    });
-
-    csv.push("");
-    csv.push("--- NMR PROBES ---");
-    csv.push("Name,Type,Field (MHz),Comments");
-    (nmrProbes || []).forEach(p => {
-      const name = typeof p === 'string' ? p : p.name;
-      const type = typeof p === 'string' ? '' : [p.type, p.subtype].filter(Boolean).join(' / ');
-      const field = typeof p === 'string' ? '' : p.field;
-      const comments = typeof p === 'string' ? '' : p.comments;
-      csv.push(`${escapeCsv(name)},${escapeCsv(type)},${escapeCsv(field)},${escapeCsv(comments)}`);
-    });
-
-    csv.push("");
-    csv.push("--- NMR EXPERIMENTS / PULSE PROGRAMS ---");
-    csv.push("Name,Dimensions,Nuclei,Comments");
-    (nmrExperiments || []).forEach(e => {
-      const name = typeof e === 'string' ? e : e.name;
-      const dim = typeof e === 'string' ? '' : e.dimensions;
-      const nuclei = typeof e === 'string' ? '' : (Array.isArray(e.nuclei) ? e.nuclei.filter(Boolean).join(', ') : (e.nuclei || ''));
-      const comments = typeof e === 'string' ? '' : e.comments;
-      csv.push(`${escapeCsv(name)},${escapeCsv(dim)},${escapeCsv(nuclei)},${escapeCsv(comments)}`);
-    });
-
-    const blob = new Blob([csv.join('\n')], { type: 'text/csv;charset=utf-8;' });
+    const blob = new Blob([text], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -141,6 +52,7 @@ export const LibraryDirectory = ({
     a.click();
     URL.revokeObjectURL(url);
   };
+
   // ------------------------------
 
   const compoundRows = compounds.map((name) => {

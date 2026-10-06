@@ -11,6 +11,10 @@ import { RichTextEditor } from '../RichTextEditor';
 import { LinksManager } from './librarySections';
 import { CALC_INPUT_CLS, CALC_LABEL_CLS } from '../../utils/styles';
 import { stripHtml, calculateSequenceInfo, generateDnaFromProtein, calculateSmilesInfoAsync } from '../../utils/sequenceInfo';
+/* 📥 « Import CSV » — LA RELECTURE DU FICHIER DE LA LIBRAIRIE : elle vit dans
+   utils/libraryCsv.js, avec l'export de la page Librairie (un seul contrat,
+   donc un aller-retour qui ne peut plus décaler les colonnes). */
+import { parseLibraryCsv } from '../../utils/libraryCsv';
 /* 🧬 LA LIGNE SOUS LA CASE DE SÉQUENCE — la composition, la charge à pH 7 et l'ε₂₈₀. Le
    composant partagé (src/components/SequenceReadingLine.jsx) la calcule lui-même avec le
    module PUR des pKa (utils/sequenceCharge.js) : la MÊME ligne sous TOUTES les cases de
@@ -212,62 +216,66 @@ export const CompoundDefinitionSection = ({
   };
 
   // ---- CSV BULK IMPORT HANDLER ----
+  /* 📥 « Import CSV » — LA MOITIÉ LECTURE DU MÊME CONTRAT que l'export de la
+     page Librairie (les deux vivent côte à côte dans utils/libraryCsv.js, où
+     l'en-tête de module dit tout). Ce qui a changé, et pourquoi : l'ancienne
+     version lisait les colonnes À LA POSITION (nom, séquence, type) alors que le
+     fichier exporté porte « Name,Type,Sequence/Formula,MW,Notes » — le TYPE
+     d'abord. Un aller-retour renversait donc le type et la séquence, gardait les
+     guillemets autour du nom, et versait les lignées cellulaires / plasmides /
+     solvants d'un export complet dans les composés. La relecture reconnaît
+     maintenant les COLONNES PAR LEUR EN-TÊTE (et garde l'ordre historique pour
+     les fichiers sans en-tête), décite les valeurs, ne lit QUE la section
+     « COMPOUNDS », et remet la masse et les notes du fichier. */
   const handleCsvImport = (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
     const reader = new FileReader();
     reader.onload = (event) => {
-      const text = event.target.result;
-      const lines = text.split(/\r?\n/);
-      
-      let addedCount = 0;
-      
-      setCompoundMeta((prevMeta) => {
-        const nextMeta = { ...prevMeta };
-        const newNames = [];
-        
-        lines.forEach((line, i) => {
-          if (i === 0 && line.toLowerCase().includes('name')) return; // Skip header
-          if (!line.trim()) return;
-          
-          // Split by comma, tab, or semicolon
-          const cols = line.split(/[,;\t]/).map(s => s.trim());
-          const name = cols[0];
-          const seq = cols[1] || '';
-          const importedType = cols[2] ? cols[2].toLowerCase() : 'protein';
-          
-          if (name) {
-            nextMeta[name] = {
-              ...(nextMeta[name] || {}),
-              name,
-              type: importedType,
-              sequence: importedType !== 'smiles' && importedType !== 'formula' ? seq : '',
-              smiles: importedType === 'smiles' ? seq : '',
-              formula: importedType === 'formula' ? seq : '',
-              notes: 'Imported from CSV',
-              updatedAt: Date.now()
-            };
-            newNames.push(name);
-            addedCount++;
+      const { compounds: rows, sections, sectioned } = parseLibraryCsv(event.target.result);
+
+      if (rows.length === 0) {
+        alert(sectioned
+          ? `No compound was found in this file — it carries ${sections.join(' · ')}, but no COMPOUNDS section. Nothing was changed.`
+          : 'No compound was found in this file — nothing was changed.');
+        return;
+      }
+
+      /* Une entrée par nom (la dernière ligne d'un même nom gagne) : les champs
+         que le fichier ne porte pas (modifications, liens, longueur, ADN
+         optimisé) RESTENT ceux du composé s'il existait déjà. */
+      const entries = {};
+      rows.forEach((row) => {
+        const before = compoundMeta[row.name] || {};
+        entries[row.name] = {
+          ...before,
+          name: row.name,
+          type: row.type,
+          sequence: row.sequence,
+          smiles: row.smiles,
+          formula: row.formula,
+          notes: row.notes,
+          molecularWeight: row.molecularWeight == null ? (before.molecularWeight ?? null) : row.molecularWeight,
+          updatedAt: Date.now(),
+        };
+      });
+      const names = Object.keys(entries);
+
+      setCompoundMeta((prevMeta) => ({ ...prevMeta, ...entries }));
+
+      // Update the global custom compounds list
+      setCustomCmpds((prevCustom) => {
+        const nextCustom = [...prevCustom];
+        names.forEach((n) => {
+          if (!nextCustom.includes(n) && !nextCustom.some((c) => typeof c === 'object' && c && c.name === n)) {
+            nextCustom.push(n);
           }
         });
-        
-        // Update the global custom compounds list
-        setCustomCmpds((prevCustom) => {
-          const nextCustom = [...prevCustom];
-          newNames.forEach(n => {
-            if (!nextCustom.includes(n) && !nextCustom.some(c => typeof c === 'object' && c.name === n)) {
-              nextCustom.push(n);
-            }
-          });
-          return nextCustom;
-        });
-        
-        return nextMeta;
+        return nextCustom;
       });
 
-      setTimeout(() => alert(`Successfully imported ${addedCount} compounds!`), 100);
+      setTimeout(() => alert(`Successfully imported ${names.length} compound${names.length > 1 ? 's' : ''}!`), 100);
     };
     reader.readAsText(file);
     e.target.value = ''; // Reset input

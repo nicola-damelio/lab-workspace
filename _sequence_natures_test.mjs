@@ -323,7 +323,7 @@ ok(NAT.sequenceNaturesNote(afterLoad, 'protein').includes('same view'),
   const name = ['NMR', 'MD', 'Docking'][i];
   has(src, "from '../utils/sequenceNatures'", `[${name}] la table des natures est importée (aucune règle recopiée)`);
   has(src, 'sequenceForMoleculeType(activeTest, moleculeType)', `[${name}] la séquence lue est celle de la nature affichée`);
-  has(src, 'sequencePatchForMoleculeType(activeTest, d.moleculeType, e.target.value)',
+  has(src, 'sequencePatchForMoleculeType(activeTest, d.moleculeType, v)',
     `[${name}] la case de saisie écrit dans le champ de sa nature`);
   has(src, 'structureSequencePatch(activeTest, d.moleculeType, seq, parts)',
     `[${name}] le fichier chargé remplit chaque champ par nature`);
