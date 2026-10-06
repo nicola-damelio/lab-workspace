@@ -1,17 +1,5 @@
 /* =========================================================================
    src/administration/libreriePage.jsx
-   Page « Librerie » — catalogue des fournisseurs (CRUD complet).
-
-   Chaque fiche peut contenir :
-     fournisseur (nom) · contact · adresse · email · téléphone ·
-     referenceSifac (référence / n° de tiers dans SIFAC) · categories ·
-     siteWeb · commentaires.
-
-   Le catalogue se remplit manuellement (« + Ajouter un fournisseur ») ou
-   depuis les noms saisis dans la colonne « Fournisseur » des Dépenses
-   (« ↻ Créer depuis les Dépenses », bouton de synchronisation) — l’assistant
-   d’import des Dépenses ajoute d’ailleurs automatiquement les fournisseurs
-   manquants lors de chaque import.
    ========================================================================= */
 import React, { useEffect, useMemo, useState } from 'react';
 import { useAdmin } from './AdminContext';
@@ -669,12 +657,10 @@ export const LibreriePage = () => {
   ];
 
   return (
-    <div className="w-full min-w-0 mx-auto flex flex-col gap-4">
-      {/* En-tête */}
+    <div className="h-full min-h-0 w-full min-w-0 mx-auto flex flex-col gap-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <p className="text-xs font-bold text-slate-400 max-w-2xl">
-          {librerie.length} fournisseur{librerie.length > 1 ? 's' : ''} au catalogue · {recettes.length} ligne{recettes.length > 1 ? 's' : ''} budgétaire{recettes.length > 1 ? 's' : ''} —
-          depuis la page Dépenses, un fournisseur ou une ligne budgétaire cliquable ouvre la fiche correspondante ici.
+        <p className="text-xs font-bold text-slate-400">
+          {librerie.length} fournisseur{librerie.length > 1 ? 's' : ''} au catalogue · {recettes.length} ligne{recettes.length > 1 ? 's' : ''} budgétaire{recettes.length > 1 ? 's' : ''}
         </p>
         {tab === 'fournisseurs' && (
           <div className="flex items-center gap-2 flex-wrap">
@@ -712,7 +698,6 @@ export const LibreriePage = () => {
         )}
       </div>
 
-      {/* Onglets : Fournisseurs · Lignes budgétaires */}
       <div className="flex items-center gap-1.5 bg-slate-200/60 border border-slate-200 rounded-xl p-1 w-fit">
         <button
           type="button"
@@ -740,55 +725,38 @@ export const LibreriePage = () => {
         </button>
       </div>
 
+      {notice && <Notice tone={notice.tone} text={notice.text} onClose={() => setNotice(null)} />}
+
       {tab === 'fournisseurs' ? (
         <>
-          {notice && <Notice tone={notice.tone} text={notice.text} onClose={() => setNotice(null)} />}
-
-          <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 px-4 py-2.5 text-[11px] text-slate-600 leading-relaxed">
-            <b>Fonctionnement :</b> chaque fiche référence un fournisseur avec son contact, son adresse, son email, sa
-            <b> référence SIFAC</b> (n° de tiers) et des commentaires. Le bouton <b>« ↻ Créer depuis les Dépenses »</b> ajoute
-            automatiquement une fiche pour chaque fournisseur présent dans la colonne « Fournisseur » des Dépenses et encore
-            absent du catalogue ; les imports de Dépenses font de même à la volée. « ✏️ Modifier » ouvre la fiche complète.
-          </div>
-
-      {librerie.length === 0 ? (
-        <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-10 text-center">
-          <div className="text-4xl mb-2">🗂️</div>
-          <p className="font-black text-slate-700">Catalogue des fournisseurs vide</p>
-          <p className="text-sm text-slate-400 mt-1">
-            {missingCount
-              ? `Il y a ${missingCount} fournisseur${missingCount > 1 ? 's' : ''} dans les Dépenses sans fiche ici — cliquez sur « ↻ Créer depuis les Dépenses », ou ajoutez-les à la main.`
-              : 'Utilisez « ＋ Ajouter un fournisseur » pour créer la première fiche (contact, adresse, email, référence SIFAC…).'}
-          </p>
-        </div>
-      ) : (
-        <SmartTable
-          columns={columns}
-          rows={rows}
-          minWidth="1750px"
-          focusRowKey={focusRow}
-          onFocusDone={() => setFocusRow(null)}
-          searchPlaceholder="Rechercher un fournisseur, contact, email, adresse, référence SIFAC…"
-          emptyLabel="Catalogue des fournisseurs vide"
-          noMatchLabel="Aucun fournisseur ne correspond aux filtres."
-        />
-      )}
+          {librerie.length === 0 ? (
+            <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-10 text-center">
+              <div className="text-4xl mb-2">🗂️</div>
+              <p className="font-black text-slate-700">Catalogue des fournisseurs vide</p>
+              <p className="text-sm text-slate-400 mt-1">
+                {missingCount
+                  ? `Il y a ${missingCount} fournisseur${missingCount > 1 ? 's' : ''} dans les Dépenses sans fiche ici — cliquez sur « ↻ Créer depuis les Dépenses », ou ajoutez-les à la main.`
+                  : 'Utilisez « ＋ Ajouter un fournisseur » pour créer la première fiche (contact, adresse, email, référence SIFAC…).'}
+              </p>
+            </div>
+          ) : (
+            <div className="flex-1 min-h-0 flex flex-col">
+              <SmartTable
+                columns={columns}
+                rows={rows}
+                minWidth="1750px"
+                fillHeight
+                focusRowKey={focusRow}
+                onFocusDone={() => setFocusRow(null)}
+                searchPlaceholder="Rechercher un fournisseur, contact, email, adresse, référence SIFAC…"
+                emptyLabel="Catalogue des fournisseurs vide"
+                noMatchLabel="Aucun fournisseur ne correspond aux filtres."
+              />
+            </div>
+          )}
         </>
       ) : (
         <>
-          <div className="rounded-xl border border-blue-100 bg-blue-50/60 px-4 py-2.5 text-[11px] text-slate-600 leading-relaxed">
-            <b>Lignes budgétaires :</b> catalogue des lignes (Fonctionnement / Investissement / Salaire) avec montant total,
-            montant mis à disposition par l’université, dates de début / de fin, date de fin d’engagement, porteur du projet et commentaires.
-            Les fiches se gèrent dans la page <b>« Recettes »</b> (création, solde, import) ; le <b>porteur</b> est un lien
-            vers sa fiche dans la page Personnel{canViewPersonnel ? '' : ' (réservée au superutilisateur)'}.
-            {canEditRecettes ? (
-              <div className="mt-1 text-blue-700">
-                💡 « ＋ Nouvelle ligne budgétaire » (et les actions 🔗 ✎ 🗑 de chaque ligne) crée / modifie les fiches
-                ici-même, avec les mêmes droits que la page « Recettes ».
-              </div>
-            ) : null}
-          </div>
-
           {recetteRows.length === 0 ? (
             <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-10 text-center">
               <div className="text-4xl mb-2">📈</div>
@@ -800,16 +768,19 @@ export const LibreriePage = () => {
               </p>
             </div>
           ) : (
-            <SmartTable
-              columns={recetteCols}
-              rows={recetteRows}
-              minWidth="1400px"
-              focusRowKey={focusRow}
-              onFocusDone={() => setFocusRow(null)}
-              searchPlaceholder="Rechercher une ligne, un acronyme, un porteur…"
-              emptyLabel="Aucune ligne budgétaire"
-              noMatchLabel="Aucune ligne ne correspond aux filtres."
-            />
+            <div className="flex-1 min-h-0 flex flex-col">
+              <SmartTable
+                columns={recetteCols}
+                rows={recetteRows}
+                minWidth="1400px"
+                fillHeight
+                focusRowKey={focusRow}
+                onFocusDone={() => setFocusRow(null)}
+                searchPlaceholder="Rechercher une ligne, un acronyme, un porteur…"
+                emptyLabel="Aucune ligne budgétaire"
+                noMatchLabel="Aucune ligne ne correspond aux filtres."
+              />
+            </div>
           )}
         </>
       )}
