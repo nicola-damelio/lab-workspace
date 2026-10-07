@@ -315,7 +315,11 @@ has('>🎨 Styles</span>', 'la bande s’appelle « 🎨 Styles » (l’ex-bouto
    which I define the style of the viewer for each instance of each experiment. Clicking on
    this button will define its style based on what is shown at that moment in the viewer.
    next to this button there must be another button to revert to the defined style. » */
-has('const DEFINED_STYLE_NAME = \'Defined style\';', 'un nom RÉSERVÉ porte le style défini d’une instance');
+has("const DEFINED_STYLE_BASE = 'Defined style';", 'un nom RÉSERVÉ porte le style défini d’une instance');
+has('const definedStyleSlug = pymolSessionInstanceSlug(instanceKey, driveNaming);',
+  '⚠⚠ …et ce nom porte le SLUG DE L’INSTANCE : le magasin des snapshots est GLOBAL (deux conditions y écrivaient la MÊME entrée — la lumière et le fond du style défini d’une instance revenaient dans sa voisine)');
+has('const DEFINED_STYLE_NAME = definedStyleSlug ? `${DEFINED_STYLE_BASE} · ${definedStyleSlug}` : DEFINED_STYLE_BASE;',
+  '…le nom propre à l’instance, le nom nu restant pour un viewer monté hors expérience');
 has('const defineInstanceStyle = () => {', '📌 Define style — un geste, un bouton');
 has('const revertToDefinedStyle = () => {', '↩ Revert to defined — le bouton d’à côté');
 has('saveSnapshot(DEFINED_STYLE_NAME);',

@@ -3788,3 +3788,63 @@ cache jeté quand la place change) ; **et le `display: none` réel mesuré par C
 `node _page_parking_render_test.cjs` — **19/19** (mêmes nœuds DOM au retour, compteur de la page gardée
 qui continue d'avancer).
 
+
+### ④ « Define style » ne gardait ni la lumière ni le fond — et une instance volait le style de sa voisine
+
+Le rapport, mot pour mot : « *define style does not take the background color in consideration. If I
+select a certain light orientation in one instance and click on define style, then I go to another
+instance of the same experiment and I change the direction of the light and I click define style,
+when I go back to the first instance the direction of the light is like in the second instance ; the
+gradient of the background still does not work. »*
+
+**La cause, dans le code.** La mémoire de style était bien par instance (§②), mais le **magasin** des
+snapshots est, lui, **commun à tout le poste** : `labViewerSnapshots`, UNE clé localStorage
+(`VIEWER_SNAPSHOT_KEY`, `NMRMoleculeViewer.jsx`). Le 📌 écrivait sous un nom **fixe** —
+`'Defined style'` — donc les conditions d'un même essai se partageaient **la même entrée** : la
+seconde écrasait la première, et la mémoire de la première (juste, elle) reposait le style de la
+seconde. Tout partait avec, parce que l'**environnement global** d'un snapshot emporte la **lampe**
+(◐ Shadows : azimut, élévation, noirceur, couleur), le **fond** (`background` : la couleur A) **et sa
+rampe** (`backgroundGradient` : B, le milieu, l'angle, l'interrupteur) en même temps que les couleurs
+des molécules — tous sont dans `THEME_GLOBAL_KEYS`. D'où les deux moitiés du rapport : la lumière
+d'une instance revenait dans l'autre, et le dégradé défini ne se retrouvait plus.
+
+**Le correctif.**
+
+* **Le nom du style défini porte le SLUG de l'instance** — `Defined style · <slug>` (`DEFINED_STYLE_NAME`),
+  le slug étant celui de sa **mémoire** de style (`pymolSessionInstanceSlug(instanceKey, driveNaming)`,
+  voir `styleMemoryKeysRef`) : le nom, la mémoire et le fichier du dossier de la condition parlent de
+  la même instance, et deux conditions ne peuvent plus se rencontrer. Hors expérience (aucun slug), le
+  nom réservé reste seul : c'est la mémoire GÉNÉRALE qui le désigne, et il n'y a qu'un viewer.
+* **Une mémoire qui nomme l'ANCIEN nom nu est ignorée** (`recallViewerStyle`) : une instance ne peut pas
+  savoir à quelle condition il appartenait, donc elle ne le rejoue pas — la mémoire suivante puis le
+  **fichier du dossier de CETTE condition** ont la parole, et le prochain 📌 écrit le nom propre à
+  l'instance. Le poste d'avant ce correctif ne peut donc plus rejouer la faute.
+
+**Une deuxième fuite, de la même famille : le magasin est commun, la copie d'un viewer non.** Chaque
+page garde son dictionnaire dans un `useState` depuis son montage, et les pages quittées **restent
+montées** (le « page parking » d'`App.jsx`, §③) : le 💾 d'une page écrasait donc ce qu'une autre venait
+d'y déposer — deux conditions qui définissent chacun leur style dans la même séance se volaient une
+entrée au geste suivant, et un poste **hors ligne** (sans le fichier du Drive pour rattraper) la perdait
+pour de bon. **Toute écriture d'un nom passe maintenant par `writeNamedEntry`** : le magasin est **relu
+du stockage** et le geste s'y fusionne (💾 Save d'un snapshot et d'un thème, ⬆ Import, l'adoption d'un
+style du Drive, 🗑 Delete — dont l'existence se lit elle aussi dans le magasin du poste), et la « regola
+aurea » d'un thème cumulatif se lit sur ce magasin, jamais sur une copie en retard.
+
+**Ce qu'il reste à faire UNE fois, sur un poste qui a déjà servi.** Le nom nu d'avant est ignoré (voir
+ci-dessus) : une instance qui a défini son style AVANT ce correctif ne le rejoue plus depuis sa mémoire —
+mais elle ne rejoue pas non plus celui de sa voisine ; le 📌 une fois suffit à écrire le nom propre à
+l'instance, et tout ce qui suit est instantané et hors ligne.
+
+*Vérifier :* `node _viewer_style_recall_test.mjs` — **156** (le nom propre à l'instance, **EXÉCUTÉ** avec
+la vraie règle de slug ; deux instances, un seul magasin : chacune repose **sa** lampe et **son** fond ;
+la mémoire de l'ancien nom nu est ignorée au profit du fichier de la condition ; hors expérience, le nom
+nu reste légitime) ; `node _viewer_style_controls_test.mjs` — **504** (📌 et ↩ toujours branchés dans la
+bande, avant 💾 Save, et le nom du style défini est celui de l'instance) ;
+`node _viewer_theme_snapshot_test.mjs` — **73** (`writeNamedEntry` **EXÉCUTÉ** : le nom d'une page survit
+à l'écriture d'une autre, `null` ne supprime que ce nom) ; `node _viewer_background_test.mjs` — **168** et
+`node _viewer_ui_layout_test.mjs` — **517** (le panneau du fond et la bande 🎨 Styles n'ont pas bougé d'un
+caractère) ; `node _viewer_light_rig_test.mjs` — **385** ; `npx oxlint` — **0 erreur** ; `npx vite build` ✓.
+`node _verify.cjs` — **44 suites, 0 échec** — dont les PIXELS réels du fond
+(`_viewer_background_pixels_test.cjs`, **34/34** : la rampe est bien peinte). Le fond n'a jamais été le
+problème : c'est le STYLE qui ne la portait pas.
+

@@ -252,19 +252,32 @@ const buildRecall = () => new Function(
   'viewerStyleEntryOf', 'viewerSnaps', 'viewerThemes', 'applyThemeEntry', 'applySnapshotEntry',
   'flashSetupMsg', 'driveNaming', 'getDriveToken', 'listExperimentFiles', 'pickViewerStyleFile',
   'downloadDriveFileText', 'parseViewerStyleFile', 'adoptViewerStyleEntry', 'saveViewerStyleMemory',
+  'definedStyleSlug', 'DEFINED_STYLE_BASE',
   'VIEWER_STYLE_EXT',
   [sliceFn(VIEW, 'recallViewerStyle'), 'return recallViewerStyle;'].join('\n')
 );
+/* ⚠ `slug` EST L'INSTANCE (le repère de sa mémoire), `memories` les mémoires D'AUTRES
+   instances déjà déposées dans le même `localStorage` (le magasin est commun à tout
+   le poste : c'est le décor du défaut rapporté, voir 5f), et `memoryKeys` la liste que
+   le viewer interroge — l'INSTANCE d'abord, l'expérience ensuite, la générale en
+   dernier recours (voir styleMemoryKeysRef). */
 const runRecall = ({
-  memory = null, files = [], texts = {}, token = () => 'tok', touched = false, snaps = {}, themes = {}
+  memory = null, memories = {}, files = [], texts = {}, token = () => 'tok', touched = false,
+  snaps = {}, themes = {}, slug = 'GEC_Mutant_X', memoryKeys = null
 } = {}) => {
   const seen = { listed: [], downloads: [], adopted: [], applied: [], messages: [], saved: [] };
-  if (memory) fakeStore.set('labViewerStyle::GEC_Mutant_X', JSON.stringify(memory));
-  else fakeStore.delete('labViewerStyle::GEC_Mutant_X');
+  const key = FILES.viewerStyleMemoryKey(slug);
+  const seeded = { ...memories };
+  if (memory) seeded[key] = memory;
+  else if (!(key in seeded)) seeded[key] = null;
+  Object.keys(seeded).forEach((k) => {
+    if (seeded[k]) fakeStore.set(k, JSON.stringify(seeded[k]));
+    else fakeStore.delete(k);
+  });
   const recall = buildRecall()(
     { current: touched },
-    { current: 'labViewerStyle::GEC_Mutant_X' },
-    { current: ['labViewerStyle::GEC_Mutant_X', 'labViewerStyle'] },
+    { current: key },
+    { current: memoryKeys || [key, 'labViewerStyle'] },
     FILES.loadViewerStyleMemory,
     FILES.viewerStyleEntryOf,
     snaps, themes,
@@ -279,9 +292,11 @@ const runRecall = ({
     FILES.parseViewerStyleFile,
     (mode, name, e) => seen.adopted.push([mode, name, e]),
     (k, v) => seen.saved.push([k, v]),
+    slug,
+    'Defined style',
     FILES.VIEWER_STYLE_EXT
   );
-  return { seen, recall };
+  return { seen, recall, key };
 };
 
 /* 5a. LA MÉMOIRE DU POSTE D'ABORD — instantanée, et AUCUNE requête. */
@@ -329,6 +344,112 @@ eq(await e.recall(), null, 'un style chargé/enregistré à la main n’est JAMA
 eq(e.seen.applied.length, 0, '…rien n’est appliqué');
 eq(e.seen.listed.length, 0, '…et le Drive n’est pas interrogé non plus');
 
+/* ══ 5f. LE STYLE DÉFINI D'UNE INSTANCE NE PART PLUS DANS SA VOISINE ═══════
+   Le défaut rapporté : « If I select a certain light orientation in one instance and
+   click on define style, then I go to another instance of the same experiment and I
+   change the direction of the light and I click define style, when I go back to the
+   first instance the direction of the light is like in the second instance ; the
+   gradient of the background still does not work. »
+
+   La mémoire était déjà par instance, mais le MAGASIN des snapshots est GLOBAL (UNE
+   clé localStorage pour tout le poste, voir VIEWER_SNAPSHOT_KEY) : un nom réservé
+   FIXE — « Defined style » — faisait écrire les DEUX conditions dans la MÊME entrée,
+   la seconde écrasant la première, et la mémoire de la première (pourtant juste, elle)
+   reposait le style de la seconde. La lampe ◐ Shadows (azimut, élévation) et le FOND
+   (sa couleur, sa rampe) voyagent dans l'environnement global d'un snapshot : ils
+   partaient donc avec. Le nom porte maintenant le slug de l'instance. Ce qui suit
+   EXÉCUTE la construction réelle de ce nom (les trois lignes de la source, avec la
+   VRAIE règle de slug du viewer) puis le rappel — deux instances, un seul magasin. */
+const DEFINED_BLOCK = VIEW.slice(
+  VIEW.indexOf("const DEFINED_STYLE_BASE = 'Defined style';"),
+  VIEW.indexOf('const defineInstanceStyle = () => {')
+);
+const buildDefinedName = () => new Function(
+  'instanceKey', 'driveNaming',
+  [
+    sliceFn(VIEW, 'pymolSessionInstanceSlug'),
+    DEFINED_BLOCK,
+    'return { DEFINED_STYLE_BASE, definedStyleSlug, DEFINED_STYLE_NAME };'
+  ].join('\n')
+);
+const definedNameOf = (instanceKey, naming) => buildDefinedName()(instanceKey, naming);
+const namedA = definedNameOf('cond_A', drive);
+const namedB = definedNameOf('cond_B', drive);
+eq(namedA.DEFINED_STYLE_BASE, 'Defined style', 'le nom réservé de base est écrit noir sur blanc');
+eq(namedA.definedStyleSlug, 'cond_A', 'le slug du style défini est CELUI DE SA MÉMOIRE (pymolSessionInstanceSlug, la règle du viewer)');
+eq(namedA.DEFINED_STYLE_NAME, 'Defined style · cond_A', '…donc le nom du style défini porte L’INSTANCE');
+ok(namedA.DEFINED_STYLE_NAME !== namedB.DEFINED_STYLE_NAME,
+  'DEUX INSTANCES NE PARTAGENT PLUS UN NOM : le magasin peut garder les deux styles');
+eq(definedNameOf(null, drive).DEFINED_STYLE_NAME, 'Defined style · GEC_Mutant_X_2026-01-05',
+  'sans instanceKey, le slug vient du contexte Drive (projet · expérience · condition)');
+eq(definedNameOf(null, null).DEFINED_STYLE_NAME, 'Defined style',
+  'un viewer monté HORS expérience garde le nom nu : il n’y a qu’un viewer, aucune ambiguïté');
+
+/* Le décor : la mémoire de A ET celle de B sont dans le même poste, et le magasin
+   porte LES DEUX entrées — ce que le nom partagé d’avant rendait impossible. */
+const lampFond = (az, bg, to, on) => ({
+  shadows: { on: true, darkness: 0.5, az, el: 12, color: '#ffffff' },
+  background: bg, backgroundGradient: { on, to, angle: 90, midOn: false }
+});
+const definedA = { v: 1, name: namedA.DEFINED_STYLE_NAME, global: lampFond(95, '#0b1f33', '#123456', true), sections: { 'protein|A': { tree: { radius: 1 } } } };
+const definedB = { v: 1, name: namedB.DEFINED_STYLE_NAME, global: lampFond(250, '#331f0b', '#654321', true), sections: { 'protein|A': { tree: { radius: 2 } } } };
+const sharedStore = { [namedA.DEFINED_STYLE_NAME]: definedA, [namedB.DEFINED_STYLE_NAME]: definedB };
+
+const backInA = runRecall({
+  slug: 'cond_A',
+  memory: { mode: 'snapshot', name: namedA.DEFINED_STYLE_NAME },
+  memories: { 'labViewerStyle::cond_B': { mode: 'snapshot', name: namedB.DEFINED_STYLE_NAME } },
+  memoryKeys: ['labViewerStyle::cond_A', 'labViewerStyle'],
+  snaps: sharedStore
+});
+eq(await backInA.recall(), { mode: 'snapshot', name: 'Defined style · cond_A', from: 'browser' },
+  'en revenant dans A, c’est LE style de A qui est reposé (« when I go back to the first instance … »)');
+eq(backInA.seen.applied.map((c) => c[1]), ['Defined style · cond_A'], '…son entrée, pas celle de B');
+eq(backInA.seen.applied[0][2], definedA, '…l’entrée du magasin, telle quelle');
+eq(backInA.seen.applied[0][2].global.shadows.az, 95, '…la LAMPE de A (◐ Shadows : son azimut), pas les 250° de B');
+eq(backInA.seen.applied[0][2].global.background, '#0b1f33', '…et SON fond');
+eq(backInA.seen.applied[0][2].global.backgroundGradient.on, true, '…sa rampe allumée, comme il l’avait définie');
+eq(backInA.seen.listed.length, 0, '…sans même interroger le Drive (la mémoire de l’instance suffit)');
+
+const backInB = runRecall({
+  slug: 'cond_B',
+  memory: { mode: 'snapshot', name: namedB.DEFINED_STYLE_NAME },
+  memories: { 'labViewerStyle::cond_A': { mode: 'snapshot', name: namedA.DEFINED_STYLE_NAME } },
+  memoryKeys: ['labViewerStyle::cond_B', 'labViewerStyle'],
+  snaps: sharedStore
+});
+eq(await backInB.recall(), { mode: 'snapshot', name: 'Defined style · cond_B', from: 'browser' },
+  '…et B retrouve le sien : deux instances, DEUX styles définis, aucun vol');
+eq(backInB.seen.applied[0][2].global.shadows.az, 250, '…avec SA lumière');
+eq(backInB.seen.applied[0][2].global.background, '#331f0b', '…et SON fond');
+
+/* 5g. LA MÉMOIRE DE L'ANCIEN NOM NU EST AMBIGUË — on ne devine pas. Le poste garde
+   ce qu'a écrit la version d'avant (une mémoire qui nomme « Defined style »), et le
+   magasin l'entrée que la SECONDE condition y a laissée : le viewer ne peut pas
+   savoir à qui elle appartenait, donc il l'ignore — la mémoire suivante puis le
+   fichier du dossier DE CETTE CONDITION ont la parole. */
+eq(FILES.viewerStyleEntryOf({ mode: 'snapshot', name: 'Defined style' }, { snapshots: ['Defined style'] }),
+  { mode: 'snapshot', name: 'Defined style' }, 'le module, lui, rend bien l’entrée que la mémoire nomme…');
+const legacyMemory = runRecall({
+  slug: 'cond_A',
+  memory: { mode: 'snapshot', name: 'Defined style' },
+  memories: { 'labViewerStyle::cond_B': { mode: 'snapshot', name: 'Defined style' } },
+  memoryKeys: ['labViewerStyle::cond_A', 'labViewerStyle'],
+  snaps: { 'Defined style': definedB, [namedA.DEFINED_STYLE_NAME]: definedA },
+  files: [snap],
+  texts: { S: JSON.stringify(FILES.viewerStyleFilePayload({ mode: 'snapshot', name: namedA.DEFINED_STYLE_NAME, entry: definedA })) }
+});
+eq(await legacyMemory.recall(), { mode: 'snapshot', name: 'Defined style · cond_A', from: 'drive' },
+  '…mais pour une INSTANCE le viewer l’ignore (ce nom nu ne dit pas de quelle condition il vient) → le fichier du dossier de CETTE condition');
+eq(legacyMemory.seen.applied.map((c) => c[1]), ['Defined style · cond_A'],
+  '…et c’est le style de A qui revient, jamais celui de sa voisine');
+eq(legacyMemory.seen.downloads, ['S'], '…un seul fichier lu, celui de la condition');
+const generalViewer = runRecall({
+  slug: '', memory: { mode: 'snapshot', name: 'Defined style' }, snaps: { 'Defined style': definedA }
+});
+eq(await generalViewer.recall(), { mode: 'snapshot', name: 'Defined style', from: 'browser' },
+  'hors expérience (aucun slug), le nom nu reste légitime : il n’y a qu’un viewer');
+
 /* ══ 6. LE CÂBLAGE DANS LE VIEWER ══════════════════════════════════════════ */
 
 has("import {\n  VIEWER_STYLE_EXT, loadViewerStyleMemory, parseViewerStyleFile, pickViewerStyleFile,",
@@ -339,8 +460,14 @@ has("import { archiveFileToDrive, downloadDriveFileText, getDriveToken, uploadLo
   '…et l’écriture / la lecture d’un fichier de Drive');
 has('const slugs = [pymolSessionInstanceSlug(instanceKey, driveNaming), pymolSessionExperimentSlug(driveNaming)]',
   '⚠ LA MÉMOIRE DE STYLE EST PORTÉE PAR L’INSTANCE D’ABORD (projet · nom · condition) — chaque condition garde SON style, l’expérience entière venant ensuite (les mémoires d’avant restent lisibles)');
-has('const DEFINED_STYLE_NAME = \'Defined style\';',
+has("const DEFINED_STYLE_BASE = 'Defined style';",
   '…et le style DÉFINI d’une instance a UN nom réservé (📌 Define style / ↩ Revert to defined)');
+has('const definedStyleSlug = pymolSessionInstanceSlug(instanceKey, driveNaming);',
+  '⚠⚠ …nom qui PORTE LE SLUG DE L’INSTANCE : le magasin des snapshots est GLOBAL (un nom fixe faisait écrire toutes les conditions dans la même entrée — la lampe ◐ Shadows et la rampe du fond d’une instance revenaient dans sa voisine, le défaut rapporté)');
+has('const DEFINED_STYLE_NAME = definedStyleSlug ? `${DEFINED_STYLE_BASE} · ${definedStyleSlug}` : DEFINED_STYLE_BASE;',
+  '…donc un nom propre à l’instance, le nom nu restant réservé au viewer monté hors expérience');
+has('if (definedStyleSlug && target.mode === \'snapshot\' && target.name === DEFINED_STYLE_BASE) continue;',
+  '…et une mémoire de l’ANCIEN nom nu est ignorée (elle ne dit pas de quelle condition elle vient) : le fichier du dossier de CETTE condition prend la relève');
 has("const VIEWER_STYLE_RECALL_DELAY_MS = 400;", 'le rappel laisse la scène se poser (les molécules annexes arrivent après)');
 has("if (status !== 'ready') return;", '…il attend que les FICHIERS soient là (« after bringing back to live its files »)');
 has('if (!Object.keys(sectionCatalog || {}).length) return;', '…et que la scène ait ses sections (un snapshot se rejoue SUR elles)');

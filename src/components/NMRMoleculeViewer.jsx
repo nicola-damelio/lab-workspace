@@ -1651,6 +1651,25 @@ const loadNamedMap = (key) => {
 const saveNamedMap = (key, map) => {
   try { localStorage.setItem(key, JSON.stringify(map || {})); } catch { /* ignore */ }
 };
+/* ⚠⚠ LE MAGASIN EST COMMUN À TOUT LE POSTE, LA COPIE D'UN VIEWER NON. Chaque page
+   garde la sienne dans un `useState` depuis son montage, et les pages QUITTÉES
+   RESTENT MONTÉES (le « page parking » d'App.jsx) : écrire le dictionnaire de l'ÉTAT
+   écrase donc ce qu'une autre page vient d'y déposer. Deux conditions qui définissent
+   chacune son style dans la même séance se volaient ainsi une entrée au geste suivant
+   (le style défini d'une instance — sa lampe ◐ Shadows, la rampe de son fond — ne se
+   retrouvait plus, et un poste hors ligne, sans le fichier du Drive pour le
+   rattraper, le perdait pour de bon).
+   TOUTE ÉCRITURE D'UN NOM PASSE DONC PAR ICI : le magasin est RELU du stockage et le
+   geste s'y fusionne — l'état n'est que le reflet de ce que le poste sait. Une entrée
+   `null` SUPPRIME le nom. */
+const writeNamedEntry = (key, setMap, name, entry) => {
+  const map = { ...loadNamedMap(key) };
+  if (entry === null) delete map[String(name)];
+  else map[String(name)] = entry;
+  setMap(map);
+  saveNamedMap(key, map);
+  return map;
+};
 /* WHAT BOTH MODES SAVE FIRST — « le impostazioni globali (luci, nebbia,
    background, clipping…) »: the scene environment, the ⚙ wheel (its palettes and
    its general look), the 2°-structure colours, the labels and the large-system
@@ -22239,11 +22258,11 @@ const loadActiveEnv = (name) => {
 };
 const deleteActiveEnv = () => {
   const store = activeEnvStore();
-  if (!store.map[setupName]) { flashSetupMsg(`type the name of the ${store.tag} to delete`); return; }
-  const map = { ...store.map };
-  delete map[setupName];
-  store.set(map);
-  saveNamedMap(store.key, map);
+  /* ⚠ L'EXISTENCE SE LIT DANS LE MAGASIN DU POSTE, pas dans la copie de l'état :
+     une entrée écrite par une AUTRE page (elles restent montées) est bien là, et la
+     copie de celle-ci ne l'aurait pas vue. */
+  if (!loadNamedMap(store.key)[setupName]) { flashSetupMsg(`type the name of the ${store.tag} to delete`); return; }
+  writeNamedEntry(store.key, store.set, setupName, null);
   flashSetupMsg(`“${setupName}” deleted`);
 };
 const exportActiveEnv = (name) => {
@@ -22276,9 +22295,7 @@ const importActiveEnvFile = (file) => {
         ? { key: VIEWER_THEME_KEY, map: viewerThemes, set: setViewerThemes, tag: 'theme' }
         : { key: VIEWER_SNAPSHOT_KEY, map: viewerSnaps, set: setViewerSnaps, tag: 'snapshot' };
       const name = String((raw && raw.name) || file.name.replace(/\.json$/i, '')).trim() || `Imported ${store.tag}`;
-      const map = { ...store.map, [name]: entry };
-      store.set(map);
-      saveNamedMap(store.key, map);
+      writeNamedEntry(store.key, store.set, name, entry);
       setSetupSaveMode(store.tag);
       setSetupName(name);
       /* ⚠ L'ENTRÉE QUI VIENT D'ARRIVER S'APPLIQUE DIRECTEMENT (applyThemeEntry /
@@ -22373,22 +22390,17 @@ const saveSnapshot = (name) => {
     });
   });
   if (!Object.keys(sections).length) { flashSetupMsg('nothing on screen to snapshot'); return; }
-  const map = {
-    ...viewerSnaps,
-    [name]: {
-      v: VIEWER_SNAPSHOT_VERSION, name, savedAt: new Date().toISOString(),
-      global: captureThemeGlobal(captureViewerSetup()), sections, vis: { ...sectionVis },
-      /* ⚠ CE QU'UNE PHOTOGRAPHIE DOIT CONTENIR DE PLUS (le rapport : « the cumulative
-         and snapshot saves do not save all the settings necessary to reconstruct the
-         image as it was when it was saved ») : les étiquettes 3D de chaque section, les
-         réglages et la POSITION de chaque molécule, la session 🧪 Selections & PyMOL et
-         le point de vue de la caméra. Un THÈME ne les prend pas (il parle de classes) ;
-         un snapshot, si — c'est une photographie de CETTE scène. */
-      scene: captureSceneExtras(),
-    },
-  };
-  setViewerSnaps(map);
-  saveNamedMap(VIEWER_SNAPSHOT_KEY, map);
+  const map = writeNamedEntry(VIEWER_SNAPSHOT_KEY, setViewerSnaps, name, {
+    v: VIEWER_SNAPSHOT_VERSION, name, savedAt: new Date().toISOString(),
+    global: captureThemeGlobal(captureViewerSetup()), sections, vis: { ...sectionVis },
+    /* ⚠ CE QU'UNE PHOTOGRAPHIE DOIT CONTENIR DE PLUS (le rapport : « the cumulative
+       and snapshot saves do not save all the settings necessary to reconstruct the
+       image as it was when it was saved ») : les étiquettes 3D de chaque section, les
+       réglages et la POSITION de chaque molécule, la session 🧪 Selections & PyMOL et
+       le point de vue de la caméra. Un THÈME ne les prend pas (il parle de classes) ;
+       un snapshot, si — c'est une photographie de CETTE scène. */
+    scene: captureSceneExtras(),
+  });
   flashSetupMsg(`✓ snapshot “${name}” — ${Object.keys(sections).length} section(s)`);
   // …ET L'EXPÉRIENCE S'EN SOUVIENT : la mémoire du poste (rappel instantané à la
   // prochaine ouverture) et le fichier du dossier Drive, à côté des .pdb et des
@@ -22453,8 +22465,28 @@ const loadSnapshot = (name) => {
    pas cela : ce bouton est TOUJOURS une photographie de section.
 
    ↩ REVERT repose ce même snapshot quand des couleurs ont changé entre-temps — et le DIT
-   quand rien n'a encore été défini, au lieu de rester muet. */
-const DEFINED_STYLE_NAME = 'Defined style';
+   quand rien n'a encore été défini, au lieu de rester muet.
+
+   ⚠⚠ ET LE NOM DE CE SNAPSHOT PORTE LE SLUG DE L'INSTANCE. Le défaut rapporté CETTE
+   session : « If I select a certain light orientation in one instance and click on define
+   style, then I go to another instance of the same experiment and I change the direction
+   of the light and I click define style, when I go back to the first instance the
+   direction of the light is like in the second instance ; the gradient of the background
+   still does not work. » La mémoire était bien par instance, mais le MAGASIN, lui, est
+   GLOBAL — UNE clé localStorage pour tout le poste (VIEWER_SNAPSHOT_KEY) : un nom réservé
+   FIXE faisait donc écrire le style de CHAQUE instance dans LA MÊME entrée, la seconde
+   écrasait la première, et la mémoire de la première (pourtant juste, elle) reposait le
+   style de la seconde. Tout partait avec, parce que l'environnement global d'un snapshot
+   emporte la LAMPE (◐ Shadows : azimut, élévation, noirceur, couleur) et le FOND (sa
+   couleur ET sa rampe) avec les couleurs des molécules. Le nom du style défini est donc
+   construit sur `pymolSessionInstanceSlug(instanceKey, driveNaming)` — le slug EXACT de
+   la mémoire de style (voir styleMemoryKeysRef) : le nom, la mémoire et le fichier du
+   dossier parlent de la même instance, et deux instances ne peuvent plus se rencontrer.
+   Hors expérience (aucun slug), le nom réservé reste seul : c'est la mémoire GÉNÉRALE qui
+   le désigne, et il n'y a alors qu'un viewer. */
+const DEFINED_STYLE_BASE = 'Defined style';
+const definedStyleSlug = pymolSessionInstanceSlug(instanceKey, driveNaming);
+const DEFINED_STYLE_NAME = definedStyleSlug ? `${DEFINED_STYLE_BASE} · ${definedStyleSlug}` : DEFINED_STYLE_BASE;
 const defineInstanceStyle = () => {
   setSetupName(DEFINED_STYLE_NAME);
   setSetupSaveMode('snapshot');   // un style DÉFINI est toujours une photographie de section
@@ -22529,15 +22561,8 @@ const rememberViewerStyle = (mode, name, entry) => {
    sous son nom (l'écriture du ⬆ Import, dans le magasin de son mode), sinon les
    lecteurs ci-dessus ne trouveraient pas, dans l'état, un nom qui vient d'arriver. */
 const adoptViewerStyleEntry = (mode, name, entry) => {
-  if (mode === 'theme') {
-    const map = { ...viewerThemes, [name]: entry };
-    setViewerThemes(map);
-    saveNamedMap(VIEWER_THEME_KEY, map);
-  } else {
-    const map = { ...viewerSnaps, [name]: entry };
-    setViewerSnaps(map);
-    saveNamedMap(VIEWER_SNAPSHOT_KEY, map);
-  }
+  if (mode === 'theme') writeNamedEntry(VIEWER_THEME_KEY, setViewerThemes, name, entry);
+  else writeNamedEntry(VIEWER_SNAPSHOT_KEY, setViewerSnaps, name, entry);
 };
 
 /* LE RAPPEL — la mémoire du poste d'abord (instantanée, hors ligne), le fichier du
@@ -22549,8 +22574,9 @@ const adoptViewerStyleEntry = (mode, name, entry) => {
 const recallViewerStyle = async () => {
   if (styleTouchedRef.current) return null;            // un geste de l'utilisateur a tranché
   const key = styleMemoryKeyRef.current;
-  /* Ce que CE poste a retenu — sous la clé de l'expérience, puis celle de la
-     condition (la mémoire des versions précédentes), puis la générale. Une mémoire
+  /* Ce que CE poste a retenu — sous la clé de l'INSTANCE d'abord (projet · nom ·
+     condition : chaque condition garde SON style), puis celle de l'expérience (les
+     mémoires d'avant ce correctif restent lisibles), puis la générale. Une mémoire
      qui désigne un style qu'on a supprimé depuis ne rappelle rien (voir
      viewerStyleEntryOf) : le fichier du dossier aura donc sa chance. */
   for (const memoryKey of styleMemoryKeysRef.current) {
@@ -22558,6 +22584,15 @@ const recallViewerStyle = async () => {
       snapshots: Object.keys(viewerSnaps), themes: Object.keys(viewerThemes)
     });
     if (!target) continue;
+    /* ⚠ UNE MÉMOIRE QUI NOMME LE « Defined style » NU EST AMBIGUË POUR UNE INSTANCE :
+       c'est le nom réservé d'AVANT ce correctif, quand toutes les conditions écrivaient
+       leur style défini dans la MÊME entrée (le défaut rapporté : la lampe ◐ Shadows et
+       la rampe du fond d'une instance revenaient dans sa voisine). On ne devine pas à
+       qui elle appartenait — elle est donc ignorée, la mémoire suivante puis le FICHIER
+       DU DOSSIER DE CETTE CONDITION ont la parole, et le prochain 📌 écrit le nom propre
+       à l'instance. Un viewer monté hors expérience (aucun slug) garde le nom nu : il
+       n'y a qu'un viewer, donc aucune ambiguïté à redouter. */
+    if (definedStyleSlug && target.mode === 'snapshot' && target.name === DEFINED_STYLE_BASE) continue;
     if (target.mode === 'theme') applyThemeEntry(viewerThemes[target.name], target.name);
     else applySnapshotEntry(viewerSnaps[target.name], target.name);
     flashSetupMsg(`✓ ${target.mode === 'theme' ? 'cumulative theme' : 'snapshot'} “${target.name}” applied — the style this experiment remembers`);
@@ -22676,7 +22711,11 @@ const saveTheme = (name, choices) => {
     flashSetupMsg(`${conflicts.length} class(es) drawn in two ways — choose the default, then 💾 Save again`);
     return;
   }
-  const prev = viewerThemes[name] || { v: VIEWER_THEME_VERSION, classes: {} };
+  /* ⚠ LA REGOLA AUREA SE LIT SUR LE MAGASIN DU POSTE, pas sur la copie de cet état :
+     c'est le fichier que l'expérience rouvrira — une autre page (elle reste montée)
+     a pu l'enrichir depuis le montage de celle-ci, et fusionner sur une copie en
+     retard ferait disparaître les classes qu'elle vient d'y apprendre. */
+  const prev = loadNamedMap(VIEWER_THEME_KEY)[name] || { v: VIEWER_THEME_VERSION, classes: {} };
   // LA REGOLA AUREA: the file is never overwritten — the classes of the scene are
   // updated or added, every class the file already knew stays untouched.
   const looksByClass = {};
@@ -22685,15 +22724,10 @@ const saveTheme = (name, choices) => {
   });
   const nextClasses = mergeThemeClasses(prev.classes, looksByClass, choices);
   const learned = kinds;
-  const map = {
-    ...viewerThemes,
-    [name]: {
-      v: VIEWER_THEME_VERSION, name, savedAt: new Date().toISOString(),
-      global: captureThemeGlobal(captureViewerSetup()), classes: nextClasses,
-    },
-  };
-  setViewerThemes(map);
-  saveNamedMap(VIEWER_THEME_KEY, map);
+  const map = writeNamedEntry(VIEWER_THEME_KEY, setViewerThemes, name, {
+    v: VIEWER_THEME_VERSION, name, savedAt: new Date().toISOString(),
+    global: captureThemeGlobal(captureViewerSetup()), classes: nextClasses,
+  });
   setThemeConflicts(null);
   setThemeChoices(null);
   const kept = Object.keys(nextClasses).filter((k) => !kinds.includes(k));
@@ -24512,9 +24546,11 @@ className={`px-2 py-1 text-[10px] font-bold rounded border h-7 whitespace-nowrap
     defineInstanceStyle) : le premier bouton fige ce qui est À L'ÉCRAN comme le style
     que cette condition rouvrira toute seule ; le second le repose si des couleurs ont
     changé entre-temps. Un SNAPSHOT, jamais un thème : deux protéines colorées
-    autrement gardent leurs couleurs respectives. */}
+    autrement gardent leurs couleurs respectives — et son NOM est celui de CETTE
+    instance (voir DEFINED_STYLE_NAME) : le magasin des snapshots est commun à tout
+    le poste, deux conditions ne peuvent donc plus s'y écraser l'une l'autre. */}
 <button type="button" onClick={defineInstanceStyle}
-title="📌 DEFINE THE STYLE OF THIS INSTANCE — photographs the look on screen RIGHT NOW (a snapshot, section by section, so two molecules drawn in different colours stay different) and makes it the style THIS instance re-applies by itself when you open it again. Always a snapshot (the 🎨 / 📷 mode on the left does not matter for this button), remembered on this station and filed in this condition's Drive folder like any other style."
+title="📌 DEFINE THE STYLE OF THIS INSTANCE — photographs the look on screen RIGHT NOW (a snapshot, section by section, so two molecules drawn in different colours stay different) and makes it the style THIS instance re-applies by itself when you open it again. Always a snapshot (the 🎨 / 📷 mode on the left does not matter for this button), remembered on this station under a name of ITS OWN — no other instance can take it over or overwrite it — and filed in this condition's Drive folder like any other style."
 className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-teal-500 text-teal-900 hover:bg-teal-100 h-7 whitespace-nowrap">
 📌 Define style
 </button>

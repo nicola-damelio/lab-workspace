@@ -83,9 +83,10 @@ const sandbox = [
   sliceFn(VIEW, 'mergeThemeClasses'),
   sliceFn(VIEW, 'loadNamedMap'),
   sliceFn(VIEW, 'saveNamedMap'),
+  sliceFn(VIEW, 'writeNamedEntry'),
   `const VIEWER_THEME_KEY = ${(/'labViewerThemes'/.exec(VIEW) || [''])[0] || "''"};`,
   `const VIEWER_SNAPSHOT_KEY = ${(/'labViewerSnapshots'/.exec(VIEW) || [''])[0] || "''"};`,
-  'return { THEME_GLOBAL_KEYS, captureThemeGlobal, classStyleSig, mergeThemeClasses, loadNamedMap, saveNamedMap, VIEWER_THEME_KEY, VIEWER_SNAPSHOT_KEY };',
+  'return { THEME_GLOBAL_KEYS, captureThemeGlobal, classStyleSig, mergeThemeClasses, loadNamedMap, saveNamedMap, writeNamedEntry, VIEWER_THEME_KEY, VIEWER_SNAPSHOT_KEY };',
 ].join('\n');
 const store = new Map();
 const fakeLocalStorage = {
@@ -105,6 +106,31 @@ eq(H.loadNamedMap(H.VIEWER_THEME_KEY), {}, 'un magasin illisible rend un objet v
 store.set(H.VIEWER_THEME_KEY, JSON.stringify({ bon: { v: 1 }, mauvais: 'texte', liste: [1, 2], nul: null }));
 eq(Object.keys(H.loadNamedMap(H.VIEWER_THEME_KEY)), ['bon'],
   'les entrées qui ne sont pas des objets sont ignorées (un fichier étranger ne casse rien)');
+
+/* ══ 1bis. LE MAGASIN EST COMMUN À TOUT LE POSTE, LA COPIE D'UN VIEWER NON ══
+   Les pages quittées RESTENT MONTÉES (le « page parking » d'App.jsx) : chacune garde
+   son dictionnaire dans un `useState` depuis son montage, et une AUTRE peut écrire
+   pendant ce temps. Écrire la copie de l'état écraserait ce que l'autre vient d'y
+   déposer — deux conditions qui définissent chacun leur style dans la même séance se
+   volaient une entrée au geste suivant (le style défini d'une instance disparaissait
+   du poste ; hors ligne, sans le fichier du Drive, il était perdu). `writeNamedEntry`
+   RELIT le magasin du stockage et y fusionne le geste : ce qui suit l'exécute. */
+store.clear();
+eq(H.writeNamedEntry(H.VIEWER_SNAPSHOT_KEY, () => {}, 'Defined style · cond_A', { v: 1, name: 'A' }),
+  { 'Defined style · cond_A': { v: 1, name: 'A' } }, 'un geste écrit SON nom dans le magasin du poste');
+// La page voisine (montée AVANT ce geste : sa copie ne connaît pas A) écrit le sien…
+const seenByNeighbour = [];
+H.writeNamedEntry(H.VIEWER_SNAPSHOT_KEY, (m) => seenByNeighbour.push(m), 'Defined style · cond_B', { v: 1, name: 'B' });
+eq(Object.keys(H.loadNamedMap(H.VIEWER_SNAPSHOT_KEY)).sort(), ['Defined style · cond_A', 'Defined style · cond_B'],
+  '…et le nom de A SURVIT : l’écriture se fusionne au magasin RELU, jamais à une copie en retard');
+eq(Object.keys(seenByNeighbour[0]).sort(), ['Defined style · cond_A', 'Defined style · cond_B'],
+  '…l’état, lui, reçoit le magasin ENTIER : il n’est que le reflet de ce que le poste sait');
+eq(H.writeNamedEntry(H.VIEWER_SNAPSHOT_KEY, () => {}, 'Defined style · cond_A', null),
+  { 'Defined style · cond_B': { v: 1, name: 'B' } }, 'une entrée `null` SUPPRIME ce seul nom');
+eq(H.loadNamedMap(H.VIEWER_SNAPSHOT_KEY), { 'Defined style · cond_B': { v: 1, name: 'B' } },
+  '…dans le magasin aussi (le 🗑 Delete d’une page ne touche pas aux styles des autres)');
+eq(H.writeNamedEntry(H.VIEWER_THEME_KEY, () => {}, 'T', { v: 1 }), { T: { v: 1 } },
+  'les deux magasins passent par le même geste, sans se mélanger');
 
 /* ══ 2. L'ENVIRONNEMENT GLOBAL DES DEUX MODES ═════════════════════════════ */
 const setup = {
