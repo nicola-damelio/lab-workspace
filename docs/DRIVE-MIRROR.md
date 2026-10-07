@@ -3299,6 +3299,11 @@ mais AVANT ⬇ PDB et 🗑 Clear). Ce qui reste vrai : c'est le viewer qui rend 
 | 7 | 📁 **Create drive folder** | le seul geste qui FABRIQUE l'arborescence de l'expérience |
 | 8 | `{fileRowExtra}` | les 📂 de la PAGE : 📂 Topology / 📂 Trajectory from Drive folder (MD), rien sur NMR / Docking |
 
+*(Depuis la session du **04/10/2026** — « Le 📂 PDB du dossier rejoint la rangée des fichiers, et 🔄
+fait tourner la molécule », en fin de document — la page **NMR** passe elle aussi son 📂 de la PAGE,
+le « 📂 PDB from Drive folder », sur cette même ligne : la ligne 8 ci-dessus ne vaut donc plus que
+pour la page **Docking**.)*
+
 ⚠ **« 📂 Style from folder » a disparu** (« *Style from folder should not be there* ») et son geste
 `pickStyleFileFromFolder` avec lui : aucun code mort, et le viewer n'importe même plus
 `DriveExperimentFilePicker` (la seule définition qui reste est celle des pages).
@@ -3597,3 +3602,83 @@ réel, ce que le moteur peint sur les pages réelles) ; `node _ui_bg_apply_test.
 `node _ui_scale_test.cjs` — **61/61** ; `node _workspace_keys_test.mjs` — **39** ;
 `node _auth_identity_test.mjs` — **39** ; `node _tdz_scan_test.mjs` — **18** (250 fichiers) ;
 `npx oxlint` sur les trois fichiers touchés — **0 avertissement** ; `npx vite build` ✓.
+
+## Le 📂 PDB du dossier rejoint la rangée des fichiers, et 🔄 fait tourner la molécule (04/10/2026)
+
+**Les deux demandes, mot pour mot.** « *in the viewer "pdb from drive folder" should fit in the
+same line as "create drive folder"* » et « *Next to the movie button add a button to rotate
+uniformly the molecule in x, y and z direction* ».
+
+### ① Le 📂 PDB du dossier de la page NMR vit sur la ligne de 📁 Create drive folder
+
+Le bouton de la page NMR était le **dernier** à se payer une **rangée à lui tout seul**, au-dessus
+du viewer (il portait en plus la phrase « *Choosing a file here opens it AND declares it…* »). Il a
+donc fait le déménagement que les deux 📂 de la page MD avaient déjà fait : il part **AU VIEWER**
+par la prop `fileRowExtra` — sous une définition UNIQUE, `nmrStructureFromFolder`, écrite avant le
+rendu de la page — et le viewer le rend **à la fin de sa rangée §1 General**, c'est-à-dire sur la
+ligne même de 📂 PDB file(s), de 📂 Trajectory et de 📁 Create drive folder (« *the same line as
+"create drive folder"* »).
+
+| Ce qui a changé | Ce qui n'a pas changé |
+|---|---|
+| l'**endroit** du bouton : une rangée à lui au-dessus du viewer → la fin de la rangée des fichiers, sur la ligne de 📁 Create drive folder | le **composant** (`DriveExperimentFilePicker`), sa **lecture** (le dossier canonique de l'expérience, sous-section `Structure`), son **installation** (`pickNmrStructureFromFolder` : nom déclaré, pointeur Drive, blob du poste) et son **libellé** |
+
+⚠ Rien n'est perdu : la phrase qui accompagnait le bouton est passée **dans son infobulle**
+(« …and open one of them as this condition's structure. Choosing a file here opens it AND declares
+it: this condition will reopen it by default, on every computer. Nothing is uploaded again. ») —
+exactement le déménagement des deux 📂 de la page MD. La page ne fait donc plus qu'**un seul** rendu
+de ce composant, et le viewer reste le SEUL à poser le geste de création (📁 Create drive folder),
+juste avant lui.
+
+*(Conséquence sur le tableau de « L'ordre de la rangée des fichiers du viewer », plus haut : sa
+ligne 8 — « rien sur NMR / Docking » — vaut maintenant pour la page **Docking** seule, la page NMR
+passant elle aussi un 📂 de la page.)*
+
+### ② 🔄 Spin x·y·z — le tournoiement uniforme, juste après 🎞 Movie
+
+Le bouton vit dans la boîte 🎨 Styles, **immédiatement après 🎞 Movie** (donc entre 🌫 Scene et
+✏️ Modify, comme le Movie lui-même), et il ne fait qu'une chose de plus que lui : **il tourne**.
+
+* **« uniformly » = le MÊME angle sur les TROIS axes.** Chaque image compose
+  `dq = Rx(ω·dt) · Ry(ω·dt) · Rz(ω·dt)`, puis **pré-multiplie** la rotation de la scène
+  (`q ← dq · q`). La pré-multiplication exprime le tour dans le repère de l'**écran** (x vers la
+  droite, y vers le haut, z vers le spectateur) : c'est bien ce qu'on VOIT qui tourne, d'où le même
+  geste quelle que soit l'orientation d'où l'on regarde — et aucun axe ne prend le dessus (jamais le
+  va-et-vient droite / gauche d'un simple plateau). `SPIN_RAD_PER_S = 0.6` : un tour complet sur
+  chaque axe en ~10,5 s.
+* **`dt` est MESURÉ**, pas supposé : c'est l'horloge que le navigateur donne à
+  `requestAnimationFrame`, donc le tour est le même à 30, 60 ou 144 Hz, et un pas est **plafonné à
+  0,1 s** pour qu'un onglet resté longtemps en arrière-plan ne fasse pas un bond au retour.
+* **C'est un geste de VUE, jamais un contenu.** L'orientation tournée est
+  `viewer.rotationGroup.quaternion` — celle qu'un glisser de souris écrit et que la pose de caméra
+  lit et repose (`applyCameraPose`), et celle que 🎞 capture dans son `q`. Donc : la souris reprend
+  le tour **où il en est**, une pose capturée **garde l'orientation qu'elle montre**, le fondu d'un
+  film la mélange, ⬇ PDB continue d'écrire la **place des molécules** (jamais où la caméra regarde)
+  et ↺ ne l'annule pas (il remet des *positions*, pas la vue).
+* **Il s'efface devant un film.** Pendant qu'une pose se vérifie (`kfPreview`) ou qu'un film s'écrit
+  (`kfBusy`), la boucle s'arrête — deux mains sur la même rotation ne donneraient qu'un tremblement
+  — et le bouton, lui, **reste allumé** : le tour reprend tout seul à la fin, sans un second clic.
+
+⚠ Les deux constructeurs d'objets (`Quaternion`, `Vector3`) sont **LUS** sur les objets de la scène,
+comme partout dans ce fichier : une version de NGL qui ne les exposerait pas ne tourne simplement
+pas, et l'exception ne remonte jamais au bouton. Rien n'est tenu dans un quaternion à nous — le seul
+objet fabriqué est l'**incrément d'une image**.
+
+*Vérifier :* `node _viewer_ui_layout_test.mjs` — **517 assertions** (contre **501**) : le bouton est
+mesuré DANS la boîte 🎨 Styles **immédiatement après** 🎞 Movie, l'état (`spinOn`, `aria-pressed`), la
+constante de vitesse, les trois axes du pas, la pré-multiplication, le `dt` mesuré, la boucle qui
+s'efface devant le film, et la liste des commandes de §2 qui nomme le nouveau bouton ;
+`node _structure_windows_test.mjs` — **112** (contre **108**) : la page NMR passe **UN**
+`fileRowExtra` (`nmrStructureFromFolder`, défini une seule fois, avec le MÊME `ctx`, le MÊME
+`onPick` et le MÊME libellé), la phrase passée dans son infobulle, et **un seul** 📂 PDB du dossier
+dans le fichier — sa rangée à lui a disparu. Régressions : `node _viewer_render_smoke_test.mjs` —
+**23** (le vrai build du viewer, qui rend le nouveau bouton et sa boucle),
+`node _viewer_style_controls_test.mjs` — **494**, `node _viewer_general_row_test.mjs` — **189**,
+`node _viewer_row_bridges_test.mjs` — **69**, `node _compact_sections_test.mjs` — **211**,
+`node _condition_page_test.mjs` — **123**, `node _residue_numbering_panels_test.mjs` — **79**,
+`node _ss_sheet_test.mjs` — **163**, `node _nmr_nuclei_table_test.mjs` — **67** ;
+`npx oxlint` — **322 avertissements / 0 erreur** (inchangé) ; `npx vite build` ✓.
+Rouges AVANT cette session, et sans rapport : `node _viewer_keyframes_test.mjs` (sa sonde cherche
+encore l'ancienne ligne d'import de `viewerRayImage`, déjà remplacée à HEAD) et
+`node _experiment_folder_files_test.mjs` (le module importe `archiveFileDriveName`, absent à HEAD).
+

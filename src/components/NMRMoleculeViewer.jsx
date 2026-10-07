@@ -10371,6 +10371,17 @@ const [kfMsg, setKfMsg] = useState('');
    perd jamais de vue. Il vit avec l'état du film, juste sous kfMsg — rien à voir avec les docks
    des autres panneaux. */
 const [movieOpen, setMovieOpen] = useState(false);
+/* 🔄 LE TOURNOIEMENT UNIFORME — l'état du bouton « 🔄 Spin x·y·z » de la boîte
+   🎨 Styles, JUSTE APRÈS 🎞 Movie (LA DEMANDE DE CETTE SESSION, MOT POUR MOT :
+   « Next to the movie button add a button to rotate uniformly the molecule in x,
+   y and z direction »). Il ne dit qu'UNE chose : le tour tourne, ou il ne tourne
+   pas — l'orientation, elle, n'est tenue NULLE PART ici : elle vit dans
+   `viewer.rotationGroup.quaternion`, la rotation de la scène que la souris écrit
+   et qu'une pose 🎞 capture (voir `spinSceneStep`, plus bas, et l'effet de la
+   boucle d'images à côté). Rien à éteindre au démontage : la boucle appartient à
+   son effet et s'arrête avec lui. */
+const [spinOn, setSpinOn] = useState(false);
+
 const kfRunRef = useRef(0);              // one recording at a time
 const kfCancelRef = useRef(false);       // what ⏹ writes, read by the drive loop
 const kfPreviewRef = useRef(0);          // token of the live playback (0 = not playing)
@@ -21648,6 +21659,79 @@ const applyCameraPose = (pose) => {
     if (typeof v.requestRender === 'function') v.requestRender();
   } catch { /* une version de NGL sans ces objets laisse la caméra en place */ }
 };
+/* ── 🔄 LE TOURNOIEMENT UNIFORME EN x, y ET z — la demande de cette session, mot
+   pour mot : « Next to the movie button add a button to rotate uniformly the
+   molecule in x, y and z direction ». Voici ce que le bouton 🔄 de la boîte
+   🎨 Styles fait, IMAGE PAR IMAGE : la scène est tournée d'un petit angle autour
+   des TROIS axes, à la MÊME vitesse angulaire — c'est le « uniformly » —, donc le
+   tour est un vrai tournoiement (aucun axe ne prend le dessus, et jamais le
+   va-et-vient droite / gauche d'un simple spin de plateau).
+
+   ⚠⚠ C'EST LA MÊME ÉCRITURE QUE LA POSE DE CAMÉRA (applyCameraPose, juste
+   au-dessus) : l'orientation de la scène EST `viewer.rotationGroup.quaternion`,
+   celle qu'un glisser de souris écrit et que 🎞 capture dans son `q`. Rien n'est
+   donc tenu ici : la souris reprend le tour où il en est, une pose capturée garde
+   l'orientation qu'elle montre, le fondu d'un film la mélange, et ⬇ PDB continue
+   d'écrire la PLACE des molécules (un tour de VUE n'a jamais été un contenu).
+
+   L'incrément d'une image : dq = Rx(ω·dt) · Ry(ω·dt) · Rz(ω·dt), puis q ← dq · q.
+   La PRÉ-multiplication exprime le tour dans le repère de l'ÉCRAN (x vers la
+   droite, y vers le haut, z vers le spectateur) : c'est bien ce qu'on VOIT qui
+   tourne, d'où le même geste quelle que soit l'orientation d'où l'on regarde.
+   `dt` est MESURÉ sur l'horloge que le navigateur donne à la boucle
+   (requestAnimationFrame) : le tour est donc le même à 30, 60 ou 144 Hz, et un
+   onglet resté longtemps en arrière-plan ne fait pas un bond (le pas est plafonné
+   à 0,1 s par l'effet).
+
+   AUCUN objet de NGL n'est construit ici : les deux constructeurs (Quaternion et
+   Vector3) sont LUS sur les objets de la scène, comme partout dans ce fichier —
+   une version de NGL qui ne les exposerait pas ne tourne simplement pas, et
+   l'exception ne remonte jamais au bouton. */
+const SPIN_RAD_PER_S = 0.6;   // rad/s et PAR axe — un tour complet en ~10,5 s
+const spinSceneStep = (stage, dt) => {
+  try {
+    const v = stage && stage.viewer;
+    const q = v && v.rotationGroup && v.rotationGroup.quaternion;
+    const pos3 = v && v.translationGroup && v.translationGroup.position;
+    if (!q || typeof q.multiplyQuaternions !== 'function') return false;
+    if (!pos3 || typeof pos3.constructor !== 'function') return false;
+    const Q = q.constructor;
+    const V3 = pos3.constructor;
+    const w = SPIN_RAD_PER_S * (Number.isFinite(dt) && dt > 0 ? dt : 0);
+    const dq = new Q().setFromAxisAngle(new V3(1, 0, 0), w);   // l'axe x de l'écran
+    dq.multiplyQuaternions(new Q().setFromAxisAngle(new V3(0, 1, 0), w), dq);
+    dq.multiplyQuaternions(dq, new Q().setFromAxisAngle(new V3(0, 0, 1), w));
+    q.multiplyQuaternions(dq, q);          // q ← dq · q : le tour, dans le repère de l'écran
+    if (typeof v.requestRender === 'function') v.requestRender();
+    return true;
+  } catch { return false; }
+};
+
+/* ── 🔄 LA BOUCLE DU TOURNOIEMENT — elle ne tourne QUE quand le bouton l'allume, et
+   elle ne fait qu'une chose : mesurer son `dt`, puis appeler `spinSceneStep` (une
+   image, un petit angle, un rendu). Rien d'autre n'est horodaté : reprendre le
+   tour après un arrêt repart de l'orientation où la vue est.
+
+   ⚠ ELLE S'EFFACE DEVANT LE FILM : pendant qu'une pose est VÉRIFIÉE ou qu'un film
+   S'ÉCRIT (`kfPreview` / `kfBusy`), c'est le film qui repose la caméra à chaque
+   image — deux mains sur la même rotation ne donneraient qu'un tremblement. Le
+   bouton, lui, RESTE ALLUMÉ (`spinOn` ne change pas) : le tour reprend de
+   lui-même à la fin du film, sans un second clic. */
+useEffect(() => {
+  if (!spinOn || kfPreview || kfBusy) return undefined;
+  if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') return undefined;
+  let raf = 0;
+  let last = null;
+  const step = (now) => {
+    const t = Number.isFinite(now) ? now : Date.now();
+    const dt = last == null ? 0 : Math.min(0.1, (t - last) / 1000);
+    last = t;
+    spinSceneStep(stageRef.current, dt);
+    raf = window.requestAnimationFrame(step);
+  };
+  raf = window.requestAnimationFrame(step);
+  return () => { if (raf && typeof window.cancelAnimationFrame === 'function') window.cancelAnimationFrame(raf); };
+}, [spinOn, kfPreview, kfBusy]);
 
 /* ── CE QU'UN ENREGISTREMENT DE SCÈNE AJOUTE À L'ENVIRONNEMENT ────────────────
    « In the viewer the cumulative and snapshot saves do not save all the settings
@@ -23894,7 +23978,7 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
     clipping sliders, ⚙ Parameters) are full-width children of this same section, so
     the bar stays one row tall while nothing is open.
     • Scene: 🌫 Fog · 🎨 Background · ◐ Shadows (+ 🌑 Darkness / 💡 Light) · 💡 Light colour · ✂ Clipping · ✨ Ray (+ resolution · ⬚ alpha · ◐ shadows)
-    • Styles: the NAME · 🎨 Cumulative / 📷 Snapshot · 💾 Save · 📂 Load… · 🗑 Delete · ⬇ · ⬆ · 🎞 Movie
+    • Styles: the NAME · 🎨 Cumulative / 📷 Snapshot · 💾 Save · 📂 Load… · 🗑 Delete · ⬇ · ⬆ · 🎞 Movie · 🔄 Spin x·y·z
     • Modify: 🧬 From sequence · ✥ Move / ↻ Rotate · ⚗️ Rebuild H · ✏️ Atom names · ⚡ ESP · 🔢 Renumber
     • Analysis: 📏 Measure · 💧 H-bonds · 🟢 Assigned
     • PyMOL: 🧪 Selections & PyMOL
@@ -24297,6 +24381,28 @@ className={`px-2 py-1 text-[10px] font-bold rounded border h-7 whitespace-nowrap
 title={`🎞 THE FILM OF POSES AND STYLES — capture the pose and the styles of a scene, morph to the next, write the film. ${movieOpen ? 'Open right now: this button closes it, and the film stops costing a line of the toolbar.' : 'Closed: this button opens the whole 🎞 Movie maker under this row — its band of gestures (＋ capture this pose · hold / morph · ▶ preview the film · 🔴 record the film · ⏹ stop · ⬇ Export the film · 📂 Import a film · 🗑 Clear the film) and its column of poses — and a second press closes it again.'} The film holds ${keyframes.length} pose(s) of ${KEYFRAME_LIMITS.keys} right now${kfBusy ? ', and one is being written (its ⏹ Stop is inside the panel)' : ''}. Nothing is uploaded anywhere: the film is written as a file on your computer.`}>
 🎞 Movie {movieOpen ? '▾' : '▸'}{keyframes.length ? ` · ${keyframes.length}` : ''}{kfBusy ? ' ●' : ''}
 </button>
+{/* ── 🔄 SPIN x·y·z — LE BOUTON QUI TOURNE LA MOLÉCULE TOUT SEUL, JUSTE APRÈS 🎞 MOVIE
+    (la demande de cette session, mot pour mot : « Next to the movie button add a button to
+    rotate uniformly the molecule in x, y and z direction »). Un clic ALLUME le tournoiement
+    uniforme (les trois axes, la MÊME vitesse angulaire — voir `spinSceneStep`), un second
+    l'ÉTEINT. Le point allumé (« ● ») et la couleur du bouton disent l'état sans un mot, et
+    `aria-pressed` le dit aux lecteurs d'écran.
+    ⚠ LE TOUR NE CHANGE RIEN AU CONTENU : c'est un geste de VUE, exactement comme un glisser
+    de souris sur le fond — l'orientation de la scène est `rotationGroup.quaternion`, donc une
+    pose 🎞 capturée garde l'orientation qu'elle montre, ⬇ PDB écrit la PLACE des molécules
+    (jamais l'orientation de la caméra) et ↺ ne l'annule pas (il remet chaque molécule à sa
+    place, pas la vue). Pendant qu'un film se vérifie ou s'écrit, le tour s'efface de lui-même
+    pour ne pas se battre avec les poses (voir l'effet) : le bouton reste allumé et le tour
+    reprend tout seul après. */} 
+<button
+type="button"
+onClick={() => setSpinOn((v) => !v)}
+aria-pressed={spinOn}
+className={`px-2 py-1 text-[10px] font-bold rounded border h-7 whitespace-nowrap transition-colors ${spinOn ? 'bg-sky-600 border-sky-700 text-white' : 'bg-white border-sky-300 text-sky-700 hover:bg-sky-50'}`}
+title={`🔄 SPIN ABOUT X, Y AND Z — the molecule turns by itself, at the SAME constant speed about the three axes (one full turn about each in about ten seconds), so every side of it goes past without touching the mouse. ${spinOn ? 'ON right now: this button stops it, and the view simply stays exactly where the spin left it — nothing about the scene is changed by having turned.' : 'OFF right now: this button starts it, and the mouse stays free — a drag picks the scene up precisely where the spin is.'} The spin is a MOVE OF THE VIEW, like dragging the background: 🎞 a captured pose keeps its own orientation, ⬇ PDB writes where the molecules STAND (never where the camera looks), and ↺ undo does not touch it. While a film is previewed or written the spin steps aside so the two never fight, then carries on by itself.`}>
+🔄 Spin x·y·z{spinOn ? ' ●' : ''}
+</button>
+
 {setupMsg && (
 <span className="text-[10px] font-bold text-teal-700 bg-teal-50 border border-teal-200 rounded-md px-2 py-1 max-w-[320px] truncate" title={setupMsg}>{setupMsg}</span>
 )}

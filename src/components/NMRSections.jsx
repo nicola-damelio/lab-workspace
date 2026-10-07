@@ -5462,6 +5462,31 @@ const generatedStructure = useMemo(() => {
      Seule une PROTÉINE a une composition d'acides aminés : pour un ADN / ARN, un sucre, un
      lipide ou une molécule organique la lecture n'existe pas et rien n'est rendu. */
 
+  /* 📂 LE PDB DU DOSSIER DE L'EXPÉRIENCE — SUR LA LIGNE DE 📁 CREATE DRIVE FOLDER.
+     La demande de cette session, mot pour mot : « in the viewer "pdb from drive folder"
+     should fit in the same line as "create drive folder" ». Ce bouton vivait dans SA
+     rangée, au-dessus du viewer — une ligne de plus pour un geste qui appartient à la
+     rangée des fichiers. Il part donc AU VIEWER par `fileRowExtra`, qui le rend À LA FIN
+     de sa rangée §1 General : la ligne même de 📂 PDB file(s), de 📂 Trajectory et de
+     📁 Create drive folder (le geste de création), exactement comme les deux 📂 de la
+     page MD (`folderFilePickers`). Rien d'autre ne bouge : c'est le MÊME composant, la
+     MÊME lecture (le dossier canonique de l'expérience, sous-section Structure) et le
+     MÊME geste d'installation (`pickNmrStructureFromFolder`).
+     La phrase qui l'accompagnait ici (« Choosing a file here opens it AND declares it:
+     this condition will reopen it by default. Nothing is uploaded again. ») est passée
+     dans son infobulle : rien n'est perdu, et elle ne coûte plus une ligne à elle seule
+     (le même déménagement que pour les deux 📂 de la page MD). */
+  const nmrStructureFromFolder = (
+    <DriveExperimentFilePicker
+      label="📂 PDB from Drive folder"
+      titleText="List the .pdb / .cif files that are in THIS experiment's Drive folder (even one you deposited by hand) and open one of them as this condition's structure. Choosing a file here opens it AND declares it: this condition will reopen it by default, on every computer. Nothing is uploaded again."
+      ctx={nmrStructDriveCtx(activeTest)}
+      exts={STRUCTURE_FILE_EXTS}
+      declaredName={activeTest.structureFileName || activeTest.structureDriveName || ''}
+      onPick={pickNmrStructureFromFolder}
+    />
+  );
+
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap gap-2 mb-2">
@@ -5817,32 +5842,16 @@ const generatedStructure = useMemo(() => {
             bouge : le piquage d'un atome (formule 2D ou vue 3D) souligne toujours sa cellule
             de tableau, seule la ligne qui le disait a disparu. */}
         <div className="flex flex-col gap-2">
-          {/* 📂 CE QUE LE DOSSIER DE L'EXPÉRIENCE CONTIENT VRAIMENT (même geste
-              que sur la page MD) : un PDB déposé à la main dans le dossier de
-              l'expérience n'a aucun nom que la reprise automatique reconnaisse.
-              Choisir ici l'OUVRE et le DÉCLARE pour cette condition.
-
-              Et comme la lecture NE CRÉE RIEN : le bouton « 📁 Create drive
-              folder » crée le dossier de l'expérience quand il n'existe pas
-              encore. Il n'est PLUS écrit ici : le VIEWER le rend lui-même, sur
-              la ligne de 📂 PDB file(s) (la demande, mot pour mot : « …must be
-              placed in the same line of "PDB file" button always », voir
-              NMRMoleculeViewer — et le `driveNaming` du viewer, plus bas, le lui
-              donne aussi). */}
-          <div className="flex flex-wrap items-center gap-2">
-            <DriveExperimentFilePicker
-              label="📂 PDB from Drive folder"
-              titleText="List the .pdb / .cif files that are in THIS experiment's Drive folder (even one you deposited by hand) and open one of them as this condition's structure"
-              ctx={nmrStructDriveCtx(activeTest)}
-              exts={STRUCTURE_FILE_EXTS}
-              declaredName={activeTest.structureFileName || activeTest.structureDriveName || ''}
-              onPick={pickNmrStructureFromFolder}
-            />
-            <span className="text-[10px] text-slate-400">
-              Choosing a file here opens it AND declares it: this condition will reopen it by default. Nothing is uploaded again.
-            </span>
-          </div>
-          <NMRMoleculeViewer key={(activeTest && activeTest.id) || 'molecular-structure'} instanceKey={(activeTest && activeTest.id) || null} src={structureSrc} structureText={structureText} structureTextExt={structureTextExt} sequenceStructureText={sequenceStructure?.text || null} sequenceStructureExt={sequenceStructure?.ext || null} imposedSecondaryStructure={univTestMode ? '' : (activeTest.secondaryStructure || '')} externalLoading={organicFetch.loading} externalError={organicFetch.error} structureFileData={activeTest.structureFileData} structureFileName={activeTest.structureFileName} structureFile={structureFile} onStructureSrc={(v) => updateActiveTest({ structureSrc: v })} onStructureFile={handleStructureFile} moleculeType={d.moleculeType} parsedSeq={d.parsedSeq} sequenceModifications={activeTest.modifications || ''} smiles={activeTest.smiles} onLigandSmiles={(info) => { if (info && info.smiles && !activeTest.smiles && !activeTest.ligandSmiles) updateActiveTest({ ligandCode: info.code, ligandSmiles: info.smiles }); }} selectedKeys={selectedKeys} manualKeys={manualKeys} onAtomClick={handleAtomClick} residueOffset={residueOffset} atomNameMap={atomNameMap} atomRenames={activeTest.atomRenames || {}} onAtomRenames={(map) => updateActiveTest({ atomRenames: map })} resRenumber={activeTest.resRenumber || {}} onResRenumber={(map) => updateActiveTest({ resRenumber: map })} onStructureSequence={(seq, parts) => { const _nat = structureSequencePatch(activeTest, d.moleculeType, seq, parts); if (_nat) updateActiveTest(_nat); }} driveNaming={{ project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || '', instance: activeTest.instanceName || '', scientist: activeTest.operator || '', section: 'Data', subsection: 'Structure' }} labelMode={atomLabelMode} height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? '1100px' : '1000px'} />
+          {/* 📂 LE PDB DU DOSSIER vit maintenant DANS la rangée des fichiers du viewer
+              (voir `nmrStructureFromFolder`, passé par `fileRowExtra` sur le viewer
+              juste en dessous) : la demande de cette session, mot pour mot — « in the
+              viewer "pdb from drive folder" should fit in the same line as "create
+              drive folder" ». Sa rangée à lui tout seul est donc partie avec, et la
+              phrase qui l'accompagnait (« Choosing a file here opens it AND declares
+              it… ») vit dans son infobulle. Rien d'autre ne change : le VIEWER rend
+              toujours le geste de création (📁 Create drive folder) sur la ligne de
+              📂 PDB file(s), et le `driveNaming` du viewer, plus bas, le lui donne. */}
+          <NMRMoleculeViewer key={(activeTest && activeTest.id) || 'molecular-structure'} instanceKey={(activeTest && activeTest.id) || null} src={structureSrc} structureText={structureText} structureTextExt={structureTextExt} sequenceStructureText={sequenceStructure?.text || null} sequenceStructureExt={sequenceStructure?.ext || null} imposedSecondaryStructure={univTestMode ? '' : (activeTest.secondaryStructure || '')} externalLoading={organicFetch.loading} externalError={organicFetch.error} structureFileData={activeTest.structureFileData} structureFileName={activeTest.structureFileName} structureFile={structureFile} onStructureSrc={(v) => updateActiveTest({ structureSrc: v })} onStructureFile={handleStructureFile} moleculeType={d.moleculeType} parsedSeq={d.parsedSeq} sequenceModifications={activeTest.modifications || ''} smiles={activeTest.smiles} onLigandSmiles={(info) => { if (info && info.smiles && !activeTest.smiles && !activeTest.ligandSmiles) updateActiveTest({ ligandCode: info.code, ligandSmiles: info.smiles }); }} selectedKeys={selectedKeys} manualKeys={manualKeys} onAtomClick={handleAtomClick} residueOffset={residueOffset} atomNameMap={atomNameMap} atomRenames={activeTest.atomRenames || {}} onAtomRenames={(map) => updateActiveTest({ atomRenames: map })} resRenumber={activeTest.resRenumber || {}} onResRenumber={(map) => updateActiveTest({ resRenumber: map })} onStructureSequence={(seq, parts) => { const _nat = structureSequencePatch(activeTest, d.moleculeType, seq, parts); if (_nat) updateActiveTest(_nat); }} driveNaming={{ project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || '', instance: activeTest.instanceName || '', scientist: activeTest.operator || '', section: 'Data', subsection: 'Structure' }} fileRowExtra={nmrStructureFromFolder} labelMode={atomLabelMode} height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? '1100px' : '1000px'} />
           <button onClick={downloadPdbFile} className="self-center mt-2 px-4 py-2 bg-indigo-50 border border-indigo-200 text-indigo-700 font-bold text-xs rounded-lg hover:bg-indigo-100 transition-colors shadow-sm">📥 Download 3D PDB File</button>
           {activeTest.structureFileName && (!structureFile || nmrStructRestore.message) && (
             <div className="flex flex-wrap items-center justify-center gap-2 text-[11px]">

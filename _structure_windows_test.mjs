@@ -214,7 +214,13 @@ has(VIEW, '{fileRowExtra}', '[viewer] …et elle les rend dans la rangée des fi
   ok(VIEW.indexOf('label="📂 Style from folder"') === -1,
     '[viewer] …et plus de 📂 Style from folder : le style du dossier est lu par le rappel automatique');
 }
-eq(count(SEC, 'fileRowExtra'), 0, '[NMR] la page NMR n’en passe pas : le défaut `null` ne rend rien');
+eq(count(SEC, 'fileRowExtra={nmrStructureFromFolder}'), 1, '[NMR] la page NMR en passe UN — LE 📂 PDB DU DOSSIER, sur la ligne de 📁 Create drive folder (la demande : « in the viewer "pdb from drive folder" should fit in the same line as "create drive folder" »)');
+has(SEC, 'const nmrStructureFromFolder = (', '[NMR] …définie une seule fois, avant le rendu de la page');
+ok(/const nmrStructureFromFolder = \([\s\S]{0,900}?label="📂 PDB from Drive folder"[\s\S]{0,900}?ctx=\{nmrStructDriveCtx\(activeTest\)\}[\s\S]{0,900}?onPick=\{pickNmrStructureFromFolder\}/.test(SEC),
+  '[NMR] …et c’est bien le MÊME bouton : sa lecture (le dossier de l’expérience) et son installation sont inchangées');
+has(SEC, 'Choosing a file here opens it AND declares it: this condition will reopen it by default, on every computer. Nothing is uploaded again.',
+  '[NMR] …la phrase qui l’accompagnait est passée dans son infobulle (rien n’est perdu)');
+eq(count(SEC, '<DriveExperimentFilePicker'), 1, '[NMR] …un seul 📂 PDB du dossier, donc : sa rangée à lui tout seul a disparu');
 eq(count(DOCK, 'fileRowExtra'), 0, '[Docking] …la page Docking non plus');
 
 const dkFlex = at(DOCK, '<div className="flex flex-col">', '[Docking] les deux cartes sont dans UN empilement');

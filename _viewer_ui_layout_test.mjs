@@ -1015,5 +1015,41 @@ has('and the ${c} anchor of « Atom charge », which walks from the NEUTRAL swat
   ok(labels.get('atomcharge') === 'Atom charge', '[13l] …dont « Atom charge » lui-même');
 }
 
+/* ── 13m. 🔄 SPIN x·y·z — LE BOUTON QUI TOURNE LA MOLÉCULE, JUSTE APRÈS 🎞 MOVIE ─────
+   LA DEMANDE DE CETTE SESSION, MOT POUR MOT : « Next to the movie button add a button to
+   rotate uniformly the molecule in x, y and z direction ». Trois faits, chacun mesuré :
+     · le bouton vit DANS la boîte 🎨 Styles, IMMÉDIATEMENT APRÈS 🎞 Movie (donc entre
+       🌫 Scene et ✏️ Modify, comme le Movie lui-même), et il PORTE son état ;
+     · l'état (`spinOn`) allume une BOUCLE D'IMAGES qui appelle `spinSceneStep`, et ce pas
+       est « uniforme » : le MÊME angle autour des TROIS axes, fabriqué par
+       pré-multiplication (q ← dq · q, donc dans le repère de l'ÉCRAN — ce qu'on voit
+       tourner), avec un `dt` MESURÉ (la même vitesse à 30, 60 ou 144 Hz) ;
+     · le tour est un geste de VUE : il écrit `viewer.rotationGroup.quaternion` — la
+       rotation que la pose de caméra lit et repose (`applyCameraPose`) — donc il ne touche
+       ni la place des molécules (⬇ PDB) ni le ↺ (qui remet des positions), et il S'EFFACE
+       devant un film qui se prévisualise ou s'écrit. */
+{
+  const iSpinBtn = VIEW.indexOf('🔄 Spin x·y·z{spinOn ?');
+  ok(iMovieBtn > 0 && iSpinBtn > iMovieBtn && iSpinBtn < iModify2b,
+    '[13m] 🔄 Spin x·y·z est DANS la boîte 🎨 Styles, immédiatement APRÈS 🎞 Movie');
+  has('onClick={() => setSpinOn((v) => !v)}', '[13m] …un clic l’allume, un second l’éteint');
+  has('aria-pressed={spinOn}', '[13m] …et il annonce son état aux lecteurs d’écran');
+  has('const [spinOn, setSpinOn] = useState(false);', '[13m] l’état du tour a UNE déclaration');
+  has('const SPIN_RAD_PER_S = 0.6;', '[13m] la vitesse est une constante NOMMÉE (un tour complet en ~10 s)');
+  has('const spinSceneStep = (stage, dt) => {', '[13m] le pas du tour est une fonction à part, qui reçoit son `dt`');
+  has('const dq = new Q().setFromAxisAngle(new V3(1, 0, 0), w);', '[13m] …le tour part de l’axe x de l’écran');
+  has('dq.multiplyQuaternions(new Q().setFromAxisAngle(new V3(0, 1, 0), w), dq);', '[13m] …puis y');
+  has('dq.multiplyQuaternions(dq, new Q().setFromAxisAngle(new V3(0, 0, 1), w));', '[13m] …puis z : les TROIS axes, le MÊME angle (« uniformly »)');
+  has('q.multiplyQuaternions(dq, q);', '[13m] …pré-multiplié : le tour est celui qu’on VOIT (le repère de l’écran)');
+  has('const dt = last == null ? 0 : Math.min(0.1, (t - last) / 1000);', '[13m] …et `dt` est MESURÉ (aucun bond après un onglet en arrière-plan)');
+  has('if (!spinOn || kfPreview || kfBusy) return undefined;', '[13m] la boucle ne tourne QUE si le bouton l’allume, et s’efface devant un film');
+  has('}, [spinOn, kfPreview, kfBusy]);', '[13m] …son effet suit l’état du bouton ET celui du film');
+  has('spinSceneStep(stageRef.current, dt);', '[13m] la boucle fait UNE chose : un pas, puis un rendu');
+  has('· 🎞 Movie · 🔄 Spin x·y·z', '[13m] la liste des commandes de §2 (l’en-tête du fichier) nomme le nouveau bouton');
+  has('⬇ PDB writes where the molecules STAND (never where the camera looks)',
+    '[13m] …et sa bulle dit ce qui NE bouge pas : ⬇ PDB écrit des positions, jamais une orientation de caméra');
+}
+
+
 /* ── Bilan ───────────────────────────────────────────────────────────────── */
 console.log(`_viewer_ui_layout_test.mjs — ${passed} assertions OK`);
