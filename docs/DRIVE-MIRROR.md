@@ -3768,15 +3768,23 @@ doublures est en retard sur les imports actuels de `NMRSections.jsx` — `useSho
 `canonicalExperimentPath`, `sanitizeSlug` ; vérifié en remettant les deux fichiers touchés de côté,
 le rouge est identique) et `node _viewer_keyframes_test.mjs` (sonde d'import périmée).
 
-### ③ « Le programme est devenu très lent » — le constat, pas encore de correctif
+### ③ « Le programme est devenu très lent » — la page gardée ne se re-rend plus
 
-Ce qui est **mesuré dans le code** (et non deviné) : la page GARDÉE (`pageSlot`, `App.jsx` — un
-`display: none` mais **montée**) est **re-rendue à chaque rendu d'App** — `render()` est rappelé pour
-les DEUX places à chaque fois — et le contenu d'une page d'expérience (sections + viewer 3D) est
-volumineux. Le correctif proposé (non appliqué : il change le moment où une page cachée voit les props
-d'App, donc il attend l'accord de l'utilisateur) est de **mémoriser l'ÉLÉMENT** de la page gardée : un
-élément identique (`===`) fait sauter tout le sous-arbre à React, la page cachée cesse alors de
-re-rendre sur les changements d'App sans perdre ses propres mises à jour (une page gardée continue de
-vivre, ses chargements continuent), et elle repart d'un rendu frais à l'instant où elle redevient la
-page affichée.
+Ce qui a été **mesuré dans le code** (et non deviné) : la page GARDÉE (`pageSlot`, `App.jsx` — un
+`display: none` mais **montée**) était **re-rendue à chaque rendu d'App** — `render()` était rappelé
+pour les DEUX places à chaque fois — et le contenu d'une page d'expérience (ses sections, sa scène
+WebGL) repassait donc par le réconciliateur pendant qu'on travaillait ailleurs : changer de page
+coûtait ce travail invisible.
+
+Le correctif : **l'ÉLÉMENT de la page gardée est retenu** (`parkedElRef`) et redonné **tel quel** tant
+qu'elle est cachée. React saute un sous-arbre dont l'élément reçu est identique (mêmes props ⇒ aucun
+travail). Ce qui ne change pas : la page gardée **vit toujours** (ses chargements continuent, ses
+propres `setState` la re-rendent elle-même — mesuré : son compteur est passé de 9 à 17 pendant qu'elle
+était cachée), la page **affichée** rend toujours frais, et le cache est **jeté** dès que la place
+gardée change, donc une page qui redevient visible repart d'un rendu frais avec les props d'App à jour.
+
+*Vérifier :* `node _page_parking_test.mjs` — **54** (l'élément retenu, la page affichée sans cache, le
+cache jeté quand la place change) ; **et le `display: none` réel mesuré par Chrome** :
+`node _page_parking_render_test.cjs` — **19/19** (mêmes nœuds DOM au retour, compteur de la page gardée
+qui continue d'avancer).
 

@@ -2192,11 +2192,36 @@ if (customType === 'dosy') {
      de le reconstruire. Mesuré par la sonde : mêmes nœuds DOM avant/après, et le
      compteur de la page gardée ne repart jamais de zéro. */
   const pageSlots = pageSlotIds(currentModule, parkedModule);
-  const pageSlot = (id, render) => (
-    pageSlots.includes(id)
-      ? <div key={id} data-page={id} className={pageSlotClass(id, currentModule)}>{render()}</div>
-      : null
-  );
+  /* ⚠ LA PAGE GARDÉE NE SE RE-REND PLUS À CHAQUE RENDU D'App — le correctif de l'enquête
+     « le programme est devenu très lent ». Elle est CACHÉE (`display: none`) mais MONTÉE,
+     et `render()` était rappelé pour les DEUX places à chaque rendu d'App : le contenu
+     d'une page d'expérience (ses sections, sa scène WebGL) repassait donc par le
+     réconciliateur pendant qu'on travaillait ailleurs, et changer de page coûtait ce
+     travail invisible. React SAUTE un sous-arbre quand l'ÉLÉMENT qu'il reçoit est
+     IDENTIQUE (mêmes props ⇒ aucun travail) : on garde donc l'élément de la page gardée
+     dans une ref et on le redonne TEL QUEL tant qu'elle est cachée.
+     Ce que cela NE change PAS : la page gardée vit toujours (ses chargements continuent,
+     ses propres `setState` la re-rendent elle-même), et elle repart d'un rendu FRAIS —
+     props d'App à jour — à l'instant où elle redevient la page affichée. */
+  const parkedElRef = useRef(null);
+  const parkedIdRef = useRef(null);
+  if (parkedIdRef.current && parkedIdRef.current !== parkedModule) {
+    // La place gardée a changé (ou disparu) : l'élément de l'ancienne ne vaut plus rien.
+    parkedIdRef.current = null;
+    parkedElRef.current = null;
+  }
+  const pageSlot = (id, render) => {
+    if (!pageSlots.includes(id)) return null;
+    if (id === currentModule) {
+      // La page AFFICHÉE rend TOUJOURS frais : c'est elle qui doit tout voir, tout de suite.
+      return <div key={id} data-page={id} className={pageSlotClass(id, currentModule)}>{render()}</div>;
+    }
+    if (parkedIdRef.current !== id) {
+      parkedIdRef.current = id;
+      parkedElRef.current = render();
+    }
+    return <div key={id} data-page={id} className={pageSlotClass(id, currentModule)}>{parkedElRef.current}</div>;
+  };
 
   /* Datasets supprimés VOLONTAIREMENT pendant cette session. Le document est
      retiré de Firestore, mais le cache localStorage de l’appareil en garde une

@@ -123,7 +123,18 @@ has("window.dispatchEvent(new Event('resize'))",
 has('}, [currentModule]);', '…au moment où la page change, donc juste après être redevenue visible');
 has('const pageSlots = pageSlotIds(currentModule, parkedModule);',
   'les places rendues viennent de la règle pure');
-has('const pageSlot = (id, render) => (', 'chaque page est rendue par UNE place');
+has('const pageSlot = (id, render) => {', 'chaque page est rendue par UNE place');
+/* ⚠ LA PAGE GARDÉE NE SE RE-REND PLUS À CHAQUE RENDU D'App — le correctif de l'enquête
+   « le programme est devenu très lent » : son ÉLÉMENT est gardé dans une ref et redonné
+   tel quel, donc React saute tout le sous-arbre. La page AFFICHÉE, elle, rend toujours
+   frais, et le cache est jeté dès que la place gardée change. Ce que la place garantit
+   par ailleurs (sa `key`, son rang, sa classe) ne bouge pas. */
+has('const parkedElRef = useRef(null);', 'l’élément de la page gardée est RETENU dans une ref');
+has('parkedElRef.current = render();', '…capturé quand la page devient la page gardée');
+has('{parkedElRef.current}', '…et redonné TEL QUEL tant qu’elle est cachée (React saute le sous-arbre)');
+has('if (id === currentModule) {', 'la page AFFICHÉE rend toujours frais (aucun cache pour elle)');
+has('if (parkedIdRef.current && parkedIdRef.current !== parkedModule) {',
+  '…et le cache est jeté dès que la place gardée change : l’élément de l’ancienne ne vaut plus rien');
 has('pageSlots.includes(id)',
   '…et cette place ne monte QUE les pages listées : aucune autre page n’est montée (sinon les quatorze vivraient)');
 has('<div key={id} data-page={id} className={pageSlotClass(id, currentModule)}>{render()}</div>',
