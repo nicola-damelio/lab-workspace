@@ -385,9 +385,15 @@ export const filmVignetteStops = (darkness) => {
    jamais sur du noir : un film ne doit pas être plus sombre que l'écran. */
 export const FILM_BACKDROP_DEFAULT = '#f8fafc';
 /** La couleur de fond d'un film, VALIDÉE (`#rrggbb`), avec le fond par défaut en
- *  secours — la couleur d'une scène, jamais un noir imposé. */
+ *  secours — la couleur d'une scène, jamais un noir imposé.
+ *  ⚠ Elle accepte aussi la SPÉCIFICATION DU FOND du viewer (`{ on, from, to,
+ *  angle }`, voir utils/viewerBackground) : la toile de film reçoit désormais
+ *  cette spécification — un fond dégradé 🎨 doit être peint, et sa PREMIÈRE
+ *  couleur est la couleur unie qui reste SOUS la rampe (comme `backgroundColor`
+ *  sous `backgroundImage` en CSS). Une chaîne, elle, est lue comme avant. */
 export const filmBackdropColor = (value, fallback = FILM_BACKDROP_DEFAULT) => {
-  const v = typeof value === 'string' ? value.trim() : '';
+  const raw = (value && typeof value === 'object') ? value.from : value;
+  const v = typeof raw === 'string' ? raw.trim() : '';
   if (/^#[0-9a-fA-F]{6}$/.test(v)) return v.toLowerCase();
   const f = typeof fallback === 'string' ? fallback.trim() : '';
   return /^#[0-9a-fA-F]{6}$/.test(f) ? f.toLowerCase() : FILM_BACKDROP_DEFAULT;

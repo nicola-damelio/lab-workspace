@@ -8,8 +8,10 @@
        estimé et les FRAIS DE PORT ;
      · isolation par membre : CHAQUE utilisateur ne voit que les achats qu’il
        a lui-même déposés (et leur état : décision, devis, BC) — jamais ceux
-       des autres. Le superutilisateur, qui décide et transfère, voit tout.
-       Le champ « demandeur » est verrouillé sur soi-même (« demandeur = moi ») ;
+       des autres — PLUS les demandes déposées au nom du demandeur collectif
+       « Service », visibles par tout le monde. Le superutilisateur, qui décide
+       et transfère, voit tout. Le champ « demandeur » propose « vous-même » ou
+       « Service » (demandeur collectif) ;
      · pour qu’un transfert produise un devis COMPLET, un membre doit fournir
        à la saisie : la description, le N° devis, la ligne budgétaire, le
        fournisseur, le montant, les frais de port et le fichier du devis
@@ -37,6 +39,7 @@ import { AdminImportModal } from './adminImportModal';
 import {
   ADMIN_PAGES, RECETTE_TYPES, URGENCES, DESIDERATE_STATUSES, DESIDERATE_TEST,
   desiderataDecisionOf, isDesiderataApproved, isDesiderataTest, APPROVAL_APPROVED, APPROVAL_GESTION,
+  SERVICE_DEMANDEUR,
 } from './adminSchema';
 import { parseEuroAmount, extractNumeroFromDoc } from './importUtils';
 import {
@@ -50,7 +53,7 @@ import { budgetDocPath, budgetDocFileName } from './driveFiling';
    immédiatement (copie « …_approuvé_signé.pdf »), exactement comme avec le
    bouton ✓ de la page « Approbation devis & BC ». */
 import { buildSignedDeposit, renameDepositDriveFileTo } from './depositSigning';
-import { scopeCanDeleteAchatLines, scopeMeNames, scopeMePersonId, scopeCanSeeItem, scopePersonIdForName, scopeSeesAllRows, scopeFonctions } from './ownScope';
+import { scopeCanDeleteAchatLines, scopeMeNames, scopeMePersonId, scopeCanSeeItem, scopePersonIdForName, scopeSeesAllRows, scopeFonctions, scopeIsServiceDemandeur, scopeSameName } from './ownScope';
 import {
   TRANSFER_TARGETS, targetMetaOf, TRANSFER_MODES,
   devisPatchFromDesiderata, desiderataTransferStatus, isDepenseBcSigne,
@@ -450,6 +453,17 @@ const DesiderataModal = ({
      l’enregistrement sans elle. */
   const lineMissing = !(draft.recetteSuggereeId || txt(draft.ligneBudgetaire));
 
+  /* Choix « demandeur » d’un MEMBRE : lui-même OU le demandeur collectif
+     « Service » (demande visible par tous). La valeur courante est toujours
+     proposée, même hors liste (ancienne demande d’import) : ouvrir puis
+     enregistrer une telle fiche ne réécrit jamais son demandeur. */
+  const demandeurChoices = (() => {
+    const out = [...(demandeurNames || [])];
+    const cur = txt(draft.demandeur);
+    if (cur && !out.some((n) => scopeSameName(n, cur))) out.push(cur);
+    return out;
+  })();
+
   const submit = () => {
     const description = txt(draft.description);
     if (!description) {
@@ -515,11 +529,19 @@ const DesiderataModal = ({
       commentaires: txt(draft.commentaires),
     };
     /* Attribution stable à la fiche Personnel du demandeur : elle permet à
-       chaque membre de ne voir que ses propres souhaits. */
-    const demandeurPersonId = lockDemandeurToMe
-      ? (mePersonId || scopePersonIdForName(personnel, patch.demandeur))
-      : scopePersonIdForName(personnel, patch.demandeur);
-    if (demandeurPersonId) patch.demandeurPersonId = demandeurPersonId;
+       chaque membre de ne voir que ses propres souhaits. Une demande déposée
+       au nom du demandeur COLLECTIF « Service » n’appartient à aucune fiche
+       Personnel : elle est visible par TOUS (scopeIsServiceDemandeur) — on
+       n’enregistre donc aucune attribution personnelle, et on efface celle
+       d’une ancienne demande repassée au nom du Service. */
+    if (scopeSameName(patch.demandeur, SERVICE_DEMANDEUR)) {
+      patch.demandeurPersonId = null;
+    } else {
+      const demandeurPersonId = lockDemandeurToMe
+        ? (mePersonId || scopePersonIdForName(personnel, patch.demandeur))
+        : scopePersonIdForName(personnel, patch.demandeur);
+      if (demandeurPersonId) patch.demandeurPersonId = demandeurPersonId;
+    }
     let approvalNow = false;
     if (canDecide) {
       const decided = desiderataDecisionOf(draft.statut) || 'En attente';
@@ -598,20 +620,32 @@ const DesiderataModal = ({
               <Field
                 label="Demandeur"
                 hint={lockDemandeurToMe
-                  ? 'Verrouillé sur vous-même : chacun ne voit que ses propres demandes.'
-                  : 'Personne à l’origine de la demande.'}
+                  ? 'Vous-même, ou « Service » : une demande déposée au nom du Service est visible par TOUS les membres (demandeur collectif).'
+                  : 'Personne à l’origine de la demande — « Service » = demandeur collectif, visible par tous.'}
               >
-                <input
-                  className={MODAL_INPUT} value={draft.demandeur}
-                  onChange={set('demandeur')}
-                  readOnly={lockDemandeurToMe}
-                  list={lockDemandeurToMe ? undefined : 'desiderata-demandeurs'}
-                  placeholder={lockDemandeurToMe ? 'vous-même' : 'ex. Marie Curie'}
-                />
-                {!lockDemandeurToMe && (
-                  <datalist id="desiderata-demandeurs">
-                    {(demandeurNames || []).map((n) => <option key={n} value={n} />)}
-                  </datalist>
+                {lockDemandeurToMe ? (
+                  /* Un membre peut déposer pour lui-même OU au nom du Service
+                     (demandeur collectif, visible par tous — même règle que la
+                     page « Approbation devis & BC »). */
+                  <select className={MODAL_INPUT} value={draft.demandeur} onChange={set('demandeur')}>
+                    {demandeurChoices.map((n) => (
+                      <option key={n} value={n}>
+                        {scopeSameName(n, SERVICE_DEMANDEUR) ? 'Service (au nom de l’équipe — visible par tous)' : `${n} (moi-même)`}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <>
+                    <input
+                      className={MODAL_INPUT} value={draft.demandeur}
+                      onChange={set('demandeur')}
+                      list="desiderata-demandeurs"
+                      placeholder="ex. Marie Curie"
+                    />
+                    <datalist id="desiderata-demandeurs">
+                      {(demandeurNames || []).map((n) => <option key={n} value={n} />)}
+                    </datalist>
+                  </>
                 )}
               </Field>
               <Field
@@ -953,11 +987,11 @@ export const DesiderataPage = () => {
   /* Portée réellement appliquée par la page, affichée dans l’en-tête : elle
      sert aussi de DIAGNOSTIC — l’info-bulle liste les fonctions reconnues sur
      la fiche Personnel du membre connecté. Si un Gestionnaire / Responsable
-     d’achats lit « vos demandes uniquement », sa fiche ne porte pas (ou pas
-     sous une forme reconnue) la fonction correspondante. */
+     d’achats lit « vos demandes + celles du Service », sa fiche ne porte pas
+     (ou pas sous une forme reconnue) la fonction correspondante. */
   const scopeLabel = isSuper
     ? ''
-    : (seesAllRows ? ' — toutes les demandes (suivi achats)' : ' — vos demandes uniquement');
+    : (seesAllRows ? ' — toutes les demandes (suivi achats)' : ' — vos demandes + celles du Service');
   const scopeTitle = isSuper
     ? ''
     : `Fonctions reconnues sur votre fiche Personnel : ${scopeFonctions(access).join(', ') || 'aucune'}. `
@@ -969,12 +1003,18 @@ export const DesiderataPage = () => {
           + (scopeCanDeleteAchatLines(access)
             ? ' La suppression d’une ligne (🗑) est ouverte à la responsable d’achats : elle corrige un doublon ou une saisie erronée.'
             : '')
-        : 'Seules vos propres demandes sont affichées ici. Pour voir toutes les demandes, cochez « Gestionnaire » ou « Responsable d’achats » sur votre fiche dans Administration › Personnel.');
+        : 'Seules vos propres demandes — et celles déposées au nom du « Service » (demandeur collectif visible par tous) — sont affichées ici. Pour voir toutes les demandes, cochez « Gestionnaire » ou « Responsable d’achats » sur votre fiche dans Administration › Personnel.');
   const meNames = useMemo(() => scopeMeNames(access, currentUser), [access, currentUser]);
   const mePersonId = useMemo(() => scopeMePersonId(access), [access]);
   const myRows = useMemo(
-    () => (seesAllRows ? list : list.filter((r) => scopeCanSeeItem(r, { isSuper, meNames, mePersonId }))),
-    // scopeCanSeeItem dépend de meNames / mePersonId (recalculés à chaque rendu).
+    () => (seesAllRows ? list : list.filter((r) => (
+      /* Les demandes portées par le demandeur collectif « Service » sont
+         visibles par TOUT LE MONDE (le Service travaille pour le laboratoire),
+         en plus de ses propres demandes. */
+      scopeIsServiceDemandeur(r) || scopeCanSeeItem(r, { isSuper, meNames, mePersonId })
+    ))),
+    // scopeCanSeeItem / scopeIsServiceDemandeur dépendent de meNames / mePersonId
+    // (recalculés à chaque rendu).
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [list, seesAllRows, isSuper, meNames, mePersonId]
   );
@@ -1017,12 +1057,17 @@ export const DesiderataPage = () => {
   }, [settings, myRows]);
 
   /* Suggestions « demandeur » du formulaire : pour un membre, uniquement
-     lui-même (« demandeur = moi », verrouillé) ; pour le superutilisateur,
-     toute l’équipe (il peut saisir pour le compte d’une autre personne). */
+     lui-même (« demandeur = moi ») ET le demandeur collectif « Service » (une
+     demande au nom du Service est visible par TOUS les membres) ; pour le
+     superutilisateur, toute l’équipe (il peut saisir pour le compte d’une autre
+     personne) + « Service ». */
   const demandeurNames = useMemo(() => {
     const set = new Set();
     if (!isSuper) {
       meNames.forEach((n) => { const s = txt(n); if (s) set.add(s); });
+      /* Demandeur collectif « Service » : une demande déposée à son nom est
+         visible par tout le monde (voir scopeIsServiceDemandeur). */
+      set.add(SERVICE_DEMANDEUR);
       return [...set];
     }
     personnel.forEach((p) => {
@@ -1030,6 +1075,7 @@ export const DesiderataPage = () => {
     });
     list.forEach((r) => { const d = demandeurOf(r); if (d) set.add(d); });
     if (currentUser && txt(currentUser.name)) set.add(txt(currentUser.name));
+    set.add(SERVICE_DEMANDEUR);
     return [...set].sort((a, b) => a.localeCompare(b, 'fr'));
   }, [personnel, list, currentUser, isSuper, meNames]);
 
@@ -1758,7 +1804,12 @@ export const DesiderataPage = () => {
 
 
   return (
-    <div className="max-w-full mx-auto flex flex-col gap-4">
+    /* La page occupe EXACTEMENT la hauteur de l’écran (h-full + min-h-0) : le
+       tableau, seul élément extensible (fillHeight), s’arrête au bas de la vue
+       et sa barre de défilement HORIZONTALE reste donc toujours visible, sans
+       avoir à faire défiler la page entière pour la rejoindre. Même convention
+       que la page « Dépenses ». */
+    <div className="h-full min-h-0 w-full min-w-0 mx-auto flex flex-col gap-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <p className="text-xs font-bold text-slate-400 max-w-2xl" title={scopeTitle || undefined}>
           {visibleSorted.length} achat{visibleSorted.length > 1 ? 's' : ''} prévu{visibleSorted.length > 1 ? 's' : ''} / souhaité{visibleSorted.length > 1 ? 's' : ''} à suivre
@@ -1824,23 +1875,6 @@ export const DesiderataPage = () => {
         </div>
       )}
 
-      <div className="rounded-xl border border-teal-100 bg-teal-50/60 px-4 py-2.5 text-[11px] text-slate-600 leading-relaxed">
-        <b>Achats prévus / souhaités :</b> chaque membre déclare ses achats souhaités et ne voit QUE ses propres demandes
-        (description, ligne budgétaire, fournisseur, coût estimé, frais de port — le N° devis et le fichier du devis sont facultatifs
-        à la soumission) — le superutilisateur, qui décide et transfère, voit tout. La <b>première colonne « Décision »</b> affiche la
-        décision du superutilisateur : <b>Approuvé / En attente / Test / Pas maintenant</b> (personnalisable dans Setup › Options des listes
-        déroulantes). La décision <b>« Test »</b> compte la demande dans les prévisions <b>« Achats prévus »</b> de la page Recettes sans
-        l’accepter réellement (aucune notification, aucun transfert). Décider <b>« Approuvé »</b> n’envoie <b>aucun e-mail à la
-        gestionnaire</b> : elle n’est prévenue qu’au transfert ci-dessous (ou à la signature du devis / BC dans « Approbation devis & BC »).
-        Pour toute demande en attente, la colonne <b>« Transfert »</b> propose au directeur : <b>« ✓ Signature et BC »</b>
-        (documents complets — le devis est <b>signé immédiatement</b> et arrive dans la section <b>« BC à faire et à approuver »</b>
-        de la page « Approbation devis &amp; BC » : il n’y reste qu’à déposer puis approuver le bon de commande) ou <b>« ✎ Révision »</b>
-        (documents manquants — un devis « En gestion » est créé pour être complété par la responsable d'achats, puis envoyé pour
-        signature). La demande transférée <b>disparaît de cette liste</b> (rétablie via « Afficher les transférées ») et son montant est
-        suivi dans les colonnes <b>« Devis en signature / signé »</b> de la page Recettes jusqu'à la signature du BC. Le <b>fournisseur</b>,
-        la <b>ligne budgétaire</b> et le <b>demandeur</b> sont des liens vers la Librerie et les fiches Personnel.
-      </div>
-
       {visibleSorted.length === 0 ? (
         <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-10 text-center">
           <div className="text-4xl mb-2">🛒</div>
@@ -1859,8 +1893,9 @@ export const DesiderataPage = () => {
                   gestion »). Ou « 📥 Importer » pour rejouer l’onglet « Souhaités » de la feuille Google Sheets.</>
               )
             ) : (
-              <>Chaque membre ne voit que ses propres demandes — ajoutez votre première demande d’achat (description, ligne budgétaire,
-                fournisseur, coût estimé, frais de port) : le N° devis et le fichier du devis ne sont pas obligatoires pour soumettre.</>
+              <>Chaque membre ne voit que ses propres demandes — et celles déposées au nom du <b>« Service »</b> — ajoutez votre
+                première demande d’achat (description, ligne budgétaire, fournisseur, coût estimé, frais de port) : le N° devis et le
+                fichier du devis ne sont pas obligatoires pour soumettre. Le champ « Demandeur » propose « vous-même » ou « Service ».</>
             )}
           </p>
           <button
@@ -1872,16 +1907,22 @@ export const DesiderataPage = () => {
           </button>
         </div>
       ) : (
-        <SmartTable
-          columns={columns}
-          rows={visibleSorted}
-          focusRowKey={focusRow}
-          onFocusDone={() => setFocusRow(null)}
-          minWidth="1820px"
-          searchPlaceholder="Rechercher article, demandeur, fournisseur, ligne, code produit…"
-          emptyLabel="Aucun achat prévu / souhaité pour le moment"
-          noMatchLabel="Aucun achat prévu / souhaité ne correspond aux filtres."
-        />
+        /* fillHeight : le tableau prend la hauteur restante de l’écran, donc sa
+           barre de défilement horizontale (qui est à son bas) est toujours
+           visible — plus besoin de faire défiler la page pour l’atteindre. */
+        <div className="flex-1 min-h-[280px] flex flex-col">
+          <SmartTable
+            columns={columns}
+            rows={visibleSorted}
+            focusRowKey={focusRow}
+            onFocusDone={() => setFocusRow(null)}
+            minWidth="1820px"
+            fillHeight
+            searchPlaceholder="Rechercher article, demandeur, fournisseur, ligne, code produit…"
+            emptyLabel="Aucun achat prévu / souhaité pour le moment"
+            noMatchLabel="Aucun achat prévu / souhaité ne correspond aux filtres."
+          />
+        </div>
       )}
 
       {importOpen && <AdminImportModal kind="desiderate" onClose={() => setImportOpen(false)} />}

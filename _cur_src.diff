@@ -1,753 +1,425 @@
-diff --git a/src/App.jsx b/src/App.jsx
-index cdc9af2..7a37f4b 100644
---- a/src/App.jsx
-+++ b/src/App.jsx
-@@ -39,6 +39,11 @@ import { repairBoxPlacements } from './utils/storageBoxes';
- import { setActiveProjectId, readLibrary, readAllProjectLibraries, mergeLibraryFromSnapshot, refreshLibraryFromStorage } from './utils/figuresLibrary';
- import { clearDriveToken, testDriveAccess, getConfiguredDriveClientId, connectDriveWithGis, sharedWorkspaceMode, getWorkspaceServerIssue, getLastDriveConnectError, driveBootstrapRequestedAtLoad, setDriveRootContext, ensureDriveFolder, getDriveToken, uploadWorkspaceFile, cleanupWorkspaceRootFolders, cloudBackendAvailable } from './utils/driveUpload';
- import { migrateCommonLibraryOnce } from './utils/commonLibraryMigrate';
-+/* Les DOCUMENTS DE SECTION d'une page projet vivaient dans un dossier au nom du
-+   projet POSÉ À LA RACINE du dataset (« <projet>/<section> ») : ce déménagement
-+   les range dans `projects/<projet>/<section>`, à côté des expériences, des
-+   figures et du document du projet (voir utils/projectRootMigrate.js). */
-+import { migrateProjectRootFoldersOnce } from './utils/projectRootMigrate';
- /* ── LE DRIVE EST LE MIROIR DU PROGRAMME (et le même sur chaque poste) ──────
-    driveMirror.js : supprimer ou renommer un dataset / un projet se répercute
-    sur Drive (dossier mis à la corbeille, dossier renommé — jamais de doublon).
-@@ -1311,6 +1316,11 @@ if (customType === 'dosy') {
-            la lecture continue de fonctionner sur les anciens emplacements
-            entre-temps (voir utils/commonLibraryMigrate.js). */
-         .then(() => migrateCommonLibraryOnce())
-+        /* LES DOSSIERS DE PROJET POSÉS À LA RACINE DU DATASET (« <projet> », où
-+           allaient les documents de section d'une page projet) rentrent dans
-+           `projects/<projet>` : même endroit, une fois par dataset, et le chemin
-+           abandonné est mis en pierre tombale (voir utils/projectRootMigrate.js). */
-+        .then(() => migrateProjectRootFoldersOnce())
-         .catch(() => {});
-     }, 800);
-     return () => {
-diff --git a/src/administration/adminSchema.js b/src/administration/adminSchema.js
-index e292a5e..c5e3920 100644
---- a/src/administration/adminSchema.js
-+++ b/src/administration/adminSchema.js
-@@ -70,6 +70,12 @@ export const ADMIN_SETTINGS_DOC = 'global';
-          achats prévus transférés depuis « OM prévus / souhaités » et « Achats
-          prévus / souhaités » (création de devis « Approbation devis & BC » et de
-          fiches du registre Remboursements).
-+       • SUPPRESSION des lignes de suivi des achats (« Achats prévus / souhaités »
-+         et « Approbation devis & BC ») : ouverte au superutilisateur ET à la
-+         fonction Achats (« Responsable d'achats ») — elle corrige un doublon ou
-+         une saisie erronée sans attendre une décision du superutilisateur ; un
-+         membre ne supprime que ses propres demandes. Règle unique :
-+         ownScope.js › scopeCanDeleteAchatLines (les deux pages l'appliquent).
-      • Personnel → superutilisateur uniquement.
-       • Page Setup → ouverte à tout membre connecté (changement de son propre
-           mot de passe) ; gestion des comptes et réglages avancés réservés au
-@@ -89,10 +95,10 @@ export const ADMIN_PAGES = [
-     blurb: 'Ordres de mission prévus / souhaités : dates, demandeur, destination, coûts, statut (En attente / Acceptée…). Un OM « Acceptée » peut être transféré en dépense réelle (page Dépenses › onglet OM). Le statut « Test » compte l’OM dans les prévisions des Recettes sans l’accepter réellement.',
-     fields: ['Description', 'Demandeur', 'Date de demande · Départ · Retour', 'Destination', 'Transport · Hébergement · Repas · Inscription', 'Coût total (calculé)', 'Statut : En attente / Acceptée / Test / Refusée / Terminée', 'Estimé vs Exact', 'Ligne budgétaire liée (Recette)', 'Commentaires'] },
-   { id: 'desiderate', label: 'Achats prévus / souhaités', icon: '🛒', superuserOnly: false, kind: 'desiderate',
--    blurb: 'Achats prévus / souhaités de l’équipe : coût estimé et frais de port saisis par le demandeur, décision réservée au superutilisateur (Approuvé / En attente / Test / Pas maintenant). Le statut « Test » compte le montant dans les prévisions des Recettes sans que la demande soit réellement acceptée.',
-+    blurb: 'Achats prévus / souhaités de l’équipe : coût estimé et frais de port saisis par le demandeur, décision réservée au superutilisateur (Approuvé / En attente / Test / Pas maintenant). Le statut « Test » compte le montant dans les prévisions des Recettes sans que la demande soit réellement acceptée. Suppression d’une ligne (🗑) : superutilisateur et responsable d’achats (fonction « Achats ») — doublon ou saisie erronée corrigés sans attendre la décision.',
-     fields: ['Décision — réservée au superutilisateur : Approuvé / En attente / Test / Pas maintenant', 'Souhait d’achat', 'Urgence : Urgent / Important / Souhaitable', 'Demandeur', 'Fournisseur', 'Ligne budgétaire suggérée', 'Coût estimé', 'Frais de port', 'N° devis · Lien du devis (Drive, facultatif) · Code produit', 'Date de demande', 'Commentaires'] },
-   { id: 'devisBc', label: 'Approbation devis & BC', icon: '📝', superuserOnly: false, kind: 'devisBc',
--    blurb: 'Deux sections seulement. « Devis à approuver » : les devis pas encore signés (visibles par les Permanents ; le Gestionnaire et le Responsable d’achats voient toutes les demandes ; les lignes demandées par « Service » sont visibles par tout le monde). « BC à faire et à approuver » : d’un côté les devis SIGNÉS dont le bon de commande reste à faire — on clique leur ligne pour déposer le BC (le devis y est déjà rattaché), de l’autre les BC déposés à approuver. Un devis signé quitte donc « Devis à approuver » et n’en finit qu’à la signature de son BC. Les fichiers sont téléversés dans Budget_labo/<année>/Devis|BC avec un nom qui reprend le N°, les attributs de la ligne ET l’objet (description) après un « _ » à la fin du titre ; l’approbation d’un devis le valide, et celle du BC lié crée la dépense « BC signé » correspondante dans la page Dépenses (catégorie, ligne budgétaire, N° SIFAC/D.A. et date de signature transmis automatiquement). À l’approbation d’un fichier PDF, une copie signée « …_approuvé_signé.pdf » est créée (image de signature du superutilisateur en bas de la dernière page) et devient le fichier officiel — l’original reste intact.',
-+    blurb: 'Deux sections seulement. « Devis à approuver » : les devis pas encore signés (visibles par les Permanents ; le Gestionnaire et le Responsable d’achats voient toutes les demandes ; les lignes demandées par « Service » sont visibles par tout le monde). « BC à faire et à approuver » : d’un côté les devis SIGNÉS dont le bon de commande reste à faire — on clique leur ligne pour déposer le BC (le devis y est déjà rattaché), de l’autre les BC déposés à approuver. Un devis signé quitte donc « Devis à approuver » et n’en finit qu’à la signature de son BC. Les fichiers sont téléversés dans Budget_labo/<année>/Devis|BC avec un nom qui reprend le N°, les attributs de la ligne ET l’objet (description) après un « _ » à la fin du titre ; l’approbation d’un devis le valide, et celle du BC lié crée la dépense « BC signé » correspondante dans la page Dépenses (catégorie, ligne budgétaire, N° SIFAC/D.A. et date de signature transmis automatiquement). À l’approbation d’un fichier PDF, une copie signée « …_approuvé_signé.pdf » est créée (image de signature du superutilisateur en bas de la dernière page) et devient le fichier officiel — l’original reste intact. La suppression d’une ligne (🗑) est ouverte au superutilisateur ET à la responsable d’achats (fonction « Achats ») : un doublon ou une saisie erronée se corrige donc sans attendre une décision.',
-     fields: ['Statut : En attente / Approuvé / Refusé (décision réservée au superutilisateur)', 'Type : Devis ou BC', 'Description', 'Fournisseur', 'N° devis · N° BC · Catégorie · N° SIFAC/D.A.', 'Montant (optionnel)', 'Fichier téléversé (Budget_labo/<année>/Devis ou /BC)', 'Déposant', 'Date de dépôt', 'Dépense « BC signé » créée automatiquement à l’approbation du BC'] },
-   { id: 'budget', label: 'Budget overview', icon: '💶', superuserOnly: false, kind: null,
-     blurb: 'Graphiques personnels de suivi budgétaire : dépenses découpées comme les onglets de la page Dépenses (Achats / Prestations internes / OM / Rémunérations de stage), lignes budgétaires & soldes (page Recettes), OM, souhaits, Remboursements (avec états liquidatifs) et devis & BC à approuver — chaque membre enregistre ses propres graphiques.',
-@@ -598,7 +604,7 @@ export const ADMIN_FONCTIONS = ['AP', 'Gestionnaire', 'Achats'];
- export const ADMIN_FONCTION_META = {
-   AP: { label: 'AP', hint: 'Agent de prévention → ajoute Dépenses, Budget overview + Hygiène & Sécurité.' },
-   Gestionnaire: { label: 'Gestionnaire', hint: '→ ajoute Recettes (création de lignes budgétaires), Dépenses, Budget overview, Questions ouvertes + Approbation devis & BC (toutes les demandes).' },
--  Achats: { label: "Responsable d'achats", hint: "→ ajoute Recettes (création de lignes budgétaires), Dépenses, Budget overview + Approbation devis & BC (toutes les demandes) ; reçoit les OM / achats prévus transférés et est notifié par e-mail quand un devis est créé." },
-+  Achats: { label: "Responsable d'achats", hint: "→ ajoute Recettes (création de lignes budgétaires), Dépenses, Budget overview + Approbation devis & BC (toutes les demandes) ; reçoit les OM / achats prévus transférés et est notifié par e-mail quand un devis est créé ; supprime les lignes de « Achats prévus / souhaités » et d'« Approbation devis & BC » (doublon, saisie erronée)." },
- };
+diff --git a/src/components/AppModules/settingsModule.jsx b/src/components/AppModules/settingsModule.jsx
+index b3fdac0..45fbaee 100644
+--- a/src/components/AppModules/settingsModule.jsx
++++ b/src/components/AppModules/settingsModule.jsx
+@@ -18,6 +18,14 @@ import {
+   UI_CUSTOM_ACCENTS, UI_CUSTOM_NEUTRALS, UI_SKIN_CUSTOM, UI_SKIN_DEFAULT, UI_SKINS,
+   readUiCustomSkin, readUiSkin, saveUiCustomSkin, saveUiSkin, uiSkinCustomVars
+ } from '../../utils/uiSkin';
++/* LE FOND DES PAGES voyage avec l'accent : il vit dans le MÊME réglage (une
++   couleur et un nom de motif, à côté de l'accent et de la famille neutre), donc
++   `saveUiCustomSkin` l'écrit et l'applique, et `uiSkinCustomVars` le pose sur la
++   miniature comme sur <html>. */
++import {
++  UI_BG_DEFAULT, UI_BG_PATTERN_DEFAULT, UI_BG_PATTERNS, UI_BG_PRESETS,
++  oklchToHex, uiBgStops
++} from '../../utils/uiSkin';
  
- /** Synonymes acceptés pour chaque fonction : libellé affiché, saisie libre,
-diff --git a/src/administration/approbationPage.jsx b/src/administration/approbationPage.jsx
-index 204551d..b62165e 100644
---- a/src/administration/approbationPage.jsx
-+++ b/src/administration/approbationPage.jsx
-@@ -32,8 +32,11 @@
-            Recettes dès que sa date de signature est renseignée ;
-          – une décision envoie un e-mail au(x) gestionnaire(s) (et au
-            déposant quand son e-mail figure dans sa fiche Personnel) ;
--     · seul le superutilisateur peut supprimer une ligne ; un déposant peut
--       modifier sa propre ligne tant qu'elle est « En attente ».
-+     · la suppression d'une ligne est ouverte au superutilisateur ET à la
-+       responsable d'achats (fonction « Achats » — règle partagée
-+       `scopeCanDeleteAchatLines`, voir ownScope.js) : elle corrige ainsi un
-+       doublon ou une saisie erronée sans attendre une décision ; un déposant
-+       peut modifier sa propre ligne tant qu'elle est « En attente ».
- 
-    Modèle stocké (collection `devisBc`) :
-      devis : { kind:'devis', description, fournisseur, ligneBudgetaire,
-@@ -75,7 +78,7 @@ import { fileBudgetDocs, hasApprovedSuffix, withApprovedSuffix } from './driveFi
- import {
-   buildSignedDeposit, budgetLaboPath, depositDocDriveNameOf, renameDepositDriveFileTo,
- } from './depositSigning';
--import { scopeFonctions } from './ownScope';
-+import { scopeCanDeleteAchatLines, scopeFonctions } from './ownScope';
- import {
-   sendAdminMail, personEmailOf, personnelEmailsMatching, superuserEmailsOf, mergeEmails,
-   notificationTargetOf,
-@@ -288,6 +291,14 @@ export const ApprobationPage = () => {
-   })();
-   const isAchatsRole = currentFonctions.indexOf('Gestionnaire') !== -1
-     || currentFonctions.indexOf('Achats') !== -1;
-+  /* ── Suppression d'une ligne (devis / BC) ─────────────────────────────────
-+     Ouverte au superutilisateur ET à la RESPONSABLE D'ACHATS (fonction
-+     « Achats ») : elle suit l'ensemble des demandes et corrige donc un doublon
-+     ou une saisie erronée sans attendre une décision. La règle vit dans
-+     ownScope.js (`scopeCanDeleteAchatLines`) — la page « Achats prévus /
-+     souhaités » applique exactement la même, et une ligne supprimée disparaît
-+     des deux côtés. */
-+  const canRemoveRow = scopeCanDeleteAchatLines(access);
-   /* Visibilité : le superutilisateur, la gestionnaire et la responsable
-      d’achats voient TOUTES les lignes. Les autres membres ne voient que
-      leurs propres éléments (déposés par eux, demandés à leur nom ou créés
-@@ -892,9 +903,9 @@ export const ApprobationPage = () => {
-     });
-   };
- 
--  /* ── Suppression (superutilisateur uniquement) ────────────────────────── */
-+  /* ── Suppression (superutilisateur et responsable d'achats) ───────────── */
-   const removeRow = (rec) => {
--    if (!rec || !rec.id || !isSuper) return;
-+    if (!rec || !rec.id || !canRemoveRow) return;
-     const ref = txt(rec.numBC) || txt(rec.numDevis) || txt(rec.description) || rec.id;
-     if (!window.confirm(`Supprimer définitivement cette ligne « ${ref} » ?`)) return;
-     /* Un devis supprimé ne doit pas laisser un BC orphelin : les bons de
-@@ -955,6 +966,7 @@ export const ApprobationPage = () => {
-         if (generated && currentName && isAchatsRole) return true;
-         return !!(txt(r.deposant) && currentName && sameName(r.deposant, currentName));
-       },
-+      canRemove: canRemoveRow,
-       onDecide: decideRow,
-       onEdit: (r) => setModal({ mode: 'edit', kind: activeKind, rec: r }),
-       onMakeBc: openBcDeposit,
-@@ -963,7 +975,7 @@ export const ApprobationPage = () => {
-       onSendBack: returnToAchats,
-     }),
-     // eslint-disable-next-line react-hooks/exhaustive-deps
--    [activeKind, isSuper, busyId, devisById, activeRows, currentName, isAchatsRole, showTreated, sendForSignature, returnToAchats]
-+    [activeKind, isSuper, busyId, devisById, activeRows, currentName, isAchatsRole, canRemoveRow, showTreated, sendForSignature, returnToAchats]
-   );
- 
-   const pendingCount = (kind) => visibleRows.filter((r) => r.kind === kind && isApprovalPending(r.statut)).length;
-@@ -1129,6 +1141,12 @@ export const ApprobationPage = () => {
-               <>
-                 👁 Vous voyez <b>toutes</b> les demandes déposées (suivi des achats — Gestionnaire /
-                 Responsable d’achats) : les devis &amp; BC de tous les membres sont listés ici.
-+                {canRemoveRow ? (
-+                  <>
-+                    {' '}La <b>suppression</b> d’une ligne (🗑) vous est ouverte : elle corrige un
-+                    doublon ou une saisie erronée sans attendre la décision du superutilisateur.
-+                  </>
-+                ) : null}
-               </>
-             ) : currentName ? (
-               <>
-@@ -1301,7 +1319,7 @@ export const ApprobationPage = () => {
- /* ── Colonnes de la table active (devis ou BC) ──────────────────────────── */
- const buildColumns = ({
-   kind, isSuper, busyId, devisById,
--  canEdit, onDecide, onEdit, onMakeBc, onRemove, onSendForSignature, onSendBack,
-+  canEdit, canRemove, onDecide, onEdit, onMakeBc, onRemove, onSendForSignature, onSendBack,
- }) => {
-   /* La section « BC à faire et à approuver » mélange DEUX natures de lignes :
-      le devis SIGNÉ dont le bon de commande reste à faire, puis les bons de
-@@ -1550,7 +1568,9 @@ const buildColumns = ({
-       value: () => '',
-       display: (r) => {
-         const editable = canEdit(r);
--        const deletable = isSuper;
-+        /* Suppression : superutilisateur et responsable d'achats (`canRemove`,
-+           calculé plus haut par `scopeCanDeleteAchatLines`). */
-+        const deletable = !!canRemove;
-         if (!editable && !deletable) return <span className="text-slate-300 text-xs">—</span>;
-         return (
-           <div className="flex items-center gap-1 justify-end">
-@@ -1564,7 +1584,7 @@ const buildColumns = ({
-             {deletable && (
-               <button
-                 type="button"
--                onClick={() => onRemove(r)} title="Supprimer (réservé au superutilisateur)"
-+                onClick={() => onRemove(r)} title="Supprimer cette ligne (superutilisateur et responsable d’achats)"
-                 className="w-7 h-7 rounded-lg border border-slate-200 text-slate-400 hover:bg-red-50 hover:text-red-600 text-xs"
-               >🗑</button>
-             )}
-diff --git a/src/administration/desiderataPage.jsx b/src/administration/desiderataPage.jsx
-index c87443b..2b512f5 100644
---- a/src/administration/desiderataPage.jsx
-+++ b/src/administration/desiderataPage.jsx
-@@ -50,7 +50,7 @@ import { budgetDocPath, budgetDocFileName } from './driveFiling';
-    immédiatement (copie « …_approuvé_signé.pdf »), exactement comme avec le
-    bouton ✓ de la page « Approbation devis & BC ». */
- import { buildSignedDeposit, renameDepositDriveFileTo } from './depositSigning';
--import { scopeMeNames, scopeMePersonId, scopeCanSeeItem, scopePersonIdForName, scopeSeesAllRows, scopeFonctions } from './ownScope';
-+import { scopeCanDeleteAchatLines, scopeMeNames, scopeMePersonId, scopeCanSeeItem, scopePersonIdForName, scopeSeesAllRows, scopeFonctions } from './ownScope';
- import {
-   TRANSFER_TARGETS, targetMetaOf, TRANSFER_MODES,
-   devisPatchFromDesiderata, desiderataTransferStatus, isDepenseBcSigne,
-@@ -963,6 +963,12 @@ export const DesiderataPage = () => {
-     : `Fonctions reconnues sur votre fiche Personnel : ${scopeFonctions(access).join(', ') || 'aucune'}. `
-       + (seesAllRows
-         ? 'Le suivi des achats (Gestionnaire / Responsable d’achats) affiche toutes les demandes.'
-+          /* La RESPONSABLE D'ACHATS supprime en plus toutes les lignes (voir
-+             ownScope.js › scopeCanDeleteAchatLines) : le dire ici, sinon le 🗑
-+             proposé sur la demande d’un autre membre étonne. */
-+          + (scopeCanDeleteAchatLines(access)
-+            ? ' La suppression d’une ligne (🗑) est ouverte à la responsable d’achats : elle corrige un doublon ou une saisie erronée.'
-+            : '')
-         : 'Seules vos propres demandes sont affichées ici. Pour voir toutes les demandes, cochez « Gestionnaire » ou « Responsable d’achats » sur votre fiche dans Administration › Personnel.');
-   const meNames = useMemo(() => scopeMeNames(access, currentUser), [access, currentUser]);
-   const mePersonId = useMemo(() => scopeMePersonId(access), [access]);
-@@ -1141,9 +1147,19 @@ export const DesiderataPage = () => {
-     }
-   };
- 
-+  /* ── Suppression d'une ligne ─────────────────────────────────────────────
-+     Ouverte au superutilisateur, à la RESPONSABLE D'ACHATS (fonction
-+     « Achats » — elle suit l'ensemble des demandes et corrige donc un doublon
-+     ou une saisie erronée : voir ownScope.js › scopeCanDeleteAchatLines) et,
-+     pour les autres membres, à leurs PROPRES demandes — les seules qu'ils
-+     voient. */
-+  const canDeleteRow = (rec) => isSuper
-+    || scopeCanDeleteAchatLines(access)
-+    || scopeCanSeeItem(rec, { isSuper, meNames, mePersonId });
-+
-   const onRemove = (rec) => {
-     if (!rec) return;
--    if (!isSuper && !scopeCanSeeItem(rec, { isSuper, meNames, mePersonId })) return;
-+    if (!canDeleteRow(rec)) return;
-     const label = txt(rec.description) || rec.id;
-     if (!window.confirm(`Supprimer l’achat prévu / souhaité « ${label} » ?\nCette action est définitive.`)) return;
-     removeRecord('desiderate', rec);
-@@ -1721,12 +1737,19 @@ export const DesiderataPage = () => {
-               title="Modifier l’achat prévu / souhaité"
-               className="text-[11px] font-black px-2 py-1 rounded-lg border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 transition-colors"
-             >✏️ Modifier</button>
--          <button
--            type="button"
--            onClick={() => onRemove(r)}
--            title="Supprimer l’achat prévu / souhaité"
--            className="text-[11px] font-black px-2 py-1 rounded-lg border border-red-200 bg-red-50 text-red-500 hover:bg-red-100 transition-colors"
--          >🗑️</button>
-+            {/* La suppression n'est proposée qu'à qui en a le DROIT : la
-+                responsable d'achats (fonction « Achats ») et le superutilisateur
-+                sur toutes les lignes, chaque autre membre sur les siennes.
-+                Sans cette condition, un Gestionnaire — qui voit tout — aurait un
-+                bouton sans effet (la garde d’onRemove refusait la suppression). */}
-+            {canDeleteRow(r) ? (
+ /* ── Display scale ─────────────────────────────────────────────────────────
+    Tailwind v4 computes every text size and every spacing step from the ROOT
+@@ -73,10 +81,11 @@ const DisplayScaleControl = () => {
+    one of the session before the first paint. Every user sees the control — and
+    the choice follows HIM from one computer to the next, like the other browser
+    keys. */
+-const SkinMiniature = ({ skin, tone = '', style = null }) => (
++const SkinMiniature = ({ skin, tone = '', pattern = '', style = null }) => (
+   <span
+     data-skin={skin.id === UI_SKIN_DEFAULT ? undefined : skin.id}
+     data-tone={tone || undefined}
++    data-pattern={pattern && pattern !== UI_BG_PATTERN_DEFAULT ? pattern : undefined}
+     style={style || undefined}
+     className="flex w-40 flex-col gap-1 rounded-lg border border-slate-200 bg-slate-50 p-2 no-print"
+   >
+@@ -113,6 +122,12 @@ const SkinControl = ({ operator = null }) => {
+   const pick = (id) => { setSkin(id); saveUiSkin(id, operator); };
+   const setAccent = (color) => setCustom(saveUiCustomSkin({ ...custom, accent: color }, operator));
+   const setNeutral = (neutral) => setCustom(saveUiCustomSkin({ ...custom, neutral }, operator));
++  /* LE FOND DES PAGES : une couleur (n'importe laquelle — elle est RAMENÉE DANS
++     LA BANDE de lisibilité par uiSkin.js, donc la page ne peut pas devenir
++     illisible) et un motif sobre. `UI_BG_DEFAULT` = la page de la famille
++     neutre choisie, c'est-à-dire celle que le programme livre. */
++  const setBg = (bg) => setCustom(saveUiCustomSkin({ ...custom, bg }, operator));
++  const setPattern = (pattern) => setCustom(saveUiCustomSkin({ ...custom, pattern }, operator));
+   return (
+     <div className="flex flex-col gap-3">
+       <div className="flex flex-wrap gap-3">
+@@ -131,6 +146,7 @@ const SkinControl = ({ operator = null }) => {
+             <SkinMiniature
+               skin={s}
+               tone={s.id === UI_SKIN_CUSTOM ? custom.neutral : ''}
++              pattern={s.id === UI_SKIN_CUSTOM ? custom.pattern : ''}
+               style={s.id === UI_SKIN_CUSTOM ? uiSkinCustomVars(custom) : null}
+             />
+             <span className="flex flex-col items-center">
+@@ -187,11 +203,72 @@ const SkinControl = ({ operator = null }) => {
+               </button>
+             ))}
+           </div>
++          <span className="text-xs font-bold text-slate-700">…and the page background</span>
++          <div className="flex flex-wrap items-center gap-2">
++            <button
++              type="button"
++              onClick={() => setBg(UI_BG_DEFAULT)}
++              title={`The page the program ships with — the lightest grey of the neutral family above (${custom.neutral}).`}
++              className={`rounded-lg border px-2 py-1 text-[11px] font-bold ${
++                custom.bg === UI_BG_DEFAULT
++                  ? 'border-blue-600 bg-blue-50 text-blue-700'
++                  : 'border-slate-300 bg-white text-slate-600 hover:border-slate-400'
++              }`}
++            >
++              {custom.neutral} page
++            </button>
++            {UI_BG_PRESETS.map((p) => (
 +              <button
++                key={p.id}
 +                type="button"
-+                onClick={() => onRemove(r)}
-+                title="Supprimer l’achat prévu / souhaité"
-+                className="text-[11px] font-black px-2 py-1 rounded-lg border border-red-200 bg-red-50 text-red-500 hover:bg-red-100 transition-colors"
-+              >🗑️</button>
-+            ) : null}
++                onClick={() => setBg(p.hex)}
++                title={`${p.label} page — a pastel page, kept light enough for the ink the program writes on it.`}
++                className={`h-7 w-7 rounded-full border-2 shadow-sm ${
++                  custom.bg === p.hex ? 'border-slate-800' : 'border-white'
++                }`}
++                style={{ backgroundColor: p.hex }}
++              />
++            ))}
++            <label
++              title="Any colour at all: it is pulled back into a legible band (lightness, chroma, and the sRGB gamut), so the writing on the page always stays readable."
++              className="flex items-center gap-1.5 text-[11px] font-bold text-slate-600"
++            >
++              <input
++                type="color"
++                value={custom.bg || oklchToHex(uiBgStops(UI_BG_DEFAULT).page)}
++                onChange={(e) => setBg(e.target.value)}
++                className="h-7 w-10 cursor-pointer rounded border border-slate-300 bg-white"
++              />
++              {custom.bg || 'page colour'}
++            </label>
++          </div>
++          <span className="text-xs font-bold text-slate-700">…and a sober pattern</span>
++          <div className="flex flex-wrap gap-2">
++            {UI_BG_PATTERNS.map((p) => (
++              <button
++                key={p.id}
++                type="button"
++                onClick={() => setPattern(p.id)}
++                title={`${p.label} — ${p.hint}. A few CSS hairlines (nothing to download), painted on the pages only, and never on a printed document.`}
++                className={`rounded-lg border px-2 py-1 text-[11px] font-bold ${
++                  custom.pattern === p.id
++                    ? 'border-blue-600 bg-blue-50 text-blue-700'
++                    : 'border-slate-300 bg-white text-slate-600 hover:border-slate-400'
++                }`}
++              >
++                {p.label}
++              </button>
++            ))}
++          </div>
+           <span className="text-[10px] text-slate-500 leading-relaxed">
+             The accent repaints every button, link, highlight and chip; the neutral family repaints the
+             pages, the cards, the borders and the inks. The eleven accent stops are <b>derived from the
+             one colour</b> you pick — the same shape as the shipped ramp — so a custom skin keeps the
+-            contrast of the program instead of producing an unreadable mix.
++            contrast of the program instead of producing an unreadable mix. The page background is the one
++            colour you can pick freely: whatever you choose is <b>pulled back into a legible band</b>
++            (lightness, chroma, sRGB gamut), and the panels that sit on the page follow it, so the titles
++            and captions the program writes there stay readable. The pattern is a few CSS hairlines drawn
++            on the page — and never on a printed document.
+           </span>
          </div>
-       );
-       },
-diff --git a/src/administration/ownScope.js b/src/administration/ownScope.js
-index 9a92928..3ce8eac 100644
---- a/src/administration/ownScope.js
-+++ b/src/administration/ownScope.js
-@@ -14,6 +14,12 @@
-        verrouillé sur soi-même pour les membres), sinon par correspondance de
-        nom normalisée avec la colonne « demandeur » (anciens imports Google
-        Sheets) puis par l’enveloppe d’audit `createdBy`.
+       )}
+@@ -255,7 +332,7 @@ export const SettingsModule = ({
+ 
+                   <CollapsibleSection
+                     title="Interface skin — the colours of the whole program"
+-                    subtitle="Repaints every page, modal, table and badge at once — the neutral greys, the ink and the accent colour — by restating the palette Tailwind's classes read. Graphite drops the blue cast, Warm paper turns the greys warm, Indigo, Violet, Purple, Red and Rose move the accent, Dimmed softens the white for long sessions, High contrast deepens every ink and border, and Custom lets you pick your own accent and neutral family. The choice is immediate, belongs to the OPERATOR who picks it (each one has his own, on every computer he signs in to; when nobody is signed in it is the skin of this computer), and every user sees it."
++                    subtitle="Repaints every page, modal, table and badge at once — the neutral greys, the ink and the accent colour — by restating the palette Tailwind's classes read. Graphite drops the blue cast, Warm paper turns the greys warm, Indigo, Violet, Purple, Red and Rose move the accent, Dimmed softens the white for long sessions, High contrast deepens every ink and border, and Custom lets you pick your own accent and neutral family. The choice is immediate, belongs to the OPERATOR who picks it (each one has his own, on every computer he signs in to; when nobody is signed in it is the skin of this computer), and every user sees it. The PAGE BACKGROUND, too: pick the colour of the pages — any colour, since it is pulled back into a band that keeps the writing readable — and a sober pattern (grid, dots, ruled lines, slanted hairlines) drawn with CSS, on screen only."
+                     defaultOpen={false}
+                   >
+                     <SkinControl operator={currentUser} />
+diff --git a/src/index.css b/src/index.css
+index 904d5a5..8cbd1d6 100644
+--- a/src/index.css
++++ b/src/index.css
+@@ -833,6 +833,66 @@ table td .text-xs, table th .text-xs {
+   --color-slate-950: oklch(14.7% 0.004 49.25);
+ }
+ 
++/* ── LE FOND DES PAGES — LE MOTIF CHOISI DANS ⚙ SETTINGS.
++   LA COULEUR n'est pas ici : elle dépend d'un choix, donc src/utils/uiSkin.js
++   l'écrit EN LIGNE sur <html> (`--color-slate-50` et `--color-slate-100`,
++   ramenés dans une bande de lisibilité — voir « LA BANDE », là-bas). Le MOTIF,
++   lui, ne dépend que d'un NOM : `data-pattern`, posé sur <html> par le même
++   appel, est décrit ici une seule fois pour toutes les pages du programme.
++   Quatre dégradés CSS répétés — aucun octet à charger, aucun composant à
++   toucher, et RIEN À L'IMPRESSION : les règles vivent dans `@media screen`,
++   donc un document imprimé garde sa page blanche.
 +
-+   Suppression (voir `scopeCanDeleteAchatLines` plus bas) : le superutilisateur
-+   et la fonction « Achats » — c’est-à-dire la RESPONSABLE D’ACHATS, qui suit
-+   l’ensemble des demandes — peuvent retirer une ligne de « Achats prévus /
-+   souhaités » et de « Approbation devis & BC » (doublon, saisie erronée) ;
-+   chaque autre membre ne supprime que ses propres demandes.
-    ========================================================================= */
- 
- import { adminFonctionCode } from './adminSchema';
-@@ -67,6 +73,25 @@ export const scopeSeesAllRows = (access) => {
-   return fonctions.indexOf('Gestionnaire') !== -1 || fonctions.indexOf('Achats') !== -1;
- };
- 
-+/** Le membre connecté peut-il SUPPRIMER une ligne de suivi des achats — une
-+ *  ligne « Achats prévus / souhaités » (collection desiderate) ou une ligne de
-+ *  devis / BC (page « Approbation devis & BC ») ?
-+ *
-+ *  Oui pour le superutilisateur, et pour la fonction « Achats » — c’est-à-dire
-+ *  la RESPONSABLE D’ACHATS : elle suit l’ENSEMBLE des demandes (voir
-+ *  scopeSeesAllRows) et corrige donc un doublon ou une saisie erronée sans
-+ *  attendre une décision du superutilisateur. Les autres membres ne suppriment
-+ *  que leurs PROPRES demandes (`scopeCanSeeItem`).
-+ *
-+ *  La règle vit ICI, en un seul endroit testable, et les deux pages l’importent
-+ *  — une ligne supprimée disparaît des deux côtés (le souhait transféré et son
-+ *  devis « Approbation devis & BC »). */
-+export const scopeCanDeleteAchatLines = (access) => {
-+  const a = access || {};
-+  if (a.isSuperuser) return true;
-+  return scopeFonctions(a).indexOf('Achats') !== -1;
-+};
++   Elles ne peignent qu'un élément qui porte la classe de la page
++   (`bg-slate-50`) — le seul repère qui dise « ceci EST une page » (le grand
++   cadre de l'application, le conteneur d'une page, le fond de ⚙ Settings, la
++   miniature). `--lab-page-line` est une encre neutre diluée, assez pâle pour ne
++   jamais gêner une lecture : les quatre motifs se contentent de filets et de
++   points, jamais d'une image. */
 +
- /** Noms d’identité du membre connecté : fiche Personnel liée d’abord, nom du
-  *  compte opérateur sinon (les deux sont conservés s’ils diffèrent). */
- export const scopeMeNames = (access, currentUser) => {
-diff --git a/src/components/AppModules/projectDetailModule.jsx b/src/components/AppModules/projectDetailModule.jsx
-index 255693e..7c9757c 100644
---- a/src/components/AppModules/projectDetailModule.jsx
-+++ b/src/components/AppModules/projectDetailModule.jsx
-@@ -1414,9 +1414,12 @@ export const ProjectDetailModule = ({
- 
-   /* ── Où les documents d'une section vont-ils sur le Drive ? ───────────────
-      La chaîne de dossiers est celle de l'envoi lui-même
--     (driveNaming.projectSectionFolderPath → <projet>/<section>, à l'intérieur
--     du dossier du dataset) : l'étiquette affichée et le dossier réellement créé
--     ne peuvent donc pas diverger. */
-+     (driveNaming.projectSectionFolderPath → projects/<projet>/<section>) : le
-+     document d'une section vit DANS le dossier du projet, comme ses expériences,
-+     ses figures et son document de texte — l'étiquette affichée et le dossier
-+     réellement créé ne peuvent donc pas diverger. Un Drive où les documents
-+     étaient encore dans `<projet>/<section>`, À LA RACINE du dataset, est rangé
-+     par utils/projectRootMigrate.js au démarrage. */
-   const sectionDrivePath = (label) => projectSectionFolderPath(project.name || '', label);
-   const sectionDriveLabel = (label) =>
-     projectSectionFolderLabel(project.name || '', label, getDriveRootName());
-diff --git a/src/components/MDSections.jsx b/src/components/MDSections.jsx
-index d76674f..acb1710 100644
---- a/src/components/MDSections.jsx
-+++ b/src/components/MDSections.jsx
-@@ -971,10 +971,23 @@ export const MDExperimentSetupSection = ({ ctx }) => {
-     // fichier reste dans le dataset : c'est lui qui le ramène sur un autre poste.
-     setTrajDriveMsg(`⬆️ Archiving ${file.name} to Google Drive…`);
-     (async () => {
--      const { name: driveName, pointer } = await archiveFileToDriveWithPointer({
-+      /* L'AVANCEMENT EST MONTRÉ. Une trajectoire part maintenant PAR MORCEAUX
-+         (session « resumable » — voir utils/driveChunkUpload.js) : sans le
-+         pourcentage, un envoi de plusieurs Go restait muet pendant des minutes et
-+         on ne pouvait pas distinguer « ça travaille » de « c'est perdu ». */
-+      let lastPct = -1;
-+      const onProgress = (sent, total) => {
-+        if (!total) return;
-+        const pct = Math.min(100, Math.round((sent / total) * 100));
-+        if (pct === lastPct) return;
-+        lastPct = pct;
-+        setTrajDriveMsg(`⬆️ Archiving ${file.name} to Google Drive… ${pct}%`);
-+      };
-+      const { name: driveName, pointer, error } = await archiveFileToDriveWithPointer({
-         file,
-         ctx: { project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || '', instance: activeTest.instanceName || '', scientist: activeTest.operator || '', section: 'Setup', subsection: 'Trajectory' },
--        suffix: 'trajectory'
-+        suffix: 'trajectory',
-+        onProgress
-       }).catch(() => null);
-       if (!driveName) return;
-       placeRestorePointer({
-@@ -984,9 +997,15 @@ export const MDExperimentSetupSection = ({ ctx }) => {
-         activeKey: mdActiveIdRef.current,
-         patch: updateActiveTest
-       });
-+      /* L'ÉCHEC SE DIT, AVEC SA RAISON. « archivé » ne doit jamais être annoncé
-+         quand le fichier n'est pas sur le Drive (c'est ce qui a fait croire, le
-+         25/09/2026, qu'une trajectoire de plusieurs Go était en sécurité alors que
-+         ni le Drive ni l'autre poste ne l'avaient). Le geste de reprise nommé est
-+         celui qui EXISTE sur la page (« Choose XTC / TRR » ré-archive le fichier) :
-+         renvoyer à un bouton imaginaire ne répare rien. */
-       setTrajDriveMsg(pointer
-         ? `✅ ${file.name} archived to Google Drive.`
--        : `⚠️ ${file.name} was loaded, but the Drive upload failed. Use “Archive trajectory to Drive” to retry (check the Drive connection first).`);
-+        : `⚠️ ${file.name} was loaded, but the Drive upload failed${error ? ` — ${error}` : ''}. Use “Choose XTC / TRR” to pick the file again (the upload archives it once more) once the Drive connection is back.`);
-     })();
-     setTrajectoryFile(file);
-     updateActiveTest({ trajectoryFileName: file.name });
-diff --git a/src/utils/driveMirror.js b/src/utils/driveMirror.js
-index de9be83..617b5d9 100644
---- a/src/utils/driveMirror.js
-+++ b/src/utils/driveMirror.js
-@@ -217,11 +217,13 @@ const findProjectFolder = async ({ datasetId = '', datasetName = '', projectName
-   return findFolderByName(sanitizeSlug(projectName), projectsFolderId);
++@media screen {
++
++  /* l'encre du motif — écrite UNE fois, les quatre motifs la partagent */
++  [data-pattern] {
++    --lab-page-line: rgb(15 23 42 / 0.06);
++  }
++
++  [data-pattern="grid"] {
++    --lab-page-image:
++      linear-gradient(to right, var(--lab-page-line) 1px, transparent 1px),
++      linear-gradient(to bottom, var(--lab-page-line) 1px, transparent 1px);
++    --lab-page-size: 24px 24px;
++  }
++
++  [data-pattern="dots"] {
++    --lab-page-image: radial-gradient(var(--lab-page-line) 1px, transparent 1.1px);
++    --lab-page-size: 18px 18px;
++  }
++
++  [data-pattern="rules"] {
++    --lab-page-image: repeating-linear-gradient(to bottom,
++      var(--lab-page-line) 0, var(--lab-page-line) 1px,
++      transparent 1px, transparent 28px);
++    --lab-page-size: auto;
++  }
++
++  [data-pattern="diagonal"] {
++    --lab-page-image: repeating-linear-gradient(45deg,
++      var(--lab-page-line) 0, var(--lab-page-line) 1px,
++      transparent 1px, transparent 12px);
++    --lab-page-size: auto;
++  }
++
++  /* LA PAGE — un élément peint avec le fond des pages. `background-image` ne
++     touche pas `background-color` : la teinte choisie reste, le motif se pose
++     dessus. Et `var(--lab-page-image, none)` laisse intacte une page sans
++     motif — aucun attribut, aucun dessin. */
++  [class~="bg-slate-50"] {
++    background-image: var(--lab-page-image, none);
++    background-size: var(--lab-page-size, auto);
++  }
++}
++
+ /* ---------------------------------------------------------------------------
+    THE SEQUENCE FIELD — the selection of a COLOURED field stays readable.
+    `SequenceField` (src/components/SequenceField.jsx) renders the letters in a
+diff --git a/src/utils/uiSkin.js b/src/utils/uiSkin.js
+index bbe9ba8..efd93d4 100644
+--- a/src/utils/uiSkin.js
++++ b/src/utils/uiSkin.js
+@@ -198,20 +198,162 @@ export const uiSkinCustomRamp = (accent = UI_CUSTOM_ACCENT_DEFAULT) => {
+   return out;
  };
  
--/** Le dossier de PROJET À LA RACINE du dataset (« <dataset>/<projet> »), celui
-- *  qui porte les DOCUMENTS DE SECTION (<projet>/<section> — le dossier affiché
-- *  sous « 📁 Drive location » de chaque section de la page projet). Il n'est pas
-- *  dans « projects/ » : c'est un SECOND dossier de projet, et c'est lui qui
-- *  restait sur le Drive après la suppression d'un projet. '' s'il n'existe pas. */
-+/** Le dossier de PROJET À LA RACINE du dataset (« <dataset>/<projet> ») — le
-+ *  chemin HISTORIQUE des DOCUMENTS DE SECTION (<projet>/<section>, voir
-+ *  driveNaming.projectSectionFolderPath, qui les range aujourd'hui dans
-+ *  `projects/<projet>/<section>`). Il n'est donc plus créé, mais il reste SUIVI :
-+ *  c'est lui qui restait sur le Drive après la suppression d'un projet, et c'est
-+ *  lui que range utils/projectRootMigrate.js quand il existe encore.
-+ *  '' s'il n'existe pas. */
- const findProjectRootFolder = async ({ datasetId = '', datasetName = '', projectName = '' }) => {
-   /* Le chemin vient de la MÊME liste que les tombes (projectFolderPaths) : un
-      projet nommé comme un dossier partagé du dataset (« projects »…) n'a donc
-@@ -236,12 +238,13 @@ const findProjectRootFolder = async ({ datasetId = '', datasetName = '', project
- 
- /**
-  * Supprimer un projet : SES DEUX dossiers Drive partent à la corbeille — les
-- * expériences, figures et le document (`projects/<projet>`) ET le dossier des
-- * documents de section (`<projet>`, à la racine du dataset, voir
-- * driveNaming.projectSectionFolderPath). Les deux chemins sont mis en pierre
-- * tombale, donc ni l'un ni l'autre ne se recrée, et un autre poste ne les voit
-- * plus. Le compte rendu dit ce qui a été trouvé (`missing`) : un dossier absent
-- * (déjà supprimé, ou projet jamais envoyé sur le Drive) n'est pas une erreur.
-+ * expériences, figures et le document (`projects/<projet>`) ET l'éventuel dossier
-+ * de documents de SECTION resté à la racine du dataset (`<projet>` — le chemin
-+ * historique, voir driveNaming.projectSectionFolderPath et
-+ * utils/projectRootMigrate.js). Les deux chemins sont mis en pierre tombale, donc
-+ * ni l'un ni l'autre ne se recrée, et un autre poste ne les voit plus. Le compte
-+ * rendu dit ce qui a été trouvé (`missing`) : un dossier absent (déjà supprimé, ou
-+ * projet jamais envoyé sur le Drive) n'est pas une erreur.
-  */
- export const mirrorDeleteProject = async ({ datasetId = '', datasetName = '', projectName = '' } = {}) => {
-   const paths = projectFolderPaths(projectName);
-diff --git a/src/utils/driveMirrorStore.js b/src/utils/driveMirrorStore.js
-index 7065263..e57243e 100644
---- a/src/utils/driveMirrorStore.js
-+++ b/src/utils/driveMirrorStore.js
-@@ -207,13 +207,15 @@ const pathUnder = (path, base) => {
- export const projectFolderPath = (projectName) =>
-   `projects/${sanitizeSlug(projectName) || '_unassigned'}`;
- 
--/** Le chemin Drive du dossier de PROJET À LA RACINE DU DATASET (« <projet> ») :
-- *  c'est là que vivent les DOCUMENTS DE SECTION (<projet>/<section>, voir
-- *  driveNaming.projectSectionFolderPath — « 📁 Drive location » de chaque
-- *  section de la page projet). Un projet a donc DEUX dossiers sur le Drive, et
-- *  supprimer le projet doit emporter les deux : n'en mettre qu'un à la
-- *  corbeille laissait l'autre sur le Drive (« si je supprime un projet, son
-- *  dossier reste »). */
-+/** Le chemin Drive du dossier de PROJET À LA RACINE DU DATASET (« <projet> »).
-+ *  C'EST UN CHEMIN HISTORIQUE : jusqu'au 25/09/2026 les DOCUMENTS DE SECTION
-+ *  d'une page projet partaient là (`<projet>/<section>`, voir
-+ *  driveNaming.projectSectionFolderPath), donc un projet avait DEUX dossiers sur
-+ *  le Drive. Les nouveaux envois vont dans `projects/<projet>/<section>`, mais ce
-+ *  chemin reste suivi pour deux raisons : un Drive d'avant le déménagement garde
-+ *  son dossier (utils/projectRootMigrate.js le range au démarrage), et un projet
-+ *  qui n'aurait pas encore été visité depuis doit pouvoir être supprimé PROPREMENT
-+ *  (les deux chemins partent à la corbeille). Voir projectFolderPaths. */
- export const projectRootFolderPath = (projectName) => sanitizeSlug(projectName);
- 
- /** Les dossiers Drive d'un projet, du plus imbriqué au plus haut — ceux qu'une
-diff --git a/src/utils/driveNaming.js b/src/utils/driveNaming.js
-index 16355a9..e9fc1b0 100644
---- a/src/utils/driveNaming.js
-+++ b/src/utils/driveNaming.js
-@@ -69,6 +69,24 @@ export const projectSectionFolderAlias = (label) => {
-   return PROJECT_SECTION_FOLDER_ALIASES[raw.toLowerCase()] || raw;
- };
- 
-+/** LES NOMS HISTORIQUES des dossiers de SECTION d'un projet (les cinq sections de
-+ *  la page projet + le titre complet de « Scientific background »). Ils servent à
-+ *  RECONNAÎTRE, sur un Drive déjà touché, un dossier de projet resté à la racine
-+ *  du dataset : son contenu est fait de ces dossiers-là (voir
-+ *  utils/projectRootMigrate.js). PUR. */
-+export const PROJECT_SECTION_FOLDER_NAMES = [
-+  'Background', 'Scientific background', 'Discussion', 'Results and discussion',
-+  'Conclusions', 'Funding', 'Supporting information'
++/* ── LE FOND DES PAGES — LA COULEUR CHOISIE, ET SON MOTIF ────────────────────
++   « let the user choose the background color, with sober patterns ». Le fond
++   vit ICI, à côté de l'accent, et pas dans index.css : la couleur dépend d'un
++   CHOIX, donc c'est `applyUiSkin` qui l'écrit EN LIGNE sur <html>, exactement
++   comme les onze crans de l'accent. Le MOTIF, lui, est une affaire de feuille
++   (src/index.css, `[data-pattern="…"]`) : le même appel pose l'attribut.
++
++   CHAQUE COULEUR EST RAMENÉE DANS UNE BANDE (c'est le garde-fou de cette
++   section). Une page peut prendre n'importe quelle TEINTE, jamais n'importe
++   quelle LUMIÈRE : les deux paires que le programme écrit SUR une page —
++   `text-slate-700` sur `bg-slate-50` (le titre d'une carte, 7 281 fois) et
++   `text-slate-800` sur `bg-slate-100` (les panneaux posés sur la page) —
++   doivent garder au pire 1.5 cran de contraste de moins que ce que la palette
++   livrée donne ; c'est la règle que la sonde impose déjà à toute peau.
++   En OKLCH c'est une bande simple : la luminosité reste entre 95.5 et 99, le
++   chroma sous 0.03 — et, parce qu'un chroma élevé sur une page aussi claire
++   sortirait du gamut sRGB (le moteur le réduirait lui-même, et la page ne
++   serait plus la couleur qu'on a mesurée), le chroma est RAMENÉ DANS LE GAMUT
++   par dichotomie, comme le fait le CSS Color 4. Toutes les teintes passent, y
++   compris les pastels qu'on attend d'un fond de page ; aucune ne descend sous
++   le plancher de lisibilité.
++
++   LE SECOND CRAN DE LA PAGE (le 100 : les panneaux, les entêtes de tableau)
++   est DÉRIVÉ du premier — même teinte, même chroma, 1.6 point de luminosité en
++   moins, l'écart exact que la palette livrée a entre ses deux crans. */
++
++/** Le fond de page LIVRÉ (slate-50, la référence) : ce que le réglage vide veut
++ *  dire, et la valeur de repli d'une couleur illisible. */
++export const UI_BG_SHIPPED_OKLCH = { L: 98.4, C: 0.003, H: 247.858 };
++
++/* LA BANDE — les valeurs que la sonde mesure. Le PLANCHER est celui des trois
++   familles neutres que le programme sait servir, pas seulement de l'ardoise :
++   une page rose vif (le pire cas possible, L=50 ramené au plancher, chroma au
++   plafond) coûte 1.56 cran de contraste sur la paire des panneaux avec le gris
++   CHAUD (stone, dont l'encre et les crans 100/800 donnent la paire la plus
++   serrée), donc 95 ne suffisait pas — 95.5 ramène le pire cas à 1.37. Les
++   changer sans les remesurer casserait la garantie. */
++export const UI_BG_FLOOR = 95.5;  /* L minimum d'une page choisie */
++export const UI_BG_CEIL = 99;     /* L maximum (100 = blanc pur, aveuglant) */
++export const UI_BG_CAP = 0.03;    /* chroma maximum — un pastel, jamais plus */
++export const UI_BG_GAP = 1.6;     /* l'écart livré entre la page et son cran 100 */
++
++/** Le réglage vide : « la page de la famille neutre choisie ». Rien n'est
++ *  écrit, donc le cran 50 du thème livré — ou celui du `data-tone` — reste en
++ *  place, et changer de famille neutre change AUSSI la page. */
++export const UI_BG_DEFAULT = '';
++
++/** LES QUATRE MOTIFS — tous des dégradés CSS répétés (aucune image, aucun octet
++ *  à charger, et rien à l'impression : voir `@media screen`, index.css), tous
++ *  volontairement discrets. `none` est le défaut, et ne pose donc rien. */
++export const UI_BG_PATTERNS = [
++  { id: 'none', label: 'None', hint: 'the plain page' },
++  { id: 'grid', label: 'Grid', hint: 'hairline squares' },
++  { id: 'dots', label: 'Dots', hint: 'a dotted sheet' },
++  { id: 'rules', label: 'Rules', hint: 'ruled lines' },
++  { id: 'diagonal', label: 'Diagonal', hint: 'slanted hairlines' }
 +];
++export const UI_BG_PATTERN_DEFAULT = 'none';
 +
-+/** Vrai quand un dossier porte le nom d'une SECTION de projet (comparaison sans
-+ *  casse ni espaces). PUR. */
-+export const isProjectSectionFolderName = (name) => {
-+  const slug = sanitizeSlug(name).toLowerCase();
-+  if (!slug) return false;
-+  return PROJECT_SECTION_FOLDER_NAMES.some((n) => sanitizeSlug(n).toLowerCase() === slug);
++/** OKLCH → sRGB LINÉAIRE : le retour exact de `hexToOklch` (mêmes matrices,
++ *  inversées). Sert à savoir si une couleur TIENT dans le gamut sRGB. PUR. */
++export const oklchToLin = ({ L, C, H }) => {
++  const h = (H * Math.PI) / 180;
++  const a = C * Math.cos(h);
++  const b = C * Math.sin(h);
++  const l_ = L / 100 + 0.3963377774 * a + 0.2158037573 * b;
++  const m_ = L / 100 - 0.1055613458 * a - 0.0638541728 * b;
++  const s_ = L / 100 - 0.0894841775 * a - 1.2914855480 * b;
++  const l = l_ ** 3, m = m_ ** 3, s = s_ ** 3;
++  return [
++    4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
++    -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
++    -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s
++  ];
 +};
 +
- /* ── Le rangement d'un STORAGE et de ses BOÎTES ─────────────────────────────
-    Une boîte de stockage n'est PAS une expérience : c'est un EMPLACEMENT. Elle
-    ne suit donc pas l'architecture d'une expérience (ni « instance », ni
-@@ -166,13 +184,25 @@ export const driveFolderPath = (ctx = {}) => {
-     return protoSlug ? ['protocols', protoSlug] : ['protocols'];
-   }
-   const segs = [];
--  if (ctx.project) segs.push(ctx.project);
--  if (ctx.test) {
--    // Test files: Project/Test/Instance/Section
--    segs.push(ctx.test);
-+  const test = String(ctx.test || '').trim();
-+  const projectSeg = sanitizeSlug(ctx.project);
-+  if (test) {
-+    // Test files: Project/Test/Instance/Section (l'ordre historique de cette
-+    // fonction — le chemin d'une EXPÉRIENCE, conteneur `projects/` compris, est
-+    // celui de canonicalExperimentPath, qui est la route réellement utilisée).
-+    if (projectSeg) segs.push(projectSeg);
-+    segs.push(test);
-     if (ctx.instance) segs.push(ctx.instance);
-+  } else if (projectSeg) {
-+    /* UN DOCUMENT DE PROJET (aucune expérience) : il vit DANS le dossier du
-+       projet, comme ses expériences, ses figures, son document de texte et ses
-+       `useful_files` — jamais dans un dossier au nom du projet POSÉ À LA RACINE
-+       du dataset (défaut signalé le 25/09/2026 : « je trouve des dossiers au nom
-+       d'un projet en dehors du dossier projects »). C'est aussi ce que rend
-+       projectSectionFolderPath. */
-+    segs.push(PROJECTS_CONTAINER, projectSeg);
-   }
--  if (ctx.section) segs.push(ctx.test ? ctx.section : projectSectionFolderAlias(ctx.section));
-+  if (ctx.section) segs.push(test ? ctx.section : projectSectionFolderAlias(ctx.section));
-   return segs.map(sanitizeSlug).filter(Boolean);
++/** Le chroma le plus élevé qui TIENT dans le gamut sRGB à cette lumière et
++ *  cette teinte (dichotomie, comme la réduction de chroma du CSS Color 4) :
++ *  c'est ce qui garantit que la page ÉCRITE est la page PEINTE. PUR. */
++export const sRGBChroma = (col) => {
++  const inside = (c) => oklchToLin({ ...col, C: c }).every((v) => v >= -1e-4 && v <= 1 + 1e-4);
++  if (inside(col.C)) return col.C;
++  let lo = 0, hi = col.C;
++  for (let i = 0; i < 40; i++) {
++    const mid = (lo + hi) / 2;
++    if (inside(mid)) lo = mid; else hi = mid;
++  }
++  return lo;
++};
++
++/** OKLCH → hexadécimal sRGB : le chemin inverse de `hexToOklch`, pour les
++ *  pastilles de ⚙ Settings (chaque canal est écrêté, comme le fait le
++ *  moteur). PUR. */
++export const oklchToHex = (col) => `#${oklchToLin(col).map((v) => {
++  const c = Math.min(1, Math.max(0, v));
++  const g = c <= 0.0031308 ? 12.92 * c : 1.055 * Math.pow(c, 1 / 2.4) - 0.055;
++  return Math.round(255 * g).toString(16).padStart(2, '0');
++}).join('')}`;
++
++/** Un OKLCH écrit comme index.css l'écrit — donc relu tel quel par la sonde et
++ *  compris tel quel par le moteur. PUR. */
++export const oklchCss = ({ L, C, H }) => `oklch(${L.toFixed(1)}% ${C.toFixed(3)} ${H.toFixed(1)})`;
++
++/** LES FONDS PROPOSÉS — les crans 50 de la palette que Tailwind livre (relevés
++ *  dans son thème, pas inventés), donc TOUS déjà dans la bande : ce que la
++ *  pastille montre est exactement ce que la page prendra. */
++export const UI_BG_PRESETS = [
++  { id: 'slate', label: 'Slate', oklch: UI_BG_SHIPPED_OKLCH },
++  { id: 'zinc', label: 'Zinc', oklch: { L: 98.5, C: 0, H: 0 } },
++  { id: 'stone', label: 'Stone', oklch: { L: 98.5, C: 0.001, H: 106.423 } },
++  { id: 'sky', label: 'Sky', oklch: { L: 97.7, C: 0.013, H: 236.62 } },
++  { id: 'emerald', label: 'Emerald', oklch: { L: 97.9, C: 0.021, H: 166.113 } },
++  { id: 'amber', label: 'Amber', oklch: { L: 98.7, C: 0.022, H: 95.277 } },
++  { id: 'rose', label: 'Rose', oklch: { L: 96.9, C: 0.015, H: 12.422 } },
++  { id: 'violet', label: 'Violet', oklch: { L: 96.9, C: 0.016, H: 293.756 } }
++].map((p) => ({ ...p, hex: oklchToHex(p.oklch) }));
++
++/** LES DEUX CRANS D'UNE PAGE CHOISIE — la couleur ramenée dans la bande, et le
++ *  cran 100 DÉRIVÉ (même teinte, même chroma, `UI_BG_GAP` de luminosité en
++ *  moins). Une couleur illisible retombe sur la page livrée ; le réglage vide
++ *  (`UI_BG_DEFAULT`) rend donc, lui aussi, la page livrée. PUR. */
++export const uiBgStops = (hex) => {
++  const pick = hexToOklch(hex) || UI_BG_SHIPPED_OKLCH;
++  const L = Math.min(UI_BG_CEIL, Math.max(UI_BG_FLOOR, pick.L));
++  const C = sRGBChroma({ L, C: Math.min(UI_BG_CAP, pick.C), H: pick.H });
++  return { page: { L, C, H: pick.H }, card: { L: L - UI_BG_GAP, C, H: pick.H } };
++};
++
+ /** Le réglage retenu, toujours utilisable (une couleur illisible ou une famille
+  *  inconnue retombent sur le défaut livré). PUR. */
+ export const uiCustomSkinOf = (raw) => ({
+   accent: (raw && /^#[0-9a-f]{6}$/i.test(String(raw.accent || '')))
+     ? String(raw.accent).toLowerCase() : UI_CUSTOM_ACCENT_DEFAULT,
+   neutral: UI_CUSTOM_NEUTRALS.some((n) => n.id === (raw && raw.neutral))
+-    ? raw.neutral : UI_CUSTOM_NEUTRAL_DEFAULT
++    ? raw.neutral : UI_CUSTOM_NEUTRAL_DEFAULT,
++  bg: (raw && /^#[0-9a-f]{6}$/i.test(String(raw.bg || '')))
++    ? String(raw.bg).toLowerCase() : UI_BG_DEFAULT,
++  pattern: UI_BG_PATTERNS.some((p) => p.id === (raw && raw.pattern))
++    ? raw.pattern : UI_BG_PATTERN_DEFAULT
+ });
+ 
+ /** Les variables d'une peau personnalisée : les onze crans de l'accent, plus
+- *  `--lab-tone` (la famille neutre, pour la miniature ET pour <html>). PUR. */
++ *  `--lab-tone` (la famille neutre, pour la miniature ET pour <html>), plus —
++ *  quand un fond a été choisi — LES DEUX CRANS DE LA PAGE, ramenés dans la
++ *  bande (utils : `uiBgStops`). Écrites EN LIGNE, donc au-dessus du bloc de la
++ *  famille neutre : un fond choisi l'emporte sur le `tone` qu'on lit à côté.
++ *  Le MOTIF n'est pas une variable : c'est l'attribut `data-pattern`. PUR. */
+ export const uiSkinCustomVars = (raw) => {
+   const custom = uiCustomSkinOf(raw);
+-  return { ...uiSkinCustomRamp(custom.accent), '--lab-tone': custom.neutral };
++  const vars = { ...uiSkinCustomRamp(custom.accent), '--lab-tone': custom.neutral };
++  if (custom.bg) {
++    const { page, card } = uiBgStops(custom.bg);
++    vars['--color-slate-50'] = oklchCss(page);
++    vars['--color-slate-100'] = oklchCss(card);
++  }
++  return vars;
  };
  
-@@ -386,10 +416,17 @@ export const projectImagesFolderPath = (projectName) => (sanitizeSlug(projectNam
- /** Canonical Drive folder NAMES (relative to the dataset folder) of a PROJECT
-  *  DOCUMENT attached to one of the project page's sections (Scientific
-  *  background / Discussion / Conclusions …):
-- *      <project>/<section>
-- *  Exactly the routing driveFolderPath({ project, section }) gives an upload
-- *  carrying that naming context, so the label shown in the interface and the
-- *  folder where the file really lands can never drift apart. */
-+ *      projects/<project>/<section>
-+ *  Le dossier du PROJET d'abord, exactement comme ses expériences
-+ *  (`projects/<projet>/<expérience>/…`), ses figures (`…/images`), son document
-+ *  de texte (`<projet>_document.json`) et ses `useful_files` : un projet n'a
-+ *  qu'UN dossier sur le Drive. Avant le 25/09/2026 cette route était
-+ *  `<projet>/<section>`, donc un dossier au nom du projet POSÉ À LA RACINE du
-+ *  dataset, à côté de `projects/` (deux dossiers par projet, dont un orphelin
-+ *  quand le projet était renommé) ; utils/projectRootMigrate.js déplace ce qui
-+ *  existe déjà. La chaîne est exactement celle de l'envoi
-+ *  (`driveFolderPath({ project, section })`, voir projectDetailModule.jsx) : le
-+ *  libellé affiché et le dossier réellement créé ne peuvent pas diverger. */
- export const projectSectionFolderPath = (projectName, section) =>
-   driveFolderPath({ project: projectName, section });
+ /** Le réglage stocké (localStorage indisponible ⇒ le défaut livré) — celui de
+@@ -263,9 +405,11 @@ export const readUiSkin = (operator = null) => {
  
-diff --git a/src/utils/driveUpload.js b/src/utils/driveUpload.js
-index 74bbed3..892c827 100644
---- a/src/utils/driveUpload.js
-+++ b/src/utils/driveUpload.js
-@@ -101,6 +101,11 @@ import {
- import { pickCanonicalFolder, emptyTwinIds, isCanonicalDatasetDir } from './datasetDirTwins';
- import { oncePerFolder, folderCreateKey } from './folderRace';
- import { getCloudProvider, nextcloudConfigured, ncUploadFile } from './nextcloud';
-+/* L'ENVOI DES GROS FICHIERS PAR MORCEAUX (session « resumable ») : au-delà de
-+   `RESUMABLE_MIN_BYTES`, une seule requête multipart n'a aucun point de reprise —
-+   une trajectoire MD de plusieurs Go arrivait alors « à moitié » (l'arborescence
-+   créée, le fichier absent : voir driveChunkUpload.js). */
-+import { shouldChunkUpload, uploadBlobInChunks } from './driveChunkUpload';
- import {
-   enqueuePendingUpload, removePendingUpload, listPendingUploads,
-   touchPendingUpload, notifyPendingChanged,
-@@ -214,14 +219,24 @@ export const driveFetch = async (path, opts = {}) => {
-   // be aborted after 20 seconds. File-content DOWNLOADS (`alt=media`) get the
-   // same long timeout by default, since the bytes are streamed as the response.
-   const isFileDownload = typeof path === 'string' && path.includes('alt=media');
--  const { timeout: timeoutMs = isFileDownload ? 10 * 60 * 1000 : 20000, ...rest } = opts;
-+  const { timeout: timeoutMs = isFileDownload ? 10 * 60 * 1000 : 20000, accept = null, ...rest } = opts;
-+  /* UN CHEMIN ABSOLU EST UTILISÉ TEL QUEL : l'URL d'une session d'envoi
-+     « resumable » est rendue par Drive dans l'en-tête `Location` et ne se
-+     reconstruit pas (elle porte un `upload_id`). Les appels ordinaires — chemins
-+     relatifs — sont préfixés comme avant. */
-+  const isAbsolute = typeof path === 'string' && /^https?:\/\//i.test(path);
-+  const url = isAbsolute ? path : `https://www.googleapis.com${path}`;
-+  /* `accept` : des statuts NON-ok qui ont un sens ici — 308 pendant un envoi
-+     par morceaux (« le morceau est passé, la session continue »). Ils ne sont
-+     donc pas convertis en erreur (voir driveChunkUpload.js). */
-+  const accepted = Array.isArray(accept) ? accept : [];
- 
-   const perform = async (tok, attempt) => {
-     const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-     const timeout = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
-     let res;
-     try {
--      res = await fetch(`https://www.googleapis.com${path}`, {
-+      res = await fetch(url, {
-         ...rest,
-         signal: controller ? controller.signal : undefined,
-         headers: { Authorization: `Bearer ${tok}`, ...(rest.headers || {}) }
-@@ -264,7 +279,7 @@ export const driveFetch = async (path, opts = {}) => {
-     if (res.status === 403) {
-       throwCode('TOKEN_EXPIRED', 'Google Drive denied the request (scope or permissions). Please reconnect Google Drive from the sidebar.');
-     }
--    if (!res.ok) {
-+    if (!res.ok && !accepted.includes(res.status)) {
-       let msg = `Drive error (HTTP ${res.status})`;
-       try {
-         const j = await res.json();
-@@ -1306,7 +1321,7 @@ export const moveTestFolderOutOfProject = async ({ testName, projectName }) => {
-  *  `path` is an explicit path array or `ctx` still describes a legacy folder
-  *  (non-experiment uploads such as library figures or project documents).
-  *  @returns {{ id:string, name:string, driveUrl:string }} */
--const uploadDriveFileToFolderOnce = async ({ name, mimeType, file, ctx = null, path = null, folderNames = null, folderId = '' }) => {
-+const uploadDriveFileToFolderOnce = async ({ name, mimeType, file, ctx = null, path = null, folderNames = null, folderId = '', onProgress = null }) => {
-   // ── Nextcloud provider ─────────────────────────────────────────────────────
-   // Mirror the Drive folder layout on the WebDAV tree:
-   //   <user>/Lab Workspace/<dataset>/<project>/<test>/<page section>/[<subsection>]
-@@ -1388,22 +1403,43 @@ const uploadDriveFileToFolderOnce = async ({ name, mimeType, file, ctx = null, p
-     ? { name, mimeType: type }
-     : { name, mimeType: type, parents: [targetId] });
- 
--  const pre = new Blob(
--    [`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n--${boundary}\r\nContent-Type: ${type}\r\n\r\n`],
--    { type: 'multipart/related' }
--  );
--  const post = new Blob([`\r\n--${boundary}--\r\n`], { type: 'multipart/related' });
--  const body = new Blob([pre, blob, post], { type: `multipart/related; boundary=${boundary}` });
--
--  const res = await driveFetch(
--    existingId
--      ? `/upload/drive/v3/files/${existingId}?uploadType=multipart&fields=id,name`
--      : `/upload/drive/v3/files?uploadType=multipart&fields=id,name`,
--    // Large raw files (trajectories, videos, …) can take minutes to upload —
--    // never abort them with the short interactive-request timeout.
--    { method: existingId ? 'PATCH' : 'POST', headers: { 'Content-Type': `multipart/related; boundary=${boundary}` }, body, timeout: 10 * 60 * 1000 }
--  );
--  const fileMeta = await res.json();
-+  /* LES GROS FICHIERS PARTENT PAR MORCEAUX (session « resumable »). Une seule
-+     requête multipart n'a aucun point de reprise : une trajectoire de plusieurs Go
-+     laissait ses dossiers sur le Drive SANS son fichier, et rien ne pouvait plus
-+     la restaurer sur un autre poste (défaut signalé le 25/09/2026). Même nom,
-+     même dossier, même remplacement d'un fichier existant : seule la façon de
-+     transporter les octets change. Une session refusée (`Location` illisible,
-+     p. ex. une réponse CORS sans en-tête exposé) rend `null` et l'envoi en une
-+     seule requête ci-dessous reste le repli — un échec de TRANSFERT, lui, remonte
-+     (il doit se dire, pas se doubler d'un second envoi complet). */
-+  let fileMeta = null;
-+  if (shouldChunkUpload(blob.size)) {
-+    fileMeta = await uploadBlobInChunks({
-+      blob, name, mimeType: type, targetId, existingId, driveFetch, onProgress
-+    });
-+    if (!fileMeta) {
-+      console.warn(`Resumable session unavailable for “${name}” (${Math.round(blob.size / 1048576)} MB) — single-request upload.`);
-+    }
-+  }
-+
-+  if (!fileMeta) {
-+    const pre = new Blob(
-+      [`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n--${boundary}\r\nContent-Type: ${type}\r\n\r\n`],
-+      { type: 'multipart/related' }
-+    );
-+    const post = new Blob([`\r\n--${boundary}--\r\n`], { type: 'multipart/related' });
-+    const body = new Blob([pre, blob, post], { type: `multipart/related; boundary=${boundary}` });
-+
-+    const res = await driveFetch(
-+      existingId
-+        ? `/upload/drive/v3/files/${existingId}?uploadType=multipart&fields=id,name`
-+        : `/upload/drive/v3/files?uploadType=multipart&fields=id,name`,
-+      // Large raw files (trajectories, videos, …) can take minutes to upload —
-+      // never abort them with the short interactive-request timeout.
-+      { method: existingId ? 'PATCH' : 'POST', headers: { 'Content-Type': `multipart/related; boundary=${boundary}` }, body, timeout: 10 * 60 * 1000 }
-+    );
-+    fileMeta = await res.json();
-+  }
-   if (!fileMeta || !fileMeta.id) throwCode('DRIVE_ERROR', 'Drive returned no file.');
- 
-   // Make it readable via the link so the app can show thumbnails / others can open it.
-@@ -1500,7 +1536,7 @@ export const saveUploadForRetry = async ({ name, mimeType, file, ctx = null, pat
-  *  Non-experiment uploads (protocols, publications, figures, imports that pass
-  *  an explicit `path`) are routed exactly as before.
-  */
--export const uploadLocalFile = async ({ name, mimeType, file, ctx = null, path = null, skipQueue = false, folderId = '' }) => {
-+export const uploadLocalFile = async ({ name, mimeType, file, ctx = null, path = null, skipQueue = false, folderId = '', onProgress = null }) => {
-   const folderCtxs = [];
-   if (ctx && typeof ctx === 'object' && String(ctx.test || '').trim() && ctx.protocol === undefined) {
-     const projects = projectNamesOf(ctx);
-@@ -1538,7 +1574,8 @@ export const uploadLocalFile = async ({ name, mimeType, file, ctx = null, path =
-         /* Le dossier résolu par IDENTIFIANT ne vaut que pour une SEULE cible (les
-            figures d'un projet). Un fichier déposé dans plusieurs projets a un
-            chemin PAR PROJET : il n'y a alors pas d'identifiant unique à viser. */
--        folderId: folderCtxs.length === 1 ? folderId : ''
-+        folderId: folderCtxs.length === 1 ? folderId : '',
-+        onProgress
-       });
-       if (res) last = res;
-     } catch (err) {
-@@ -2276,22 +2313,41 @@ export const driveFilePointer = (res, fallbackName = '') => (
- );
- 
- /** Comme `archiveFileToDrive`, mais rend de quoi écrire un POINTEUR de
-- *  restauration : `{ name, pointer }`. Le nom (celui du Drive) est rendu même
-- *  quand l'envoi échoue — c'est lui que cherchera la restauration par nom sur un
-- *  poste vierge ; `pointer` est null dans ce cas (rien à viser par id).
-+ *  restauration : `{ name, pointer, error }`. Le nom (celui du Drive) est rendu
-+ *  même quand l'envoi échoue — c'est lui que cherchera la restauration par nom
-+ *  sur un poste vierge ; `pointer` est null dans ce cas (rien à viser par id) et
-+ *  `error` dit POURQUOI l'envoi n'a pas abouti (l'appelant l'affiche : un échec
-+ *  muet laissait croire à une archive qui n'existait pas).
-+ *  `onProgress(octetsConfirmés, total)` est passé à l'envoi : les gros fichiers
-+ *  partant par morceaux, l'interface peut annoncer leur avancement.
-  *  Le nommage reste EXACTEMENT celui d'`archiveFileToDrive` : rien ne change
-  *  dans l'arborescence du Drive.
-- *  @returns {Promise<{ name: string, pointer: {id:string,name:string,url:string}|null }>} */
--export const archiveFileToDriveWithPointer = async ({ file, ctx = {}, title = '', suffix = 'file' }) => {
-+ *  @returns {Promise<{ name: string, pointer: {id:string,name:string,url:string}|null, error: string }>} */
-+export const archiveFileToDriveWithPointer = async ({ file, ctx = {}, title = '', suffix = 'file', onProgress = null }) => {
-   const name = archiveFileDriveName({ file, ctx, title, suffix });
--  if (!file || !getDriveToken()) return { name, pointer: null };
-+  if (!file || !getDriveToken()) {
-+    return { name, pointer: null, error: 'Google Drive is not connected in this browser.' };
-+  }
-   const base = title || String(file.name || '').replace(/\.[^/.]+$/, '');
-   try {
--    const res = await uploadLocalFile({ name, mimeType: file.type || 'application/octet-stream', file, ctx: { ...ctx, title: base, suffix } });
--    return { name, pointer: driveFilePointer(res, name) };
-+    const res = await uploadLocalFile({ name, mimeType: file.type || 'application/octet-stream', file, ctx: { ...ctx, title: base, suffix }, onProgress });
-+    const pointer = driveFilePointer(res, name);
-+    if (pointer) return { name, pointer, error: '' };
-+    /* L'ÉCHEC SE DIT : la copie de référence du fichier n'est PAS sur le Drive,
-+       donc elle n'existe que dans ce navigateur. Un fichier plus gros que la file
-+       de reprise (MAX_SINGLE_BYTES) n'y est même pas mis : c'est écrit noir sur
-+       blanc au lieu d'un « archivé » trompeur. */
-+    const tooLarge = Number(file.size || 0) > MAX_SINGLE_BYTES;
-+    return {
-+      name,
-+      pointer: null,
-+      error: tooLarge
-+        ? `the file is too large for the retry queue (${Math.round(MAX_SINGLE_BYTES / 1048576)} MB max) — keep this browser open and press again`
-+        : 'the upload did not complete (network, session or permission) — it is queued and retried on its own'
-+    };
-   } catch (err) {
-     console.warn('Drive archive failed:', err && err.message);
--    return { name, pointer: null };
-+    return { name, pointer: null, error: String((err && err.message) || 'Drive upload failed.') };
+ /* `id` = the reference ⇒ the attribute is REMOVED (the shipped palette comes
+    back exactly as Tailwind defines it). The custom skin is the one case whose
+-   accent ramp is NOT in the stylesheet: its eleven stops depend on a colour the
+-   user picked, so they are written INLINE on <html> — and cleared for every
+-   other skin, or they would outlive the choice.
++   accent ramp — and the page colour the user chose — is NOT in the stylesheet:
++   its eleven stops depend on a colour the user picked, so they are written
++   INLINE on <html> — and cleared for every other skin, or they would outlive
++   the choice. The PATTERN is the stylesheet's job (index.css): here we only
++   raise or drop `data-pattern` on <html>, which paints every page at once.
+    `operator` : l'accent lu (peau personnalisée) est celui de CET opérateur. */
+ export const applyUiSkin = (id, operator = null) => {
+   if (typeof document === 'undefined') return; // unit tests (node) have no DOM
+@@ -273,15 +417,31 @@ export const applyUiSkin = (id, operator = null) => {
+   if (!root) return;
+   const skin = uiSkinById(id);
+   if (!root.dataset) return;
+-  const customKeys = [...Object.keys(uiSkinCustomRamp(UI_CUSTOM_ACCENT_DEFAULT)), '--lab-tone'];
++  /* les clés à effacer : TOUTE la rampe d'accent, `--lab-tone`, et les deux
++     crans de la page — qu'un fond ait été choisi ou non (sinon un fond posé
++     hier survivrait au passage à une autre peau). */
++  const customKeys = [
++    ...Object.keys(uiSkinCustomRamp(UI_CUSTOM_ACCENT_DEFAULT)),
++    '--lab-tone', '--color-slate-50', '--color-slate-100'
++  ];
+   const clearCustom = () => {
+     if (root.style) customKeys.forEach((k) => root.style.removeProperty(k));
+     delete root.dataset.tone;
++    delete root.dataset.pattern;
+   };
+   if (skin.id === UI_SKIN_CUSTOM) {
+     const custom = readUiCustomSkin(operator);
++    /* ON EFFACE D'ABORD : un fond qu'on vient de retirer (ou l'accent d'un autre
++       opérateur) doit disparaître des variables en ligne, sinon l'écriture qui
++       suit ne ferait qu'ajouter le réglage courant À l'ancien — la page
++       resterait peinte avec la couleur qu'on vient d'abandonner. */
++    clearCustom();
+     if (root.style) Object.entries(uiSkinCustomVars(custom)).forEach(([k, v]) => root.style.setProperty(k, v));
+     root.dataset.tone = custom.neutral;
++    /* le motif : « none » (le défaut) n'écrit AUCUN attribut, donc la feuille
++       ne peint rien et l'attribut ne traîne pas dans le DOM. */
++    if (custom.pattern === UI_BG_PATTERN_DEFAULT) delete root.dataset.pattern;
++    else root.dataset.pattern = custom.pattern;
+     root.dataset.skin = UI_SKIN_CUSTOM;
+     return;
    }
- };
- 
-@@ -2352,21 +2408,31 @@ export const uploadWorkspaceFile = async ({ name, mimeType, file, folder = 'back
-       ? { name, mimeType: type }
-       : { name, mimeType: type, parents: [folderId] });
- 
--    const pre = new Blob(
--      [`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n--${boundary}\r\nContent-Type: ${type}\r\n\r\n`],
--      { type: 'multipart/related' }
--    );
--    const post = new Blob([`\r\n--${boundary}--\r\n`], { type: 'multipart/related' });
--    const body = new Blob([pre, blob, post], { type: `multipart/related; boundary=${boundary}` });
--
--    const res = await driveFetch(
--      existingId
--        ? `/upload/drive/v3/files/${existingId}?uploadType=multipart&fields=id,name`
--        : `/upload/drive/v3/files?uploadType=multipart&fields=id,name`,
--      // Weekly backup HTML files can be several MB — allow a long transfer time.
--      { method: existingId ? 'PATCH' : 'POST', headers: { 'Content-Type': `multipart/related; boundary=${boundary}` }, body, timeout: 10 * 60 * 1000 }
--    );
--    const fileMeta = await res.json();
-+    /* Même règle que pour les envois d'expérience : au-delà de
-+       `RESUMABLE_MIN_BYTES` (une sauvegarde HTML hebdomadaire peut peser
-+       plusieurs Mo), le fichier part par MORCEAUX — avec reprise — et l'envoi en
-+       une seule requête reste le repli si la session est refusée. */
-+    let fileMeta = null;
-+    if (shouldChunkUpload(blob.size)) {
-+      fileMeta = await uploadBlobInChunks({ blob, name, mimeType: type, targetId: folderId, existingId, driveFetch });
-+    }
-+    if (!fileMeta) {
-+      const pre = new Blob(
-+        [`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n--${boundary}\r\nContent-Type: ${type}\r\n\r\n`],
-+        { type: 'multipart/related' }
-+      );
-+      const post = new Blob([`\r\n--${boundary}--\r\n`], { type: 'multipart/related' });
-+      const body = new Blob([pre, blob, post], { type: `multipart/related; boundary=${boundary}` });
-+
-+      const res = await driveFetch(
-+        existingId
-+          ? `/upload/drive/v3/files/${existingId}?uploadType=multipart&fields=id,name`
-+          : `/upload/drive/v3/files?uploadType=multipart&fields=id,name`,
-+        // Weekly backup HTML files can be several MB — allow a long transfer time.
-+        { method: existingId ? 'PATCH' : 'POST', headers: { 'Content-Type': `multipart/related; boundary=${boundary}` }, body, timeout: 10 * 60 * 1000 }
-+      );
-+      fileMeta = await res.json();
-+    }
-     if (!fileMeta || !fileMeta.id) return null;
-     return { id: String(fileMeta.id), name: String(fileMeta.name || name) };
-   } catch (err) {

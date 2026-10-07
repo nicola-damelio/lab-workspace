@@ -5,7 +5,8 @@
    Ce qui doit rester vrai :
 
      • « Classification » et « Compounds & Biological Models » vivent dans le
-       MÊME bloc GENERAL, côte à côte sur un écran large (une colonne chacun) ;
+       MÊME bloc GENERAL, côte à côte dès `md` (720 px au grossissement racine
+       par défaut : 15 px, l'échelle d'affichage), Classification à gauche ;
      • « Bruker Import » (NMR) tient sur UNE ligne : la phrase d'aide sous le
        bouton, le sous-volet « From Google Drive link » et les champs
        « Manual SW (ppm) / Centre O1 (ppm) » ont disparu ;
@@ -418,10 +419,52 @@ has(SEC, '.filter((r) => r.affinity !== null && r.rmsd !== null);', 'un RMSD vid
 has(RENDER, 'analysisPlain: true,', '[docking] le contenu de Data Analysis est rendu directement');
 has(SHELL, 'custom.analysisPlain ? (', '[shell] analysisPlain est bien ce qui supprime la sous-section');
 /* ══ 5. GENERAL : CLASSIFICATION + COMPOUNDS CÔTE À CÔTE ═════════════════ */
-has(SHELL, "grid grid-cols-1 items-start gap-0 ${(showCompoundsSection || CompoundsSection) ? 'xl:grid-cols-2 xl:gap-x-4' : ''}",
+has(SHELL, "grid grid-cols-1 items-start gap-0 ${(showCompoundsSection || CompoundsSection) ? 'md:grid-cols-2 md:gap-x-4' : ''}",
   'les deux sous-sections courtes de GENERAL partagent une grille à deux colonnes');
 ok(SHELL.indexOf('title="Classification"') < SHELL.indexOf('title="Compounds & Biological Models"'),
   'Classification reste la première colonne');
+/* FRÈRES, pas imbriquées : entre l'ouverture de la grille et la boîte
+   « Compounds », on ne croise QUE l'ouverture et la fermeture de Classification.
+   Une boîte imbriquée dans l'autre (deux ouvertures, aucune fermeture) ne serait
+   pas « à côté », elle serait « dedans ». La borne est le DÉBUT de l'élément
+   Compounds (son `<CollapsibleSection`, pas son `title=` : l'ouverture est ce
+   qu'on compte). */
+eq(countOf(SHELL, 'grid grid-cols-1 items-start gap-0'), 1,
+  'une seule grille à deux colonnes dans le shell');
+const between = SHELL.slice(
+  SHELL.indexOf('grid grid-cols-1 items-start gap-0'),
+  SHELL.indexOf('<CollapsibleSection title="Compounds & Biological Models"'));
+eq(countOf(between, '<CollapsibleSection'), 1,
+  'Classification est la SEULE boîte ouverte avant Compounds');
+eq(countOf(between, '</CollapsibleSection>'), 1,
+  '…et elle est REFERMÉE avant : les deux volets sont FRÈRES dans la rangée');
+has(SHELL, 'title="Classification" icon="🏷️" defaultOpen={false} className="min-w-0"',
+  'la boîte Classification se replie sur sa colonne (min-w-0)');
+has(SHELL, 'title="Compounds & Biological Models" icon="🧪" defaultOpen={false} className="min-w-0"',
+  '…la boîte Compounds aussi : aucune des deux ne peut pousser sa voisine');
+ok(!SHELL.includes('xl:grid-cols-2'),
+  'le palier « xl » ne laisse plus les deux volets empilés sur un écran de portable');
+
+/* LE PALIER, lu dans la source puis CONVERTI en pixels : un palier Tailwind est
+   en rem, or l'application écrit la taille racine (échelle d'affichage,
+   src/utils/uiScale.js — 15 px par défaut, 16 px si le navigateur reprend la
+   main). C'est là que se jouait le « pas côte à côte » : `xl` valait 1200 px au
+   grossissement par défaut, donc les deux volets restaient empilés sur un
+   portable alors que la page avait la place. */
+const twoCol = SHELL.match(/'(\w+):grid-cols-2 (\w+):gap-x-4'/);
+ok(twoCol, 'la grille à deux colonnes nomme son palier');
+const palier = twoCol[1];
+const PALIERS_REM = { sm: 40, md: 48, lg: 64, xl: 80, '2xl': 96 }; /* défauts Tailwind v4 */
+const UISCALE = read('src/utils/uiScale.js');
+const rootDefault = Number((UISCALE.match(/UI_SCALE_DEFAULT = (\d+)/) || [])[1]);
+eq(rootDefault, 15, "l'échelle d'affichage par défaut est lue dans la source (15 px)");
+ok(Object.keys(PALIERS_REM).includes(palier), `palier Tailwind connu (« ${palier} »)`);
+eq(palier, 'md', 'le palier est « md » — le plus petit qui partage la rangée');
+eq(PALIERS_REM[palier] * rootDefault, 720,
+  'côte à côte dès 720 px au grossissement par défaut');
+ok(PALIERS_REM[palier] * 16 <= 768, 'côte à côte dès 768 px quand le navigateur reprend son 16 px');
+ok(PALIERS_REM[palier] * 16 < PALIERS_REM.xl * rootDefault,
+  '…soit BIEN EN DESSOUS des 1200 px de l’ancien palier `xl`');
 
 /* ══ 6. « BRUKER IMPORT » (NMR) SUR UNE LIGNE ════════════════════════════ */
 ok(!NMR.includes('0x1F517)} From Google Drive link'), '[NMR] le sous-volet « From Google Drive link » a disparu');

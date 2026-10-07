@@ -12,8 +12,20 @@ import { LIGHT_COLOR_DEFAULT, LIGHT_RIG, nglKeyLightDirection, nglLightParams, n
 // ✨ Ray from turning into a render that never comes back.
 import {
   RAY_FACTORS, RAY_DEFAULT_FACTOR, rayFactorOptions, rayPlanOf, rayProgressText,
-  previewRayImage, previewUrlOf, releasePreviewUrl, downloadBlob,
+  previewRayImage, previewUrlOf, releasePreviewUrl, downloadBlob, rayFileName,
 } from '../utils/viewerRayImage';
+// ⬚ LE FOND DE LA SCÈNE — une couleur, ou une RAMPE de deux couleurs et sa
+// direction (sa propre spec, voir src/utils/viewerBackground.js). NGL ne sait
+// peindre QU'une couleur (`setBackground` → `setClearColor(couleur, 0)` + la
+// couleur en `style.backgroundColor` du canvas) : la rampe vit donc dans le CSS
+// du canvas pour l'écran, dans la toile de film pour 🎬🎞, et SOUS le PNG
+// transparent du ✨ Ray. Les deux couleurs sont 'A' (la couleur de la scène, le
+// 🎨 de §2 Scene) et 'B', plus l'angle ; tout est validé par le module.
+import {
+  BG_DIRECTIONS, BG_GRADIENT_DEFAULT_ANGLE, BG_GRADIENT_DEFAULT_TO,
+  backgroundCss, backgroundSpecOf, bgDirectionOf, bgGradientOf,
+  paintViewerBackground, readBgGradient, underlayBackdrop,
+} from '../utils/viewerBackground';
 // 🎬 The VIDEO OF A TRAJECTORY — the run the ▶ button plays, written as one file
 // (its own module, see src/utils/viewerTrajectoryVideo.js). It records the very
 // canvas NGL is drawing into (`canvas.captureStream` + `MediaRecorder`), frame
@@ -36,12 +48,23 @@ import {
   keyframePlan, keyframeFilmSummary, keyframeLegs, sampleKeyframeFilm,
   keyframePoseOf, normalizeKeyframe, normalizeKeyframeFilm, parseKeyframeFilm,
   serialiseKeyframeFilm, slimKeyframeState, poseStylesForSections,
+  filmSceneState, FILM_GLIDE_KEYS,
 } from '../utils/viewerKeyframes';
 // The CAST SHADOWS of a ✨ Ray still: NGL 2.4 has no shadow-map pass at all, so
 // the shadow is computed from the ATOMS with the camera and the key light of the
 // scene (utils/viewerRayShadows.js) — its own toggle and strength live in the Ray
 // controls of the 🌫 Scene group, next to the resolution and the alpha.
 import { RAY_SHADOW_DEFAULTS } from '../utils/viewerRayShadows';
+// ◐ LA MÊME OMBRE, MAIS VIVANTE — la demande : « wow! it works! will it be
+// possible to see it while the molecule is moving and not only as a still
+// picture? » L'ombre du « ✨ Ray » n'est pas un effet du PNG : c'est une fonction
+// pure de (atomes, caméra, lampe, taille, options). Ce module la calcule pour
+// la VUE — une toile 2D posée sur la toile WebGL, peinte du même masque — avec
+// trois régimes (le direct, la qualité du PNG, le brouillon) et une largeur de
+// brouillon qui s'adapte au temps réel (utils/viewerRayShadowLive.js).
+import {
+  RAY_LIVE_DEFAULTS, rayLiveSettingOf, createRayShadowOverlay, attachRayShadowLive,
+} from '../utils/viewerRayShadowLive';
 import { computeSmiles3DNameMap } from '../utils/atomNameSync';
 import { rebuildProteinHydrogenCoords } from '../utils/rebuildProteinHydrogens';
 import { enforceOneHeavyBondPerHydrogen } from '../utils/hydrogenBondRule';
@@ -58,7 +81,34 @@ import { enforceCovalentProteinBonds } from '../utils/proteinBondRule';
 // rapporte est jugée avec la fenêtre du repliement (utils/disulfideFold.js) :
 // une seule définition de « pont fermé », pour ⚭ Fold et pour l'interrupteur.
 import { applyDisulfideDisplay } from '../utils/disulfideBonds';
-import { SS_BOND_LENGTH, SS_BOND_TOLERANCE } from '../utils/disulfideFold';
+// 💧 « H-bonds: shown / hidden » — la demande de cette session : « in the section
+// analysis of the viewer, add a button to display H-bonds. » Le bouton LIT la
+// géométrie de ce qui est à l'écran (donneurs N/O/S, accepteurs, distances et
+// angles — la règle entière est dans utils/hydrogenBonds.js) et la DESSINE en UNE
+// représentation `distance` de NGL, comme 📏 Measure dessine la sienne. À la
+// différence des trois règles ci-dessus, ce bouton ne retire rien du graphe de
+// liaisons : ni le fichier PDB, ni le graphe, ni un style ne sont touchés.
+// …ET LE RÉSEAU EST RELU PENDANT UN MOUVEMENT (voir refreshHydrogenBonds) : un pont
+// qui se forme apparaît pendant la dynamique, un pont qui casse s'en va — les lignes
+// ne racontent jamais une conformation qui n'est plus à l'écran.
+import {
+  findHydrogenBonds, hydrogenBondNoteOf, HBOND_LABEL_MAX,
+} from '../utils/hydrogenBonds';
+// 🔎 CE QU'UN ATOME PORTE, DIT AU SURVOL : le nom était déjà là, la charge
+// partielle arrive par la MÊME table que le ⚡ ESP et « Color by → Atom charge »
+// (voir `atomHoverChargeOf`, à côté de `atomChargeOf`), mise en forme par la
+// fonction pure de ce module — un survol ne peut donc pas écrire autre chose que
+// ce que la surface et la rampe peignent.
+import { hoverAtomReadout } from '../utils/viewerAtomReadout';
+// …ET LA RÈGLE QUI CONDUIT UN PONT ÉTIRÉ (cette session) : les moteurs du champ FIGENT la
+// famille « liaisons » (une torsion rigide ne change pas une longueur), donc un pont à
+// 10 Å ne se rapprocherait jamais. `stretchedDisulfideTermsOf` rend un terme de DISTANCE
+// par pont étiré — le mécanisme des lignes de la table — et c'est lui que les quatre gestes
+// reçoivent en plus de la table (voir `calcRestraintTermsOf`).
+import {
+  SS_BOND_LENGTH, SS_BOND_TOLERANCE, stretchedDisulfideTermsOf,
+  withoutStretchedDisulfideBonds,
+} from '../utils/disulfideFold';
 
 
 import { readXtcFrames, countXtcFrames, countXtcFramesInFile } from '../utils/xtcDecoder';
@@ -87,13 +137,158 @@ import {
   partKeyOf, centroidOf, partMoveIdentity, partMoveFromPose, partPosesOf,
   rotatePartMove, slidePartMove, partPositionsInto, isIdentityMove, normalisedDirection,
 } from '../utils/viewerMoleculeMoves';
+// ⬇ ✏️ RÉGLER UNE TORSION — OU ATTEINDRE UNE DISTANCE — AU CHIFFRE (utils/torsionDrive.js).
+// Quatre atomes piqués dans la vue 3D (A · B · C · D), un angle ou une distance tapés, et
+// le côté de D tourne d'UN SEUL bloc rigide autour de B–C : l'angle est RÉSOLU en forme
+// fermée (aucun balayage, aucune énergie), le graphe de liaisons de NGL dit QUELS atomes
+// partent avec D (jamais une supposition), et le dihèdre dont le module parle est signé
+// IUPAC — exactement la convention de `torsionDeg` ci-dessous (les lecteurs χ/δ du
+// classement) : _torsion_drive_test.mjs compare les deux, chiffre à chiffre.
+import { movingSideOf, planTorsion, dihedralDeg, distanceOf } from '../utils/torsionDrive';
+// ⬇ 🪢 LE GRAPHE DE RAMACHANDRAN (utils/ramachandran.js). La demande : « would be nice
+// to see the Ramachandran plot. » Le panneau 🪢 lit les φ/ψ de la chaîne peptidique à
+// l'écran par le module PUR (le dièdre de utils/torsionDrive.js, jamais un second), les
+// classe par les polygones de la figure classique — résidu ordinaire, glycine, proline,
+// pré-proline — et dessine le graphe : les bassins en fond, un point par résidu, les
+// OUTLIERS nommés, les AXES gradués et nommés (φ en abscisse, ψ en ordonnée) et le
+// SURVOL d'un point qui dit le résidu et ses deux angles. Voir §6 de
+// _ramachandran_test.mjs.
+import {
+  RAMA_PLOT, RAMA_PLOT_REGIONS, RAMA_REGION_COLORS, RAMA_REGION_NAMES,
+  RAMA_POINT,
+  ramachandranOf, ramaPlotPath, ramaPlotGrid, ramaPlotAxisLabels, ramaHoverTextOf,
+} from '../utils/ramachandran';
+// ⬇ 🧬 CALCUL DE STRUCTURE — n DÉPARTS TIRÉS AU HASARD, LE 🔥 RECUIT SUR CHACUN, m
+// RETENUES, PUIS LA DYNAMIQUE ET LA MINIMISATION (utils/structureCalc.js). Le panneau 🧬
+// ne calcule RIEN lui-même : il lit la molécule à l'écran, donne ses distances, son n et
+// son m au module PUR, CONDUIT ses images (le calcul se regarde : la molécule est écrite
+// à chaque image, puis la page peint), et écrit par le MÊME chemin qu'une torsion —
+// donc le 📏, les plaques, le film et le 📥 Download la lisent.
+// `structureCalculationFrames` est le moteur du calcul entier (un générateur),
+// `molecularDynamicsOf` / `minimizeTorsionsOf` ceux des deux gestes ⚙ du panneau, et
+// `forceFieldRowsOf` LA description du champ de forces : le panneau écrit ces lignes au
+// lieu d'inventer un chiffre.
+import {
+  structureAttemptOf, rankStructureAttempts, structureCalculationFrames,
+  molecularDynamicsOf, minimizeTorsionsOf, mdFrames, minimizeFrames,
+  forceFieldRowsOf, forceFieldEnergyOf, FORCE_FIELD_FAMILIES,
+  structureCalcSimulationTimeOf, restraintReportOf,
+  STRUCTURE_CALC_DEFAULT_STARTS, STRUCTURE_CALC_MAX_STARTS,
+  STRUCTURE_CALC_DEFAULT_KEEP, STRUCTURE_CALC_MAX_KEEP,
+  STRUCTURE_CALC_SEED, STRUCTURE_CALC_MAX_RESTRAINTS,
+  STRUCTURE_CALC_RESTRAINT_TOLERANCE,
+  STRUCTURE_CALC_ANNEAL_STEPS, STRUCTURE_CALC_ANNEAL_HOT, STRUCTURE_CALC_ANNEAL_COLD,
+  STRUCTURE_CALC_QUENCH_STEPS, STRUCTURE_CALC_QUENCH_TEMPERATURE,
+  STRUCTURE_CALC_OMEGA, STRUCTURE_CALC_OMEGA_TOLERANCE, STRUCTURE_CALC_OMEGA_WEIGHT,
+  /* 🪢 L'OPTION « ω VARIE » — son DÉFAUT vient du module (faux : les peptides restent trans). */
+  STRUCTURE_CALC_FREE_OMEGA,
+  STRUCTURE_CALC_RAMA_WEIGHT, STRUCTURE_CALC_CHI_WEIGHT, STRUCTURE_CALC_CHI_TOLERANCE,
+  STRUCTURE_CALC_MD_STEPS, STRUCTURE_CALC_MD_FRAME, STRUCTURE_CALC_MD_HOT,
+  STRUCTURE_CALC_MD_COLD, STRUCTURE_CALC_MD_DT, STRUCTURE_CALC_MD_FRICTION,
+  STRUCTURE_CALC_MD_EQUILIBRATION, STRUCTURE_CALC_MIN_ROUNDS,
+  /* ⚒ …ET LES TROIS AUTRES RÉGLAGES DE LA DESCENTE — la demande de cette session :
+     « Minimize should have more controls (number of steps, criteria to converge, etc) ».
+     Ils viennent du module (structureCalc.js, §4quater), comme le nombre de balayages : le
+     panneau n'invente ni le pas initial, ni le pas le plus fin, ni les essais d'une charnière. */
+  STRUCTURE_CALC_MIN_STEP, STRUCTURE_CALC_MIN_STEP_FLOOR, STRUCTURE_CALC_MIN_TRIES,
+  /* 🌡 L'INERTIE RÉDUITE D'UN DIÈDRE — c'est elle qui fait de la température la VITESSE du
+     moteur (√(R·T/m)), donc le viewer la DIT au lieu d'écrire un chiffre : la remarque de
+     cette session était « the MD looks more like a minimisation… at a certain temperature
+     the movement should be continuous » (voir le module). */
+  STRUCTURE_CALC_MD_MASS,
+  /* ⚖ LE PLAFOND DE COUPLE DE LA FAMILLE DES DISTANCES — le viewer le DIT dans un rapport
+     (une ligne de poids ⚖ élevé tire jusqu'à ce plafond, voir le module). */
+  STRUCTURE_CALC_MD_MAX_RESTRAINT_TORQUE,
+  /* 💧 LE SOLVANT DE LA DYNAMIQUE ISOLÉE — les modèles et leur diélectrique viennent du
+     module : le viewer n'écrit aucun ε, et il ne promet pas d'eau explicite que le moteur
+     n'a pas (voir utils/structureCalc.js). La demande de cette session a ajouté la BOÎTE :
+     `explicitSolventOf` la construit (les eaux TIP3P rigides), et `mdBox` en est l'arête. */
+  STRUCTURE_CALC_SOLVENT, STRUCTURE_CALC_SOLVENTS, structureCalcSolventOf,
+  structureCalcSolventIsExplicit, explicitSolventOf,
+  STRUCTURE_CALC_SOLVENT_BOX, STRUCTURE_CALC_SOLVENT_BOX_MIN, STRUCTURE_CALC_SOLVENT_BOX_MAX,
+  /* 💧 …ET LE PAS MAXIMAL D'UNE EAU — le rapport le CITE quand la subdivision a eu lieu
+     (une eau rapide coûte plus cher : le lecteur doit pouvoir le lire). */
+  STRUCTURE_CALC_WATER_MAX_MOVE,
+  /* 🎯 LA FONCTION CIBLE — `classic` (le champ entier) ou `dyana` : la liste des règles
+     vient du module, donc le panneau n'en invente aucune (voir STRUCTURE_CALC_TARGET_FUNCTIONS). */
+  STRUCTURE_CALC_TARGET_FUNCTION, STRUCTURE_CALC_TARGET_FUNCTIONS, structureCalcTargetFunctionOf,
+  /* ⛓ LA STRUCTURE SECONDAIRE IMPOSÉE → DES CONTRAINTES DE DIHÈDRE — la conversion,
+     la relecture pour les rapports, les lettres et la fenêtre : tout vient du module
+     (aucun chiffre de φ/ψ n'est écrit dans le JSX). */
+  backboneTorsionsOf, secondaryDihedralRestraintsOf, dihedralPenaltyOf,
+  SS_DIHEDRALS, SS_DIHEDRAL_LETTERS, SS_DIHEDRAL_TOLERANCE,
+  /* 🧪 LE pH ET LA FORCE IONIQUE — les deux réglages de la CHIMIE du champ (les pKa des
+     familles, κ, la longueur de Debye, et la lecture de la charge) viennent du module : le
+     panneau n'écrit aucun pKa, aucun 3.29 et aucun chiffre d'écrantage (voir §2bis et §4bis de
+     utils/forceFieldKcal.js, réexportés par utils/structureCalc.js). */
+  ffDebyeKappaOf, ffDebyeLengthOf, partialChargesOf,
+  FF_PKA, FF_PH_DEFAULT, FF_IONIC_STRENGTH_DEFAULT, FF_DEBYE_FACTOR,
+} from '../utils/structureCalc';
+// ⚒ « Model build » A ÉTÉ RETIRÉ DE L'INTERFACE cette session — la demande :
+// « The torsion section must be drastically reduced. eliminate comments and
+// eliminate the "model build" button. » Le bouton, ses réglages et son animation
+// partent donc avec lui ; le module PUR utils/geometryRelax.js reste en place, et
+// c'est LUI qui donne la longueur d'une liaison quand une ligne de la table des
+// distances n'en donne aucune (`bondLengthTarget`). Le protocole de construction
+// d'un modèle est celui du calcul de structure (`utils/structureCalc.js`).
+import { bondLengthTarget } from '../utils/geometryRelax';
+// ⬇ 💾 LA LISTE DES DISTANCES DANS UN FICHIER — le FORMAT vit dans un module PUR
+// (utils/structureRestraints.js : trois colonnes, relues telles quelles), et le
+// viewer ne fait que le brancher sur sa table du 🧬. La demande : « Allow to
+// save/upload from file the distance constraints in the structure calculation
+// section. » La résolution des noms d'atomes reste ici (calcAtomOfText) : le module
+// ne connaît aucune molécule.
+import {
+  restraintsToText, restraintsFromText, restraintWeightOf,
+  RESTRAINT_FILE_EXT, RESTRAINT_FILE_MIME,
+} from '../utils/structureRestraints';
 // HETATM code → SMILES: the Chemistry Component Dictionary of the RCSB (see
 // utils/ligandSmiles.js). A PDB only names its ligand by a 3-letter code, so this
 // is where the SMILES of a hand-loaded ligand comes from.
 import { cachedLigandSmiles, fetchLigandSmiles } from '../utils/ligandSmiles';
-import { archiveFileToDrive } from '../utils/driveUpload';
+import { archiveFileToDrive, downloadDriveFileText, getDriveToken, uploadLocalFile } from '../utils/driveUpload';
 import { getPymolScripts, setPymolScript as savePymolScriptToLibrary } from '../utils/pymolScripts';
-import { SEQUENCE_NATURES } from '../utils/sequenceNatures';
+/* 🎨 LE STYLE QU'UNE EXPÉRIENCE RETIENT — la demande de cette session : « when an
+   experiment opens, after bringing back to live its files (pdb, trajectory etc) it
+   should remember also the style file (called snapshot or in its absence the
+   cumulative) of the viewer and apply it automatically. »
+   Le style voyage donc comme les fichiers : un fichier JSON dans le dossier Drive
+   de l'expérience (`viewer-style-snapshot.json` / `viewer-style-cumulative.json`,
+   à côté des .pdb et des .xtc — l'écriture est celle des fichiers déjà envoyés par
+   le viewer, `uploadLocalFile` avec le contexte de nommage de la page), lu à
+   l'ouverture par la lecture du dossier de l'expérience
+   (utils/driveExperimentFiles.js, le geste déjà offert par les boutons
+   « 📂 … from Drive folder » des pages), et une mémoire par instance qui rend le
+   rappel instantané et hors ligne. Les règles — nom canonique par mode, préférence
+   snapshot → cumulatif, format du fichier, mémoire — sont PURES et vivent dans
+   utils/viewerStyleFile.js. */
+import {
+  VIEWER_STYLE_EXT, loadViewerStyleMemory, parseViewerStyleFile, pickViewerStyleFile,
+  saveViewerStyleMemory, viewerStyleEntryOf, viewerStyleFilePayload, viewerStyleFileName,
+  viewerStyleMemoryKey,
+} from '../utils/viewerStyleFile';
+import { listExperimentFiles } from '../utils/driveExperimentFiles';
+/* 📁 LE SEUL GESTE QUI FABRIQUE UN DOSSIER (voir DriveExperimentFiles.jsx). La
+   demande, mot pour mot : « the "create experiment folder on drive" must be
+   placed in the same line of "PDB file" button always. to save space you can
+   rename it "Create drive folder". » Le viewer le rend donc LUI-MÊME, dans sa
+   rangée §1 General — la ligne même de 📂 PDB file(s) — dès qu'un contexte de
+   nommage lui est fourni (`driveNaming` : MD, NMR, Docking) : aucune page ne
+   peut l'oublier, ni le poser deux rangées plus haut. */
+import { DriveExperimentFolderCreator } from './DriveExperimentFiles';
+/* 🧪 LA CHARGE D'UNE SÉQUENCE — la lecture du ⚙ Params & Constraints quand l'écran montre le
+   modèle bâti par la page : le pKa de CHAQUE chaîne latérale et les deux terminus (voir
+   utils/sequenceCharge.js). Le graphe reste la lecture d'un PDB chargé, et le panneau DIT
+   toujours laquelle des deux il a lue. */
+import { sequenceChargeReportOf, AA_SIDECHAIN_PKA } from '../utils/sequenceCharge';
+/* La table des natures (une nature, un champ) ET ce qu'il faut pour CHOISIR
+   quand un fichier porte plusieurs séquences : ses candidates (une par chaîne
+   polymère), les natures ambiguës (plus d'une chaîne pour le même champ) et les
+   résidus à écrire une fois le choix fait — voir utils/sequenceNatures.js. */
+import {
+  SEQUENCE_NATURES, NATURE_LABELS, NATURE_UNITS,
+  sequenceCandidatesOf, ambiguousSequenceNatures, sequenceChoiceTicks,
+} from '../utils/sequenceNatures';
 
 /* ---- Shared "Assigned atoms" highlight flag ---------------------------------
    The green "assigned atoms" highlight is shown both on the 3D molecule viewer
@@ -315,7 +510,7 @@ const LARGE_ATOM_COUNT = 25000;                 // lighter rendering above this
    Background »), persisted like Fog / Shadows / Clipping, and it is part of a
    saved setup.
 
-   SAVED SETUPS (🎨 Styles, §2 · the Scene line) — « Save the visualisation setup »: a NAMED
+   SAVED SETUPS (🎨 Styles, §2 · its own row, above ✏️ Modify) — « Save the visualisation setup »: a NAMED
    snapshot of the whole viewer look (the six menus with their radii and colours,
    the nucleic-acid group colours and the lipid part colours, the label switches,
    the 2°-structure and highlight colours, Fog / Shadows / Clipping / Background /
@@ -324,7 +519,7 @@ const LARGE_ATOM_COUNT = 25000;                 // lighter rendering above this
    a look can be reused on another page or another computer.
    ============================================================================ */
 const CAT_STYLE_KEY = 'labViewerCategoryStyles';
-// Saved visualisation setups (🎨 Styles, §2 · the Scene line). One localStorage entry holds
+// Saved visualisation setups (🎨 Styles, §2 · its own row). One localStorage entry holds
 // a { name → setup } map; a setup is the plain object built by captureViewerSetup
 // and read back by applyViewerSetup, with a version so an older file can never
 // break the viewer (unknown / missing keys simply keep their default).
@@ -588,12 +783,31 @@ const sceneRebuildSig = (s) => {
   const extras = Array.isArray(mols && mols.extras)
     ? mols.extras.map((m) => ((m && typeof m === 'object') ? { ...m, position: null } : m))
     : (mols ? mols.extras : undefined);
-  return JSON.stringify({
+  const out = {
     ...s,
     camera: null,      // le point de vue : repositionné, jamais reconstruit
     savedAt: null,     // l'horodatage d'une capture n'est pas une image
     molecules: mols ? { ...mols, main, extras } : mols,
-  });
+  };
+  /* ⚠⚠ LES CINQ RÉGLAGES DE L'ÉTAGE SONT RETIRÉS DE LA SIGNATURE — ILS NE DEMANDENT AUCUNE
+     REPRÉSENTATION, ET LES Y LAISSER COÛTAIT UNE RECONSTRUCTION PAR IMAGE DANS UN FILM.
+     LE RAPPORT DE CETTE SESSION : « In the movie, the transition between one state and the
+     other is not smooth. there is a fraction of time where there is nothing. It would be
+     better to see one move transform into the other gradually. » Ces cinq-là sont reposés
+     EN PLACE par leurs propres effets, jamais par une représentation : le fond et la
+     qualité par `stage.setParameters` / `stage.setQuality`, les ombres par le rig de
+     lumière (des uniformes), le brouillard par `fogNear`/`fogFar`, le clipping par
+     `clipNear`/`clipFar`/`clipDist` (voir `applySceneExtras`). Comme la caméra et la place
+     des molécules, ils peuvent donc CHANGER À CHAQUE IMAGE sans rien rebâtir — c'est ce qui
+     laisse un film les faire GLISSER devant la molécule qui tourne.
+     ⚠ LA LISTE EST CELLE DU MODULE DU 🎞 (`FILM_GLIDE_KEYS`, moins la caméra, déjà traitée
+     ci-dessus) : le spectateur retire de la signature EXACTEMENT ce qu'il laisse glisser,
+     donc les deux ne peuvent pas diverger sur un champ oublié d'un côté.
+     ⚠ ON LES RETIRE (`delete`) AU LIEU DE LES METTRE À `null` : une photographie qui ne
+     porte pas le champ et une qui le porte doivent donner LA MÊME signature (une capture
+     d'avant cette session n'a pas à coûter une reconstruction de plus). */
+  FILM_GLIDE_KEYS.forEach((k) => { if (k !== 'camera') delete out[k]; });
+  return JSON.stringify(out);
 };
 
 /* ---- SPHERE / BOND RADIUS of one category ---------------------------------
@@ -778,6 +992,98 @@ let chargeSchemeKey = null; // id returned by ColormakerRegistry.addScheme (null
 const registerChargeScheme = (NGL) => {
   if (chargeSchemeKey) return;
   chargeSchemeKey = registerColorScheme(NGL, 'lab-charge', defineChargeScheme());
+};
+
+/* ---- ATOM CHARGE colours (the « Atom charge » colouring) --------------------
+   THE REQUEST OF THIS SESSION, MOT POUR MOT: « In the “molecule styling” window
+   add a “color by” option: atom charge. »
+
+   « Charge » above is a SIGN of three values, and it is offered on an ION alone —
+   that is what tells a Na⁺ from a Cl⁻ in the same solvent. « ATOM CHARGE » is the
+   other half of the same idea: the PARTIAL charge of EVERY atom, painted as a RAMP.
+
+   It reads the very table the ⚡ ESP of PART 4.0 charges its atoms with
+   (`espChargesFor`, cached per structure) — the FILE's own partial charge when it
+   carries one (PQR · charged MOL2 / SDF, which NGL keeps in `atom.partialCharge`),
+   the PAGE's OWN charge model for a protein (`partialChargesOf` over the graph of
+   the structure, plus the formal groups the graph shows — see
+   `espProteinChargesOf`: it is what finally gives an explicit protein hydrogen and
+   the C-terminal `OXT` a charge, and what makes this table the panel's own
+   reading), the formal charge of a single-atom
+   residue (Na⁺ · Cl⁻ · Mg²⁺ …), and an electronegativity estimate for any other
+   hetero atom (shifted so its residue sums to zero). The two colourings can
+   therefore never disagree about what an atom carries — and, as with the ⚡ ESP,
+   NGL's own `partialcharge` colormaker is not used as the first choice because it
+   gives every atom it knows nothing about (the hetero atoms of a PDB ligand, which
+   carries neither charges nor bonds) the charge 0, i.e. one flat neutral colour; it
+   stays the FALLBACK, for a build whose scheme could not be registered.
+
+   The three anchors of the ramp ARE the three swatches the ⚙ settings wheel edits
+   for « Charge » (negative · neutral · positive): a colour changed there repaints
+   this colouring too, exactly like every other palette of the house schemes. The
+   scale is the physical one of a partial charge, ±ATOM_CHARGE_DOMAIN e — a CHARMM
+   carbonyl oxygen sits near −0.8, an amide hydrogen near +0.26, a TIP3P water at
+   q_O = −0.834 — so an atom at −1 e (a chloride, a fully charged carboxylate
+   oxygen) is AT the negative pole and one at +1 e (a sodium) at the positive one,
+   while a formal ±2 e (a magnesium) clamps on its pole instead of inventing a
+   fourth colour. */
+const ATOM_CHARGE_DOMAIN = 1;   // e — the full scale of the ramp (±)
+// The colour of ONE partial charge: a charge of 0 IS the neutral swatch, and |q| /
+// domain says HOW FAR the atom walks from it — towards the negative swatch for a
+// negative charge, towards the positive one otherwise. PURE, so a test can run the
+// very ramp the scheme hands to NGL (it is read from the neutral end, as the wording
+// of every tooltip says).
+const atomChargeColorOf = (q) => {
+  const v = Number.isFinite(q) ? Math.max(-ATOM_CHARGE_DOMAIN, Math.min(ATOM_CHARGE_DOMAIN, q)) : 0;
+  const t = Math.abs(v) / ATOM_CHARGE_DOMAIN;
+  return v < 0
+    ? lerpHexColors(chargeColorOf('neutral'), chargeColorOf('negative'), t)
+    : lerpHexColors(chargeColorOf('neutral'), chargeColorOf('positive'), t);
+};
+// The partial charge of ONE atom, read from the table PART 4.0 built for ITS OWN
+// structure (one walk per structure, shared by the two colourings). Nothing to read —
+// no structure at all (the registry's own probe, a bare object in a test), an atom
+// without an index, a charge the table does not hold — is 0, i.e. the NEUTRAL colour:
+// a charge is never invented.
+const atomChargeOf = (atom, structure) => {
+  // ⚠ `Number(null)` VAUT 0 : sans le garde sur l'atome lui-même, un atome absent
+  // prendrait la charge de l'atome 0 — un atome qui n'existe pas serait peint.
+  if (!atom || !structure) return 0;
+  const i = Number(atom.index);
+  if (!Number.isFinite(i)) return 0;
+  const data = espChargesFor(structure);
+  const q = data && data.charges ? data.charges[i] : 0;
+  return Number.isFinite(q) ? q : 0;
+};
+// LA MÊME charge, mais DITE quand elle existe : le survol d'un atome écrit son nom
+// ET ce qu'il porte (« … · q = −0.412 e »). `atomChargeOf` répond 0 quand il n'y a
+// rien à lire — le bon repli pour PEINDRE (le neutre) mais pas pour ÉCRIRE : une
+// molécule dont ni le fichier ni NGL ne décrivent les charges ne se raconte pas
+// comme une molécule neutre. Ici l'absence de table rend `null`, et la phrase du
+// survol s'arrête au nom (la règle de `hoverAtomReadout`, utils/viewerAtomReadout).
+const atomHoverChargeOf = (atom, structure) => {
+  if (!atom || !structure) return null;
+  const i = Number(atom.index);
+  if (!Number.isFinite(i)) return null;
+  const data = espChargesFor(structure);
+  const q = data && data.charges ? data.charges[i] : null;
+  return Number.isFinite(q) ? q : null;
+};
+// The definition of the scheme, NAMED so a test can extract and really run it. The
+// structure arrives exactly the way NGL hands it to every representation's colour
+// (StructureRepresentation#getColorParams → `structure`), never from a global — and a
+// scheme instantiated without one (the registry's probe) paints the neutral colour.
+const defineAtomChargeScheme = () => {
+  return function (params) {
+    const P = this.parameters || params || {};
+    const structure = P.structure;
+    this.atomColor = function (atom) { return atomChargeColorOf(atomChargeOf(atom, structure)); };
+  };
+};
+let atomChargeSchemeKey = null; // id returned by ColormakerRegistry.addScheme (null = unusable)
+const registerAtomChargeScheme = (NGL) => {
+  if (atomChargeSchemeKey) return;
+  atomChargeSchemeKey = registerColorScheme(NGL, 'lab-atom-charge', defineAtomChargeScheme());
 };
 
 /* ---- PART 3 · The FORM of a nucleic acid, read from the coordinates ----------
@@ -1280,7 +1586,7 @@ const nucleicClassCounts = (structure) => {
   return { total: info ? info.nucleotides.length : 0, forms, motifs };
 };
 
-/* ---- Saved visualisation setups (🎨 Styles, §2 · the Scene line) ---------------------
+/* ---- Saved visualisation setups (🎨 Styles, §2 · its own row) ------------------------
    One localStorage entry holds a { name → setup } map. A setup is the plain
    object built by captureViewerSetup and read back by applyViewerSetup; the
    version lets a file written by another build be accepted safely — every field is
@@ -1351,7 +1657,7 @@ const saveNamedMap = (key, map) => {
    written by another build is merged over the defaults and can never break the
    viewer. */
 const THEME_GLOBAL_KEYS = [
-  'fog', 'shadows', 'clip', 'background', 'quality', 'large', 'generalLook', 'palettes',
+  'fog', 'shadows', 'clip', 'background', 'backgroundGradient', 'quality', 'large', 'generalLook', 'palettes',
   'catStyles', 'catLabels', 'sidechainStyle', 'sstrucColors', 'selectedResidueColor', 'assignedAtomColor',
   // ⚠ ✨ Ray (facteur · fond transparent · ombre portée) et ⚡ ESP (les bornes du
   // dégradé) font partie de « l'environnement global » des deux modes : ce sont des
@@ -1452,6 +1758,13 @@ const LIPID_RESNAMES = new Set([
   // glycolipids / sphingolipids / glycerides / cardiolipins / bare heads
   'MGDG', 'DGDG', 'SQDG', 'SM', 'PSM', 'CER', 'DAG', 'TAG', 'MAG', 'CL', 'CDL',
   'PA', 'PC', 'PE', 'PS', 'PG', 'PI',
+  /* ⚠ LES TROIS CODES QUE LE RAPPORT DE CETTE SESSION AJOUTE — « se trovi una molecola
+     che si chiama TOCL2 classificala come cardiolipina (CL) » et « includi tra i lipidi
+     anche DLIPE e PLPA ». Sans eux le résidu n'était PAS reconnu comme un lipide : le
+     menu Lipids restait fermé sur lui, la molécule tombait dans un espace « ligand », et
+     TOCL2 ne rejoignait même pas sa classe (voir lipidClassOf, qui lit désormais le code
+     AVANT son numéro de fin). La reconnaissance est par NOM, comme le `lipid` de PyMOL. */
+  'TOCL', 'TOCL2', 'DLIPE', 'PLPA',
   // The SHORT headgroup codes of the request — POP · DPQ name a phosphatidyl-
   // choline, EPH a phosphatidyl-ethanolamine, PGL a phosphatidyl-glycerol and
   // CLR a cholesterol. A file written by another lab may use those instead of
@@ -1492,12 +1805,27 @@ const LIPID_CLASS_SUFFIXES = ['PC', 'PE', 'PG', 'PS', 'PI', 'PA', 'SM', 'CL'];
 const lipidClassOf = (resname) => {
   const n = String(resname || '').trim().toUpperCase().replace(/\s+/g, '');
   if (!n) return 'OTHER';
-  const alias = LIPID_CLASS_ALIASES[n];
-  if (alias) return alias;
-  if (n === 'PC' || n === 'PE' || n === 'PG' || n === 'PS' || n === 'PI' || n === 'PA' || n === 'SM' || n === 'CL') return n;
-  if (/^(?:CHOL|CHL|ERG|STIG|SITO|LANO|DHC)/.test(n)) return 'Chol';
-  const hit = LIPID_CLASS_SUFFIXES.find((s) => n.length > s.length && n.endsWith(s));
-  return hit || 'OTHER';
+  /* ⚠ UN COMPTEUR EN FIN DE CODE N'EST PAS UNE CLASSE — « se trovi una molecola che si
+     chiama TOCL2 classificala come cardiolipina (CL) ». La nomenclature des fichiers
+     réels écrit TOCL2 / CDL02 (la même cardiolipine, un autre compteur) : `'TOCL2'`
+     ne finit donc PAS par sa classe et `'CDL02'` n'est pas dans la table — la molécule
+     tombait dans « autre » et la coloration par type la peignait en gris. Le code est
+     donc jugé DEUX FOIS : tel quel, puis SANS son numéro final (l'alias, le code exact,
+     le stérol et le suffixe de classe, dans le même ordre). Rien ne bouge pour un nom
+     qui n'a pas de compteur, et « CHL1 » — un vrai code CHARMM — reste un stérol : la
+     seconde lecture ne fait que RENDRE un code à sa classe, jamais l'inverse. */
+  const core = n.replace(/\d+$/, '');
+  const forms = core !== n && core.length >= 2 ? [n, core] : [n];
+  for (let i = 0; i < forms.length; i += 1) {
+    const code = forms[i];
+    const alias = LIPID_CLASS_ALIASES[code];
+    if (alias) return alias;
+    if (LIPID_CLASS_SUFFIXES.includes(code)) return code;
+    if (/^(?:CHOL|CHL|ERG|STIG|SITO|LANO|DHC)/.test(code)) return 'Chol';
+    const hit = LIPID_CLASS_SUFFIXES.find((s) => code.length > s.length && code.endsWith(s));
+    if (hit) return hit;
+  }
+  return 'OTHER';
 };
 
 // Residue names of the lipids actually present in a structure ([] when none).
@@ -1743,9 +2071,36 @@ const lipidPartIndexStore = {
   structure: null, head: null, glycerol: null, acyl: null, named: true,
 };
 
+/* ⚠ LES OXYGÈNES D'UN PHOSPHATE NE SONT PAS DES « HEADS » — le rapport de cette
+   session : « tra gli atomi che definiscono gli head groups deve contenere solo il
+   fosforo …, gli atomi di azoto e gli ossigeni ad eccezione degli ossigeni legati al
+   fosforo. Non deve contenere carboni come invece adesso contiene. »
+   La lecture est celle du GRAPHE DE LIAISONS de la structure — les records CONECT,
+   les gabarits de résidus que NGL a lus —, jamais un tableau de noms : un oxygène
+   sort de la sous-catégorie quand l'un de ses voisins COVALENTS est un phosphore, ce
+   qui vaut pour le phosphate d'un POPC (O11 · O12 · O13 · O14) comme pour celui d'un
+   PI, d'une PS ou d'une SM (voir lipidSubSelections). Un fichier dont les liaisons ne
+   se lisent pas ne PROUVE rien : l'ensemble rendu est alors VIDE et aucun oxygène
+   n'est écarté sur un doute — la tête garde ce qu'elle avait. */
+const phosphateOxygenIndices = (structure, indices) => {
+  const out = new Set();
+  if (!structure || typeof structure.getAtomProxy !== 'function') return out;
+  (indices || []).forEach((i) => {
+    if (!Number.isFinite(i)) return;
+    try {
+      const a = structure.getAtomProxy(i);
+      if (!a || atomElement(a.atomname, a.element) !== 'O') return;
+      a.eachBondedAtom((b) => {
+        if (b && atomElement(b.atomname, b.element) === 'P') out.add(i);
+      });
+    } catch { /* un atome illisible ne retire rien */ }
+  });
+  return out;
+};
+
 const lipidSubCache = new WeakMap();
 const lipidSubSelections = (structure, lipidSele) => {
-  const none = { head: '', glycerol: '', acyl: '', named: false };
+  const none = { head: '', glycerol: '', acyl: '', heads: '', phosphorus: '', named: false };
   if (!structure || !lipidSele) return none;
   let per = lipidSubCache.get(structure);
   if (!per) { per = new Map(); lipidSubCache.set(structure, per); }
@@ -1761,7 +2116,7 @@ const lipidSubSelections = (structure, lipidSele) => {
   // about the file: keep the historical default, so the menu never claims a
   // non-standard naming out of a walk that saw no atom at all.
   if (!atoms.length) {
-    const blank = { head: '', glycerol: '', acyl: '', named: true };
+    const blank = { head: '', glycerol: '', acyl: '', heads: '', phosphorus: '', named: true };
     per.set(lipidSele, blank);
     return blank;
   }
@@ -1819,10 +2174,48 @@ const lipidSubSelections = (structure, lipidSele) => {
     else if (g === 'acyl') acyl.push(i);
     else head.push(i);
   });
+  /* ⚠ LA SOUS-CATÉGORIE « heads » — SA DÉFINITION A ÉTÉ REVUE DEUX FOIS.
+     Premier rapport de la session : « tra gli atomi che definiscono gli head groups deve
+     contenere solo il fosforo (che deve essere del colore definito per il fosforo nel
+     setting wheel), gli atomi di azoto e gli ossigeni ad eccezione degli ossigeni legati
+     al fosforo. Non deve contenere carboni come invece adesso contiene. »
+     Second rapport, celui-ci : « Dalla definizione di Head elimina il fosforo e crea una
+     classe a parte con solo il fosforo chiamata “P”. »
+     LE PHOSPHORE A DONC SA PROPRE RANGÉE (« P », juste à côté de « Heads » — voir
+     SECTION_SUBSECTIONS), et « heads » ne garde que les atomes POLAIRES d'une tête QUI NE
+     PENDENT PAS D'UN PHOSPHORE : l'AZOTE et les oxygènes qui ne pendent pas d'un phosphore
+     (l'O3 du cholestérol, les hydroxyles du glycérol d'un PG, les carboxyles d'une PS,
+     les OH d'un inositol, l'amide d'une SM). La chimie d'un POPC ne lui laisse donc QU'UN
+     atome de tête — son N —, son P partant à la classe « P » et ses quatre oxygènes de
+     phosphate (O11 · O12 · O13 · O14) revenant à la TÊTE ENTIÈRE, dont la rangée ne bouge
+     pas d'un atome. Le soufre d'un sulfolipide, les carbones de la choline et les
+     hydrogènes restent à la tête entière : ni eux ni aucun CARBONE n'entrent ici. Les
+     trois jeux (la tête, « heads », « P ») sont calculés ICI, avec les trois parts, donc
+     les rangées « Heads (N · O) » et « P » ne peuvent pas se contredire : la lecture des
+     oxygènes du phosphate est celle du graphe de liaisons (phosphateOxygenIndices). */
+  const HEAD_ELEMENTS = new Set(['N', 'O']);
+  const headPolar = atoms
+    .filter(([i, n, el]) => (part.get(i) || 'head') === 'head' && HEAD_ELEMENTS.has(atomElement(n, el)))
+    .map(([i]) => i);
+  const phosphateO = phosphateOxygenIndices(structure, headPolar);
+  const heads = headPolar.filter((i) => !phosphateO.has(i));
+  /* ⚠ LA CLASSE « P » — LE PHOSPHORE A LA SIENNE (le rapport de cette session, mot pour
+     mot : « Dalla definizione di Head elimina il fosforo e crea una classe a parte con
+     solo il fosforo chiamata “P” »). Ses atomes sont ceux que la MÊME marche a classés
+     « head » et dont l'élément est P : le phosphate d'un POPC (P), d'un PI, d'une PS ou
+     d'une SM. Rien d'autre n'y entre — ni ses oxygènes (O11 · O12 · O13 · O14, qui
+     restent à la tête entière), ni l'azote, ni un carbone. Elle se peint par « Atom
+     type » (SON défaut, voir SECTION_SUBSECTIONS), donc de la couleur que la roue ⚙
+     définit pour l'élément P — la pastille « P » de la table des éléments. */
+  const phosphorus = atoms
+    .filter(([i, n, el]) => (part.get(i) || 'head') === 'head' && atomElement(n, el) === 'P')
+    .map(([i]) => i);
   const sele = (list) => (list.length ? `@${list.join(',')}` : '');
   const out = {
-    head: sele(head), glycerol: sele(glycerol), acyl: sele(acyl), named,
+    head: sele(head), glycerol: sele(glycerol), acyl: sele(acyl),
+    heads: sele(heads), phosphorus: sele(phosphorus), named,
     headAtoms: new Set(head), glycerolAtoms: new Set(glycerol), acylAtoms: new Set(acyl),
+    headsAtoms: new Set(heads), phosphorusAtoms: new Set(phosphorus),
   };
   // The scheme colours from these very sets (see defineLipidGroupsScheme).
   lipidPartIndexStore.structure = structure;
@@ -2738,6 +3131,16 @@ const MANUAL_COLOR_HEX = 0x16a34a;
 // live stage with `stage.setParameters({ backgroundColor })`, and part of a saved
 // setup — while the 🧪 PyMOL panel writes the same state (so both entries agree).
 const BG_DEFAULT = '#f8fafc';
+/* ⬚ LA RAMPE DU FOND — les DEUX couleurs et la DIRECTION de la demande de cette
+   session : « in the background of the viewer allow gradients of two colors and
+   their direction ». La PREMIÈRE couleur n'est pas gardée ici : c'est `bgColor`
+   (le 🎨 ci-dessus, que le panneau 🧪 PyMOL écrit aussi), donc il n'y a jamais
+   deux « fonds » à tenir d'accord — la rampe PART de la couleur de la scène.
+   Le reste — la seconde couleur, l'angle, l'interrupteur — vit sous cette clé,
+   en JSON, et il est VALIDÉ à chaque lecture par utils/viewerBackground (comme
+   le brouillard ou le fond : une valeur bricolée retombe sur le défaut par
+   défaut, jamais sur un fond cassé). */
+const BG_GRADIENT_KEY = 'labViewerBgGradient';
 
 // ---- Customisable viewer colours (persisted) --------------------------------
 // NGL's built-in "sstruc" colour scheme uses hard-coded colours. To let the user
@@ -3380,6 +3783,36 @@ const loadPartPalette = (key, defaults) => {
   return Object.fromEntries(Object.keys(defaults).map((k) => [k, { ...defaults[k] }]));
 };
 
+/* ⛭ LES VALEURS PAR DÉFAUT SONT CELLES DE L'UTILISATEUR (le rapport de cette session)
+   « i colori attualmente definiti a mano da me nel setting wheel devono essere i colori
+   di default (non quelli che avevi messo tu quando hai scritto il codice) ».
+
+   Une palette ENREGISTRÉE par le navigateur EST donc son propre défaut : les ↺ de la
+   roue ⚙ — et le bouton « ↺ Defaults » de chaque section — ramènent aux couleurs de
+   l'utilisateur, jamais aux tables du code. Celles-ci ne servent plus qu'au TOUT PREMIER
+   démarrage (aucune palette enregistrée : il n'y a alors rien d'autre à proposer) et aux
+   clés qu'un poste n'a jamais touchées, puisque la fusion garde, entrée par entrée, la
+   valeur de l'utilisateur quand elle en est une.
+
+   La photographie est prise UNE fois par chargement de page (voir paletteDefaults) :
+   les couleurs sont celles du dernier enregistrement, donc appuyer sur ↺ après avoir
+   bougé une pastille de la session revient bien aux couleurs enregistrées, et non à ce
+   qui est à l'écran (un ↺ qui ne ferait rien serait un bouton mort). */
+const paletteUserDefaults = (key, codeDefaults, merge = mergePalette) => {
+  try {
+    const raw = JSON.parse(localStorage.getItem(key) || 'null');
+    if (raw && typeof raw === 'object') return merge(codeDefaults, raw);
+  } catch { /* privé / illisible → les tables du code */ }
+  return merge(codeDefaults, null);
+};
+const paletteDefaultCache = new Map();
+const paletteDefaults = (key, codeDefaults, merge = mergePalette) => {
+  if (!paletteDefaultCache.has(key)) {
+    paletteDefaultCache.set(key, paletteUserDefaults(key, codeDefaults, merge));
+  }
+  return paletteDefaultCache.get(key);
+};
+
 /* ---- Which NGL colour SCHEME a per-molecule « Colour by » choice is ---------
    The Molecules bar offers the NGL metaphors (chain / residue / hydrophobicity)
    plus the HOUSE ones, and they all have to survive a scheme that could not be
@@ -3420,6 +3853,12 @@ const schemeForColorMode = (mode) => {
      lipide. */
   if (mode === 'chain') return chainSchemeKey || 'chainid';
   if (mode === 'charge') return chargeSchemeKey || elementSchemeKey || 'element';
+  /* « Atom charge » — la charge PARTIELLE de chaque atome, la table du ⚡ ESP lue atome
+     par atome. Son repli est le colormaker `partialcharge` de NGL LUI-MÊME (la même
+     rampe rouge → blanc → bleu sur `atom.partialCharge`, ±1 e), et non un aplat
+     d'éléments : c'est la lecture la plus proche que NGL connaisse, et c'est de toute
+     façon ce qu'une version sans le schéma maison aurait montré. */
+  if (mode === 'atomcharge') return atomChargeSchemeKey || 'partialcharge';
   if (mode === 'lipidtype') return lipidClassSchemeKey || elementSchemeKey || 'element';
   return mode;
 };
@@ -3431,7 +3870,7 @@ const schemeForColorMode = (mode) => {
 
      • protein        → general · backbone · side chains
      • nucleic acid   → general · backbone · DNA/RNA bases · DNA/RNA ribose
-     • lipid          → general · phospholipid headgroups · acyl chains · glycerol
+     • lipid          → general · phospholipid headgroups · heads (N · O) · P · acyl chains · glycerol
      • sugar          → one row (the whole molecule)
      • ligand         → one row
      • water          → one row
@@ -3510,8 +3949,10 @@ const DEFAULT_SECTION_TINTS = {
   ligand: 0xeef1f5,    // neutral — the request names no colour for a ligand
 };
 // How much white each row of a space mixes into the base tint. The first entry is
-// the GENERAL row (the most tinted), the last one is the deepest row a kind has.
-const SECTION_TINT_STEPS = [0.45, 0.62, 0.74, 0.84];
+// the GENERAL row (the most tinted), the last one is the deepest row a kind has —
+// SIX entries since the Lipids menu gained its « P » row, à côté de « Heads (N · O) »
+// (a kind with fewer rows simply stops earlier; a kind with more reuses the last shade).
+const SECTION_TINT_STEPS = [0.45, 0.62, 0.74, 0.84, 0.9, 0.94];
 // The seven kinds in the order the wheel draws their swatches.
 const SECTION_TINT_ORDER = ['protein', 'nucleic', 'lipid', 'sugar', 'water', 'ion', 'ligand'];
 const SECTION_TINT_LABELS = {
@@ -3580,6 +4021,7 @@ const COLOR_LABELS = {
   gradient: 'Gradient (first → last)',
   rainbow: 'Rainbow (first → last)',
   charge: 'Charge',
+  atomcharge: 'Atom charge',
 };
 /* The style sets of the request, named after the rows that are allowed to use them.
    ⚠ LE SQUELETTE N'A PLUS DE LISTE À LUI (le rapport : « in the styling window
@@ -3596,6 +4038,19 @@ const STYLES = {
   bases: ['hide', 'base', 'rings', 'ball+stick', 'licorice', 'line', 'spacefill', 'sphere'],
   ribose: ['hide', 'base', 'plates', 'ball+stick', 'licorice', 'line', 'spacefill', 'sphere'],
   sidechains: ['hide', 'ball+stick', 'licorice', 'line', 'spacefill', 'sphere'],
+  /* « HEADS (N · O) » ET « P » N'ONT QUE LA SPHÈRE (le rapport de cette session) : « il
+     loro stile sarà semplicemente sphere ma dovrò poter regolare la dimensione ed il
+     materiale delle spheres ». La liste est donc celle-là, et rien de plus : les deux
+     réglages demandés (R◯ = la taille des billes, le panneau de matériau du rang) sont
+     ceux que TOUTE rangée porte déjà. Les DEUX rangées qui s'en servent sont celles de la
+     chimie polaire d'une tête — « Heads (N · O) » (l'azote et les oxygènes qui ne pendent
+     pas d'un phosphore) et « P » (le phosphore, sa classe à part). ⚠ AUCUNE DES DEUX N'EST
+     ANCRÉE (voir sectionRowSele) : leur définition est CLOSE — aucun carbone —, or le pont
+     d'une rangée lui ajoutait les atomes voisins auxquels ses atomes pendent, c'est-à-dire
+     le C3 du glycérol et les carbones de la choline. Et une sphère ne dessine aucun bâton :
+     il n'y avait rien à rattacher. `hide` reste offert comme partout : une rangée qu'on ne
+     peut pas éteindre serait un piège. */
+  heads: ['hide', 'sphere'],
   small: ['hide', 'ball+stick', 'licorice', 'line', 'spacefill', 'sphere', 'surface', 'mesh'],
   ion: ['hide', 'spacefill'],   // its spacefill IS its sphere, labelled « Sphere »
 };
@@ -3628,22 +4083,29 @@ const ATOM_DRAW_STYLES = ['ball+stick', 'licorice', 'line', 'spacefill', 'sphere
 // entière disparaissait) ; c'est pourquoi un parcours ne se cède pas.
 // The « Color by » sets, one per row of the request. NOTE: « Lipid type » is NOT
 // offered on water (the request corrected exactly that), and « Charge » exists for
-// ions alone — it is what tells a Na⁺ from a Cl⁻ in the same solvent.
+// ions alone — it is what tells a Na⁺ from a Cl⁻ in the same solvent. « Atom charge »
+// (the request of this session, « In the “molecule styling” window add a “color by”
+// option: atom charge. ») is offered on EVERY row of EVERY kind: a partial charge
+// exists for every atom of every molecule — the file's own when it carries one,
+// NGL's CHARMM table for a protein, the formal charge of an ion, the
+// electronegativity estimate for anything else — so the reading says something on a
+// protein, a nucleic acid, a ligand, a lipid, a sugar, a solvent and a salt alike
+// (see the lab-atom-charge scheme below).
 const COLORS = {
-  protein: ['solid', 'element', 'chain', 'residue', 'sstruc', 'hydrophobicity', 'esp', 'gradient', 'rainbow'],
-  proteinSide: ['solid', 'element', 'chain', 'residue'],
-  nucleic: ['solid', 'element', 'chain', 'basetype', 'nucform', 'hydrophobicity', 'esp', 'gradient', 'rainbow'],
-  nucleicParts: ['solid', 'element', 'chain', 'basetype'],
-  lipid: ['solid', 'element', 'chain', 'lipidtype', 'hydrophobicity', 'esp'],
-  lipidParts: ['solid', 'element', 'lipidtype'],
-  sugar: ['solid', 'element', 'chain', 'sugar', 'hydrophobicity', 'esp'],
+  protein: ['solid', 'element', 'atomcharge', 'chain', 'residue', 'sstruc', 'hydrophobicity', 'esp', 'gradient', 'rainbow'],
+  proteinSide: ['solid', 'element', 'atomcharge', 'chain', 'residue'],
+  nucleic: ['solid', 'element', 'atomcharge', 'chain', 'basetype', 'nucform', 'hydrophobicity', 'esp', 'gradient', 'rainbow'],
+  nucleicParts: ['solid', 'element', 'atomcharge', 'chain', 'basetype'],
+  lipid: ['solid', 'element', 'atomcharge', 'chain', 'lipidtype', 'hydrophobicity', 'esp'],
+  lipidParts: ['solid', 'element', 'atomcharge', 'lipidtype'],
+  sugar: ['solid', 'element', 'atomcharge', 'chain', 'sugar', 'hydrophobicity', 'esp'],
   // A LIGAND is not a sugar: offering « Sugar type » on its row was a copy of the
   // sugar list (the report: « in the ligand menu there is color by sugar type
   // (should not be there) ») — the per-sugar identity palette only says something
   // where sugars are drawn, and the Sugars menu is the one that draws them.
-  ligand: ['solid', 'element', 'chain', 'hydrophobicity', 'esp'],
-  water: ['solid', 'element', 'hydrophobicity', 'esp'],
-  ion: ['solid', 'element', 'charge'],
+  ligand: ['solid', 'element', 'atomcharge', 'chain', 'hydrophobicity', 'esp'],
+  water: ['solid', 'element', 'atomcharge', 'hydrophobicity', 'esp'],
+  ion: ['solid', 'element', 'atomcharge', 'charge'],
 };
 
 /* ---- The « Color by » of a SELECTIONS row ------------------------------------
@@ -3692,6 +4154,25 @@ const SECTION_SUBSECTIONS = {
   lipid: [
     { sub: 'general', label: 'General', styles: STYLES.small, colors: COLORS.lipid, def: { style: 'ball+stick', colorBy: 'lipidtype' }, sele: '' },
     { sub: 'head', label: 'Phospholipid headgroups', styles: STYLES.sidechains, colors: COLORS.lipidParts, def: { style: 'ball+stick', colorBy: 'lipidtype' }, sele: 'head' },
+    /* « HEADS (N · O) » — LA SOUS-CATÉGORIE DEMANDÉE PAR CE RAPPORT, REVUE PAR LE DERNIER :
+       les SEULS atomes polaires d'un groupe de tête QUI NE PENDENT PAS D'UN PHOSPHORE —
+       l'azote et les oxygènes « libres » de la tête ; LE PHOSPHORE, LUI, A SA PROPRE RANGÉE
+       (« P », juste en dessous) —, dessinés en SPHÈRES dont la taille (R◯) et le matériau se
+       règlent comme pour toute rangée. Sa couleur vient de la roue ⚙, et c'est « Atom type »
+       — SON DÉFAUT : la bille de l'AZOTE y porte la couleur que la roue ⚙ définit pour cet
+       élément (la table « Atom types (element colours) », 0x2f61d9 par défaut), celle des
+       oxygènes la leur — « Solid » et « Lipid type » restant offerts comme sur les autres
+       parties. Le style par défaut est la sphère, et la liste des styles offerts est celle-là
+       (`STYLES.heads`). */
+    { sub: 'heads', label: 'Heads (N · O)', styles: STYLES.heads, colors: COLORS.lipidParts, def: { style: 'sphere', colorBy: 'element' }, sele: 'heads' },
+    /* « P » — LA CLASSE À PART (le rapport de cette session, mot pour mot : « Dalla
+       definizione di Head elimina il fosforo e crea una classe a parte con solo il fosforo
+       chiamata “P” ») : LE SEUL PHOSPHORE, celui du phosphate de chaque lipide — aucun de
+       ses oxygènes, aucun azote, aucun carbone (voir lipidSubSelections). Mêmes réglages que
+       « Heads » — la sphère pour seul style, la taille (R◯) et le matériau de toute rangée —
+       et la MÊME coloration par défaut : « Atom type », donc la couleur que la roue ⚙ définit
+       pour l'élément P (0xe08a20 par défaut) ; « Solid » et « Lipid type » restent offerts. */
+    { sub: 'phosphorus', label: 'P', styles: STYLES.heads, colors: COLORS.lipidParts, def: { style: 'sphere', colorBy: 'element' }, sele: 'phosphorus' },
     { sub: 'tail', label: 'Acyl chains', styles: STYLES.sidechains, colors: COLORS.lipidParts, def: { style: 'ball+stick', colorBy: 'lipidtype' }, sele: 'tail' },
     { sub: 'glycerol', label: 'Glycerol', styles: STYLES.sidechains, colors: COLORS.lipidParts, def: { style: 'ball+stick', colorBy: 'lipidtype' }, sele: 'glycerol' },
   ],
@@ -4357,10 +4838,21 @@ const registerGradientScheme = (NGL) => {
    ramp and the same ± limits — but gives EVERY atom a charge:
 
      1. the FILE's own partial charge when it carries one (PQR · charged MOL2 /
-        SDF — NGL keeps it in `atom.partialCharge`), and NGL's CHARMM-derived
-        table for a protein, read from NGL's OWN instance so the protein map of
-        the viewer does not move by a thousandth;
-     2. an ESTIMATE for everything else, read from the ELEMENT alone — a ligand
+        SDF — NGL keeps it in `atom.partialCharge`) : le fichier gagne toujours ;
+     2. pour une PROTÉINE, LE MODÈLE DE CHARGES DE LA PAGE — `partialChargesOf`
+        (utils/forceFieldKcal), la fonction même qui donne ses charges au champ
+        et dont le panneau ⚙ lit sa charge nette, appliquée au GRAPHE LU SUR LA
+        STRUCTURE (voir `espProteinChargesOf`). C'est le correctif de cette
+        session : la table de NGL ne décrit que les atomes LOURDS du squelette
+        (CHARMM), donc un HYDROGÈNE protéique explicite et l'`OXT` du terminus C
+        y valent 0 — la surface était blanche sur les atomes qui portent
+        justement les pôles amide et carboxylate, et le survol annonçait
+        « q = 0.000 e » pour un atome qui porte +0.2 e. Le modèle de la page
+        connaît tout atome du graphe ET les groupes formels que le graphe montre
+        (un N-terminal protoné est un ammonium, un C-terminal déprotoné un
+        carboxylate) : la moitié protéique de la table est donc désormais la
+        lecture du panneau, au chiffre près ;
+     3. an ESTIMATE for everything else, read from the ELEMENT alone — a ligand
         usually ships neither charges nor bonds (no CONECT in a PDB), so nothing
         else can be read. The estimate is the electronegativity difference to the
         carbon / hydrogen frame of an organic molecule, q = 0.35 × (2.50 − χ), the
@@ -4368,13 +4860,18 @@ const registerGradientScheme = (NGL) => {
         (an alcohol oxygen −0.28, an amide hydrogen +0.26, a carbonyl oxygen
         −0.55). The charges of ONE residue are then shifted so the residue sums to
         zero — a ligand is not an ion;
-     3. and for a SINGLE-ATOM residue a formal charge is the honest answer (Na⁺
+     4. and for a SINGLE-ATOM residue a formal charge is the honest answer (Na⁺
         +1, Cl⁻ −1, Mg²⁺ +2 …), which is what makes the salt of a membrane system
         show its real pole.
 
    The estimate is APPROXIMATE — as approximate as NGL's own, which says so in its
    own source — but it is not zero: a red pole sits on every oxygen, a blue one on
-   every sodium. A file that carries charges is never estimated. */
+   every sodium. A file that carries charges is never estimated.
+   ⚠ LE MODÈLE DE LA PAGE EST DÉPOSÉ, PAS DEVINÉ — `espChargesFor` vit au niveau du
+   MODULE (les schémas NGL le lisent), donc il ne voit pas l'état React du ⚙ : le
+   viewer écrit le modèle dans `espChargeModelStore` (voir plus bas), exactement
+   comme les palettes de la roue passent par `chargeColorStore`. Sans ce dépôt,
+   la table retombe sur celle de NGL — le comportement d'avant, jamais un vide. */
 const ESP_MAX_RADIUS = 12;            // Å — the cutoff NGL's own scheme uses
 const ESP_KCAL = 332;                 // e²/(Å·kcal/mol) — NGL's own conversion factor
 const ESP_NEUTRAL_REFERENCE = 2.50;   // the carbon / hydrogen frame of an organic molecule
@@ -4405,21 +4902,72 @@ const espHeteroChargeOf = (element) => {
   if (!Number.isFinite(x)) return 0;
   return Math.max(-1, Math.min(1, ESP_CHARGE_PER_UNIT * (ESP_NEUTRAL_REFERENCE - x)));
 };
-// The charges of ONE structure — the file's / the protein's (NGL) + the estimate.
-// Cached per structure: the walk is O(atoms) and a rebuild must never repeat it.
+/* 🧪 LE MODÈLE DE CHARGES DU CHAMP, VU DEPUIS LES SCHÉMAS — `espChargesFor` vit au
+   niveau du MODULE (les schémas NGL, enregistrés une fois pour toutes, le lisent),
+   donc il ne voit pas l'état React du panneau ⚙ — et pourtant la table qu'il rend
+   doit être CELLE DU CHAMP, sinon la surface, la rampe « Atom charge » et le survol
+   diraient autre chose que la charge nette du panneau. D'où ce magasin, le jumeau de
+   `chargeColorStore` : le viewer le remplit pendant ses rendus (voir l'effet qui le
+   remplit, à côté des autres magasins de palettes) et les schémas le lisent tel quel.
+     · `geometryOf`      — le lecteur du GRAPHE de la structure (`geometryOfStructure`,
+       le même que les quatre gestes du champ : éléments, liaisons, coordonnées) ;
+     · `partialChargesOf` — la lecture PURE du module (utils/forceFieldKcal) ;
+     · `ph`              — le pH de la case ⚙ (`null` = « la chimie que le graphe
+       montre », le défaut du module) : deux tables ne peuvent pas être peintes sous
+       deux pH différents.
+   ⚠ Modèle absent (null) : la table de NGL reste seule juge — le comportement d'avant
+   ce correctif, jamais un vide. C'est aussi ce qui rend la fonction testable telle
+   quelle : la suite y dépose le VRAI lecteur et le VRAI module. */
+const espChargeModelStore = { geometryOf: null, partialChargesOf: null, ph: null };
+/** 🧪 LA TABLE DE CHARGES D'UNE PROTÉINE, PAR LE MODÈLE DE LA PAGE — le graphe de la
+ *  structure (éléments + liaisons, lus par le viewer) donné à `partialChargesOf`, le
+ *  même appel que le panneau ⚙ : PEOE sur les atomes, plus la charge des groupes
+ *  formels que le graphe montre (ammonium d'un N-terminal protoné, carboxylate d'un
+ *  C-terminal déprotoné, guanidinium, phosphate…). C'est LUI qui donne enfin une
+ *  charge aux hydrogènes protéiques et à l'`OXT`, que la table de NGL laissait à 0.
+ *  Rend `null` — jamais une table inventée — quand le modèle n'est pas déposé, quand
+ *  la structure n'a pas de graphe lisible (un fichier sans CONECT : NGL reste alors
+ *  seul juge, exactement comme avant), ou quand le module refuse de charger des
+ *  atomes isolés (`method: 'zero'`).
+ *  ⚠ CE QUE ÇA COÛTE, MESURÉ : PEOE sur un graphe linéaire synthétique — **27 ms** à
+ *  2 000 atomes, **119 ms** à 20 000, **193 ms** à 40 000. C'est UNE fois par structure
+ *  et par modèle (l'entrée est mise en cache, voir espChargeCache), au premier lecteur
+ *  — le survol, la rampe « Atom charge » ou ⚡ ESP —, et c'est le même appel que le
+ *  panneau ⚙ fait déjà sur la molécule à l'écran. */
+const espProteinChargesOf = (structure, model) => {
+  const m = model || null;
+  if (!m || typeof m.partialChargesOf !== 'function' || typeof m.geometryOf !== 'function') return null;
+  const geom = m.geometryOf(structure);
+  if (!geom || !geom.bonds || !geom.bonds.length) return null;
+  let read = null;
+  try { read = m.partialChargesOf({ elements: geom.elements, bonds: geom.bonds, ph: m.ph }); } catch { read = null; }
+  if (!read || !read.charges || read.method === 'zero') return null;
+  return read.charges;
+};
+// The charges of ONE structure — the file's / the field's (a protein) / NGL's + the
+// estimate. Cached per structure AND per model: the walk is O(atoms) and a rebuild
+// must never repeat it, but a pH change (or the model arriving a render late) MUST
+// recompute it — hence `ph` / `modelled` in the entry, which are what the hit checks.
 const espChargeCache = new WeakMap();
 const espChargesFor = (structure) => {
+  const model = espChargeModelStore;
+  const ph = model.ph == null ? null : Number(model.ph);
+  const modelled = typeof model.partialChargesOf === 'function' && typeof model.geometryOf === 'function';
   const hit = espChargeCache.get(structure);
-  if (hit) return hit;
+  if (hit && hit.ph === ph && hit.modelled === modelled) return hit;
   const NG = typeof window !== 'undefined' ? window.NGL : null;
   if (!NG || !structure || typeof structure.eachAtom !== 'function') return null;
-  // NGL's OWN instance first: its `charges` array already holds the file's partial
-  // charges AND its CHARMM values for every protein atom, so the protein map of the
-  // viewer is kept to the digit (its dummy amide hydrogens included).
+  // NGL's OWN instance first: its `charges` array already holds the FILE's partial
+  // charges for the atoms that carry one, and its dummy amide hydrogens (a protein
+  // nitrogen that has no explicit H gets a placed one) — that map is kept as it is.
   let base = null;
   try { base = NG.ColormakerRegistry.getScheme({ scheme: 'electrostatic', structure }); } catch { base = null; }
   if (!base || !base.charges) return null;
   const charges = new Float32Array(base.charges);
+  /* 🧪 LA PROTÉINE PASSE AU MODÈLE DE LA PAGE (voir espProteinChargesOf) : la table
+     de NGL ne décrit que les atomes lourds du squelette, celle-ci décrit tout atome
+     du graphe — H explicites et OXT compris. */
+  const field = modelled ? espProteinChargesOf(structure, model) : null;
   // …then the atoms NGL left at zero that no file charge describes: the hetero
   // atoms. Two passes, because the estimate of ONE residue is shifted so that the
   // residue sums to zero (an ion is excepted — it keeps its formal charge).
@@ -4429,7 +4977,11 @@ const espChargesFor = (structure) => {
   structure.eachAtom((a) => {
     const pc = a.partialCharge;
     if (pc !== null && pc !== undefined) return;               // the file's own charge
-    if (a.isProtein && a.isProtein()) return;                  // NGL's CHARMM table
+    if (a.isProtein && a.isProtein()) {
+      const q = field ? field[a.index] : null;                 // le modèle de la page…
+      if (Number.isFinite(q)) charges[a.index] = q;            // …sinon la table de NGL
+      return;
+    }
     const name = String(a.resname || '').trim().toUpperCase();
     const heavy = String(a.element || '').toUpperCase() !== 'H';
     const formal = heavy ? ESP_ION_CHARGES[name] : undefined;   // Na⁺ · Cl⁻ …
@@ -4442,7 +4994,7 @@ const espChargesFor = (structure) => {
   own.forEach(([index, resno, q]) => {
     charges[index] = resno === null ? q : q - (sum.get(resno) || 0) / Math.max(1, count.get(resno) || 1);
   });
-  const out = { charges, base, hetero: own.length };
+  const out = { charges, base, hetero: own.length, ph, modelled };
   espChargeCache.set(structure, out);
   return out;
 };
@@ -5757,7 +6309,11 @@ const applyMaterialToRep = (el, mat) => {
    stockage : un localStorage bricolé ne peut ni inventer un style, ni écrire un
    preset inconnu, ni faire planter une reconstruction. */
 const PYMOL_SESSION_KEY = 'labViewerPymolSession';
-const PYMOL_SESSION_VERSION = 1;
+/* LA VERSION QUI ÉCRIT L'EMPREINTE DE LA SESSION (le monde qui l'a créée, voir
+   pymolSessionOwnerOf) ; `PYMOL_SESSION_V1` est la version d'AVANT, dont les entrées
+   restent lisibles — mais sous une clé de CONTEXTE seulement (pymolSessionAcceptable). */
+const PYMOL_SESSION_VERSION = 2;
+const PYMOL_SESSION_V1 = 1;
 /* ⚠⚠ LA SESSION EST CELLE D'UNE INSTANCE, PAS CELLE DE L'APPLICATION — le rapport de
    cette session : « Saving the selection window in each session was meant at each
    instance level, not general. » Une clé unique faisait revenir les fenêtres de
@@ -5917,12 +6473,18 @@ const normalizeSelOverrides = (raw) => (Array.isArray(raw) ? raw : [])
   .slice(0, 512);
 const emptyPymolSession = () => ({
   selections: [], selStyles: {}, selOverrides: [], script: '', active: false, autoShow: true, name: '',
+  /* L'EMPREINTE DE LA SESSION (voir pymolSessionOwnerOf) : le monde qui l'a créée. */
+  owner: '', scope: 'viewer',
 });
 const loadPymolSession = (key) => {
   const base = emptyPymolSession();
   try {
     const raw = JSON.parse(localStorage.getItem(key || PYMOL_SESSION_KEY) || 'null');
-    if (!raw || typeof raw !== 'object' || raw.v !== PYMOL_SESSION_VERSION) return base;
+    if (!raw || typeof raw !== 'object') return base;
+    /* LES DEUX VERSIONS SE LISENT : la 2 écrit l'empreinte, la 1 (et toute entrée sans
+       empreinte) est la mémoire d'avant — elle reste lue, mais sous une clé de CONTEXTE
+       seulement (voir pymolSessionAcceptable). Tout le reste est refusé. */
+    if (raw.v !== PYMOL_SESSION_VERSION && raw.v !== PYMOL_SESSION_V1) return base;
     return {
       selections: normalizeSelNames(raw.selections),
       selStyles: normalizeSelStyles(raw.selStyles),
@@ -5931,6 +6493,8 @@ const loadPymolSession = (key) => {
       active: raw.active === true,
       autoShow: raw.autoShow !== false,
       name: sessionText(raw.name, 128),
+      owner: sessionText(raw.owner, 200),
+      scope: (raw.scope === 'experiment' || raw.scope === 'condition') ? raw.scope : 'viewer',
     };
   } catch { return base; }
 };
@@ -5939,16 +6503,63 @@ const savePymolSession = (s, key) => {
     localStorage.setItem(key || PYMOL_SESSION_KEY, JSON.stringify({ v: PYMOL_SESSION_VERSION, ...(s || {}) }));
   } catch { /* private mode: the session simply is not remembered */ }
 };
+/* ⛭ LA SESSION PORTE SON PROPRIÉTAIRE — l'empreinte qui la rend intransportable.
+   LE RAPPORT DE CETTE SESSION : « La finestra selections che si genera facendo delle
+   selezioni con pymol, continua a comparire in tutti gli esperimenti e questo non deve
+   succedere. Deve comparire solo nelle instances dell'esperimento dove é stata creata e
+   non altrove! »
+
+   La clé de stockage dit déjà dans quel monde on écrit (expérience · condition), mais une
+   CLÉ peut se répéter : l'application groupe les instances par leur NOM, une expérience
+   sans nom n'a que sa condition, et un viewer monté hors page d'expérience n'a que la
+   clé générale. La session enregistrée porte donc, EN PLUS de sa clé, l'identité du monde
+   qui l'a créée (`owner` · `scope`), et la relecture REFUSE une session dont l'empreinte
+   n'est pas celle d'ici :
+
+     • `experiment` (projet · nom) — toutes les CONDITIONS de cette expérience la
+       partagent, et aucune autre expérience ne la voit ;
+     • `condition`  — l'expérience n'a pas de nom : elle ne vaut que pour SA condition ;
+     • `viewer`     — aucune page d'expérience : elle ne vaut que pour le viewer nu.
+
+   Une session écrite par une version ANTÉRIEURE (aucune empreinte) n'est lue que sous une
+   clé de CONTEXTE — jamais sous la clé générale quand le viewer SAIT où il est : c'est la
+   mémoire d'avant, et elle reste celle de l'expérience dont la clé la porte (rien n'est
+   perdu pour l'utilisateur, et rien n'entre dans une autre expérience).
+   PURE — elle ne lit que ce que la page donne au viewer —, donc exécutée par la sonde
+   (_pymol_selections_test.mjs) en même temps que les clés. */
+const pymolSessionOwnerOf = (instanceKey, driveNaming) => {
+  const exp = pymolSessionExperimentSlug(driveNaming);
+  if (exp) return { scope: 'experiment', owner: exp };
+  const slug = pymolSessionInstanceSlug(instanceKey, driveNaming);
+  if (slug) return { scope: 'condition', owner: slug };
+  return { scope: 'viewer', owner: '' };
+};
+/* CETTE SESSION PEUT-ELLE ÊTRE LUE ICI ? (clé + empreinte, les deux autorités) */
+const pymolSessionAcceptable = (one, key, owner) => {
+  const here = owner && typeof owner === 'object' ? owner : { scope: 'viewer', owner: '' };
+  // 1. La session DIT à qui elle appartient : c'est la seule autorité quand elle le dit.
+  if (one.owner) return here.scope !== 'viewer' && one.owner === here.owner;
+  // 2. Aucune empreinte (version antérieure) : la CLÉ décide, et la clé générale n'entre
+  //    dans aucune page d'expérience — c'est elle qui faisait apparaître les fenêtres
+  //    d'une AUTRE expérience.
+  if (key === PYMOL_SESSION_KEY && here.scope !== 'viewer') return false;
+  return true;
+};
 /* LA PREMIÈRE SESSION ENREGISTRÉE PARMI LES CLÉS, dans l'ordre de pymolSessionKeys :
    l'expérience d'abord, l'instance ensuite (et la générale seulement quand rien ne dit
    où l'on est). Une session VIDE à la clé de l'expérience ne cache donc jamais celle
    qu'une version précédente avait écrite pour cette condition, et un viewer neuf
    (deux clés vides) repart vierge. */
-const loadPymolSessionFor = (keys) => {
+const loadPymolSessionFor = (keys, owner) => {
   const list = (Array.isArray(keys) ? keys : [keys]).filter((k) => typeof k === 'string' && k);
   for (let i = 0; i < list.length; i += 1) {
     const one = loadPymolSession(list[i]);
-    if (one.selections.length || one.script || one.selOverrides.length || one.active) return one;
+    if (!one.selections.length && !one.script && !one.selOverrides.length && !one.active) continue;
+    /* ⚠ UNE SESSION D'AILLEURS N'EST PAS LUE (voir pymolSessionAcceptable) : la clé ET
+       l'empreinte doivent dire le monde où l'on est — sans quoi les fenêtres de
+       sélection d'une AUTRE expérience reviendraient, le défaut même du rapport. */
+    if (!pymolSessionAcceptable(one, list[i], owner)) continue;
+    return one;
   }
   return emptyPymolSession();
 };
@@ -6206,7 +6817,7 @@ const membraneOverridesFor = (structure, named, measured, base) => {
     map[key] = clause;
     const whole = nglSeleCount(structure, scripted);
     const heads = nglSeleCount(structure, clause);
-    fixed.set(key, `« ${name} » = \`${expr}\` does not select the headgroups: ${whole >= 0 ? `${whole} atoms — the whole lipid, tails included` : 'it reaches outside the measured headgroups'}. The MEASURED headgroups replace it (${heads >= 0 ? `${heads} atoms` : 'the heads of both leaflets'}), the atoms the Lipids menu itself calls heads`);
+    fixed.set(key, `« ${name} » = \`${expr}\` does not select the headgroups: ${whole >= 0 ? `${whole} atoms — the whole lipid, tails included` : 'it reaches outside the measured headgroups'}. The MEASURED headgroups replace it (${heads >= 0 ? `${heads} atoms` : 'the heads of both leaflets'}), the atoms the Lipids menu itself calls headgroups`);
   });
   return { map, fixed };
 };
@@ -6314,7 +6925,12 @@ nmrAtom = match ? `${match[1]}${GREEK_MAP[match[2]]}${match[3]}` : upper;
 const tokens = [nmrAtom];
 if (moleculeType === 'dna' || moleculeType === 'rna') tokens.push(`${nmrAtom}`);
 const keys = buildKeys(ri, tokens, moleculeType, res.char);
-return { ri, keys, label: `${res.id || res.char}${resno} ${nmrAtom}`, nmrAtom };
+/* ⚠ LE NUMÉRO N'EST ÉCRIT QU'UNE FOIS — `res.id` est DÉJÀ « Cys17 » (le code à trois
+   lettres suivi de son numéro, la forme de toute l'application) : y rajouter `resno`
+   écrivait « Cys1717 SG ». Sans identifiant lisible, c'est la lettre et le numéro qui
+   le composent — et l'étiquette reste « Cys17 SG », la forme NMR standard. */
+const resTag = res.id || `${res.char || ''}${resno}`;
+return { ri, keys, label: `${resTag} ${nmrAtom}`.trim(), nmrAtom };
 };
 
 const mapAtomToNmrKeys = (atom, parsedSeq, moleculeType, namingConvention) => {
@@ -6775,18 +7391,25 @@ const stripHighlightClauses = (keys, residueTicks) => {
 /* ============================================================================
    TOOLBAR BUILDING BLOCKS — the viewer UI is organised in a few numbered
    ROWS, so the command bar never eats the 3D canvas. The rows of THIS session
-   (the request: « the viewer menu must be drastically reduced and organised …
-   the “analysis” and “modify” can be in one line but clearly separated … the
-   “styles” section can fit inside the line of the “scene” section … the movie
-   maker section can fit in the line of the general section »):
-     · §1 General — what is loaded, cleared and filmed: PDB file(s) / PDB ID ·
-       Trajectory · ⬇ PDB · 🗑 Clear · 🗑 Delete PDB, AND the whole 🎞 Movie maker
-       row on the SAME line (it films the structure the row loads);
-     · §2 Toolbar — TWO lines of clearly separated groups, each one a small
-       tinted box (the separator between two boxes stays a hairline):
-         line 1:  🌫 Scene  │  🎨 Styles (the former « 🎨 Predefined styles »
-                  button: name · 🎨 Cumulative · 📷 Snapshot · 💾 · 📂 · 🗑 · ⬇ ⬆);
-         line 2:  ✏️ Modify │ 📏 Analysis │ 🧪 PyMOL;
+   (the request: « the viewer menu must be drastically reduced and organised … the
+   “analysis” and “modify” can be in one line but clearly separated … the movie maker
+   section can fit in the line of the general section … compact the commands in the
+   scene section so that they fit in one line without the need to use the scrolling
+   bar. Move the styles section in another line and add to it a Movie button. If
+   clicked the movie button must show the movie maker commands. In this way we can
+   get rid of the movie maker line and save space. »):
+     · §1 General — what is loaded and cleared: PDB file(s) / PDB ID · Trajectory ·
+       ⬇ PDB · 🗑 Clear · 🗑 Delete PDB. ⚠ THE 🎞 MOVIE MAKER ROW IS NO LONGER HERE:
+       it was the line this session removes, and it is now the panel the 🎞 Movie
+       button of 🎨 Styles opens (closed by default, so §1 costs one line, period);
+     · §2 Toolbar — ONE row per group, each one a small tinted box closed on itself
+       (the separator between two boxes is the gap alone):
+         row 1:  🌫 Scene (COMPACT — each toggle shows its state by its fill and its
+                 `aria-pressed`, and its word lives in the tooltip);
+         row 2:  🎨 Styles (the former « 🎨 Predefined styles » button: name ·
+                 🎨 Cumulative · 📷 Snapshot · 💾 · 📂 · 🗑 · ⬇ ⬆) + 🎞 Movie, the
+                 button that opens the film of poses full width UNDER this row;
+         row 3:  ✏️ Modify │ 📏 Analysis │ 🧪 PyMOL;
      · ▶ Trajectory playback — the ▶ Play bar, with 🎬 Video (the same run saved
        as one file) right next to it.
    The old « 2 · Molecular Styling » accordion (Hide everything / ESP /
@@ -6803,7 +7426,18 @@ const stripHighlightClauses = (keys, residueTicks) => {
    la rangée fait : elle est maintenant la BULLE du titre de la rangée. Le texte de
    la demande n'a pas bougé d'un caractère — seul son endroit a changé, et la rangée
    ne montre plus que ce sur quoi on peut cliquer. */
-const VSection = ({ title, hint, right = null, children }) => (
+/* ⚠ `bare` — POSER DEUX SECTIONS DANS UNE SEULE BOÎTE. La demande de cette session : « you
+   can also remove the two lines corresponding to “1-general” and “2-toolbar”. Just put the
+   two sections together and we will save two extra lines. » Une section `bare` ne peint donc
+   NI bordure NI ligne de titre : elle rend ses enfants tels quels, et ce sont eux qui
+   deviennent les enfants d'UNE SEULE boîte teintée (voir le retour du composant : les deux
+   sections « bare » y sont côte à côte). Les deux lignes d'en-tête disparaissent de
+   l'écran, les marqueurs `title=` restent, et l'infobulle du titre reste celle des sections
+   ordinaires (`title={hint || undefined}` — la barre ▶ Trajectory s'en sert encore). */
+const VSection = ({ title, hint, right = null, bare = false, children }) => (
+  bare ? (
+    <>{children}</>
+  ) : (
   <section className="flex flex-col gap-1 bg-slate-50/80 border border-slate-200 rounded-lg px-1.5 py-1">
     <div className="flex flex-wrap items-center gap-1.5">
       <span className="text-[9px] font-black text-slate-700 uppercase tracking-wide whitespace-nowrap" title={hint || undefined}>{title}</span>
@@ -6811,6 +7445,7 @@ const VSection = ({ title, hint, right = null, children }) => (
     </div>
     <div className="flex flex-wrap items-center gap-1">{children}</div>
   </section>
+  )
 );
 
 /* One menu of §2 (A–F). The SIX menus have to hold on ONE LINE, so a closed
@@ -6943,6 +7578,19 @@ const collectResidues = (structure) => {
   } catch { /* a structure that cannot be walked lists nothing */ }
   return out;
 };
+/* ✏️ The four slots of a torsion pick — the letters the panel buttons show and the
+   letters the prompt asks for, from ONE place so « click atom B » and the button that
+   says B can never drift apart. Module scope on purpose: the 3D click handler is
+   installed ONCE (the stage effect), and it reads these on every click. */
+const TORSION_SLOT_LETTERS = ['A', 'B', 'C', 'D'];
+const TORSION_SLOT_ROLES = [
+  'the reference — it must NOT move',
+  'an atom of the axle B–C',
+  'the other atom of the axle B–C',
+  'the atom whose side turns',
+];
+
+
 
 const NMRMoleculeViewer = ({
 src,
@@ -6960,16 +7608,15 @@ structureTextExt,
 // still wins on screen; the model simply stays one click away.
 sequenceStructureText = null,
 sequenceStructureExt = null,
-// ⚭ Fold for disulfides — LA PAGE FABRIQUE LE MODÈLE DÉTENDU, À LA DEMANDE.
-// `buildDisulfideFoldedStructure()` rend { text, ext, note } : le même modèle de
-// séquence, mais avec les φ/ψ des résidus entre chaque pont disulfure défini
-// (et les rotamères χ1 de ses deux Cys) relâchés jusqu'à ce que les deux Sγ
-// soient à une distance de liaison — et un `note` qui dit, pont par pont, la
-// distance obtenue (utils/disulfideFold.js). Le viewer ne calcule rien : il
-// charge ce texte comme celui de « 🧬 Structure from sequence » et affiche la
-// note. Rien ne bouge tant que le bouton n'est pas cliqué : le modèle servi
-// d'office reste le modèle idéal.
-buildDisulfideFoldedStructure = null,
+// ⛓ LA STRUCTURE SECONDAIRE IMPOSÉE — la chaîne de lettres peinte dans la sous-section
+// « Sequence and structure » de la page (🖌️ H hélice α, E feuillet β, C/S pelote, une
+// lettre par résidu EN ORDRE DE SÉQUENCE). Le viewer ne la peint pas et ne la modifie
+// pas : il en fait des CONTRAINTES DE DIHÈDRE à la demande (« ⛓ SS → φ/ψ » du panneau
+// 🧬 et de la rangée ▶ MD), par le module pur (`secondaryDihedralRestraintsOf`).
+// La demande : « In MD and “structure calculation” allow the conversion of the
+// secondary structure imposed in the “sequence and structure” subsection into
+// dihedral angle constraints. »
+imposedSecondaryStructure = '',
 externalLoading = false,
 externalError = null,
 structureFileData,
@@ -7000,6 +7647,15 @@ trajectoryFormat = 'xtc',
 onStructureFile,
 onStructureSrc,
 onTrajectoryFile,
+// 📂 CE QUE LA PAGE AJOUTE À LA RANGÉE DES FICHIERS (§1 General) — la page MD y
+// pose ses deux boutons « 📂 Topology / 📂 Trajectory from Drive folder » (le
+// dossier de l'expérience sur le Drive, voir DriveExperimentFiles.jsx) pour
+// qu'ils soient SUR LA MÊME LIGNE que 📂 PDB file(s) et 📂 Trajectory. La demande,
+// mot pour mot : « the "topology from drive folder" and "trajectory from drive
+// folder" buttons should be in the same line as "PDB file" and "trajectory"
+// buttons ». Défaut `null` : les pages qui n'en fournissent pas (NMR, Docking) ne
+// voient AUCUN changement.
+fileRowExtra = null,
 driveNaming = null,   // naming context → archive chosen structure files to Drive
 onAtomClick,
 selectedKeys,
@@ -7016,6 +7672,12 @@ smiles = '',
 ligandSmiles = '',
 onLigandSmiles,
 parsedSeq = [],
+/* 🧪 LA DÉFINITION DU COMPOSÉ, QUAND ELLE TOUCHE LES TERMINUS — le texte de « Modifications »
+   de la fiche de la Librairie (Acetylation · Amidation · Phosphorylation…). Le ⚙ lit la
+   charge de la SÉQUENCE avec lui (utils/sequenceCharge.js) : une amidation ne se devine pas
+   d'un atome, et sans ce texte le panneau supposerait des terminus LIBRES — la règle de la
+   séquence écrite directement, mais pas celle d'un composé qui dit le contraire. */
+sequenceModifications = '',
 residueOffset = 0,
 atomRenames,
 onAtomRenames,
@@ -7082,7 +7744,7 @@ const [sugarTypeColors, setSugarTypeColors] = useState(() => loadPalette('labVie
    white (sectionRowTintCss), so moving one swatch repaints the whole ladder. */
 const [sectionTints, setSectionTints] = useState(() => loadPalette(SECTION_TINT_KEY, DEFAULT_SECTION_TINTS));
 const setSectionTint = (kind, hex) => setSectionTints((p) => ({ ...p, [kind]: hex }));
-const resetSectionTints = () => setSectionTints({ ...DEFAULT_SECTION_TINTS });
+const resetSectionTints = () => setSectionTints(paletteDefaults(SECTION_TINT_KEY, DEFAULT_SECTION_TINTS));
 // The THREE PARTS of every lipid type (Head · Glycerol · Acyl) — the request's
 // second expansion of the ⚙ wheel. One object per class, persisted like the rest.
 const [lipidPartColors, setLipidPartColors] = useState(() => loadPartPalette('labViewerLipidPartColors', LIPID_PART_DEFAULTS));
@@ -7108,13 +7770,13 @@ const [nucleicMotifColors, setNucleicMotifColors] = useState(() => loadPalette(N
 // ONE swatch = ONE entry of the palette (the element is the key, the hex the value).
 const setElementColor = (el, hex) => setElementColors((prev) => ({ ...prev, [el]: hex }));
 const setSugarColor = (res, hex) => setSugarColors((prev) => ({ ...prev, [res]: hex }));
-const resetElementColors = () => setElementColors({ ...ELEMENT_COLOR_PALETTE });
-const resetSugarColors = () => setSugarColors({ ...SUGAR_IDENTITY_COLORS });
+const resetElementColors = () => setElementColors(paletteDefaults(ELEMENT_COLORS_KEY, ELEMENT_COLOR_PALETTE));
+const resetSugarColors = () => setSugarColors(paletteDefaults(SUGAR_COLORS_KEY, SUGAR_IDENTITY_COLORS));
 // ONE swatch of the nucleic palettes (the key is the FORM · 'gquad' · 'hairpin').
 const setNucleicFormColor = (form, hex) => setNucleicFormColors((prev) => ({ ...prev, [form]: hex }));
 const setNucleicMotifColor = (motif, hex) => setNucleicMotifColors((prev) => ({ ...prev, [motif]: hex }));
-const resetNucleicFormColors = () => setNucleicFormColors({ ...DEFAULT_NUCLEIC_FORM_COLORS });
-const resetNucleicMotifColors = () => setNucleicMotifColors({ ...DEFAULT_NUCLEIC_MOTIF_COLORS });
+const resetNucleicFormColors = () => setNucleicFormColors(paletteDefaults(NUCLEIC_FORM_COLORS_KEY, DEFAULT_NUCLEIC_FORM_COLORS));
+const resetNucleicMotifColors = () => setNucleicMotifColors(paletteDefaults(NUCLEIC_MOTIF_COLORS_KEY, DEFAULT_NUCLEIC_MOTIF_COLORS));
 
 // Message of the §1 « ⬇ PDB » button (structure / current-frame snapshot).
 const [pdbMsg, setPdbMsg] = useState('');
@@ -7150,6 +7812,39 @@ useEffect(() => {
     }
   } catch { /* ignore */ }
 }, [viewerCollapsed]);
+
+/* ◐ LA VUE SUIT SON CADRE — QUEL QUE SOIT LE GESTE QUI L'A CHANGÉ.
+   La vue 3D n'est pas seule : elle partage sa rangée avec les docks de GAUCHE
+   (🧬 Structure calculation, ▶ MD, 🪢 Ramachandran), qui PRENNENT la largeur quand
+   ils s'ouvrent (voir le commentaire de la rangée, plus bas : « la colonne de
+   gauche prend sa place, la vue prend le RESTE »). NGL ne s'en aperçoit pas tout
+   seul — il n'écoute que la FENÊTRE — et une toile qui garde son ancienne largeur
+   laisse la molécule cadrée pour un cadre qui n'existe plus, tandis que la couche
+   de l'ombre vivante, elle, est étirée en CSS sur la boîte (elle, elle rétrécit) :
+   c'est le rapport de cette session, mot pour mot — « as soon as I click on the MD
+   window (without running it) or "structure calculation" (without even running
+   it), this strange shadow detached from the molecule appears ».
+   Un ResizeObserver sur la boîte d'NGL dit donc au moteur de reprendre ses mesures
+   à CHAQUE changement de taille — un dock, la poignée de hauteur, un repli de la
+   barre des résidus, la fenêtre, la barre latérale — au lieu des trois effets qui
+   devinaient lesquels (viewH, viewerCollapsed, ramaDock : ils restent, ils agissent
+   AVANT le navigateur ; l'observateur, lui, ne peut plus rien oublier).
+   ⚠ Repliée (0 px de haut), la boîte n'a rien à mesurer : NGL garde sa dernière
+   taille, et le 🔎 « Expand viewer » recale tout par son propre effet ci-dessus. */
+useEffect(() => {
+  const host = containerRef.current;
+  if (!host || typeof ResizeObserver === 'undefined') return undefined;
+  const ro = new ResizeObserver(() => {
+    const box = host.getBoundingClientRect();
+    if (!(box.width > 1) || !(box.height > 1)) return;
+    try {
+      if (stageRef.current) stageRef.current.handleResize();
+      if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender();
+    } catch { /* pas de scène : rien à recadrer */ }
+  });
+  ro.observe(host);
+  return () => ro.disconnect();
+}, []);
 
 const containerRef = useRef(null);
 const stageRef = useRef(null);
@@ -7252,6 +7947,27 @@ const [rayShadowBlur, setRayShadowBlur] = useState(() => {
     return Number.isFinite(v) && v > 0 ? Math.min(4, v / 100) : 1;
   } catch { return 1; }
 });
+/* ◐ L'OMBRE VIVANTE — la demande de cette session : « will it be possible to see
+   it while the molecule is moving and not only as a still picture? »
+   Le RÉGLAGE est à quatre états : `off`, et les trois régimes du module
+   (auto = brouillon pendant le geste puis la qualité du PNG à l'arrêt, full =
+   la qualité du PNG à chaque image, draft = le brouillon toujours). `auto` est
+   le défaut. Il est MÉMORISÉ à part de la case ◐ shadows du « ✨ Ray » : la
+   couche vivante de la vue et les ombres du PNG sont deux choses distinctes,
+   et l'une peut vivre sans l'autre. */
+const RAY_LIVE_KEY = 'labViewerRayShadowLive';
+const [rayShadowLive, setRayShadowLive] = useState(() => {
+  try { return rayLiveSettingOf(localStorage.getItem(RAY_LIVE_KEY)); } catch { return RAY_LIVE_DEFAULTS.quality; }
+});
+const rayLiveOn = rayShadowLive !== 'off';
+/* La TOILE de la couche (rendue plus bas, au-dessus de celle d'NGL) et le
+   PILOTE qui la peint : une référence chacun, comme le Stage lui-même. Les
+   RÉGLAGES vivants (lampe, noirceur, douceur) passent par une référence aussi
+   — le pilote les LIT au moment où il peint, donc un curseur n'a pas à le
+   recréer (et un `useEffect` sans cette référence lirait une valeur figée). */
+const rayShadowCanvasRef = useRef(null);
+const rayShadowLiveRef = useRef(null);
+const rayLiveParamsRef = useRef({ az: 0, el: 0, strength: RAY_SHADOW_DEFAULTS.strength, blur: 1 });
 const [rayBusy, setRayBusy] = useState(false);
 const [rayMsg, setRayMsg] = useState('');
 // One token per render: a slow ray that is superseded by a second click may
@@ -7307,6 +8023,9 @@ useEffect(() => {
 useEffect(() => {
   try { localStorage.setItem('labViewerRayShadows', rayShadows ? `on:${Math.round(rayShadowStrength * 100)}:${Math.round(rayShadowBlur * 100)}` : 'off'); } catch { /* ignore */ }
 }, [rayShadows, rayShadowStrength, rayShadowBlur]);
+useEffect(() => {
+  try { localStorage.setItem(RAY_LIVE_KEY, rayShadowLive); } catch { /* ignore */ }
+}, [rayShadowLive]);
 /* The resolution list of the ✨ Ray selector is written in PIXELS (`3× · 4800×
    2700 px`), so it is rebuilt when the canvas really changes size — a window
    resize, a new structure — and never shows a size another screen would give.
@@ -7362,6 +8081,808 @@ const measureModeRef = useRef(false);
 measureModeRef.current = measureMode;
 const measurePendingRef = useRef(null); // { comp, atomIndex, label } of the 1st picked atom
 const measureRepsRef = useRef([]);      // [{ comp, elem }] NGL 'distance' representations that were drawn
+
+// ---- 💧 H-bonds ------------------------------------------------------------
+// LE bouton de 📏 Analysis qui DESSINE les liaisons hydrogène de la molécule
+// choisie dans la barre des Molecules. La règle (qui donne, qui accepte, quelles
+// distances et quels angles) vit dans utils/hydrogenBonds.js et n'est écrite
+// qu'une fois ; ici il n'y a que le DESSIN et sa comptabilité : une seule
+// représentation NGL 'distance' — donc un objet qui tourne, zoome, se cache avec
+// sa molécule et meurt avec elle, exactement comme les lignes de 📏 Measure (dont
+// elle suit la vie : `clearHydrogenBonds` est appelé partout où
+// `clearMeasurements` l'est). `hbondMsg` est la phrase que le bouton dit dans les
+// deux cas — ce qu'il a trouvé (nombre, règle, solvant, plafond) ou pourquoi il
+// n'a rien trouvé : un bouton qui ne dit rien ferait croire à une panne.
+const [hbondsShown, setHbondsShown] = useState(false);
+const [hbondMsg, setHbondMsg] = useState('');
+const hbondRepRef = useRef(null);   // { comp, elem } — la représentation 'distance' vivante
+/* ⏱ LE RYTHME DU RÉSEAU DE 💧 — voir refreshHydrogenBonds : quand le dernier
+   balayage a eu lieu, l'intervalle à respecter, l'empreinte du réseau qu'il a trouvé
+   et la phrase déjà écrite. Un REF (jamais un état React) : la boucle d'images d'un
+   ▶ MD lit où elle en est sans attendre un rendu, et l'écrire ne re-rend rien.
+   `gap: 0` veut dire « l'intervalle minimum » (la constante est déclarée avec le
+   bouton, plus bas dans ce fichier : un `useRef` ne peut pas la lire ici). */
+const hbondLiveRef = useRef({ at: 0, gap: 0, sig: '', msg: '' });
+
+// ---- ✏️ Set a torsion — or reach a target distance — by the numbers ---------
+// The gesture the pointer cannot make precisely: pick FOUR atoms in the 3D view
+// (A · B · C · D — B–C is the bond that turns), type the dihedral you want in
+// degrees, or the distance A–D you need in Å, and the ANGLE IS SOLVED in closed
+// form by utils/torsionDrive.js. The whole side of D turns rigidly about B–C
+// through the SAME coordinate write-back a molecule drag uses (`positionFromArray`
+// → `updateRepresentations({ position: true })`, see applyPartMove), so the 📏
+// rungs, the plates, the film poses and 📥 Download all read the geometry that is
+// really there — and nothing else in the structure moves. ↺ puts the last torsion
+// back, atom by atom.
+/* ── 🧬 LA FENÊTRE DU CALCUL, ET LES DEUX AUTRES FENÊTRES DU VIEWER ───────────
+   La demande qui a créé les deux premières : « when clicking on torsion do not open the
+   section inside the toolbar but open a dedicated retractable window inside the viewer as
+   for ramachandran » (et, du même rapport : « The ramachandran button will make the
+   ramachandran window inside the viewer appear or disappear »).
+   ⚠ CELLE DE CETTE SESSION CHANGE AUSSI LE 🧬 — « Transform the “structure calculation”
+   page in an internal collapsible window as that of MD or Ramachandran containing the
+   calculation parameters and updates to follow the stages of the calculation but move the
+   structure constraint tables with their buttons … into a new button “Parameters and
+   Constraints” » : il n'y a donc plus AUCUNE section du 🧬 dans la barre. TROIS gestes sont des
+   FENÊTRES de la vue 3D, poussées à sa gauche — `torsionWindow` DANS le cadre, `ramaDock` et
+   `calcDock` à côté —, ouvertes et refermées par leur propre bouton de la barre. ⚠ `paramsDock`
+   A QUITTÉ LA FENÊTRE 🧬 (la demande de la session précédente : « “Parameters and Constraints”
+   section should be in the “modify” menu ») : il vit dans le groupe ✏️ Modify de « 2 · Toolbar »
+   et porte le champ de forces ET les deux tables de contraintes. ⚠ ET DEPUIS CETTE SESSION IL
+   N'EST MÊME PLUS UNE FENÊTRE (la demande : « should not open a window in the molecule space but
+   it should [be] full width under the button ») : c'est un PANNEAU pleine largeur, rendu sous la
+   rangée de ses boutons, sans onglet sur le bord de la vue (voir `renderParamsWindow`). */
+const [calcDock, setCalcDock] = useState(false);
+const toggleCalcDock = (v) => setCalcDock((cur) => (typeof v === 'boolean' ? v : !cur));
+/* ⚙ LE PANNEAU « PARAMETERS AND CONSTRAINTS » — la demande de la session précédente :
+   « “Parameters and Constraints” section should be in the “modify” menu and should contain the
+   description of the force field (now in the structure calculation window) and the constraints
+   tables with the associated buttons (now in the structure calculation window) ». Elle a donc
+   QUITTÉ la fenêtre 🧬 : son bouton vit dans le groupe ✏️ Modify de « 2 · Toolbar ».
+   ⚠ ET IL N'EST PLUS UN DOCK (la demande de CETTE session : « The “parameters and constraints”
+   should not open a window in the molecule space but it should [be] full width under the
+   button. By clicking the button a second time it should disappear. ») : `renderParamsWindow`
+   n'est plus rendu dans la rangée des docks de la vue 3D (il n'y a plus d'onglet ⚙ sur le bord)
+   mais DANS la rangée de ses boutons, en pleine largeur sous le groupe ✏️ Modify — la molécule
+   garde donc sa surface, et une seconde pression sur le bouton le referme. */
+const [paramsDock, setParamsDock] = useState(false);
+const toggleParamsDock = (v) => setParamsDock((cur) => (typeof v === 'boolean' ? v : !cur));
+/* LA FENÊTRE ✏️ TORSION — ouverte par son bouton, refermée par le même bouton (et par
+   le ⇤ de son en-tête) : elle vit dans le cadre de la vue 3D, jamais dans la barre. */
+const [torsionWindow, setTorsionWindow] = useState(false);
+const [torsionPick, setTorsionPick] = useState(0);   // 1..4 = the slot the NEXT click fills, 0 = idle
+const torsionPickRef = useRef(0);
+torsionPickRef.current = torsionPick;
+const torsionAtomsRef = useRef([]);                  // [{ comp, atomIndex, label }] — A · B · C · D
+/* LES QUATRE COULEURS DU PIQUAGE — A vert, B bleu, C ambre, D magenta : l'atome piqué
+   est PEINT dans la vue 3D pendant qu'on le choisit (« color the picked atom at least
+   during the definition »), donc plus besoin de deviner lequel on vient de cliquer. */
+const TORSION_SLOT_COLORS = [0x16a34a, 0x2563eb, 0xf59e0b, 0xdb2777];
+const torsionPaintRef = useRef(null);                // { comp, reps } du piquage en cours
+const [torsionAtoms, setTorsionAtoms] = useState([]);
+const [torsionMsg, setTorsionMsg] = useState('');
+const [torsionAngleDraft, setTorsionAngleDraft] = useState('');
+const [torsionDistDraft, setTorsionDistDraft] = useState('');
+/* ── ⌖ LE COUPLE DE LA TABLE DES DISTANCES — SON PROPRE PIQUAGE ────────────────
+   La demande de cette session, mot pour mot : « dedicated pair picker ». Le ⌖ de
+   🧬 Structure calculation empruntait les atomes du piquage ✏️ Torsion (A · B · C · D) :
+   définir une torsion et un couple était un seul et même geste, et le second changement
+   défaisait le premier. Le ⌖ a donc SON piquage : DEUX atomes (A · B), peints en BLEU,
+   avec son état, sa peinture et ses phrases à lui. Les quatre atomes de la torsion ne
+   bougent pas d'un iota, et les deux gestes ne se disputent plus le clic dans la vue 3D
+   (armer l'un désarme l'autre — ses atomes à lui restent peints). */
+const PAIR_PICK_COLOR = 0x2563eb;                    // bleu : la couleur du couple de la table
+const [pairPick, setPairPick] = useState(0);         // 1..2 = le slot que le PROCHAIN clic remplit, 0 = au repos
+const pairPickRef = useRef(0);
+pairPickRef.current = pairPick;
+const pairAtomsRef = useRef([]);                     // [{ comp, atomIndex, label }] — A · B
+const pairPaintRef = useRef(null);                   // { comp, reps } de la peinture bleue en cours
+const [pairAtoms, setPairAtoms] = useState([]);
+const [pairTargetDraft, setPairTargetDraft] = useState('');
+const [pairMsg, setPairMsg] = useState('');
+/* ⚠ LA RÉFÉRENCE EST TENUE À JOUR COMME CELLE DU PIQUAGE ✏️ : l'écoute du clic 3D est
+   posée UNE fois (le grand effet du stage) et lit `pairPickRef.current` — jamais le
+   state, qui serait figé dans la fermeture du rendu qui l'a créée. */
+/* Le brouillon de l'angle, DOUBLÉ d'une référence : l'écoute du clic 3D est posée UNE
+   fois (le grand effet du stage, plus bas) et doit lire la valeur COURANTE du champ —
+   elle ne le pré-remplit que s'il est encore vide, et le champ, lui, se re-rend à
+   chaque frappe. Lire le state depuis cette écoute figerait la valeur du rendu qui l'a
+   créée. Le texte passe donc par ici, jamais directement par le setter. */
+const torsionAngleDraftRef = useRef('');
+const setTorsionAngleText = (v) => { torsionAngleDraftRef.current = v; setTorsionAngleDraft(v); };
+const [torsionClosest, setTorsionClosest] = useState(null); // last unreachable distance: { deltaDeg, closest, target }
+const torsionUndoRef = useRef(null);                 // { comp, structure, idxs, base, label }
+/* ── 🪢 LE GRAPHE DE RAMACHANDRAN — CE QUE LE PANNEAU A LU, ET QUAND ──────────
+   La lecture est un SNAPSHOT : refaite par « ⟳ Read the backbone » (et à l'ouverture
+   de la fenêtre), sur les coordonnées du moment. Rien n'est dérivé à chaque rendu —
+   mais tout ce qui BOUGE la molécule (🧬 le calcul de structure, ▶ MD, ⚒ Minimise) la
+   REFait après chaque image écrite, tant que la fenêtre est à l'écran : voir
+   `ramaIsShown(), ci-dessous. C'est le seul cas où le graphe se redessine sans qu'on
+   le lui demande. */
+const [rama, setRama] = useState(null);
+const [ramaMsg, setRamaMsg] = useState('');
+/* …ET LA RÉFÉRENCE QUI RÉPOND « CE GRAPHE EST-IL À L'ÉCRAN MAINTENANT ? ». Trois gestes
+   BOUGENT la molécule image par image — le 🧬 calcul de structure, le ▶ MD et le ⚒ Minimise
+   — et les trois doivent relire les φ/ψ qu'ils viennent d'écrire. Ils ne peuvent pas
+   regarder `rama` : leurs boucles sont des fermetures DÉJÀ EN VOL (elles ont été créées au
+   clic sur le bouton, et elles ne verront jamais un état mis à jour ensuite), alors qu'une
+   référence, elle, rend toujours la valeur COURANTE. C'est ce qui fait qu'ouvrir la
+   fenêtre 🪢 pendant que la molécule bouge la fait suivre dès l'image suivante, au lieu de
+   la laisser sur la conformation du clic. La référence est écrite ICI, à chaque rendu :
+   c'est le seul endroit qui la tient (donc aucune autre lecture que `rama` ne peut la
+   désynchroniser). */
+const ramaShownRef = useRef(false);
+ramaShownRef.current = !!rama;
+/* LE DOCK 🪢 À GAUCHE DE LA FENÊTRE 3D — la demande : « The Ramachandran plot should
+   appear at the left in the viewer window (expandible and compressible). » Le graphe
+   était une SECTION du panneau 🧬 (en bas, sous la molécule) ; il est ICI une colonne
+   collante à gauche de la vue, qu'on replie par un bouton (⇤ / 🪢) et qui se souvient de
+   son état. Le SVG est le MÊME que celui de la section (`ramaPlotSvg`) : deux fenêtres,
+   un seul dessin. */
+/** CE QUE LE DOCK 🪢 RETIENT — ouvert (1, le défaut) ou replié (0). Le choix voyage avec
+ *  le poste, comme le film des images clefs : rouvrir la page ne redéfait pas un geste.
+ *  ⚠ La clef est définie ICI, avant son `useState` : une constante lue par un
+ *  initialiseur doit exister quand il s'exécute. */
+const RAMA_DOCK_KEY = 'labViewerRamaDock';
+const [ramaDock, setRamaDock] = useState(() => {
+  try { return localStorage.getItem(RAMA_DOCK_KEY) !== '0'; } catch { return true; }
+});
+/* ── 🌡 LA FENÊTRE MD — LE DOCK DE GAUCHE DE LA VUE 3D ─────────────────────────
+   La demande qui l'a créée : « Il pulsante MD deve aprire una finestra collapsable a
+   sinistra all'interno del viewer … Tale finestra si deve richiudere quando si riclicca
+   su MD. » Celle de CETTE session : « bring back all the MD parameters related to
+   structure calculation in the settings of structure calculation … In the window
+   dedicated to MD put the parameters for an MD run (temperature, explicit, implicit
+   solvent, steps, stepinterval, duration) … This MD should be independent of structure
+   calculation. »
+
+   ⚠ LES DEUX DYNAMIQUES SONT DONC SÉPARÉES, et c'est tout l'objet de ce bloc :
+     · le 🧬 Structure calculation a LA SIENNE — les pas, le pas de temps, la durée, les
+       deux températures (🌡 hot → 🌡 cold), la part d'équilibration et les balayages de
+       ⚒ : `calcMdSteps`, `calcMdDt`, `calcMdHot`, `calcMdCold`, `calcMdEquil`,
+       `calcMinimise`. Son ▶ Run les lit, et LUI SEUL : `renderCalcMdOptions()` les écrit
+       dans le panneau du calcul (chaque départ, c'est un recuit PUIS cette dynamique) ;
+     · cette fenêtre a LA SIENNE — `mdTemp`, `mdSolvent`, `mdSteps`, `mdDt`, `mdImage`,
+       `mdFreeOmega` — et son ▶ MD les lit sans rien demander au 🧬 : une dynamique
+       ISOLÉE, à UNE température, avec son solvant, sa durée et son intervalle d'images,
+       sur la molécule telle qu'elle est. La 📏 case est son seul pont avec le panneau,
+       et c'est une OPTION : décochée, elle part sans aucune contrainte.
+
+   ⚠ CE QUI RESTE COMMUN EST UNE DONNÉE, PAS UN RÉGLAGE : la TABLE des distances (lue par
+   la 📏 case) et les contraintes de φ/ψ imposées. Aucun des deux gestes ne peut donc lire
+   un chiffre que l'autre vient de changer.
+
+   Le bouton de la barre (▶ MD), lui, ne fait qu'OUVRIR/FERMER cette fenêtre. */
+const [mdDock, setMdDock] = useState(false);
+const toggleMdDock = (v) => setMdDock((cur) => (typeof v === 'boolean' ? v : !cur));
+
+/* ⚠ …ET LE DOCK 🪢 OUVERT COMPTE AUSSI COMME « LE GRAPHE EST À L'ÉCRAN ». La référence a
+   été écrite une première fois PLUS HAUT, avant que `ramaDock` existe (il est déclaré
+   juste en dessous), et elle n'y posait que `!!rama` : une lecture VIDE laissait donc
+   `ramaShownRef.current` à faux — donc `ramaIsShown()` faux, donc plus AUCUNE relecture
+   pendant un ▶ MD, un ⚒ Minimise ou un ▶ Run. Deux cas le déclenchaient vraiment :
+     · la fenêtre 🪢 ouverte AVANT le chargement de la molécule (le premier `readRamachandran`
+       dit « il n'y a pas de molécule » et laisse `rama` à `null`) ;
+     · une molécule sans squelette N–CA–C, dont la lecture ne place aucun point.
+   La remarque de cette session : « the independent MD calculation works now very well but
+   the ramachandran does not update with the MD steps » — c'est exactement ce cas-là. Cette
+   SECONDE écriture est la DERNIÈRE du rendu, donc c'est elle qui décide : « le graphe est à
+   l'écran » = « il y a une lecture, OU la fenêtre est ouverte ». */
+ramaShownRef.current = !!rama || !!ramaDock;
+
+const toggleRamaDock = (v) => {
+  const next = typeof v === 'boolean' ? v : !ramaDock;
+  setRamaDock(next);
+  try { localStorage.setItem(RAMA_DOCK_KEY, next ? '1' : '0'); } catch { /* un dock n'est pas une donnée */ }
+};
+/* LE DOCK CHANGE LA LARGEUR DE LA VUE — NGL dessine dans un cadre : on lui dit de
+   reprendre ses mesures, sinon la molécule reste cadrée sur l'ancienne largeur. */
+useEffect(() => {
+  try {
+    if (!stageRef.current) return;
+    stageRef.current.handleResize();
+    if (stageRef.current.viewer) stageRef.current.viewer.requestRender();
+  } catch { /* pas de scène : rien à recadrer */ }
+}, [ramaDock]);
+/* LE DOCK OUVERT LIT LE SQUELETTE TOUT SEUL — un graphe ne sert à rien tant qu'il n'a
+   rien lu, et personne ne va chercher un bouton dans une colonne qu'il vient d'ouvrir.
+   ⚠ UNE TENTATIVE PAR MOLÉCULE, PAS UNE PAR PAGE : `ramaMsg` disait seulement « une
+   lecture a eu lieu » — donc une fenêtre ouverte AVANT le chargement (ou sur une molécule
+   sans squelette) ne réessayait JAMAIS, et le graphe restait vide alors que la molécule
+   était arrivée. La garde est donc la STRUCTURE elle-même (l'objet NGL) : la lecture est
+   refaite dès qu'une autre molécule est à l'écran, et jamais deux fois pour la même.
+   ⚠ `ramaMsg` N'EST PLUS une dépendance : la lecture l'écrit, donc l'y mettre ferait une
+   boucle (lire → écrire le message → relire). */
+const ramaReadStructureRef = useRef(null);
+useEffect(() => {
+  if (!ramaDock) return;
+  if (rama) return;
+  if (status !== 'ready' || !componentRef.current) return;
+  const st = componentRef.current.structure;
+  if (!st || ramaReadStructureRef.current === st) return;   // une tentative par molécule
+  ramaReadStructureRef.current = st;
+  readRamachandran();
+}, [ramaDock, status, rama]);
+/* LE POINT SURVOLÉ — la CLEF de son résidu, pas l'objet : une nouvelle lecture (⏮, un
+   ⚒, un ✏️ Torsion) jette les anciens résidus, et une clef morte ne désigne plus rien
+   (le panneau retombe sur « survolez un point » au lieu de lire un résidu disparu). */
+const [ramaHover, setRamaHover] = useState(null);
+
+/* ── 🧬 LE CALCUL DE STRUCTURE — LES DISTANCES, n, m, ET LA FAMILLE RETENUE ────
+   « the user provide the distances between atom pairs and selects the number of
+   starting structures n and the number of retained structures m ». Une ligne de
+   distance se remplit de DEUX façons : le couple piqué (🎯 A · B · C · D, comme le ⚒)
+   ou deux atomes tapés à la main dans la table — la demande est « define distances in a
+   table ». Chaque ligne reste modifiable après coup, et le calcul est découpé UN DÉPART
+   PAR TRANCHE (le même `setTimeout` d'une image que le reste du viewer) avec un jeton
+   d'annulation : un ⏹ l'arrête entre deux départs. */
+const [calcRestraints, setCalcRestraints] = useState([]);  // [{ key, i, j, target, label }]
+/* ⛓ LES CONTRAINTES DE DIHÈDRE — la conversion de la structure secondaire imposée
+   (la peinture 🖌️ de la page), tenue ICI pour être donnée au ▶ MD, au ⚒ Minimise, au
+   ▶ Run et à la lecture du champ. `calcSsReading` garde ce que la conversion a
+   trouvé (lettres, résidus lus, résidus appariés) : le rapport du panneau le dit. */
+const [calcDihedrals, setCalcDihedrals] = useState([]);
+const [calcSsReading, setCalcSsReading] = useState(null);
+const [calcStarts, setCalcStarts] = useState(STRUCTURE_CALC_DEFAULT_STARTS);
+const [calcKeep, setCalcKeep] = useState(STRUCTURE_CALC_DEFAULT_KEEP);
+/* ⚙ CE QUI DONNE SA PHYSIQUE AU CALCUL — les paliers de recuit (0 = tirage seul, ce
+   que le module faisait avant), le nombre d'IMAGES par palier (le recuit se regarde),
+   les pas de DYNAMIQUE MOLÉCULAIRE et les balayages de MINIMISATION (0 = sans eux), et
+   le suivi à l'écran de chaque geste. */
+const [calcAnneal, setCalcAnneal] = useState(STRUCTURE_CALC_ANNEAL_STEPS);
+const [calcAnnealFrame, setCalcAnnealFrame] = useState(4);
+/* ⚙ LE PROTOCOLE STANDARD DU CALCUL — LES PAS DE DYNAMIQUE, LE PAS DE TEMPS (ps) ET LA
+   PART D'ÉQUILIBRATION. Ce sont les réglages du 🧬, et ils sont écrits DANS SON PANNEAU
+   (`renderCalcMdOptions()`) : chaque départ les lit — recuit, PUIS dynamique
+   d'équilibration à 🌡 hot, refroidissement vers 🌡 cold, minimisation. La DURÉE TOTALE
+   (ps) se tape aussi et décide des pas (`structureCalcSimulationTimeOf` fait la
+   multiplication, dans le module).
+   ⚠ LA DYNAMIQUE ISOLÉE DE LA FENÊTRE 🌡 MD NE LES LIT PAS (et réciproquement) : elle a
+   ses propres états (`mdSteps`, `mdDt`, …), voir « les réglages de la dynamique isolée ». */
+const [calcMdSteps, setCalcMdSteps] = useState(STRUCTURE_CALC_MD_STEPS);
+const [calcMdDt, setCalcMdDt] = useState(STRUCTURE_CALC_MD_DT);
+const [calcMdEquil, setCalcMdEquil] = useState(Math.round(STRUCTURE_CALC_MD_EQUILIBRATION * 100));
+const [calcMinimise, setCalcMinimise] = useState(STRUCTURE_CALC_MIN_ROUNDS);
+/* ⚒ LES TROIS AUTRES RÉGLAGES DE LA DESCENTE — la demande de cette session : « Minimize
+   should have more controls (number of steps, criteria to converge, etc) ». `minimizeFrames`
+   les accepte depuis toujours (`step`, `stepFloor`, `tries`) ; ils n'étaient tout simplement
+   pas exposés, et le ⚒ ne pouvait que balayer avec les pas du module.
+   ⚠ « steps » N'EST PAS un état de plus : c'est `calcMinimise` (le ⚒ sweeps du panneau 🧬),
+   donc le panneau et le bloc ⚒ ne peuvent pas se contredire — une seule valeur, deux portes,
+   et le ▶ Run du 🧬 comme le ⚒ Minimise de la barre descendent le même champ du même pas. */
+const [calcMinStep, setCalcMinStep] = useState(STRUCTURE_CALC_MIN_STEP);
+const [calcMinStepFloor, setCalcMinStepFloor] = useState(STRUCTURE_CALC_MIN_STEP_FLOOR);
+const [calcMinTries, setCalcMinTries] = useState(STRUCTURE_CALC_MIN_TRIES);
+/* ⚒ …ET CES RÉGLAGES SE REPLIENT, EUX AUSSI — la seconde moitié de la même demande :
+   « the comments of the buttons “minimize” and “energy” should be retractable to save
+   space ». Le ✓/■/✕ que le ⚒ Minimise et le ⟳ Energy écrivent sous les boutons se replie
+   donc sur sa PREMIÈRE LIGNE (`gestureMsgOpen` : ▸ le déplie, ✕ l'efface), et les trois
+   réglages neufs vivent derrière « ⚒ settings ▸ » — la rangée garde sa hauteur tant qu'on
+   ne demande rien, et le clic dit toujours quelque chose (une ligne reste à l'écran). */
+const [minSettings, setMinSettings] = useState(false);
+const [gestureMsgOpen, setGestureMsgOpen] = useState(false);
+/* 🪢 L'OPTION « ω VARIE » — la demande : « in the structure calculation allow the option to
+   vary also the omega backbone angle. » Décochée (le défaut du module), la liaison peptidique
+   est un dièdre PROTÉGÉ : le recuit, la trempe, la dynamique et la minimisation REFUSENT un pas
+   qui augmente son coût, et les peptides restent TRANS. Cochée, elle devient un dièdre
+   ORDINAIRE du protocole — sa barrière reste comptée dans le champ
+   (`STRUCTURE_CALC_OMEGA_WEIGHT` kcal/mol, nulle dans le plateau de ±
+   `STRUCTURE_CALC_OMEGA_TOLERANCE`° autour de `STRUCTURE_CALC_OMEGA`°), mais plus aucune règle
+   ne la refuse : c'est donc le champ qui décide, et un ω ne s'écarte de trans que si une
+   distance demandée, un φ/ψ imposé ou un empilement paie plus que sa barrière. Le pas reste
+   celui de la famille (12° au recuit, 4° en dynamique).
+   ⚠ CE RÉGLAGE EST CELUI DU CALCUL : il part au ▶ Run (chaque départ) ET au ⚒ Minimise de
+   la barre — qui est LA descente de fin de départ du protocole (mêmes balayages, même ω),
+   donc un clic sur ⚒ ne peut pas défaire ce que ▶ Run vient de faire.
+   ⚠ …ET LA DYNAMIQUE ISOLÉE DE LA FENÊTRE 🌡 MD A LE SIEN (`mdFreeOmega`) : elle est
+   indépendante du calcul, donc elle ne peut plus changer le protocole des départs par
+   surprise. La case 🪢 est écrite dans les DEUX — chacune chez elle — et chaque infobulle
+   dit À QUEL GESTE elle s'applique. */
+const [calcOmegaFree, setCalcOmegaFree] = useState(STRUCTURE_CALC_FREE_OMEGA);
+/* ── 📏 LA CASE « LES CONTRAINTES DU 🧬 » DE LA FENÊTRE 🌡 MD ──────────────────
+   La demande, mot pour mot : « nella finestra MD aggiungi l'opzione “use constraints
+   defined in structure calculation” and enable this option allowing the user to give a
+   weight to these constraints. This weight can be defined in the table. » — puis, cette
+   session : « I wanted the option to include the constraints but this is only an option ».
+
+   ⚠ C'EST UNE OPTION, ET RIEN D'AUTRE : le ▶ MD de la fenêtre est INDÉPENDANT du calcul,
+   donc la seule chose qu'il puisse emprunter au 🧬, c'est ce qu'on lui prête. COCHÉE (le
+   comportement historique, donc le défaut — une table ne change pas de sens sans un
+   geste), il porte la TABLE DES DISTANCES du 🧬 comme contraintes, chaque ligne avec son
+   ⚖ (k = k_NOE × poids) : c'est une dynamique « avec vos distances ». DÉCOCHÉE, il part
+   SANS aucune contrainte de distance et SANS longe (le champ de forces seul : liaisons,
+   angles, cycles, van der Waals, charges, solvant, ω, φ/ψ, χ1) — c'est une dynamique
+   LIBRE, ce qui permet de comparer « avec » et « sans » sur la MÊME molécule. La table
+   n'est jamais MODIFIÉE par cette case : elle est lue, ou pas.
+
+   ⚠ LA CASE EST À LA DYNAMIQUE ISOLÉE, PAS AU POIDS : les ⚖ de la table sont une
+   PROPRIÉTÉ de chaque ligne (k = k_NOE × poids), donc le ▶ Run, le ⚒ Minimise et le
+   ⟳ Energy les lisent aussi, comme ils ont toujours lu la table. Le ▶ MD est le seul
+   geste qui puisse IGNORER la table, parce que c'est le seul dont la fenêtre le propose. */
+const [mdUseRestraints, setMdUseRestraints] = useState(true);
+/* ── 💾 LES DEUX TABLES SURVIVENT À UN RECHARGEMENT DE LA PAGE ─────────────────
+   La demande : « Structure calculation ha un problema. Funziona per un po' ma poi dà un
+   messaggio di errore e se rinfresco la pagina tutto è perso e bisogna ricominciare da
+   capo. » Un calcul, lui, ne peut pas survivre à un rechargement (les coordonnées sont
+   rebâties par la page) ; ce qui DOIT survivre, c'est le TRAVAIL de l'utilisateur : les
+   lignes de la table des distances TELLES QU'ELLES SONT ÉCRITES, et les réglages. Ils
+   sont donc écrits dans `localStorage` à chaque changement et relus au montage.
+   ⚠ Les ATOMES d'une ligne relue sont RÉSOLUS sur la molécule à l'écran dès qu'elle est
+   prête, par le MÊME lecteur que la frappe et que 📂 Load ; une ligne dont les noms ne
+   tombent sur rien reste telle quelle (à finir) — aucune coordonnée n'est inventée, et
+   les contraintes de φ/ψ, elles, se refont d'un clic sur ⛓ (elles sont appariées au
+   squelette AFFICHÉ : les garder en mémoire les figerait sur les atomes d'hier). */
+/* LES TEMPÉRATURES DE LA DYNAMIQUE (KELVINS) — des champs de DEUX gestes différents, bornés
+   par ce qui a un sens : à 300 K l'énergie thermique vaut 0.6 kcal/mol (la molécule
+   vibre), à 3000 K elle vaut 6 kcal/mol (elle change de bassin), et au-delà de 20000 K le
+   bruit casserait la géométrie. Le ▶ Run du 🧬 part de `calcMdHot` et refroidit jusqu'à
+   `calcMdCold` ; le ▶ MD ISOLÉ de la fenêtre tient UNE température, la sienne (`mdTemp`).
+   ⚠ ELLES SONT DÉCLARÉES ICI, AVANT LES DEUX EFFETS DU 💾 QUI LES LISENT — un tableau de
+   dépendances est évalué PENDANT le rendu, donc citer un `const` déclaré plus bas est une
+   TDZ (« Cannot access 'calcMdHot' before initialization ») qui fait JETER TOUT LE VIEWER,
+   docking comprise : c'est exactement l'incident que `_tdz_scan_test.mjs` garde (et que
+   `_viewer_render_smoke_test.mjs` avait trouvé). L'ordre des `useState` et des `useEffect`
+   n'est pas cosmétique. */
+const clampTemp = (v, fallback) => {
+  const t = Number(String(v).replace(',', '.'));
+  return Number.isFinite(t) ? Math.max(1, Math.min(20000, t)) : fallback;
+};
+const [calcMdHot, setCalcMdHot] = useState(STRUCTURE_CALC_MD_HOT);
+const setCalcMdHotText = (v) => setCalcMdHot(clampTemp(v, STRUCTURE_CALC_MD_HOT));
+const [calcMdCold, setCalcMdCold] = useState(STRUCTURE_CALC_MD_COLD);
+const setCalcMdColdText = (v) => setCalcMdCold(clampTemp(v, STRUCTURE_CALC_MD_COLD));
+/* ── ⚙ LES RÉGLAGES DE LA DYNAMIQUE ISOLÉE — LES ÉTATS DE LA FENÊTRE 🌡 MD ────
+   « In the window dedicated to MD put the parameters for an MD run (temperature, explicit,
+   implicit solvent, steps, stepinterval, duration)… This MD should be independent of
+   structure calculation. » Les voici, et AUCUN n'est lu par le ▶ Run du 🧬 : changer la
+   dynamique de la fenêtre ne change plus le protocole des départs, et changer les départs
+   ne change plus la dynamique.
+   ⚠ DÉCLARÉS ICI, AVANT LES DEUX EFFETS DU 💾 QUI LES LISENT (voir la TDZ plus haut). */
+const [mdTemp, setMdTemp] = useState(STRUCTURE_CALC_MD_HOT);
+const setMdTempText = (v) => setMdTemp(clampTemp(v, STRUCTURE_CALC_MD_HOT));
+const [mdSteps, setMdSteps] = useState(STRUCTURE_CALC_MD_STEPS);
+const [mdDt, setMdDt] = useState(STRUCTURE_CALC_MD_DT);
+/* 🖼 LE « STEP INTERVAL » — combien de pas entre DEUX IMAGES écrites : le moteur n'annonce
+   une image que tous ces pas (8 par défaut, la constante du module), et c'est CE rythme qui
+   rend la dynamique regardable au lieu de ne montrer que la fin. */
+const [mdImage, setMdImage] = useState(STRUCTURE_CALC_MD_FRAME);
+/* 💧 LE SOLVANT — le modèle implicite du module (`STRUCTURE_CALC_SOLVENTS`) : le
+   diélectrique que les charges voient. Aucun ε n'est écrit dans le JSX. */
+const [mdSolvent, setMdSolvent] = useState(STRUCTURE_CALC_SOLVENT);
+/* 📦 L'ARÊTE DE LA BOÎTE D'EAU EXPLICITE (Å) — le « with its box » de la demande de cette
+   session : « it would be great if you could add the explicit solvent as a further option
+   with its box. » Elle ne sert QU'au modèle `explicit` (les trois modèles implicites sont
+   un diélectrique, sans géométrie) : le panneau ne l'affiche donc qu'avec lui, et
+   `explicitSolventOf` la refuse si elle ne peut pas contenir la molécule. */
+const [mdBox, setMdBox] = useState(STRUCTURE_CALC_SOLVENT_BOX);
+/* 🎯 LA FONCTION CIBLE DU CALCUL — `classic` (le champ entier, le défaut) ou `dyana`
+   (répulsion seule, sans charge ni surface, atomes unis). Les QUATRE gestes du champ (▶ Run,
+   ▶ MD, ⚒ Minimise, ⟳ Energy) la lisent, donc un modèle ne peut pas être construit sous un
+   jeu de règles et lu sous un autre ; le module en donne la liste et la description. */
+const [calcTargetFunction, setCalcTargetFunction] = useState(STRUCTURE_CALC_TARGET_FUNCTION);
+/* 🧪 LE pH ET LA FORCE IONIQUE — LA DEMANDE DE CETTE SESSION : « In MD and “structure
+   calculation” allow to define the pH and ionic strength so that the molecule can be protonated
+   or deprotonated and charge can be taken into consideration. »
+   Les deux vivent ICI, chez le CHAMP DE FORCES (le panneau ⚙ Parameters and Constraints), et
+   pas dans la fenêtre 🌡 : ce sont des propriétés de la CHIMIE, donc les QUATRE gestes (▶ Run,
+   ▶ MD, ⚒ Minimise, ⟳ Energy) les lisent — un modèle ne peut pas être construit sous une chimie
+   et lu sous une autre. Le texte tapé est la SEULE source (comme la cible d'une distance et son
+   poids) : une case vidée ou illisible vaut le défaut du module, jamais un zéro supposé. */
+const [calcPhText, setCalcPhText] = useState('');
+const [calcIonicText, setCalcIonicText] = useState('');
+/** LE pH DEMANDÉ — `null` quand la case est vide ou illisible : c'est « la chimie que le graphe
+ *  montre » (`FF_PH_DEFAULT`), PAS un pH 0 qui déprotonerait tout (le module refuse déjà le
+ *  vide ; ici c'est le même contrat, côté panneau). Les pKa du module disent ce que le pH fait :
+ *  carboxylate 3.9, phosphate 6.8, thiolate 8.3, ammonium 9.0, guanidinium 12.5. */
+const calcPhOf = () => {
+  const t = String(calcPhText == null ? '' : calcPhText).trim().replace(',', '.');
+  if (!t) return FF_PH_DEFAULT;
+  const v = Number(t);
+  return Number.isFinite(v) && v >= 0 && v <= 14 ? v : FF_PH_DEFAULT;
+};
+/** LA FORCE IONIQUE DEMANDÉE (mol/L) — une case vide ou illisible vaut 0 : « pas de sel », le
+ *  défaut du module (`FF_IONIC_STRENGTH_DEFAULT`), et κ = 0 y rend EXACTEMENT le Coulomb
+ *  d'avant cette fonctionnalité. */
+const calcIonicOf = () => {
+  const t = String(calcIonicText == null ? '' : calcIonicText).trim().replace(',', '.');
+  const v = Number(t);
+  return Number.isFinite(v) && v > 0 ? v : FF_IONIC_STRENGTH_DEFAULT;
+};
+/** 🧪 CE QUE LA CHIMIE VAUT SUR LA MOLÉCULE À L'ÉCRAN — la lecture LÉGÈRE du module
+ *  (`partialChargesOf`, LA fonction qui donne ses charges au champ) : charge nette, groupes
+ *  ionisables que le graphe montre et leur degré d'ionisation à ce pH-là, plus κ et la longueur
+ *  de Debye de la force ionique. C'est ce que le panneau écrit à côté de ses deux cases — la
+ *  MÊME lecture que les gestes, donc aucun second calcul de charges. Rend `null` sans molécule :
+ *  le panneau n'affiche alors aucun chiffre inventé. */
+const calcChemNow = () => {
+  const live = calcGeometryNow();
+  if (!live) return null;
+  const { geom } = live;
+  const ph = calcPhOf();
+  const ionicStrength = calcIonicOf();
+  const q = partialChargesOf({ elements: geom.elements, bonds: geom.bonds, ph });
+  const kappa = ffDebyeKappaOf(ionicStrength);
+  const groups = (q.ionisation && q.ionisation.groups) || [];
+  return {
+    ph: q.ph, net: q.net, method: q.method,
+    groups,
+    /* 🧪 LES DEUX COMPTES QUE LA PHRASE DU PANNEAU LIT — « combien de ses fonctions ionisables
+       le pH a chargées », compté de la MÊME façon pour les deux lectures du panneau (le graphe
+       ici, la séquence dans `calcSeqChemNow`), pour que la phrase ne change jamais de règle. */
+    ionised: groups.filter((g) => g.factor > 1e-6).length,
+    total: groups.length,
+    atWork: !!(q.ionisation && q.ionisation.atWork),
+    ionicStrength, kappa,
+    debyeLength: kappa > 0 ? ffDebyeLengthOf(kappa) : null,
+  };
+};
+/** 🧪 LA SECONDE LECTURE — CE QUE LA SÉQUENCE DIT, ELLE, À CE pH-LÀ.
+
+    LA DEMANDE DE CETTE SESSION, MOT POUR MOT : « If the sequence is written directly into the
+    sequence space, assume free termini. this is valid not only for this writing but also for
+    the calculation of the charge based on pH in the “params and constraints” section. In that
+    case, to calculate the charge based on pH you need to know the pka of all aminoacids side
+    chains. I guess you know them already. »
+
+    LE PANNEAU DU ⚙ A DONC DEUX LECTURES, ET IL DIT TOUJOURS LAQUELLE IL MONTRE :
+      · LA MOLÉCULE BÂTIE PAR LA PAGE SUR SA SÉQUENCE (le modèle que la page fournit —
+        `sequenceStructureText` —, celui que « 🧬 Struct from sequence » rebâtit) : la charge
+        vient du module PUR des séquences (`sequenceChargeReportOf`, utils/sequenceCharge.js),
+        qui connaît le pKa de CHAQUE chaîne latérale — y compris l'imidazole d'une histidine,
+        que le graphe ne reconnaît pas — et les DEUX TERMINUS, gratuits par défaut, retirés
+        quand la définition du composé le dit (`sequenceModifications` : acétylation, amidation,
+        phosphorylation) ;
+      · TOUT LE RESTE — un PDB chargé, un fichier, une molécule organique, un ligand : la
+        lecture du GRAPHE (`calcChemNow`), qui est celle du fichier réellement affiché, avec
+        ses pKa de famille.
+    Rend `null` quand la séquence n'est PAS ce qui est à l'écran : le panneau retombe alors sur
+    le graphe, jamais sur un chiffre qui ne décrirait pas la molécule montrée. */
+const calcSeqChemNow = () => {
+  if (moleculeType !== 'protein') return null;
+  if (!sequenceStructureText || lastLoadedTextRef.current !== sequenceStructureText) return null;
+  const seq = (Array.isArray(parsedSeq) ? parsedSeq : [])
+    .map((r) => (r && r.char) || '')
+    .join('')
+    .replace(/[^A-Za-z]/g, '');
+  if (!seq) return null;
+  const report = sequenceChargeReportOf(seq, calcPhOf(), { modifications: sequenceModifications });
+  return { ...report, seq, modifications: sequenceModifications };
+};
+/** 🧪 LA PHRASE DE LA CHIMIE — ce qu'un geste a lu (son `chemistry`) ou ce qu'une lecture du
+ *  champ rend (`ph`, `kappa`, `charges`), mis en mots : le pH, la charge nette, les groupes
+ *  ionisables et l'écrantage ionique. `''` quand il n'y a rien à dire — un rapport sans chimie
+ *  n'a pas de ligne de chimie, et le module DIT toujours si le pH a travaillé (`atWork`). */
+const calcChemNote = (c) => {
+  if (!c) return '';
+  const groups = Array.isArray(c.groups) ? c.groups
+    : ((c.ionisation && Array.isArray(c.ionisation.groups)) ? c.ionisation.groups : []);
+  const net = Number.isFinite(Number(c.net)) ? Number(c.net)
+    : ((c.charges && Number.isFinite(Number(c.charges.net))) ? Number(c.charges.net) : null);
+  const ph = c.ph == null ? null : Number(c.ph);
+  const I = Number(c.ionicStrength) > 0 ? Number(c.ionicStrength) : 0;
+  const kappa = Number(c.kappa) > 0 ? Number(c.kappa) : 0;
+  const debye = Number(c.debyeLength) > 0 ? Number(c.debyeLength) : null;
+  const atWork = c.atWork != null ? !!c.atWork : !!(c.ionisation && c.ionisation.atWork);
+  const bits = [];
+  if (ph != null) bits.push(`🧪 pH ${ph}${atWork ? '' : ' (no ionisable group of this molecule moved)'}`);
+  if (net != null) bits.push(`net charge ${net >= 0 ? '+' : ''}${net.toFixed(2)} e`);
+  if (groups.length) {
+    const charged = groups.filter((g) => g.factor > 1e-6).length;
+    bits.push(`${charged}/${groups.length} ionisable group${groups.length === 1 ? '' : 's'} charged`);
+  }
+  bits.push(kappa > 0
+    ? `I = ${I} mol/L — the charges are screened (κ = ${kappa.toFixed(2)} Å⁻¹, Debye length ${debye} Å)`
+    : 'no ionic screening (I = 0: the charges see each other in full)');
+  return ` · ${bits.join(' · ')}`;
+};
+/* 🪢 ω VARIE — l'option de la dynamique ISOLÉE (la sienne : le calcul a `calcOmegaFree`). */
+const [mdFreeOmega, setMdFreeOmega] = useState(STRUCTURE_CALC_FREE_OMEGA);
+const CALC_STORE_KEY = 'labViewerCalcState';
+const calcRestoreRef = useRef(false);
+useEffect(() => {
+  if (calcRestoreRef.current) return;      // une seule relecture, au montage
+  calcRestoreRef.current = true;
+  try {
+    const raw = localStorage.getItem(CALC_STORE_KEY);
+    if (!raw) return;
+    const s = JSON.parse(raw) || {};
+    if (Array.isArray(s.rows) && s.rows.length) {
+      setCalcRestraints(s.rows.slice(0, STRUCTURE_CALC_MAX_RESTRAINTS).map((r, k) => {
+        const t = String((r && r.t) == null ? '' : r.t);
+        const v = Number(t.replace(',', '.'));
+        /* ⚖ LE POIDS SE RELIT COMME LE RESTE — le TEXTE tapé revient tel quel et la
+           valeur numérique n'est que sa conséquence : une frappe à moitié écrite revient
+           à moitié écrite (la ligne court alors au poids par défaut, 1), et une table
+           enregistrée AVANT cette colonne (aucun `w`) revient exactement comme avant. */
+        const wText = String((r && r.w) == null ? '' : r.w);
+        const wv = Number(wText.replace(',', '.'));
+        return {
+          key: `row-restored-${k + 1}`, i: null, j: null,
+          target: Number.isFinite(v) && v > 0 ? v : null,
+          weight: Number.isFinite(wv) && wv >= 0 ? wv : null,
+          w: wText,
+          a: String((r && r.a) || ''), b: String((r && r.b) || ''), t, la: '', lb: '', say: '', sayA: '', sayB: '',
+        };
+      }));
+      calcRowSeqRef.current = s.rows.length;
+    }
+    if (Number.isFinite(s.starts)) setCalcStartsText(s.starts);
+    if (Number.isFinite(s.keep)) setCalcKeepText(s.keep);
+    if (Number.isFinite(s.anneal)) setCalcAnneal(Math.max(0, Math.min(24, Math.round(s.anneal))));
+    if (Number.isFinite(s.annealFrame)) setCalcAnnealFrame(Math.max(0, Math.min(24, Math.round(s.annealFrame))));
+    if (Number.isFinite(s.mdSteps)) setCalcMdSteps(Math.max(0, Math.min(20000, Math.round(s.mdSteps))));
+    if (Number.isFinite(s.mdDt)) setCalcMdDtText(s.mdDt);
+    if (Number.isFinite(s.mdEquil)) setCalcMdEquil(Math.max(0, Math.min(90, Math.round(s.mdEquil))));
+    if (Number.isFinite(s.minimise)) setCalcMinimise(Math.max(0, Math.min(12, Math.round(s.minimise))));
+    /* ⚒ …ET LES TROIS RÉGLAGES DE LA DESCENTE (voir leur état) : ils reviennent BORNÉS comme
+       les cases qui les écrivent, donc une valeur impossible relue ici ne peut pas armer un
+       pas nul ni zéro essai. Une session enregistrée AVANT eux n'en a pas : elle revient
+       simplement sur les valeurs du module, sans rien dire. */
+    if (Number.isFinite(s.minStep)) setCalcMinStep(Math.max(0.1, Math.min(180, Number(s.minStep))));
+    if (Number.isFinite(s.minStepFloor)) setCalcMinStepFloor(Math.max(0.01, Math.min(90, Number(s.minStepFloor))));
+    if (Number.isFinite(s.minTries)) setCalcMinTries(Math.max(1, Math.min(64, Math.round(s.minTries))));
+    if (Number.isFinite(s.hot)) setCalcMdHotText(s.hot);
+    if (Number.isFinite(s.cold)) setCalcMdColdText(s.cold);
+    if (typeof s.omegaFree === 'boolean') setCalcOmegaFree(s.omegaFree);
+    /* ⚙ …ET LES RÉGLAGES DE LA DYNAMIQUE ISOLÉE, EUX AUSSI — sous leurs propres clefs
+       (`mdRun…`), donc les valeurs du 🧬 ci-dessus ne peuvent pas se déverser dans la
+       fenêtre, ni l'inverse. ⚠ `mdTemp` et `mdUseRestraints` sont les clefs de la fenêtre
+       DEPUIS TOUJOURS (elles ont seulement changé de nom d'état) : une session enregistrée
+       avant cette révision revient exactement où elle était. */
+    if (Number.isFinite(s.mdTemp)) setMdTempText(s.mdTemp);
+    if (typeof s.mdUseRestraints === 'boolean') setMdUseRestraints(s.mdUseRestraints);
+    if (Number.isFinite(s.mdRunTemp)) setMdTempText(s.mdRunTemp);
+    if (Number.isFinite(s.mdRunSteps)) setMdSteps(Math.max(0, Math.min(100000, Math.round(s.mdRunSteps))));
+    if (Number.isFinite(s.mdRunDt)) setMdDtText(s.mdRunDt);
+    if (Number.isFinite(s.mdRunImage)) setMdImage(Math.max(1, Math.min(20000, Math.round(s.mdRunImage))));
+    if (typeof s.mdRunSolvent === 'string') setMdSolvent(structureCalcSolventOf(s.mdRunSolvent).id);
+    if (Number.isFinite(s.mdRunBox)) setMdBox(Math.max(STRUCTURE_CALC_SOLVENT_BOX_MIN,
+      Math.min(STRUCTURE_CALC_SOLVENT_BOX_MAX, Math.round(s.mdRunBox))));
+    if (typeof s.mdRunOmega === 'boolean') setMdFreeOmega(s.mdRunOmega);
+    /* 🧪 …ET LA CHIMIE DU CHAMP : le pH et la force ionique tapés reviennent tels quels (le
+       TEXTE, comme la cible d'une distance). Une session enregistrée avant cette ligne n'en a
+       pas : les deux cases restent alors à leur défaut (pH « la chimie du graphe », I = 0). */
+    if (typeof s.chemPh === 'string') setCalcPhText(s.chemPh);
+    if (typeof s.chemIonic === 'string') setCalcIonicText(s.chemIonic);
+    if (typeof s.mdRunRestraints === 'boolean') setMdUseRestraints(s.mdRunRestraints);
+    /* 🎯 …ET LA FONCTION CIBLE DU CALCUL — résolue par le module (un identifiant inconnu
+       rend `classic`), donc une session ancienne revient sur le champ historique. */
+    if (typeof s.targetFunction === 'string') setCalcTargetFunction(structureCalcTargetFunctionOf(s.targetFunction).id);
+    setCalcMsg('↩ The distance table and the settings of the last session were brought back from this browser'
+      + ' (the rows are re-resolved on the molecule as soon as it is on screen). ⛓ re-imposes the φ/ψ of the'
+      + ' painted secondary structure in one click: those constraints are matched to the backbone ON SCREEN, so'
+      + ' they are always rebuilt on the molecule you are looking at.');
+  } catch { /* un rechargement n'est pas une donnée : on repart des défauts */ }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, []);
+useEffect(() => {
+  try {
+    localStorage.setItem(CALC_STORE_KEY, JSON.stringify({
+      rows: calcRestraints.map((r) => ({
+        a: r.a || '', b: r.b || '',
+        t: r.t != null ? r.t : (r.target == null ? '' : String(r.target)),
+        /* ⚖ Le TEXTE du poids, comme la cible : ce que l'utilisateur a écrit, pas ce
+           qu'on en a compris (`weight` se recalculera à la relecture). */
+        w: r.w != null ? r.w : (r.weight == null || r.weight === 1 ? '' : String(r.weight)),
+      })),
+      starts: calcStarts, keep: calcKeep, anneal: calcAnneal, annealFrame: calcAnnealFrame,
+      mdSteps: calcMdSteps, mdDt: calcMdDt, mdEquil: calcMdEquil, minimise: calcMinimise,
+      /* ⚒ …ET LES TROIS RÉGLAGES DE LA DESCENTE, sous leurs propres clefs : le ⚒ Minimise
+         de la barre les relit au chargement, exactement comme le 🧬 relit ses balayages. */
+      minStep: calcMinStep, minStepFloor: calcMinStepFloor, minTries: calcMinTries,
+      hot: calcMdHot, cold: calcMdCold, omegaFree: calcOmegaFree,
+      /* ⚙ …ET LA FENÊTRE 🌡 MD SOUS SES PROPRES CLEFS : deux jeux de valeurs, deux
+         préfixes, donc une relecture ne peut pas les mélanger. */
+      mdRunSteps: mdSteps, mdRunDt: mdDt, mdRunImage: mdImage, mdRunSolvent: mdSolvent,
+      mdRunTemp: mdTemp, mdRunOmega: mdFreeOmega, mdRunRestraints: mdUseRestraints,
+      /* 📦 …ET L'ARÊTE DE LA BOÎTE EXPLICITE (le réglage « de la boîte » de cette session),
+         plus 🎯 LA FONCTION CIBLE DU CALCUL : les deux survivent au rechargement. */
+      mdRunBox: mdBox, targetFunction: calcTargetFunction,
+      /* 🧪 …ET LA CHIMIE DU CHAMP — le pH et la force ionique tapés (le TEXTE, comme la cible
+         d'une distance : une case à moitié écrite revient à moitié écrite). */
+      chemPh: calcPhText, chemIonic: calcIonicText,
+    }));
+  } catch { /* le stockage local est un confort, pas une donnée */ }
+}, [calcRestraints, calcStarts, calcKeep, calcAnneal, calcAnnealFrame, calcMdSteps, calcMdDt,
+  calcMdEquil, calcMinimise, calcMinStep, calcMinStepFloor, calcMinTries,
+  calcMdHot, calcMdCold, calcOmegaFree,
+  mdSteps, mdDt, mdImage, mdSolvent, mdBox, mdTemp, mdFreeOmega, mdUseRestraints,
+  calcPhText, calcIonicText, calcTargetFunction]);
+/* …ET LA RÉSOLUTION DES ATOMES REVENUS, dès que la molécule est là — les DEUX côtés d'une
+   ligne : sans les deux, elle resterait « pas prête » jusqu'à ce qu'on la retape. Une
+   ligne dont un nom ne se résout pas GARDE son texte et dit POURQUOI (comme la frappe). */
+/** CE QU'UNE FRAPPE — OU LE RETOUR DE LA MOLÉCULE — FAIT D'UN CÔTÉ DE LIGNE : le texte
+ *  écrit (`a`/`b`), l'atome que ce texte désigne s'il se lit (`i`/`j`), son libellé, et
+ *  sinon le message qui dit POURQUOI (`say`). Écrit UNE fois, parce que les DEUX chemins
+ *  qui posent un atome — la frappe (`calcSetRowAtom`) et l'effet de résolution ci-dessous
+ *  — doivent répondre exactement la même chose du même texte.
+ *
+ *  ⚠ ELLE REND LA LIGNE ELLE-MÊME QUAND RIEN NE CHANGE (même texte, même atome, même
+ *  libellé, même message). C'est ce qui ARRÊTE l'effet : sans cette comparaison, une
+ *  ligne au texte illisible recevait un objet NEUF à chaque tour, `calcRestraints`
+ *  changeait, l'effet se relançait — la page bouclait pendant qu'on tapait dans la table.
+ *  ⚠ ET ELLE GARDE LE TEXTE TAPÉ MÊME SANS MOLÉCULE (`live` null, `waiting` le dit) :
+ *  c'est le rapport de cette session, « the atom is not typed … the last character
+ *  disappears ». Un caractère écrit ne se perd plus : la ligne l'affiche tel quel, dit
+ *  qu'elle attend une structure, et l'effet la relit dès que la molécule est là.
+ *  ⚠ UNE CASE VIDÉE SE VIDE VRAIMENT : plus d'atome de ce côté, plus de message — et la
+ *  ligne redevient « pas prête », ce qui est le seul reproche utile.
+ *  ⚠ ET CHAQUE PLAINTE PORTE LE NOM DE SON CÔTÉ (`sayA`/`sayB`, réunis par
+ *  `calcRowSayOf`) : une ligne dont le PREMIER atome est résolu ne peut plus afficher,
+ *  sans le dire, la plainte de son SECOND. Le rapport de cette session — « I type
+ *  “CYS 31 SG” and it answers “CYS 1 SG”. It does not see the 1. Mistery » — est
+ *  exactement cela : le ✕ appartenait à l'autre case de la ligne, et la ligne ne
+ *  disait pas laquelle ; la frappe, elle, croyait avoir été refusée. Le côté qui
+ *  redevient lisible efface SA plainte et laisse celle de l'autre intacte. */
+const CALC_WAITING_SAY = 'no molecule on screen yet — the text is kept and resolves as soon as a structure is loaded';
+/** LA PHRASE D'UNE LIGNE — SES DEUX CÔTÉS, NOMMÉS, ET RIEN D'AUTRE. Le `say` d'une
+ *  ligne est la somme de ce que ses DEUX cases ont répondu — « atom A: … », « atom B:
+ *  … » — plus ce qu'un FICHIER a dit de la ligne (`sayExtra`, le « w= » illisible de
+ *  utils/structureRestraints.js). Sans le nom du côté, la plainte d'une case se lit
+ *  comme la plainte de l'AUTRE : c'est le rapport de cette session, « I type “CYS 31
+ *  SG” and it answers “CYS 1 SG”. It does not see the 1. Mistery » — le ✕ était celui
+ *  du SECOND atome de la ligne (resté là), et rien ne disait de quel atome il parlait.
+ *  Écrite UNE fois : 📂 Load et la frappe composent donc la phrase de la MÊME façon,
+ *  et un côté qui redevient lisible efface SA plainte sans toucher à celle de l'autre. */
+const calcRowSayOf = (row) => [
+  row && row.sayA ? `atom A: ${row.sayA}` : '',
+  row && row.sayB ? `atom B: ${row.sayB}` : '',
+  (row && row.sayExtra) || '',
+].filter(Boolean).join(' · ');
+
+/** LE NOM D'UN CÔTÉ DE LIGNE, DANS LES PHRASES QUI PARLENT À L'UTILISATEUR — le même
+ *  mot que dans `say` (« atom A », « atom B ») : un message ne peut plus être attribué
+ *  à la mauvaise case. */
+const CALC_SIDE_NAME = (side) => (side === 'a' ? 'atom A' : 'atom B');
+
+const calcRowAfterAtom = (row, which, text, live, waiting) => {
+  const textCol = which === 'a' ? 'a' : 'b';
+  const labelCol = which === 'a' ? 'la' : 'lb';
+  const sayCol = which === 'a' ? 'sayA' : 'sayB';   // ⚠ la plainte de CE côté, jamais des deux à la fois
+  const written = String(text == null ? '' : text);
+  const hadText = String(row[textCol] == null ? '' : row[textCol]);
+  const hadLabel = String(row[labelCol] == null ? '' : row[labelCol]);
+  const hadSay = String(row[sayCol] == null ? '' : row[sayCol]);
+  const known = which === 'a' ? row.i : row.j;
+  /* CE QUE LA CASE DIT, EN CLAIR — trois cas, jamais devinés : une case vide ne désigne
+     rien ; un texte écrit sans molécule ATTEND ; sinon c'est le lecteur commun de la
+     frappe et de la relecture qui tranche (`calcAtomOfText`). */
+  const read = !written ? { ok: false, say: '' }
+    : (live ? calcAtomOfText(live.structure, written) : { ok: false, say: waiting });
+  const index = read.ok ? read.index : null;
+  const label = read.ok ? read.label : '';
+  const say = read.ok ? '' : read.say;
+  if (index === known && label === hadLabel && say === hadSay && written === hadText) return row;
+  const next = { ...row, [textCol]: written, [sayCol]: say };
+  next.say = calcRowSayOf(next);   // ⚠ la phrase de la ligne se recompose de SES DEUX côtés
+  if (which === 'a') { next.i = index; next.la = label; } else { next.j = index; next.lb = label; }
+  /* LES DEUX ATOMES SONT LÀ : la ligne porte son libellé, et sa cible par défaut est la
+     longueur que les tables donnent à ce couple d'éléments (l'utilisateur peut la
+     réécrire — c'est la colonne Want). */
+  if (next.i != null && next.j != null && live) {
+    next.label = `${next.la || `#${next.i}`}–${next.lb || `#${next.j}`}`;
+    if (!(Number.isFinite(next.target) && next.target > 0)) {
+      const el = live.geom.elements;
+      next.target = bondLengthTarget(el[next.i], el[next.j]);
+    }
+  }
+  return next;
+};
+useEffect(() => {
+  if (status !== 'ready' || !componentRef.current) return;
+  if (!calcRestraints.some((r) => r.i == null && r.a || r.j == null && r.b)) return;
+  const live = calcGeometryNow();
+  if (!live) return;
+  setCalcRestraints((list) => {
+    let changed = false;
+    const next = list.map((r) => {
+      const done = calcRowAfterAtom(
+        calcRowAfterAtom(r, 'a', r.a, live, CALC_WAITING_SAY), 'b', r.b, live, CALC_WAITING_SAY,
+      );
+      if (done !== r) changed = true;
+      return done;
+    });
+    /* ⚠ RIEN DE NEUF → LA MÊME LISTE. Une liste identique ne change pas l'état, donc
+       l'effet ne se relance pas : c'est la seconde moitié de la garde ci-dessus (voir le
+       commentaire du helper). Renvoyer `next` même inchangé faisait boucler la page. */
+    return changed ? next : list;
+  });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [status, calcRestraints]);
+const [calcWatch, setCalcWatch] = useState(true);
+/* COMBIEN DE MILLISECONDES DE CALCUL ENTRE DEUX IMAGES — c'est le budget d'un tour de
+   `pump` : assez court pour que la page peigne à chaque tour (≈ 15 images par seconde),
+   assez long pour que le calcul avance vraiment. Un calcul plus rapide que ça se voit
+   encore : la boucle en fait PLUSIEURS dans un tour, tant que le budget n'est pas
+   dépensé. */
+const CALC_FRAME_BUDGET_MS = 14;
+/* ⚠ LES TEMPÉRATURES DES DEUX GESTES (`calcMdHot`, `calcMdCold`, `mdTemp`) SONT DÉCLARÉES
+   PLUS HAUT, avec les deux effets du 💾 qui les lisent : voir le commentaire là-bas — un
+   tableau de dépendances est évalué PENDANT le rendu, donc citer un `const` déclaré plus
+   bas est une TDZ qui fait jeter le viewer entier.
+   …ET LES ÉTATS DE LA FENÊTRE 🌡 MD AUSSI (`mdSteps`, `mdDt`, `mdImage`, `mdSolvent`,
+   `mdFreeOmega`, `mdUseRestraints`) : le 💾 les enregistre, donc il les cite. */
+/* LE PAS DE TEMPS (ps) ET LA DURÉE TOTALE D'UNE SIMULATION (ps) — les deux se commandent
+   l'un l'autre : taper une durée choisit les pas (`durée / dt`), taper les pas choisit la
+   durée. Le module fait la multiplication (`structureCalcSimulationTimeOf`), et les DEUX
+   gestes ont leur paire, chez eux : celle du protocole du 🧬 (`calcMdDt` → `calcMdTime`)
+   et celle de la dynamique isolée de la fenêtre (`mdDt` → `mdTime`). */
+const setCalcMdDtText = (v) => {
+  const h = Number(String(v).replace(',', '.'));
+  setCalcMdDt(Number.isFinite(h) ? Math.max(0.0001, Math.min(1, h)) : STRUCTURE_CALC_MD_DT);
+};
+const setCalcMdTotalText = (v) => {
+  const ps = Number(String(v).replace(',', '.'));
+  if (!Number.isFinite(ps) || ps <= 0) return;
+  const steps = Math.max(0, Math.min(100000, Math.round(ps / Math.max(1e-4, calcMdDt))));
+  setCalcMdSteps(steps);
+};
+const calcMdTime = structureCalcSimulationTimeOf({ steps: calcMdSteps, dt: calcMdDt });
+const setMdDtText = (v) => {
+  const h = Number(String(v).replace(',', '.'));
+  setMdDt(Number.isFinite(h) ? Math.max(0.0001, Math.min(1, h)) : STRUCTURE_CALC_MD_DT);
+};
+const setMdTotalText = (v) => {
+  const ps = Number(String(v).replace(',', '.'));
+  if (!Number.isFinite(ps) || ps <= 0) return;
+  const steps = Math.max(0, Math.min(100000, Math.round(ps / Math.max(1e-4, mdDt))));
+  setMdSteps(steps);
+};
+const mdTime = structureCalcSimulationTimeOf({ steps: mdSteps, dt: mdDt });
+/* 💧 LE MODÈLE DE SOLVANT DU MOMENT — lu UNE fois, par le geste et par son rapport : un
+   identifiant inconnu retombe sur le défaut du module (`structureCalcSolventOf` ne rend
+   jamais `undefined`), donc ni le moteur ni l'écran ne peuvent jeter pour lui. */
+const mdSolventOf = () => structureCalcSolventOf(mdSolvent);
+const [calcForce, setCalcForce] = useState(null);   // le dernier champ de forces relu
+const [calcMsg, setCalcMsg] = useState('');
+const [calcProgress, setCalcProgress] = useState('');
+/* ⚡ LA LIGNE DE PROGRESSION DES GESTES ISOLÉS (▶ MD et ⚒ Minimise) — la demande de cette
+   session : « Le informazioni sul progresso del calcolo sono nella finestra di MD ma
+   dovrebbero essere nella finestra di structure calculation. » Les deux gestes et le calcul
+   partageaient UNE seule ligne, écrite dans les DEUX fenêtres : lancer ▶ Run affichait donc
+   « 🧬 start 3/8 … » dans la fenêtre 🌡 MD, qui n'a rien lancé. Chaque fenêtre a maintenant
+   SON état — `calcProgress` pour le 🧬 (dans son panneau), `mdProgress` pour les deux gestes
+   de la fenêtre 🌡 MD (dans la sienne) — et aucune ligne ne s'affiche ailleurs que là où le
+   geste a été cliqué. */
+const [mdProgress, setMdProgress] = useState('');
+/* ■ LE TÉMOIN DU GESTE EN COURS — la seconde moitié de la demande de cette session :
+   « manca un pulsante di stop sia per la structure calculation che per la MD ». Le 🧬 avait
+   son ⏹ ; la fenêtre 🌡 MD n'avait RIEN — une dynamique de 20 000 pas ne pouvait que
+   s'attendre. `mdBusy` est l'état DE LA FENÊTRE, comme `mdProgress` : le 🧬 garde le sien
+   (`calcBusy`), donc le ⏹ du calcul ne s'allume plus pendant une dynamique (il s'allumait :
+   un `calcBusy` partagé le faisait apparaître dans l'AUTRE fenêtre, et le cliquer
+   re-classait un calcul déjà fini — voir `calcStop`). C'est aussi lui qui gèle les trois ▶
+   pendant qu'un geste tourne : les deux gestes et le calcul avancent le MÊME jeton
+   d'annulation (`calcRunRef`), donc ils ne peuvent pas courir ensemble.
+   ⚠ `mdPhaseRef` garde la dernière ligne annoncée par la pompe : le ■ s'arrête ENTRE deux
+   images et peut le DIRE (où en était le geste), au lieu de laisser la ligne sur « running… ».
+   ⚠ `mdRunRef` dit QUEL geste tourne : un tick en retard d'un geste qu'on vient d'arrêter ne
+   doit pas éteindre le témoin d'un geste relancé juste après (voir `mdStop`). */
+const [mdBusy, setMdBusy] = useState(false);
+const mdPhaseRef = useRef('');   // la dernière ligne annoncée par la pompe du geste
+const mdRunRef = useRef(0);      // le jeton du geste qui tourne (0 = personne)
+const [calcBusy, setCalcBusy] = useState(false);
+/* ⚠ LE MÊME TÉMOIN, LU PAR UN CALLBACK QUI N'EST PAS UN RENDU — l'aperçu de la boîte d'eau
+   explicite (le `useEffect` posé à côté de `calcDrawWaterBox`) tourne dans un `setTimeout` :
+   la valeur d'état figée dans sa fermeture peut avoir un geste de retard, donc il lit CE ref,
+   réécrit à chaque rendu comme les autres (`sectionCatalogRef`, `mdPhaseRef`…). */
+const calcBusyRef = useRef(false);
+calcBusyRef.current = calcBusy;
+const [calcResult, setCalcResult] = useState(null);   // la famille classée du module
+const [calcShown, setCalcShown] = useState(0);        // le rang écrit à l'écran
+const calcRunRef = useRef(0);                         // le jeton d'annulation du ⏹
+const calcPartialRef = useRef(null);                  // { run, finish, attempts } du calcul en cours
+const calcPartPartialRef = useRef(null);
+const calcRowSeqRef = useRef(0);
+const setCalcStartsText = (v) => {
+  const n = Math.round(Number(String(v).replace(',', '.')));
+  setCalcStarts(Number.isFinite(n) ? Math.min(STRUCTURE_CALC_MAX_STARTS, Math.max(1, n)) : STRUCTURE_CALC_DEFAULT_STARTS);
+};
+const setCalcKeepText = (v) => {
+  const n = Math.round(Number(String(v).replace(',', '.')));
+  setCalcKeep(Number.isFinite(n) ? Math.min(STRUCTURE_CALC_MAX_KEEP, Math.max(1, n)) : STRUCTURE_CALC_DEFAULT_KEEP);
+};
+
 const [rebuildMsg, setRebuildMsg] = useState('');
 const rebuildMsgTimerRef = useRef(null);
 const flashRebuildMsg = (m) => {
@@ -7506,6 +9027,53 @@ const sectionTreesOf = (sections) => {
   const out = {};
   (sections || []).forEach((s) => { out[s.id] = sectionTreeOf(s.id, s.kind); });
   return out;
+};
+/** ⚠ UNE MOLÉCULE QUI QUITTE LA SCÈNE EMPORTE SES SECTIONS — le rapport de cette session :
+ *  « After the structure calculation the styling window reports each molecule twice. In MD with
+ *  explicit solvent the water is added twice. » Les DEUX étaient exacts, et la cause est ici :
+ *  le CATALOGUE des sections (`sectionCatalog`, la source de la fenêtre de style) n'était jamais
+ *  purgé. `ensureSections` AJOUTE une entrée par molécule ; rien n'en RETIRAIT quand le
+ *  composant sortait de la scène — la famille d'un calcul que le suivant remplace (`fam_…`),
+ *  la boîte d'eau qu'un ▶ MD redessine (`solv_…`, un identifiant NEUF à chaque dessin), une
+ *  molécule ajoutée qu'on 🗑, un « 🗑 Clear ». Leurs sections RESTAIENT dans la fenêtre de style
+ *  avec leur nom, et la suivante s'ajoutait à côté : la même molécule deux fois, la même boîte
+ *  d'eau deux fois — une morte, une vivante.
+ *  Ce geste est le SEUL retrait, et il défait exactement ce qu'`ensureSections` a écrit :
+ *  l'entrée du catalogue, le look `sectionLooksRef`, le ✔ `sectionVisRef` et le nom
+ *  `molNamesRef` de la molécule — par identifiant GLOBAL de section (`<molécule>::<clé>`), donc
+ *  rien d'autre n'est effacé. La signature du catalogue est ensuite périmée et un rendu est
+ *  demandé, sans quoi l'état garderait la molécule partie.
+ *  ⚠ AUCUN composant NGL n'est touché ici : celui qui retire la molécule l'a déjà fait
+ *  (`calcRemoveWaterBox`, `calcAddFamilyToBar`) ou va le faire (le 🗑 d'une molécule ajoutée). */
+const forgetSectionMolecules = (ids) => {
+  const gone = new Set(Array.from(ids || []).map((k) => String(k)));
+  if (!gone.size) return;
+  const cat = sectionCatalogRef.current || {};
+  const next = {};
+  let changed = false;
+  Object.keys(cat).forEach((molKey) => {
+    if (gone.has(molKey)) { changed = true; return; }
+    next[molKey] = cat[molKey];
+  });
+  if (changed) {
+    sectionCatalogRef.current = next;
+    sectionCatalogSigRef.current = '';
+    setSectionCatalog(next);
+  }
+  const kills = (key) => Array.from(gone).some((molKey) => String(key).startsWith(`${molKey}::`));
+  const looks = { ...(sectionLooksRef.current || {}) };
+  const vis = { ...(sectionVisRef.current || {}) };
+  let dropped = false;
+  Object.keys(looks).forEach((k) => { if (kills(k)) { delete looks[k]; dropped = true; } });
+  Object.keys(vis).forEach((k) => { if (kills(k)) { delete vis[k]; dropped = true; } });
+  if (dropped) {
+    sectionLooksRef.current = looks;
+    sectionVisRef.current = vis;
+    setSectionLooks(looks);
+    setSectionVis(vis);
+  }
+  gone.forEach((molKey) => { delete molNamesRef.current[molKey]; });
+  bumpSectionEpoch();
 };
 // The sections switched OFF (the ✔ of the bar): a molecule of water / an ion is off
 // until its ✔ is ticked (the request: a solvated box must not block the view).
@@ -7807,6 +9375,21 @@ const [residueTicks, setResidueTicks] = useState([]); // [{ resno, resname, code
 // FIRST render's value. The ref always holds the list the strip is showing.
 const residueTicksRef = useRef(residueTicks);
 residueTicksRef.current = residueTicks;
+/* 🧬 LE FICHIER PORTE PLUSIEURS SÉQUENCES — LAQUELLE ÉCRIRE ? (la demande)
+   Un .pdb / un .gro peut contenir plusieurs chaînes polymères (un homodimère
+   A · B, les deux brins d'un ADN, un complexe) : la case d'une nature n'en peut
+   garder qu'une, donc rien n'est écrit tant que l'utilisateur n'a pas choisi —
+   voir le panneau « Sequence to write » au-dessus du bandeau de résidus. État :
+   `{ candidates, ambiguous, sel }`, `sel` = la chaîne choisie par nature
+   ambiguë (`{ dna: 'dna|B' }`), initialisé sur la première du fichier. Le
+   fichier reste ENTIER dans la vue 3D : ce panneau ne décide que ce qui part
+   dans les cases de séquence de la page, et seulement si elles sont vides. */
+const [sequenceChoice, setSequenceChoice] = useState(null);
+// (L'état de la case de séquence de la page est lu par `parsedSeqRef`, la ref
+// partagée du viewer — voir plus bas : l'effet de chargement n'est relancé que
+// par la demande de chargement, donc la prop `parsedSeq` y serait la valeur du
+// chargement PRÉCÉDENT, alors que c'est bien l'état de la case À L'INSTANT du
+// chargement qui décide entre écrire et demander.)
 /* 🎯 THE SIGNATURE OF THE « SELECTED » SPACE (the request): its rows are drawn by
    the very builder of a molecule's space, so the rebuild has to follow the
    SELECTION as well as the looks — same keys, same ticks, same kinds. The looks
@@ -7850,6 +9433,7 @@ const pendingExtraFilesRef = useRef([]);           // [{ file, n }]
 // of any new main-structure load — NOT after it — so a freshly-selected batch
 // of files is never wiped by the main load that runs concurrently with them.
 const clearExtraMolecules = useCallback(() => {
+  forgetSectionMolecules(extraCompsRef.current.map((e) => e.id));   // leurs sections partent avec
   extraCompsRef.current.forEach(({ comp }) => {
     try { if (stageRef.current) stageRef.current.removeComponent(comp); } catch {}
   });
@@ -8040,19 +9624,12 @@ const [themeChoices, setThemeChoices] = useState(null);        // kind → secti
 const [setupName, setSetupName] = useState('');
 const [setupMsg, setSetupMsg] = useState('');
 const setupMsgTimerRef = useRef(null);   // the “✓ saved / applied” line clears itself
-const [sstrucColors, setSstrucColors] = useState(() => {
-  try {
-    const raw = JSON.parse(localStorage.getItem('labViewerSstrucColors') || 'null');
-    if (raw && typeof raw === 'object') {
-      return {
-        helix: raw.helix || SSTRUC_COLOR_DEFAULTS.helix,
-        sheet: raw.sheet || SSTRUC_COLOR_DEFAULTS.sheet,
-        loop: raw.loop || SSTRUC_COLOR_DEFAULTS.loop,
-      };
-    }
-  } catch { /* fall through to defaults */ }
-  return { ...SSTRUC_COLOR_DEFAULTS };
-});
+/* ⛭ …ET LA MÊME LECTURE QUE TOUTES LES PALETTES (le rapport de cette session : les ↺
+   rendent les couleurs ENREGISTRÉES, voir paletteDefaults). La palette de 2° structure
+   était la SEULE à relire le stockage à la main, avec son propre `||` : elle passe par
+   loadPalette — la même garde que les dix autres (une valeur qui n'est pas une couleur
+   est écartée) et la même clé que celle que son ↺ relit. */
+const [sstrucColors, setSstrucColors] = useState(() => loadPalette('labViewerSstrucColors', SSTRUC_COLOR_DEFAULTS));
 const [selectedResidueColor, setSelectedResidueColor] = useState(() => {
   try { const v = parseInt(localStorage.getItem('labViewerSelResColor') || '', 16); if (Number.isFinite(v) && v >= 0) return v; } catch { /* default */ }
   return SELECT_COLOR_HEX;
@@ -8095,7 +9672,33 @@ if (!pymolSessionKeyRef.current) pymolSessionKeyRef.current = pymolSessionKeysRe
    intention dans un commentaire. */
 const pymolScopeRef = useRef(null);
 if (!pymolScopeRef.current) pymolScopeRef.current = pymolScopeLabelOf(instanceKey, driveNaming);
-const [pymolSession] = useState(() => loadPymolSessionFor(pymolSessionKeysRef.current));
+/* L'EMPREINTE DU MONDE OÙ L'ON EST (voir pymolSessionOwnerOf) : écrite AVEC la session et
+   relue AVANT de l'accepter. Elle est FIGÉE au montage, comme les clés : la page qu'on
+   quitte reste vivante (elles gardent chacune la leur) et la session ne peut donc pas
+   glisser d'une expérience dans une autre. */
+const pymolOwnerRef = useRef(null);
+if (!pymolOwnerRef.current) pymolOwnerRef.current = pymolSessionOwnerOf(instanceKey, driveNaming);
+/* 🎨 LA MÉMOIRE DE STYLE DE CETTE INSTALLATION (la demande de cette session, voir
+   utils/viewerStyleFile.js) : le MÊME repère que la session 🧪 — l'expérience
+   d'abord (projet · nom, ses conditions la partagent), la condition ensuite (une
+   mémoire écrite avant ce correctif reste lisible), la clé générale en dernier
+   recours. Le monde est FIGÉ au montage, comme les clés ci-dessus : la page qu'on
+   quitte garde le sien, et le style d'une expérience ne peut pas glisser dans une
+   autre. Deux drapeaux : `styleRecallRef` = le rappel n'a lieu qu'UNE fois par
+   montage, `styleTouchedRef` = un geste de l'utilisateur (enregistrer, charger,
+   importer) le clôt — le style qu'il vient de choisir n'est jamais écrasé par un
+   rappel qui arrive après. */
+const styleMemoryKeysRef = useRef(null);
+if (!styleMemoryKeysRef.current) {
+  const slugs = [pymolSessionExperimentSlug(driveNaming), pymolSessionInstanceSlug(instanceKey, driveNaming)]
+    .filter(Boolean);
+  styleMemoryKeysRef.current = [...slugs.map(viewerStyleMemoryKey), viewerStyleMemoryKey('')];
+}
+const styleMemoryKeyRef = useRef(null);
+if (!styleMemoryKeyRef.current) styleMemoryKeyRef.current = styleMemoryKeysRef.current[0];
+const styleRecallRef = useRef(false);
+const styleTouchedRef = useRef(false);
+const [pymolSession] = useState(() => loadPymolSessionFor(pymolSessionKeysRef.current, pymolOwnerRef.current));
 const [selections, setSelections] = useState(() => pymolSession.selections);   // [{ name, expr }]
 const [selStyles, setSelStyles] = useState(() => pymolSession.selStyles);       // key -> { cartoon, ribbon, tube, ball, stick, sphere, surface, color, colorMode, transparency, sphereScale, radiusSphere, radiusBond, hideFor, mat }
 // PyMOL's `set … , <selection>` commands are NOT looks: they are properties of
@@ -8153,6 +9756,11 @@ useEffect(() => {
     active: pymolActive,
     autoShow: autoShowSel,
     name: pymolScriptName,
+    /* L'EMPREINTE DU MONDE QUI ÉCRIT (voir pymolSessionOwnerOf) : c'est ELLE, avec la clé,
+       qui garantit que ces fenêtres de sélection ne peuvent se relire que dans les
+       instances de l'expérience où elles ont été créées. */
+    owner: pymolOwnerRef.current.owner,
+    scope: pymolOwnerRef.current.scope,
   }, pymolSessionKeyRef.current);
 }, [selections, selStyles, selOverrides, pymolScript, pymolActive, autoShowSel, pymolScriptName]);
 /* LA SESSION RELUE SE DIT DANS LE JOURNAL DU PANNEAU — c'est la seule façon de
@@ -8176,6 +9784,32 @@ const [bgColor, setBgColor] = useState(() => {
   return BG_DEFAULT;
 });
 const [qualityHigh, setQualityHigh] = useState(false);
+/* ⬚ L'ÉTAT DE LA RAMPE (voir BG_GRADIENT_KEY) : relu au chargement comme le
+   fond, et VALIDÉ par le module — un magasin d'un autre build, ou bricolé à la
+   main, ne peut donner ni une couleur qui n'en est pas une ni un angle infini.
+   `bgPanelOpen` n'est PAS persisté : la demande veut qu'un clic sur le fond
+   fasse APPARAÎTRE le panneau et qu'un second clic le fasse partir — un
+   panneau qui se rouvrirait tout seul au rechargement irait contre ça. */
+const [bgGradient, setBgGradient] = useState(() => {
+  try { return readBgGradient(localStorage.getItem(BG_GRADIENT_KEY)); } catch { return readBgGradient(null); }
+});
+const [bgPanelOpen, setBgPanelOpen] = useState(false);
+/* LA SEULE ÉCRITURE : chaque contrôle du panneau (l'interrupteur, la couleur B,
+   l'angle, une direction, ⇄, ↺) passe par ici — donc par le validateur du
+   module, qui normalise l'angle et les deux couleurs d'un même geste. */
+const patchBgGradient = (patch) => setBgGradient((g) => bgGradientOf({ ...g, ...patch }));
+
+/* ⬚ LE FOND VIVANT — la rampe est une `backgroundImage` posée sur le canvas
+   NGL, PAR-DESSUS la couleur qu'NGL vient d'y écrire (voir le module : c'est
+   là que le fond de l'écran vit, la toile ayant un clear d'alpha zéro). Rien
+   n'est reconstruit, aucune représentation ne bouge. Éteinte, la chaîne vide
+   rend la main à la couleur de NGL — le fond uni d'avant, au pixel près. */
+const applyBackgroundGradient = useCallback(() => {
+  const stage = stageRef.current;
+  const el = stage && stage.viewer && stage.viewer.renderer ? stage.viewer.renderer.domElement : null;
+  if (!el || !el.style) return;
+  try { el.style.backgroundImage = backgroundCss(backgroundSpecOf(bgColor, bgGradient)); } catch { /* ignore */ }
+}, [bgColor, bgGradient]);
 
 // ---- Depth fog ----
 // NGL's default depth fog (fogNear 50 / fogFar 100) fades distant atoms toward
@@ -8300,6 +9934,48 @@ const shadowDirRef = useRef({ az: shadowAz, el: shadowEl });
 shadowOnRef.current = shadowOn;
 shadowDarknessRef.current = shadowDarkness;
 shadowDirRef.current = { az: shadowAz, el: shadowEl };
+/* ◐ L'OMBRE VIVANTE (voir le bloc de ses états, plus haut) lit ces réglages au
+   moment où elle peint : sa référence est tenue à jour ICI, avec celles du rig —
+   à cet endroit du corps, `shadowAz` / `shadowEl` sont déclarées (plus haut,
+   elles seraient encore dans leur zone morte). */
+rayLiveParamsRef.current = { az: shadowAz, el: shadowEl, strength: rayShadowStrength, blur: rayShadowBlur };
+/* ◐ LE PILOTE DE L'OMBRE VIVANTE s'accroche au signal `rendered` d'NGL : la
+   pose de la caméra est comparée à la précédente, le régime vient de la
+   politique du module, et rien n'est recalculé quand rien ne bouge. Il est
+   recréé quand le RÉGLAGE change (et seulement là : la lampe, la noirceur et la
+   douceur lui arrivent en FONCTIONS, lues au moment de peindre, pour qu'un
+   curseur ne le recrée pas — et pour qu'il ne lise jamais une valeur figée).
+   ⚠ CES DEUX EFFETS SONT ICI, PAS À CÔTÉ DES ÉTATS : un tableau de dépendances
+   est ÉVALUÉ au rendu, donc `[shadowAz, shadowEl]` écrit plus haut dans le corps
+   lèverait « Cannot access 'shadowAz' before initialization » — mesuré par
+   _viewer_render_smoke_test.mjs, corrigé en descendant le bloc. */
+useEffect(() => {
+  if (!rayLiveOn || status !== 'ready') return undefined;
+  const stage = stageRef.current;
+  const canvas = rayShadowCanvasRef.current;
+  if (!stage || !stage.viewer || !canvas) return undefined;
+  const overlay = createRayShadowOverlay(canvas);
+  if (!overlay) return undefined;
+  const pilot = attachRayShadowLive({
+    stage,
+    overlay,
+    light: () => { const p = rayLiveParamsRef.current; const l = nglKeyLightDirection(p.az, p.el); return [l.x, l.y, l.z]; },
+    options: () => { const p = rayLiveParamsRef.current; return { strength: p.strength, blur: p.blur }; },
+    quality: rayShadowLive,
+  });
+  rayShadowLiveRef.current = pilot;
+  /* La première image n'attend pas un geste : la scène est déjà là. */
+  if (pilot) pilot.refresh({ force: true });
+  return () => {
+    if (rayShadowLiveRef.current) rayShadowLiveRef.current.stop();
+    rayShadowLiveRef.current = null;
+  };
+}, [status, rayLiveOn, rayShadowLive]);
+/* Un réglage touché PENDANT que la couche vit : on repeint dans le régime de
+   l'instant (le module réarme lui-même la passe nette si c'était un brouillon). */
+useEffect(() => {
+  if (rayShadowLiveRef.current) rayShadowLiveRef.current.refresh({ force: true });
+}, [rayShadowStrength, rayShadowBlur, shadowAz, shadowEl]);
 
 // ---- 💡 Light colour (Scene, JUST BEFORE « ✂ Clipping ») --------------------
 // The request: « in the molecular viewer add the possibility to change the color
@@ -8454,6 +10130,21 @@ useEffect(() => {
   try { localStorage.setItem('labViewerChargeColors', JSON.stringify(chargeColors)); } catch { /* ignore */ }
   Object.keys(CHARGE_COLORS).forEach((k) => { if (Number.isFinite(chargeColors[k])) chargeColorStore[k] = chargeColors[k]; });
 }, [chargeColors]);
+/* 🧪 LE MODÈLE DE CHARGES DU CHAMP DÉPOSÉ DANS LE MAGASIN DU MODULE (voir
+   espChargeModelStore, à côté de espChargesFor) : les schémas NGL lisent la table des
+   charges AU NIVEAU DU MODULE, donc c'est ici — et nulle part ailleurs — que le pH de
+   la case ⚙ rejoint `partialChargesOf` et le lecteur du graphe. Le pH est une
+   DÉPENDANCE : le changer refait la table au lieu de resservir celle du pH précédent
+   (l'entrée de cache la porte, voir espChargesFor), et le survol comme la rampe
+   « Atom charge » disent donc la chimie que le panneau affiche. Rien d'autre n'est
+   alimenté : le lecteur du graphe et le module des charges sont des constantes
+   (geometryOfStructure, l'import de utils/forceFieldKcal). */
+useEffect(() => {
+  espChargeModelStore.geometryOf = geometryOfStructure;
+  espChargeModelStore.partialChargesOf = partialChargesOf;
+  espChargeModelStore.ph = calcPhOf();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [calcPhText]);
 useEffect(() => {
   try { localStorage.setItem('labViewerLipidTypeColors', JSON.stringify(lipidTypeColors)); } catch { /* ignore */ }
   Object.keys(LIPID_CLASS_COLORS).forEach((k) => { if (Number.isFinite(lipidTypeColors[k])) lipidClassColorStore[k] = lipidTypeColors[k]; });
@@ -8669,10 +10360,129 @@ const kfFps = kfFilm.fps;
 const [kfBusy, setKfBusy] = useState(false);          // 🔴 a film is being written
 const [kfPreview, setKfPreview] = useState(false);    // ▶ the film is playing live
 const [kfMsg, setKfMsg] = useState('');
+/* 🎞 LE PANNEAU DU FILM EST FERMÉ PAR DÉFAUT — la demande de cette session : « Move the styles
+   section in another line and add to it a Movie button. If clicked the movie button must show
+   the movie maker commands. In this way we can get rid of the movie maker line and save space. »
+   Le bouton 🎞 Movie vit dans la boîte 🎨 Styles de « 2 · Toolbar » ; ce drapeau ouvre et referme
+   le PANNEAU PLEINE LARGEUR qu'il rend SOUS cette rangée (la bande des gestes ET la colonne des
+   poses, rendues une seule fois dans le viewer, `id="viewer-movie-maker"`). Fermé, il ne coûte
+   aucun pixel : c'est la ligne entière de l'ex-« 🎞 Movie maker » de « 1 · General » qui a
+   disparu de la barre. Le compte des poses reste écrit sur le bouton, donc un film fermé ne se
+   perd jamais de vue. Il vit avec l'état du film, juste sous kfMsg — rien à voir avec les docks
+   des autres panneaux. */
+const [movieOpen, setMovieOpen] = useState(false);
+/* 🔄 LE TOURNOIEMENT UNIFORME — l'état du bouton « 🔄 Spin x·y·z » de la boîte
+   🎨 Styles, JUSTE APRÈS 🎞 Movie (LA DEMANDE DE CETTE SESSION, MOT POUR MOT :
+   « Next to the movie button add a button to rotate uniformly the molecule in x,
+   y and z direction »). Il ne dit qu'UNE chose : le tour tourne, ou il ne tourne
+   pas — l'orientation, elle, n'est tenue NULLE PART ici : elle vit dans
+   `viewer.rotationGroup.quaternion`, la rotation de la scène que la souris écrit
+   et qu'une pose 🎞 capture (voir `spinSceneStep`, plus bas, et l'effet de la
+   boucle d'images à côté). Rien à éteindre au démontage : la boucle appartient à
+   son effet et s'arrête avec lui. */
+const [spinOn, setSpinOn] = useState(false);
+
 const kfRunRef = useRef(0);              // one recording at a time
 const kfCancelRef = useRef(false);       // what ⏹ writes, read by the drive loop
 const kfPreviewRef = useRef(0);          // token of the live playback (0 = not playing)
 const kfPreviewTimerRef = useRef(null);  // its timer, cleared by ⏹ and by a recording
+
+/* ── 🎞 LE FONDU DU MOUVEMENT — « one move transform into the other gradually » ─────────
+   LE RAPPORT DE CETTE SESSION, MOT POUR MOT : « In the movie, the transition between one
+   state and the other is not smooth. there is a fraction of time where there is nothing. It
+   would be better to see one move transform into the other gradually. »
+
+   Les deux moitiés de la cause, et ce que chacune est devenue :
+     · LA SCÈNE ÉTAIT REBÂTIE À CHAQUE IMAGE — parce qu'un instant de mouvement mélangeait
+       les réglages que le constructeur de représentations lit (une opacité, un rayon, une
+       couleur qui glissent). Le spectateur repose maintenant l'ASPECT D'UNE POSE, une seule
+       fois par moitié de mouvement (`filmSceneState`, dans le module du 🎞) : une surface ou
+       un cartoon — que NGL calcule DANS UN WORKER — n'est donc plus détruit à chaque image,
+       et le trou a disparu pour cette raison-là.
+     · LE CHANGEMENT D'ASPECT ÉTAIT UNE COUPURE — au milieu du mouvement, l'aspect quitté
+       disparaissait d'un coup et l'autre arrivait d'un coup (et l'enveloppe calculée en
+       tâche de fond manquait les premières images : le « nothing » du rapport). Ici, les
+       représentations QUITTÉES NE SONT PAS RETIRÉES : elles s'éteignent pendant que les
+       nouvelles s'allument, sur le temps qui reste au mouvement — un FONDU, la technique du
+       cinéma. NGL fait exactement ce qu'il faut pour cela : `opacity` est un UNIFORME de
+       shader (ngl 2.4 : `RepresentationParameters.opacity` → `parameters.buffer` →
+       `BufferParameters.opacity: { uniform: true }`, posé par `setUniforms`, et
+       `transparent` suit) — `setParameters({ opacity })` ne rebâtit donc RIEN et ne relance
+       AUCUN worker (mesuré dans la source de ngl : seul un paramètre déclaré `rebuild: true`
+       appelle `build()`).
+   ⚠ POURQUOI L'ANCIEN ASPECT EST GARDÉ TEL QUEL, OPACITÉ PAR OPACITÉ : une représentation
+   peut avoir été créée déjà translucide (le curseur Transp d'une rangée, une surface à
+   0,85). Le fondu multiplie donc l'opacité DE CHAQUE REPRÉSENTATION par son propre poids,
+   lu sur elle (`Representation#opacity`) au moment où le fondu commence — jamais un chiffre
+   supposé.
+   ⚠ ET LE FONDU SE TERMINE TOUJOURS : quand le poids atteint 1, quand le film s'arrête, ou
+   quand une pose est montrée à la main (👁) — sinon des représentations à moitié éteintes
+   resteraient dans la scène pour toujours. `endFilmDissolve` remet celles qui restent à leur
+   opacité d'origine et retire celles qui partent. */
+const filmFadeRef = useRef(null);        // { dying: [{el, base, comp}], born: [{el, base}], t0 }
+const filmMoveRef = useRef(null);        // { active, t } — le dernier instant de MOUVEMENT posé
+/** L'opacité qu'une représentation porte VRAIMENT (celle avec laquelle NGL l'a construite). */
+const repOpacityOf = (el) => {
+  const r = reprOfElement(el);
+  const v = r ? Number(r.opacity) : NaN;
+  return Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 1;
+};
+/** Poser l'opacité d'une représentation — EN PLACE (aucun rebâtiment, aucun worker). */
+const setRepOpacity = (el, v) => {
+  const r = reprOfElement(el);
+  if (!r || typeof r.setParameters !== 'function') return;
+  try { r.setParameters({ opacity: Math.min(1, Math.max(0, v)) }); } catch { /* un fondu raté ne casse jamais la scène */ }
+};
+/** LA FIN DU FONDU — les représentations quittées partent, celles qui restent retrouvent
+ *  leur opacité d'origine. Rend `true` quand un fondu était en cours. */
+const endFilmDissolve = () => {
+  const f = filmFadeRef.current;
+  if (!f) return false;
+  filmFadeRef.current = null;
+  f.dying.forEach(({ el, comp }) => { try { if (comp) comp.removeRepresentation(el); } catch { /* déjà partie */ } });
+  f.born.forEach(({ el, base }) => setRepOpacity(el, base));
+  return true;
+};
+/** LE DÉBUT DU FONDU — `leaving` (l'aspect quitté, encore à l'écran) s'éteint pendant que
+ *  `arriving` (le neuf, construit juste avant) s'allume. Sans film en cours, `leaving` part
+ *  à l'instant : un geste de la barre doit se voir tout de suite. */
+const startFilmDissolve = (comp, leaving, arriving) => {
+  const move = filmMoveRef.current;
+  if (!move || !move.active || !leaving || !leaving.length) {
+    endFilmDissolve();
+    (leaving || []).forEach((el) => { try { if (comp) comp.removeRepresentation(el); } catch { /* ignore */ } });
+    return false;
+  }
+  /* ⚠ UN FONDU ENCHAÎNÉ NE REPART PAS DE ZÉRO — LE FONDU PRÉCÉDENT SE TERMINE SANS ÊTRE REMIS
+     À PLAT : ses représentations « arrivées » deviennent celles qui QUITTENT, à l'opacité où le
+     fondu les avait laissées (`repOpacityOf` les lit maintenant), donc elles s'éteignent depuis
+     là au lieu de sauter à leur valeur pleine puis de redescendre. Seules ses « quittées »
+     partent, à l'instant : elles quittaient déjà. Un fondu de film dure une moitié de
+     mouvement, donc ce cas ne se produit que sur un film dont deux mouvements se touchent. */
+  const previous = filmFadeRef.current;
+  if (previous) {
+    previous.dying.forEach(({ el, comp: c }) => { try { if (c) c.removeRepresentation(el); } catch { /* déjà partie */ } });
+    filmFadeRef.current = null;
+  }
+  filmFadeRef.current = {
+    dying: leaving.map((el) => ({ el, base: repOpacityOf(el), comp })),
+    born: (arriving || []).map((el) => ({ el, base: repOpacityOf(el) })),
+    t0: Number.isFinite(move.t) ? Math.min(1, Math.max(0, move.t)) : 0,
+  };
+  stepFilmDissolve(move.t);
+  return true;
+};
+/** L'AVANCÉE DU FONDU — le poids suit la progression du mouvement (`t`, déjà adouci par
+ *  l'easing de la pose) entre le moment du changement et la fin du mouvement. */
+const stepFilmDissolve = (t) => {
+  const f = filmFadeRef.current;
+  if (!f) return;
+  const span = Math.max(1e-6, 1 - f.t0);
+  const w = Math.min(1, Math.max(0, ((Number.isFinite(t) ? t : 1) - f.t0) / span));
+  if (w >= 1) { endFilmDissolve(); return; }
+  f.dying.forEach(({ el, base }) => setRepOpacity(el, base * (1 - w)));
+  f.born.forEach(({ el, base }) => setRepOpacity(el, base * w));
+};
 
 // Number of frames we actually step through (the trajectory's total time span is
 // preserved because we jump by `effStride` frames each step). When a "Max frames"
@@ -8827,9 +10637,2791 @@ const toggleMeasureMode = () => {
     setMeasurePending(null);
     setMeasureInfo('');
   } else {
+    torsionPickRef.current = 0;   // the ✏️ Torsion picker and 📏 Measure cannot both be armed
+    setTorsionPick(0);
+    if (pairPickRef.current) clearPairPicks();   // …nor ⌖, the pair picker of the 🧬 distance table
     setMeasureInfo('📏 Measure ON — click two atoms to show the distance between them.');
   }
 };
+
+/* ── ✏️ SET A TORSION — OR REACH A TARGET DISTANCE — BY THE NUMBERS ────────────
+   The four atoms are picked with the pointer, in the order of a dihedral
+   (A · B · C · D : B–C is the axle, D turns with its whole side, A must not move);
+   everything else — the angle, the distance — is TYPED. Nothing here guesses :
+   utils/torsionDrive.js reads NGL's BOND GRAPH (`movingSideOf`) to know which atoms
+   travel with D (a bond is a hinge, never a pair of scissors), solves the angle in
+   closed form (`planTorsion`, through `solveDistance` for a target distance) and
+   RE-READS the geometry it has just written. This viewer reads four coordinates,
+   writes the turned ones back exactly the way a molecule drag does (positionFromArray
+   + updateRepresentations({ position: true }) — voir applyPartMove), and prints OUT
+   LOUD what the module refused : a bond inside a ring, a reference atom that would
+   travel, a distance the circle of D cannot reach — with the nearest rotation on
+   offer. The dihedral it speaks of is the SIGNED IUPAC one, the same reader as
+   `torsionDeg` just below (the χ/δ readers of the assignment) : the probe
+   _torsion_drive_test.mjs compares the two, digit for digit.
+   ⚠ WHAT A TORSION IS NOT. It is not stored anywhere : it lives in the COORDINATES
+   of the current frame, like every edit. A trajectory frame change (or the player's
+   ⏮) installs the frame's own geometry again, and dragging a molecule that has
+   ALREADY been dragged replays that placement — the panel says so rather than
+   pretending. */
+/** The four picked atoms, A · B · C · D — every change goes through here. */
+/** PEINDRE LES ATOMES PIQUÉS — l'atome qu'on vient de cliquer se VOIT (sa couleur dit
+ *  SON slot : A · B · C · D), et chaque slot reprend sa couleur dès qu'il est rempli.
+ *  Une représentation par atome, posée sur le component piqué et retirée au piquage
+ *  suivant : rien n'est laissé derrière (Clear les enlève toutes).
+ *  ⚠ La sélection est vérifiée après coup (`getAtomIndices`) : une vue 3D qui n'aurait
+ *  pas compris la sélection d'index ne peint RIEN plutôt que de peindre le mauvais
+ *  atome — le panneau, lui, montre toujours les noms des quatre. */
+const paintTorsionPicks = (slots) => {
+  const paint = torsionPaintRef.current;
+  if (paint && paint.comp) {
+    try { paint.reps.forEach((r) => { if (r) paint.comp.removeRepresentation(r); }); } catch { /* vue déjà détruite */ }
+  }
+  torsionPaintRef.current = null;
+  const list = Array.from(slots || []);
+  const comp = list.length ? list[0].comp : null;
+  if (!comp) return { ok: false, painted: 0, say: '' };
+  const reps = [];
+  let refused = 0;
+  list.forEach((s, i) => {
+    if (!s || !Number.isInteger(s.atomIndex)) return;
+    try {
+      const rep = comp.addRepresentation('spacefill', {
+        sele: `${s.atomIndex}`,
+        radiusType: 'vdw', radiusScale: 0.5,
+        color: TORSION_SLOT_COLORS[i % TORSION_SLOT_COLORS.length],
+        opacity: 1, visible: true,
+      });
+      if (!rep) { refused += 1; return; }
+      const seen = rep.structureView && typeof rep.structureView.getAtomIndices === 'function'
+        ? Array.from(rep.structureView.getAtomIndices()) : null;
+      if (seen && (seen.length !== 1 || seen[0] !== s.atomIndex)) {
+        comp.removeRepresentation(rep);
+        refused += 1;
+        return;
+      }
+      reps.push(rep);
+    } catch { refused += 1; }
+  });
+  torsionPaintRef.current = reps.length ? { comp, reps } : null;
+  return { ok: reps.length > 0, painted: reps.length, refused };
+};
+
+const putTorsionAtoms = (list) => {
+  torsionAtomsRef.current = Array.isArray(list) ? list : [];
+  const paint = paintTorsionPicks(torsionAtomsRef.current);
+  if (paint.refused) {
+    setTorsionMsg(`⚠ ${paint.refused} of the picked atoms could not be highlighted in the 3D view`
+      + ' (the viewer refused the selection). The slot buttons below still name them.');
+  }
+  setTorsionAtoms(torsionAtomsRef.current);
+};
+
+/** « A — B — C — D » : the four labels of the current pick, for a message. */
+const torsionQuadName = (slots) => (slots || []).map((s) => (s && s.label) || '').filter(Boolean).join(' — ');
+
+/** Where the NEXT click lands (1..4) — 1 again once the four are picked. */
+const nextTorsionSlot = () => (torsionAtomsRef.current.length >= 4 ? 1 : torsionAtomsRef.current.length + 1);
+
+/** ARM THE CLICK PICKER on slot `slot` : everything after it is dropped, and a click
+ *  on the 4th atom turns the picker off by itself (voir stage.signals.clicked). */
+const armTorsionPick = (slot) => {
+  const n = Math.min(4, Math.max(1, Number(slot) || 1));
+  putTorsionAtoms(torsionAtomsRef.current.slice(0, n - 1));
+  /* ⚠ UN SEUL PIQUAGE ARMÉ À LA FOIS : le ⌖ de la table des distances a le SIEN (bleu,
+     deux atomes) — il est éteint ici, et ses atomes avec lui. Le contraire est vrai
+     aussi : `armPairPick` désarme celui-ci sans toucher aux atomes déjà piqués. */
+  if (pairPickRef.current) clearPairPicks();
+  torsionPickRef.current = n;
+  setTorsionPick(n);
+  setTorsionClosest(null);
+  setTorsionMsg(`Click atom ${TORSION_SLOT_LETTERS[n - 1]} — ${TORSION_SLOT_ROLES[n - 1]}${n > 1 ? ` (${n - 1} of 4 already picked)` : ''}.`);
+};
+
+/** Empty the picker — and the click handler with it. */
+const clearTorsionPicks = () => {
+  putTorsionAtoms([]);
+  torsionPickRef.current = 0;
+  setTorsionPick(0);
+  setTorsionClosest(null);
+  setTorsionMsg('');
+};
+
+/* ── ⌖ LE PIQUAGE DU COUPLE — LE MÊME CONTRAT QUE LE PIQUAGE ✏️, SUR SES PROPRES
+   ATOMES : la peinture est VÉRIFIÉE avant d'être gardée (jamais le mauvais atome peint),
+   deux atomes suffisent, et le piquage se désarme tout seul quand la ligne est ajoutée.
+   La seule différence est la couleur : les deux atomes d'un couple sont UN geste, il n'y
+   a pas d'ordre à deviner — bleu pour les deux (TORSION_SLOT_COLORS reste aux quatre). */
+const paintPairPicks = (list) => {
+  const paint = pairPaintRef.current;
+  if (paint && paint.comp) {
+    try { paint.reps.forEach((r) => { if (r) paint.comp.removeRepresentation(r); }); } catch { /* vue déjà détruite */ }
+  }
+  pairPaintRef.current = null;
+  const slots = Array.from(list || []);
+  const comp = slots.length ? slots[0].comp : null;
+  if (!comp) return { ok: false, painted: 0 };
+  const reps = [];
+  slots.forEach((s) => {
+    if (!s || !Number.isInteger(s.atomIndex)) return;
+    try {
+      const rep = comp.addRepresentation('spacefill', {
+        sele: `${s.atomIndex}`,
+        radiusType: 'vdw', radiusScale: 0.5,
+        color: PAIR_PICK_COLOR,
+        opacity: 1, visible: true,
+      });
+      if (!rep) return;
+      const seen = rep.structureView && typeof rep.structureView.getAtomIndices === 'function'
+        ? Array.from(rep.structureView.getAtomIndices()) : null;
+      if (seen && (seen.length !== 1 || seen[0] !== s.atomIndex)) {
+        comp.removeRepresentation(rep);
+        return;
+      }
+      reps.push(rep);
+    } catch { /* une peinture refusée n'est pas gardée : la ligne dit ses atomes */ }
+  });
+  pairPaintRef.current = reps.length ? { comp, reps } : null;
+  return { ok: reps.length > 0, painted: reps.length };
+};
+
+const putPairAtoms = (list) => {
+  pairAtomsRef.current = Array.isArray(list) ? list : [];
+  paintPairPicks(pairAtomsRef.current);
+  setPairAtoms(pairAtomsRef.current);
+};
+
+/** ARMER LE PIQUAGE DU COUPLE — ses DEUX atomes à lui, sa couleur à lui. Le piquage
+ *  ✏️ Torsion est seulement DÉSARMÉ (ses atomes restent peints et listés) : les deux
+ *  gestes ne peuvent plus se disputer le même clic, et rien de ce qui était piqué n'est
+ *  perdu. */
+const armPairPick = () => {
+  if (measureModeRef.current) toggleMeasureMode();   // 📏 Measure ne pioche pas ces clics
+  putPairAtoms([]);
+  pairPickRef.current = 1;
+  setPairPick(1);
+  torsionPickRef.current = 0;
+  setTorsionPick(0);
+  setPairMsg('Click the FIRST atom of the pair in the 3D view — the two atoms of this table are painted BLUE, and they are its own: the four picks of ✏️ Torsion (A · B · C · D) are not touched.');
+};
+
+/** ÉTEINDRE LE PIQUAGE DU COUPLE — et effacer sa peinture bleue. */
+const clearPairPicks = () => {
+  putPairAtoms([]);
+  pairPickRef.current = 0;
+  setPairPick(0);
+  setPairMsg('');
+};
+
+/** LES DEUX ATOMES DU COUPLE — lus AU MOMENT du geste, jamais gardés : la structure vient
+ *  de la structure À L'ÉCRAN, comme partout ailleurs. `{ok, idx, slots, say, label}`. */
+const pairPickOf = () => {
+  const slots = pairAtomsRef.current;
+  if (slots.length < 2) {
+    return { ok: false, say: `The pair of this line is not picked yet — ⌖ arms its own picker (blue) and the SECOND click adds the line (${slots.length} of 2 picked).` };
+  }
+  const [first, second] = slots;
+  const comp = first.comp;
+  const structure = comp && comp.structure;
+  if (!structure) return { ok: false, say: 'The structure these atoms belong to is gone — pick them again with ⌖.' };
+  if (second.comp !== comp) {
+    return { ok: false, say: 'The two atoms must belong to the SAME structure — pick them in one molecule.' };
+  }
+  const idx = [Number(first.atomIndex), Number(second.atomIndex)];
+  if (idx[0] === idx[1]) return { ok: false, say: 'The two atoms of a line must be two different atoms.' };
+  let points = null;
+  try {
+    const ap = structure.getAtomProxy();
+    points = idx.map((i) => { ap.index = i; return [ap.x, ap.y, ap.z]; });
+  } catch { points = null; }
+  if (!points || !points.every((pt) => pt.every(Number.isFinite))) {
+    return { ok: false, say: 'The two picked atoms can no longer be read — pick them again with ⌖.' };
+  }
+  return { ok: true, comp, structure, idx, points, slots: [first, second], label: `${first.label}–${second.label}` };
+};
+
+/** WHY A TORSION WAS REFUSED — one sentence per `reason` of utils/torsionDrive.js.
+ *  The panel never invents a diagnosis : every line here answers a `reason` the pure
+ *  module really returned (or its twin in this viewer : movingSideOf and planTorsion
+ *  are the ONLY deciders, and `no-dihedral` / `no-axis` come from the same code that
+ *  reads the dihedral shown in the panel). */
+const torsionWhy = (reason) => ({
+  'ring': 'the two atoms of the axle are STILL LINKED another way round — so the molecule has no “side of D” to turn: a bond inside a ring is not a hinge, and two atoms that are not bonded are not an axle',
+  'reference-moves': 'atom A would turn too — pick a reference atom on the other side of the axle',
+  'axis-atom': 'the atom that must turn is one of the two atoms of the axle — nothing would turn',
+  'bad-axis': 'the two atoms of the axle are not two different atoms of this structure — pick A · B · C · D again',
+  'bad-atom': 'the atom that must turn is no longer an atom of this structure — pick the four again',
+  'no-axis': 'the two atoms of the axle sit at the SAME place — there is no axis to turn about',
+  'no-dihedral': 'the dihedral is undefined for these four atoms (three of them are in line, or two are confounded) — pick another set',
+  'bad-points': 'the four picked atoms can no longer be read — pick them again',
+  'bad-target': 'the target distance must be a positive number of ångströms',
+  'no-request': 'type a dihedral angle or a distance first',
+  'no-rotation': 'the rotation could not be built — check the four atoms',
+  'moving-not-covered': 'the list of the atoms that must turn could not be made — pick the four atoms again',
+  'distance-fixed': 'turning this bond does NOT change the distance A–D (A or D lies ON the axle) — no angle can reach the distance you typed',
+  'unreachable': 'the distance you typed is out of reach',
+}[reason] || 'the torsion could not be applied');
+
+/** The structure and the four coordinates, or a refusal in plain words. */
+const torsionPicks = () => {
+  const slots = torsionAtomsRef.current;
+  if (slots.length < 4) return { ok: false, say: `Pick the four atoms first — ${4 - slots.length} still to go (A · B · C · D).` };
+  const comp = slots[0].comp;
+  const structure = comp && comp.structure;
+  if (!structure) return { ok: false, say: 'The structure these atoms belong to is gone — pick the four again.' };
+  const idx = slots.map((s) => Number(s.atomIndex));
+  let points = null;
+  try {
+    const ap = structure.getAtomProxy();
+    points = idx.map((i) => { ap.index = i; return [ap.x, ap.y, ap.z]; });
+  } catch { points = null; }
+  if (!points || !points.every((pt) => pt.every(Number.isFinite))) {
+    return { ok: false, say: 'The four picked atoms can no longer be read — pick them again.' };
+  }
+  return { ok: true, comp, structure, slots, idx, points };
+};
+
+/** NGL'S BOND GRAPH as a neighbour function — the bonds the file really carries.
+ *  `movingSideOf` l'emploie tel quel : la structure est la SEULE autorité sur ce qui
+ *  est lié (jamais une distance devinée). Un fichier sans CONECT rend un graphe vide,
+ *  donc un côté de D réduit à D — ce que le rapport du module décrit alors. */
+const torsionNeighboursOf = (structure) => {
+  const adj = new Map();
+  try {
+    const store = structure && structure.bondStore;
+    const count = (store && store.count) || 0;
+    for (let k = 0; k < count; k++) {
+      const i = Number(store.atomIndex1[k]);
+      const j = Number(store.atomIndex2[k]);
+      if (!Number.isInteger(i) || !Number.isInteger(j) || i === j) continue;
+      const li = adj.get(i); if (li) li.push(j); else adj.set(i, [j]);
+      const lj = adj.get(j); if (lj) lj.push(i); else adj.set(j, [i]);
+    }
+  } catch { /* pas de graphe de liaisons : voir movingSideOf */ }
+  return (i) => adj.get(i) || [];
+};
+
+/** A number, as the panel writes it. */
+const torsionDeg = (v) => (Number.isFinite(Number(v)) ? `${Number(v).toFixed(1)}°` : '—');
+const torsionAng = (v) => (Number.isFinite(Number(v)) ? `${Number(v).toFixed(2)} Å` : '—');
+
+/** THE LINE PRINTED AFTER A TORSION — every number comes from the module's report,
+ *  which RE-READ the geometry after turning : it announces what the structure has
+ *  now, not what was asked for. */
+const torsionReportOf = (slots, plan) => {
+  const quad = torsionQuadName(slots);
+  const turned = `${plan.movedCount} atom${plan.movedCount === 1 ? '' : 's'} turned`;
+  if (plan.targetDistance != null) {
+    return `✓ ${quad} : A–D ${torsionAng(plan.beforeDistance)} → ${torsionAng(plan.afterDistance)}`
+      + ` at dihedral ${torsionDeg(plan.afterDeg)} (turned ${torsionDeg(plan.deltaDeg)})`
+      + `${plan.alternativeDeg != null ? ` · the other solution is ${torsionDeg(plan.alternativeDeg)}` : ''} · ${turned}.`;
+  }
+  return `✓ ${quad} : dihedral ${torsionDeg(plan.beforeDeg)} → ${torsionDeg(plan.afterDeg)}`
+    + ` (turned ${torsionDeg(plan.deltaDeg)}) · A–D ${torsionAng(plan.beforeDistance)} → ${torsionAng(plan.afterDistance)} · ${turned}.`;
+};
+
+/** LES POSITIONS DE CETTE LISTE D'ATOMES — lues au moment du geste, jamais gardées. */
+const torsionPointsOf = (structure, idxs) => {
+  try {
+    const ap = structure.getAtomProxy();
+    return idxs.map((i) => { ap.index = i; return [ap.x, ap.y, ap.z]; });
+  } catch { return null; }
+};
+
+/* ── ✏️ TORSION · LE COUPLE A–D — LA DISTANCE QUE LE CHAMP A–D DU PANNEAU LIT ──
+   Une torsion demande QUATRE atomes (une charnière) ; la ligne « Now: A–D … » de la
+   fenêtre ✏️ Torsion, elle, parle d'un COUPLE : A et D quand les quatre sont piqués
+   (c'est le couple dont le champ « A–D » parle) —, A et B quand il n'y en a que deux.
+   Rien d'autre n'est deviné : la structure, les coordonnées et le graphe viennent de
+   la structure à l'écran, comme pour la torsion. */
+const torsionPairOf = () => {
+  const slots = torsionAtomsRef.current;
+  if (slots.length < 2) {
+    return { ok: false, say: `Pick the two atoms to bring together first — ${2 - slots.length} still to go (or all four of A · B · C · D, the pair is then A and D).` };
+  }
+  const picked = slots.length >= 4 ? [slots[0], slots[3]] : [slots[0], slots[1]];
+  const comp = picked[0].comp;
+  const structure = comp && comp.structure;
+  if (!structure) return { ok: false, say: 'The structure these atoms belong to is gone — pick them again.' };
+  if (picked.some((s) => s.comp !== comp)) {
+    return { ok: false, say: 'The two atoms must belong to the SAME structure — pick them in one molecule.' };
+  }
+  const idx = picked.map((s) => Number(s.atomIndex));
+  let points = null;
+  try {
+    const ap = structure.getAtomProxy();
+    points = idx.map((i) => { ap.index = i; return [ap.x, ap.y, ap.z]; });
+  } catch { points = null; }
+  if (!points || !points.every((pt) => pt.every(Number.isFinite))) {
+    return { ok: false, say: 'The two picked atoms can no longer be read — pick them again.' };
+  }
+  return { ok: true, comp, structure, slots: picked, idx, points, label: picked.length >= 4 ? 'A–D' : 'A–B' };
+};
+
+/** LA DISTANCE DES DEUX ATOMES PIQUÉS, relue à chaque rendu — le « maintenant » de la
+ *  ligne du haut de la fenêtre ✏️ Torsion, comme la lecture du dihèdre (null tant que
+ *  le couple n'est pas complet). */
+const torsionPairReading = () => {
+  const r = torsionPairOf();
+  if (!r.ok) return null;
+  return { label: r.label, dist: distanceOf(r.points[0], r.points[1]) };
+};
+
+/** LA MOLÉCULE TELLE QUE LE MODULE PUR LA LIT — les éléments de ses atomes, les
+ *  liaisons de SON graphe (avec l'ordre quand le fichier en déclare un) et les
+ *  coordonnées à plat (trois nombres par atome, l'ordre des atomes de la
+ *  structure : c'est ce que `positionFromArray` écrit). Un fichier sans CONECT
+ *  arrive donc avec le graphe que NGL a su lire — jamais un graphe inventé ici. */
+const geometryOfStructure = (structure) => {
+  try {
+    const count = (structure.atomStore && structure.atomStore.count) || 0;
+    if (!count) return null;
+    const ap = structure.getAtomProxy();
+    const positions = new Array(count * 3);
+    const elements = new Array(count);
+    for (let i = 0; i < count; i += 1) {
+      ap.index = i;
+      positions[i * 3] = ap.x; positions[i * 3 + 1] = ap.y; positions[i * 3 + 2] = ap.z;
+      elements[i] = ap.element;
+    }
+    const bonds = [];
+    const store = structure.bondStore;
+    const bondCount = (store && store.count) || 0;
+    for (let k = 0; k < bondCount; k += 1) {
+      const i = Number(store.atomIndex1[k]);
+      const j = Number(store.atomIndex2[k]);
+      if (!Number.isInteger(i) || !Number.isInteger(j) || i === j) continue;
+      bonds.push({ i, j, order: store.bondOrder ? Number(store.bondOrder[k]) || 1 : 1 });
+    }
+    return { count, elements, positions, bonds };
+  } catch { return null; }
+};
+
+/** LA LECTURE DU GRAPHE DE RAMACHANDRAN — les atomes de la structure à l'écran (ceux
+ *  de `structureAtomRecords`, les mêmes que les schémas de couleurs), donnés au module
+ *  PUR (`ramachandranOf`). Rend `null` sans structure, et un graphe à ZÉRO résidu
+ *  quand la molécule n'a pas de squelette N–CA–C : le panneau dit alors pourquoi au
+ *  lieu de dessiner un carré vide (un graphe vide tromperait plus qu'il n'informe). */
+const ramachandranReadingOf = (structure) => (
+  structure ? ramachandranOf({ atoms: structureAtomRecords(structure) }) : null
+);
+
+/** LE GRAPHE 🪢 EST-IL À L'ÉCRAN MAINTENANT ? — LA question que posent les trois gestes
+ *  qui BOUGENT la molécule image par image (🧬 le calcul de structure, ▶ MD, ⚒ Minimise)
+ *  avant de relire les φ/ψ qu'ils viennent d'écrire. Elle est posée à la RÉFÉRENCE
+ *  (`ramaShownRef`), pas à l'état : une boucle d'images est une fermeture déjà en vol,
+ *  elle ne verrait jamais un état mis à jour ensuite, alors qu'elle lit toujours la valeur
+ *  COURANTE d'une référence. Ouvrir (ou refermer) la fenêtre 🪢 pendant que la molécule
+ *  bouge la fait donc suivre — ou ne rien coûter du tout — dès l'image suivante, et
+ *  toujours par le MÊME lecteur : `readRamachandran`, ci-dessous. */
+const ramaIsShown = () => ramaShownRef.current;
+
+/** LA LECTURE, DEPUIS LA FENÊTRE — le bouton « ⟳ Read the backbone » du dock 🪢. Elle
+ *  prend la structure du moment (donc les coordonnées que la torsion ou un calcul
+ *  viennent d'écrire), garde le graphe, et dit dans la ligne du dock ce QU'ELLE a
+ *  trouvé : combien de résidus, combien de points, et pourquoi rien n'est dessiné
+ *  quand rien ne peut l'être. */
+const readRamachandran = () => {
+  const comp = componentRef.current;
+  const structure = comp && comp.structure;
+  /* Une nouvelle lecture jette les points de l'ancienne : le point survolé n'existe
+     plus, donc le survol se lève avec elle (sinon le panneau nommerait un résidu que
+     la nouvelle géométrie ne place plus là). */
+  setRamaHover(null);
+  if (!structure) {
+    setRama(null);
+    setRamaMsg('✕ There is no molecule on screen to read — load a structure first.');
+    return;
+  }
+  const read = ramachandranReadingOf(structure);
+  if (!read || !read.count) {
+    setRama(null);
+    setRamaMsg('✕ This molecule has no N–CA–C backbone. φ and ψ are angles of a PEPTIDE'
+      + ' chain: a nucleic acid (its atoms are N1/N9, C1′…), a sugar, a lipid or a ligand'
+      + ' has none — nothing was drawn rather than an empty graph.');
+    return;
+  }
+  setRama(read);
+  setRamaMsg(read.measured
+    ? `✓ ${read.measured} of the ${read.count} backbone residue${read.count === 1 ? '' : 's'} read`
+      + ` — ${read.regions.alpha} α, ${read.regions.beta} β, ${read.regions.leftalpha} left-α,`
+      + ` ${read.regions.outlier} outside`
+      + `${read.breaks ? ` · ${read.breaks} with only ONE angle (a chain end or a gap in the numbering), so no point` : ''}.`
+    : `✕ ${read.count} residue${read.count === 1 ? '' : 's'} of backbone found, but not ONE has both`
+      + ' angles: φ needs the residue before, ψ the one after, so a chain of one residue (or a'
+      + ' structure with gaps) has nothing to plot.');
+};
+
+/** LE GRAPHE 🪢, DESSINÉ UNE SEULE FOIS — la section 🪢 du panneau ET le dock à GAUCHE
+ *  de la fenêtre 3D écrivent ce même SVG : les bassins, les graduations (avec la place
+ *  et la taille de caractères que `ramaPlotAxisLabels` donne), les points, le repère du
+ *  point survolé, et le survol lui-même. Un seul endroit à corriger, donc un graphe qui
+ *  ne peut pas diverger entre ses deux fenêtres.
+ *  `opts.wide` : le dock est plus large que la colonne du panneau — le carré prend alors
+ *  toute la largeur disponible au lieu de plafonner à la taille du dessin. */
+const ramaPlotSvg = (opts = {}) => {
+  const grid = ramaPlotGrid();
+  const axis = ramaPlotAxisLabels();
+  /* LES POINTS, LES OUTLIERS PAR-DESSUS — un résidu hors région se voit : il est dessiné
+     en dernier (donc au-dessus) et plus gros. */
+  const hovered = rama && ramaHover
+    ? rama.residues.find((r) => r.key === ramaHover && r.point) || null
+    : null;
+  const points = rama
+    ? [...rama.residues.filter((r) => r.point)].sort((a, b) => (
+      (a.region === 'outlier' ? 1 : 0) - (b.region === 'outlier' ? 1 : 0)
+    ))
+    : [];
+  return (
+    <svg viewBox={`0 0 ${RAMA_PLOT.size} ${RAMA_PLOT.size}`}
+      className={`w-full h-auto bg-white rounded border border-amber-200 shrink-0 ${opts.wide ? '' : 'max-w-[340px]'}`}>
+      {/* LES BASSINS — le contour des résidus ORDINAIRES, et les polygones que la
+          classification emploie sont LES MÊMES : la couleur d'un point ne peut pas
+          mentir sur la région dont on l'a tirée. */}
+      {['alpha', 'beta', 'leftalpha'].map((region) => (
+        <path key={region} d={ramaPlotPath(RAMA_PLOT_REGIONS[region])}
+          fill={RAMA_REGION_COLORS[region]} fillOpacity="0.13"
+          stroke={RAMA_REGION_COLORS[region]} strokeOpacity="0.4" strokeWidth="1" />
+      ))}
+      {grid.x.map((m) => (
+        <line key={`gx${m.deg}`} x1={m.at} y1={grid.pad} x2={m.at} y2={grid.size - grid.pad} stroke="#e2e8f0" strokeWidth="1" />
+      ))}
+      {grid.y.map((m) => (
+        <line key={`gy${m.deg}`} x1={grid.pad} y1={m.at} x2={grid.size - grid.pad} y2={m.at} stroke="#e2e8f0" strokeWidth="1" />
+      ))}
+      {/* LE REPÈRE DU POINT SURVOLÉ — deux pointillés jusqu'aux DEUX axes : on lit son φ
+          en bas et son ψ à gauche sans lâcher le point des yeux. */}
+      {hovered && (
+        <g pointerEvents="none" stroke={RAMA_REGION_COLORS.outlier} strokeWidth="1" strokeDasharray="3 3">
+          <line x1={grid.pad} y1={hovered.point.y} x2={grid.size - grid.pad} y2={hovered.point.y} />
+          <line x1={hovered.point.x} y1={grid.pad} x2={hovered.point.x} y2={grid.size - grid.pad} />
+        </g>
+      )}
+      {/* LES GRADUATIONS DES DEUX AXES — « −180 … 180 », avec le vrai moins, en 13 unités
+          (elles en faisaient 7) : c'est la demande, et la place vient du module. */}
+      {axis.x.map((m) => (
+        <text key={`tx${m.deg}`} x={m.x} y={m.y} textAnchor={m.anchor} fontSize={axis.font.tick} fill="#64748b">{m.text}</text>
+      ))}
+      {axis.y.map((m) => (
+        <text key={`ty${m.deg}`} x={m.x} y={m.y} textAnchor={m.anchor} fontSize={axis.font.tick} fill="#64748b">{m.text}</text>
+      ))}
+      {/* …ET LES TITRES DES AXES — φ en abscisse, ψ en ordonnée (couchée) : une figure de
+          Ramachandran se lit avec ses deux noms écrits. */}
+      <text x={axis.xTitle.x} y={axis.xTitle.y} textAnchor={axis.xTitle.anchor}
+        fontSize={axis.font.title} fontWeight="700" fill="#475569">{axis.xTitle.text}</text>
+      <text x={axis.yTitle.x} y={axis.yTitle.y} textAnchor={axis.yTitle.anchor}
+        fontSize={axis.font.title} fontWeight="700" fill="#475569"
+        transform={`rotate(${axis.yTitle.rotate} ${axis.yTitle.x} ${axis.yTitle.y})`}>{axis.yTitle.text}</text>
+      {/* UN POINT PAR RÉSIDU — un CERNE blanc (deux résidus voisins ne se confondent pas
+          en une tache) et un cercle de PRISE plus large que lui : le survol, et le
+          clavier (Tab), attrapent le point sans viser au pixel. */}
+      {points.map((r) => {
+        const isHovered = !!hovered && hovered.key === r.key;
+        const color = RAMA_REGION_COLORS[r.region] || RAMA_REGION_COLORS.outlier;
+        const radius = (r.region === 'outlier' ? RAMA_POINT.outlier : RAMA_POINT.radius)
+          + (isHovered ? 1.4 : 0);
+        return (
+          <g key={r.key}>
+            <circle cx={r.point.x} cy={r.point.y} r={RAMA_POINT.hit} fill="transparent"
+              className="cursor-crosshair"
+              onMouseEnter={() => setRamaHover(r.key)}
+              onMouseLeave={() => setRamaHover((k) => (k === r.key ? null : k))}
+              onClick={() => setRamaHover(r.key)}
+              onFocus={() => setRamaHover(r.key)}
+              onBlur={() => setRamaHover((k) => (k === r.key ? null : k))}
+              tabIndex={0} role="img" aria-label={ramaHoverTextOf(r) || r.label}>
+              <title>{`${r.label} · φ ${r.phi.toFixed(1)}° ψ ${r.psi.toFixed(1)}°${r.omega == null ? '' : ` ω ${r.omega.toFixed(1)}°`} · ${RAMA_REGION_NAMES[r.region]}${r.klass === 'general' ? '' : ` · ${r.klass} contours`}`}</title>
+            </circle>
+            <circle cx={r.point.x} cy={r.point.y} r={radius}
+              fill={color}
+              fillOpacity={r.region === 'outlier' || isHovered ? 0.95 : 0.75}
+              stroke={isHovered ? '#1e293b' : (r.region === 'outlier' ? '#5b21b6' : '#ffffff')}
+              strokeWidth={isHovered ? 1.4 : (r.region === 'outlier' ? 0.9 : RAMA_POINT.stroke)}
+              pointerEvents="none" />
+          </g>
+        );
+      })}
+    </svg>
+  );
+};
+
+/** CE QUE LE GRAPHE MESURE — la ligne de synthèse, ÉCRITE UNE FOIS (le panneau et le
+ *  dock lisent la MÊME lecture, donc ils ne peuvent pas annoncer deux chiffres). */
+const ramaSummaryText = () => (rama ? (
+  <>
+    <b>{rama.measured}</b> of {rama.count} residue{rama.count === 1 ? '' : 's'} plotted ·
+    {' '}<b style={{ color: RAMA_REGION_COLORS.alpha }}>{rama.regions.alpha} α</b> ·
+    {' '}<b style={{ color: RAMA_REGION_COLORS.beta }}>{rama.regions.beta} β</b>
+    {rama.regions.leftalpha ? <> · <b style={{ color: RAMA_REGION_COLORS.leftalpha }}>{rama.regions.leftalpha} α left</b></> : null}
+    {' '}· <b style={{ color: RAMA_REGION_COLORS.outlier }}>{rama.regions.outlier} outside</b>
+    {rama.breaks ? ` · ${rama.breaks} with one angle only (a chain end or a gap)` : ''}
+  </>
+) : 'Nothing read yet — press ⟳ Read the backbone.');
+
+/** LES OUTLIERS, EN CLAIR — la liste des résidus hors bassin (avec leur distance au
+ *  bassin le plus proche), écrite une fois pour les deux fenêtres. */
+const ramaOutlierList = () => (rama && rama.outliers.length ? (
+  <div className="max-h-28 overflow-y-auto custom-scrollbar border border-violet-200 rounded bg-violet-50 px-2 py-1">
+    <p className="text-[9px] font-black uppercase tracking-wide text-violet-700">Outside every basin</p>
+    <ul className="text-[10px] text-violet-800 font-mono">
+      {rama.outliers.map((o) => (
+        <li key={`o${o.key}`}>
+          {o.label}: φ {o.phi.toFixed(1)}° ψ {o.psi.toFixed(1)}°
+          {o.nearest ? ` — ${Math.round(o.nearest.distance)}° from the centre of ${RAMA_REGION_NAMES[o.nearest.region]}` : ''}
+        </li>
+      ))}
+    </ul>
+  </div>
+) : null);
+
+/** LE CÔTÉ QUI TOURNE — la réponse du module (les atomes qui partent avec D), ou sa
+ *  raison de refuser. `atomCount` vient de la structure : c'est lui qui rend un index
+ *  invalide (`bad-atom`) au lieu de faire croire à un atome qui n'existe pas. */
+const torsionMovingOf = (r) => {
+  const atomCount = (r.structure.atomStore && r.structure.atomStore.count) || 0;
+  const side = movingSideOf({
+    neighbours: torsionNeighboursOf(r.structure),
+    atomCount,
+    axis: [r.idx[1], r.idx[2]],
+    moving: r.idx[3],
+    stay: r.idx[0],
+  });
+  if (!side || !side.ok) return { ok: false, reason: (side && side.reason) || 'moving-not-covered' };
+  return { ok: true, moved: side.moved };
+};
+
+/** TOUTE LA STRUCTURE À PLAT — trois nombres par atome, dans l'ordre de ses atomes :
+ *  c'est ce que le ↺ du panneau remet quand une torsion doit être défaite en entier. */
+const torsionSnapshotOf = (structure) => {
+  try {
+    const n = (structure.atomStore && structure.atomStore.count) || 0;
+    if (!n) return null;
+    const flat = new Float32Array(n * 3);
+    const ap = structure.getAtomProxy();
+    for (let i = 0; i < n; i++) {
+      ap.index = i;
+      flat[i * 3] = ap.x; flat[i * 3 + 1] = ap.y; flat[i * 3 + 2] = ap.z;
+    }
+    return flat;
+  } catch { return null; }
+};
+
+/** ÉCRIRE DES COORDONNÉES DANS LA STRUCTURE — le chemin d'un glisser de molécule (voir
+ *  applyPartMove) : `positionFromArray` atome par atome, puis UNE demande de redessin,
+ *  et les plaques de la scène qui suivent les coordonnées. Le tableau `flat` est celui
+ *  du module (Float32Array, trois nombres par atome, dans l'ordre de `idxs`).
+ *  @returns {boolean} true quand NGL a bien reçu les nouvelles positions. */
+const writeStructurePositions = (comp, idxs, flat) => {
+  const structure = comp && comp.structure;
+  if (!structure || !idxs || !idxs.length || !flat) return false;
+  try {
+    const ap = structure.getAtomProxy();
+    for (let k = 0; k < idxs.length; k++) {
+      ap.index = idxs[k];
+      ap.positionFromArray(flat, k * 3);
+    }
+    if (typeof comp.updateRepresentations === 'function') comp.updateRepresentations({ position: true });
+  } catch { return false; }
+  refreshScenePlates();          // les plaques suivent les coordonnées, comme pour une image
+  refreshHydrogenBonds(comp);    // …et le réseau de 💧 se relit LÀ OÙ les coordonnées arrivent
+  requestSceneRepaint();
+  rayShadowMoleculeMoved();      // ◐ …et l'OMBRE VIVANTE apprend que la molécule a bougé (voir son commentaire)
+  return true;
+};
+
+/* ── 🧬 CALCUL DE STRUCTURE · LES DISTANCES, n, m — LE PANNEAU NE CALCULE RIEN ───
+   « the user provide the distances between atom pairs and selects the number of
+   starting structures n and the number of retained structures m. » Ici : la liste
+   des distances (les atomes piqués dans la fenêtre ✏️ Torsion + le champ A–D, et la
+   table quand il est vide), les deux compteurs, et UN DÉPART PAR TRANCHE. Tout le
+   reste est dans utils/structureCalc.js : le tirage des dièdres, le protocole
+   standard sur chaque départ (recuit → dynamique → minimisation → trempe), la note,
+   le classement et les m retenues. Le panneau écrit la structure retenue par le MÊME
+   chemin qu'une torsion, et il DIT ce que le module a fait. */
+
+/** LA DISTANCE DE DEUX ATOMES DE LA MOLÉCULE À L'ÉCRAN — le « maintenant » d'une
+ *  ligne de la liste, relu à chaque rendu (comme la lecture d'une torsion). */
+const calcDistanceIn = (geom, i, j) => (geom
+  ? distanceOf(
+    [geom.positions[i * 3], geom.positions[i * 3 + 1], geom.positions[i * 3 + 2]],
+    [geom.positions[j * 3], geom.positions[j * 3 + 1], geom.positions[j * 3 + 2]],
+  )
+  : null);
+
+/** LA MOLÉCULE ET SA GÉOMÉTRIE, TELLES QUE LE CALCUL LES LIT — la structure du
+ *  componentRef, ses éléments, SON graphe de liaisons et ses coordonnées à plat.
+ *  `null` quand il n'y a rien à l'écran : le panneau le DIT alors, il ne devine pas. */
+const calcGeometryNow = () => {
+  const comp = componentRef.current;
+  const structure = comp && comp.structure;
+  if (!comp || !structure) return null;
+  const geom = geometryOfStructure(structure);
+  return geom ? { comp, structure, geom } : null;
+};
+
+/** LE GRAPHE QUE LES MOTEURS LISENT — la MÊME molécule, MOINS la fausse liaison d'un pont
+ *  disulfure ÉTIRÉ (les quatre gestes du champ seuls : ▶ Run, ▶ MD, ⚒ Minimise, ⟳ Energy).
+ *
+ *  ⚠ POURQUOI UNE SECONDE LECTURE DE LA MÊME MOLÉCULE — le rapport de cette session :
+ *  « when a disulphide is declared this long bond created by two far cysteines seems
+ *  blocked and can never approach the custom disulphide distance ». Le CONECT SG–SG que
+ *  la page écrit pour qu'NGL DESSINE le pont referme le graphe sur un MACROCYCLE quand
+ *  les deux Sγ sont loin ; `rotatableBondsOf` compte alors toutes les charnières du
+ *  segment entre les deux Cys comme des liaisons de CYCLE et les écarte du tirage, donc
+ *  AUCUN canal ne peut changer la distance Sγ–Sγ — mesuré sur le modèle de la page (pont
+ *  Cys3–Cys10 dessiné à 22.6 Å) : 24 canaux et aucun qui sépare les deux Sγ avec la
+ *  liaison, 47 dont 23 sans elle. Le pont ÉTIRÉ perd donc sa fausse liaison ici (il est
+ *  CONDUIT par le terme de distance de `calcRestraintTermsOf`) ; un pont FERMÉ garde la
+ *  sienne — c'est une vraie liaison S–S, et c'est elle qui tient les deux Sγ.
+ *
+ *  ⚠ TOUT LE RESTE DU PANNEAU LIT LA MOLÉCULE ENTIÈRE : les lignes de la table, la
+ *  distance « maintenant » de chacune (`calcDistanceIn`), le piquage ⌖ et la barre de
+ *  liaison passent par `calcGeometryNow` — seule la PHYSIQUE voit ce graphe-là, et le
+ *  rapport du geste dit qu'un pont étiré est conduit (`disulfideConductedNote`). */
+const calcEngineGeometry = () => {
+  const now = calcGeometryNow();
+  if (!now) return null;
+  const bonds = withoutStretchedDisulfideBonds({
+    bonds: now.geom.bonds, bridges: disulfideDrawnRef.current.bonds,
+  });
+  const geom = { ...now.geom, bonds };
+  /* 💧 …ET LA BOÎTE D'EAU EXPLICITE, QUAND ELLE EST LE SOLVANT CHOISI — la demande de
+     cette session : « it would be great if you could add the explicit solvent as a further
+     option with its box. » Les molécules d'eau TIP3P sont construites par le module
+     (`explicitSolventOf`) et AJOUTÉES ICI, à la fin de la molécule : les indices d'origine
+     ne bougent donc pas, et les contraintes, les canaux et les résidus de l'utilisateur
+     gardent les leurs. C'est le MÊME graphe pour les quatre gestes du champ (▶ Run, ▶ MD,
+     ⚒ Minimise, ⟳ Energy) — ils lisent tous `calcEngineGeometry`, donc aucun ne voit un
+     soluté nu quand les autres voient une boîte.
+     ⚠ LA BOÎTE N'EST PAS CONSTRUITE QUAND LA MOLÉCULE NE PEUT PAS LA CONTENIR : le
+     rapport du geste le DIT (`calcBoxNote`), il ne l'agrandit pas en silence. */
+  const solvent = structureCalcSolventOf(mdSolvent);
+  if (!solvent.explicit) return { ...now, geom };
+  /* 📦 L'ARÊTE EST RELEVÉE QUAND ELLE NE PEUT PAS CONTENIR LA MOLÉCULE — LE CORRECTIF DE
+     CETTE SESSION, et la raison pour laquelle « on ne voyait jamais l'eau ni la boîte » :
+     le module REFUSE une arête trop petite (c'est son contrat : « une boîte trop petite pour
+     contenir la molécule est REFUSÉE, jamais agrandie en silence »), mais le DÉFAUT du
+     panneau est `STRUCTURE_CALC_SOLVENT_BOX = 24 Å` alors que la règle demande la plus grande
+     dimension + 2 × 8 Å. Pour TOUTE molécule de plus de 8 Å, `box.ok` valait donc false :
+     aucune eau n'était construite, rien n'était dessiné, et il ne restait qu'une phrase dans
+     le rapport — d'où la remarque revenue trois fois (« I still do not see the water and the
+     box in the MD »). Ici le VIEWER relance le module avec l'arête que le module demande
+     lui-même (`needed`, déjà borné à `STRUCTURE_CALC_SOLVENT_BOX_MAX`) : le module ne cède
+     pas, c'est l'appelant qui relève — et le rapport du geste dit l'arête retenue
+     (`calcBoxNote` lit `grownFrom`). */
+  const box = explicitSolventOf({
+    positions: geom.positions, elements: geom.elements, bonds: geom.bonds, edge: mdBox,
+  });
+  if (!box.ok && box.reason === 'box-too-small' && Number(box.needed) > 0) {
+    const grown = explicitSolventOf({
+      positions: geom.positions, elements: geom.elements, bonds: geom.bonds, edge: 0,
+    });
+    if (grown.ok) {
+      return {
+        ...now,
+        geom: {
+          ...geom,
+          positions: grown.positions, elements: grown.elements, bonds: grown.bonds,
+          solvent: { ok: true, molecules: grown.molecules, edge: grown.edge, skipped: grown.skipped,
+            atoms: grown.atoms, solute: grown.solute, needed: grown.needed,
+            asked: mdBox, grownFrom: box.needed },
+        },
+      };
+    }
+  }
+  if (!box.ok) return { ...now, geom, solvent: { ...box, asked: mdBox, ok: false } };
+  return {
+    ...now,
+    geom: {
+      ...geom,
+      positions: box.positions, elements: box.elements, bonds: box.bonds,
+      solvent: { ok: true, molecules: box.molecules, edge: box.edge, skipped: box.skipped,
+        atoms: box.atoms, solute: box.solute, needed: box.needed },
+    },
+  };
+};
+
+/** 🎯 LA FONCTION CIBLE, DITE EN UNE PHRASE — le rapport d'un geste l'écrit pour que
+ *  personne ne prenne une famille ÉTEINTE pour une famille oubliée. `classic` n'a rien
+ *  éteint : la phrase est alors celle du libellé seul. */
+const calcTargetFunctionNote = (id) => {
+  const tf = structureCalcTargetFunctionOf(id);
+  return tf.off.length
+    ? ` · 🎯 target function ${tf.label}: ${tf.of} — with ${tf.off.join(', ')} switched OFF (chosen, not forgotten)`
+    : ` · 🎯 target function ${tf.label}`;
+};
+
+/** ⚖ CE QUE LA TABLE A GAGNÉ PENDANT LE GESTE — la MÊME lecture (`restraintReportOf`) sur
+ *  les coordonnées du DÉPART et sur celles de la fin : combien de distances sont tenues,
+ *  de combien la table se trompe au total, et la plus fausse. C'est la réponse chiffrée à
+ *  la remarque de cette session : « giving a high weight to one constraint did not have an
+ *  effect on MD » — la mécanique marchait, mais le plafond de couple écrasait le poids ⚖
+ *  (voir `STRUCTURE_CALC_MD_MAX_RESTRAINT_TORQUE`), et RIEN ne montrait le déplacement.
+ *  Rend '' quand la table est vide : un geste sans contrainte n'a rien à comparer. */
+const calcRestraintEffect = (before, after, list) => {
+  if (!list.length || !before || !after || !before.count) return '';
+  const miss = (rep) => rep.list.reduce((s, r) => s + Math.abs(r.deviation), 0);
+  return ` · ⚖ the ${before.count} distance${before.count === 1 ? '' : 's'} of the table:`
+    + ` ${before.satisfied}/${before.count} within ± ${before.tolerance} Å before → ${after.satisfied}/${after.count} after,`
+    + ` total miss ${miss(before).toFixed(2)} → ${miss(after).toFixed(2)} Å,`
+    + ` worst ${before.worst.abs.toFixed(2)} → ${after.worst.abs.toFixed(2)} Å`
+    + ` (a line's ⚖ weight multiplies the torque it pulls with, up to ${STRUCTURE_CALC_MD_MAX_RESTRAINT_TORQUE} kcal/mol·deg —`
+    + ' a heavier line really does bite harder. ⚠ The FIELD’s own cap follows the temperature and the inertia'
+    + ' (γ·m·f·√(R·T/m), so the requested T stays what drives the trajectory); this family’s does NOT — a'
+    + ' requested distance is a hard spring, not a thermal agitation, so it can win while it is violated).';
+};
+
+/** LA BOÎTE EXPLICITE, DITE EN UNE PHRASE — ce que le rapport d'un geste ajoute quand le
+ *  solvant choisi est `explicit`, et RIEN quand il ne l'est pas (les modèles implicites
+ *  n'ont pas de géométrie à décrire). Une boîte refusée est DITE avec la raison du module
+ *  et l'arête qu'il faudrait : un geste qui ne solvate pas doit le dire, pas le taire. */
+const calcBoxNote = (geom) => {
+  if (!structureCalcSolventOf(mdSolvent).explicit) return '';
+  const s = geom && geom.solvent;
+  if (!s) return '';
+  if (!s.ok) {
+    return ` · 📦 the water box was NOT built (${s.reason === 'box-too-small'
+      ? `it must be at least ${s.needed} Å for this molecule` : s.reason === 'no-water'
+        ? 'no site of the lattice was free — the molecule fills it' : s.reason})`
+      + ` — the dynamics ran in ε = 1 with no water; 📦 raise the box edge.`;
+  }
+  return ` · 📦 ${s.molecules} rigid TIP3P water${s.molecules === 1 ? '' : 's'} in a `
+    + `${s.edge} Å cube${s.skipped ? ` (${s.skipped} lattice site${s.skipped === 1 ? '' : 's'} left empty, too close to the molecule)` : ''}`
+    + `${s.grownFrom ? ` — the edge asked for (${s.grownFrom} Å) could not hold the molecule, so the box was GROWN to ${s.edge} Å; the dynamics AND the drawing use THIS one` : ''}`
+    /* ⚠ LA PHRASE QUI A CHANGÉ — elle disait « they never move (this engine turns
+       dihedrals) », ce qui était VRAI de la boîte tant que le moteur ne tournait que des
+       charnières : une eau n'en a aucune. Depuis la décision de cette session (« MAKE WATER
+       MOBILE »), les eaux ont leurs SIX degrés de liberté (voir `waterRigidBodyOf`) et le
+       rapport dit ce qu'elles ont fait — sinon le lecteur croirait encore à un décor. */
+    + ' — they screen and they push, and they DO move: each one translates and rotates under'
+    + ' the same Langevin thermostat as the dihedrals (they stay rigid — TIP3P geometry holds).'
+    /* 💧 …ET ILS SONT DESSINÉS (la remarque de cette session : « I still do not see the water
+       in the MD ») : la boîte entre dans la scène comme une molécule de la barre
+       (`calcDrawWaterBox`), donc elle se VOIT, se style et se cache comme les autres. */
+    + ' They are drawn in the view as their own molecule (« 💧 water box … » in the Molecules'
+    + ' bar: ☐ None hides them, and 🗑 removes them) — and their ✔ IS TICKED by the gesture'
+    + ' that built the box (the remark: « I still do not see the water and the box in the MD'
+    + ' simulation »), so the box is on screen at once; untick the Water row to clear the'
+    + ' view again (the older rule kept water OFF until it was ticked).';
+};
+
+/** CE QUE LES EAUX ONT FAIT — la phrase qu'un geste ajoute quand il AVAIT une boîte :
+ *  combien de molécules, combien ont VRAIMENT bougé, de combien (déplacement net moyen et
+ *  écart quadratique moyen), de quel angle elles ont tourné en moyenne, et la température
+ *  cinétique que leur thermostat tient — translation ET rotation, mesurées séparément et
+ *  comparées à celle qui a été demandée. ⚠ Quand il n'y a pas de boîte, elle ne dit RIEN
+ *  (pas un zéro inventé) : le rapport d'un geste sans eau n'a pas de ligne d'eau. */
+const calcWaterRunNote = (w, askedK) => {
+  if (!w || !w.molecules) return '';
+  const k = w.kinetic || {};
+  const ask = Number.isFinite(Number(askedK)) ? ` (T asked ${Number(askedK).toFixed(0)} K)` : '';
+  return ` · 💧 its ${w.molecules} water${w.molecules === 1 ? '' : 's'} MOVED DURING THE RUN:`
+    + ` ${w.moved} displaced (mean ${w.net} Å net, ${Math.sqrt(Math.max(0, w.msd)).toFixed(2)} Å rms),`
+    + ` turned ${((w.turned * 180) / Math.PI).toFixed(0)}° on average`
+    + ` · kinetic temperature ${Number(k.translation).toFixed(0)} K translation,`
+    + ` ${Number(k.rotation).toFixed(0)} K rotation${ask}`
+    + `${Number.isFinite(w.closest) ? ` · closest contact reached ${w.closest} Å` : ''}`
+    + `${w.subSteps > 1 ? ` · 🧩 its motion was subdivided ${w.subSteps}× per step (no molecule moves more than ${STRUCTURE_CALC_WATER_MAX_MOVE} Å per force evaluation — that is what resolves a collision, and it is why a big box costs more than it used to)` : ' · 🧩 one force evaluation per step (nothing was fast enough to need subdividing)'}`
+    /* ⚠ CE QUE LE MODÈLE EST — dit ici, parce qu'un lecteur doit pouvoir juger les chiffres :
+       la boîte part d'un RÉSEAU (σ = 3.15 Å), pas d'un liquide équilibré, et il n'y a PAS de
+       période (minimum image) : c'est un AMAS, pas un cristal infini. Au premier pas la
+       cohésion et la répulsion du ε = 1 détendent donc ce réseau d'un coup (l'énergie « avant
+       → après » le montre), les molécules de surface n'ont personne au-dessus d'elles, et à
+       une température élevée l'amas s'évapore dans le vide. C'est la physique de ce modèle-là,
+       avec ses limites, et non un décor qui bouge. */
+    + ' — rigid TIP3P molecules (the O–H lengths and the H–O–H angle cannot move), pushed by'
+    + ' their own van der Waals and electrostatic terms at ε = 1. ⚠ The box starts as a'
+    + ' LATTICE (σ = 3.15 Å), not as an equilibrated liquid, and there is no periodic image:'
+    + ' it is a CLUSTER, so the first steps relax that lattice (the energy above shows it) and,'
+    + ' at a high temperature, the cluster flies apart.';
+};
+
+
+/** POURQUOI UN DÉPART S'EST ARRÊTÉ LÀ — une phrase par `reason` du module, traduite
+ *  et jamais inventée (le panneau n'a pas de diagnostic à lui). Le protocole standard
+ *  n'a plus de balayages de contraintes : la raison d'un départ est ce qui a été
+ *  exécuté. */
+const calcWhyOf = (reason) => ({
+  'standard-protocol': 'the standard protocol ran to its end (draw → anneal → MD → minimise → quench)',
+  'converged': 'every distance you asked for is respected',
+  'stalled': 'a whole pass gained nothing more (a LOCAL minimum) — the gap left is measured, not hidden',
+  'max-passes': 'the pass budget ran out with a distance still off',
+  'clean': 'there was nothing to fix',
+  'no-terms': 'this molecule has no bond the tables know — nothing to read',
+  'bad-points': 'the coordinates could not be read',
+  'no-step': 'no dihedral could be turned',
+  'no-channel': 'this molecule has no rotatable dihedral',
+}[reason] || 'the start stopped');
+
+/** ⌖ ARMER (OU ÉTEINDRE) LE PIQUAGE DU COUPLE — le bouton ⌖ de la table. Au repos il
+ *  arme SON piquage : deux atomes, bleus, ses propres atomes (le piquage ✏️ Torsion est
+ *  seulement désarmé, ses quatre atomes restent ce qu'ils étaient). Pendant le piquage,
+ *  le même bouton l'éteint — c'est le SECOND clic dans la vue 3D qui ajoute la ligne
+ *  (`calcAddPairRow`), donc rien n'est ajouté à moitié. */
+const calcAddRestraint = () => {
+  if (pairPickRef.current) {
+    clearPairPicks();
+    setCalcMsg('The pair picker of the table is OFF — nothing was added (the ✏️ Torsion picks were never touched).');
+    return;
+  }
+  if (!calcGeometryNow()) {
+    setCalcMsg('✕ There is no molecule on screen — load a structure first, then pick the two atoms with ⌖.');
+    return;
+  }
+  armPairPick();
+};
+
+/** AJOUTER LE COUPLE PIQUÉ À LA LISTE — les deux atomes viennent du PIQUAGE DU ⌖ (bleu,
+ *  A · B : ses propres atomes, aucun rapport avec les quatre de ✏️ Torsion) et la cible
+ *  du champ ⌖ « want » (vide : la longueur que la table donne à ce couple d'éléments).
+ *  Un couple DÉJÀ dans la liste est remplacé, pas doublé : le module ne lit qu'une cible
+ *  par couple. */
+const calcAddPairRow = () => {
+  const now = calcGeometryNow();
+  if (!now) {
+    setCalcMsg('✕ There is no molecule on screen — load a structure first, then pick the two atoms with ⌖.');
+    return;
+  }
+  const pair = pairPickOf();
+  if (!pair.ok) { setPairMsg(`⚠ ${pair.say}`); return; }
+  const { geom } = now;
+  const [i, j] = pair.idx;
+  const typed = Number(String(pairTargetDraft).replace(',', '.'));
+  const table = bondLengthTarget(geom.elements[i], geom.elements[j]);
+  const target = Number.isFinite(typed) && typed > 0 ? typed : table;
+  if (!Number.isFinite(target) || target <= 0) {
+    setCalcMsg(`✕ Type the distance you want ${pair.label} to reach, in ångströms (the ⌖ want field) — the`
+      + ` table has no length for ${geom.elements[i] || '?'}–${geom.elements[j] || '?'}, so this line would have nothing to aim at.`);
+    return;
+  }
+  const key = i < j ? `${i}-${j}` : `${j}-${i}`;
+  const label = pair.label;
+  /* ⚖ LE POIDS PAR DÉFAUT EST ÉCRIT, PAS SEULEMENT SUPPOSÉ — la demande de cette session :
+     « when I add a distance in parameters and constraints the program waits for the weight to
+     accept the constraints but it would be easier to give weight 1 by default. the user can then
+     decide to change it. otherwise it seems that the constraints are there but the program does
+     not take them in consideration. » La ligne entre donc avec **1** DANS SA CASE (et non une
+     case vide au-dessus d'un placeholder) : le lecteur VOIT ce que la ligne pèse, et peut le
+     changer — 2 pour qu'elle tire plus fort, 0 pour la mettre en pause. La physique, elle, n'a
+     pas changé d'un iota : `restraintWeightOf(1)` vaut 1, exactement ce que valait la case vide. */
+  const row = {
+    key, i, j, target, label, weight: 1, w: '1', say: '', sayA: '', sayB: '',
+    a: pair.slots[0].label, b: pair.slots[1].label,
+    la: pair.slots[0].label, lb: pair.slots[1].label,
+  };
+  const next = [...calcRestraints.filter((r) => r.key !== key), row]
+    .sort((a, b2) => ((a.i ?? 0) - (b2.i ?? 0)) || ((a.j ?? 0) - (b2.j ?? 0)));
+  setCalcRestraints(next);
+  setPairMsg(`✓ ${label} = ${torsionAng(target)} is in the list (the pair is still painted BLUE). Press ⌖ again to`
+    + ' pick another pair — the two atoms of this line are already its own, the ✏️ Torsion picks never moved.');
+  setCalcMsg(`✓ Distance ${label} = ${torsionAng(target)} is in the list (${next.length} of`
+    + ` ${STRUCTURE_CALC_MAX_RESTRAINTS} the module accepts) — ▶ Run builds ${calcStarts} structure`
+    + `${calcStarts === 1 ? '' : 's'} and keeps the best ${calcKeep}. Every line can be edited, and ✕ drops it.`);
+};
+
+/** CHANGER LA CIBLE D'UNE LIGNE — c'est l'UTILISATEUR qui donne les distances, et il
+ *  peut les corriger après coup ; une cible illisible ou nulle est refusée sans un mot. */
+const calcSetRestraintTarget = (key, value) => {
+  /* ⚠ CE QUI EST GARDÉ, C'EST LE TEXTE TAPÉ (`t`), ET LA CIBLE N'EST POSÉE QUE QUAND IL
+     SE LIT. Le champ était `type="number"` avec `value={r.target}` : chaque frappe
+     réécrivait la case avec le NOMBRE, donc taper « 12.5 » donnait 1 → 12 → 125 (le
+     point était mangé et le chiffre suivant s'ajoutait au dernier — le rapport : « il
+     programma non legge quello che scrivo e mi dà errore perché taglia l'ultima lettera »).
+     Le texte est maintenant la seule source du champ, la virgule décimale est acceptée,
+     et une case vidée ou illisible rend la ligne « pas prête » — elle n'est pas effacée. */
+  const text = String(value == null ? '' : value);
+  const v = Number(text.replace(',', '.'));
+  const target = Number.isFinite(v) && v > 0 ? v : null;
+  setCalcRestraints((list) => list.map((r) => (r.key === key ? { ...r, t: text, target } : r)));
+};
+
+/** ⚖ CHANGER LE POIDS D'UNE LIGNE — la demande : « enable this option allowing the user
+ *  to give a weight to these constraints. This weight can be defined in the table. » Le
+ *  poids MULTIPLIE la raideur de la ligne (`k = k_NOE × poids`) : c'est lui qui décide
+ *  de ce qu'une distance coûte quand elle n'est pas tenue, et c'est le SEUL réglage qui
+ *  hiérarchise deux lignes de la table.
+ *
+ *  Il se tape et se relit EXACTEMENT comme la cible — le texte tapé est gardé tel quel
+ *  (`w`), la valeur numérique n'est que sa conséquence (`weight`), la virgule décimale
+ *  est acceptée. Trois choses sont DITES plutôt que devinées :
+ *    · une case VIDE = le poids par défaut, 1 — la ligne se comporte comme avant ;
+ *    · une case ILLISIBLE (lettres, nombre négatif) = le poids par défaut AUSSI (`weight`
+ *      vaut `null`, donc 1) : la ligne n'est pas jetée pour un chiffre mal tapé, et la
+ *      case passe en AMBRE avec une infobulle qui le dit ;
+ *    · un poids de 0 est une VRAIE valeur : la ligne est encore affichée et mesurée
+ *      (colonnes Now et Δ), mais elle ne pèse RIEN dans le champ, la dynamique et le
+ *      calcul — c'est la façon de mettre une ligne en pause sans perdre ses atomes. */
+const calcSetRestraintWeight = (key, value) => {
+  const text = String(value == null ? '' : value);
+  const v = Number(text.replace(',', '.'));
+  const weight = Number.isFinite(v) && v >= 0 ? v : null;
+  setCalcRestraints((list) => list.map((r) => (r.key === key ? { ...r, w: text, weight } : r)));
+};
+
+/** LE POIDS D'UNE LIGNE, EN NOMBRE — `weight` quand il est lisible, 1 sinon. C'est
+ *  l'UNIQUE lecteur du poids dans le viewer : les quatre gestes (▶ Run, ▶ MD, ⚒
+ *  Minimise, ⟳ Energy) et la sauvegarde passent par lui, donc ils ne peuvent pas lire
+ *  deux poids différents pour la même ligne. Ce que `null` veut dire est ici : une case
+ *  vidée ou illisible est le poids PAR DÉFAUT de la contrainte, pas un poids de 0. */
+const calcWeightOf = (row) => restraintWeightOf(row);
+
+const calcRemoveRestraint = (key) => {
+  setCalcRestraints((list) => list.filter((r) => r.key !== key));
+};
+
+/* ── ⛓ LA STRUCTURE SECONDAIRE IMPOSÉE → DES CONTRAINTES DE DIHÈDRE ────────────
+   La demande de cette session : « In MD and “structure calculation” allow the
+   conversion of the secondary structure imposed in the “sequence and structure”
+   subsection into dihedral angle constraints. »
+
+   Ce que la page peint (la sous-section « Sequence and structure », la chaîne
+   `imposedSecondaryStructure` : une lettre par résidu) devient une liste de φ/ψ avec
+   cible et fenêtre — calculée par le module PUR (`secondaryDihedralRestraintsOf`, qui
+   apparie les lettres au squelette LU DE LA MOLÉCULE À L'ÉCRAN, par ordre). Cette
+   liste est ensuite donnée au ▶ MD, au ⚒ Minimise, au ▶ Run et à la lecture du champ :
+   dans TOUS ces gestes, c'est le même objet, donc les quatre ne peuvent pas dire deux
+   choses différentes.
+
+   ⚠ LE BOUTON EST UN INTERRUPTEUR : premier clic = convertir, second = rendre la
+   liberté (la liste est vidée). Le rapport dit exactement ce qui a été converti, et ce
+   qui ne l'a pas été — l'appariement par ordre est DIT (une molécule dont la
+   numérotation ne suit pas la séquence de la page peut donc être vue, pas crue). */
+const calcConvertSecondaryStructure = () => {
+  if (calcDihedrals.length) {
+    setCalcDihedrals([]);
+    setCalcSsReading(null);
+    setCalcMsg('⛓ The φ/ψ constraints of the imposed secondary structure are OFF — the dynamics, the'
+      + ' minimisation and the calculation are free of them again. The painted structure itself is untouched.');
+    return;
+  }
+  const structure = String(imposedSecondaryStructure || '').replace(/\s+/g, '');
+  if (!structure) {
+    setCalcMsg('✕ No secondary structure is painted for this page: the “Sequence and structure” subsection'
+      + ' (🖌️ brush: H helix · E sheet · C coil) is where the letters come from. Paint a helix or a sheet,'
+      + ' then press ⛓ again.');
+    return;
+  }
+  const now = calcGeometryNow();
+  if (!now) {
+    setCalcMsg('✕ There is no molecule on screen — load a structure first: the letters are matched to the'
+      + ' backbone that is DISPLAYED.');
+    return;
+  }
+  const { geom } = now;
+  const backbone = backboneTorsionsOf({ elements: geom.elements, bonds: geom.bonds, atomCount: geom.count });
+  const read = secondaryDihedralRestraintsOf({
+    secondaryStructure: structure, torsions: backbone, tolerance: SS_DIHEDRAL_TOLERANCE,
+  });
+  setCalcSsReading(read);
+  if (!read.ok) {
+    setCalcDihedrals([]);
+    setCalcMsg(read.reason === 'no-backbone'
+      ? '✕ This molecule has no readable N–CA–C backbone: the letters of the painted sequence have nothing'
+        + ' to be attached to (a nucleic acid has no φ/ψ).'
+      : (read.reason === 'length-mismatch'
+        ? `✕ The painted sequence has ${read.letters} letters and this molecule has ${read.residues} readable`
+          + ' residues — the two must match, because the letters are matched BY ORDER (helix/sheet per residue).'
+        : '✕ The painted sequence has no H (helix) and no E (sheet): a coil imposes nothing, so there is'
+          + ' nothing to convert. Paint a helix or a sheet first.'));
+    return;
+  }
+  setCalcDihedrals(read.constraints);
+  const byAngle = read.constraints.length;
+  const worst = read.unmatched ? `${read.unmatched} residue${read.unmatched === 1 ? '' : 's'} of this molecule`
+    + ' got no letter (the painted sequence is shorter) and stay free' : '';
+  const recipes = SS_DIHEDRAL_LETTERS
+    .map((l) => `${l}: φ ${SS_DIHEDRALS[l].phi}° / ψ ${SS_DIHEDRALS[l].psi}°`).join(' · ');
+  setCalcMsg(`✓ ⛓ ${read.matched} residue${read.matched === 1 ? '' : 's'} of the imposed secondary structure converted`
+    + ` into ${byAngle} dihedral constraint${byAngle === 1 ? '' : 's'} (${recipes}, flat-bottom window of`
+    + ` ± ${SS_DIHEDRAL_TOLERANCE}°) — each φ and ψ is judged on its own. They now enter the ▶ MD, the`
+    + ` ⚒ Minimise, the ▶ Run and the ⟳ Energy reading of this panel. ${worst}`);
+};
+
+
+/* ── 💾 LA LISTE DES DISTANCES DANS UN FICHIER — LA DEMANDE DE CETTE SESSION ────
+   « Allow to save/upload from file the distance constraints in the structure
+   calculation section. » La table vit dans l'état du viewer : elle disparaît quand
+   la page est rechargée. Ces deux gestes l'écrivent dans un FICHIER (texte, trois
+   colonnes — le format de utils/structureRestraints.js, qui n'est PAS recopié ici :
+   le viewer ne fait que le brancher) et la RELISENT.
+
+   ⚠ CE QUI EST ÉCRIT EST CE QUE LA TABLE MONTRE (les deux colonnes d'atomes, la cible,
+   et le poids ⚖ d'une ligne quand il n'est pas 1 — c'est le champ « w= » que le module
+   écrit et relit), et ce qui est RELU est RÉSOLU SUR LA MOLÉCULE À L'ÉCRAN par
+   `calcAtomOfText` — le même lecteur que la frappe. Une ligne dont les atomes ne se
+   résolvent pas est GARDÉE telle quelle (elle attend d'être finie, comme une ligne tapée
+   à moitié) et le rapport dit combien de lignes le fichier portait, combien sont
+   résolues, celles qui n'ont pas été comprises, et celles qui portaient un poids. */
+
+/** LE NOM DU FICHIER — le nom de la molécule à l'écran, réduit à ce qu'un système
+ *  de fichiers accepte, et l'extension du module (une seule définition). */
+const calcRestraintFileName = () => {
+  const what = String(molNameOf(selectedMolKey) || 'structure').replace(/[^\w.-]+/g, '_').slice(0, 40);
+  return `distances-${what}.${RESTRAINT_FILE_EXT}`;
+};
+
+const calcSaveRestraints = () => {
+  if (!calcRestraints.length) {
+    setCalcMsg('✕ There is nothing to save yet — the list is empty. Add a distance (⌖ or ➕), or load a file (📂).');
+    return;
+  }
+  const live = calcGeometryNow();
+  const ready = calcUsableRows().length;
+  /* ⚖ COMBIEN DE LIGNES PORTENT UN POIDS À ELLES — compté pour que la note du fichier
+     le dise : une liste dont les poids se sont perdus en chemin ferait un autre calcul
+     que celui qu'on vient de lire à l'écran. */
+  const weighted = calcRestraints.filter((r) => calcWeightOf(r) !== 1).length;
+  const paused = calcRestraints.filter((r) => calcWeightOf(r) === 0).length;
+  try {
+    const { text, count } = restraintsToText({
+      restraints: calcRestraints,
+      note: `${calcRestraints.length} distance${calcRestraints.length === 1 ? '' : 's'} for`
+        + ` « ${molNameOf(selectedMolKey)} » — ${ready} of them resolved on this molecule`
+        + `${live ? ` (${live.geom.count} atoms)` : ''}`
+        + `${weighted ? `, ${weighted} with a ⚖ weight of their own${paused ? ` (${paused} of them at 0, on hold)` : ''}` : ''}.`,
+    });
+    const blob = new Blob([text], { type: RESTRAINT_FILE_MIME });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = calcRestraintFileName();
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    setCalcMsg(`✓ ${count} distance${count === 1 ? '' : 's'} saved to “${calcRestraintFileName()}” —`
+      + ' three columns (atom A · atom B · target in Å) plus a “w=” field on the lines whose'
+      + ' ⚖ weight is not 1, reloaded by 📂 Load distances on any molecule.'
+      + ' The file is plain text: it can be edited and kept with the experiment.');
+  } catch (e) {
+    setCalcMsg(`✕ The list could not be saved: ${(e && e.message) || e}`);
+  }
+};
+
+/* ── 💾 LA FAMILLE ET LE RAPPORT D'UN CALCUL DE STRUCTURE — la demande de cette session :
+   « Allow saving the family of structures and the report. » Deux fichiers, deux formats :
+     · LA FAMILLE, en PDB MULTI-MODÈLE (`MODEL n` / `ENDMDL`) : un bloc par structure
+       RETENUE, dans l'ordre du classement (le rang 1 d'abord — celui qui est écrit dans la
+       molécule), chaque bloc écrit par `calcFamilyPdbOf` (l'écrivain du dossier, le même que
+       le 📥 Download), et des REMARK qui disent ce que chaque modèle est (son rang, son
+       départ, sa note). Le fichier se recharge ici comme dans PyMOL / Chimera, et il porte
+       les noms d'atomes qu'une superposition attend ;
+     · LE RAPPORT, en texte : les paramètres du calcul, puis CHAQUE départ (sa note et les
+       familles du champ, ses distances, sa lecture du squelette, ses contacts, comment il
+       s'est terminé), puis la famille (ce que chaque distance mesure à travers les modèles
+       retenus, et de combien ils diffèrent après superposition optimale).
+   ⚠ AUCUN CHIFFRE N'EST REFABRIQUÉ ICI : tout vient du rapport du module (`calcResult`),
+   le même que le tableau du panneau lit — un rapport qui recalculerait pourrait contredire
+   l'écran. */
+
+/** La fabrique d'un téléchargement de texte — une seule, pour les deux fichiers comme pour
+ *  la table des distances (trois `Blob` recopiés finiraient par diverger). Rend le nom écrit. */
+const calcDownloadText = (name, text, mime = 'text/plain') => {
+  const blob = new Blob([text], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return name;
+};
+
+/** LE NOM DE BASE DES FICHIERS DU CALCUL — la molécule à l'écran, réduite à ce qu'un
+ *  système de fichiers accepte. */
+const calcFamilyBaseName = () => String(molNameOf(selectedMolKey) || 'structure')
+  .replace(/[^\w.-]+/g, '_').slice(0, 40) || 'structure';
+
+/** LE RAPPORT, EN TEXTE — les paramètres, chaque départ, puis la famille. */
+const calcReportText = (ranked) => {
+  const L = [];
+  const f = (v, d = 2) => (Number.isFinite(Number(v)) ? Number(v).toFixed(d) : '—');
+  const n0 = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+  L.push('STRUCTURE CALCULATION — report');
+  L.push(`molecule            : ${molNameOf(selectedMolKey)}`);
+  L.push(`written             : ${new Date().toISOString()}`);
+  L.push(`target function     : ${calcTargetFunction} · ω ${calcOmegaFree ? 'free to vary' : 'held trans'}`);
+  L.push(`starts n / kept m   : ${ranked.starts} / ${ranked.keep}`);
+  L.push(`starts computed     : ${ranked.tried}${ranked.refused ? ` (${ranked.refused} refused before scoring)` : ''}`);
+  L.push(`annealing           : ${calcAnneal} temperature step(s), ${calcAnnealFrame} image(s) per step`);
+  L.push(`dynamics per start  : ${calcMdSteps} step(s) of ${calcMdDt} ps = ${f(calcMdTime.ps, 4)} ps, T ${calcMdHot} -> ${calcMdCold} K, equilibration ${calcMdEquil} %`);
+  L.push(`minimisation        : ${calcMinimise} sweep(s) per start`);
+  L.push(`seed (fixed)        : ${STRUCTURE_CALC_SEED}`);
+  L.push(`constraints         : ${n0(ranked.restraintCount)} distance(s), ${n0(ranked.dihedralCount)} imposed phi/psi${ranked.dropped ? `, ${ranked.dropped} line(s) dropped (unreadable)` : ''}`);
+  L.push(`tolerance           : +/- ${STRUCTURE_CALC_RESTRAINT_TOLERANCE} A on a distance, +/- ${SS_DIHEDRAL_TOLERANCE} deg on phi/psi`);
+  L.push('');
+  L.push(`THE STARTS — ${ranked.ranking.length} scored, best score first`);
+  L.push('  rank  start    score  target   clash  distances    rms  worst distance        bonds/angles  phi/psi outside  clashes/contacts  moved  ended');
+  ranked.ranking.forEach((r) => {
+    const worst = r.worst ? `${r.worst.i}-${r.worst.j} ${f(r.worst.distance)}/${f(r.worst.target)} A` : '—';
+    const rama = r.rama ? `${r.rama.violations}/${r.rama.measured}${r.rama.partial ? ` (+${r.rama.partial} end)` : ''}` : '—';
+    L.push(`  ${String(r.rank).padStart(4)}  ${`#${r.index}`.padStart(6)}  ${f(r.score, 1).padStart(6)}  ${f(r.total, 1).padStart(6)}  ${f(r.clashPenalty, 2).padStart(6)}  `
+      + `${`${n0(r.satisfied)}/${n0(r.satisfied) + n0(r.violations)}`.padStart(8)}  ${f(r.rmsd, 3).padStart(5)}  ${worst.padEnd(20)}  `
+      + `${`${f(r.bondRms, 3)}/${f(r.angleRms, 1)}`.padStart(12)}  ${rama.padEnd(15)}  ${`${n0(r.clashes)}/${n0(r.contacts)}`.padStart(16)}  ${String(r.moved).padStart(5)}  ${r.reason}`);
+    L.push(`        · families (kcal/mol): bonds ${f(r.bond)} · angles ${f(r.angle)} · rings ${f(r.planar)} · vdW ${f(r.vdw)}`
+      + ` · mu ${f(r.elec)} · solvent ${f(r.solv)} · phi/psi ${f(r.ramaPenalty)} · chi1 ${f(r.chiPenalty)} · omega ${f(r.omegaPenalty)} · your distances ${f(r.restraint)}`);
+    if (r.worst) L.push(`        · worst distance: measured ${f(r.worst.distance)} A for ${f(r.worst.target)} A (delta ${f(n0(r.worst.distance) - n0(r.worst.target))} A)`);
+  });
+  L.push('');
+  L.push(`THE KEPT FAMILY — ${ranked.retained.length} model(s), rank 1 first`);
+  const fam = (ranked.family && ranked.family.restraints) || [];
+  if (!fam.length) L.push('  (no distance was asked: the kept models answer the dihedral constraints alone)');
+  fam.forEach((x) => {
+    L.push(`  ${x.i}-${x.j}: mean ${f(x.mean)} A over ${n0(x.models)} model(s), ${n0(x.satisfied)} inside the tolerance, spread ${f(x.spread)} A`);
+  });
+  const spread = ranked.family && ranked.family.spread;
+  if (spread && spread.count) {
+    L.push(`  the models differ by ${f(spread.mean)} A rmsd on average after optimal superposition over all ${n0(spread.atoms)} atoms`
+      + ` (worst pair #${spread.worst.a}-#${spread.worst.b} at ${f(spread.worst.rmsd)} A)`);
+  } else {
+    L.push('  a single model was kept, so there is no spread to measure');
+  }
+  const rest = (ranked.family && ranked.family.rest) || [];
+  rest.forEach((r) => {
+    L.push(`  left out (scored, not kept): rank ${r.rank} start #${r.index} (score ${f(r.score, 1)}, ${n0(r.violations)} distance(s) outside)`);
+  });
+  L.push('');
+  L.push('NOTE — the force field is the app\'s own (kcal/mol), so a score is comparable');
+  L.push('inside one calculation only (same molecule, same constraints, same n). The seed is');
+  L.push('fixed: the same molecule, the same constraints and the same n give the same family.');
+  return L.join('\n');
+};
+
+/** 💾 LA FAMILLE — un PDB multi-modèle, écrit par l'écrivain du dossier. */
+const calcSaveFamily = async () => {
+  const ranked = calcResult;
+  if (!ranked || !ranked.retained.length) {
+    setCalcMsg('✕ There is no family to save yet — run the calculation (▶ Run) first.');
+    return;
+  }
+  const comp = componentRef.current;
+  const structure = comp && comp.structure;
+  if (!structure || !comp) {
+    setCalcMsg('✕ The family cannot be written: no molecule is on screen, and its coordinates belong to the molecule it was computed on.');
+    return;
+  }
+  const models = [];
+  for (const m of ranked.retained) {
+    /* eslint-disable no-await-in-loop -- un modèle après l'autre : chacun EMPRUNTE les
+       coordonnées de la structure, donc deux écritures ne peuvent pas se chevaucher. */
+    const text = await calcFamilyPdbOf(structure, comp, m.positions);
+    /* eslint-enable no-await-in-loop */
+    if (!text) {
+      setCalcMsg('✕ The family could not be written: the coordinates of a model would not go back to the molecule.');
+      return;
+    }
+    models.push({
+      rank: Number(m.rank) || models.length + 1, index: m.index, score: m.score,
+      satisfied: m.satisfied, violations: m.violations,
+      text: String(text).split('\n').filter((l) => l.trim().toUpperCase() !== 'END').join('\n').trimEnd(),
+    });
+  }
+  const remarks = [
+    'REMARK   1 STRUCTURE CALCULATION - the family kept by the structure calculation panel',
+    `REMARK   2 ${models.length} model(s) kept, ranked by the force field score (kcal/mol), rank 1 first`,
+    ...models.map((m, k) => `REMARK   3 MODEL ${k + 1}: rank ${m.rank}, start #${m.index}, score ${Number(m.score).toFixed(2)}, distances ${m.satisfied}/${Number(m.satisfied) + Number(m.violations)}`),
+  ];
+  const body = models.map((m, k) => `MODEL     ${String(k + 1).padStart(4)}\n${m.text}\nENDMDL`).join('\n');
+  const name = `${calcFamilyBaseName()}_family.pdb`;
+  try {
+    calcDownloadText(name, `${remarks.join('\n')}\n${body}\nEND\n`, 'chemical/x-pdb');
+    setCalcMsg(`✓ ${models.length} model${models.length === 1 ? '' : 's'} saved to “${name}” — a multi-model PDB (MODEL / ENDMDL), rank 1 first:`
+      + ' the same writer as ⤓ Load and 📥 Download, so it reloads here or in PyMOL / Chimera and carries the atom names a superposition needs.'
+      + ' The molecule on screen was borrowed for the writing and put back: nothing moved.');
+  } catch (e) {
+    setCalcMsg(`✕ The family could not be saved: ${(e && e.message) || e}`);
+  }
+};
+
+/** 💾 LE RAPPORT — le texte du module, tel quel. */
+const calcSaveReport = () => {
+  const ranked = calcResult;
+  if (!ranked || !ranked.ranking.length) {
+    setCalcMsg('✕ There is no report to save yet — run the calculation (▶ Run) first.');
+    return;
+  }
+  const name = `${calcFamilyBaseName()}_structure-calculation.txt`;
+  try {
+    calcDownloadText(name, `${calcReportText(ranked)}\n`);
+    setCalcMsg(`✓ The report of ${ranked.ranking.length} start${ranked.ranking.length === 1 ? '' : 's'} is in “${name}” — the parameters, each start`
+      + ' (score and families, distances, backbone reading, contacts, how it ended) and the family (what each distance measures'
+      + ' across the kept models, and their rmsd after optimal superposition).');
+  } catch (e) {
+    setCalcMsg(`✕ The report could not be saved: ${(e && e.message) || e}`);
+  }
+};
+
+const calcLoadRestraintsFile = (file) => {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    const live = calcGeometryNow();
+    const { rows, count, skipped, weighted } = restraintsFromText(String(reader.result || ''));
+    if (!count) {
+      setCalcMsg(`✕ Nothing was read in “${file.name || 'the file'}” — it holds no line of the form`
+        + ' “atom A · atom B · target in Å” (see the header the 💾 button writes).');
+      return;
+    }
+    if (!live) {
+      setCalcMsg('✕ There is no molecule on screen — load a structure first: the atom names of the file'
+        + ' are resolved on the molecule that is shown.');
+      return;
+    }
+    /* CHAQUE LIGNE EST RÉSOLUE ICI — sinon elle est GARDÉE avec ce que le lecteur a
+       répondu (`say`), exactement comme une ligne tapée à moitié. */
+    let unresolved = 0;
+    const incoming = rows.map((row) => {
+      const hitA = calcAtomOfText(live.structure, row.a);
+      const hitB = calcAtomOfText(live.structure, row.b);
+      const i = hitA.ok ? hitA.index : null;
+      const j = hitB.ok ? hitB.index : null;
+      if (i == null || j == null) unresolved += 1;
+      /* ⚖ ET LE POIDS DU FICHIER — il revient TEL QUEL dans la case du tableau (le champ
+         « w= » du module, 1 quand la ligne n'en porte pas). Un « w= » que le module n'a pas
+         su lire est DIT sur la ligne (`weightSay`, joint au reste) : la ligne court alors
+         au poids par défaut — elle n'est pas jetée pour un chiffre mal écrit. */
+      /* ⚠ LES DEUX CÔTÉS SONT NOMMÉS ICI COMME PARTOUT AILLEURS (`calcRowSayOf`) : le ✕
+         d'un fichier dit de quel atome il parle, et le « w= » du module s'AJOUTE à la
+         phrase au lieu de la remplacer. */
+      const sayA = hitA.ok ? '' : hitA.say;
+      const sayB = hitB.ok ? '' : hitB.say;
+      const sayExtra = (row && row.weightSay) || '';
+      return {
+        key: i != null && j != null && i !== j ? (i < j ? `${i}-${j}` : `${j}-${i}`) : null,
+        i, j, target: row.target, sayA, sayB, sayExtra,
+        say: calcRowSayOf({ sayA, sayB, sayExtra }),
+        weight: row.weight == null ? null : row.weight,
+        w: row.weight == null ? '' : String(row.weight),
+        a: row.a, b: row.b,
+        la: hitA.ok ? hitA.label : '', lb: hitB.ok ? hitB.label : '',
+        label: `${hitA.ok ? hitA.label : (row.a || `#${i}`)}–${hitB.ok ? hitB.label : (row.b || `#${j}`)}`,
+      };
+    });
+    /* LA CLEF DE CHAQUE LIGNE EST FIXÉE ICI (une ligne résolue porte sa CLÉ DE PAIR,
+       `i-j`, qui remplace la même ligne si elle y est déjà ; une ligne non résolue
+       reçoit une clef de rang, comme ➕ Add a row — elle attend d'être finie). */
+    let seq = calcRowSeqRef.current;
+    const incomingKeyed = incoming.map((row) => {
+      if (row.key) return row;
+      seq += 1;
+      return { ...row, key: `row-${seq}` };
+    });
+    calcRowSeqRef.current = seq;
+    setCalcRestraints((list) => {
+      const out = [...list];
+      incomingKeyed.forEach((row) => {
+        const at = out.findIndex((r) => r.key === row.key);
+        if (at >= 0) out[at] = row;
+        else out.push(row);
+      });
+      return out.slice(0, STRUCTURE_CALC_MAX_RESTRAINTS);
+    });
+    const kept = Math.min(STRUCTURE_CALC_MAX_RESTRAINTS, calcRestraints.length + incoming.length);
+    const droppedKb = skipped.length;
+    setCalcMsg(`✓ Read ${count} distance${count === 1 ? '' : 's'} in “${file.name || 'the file'}” —`
+      + ` ${count - unresolved} of them resolved on « ${molNameOf(selectedMolKey)} »,`
+      + ` ${unresolved} waiting for a name that this molecule does not have`
+      + `${droppedKb ? `, and ${droppedKb} line${droppedKb === 1 ? '' : 's'} not understood` : ''}.`
+      + `${weighted ? ` ${weighted} of them carr${weighted === 1 ? 'ies' : 'y'} a ⚖ weight of their own (it is in the table now — a weight of 0 puts a line on hold).` : ''}`
+      + ` The table now holds ${kept} of ${STRUCTURE_CALC_MAX_RESTRAINTS} lines.`
+      + `${droppedKb ? ` ⚠ ${skipped.slice(0, 3).map((s) => `line ${s.line}: ${s.say}`).join(' · ')}` : ''}`
+      + (count - unresolved === 0 ? ' ⚠ No name of this file matches this molecule: check the residue numbering' : ''));
+  };
+  reader.onerror = () => setCalcMsg(`✕ “${file.name || 'the file'}” could not be read.`);
+  reader.readAsText(file);
+};
+
+/* ── LA TABLE DES DISTANCES — DEUX ATOMES TAPÉS À LA MAIN ─────────────────────
+   « let me define distances in a table and not only by clicking on atoms. » Une ligne
+   porte donc ses DEUX ATOMES ÉCRITS (le nom que la ligne affiche, un numéro d'atome, ou
+   le nom brut du fichier) en plus de sa cible : le piquage n'est plus qu'un raccourci.
+   Un atome illisible est DIT sur la ligne, jamais deviné — et une ligne à moitié
+   remplie se garde pour la finir plus tard, mais n'est jamais envoyée au module. */
+const CALC_KEY = (s) => String(s == null ? '' : s).toUpperCase().replace(/[^A-Z0-9]/g, '');
+const calcAtomLabel = (rec) => `${rec.resname || ''} ${rec.resno || ''} ${rec.name || ''}`.trim();
+
+/** LE RÉSIDU QUI PORTE UN ATOME — « ALA 12 », tel que la molécule à l'écran le nomme.
+ *  Le rapport de cette session : « The table of dihedral constraints does not report the
+ *  residue number as it should but the atom number. » La colonne `residue` de la table des
+ *  φ/ψ imposés écrit donc CE libellé ; le numéro d'atome reste dans l'infobulle (il sert au
+ *  piquage, et la cible est un dièdre lu sur ces atomes-là). Un atome sans résidu lisible
+ *  (rien à l'écran) se dit par son numéro : jamais un blanc. */
+const calcResidueLabelOf = (index) => {
+  const structure = componentRef.current && componentRef.current.structure;
+  const rec = Number.isInteger(index)
+    ? structureAtomRecords(structure).find((r) => r.index === index) : null;
+  if (!rec) return index == null ? '—' : `#${index}`;
+  const label = `${rec.resname || ''}${rec.resno != null ? ` ${rec.resno}` : ''}${rec.chainIndex ? ` · ${rec.chainIndex}` : ''}`.trim();
+  return label || `#${index}`;
+};
+
+/** L'ATOME DÉSIGNÉ PAR UN TEXTE — `{ok, index, element, label}` ou `{ok:false, say}`. */
+const calcAtomOfText = (structure, text) => {
+  const asked = String(text == null ? '' : text).trim();
+  const want = CALC_KEY(asked);
+  if (!want) return { ok: false, say: 'type an atom — “ALA 12 CA”, “12:CA”, “CA12” or its number' };
+  const records = structureAtomRecords(structure);
+  /* ⚠ « #123 » est LE NUMÉRO D'ATOME ÉCRIT PAR LE FICHIER DES DISTANCES
+     (utils/structureRestraints.js, la colonne d'un atome qui n'a pas de nom écrit) :
+     il est lu comme le nombre nu. */
+  const bare = asked.replace(/^#/, '');
+  if (/^\d+$/.test(bare)) {
+    const i = Number(bare);
+    const rec = records.find((r) => r.index === i);
+    if (rec) return { ok: true, index: i, element: rec.element, label: calcAtomLabel(rec) };
+    return { ok: false, say: `this molecule has no atom #${i} (it has ${records.length})` };
+  }
+  const hits = records.filter((r) => CALC_KEY(calcAtomLabel(r)) === want
+    || CALC_KEY(`${r.name}${r.resno}`) === want
+    || CALC_KEY(`${r.resname}${r.resno}${r.name}`) === want);
+  if (!hits.length) return { ok: false, say: `no atom of this molecule is named “${asked}”` };
+  if (hits.length > 1) return { ok: false, say: `“${asked}” names ${hits.length} atoms — add the residue number` };
+  return { ok: true, index: hits[0].index, element: hits[0].element, label: calcAtomLabel(hits[0]) };
+};
+
+/** LES LIGNES UTILISABLES — deux atomes résolus et une cible positive : ce que le
+ *  module reçoit. Une ligne incomplète ne l'est jamais (elle attend d'être finie). */
+const calcUsableRows = () => calcRestraints.filter((r) => Number.isInteger(r.i)
+  && Number.isInteger(r.j) && r.i !== r.j
+  && Number.isFinite(r.target) && r.target > 0);
+
+/** ⚖ LES LIGNES QUI ENTRENT DANS LE CHAMP — les lignes utilisables dont le poids n'est
+ *  pas 0. Un poids de 0 est une MISE EN PAUSE : la ligne garde ses atomes, sa cible et
+ *  ses colonnes de mesure, mais elle n'est donnée NI au ▶ Run, NI au ▶ MD, NI au ⚒
+ *  Minimise, NI au ⟳ Energy, et elle ne compte donc dans aucun rapport — « N ready »
+ *  dit combien de lignes travaillent VRAIMENT, et c'est le même N que la fenêtre 🌡 MD
+ *  affiche à côté de sa case. */
+const calcFieldRows = () => calcUsableRows().filter((r) => calcWeightOf(r) > 0);
+
+/** COMBIEN DE LIGNES SONT EN PAUSE (complètes, et de poids 0) — le chiffre que les
+ *  rapports disent au lieu de laisser croire qu'une ligne a été oubliée. */
+const calcInertCount = () => calcUsableRows().filter((r) => calcWeightOf(r) <= 0).length;
+
+/** CE QU'UN GESTE TRANSMET AU MODULE POUR UNE LIGNE — ses deux atomes, sa cible et son
+ *  poids ⚖. Écrit UNE fois : le ▶ Run, le ▶ MD, le ⚒ Minimise, le ⟳ Energy et la
+ *  sauvegarde lisent donc le même poids (une seconde copie pourrait en lire un autre).
+ *
+ *  ⚠ ET AVEC ELLES, LES PONTS DISULFURE ÉTIRÉS — « I only want the disulphide to be at the
+ *  default bond length after minimization ». Un pont que le modèle DESSINE (le CONECT
+ *  SG–SG de la page) mais dont les deux Sγ sont à des dizaines d'ångströms ne se referme
+ *  JAMAIS tout seul : sa liaison est une famille FIGÉE du champ (voir le commentaire de
+ *  `stretchedDisulfideTermsOf`, utils/disulfideFold.js). Ce que les quatre gestes reçoivent
+ *  en plus de la table, ce sont donc ces ponts-là, portés par un terme de distance à la
+ *  longueur de la liaison (2.05 Å) — le même mécanisme qu'une ligne tapée, donc la même
+ *  conduite, le même puits plat et le même rapport. Un pont déjà fermé n'ajoute rien.
+ *  ⚠ C'est ICI, dans la fabrique unique, que le pont est ajouté : les quatre gestes ne
+ *  peuvent pas le conduire l'un sans l'autre, et aucun d'eux n'en sait davantage. */
+const calcRestraintTermsOf = (list) => Array.from(list || []).map((r) => ({
+  i: r.i, j: r.j, target: r.target, weight: calcWeightOf(r),
+})).concat(stretchedDisulfideTermsOf({ bridges: disulfideDrawnRef.current.bonds }));
+
+/** LA PHRASE QUI DIT QU'UN PONT ÉTIRÉ EST CONDUIT — le rapport d'un geste compte alors une
+ *  distance de plus que la table n'affiche de lignes : sans cette phrase, ce chiffre
+ *  passerait pour une erreur de comptage. Rend '' quand il n'y a aucun pont à conduire (le
+ *  cas ordinaire), donc rien ne s'affiche pour rien. */
+const disulfideConductedNote = () => {
+  const count = stretchedDisulfideTermsOf({ bridges: disulfideDrawnRef.current.bonds }).length;
+  if (!count) return '';
+  return ` · ⚭ ${count} stretched disulphide bridge${count === 1 ? '' : 's'} conducted to`
+    + ` ${SS_BOND_LENGTH} Å (the two Sγ are pulled together like a distance of the table)`;
+};
+
+/** AJOUTER UNE LIGNE VIDE — la table s'écrit à la main : deux atomes, une cible.
+ *  ⚖ ELLE AUSSI NAÎT AVEC SON POIDS ÉCRIT (`1`) — la demande de cette session : « it would be
+ *  easier to give weight 1 by default. the user can then decide to change it. » Une case vide
+ *  affichait un placeholder « 1 » que la ligne n'avait pas : le lecteur croyait devoir le taper
+ *  pour que la contrainte soit prise en compte. La ligne porte donc 1 (et `w: '1'`, le texte
+ *  montré), et rien d'autre ne change — `restraintWeightOf(1)` vaut le défaut d'avant. */
+const calcAddBlankRow = () => {
+  calcRowSeqRef.current += 1;
+  const key = `row-${calcRowSeqRef.current}`;
+  setCalcRestraints((list) => (list.length >= STRUCTURE_CALC_MAX_RESTRAINTS ? list
+    : [...list, { key, i: null, j: null, target: null, weight: 1, w: '1', a: '', b: '', la: '', lb: '', say: '', sayA: '', sayB: '' }]));
+  if (calcRestraints.length >= STRUCTURE_CALC_MAX_RESTRAINTS) {
+    setCalcMsg(`✕ The module takes at most ${STRUCTURE_CALC_MAX_RESTRAINTS} distances — this line was not added.`);
+  }
+};
+
+/** ÉCRIRE UN ATOME D'UNE LIGNE — le texte est résolu sur la molécule À L'ÉCRAN, et la
+ *  ligne dit elle-même ce qu'elle n'a pas compris (`say`). La cible, elle, se tape dans
+ *  sa colonne : c'est l'utilisateur qui donne les distances.
+ *
+ *  ⚠ LA FRAPPE N'EST JAMAIS JETÉE, MÊME SANS MOLÉCULE — le rapport de cette session :
+ *  « the atom is not typed … the last character disappears ». La ligne GARDE ce qui est
+ *  écrit et dit qu'elle attend une structure (`calcRowAfterAtom`, le helper écrit UNE
+ *  fois) ; l'effet de résolution la relit dès que la molécule est là. Avant, la frappe
+ *  était PERDUE dans ce cas : la case affichait la lettre, et le rendu suivant la
+ *  réécrivait avec le texte resté en mémoire (le même `value`) — donc le dernier
+ *  caractère disparaissait sous les doigts, et la ligne ne pouvait jamais être finie.
+ *  ⚠ ET CE QUI EST DIT, À CHAQUE FRAPPE, EST LE VERDICT DU TEXTE PRÉSENT (voir le bloc
+ *  `written` plus bas) : c'est lui qui a mis fin au mystère d'une case qu'on croyait
+ *  refusée alors qu'un ✕ plus ancien — ou celui de l'AUTRE atome — était resté à
+ *  l'écran. */
+const calcSetRowAtom = (key, side, text) => {
+  const live = calcGeometryNow();
+  setCalcRestraints((list) => {
+    let changed = false;
+    const next = list.map((r) => {
+      if (r.key !== key) return r;
+      const done = calcRowAfterAtom(r, side, text, live, CALC_WAITING_SAY);
+      if (done !== r) changed = true;
+      return done;
+    });
+    return changed ? next : list;
+  });
+  if (!live) {
+    const typed = String(text == null ? '' : text).trim();
+    setCalcMsg(typed ? `✕ ${CALC_SIDE_NAME(side)} “${typed}”: ${CALC_WAITING_SAY}.` : '');
+    return;
+  }
+  const hit = calcAtomOfText(live.structure, text);
+  /* ⚠ LA PHRASE DE LA CASE EST CELLE DU TEXTE QUI Y EST — redite à CHAQUE frappe, et
+     jamais celle d'un essai plus ancien. Le rapport de cette session : « I type “CYS
+     31 SG” and I get “no atom … named “CYS 1 SG”” » — un ✕ FIGÉ (sur un texte corrigé
+     depuis, ou sur l'AUTRE case de la ligne) reste à l'écran et se lit comme « la
+     frappe ne marche pas », alors que la ligne est résolue. Le ✓ dit ce que la case a
+     compris ET NOMME l'atome tombé, donc on voit du même coup si le BON résidu a été
+     pris — et une case qu'on efface emporte sa plainte avec elle. */
+  const written = String(text == null ? '' : text).trim();
+  /* Une case VIDÉE ne dit rien de plus : c'est la ligne qui redevient « pas prête », et
+     c'est tout — une case qu'on efface n'a rien à se reprocher. */
+  if (!written) { setCalcMsg(''); return; }
+  setCalcMsg(hit.ok
+    ? `✓ ${CALC_SIDE_NAME(side)} “${written}” is ${hit.label} (atom #${hit.index}) — the line keeps the text exactly as typed, and this atom is resolved.`
+    : `✕ ${CALC_SIDE_NAME(side)} “${written}”: ${hit.say}.`);
+};
+
+/** LE RAPPORT D'UN CALCUL — les chiffres du module, mis en phrases : ce qui a été
+ *  tiré, combien de départs respectent les distances, le classement, ce que la famille
+ *  retenue mesure, et ce que ce calcul n'est PAS. Rien n'est inventé ici : tout vient
+ *  du classement que le module a rendu (`rankStructureAttempts`). */
+const calcReportOf = (retained, ranked) => {
+  if (!ranked || !retained) return '';
+  const { ranking, family } = ranked;
+  const best = ranking[0];
+  const n = ranked.tried;
+  const kept = ranked.retained.length;
+  const converged = ranking.filter((r) => r.violations === 0).length;
+  const worst = best.worst
+    ? ` (worst ${best.worst.i}–${best.worst.j} at ${torsionAng(best.worst.distance)} for ${torsionAng(best.worst.target)})`
+    : '';
+  const spread = family && family.spread;
+  const spreadLine = spread && spread.count
+    ? ` · family spread ${spread.mean.toFixed(2)} Å rmsd (worst pair #${spread.worst.a}–#${spread.worst.b} at`
+      + ` ${spread.worst.rmsd.toFixed(2)}, superposed on all ${spread.atoms} atoms)`
+    : ' · a single model was kept: there is no family spread to measure';
+  const restLine = family && family.rest && family.rest.length
+    ? ` · left out: ${family.rest.map((r) => `#${r.rank} (start ${r.index}, score ${r.score.toFixed(1)}`
+      + `${r.violations ? `, ${r.violations} distance${r.violations === 1 ? '' : 's'} off` : ''})`).join(' · ')}`
+    : '';
+  const distLine = family && family.restraints && family.restraints.length
+    ? ` · distances in the kept family: ${family.restraints.map((r) => `${r.i}–${r.j} ${torsionAng(r.mean)}`
+      + ` (${r.satisfied}/${r.models} models, spread ${torsionAng(r.spread)})`).join(' · ')}`
+    : '';
+  const drawLine = best.draw
+    ? ` · ${best.draw.turned} dihedral${best.draw.turned === 1 ? '' : 's'} drawn at random over`
+      + ` ${best.draw.channels} rotatable bond${best.draw.channels === 1 ? '' : 's'}`
+      + `${best.draw.omegaLocked ? `, ${best.draw.omegaLocked} peptide ω held trans (not drawn)` : ''}`
+      + `${best.draw.skipped ? ` (${best.draw.skipped} without a dihedral, skipped)` : ''}`
+    : '';
+  const protocolLine = best.protocol
+    ? ` · ${best.protocol.passes} pass${best.protocol.passes === 1 ? '' : 'es'},`
+      + ` ${best.protocol.drove} distance${best.protocol.drove === 1 ? '' : 's'} driven`
+      + ` (${best.protocol.reached} on target), ${best.protocol.steps} steps`
+    : '';
+  /* LA PHYSIQUE, CHIFFRÉE — ce que le recuit a essayé et accepté, ce que la trempe a
+     réparé, et l'état des ω. Un panneau qui annonce « recuit » doit pouvoir dire ce
+     qu'il a fait, sinon le mot est un décor. */
+  const annealLine = best.anneal
+    ? ` · 🔥 recuit ${best.anneal.steps} palier${best.anneal.steps === 1 ? '' : 's'},`
+      + ` ${best.anneal.accepted}/${best.anneal.tried} pas acceptés (coût ${best.anneal.before.toFixed(1)} → ${best.anneal.after.toFixed(1)})`
+      + `${best.quench ? ` · trempe ${best.quench.steps} paliers, ω ${best.quench.omegaBeforeDeg != null ? `${best.quench.omegaBeforeDeg.toFixed(0)}°` : '—'} →` 
+        + ` ${best.omega && best.omega.worst ? `${best.omega.worst.deg.toFixed(0)}°` : '—'}` : ''}`
+    : ' · 🔥 recuit OFF (n tirages nus : c’est l’ancien comportement)';
+  const omegaLine = best.omega && best.omega.count
+    ? ` · ω ${best.omega.count} liaison${best.omega.count === 1 ? '' : 's'} peptidique${best.omega.count === 1 ? '' : 's'} :`
+      + (best.omega.violations
+        ? ` ⚠ ${best.omega.violations} hors du plateau de ± ${STRUCTURE_CALC_OMEGA_TOLERANCE}° (la pire à ${best.omega.worst.deg.toFixed(0)}°)`
+        : ` ✓ toutes dans le plateau de ± ${STRUCTURE_CALC_OMEGA_TOLERANCE}° autour de ${STRUCTURE_CALC_OMEGA}° (trans)`)
+      + (best.omegaFree
+        ? ` — 🪢 ω était LIBRE (case « ω varies » cochée) : sa barrière était comptée, pas imposée`
+        : ` — 🪢 ω protégé (le tirage l'a posé trans, et aucun pas du protocole n'a pu l'abîmer)`)
+    : '';
+  /* 🪢 LA CASE « ω VARIE » — le rapport DIT avec quel réglage la famille a été calculée :
+     deux scores ne se comparent pas si l'un avait le droit de tordre les liaisons peptidiques
+     et l'autre non. Quand le modèle a effectivement payé de la barrière d'ω, la ligne ω le
+     montre déjà (les « hors du plateau » ci-dessus) ; ici on dit le RÉGLAGE. */
+  const omegaFreeLine = best.omegaFree
+    ? ' 🪢 Cette famille a été calculée avec ω LIBRE : la liaison peptidique y est un dièdre ordinaire du champ'
+      + ' (sa barrière est comptée, k = ' + STRUCTURE_CALC_OMEGA_WEIGHT + ' kcal/mol, nulle dans ± '
+      + STRUCTURE_CALC_OMEGA_TOLERANCE + '° de ' + STRUCTURE_CALC_OMEGA + '°) — les ω hors du plateau sont donc'
+      + ' un CHOIX du champ, pas un accident.'
+    : '';
+  /* LA FIN DU PROTOCOLE, CHIFFRÉE ELLE AUSSI — la dynamique (ses pas, sa température, son
+     énergie) et la minimisation : c'est le champ de forces qui a le dernier mot, et le
+     rapport doit pouvoir le prouver. */
+  const mdLine = best.md
+    ? ` · 🌡 dynamique ${best.md.steps} pas`
+      + `${best.md.temperature ? ` (T ${Number(best.md.temperature.hot).toFixed(2)} → ${Number(best.md.temperature.cold).toFixed(2)}, cinétique ${best.md.temperature.kinetic})` : ''}`
+      + ` : énergie ${best.md.before.toFixed(1)} → ${best.md.after.toFixed(1)}`
+      + `${best.minimise ? ` · ⚒ minimisation ${best.minimise.sweeps} balayages, ${best.minimise.before.toFixed(1)} → ${best.minimise.after.toFixed(1)}` : ''}`
+    : (best.minimise ? ` · ⚒ minimisation ${best.minimise.sweeps} balayages, ${best.minimise.before.toFixed(1)} → ${best.minimise.after.toFixed(1)}` : '');
+  /* LES BASSINS φ/ψ DU MODÈLE RETENU — le chiffre qui répond à « mes Ramachandran sont
+     mauvais » : combien de résidus sont HORS bassin, et à quelle distance du bord. */
+  const ramaLine = best.rama
+    ? ` · 🧭 bassins φ/ψ ${best.rama.measured} résidu${best.rama.measured === 1 ? '' : 's'} relu${best.rama.measured === 1 ? '' : 's'} :`
+      + (best.rama.violations
+        ? ` ⚠ ${best.rama.violations} hors bassin${best.rama.worst ? ` (le pire à ${best.rama.worst.gap.toFixed(0)}° du bord, région « ${best.rama.worst.region} »)` : ''}`
+        : ' ✓ tous dans un bassin du graphe 🪢')
+    : '';
+  return `✓ 🧬 Structure calculation · ${n} starting structure${n === 1 ? '' : 's'}, ${kept} kept`
+    + `${ranked.refused ? ` (${ranked.refused} refused)` : ''} · ${converged} of them respected every distance`
+    + ` · best = start #${best.index} (score ${best.score.toFixed(1)} = target function ${best.total.toFixed(1)}`
+    + ` + clash penalty ${best.clashPenalty.toFixed(1)}) · ${best.satisfied} distance${best.satisfied === 1 ? '' : 's'} respected${worst}`
+    + `${best.clashes ? ` · ⚠ ${best.clashes} atom pair${best.clashes === 1 ? '' : 's'} closer than 1.45 Å in that model`
+      : ' · ✓ no atom pair closer than 1.45 Å in it'}`
+    /* 🧪 LA CHIMIE DU CALCUL — le pH et la force ionique lus par le CHAMP qui a noté le
+       meilleur modèle (`best.chemistry`, rempli par le moteur : voir `structureAttemptFrames`),
+       donc ce que le calcul a VRAIMENT conduit — pas ce que le panneau affichait. */
+    + calcChemNote(best.chemistry)
+    + ` · bonds ${best.bondRms.toFixed(4)} Å rms, angles ${best.angleRms.toFixed(2)}° rms`
+    + ` · ${best.moved} atom${best.moved === 1 ? '' : 's'} moved`
+    + `${drawLine}${annealLine}${protocolLine}${mdLine}${omegaLine}${omegaFreeLine}${ramaLine}${spreadLine}${distLine}${restLine}.`
+    + ` ${calcWhyOf(retained.reason)} — the standard protocol ran on each start;`
+    + ` a FIXED seed (${STRUCTURE_CALC_SEED}), so the same n and the same distances give the same family to the last digit,`
+    + ` and a distance counts as respected within ${STRUCTURE_CALC_RESTRAINT_TOLERANCE} Å.`
+    + ' ⚠ Every move is in DIHEDRAL space: one RIGID rotation of one side of the molecule about its hinge, so bond'
+    + ' lengths and angles cannot change — that is what makes the WHOLE force field (bonds, angles, planar rings,'
+    + ' vdW, electrostatics, solvent, ω, φ/ψ, χ1, your distances) affordable here.'
+    + ' ⚠ The energy IS in kcal/mol, from the force field of this module: bond lengths, angles, planar rings,'
+    + ' vdW, the electrostatics of PARTIAL CHARGES, a NON-POLAR SOLVENT term γ·A (a 1.4 Å water probe), ω,'
+    + ' φ/ψ, χ1 and your distances — the hydrogens the field adds are part of it, and the score above is the'
+    + ' FREE energy of the model: that enthalpy plus its conformational entropy (−T·S).'
+    + ' ⚠ The solvent is IMPLICIT ONLY (charges screened by ε = 4·r): no explicit water, no explicit counter-ion'
+    + ' and no polarisability — the 🧲 force field panel and the ⟳ Energy line show the families one by one.'
+    + ' ⚠ THE pH AND THE IONIC STRENGTH of the ⚙ panel, when they are set, ARE read by this same field (they are'
+    + ' properties of the force field, and the head of this report says what they did): the pH sets the charge of'
+    + ' the ionisable groups the bond graph shows, and the ionic strength screens the electrostatic term — neither'
+    + ' adds an atom, so the molecule on screen is untouched.'
+    + ' ⚠ The φ/ψ term is what was missing before: it is ZERO inside a basin of the 🪢 plot and grows with the distance'
+    + ' to the basin, so the models you keep no longer come out with points all over the map. If one of YOUR distances'
+    + ' forces a residue out of its basin, your distance wins — and the line above says how many went out.'
+    + ' ↺ Undo torsion puts the molecule back exactly where it was before the calculation wrote anything.';
+};
+
+/** ⚠ LA MOLÉCULE D'UN CALCUL SE RECONNAÎT À CE QU'ELLE EST, PAS À L'OBJET QUI LA PORTE.
+ *  L'objet de cette session : le calcul de structure doit SURVIVRE au changement de page /
+ *  d'onglet — « Structure calculation ha un problema … se rinfresco la pagina tutto è perso
+ *  e bisogna ricominciare da capo ». Or quand on quitte la page et qu'on y revient, la page
+ *  RESSERT le même modèle et NGL en refait un NOUVEAU composant : comparer les OBJETS (ce
+ *  que faisaient le ⏹ et l'écriture) arrêtait le calcul au premier aller-retour et refusait
+ *  sa famille pour toujours. La clé est donc ce qui NE BOUGE PAS quand la molécule est
+ *  resservie : son nom, son nombre d'atomes et de résidus, et les deux atomes extrêmes —
+ *  jamais ses coordonnées, puisque c'est justement elles que le calcul écrit.
+ *  Deux composants qui donnent la même clé sont LA MÊME molécule pour tout ce qui suit :
+ *  l'aperçu à l'écran, le ⏹, et l'écriture (`calcWriteStructure`, ⤓ Load). */
+const calcMoleculeKey = (comp, structure) => {
+  const st = structure || (comp && comp.structure);
+  if (!comp || !st) return '';
+  const count = Number(st.atomCount) || 0;
+  const endAtom = (i) => {
+    try { const ap = st.getAtomProxy(i); return `${ap.resname || ''}.${ap.atomname || ''}`; } catch { return '?'; }
+  };
+  return `${st.name || ''}|${count}|${Number(st.residueCount) || 0}|${endAtom(0)}|${endAtom(count - 1)}`;
+};
+
+/** ÉCRIRE UNE STRUCTURE RETENUE DANS LA MOLÉCULE — TOUTE la molécule (c'est elle que
+ *  le calcul a construite), par le chemin d'une torsion, avec le rapport du module.
+ *  ⚠ L'ÉCRITURE EST REFUSÉE SI LA MOLÉCULE A CHANGÉ depuis le calcul : ces
+ *  coordonnées-là appartiennent aux atomes de la molécule qui les a produites, et
+ *  les écrire sur une autre serait écrire du bruit (le ↺ fait le même contrôle). */
+const calcWriteStructure = (retained, ranked) => {
+  const comp = componentRef.current;
+  const structure = comp && comp.structure;
+  if (!comp || !structure || !retained || !retained.positions) return;
+  if (ranked && ranked.moleculeKey && ranked.moleculeKey !== calcMoleculeKey(comp, structure)) {
+    setCalcMsg('✕ These structures were computed on ANOTHER molecule than the one on screen now — their coordinates'
+      + ' belong to its atoms. ▶ Run the calculation again on this molecule (the last family is kept above, with its scores).');
+    return;
+  }
+  /* ⚠ LA GÉOMÉTRIE CONDUITE PEUT ÊTRE PLUS LONGUE QUE LA MOLÉCULE À L'ÉCRAN — le solvant
+     EXPLICITE ajoute une boîte d'eaux à la fin (`explicitSolventOf`), et la structure NGL,
+     elle, ne connaît que le soluté : écrire au-delà de `structure.atomCount` écrirait hors
+     de la molécule. On n'écrit donc QUE ses atomes, avec la MÊME borne que
+     `calcPreviewPositions` (un seul contrat d'écriture, une seule règle). Les index sont
+     préservés par le module (les eaux sont ajoutées à la fin), donc le soluté est bien le
+     préfixe — il n'y a aucun décalage à corriger. */
+  const have = Math.round(retained.positions.length / 3);
+  const count = Math.min(have, Number(structure.atomCount) || have);
+  const idxs = [];
+  for (let i = 0; i < count; i += 1) idxs.push(i);
+  if (!writeStructurePositions(comp, idxs, retained.positions)) {
+    setCalcMsg('✕ The structure refused the new coordinates — nothing was changed.');
+    return;
+  }
+  setCalcShown(retained.rank);
+  /* ⚠ LE RAPPORT NE PEUT PLUS FAIRE PERDRE LA STRUCTURE ÉCRITE — les coordonnées sont DÉJÀ
+     dans la molécule quand cette ligne s'exécute, et l'exception remontait hors de la pompe
+     (le rapport de cette session : « at the end I have this error message: Cannot read
+     properties of undefined (reading 'toFixed') » — le calcul était fini, la molécule
+     écrite, et l'écran n'avait ni rapport ni explication). La CAUSE est corrigée à la
+     source (`rankStructureAttempts`, utils/structureCalc.js : `bondRms` et `angleRms` y
+     manquaient) et un test mesure que tout champ lu par ce rapport existe ; ce filet-ci dit
+     seulement ce qui s'est passé si une lecture venait encore à manquer, au lieu de perdre
+     le résultat du calcul. */
+  let report = '';
+  try {
+    report = calcReportOf(retained, ranked);
+  } catch (e) {
+    report = `✓ The structure is written into the molecule, but its report could not be built: ${(e && e.message) || e}`
+      + ' — the family above keeps every score and every model, and ⤓ Load still writes any of them.';
+  }
+  setCalcMsg(report);
+  /* LE GRAPHE 🪢 SUIT CETTE ÉCRITURE — une lecture est un instantané : quand la fenêtre
+     🪢 est à l'écran, la nouvelle géométrie ne peut pas laisser un graphe qui parle
+     d'une autre conformation (le calcul et le graphe disent alors la MÊME chose). */
+  if (ramaIsShown()) readRamachandran();
+};
+
+/** ÉCRIRE UNE IMAGE DU CALCUL À L'ÉCRAN — « je veux VOIR la structure se calculer ».
+ *  Le module annonce chaque geste (`onStep` : le tirage, chaque palier de recuit, la
+ *  préparation, chaque distance conduite, la trempe) et cette image-là s'écrit par le
+ *  MÊME chemin qu'une torsion — donc le 📏, les plaques, le film et le 📥 Download
+ *  suivent la géométrie qui est vraiment là. Le ↺ du panneau remet la molécule d'avant. */
+const calcPreviewPositions = (comp, structure, positions) => {
+  if (!comp || !structure || !positions) return;
+  const have = Math.round(positions.length / 3);
+  const count = Math.min(have, Number(structure.atomCount) || have);
+  if (!(count > 0)) return;
+  const idxs = [];
+  for (let i = 0; i < count; i += 1) idxs.push(i);
+  writeStructurePositions(comp, idxs, positions);
+};
+
+/** ÉCRIRE LES EAUX QUI ONT BOUGÉ — la moitié de la boîte dont le MOTEUR a déplacé les
+ *  coordonnées (voir `waterRigidBodyOf` dans utils/structureCalc.js). La molécule de l'écran
+ *  porte le SOLUTÉ, donc l'image d'une dynamique ne peut pas la mettre à jour au-delà du
+ *  premier atome du soluté (`calcPreviewPositions` s'arrête là) : les eaux vivent dans LEUR
+ *  molécule (le composant `solv_`, voir `calcDrawWaterBox`), et c'est celle-là qu'il faut
+ *  réécrire image après image — sinon la boîte DESSINÉE resterait au réseau du départ
+ *  pendant que la physique la fait diffuser.
+ *  ⚠ RIEN N'EST RÉÉCRIT SI LA BOÎTE DESSINÉE N'EST PAS CELLE DU MOTEUR (nombre d'atomes
+ *  différent, ou aucune boîte à l'écran) : une image d'un autre geste ne doit pas déformer
+ *  la boîte qui est là. `solute` est le nombre d'atomes du soluté dans la molécule du moteur
+ *  (`geom.solvent.solute`) : les eaux sont donc la FIN du tableau de positions. */
+const calcPreviewWaterPositions = (positions, solute) => {
+  if (!positions || !(solute > 0)) return false;
+  const entry = extraCompsRef.current.find((e) => String(e.id).startsWith('solv_'));
+  const count = entry && entry.comp && entry.comp.structure
+    ? Number(entry.comp.structure.atomCount) || 0 : 0;
+  if (!count) return false;
+  if (Math.round(positions.length / 3) - solute !== count) return false;
+  const idxs = [];
+  for (let i = 0; i < count; i += 1) idxs.push(i);
+  return writeStructurePositions(entry.comp, idxs, positions.slice(solute * 3));
+};
+
+/** LA LIGNE D'UNE IMAGE DU CALCUL — une phrase par phase du MOTEUR (le tirage, le recuit,
+ *  la préparation, chaque distance conduite, le balayage, la dynamique, la minimisation,
+ *  la trempe). C'est ce que la ligne de progression affiche PENDANT le calcul : elle dit
+ *  ce que la molécule est en train de faire, pas seulement qu'elle tourne. */
+const calcPhaseLine = (f, done, of, head = null) => {
+  const prefix = head || `🧬 start ${(Number(f.index) || 0) + 1}/${of}`
+    + `${done ? ` · ${done} finished` : ''}`;
+  switch (f.phase) {
+    case 'start': return `${prefix} — taking a start (draw of every rotatable dihedral)…`;
+    case 'draw': return `${prefix} — all dihedrals drawn at random (${f.channels || 0} channels)`;
+    case 'anneal': return `${prefix} — 🔥 annealing T=${Number(f.temperature).toFixed(0)} K`
+      + ` · step ${f.step}/${f.of}${f.parts ? ` (${f.part}/${f.parts})` : ''}`;
+    case 'md-equilibrate': return `${prefix} — 🌡 equilibration ${f.step}/${f.of}`
+      + ` · T=${Number(f.temperature).toFixed(0)} K (kinetic ${Number(f.kinetic).toFixed(0)} K)`
+      + ` · E=${Number(f.potential).toFixed(2)} kcal/mol`;
+    case 'md-cool': return `${prefix} — 🌡 cooling ${f.step}/${f.of}`
+      + ` · T=${Number(f.temperature).toFixed(0)} K (kinetic ${Number(f.kinetic).toFixed(0)} K)`
+      + ` · E=${Number(f.potential).toFixed(2)} kcal/mol`;
+    case 'md': return `${prefix} — dynamics ${f.step}/${f.of}`
+      + ` · T=${Number(f.temperature).toFixed(0)} K (kinetic ${Number(f.kinetic).toFixed(0)} K)`
+      + ` · E=${Number(f.potential).toFixed(2)} kcal/mol`;
+    case 'minimise': return `${prefix} — ⚒ minimisation ${f.sweep}/${f.of}`
+      + ` · step ${Number(f.step).toFixed(2)}° · E=${Number(f.cost).toFixed(2)} kcal/mol`;
+    case 'quench': return `${prefix} — 🧊 quench (frozen, leashed, ω protected), step ${f.step}/${f.of}`;
+    default: return prefix;
+  }
+};
+
+/** LA LIGNE D'UN DÉPART FINI — la même phrase qu'avant, plus les trois mouvements de la
+ *  fin : le recuit, la dynamique (ses pas et sa température), la minimisation (ses
+ *  balayages et son énergie), et ce que le départ laisse comme ω et comme φ/ψ. */
+const calcAttemptLine = (a, { done, of }) => `🧬 start ${done}/${of} — ${calcWhyOf(a.reason)}`
+  + `${a.anneal ? ` · recuit ${a.anneal.accepted}/${a.anneal.tried} pas acceptés` : ''}`
+  + `${a.md ? ` · 🌡 ${a.md.steps} steps (T ${Number(a.md.temperature.hot).toFixed(2)} → ${Number(a.md.temperature.cold).toFixed(2)})` : ''}`
+  + `${a.minimise ? ` · ⚒ ${a.minimise.sweeps} sweeps` : ''}`
+  + `${a.omega && a.omega.violations ? ` · ⚠ ω ${a.omega.worst.deg.toFixed(0)}°` : ''}`
+  + `${a.ramaPlot && a.ramaPlot.violations ? ` · ⚠ φ/ψ ${a.ramaPlot.violations}/${a.ramaPlot.measured} outside` : ''}`
+  + `${a.dihedralWells && a.dihedralWells.count ? ` · ⛓ ${a.dihedralWells.satisfied}/${a.dihedralWells.count} imposed φ/ψ within ± ${a.dihedralWells.tolerance}°` : ''}`
+  + `${a.draw ? ` · ${a.draw.turned} dihedral${a.draw.turned === 1 ? '' : 's'} drawn at random`
+    + `${a.draw.omegaLocked ? ` (${a.draw.omegaLocked} peptide ω held trans, not drawn)` : ''}` : ''}`
+  + `${a.protocol ? ` · ${a.protocol.steps} steps` : ''}`;
+
+/** LE CALCUL, IMAGE PAR IMAGE — « the program must then generate n structures by randomly
+ *  assigning values of all dihedral angles », puis le protocole standard sur chacune
+ *  (recuit, dynamique, minimisation, trempe) : c'est le MOTEUR du module qui décide de
+ *  l'ordre (`structureCalculationFrames`), et l'écran ne fait que le CONDUIRE — il
+ *  avance dans les images pendant au plus `CALC_FRAME_BUDGET_MS` millisecondes, écrit la
+ *  dernière image dans la molécule (le MÊME chemin d'écriture qu'une torsion), met la
+ *  ligne de progression à jour, puis rend la main à la page (`setTimeout`) pour qu'elle
+ *  PEIGNE.
+ *  ⚠ C'est ce qui rend le calcul REGARDABLE : un calcul poussé d'un trait bloque le fil
+ *  du navigateur, donc la molécule ne bouge qu'à la fin — c'était la remarque « I do not
+ *  see the molecule changing structures during the calculation ». Ici la molécule est
+ *  écrite à chaque image, et la page a le temps de la dessiner avant la suivante.
+ *  Le ⏹ (ou un autre chargement) avance le jeton `calcRunRef` : la boucle s'arrête au
+ *  prochain tour, et le module s'arrête lui-même ENTRE deux départs (`shouldStop`). */
+const runStructureCalculation = () => {
+  /* ⚠ LE GRAPHE DES MOTEURS, PAS LA MOLÉCULE BRUTE : un pont disulfure ÉTIRÉ n'y porte
+     plus sa fausse liaison — sans quoi elle referme le graphe sur un cycle, aucun canal
+     ne sépare les deux Sγ, et le terme de distance du pont n'a rien à conduire (voir
+     `calcEngineGeometry`). */
+  const live = calcEngineGeometry();
+  if (!live) {
+    setCalcMsg('✕ There is no molecule on screen — load a structure first.');
+    return;
+  }
+  const { comp, structure, geom } = live;
+  /* 💧 LA BOÎTE EXPLICITE SE DESSINE (voir `calcDrawWaterBox`) — la boîte est construite UNE
+     fois pour tout le ▶ Run (`calcEngineGeometry`), donc les n départs partagent le même
+     environnement : c'est CELUI-LÀ qu'on met à l'écran, et le rapport le décrit
+     (`calcBoxNote`). */
+  calcDrawWaterBox(geom).catch(() => {});
+  /* LA MOLÉCULE DU CALCUL, RETENUE SOUS SA CLÉ (`calcMoleculeKey`) : c'est elle qui dira,
+     à chaque image et à la fin, si l'écran montre encore celle sur laquelle ces modèles
+     ont été construits — donc où l'écriture est permise. */
+  const moleculeKey = calcMoleculeKey(comp, structure);
+  /* ⚠ LES COORDONNÉES DE DÉPART SONT PHOTOGRAPHIÉES — les départs se tirent tous de la
+     molécule telle qu'elle est MAINTENANT, et l'aperçu du calcul écrit à l'écran : sans
+     cette copie, l'écriture d'une image nourrirait le départ suivant. */
+  const base = Array.from(geom.positions);
+  /* ⚖ LES LIGNES QUI TRAVAILLENT — les complètes et dont le poids n'est pas 0
+     (`calcFieldRows`). Une ligne en pause n'entre donc dans AUCUN départ, et le chiffre
+     que le panneau affiche (« N ready ») est celui que le calcul reçoit. */
+  const list = calcFieldRows().filter((r) => r.i < geom.count && r.j < geom.count);
+  /* « ENCORE INACHEVÉES » = les lignes que le calcul ne reçoit pas parce qu'il leur
+     manque un atome ou une cible — les lignes de poids 0 sont COMPLÈTES (elles sont en
+     pause) : les confondre ferait dire au rapport qu'une ligne finie est à moitié écrite. */
+  const half = calcRestraints.length - calcUsableRows().length;
+  /* ⛓ LES CONTRAINTES DE DIHÈDRE COMPTENT COMME LES DISTANCES — la demande de cette
+     session : « The structure calculation must work even if there are only dihedral
+     constraints (at present it wants at least one distance). » Un calcul qui ne porte QUE
+     des φ/ψ imposés (la structure secondaire peinte convertie par ⛓) part donc NORMALEMENT :
+     le module accepte la liste vide de distances dès qu'il a des dièdres (`structureCalc.js`,
+     `structureCalculationFrames`), et c'est le puits plat de `ffDihedralCostOf` qui assemble
+     la molécule. Il n'y a donc plus qu'UN refus possible, et il dit les DEUX manques. */
+  const dhCount = Array.from(calcDihedrals || []).length;
+  if (!list.length && !dhCount) {
+    const paused = calcInertCount();
+    setCalcMsg(paused
+      ? `✕ Every line of the table is at weight ⚖ = 0 (${paused} line${paused === 1 ? '' : 's'}):`
+        + ' the protocol has no distance to drive. Type a weight ABOVE 0 in the ⚖ column of at least one'
+        + ' line — a weight of 0 keeps a line listed and measured, it simply takes no part in the calculation —'
+        + ' or impose φ/ψ with ⛓ (the painted secondary structure), which the calculation also obeys.'
+      : '✕ Nothing to respect yet. A structure calculation needs at least ONE constraint — a distance OR an'
+        + ' imposed dihedral. Two ways for a distance: press ⌖ and pick the pair IN THE VIEW'
+        + ' — the ⌖ picker paints its own two atoms BLUE, with nothing to do with the four picks of ✏️ Torsion,'
+        + ' and the second click adds the line — or add a row and TYPE its two atoms — “ALA 12 CA”, “12:CA” or an atom'
+        + ' number — with the distance you want. For φ/ψ, paint the secondary structure in “Sequence and structure”'
+        + ' and press ⛓ Secondary structure → φ/ψ: a calculation with ONLY dihedral constraints is a valid one.');
+    return;
+  }
+  const n = Math.min(STRUCTURE_CALC_MAX_STARTS, Math.max(1, calcStarts));
+  const m = Math.min(STRUCTURE_CALC_MAX_KEEP, Math.max(1, calcKeep));
+  /* LE ↺ — la molécule d'AVANT, photographiée avant d'écrire quoi que ce soit : c'est
+     le MÊME journal que celui d'une torsion, donc le ↺ du panneau remet la molécule. */
+  const before = torsionSnapshotOf(structure);
+  torsionUndoRef.current = {
+    comp, structure, count: before ? before.length / 3 : 0, flat: before,
+    label: `🧬 structure calculation · ${list.length} distance${list.length === 1 ? '' : 's'}${dhCount ? ` + ${dhCount} imposed φ/ψ` : ''} · n = ${n}, m = ${m}`
+      + ` · ω ${calcOmegaFree ? 'free to vary' : 'held trans'}`,
+  };
+  calcRunRef.current += 1;
+  const run = calcRunRef.current;
+  const attempts = [];
+  /* ■ LE RAPPORT DE CE RUN REMPLACE CELUI DU PRÉCÉDENT — la remarque de cette session : « at a
+     new run structure calculation should reinitialize while I still see old messages related to
+     previous runs. » `calcMsg` est UN SEUL état, partagé par les quatre gestes et affiché par
+     les deux fenêtres : sans ce nettoyage au départ, lancer un ▶ Run laissait donc à l'écran le
+     ✓ d'un calcul fini — et jusqu'au ■ « You stopped the gesture… » de la séance précédente —
+     pendant que la ligne de progression parlait, elle, du run qui venait de commencer. Un geste
+     neuf part d'une page blanche ; son rapport s'écrit à la fin (ou sur son ⏹), et le ▸/✕ de la
+     boîte reste à l'utilisateur pour garder ou effacer ce qu'il veut relire. */
+  setCalcMsg('');
+  setCalcForce(null);   // le tableau du ⟳ d'avant parle d'une géométrie qui n'est plus
+  setGestureMsgOpen(false);
+  setCalcBusy(true);
+  setCalcShown(0);
+  setCalcResult(null);
+  setCalcProgress(`🧬 start 0/${n} …${half
+    ? ` (${half} line${half === 1 ? '' : 's'} of the table still unfinished, left out)`
+    : ''}${!list.length && dhCount
+    ? ` (no distance: the ${dhCount} imposed φ/ψ are what this calculation obeys)`
+    : ''}${disulfideConductedNote()}`);
+  /* LE GRAPHE 🪢, S'IL EST À L'ÉCRAN, SUIT CHAQUE DÉPART ÉCRIT (voir `pumpMotion`) : la
+     MÊME question `ramaIsShown()`, posée à CHAQUE image — le 🪢 bouge donc aussi pendant un
+     calcul de structure, et l'ouvrir en cours de route suffit à ce qu'il prenne la suite. */
+  const finish = (stopped, ranked = null) => {
+    const family = ranked || rankStructureAttempts({ attempts, keep: m });
+    /* LA FAMILLE EST MARQUÉE DE SA MOLÉCULE — `comp` et `structure` : ses coordonnées
+       ne peuvent donc pas être écrites sur une autre (voir `calcWriteStructure`). */
+    setCalcResult({ ...family, comp, structure, moleculeKey });
+    setCalcBusy(false);
+    setCalcProgress('');
+    /* ⚠ LA PARTIE EST CONSOMMÉE — `calcPartialRef` ne garde plus la partie d'un calcul FINI :
+       sinon tout chemin qui appelle `part.finish(true)` sur la dernière partie connue
+       re-classerait et RÉÉCRIRAIT la famille précédente (c'était le cas du ⏹ cliqué pendant
+       une dynamique, quand `calcBusy` était partagé). */
+    calcPartialRef.current = null;
+    if (!family.retained.length) {
+      setCalcMsg('✕ No structure came out of the calculation — nothing was written.');
+      return;
+    }
+    /* LE MEILLEUR S'ÉCRIT TOUT DE SUITE — les m retenues se regardent ensuite une par
+       une (⤓ Load), et chacune s'écrit par le chemin d'une torsion.
+       ⚠ SEULEMENT SI LA MOLÉCULE DU CALCUL EST (ENCORE) CELLE DE L'ÉCRAN : les
+       coordonnées de la famille appartiennent à SES atomes, donc les écrire sur une autre
+       serait écrire du bruit (voir `calcMoleculeKey`). Quand la page a changé d'onglet
+       pendant le calcul, rien n'est écrit — mais RIEN N'EST PERDU : la famille reste
+       ci-dessous avec ses notes, et ⤓ Load l'écrit dès que la bonne molécule est revenue.
+       C'est la seconde moitié du « le calcul survit au changement de page ». */
+    if (calcMoleculeKey(componentRef.current, componentRef.current && componentRef.current.structure) === moleculeKey) {
+      calcWriteStructure(family.retained[0], family);
+      /* 🧬 …ET LES AUTRES MODÈLES DE LA FAMILLE ENTRENT DANS LA BARRE (voir
+         `calcAddFamilyToBar`) : ils deviennent des molécules ordinaires, donc on les VOIT,
+         on les style, on les cache, et 🎯 Fit to chosen superpose la famille. Le premier
+         n'est pas ajouté deux fois — il EST la molécule de l'écran (celle que la barre
+         appelle ★ main). */
+      /* ⚠ LA FENÊTRE DE STYLE DOIT VOIR LA FAMILLE TOUT DE SUITE — le rapport de cette
+         session : « The series of structures calculated are not immediately seen in the
+         styling window. I had to select and deselect the “hide H” button to update the
+         window. » C'était EXACT, et la cause est connue : les rangées de style d'une molécule
+         sont énumérées dans `ensureSections`, appelée par la RECONSTRUCTION de la scène —
+         qui ne part que quand `styleSignature` change (le tick « Hide H » en fait partie,
+         d'où le symptôme). Une molécule entrée par `calcAddFamilyToBar` n'existait donc dans
+         le catalogue des sections qu'à la reconstruction SUIVANTE. `bumpSectionEpoch`
+         (le geste du ↺ d'une rangée, de ✔, de 🎨 Copy) périme les signatures et redemande la
+         reconstruction : la famille est dans la barre des molécules ET dans la fenêtre de
+         style dès l'image qui l'a fait entrer. L'appel est différé d'un tour de boucle
+         (`setTimeout 0`) parce que `calcAddFamilyToBar` est asynchrone : la dernière molécule
+         n'est dans `extraCompsRef` qu'à son retour.
+         ⚠⚠ UN SEUL APPEL, ET C'EST CELUI-CI — le rapport de cette session : « After the
+         structure calculation the styling window reports each molecule twice. » Il y avait DEUX
+         appels à `calcAddFamilyToBar` : celui-ci, et un `…catch(() => 0)` juste avant dont le
+         résultat n'était jamais attendu. Deux ajouts CONCURRENTS de la même famille : le second
+         relisait `previous` AVANT que le premier ait posé ses entrées, donc les deux familles
+         entraient dans la barre ET dans la fenêtre de style — chaque molécule y figurait deux
+         fois. Le doublon est parti ; le retrait des `fam_…` (`forgetSectionMolecules`) garantit
+         en plus qu'aucune famille morte ne reste dans la fenêtre. */
+      calcAddFamilyToBar(structure, componentRef.current, family.retained)
+        .then(() => { setTimeout(bumpSectionEpoch, 0); })
+        .catch(() => setTimeout(bumpSectionEpoch, 0));
+    } else {
+      setCalcMsg(`✓ The calculation went through the page change — ${family.retained.length}`
+        + ` structure${family.retained.length === 1 ? '' : 's'} kept above (${attempts.length} start`
+        + `${attempts.length === 1 ? '' : 's'} computed). The molecule they were computed on is not on screen any`
+        + ' more, so nothing was written: press ⤓ Load when THAT molecule is back and the model goes in.'
+        + ' The two tables never moved.');
+    }
+    if (stopped) setCalcMsg((prev) => `⏹ Stopped between two starts: ${attempts.length} of ${n} computed, the rest is not. ${prev}`);
+  };
+  calcPartialRef.current = { run, finish, attempts };
+  /* LE MOTEUR — le module, image par image (`onAttempt` pousse chaque départ fini dans
+     `attempts`, ce que le ⏹ classe même s'il arrête tout). */
+  const frames = structureCalculationFrames({
+    positions: base, elements: geom.elements, bonds: geom.bonds,
+    restraints: calcRestraintTermsOf(list),
+    starts: n, keep: m,
+    seed: STRUCTURE_CALC_SEED,
+    /* ⛓ LES CONTRAINTES DE DIHÈDRE ISSUES DE LA STRUCTURE SECONDAIRE IMPOSÉE — les
+       MÊMES que celles que le ▶ MD et le ⚒ Minimise portent : un départ les respecte
+       dans son recuit, sa dynamique, sa minimisation et sa trempe, et sa note les
+       compte. */
+    dihedrals: calcDihedrals,
+    /* 🎯 LA FONCTION CIBLE DU CALCUL — le réglage du panneau, tel quel : chaque départ la
+       porte dans son recuit, sa dynamique, sa minimisation et sa trempe, et SA NOTE la
+       porte aussi (un modèle ne peut pas être construit sous un jeu de règles et noté sous
+       un autre). `dyana` veut dire répulsion seule, sans charge, sans surface, atomes unis. */
+    targetFunction: calcTargetFunction,
+    /* 🧪 LE pH ET LA FORCE IONIQUE — le réglage du panneau ⚙ (le champ de forces), tel quel :
+       ce départ les porte dans son recuit, sa dynamique, sa minimisation, sa trempe ET sa note
+       (voir §2bis et §4bis du champ). Ils ne sont PAS des réglages du 🧬 : ils vivent chez le
+       champ, donc le ▶ Run, le ▶ MD, le ⚒ et le ⟳ lisent la même chimie. */
+    ph: calcPhOf(), ionicStrength: calcIonicOf(),
+    /* 🪢 L'OPTION « ω VARIE » — le réglage du panneau, tel quel : chaque départ le porte
+       dans son recuit, sa dynamique, sa minimisation et sa trempe (le module dit
+       `omegaFree` dans son rapport). */
+    freeOmega: calcOmegaFree,
+    /* ⚙ LE PROTOCOLE STANDARD — le recuit (avec ses images), la dynamique (équilibration
+       PUIS refroidissement : c'est `md`, `mdDt` et `mdEquil` qui la découpent, et le
+       rapport rend la DURÉE totale, pas × dt), la minimisation, la trempe. */
+    anneal: calcAnneal, annealPerFrame: calcAnnealFrame,
+    md: calcMdSteps, mdPerFrame: STRUCTURE_CALC_MD_FRAME,
+    /* ⏱ LA PART D'ÉQUILIBRATION — ⚠ **DIVISÉE PAR 100, ET C'EST UN CORRECTIF** : le panneau
+       la garde en POUR CENT (33, l'entrée `⚖ equil` dit « % »), le module la lit en FRACTION
+       (`structureAttemptFrames` : `Math.min(0.9, mdEquilibration)`). Sans la division, 33
+       tombait sur le plafond 0.9 : 90 % de la dynamique de chaque départ tournait à 🌡 hot
+       (1500 K) et il ne restait que ~30 pas (0.3 ps) pour refroidir vers 🌡 cold. C'est ce qui
+       rendait les modèles du calcul « peu helicoïdaux » alors qu'une 🌡 MD tenue à 300 K
+       gardait la même hélice : la comparaison des deux gestes n'était plus sur la même
+       échelle. La grotte du rapport (« equilibration 3300 % ») disparaît avec. */
+    mdDt: calcMdDt, mdEquilibration: calcMdEquil / 100,
+    mdHot: calcMdHot, mdCold: calcMdCold,
+    minimise: calcMinimise,
+    /* ⚠ Le rebâtiment d'une partie hors fenêtre n'existe plus : la fenêtre du ⚒ a été
+       retirée avec son bouton, et le protocole standard travaille sur la molécule
+       ENTIÈRE — il n'y a donc rien à reposer, et le rapport du calcul n'en parle pas. */
+    rebuild: false,
+    /* ⚠ LE JETON EST LE SEUL MAÎTRE DE L'ARRÊT — le ⏹, et un nouveau départ. Un
+       changement de PAGE ou d'ONGLET ne tue plus le calcul : c'est l'objet de cette
+       session (« se rinfresco la pagina tutto è perso e bisogna ricominciare da capo »).
+       La molécule à l'écran peut changer sous nos pieds (la page resservant son modèle) :
+       le calcul tourne sur les coordonnées PHOTOGRAPHIÉES au départ et continue ; ce qui
+       s'arrête, c'est seulement l'écriture à l'écran (voir `onScreen` dans la pompe). */
+    shouldStop: () => calcRunRef.current !== run,
+    onAttempt: (attempt) => {
+      attempts.push(attempt);
+      const live2 = attempt.satisfied + attempt.violations;
+      setCalcProgress(calcAttemptLine(attempt, { done: attempts.length, of: n })
+        + ` · ${attempt.satisfied}/${live2} distance${live2 === 1 ? '' : 's'} respected`
+        + ` · score ${attempt.score.toFixed(1)}`);
+    },
+  });
+  const pump = () => {
+    if (calcRunRef.current !== run) return;
+    /* ⚠ LE CALCUL NE S'ARRÊTE PAS PARCE QU'ON A CHANGÉ DE PAGE — c'est le rapport de
+       cette session (« se rinfresco la pagina tutto è perso e bisogna ricominciare da
+       capo ») : la page resservant sa molécule, `componentRef.current` n'est plus le
+       composant du départ. Le calcul, lui, tourne sur les coordonnées PHOTOGRAPHIÉES au
+       départ (`base`) : il n'a besoin de rien de ce qui est affiché, donc il CONTINUE.
+       Ce qui s'arrête, c'est l'ÉCRITURE À L'ÉCRAN : on n'écrit pas les images d'une
+       molécule sur une autre (`calcMoleculeKey`) — `onScreen` reste faux tant que la
+       bonne molécule n'est pas revenue, et la ligne de progression suit quand même. */
+    const onScreen = calcMoleculeKey(componentRef.current, componentRef.current && componentRef.current.structure) === moleculeKey;
+    const started = Date.now();
+    let shown = null;
+    for (;;) {
+      let tick;
+      try { tick = frames.next(); } catch (e) {
+        /* ⚠ UNE ERREUR NE JETTE PLUS LE TRAVAIL DÉJÀ FAIT — la demande : « Structure
+           calculation ha un problema. Funziona per un po' ma poi dà un messaggio di errore e
+           se rinfresco la pagina tutto è perso e bisogna ricominciare da capo. » Les départs
+           DÉJÀ finis (`attempts`, poussés par `onAttempt`) sont donc CLASSÉS ET GARDÉS : le
+           meilleur est écrit dans la molécule, la famille reste dans le panneau, et le message
+           dit la phase exacte où l'erreur est tombée, son texte, et combien de départs ont été
+           calculés. Les deux tables (distances et φ/ψ), elles, ne sont jamais touchées ici. */
+        const phase = (shown && shown.phase) || '';
+        const where = ` — start ${attempts.length + 1} of ${n}${phase ? `, phase "${phase}"` : ''}`;
+        if (attempts.length) {
+          finish(true);                                  // classe et écrit ce qui est fait
+          setCalcMsg(`✕ The calculation stopped on an error${where}: ${(e && e.message) || e}`
+            + ` The ${attempts.length} start${attempts.length === 1 ? '' : 's'} already computed`
+            + ' were RANKED AND KEPT anyway (the best one is on screen); your two tables are untouched.'
+            + ' ▶ Run again, or ⏹ to stop here.');
+        } else {
+          setCalcBusy(false);
+          setCalcProgress('');
+          setCalcMsg(`✕ The calculation stopped on an error${where}: ${(e && e.message) || e}`
+            + ' Nothing had been computed yet — your two tables are intact.');
+        }
+        return;
+      }
+      if (tick.done) { finish(false, tick.value); return; }
+      shown = tick.value;
+      if (calcRunRef.current !== run) return;      // ⏹ pendant cette image : on sort
+      if (Date.now() - started > CALC_FRAME_BUDGET_MS) break;
+    }
+    /* L'IMAGE S'ÉCRIT, PUIS LA PAGE PEINT — c'est l'ordre qui fait qu'on VOIT la
+       molécule : écrire sans rendre la main ne montrerait rien. */
+    if (shown) {
+      if (onScreen) {
+        if (calcWatch && shown.positions) calcPreviewPositions(comp, structure, shown.positions);
+        /* …ET LE 🪢 SUIT LE CALCUL QUAND IL EST À L'ÉCRAN (👁 watch écrit vraiment la
+           molécule : le graphe parle donc de la conformation qui est à l'écran). */
+        if (calcWatch && ramaIsShown()) readRamachandran();
+      }
+      if (shown.phase !== 'attempt-done') setCalcProgress(calcPhaseLine(shown, attempts.length, n));
+    }
+    if (typeof window !== 'undefined' && window.setTimeout) window.setTimeout(pump, 0);
+    else pump();
+  };
+  pump();
+};
+
+/** ⏹ ARRÊTER LE CALCUL — entre deux départs, et sans rien perdre : ce qui est déjà
+ *  construit est classé, ses m meilleures sont écrites, et le panneau dit combien de
+ *  départs sur n ont été faits (un calcul partiel reste un calcul).
+ *  ⚠ CE BOUTON EST CELUI DU 🧬 ET RIEN D'AUTRE — il n'existe que pendant un calcul
+ *  (`calcBusy`, l'état du panneau) et il ne consomme QUE la partie du calcul. Les gestes
+ *  de la fenêtre 🌡 MD ont le leur (■ `mdStop`), qui ne classe rien : un geste n'a pas de
+ *  résultats partiels, il a une conformation à l'écran. Avant cette séparation, un
+ *  `calcBusy` partagé faisait apparaître ce ⏹ dans la fenêtre du 🧬 pendant une DYNAMIQUE,
+ *  et le cliquer re-classait — et réécrivait — la famille du calcul PRÉCÉDENT. */
+const calcStop = () => {
+  const part = calcPartialRef.current;
+  /* ⚠ LA PARTIE EST CONSOMMÉE ICI AUSSI (`null`) : `finish` la consomme à la fin normale,
+     et le ⏹ la consomme quand il classe lui-même — donc aucune partie finie ne traîne pour
+     être re-classée par un autre chemin. */
+  calcPartialRef.current = null;
+  calcRunRef.current += 1;
+  setCalcBusy(false);
+  if (part && part.attempts.length) { part.finish(true); return; }
+  setCalcProgress('');
+  setCalcMsg('⏹ Stopped — no start had been computed yet, so nothing was written.');
+};
+
+/** LE CHAMP DE FORCES, RELU SUR LA MOLÉCULE À L'ÉCRAN — `forceFieldEnergyOf` sur les
+ *  coordonnées DU MOMENT, avec les distances de la table comme contraintes. Le panneau
+ *  affiche alors l'énergie famille par famille (liaisons, angles, plans, distances, cœur
+ *  dur, ω, bassins φ/ψ, χ1) au lieu de dire « le calcul tourne ». */
+const calcReadForceFieldNow = () => {
+  const now = calcEngineGeometry();   // le graphe des moteurs (ponts ÉTIRÉS sans leur fausse liaison)
+  if (!now) {
+    setCalcMsg('✕ There is no molecule on screen — load a structure first.');
+    return null;
+  }
+  const { geom } = now;
+  /* ⚖ La lecture lit CE QUE LES GESTES LISENT : les lignes complètes de poids non nul
+     (`calcFieldRows`) — une ligne en pause ne doit pas apparaître dans le total du champ,
+     sinon la lecture annoncerait un chiffre que le calcul n'utilise pas. */
+  const list = calcFieldRows().filter((r) => r.i < geom.count && r.j < geom.count);
+  const field = forceFieldEnergyOf({
+    positions: geom.positions, elements: geom.elements, bonds: geom.bonds,
+    restraints: calcRestraintTermsOf(list),
+    dihedrals: calcDihedrals,
+    exactSurface: true,
+    /* 🎯 …ET LA FONCTION CIBLE CHOISIE, AVEC LE SOLVANT DE LA FENÊTRE : la lecture du
+       champ lit ce que les gestes conduisent (familles éteintes comprises), sinon elle
+       annoncerait un total que le calcul n'utilise pas. `exactSurface` reste demandé :
+       c'est la mesure INDÉPENDANTE de la surface, et elle n'a de sens qu'avec la famille. */
+    targetFunction: calcTargetFunction,
+    /* 🧪 LE pH ET LA FORCE IONIQUE — la lecture ⟳ tourne sur le champ que le panneau affiche,
+       donc elle porte les deux réglages de la CHIMIE : ce qu'elle montre est l'énergie de la
+       molécule TELLE QUE LE pH la fait (voir §2bis et §4bis du champ). */
+    ph: calcPhOf(), ionicStrength: calcIonicOf(),
+    dielectric: mdSolventOf().dielectric,
+  });
+  setCalcForce(field);
+  const ra = field.ramaReport;
+  const ch = field.chiReport;
+  const dh = field.dihedralReport;
+  /* ⚖ CE QUI N'ENTRE PAS DANS LE CHIFFRE — une ligne en pause (⚖ 0) n'est pas dans
+     `field.restraint` : le dire ICI évite de la croire oubliée par un défaut. */
+  const pausedRows = calcInertCount();
+  setCalcMsg(`🧲 Force field on the molecule as it stands: E = ${field.total.toFixed(2)} kcal/mol`
+    + ` (bonds ${field.bond.toFixed(2)} + angles ${field.angle.toFixed(2)} + rings ${field.planar.toFixed(2)}`
+    + ` + vdW ${field.vdw.toFixed(2)} + µ ${field.elec.toFixed(2)} + solvent ${field.solv.toFixed(2)}`
+    + ` + φ/ψ ${field.rama.toFixed(2)} + χ1 ${field.chi.toFixed(2)} + ω ${field.omega.toFixed(2)}`
+    + ` + your distances ${field.restraint.toFixed(2)}`
+    + ` + the φ/ψ you imposed ${field.dihedral.toFixed(2)})`
+    + ` · entropy ${field.entropyReport.total.toFixed(1)} cal·mol⁻¹·K⁻¹ (−T·S = ${field.entropy.toFixed(2)} kcal/mol)`
+    + ` · ${field.added.hydrogens} hydrogens added on ${field.added.heavy} heavy atoms`
+    + ` · net charge ${field.charges.net.toFixed(3)} e (${field.charges.method})`
+    + ` · surface ${field.surface.estimate.toFixed(0)} Å² (exact ${field.surface.exact == null ? '—' : field.surface.exact.toFixed(0)} Å²)`
+    + ` · ${field.torsions.residues} backbone residue${field.torsions.residues === 1 ? '' : 's'}`
+    + ` (${field.torsions.phi.length} φ, ${field.torsions.psi.length} ψ, ${field.omegaReport.count} ω, ${ch.count} χ1)`
+    + `${ra.violations ? ` · ⚠ ${ra.violations} φ/ψ outside every basin${ra.worst ? ` (worst ${ra.worst.gap.toFixed(0)}° away)` : ''}` : ' · ✓ every φ/ψ inside a basin'}`
+    + `${field.omegaReport.violations ? ` · ⚠ ${field.omegaReport.violations} ω outside ± ${STRUCTURE_CALC_OMEGA_TOLERANCE}°` : ''}`
+    + `${ch.violations ? ` · ⚠ ${ch.violations} χ1 between two staggered wells` : ''}`
+    + `${dh.count ? ` · ⛓ ${dh.satisfied}/${dh.count} imposed φ/ψ within ± ${dh.tolerance}°`
+      + `${dh.violations ? ` (worst ${dh.worst.over.toFixed(1)}° outside)` : ''}` : ''}`
+    + `${field.nonbonded.repulsive ? ` · ⚠ ${field.nonbonded.repulsive} repulsive pair${field.nonbonded.repulsive === 1 ? '' : 's'}` : ''}.`
+    + `${pausedRows ? ` ⚖ ${pausedRows} line${pausedRows === 1 ? '' : 's'} of the table ${pausedRows === 1 ? 'is' : 'are'} on hold (weight 0): ${field.restraintReport.count} distance${field.restraintReport.count === 1 ? '' : 's'} enter${field.restraintReport.count === 1 ? 's' : ''} the field.` : ''}`
+    + ' ⚡ The energy is in kcal/mol, the potential is the one the calculation uses (no charge model is perfect: the charges are PEOE estimates with the formal charges the chemistry implies — and, since this session, the pH and the ionic strength of the ⚙ panel, which the line below reads out).'
+    /* 🧪 LA CHIMIE DE CETTE LECTURE — le pH et la force ionique avec lesquels ⟳ vient de lire. */
+    + calcChemNote(field)
+    + ' The family-by-family table of this same reading is in 🧬 Structure calculation — open that section and the families are listed there, with this number broken into them.'
+    + ' ⚠ Nothing was written: ⚡ is a READING (↺ Undo torsion has nothing to undo).');
+  return field;
+};
+
+/** ⟳ LE BOUTON « ENERGY » DE LA BARRE — ET RIEN QU'UN BOUTON. Sa lecture est celle du
+ *  dessus (`calcReadForceFieldNow`), enveloppée pour une seule raison : la remarque de
+ *  cette session, « I do not understand the use of the energy button. If I click nothing
+ *  happens and nothing is written anywhere. » Deux causes, et les deux sont traitées :
+ *    · la lecture n'était écrite QUE dans le corps du 🧬, donc invisible tant que sa
+ *      section était fermée — le message est maintenant rendu SOUS les boutons, par
+ *      `renderForceGestures` (voir la ligne du message des gestes) ;
+ *    · une lecture qui jette (un chiffre en moins du côté du champ) laissait le clic SANS
+ *      réponse — elle est maintenant attrapée, DITE, et ne peut plus emporter une partie
+ *      de l'écran avec elle. */
+const calcReadForceField = () => {
+  try {
+    return calcReadForceFieldNow();
+  } catch (e) {
+    setCalcForce(null);
+    setCalcMsg(`✕ The reading of the force field failed: ${(e && e.message) || e}`
+      + ' The molecule was not touched (a reading writes nothing), and your two tables are intact.'
+      + ' 🐞 That is a defect of the field model, not of your molecule.');
+    return null;
+  }
+};
+
+/** CONDUIRE UN MOTEUR D'IMAGES — le même budget, la même écriture, le même jeton d'arrêt
+ *  que le calcul : un seul endroit où l'écran apprend à REGARDER un générateur. `head`
+ *  remplace l'en-tête de la ligne de progression (un geste isolé n'est pas un « start i/n »).
+ *
+ *  👁 `watch` — QUI ÉCRIT LES IMAGES SUR LA MOLÉCULE. Le calcul du 🧬 passe le sien
+ *  (`calcWatch`, la case « watch each start » : on peut vouloir un calcul silencieux), mais
+ *  un geste ISOLÉ de la fenêtre 🌡 MD ou du ⚒ s'écrit TOUJOURS, image par image : la
+ *  remarque de cette session était « I see that some calculations are being performed but
+ *  the molecule and its dihedrals remain still » — elle ne venait pas du moteur, qui
+ *  tournait, mais de ce `calcWatch` non transmis qui laissait la molécule immobile jusqu'à
+ *  la dernière image. Un geste qu'on vient de lancer à la main se regarde : `watch: true`. */
+const pumpMotion = ({ frames, comp, structure, head, watch = calcWatch, water = null, onEnd }) => {
+  calcRunRef.current += 1;
+  const run = calcRunRef.current;
+  /* ■ LE GESTE DIT QU'IL TOURNE — c'est ce qui fait apparaître le ■ de SA fenêtre (voir
+     `mdStop`) et ce qui gèle les trois ▶. Il le dit à la SEULE fenêtre 🌡 MD : le calcul, lui,
+     a son propre témoin (`calcBusy`), donc le ⏹ du 🧬 n'apparaît jamais pendant une
+     dynamique — ni l'inverse. */
+  setMdBusy(true);
+  mdRunRef.current = run;
+  mdPhaseRef.current = '';   // rien d'annoncé : un ■ immédiat n'a pas d'image à citer
+  /* ⚠ LA MÊME CLÉ QUE LE CALCUL (`calcMoleculeKey`) : un ▶ MD ou un ⚒ Minimise survit lui
+     aussi au changement de page, et n'écrit rien sur une autre molécule. */
+  const moleculeKey = calcMoleculeKey(comp, structure);
+  /* LE GRAPHE 🪢 SUIT LE MOUVEMENT — la demande : « can the ramachandran be updated while
+     the molecule moves? » Oui. La lecture φ/ψ est refaite après CHAQUE image écrite
+     quand la fenêtre 🪢 est à l'écran (mesuré : 0.24 ms pour 30 résidus, 1 ms pour 300),
+     donc les points sortent de leur bassin PENDANT que la dynamique tourne au lieu de
+     n'apparaître qu'à la fin. C'est la MÊME lecture que le bouton ⟳ du 🪢 : pas un
+     second lecteur, et rien à recalculer quand le graphe n'est pas affiché. ⚠ La question
+     est posée À CHAQUE IMAGE (`ramaIsShown()`) et non une fois au clic : ouvrir la
+     fenêtre pendant que la molécule bouge la fait suivre dès l'image suivante. */
+  const pump = () => {
+    /* ■ L'ARRÊT EST ICI — le ■ avance le jeton (voir `mdStop`), et la pompe sort avant
+       d'avancer d'une image de plus : le geste s'arrête ENTRE deux images, jamais au milieu
+       d'une écriture. ⚠ On n'éteint le témoin QUE si c'est NOTRE geste qui tournait
+       (`mdRunRef`) : un tick en retard d'un geste qu'on vient d'arrêter ne doit pas éteindre
+       le ■ d'un geste relancé juste après. */
+    if (calcRunRef.current !== run) {
+      if (mdRunRef.current === run) { mdRunRef.current = 0; setMdBusy(false); }
+      return;
+    }
+    /* ⚠ …ET LE GESTE SURVIT AU CHANGEMENT DE PAGE POUR LA MÊME RAISON (voir le calcul) :
+       la seule chose qui s'arrête est l'écriture à l'écran, pas le geste lui-même. */
+    const onScreen = calcMoleculeKey(componentRef.current, componentRef.current && componentRef.current.structure) === moleculeKey;
+    const started = Date.now();
+    let shown = null;
+    for (;;) {
+      let tick;
+      try { tick = frames.next(); } catch (e) {
+        /* ⚠ LE TÉMOIN DU GESTE, PAS CELUI DU CALCUL — et le geste est fini : le jeton est
+           consommé, donc un tick en retard ne rallumera rien. */
+        mdRunRef.current = 0;
+        setMdBusy(false);
+        setMdProgress('');
+        setCalcMsg(`✕ It stopped on an error: ${(e && e.message) || e}`);
+        return;
+      }
+      if (tick.done) {
+        mdRunRef.current = 0;
+        setMdBusy(false);
+        setMdProgress('');
+        /* ⚠ LA DERNIÈRE IMAGE ÉCRITE N'EST PAS LA DERNIÈRE COORDONNÉE — et sans 👁 elle
+           n'existe même pas. Le moteur n'annonce qu'une image tous `perFrame` pas (les
+           autres seraient trop nombreuses pour l'écran) : après un ▶ MD ou un ⚒ Minimise,
+           l'écran s'arrêtait donc quelques pas AVANT la fin, et avec le 👁 décoché la
+           molécule restait carrément où elle était — pendant que le rapport parlait de
+           l'énergie APRÈS et que le ↺ promettait de défaire le geste. `tick.value` porte
+           l'état FINAL : il s'écrit ici, une fois, par le MÊME chemin qu'une torsion (donc
+           le 📏, les plaques, le film et le 📥 Download suivent aussi), et c'est la
+           conformation dont le rapport et le 🪢 parlent ensuite. */
+        const end = tick.value;
+        /* ⚠ ÉCRITE SEULEMENT SI LA MOLÉCULE DU GESTE EST (ENCORE) CELLE DE L'ÉCRAN — la
+           géométrie finale appartient à ses atomes. Le geste, lui, est allé au bout. */
+        if (onScreen) {
+          if (end && end.ok && end.positions) calcPreviewPositions(comp, structure, end.positions);
+          /* 💧 …ET LA BOÎTE QUI A BOUGÉ (voir `calcPreviewWaterPositions`) : sans elle,
+             l'écran garderait la boîte du DÉPART pendant que la physique l'a fait diffuser —
+             et la dernière image est justement celle qui reste. */
+          if (end && end.ok && water) calcPreviewWaterPositions(end.positions, water.solute);
+        }
+        if (onEnd) onEnd(end);
+        return;
+      }
+      shown = tick.value;
+      if (calcRunRef.current !== run) return;
+      if (Date.now() - started > CALC_FRAME_BUDGET_MS) break;
+    }
+    if (shown) {
+      if (onScreen) {
+        if (watch && shown.positions) calcPreviewPositions(comp, structure, shown.positions);
+        /* 💧 LES EAUX SUIVENT L'IMAGE — la molécule de la boîte est une AUTRE molécule de
+           la scène (le composant `solv_`) : elle se réécrit par le même chemin. */
+        if (watch && water) calcPreviewWaterPositions(shown.positions, water.solute);
+        if (ramaIsShown()) readRamachandran();   // le 🪢 suit l'image qui vient d'être écrite
+      }
+      const line = calcPhaseLine(shown, 0, 1, head);
+      setMdProgress(line);
+      mdPhaseRef.current = line;   // ■ s'arrête entre deux images : il peut CITER celle-ci
+    }
+    if (typeof window !== 'undefined' && window.setTimeout) window.setTimeout(pump, 0);
+    else pump();
+  };
+  pump();
+};
+
+/** ■ ARRÊTER LE GESTE EN COURS (▶ MD ou ⚒ Minimise) — la seconde moitié de la demande de
+ *  cette session : « manca un pulsante di stop sia per la structure calculation che per la
+ *  MD ». Le 🧬 avait le sien (⏹, qui CLASSE ce qui est déjà calculé) ; la fenêtre 🌡 MD
+ *  n'avait rien, et une dynamique de 20 000 pas ne pouvait que s'attendre.
+ *
+ *  L'ARRÊT EST CELUI DU MODULE, PAS UNE INVENTION DU PANNEAU : on avance le jeton que la
+ *  pompe vérifie à chaque tour (`calcRunRef`, le même que le ⏹ du calcul), donc le geste
+ *  s'arrête ENTRE l'image qu'il vient d'écrire et la suivante — jamais au milieu d'une
+ *  écriture. Il n'y a donc pas d'état intermédiaire à ranger.
+ *
+ *  ⚠ RIEN N'EST PERDU : les images déjà écrites SONT la molécule à l'écran, et ↺ Undo torsion
+ *  défait le geste ENTIER (sa photographie a été prise au départ, avant la première image).
+ *  ⚠ MAIS LE RAPPORT DU GESTE N'EST PAS CALCULÉ — ses « énergie avant → après » décrivent un
+ *  run qui est allé au bout, et celui-ci ne l'est pas : le message le DIT au lieu de laisser
+ *  croire que l'énergie « après » est celle d'un MD fini. ⟳ Energy relit le champ sur ce qui
+ *  est là. ⚠ Et le tableau du champ est remis à zéro (`setCalcForce(null)`) : ses chiffres
+ *  parlaient d'un autre jeu de coordonnées — c'est ce que font déjà les deux gestes en fin de
+ *  course.
+ *  ⚠ `mdRunRef` (et non `calcRunRef`) pour éteindre le témoin : un tick en retard du geste
+ *  qu'on vient d'arrêter ne doit pas éteindre le ■ d'un geste relancé juste après. */
+const mdStop = () => {
+  if (!mdRunRef.current) return;   // personne ne tourne : le ■ n'est d'ailleurs pas affiché
+  const at = mdPhaseRef.current;
+  mdRunRef.current = 0;
+  calcRunRef.current += 1;         // la pompe sort au prochain tour (elle vérifie le jeton)
+  setMdBusy(false);
+  setCalcForce(null);
+  setMdProgress(at ? `■ stopped between two images — the last one written was: ${at}`
+    : '■ stopped before the first image.');
+  /* ⚠ LE MESSAGE EST COURT, ET C'EST VOULU — le rapport disait tout cela en six lignes et
+     restait à l'écran jusqu'au geste suivant (la remarque de cette session : « I always see this
+     strange message appearing »). Trois faits suffisent : ce qui est gardé, ce qui défait le
+     geste, et ce qui n'a PAS été calculé. */
+  setCalcMsg(`■ Stopped${at ? ` after the image « ${at} »` : ' before the first image'} —`
+    + ' those images ARE the molecule on screen. ↺ Undo torsion puts back the conformation from'
+    + ' before the gesture, ▶ MD can start again from here, and ⟳ Energy re-reads the field on'
+    + ' what is actually there (a stopped run has no "before → after" energies of its own).');
+};
+
+/** LES DISTANCES DÉJÀ TENUES — la longe des gestes ⚙ (dynamique et minimisation) : un
+ *  couple dont la distance est DANS sa tolérance au moment du départ ne peut plus en
+ *  sortir. Une distance pas encore tenue n'est pas dans la longe : elle reste une
+ *  contrainte de la table, et le geste la conduit.
+ *  ⚖ ELLE PORTE SON POIDS — le mur de la longe est multiplié par le poids de la ligne
+ *  (`costWall`, dans le module) : une contrainte qui compte double est aussi gardée deux
+ *  fois plus fermement, et une ligne en pause (poids 0) n'est jamais dans cette liste
+ *  puisque les gestes ne reçoivent que `calcFieldRows`. */
+const calcHeldPairs = (geom, list) => list
+  .filter((r) => {
+    const d = Math.hypot(
+      geom.positions[r.i * 3] - geom.positions[r.j * 3],
+      geom.positions[r.i * 3 + 1] - geom.positions[r.j * 3 + 1],
+      geom.positions[r.i * 3 + 2] - geom.positions[r.j * 3 + 2],
+    );
+    return Math.abs(d - r.target) <= STRUCTURE_CALC_RESTRAINT_TOLERANCE;
+  })
+  .map((r) => ({ i: r.i, j: r.j, target: r.target, weight: calcWeightOf(r) }));
+
+/** 🌡 LA DYNAMIQUE MOLÉCULAIRE, SUR LA MOLÉCULE TELLE QU'ELLE EST — la demande :
+ *  « add the force field and a Molecular dynamics option. this will help the final
+ *  energy refinement. » Elle part des coordonnées à l'écran, prend les distances de la
+ *  table comme contraintes et les distances DÉJÀ tenues comme longe, se conduit image par
+ *  image (donc SE REGARDE), et s'écrit par le MÊME chemin qu'une torsion — le ↺ la remet.
+ *  ⚠ `T` est en unités réelles (KELVINS) : le panneau le dit, et le rapport donne la
+ *  température cinétique obtenue. ⚠ Et c'est une CONSTANTE (pas un plan de température) :
+ *  une dynamique d'équilibrage tient sa température, c'est un recuit qui la fait descendre.
+ *
+ *  📏 ELLE DEMANDE D'ABORD À LA CASE DE SA FENÊTRE — « use constraints defined in
+ *  structure calculation » : cochée (le défaut), elle porte la table des distances du 🧬
+ *  avec les poids ⚖ de chaque ligne ; décochée, elle part SANS contrainte de distance et
+ *  SANS longe (le champ de forces seul : liaisons, angles, cycles, van der Waals,
+ *  charges, solvant, ω, φ/ψ, χ1). La table n'est jamais MODIFIÉE par cette case — elle
+ *  est seulement lue, ou pas.
+ *
+ *  ⚙ ELLE EST INDÉPENDANTE DU CALCUL — c'est la demande de cette session : ses réglages
+ *  sont les SIENS (`mdSteps`, `mdDt`, `mdTemp`, `mdImage`, `mdSolvent`, `mdFreeOmega` —
+ *  ceux de `renderMdOptions`, dans la fenêtre 🌡 MD), et le ▶ Run du 🧬 a les siens. Le
+ *  protocole des départs (🌡 hot → 🌡 cold, part d'équilibration, balayages de ⚒, pas de
+ *  recuit) n'est donc pas touché par ce qu'on règle ici, et réciproquement. Le 💧 solvant
+ *  est le diélectrique que les charges voient, et la boîte explicite est une vraie
+ *  ENVIRONMENT depuis la décision de cette session : ses eaux ont leurs six degrés de
+ *  liberté et DIFFUSENT pendant le geste (voir `waterRigidBodyOf`), ce que le rapport
+ *  chiffre et ce que l'écran suit image après image. */
+const runMolecularDynamics = () => {
+  const now = calcEngineGeometry();   // le graphe des moteurs (ponts ÉTIRÉS sans leur fausse liaison)
+  if (!now) {
+    setCalcMsg('✕ There is no molecule on screen — load a structure first.');
+    return;
+  }
+  const { comp, structure, geom } = now;
+  /* 💧 LA BOÎTE EXPLICITE SE DESSINE — la demande : « I still do not see the water in the
+     MD ». Elle est déjà dans `geom` (donc dans la physique de ce geste, voir
+     `calcEngineGeometry`) ; ici elle entre dans la SCÈNE comme une molécule de la barre.
+     Sans blocage : le geste part sur ses images, la boîte apparaît dès que NGL l'a lue. */
+  calcDrawWaterBox(geom).catch(() => {});
+  /* Ce que la dynamique emporte : les lignes COMPLÈTES de poids non nul, ou RIEN. */
+  /* 📏 …ET D'ABORD LA CASE DE SA FENÊTRE — elle décide SI cette dynamique porte la table
+     (`mdUseRestraints`, la case 📏 de `renderMdOptions`) : cochée elle emporte les lignes
+     complètes de poids non nul, décochée elle n'emporte RIEN (ni contrainte, ni longe).
+     C'est une OPTION, pas une règle : le ▶ Run du 🧬 lit toujours la table, lui. */
+  const list = mdUseRestraints
+    ? calcFieldRows().filter((r) => r.i < geom.count && r.j < geom.count)
+    : [];
+  const paused = calcInertCount();
+  const base = Array.from(geom.positions);
+  const held = list.length ? calcHeldPairs(geom, list) : [];
+  /* ⚖ LA TABLE, RELUE AU DÉPART — la moitié « avant » de la comparaison que le rapport
+     donne à la fin (`calcRestraintEffect`) : c'est elle qui montre ce que le poids ⚖ et la
+     durée du geste ont réellement gagné. */
+  const restBefore = restraintReportOf({ positions: base, restraints: list });
+  const before = torsionSnapshotOf(structure);
+  torsionUndoRef.current = {
+    comp, structure, count: before ? before.length / 3 : 0, flat: before,
+    label: `🌡 molecular dynamics · ${mdSteps} steps · ${mdTime.ps} ps · T = ${mdTemp} K`
+      + ` · 💧 ${mdSolventOf().label}`
+      + ` · ω ${mdFreeOmega ? 'free to vary' : 'held trans'}`
+      + ` · ${mdUseRestraints ? `with the ${list.length} distance${list.length === 1 ? '' : 's'} of the table` : 'without the distance table'}`,
+  };
+  /* ■ LE GESTE ALLUME SON PROPRE TÉMOIN — `mdBusy`, l'état de la fenêtre 🌡 MD : le ⏹ du
+     calcul (`calcBusy`) n'a donc plus rien à voir avec une dynamique, et le ■ de cette
+     fenêtre n'apparaît qu'ici. `pumpMotion` le repose au départ et l'éteint à la fin (fin
+     normale, erreur, ou ■) : le geste et sa pompe parlent du même état. */
+  /* ■ LA PAGE BLANCHE DU GESTE (voir le commentaire de `runStructureCalculation`) : le rapport
+     qui traîne à l'écran parle d'un AUTRE run, donc il part avant que celui-ci commence. */
+  setCalcMsg('');
+  setCalcForce(null);   // la lecture du ⟳ d'avant ne décrit plus la molécule qui va bouger
+  setGestureMsgOpen(false);
+  setMdBusy(true);
+  setCalcShown(0);
+  setMdProgress(`🌡 molecular dynamics …${disulfideConductedNote()}`);
+  pumpMotion({
+    frames: mdFrames({
+      positions: base, elements: geom.elements, bonds: geom.bonds,
+      restraints: calcRestraintTermsOf(list),
+      leash: held,
+      /* ⚙ LES RÉGLAGES DE CETTE FENÊTRE, ET EUX SEULS — ses pas, son pas de temps (donc sa
+         durée : `mdTime` = pas × dt), sa température (UNE : c'est une dynamique
+         d'équilibrage, pas un recuit), son intervalle d'images et son solvant (le
+         diélectrique que les charges voient). AUCUN n'appartient au 🧬 : le ▶ Run du calcul
+         a les siens, et ce qui se règle ici ne le touche pas. */
+      steps: mdSteps, dt: mdDt, temperature: mdTemp,
+      dielectric: mdSolventOf().dielectric,
+      /* 🎯 …ET LA FONCTION CIBLE — le réglage du panneau 🧬, donc la dynamique ISOLÉE et le
+         ▶ Run conduisent le même champ : `dyana` ici veut dire répulsion seule, sans
+         charge, sans surface, atomes unis (voir `STRUCTURE_CALC_TARGET_FUNCTIONS`), et le
+         rapport de ce geste DIT ce qu'elle a éteint. */
+      /* ⛓ …ET LES CONTRAINTES DE DIHÈDRE DE LA STRUCTURE SECONDAIRE IMPOSÉE.
+         La demande : « In MD and “structure calculation” allow the conversion of the
+         secondary structure imposed … into dihedral angle constraints. » */
+      dihedrals: calcDihedrals,
+      /* 🪢 L'OPTION « ω VARIE » DE CETTE DYNAMIQUE — la sienne (`mdFreeOmega` ; le calcul a
+         la sienne) : cochée, elle ne refuse plus un pas qui augmente le coût d'une liaison
+         peptidique (sa barrière reste une famille du champ, et c'est elle qui arbitre). */
+      freeOmega: mdFreeOmega,
+      perFrame: mdImage,
+      targetFunction: calcTargetFunction,
+      /* 🧪 …ET LA CHIMIE DU CHAMP — le pH et la force ionique du panneau ⚙, tels quels : cette
+         dynamique tourne donc dans la même chimie que le ▶ Run, le ⚒ et le ⟳ (voir §2bis et
+         §4bis du champ). Le rapport du geste DIT ce qui a été lu (`run.chemistry`). */
+      ph: calcPhOf(), ionicStrength: calcIonicOf(),
+    }),
+    comp, structure,
+    /* 👁 ELLE SE REGARDE TOUJOURS — c'est la remarque de cette session : « I see that some
+       calculations are being performed but the molecule and its dihedrals remain still. »
+       Le geste de la fenêtre écrit donc CHAQUE image qu'il annonce, sans dépendre du
+       👁 watch each start du 🧬 (`watch: true`) : ce qui bougeait seulement à la fin bouge
+       maintenant pas à pas, et le 🪢 suit tant que son dock est à l'écran. */
+    watch: true,
+    /* 💧 LA BOÎTE DESSINÉE SUIT LE MOTEUR — `solute` est le nombre d'atomes du soluté DANS LA
+       MOLÉCULE DU MOTEUR (`explicitSolventOf` les ajoute à la fin, voir `geom.solvent`) : au-delà,
+       ce sont les eaux, et la pompe les réécrit dans LEUR composant à chaque image
+       (voir `calcPreviewWaterPositions`). Sans boîte (`solvent.ok` faux), rien n'est passé et
+       le geste est celui d'avant. */
+    water: geom.solvent && geom.solvent.ok && geom.solvent.solute
+      ? { solute: geom.solvent.solute } : null,
+    head: `🌡 MD · ${mdSteps} steps · ${mdTime.ps} ps · T = ${mdTemp} K · 💧 ${mdSolventOf().label}`,
+    onEnd: (run) => {
+      if (!run || !run.ok) {
+        setCalcMsg(`✕ The dynamics refused: ${run && run.reason === 'no-channel'
+          ? 'this molecule has no rotatable bond to turn.' : 'nothing to do.'}`);
+        return;
+      }
+      setCalcForce(null);
+      /* ⚖ LES DISTANCES DEMANDÉES, RELUES SUR LES COORDONNÉES QUE LA DYNAMIQUE VIENT
+         D'ÉCRIRE — « can the MD take the distance constraints into account? » : le
+         rapport le chiffre au lieu de le promettre (combien sont dans la tolérance, et
+         de combien la plus fausse en sort). C'est `restraintReportOf`, la lecture du
+         module : le panneau ne compte rien lui-même.
+         ⚖ ET LA MÊME LECTURE AU DÉPART (`restBefore`) : c'est la COMPARAISON qui montre
+         ce que le poids ⚖ d'une ligne a fait — la remarque de cette session était « giving
+         a high weight to one constraint did not have an effect on MD ». */
+      const rep = restraintReportOf({ positions: run.positions, restraints: list });
+      /* ⛓ LES φ/ψ IMPOSÉS, RELUS SUR LES COORDONNÉES QUE LA DYNAMIQUE VIENT D'ÉCRIRE —
+         la MÊME lecture que le champ (`dihedralPenaltyOf`), donc le rapport ne peut pas
+         annoncer autre chose que ce que la note juge. */
+      const dh = dihedralPenaltyOf({ positions: run.positions, dihedrals: calcDihedrals });
+      setCalcMsg(`✓ 🌡 Molecular dynamics · ${run.steps} steps (${run.applied} applied) over`
+        + ` ${run.channels} channel${run.channels === 1 ? '' : 's'}`
+        + ` · ${run.time.ps} ps at dt = ${run.time.dt} ps (an image every ${mdImage} step${mdImage === 1 ? '' : 's'})`
+        + ` · T held at ${run.temperature.hot} K (kinetic ${run.temperature.mean.toFixed(0)} K mean)`
+        + ` · 💧 ${mdSolventOf().label} — ${mdSolventOf().of}`
+        /* ⚠ LA FENÊTRE, DITE — c'est la demande du module (« le rapport dit le nombre de
+           canaux par pas ») et c'est ce qui explique le mouvement : une molécule qui a plus de
+           dièdres que la fenêtre voit chaque canal tourné tous les `skip` pas, donc intégré
+           sur `dt_eff = dt × skip` — sinon l'excursion d'un dièdre dépendait du NOMBRE de
+           dièdres de la molécule (mesuré : χ1 à 1.4° sur l'ubiquitine, « look blocked »). */
+        + `${run.windowed
+          ? ` · 🎛 the window turned ${run.budget} of the ${run.channels} dihedrals per step, so each`
+            + ` channel was updated every ${run.skip} steps and integrated dt_eff = ${run.dtEff} ps`
+            + ' (not dt) — that is what keeps the motion of every dihedral the same whatever the size of the molecule'
+          : ` · 🎛 every one of its ${run.channels} dihedral${run.channels === 1 ? '' : 's'} was turned at every step (they all fit in the window of ${run.budget})`}`
+        + ` · energy ${run.cost.before.toFixed(2)} → ${run.cost.after.toFixed(2)} kcal/mol`
+        + ` · 📏 ${mdUseRestraints
+          ? `${list.length} distance${list.length === 1 ? '' : 's'} of the table carried with their ⚖ weights`
+            + `${paused ? ` (${paused} line${paused === 1 ? '' : 's'} at weight 0 left out)` : ''}`
+          : 'the distance table was LEFT OUT (📏 unticked in this window): the dynamics ran on the force field alone, with no restraint and no leash'}`
+        + `${rep.count ? ` · distances: ${rep.satisfied}/${rep.count} within ± ${rep.tolerance} Å` : ''}`
+        + `${rep.count && rep.violations ? ` (worst ${rep.worst.abs.toFixed(2)} Å outside — the ⚒ converges them, a trajectory at T does not have to)` : ''}`
+        + calcRestraintEffect(restBefore, rep, list)
+        + calcBoxNote(geom)
+        /* 🧪 CE QUE LA CHIMIE DE CE GESTE A FAIT — le pH et la force ionique lus par le MOTEUR
+           (`run.chemistry`), pas ceux qu'on espérait : charge nette, groupes ionisables et
+           écrantage. La phrase n'existe que si le moteur en a rendu une. */
+        + calcChemNote(run.chemistry)
+        /* 💧 CE QUE LES EAUX ONT FAIT — la phrase n'existe que si le geste avait une boîte
+           (voir `calcWaterRunNote`) : ce que le moteur a MESURÉ, pas ce qu'on espère. */
+        + calcWaterRunNote(run.water, mdTemp)
+
+        + calcTargetFunctionNote(calcTargetFunction)
+        + `${run.walls.count ? ` · ${run.walls.count} distance${run.walls.count === 1 ? '' : 's'} held by the leash (${run.walls.before.toFixed(2)} → ${run.walls.after.toFixed(2)})` : ''}`
+        + `${dh.count ? ` · ⛓ φ/ψ imposed: ${dh.satisfied}/${dh.count} within ± ${dh.tolerance}°`
+          + `${dh.violations ? ` (worst ${dh.worst.over.toFixed(1)}° outside — a trajectory at T is not obliged to land inside)` : ''}` : ''}`
+        + ` · ω ${run.omega ? run.omega.penalty.toFixed(2) : 0}`
+        + `${run.omegaFree
+          ? ` (🪢 ω was FREE to vary: the peptide bond is an ordinary dihedral here — its barrier was counted, not imposed)`
+          : ` (🪢 ω held trans: no step of this dynamics could make it worse)`}`
+        + ` · φ/ψ ${run.rama ? run.rama.penalty.toFixed(2) : 0}`
+        + ` (${run.rama ? run.rama.violations : 0} outside) · χ1 ${run.chi ? run.chi.penalty.toFixed(2) : 0}`
+        + ` · ${run.added ? run.added.hydrogens : 0} hydrogens added.`
+        + ' ⚡ Energies in kcal/mol, temperature in kelvins (R·T is the thermal energy: 0.6 kcal/mol at 300 K).'
+        /* ⚠ LES CLASH — LA DEMANDE DE CETTE SESSION, mot pour mot : « all this doesn't matter,
+           just report the clashes. » Le geste REND le chiffre et ne change RIEN à sa physique
+           (aucun pas n'est refusé pour ça) : il lit avec le lecteur du calcul de structure
+           (`clashReportOf`) ET son seuil (`RELAX_CLASH_DISTANCE`), sur la géométrie qu'il
+           vient d'écrire — donc ce que l'écran montre. Sous ce seuil, ce n'est pas « deux
+           atomes côte à côte » : c'est un atome passé À TRAVERS un autre. Le rapport dit donc
+           les deux choses séparément : ce que la géométrie RENDUE porte, et ce que la
+           TRAJECTOIRE a montré en chemin (l'écran ne voit qu'une image toutes les `perFrame`
+           pas, et un empilement de trois pas peut vivre entre deux images). */
+        + (run.clashes
+          ? (run.clashes.count
+            ? ` ⚠ ${run.clashes.count} atom pair${run.clashes.count === 1 ? '' : 's'} closer than ${run.clashes.minDistance} Å in the geometry this gesture leaves`
+              + ` (worst ${Number(run.clashes.worst && run.clashes.worst.distance).toFixed(2)} Å)`
+              + ' — the SAME clash reader and the SAME threshold the 🧬 structure calculation uses: below it, one atom has passed through another.'
+            : ` ✓ no atom pair closer than ${run.clashes.minDistance} Å in the geometry this gesture leaves (the clash reader of the 🧬 structure calculation).`)
+            + (run.clashes.worstDuring
+              /* CE QUE LE GESTE A MONTRE EN CHEMIN — le chiffre qui répond à « gli atomi si
+                 attraversano » : la dynamique n'a rien refusé (elle mesure), donc la façon de
+                 les écarter est la descente ⚒, qui descend le même champ. */
+              ? ` ⚠ …and the trajectory itself went closer: ${run.clashes.frames} of its ${run.clashes.images} image${run.clashes.images === 1 ? '' : 's'} carried such a pair,`
+                + ` worst ${Number(run.clashes.worstDuring.distance).toFixed(2)} Å at step ${run.clashes.worstDuring.step}`
+                + ' — the dynamics refuses no step for that (it only reports it, as asked): ⚒ Minimise from here is what pushes them apart.'
+              : '')
+          : '')
+        /* 🌡 LA TEMPÉRATURE EST LA VITESSE DU MOTEUR — la remarque de cette session était
+           « when it reaches a correct structure the atoms don't move anymore » : le rapport
+           DIT donc la vitesse thermique du palier (√(R·T/m)) et le plafond de couple qui la
+           suit, au lieu de laisser croire que la température ne fait que se lire. */
+        + ` 🌡 speed scale √(R·T/m) = ${run.temperature && Number.isFinite(run.temperature.thermal) ? run.temperature.thermal.toFixed(1) : '—'} °/ps`
+        + ` (m = ${STRUCTURE_CALC_MD_MASS}), and the field's ceiling is the torque that reverses it IN ONE STEP`
+        + ` (f·√(R·T·m)/${run.windowed ? 'dt_eff' : 'h'} = ${run.torque && Number.isFinite(run.torque.wall) ? run.torque.wall.toFixed(3) : '—'} kcal/mol·deg`
+        + `, capped at ${run.torque && Number.isFinite(run.torque.dynamic) ? run.torque.dynamic.toFixed(3) : '—'}) —`
+        + ' the temperature you asked for is what makes the atoms move, so it does not settle in a minimum,'
+        + ' and that ceiling is what makes a van der Waals wall a WALL (a smaller budget lets two atoms cross'
+        + ' each other: the field could not answer the thermal kick).'
+        + ' ⚒ Minimise from here lands on a minimum of the same field; ↺ Undo torsion puts the molecule back.');
+      if (ramaIsShown()) readRamachandran();   // le graphe suit ce que la dynamique vient d'écrire
+    },
+  });
+};
+
+/** ⚒ LA MINIMISATION — l'affinage final : la même descente dihédrale que le module
+ *  applique en fin de départ (chaque charnière essayée de part et d'autre, pas divisé par
+ *  deux), sur le MÊME champ et avec la MÊME longe. Elle part d'où la molécule est. */
+const runMinimise = () => {
+  /* ⚠ LE GRAPHE DES MOTEURS ICI AUSSI — c'est le geste que la demande d'origine visait
+     (« I only want the disulphide to be at the default bond length after minimization ») :
+     la fausse liaison SG–SG d'un pont étiré en est retirée, donc les charnières entre les
+     deux Cys redeviennent des canaux et le pont se referme (voir `calcEngineGeometry`). */
+  const now = calcEngineGeometry();
+  if (!now) {
+    setCalcMsg('✕ There is no molecule on screen — load a structure first.');
+    return;
+  }
+  const { comp, structure, geom } = now;
+  /* 💧 LA BOÎTE SE DESSINE ICI AUSSI (voir `calcDrawWaterBox`) — le ⚒ descend le même champ
+     que le ▶ MD, donc il voit le même solvant, et la même boîte se met à l'écran. */
+  calcDrawWaterBox(geom).catch(() => {});
+  /* ⚖ LA MINIMISATION AUSSI (les lignes complètes de poids non nul) : elle CONVERGE les
+     distances, donc elle doit lire exactement ce que la table pèse. */
+  const list = calcFieldRows().filter((r) => r.i < geom.count && r.j < geom.count);
+  const base = Array.from(geom.positions);
+  const held = calcHeldPairs(geom, list);
+  /* ⚖ …ET LA MÊME COMPARAISON QUE LE ▶ MD : la minimisation CONVERGE les distances, donc
+     c'est elle qui montre le plus clairement ce que le poids ⚖ d'une ligne a fait. */
+  const restBefore = restraintReportOf({ positions: base, restraints: list });
+  const before = torsionSnapshotOf(structure);
+  torsionUndoRef.current = {
+    comp, structure, count: before ? before.length / 3 : 0, flat: before,
+    label: `⚒ minimisation · ${calcMinimise} sweeps · step ${calcMinStep}° → ${calcMinStepFloor}° · ω ${calcOmegaFree ? 'free to vary' : 'held trans'}`,
+  };
+  /* ■ LA MÊME PAGE BLANCHE QUE LES DEUX AUTRES GESTES — le ⚒ partage `calcMsg` avec le 🧬 et le
+     ▶ MD, donc il efface un rapport qui n'est pas le sien (voir `runStructureCalculation`). */
+  setCalcMsg('');
+  setCalcForce(null);   // le tableau du ⟳ d'avant parle d'une géométrie qui n'est plus
+  setGestureMsgOpen(false);
+  setMdBusy(true);   // le témoin de LA FENÊTRE 🌡 MD (le ⏹ du 🧬 garde le sien : `calcBusy`)
+  setCalcShown(0);
+  setMdProgress(`⚒ minimising …${disulfideConductedNote()}`);
+  pumpMotion({
+    frames: minimizeFrames({
+      positions: base, elements: geom.elements, bonds: geom.bonds,
+      restraints: calcRestraintTermsOf(list),
+      leash: held, rounds: calcMinimise,
+      /* ⚒ LES TROIS RÉGLAGES NEUFS — la demande de cette session : « Minimize should have
+         more controls (number of steps, criteria to converge, etc) ». Ils descendent TELS
+         QUELLES que le bloc « ⚒ settings » les affiche : le pas initial, le PLANCHER qui
+         décide de la convergence (la descente divise le pas par deux dès qu'un balayage
+         n'améliore plus rien et s'arrête sous ce plancher), et les essais par charnière. */
+      step: calcMinStep, stepFloor: calcMinStepFloor, tries: calcMinTries,
+      /* ⛓ …ET LES CONTRAINTES DE DIHÈDRE DE LA STRUCTURE SECONDAIRE IMPOSÉE : c'est la
+         minimisation qui les CONVERGE, comme les distances. */
+      dihedrals: calcDihedrals,
+      /* 🪢 L'OPTION « ω VARIE » — le réglage du panneau : coché, la descente peut PAYER un
+         peu de barrière d'ω pour gagner ailleurs (une distance demandée, un φ/ψ imposé, un
+         empilement), comme elle arbitre déjà les autres familles du champ. */
+      freeOmega: calcOmegaFree,
+      /* 💧 LE MÊME DIÉLECTRIQUE QUE LE ▶ MD, ET 🎯 LA MÊME FONCTION CIBLE — le ⚒ descend
+         le champ que le panneau affiche, sinon deux gestes sur la même molécule ne
+         parleraient pas du même monde. */
+      dielectric: mdSolventOf().dielectric,
+      targetFunction: calcTargetFunction,
+      /* 🧪 …ET LA CHIMIE DU CHAMP — la descente lit le pH et la force ionique du panneau ⚙,
+         comme le ▶ Run, le ▶ MD et le ⟳ : un minimum trouvé sous une chimie ne peut pas être
+         lu sous une autre (voir §2bis et §4bis du champ). */
+      ph: calcPhOf(), ionicStrength: calcIonicOf(),
+    }),
+    comp, structure,
+    head: '⚒ Minimise',
+    /* 👁 LE ⚒ SE REGARDE AUSSI — sa propre infobulle promet que « the 🪢 plot follows the
+       descent image by image », et une descente de quelques balayages est courte : elle
+       s'écrit donc toujours à l'écran, comme le ▶ MD de la fenêtre, sans dépendre du 👁 du
+       🧬 (voir `pumpMotion`). */
+    watch: true,
+    onEnd: (run) => {
+      if (!run || !run.ok) {
+        setCalcMsg(`✕ The minimisation refused: ${run && run.reason === 'no-channel'
+          ? 'this molecule has no rotatable bond to turn.' : 'nothing to do.'}`);
+        return;
+      }
+      setCalcForce(null);
+      /* LA MÊME RELECTURE DES DISTANCES ICI — c'est la minimisation qui les CONVERGE :
+         le rapport dit combien sont dans la tolérance après l'affinage. Les φ/ψ imposés
+         sont relus par la MÊME lecture que le champ (`dihedralPenaltyOf`). */
+      const rep = restraintReportOf({ positions: run.positions, restraints: list });
+      const dh = dihedralPenaltyOf({ positions: run.positions, dihedrals: calcDihedrals });
+      setCalcMsg(`✓ ⚒ Minimisation · ${run.sweeps} sweep${run.sweeps === 1 ? '' : 's'}`
+        + ` (${run.accepted} accepted moves) · energy ${run.cost.before.toFixed(2)} → ${run.cost.after.toFixed(2)}`
+        + `${rep.count ? ` · distances: ${rep.satisfied}/${rep.count} within ± ${rep.tolerance} Å` : ''}`
+        + `${rep.count && rep.violations ? ` (worst ${rep.worst.abs.toFixed(2)} Å outside)` : ''}`
+        + `${dh.count ? ` · ⛓ φ/ψ imposed: ${dh.satisfied}/${dh.count} within ± ${dh.tolerance}°`
+          + `${dh.violations ? ` (worst ${dh.worst.over.toFixed(1)}° outside)` : ''}` : ''}`
+        + ` · step ${calcMinStep}° → ${calcMinStepFloor}° floor, ${calcMinTries} tr${calcMinTries === 1 ? 'y' : 'ies'} per hinge`
+        + ` · step down to ${run.step.toFixed(2)}°`
+        + ` · ${run.reason === 'converged' ? 'it stopped on the step floor' : 'the sweep budget ran out'}`
+        + ` · 🪢 ω ${run.omegaFree
+          ? `free to vary (the descent could trade a little ω barrier for a distance) — it cost ${run.omega ? run.omega.penalty.toFixed(2) : 0} kcal/mol`
+          : `held trans: no move could make it worse (${run.omega ? run.omega.penalty.toFixed(2) : 0} kcal/mol)`}`
+        + `${run.walls.count ? ` · ${run.walls.count} distance${run.walls.count === 1 ? '' : 's'} held by the leash` : ''}.`
+        + calcRestraintEffect(restBefore, rep, list)
+        + calcBoxNote(geom)
+        /* 🧪 LA CHIMIE DE CETTE DESCENTE — la même ligne que le ▶ MD (`run.chemistry`). */
+        + calcChemNote(run.chemistry)
+        + calcTargetFunctionNote(calcTargetFunction)
+        + ' ↺ Undo torsion puts the molecule back exactly where it was.');
+      if (ramaIsShown()) readRamachandran();   // le graphe suit la conformation que le ⚒ vient d'écrire
+    },
+  });
+};
+
+/** LA STRUCTURE À L'ÉCRAN A-T-ELLE ÉTÉ DÉPLACÉE À LA MAIN ? Le rapport de la torsion
+ *  doit LE DIRE : rejouer un glisser (changement d'image, ⏮ du lecteur) réinstalle les
+ *  coordonnées que ce glisser connaît, donc une torsion appliquée après lui n'y
+ *  survivrait pas. Mieux vaut l'annoncer au moment du geste que le laisser découvrir. */
+const structureWasDragged = (structure) => {
+  let dragged = false;
+  partMoveRef.current.forEach((rec) => {
+    if (dragged || !rec || rec.structure !== structure) return;
+    if (!isIdentityMove(rec)) dragged = true;
+  });
+  return dragged;
+};
+
+/** COMMITTER UN PLAN DE TORSION — le seul chemin d'écriture : vérifications, écriture
+ *  des atomes tournés, journal ↺, et le rapport que le panneau affiche. Un plan refusé
+ *  n'écrit RIEN et rend la raison du module telle quelle (`torsionWhy`, qui la traduit
+ *  en une phrase : jamais un diagnostic inventé ici). */
+const commitTorsion = (r, plan, label) => {
+  if (!r || !r.ok) {
+    setTorsionClosest(null);
+    setTorsionMsg(`✕ ${(r && r.say) || torsionWhy(plan && plan.reason)}`);
+    return false;
+  }
+  if (!plan) {
+    setTorsionClosest(null);
+    setTorsionMsg('✕ The torsion could not be planned — nothing was changed.');
+    return false;
+  }
+  if (!plan.ok) {
+    const extra = plan.reason === 'unreachable' && plan.solved
+      ? ` Turning the bond brings the two atoms within ${torsionAng(plan.solved.closestDistance)}`
+        + ` — ${plan.solved.tooFar ? 'they cannot be pulled further apart' : 'they cannot be brought closer'}`
+        + ` (a rotation of ${torsionDeg(plan.solved.closestDeltaDeg)})`
+      : '';
+    setTorsionMsg(`✕ ${torsionWhy(plan.reason)}${extra}.`);
+    setTorsionClosest(plan.reason === 'unreachable' && plan.solved
+      && Number.isFinite(Number(plan.solved.closestDeltaDeg))
+      ? { deltaDeg: plan.solved.closestDeltaDeg, closest: plan.solved.closestDistance, target: plan.targetDistance }
+      : null);
+    return false;
+  }
+  if (!plan.flatPositions) {
+    setTorsionClosest(null);
+    setTorsionMsg('✕ The turned coordinates could not be built — nothing was changed.');
+    return false;
+  }
+  const before = torsionSnapshotOf(r.structure);       // AVANT l'écriture : le ↺
+  if (!writeStructurePositions(r.comp, r.moved, plan.flatPositions)) {
+    setTorsionClosest(null);
+    setTorsionMsg('✕ The structure refused the new coordinates — nothing was changed.');
+    return false;
+  }
+  torsionUndoRef.current = {
+    comp: r.comp,
+    structure: r.structure,
+    count: before ? before.length / 3 : 0,
+    flat: before,
+    label,
+  };
+  setTorsionClosest(null);
+  const warn = structureWasDragged(r.structure)
+    ? ' ⚠ this molecule had also been DRAGGED by hand: re-playing that drag (another frame, the ⏮ button) puts its placement back — the same ✏️ Torsion gesture is always there to redo this.'
+    : '';
+  setTorsionMsg(`${torsionReportOf(r.slots, plan)}${warn}`);
+  return true;
+};
+
+/** ✏️ Dihedral → set it. The one number the panel needs is the dihedral of A · B · C · D. */
+const applyTorsionAngle = () => {
+  const r = torsionPicks();
+  if (!r.ok) { setTorsionClosest(null); setTorsionMsg(`✕ ${r.say}`); return; }
+  const want = Number(String(torsionAngleDraft).replace(',', '.'));
+  if (!Number.isFinite(want)) {
+    setTorsionClosest(null);
+    setTorsionMsg('✕ Type the dihedral you want first, in degrees (−180 to 180) — then ↵ or Set.');
+    return;
+  }
+  const side = torsionMovingOf(r);
+  if (!side.ok) { setTorsionClosest(null); setTorsionMsg(`✕ ${torsionWhy(side.reason)}.`); return; }
+  const pts = torsionPointsOf(r.structure, side.moved);
+  if (!pts) { setTorsionMsg('✕ The atoms that must turn can no longer be read — pick the four again.'); return; }
+  const plan = planTorsion({ points: r.points, moved: pts, request: { angleDeg: want } });
+  commitTorsion({ ...r, moved: side.moved }, plan, `dihedral ${torsionDeg(want)}`);
+};
+
+/** 📏 Distance A–D → reach it. L'angle est RÉSOLU en forme fermée, jamais balayé. */
+const applyTorsionDistance = () => {
+  const r = torsionPicks();
+  if (!r.ok) { setTorsionClosest(null); setTorsionMsg(`✕ ${r.say}`); return; }
+  const want = Number(String(torsionDistDraft).replace(',', '.'));
+  if (!Number.isFinite(want) || want <= 0) {
+    setTorsionClosest(null);
+    setTorsionMsg('✕ Type the distance A–D you want first, in ångströms (a positive number) — then ↵ or Reach.');
+    return;
+  }
+  const side = torsionMovingOf(r);
+  if (!side.ok) { setTorsionClosest(null); setTorsionMsg(`✕ ${torsionWhy(side.reason)}.`); return; }
+  const pts = torsionPointsOf(r.structure, side.moved);
+  if (!pts) { setTorsionMsg('✕ The atoms that must turn can no longer be read — pick the four again.'); return; }
+  const plan = planTorsion({ points: r.points, moved: pts, request: { distance: want } });
+  commitTorsion({ ...r, moved: side.moved }, plan, `A–D ${torsionAng(want)}`);
+};
+
+/** ↳ APPLY CLOSEST — la rotation que le rapport vient de calculer, quand la distance
+ *  demandée est hors d'atteinte : le chiffre refusé devient le geste qui en approche.
+ *  Rien n'est deviné : `deltaDeg` est celui du module, `rotateByDeg` le réemploie tel quel. */
+const applyClosestTorsion = () => {
+  const c = torsionClosest;
+  const r = torsionPicks();
+  if (!c || !r.ok) {
+    setTorsionClosest(null);
+    setTorsionMsg('✕ Nothing left to approach — pick the four atoms again.');
+    return;
+  }
+  const side = torsionMovingOf(r);
+  if (!side.ok) { setTorsionClosest(null); setTorsionMsg(`✕ ${torsionWhy(side.reason)}.`); return; }
+  const pts = torsionPointsOf(r.structure, side.moved);
+  if (!pts) { setTorsionMsg('✕ The atoms that must turn can no longer be read — pick the four again.'); return; }
+  const plan = planTorsion({ points: r.points, moved: pts, request: { rotateByDeg: c.deltaDeg } });
+  if (commitTorsion({ ...r, moved: side.moved }, plan, `the closest approach to A–D ${torsionAng(c.target)}`)) {
+    setTorsionMsg(`↳ ${torsionReportOf(r.slots, plan)} — the distance you typed (${torsionAng(c.target)}) cannot be reached on this circle: this is the closest the bond can come.`);
+  }
+};
+
+/** ↺ UNDO — la torsion défaite atome par atome, sur les coordonnées d'AVANT. Le ↺ ne
+ *  touche ni les picks ni les chiffres tapés : il défait le geste, pas la question. */
+const undoLastTorsion = () => {
+  const rec = torsionUndoRef.current;
+  const comp = componentRef.current;
+  if (!rec || !rec.flat || !rec.count) {
+    setTorsionMsg('↺ Nothing to undo — no torsion has been applied from this panel yet.');
+    return;
+  }
+  if (!comp || comp !== rec.comp || comp.structure !== rec.structure) {
+    setTorsionMsg('↺ That structure is no longer the one on screen (it was reloaded, or another molecule is shown) — the ↺ of its own space is the gesture that resets it.');
+    return;
+  }
+  const idxs = [];
+  for (let i = 0; i < rec.count; i++) idxs.push(i);
+  if (!writeStructurePositions(comp, idxs, rec.flat)) {
+    setTorsionMsg('↺ The coordinates could not be written back — the ↺ of the molecule’s own space resets it.');
+    return;
+  }
+  torsionUndoRef.current = null;
+  setTorsionClosest(null);
+  setTorsionMsg(`↺ ${rec.label || 'The torsion'} was undone — every atom is back exactly where it was before it.`);
+};
+
+/** LA LECTURE VIVANTE DU PANNEAU — le dihèdre et la distance A–D des quatre atomes
+ *  PIOUÉS, relus sur la structure à chaque rendu : après un geste, le « maintenant »
+ *  montre ce que les coordonnées portent, pas ce qui a été demandé. `null` tant que les
+ *  quatre atomes ne sont pas là (le panneau écrit alors sa propre invite). */
+const torsionReading = () => {
+  const r = torsionPicks();
+  if (!r.ok) return null;
+  const deg = dihedralDeg(r.points[0], r.points[1], r.points[2], r.points[3]);
+  const dist = distanceOf(r.points[0], r.points[3]);
+  return { deg, dist };
+};
+
+
 
 useEffect(() => {
 let cancelled = false;
@@ -8857,6 +13449,7 @@ registerNucleicMotifScheme(NGL); // 🧬 G-quadruplex · hairpin over the 2° st
 registerResidueScheme(NGL);      // 🧬 one colour per residue (nucleic = its base)
 registerBaseTypeScheme(NGL);     // 🧬 one colour per BASE TYPE (A · C · G · T · U)
 registerChargeScheme(NGL);       // ⚡ − / 0 / + of an ion
+registerAtomChargeScheme(NGL);   // ⚡ the PARTIAL charge of EVERY atom (lab-atom-charge)
 const stage = new NGL.Stage(containerRef.current, { backgroundColor: '#f8fafc' });
 stageRef.current = stage;
 applyFog(); // honour the user's fog preference (off by default) right away
@@ -8864,8 +13457,98 @@ applyClip(); // honour the user's clipping-plane preference (off by default)
 applyShadowSettings(); // honour the user's shadow preference (off by default)
 
 stage.signals.clicked.add((pickingProxy) => {
-if (!pickingProxy || !pickingProxy.atom) return;
+/* ⬚ LE CLIC SUR LE FOND — la demande : « clicking on background should display
+   the options underneath and disappear when background is clicked again ». NGL
+   dispatche `clicked` MÊME quand rien n'a été piqué (PickingControls._onClick
+   fait `stage.signals.clicked.dispatch(pickingProxy)` sans condition, ngl 2.4) :
+   un pickingProxy SANS atome est un clic sur le fond, et il fait les deux gestes
+   de la demande — un clic ouvre le panneau du fond, le suivant le referme (un
+   seul état, donc un seul `setBgPanelOpen((v) => !v)`).
+   ⚠ UN SEUL DES DEUX GESTES À LA FOIS : pendant un piquage (⌖ la paire, ✏️ la
+   torsion, 📏 Measure, ✎ Rename) les clics appartiennent au piquage — même
+   quand ils tombent À CÔTÉ d'un atome, puisque c'est justement ainsi qu'on
+   vise le fond sans piquer l'atome voisin — donc aucun d'eux n'ouvre le
+   panneau du fond. */
+if (!pickingProxy || !pickingProxy.atom) {
+  if (pairPickRef.current || torsionPickRef.current || measureModeRef.current || renameModeRef.current) return;
+  setBgPanelOpen((v) => !v);
+  return;
+}
 const atom = pickingProxy.atom;
+// ⌖ Structure calculation: the distance table has its OWN pair picker — TWO atoms (A · B),
+// painted BLUE, with its own state (pairPickRef/pairAtomsRef): the four picks of ✏️ Torsion
+// are not read here and not touched by this click. The SECOND atom completes the pair, the
+// picker disarms by itself and the line is added to the table (it can then be edited, or
+// dropped with ✕); the two blue atoms stay painted, because the line is about them.
+if (pairPickRef.current) {
+  const comp = pickingProxy.component;
+  if (!comp) return;
+  const slot = pairPickRef.current;
+  const taken = pairAtomsRef.current;
+  const first = taken[0];
+  if (first && first.comp !== comp) {
+    setPairMsg(`⚠ The two atoms of a line must belong to the SAME structure — ${first.label} and this atom are in two different molecules. Pick both in one molecule, or stop ⌖ and start again.`);
+    return;
+  }
+  const label = atomPickName(atom);
+  const next = taken.slice(0, slot - 1);
+  if (next.some((s) => s.comp === comp && s.atomIndex === atom.index)) {
+    setPairMsg(`⚠ ${label} is already one of the two atoms of this line — A and B must be two different atoms.`);
+    return;
+  }
+  next.push({ comp, atomIndex: atom.index, label });
+  putPairAtoms(next);
+  if (next.length < 2) {
+    pairPickRef.current = 2;
+    setPairPick(2);
+    setPairMsg(`1 of 2 picked (${label}) — now click atom B : the second atom of the distance.`);
+    return;
+  }
+  pairPickRef.current = 0;             // the second atom completes the pair : the picker disarms
+  setPairPick(0);
+  putPairAtoms(next);                  // les deux atomes restent BLEUS : la ligne parle d'eux
+  calcAddPairRow();
+  return;                              // picking a pair replaces atom-click selection
+}
+// ✏️ Torsion: a click fills one slot of A · B · C · D instead of selecting an atom.
+// The four slots must live in ONE structure (a torsion spans one molecule) and no atom
+// can hold two slots ; once the fourth is in, the picker disarms by itself and the
+// panel is told the dihedral/distance the four atoms have RIGHT NOW.
+if (torsionPickRef.current) {
+  const comp = pickingProxy.component;
+  if (!comp) return;
+  const slot = torsionPickRef.current;
+  const taken = torsionAtomsRef.current;
+  const first = taken[0];
+  if (first && first.comp !== comp) {
+    setTorsionMsg(`⚠ The four atoms must belong to the SAME structure — ${first.label} and this atom are in two different molecules. Pick A · B · C · D in one molecule, or Clear and start again.`);
+    return;
+  }
+  const label = atomPickName(atom);
+  const next = taken.slice(0, slot - 1);
+  if (next.some((s) => s.comp === comp && s.atomIndex === atom.index)) {
+    setTorsionMsg(`⚠ ${label} is already one of the four atoms — each of A · B · C · D must be a different atom.`);
+    return;
+  }
+  next.push({ comp, atomIndex: atom.index, label });
+  putTorsionAtoms(next);
+  if (next.length < 4) {
+    const n = next.length + 1;
+    torsionPickRef.current = n;
+    setTorsionPick(n);
+    setTorsionMsg(`${next.length} of 4 picked (${torsionQuadName(next)}) — now click atom ${TORSION_SLOT_LETTERS[n - 1]} : ${TORSION_SLOT_ROLES[n - 1]}.`);
+    return;
+  }
+  torsionPickRef.current = 0;         // the fourth atom fills the picker : it disarms
+  setTorsionPick(0);
+  const r = torsionPicks();
+  const deg = r.ok ? dihedralDeg(r.points[0], r.points[1], r.points[2], r.points[3]) : null;
+  const dist = r.ok ? distanceOf(r.points[0], r.points[3]) : null;
+  if (!torsionAngleDraftRef.current && Number.isFinite(deg)) setTorsionAngleText(String(Math.round(deg * 10) / 10));
+  setTorsionMsg(`✓ ${torsionQuadName(next)} — now: dihedral ${torsionDeg(deg)} · A–D ${torsionAng(dist)}. `
+    + 'Type the dihedral you want (°) and press Set, or the distance A–D (Å) and press Reach — the angle is solved for you.');
+  return;                              // picking a torsion replaces atom-click selection
+}
 // 📏 Measure mode: clicks pick distance endpoints instead of selecting atoms.
 if (measureModeRef.current) {
   const comp = pickingProxy.component;
@@ -8911,7 +13594,15 @@ return;
 }
 const atom = pickingProxy.atom;
 const mapped = mapAtomToNmrKeys(atom, parsedSeqRef.current, moleculeTypeRef.current, namingConventionRef.current);
-const label = mapped ? mapped.label : `${atom.resname || ''} ${atom.resno || ''} ${displayNameRef.current(atom)}`.trim();
+const name = mapped ? mapped.label : `${atom.resname || ''} ${atom.resno || ''} ${displayNameRef.current(atom)}`.trim();
+// …ET CE QUE L'ATOME PORTE : le nom seul ne dit pas qu'un oxygène de carbonyle
+// vaut −0,5 e ni qu'un sodium vaut +1 — or c'est justement ce qu'on vient lire
+// en survolant. La charge sort de la MÊME table que le ⚡ ESP et « Atom charge »
+// (`atomHoverChargeOf` → `espChargesFor`) : une seule table, donc jamais deux
+// réponses sur le même atome. Une molécule dont rien ne décrit les charges ne
+// dit rien de plus : `hoverAtomReadout` n'écrit la charge que lorsqu'elle existe.
+const structure = (pickingProxy.component && pickingProxy.component.structure) || atom.structure || null;
+const label = hoverAtomReadout(name, atomHoverChargeOf(atom, structure));
 if (label !== lastHover) { lastHover = label; setHoverInfo(label); }
 });
 
@@ -8969,16 +13660,6 @@ const flashSeqBuildMsg = (m) => {
   setSeqBuildMsg(m);
   clearTimeout(seqBuildTimerRef.current);
   seqBuildTimerRef.current = setTimeout(() => setSeqBuildMsg(''), 6000);
-};
-/* Le message de « ⚭ Fold for disulfides », À CÔTÉ de son bouton : il nomme les
-   ponts obtenus avec leur distance Sγ–Sγ et dit franchement quand un pont n'a
-   PAS pu être fermé (le module ne prétend jamais avoir réussi). */
-const [disulfideFoldMsg, setDisulfideFoldMsg] = useState('');
-const disulfideFoldTimerRef = useRef(null);
-const flashDisulfideFoldMsg = (m) => {
-  setDisulfideFoldMsg(m);
-  clearTimeout(disulfideFoldTimerRef.current);
-  disulfideFoldTimerRef.current = setTimeout(() => setDisulfideFoldMsg(''), 9000);
 };
 /* ⚭ « Disulfides: shown / hidden » — L'INTERRUPTEUR DU DESSIN DU PONT.
    Ce qui change entre deux clics est UN booléen : quand il est faux, la règle
@@ -9101,6 +13782,7 @@ if (!structureText) {
     clearExtraMolecules();
     try { if (stageRef.current) stageRef.current.removeAllComponents(); } catch {}
     clearMeasurements(); // drawn distance lines die with their component
+    clearHydrogenBonds(); // …et les lignes de 💧 H-bonds avec elle (mêmes overlays, même sort)
     componentRef.current = null;
     highlightCompRef.current = null;
     manualHighlightCompRef.current = null;
@@ -9227,6 +13909,12 @@ const sectionColorParams = (look, kind) => {
     case 'lipidtype': return schemeParam(lipidClassSchemeKey || elementSchemeKey, 'element');
     case 'sugar': return schemeParam(sugarSchemeKey, 'element');
     case 'charge': return schemeParam(chargeSchemeKey || elementSchemeKey, 'element');
+    // « Atom charge » — the PARTIAL charge of every atom (the very table the ⚡ ESP of
+    // PART 4.0 reads, atom by atom instead of summed over a radius), painted on the
+    // three ⚙ swatches of « Charge »: negative → neutral → positive, ±1 e full scale
+    // (see defineAtomChargeScheme above). The fallback is NGL's own `partialcharge`
+    // colormaker — the closest native reading — so a row is never left without colour.
+    case 'atomcharge': return schemeParam(atomChargeSchemeKey, 'partialcharge');
     case 'hydrophobicity': return { colorScheme: 'hydrophobicity' };
     // « Rainbow (first → last) » is the rainbow BY RESIDUE. NGL has NO `rainbow`
     // COLORMAKER — « rainbow » is one of its color SCALES (the registry only holds
@@ -9266,12 +13954,21 @@ const sectionStyleReps = (style, kind, look) => {
     case 'ball+stick': return [{ type: 'ball+stick', params: { multipleBond: true, aspectRatio: 1.1 * sphere, radiusSize: BALLSTICK_BOND_RADIUS * bond } }];
     case 'licorice': return [{ type: 'licorice', params: { radiusSize: LICORICE_BOND_RADIUS * bond } }];
     case 'line': return [{ type: 'line', params: { linewidth: Math.max(1, Math.round(2 * bond)) } }];
+    /* ⚠ LA TAILLE D'UNE BILLE S'ÉCRIT `radiusScale`, JAMAIS `scale`. Mesuré sur le
+       paquet installé : NGL 2.4 n'a PAS de paramètre `scale` — il n'est pas dans la
+       table de la représentation, donc `Representation#setParameters` le saute, et
+       le rayon vient de `RadiusFactory#atomRadius` = `min(rayonVdW × radiusScale,
+       10)`. « CPK » demandait `scale: 0.6` depuis toujours : il dessinait donc des
+       sphères de PLEIN rayon de van der Waals, et l'ombre, elle, les mesurait à
+       0,6 Å — l'écart exact du rapport « spheric shadows ». Le facteur est
+       maintenant multiplié DANS `radiusScale`, le seul champ que NGL lit ET que le
+       proxy des ombres lit : l'ombre et l'encre ne peuvent plus différer. */
     // « CPK » IS spacefill, and an ION's « sphere » is the same representation
     // drawn at its full Van der Waals radius (an ion has no bonds to speak of).
-    case 'spacefill': return [{ type: 'spacefill', params: { radiusScale: sphere, scale: kind === 'ion' ? 1 : 0.6 } }];
+    case 'spacefill': return [{ type: 'spacefill', params: { radiusScale: sphere * (kind === 'ion' ? 1 : 0.6) } }];
     // « Sphere » = PyMOL's « show spheres »: the SAME NGL spacefill, drawn at the
     // FULL Van der Waals radius — the row's R◯ multiplies it like any other style.
-    case 'sphere': return [{ type: 'spacefill', params: { radiusScale: sphere, scale: 1 } }];
+    case 'sphere': return [{ type: 'spacefill', params: { radiusScale: sphere } }];
     case 'base': return [{ type: 'base', params: { radiusSize: BASE_BOND_RADIUS * bond } }];
     case 'surface': return [{ type: 'surface', params: { surfaceType: 'av', opacity: Number((1 - Math.min(1, Math.max(0, (look && look.opacity) || 0))).toFixed(3)), ...SEE_THROUGH_SURFACE } }];
     case 'mesh': return [{ type: 'surface', params: { surfaceType: 'av', wireframe: true, opacity: 1 } }];
@@ -9456,9 +14153,30 @@ const sectionRowSele = (structure, sec, sub, opts = {}) => {
     // show the bond to phosphate »: the ACYL row takes the ester oxygens it hangs
     // from (O21 · O31, of the glycerol), the GLYCEROL row the acyl carbonyls and the
     // oxygen that carries the phosphate, the HEADGROUP row the C3 of the glycerol.
+    // « Heads (N · O) » et « P » (les rapports de cette session) dessinent, elles, les
+    // SEULS atomes polaires d'une tête QUI NE PENDENT PAS D'UN PHOSPHORE — l'azote et les
+    // oxygènes « libres » d'un côté, LE PHOSPHORE de l'autre (« una classe a parte con solo
+    // il fosforo ») — que la même marche a classés « head » : trois rangées, un seul
+    // classement.
     const parts = lipidSubSelections(structure, base);
     const within = anchored ? moleculeIndicesOf(structure, base) : null;
     if (sub === 'head') return anchoredPartSele(structure, parts.headAtoms, within, anchored);
+    /* ⚠ LA RANGÉE « HEADS » N'EST JAMAIS ANCRÉE — sa définition est CLOSE, et le rapport
+       de cette session le dit mot pour mot : « non deve contenere carboni come invece
+       adesso contiene ». Le pont d'une rangée (voir bridgeAtomIndices) ajoute les atomes
+       VOISINS auxquels les siens pendent : pour un POPC, le C3 du glycérol qui porte le
+       phosphate et les carbones de la choline qui portent l'azote — trois CARBONES qui
+       entraient donc dans la sélection de la rangée et se dessinaient en BILLES, avec la
+       couleur de la rangée. La liaison, elle, n'y gagne rien : le seul style offert par
+       cette rangée est la SPHÈRE (`STYLES.heads`), et une sphère ne dessine aucun bâton
+       — il n'y a donc rien à rattacher. La rangée est EXACTEMENT le jeu « heads », ses
+       propres atomes et rien d'autre. */
+    if (sub === 'heads') return anchoredPartSele(structure, parts.headsAtoms, within, false);
+    /* …ET « P » NON PLUS — ni pont ni ancre, pour exactement la même raison : ses atomes
+       sont des PHOSPHORES, le pont y aurait fait entrer les oxygènes et le C3 du glycérol
+       auxquels un phosphate pend, et une sphère ne dessine aucun bâton. La rangée est
+       EXACTEMENT le jeu « P » — le phosphore des têtes, rien de plus. */
+    if (sub === 'phosphorus') return anchoredPartSele(structure, parts.phosphorusAtoms, within, false);
     if (sub === 'tail') return anchoredPartSele(structure, parts.acylAtoms, within, anchored);
     if (sub === 'glycerol') return anchoredPartSele(structure, parts.glycerolAtoms, within, anchored);
   }
@@ -10333,7 +15051,7 @@ const buildCategoryReps = (comp) => {
     // and sticks share ONE radius, so the Bond radius is what acts on it.
     else if (bb === 'licorice') add('licorice', { sele: sels.protein, ...atomCol('protein'), ...stickGeom('protein', LICORICE_BOND_RADIUS) });
     else if (bb === 'lines') add('line', { sele: sels.protein, ...atomCol('protein'), ...lineGeom('protein') });
-    else if (bb === 'spheres') add('spacefill', { sele: sels.protein, ...atomCol('protein'), radiusScale: g.sphere, scale: 0.6 });
+    else if (bb === 'spheres') add('spacefill', { sele: sels.protein, ...atomCol('protein'), radiusScale: g.sphere * 0.6 });
     addSurface(sels.protein, 'protein', cs.protein.surfaceOpacity);
   }
 
@@ -10353,7 +15071,7 @@ const buildCategoryReps = (comp) => {
     else if (nb === 'licorice') add('licorice', { sele: sels.nucleic, ...stickCol, ...stickGeom('nucleic', LICORICE_BOND_RADIUS) });
     else if (nb === 'ball+stick') add('ball+stick', { sele: sels.nucleic, ...stickCol, multipleBond: true, aspectRatio: 1.1 * g.sphere, ...stickGeom('nucleic', BALLSTICK_BOND_RADIUS) });
     else if (nb === 'lines') add('line', { sele: sels.nucleic, ...stickCol, ...lineGeom('nucleic') });
-    else if (nb === 'spheres') add('spacefill', { sele: sels.nucleic, ...stickCol, radiusScale: g.sphere, scale: 0.6 });
+    else if (nb === 'spheres') add('spacefill', { sele: sels.nucleic, ...stickCol, radiusScale: g.sphere * 0.6 });
     // Bases: NGL's own `base` representation draws the filled base rungs (the
     // slabs / boxes of the DNA / RNA ladder); when the group colouring is ON the
     // rungs take the panel's « Bases » colour instead of the resname palette.
@@ -10381,7 +15099,7 @@ const buildCategoryReps = (comp) => {
     // old add('stick', …) threw and the sticks never appeared at all.
     else if (bases === 'sticks') add('licorice', { sele: 'nucleic and sidechain', ...stickCol, ...stickGeom('nucleic', LICORICE_BOND_RADIUS) });
     else if (bases === 'lines') add('line', { sele: 'nucleic and sidechain', ...stickCol, ...lineGeom('nucleic') });
-    else if (bases === 'spheres') add('spacefill', { sele: 'nucleic and sidechain', ...stickCol, radiusScale: g.sphere, scale: 0.6 });
+    else if (bases === 'spheres') add('spacefill', { sele: 'nucleic and sidechain', ...stickCol, radiusScale: g.sphere * 0.6 });
     addSurface(sels.nucleic, 'nucleic', cs.nucleic.surfaceOpacity);
   }
 
@@ -10410,8 +15128,8 @@ const buildCategoryReps = (comp) => {
       // the old add('stick', …) threw, so « Sticks » really means licorice.
       else if (style === 'stick' || style === 'sticks') add('licorice', { sele, ...col, ...stickGeom('lipid', LICORICE_BOND_RADIUS) });
       else if (style === 'lines' || style === 'line') add('line', { sele, ...col, ...lineGeom('lipid') });
-      else if (style === 'spheres') add('spacefill', { sele, ...col, radiusScale: g.sphere, scale: 0.4 });
-      else add('spacefill', { sele, ...col, radiusScale: g.sphere, scale: 0.6 });
+      else if (style === 'spheres') add('spacefill', { sele, ...col, radiusScale: g.sphere * 0.4 });
+      else add('spacefill', { sele, ...col, radiusScale: g.sphere * 0.6 });
     };
     // Headgroups = EVERY atom that is neither an acyl-chain atom nor a backbone
     // atom (the phosphate, the choline / ethanolamine part and their hydrogens).
@@ -10439,9 +15157,9 @@ const buildCategoryReps = (comp) => {
     // « Sticks » = licorice: NGL registers no `stick` representation (a `stick`
     // style silently drew NOTHING before this).
     else if (st === 'sticks') add('licorice', { sele: sugarSele, ...col, ...stickGeom('sugar', LICORICE_BOND_RADIUS) });
-    else if (st === 'spacefill') add('spacefill', { sele: sugarSele, ...col, radiusScale: g.sphere, scale: 0.7 });
+    else if (st === 'spacefill') add('spacefill', { sele: sugarSele, ...col, radiusScale: g.sphere * 0.7 });
     else if (st === 'lines') add('line', { sele: sugarSele, ...col, ...lineGeom('sugar') });
-    else if (st === 'spheres') add('spacefill', { sele: sugarSele, ...col, radiusScale: g.sphere, scale: 0.6 });
+    else if (st === 'spheres') add('spacefill', { sele: sugarSele, ...col, radiusScale: g.sphere * 0.6 });
     else if (st === 'surface') add('surface', { sele: sugarSele, ...col });
     addSurface(sugarSele, 'sugar', cs.sugar.surfaceOpacity);
   }
@@ -10455,9 +15173,9 @@ const buildCategoryReps = (comp) => {
     else if (st === 'licorice') add('licorice', { sele: organicSele, ...col, ...stickGeom('organic', LICORICE_BOND_RADIUS) });
     // « Sticks » = licorice (NGL registers no `stick` representation).
     else if (st === 'sticks') add('licorice', { sele: organicSele, ...col, ...stickGeom('organic', LICORICE_BOND_RADIUS) });
-    else if (st === 'spacefill') add('spacefill', { sele: organicSele, ...col, radiusScale: g.sphere, scale: 0.7 });
+    else if (st === 'spacefill') add('spacefill', { sele: organicSele, ...col, radiusScale: g.sphere * 0.7 });
     else if (st === 'lines') add('line', { sele: organicSele, ...col, ...lineGeom('organic') });
-    else if (st === 'spheres') add('spacefill', { sele: organicSele, ...col, radiusScale: g.sphere, scale: 0.6 });
+    else if (st === 'spheres') add('spacefill', { sele: organicSele, ...col, radiusScale: g.sphere * 0.6 });
     else if (st === 'surface') add('surface', { sele: organicSele, ...col });
     addSurface(organicSele, 'organic', cs.organic.surfaceOpacity);
   }
@@ -10467,15 +15185,24 @@ const buildCategoryReps = (comp) => {
     const ion = cs.other.ion || 'spheres';
     const col = atomCol('other');
     const g = catRadii(cs.other);
-    if (ion === 'spheres') add('spacefill', { sele: 'ion', ...col, radiusScale: g.sphere, scale: 0.8 });
+    if (ion === 'spheres') add('spacefill', { sele: 'ion', ...col, radiusScale: g.sphere * 0.8 });
     else if (ion === 'ball+stick') add('ball+stick', { sele: 'ion', ...col, multipleBond: true, aspectRatio: 2.0 * g.sphere, ...stickGeom('other', BALLSTICK_BOND_RADIUS) });
     else if (ion === 'lines') add('line', { sele: 'ion', ...col, ...lineGeom('other') });
-    else if (ion === 'dots') add('dot', { sele: 'ion', ...col });
+    /* ⚠ « DOTS » SONT DES `point` : NGL 2.4 n'enregistre AUCUNE représentation
+       `dot` (le registre du paquet installé s'arrête à … · line · point · ribbon
+       …), et demander `dot` LÈVE — le `try` d'`add` avalait l'erreur, donc les
+       trois « pointillés » du viewer ne dessinaient RIEN DU TOUT (les ions, l'eau,
+       et tout le style léger « dots » d'un grand système, qui apparaissait vide).
+       Un point est un point ÉCRAN (`pointSize`, `sizeAttenuation`), sans rayon en
+       ångströms : le module des ombres le traite en cheveu (voir `point` dans
+       PROXY_STROKE_BY_TYPE) au lieu de lui donner la bille de 1,7 Å du repli vdW,
+       qui remplissait l'ombre d'une nuée de billes — « a shadow on a plane ». */
+    else if (ion === 'dots') add('point', { sele: 'ion', ...col, pointSize: 1.5 * g.sphere, sizeAttenuation: true });
     const water = cs.other.water || 'hidden';
-    if (water === 'dots') add('dot', { sele: 'water', ...col });
+    if (water === 'dots') add('point', { sele: 'water', ...col, pointSize: 1.5 * g.sphere, sizeAttenuation: true });
     else if (water === 'points') add('point', { sele: 'water', ...col, pointSize: 1 * g.sphere, sizeAttenuation: true });
     else if (water === 'lines') add('line', { sele: 'water', ...col, ...lineGeom('other') });
-    else if (water === 'spheres') add('spacefill', { sele: 'water', ...col, radiusScale: g.sphere, scale: 0.25 });
+    else if (water === 'spheres') add('spacefill', { sele: 'water', ...col, radiusScale: g.sphere * 0.25 });
     else if (water === 'ball+stick') add('ball+stick', { sele: 'water', ...col, multipleBond: true, aspectRatio: 2.0 * g.sphere, ...stickGeom('other', BALLSTICK_BOND_RADIUS) });
   }
   // Water SURFACE — applied on its own, never inside the block above: the solvent
@@ -10535,8 +15262,8 @@ const addDefaultReps = (component, molKey = 'main') => {
        système : « in all molecules » est la demande, et le drapeau est le même. */
     const lightParams = (extra) => withoutHydrogensParams({ sele, colorScheme: 'element', ...extra }, hideHydrogensRef.current === true);
     try {
-      if (ls === 'spheres') trackBase(component.addRepresentation('spacefill', lightParams({ scale: 0.25, quality: 'low' })));
-      else if (ls === 'dots') trackBase(component.addRepresentation('dot', lightParams({})));
+      if (ls === 'spheres') trackBase(component.addRepresentation('spacefill', lightParams({ radiusScale: 0.25, quality: 'low' })));
+      else if (ls === 'dots') trackBase(component.addRepresentation('point', lightParams({ pointSize: 1.5, sizeAttenuation: true })));
       else trackBase(component.addRepresentation('line', lightParams({})));
     } catch { /* lightweight style best-effort */ }
     return;
@@ -10763,6 +15490,209 @@ const espToggle = (key) => {
   else espEnable(key);
 };
 
+/* ── 💧 H-BONDS — LE BOUTON DE 📏 ANALYSIS ──────────────────────────────────
+   La demande : « in the section analysis of the viewer, add a button to display
+   H-bonds. » Une LECTURE, exactement comme 📏 Measure juste à côté et ⚡ ESP juste
+   en dessous : la règle — donneurs N · O · S, accepteurs, r(H···A) ≤ 2,5 Å et
+   angle D–H···A ≥ 120° quand la structure porte ses hydrogènes, la distance des
+   lourds (r(D···A) ≤ 3,5 Å) sinon — est celle d'utils/hydrogenBonds.js, et c'est
+   la molécule CHOISIE dans la barre des Molecules qui est lue (le même
+   `resolveMolComp` que ⚡ ESP).
+
+   Le dessin est UNE représentation `distance` de NGL portant TOUS les couples
+   donneur → accepteur : les lignes tournent, zooment et se cachent avec leur
+   molécule, et rien n'est écrit dans la géométrie. Chaque ligne est étiquetée de
+   sa distance tant qu'elles sont peu nombreuses (HBOND_LABEL_MAX) : au-delà, un
+   mur de chiffres cacherait la structure qu'on est venu regarder — les lignes
+   seules disent alors le réseau.
+
+   `clearHydrogenBonds` suit `clearMeasurements` partout : une ligne qui survit à
+   la molécule qu'elle relie serait un mensonge.
+
+   …ET LE RÉSEAU SUIT LA GÉOMÉTRIE (la demande de cette session : « the H-bonds
+   should follow the geometry during MD »). Un réseau calculé UNE FOIS au clic est
+   faux dès la première image d'un ▶ MD : les lignes, elles, suivent leurs deux
+   atomes, mais le CHOIX des couples restait gelé — un pont qui se forme
+   n'apparaissait jamais, un pont qui casse restait dessiné. `refreshHydrogenBonds`
+   (juste après le geste du bouton) relit donc le réseau là où les coordonnées
+   arrivent, à un rythme réglé par le coût de la scène. */
+const HBOND_READ_OPTS = { excludeWater: true };   // le solvant noierait le reste (la note le dit)
+const HBOND_LINE_COLOR = 0xfbbf24;   // ambre : la ligne D···A de chaque pont
+const HBOND_LABEL_COLOR = 0xfde68a;  // …et le chiffre qui va avec (tant qu'il y en a peu)
+const clearHydrogenBonds = () => {
+  const rep = hbondRepRef.current;
+  hbondRepRef.current = null;
+  /* ⏱ LE RYTHME REPART À ZÉRO (voir refreshHydrogenBonds) : l'intervalle, l'instant
+     du dernier balayage, l'empreinte du réseau et la phrase écrite. Rallumer 💧
+     balaie donc TOUT DE SUITE, et la première image d'un nouveau geste n'hérite pas
+     de l'intervalle lent de la scène précédente. Aucun écouteur à retirer : le
+     réseau n'en a jamais posé (il se fait relire par le viewer, voir les trois
+     appels). */
+  hbondLiveRef.current = { at: 0, gap: 0, sig: '', msg: '' };
+  if (rep) {
+    try { if (rep.comp && rep.elem) rep.comp.removeRepresentation(rep.elem); } catch { /* component may already be disposed */ }
+    try { if (rep.elem && typeof rep.elem.dispose === 'function') rep.elem.dispose(); } catch { /* idempotent */ }
+    try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch { /* nothing to redraw */ }
+  }
+  setHbondsShown(false);
+  setHbondMsg('');
+};
+
+const toggleHydrogenBonds = () => {
+  if (hbondRepRef.current) { clearHydrogenBonds(); return; }   // le bouton est un interrupteur
+  const comp = resolveMolComp(selectedMolKey);
+  const name = molNameOf(selectedMolKey) || 'the structure on screen';
+  if (!comp || !comp.structure) {
+    setHbondsShown(false);
+    setHbondMsg('⚠ H-bonds — nothing to read yet: load a structure (or build one from the sequence) first.');
+    return;
+  }
+  let found = null;
+  try { found = findHydrogenBonds(comp, HBOND_READ_OPTS); } catch (e) { console.warn('H-bond search failed:', e); }
+  if (!found || found.mode === 'none') {
+    setHbondsShown(false);
+    setHbondMsg('⚠ H-bonds — the bond graph of this structure could not be read.');
+    return;
+  }
+  if (!found.bonds.length) {
+    setHbondsShown(false);                                   // rien à dessiner : le bouton le DIT
+    setHbondMsg(`💧 ${hydrogenBondNoteOf(name, found)}`);
+    return;
+  }
+  try {
+    const elem = comp.addRepresentation('distance', {
+      atomPair: found.bonds.map((b) => [b.donor, b.acceptor]),  // la ligne D···A de chaque pont
+      labelVisible: found.bonds.length <= HBOND_LABEL_MAX,     // peu de ponts : chacun dit sa distance
+      labelUnit: 'angstrom',
+      labelSize: 0.9,
+      labelColor: HBOND_LABEL_COLOR,
+      color: HBOND_LINE_COLOR,
+      linewidth: 3,
+      lineOpacity: 0.9,
+      opacity: 1,
+      visible: true,
+    });
+    if (!elem) throw new Error('NGL refused the representation');
+    hbondRepRef.current = { comp, elem };
+    /* ⏱ LE RYTHME PART DE CE QUE LE CLIC VIENT DE LIRE (voir refreshHydrogenBonds) :
+       l'empreinte du réseau que la représentation porte déjà — une première image
+       identique ne reconstruira donc rien — et l'instant de ce balayage, pour que
+       l'intervalle soit respecté dès le premier mouvement. */
+    hbondLiveRef.current = {
+      at: Date.now(), gap: HBOND_LIVE_MIN_MS, sig: hbondSignatureOf(found), msg: '',
+    };
+    setHbondsShown(true);
+    try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch { /* nothing to redraw */ }
+    setHbondMsg(`💧 ✓ ${hydrogenBondNoteOf(name, found)} — click 💧 again to hide them.`);
+  } catch (e) {
+    console.warn('H-bond overlay failed:', e);
+    setHbondsShown(false);
+    setHbondMsg('⚠ H-bonds — the overlay could not be drawn on this molecule.');
+  }
+};
+
+/* ── ⏱ LE RÉSEAU SUIT LA GÉOMÉTRIE PENDANT UN MOUVEMENT ───────────────────────
+   LA DEMANDE DE CETTE SESSION, MOT POUR MOT : « the H-bonds should follow the
+   geometry during MD. » Le geste du bouton lit le réseau UNE fois ; les lignes qu'il
+   dessine suivent bien leurs deux atomes (c'est NGL qui les place à chaque rendu),
+   mais le CHOIX des couples, lui, était gelé : un pont qui se forme pendant la
+   dynamique n'apparaissait jamais, un pont qui casse restait dessiné à sa place — la
+   vue racontait une conformation qui n'était plus à l'écran.
+
+   QUI L'APPELLE — les écritures de coordonnées du viewer, et elles seules : le
+   `refreshScenePlates()` de `writeStructurePositions` (chaque image d'un ▶ MD, d'un
+   ⚒ Minimise, d'un 🧬 calcul de structure, d'un ✏️ Set torsion, d'un glisser
+   d'atome), ceux de `applyPartMove` / `restorePartMoves` (les molécules déplacées à
+   la main) et l'écouteur du signal `refreshed` de la structure (une image de
+   TRAJECTOIRE, que NGL écrit sans passer par nous). Une seule règle : le réseau est
+   relu LÀ OÙ les coordonnées arrivent — jamais par une horloge, jamais par un état
+   React.
+
+   ⚠ CE QUE ÇA COÛTE, ET POURQUOI LE RYTHME EST RÉGLÉ ICI : `findHydrogenBonds`
+   parcourt la structure entière (grille de 3,5 Å, mais un objet par atome) — quelques
+   millisecondes sur une protéine, beaucoup plus sur un système solvaté. Une boucle
+   d'images ne peut pas payer ça à chaque image :
+     · HBOND_LIVE_MIN_MS entre deux balayages (≈5 Hz), l'intervalle par défaut ;
+     · un balayage qui coûte plus de HBOND_LIVE_SLOW_MS fait DOUBLER l'intervalle
+       (jusqu'à HBOND_LIVE_MAX_MS) — une grosse scène se rafraîchit moins souvent,
+       mais elle se rafraîchit ;
+     · un balayage redevenu bon repose l'intervalle au minimum, et éteindre 💧 remet
+       tout à zéro (`clearHydrogenBonds`) : rallumer repart d'un balayage neuf ;
+     · l'EMPREINTE du réseau est comparée AVANT toute écriture — une image qui ne
+       change pas un seul pont ne coûte ni reconstruction NGL ni rendu React.
+
+   ⚠ ON NE REFAIT QUE LES COUPLES, ET RIEN D'AUTRE : `atomPair` est déclaré
+   `{ type: 'hidden', rebuild: true }` dans distance-representation.ts, donc
+   `elem.setParameters({ atomPair })` fait reconstruire le bond store et les buffers
+   EN PLACE (la même UNE représentation pour tout le réseau, jamais un objet par
+   pont) — et l'étiquetage suit la même règle qu'au clic (HBOND_LABEL_MAX).
+   ⚠ `comp` NOMME LA MOLÉCULE QUI VIENT DE BOUGER : le réseau appartient à UNE seule
+   (celle du bouton, `hbondRepRef`), donc une autre molécule qui bouge — la boîte de
+   solvant d'un ▶ MD, une molécule extra — ne le touche pas. */
+const HBOND_LIVE_MIN_MS = 200;      // ≈5 balayages par seconde : le rythme de croisière
+const HBOND_LIVE_MAX_MS = 1000;     // …et son plafond, pour une scène qui coûte cher
+const HBOND_LIVE_SLOW_MS = 8;       // au-delà de ce coût, l'intervalle double
+/** L'EMPREINTE D'UN RÉSEAU — son mode, son nombre de ponts et une somme roulante
+ *  (FNV-1a, 32 bits) des couples donneur → accepteur. PURE, donc exécutable par une
+ *  suite : deux réseaux qui ne portent pas les mêmes ponts ne peuvent pas avoir la
+ *  même empreinte, et la comparer coûte O(ponts) sans rien allouer. Le réseau VIDE a
+ *  donc son empreinte (`…:0:…`) : un réseau qui se vide est un changement comme un
+ *  autre, et les lignes d'un pont disparu s'en vont. */
+const hbondSignatureOf = (found) => {
+  const bonds = (found && found.bonds) || [];
+  let h = 2166136261;
+  for (let k = 0; k < bonds.length; k += 1) {
+    const b = bonds[k] || {};
+    h = Math.imul(h ^ (Number(b.donor) + 1), 16777619);
+    h = Math.imul(h ^ (Number(b.acceptor) + 1), 16777619);
+  }
+  return `${(found && found.mode) || '?'}:${bonds.length}:${(h >>> 0).toString(36)}`;
+};
+/** RELIRE LE RÉSEAU APRÈS UNE ÉCRITURE DE COORDONNÉES — voir le pourquoi ci-dessus.
+ *  Le rythme (intervalle + empreinte) vit dans `hbondLiveRef`, remis à zéro par
+ *  `clearHydrogenBonds` : ce n'est donc PAS un état React, et deux images peuvent
+ *  s'enchaîner sans que rien ne se re-rende tant que le réseau ne change pas.
+ *  @returns {boolean} true quand NGL a réellement reçu une nouvelle liste de ponts. */
+const refreshHydrogenBonds = (comp) => {
+  const rep = hbondRepRef.current;
+  if (!rep || !rep.elem) return false;                       // 💧 est éteint : rien à suivre
+  if (!comp || rep.comp !== comp) return false;              // c'est une AUTRE molécule
+  if (!comp.structure) return false;
+  const live = hbondLiveRef.current;
+  const gap = live.gap > 0 ? live.gap : HBOND_LIVE_MIN_MS;
+  const now = Date.now();
+  if (live.at && now - live.at < gap) return false;           // trop tôt : cette image passe
+  live.at = now;
+  const t0 = Date.now();
+  let found = null;
+  try { found = findHydrogenBonds(comp, HBOND_READ_OPTS); } catch { return false; }
+  // Le coût du balayage règle le rythme du suivant (voir le pourquoi ci-dessus).
+  live.gap = (Date.now() - t0) > HBOND_LIVE_SLOW_MS
+    ? Math.min(HBOND_LIVE_MAX_MS, gap * 2)
+    : HBOND_LIVE_MIN_MS;
+  if (!found || found.mode === 'none') return false;
+  const sig = hbondSignatureOf(found);
+  if (sig === live.sig) return false;                         // rien n'a bougé : ni NGL, ni React
+  live.sig = sig;
+  try {
+    rep.elem.setParameters({
+      atomPair: found.bonds.map((b) => [b.donor, b.acceptor]),
+      labelVisible: found.bonds.length > 0 && found.bonds.length <= HBOND_LABEL_MAX,
+    });
+  } catch { return false; }
+  /* LA PHRASE SUIT LE RÉSEAU, ELLE AUSSI — le compte et la règle peuvent changer en
+     direct (« 12 H-bonds … » puis « 9 … »). On ne la réécrit que si le TEXTE change :
+     sur un réseau qui se réorganise sans changer de compte ni de règle, aucun rendu
+     React n'est demandé — la seule dépense est la reconstruction NGL, ci-dessus. */
+  const name = molNameOf(selectedMolKey) || 'the structure on screen';
+  const msg = found.bonds.length
+    ? `💧 ✓ ${hydrogenBondNoteOf(name, found)} — followed while the molecule moves.`
+    : `💧 ${hydrogenBondNoteOf(name, found)}`;
+  if (msg !== live.msg) { live.msg = msg; setHbondMsg(msg); }
+  requestSceneRepaint();
+  return true;
+};
+
 // Load ONE chain of a multi-chain PDB as its own (hidden) NGL component and add
 // it to the Molecules selector. Called by the main-load effect after the whole
 // structure is parsed.
@@ -10805,6 +15735,7 @@ abortRef.current = {
     setCatInfo(null);
     try { if (stageRef.current) stageRef.current.removeAllComponents(); } catch {}
     clearMeasurements(); // distance lines belong to the removed components
+    clearHydrogenBonds(); // …et les lignes de 💧 H-bonds aussi
   }
 };
 const unregisterAbort = abortControl.register('structure loading', () => {
@@ -10816,6 +15747,7 @@ const unregisterAbort = abortControl.register('structure loading', () => {
 });
 setStatus('loading');
 setErrorMsg('');
+setSequenceChoice(null);   // le panneau de choix du fichier PRÉCÉDENT ne survit pas à un chargement
 setTrajFile(null);
 setTrajStatus('none');
 // The progression the top bar of the window draws while THIS structure loads
@@ -10844,6 +15776,7 @@ const stage = await stageReadyRef.current;
 if (cancelled || !stage) return;
 stage.removeAllComponents();
 clearMeasurements(); // any previously drawn distance lines are gone too
+clearHydrogenBonds(); // …et les lignes de 💧 H-bonds aussi
 componentRef.current = null;
 espResetAll(); // every previous component (and its ⚡ ESP overlay) is gone
 highlightCompRef.current = null;
@@ -11052,7 +15985,30 @@ stripResidueRiRef.current = null;
 if (typeof onStructureSequence === 'function') {
 const seq = extractStructureSequence(component);
 const parts = structureSequenceParts(ticks);
-if (seq || parts.protein.seq || parts.dna.seq || parts.rna.seq) onStructureSequence(seq, parts);
+/* 🧬 PLUSIEURS SÉQUENCES DANS LE FICHIER — LAQUELLE ÉCRIRE ? Un .pdb / un .gro
+   d'homodimère (A · B), de duplex d'ADN (les deux brins) ou de complexe porte
+   PLUSIEURS chaînes polymères, et la case d'une nature n'en peut garder qu'UNE :
+   les écrire bout à bout fabriquait une séquence qui n'existe dans aucune des
+   deux. Le fichier est donc lu en CANDIDATES (une par nature ET par chaîne) et,
+   quand une même nature est servie par plusieurs chaînes, RIEN n'est écrit : le
+   panneau « Sequence to write » (au-dessus du bandeau de résidus) demande
+   laquelle écrire. Le cas courant — un fichier qui n'a qu'une chaîne par nature
+   — part directement dans son champ, exactement comme avant, et la page ne
+   remplit de toute façon qu'une case VIDE (structureSequencePatch). */
+const candidates = sequenceCandidatesOf(ticks);
+const ambiguous = ambiguousSequenceNatures(candidates);
+const pageBoxEmpty = !(Array.isArray(parsedSeqRef.current) && parsedSeqRef.current.length > 0);
+if (ambiguous.length > 0 && candidates.length > 1 && SEQUENCE_NATURES.includes(moleculeType) && pageBoxEmpty) {
+  const sel = {};
+  ambiguous.forEach((n) => {
+    const first = candidates.find((c) => c.nature === n);
+    if (first) sel[n] = first.key;   // la première chaîne du fichier, à changer d'un clic
+  });
+  setSequenceChoice({ candidates, ambiguous, sel });
+} else if (seq || parts.protein.seq || parts.dna.seq || parts.rna.seq) {
+  setSequenceChoice(null);
+  onStructureSequence(seq, parts);
+}
 }
 
 component.autoView();
@@ -11422,7 +16378,7 @@ const bestVideoMime = () => {
    Elle renvoie `null` quand un contexte 2D n'est pas disponible : le film est
    alors la toile de NGL elle-même, comme avant — une composition impossible ne
    casse jamais l'enregistrement. */
-const filmCanvasFor = (source, vignetteDarkness, background) => {
+const filmCanvasFor = (source, vignetteDarkness, background, shadowLayer = null) => {
   try {
     if (!source || typeof document === 'undefined' || typeof document.createElement !== 'function') return null;
     const w = Math.max(1, Math.round(Number(source.width) || 0));
@@ -11456,7 +16412,23 @@ const filmCanvasFor = (source, vignetteDarkness, background) => {
            l'écran est blanc (voir le commentaire de la fabrique plus haut). */
         ctx.fillStyle = backdrop;
         ctx.fillRect(0, 0, w, h);
+        /* ⬚ …PUIS LA RAMPE, QUAND IL Y EN A UNE. Exactement comme le CSS empile
+           `backgroundImage` sur `backgroundColor` : la couleur reste dessous, la
+           rampe est peinte par-dessus — et `paintViewerBackground` ne fait RIEN
+           quand le fond est uni (le film d'avant, au pixel près). Le film suit
+           donc l'écran, dégradé compris : c'est tout le sujet de cette toile. */
+        paintViewerBackground(ctx, w, h, background);
         ctx.drawImage(source, 0, 0, w, h);
+        /* ◐ L'OMBRE VIVANTE — la MÊME couche qui est à l'écran, et par le même
+           chemin que la vignette : un `captureStream` ne voit pas une couche
+           HTML, donc l'image TENUE par le film doit la porter. C'est un noir
+           d'alpha `s·m` posé en `source-over`, soit `dst·(1 − a)` — le produit
+           exact du PNG du « ✨ Ray ». Une couche vidée fait 1×1 (voir
+           createRayShadowOverlay) : elle ne peint rien. */
+        if (shadowLayer && shadowLayer.width > 1 && shadowLayer.height > 1) {
+          ctx.globalCompositeOperation = 'source-over';
+          ctx.drawImage(shadowLayer, 0, 0, w, h);
+        }
         if (!gradient) return;
         /* `multiply` + une ellipse : exactement le `mix-blend-mode: multiply` et le
            `radial-gradient(ellipse at 50% 40%, …)` de la couche de l'écran. */
@@ -11509,7 +16481,7 @@ const recordTrajectoryVideoClick = async () => {
   const vignetteDarkness = shadowOn
     ? (Number.isFinite(Number(shadowDarkness)) ? Number(shadowDarkness) : 0)
     : Number.NaN;
-  const film = filmCanvasFor(canvas, vignetteDarkness, bgColor);
+  const film = filmCanvasFor(canvas, vignetteDarkness, backgroundSpecOf(bgColor, bgGradient), rayLiveOn ? rayShadowCanvasRef.current : null);
   // ONE driver of the frame at a time, and the scene is put back where it was.
   setPlaying(false);
   videoCancelRef.current = false;
@@ -11648,11 +16620,28 @@ const applyKeyframePoses = (poses) => {
 
 /* METTRE UN INSTANT DU FILM À L'ÉCRAN — la SEULE fonction que le panneau (👁), le
    ▶ de contrôle et le 🔴 enregistreur appellent : le film vu et le film écrit ne
-   peuvent pas diverger, puisque c'est le même appel qui les conduit. */
-const applyKeyframeSample = (sample) => {
+   peuvent pas diverger, puisque c'est le même appel qui les conduit.
+   ⚠ `driven = false` POUR CE QUI N'EST PAS UN MOUVEMENT DU FILM — une pose montrée à la main
+   (👁), un instant hors du 🎞, et le RETOUR de la scène à la fin d'un enregistrement : le
+   drapeau du mouvement retombe, donc un changement d'aspect à ce moment-là se pose TOUT DE
+   SUITE et un fondu encore ouvert se termine (sinon des représentations à moitié éteintes
+   resteraient dans la scène pour toujours). */
+const applyKeyframeSample = (sample, driven = true) => {
   if (!sample) return false;
-  applyViewerSetup(sample.state);       // styles, palettes, scène, caméra, positions
-  applyKeyframePoses(sample.pose);      // …et les orientations
+  /* 🎞 CE QUI SE POSE D'UN COUP, ET CE QUI GLISSE — `filmSceneState` (module du 🎞) rend
+     l'ASPECT D'UNE POSE pour tout ce qui fait rebâtir la scène, et le MÉLANGE pour ce qui se
+     repose en place (la caméra, les réglages de l'étage). C'est ce qui remplace le
+     rebâtiment à CHAQUE image par un rebâtiment PAR MOITIÉ DE MOUVEMENT — la cause du
+     « fraction of time where there is nothing » du rapport. Le fondu, lui, n'existe que
+     pendant un vrai MOUVEMENT et pendant qu'un film le conduit : une tenue est un arrivé. */
+  const moving = driven && sample.kind === 'morph';
+  const t = Number(sample.t);
+  filmMoveRef.current = { active: moving, t: moving && Number.isFinite(t) ? Math.min(1, Math.max(0, t)) : 0 };
+  if (!driven) endFilmDissolve();
+  applyViewerSetup(filmSceneState(sample));   // l'aspect de la pose, la caméra qui glisse
+  applyKeyframePoses(sample.pose);            // …et les orientations, elles, toujours mélangées
+  if (moving) stepFilmDissolve(filmMoveRef.current.t);   // l'avancée du fondu, image par image
+  else endFilmDissolve();                     // une tenue est un ARRIVÉ : le fondu se termine
   requestSceneRepaint();
   return true;
 };
@@ -11728,7 +16717,7 @@ const clearKeyframes = () => {
 const showKeyframe = (key) => {
   if (kfBusy) return;
   stopKeyframePreview(true);
-  applyKeyframeSample({ state: key.state, pose: key.pose });
+  applyKeyframeSample({ state: key.state, pose: key.pose }, false);
   setKfMsg(`👁 “${key.name}” is on screen — ${(key.pose || []).length} molecule(s) put back where they were captured.`);
 };
 
@@ -11743,6 +16732,11 @@ const stopKeyframePreview = (quiet = false) => {
   kfPreviewRef.current += 1;
   if (kfPreviewTimerRef.current != null) { clearTimeout(kfPreviewTimerRef.current); kfPreviewTimerRef.current = null; }
   setKfPreview(false);
+  /* 🎞 UN FILM QUI S'ARRÊTE NE LAISSE AUCUN FONDU OUVERT — voir endFilmDissolve : les
+     représentations quittées partent et celles qui restent retrouvent leur opacité (un fondu
+     interrompu à mi-chemin laisserait la scène à moitié éteinte sous la main de l'utilisateur). */
+  filmMoveRef.current = null;
+  endFilmDissolve();
   if (!quiet) setKfMsg('⏹ Preview stopped — the scene stays where the film had reached.');
   return true;
 };
@@ -11821,7 +16815,7 @@ const recordKeyframeFilmClick = async () => {
      viewer se ressembleraient seulement l'un à l'autre. */
   const kfFilmCanvas = filmCanvasFor(canvas, shadowOn
     ? (Number.isFinite(Number(shadowDarkness)) ? Number(shadowDarkness) : 0)
-    : Number.NaN, bgColor);
+    : Number.NaN, backgroundSpecOf(bgColor, bgGradient), rayLiveOn ? rayShadowCanvasRef.current : null);
   const back = { state: captureViewerSetup(), pose: captureKeyframePoses() };
   const label = (file && file.name) || (trajFile && trajFile.name) || declaredTrajName || 'scene';
   setKfMsg(`${keyframeFilmSummary(keys.length, plan)}${plan.long ? ' · long film — keep this tab in the foreground' : ''}`);
@@ -11869,7 +16863,7 @@ const recordKeyframeFilmClick = async () => {
       setKfBusy(false);
       // The scene goes back EXACTLY where it was: styles, camera, positions and
       // orientations. The film left no trace but the file.
-      applyKeyframeSample(back);
+      applyKeyframeSample(back, false);
       const token = kfRunRef.current;
       setTimeout(() => { if (kfRunRef.current === token) setKfMsg(''); }, 15000);
     }
@@ -12646,6 +17640,29 @@ const clearResidueSelection = () => {
   if (onAtomClickRef.current) onAtomClickRef.current(0, []);
 };
 
+/* 🧬 « ✔ Write to the sequence box » DU PANNEAU DE CHOIX (la demande) — la
+   séquence choisie part dans SA case, et rien d'autre n'est écrit :
+   `sequenceChoiceTicks` garde tous les résidus des natures NON ambiguës (elles
+   allaient déjà dans leur champ — choisir une chaîne de protéine ne doit pas
+   faire perdre l'ADN du complexe) et, de chaque nature ambiguë, la SEULE chaîne
+   cochée. C'est la liste que `structureSequenceParts` transforme en `parts`, le
+   second argument d'`onStructureSequence` : la page range chaque nature dans son
+   champ, et seulement s'il est VIDE (voir utils/sequenceNatures.js). Le fichier,
+   lui, n'est pas touché : la vue 3D garde toutes ses molécules. */
+const writeSequenceChoice = () => {
+  const plan = sequenceChoice;
+  if (!plan) return;
+  const kept = sequenceChoiceTicks(residueTicksRef.current, plan.sel);
+  const parts = structureSequenceParts(kept);
+  const seq = kept
+    .filter((t) => t && t.code && SEQUENCE_NATURES.includes(t.nature))
+    .map((t) => String(t.code).toUpperCase())
+    .join('');
+  setSequenceChoice(null);
+  if (typeof onStructureSequence === 'function'
+    && (seq || parts.protein.seq || parts.dna.seq || parts.rna.seq)) onStructureSequence(seq, parts);
+};
+
 /* ---- A HIDDEN ROW IS PyMOL'S LAST COMMAND ABOUT ITS ATOMS ------------------
    The rows of the selections bar are OVERLAYS, not disjoint sets: the macro of
    the reference draws the same lipid with « show sphere, resn POPC+… » AND
@@ -12696,6 +17713,42 @@ const requestSceneRepaint = () => {
       window.requestAnimationFrame(() => { try { v.requestRender(); } catch { /* ignore */ } });
     }
   } catch { /* ignore */ }
+};
+
+/* ── ◐ L'OMBRE VIVANTE SUIT AUSSI LES COORDONNÉES ───────────────────────────
+   LE RAPPORT DE CETTE SESSION : « when I start a MD run the shadow detaches from
+   the molecule and remains detached ». Le pilote de l'ombre vivante
+   (utils/viewerRayShadowLive.js) s'accroche au signal `rendered` d'NGL et ne juge
+   un GESTE que sur deux choses : la POSE de la caméra et la signature de la scène
+   (`sceneSignatureOf` — les groupes de la vue, la visibilité d'un composant, son
+   `currentFrame`, sa matrice, le nombre de ses représentations). Une DYNAMIQUE
+   MOLÉCULAIRE n'y touche pas : elle ÉCRIT des coordonnées, comme une torsion ou un
+   glisser de molécule. Le filet du pilote finissait bien par les voir, mais AU PLUS
+   UNE FOIS PAR `staleMs` (400 ms) — et la DERNIÈRE écriture d'un geste tombe
+   presque toujours dans cette fenêtre : après elle, plus rien n'est rendu (NGL ne
+   rend que sur demande), donc la couche restait posée sur la géométrie d'avant,
+   définitivement. C'est ce que dit « remains detached ».
+
+   Ici l'écrivain DIT que la molécule a bougé (`moved()`) : l'image rendue qui suit
+   est un GESTE — brouillon pendant, passe nette à l'arrêt — et la passe nette est
+   armée par une MINUTERIE, donc elle arrive même quand plus aucune image n'est
+   rendue. C'est ce qui fait que l'ombre FINIT exactement sur la molécule.
+
+   QUI L'APPELLE — les écritures de coordonnées du viewer, et elles seules, à côté
+   de `refreshScenePlates()` / `refreshHydrogenBonds()` : `writeStructurePositions`
+   (chaque image d'un ▶ MD, d'un ⚒ Minimise, d'un 🧬 calcul de structure, d'une
+   ✏️ torsion, du 📥 PDB de l'écran), `applyPartMove` / `restorePartMoves` (les
+   molécules déplacées à la main). Une image de TRAJECTOIRE n'a pas besoin de ce
+   mot : NGL écrit ses coordonnées sans nous et son `currentFrame` EST dans la
+   signature de la scène (le pilote la voit comme un geste, par lui-même).
+
+   Rien n'est peint ici, rien n'est obligatoire : sans couche vivante (`off`), sans
+   pilote, ou si le module est plus ancien, l'appel ne fait STRICTEMENT rien — et
+   il ne peut jamais casser un geste de la molécule. */
+const rayShadowMoleculeMoved = () => {
+  const pilot = rayShadowLiveRef.current;
+  if (!pilot || typeof pilot.moved !== 'function') return;
+  try { pilot.moved(); } catch { /* l'ombre ne casse jamais un geste de la molécule */ }
 };
 
 /* ── LES PLAQUES DE LA SCÈNE SUIVENT LES COORDONNÉES ─────────────────────────
@@ -12809,7 +17862,9 @@ const applyPartMove = (comp, rec) => {
     if (typeof comp.updateRepresentations === 'function') comp.updateRepresentations({ position: true });
   } catch { return false; }
   refreshScenePlates();          // les plaques suivent les coordonnées, comme pour une image
+  refreshHydrogenBonds(comp);    // …et le réseau de 💧 suit le geste qui vient de déplacer la molécule
   requestSceneRepaint();
+  rayShadowMoleculeMoved();      // ◐ …et l'ombre vivante : un glisser de molécule est un geste, lui aussi
   return true;
 };
 
@@ -12870,7 +17925,9 @@ const restorePartMoves = (comp) => {
   if (n) {
     try { comp.updateRepresentations({ position: true }); } catch { /* best-effort */ }
     refreshScenePlates();
+    refreshHydrogenBonds(comp);    // …et le réseau de 💧 : un ↺ a redonné la géométrie de départ
     requestSceneRepaint();
+    rayShadowMoleculeMoved();      // ◐ …et l'ombre vivante : ce ↺ est un geste comme un autre
   }
   return n;
 };
@@ -12933,13 +17990,18 @@ const applyPartPoses = (poses) => {
    une molécule posée à côté de la protéine doit y RESTER quand la trajectoire avance,
    donc le rejeu doit précéder les plaques (qui lisent les coordonnées). Les deux
    passent par le MÊME signal, et notre écriture à nous ne redispatch rien — donc aucun
-   va-et-vient possible entre les deux. */
+   va-et-vient possible entre les deux.
+   ⚠ ET LE RÉSEAU DE 💧 EST RELU ICI AUSSI (voir refreshHydrogenBonds) : une image de
+   TRAJECTOIRE est écrite par NGL (`updatePosition` → `refreshPosition`), donc elle ne
+   passe JAMAIS par `writeStructurePositions` — sans cet appel, les lignes de ponts
+   resteraient celles de la première image lue. Les ponts viennent en DERNIER parce
+   qu'ils lisent les mêmes coordonnées que les plaques. */
 const hookStructurePlates = (comp) => {
   try {
     const sig = comp && comp.structure && comp.structure.signals && comp.structure.signals.refreshed;
     if (!sig || typeof sig.add !== 'function' || comp.__platesHook) return;
     comp.__platesHook = true;
-    sig.add(() => { reapplyPartMoves(comp); refreshScenePlates(); });
+    sig.add(() => { reapplyPartMoves(comp); refreshScenePlates(); refreshHydrogenBonds(comp); });
   } catch { /* best-effort: une structure sans signal ne casse rien */ }
 };
 
@@ -12981,9 +18043,19 @@ useEffect(() => {
     baseCompsRef.current.forEach((r) => { try { component.removeRepresentation(r); } catch {} });
     baseCompsRef.current = [];
   } else if (styleChanged || baseCompsRef.current.length === 0) {
-    baseCompsRef.current.forEach((r) => { try { component.removeRepresentation(r); } catch {} });
+    /* 🎞 UN FONDU QUAND C'EST LE FILM QUI CHANGE L'ASPECT, UNE COUPURE SINON — LE RAPPORT DE
+       CETTE SESSION : « In the movie, the transition between one state and the other is not
+       smooth. there is a fraction of time where there is nothing. It would be better to see one
+       move transform into the other gradually. » L'ASPECT NEUF EST DONC CONSTRUIT AVANT QUE
+       L'ANCIEN NE PARTE (`startFilmDissolve` reçoit les deux listes), et pendant un mouvement
+       du film l'ancien ne part pas du tout : il s'éteint pendant que le neuf s'allume, sur le
+       temps qui reste au mouvement. Un geste de la barre, lui, se pose à l'instant (aucun
+       fondu) — ce que l'utilisateur vient de régler doit se voir tout de suite, et c'est
+       `startFilmDissolve` qui tranche, en un seul endroit. */
+    const leaving = baseCompsRef.current;
     baseCompsRef.current = [];
     buildMainReps();
+    startFilmDissolve(component, leaving, baseCompsRef.current);
   }
   // …and the frame is asked THE MOMENT the sections exist (see requestSceneRepaint):
   // a styling gesture must not wait for a mouse move to be seen.
@@ -13141,7 +18213,7 @@ useEffect(() => {
     // a ribbon): its `radius` is an ångström value, which makes it the one spline
     // style the R— knob regulates like the sticks (see TUBE_RADIUS).
     if (st.tube) addWithOverrides('tube', 'tube', { colorScheme, opacity, radius: TUBE_RADIUS * rB }, false);
-    if (st.sphere) addWithOverrides('spacefill', 'sphere', { scale: (st.sphereScale || 1) * rS, colorScheme, opacity, multipleBond: true }, true);
+    if (st.sphere) addWithOverrides('spacefill', 'sphere', { radiusScale: (st.sphereScale || 1) * rS, colorScheme, opacity, multipleBond: true }, true);
     if (st.ball) addWithOverrides('ball+stick', 'ball', {
       colorScheme, opacity, multipleBond: true, aspectRatio: 1.3 * rS,
       // A radius the user really asked for (R—): when the knob has not been
@@ -13297,11 +18369,16 @@ useEffect(() => {
   const stage = stageRef.current;
   if (!stage) return;
   try { stage.setParameters({ backgroundColor: bgColor }); } catch {}
+  // ⬚ …ET LA RAMPE PAR-DESSUS CETTE COULEUR. NGL vient d'écrire la couleur sur
+  // son canvas (`setBackground`) : la rampe se pose dans le CSS du même canvas,
+  // donc APRÈS lui — et l'éteindre remet la chaîne vide, c'est-à-dire la
+  // couleur de NGL telle quelle.
+  applyBackgroundGradient();
   try { stage.setQuality(qualityHigh ? 'high' : 'medium'); } catch {}
   // setBackground re-colours the fog; re-apply the user's fog preference after
   // any background/quality change so a toggled-off fog stays off.
   applyFog();
-}, [bgColor, qualityHigh, status, applyFog]);
+}, [bgColor, qualityHigh, status, applyFog, applyBackgroundGradient]);
 
 // Persist the background colour of the scene (§3 Scene → 🎨 Background) so the
 // chosen colour survives a reload / another page — the effect above pushes it to
@@ -13309,6 +18386,14 @@ useEffect(() => {
 useEffect(() => {
   try { localStorage.setItem('labViewerBg', bgColor); } catch { /* ignore */ }
 }, [bgColor]);
+
+/* ⬚ LA RAMPE SE SOUVIENT D'ELLE AUSSI — la seconde couleur et la direction
+   (l'interrupteur compris), sous UNE clé JSON. C'est le même contrat que la
+   couleur qu'elle prolonge : une scène réglée est là au rechargement suivant,
+   sur n'importe quelle page. */
+useEffect(() => {
+  try { localStorage.setItem(BG_GRADIENT_KEY, JSON.stringify(bgGradient)); } catch { /* ignore */ }
+}, [bgGradient]);
 
 // Persist the fog preference and apply it to the live stage whenever it changes.
 useEffect(() => {
@@ -13735,7 +18820,7 @@ fontStyle: 'normal',
 fontWeight: 'bold',
 // Larger, uniform text size (was radius 1.0) with a constant on-screen
 // size so labels stay readable at any zoom level.
-radiusType: 'size', radius: 1.6, scale: 1.0,
+radiusType: 'size', radius: 1.6,   // ⚠ pas de `scale:` : NGL ne lit pas ce paramètre
 fixedSize: true,
 // Billboard sprites always face the camera; depth testing off plus a
 // slight forward push keep them clear of the VdW spheres and bonds.
@@ -13913,6 +18998,307 @@ try {
 // Snapshot of the Molecules-bar entries (used by every setExtraMols call).
 const extraMolsSnapshot = () => extraCompsRef.current.map(({ id, name, style, color, colorMode, transparency, position }) => ({ id, name, style, color, colorMode, transparency, position }));
 
+/* ── 🧬 LA FAMILLE D'UN CALCUL ENTRE DANS LA BARRE DES MOLÉCULES ─────────────────────
+   La demande de cette session, verbatim : « nello structure calculation le strutture
+   devono essere salvate e incluse nella styling window in modo che possa fare “fit to
+   chosen” e visualizzare la famiglia di strutture. » Les m modèles retenus étaient
+   GARDÉS (le tableau du panneau les liste, ⤓ Load les écrit un par un) mais ils
+   n'existaient nulle part ailleurs : rien à montrer, rien à superposer, aucun fit.
+
+   Ici, chaque modèle retenu devient UNE MOLÉCULE ORDINAIRE DE LA BARRE — elle a donc son
+   ☑, ses rangées de style (§2 « Molecular Styling »), son ★ set main, son ↺, son 🗑, son
+   🔎, et 🎯 Fit to chosen la superpose sur la molécule CHOISIE avec le même Kabsch que le
+   reste de la scène. Rien n'est réinventé : le modèle entre par la MÊME porte qu'une
+   molécule chargée (`loadChainMolecule`, la même liste `extraCompsRef`), et c'est la barre
+   qui le dessine — donc les libellés, les styles et la visibilité sont ceux de tout le
+   monde.
+
+   LE TEXTE PDB DU MODÈLE est écrit par l'écrivain du dossier (`NS.PdbWriter`, celui de
+   « le PDB de l'écran », voir downloadFramePdb) : les coordonnées du modèle sont POSÉES
+   dans la structure le temps de l'écriture, puis la géométrie de l'écran est REMISE — un
+   emprunt, pas un geste, donc le ↺ n'a rien à défaire. Les atomes gardent leurs NOMS :
+   c'est ce qui fait que le fit appariera les atomes du modèle à ceux de la référence. */
+const calcFamilyPdbOf = async (structure, comp, positions) => {
+  const keep = torsionSnapshotOf(structure);
+  if (!keep || !positions || !comp) return '';
+  const n = Math.min(Math.round(positions.length / 3), Number(structure.atomCount) || 0);
+  if (!(n > 0)) return '';
+  let text = '';
+  try {
+    const NS = await ensureNGL();          // ⚠ AVANT l'emprunt : entre les deux, rien ne doit peindre
+    const ap = structure.getAtomProxy();
+    for (let k = 0; k < n; k += 1) { ap.index = k; ap.positionFromArray(positions, k * 3); }
+    text = new NS.PdbWriter(structure).getData();
+  } catch { text = ''; }
+  const all = [];
+  for (let i = 0; i < Math.round(keep.length / 3); i += 1) all.push(i);
+  writeStructurePositions(comp, all, keep);   // LA GÉOMÉTRIE DE L'ÉCRAN REVIENT, toujours
+  return text;
+};
+
+/** UNE molécule de la famille dans la barre — `{ok, id, reason}` (la raison sert au rapport). */
+const calcAddFamilyMolecule = async (structure, comp, label, positions, n) => {
+  const stage = stageRef.current;
+  if (!stage) return { ok: false, reason: 'no-stage' };
+  const text = await calcFamilyPdbOf(structure, comp, positions);
+  if (!text) return { ok: false, reason: 'no-pdb' };
+  try {
+    const mol = await stage.loadFile(new Blob([text], { type: 'text/plain' }), { ext: 'pdb' });
+    try { enforceCovalentProteinBonds(mol); } catch { /* best-effort (protein-bond rule) */ }
+    const baseReps = applyCurrentStyleTo(mol, []);
+    shadowRepsHook(mol);
+    if (shadowOnRef.current) setMeshShadows(mol);
+    const id = `fam_${Date.now()}_${n}`;
+    extraCompsRef.current.push({ id, name: label, comp: mol, baseReps, style: 'auto', color: '', colorMode: 'element', transparency: 0, position: [0, 0, 0] });
+    setExtraMols(extraMolsSnapshot());
+    /* ⚠ LA MOLÉCULE DE LA FAMILLE EST MONTRÉE — une famille qu'il faudrait déplier avant de
+       voir n'aurait rien répondu à la demande. C'est un état de la barre : ☐ None la cache
+       comme les autres, et ☑ la ramène. */
+    setVisibleMolKeys((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
+    return { ok: true, id };
+  } catch { return { ok: false, reason: 'load-failed' }; }
+};
+
+/** LA FAMILLE ENTIÈRE — les modèles APRÈS le premier (celui-là est DÉJÀ la molécule de
+ *  l'écran, écrite par `calcWriteStructure`). Rend le nombre de molécules entrées, et le
+ *  rapport du calcul le DIT (sinon le lecteur chercherait la famille sans savoir où). */
+const calcAddFamilyToBar = async (structure, comp, retained) => {
+  const models = (retained || []).slice(1);
+  if (!models.length || !structure || !comp) return 0;
+  /* ⚠ UNE SEULE FAMILLE À LA FOIS — une molécule de famille porte l'identifiant `fam_…` :
+     celles d'un calcul PRÉCÉDENT sont retirées avant que la nouvelle famille entre, sinon
+     deux ▶ Run empileraient deux familles dans la barre (et 🎯 Fit to chosen ne saurait plus
+     laquelle il superpose). Le préfixe est le SEUL critère, et il n'est donné qu'ici. */
+  const previous = extraCompsRef.current.filter((e) => String(e.id).startsWith('fam_'));
+  if (previous.length) {
+    extraCompsRef.current = extraCompsRef.current.filter((e) => !String(e.id).startsWith('fam_'));
+    previous.forEach((e) => { try { if (stageRef.current) stageRef.current.removeComponent(e.comp); } catch { /* ignore */ } });
+    /* ⚠ LEURS SECTIONS AUSSI — la famille précédente quitte la scène, donc ses rangées de style
+       doivent quitter la fenêtre (voir `forgetSectionMolecules`) : sinon chaque ▶ Run laissait
+       une famille morte derrière la vivante, et la fenêtre « reportait chaque molécule deux
+       fois » — le rapport de cette session, mot pour mot. */
+    forgetSectionMolecules(previous.map((e) => e.id));
+    setExtraMols(extraMolsSnapshot());
+    setVisibleMolKeys((prev) => { const n = new Set(prev); previous.forEach((e) => n.delete(e.id)); return n; });
+    if (previous.some((e) => e.id === selectedMolKey)) setSelectedMolKey('main');
+  }
+  let added = 0;
+  for (let k = 0; k < models.length; k += 1) {
+    const rank = Number(models[k].rank) || (k + 2);
+    const label = `🧬 model ${rank}/${retained.length}`;
+    /* eslint-disable no-await-in-loop -- un modèle après l'autre : chacun EMPRUNTE les
+       coordonnées de la structure, donc deux écritures ne peuvent pas se chevaucher. */
+    const r = await calcAddFamilyMolecule(structure, comp, label, models[k].positions, k);
+    /* eslint-enable no-await-in-loop */
+    if (r.ok) added += 1;
+  }
+  if (!added) return 0;
+  const many = added === 1;
+  setCalcMsg((prev) => `${prev ? `${prev} ` : ''}🧬 ${added} more model${many ? '' : 's'} of the family ${many ? 'is' : 'are'} now`
+    + ' a MOLECULE of the Molecules bar (it is shown, and it has its own ☑, styling rows, set main, ↺ and 🗑):'
+    + ' press 🎯 Fit to chosen to superpose the family onto the reference.');
+  return added;
+};
+/* ── 💧 LA BOÎTE D'EAU EXPLICITE SE DESSINE ENFIN ─────────────────────────────────────
+   La demande de cette session, verbatim : « I still do not see the water in the MD ». Et
+   c'était EXACT : la boîte existait dans la PHYSIQUE (le moteur tournait bien sur les eaux,
+   le rapport les comptait — `calcBoxNote`) mais elle n'était écrite NULLE PART dans la scène.
+   Un modèle solvaté qui ne se voit pas est exactement le contraire de ce que la fenêtre
+   🌡 MD promet (« the box edge sets how many there are »).
+
+   Ici les eaux deviennent UNE MOLÉCULE ORDINAIRE DE LA BARRE — le même chemin que la
+   famille d'un calcul (`calcAddFamilyMolecule`) : son ☑, ses rangées de style, son 🗑, sa
+   visibilité. Elles entrent par un petit PDB écrit à la main (HETATM HOH · OW · HW, avec
+   l'O–H en CONECT, comme le fichier d'une boîte solvatée) : c'est ce qui fait qu'NGL les
+   reconnaît comme de l'EAU (`water`, la sélection du dossier), donc qu'elles prennent le
+   style de la catégorie « others » (boule+bâton, bleu clair) et rien d'autre.
+
+   ⚠ ELLES BOUGENT MAINTENANT — la molécule est écrite UNE fois, au départ du geste (sur la
+   géométrie que le moteur lui donne, réseau compris), et c'est `calcPreviewWaterPositions`
+   qui la RÉÉCRIT à chaque image : les eaux que la physique a déplacées se voient donc
+   bouger, au lieu de rester au réseau du départ (la décision de cette session — voir
+   `waterRigidBodyOf` dans utils/structureCalc.js). ⚠ UNE SEULE BOÎTE À LA FOIS (le
+   préfixe `solv_`, le même critère que `fam_`) : deux ▶ MD ne peuvent pas empiler deux
+   boîtes dans la barre. ⚠ ET RIEN N'EST DESSINÉ QUAND LA BOÎTE A ÉTÉ REFUSÉE : le rapport
+   dit pourquoi (`calcBoxNote`), une boîte absente à l'écran est alors la vérité. */
+
+/** LE PDB DES EAUX — un HETATM par atome (`OW` · `HW` · `HW`), un résidu `HOH` par molécule,
+ *  et leur O–H en CONECT (les seules liaisons qu'une eau TIP3P possède). Les coordonnées
+ *  sont celles du module, sans recopie de nombre : `geom.solvent.solute` dit où finit la
+ *  molécule, donc les eaux sont la fin du tableau. */
+const calcWaterBoxPdbText = (geom) => {
+  const s = geom && geom.solvent;
+  if (!s || !s.ok || !Array.isArray(geom.elements) || !Array.isArray(geom.positions)) return '';
+  const solute = Math.max(0, Math.round(Number(s.solute) || 0));
+  const atoms = Math.max(0, Math.round(Number(s.atoms) || 0) - solute);
+  if (!(atoms > 0) || geom.positions.length < (solute + atoms) * 3) return '';
+  const num = (v) => (Number.isFinite(v) ? v.toFixed(3) : '0.000').padStart(8);
+  const lines = [];
+  const serialOf = [];
+  for (let k = 0; k < atoms; k += 1) {
+    const i = solute + k;
+    const water = Math.floor(k / 3) + 1;
+    const el = String(geom.elements[i] || '').trim().toUpperCase();
+    const name = el.startsWith('O') ? ' OW ' : ' HW ';
+    const serial = k + 1;
+    serialOf.push(serial);
+    /* ⚠ LES COLONNES DU PDB SONT UN CONTRAT — nom en 13-16, résidu en 18-20, chaîne en 22,
+       numéro de résidu en 23-26, et les coordonnées en 31-54 : d'où les QUATRE blancs entre
+       le numéro de résidu et le x (27-30 valent « pas d'altloc, pas de code d'insertion »). */
+    lines.push(`HETATM${String(serial).padStart(5)} ${name} HOH W${String(water % 10000).padStart(4)}`
+      + `    ${num(geom.positions[i * 3])}${num(geom.positions[i * 3 + 1])}${num(geom.positions[i * 3 + 2])}`
+      + '  1.00  0.00          '
+      + `${el.startsWith('O') ? 'O' : 'H'}`);
+  }
+  /* L'O–H DES EAUX — par la MÊME lecture que le graphe du module : un couple dont l'un des
+     deux atomes est une eau et l'autre son O (les liaisons ajoutées par `explicitSolventOf`
+     sont exactement `O–H`, et elles seules). */
+  const isWater = (i) => i >= solute && i < solute + atoms;
+  const bonds = Array.from(geom.bonds || []);
+  const seen = new Set();
+  for (const b of bonds) {
+    const i = Number(b && b.i); const j = Number(b && b.j);
+    if (!Number.isInteger(i) || !Number.isInteger(j) || !isWater(i) || !isWater(j)) continue;
+    const key = i < j ? `${i}-${j}` : `${j}-${i}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    lines.push(`CONECT${String(serialOf[i - solute]).padStart(5)}${String(serialOf[j - solute]).padStart(5)}`);
+  }
+  return `${lines.join('\n')}\n`;
+};
+
+/** LA BOÎTE SORT DE LA SCÈNE — le retrait de la seule boîte `solv_` (le même critère que la
+ *  famille `fam_`), qu'elle parte parce qu'un AUTRE dessin la remplace ou parce que le solvant
+ *  choisi n'est plus explicite (voir l'aperçu de `calcDrawWaterBox`). `true` quand une boîte
+ *  était là. ⚠ LE JETON AVANCE MÊME QUAND RIEN N'EST RETIRÉ : un `loadFile` EN VOL — dont
+ *  l'entrée n'est pas encore posée — est ainsi déclaré périmé, et il lâchera sa molécule au
+ *  lieu de la poser dans notre dos (c'était LA course de cette session : deux `loadFile`
+ *  concurrents laissaient deux boîtes empilées, ou aucune — « the water does not appear but
+ *  sometimes it appears later »). */
+const waterBoxSeqRef = useRef(0);
+const calcRemoveWaterBox = () => {
+  const stage = stageRef.current;
+  const previous = extraCompsRef.current.filter((e) => String(e.id).startsWith('solv_'));
+  waterBoxSeqRef.current += 1;
+  if (!previous.length) return false;
+  extraCompsRef.current = extraCompsRef.current.filter((e) => !String(e.id).startsWith('solv_'));
+  previous.forEach((e) => { try { if (stage) stage.removeComponent(e.comp); } catch { /* ignore */ } });
+  /* ⚠ ET LES SECTIONS DE LA BOÎTE QUI PART — une boîte d'eau redessinée porte un identifiant
+     NEUF (`solv_<date>`), donc sa prédécesseure restait dans la fenêtre de style : c'était
+     exactement « in MD with explicit solvent the water is added twice » (voir
+     `forgetSectionMolecules`). Les ✔ et les rangs de la nouvelle boîte sont posés par
+     `calcDrawWaterBox`, donc rien de vivant n'est effacé ici. */
+  forgetSectionMolecules(previous.map((e) => e.id));
+  setVisibleMolKeys((prev) => { const n = new Set(prev); previous.forEach((e) => n.delete(e.id)); return n; });
+  setExtraMols(extraMolsSnapshot());   // la barre des Molecules ne garde pas d'entrée morte
+  return true;
+};
+
+/** LA BOÎTE ENTRE DANS LA SCÈNE — `{ok, id, reason}` (la raison sert au rapport). Elle est
+ *  MONTRÉE (une boîte qu'il faudrait déplier avant de voir n'aurait rien répondu) et
+ *  remplace la précédente : `solv_` est le seul identifiant de ce genre. */
+const calcDrawWaterBox = async (geom) => {
+  const stage = stageRef.current;
+  if (!stage || !geom || !geom.solvent || !geom.solvent.ok) return { ok: false, reason: 'no-box' };
+  const text = calcWaterBoxPdbText(geom);
+  if (!text) return { ok: false, reason: 'no-pdb' };
+  /* ⚠ LA BOÎTE PRÉCÉDENTE PART, ET LE DESSIN PREND UN JETON (voir `calcRemoveWaterBox`) : si
+     deux dessins se croisent — l'aperçu du panneau et le geste qui part, ou deux clics sur
+     ▶ — le premier à REVENIR voit son jeton périmé et lâche la molécule qu'il vient de lire
+     au lieu de la poser par-dessus l'autre. Sans ce jeton, l'ordre d'arrivée des deux
+     `loadFile` décidait de ce qui restait à l'écran. */
+  calcRemoveWaterBox();
+  const seq = waterBoxSeqRef.current;
+  const s = geom.solvent;
+  const label = `💧 water box ${s.edge} Å · ${s.molecules} TIP3P`;
+  try {
+    const mol = await stage.loadFile(new Blob([text], { type: 'text/plain' }), { ext: 'pdb' });
+    /* ⚠ UN DESSIN PLUS RÉCENT A PRIS LA MAIN PENDANT LA LECTURE — celui-ci se retire : sa
+       molécule sort du stage au lieu d'être posée par-dessus la nouvelle (l'entrée n'a pas
+       encore été créée, donc il n'y a rien à défaire dans la barre). `superseded` n'est pas
+       un échec : c'est le dessin qui EST à l'écran qui compte. */
+    if (seq !== waterBoxSeqRef.current) {
+      try { if (stageRef.current) stageRef.current.removeComponent(mol); } catch { /* ignore */ }
+      return { ok: false, reason: 'superseded' };
+    }
+    /* ⚠ L'ENTRÉE ENTRE DANS LA BARRE AVANT QUE RIEN NE SOIT CONSTRUIT — LE SECOND CORRECTIF
+       DE CETTE SESSION. `molKeyOfComp` reconnaît une molécule par son ENTRÉE dans
+       `extraCompsRef` : construite AVANT l'entrée, la boîte était prise pour la molécule
+       PRINCIPALE (`'main'`), donc `ensureSections(mol, 'main')` ÉCRASAIT le catalogue de
+       sections de la molécule de l'écran — et `hiddenSectionIds` y éteignait l'eau
+       (`KIND_VISIBLE_BY_DEFAULT.water` = false), si bien que la boîte ne dessinait RIEN au
+       premier passage. L'entrée est donc posée d'abord, les ✔ des sections qu'elle vient de
+       créer sont posés ENSUITE (avant tout `applyCurrentStyleTo`), et le dessin a lieu UNE
+       fois, avec les eaux déjà allumées : la boîte se voit sur l'image qui l'a fait entrer. */
+    const id = `solv_${Date.now()}`;
+    const entry = { id, name: label, comp: mol, baseReps: [], style: 'auto', color: '', colorMode: 'element', transparency: 0, position: [0, 0, 0] };
+    extraCompsRef.current.push(entry);
+    const boxSections = ensureSections(mol, id);
+    boxSections.forEach((sec) => { sectionVisRef.current[sec.id] = true; });
+    setSectionVis((prev) => { const next = { ...prev }; boxSections.forEach((sec) => { next[sec.id] = true; }); return next; });
+    setExtraMols(extraMolsSnapshot());
+    setVisibleMolKeys((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
+    shadowRepsHook(mol);
+    if (shadowOnRef.current) setMeshShadows(mol);
+    entry.baseReps = applyCurrentStyleTo(mol, []);
+    /* 💧 LES EAUX DE LA BOÎTE SONT MONTRÉES — la remarque (déjà) de l'utilisateur : « I still do
+       not see the water and the box in the MD simulation ». La cause : KIND_VISIBLE_BY_DEFAULT
+       éteint le genre `water` (« un boîtier solvaté ne doit pas masquer la protéine »), donc la
+       boîte qu'un geste venait de construire était DESSINÉE PAR RIEN — `setVisibleMolKeys`
+       allume la MOLÉCULE de la barre, pas la RANGÉE de la fenêtre de style. Les ✔ sont
+       maintenant posés AVANT le premier dessin (voir plus haut), et la reconstruction est
+       redemandée ici (`bumpSectionEpoch`) : la boîte se voit sur l'image qui l'a fait entrer.
+       ⚠ LE ✔ RESTE UN GESTE DE L'UTILISATEUR : ☐ None l'éteint, ☑ la rallume. */
+    bumpSectionEpoch();
+    return { ok: true, id };
+  } catch { return { ok: false, reason: 'load-failed' }; }
+};
+
+/* 💧 LA BOÎTE SE MONTRE DÈS QU'ON LA CHOISIT — la remarque de cette session : « when I click
+   on explicit water the water does not appear but sometimes it appears later, i can never be
+   certain if it will be visible or not. » Elle était exacte : la boîte n'était construite que
+   par les TROIS gestes du champ (▶ Run du 🧬, ▶ MD, ⚒ Minimise, qui appellent
+   `calcDrawWaterBox`), donc choisir « 💧 explicit water box » dans le sélecteur du panneau
+   🌡 MD ne montrait RIEN — le solvant explicite restait une promesse jusqu'au prochain clic
+   sur ▶, et la boîte « apparaissait plus tard », parfois. C'est le CHOIX lui-même (et l'arête
+   📦) qui fait le geste, maintenant : la boîte que le module construit entre dans la scène dès
+   qu'elle est demandée, donc elle est là AVANT le geste au lieu de dépendre de lui.
+   ⚠ TROIS RÈGLES, chacune contre une façon de se tromper :
+     · 200 ms de calme avant de dessiner — on tape « 24 » chiffre par chiffre dans 📦, et un
+       dessin par frappe (des centaines d'atomes relus) serait un feu d'artifice ;
+     · pendant qu'un geste TOURNE, c'est LUI qui possède la boîte — ses images la réécrivent
+       position par position (`calcPreviewWaterPositions`) — donc l'aperçu ne la relance pas
+       sous lui : il la ramènerait au réseau du départ et effacerait la diffusion déjà écrite ;
+     · repasser à un solvant IMPLICITE RETIRE la boîte (une eau qui n'est plus dans le champ
+       n'a rien à faire à l'écran), et une boîte REFUSÉE se DIT à l'écran au lieu de laisser
+       l'utilisateur devant rien — c'était l'autre moitié de « I can never be certain ».
+   ⚠ La boîte est le MÊME objet de scène que celui des gestes (le composant `solv_`), donc elle
+   se style, se cache et se supprime comme les autres molécules de la barre. */
+useEffect(() => {
+  if (status !== 'ready') return undefined;
+  const explicit = structureCalcSolventIsExplicit(mdSolvent);
+  const timer = setTimeout(() => {
+    if (mdRunRef.current || calcBusyRef.current) return;   // un geste tourne : la boîte est à lui
+    if (!explicit) { calcRemoveWaterBox(); return; }
+    const geom = calcEngineGeometry();
+    if (!geom) return;
+    if (!geom.solvent || !geom.solvent.ok) {
+      const why = geom.solvent && geom.solvent.reason === 'box-too-small' && Number(geom.solvent.needed) > 0
+        ? `it needs an edge of at least ${geom.solvent.needed} Å for this molecule`
+        : geom.solvent && geom.solvent.reason === 'no-water'
+          ? 'no lattice site was left free — the molecule fills it'
+          : 'the module refused it';
+      setCalcMsg(`■ 💧 ${mdSolventOf().label}: the box is NOT on screen — ${why}.`
+        + ' The field stays at ε = 1, with no water: 📦 raise the edge, or choose another solvent.');
+      return;
+    }
+    calcDrawWaterBox(geom).catch(() => {});
+  }, 200);
+  return () => clearTimeout(timer);
+}, [mdSolvent, mdBox, status]);
+
+
+
 // Per-extra-structure style/color overrides. Each entry in the Molecules bar can
 // be rendered independently: "auto" follows the §2 « Molecular Styling » menus;
 // anything else rebuilds that component with ONE chosen style, colour
@@ -13950,7 +19336,7 @@ const restyleExtraMol = (id) => {
       else if (style === 'ball+stick') reps.push(comp.addRepresentation('ball+stick', { ...opts, multipleBond: true, aspectRatio: 1.3 }));
       else if (style === 'sticks') reps.push(comp.addRepresentation('licorice', { ...opts, multipleBond: true, radiusSize: LICORICE_BOND_RADIUS }));
       else if (style === 'lines') reps.push(comp.addRepresentation('line', { ...opts }));
-      else if (style === 'spheres') reps.push(comp.addRepresentation('spacefill', { ...opts, scale: 0.6 }));
+      else if (style === 'spheres') reps.push(comp.addRepresentation('spacefill', { ...opts, radiusScale: 0.6 }));
       // The surface is the ONE style here whose transparency needs
       // SEE_THROUGH_SURFACE: it is the only one with a far wall to paint.
       else if (style === 'surface') reps.push(comp.addRepresentation('surface', { ...opts, ...SEE_THROUGH_SURFACE }));
@@ -14069,7 +19455,7 @@ const renderLookControls = ({
       </select>
       <select value={look.colorBy} onChange={(e) => set('colorBy', e.target.value)}
         className="border border-slate-300 rounded text-[10px] py-0.5 px-0.5 flex-1 min-w-0 bg-white"
-        title={`« Color by » of ${uid} — « Electrostatic potential » paints a surface and nothing else`}>
+        title={`« Color by » of ${uid} — « Electrostatic potential » paints a surface and nothing else; « Atom charge » paints EVERY atom by its own partial charge (negative → neutral → positive on the ⚙ swatches of « Charge », ±1 e full scale)`}>
         {colorOptions.map((c) => <option key={c} value={c}>{COLOR_LABELS[c] || c}</option>)}
       </select>
       {look.colorBy === 'solid' && (
@@ -14254,6 +19640,9 @@ const renderSectionRow = (sec, sub) => {
       )}
       {isPlates && (
         <span className="text-[9px] text-slate-400 italic">filled ring plates (a MeshBuffer the viewer builds) — the outline sticks carry the colouring above</span>
+      )}
+      {look.colorBy === 'atomcharge' && (
+        <span className="text-[9px] text-slate-400 italic">every atom by its own PARTIAL charge — the three swatches of « Charge » in the ⚙ wheel are the ramp (neutral → − / +, ±1 e full scale)</span>
       )}
       {look.colorBy === 'esp' && (
         <span className="text-[9px] text-slate-400 italic">NGL paints this colouring on a surface only — one is added on top of this row</span>
@@ -14956,6 +20345,9 @@ const deleteExtraMol = (id) => {
   const [entry] = extraCompsRef.current.splice(idx, 1);
   try { if (stageRef.current) stageRef.current.removeComponent(entry.comp); } catch {}
   espForget(id); // the ⚡ ESP overlay (if any) was destroyed with the component
+  // ⚠ ET SES SECTIONS DE STYLE AUSSI — sans ce retrait, la molécule supprimée restait dans la
+  // fenêtre de style (voir `forgetSectionMolecules`) : elle y apparaissait une fois morte.
+  forgetSectionMolecules([id]);
   setExtraMols(extraMolsSnapshot());
   setVisibleMolKeys((prev) => { const n = new Set(prev); n.delete(id); return n; });
   if (selectedMolKey === id) setSelectedMolKey('main');
@@ -15206,6 +20598,7 @@ const handleClearViewer = () => {
   clearExtraMolecules();
   try { if (stageRef.current) stageRef.current.removeAllComponents(); } catch {}
   clearMeasurements(); // distance lines belong to the removed components
+  clearHydrogenBonds(); // …et les lignes de 💧 H-bonds aussi
   espResetAll(); // every component (and its ⚡ ESP overlay) is gone now
   componentRef.current = null;
   highlightCompRef.current = null;
@@ -15232,6 +20625,7 @@ const handleClearViewer = () => {
   setStatus('idle');
   setErrorMsg('');
   setResidueTicks([]);
+  setSequenceChoice(null);   // plus de fichier : plus de séquence à choisir
   setSelections([]);
   setSelStyles({});
   setPymolActive(false);
@@ -15317,6 +20711,7 @@ const deleteLoadedPdb = () => {
   clearExtraMolecules();
   try { if (stageRef.current) stageRef.current.removeAllComponents(); } catch {}
   clearMeasurements();          // distance lines belong to the removed components
+  clearHydrogenBonds();         // …et les lignes de 💧 H-bonds aussi
   espResetAll();                // …and so do the ⚡ ESP overlays
   componentRef.current = null;
   highlightCompRef.current = null;
@@ -15425,53 +20820,6 @@ const buildFromSequence = () => {
   flashSeqBuildMsg(`🧬 Structure rebuilt from the sequence — ${atoms.toLocaleString()} atoms, ${sequenceStructureText.length.toLocaleString()} PDB characters.`);
 };
 
-/* ── ✏️ Modify · « ⚭ Fold for disulfides » ─────────────────────────────────
-   LE PONT DISULFURE EST DÉJÀ DESSINÉ dans le modèle servi par la page (un
-   CONECT entre les deux Sγ : les styles Sticks / Ball+stick / Lines le
-   montrent). Ce bouton va plus loin — et seulement quand on le clique : la
-   page DÉTEND la chaîne (φ/ψ des résidus entre les deux Cys, rotamères χ1) pour
-   que les deux Sγ viennent à une distance de liaison, puis sert ce modèle-là.
-
-   Ce que le bouton ne fait PAS, et le message le redit : ce n'est pas un
-   repliement physique (aucune énergie, aucun solvant) — et quand la fenêtre
-   relâchée ne suffit pas à réunir deux Sγ lointaines, le modèle arrive quand
-   même, avec la distance RÉELLE dans le message au lieu d'un pont imaginaire.
-
-   Le geste range ce qui était à l'écran comme le fait « 🧬 Structure from
-   sequence » (mêmes règles, même « ↩ Back to PDB ») : le modèle détendu n'est
-   jamais une impasse. */
-const foldForDisulfides = () => {
-  if (typeof buildDisulfideFoldedStructure !== 'function') {
-    flashDisulfideFoldMsg('⚠️ No disulphide pair to fold for — define one in “Cysteine states” (Cysteine states ⚭ couple with).');
-    return;
-  }
-  let built = null;
-  try {
-    built = buildDisulfideFoldedStructure();
-  } catch (e) {
-    flashDisulfideFoldMsg(`⚠️ Disulphide folding failed: ${e?.message || e}`);
-    return;
-  }
-  if (!built || !built.text) {
-    flashDisulfideFoldMsg('⚠️ Nothing to fold: this condition has no disulphide pair (or no protein sequence).');
-    return;
-  }
-  if (!stashedPdb) {
-    const stash = lastLoadedTextRef.current === sequenceStructureText ? pageStructureStash() : pdbSourceOfCurrent();
-    if (stash && (stash.file || stash.url || stash.text)) setStashedPdb(stash);
-  }
-  abortControl.abortAll();
-  clearExtraMolecules();
-  setFile(null);
-  setPdbId('');
-  setManualOverride(false);
-  setStructOrigin('generated');
-  lastLoadedTextRef.current = built.text;
-  requestStructureLoad({ file: null, url: null, text: built.text, ext: built.ext || 'pdb', ts: Date.now() });
-  const atoms = (built.text.match(/^(ATOM|HETATM)/gm) || []).length;
-  flashDisulfideFoldMsg(`${built.note || '⚭ Disulphide-folded model loaded.'} (${atoms.toLocaleString()} atoms)`);
-};
-
 /* ── ✏️ Modify · « ⚭ Disulfides: shown / hidden » ─────────────────────────────
    LE DESSIN DU PONT, PAS SA DÉFINITION. Le pont existe deux fois : dans la
    définition (« Cysteine states », la page) et dans le graphe de liaisons de la
@@ -15487,10 +20835,14 @@ const foldForDisulfides = () => {
    l'écran. Le rapport était « you displayed the disulfide bonds but you did not
    fold the structure to bring the cysteines at bond distance » : un pont étiré
    est donc DIT, chiffre en main, au lieu de passer pour une liaison — et
-   ⚭ Fold for disulfides, juste à côté, est le geste qui essaie de le fermer.
-   La fenêtre de liaison est celle du repliement (SS_BOND_LENGTH /
-   SS_BOND_TOLERANCE de utils/disulfideFold.js) : une seule définition de « pont
-   fermé » pour le repliement et pour ce compte rendu. */
+   ⚭ « Fold for disulfides » A ÉTÉ RETIRÉ (la demande : « The “fold for disulphide”
+   button does not work and you can eliminate it but keep the “disulphide:shown/
+   hidden” button. ») : ce compte rendu nommait le bouton juste à côté, il dit
+   donc maintenant la vérité toute seule — un pont étiré est DIT, chiffre en
+   main, au lieu de passer pour une liaison. La fenêtre de liaison est celle du
+   repliement (SS_BOND_LENGTH / SS_BOND_TOLERANCE de utils/disulfideFold.js) :
+   une seule définition de « pont fermé » pour le repliement et pour ce compte
+   rendu. */
 // « Cys 6–Cys 127: 2.04 Å ✓ bonded » / « … 18.42 Å ⚠️ drawn but stretched »
 const describeDisulfideBond = (b) => {
   const label = (resno, chain, otherChain) => `${chain && chain !== otherChain ? `${chain} ` : ''}${displayResno(resno)}`;
@@ -15510,13 +20862,18 @@ const toggleDisulfideBonds = () => {
   const next = !disulfidesShownRef.current;
   const parts = bonds.map(describeDisulfideBond).join(' · ');
   const n = bonds.length;
-  /* Un pont DESSINÉ mais étiré est le cas du rapport (« you displayed the
+  /* Un pont DESSINÉ mais étiré était le cas du rapport (« you displayed the
      disulfide bonds but you did not fold the structure to bring the cysteines at
-     bond distance ») : le compte rendu le dit, et il nomme le geste qui essaie de
-     le fermer — ⚭ Fold for disulfides, juste à côté. */
+     bond distance ») : le compte rendu le dit, et il ne nomme plus aucun bouton —
+     celui qui essayait de fermer le pont (⚭ Fold for disulfides) a été retiré.
+     ⚠ DEPUIS CETTE SESSION IL SE FERME TOUT SEUL, PENDANT LES GESTES : le pont étiré
+     entre dans les contraintes du ▶ Run, du ▶ MD et du ⚒ Minimise comme une distance
+     visée à 2.05 Å (voir `calcRestraintTermsOf`), donc la phrase le DIT au lieu de
+     laisser croire qu'il restera élongué. */
   const stretched = bonds.filter((b) => b.distance != null && Math.abs(b.distance - SS_BOND_LENGTH) > SS_BOND_TOLERANCE).length;
   const hint = stretched
-    ? ` ${stretched} of them ${stretched === 1 ? 'is' : 'are'} drawn but STRETCHED — ⚭ Fold for disulfides, right here, relaxes the chain until the two Sγ can meet.`
+    ? ` ${stretched} of them ${stretched === 1 ? 'is' : 'are'} drawn but STRETCHED: the two Sγ are further apart than the S–S bond length (${SS_BOND_LENGTH} ± ${SS_BOND_TOLERANCE} Å), so the link NGL draws is not a bond the geometry supports.`
+      + ` ▶ Run, ▶ MD and ⚒ Minimise CONDUCT ${stretched === 1 ? 'it' : 'them'} to ${SS_BOND_LENGTH} Å — the two Sγ are pulled together like a distance of the table, so the bridge comes in as the gesture runs (the gesture's own report says how close it got: the geometry may not allow it to close).`
     : '';
   disulfidesShownRef.current = next;
   setDisulfidesShown(next);
@@ -15579,6 +20936,24 @@ const rebuildHydrogensNow = async () => {
   flashRebuildMsg(`⚗️ Hydrogens rebuilt across ${result.residues} residues (${result.rebuilt} re-placed, names kept) — ${suffix}.`);
 };
 
+/* ⬚ LE PNG DU ✨ RAY QUAND LE FOND EST UN DÉGRADÉ — la rampe est peinte SOUS le
+   still rendu transparent (utils/viewerBackground : `underlayBackdrop`). Le
+   NOUVEAU PNG reprend le nom du fichier de la still : sa taille et sa date ne
+   bougent pas, et son suffixe « _transparent » disparaît puisque le fond est de
+   nouveau OPAQUE (la rampe). Si le navigateur ne sait pas décoder ou ré-encoder
+   l'image, la still d'origine est gardée TELLE QUELLE : un rendu n'est jamais
+   perdu pour un fond, et rien de tout cela ne lève jamais. */
+const rayStillWithBackdrop = async (out, backdrop, label) => {
+  const png = await underlayBackdrop(out.blob, backdrop);
+  if (!png) return out;
+  return {
+    ...out,
+    blob: png,
+    transparent: false,
+    fileName: rayFileName({ label, width: out.width, height: out.height, transparent: false }),
+  };
+};
+
 /* ---- ✨ Ray — the high-resolution STILL of the current scene -----------------
    Its OWN button and its own handler: ✨ Ray renders the scene on screen — every
    palette, the ring plates, the ESP overlays, the clipping plane, the fog, the
@@ -15618,10 +20993,21 @@ const captureRay = async () => {
     // Elevation, see nglKeyLightDirection) and the strength chosen in the bar.
     // `shadows: false` is the plain supersampled still NGL drew before.
     const lamp = nglKeyLightDirection(shadowAz, shadowEl);
+    const stillLabel = file ? file.name : (pdbId || 'structure');
+    /* ⬚ LE FOND DÉGRADÉ ET LE ✨ RAY. NGL rend le still d'un seul tenant, avec un
+       fond OPAQUE (`makeImage` fait `setClearAlpha(s?0:1)`, ngl 2.4) et d'UNE
+       seule couleur : une still de fond dégradé sortirait donc UNIE — la couleur
+       A. La still est donc rendue TRANSPARENTE quand la rampe est allumée (et
+       seulement alors, et jamais si l'utilisateur a déjà demandé « ⬚ alpha » :
+       dans ce cas sa transparence est sa réponse, on n'y touche pas), puis
+       `underlayBackdrop` peint la rampe SOUS le PNG (voir utils/viewerBackground) :
+       le fichier montre alors exactement ce que l'écran montre, coin par coin. */
+    const backdrop = backgroundSpecOf(bgColor, bgGradient);
+    const gradientStill = !!backdrop.on && !rayTransparent;
     const out = await previewRayImage(stage, {
-      label: file ? file.name : (pdbId || 'structure'),
+      label: stillLabel,
       factor: rayFactor,
-      transparent: rayTransparent,
+      transparent: rayTransparent || gradientStill,
       onProgress: (done, total) => {
         if (rayRunRef.current !== run) return;
         const slow = Date.now() - startedAt > RAY_SLOW_HINT_MS;
@@ -15644,9 +21030,13 @@ const captureRay = async () => {
        est à l'écran (showRayPreview), et les deux seuls gestes qui restent sont
        le 💾 de l'aperçu (saveRayPreviewFile — le fichier que l'aperçu montre) et
        sa fermeture, qui n'écrit rien. Le message dit la taille RÉELLE, la
-       transparence et ce qu'ont coûté les ombres portées. */
-    showRayPreview(out);
-    setRayMsg(`✓ ${out.width}×${out.height} px rendered${out.transparent ? ' · transparent' : ''}${out.shadowNote ? ` ${out.shadowNote}` : ''}${out.queueNote ? ` ${out.queueNote}` : ''} — the preview is on screen: 💾 Save PNG writes the file`);
+       transparence et ce qu'ont coûté les ombres portées.
+       ⬚ Une still de fond DÉGRADÉ est passée par rayStillWithBackdrop AVANT
+       d'être montrée : ce qui est à l'écran EST le fichier, rampe comprise. */
+    const still = gradientStill ? await rayStillWithBackdrop(out, backdrop, stillLabel) : out;
+    if (rayRunRef.current !== run) return;
+    showRayPreview(still);
+    setRayMsg(`✓ ${still.width}×${still.height} px rendered${still.transparent ? ' · transparent' : ''}${gradientStill ? ' · gradient background' : ''}${out.shadowNote ? ` ${out.shadowNote}` : ''}${out.queueNote ? ` ${out.queueNote}` : ''} — the preview is on screen: 💾 Save PNG writes the file`);
   } catch (err) {
     if (rayRunRef.current === run) {
       /* LE CONSEIL VIENT DU MODULE quand il en a un (`err.hint` : contexte WebGL
@@ -16146,6 +21536,12 @@ const captureViewerSetup = () => ({
   shadows: { on: shadowOn, darkness: shadowDarkness, az: shadowAz, el: shadowEl, color: lightColor },
   clip: { on: clipOn, near: clipNear, far: clipFar, dist: clipDist },
   background: bgColor,
+  /* ⬚ …ET LA RAMPE QUI PART DE CETTE COULEUR (la seconde couleur, l'angle,
+     l'interrupteur) : la demande dit « two colors and their direction », donc
+     une figure enregistrée doit revenir avec SA rampe — comme elle revient avec
+     son brouillard et ses ombres. Le lecteur la revalide (bgGradientOf) : un
+     fichier d'un autre build, ou bricolé, ne peut pas peindre un fond cassé. */
+  backgroundGradient: bgGradient,
   quality: qualityHigh,
   large: { style: largeStyle, water: showLargeWater },
   // The ⚙ settings wheel belongs to « the whole visualisation setup » too: the two
@@ -16180,7 +21576,7 @@ const captureViewerSetup = () => ({
   /* ✨ Ray (le facteur, le fond transparent, l'ombre portée avec sa force et son flou)
      et ⚡ ESP (les deux bornes du dégradé) font partie de l'image d'une figure : ils
      voyagent avec elle. */
-  ray: { factor: rayFactor, transparent: rayTransparent, shadows: rayShadows, strength: rayShadowStrength, blur: rayShadowBlur },
+  ray: { factor: rayFactor, transparent: rayTransparent, shadows: rayShadows, strength: rayShadowStrength, blur: rayShadowBlur, live: rayShadowLive },
   esp: espLimits,
   // …et tout ce qui est propre à CETTE scène (voir captureSceneExtras).
   ...captureSceneExtras(),
@@ -16263,6 +21659,79 @@ const applyCameraPose = (pose) => {
     if (typeof v.requestRender === 'function') v.requestRender();
   } catch { /* une version de NGL sans ces objets laisse la caméra en place */ }
 };
+/* ── 🔄 LE TOURNOIEMENT UNIFORME EN x, y ET z — la demande de cette session, mot
+   pour mot : « Next to the movie button add a button to rotate uniformly the
+   molecule in x, y and z direction ». Voici ce que le bouton 🔄 de la boîte
+   🎨 Styles fait, IMAGE PAR IMAGE : la scène est tournée d'un petit angle autour
+   des TROIS axes, à la MÊME vitesse angulaire — c'est le « uniformly » —, donc le
+   tour est un vrai tournoiement (aucun axe ne prend le dessus, et jamais le
+   va-et-vient droite / gauche d'un simple spin de plateau).
+
+   ⚠⚠ C'EST LA MÊME ÉCRITURE QUE LA POSE DE CAMÉRA (applyCameraPose, juste
+   au-dessus) : l'orientation de la scène EST `viewer.rotationGroup.quaternion`,
+   celle qu'un glisser de souris écrit et que 🎞 capture dans son `q`. Rien n'est
+   donc tenu ici : la souris reprend le tour où il en est, une pose capturée garde
+   l'orientation qu'elle montre, le fondu d'un film la mélange, et ⬇ PDB continue
+   d'écrire la PLACE des molécules (un tour de VUE n'a jamais été un contenu).
+
+   L'incrément d'une image : dq = Rx(ω·dt) · Ry(ω·dt) · Rz(ω·dt), puis q ← dq · q.
+   La PRÉ-multiplication exprime le tour dans le repère de l'ÉCRAN (x vers la
+   droite, y vers le haut, z vers le spectateur) : c'est bien ce qu'on VOIT qui
+   tourne, d'où le même geste quelle que soit l'orientation d'où l'on regarde.
+   `dt` est MESURÉ sur l'horloge que le navigateur donne à la boucle
+   (requestAnimationFrame) : le tour est donc le même à 30, 60 ou 144 Hz, et un
+   onglet resté longtemps en arrière-plan ne fait pas un bond (le pas est plafonné
+   à 0,1 s par l'effet).
+
+   AUCUN objet de NGL n'est construit ici : les deux constructeurs (Quaternion et
+   Vector3) sont LUS sur les objets de la scène, comme partout dans ce fichier —
+   une version de NGL qui ne les exposerait pas ne tourne simplement pas, et
+   l'exception ne remonte jamais au bouton. */
+const SPIN_RAD_PER_S = 0.6;   // rad/s et PAR axe — un tour complet en ~10,5 s
+const spinSceneStep = (stage, dt) => {
+  try {
+    const v = stage && stage.viewer;
+    const q = v && v.rotationGroup && v.rotationGroup.quaternion;
+    const pos3 = v && v.translationGroup && v.translationGroup.position;
+    if (!q || typeof q.multiplyQuaternions !== 'function') return false;
+    if (!pos3 || typeof pos3.constructor !== 'function') return false;
+    const Q = q.constructor;
+    const V3 = pos3.constructor;
+    const w = SPIN_RAD_PER_S * (Number.isFinite(dt) && dt > 0 ? dt : 0);
+    const dq = new Q().setFromAxisAngle(new V3(1, 0, 0), w);   // l'axe x de l'écran
+    dq.multiplyQuaternions(new Q().setFromAxisAngle(new V3(0, 1, 0), w), dq);
+    dq.multiplyQuaternions(dq, new Q().setFromAxisAngle(new V3(0, 0, 1), w));
+    q.multiplyQuaternions(dq, q);          // q ← dq · q : le tour, dans le repère de l'écran
+    if (typeof v.requestRender === 'function') v.requestRender();
+    return true;
+  } catch { return false; }
+};
+
+/* ── 🔄 LA BOUCLE DU TOURNOIEMENT — elle ne tourne QUE quand le bouton l'allume, et
+   elle ne fait qu'une chose : mesurer son `dt`, puis appeler `spinSceneStep` (une
+   image, un petit angle, un rendu). Rien d'autre n'est horodaté : reprendre le
+   tour après un arrêt repart de l'orientation où la vue est.
+
+   ⚠ ELLE S'EFFACE DEVANT LE FILM : pendant qu'une pose est VÉRIFIÉE ou qu'un film
+   S'ÉCRIT (`kfPreview` / `kfBusy`), c'est le film qui repose la caméra à chaque
+   image — deux mains sur la même rotation ne donneraient qu'un tremblement. Le
+   bouton, lui, RESTE ALLUMÉ (`spinOn` ne change pas) : le tour reprend de
+   lui-même à la fin du film, sans un second clic. */
+useEffect(() => {
+  if (!spinOn || kfPreview || kfBusy) return undefined;
+  if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') return undefined;
+  let raf = 0;
+  let last = null;
+  const step = (now) => {
+    const t = Number.isFinite(now) ? now : Date.now();
+    const dt = last == null ? 0 : Math.min(0.1, (t - last) / 1000);
+    last = t;
+    spinSceneStep(stageRef.current, dt);
+    raf = window.requestAnimationFrame(step);
+  };
+  raf = window.requestAnimationFrame(step);
+  return () => { if (raf && typeof window.cancelAnimationFrame === 'function') window.cancelAnimationFrame(raf); };
+}, [spinOn, kfPreview, kfBusy]);
 
 /* ── CE QU'UN ENREGISTREMENT DE SCÈNE AJOUTE À L'ENVIRONNEMENT ────────────────
    « In the viewer the cumulative and snapshot saves do not save all the settings
@@ -16386,6 +21855,14 @@ const applyViewerSetup = (s) => {
   if (Number.isFinite(cl.far)) setClipFar(cl.far);
   if (Number.isFinite(cl.dist)) setClipDist(cl.dist);
   if (typeof s.background === 'string' && /^#[0-9a-fA-F]{6}$/.test(s.background)) setBgColor(s.background);
+  /* ⬚ LA RAMPE DU FOND, relue par le VALIDATEUR du module (bgGradientOf) : un
+     fichier qui n'en a pas laisse le dégradé où il est — c'est ce qui fait
+     qu'un setup écrit AVANT cette fonctionnalité ne change rien au fond — et un
+     objet bricolé (une couleur nommée, un angle infini) retombe sur les
+     valeurs sûres au lieu de peindre un fond cassé. Le champ est DANS
+     THEME_GLOBAL_KEYS : les ⚙️ thèmes cumulatifs et les photographies
+     l'emportent, comme le fond uni qu'il prolonge. */
+  if (s.backgroundGradient && typeof s.backgroundGradient === 'object') setBgGradient(bgGradientOf(s.backgroundGradient));
   if (typeof s.quality === 'boolean') setQualityHigh(s.quality);
   const lg = s.large || {};
   if (typeof lg.style === 'string') setLargeStyle(lg.style);
@@ -16421,6 +21898,7 @@ const applyViewerSetup = (s) => {
   if (typeof ry.shadows === 'boolean') setRayShadows(ry.shadows);
   if (Number.isFinite(ry.strength)) setRayShadowStrength(Math.min(1, Math.max(0.1, ry.strength)));
   if (Number.isFinite(ry.blur)) setRayShadowBlur(Math.min(4, Math.max(0, ry.blur)));
+  if (typeof ry.live === 'string') setRayShadowLive(rayLiveSettingOf(ry.live));
   if (Array.isArray(s.esp) && s.esp.length === 2 && s.esp.every((n) => Number.isFinite(n) && n > 0)) {
     setEspLimits([Math.min(500, Math.max(0.5, s.esp[0])), Math.min(500, Math.max(0.5, s.esp[1]))]);
   }
@@ -16661,8 +22139,17 @@ const importActiveEnvFile = (file) => {
       saveNamedMap(store.key, map);
       setSetupSaveMode(store.tag);
       setSetupName(name);
-      if (store.tag === 'theme') loadTheme(name);
-      else loadSnapshot(name);
+      /* ⚠ L'ENTRÉE QUI VIENT D'ARRIVER S'APPLIQUE DIRECTEMENT (applyThemeEntry /
+         applySnapshotEntry), et non par `loadTheme(name)` / `loadSnapshot(name)` :
+         ces lecteurs relisent le MAGASIN, qui n'a pas encore ce nom dans cet état
+         (setViewerThemes / setViewerSnaps sont asynchrones) — un ⬆ Import annonçait
+         donc « no such theme » et n'appliquait RIEN. C'est aussi ce que fait le
+         rappel automatique de l'ouverture (voir recallViewerStyle). */
+      if (store.tag === 'theme') applyThemeEntry(entry, name);
+      else applySnapshotEntry(entry, name);
+      // …ET L'EXPÉRIENCE S'EN SOUVIENT : un fichier de style importé à la main est
+      // déposé dans le dossier Drive de l'expérience, comme celui du 💾.
+      rememberViewerStyle(store.tag, name, entry);
     } catch (err) {
       flashSetupMsg(`import failed: ${(err && err.message) || 'bad file'}`);
     }
@@ -16690,9 +22177,8 @@ const flashSetupMsg = (m) => {
 
 /* 📂 MODE 1 · LOAD A THEME — the PARTIAL application of the request: the global
    environment first, then every molecule whose class the theme knows. */
-const loadTheme = (name) => {
-  const th = viewerThemes[name];
-  if (!th) { flashSetupMsg('no such theme'); return; }
+const applyThemeEntry = (th, name) => {
+  if (!th) { flashSetupMsg('no such theme'); return false; }
   applyThemeGlobal(th.global);
   const classes = th.classes || {};
   // 1. La couche PERSISTÉE par classe : un système chargé (ou ajouté) PLUS TARD
@@ -16720,6 +22206,17 @@ const loadTheme = (name) => {
   leaveLightMode();
   try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch { /* ignore */ }
   flashSetupMsg(`✓ theme “${name}” applied — ${known} section(s) styled, ${neutral} on the neutral base`);
+  return true;
+};
+/* 📂 LE GESTE DE L'UTILISATEUR — ET L'EXPÉRIENCE S'EN SOUVIENT : la mémoire du
+   poste (rappel instantané à la prochaine ouverture) et le fichier du dossier
+   Drive, qui le ramène sur un autre poste (voir rememberViewerStyle). Le corps du
+   chargement vit dans applyThemeEntry : le RAPPEL automatique de l'ouverture
+   applique une entrée qu'il vient d'adopter ou de lire sur le Drive, sans repasser
+   par le magasin ni par le fichier (voir recallViewerStyle). */
+const loadTheme = (name) => {
+  const th = viewerThemes[name];
+  if (applyThemeEntry(th, name)) rememberViewerStyle('theme', name, th);
 };
 
 /* 💾 MODE 2 · SAVE A SNAPSHOT — deterministic overwrite, keyed by the SECTION (the
@@ -16751,14 +22248,18 @@ const saveSnapshot = (name) => {
   setViewerSnaps(map);
   saveNamedMap(VIEWER_SNAPSHOT_KEY, map);
   flashSetupMsg(`✓ snapshot “${name}” — ${Object.keys(sections).length} section(s)`);
+  // …ET L'EXPÉRIENCE S'EN SOUVIENT : la mémoire du poste (rappel instantané à la
+  // prochaine ouverture) et le fichier du dossier Drive, à côté des .pdb et des
+  // .xtc (voir rememberViewerStyle). Un 💾 hors d'une expérience — un viewer monté
+  // seul — n'a rien à qui l'attacher : la mémoire générale suffit alors.
+  rememberViewerStyle('snapshot', name, map[name]);
 };
 
 /* 📂 MODE 2 · LOAD A SNAPSHOT — the environment, then the styles back onto the very
    same sections: by ID first, by the section KEY (protein|A) when the ids of a
    reloaded file differ. A section the file does not know keeps its own look. */
-const loadSnapshot = (name) => {
-  const sn = viewerSnaps[name];
-  if (!sn) { flashSetupMsg('no such snapshot'); return; }
+const applySnapshotEntry = (sn, name) => {
+  if (!sn) { flashSetupMsg('no such snapshot'); return false; }
   applyThemeGlobal(sn.global);
   const byKey = {};
   Object.keys(sn.sections || {}).forEach((id) => {
@@ -16783,7 +22284,175 @@ const loadSnapshot = (name) => {
   leaveLightMode();
   try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch { /* ignore */ }
   flashSetupMsg(`✓ snapshot “${name}” applied — ${hit} section(s)${miss ? `, ${miss} unknown (their look is kept)` : ''}`);
+  return true;
 };
+// LE GESTE DE L'UTILISATEUR — le pendant de loadTheme : le snapshot appliqué est
+// RETENU par l'expérience ouverte (mémoire du poste + fichier du dossier Drive).
+const loadSnapshot = (name) => {
+  const sn = viewerSnaps[name];
+  if (applySnapshotEntry(sn, name)) rememberViewerStyle('snapshot', name, sn);
+};
+
+/* ══ 🎨 LE STYLE QU'UNE EXPÉRIENCE RETIENT — LES TROIS GESTES DU VIEWER ═══════
+   La demande : « when an experiment opens, after bringing back to live its files
+   (pdb, trajectory etc) it should remember also the style file (called snapshot or
+   in its absence the cumulative) of the viewer and apply it automatically. »
+   Le format du fichier, les noms canoniques et la règle « snapshot, sinon
+   cumulatif » vivent dans utils/viewerStyleFile.js (purs, et EXÉCUTÉS par
+   _viewer_style_recall_test.mjs) ; ici, ce que le viewer en fait :
+     1. RETENIR (rememberViewerStyle) — un style APPLIQUÉ ou ENREGISTRÉ pour cette
+        installation écrit la mémoire du poste (instantanée, hors ligne) ET dépose
+        le fichier JSON dans le dossier Drive de l'expérience, à côté des .pdb et
+        des .xtc : c'est ce fichier qui ramène le style sur un autre poste ;
+     2. RAPPELER (recallViewerStyle, déclenché par l'effet qui suit) — à
+        l'ouverture, une fois les fichiers là (`status === 'ready'` et des sections
+        à l'écran), la mémoire du poste est appliquée ; si elle ne suffit pas
+        (autre poste, navigateur vidé, style supprimé depuis), le dossier de
+        l'expérience est lu et son fichier est adopté puis appliqué ;
+     3. SE TAIRE — rien n'est écrit, rien n'est dit, rien n'est appliqué quand
+        l'expérience n'a aucun style : le viewer garde son style de base, exactement
+        comme avant cette demande. */
+
+/* Le fichier du dossier de l'expérience : le format du ⬇ Export du viewer
+   (`{ mode, name, entry }`, voir utils/viewerStyleFile.js), déposé SOUS LE NOM
+   CANONIQUE de son mode — un seul fichier par mode (réenregistrer REMPLACE le
+   contenu : `uploadLocalFile` ne fabrique pas de doublon). Rend le nom déposé, ou
+   '' hors Drive / en échec — l'appelant peut alors le DIRE au lieu de promettre un
+   voyage. */
+const archiveViewerStyle = async (mode, name, entry) => {
+  if (!driveNaming || !getDriveToken() || !entry) return '';
+  const fileName = viewerStyleFileName(mode);
+  try {
+    const text = JSON.stringify(viewerStyleFilePayload({
+      mode, name, entry, instance: pymolSessionInstanceSlug(instanceKey, driveNaming)
+    }), null, 2);
+    const res = await uploadLocalFile({
+      name: fileName,
+      mimeType: 'application/json',
+      file: new Blob([text], { type: 'application/json' }),
+      ctx: driveNaming
+    });
+    return (res && res.name) || '';
+  } catch { return ''; }
+};
+
+/* LE GESTE COMPLET : la mémoire du poste tout de suite, le fichier du dossier
+   ensuite — et le message nomme celui des deux qui a VRAIMENT eu lieu (sans Drive
+   connecté, la mémoire locale reste et rien n'est promis). */
+const rememberViewerStyle = (mode, name, entry) => {
+  styleTouchedRef.current = true;      // le style de l'utilisateur est désormais le sien
+  saveViewerStyleMemory(styleMemoryKeyRef.current, { mode, name });
+  const label = mode === 'theme' ? 'cumulative theme' : 'snapshot';
+  archiveViewerStyle(mode, name, entry).then((filed) => {
+    if (filed) flashSetupMsg(`✓ ${label} “${name}” — remembered for this experiment (filed as ${filed})`);
+  });
+};
+
+/* LE FICHIER DU DOSSIER → LE MAGASIN → LA SCÈNE : l'entrée lue est d'abord ADOPTÉE
+   sous son nom (l'écriture du ⬆ Import, dans le magasin de son mode), sinon les
+   lecteurs ci-dessus ne trouveraient pas, dans l'état, un nom qui vient d'arriver. */
+const adoptViewerStyleEntry = (mode, name, entry) => {
+  if (mode === 'theme') {
+    const map = { ...viewerThemes, [name]: entry };
+    setViewerThemes(map);
+    saveNamedMap(VIEWER_THEME_KEY, map);
+  } else {
+    const map = { ...viewerSnaps, [name]: entry };
+    setViewerSnaps(map);
+    saveNamedMap(VIEWER_SNAPSHOT_KEY, map);
+  }
+};
+
+/* LE RAPPEL — la mémoire du poste d'abord (instantanée, hors ligne), le fichier du
+   dossier de l'expérience ensuite (c'est lui qui sauve un poste vierge : la même
+   expérience rouverte ailleurs retrouve son style, comme elle retrouve ses .pdb et
+   ses .xtc). LE SNAPSHOT GAGNE, LE CUMULATIF S'APPLIQUE EN SON ABSENCE : la
+   mémoire le dit (`mode`), et dans le dossier c'est `pickViewerStyleFile` qui
+   applique exactement cette préférence (voir utils/viewerStyleFile.js). */
+const recallViewerStyle = async () => {
+  if (styleTouchedRef.current) return null;            // un geste de l'utilisateur a tranché
+  const key = styleMemoryKeyRef.current;
+  /* Ce que CE poste a retenu — sous la clé de l'expérience, puis celle de la
+     condition (la mémoire des versions précédentes), puis la générale. Une mémoire
+     qui désigne un style qu'on a supprimé depuis ne rappelle rien (voir
+     viewerStyleEntryOf) : le fichier du dossier aura donc sa chance. */
+  for (const memoryKey of styleMemoryKeysRef.current) {
+    const target = viewerStyleEntryOf(loadViewerStyleMemory(memoryKey), {
+      snapshots: Object.keys(viewerSnaps), themes: Object.keys(viewerThemes)
+    });
+    if (!target) continue;
+    if (target.mode === 'theme') applyThemeEntry(viewerThemes[target.name], target.name);
+    else applySnapshotEntry(viewerSnaps[target.name], target.name);
+    flashSetupMsg(`✓ ${target.mode === 'theme' ? 'cumulative theme' : 'snapshot'} “${target.name}” applied — the style this experiment remembers`);
+    return { ...target, from: 'browser' };
+  }
+  // Le poste n'a rien (ou plus) : LE FICHIER DU DOSSIER DE L'EXPÉRIENCE.
+  if (!driveNaming || !getDriveToken()) return null;
+  let found = null;
+  try {
+    const listed = await listExperimentFiles({
+      ctx: { ...driveNaming },
+      ctxs: [{ ...driveNaming, section: 'Setup' }],
+      exts: [VIEWER_STYLE_EXT]
+    });
+    found = pickViewerStyleFile(listed.files);
+  } catch { found = null; }
+  if (!found || styleTouchedRef.current) return null;  // l'utilisateur a choisi entre-temps
+  const text = await downloadDriveFileText(found.id).catch(() => '');
+  const parsed = parseViewerStyleFile(text);
+  if (!parsed) return null;                            // ce .json n'est pas un style : on ne devine pas
+  adoptViewerStyleEntry(parsed.mode, parsed.name, parsed.entry);
+  saveViewerStyleMemory(key, { mode: parsed.mode, name: parsed.name });
+  if (parsed.mode === 'theme') applyThemeEntry(parsed.entry, parsed.name);
+  else applySnapshotEntry(parsed.entry, parsed.name);
+  flashSetupMsg(`✓ ${parsed.mode === 'theme' ? 'cumulative theme' : 'snapshot'} “${parsed.name}” applied — brought back from this experiment's Drive folder (${found.name})`);
+  return { mode: parsed.mode, name: parsed.name, from: 'drive' };
+};
+
+/* ⚠ LE GESTE MANUEL « 📂 Style from folder » A ÉTÉ RETIRÉ — la demande de cette
+   session, mot pour mot : « Style from folder should not be there. The last file
+   style should be read automatically. » Les deux moitiés de la demande 🧪 sont
+   donc devenues UNE seule : le RAPPEL AUTOMATIQUE (recallViewerStyle, plus haut)
+   est le SEUL lecteur du style du dossier. Et il lit bien « the last file
+   style » : chaque geste qui RETIENT un style (💾 Save, 📂 Load d'un nom du
+   magasin, ⬆ Import) réécrit le fichier CANONIQUE de son mode dans le dossier de
+   l'expérience (rememberViewerStyle → archiveViewerStyle), donc le dossier porte
+   toujours le dernier utilisé — c'est lui que l'ouverture suivante applique,
+   ici comme sur un autre poste. La règle de préférence reste celle du module pur
+   (utils/viewerStyleFile.js : pickViewerStyleFile — le snapshot de l'expérience,
+   sinon le cumulatif, le plus récent du mode), et rien n'est deviné : un .json
+   qui n'est pas un style est refusé (`parseViewerStyleFile` rend null).
+   Ce que le bouton faisait de plus — adopter un .json renommé à la main sous son
+   nom canonique — n'a plus de porte d'entrée : le rappel ne reconnaît que les
+   noms canoniques et ceux que le viewer exporte lui-même
+   (viewer-snapshot-*.json / viewer-theme-*.json). */
+
+/* L'EFFET DU RAPPEL — « after bringing back to live its files » : il attend que les
+   fichiers soient LÀ (`status === 'ready'`) et que la scène ait ses sections (un
+   snapshot se rejoue SUR elles, voir applySnapshotEntry), puis n'a lieu qu'UNE
+   fois par montage. La page remonte le viewer à chaque changement d'instance
+   (`key={activeTest.id}`) : « une fois par montage » est donc « une fois par
+   expérience ouverte ».
+   ⚠ LE COURT DÉLAI N'EST PAS DU CONFORT : les molécules ANNEXES (un ligand, une
+   eau) arrivent APRÈS le fichier principal, et un snapshot se rejoue section par
+   section — laisser la scène se POSER évite d'appliquer le style avant que la
+   dernière molécule soit là (le catalogue et le compteur de gestes sont dans les
+   dépendances : chaque arrivée repousse l'échéance). */
+const VIEWER_STYLE_RECALL_DELAY_MS = 400;
+useEffect(() => {
+  if (styleRecallRef.current) return;
+  if (status !== 'ready') return;
+  if (!Object.keys(sectionCatalog || {}).length) return;
+  const timer = setTimeout(() => {
+    if (styleRecallRef.current) return;
+    styleRecallRef.current = true;
+    // Le rappel ne doit JAMAIS devenir une promesse non tenue : un style illisible ou
+    // un Drive qui répond mal laisse simplement la scène telle qu'elle est.
+    recallViewerStyle().catch(() => {});
+  }, VIEWER_STYLE_RECALL_DELAY_MS);
+  return () => clearTimeout(timer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [status, instanceKey, sectionEpoch, sectionCatalog]);
 
 /* ══ THE TWO SAVE MODES OF THE VISUALISATION ENVIRONMENT (the request) ═══════
    MODE 1 · THEME (cumulative) and MODE 2 · SNAPSHOT (exact scene): the two stores
@@ -16852,6 +22521,10 @@ const saveTheme = (name, choices) => {
   setThemeChoices(null);
   const kept = Object.keys(nextClasses).filter((k) => !kinds.includes(k));
   flashSetupMsg(`✓ theme “${name}” — ${learned.length} class(es) learned${kept.length ? `, ${kept.length} kept (${kept.join(' · ')})` : ''}`);
+  // …ET L'EXPÉRIENCE S'EN SOUVIENT (voir rememberViewerStyle) : le thème cumulatif
+  // enregistré ici est celui que l'expérience rouvrira — et « en l'absence d'un
+  // snapshot » c'est LUI qui s'appliquera, exactement la règle de la demande.
+  rememberViewerStyle('theme', name, map[name]);
 };
 
 // A swatch of the 🔬 nucleic-acid panel: it sets the colour AND switches « Colour
@@ -16927,6 +22600,1200 @@ const stylesSavedTitle = stylesSavedNames.length
   ? `${activeEnv.tag === 'theme' ? 'Themes' : 'Snapshots'} saved: ${stylesSavedNames.join(' · ')}`
   : `No ${activeEnv.tag} saved yet — type a name in the box and press 💾 Save.`;
 
+/* ── ⚙ LES TROIS GESTES DU CHAMP — À CÔTÉ DU BOUTON 🧬 ───────────────────────
+   La demande : « can the MD, Minimize and Energy be put next to “structure
+   calculation” button? » Ils étaient au fond du corps de la section 🧬, donc invisibles
+   tant qu'on ne l'ouvrait pas ; ils sont maintenant DANS LA RANGÉE DES BOUTONS, juste
+   après 🧬 Structure calculation, avec le champ 🌡 T qui les règle (un seul champ de
+   température pour ▶ MD, et la même pour tous). Le JSX est écrit UNE fois et rendu une
+   fois : les trois gestes restent ceux du module (`mdFrames`, `minimizeFrames`,
+   `forceFieldEnergyOf`) — il n'y a pas de second moteur caché dans le panneau. */
+/* ── ⚙ LE PROTOCOLE DU CALCUL — SES RÉGLAGES, DANS SON PANNEAU ────────────────
+   « bring back all the MD parameters related to structure calculation in the settings of
+   structure calculation. » Les voici, remis là où la demande les remet : pas de dynamique,
+   pas de temps, durée totale, températures chaude et froide, part d'équilibration,
+   balayages de minimisation et option 🪢 ω — le protocole STANDARD que chaque départ porte
+   (tirage → recuit → dynamique → minimisation → trempe).
+   ⚠ Le ▶ Run du 🧬 est le SEUL à lire ces états (`calcMdSteps`, `calcMdDt`, `calcMdHot`,
+   `calcMdCold`, `calcMdEquil`, `calcMinimise`, `calcOmegaFree`) : la dynamique ISOLÉE de
+   la fenêtre 🌡 MD a les siens (`renderMdOptions`), donc les deux gestes ne peuvent plus se
+   changer l'un l'autre — c'est exactement ce que la demande sépare. */
+const renderCalcMdOptions = () => (
+  <>
+    <label className="flex items-center gap-1"
+      title="🌡 MOLECULAR DYNAMICS — how many Langevin steps each start gets (and how many the ▶ MD button below runs). The dynamics is in DIHEDRAL space (a step is one rigid rotation about a hinge, so bond lengths and angles cannot break), under the WHOLE force field in kcal/mol — bonds, angles, planar rings, van der Waals, electrostatics with partial charges, non-polar solvent, your distances as flat-bottom wells, ω trans, the φ/ψ statistical potential and χ1. Each start runs an EQUILIBRATION phase at the hot temperature and then cools down to the cold one. 0 = no dynamics.">
+      🌡 MD
+      <input type="number" min="0" max="20000" step="10" value={calcMdSteps}
+        onChange={(e) => setCalcMdSteps(Math.max(0, Math.min(20000, Math.round(Number(e.target.value) || 0))))}
+        aria-label="Molecular dynamics steps per start"
+        className="w-16 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
+      <span className="font-semibold text-slate-500">steps</span>
+    </label>
+    <label className="flex items-center gap-1"
+      title="⏱ THE TIMESTEP of the dynamics, in picoseconds — and with it the TOTAL SIMULATION TIME: steps × dt. Type a length here (or in the « total » field) and the number of steps follows; type steps and this length follows. 0.01 ps is the usual value for a dihedral trajectory.">
+      ⏱ dt
+      <input type="number" min="0.0001" max="1" step="0.005" value={calcMdDt}
+        onChange={(e) => setCalcMdDtText(e.target.value)}
+        aria-label="Timestep of each start's dynamics, in picoseconds"
+        className="w-16 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
+      <span className="font-semibold text-slate-500">ps</span>
+    </label>
+    <label className="flex items-center gap-1"
+      title="⏱ THE TOTAL SIMULATION TIME of one start, in picoseconds — the length the whole trajectory will have (equilibration + cooling). Typing a length here sets the number of steps to length / dt; that is the only arithmetic the panel does, and the module checks it (`structureCalcSimulationTimeOf`).">
+      ⏱ total
+      <input type="number" min="0.0001" max="20000" step="0.5" value={calcMdTime.ps}
+        onChange={(e) => setCalcMdTotalText(e.target.value)}
+        aria-label="Total simulation time per start, in picoseconds"
+        className="w-20 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
+      <span className="font-semibold text-slate-500">ps</span>
+    </label>
+    <span className="text-[10px] font-mono font-bold text-indigo-800 bg-indigo-50 border border-indigo-200 rounded px-1.5 py-0.5"
+      title="steps × dt — the nominal length of one start's trajectory, computed by the module.">
+      = {calcMdTime.ps} ps ({calcMdTime.ns} ns)
+    </span>
+    <label className="flex items-center gap-1"
+      title="🌡 THE HOT TEMPERATURE of the dynamics, in KELVINS — the equilibration phase. The thermal energy is R·T (0.6 kcal/mol at 300 K, 6 kcal/mol at 3000 K), so 2000–4000 K is the range where a dihedral actually changes basin: that is the whole point of the dynamics inside a structure calculation. The ▶ MD button below keeps ONE temperature instead (its own 🌡 T field).">
+      🌡 hot
+      <input type="number" min="1" max="20000" step="100" value={calcMdHot}
+        onChange={(e) => setCalcMdHotText(e.target.value)}
+        aria-label="Hot temperature of the molecular dynamics, in kelvins"
+        className="w-16 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
+      <span className="font-semibold text-slate-500">K</span>
+    </label>
+    <label className="flex items-center gap-1"
+      title="🌡 THE COLD TEMPERATURE at the end of the cooling, in KELVINS — 300 K is room temperature (R·T = 0.6 kcal/mol): the molecule vibrates and settles, it does not jump basins any more.">
+      🌡 cold
+      <input type="number" min="1" max="20000" step="50" value={calcMdCold}
+        onChange={(e) => setCalcMdColdText(e.target.value)}
+        aria-label="Cold temperature of the molecular dynamics, in kelvins"
+        className="w-16 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
+      <span className="font-semibold text-slate-500">K</span>
+    </label>
+    <label className="flex items-center gap-1"
+      title="⚖ THE EQUILIBRATION SHARE of the dynamics, in per cent: that part runs at the HOT temperature (the conformation installs itself under your distances), the rest cools down hot → cold. 33 % is the default; 0 % starts the cooling at once.">
+      ⚖ equil
+      <input type="number" min="0" max="90" step="5" value={calcMdEquil}
+        onChange={(e) => setCalcMdEquil(Math.max(0, Math.min(90, Math.round(Number(e.target.value) || 0))))}
+        aria-label="Share of the dynamics spent equilibrating, in per cent"
+        className="w-14 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
+      <span className="font-semibold text-slate-500">%</span>
+    </label>
+    <label className="flex items-center gap-1"
+      title="⚒ MINIMISATION — how many sweeps of the dihedral minimisation each start gets after the dynamics (and how many the ⚒ Minimise button runs). Each hinge is tried on both sides of a step that halves as soon as a whole sweep improves nothing: it lands on a LOCAL MINIMUM of the same force field, which is the last energy refinement of the protocol. 0 = no minimisation.">
+      ⚒ sweeps
+      <input type="number" min="0" max="12" value={calcMinimise}
+        onChange={(e) => setCalcMinimise(Math.max(0, Math.min(12, Math.round(Number(e.target.value) || 0))))}
+        aria-label="Minimisation sweeps per start"
+        className="w-12 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
+    </label>
+    <label className="flex items-center gap-1"
+      title={`🪢 LET ω VARY — the request: « in the structure calculation allow the option to vary also the omega backbone angle. » UNCHECKED (the default) every peptide C–N bond is a PROTECTED dihedral: the annealing, the quench, the dynamics AND the minimisation refuse a step that increases its ω cost — that is what keeps peptides trans (measured: without it, an ω started from the plateau's edge, at ω = 150°, ends at 119° — 61° out of the plateau — after 300 dynamics steps at 3000 K — and at 81° after 3000 steps at 3000 K, 85° at 2000 K). THE RANDOM DRAW OF A START OBEYS IT TOO — and that was the hole: the draw used to give EVERY hinge a uniform angle, the peptide C–N included, so a start could be handed a cis ω (near 0°). The field does TIRE it back — its ω barrier is ONE-WAY (zero inside the plateau, k = ${STRUCTURE_CALC_OMEGA_WEIGHT} kcal/mol at the cis, never a second minimum) — but that is a PREFERENCE, judged with the rest of the field, and nothing guarantees it wins over a distance you asked for: MEASURED, a start at 0.4° from the cis came back to 92° of deviation from trans after six sweeps, and to 77° after 3000 dynamics steps at 2000 K — out of the plateau, still paying its barrier. The draw was the only place that could hand such a start out, so it is where the lock is: it no longer DRAWS a peptide, it POSES it trans, and it pulls a cis one back to trans. CHECKED, ω becomes an ORDINARY dihedral of the protocol: the draw pulls it at random like any other hinge, its barrier is still a family of the force field (k = ${STRUCTURE_CALC_OMEGA_WEIGHT} kcal/mol, zero inside the plateau of ± ${STRUCTURE_CALC_OMEGA_TOLERANCE}° around ${STRUCTURE_CALC_OMEGA}°), and the FIELD alone arbitrates — a peptide only leaves trans when a distance you asked for, an imposed φ/ψ or a clash pays more than that barrier. The step stays the family's own (12° in the annealing, 4° in the dynamics), so ω still turns by small steps and never jumps to another conformer. The setting is the STRUCTURE CALCULATION'S OWN: every start of ▶ Run carries it, and so does the ⚒ Minimise of the toolbar (which is the descent each start ends on). The 🌡 MD window has its OWN 🪢 box — this one does not touch it.`}>
+      <input type="checkbox" checked={calcOmegaFree} onChange={(e) => setCalcOmegaFree(e.target.checked)}
+        aria-label="Let the peptide ω dihedral vary in the structure calculation"
+        className="accent-indigo-600" />
+      🪢 ω varies
+    </label>
+    {/* 🎯 LA FONCTION CIBLE — la demande de cette session : « if the present plan is correct
+        I wouldn't throw it but I would add the option to run as Dyana as well. » Le choix
+        est celui du module (`STRUCTURE_CALC_TARGET_FUNCTIONS`) : le panneau écrit ses
+        libellés et sa description, il n'invente aucune règle. Il est lu par les QUATRE
+        gestes du champ — ▶ Run (le recuit, la dynamique, la minimisation, la trempe ET la
+        note de chaque départ), ▶ MD, ⚒ Minimise, ⟳ Energy — donc deux gestes sur la même
+        molécule ne peuvent pas conduire deux mondes différents. */}
+    <label className="flex items-center gap-1"
+      title={`🎯 THE TARGET FUNCTION — what the calculation minimises. ${STRUCTURE_CALC_TARGET_FUNCTIONS.map((t) => `${t.label}: ${t.of}${t.off.length ? ` (with ${t.off.join(', ')} switched OFF)` : ''}`).join(' · ')}. ⚠ DYANA is exactly what that program does — a REPULSIVE non-bonded term, no charges, no non-polar surface, united atoms — and the families of geometry (bonds, angles, planar rings), ω, the φ/ψ basins, χ1 and YOUR DISTANCES stay those of this module: the report of every gesture says which families are switched OFF, so nothing looks forgotten. It is also the cheapest physics of this engine (no surface term at all, a ${STRUCTURE_CALC_TARGET_FUNCTIONS[1].pairLimit} Å reach, and no added hydrogens), which is what makes an explicit water box affordable. The setting survives a reload, and a saved session that does not have it comes back on ${STRUCTURE_CALC_TARGET_FUNCTION}.`}>
+      🎯 target
+      <select value={calcTargetFunction} onChange={(e) => setCalcTargetFunction(structureCalcTargetFunctionOf(e.target.value).id)}
+        aria-label="Target function of the structure calculation"
+        className="border border-indigo-300 rounded px-1 py-0.5 text-[10px] font-mono bg-white outline-none focus:border-indigo-500">
+        {STRUCTURE_CALC_TARGET_FUNCTIONS.map((t) => (
+          <option key={t.id} value={t.id}>{t.label}</option>
+        ))}
+      </select>
+    </label>
+  </>
+);
+
+/* ── ⚙ LES RÉGLAGES DE LA DYNAMIQUE ISOLÉE — LA FENÊTRE 🌡 MD, ET ELLE SEULE ──
+   « In the window dedicated to MD put the parameters for an MD run (temperature, explicit,
+   implicit solvent, steps, stepinterval, duration)… This MD should be independent of
+   structure calculation. » Les voici, tels quels : 🌡 sa température (UNE, tenue), 💧 son
+   solvant, 🌡 ses pas, ⏱ son pas de temps (le « stepinterval »), ⏱ sa durée (pas × dt,
+   affichée à côté), 🖼 son intervalle d'images et 🪢 sa règle sur ω — et, en dernier, la 📏
+   case, qui est son seul pont vers le 🧬 (une OPTION : décochée, la dynamique part libre).
+   ⚠ AUCUN de ces états n'est lu par le ▶ Run du 🧬 (`calcMdSteps`, `calcMdHot`, … sont au
+   protocole, voir `renderCalcMdOptions`) : les deux dynamiques sont INDÉPENDANTES. */
+const renderMdOptions = () => (
+  <>
+    <label className="flex items-center gap-1"
+      title={`🌡 THE TEMPERATURE OF THIS DYNAMICS, in KELVINS — ONE temperature for the whole run: this gesture does not cool down. A cooling schedule is what a structure calculation does on each start, and it has its own 🌡 hot → 🌡 cold in the 🧬 panel. The thermal energy is R·T (0.6 kcal/mol at 300 K, 6 kcal/mol at 3000 K), so 2000–4000 K is the range where a dihedral actually changes basin. ⚠ WHAT IT DOES — IT IS THE SPEED OF THE ENGINE: a channel's thermal speed is √(R·T/m) (m = ${STRUCTURE_CALC_MD_MASS}, the reduced inertia of a dihedral), so 1500 K means 34.5 °/ps and the molecule KEEPS MOVING — the displacement per image scales as √T, which is what a temperature does. The torque the field may pull with is capped at the speed that produces it (γ·m·f·√(R·T/m)), so no hard-wired cap can flatten the temperature you ask for.`}>
+      🌡 T
+      <input type="number" min="1" max="20000" step="100" value={mdTemp}
+        onChange={(e) => setMdTempText(e.target.value)}
+        aria-label="Molecular dynamics temperature, in kelvins"
+        className="w-16 border border-sky-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-sky-500 text-[10px] font-mono bg-white" />
+      <span className="font-semibold text-slate-500">K</span>
+    </label>
+    <label className="flex items-center gap-1"
+      title={`💧 THE SOLVENT OF THIS DYNAMICS — two kinds of solvent, and this choice offers both. THE IMPLICIT ONES are a DIELECTRIC the charges see (the non-polar surface term is a family of the field and never moves). THE EXPLICIT ONE is a BOX: ${STRUCTURE_CALC_SOLVENTS.map((s) => `${s.label} — ${s.of}`).join(' · ')}. ⚠ WHAT THE BOX IS: its waters are RIGID TIP3P molecules (O–H 0.9572 Å, H–O–H 104.52° — that geometry cannot move), and this dynamics turns DIHEDRALS, so they have no hinge to turn. They therefore get the six degrees of freedom water really has instead: three TRANSLATIONS and three ROTATIONS, pushed by their own van der Waals and electrostatic terms (solute–water and water–water at ε = 1) and thermostatted by the same Langevin friction and noise as the dihedrals — so they genuinely DIFFUSE during the run, they screen the charges, and they are counted in every family of the field. The gesture's report says how many displaced, by how much, how far they turned and the kinetic temperature it really held (translation and rotation separately). ⚠ What they do NOT feel: the non-polar surface term's gradient (they are still counted in its energy), and the solute is not pushed back in Cartesian space — it moves through its own hinges (Gauss–Seidel). ⚠ And there is no periodic box (no minimum image): the edge is a solvation boundary, not an infinite crystal, so a water that leaves the cube does not come back. Build it with 📦 below. The ε values come from the module; none is written here.`}>
+      💧 solvent
+      <select value={mdSolvent} onChange={(e) => setMdSolvent(e.target.value)}
+        aria-label="Solvent of the molecular dynamics"
+        className="border border-sky-300 rounded px-1 py-0.5 text-[10px] font-mono bg-white outline-none focus:border-sky-500">
+        {STRUCTURE_CALC_SOLVENTS.map((s) => (
+          <option key={s.id} value={s.id}>{s.label}</option>
+        ))}
+      </select>
+    </label>
+    {/* 📦 LA BOÎTE DE L'EAU EXPLICITE — le « with its box » de la demande de cette session :
+        « it would be great if you could add the explicit solvent as a further option with
+        its box. » Elle n'apparaît QU'AVEC le modèle `explicit` (les trois autres sont un
+        diélectrique : une arête n'y voudrait rien dire), et c'est le module qui la
+        construit (`explicitSolventOf`). Le nombre d'eaux suit l'arête — une maille vaut le
+        σ de l'eau (3.1 Å), donc une boîte de 24 Å place des eaux sur un réseau 7×7×7, moins
+        les sites qui touchent la molécule. */}
+    {structureCalcSolventIsExplicit(mdSolvent) && (
+      <label className="flex items-center gap-1"
+        title={`📦 THE EDGE OF THE EXPLICIT WATER BOX, in Å — a CUBE centred on the molecule, filled with RIGID TIP3P waters on a 3.1 Å lattice (the σ of the water: two neighbouring oxygens are at van der Waals contact, which is the density of a liquid). Every site that would come closer than 2.6 Å to one of your heavy atoms is LEFT EMPTY, so the molecule is never crossed by a water; the gesture's report says how many waters were placed and how many sites were left out. The box must be able to contain the molecule (at least its longest dimension plus ${2 * 8} Å of free water, i.e. 8 Å of hydration on each side): a box that is too small is REFUSED — the report says the edge it would need, and the dynamics then runs in ε = 1 with no water instead of silently growing what you typed. ⚠ A box is COSTLY (every water is an atom of the pair list and of the surface): a 🎯 DYANA target function makes it far cheaper, because it has no surface term and a 3.5 Å reach.`}>
+        📦 box
+        <input type="number" min={STRUCTURE_CALC_SOLVENT_BOX_MIN} max={STRUCTURE_CALC_SOLVENT_BOX_MAX} step="1"
+          value={mdBox}
+          onChange={(e) => setMdBox(Math.max(STRUCTURE_CALC_SOLVENT_BOX_MIN,
+            Math.min(STRUCTURE_CALC_SOLVENT_BOX_MAX, Math.round(Number(e.target.value) || STRUCTURE_CALC_SOLVENT_BOX))))}
+          aria-label="Edge of the explicit water box, in angstroms"
+          className="w-14 border border-sky-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-sky-500 text-[10px] font-mono bg-white" />
+        <span className="font-semibold text-slate-500">Å</span>
+        {/* ⚠ LE SOLVANT EST CELUI DU CHAMP, PAS SEULEMENT DE CETTE DYNAMIQUE — les quatre
+            gestes du champ (▶ Run, ▶ MD, ⚒ Minimise, ⟳ Energy) lisent la même géométrie
+            (`calcEngineGeometry`) et la même fonction cible : une boîte d'eau qui ne
+            serait construite que pour le ▶ MD rendrait deux gestes incohérents sur la
+            même molécule. C'est DIT ici, au lieu de laisser croire à une étanchéité qui
+            n'existe plus pour le solvant. */}
+        <span className="text-[9px] font-semibold text-sky-700"
+          title="The solvent (this dielectric, or this water box) and the 🎯 target function are properties of the FORCE FIELD, so all four gestures read them: ▶ Run, ▶ MD, ⚒ Minimise and ⟳ Energy work on exactly the same molecule. Every other setting of this window (T, steps, dt, images, ω) stays this gesture's own.">
+          (the whole field)
+        </span>
+        <button type="button"
+          onClick={() => setMdBox(STRUCTURE_CALC_SOLVENT_BOX)}
+          title={`Put the box edge back to its default (${STRUCTURE_CALC_SOLVENT_BOX} Å).`}
+          className="px-1 py-0.5 text-[9px] font-bold rounded border bg-white border-sky-300 text-sky-700 hover:bg-sky-50">
+          ↺
+        </button>
+      </label>
+    )}
+    <label className="flex items-center gap-1"
+      title="🌡 HOW MANY STEPS THIS DYNAMICS RUNS — in DIHEDRAL space (a step is one rigid rotation about a hinge, so bond lengths and angles cannot break), under the WHOLE force field in kcal/mol: bonds, angles, planar rings, van der Waals, electrostatics with partial charges, solvent, your distances as flat-bottom wells when the 📏 box below is ticked, ω, the φ/ψ statistical potential and χ1. It is the length of THIS gesture and of nothing else — the structure calculation has its own steps per start. 0 = nothing to do.">
+      🌡 steps
+      <input type="number" min="0" max="20000" step="10" value={mdSteps}
+        onChange={(e) => setMdSteps(Math.max(0, Math.min(20000, Math.round(Number(e.target.value) || 0))))}
+        aria-label="Molecular dynamics steps"
+        className="w-16 border border-sky-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-sky-500 text-[10px] font-mono bg-white" />
+    </label>
+    <label className="flex items-center gap-1"
+      title="⏱ THE STEP INTERVAL of this dynamics, in picoseconds — how much time ONE step represents. With the number of steps it fixes the DURATION shown on the right (steps × dt); typing a duration below (or here) chooses the steps. That is the only arithmetic the panel does, and the module checks it (`structureCalcSimulationTimeOf`). 0.01 ps is the usual value for a dihedral trajectory.">
+      ⏱ dt
+      <input type="number" min="0.0001" max="1" step="0.005" value={mdDt}
+        onChange={(e) => setMdDtText(e.target.value)}
+        aria-label="Molecular dynamics timestep, in picoseconds"
+        className="w-16 border border-sky-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-sky-500 text-[10px] font-mono bg-white" />
+      <span className="font-semibold text-slate-500">ps</span>
+    </label>
+    <label className="flex items-center gap-1"
+      title="⏱ THE DURATION OF THIS DYNAMICS, in picoseconds — steps × dt. Type a length here and the number of steps follows (length / dt); type the steps and this length follows. The multiplication is the module's (`structureCalcSimulationTimeOf`), not the panel's.">
+      ⏱ duration
+      <input type="number" min="0.0001" max="20000" step="0.5" value={mdTime.ps}
+        onChange={(e) => setMdTotalText(e.target.value)}
+        aria-label="Duration of the molecular dynamics, in picoseconds"
+        className="w-20 border border-sky-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-sky-500 text-[10px] font-mono bg-white" />
+      <span className="font-semibold text-slate-500">ps</span>
+    </label>
+    <span className="text-[10px] font-mono font-bold text-sky-800 bg-sky-50 border border-sky-200 rounded px-1.5 py-0.5"
+      title="steps × dt — the nominal length of THIS trajectory, computed by the module.">
+      = {mdTime.ps} ps ({mdTime.ns} ns)
+    </span>
+    <label className="flex items-center gap-1"
+      title="🖼 ONE IMAGE EVERY N STEPS — this is what makes the dynamics VISIBLE: the engine announces an image every N steps (8 by default, the module's constant), each image is written into the molecule before the page is allowed to paint, and the 🪢 plot follows it while its window is on screen. 1 writes every step (the finest, the slowest), 50 is a quick glimpse.">
+      🖼 every
+      <input type="number" min="1" max="2000" step="1" value={mdImage}
+        onChange={(e) => setMdImage(Math.max(1, Math.min(2000, Math.round(Number(e.target.value) || 1))))}
+        aria-label="One image every N steps of the molecular dynamics"
+        className="w-12 border border-sky-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-sky-500 text-[10px] font-mono bg-white" />
+      <span className="font-semibold text-slate-500">steps</span>
+    </label>
+    <label className="flex items-center gap-1"
+      title={`🪢 LET ω VARY IN THIS DYNAMICS — the 🌡 MD window's OWN setting (the structure calculation has its own 🪢 box, in its panel): this one changes nothing in ▶ Run. UNCHECKED (the default) every peptide C–N bond is PROTECTED — the dynamics refuses a step that increases its ω cost, which is what keeps peptides trans (MEASURED: an ω sitting at the plateau's edge, ω = 150°, is still 150.0° — cost 0 — after 3000 dynamics steps at 2000 K, while the SAME run with ω free walks out of the plateau: 119° after 300 steps at 3000 K, and 85° / 81° after 3000 steps at 2000 K / 3000 K. Note also what this protection is NOT: the barrier is ONE-WAY — strictly rising from the plateau up to k at the cis — so nothing is ever TOWED towards the cis and there is no cis basin to fall into; a free ω leaves trans only when the thermal noise and your own distances outbid the barrier). CHECKED, ω becomes an ORDINARY dihedral: its barrier is still a family of the field (k = ${STRUCTURE_CALC_OMEGA_WEIGHT} kcal/mol — ONE-WAY: zero inside the plateau of ± ${STRUCTURE_CALC_OMEGA_TOLERANCE}° around ${STRUCTURE_CALC_OMEGA}°, then strictly rising to k at the cis, never a second minimum), and the FIELD alone arbitrates — a peptide only leaves trans when a distance you asked for, an imposed φ/ψ or a clash pays more than that barrier. Its step cap stays the family's own (4°), so ω turns by small steps and never jumps to another conformer.`}>
+      <input type="checkbox" checked={mdFreeOmega} onChange={(e) => setMdFreeOmega(e.target.checked)}
+        aria-label="Let the peptide ω dihedral vary"
+        className="accent-sky-600" />
+      🪢 ω varies
+    </label>
+    <label className="flex items-center gap-1"
+
+      title={`USE THE CONSTRAINTS DEFINED IN 🧬 STRUCTURE CALCULATION — the dynamics launched by the ▶ MD button below carries the distance table of the 🧬 panel as restraints, each line with its own ⚖ weight (k = k_NOE × weight): that is what makes a dynamics pull the molecule towards the distances you typed. UNTICK it and the dynamics runs on the FORCE FIELD ALONE — bonds, angles, planar rings, van der Waals, electrostatics, solvent, ω, φ/ψ, χ1 — with no distance restraint and no leash, which is how you compare the same molecule with and without your distances. Either way the table is neither changed nor emptied: it is only read, or left out. The number here is how many lines will really take part (complete lines whose ⚖ weight is not 0 — a weight of 0 puts a line on hold). This box belongs to THIS window: the 🧬 ▶ Run, the ⚒ Minimise and the ⟳ Energy keep reading the table, as they always did.${mdUseRestraints
+        ? ` Right now ${calcFieldRows().length} distance${calcFieldRows().length === 1 ? '' : 's'} of the table ride along${calcInertCount() ? `, and ${calcInertCount()} line${calcInertCount() === 1 ? ' is' : 's are'} at weight 0 (on hold)` : ''}.`
+        : ' Right now the dynamics ignores the table.'}`}>
+      <input type="checkbox" checked={mdUseRestraints}
+        onChange={(e) => setMdUseRestraints(e.target.checked)}
+        aria-label="Use the distance constraints defined in Structure calculation"
+        className="accent-indigo-600" />
+      📏 use the constraints of 🧬 Structure calculation
+      <span className="font-mono font-bold text-indigo-800">({calcFieldRows().length})</span>
+    </label>
+  </>
+);
+
+/* ── 🌡 LA FENÊTRE MD ELLE-MÊME — LA COLONNE DE GAUCHE DE LA VUE 3D ────────────
+   Le dessin suit le dock 🪢 au pixel : même largeur, même cadre, même ⇤, et un onglet
+   vertical (🌡 MD) quand elle est repliée. Dedans : les réglages de la dynamique ISOLÉE
+   (`renderMdOptions` : 🌡 T, 💧 solvant, pas, dt, durée, 🖼 images, 🪢 ω, 📏 distances), le
+   bouton ▶ MD qui la lance, SON ■ Stop (qui n'est là que pendant qu'un geste tourne — la
+   demande de cette session : « manca un pulsante di stop sia per la structure calculation
+   che per la MD »), et son rapport. « Quando clicco su MD non succede
+   praticamente niente » n'était pas un défaut du moteur (le module tourne, et le rapport
+   dit tout) : c'était un geste SANS fenêtre — et, cette session l'a montré, un geste dont
+   les images ne s'écrivaient qu'à la fin (voir `watch` dans `pumpMotion`) : « I see that
+   some calculations are being performed but the molecule and its dihedrals remain still. »
+   Un geste qu'on lance à la main se regarde : il s'écrit image par image. */
+const renderMdWindow = () => (
+  <div className="shrink-0 w-[340px] flex flex-col gap-1.5 bg-white border border-sky-200 rounded-xl p-2 overflow-hidden"
+    style={{ height: (viewerCollapsed ? 0 : viewH) + 'px' }}>
+    <div className="flex items-center justify-between gap-1 shrink-0">
+      <span className="text-[10px] font-black text-sky-700 uppercase tracking-wide">🌡 Molecular dynamics · its parameters</span>
+      <button type="button" onClick={() => toggleMdDock(false)}
+        title="Collapse the MD window — it folds to a thin tab on the left edge (🌡 MD brings it back), and the 3D view takes the whole width again. Nothing is lost: these are the panel's own values."
+        className="px-1.5 py-0.5 text-[9px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100">⇤</button>
+    </div>
+    <div className="overflow-y-auto custom-scrollbar flex flex-col gap-1.5">
+      <p className="text-[9px] font-black text-slate-500 uppercase tracking-wide"
+        title="THE PARAMETERS OF THIS DYNAMICS — and they are ITS OWN: 🌡 one temperature (this gesture does not cool down), 💧 the solvent (a dielectric for the implicit models, or a BOX of rigid TIP3P waters for the explicit one — see its own tip), 🌡 the steps, ⏱ the step interval and the duration, 🖼 how often an image is written, 🪢 whether ω may leave trans, and 📏 whether the distance table of the 🧬 rides along (an OPTION, ticked by default). ⚠ These values are NOT the protocol of 🧬 Structure calculation: n, m, 🔥 recuit, 🖼 frames, 🌡 hot → 🌡 cold, the equilibration share and the ⚒ sweeps are read by its ▶ Run, in its own panel, and neither gesture can change the other. ⚠ ONE EXCEPTION, and it is deliberate: the 💧 solvent (its box included) and the 🎯 target function describe the FORCE FIELD, so all four gestures read them — ▶ Run, ▶ MD, ⚒ Minimise and ⟳ Energy work on the same molecule. The ▶ MD below runs on the molecule AS IT STANDS.">
+        ⚙ T · 💧 solvent · steps · dt · duration · 🖼 images · 🪢 ω · 📏 distances
+      </p>
+      <div className="flex flex-wrap items-center gap-1.5">{renderMdOptions()}</div>
+      <div className="flex flex-wrap items-center gap-1.5 border-t border-sky-100 pt-1.5">
+        {/* ⚡ LE 🌡 T DE CE GESTE EST DANS LA RANGÉE DES RÉGLAGES (`renderMdOptions`) — un
+            seul champ, à côté du 💧 solvant et des pas : le laisser AUSSI ici en aurait fait
+            deux cases pour le même état (elles ne pouvaient pas diverger, mais deux cases
+            pour un chiffre se lisent comme deux chiffres). La rangée ne garde donc que les
+            gestes : ▶ MD, SON ■ Stop (qui n'apparaît que pendant qu'il tourne), son témoin
+            « running… » et le rapport. C'est la demande de cette session : « manca un
+            pulsante di stop sia per la structure calculation che per la MD » — le 🧬 avait
+            son ⏹, cette fenêtre avait le ▶ et rien pour l'arrêter. */}
+        <button type="button" onClick={runMolecularDynamics} disabled={calcBusy || mdBusy}
+          title="RUN MOLECULAR DYNAMICS on the molecule AS IT STANDS — an ISOLATED dynamics, with the parameters of THIS window and nothing else: its 🌡 temperature (held), its 💧 solvent, its steps, its ⏱ step interval and duration, 🖼 one image every N steps and its 🪢 rule on ω. ⚠ It owes nothing to 🧬 Structure calculation: the protocol of the starts (n, m, recuit, 🌡 hot → 🌡 cold, the ⚖ equilibration share, the ⚒ sweeps) is read by its ▶ Run, in its own panel, and what is changed here changes nothing there. It is dihedral Langevin dynamics under the whole force field (kcal/mol, charges, solvent, added hydrogens) — and the trajectory FEELS your distances when the 📏 box below is ticked (each one with its ⚖ weight; the already-held ones are a leash, a wall, so they cannot be let go), and runs free of them when it is unticked. EVERY image the engine announces is written into the molecule — you SEE it move step by step, and the 🪢 plot follows it image by image while its window is on screen (open it WHILE the dynamics runs and it takes the next image); the FINAL coordinates are written too, so the report, the molecule and the plot always speak of the same conformation. ↺ Undo torsion puts the molecule back exactly as it was. The report gives the steps, the length in ps, the image interval, the solvent, the kinetic temperature, the energy before and after, whether the table was carried, how many of your distances are within tolerance, and what happened to ω, φ/ψ and χ1. ⚠ AND IT KEEPS MOVING — this is a Langevin thermostat, not a minimisation: a channel's thermal speed is √(R·T/m) (34.5 °/ps at 1500 K with the inertia of the module), the displacement per image scales as √T, and the energy does NOT settle into the trajectory's own minimum; the kinetic temperature the report gives is that of the VELOCITIES, so it reads at (or a little above) the 🌡 you asked for. ■ Stop sits right next to this button while it runs: it halts the dynamics between the image it has just written and the next one, and NOTHING is reverted — the molecule keeps the images it was given, and ↺ Undo torsion is what puts it back."
+          className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-sky-400 text-sky-700 hover:bg-sky-50 disabled:opacity-40">
+          ▶ MD
+        </button>
+        {/* ■ LE STOP DE CETTE FENÊTRE — il n'apparaît QUE pendant qu'un geste tourne (comme
+            le ⏹ du 🧬, qui n'existe que pendant un calcul) : un ■ toujours là laisserait
+            croire qu'il arrête le calcul, qui a le sien, dans son panneau. Il arrête le
+            geste ENTRE deux images, et rien n'est perdu : les images déjà écrites SONT la
+            molécule (↺ Undo torsion défait le geste entier). Voir `mdStop`. */}
+        {mdBusy && (
+          <button type="button" onClick={mdStop}
+            title="■ STOP THIS GESTURE — the dynamics (and ⚒ Minimise) stops BETWEEN the image it has just written and the next one: no half-written coordinates. ⚠ NOTHING IS THROWN AWAY: the images already written ARE the molecule on screen, and ↺ Undo torsion puts back the conformation you had before the gesture started (its photograph was taken before the first image), so you can start ▶ MD again from wherever you like. ⚠ The gesture's own report is NOT computed: its energies “before → after” describe a run that reached the end, and this one did not — ⟳ Energy re-reads the force field on what is actually there. ⚠ This stops THIS window's gesture, not 🧬 Structure calculation: that one has its own ⏹, in its own panel, and it is the one that RANKS what is already computed."
+            className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-red-300 text-red-600 hover:bg-red-50">
+            ■ Stop
+          </button>
+        )}
+        {mdBusy && <span className="text-[9px] font-bold text-sky-700">running…</span>}
+      </div>
+      {mdProgress && (
+        <p className={`text-[10px] font-semibold ${/^■/.test(mdProgress) ? 'text-rose-700' : 'text-sky-700'}`}>{mdProgress}</p>
+      )}
+      {calcMsg && (
+        <p title={calcMsg} className={`text-[10px] font-semibold rounded-md border px-2 py-1 whitespace-pre-wrap ${/^✓/.test(calcMsg) ? 'text-emerald-800 bg-emerald-50 border-emerald-200' : /^■/.test(calcMsg) ? 'text-amber-800 bg-amber-50 border-amber-200' : 'text-rose-800 bg-rose-50 border-rose-200'}`}>
+          {calcMsg}
+        </p>
+      )}
+      {/* ⚠ LE PARAGRAPHE QUI VIVAIT ICI (« These values are THIS window's own… ») A ÉTÉ
+          RETIRÉ — la demande de cette session : « Please remove all these large commentaries
+          in the MD window and in the “structure calculation section”. » Ce qu'il disait est
+          resté là où il sert : dans l'infobulle de chaque réglage, dans celle de la case 📏
+          et dans celle du ▶ MD. */}
+    </div>
+  </div>
+);
+
+/* ⚠ LA BOÎTE BLEUE DE LA RANGÉE A DISPARU — la demande de cette session : « MD should not
+   change but it must move in line with the other commands of the “modify” section. »
+   `display: contents` fait des DEUX boutons (et de la ligne dépliée du ⚒) des enfants
+   DIRECTS de la rangée ✏️ Modify : ils se rangent donc DANS le flux des autres commandes
+   (même hauteur, même bordure), au lieu d'occuper un bloc encadré à eux seuls. La ligne
+   dépliée du ⚒ reste `basis-full`, donc elle descend sous la rangée entière, et rien ne
+   s'affiche sous les boutons tant qu'on n'a rien demandé.
+   ⚠ DEPUIS CETTE SESSION, ELLE N'EST PLUS UN ENFANT DE LA RANGÉE : c'est justement elle qui
+   « push[ait] the bar down instead of collapsing like the movie button » (voir
+   `renderMinSettingsRow`). Seuls les boutons du geste (▶ MD · ⚒ Minimize · ■ Stop) restent
+   ici, en `display: contents`, donc dans la rangée. */
+const renderForceGestures = () => (
+  <span
+    className="contents"
+    title="THE THREE GESTURES OF THE FORCE FIELD, ON THE MOLECULE AS IT STANDS: ▶ MD runs the dihedral Langevin dynamics, ⚒ Minimise the dihedral descent, ⟳ Energy only READS the families (a reading, nothing written). They are the same controls the 🧲 Force field block describes — put here so they are one click away from 🧬 Structure calculation, without opening any section. Each button's own tooltip says what it does to the molecule and what it reports. ⚠ TWO STOPS, AND THEY ARE NOT THE SAME: the ⏹ next to ▶ Run stops the CALCULATION (it ranks what is already computed and keeps its best m); the ■ that appears next to ▶ MD — and, when the 🌡 MD window is folded, right here in this row — stops a running ▶ MD or ⚒ Minimise, which has no family to rank.">
+    {/* 🌡 LE BOUTON MD DE LA BARRE — SON SEUL GESTE EST LA FENÊTRE. La demande : « Il
+        pulsante MD deve aprire una finestra collapsable a sinistra all'interno del viewer
+        … Tale finestra si deve richiudere quando si riclicca su MD. » Il ouvre donc le dock
+        🌡 MD (au-dessus de la vue 3D, avec TOUS les réglages de la dynamique et son propre
+        ▶ MD), et le referme quand on reclique — exactement comme le 🪢. */}
+    <button type="button" onClick={() => toggleMdDock()}
+      className={`px-2 py-1 text-[10px] font-bold rounded border transition-colors ${mdDock ? 'bg-sky-100 border-sky-400 text-sky-800 hover:bg-sky-200' : 'bg-white border-sky-400 text-sky-700 hover:bg-sky-50'}`}
+      title={`Show or hide the 🌡 MD window INSIDE the viewer: it sits at the LEFT of the 3D view, with the parameters of a MOLECULAR DYNAMICS RUN OF ITS OWN — 🌡 one temperature, 💧 the solvent, the steps, the ⏱ step interval and the duration, 🖼 how often an image is written, 🪢 whether ω may leave trans, and the 📏 option that makes it carry (or not) the distance table of the 🧬 — and its own ▶ MD button, which runs on the molecule AS IT STANDS and shows every image it computes. ⚠ These are NOT the protocol of 🧬 Structure calculation: n, m, 🔥 recuit, 🖼 frames, 🌡 hot → 🌡 cold, the ⚖ equilibration share and the ⚒ sweeps live in its own panel, and neither gesture can change the other. Press this button again to close the window; ⇤ folds it to a thin tab on the left edge. Closing it loses nothing: the parameters are the window's own state.${mdDock ? ' — open right now.' : ''}`}>
+      ▶ MD{mdDock ? ' ⇥' : ' ⇤'}
+    </button>
+    {/* ⚒ MINIMIZE — UN BOUTON QUI DÉPLIE, PLUS UN BOUTON QUI PART — la demande de cette
+        session, mot pour mot : « Clicking Minimize should not immediately execute the
+        function. Instead, it expands a new row beneath the buttons. A second click collapses
+        and hides this row. » Il garde donc sa place DANS la ligne des commandes de ✏️ Modify,
+        et c'est LUI qui ouvre et referme la ligne du dessous : les quatre réglages de la
+        descente ET les deux gestes qui les lisent (⟳ Energy · ▶ Run). Replié, il ne coûte
+        rien : rien ne s'affiche sous les boutons tant qu'on n'a rien demandé.
+        ⚠ `steps` EST `calcMinimise` — le ⚒ sweeps du panneau 🧬 : une seule valeur, deux
+        portes, donc le panneau du calcul et cette ligne ne peuvent pas se contredire. */}
+    <button type="button" onClick={() => setMinSettings((v) => !v)}
+      className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${minSettings ? 'bg-amber-100 border-amber-400 text-amber-900 hover:bg-amber-200' : 'bg-white border-amber-300 text-amber-700 hover:bg-amber-50'}`}
+      title={`⚒ MINIMIZE — OUVRE (▸) OU REFERME (▾) LA LIGNE DE LA DESCENTE, sous cette rangée : ses paramètres (steps, initial step, convergence floor, tries per hinge), la lecture ⟳ Energy et le ▶ Run qui la lance. La descente est celle sur laquelle chaque départ se termine — chaque charnière essayée de part et d'autre d'un pas qui se DIVISE PAR DEUX dès qu'un balayage n'améliore plus rien — sur le MÊME champ, avec votre table de distances comme contraintes et celles déjà tenues comme longe. C'est l'AFFINAGE FINAL DE L'ÉNERGIE : c'est elle qui CONVERGE une distance que la dynamique n'a fait qu'approcher, et elle atterrit sur un MINIMUM LOCAL, pas seulement sur un modèle qui « respecte » les distances. Le 🪢 suit la descente image par image tant que sa fenêtre est à l'écran, et le minimum est écrit même si 👁 est décochée. ↺ Undo torsion remet la molécule exactement comme elle était. ⚠ WHILE IT RUNS IT CAN BE STOPPED, and the ■ is always somewhere you can see: next to the ▶ MD of the 🌡 MD window when that window is open, or right here on this line when it is folded/closed (the same stop, the same pump). ⚠ « steps » EST le même réglage que « ⚒ sweeps » du 🧬 Structure calculation (cette descente est celle sur laquelle chaque départ se termine), donc les deux cases ne peuvent pas diverger.${minSettings ? ' — la ligne est ouverte en ce moment.' : ''}`}>
+      ⚒ Minimize{minSettings ? ' ▾' : ' ▸'}
+    </button>
+    {/* ■ LE STOP DES GESTES — LE MÊME BOUTON, ÉCRIT DÉSORMAIS AVANT LA LIGNE DÉPLIÉE (elle
+        n'est plus un enfant de cette rangée — voir `renderMinSettingsRow`), pour qu'il reste
+        SUR la rangée des deux boutons : un arrêt doit être atteignable sans déplier quoi que
+        ce soit. La seconde moitié de la demande : « manca un pulsante di stop sia per la
+        structure calculation che per la MD ». Le ⏹ du calcul vit dans le panneau 🧬 ; le ■ des
+        gestes vit à côté de leur ▶, dans la fenêtre 🌡 MD (voir `mdStop`). Mais le ⚒ Minimize
+        se lance ICI, et la fenêtre 🌡 MD peut être repliée (⇤), fermée, ou la vue 3D entière
+        réduite (⬇ — la colonne n'a alors plus de hauteur) : le ■ apparaît alors AUSSI sur
+        CETTE ligne, pour qu'un geste en cours ait TOUJOURS son arrêt à l'écran. Et il n'y en a
+        jamais deux VISIBLES à la fois : la fenêtre porte le sien, celui-ci n'existe que quand
+        elle ne peut pas le montrer. */}
+    {mdBusy && (viewerCollapsed || !mdDock) && (
+      <button type="button" onClick={mdStop}
+        title="■ STOP THE RUNNING GESTURE (▶ MD or ⚒ Minimize) — it is here because the 🌡 MD window, where it normally sits right next to ▶ MD, is folded or closed at the moment. It stops the gesture BETWEEN the image it has just written and the next one: nothing is reverted (the images already written ARE the molecule on screen, and ↺ Undo torsion is what puts it back), and the gesture's own report is NOT computed — ⟳ Energy re-reads the force field on what is actually there."
+        className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap bg-white border-red-300 text-red-600 hover:bg-red-50">
+        ■ Stop
+      </button>
+    )}
+    {/* ⛓ LE BOUTON « SS → φ/ψ » N'EST PLUS ICI — la demande : « Il pulsante “SS to phi, psi”
+        deve andare dentro la sezione “structure calculation”. Quest'ultimo deve riempire la
+        tabella di constraints. » Il vit donc au SEUL endroit que la demande nomme : dans le
+        panneau 🧬 Structure calculation (voir son bouton ⛓, qui écrit maintenant la table
+        des contraintes de φ/ψ à côté de celle des distances). Un seul bouton, un seul état
+        (`calcDihedrals`), donc ce que la table montre EST ce que ▶ Run, ▶ MD et ⚒ Minimise
+        portent. */}
+  </span>
+);
+
+/* ⚒ LA DESCENTE DÉPLIÉE — LE PANNEAU, PLUS UN ENFANT DE LA RANGÉE. LE RAPPORT DE CETTE
+   SESSION, MOT POUR MOT : « the “minimize” button pushes the bar down instead of collapsing
+   like the movie button. » C'EST EXACTEMENT LE DÉFAUT que le rapport précédent décrivait pour
+   les panneaux du groupe (« they push the things to show at the right edge of the page ») :
+   la ligne dépliée du ⚒ est `basis-full`, et elle était écrite DANS la rangée `flex-nowrap` —
+   une boîte qui ne revient pas à la ligne ne peut pas laisser descendre un `basis-full` :
+   elle ÉTIRAIT la rangée, donc la barre GRANDISSAIT au lieu de se replier. Le gabarit qui
+   marche est celui du panneau 🎞 Movie sous 🎨 Styles : la ligne est rendue COMME LES AUTRES
+   PANNEAUX du groupe ✏️ Modify, en FRÈRE de la rangée (voir `renderMinSettingsRow`, appelé juste
+   après sa fermeture), donc elle descend sous la barre entière — et la seconde pression du
+   ⚒ Minimize la referme sans laisser une ligne de plus.
+   ⚠ Les DEUX boutons du geste, eux, ne bougent pas : ils restent SUR la rangée
+   (`renderForceGestures`), y compris le ■ Stop — un arrêt doit être atteignable sans déplier
+   quoi que ce soit. Rien ici ne crée d'état : c'est le MÊME `minSettings`, le même `calcMsg`. */
+const renderMinSettingsRow = () => (
+  <>
+    {/* ⚠ LE BOUTON « ⚒ settings » A DISPARU — la demande de cette session a fondu les DEUX
+        boutons du ⚒ en UN : c'est maintenant « ⚒ Minimize » lui-même qui déplie la ligne
+        (▸/▾), et la ligne qu'il ouvre porte les quatre réglages ET les deux gestes
+        (⟳ Energy · ▶ Run). Les réglages n'existent donc QUE dépliés, exactement comme avant
+        (la demande : « Minimize should have more controls (number of steps, criteria to
+        converge, etc) » et « the comments of the buttons “minimize” and “energy” should be
+        retractable to save space »), mais une seule pression suffit à les voir. */}
+    {minSettings && (
+      <span
+        className="basis-full flex flex-wrap items-center gap-1.5 border-t border-amber-200 pt-1.5 text-[10px] font-bold text-slate-700"
+        title="THE DESCENT, WRITTEN AS THE MODULE READS IT (minimizeFrames): each hinge is tried on both sides of the step, and the step HALVES as soon as a whole sweep improves nothing — the descent then stops when it goes below the convergence floor (or when the sweep budget is out). Nothing here is written twice: the numbers go straight to the engine, and the ⚒ Minimise report says what came out.">
+        <label className="flex items-center gap-1"
+          title="⚒ STEPS — how many sweeps of the descent the ⚒ Minimise runs (and how many the minimisation of each start of ▶ Run gets: it is ONE setting, the « ⚒ sweeps » of 🧬 Structure calculation). 0 = nothing to do.">
+          steps
+          <input type="number" min="0" max="12" value={calcMinimise}
+            onChange={(e) => setCalcMinimise(Math.max(0, Math.min(12, Math.round(Number(e.target.value) || 0))))}
+            aria-label="Minimisation steps"
+            className="w-12 border border-amber-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-amber-500 text-[10px] font-mono bg-white" />
+        </label>
+        <label className="flex items-center gap-1"
+          title="⚒ THE INITIAL STEP of the descent, in DEGREES — how far a hinge is turned on the first sweep. 8° is the module's own value: big enough to leave a basin, small enough not to cross a barrier blindly. It halves each time a whole sweep improves nothing.">
+          step
+          <input type="number" min="0.1" max="180" step="0.5" value={calcMinStep}
+            onChange={(e) => setCalcMinStep(Math.max(0.1, Math.min(180, Number(e.target.value) || STRUCTURE_CALC_MIN_STEP)))}
+            aria-label="Minimisation initial step, in degrees"
+            className="w-14 border border-amber-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-amber-500 text-[10px] font-mono bg-white" />
+          <span className="font-semibold text-slate-500">°</span>
+        </label>
+        <label className="flex items-center gap-1"
+          title="⚒ THE CONVERGENCE CRITERION — the FINEST step the descent is allowed to reach, in DEGREES: the sweep halves its step whenever it stops improving, and this is where it stops for good. 0.5° is the module's own value. Keep it BELOW the initial step: a floor above it means the descent has nothing to do.">
+          converge
+          <input type="number" min="0.01" max="90" step="0.05" value={calcMinStepFloor}
+            onChange={(e) => setCalcMinStepFloor(Math.max(0.01, Math.min(90, Number(e.target.value) || STRUCTURE_CALC_MIN_STEP_FLOOR)))}
+            aria-label="Minimisation convergence step floor, in degrees"
+            className="w-14 border border-amber-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-amber-500 text-[10px] font-mono bg-white" />
+          <span className="font-semibold text-slate-500">°</span>
+        </label>
+        <label className="flex items-center gap-1"
+          title="⚒ TRIES PER HINGE — how many times a hinge is turned within ONE sweep before the descent moves on (each try doubles the turn while it keeps paying). 4 is the module's own value: 1 is a single-sweep descent, higher numbers refine a hinge that keeps improving.">
+          tries
+          <input type="number" min="1" max="64" step="1" value={calcMinTries}
+            onChange={(e) => setCalcMinTries(Math.max(1, Math.min(64, Math.round(Number(e.target.value) || STRUCTURE_CALC_MIN_TRIES))))}
+            aria-label="Minimisation tries per hinge per sweep"
+            className="w-10 border border-amber-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-amber-500 text-[10px] font-mono bg-white" />
+        </label>
+        {/* ⚡ LES DEUX GESTES DE LA LIGNE DÉPLIÉE — la demande de cette session : « When
+            expanded, this row must display the minimization parameters, an Energy button,
+            and a Run button (which triggers the actual minimization process). » Ils sont
+            donc ICI, dans la ligne que « ⚒ Minimize » ouvre, et le rapport qu'ils écrivent
+            s'affiche DIRECTEMENT SOUS elle (la boîte `calcMsg` plus bas, qui n'existe que
+            dépliée) : la rangée des commandes, elle, ne garde que les deux boutons. */}
+        <button type="button" onClick={calcReadForceField}
+          className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap bg-white border-indigo-300 text-indigo-700 hover:bg-indigo-50"
+          title="⟳ ENERGY — a READING of the force field on the molecule as it stands: the families, the residue counts, which φ/ψ and χ1 are outside, the charges, the surface, the hydrogens it added. It is NOT a gesture: nothing is written, so ↺ Undo torsion has nothing to undo. Its answer is printed RIGHT BELOW this row — and when the 🧬 Structure calculation panel is open, the family-by-family table is the one it fills there.">
+          ⟳ Energy
+        </button>
+        <button type="button" onClick={runMinimise} disabled={calcBusy || mdBusy}
+          className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap bg-amber-600 border-amber-700 text-white hover:bg-amber-700 disabled:opacity-40"
+          title="▶ RUN THE MINIMISATION — THE gesture the four settings of this row describe: the dihedral descent from where the molecule stands, under the same force field, with your distance table as restraints and the already-held ones as a leash. It is the FINAL ENERGY REFINEMENT — it CONVERGES a distance the dynamics merely approached, and it lands on a LOCAL MINIMUM. Its report is written RIGHT BELOW this row, the 🪢 plot follows it image by image while its window is on screen, and ↺ Undo torsion puts the molecule back exactly as it was.">
+          ▶ Run
+        </button>
+      </span>
+    )}
+    {/* ⚡ LA RÉPONSE DU ⟳ Energy ET DU ▶ Run S'ÉCRIT ICI — la remarque d'origine : « I do not
+        understand the use of the energy button. If I click nothing happens and nothing is
+        written anywhere. » Elle est donc écrite DIRECTEMENT SOUS la ligne que « ⚒ Minimize »
+        déplie (la demande de cette session, mot pour mot : « Any resulting comments or data
+        generated by clicking the Run or Energy buttons should appear directly below the
+        expanded parameters row. »), et ⚠ elle n'existe QUE dépliée : replier le ⚒ referme
+        aussi ce rapport (son texte n'est pas perdu — le redéplier le ramène), donc rien ne
+        traîne sous la rangée par défaut. Quand le panneau 🧬 est ouvert, c'est LUI qui
+        l'affiche (le même `calcMsg`), donc jamais deux fois le même texte. */}
+    {minSettings && calcMsg && !calcDock && (
+      <div
+        title={calcMsg}
+        className={`basis-full text-[10px] font-semibold rounded-md border px-2 py-1 ${/^✓/.test(calcMsg) ? 'text-emerald-800 bg-emerald-50 border-emerald-200' : /^■/.test(calcMsg) ? 'text-amber-800 bg-amber-50 border-amber-200' : /^✕/.test(calcMsg) ? 'text-rose-800 bg-rose-50 border-rose-200' : 'text-slate-700 bg-slate-50 border-slate-200'}`}>
+        {/* ⚠ LE RAPPORT SE REPLIE — la seconde moitié de la demande de cette session :
+            « the comments of the buttons “minimize” and “energy” should be retractable to
+            save space ». Un ✓/■/✕ de ⚒ Minimise ou de ⟳ Energy écrit un paragraphe long
+            (`whitespace-pre-wrap`, il peut courir sur six lignes) : il ne mange donc plus la
+            hauteur de la barre. Il s'affiche sur UNE ligne (sa première), ▸ le déplie, ✕
+            l'efface — et il reste TOUJOURS quelque chose à l'écran, parce que la remarque
+            d'origine (« If I click nothing happens and nothing is written anywhere ») ne
+            doit pas revenir par la porte du repli. Le MÊME texte, replié, reste sa bulle. */}
+        <div className="flex items-start gap-1">
+          <p className={`min-w-0 flex-1 whitespace-pre-wrap ${gestureMsgOpen ? '' : 'line-clamp-1'}`}>{calcMsg}</p>
+          <button type="button" onClick={() => setGestureMsgOpen((v) => !v)}
+            title={gestureMsgOpen
+              ? 'Fold this report down to its first line — the whole text stays in the tooltip of the line, and ▸ brings it back.'
+              : 'Unfold the whole report of this gesture (the ✓/■/✕ line above is only its beginning).'}
+            className="shrink-0 px-1 py-0.5 text-[9px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100">
+            {gestureMsgOpen ? '▾' : '▸'}
+          </button>
+          <button type="button" onClick={() => setCalcMsg('')}
+            title="Clear this message — it is only a report, nothing is undone, and the next gesture writes its own."
+            className="shrink-0 px-1 py-0.5 text-[9px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100">
+            ✕
+          </button>
+        </div>
+      </div>
+    )}
+  </>
+);
+/* ── 🧬 LE PANNEAU DU CALCUL DE STRUCTURE — PLEINE LARGEUR, SOUS LA RANGÉE DE SON BOUTON ─
+   La demande de cette session : « La finestra struttura calculation dovrebbe essere full
+   width e retractable in alto invece che a sinistra. i parametri saranno quindi
+   distribuiti in orizzontale. » Il n'est donc PLUS un dock de la vue 3D (il ne pousse plus
+   la molécule, il ne recouvre rien et il n'y a plus d'onglet 🧬 STRUCT. sur le bord gauche) :
+   il se rend DANS le groupe ✏️ Modify, en enfant PLEINE LARGEUR (`w-full`, exactement comme
+   le panneau ⚙ Parameters and Constraints), donc SOUS la rangée entière de ses boutons. Le
+   🧬 de la rangée l'ouvre et le referme, et son ✕ le referme aussi.
+   La demande qui l'avait fait naître : « Transform the “structure calculation” page in an
+   internal collapsible window as that of MD or Ramachandran containing the calculation
+   parameters and updates to follow the stages of the calculation but move the structure
+   constraint tables with their buttons … into a new button “Parameters and Constraints”
+   which if clicked shows MD parameters and structural constraints tables. » Le bloc qui
+   vivait dans la barre de commandes est donc devenu CETTE FENÊTRE : `renderCalcWindow`
+   la peint (les paramètres n · m · 🔥 recuit · 🖼 frames, puis les ÉTAPES du calcul : la
+   progression, le rapport, la table classée de la famille et ses boutons de
+   sauvegarde). ⚠ ELLE NE PORTE PLUS LES TABLES NI LE CHAMP — la demande de cette session :
+   « “Parameters and Constraints” section should be in the “modify” menu and should
+   contain the description of the force field (now in the structure calculation window) and
+   the constraints tables with the associated buttons (now in the structure calculation
+   window) ». Le champ de forces et les DEUX tables ont donc leur FENÊTRE
+   (`renderParamsWindow`, ouverte par le bouton ⚙ du groupe ✏️ Modify), et les réglages de
+   la dynamique du protocole ne sont rendus qu'UNE fois, ici (`renderCalcMdOptions`) : « The
+   structure calculation window contains twice the simulated annealing parameter because
+   one set of parameters was inside the “Parameters and Constraints” but they are not
+   necessary there. » Rien n'a réécrit la physique : les mêmes `calcRestraints`,
+   `calcDihedrals` et module pur.
+   ⚠ SEULE LA PLACE DU PANNEAU CHANGE, ET ELLE A CHANGÉ DEUX FOIS : la barre de commandes
+   n'est plus poussée par une section pleine largeur, et la vue 3D n'est plus poussée du
+   tout. Le champ de forces et les deux tables sont devenus le panneau ⚙ (pleine largeur sous
+   la rangée ✏️ Modify — la demande : « should not open a window in the molecule space but it
+   should [be] full width under the button »), et le calcul lui-même les a suivis cette
+   session : `renderCalcWindow` est PLEINE LARGEUR, rendu sous la même rangée, avec ses
+   paramètres en tableau. La molécule garde donc sa surface, panneau ouvert comme fermé. */
+/* ── ⚙ LE PANNEAU « PARAMETERS AND CONSTRAINTS » — LE BOUTON DU MENU ✏️ MODIFY ─────
+   La demande de cette session : « “Parameters and Constraints” section should be in the
+   “modify” menu and should contain the description of the force field (now in the
+   structure calculation window) and the constraints tables with the associated buttons
+   (now in the structure calculation window: add picked pair, add row, save distances,
+   load distances, clear list, and “secondary structure → phi, psi”) ». Elle est donc
+   SORTIE de la fenêtre 🧬 : son bouton vit dans le groupe ✏️ MODIFY de « 2 · Toolbar »
+   (le même groupe que ✏️ Torsion et 🧬 Structure from sequence), et ce qu’il ouvre est
+   ce PANNEAU PLEINE LARGEUR (plus un dock de la vue 3D comme 🌡 MD, 🧬 Structure calculation
+   et 🪢 Ramachandran) : la demande de cette session (« should not open a window in the molecule
+   space but it should [be] full width under the button. By clicking the button a second time it
+   should disappear. ») en a fait un panneau rendu SOUS la rangée de ses boutons — la molécule
+   garde sa surface, et une seconde pression sur le bouton ⚙ le referme.
+   Elle porte EXACTEMENT deux choses, et rien d’autre :
+     · 🧲 LE CHAMP DE FORCES — les familles nommées, leurs k, leurs unités et la lecture
+       du ⟳ Energy (la description qui vivait dans la fenêtre du calcul) ;
+     · LES DEUX TABLES — les distances à respecter (⌖ add picked pair · ➕ add a row ·
+       💾 save distances · 📂 load distances · Clear the list) et les φ/ψ imposés (⛓
+       “secondary structure → φ/ψ”), avec la cible et le ⚖ poids de chaque ligne.
+   ⚠ AUCUN RÉGLAGE DU PROTOCOLE ICI — la demande : « The structure calculation window
+   contains twice the simulated annealing parameter because one set of parameters was
+   inside the “Parameters and Constraints” but they are not necessary there. » Les pas,
+   le dt, la durée, 🌡 hot → 🌡 cold, ⚖ equil, ⚒ sweeps, 🪢 ω et 🎯 target sont rendus
+   UNE fois, par `renderCalcMdOptions()`, dans la fenêtre 🧬 ; n · m · 🔥 recuit · 🖼
+   frames et 👁 watch y restent aussi. Les deux gestes lisent les mêmes états
+   (`calcRestraints`, `calcDihedrals`, `calcForce`) : la table montrée EST celle du
+   ▶ Run, du ▶ MD, du ⚒ Minimise et du ⟳ Energy. */
+const renderParamsWindow = () => {
+  /* ⚠ LA GÉOMÉTRIE COURANTE EST LUE ICI AUSSI — le tableau des distances vit maintenant DANS
+     ce panneau (il vivait dans celui du 🧬), et ses colonnes « Now » et « Δ » mesurent la
+     molécule TELLE QU'ELLE EST. `geom` vient donc de `calcGeometryNow()`, la MÊME lecture que
+     celle des quatre gestes du champ — aucun second calcul de distance, et aucune variable
+     supposée : sans ces deux lignes, `geom` n'existe pas dans cette portée et le tableau
+     levait un ReferenceError dès qu'une ligne de distance était écrite. */
+  const live = calcGeometryNow();
+  const geom = live ? live.geom : null;
+  return (
+  <div className="w-full bg-white border border-slate-300 rounded-lg p-2 flex flex-col gap-1.5">
+    <div className="flex items-center justify-between gap-1">
+      <span className="text-[10px] font-black text-slate-700 uppercase tracking-wide"
+        title="THE PARAMETERS AND CONSTRAINTS OF THE FORCE FIELD — the description of the families it sums, and the two constraint tables every gesture reads (Run, MD, Minimise, Energy). IT IS A PANEL OF THE TOOLBAR, NOT A WINDOW (the request: parameters and constraints should not open a window in the molecule space but should be full width under the button): it takes the full width UNDER the row that holds its button, so the 3D view keeps its whole surface and the molecule is never pushed aside. A second press on the button of the Modify menu — or the close cross here — closes it again.">
+        ⚙ Parameters and Constraints
+      </span>
+      <button type="button" onClick={() => toggleParamsDock(false)}
+        title="Close this panel — the button of the Modify menu opens it again (the request: by clicking the button a second time it should disappear). Nothing is lost: the tables and the field are the panel's own state."
+        className="px-1.5 py-0.5 text-[9px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100">✕</button>
+    </div>
+    <div className="flex flex-col gap-1.5">
+      <p className="text-[9px] font-black text-slate-500 uppercase tracking-wide"
+        title="🧲 the description of the force field the gestures sum (its named families, in kcal/mol) · ⌖ the distances to respect · ⛓ the imposed φ/ψ. ⚠ THE PROTOCOL IS NOT HERE: n · m · 🔥 recuit · 🖼 frames, the dynamics (steps, dt, total, 🌡 hot → 🌡 cold, ⚖ equil, ⚒ sweeps), 🪢 ω and 🎯 target stay in the 🧬 Structure calculation window, each rendered once.">
+        🧲 the force field · ⌖ the distances · ⛓ the imposed φ/ψ
+      </p>
+      {/* 🧪 LE pH ET LA FORCE IONIQUE — LA DEMANDE DE CETTE SESSION : « In MD and “structure
+          calculation” allow to define the pH and ionic strength so that the molecule can be
+          protonated or deprotonated and charge can be taken into consideration. »
+          Les deux sont ICI, chez le champ de forces, et non dans la fenêtre 🌡 : ce sont des
+          propriétés de la CHIMIE, donc les QUATRE gestes du champ (▶ Run, ▶ MD, ⚒ Minimise,
+          ⟳ Energy) les lisent — un modèle ne peut pas être bâti sous une chimie et lu sous une
+          autre. La note à droite des cases lit la MOLÉCULE À L'ÉCRAN par la même fonction que le
+          champ (`partialChargesOf`) : aucun pKa ni aucun κ n'est écrit ici, ils viennent du
+          module (`FF_PKA`, `ffDebyeKappaOf`). */}
+      {(() => {
+        const chem = calcChemNow();
+        const seqChem = calcSeqChemNow();
+        const pkaText = Object.keys(FF_PKA).map((k) => `${k} ${FF_PKA[k]}`).join(' · ');
+        const seqPkaText = Object.keys(AA_SIDECHAIN_PKA)
+          .map((aa) => `${aa} ${AA_SIDECHAIN_PKA[aa]}`).join(' · ');
+        /* 🧪 LA MÊME PHRASE POUR LES DEUX LECTURES — le pH, la charge nette, les fonctions
+           titrées —, puis D'OÙ VIENT LE CHIFFRE : de la SÉQUENCE (le modèle de la page, dont on
+           connaît chaque résidu) ou du GRAPHE (le fichier affiché). La phrase ne présente
+           jamais l'une pour l'autre : c'est le point de la demande (« assume free termini …
+           also for the calculation of the charge based on pH in the “params and constraints”
+           section »). */
+        const netPhraseOf = (c) => (c.ph == null
+          ? 'pH: not set — the chemistry that reading shows (each ionisable group it recognises is fully charged)'
+          : `pH ${c.ph} — net charge ${c.net >= 0 ? '+' : ''}${c.net.toFixed(2)} e, ${c.ionised}/${c.total} of its ionisable groups charged`);
+        const reading = !chem
+          ? 'no molecule on screen — the pH and the ionic strength will be read as soon as one is loaded'
+          : (seqChem
+            ? `${netPhraseOf(seqChem)} · read from the SEQUENCE (${seqChem.effects.terminus.nTerm} N-term · ${seqChem.effects.terminus.cTerm} C-term, ${seqChem.total} side-chain/terminus functions)`
+            : `${netPhraseOf(chem)} · read from the BOND GRAPH`)
+            + ` · ${chem.kappa > 0
+              ? `I = ${chem.ionicStrength} mol/L — κ = ${chem.kappa.toFixed(3)} Å⁻¹, Debye length ${chem.debyeLength.toFixed(3)} Å`
+              : 'I = 0 — no ionic screening'}`;
+        return (
+          <div className="flex flex-wrap items-center gap-1.5 border border-sky-200 bg-sky-50/40 rounded-md px-1.5 py-1">
+            <span className="text-[9px] font-black text-sky-800 uppercase tracking-wide"
+              title={`🧪 THE CHEMISTRY OF THE FORCE FIELD — the two settings that say WHAT the molecule carries (pH) and HOW its charges see each other (ionic strength). ALL FOUR gestures read them (▶ Run, ▶ MD, ⚒ Minimise, ⟳ Energy), because they are properties of the field: a model can never be built under one chemistry and read under another. ⚠ THE READING NEXT TO THE BOXES COMES FROM ONE OF TWO MODELS, AND IT SAYS WHICH: • for the molecule the PAGE builds from its SEQUENCE (the model on screen after “🧬 Struct from sequence”), the net charge is the SEQUENCE model — utils/sequenceCharge.js — i.e. the pKa of EVERY side chain (${seqPkaText}), the two termini FREE by default (the rule of this session: « If the sequence is written directly into the sequence space, assume free termini ») and capped only when the compound's Modifications say so (Acetylation / Acylation / Formylation on the N-terminus, Amidation on the C-terminus), which is also what knows a histidine's imidazole; • for a LOADED structure, a file or a ligand, it is the BOND GRAPH — partialChargesOf —, whose pKa are the field's families (${pkaText}), because a file does not declare the identity of every residue. THE pH titrates those groups by Henderson–Hasselbalch — an empty box means “the chemistry that model shows” (every group fully charged, exactly what this module did before), NOT pH 0. THE IONIC STRENGTH (mol/L) screens the charges with the ionic atmosphere of Debye–Hückel (the Coulomb term is multiplied by exp(−κ·r), κ = ${FF_DEBYE_FACTOR}·√I Å⁻¹ at 298 K) — 0 is the default and renders exactly the Coulomb term of before.`}>
+              🧪 pH · ionic strength
+            </span>
+            <label className="flex items-center gap-1 text-[10px] font-bold text-slate-600"
+              title={`🧪 THE pH OF THE SOLUTION — it decides the protonation state of the ionisable groups this molecule's bond graph shows (a carboxylate, a phosphate and a thiolate are ACIDS: neutral at low pH, charged at high pH; an ammonium and a guanidinium are BASES: charged at low pH, neutral at high pH). The degree of ionisation is Henderson–Hasselbalch with the module's own pKa (${pkaText}) and the group's charge is multiplied by it — at pH 2 a carboxylate is neutral (almost 0 e per oxygen instead of −0.5), at pH 7.4 it is charged. ⚠ LEFT EMPTY, the box means “the chemistry the graph shows”: every ionisable group keeps the charge this module always gave it. That is the default, and it is NOT pH 0.`}>
+              pH
+              <input type="text" inputMode="decimal" value={calcPhText}
+                onChange={(e) => setCalcPhText(e.target.value)}
+                aria-label="pH of the solution, for the protonation state of the molecule"
+                placeholder="—"
+                className="w-14 border border-slate-300 rounded px-1.5 py-1 text-[11px] bg-white outline-none focus:border-sky-500" />
+            </label>
+            <label className="flex items-center gap-1 text-[10px] font-bold text-slate-600"
+              title={`🧪 THE IONIC STRENGTH OF THE SOLUTION, in mol/L — the charges of a buffer screen each other through their ionic atmosphere: the electrostatic term of the field is multiplied by exp(−κ·r), with κ = ${FF_DEBYE_FACTOR}·√I Å⁻¹ (Debye–Hückel, 298 K). A physiological salt (0.15 mol/L) gives κ ≈ 1.27 Å⁻¹, i.e. a Debye length of about 0.79 Å: the attraction between two opposite charges is mostly gone beyond a few ångströms. ⚠ 0, or an empty box, is the default and renders EXACTLY the Coulomb term of before this setting — nothing changes. ⚠ Only the electrostatics is screened: the counter-ions that would really sit around the molecule are not added, and the van der Waals wall is not touched.`}>
+              I (mol/L)
+              <input type="text" inputMode="decimal" value={calcIonicText}
+                onChange={(e) => setCalcIonicText(e.target.value)}
+                aria-label="Ionic strength of the solution in mol per litre, screening the electrostatic term"
+                placeholder="0"
+                className="w-16 border border-slate-300 rounded px-1.5 py-1 text-[11px] bg-white outline-none focus:border-sky-500" />
+            </label>
+            <span className="text-[9px] font-semibold text-sky-900" title={reading}>{reading}</span>
+            <button type="button" onClick={() => { setCalcPhText(''); setCalcIonicText(''); }}
+              title="Put both boxes back to their default (an empty pH = the chemistry the graph shows, I = 0 = no screening). The molecule, the two tables and the parameters are NOT touched."
+              className="px-1.5 py-0.5 text-[9px] font-bold rounded border bg-white border-sky-300 text-sky-800 hover:bg-sky-100">
+              ↺ Default
+            </button>
+          </div>
+        );
+      })()}
+      <div className="flex flex-col gap-1.5">
+        <div className="flex flex-wrap items-center gap-1.5">
+          {/* ⌖ SON PROPRE PIQUAGE — la demande : « dedicated pair picker ». Le ⌖ arme un
+              piquage À LUI : DEUX atomes (A · B) peints en BLEU, son état, ses phrases.
+              Les quatre atomes de ✏️ Torsion ne sont ni lus ni touchés : armé, le bouton
+              devient « ⌖ Picking A · B » ; une seconde pression l'éteint. */}
+          <button type="button" onClick={calcAddRestraint}
+            title="THE TABLE'S OWN PAIR PICKER — the request, verbatim: “dedicated pair picker”. Press ⌖ and it arms a picker OF ITS OWN: TWO atoms (A · B), painted BLUE in the 3D view, and NOTHING to do with the four picks of ✏️ Torsion (A · B · C · D) — those are not read here and not touched, so a torsion and a pair can be picked one after the other without either undoing the other. Click the first atom, then the second: the line is added to the list with its two atoms already resolved (it can still be edited, or dropped with ✕), and the two blue atoms stay painted on the molecule the line is about. The distance is the one typed in the ⌖ want field on the right — left EMPTY (the usual case), it is the length the tables give that pair of elements (S–S 2.05 Å, C–C 1.54 Å…). A pair already in the list is REPLACED, never doubled."
+            className={`px-2 py-1 text-[10px] font-bold rounded border ${pairPick ? 'bg-blue-600 border-blue-700 text-white' : 'bg-white border-indigo-300 text-indigo-700 hover:bg-indigo-100'}`}>
+            {pairPick ? `⌖ Picking A · B (${pairAtoms.length}/2) — click the atoms, ⌖ stops` : '⌖ Add the picked pair'}
+          </button>
+          <input type="text" inputMode="decimal" value={pairTargetDraft}
+            onChange={(e) => setPairTargetDraft(e.target.value)}
+            placeholder="want (Å)"
+            aria-label="Target distance of the pair picked with ⌖, in ångströms — left empty: the length the tables give that pair of elements"
+            title="⌖ WANT — the distance YOU want the pair picked with ⌖ to have, in ångströms. Left EMPTY (the usual case) the line takes the length the tables give that pair of elements; whatever you type here becomes the target of the line the SECOND click adds, and it can still be overwritten afterwards in the line's own distance column."
+            className="w-16 border border-indigo-300 rounded px-1.5 py-1 text-[10px] font-mono bg-white text-right outline-none focus:border-indigo-500" />
+          <button type="button" onClick={calcAddBlankRow}
+            disabled={calcRestraints.length >= STRUCTURE_CALC_MAX_RESTRAINTS}
+            title="Add an EMPTY line and TYPE its two atoms — “ALA 12 CA”, “12:CA”, “CA12”, the raw file name, or simply an atom number — then its distance in ångströms. The table is how distances are defined here; picking atoms is only the shortcut. A line that is not finished yet is kept but never sent to the module, and ⌖ replaces a line it duplicates."
+            className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-indigo-300 text-indigo-700 hover:bg-indigo-100 disabled:opacity-40">
+            ➕ Add a row
+          </button>
+          <button type="button" onClick={() => setCalcRestraints([])}
+            disabled={!calcRestraints.length}
+            title="Drop every distance from the list (the molecule is not touched — only the list is emptied)."
+            className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100 disabled:opacity-40">
+            Clear the list
+          </button>
+          {/* 💾 📂 LA TABLE DANS UN FICHIER — la demande : « Allow to save/upload from
+              file the distance constraints in the structure calculation section. »
+              Le format est celui de utils/structureRestraints.js (trois colonnes,
+              lisible à l'œil) : 💾 écrit la table TELLE QU'ELLE EST AFFICHÉE, 📂 la
+              relit et RÉSOUT les noms d'atomes sur la molécule à l'écran — une ligne
+              non résolue est gardée, avec son `say`, comme une ligne tapée à moitié. */}
+          <button type="button" onClick={calcSaveRestraints}
+            disabled={!calcRestraints.length}
+            title="Save the distance table to a FILE (plain text, three columns: atom A · atom B · target in Å, with a header that says how to read it back). The list lives in this viewer's state, so it disappears when the page is reloaded — the file is what keeps it. It can be edited by hand and reloaded with 📂 Load distances, on this molecule or on another one."
+            className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-indigo-300 text-indigo-700 hover:bg-indigo-100 disabled:opacity-40">
+            💾 Save distances
+          </button>
+          <label
+            title="Load a distance table from a FILE (the format 💾 Save distances writes: one distance per line, “atom A · atom B · target in Å”). Every atom name is resolved ON THE MOLECULE ON SCREEN — “ALA 12 CA”, “12:CA”, “CA12”, the raw file name, or “#123” (atom number) — and a line whose atoms are not found is KEPT as it is, to be finished, with the reason said on the row. A pair already in the table is replaced, never doubled."
+            className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-indigo-300 text-indigo-700 hover:bg-indigo-100 cursor-pointer">
+            📂 Load distances
+            <input type="file" accept=".txt,.csv,text/plain" className="hidden"
+              onChange={(e) => { calcLoadRestraintsFile(e.target.files && e.target.files[0]); e.target.value = ''; }} />
+          </label>
+          {/* ⛓ LA STRUCTURE SECONDAIRE IMPOSÉE → DES CONTRAINTES DE DIHÈDRE — la
+              demande, mot pour mot : « In MD and “structure calculation” allow the
+              conversion of the secondary structure imposed in the “sequence and
+              structure” subsection into dihedral angle constraints. » Le MÊME bouton
+              que celui de la rangée ▶ MD : un seul état, un seul calcul, donc le
+              calcul de structure ne peut pas porter d'autres contraintes que le ▶ MD. */}
+          <button type="button" onClick={calcConvertSecondaryStructure}
+            className={`px-2 py-1 text-[10px] font-bold rounded border transition-colors ${calcDihedrals.length ? 'bg-emerald-50 border-emerald-400 text-emerald-800 hover:bg-emerald-100' : 'bg-white border-indigo-300 text-indigo-700 hover:bg-indigo-100'}`}
+            title={`Convert the secondary structure painted in “Sequence and structure” of the page (${imposedSecondaryStructure ? `${imposedSecondaryStructure.replace(/\s+/g, '').length} letters` : 'nothing painted yet'}) into dihedral angle constraints (H → φ −57° / ψ −47°, E → φ −139° / ψ +135°, flat-bottom window ± ${SS_DIHEDRAL_TOLERANCE}°): they enter the recuit, the dynamics, the minimisation and the quench of every start, and the score counts them. Press again to remove them.`}>
+            ⛓ {calcDihedrals.length ? `${calcDihedrals.length} φ/ψ imposed — Off` : 'Secondary structure → φ/ψ'}
+          </button>
+          {!!calcDihedrals.length && (
+            <span className="text-[9px] font-semibold text-emerald-800"
+              title="What the conversion found, said by the module: the painted letters, the readable residues on screen, and how many were matched (the letters are matched BY ORDER).">
+              {(calcSsReading && calcSsReading.matched) || 0} residue{((calcSsReading && calcSsReading.matched) || 0) === 1 ? '' : 's'} converted (± {SS_DIHEDRAL_TOLERANCE}°)
+            </span>
+          )}
+        </div>
+      {/* ⛓ LA TABLE DES CONTRAINTES DE φ/ψ — la demande : « Quest'ultimo deve riempire la
+          tabella di constraints. » Elle est écrite ICI, à côté de celle des distances, et
+          chaque ligne est UN angle imposé par la peinture 🖌️ : un résidu donne son φ ET son
+          ψ, jugés séparément. La cible et la fenêtre viennent du module (`SS_DIHEDRALS`,
+          `SS_DIHEDRAL_TOLERANCE` — aucun chiffre de φ/ψ n'est écrit dans le JSX), la lettre
+          est celle qui a été PEINTE, `#n` est le CA qui porte l'angle, et ✕ rend à CE
+          résidu-là sa liberté sans toucher aux autres. */}
+      {calcDihedrals.length > 0 && (
+        <div className="max-h-32 overflow-y-auto custom-scrollbar border border-emerald-200 rounded-lg bg-white">
+          <table className="w-full text-xs">
+            <thead className="sticky top-0 bg-emerald-50">
+              <tr>
+                <th className="text-left px-2 py-1 text-[9px] uppercase text-emerald-800">#</th>
+                <th className="text-left px-2 py-1 text-[9px] uppercase text-emerald-800"
+                  title="THE RESIDUE whose φ or ψ is imposed — its number, not the CA's atom index (the request: « The table of dihedral constraints does not report the residue number as it should but the atom number. »). The atom index stays in the cell's own tooltip, because the angle is a dihedral read on the four atoms around it.">
+                  residue
+                </th>
+                <th className="text-left px-2 py-1 text-[9px] uppercase text-emerald-800">letter</th>
+                <th className="text-left px-2 py-1 text-[9px] uppercase text-emerald-800">angle</th>
+                <th className="text-left px-2 py-1 text-[9px] uppercase text-emerald-800">target</th>
+                <th className="text-left px-2 py-1 text-[9px] uppercase text-emerald-800">window</th>
+                <th className="text-left px-2 py-1 text-[9px] uppercase text-emerald-800" />
+              </tr>
+            </thead>
+            <tbody>
+              {calcDihedrals.map((c, k) => (
+                <tr key={`dh${k}`} className="border-t border-emerald-100">
+                  <td className="px-2 py-1 text-slate-400">{k + 1}</td>
+                  <td className="px-2 py-1 font-mono text-slate-600"
+                    title={`THE RESIDUE of this constraint — the CA that carries the angle is atom #${c.ca} of the molecule on screen, and the angle is the dihedral of ${(c.atoms || []).map((x) => `#${x}`).join(' · ')}.`}>
+                    {calcResidueLabelOf(c.ca)}
+                  </td>
+                  <td className="px-2 py-1 font-black text-emerald-800"
+                    title={`The letter painted in “Sequence and structure”: ${c.letter} — the module carries its own φ/ψ target (SS_DIHEDRALS).`}>
+                    {c.letter || '—'}
+                  </td>
+                  <td className="px-2 py-1 font-mono font-bold text-slate-700"
+                    title="φ (C(i−1)–N–CA–C) or ψ (N–CA–C–N(i+1)) — each one is judged ON ITS OWN, so a residue can keep one and lose the other.">
+                    {c.kind === 'phi' ? 'φ' : 'ψ'}
+                  </td>
+                  <td className="px-2 py-1 font-mono text-slate-700">{torsionAng(c.target)}</td>
+                  <td className="px-2 py-1 font-mono text-slate-500">± {c.tolerance}°</td>
+                  <td className="px-1 py-1">
+                    <button type="button" onClick={() => setCalcDihedrals((list) => list.filter((x) => x !== c))}
+                      title="Drop THIS angle: the residue keeps the other one, and ▶ MD, ⚒ Minimise, ▶ Run and the ⟳ Energy reading stop imposing it. ⛓ puts the whole painted structure back."
+                      className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-white border border-red-300 text-red-600 hover:bg-red-50">
+                      ✕
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {calcRestraints.length > 0 && (
+        <div className="max-h-32 overflow-y-auto custom-scrollbar border border-indigo-200 rounded-lg bg-white">
+          <table className="w-full text-xs">
+            <thead className="sticky top-0 bg-indigo-50">
+              <tr>
+                <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">#</th>
+                <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">Atom A</th>
+                <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">Atom B</th>
+                <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">Want (Å)</th>
+                {/* ⚖ LA COLONNE DU POIDS — la demande : « enable this option allowing the
+                    user to give a weight to these constraints. This weight can be defined
+                    in the table. » Elle est ICI, entre la cible et les deux colonnes de
+                    mesure, et elle ne bouge JAMAIS de place : une ligne = un poids. Le
+                    titre dit tout ce que la case accepte, y compris le 0 (mise en pause). */}
+                <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700"
+                  title="⚖ THE WEIGHT OF A LINE — the force constant of this distance is k_NOE × weight, so 2 pulls on the pair twice as hard as 1 and 0.5 twice as gently. It is written here, on the line, and it is read by ▶ Run, ▶ MD, ⚒ Minimise and ⟳ Energy alike. Type a number ≥ 0: empty or a value that cannot be read means the DEFAULT weight of 1 (as if this column did not exist), and a weight of 0 puts the line ON HOLD — it keeps its atoms, its target, its Now and its Δ, but it takes part in nothing and counts in no report. A comma works as the decimal separator.">
+                  ⚖ w
+                </th>
+                <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">Now</th>
+                <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">Δ</th>
+                <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700" />
+              </tr>
+            </thead>
+            <tbody>
+              {calcRestraints.map((r, k) => {
+                const ready = Number.isInteger(r.i) && Number.isInteger(r.j) && r.i !== r.j
+                  && Number.isFinite(r.target) && r.target > 0;
+                const at = ready && geom ? calcDistanceIn(geom, r.i, r.j) : null;
+                const dev = Number.isFinite(at) ? at - r.target : null;
+                const good = dev != null && Math.abs(dev) <= STRUCTURE_CALC_RESTRAINT_TOLERANCE;
+                /* ⚖ CE QUE LA LIGNE PÈSE — `0` est une mise en PAUSE (la ligne est
+                   encore mesurée et affichée, mais aucun geste ne la reçoit), et un texte
+                   illisible est le poids par DÉFAUT (1) : c'est `calcWeightOf` qui le dit,
+                   ici comme dans les quatre gestes du champ. La case passe en ambre dans
+                   les deux cas qui doivent se voir : une frappe que le module ne peut pas
+                   lire, et le 0 qui met la ligne en attente. */
+                const weight = calcWeightOf(r);
+                const paused = ready && weight === 0;
+                const unreadable = String(r.w == null ? '' : r.w).trim() !== '' && r.weight == null;
+                const cell = (side) => {
+                  const idx = side === 'a' ? r.i : r.j;
+                  const own = side === 'a' ? r.sayA : r.sayB;   // ⚠ la plainte de CETTE case, jamais celle de l'autre
+                  return (
+                    <td className="px-1 py-1 whitespace-nowrap">
+                      {/* ⚠ LE NAVIGATEUR N'A PAS LE DROIT DE RÉÉCRIRE CE QU'ON TAPE ICI —
+                          la différence entre TAPER et COLLER, c'est que le navigateur ne
+                          propose et ne corrige QUE pendant la frappe (« je tape “CYS 31
+                          SG” et il me répond “CYS 1 SG” »). Les colonnes numériques s'en
+                          gardent par `inputMode="decimal"` (voir plus bas) ; les deux
+                          atomes se gardent par ces trois attributs : le texte de la case
+                          est celui de l'utilisateur, et rien d'autre. */}
+                      <input type="text" value={(side === 'a' ? r.a : r.b) || ''} autoComplete="off" autoCorrect="off" spellCheck={false}
+                        placeholder={side === 'a' ? 'atom A' : 'atom B'}
+                        onChange={(e) => calcSetRowAtom(r.key, side, e.target.value)}
+                        aria-label={`${side === 'a' ? 'First' : 'Second'} atom of line ${k + 1}`}
+                        title={`TYPE the ${side === 'a' ? 'first' : 'second'} atom: “ALA 12 CA”, “12:CA”, “CA12”, its raw file name, or simply its number. It is resolved on the molecule on screen, and THIS cell says what IT did not understand — the complaint of the other atom belongs to the other cell.${own ? ` ⚠ ${own}` : ''}`}
+                        className={`w-28 border rounded px-1.5 py-0.5 outline-none text-[10px] font-mono bg-white ${idx == null ? 'border-amber-400' : 'border-indigo-300 focus:border-indigo-500'}`} />
+                      <span className="ml-1 text-[10px] font-mono text-slate-400">#{idx ?? '?'}</span>
+                    </td>
+                  );
+                };
+                return (
+                  <tr key={r.key} className={`border-t border-indigo-100 ${ready ? '' : 'bg-amber-50/60'}`}>
+                    <td className="px-2 py-1 text-slate-400"
+                      title={r.say || (paused ? '⏸ ON HOLD — this line weighs ⚖ 0: it is still listed and measured here, and it takes part in nothing (no ▶ Run, no ▶ MD, no ⚒ Minimise, no ⟳ Energy).' : '')}>
+                      {k + 1}{r.say ? ' ⚠' : ''}{paused ? ' ⏸' : ''}
+                    </td>
+                    {cell('a')}
+                    {cell('b')}
+                    <td className="px-1 py-1">
+                      {/* ⚠ `type="text"` + `inputMode="decimal"` : le navigateur ne peut
+                          donc pas REFORMATER ce que l'utilisateur écrit. `value` est le
+                          TEXTE tapé (`r.t`), la cible numérique n'est qu'une conséquence
+                          (`calcSetRestraintTarget`), et taper « 12.5 » reste « 12.5 ». */}
+                      <input type="text" inputMode="decimal" value={r.t != null ? r.t : (r.target ?? '')}
+                        onChange={(e) => calcSetRestraintTarget(r.key, e.target.value)}
+                        aria-label={`Target distance for ${r.label || `atom ${r.i ?? '?'} and atom ${r.j ?? '?'}`}, in ångströms`}
+                        title="The distance YOU want this pair to have, in ångströms — the protocol drives THIS number, and the report compares the model against it. A line whose atoms are typed gets the length the tables give that pair of elements, and you can overwrite it. Typed text is kept as typed (a comma works as the decimal separator); a value that cannot be read leaves the line 'not ready' instead of being rewritten under your fingers."
+                        className="w-16 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
+                    </td>
+                    <td className="px-1 py-1">
+                      {/* ⚖ LA CASE DU POIDS — le MÊME contrat que la cible ci-dessus :
+                          `type="text"` + `inputMode="decimal"` (le navigateur ne peut pas
+                          reformater ce qu'on écrit), le TEXTE est la source
+                          (`calcSetRestraintWeight`), la valeur numérique n'en est que la
+                          conséquence. Le placeholder « 1 » dit le défaut, et l'infobulle dit
+                          le reste — le 0 compris, qui met la ligne en PAUSE. */}
+                      <input type="text" inputMode="decimal"
+                        value={r.w != null ? r.w : (r.weight == null || r.weight === 1 ? '' : String(r.weight))}
+                        placeholder="1"
+                        onChange={(e) => calcSetRestraintWeight(r.key, e.target.value)}
+                        aria-label={`Weight of distance ${k + 1}, in multiples of the field's k_NOE`}
+                        title={`⚖ WHAT THIS LINE WEIGHS — its force constant is k_NOE × this number, so the distance pulls harder or more gently than the other lines. 1 (or an empty box) is the default and changes nothing; 0 puts the line ON HOLD (its atoms, its target and its measures stay, but ▶ Run, ▶ MD, ⚒ Minimise and ⟳ Energy stop receiving it).${paused ? ' — This line is ON HOLD right now.' : ''}${unreadable ? ' — The value typed here cannot be read as a number: the line runs at the default weight of 1.' : ''}`}
+                        className={`w-12 border rounded px-1.5 py-0.5 text-right outline-none text-[10px] font-mono ${paused || unreadable
+                          ? 'border-amber-400 bg-amber-50 text-amber-800'
+                          : 'border-indigo-300 bg-white focus:border-indigo-500'}`} />
+                    </td>
+                    <td className="px-2 py-1 font-mono text-slate-500">{ready ? torsionAng(at) : '—'}</td>
+                    <td className={`px-2 py-1 font-mono ${paused ? 'text-slate-500' : (good ? 'text-emerald-700' : 'text-rose-700')}`}
+                      title={paused ? 'A READING, not a verdict: this line is on hold (⚖ 0), so no gesture compares it to anything — the target and the distance are still shown as typed.' : (good ? `Inside the tolerance of ± ${STRUCTURE_CALC_RESTRAINT_TOLERANCE} Å of the target.` : `Outside the tolerance of ± ${STRUCTURE_CALC_RESTRAINT_TOLERANCE} Å — the field pays k_NOE × ⚖ per squared ångström beyond it.`)}>
+                      {dev == null ? '—' : `${dev > 0 ? '+' : ''}${dev.toFixed(2)}`}
+                    </td>
+                    <td className="px-1 py-1">
+                      <button type="button" onClick={() => calcRemoveRestraint(r.key)}
+                        title="Drop this distance from the list."
+                        className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-white border border-red-300 text-red-600 hover:bg-red-50">
+                        ✕
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+      </div>
+      <div className="flex flex-col gap-1.5">
+      <div className="rounded-lg border border-slate-200 bg-slate-50/60 p-2 flex flex-col gap-1.5">
+        <div className="flex flex-wrap items-center justify-between gap-1.5">
+          <span className="text-[10px] font-black text-slate-600 uppercase tracking-wide"
+            title="THE FORCE FIELD OF THIS CALCULATION — one list of named families, summed by the module, IN kcal/mol. The annealing, the dynamics, the minimisation and the score all read THIS list: no engine has a physics of its own. The charges, the non-polar solvent and the hydrogens it adds are part of it, and the panel writes what it computes. ⚙ The three gestures that PUT this field to work — ▶ MD, ⚒ Minimise and ⟳ Energy — sit in the button row above, next to 🧬 Structure calculation (they act on the molecule as it stands, so they need no section open).">
+            🧲 Force field · {FORCE_FIELD_FAMILIES.length} families · kcal/mol
+          </span>
+          <span className="text-[10px] font-semibold text-slate-500">
+            ⚙ ▶ MD · ⚒ Minimise · ⟳ Energy — in the row of 🧬 Structure calculation
+          </span>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-1">
+          {forceFieldRowsOf().map((row) => (
+            <div key={row.id} className="rounded border border-slate-200 bg-white px-1.5 py-1"
+              title={`${row.label} — ${row.of}; ${row.rule}`}>
+              <div className="text-[9px] font-black text-slate-500 uppercase tracking-wide flex items-center justify-between gap-1">
+                <span>{row.icon} {row.label}</span>
+                <span className="font-mono text-slate-400">k {row.k} {row.id === 'elec' ? '' : row.unit}</span>
+              </div>
+              <div className="text-[9px] text-slate-500 leading-tight">{row.of}</div>
+              <div className="text-[10px] font-mono font-bold text-slate-700">
+                {calcForce ? Number(calcForce[row.id]).toFixed(2) : '—'}
+                <span className="text-slate-400 font-normal"> kcal/mol</span>
+              </div>
+            </div>
+          ))}
+        </div>
+        {calcForce && (
+          <p className="text-[10px] text-slate-600">
+            Read on the molecule on screen: <b>E = {calcForce.total.toFixed(2)} kcal/mol</b> =
+            {' '}bonds {calcForce.bond.toFixed(2)} + angles {calcForce.angle.toFixed(2)}
+            {' '}+ rings {calcForce.planar.toFixed(2)} + vdW {calcForce.vdw.toFixed(2)}
+            {' '}+ µ {calcForce.elec.toFixed(2)} + solvent {calcForce.solv.toFixed(2)}
+            {' '}+ φ/ψ {calcForce.rama.toFixed(2)} + χ1 {calcForce.chi.toFixed(2)}
+            {' '}+ ω {calcForce.omega.toFixed(2)} + your distances {calcForce.restraint.toFixed(2)}
+            {' '}· entropy {calcForce.entropyReport.total.toFixed(1)} cal·mol⁻¹·K⁻¹
+            ({calcForce.entropy.toFixed(2)} kcal/mol of −T·S)
+            {' '}· <b>{calcForce.added.hydrogens}</b> hydrogens added on {calcForce.added.heavy} heavy atoms
+            ({calcForce.added.atoms} atoms in total) · net charge {calcForce.charges.net.toFixed(3)} e
+            ({calcForce.charges.method}) · surface {calcForce.surface.estimate.toFixed(0)} Å²
+            {calcForce.surface.exact != null ? ` (exact ${calcForce.surface.exact.toFixed(0)} Å²)` : ''}
+            {' '}· {calcForce.torsions.residues} residue{calcForce.torsions.residues === 1 ? '' : 's'} with a backbone
+            ({calcForce.torsions.phi.length} φ, {calcForce.torsions.psi.length} ψ, {calcForce.omegaReport.count} ω, {calcForce.chiReport.count} χ1)
+            {' '}· φ/ψ outside a basin: <b>{calcForce.ramaReport.violations}</b>
+            {calcForce.ramaReport.worst ? ` (worst ${calcForce.ramaReport.worst.gap.toFixed(0)}° away, ${calcForce.ramaReport.worst.region})` : ''}
+            {' '}· χ1 between wells: <b>{calcForce.chiReport.violations}</b>
+            {' '}· ω outside ± {STRUCTURE_CALC_OMEGA_TOLERANCE}°: <b>{calcForce.omegaReport.violations}</b>
+            {' '}· pairs inside {calcForce.nonbonded.limit} Å: {calcForce.nonbonded.count}
+            {calcForce.nonbonded.repulsive ? `, ${calcForce.nonbonded.repulsive} repulsive` : ''}.
+          </p>
+        )}
+        {/* ⚠ LE BLOC DE COMMENTAIRE QUI VIVAIT ICI (« les trois familles de torsion… ») A ÉTÉ
+            RETIRÉ — la demande de cette session : « Please remove all these large commentaries
+            in the MD window and in the “structure calculation section”. » Ce qu'il disait est
+            resté là où il sert : dans les infobulles des familles (🧲 ci-dessus) et dans les
+            rapports des gestes. */}
+      </div>
+      </div>
+    </div>
+  </div>
+);
+};
+
+const renderCalcWindow = () => {
+  const live = calcGeometryNow();
+  const geom = live ? live.geom : null;
+  const ranked = calcResult;
+  return (
+    <div className="shrink-0 w-[360px] flex flex-col gap-1.5 bg-white border border-indigo-200 rounded-xl p-2 overflow-hidden"
+      style={{ height: (viewerCollapsed ? 0 : viewH) + 'px' }}>
+      <div className="flex items-center justify-between gap-1 shrink-0">
+        <span className="text-[10px] font-black text-indigo-700 uppercase tracking-wide">
+          🧬 Structure calculation{ranked ? ` (${ranked.retained.length}/${ranked.tried})` : ''}
+        </span>
+        <button type="button" onClick={() => toggleCalcDock(false)}
+          title="Collapse the structure-calculation window — it folds to a thin tab on the left edge (🧬 brings it back), and the 3D view takes the whole width again. Nothing is lost: these are the panel's own values, the two constraint tables and the family."
+          className="px-1.5 py-0.5 text-[9px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100">⇤</button>
+      </div>
+      <div className="overflow-y-auto custom-scrollbar flex flex-col gap-1.5">
+      <p className="text-[9px] font-black text-slate-500 uppercase tracking-wide"
+        title="THE PARAMETERS OF THIS CALCULATION, AND WHAT FOLLOWS ITS STAGES — n · m · 🔥 recuit · 🖼 frames here, then the dynamics of the protocol (steps, dt, total, 🌡 hot → 🌡 cold, ⚖ equil, ⚒ sweeps, 🪢 ω, 🎯 target), then ▶ Run / ⏹ Stop and the report that says where the calculation is, then the ranked family. ⚠ THE FORCE FIELD AND THE TWO CONSTRAINT TABLES ARE NOT HERE ANY MORE: they live in ⚙ Parameters and Constraints, in the ✏️ Modify menu of “2 · Toolbar” (the request: « should be in the “modify” menu »).">
+        ⚙ n · m · 🔥 recuit · 🖼 frames · la dynamique · les étapes
+      </p>
+      <div className="flex flex-wrap items-center gap-3 text-[10px] font-bold text-indigo-800">
+        <label className="flex items-center gap-1"
+          title="n — how many structures are BUILT from scratch. Each one is a fresh random draw of every rotatable dihedral, and each one is put through the standard protocol (anneal → dynamics → minimise → quench) before being scored. More starts means more chances that at least one of them can obey your distances — and more time: one start costs an annealing schedule, a whole dynamics and a minimisation.">
+          n starting
+          <input type="number" min="1" max={STRUCTURE_CALC_MAX_STARTS} value={calcStarts}
+            onChange={(e) => setCalcStartsText(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') runStructureCalculation(); }}
+            aria-label="Number of starting structures n"
+            className="w-14 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
+        </label>
+        <label className="flex items-center gap-1"
+          title="m — how many structures are KEPT once every start has been scored. The score is the force field of this calculation (kcal/mol: bonds, angles, planar rings, vdW, electrostatics, solvent, φ/ψ, χ1, ω, your distances in flat-bottom wells) plus the clash penalty; the m best are kept IN ORDER, with their coordinates, and the first one is written into the molecule. The OTHERS become MOLECULES of the Molecules bar (each shown, with its own ☑, styling rows, ★ set main, ↺ and 🗑): tick them, style them, and press 🎯 Fit to chosen to superpose the whole FAMILY onto the chosen one — the ensemble is then on screen and in the styling window, and 🗑 removes a model you do not want. Only the m kept structures carry their coordinates — that is what m means.">
+          m kept
+          <input type="number" min="1" max={STRUCTURE_CALC_MAX_KEEP} value={calcKeep}
+            onChange={(e) => setCalcKeepText(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') runStructureCalculation(); }}
+            aria-label="Number of retained structures m"
+            className="w-14 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
+        </label>
+        <label className="flex items-center gap-1"
+          title="🔥 The ANNEALING — how many temperature steps each start gets. A start is a random draw of every dihedral, which is almost always stacked or far from your distances, and the protocol that follows is LOCAL: without annealing it stays where the draw put it. The annealing moves DIHEDRALS ONLY (a rigid rotation of one side of the molecule about its hinge: bond lengths and angles cannot move), accepts a step that is worse with probability exp(−Δ/T), and cools down. 0 = no annealing, exactly what this panel did before (n plain draws + the rest of the protocol).">
+          🔥 recuit
+          <input type="number" min="0" max="24" value={calcAnneal}
+            onChange={(e) => setCalcAnneal(Math.max(0, Math.min(24, Math.round(Number(e.target.value) || 0))))}
+            aria-label="Annealing temperature steps"
+            className="w-12 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
+          <span className="font-semibold text-slate-500">paliers</span>
+        </label>
+        <label className="flex items-center gap-1"
+          title="🖼 HOW MANY IMAGES PER ANNEALING STEP — this is what makes the annealing VISIBLE: the module hands the screen a picture every N moves inside a temperature step (0/1 = one picture per step), and each picture is written into the molecule before the page is allowed to paint. 4 to 8 shows the fold without slowing the calculation down.">
+          🖼 frames
+          <input type="number" min="0" max="24" value={calcAnnealFrame}
+            onChange={(e) => setCalcAnnealFrame(Math.max(0, Math.min(24, Math.round(Number(e.target.value) || 0))))}
+            aria-label="Images per annealing temperature step"
+            className="w-12 border border-indigo-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-indigo-500 text-[10px] font-mono bg-white" />
+        </label>
+        {/* ⚙ LES RÉGLAGES DE LA DYNAMIQUE DU CALCUL SONT REVENUS ICI — la demande : « bring
+            back all the MD parameters related to structure calculation in the settings of
+            structure calculation. » Ils sont écrits UNE fois, par `renderCalcMdOptions()`,
+            et AUCUN autre geste ne les lit : ce sont les pas, le pas de temps, la durée,
+            les deux températures (🌡 hot → 🌡 cold), la part d'équilibration, les balayages
+            de ⚒ et l'option 🪢 ω — le protocole que CHAQUE DÉPART porte après son recuit.
+            La fenêtre 🌡 MD du bord gauche de la vue 3D a, elle, la dynamique ISOLÉE et ses
+            propres réglages (T, 💧 solvant, pas, dt, durée, intervalle d'images, ω), donc
+            les deux gestes ne peuvent plus se changer l'un l'autre (voir
+            `renderMdWindow`). */}
+        <div className="flex flex-wrap items-center gap-1.5">{renderCalcMdOptions()}</div>
+
+
+        <label className="flex items-center gap-1"
+          title="👁 WATCH EACH START: every gesture the module announces (the random draw, each annealing step, the equilibration, the cooling, the minimisation, the quench) is written into the molecule ON SCREEN, by the same path a torsion uses — so you SEE the molecule fold instead of watching a progress line, and the 🪢 plot follows it image by image while its window is on screen. Uncheck it for a quiet run: the molecule is then written ONCE, with the FINAL coordinates — the best model of the calculation, or what ▶ MD and ⚒ Minimise landed on — so the report and the 🪢 plot still describe the structure that came out. ↺ Undo torsion puts back the molecule you had before the calculation wrote anything. ⚠ THIS BOX RULES THE CALCULATION AND NOTHING ELSE: the ▶ MD of the 🌡 MD window and the ⚒ Minimise of the toolbar always write every image they compute — they are single gestures, launched by hand, and they are there to be watched.">
+          <input type="checkbox" checked={calcWatch} onChange={(e) => setCalcWatch(e.target.checked)}
+            aria-label="Write each start on screen while it is computed"
+            className="accent-indigo-600" />
+          👁 watch each start
+        </label>
+        <button type="button" onClick={runStructureCalculation}
+          disabled={calcBusy || mdBusy || (!calcUsableRows().length && !calcDihedrals.length)}
+          title="Run the calculation: n starts, the ⚒ protocol on each, the best m kept, and the first one written into the molecule. The panel is updated START BY START (one per frame, so the page stays alive), and ⏹ stops between two of them — ⏹ is THIS panel's stop: it RANKS what is already computed and keeps its best m, so a partial run still gives you a family. ⚠ It is not the ■ of the 🌡 MD window: that one stops the isolated ▶ MD (or a ⚒ Minimise), which has no family to rank — each stop is in the window of the gesture it stops, and while one runs the other's ▶ is greyed (they share the same single cancellation token). A fixed seed means the same molecule, the same distances and the same n always give the same family — press ▶ Run twice and compare. The 🪢 plot follows every start written while its window is on screen (one reader for φ/ψ, the same as its ⟳ Read)."
+          className="px-2 py-1 text-[10px] font-bold rounded border bg-indigo-600 border-indigo-700 text-white hover:bg-indigo-700 disabled:opacity-40">
+          ▶ Run
+        </button>
+        {calcBusy && (
+          <button type="button" onClick={calcStop}
+            title="⏹ STOP THE CALCULATION — it stops BETWEEN two starts (never in the middle of one), and what is already computed is NOT thrown away: those starts are RANKED, their best m are kept in the family below, and the best one is written into the molecule. The line says how many starts of n were made — a partial run is still a run. ⚠ This is the CALCULATION's stop, and it only exists while the calculation runs; the isolated ▶ MD and ⚒ Minimise of the 🌡 MD window have their own ■ Stop, right in that window (a gesture has no family to rank: it has the conformation on screen, and ↺ Undo torsion is what takes it back)."
+            className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-red-300 text-red-600 hover:bg-red-50">
+            ⏹ Stop
+          </button>
+        )}
+      </div>
+      {calcProgress && (
+        <p className="text-[10px] font-semibold text-indigo-700">{calcProgress}</p>
+      )}
+      {/* ⌖ LA VOIX DU PIQUAGE DU COUPLE — ses phrases à LUI. Le ⌖ a son état, sa peinture
+          bleue et donc son message : il dit d'aller cliquer le PREMIER atome, il compte
+          les atomes piqués (« 1 of 2 picked »), il refuse un couple pris dans deux
+          molécules, et il dit ce qui vient d'entrer dans la table. Sans ce paragraphe,
+          tout cela était écrit dans le vide : le piquage se serait tu. Le bleu est sa
+          couleur (la même que ses deux atomes), le vert une réussite, le rose un refus —
+          la classe suit le premier caractère, comme partout ailleurs dans ce panneau. */}
+      {pairMsg && (
+        <p title={pairMsg} className={`text-[10px] font-semibold rounded-md border px-2 py-1 whitespace-pre-wrap ${/^✓/.test(pairMsg) ? 'text-emerald-800 bg-emerald-50 border-emerald-200' : /^⚠/.test(pairMsg) ? 'text-rose-800 bg-rose-50 border-rose-200' : 'text-blue-800 bg-blue-50 border-blue-200'}`}>
+          {pairMsg}
+        </p>
+      )}
+      {calcMsg && (
+        <p title={calcMsg} className={`text-[10px] font-semibold rounded-md border px-2 py-1 whitespace-pre-wrap ${/^✓/.test(calcMsg) ? 'text-emerald-800 bg-emerald-50 border-emerald-200' : /^■/.test(calcMsg) ? 'text-amber-800 bg-amber-50 border-amber-200' : 'text-rose-800 bg-rose-50 border-rose-200'}`}>
+          {calcMsg}
+        </p>
+      )}
+      {/* ⚠ CETTE FAMILLE APPARTIENT-ELLE À LA MOLÉCULE À L'ÉCRAN ? — la phrase vivait dans
+          la boîte ⚙ avant que les tables la quittent : c'est une lecture du 🧬 (les modèles,
+          leur note), donc elle est revenue ici, avec le tableau qu'elle prévient. */}
+      {ranked && ranked.comp && ranked.comp !== componentRef.current && (
+        <p className="text-[10px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">
+          ⚠ This family was computed on ANOTHER molecule than the one on screen now (it was reloaded, or another molecule
+          is shown): its scores stay readable, but ⤓ Load would write coordinates that belong to the other one and is
+          refused. ▶ Run does it again on this molecule.
+        </p>
+      )}
+      {ranked && ranked.ranking.length > 0 && (
+        <div className="flex flex-col gap-1.5">
+          <p className="text-[10px] text-slate-600">
+            <b>{ranked.tried}</b> start{ranked.tried === 1 ? '' : 's'} built, each scored by the force field
+            {ranked.refused ? ` (${ranked.refused} refused before scoring)` : ''} · the best{' '}
+            <b>{ranked.retained.length}</b> kept and ranked — the others are listed too, with their score, so nothing is
+            hidden{calcShown ? <> · on screen right now: <b>#{calcShown}</b> of the kept family</> : null}.
+          </p>
+          <div className="max-h-44 overflow-y-auto custom-scrollbar border border-indigo-200 rounded-lg bg-white">
+            <table className="w-full text-xs">
+              <thead className="sticky top-0 bg-indigo-50">
+                <tr>
+                  <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">#</th>
+                  <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">start</th>
+                  <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">score</th>
+                  <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">distances</th>
+                  <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">worst</th>
+                  <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">bonds / angles</th>
+                  <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700"
+                    title="THE BACKBONE READING OF EACH MODEL — how many residues have both φ and ψ, and how many of them fall OUTSIDE every basin of the 🪢 plot (with the worst distance to a basin). Zero here is a model whose Ramachandran plot is inside the basins; the number is the φ/ψ term of the score, read back on the model.">
+                    🧭 φ/ψ
+                  </th>
+                  <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">clashes</th>
+                  <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">moved</th>
+                  <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700">how it ended</th>
+                  <th className="text-left px-2 py-1 text-[9px] uppercase text-indigo-700" />
+                </tr>
+              </thead>
+              <tbody>
+                {ranked.ranking.map((r) => {
+                  const inFamily = r.rank <= ranked.retained.length;
+                  const model = inFamily ? ranked.retained.find((x) => x.rank === r.rank) : null;
+                  return (
+                    <tr key={`calc${r.rank}`} className={`border-t border-indigo-100 ${inFamily ? 'bg-emerald-50/50' : ''}`}>
+                      <td className="px-2 py-1 font-bold text-indigo-800" title={inFamily ? 'kept: this structure carries its coordinates' : 'NOT kept: it was scored, but m only keeps the first ones'}>
+                        {r.rank}{inFamily ? ' ✓' : ''}
+                      </td>
+                      <td className="px-2 py-1 font-mono text-slate-500">#{r.index}</td>
+                      <td className="px-2 py-1 font-mono text-slate-700"
+                        title={`Score ${r.score.toFixed(2)} = target function ${Number(r.total).toFixed(2)} + clash penalty ${Number(r.clashPenalty).toFixed(2)} (the ⚒'s own way of preferring a model without atoms on top of each other)`}>
+                        {r.score.toFixed(1)}
+                      </td>
+                      <td className={`px-2 py-1 font-mono ${r.violations ? 'text-rose-700' : 'text-emerald-700'}`}
+                        title={`${r.satisfied} of the ${r.satisfied + r.violations} distances are respected (within ${STRUCTURE_CALC_RESTRAINT_TOLERANCE} Å) — rms ${Number(r.rmsd).toFixed(3)} Å`}>
+                        {r.satisfied}/{r.satisfied + r.violations}
+                      </td>
+                      <td className="px-2 py-1 font-mono text-slate-500"
+                        title={r.worst ? `the distance furthest from what you asked: ${r.worst.i}–${r.worst.j} measured ${Number(r.worst.distance).toFixed(2)} Å for ${Number(r.worst.target).toFixed(2)} Å` : 'no distance to report'}>
+                        {r.worst ? `${r.worst.i}–${r.worst.j} ${torsionAng(r.worst.distance)}` : '—'}
+                      </td>
+                      <td className="px-2 py-1 font-mono text-slate-500">{r.bondRms.toFixed(3)} Å / {r.angleRms.toFixed(1)}°</td>
+                      <td className={`px-2 py-1 font-mono ${r.rama && r.rama.violations ? 'text-rose-700' : 'text-emerald-700'}`}
+                        title={r.rama
+                          ? `${r.rama.measured} residue(s) with both φ and ψ (${r.rama.partial} at a chain end have only one), ${r.rama.violations} outside every basin of the 🪢 plot${r.rama.worst ? ` — the worst is ${r.rama.worst.gap.toFixed(0)}° from the edge of a basin, in the « ${r.rama.worst.region} » region` : ''}. This is the φ/ψ term of the score (k = ${STRUCTURE_CALC_RAMA_WEIGHT}) read back on the model, and the same reading the 🪢 plot draws.`
+                          : 'no backbone residue to read in this model (no N–CA–C: a nucleic acid, a sugar, a lipid or a ligand)'}>
+                        {r.rama ? `${r.rama.violations}/${r.rama.measured}` : '—'}
+                        {r.rama && r.rama.partial ? <span className="text-slate-400">+{r.rama.partial}</span> : null}
+                      </td>
+                      <td className={`px-2 py-1 font-mono ${r.clashes ? 'text-rose-700' : 'text-emerald-700'}`}
+                        title={`${r.clashes} atom pair(s) closer than 1.45 Å in this model, ${r.contacts} pair(s) inside their hard core (0.6 × the two Bondi radii)`}>
+                        {r.clashes ? `⚠ ${r.clashes}` : '✓'} · {r.contacts}
+                      </td>
+                      <td className="px-2 py-1 font-mono text-slate-500" title="atoms this start moved away from the molecule you had on screen (the draw and the protocol together)">{r.moved}</td>
+                      <td className="px-2 py-1 text-slate-500" title={calcWhyOf(r.reason)}>{r.reason}</td>
+                      <td className="px-1 py-1">
+                        {model ? (
+                          <button type="button" onClick={() => calcWriteStructure(model, ranked)}
+                            title={`Write this structure into the molecule (it becomes THE molecule on screen: every atom, by the same path a torsion uses — so 📏, the plates, the film, 📥 Download and ↺ all follow it). ${r.index === 0 ? '' : ''}Undo torsion puts the previous geometry back.`}
+                            className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-white border border-indigo-300 text-indigo-700 hover:bg-indigo-50">
+                            ⤓ Load
+                          </button>
+                        ) : (
+                          <span className="text-slate-300" title="only the m kept structures carry their coordinates — raise “m kept” to keep more">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+      {ranked && ranked.family && ranked.family.restraints.length > 0 && (
+        <p className="text-[10px] text-slate-500">
+          <b>The kept family</b> —{' '}
+          {ranked.family.restraints.map((f) => `${f.i}–${f.j} ${torsionAng(f.mean)} (${f.satisfied}/${f.models} models,`
+            + ` spread ${torsionAng(f.spread)})`).join(' · ')}
+          {ranked.family.spread.count
+            ? ` · the models differ by ${ranked.family.spread.mean.toFixed(2)} Å rmsd on average, after optimal`
+              + ` superposition over all ${ranked.family.spread.atoms} atoms (worst pair #${ranked.family.spread.worst.a}–#${ranked.family.spread.worst.b}`
+              + ` at ${ranked.family.spread.worst.rmsd.toFixed(2)})`
+            : ' · a single model was kept, so there is no spread to measure'}
+          {ranked.family.rest.length
+            ? ` · left out (scored, not kept): ${ranked.family.rest.map((r) => `#${r.rank} start ${r.index} (${r.score.toFixed(1)})`).join(' · ')}`
+            : ''}
+        </p>
+      )}
+      {/* 💾 LA FAMILLE ET LE RAPPORT DANS DES FICHIERS — la demande de cette session :
+          « Allow saving the family of structures and the report. » Le PDB est MULTI-MODÈLE
+          (MODEL / ENDMDL), écrit par l'écrivain du dossier (le même que ⤓ Load et le 📥
+          Download) : chaque structure retenue y est posée UNE fois, dans l'ordre du tableau
+          (le rang 1 d'abord — celui qui est écrit dans la molécule). Le rapport est du
+          TEXTE, fait des chiffres du module : rien n'y est recalculé. */}
+      <div className="flex flex-wrap items-center gap-1.5 border-t border-indigo-100 pt-1.5">
+        <button type="button" onClick={calcSaveFamily} disabled={!ranked || !ranked.retained.length}
+          title="SAVE THE FAMILY OF STRUCTURES — one multi-model PDB file (MODEL / ENDMDL), one model per retained structure, in the order of the table (rank 1 first: the one written into the molecule on screen). Written by the app's own PDB writer, so it reloads here or in PyMOL / Chimera and carries the atom names a superposition needs. The writing BORROWS the coordinates and puts the geometry of the screen back: nothing moves."
+          className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-indigo-300 text-indigo-700 hover:bg-indigo-100 disabled:opacity-40">
+          💾 Save the family{ranked && ranked.retained.length ? ` (${ranked.retained.length})` : ''}
+        </button>
+        <button type="button" onClick={calcSaveReport} disabled={!ranked || !ranked.ranking.length}
+          title="SAVE THE REPORT — a plain-text file with the whole reading of this calculation: the parameters, then each start (its score and the families of the field, its distances satisfied / violations / rms / worst, its backbone reading, its contacts, how it ended), then the family (what each distance measures across the kept models, and how far apart they are after optimal superposition). Every number comes from the module's own report."
+          className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-indigo-300 text-indigo-700 hover:bg-indigo-100 disabled:opacity-40">
+          💾 Save the report
+        </button>
+      </div>
+      </div>
+    </div>
+  );
+};
+
+
 return (
 <div className="flex flex-col gap-2">
 
@@ -16939,7 +23806,18 @@ return (
       · the « 🧬 3D viewer minimized » bar's « ▲ Expand viewer » brings it back —
         it has to stay: the retracted viewport is 0 px tall, so the ▼ is out of
         reach while the viewer is minimized. */}
-<VSection title="1 · General" hint="structure · trajectory · clear">
+{/* ══ 1 · GENERAL + 2 · TOOLBAR — UNE SEULE BOÎTE, SANS LIGNE DE TITRE ═══════
+    La demande de cette session : « you can also remove the two lines corresponding to
+    “1-general” and “2-toolbar”. Just put the two sections together and we will save two extra
+    lines. » Les deux sections `bare` ci-dessous ne peignent donc ni bordure ni ligne de titre :
+    leurs enfants sont ceux d'UNE boîte unique, et les deux en-têtes (« 1 · GENERAL » et
+    « 2 · TOOLBAR ») ont disparu de l'écran — deux lignes de gagnées. ⚠ RIEN N'EST PERDU : les
+    deux marqueurs `title="1 · General"` et `title="2 · Toolbar"` restent les MARQUEURS de la
+    structure (les tests s'y accrochent, et le lecteur sait où commence quelle rangée), et
+    chaque groupe de la rangée garde sa propre boîte teintée (🌫 Scene · 🎨 Styles · ✏️ Modify ·
+    📏 Analysis · 🧪 PyMOL). */}
+<div className="flex flex-wrap items-center gap-1 bg-slate-50/80 border border-slate-200 rounded-lg px-1.5 py-1">
+<VSection title="1 · General" hint="structure · trajectory · clear" bare />
 <label
 title="Load structure file(s) from your computer — the first is the main structure, the rest appear in the Molecules bar (right side, multi-select)"
 className="cursor-pointer bg-blue-600 hover:bg-blue-700 text-white font-bold px-2 py-1 rounded-md text-[11px] shadow-sm transition-colors inline-flex items-center gap-1 h-7"
@@ -17049,14 +23927,540 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
 {structAsideMsg && (
 <span className="text-[10px] font-bold text-slate-600 bg-slate-50 border border-slate-200 rounded-md px-2 py-1 max-w-[380px] truncate" title={structAsideMsg}>{structAsideMsg}</span>
 )}
+{/* ══ L'ORDRE DE CETTE RANGÉE EST CELUI DE LA DEMANDE DE CETTE SESSION ═══════
+    « pdb from drive button should stay in the same line as PDB files, and in
+    the following order: PDB files, URL, Load, Trajectory, download pdb, clear,
+    Create drive folder, Pdb from folder, trajectory from folder. Style from
+    folder should not be there. The last file style should be read
+    automatically. »
+    Les DEUX fichiers du poste d'abord (📂 PDB file(s) · PDB ID / URL · Load ·
+    📂 Trajectory), puis ce qu'on fait de CE QUI EST À L'ÉCRAN (⬇ PDB · 🗑 Clear ·
+    🗑 Delete PDB ⇄ ↩ Restore PDB), puis les commandes DU DOSSIER de
+    l'expérience : le geste qui le CRÉE, et les 📂 de la PAGE (`fileRowExtra` :
+    « 📂 Topology from Drive folder » et « 📂 Trajectory from Drive folder » sur
+    MD, rien sur NMR / Docking — le défaut `null` ne rend rien). Un seul `null`,
+    donc, et toujours sur la ligne de 📂 PDB file(s) : aucune page ne peut
+    oublier ces boutons ni les mettre dans une rangée à part.
+    ⚠ « 📂 Style from folder » A ÉTÉ RETIRÉ de cette rangée à la demande (« Style
+    from folder should not be there ») : le style du dossier n'a plus de geste
+    manuel — c'est le RAPPEL AUTOMATIQUE qui le lit à l'ouverture
+    (`recallViewerStyle` : la mémoire de ce poste, puis le dossier de
+    l'expérience et son fichier canonique, le plus récent du mode — voir
+    utils/viewerStyleFile.js). Comme chaque 💾 / 📂 / ⬆ RETIENT le style utilisé
+    en réécrivant ce fichier canonique, le dossier porte TOUJOURS le dernier
+    utilisé : c'est donc bien « the last file style » que l'ouverture suivante
+    applique, sans qu'aucune commande n'ait à le désigner. */}
+{/* 📁 « Create drive folder » — LE SEUL GESTE QUI FABRIQUE UN DOSSIER, et il est
+    TOUJOURS ICI, sur la ligne de 📂 PDB file(s) (la demande, mot pour mot :
+    « the "create experiment folder on drive" must be placed in the same line of
+    "PDB file" button always »). Rendue par le viewer lui-même dès qu'un
+    contexte de nommage est fourni (`driveNaming` : MD, NMR, Docking) : aucune
+    page ne peut donc l'oublier, ni le déplacer dans une rangée à part. Le
+    libellé est court (« 📁 Create drive folder ») pour tenir dans la rangée, et
+    l'infobulle dit où il crée — dataset compris : …/experiment_setup/Structure
+    et …/experiment_setup/Trajectory (voir DriveExperimentFiles.jsx). */}
+{driveNaming ? <DriveExperimentFolderCreator ctx={driveNaming} /> : null}
+{/* 📂 CE QUE LA PAGE AJOUTE À CETTE RANGÉE (voir `fileRowExtra`) — sur la page
+    MD, les deux boutons « 📂 Topology / 📂 Trajectory from Drive folder » ; ils
+    sont posés APRÈS le geste de création, donc en fin de rangée, exactement
+    l'ordre demandé (« … Create drive folder, Pdb from folder, trajectory from
+    folder »). */}
+{fileRowExtra}
+{/* ══ 2 · TOOLBAR — Scene | Styles | Modify | Analysis | PyMOL ══════════════
+    This is §2 of the command bar now (the report: « quindi toolbar diventa la
+    sezione 2 e contiene separatamente scene, modify e analysis »). Each group is a
+    small tinted box closed on itself, and 🌫 Scene and 🎨 Styles have a ROW OF THEIR
+    OWN (the request of this session: « compact the commands in scene section so that
+    they fit in one line without the need to use the scrolling bar. Move the styles
+    section in another line ») — a row never cuts in the middle of a group, so the bar
+    costs exactly as many lines as the CONTENT decides. The expanded panels
+    (🎞 the film of poses, ⚡ ESP · Range, 🔢 Renumber, ✏️ Atom names, 🧪 PyMOL, the
+    clipping sliders, ⚙ Parameters) are full-width children of this same section, so
+    the bar stays one row tall while nothing is open.
+    • Scene: 🌫 Fog · 🎨 Background · ◐ Shadows (+ 🌑 Darkness / 💡 Light) · 💡 Light colour · ✂ Clipping · ✨ Ray (+ resolution · ⬚ alpha · ◐ shadows)
+    • Styles: the NAME · 🎨 Cumulative / 📷 Snapshot · 💾 Save · 📂 Load… · 🗑 Delete · ⬇ · ⬆ · 🎞 Movie · 🔄 Spin x·y·z
+    • Modify: 🧬 From sequence · ✥ Move / ↻ Rotate · ⚗️ Rebuild H · ✏️ Atom names · ⚡ ESP · 🔢 Renumber
+    • Analysis: 📏 Measure · 💧 H-bonds · 🟢 Assigned
+    • PyMOL: 🧪 Selections & PyMOL
+    THE FOUR MOVES OF THIS REVISION (each one is a line of the report):
+      · ✨ Ray and its associates (the resolution, ⬚ alpha, ◐ shadows + strength)
+        left §1 General for the 🌫 Scene group — a still of the SCENE belongs with
+        the fog / background / shadows / clipping that define it, and the ◐
+        Shadows rig that aims the light of the still is right there;
+      · 📷 Figure is REMOVED (redundant): the very still of the scene is written
+        by ✨ Ray as a PNG on the computer, and the ★ figures of Publications &
+        Slides keep their own capture / import paths (the canvas, the Image
+        builder, the imported files);
+      · 🙈 Hide everything is REMOVED here: the Selections bar on the left keeps
+        its own « 🙈 Hide all » / « Show all » button on the SAME `hideAll` state,
+        so the gesture survives and this row no longer repeats it;
+      · ⚡ ESP and 🔢 Renumber (the button AND its list) left the old §2 for the
+        ✏️ Modify group — they modify the selected molecule's surface and the
+        numbering of the residues on screen;
+      · §2 « Molecular Styling » disappears with them: the styling of every
+        molecule has lived in the bar on the RIGHT of the canvas since PART 4
+        (one space per molecule), and the accordion only held those two gestures
+        and the Hide-everything button.
+    The lighting rig is untouched: Shadows locks NGL's single light in place and
+    the Darkness / Light sliders aim it (and now also drive the AMBIENT-OCCLUSION
+    equivalent, see applyShadowSettings). Its ONE user-changeable colour is the « 💡 Light colour » swatch, parked IMMEDIATELY BEFORE « ✂ Clipping » because that is where the request puts it (« in the molecular viewer add the possibility to change the color of the light and put it just before the clipping in the scene section of the toolbar ») — white by default, so the reference look is what an untouched swatch gives. ✂ Clipping pushed OFF sets the camera
+    bounds to the EXTREMES (near 0 · far 100000 · dist 0) so a large complex is
+    never cut. */}
+<VSection title="2 · Toolbar" hint="scene · styles · modify · analysis · PyMOL" bare />
+{/* ── 🌫 SCENE — SA PROPRE RANGÉE, ET COMPACTE (la demande de cette session : « in the viewer
+    compact the commands in scene section so that they fit in one line without the need to use
+    the scrolling bar. Move the styles section in another line and add to it a Movie button. »).
+    Deux mouvements, un seul but — une ligne :
+      · 🎨 STYLES A QUITTÉ CETTE RANGÉE : elle a la sienne, juste en dessous, et le filet qui
+        les séparait est parti avec la rangée qu'elles partageaient (deux boîtes de teintes
+        différentes, sur deux lignes, se séparent toutes seules). La largeur de la bande teal ne
+        manque donc plus à 🌫 Scene — c'est la moitié du gain ;
+      · ET LE TEXTE REDONDANT EST PARTI. Chaque interrupteur disait son état DEUX fois
+        (« 🌫 Fog: On » : la boîte teintée le disait déjà) : il ne le dit plus qu'UNE fois, par
+        son REMPLISSAGE (teinté = ON, blanc = OFF) et par `aria-pressed` — donc un lecteur
+        d'écran l'entend comme avant —, et chaque bulle s'ouvre maintenant sur l'état
+        (« ON right now… »). Les deux pastilles de couleur (🎨 le fond de la scène, 💡 la lampe)
+        se passent de leur mot : l'émoji EST leur nom dans tout le reste du fichier
+        (🎨 Background · 💡 Light colour) et leur bulle le dit en entier — exactement la demande
+        d'origine (« too much writing which can be substituted by information available by
+        hovering »). Curseurs et valeurs raccourcis (w-14 · w-9), ↺ sans cadre : la boîte
+        fermée tient sur UNE ligne, sans barre de défilement.
+    La rangée garde `overflow-x-auto` en FILET DE SÉCURITÉ (sur un panneau vraiment étroit elle
+    défile au lieu de casser la ligne — le gabarit de la bande 🎞 du film) et sa boîte reste
+    `shrink-0`, donc le CONTENU décide de la largeur, jamais une coupure de ligne.
+    ⚠ RIEN N'A ÉTÉ RETIRÉ : mêmes sept gestes, mêmes curseurs et leurs valeurs, mêmes bulles. */}
+<div className="flex items-center gap-1 w-full overflow-x-auto">
+<div className="flex items-center gap-0.5 rounded-md border border-sky-200 bg-sky-50/40 px-1 py-0.5 shrink-0">
+<span className="text-[9px] font-black text-sky-700 uppercase tracking-wide whitespace-nowrap" title="The scene the structure is drawn in: NGL's depth fog, the background colour, the shadows and the one light that casts them, the clipping plane, and the high-resolution still (✨ Ray, with its resolution, its alpha and its cast shadows).">🌫 Scene</span>
+<button type="button" onClick={() => setFogEnabled((v) => !v)}
+  aria-pressed={fogEnabled}
+  className={`px-1.5 py-1 text-[10px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${fogEnabled ? 'bg-sky-100 border-sky-400 text-sky-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+  title={`🌫 Fog — ${fogEnabled ? 'ON right now: distant atoms still fade into the background; this button turns the haze OFF and gives every atom its full colour back.' : 'OFF right now: the haze is gone; this button turns it back ON.'} NGL's default depth fog fades distant atoms toward the background (a grey haze). The setting is saved and persists across pages.`}>
+  🌫 Fog
+</button>
+{/* 🎨 BACKGROUND — the colour of the 3D scene itself (§2 Scene). It is applied to
+    the live stage (stage.setParameters({ backgroundColor })), persists like the
+    fog / shadows / clipping, and travels inside a ⚙️ saved setup. The 🧪 PyMOL
+    panel writes this very same state, so the two entries never disagree. */}
+<label className="flex items-center gap-0.5 cursor-pointer" title={`🎨 Background — the colour of the 3D scene itself, and the colour the depth fog fades toward. Saved and persistent across pages, and part of a ⚙️ setup. The 🧪 PyMOL panel writes this very same state, so the two entries never disagree.`}>
+  <span className="text-[11px] leading-none">🎨</span>
+  <input type="color" value={bgColor} onChange={(e) => setBgColor(e.target.value)}
+    className="w-7 h-6 border border-slate-300 rounded cursor-pointer" aria-label="Background colour" />
+</label>
+<button type="button" onClick={() => setBgColor(BG_DEFAULT)}
+  className="px-0.5 py-1 text-[11px] font-bold rounded text-slate-500 hover:text-slate-900 hover:bg-slate-100"
+  title={`↺ Back to the default background (${BG_DEFAULT})`}>
+  ↺
+</button>
+{/* ⬚ LE BOUTON DU FOND-DÉGRADÉ — la demande de cette session : « in the
+    background of the viewer allow gradients of two colors and their direction ».
+    Le panneau s'ouvre d'un CLIC SUR LE FOND de la vue (voir le signal `clicked`) ;
+    ce bouton est le MÊME geste depuis la barre — donc au clavier aussi, et sans
+    avoir à viser le fond — et il dit son état (`aria-expanded` + `aria-controls`,
+    la teinte bleue pour le dégradé ALLUMÉ). Il ne change rien à lui seul : c'est
+    l'interrupteur ⬚ Gradient du panneau qui peint la rampe. */}
+<button type="button" onClick={() => setBgPanelOpen((v) => !v)}
+  aria-expanded={bgPanelOpen}
+  aria-controls="viewer-background"
+  className={`px-1 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 ${bgGradient.on ? 'bg-sky-100 border-sky-400 text-sky-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+  title={`⬚ Background options — ${bgPanelOpen ? 'OPEN right now: this button closes them (so does a click on the background of the 3D view).' : 'CLOSED right now: this button opens them under the 3D view — two colours and their direction — and so does a click on the background itself.'} ${bgGradient.on ? `The gradient is ON (A ${bgColor} → B ${bgGradient.to}, ${bgGradient.angle}°).` : 'The gradient is OFF: the scene keeps its flat colour (A), which the 🎨 swatch beside this button sets.'} The ramp never touches the scene: NGL paints one colour and the ramp lives in the CSS of its canvas, so no representation is rebuilt — and the 🎬🎞 films and the ✨ Ray still take the very same ramp.`}>
+  ⬚
+</button>
+<button type="button" onClick={() => setShadowOn((v) => !v)}
+  aria-pressed={shadowOn}
+  className={`px-1.5 py-1 text-[10px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${shadowOn ? 'bg-slate-800 border-slate-800 text-white' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+  title={`◐ Shadows — ${shadowOn ? 'ON right now: the scene is lit by ONE fixed key light and the 💡 Light sliders below aim it; this button hands the lighting back to NGL (flat, camera-linked).' : 'OFF right now: NGL lights the scene with its own camera-linked headlight; this button swaps that for ONE fixed key light you aim.'} Shadows: swaps NGL's flat camera-lit look for ONE fixed key light whose direction you aim (Azimuth / Elevation appear while ON), so every side of the structure that turns away from the light falls into real shade as you rotate. The Darkness slider then only raises the dark↔light contrast — the light stays pure white unless you say otherwise (the 💡 Light colour swatch that follows, immediately before ✂ Clipping, is the ONE control that tints this lamp). Shadows also switches on the AMBIENT-OCCLUSION equivalent: NGL 2.4 has no SSAO pass, so the cavity shading comes from the deep-ambient + strong-key-light rig with supersampled shading (sampleLevel), which is what makes crevices and the inner sides of a fold read as depth. (True WebGL shadow maps aren't supported by NGL — trying them made the molecule disappear. Every mesh is still flagged cast+receive shadows, see flagMeshShadows.)`}>
+  ◐ Shadows
+</button>
+{shadowOn && (
+  <label className="flex items-center gap-0.5 text-[10px] font-bold text-slate-700 whitespace-nowrap" title="Darkness — contrast only: the lit side gets brighter and the shaded side darker, with no colour change here (only the light/ambient INTENSITIES move, and the light keeps its colour — the 💡 Light colour swatch just before ✂ Clipping is where that colour is chosen, white by default). This is also what deepens the ambient-occlusion-like cavity shading.">
+    🌑 Darkness
+    <input type="range" min="0" max="100" value={Math.round(shadowDarkness * 100)} onChange={(e) => setShadowDarkness(Number(e.target.value) / 100)} className="w-14 accent-slate-700" />
+    <span className="text-[10px] text-slate-500 w-7">{Math.round(shadowDarkness * 100)}%</span>
+  </label>
+)}
+{(shadowOn || rayShadows || rayLiveOn) && (
+  <label className="flex items-center gap-0.5 text-[10px] font-bold text-slate-700 whitespace-nowrap" title="Light direction — aim the fixed key light (and therefore where the shadows fall). Azimuth 0° = light behind the camera (flat), 90° = screen-left, 180° = facing the camera; Elevation is the height above/below the horizon. The shade follows live while you drag. ⚠ The ✨ Ray still AND the ◐ live layer throw their cast shadow from THIS lamp too, so these sliders are shown whenever either the ◐ Shadows rig, the ray shadows or the live layer are on — an off-axis lamp (about 90° / 45°) is what makes a cast shadow read as a shadow instead of hiding in the shade the canvas already draws. The COLOUR of this lamp is the 💡 Light colour swatch just beside it — the swatch and these two sliders own the same lamp.">
+    💡 Light
+    <input type="range" min="0" max="360" value={shadowAz} onChange={(e) => setShadowAz(Number(e.target.value))} className="w-14 accent-slate-700" aria-label="Light azimuth" />
+    <span className="text-[10px] text-slate-500 w-7">{shadowAz}°</span>
+    <span className="text-slate-400">/</span>
+    <input type="range" min="-90" max="90" value={shadowEl} onChange={(e) => setShadowEl(Number(e.target.value))} className="w-14 accent-slate-700" aria-label="Light elevation" />
+    <span className="text-[10px] text-slate-500 w-7">{shadowEl}°</span>
+  </label>
+)}
+{/* 💡 LIGHT COLOUR — the request: « in the molecular viewer add the possibility
+    to change the color of the light and put it just before the clipping in the
+    scene section of the toolbar ». It sits HERE, immediately before the ✂ Clipping
+    button, and it is the ONE control of the rig that tints anything: the KEY light
+    — the lamp NGL lights the scene with, the lamp the ◐ Shadows rig aims and the
+    ✨ Ray still re-renders with. White by default, which IS the reference look; the
+    ambient fill is deliberately left white (see nglLightParams in
+    utils/viewerLightRig.js), so the shaded side of an atom keeps the colour its
+    palette gave it and only the lit side takes the cast — the same bargain PyMOL's
+    `light_color` makes with `ambient_color`. Unlike the 💡 Light direction sliders
+    beside it (only the AIMED rig and the ray shadows need them), this swatch stays
+    visible in both modes: NGL re-reads `parameters.lightColor` on every frame
+    (Viewer.__updateLights, verified in the installed 2.4), so it also tints the
+    plain camera-linked headlight while ◐ Shadows is OFF. The value is validated by
+    the rig's own normalizeLightColor (junk → the white default), persisted like the
+    fog / shadows / clipping, and carried by a ⚙️ saved setup. */}
+  <label className="flex items-center gap-0.5 cursor-pointer" title={`💡 Light colour — the colour of the KEY light, the lamp the whole scene is lit with: the one the ◐ Shadows rig aims (Azimuth / Elevation) and the one the ✨ Ray re-renders in its still. White is the reference look. Any other colour tints the LIT side of every atom while the ambient fill stays white, so the shaded side keeps the colour its palette gave it (exactly PyMOL's light_color, which also leaves ambient_color alone). NGL re-reads the colour on every frame, so it applies with the Shadows rig ON and OFF; it is saved with the page and travels inside a ⚙️ saved setup.`}>
+    <span className="text-[11px] leading-none">💡</span>
+    <input type="color" value={lightColor} onChange={(e) => setLightColor(normalizeLightColor(e.target.value))}
+      className="w-7 h-6 border border-slate-300 rounded cursor-pointer" aria-label="Light colour" />
+  </label>
+  <button type="button" onClick={() => setLightColor(LIGHT_COLOR_DEFAULT)}
+    className="px-0.5 py-1 text-[11px] font-bold rounded text-slate-500 hover:text-slate-900 hover:bg-slate-100"
+    title={`↺ Back to the white key light (${LIGHT_COLOR_DEFAULT}) — the reference look, nothing tinted`}>
+    ↺
+  </button>
+<button type="button" onClick={() => setClipOn((v) => !v)}
+  aria-pressed={clipOn}
+  className={`px-1.5 py-1 text-[10px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${clipOn ? 'bg-emerald-50 border-emerald-400 text-emerald-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+  title={`✂ Clipping — ${clipOn ? 'ON right now: your own near / far / distance values below are cutting the scene; this button pushes the bounds back to the EXTREMES (nothing is ever cut).' : 'OFF right now: the camera bounds sit at the EXTREMES (near 0 · far 100000 · dist 0), so nothing is ever cut at any zoom; this button hands the scene to your own values below.'} Clipping plane. NGL clips the scene with the camera near / far planes: clipNear / clipFar are percentages of the scene bounding sphere and clipDist is the closest the near plane may come to the camera — exactly what CUTS a big complex when you zoom in.`}>
+  ✂ Clipping
+</button>
+{clipOn && (
+  <>
+    <label className="flex items-center gap-0.5 text-[10px] font-bold text-slate-700 whitespace-nowrap" title="clipNear — how much is cut in FRONT of the molecule, as a percentage of the bounding sphere. 0 cuts nothing (the near plane sits on the front edge of the sphere); positive values bring the near plane closer to the molecule.">
+      near
+      <input type="range" min="-50" max="50" step="1" value={clipNear} onChange={(e) => setClipNear(Number(e.target.value))} className="w-14 accent-emerald-600" aria-label="Clipping near" />
+      <span className="text-[10px] text-slate-500 w-9">{clipNear}%</span>
+    </label>
+    <label className="flex items-center gap-0.5 text-[10px] font-bold text-slate-700 whitespace-nowrap" title="clipFar — how far BEHIND the molecule the far plane sits, as a percentage of the bounding sphere. 50 = the centre of the sphere, 100 = its back edge, 150 = one radius further; « Off » uses 100000 (effectively infinite).">
+      far
+      <input type="range" min="50" max="150" step="1" value={clipFar} onChange={(e) => setClipFar(Number(e.target.value))} className="w-14 accent-emerald-600" aria-label="Clipping far" />
+      <span className="text-[10px] text-slate-500 w-9">{clipFar}%</span>
+    </label>
+    <label className="flex items-center gap-0.5 text-[10px] font-bold text-slate-700 whitespace-nowrap" title="clipDist — the MINIMUM distance (Å) between the camera and the near plane. NGL floors the near plane with it, which is what cuts a large complex when you zoom in: 0 removes the floor completely (that is what « Off » uses).">
+      cam. near
+      <input type="range" min="0" max="30" step="0.1" value={clipDist} onChange={(e) => setClipDist(Math.max(0, Number(e.target.value)))} className="w-14 accent-emerald-600" aria-label="Clipping camera distance" />
+      <span className="text-[10px] text-slate-500 w-9">{clipDist} Å</span>
+    </label>
+    <button type="button"
+      onClick={() => { setClipNear(CLIP_DEFAULTS.near); setClipFar(CLIP_DEFAULTS.far); setClipDist(CLIP_DEFAULTS.dist); }}
+      className="px-1.5 py-1 text-[10px] font-bold rounded border bg-white border-emerald-300 text-emerald-700 hover:bg-emerald-50 whitespace-nowrap"
+      title={`↺ Back to the « no cut » extremes: clipNear ${CLIP_DEFAULTS.near} · clipFar ${CLIP_DEFAULTS.far} · clipDist ${CLIP_DEFAULTS.dist} Å`}>
+      ↺ No cut
+    </button>
+  </>
+)}
+{/* ✨ RAY — the HIGH-RESOLUTION STILL of the scene, HERE in the 🌫 Scene group
+    (the request: « i comandi ray e i suoi associati (alpha, shadow) devono
+    essere spostati nella sezione scene »). A still belongs to the SCENE as a
+    whole, exactly like the 🌫 Fog · 🎨 Background · ◐ Shadows · ✂ Clipping beside
+    it — and the ◐ Shadows rig that AIMS the light of the still is right there,
+    so the two controls that own the light of a still are neighbours. It renders
+    with NGL's own supersampling path (utils/viewerRayImage.js) and writes ONE
+    PNG on the computer; the 📷 button that published to the Figure library is
+    gone (the request: « il pulsante figure é ridondante »).
+    WHY A « RAY » COMES BACK NOW. The report: « se clicco su ray, anche per un
+    piccolo peptide il rendering non finisce mai e non arrivo a vedere
+    l'immagine ». The still is `canvasPixels × factor` and it is not only
+    RENDERED: the cast shadows walk every pixel of it (on the CPU) and the PNG is
+    decoded and encoded once more. On a HiDPI canvas the old 40 Mpx budget meant
+    a 200 MB image copied three times — minutes inside getImageData / toBlob,
+    while the button still said « Rendering… ». The size is now capped by the
+    module (RAY_MAX_PIXELS · 16 Mpx, a 4000×4000-class still), the antialias pass
+    — FOUR times the tiles — is only asked for while the tiles stay few
+    (RAY_ANTIALIAS_MAX_FACTOR: from 3× up every tile IS a supersample), and the
+    title below says, BEFORE the click, how many pixels and how many tiles this
+    factor really costs here. */ }
+<div className="flex items-center gap-1">
+  <button
+    type="button"
+    onClick={captureRay}
+    disabled={rayBusy}
+    title={status === 'ready'
+      ? `Render a high-resolution still of the scene on screen: ${rayPlan.realWidth || 0}×${rayPlan.realHeight || 0} px${rayPlan.antialias ? ' (antialias pass)' : ''}, ${rayPlan.tiles || 0} tiles. It is NGL's own supersampling render of the very scene — every palette, the ring plates, the ESP surface, the fog and the light rig. The still is SHOWN here first (✨ Ray preview): nothing is written until you press 💾 Save PNG, which downloads exactly the image you saw. A size this GPU cannot take is reduced automatically, so the render never fails.`
+      : 'Load a structure first — ✨ Ray renders the 3D scene on screen at high resolution'}
+    className={`px-1.5 py-1 text-[10px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${rayBusy ? 'bg-amber-50 border-amber-300 text-amber-700 cursor-wait' : 'bg-white border-amber-300 text-amber-700 hover:bg-amber-50'}`}
+  >
+    {rayBusy ? '✨ Rendering…' : '✨ Ray'}
+  </button>
+  <select
+    value={rayFactor}
+    onChange={(e) => setRayFactor(Number(e.target.value))}
+    title={'Supersampling multiple of the canvas — the bigger it is, the smoother and the larger the PNG. The pixel size written after the × is what the render will really produce on this screen; a size this GPU cannot take is reduced automatically.'}
+    className="border border-amber-300 rounded-md px-1 py-0.5 text-[10px] bg-white outline-none focus:border-amber-500 h-7 max-w-[4.6rem]"
+  >
+    {raySizes.map((o) => (
+      <option key={o.factor} value={o.factor}>
+        {o.label}{o.allowed ? '' : ` → ${o.best}×`}
+      </option>
+    ))}
+  </select>
+  <label
+    title="Transparent background: the PNG keeps an alpha channel, so the molecule can be dropped on any coloured page or slide (the interactive canvas is not affected)"
+    className="px-1 py-1 text-[10px] font-bold rounded-md border transition-colors h-7 flex items-center gap-0.5 cursor-pointer bg-white border-amber-300 text-amber-700 hover:bg-amber-50 whitespace-nowrap"
+  >
+    <input type="checkbox" checked={rayTransparent} onChange={(e) => setRayTransparent(e.target.checked)} className="accent-amber-600" />
+    ⬚ alpha
+  </label>
+  {/* ◐ CASTED SHADOWS — the report: « the ray button only takes a snapshot of the
+      image but does not introduce casted shadows ». NGL 2.4 ships no shadow-map
+      pass (see the note above `flagMeshShadows`), so the shadow of the still is
+      computed from the ATOMS — the very camera of the canvas, the very lamp of
+      the ◐ Shadows rig — and multiplied into the pixels NGL just wrote
+      (utils/viewerRayShadows.js). The PNG therefore carries a real projected
+      shadow; untick to get the plain supersampled still back. Only what is
+      DRAWN casts: a molecule this viewer has hidden (a section unticked, a look
+      set to « hide ») keeps its atoms in the structure but draws no
+      representation, and it no longer throws a shadow of itself into the still —
+      the report « I see a projected membrane, while the membrane is hidden in the
+      program » (see drawnAtomIndicesOf in that module). */}
+  <label
+    title="Casted shadows in the PNG: the shadow the molecule throws, from the very lamp of the ◐ Shadows rig (its Azimuth / Elevation — the 💡 Light sliders of « 2 · Toolbar », shown whenever these ray shadows are on). NGL cannot cast them — the shadow is computed from the atoms with the camera and the light of the scene and multiplied into the still. Untick for the plain supersampled image."
+    className={`px-1 py-1 text-[10px] font-bold rounded-md border transition-colors h-7 flex items-center gap-0.5 cursor-pointer whitespace-nowrap ${rayShadows ? 'bg-amber-100 border-amber-400 text-amber-900' : 'bg-white border-amber-300 text-amber-700 hover:bg-amber-50'}`}
+  >
+    <input type="checkbox" checked={rayShadows} onChange={(e) => setRayShadows(e.target.checked)} className="accent-amber-600" />
+    ◐ shadows
+  </label>
+  {rayShadows && (
+    <>
+      <input
+        type="range" min="0.1" max="1" step="0.05" value={rayShadowStrength}
+        onChange={(e) => setRayShadowStrength(Number(e.target.value))}
+        className="accent-amber-600 w-14 shrink-0"
+        title={`Darkness of the cast shadow — ${Math.round(rayShadowStrength * 100)} % (the DIRECTION comes from the 💡 Light sliders of « 2 · Toolbar » — Azimuth / Elevation)`}
+        aria-label="cast shadow strength"
+      />
+      {/* LA DOUCEUR DU CONTOUR — l'autre moitié réglable d'une ombre portée (sa
+          direction est celle du rig ◐). Elle multiplie la pénombre du module
+          (RAY_SHADOW_DEFAULTS.blur : 0 = contour net, 1 = les valeurs par défaut,
+          4 = très diffuse) — la noirceur ne bouge pas, et un rendu à 1 est
+          exactement celui d'avant. */}
+      <input
+        type="range" min="0" max="4" step="0.25" value={rayShadowBlur}
+        onChange={(e) => setRayShadowBlur(Number(e.target.value))}
+        className="accent-amber-600 w-14 shrink-0"
+        title={`Softness of the cast shadow — ×${Number(rayShadowBlur).toFixed(2)} of the default penumbra (0 = a hard edge, 1 = the viewer's own default, 4 = a very diffuse shadow). It widens the shadow blur AND how much that blur grows with the occluder-to-receiver distance.`}
+        aria-label="cast shadow blur"
+      />
+    </>
+  )}
+  {/* ◐ L'OMBRE VIVANTE — la demande : « will it be possible to see it while the
+      molecule is moving and not only as a still picture? » OUI. C'est la MÊME
+      ombre que celle du PNG (une fonction pure de la caméra, de la lampe et des
+      atomes), peinte dans une couche 2D posée sur la vue : on la voit donc
+      pendant qu'on tourne, et elle est dans le film 🎬 comme la vignette 🌑.
+      Trois régimes, mesurés image par image sur un peptide / une grosse
+      protéine : `auto` (DÉFAUT) = brouillon pendant le geste puis la qualité du
+      PNG dès que ça s'arrête ≈ 100 / 20 img/s, `sharp` = la qualité du PNG à
+      chaque image ≈ 18 / 7,5 img/s, `draft` = le brouillon toujours (le plus
+      léger, un peu plus doux que le PNG). Le réglage ◐ shadows du « ✨ Ray »
+      ci-dessus reste celui du FICHIER : les deux sont indépendants. */}
+  <span
+    title={'The cast shadow IN THE 3D VIEW, live: the very shadow of the ✨ Ray still (same camera, same lamp of the ◐ Shadows rig, same atoms), painted in a 2D layer over the canvas. It follows the molecule while you drag, spin or play a trajectory, and it lands in the 🎬 video too (the film canvas composes it, like the 🌑 Darkness vignette).\n• auto (default): a draft shadow while it moves (≤ 420 px mask, 4 taps), then the FULL ✨ Ray quality the moment the movement stops (~0.2 s) — 100 img/s on a small molecule, ~20 on a large one.\n• sharp: the ✨ Ray quality on every frame (~18 img/s on a small molecule, ~7 on a big cartoon).\n• draft: always the light version — the quickest and the smoothest, ever so slightly softer than the still.\n• off: no shadow in the view (the PNG of ✨ Ray keeps its own ◐ shadows setting).'}
+    className={`px-1 py-1 text-[10px] font-bold rounded-md border transition-colors h-7 flex items-center gap-0.5 whitespace-nowrap ${rayLiveOn ? 'bg-amber-100 border-amber-400 text-amber-900' : 'bg-white border-amber-300 text-amber-700 hover:bg-amber-50'}`}
+  >
+    ◐ live
+    <select
+      value={rayShadowLive}
+      onChange={(e) => setRayShadowLive(rayLiveSettingOf(e.target.value))}
+      className="border border-amber-300 rounded-md px-1 py-0.5 text-[10px] bg-white outline-none focus:border-amber-500 h-7"
+      aria-label="live cast shadow quality"
+    >
+      <option value="auto">auto</option>
+      <option value="full">sharp</option>
+      <option value="draft">draft</option>
+      <option value="off">off</option>
+    </select>
+  </span>
+  {/* ⏹ STOP WAITING (le rapport : « start ray tracing … hangs ») : NGL ne sait pas
+      annuler un `makeImage` — le seul geste honnête est de cesser de l'attendre.
+      Le rendu abandonné n'écrira AUCUN fichier ; le module abandonne de lui-même
+      après RAY_STALL_MS de silence (voir viewerRayImage.js). */}
+  {rayBusy && (
+    <button
+      type="button"
+      onClick={abandonRay}
+      className="px-1.5 py-1 text-[10px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap bg-white border-amber-400 text-amber-800 hover:bg-amber-50"
+      title="Stop waiting for this render: the button is freed at once and this still is abandoned (NGL cannot cancel an image it has begun — no file will be written). The ✨ Ray render itself gives up on its own after 45 s without a sign of life."
+    >
+      ⏹ stop
+    </button>
+  )}
+</div>
+{rayMsg && (
+<span className="text-[10px] font-bold text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">{rayMsg}</span>
+)}
+</div>
+</div>
+
+{/* ── 🎨 STYLES — SA PROPRE RANGÉE, ET ELLE PORTE LE 🎞 MOVIE (la demande de cette session :
+    « Move the styles section in another line and add to it a Movie button. If clicked the movie
+    button must show the movie maker commands. In this way we can get rid of the movie maker
+    line and save space. »). La bande teal ne partage donc plus sa largeur avec 🌫 Scene : le
+    filet qui les séparait est parti avec la rangée qu'elles partageaient (deux boîtes de teintes
+    différentes, sur deux lignes, se séparent toutes seules), et les CINQ gestes de la demande
+    d'origine restent là, dans leur ordre : le NOM, les DEUX modes d'apprentissage
+    (🎨 Cumulative · 📷 Snapshot), puis 💾 Save · 📂 Load… · 🗑 Delete — et au bout les deux
+    gestes de FICHIER (⬇ · ⬆) qui emportent un style sur un autre ordinateur.
+    🎞 MOVIE SE BRANCHE À LA SUITE : il ouvre et referme le panneau du film, rendu PLEINE
+    LARGEUR sous cette rangée (le gabarit de ⚙ Parameters and Constraints) — fermé par défaut,
+    donc bande ET colonne des poses ne coûtent rien et la ligne entière de l'ex-« 🎞 Movie
+    maker » de « 1 · General » a quitté la barre. Le compte des poses reste écrit sur le bouton
+    (« · 3 »), donc un film fermé ne se perd jamais de vue, et une écriture en cours le dit
+    (« ● ») même panneau refermé.
+    IL N'Y A TOUJOURS QU'UN JEU DE CES CINQ BOUTONS : la bande en montrait DEUX (les « setups »
+    nommés, puis les deux modes), donc deux pavés de prose pour expliquer deux fois la même
+    chose. Tout ce qui était écrit ici se lit en survolant le bouton qui le fait — la liste des
+    styles enregistrées comprise — et la bande ne coûte plus une seule ligne de texte. Les
+    « setups » de l'ancienne bande sont repris une fois comme thèmes du même nom (la migration
+    est en tête du composant, à côté de l'état des thèmes). */}
+<div className="flex flex-wrap items-center gap-1 rounded-md border border-teal-200 bg-teal-50/40 px-1.5 py-1 shrink-0">
+<span className="text-[9px] font-black text-teal-700 uppercase tracking-wide whitespace-nowrap" title={`Save / load the whole visualisation look under a NAME: every molecule style, its colour, its radii, the labels, Fog / Shadows / Clipping / Background, the light and its colour… ${stylesSavedTitle}`}>🎨 Styles</span>
+<input
+type="text"
+value={setupName}
+onChange={(e) => setSetupName(e.target.value)}
+onKeyDown={(e) => { if (e.key === 'Enter') saveActiveEnv(); }}
+placeholder="Style name"
+title="The NAME of the style — 💾 saves the look on screen under it (an existing name is overwritten, and an empty box gets a name typed for you), 🗑 Delete removes the one written here, ⬇ exports it. It is the name you will find in 📂 Load… and the name of the .json file."
+className="border border-teal-300 rounded-md px-2 py-1 text-[11px] w-28 bg-white outline-none focus:border-teal-500 h-7"
+/>
+{[['theme', '🎨 Cumulative'], ['snapshot', '📷 Snapshot']].map(([m, label]) => (
+<button key={m} type="button"
+onClick={() => { setSetupSaveMode(m); setThemeConflicts(null); setThemeChoices(null); }}
+title={m === 'theme'
+? 'Cumulative: 💾 Save learns the styles BY MOLECULAR CLASS (protein · nucleic acid · lipid · sugar · ligand · water · ion) and MERGES them into the theme — a style you can reuse on another file; a class the theme does not know keeps the neutral base style.'
+: 'Snapshot: 💾 Save photographs THIS exact scene, section by section (« protein · chain A » …), with no merge — one isolated setting for this system only.'}
+className={`px-2 py-1 text-[10px] font-bold rounded border h-7 whitespace-nowrap ${setupSaveMode === m ? 'bg-teal-600 border-teal-700 text-white' : 'bg-white border-teal-300 text-teal-800 hover:bg-teal-100'}`}>
+{label}
+</button>
+))}
+<button type="button" onClick={saveActiveEnv}
+title={setupSaveMode === 'theme'
+? `Save the theme under the name written on the left: the styles of the classes on screen are learned (merged), the rest of the file is untouched. A name is typed for you when the box is empty. ${stylesSavedTitle}`
+: `Save a snapshot of this scene under the name written on the left (an existing name is overwritten — no merge): one picture of THIS system, section by section. A name is typed for you when the box is empty. ${stylesSavedTitle}`}
+className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-teal-400 text-teal-800 hover:bg-teal-100 h-7 whitespace-nowrap">
+💾 Save {setupSaveMode === 'theme' ? 'theme' : 'snapshot'}
+</button>
+<select value="" onChange={(e) => loadActiveEnv(e.target.value)}
+title={setupSaveMode === 'theme'
+? `Put a saved theme back on screen: the global environment first, then the style of every class the theme knows — a class it does not know keeps the neutral base style. ${stylesSavedTitle}`
+: `Put a saved snapshot back on screen: the global environment and the styles of the very sections it photographed. ${stylesSavedTitle}`}
+className="border border-teal-300 rounded-md px-1.5 py-1 text-[11px] bg-white outline-none focus:border-teal-500 h-7 max-w-[10rem]">
+<option value="">📂 Load…</option>
+{Object.keys(activeEnvStore().map).sort().map((n) => <option key={n} value={n}>{n}</option>)}
+</select>
+<button type="button" onClick={deleteActiveEnv}
+title={`Delete the theme / snapshot whose name is written on the left. The scene on screen is NOT touched — deleting a saved style never changes what you see. ${stylesSavedTitle}`}
+className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-teal-300 text-teal-800 hover:bg-teal-100 h-7 whitespace-nowrap">
+🗑 Delete
+</button>
+<button type="button" onClick={() => exportActiveEnv(setupName)}
+title={`Download the style named on the left as a .json file — it can be imported on another page or another computer. ${stylesSavedTitle}`}
+className="px-1.5 py-1 text-[11px] font-bold rounded border bg-white border-teal-300 text-teal-800 hover:bg-teal-100 h-7">
+⬇
+</button>
+<label title={`Import a style .json file (written by ⬇): its mode is read from the file and it is applied at once. ${stylesSavedTitle}`}
+className="cursor-pointer px-1.5 py-1 text-[11px] font-bold rounded border bg-white border-teal-300 text-teal-800 hover:bg-teal-100 h-7 inline-flex items-center">
+⬆
+<input type="file" accept=".json,application/json"
+onChange={(e) => { importActiveEnvFile(e.target.files && e.target.files[0]); e.target.value = ''; }}
+className="hidden" />
+</label>
+{/* ── 🎞 MOVIE — LE BOUTON QUI A REMPLACÉ LA RANGÉE « Movie maker » DE §1 (la demande de cette
+    session : « add to it a Movie button. If clicked the movie button must show the movie maker
+    commands. In this way we can get rid of the movie maker line and save space. »). Un clic
+    ouvre le panneau du film SOUS cette rangée, un second le referme : la bande des gestes
+    (＋ capturer · ⏸ tenue / morphème · ▶ vérifier · 🔴 écrire · ⏹ · ⬇ · 📂 · 🗑) et la colonne
+    des poses, ENTIÈRES et pleine largeur. Fermé, il ne pousse rien — et il continue de PARLER :
+    « · 3 » dit combien de poses le film a, « ● » dit qu'une écriture est en cours (son ⏹ est
+    dans le panneau), « ▾ / ▸ » dit dans quel sens le clic ira. Sa bulle dit tout le reste, dont
+    le fait que rien n'est envoyé nulle part : le film s'écrit sur votre ordinateur. */}
+<button
+type="button"
+onClick={() => setMovieOpen((v) => !v)}
+aria-expanded={movieOpen}
+aria-controls="viewer-movie-maker"
+className={`px-2 py-1 text-[10px] font-bold rounded border h-7 whitespace-nowrap transition-colors ${movieOpen ? 'bg-fuchsia-600 border-fuchsia-700 text-white' : kfBusy ? 'bg-fuchsia-100 border-fuchsia-400 text-fuchsia-800' : 'bg-white border-fuchsia-300 text-fuchsia-700 hover:bg-fuchsia-50'}`}
+title={`🎞 THE FILM OF POSES AND STYLES — capture the pose and the styles of a scene, morph to the next, write the film. ${movieOpen ? 'Open right now: this button closes it, and the film stops costing a line of the toolbar.' : 'Closed: this button opens the whole 🎞 Movie maker under this row — its band of gestures (＋ capture this pose · hold / morph · ▶ preview the film · 🔴 record the film · ⏹ stop · ⬇ Export the film · 📂 Import a film · 🗑 Clear the film) and its column of poses — and a second press closes it again.'} The film holds ${keyframes.length} pose(s) of ${KEYFRAME_LIMITS.keys} right now${kfBusy ? ', and one is being written (its ⏹ Stop is inside the panel)' : ''}. Nothing is uploaded anywhere: the film is written as a file on your computer.`}>
+🎞 Movie {movieOpen ? '▾' : '▸'}{keyframes.length ? ` · ${keyframes.length}` : ''}{kfBusy ? ' ●' : ''}
+</button>
+{/* ── 🔄 SPIN x·y·z — LE BOUTON QUI TOURNE LA MOLÉCULE TOUT SEUL, JUSTE APRÈS 🎞 MOVIE
+    (la demande de cette session, mot pour mot : « Next to the movie button add a button to
+    rotate uniformly the molecule in x, y and z direction »). Un clic ALLUME le tournoiement
+    uniforme (les trois axes, la MÊME vitesse angulaire — voir `spinSceneStep`), un second
+    l'ÉTEINT. Le point allumé (« ● ») et la couleur du bouton disent l'état sans un mot, et
+    `aria-pressed` le dit aux lecteurs d'écran.
+    ⚠ LE TOUR NE CHANGE RIEN AU CONTENU : c'est un geste de VUE, exactement comme un glisser
+    de souris sur le fond — l'orientation de la scène est `rotationGroup.quaternion`, donc une
+    pose 🎞 capturée garde l'orientation qu'elle montre, ⬇ PDB écrit la PLACE des molécules
+    (jamais l'orientation de la caméra) et ↺ ne l'annule pas (il remet chaque molécule à sa
+    place, pas la vue). Pendant qu'un film se vérifie ou s'écrit, le tour s'efface de lui-même
+    pour ne pas se battre avec les poses (voir l'effet) : le bouton reste allumé et le tour
+    reprend tout seul après. */} 
+<button
+type="button"
+onClick={() => setSpinOn((v) => !v)}
+aria-pressed={spinOn}
+className={`px-2 py-1 text-[10px] font-bold rounded border h-7 whitespace-nowrap transition-colors ${spinOn ? 'bg-sky-600 border-sky-700 text-white' : 'bg-white border-sky-300 text-sky-700 hover:bg-sky-50'}`}
+title={`🔄 SPIN ABOUT X, Y AND Z — the molecule turns by itself, at the SAME constant speed about the three axes (one full turn about each in about ten seconds), so every side of it goes past without touching the mouse. ${spinOn ? 'ON right now: this button stops it, and the view simply stays exactly where the spin left it — nothing about the scene is changed by having turned.' : 'OFF right now: this button starts it, and the mouse stays free — a drag picks the scene up precisely where the spin is.'} The spin is a MOVE OF THE VIEW, like dragging the background: 🎞 a captured pose keeps its own orientation, ⬇ PDB writes where the molecules STAND (never where the camera looks), and ↺ undo does not touch it. While a film is previewed or written the spin steps aside so the two never fight, then carries on by itself.`}>
+🔄 Spin x·y·z{spinOn ? ' ●' : ''}
+</button>
+
+{setupMsg && (
+<span className="text-[10px] font-bold text-teal-700 bg-teal-50 border border-teal-200 rounded-md px-2 py-1 max-w-[320px] truncate" title={setupMsg}>{setupMsg}</span>
+)}
+{/* Le conflit d'un THÈME (deux molécules d'une même classe dessinées autrement) :
+    le SEUL texte que la bande garde, parce qu'il attend une réponse. */}
+{themeConflicts && (
+<div className="w-full flex flex-wrap items-center gap-1.5 bg-amber-50 border border-amber-300 rounded-md px-2 py-1">
+<span className="text-[10px] font-black text-amber-800" title="A theme keys its styles by MOLECULAR CLASS: when two molecules of the same class are drawn differently, you choose which one becomes the class default — then press 💾 Save again. The styles of the other molecules are not touched.">
+{themeConflicts.length} class(es) drawn in two ways — choose the class default
+</span>
+{themeConflicts.map((c) => (
+<label key={c.kind} className="flex items-center gap-1 text-[10px] font-bold text-amber-900">
+<span title="The molecular class a theme keys its styles by">{MOL_KIND_LABELS[c.kind] || c.kind}</span>
+<select value={(themeChoices && themeChoices[c.kind]) || ''}
+onChange={(e) => setThemeChoices({ ...(themeChoices || {}), [c.kind]: e.target.value })}
+title="The molecule whose style becomes the default of this class in the theme"
+className="border border-amber-300 rounded-md px-1.5 py-1 text-[11px] bg-white outline-none focus:border-amber-500 h-7">
+{c.options.map((sec) => <option key={sec.id} value={sec.id}>{classLabelOfSection(sec)}</option>)}
+</select>
+</label>
+))}
+</div>
+)}
+</div>
+
+{/* ── LA BOÎTE 🎨 STYLES N'A PLUS DE RANGÉE À ELLE — c'est la demande de cette session :
+    « elimina la riga vuota tra la sezione “STYLES” e “MODIFY” ». Elle s'écrivait sur SA
+    rangée pleine largeur (`flex items-center gap-1 w-full overflow-x-auto`), donc à droite
+    d'elle il ne restait RIEN : une bande vide, et ✏️ Modify en dessous. Elle est maintenant
+    un FRÈRE ordinaire des autres groupes de « 2 · Toolbar » (même `shrink-0`, séparé comme
+    eux par le filet) : c'est le CONTENU qui décide où la largeur se coupe, donc ✏️ Modify
+    vient se poser sur SA ligne et remplit l'espace qui était vide. 🌫 Scene garde la sienne
+    (elle finit par ✨ Ray et ses curseurs, qui ont besoin de la largeur), et le panneau 🎞 du
+    film, quand il est ouvert, reste pleine largeur comme les autres panneaux dépliés de §2. */}
+{/* ── LE SAUT DE LIGNE FORCÉ A ÉTÉ RETIRÉ — la demande : « between the “style” section and the
+    “modify” section there is an empty line ». Il s'écrivait ici : un `<span>` vide, pleine
+    largeur et SANS HAUTEUR, dont le seul effet était de couper la rangée. Ce frère occupait une
+    rangée ENTIÈRE à lui tout seul — hauteur nulle, mais les deux `gap` de la rangée autour —
+    donc une bande vide entre la boîte 🎨 Styles et la boîte ✏️ Modify, exactement la ligne que
+    le rapport décrit. Les cinq groupes de « 2 · Toolbar » s'enchaînent maintenant dans l'ordre,
+    chacun refermé dans sa boîte teintée : c'est le CONTENU qui décide où la largeur se coupe —
+    jamais un frère vide. */}
+
 {/* ── 🎞 THE MOVIE MAKER — « capture the pose and the styles of a scene, morph to
-    the next, write the film ». IL VIT MAINTENANT SUR LA LIGNE « 1 · General »
-    (la demande : « the movie maker section can fit in the line of the general
-    section (where you upload the pdb and trajectory) ») : il filme la structure
-    et la trajectoire qui se chargent juste à côté, donc c'est là qu'on le
-    cherche. Sa rangée de gestes n'a pas bougé d'un pixel — une ligne, pas de
-    retour à la ligne, pas de roman (voir le commentaire de la bande). */}
-<div className="flex flex-col gap-1 w-full">
+    the next, write the film ». IL NE VIT PLUS SUR LA LIGNE DE « 1 · General » (la demande de
+    cette session : « Move the styles section in another line and add to it a Movie button. If
+    clicked the movie button must show the movie maker commands. In this way we can get rid of
+    the movie maker line and save space. ») : la rangée de §1 charge et efface, elle ne filme
+    plus rien, et c'est le 🎞 MOVIE de la boîte 🎨 Styles qui ouvre ce panneau. Il est FERMÉ par
+    défaut (`movieOpen`), donc bande ET colonne des poses ne coûtent pas un pixel tant qu'on ne
+    le demande pas — c'est la ligne entière de l'ex-« 🎞 Movie maker » qui a quitté la barre.
+    Ouvert, il se rend PLEINE LARGEUR ici, le gabarit des autres panneaux dépliés de
+    « 2 · Toolbar » (⚙ Parameters and Constraints, ⚡ Range, ✏️ Atom names) : la rangée des
+    gestes et la colonne des poses gardent donc toute la largeur de la barre.
+    ⚠ RIEN N'A ÉTÉ RÉÉCRIT : la bande des boutons, ses bulles, ses messages et ses lignes de
+    pose sont celles d'avant, au caractère près — seul leur EMPLACEMENT a changé. */}
+{movieOpen && (
+<div id="viewer-movie-maker" className="flex flex-col gap-1 w-full">
 <span className="text-[9px] font-black text-fuchsia-700 uppercase tracking-wide whitespace-nowrap" title="Capture the pose and the styles of a scene, morph to the next, write the film: ＋ photographs the scene as it is, ⏸ hold / morph say how long each picture stays and how long the way to the next one takes, ▶ checks the film on screen and 🔴 writes it into one file. Every gesture explains itself in its own tooltip.">🎞 Movie maker</span>
 {/* ── UNE SEULE LIGNE DE BOUTONS (le rapport : « keep all buttons in one line.
     Remove the commentaries so that it fits in one row »). La rangée ne REVIENT PAS
@@ -17279,407 +24683,112 @@ title={kfMsg || (videoReady.ok ? keyframeFilmSummary(keyframes.length, kfPlanNow
   })()}
 
 </div>
-</VSection>
-
-{/* ══ 2 · TOOLBAR — Scene | Modify | Analysis | PyMOL, ONE horizontal row ════
-    This is §2 of the command bar now (the report: « quindi toolbar diventa la
-    sezione 2 e contiene separatamente scene, modify e analysis »). The four
-    groups are ONE wrapped row, each introduced by a small chip and separated by
-    a hairline; the expanded panels (⚡ ESP · Range, 🔢 Renumber, ✏️ Atom names,
-    🧪 PyMOL, the clipping sliders) are full-width children of this same section,
-    so the bar stays one row tall while nothing is open.
-    • Scene: 🌫 Fog · 🎨 Background · ◐ Shadows (+ 🌑 Darkness / 💡 Light) · 💡 Light colour · ✂ Clipping · ✨ Ray (+ resolution · ⬚ alpha · ◐ shadows)
-    • Modify: 🧬 From sequence · ✥ Move / ↻ Rotate · ⚗️ Rebuild H · ✏️ Atom names · ⚡ ESP · 🔢 Renumber
-    • Analysis: 📏 Measure · 🟢 Assigned
-    • PyMOL: 🧪 Selections & PyMOL
-    THE FOUR MOVES OF THIS REVISION (each one is a line of the report):
-      · ✨ Ray and its associates (the resolution, ⬚ alpha, ◐ shadows + strength)
-        left §1 General for the 🌫 Scene group — a still of the SCENE belongs with
-        the fog / background / shadows / clipping that define it, and the ◐
-        Shadows rig that aims the light of the still is right there;
-      · 📷 Figure is REMOVED (redundant): the very still of the scene is written
-        by ✨ Ray as a PNG on the computer, and the ★ figures of Publications &
-        Slides keep their own capture / import paths (the canvas, the Image
-        builder, the imported files);
-      · 🙈 Hide everything is REMOVED here: the Selections bar on the left keeps
-        its own « 🙈 Hide all » / « Show all » button on the SAME `hideAll` state,
-        so the gesture survives and this row no longer repeats it;
-      · ⚡ ESP and 🔢 Renumber (the button AND its list) left the old §2 for the
-        ✏️ Modify group — they modify the selected molecule's surface and the
-        numbering of the residues on screen;
-      · §2 « Molecular Styling » disappears with them: the styling of every
-        molecule has lived in the bar on the RIGHT of the canvas since PART 4
-        (one space per molecule), and the accordion only held those two gestures
-        and the Hide-everything button.
-    The lighting rig is untouched: Shadows locks NGL's single light in place and
-    the Darkness / Light sliders aim it (and now also drive the AMBIENT-OCCLUSION
-    equivalent, see applyShadowSettings). Its ONE user-changeable colour is the « 💡 Light colour » swatch, parked IMMEDIATELY BEFORE « ✂ Clipping » because that is where the request puts it (« in the molecular viewer add the possibility to change the color of the light and put it just before the clipping in the scene section of the toolbar ») — white by default, so the reference look is what an untouched swatch gives. ✂ Clipping pushed OFF sets the camera
-    bounds to the EXTREMES (near 0 · far 100000 · dist 0) so a large complex is
-    never cut. */}
-<VSection title="2 · Toolbar" hint="scene · styles · modify · analysis · PyMOL">
-{/* ── LIGNE 1 · 🌫 SCENE, SEUL DANS SA BOÎTE (la demande : « the scene, modify and
-    analyze subgroups are not clearly separated but I do not want to use a line for
-    each of them »). Chaque groupe est maintenant une petite boîte teintée à sa
-    couleur, refermée sur elle-même : la séparation ne demande aucune ligne de plus,
-    et le filet qui reste entre deux boîtes dit où finit l'une et où commence
-    l'autre. 🎨 Styles vit sur CETTE ligne, derrière son filet. */}
-<div className="flex flex-wrap items-center gap-1 rounded-md border border-sky-200 bg-sky-50/40 px-1.5 py-1">
-<span className="text-[9px] font-black text-sky-700 uppercase tracking-wide whitespace-nowrap" title="The scene the structure is drawn in: NGL's depth fog, the background colour, the shadows and the one light that casts them, the clipping plane, and the high-resolution still (✨ Ray, with its resolution, its alpha and its cast shadows).">🌫 Scene</span>
-<button type="button" onClick={() => setFogEnabled((v) => !v)}
-  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 ${fogEnabled ? 'bg-sky-100 border-sky-400 text-sky-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
-  title="NGL's default depth fog fades distant atoms toward the background (a grey haze). Toggle it off for a crisp image — the setting is saved and persists across pages.">
-  🌫 Fog: {fogEnabled ? 'On' : 'Off'}
-</button>
-{/* 🎨 BACKGROUND — the colour of the 3D scene itself (§2 Scene). It is applied to
-    the live stage (stage.setParameters({ backgroundColor })), persists like the
-    fog / shadows / clipping, and travels inside a ⚙️ saved setup. The 🧪 PyMOL
-    panel writes this very same state, so the two entries never disagree. */}
-<label className="flex items-center gap-1 text-[11px] font-bold text-slate-700 whitespace-nowrap" title="Background colour of the 3D scene — the colour the depth fog fades toward. Saved and persistent across pages, and part of a ⚙️ setup.">
-  🎨 Background
-  <input type="color" value={bgColor} onChange={(e) => setBgColor(e.target.value)}
-    className="w-8 h-6 border border-slate-300 rounded cursor-pointer" aria-label="Background colour" />
-</label>
-<button type="button" onClick={() => setBgColor(BG_DEFAULT)}
-  className="px-1.5 py-1 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100"
-  title={`Back to the default background (${BG_DEFAULT})`}>
-  ↺
-</button>
-<button type="button" onClick={() => setShadowOn((v) => !v)}
-  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 ${shadowOn ? 'bg-slate-800 border-slate-800 text-white' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
-  title="Shadows: swaps NGL's flat camera-lit look for ONE fixed key light whose direction you aim (Azimuth / Elevation appear while ON), so every side of the structure that turns away from the light falls into real shade as you rotate. The Darkness slider then only raises the dark↔light contrast — the light stays pure white unless you say otherwise (the 💡 Light colour swatch that follows, immediately before ✂ Clipping, is the ONE control that tints this lamp). Shadows also switches on the AMBIENT-OCCLUSION equivalent: NGL 2.4 has no SSAO pass, so the cavity shading comes from the deep-ambient + strong-key-light rig with supersampled shading (sampleLevel), which is what makes crevices and the inner sides of a fold read as depth. (True WebGL shadow maps aren't supported by NGL — trying them made the molecule disappear. Every mesh is still flagged cast+receive shadows, see flagMeshShadows.)">
-  ◐ Shadows: {shadowOn ? 'On' : 'Off'}
-</button>
-{shadowOn && (
-  <label className="flex items-center gap-1 text-[11px] font-bold text-slate-700 whitespace-nowrap" title="Darkness — contrast only: the lit side gets brighter and the shaded side darker, with no colour change here (only the light/ambient INTENSITIES move, and the light keeps its colour — the 💡 Light colour swatch just before ✂ Clipping is where that colour is chosen, white by default). This is also what deepens the ambient-occlusion-like cavity shading.">
-    🌑 Darkness
-    <input type="range" min="0" max="100" value={Math.round(shadowDarkness * 100)} onChange={(e) => setShadowDarkness(Number(e.target.value) / 100)} className="w-20 accent-slate-700" />
-    <span className="text-[10px] text-slate-500 w-8">{Math.round(shadowDarkness * 100)}%</span>
-  </label>
 )}
-{(shadowOn || rayShadows) && (
-  <label className="flex items-center gap-1 text-[11px] font-bold text-slate-700 whitespace-nowrap" title="Light direction — aim the fixed key light (and therefore where the shadows fall). Azimuth 0° = light behind the camera (flat), 90° = screen-left, 180° = facing the camera; Elevation is the height above/below the horizon. The shade follows live while you drag. ⚠ The ✨ Ray still throws its cast shadow from THIS lamp too, so these sliders are shown whenever either the ◐ Shadows rig or the ray shadows are on — an off-axis lamp (about 90° / 45°) is what makes a cast shadow read as a shadow instead of hiding in the shade the canvas already draws. The COLOUR of this lamp is the 💡 Light colour swatch just beside it — the swatch and these two sliders own the same lamp.">
-    💡 Light
-    <input type="range" min="0" max="360" value={shadowAz} onChange={(e) => setShadowAz(Number(e.target.value))} className="w-16 accent-slate-700" aria-label="Light azimuth" />
-    <span className="text-[10px] text-slate-500 w-8">{shadowAz}°</span>
-    <span className="text-slate-400">/</span>
-    <input type="range" min="-90" max="90" value={shadowEl} onChange={(e) => setShadowEl(Number(e.target.value))} className="w-16 accent-slate-700" aria-label="Light elevation" />
-    <span className="text-[10px] text-slate-500 w-8">{shadowEl}°</span>
-  </label>
-)}
-{/* 💡 LIGHT COLOUR — the request: « in the molecular viewer add the possibility
-    to change the color of the light and put it just before the clipping in the
-    scene section of the toolbar ». It sits HERE, immediately before the ✂ Clipping
-    button, and it is the ONE control of the rig that tints anything: the KEY light
-    — the lamp NGL lights the scene with, the lamp the ◐ Shadows rig aims and the
-    ✨ Ray still re-renders with. White by default, which IS the reference look; the
-    ambient fill is deliberately left white (see nglLightParams in
-    utils/viewerLightRig.js), so the shaded side of an atom keeps the colour its
-    palette gave it and only the lit side takes the cast — the same bargain PyMOL's
-    `light_color` makes with `ambient_color`. Unlike the 💡 Light direction sliders
-    beside it (only the AIMED rig and the ray shadows need them), this swatch stays
-    visible in both modes: NGL re-reads `parameters.lightColor` on every frame
-    (Viewer.__updateLights, verified in the installed 2.4), so it also tints the
-    plain camera-linked headlight while ◐ Shadows is OFF. The value is validated by
-    the rig's own normalizeLightColor (junk → the white default), persisted like the
-    fog / shadows / clipping, and carried by a ⚙️ saved setup. */}
-  <label className="flex items-center gap-1 text-[11px] font-bold text-slate-700 whitespace-nowrap" title="Colour of the KEY light — the lamp the whole scene is lit with: the one the ◐ Shadows rig aims (Azimuth / Elevation) and the one the ✨ Ray re-renders in its still. White is the reference look. Any other colour tints the LIT side of every atom while the ambient fill stays white, so the shaded side keeps the colour its palette gave it (exactly PyMOL's light_color, which also leaves ambient_color alone). NGL re-reads the colour on every frame, so it applies with the Shadows rig ON and OFF; it is saved with the page and travels inside a ⚙️ saved setup.">
-    💡 Light colour
-    <input type="color" value={lightColor} onChange={(e) => setLightColor(normalizeLightColor(e.target.value))}
-      className="w-8 h-6 border border-slate-300 rounded cursor-pointer" aria-label="Light colour" />
-  </label>
-  <button type="button" onClick={() => setLightColor(LIGHT_COLOR_DEFAULT)}
-    className="px-1.5 py-1 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100"
-    title={`Back to the white key light (${LIGHT_COLOR_DEFAULT}) — the reference look, nothing tinted`}>
-    ↺
-  </button>
-<button type="button" onClick={() => setClipOn((v) => !v)}
-  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${clipOn ? 'bg-emerald-50 border-emerald-400 text-emerald-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
-  title="Clipping plane. NGL clips the scene with the camera near / far planes: clipNear / clipFar are percentages of the scene bounding sphere and clipDist is the closest the near plane may come to the camera — exactly what CUTS a big complex when you zoom in. OFF = the camera bounds are pushed to the EXTREMES (near 0 · far 100000 · dist 0), so nothing is ever cut at any zoom. ON = your own values below.">
-  ✂ Clipping: {clipOn ? 'On' : 'Off'}
-</button>
-{clipOn && (
-  <>
-    <label className="flex items-center gap-1 text-[11px] font-bold text-slate-700 whitespace-nowrap" title="clipNear — how much is cut in FRONT of the molecule, as a percentage of the bounding sphere. 0 cuts nothing (the near plane sits on the front edge of the sphere); positive values bring the near plane closer to the molecule.">
-      near
-      <input type="range" min="-50" max="50" step="1" value={clipNear} onChange={(e) => setClipNear(Number(e.target.value))} className="w-20 accent-emerald-600" aria-label="Clipping near" />
-      <span className="text-[10px] text-slate-500 w-10">{clipNear}%</span>
-    </label>
-    <label className="flex items-center gap-1 text-[11px] font-bold text-slate-700 whitespace-nowrap" title="clipFar — how far BEHIND the molecule the far plane sits, as a percentage of the bounding sphere. 50 = the centre of the sphere, 100 = its back edge, 150 = one radius further; « Off » uses 100000 (effectively infinite).">
-      far
-      <input type="range" min="50" max="150" step="1" value={clipFar} onChange={(e) => setClipFar(Number(e.target.value))} className="w-20 accent-emerald-600" aria-label="Clipping far" />
-      <span className="text-[10px] text-slate-500 w-10">{clipFar}%</span>
-    </label>
-    <label className="flex items-center gap-1 text-[11px] font-bold text-slate-700 whitespace-nowrap" title="clipDist — the MINIMUM distance (Å) between the camera and the near plane. NGL floors the near plane with it, which is what cuts a large complex when you zoom in: 0 removes the floor completely (that is what « Off » uses).">
-      cam. near
-      <input type="range" min="0" max="30" step="0.1" value={clipDist} onChange={(e) => setClipDist(Math.max(0, Number(e.target.value)))} className="w-20 accent-emerald-600" aria-label="Clipping camera distance" />
-      <span className="text-[10px] text-slate-500 w-12">{clipDist} Å</span>
-    </label>
-    <button type="button"
-      onClick={() => { setClipNear(CLIP_DEFAULTS.near); setClipFar(CLIP_DEFAULTS.far); setClipDist(CLIP_DEFAULTS.dist); }}
-      className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-emerald-300 text-emerald-700 hover:bg-emerald-50"
-      title="Back to the « no cut » extremes: clipNear 0 · clipFar 100000 · clipDist 0 Å">
-      ↺ No cut (0 · 100000 · 0 Å)
-    </button>
-  </>
-)}
-{/* ✨ RAY — the HIGH-RESOLUTION STILL of the scene, HERE in the 🌫 Scene group
-    (the request: « i comandi ray e i suoi associati (alpha, shadow) devono
-    essere spostati nella sezione scene »). A still belongs to the SCENE as a
-    whole, exactly like the 🌫 Fog · 🎨 Background · ◐ Shadows · ✂ Clipping beside
-    it — and the ◐ Shadows rig that AIMS the light of the still is right there,
-    so the two controls that own the light of a still are neighbours. It renders
-    with NGL's own supersampling path (utils/viewerRayImage.js) and writes ONE
-    PNG on the computer; the 📷 button that published to the Figure library is
-    gone (the request: « il pulsante figure é ridondante »).
-    WHY A « RAY » COMES BACK NOW. The report: « se clicco su ray, anche per un
-    piccolo peptide il rendering non finisce mai e non arrivo a vedere
-    l'immagine ». The still is `canvasPixels × factor` and it is not only
-    RENDERED: the cast shadows walk every pixel of it (on the CPU) and the PNG is
-    decoded and encoded once more. On a HiDPI canvas the old 40 Mpx budget meant
-    a 200 MB image copied three times — minutes inside getImageData / toBlob,
-    while the button still said « Rendering… ». The size is now capped by the
-    module (RAY_MAX_PIXELS · 16 Mpx, a 4000×4000-class still), the antialias pass
-    — FOUR times the tiles — is only asked for while the tiles stay few
-    (RAY_ANTIALIAS_MAX_FACTOR: from 3× up every tile IS a supersample), and the
-    title below says, BEFORE the click, how many pixels and how many tiles this
-    factor really costs here. */ }
-<div className="flex items-center gap-1">
-  <button
-    type="button"
-    onClick={captureRay}
-    disabled={rayBusy}
-    title={status === 'ready'
-      ? `Render a high-resolution still of the scene on screen: ${rayPlan.realWidth || 0}×${rayPlan.realHeight || 0} px${rayPlan.antialias ? ' (antialias pass)' : ''}, ${rayPlan.tiles || 0} tiles. It is NGL's own supersampling render of the very scene — every palette, the ring plates, the ESP surface, the fog and the light rig. The still is SHOWN here first (✨ Ray preview): nothing is written until you press 💾 Save PNG, which downloads exactly the image you saw. A size this GPU cannot take is reduced automatically, so the render never fails.`
-      : 'Load a structure first — ✨ Ray renders the 3D scene on screen at high resolution'}
-    className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${rayBusy ? 'bg-amber-50 border-amber-300 text-amber-700 cursor-wait' : 'bg-white border-amber-300 text-amber-700 hover:bg-amber-50'}`}
-  >
-    {rayBusy ? '✨ Rendering…' : '✨ Ray'}
-  </button>
-  <select
-    value={rayFactor}
-    onChange={(e) => setRayFactor(Number(e.target.value))}
-    title={'Supersampling multiple of the canvas — the bigger it is, the smoother and the larger the PNG. The pixel size written after the × is what the render will really produce on this screen; a size this GPU cannot take is reduced automatically.'}
-    className="border border-amber-300 rounded-md px-1 py-1 text-[11px] bg-white outline-none focus:border-amber-500 h-7"
-  >
-    {raySizes.map((o) => (
-      <option key={o.factor} value={o.factor}>
-        {o.label}{o.allowed ? '' : ` → ${o.best}×`}
-      </option>
-    ))}
-  </select>
-  <label
-    title="Transparent background: the PNG keeps an alpha channel, so the molecule can be dropped on any coloured page or slide (the interactive canvas is not affected)"
-    className="px-1.5 py-1 text-[10px] font-bold rounded-md border transition-colors h-7 flex items-center gap-1 cursor-pointer bg-white border-amber-300 text-amber-700 hover:bg-amber-50 whitespace-nowrap"
-  >
-    <input type="checkbox" checked={rayTransparent} onChange={(e) => setRayTransparent(e.target.checked)} className="accent-amber-600" />
-    ⬚ alpha
-  </label>
-  {/* ◐ CASTED SHADOWS — the report: « the ray button only takes a snapshot of the
-      image but does not introduce casted shadows ». NGL 2.4 ships no shadow-map
-      pass (see the note above `flagMeshShadows`), so the shadow of the still is
-      computed from the ATOMS — the very camera of the canvas, the very lamp of
-      the ◐ Shadows rig — and multiplied into the pixels NGL just wrote
-      (utils/viewerRayShadows.js). The PNG therefore carries a real projected
-      shadow; untick to get the plain supersampled still back. Only what is
-      DRAWN casts: a molecule this viewer has hidden (a section unticked, a look
-      set to « hide ») keeps its atoms in the structure but draws no
-      representation, and it no longer throws a shadow of itself into the still —
-      the report « I see a projected membrane, while the membrane is hidden in the
-      program » (see drawnAtomIndicesOf in that module). */}
-  <label
-    title="Casted shadows in the PNG: the shadow the molecule throws, from the very lamp of the ◐ Shadows rig (its Azimuth / Elevation — the 💡 Light sliders of « 2 · Toolbar », shown whenever these ray shadows are on). NGL cannot cast them — the shadow is computed from the atoms with the camera and the light of the scene and multiplied into the still. Untick for the plain supersampled image."
-    className={`px-1.5 py-1 text-[10px] font-bold rounded-md border transition-colors h-7 flex items-center gap-1 cursor-pointer whitespace-nowrap ${rayShadows ? 'bg-amber-100 border-amber-400 text-amber-900' : 'bg-white border-amber-300 text-amber-700 hover:bg-amber-50'}`}
-  >
-    <input type="checkbox" checked={rayShadows} onChange={(e) => setRayShadows(e.target.checked)} className="accent-amber-600" />
-    ◐ shadows
-  </label>
-  {rayShadows && (
-    <>
-      <input
-        type="range" min="0.1" max="1" step="0.05" value={rayShadowStrength}
-        onChange={(e) => setRayShadowStrength(Number(e.target.value))}
-        className="accent-amber-600 w-16 shrink-0"
-        title={`Darkness of the cast shadow — ${Math.round(rayShadowStrength * 100)} % (the DIRECTION comes from the 💡 Light sliders of « 2 · Toolbar » — Azimuth / Elevation)`}
-        aria-label="cast shadow strength"
-      />
-      {/* LA DOUCEUR DU CONTOUR — l'autre moitié réglable d'une ombre portée (sa
-          direction est celle du rig ◐). Elle multiplie la pénombre du module
-          (RAY_SHADOW_DEFAULTS.blur : 0 = contour net, 1 = les valeurs par défaut,
-          4 = très diffuse) — la noirceur ne bouge pas, et un rendu à 1 est
-          exactement celui d'avant. */}
-      <input
-        type="range" min="0" max="4" step="0.25" value={rayShadowBlur}
-        onChange={(e) => setRayShadowBlur(Number(e.target.value))}
-        className="accent-amber-600 w-16 shrink-0"
-        title={`Softness of the cast shadow — ×${Number(rayShadowBlur).toFixed(2)} of the default penumbra (0 = a hard edge, 1 = the viewer's own default, 4 = a very diffuse shadow). It widens the shadow blur AND how much that blur grows with the occluder-to-receiver distance.`}
-        aria-label="cast shadow blur"
-      />
-    </>
-  )}
-  {/* ⏹ STOP WAITING (le rapport : « start ray tracing … hangs ») : NGL ne sait pas
-      annuler un `makeImage` — le seul geste honnête est de cesser de l'attendre.
-      Le rendu abandonné n'écrira AUCUN fichier ; le module abandonne de lui-même
-      après RAY_STALL_MS de silence (voir viewerRayImage.js). */}
-  {rayBusy && (
-    <button
-      type="button"
-      onClick={abandonRay}
-      className="px-1.5 py-1 text-[10px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap bg-white border-amber-400 text-amber-800 hover:bg-amber-50"
-      title="Stop waiting for this render: the button is freed at once and this still is abandoned (NGL cannot cancel an image it has begun — no file will be written). The ✨ Ray render itself gives up on its own after 45 s without a sign of life."
-    >
-      ⏹ stop
-    </button>
-  )}
-</div>
-{rayMsg && (
-<span className="text-[10px] font-bold text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">{rayMsg}</span>
-)}
-</div>
-
-{/* ── 🎨 STYLES — l'ex-bouton « 🎨 Predefined styles » est devenu une BANDE
-    TOUJOURS LÀ, posée sur la ligne de 🌫 Scene et séparée d'elle par un filet
-    (la demande : « the “predefined styles” button can be replaced by a “Styles”
-    section containing the cumulative, snapshot, save, load, delete buttons and
-    the space to title the name of the file. The “styles” section can fit inside
-    the line of the “scene” section but it should be clear that they are
-    separated »). Les cinq gestes demandés, dans cet ordre : le NOM, les DEUX
-    modes d'apprentissage (🎨 Cumulative · 📷 Snapshot), puis 💾 Save · 📂 Load… ·
-    🗑 Delete — et, au bout, les deux gestes de FICHIER (⬇ · ⬆) qui emportent une
-    style sur un autre ordinateur.
-    IL N'Y A PLUS QU'UN JEU DE CES CINQ BOUTONS : la bande en montrait DEUX (les
-    « setups » nommés, puis les deux modes), donc deux pavés de prose pour
-    expliquer deux fois la même chose. Tout ce qui était écrit ici se lit
-    maintenant en survolant le bouton qui le fait — la liste des styles
-    enregistrées comprise — et la bande ne coûte plus une seule ligne de texte.
-    Les « setups » de l'ancienne bande sont repris une fois comme thèmes du même
-    nom (la migration est en tête du composant, à côté de l'état des thèmes). */}
-<span className="w-px h-6 bg-slate-200 shrink-0" aria-hidden="true" />
-<div className="flex flex-wrap items-center gap-1 rounded-md border border-teal-200 bg-teal-50/40 px-1.5 py-1">
-<span className="text-[9px] font-black text-teal-700 uppercase tracking-wide whitespace-nowrap" title={`Save / load the whole visualisation look under a NAME: every molecule style, its colour, its radii, the labels, Fog / Shadows / Clipping / Background, the light and its colour… ${stylesSavedTitle}`}>🎨 Styles</span>
-<input
-type="text"
-value={setupName}
-onChange={(e) => setSetupName(e.target.value)}
-onKeyDown={(e) => { if (e.key === 'Enter') saveActiveEnv(); }}
-placeholder="Style name"
-title="The NAME of the style — 💾 saves the look on screen under it (an existing name is overwritten, and an empty box gets a name typed for you), 🗑 Delete removes the one written here, ⬇ exports it. It is the name you will find in 📂 Load… and the name of the .json file."
-className="border border-teal-300 rounded-md px-2 py-1 text-[11px] w-28 bg-white outline-none focus:border-teal-500 h-7"
-/>
-{[['theme', '🎨 Cumulative'], ['snapshot', '📷 Snapshot']].map(([m, label]) => (
-<button key={m} type="button"
-onClick={() => { setSetupSaveMode(m); setThemeConflicts(null); setThemeChoices(null); }}
-title={m === 'theme'
-? 'Cumulative: 💾 Save learns the styles BY MOLECULAR CLASS (protein · nucleic acid · lipid · sugar · ligand · water · ion) and MERGES them into the theme — a style you can reuse on another file; a class the theme does not know keeps the neutral base style.'
-: 'Snapshot: 💾 Save photographs THIS exact scene, section by section (« protein · chain A » …), with no merge — one isolated setting for this system only.'}
-className={`px-2 py-1 text-[10px] font-bold rounded border h-7 whitespace-nowrap ${setupSaveMode === m ? 'bg-teal-600 border-teal-700 text-white' : 'bg-white border-teal-300 text-teal-800 hover:bg-teal-100'}`}>
-{label}
-</button>
-))}
-<button type="button" onClick={saveActiveEnv}
-title={setupSaveMode === 'theme'
-? `Save the theme under the name written on the left: the styles of the classes on screen are learned (merged), the rest of the file is untouched. A name is typed for you when the box is empty. ${stylesSavedTitle}`
-: `Save a snapshot of this scene under the name written on the left (an existing name is overwritten — no merge): one picture of THIS system, section by section. A name is typed for you when the box is empty. ${stylesSavedTitle}`}
-className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-teal-400 text-teal-800 hover:bg-teal-100 h-7 whitespace-nowrap">
-💾 Save {setupSaveMode === 'theme' ? 'theme' : 'snapshot'}
-</button>
-<select value="" onChange={(e) => loadActiveEnv(e.target.value)}
-title={setupSaveMode === 'theme'
-? `Put a saved theme back on screen: the global environment first, then the style of every class the theme knows — a class it does not know keeps the neutral base style. ${stylesSavedTitle}`
-: `Put a saved snapshot back on screen: the global environment and the styles of the very sections it photographed. ${stylesSavedTitle}`}
-className="border border-teal-300 rounded-md px-1.5 py-1 text-[11px] bg-white outline-none focus:border-teal-500 h-7 max-w-[10rem]">
-<option value="">📂 Load…</option>
-{Object.keys(activeEnvStore().map).sort().map((n) => <option key={n} value={n}>{n}</option>)}
-</select>
-<button type="button" onClick={deleteActiveEnv}
-title={`Delete the theme / snapshot whose name is written on the left. The scene on screen is NOT touched — deleting a saved style never changes what you see. ${stylesSavedTitle}`}
-className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-teal-300 text-teal-800 hover:bg-teal-100 h-7 whitespace-nowrap">
-🗑 Delete
-</button>
-<button type="button" onClick={() => exportActiveEnv(setupName)}
-title={`Download the style named on the left as a .json file — it can be imported on another page or another computer. ${stylesSavedTitle}`}
-className="px-1.5 py-1 text-[11px] font-bold rounded border bg-white border-teal-300 text-teal-800 hover:bg-teal-100 h-7">
-⬇
-</button>
-<label title={`Import a style .json file (written by ⬇): its mode is read from the file and it is applied at once. ${stylesSavedTitle}`}
-className="cursor-pointer px-1.5 py-1 text-[11px] font-bold rounded border bg-white border-teal-300 text-teal-800 hover:bg-teal-100 h-7 inline-flex items-center">
-⬆
-<input type="file" accept=".json,application/json"
-onChange={(e) => { importActiveEnvFile(e.target.files && e.target.files[0]); e.target.value = ''; }}
-className="hidden" />
-</label>
-{setupMsg && (
-<span className="text-[10px] font-bold text-teal-700 bg-teal-50 border border-teal-200 rounded-md px-2 py-1 max-w-[320px] truncate" title={setupMsg}>{setupMsg}</span>
-)}
-{/* Le conflit d'un THÈME (deux molécules d'une même classe dessinées autrement) :
-    le SEUL texte que la bande garde, parce qu'il attend une réponse. */}
-{themeConflicts && (
-<div className="w-full flex flex-wrap items-center gap-1.5 bg-amber-50 border border-amber-300 rounded-md px-2 py-1">
-<span className="text-[10px] font-black text-amber-800" title="A theme keys its styles by MOLECULAR CLASS: when two molecules of the same class are drawn differently, you choose which one becomes the class default — then press 💾 Save again. The styles of the other molecules are not touched.">
-{themeConflicts.length} class(es) drawn in two ways — choose the class default
-</span>
-{themeConflicts.map((c) => (
-<label key={c.kind} className="flex items-center gap-1 text-[10px] font-bold text-amber-900">
-<span title="The molecular class a theme keys its styles by">{MOL_KIND_LABELS[c.kind] || c.kind}</span>
-<select value={(themeChoices && themeChoices[c.kind]) || ''}
-onChange={(e) => setThemeChoices({ ...(themeChoices || {}), [c.kind]: e.target.value })}
-title="The molecule whose style becomes the default of this class in the theme"
-className="border border-amber-300 rounded-md px-1.5 py-1 text-[11px] bg-white outline-none focus:border-amber-500 h-7">
-{c.options.map((sec) => <option key={sec.id} value={sec.id}>{classLabelOfSection(sec)}</option>)}
-</select>
-</label>
-))}
-</div>
-)}
-</div>
-
-{/* ── LIGNE 2 · ✏️ MODIFY │ 📏 ANALYSIS │ 🧪 PYMOL : les trois partagent la
-    deuxième ligne, chacun dans sa boîte, séparés par un filet (la demande :
-    « the “analysis” and “modify” can be in one line but clearly separated »).
-    Cette barre pleine largeur est ce qui met fin à la ligne 1 : un frère qui
-    occupe toute la largeur oblige les suivants à descendre. */}
-<span className="basis-full h-0" aria-hidden="true" />
 
 {/* ── Modify ─────────────────────────────────────────────────────────────── */}
 <span className="w-px h-6 bg-slate-200 shrink-0" aria-hidden="true" />
-<div className="flex flex-wrap items-center gap-1 rounded-md border border-amber-200 bg-amber-50/40 px-1.5 py-1">
-<span className="text-[9px] font-black text-amber-700 uppercase tracking-wide whitespace-nowrap" title="Change the molecule itself: build it from the page's sequence, fold it for its disulphides, show or hide the drawn disulphide bonds, rebuild the hydrogens, rename the atoms, colour by electrostatic potential and renumber the residues.">✏️ Modify</span>
-{/* 🧬 From sequence — the page's sequence (Proteins / DNA / RNA) becomes a 3D
+{/* ⚠ TOUS LES BOUTONS DE ✏️ MODIFY SUR UNE SEULE LIGNE — la seconde moitié de la demande de
+    cette session : « cerca di fare entrare tutti i pulsanti di MODIFY in una sola riga ». La
+    boîte était `flex-wrap` : elle cassait sa ligne dès que la barre était un peu étroite, donc
+    ses gestes s'empilaient et la rangée coûtait deux ou trois lignes de hauteur. Elle est
+    maintenant `flex-nowrap` (le gabarit de la bande 🎞 : « la rangée ne REVIENT PAS À LA LIGNE :
+    sur un panneau étroit elle défile horizontalement, donc aucun contrôle n'est jamais repoussé
+    dessous »), avec les écarts et le rembourrage resserrés (`gap-0.5` · `px-1 py-0.5`) pour
+    qu'elle tienne le plus souvent sans défiler — et `max-w-full` + `overflow-x-auto` pour que le
+    défilement, s'il faut, reste DANS la boîte — jamais sur la barre entière.
+    ⚠⚠ LA BARRE DE DÉFILEMENT A DISPARU, ET LES NOMS ONT RACCOURCI — la demande de CETTE
+    session, mot pour mot : « in MODIFY, instead of using a scrolling bar write shorter names,
+    for example “Params & Constraints” instead of “Parameters and Constraints”, “SS:shown/hidden”
+    instead of “disulphide:shown/hidden”, “Struct” instead of “Structure” ». La boîte est donc
+    `flex-nowrap` SANS `overflow-x-auto` ni `max-w-full` — plus de rangée qui défile — et ses
+    quatre libellés longs sont devenus courts : « ⚙ Params & Constraints » (le panneau ⚙),
+    « ⚭ SS: shown / hidden » (l'interrupteur du pont disulfure, sa définition restant où elle
+    était : « Cysteine states »), « 🧬 Struct from sequence » (le modèle bâti sur la séquence) et
+    « 🧬 Struct calc » (le calcul de structure, avec son compte (m/tried)). ⚠⚠ LES INFOBULLES,
+    ELLES, N'ONT PAS ÉTÉ RACCOURCIES : chacune dit toujours tout ce que le bouton fait — seul ce
+    qui est ÉCRIT SUR la rangée a changé, et chaque lettre gagnée est une lettre que la rangée
+    n'a plus à faire défiler. */}
+<div className="flex flex-wrap items-center gap-0.5 rounded-md border border-amber-200 bg-amber-50/40 px-1 py-0.5">
+<div className="flex flex-nowrap items-center gap-0.5 min-w-0">
+<span className="text-[9px] font-black text-amber-700 uppercase tracking-wide whitespace-nowrap" title="Change the molecule itself: build it from the page's sequence, show or hide the drawn disulphide bonds, rebuild the hydrogens, rename the atoms, colour by electrostatic potential and renumber the residues.">✏️ Modify</span>
+{/* ⚙ PARAMETERS AND CONSTRAINTS — le bouton du groupe ✏️ MODIFY (la demande de la session
+   précédente : « “Parameters and Constraints” section should be in the “modify” menu »). Il
+   ouvre et referme le PANNEAU PLEINE LARGEUR (`renderParamsWindow`) rendu SOUS cette rangée :
+   le champ de forces et les DEUX tables de contraintes, et rien des réglages du protocole
+   (ceux-là sont rendus une seule fois, dans la fenêtre 🧬). ⚠ LA DEMANDE DE CETTE SESSION EN A
+   FAIT UN PANNEAU, PLUS UNE FENÊTRE (« should not open a window in the molecule space but it
+   should [be] full width under the button. By clicking the button a second time it should
+   disappear. ») : la vue 3D garde donc toute sa surface, et une seconde pression le referme. */}
+<button type="button" onClick={() => toggleParamsDock()}
+  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${paramsDock ? 'bg-slate-200 border-slate-400 text-slate-900 hover:bg-slate-300' : 'bg-white border-slate-400 text-slate-700 hover:bg-slate-100'}`}
+  title={`PARAMETERS AND CONSTRAINTS — the description of the force field and the two constraint tables, in a FULL-WIDTH PANEL under this row (${paramsDock ? 'open right now: this button closes it' : 'closed: this button opens it, and a second press closes it again'}). It does NOT open a window in the molecule space — it drops UNDER the ✏️ Modify row, so the 3D view keeps its whole surface whether it is open or closed (the request of this session: « The “parameters and constraints” should not open a window in the molecule space but it should [be] full width under the button. By clicking the button a second time it should disappear. »). Everything of the FORCE FIELD is there: the named families the gestures sum (bonds, angles, planar rings, vdW, electrostatics, solvent, ω, φ/ψ, χ1, your distances), their k and their unit, and the ⟳ reading of the molecule on screen. And the two tables with ALL their buttons: the distances to respect (⌖ add picked pair · ➕ add a row · 💾 save distances · 📂 load distances · Clear the list) and the imposed φ/ψ (⛓ secondary structure → φ/ψ). ⚠ THE PROTOCOL IS NOT HERE: n · m · 🔥 recuit · 🖼 frames, the dynamics (steps, dt, total, 🌡 hot → 🌡 cold, ⚖ equil, ⚒ sweeps), 🪢 ω and 🎯 target live in the 🧬 Structure calculation window, rendered once.`}>
+  ⚙ Params & Constraints{paramsDock ? ' ▾' : ' ▸'}
+</button>{/* 🧬 From sequence — the page's sequence (Proteins / DNA / RNA) becomes a 3D
     structure at any moment, even over a loaded PDB (which is put aside: the
     ↩ Restore PDB button of §1 General brings it back). No network round trip:
     the page builds the backbone from the sequence and the secondary structure
-    painted on it. */}
+    painted on it. ⚠ IL EST EN BLEU CLAIR — la demande de cette session : « move the
+    button structure calculation next to the button structure from sequence and
+    color the latter in light blue. » La teinte (sky) le distingue au premier coup
+    d'œil dans la rangée ✏️ Modify, sans rien changer à ce qu'il fait : le geste, son
+    infobulle et l'état « pas de séquence » (`disabled`) sont les mêmes. */}
 <button
 type="button"
 onClick={buildFromSequence}
 disabled={!sequenceStructureText}
 title="Build the 3D structure from the sequence typed in “Molecular structure and visualization” (Proteins / DNA / RNA) — the model the viewer shows whenever no PDB is loaded. What is on screen is put aside, not lost: « ↩ Back to PDB », right here, and ↩ Restore PDB (§1 General) bring it back — including the PDB this page defines."
-className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap bg-white border-emerald-300 text-emerald-700 hover:bg-emerald-50 disabled:opacity-40 disabled:cursor-not-allowed"
+className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap bg-sky-100 border-sky-400 text-sky-800 hover:bg-sky-200 disabled:opacity-40 disabled:cursor-not-allowed"
 >
-🧬 Structure from sequence
+🧬 Struct from sequence
 </button>
 {seqBuildMsg && (
 <span title={seqBuildMsg} className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-md px-2 py-1 h-7 inline-flex items-center max-w-[380px] truncate">
 {seqBuildMsg}
 </span>
 )}
-{/* ⚭ Fold for disulfides — le pont disulfure défini dans « Cysteine states »
-    est DÉJÀ dessiné (CONECT SG–SG, écrit par le modèle de la page) ; ce bouton
-    fait un pas de plus, sur demande : la chaîne est détendue pour que les deux
-    Sγ puissent se lier. Désactivé quand la page n'a rien à détendre. */}
-<button
-type="button"
-onClick={foldForDisulfides}
-disabled={typeof buildDisulfideFoldedStructure !== 'function'}
-title="Relax the sequence model (phi/psi between the two cysteines and their chi1 rotamers) until each disulphide pair defined in “Cysteine states” has its two S-gamma atoms within bonding distance — the S–S is then a real bond in Sticks / Ball+stick. The model is a chain relaxation, NOT a physical fold, and the message says the true Sγ–Sγ distance of every pair, including the ones that could not be closed."
-className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap bg-white border-amber-300 text-amber-700 hover:bg-amber-50 disabled:opacity-40 disabled:cursor-not-allowed"
->
-⚭ Fold for disulfides
+{/* 🧬 LE CALCUL DE STRUCTURE — n DÉPARTS TIRÉS AU HASARD, LE PROTOCOLE STANDARD SUR
+    CHACUN, LES m MEILLEURES GARDÉES. La demande, mot pour mot : « Implement a structure
+    calculation button in which the user provide the distances between atom pairs and
+    selects the number of starting structures n and the number of retained structures m.
+    The program must then generate n structures by randomly assigning values of all
+    dihedral angles. From each of these n structure the protocol of “model build” is
+    applied to respect the distance constraints and the final result is scored. the best
+    m structures are retained. »
+    Le panneau ne calcule RIEN : la liste des distances, les deux compteurs, et le module
+    PUR (utils/structureCalc.js) fait le reste — pas une seconde descente, pas une seconde
+    table, pas un second générateur. ⚠ LE PROTOCOLE DU ⚒ « MODEL BUILD » N'EST PLUS
+    CELUI DU CALCUL (le module le dit lui-même, §1 de utils/structureCalc.js, et le
+    bouton ⚒ a été retiré du viewer) : un départ suit le protocole STANDARD — tirage des
+    dièdres, recuit, dynamique d'équilibration puis de refroidissement, minimisation,
+    trempe — et le texte ci-dessous le dit tel qu'il est. Contrairement au 🪢 il ÉCRIT :
+    la structure retenue, par le MÊME chemin qu'une torsion (donc le 📏, les plaques, le
+    film, le 📥 Download et le ↺ la lisent et la défont).
+    ⚠ EMPLACEMENT — la demande d'une session passée : « move the button structure calculation
+    next to the button structure from sequence and color the latter in light blue. » Le
+    bouton 🧬 est donc À CÔTÉ de « 🧬 Structure from sequence » (le premier bouton de ✏️
+    Modify), et les trois gestes du champ (▶ MD · ⚒ Minimise · ⟳ Energy) restent collés à lui.
+    ⚠ CE PANNEAU N'EST PLUS UNE SECTION DE LA BARRE — la demande d'une session passée :
+    « Transform the “structure calculation” page in an internal collapsible window as that of
+    MD or Ramachandran … ». Le bouton 🧬 OUVRE ET REFERME la FENÊTRE (`calcDock`,
+    `renderCalcWindow`). ⚠⚠ ET SA PLACE EST REVENUE OÙ ELLE ÉTAIT — la demande de CETTE
+    session : « the structure calculation retractable window appearing at the left was ok. you
+    didn't have to change it. can you put it back as it was? » Il est donc redevenu la TROISIÈME
+    fenêtre du bord GAUCHE de la vue 3D, dans la rangée des docks (`calcDock ? renderCalcWindow()`),
+    à côté de 🌡 MD et 🪢 Ramachandran — la colonne pousse la molécule, elle ne la recouvre pas,
+    et repliée elle ne laisse que son onglet vertical « 🧬 STRUCT. ». Ce qui suit donc ici
+    (⚭ Disulfides, ↩ Back to PDB, ⚗️ Rebuild H, ✏️ Atom names, ⚡ ESP, 🔢 Renumber)
+    reste sur sa ligne, ouverte ou fermée. */}
+<button type="button"
+  onClick={() => toggleCalcDock()}
+  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${calcDock ? 'bg-indigo-100 border-indigo-400 text-indigo-900 hover:bg-indigo-200' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+  title="🧬 STRUCTURE CALCULATION — OPEN OR CLOSE ITS WINDOW. The window sits at the LEFT of the 3D view (as 🌡 MD and 🪢 Ramachandran do), and this same button closes it; its ⇤ folds it to a thin 🧬 STRUCT. tab on the edge. In it: the parameters (n · m · 🔥 recuit · 🖼 frames · the dynamics of the protocol), the stages of the calculation (the progression, the report, the ranked family) and 💾 Save the family / 💾 Save the report. The force field and the two constraint tables are NOT here: they are the ⚙ Parameters and Constraints panel, opened by its own button of this same row. ① THE DISTANCES: press ⌖ and pick the pair IN THE VIEW — the ⌖ of that table has its OWN picker (the request, verbatim: “dedicated pair picker”): TWO atoms (A · B), painted BLUE, with nothing to do with the four picks of ✏️ Torsion (A · B · C · D), which are not read here and not touched; the SECOND click adds the line, and the distance you want is typed in the ⌖ want field next to it — left empty, the length the tables give that pair of elements is used; every line can be edited, and a pair is listed once. ② n AND m: how many starting structures to build, and how many to keep. ③ ▶ RUN: each of the n starts is a draw of EVERY rotatable dihedral (a bond that is a hinge: single, not inside a ring, with something on both sides) taken uniformly in (−180, 180) and APPLIED as one rigid rotation by the app's own torsion writer, so bond lengths and angles are untouched to the last digit; then the STANDARD protocol is applied to it — the annealing in dihedral space (Metropolis, 1500 K down to 300 K), the Langevin dynamics (an equilibration at 🌡 hot, then a cooling down to 🌡 cold), the dihedral minimisation, and a cold quench that repairs what the descent broke — and the result is SCORED with the same force field (kcal/mol: bonds, angles, planar rings, vdW, electrostatics, solvent, φ/ψ, χ1, ω, your distances), plus the clash penalty. The best m are retained, ranked by that score, and the first is written into the molecule. ④ The seed is FIXED: the same molecule, the same distances and the same n give the same family to the last digit. ⏹ Stop stops between two starts and keeps what is done. ⚠ What it is NOT: an experimental structure. The protocol is the standard one (annealing, dynamics, minimisation, quench) under the force field, but the force field is the app's OWN — partial charges from the graph, a non-polar solvent term, no explicit water, no added atoms that the file does not have. The randomness is only in the STARTING dihedrals (the score is deterministic), and a peptide C–N bond is one of them: a start can come out cis, which is exactly why the field's ω term and the cold quench are there.">
+  🧬 Struct calc{calcResult ? ` (${calcResult.retained.length}/${calcResult.tried})` : ''}{calcDock ? ' ▾' : ' ▸'}
 </button>
-{disulfideFoldMsg && (
-<span title={disulfideFoldMsg} className="text-[10px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1 h-7 inline-flex items-center max-w-[380px] truncate">
-{disulfideFoldMsg}
-</span>
-)}
+{/* ⚙ LES TROIS GESTES DU CHAMP, ICI — la demande : « can the MD, Minimize and Energy be
+    put next to “structure calculation” button? » Ils s'appliquent à la molécule TELLE
+    QU'ELLE EST (aucune section à ouvrir), donc ils vivent dans la rangée du bouton 🧬,
+    avec le 🌡 T qui règle la dynamique. Voir `renderForceGestures`. */}
+{renderForceGestures()}
 {/* ⚭ Disulfides: shown / hidden — L'INTERRUPTEUR DU DESSIN, PAS DE LA DÉFINITION.
     Le pont est écrit par la page (CONECT SG–SG) et NGL le dessine ; ngl@2.4.0
     n'offre AUCUNE visibilité par liaison, donc cacher le pont se fait dans le
@@ -17696,7 +24805,7 @@ disabled={disulfideDrawn.bonds.length === 0}
 title="Show or hide the disulphide bonds the model on screen DRAWS. Hiding takes every Sγ–Sγ link between two residues out of the structure's own bond graph (utils/disulfideBonds.js), so Sticks / Ball+stick / Lines stop drawing them — nothing else changes: every atom stays, and the definition in “Cysteine states”, the PDB file, the 📥 download and the Drive copy keep their S–S. The model is then re-served, the same gesture as the ⚗️ hydrogen rebuild. Inactive when the structure on screen draws no disulphide at all: NGL draws an S–S from the bond graph only (a CONECT record, or the distance between two Sγ) — a file that declares SSBOND alone, with its two cysteines apart, draws none."
 className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap bg-white border-amber-300 text-amber-700 hover:bg-amber-50 disabled:opacity-40 disabled:cursor-not-allowed"
 >
-{disulfidesShown ? '⚭ Disulfides: shown' : '⚭ Disulfides: hidden'}
+{disulfidesShown ? '⚭ SS: shown' : '⚭ SS: hidden'}
 </button>
 {/* Le compte rendu, juste à côté : chaque pont par son NUMÉRO AFFICHÉ et par la
     distance Sγ–Sγ RÉELLE de l'écran — un pont dessiné mais étiré est dit ÉTIRÉ,
@@ -17731,18 +24840,14 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
 ↩ Back to PDB
 </button>
 )}
-{/* 🖱 PLACER UNE MOLÉCULE — les boutons ✥ Move · ↻ Rotate ont disparu avec le mode
-qu'ils armaient (le rapport : « The separated move and rotate buttons are
-impractical… ») : le geste se fait à la souris, sur la molécule que l'on attrape
-(voir installMoleculeDrag). Comme il n'y a plus de bouton pour l'apprendre, cette
-pastille LE DIT — elle ne fait rien d'autre. Le X · Y · Z tapé reste supprimé :
-un glisser dit où va une molécule, et le ↺ de son espace annule position ET
-rotation. */}
-<span
-  className="px-2 py-1 text-[10px] font-semibold rounded-md border h-7 inline-flex items-center whitespace-nowrap bg-amber-50 border-amber-200 text-amber-800"
-  title={`Drag ON a molecule to turn it about its own centre (left button) · right-drag ON it to slide it — the other molecules stay where they are, and the molecule you take hold of becomes « ${molNameOf(selectedMolKey)} »'s ★ reference (its ↺ in the styling bar puts it back). Start the drag on the background (or hold Alt) to turn the camera as before, and use the wheel to zoom. In a PDB that holds SEVERAL molecules (a complex, a receptor with its ligands, an NMR model), the molecule under the pointer is the ONE that moves: its atoms are placed inside the structure, the file is never split into copies (a split would draw every atom twice and would freeze the frame slider), and its place is written into the film's poses with the ↺ of its space putting it back.`}>
-  🖱 drag a molecule: turn · right-drag: slide{heldPart ? ` · 🖐 ${heldPart}` : ''}
-</span>
+{/* 🖱 LA PASTILLE « drag a molecule: turn · right-drag: slide » A ÉTÉ RETIRÉE
+    (la demande : « the button “drag a molecule: turn · right-drag: slide” seems
+    useless and you can remove it »). Le geste, lui, ne change pas : un glisser
+    SUR une molécule la tourne (bouton gauche), un glisser droit la fait glisser,
+    et un glisser qui commence sur le fond est la caméra (voir
+    installMoleculeDrag). Il n'y a donc plus de mode à armer ni d'étiquette à
+    lire : la molécule tenue est dite par la ligne ★ de son espace de style
+    (« moving « … » ALONE »), là où ses réglages vivent. */}
 <button
 type="button"
 onClick={rebuildHydrogensNow}
@@ -17758,12 +24863,111 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
 )}
 
 {/* ✏️ Atom names (rename) — the control of the Modify group; its panel is a
-    full-width child of the toolbar so the row itself stays one line tall. */}
+    full-width SIBLING of the row (a panel inside a `flex-nowrap` row is crushed at the
+    right end — see the closure of the row, further down). */}
 <button type="button" onClick={() => setShowAtomPanel((v) => !v)}
   className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 ${showAtomPanel ? 'bg-amber-100 border-amber-400 text-amber-900' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
   title="Rename the atoms of the 3D structure (organic molecules included): click-to-rename in the 3D view, auto-naming from the 2D formula, or edit the name list directly. The 2D formula is never touched.">
   ✏️ Atom names{Object.keys(renames).length ? ` (${Object.keys(renames).length})` : ''}
 </button>
+
+{/* ✏️ Torsion — LA FENÊTRE DU VIEWER, PAS UNE SECTION DE LA BARRE.
+    La demande : « when clicking on torsion do not open the section inside the
+    toolbar but open a dedicated retractable window inside the viewer as for
+    ramachandran. this window will disappear clicking again in the torsion
+    button. » Le bouton ne fait donc qu'OUVRIR/FERMER `torsionWindow` (la fenêtre
+    vit DANS le cadre de la vue 3D, voir plus bas) : rien ne s'insère plus dans la
+    barre de commandes. Quatre atomes piqués dans la vue 3D (A · B · C · D — B–C
+    est la charnière) puis UN nombre tapé : l'angle est résolu en forme fermée
+    (utils/torsionDrive.js) et le côté de D tourne d'un bloc rigide, par le MÊME
+    chemin d'écriture qu'un glisser de molécule. */}
+<button type="button" onClick={() => setTorsionWindow((v) => !v)}
+  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${torsionWindow ? 'bg-amber-100 border-amber-400 text-amber-900' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+  title="Show or hide the ✏️ Torsion window INSIDE the 3D view: four picked atoms A · B · C · D (B–C is the hinge) and a TYPED angle or a TYPED distance. The angle is solved in closed form (utils/torsionDrive.js) and the whole side of D turns as one rigid block, so bond lengths and angles are untouched. ↺ puts the last torsion back. Press the button again to close the window — the picks and the numbers typed stay.">
+  ✏️ Torsion{torsionAtoms.length ? ` (${torsionAtoms.length}/4)` : ''}
+</button>
+{/* 🪢 LE GRAPHE DE RAMACHANDRAN — LA FENÊTRE DU VIEWER, PLUS UNE SECTION.
+    La demande : « The ramachandran button will make the ramachandran window inside
+    the viewer appear or disappear so the large section which now opens inside the
+    tool bar will not be useful anymore. » Le bouton ne fait donc qu'OUVRIR/FERMER
+    le dock 🪢 (le MÊME état que son ⇤ et que l'onglet vertical du bord gauche), et
+    la grande section de la barre a disparu avec lui. Le graphe se LIT, il n'écrit
+    RIEN : tout vient de utils/ramachandran.js, et la lecture est un SNAPSHOT — pris
+    à l'ouverture, repris par son ⟳ Read, et REFait après chaque image des trois
+    gestes qui bougent la molécule (🧬 calcul, ▶ MD, ⚒ Minimise) tant que la
+    fenêtre est à l'écran : le graphe ne parle jamais d'une conformation qui n'y
+    est plus. */}
+<button type="button"
+  onClick={() => { if (!ramaDock) readRamachandran(); toggleRamaDock(!ramaDock); }}
+  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${ramaDock ? 'bg-amber-100 border-amber-400 text-amber-900' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+  title="Show or hide the 🪢 Ramachandran window INSIDE the viewer: the φ/ψ map of the peptide backbone on screen (φ = C(i−1)·N·CA·C, ψ = N·CA·C·N(i+1)), read with the same signed-IUPAC dihedral reader as the χ/δ readers — there is no second dihedral reader in this app (utils/torsionDrive.js) — one point per residue. The window sits at the LEFT of the 3D view (expandable · compressible) and this button closes it again. ⚠ It is a PLAN, not a calculation: no potential, no energy, and a point outside the regions is not “wrong”, it is outside the regions. The reading is a SNAPSHOT of the coordinates — taken when the window opens, and re-taken by its ⟳ Read — and it FOLLOWS the three gestures that move the molecule (🧬 Structure calculation, ▶ MD, ⚒ Minimise): one more reading after every image they write, so the points never describe a conformation the molecule has left.">
+  🪢 Ramachandran{rama && rama.measured ? ` (${rama.measured})` : ''}
+</button>
+{/* ⚡ ESP A DÉMÉNAGÉ — la demande de cette session : « Move the ESP button in the analysis
+    section in line with measure button. » Il vit donc dans le groupe 📏 Analysis, à côté de
+    📏 Measure (voir plus bas, son bouton ET son ⚡ Range) : c'est une LECTURE de la molécule
+    mise à l'écran — un potentiel qui se regarde, comme la distance qui se mesure — et non un
+    geste qui MODIFIE la molécule, comme ⚗️ Rebuild H ou ✏️ Atom names qui l'entouraient ici.
+    ⚠ Rien n'est perdu : c'est le MÊME bouton, le même état `espMolKeys` et la même surface; le
+    🔢 Renumber ci-dessous reste seul maître de sa liste, dans ✏️ Modify. */}
+{/* ⚡ Range (les deux bornes du dégradé, en kcal/mol) est parti AVEC le bouton, dans
+    📏 Analysis : les deux entrées ESP ne doivent jamais se séparer (voir plus bas). */}
+{/* 🔢 Renumber — the button AND its list live in ✏️ Modify (the request: « la
+    lista per il renumbering … dovrebbe piuttosto apparire nella sezione
+    modify »): the panel lists every residue and the number it will take, and the
+    3D labels and the residue strip follow the new numbers. The tiny 🔢 of a
+    molecule's header (in the styling bar on the right) opens THE SAME panel —
+    one implementation, see renderRenumberPanel. */}
+<button
+type="button"
+onClick={toggleRenumberPanel}
+title="🔢 Renumber the residues (the panel below lists every residue and the number it will take; the 3D labels and the residue strip follow it)"
+className="text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-md px-2 py-1.5 h-8 whitespace-nowrap"
+>
+🔢 Renumber{showRenumberPanel ? ' ▲' : ' ▼'}
+</button>
+</div>
+{/* ⚠ LA RANGÉE EST FERMÉE ICI, ET LES PANNEAUX SONT SES FRÈRES — LE RAPPORT DE CETTE SESSION :
+    « When i click an expandable button in the section “MODIFY” of the viewer, they do not
+    behave as for example the movie button (which works correctly) but they push the things to
+    show at the right edge of the page. » POURQUOI : les panneaux pleine largeur (`w-full`)
+    étaient des ENFANTS de la rangée, et la rangée est `flex-nowrap` (la demande de la session
+    précédente : tous les boutons sur UNE ligne, sans barre de défilement). Dans une boîte qui ne
+    revient pas à la ligne, un enfant `w-full` ne peut PAS descendre sur sa propre ligne : il est
+    ÉCRASÉ au bout de la rangée, à droite — exactement le « right edge of the page » du rapport.
+    Le gabarit qui marche est celui de 🎨 Styles : sa boîte est `flex-wrap`, donc son panneau 🎞
+    descend vraiment SOUS sa rangée. La boîte ✏️ Modify est donc devenue `flex-wrap` ELLE AUSSI,
+    avec la rangée dans sa PROPRE boîte `flex-nowrap` (les boutons restent sur une ligne, c'est
+    cette boîte-là qui ne se coupe pas — aucun défilement) et les PANNEAUX pour frères, APRÈS
+    elle : ✏️ Atom names, 🔢 Renumber et ⚙ Parameters and Constraints descendent chacun sur sa
+    ligne, pleine largeur, et la barre entière grandit au lieu de tasser le panneau à droite.
+    ⚠ C'EST LE CONTENU QUI DÉCIDE, pas un saut de ligne écrit : la rangée est un frère comme un
+    autre, et quand aucun panneau n'est ouvert, elle est SEULE — donc une seule ligne, comme
+    avant. */}
+{/* ⚒ LA LIGNE DE LA DESCENTE SE RANGE ICI, AVEC LES AUTRES PANNEAUX — LE RAPPORT DE CETTE
+    SESSION, MOT POUR MOT : « the “minimize” button pushes the bar down instead of collapsing
+    like the movie button. » Elle était encore un ENFANT de la rangée `flex-nowrap` (sa seule
+    exception), donc son `basis-full` ne pouvait pas descendre d'une ligne : il ÉTIRAIT la
+    rangée — le ⚒ changeait la hauteur de la barre au lieu de se replier. Rendue ICI, en frère
+    de la rangée, elle suit EXACTEMENT le gabarit du panneau 🎞 Movie sous 🎨 Styles : elle
+    descend sous la barre entière quand `minSettings` est vrai, et la seconde pression du
+    ⚒ Minimize la referme sans laisser une ligne de plus. Rien d'autre ne change : c'est le
+    même état, les mêmes réglages, le même ⟳ Energy, le même ▶ Run et le même rapport (voir
+    `renderMinSettingsRow`). */}
+{renderMinSettingsRow()}
+{/* The ONE renumbering panel of the viewer (see renderRenumberPanel) — the same
+    specification the 🔢 of a molecule's header opens. */}
+{renderRenumberPanel()}
+{/* ⚙ PARAMETERS AND CONSTRAINTS — LE PANNEAU, PAS UNE FENÊTRE (la demande de cette session :
+    « The “parameters and constraints” should not open a window in the molecule space but it
+    should [be] full width under the button. By clicking the button a second time it should
+    disappear. »). Il est donc RENDU ICI, comme un enfant PLEINE LARGEUR du groupe ✏️ Modify
+    (`w-full` : il descend sous la rangée de ses boutons, exactement comme le panneau
+    ✏️ Atom names ci-dessus), et il ne pousse plus la vue 3D : la molécule garde toute sa
+    surface, qu'il soit ouvert ou fermé. C'est ce qui a remplacé sa colonne d'onglet sur le bord
+    de la vue (l'ancien dock, dont il ne reste rien), et le bouton ⚙ du groupe le referme —
+    une seconde pression le fait disparaître, comme le dit la demande. */}
+{paramsDock && renderParamsWindow()}
 {showAtomPanel && (
   <div className="w-full bg-amber-50/40 border border-amber-200 rounded-lg p-3 flex flex-col gap-2">
     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -17821,15 +25025,80 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
     </div>
   </div>
 )}
+{/* 🧬 LE CALCUL DE STRUCTURE N'EST PLUS RENDU ICI — il est redevenu la FENÊTRE de la vue 3D,
+    à sa gauche, dans la rangée des docks (`{calcDock ? renderCalcWindow() : (` plus bas, à côté
+    de 🌡 MD et 🪢 Ramachandran). La demande de cette session : « the structure calculation
+    retractable window appearing at the left was ok. you didn't have to change it. can you put
+    it back as it was? » Le bouton 🧬 de CETTE rangée l'ouvre et le referme — le même bouton, et
+    son ⇤ le replie en onglet vertical sur le bord gauche de la vue. ⚠ L'ENVELOPPE CSS a suivi :
+    `renderCalcWindow` a retrouvé son gabarit de dock (`shrink-0 w-[360px]`, hauteur de la vue,
+    `overflow-hidden`, défilement vertical interne) au lieu du `w-full` de la session
+    précédente. Ce qui reste d'acquis de cette session : rien n'a été écrit dans la physique,
+    et le champ de forces + les deux tables de contraintes vivent toujours dans le panneau ⚙
+    ci-dessus. */}
+</div>
 
-{/* ⚡ ESP — the electrostatic-potential surface of the molecule selected in the
-    Molecules bar. It sits in ✏️ Modify (the request: « anche il pulsante ESP
-    dovrebbe piuttosto apparire nella sezione modify »): it MODIFIES what is on
-    screen — a translucent surface coloured by the Coulomb potential of the
-    charges (red = negative, white ≈ neutral, blue = positive) — exactly like
-    ⚗️ Rebuild H or ✏️ Atom names beside it. Clicking again removes the surface,
-    and the ⚡ Range readout below appears while one is on, for the two potentials
-    that give it its colour scale (kcal/mol). */}
+{/* ── Analysis ───────────────────────────────────────────────────────────── */}
+<span className="w-px h-6 bg-slate-200 shrink-0" aria-hidden="true" />
+<div className="flex flex-wrap items-center gap-1 rounded-md border border-rose-200 bg-rose-50/40 px-1.5 py-1">
+<span className="text-[9px] font-black text-rose-700 uppercase tracking-wide whitespace-nowrap" title="Read the structure: measure the distance between two atoms (in Å), clear the drawn distances, draw the hydrogen bonds of the chosen molecule, and show or hide the green highlight of the atoms assigned by NMR.">📏 Analysis</span>
+<button
+type="button"
+onClick={toggleMeasureMode}
+title={measureMode ? '📏 Measure is ON — click any two atoms to draw the distance between them (shown in Å). Click again to stop measuring; drawn distances stay visible.' : 'Measure atom distances: click any two atoms to draw the distance between them, with a live label in Å (NGL distance representation).'}
+className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${measureMode ? 'bg-rose-50 border-rose-400 text-rose-700 ring-1 ring-rose-200' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+>
+{measureMode ? '📏 Measuring…' : '📏 Measure'}
+</button>
+{measureMode && (
+<span title={measureInfo || 'Click two atoms to measure the distance between them'} className="text-[10px] font-semibold text-rose-700 bg-rose-50 border border-rose-200 rounded-md px-2 py-1 h-7 inline-flex items-center max-w-[320px] truncate">
+{measureInfo || (measurePending ? `1st atom: ${measurePending} — click the 2nd…` : 'Click two atoms…')}
+</span>
+)}
+{(measureRepsRef.current.length > 0 || measurePending) && (
+<button
+type="button"
+onClick={clearMeasurements}
+className="px-2 py-1 text-[11px] font-bold rounded-md border border-rose-300 bg-white text-rose-700 hover:bg-rose-50 h-7 whitespace-nowrap"
+title={measurePending ? 'Cancel the pending first atom and remove all drawn distance measurements' : 'Remove all drawn distance measurements'}
+>
+✕ Clear distances
+</button>
+)}
+{/* 💧 H-BONDS — la demande de cette session : « in the section analysis of the
+    viewer, add a button to display H-bonds. » Une LECTURE, comme 📏 Measure juste
+    au-dessus et ⚡ ESP juste en dessous : la règle (donneurs N · O · S, accepteurs,
+    r(H···A) ≤ 2.5 Å et angle D–H···A ≥ 120° quand la structure porte ses
+    hydrogènes ; la distance des lourds D···A ≤ 3.5 Å quand elle n'en porte aucun)
+    est celle d'utils/hydrogenBonds.js, et c'est la molécule CHOISIE dans la barre
+    des Molecules qui est lue — le même `resolveMolComp` que ⚡ ESP. RIEN n'est
+    modifié dans la molécule : ni le fichier PDB, ni le graphe de liaisons, ni un
+    style ; le bouton se reclique pour retirer ses lignes d'ambre. */}
+<button
+type="button"
+onClick={toggleHydrogenBonds}
+disabled={status !== 'ready'}
+title={hbondsShown
+  ? '💧 H-bonds are ON — the hydrogen bonds of the chosen molecule are drawn in amber (donor → acceptor, with the distance written on the line while there are few). Click again to hide them: nothing else about the molecule changes.'
+  : 'Display the HYDROGEN BONDS of the molecule chosen in the Molecules bar. With hydrogens on the structure: donor N/O/S whose hydrogen sits r(H···A) ≤ 2.5 Å from an acceptor N/O/S at an angle D–H···A ≥ 120°. Without any hydrogen (an X-ray PDB): the heavy atoms are judged by their distance, D···A ≤ 3.5 Å. Same-residue pairs, covalently bonded pairs and the solvent are left out, up to 600 bonds (the shortest first). Drawn as ONE distance representation over the existing scene — the PDB file, the bond graph and the styles are untouched.'}
+className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed ${hbondsShown ? 'bg-amber-100 border-amber-400 text-amber-900 ring-1 ring-amber-200' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+>
+{hbondsShown ? '💧 H-bonds: On' : '💧 H-bonds'}
+</button>
+{hbondMsg && (
+<span title={hbondMsg} className="text-[10px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1 h-7 inline-flex items-center max-w-[380px] truncate">
+{hbondMsg}
+</span>
+)}
+{/* ⚡ ESP — la surface de potentiel électrostatique de la molécule choisie dans la barre des
+    Molecules. Il vit ICI depuis cette session (la demande : « Move the ESP button in the
+    analysis section in line with measure button ») : c'est une LECTURE de ce qui est à
+    l'écran — une carte du potentiel de Coulomb des charges (rouge = négatif, blanc ≈ neutre,
+    bleu = positif) qui se regarde, exactement comme la distance de 📏 Measure juste à côté.
+    Cliquer de nouveau RETIRE la surface, et le ⚡ Range ci-dessous n'apparaît que pendant
+    qu'une surface est allumée, pour les deux potentiels qui donnent son échelle (kcal/mol).
+    ⚠ LA SURFACE ELLE-MÊME N'A PAS BOUGÉ : ni sa représentation NGL, ni son jeu de couleurs
+    (`lab-esp`), ni son état (`espMolKeys`) — seule sa place dans la barre change. */}
 <button
 type="button"
 onClick={() => espToggle(selectedMolKey)}
@@ -17873,52 +25142,6 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
     <button type="button" onClick={() => espApplyLimits(25, 25)} className="px-1.5 py-0.5 rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-50 font-semibold" title="Preset: red ≤ −25, blue ≥ +25 kcal/mol">±25</button>
     <button type="button" onClick={() => espApplyLimits(50, 50)} className="px-1.5 py-0.5 rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-50 font-semibold" title="NGL's original wide range ±50 — only the strongest charges reach red/blue">±50</button>
   </div>
-)}
-{/* 🔢 Renumber — the button AND its list live in ✏️ Modify (the request: « la
-    lista per il renumbering … dovrebbe piuttosto apparire nella sezione
-    modify »): the panel lists every residue and the number it will take, and the
-    3D labels and the residue strip follow the new numbers. The tiny 🔢 of a
-    molecule's header (in the styling bar on the right) opens THE SAME panel —
-    one implementation, see renderRenumberPanel. */}
-<button
-type="button"
-onClick={toggleRenumberPanel}
-title="🔢 Renumber the residues (the panel below lists every residue and the number it will take; the 3D labels and the residue strip follow it)"
-className="text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-md px-2 py-1.5 h-8 whitespace-nowrap"
->
-🔢 Renumber{showRenumberPanel ? ' ▲' : ' ▼'}
-</button>
-{/* The ONE renumbering panel of the viewer (see renderRenumberPanel) — the same
-    specification the 🔢 of a molecule's header opens. */}
-{renderRenumberPanel()}
-</div>
-
-{/* ── Analysis ───────────────────────────────────────────────────────────── */}
-<span className="w-px h-6 bg-slate-200 shrink-0" aria-hidden="true" />
-<div className="flex flex-wrap items-center gap-1 rounded-md border border-rose-200 bg-rose-50/40 px-1.5 py-1">
-<span className="text-[9px] font-black text-rose-700 uppercase tracking-wide whitespace-nowrap" title="Read the structure: measure the distance between two atoms (in Å), clear the drawn distances and show or hide the green highlight of the atoms assigned by NMR.">📏 Analysis</span>
-<button
-type="button"
-onClick={toggleMeasureMode}
-title={measureMode ? '📏 Measure is ON — click any two atoms to draw the distance between them (shown in Å). Click again to stop measuring; drawn distances stay visible.' : 'Measure atom distances: click any two atoms to draw the distance between them, with a live label in Å (NGL distance representation).'}
-className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${measureMode ? 'bg-rose-50 border-rose-400 text-rose-700 ring-1 ring-rose-200' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
->
-{measureMode ? '📏 Measuring…' : '📏 Measure'}
-</button>
-{measureMode && (
-<span title={measureInfo || 'Click two atoms to measure the distance between them'} className="text-[10px] font-semibold text-rose-700 bg-rose-50 border border-rose-200 rounded-md px-2 py-1 h-7 inline-flex items-center max-w-[320px] truncate">
-{measureInfo || (measurePending ? `1st atom: ${measurePending} — click the 2nd…` : 'Click two atoms…')}
-</span>
-)}
-{(measureRepsRef.current.length > 0 || measurePending) && (
-<button
-type="button"
-onClick={clearMeasurements}
-className="px-2 py-1 text-[11px] font-bold rounded-md border border-rose-300 bg-white text-rose-700 hover:bg-rose-50 h-7 whitespace-nowrap"
-title={measurePending ? 'Cancel the pending first atom and remove all drawn distance measurements' : 'Remove all drawn distance measurements'}
->
-✕ Clear distances
-</button>
 )}
 <button
 type="button"
@@ -18022,7 +25245,7 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
   </div>
 )}
 </div>
-</VSection>
+</div>
 
 {/* (The global Side / Backbone / Mol / Large / Water selectors and the docking
     row that used to sit here are gone: their functionality now lives in the
@@ -18190,6 +25413,62 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
 )}
 
 
+{/* 🧬 LE FICHIER PORTE PLUSIEURS SÉQUENCES — LAQUELLE ÉCRIRE ? (la demande)
+    Le viewer a lu le fichier en candidates — une par nature ET par chaîne — et
+    une même nature est servie par PLUSIEURS chaînes : la case de cette nature
+    ne peut en garder qu'une, donc elle reste intacte jusqu'au choix. Ce panneau
+    ne décide QUE ce qui part dans les cases de séquence de la page (et la page
+    ne remplit qu'une case VIDE) : la vue 3D garde le fichier entier. */}
+{sequenceChoice && sequenceChoice.candidates.length > 0 && SEQUENCE_NATURES.includes(moleculeType) && (
+  <div className="flex flex-col gap-1.5 bg-teal-50 border border-teal-300 rounded-xl px-2 py-2">
+    <div className="flex items-center gap-2 flex-wrap">
+      <span className="text-[10px] font-black text-teal-900 uppercase shrink-0">🧬 Sequence to write</span>
+      <span className="text-[10px] text-teal-900 flex-1 min-w-[14rem]">
+        This file holds {sequenceChoice.candidates.length} sequences and more than one chain serves the same nature ({sequenceChoice.ambiguous.map((n) => NATURE_LABELS[n]).join(' · ')}), so the sequence box of the page was left untouched. Pick the chain to write below — and remember that only a box still EMPTY gets filled.
+      </span>
+      <button type="button" onClick={() => setSequenceChoice(null)}
+        title="Write nothing — the sequence boxes of the page stay exactly as they are"
+        className="px-1.5 py-1 rounded-md border bg-white border-teal-300 text-teal-800 text-[10px] font-black leading-none hover:bg-teal-100 shrink-0">
+        ✕ skip
+      </button>
+    </div>
+    {sequenceChoice.ambiguous.map((nat) => (
+      <div key={nat} className="flex items-center gap-1.5 flex-wrap">
+        <span className="text-[9px] font-black text-teal-900 uppercase tracking-wide text-right shrink-0 w-12">{NATURE_LABELS[nat]}</span>
+        {sequenceChoice.candidates.filter((c) => c.nature === nat).map((c) => {
+          const on = sequenceChoice.sel[nat] === c.key;
+          return (
+            <button key={c.key} type="button"
+              onClick={() => setSequenceChoice((prev) => (prev ? { ...prev, sel: { ...prev.sel, [nat]: c.key } } : prev))}
+              title={`${NATURE_LABELS[nat]} sequence of chain ${c.chain || '—'} — ${c.len} ${NATURE_UNITS[nat]}. ${c.chain ? '' : 'The file names no chain: this is every residue of that nature. '}Choosing it writes those letters into the ${NATURE_LABELS[nat]} box of the page, in the order they appear in the file.`}
+              className={`px-1.5 py-1 rounded-md border text-[10px] font-bold leading-none transition-colors ${on ? 'bg-teal-600 border-teal-700 text-white' : 'bg-white border-teal-300 text-teal-800 hover:bg-teal-100'}`}>
+              {on ? '●' : '○'} chain {c.chain || '—'} · {c.len} {NATURE_UNITS[nat]} · <span className="font-mono">{c.seq.slice(0, 12)}{c.seq.length > 12 ? '…' : ''}</span>
+            </button>
+          );
+        })}
+      </div>
+    ))}
+    {sequenceChoice.candidates.some((c) => !sequenceChoice.ambiguous.includes(c.nature)) && (
+      <p className="text-[9px] text-teal-800">
+        The other natures go to their own box as always:{' '}
+        {sequenceChoice.candidates
+          .filter((c) => !sequenceChoice.ambiguous.includes(c.nature))
+          .map((c) => `${NATURE_LABELS[c.nature]} chain ${c.chain || '—'} (${c.len} ${NATURE_UNITS[c.nature]})`)
+          .join(' · ')}
+        .
+      </p>
+    )}
+    <div className="flex items-center gap-2 flex-wrap">
+      <button type="button" onClick={writeSequenceChoice}
+        title="Write the chain chosen above into the sequence box of its nature — and only if that box is still empty"
+        className="px-2 py-1 rounded-md border border-teal-600 bg-teal-600 text-white text-[10px] font-black leading-none hover:bg-teal-700">
+        ✔ Write to the sequence box
+      </button>
+      <span className="text-[9px] text-teal-800">Only an EMPTY box is filled — a sequence you typed is never overwritten.</span>
+    </div>
+  </div>
+)}
+
 {/* Residue sequence strip — click a tick to select that whole residue.
     Only POLYMER residues (protein / nucleic) are shown: water, ions and
     phospholipids/lipids are not part of the sequence and are excluded. */}
@@ -18308,12 +25587,336 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
 
 {/* 3D Viewport — retractable: "⬇ Minimize" collapses it to a thin bar. The
     container stays MOUNTED (height 0) so the NGL stage, structure and
-    trajectory are preserved; only the tall canvas is hidden. */}
+    trajectory are preserved; only the tall canvas is hidden.
+
+    ⚠ IL EST DANS UNE RANGÉE avec les docks 🧬 Structure calculation, 🌡 MD et 🪢 Ramachandran :
+    la colonne de gauche prend sa place, la vue prend le RESTE (`flex-1 min-w-0`), et replier un
+    dock rend la largeur entière à la molécule. Les fenêtres ne recouvrent donc jamais la
+    structure — elles la poussent. ⚠ LE 🧬 STRUCT. EST REVENU ICI : la fenêtre du calcul a
+    retrouvé sa place à gauche (voir `{calcDock ? renderCalcWindow() : (` plus bas), avec son
+    onglet vertical 🧬 sur le bord quand elle est repliée. */}
+<div className="flex items-stretch gap-2">
+{/* LES DOCK 🧬 STRUCTURE CALCULATION · 🌡 MD · 🪢 RAMACHANDRAN — LES TROIS FENÊTRES DE LA VUE
+    3D, À SA GAUCHE. Repliée, chacune ne laisse qu'un onglet vertical sur le bord ; elles
+    peuvent être ouvertes ensemble : les colonnes POUSSENT la molécule, aucune ne la recouvre.
+    ⚠ LE 🧬 EST REVENU ICI CETTE SESSION — la demande : « the structure calculation retractable
+    window appearing at the left was ok. you didn't have to change it. can you put it back as
+    it was? » Son `renderCalcWindow` est donc REDESCENDU de « 2 · Toolbar » dans cette rangée
+    (voir `{calcDock ? renderCalcWindow() : (` juste après), avec son onglet vertical
+    « 🧬 STRUCT. », son ⇤ de repli et son gabarit de dock (`w-[360px]`) — tout ce qu'il était
+    avant la session précédente.
+    ⚠ LE ⚙ N'EN A JAMAIS FAIT PARTIE (la demande : « The “parameters and constraints” should not
+    open a window in the molecule space but it should [be] full width under the button. ») : son
+    panneau est rendu lui aussi pleine largeur sous le groupe ✏️ Modify, et il n'y a donc
+    aucun onglet ⚙ sur le bord de la vue. */}
+{/* ⚠ LA COLONNE ⚙ « PARAM. &amp; CONSTRAINTS » A DISPARU DE LA RANGÉE DES DOCKS — la demande
+    de cette session : « The “parameters and constraints” should not open a window in the
+    molecule space but it should [be] full width under the button. By clicking the button a
+    second time it should disappear. » Le panneau n'est plus une colonne à la gauche de la vue
+    3D : il est rendu DANS la rangée de ses boutons, pleine largeur, sous le groupe ✏️ Modify
+    (voir `{paramsDock && renderParamsWindow()}` dans « 2 · Toolbar »). Il ne pousse donc plus
+    la molécule : la vue 3D garde exactement la largeur qu'elle avait panneau fermé. */}
+{/* 🧬 LA FENÊTRE DU CALCUL DE STRUCTURE — LA TROISIÈME DU BORD GAUCHE, comme 🌡 MD et
+    🪢 Ramachandran. La demande de cette session : « the structure calculation retractable
+    window appearing at the left was ok. you didn't have to change it. can you put it back as
+    it was? » Elle est donc REVENUE ICI, avec son onglet vertical « 🧬 STRUCT. » quand elle est
+    repliée, son ⇤ qui la replie, et la hauteur de la vue (`viewH`) : la colonne POUSSE la
+    molécule, elle ne la recouvre pas. C'est le MÊME bouton 🧬 de la rangée ✏️ Modify qui
+    l'ouvre et la referme (`toggleCalcDock`). */}
+{calcDock ? renderCalcWindow() : (
+  <button type="button" onClick={() => toggleCalcDock(true)}
+    title="Open the structure-calculation window — its parameters (n · m · 🔥 recuit · 🖼 frames), the stages of the calculation, the ranked family and 💾 Save the family / Save the report, at the LEFT of the 3D view (expandable · compressible). Its ⇤ folds it to a thin 🧬 STRUCT. tab on the edge. The 🧬 button of the toolbar closes it again."
+    className="shrink-0 w-7 flex items-center justify-center gap-1 bg-white border border-indigo-200 rounded-xl text-indigo-700 hover:bg-indigo-50"
+    style={{ height: (viewerCollapsed ? 0 : viewH) + 'px' }}>
+    <span className="text-[10px] font-black tracking-widest" style={{ writingMode: 'vertical-rl' }}>🧬 STRUCT.</span>
+  </button>
+)}
+{mdDock ? renderMdWindow() : (
+  <button type="button" onClick={() => toggleMdDock(true)}
+    title="Open the MD window — the parameters of the molecular dynamics (steps, dt, total length, hot → cold, equilibration, minimisation sweeps, 🪢 ω) and its ▶ MD button, at the left of the 3D view (expandable · compressible). The ▶ MD button of the toolbar closes it again."
+    className="shrink-0 w-7 flex items-center justify-center gap-1 bg-white border border-sky-200 rounded-xl text-sky-700 hover:bg-sky-50"
+    style={{ height: (viewerCollapsed ? 0 : viewH) + 'px' }}>
+    <span className="text-[10px] font-black tracking-widest" style={{ writingMode: 'vertical-rl' }}>🌡 MD</span>
+  </button>
+)}
+{/* LE DOCK 🪢 — LE GRAPHE DE RAMACHANDRAN À GAUCHE DE LA FENÊTRE 3D. Replié, il ne
+    reste qu'un onglet vertical (🪢) sur le bord : le graphe est toujours à un clic, et
+    il ne mange jamais la vue sans qu'on l'ait demandé. ⚠ SA PLACE DANS LA RANGÉE A
+    CHANGÉ CETTE SESSION (la colonne 🧬 STRUCT. s'est ajoutée à sa gauche) : ce qu'il EST,
+    lui, n'a pas bougé — un PLAN qui LIT, jamais un calcul qui écrit. Il garde donc sa
+    propre note, distincte de celle de la rangée (voir « LES DOCK » plus haut), parce que
+    c'est l'ancre que la vue d'ensemble ne remplace pas. */}
+{ramaDock ? (
+  <div className="shrink-0 w-[360px] flex flex-col gap-1.5 bg-white border border-amber-200 rounded-xl p-2 overflow-hidden"
+    style={{ height: (viewerCollapsed ? 0 : viewH) + 'px' }}>
+    <div className="flex items-center justify-between gap-1 shrink-0">
+      <span className="text-[10px] font-black text-amber-700 uppercase tracking-wide">🪢 Ramachandran · φ against ψ</span>
+      <span className="flex items-center gap-1">
+        <button type="button" onClick={readRamachandran}
+          title="Read the backbone of the molecule on screen NOW (its N · CA · C atoms, the φ and ψ of every residue). ⚠ You rarely need it: while a 🧬 Structure calculation, a ▶ MD or a ⚒ Minimise MOVES the molecule, this window re-reads the backbone by itself after every image written — the points leave their basins as the backbone turns, instead of appearing at the end. This button takes a reading at any OTHER moment: after a ✏️ Torsion, a drag, a fresh loading, or a ⌖/🎯 pick."
+          className="px-1.5 py-0.5 text-[9px] font-bold rounded border bg-white border-amber-300 text-amber-700 hover:bg-amber-100">⟳ Read</button>
+        <button type="button" onClick={() => toggleRamaDock(false)}
+          title="Collapse the Ramachandran dock — the plot folds to a thin tab on the left edge (🪢 brings it back), and the 3D view takes the whole width again. The reading is not lost."
+          className="px-1.5 py-0.5 text-[9px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100">⇤</button>
+      </span>
+    </div>
+    <div className="overflow-y-auto custom-scrollbar flex flex-col gap-1.5">
+      {ramaPlotSvg({ wide: true })}
+      <p className="text-[10px] text-slate-600">{ramaSummaryText()}</p>
+      {ramaMsg && (
+        <p title={ramaMsg} className={`text-[10px] font-semibold rounded-md border px-2 py-1 ${/^✓/.test(ramaMsg) ? 'text-emerald-800 bg-emerald-50 border-emerald-200' : 'text-rose-800 bg-rose-50 border-rose-200'}`}>
+          {ramaMsg}
+        </p>
+      )}
+      {ramaOutlierList()}
+      {/* LA LIGNE DU POINT SURVOLÉ — la même lecture que la section 🪢 : le résidu, ses
+          deux angles, son ω et sa région (le texte vient du module). */}
+      {rama && (ramaHover || null) ? (
+        <p className="text-[10px] font-semibold rounded-md border px-2 py-1 bg-amber-50 border-amber-200 text-slate-700">
+          {ramaHoverTextOf(rama.residues.find((r) => r.key === ramaHover && r.point) || null)}
+        </p>
+      ) : null}
+      {/* ⚠ CE QUE LE DOCK EST — et ce qu'il n'est pas : un plan, pas un calcul. La phrase
+          est là parce que la QUESTION (« pourquoi mes Ramachandran sont mauvais ? ») se
+          pose ici : c'est 🧬 Structure calculation qui porte les bassins comme cible. */}
+      {/* ⚠ LE PARAGRAPHE QUI VIVAIT ICI (« The coloured shapes are the basins of the classic
+          figure… ») A ÉTÉ RETIRÉ — la remarque de cette session : « Large commentaries are
+          still present in the windows inside the viewer. » Ce qu'il disait est resté là où
+          il sert : dans les infobulles des familles du 🧲 Force field (la fenêtre ⚙ Parameters
+          and Constraints) et dans le rapport des gestes. */}    </div>
+  </div>
+) : (
+  <button type="button" onClick={() => toggleRamaDock(true)}
+    title="Open the Ramachandran dock — the φ/ψ plot of the backbone, at the left of the 3D view (expandable · compressible)."
+    className="shrink-0 w-7 flex items-center justify-center gap-1 bg-white border border-amber-200 rounded-xl text-amber-700 hover:bg-amber-50"
+    style={{ height: (viewerCollapsed ? 0 : viewH) + 'px' }}>
+    <span className="text-[10px] font-black tracking-widest" style={{ writingMode: 'vertical-rl' }}>🪢 RAMACHANDRAN</span>
+  </button>
+)}
 <div
-className="relative border border-slate-200 rounded-xl overflow-hidden bg-white"
+className="relative flex-1 min-w-0 border border-slate-200 rounded-xl overflow-hidden bg-white"
 style={{ height: (viewerCollapsed ? 0 : viewH) + 'px' }}
 >
 <div ref={containerRef} className="w-full h-full" />
+          {/* ◐ L'OMBRE VIVANTE — la couche du module viewerRayShadowLive.js :
+              une toile 2D AU-DESSUS de celle d'NGL, étirée en CSS sur la même
+              boîte (sa taille EST celle du mask, que le navigateur agrandit
+              d'un bilinéaire, comme `applyShadowToPixels` échantillonne le
+              sien). Elle ne prend AUCUN clic (`pointer-events: none`) et ne
+              change rien à la scène : elle assombrit ce qui est déjà dessiné.
+              Le 🌑 Darkness reste AU-DESSUS d'elle dans le DOM, donc l'ordre de
+              l'écran est celui de l'image. */}
+          <canvas
+            ref={rayShadowCanvasRef}
+            aria-hidden="true"
+            className="absolute inset-0 w-full h-full pointer-events-none"
+            style={{ display: rayLiveOn ? 'block' : 'none' }}
+          />
+
+{/* ⬚ LE PANNEAU DU FOND — LA DEMANDE DE CETTE SESSION : « clicking on background
+    should display the options underneath and disappear when background is clicked
+    again ». Il est posé DANS la vue, en bas de la rangée du fond : le clic qui
+    l'ouvre tombe sur le fond, et le clic suivant — n'importe où sur le fond — le
+    referme (voir le signal `clicked` d'NGL). Il ne prend AUCUN clic destiné à la
+    scène : il est À CÔTÉ du div d'NGL, jamais dedans, et son ⇤ le referme aussi.
+    Ce qu'il porte, et rien d'autre : l'interrupteur de la rampe, ses DEUX couleurs
+    (A = la couleur de la scène, celle du 🎨 de §2 Scene et du panneau 🧪 PyMOL ;
+    B = l'autre bout), ⇄ pour les échanger, les HUIT directions d'un clic, le
+    curseur d'angle (0–360°) et ↺ pour revenir à la rampe d'origine. */}
+{bgPanelOpen && (
+  <div id="viewer-background"
+    role="group" aria-label="Background of the 3D scene — one colour, or a gradient of two colours with its direction"
+    className="absolute left-2 right-2 bottom-2 z-30 flex flex-wrap items-center gap-1.5 rounded-xl border border-sky-300 bg-white/95 px-2 py-1.5 shadow-lg">
+    <span className="text-[10px] font-black text-sky-700 uppercase tracking-wide whitespace-nowrap"
+      title="The background of the 3D scene itself. NGL can only paint ONE colour, so the gradient lives in the CSS of the canvas (the canvas is cleared with alpha 0 — the colour you see through it IS its CSS background): turning it on therefore changes nothing in the scene, no representation is rebuilt, and the ✨ Ray still and the 🎬🎞 films take the same ramp. Saved with the page like the fog and the shadows, and carried by a ⚙️ saved setup.">⬚ Background</span>
+    <button type="button" onClick={() => patchBgGradient({ on: !bgGradient.on })}
+      aria-pressed={bgGradient.on}
+      className={`px-1.5 py-1 h-7 text-[10px] font-bold rounded-md border whitespace-nowrap transition-colors ${bgGradient.on ? 'bg-sky-100 border-sky-400 text-sky-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+      title={bgGradient.on
+        ? 'ON right now: the scene is painted with the two-colour ramp below (A → B, in the direction of the arrow you picked). This button puts the flat colour back (A alone — the 🎨 of §2 Scene).'
+        : 'OFF right now: the scene is painted with the FLAT colour A (the 🎨 of §2 Scene). This button paints the two-colour ramp instead, in the direction of the arrow you pick.'}>
+      ⬚ Gradient
+    </button>
+    <label className="flex items-center gap-0.5 cursor-pointer whitespace-nowrap"
+      title="A — the FIRST colour of the ramp, and the colour the scene has on its own: it is the very same value as the 🎨 of §2 Scene and of the 🧪 PyMOL panel (one single state, so the two can never disagree). It is also the colour the depth fog fades toward, and the colour an OFF gradient paints the scene with.">
+      <span className="text-[10px] font-black text-slate-500">A</span>
+      <input type="color" value={bgColor} onChange={(e) => setBgColor(e.target.value)}
+        className="w-7 h-6 border border-slate-300 rounded cursor-pointer" aria-label="Background colour (first colour of the ramp)" />
+    </label>
+    <button type="button" onClick={() => { const a = bgColor; setBgColor(bgGradient.to); patchBgGradient({ to: a }); }}
+      className="px-1.5 py-1 h-7 text-[11px] font-bold rounded-md border bg-white border-slate-300 text-slate-600 hover:bg-slate-100"
+      title="⇄ Swap the two ends of the ramp: A becomes B and B becomes A — the colours change places, the direction does not. The scene's own colour (🎨 of §2 Scene) follows, because A IS that colour.">
+      ⇄
+    </button>
+    <label className="flex items-center gap-0.5 cursor-pointer whitespace-nowrap"
+      title="B — the SECOND colour of the ramp, the end the arrow points at. Ignored while ⬚ Gradient is OFF (the scene is then painted with A alone), kept ready for the next time you turn it on.">
+      <span className="text-[10px] font-black text-slate-500">B</span>
+      <input type="color" value={bgGradient.to} onChange={(e) => patchBgGradient({ to: e.target.value })}
+        className="w-7 h-6 border border-slate-300 rounded cursor-pointer" aria-label="Background gradient second colour" />
+    </label>
+    <span className="flex items-center gap-0.5" role="group" aria-label="Gradient direction">
+      {BG_DIRECTIONS.map((d) => (
+        <button key={d.key} type="button" onClick={() => patchBgGradient({ angle: d.angle })}
+          aria-pressed={bgGradient.angle === d.angle}
+          className={`w-6 h-7 text-[11px] font-black rounded-md border transition-colors ${bgGradient.angle === d.angle ? 'bg-sky-100 border-sky-400 text-sky-800' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-100'}`}
+          title={`Paint the ramp ${d.what} (${d.angle}°) — A sits at the starting end, B at the end the arrow points at.`}>
+          {d.glyph}
+        </button>
+      ))}
+    </span>
+    <label className="flex items-center gap-0.5 whitespace-nowrap"
+      title="The exact angle of the ramp, in the CSS convention: 0° runs from the BOTTOM to the TOP, 90° from the left to the right, 180° from the top to the bottom, 270° from the right to the left. The eight arrows on the left are the eight angles you can also reach here by hand.">
+      <span className="text-[10px] font-bold text-slate-700">angle</span>
+      <input type="range" min="0" max="360" step="1" value={bgGradient.angle}
+        onChange={(e) => patchBgGradient({ angle: Number(e.target.value) })}
+        className="w-20 accent-sky-600" aria-label="Gradient angle in degrees" />
+      <span className="text-[10px] text-slate-500 w-8">{bgGradient.angle}°</span>
+    </label>
+    <button type="button" onClick={() => patchBgGradient({ on: false, to: BG_GRADIENT_DEFAULT_TO, angle: BG_GRADIENT_DEFAULT_ANGLE })}
+      className="px-1.5 py-1 h-7 text-[10px] font-bold rounded-md border bg-white border-slate-300 text-slate-600 hover:bg-slate-100 whitespace-nowrap"
+      title={`↺ Back to the ramp as it comes (B ${BG_GRADIENT_DEFAULT_TO}, ↓ top → bottom) and ⬚ Gradient OFF — a flat background. The colour A (the 🎨 of §2 Scene) is NOT touched: use its own ↺ for that.`}>
+      ↺
+    </button>
+    <button type="button" onClick={() => setBgPanelOpen(false)}
+      className="ml-auto px-1.5 py-1 h-7 text-[10px] font-bold rounded-md border bg-white border-slate-300 text-slate-600 hover:bg-slate-100"
+      title="Close these options — a click on the background of the 3D view brings them back (and so does the ⬚ button of §2 Toolbar → 🌫 Scene). Closing them changes nothing to the scene.">
+      ⇤
+    </button>
+    {/* LA LIGNE QUI DIT LA RAMPE — elle n'apparaît que quand elle est ALLUMÉE :
+        éteint, le panneau n'imprime rien de ce qui ne se voit pas. Le nom de la
+        direction vient des mêmes huit entrées que les boutons (bgDirectionOf) :
+        un angle libre n'a pas de nom, et dit alors ses degrés. */}
+    {bgGradient.on && (
+      <span className="w-full text-[9px] text-slate-500 leading-tight">
+        The ramp runs {bgDirectionOf(bgGradient.angle)?.what || `${bgGradient.angle}°`} — A <b>{bgColor}</b> → B <b>{bgGradient.to}</b>. It paints the screen, the 🎬🎞 films and the ✨ Ray still; a click on the background closes these options.
+      </span>
+    )}
+  </div>
+)}
+{/* ── ✏️ LA FENÊTRE DE TORSION — DANS LA VUE 3D, PAS DANS LA BARRE ────────────
+    La demande : « The torsion section must be drastically reduced. eliminate
+    comments and eliminate the "model build" button. when clicking on torsion do
+    not open the section inside the toolbar but open a dedicated retractable
+    window inside the viewer as for ramachandran. this window will disappear
+    clicking again in the torsion button. »
+    Ce qui reste, et rien d'autre : les QUATRE SLOTS (A · B · C · D, chacun dans la
+    couleur de l'atome peint dans la vue), le bouton 🎯 qui arme le piquage, la
+    lecture du moment, les DEUX nombres (dihedral · A–D), Set / Reach (et ↳ Apply
+    closest quand le cercle s'arrête avant la cible), ↺ Undo, et le rapport du
+    geste. Aucun réglage de descente, aucun ⚒, aucun paragraphe de mode d'emploi :
+    les gestes de champ (▶ MD · ⚒ Minimise · ⟳ Energy) vivent dans la rangée du
+    bouton 🧬, et le protocole de construction est celui du calcul de structure. Le
+    ⇤ de l'en-tête referme la fenêtre — le bouton ✏️ Torsion la rouvre telle quelle
+    (même état React : atomes piqués et chiffres tapés compris). */}
+{torsionWindow && (() => {
+  const read = torsionReading();
+  const pairRead = torsionPairReading();
+  const part = torsionPicks();
+  const dragged = part.ok ? structureWasDragged(part.structure) : false;
+  return (
+    <div className="absolute left-2 bottom-2 z-20 w-[330px] max-h-[75%] overflow-y-auto custom-scrollbar rounded-xl border border-amber-300 bg-white/95 shadow-lg p-2 flex flex-col gap-1.5">
+      <div className="flex flex-wrap items-center justify-between gap-1">
+        <span className="text-[10px] font-black text-amber-700 uppercase tracking-wide">✏️ Torsion · A · B · C · D (B–C is the hinge: D’s whole side turns)</span>
+        <button type="button" onClick={() => setTorsionWindow(false)}
+          title="Close the torsion window (the ✏️ Torsion button brings it back, with the picks and the numbers typed)."
+          className="px-1.5 py-0.5 text-[9px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100">⇤</button>
+      </div>
+      <div className="flex flex-wrap items-center gap-1">
+        {TORSION_SLOT_LETTERS.map((letter, i) => {
+          const slot = torsionAtoms[i];
+          const dot = `#${TORSION_SLOT_COLORS[i % TORSION_SLOT_COLORS.length].toString(16).padStart(6, '0')}`;
+          return (
+            <button key={letter} type="button" onClick={() => armTorsionPick(i + 1)}
+              title={`Pick atom ${letter} — ${TORSION_SLOT_ROLES[i]}. Arming a slot drops the atoms picked after it; the click that fills the fourth slot disarms the picker by itself. The atom is highlighted in the 3D view in this colour (${dot}) as soon as it is picked.`}
+              className={`px-1.5 py-0.5 text-[10px] font-bold rounded border ${torsionPick === i + 1 ? 'bg-amber-600 text-white border-amber-600' : slot ? 'bg-white border-amber-300 text-amber-800' : 'bg-white border-slate-200 text-slate-400'}`}>
+              <span className="inline-block w-2 h-2 rounded-full mr-1 align-middle" style={{ backgroundColor: dot }} />
+              {letter} · {slot ? slot.label : '—'}
+            </button>
+          );
+        })}
+        <button type="button"
+          onClick={() => { if (measureModeRef.current) toggleMeasureMode(); armTorsionPick(torsionPick || nextTorsionSlot()); }}
+          className={`px-1.5 py-0.5 text-[10px] font-bold rounded border ${torsionPick ? 'bg-amber-600 text-white border-amber-600' : 'bg-white border-amber-300 text-amber-700 hover:bg-amber-100'}`}
+          title="Arm the click picker on the next slot: click the atoms in the 3D view, A then B then C then D. 📏 Measure is turned off if it was on (the two gestures cannot both take the clicks), and the click that fills the fourth slot disarms the picker by itself.">
+          🎯 Pick
+        </button>
+        <button type="button" onClick={clearTorsionPicks}
+          title="Empty the four slots, and disarm the picker with them."
+          className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-white border border-red-300 text-red-600 hover:bg-red-50">
+          Clear
+        </button>
+      </div>
+      <p className="text-[10px] text-slate-500">
+        {read
+          ? <>Now: <b>dihedral {torsionDeg(read.deg)}</b> · <b>A–D {torsionAng(read.dist)}</b> — type a dihedral (Set) or a distance (Reach).</>
+          : (pairRead
+            ? <>Now: <b>{pairRead.label} {torsionAng(pairRead.dist)}</b> — pick two more atoms (B · C) and these four become A · B · C · D.</>
+            : 'Pick four atoms: A (the reference — it must not move), B · C (the axle bond), D (the atom whose side turns). 🎯 then click them one after the other in the 3D view.')}
+      </p>
+      {torsionPick > 0 && (
+        <p className="text-[10px] font-bold text-amber-800">● Pick atom {TORSION_SLOT_LETTERS[torsionPick - 1]} — {TORSION_SLOT_ROLES[torsionPick - 1]}</p>
+      )}
+      <div className="flex flex-wrap items-end gap-2">
+        <label className="flex items-center gap-1 text-[10px] font-bold text-amber-800">
+          dihedral
+          <input type="number" step="1" min="-180" max="180" value={torsionAngleDraft}
+            onChange={(e) => setTorsionAngleText(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') applyTorsionAngle(); }}
+            placeholder="−60" aria-label="Target dihedral A–B–C–D, in degrees"
+            title="The dihedral A–B–C–D you want, in degrees (−180 … 180). ↵ or Set turns the bond B–C — right-hand rule about B→C, the whole side of D moving as one rigid piece — until the dihedral is exactly this. The report tells the dihedral the structure HAS afterwards, read by the same signed-IUPAC reader as the χ/δ readers."
+            className="w-16 border border-amber-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-amber-500 text-[10px] font-mono bg-white" />
+          °
+        </label>
+        <button type="button" onClick={applyTorsionAngle}
+          className="px-2 py-1 text-[10px] font-bold rounded border bg-amber-600 border-amber-700 text-white hover:bg-amber-700"
+          title="Turn B–C in one rigid rotation until the dihedral A–B–C–D equals the angle typed on the left. A does not move, the two axle atoms do not move, and nothing else in the molecule is touched.">
+          Set
+        </button>
+        <label className="flex items-center gap-1 text-[10px] font-bold text-amber-800">
+          A–D
+          <input type="number" step="0.01" min="0.01" value={torsionDistDraft}
+            onChange={(e) => setTorsionDistDraft(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') applyTorsionDistance(); }}
+            placeholder="2.60" aria-label="Target distance A–D, in ångströms"
+            title="The distance |A − D| you want, in ångströms. D turns on a circle about B–C, so this has AT MOST TWO exact answers (two rotamers) and sometimes NONE — the window then says how close the circle comes and offers ↳ Apply closest. ↵ or Reach applies the solution that turns the bond the least."
+            className="w-16 border border-amber-300 rounded px-1.5 py-0.5 text-right outline-none focus:border-amber-500 text-[10px] font-mono bg-white" />
+          Å
+        </label>
+        <button type="button" onClick={applyTorsionDistance}
+          className="px-2 py-1 text-[10px] font-bold rounded border bg-amber-600 border-amber-700 text-white hover:bg-amber-700"
+          title="Solve the angle that brings A and D to the distance typed on the left — in closed form (cos(θ − φ) = C/Amp), never by scanning: a 1° step could not be exact, and its answer would still have to become a rotation. The nearest of the two exact solutions is applied.">
+          Reach
+        </button>
+        {torsionClosest && (
+          <button type="button" onClick={applyClosestTorsion}
+            className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-fuchsia-300 text-fuchsia-700 hover:bg-fuchsia-50"
+            title={`The distance you typed (${torsionAng(torsionClosest.target)}) cannot be reached: D's circle about B–C stops at ${torsionAng(torsionClosest.closest)}. This applies the rotation of exactly ${torsionDeg(torsionClosest.deltaDeg)} that comes as close as the bond can — the number comes from the same closed-form solution that refused the target.`}>
+            ↳ Apply closest ({torsionAng(torsionClosest.closest)})
+          </button>
+        )}
+        <button type="button" onClick={undoLastTorsion}
+          className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-700 hover:bg-slate-100"
+          title="Put the last torsion back: every atom of that structure is written back exactly where it was BEFORE the gesture (the four picks and the numbers typed stay — this undoes the move, not the question). With no torsion applied yet, the button says so instead of doing nothing.">
+          ↺ Undo
+        </button>
+      </div>
+      {torsionMsg && (
+        <p title={torsionMsg} className={`text-[10px] font-semibold rounded-md border px-2 py-1 whitespace-pre-wrap ${/^[✓↳↺]/.test(torsionMsg) ? 'text-emerald-800 bg-emerald-50 border-emerald-200' : 'text-rose-800 bg-rose-50 border-rose-200'}`}>
+          {torsionMsg}
+        </p>
+      )}
+      {dragged && (
+        <p className="text-[10px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">
+          ⚠ This molecule has also been DRAGGED by hand: a frame change or ⏮ replays that drag from the coordinates it knows, so a torsion applied after the drag goes with it. The ↺ of the molecule’s own space (styling bar) resets both — drag and torsion.
+        </p>
+      )}
+      <p className="text-[9px] text-slate-400 leading-tight">
+        A torsion is not stored anywhere: it lives in the COORDINATES of the frame on screen, like every edit of this bar. The atoms that turn are the ones NGL’s bond graph reaches from D without crossing B–C — a bond inside a RING has no such side, and the window refuses it rather than deforming the ring.
+      </p>
+    </div>
+  );
+})()}
+
 
 {/* ⚠ PLUS DE CALQUE DE GESTE ICI. Un div plein cadre capturait la souris quand
     ✥ Move / ↻ Rotate étaient armés — c'est ce qui rendait le geste « séparé »
@@ -18436,7 +26039,7 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
         simplement ATTRAPER l'autre à la souris dans la vue 3D : la molécule qu'une
         main attrape DEVIENT la référence (voir installMoleculeDrag). */}
     <p className="text-[10px] font-bold text-violet-800 shrink-0"
-      title={`Every ␣ below is ONE molecule — even when several molecules live in the SAME PDB file: each one has its own ☑, its own « ★ set main », its own styling rows and its own 🔎, so they can be ticked, styled, moved and superposed one by one. « ${molNameOf(selectedMolKey)} » is the reference right now — 🎯 Fit to chosen superposes the other shown structures onto it, and a drag that starts ON a molecule turns it (left) or slides it (right) without moving the others.`}>
+      title={`Every ␣ below is ONE molecule — even when several molecules live in the SAME PDB file: each one has its own ☑, its own « set main », its own styling rows and its own 🔎, so they can be ticked, styled, moved and superposed one by one. « ${molNameOf(selectedMolKey)} » is the reference right now — 🎯 Fit to chosen superposes the other shown structures onto it, and a drag that starts ON a molecule turns it (left) or slides it (right) without moving the others.`}>
       ★ main: {molNameOf(selectedMolKey)} · a drag on a molecule turns/slides it · 🎯 Fit to chosen superposes the others onto it{heldPart ? ` · 🖐 moving « ${heldPart} » ALONE` : ''}
     </p>
     <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-1 min-h-0">
@@ -18471,12 +26074,22 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
                   autres sur elle, et c'est elle que la souris tourne ou fait glisser
                   quand on l'attrape dans la vue 3D (voir installMoleculeDrag). La ligne
                   ★ du haut de la barre nomme toujours celle qui est choisie. */}
+              {/* ⚠ LES DEUX ★ DU MILIEU SONT PARTIES — le rapport de cette session :
+                  « in the middle of the viewer I see two stars (three in total with the
+                  correct one at the top right). they should be removed. » Ces deux ★
+                  étaient ceux de CE bouton, un par molécule de la barre, alors que la
+                  ligne ★ du HAUT de la barre NOMME déjà la référence : l'astérisque
+                  décoratif est donc retiré de chaque espace et il ne reste que les mots
+                  « main » / « set main ». Le geste, lui, ne change pas — un clic choisit
+                  toujours la molécule (chooseMol) — et le cadre violet + le mot « main »
+                  de l'espace choisi disent le reste. */}
+
               <button type="button" onClick={() => chooseMol(molKey)}
                 className={`text-[10px] font-bold px-1 rounded shrink-0 ${chosen ? 'bg-violet-600 text-white' : 'text-slate-500 hover:text-violet-700'}`}
                 title={chosen
                   ? `${entry.name} IS the main molecule (the reference): 🎯 Fit to chosen superposes every other shown structure onto it, and it is the one a drag on it turns or slides. Click another space's « set main » to change it.`
                   : `Make ${entry.name} the main molecule (the reference): 🎯 Fit to chosen then superposes every other shown structure onto it. Grabbing it in the 3D view (a drag on it) makes it the reference too.`}>
-                ★ {chosen ? 'main' : 'set main'}</button>
+                {chosen ? 'main' : 'set main'}</button>
               {extra && (
                 <button type="button" onClick={(e) => { e.stopPropagation(); deleteExtraMol(extra.id); }}
                   className="text-red-400 hover:text-red-600 font-bold text-[10px] px-1 shrink-0" title="Delete this structure">🗑</button>
@@ -18590,6 +26203,15 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
         title="Close the settings wheel">✕</button>
     </div>
     <div className="flex-1 overflow-y-auto custom-scrollbar p-4 flex flex-col gap-4">
+      {/* ⛭ CHAQUE ↺ RAMÈNE À VOS COULEURS (le rapport de cette session : « i colori
+          attualmente definiti a mano da me nel setting wheel devono essere i colori di
+          default (non quelli che avevi messo tu quando hai scritto il codice) »). Une
+          palette enregistrée par ce navigateur EST son propre défaut : le ↺ d'une
+          section rend donc VOS pastilles, jamais la table du code — voir paletteDefaults,
+          qui prend la photographie des palettes enregistrées une fois par chargement. */}
+      <p className="text-[10px] text-slate-500 border border-slate-200 rounded-lg px-2 py-1.5 bg-slate-50">
+        <b>Every ↺ of this wheel gives YOUR colours back</b> — the palette as this browser saved it, which is what « default » means here. The viewer's own tables are only used on a browser that has never stored the palette.
+      </p>
       {/* ▲ THE ATOM-TYPE PALETTE HAS MOVED (the request). It now stands right after
           « Styling window · section backgrounds » (just below), so the two palettes of
           the WINDOW itself — its own space colours and the element colours it draws
@@ -18649,7 +26271,7 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
           </button>
         </div>
         <p className="text-[10px] text-slate-500">
-          What « Atom type » (the « Color by » option of every row of the styling bar) paints: one colour per element. The list is the request's: {ELEMENT_ORDER.join(' · ')}. An element that is NOT in the table (a metal of an unusual file) keeps a readable grey instead of turning black. Saved like every other viewer preference.
+          What « Atom type » (the « Color by » option of every row of the styling bar) paints: one colour per element. The list is the request's: {ELEMENT_ORDER.join(' · ')}. An element that is NOT in the table (a metal of an unusual file) keeps a readable grey instead of turning black. The <b>P</b> swatch is, in particular, the colour of the <b>phosphorus</b> spheres of the « P » row of the Lipids menu — its own class, the phosphorus of the headgroups alone, and that row is read by « Atom type ». Saved like every other viewer preference.
         </p>
         <div className="mt-1 grid grid-cols-[repeat(auto-fill,minmax(4.5rem,1fr))] gap-1.5">
           {ELEMENT_ORDER.map((el) => (
@@ -18678,7 +26300,7 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
             everything else a side chain. */}
         <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="text-[11px] font-black uppercase tracking-wide text-slate-600">Amino acids · backbone (B) / side chains (S)</span>
-          <button type="button" onClick={() => { setResidueColors({ ...RESIDUE_COLOR_PALETTE }); setResiduePartColors(mergePartPalette(RESIDUE_PART_DEFAULTS, null)); }}
+          <button type="button" onClick={() => { setResidueColors(paletteDefaults('labViewerResidueColors', RESIDUE_COLOR_PALETTE)); setResiduePartColors(paletteDefaults('labViewerResiduePartColors', RESIDUE_PART_DEFAULTS, mergePartPalette)); }}
             className="px-2 py-0.5 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100"
             title="Put the residue's own colour back to its default — the backbone and the side-chain swatches follow it">
             ↺ Defaults
@@ -18712,7 +26334,7 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
       <section className="flex flex-col gap-1">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="text-[11px] font-black uppercase tracking-wide text-slate-600">Secondary structure · helix / sheet / loop</span>
-          <button type="button" onClick={() => setSstrucColors({ ...SSTRUC_COLOR_DEFAULTS })}
+          <button type="button" onClick={() => setSstrucColors(paletteDefaults('labViewerSstrucColors', SSTRUC_COLOR_DEFAULTS))}
             className="px-2 py-0.5 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100"
             title="Put the three 2°-structure colours back to their defaults">
             ↺ Defaults
@@ -18741,14 +26363,14 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
       <section className="flex flex-col gap-1">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="text-[11px] font-black uppercase tracking-wide text-slate-600">DNA/RNA bases · charge</span>
-          <button type="button" onClick={() => { setBaseTypeColors({ ...BASE_IDENTITY_COLORS }); setChargeColors({ ...CHARGE_COLORS }); }}
+          <button type="button" onClick={() => { setBaseTypeColors(paletteDefaults('labViewerBaseTypeColors', BASE_IDENTITY_COLORS)); setChargeColors(paletteDefaults('labViewerChargeColors', CHARGE_COLORS)); }}
             className="px-2 py-0.5 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100"
             title="Put these two palettes back to their defaults">
             ↺ Defaults
           </button>
         </div>
         <p className="text-[10px] text-slate-500">
-          What « Color by : DNA/RNA base » of a nucleic acid — and « DNA/RNA base » in the « Atom colour » selector of its menu — paints: the five bases {BASE_TYPE_ORDER.join(' · ')} (also the colour that fills the stylized ring plates). Then what « Charge » paints on an ion: a PDB file rarely carries a formal charge, so the sign is read from the file when it has one and from the element otherwise. (The helix / sheet / loop colours of « Secondary structure » have their own section just above.)
+          What « Color by : DNA/RNA base » of a nucleic acid — and « DNA/RNA base » in the « Atom colour » selector of its menu — paints: the five bases {BASE_TYPE_ORDER.join(' · ')} (also the colour that fills the stylized ring plates). Then what « Charge » paints on an ion: a PDB file rarely carries a formal charge, so the sign is read from the file when it has one and from the element otherwise. THE SAME THREE SWATCHES ARE THE ANCHORS OF « Atom charge » : that colouring paints every atom by its own PARTIAL charge (the table of the ⚡ ESP), walking from the NEUTRAL swatch to the + pole for a positive atom and to the − pole for a negative one, ±1 e full scale — so a colour changed here repaints the site of every atom too. (The helix / sheet / loop colours of « Secondary structure » have their own section just above.)
         </p>
         <div className="mt-1 grid grid-cols-[repeat(auto-fill,minmax(4.5rem,1fr))] gap-1.5">
           {BASE_TYPE_ORDER.map((b) => (
@@ -18775,7 +26397,8 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
             </label>
           ))}
           {CHARGE_ORDER.map((c) => (
-            <label key={c} className="flex items-center gap-1 border border-slate-200 rounded px-1 py-0.5 bg-slate-50" title={`Colour of a ${c} atom / ion`}>
+            <label key={c} className="flex items-center gap-1 border border-slate-200 rounded px-1 py-0.5 bg-slate-50"
+              title={`Colour of a ${c} atom / ion — and the ${c} anchor of « Atom charge », which walks from the NEUTRAL swatch towards this pole as |q| grows`}>
               <input type="color" value={numToHex(chargeColors[c])}
                 onChange={(e) => setChargeColors((p) => ({ ...p, [c]: parseInt(e.target.value.slice(1), 16) }))}
                 className="w-6 h-5 rounded border border-slate-300 cursor-pointer" aria-label={`${c} charge colour`} />
@@ -18831,7 +26454,7 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
       <section className="flex flex-col gap-1">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="text-[11px] font-black uppercase tracking-wide text-slate-600">Sugar types</span>
-          <button type="button" onClick={() => setSugarTypeColors({ ...SUGAR_TYPE_COLORS })}
+          <button type="button" onClick={() => setSugarTypeColors(paletteDefaults('labViewerSugarTypeColors', SUGAR_TYPE_COLORS))}
             className="px-2 py-0.5 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100"
             title="Put every sugar type back to its default colour">
             ↺ Defaults
@@ -18865,14 +26488,14 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
             them. Each class shows its H · G · A swatches below. */}
         <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="text-[11px] font-black uppercase tracking-wide text-slate-600">Lipid types · headgroup (H) / glycerol (G) / acyl chains (A)</span>
-          <button type="button" onClick={() => { setLipidTypeColors({ ...LIPID_CLASS_COLORS }); setLipidPartColors(mergePartPalette(LIPID_PART_DEFAULTS, null)); }}
+          <button type="button" onClick={() => { setLipidTypeColors(paletteDefaults('labViewerLipidTypeColors', LIPID_CLASS_COLORS)); setLipidPartColors(paletteDefaults('labViewerLipidPartColors', LIPID_PART_DEFAULTS, mergePartPalette)); }}
             className="px-2 py-0.5 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100"
             title="Put the headgroup, glycerol and acyl-chain colours of every lipid class back to the class's own default colour">
             ↺ Defaults
           </button>
         </div>
         <p className="text-[10px] text-slate-500">
-          What « Color by : Lipid type » paints: THREE swatches per lipid class — H its polar headgroup, G its glycerol backbone (C1 · C2 · C3), A its acyl chains. All three start at the class's own colour, so a class stays ONE colour until its parts are separated here; a class the table does not know keeps the readable grey.
+          What « Color by : Lipid type » paints: THREE swatches per lipid class — H its polar headgroup, G its glycerol backbone (C1 · C2 · C3), A its acyl chains. All three start at the class's own colour, so a class stays ONE colour until its parts are separated here; a class the table does not know keeps the readable grey. The <b>H</b> swatch paints the « Phospholipid headgroups » row. The « Heads (N · O) » and « P » rows of the Lipids menu do NOT follow it: they are read by <b>Atom type</b> (their own default), so each of their spheres wears the colour defined for its element above — the <b>P</b> one, the phosphorus of the headgroups, first of all.
         </p>
         <div className="mt-1 grid grid-cols-[repeat(auto-fill,minmax(7rem,1fr))] gap-1.5">
           {LIPID_TYPE_ORDER.map((k) => (
@@ -18883,7 +26506,7 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
                 <input key={`${k}-${part}`} type="color" value={numToHex(lipidPartColors[k][part])}
                   onChange={(e) => setLipidPartColors((p) => ({ ...p, [k]: { ...p[k], [part]: parseInt(e.target.value.slice(1), 16) } }))}
                   className="w-6 h-5 rounded border border-slate-300 cursor-pointer" aria-label={`${k} ${part} colour`}
-                  title={`${k} · ${part === 'head' ? 'headgroup' : part === 'glycerol' ? 'glycerol backbone' : 'acyl chains'} (${letter})`} />
+                  title={`${k} · ${part === 'head' ? 'headgroup — the whole « Phospholipid headgroups » row of the Lipids menu' : part === 'glycerol' ? 'glycerol backbone' : 'acyl chains'} (${letter})`} />
               ))}
             </span>
           ))}
@@ -18899,7 +26522,7 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
       <section className="flex flex-col gap-1">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="text-[11px] font-black uppercase tracking-wide text-slate-600">Chains · color by chain</span>
-          <button type="button" onClick={() => setChainColors({ ...CHAIN_COLOR_PALETTE })}
+          <button type="button" onClick={() => setChainColors(paletteDefaults('labViewerChainColors', CHAIN_COLOR_PALETTE))}
             className="px-2 py-0.5 text-[10px] font-bold rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-100"
             title="Put the chain colours back to their defaults">
             ↺ Defaults
@@ -19163,6 +26786,7 @@ Tip: you cannot paste a local file path — use the file picker button above
 </div>
 </div>
 )}
+</div>
 </div>
 
 {/* Vertical resize handle — drag to make the 3D viewer taller/shorter */}

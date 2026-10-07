@@ -574,13 +574,6 @@ export const CongesPage = () => {
         </div>
       )}
 
-      <div className="rounded-xl border border-blue-100 bg-blue-50/60 px-4 py-2.5 text-[11px] text-slate-600 leading-relaxed">
-        <b>Fonctionnement :</b> chacun pose sa demande (statut « Demande »), un superutilisateur l’approuve ou la refuse. Un membre ne voit que ses propres demandes de congés, le superutilisateur voit toute la liste et approuve. Le solde de chaque membre est décompté en jours ouvrés sur la saison du
-        1er septembre au 31 août (renouvelée automatiquement chaque 1er septembre), week-ends et fêtes nationales exclus. Les jours de fermeture UPJV de la saison (2 semaines de Noël + 4 semaines en juillet-août, jours ouvrés hors fériés) sont
-        décomptés d’office du quota de chaque membre : une demande de congé ne consomme que ses jours ouvrés hors fermeture, et une ligne « Présence autorisée pendant fermeture » (superutilisateur) réintègre au solde les jours de fermeture travaillés avec autorisation.
-        Quota par défaut : 47 jours pour un Doctorant, modulable par profil dans Setup › « Congés : jours/an par profil ».
-      </div>
-
       <div className="rounded-2xl border border-slate-200 bg-white shadow-sm p-4">
         <div className="flex items-center gap-2 mb-2 flex-wrap">
           <h3 className="text-sm font-black text-slate-700">🎉 Jours fériés en France cette année</h3>

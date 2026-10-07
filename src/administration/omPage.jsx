@@ -38,7 +38,7 @@ import {
 import { scopeMeNames, scopeMePersonId, scopeCanSeeItem, scopePersonIdForName, scopeSeesAllRows, scopeFonctions } from './ownScope';
 import {
   TRANSFER_TARGETS, targetMetaOf, partModeOf, omTransferSummary,
-  devisPatchFromOmPart, reimbPatchFromOm, omTransferStatus, TRANSFER_MODES, isDevisGestion,
+  devisPatchFromOmPart, reimbPatchFromOm, omTransferStatus, TRANSFER_MODES,
 } from './transferAchats';
 
 /* ── Petites aides ─────────────────────────────────────────────────────── */
@@ -1342,21 +1342,6 @@ export const OmPage = () => {
         const transferred = !!r.transfert;
         const metaT = r.transfert ? targetMetaOf(r.transfert.cible) : null;
         const readyAll = !omTransferSummary(r).commande.some((p) => !omPartComplete(r, p.key));
-        const chip = (p) => {
-          if (p.mode === 'bc') {
-            if (p.devis && isDevisGestion(p.devis)) return <span className="text-orange-600 whitespace-nowrap" title="Devis « En gestion » : N° devis / fichier à compléter dans « Approbation devis & BC »">… en gestion</span>;
-            if (p.state === 'bc-signe') return <span className="text-emerald-600 font-black whitespace-nowrap" title="BC signé (date de signature BC dans Dépenses)">✓ BC signé</span>;
-            if (p.state === 'bc-en-cours') return <span className="text-blue-600 whitespace-nowrap" title="Devis signé, BC non signé">… BC à signer</span>;
-            if (p.state === 'bc-devis-attente') return <span className="text-amber-600 whitespace-nowrap" title="Devis en attente de signature dans « Approbation devis & BC »">… en attente de signature</span>;
-            return <span className="text-slate-300 whitespace-nowrap">devis à créer</span>;
-          }
-          if (p.fiche) {
-            return p.fiche.aCorriger
-              ? <span className="text-amber-600 whitespace-nowrap" title="Montants estimés à corriger une fois les justificatifs réels connus">… À corriger</span>
-              : <span className="text-emerald-600 font-black whitespace-nowrap" title="Fiche Remboursement corrigée">✓ remboursé</span>;
-          }
-          return <span className="text-slate-300 whitespace-nowrap">fiche à créer</span>;
-        };
         const transferButton = (mode, tone, label, hint, disabled = false) => (
           <button
             type="button"
@@ -1425,24 +1410,13 @@ export const OmPage = () => {
                   )}
                   {reimbButton(!(st && st.parts.length))}
                 </div>
-                {!readyAll && (
-                  <span className="text-[9px] font-bold text-amber-600 leading-tight max-w-[300px]">
-                    🔒 « Pour signature » est inactif tant que TOUS les postes « Commande » n’ont pas un N° de devis + un fichier.
-                    Utilisez « ✎ Révision » : les devis partent « En gestion » pour être complétés par la responsable d’achats, puis signés.
-                  </span>
-                )}
               </div>
             ) : null}
             {!transferred && !approved && !pendingDecision && !inTest ? <span className="text-[10px] text-slate-300">OM refusée</span> : null}
-            {st && st.parts.length ? st.parts.map((p) => (
-              <div key={p.key} className="flex items-center gap-1.5 text-[10px] leading-tight">
-                <span className="shrink-0">{p.icon}</span>
-                <span className="text-slate-500 shrink-0">{p.label}</span>
-                <span className="text-[10px] text-slate-400 tabular-nums whitespace-nowrap">{p.montant !== null && p.montant !== undefined ? euro.format(p.montant) : '—'}</span>
-                {transferred ? chip(p) : <span className={`text-[9px] font-black uppercase px-1 rounded whitespace-nowrap ${p.mode === 'bc' ? 'text-blue-600 bg-blue-50' : 'text-amber-600 bg-amber-50'}`}>{p.mode === 'bc' ? 'BC' : 'Remb.'}</span>}
-              </div>
-            )) : null}
-            {st && !st.hasCosts ? <span className="text-[10px] text-slate-300">aucun poste chiffré</span> : null}
+            {/* Plus de récapitulatif des postes sous les boutons (libellé ·
+               montant · « BC » / « Remb. ») : chaque poste a sa colonne de
+               montant et le suivi d’un transfert se lit dans « Approbation
+               devis & BC » et « Dépenses › Remboursements ». */}
           </div>
         );
       },
@@ -1488,7 +1462,12 @@ export const OmPage = () => {
     },
   ];
   return (
-    <div className="max-w-full mx-auto flex flex-col gap-4">
+    /* La page occupe EXACTEMENT la hauteur de l’écran (h-full + min-h-0) : le
+       tableau, seul élément extensible (fillHeight), s’arrête au bas de la vue
+       et sa barre de défilement HORIZONTALE reste donc toujours visible, sans
+       avoir à faire défiler la page entière pour la rejoindre. Même convention
+       que la page « Dépenses ». */
+    <div className="h-full min-h-0 w-full min-w-0 mx-auto flex flex-col gap-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <p className="text-xs font-bold text-slate-400 max-w-2xl" title={scopeTitle || undefined}>
           {visibleRows.length} demande{visibleRows.length > 1 ? 's' : ''} de mission à suivre
@@ -1527,25 +1506,6 @@ export const OmPage = () => {
 
       {notice && <Notice tone={notice.tone} text={notice.text} mailto={notice.mailto} consoleUrl={notice.consoleUrl} onClose={() => setNotice(null)} />}
 
-      <div className="rounded-xl border border-blue-100 bg-blue-50/60 px-4 py-2.5 text-[11px] text-slate-600 leading-relaxed">
-        <b>OM prévus / souhaités :</b> chaque OM décrit une mission à préparer. Chaque membre ne voit que ses propres OM
-        (demandeur = lui-même, verrouillé) — le superutilisateur, qui accepte et transfère, voit tout. La <b>première colonne « Statut »</b>
-        (En attente / Acceptée / Test / Refusée / Terminée) n’est modifiable que par le superutilisateur. Le statut <b>« Test »</b> compte l’OM
-        dans les prévisions <b>« OM prévus »</b> de la page Recettes sans l’accepter réellement (aucune notification, aucun transfert).
-        Marquer une OM <b>« Acceptée »</b> n’envoie <b>aucun e-mail à la gestionnaire</b> : elle n’est prévenue qu’au transfert
-        <b>« ✓ Signature »</b> / <b>« ✎ Révision »</b> (ou à la signature du devis / BC dans « Approbation devis & BC »). Dans le formulaire,
-        chaque <b>poste de coût</b> est étiqueté <b>« BC »</b> (commandé par le laboratoire : devis dans « Approbation
-        devis & BC ») ou <b>« Remb. »</b> (frais avancés par le membre puis remboursés : fiche dans Dépenses ›
-        Remboursements). Pour une demande en attente, la colonne <b>« Gestion des frais »</b> propose au directeur
-        <b>« ✓ Signature »</b> ou <b>« ✎ Révision »</b> : l'OM est acceptée, des devis « en attente de signature »
-        (postes complets) ou « En gestion » (à compléter) sont créés par poste « Commande », et la fiche Remboursement
-        « À corriger » pour les postes « Remb. ». Le bouton <b>« 💸 Remb. »</b> transfère quant à lui <b>tous les postes</b>
-        en remboursement (frais avancés : 1 fiche dans Dépenses › Remboursements, montant déduit du solde). L’OM transférée
-        <b>disparaît de la liste</b> et son montant est suivi dans les colonnes <b>« OM en signature / signé »</b> de la page
-        Recettes jusqu'à la signature des BC.
-        « ✏️ Modifier » ouvre la fiche, « 🗑️ » supprime, « 📥 Importer » rejoue la feuille « ENT / Prix / Description » du classeur.
-      </div>
-
       {visibleRows.length === 0 ? (
         <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-10 text-center">
           <div className="text-4xl mb-2">✈️</div>
@@ -1578,16 +1538,22 @@ export const OmPage = () => {
           </button>
         </div>
       ) : (
-        <SmartTable
-          columns={columns}
-          rows={visibleRows}
-          focusRowKey={focusRow}
-          onFocusDone={() => setFocusRow(null)}
-          minWidth="1560px"
-          searchPlaceholder="Rechercher mission, demandeur, destination, n° OM…"
-          emptyLabel="Aucun ordre de mission pour le moment"
-          noMatchLabel="Aucun ordre de mission ne correspond aux filtres."
-        />
+        /* fillHeight : le tableau prend la hauteur restante de l’écran, donc sa
+           barre de défilement horizontale (qui est à son bas) est toujours
+           visible — plus besoin de faire défiler la page pour l’atteindre. */
+        <div className="flex-1 min-h-[280px] flex flex-col">
+          <SmartTable
+            columns={columns}
+            rows={visibleRows}
+            focusRowKey={focusRow}
+            onFocusDone={() => setFocusRow(null)}
+            minWidth="1560px"
+            fillHeight
+            searchPlaceholder="Rechercher mission, demandeur, destination, n° OM…"
+            emptyLabel="Aucun ordre de mission pour le moment"
+            noMatchLabel="Aucun ordre de mission ne correspond aux filtres."
+          />
+        </div>
       )}
 
       {modal && (

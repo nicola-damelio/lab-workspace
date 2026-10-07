@@ -323,7 +323,7 @@ ok(NAT.sequenceNaturesNote(afterLoad, 'protein').includes('same view'),
   const name = ['NMR', 'MD', 'Docking'][i];
   has(src, "from '../utils/sequenceNatures'", `[${name}] la table des natures est importée (aucune règle recopiée)`);
   has(src, 'sequenceForMoleculeType(activeTest, moleculeType)', `[${name}] la séquence lue est celle de la nature affichée`);
-  has(src, 'sequencePatchForMoleculeType(activeTest, d.moleculeType, e.target.value)',
+  has(src, 'sequencePatchForMoleculeType(activeTest, d.moleculeType, v)',
     `[${name}] la case de saisie écrit dans le champ de sa nature`);
   has(src, 'structureSequencePatch(activeTest, d.moleculeType, seq, parts)',
     `[${name}] le fichier chargé remplit chaque champ par nature`);
@@ -338,15 +338,112 @@ has(SHELL, 'sequenceForMoleculeType(t, t.moleculeType)', '[rapport] la table d�
 has(NMRR, 'sequenceForMoleculeType(t, t.moleculeType)', '[notebook NMR] la séquence affichée est celle de sa nature');
 has(NB, 'sequenceForMoleculeType(localTest, localTest.moleculeType)', '[notebook] la formule suit la nature');
 // Le viewer : classement, handshake et bandeau groupé.
-has(VIEW, "import { SEQUENCE_NATURES } from '../utils/sequenceNatures';", '[viewer] la table des natures est partagée');
+// (L'import a grandi avec le choix entre plusieurs séquences : il porte les
+// libellés / unités du panneau ET la lecture du fichier en candidates.)
+has(VIEW, "SEQUENCE_NATURES, NATURE_LABELS, NATURE_UNITS,", '[viewer] la table des natures est partagée (avec libellés et unités)');
+has(VIEW, "sequenceCandidatesOf, ambiguousSequenceNatures, sequenceChoiceTicks,", '[viewer] …et la lecture du fichier en candidates');
+has(VIEW, "} from '../utils/sequenceNatures';", '[viewer] les deux viennent du MÊME module (aucune règle recopiée)');
 has(VIEW, "nature: code ? residueNatureOf(name, atomNames) : ''", '[viewer] chaque résidu polymère porte sa nature');
 has(VIEW, 'const parts = structureSequenceParts(ticks);', '[viewer] une séquence par nature est construite');
 has(VIEW, 'onStructureSequence(seq, parts)', '[viewer] …et remise à la page (2e argument)');
+has(VIEW, 'const candidates = sequenceCandidatesOf(ticks);', '[choix] le fichier est lu en candidates');
+has(VIEW, 'const ambiguous = ambiguousSequenceNatures(candidates);', '[choix] les natures servies par plusieurs chaînes sont repérées');
+has(VIEW, 'setSequenceChoice({ candidates, ambiguous, sel });', '[choix] …et rien n’est écrit : le panneau demande');
+has(VIEW, 'SEQUENCE_NATURES.includes(moleculeType) && pageBoxEmpty', '[choix] on ne demande que sur une condition polymère à case VIDE');
+has(VIEW, 'const kept = sequenceChoiceTicks(residueTicksRef.current, plan.sel);', '[choix] le choix garde la chaîne cochée (et tout ce qui n’est pas ambigu)');
+has(VIEW, '🧬 Sequence to write', '[choix] le panneau est nommé');
+has(VIEW, 'Only an EMPTY box is filled — a sequence you typed is never overwritten.', '[choix] …et dit qu’aucune case remplie n’est écrasée');
+has(VIEW, '✕ skip', '[choix] …et qu’on peut ne rien écrire du tout');
 has(VIEW, "{ key: 'protein', label: 'Proteins' },", '[bandeau] un groupe par nature');
 has(VIEW, "{ key: 'dna', label: 'DNA' },", '…ADN');
 has(VIEW, "{ key: 'rna', label: 'RNA' },", '…ARN');
 has(VIEW, 'const multiNature = polyGroups.length > 1;', '[bandeau] les titres n’apparaissent que sur un fichier MIXTE');
 has(VIEW, '{ticksRow(g.ticks)}', '[bandeau] les résidus de chaque nature sont rendus par le MÊME bouton');
 has(VIEW, 'strip collapsed — {polyTicks.length} residues', '[bandeau] le repli continue de dire combien de résidus sont masqués');
+
+/* ══ 6. PLUSIEURS SÉQUENCES DANS LE FICHIER : LAQUELLE ÉCRIRE ? ═══════════ */
+// 6a. Ce que le fichier contient : une candidate par (nature, chaîne).
+const cands = NAT.sequenceCandidatesOf(ticks);
+eq(cands.map((c) => c.key), ['protein|A', 'dna|B', 'dna|C', 'rna|D', 'dna|E', 'rna|F'],
+  'une candidate par nature ET par chaîne, dans l’ordre du fichier (5MC · eau · ligand exclus)');
+eq(cands[0].seq, 'AG', 'la première candidate est la séquence de la chaîne A');
+eq(cands[0].nature, 'protein', '…avec sa nature');
+eq(cands[0].chain, 'A', '…et sa chaîne (le NOM du PDB)');
+eq(cands.filter((c) => c.nature === 'dna').map((c) => c.seq), ['A', 'C', 'A'],
+  'les trois chaînes d’ADN ont chacune la leur (DA · DC · A désoxy)');
+eq(NAT.sequenceCandidatesOf([]), [], 'aucun résidu : aucune candidate');
+eq(NAT.sequenceCandidatesOf(null), [], '…et rien ne casse sans liste');
+
+// 6b. Les natures AMBIGUËS : celles que plusieurs chaînes servent.
+eq(NAT.ambiguousSequenceNatures(cands), ['dna', 'rna'],
+  'trois chaînes d’ADN et deux d’ARN : ces deux natures demandent un choix');
+const singleChains = ticks.filter((t) => ['A', 'B', 'D'].includes(t.chainname));
+eq(NAT.ambiguousSequenceNatures(NAT.sequenceCandidatesOf(singleChains)), [],
+  'une seule chaîne par nature : rien à demander (comportement d’avant)');
+
+// 6c. Le choix : la chaîne cochée, et tout ce qui n’est PAS ambigu.
+const pickedParts = H.structureSequenceParts(NAT.sequenceChoiceTicks(ticks, { dna: 'dna|C', rna: 'rna|F' }));
+eq(pickedParts.dna.seq, 'C', 'seule la chaîne cochée part dans la case d’ADN');
+eq(pickedParts.dna.chains, ['C'], '…et la case ne nomme que cette chaîne');
+eq(pickedParts.rna.seq, 'A', 'la chaîne d’ARN cochée part aussi');
+eq(pickedParts.protein.seq, 'AG', 'la protéine (jamais ambiguë) part comme avant');
+const keptWithoutPick = H.structureSequenceParts(NAT.sequenceChoiceTicks(ticks, { dna: 'dna|B' }));
+eq(keptWithoutPick.rna.seq, '', 'une nature ambiguë NON cochée n’écrit rien');
+eq(keptWithoutPick.dna.seq, 'A', '…sans toucher à la chaîne choisie');
+const written = NAT.structureSequencePatch({}, 'protein', 'AGACA', pickedParts);
+eq(written.proteinSequence, 'AG', 'le choix atterrit dans le champ de sa nature, via le MÊME patch');
+eq(written.nucleicSequences, { dna: 'C', rna: 'A' }, '…ADN et ARN dans le magasin des natures');
+
+// 6d. Un .gro sans nom de chaîne : UNE candidate par nature — donc rien à
+//     demander, la case se remplit comme avant.
+const groTicks = [
+  { resno: 1, resname: 'ALA', code: 'A', nature: 'protein', chainid: '', chainname: '' },
+  { resno: 2, resname: 'GLY', code: 'G', nature: 'protein', chainid: '', chainname: '' },
+];
+const groCands = NAT.sequenceCandidatesOf(groTicks);
+eq(groCands.length, 1, 'un .gro sans nom de chaîne donne UNE candidate pour toute la nature');
+eq(groCands[0].key, 'protein|', '…de clé sans chaîne');
+eq(groCands[0].seq, 'AG', '…et avec la séquence entière');
+eq(NAT.ambiguousSequenceNatures(groCands), [], '…donc aucune question : la case est remplie directement');
+eq(NAT.sequenceChoiceTicks(groTicks, {}).length, 2, 'et tous ses résidus partiront');
+
+// 6e. Le compte, dans les deux cas : sans nature ambiguë RIEN n'est enlevé ;
+//     avec des natures ambiguës et aucun choix, seuls les résidus non ambigus
+//     partent (ici la seule chaîne protéique du complexe).
+eq(NAT.sequenceChoiceTicks(singleChains, {}).length, 4,
+  'sans nature ambiguë, sequenceChoiceTicks n’enlève AUCUN résidu polymère (ALA · GLY · DA · U)');
+eq(NAT.sequenceChoiceTicks(ticks, {}).length, 2,
+  'avec des natures ambiguës et aucun choix, seuls les résidus des natures non ambiguës partent');
+
+// 6f. LE SCÉNARIO COMPLET (la demande), sur un VRAI homodimère parsé par NGL :
+//     deux chaînes protéiques dans le même .pdb, la case vide, l'utilisateur
+//     choisit la chaîne B.
+const homoText = [
+  ...recast(prot, { chain: 'A', resno: 1, serial0: 1 }),
+  ...recast(prot, { resname: 'GLY', chain: 'A', resno: 2, serial0: 101 }),
+  ...recast(prot, { resname: 'SER', chain: 'B', resno: 1, serial0: 201 }),
+  'END',
+].join('\n');
+const homo = await NGL.autoLoad(new Blob([homoText], { type: 'text/plain' }), { ext: 'pdb' });
+const homoTicks = H.collectResidueTicks({ structure: homo });
+const homoCands = NAT.sequenceCandidatesOf(homoTicks);
+eq(homoCands.map((c) => c.key), ['protein|A', 'protein|B'], 'un homodimère donne DEUX candidates de la même nature');
+eq(homoCands.map((c) => c.seq), ['AG', 'S'], '…chacune avec SA séquence (la chaîne A a deux résidus, la B un seul)');
+eq(NAT.ambiguousSequenceNatures(homoCands), ['protein'],
+  '…donc la nature protéique est ambiguë : c’est là qu’il faut DEMANDER');
+// Ce qui se passait AVANT ce choix : les deux chaînes bout à bout.
+eq(H.structureSequenceParts(homoTicks).protein.seq, 'AGS',
+  'sans choix, les deux chaînes étaient écrites bout à bout — une séquence qui n’existe nulle part');
+// Le choix de la chaîne B, de bout en bout : la bonne case, la bonne séquence.
+const homoChosen = H.structureSequenceParts(NAT.sequenceChoiceTicks(homoTicks, { protein: 'protein|B' }));
+eq(homoChosen.protein.chains, ['B'], 'la chaîne B est celle qui part');
+eq(homoChosen.protein.seq, 'S', '…seule (jamais A + B)');
+const homoPage = NAT.structureSequencePatch({}, 'protein', homoChosen.protein.seq, homoChosen);
+eq(homoPage.proteinSequence, 'S', 'la case « Proteins » de la page reçoit la chaîne choisie');
+const homoKept = NAT.structureSequencePatch({ proteinSequence: 'MKWV' }, 'protein', homoChosen.protein.seq, homoChosen);
+eq(homoKept.proteinSequence, undefined,
+  '…et une case déjà écrite n’est JAMAIS écrasée par ce choix (le patch ne touche pas `proteinSequence`)');
+eq(NAT.sequenceForMoleculeType({ proteinSequence: 'MKWV', ...homoKept }, 'protein'), 'MKWV',
+  'la séquence écrite à la main reste celle qu’affiche la page');
 
 console.log(`_sequence_natures_test.mjs — ${passed} assertions OK`);

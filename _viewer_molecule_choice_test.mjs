@@ -60,19 +60,31 @@ has('const [sectionVis, setSectionVis] = useState({});', '…et les ✔ de secti
 
 /* ── 2. LE CHOIX DE LA MOLÉCULE (la référence de « 🎯 Fit to chosen ») ───── */
 has('const chooseMol = (key) => {', 'choisir une molécule est UN geste, nommé');
-has('onClick={() => chooseMol(molKey)}', '…et chaque espace a son bouton ★');
-has("★ {chosen ? 'main' : 'set main'}",
-  '…qui DIT « main » — la référence — au lieu d’un « chosen » discret (le rapport de cette session : « You say that the main is the molecule to move but there is no way to define the main. »)');
+has('onClick={() => chooseMol(molKey)}', '…et chaque espace a son bouton « main »');
+has("{chosen ? 'main' : 'set main'}</button>",
+  '…qui DIT « main » — la référence — au lieu d’un « chosen » discret (le rapport de cette session : « You say that the main is the molecule to move but there is no way to define the main. »), et l’astérisque ★ qui décorait ce bouton a été retirée depuis.');
+/* ⚠ LES ★ DES ESPACES ONT ÉTÉ RETIRÉES cette session. Le rapport, mot pour mot :
+   « in the middle of the viewer I see two stars (three in total with the correct one
+   at the top right). they should be removed. » — les deux ★ du MILIEU étaient ceux
+   des espaces de molécule (un par molécule), que la ligne ★ du HAUT de la barre
+   doublait inutilement ; l'astérisque est donc parti, le bouton et son geste restent. */
+gone("★ {chosen ? 'main' : 'set main'}", '…et les ★ du milieu ne sont plus rendues');
+has("{chosen ? 'main' : 'set main'}</button>", 'le bouton « main » / « set main » de chaque espace est intact (seul l’astérisque est partie)');
+
 has('★ main: {molNameOf(selectedMolKey)}',
   'la barre NOMME en permanence la molécule de référence (on ne peut plus se demander laquelle c’est)');
 has('★ main: {molNameOf(selectedMolKey)} · a drag on a molecule turns/slides it',
   '…et la ligne dit à QUOI elle sert : le geste de la souris ET le fit');
-has('🖱 drag a molecule: turn · right-drag: slide',
-  'les deux boutons de §2 sont remplacés par UNE pastille qui dit le geste (le rapport : « The separated move and rotate buttons are impractical »)');
+/* ⚠ LA PASTILLE A ÉTÉ RETIRÉE cette session : la demande (« the button “drag a
+   molecule: turn · right-drag: slide” seems useless and you can remove it ») a
+   supprimé son rendu ET son titre. Ce qui RESTE — et que la barre continue de
+   dire — c'est la ligne ★ « main: … », qui nomme la molécule de référence. */
+gone('🖱 drag a molecule: turn · right-drag: slide',
+  'la pastille du geste n’est plus rendue');
+gone('Drag ON a molecule to turn it about its own centre (left button)',
+  '…ni son titre');
 gone("const [mouseMode, setMouseMode] = useState('off');",
   '…le mode à armer a disparu : le geste est la souris, il n’y a plus rien à sélectionner avant de placer');
-has('Drag ON a molecule to turn it about its own centre (left button)',
-  '…et la pastille dit le geste entier (gauche = tourner, droit = glisser, fond · Alt = caméra)');
 has('const chosen = selectedMolKey === molKey;', '…et l’espace choisi porte un cadre violet');
 has("${chosen ? 'border-violet-400 bg-violet-50/60' : 'border-slate-300 bg-slate-50/70'}",
   '…le cadre de l’espace suit le choix');

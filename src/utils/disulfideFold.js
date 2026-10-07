@@ -29,6 +29,30 @@
    reste dessinée même non fermée (CONECT SG–SG écrit par
    proteinSequenceToPdbText).
 
+   ⚠ ET LE PONT ÉTIRÉ EST CONDUIT PAR LES GESTES DU 🧬 (cette session) : le bouton
+   « ⚭ Fold » a été retiré, mais un pont à des dizaines d'ångströms ne se refermait
+   toujours pas — les moteurs du champ FIGENT la famille « liaisons » (une torsion
+   rigide ne change pas une longueur : voir `engine.constants` de
+   utils/structureCalc.js), donc l'écart pesait dans le score sans qu'aucun mouvement
+   ne rapproche jamais les deux Sγ : « I only want the disulphide to be at the default
+   bond length after minimization. » `stretchedDisulfideTermsOf` (plus bas) rend le
+   terme de DISTANCE que le viewer ajoute, pour chaque pont étiré, aux contraintes des
+   quatre gestes — le pont est alors CONDUIT vers sa longueur de liaison par le même
+   chemin qu'une ligne de la table des distances, et le rapport du geste dit où il en
+   est (aucune promesse de fermeture : c'est la géométrie qui décide).
+
+   ⚠ …ET SA LIAISON EST RETIRÉE DU GRAPHE QUE CES MÊMES GESTES LISENT — le second
+   rapport de cette session : « when a disulphide is declared this long bond created by
+   two far cysteines seems blocked and can never approach the custom disulphide
+   distance ». Le terme de distance ne suffisait PAS : la liaison SG–SG écrite par la
+   page referme le graphe sur un macrocycle, donc `rotatableBondsOf` compte toutes les
+   charnières du segment entre les deux Cys comme des liaisons de CYCLE et les écarte du
+   tirage — mesuré sur le modèle de la page (pont Cys3–Cys10 à 22.6 Å) : 24 canaux et
+   AUCUN qui sépare les deux Sγ, contre 47 dont 23 sans cette liaison. Les quatre gestes
+   reçoivent donc le graphe de `withoutStretchedDisulfideBonds` : un pont ÉTIRÉ perd sa
+   fausse liaison (il est CONDUIT par le terme de distance), un pont FERMÉ garde la
+   sienne — c'est une vraie liaison S–S, et c'est elle qui tient les deux Sγ.
+
    Module PUR (aucun import) : la géométrie est INJECTÉE (`sgPositions`), donc
    le test peut la remplacer par une chaîne jouet, et la page par le vrai
    constructeur NeRF. Aucune fonction d'ici ne modifie ses arguments.
@@ -36,12 +60,118 @@
 
 export const SS_BOND_LENGTH = 2.05;            // Å — le S–S d'un pont réel
 export const SS_BOND_TOLERANCE = 0.35;         // Å — « le pont peut se fermer »
+export const SS_DRIVE_WEIGHT = 1;              // ⚖ poids du terme qui CONDUIT un pont étiré
 export const SS_CLASH_MIN = 3.2;               // Å — répulsion Sγ ↔ Cα
 export const MAX_MOVABLE_RESIDUES = 40;        // bornes de la fenêtre détendue
 export const CHI1_ROTAMERS = [-60, 60, 180];   // degrés — g−, g+, trans
 export const DEFAULT_FOLD_SEED = 0x9e3779b9;   // graine fixe : résultat stable
 const TAU = Math.PI * 2;
 const DEG = Math.PI / 180;
+
+/** ⚠ LES PONTS ÉTIRÉS, CONDUITS À LEUR LONGUEUR DE LIAISON — la demande de cette session,
+ *  mot pour mot : « A bond between cysteines is correctly formed when I define the couples
+ *  of cysteines making a disulphide but the length of this bond is the distance between the
+ *  cysteines in the structure present. If the protein is not folded to approach the two
+ *  cysteines, this bond can be tens of ångströms. When I do MD or energy minimization or
+ *  structure calculation this long non realistic bond does not change and forces the
+ *  structure in an elongated form. I only want the disulphide to be at the default bond
+ *  length after minimization. »
+ *
+ *  POURQUOI IL FAUT UN TERME À PART, et pas seulement la liaison du graphe : les moteurs
+ *  (recuit, dynamique, minimisation, trempe) ne relisent QUE les familles qu'une torsion
+ *  rigide peut changer — et une LONGUEUR de liaison n'en est pas, c'est écrit noir sur
+ *  blanc dans utils/structureCalc.js (`engine.constants` : « une torsion rigide ne change
+ *  NI une longueur, NI un angle, NI un cycle plan »). Le terme de liaison d'un pont étiré
+ *  est donc calculé UNE fois puis FIGÉ : son écart de dizaines d'ångströms pèse dans le
+ *  score, mais aucun mouvement ne rapprochera jamais les deux Sγ — c'est très exactement
+ *  le rapport ci-dessus. Le pont doit donc être porté par un terme de DISTANCE, celui-là
+ *  relu à chaque image : le même mécanisme que les lignes de la table des distances du 🧬,
+ *  avec la longueur du pont réel (2.05 Å) pour cible.
+ *
+ *  Ce que cette fonction dit, et rien de plus : pour chaque pont dont les deux Sγ ne sont
+ *  PAS dans la fenêtre de liaison (SS_BOND_LENGTH ± SS_BOND_TOLERANCE — la même que le
+ *  bouton ⚭ et que le repliement), elle rend le couple `{ i, j, target, weight }` à donner
+ *  aux moteurs. La cible est TOUJOURS la longueur de la liaison, jamais la distance
+ *  trouvée. Un pont DÉJÀ fermé ne rend aucun terme : sa vraie liaison le tient, et le
+ *  conduire serait compter deux fois la même chose.
+ *
+ * @param {{bridges?: Array<{atomIndex1:number, atomIndex2:number, distance?:number|null}>,
+ *          length?:number, tolerance?:number, weight?:number}} spec
+ *   `bridges` = ce que `applyDisulfideDisplay` (utils/disulfideBonds.js) a trouvé DESSINÉ
+ *   dans le modèle : deux indices d'atomes et la distance Sγ–Sγ de l'écran.
+ * @returns {Array<{i:number, j:number, target:number, weight:number}>} un couple par pont
+ *   étiré, prêt pour `restraints` (▶ Run, ▶ MD, ⚒ Minimise, ⟳ Energy).
+ */
+/* LE PRÉDICAT UNIQUE — « ce pont est ÉTIRÉ », écrit UNE fois : le terme qui le CONDUIT
+   (`stretchedDisulfideTermsOf`) et le filtre qui RETIRE sa liaison du graphe des moteurs
+   (`withoutStretchedDisulfideBonds`) ne peuvent pas juger deux choses différentes. */
+export const isStretchedDisulfideBond = (b, {
+  length = SS_BOND_LENGTH, tolerance = SS_BOND_TOLERANCE,
+} = {}) => {
+  if (!b || !Number.isInteger(b.atomIndex1) || !Number.isInteger(b.atomIndex2)) return false;
+  if (b.atomIndex1 === b.atomIndex2) return false;
+  /* ⚠ UNE DISTANCE ABSENTE N'EST PAS UNE DISTANCE NULLE : `distance: null` veut dire « les
+     deux Sγ n'ont pas de coordonnées » (la même lecture que `describeDisulfideBond`), donc
+     il n'y a rien à conduire — et `Number(null)` vaut 0, ce qui ferait passer ce pont-là
+     pour un pont à zéro ångström. */
+  if (b.distance == null) return false;
+  const d = Number(b.distance);
+  return Number.isFinite(d) && Math.abs(d - length) > Math.max(0, Number(tolerance) || 0);
+};
+
+export const stretchedDisulfideTermsOf = ({
+  bridges = [], length = SS_BOND_LENGTH, tolerance = SS_BOND_TOLERANCE,
+  weight = SS_DRIVE_WEIGHT,
+} = {}) => Array.from(bridges || [])
+  .filter((b) => isStretchedDisulfideBond(b, { length, tolerance }))
+  .map((b) => ({ i: b.atomIndex1, j: b.atomIndex2, target: length, weight }));
+
+/** LE GRAPHE QUE LES MOTEURS LISENT — la liaison SG–SG d'un pont ÉTIRÉ n'y est PLUS.
+ *
+ *  POURQUOI IL NE SUFFISAIT PAS DE CONDUIRE LE PONT (le second rapport de cette session :
+ *  « when a disulphide is declared this long bond created by two far cysteines seems
+ *  blocked and can never approach the custom disulphide distance ») : cette liaison
+ *  n'existe que parce que la page l'ÉCRIT (le CONECT SG–SG de
+ *  `proteinSequenceToPdbText`, pour que NGL dessine un pont) ; entre deux Sγ à vingt
+ *  ångströms ce n'est pas une liaison covalente, mais les moteurs du champ la lisent
+ *  comme telle. Or elle REFERME le graphe de la molécule sur un MACROCYCLE : toutes les
+ *  charnières du segment entre les deux Cys deviennent des liaisons de CYCLE, et
+ *  `rotatableBondsOf` les écarte du tirage (`ring`) — donc plus aucun canal ne peut
+ *  changer la distance Sγ–Sγ et le terme de distance n'a plus rien à conduire.
+ *  MESURÉ sur le modèle de la page (12 résidus, pont Cys3–Cys10 dessiné à 22.6 Å,
+ *  122 atomes, 122 liaisons) : 24 canaux et AUCUN qui sépare les deux Sγ avec la
+ *  liaison ; 47 canaux dont 23 qui les séparent sans elle — et le même calcul conduit
+ *  le pont de 22.6 Å à 2.6 Å au lieu de le laisser à 22.6 Å.
+ *
+ *  ⚠ SEULS LES PONTS ÉTIRÉS SONT RETIRÉS : un pont FERMÉ (dans la fenêtre de liaison)
+ *  EST une vraie liaison S–S, et c'est elle qui tient les deux Sγ — la retirer les
+ *  laisserait dériver. Les deux listes s'accordent par construction (même prédicat).
+ *
+ *  `bonds` accepte les trois écritures du dossier ([[i, j]], [[i, j, ordre]],
+ *  [{i, j, order}] — voir `bondGraphOf`, utils/geometryRelax.js) et la liste est rendue
+ *  TELLE QUELLE quand aucun pont n'est étiré : le cas ordinaire ne copie rien.
+ */
+export const withoutStretchedDisulfideBonds = ({
+  bonds = [], bridges = [], length = SS_BOND_LENGTH, tolerance = SS_BOND_TOLERANCE,
+} = {}) => {
+  const list = Array.isArray(bonds) ? bonds : Array.from(bonds || []);
+  const drop = new Set();
+  Array.from(bridges || [])
+    .filter((b) => isStretchedDisulfideBond(b, { length, tolerance }))
+    .forEach((b) => drop.add(b.atomIndex1 < b.atomIndex2
+      ? `${b.atomIndex1}-${b.atomIndex2}` : `${b.atomIndex2}-${b.atomIndex1}`));
+  if (!drop.size) return list;
+  const keyOf = (raw) => {
+    const a = Number(Array.isArray(raw) ? raw[0] : (raw && raw.i));
+    const b = Number(Array.isArray(raw) ? raw[1] : (raw && raw.j));
+    if (!Number.isInteger(a) || !Number.isInteger(b)) return null;
+    return a < b ? `${a}-${b}` : `${b}-${a}`;
+  };
+  return list.filter((raw) => {
+    const key = keyOf(raw);
+    return !key || !drop.has(key);       // une liaison illisible n'est jamais retirée par erreur
+  });
+};
 
 // Générateur déterministe (mulberry32) : le MÊME modèle donne toujours le MÊME
 // repliement, sinon un test ne pourrait rien affirmer et l'écran changerait à

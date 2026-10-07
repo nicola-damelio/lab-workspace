@@ -123,6 +123,10 @@ const structure = await NGL.autoLoad(new Blob([PDB], { type: 'text/plain' }), { 
 const BACKBONE = [0, 1, 2, 3, 5, 6, 7, 8];   // N · CA · C · O des deux résidus
 const SIDECHAIN = [4, 9, 10, 11];            // CB · CB · CG1 · CG2 (la ramification)
 const LIGAND = [12, 13];
+/* LA TRACE — les atomes par lesquels la SPLINE d'un cartoon/ribbon/tube passe
+   vraiment (`residue.traceAtomIndex` : le CA d'une protéine). Un tube ne dessine
+   QUE ceux-là ; un N ou un C est à ~1,2 Å de cette ligne, donc HORS du ruban. */
+const TRACE = [1, 6];
 const ATOM_COUNT = ATOMS.length;
 
 /* Une représentation RÉELLE de ngl 2.4 : l'élément porte le `name` (= le type),
@@ -175,26 +179,28 @@ const shared = drawnProxyRadiiOf({ structure, reprList: SHARED_LIST }, ATOM_COUN
 const plain = (f) => [...f].map((v) => (Number.isNaN(v) ? NaN : Number(v.toFixed(3))));
 const expectFor = (v, idx) => ATOMS.map((_, i) => (idx.includes(i) ? v : NaN));
 
-near(shared[0], 0.5, 1e-6, 'N1 (squelette) : 0,50 Å — le trait du TUYAU, comme avant');
+near(shared[1], 0.5, 1e-6, 'CA1 (LA TRACE) : 0,50 Å — le trait du TUYAU, qui court le long de la trace');
+near(shared[0], 0.25, 1e-6,
+  'N1 : 0,25 Å — le BÂTON, parce que le tuyau ne passe PAS par les N (ils sont à 1,2 Å de sa trace)');
 near(shared[10], 0.25, 1e-6,
   'CG1 (chaîne latérale) : 0,25 Å — le trait du BÂTON, qui est ce que NGL dessine là');
 near(shared[11], 0.25, 1e-6, '…idem CG2 : les deux branches de l’isoleucine ne sont plus des billes de 0,50 Å');
-eq(plain(shared), ATOMS.map((_, i) => (LIGAND.includes(i) ? NaN : (BACKBONE.includes(i) ? 0.5 : 0.25))),
-  'le vecteur entier : 0,50 Å sur le squelette, 0,25 Å sur les chaînes latérales, rien sur le ligand');
+eq(plain(shared), ATOMS.map((_, i) => (LIGAND.includes(i) ? NaN : (TRACE.includes(i) ? 0.5 : 0.25))),
+  'le vecteur entier : 0,50 Å sur la TRACE, 0,25 Å partout ailleurs, rien sur le ligand');
 eq(plain(links), ATOMS.map((_, i) => (LIGAND.includes(i) ? 0 : 1)),
   '…et TOUS les atomes du dessin restent LIÉS : le licorice est un trait de liaison à lui seul');
 
 /* Le tube seul : il ne répond plus que de son squelette — le reste n’est dessiné
    par personne dans cette composition, donc il ne projette rien (avant, chaque
    chaîne latérale recevait du tube une bille de 0,50 Å qu’il ne dessine pas). */
-eq(plain(radiiOf({ structure, reprList: [tubeOf()] })), expectFor(0.5, BACKBONE),
-  'un TUBE seul ne projette que son squelette : les chaînes latérales ne sont plus dessinées');
+eq(plain(radiiOf({ structure, reprList: [tubeOf()] })), expectFor(0.5, TRACE),
+  'un TUBE seul ne projette que sa TRACE : ni les N/C/O, ni les chaînes latérales');
 /* …et le bâton seul dessine tout ce qu’il liste, à son propre rayon. */
 eq(plain(radiiOf({ structure, reprList: [stickOf()] })), expectFor(0.25, [...BACKBONE, ...SIDECHAIN]),
   'un LICORICE seul projette ses 12 atomes à 0,25 Å — c’est lui qui porte les chaînes latérales');
 /* Le cartoon suit le tube (même genre « chaîne ») : ruban sur le squelette seul. */
-eq(plain(radiiOf({ structure, reprList: [cartoonOf()] })), expectFor(0.45, BACKBONE),
-  'un CARTOON (genre spline) ne répond lui aussi que du squelette — 0,45 Å de ruban');
+eq(plain(radiiOf({ structure, reprList: [cartoonOf()] })), expectFor(0.45, TRACE),
+  'un CARTOON (genre spline) ne répond lui aussi que de sa trace — 0,45 Å de ruban');
 
 
 /* ── 3. L'ANCIEN DÉFAUT, REPRODUIT : SANS AtomProxy, LA BILLE DOUBLE ─────────
@@ -230,8 +236,8 @@ eq(plain(ligandLinks), ATOMS.map((_, i) => (LIGAND.includes(i) ? 1 : 0)),
   '…et ses liens aussi : le tuyau reste rempli, il ne s’efface pas du masque');
 eq(plain(drawnProxyRadiiOf({ structure, reprList: [tubeOf('hetero'), tubeOf('protein')] }, ATOM_COUNT,
   new Float32Array(ATOM_COUNT).fill(1.7))),
-ATOMS.map((_, i) => (SIDECHAIN.includes(i) ? NaN : 0.5)),
-  'la porte est posée PAR REPRÉSENTATION : le tube du ligand dessine, celui du peptide est filtré');
+ATOMS.map((_, i) => ((TRACE.includes(i) || LIGAND.includes(i)) ? 0.5 : NaN)),
+  'la porte est posée PAR REPRÉSENTATION : le tube du ligand dessine sa trace, celui du peptide la sienne');
 
 
 /* ── 5. DE BOUT EN BOUT : LES PROXIES, PAR `atomsFromStage` ────────────────── */
@@ -244,11 +250,20 @@ const stage = {
   }],
 };
 const atoms = atomsFromStage(stage, 1e5);
+const hasEdge = (from, to) => {
+  for (let k = 0; k + 1 < atoms.edges.length; k += 2) {
+    if ((atoms.edges[k] === from && atoms.edges[k + 1] === to)
+      || (atoms.edges[k] === to && atoms.edges[k + 1] === from)) return true;
+  }
+  return false;
+};
 eq(atoms.total, 12, 'les 12 atomes du dessin — le ligand n’est dessiné par personne, donc il ne projette rien');
 eq(atoms.stride, 1, '…sans budget serré, donc un proxy par atome, dans l’ordre des indices');
-eq(atoms.count - 12, atoms.filled, 'les atomes d’abord, puis les proxies qui bouchent leurs liens');
-ok(atoms.filled > 0, '…et il y en a : le tube du squelette ET les bâtons se remplissent');
-near(atoms.radii[0], 0.5, 1e-6, 'le 1er atome du dessin (N1) porte le trait du TUYAU');
+eq(atoms.filled, atoms.edges.length / 2, '`filled` compte les capsules : deux sommets pour chacune');
+ok(hasEdge(1, 6),
+  '…dont celle de la TRACE du tuyau (CA1–CA2), tissée par le module même si le graphe des liaisons ne joint pas ces deux atomes');
+near(atoms.radii[0], 0.25, 1e-6, 'le 1er atome du dessin (N1) porte le trait du BÂTON (le tuyau ne passe pas par lui)');
+near(atoms.radii[1], 0.5, 1e-6, '…et CA1, la TRACE, celui du TUYAU');
 near(atoms.radii[4], 0.25, 1e-6, '…le 5e (CB1, première chaîne latérale) celui du BÂTON');
 near(atoms.radii[10], 0.25, 1e-6, '…et CG1 aussi : plus aucune chaîne latérale à 0,50 Å dans le proxy');
 

@@ -1495,12 +1495,20 @@ const details = [
 
           {showGeneral && (
             /* « Classification » et « Compounds & Biological Models » sont deux
-               sous-sections COURTES qui se suivaient verticalement : sur un
-               écran de bureau elles tiennent côte à côte (une colonne chacune,
-               empilées seulement quand la fenêtre est étroite), ce qui rend la
-               moitié de la hauteur à la page. */
-            <div className={`grid grid-cols-1 items-start gap-0 ${(showCompoundsSection || CompoundsSection) ? 'xl:grid-cols-2 xl:gap-x-4' : ''}`}>
-              <CollapsibleSection title="Classification" icon="🏷️" defaultOpen={false}>
+               sous-sections COURTES qui se suivaient verticalement : elles
+               tiennent côte à côte (une colonne chacune, Classification à
+               gauche) dès que la page est une page de bureau, ce qui rend la
+               moitié de la hauteur à la page.
+               Le palier était `xl` — et c'est là que « pas côte à côte » se
+               jouait : un palier Tailwind est en REM, or l'application écrit la
+               taille racine (échelle d'affichage, src/utils/uiScale.js — 15 px
+               par défaut). `xl` valait donc 1200 px (davantage encore si
+               l'échelle était agrandie) : sur un écran de portable les deux
+               volets restaient empilés alors que la page avait la place. `md`
+               vaut 720 px au grossissement par défaut et 768 px quand le
+               navigateur reprend son 16 px. */
+            <div className={`grid grid-cols-1 items-start gap-0 ${(showCompoundsSection || CompoundsSection) ? 'md:grid-cols-2 md:gap-x-4' : ''}`}>
+              <CollapsibleSection title="Classification" icon="🏷️" defaultOpen={false} className="min-w-0">
             <div className="max-w-xl flex flex-col gap-5">
               <div>
                 <label className="text-xs font-bold text-slate-600 uppercase mb-2 block">
@@ -1570,7 +1578,7 @@ const details = [
           </CollapsibleSection>
 
           {(showCompoundsSection || CompoundsSection) && (
-            <CollapsibleSection title="Compounds & Biological Models" icon="🧪" defaultOpen={false}>
+            <CollapsibleSection title="Compounds & Biological Models" icon="🧪" defaultOpen={false} className="min-w-0">
               {showCompoundsSection && (
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                   {showCompounds && (

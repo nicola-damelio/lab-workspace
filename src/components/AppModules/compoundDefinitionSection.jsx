@@ -11,6 +11,16 @@ import { RichTextEditor } from '../RichTextEditor';
 import { LinksManager } from './librarySections';
 import { CALC_INPUT_CLS, CALC_LABEL_CLS } from '../../utils/styles';
 import { stripHtml, calculateSequenceInfo, generateDnaFromProtein, calculateSmilesInfoAsync } from '../../utils/sequenceInfo';
+/* 📥 « Import CSV » — LA RELECTURE DU FICHIER DE LA LIBRAIRIE : elle vit dans
+   utils/libraryCsv.js, avec l'export de la page Librairie (un seul contrat,
+   donc un aller-retour qui ne peut plus décaler les colonnes). */
+import { parseLibraryCsv } from '../../utils/libraryCsv';
+/* 🧬 LA LIGNE SOUS LA CASE DE SÉQUENCE — la composition, la charge à pH 7 et l'ε₂₈₀. Le
+   composant partagé (src/components/SequenceReadingLine.jsx) la calcule lui-même avec le
+   module PUR des pKa (utils/sequenceCharge.js) : la MÊME ligne sous TOUTES les cases de
+   séquence de l'application (cette fiche, et les cases des pages NMR, MD et Docking), et le
+   MÊME modèle que le ⚙ « Params & Constraints » lit pour le pH. */
+import { SequenceReadingLine } from '../SequenceReadingLine';
 import { getMolecularWeightFromFormula } from '../DefinitionsExtra';
 
 export const CompoundDefinitionSection = ({
@@ -89,6 +99,13 @@ export const CompoundDefinitionSection = ({
       modifications: modText
     });
   }, [type, sequence, modText]);
+  /* 🧬 LA LECTURE DE LA SÉQUENCE — la composition, la charge à pH 7 et l'ε₂₈₀ : c'est
+     `SequenceReadingLine` qui la calcule (le module pur des pKa) avec la séquence ET le texte
+     des modifications (un capuchon change la charge), et rien du tout pour un type qui n'a pas
+     d'acides aminés.
+     ⚠ LA CASE EST DU HTML (RichTextEditor) : on lui passe `stripHtml(sequence)` — sinon les
+     lettres des BALISES (« div », « br »…) se compteraient comme des acides aminés. */
+
 
   const dnaPreview = useMemo(() => {
     if (type !== 'protein' || !stripHtml(sequence).trim()) return '';
@@ -199,62 +216,66 @@ export const CompoundDefinitionSection = ({
   };
 
   // ---- CSV BULK IMPORT HANDLER ----
+  /* 📥 « Import CSV » — LA MOITIÉ LECTURE DU MÊME CONTRAT que l'export de la
+     page Librairie (les deux vivent côte à côte dans utils/libraryCsv.js, où
+     l'en-tête de module dit tout). Ce qui a changé, et pourquoi : l'ancienne
+     version lisait les colonnes À LA POSITION (nom, séquence, type) alors que le
+     fichier exporté porte « Name,Type,Sequence/Formula,MW,Notes » — le TYPE
+     d'abord. Un aller-retour renversait donc le type et la séquence, gardait les
+     guillemets autour du nom, et versait les lignées cellulaires / plasmides /
+     solvants d'un export complet dans les composés. La relecture reconnaît
+     maintenant les COLONNES PAR LEUR EN-TÊTE (et garde l'ordre historique pour
+     les fichiers sans en-tête), décite les valeurs, ne lit QUE la section
+     « COMPOUNDS », et remet la masse et les notes du fichier. */
   const handleCsvImport = (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
     const reader = new FileReader();
     reader.onload = (event) => {
-      const text = event.target.result;
-      const lines = text.split(/\r?\n/);
-      
-      let addedCount = 0;
-      
-      setCompoundMeta((prevMeta) => {
-        const nextMeta = { ...prevMeta };
-        const newNames = [];
-        
-        lines.forEach((line, i) => {
-          if (i === 0 && line.toLowerCase().includes('name')) return; // Skip header
-          if (!line.trim()) return;
-          
-          // Split by comma, tab, or semicolon
-          const cols = line.split(/[,;\t]/).map(s => s.trim());
-          const name = cols[0];
-          const seq = cols[1] || '';
-          const importedType = cols[2] ? cols[2].toLowerCase() : 'protein';
-          
-          if (name) {
-            nextMeta[name] = {
-              ...(nextMeta[name] || {}),
-              name,
-              type: importedType,
-              sequence: importedType !== 'smiles' && importedType !== 'formula' ? seq : '',
-              smiles: importedType === 'smiles' ? seq : '',
-              formula: importedType === 'formula' ? seq : '',
-              notes: 'Imported from CSV',
-              updatedAt: Date.now()
-            };
-            newNames.push(name);
-            addedCount++;
+      const { compounds: rows, sections, sectioned } = parseLibraryCsv(event.target.result);
+
+      if (rows.length === 0) {
+        alert(sectioned
+          ? `No compound was found in this file — it carries ${sections.join(' · ')}, but no COMPOUNDS section. Nothing was changed.`
+          : 'No compound was found in this file — nothing was changed.');
+        return;
+      }
+
+      /* Une entrée par nom (la dernière ligne d'un même nom gagne) : les champs
+         que le fichier ne porte pas (modifications, liens, longueur, ADN
+         optimisé) RESTENT ceux du composé s'il existait déjà. */
+      const entries = {};
+      rows.forEach((row) => {
+        const before = compoundMeta[row.name] || {};
+        entries[row.name] = {
+          ...before,
+          name: row.name,
+          type: row.type,
+          sequence: row.sequence,
+          smiles: row.smiles,
+          formula: row.formula,
+          notes: row.notes,
+          molecularWeight: row.molecularWeight == null ? (before.molecularWeight ?? null) : row.molecularWeight,
+          updatedAt: Date.now(),
+        };
+      });
+      const names = Object.keys(entries);
+
+      setCompoundMeta((prevMeta) => ({ ...prevMeta, ...entries }));
+
+      // Update the global custom compounds list
+      setCustomCmpds((prevCustom) => {
+        const nextCustom = [...prevCustom];
+        names.forEach((n) => {
+          if (!nextCustom.includes(n) && !nextCustom.some((c) => typeof c === 'object' && c && c.name === n)) {
+            nextCustom.push(n);
           }
         });
-        
-        // Update the global custom compounds list
-        setCustomCmpds((prevCustom) => {
-          const nextCustom = [...prevCustom];
-          newNames.forEach(n => {
-            if (!nextCustom.includes(n) && !nextCustom.some(c => typeof c === 'object' && c.name === n)) {
-              nextCustom.push(n);
-            }
-          });
-          return nextCustom;
-        });
-        
-        return nextMeta;
+        return nextCustom;
       });
 
-      setTimeout(() => alert(`Successfully imported ${addedCount} compounds!`), 100);
+      setTimeout(() => alert(`Successfully imported ${names.length} compound${names.length > 1 ? 's' : ''}!`), 100);
     };
     reader.readAsText(file);
     e.target.value = ''; // Reset input
@@ -426,6 +447,29 @@ export const CompoundDefinitionSection = ({
         </div>
       )}
       
+      {/* 🧬 LA LECTURE DE LA SÉQUENCE — SOUS LA CASE DE SÉQUENCE, SUR TOUTE LA LARGEUR : le
+          nombre de chaque acide aminé, la charge totale à pH 7 et l'ε₂₈₀ estimé. LA DEMANDE,
+          MOT POUR MOT : « Under the sequence field please write the number of each type of
+          aminoacids, the total charge at pH 7 and the estimated molar extinction coefficient.
+          Keep this information compact utilising as much horizontal space. In the library the
+          compound are defined with their modification, like acetylation or amidation. the
+          charge should keep this into account. »
+          ⚠ La charge est celle de utils/sequenceCharge.js — le pKa de CHAQUE chaîne latérale,
+          et les deux terminus GRATUITS par défaut (la règle : « If the sequence is written
+          directly into the sequence space, assume free termini »), retirés quand les
+          Modifications le disent. C'est la MÊME lecture que le pH du ⚙ Params & Constraints.
+          ⚠ ET LA MÊME LIGNE QUE TOUTES LES AUTRES CASES DE SÉQUENCE : le rendu, le calcul et
+          son explication vivent dans SequenceReadingLine (src/components/SequenceReadingLine.jsx,
+          qui lit lui-même le module pur) — une seule copie, donc des cases qui ne peuvent pas
+          diverger. Ici la séquence est encore du HTML (RichTextEditor) : on lui passe
+          `stripHtml(sequence)`. */}
+      <SequenceReadingLine
+        sequence={stripHtml(sequence)}
+        moleculeType={type}
+        modifications={modText}
+        className="mb-4"
+      />
+
       <div className="grid grid-cols-1 mb-4">
         <label className={CALC_LABEL_CLS}>Additional Notes</label>
         <textarea

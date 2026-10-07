@@ -1214,16 +1214,6 @@ export const BudgetPage = () => {
                   espace personnel de {meName}
                 </span>
               </div>
-              <p className="text-sm text-slate-500 mt-0.5 max-w-3xl">
-                Composez vos propres graphiques de suivi budgétaire — camembert, barres ou courbe —
-                puis enregistrez-les dans la base. Les sources suivent la structure actuelle du
-                budget : dépenses découpées comme les onglets de la page Dépenses (Achats /
-                Prestations internes / OM / Rémunérations de stage), lignes budgétaires &amp; soldes
-                (page Recettes : Achats BC signés, PI, OM payés, Stages et Remboursements déduits
-                du solde), OM prévus / souhaités, achats prévus / souhaités, le registre des
-                Remboursements (avec les états liquidatifs) et les devis &amp; BC de l’Approbation.
-                Chaque membre retrouve son tableau de bord à l’ouverture de la page.
-              </p>
             </div>
           </div>
           <div className="text-right shrink-0">

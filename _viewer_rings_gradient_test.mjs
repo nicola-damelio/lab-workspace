@@ -61,7 +61,6 @@ const VIEW = readFileSync(new URL('./src/components/NMRMoleculeViewer.jsx', impo
 const has = (needle, what) => ok(VIEW.includes(needle), `${what}\n  introuvable : ${needle}`);
 const CODE = VIEW.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 
-
 /* ── Extraction : `const name = (…) => { … };` et `const name = { … };` ──── */
 const sliceFn = (src, name) => {
   const start = src.indexOf(`const ${name} = (`);
@@ -144,6 +143,14 @@ const buildHelpers = (keys = {}, env = {}) => new Function('__window', [
   `const partMoveRef = { current: new Map() };`,
   `let plateRepaints = 0;`,
   `const requestSceneRepaint = () => { plateRepaints += 1; };`,
+  /* …ET 💧 ÉTEINT : l'écouteur du signal relit aussi le RÉSEAU DE PONTS HYDROGÈNE
+     (voir refreshHydrogenBonds), et ce qu'il lit d'abord, c'est la représentation du
+     bouton. Une suite de plaques ne clique jamais sur 💧, donc `current` reste `null`
+     et le VRAI `refreshHydrogenBonds` — extrait ci-dessous, pas une doublure — sort
+     sur son premier garde. La suite qui l'exécute pour de vrai (et qui lui donne une
+     représentation, un rythme et un réseau) est _viewer_hbonds_test.mjs, section 5. */
+  `const hbondRepRef = { current: null };`,
+  sliceFn(VIEW, 'refreshHydrogenBonds'),
   sliceFn(VIEW, 'refreshScenePlates'),
   sliceFn(VIEW, 'reapplyPartMoves'),
   sliceFn(VIEW, 'hookStructurePlates'),
@@ -195,7 +202,6 @@ const buildHelpers = (keys = {}, env = {}) => new Function('__window', [
 ].join('\n'))(env.window);
 const H = buildHelpers();
 const HS = buildHelpers({ sstruc: 'lab-test-sstruc', gradient: 'lab-test-gradient', elements: 'lab-test-elements', sugar: 'lab-test-sugar' });
-
 
 /* ══ 1. LA DÉCOUVERTE DES CYCLES ══════════════════════════════════════════ */
 // Un graphe de liaisons minimal : le squelette d'une purine (deux cycles FUSIONNÉS,
@@ -436,6 +442,9 @@ eq(mesh.geometry.attributes.color.count, plates.color.length / 3, '…et toutes 
 eq(mesh.geometry.index.count, plates.index.length, '…et tous les indices de triangle');
 eq(mesh.parameters.opacity, 1, 'par défaut la plaque est SOLIDE (opacity 1)');
 eq(mesh.transparent, false, '…donc pas de transparence');
+/* …et elle se voit des DEUX CÔTÉS : une plaque est un plan sans épaisseur, vue de
+   l'autre face elle doit rester dessinée (jamais un trou dans le cycle). */
+eq(mesh.parameters.side, 'double', 'les plaques sont rendues recto-verso (une plaque se voit des deux côtés)');
 // Ring transparency : 1 − t, poussé à NGL. Buffer#transparent = opacity < 1.
 const half = new NGL.MeshBuffer({ position: plates.position, normal: plates.normal, color: plates.color, index: plates.index }, { opacity: 0.5 });
 eq(half.parameters.opacity, 0.5, 'la transparence choisie part bien dans NGL');
@@ -487,7 +496,6 @@ eq(ranged, { 0: [3, 7], 1: [2, 2], all: [2, 7] }, 'une chaîne = ses propres bor
 eq(H.gradientRangesFor(null, 'protein'), null, 'sans structure : aucune borne (et aucun plantage)');
 eq(H.gradientRangesFor({}, 'protein'), null, 'une structure incomplète non plus');
 eq(H.gradientRangesFor({ eachAtom: (cb) => { cb({}); } }, 'protein'), null, 'un atome sans indices ne produit pas de bornes fausses');
-
 
 /* ══ 7. « ATOM COLOUR » : UN SEUL LECTEUR, QUATRE MÉTIERS ═════════════════ */
 // Avec les schémas enregistrés : « Secondary structure » et « Gradient » passent
@@ -585,10 +593,6 @@ ok(CODE.includes("value={look.opacity}") && CODE.includes("onChange={(e) => set(
 ok(CODE.includes('{ sub: \'ribose\', label: \'DNA/RNA ribose\''), 'la plaque du ribose est la row « DNA/RNA ribose » (Ring plates)');
 
 
-
-
-
-
 // 3. L'IMAGE SUIVANTE : les atomes bougent (la trajectoire), les liaisons NON — le
 //    graphe est le même, donc les anneaux sont les mêmes et la plaque ne fait que
 //    suivre ses atomes.
@@ -618,7 +622,6 @@ eq(HF.refreshRingPlates([fakeComp]), 1, 'la géométrie peut être réécrite à
 move(-1);
 eq(HF.refreshRingPlates([fakeComp]), 1, 'le retour à l’image 1 réécrit la plaque');
 eq(screenPos(), before, '…et elle revient sur les coordonnées de l’image 1');
-
 
 // 5. Le rendu n'est demandé QUE si quelque chose a réellement été réécrit.
 HF.plateFrame.componentRef.current = fakeComp;
@@ -659,14 +662,22 @@ eq(HF.plateFrame.reapplyPartMoves(fakeComp), 0,
   '…et le rejeu d’une image le dit : rien à replacer, rien d’écrit (une scène intacte reste intacte)');
 eq(HF.plateFrame.reapplyPartMoves(null), 0, '…même sans composant du tout');
 
+/* 8. UNE PLAQUE EST UN INSTANTANÉ : elle reste sur la dernière image reçue JUSQU'À ce
+   qu'une image la réécrive — c'est la différence entre « suit les images » (ce que la
+   section 9 vient de montrer) et « se replace tout seul », qui n'existe pas. */
+move(-2);                                    // retour aux coordonnées de l'image 1
+ok(screenPos().join() !== before.join(), 'une plaque est un INSTANTANÉ : elle reste sur la dernière image reçue');
+eq(HF.refreshRingPlates([fakeComp]), 1, '…jusqu’à ce que la prochaine image la réécrive');
+eq(screenPos(), before, '…et la voilà reposée sur les atomes de l’image 1');
+
 /* ── Le BRANCHEMENT : ce que la section 9 vient d'exécuter est bien celui du viewer ── */
 has('hookStructurePlates(component);', 'le chargement ACCROCHE les plaques de la structure');
 ok(VIEW.indexOf('componentRef.current = component;') < VIEW.indexOf('hookStructurePlates(component);'),
   '…APRÈS avoir retenu le composant : une image arrivée pendant le chargement est déjà suivie');
 has('const sig = comp && comp.structure && comp.structure.signals && comp.structure.signals.refreshed;',
   '…sur le signal des COORDONNÉES de la structure (jamais celui du lecteur de trajectoire)');
-has('sig.add(() => { reapplyPartMoves(comp); refreshScenePlates(); });',
-  'l’écoute est posée sur `refreshed`, et elle REJOUE D’ABORD les molécules que la main a déplacées dans le fichier (une molécule posée à côté de la protéine doit y rester quand l’image change — voir reapplyPartMoves) : les plaques, qui lisent les coordonnées, viennent après');
+has('sig.add(() => { reapplyPartMoves(comp); refreshScenePlates(); refreshHydrogenBonds(comp); });',
+  'l’écoute est posée sur `refreshed`, et elle REJOUE D’ABORD les molécules que la main a déplacées dans le fichier (une molécule posée à côté de la protéine doit y rester quand l’image change — voir reapplyPartMoves) : les plaques, qui lisent les coordonnées, viennent après, puis le réseau de 💧 qui lit les mêmes');
 has('if (refreshRingPlates(comps)) requestSceneRepaint();',
   '…et un rendu n’est demandé que si une plaque a ÉTÉ réécrite');
 has('const data = recipe.make();', 'la recette de la plaque est REJOUÉE sur la structure telle qu’elle est');
@@ -687,28 +698,6 @@ eq((CODE.match(/addRingPlateRep\(/g) || []).length, 3,
 eq((CODE.match(/const (markRingPlates|addRingPlateRep|refreshRingPlates|refreshScenePlates|hookStructurePlates) =/g) || []).length, 5,
   'chaque helper des plaques n’existe qu’UNE fois (aucune copie oubliée)');
 eq((CODE.match(/__platesHook/g) || []).length, 2, 'l’accroche ne peut être posée qu’UNE fois par structure');
-
-move(-2);                                    // retour aux coordonnées de l'image 1
-ok(screenPos().join() !== before.join(), 'une plaque est un INSTANTANÉ : elle reste sur la dernière image reçue');
-eq(HF.refreshRingPlates([fakeComp]), 1, '…jusqu’à ce que la prochaine image la réécrive');
-eq(screenPos(), before, '…et la voilà reposée sur les atomes de l’image 1');
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
@@ -773,6 +762,3 @@ eq(kept[0].__sec, undefined, 'aucune marque de rangée n’est inventée par le 
 
 /* ── Bilan ─────────────────────────────────────────────────────────────── */
 console.log(`_viewer_rings_gradient_test.mjs — ${passed} assertions OK`);
-
-eq(mesh.parameters.side, 'double', 'les plaques sont rendues recto-verso (une plaque se voit des deux côtés)');
-

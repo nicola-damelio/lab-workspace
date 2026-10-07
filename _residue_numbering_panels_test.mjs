@@ -105,21 +105,23 @@ cases.forEach(({ test, n }, ci) => {
 });
 
 /* ════════════ 2. LA BANDE DE SÉQUENCE PORTE LE NUMÉRO AFFICHÉ ════════════ */
-has(DATA, 'export const SequencePaintStrip = ({ residues, getLetter, meta, onApply, focusIdx, charLabel, residueNo, linkOf }) => {',
-  'la bande de séquence accepte le numéro affiché (et, avec les ponts disulfure, les résidus appariés)');
+has(DATA, 'export const SequencePaintStrip = ({ residues, getLetter, meta, onApply, focusIdx, charLabel, residueNo, linkOf, sheetOf }) => {',
+  'la bande de séquence accepte le numéro affiché (et, avec les ponts disulfure, les résidus appariés — et, avec un feuillet déclaré, les brins)');
 has(DATA, 'const numberAt = typeof residueNo === \'function\' ? residueNo : (i) => i + 1;',
   '…et retombe sur le rang dans la séquence quand aucune page ne le fournit');
 has(DATA, '<div className="text-[8px] text-slate-500 font-bold">{resNo}</div>',
   'la pastille écrit LE numéro du résidu (et non son rang)');
-has(DATA, 'const resNo = numberAt(i);', '…calculé une fois par pastille');
-has(DATA, 'title={`${r.name || r.char} ${resNo}: ${m.label}${link ? ` · ⚭ disulphide with ${link.partner}` : \'\'}`}',
+has(DATA, 'title={`${r.name || r.char} ${resNo}: ${m.label}${link ? ',
   'l’infobulle donne le même numéro que la pastille (plus de « Ala1 » qui contredit « 12 »)');
+has(DATA, ' · ⚭ disulphide with ${link.partner}',
+  '…et, pour une Cys appariée, le nom de son pont — la suite de la même infobulle y ajoute le brin de feuillet déclaré quand il y en a un');
+has(DATA, 'const resNo = numberAt(i);', '…calculé une fois par pastille');
 gone(DATA, '<div className="text-[8px] text-slate-500 font-bold">{i + 1}</div>',
   'l’ancien rang de séquence n’est plus écrit sous la lettre');
 eq(count(DATA, 'const SequencePaintStrip = ('), 1, 'la bande de séquence n’a qu’une définition');
 eq(count(SEC, 'const SequencePaintStrip = ('), 0,
   'la copie privée de NMRSections.jsx est supprimée (un correctif atteint les trois pages)');
-has(SEC, 'SequencePaintStrip\n} from \'./NMRData\';', 'la page NMR importe la bande partagée');
+has(SEC, 'SequencePaintStrip, BetaSheetEditor\n} from \'./NMRData\';', 'la page NMR importe la bande partagée (et le panneau du feuillet)');
 
 /* La règle INTERNE de la bande, extraite du source et RÉELLEMENT exécutée :
    la pastille écrit `numberAt(i)`, donc les numéros que la page lui donne. */
@@ -138,19 +140,20 @@ eq([0, 1, 2].map(makeNumberAt(undefined)), [1, 2, 3],
 const PAGES = DOCK + MD + SEC;
 eq(count(PAGES, '<SequencePaintStrip'), 4,
   'quatre bandes de séquence : Docking + MD (protéine, acide nucléique) + NMR');
-eq(count(PAGES, 'residueNo={residueNoOf}'), 4, '…et les quatre reçoivent le résolveur de la page');
+eq(count(PAGES, 'residueNo={residueNoOf}'), 7,
+  '…et les quatre bandes — plus les TROIS panneaux 🧵 du feuillet (NMR, MD, Docking), qui écrivent eux aussi des numéros affichés — reçoivent le résolveur de la page');
 
 has(DOCK, 'import { residueNumberResolver } from \'../utils/residueNumbering\';',
   'la page Docking lit la règle partagée');
 has(DOCK, 'const residueNoOf = residueNumberResolver(activeTest);',
   '…et se construit le résolveur de la condition');
-eq(count(DOCK, 'residueNo={residueNoOf}'), 1, 'la bande du Docking l’utilise');
+eq(count(DOCK, 'residueNo={residueNoOf}'), 2, 'la bande du Docking ET son panneau 🧵 l’utilisent');
 
 has(MD, 'import { residueNumberResolver } from \'../utils/residueNumbering\';',
   'la page MD lit la règle partagée');
 has(MD, 'const residueNoOf = residueNumberResolver(activeTest);', '…et se construit le résolveur');
-eq(count(MD, 'residueNo={residueNoOf}'), 2,
-  'les deux bandes MD (peinture secondaire ET formes A/B/Z) l’utilisent');
+eq(count(MD, 'residueNo={residueNoOf}'), 3,
+  'les deux bandes MD (peinture secondaire ET formes A/B/Z) et son panneau 🧵 l’utilisent');
 eq(count(MD, 'title="Sequence and structure"'), 2,
   '…ce sont bien les deux sous-sections « Sequence and structure »');
 

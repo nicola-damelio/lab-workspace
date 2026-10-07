@@ -192,7 +192,7 @@ const SESSION = new Function('localStorage', [
   // matériau (un look de sélection en porte un) et un `localStorage` de test.
   "const MATERIAL_PRESET_KEYS = ['auto', 'matte', 'gloss', 'metallic', 'glass'];",
   sliceBetween("const PYMOL_SESSION_KEY = 'labViewerPymolSession';", '\n/* ---- Which leaflet is which', 'session'),
-  'return { PYMOL_SESSION_KEY, loadPymolSession, savePymolSession, loadPymolSessionFor, pymolSessionKey, pymolSessionKeys, pymolSessionExperimentSlug, pymolSessionInstanceSlug, pymolScopeLabelOf };',
+  'return { PYMOL_SESSION_KEY, PYMOL_SESSION_VERSION, PYMOL_SESSION_V1, loadPymolSession, savePymolSession, loadPymolSessionFor, pymolSessionKey, pymolSessionKeys, pymolSessionExperimentSlug, pymolSessionInstanceSlug, pymolScopeLabelOf, pymolSessionOwnerOf, pymolSessionAcceptable };',
 ].join('\n'))({
   getItem: (k) => (store.has(k) ? store.get(k) : null),
   setItem: (k, v) => store.set(k, String(v)),
@@ -325,6 +325,78 @@ eq(SESSION.pymolScopeLabelOf(null, null).scope, 'viewer', 'hors page d’expéri
 has('const pymolScopeRef = useRef(null);', 'le panneau 🧪 reçoit la portée, calculée une fois');
 has('🧪 Kept for {pymolScopeRef.current.text}.', '…et l’ÉCRIT (la règle est vérifiable à l’écran)');
 
+/* ══ §2ter. L'EMPREINTE DE LA SESSION — LA FUITE FERMÉE PAR LES DONNÉES ═════════
+   LE RAPPORT DE CETTE SESSION : « La finestra selections che si genera facendo delle
+   selezioni con pymol, continua a comparire in tutti gli esperimenti e questo non deve
+   succedere. Deve comparire solo nelle instances dell'esperimento dove é stata creata e
+   non altrove! »
+
+   Une CLÉ de stockage peut se répéter (l'application groupe les instances par leur NOM,
+   une expérience sans nom n'a que sa condition, un viewer hors page n'a que la clé
+   générale) : la session enregistrée porte donc aussi l'IDENTITÉ du monde qui l'a créée,
+   et la relecture refuse une empreinte qui ne dit pas CE monde-là. */
+store.clear();
+const ownerA = SESSION.pymolSessionOwnerOf(null, { project: 'GEC', test: 'Mutant X', instance: 'A' });
+const ownerB = SESSION.pymolSessionOwnerOf(null, { project: 'GEC', test: 'Mutant Y', instance: 'B' });
+eq([ownerA.scope, ownerB.scope], ['experiment', 'experiment'],
+  'une expérience nommée : la portée est l’EXPÉRIENCE (toutes ses conditions)');
+ok(ownerA.owner !== ownerB.owner, '…et deux expériences différentes ont deux empreintes différentes');
+const sharedKey = SESSION.pymolSessionKeys(null, { project: 'GEC', test: 'Mutant X' })[0];
+SESSION.savePymolSession({ selections: [{ name: 'x', expr: 'all' }], owner: ownerA.owner, scope: ownerA.scope }, sharedKey);
+eq(SESSION.loadPymolSessionFor([sharedKey], ownerA).selections, [{ name: 'x', expr: 'all' }],
+  'l’expérience qui l’a créée la retrouve');
+eq(SESSION.loadPymolSessionFor([sharedKey], ownerB).selections, [],
+  '…et une AUTRE expérience qui produirait la MÊME clé n’en voit RIEN (l’empreinte tranche, la clé ne suffit pas)');
+const rawSaved = JSON.parse(store.get(sharedKey));
+eq([rawSaved.v, rawSaved.owner, rawSaved.scope], [SESSION.PYMOL_SESSION_VERSION, ownerA.owner, 'experiment'],
+  'la session enregistrée porte son empreinte : version · propriétaire · portée');
+
+// Une expérience SANS NOM n'a que sa condition : l'empreinte vaut pour elle seule.
+const condA = SESSION.pymolSessionOwnerOf('exp_A', null);
+const condB = SESSION.pymolSessionOwnerOf('exp_B', null);
+eq([condA.scope, condA.owner], ['condition', 'exp_A'], 'une expérience sans nom : la portée est sa CONDITION');
+SESSION.savePymolSession({ selections: [{ name: 'y', expr: 'all' }], owner: condA.owner, scope: condA.scope },
+  SESSION.pymolSessionKeys('exp_A', null)[0]);
+eq(SESSION.loadPymolSessionFor(SESSION.pymolSessionKeys('exp_A', null), condA).selections, [{ name: 'y', expr: 'all' }],
+  '…qui la retrouve');
+eq(SESSION.loadPymolSessionFor(SESSION.pymolSessionKeys('exp_A', null), condB).selections, [],
+  '…et une autre condition n’en voit RIEN, même sous la même clé');
+
+// Hors page d'expérience : la portée est le viewer, et l'empreinte vide n'entre nulle part.
+const viewerOwner = SESSION.pymolSessionOwnerOf(null, null);
+eq([viewerOwner.scope, viewerOwner.owner], ['viewer', ''],
+  'hors page d’expérience : la portée est le VIEWER (aucune empreinte à porter)');
+store.clear();
+SESSION.savePymolSession({ selections: [{ name: 'old', expr: 'resn TIP3' }] }, SESSION.PYMOL_SESSION_KEY);
+eq(SESSION.loadPymolSessionFor(SESSION.pymolSessionKeys(null, { project: 'GEC', test: 'Mutant X', instance: 'A' }), ownerA).selections,
+  [], 'la clé générale n’entre dans AUCUNE expérience (ni la clé ni l’empreinte ne le permettent)');
+eq(SESSION.loadPymolSessionFor(SESSION.pymolSessionKeys(null, null), viewerOwner).selections,
+  [{ name: 'old', expr: 'resn TIP3' }], '…mais un viewer monté hors page d’expérience relit la sienne');
+
+// UNE SESSION D'AVANT (aucune empreinte) RESTE LISIBLE sous la clé de SON expérience :
+// c'est la mémoire des versions précédentes, et rien n'est perdu pour l'utilisateur.
+store.clear();
+const ctxKey = SESSION.pymolSessionKeys(null, { project: 'GEC', test: 'Mutant X', instance: 'A' })[0];
+SESSION.savePymolSession({ selections: [{ name: 'before', expr: 'all' }] }, ctxKey);
+eq(SESSION.loadPymolSession(ctxKey).owner, '', '…et elle est bien lue SANS empreinte (version d’avant)');
+eq(SESSION.loadPymolSessionFor([ctxKey], ownerA).selections, [{ name: 'before', expr: 'all' }],
+  'une session d’avant reste lue sous la clé de contexte — la clé dit déjà de quelle expérience elle est');
+eq(SESSION.PYMOL_SESSION_V1, 1, '…la version d’avant est nommée, donc lisible pour toujours');
+eq(SESSION.PYMOL_SESSION_VERSION, 2, 'et la version courante est celle qui ÉCRIT l’empreinte');
+has('const pymolOwnerRef = useRef(null);', 'le viewer fige l’empreinte du monde où il est, au montage');
+has('pymolSessionOwnerOf(instanceKey, driveNaming)', '…dérivée de l’expérience que la page donne au viewer');
+has('if (!pymolSessionAcceptable(one, list[i], owner)) continue;',
+  '…et une session dont l’empreinte ne dit pas CE monde-là n’est jamais relue');
+has('owner: pymolOwnerRef.current.owner,', 'la session enregistrée porte son propriétaire');
+has('scope: pymolOwnerRef.current.scope,', '…et sa portée');
+// Les trois pages doivent parler la MÊME langue : la page MD ne donnait que sa condition,
+// donc la session des fenêtres de sélection ne pouvait pas être partagée par les instances
+// de l'expérience (et la clé générale restait son seul repli).
+const MD_SRC = readFileSync(new URL('./src/components/MDSections.jsx', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+ok(MD_SRC.includes("driveNaming={{ project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || '', instance: activeTest.instanceName || ''"),
+  'la page MD passe le MÊME contexte de nommage (projet · expérience · condition) que les pages NMR / Docking');
+
+
 // Le câblage : relue au montage, réécrite à chaque geste, et dite dans le journal.
 has("const PYMOL_SESSION_KEY = 'labViewerPymolSession';", 'la session a UNE clé de stockage — sa BASE');
 has('const pymolSessionKeysRef = useRef(null);',
@@ -332,8 +404,8 @@ has('const pymolSessionKeysRef = useRef(null);',
 has('pymolSessionKeys(instanceKey, driveNaming)',
   '…et dérivées de l’EXPÉRIENCE que la page donne au viewer (projet · expérience)');
 has('const pymolSessionKeyRef = useRef(null);', 'la clé où l’on ÉCRIT est la première de la liste');
-has('const [pymolSession] = useState(() => loadPymolSessionFor(pymolSessionKeysRef.current));',
-  'elle est relue au montage, dans la première clé qui porte une session');
+has('const [pymolSession] = useState(() => loadPymolSessionFor(pymolSessionKeysRef.current, pymolOwnerRef.current));',
+  'elle est relue au montage, dans la première clé qui porte une session ACCEPTABLE (voir pymolSessionAcceptable)');
 has('instanceKey = null,', 'la page peut nommer son instance (les trois pages y passent l’expérience ouverte)');
 has('const [selections, setSelections] = useState(() => pymolSession.selections);',
   '…et les fenêtres de sélection en partent');

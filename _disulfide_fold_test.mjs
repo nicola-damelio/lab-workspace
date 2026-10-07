@@ -10,11 +10,15 @@
        autres outils ;
      • une Cys engagée dans un pont n'a PLUS d'hydrogène de thiol (HG) : un
        thiol oxydé n'a pas de proton ;
-     • le bouton « ⚭ Fold for disulfides » du viewer DÉTEND φ/ψ des résidus
-       entre les deux Cys et essaie les trois rotamères χ1 (utils/
-       disulfideFold.js) jusqu'à ce que les deux Sγ soient à une distance de
-       liaison (2.05 Å ± 0.35). Le modèle écrit alors porte RÉELLEMENT ce
-       S–S : le test relit le PDB produit et mesure la distance en 3D ;
+     • le module pur utils/disulfideFold.js DÉTEND φ/ψ des résidus entre les deux
+       Cys et essaie les trois rotamères χ1 jusqu'à ce que les deux Sγ soient à
+       une distance de liaison (2.05 Å ± 0.35). Le modèle écrit alors porte
+       RÉELLEMENT ce S–S : le test relit le PDB produit et mesure la distance en
+       3D. ⚠ LE BOUTON « ⚭ Fold for disulfides » DU VIEWER A ÉTÉ RETIRÉ cette
+       session — la demande : « The “fold for disulphide” button does not work and
+       you can eliminate it but keep the “disulphide:shown/hidden” button. » Le
+       module et la fabrique de la page sont donc partis avec lui, et les
+       assertions qui suivaient le bouton disent maintenant son ABSENCE ;
      • quand la fenêtre déplacée ne suffit pas, le module le DIT
        (`converged: false`) et rend la distance obtenue — il n'invente jamais
        un pont ;
@@ -46,8 +50,12 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   foldProteinForDisulfides, movableResiduesFor, scoreFold,
-  SS_BOND_LENGTH, SS_BOND_TOLERANCE, MAX_MOVABLE_RESIDUES, CHI1_ROTAMERS, DEFAULT_FOLD_SEED,
+  SS_BOND_LENGTH, SS_BOND_TOLERANCE, SS_DRIVE_WEIGHT, MAX_MOVABLE_RESIDUES, CHI1_ROTAMERS, DEFAULT_FOLD_SEED,
+  stretchedDisulfideTermsOf, isStretchedDisulfideBond, withoutStretchedDisulfideBonds,
 } from './src/utils/disulfideFold.js';
+// Le lecteur des canaux de torsion : c'est lui qui mesure qu'un pont déclaré BLOQUE le
+// rapprochement des deux Sγ (les charnières du segment passent pour des liaisons de cycle).
+import { rotatableBondsOf } from './src/utils/structureCalc.js';
 // ⚭ « Disulfides: shown / hidden » — la règle qui RETIRE un pont du graphe de
 // liaisons de la structure affichée (module pur, aucun import).
 import { applyDisulfideDisplay, disulfideBondIndices, SG_ATOM_NAME } from './src/utils/disulfideBonds.js';
@@ -279,28 +287,35 @@ has(SEC, 'export const disulfidePairColor = (pairIndex) =>',
 has(SEC, 'linkOf={(i) => {', 'la bande de séquence reçoit les résidus appariés');
 has(SEC, 'return { pairIndex: pi, partner: residueNoOf(partner - 1), color: disulfidePairColor(pi) };',
   '…avec le numéro AFFICHÉ du partenaire (le 🔢, pas la position de séquence)');
-has(SEC, 'buildDisulfideFoldedStructure={buildDisulfideFoldedStructure}',
-  'la fabrique du modèle détendu part vers le viewer');
-has(SEC, 'foldProteinForDisulfides({ torsions: base, pairs, sgPositions })',
-  '…et c’est bien le module pur qui détend la chaîne');
-has(SEC, 'buildProteinBackbone(d.seq, torsions)', '…en passant les torsions détendues au constructeur NeRF');
-has(SEC, '{ cysDisulfides: activeTest.cysDisulfides }',
+/* ⚠ LE BOUTON « ⚭ Fold for disulfides » A ÉTÉ RETIRÉ (demande de la session) :
+   la fabrique de la page appelait le module pur, ce bouton l'appelait, et les
+   deux sont partis ensemble. Ce qui reste VRAI et continue d'être vérifié :
+   le module pur (sections 1 à 8) et l'interrupteur du DESSIN (section 9). */
+ok(!SEC.includes('const buildDisulfideFoldedStructure = useCallback'),
+  'la page ne fabrique plus de modèle détendu (la fabrique est partie avec le bouton)');
+ok(!SEC.includes('foldProteinForDisulfides({'),
+  '…et n’importe donc plus utils/disulfideFold.js');
+ok(!SEC.includes('buildDisulfideFoldedStructure={'),
+  '…et ne passe plus aucune fabrique au viewer');
+ok(!VIEW.includes('buildDisulfideFoldedStructure'),
+  'le viewer ne reçoit plus cette fabrique');
+ok(!VIEW.includes('foldForDisulfides'),
+  '…et le geste qui la sollicitait a disparu');
+ok(!VIEW.includes('⚭ Fold for disulfides\n'),
+  'le bouton ⚭ Fold for disulfides n’est plus rendu\n');
+has(SEC, 'cysDisulfides: activeTest.cysDisulfides,',
   'les ponts entrent aussi dans le modèle servi d’office (le CONECT est là sans clic)');
 
-has(DATA, 'residueNo, linkOf }', 'la bande de séquence partagée accepte les ponts');
+has(DATA, 'residueNo, linkOf, sheetOf }', 'la bande de séquence partagée accepte les ponts — et les brins de feuillet');
 has(DATA, "const linkAt = typeof linkOf === 'function' ? linkOf : () => null;",
   'sans la prop, la bande ne marque rien (MD et Docking sont intacts)');
 has(DATA, 'borderColor: link ? link.color : m.color', 'une Cys appariée prend la couleur de son pont');
 has(DATA, '⚭ disulphide with ${link.partner}', 'son infobulle nomme le partenaire');
 
-has(VIEW, 'buildDisulfideFoldedStructure = null,', 'le viewer reçoit la fabrique (optionnelle)');
-has(VIEW, 'const foldForDisulfides = () => {', 'et le geste qui la sollicite');
-has(VIEW, 'disabled={typeof buildDisulfideFoldedStructure !== \'function\'}',
-  'le bouton est inactif quand la page n’a aucun pont à détendre');
-has(VIEW, '⚭ Fold for disulfides', 'le bouton est nommé');
-has(VIEW, 'flashDisulfideFoldMsg(`${built.note', 'le message affiché est CELUI DE LA PAGE (distance réelle comprise)');
-has(VIEW, "'⚠️ Nothing to fold: this condition has no disulphide pair (or no protein sequence).'",
-  'et il dit quand il n’y a rien à détendre au lieu de ne rien faire');
+/* ⚠ Les six assertions du BOUTON ⚭ Fold for disulfides ont disparu avec lui : il
+   n'y a plus de prop `buildDisulfideFoldedStructure`, plus de `foldForDisulfides`,
+   plus de `flashDisulfideFoldMsg` ni de bouton à désactiver. Le gesture est
+   REDEVENU impossible — c'est la demande — et le module pur reste testé plus haut. */
 
 /* ════════════ 9. ⚭ « Disulfides: shown / hidden » : LA RÈGLE DU GRAPHE ════════════
    Cacher un S–S ne peut pas passer par le TEXTE : la passe de distances de NGL
@@ -420,10 +435,49 @@ eq(applyDisulfideDisplay(null), { bonds: [], removed: 0 }, 'une structure absent
 eq(applyDisulfideDisplay({ atomCount: 0, bondStore: { count: 0 } }), { bonds: [], removed: 0 },
   'une structure vide est ignorée');
 
+/* ---- (d2) LE PONT ÉTIRÉ, CONDUIT À SA LONGUEUR DE LIAISON ──────────────────
+   La demande de cette session, mot pour mot : « … When I do MD or energy minimization or
+   structure calculation this long non realistic bond does not change and forces the
+   structure in an elongated form. I only want the disulphide to be at the default bond
+   length after minimization. »
+
+   POURQUOI CE TERME EXISTE : les moteurs du champ FIGENT la famille « liaisons » (une
+   torsion rigide ne change pas une longueur — `engine.constants` de
+   utils/structureCalc.js), donc un pont à 10 Å pèse dans le score sans qu'aucun mouvement
+   ne rapproche jamais les deux Sγ. Le pont est donc porté par un terme de DISTANCE, celui
+   que les moteurs relisent à chaque image — et c'est ce que cette fonction rend. */
+const bridgesOf = (list) => list.map((b) => ({ atomIndex1: b[0], atomIndex2: b[1], distance: b[2] }));
+eq(stretchedDisulfideTermsOf(), [], 'sans pont : aucun terme — rien à conduire');
+eq(stretchedDisulfideTermsOf({ bridges: null }), [], 'une liste absente ne fait pas planter la règle');
+eq(stretchedDisulfideTermsOf({ bridges: bridgesOf([[4, 300, 10.4]]) }),
+  [{ i: 4, j: 300, target: SS_BOND_LENGTH, weight: SS_DRIVE_WEIGHT }],
+  '⚠ un pont à 10,4 Å rend UN terme de distance visé à la LONGUEUR DE LA LIAISON (2.05 Å) — jamais à la distance trouvée');
+eq(stretchedDisulfideTermsOf({ bridges: bridgesOf([[4, 300, SS_BOND_LENGTH]]) }), [],
+  '…et un pont DÉJÀ fermé n’en rend aucun : sa vraie liaison le tient, le conduire serait compter deux fois');
+eq(stretchedDisulfideTermsOf({ bridges: bridgesOf([[4, 300, SS_BOND_LENGTH + SS_BOND_TOLERANCE - 0.01]]) }), [],
+  'la fenêtre de fermeture est celle du repliement : un cheveu SOUS la limite de tolérance, le pont est encore un pont');
+eq(stretchedDisulfideTermsOf({ bridges: bridgesOf([[4, 300, SS_BOND_LENGTH + SS_BOND_TOLERANCE + 0.01]]) }).length, 1,
+  '…un cheveu au-delà, il est ÉTIRÉ et se conduit (donc les deux Sγ se rapprochent)');
+eq(stretchedDisulfideTermsOf({ bridges: bridgesOf([[4, 300, null], [4, 4, 9], ['a', 2, 9], [4, 300, 9]]) }),
+  [{ i: 4, j: 300, target: SS_BOND_LENGTH, weight: SS_DRIVE_WEIGHT }],
+  '⚠ un pont sans distance, un atome sur lui-même et un indice illisible sont ÉCARTÉS — il ne reste que le pont étiré');
+eq(stretchedDisulfideTermsOf({ bridges: bridgesOf([[1, 2, 9]]), length: 1.5, tolerance: 0.1, weight: 3 }),
+  [{ i: 1, j: 2, target: 1.5, weight: 3 }],
+  'la longueur, la fenêtre et le poids sont ceux qu’on donne (le module n’impose rien)');
+
 /* ---- (e) le viewer : le bouton, le geste, le compte rendu ------------------ */
 has(VIEW, "import { applyDisulfideDisplay } from '../utils/disulfideBonds';", 'le viewer importe la règle');
-has(VIEW, "import { SS_BOND_LENGTH, SS_BOND_TOLERANCE } from '../utils/disulfideFold';",
-  'la fenêtre de liaison est CELLE du repliement (une seule définition de « pont fermé »)');
+has(VIEW, 'SS_BOND_LENGTH, SS_BOND_TOLERANCE, stretchedDisulfideTermsOf,',
+  '⚠ …ET la fonction qui CONDUIT un pont étiré : la fenêtre de liaison est CELLE du repliement (une seule définition de « pont fermé », un seul conducteur)');
+has(VIEW, "} from '../utils/disulfideFold';", '…du module du pont, avec le reste de ses lectures');
+/* ⚠ LE PONT ÉTIRÉ EST CONDUIT PAR LES QUATRE GESTES — « I only want the disulphide to be at
+   the default bond length after minimization. » Le terme ajouté l'est dans la fabrique
+   UNIQUE des contraintes (voir _structure_calculation_test.mjs §la table), donc ▶ Run,
+   ▶ MD, ⚒ Minimise et ⟳ Energy le reçoivent ensemble, sans qu'aucun ne le recopie. */
+has(VIEW, 'stretchedDisulfideTermsOf({ bridges: disulfideDrawnRef.current.bonds })',
+  '⚠ le pont étiré entre dans les contraintes par un terme de distance (les moteurs FIGENT la famille « liaisons » : sans ce terme, les deux Sγ ne se rapprocheraient jamais)');
+has(VIEW, 'const disulfideConductedNote = () => {',
+  '…et les gestes qui le conduisent le DISENT (le rapport compte alors une distance de plus que la table)');
 has(VIEW, 'applyDisulfideDisplay(component, { hidden: !disulfidesShownRef.current })',
   'la règle est appliquée au CHARGEMENT, avant qu’une représentation ne lise le graphe');
 ok(VIEW.indexOf('applyDisulfideDisplay(component') > VIEW.indexOf('try { enforceCovalentProteinBonds(component); }'),
@@ -431,21 +485,94 @@ ok(VIEW.indexOf('applyDisulfideDisplay(component') > VIEW.indexOf('try { enforce
 has(VIEW, 'const [disulfidesShown, setDisulfidesShown] = useState(true);',
   'le pont est AFFICHÉ par défaut (rien ne bouge tant que le bouton n’est pas cliqué)');
 has(VIEW, 'const toggleDisulfideBonds = () => {', 'le geste existe');
-has(VIEW, "{disulfidesShown ? '⚭ Disulfides: shown' : '⚭ Disulfides: hidden'}", 'le bouton dit SON état');
+has(VIEW, "{disulfidesShown ? '⚭ SS: shown' : '⚭ SS: hidden'}", 'le bouton dit SON état (libellé COURT : la demande de la session des noms courts — « SS:shown/hidden » au lieu de « Disulfides:shown/hidden »)');
 has(VIEW, 'disabled={disulfideDrawn.bonds.length === 0}',
   'le bouton est inactif quand la structure à l’écran ne dessine aucun pont');
 has(VIEW, "flashDisulfideShowMsg('⚠️ No disulphide bond is drawn in this model — nothing to hide.",
-  '…et le geste le DIT au lieu de ne rien faire (comme ⚭ Fold for disulfides)');
+  '…et le geste le DIT au lieu de ne rien faire');
 has(VIEW, 'requestStructureLoad({ ...(loadRequest || {}), ts: Date.now() });',
   'cacher — puis remontrer — ressert LE MÊME modèle (l’entonnoir du ⚗️ rebuild des hydrogènes)');
 has(VIEW, '⚠️ drawn but stretched (the two Sγ are not at bonding distance)',
   'un pont dessiné mais ÉTIRÉ est dit tel : sa distance réelle, pas une promesse');
-has(VIEW, 'drawn but STRETCHED — ⚭ Fold for disulfides, right here, relaxes the chain until the two Sγ can meet.',
-  '…et le compte rendu nomme le geste qui essaie de le fermer au lieu de faire croire à une liaison');
+has(VIEW, 'drawn but STRETCHED: the two Sγ are further apart than the S–S bond length',
+  '…et le compte rendu dit qu’un pont étiré n’est PAS une liaison (le bouton qui essayait de le fermer a été retiré)');
 has(VIEW, 'const describeDisulfideBond = (b) => {', '…par une seule description, pont par pont');
 // La DÉFINITION reste à la page : le viewer ne touche pas au modèle qu’elle écrit.
 has(SEC, 'cysDisulfides.forEach(([a, b]) => emitBond(`SG@${a - 1}`, `SG@${b - 1}`));',
   'la page écrit toujours le CONECT du pont : l’interrupteur ne touche que le DESSIN');
+
+/* ---- (d3) LA FAUSSE LIAISON DU PONT ÉTIRÉ, RETIRÉE DU GRAPHE DES MOTEURS ------------
+   Le second rapport de cette session : « when a disulphide is declared this long bond
+   created by two far cysteines seems blocked and can never approach the custom
+   disulphide distance ». Le terme de distance de (d2) ne suffisait donc PAS, et voici
+   pourquoi : le CONECT SG–SG que la page écrit pour qu'NGL DESSINE le pont REFERME le
+   graphe sur un macrocycle — toutes les charnières du segment entre les deux Cys passent
+   pour des liaisons de CYCLE (`rotatableBondsOf`), sortent du tirage, et plus AUCUN canal
+   ne peut changer la distance Sγ–Sγ. `withoutStretchedDisulfideBonds` rend le graphe des
+   moteurs : les deux Cys peuvent enfin se rapprocher. */
+const gBond = (i, j) => ({ i, j, order: 1 });
+const plainBonds = [gBond(0, 1), gBond(1, 2), gBond(2, 3)];
+/* La chaîne refermée par la « liaison » du pont déclaré : c'est CETTE arête-là (0–3) que
+   le filtre doit retirer, et c'est elle qui fait tout passer pour un cycle. */
+const ringBonds = plainBonds.concat([gBond(0, 3)]);
+ok(withoutStretchedDisulfideBonds({ bonds: plainBonds }) === plainBonds,
+  'sans pont : la liste reçue est rendue TELLE QUELLE (aucune copie dans le cas ordinaire)');
+eq(withoutStretchedDisulfideBonds({
+  bonds: ringBonds, bridges: bridgesOf([[3, 0, 12.4]]),
+}), plainBonds,
+  '⚠ la liaison SG–SG d’un pont ÉTIRÉ est RETIRÉE — quel que soit l’ordre des deux atomes');
+eq(withoutStretchedDisulfideBonds({ bonds: ringBonds, bridges: bridgesOf([[0, 3, SS_BOND_LENGTH]]) }),
+  ringBonds, '⚠ …et un pont FERMÉ garde la sienne : c’est une VRAIE liaison S–S, elle tient les deux Sγ');
+eq(withoutStretchedDisulfideBonds({ bonds: [[0, 1], [1, 2], [0, 2]], bridges: bridgesOf([[2, 0, 9]]) }),
+  [[0, 1], [1, 2]],
+  'les liaisons écrites [[i, j]] sont filtrées comme les {i, j} (les deux écritures du dossier)');
+eq(withoutStretchedDisulfideBonds({ bonds: [[0, 1, 2], [1, 2, 1], [0, 2, 1]], bridges: bridgesOf([[0, 2, 9]]) }),
+  [[0, 1, 2], [1, 2, 1]],
+  '…et celles qui portent leur ordre aussi');
+eq(withoutStretchedDisulfideBonds({ bonds: ringBonds, bridges: [{ atomIndex1: 0, atomIndex2: 3, distance: null }] }),
+  ringBonds, 'un pont SANS coordonnées ne retire rien : il n’y a aucune distance à juger');
+eq(withoutStretchedDisulfideBonds({ bonds: ringBonds, bridges: bridgesOf([[9, 9, 9]]) }), ringBonds,
+  '…et un pont dégénéré (deux fois le même atome) non plus');
+eq([isStretchedDisulfideBond(bridgesOf([[0, 2, 20]])[0]), isStretchedDisulfideBond(bridgesOf([[0, 2, 2.0]])[0]),
+  isStretchedDisulfideBond(null), isStretchedDisulfideBond({ atomIndex1: 0 })], [true, false, false, false],
+  'le prédicat « ce pont est ÉTIRÉ » est UN seul, partagé par le terme de conduite et par le filtre');
+
+/* ---- (d4) LE VRAI MODÈLE DE LA PAGE, MESURÉ ----------------------------------------
+   Deux Cys LOIN l'une de l'autre (3 et 11 d'une chaîne couchée) : le modèle de la page
+   porte alors un CONECT SG–SG de plus de vingt ångströms. On relit le PDB ÉCRIT (son
+   graphe de liaisons compris) et on COMPTE les canaux de torsion qui séparent les deux
+   Sγ — avec la liaison, puis avec le graphe des moteurs. */
+const farPdb = B.proteinSequenceToPdbText(SEQ, 'CCCCCCCCCCCCC', 'TEST', { cysDisulfides: [[3, 11]] });
+const farModel = parsePdb(farPdb);
+const farIndex = new Map(farModel.atoms.map((a, k) => [a.serial, k]));
+const farBonds = [];
+farModel.conectPairs.forEach((pair) => {
+  const [a, b] = pair.split('|').map(Number);
+  if (farIndex.has(a) && farIndex.has(b)) farBonds.push(gBond(farIndex.get(a), farIndex.get(b)));
+});
+const sgFarI = farModel.atoms.findIndex((a) => a.name === 'SG' && a.resSeq === 3);
+const sgFarJ = farModel.atoms.findIndex((a) => a.name === 'SG' && a.resSeq === 11);
+const farAtoms = farModel.atoms.length;
+const farElements = farModel.atoms.map((a) => a.name.replace(/[^A-Za-z]/g, '')[0]);
+const farSpan = dist(position(farModel.atoms[sgFarI]), position(farModel.atoms[sgFarJ]));
+ok(farSpan > 10, `le modèle de la page déclare un pont ÉTIRÉ : les deux Sγ sont à ${farSpan.toFixed(2)} Å`);
+ok(farBonds.some((b) => (b.i === sgFarI && b.j === sgFarJ) || (b.i === sgFarJ && b.j === sgFarI)),
+  '…et sa liaison SG–SG est bien dans le graphe relu (c’est ce CONECT qui fait dessiner le pont)');
+const farReadOf = (list) => rotatableBondsOf({ elements: farElements, bonds: list, atomCount: farAtoms });
+const separates = (read) => read.channels
+  .filter((c) => c.moving.includes(sgFarI) !== c.moving.includes(sgFarJ)).length;
+const farWith = farReadOf(farBonds);
+const farEngineBonds = withoutStretchedDisulfideBonds({
+  bonds: farBonds, bridges: [{ atomIndex1: sgFarI, atomIndex2: sgFarJ, distance: farSpan }],
+});
+eq(farEngineBonds.length, farBonds.length - 1, 'le filtre retire UNE arête, et c’est celle du pont');
+const farWithout = farReadOf(farEngineBonds);
+eq(separates(farWith), 0,
+  '⚠ AVEC elle, AUCUN canal ne sépare les deux Sγ : le pont ne peut pas se rapprocher, quelle que soit la contrainte');
+ok(separates(farWithout) > 0,
+  `…SANS elle, ${separates(farWithout)} canaux les séparent : les charnières du segment redeviennent des dièdres`);
+ok(farWithout.count > farWith.count,
+  `…et le graphe des moteurs a plus de charnières que celui du dessin (${farWith.count} → ${farWithout.count})`);
 
 console.log(`_disulfide_fold_test.mjs — ${passed} assertions OK`);
 

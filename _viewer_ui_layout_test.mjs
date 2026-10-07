@@ -17,8 +17,10 @@
        « Molecular Styling » (un accordéon qui ne portait que 🙈 Hide everything ·
        ⚡ ESP · 🔢 Renumber) a été dissous, et ses commandes ont rejoint les groupes
        qui leur correspondent — ✨ Ray AVEC ses associés (résolution · ⬚ alpha ·
-       ◐ shadows) dans 🌫 Scene, ⚡ ESP et 🔢 Renumber (bouton ET liste) dans
-       ✏️ Modify. Le 📷 Figure et le 🙈 Hide everything de la rangée ont disparu
+       ◐ shadows) dans 🌫 Scene, 🔢 Renumber (bouton ET liste) dans ✏️ Modify, et
+       ⚡ ESP dans 📏 Analysis, à la suite de 📏 Measure (« in line with measure
+       button » : une surface qui se lit, comme une distance). Le 📷 Figure et le
+       🙈 Hide everything de la rangée ont disparu
        (la demande : « il pulsante figure é ridondante come anche il hide
        everything ») — le geste de masquage vit dans la barre des sélections, sur
        le MÊME état `hideAll` ;
@@ -126,17 +128,26 @@ const iAnalysisG = VIEW.indexOf('>📏 Analysis</span>');
 ok(iSceneG > 0 && iSceneG < iModifyG && iModifyG < iAnalysisG,
   '[§2] scene → modify → analysis, séparément et dans cet ordre');
 // Les commandes de la « ray » (et ses associés alpha / shadows) sont DANS Scene ;
-// ⚡ ESP et 🔢 Renumber sont DANS Modify ; rien n'est monté deux fois.
+// 🔢 Renumber reste DANS Modify ; ⚡ ESP vit maintenant DANS ✏️ Modify → 📏 Analysis, À LA
+// SUITE de 📏 Measure (la demande de cette session : « Move the ESP button in the analysis
+// section in line with measure button. ») ; rien n'est monté deux fois.
 const iRayBlock = VIEW.indexOf('✨ RAY — the HIGH-RESOLUTION STILL');
 ok(iRayBlock > iSceneG && iRayBlock < iModifyG, '[§2] ✨ Ray + ⬚ alpha + ◐ shadows dans le groupe Scene');
-ok(VIEW.indexOf('⚡ ESP — the electrostatic-potential surface') > iModifyG
-  && VIEW.indexOf('⚡ ESP — the electrostatic-potential surface') < iAnalysisG,
-  '[§2] ⚡ ESP dans le groupe Modify');
+const iEspBtn = VIEW.indexOf('onClick={() => espToggle(selectedMolKey)}');
+ok(iEspBtn > iAnalysisG, '[§2] ⚡ ESP est dans le groupe 📏 Analysis');
+ok(iEspBtn > VIEW.indexOf('onClick={toggleMeasureMode}'),
+  '[§2] …À LA SUITE de 📏 Measure : une surface qui se LIT, comme une distance');
+ok(VIEW.split('onClick={() => espToggle(selectedMolKey)}').length - 1 === 1,
+  '[§2] …et il n’existe qu’UNE fois dans tout le viewer (rien n’est resté dans ✏️ Modify)');
+ok(VIEW.indexOf('⚡ ESP A DÉMÉNAGÉ') > iModifyG && VIEW.indexOf('⚡ ESP A DÉMÉNAGÉ') < iAnalysisG,
+  '[§2] …et ✏️ Modify le DIT (une note, pas un bouton fantôme)');
 ok(VIEW.indexOf('🔢 Renumber — the button AND its list live in ✏️ Modify') > iModifyG
   && VIEW.indexOf('🔢 Renumber — the button AND its list live in ✏️ Modify') < iAnalysisG,
   '[§2] 🔢 Renumber ET sa liste dans le groupe Modify');
 ok((VIEW.match(/rayMsg && \(/g) || []).length === 1, '[§2] un seul bloc ✨ Ray dans tout le viewer');
-ok(VIEW.indexOf('🎨 Background') < iModifyG, '[§2] 🎨 Background reste dans Scene');
+ok(VIEW.indexOf('aria-label="Background colour"', iSceneG) > 0
+  && VIEW.indexOf('aria-label="Background colour"', iSceneG) < iModifyG,
+  '[§2] 🎨 Background reste dans Scene (sa pastille, dont la bulle porte le mot)');
 
 /* ── 2ter. La barre ▶ Play n'est pas remplacée par du texte ─────────────── */
 ok(!/\n\/\* ══ ▶ TRAJECTORY PLAYBACK/.test(VIEW),
@@ -152,7 +163,52 @@ has('placeholder="PDB ID or URL"', '[§1] champ PDB ID / URL');
 has('onClick={handlePdbIdLoad}', '[§1] bouton Load');
 has('📂 Trajectory', '[§1] bouton Trajectory');
 has('if (f) handleTrajFileChosen(f);', '[§1] …branché sur handleTrajFileChosen');
+/* 📂 LA PAGE PEUT AJOUTER SES PROPRES COMMANDES À CETTE RANGÉE (prop
+   `fileRowExtra`) : la page MD y pose ses deux boutons « 📂 Topology / 📂 Trajectory
+   from Drive folder » (le dossier de l'expérience sur le Drive) pour qu'ils soient
+   SUR LA MÊME LIGNE que 📂 PDB file(s) et 📂 Trajectory — la demande de cette
+   session : « the "topology from Drive folder" and "trajectory from drive folder"
+   buttons should be in the same line as "PDB file" and "trajectory" buttons ».
+   Défaut `null` : les pages NMR et Docking ne voient AUCUN changement. */
+has('fileRowExtra = null,', '[§1] la rangée des fichiers accepte les commandes de la PAGE');
+has('{fileRowExtra}', '[§1] …et les rend DANS la même rangée (la ligne de 📂 PDB file(s))');
 has('onClick={handleClearViewer}', '[§1] bouton Clear');
+/* ── L'ORDRE DE LA RANGÉE (la demande de cette session, mot pour mot) : « in the
+   following order: PDB files, URL, Load, Trajectory, download pdb, clear, Create
+   drive folder, Pdb from folder, trajectory from folder. Style from folder
+   should not be there. The last file style should be read automatically. »
+   ⚠ C'EST UN ORDRE, DONC C'EST UNE SUITE DE POSITIONS — mesurée, pas racontée. */
+{
+  const rowStart = VIEW.indexOf('<VSection title="1 · General"');
+  const at = (needle, from = rowStart) => VIEW.indexOf(needle, from);
+  const iFiles = at('📂 PDB file(s)');
+  const iUrl = at('placeholder="PDB ID or URL"');
+  const iLoad = at('onClick={handlePdbIdLoad}');
+  const iTraj = at('📂 Trajectory', iLoad);
+  const iPdb = at('onClick={downloadFramePdb}');
+  const iClear = at('onClick={handleClearViewer}');
+  const iCreate = at('<DriveExperimentFolderCreator ctx={driveNaming} />');
+  const iExtra = at('{fileRowExtra}', iCreate);
+  ok(iFiles > 0 && iFiles < iUrl && iUrl < iLoad && iLoad < iTraj && iTraj < iPdb
+    && iPdb < iClear && iClear < iCreate && iCreate < iExtra,
+    '[§1] la rangée suit l’ordre demandé : 📂 PDB file(s) · URL · Load · 📂 Trajectory · ⬇ PDB · 🗑 Clear · 📁 Create drive folder · les 📂 de la page');
+  ok(VIEW.indexOf('label="📂 Style from folder"') === -1,
+    '[§1] …et « Style from folder » n’y est plus : le style du dossier est lu par le rappel automatique');
+  ok(VIEW.indexOf('const pickStyleFileFromFolder') === -1,
+    '[§1] …la picker du style a donc disparu du viewer (aucun code mort)');
+}
+/* ◐ LA VUE SUIT SON CADRE — le rapport de cette session : « as soon as I click on
+   the MD window (without running it) or "structure calculation" (without even
+   running it), this strange shadow detached from the molecule appears ». Les docks
+   de gauche (🧬 · ▶ MD · 🪢) rétrécissent la vue sans bouger la caméra : un
+   ResizeObserver dit donc à NGL de reprendre ses mesures à chaque changement de
+   taille, et le pilote de l'ombre refait son masque sur la taille observée. */
+has('const ro = new ResizeObserver(() => {', '[§0] la boîte d’NGL est observée (un dock qui s’ouvre n’est plus oublié)');
+has("if (!host || typeof ResizeObserver === 'undefined') return undefined;",
+  '[§0] …sans dépendre du navigateur (aucun ResizeObserver = aucune erreur)');
+has('ro.observe(host);', '[§0] …et c’est bien la boîte de la vue qui est observée');
+has('if (!(box.width > 1) || !(box.height > 1)) return;',
+  '[§0] …mais une vue REPLIÉE (0 px) n’est pas mesurée : NGL garde sa dernière taille');
 /* 🗑 Delete PDB / ↩ Restore PDB — UN bouton, deux états : le PDB chargé dans
    CETTE section est mis de côté (jamais perdu : le même bouton le ressuscite,
    sa trajectoire avec lui) et la structure de la séquence de la page reprend la
@@ -225,11 +281,10 @@ gone('label="E · Ligands"', '[§2] …ni E · Ligands');
 gone('label="F · Others', '[§2] …ni F · Others');
 gone('grid-cols-6', '[§2] …donc plus de grille de six colonnes');
 has('className="flex flex-wrap items-center gap-1"', '[§2] sa rangée d’outils est bien une rangée, pas une grille de menus');
-// ⚡ ESP et 🔢 Renumber sont dans le groupe ✏️ Modify de cette rangée (la demande) ;
-// les panneaux qu’ils ouvrent (⚡ Range, la liste du renumbering) en sont des
-// enfants pleine largeur, donc la rangée reste haute d’une ligne quand rien n’est
-// ouvert.
-has("{espOnSelected ? '⚡ ESP: On' : '⚡ ESP'}", '[Modify] le bouton ⚡ ESP');
+// 🔢 Renumber est resté dans le groupe ✏️ Modify de cette rangée, et ⚡ ESP a rejoint 📏
+// Analysis (la demande de cette session) ; le panneau qu'il ouvre (⚡ Range) est un enfant de
+// son groupe, donc la rangée reste haute d'une ligne quand rien n'est ouvert.
+has("{espOnSelected ? '⚡ ESP: On' : '⚡ ESP'}", '[Analysis] le bouton ⚡ ESP');
 has("🔢 Renumber{showRenumberPanel ? ' ▲' : ' ▼'}", '[Modify] le bouton 🔢 Renumber');
 has('✏️ Atom names{Object.keys(renames).length', '[Modify] le bouton ✏️ Atom names');
 has('{(entry.sections || []).map((sec) => renderSection(sec))}',
@@ -279,8 +334,8 @@ has("small: ['hide', 'ball+stick', 'licorice', 'line', 'spacefill', 'sphere', 's
   '…y compris les petites molécules (ligand · sucre)');
 has("const ATOM_DRAW_STYLES = ['ball+stick', 'licorice', 'line', 'spacefill', 'sphere'];",
   '« sphere » dessine des atomes : il compte pour les ancres de chaîne latérale');
-has("case 'sphere': return [{ type: 'spacefill', params: { radiusScale: sphere, scale: 1 } }];",
-  '« Sphere » = le même spacefill NGL, au rayon de Van der Waals entier');
+has("case 'sphere': return [{ type: 'spacefill', params: { radiusScale: sphere } }];",
+  '« Sphere » = le même spacefill NGL, au rayon de Van der Waals entier — écrit en `radiusScale`, le seul champ qu’NGL lit (voir _viewer_sphere_size_test.mjs)');
 has("const styleFamiliesOf = (style) => [...new Set((STYLE_FAMILY_REPS[style] || [])",
   'la rangée de STYLING nomme la famille de matériau qu’elle atteint, comme les rangées de sélection');
 // Les deux feuillets : ils ont QUITTÉ la boîte Membrane de GAUCHE, puis la boîte
@@ -351,7 +406,7 @@ has('else head.push(i);', '[lipides] la tête est le RESTE : ni chaîne ni squel
 has("const LIPID_NAMED_PROBE = new Set(['P', 'N', 'C1', 'C2', 'C3']);",
   '[lipides] ce qui prouve que le fichier suit bien la nomenclature standard');
 has('const sub = lipidSubSelections(comp.structure, lipidSele);', '[lipides] le rendu part de la classification');
-has('const blank = { head: \'\', glycerol: \'\', acyl: \'\', named: true };',
+has("const blank = { head: '', glycerol: '', acyl: '', heads: '', phosphorus: '', named: true };",
   '[lipides] aucune visite d’atome (NGL pas prêt) → le drapeau garde sa valeur historique');
 has('lipidColorStore.named = sub.named;', '[lipides] …et le panneau de couleurs lit le MÊME drapeau');
 has('const col = lipidCol();', '[lipides] la couleur du menu C passe par « Colour by chemical part »');
@@ -451,8 +506,13 @@ has('onChange={(e) => setSectionLabel(sec.id, k, e.target.checked)}', '[étiquet
 has('allowed: new Set(indices)', '[étiquettes] build3dLabelMap ne reçoit que les atomes de l’espace');
 has('const atomIndicesForSele = (structure, sele) => {', '[étiquettes] la sélection du menu devient une liste d’indices d’atomes');
 has('const routeCategorySelections = (sels, moleculeType) => {', '[rendu] UNE fonction de routage partagée par le rendu ET les étiquettes');
-has('🖱 drag a molecule: turn · right-drag: slide',
-  '[conservé] le placement d’une molécule, DIT au lieu d’être boutonné (✥ Move · ↻ Rotate ont disparu : ils étaient « impractical »)');
+/* ⚠ LA PASTILLE « 🖱 drag a molecule: turn · right-drag: slide » A ÉTÉ RETIRÉE
+   cette session — la demande : « the button “drag a molecule: turn · right-drag:
+   slide” seems useless and you can remove it ». Le geste, lui, est toujours
+   installé (ligne suivante) et la molécule tenue est dite par la ligne ★ de son
+   espace de style. */
+gone('🖱 drag a molecule: turn · right-drag: slide',
+  '[retiré] la pastille du geste de placement n’est plus rendue');
 has("stage.mouseControls.add('drag-left', dragRotate);",
   '[ajouté] …et installé sur les gestes de NGL (un glisser sur une molécule la tourne, les autres ne bougent pas)');
 has('onClick={rebuildHydrogensNow}', '[conservé] ⚗️ Rebuild H');
@@ -471,7 +531,16 @@ has("requestStructureLoad({ file: null, url: null, text: sequenceStructureText, 
 has('onClick={buildFromSequence}', '[modify] bouton 🧬 Structure from sequence');
 has('disabled={!sequenceStructureText}', '[modify] …inactif tant qu\'aucune séquence n\'est saisie');
 has('const buildFromSequence = () => {', '[modify] …son implémentation (le PDB affiché est rangé, jamais perdu)');
-has('🧬 Structure from sequence', '[modify] libellé du bouton (renommé : il dit ce qu\'il FABRIQUE)');
+has('🧬 Struct from sequence', '[modify] libellé du bouton (COURT : « Struct », la demande de la session des noms courts — voir [13i])');
+/* ── BLEU CLAIR — la demande de cette session : « move the button structure
+   calculation next to the button structure from sequence and color the latter in light
+   blue. » Le bouton de la séquence est donc en sky (bleu clair), et l'ancien blanc /
+   emerald a disparu : la couleur dit, sans lire l'infobulle, lequel des deux gestes 🧬
+   part de la séquence de la page (l'autre part des distances mesurées). */
+has('bg-sky-100 border-sky-400 text-sky-800 hover:bg-sky-200 disabled:opacity-40 disabled:cursor-not-allowed',
+  '[modify] …en BLEU CLAIR (la couleur fait partie de la demande, pas du hasard)');
+gone('bg-white border-emerald-300 text-emerald-700 hover:bg-emerald-50 disabled:opacity-40 disabled:cursor-not-allowed',
+  '[modify] …et le blanc / emerald d’avant n’est plus là (aucune trace de la couleur d’origine)');
 /* ↩ Back to PDB — LE RETOUR EST LÀ OÙ LE GESTE A ÉTÉ FAIT (le rapport : « when
    clicking on "from sequence" the viewer generates the molecule from scratch but
    before I had a button to come back to the structure that was present before I
@@ -503,7 +572,7 @@ has('onClick={toggleRenumberPanel}', '[conservé] 🔢 Renumber (le panneau uniq
 has('onClick={applyRenumberFrom}', '[conservé] « Renumber from »');
 has("onChange={(e) => setSstrucColour(it.key, parseInt(e.target.value.slice(1), 16))}",
   '[conservé] couleurs 2° structure — la palette est dans la RANGÉE dès que « Secondary structure » est choisi');
-has('onClick={() => setSstrucColors({ ...SSTRUC_COLOR_DEFAULTS })}', '[conservé] …et la roue ⚙ les remet à leurs défauts');
+has("onClick={() => setSstrucColors(paletteDefaults('labViewerSstrucColors', SSTRUC_COLOR_DEFAULTS))}", '[conservé] …et la roue ⚙ les remet aux couleurs enregistrées (voir paletteDefaults)');
 // Le contrôle de la couleur des atômes « assigned » a disparu avec les menus : la
 // couleur reste celle du réglage enregistré, et le rendu la lit toujours.
 gone('onChange={(e) => setAssignedAtomColor(parseInt(', '[supprimé] plus de pastille « couleur des assigned » dans les menus');
@@ -570,7 +639,8 @@ has("const r = addRow('surface', { sele: drawn, ...espColorParams(), ...SEE_THRO
 has('const CLIP_DEFAULTS = { near: 0, far: 100000, dist: 0 };',
   '[§3] « Off » = plans de la caméra aux extrêmes (0 · 100000 · 0 Å, rien n’est jamais coupé)');
 has('const [clipOn, setClipOn] = useState(() => {', '[§3] interrupteur de clipping');
-has('✂ Clipping: {clipOn ? \'On\' : \'Off\'}', '[§3] bouton Clipping On/Off');
+has('aria-pressed={clipOn}', '[§3] bouton Clipping : l’état se lit sur le bouton (remplissage + aria-pressed)');
+has('✂ Clipping — ${clipOn ?', '[§3] …et sa bulle s’ouvre sur l’état (ON / OFF), sans imprimer le mot deux fois');
 has('if (c.on) stage.setParameters({ clipNear: c.near, clipFar: c.far, clipDist: c.dist });',
   '[§3] les valeurs choisies sont poussées au stage');
 has('else stage.setParameters({ clipNear: CLIP_DEFAULTS.near, clipFar: CLIP_DEFAULTS.far, clipDist: CLIP_DEFAULTS.dist });',
@@ -579,7 +649,9 @@ has('localStorage.setItem(\'labViewerClip\'', '[§3] le réglage est persistant'
 has('aria-label="Clipping near"', '[§3] curseur near');
 has('aria-label="Clipping far"', '[§3] curseur far');
 has('aria-label="Clipping camera distance"', '[§3] curseur clipDist (la vraie cause de la coupe au zoom)');
-has('↺ No cut (0 · 100000 · 0 Å)', '[§3] retour aux valeurs extrêmes (aucune coupe)');
+has('↺ No cut', '[§3] retour aux valeurs extrêmes (aucune coupe)');
+has('clipNear ${CLIP_DEFAULTS.near} · clipFar ${CLIP_DEFAULTS.far} · clipDist ${CLIP_DEFAULTS.dist} Å',
+  '[§3] …dont la bulle donne les trois valeurs (elles n’encombrent plus le bouton)');
 has('min="0" max="30" step="0.1" value={clipDist}', '[§3] clipDist descend jusqu’à 0 (plus aucun plancher)');
 // 💡 LIGHT COLOUR — la demande : « in the molecular viewer add the possibility to
 // change the color of the light and put it just before the clipping in the scene
@@ -591,7 +663,7 @@ has('const [lightColor, setLightColor] = useState(() => {', '[§3] l’état de 
 has("localStorage.setItem('labViewerLightColor'", '[§3] …persisté comme le clipping');
 {
   const iColour = VIEW.indexOf('aria-label="Light colour"');
-  const iClip = VIEW.indexOf('✂ Clipping: ');
+  const iClip = VIEW.indexOf('✂ Clipping — ${clipOn ?');
   ok(iColour > 0 && iClip > 0 && iColour < iClip,
     '[§3] …et le swatch se trouve JUSTE AVANT ✂ Clipping, dans le groupe 🌫 Scene (la demande, mot pour mot)');
   ok(VIEW.includes('</button>\n<button type="button" onClick={() => setClipOn((v) => !v)}'),
@@ -656,24 +728,45 @@ gone('{hint && <span className="text-[9px] text-slate-400 truncate hidden lg:inl
   '[13a] la ligne grise « structure · trajectory · clear » a quitté la rangée');
 has('title={hint || undefined}>{title}</span>', '[13a] …le résumé vit dans la bulle du titre de la rangée');
 
-/* 13b. Le 🎞 Movie maker est SUR la ligne de §1 General — il n'a plus sa section. */
-const iFilm = VIEW.indexOf('>🎞 Movie maker</span>');
-const iFilmBox = VIEW.indexOf('<div className="flex flex-col gap-1 w-full">', iS1);
-ok(iFilm > iS1 && iS2 > iFilm && iFilmBox > iS1 && iS2 > iFilmBox,
-  '[13b] 🎞 Movie maker vit dans « 1 · General » (la ligne qui charge PDB et trajectoire)');
+/* 13b. LE 🎞 MOVIE MAKER N'EST PLUS SUR LA LIGNE DE §1 GENERAL — il est devenu le PANNEAU que
+   le bouton 🎞 MOVIE de la boîte 🎨 Styles ouvre (la demande de cette session : « Move the
+   styles section in another line and add to it a Movie button. If clicked the movie button
+   must show the movie maker commands. In this way we can get rid of the movie maker line and
+   save space. »). Fermé par défaut (`movieOpen`), il ne coûte plus un pixel à §1 — c'est TOUTE
+   la ligne de l'ex-« 🎞 Movie maker » qui a quitté la barre — et ouvert il se rend PLEINE
+   LARGEUR sous la rangée 🎨 Styles, avant ✏️ Modify (le gabarit des autres panneaux dépliés
+   de §2 : ⚙ Parameters, ⚡ Range, ✏️ Atom names). */
+const iMovieBtn = VIEW.indexOf('🎞 Movie {movieOpen ?');
+const iMoviePanel = VIEW.indexOf('{movieOpen && (');
+const iScene2b = VIEW.indexOf('>🌫 Scene</span>', iS2);
+const iModify2b = VIEW.indexOf('>✏️ Modify</span>', iS2);
+ok(iMovieBtn > iS2 && iMoviePanel > iMovieBtn && iScene2b < iMovieBtn && iMovieBtn < iModify2b,
+  '[13b] 🎞 Movie vit dans la boîte 🎨 Styles (entre 🌫 Scene et ✏️ Modify) et ouvre le panneau SOUS sa rangée');
+ok(iMoviePanel > iMovieBtn && iMoviePanel < iModify2b,
+  '[13b] …le panneau du film se rend juste sous la rangée 🎨 Styles (aucun groupe de §2 entre eux)');
+ok(VIEW.indexOf('>🎞 Movie maker</span>', iS1) > iS2,
+  '[13b] …et la bande du film a quitté « 1 · General » : la ligne qu’elle coûtait est bel et bien libérée');
 gone('<VSection title="🎞 Movie maker"', '[13b] …il n’est plus une section à lui tout seul');
 has('＋ Capture this pose', '[13b] …et sa rangée de gestes est intacte');
 
-/* 13c. §2 tient sur DEUX lignes de groupes — 🌫 Scene │ 🎨 Styles, puis ✏️ Modify │
-   📏 Analysis │ 🧪 PyMOL — et chaque groupe est refermé dans sa propre boîte
-   teintée : « clairement séparés » ne coûte donc aucune ligne de plus. */
-const iBreak = VIEW.indexOf('<span className="basis-full h-0" aria-hidden="true" />', iS2);
-const iModifyIn2 = VIEW.indexOf('>✏️ Modify</span>', iS2);
-ok(iBreak > iS2 && iBreak < iModifyIn2, '[13c] §2 coupe la ligne entre 🎨 Styles et ✏️ Modify');
+/* 13c. §2 n'a PLUS de saut de ligne forcé — la demande de cette session : « between the
+   “style” section and the “modify” section there is an empty line ». Le frère vide
+   (`<span className="basis-full h-0" aria-hidden="true" />`) occupait une rangée ENTIÈRE à
+   lui tout seul — hauteur 0, mais les deux `gap` de la rangée autour — et c'est lui qui
+   faisait la bande vide entre la boîte 🎨 Styles et la boîte ✏️ Modify. Les cinq groupes
+   s'enchaînent maintenant dans l'ordre de la rangée, chacun refermé dans sa propre boîte
+   teintée et séparé de son voisin par le filet : « clairement séparés » ne coûte donc
+   aucune ligne de plus, et il n'y a plus de ligne vide du tout. */
+gone('<span className="basis-full h-0" aria-hidden="true" />',
+  '[13c] plus de frère pleine largeur entre 🎨 Styles et ✏️ Modify (la ligne vide est partie)');
 const iSceneIn2 = VIEW.indexOf('>🌫 Scene</span>', iS2);
-ok(iSceneIn2 > iS2 && iSceneIn2 < iBreak, '[13c] 🌫 Scene et 🎨 Styles sont sur la PREMIÈRE ligne');
-ok(VIEW.indexOf('>📏 Analysis</span>', iModifyIn2) > iBreak,
-  '[13c] ✏️ Modify et 📏 Analysis sont sur la SECONDE ligne, ensemble');
+const iModifyIn2 = VIEW.indexOf('>✏️ Modify</span>', iS2);
+const iStyleIn2 = VIEW.indexOf('>🎨 Styles</span>', iS2);
+const iAnalysisIn2 = VIEW.indexOf('>📏 Analysis</span>', iS2);
+const iPymolIn2 = VIEW.indexOf('>🧪 PyMOL</span>', iS2);
+ok(iSceneIn2 > iS2 && iSceneIn2 < iStyleIn2 && iStyleIn2 < iModifyIn2
+  && iModifyIn2 < iAnalysisIn2 && iAnalysisIn2 < iPymolIn2,
+  '[13c] les cinq groupes de §2 se suivent dans l’ordre de la rangée (Scene · Styles · Modify · Analysis · PyMOL)');
 [['sky-200', '🌫 Scene'], ['teal-200', '🎨 Styles'], ['amber-200', '✏️ Modify'],
   ['rose-200', '📏 Analysis'], ['violet-200', '🧪 PyMOL']].forEach(([tone, name]) => {
   has(`rounded-md border border-${tone}`, `[13c] le groupe ${name} est refermé dans sa boîte`);
@@ -697,6 +790,265 @@ gone('{showSetupPanel && (', '[13f] le panneau à deux jeux de boutons a disparu
 gone('const [viewerSetups, setViewerSetups] = useState', '[13f] …et son état avec lui');
 gone('const saveCurrentSetup = () => {', '[13f] …ainsi que ses cinq gestes doublons');
 has('const legacy = loadViewerSetups();', '[13f] les setups nommés deviennent des thèmes (rien n’est perdu)');
+
+/* 13g. LA COMPACITÉ DE 🌫 SCENE ET LA RANGÉE PROPRE À 🎨 STYLES — la demande de la
+   session d'origine : « compact the commands in scene section so that they fit in one line
+   without the need to use the scrolling bar. Move the styles section in another line and add
+   to it a Movie button. » Trois faits, chacun vérifié :
+     · §2 compte UNE SEULE rangée `w-full` (`overflow-x-auto` + boîte `shrink-0`) : 🌫 Scene
+       — 🎨 Styles, elle, n'a PLUS de rangée à elle (la demande de la session suivante,
+       §13h) : elle est un frère ordinaire des autres groupes, donc ✏️ Modify │ 📏 Analysis │
+       🧪 PyMOL se posent sur sa ligne et remplissent l'espace qui restait vide ;
+     · 🌫 Scene ne dit plus l'état de ses interrupteurs DEUX fois : la boîte teintée + son
+       `aria-pressed` le disent, et la bulle s'ouvre sur « ON right now » ;
+     · les deux pastilles de couleur se passent de leur mot (l'émoji EST leur nom dans le
+       fichier) : plus de « 🎨 Background » ni de « 💡 Light colour » imprimés — la bulle les
+       nomme en entier, et le `aria-label` du sélecteur aussi. */
+{
+  const rows = VIEW.split('<div className="flex items-center gap-1 w-full overflow-x-auto">').length - 1;
+  ok(rows === 1, `[13g] §2 n'a plus qu'UNE rangée pleine largeur (🌫 Scene) — ${rows} trouvée(s)`);
+  has('rounded-md border border-teal-200 bg-teal-50/40 px-1.5 py-1 shrink-0',
+    '[13g] la boîte 🎨 Styles est refermée de la même façon que ses voisines');
+  has('rounded-md border border-sky-200 bg-sky-50/40 px-1 py-0.5 shrink-0',
+    '[13g] la boîte 🌫 Scene est compacte (px-1 py-0.5) et ne peut pas être coupée en deux (shrink-0)');
+  has('aria-pressed={fogEnabled}', '[13g] 🌫 Fog dit son état par son remplissage ET par aria-pressed');
+  has('aria-pressed={shadowOn}', '[13g] ◐ Shadows aussi');
+  has('aria-pressed={clipOn}', '[13g] ✂ Clipping aussi');
+  gone('🌫 Fog: {fogEnabled ? \'On\' : \'Off\'}', '[13g] …donc le mot « On/Off » ne s’imprime plus deux fois');
+  gone('◐ Shadows: {shadowOn ? \'On\' : \'Off\'}', '[13g] …ni pour les ombres');
+  gone("🎨 Background\n  <input type=\"color\"", '[13g] la pastille 🎨 se passe de son mot (la bulle le dit en entier)');
+  has('<span className="text-[11px] leading-none">🎨</span>', '[13g] …non : l’émoji EST la ligne, comme ailleurs');
+  has('aria-label="Background colour"', '[13g] …le sélecteur garde son nom accessible');
+  has('aria-label="Light colour"', '[13g] …comme celui de la lampe');
+  has('className="w-14 accent-emerald-600"', '[13g] les curseurs de clipping sont plus courts (w-14)');
+  has('className="w-14 accent-slate-700"', '[13g] ceux de la lumière aussi');
+  has('max-w-[4.6rem]', '[13g] le sélecteur de résolution de ✨ Ray est borné');
+}
+
+
+/* 13h. PLUS DE LIGNE VIDE ENTRE 🎨 STYLES ET ✏️ MODIFY, ET MODIFY SUR UNE SEULE RANGÉE —
+   la demande de cette session, mot pour mot : « elimina la riga vuota tra la sezione
+   “STYLES” e “MODIFY” e cerca di fare entrare tutti i pulsanti di MODIFY in una sola
+   riga ». Deux faits, chacun vérifié sur le graphe du JSX :
+     · 🎨 Styles n'est plus ENVELOPPÉE dans une rangée pleine largeur : le `<div>` de sa
+       rangée est parti, donc la boîte teal est un frère des autres groupes et le CONTENU
+       décide où la largeur se coupe — la bande vide à sa droite est ce que ✏️ Modify
+       remplit maintenant ;
+     · ✏️ Modify ne revient JAMAIS à la ligne (`flex-nowrap`, le gabarit de la bande 🎞 du
+       film) : ses boutons restent sur UNE rangée, avec les écarts resserrés (`gap-0.5`).
+       ⚠ LA BOÎTE, ELLE, REVIENT À LA LIGNE DEPUIS CETTE SESSION — voir [13j] : un panneau
+       `w-full` ne peut pas descendre d'une ligne dans une boîte `flex-nowrap`, il y était
+       écrasé au bord droit.
+   ⚠ DEPUIS CETTE SESSION, ELLE NE DÉFILE PLUS NON PLUS, ET SES NOMS SONT COURTS — la demande,
+   mot pour mot : « in MODIFY, instead of using a scrolling bar write shorter names, for example
+   “Params & Constraints” instead of “Parameters and Constraints”, “SS:shown/hidden” instead of
+   “disulphide:shown/hidden”, “Struct” instead of “Structure” ». Voir le bloc [13i]. */
+has('elimina la riga vuota tra la sezione',
+  '[13h] la demande de la session est écrite dans le fichier (contrat du layout)');
+gone('<div className="flex items-center gap-1 w-full overflow-x-auto">\n<div className="flex flex-wrap items-center gap-1 rounded-md border border-teal-200',
+  '[13h] ⚠ 🎨 Styles n’est PLUS dans une rangée pleine largeur (c’est elle qui laissait la bande vide)');
+has('cerca di fare entrare tutti i pulsanti di MODIFY in una sola riga',
+  '[13h] …et le second point de la demande aussi');
+has('flex flex-wrap items-center gap-0.5 rounded-md border border-amber-200 bg-amber-50/40 px-1 py-0.5',
+  '⚠ [13j] la boîte ✏️ Modify est `flex-wrap` : un PANNEAU peut donc descendre SOUS la rangée');
+has('<div className="flex flex-nowrap items-center gap-0.5 min-w-0">',
+  '⚠ [13j] …tandis que la RANGÉE est sa propre boîte `flex-nowrap` : ses boutons ne peuvent plus s’empiler');
+gone('flex flex-nowrap items-center gap-0.5 rounded-md border border-amber-200',
+  '⚠ [13j] …l’ancienne boîte qui était À LA FOIS la rangée et le parent des panneaux a disparu');
+gone('px-1 py-0.5 max-w-full overflow-x-auto',
+  '⚠ [13h] …et elle ne DÉFILE plus : `max-w-full` + `overflow-x-auto` (la barre de défilement de la demande suivante) ont disparu');
+gone('<div className="flex flex-wrap items-center gap-1 rounded-md border border-amber-200 bg-amber-50/40 px-1.5 py-1">',
+  '⚠ [13h] …l’ancienne boîte `flex-wrap` (celle qui cassait la rangée) a disparu');
+{
+  const iModifyBox = VIEW.indexOf('flex flex-wrap items-center gap-0.5 rounded-md border border-amber-200');
+  const iRow = VIEW.indexOf('<div className="flex flex-nowrap items-center gap-0.5 min-w-0">');
+  const iModifyLabel = VIEW.indexOf('>✏️ Modify</span>');
+  ok(iModifyBox > 0 && iModifyBox < iModifyLabel && iModifyLabel - iModifyBox < 900,
+    '[13j] …et c’est bien la boîte DU GROUPE ✏️ Modify (elle s’ouvre juste avant son étiquette)');
+  ok(iRow > iModifyBox && iRow < iModifyLabel,
+    '[13j] …sa RANGÉE s’ouvre DANS la boîte, juste avant son étiquette (les boutons sont dedans, les panneaux dehors)');
+  /* ⚠ LES PANNEAUX SONT DES FRÈRES DE LA RANGÉE, PAS DES ENFANTS — LE RAPPORT DE CETTE SESSION :
+     « When i click an expandable button in the section “MODIFY” of the viewer, they do not behave
+     as for example the movie button (which works correctly) but they push the things to show at
+     the right edge of the page. » Dans la boîte `flex-nowrap` d’avant, un panneau `w-full` était
+     ÉCRASÉ au bout de la rangée. La fermeture de la rangée est donc écrite AVANT les trois
+     panneaux, et chacun des trois se rend APRÈS elle. */
+  const iRowClose = VIEW.indexOf('</div>\n{/* ⚠ LA RANGÉE EST FERMÉE ICI');
+  ok(iRowClose > iRow, '[13j] …la rangée se REFERME avant les panneaux (aucun panneau n’est son enfant)');
+  has('but they push the things to',
+    '[13j] …et le rapport de la session est écrit dans le fichier (contrat du layout)');
+  /* ⚠ ON CHERCHE CHAQUE PANNEAU APRÈS CETTE FERMETURE, ET AVANT CELLE DE LA BOÎTE : le même
+     appel existe ailleurs dans le fichier (le 🔢 de la barre de styles ouvre le MÊME panneau de
+     renumérotation), donc c’est la POSITION de l’appel DANS le groupe ✏️ Modify qui compte. */
+  const iBoxClose = VIEW.indexOf('</div>\n\n{/* ── Analysis');
+  ok(iBoxClose > iRowClose, '[13j] …et la boîte du groupe ✏️ Modify se referme APRÈS eux');
+  ['{renderRenumberPanel()}', '{paramsDock && renderParamsWindow()}', '{showAtomPanel && ('].forEach((call) => {
+    const at = VIEW.indexOf(call, iRowClose);
+    ok(at > iRowClose && at < iBoxClose,
+      `[13j] ${call} est rendu SOUS la rangée (le panneau ne peut plus être tassé au bord droit)`);
+  });
+}
+
+/* 13k. LE ⚒ MINIMIZE SE REPLIE COMME LE 🎞 MOVIE — LE RAPPORT DE CETTE SESSION, MOT POUR MOT :
+   « the “minimize” button pushes the bar down instead of collapsing like the movie button. »
+   La ligne dépliée du ⚒ était le DERNIER enfant `basis-full` resté DANS la rangée `flex-nowrap`
+   ([13j] n’avait sorti que les trois PANNEAUX) : dans une boîte qui ne revient pas à la ligne, un
+   `basis-full` ne peut pas descendre sur la sienne — il ÉTIRAIT la rangée, donc la barre
+   grandissait au lieu de se replier. Elle est maintenant écrite dans SA PROPRE fonction de rendu
+   et appelée COMME UN QUATRIÈME PANNEAU, en frère de la rangée : exactement le gabarit du panneau
+   🎞 Movie sous 🎨 Styles, celui que le rapport donne comme le bon. Le geste, lui, ne bouge pas :
+   ▶ MD, ⚒ Minimize et le ■ Stop restent SUR la rangée (un arrêt s’atteint sans rien déplier). */
+has('the “minimize” button pushes the bar down instead of collapsing',
+  '[13k] le rapport de la session est écrit dans le fichier (contrat du repli du ⚒)');
+has('const renderMinSettingsRow = () => (',
+  '[13k] la ligne dépliée du ⚒ est écrite dans sa PROPRE fonction de rendu (comme un panneau)');
+{
+  const iMinRowClose = VIEW.indexOf('</div>\n{/* ⚠ LA RANGÉE EST FERMÉE ICI');
+  const iMinPanel = VIEW.indexOf('{renderMinSettingsRow()}');
+  const iMinBoxClose = VIEW.indexOf('</div>\n\n{/* ── Analysis');
+  ok(iMinPanel > iMinRowClose && iMinPanel < iMinBoxClose,
+    '[13k] …et elle est rendue SOUS la rangée, avec les autres panneaux (jamais dedans : elle ne peut plus pousser la barre)');
+  /* ⚠ LE GESTE RESTE SUR LA RANGÉE : `renderForceGestures` porte toujours les deux boutons (et le
+     ■ Stop d’un geste en cours), et son contenu ne contient PLUS la ligne `basis-full` du ⚒. */
+  const gestures = VIEW.slice(
+    VIEW.indexOf('const renderForceGestures = () => ('),
+    VIEW.indexOf('const renderMinSettingsRow = () => ('),
+  );
+  ok(gestures.includes('onClick={() => setMinSettings((v) => !v)}') && gestures.includes('■ Stop'),
+    '[13k] le ⚒ Minimize et le ■ Stop restent SUR la rangée des commandes');
+  ok(!gestures.includes('basis-full flex flex-wrap items-center gap-1.5'),
+    '[13k] …et la ligne `basis-full` du ⚒ n’est plus un enfant de cette rangée');
+  /* ⚠ ELLE VIT DANS LA FONCTION DU PANNEAU, ENTRE SON OUVERTURE ET SA FERMETURE : c’est elle qui
+     fait la ligne pleine largeur sous la rangée (elle n’a plus besoin d’être un enfant de la
+     rangée pour cela, et elle ne peut plus l’étirer). */
+  const iSpan = VIEW.indexOf('basis-full flex flex-wrap items-center gap-1.5');
+  const iMinFn = VIEW.indexOf('const renderMinSettingsRow = () => (');
+  const iMinFnEnd = VIEW.indexOf('</>\n);\n/* ── 🧬 LE PANNEAU DU CALCUL DE STRUCTURE');
+  ok(iSpan > iMinFn && iSpan < iMinFnEnd,
+    '[13k] …elle est écrite DANS la fonction du panneau (entre son ouverture et sa fermeture)');
+}
+
+/* 13i. LES NOMS COURTS DE ✏️ MODIFY — la demande de CETTE session : « in MODIFY, instead of
+   using a scrolling bar write shorter names, for example “Params & Constraints” instead of
+   “Parameters and Constraints”, “SS:shown/hidden” instead of “disulphide:shown/hidden”, “Struct”
+   instead of “Structure” ». Quatre libellés, chacun vérifié — et LES INFOBULLES RESTENT LONGUES :
+   elles disent toujours tout ce que le bouton fait (seul ce qui est ÉCRIT SUR la rangée change). */
+has('in MODIFY, instead of using a scrolling bar write shorter names',
+  '[13i] la demande est écrite dans le fichier (contrat des libellés)');
+has('⚙ Params & Constraints{paramsDock ?', '[13i] le panneau ⚙ dit « Params & Constraints »');
+gone('⚙ Parameters and Constraints{paramsDock', '[13i] …son ancien libellé long a disparu de la rangée');
+has('PARAMETERS AND CONSTRAINTS — the description of the force field',
+  '[13i] …mais son infobulle dit toujours tout (elle n’a pas été raccourcie)');
+has("'⚭ SS: shown'", "[13i] l'interrupteur du pont disulfure dit « SS: shown »");
+has("'⚭ SS: hidden'", '[13i] …et « SS: hidden » dans l’autre état');
+gone("Disulfides: shown'", '[13i] …« Disulfides: shown » n’est plus écrit sur la rangée');
+has('🧬 Struct from sequence\n</button>',
+  '[13i] le modèle bâti sur la séquence dit « Struct from sequence »');
+gone('🧬 Structure from sequence\n</button>',
+  '[13i] …« Structure from sequence » a disparu de la rangée');
+has('🧬 Struct calc{calcResult ?', '[13i] le calcul dit « Struct calc » (avec son compte m/tried)');
+gone('🧬 Structure calculation{calcResult',
+  '[13i] …« Structure calculation » a disparu de la rangée');
+
+/* 13l. « ATOM CHARGE » — LA DEMANDE DE CETTE SESSION, MOT POUR MOT : « In the “molecule
+   styling” window add a “color by” option: atom charge. »
+   La fenêtre de styling tire son menu « Color by » de SECTION_SUBSECTIONS ← COLORS (une
+   liste par TYPE de molécule) et ses libellés de COLOR_LABELS : la nouvelle lecture est
+   donc écrite UNE fois dans ces deux vocabulaires, et elle apparaît sur CHAQUE rangée —
+   protéine, acide nucléique, leurs parties, lipide, sucre, ligand, eau, ion. Ce qu'elle
+   peint : la charge PARTIELLE de chaque atome, lue dans la MÊME table que le ⚡ ESP
+   (`espChargesFor` : la charge du fichier, la table CHARMM de NGL pour une protéine, la
+   charge formelle d'un ion, l'estimation d'électronégativité des hétéro-atomes), sur les
+   TROIS pastilles éditables de « Charge » de la roue ⚙ (négatif · neutre · positif) —
+   échelle pleine ±1 e, comme la grandeur qu'elle peint. Le repli d'un build sans le
+   schéma maison est le colormaker `partialcharge` de NGL lui-même, jamais un aplat
+   d'éléments : une molécule n'est jamais laissée sans couleur. */
+has('THE REQUEST OF THIS SESSION, MOT POUR MOT: « In the “molecule styling” window\n   add a “color by” option: atom charge. »',
+  '[13l] la demande de la session est écrite dans le fichier (contrat du vocabulaire)');
+has("charge: 'Charge',\n  atomcharge: 'Atom charge',",
+  '[13l] « Charge » (le SIGNE, offert sur un ion) et « Atom charge » (la charge partielle de CHAQUE atome) cohabitent dans le vocabulaire');
+has("const ATOM_CHARGE_DOMAIN = 1;   // e — the full scale of the ramp (±)",
+  '[13l] l’échelle de la rampe est écrite en unités de charge élémentaire (±1 e)');
+has('const v = Number.isFinite(q) ? Math.max(-ATOM_CHARGE_DOMAIN, Math.min(ATOM_CHARGE_DOMAIN, q)) : 0;',
+  '[13l] …et une charge hors échelle est ÉCRÊTÉE au pôle (un Mg²⁺ ne peut pas inventer une quatrième couleur)');
+has("? lerpHexColors(chargeColorOf('neutral'), chargeColorOf('negative'), t)\n    : lerpHexColors(chargeColorOf('neutral'), chargeColorOf('positive'), t);",
+  '[13l] la rampe part de la pastille NEUTRE et marche vers le pôle du signe (les trois pastilles ÉDITABLES de « Charge »)');
+has('const data = espChargesFor(structure);',
+  '[13l] la charge d’un atome est celle du ⚡ ESP — une SEULE table pour les deux colorations');
+has("const P = this.parameters || params || {};\n    const structure = P.structure;",
+  '[13l] la structure vient de NGL (StructureRepresentation#getColorParams), jamais d’un global');
+has('registerAtomChargeScheme(NGL);   // ⚡ the PARTIAL charge of EVERY atom (lab-atom-charge)',
+  '[13l] le schéma est enregistré au démarrage de la scène, comme les autres');
+has("atomChargeSchemeKey = registerColorScheme(NGL, 'lab-atom-charge', defineAtomChargeScheme());",
+  '[13l] …par le SEUL enregistreur de schémas maison (définition d’abord, libellé ensuite)');
+has("case 'atomcharge': return schemeParam(atomChargeSchemeKey, 'partialcharge');",
+  '[13l] une rangée le passe à NGL en `color`, avec le `partialcharge` natif en repli');
+has("if (mode === 'atomcharge') return atomChargeSchemeKey || 'partialcharge';",
+  '[13l] la barre des sélections et celle de la membrane passent par la MÊME correspondance');
+has('« Atom charge » paints EVERY atom by its own partial charge',
+  '[13l] l’infobulle du menu « Color by » dit ce que la lecture peint');
+has('every atom by its own PARTIAL charge — the three swatches of « Charge » in the ⚙ wheel are the ramp (neutral → − / +, ±1 e full scale)',
+  '[13l] la rangée le dit aussi quand elle est choisie (sans rouvrir un second ⚙)');
+has('THE SAME THREE SWATCHES ARE THE ANCHORS OF « Atom charge »',
+  '[13l] et la roue ⚙ dit que ses trois pastilles sont les ancres de la rampe');
+has('and the ${c} anchor of « Atom charge », which walks from the NEUTRAL swatch towards this pole as |q| grows',
+  '[13l] …pastille par pastille (chacune nomme son rôle dans la rampe)');
+/* LA LISTE EST LUE DANS LA SOURCE, PUIS PARCOURUE : chaque vocabulaire de rangée doit
+   offrir la nouvelle lecture ET un libellé pour chaque valeur qu’il propose (un jeton
+   sans libellé s’afficherait tel quel dans le menu). */
+{
+  const iColors = VIEW.indexOf('const COLORS = {');
+  const colorsSrc = VIEW.slice(iColors, VIEW.indexOf('\n};', iColors));
+  const lists = [...colorsSrc.matchAll(/(\w+): \[([^\]]*)\]/g)]
+    .map((m) => ({ kind: m[1], modes: m[2].split(',').map((s) => s.trim().replace(/^'|'$/g, '')).filter(Boolean) }));
+  ok(lists.length >= 10, `[13l] les listes « Color by » sont lues dans la source (${lists.length} listes)`);
+  const iLabels = VIEW.indexOf('const COLOR_LABELS = {');
+  const labels = new Map([...VIEW.slice(iLabels, VIEW.indexOf('\n};', iLabels)).matchAll(/(\w+): '([^']*)'/g)]
+    .map((m) => [m[1], m[2]]));
+  lists.forEach(({ kind, modes }) => {
+    ok(modes.includes('atomcharge'), `[13l] « Atom charge » est offert sur la rangée « ${kind} »`);
+    ok(modes.includes('solid') && modes.includes('element'),
+      `[13l] …et la rangée « ${kind} » garde « Solid » et « Atom type »`);
+    modes.forEach((mode) => ok(labels.has(mode),
+      `[13l] chaque valeur offerte sur « ${kind} » a un libellé (${mode})`));
+  });
+  ok(labels.get('atomcharge') === 'Atom charge', '[13l] …dont « Atom charge » lui-même');
+}
+
+/* ── 13m. 🔄 SPIN x·y·z — LE BOUTON QUI TOURNE LA MOLÉCULE, JUSTE APRÈS 🎞 MOVIE ─────
+   LA DEMANDE DE CETTE SESSION, MOT POUR MOT : « Next to the movie button add a button to
+   rotate uniformly the molecule in x, y and z direction ». Trois faits, chacun mesuré :
+     · le bouton vit DANS la boîte 🎨 Styles, IMMÉDIATEMENT APRÈS 🎞 Movie (donc entre
+       🌫 Scene et ✏️ Modify, comme le Movie lui-même), et il PORTE son état ;
+     · l'état (`spinOn`) allume une BOUCLE D'IMAGES qui appelle `spinSceneStep`, et ce pas
+       est « uniforme » : le MÊME angle autour des TROIS axes, fabriqué par
+       pré-multiplication (q ← dq · q, donc dans le repère de l'ÉCRAN — ce qu'on voit
+       tourner), avec un `dt` MESURÉ (la même vitesse à 30, 60 ou 144 Hz) ;
+     · le tour est un geste de VUE : il écrit `viewer.rotationGroup.quaternion` — la
+       rotation que la pose de caméra lit et repose (`applyCameraPose`) — donc il ne touche
+       ni la place des molécules (⬇ PDB) ni le ↺ (qui remet des positions), et il S'EFFACE
+       devant un film qui se prévisualise ou s'écrit. */
+{
+  const iSpinBtn = VIEW.indexOf('🔄 Spin x·y·z{spinOn ?');
+  ok(iMovieBtn > 0 && iSpinBtn > iMovieBtn && iSpinBtn < iModify2b,
+    '[13m] 🔄 Spin x·y·z est DANS la boîte 🎨 Styles, immédiatement APRÈS 🎞 Movie');
+  has('onClick={() => setSpinOn((v) => !v)}', '[13m] …un clic l’allume, un second l’éteint');
+  has('aria-pressed={spinOn}', '[13m] …et il annonce son état aux lecteurs d’écran');
+  has('const [spinOn, setSpinOn] = useState(false);', '[13m] l’état du tour a UNE déclaration');
+  has('const SPIN_RAD_PER_S = 0.6;', '[13m] la vitesse est une constante NOMMÉE (un tour complet en ~10 s)');
+  has('const spinSceneStep = (stage, dt) => {', '[13m] le pas du tour est une fonction à part, qui reçoit son `dt`');
+  has('const dq = new Q().setFromAxisAngle(new V3(1, 0, 0), w);', '[13m] …le tour part de l’axe x de l’écran');
+  has('dq.multiplyQuaternions(new Q().setFromAxisAngle(new V3(0, 1, 0), w), dq);', '[13m] …puis y');
+  has('dq.multiplyQuaternions(dq, new Q().setFromAxisAngle(new V3(0, 0, 1), w));', '[13m] …puis z : les TROIS axes, le MÊME angle (« uniformly »)');
+  has('q.multiplyQuaternions(dq, q);', '[13m] …pré-multiplié : le tour est celui qu’on VOIT (le repère de l’écran)');
+  has('const dt = last == null ? 0 : Math.min(0.1, (t - last) / 1000);', '[13m] …et `dt` est MESURÉ (aucun bond après un onglet en arrière-plan)');
+  has('if (!spinOn || kfPreview || kfBusy) return undefined;', '[13m] la boucle ne tourne QUE si le bouton l’allume, et s’efface devant un film');
+  has('}, [spinOn, kfPreview, kfBusy]);', '[13m] …son effet suit l’état du bouton ET celui du film');
+  has('spinSceneStep(stageRef.current, dt);', '[13m] la boucle fait UNE chose : un pas, puis un rendu');
+  has('· 🎞 Movie · 🔄 Spin x·y·z', '[13m] la liste des commandes de §2 (l’en-tête du fichier) nomme le nouveau bouton');
+  has('⬇ PDB writes where the molecules STAND (never where the camera looks)',
+    '[13m] …et sa bulle dit ce qui NE bouge pas : ⬇ PDB écrit des positions, jamais une orientation de caméra');
+}
 
 
 /* ── Bilan ───────────────────────────────────────────────────────────────── */

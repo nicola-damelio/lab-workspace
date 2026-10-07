@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Sonde NGL — l'ombre vivante quand le CADRE change de taille (un dock s'ouvre)</title>
+<style>
+  html, body { margin:0; padding:0; background:#fff; font:12px/1.45 monospace; color:#111; }
+  #log { padding:8px; white-space:pre-wrap; }
+  /* ⚠ LA SONDE EST HORS ÉCRAN (comme celle de l'ombre au repos) : la mesure est
+     celle du NAVIGATEUR, pas une capture d'écran. */
+  #frame { position:absolute; left:-10000px; top:0; display:flex; align-items:stretch; width:900px; height:600px; }
+  /* LA FENÊTRE DE GAUCHE (🧬 Structure calculation / ▶ MD) : fermée, elle vaut 0,
+     ouverte elle PREND la largeur — c'est la vue qui garde le reste (`flex:1`).
+     Exactement la rangée du viewer (voir NMRMoleculeViewer, la rangée des docks). */
+  #dock { width:0; flex:0 0 auto; overflow:hidden; background:#eef; }
+  #view { position:relative; flex:1 1 auto; min-width:0; height:600px; overflow:hidden; }
+  #host { position:absolute; left:0; top:0; width:100%; height:100%; }
+  /* LA COUCHE DE L'OMBRE VIVANTE, telle que le viewer la pose : au-dessus de la
+     toile d'NGL, étirée en CSS sur TOUTE la boîte, et sans jamais prendre un clic. */
+  #layer { position:absolute; left:0; top:0; width:100%; height:100%; pointer-events:none; }
+</style>
+</head>
+<body>
+<pre id="log">chargement de ngl.js…</pre>
+<div id="frame"><div id="dock"></div><div id="view"><div id="host"></div><canvas id="layer"></canvas></div></div>
+<script src="/ngl.js"></script>
+<script type="module">
+'use strict';
+/* ---------------------------------------------------------------------------
+   Sonde : LE CADRE QUI CHANGE DE TAILLE, ET L'OMBRE VIVANTE.
+
+   LE RAPPORT DE CETTE SESSION : « as soon as I click on the MD window (without
+   running it) or "structure calculation" (without even running it), this strange
+   shadow detached from the molecule appears ».
+
+   CE QUE LA SONDE MESURE, ET POURQUOI ELLE EXISTE
+   La vue 3D partage sa rangée avec les docks de GAUCHE (🧬 Structure calculation,
+   ▶ MD, 🪢 Ramachandran) : ouvrir l'un d'eux RÉTRÉCIT la boîte de la vue. NGL
+   n'apprend ce changement que si on le lui dit (`handleResize`), et la couche de
+   l'ombre, elle, est étirée en CSS sur la NOUVELLE boîte. Deux issues :
+
+     · TELLE QUE LA SONDE LA JOUE D'ABORD (le correctif de cette session) : le
+       viewer observe sa boîte (ResizeObserver), donc NGL reprend ses mesures, le
+       pilote voit la taille changer et refait son masque POUR CETTE TAILLE. La
+       position de l'ombre par rapport à la molécule ne bouge pas.
+     · LE TÉMOIN NÉGATIF : la MÊME ouverture du dock, sans rien dire à NGL (le
+       comportement d'avant). La toile garde ses 900 px, la molécule ne bouge
+       donc pas d'un pixel, mais le masque — bâti pour 900 — est étiré sur 700 :
+       l'ombre se décale, elle est DÉTACHÉE de la molécule. C'est le défaut
+       rapporté, mesuré, et non pas raconté.
+
+   LA MESURE — « OÙ L'OMBRE EST-ELLE PAR RAPPORT À LA MOLÉCULE ? »
+   Deux centres de gravité, dans la MÊME unité (les pixels AFFICHÉS de la boîte) :
+     · la MOLÉCULE : les atomes projetés par la matrice de la caméra (le même
+       `camera.clip` que le masque emploie), ramenés en pixels affichés par la
+       taille CSS réelle de la toile d'NGL ;
+     · l'OMBRE : le centre de gravité du DERNIER masque peint, ramené en pixels
+       affichés par la taille CSS réelle de la couche.
+   Leur écart est un décalage de projection (la lampe), constant tant que la
+   couche tombe juste : c'est sa STABILITÉ qui juge, pas sa valeur.
+
+   Pilotée par _viewer_ray_shadow_resize_test.cjs, qui la sert en 127.0.0.1 avec
+   ngl.js (le MÊME dist UMD 2.4.0 que src/utils/ngl.js) et le SOURCE des modules.
+   ------------------------------------------------------------------------- */
+const OUT = { facts: {}, results: {}, errors: [] };
+const log = (s) => {
+  const el = document.getElementById('log');
+  el.textContent += '\n' + s;
+};
+const post = (stage) => fetch('/result', {
+  method: 'POST', headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ stage, ...OUT }),
+}).catch(() => {});
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const r2 = (v) => (Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
+
+/* ---- LE PEPTIDE (le même que la sonde de l'ombre au repos) ---------------- */
+function peptidePdb () {
+  const N = 14;
+  const lines = [];
+  const aa = ['ALA', 'GLY', 'SER', 'LEU', 'LYS'];
+  const pad = (v, n) => String(v).padStart(n, ' ');
+  for (let i = 1; i <= N; i += 1) {
+    const t = (i - 1) * 1.5;
+    const name = aa[(i - 1) % aa.length];
+    const x = 6 * Math.cos(t * 1.2);
+    const y = 6 * Math.sin(t * 1.2);
+    const z = 1.5 * i;
+    lines.push(`ATOM  ${pad(i * 3 + 1, 5)}  N   ${name} A${pad(i, 4)}    ${x.toFixed(3).padStart(8)}${y.toFixed(3).padStart(8)}${z.toFixed(3).padStart(8)}  1.00  0.00           N`);
+    lines.push(`ATOM  ${pad(i * 3 + 2, 5)}  CA  ${name} A${pad(i, 4)}    ${(x + 1.4).toFixed(3).padStart(8)}${(y + 0.4).toFixed(3).padStart(8)}${(z + 0.3).toFixed(3).padStart(8)}  1.00  0.00           C`);
+    lines.push(`ATOM  ${pad(i * 3 + 3, 5)}  C   ${name} A${pad(i, 4)}    ${(x + 2.6).toFixed(3).padStart(8)}${(y + 0.9).toFixed(3).padStart(8)}${(z + 0.5).toFixed(3).padStart(8)}  1.00  0.00           C`);
+  }
+  lines.push(`HELIX    1   1 ALA A${pad(1, 4)}  ALA A${pad(N, 4)}  1${pad(N, 36)}`);
+  return lines.join('\n') + '\nEND\n';
+}
+
+/* ---- LES REPÈRES DE LA MESURE -------------------------------------------- */
+const viewEl = document.getElementById('view');
+const dockEl = document.getElementById('dock');
+const hostEl = document.getElementById('host');
+const layerCv = document.getElementById('layer');
+const rectOf = (el) => { const r = el.getBoundingClientRect(); return [r.width, r.height]; };
+const LIGHT = [0.52, 0.42, 0.74];
+let stage = null;
+let canvas = null;
+let pilot = null;
+let lastPaint = null;
+let rays = null;
+
+/* LE CENTRE DE GRAVITÉ D'UN MASQUE (mêmes poids que la sonde de l'ombre au repos) */
+const centroidOf = (mask, w, h) => {
+  if (!mask || !(w > 0) || !(h > 0) || mask.length < w * h) return null;
+  let sx = 0;
+  let sy = 0;
+  let sw = 0;
+  for (let i = 0; i < w * h; i += 1) {
+    const v = mask[i];
+    if (!(v > 0)) continue;
+    const x = i % w;
+    sx += v * x;
+    sy += v * ((i - x) / w);
+    sw += v;
+  }
+  return sw > 0 ? { x: sx / sw, y: sy / sw } : null;
+};
+
+/* OÙ LA MOLÉCULE EST PEINTE, EN PIXELS AFFICHÉS — son centre de gravité ET sa
+   boîte. Les atomes sont projetés par la matrice de la caméra (`camera.clip` — LA
+   même que le masque emploie) puis ramenés dans la boîte CSS RÉELLE de la toile :
+   le repère de ce que l'œil voit. La BOÎTE sert au témoin négatif : elle prouve que
+   la molécule n'a pas bougé d'un pixel quand le cadre rétrécit sans qu'on le dise à
+   NGL (et donc que c'est bien l'OMBRE qui se détache). */
+const inkInBox = () => {
+  const atoms = rays.atomsFromStage(stage, 100000, 100000);
+  const cam = rays.cameraFromViewer(stage.viewer);
+  const c = cam.clip;
+  const cRect = rectOf(canvas);
+  let sx = 0;
+  let sy = 0;
+  let n = 0;
+  let x0 = Infinity;
+  let y0 = Infinity;
+  let x1 = -Infinity;
+  let y1 = -Infinity;
+  for (let i = 0; i < atoms.count; i += 1) {
+    const x = atoms.positions[i * 3];
+    const y = atoms.positions[i * 3 + 1];
+    const z = atoms.positions[i * 3 + 2];
+    const w = c[3] * x + c[7] * y + c[11] * z + c[15];
+    if (!(Math.abs(w) > 1e-9)) continue;
+    const px = (c[0] * x + c[4] * y + c[8] * z + c[12]) / w;
+    const py = (c[1] * x + c[5] * y + c[9] * z + c[13]) / w;
+    const bx = ((px + 1) / 2) * cRect[0];
+    const by = ((1 - py) / 2) * cRect[1];
+    sx += bx;
+    sy += by;
+    if (bx < x0) x0 = bx;
+    if (bx > x1) x1 = bx;
+    if (by < y0) y0 = by;
+    if (by > y1) y1 = by;
+    n += 1;
+  }
+  return n ? { centroid: [sx / n, sy / n], box: [x0, y0, x1, y1], size: [x1 - x0, y1 - y0] } : null;
+};
+
+/* OÙ L'OMBRE EST PEINTE, EN PIXELS AFFICHÉS : le masque du dernier tableau peint,
+   ramené par la taille CSS de la couche (c'est là qu'il est ÉTIRÉ). */
+const shadowInBox = () => {
+  if (!lastPaint || !lastPaint.mask) return null;
+  const p = centroidOf(lastPaint.mask, lastPaint.maskWidth, lastPaint.maskHeight);
+  if (!p) return null;
+  const lRect = rectOf(layerCv);
+  return [p.x / lastPaint.maskWidth * lRect[0], p.y / lastPaint.maskHeight * lRect[1]];
+};
+
+/* L'ÉTAT COMPLET D'UN INSTANT : ce que la boîte mesure, ce que la toile vaut, ce
+   que le masque vaut, et L'ÉCART ombre − molécule (la seule chose qui décide). */
+const state = () => {
+  const box = rectOf(viewEl);
+  const cRect = rectOf(canvas);
+  const lRect = rectOf(layerCv);
+  const ink = inkInBox();
+  const sh = shadowInBox();
+  const pt = ink ? ink.centroid : null;
+  return {
+    box: [Math.round(box[0]), Math.round(box[1])],
+    canvas: [canvas.width, canvas.height],
+    canvasCss: [Math.round(cRect[0]), Math.round(cRect[1])],
+    layerCss: [Math.round(lRect[0]), Math.round(lRect[1])],
+    mask: lastPaint ? [lastPaint.maskWidth, lastPaint.maskHeight] : null,
+    /* 1 = la couche est exactement la taille de la toile (rien n'est étiré, donc
+       l'ombre tombe là où elle a été calculée) ; 0,78 = elle est écrasée. */
+    stretchX: r2(cRect[0] > 0 ? lRect[0] / cRect[0] : null),
+    ink: pt ? [r2(pt[0]), r2(pt[1])] : null,
+    /* LA BOÎTE DE L'ENCRE — la preuve que la molécule n'a pas bougé, et qu'elle
+       n'a pas été redimensionnée non plus (la même taille en px à 900 et à 700). */
+    inkBox: ink ? ink.box.map(r2) : null,
+    inkSize: ink ? ink.size.map(r2) : null,
+    shadow: sh ? [r2(sh[0]), r2(sh[1])] : null,
+    offset: (pt && sh) ? [r2(sh[0] - pt[0]), r2(sh[1] - pt[1])] : null,
+    builds: pilot.stats().builds,
+    mode: pilot.stats().mode,
+  };
+};
+
+/* OUVRIR / REFERMER LA FENÊTRE DE GAUCHE : elle PREND la largeur, la vue garde le
+   reste — exactement la rangée du viewer (🧬 · ▶ MD · 🪢). */
+const openDock = (px) => { dockEl.style.width = `${px}px`; };
+
+async function main () {
+  if (typeof NGL === 'undefined') throw new Error('ngl.js non chargé');
+  const live = await import('/src/utils/viewerRayShadowLive.js');
+  rays = await import('/src/utils/viewerRayShadows.js');
+  log('modules importés (ombre vivante + ombres)');
+
+  stage = new NGL.Stage(hostEl, { backgroundColor: 'white' });
+  stage.handleResize();
+  const comp = await stage.loadFile(new Blob([peptidePdb()], { type: 'text/plain' }), { ext: 'pdb' });
+  if (!comp) throw new Error('le PDB n a pas été lu');
+  comp.addRepresentation('licorice', { sele: 'all', colorScheme: 'uniform', colorValue: 0x3377ff, radiusSize: 0.2 });
+  stage.autoView(0);
+  canvas = hostEl.querySelector('canvas');
+  if (!canvas) throw new Error('NGL n a pas posé de toile');
+  /* Les maillages d'NGL se construisent de façon ASYNCHRONE : on attend une toile
+     STABLE avant de mesurer (sinon le pilote refuserait de peindre). */
+  const t0 = Date.now();
+  let stable = 0;
+  let lastW = 0;
+  while (Date.now() - t0 < 20000 && stable < 3) {
+    if (canvas.width > 0 && canvas.width === lastW) stable += 1; else stable = 0;
+    lastW = canvas.width;
+    await sleep(200);
+  }
+  OUT.facts.canvas = `${canvas.width}x${canvas.height}`;
+  OUT.facts.atoms = comp.structure ? comp.structure.atomCount : 0;
+  OUT.facts.waitedMs = Date.now() - t0;
+  log(`scène prête : ${JSON.stringify(OUT.facts)}`);
+  await post('scene');
+
+  /* ---- LE PILOTE, EXACTEMENT CELUI DU VIEWER ------------------------------ */
+  const layer = live.createRayShadowOverlay(layerCv);
+  const overlay = {
+    element: layer.element,
+    size: layer.size,
+    clear: () => { lastPaint = null; return layer.clear(); },
+    dispose: () => { lastPaint = null; return layer.dispose(); },
+    paint: (shadow) => { lastPaint = shadow; return layer.paint(shadow); },
+  };
+  pilot = live.attachRayShadowLive({
+    stage, overlay,
+    light: () => LIGHT,
+    options: () => ({ strength: 0.55, blur: 1 }),
+  });
+  if (!pilot) throw new Error('le pilote n a pas pu s attacher');
+  pilot.refresh({ force: true });
+  await sleep(120);
+  OUT.results.ready = state();
+  log(`1. la scène est posée : ${JSON.stringify(OUT.results.ready)}`);
+  await post('ready');
+
+  /* ---- 1. LE CADRE SE RÉTRÉCIT, ET ON LE DIT À NGL (le correctif) ---------- */
+  /* Ce que fait le viewer : le dock s'ouvre, son ResizeObserver voit la boîte
+     changer, et il rend ses mesures à NGL (`handleResize` + une image). Le pilote
+     doit alors refaire son masque POUR CETTE TAILLE — donc l'écart ombre − molécule
+     ne doit PAS bouger. */
+  openDock(200);
+  await sleep(60);
+  stage.handleResize();
+  await sleep(250);
+  OUT.results.fix = state();
+  log(`2. dock ouvert, NGL prévenu : ${JSON.stringify(OUT.results.fix)}`);
+  await post('fix');
+
+  /* ---- 2. LA VUE REPREND TOUTE LA LARGEUR (toujours en prévenant NGL) ------ */
+  openDock(0);
+  await sleep(60);
+  stage.handleResize();
+  await sleep(250);
+  OUT.results.back = state();
+  log(`3. dock refermé : ${JSON.stringify(OUT.results.back)}`);
+  await post('back');
+
+  /* ---- 3. LE TÉMOIN NÉGATIF — LA MÊME OUVERTURE, SANS RIEN DIRE À NGL ------
+     Le comportement d'avant cette session : la toile garde ses 900 px, la molécule
+     ne bouge donc pas d'un pixel, et le masque bâti pour 900 est étiré sur 700 →
+     l'ombre se décolle. Le défaut du rapport, MESURÉ. */
+  openDock(200);
+  await sleep(300);                    // aucune image n'est rendue : rien ne le dit
+  OUT.results.defect = state();
+  log(`4. la même ouverture, SANS le dire à NGL : ${JSON.stringify(OUT.results.defect)}`);
+  await post('defect');
+
+  await post('done');
+}
+main().catch(async (e) => {
+  OUT.errors.push(`fatal: ${(e && e.stack) || e}`);
+  log(`ÉCHEC : ${(e && e.stack) || e}`);
+  await post('fatal').catch(() => {});
+});
+</script>
+</body>
+</html>

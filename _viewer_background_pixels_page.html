@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Sonde — le fond du viewer (⬚ rampe, clic, film, still)</title>
+<style>
+  html, body { margin:0; padding:0; background:#fff; font:12px/1.45 monospace; color:#111; }
+  #host { position:absolute; left:-10000px; top:0; width:320px; height:240px; }
+  #log { padding:8px; white-space:pre-wrap; }
+</style>
+</head>
+<body>
+<pre id="log">chargement…</pre>
+<div id="host"></div>
+<script src="/ngl.js"></script>
+<script>
+'use strict';
+/* ---------------------------------------------------------------------------
+   Sonde : LE FOND DU VIEWER — une rampe de deux couleurs, sa direction, et le
+   CLIC sur le fond qui doit ouvrir (puis fermer) les options.
+
+   Page pilotée par _viewer_background_pixels_test.cjs, qui la sert en 127.0.0.1
+   avec `ngl.js` (le dist UMD 2.4.0 du dépôt) et src/utils/viewerBackground.js
+   SERVI COMME MODULE (le vrai, jamais recopié), puis lit le verdict JSON qu'elle
+   POSTe. Elle n'est jamais ouverte à la main.
+
+   CE QU'ELLE PROUVE, PARCE QUE RIEN D'AUTRE NE LE PEUT :
+     1. le module PEINT la rampe dans une toile 2D — le coin du haut est A, celui
+        du bas est B, et la direction les échange (c'est le fond d'un film 🎬🎞) ;
+     2. sur un VRAI canvas NGL, la couleur de fond vit bien dans le CSS
+        (`style.backgroundColor`) et la TOILE est transparente (clear d'alpha 0) :
+        c'est ce fait qui rend un dégradé CSS gratuit — aucune scène touchée ;
+     3. un clic sur le fond ARRIVE au signal `stage.signals.clicked` d'NGL avec un
+        pickingProxy SANS atome : c'est le geste du panneau (et le second clic,
+        qui le referme, passe par le même chemin) ;
+     4. `underlayBackdrop` pose la rampe SOUS un PNG transparent : la « molécule»
+        garde ses pixels, le fond prend les deux extrémités de la rampe.
+   --------------------------------------------------------------------------- */
+var OUT = { stage: 'start', cases: [], log: [], ua: navigator.userAgent };
+
+function log () {
+  OUT.log.push(Array.prototype.slice.call(arguments).join(' '));
+  document.getElementById('log').textContent = OUT.log.join('\n');
+}
+function post (extra) {
+  var payload = { stage: OUT.stage, cases: OUT.cases, log: OUT.log, ua: OUT.ua };
+  if (extra) { for (var k in extra) payload[k] = extra[k]; }
+  return fetch('/result', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+}
+function sleep (ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+function raf () { return new Promise(function (r) { requestAnimationFrame(function () { requestAnimationFrame(r); }); }); }
+
+window.addEventListener('error', function (e) { log('window.error: ' + (e.message || e)); });
+window.addEventListener('unhandledrejection', function (e) { log('rejet: ' + ((e.reason && e.reason.message) || e.reason)); });
+
+var W = 320, H = 240;
+
+/* Une couleur CSS (celle du navigateur : rgb(), oklch()… ou un #rrggbb) ramenée
+   à `#rrggbb` par un canvas — le même tour que la sonde des peaux. */
+function hexOf (css) {
+  try {
+    var c = document.createElement('canvas');
+    c.width = c.height = 1;
+    var x = c.getContext('2d');
+    x.fillStyle = '#000000';
+    x.fillStyle = String(css);
+    var v = String(x.fillStyle).toLowerCase();
+    return /^#[0-9a-f]{6}$/.test(v) ? v : null;
+  } catch (e) { return null; }
+}
+function pxOf (ctx, x, y) { return Array.prototype.slice.call(ctx.getImageData(Math.round(x), Math.round(y), 1, 1).data); }
+function save (name, dataUrl) {
+  return fetch('/save?name=' + name, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: dataUrl });
+}
+
+/* Une petite molécule factice (4×4×4 carbones, pas de recouvrement voulu) : la
+   scène doit avoir quelque chose à piquer pour que le clic de FOND soit mesuré
+   dans les conditions du viewer — rien piqué, même avec une structure chargée. */
+function pad (v, w) { var s = String(v); while (s.length < w) s = ' ' + s; return s; }
+function f8 (v) { var s = v.toFixed(3); while (s.length < 8) s = ' ' + s; return s; }
+var pdb = ['HEADER    SONDE FOND DU VIEWER'];
+var serial = 0;
+for (var gx = 0; gx < 4; gx++) {
+  for (var gy = 0; gy < 4; gy++) {
+    for (var gz = 0; gz < 4; gz++) {
+      serial++;
+      pdb.push('ATOM  ' + pad(serial, 5) + '  C   ALA A' + pad(serial, 4) + '    ' +
+        f8((gx - 1.5) * 2.6) + f8((gy - 1.5) * 2.6) + f8((gz - 1.5) * 2.6) + '  1.00  0.00          C');
+    }
+  }
+}
+pdb.push('END');
+</script>
+<script type="module">
+/* LE MODULE EST SERVI TEL QUEL : c'est LUI qui peint, pas une copie. Le flux
+   complet vit ici (module scope) mais n'utilise que les globales de la page. */
+import {
+  backgroundCss, backgroundSpecOf, paintViewerBackground, underlayBackdrop,
+} from '/bg.js';
+
+function near (px, hex, tol) {
+  if (!px || !hex) return false;
+  var r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16);
+  return Math.max(Math.abs(px[0] - r), Math.abs(px[1] - g), Math.abs(px[2] - b)) <= tol;
+}
+
+async function main () {
+  /* LES DEUX SPÉCIFICATIONS MESURÉES : la même paire A → B, ↓ puis → */
+  var specDown = backgroundSpecOf('#ff0000', { on: true, to: '#0000ff', angle: 180 });
+  var specRight = backgroundSpecOf('#ff0000', { on: true, to: '#0000ff', angle: 90 });
+  var css = backgroundCss(specDown);
+  var cssOff = backgroundCss(backgroundSpecOf('#ff0000', null));
+
+  /* ── 1. LA RAMPE PEINTE DANS UNE TOILE 2D (le fond d'un film 🎬🎞) ──────── */
+  var film = { css: css, off: cssOff };
+  var c1 = document.createElement('canvas'); c1.width = W; c1.height = H;
+  var g1 = c1.getContext('2d');
+  film.painted = paintViewerBackground(g1, W, H, specDown);
+  film.top = pxOf(g1, W / 2, 0);
+  film.bottom = pxOf(g1, W / 2, H - 1);
+  film.middle = pxOf(g1, W / 2, H / 2);
+  var c2 = document.createElement('canvas'); c2.width = W; c2.height = H;
+  var g2 = c2.getContext('2d');
+  paintViewerBackground(g2, W, H, specRight);
+  film.left = pxOf(g2, 0, H / 2);
+  film.right = pxOf(g2, W - 1, H / 2);
+  /* ⚠ UNE SIMPLE COULEUR NE PEINT RIEN : la toile doit rester VIDE (c'est le
+     film d'avant, au pixel près — le fond uni y est posé par le viewer). */
+  var c3 = document.createElement('canvas'); c3.width = W; c3.height = H;
+  var g3 = c3.getContext('2d');
+  film.solidPainted = paintViewerBackground(g3, W, H, '#f8fafc');
+  film.solidPixel = pxOf(g3, W / 2, H / 2);
+  OUT.cases.push({ id: 'film', film: film, image: c1.toDataURL() });
+  OUT.stage = 'film-peint';
+  await post({});
+
+  /* ── 2. LE CANVAS DU VIEWER : LE FOND EST DU CSS, LA TOILE EST TRANSPARENTE ─ */
+  var host = document.getElementById('host');
+  var stage = new NGL.Stage(host, { backgroundColor: '#ff0000' });
+  var canvas = stage.viewer.renderer.domElement;
+  await raf();
+  stage.setParameters({ backgroundColor: '#ff0000' });
+  stage.viewer.requestRender();
+  await raf();
+  var probe = {
+    cssBg: getComputedStyle(canvas).backgroundColor,
+    cssBgHex: hexOf(getComputedStyle(canvas).backgroundColor),
+    canvasCss: String(canvas.style.backgroundColor),
+    clearAlpha: (typeof stage.viewer.renderer.getClearAlpha === 'function') ? stage.viewer.renderer.getClearAlpha() : null,
+    canvasSize: [canvas.width, canvas.height],
+  };
+  /* LA RAMPE, POSÉE COMME LE FAIT applyBackgroundGradient : sur ce même canvas */
+  var stopRe = /(rgba?|oklch|color)\([^)]*\)|#[0-9a-fA-F]{3,8}/g;
+  canvas.style.backgroundImage = css;
+  var computed = String(getComputedStyle(canvas).backgroundImage);
+  probe.computed = computed;
+  probe.computedAngle = (/([\d.]+)deg/.exec(computed) || [])[1] || null;
+  probe.computedColours = (computed.match(stopRe) || []).slice(0, 2).map(hexOf);
+  probe.computedCount = (computed.match(stopRe) || []).length;
+  /* ⚠ CHROME SÉRIALISE « to bottom » (180°) SANS SON ANGLE : c'est la direction
+     par DÉFAUT du CSS, le moteur l'omet. Le relevé garde donc les deux formes —
+     et un second essai à 90°, qui, lui, DOIT porter son angle : c'est ainsi que
+     « leur direction » se mesure vraiment. */
+  canvas.style.backgroundImage = backgroundCss(specRight);
+  probe.computedRight = String(getComputedStyle(canvas).backgroundImage);
+  probe.computedRightAngle = (/([\d.]+)deg/.exec(probe.computedRight) || [])[1] || null;
+  probe.rightColours = (probe.computedRight.match(stopRe) || []).slice(0, 2).map(hexOf);
+  /* …et éteinte : la chaîne VIDE rend la couleur d'NGL telle quelle */
+  canvas.style.backgroundImage = cssOff;
+  probe.offComputed = String(getComputedStyle(canvas).backgroundImage);
+  canvas.style.backgroundImage = css;
+  OUT.cases.push({ id: 'canvas', probe: probe });
+  OUT.stage = 'canvas-css';
+  await post({});
+  /* ── 3. LE CLIC SUR LE FOND — ce que le panneau attend du signal ─────────
+     Une structure est chargée (la petite molécule factice) et le clic tombe
+     dans un COIN de la vue : NGL dispatche quand même `clicked`, avec un
+     pickingProxy qui n'a AUCUN atome. C'est exactement la branche du viewer qui
+     ouvre le panneau — et le SECOND clic, qui le referme, passe par le même
+     chemin (c'est le même état basculé). */
+  var ref = stage.loadFile(new Blob([pdb.join('\n')], { type: 'text/plain' }), { ext: 'pdb' });
+  await ref;
+  await raf();
+  stage.autoView();
+  stage.viewer.requestRender();
+  await raf();
+  var clicks = 0, emptyClicks = 0, atomsClicked = 0;
+  stage.signals.clicked.add(function (p) {
+    clicks += 1;
+    if (!p || !p.atom) emptyClicks += 1; else atomsClicked += 1;
+  });
+  var rect = canvas.getBoundingClientRect();
+  function fire (x, y) {
+    var ev = { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y, button: 0, buttons: 1 };
+    canvas.dispatchEvent(new MouseEvent('mousedown', ev));
+    canvas.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y, button: 0, buttons: 0 }));
+  }
+  fire(rect.left + rect.width - 8, rect.top + 8);          // le coin haut-droit : du fond
+  await raf();
+  var afterFirst = { clicks: clicks, emptyClicks: emptyClicks };
+  fire(rect.left + rect.width - 8, rect.top + 8);          // le même clic : il referme
+  await raf();
+  var click = {
+    clicks: clicks, emptyClicks: emptyClicks, atomsClicked: atomsClicked,
+    afterFirst: afterFirst, rect: [rect.left, rect.top, rect.width, rect.height],
+  };
+  OUT.cases.push({ id: 'click', click: click });
+  OUT.stage = 'clic-fond';
+  await post({});
+
+  /* ── 4. LA STILL ✨ RAY : LA RAMPE SOUS UN PNG TRANSPARENT ──────────────── */
+  var ray = document.createElement('canvas'); ray.width = W; ray.height = H;
+  var rg = ray.getContext('2d');
+  rg.fillStyle = '#00ff00';                                 // la « molécule »
+  rg.fillRect(W / 2 - 20, H / 2 - 20, 40, 40);
+  var blob = await new Promise(function (res) { ray.toBlob(res, 'image/png'); });
+  var composed = await underlayBackdrop(blob, specDown);
+  var still = { made: !!composed, type: composed ? composed.type : null };
+  if (composed) {
+    var bmp = await createImageBitmap(composed);
+    var dc = document.createElement('canvas'); dc.width = W; dc.height = H;
+    var dg = dc.getContext('2d');
+    dg.drawImage(bmp, 0, 0, W, H);
+    still.molecule = pxOf(dg, W / 2, H / 2);
+    still.top = pxOf(dg, W / 2, 0);
+    still.bottom = pxOf(dg, W / 2, H - 1);
+    /* la même composition, mais SANS rampe : le module ne doit rien faire */
+    still.plain = (await underlayBackdrop(blob, backgroundSpecOf('#ff0000', null))) === null;
+    still.moleculeOk = near(still.molecule, '#00ff00', 2);
+    still.topOk = near(still.top, '#ff0000', 2);
+    still.bottomOk = near(still.bottom, '#0000ff', 2);
+    await save('still', dc.toDataURL());
+  }
+  await save('film', c1.toDataURL());
+  OUT.cases.push({ id: 'still', still: still });
+
+  OUT.stage = 'done';
+  await post({});
+}
+main().catch(function (e) {
+  OUT.stage = 'fatal';
+  log('exception : ' + ((e && e.stack) || e));
+  post({});
+});
+</script>
+
+</body>
+</html>

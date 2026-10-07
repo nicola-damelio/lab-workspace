@@ -104,7 +104,7 @@ const windowOf = (e1, e2) => ({ lo: Math.max(0, (RAD[e1] || 0.77) + (RAD[e2] || 
 const seq = 'ACDEFGHIKLMNPQRSTVWY';
 const pdb = B.proteinSequenceToPdbText(seq, '');
 const model = parsePdb(pdb);
-ok(model.atoms.length === 324, 'builder atoms = ' + model.atoms.length + ' (expected 324)');
+ok(model.atoms.length === 325, 'builder atoms = ' + model.atoms.length + ' (expected 325: the 324 of before plus the C-terminal OXT of §1ter)');
 
 const isH = (a) => a.element === 'H' || a.element === 'D';
 const heavy = model.atoms.filter((a) => !isH(a));
@@ -141,6 +141,42 @@ model.atoms.filter((a) => /^CD\d?$/.test(a.name)).forEach((cd) => {
   });
 });
 ok(near.length === 0, 'no residue has its CD inside a C–C window of CA or CB' + (near.length ? ' -> ' + near.join(', ') : ''));
+
+// ---- 1ter. the C-terminus is a carboxylate ------------------------------------
+// The user's report, word for word: "The pH setting is wrong. it gives me a charge of +36 at
+// pH 7 for the peptide: SIIGIIMGILGNIPQVIQIIMSIVKAFKGNK. At pH 7 it should be +3!"  Part of
+// that +4-vs-+3 gap was the model itself: the built chain carried NO acid at all — the
+// carboxylate every real peptide ends in was missing — so no pH could ever read below its
+// four bases (three lysines + the N-terminus).  It is written now: OXT, with NO proton on it,
+// exactly like the carboxylates of Asp and Glu (see buildProteinBackbone), so the field reads
+// a CARBOXYLATE (pKa 3.9) and titrates it to −1 at pH 7.
+const lastRes = model.atoms.reduce((m, a) => Math.max(m, a.resSeq), 0);
+const atomAt = (name, resSeq) => model.atoms.find((a) => a.name === name && a.resSeq === resSeq);
+const cTerm = atomAt('C', lastRes);
+const oTerm = atomAt('O', lastRes);
+const oxt = atomAt('OXT', lastRes);
+ok(!!oxt, `the last residue of the built chain carries an OXT (residue ${lastRes})`);
+ok(oxt && model.bondsOf(cTerm).includes(oxt),
+  '…and it is BONDED to the carbonyl carbon by a real CONECT record (that record is what makes the group a carboxylate for the field)');
+ok(model.bondsOf(cTerm).length === 3,
+  `…the terminal carbon has exactly three neighbours (${model.bondsOf(cTerm).map((a) => a.name).join('/')}) — it is an sp2 carboxyl carbon, nothing else hangs on it`);
+const corner = (a, b, c) => {
+  const u = [a.x - b.x, a.y - b.y, a.z - b.z];
+  const v = [c.x - b.x, c.y - b.y, c.z - b.z];
+  const n = (w) => Math.hypot(w[0], w[1], w[2]);
+  return Math.acos(Math.max(-1, Math.min(1, (u[0] * v[0] + u[1] * v[1] + u[2] * v[2]) / (n(u) * n(v))))) * 180 / Math.PI;
+};
+ok(oxt && Math.abs(dist(cTerm, oxt) - dist(cTerm, oTerm)) < 0.002,
+  `…with the SAME C–O length as the carbonyl oxygen (${dist(cTerm, oTerm).toFixed(3)} / ${dist(cTerm, oxt).toFixed(3)} A — the file rounds to 1/1000 Å)`);
+ok(oxt && Math.abs(corner(oTerm, cTerm, oxt) - 119.0) < 0.6,
+  `…and the planar-carboxylate corner O–C–OXT = ${corner(oTerm, cTerm, oxt).toFixed(2)}° (the two C–O are 180° apart about the CA–C axis)`);
+ok(oxt && Math.abs(corner(atomAt('CA', lastRes), cTerm, oxt) - 120.5) < 0.6,
+  `…CA–C–OXT = ${corner(atomAt('CA', lastRes), cTerm, oxt).toFixed(2)}° — the third sp2 angle`);
+ok(!model.atoms.some((a) => a.name === 'HXT'),
+  '…and NO proton is written on it (the ionised form, as for Asp and Glu: the pH is what charges it)');
+ok(oxt && model.atoms.filter(isH).every((h) => dist(h, oxt) > 1.3),
+  '…no hydrogen of the model sits within a bond window of the OXT either (the terminus cannot be read as a COOH)');
+
 
 // ---- 2. the proline ring itself: a pentagon, not a folded chain ----------------
 const bb = B.buildProteinBackbone('APA', '')[1];

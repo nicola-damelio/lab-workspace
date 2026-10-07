@@ -52,6 +52,7 @@ export {
   StructureSVGView,
   CollapsibleSection,
   SequencePaintStrip,
+  BetaSheetEditor,
   CustomXTick1H,
   CustomYTick1H,
   CustomXTick13C,
@@ -69,6 +70,12 @@ export {
   normalizeImageCandidates,
   SmartImage
 } from './NMRData';
+
+/* 🧵 LA DÉFINITION DE SÉQUENCE → LE MODÈLE REPLIÉ — le pinceau 🖌️, les feuillets
+   déclarés (le panneau 🧵 « Pair them ») et le texte PDB que la page confie au
+   viewer 3D. Le crochet vit avec le bâtisseur PDB (NMRSections.jsx) : les trois
+   pages l'appellent, aucune n'a donc sa propre lecture de la déclaration. */
+export { useSequenceStructureModel } from './NMRSections';
 
 // ================= DOCKING-SPECIFIC CONSTANTS =================
 export const DOCK_SELECT_COLOR = '#f59e0b';

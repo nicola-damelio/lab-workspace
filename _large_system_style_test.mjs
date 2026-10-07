@@ -56,7 +56,9 @@ ok(/const sele = showLargeWaterRef\.current \? 'all' : 'not water';/.test(block)
   'l’eau n’est dessinée que si 💧 Water est cochée (sinon la sélection est « not water »)');
 ok(/addRepresentation\('line'/.test(block), 'le style « lines » existe');
 ok(/addRepresentation\('spacefill'/.test(block), 'le style « spheres » existe');
-ok(/addRepresentation\('dot'/.test(block), 'le style « dots » existe');
+ok(/addRepresentation\('point'/.test(block), 'le style « dots » existe — et c’est `point`, la seule représentation de points qu’NGL 2.4 enregistre');
+ok(/radiusScale: 0\.25/.test(block), 'le style « spheres » écrit sa taille en `radiusScale` (le seul champ qu’NGL lit — `scale` est ignoré)');
+gone("addRepresentation('dot'", 'plus jamais `dot` : ce nom n’est pas dans le registre d’NGL 2.4, la vue devenait VIDE');
 ok(!/addRepresentation\('cartoon'/.test(block),
   'la protéine n’est PLUS forcée en cartoon : « tout en lines » s’applique à tous les atomes');
 ok(!/'hetero and not water'/.test(block),
@@ -137,8 +139,8 @@ ok(VIEWER.includes('Colour of the ${it.what} — the 2°-structure palette (heli
 // Le ↺ de la section 2° structure du ⚙ remet la PALETTE à ses défauts : c'est une
 // palette (le schéma la lit en direct, rien n'est reconstruit), pas un choix de
 // dessin — elle n'a donc pas à quitter le rendu léger.
-ok(VIEWER.includes('onClick={() => setSstrucColors({ ...SSTRUC_COLOR_DEFAULTS })}'),
-  'le ↺ de la section 2° structure du ⚙ remet les trois couleurs à leurs défauts');
+ok(VIEWER.includes("onClick={() => setSstrucColors(paletteDefaults('labViewerSstrucColors', SSTRUC_COLOR_DEFAULTS))}"),
+  'le ↺ de la section 2° structure du ⚙ remet les trois couleurs enregistrées');
 ok(VIEWER.includes('const SSTRUC_COLOR_DEFAULTS = { ...sstrucColorStore };'),
   '…et ces défauts sont ceux du store que le schéma lit');
 // La barre « Molecules · styling » a remplacé le mode de docking : c'est elle qui

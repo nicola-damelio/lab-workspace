@@ -325,7 +325,7 @@ has("set('sphere', Number(e.target.value))", '…le R◯ de la ligne écrit son 
 has("sphere: 'radiusSphere',", '…par le champ commun des deux barres, mappé sur radiusSphere');
 has("set('bond', Number(e.target.value))", '…et son R— le sien');
 has("bond: 'radiusBond',", '…par le même adaptateur, mappé sur radiusBond');
-has('{ scale: (st.sphereScale || 1) * rS, colorScheme, opacity, multipleBond: true }',
+has('{ radiusScale: (st.sphereScale || 1) * rS, colorScheme, opacity, multipleBond: true }',
   'R◯ multiplie la taille des sphères (un `set sphere_scale` du macro reste une propriété d’ATOMES qui multiplie celle-ci)');
 has('aspectRatio: 1.3 * rS,', 'R◯ multiplie aussi les sphères des ball+stick');
 has('radiusSize: LICORICE_BOND_RADIUS * rB }', 'R— multiplie l’épaisseur des bâtons (licorice)');

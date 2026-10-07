@@ -111,3 +111,1196 @@ table td .text-xs, table th .text-xs {
 .cite-ref:hover {
   text-decoration: underline;
 }
+
+
+/* ===========================================================================
+   INTERFACE SKINS — the whole program re-painted from one attribute.
+
+   Tailwind v4 compiles every colour utility to a THEME VARIABLE
+   (`bg-slate-800` → `background-color: var(--color-slate-800)`,
+   `text-white` → `color: var(--color-white)`), and those variables live in
+   @layer theme. The blocks below are UNLAYERED, so they win over that layer,
+   and they are keyed on `[data-skin="…"]` instead of `:root`: the custom
+   properties inherited by every descendant, a skin can therefore be applied to
+   <html> (the whole program, see src/utils/uiSkin.js + main.jsx) AND to any
+   small element — which is how Settings shows a live miniature of each skin.
+
+   Choosing a skin changes NO class and NO component: the neutral scale, the
+   accent and (for `dim`, and for the night skins) the white are restated, so
+   every page, modal, badge, button, table and chip of the program follows at
+   once. The document itself follows too, on the two colours index.html's
+   `body` reads from those same variables.
+
+   The values are not invented: each skin either SWAPS two of Tailwind's own
+   ramps or restates a ramp stop for stop, and the probe test
+   (node _ui_skin_test.cjs) recomputes the WCAG contrast of the pairs the
+   program actually writes — no skin may cost more than 1.5 steps of contrast
+   against the shipped palette, anywhere. A `night` skin (see « NUIT », below)
+   cannot be judged that way — it turns the palette over, so it answers to its
+   own RECIPE (every stop is the recipe applied to Tailwind's ramp) and to a
+   FLOOR per pair (the nine pairs the program writes keep their readability,
+   family by family, on a dark page).
+
+   The reference skin (Slate & blue) has NO block: it IS Tailwind's values, and
+   applying it removes the attribute.
+   ========================================================================= */
+
+/* ── Graphite — the neutral scale of ZINC: the blue cast slate carries
+   everywhere is gone, pure grey chrome on the same blue accent. */
+[data-skin="graphite"] {
+  --color-slate-50: oklch(98.5% 0 0);
+  --color-slate-100: oklch(96.7% 0.001 286.375);
+  --color-slate-200: oklch(92% 0.004 286.32);
+  --color-slate-300: oklch(87.1% 0.006 286.286);
+  --color-slate-400: oklch(70.5% 0.015 286.067);
+  --color-slate-500: oklch(55.2% 0.016 285.938);
+  --color-slate-600: oklch(44.2% 0.017 285.786);
+  --color-slate-700: oklch(37% 0.013 285.805);
+  --color-slate-800: oklch(27.4% 0.006 286.033);
+  --color-slate-900: oklch(21% 0.006 285.885);
+  --color-slate-950: oklch(14.1% 0.005 285.823);
+}
+
+/* ── Warm paper — the neutral scale of STONE: warm grey ink and borders, a
+   “paper” page, on the same blue accent. */
+[data-skin="warm"] {
+  --color-slate-50: oklch(98.5% 0.001 106.423);
+  --color-slate-100: oklch(97% 0.001 106.424);
+  --color-slate-200: oklch(92.3% 0.003 48.717);
+  --color-slate-300: oklch(86.9% 0.005 56.366);
+  --color-slate-400: oklch(70.9% 0.01 56.259);
+  --color-slate-500: oklch(55.3% 0.013 58.071);
+  --color-slate-600: oklch(44.4% 0.011 73.639);
+  --color-slate-700: oklch(37.4% 0.01 67.558);
+  --color-slate-800: oklch(26.8% 0.007 34.298);
+  --color-slate-900: oklch(21.6% 0.006 56.043);
+  --color-slate-950: oklch(14.7% 0.004 49.25);
+}
+
+/* ── Indigo — the accent of INDIGO. The two blues SWAP places (the app's own
+   indigo accents are its secondary accent): the primary turns indigo — one
+   stop darker, so every white-on-blue label gains a step — and every indigo
+   accent turns blue. */
+[data-skin="indigo"] {
+  --color-blue-50: oklch(96.2% 0.018 272.314);
+  --color-blue-100: oklch(93% 0.034 272.788);
+  --color-blue-200: oklch(87% 0.065 274.039);
+  --color-blue-300: oklch(78.5% 0.115 274.713);
+  --color-blue-400: oklch(67.3% 0.182 276.935);
+  --color-blue-500: oklch(58.5% 0.233 277.117);
+  --color-blue-600: oklch(51.1% 0.262 276.966);
+  --color-blue-700: oklch(45.7% 0.24 277.023);
+  --color-blue-800: oklch(39.8% 0.195 277.366);
+  --color-blue-900: oklch(35.9% 0.144 278.697);
+  --color-blue-950: oklch(25.7% 0.09 281.288);
+  --color-indigo-50: oklch(97% 0.014 254.604);
+  --color-indigo-100: oklch(93.2% 0.032 255.585);
+  --color-indigo-200: oklch(88.2% 0.059 254.128);
+  --color-indigo-300: oklch(80.9% 0.105 251.813);
+  --color-indigo-400: oklch(70.7% 0.165 254.624);
+  --color-indigo-500: oklch(62.3% 0.214 259.815);
+  --color-indigo-600: oklch(54.6% 0.245 262.881);
+  --color-indigo-700: oklch(48.8% 0.243 264.376);
+  --color-indigo-800: oklch(42.4% 0.199 265.638);
+  --color-indigo-900: oklch(37.9% 0.146 265.522);
+  --color-indigo-950: oklch(28.2% 0.091 267.935);
+}
+
+/* ── Violet — the accent of VIOLET: the same swap one hue further, violet
+   primary and blue secondary. The two ramps are 1:1 in lightness, so the
+   contrast of every label on an accent is exactly what the program had. */
+[data-skin="violet"] {
+  --color-blue-50: oklch(96.9% 0.016 293.756);
+  --color-blue-100: oklch(94.3% 0.029 294.588);
+  --color-blue-200: oklch(89.4% 0.057 293.283);
+  --color-blue-300: oklch(81.1% 0.111 293.571);
+  --color-blue-400: oklch(70.2% 0.183 293.541);
+  --color-blue-500: oklch(60.6% 0.25 292.717);
+  --color-blue-600: oklch(54.1% 0.281 293.009);
+  --color-blue-700: oklch(49.1% 0.27 292.581);
+  --color-blue-800: oklch(43.2% 0.232 292.759);
+  --color-blue-900: oklch(38% 0.189 293.745);
+  --color-blue-950: oklch(28.3% 0.141 291.089);
+  --color-violet-50: oklch(97% 0.014 254.604);
+  --color-violet-100: oklch(93.2% 0.032 255.585);
+  --color-violet-200: oklch(88.2% 0.059 254.128);
+  --color-violet-300: oklch(80.9% 0.105 251.813);
+  --color-violet-400: oklch(70.7% 0.165 254.624);
+  --color-violet-500: oklch(62.3% 0.214 259.815);
+  --color-violet-600: oklch(54.6% 0.245 262.881);
+  --color-violet-700: oklch(48.8% 0.243 264.376);
+  --color-violet-800: oklch(42.4% 0.199 265.638);
+  --color-violet-900: oklch(37.9% 0.146 265.522);
+  --color-violet-950: oklch(28.2% 0.091 267.935);
+}
+
+/* ── Dimmed — a pared-back white, for long sessions in front of the screen.
+   The glaring #fff becomes a soft #f1f4f6, the page sits BELOW the cards
+   (slate-50 is now darker than the white, which is what makes the layout read
+   at night), the accent loses part of its chroma, and borders and captions
+   GAIN a step: nothing is inverted, so every chart, canvas and figure keeps
+   the ink it was drawn with. */
+[data-skin="dim"] {
+  --color-white: oklch(96.5% 0.004 250);
+  --color-slate-50: oklch(94% 0.006 250);
+  --color-slate-100: oklch(91.5% 0.008 250);
+  --color-slate-200: oklch(85% 0.012 252);
+  --color-slate-300: oklch(78% 0.018 253);
+  --color-slate-400: oklch(63% 0.03 256);
+  --color-slate-500: oklch(52% 0.04 257);
+  --color-slate-600: oklch(42% 0.04 257);
+  --color-slate-700: oklch(34% 0.04 257);
+  --color-slate-800: oklch(25.5% 0.04 260);
+  --color-slate-900: oklch(19% 0.04 264);
+  --color-slate-950: oklch(12% 0.04 264);
+  --color-blue-50: oklch(94% 0.02 254);
+  --color-blue-100: oklch(89% 0.04 255);
+  --color-blue-200: oklch(83% 0.07 254);
+  --color-blue-300: oklch(75% 0.11 252);
+  --color-blue-400: oklch(66% 0.15 255);
+  --color-blue-500: oklch(58% 0.18 260);
+  --color-blue-600: oklch(50.5% 0.17 262);
+  --color-blue-700: oklch(45% 0.16 264);
+  --color-blue-800: oklch(39% 0.14 266);
+  --color-blue-900: oklch(35% 0.11 266);
+  --color-blue-950: oklch(26% 0.08 268);
+}
+
+/* ── High contrast — WCAG-leaning ink and borders. Every ink and every border
+   takes a step towards black (the captions that were #94a3b8 — 2.6:1 on white
+   — now clear 6.8:1), the accent deepens, and the status inks of the warning /
+   success / danger chips deepen by 6 points of OKLCH lightness: the same
+   hues, one or two steps stronger, and NO pair of the program loses a step. */
+[data-skin="contrast"] {
+  --color-slate-50: oklch(99% 0.002 250);
+  --color-slate-100: oklch(97.5% 0.003 250);
+  --color-slate-200: oklch(72% 0.015 255);
+  --color-slate-300: oklch(65% 0.03 256);
+  --color-slate-400: oklch(47% 0.04 257);
+  --color-slate-500: oklch(38% 0.04 257);
+  --color-slate-600: oklch(29% 0.04 257);
+  --color-slate-700: oklch(21% 0.04 257);
+  --color-slate-800: oklch(15% 0.04 260);
+  --color-slate-900: oklch(11% 0.04 264);
+  --color-slate-950: oklch(7% 0.04 264);
+  --color-blue-50: oklch(95% 0.03 254);
+  --color-blue-100: oklch(90% 0.05 255);
+  --color-blue-200: oklch(82% 0.09 254);
+  --color-blue-300: oklch(70% 0.14 252);
+  --color-blue-400: oklch(58% 0.19 255);
+  --color-blue-500: oklch(50% 0.22 258);
+  --color-blue-600: oklch(44% 0.23 261);
+  --color-blue-700: oklch(38% 0.21 263);
+  --color-blue-800: oklch(32% 0.18 265);
+  --color-blue-900: oklch(28% 0.14 266);
+  --color-blue-950: oklch(20% 0.1 268);
+  /* the same 6-point deepening of the status inks (600 → 900 of each family) */
+  --color-red-600: oklch(51.7% 0.245 27.325);
+  --color-red-700: oklch(44.5% 0.213 27.518);
+  --color-red-800: oklch(38.4% 0.177 26.899);
+  --color-red-900: oklch(33.6% 0.141 25.723);
+  --color-orange-600: oklch(58.6% 0.222 41.116);
+  --color-orange-700: oklch(49.3% 0.195 38.402);
+  --color-orange-800: oklch(41% 0.157 37.304);
+  --color-orange-900: oklch(34.8% 0.123 38.172);
+  --color-amber-600: oklch(60.6% 0.179 58.318);
+  --color-amber-700: oklch(49.5% 0.163 48.998);
+  --color-amber-800: oklch(41.3% 0.137 46.201);
+  --color-amber-900: oklch(35.4% 0.112 45.904);
+  --color-yellow-600: oklch(62.1% 0.162 75.834);
+  --color-yellow-700: oklch(49.4% 0.135 66.442);
+  --color-yellow-800: oklch(41.6% 0.114 61.907);
+  --color-yellow-900: oklch(36.1% 0.095 57.708);
+  --color-green-600: oklch(56.7% 0.194 149.214);
+  --color-green-700: oklch(46.7% 0.154 150.069);
+  --color-green-800: oklch(38.8% 0.119 151.328);
+  --color-green-900: oklch(33.3% 0.095 152.535);
+  --color-emerald-600: oklch(53.6% 0.145 163.225);
+  --color-emerald-700: oklch(44.8% 0.118 165.612);
+  --color-emerald-800: oklch(37.2% 0.095 166.913);
+  --color-emerald-900: oklch(31.8% 0.077 168.94);
+  --color-rose-600: oklch(52.6% 0.253 17.585);
+  --color-rose-700: oklch(45.4% 0.222 16.935);
+  --color-rose-800: oklch(39.5% 0.188 13.697);
+  --color-rose-900: oklch(35% 0.159 10.272);
+  --color-teal-600: oklch(54% 0.118 184.704);
+  --color-teal-700: oklch(45.1% 0.096 186.391);
+  --color-teal-800: oklch(37.7% 0.078 188.216);
+  --color-teal-900: oklch(32.6% 0.063 188.416);
+  --color-sky-600: oklch(52.8% 0.158 241.966);
+  --color-sky-700: oklch(44% 0.134 242.749);
+  --color-sky-800: oklch(38.3% 0.11 240.79);
+  --color-sky-900: oklch(33.1% 0.09 240.876);
+  --color-cyan-600: oklch(54.9% 0.126 221.723);
+  --color-cyan-700: oklch(46% 0.105 223.128);
+  --color-cyan-800: oklch(39% 0.085 224.283);
+  --color-cyan-900: oklch(33.8% 0.07 227.392);
+}
+
+/* ── Purple / Red / Rose — the accent of PURPLE, RED and ROSE. La demande de
+   cette session : « the skins in the setup are all too similar ». Les trois
+   dégradés sont ceux de Tailwind, cran pour cran, et leur structure de
+   luminosité reste à moins de 4 points de celle du bleu (ce qu'un échange de
+   teinte a le droit de déplacer) : chaque libellé blanc-sur-accent garde donc
+   son contraste, et les accents proposés sont enfin franchement différents. */
+[data-skin="purple"] {
+  --color-blue-50: oklch(97.7% 0.014 308.299);
+  --color-blue-100: oklch(94.6% 0.033 307.174);
+  --color-blue-200: oklch(90.2% 0.063 306.703);
+  --color-blue-300: oklch(82.7% 0.119 306.383);
+  --color-blue-400: oklch(71.4% 0.203 305.504);
+  --color-blue-500: oklch(62.7% 0.265 303.9);
+  --color-blue-600: oklch(55.8% 0.288 302.321);
+  --color-blue-700: oklch(49.6% 0.265 301.924);
+  --color-blue-800: oklch(43.8% 0.218 303.724);
+  --color-blue-900: oklch(38.1% 0.176 304.987);
+  --color-blue-950: oklch(29.1% 0.149 302.717);
+}
+
+/* ── Red — l'accent ROUGE. */
+[data-skin="red"] {
+  --color-blue-50: oklch(97.1% 0.013 17.38);
+  --color-blue-100: oklch(93.6% 0.032 17.717);
+  --color-blue-200: oklch(88.5% 0.062 18.334);
+  --color-blue-300: oklch(80.8% 0.114 19.571);
+  --color-blue-400: oklch(70.4% 0.191 22.216);
+  --color-blue-500: oklch(63.7% 0.237 25.331);
+  --color-blue-600: oklch(57.7% 0.245 27.325);
+  --color-blue-700: oklch(50.5% 0.213 27.518);
+  --color-blue-800: oklch(44.4% 0.177 26.899);
+  --color-blue-900: oklch(39.6% 0.141 25.723);
+  --color-blue-950: oklch(25.8% 0.092 26.042);
+}
+
+/* ── Rose — l'accent ROSE. */
+[data-skin="rose"] {
+  --color-blue-50: oklch(96.9% 0.015 12.422);
+  --color-blue-100: oklch(94.1% 0.03 12.58);
+  --color-blue-200: oklch(89.2% 0.058 10.001);
+  --color-blue-300: oklch(81% 0.117 11.638);
+  --color-blue-400: oklch(71.2% 0.194 13.428);
+  --color-blue-500: oklch(64.5% 0.246 16.439);
+  --color-blue-600: oklch(58.6% 0.253 17.585);
+  --color-blue-700: oklch(51.4% 0.222 16.935);
+  --color-blue-800: oklch(45.5% 0.188 13.697);
+  --color-blue-900: oklch(41% 0.159 10.272);
+  --color-blue-950: oklch(27.1% 0.105 12.094);
+}
+
+/* ── NUIT — LA PAGE DEVIENT SOMBRE, ET L'ENCRE SUIT. ────────────────────────
+   Les peaux ci-dessus déplacent la TEINTE ou l'ENCRE, jamais la LUMIÈRE : la
+   page reste claire — c'est ce que « the skins do not change the background
+   color » reprochait. Une peau `night` fait le contraire : elle RETOURNE
+   l'échelle, donc le fond de page, les cartes, les panneaux et les bordures
+   deviennent sombres — et, par la même opération, l'encre qui s'écrivait dessus
+   devient claire : « for dark color the writing must change color to allow
+   visibility » est satisfait par construction, pas au cas par cas.
+
+   LA RECETTE (rejouée valeur par valeur par la sonde, node _ui_skin_test.cjs) —
+   chaque famille garde sa TEINTE et son chroma (ramené dans le gamut sRGB, la
+   réduction de chroma du CSS Color 4), et sa LUMINOSITÉ est rejouée sur les
+   deux segments que le programme sépare lui-même :
+     · les SURFACES — crans 50 à 300 : le fond, les panneaux, les bordures ;
+     · les ENCRES   — crans 400 à 950 : les légendes, les libellés, les titres.
+   La rampe livrée de la famille est NORMALISÉE sur la bande voulue, de son
+   cran 50 à son cran 300 pour les surfaces et de son cran 400 à son 950 pour
+   les encres : `night` rejoue ses neutres sur [15, 40] et [57, 99], ses
+   couleurs sur [29, 45] et [57, 100] ; `carbon` emprunte les gris PURS de Zinc
+   et descend d'un cran — [13, 37] et [53, 97] pour ses neutres, [27, 42] et
+   [53, 97] pour ses couleurs. Une famille garde donc l'écart de luminosité
+   qu'elle avait ENTRE ses crans : c'est ce qui fait tenir, après le
+   retournement, les paires que le programme écrit (une puce `bg-blue-50` +
+   `text-blue-700`, un libellé blanc sur `bg-blue-600`, un filet
+   `border-slate-200` sur une carte).
+
+   LA PROFONDEUR — pourquoi ces bandes-là, et pas plus sombres. Un fond à 13 %
+   et une carte à 17 % ne font qu'UN seul noir : mesurés sur l'application
+   réelle, ils ne se séparaient que de 4 points de luminosité, la carte ne se
+   lisait pas comme une carte. Les surfaces sont donc ÉTALÉES — 15 % la page,
+   18.5 le panneau, 22 la carte, 27 le filet, 40 le cran fort — et les encres
+   MONTENT avec elles (l'encre passe de 50 à 57 % au premier cran) pour que
+   chaque paire garde son plancher : c'est ce que la sonde mesure, et c'est la
+   raison d'être des deux nombres de chaque bande. Descendre la page ou la carte
+   sous ces valeurs ramène le « tout noir » que ces peaux viennent corriger ;
+   monter les encres au-delà laisserait une page grise au lieu d'une page
+   sombre.
+
+   LA SONDE VÉRIFIE (et pas autre chose) que chaque cran EST la recette
+   appliquée à la rampe de Tailwind — aucune valeur n'est inventée ; que la
+   rampe MONTE (le cran 50 est la surface, le 950 l'encre : l'inverse de la
+   rampe livrée) ; et que neuf paires écrites par le programme gardent, POUR
+   CHAQUE FAMILLE, le plancher de lisibilité d'une page sombre — de 1.25:1 pour
+   un filet à 4.5:1 pour une encre. La lisibilité n'y est donc pas une
+   espérance : c'est une mesure.
+
+   ÉCRAN SEULEMENT — `@media screen` : une page sombre est une intention
+   d'écran. Sur le papier (window.print, les documents, les figures), le
+   programme reprend la palette livrée : un tirage ne doit pas envoyer une page
+   noire à l'imprimante, et les documents ont de toute façon leur propre encre.
+   ========================================================================= */
+
+@media screen {
+
+[data-skin="night"],
+/* ── ET LA MÊME PEAU POUR LA PEAU PERSONNALISÉE DE NUIT : le bloc est PARTAGÉ,
+   pas recopié — voir « LA NUIT D'UNE PEAU PERSONNALISÉE », plus bas. Le bleu
+   ci-dessous n'est qu'un repli : l'accent de l'opérateur est écrit EN LIGNE et
+   l'emporte. */
+[data-skin="custom"][data-pagemode="night"] {
+  color-scheme: dark;
+  --color-white: oklch(22.0% 0.000 0.0);
+  --color-slate-50: oklch(15.0% 0.003 247.9);
+  --color-slate-100: oklch(18.5% 0.007 247.9);
+  --color-slate-200: oklch(27.0% 0.013 255.5);
+  --color-slate-300: oklch(40.0% 0.022 252.9);
+  --color-slate-400: oklch(57.0% 0.040 256.8);
+  --color-slate-500: oklch(68.0% 0.046 257.4);
+  --color-slate-600: oklch(75.8% 0.043 257.3);
+  --color-slate-700: oklch(81.3% 0.044 257.3);
+  --color-slate-800: oklch(88.0% 0.041 260.0);
+  --color-slate-900: oklch(93.2% 0.032 265.8);
+  --color-slate-950: oklch(99.0% 0.005 264.7);
+  --color-blue-50: oklch(29.0% 0.014 254.6);
+  --color-blue-100: oklch(32.8% 0.032 255.6);
+  --color-blue-200: oklch(37.7% 0.059 254.1);
+  --color-blue-300: oklch(45.0% 0.105 251.8);
+  --color-blue-400: oklch(57.0% 0.165 254.6);
+  --color-blue-500: oklch(65.5% 0.184 259.8);
+  --color-blue-600: oklch(73.3% 0.138 262.9);
+  --color-blue-700: oklch(79.2% 0.105 264.4);
+  --color-blue-800: oklch(85.6% 0.070 265.6);
+  --color-blue-900: oklch(90.2% 0.047 265.5);
+  --color-blue-950: oklch(100.0% 0.000 267.9);
+  --color-indigo-50: oklch(29.0% 0.018 272.3);
+  --color-indigo-100: oklch(31.9% 0.034 272.8);
+  --color-indigo-200: oklch(37.3% 0.065 274.0);
+  --color-indigo-300: oklch(45.0% 0.115 274.7);
+  --color-indigo-400: oklch(57.0% 0.182 276.9);
+  --color-indigo-500: oklch(66.1% 0.182 277.1);
+  --color-indigo-600: oklch(73.7% 0.137 277.0);
+  --color-indigo-700: oklch(79.3% 0.105 277.0);
+  --color-indigo-800: oklch(85.4% 0.072 277.4);
+  --color-indigo-900: oklch(89.5% 0.052 278.7);
+  --color-indigo-950: oklch(100.0% 0.000 281.3);
+  --color-sky-50: oklch(29.0% 0.013 236.6);
+  --color-sky-100: oklch(31.8% 0.026 236.8);
+  --color-sky-200: oklch(37.2% 0.058 230.9);
+  --color-sky-300: oklch(45.0% 0.090 230.3);
+  --color-sky-400: oklch(57.0% 0.117 232.7);
+  --color-sky-500: oklch(62.8% 0.138 237.3);
+  --color-sky-600: oklch(72.0% 0.158 242.0);
+  --color-sky-700: oklch(80.4% 0.108 242.7);
+  --color-sky-800: oklch(85.8% 0.078 240.8);
+  --color-sky-900: oklch(90.7% 0.050 240.9);
+  --color-sky-950: oklch(100.0% 0.000 243.2);
+  --color-teal-50: oklch(29.0% 0.014 180.7);
+  --color-teal-100: oklch(32.8% 0.051 180.8);
+  --color-teal-200: oklch(38.2% 0.069 180.4);
+  --color-teal-300: oklch(45.0% 0.081 181.1);
+  --color-teal-400: oklch(57.0% 0.102 181.9);
+  --color-teal-500: oklch(63.3% 0.113 182.5);
+  --color-teal-600: oklch(72.2% 0.118 184.7);
+  --color-teal-700: oklch(79.9% 0.096 186.4);
+  --color-teal-800: oklch(86.2% 0.078 188.2);
+  --color-teal-900: oklch(90.6% 0.063 188.4);
+  --color-teal-950: oklch(100.0% 0.000 192.5);
+  --color-violet-50: oklch(29.0% 0.016 293.8);
+  --color-violet-100: oklch(31.6% 0.029 294.6);
+  --color-violet-200: oklch(36.6% 0.057 293.3);
+  --color-violet-300: oklch(45.0% 0.111 293.6);
+  --color-violet-400: oklch(57.0% 0.183 293.5);
+  --color-violet-500: oklch(66.9% 0.194 292.7);
+  --color-violet-600: oklch(73.5% 0.151 293.0);
+  --color-violet-700: oklch(78.7% 0.119 292.6);
+  --color-violet-800: oklch(84.7% 0.083 292.8);
+  --color-violet-900: oklch(90.0% 0.053 293.7);
+  --color-violet-950: oklch(100.0% 0.000 291.1);
+  --color-purple-50: oklch(29.0% 0.014 308.3);
+  --color-purple-100: oklch(32.3% 0.033 307.2);
+  --color-purple-200: oklch(37.0% 0.063 306.7);
+  --color-purple-300: oklch(45.0% 0.119 306.4);
+  --color-purple-400: oklch(57.0% 0.203 305.5);
+  --color-purple-500: oklch(65.8% 0.226 303.9);
+  --color-purple-600: oklch(72.9% 0.171 302.3);
+  --color-purple-700: oklch(79.2% 0.127 301.9);
+  --color-purple-800: oklch(85.1% 0.091 303.7);
+  --color-purple-900: oklch(90.9% 0.055 305.0);
+  --color-purple-950: oklch(100.0% 0.000 302.7);
+  --color-cyan-50: oklch(29.0% 0.019 200.9);
+  --color-cyan-100: oklch(32.8% 0.045 203.4);
+  --color-cyan-200: oklch(38.0% 0.065 205.0);
+  --color-cyan-300: oklch(45.0% 0.077 207.1);
+  --color-cyan-400: oklch(57.0% 0.099 211.5);
+  --color-cyan-500: oklch(63.5% 0.112 215.2);
+  --color-cyan-600: oklch(72.9% 0.126 221.7);
+  --color-cyan-700: oklch(80.8% 0.105 223.1);
+  --color-cyan-800: oklch(86.9% 0.085 224.3);
+  --color-cyan-900: oklch(91.5% 0.053 227.4);
+  --color-cyan-950: oklch(100.0% 0.000 229.7);
+  --color-fuchsia-50: oklch(29.0% 0.017 320.1);
+  --color-fuchsia-100: oklch(31.8% 0.037 318.9);
+  --color-fuchsia-200: oklch(37.2% 0.076 319.6);
+  --color-fuchsia-300: oklch(45.0% 0.145 321.4);
+  --color-fuchsia-400: oklch(57.0% 0.238 322.2);
+  --color-fuchsia-500: oklch(64.0% 0.295 322.1);
+  --color-fuchsia-600: oklch(71.3% 0.264 322.9);
+  --color-fuchsia-700: oklch(78.4% 0.198 323.9);
+  --color-fuchsia-800: oklch(84.7% 0.138 324.6);
+  --color-fuchsia-900: oklch(89.6% 0.094 325.6);
+  --color-fuchsia-950: oklch(100.0% 0.000 325.7);
+  --color-emerald-50: oklch(29.0% 0.021 166.1);
+  --color-emerald-100: oklch(32.5% 0.052 163.1);
+  --color-emerald-200: oklch(37.8% 0.081 164.2);
+  --color-emerald-300: oklch(45.0% 0.095 165.0);
+  --color-emerald-400: oklch(57.0% 0.123 163.2);
+  --color-emerald-500: oklch(62.9% 0.137 162.5);
+  --color-emerald-600: oklch(71.4% 0.145 163.2);
+  --color-emerald-700: oklch(79.0% 0.118 165.6);
+  --color-emerald-800: oklch(85.5% 0.095 166.9);
+  --color-emerald-900: oklch(90.1% 0.077 168.9);
+  --color-emerald-950: oklch(100.0% 0.000 172.6);
+  --color-green-50: oklch(29.0% 0.018 155.8);
+  --color-green-100: oklch(31.9% 0.044 156.7);
+  --color-green-200: oklch(37.2% 0.084 156.0);
+  --color-green-300: oklch(45.0% 0.113 154.4);
+  --color-green-400: oklch(57.0% 0.151 151.7);
+  --color-green-500: oklch(62.6% 0.174 149.6);
+  --color-green-600: oklch(70.5% 0.194 149.2);
+  --color-green-700: oklch(78.7% 0.154 150.1);
+  --color-green-800: oklch(85.1% 0.119 151.3);
+  --color-green-900: oklch(89.6% 0.095 152.5);
+  --color-green-950: oklch(100.0% 0.000 152.9);
+  --color-amber-50: oklch(29.0% 0.022 95.3);
+  --color-amber-100: oklch(32.7% 0.059 95.6);
+  --color-amber-200: oklch(38.3% 0.079 95.7);
+  --color-amber-300: oklch(45.0% 0.092 91.6);
+  --color-amber-400: oklch(57.0% 0.117 84.4);
+  --color-amber-500: oklch(61.6% 0.134 70.1);
+  --color-amber-600: oklch(69.7% 0.166 58.3);
+  --color-amber-700: oklch(78.4% 0.138 49.0);
+  --color-amber-800: oklch(84.8% 0.090 46.2);
+  --color-amber-900: oklch(89.4% 0.060 45.9);
+  --color-amber-950: oklch(100.0% 0.000 45.6);
+  --color-yellow-50: oklch(29.0% 0.026 102.2);
+  --color-yellow-100: oklch(31.7% 0.067 103.2);
+  --color-yellow-200: oklch(37.2% 0.078 101.5);
+  --color-yellow-300: oklch(45.0% 0.093 98.1);
+  --color-yellow-400: oklch(57.0% 0.117 91.9);
+  --color-yellow-500: oklch(61.3% 0.126 86.0);
+  --color-yellow-600: oklch(70.0% 0.147 75.8);
+  --color-yellow-700: oklch(79.6% 0.135 66.4);
+  --color-yellow-800: oklch(85.6% 0.099 61.9);
+  --color-yellow-900: oklch(89.7% 0.065 57.7);
+  --color-yellow-950: oklch(100.0% 0.000 53.8);
+  --color-orange-50: oklch(29.0% 0.016 73.7);
+  --color-orange-100: oklch(31.9% 0.038 75.2);
+  --color-orange-200: oklch(37.8% 0.076 70.7);
+  --color-orange-300: oklch(45.0% 0.100 66.3);
+  --color-orange-400: oklch(57.0% 0.140 55.9);
+  --color-orange-500: oklch(61.0% 0.167 47.6);
+  --color-orange-600: oklch(66.2% 0.203 41.1);
+  --color-orange-700: oklch(74.5% 0.159 38.4);
+  --color-orange-800: oklch(81.9% 0.105 37.3);
+  --color-orange-900: oklch(87.4% 0.069 38.2);
+  --color-orange-950: oklch(100.0% 0.000 36.3);
+  --color-red-50: oklch(29.0% 0.013 17.4);
+  --color-red-100: oklch(32.4% 0.032 17.7);
+  --color-red-200: oklch(37.4% 0.062 18.3);
+  --color-red-300: oklch(45.0% 0.114 19.6);
+  --color-red-400: oklch(57.0% 0.191 22.2);
+  --color-red-500: oklch(63.5% 0.237 25.3);
+  --color-red-600: oklch(69.2% 0.197 27.3);
+  --color-red-700: oklch(76.2% 0.142 27.5);
+  --color-red-800: oklch(82.1% 0.101 26.9);
+  --color-red-900: oklch(86.7% 0.071 25.7);
+  --color-red-950: oklch(100.0% 0.000 26.0);
+  --color-rose-50: oklch(29.0% 0.015 12.4);
+  --color-rose-100: oklch(31.8% 0.030 12.6);
+  --color-rose-200: oklch(36.7% 0.058 10.0);
+  --color-rose-300: oklch(45.0% 0.117 11.6);
+  --color-rose-400: oklch(57.0% 0.194 13.4);
+  --color-rose-500: oklch(63.5% 0.246 16.4);
+  --color-rose-600: oklch(69.3% 0.199 17.6);
+  --color-rose-700: oklch(76.3% 0.142 16.9);
+  --color-rose-800: oklch(82.1% 0.102 13.7);
+  --color-rose-900: oklch(86.4% 0.075 10.3);
+  --color-rose-950: oklch(100.0% 0.000 12.1);
+}
+
+[data-skin="carbon"],
+/* …et la famille GRISE, de nuit (les gris purs de Zinc, un cran plus bas — les
+   mêmes nombres que `carbon`, la teinte de l'opérateur en plus). */
+[data-skin="custom"][data-tone="zinc"][data-pagemode="night"] {
+  color-scheme: dark;
+  --color-white: oklch(19.0% 0.000 0.0);
+  --color-slate-50: oklch(13.0% 0.000 0.0);
+  --color-slate-100: oklch(16.8% 0.001 286.4);
+  --color-slate-200: oklch(26.7% 0.004 286.3);
+  --color-slate-300: oklch(37.0% 0.006 286.3);
+  --color-slate-400: oklch(53.0% 0.015 286.1);
+  --color-slate-500: oklch(64.9% 0.016 285.9);
+  --color-slate-600: oklch(73.5% 0.017 285.8);
+  --color-slate-700: oklch(79.1% 0.013 285.8);
+  --color-slate-800: oklch(86.6% 0.006 286.0);
+  --color-slate-900: oklch(91.6% 0.006 285.9);
+  --color-slate-950: oklch(97.0% 0.005 285.8);
+  --color-blue-50: oklch(27.0% 0.014 254.6);
+  --color-blue-100: oklch(30.5% 0.032 255.6);
+  --color-blue-200: oklch(35.2% 0.059 254.1);
+  --color-blue-300: oklch(42.0% 0.105 251.8);
+  --color-blue-400: oklch(53.0% 0.165 254.6);
+  --color-blue-500: oklch(61.7% 0.208 259.8);
+  --color-blue-600: oklch(69.7% 0.159 262.9);
+  --color-blue-700: oklch(75.7% 0.124 264.4);
+  --color-blue-800: oklch(82.3% 0.088 265.6);
+  --color-blue-900: oklch(87.0% 0.064 265.5);
+  --color-blue-950: oklch(97.0% 0.014 267.9);
+  --color-indigo-50: oklch(27.0% 0.018 272.3);
+  --color-indigo-100: oklch(29.7% 0.034 272.8);
+  --color-indigo-200: oklch(34.8% 0.065 274.0);
+  --color-indigo-300: oklch(42.0% 0.115 274.7);
+  --color-indigo-400: oklch(53.0% 0.182 276.9);
+  --color-indigo-500: oklch(62.3% 0.205 277.1);
+  --color-indigo-600: oklch(70.1% 0.158 277.0);
+  --color-indigo-700: oklch(75.8% 0.125 277.0);
+  --color-indigo-800: oklch(82.1% 0.090 277.4);
+  --color-indigo-900: oklch(86.2% 0.069 278.7);
+  --color-indigo-950: oklch(97.0% 0.014 281.3);
+  --color-sky-50: oklch(27.0% 0.013 236.6);
+  --color-sky-100: oklch(29.6% 0.026 236.8);
+  --color-sky-200: oklch(34.7% 0.058 230.9);
+  --color-sky-300: oklch(42.0% 0.084 230.3);
+  --color-sky-400: oklch(53.0% 0.109 232.7);
+  --color-sky-500: oklch(58.9% 0.129 237.3);
+  --color-sky-600: oklch(68.3% 0.158 242.0);
+  --color-sky-700: oklch(76.9% 0.129 242.7);
+  --color-sky-800: oklch(82.4% 0.097 240.8);
+  --color-sky-900: oklch(87.5% 0.068 240.9);
+  --color-sky-950: oklch(97.0% 0.015 243.2);
+  --color-teal-50: oklch(27.0% 0.014 180.7);
+  --color-teal-100: oklch(30.6% 0.051 180.8);
+  --color-teal-200: oklch(35.6% 0.065 180.4);
+  --color-teal-300: oklch(42.0% 0.076 181.1);
+  --color-teal-400: oklch(53.0% 0.095 181.9);
+  --color-teal-500: oklch(59.4% 0.106 182.5);
+  --color-teal-600: oklch(68.6% 0.118 184.7);
+  --color-teal-700: oklch(76.4% 0.096 186.4);
+  --color-teal-800: oklch(82.9% 0.078 188.2);
+  --color-teal-900: oklch(87.4% 0.063 188.4);
+  --color-teal-950: oklch(97.0% 0.043 192.5);
+  --color-violet-50: oklch(27.0% 0.016 293.8);
+  --color-violet-100: oklch(29.5% 0.029 294.6);
+  --color-violet-200: oklch(34.1% 0.057 293.3);
+  --color-violet-300: oklch(42.0% 0.111 293.6);
+  --color-violet-400: oklch(53.0% 0.183 293.5);
+  --color-violet-500: oklch(63.1% 0.219 292.7);
+  --color-violet-600: oklch(69.9% 0.174 293.0);
+  --color-violet-700: oklch(75.2% 0.140 292.6);
+  --color-violet-800: oklch(81.4% 0.103 292.8);
+  --color-violet-900: oklch(86.8% 0.072 293.7);
+  --color-violet-950: oklch(97.0% 0.015 291.1);
+  --color-purple-50: oklch(27.0% 0.014 308.3);
+  --color-purple-100: oklch(30.1% 0.033 307.2);
+  --color-purple-200: oklch(34.5% 0.063 306.7);
+  --color-purple-300: oklch(42.0% 0.119 306.4);
+  --color-purple-400: oklch(53.0% 0.203 305.5);
+  --color-purple-500: oklch(62.0% 0.255 303.9);
+  --color-purple-600: oklch(69.2% 0.197 302.3);
+  --color-purple-700: oklch(75.7% 0.151 301.9);
+  --color-purple-800: oklch(81.7% 0.113 303.7);
+  --color-purple-900: oklch(87.6% 0.076 305.0);
+  --color-purple-950: oklch(97.0% 0.017 302.7);
+  --color-cyan-50: oklch(27.0% 0.019 200.9);
+  --color-cyan-100: oklch(30.5% 0.045 203.4);
+  --color-cyan-200: oklch(35.4% 0.061 205.0);
+  --color-cyan-300: oklch(42.0% 0.072 207.1);
+  --color-cyan-400: oklch(53.0% 0.092 211.5);
+  --color-cyan-500: oklch(59.7% 0.106 215.2);
+  --color-cyan-600: oklch(69.3% 0.126 221.7);
+  --color-cyan-700: oklch(77.3% 0.105 223.1);
+  --color-cyan-800: oklch(83.6% 0.085 224.3);
+  --color-cyan-900: oklch(88.3% 0.070 227.4);
+  --color-cyan-950: oklch(97.0% 0.018 229.7);
+  --color-fuchsia-50: oklch(27.0% 0.017 320.1);
+  --color-fuchsia-100: oklch(29.6% 0.037 318.9);
+  --color-fuchsia-200: oklch(34.7% 0.076 319.6);
+  --color-fuchsia-300: oklch(42.0% 0.145 321.4);
+  --color-fuchsia-400: oklch(53.0% 0.238 322.2);
+  --color-fuchsia-500: oklch(60.2% 0.286 322.1);
+  --color-fuchsia-600: oklch(67.7% 0.293 322.9);
+  --color-fuchsia-700: oklch(74.9% 0.234 323.9);
+  --color-fuchsia-800: oklch(81.3% 0.171 324.6);
+  --color-fuchsia-900: oklch(86.4% 0.126 325.6);
+  --color-fuchsia-950: oklch(97.0% 0.026 325.7);
+  --color-emerald-50: oklch(27.0% 0.021 166.1);
+  --color-emerald-100: oklch(30.2% 0.052 163.1);
+  --color-emerald-200: oklch(35.3% 0.075 164.2);
+  --color-emerald-300: oklch(42.0% 0.088 165.0);
+  --color-emerald-400: oklch(53.0% 0.114 163.2);
+  --color-emerald-500: oklch(59.0% 0.129 162.5);
+  --color-emerald-600: oklch(67.8% 0.145 163.2);
+  --color-emerald-700: oklch(75.5% 0.118 165.6);
+  --color-emerald-800: oklch(82.1% 0.095 166.9);
+  --color-emerald-900: oklch(86.9% 0.077 168.9);
+  --color-emerald-950: oklch(97.0% 0.042 172.6);
+  --color-green-50: oklch(27.0% 0.018 155.8);
+  --color-green-100: oklch(29.7% 0.044 156.7);
+  --color-green-200: oklch(34.7% 0.084 156.0);
+  --color-green-300: oklch(42.0% 0.105 154.4);
+  --color-green-400: oklch(53.0% 0.140 151.7);
+  --color-green-500: oklch(58.8% 0.164 149.6);
+  --color-green-600: oklch(66.8% 0.188 149.2);
+  --color-green-700: oklch(75.2% 0.154 150.1);
+  --color-green-800: oklch(81.8% 0.119 151.3);
+  --color-green-900: oklch(86.4% 0.095 152.5);
+  --color-green-950: oklch(97.0% 0.047 152.9);
+  --color-amber-50: oklch(27.0% 0.022 95.3);
+  --color-amber-100: oklch(30.5% 0.059 95.6);
+  --color-amber-200: oklch(35.8% 0.074 95.7);
+  --color-amber-300: oklch(42.0% 0.086 91.6);
+  --color-amber-400: oklch(53.0% 0.109 84.4);
+  --color-amber-500: oklch(57.7% 0.125 70.1);
+  --color-amber-600: oklch(66.0% 0.157 58.3);
+  --color-amber-700: oklch(74.9% 0.163 49.0);
+  --color-amber-800: oklch(81.5% 0.113 46.2);
+  --color-amber-900: oklch(86.2% 0.080 45.9);
+  --color-amber-950: oklch(97.0% 0.016 45.6);
+  --color-yellow-50: oklch(27.0% 0.026 102.2);
+  --color-yellow-100: oklch(29.6% 0.063 103.2);
+  --color-yellow-200: oklch(34.7% 0.073 101.5);
+  --color-yellow-300: oklch(42.0% 0.087 98.1);
+  --color-yellow-400: oklch(53.0% 0.109 91.9);
+  --color-yellow-500: oklch(57.4% 0.118 86.0);
+  --color-yellow-600: oklch(66.3% 0.139 75.8);
+  --color-yellow-700: oklch(76.2% 0.135 66.4);
+  --color-yellow-800: oklch(82.2% 0.114 61.9);
+  --color-yellow-900: oklch(86.5% 0.087 57.7);
+  --color-yellow-950: oklch(97.0% 0.017 53.8);
+  --color-orange-50: oklch(27.0% 0.016 73.7);
+  --color-orange-100: oklch(29.7% 0.038 75.2);
+  --color-orange-200: oklch(35.3% 0.076 70.7);
+  --color-orange-300: oklch(42.0% 0.093 66.3);
+  --color-orange-400: oklch(53.0% 0.130 55.9);
+  --color-orange-500: oklch(57.1% 0.157 47.6);
+  --color-orange-600: oklch(62.5% 0.192 41.1);
+  --color-orange-700: oklch(70.9% 0.188 38.4);
+  --color-orange-800: oklch(78.5% 0.128 37.3);
+  --color-orange-900: oklch(84.1% 0.090 38.2);
+  --color-orange-950: oklch(97.0% 0.015 36.3);
+  --color-red-50: oklch(27.0% 0.013 17.4);
+  --color-red-100: oklch(30.2% 0.032 17.7);
+  --color-red-200: oklch(34.9% 0.062 18.3);
+  --color-red-300: oklch(42.0% 0.114 19.6);
+  --color-red-400: oklch(53.0% 0.191 22.2);
+  --color-red-500: oklch(59.6% 0.237 25.3);
+  --color-red-600: oklch(65.5% 0.231 27.3);
+  --color-red-700: oklch(72.6% 0.169 27.5);
+  --color-red-800: oklch(78.7% 0.124 26.9);
+  --color-red-900: oklch(83.4% 0.092 25.7);
+  --color-red-950: oklch(97.0% 0.015 26.0);
+  --color-rose-50: oklch(27.0% 0.015 12.4);
+  --color-rose-100: oklch(29.6% 0.030 12.6);
+  --color-rose-200: oklch(34.3% 0.058 10.0);
+  --color-rose-300: oklch(42.0% 0.117 11.6);
+  --color-rose-400: oklch(53.0% 0.194 13.4);
+  --color-rose-500: oklch(59.7% 0.239 16.4);
+  --color-rose-600: oklch(65.6% 0.233 17.6);
+  --color-rose-700: oklch(72.8% 0.170 16.9);
+  --color-rose-800: oklch(78.6% 0.126 13.7);
+  --color-rose-900: oklch(83.1% 0.096 10.3);
+  --color-rose-950: oklch(97.0% 0.015 12.1);
+}
+}
+
+/* ── Custom — LA PEAU QUE L'UTILISATEUR POSSÈDE. Ses onze crans d'accent ne
+   sont PAS ici : ils dépendent de la couleur choisie dans ⚙ Settings, donc
+   src/utils/uiSkin.js les écrit EN LIGNE sur <html> — dérivés d'UNE couleur,
+   dans la forme même du dégradé livré. Ce bloc ne porte que l'accent de repli,
+   pour qu'une peau personnalisée jamais réglée soit le bleu du programme. */
+[data-skin="custom"] {
+  --lab-accent: #155dfc;
+}
+
+/* …et la famille NEUTRE, restituée cran pour cran : le gris pur (les valeurs de
+   la peau Graphite) et le chaud (celles de Warm paper). La peau personnalisée
+   les emprunte par `data-tone`, donc les pages, les bordures et les encres
+   changent aussi — c'est la seconde moitié du « not customizable ». */
+[data-skin="custom"][data-tone="zinc"] {
+  --color-slate-50: oklch(98.5% 0 0);
+  --color-slate-100: oklch(96.7% 0.001 286.375);
+  --color-slate-200: oklch(92% 0.004 286.32);
+  --color-slate-300: oklch(87.1% 0.006 286.286);
+  --color-slate-400: oklch(70.5% 0.015 286.067);
+  --color-slate-500: oklch(55.2% 0.016 285.938);
+  --color-slate-600: oklch(44.2% 0.017 285.786);
+  --color-slate-700: oklch(37% 0.013 285.805);
+  --color-slate-800: oklch(27.4% 0.006 286.033);
+  --color-slate-900: oklch(21% 0.006 285.885);
+  --color-slate-950: oklch(14.1% 0.005 285.823);
+}
+
+[data-skin="custom"][data-tone="stone"] {
+  --color-slate-50: oklch(98.5% 0.001 106.423);
+  --color-slate-100: oklch(97% 0.001 106.424);
+  --color-slate-200: oklch(92.3% 0.003 48.717);
+  --color-slate-300: oklch(86.9% 0.005 56.366);
+  --color-slate-400: oklch(70.9% 0.01 56.259);
+  --color-slate-500: oklch(55.3% 0.013 58.071);
+  --color-slate-600: oklch(44.4% 0.011 73.639);
+  --color-slate-700: oklch(37.4% 0.01 67.558);
+  --color-slate-800: oklch(26.8% 0.007 34.298);
+  --color-slate-900: oklch(21.6% 0.006 56.043);
+  --color-slate-950: oklch(14.7% 0.004 49.25);
+}
+
+/* ── LA NUIT D'UNE PEAU PERSONNALISÉE — « la pagina resta molto chiara ».
+   La peau personnalisée ne peignait que des pages CLAIRES : le réglage
+   « Night pages » de ⚙ Settings pose `data-pagemode="night"` sur <html>, et la
+   palette se retourne — SANS UNE LIGNE DE PLUS ICI. Le bloc de la peau `night`
+   et celui de `carbon` portent simplement un SECOND sélecteur (plus haut), donc
+   une peau personnalisée de nuit EST la peau livrée correspondante : mêmes
+   nombres, une seule source, et l'accent de l'opérateur par-dessus (écrit en
+   ligne, il l'emporte sur le bleu de repli).
+
+   Reste la famille CHAUDE, que ces deux peaux n'ont pas : la voici, et c'est la
+   même recette — les onze crans NEUTRES de `night` (15 la page, 40 le cran fort,
+   57 la première encre, 99 la dernière) appliqués à la rampe de Stone, qui a la
+   profondeur de celle de Slate (98.5 % contre 98.4 %, 14.7 contre 12.9). Onze
+   crans seulement : les COULEURS de la famille — les puces d'alerte, les liens —
+   restent celles du bloc partagé, et la sonde rejoue la recette plutôt que de
+   croire ces nombres. */
+@media screen {
+
+[data-skin="custom"][data-tone="stone"][data-pagemode="night"] {
+  --color-slate-50: oklch(15.0% 0.001 106.4);
+  --color-slate-100: oklch(18.2% 0.001 106.4);
+  --color-slate-200: oklch(28.4% 0.003 48.7);
+  --color-slate-300: oklch(40.0% 0.005 56.4);
+  --color-slate-400: oklch(57.0% 0.010 56.3);
+  --color-slate-500: oklch(68.7% 0.013 58.1);
+  --color-slate-600: oklch(76.8% 0.011 73.6);
+  --color-slate-700: oklch(82.0% 0.010 67.6);
+  --color-slate-800: oklch(90.0% 0.007 34.3);
+  --color-slate-900: oklch(93.8% 0.006 56.0);
+  --color-slate-950: oklch(99.0% 0.004 49.3);
+}
+
+}
+
+/* L'IMPRESSION. Une page sombre est une intention d'écran, et ça reste vrai
+   quand la page a été CHOISIE : la couleur, l'accent et l'encre du motif sont
+   écrits EN LIGNE (ils dépendent du réglage), donc aucune règle d'écran ne peut
+   les défaire — sauf la seule qu'un auteur puisse opposer à du style en ligne :
+   `!important`. Ce garde rend donc au papier les deux crans CLAIRS de la
+   famille (le motif, lui, ne s'imprime de toute façon jamais : `@media screen`).
+   Ce qui reste imprimé du réglage de nuit, c'est l'accent et son échelle : c'est
+   écrit dans ⚙ Settings. */
+@media print {
+  [data-skin="custom"][data-pagemode="night"] {
+    --color-slate-50: oklch(98.4% 0.003 247.858) !important;
+    --color-slate-100: oklch(96.8% 0.007 247.896) !important;
+  }
+  [data-skin="custom"][data-tone="zinc"][data-pagemode="night"] {
+    --color-slate-50: oklch(98.5% 0 0) !important;
+    --color-slate-100: oklch(96.7% 0.001 286.375) !important;
+  }
+  [data-skin="custom"][data-tone="stone"][data-pagemode="night"] {
+    --color-slate-50: oklch(98.5% 0.001 106.423) !important;
+    --color-slate-100: oklch(97% 0.001 106.424) !important;
+  }
+}
+
+/* ── LE FOND DES PAGES — LE MOTIF CHOISI DANS ⚙ SETTINGS.
+   LA COULEUR n'est pas ici : elle dépend d'un choix, donc src/utils/uiSkin.js
+   l'écrit EN LIGNE sur <html> (`--color-slate-50` et `--color-slate-100`,
+   ramenés dans une bande de lisibilité — voir « LA BANDE », là-bas). Le MOTIF,
+   lui, ne dépend que d'un NOM : `data-pattern`, posé sur <html> par le même
+   appel, est décrit ici une seule fois pour toutes les pages du programme, et
+   SES RÉGLAGES — la force de l'encre, l'échelle de la trame et les TROIS ENCRES
+   des motifs dessinés — sont des variables que le même appel écrit EN LIGNE : la
+   feuille n'a donc qu'à multiplier ses propres pas (`calc(24px *
+   var(--lab-page-scale, 1))`) et à décaler les siens (`--lab-page-position`). La
+   géométrie d'un motif n'est donc écrite qu'UNE fois, et changer l'échelle
+   depuis ⚙ Settings ne demande aucun nombre au JavaScript.
+
+   VINGT MOTIFS, TOUS des dégradés CSS répétés — aucun octet à charger, aucun
+   composant à toucher, et RIEN À L'IMPRESSION : les règles vivent dans
+   `@media screen`, donc un document imprimé garde sa page blanche. Il y en a de
+   deux familles (voir `UI_BG_PATTERN_GROUPS`, src/utils/uiSkin.js) : douze
+   TRAMES de papier — des filets, des points — et huit MOTIFS DESSINÉS, qui
+   courbent la ligne (des vagues, des écailles, un nid d'abeille, un damier) et
+   se peignent en PLUSIEURS COULEURS.
+
+   LA NUIT. La même couleur de page tombe dans une bande SOMBRE quand le réglage
+   est « Night pages » (`data-pagemode="night"`) : la palette se retourne alors
+   par les blocs plus haut — ceux de `night` et de `carbon`, qui portent un
+   second sélecteur — et l'encre des motifs est écrite CLAIRE par le même appel
+   JavaScript. Une page sombre n'est donc pas une seconde feuille de style.
+
+   L'ENCRE EST UN FILET DILUÉ, et sa force est un alpha : même « Bold » (0.11)
+   reste à 1.12:1 de la page claire qu'il décore — un repère de papier, jamais
+   une gêne pour la lecture (la sonde le mesure, voir `_ui_skin_test.cjs`). Sur
+   une page SOMBRE, le même filet clair monte à 1.6:1 (Standard) et 2.7:1
+   (Bold) : il se voit, et il reste sous les 4.2:1 de la légende la plus pâle
+   que le programme y écrit.
+
+   Elles ne peignent qu'un élément qui porte la classe de la page
+   (`bg-slate-50`) ou la classe d'une PASTILLE (`.lab-page-chip`, la miniature
+   d'un motif dans ⚙ Settings) — c'est la MÊME règle pour les deux, donc une
+   pastille ne peut pas montrer autre chose que ce que la page fera. */
+
+@media screen {
+
+  /* LES TROIS ENCRES du motif — écrites UNE fois, les vingt motifs les
+     partagent : seule leur FORCE change, et elle vient de `--lab-page-alpha`.
+     L'encre NEUTRE (`--lab-page-ink`) est celle des filets ; de nuit c'est la
+     version claire (voir `uiBgInkRgb` dans src/utils/uiSkin.js), donc le même
+     motif se peint sur une page sombre sans une règle de plus. `…-strong` est le
+     filet marqué du papier millimétré, au double de la force choisie. */
+  [data-pattern] {
+    --lab-page-line: rgb(var(--lab-page-ink, 15 23 42) / var(--lab-page-alpha, 0.06));
+    --lab-page-line-strong: rgb(var(--lab-page-ink, 15 23 42) / calc(var(--lab-page-alpha, 0.06) * 2));
+    --lab-page-line-2: rgb(var(--lab-page-ink-2, 15 23 42) / var(--lab-page-alpha, 0.06));
+    --lab-page-line-3: rgb(var(--lab-page-ink-3, 15 23 42) / var(--lab-page-alpha, 0.06));
+  }
+
+  /* LA PASTILLE D'UN MOTIF : la miniature d'une page, peinte par la règle du
+     bas. Elle remet d'abord le motif à ZÉRO — un attribut ne s'hérite pas, mais
+     une variable si : sans elle, la pastille « None » porterait le motif de la
+     page. La couleur, elle, est celle de la page choisie. */
+  .lab-page-chip {
+    --lab-page-image: none;
+    --lab-page-size: auto;
+    background-color: var(--color-slate-50);
+  }
+
+  /* Un carré : deux familles de filets, l'une verticale, l'autre horizontale.
+     `background-image` ne touche pas `background-color` : la teinte choisie
+     reste, le motif se pose dessus. L'échelle multiplie la taille de la tuile. */
+  [data-pattern="grid"] {
+    --lab-page-image:
+      linear-gradient(to right, var(--lab-page-line) 1px, transparent 1px),
+      linear-gradient(to bottom, var(--lab-page-line) 1px, transparent 1px);
+    --lab-page-size:
+      calc(24px * var(--lab-page-scale, 1)) calc(24px * var(--lab-page-scale, 1));
+  }
+
+  /* Le même carré, deux fois plus serré : le papier quadrillé fin. */
+  [data-pattern="fine"] {
+    --lab-page-image:
+      linear-gradient(to right, var(--lab-page-line) 1px, transparent 1px),
+      linear-gradient(to bottom, var(--lab-page-line) 1px, transparent 1px);
+    --lab-page-size:
+      calc(12px * var(--lab-page-scale, 1)) calc(12px * var(--lab-page-scale, 1));
+  }
+
+  /* LE PAPIER MILLIMÉTRÉ : la trame fine, et un filet marqué tous les cinq —
+     les deux derniers dégradés, à la tuile de 40 px, prennent l'encre double. */
+  [data-pattern="graph"] {
+    --lab-page-image:
+      linear-gradient(to right, var(--lab-page-line) 1px, transparent 1px),
+      linear-gradient(to bottom, var(--lab-page-line) 1px, transparent 1px),
+      linear-gradient(to right, var(--lab-page-line-strong) 1px, transparent 1px),
+      linear-gradient(to bottom, var(--lab-page-line-strong) 1px, transparent 1px);
+    --lab-page-size:
+      calc(8px * var(--lab-page-scale, 1)) calc(8px * var(--lab-page-scale, 1)),
+      calc(8px * var(--lab-page-scale, 1)) calc(8px * var(--lab-page-scale, 1)),
+      calc(40px * var(--lab-page-scale, 1)) calc(40px * var(--lab-page-scale, 1)),
+      calc(40px * var(--lab-page-scale, 1)) calc(40px * var(--lab-page-scale, 1));
+  }
+
+  [data-pattern="dots"] {
+    --lab-page-image: radial-gradient(var(--lab-page-line) 1px, transparent 1.1px);
+    --lab-page-size:
+      calc(18px * var(--lab-page-scale, 1)) calc(18px * var(--lab-page-scale, 1));
+  }
+
+  [data-pattern="dense"] {
+    --lab-page-image: radial-gradient(var(--lab-page-line) 1px, transparent 1.1px);
+    --lab-page-size:
+      calc(10px * var(--lab-page-scale, 1)) calc(10px * var(--lab-page-scale, 1));
+  }
+
+  /* Les motifs à trame RÉPÉTÉE dans le dégradé lui-même : le pas est dedans
+     (`--lab-page-scale` y entre aussi), donc `background-size: auto`. */
+  [data-pattern="rules"] {
+    --lab-page-image: repeating-linear-gradient(to bottom,
+      var(--lab-page-line) 0, var(--lab-page-line) 1px,
+      transparent 1px, transparent calc(28px * var(--lab-page-scale, 1)));
+    --lab-page-size: auto;
+  }
+
+  [data-pattern="diagonal"] {
+    --lab-page-image: repeating-linear-gradient(45deg,
+      var(--lab-page-line) 0, var(--lab-page-line) 1px,
+      transparent 1px, transparent calc(12px * var(--lab-page-scale, 1)));
+    --lab-page-size: auto;
+  }
+
+  /* La hachure croisée : deux familles de filets obliques, en sens inverse. */
+  [data-pattern="cross"] {
+    --lab-page-image:
+      repeating-linear-gradient(45deg,
+        var(--lab-page-line) 0, var(--lab-page-line) 1px,
+        transparent 1px, transparent calc(10px * var(--lab-page-scale, 1))),
+      repeating-linear-gradient(-45deg,
+        var(--lab-page-line) 0, var(--lab-page-line) 1px,
+        transparent 1px, transparent calc(10px * var(--lab-page-scale, 1)));
+    --lab-page-size: auto;
+  }
+
+  /* Le tissu : les deux mêmes familles, mais horizontale et verticale, au pas
+     le plus fin — la trame d'un lin. */
+  [data-pattern="weave"] {
+    --lab-page-image:
+      repeating-linear-gradient(to right,
+        var(--lab-page-line) 0, var(--lab-page-line) 1px,
+        transparent 1px, transparent calc(6px * var(--lab-page-scale, 1))),
+      repeating-linear-gradient(to bottom,
+        var(--lab-page-line) 0, var(--lab-page-line) 1px,
+        transparent 1px, transparent calc(6px * var(--lab-page-scale, 1)));
+    --lab-page-size: auto;
+  }
+
+  /* L'ARÊTE DE POISSON : le second filet démarre une DEMI-période plus loin —
+     les deux obliques alternent donc, et la trame devient un zigzag. */
+  [data-pattern="herringbone"] {
+    --lab-page-image:
+      repeating-linear-gradient(45deg,
+        var(--lab-page-line) 0, var(--lab-page-line) 1px,
+        transparent 1px, transparent calc(14px * var(--lab-page-scale, 1))),
+      repeating-linear-gradient(-45deg,
+        transparent 0, transparent calc(7px * var(--lab-page-scale, 1)),
+        var(--lab-page-line) calc(7px * var(--lab-page-scale, 1)),
+        var(--lab-page-line) calc(7px * var(--lab-page-scale, 1) + 1px),
+        transparent calc(7px * var(--lab-page-scale, 1) + 1px),
+        transparent calc(14px * var(--lab-page-scale, 1)));
+    --lab-page-size: auto;
+  }
+
+  /* Le treillis isométrique : deux familles à 60°, plus l'horizontale — des
+     triangles, comme un calepin de cristallographe. */
+  [data-pattern="triangles"] {
+    --lab-page-image:
+      repeating-linear-gradient(60deg,
+        var(--lab-page-line) 0, var(--lab-page-line) 1px,
+        transparent 1px, transparent calc(16px * var(--lab-page-scale, 1))),
+      repeating-linear-gradient(-60deg,
+        var(--lab-page-line) 0, var(--lab-page-line) 1px,
+        transparent 1px, transparent calc(16px * var(--lab-page-scale, 1))),
+      repeating-linear-gradient(to bottom,
+        var(--lab-page-line) 0, var(--lab-page-line) 1px,
+        transparent 1px, transparent calc(14px * var(--lab-page-scale, 1)));
+    --lab-page-size: auto;
+  }
+
+  /* ══ LES HUIT MOTIFS DESSINÉS ══════════════════════════════════════════════
+     « mai motivi ondulati o multicolore » : les douze trames ci-dessus sont des
+     FILEts — des repères pour écrire. Ceux-ci sont des DESSINS : ils courbent la
+     ligne (arcs de cercle, conique, toiles) et se peignent avec les TROIS ENCRES
+     écrites en ligne (`--lab-page-ink`, `-2`, `-3` — le neutre, la teinte de
+     l'accent choisi, son complémentaire : voir `uiBgInkRgb`). Même géométrie
+     ici, mêmes deux réglages (la force, l'échelle), même `@media screen` : rien
+     à télécharger, rien à imprimer, et une pastille qui ne peut pas mentir. */
+
+  /* LES VAGUES — deux familles d'arcs de cercle, l'une ouverte vers le bas,
+     l'autre vers le haut, à une demi-période l'une de l'autre : la ligne court
+     donc en ondulant, sans qu'une seule courbe soit écrite. */
+  [data-pattern="waves"] {
+    --lab-page-image:
+      radial-gradient(circle at 25% 0,
+        transparent calc(7px * var(--lab-page-scale, 1)),
+        var(--lab-page-line) calc(7px * var(--lab-page-scale, 1)),
+        var(--lab-page-line) calc(7px * var(--lab-page-scale, 1) + 1px),
+        transparent calc(7px * var(--lab-page-scale, 1) + 1px)),
+      radial-gradient(circle at 75% 100%,
+        transparent calc(7px * var(--lab-page-scale, 1)),
+        var(--lab-page-line) calc(7px * var(--lab-page-scale, 1)),
+        var(--lab-page-line) calc(7px * var(--lab-page-scale, 1) + 1px),
+        transparent calc(7px * var(--lab-page-scale, 1) + 1px));
+    --lab-page-size:
+      calc(28px * var(--lab-page-scale, 1)) calc(14px * var(--lab-page-scale, 1)),
+      calc(28px * var(--lab-page-scale, 1)) calc(14px * var(--lab-page-scale, 1));
+  }
+
+  /* LES ÉCAILLES — un rang d'arcs, puis le demi-disque de la teinte de l'accent
+     dans le rang suivant, une demi-tuile plus bas : c'est le recouvrement des
+     écailles, en deux couleurs. Le rang d'arcs est peint EN DERNIER (première
+     image de la liste) : il passe donc sur la teinte. */
+  [data-pattern="scales"] {
+    --lab-page-image:
+      radial-gradient(circle at 50% 100%,
+        transparent calc(10px * var(--lab-page-scale, 1)),
+        var(--lab-page-line) calc(10px * var(--lab-page-scale, 1)),
+        var(--lab-page-line) calc(10px * var(--lab-page-scale, 1) + 1px),
+        transparent calc(10px * var(--lab-page-scale, 1) + 1px)),
+      radial-gradient(circle at 50% 0,
+        var(--lab-page-line-2) calc(10px * var(--lab-page-scale, 1)),
+        transparent calc(10px * var(--lab-page-scale, 1) + 1px));
+    --lab-page-size:
+      calc(20px * var(--lab-page-scale, 1)) calc(20px * var(--lab-page-scale, 1)),
+      calc(20px * var(--lab-page-scale, 1)) calc(20px * var(--lab-page-scale, 1));
+    --lab-page-position:
+      0 0,
+      calc(10px * var(--lab-page-scale, 1)) calc(10px * var(--lab-page-scale, 1));
+  }
+
+  /* LES CHEVRONS — les deux familles d'angles droits, décalées d'une demi-tuile :
+     les dents du haut dans l'encre neutre, celles du bas dans la teinte. Ce n'est
+     pas un filet de plus, c'est une DENT. */
+  [data-pattern="zigzag"] {
+    --lab-page-image:
+      linear-gradient(135deg, var(--lab-page-line) 25%, transparent 25%),
+      linear-gradient(225deg, var(--lab-page-line) 25%, transparent 25%),
+      linear-gradient(45deg, var(--lab-page-line-2) 25%, transparent 25%),
+      linear-gradient(315deg, var(--lab-page-line-2) 25%, transparent 25%);
+    --lab-page-size:
+      calc(20px * var(--lab-page-scale, 1)) calc(20px * var(--lab-page-scale, 1)),
+      calc(20px * var(--lab-page-scale, 1)) calc(20px * var(--lab-page-scale, 1)),
+      calc(20px * var(--lab-page-scale, 1)) calc(20px * var(--lab-page-scale, 1)),
+      calc(20px * var(--lab-page-scale, 1)) calc(20px * var(--lab-page-scale, 1));
+    --lab-page-position:
+      calc(-10px * var(--lab-page-scale, 1)) 0,
+      calc(-10px * var(--lab-page-scale, 1)) 0,
+      0 0,
+      0 0;
+  }
+
+  /* LE NID D'ABEILLE — l'alvéole : quatre familles à 30°/150° pour les parois,
+     deux à 60° pour le fond, la seconde teinte une demi-tuile plus loin — le
+     treillis se referme sur lui-même. */
+  [data-pattern="honeycomb"] {
+    --lab-page-image:
+      linear-gradient(30deg, var(--lab-page-line) 12%, transparent 12.5%, transparent 87%, var(--lab-page-line) 87.5%, var(--lab-page-line)),
+      linear-gradient(150deg, var(--lab-page-line) 12%, transparent 12.5%, transparent 87%, var(--lab-page-line) 87.5%, var(--lab-page-line)),
+      linear-gradient(30deg, var(--lab-page-line) 12%, transparent 12.5%, transparent 87%, var(--lab-page-line) 87.5%, var(--lab-page-line)),
+      linear-gradient(150deg, var(--lab-page-line) 12%, transparent 12.5%, transparent 87%, var(--lab-page-line) 87.5%, var(--lab-page-line)),
+      linear-gradient(60deg, var(--lab-page-line-2) 25%, transparent 25.5%, transparent 75%, var(--lab-page-line-2) 75%, var(--lab-page-line-2)),
+      linear-gradient(60deg, var(--lab-page-line-2) 25%, transparent 25.5%, transparent 75%, var(--lab-page-line-2) 75%, var(--lab-page-line-2));
+    --lab-page-size:
+      calc(40px * var(--lab-page-scale, 1)) calc(70px * var(--lab-page-scale, 1)),
+      calc(40px * var(--lab-page-scale, 1)) calc(70px * var(--lab-page-scale, 1)),
+      calc(40px * var(--lab-page-scale, 1)) calc(70px * var(--lab-page-scale, 1)),
+      calc(40px * var(--lab-page-scale, 1)) calc(70px * var(--lab-page-scale, 1)),
+      calc(40px * var(--lab-page-scale, 1)) calc(70px * var(--lab-page-scale, 1)),
+      calc(40px * var(--lab-page-scale, 1)) calc(70px * var(--lab-page-scale, 1));
+    --lab-page-position:
+      0 0,
+      0 0,
+      calc(20px * var(--lab-page-scale, 1)) calc(35px * var(--lab-page-scale, 1)),
+      calc(20px * var(--lab-page-scale, 1)) calc(35px * var(--lab-page-scale, 1)),
+      0 0,
+      calc(20px * var(--lab-page-scale, 1)) calc(35px * var(--lab-page-scale, 1));
+  }
+
+  /* LES BULLES — trois disques de trois tailles et de trois couleurs, chacun sur
+     sa propre trame et décalé des autres : le semis n'est jamais régulier à
+     l'œil, alors qu'il l'est au pixel. */
+  [data-pattern="bubbles"] {
+    --lab-page-image:
+      radial-gradient(circle at 22% 30%,
+        var(--lab-page-line) calc(3px * var(--lab-page-scale, 1)),
+        transparent calc(3px * var(--lab-page-scale, 1) + 1px)),
+      radial-gradient(circle at 70% 72%,
+        var(--lab-page-line-2) calc(5px * var(--lab-page-scale, 1)),
+        transparent calc(5px * var(--lab-page-scale, 1) + 1px)),
+      radial-gradient(circle at 80% 20%,
+        var(--lab-page-line-3) calc(2px * var(--lab-page-scale, 1)),
+        transparent calc(2px * var(--lab-page-scale, 1) + 1px));
+    --lab-page-size:
+      calc(34px * var(--lab-page-scale, 1)) calc(34px * var(--lab-page-scale, 1)),
+      calc(34px * var(--lab-page-scale, 1)) calc(34px * var(--lab-page-scale, 1)),
+      calc(34px * var(--lab-page-scale, 1)) calc(34px * var(--lab-page-scale, 1));
+    --lab-page-position:
+      0 0,
+      calc(11px * var(--lab-page-scale, 1)) calc(-7px * var(--lab-page-scale, 1)),
+      calc(-8px * var(--lab-page-scale, 1)) calc(13px * var(--lab-page-scale, 1));
+  }
+
+  /* LES CONFETTIS — deux obliques courtes (un bout de bande, pas une ligne qui
+     traverse la page) dans les deux teintes, plus un grain rond dans l'encre
+     neutre, chacun sur sa trame : trois couleurs semées. */
+  [data-pattern="confetti"] {
+    --lab-page-image:
+      linear-gradient(45deg, transparent 44%, var(--lab-page-line-2) 44%, var(--lab-page-line-2) 56%, transparent 56%),
+      linear-gradient(-45deg, transparent 44%, var(--lab-page-line-3) 44%, var(--lab-page-line-3) 56%, transparent 56%),
+      radial-gradient(circle at 50% 50%,
+        var(--lab-page-line) calc(2px * var(--lab-page-scale, 1)),
+        transparent calc(2px * var(--lab-page-scale, 1) + 1px));
+    --lab-page-size:
+      calc(26px * var(--lab-page-scale, 1)) calc(26px * var(--lab-page-scale, 1)),
+      calc(34px * var(--lab-page-scale, 1)) calc(34px * var(--lab-page-scale, 1)),
+      calc(16px * var(--lab-page-scale, 1)) calc(16px * var(--lab-page-scale, 1));
+    --lab-page-position:
+      0 0,
+      calc(13px * var(--lab-page-scale, 1)) calc(9px * var(--lab-page-scale, 1)),
+      calc(5px * var(--lab-page-scale, 1)) calc(11px * var(--lab-page-scale, 1));
+  }
+
+  /* LE DAMIER — une conique répétée : quatre quadrants, deux encres. Les carrés
+     sont donc des angles, pas des filets, et la seconde couleur n'est pas une
+     variante de la première : c'est la teinte de l'accent. */
+  [data-pattern="checker"] {
+    --lab-page-image: repeating-conic-gradient(
+      var(--lab-page-line) 0 25%,
+      var(--lab-page-line-2) 0 50%);
+    --lab-page-size:
+      calc(20px * var(--lab-page-scale, 1)) calc(20px * var(--lab-page-scale, 1));
+  }
+
+  /* LE TARTAN — deux largeurs de bandes dans les deux sens, chacune dans une
+     teinte : là où elles se croisent, les deux alpha s'ajoutent et la troisième
+     couleur apparaît toute seule. */
+  [data-pattern="plaid"] {
+    --lab-page-image:
+      repeating-linear-gradient(to right,
+        var(--lab-page-line-2) 0, var(--lab-page-line-2) calc(6px * var(--lab-page-scale, 1)),
+        transparent calc(6px * var(--lab-page-scale, 1)), transparent calc(30px * var(--lab-page-scale, 1))),
+      repeating-linear-gradient(to bottom,
+        var(--lab-page-line-2) 0, var(--lab-page-line-2) calc(6px * var(--lab-page-scale, 1)),
+        transparent calc(6px * var(--lab-page-scale, 1)), transparent calc(30px * var(--lab-page-scale, 1))),
+      repeating-linear-gradient(to right,
+        var(--lab-page-line-3) 0, var(--lab-page-line-3) calc(2px * var(--lab-page-scale, 1)),
+        transparent calc(2px * var(--lab-page-scale, 1)), transparent calc(10px * var(--lab-page-scale, 1))),
+      repeating-linear-gradient(to bottom,
+        var(--lab-page-line-3) 0, var(--lab-page-line-3) calc(2px * var(--lab-page-scale, 1)),
+        transparent calc(2px * var(--lab-page-scale, 1)), transparent calc(10px * var(--lab-page-scale, 1)));
+    --lab-page-size: auto;
+  }
+
+  /* LA PAGE — et la PASTILLE d'un motif, qui doit montrer exactement la même
+     chose qu'elle. `background-image` ne touche pas `background-color` : la
+     teinte choisie reste, le motif se pose dessus. Et
+     `var(--lab-page-image, none)` laisse intacte une page sans motif — aucun
+     attribut, aucun dessin.
+     LA POSITION est la troisième variable d'un motif : les vagues et les écailles
+     décalent une famille d'arcs d'une demi-tuile, et ce décalage est un
+     `background-position` — lui aussi multiplié par l'échelle choisie, jamais un
+     nombre écrit deux fois. Un motif qui n'en a pas besoin la laisse à `0 0`,
+     qui est le défaut du moteur. */
+  [class~="bg-slate-50"],
+  .lab-page-chip {
+    background-image: var(--lab-page-image, none);
+    background-size: var(--lab-page-size, auto);
+    background-position: var(--lab-page-position, 0 0);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   THE SEQUENCE FIELD — the selection of a COLOURED field stays readable.
+   `SequenceField` (src/components/SequenceField.jsx) renders the letters in a
+   layer BEHIND the textarea and makes the textarea's own ink transparent, so
+   the five marked letters (K · R blue, E · D red, C orange, see
+   src/utils/sequenceHighlight.js) show through. The browser's default
+   selection is an OPAQUE block painted ON TOP of that layer: it would hide
+   the very text being selected. This rule is the one thing the layer cannot
+   carry itself — a translucent highlight, so the letters stay legible inside
+   the selection.
+   ------------------------------------------------------------------------- */
+.lab-seq-field::selection {
+  background: rgb(56 189 248 / 0.35);   /* sky-400, see-through */
+}
+.lab-seq-field::-moz-selection {
+  background: rgb(56 189 248 / 0.35);
+}
+

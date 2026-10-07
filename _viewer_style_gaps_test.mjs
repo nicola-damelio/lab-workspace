@@ -50,6 +50,10 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
+// 🧪 LE MODÈLE DE CHARGES DU CHAMP — le MÊME module que le viewer importe
+// (utils/structureCalc réexporte utils/forceFieldKcal) : c'est lui que la page
+// dépose dans `espChargeModelStore`, donc c'est lui que cette suite dépose aussi.
+import { partialChargesOf } from './src/utils/structureCalc.js';
 
 const require = createRequire(import.meta.url);
 const NGL = require('ngl');
@@ -299,7 +303,7 @@ CHAIN.chainColorStore.A = CHAIN.CHAIN_COLOR_PALETTE.A;
 gone("{look.colorBy === 'chain' && (", 'la rangée « Color by » ne répète plus le ⚙ de la roue');
 has('Chains · color by chain', 'la roue ⚙ a une section À ELLE pour les chaînes');
 has('{CHAIN_COLOR_ORDER.map((c) => (', '…qui dessine la MÊME liste que le schéma');
-has('onClick={() => setChainColors({ ...CHAIN_COLOR_PALETTE })}', '…avec son ↺ Defaults');
+has("onClick={() => setChainColors(paletteDefaults('labViewerChainColors', CHAIN_COLOR_PALETTE))}", '…avec son ↺ Defaults (les couleurs ENREGISTRÉES, voir paletteDefaults)');
 has("const [chainColors, setChainColors] = useState(() => loadPalette('labViewerChainColors', CHAIN_COLOR_PALETTE));",
   'la palette de chaînes est un état persisté comme les autres');
 has("try { localStorage.setItem('labViewerChainColors', JSON.stringify(chainColors)); } catch { /* ignore */ }",
@@ -362,12 +366,15 @@ const ESP = new Function('NGL', [
   sliceObject(VIEW, 'ESP_ELECTRONEGATIVITY'),
   sliceObject(VIEW, 'ESP_ION_CHARGES'),
   sliceFn(VIEW, 'espHeteroChargeOf'),
+  sliceDecl(VIEW, 'espChargeModelStore'),
+  sliceFn(VIEW, 'espProteinChargesOf'),
   sliceDecl(VIEW, 'espChargeCache'),
   sliceFn(VIEW, 'espChargesFor'),
+  sliceFn(VIEW, 'geometryOfStructure'),
   'let espSchemeKey = null;',
   sliceFn(VIEW, 'defineEspScheme'),
   sliceFn(VIEW, 'registerColorScheme'),
-  'return { ESP_ION_CHARGES, ESP_ELECTRONEGATIVITY, espHeteroChargeOf, espChargesFor, defineEspScheme, registerColorScheme };',
+  'return { ESP_ION_CHARGES, ESP_ELECTRONEGATIVITY, espHeteroChargeOf, espChargesFor, espChargeModelStore, espProteinChargesOf, geometryOfStructure, defineEspScheme, registerColorScheme };',
 ].join('\n'))(NGL);
 
 // 4a. L'estimation par électronégativité, seule règle utilisable quand le fichier
@@ -395,10 +402,81 @@ ok(charges.charges[6] < 0, '…l’azote aussi');
 near(charges.charges[4] + charges.charges[5] + charges.charges[6], 0,
   '…et la somme du résidu est nulle (un ligand n’est pas un ion)', 1e-5);
 eq(charges.charges[7], 1, 'un sodium SOD prend sa charge FORMELLE (+1)');
-// La PROTÉINE garde la table CHARMM de NGL, au chiffre près.
+/* 🧪 …ET LE MODÈLE DE CHARGES DU CHAMP, DÉPOSÉ COMME LA PAGE LE FAIT (voir
+   espChargeModelStore dans le viewer) : la lecture PURE du module (utils/forceFieldKcal,
+   importé par cette suite) et le lecteur de graphe DU VIEWER (geometryOfStructure,
+   extrait de cette même source). C'est l'état dans lequel la page vit — sans ce dépôt,
+   la table retombe sur celle de NGL, c'est-à-dire le comportement d'avant. */
+// La table de NGL, telle qu'elle était servie AVANT ce correctif (elle sert encore de
+// témoin : le repli, et le zéro sur les H et l'OXT).
 const base = NGL.ColormakerRegistry.getScheme({ scheme: 'electrostatic', structure: st });
-[0, 1, 2, 3].forEach((i) => eq(charges.charges[i], base.charges[i],
-  `l’atome protéique ${i} garde la charge CHARMM de NGL`));
+ESP.espChargeModelStore.geometryOf = ESP.geometryOfStructure;
+ESP.espChargeModelStore.partialChargesOf = partialChargesOf;
+ESP.espChargeModelStore.ph = null;
+
+// ⚠ LA PROTÉINE EST LUE PAR LE MODÈLE DE LA PAGE — et non plus par la seule table
+// CHARMM de NGL, qui ne décrit que les atomes LOURDS du squelette. La table du
+// correctif est donc CELLE DU MODULE, atome par atome : c'est ce que la surface, la
+// rampe « Atom charge » et le survol peignent, et c'est la même lecture que le
+// panneau ⚙ (charge nette).
+const modelled = ESP.espChargesFor(st);
+ok(modelled !== charges, 'déposer le modèle refait la table (le modèle est dans la clé du cache)');
+const field = partialChargesOf({
+  elements: ESP.geometryOfStructure(st).elements,
+  bonds: ESP.geometryOfStructure(st).bonds,
+  ph: null,
+});
+[0, 1, 2, 3].forEach((i) => near(modelled.charges[i], field.charges[i],
+  `l’atome protéique ${i} porte la charge du MODÈLE (partialChargesOf), pas celle de NGL`, 1e-6));
+ok(modelled.charges[3] !== base.charges[3],
+  `…et elle a bien changé : l’oxygène du carbonyle vaut ${modelled.charges[3].toFixed(3)} e, `
+  + `là où la table CHARMM de NGL dit ${base.charges[3].toFixed(3)} e`);
+// LE REPLI : sans modèle, la table de NGL revient — le comportement d’avant, à la
+// ligne près (rien n’est inventé quand rien n’est déposé).
+ESP.espChargeModelStore.partialChargesOf = null;
+const unmodelled = ESP.espChargesFor(st);
+eq(unmodelled.charges[3], base.charges[3], 'sans modèle, la table de NGL est servie telle quelle');
+ok(!!unmodelled.base && Array.from(unmodelled.base.charges).every((q, i) => q === base.charges[i]),
+  '…sur la table de NGL entière (son potentiel d’amides — hHash / hCharges — est conservé)');
+ESP.espChargeModelStore.partialChargesOf = partialChargesOf;
+// …ET LE pH EST DANS LA CLÉ AUSSI : deux tables ne peuvent pas être peintes sous deux
+// chimies — changer la case du ⚙ refait donc le parcours.
+ESP.espChargeModelStore.ph = 7;
+ok(ESP.espChargesFor(st) !== modelled, 'changer le pH refait la table (le pH est dans la clé du cache)');
+ESP.espChargeModelStore.ph = null;
+
+/* ⚠⚠ LA RAISON DU CORRECTIF, MESURÉE : une alanine N/C-terminale COMPLÈTE — les trois
+   hydrogènes de l’ammonium, l’`OXT` du carboxylate. NGL lit ZÉRO sur ces quatre
+   atomes (sa table de squelette n’a que N · CA · C · O · CB …) ; le modèle de la page
+   leur donne une charge, parce qu’il lit TOUT le graphe et qu’il reconnaît les groupes
+   formels que le graphe montre. C’est très exactement « explicit protein H and OXT read
+   0 » — le défaut de cette session. */
+const FREE_ALA_PDB = [
+  'ATOM      1  N   ALA A   1       0.000   0.000   0.000  1.00  0.00           N',
+  'ATOM      2  H1  ALA A   1       1.010   0.000   0.000  1.00  0.00           H',
+  'ATOM      3  H2  ALA A   1      -0.400   0.930   0.000  1.00  0.00           H',
+  'ATOM      4  H3  ALA A   1      -0.400  -0.460  -0.810  1.00  0.00           H',
+  'ATOM      5  CA  ALA A   1      -0.500  -0.600   1.420  1.00  0.00           C',
+  'ATOM      6  C   ALA A   1      -1.990  -0.400   1.290  1.00  0.00           C',
+  'ATOM      7  O   ALA A   1      -2.470   0.650   1.000  1.00  0.00           O',
+  'ATOM      8  OXT ALA A   1      -2.640  -1.470   1.480  1.00  0.00           O',
+  'END',
+].join('\n');
+const stFree = await NGL.autoLoad(new Blob([FREE_ALA_PDB], { type: 'text/plain' }), { ext: 'pdb' });
+const baseFree = NGL.ColormakerRegistry.getScheme({ scheme: 'electrostatic', structure: stFree });
+[1, 2, 3, 7].forEach((i) => eq(baseFree.charges[i], 0,
+  `NGL lit 0 sur l’atome ${i} (${i === 7 ? 'OXT' : 'H du N-terminal'}) — c’est le défaut`));
+const free = ESP.espChargesFor(stFree);
+ok(free.charges[1] > 0.05 && free.charges[1] < 0.3,
+  `les trois H du N-terminal portent enfin une charge POSITIVE (${free.charges[1].toFixed(3)} e)`);
+ok(free.charges[0] > 0.5, `l’azote du N-terminal est l’AMMONIUM du groupe formel (${free.charges[0].toFixed(3)} e)`);
+ok(free.charges[7] < -0.5, `…et l’OXT du terminus C le CARBOXYLATE (${free.charges[7].toFixed(3)} e)`);
+near(Array.from(free.charges).reduce((s, q) => s + q, 0), 0,
+  'la somme de la molécule reste nulle (une alanine neutre : +1 + −1)', 1e-4);
+// Le LIGAND et l’ION ne bougent pas : le correctif ne touche que la protéine.
+eq(modelled.charges[7], 1, 'un sodium reste un sodium (+1 e, charge formelle)');
+near(modelled.charges[4] + modelled.charges[5] + modelled.charges[6], 0,
+  '…et le résidu d’un ligand est toujours neutre (l’estimation ne bouge pas)', 1e-5);
 
 // 4b. Le schéma peint vraiment : rouge sur l'oxygène du ligand, bleu sur le sodium.
 const cm = NGL.ColormakerRegistry.getScheme({ scheme: espKey, structure: st, colorScale: 'rwb', colorDomain: [-15, 15] });
@@ -959,6 +1037,9 @@ const LSUBS = new Function('NGL', [
   sliceFn(VIEW, 'lipidGroupOf'),
   sliceDecl(VIEW, 'lipidPartIndexStore'),
   sliceDecl(VIEW, 'lipidSubCache'),
+  // Les oxygènes du phosphate, lus dans le graphe de liaisons : la définition de
+  // « heads » les écarte depuis la révision (voir lipidSubSelections).
+  sliceFn(VIEW, 'phosphateOxygenIndices'),
   sliceFn(VIEW, 'lipidSubSelections'),
   sliceFn(VIEW, 'lipidResnamesIn'),
   sliceFn(VIEW, 'lipidResnameSele'),

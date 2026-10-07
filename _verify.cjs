@@ -1,4 +1,4 @@
-// Les trente-cinq suites du VIEWER 3D seul — les plus rapides à relancer après une
+// Les suites du VIEWER 3D seul — les plus rapides à relancer après une
 // retouche de src/components/NMRMoleculeViewer.jsx (l'ensemble du dépôt, c'est
 // _run_all.cjs). _viewer_render_smoke_test.mjs est la SEULE ICI qui exécute un
 // vrai rendu : elle construit son probe en SSR et monte la page docking, chaque
@@ -6,19 +6,49 @@
 // attrapé le « Cannot access 'extraMols' before initialization » de la page
 // docking). Résultat : EXIT + dernière ligne de chacune, sur la console et dans
 // _verify.txt.
-// Le SEUL garde-fou qui LIT DE VRAIS PIXELS WebGL est le dernier de la liste
-// (_viewer_surface_seethrough_pixels_test.cjs) : il ouvre Chrome en
-// --headless=new et rend quatre surfaces identiques — c'est lui qui a prouvé que
-// SEE_THROUGH_SURFACE (`opaqueBack: false`) laisse vraiment voir le fond à
-// travers la paroi arrière d'une surface translucide (luminance du centre 184.4
-// contre 161.9 pour le défaut NGL). ≈8 s, et SAUTÉ (exit 0) sur une machine sans
-// Chrome ni Edge.
+// Les garde-fous qui LISENT DE VRAIS PIXELS sont GROUPÉS À LA FIN de la liste
+// (_viewer_surface_seethrough_pixels_test.cjs, _viewer_ray_shadow_pixels_test.cjs,
+// _viewer_ray_shadow_idle_test.cjs, _page_parking_render_test.cjs et
+// _viewer_background_pixels_test.cjs) : ils ouvrent Chrome en --headless=new et
+// rendent une vraie scène — c'est le premier qui a prouvé que SEE_THROUGH_SURFACE
+// (`opaqueBack: false`) laisse vraiment voir le fond à travers la paroi arrière
+// d'une surface translucide (luminance du centre 184.4 contre 161.9 pour le défaut
+// NGL), et le dernier que le fond du viewer est du CSS vu à travers une toile
+// transparente (une rampe de deux couleurs, et le clic de fond qui ouvre le
+// panneau). ≈8 s à ≈20 s chacun, et SAUTÉS (exit 0) sur une machine sans Chrome.
 const { spawnSync } = require('child_process');
 const fs = require('fs');
 const tests = [
   '_viewer_scheme_test.mjs', '_viewer_style_controls_test.mjs', '_viewer_ui_layout_test.mjs',
   '_viewer_rings_gradient_test.mjs', '_dock_style_test.mjs', '_large_system_style_test.mjs',
   '_viewer_color_settings_test.mjs', '_viewer_structure_classes_test.mjs',
+  // « In the “molecule styling” window add a “color by” option: atom charge. » : la
+  // rampe de la charge PARTIELLE de chaque atome (trois pastilles éditables de la
+  // roue ⚙ : négatif · neutre · positif, ±1 e pleine échelle), la MÊME table de
+  // charges que le ⚡ ESP (la charge du fichier, la table CHARMM de NGL pour une
+  // protéine, la charge formelle d'un ion, l'estimation d'électronégativité des
+  // hétéro-atomes), et le schéma maison lab-atom-charge, enregistré dans le VRAI
+  // NGL et instancié sur une structure réellement parsée : cette suite EXÉCUTE la
+  // rampe et le schéma (l'oxygène d'un ligand peint vers le rouge, un sodium vers
+  // le bleu, un atome sans structure peint le NEUTRE), et vérifie que la liste
+  // « Color by » de CHAQUE type de molécule — et son libellé — l'offrent, la barre
+  // des sélections comprise. Sans le schéma maison, le repli est le colormaker
+  // `partialcharge` de NGL, jamais un aplat d'éléments.
+  '_viewer_atom_charge_test.mjs',
+  // « in the section analysis of the viewer, add a button to display H-bonds. » et
+  // « when hovering on an atom display not only the name but also the charge. » —
+  // LES DEUX DEMANDES DE CETTE SESSION, mesurées d'un bout à l'autre : la règle des
+  // ponts hydrogène est PURE (utils/hydrogenBonds.js) et EXÉCUTÉE sur des géométries
+  // construites à la main (le N–H···O linéaire en est un, le donneur couché non ;
+  // paires 1-2 et 1-3, même résidu et solvant écartés ; le mode « lourds » sans
+  // aucun hydrogène, le plafond du dessin), puis appliquée à une VRAIE structure
+  // parsée par le NGL de la page ; le bouton de 📏 Analysis est vérifié par ses
+  // marqueurs — il ne dessine qu'UNE représentation `distance` pour TOUS les ponts,
+  // et `clearHydrogenBonds()` accompagne CHAQUE `clearMeasurements()` du viewer ; et
+  // le survol écrit le nom PUIS la charge, lue dans la MÊME table que le ⚡ ESP
+  // (helpers EXTRAITS puis EXÉCUTÉS sur la structure), une molécule sans charges ne
+  // disant rien de plus au lieu d'annoncer « 0 ».
+  '_viewer_hbonds_test.mjs',
   // LA DEMANDE « styling window » DE CETTE SESSION, mesurée d'un bout à l'autre :
   // une teinte par TYPE peint l'ESPACE de la barre de style — et les rangées de cet
   // espace s'éclaircissent vers le blanc, General d'abord — toutes deux des pastilles
@@ -189,10 +219,57 @@ const tests = [
   // l'ADDITIVITÉ : le 📷 publie toujours dans la bibliothèque, ✨ Ray écrit
   // seulement un PNG sur l'ordinateur, et aucune représentation n'est touchée.
   '_viewer_ray_test.mjs',
+  // …ET L'OMBRE VIVANTE DE LA MÊME « ray » (la demande de cette session :
+  // « wow! it works! will it be possible to see it while the molecule is moving
+  // and not only as a still picture? »). Le fichier mesure la POLITIQUE sans
+  // navigateur (la parité calculée entre le produit du PNG et la toile noire
+  // d'alpha `s·m`, les trois régimes et leur défaut `auto`, la pose, la
+  // signature de la scène, la couche peinte avec un faux contexte 2D, le pilote
+  // conduit avec des doublures), puis le CÂBLAGE dans le viewer — la couche dans
+  // le JSX, le signal `rendered`, la préférence mémorisée et la composition dans
+  // les DEUX films (🎬 trajectoire et film de poses). La parité sur de VRAIS
+  // pixels WebGL est mesurée juste après, par la sonde des ombres portées.
+  '_viewer_ray_shadow_live_test.mjs',
   // Les DEUX MODES d'enregistrement de l'environnement (la demande) : le THÈME
   // cumulatif par classe moléculaire (merge verrouillé par le fichier, prompt de
   // conflit) et le SNAPSHOT exact de la scène, clé par section.
   '_viewer_theme_snapshot_test.mjs',
+  // ⬚ LE FOND DU VIEWER — UNE RAMPE DE DEUX COULEURS ET SA DIRECTION (la demande
+  // de cette session : « in the background of the viewer allow gradients of two
+  // colors and their direction (clicking on background should display the
+  // options underneath and disappear when background is clicked again) »). Le
+  // module utils/viewerBackground est EXÉCUTÉ : les maths de la rampe CSS (la
+  // ligne de l'angle, ses deux arrêts, la peinture d'une toile 2D), la
+  // validation de ce que localStorage et un ⚙️ setup rendent, les huit directions.
+  // Puis le CÂBLAGE du viewer est lu : le CSS du canvas, le clic sans atome qui
+  // ouvre et referme le panneau, les deux couleurs, ⇄, ↺, ⇤, la barre, les ⚙️
+  // thèmes, la toile de film 🎬🎞 et le PNG du ✨ Ray. Les PIXELS de tout cela
+  // sont mesurés juste après par la sonde du fond.
+  '_viewer_background_test.mjs',
+  // 🎨 LE STYLE QU'UNE EXPÉRIENCE RETIENT (la demande : « when an experiment opens,
+  // after bringing back to live its files (pdb, trajectory etc) it should remember
+  // also the style file (called snapshot or in its absence the cumulative) of the
+  // viewer and apply it automatically. ») : les règles PURES et exécutées du
+  // fichier de style (nom canonique par mode, préférence snapshot → cumulatif,
+  // format du ⬇ Export, mémoire par instance dans utils/viewerStyleFile.js), puis
+  // LES DEUX GESTES DU VIEWER sortis de la source et exécutés avec des doublures —
+  // retenir (mémoire + fichier dans le dossier Drive de l'expérience, à côté des
+  // .pdb et des .xtc) et rappeler (la mémoire du poste d'abord, sans aucune
+  // requête ; le fichier du dossier ensuite, sur un poste vierge).
+  '_viewer_style_recall_test.mjs',
+  // LA MÊME ORGANISATION QUE LA PAGE NMR SUR LES PAGES MD ET DOCKING (la
+  // demande : « You did not apply the same structure of the NMR page to the
+  // other pages of the viewer (MD and docking). use the same separation and
+  // organization of 2D formula and 3D viewer. and the same compressible windows
+  // that you used in NMR page. ») : le sélecteur 2D ⇄ 3D a disparu des deux
+  // pages, la formule 2D (écrite UNE fois, `formulaBlock`) vit DANS la
+  // sous-section « Sequence and structure » — ouverte par défaut — et le viewer
+  // 3D a SA carte repliable (« 🧬 3D viewer » : `defaultOpen={false}`,
+  // `openWhen`, `keepMounted`, `onToggle`) dans le même empilement, le 🔍 Focus
+  // / ✖ Deselect dans son en-tête, les 📂 fichiers du dossier DANS la carte et
+  // — sur Docking — le champ « Receptor topology » avec elle. Vérifié sur le
+  // TEXTE des deux pages, plus le geste replié/déplié de ui.jsx.
+  '_structure_windows_test.mjs',
   // LES QUATRE RÉGLAGES DE CETTE SESSION, du côté du viewer : la couleur unie de
   // General qui descend sur les parties de la molécule (« the solid color is not
   // transferred to the subsections backbone, sidechains, etc. »), la section qui
@@ -242,6 +319,36 @@ const tests = [
   // qui remettrait le paramètre au défaut NGL) y casse la mesure du fond qui
   // traverse la paroi arrière, alors qu'aucune lecture de source ne la voit.
   '_viewer_surface_seethrough_pixels_test.cjs',
+  // …ET LE MÊME VERDICT DE PIXELS POUR LES OMBRES PORTÉES DU « ✨ Ray » (≈15 s) :
+  // une VRAIE scène NGL (un ruban, des bâtons, la PLAQUE d'un cycle aromatique), et
+  // les pixels du PNG que NGL a rendu avant/après l'ombre. Il prouve les trois
+  // faits que le rapport contestait : le maillage d'un cartoon est INDEXÉ et LU
+  // (l'ancien lecteur y voyait « 12 flottants par sommet », rendait `null`, et un
+  // cartoon NE PROJETAIT RIEN), la plaque d'un cycle est lue (un MeshBuffer sans
+  // `structureView`) et l'ombre tombe vraiment sur le dessin — pendant que LE FOND
+  // BLANC N'EST PAS TOUCHÉ D'UN SEUL PIXEL (c'est le « ça salit la molécule »).
+  '_viewer_ray_shadow_pixels_test.cjs',
+  // …ET LE GESTE QUI NE BOUGE RIEN (le rapport de cette session : « the auto mode
+  // for live rendering of ray is good but it reinitializes the view even if i move
+  // the mouse without moving the molecule », ≈20 s). La politique du pilote se
+  // mesure sans navigateur ; ce qui ne se mesure QUE dans un vrai Chrome, c'est
+  // combien d'images NGL lui parviennent pour un simple passage de souris. La
+  // sonde promène le pointeur (mousemove sans bouton, avec des pauses qui
+  // franchissent idleMs ET staleMs) sur une vraie scène NGL, prouve que la pose ET
+  // les atomes n'ont pas bougé, et exige ZÉRO reconstruction du masque — puis
+  // rétablit les DEUX témoins : la scène déplacée (brouillon pendant, net après) et
+  // des ATOMES glissés sans caméra (le filet, dans le régime du repos).
+  // …ET LA DYNAMIQUE QUI ÉCRIT, ELLE AUSSI (le rapport de la session suivante :
+  // « when I start a MD run the shadow detaches from the molecule and remains
+  // detached »). Une ▶ MD n'écrit que des COORDONNÉES : ni la pose ni la signature
+  // de la scène ne bougent, donc l'image qu'elle demande était jugée « rendue pour
+  // rien » et le filet ne la regardait qu'au plus une fois par `staleMs`. La sonde
+  // joue le geste comme le viewer (`pilot.moved()` après chaque écriture) et son
+  // verdict est un ÉCART EN PIXELS : le dernier masque peint contre le masque de la
+  // géométrie d'ARRIVÉE — 0,0 px avec le mot du geste (et la passe nette venue de la
+  // minuterie d'`idleMs`, pas d'une image), 16,2 px sans lui, où la couche RESTE à
+  // côté : le défaut rapporté, mesuré, avec son témoin négatif.
+  '_viewer_ray_shadow_idle_test.cjs',
   // …ET LE MÊME MÉCANISME DE PLACES DE PAGE, MESURÉ PAR UN VRAI NAVIGATEUR
   // (≈10 s) : le seul garde-fou qui prouve ce que React fait vraiment des places
   // (keyed siblings) — la page quittée garde LE MÊME nœud DOM, continue de vivre
@@ -250,6 +357,17 @@ const tests = [
   // conditionnel — est monté à côté et se fait bien détruire/recréer, sinon la
   // sonde serait verte sans rien mesurer. SAUTÉE (exit 0) sans Chrome ni Edge.
   '_page_parking_render_test.cjs',
+  // ⬚ …ET LES PIXELS DU FOND DÉGRADÉ, MESURÉS PAR UN VRAI NAVIGATEUR (≈10 s) :
+  // le module SERVI COMME MODULE peint une rampe dans une toile 2D (le coin du
+  // haut est A, celui du bas est B, et la direction les échange), un VRAI canvas
+  // NGL prouve le fait qui rend tout cela gratuit — le fond est du CSS
+  // (`style.backgroundColor`) vu à travers une toile vidée d'ALPHA ZÉRO, donc la
+  // rampe est une `background-image` que le moteur compose sans qu'une seule
+  // représentation soit rebâtie — un clic sur le FOND arrive à `signals.clicked`
+  // avec un pickingProxy SANS atome (le geste du panneau, deux fois : il ouvre,
+  // puis il referme), et la still du ✨ Ray reçoit la rampe SOUS son PNG
+  // transparent sans perdre un pixel de la molécule. SAUTÉE (exit 0) sans Chrome.
+  '_viewer_background_pixels_test.cjs',
 ];
 const rows = tests.map((t) => {
   const r = spawnSync(process.execPath, [t], { encoding: 'utf8' });

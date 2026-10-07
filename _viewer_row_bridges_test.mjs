@@ -164,6 +164,9 @@ const H = new Function('NGL', [
   sliceFn(VIEW, 'lipidGroupOf'),
   sliceDecl(VIEW, 'lipidPartIndexStore'),
   sliceDecl(VIEW, 'lipidSubCache'),
+  // Les oxygènes du phosphate, lus dans le graphe de liaisons : la définition de
+  // « heads » les écarte depuis la révision (voir lipidSubSelections).
+  sliceFn(VIEW, 'phosphateOxygenIndices'),
   sliceFn(VIEW, 'lipidSubSelections'),
   // Les groupes d'un nucléotide, et LA SÉLECTION D'UNE RANGÉE (le pont compris).
   sliceFn(VIEW, 'nucleicGroupOf'),

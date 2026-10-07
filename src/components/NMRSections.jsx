@@ -2,7 +2,7 @@ import NMRMoleculeViewer, { useShowAssignedFlag } from './NMRMoleculeViewer';
 import {
   ChartControlBar, SharedChartStylePanel, ChartInspector, brokenAxisProps, AngledTick, tickLabelOffset, cfgTickFormatter, cfgAxisLabel, cfgChartMargin, errorBarRange, instancesLinked, InstanceLinkToggle } from './SharedAnalysisTools';
 import { Icon } from './Icons';
-import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceArea, ReferenceLine, BarChart, Bar, LineChart, Line, Legend, ErrorBar, Cell
 } from 'recharts';
@@ -17,21 +17,47 @@ import { storeJson, loadJson } from '../utils/pdbStore';
 import { blobStore } from '../utils/blobStore';
 import { archiveRestoreJson, isMissingValue, placeRestorePointer, pointerStillWanted, restoreJsonFor, restoreRawFileFor, restoreStems, sameRawFileFor, takePendingRestorePointer, wantedRawNames } from '../utils/driveRestore';
 import { useDriveAutoRestore } from './useDriveAutoRestore';
+/* 📂 LIRE LE DOSSIER DE L'EXPÉRIENCE (voir utils/driveExperimentFiles.js) : un
+   PDB DÉPOSÉ À LA MAIN dans le dossier de l'expérience n'a aucun nom que la
+   reprise automatique puisse reconnaître (elle cherche par nom / pointeur). Le
+   geste manquant est une lecture du dossier ; le fichier choisi devient le PDB
+   déclaré de la condition (nom + pointeur). */
+import { DriveExperimentFilePicker } from './DriveExperimentFiles';
+import { experimentFilePointer, STRUCTURE_FILE_EXTS } from '../utils/driveExperimentFiles';
 import { sequenceForMoleculeType, sequencePatchForMoleculeType, structureSequencePatch, sequenceNaturesNote } from '../utils/sequenceNatures';
+/* 🧬 LA LECTURE D'UNE SÉQUENCE — la ligne COMPACTE qui la montre SOUS une case de séquence
+   (src/components/SequenceReadingLine.jsx) : c'est ELLE qui lit le module PUR (le pKa de CHAQUE
+   chaîne latérale et les deux terminus : utils/sequenceCharge.js). La case « … Sequence
+   (1-letter code) » de cette page rend la même ligne que la fiche du composé de la Librairie et
+   que les cases des pages MD et Docking : une seule copie, un seul calcul. */
+import { SequenceReadingLine } from './SequenceReadingLine';
+/* 🎨 LA CASE DE SÉQUENCE, LETTRES COLORÉES (la demande) — le même composant pour les trois
+   pages : les cinq lettres de utils/sequenceHighlight.js y sont PEINTES (K · R bleu, E · D
+   rouge, C orange) dans une couche sous un vrai `<textarea>`, donc la saisie, le curseur, la
+   sélection, le collage et l'annuler/rétablir ne changent pas. */
+import { SequenceField } from './SequenceField';
 // LE numéro affiché d'un résidu (position + residueOffset → table resRenumber du
 // viewer 🔢) : une seule règle pour la table des déplacements, la bande de
 // séquence de « Sequence and structure » et les ponts disulfure.
 import { residueNumberResolver, residueNumberOf } from '../utils/residueNumbering';
-// LE repliement demandé par le bouton « ⚭ Fold for disulfides » du viewer : la
-// détente des torsions qui amène les deux Sγ d'un pont défini à une distance de
-// liaison (module pur, la géométrie lui est injectée — voir plus bas).
-import { foldProteinForDisulfides } from '../utils/disulfideFold.js';
+// ⚭ Le repliement « Fold for disulfides » A ÉTÉ RETIRÉ de cette page avec son
+// bouton (la demande : « The “fold for disulphide” button does not work and you
+// can eliminate it ») : la fabrique `buildDisulfideFoldedStructure` qui appelait
+// utils/disulfideFold.js a disparu avec lui, et le modèle déduit de la séquence
+// est servi tel quel (l'interrupteur « ⚭ Disulfides: shown / hidden » du viewer,
+// lui, reste). Le module pur et ses tests restent en place.
 import {
   AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, CARBON_RANGE_DB,
   SS_CORRECTIONS, SS_META, DNA_FORM_OFFSETS, SUGAR_ANOMER_OFFSETS,
   RESIDUE_COLORS, RANDOM_COIL_DB, CYS_OXIDIZED_RC, CYS_OXIDIZED_CARBON_RANGE, TICKS_1H, TICKS_13C, TICKS_15N,
-  SequencePaintStrip
+  SequencePaintStrip, BetaSheetEditor
 } from './NMRData';
+// 🧵 LE FEUILLET β — la déclaration du panneau 🧵 (« Pair them ») et sa géométrie :
+// un seul module PUR pour les trois lecteurs (le panneau, le repliement du modèle de
+// séquence et l'écrivain PDB). Voir l'en-tête de utils/betaSheetFold.js.
+import {
+  betaSheetPairsOf, foldBetaSheets, sheetGeometryOf, sheetMarkAt,
+} from '../utils/betaSheetFold';
 export { VIS_PALETTES };
 
 // Session cache + IndexedDB key for a structure FILE picked in the 3D viewer
@@ -2688,8 +2714,28 @@ const _vecNorm = (a) => Math.sqrt(_vecDot(a, a));
 const _vecNormalize = (a) => { const n = _vecNorm(a); return n < 1e-8 ? [0,0,0] : _vecScale(a, 1/n); };
 const _deg2rad = (d) => d * Math.PI / 180;
 
+/* ⚠ LE SIGNE DE LA TORSION — LA CONVENTION IUPAC DU DOSSIER, ET RIEN D'AUTRE.
+   Ce poseur (NeRF) attachait jusqu'ici la torsion À L'ENVERS de ce que l'application
+   RELIT ensuite (`dihedralDeg` de utils/torsionDrive.js, la convention signée IUPAC
+   des lecteurs χ/δ, du graphe 🪢 et des contraintes de structure secondaire). Tout le
+   modèle de protéine sortait donc EN MIROIR. Mesuré, chiffre à chiffre, avant le
+   correctif (les deux faits sont tenus par _ss_geometry_test.mjs) :
+
+     · l'hélice α peinte (φ −57° / ψ −47°, Pauling–Corey) se construisait φ +57° /
+       ψ +47° — c'est-à-dire une hélice α GAUCHE ;
+     · le feuillet se construisait avec ses φ/ψ inversés (φ +119° / ψ −113° au lieu de
+       −119° / +113°) ;
+     · le carbone α portait la stéréochimie D au lieu de L : le carbone asymétrique du
+       modèle donnait N–CA–C–CB = +122.8° là où le vrai aminoacide L du dépôt
+       (public/structures/template_amino_acid.pdb) donne −123.1°.
+
+   Le signe est maintenant celui du fichier : la torsion DEMANDÉE est exactement celle
+   qu'on mesure ensuite. ⚠ Ce poseur n'est utilisé QUE par le modèle de protéine (le
+   squelette, `placeSidechainAtoms`, les hydrogènes du squelette) : les bâtisseurs
+   d'acides nucléiques, de sucres et de lipides ont leurs propres coordonnées et ne
+   passent pas par lui. */
 const nerfPlace = (A, B, C, bondLength, bondAngleRad, torsionRad) => {
-  const t = -torsionRad; // sign verified against a standard dihedral calculator
+  const t = torsionRad;  // ⚠ LE SIGNE DU FICHIER (IUPAC) — voir le commentaire du poseur
   const bc = _vecNormalize(_vecSub(C, B));
   const ab = _vecSub(B, A);
   const n = _vecNormalize(_vecCross(ab, bc));
@@ -2737,8 +2783,34 @@ const PROTEIN_BB = {
   OMEGA: _deg2rad(180),
 };
 const SS_TORSIONS = {
-  H: { phi: _deg2rad(-57), psi: _deg2rad(-47) },   // alpha helix
-  E: { phi: _deg2rad(-119), psi: _deg2rad(113) },  // beta strand
+  /* ⚠ CES φ/ψ SONT EXACTEMENT CEUX QU'ON MESURE ENSUITE (dihedralDeg, convention
+     signée IUPAC) : l'hélice peinte sort DROITE (φ négatif), le feuillet sort avec
+     ses φ/ψ du bon côté, et le carbone α reste L. Voir le commentaire de `nerfPlace`
+     et _ss_geometry_test.mjs, qui construit puis RELIT chaque lettre. */
+  H: { phi: _deg2rad(-57), psi: _deg2rad(-47) },   // α-helix, RIGHT-handed (Pauling–Corey)
+  /* L'ÉLICHE GAUCHE — la demande : « il bottone alfa elica impone una struttura
+     elicacea left-handed. aggiungi anche la right-handed. » Les deux mains sont
+     maintenant peignables : H = droite (le couple de Pauling–Corey), L = gauche
+     (son MIROIR exact, φ/ψ positifs). C'est la lettre L que la peinture écrit, donc
+     le chip, la contrainte de dihèdre (SS_DIHEDRALS.L) et la géométrie ci-dessous
+     parlent du même objet. */
+  L: { phi: _deg2rad(57), psi: _deg2rad(47) },     // α-helix, LEFT-handed (the mirror pair)
+  /* Le MÊME couple que la contrainte de structure secondaire (SS_DIHEDRALS.E, module
+     structureCalc) : un feuillet peint tombe donc à 0° de la cible qu'on lui impose
+     quand la page le convertit en contraintes, au lieu de 20° à côté. */
+  E: { phi: _deg2rad(-139), psi: _deg2rad(135) },  // β strand (pleated sheet)
+  /* ⚠ LE TOUR — la demande : « add the possibility to impose turns ». La lettre T
+     porte la conformation du TOUR γ de la littérature (Rose–Matthews : φ +75° /
+     ψ −65°), la seule conformation de tour qu'UN SEUL résidu puisse imposer. Elle
+     COURBE donc la chaîne : mesuré sur le modèle de la page, le carbonyle d'un
+     résidu T vient à 2,72 Å de l'amide du résidu i+2 — c'est le pont hydrogène C7
+     du tour γ lui-même, que le réseau 💧 du viewer trouve alors tout seul, là où une
+     pelote (PPII, φ −75 / ψ +145) laisse 3,77 Å et aucune courbure.
+     Le couple est le MÊME que SS_DIHEDRALS.T du module structureCalc (la règle tenue
+     pour E) : la peinture, la géométrie construite et la contrainte de dihèdre
+     parlent du même objet. Entre deux brins E, un T (ou deux) est la boucle que le
+     feuillet déclaré vient ensuite refermer (utils/betaSheetFold.js). */
+  T: { phi: _deg2rad(75), psi: _deg2rad(-65) },    // γ-turn (C7 — the one-residue turn)
   // Coil / extended default: polyproline-II-like (phi=-75°, psi=+145°). The old
   // "fully extended" phi=psi=180° puts every side chain straight back into the
   // previous residue's carbonyl (O...H as close as ~0.5 A for bulky residues),
@@ -3138,6 +3210,24 @@ const buildProteinBackbone = (seq, ssString) => {
     const r = residues[i];
     const psiI = torsionAt(i).psi;
     r.O = nerfPlace(r.N, r.CA, r.C, B.C_O, B.ANG_CA_C_O, psiI - Math.PI);
+    /* ⚠⚠ LE CARBOXYLE C-TERMINAL — le SECOND oxygène (OXT) de la fonction ACIDE du dernier
+       résidu. LE RAPPORT DE CETTE SESSION : « The pH setting is wrong. it gives me a charge of
+       +36 at pH 7 for the peptide: SIIGIIMGILGNIPQVIQIIMSIVKAFKGNK. At pH 7 it should be +3! »
+       — et la chaîne bâtie ici n'avait AUCUN acide : ses trois lysines et son N-terminal sont
+       des bases (+1 chacune, +4 sans pH) et le carboxyle qui termine un peptide n'existait pas,
+       si bien qu'aucun pH, aucun pKa et aucune case du panneau ne pouvait faire autre chose que
+       compter +4. Un peptide réel finit en COO⁻ (pKa ≈ 3,1) : c'est ce groupe-là qui manquait
+       pour tomber à +3.
+       GÉOMÉTRIE — la MÊME longueur et le MÊME angle que l'oxygène du carbonyle (B.C_O,
+       B.ANG_CA_C_O) et le dièdre retourné de 180° (ψ au lieu de ψ − 180°) : par cette rotation
+       autour de l'axe CA–C les deux C–O se retrouvent à cos(2θ) l'un de l'autre, soit
+       O–C–OXT ≈ 119,5° — un carboxyle PLAN, la géométrie d'un vrai terminus.
+       ⚠ AUCUN PROTON SUR OXT — comme les carboxyles d'Asp et Glu (voir placeSidechainAtoms) :
+       ce bâtisseur écrit les formes IONISÉES des acides et les formes PROTONÉES des bases (la
+       chimie du modèle idéal), et c'est le pH qui titre ensuite ce groupe. Un H écrit ici
+       aurait fait lire le terminus comme un COOH : neutre à la lecture par défaut (+4) au lieu
+       du −1 que le panneau annonce — le peptide n'aurait jamais affiché « +3 ». */
+    if (i === n - 1) r.OXT = nerfPlace(r.N, r.CA, r.C, B.C_O, B.ANG_CA_C_O, psiI);
     if (seq[i] !== 'G') r.CB = nerfPlace(r.C, r.N, r.CA, B.CA_CB, _deg2rad(110.5), _deg2rad(-122.5));
   }
   return residues;
@@ -3151,6 +3241,12 @@ const buildProteinBackbone = (seq, ssString) => {
    jamais un numéro affiché), et `opts.torsions` = le tableau de torsions
    détendues rendu par utils/disulfideFold.js (« ⚭ Fold for disulfides »), ou
    null pour le modèle idéal habituel.
+
+   LE TERMINUS C EST UN CARBOXYLE (l'atome OXT, écrit SANS proton) : c'est la seule fonction
+   acide d'un peptide qui ne soit pas dans une chaîne latérale, et son absence faisait lire une
+   chaîne à +4 e — voir buildProteinBackbone, où sa géométrie est posée. Le record CONECT
+   C–OXT est écrit comme tous les autres, sans quoi le carboxyle ne serait pas un groupe pour
+   le champ (et le pH n'aurait rien à y titrer).
 
    Trois choses, et rien d'autre, quand des ponts sont définis :
     1. les deux Sγ d'une paire sont joints par un CONECT — LE record que NGL lit
@@ -3166,10 +3262,41 @@ const buildProteinBackbone = (seq, ssString) => {
    ---------------------------------------------------------------------------- */
 const proteinSequenceToPdbText = (seq, ssString, title = 'GENERATED', opts = {}) => {
   const relaxTorsions = Array.isArray(opts.torsions) ? opts.torsions : null;
-  // Le squelette suit les torsions DÉTENDUES quand il y en a (et non plus la
-  // structure secondaire) : c'est tout l'objet du repliement — χ1 seul ne
-  // rapprocherait jamais deux Sγ que φ/ψ séparent.
-  const residues = buildProteinBackbone(seq, relaxTorsions || ssString);
+  /* 🧵 LES FEUILLETS DÉCLARÉS — la déclaration du panneau 🧵 (« Pair them », en
+     positions de séquence), relue par le module pur : les fourchettes hors séquence,
+     trop courtes ou qui se recouvrent sont COMPTÉES (`rejected`), jamais devinées.
+     Quand l'appelant n'a pas déjà fourni ses torsions, la chaîne est REPLIÉE ICI par
+     utils/betaSheetFold.js : deux brins peints E que la chaîne n'avait pas rapprochés
+     sortent alors côte à côte, dans le sens demandé, avec leurs ponts N–H···O=C.
+     Le squelette suit donc, dans l'ordre : les torsions données (ponts disulfure ou
+     appelant), celles du repliement de feuillet, et enfin la structure secondaire. */
+  /* ⚠ LES TROIS LECTEURS DU FEUILLET SONT FACULTATIFS ICI — et c'est ce qui garde
+     cette fabrique EXTRACTIBLE : sept sondes du dossier la reconstruisent par
+     `new Function` (le motif de _sequence_charge_test.mjs) sans lui passer le
+     module. Un `typeof` sur un nom non déclaré ne jette pas : dans une sonde, le
+     bloc du feuillet est donc INERTE et le fichier sort exactement comme avant
+     (aucun record SHEET) ; dans la page, l'import est là — `_ss_sheet_test.mjs`
+     compare les deux (les noms sont bien des fonctions) — et tout le bloc s'exécute. */
+  const sheetFoldApi = (typeof betaSheetPairsOf === 'function'
+    && typeof foldBetaSheets === 'function' && typeof sheetGeometryOf === 'function')
+    ? { pairsOf: betaSheetPairsOf, fold: foldBetaSheets, geometry: sheetGeometryOf }
+    : null;
+  const sheetRead = sheetFoldApi
+    ? sheetFoldApi.pairsOf({
+      secondaryStructure: typeof ssString === 'string' ? ssString : '',
+      sheets: opts.sheets,
+      sequenceLength: seq.length,
+    })
+    : { pairs: [], rejected: 0 };
+  const sheetFold = (sheetFoldApi && !relaxTorsions && typeof ssString === 'string' && sheetRead.pairs.length)
+    ? sheetFoldApi.fold({
+      sequence: seq,
+      torsions: seq.split('').map((_, i) => ssTorsionAt(ssString[i] || 'C')),
+      pairs: sheetRead.pairs,
+      build: (cand) => buildProteinBackbone(seq, cand),
+    })
+    : null;
+  const residues = buildProteinBackbone(seq, relaxTorsions || (sheetFold ? sheetFold.torsions : null) || ssString);
   const cysDisulfides = (Array.isArray(opts.cysDisulfides) ? opts.cysDisulfides : [])
     .filter((p) => Array.isArray(p) && p.length === 2 && Number.isInteger(p[0]) && Number.isInteger(p[1]))
     .filter((p) => p[0] >= 1 && p[0] <= seq.length && p[1] >= 1 && p[1] <= seq.length && p[0] !== p[1])
@@ -3193,6 +3320,57 @@ const proteinSequenceToPdbText = (seq, ssString, title = 'GENERATED', opts = {})
     const pad = (s, w) => String(s).padStart(w);
     lines.push(`SSBOND${pad(k + 1, 3)} CYS A${pad(a, 4)}${' '.repeat(10)} CYS A${pad(b, 4)}${' '.repeat(12)}2.05`);
   });
+  /* 🧵 LES RECORDS DU FEUILLET — ce qui a été écrit au-dessus est DIT ici : un record
+     SHEET par brin déclaré (la convention PDB) et un REMARK par paire. La géométrie
+     RÉELLEMENT obtenue est mesurée sur `residues` — c'est-à-dire sur le modèle que ce
+     fichier écrit — par le lecteur partagé `sheetGeometryOf` : aucun des trois
+     lecteurs (panneau, repliement, écrivain) ne peut donc annoncer autre chose que
+     les coordonnées. */
+  if (sheetFoldApi && (sheetRead.pairs.length || sheetRead.rejected)) {
+    /* ⚠ LE COMPTE EST ÉCRIT MÊME QUAND AUCUNE PAIRE NE RESTE : une déclaration
+       devenue invalide (peinture effacée, fourchette hors séquence) est DITE dans le
+       fichier, jamais passée sous silence — c'est la même règle que le panneau. */
+    lines.push(`REMARK 950 BETA-SHEET(S) IMPOSED BY THE SEQUENCE DEFINITION: ${sheetRead.pairs.length}`
+      + `${sheetRead.rejected ? ` (+${sheetRead.rejected} declaration(s) that no longer match the sequence)` : ''}`);
+  }
+  if (sheetFoldApi && sheetRead.pairs.length) {
+    const res3 = (pos) => AA_1_TO_3[seq[pos - 1]] || 'UNK';
+    /* Format SHEET (spécification PDB, exemple officiel) :
+       « SHEET    1   A 4 ASNA 102  THRA 105  0 » — identifiant du feuillet en 10,
+       chaîne en 14, nombre de brins en 16, premier résidu (nom + chaîne) en 18-21,
+       son numéro en 22-25, dernier résidu en 28-31, son numéro en 32-35, et le SENS
+       en 36-38 (0 = premier brin, +1 = parallèle, −1 = antiparallèle). */
+    const sheetLine = (id, numStrands, init, end, sense) => 'SHEET'
+      + String(id).padStart(5)
+      + '   A'
+      + ` ${numStrands}`
+      + ` ${res3(init)}A`
+      + String(init).padStart(4)
+      + `  ${res3(end)}A`
+      + String(end).padStart(4)
+      /* Le SENS, signé : « +1 » parallèle, «-1 » antiparallèle, 0 pour le premier
+         brin (la convention du record SHEET). */
+      + String(sense > 0 ? `+${sense}` : sense).padStart(3);
+    const geometry = sheetFoldApi.geometry({ residues, pairs: sheetRead.pairs });
+    sheetRead.pairs.forEach((pair, k) => {
+      const sense = pair.sense === 'parallel' ? 1 : -1;
+      /* Le PREMIER brin du feuillet porte le sens 0 (la convention : la première ligne
+         d'un feuillet n'a pas d'antécédent), le second son sens signé. */
+      lines.push(sheetLine(k + 1, 2, pair.a.start, pair.a.end, 0));
+      lines.push(sheetLine(k + 1, 2, pair.b.start, pair.b.end, sense));
+    });
+    lines.push(`REMARK 950 BETA-SHEET(S) IMPOSED BY THE SEQUENCE DEFINITION: ${sheetRead.pairs.length}`
+      + `${sheetRead.rejected ? ` (+${sheetRead.rejected} declaration(s) that no longer match the sequence)` : ''}`);
+    geometry.forEach((g) => {
+      lines.push(`REMARK 951 ${g.label}: strand ${g.a.start}-${g.a.end} / strand ${g.b.start}-${g.b.end}`
+        + ` ${g.sense === 'parallel' ? 'PARALLEL' : 'ANTIPARALLEL'}`
+        + ` (measured strand axes cos = ${g.direction.toFixed(2)}`
+        + `${g.senseOk ? '' : ', WRONG DIRECTION'}); the two strands were folded face to face`
+        + ` (CA-CA ${[...g.ca, ...g.caB].map((d) => d.toFixed(1)).join(' ')} A)`
+        + ` and ${g.hbonds.length} N-H...O=C hydrogen bond(s) are present.`
+        + `${g.converged ? '' : ' The fold did NOT fully converge: this is the best conformation found.'}`);
+    });
+  }
   let serial = 1;
   const serialOf = new Map();       // `${atomName}@${residueIndex}` → serial
   const residueBondPairs = [];      // [{ i, bonds: [[an, bn], ...] }]
@@ -3232,7 +3410,10 @@ const proteinSequenceToPdbText = (seq, ssString, title = 'GENERATED', opts = {})
       console.warn(`Side-chain generation failed for residue ${i + 1} (${char}), keeping backbone only:`, e);
     }
     const ordered = [];
-    ['N', 'CA', 'C', 'O', 'CB'].forEach((nm) => { if (r[nm]) ordered.push({ name: nm, pos: r[nm] }); });
+    /* `OXT` n'existe que sur le dernier résidu (voir buildProteinBackbone) : la boucle le
+       laisse donc passer inaperçu partout ailleurs. Il est écrit JUSTE APRÈS l'O du
+       carbonyle — la place d'un second oxygène de carboxyle dans un PDB. */
+    ['N', 'CA', 'C', 'O', 'OXT', 'CB'].forEach((nm) => { if (r[nm]) ordered.push({ name: nm, pos: r[nm] }); });
     bbH.forEach((a) => ordered.push(a));
     (sidechain.atoms || []).forEach((a) => ordered.push(a));
     ordered.forEach((a) => {
@@ -3265,6 +3446,11 @@ const proteinSequenceToPdbText = (seq, ssString, title = 'GENERATED', opts = {})
     emitBond(`N@${i}`, `CA@${i}`);
     emitBond(`CA@${i}`, `C@${i}`);
     emitBond(`C@${i}`, `O@${i}`);
+    /* …ET LE SECOND OXYGÈNE DU CARBOXYLE C-TERMINAL, quand ce résidu est le dernier (voir
+       buildProteinBackbone) : sans ce record, NGL ne dessinerait pas la liaison C–OXT et le
+       module du champ ne verrait aucun carboxyle au bout de la chaîne — le peptide du rapport
+       resterait à +4 e quel que soit le pH. */
+    if (r.OXT) emitBond(`C@${i}`, `OXT@${i}`);
     if (r.CB) emitBond(`CA@${i}`, `CB@${i}`);
     emitBond(`CA@${i}`, `HA@${i}`);
     if (i === 0) {
@@ -3672,7 +3858,10 @@ const useNmrDerived = (activeTest, ctx = {}) => {
   const shifts = allLayerValues['cs'] || {};
   const activeValues = shifts;
   const ssRaw = activeTest.secondaryStructure || '';
-  const getSSAt = (i) => (ssRaw[i] && 'HES'.includes(ssRaw[i]) ? ssRaw[i] : 'C');
+  // ⚠ HESLT — L (hélice α GAUCHE) et T (tour β) sont des lettres peignables comme les
+  // autres : sans elles ici, le chip retombait sur « C » et la peinture était effacée au
+  // rendu suivant.
+  const getSSAt = (i) => (ssRaw[i] && 'HESLT'.includes(ssRaw[i]) ? ssRaw[i] : 'C');
   const formsRaw = activeTest.nucleicForms || '';
   const dnaFormDefault = activeTest.dnaForm || 'B';
   const getFormAt = (i) => (formsRaw[i] && 'ABZ'.includes(formsRaw[i]) ? formsRaw[i] : dnaFormDefault);
@@ -3809,7 +3998,14 @@ const useNmrDerived = (activeTest, ctx = {}) => {
       ? cysIsOxidized(activeTest.cysOxidized, activeTest.cysStates, activeTest.cysDisulfides, idx + 1)
       : false;
     const ssLetter = moleculeType === 'protein' ? getSSAt(idx) : 'C';
-    const ssKey = { C: 'coil', H: 'helix', E: 'sheet' }[ssLetter];
+    // ⚠ L (hélice α GAUCHE) est une HÉLICE comme H : elle prend les mêmes corrections
+    // de déplacements chimiques (`helix`), sinon la lettre tombait sur `undefined`.
+    // ⚠ T (tour β) n'a AUCUNE correction propre : la table des corrections (SS_CORRECTIONS)
+    // n'a pas d'entrée « tour » — un tour n'est ni une hélice ni un feuillet —, il prend
+    // donc la ligne `coil` (le silence), comme la lettre T du DSSP reste une boucle dans
+    // la lecture à trois couleurs de la 2° structure. C'est le même choix que la carte
+    // `sstrucAtomColorOf` du viewer (h/g/i → hélice, e/b → feuillet, le reste → boucle).
+    const ssKey = { C: 'coil', H: 'helix', L: 'helix', E: 'sheet', T: 'coil' }[ssLetter];
     const corr = SS_CORRECTIONS[ssKey];
     const estShifts = {};
     Object.keys(res.shifts || {}).forEach((a) => {
@@ -4674,11 +4870,112 @@ const renderSvg = (heightStyle) => {
   );
 };
 
+/* ══════════════════════════════════════════════════════════════════════════════
+   🧵 LA DÉFINITION DE SÉQUENCE → LE MODÈLE REPLIÉ, POUR LES TROIS PAGES
+
+   La MÊME définition de séquence vit sur les trois pages du viewer (NMR, MD et
+   Docking) : le pinceau 🖌️ peint une lettre par résidu (C · H · L · E · T), et le
+   panneau 🧵 apparie DEUX brins E — parallèles ou antiparallèles — pour IMPOSER un
+   feuillet. Ce crochet est la SEULE lecture de cette définition : les trois pages
+   l'appellent et en font la même chose — la bande de séquence marque les brins
+   (`betaSheetRead`), le panneau 🧵 affiche le rapport du modèle RÉELLEMENT bâti
+   (`sheetFold`), et le viewer 3D sert le texte PDB du modèle (`sequenceStructure`)
+   dès que RIEN n'est chargé sur la page (un PDB chargé, lui, reste prioritaire).
+
+     • `betaSheetRead` — les brins peints et les paires VALIDES. Tout ce qui ne
+       correspond plus à la séquence (fourchette hors séquence, brin d'un résidu,
+       deux fourchettes qui se recouvrent, sens inconnu, doublon) est COMPTÉ
+       (`rejected`), jamais deviné (voir utils/betaSheetFold.js) ;
+     • `sheetFold` — le repliement du modèle : la recherche locale de
+       utils/betaSheetFold.js sur les φ/ψ des deux brins ET de la boucle qui les
+       sépare, jusqu'à ce que les deux brins se fassent face avec leurs ponts
+       N–H···O=C. DÉTERMINISTE (graine fixe) : la même définition donne toujours le
+       même modèle, et le rapport de la note sous le panneau dit ce qui a été
+       obtenu (échelons CA–CA mesurés, nombre de ponts, convergence) ;
+     • `sequenceStructure` — { text, ext } du PDB : le modèle de la séquence, ponts
+       disulfure ⚭ et feuillets déclarés compris (les records SHEET et les REMARK
+       950 / 951 sont écrits par le MÊME écrivain que le fichier téléchargé), avec
+       les torsions du repliement. Les résidus HORS de la fenêtre du feuillet
+       gardent leurs φ/ψ au bit près — un feuillet déclaré ne défait jamais une
+       hélice qui vit ailleurs.
+
+   ⚠ Le mode 🎓 University test n'en replie AUCUN et n'en peint AUCUNE (le modèle
+   montrerait la réponse : c'est la même règle que ssFor3D, qui part vide).
+   ══════════════════════════════════════════════════════════════════════════════ */
+export const useSequenceStructureModel = ({ activeTest = {}, d = {}, univTestMode = false } = {}) => {
+  const betaSheetRead = useMemo(() => betaSheetPairsOf({
+    secondaryStructure: activeTest.secondaryStructure || '',
+    sheets: activeTest.betaSheets,
+    sequenceLength: (d.seq || '').length,
+  }), [activeTest.secondaryStructure, activeTest.betaSheets, d.seq]);
+  const sheetFold = useMemo(() => {
+    if (univTestMode || d.moleculeType !== 'protein' || !d.seq || !betaSheetRead.pairs.length) return null;
+    const ss = activeTest.secondaryStructure || '';
+    return foldBetaSheets({
+      sequence: d.seq,
+      torsions: d.seq.split('').map((_, i) => ssTorsionAt(ss[i] || 'C')),
+      pairs: betaSheetRead.pairs,
+      build: (cand) => buildProteinBackbone(d.seq, cand),
+    });
+  }, [univTestMode, d.moleculeType, d.seq, activeTest.secondaryStructure, betaSheetRead.pairs]);
+  const sequenceStructure = useMemo(() => {
+    try {
+      console.log('🔄 3D Generation attempt. moleculeType:', d.moleculeType, 'seq length:', d.seq?.length);
+
+      if (d.moleculeType === 'protein' && d.seq) {
+        console.log('✅ Generating protein structure...');
+        // University test mode: the molecule must NOT fold from the secondary
+        // structure painted with the brush (that would leak the answer). An
+        // empty secondary structure yields the fully-extended chain.
+        const ssFor3D = univTestMode ? '' : (activeTest.secondaryStructure || '');
+        // Les ponts disulfure définis dans « Cysteine states » entrent dans le
+        // modèle : CONECT SG–SG (le pont se voit en Sticks / Ball+stick) + le
+        // proton HG retiré des Cys engagées.
+        // 🧵 ET LES FEUILLETS DÉCLARÉS dans « Sequence and structure » (« Pair them ») :
+        // `sheetFold` (calculé plus haut) a déjà replié les φ/ψ des deux brins et de
+        // leur boucle — ses torsions sont données TELLES QUELLES au bâtisseur, qui
+        // n'a donc plus rien à chercher, et les records SHEET / REMARK du fichier
+        // décrivent ce modèle-là (mesuré, jamais promis).
+        return {
+          text: proteinSequenceToPdbText(d.seq, ssFor3D, activeTest.name || 'PROTEIN', {
+            cysDisulfides: activeTest.cysDisulfides,
+            /* ⚠ LA DÉCLARATION BRUTE, pas les paires résolues : proteinSequenceToPdbText
+               relit lui-même `opts.sheets` (betaSheetPairsOf) pour écrire ses records —
+               il attend donc la forme du panneau, { a: [start, end], b: [start, end],
+               sense }, et il compte lui-même les déclarations devenues invalides. */
+            sheets: activeTest.betaSheets,
+            torsions: sheetFold ? sheetFold.torsions : null,
+          }),
+          ext: 'pdb',
+        };
+      }
+
+      if ((d.moleculeType === 'dna' || d.moleculeType === 'rna') && d.seq) {
+        console.log('✅ Generating nucleic acid structure...');
+        return { text: nucleicSequenceToPdbText(d.seq, d.moleculeType, activeTest.name || 'NUCLEIC_ACID'), ext: 'pdb' };
+      }
+
+      console.log('ℹ️ 3D Generation skipped: No valid sequence provided for this molecule type.');
+    } catch (e) {
+      console.error('❌ 3D structure generation failed with error:', e);
+    }
+
+    return null;
+  }, [d.moleculeType, d.seq, activeTest.secondaryStructure, activeTest.name, univTestMode, activeTest.cysDisulfides,
+    activeTest.betaSheets, sheetFold]);
+
+  return { betaSheetRead, sheetFold, sequenceStructure };
+};
+
+
 // ================= MOLECULAR STRUCTURE SECTION =================
 export const MolecularStructureSection = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
   const d = useNmrDerived(activeTest, ctx);
-  const structureMode = activeTest.structureMode || '2d';
+  // (Le sélecteur « 2D Formula / 3D Viewer » a été RETIRÉ — la demande : le
+  // viewer 3D devient sa PROPRE sous-section repliable, indépendante de la
+  // formule 2D. `viewerOpen` ne sert qu'à faire recaler le viewer 3D (et les
+  // tracés) sur la largeur réelle quand on le déplie.)
   const atomLabelMode = activeTest.atomLabelMode || 'selected';
   const residueOffset = activeTest.residueOffset || 0;
   // LE numéro affiché d'un résidu (position + décalage, puis table 🔢 du viewer) :
@@ -4690,7 +4987,7 @@ export const MolecularStructureSection = ({ ctx }) => {
   // secondary structure away (brush + 3D folding driven by the brush).
   const univTestMode = Boolean(activeTest.universityTest);
   const atomNameMap = useMemo(() => { try { return activeTest.atomNameMap ? JSON.parse(activeTest.atomNameMap) : {}; } catch { return {}; } }, [activeTest.atomNameMap]);
-  const [hasOpened3D, setHasOpened3D] = useState(structureMode === '3d');
+  const [viewerOpen, setViewerOpen] = useState(false);
   
   // (The « PDB ID / URL / local file » box that used to sit above the 3D viewer
   // is GONE — with its decoupled keystroke state and its Load handler. It was a
@@ -4701,11 +4998,13 @@ export const MolecularStructureSection = ({ ctx }) => {
   // viewer — is now entered in ONE place only, the viewer, which writes it back
   // with onStructureSrc.)
 
-  useEffect(() => { if (structureMode === '3d') setHasOpened3D(true); }, [structureMode]);
+  // Le viewer 3D et les tracés se recalent sur la largeur RÉELLE après chaque
+  // dépliage : replié, le viewer reste MONTÉ (masqué en CSS) et le navigateur
+  // n'émet alors aucun « resize ».
   useEffect(() => {
     const t = setTimeout(() => { window.dispatchEvent(new Event('resize')); }, 100);
     return () => clearTimeout(t);
-  }, [structureMode, hasOpened3D]);
+  }, [viewerOpen]);
   
   const firstSelectedCmp = activeTest.selectedCompounds?.[0];
   useEffect(() => {
@@ -4724,6 +5023,17 @@ export const MolecularStructureSection = ({ ctx }) => {
           // fills the DNA box, never the Proteins one.
           Object.assign(updates, sequencePatchForMoleculeType(activeTest, meta.type || 'protein', meta.sequence));
           updates.moleculeType = meta.type || 'protein';
+          needsUpdate = true;
+        }
+        /* 🧪 …ET SA DÉFINITION DE MODIFICATIONS (Acetylation · Amidation · Phosphorylation) —
+           elle ne change ni les atomes ni la séquence, mais elle change la CHARGE : un
+           composé acétylé n'a pas d'ammonium N-terminal, un composé amidé pas de carboxyle
+           C-terminal. Le ⚙ Params & Constraints lit la charge de la SÉQUENCE (le module
+           utils/sequenceCharge.js) : sans ce texte il supposerait des terminus LIBRES — la
+           règle d'une séquence écrite directement, mais pas celle d'un composé qui dit le
+           contraire. Copiée ici, elle suit la condition comme la séquence et le type. */
+        if ((meta.modifications || '') !== (activeTest.modifications || '')) {
+          updates.modifications = meta.modifications || '';
           needsUpdate = true;
         }
         if (needsUpdate) {
@@ -4918,6 +5228,41 @@ export const MolecularStructureSection = ({ ctx }) => {
     };
   };
 
+  /* ── 📂 PRENDRE LE PDB DANS LE DOSSIER DE L'EXPÉRIENCE ────────────────────
+     Le même geste que sur la page MD (voir utils/driveExperimentFiles.js) : le
+     dossier canonique de l'expérience est LU (`projects/<projet>/<expérience>/
+     <instance>/Data/Structure`, et un cran plus haut si besoin), et le fichier
+     choisi devient le PDB DÉCLARÉ de cette condition — nom + pointeur — donc
+     celui qui sera rouvert par défaut, ici comme sur un autre poste. C'est ce
+     qui rend lisible un PDB POSÉ À LA MAIN dans le dossier : la reprise
+     automatique cherche par nom et par pointeur, elle ne le voit pas. Rien
+     n'est renvoyé au Drive : le fichier y est déjà, on l'ouvre. */
+  const pickNmrStructureFromFolder = async (file, meta) => {
+    const testId = activeTest.id;
+    const restored = new File(
+      [file],
+      file.name || 'structure.pdb',
+      { type: file.type || 'application/octet-stream' }
+    );
+    try { await blobStore.save(nmrStructBlobKey(testId), restored); } catch { /* base indisponible : le fichier reste en mémoire */ }
+    const cache = nmrLocalFileCache.get(testId) || {};
+    nmrLocalFileCache.set(testId, { ...cache, structure: restored });
+    // L'écran ne bouge que si c'est TOUJOURS cette condition qui est affichée
+    // (les onglets ne remontent pas la page) : le fichier est rangé sous la clé
+    // de la condition lue, et la suivante le reprendra de son cache.
+    if (nmrStructPageIdRef.current === testId) setStructureFile(restored);
+    const pointer = experimentFilePointer(meta);
+    updateActiveTest({
+      structureFileName: restored.name,
+      structureFileData: null,     // le fichier déclaré a changé : l'ancien data URL ne le décrit plus
+      structureSrc: null,          // un code PDB / une URL d'hier ne doit pas l'emporter sur le fichier choisi
+      pdbId: null,
+      structureDriveName: meta.name || restored.name,
+      ...(pointer ? { structureDrive: pointer } : {})
+    }, testId);
+  };
+
+
   const nmrStructRestore = useDriveAutoRestore({
     kind: NMR_STRUCT_KIND,
     testId: activeTest.id,
@@ -4942,6 +5287,16 @@ export const MolecularStructureSection = ({ ctx }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTest.id, activeTest.structureFileName]);
 
+  /* 🧵 LA DÉFINITION DE SÉQUENCE — LES FEUILLETS DÉCLARÉS ET LE MODÈLE REPLIÉ.
+     Une SEULE définition pour les TROIS pages (NMR, MD, Docking) : le crochet
+     `useSequenceStructureModel` (défini avec le bâtisseur PDB, plus haut) relit la
+     déclaration du panneau 🧵 (`activeTest.betaSheets`), replie le modèle de
+     séquence, et rend le texte PDB — celui que le viewer 3D sert dès que RIEN
+     n'est chargé ici, exactement comme sur les pages MD et Docking. */
+  const { betaSheetRead, sheetFold, sequenceStructure } = useSequenceStructureModel({
+    activeTest, d, univTestMode,
+  });
+
   // Locally-generated structures (no network round trip): idealized protein backbone from
   // sequence + secondary structure (or fully-extended fallback), and a simplified extended
   // sugar-phosphate backbone trace for DNA/RNA.
@@ -4949,42 +5304,13 @@ export const MolecularStructureSection = ({ ctx }) => {
   // LE MODÈLE EST TOUJOURS FABRIQUÉ, même quand un PDB est déclaré plus bas : une
   // séquence tapée dans « Molecular structure and visualization » doit pouvoir donner
   // sa structure. Deux sorties, deux rôles :
-  //   • `sequenceStructure` — le modèle déduit de la séquence, disponible en
-  //     permanence ; c'est lui que le viewer 3D sert dès que RIEN n'est chargé dans
-  //     cette section, et que le bouton « 🧬 Build from sequence » (groupe Modify du
-  //     viewer) reconstruit à la demande ;
+  //   • `sequenceStructure` — le modèle déduit de la séquence (le crochet ci-dessus),
+  //     disponible en permanence ; c'est lui que le viewer 3D sert dès que RIEN n'est
+  //     chargé dans cette section, et que le bouton « 🧬 Build from sequence » (groupe
+  //     Modify du viewer) reconstruit à la demande ;
   //   • `generatedStructure` — ce que la PAGE sert d'elle-même : quand un PDB est
   //     déclaré (structureSrc / pdbId / structureFileName), ce PDB gagne et la page
   //     ne pousse rien, comme avant.
-const sequenceStructure = useMemo(() => {
-  try {
-    console.log('🔄 3D Generation attempt. moleculeType:', d.moleculeType, 'seq length:', d.seq?.length);
-
-    if (d.moleculeType === 'protein' && d.seq) {
-      console.log('✅ Generating protein structure...');
-      // University test mode: the molecule must NOT fold from the secondary
-      // structure painted with the brush (that would leak the answer). An
-      // empty secondary structure yields the fully-extended chain.
-      const ssFor3D = univTestMode ? '' : (activeTest.secondaryStructure || '');
-      // Les ponts disulfure définis dans « Cysteine states » entrent dans le
-      // modèle : CONECT SG–SG (le pont se voit en Sticks / Ball+stick) + le
-      // proton HG retiré des Cys engagées. Le squelette reste le modèle idéal
-      // tant que « ⚭ Fold for disulfides » n'est pas cliqué (voir plus bas).
-      return { text: proteinSequenceToPdbText(d.seq, ssFor3D, activeTest.name || 'PROTEIN', { cysDisulfides: activeTest.cysDisulfides }), ext: 'pdb' };
-    }
-
-    if ((d.moleculeType === 'dna' || d.moleculeType === 'rna') && d.seq) {
-      console.log('✅ Generating nucleic acid structure...');
-      return { text: nucleicSequenceToPdbText(d.seq, d.moleculeType, activeTest.name || 'NUCLEIC_ACID'), ext: 'pdb' };
-    }
-
-    console.log('ℹ️ 3D Generation skipped: No valid sequence provided for this molecule type.');
-  } catch (e) {
-    console.error('❌ 3D structure generation failed with error:', e);
-  }
-
-  return null;
-}, [d.moleculeType, d.seq, activeTest.secondaryStructure, activeTest.name, univTestMode, activeTest.cysDisulfides]);
 
 const generatedStructure = useMemo(() => {
   if (hasExplicitOverride) {
@@ -4994,69 +5320,13 @@ const generatedStructure = useMemo(() => {
   return sequenceStructure;
 }, [hasExplicitOverride, sequenceStructure]);
 
-  /* ── ⚭ Fold for disulfides — LE GESTE DU VIEWER, CALCULÉ ICI ──────────────
-     Le bouton du groupe Modify du viewer appelle cette fabrique : elle rend le
-     MÊME modèle de séquence, mais avec les torsions DÉTENDUES jusqu'à ce que
-     chaque pont défini dans « Cysteine states » puisse se fermer
-     (utils/disulfideFold.js : les deux Sγ visés à 2.05 Å, φ/ψ des résidus
-     entre les deux Cys + les trois rotamères χ1).
-
-     Trois propriétés qui comptent :
-       • RIEN NE BOUGE TANT QUE LE BOUTON N'EST PAS CLIQUÉ : le modèle servi
-         d'office reste le modèle idéal ci-dessus (c'est une déformation
-         explicite, pas une surprise à l'ouverture d'une condition) ;
-       • le texte rendu est celui du constructeur avec `torsions` — donc il
-         porte AUSSI le CONECT SG–SG et l'absence de HG (voir
-         proteinSequenceToPdbText) ;
-       • `note` dit ce qui a été obtenu, pont par pont, avec les NUMÉROS
-         AFFICHÉS (le 🔢 du viewer), y compris quand un pont n'a PAS pu être
-         fermé : c'est le viewer qui l'affiche tel quel. Aucune promesse de
-         repliement physique n'est faite (le module n'en fait pas non plus).
-     Rend `null` quand il n'y a rien à détendre (pas de pont, pas de
-     séquence) : le bouton du viewer est alors désactivé. */
-  const buildDisulfideFoldedStructure = useCallback(() => {
-    const pairs = (Array.isArray(activeTest.cysDisulfides) ? activeTest.cysDisulfides : [])
-      .filter((p) => Array.isArray(p) && p.length === 2 && p[0] !== p[1]);
-    if (d.moleculeType !== 'protein' || !d.seq || pairs.length === 0) return null;
-    const ssFor3D = univTestMode ? '' : (activeTest.secondaryStructure || '');
-    // Les torsions de départ SONT celles du modèle idéal : une par résidu (la
-    // même lecture que buildProteinBackbone, mais explicite ici).
-    const base = d.seq.split('').map((_, i) => {
-      const t = ssTorsionAt(ssFor3D[i] || 'C');
-      return { phi: t.phi, psi: t.psi, chi1: _deg2rad(-60) };
-    });
-    // La géométrie réelle, injectée dans le module pur : le constructeur NeRF de
-    // la page et le vrai placement du Sγ (χ1 compris).
-    const sgPositions = (torsions) => {
-      const residues = buildProteinBackbone(d.seq, torsions);
-      const sg = new Array(d.seq.length).fill(null);
-      residues.forEach((r, i) => {
-        if (d.seq[i] !== 'C') return;
-        try {
-          const sc = placeSidechainAtoms('C', r, torsions[i]);
-          const a = (sc.atoms || []).find((x) => x.name === 'SG');
-          if (a) sg[i] = a.pos;
-        } catch { /* une Cys sans Sγ ne bloque pas le repliement */ }
-      });
-      return { sg, ca: residues.map((r) => r.CA) };
-    };
-    const result = foldProteinForDisulfides({ torsions: base, pairs, sgPositions });
-    const text = proteinSequenceToPdbText(d.seq, ssFor3D, activeTest.name || 'PROTEIN', {
-      cysDisulfides: pairs, torsions: result.torsions,
-    });
-    const resNoOf = residueNumberResolver(activeTest);
-    const noOf = (pos) => resNoOf(pos - 1);
-    const parts = result.pairs.map(({ a, b, distance, bonded }) => (
-      distance === null
-        ? `Cys ${noOf(a)}–Cys ${noOf(b)}: no Sγ could be placed`
-        : `Cys ${noOf(a)}–Cys ${noOf(b)}: ${distance.toFixed(2)} Å ${bonded ? '✓ bonded' : '(not closed)'}`
-    ));
-    return {
-      text,
-      ext: 'pdb',
-      note: `${result.converged ? '⚭ Disulphide-folded model' : '⚠️ Partially folded model'} — ${parts.join(' · ')}. Chain relaxed, not a physical fold.`,
-    };
-  }, [activeTest, d.moleculeType, d.seq, univTestMode, activeTest.secondaryStructure]);
+  /* ── ⚭ Fold for disulfides — RETIRÉ : le bouton du viewer n'existe plus ─────
+     La fabrique rendait le modèle de séquence avec les φ/ψ DÉTENDUES jusqu'à ce
+     que chaque pont de « Cysteine states » puisse se fermer (utils/disulfideFold.js).
+     Elle n'avait qu'UN appelant — le bouton « ⚭ Fold for disulfides » du groupe
+     Modify — et la demande a été de le retirer : elle part donc avec lui, ainsi
+     que le module pur qu'elle seule branchait. Rien d'autre ne changeait le
+     modèle servi : celui-ci reste le modèle idéal de la séquence. */
 
   // Organic molecules with no override: fetch + validate a real 3D structure ourselves (Cactus,
   // falling back to PubChem) instead of handing NGL a raw URL to fetch on its own -- this is what
@@ -5160,7 +5430,8 @@ const generatedStructure = useMemo(() => {
       // Fallback: build it fresh even if organicFetch/generatedStructure hasn't populated yet
       try {
         const text = d.moleculeType === 'protein'
-          ? proteinSequenceToPdbText(d.seq, univTestMode ? '' : (activeTest.secondaryStructure || ''), activeTest.name || 'PROTEIN', { cysDisulfides: activeTest.cysDisulfides })
+          ? proteinSequenceToPdbText(d.seq, univTestMode ? '' : (activeTest.secondaryStructure || ''), activeTest.name || 'PROTEIN',
+            { cysDisulfides: activeTest.cysDisulfides, sheets: activeTest.betaSheets, torsions: sheetFold ? sheetFold.torsions : null })
           : nucleicSequenceToPdbText(d.seq, d.moleculeType, activeTest.name || 'NUCLEIC_ACID');
         triggerDownload(text, `${pdbBase}.pdb`);
       } catch (e) {
@@ -5170,6 +5441,51 @@ const generatedStructure = useMemo(() => {
       alert(`No sequence or SMILES available for this selection, so there is nothing to generate a 3D structure from.`);
     }
   };
+
+  // Ce que la sous-section « Sequence and structure » a à montrer : la FORMULE
+  // 2D (l'ancien volet « 2D Formula » du sélecteur 2D / 3D — la demande :
+  // « Include the 2D formula in the "sequence and structure" section ») et, pour
+  // une protéine HORS mode 🎓 University test, la peinture 🖌️ et sa bande.
+  const show2DFormula = d.moleculeType === 'organic' ? Boolean(activeTest.smiles) : Boolean(d.structure);
+  const showPaintStrip = !univTestMode && d.moleculeType === 'protein' && d.parsedSeq.length > 0;
+
+  /* 🧬 LA LECTURE DE LA SÉQUENCE — SOUS LA CASE DE CETTE PAGE, EXACTEMENT COMME SOUS TOUTES LES
+     AUTRES CASES DE SÉQUENCE : le nombre de chaque acide aminé, la charge totale à pH 7 et l'ε₂₈₀.
+     LA DEMANDE : « Under the sequence field please write the number of each type of aminoacids,
+     the total charge at pH 7 and the estimated molar extinction coefficient. »
+     ⚠ C'EST `SequenceReadingLine` QUI CALCULE — avec le module utils/sequenceCharge.js (le pKa de
+     CHAQUE chaîne latérale, les deux terminus GRATUITS par défaut — « If the sequence is written
+     directly into the sequence space, assume free termini » —, capuchonnés par le texte de
+     modifications de la condition, celui que la définition du composé a semé plus haut dans CE
+     composant) : la ligne de cette case, celle de la Librairie et la charge du ⚙ Params &
+     Constraints ne peuvent donc pas se contredire.
+     Seule une PROTÉINE a une composition d'acides aminés : pour un ADN / ARN, un sucre, un
+     lipide ou une molécule organique la lecture n'existe pas et rien n'est rendu. */
+
+  /* 📂 LE PDB DU DOSSIER DE L'EXPÉRIENCE — SUR LA LIGNE DE 📁 CREATE DRIVE FOLDER.
+     La demande de cette session, mot pour mot : « in the viewer "pdb from drive folder"
+     should fit in the same line as "create drive folder" ». Ce bouton vivait dans SA
+     rangée, au-dessus du viewer — une ligne de plus pour un geste qui appartient à la
+     rangée des fichiers. Il part donc AU VIEWER par `fileRowExtra`, qui le rend À LA FIN
+     de sa rangée §1 General : la ligne même de 📂 PDB file(s), de 📂 Trajectory et de
+     📁 Create drive folder (le geste de création), exactement comme les deux 📂 de la
+     page MD (`folderFilePickers`). Rien d'autre ne bouge : c'est le MÊME composant, la
+     MÊME lecture (le dossier canonique de l'expérience, sous-section Structure) et le
+     MÊME geste d'installation (`pickNmrStructureFromFolder`).
+     La phrase qui l'accompagnait ici (« Choosing a file here opens it AND declares it:
+     this condition will reopen it by default. Nothing is uploaded again. ») est passée
+     dans son infobulle : rien n'est perdu, et elle ne coûte plus une ligne à elle seule
+     (le même déménagement que pour les deux 📂 de la page MD). */
+  const nmrStructureFromFolder = (
+    <DriveExperimentFilePicker
+      label="📂 PDB from Drive folder"
+      titleText="List the .pdb / .cif files that are in THIS experiment's Drive folder (even one you deposited by hand) and open one of them as this condition's structure. Choosing a file here opens it AND declares it: this condition will reopen it by default, on every computer. Nothing is uploaded again."
+      ctx={nmrStructDriveCtx(activeTest)}
+      exts={STRUCTURE_FILE_EXTS}
+      declaredName={activeTest.structureFileName || activeTest.structureDriveName || ''}
+      onPick={pickNmrStructureFromFolder}
+    />
+  );
 
   return (
     <div className="flex flex-col gap-6">
@@ -5207,20 +5523,47 @@ const generatedStructure = useMemo(() => {
               )}
             </div>
           ) : d.isPolymer ? (
-            <>
-              <label className="block text-xs font-bold text-slate-500 uppercase mb-2">{d.typeLabel} Sequence (1-letter code)</label>
-              <textarea value={d.rawSequence} onChange={(e) => updateActiveTest(sequencePatchForMoleculeType(activeTest, d.moleculeType, e.target.value))}
-                className="w-full border border-slate-300 rounded-lg p-3 font-mono text-sm tracking-widest outline-none focus:border-blue-500 uppercase h-24 custom-scrollbar shadow-inner"
-                placeholder={d.moleculeType === 'protein' ? 'e.g. MKWVTFISLL...' : d.moleculeType === 'dna' ? 'e.g. ATGCGTAC...' : 'e.g. AUGCGUAC...'} />
-              <p className="text-[10px] text-slate-400 mt-1 font-bold">Length: {d.seq.length} {d.moleculeType === 'protein' ? 'residues' : 'nucleotides'} (valid: {d.validChars.split('').join(' ')})</p>
-              {d.seqNaturesNote && (
-                <p className="text-[10px] font-bold text-teal-800 bg-teal-50 border border-teal-200 rounded-lg px-2 py-1 mt-1">{d.seqNaturesNote}</p>
-              )}
-              {!d.seq && Object.keys(d.shifts || {}).length > 0 && (
-                <p className="text-[10px] text-amber-700 mt-1 font-bold">
-                  ⚠️ {Object.keys(d.shifts).length} chemical shift value(s) are stored for this condition, but the sequence is empty — so the per-atom tables have no row to show them. Restore the structure file in the 3D viewer above (or type the sequence): the values themselves are NOT lost.
-                </p>
-              )}
+            /* La case de séquence et « Cysteine states » sont CÔTE À CÔTE : la
+               case garde toute la place qui reste (flex-1), le panneau des
+               cystéines est la COLONNE DE DROITE — son propre div, plus bas,
+               porte la largeur (un quart de la page au plus). Pas de colonne
+               vide sans cystéine : l'IIFE rend `null`, et un `null` ne prend
+               ni place ni « gap » dans un flex. DNA / RNA (aucun panneau) :
+               la case reprend toute la largeur. */
+            <div className="flex flex-col md:flex-row gap-6 items-start w-full">
+              <div className="flex-1 w-full min-w-0">
+                <label className="block text-xs font-bold text-slate-500 uppercase mb-2">{d.typeLabel} Sequence (1-letter code)</label>
+                {/* 🎨 LA CASE COLORÉE (la demande : « when the sequence is inserted in the
+                    sequence field automatically color K and R in blue, E and D in red and C in
+                    orange ») : c'est SequenceField qui peint les cinq lettres, dans une couche
+                    SOUS le champ — le champ reste un vrai `<textarea>`, donc la saisie, le
+                    curseur, la sélection, le collage et l'annuler/rétablir sont inchangés, et
+                    l'écriture dans la condition passe toujours par le même patch de nature. */}
+                <SequenceField
+                  value={d.rawSequence}
+                  onChange={(v) => updateActiveTest(sequencePatchForMoleculeType(activeTest, d.moleculeType, v))}
+                  moleculeType={d.moleculeType}
+                />
+                <p className="text-[10px] text-slate-400 mt-1 font-bold">Length: {d.seq.length} {d.moleculeType === 'protein' ? 'residues' : 'nucleotides'} (valid: {d.validChars.split('').join(' ')})</p>
+                {/* 🧬 LA LECTURE DE LA SÉQUENCE — sous la CASE, sur toute la largeur : le
+                    nombre de chaque acide aminé, la charge totale à pH 7 et l'ε₂₈₀ estimé.
+                    Le MÊME composant que TOUTES les autres cases de séquence (Librairie, MD,
+                    Docking), qui lit lui-même le module pur : voir l'en-tête ci-dessus. */}
+                <SequenceReadingLine
+                  sequence={d.rawSequence}
+                  moleculeType={d.moleculeType}
+                  modifications={activeTest.modifications || ''}
+                  className="mt-1"
+                />
+                {d.seqNaturesNote && (
+                  <p className="text-[10px] font-bold text-teal-800 bg-teal-50 border border-teal-200 rounded-lg px-2 py-1 mt-1">{d.seqNaturesNote}</p>
+                )}
+                {!d.seq && Object.keys(d.shifts || {}).length > 0 && (
+                  <p className="text-[10px] text-amber-700 mt-1 font-bold">
+                    ⚠️ {Object.keys(d.shifts).length} chemical shift value(s) are stored for this condition, but the sequence is empty — so the per-atom tables have no row to show them. Restore the structure file in the 3D viewer above (or type the sequence): the values themselves are NOT lost.
+                  </p>
+                )}
+              </div>
               {d.moleculeType === 'protein' && (() => {
                 const cysPositions = d.parsedSeq
                   .map((r, idx) => (r.char === 'C' ? idx + 1 : null))
@@ -5261,7 +5604,7 @@ const generatedStructure = useMemo(() => {
                 };
                 const removePair = (pi) => updateActiveTest({ cysDisulfides: pairs.filter((_, i) => i !== pi) });
                 return (
-                  <div className="mt-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 flex flex-col gap-2">
+                  <div className="w-full md:w-1/4 md:max-w-[25%] shrink-0 min-w-0 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 flex flex-col gap-2">
                     <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
                       <span className="text-[10px] font-bold text-amber-800 uppercase">Cysteine states</span>
                       <label className="flex items-center gap-1.5 text-xs font-bold text-slate-700 cursor-pointer" title="Default state for cysteines not set individually">
@@ -5353,7 +5696,7 @@ const generatedStructure = useMemo(() => {
                   </div>
                 );
               })()}
-            </>
+            </div>
           ) : d.moleculeType === 'sugar' ? (
             <div className="flex gap-4">
               <div className="flex-1">
@@ -5379,79 +5722,107 @@ const generatedStructure = useMemo(() => {
             </div>
           )}
         </div>
-        <div className="w-full md:w-64 flex flex-col gap-4">
-          <div className="bg-slate-50 p-4 rounded-lg border border-slate-200">
-            <label className="block text-xs font-bold text-slate-500 uppercase mb-3">Target Nuclei</label>
-            <div className="flex flex-col gap-2">
-              {['H', 'N', 'C', ...(d.hasPhosphorus ? ['P'] : [])].map((n) => (
-                <label key={n} className="flex items-center gap-3 cursor-pointer bg-white border border-slate-200 p-2 rounded shadow-sm hover:border-blue-300 transition-colors">
-                  <input type="checkbox" checked={d.selNuc.includes(n)}
-                    onChange={() => updateActiveTest({ selectedNuclei: d.selNuc.includes(n) ? d.selNuc.filter((x) => x !== n) : [...d.selNuc, n] })}
-                    className="w-4 h-4 cursor-pointer accent-blue-600" />
-                  <span className="font-bold text-slate-700">{n === 'H' ? '¹H' : n === 'N' ? '¹⁵N' : n === 'C' ? '¹³C' : '³¹P'}</span>
-                </label>
-              ))}
-            </div>
-          </div>
-        </div>
       </div>
       
-      {/* Sequence and structure (Issue #10) : la peinture 🖌️ et la bande de
-          séquence forment UNE sous-section, repliée par défaut — la page garde
-          ses cartes de travail en tête, et CollapsibleSection mémorise le choix
-          (ouvert / replié) par expérience. */}
-      {!univTestMode && d.moleculeType === 'protein' && d.parsedSeq.length > 0 && (
-        <CollapsibleSection title="Sequence and structure" icon="🖌️" defaultOpen={false}>
-          <div className="flex flex-wrap gap-2 mb-3 items-center">
-            <span className="text-xs font-bold text-slate-500 uppercase mr-1">🖌️ Brush:</span>
-            {['C', 'H', 'E'].map((l) => (
-              <button key={l} onClick={() => setSSBrush(l)} className="px-3 py-1 rounded-lg text-xs font-black border transition-all"
-                style={{ backgroundColor: ssBrush === l ? SS_META[l].color : 'white', borderColor: SS_META[l].color, color: ssBrush === l ? 'white' : SS_META[l].color }}>
-                {SS_META[l].label}
-              </button>
-            ))}
-            <span className="mx-2 text-slate-300">|</span>
-            <button onClick={() => setAllSS('C')} className="px-3 py-1 rounded-lg text-xs font-bold bg-slate-100 border border-slate-300 text-slate-600 hover:bg-slate-200">All Coil</button>
-            <button onClick={() => setAllSS('H')} className="px-3 py-1 rounded-lg text-xs font-bold bg-violet-100 border border-violet-300 text-violet-700 hover:bg-violet-200">All α-Helix</button>
-            <button onClick={() => setAllSS('E')} className="px-3 py-1 rounded-lg text-xs font-bold bg-amber-100 border border-amber-300 text-amber-700 hover:bg-amber-200">All β-Sheet</button>
+      {/* Sequence and structure (Issue #10) : la FORMULE 2D — l'ancien volet du
+          sélecteur 2D / 3D — ET la peinture 🖌️ avec sa bande de séquence
+          forment UNE sous-section. Elle est OUVERTE par défaut : c'est là que la
+          formule 2D se voit. CollapsibleSection mémorise le choix (ouvert /
+          replié) par expérience, et la peinture 🖌️ reste réservée à une
+          protéine HORS mode 🎓 University test (elle dirait la structure). */}
+      <div className="flex flex-col">
+      {(show2DFormula || showPaintStrip) && (
+        <CollapsibleSection title="Sequence and structure" icon="🖌️" defaultOpen>
+          <div className="mb-3">
+            {d.moleculeType === 'organic' && activeTest.smiles ? (
+              <OrganicViewer smiles={activeTest.smiles || activeTest.ligandSmiles} selectedKeys={selectedKeys} manualKeys={manualKeys} onAtomClick={handleAtomClick} />
+            ) : d.structure ? (
+              <StructureSVGView structure={d.structure} minWidth={d.moleculeType === 'protein' && d.parsedSeq.length > 3 ? `${d.parsedSeq.length * 120}px` : '100%'} isExpanded={expandedPanel === 'formula'} onToggleExpand={() => setExpandedPanel(expandedPanel === 'formula' ? null : 'formula')} selectedKeys={selectedKeys} manualKeys={manualKeys} onAtomClick={handleAtomClick} height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? `${Math.max(360, d.parsedSeq.length * 250 + 120)}px` : '300px'} />
+            ) : null}
+            <p className="text-xs text-slate-400 mt-1">💡 Click an atom in the formula (or in the 3D viewer below) to highlight its cell in the table.</p>
           </div>
-          <p className="text-xs text-slate-400 mb-3">💡 Select a brush, then click or drag across the sequence chips to paint secondary structure.</p>
-          <SequencePaintStrip residues={d.parsedSeq} getLetter={(i) => d.getSSAt(i)} meta={SS_META} onApply={(i) => paintSSAt(i, ssBrush)} focusIdx={focusIdx} residueNo={residueNoOf}
-            /* Les Cys d'un pont disulfure portent un repère de la MÊME couleur que
-               la puce du pont dans « Cysteine states » : la bande de séquence
-               montre donc la liaison, elle aussi (le dessin S–S complet est dans la
-               définition ; ici c'est le marqueur de paire, sans mesure DOM). */
-            linkOf={(i) => {
-              const pairs = Array.isArray(activeTest.cysDisulfides) ? activeTest.cysDisulfides : [];
-              const pos = i + 1;
-              const pi = pairs.findIndex(([a, b]) => a === pos || b === pos);
-              if (pi < 0) return null;
-              const partner = pairs[pi][0] === pos ? pairs[pi][1] : pairs[pi][0];
-              return { pairIndex: pi, partner: residueNoOf(partner - 1), color: disulfidePairColor(pi) };
-            }} />
+          {showPaintStrip && (
+            <>
+            <div className="flex flex-wrap gap-2 mb-3 items-center">
+              <span className="text-xs font-bold text-slate-500 uppercase mr-1">🖌️ Brush:</span>
+              {['C', 'H', 'L', 'E', 'T'].map((l) => (
+                <button key={l} onClick={() => setSSBrush(l)} className="px-3 py-1 rounded-lg text-xs font-black border transition-all"
+                  style={{ backgroundColor: ssBrush === l ? SS_META[l].color : 'white', borderColor: SS_META[l].color, color: ssBrush === l ? 'white' : SS_META[l].color }}>
+                  {SS_META[l].label}
+                </button>
+              ))}
+              <span className="mx-2 text-slate-300">|</span>
+              <button onClick={() => setAllSS('C')} className="px-3 py-1 rounded-lg text-xs font-bold bg-slate-100 border border-slate-300 text-slate-600 hover:bg-slate-200">All Coil</button>
+              <button onClick={() => setAllSS('H')} className="px-3 py-1 rounded-lg text-xs font-bold bg-violet-100 border border-violet-300 text-violet-700 hover:bg-violet-200">All α-Helix</button>
+              <button onClick={() => setAllSS('L')} className="px-3 py-1 rounded-lg text-xs font-bold bg-fuchsia-100 border border-fuchsia-300 text-fuchsia-700 hover:bg-fuchsia-200">All α-Helix (L)</button>
+              <button onClick={() => setAllSS('E')} className="px-3 py-1 rounded-lg text-xs font-bold bg-amber-100 border border-amber-300 text-amber-700 hover:bg-amber-200">All β-Sheet</button>
+              <button onClick={() => setAllSS('T')} className="px-3 py-1 rounded-lg text-xs font-bold bg-teal-100 border border-teal-300 text-teal-700 hover:bg-teal-200">All γ-Turn</button>
+            </div>
+            <p className="text-xs text-slate-400 mb-3">💡 Select a brush, then click or drag across the sequence chips to paint secondary structure. Paint two runs of β-strand (E) — a turn (T) between them holds the hairpin — then pair them as a β-sheet below.</p>
+            <SequencePaintStrip residues={d.parsedSeq} getLetter={(i) => d.getSSAt(i)} meta={SS_META} onApply={(i) => paintSSAt(i, ssBrush)} focusIdx={focusIdx} residueNo={residueNoOf}
+              /* 🧵 Le repère d'un brin de feuillet déclaré (la lettre de la paire et son
+                 numéro 1 / 2) : il vient du MÊME lecteur que le panneau 🧵 ci-dessous,
+                 sur les POSITIONS de séquence (la clé), et s'affiche sous le numéro du 🔢. */
+              sheetOf={(i) => sheetMarkAt(betaSheetRead.pairs, i + 1)}
+              /* Les Cys d'un pont disulfure portent un repère de la MÊME couleur que
+                 la puce du pont dans « Cysteine states » : la bande de séquence
+                 montre donc la liaison, elle aussi (le dessin S–S complet est dans la
+                 définition ; ici c'est le marqueur de paire, sans mesure DOM). */
+              linkOf={(i) => {
+                const pairs = Array.isArray(activeTest.cysDisulfides) ? activeTest.cysDisulfides : [];
+                const pos = i + 1;
+                const pi = pairs.findIndex(([a, b]) => a === pos || b === pos);
+                if (pi < 0) return null;
+                const partner = pairs[pi][0] === pos ? pairs[pi][1] : pairs[pi][0];
+                return { pairIndex: pi, partner: residueNoOf(partner - 1), color: disulfidePairColor(pi) };
+              }} />
+            {/* 🧵 LA DÉFINITION DU FEUILLET — la seconde moitié de la demande : deux
+                brins E appariés, parallèles ou antiparallèles. Le panneau écrit la
+                DÉCLARATION (activeTest.betaSheets, en positions de séquence), et la
+                note qu'il affiche est le rapport du modèle RÉELLEMENT bâti
+                (`sheetFold`, mesuré par le même lecteur que l'écrivain PDB). */}
+            {d.moleculeType === 'protein' && (
+              <BetaSheetEditor
+                secondaryStructure={activeTest.secondaryStructure || ''}
+                sequenceLength={(d.seq || '').length}
+                sheets={activeTest.betaSheets}
+                onChange={(next) => updateActiveTest({ betaSheets: next })}
+                residueNo={residueNoOf}
+                fold={sheetFold}
+              />
+            )}
+            </>
+          )}
         </CollapsibleSection>
       )}
       
-      <div className="mt-6 border-t border-slate-200 pt-6">
-        <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
-          <div className="flex bg-slate-200 p-1 rounded-lg">
-            <button onClick={() => updateActiveTest({ structureMode: '2d' })} className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${structureMode === '2d' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>2D Formula</button>
-            <button onClick={() => updateActiveTest({ structureMode: '3d' })} className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${structureMode === '3d' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>3D Viewer</button>
+      <CollapsibleSection
+        title="3D viewer"
+        icon="🧬"
+        defaultOpen={false}
+        /* Une condition restée en mode 3D (structureMode: '3d' — l'ancien
+           sélecteur 2D / 3D) rouvre SA sous-section toute seule. */
+        openWhen={activeTest.structureMode === '3d'}
+        /* Replier ne DÉMONTE pas le viewer (il relirait la structure au
+           dépliage) : `keepMounted` le garde monté, masqué en CSS, dès la
+           première ouverture ; `onToggle` fait recaler le viewer 3D et les
+           tracés sur la largeur réelle. */
+        keepMounted
+        onToggle={setViewerOpen}
+        headerExtra={d.moleculeType !== 'organic' ? (
+          <div className="flex items-center gap-2 flex-wrap justify-end">
+            <label className="text-[10px] font-bold text-slate-500 uppercase">🔍 Focus</label>
+            <select value={focusIdx} onChange={(e) => setFocusIdx(e.target.value === 'ALL' ? 'ALL' : Number(e.target.value))}
+              className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 max-w-[180px]">
+              <option value="ALL">All residues</option>
+              {d.parsedSeq.map((r, i) => <option key={i} value={i}>{r.id} — {r.name}</option>)}
+            </select>
+            {selectedKeys && (
+              <button onClick={() => updateActiveTest({ selectedAtomKeys: [] })} className="px-2 py-1 rounded-lg text-xs font-bold bg-amber-100 border border-amber-400 text-amber-800">✖ Deselect</button>
+            )}
           </div>
-          {d.moleculeType !== 'organic' && (
-            <div className="flex items-center gap-2 flex-wrap justify-end">
-              <label className="text-[10px] font-bold text-slate-500 uppercase">🔍 Focus</label>
-              <select value={focusIdx} onChange={(e) => setFocusIdx(e.target.value === 'ALL' ? 'ALL' : Number(e.target.value))}
-                className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 max-w-[180px]">
-                <option value="ALL">All residues</option>
-                {d.parsedSeq.map((r, i) => <option key={i} value={i}>{r.id} — {r.name}</option>)}
-              </select>
-              {selectedKeys && (
-                <button onClick={() => updateActiveTest({ selectedAtomKeys: [] })} className="px-2 py-1 rounded-lg text-xs font-bold bg-amber-100 border border-amber-400 text-amber-800">✖ Deselect</button>
-              )}
-            </div>
-          )}
-        </div>
+        ) : null}
+      >
         
         {/* (The « PDB ID / URL / local file » row that used to sit here has been
             REMOVED: the structure source is entered in ONE place only — the
@@ -5461,46 +5832,48 @@ const generatedStructure = useMemo(() => {
             URL or a local file dropped on the viewer all still reach
             structureSrc, and there is no longer a second field that can show a
             value the loaded structure does not have.)
-            The 2D ⇄ 3D switch and the 🔍 Focus selector above, the viewer and the
-            📥 Download 3D PDB File button below are unchanged. */}
-        
-        <p className="text-xs text-slate-400 mb-2">💡 Click an atom in the {structureMode === '2d' ? 'formula' : '3D viewer'} to highlight its cell.</p>
-        
-        <div style={{ display: structureMode === '3d' ? 'block' : 'none' }} aria-hidden={structureMode !== '3d'}>
-          {hasOpened3D && (
-            <div className="flex flex-col gap-2">
-              <NMRMoleculeViewer key={(activeTest && activeTest.id) || 'molecular-structure'} instanceKey={(activeTest && activeTest.id) || null} src={structureSrc} structureText={structureText} structureTextExt={structureTextExt} sequenceStructureText={sequenceStructure?.text || null} sequenceStructureExt={sequenceStructure?.ext || null} buildDisulfideFoldedStructure={buildDisulfideFoldedStructure} externalLoading={organicFetch.loading} externalError={organicFetch.error} structureFileData={activeTest.structureFileData} structureFileName={activeTest.structureFileName} structureFile={structureFile} onStructureSrc={(v) => updateActiveTest({ structureSrc: v })} onStructureFile={handleStructureFile} moleculeType={d.moleculeType} parsedSeq={d.parsedSeq} smiles={activeTest.smiles} onLigandSmiles={(info) => { if (info && info.smiles && !activeTest.smiles && !activeTest.ligandSmiles) updateActiveTest({ ligandCode: info.code, ligandSmiles: info.smiles }); }} selectedKeys={selectedKeys} manualKeys={manualKeys} onAtomClick={handleAtomClick} residueOffset={residueOffset} atomNameMap={atomNameMap} atomRenames={activeTest.atomRenames || {}} onAtomRenames={(map) => updateActiveTest({ atomRenames: map })} resRenumber={activeTest.resRenumber || {}} onResRenumber={(map) => updateActiveTest({ resRenumber: map })} onStructureSequence={(seq, parts) => { const _nat = structureSequencePatch(activeTest, d.moleculeType, seq, parts); if (_nat) updateActiveTest(_nat); }} driveNaming={{ project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || '', instance: activeTest.instanceName || '', scientist: activeTest.operator || '', section: 'Data', subsection: 'Structure' }} labelMode={atomLabelMode} height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? '1100px' : '1000px'} />
-              <button onClick={downloadPdbFile} className="self-center mt-2 px-4 py-2 bg-indigo-50 border border-indigo-200 text-indigo-700 font-bold text-xs rounded-lg hover:bg-indigo-100 transition-colors shadow-sm">📥 Download 3D PDB File</button>
-              {activeTest.structureFileName && (!structureFile || nmrStructRestore.message) && (
-                <div className="flex flex-wrap items-center justify-center gap-2 text-[11px]">
-                  {nmrStructRestore.message ? (
-                    <span className={`font-bold ${nmrStructRestore.status === 'failed' ? 'text-amber-700' : 'text-emerald-700'}`}>{nmrStructRestore.message}</span>
-                  ) : (
-                    <span className="font-bold text-slate-500">
-                      🔎 {activeTest.structureFileName} is not in this browser — checking Google Drive…
-                    </span>
-                  )}
-                  {!structureFile && (
-                    <button
-                      type="button"
-                      onClick={() => nmrStructRestore.attempt('manual')}
-                      title={`Fetch ${activeTest.structureFileName} from Google Drive again`}
-                      className="px-3 py-1.5 bg-emerald-50 border border-emerald-300 text-emerald-800 font-bold rounded-lg hover:bg-emerald-100 transition-colors shadow-sm"
-                    >⬇️ Restore from Drive</button>
-                  )}
-                </div>
+            Ce qui a CHANGÉ depuis (demande) : le sélecteur 2D ⇄ 3D a disparu — la
+            formule 2D vit dans « Sequence and structure » et le viewer 3D dans SA
+            sous-section repliable (🔍 Focus dans son en-tête) ; le viewer et le
+            bouton 📥 Download 3D PDB File sont inchangés. */}
+        {/* ⚠ LA PASTILLE « 💡 Click an atom in the 3D viewer … » A ÉTÉ RETIRÉE — la demande de
+            cette session, mot pour mot : « remove the line: “💡 Click an atom in the 3D viewer
+            (or in the formula above) to highlight its cell in the table.” » Rien d'autre ne
+            bouge : le piquage d'un atome (formule 2D ou vue 3D) souligne toujours sa cellule
+            de tableau, seule la ligne qui le disait a disparu. */}
+        <div className="flex flex-col gap-2">
+          {/* 📂 LE PDB DU DOSSIER vit maintenant DANS la rangée des fichiers du viewer
+              (voir `nmrStructureFromFolder`, passé par `fileRowExtra` sur le viewer
+              juste en dessous) : la demande de cette session, mot pour mot — « in the
+              viewer "pdb from drive folder" should fit in the same line as "create
+              drive folder" ». Sa rangée à lui tout seul est donc partie avec, et la
+              phrase qui l'accompagnait (« Choosing a file here opens it AND declares
+              it… ») vit dans son infobulle. Rien d'autre ne change : le VIEWER rend
+              toujours le geste de création (📁 Create drive folder) sur la ligne de
+              📂 PDB file(s), et le `driveNaming` du viewer, plus bas, le lui donne. */}
+          <NMRMoleculeViewer key={(activeTest && activeTest.id) || 'molecular-structure'} instanceKey={(activeTest && activeTest.id) || null} src={structureSrc} structureText={structureText} structureTextExt={structureTextExt} sequenceStructureText={sequenceStructure?.text || null} sequenceStructureExt={sequenceStructure?.ext || null} imposedSecondaryStructure={univTestMode ? '' : (activeTest.secondaryStructure || '')} externalLoading={organicFetch.loading} externalError={organicFetch.error} structureFileData={activeTest.structureFileData} structureFileName={activeTest.structureFileName} structureFile={structureFile} onStructureSrc={(v) => updateActiveTest({ structureSrc: v })} onStructureFile={handleStructureFile} moleculeType={d.moleculeType} parsedSeq={d.parsedSeq} sequenceModifications={activeTest.modifications || ''} smiles={activeTest.smiles} onLigandSmiles={(info) => { if (info && info.smiles && !activeTest.smiles && !activeTest.ligandSmiles) updateActiveTest({ ligandCode: info.code, ligandSmiles: info.smiles }); }} selectedKeys={selectedKeys} manualKeys={manualKeys} onAtomClick={handleAtomClick} residueOffset={residueOffset} atomNameMap={atomNameMap} atomRenames={activeTest.atomRenames || {}} onAtomRenames={(map) => updateActiveTest({ atomRenames: map })} resRenumber={activeTest.resRenumber || {}} onResRenumber={(map) => updateActiveTest({ resRenumber: map })} onStructureSequence={(seq, parts) => { const _nat = structureSequencePatch(activeTest, d.moleculeType, seq, parts); if (_nat) updateActiveTest(_nat); }} driveNaming={{ project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || '', instance: activeTest.instanceName || '', scientist: activeTest.operator || '', section: 'Data', subsection: 'Structure' }} fileRowExtra={nmrStructureFromFolder} labelMode={atomLabelMode} height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? '1100px' : '1000px'} />
+          <button onClick={downloadPdbFile} className="self-center mt-2 px-4 py-2 bg-indigo-50 border border-indigo-200 text-indigo-700 font-bold text-xs rounded-lg hover:bg-indigo-100 transition-colors shadow-sm">📥 Download 3D PDB File</button>
+          {activeTest.structureFileName && (!structureFile || nmrStructRestore.message) && (
+            <div className="flex flex-wrap items-center justify-center gap-2 text-[11px]">
+              {nmrStructRestore.message ? (
+                <span className={`font-bold ${nmrStructRestore.status === 'failed' ? 'text-amber-700' : 'text-emerald-700'}`}>{nmrStructRestore.message}</span>
+              ) : (
+                <span className="font-bold text-slate-500">
+                  🔎 {activeTest.structureFileName} is not in this browser — checking Google Drive…
+                </span>
+              )}
+              {!structureFile && (
+                <button
+                  type="button"
+                  onClick={() => nmrStructRestore.attempt('manual')}
+                  title={`Fetch ${activeTest.structureFileName} from Google Drive again`}
+                  className="px-3 py-1.5 bg-emerald-50 border border-emerald-300 text-emerald-800 font-bold rounded-lg hover:bg-emerald-100 transition-colors shadow-sm"
+                >⬇️ Restore from Drive</button>
               )}
             </div>
           )}
         </div>
-        
-     <div style={{ display: structureMode === '2d' ? 'block' : 'none' }} aria-hidden={structureMode !== '2d'}>
-       {d.moleculeType === 'organic' && activeTest.smiles ? (
-          <OrganicViewer smiles={activeTest.smiles || activeTest.ligandSmiles} selectedKeys={selectedKeys} manualKeys={manualKeys} onAtomClick={handleAtomClick} />
-       ) : d.structure ? (
-         <StructureSVGView structure={d.structure} minWidth={d.moleculeType === 'protein' && d.parsedSeq.length > 3 ? `${d.parsedSeq.length * 120}px` : '100%'} isExpanded={expandedPanel === 'formula'} onToggleExpand={() => setExpandedPanel(expandedPanel === 'formula' ? null : 'formula')} selectedKeys={selectedKeys} manualKeys={manualKeys} onAtomClick={handleAtomClick} height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? `${Math.max(360, d.parsedSeq.length * 250 + 120)}px` : '300px'} />
-       ) : null}
-     </div>
+      </CollapsibleSection>
       </div>
     </div>
   );
@@ -6435,6 +6808,23 @@ const NMR2DSpectrumOverlay = ({ ctx, d }) => {
 // =========================================================================
 // NMRSections.jsx - REPLACE DataSection COMPONENT
 // =========================================================================
+/* Le NOYAU porté par une option d'atome, lu sur l'étiquette que la table
+   affiche (« Ala1 HN (¹H) », « Ala1 N (¹⁵N) », « Ala1 Cα (¹³C) », « P (³¹P) »).
+   Les cases 🎯 Target nuclei de la barre de la table filtrent les lignes avec
+   EXACTEMENT ce que la colonne « Nucleus / Atom » annonce : une case cochée fait
+   APPARAÎTRE les lignes de ce noyau, la décocher les retire. Une étiquette dont
+   le noyau n'est pas reconnu n'est jamais cachée. */
+const ATOM_NUCLEUS_TAG = { '(¹H)': 'H', '(¹³C)': 'C', '(¹⁵N)': 'N', '(³¹P)': 'P' };
+const atomNucleusOf = (opt) => {
+  const label = (opt && opt.label) || '';
+  for (const tag of Object.keys(ATOM_NUCLEUS_TAG)) if (label.includes(tag)) return ATOM_NUCLEUS_TAG[tag];
+  return null;
+};
+const atomInSelectedNuclei = (opt, selNuc) => {
+  const n = atomNucleusOf(opt);
+  return !n || !Array.isArray(selNuc) || selNuc.includes(n);
+};
+
 export const DataSection = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
   const d = useNmrDerived(activeTest, ctx);
@@ -7610,6 +8000,28 @@ let dom = brukerZoomDom || xFull;
                 <button onClick={() => { setTableMode('all'); updateActiveTest({ tableMode: 'all' }); }} className={`px-3 py-1.5 text-xs font-bold rounded-md transition-colors ${effTableMode === 'all' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>All Atoms</button>
               </div>
             )}
+            {/* 🎯 Target nuclei — les cases H / N / C (/ P) sont ICI, à
+                l'horizontale, juste avant « 📄 Publication Table » (la demande :
+                « Move its atom ticks in horizontal before the button publication
+                table »). Une case cochée fait APPARAÎTRE les lignes de ce noyau
+                dans la table ci-dessous, la décocher les retire ; ce même état
+                commande les spectres simulés correspondants (³¹P, HSQC ¹⁵N). */}
+            <div className="flex items-center gap-1 mr-2">
+              <span className="text-[10px] font-bold text-slate-500 uppercase"
+                title="Nuclei listed in the table — tick a nucleus to see its atoms (and its simulated spectrum)">
+                🎯 Nuclei
+              </span>
+              {['H', 'N', 'C', ...(d.hasPhosphorus ? ['P'] : [])].map((n) => (
+                <label key={n}
+                  className={`flex items-center gap-1 text-xs font-bold px-2 py-1 rounded border cursor-pointer transition-colors ${d.selNuc.includes(n) ? 'bg-blue-50 border-blue-300 text-blue-700' : 'bg-white border-slate-200 text-slate-400'}`}
+                  title={`${n === 'H' ? '¹H' : n === 'N' ? '¹⁵N' : n === 'C' ? '¹³C' : '³¹P'} — ticked: its atoms are listed in the table; unticked: its rows are hidden.`}>
+                  <input type="checkbox" checked={d.selNuc.includes(n)}
+                    onChange={() => updateActiveTest({ selectedNuclei: d.selNuc.includes(n) ? d.selNuc.filter((x) => x !== n) : [...d.selNuc, n] })}
+                    className="w-3.5 h-3.5 cursor-pointer accent-blue-600" />
+                  {n === 'H' ? '¹H' : n === 'N' ? '¹⁵N' : n === 'C' ? '¹³C' : '³¹P'}
+                </label>
+              ))}
+            </div>
             <button onClick={openExportModal} className="px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-50 border border-indigo-300 text-indigo-700 hover:bg-indigo-100">📄 Publication Table</button>
             <button onClick={fillEstimated} disabled={univTestMode} title={univTestMode ? 'Disabled during University test' : 'Fill empty cells with the theoretical estimates'} className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${univTestMode ? 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed' : 'bg-green-50 border-green-300 text-green-700 hover:bg-green-100'}`}>✨ Fill Estimated</button>
             {hasCsValues || emptyCsBackup ? (
@@ -7719,9 +8131,14 @@ let dom = brukerZoomDom || xFull;
                 if (focusIdx !== 'ALL' && focusIdx !== idx) return null;
                 const resAtoms = d.atomOptions.filter((opt) => opt.key.startsWith(`${idx}-`));
                 
-                const displayAtoms = effTableMode === 'backbone' 
+                const displayAtoms = (effTableMode === 'backbone' 
                    ? resAtoms.filter(o => o.label.includes(' HN ') || o.label.includes(' N ') || o.label.includes(' Cα ') || o.label.includes(' Cβ ') || o.label.includes(" C' "))
-                   : resAtoms;
+                   : resAtoms)
+                   /* 🎯 Les cases « Target nuclei » de la barre (juste avant
+                      « 📄 Publication Table ») décident des lignes visibles :
+                      cocher ¹⁵N fait apparaître les lignes N, la décocher les
+                      retire. */
+                   .filter((opt) => atomInSelectedNuclei(opt, d.selNuc));
 
                 return displayAtoms.map((opt, aIdx) => {
                   const atomName = opt.key.slice(String(idx).length + 1);

@@ -122,7 +122,7 @@ has("const stickGeom = (cat, naturalBond) => ({ radiusSize: naturalBond * catRad
   'le rayon des bâtons part dans NGL en radiusSize (Å), multiplié');
 has("const lineGeom = (cat) => ({ linewidth: Math.max(1, Math.round(2 * catRadii(cs[cat]).bond)) });",
   'un style « Lines » suit le rayon des bâtons via linewidth');
-has('radiusScale: g.sphere, scale: 0.6', 'spacefill : rayon des sphères = radiusScale (× le rayon de van der Waals)');
+has('radiusScale: g.sphere * 0.6', 'spacefill : rayon des sphères = radiusScale × 0,6 (× le rayon de van der Waals) — le SEUL champ qu’NGL lit');
 has('aspectRatio: 1.1 * g.sphere', 'ball+stick : rayon des sphères = aspectRatio');
 // Les chaînes latérales sont une RANGÉE de la protéine (licorice par défaut), et le
 // rendeur les recolle au squelette avec la même règle qu'autrefois (sectionRowSele).
@@ -311,20 +311,55 @@ has('if (!entry || typeof entry !== \'object\') throw new Error(\'not an environ
 has('📂 Load…', 'la liste déroulante des styles enregistrées');
 has('⬆\n<input type="file" accept=".json,application/json"', 'le bouton d’import (une flèche : son mode d’emploi est dans la bulle)');
 has('>🎨 Styles</span>', 'la bande s’appelle « 🎨 Styles » (l’ex-bouton « 🎨 Predefined styles » de la demande)');
-/* ⚠ LA BANDE A CHANGÉ DE RANG (la demande : « the “styles” section can fit inside
-   the line of the “scene” section but it should be clear that they are
-   separated ») : elle ne vit plus dans « 1 · General » — elle est SUR LA LIGNE de
-   🌫 Scene, dans sa propre boîte, derrière un filet. */
+/* ⚠ LA BANDE A CHANGÉ DE RANG TROIS FOIS. D'abord : « the “styles” section can fit inside
+   the line of the “scene” section but it should be clear that they are separated » — elle a
+   quitté « 1 · General » pour la ligne de 🌫 Scene. Puis : « Move the styles section in
+   another line and add to it a Movie button. » — elle a eu SA PROPRE rangée, juste sous
+   🌫 Scene. Et CETTE session : « elimina la riga vuota tra la sezione “STYLES” e “MODIFY” »
+   — sa rangée pleine largeur laissait une BANDE VIDE à sa droite, donc elle est redevenue un
+   FRÈRE ORDINAIRE des autres groupes de §2 (même `shrink-0`, sans filet) et c'est le CONTENU
+   qui décide où la largeur se coupe : ✏️ Modify vient se poser sur sa ligne et remplit cet
+   espace, au lieu de commencer une ligne plus bas. */
 const iSec2Band = VIEW.indexOf('<VSection title="2 · Toolbar"');
 const iSceneBand = VIEW.indexOf('>🌫 Scene</span>');
 ok(iSec2Band > 0 && iSceneBand > iSec2Band && VIEW.indexOf('>🎨 Styles</span>', iSceneBand) > 0,
-  'la bande « 🎨 Styles » vit dans §2 · Toolbar, SUR LA LIGNE de 🌫 Scene');
-ok(VIEW.includes('aria-hidden="true" />\n<div className="flex flex-wrap items-center gap-1 rounded-md border border-teal-200'),
-  '…séparée de 🌫 Scene par un filet, et refermée dans sa propre boîte');
+  'la bande « 🎨 Styles » vit dans §2 · Toolbar, APRÈS 🌫 Scene');
+ok(!VIEW.includes('aria-hidden="true" />\n<div className="flex flex-wrap items-center gap-1 rounded-md border border-teal-200'),
+  '…sans filet devant elle : elle suit 🌫 Scene comme ses voisines, et sa boîte teal la sépare');
+/* ⚠ SEUL 🌫 SCENE A ENCORE UNE RANGÉE QUI NE SE COUPE JAMAIS — `w-full` + défilement
+   horizontal, boîte `shrink-0`, donc UNE ligne et jamais plus. 🎨 Styles n'en a plus : c'est
+   ELLE qui laissait la bande vide que la demande de cette session supprime, et les cinq
+   groupes de §2 s'enchaînent maintenant dans l'ordre, en remplissant chaque ligne. */
+const styleRows = VIEW.split('<div className="flex items-center gap-1 w-full overflow-x-auto">').length - 1;
+ok(styleRows === 1 && VIEW.includes('<div className="flex items-center gap-1 w-full overflow-x-auto">'),
+  '⚠ seule la rangée 🌫 Scene est pleine largeur : 🎨 Styles ne laisse plus de bande vide avant ✏️ Modify');
+ok(VIEW.includes('border border-sky-200 bg-sky-50/40 px-1 py-0.5 shrink-0')
+  && VIEW.includes('border border-teal-200 bg-teal-50/40 px-1.5 py-1 shrink-0'),
+  '…les deux boîtes y sont `shrink-0` (le contenu décide de la largeur, jamais une coupure de ligne)');
+
+/* ⚠ ET LE 🎞 MOVIE SE BRANCHE AU BOUT DE CETTE BANDE — la demande de cette session : « Move
+   the styles section in another line and add to it a Movie button. If clicked the movie button
+   must show the movie maker commands. In this way we can get rid of the movie maker line and
+   save space. » Le bouton est DANS la boîte 🎨 Styles (après les cinq gestes), il porte
+   `aria-expanded` + `aria-controls` (l’accessibilité du panneau qu’il ouvre) et il DIT ce qu’il
+   fait même fermé : le nombre de poses du film (« · 3 ») et, pendant une écriture, un ● qui
+   rappelle que le ⏹ est dans le panneau. */
+const iMovieButton = VIEW.indexOf('🎞 Movie {movieOpen ?');
+ok(iMovieButton > VIEW.indexOf('>🎨 Styles</span>')
+  && iMovieButton < VIEW.indexOf('>✏️ Modify</span>', iSec2Band),
+  'le bouton 🎞 Movie vit DANS la boîte 🎨 Styles (avant ✏️ Modify)');
+has('aria-expanded={movieOpen}', '…il annonce l’état du panneau (aria-expanded)');
+has('aria-controls="viewer-movie-maker"', '…et il désigne le panneau qu’il commande (aria-controls)');
+has('id="viewer-movie-maker"', '…que ce panneau porte bien (une seule fois dans tout le viewer)');
+has('const [movieOpen, setMovieOpen] = useState(false);',
+  '…et il est FERMÉ par défaut : la ligne du film ne se paie que si on la demande');
+ok(VIEW.split('<div id="viewer-movie-maker"').length - 1 === 1,
+  '…un seul panneau 🎞 dans tout le viewer (le film ne se monte qu’une fois)');
 
 /* ══ 8. FOND DE LA SCÈNE DANS §2 SCENE ═══════════════════════════════════ */
 has("const BG_DEFAULT = '#f8fafc';", 'le fond par défaut est nommé une fois');
-has('🎨 Background', 'la ligne « 🎨 Background » du groupe Scene');
+has('🎨 Background — the colour of the 3D scene itself',
+  'la ligne « 🎨 Background » : son MOT vit maintenant dans la BULLE de la pastille (la boîte compacte ne l’imprime plus)');
 has('aria-label="Background colour"', 'un sélecteur de couleur accessible');
 has('onChange={(e) => setBgColor(e.target.value)}', 'il écrit l’état du fond (le même que le panneau PyMOL)');
 has('onClick={() => setBgColor(BG_DEFAULT)}', '↺ revient au fond par défaut');
@@ -350,8 +385,9 @@ ok(VIEW.indexOf('◐ shadows', iSec2) > 0 && VIEW.indexOf('cast shadow strength'
   '…la case « ◐ shadows » et son curseur de force compris');
 ok(VIEW.indexOf('const rayPlan = rayPlanOf(stageRef.current, rayFactor);') > 0,
   '…et le plan (pixels + tuiles) du facteur choisi est lu par le bouton, AVANT le clic');
-ok(VIEW.indexOf('⚡ ESP — the electrostatic-potential surface') > iModify,
-  'le bouton ⚡ ESP a rejoint le groupe ✏️ Modify (la demande)');
+ok(VIEW.indexOf('onClick={() => espToggle(selectedMolKey)}') > VIEW.indexOf('📏 Analysis</span>', iSec2),
+  'le bouton ⚡ ESP a rejoint le groupe 📏 Analysis, à la suite de 📏 Measure (la demande de cette'
+  + ' session : « Move the ESP button in the analysis section in line with measure button. »)');
 
 
 /* ══ 9. LES HELPERS PURS, EXTRAITS DU FICHIER ET EXÉCUTÉS ═════════════════ */

@@ -23,11 +23,26 @@ import {
   computeSecondaryStructure, SS_CODE_ORDER, SS_COLORS, SS_GROUP_COLORS
 } from './MDSecondaryStructure';
 
-import { AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, SS_META, FORM_META, RESIDUE_COLORS, buildKeys, buildProteinStructure, buildNucleicStructure, buildSugarStructure, buildLipidStructure, elementsToSVG, StructureSVGView, SequencePaintStrip, getSelectedKeys, selectionLabel, getManualKeys, FORCE_FIELDS, WATER_MODELS, MD_ENSEMBLES, MD_INTEGRATORS, MD_THERMOSTATS, MD_BAROSTATS, parseMDValue, getForceFieldInfo, getFFVersions, getWaterModelInfo, getFFBackboneAtoms, normalizeTrajectoryUrl, detectTrajectoryFormat, getTrajectoryFormatInfo, getMDInstances, getMDActiveInstance, getMDLayers, getMDActiveLayerKey, getMDLayerValues, writeMDCellValue, MD_ANALYSIS_LAYERS, DEFAULT_MD_CHART_STYLE, mdDom} from './MDData';
+import { AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, SS_META, FORM_META, RESIDUE_COLORS, buildKeys, buildProteinStructure, buildNucleicStructure, buildSugarStructure, buildLipidStructure, elementsToSVG, StructureSVGView, SequencePaintStrip, BetaSheetEditor, useSequenceStructureModel, getSelectedKeys, selectionLabel, getManualKeys, FORCE_FIELDS, WATER_MODELS, MD_ENSEMBLES, MD_INTEGRATORS, MD_THERMOSTATS, MD_BAROSTATS, parseMDValue, getForceFieldInfo, getFFVersions, getWaterModelInfo, getFFBackboneAtoms, normalizeTrajectoryUrl, detectTrajectoryFormat, getTrajectoryFormatInfo, getMDInstances, getMDActiveInstance, getMDLayers, getMDActiveLayerKey, getMDLayerValues, writeMDCellValue, MD_ANALYSIS_LAYERS, DEFAULT_MD_CHART_STYLE, mdDom} from './MDData';
 import { DriveUploadButton } from './DriveUpload';
 import { suggestDriveFileName } from '../utils/driveNaming';
+// 🧵 Le feuillet déclaré (la définition de séquence des TROIS pages) : la bande de
+// séquence de cette page le marque avec le MÊME lecteur que le panneau 🧵 et le
+// repliement (utils/betaSheetFold.js — un seul lecteur, aucune seconde lecture).
+import { sheetMarkAt } from '../utils/betaSheetFold';
 import { archiveFileToDrive, archiveFileToDriveWithPointer, getDriveToken, getDriveFileRegistry, driveFetch } from '../utils/driveUpload';
 import { sequenceForMoleculeType, sequencePatchForMoleculeType, structureSequencePatch, sequenceNaturesNote } from '../utils/sequenceNatures';
+/* 🧬 LA LIGNE SOUS LA CASE DE SÉQUENCE — le nombre de chaque acide aminé, la charge totale à
+   pH 7 et l'ε₂₈₀. Le composant partagé (src/components/SequenceReadingLine.jsx) calcule la
+   lecture lui-même avec le module PUR des pKa (utils/sequenceCharge.js) et le texte de
+   modifications de la condition : la MÊME ligne sous TOUTES les cases de séquence (les pages
+   NMR, MD et Docking, et la fiche du composé de la Librairie), et le MÊME modèle que le ⚙
+   « Params & Constraints » lit pour le pH. */
+import { SequenceReadingLine } from './SequenceReadingLine';
+/* 🎨 LA CASE DE SÉQUENCE, LETTRES COLORÉES (la demande) — le même composant que les pages NMR
+   et Docking : les cinq lettres de utils/sequenceHighlight.js y sont PEINTES (K · R bleu,
+   E · D rouge, C orange) dans une couche sous un vrai `<textarea>`. */
+import { SequenceField } from './SequenceField';
 // LE numéro affiché d'un résidu (position + residueOffset → table 🔢 du viewer) :
 // les pastilles de « Sequence and structure » montrent les mêmes numéros que le
 // viewer 3D et que la table des déplacements.
@@ -49,6 +64,13 @@ import {
   mdTrajectoryFingerprint
 } from '../utils/mdAnalysisCache';
 import { placeRestorePointer, pointerStillWanted, restoreRawFileFor, sameRawFileFor, takePendingRestorePointer, wantedRawNames } from '../utils/driveRestore';
+/* 📂 LIRE LE DOSSIER DE L'EXPÉRIENCE (voir utils/driveExperimentFiles.js) : la
+   reprise automatique cherche par NOM ; un fichier DÉPOSÉ À LA MAIN dans le
+   dossier de l'expérience n'a aucun nom à reconnaître. Le geste manquant est
+   donc une lecture du dossier, et le fichier choisi devient celui que la
+   condition rouvre par défaut (nom déclaré + pointeur). */
+import { DriveExperimentFilePicker } from './DriveExperimentFiles';
+import { experimentFilePointer, MD_TOPOLOGY_EXTS, MD_TRAJECTORY_EXTS } from '../utils/driveExperimentFiles';
 
 // Cache to retain local File objects when switching tabs within the same session
 const localFileCache = new Map();
@@ -488,7 +510,9 @@ const useMDDerived = (activeTest, ctx = {}) => {
 
   // ---- conformation state (identical to NMR) ----
   const ssRaw = activeTest.secondaryStructure || '';
-  const getSSAt = (i) => (ssRaw[i] && 'HES'.includes(ssRaw[i]) ? ssRaw[i] : 'C');
+  // ⚠ HESLT — L (hélice α GAUCHE) et T (tour β) sont des lettres peignables comme
+  // les autres.
+  const getSSAt = (i) => (ssRaw[i] && 'HESLT'.includes(ssRaw[i]) ? ssRaw[i] : 'C');
 
   const formsRaw = activeTest.nucleicForms || '';
   const dnaFormDefault = activeTest.dnaForm || 'B';
@@ -803,8 +827,16 @@ export const MDExperimentSetupSection = ({ ctx }) => {
     try { return activeTest.atomNameMap ? JSON.parse(activeTest.atomNameMap) : {}; } catch { return {}; }
   }, [activeTest.atomNameMap]);
 
-  const [hasOpened3D, setHasOpened3D] = useState(structureMode === '3d');
-  
+  /* ── LE VIEWER 3D A SA PROPRE SOUS-SECTION REPLIABLE (comme la page NMR) ────
+     `keepMounted` (src/components/ui.jsx) fait que replier NE DÉMONTE PAS le
+     viewer : son contenu n'est créé qu'à la PREMIÈRE ouverture, reste monté
+     ensuite (masqué en CSS) et le dépliage ne relit donc pas la structure.
+     `viewerOpen` ne décide plus si le viewer existe — c'est SA carte qui s'en
+     charge — mais sert à faire recaler le viewer et les tracés sur la largeur
+     RÉELLE à chaque repli / dépliage (aucun « resize » n'est émis par le
+     navigateur dans ce geste). */
+  const [viewerOpen, setViewerOpen] = useState(false);
+
   const [trajectoryFile, setTrajectoryFile] = useState(() => localFileCache.get(activeTest.id)?.trajectory || null);
   const [structureFile, setStructureFile] = useState(() => localFileCache.get(activeTest.id)?.structure || null);
   // OÙ LA RECHERCHE EN EST VRAIMENT, et ce qu'elle a répondu. Ces quatre états
@@ -1058,6 +1090,73 @@ export const MDExperimentSetupSection = ({ ctx }) => {
     return restored;
   };
 
+  /* ── 📂 PRENDRE LE FICHIER DANS LE DOSSIER DE L'EXPÉRIENCE ────────────────
+     Ce que la reprise automatique NE PEUT PAS faire : elle cherche par NOM
+     (nom déclaré, nom déposé, pointeur — voir driveRestore.js). Un fichier
+     DéPOSÉ À LA MAIN dans le dossier canonique de l'expérience, ou envoyé sous
+     un autre nom, n'a aucun de ces noms : la page annonçait alors « pas dans ce
+     navigateur ni sur le Drive » alors que le fichier était là (défaut
+     signalé). Le geste manquant est une LECTURE DU DOSSIER (voir
+     utils/driveExperimentFiles.js) : l'utilisateur VOIT ce que l'expérience
+     contient et choisit.
+
+     LE FICHIER CHOISI DEVIENT CELUI DE LA CONDITION : son nom est déclaré
+     (`structureFileName` / `trajectoryFileName`) ET son pointeur est posé
+     (`structureDrive` / `trajectoryDrive` = id + nom + url). C'est exactement ce
+     que lit la reprise au prochain affichage, ici comme sur un autre poste —
+     choisir ici, c'est donc DÉFINIR le fichier par défaut de l'instance.
+     Rien n'est renvoyé au Drive : le fichier y est déjà, on l'ouvre. */
+  const mdFolderCtx = (subsection, section = 'Setup') => ({
+    project: (activeTest.projectNames || [])[0] || '',
+    test: activeTest.name || '',
+    instance: activeTest.instanceName || '',
+    scientist: activeTest.operator || '',
+    section,
+    subsection
+  });
+  /* DEUX BRANCHES : la page archive la topologie sous `Setup`, les commandes du
+     viewer 3D sous `Data` — un fichier déposé dans l'une OU dans l'autre doit
+     être vu (le premier dossier qui porte une correspondance gagne). */
+  const mdFolderCtxs = (subsection) => [mdFolderCtx(subsection, 'Data')];
+
+  const pickStructureFromFolder = async (file, meta) => {
+    const testId = activeTest.id;
+    const paint = restoreTargetStillShown(testId);
+    // `wantedName: ''` : on installe le fichier choisi sous SON nom — le
+    // renommer au nom déclaré d'hier ferait croire que les deux décrivent le
+    // même fichier (c'est la règle de applyReloadedFile quand les radicaux
+    // concordent seulement).
+    const restored = await applyReloadedFile({ kind: 'structure', testId, wantedName: '', file, paint });
+    const pointer = experimentFilePointer(meta);
+    updateActiveTest({
+      structureFileName: restored.name,
+      structureFileData: null,          // le fichier déclaré a changé : l'ancien data URL ne le décrit plus
+      structureSrc: null,               // un PDB ID / une URL d'hier ne doit pas l'emporter sur le fichier choisi
+      structureDriveName: meta.name || restored.name,
+      ...(pointer ? { structureDrive: pointer } : {})
+    }, testId);
+    if (paint) {
+      setStructPhase('done');
+      setStructRestoreMsg(`✅ ${restored.name} taken from the experiment folder on Google Drive.`);
+    }
+  };
+
+  const pickTrajectoryFromFolder = async (file, meta) => {
+    const testId = activeTest.id;
+    const paint = restoreTargetStillShown(testId);
+    const restored = await applyReloadedFile({ kind: 'trajectory', testId, wantedName: '', file, paint });
+    const pointer = experimentFilePointer(meta);
+    updateActiveTest({
+      trajectoryFileName: restored.name,
+      trajectoryDriveName: meta.name || restored.name,
+      ...(pointer ? { trajectoryDrive: pointer } : {})
+    }, testId);
+    if (paint) {
+      setTrajPhase('done');
+      setTrajDriveMsg(`✅ ${restored.name} taken from the experiment folder on Google Drive.`);
+    }
+  };
+
   const restoreTrajectoryFromDrive = async () => {
     const declared = activeTest.trajectoryFileName || '';
     const driveName = activeTest.trajectoryDriveName || '';
@@ -1299,12 +1398,15 @@ export const MDExperimentSetupSection = ({ ctx }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTest.id, activeTest.structureFileName, activeTest.structureDriveName, structPointerId, fileEpoch, driveConnectedAt]);
   
-  useEffect(() => { if (structureMode === '3d') setHasOpened3D(true); }, [structureMode]);
-
+  /* Le viewer 3D et les tracés se recalent sur la largeur RÉELLE après chaque
+     repli / dépliage : replié, le viewer reste MONTÉ (masqué en CSS) et le
+     navigateur n'émet alors aucun « resize ». La carte « 3D viewer » réouvre SA
+     sous-section toute seule pour une condition restée en mode 3D (openWhen),
+     donc aucun état de montage n'a plus à être surveillé ici. */
   useEffect(() => {
-    const t = setTimeout(() => window.dispatchEvent(new Event('resize')), 100);
+    const t = setTimeout(() => { window.dispatchEvent(new Event('resize')); }, 100);
     return () => clearTimeout(t);
-  }, [structureMode, hasOpened3D]);
+  }, [viewerOpen]);
 
   const focusIdx = activeTest.focusIdx !== undefined ? activeTest.focusIdx : 'ALL';
   const setFocusIdx = (val) => updateActiveTest({ focusIdx: val });
@@ -1331,6 +1433,18 @@ export const MDExperimentSetupSection = ({ ctx }) => {
 
   const setAllSS = (letter) => updateActiveTest({ secondaryStructure: d.seq.split('').map(() => letter).join('') });
 
+  /* 🧵 LA DÉFINITION DE SÉQUENCE — le pinceau 🖌️, les feuillets déclarés et le modèle
+     replié : le crochet partagé `useSequenceStructureModel` (défini avec le bâtisseur
+     PDB, dans NMRSections.jsx) est LA seule lecture de cette définition, la même pour
+     les trois pages. `betaSheetRead` marque les brins sur la bande de séquence
+     ci-dessous, `sheetFold` est le rapport du modèle pour le panneau 🧵, et
+     `sequenceStructure` est le texte PDB que CETTE page confie à son viewer 3D — servi
+     dès que RIEN n'est chargé ici (un PDB chargé, lui, garde la priorité). */
+  const univTestMode = Boolean(activeTest.universityTest);
+  const { betaSheetRead, sheetFold, sequenceStructure } = useSequenceStructureModel({
+    activeTest, d, univTestMode,
+  });
+
   const paintFormAt = (i, letter) => {
     const arr = d.seq.split('').map((_, j) => d.getFormAt(j));
     arr[i] = letter;
@@ -1346,6 +1460,114 @@ export const MDExperimentSetupSection = ({ ctx }) => {
     updateActiveTest({ comments: currentComments + (currentComments ? '<br/>' : '') + html });
     alert('Chemical formula appended to the Lab Notebook notes.');
   };
+
+  /* ── CE QUE LA SOUS-SECTION « SEQUENCE AND STRUCTURE » A À MONTRER ──────────
+     La FORMULE 2D (l'ancien volet « 2D Formula » du sélecteur 2D / 3D) et, dans
+     la MÊME carte, la peinture 🖌️ de sa bande — exactement l'organisation de la
+     page NMR (la demande : « use the same separation and organization of 2D
+     formula and 3D viewer. and the same compressible windows that you used in NMR
+     page »). Le VIEWER 3D, lui, a SA propre sous-section repliable plus bas.
+     Deux cartes portent ce titre (l'une pour une protéine ou une petite molécule,
+     l'autre pour un acide nucléique — sa peinture est celle des formes A/B/Z) et
+     EXACTEMENT UNE se rend selon le type de molécule. */
+  const isNucleic = d.moleculeType === 'dna' || d.moleculeType === 'rna';
+  const show2DFormula = d.moleculeType === 'organic' ? Boolean(activeTest.smiles) : Boolean(d.structure);
+  const showProteinStrip = d.moleculeType === 'protein' && d.parsedSeq.length > 0;
+  const showNucleicStrip = isNucleic && d.parsedSeq.length > 0;
+  /* LA FORMULE, ÉCRITE UNE FOIS : c'est le même bloc que les deux cartes
+     affichent, la formule ne peut donc pas diverger de l'une à l'autre. Le
+     💡 et le 📓 de la formule vivent avec elle (le 🔍 Focus et le ✖ Deselect,
+     eux, sont dans l'en-tête de la carte 3D — ils restent accessibles repliée). */
+  const formulaBlock = (
+    <div className="mb-3">
+      {d.moleculeType === 'organic' && activeTest.smiles ? (
+        <OrganicViewer smiles={activeTest.smiles || activeTest.ligandSmiles} selectedKeys={selectedKeys} onAtomClick={handleAtomClick} />
+      ) : d.structure ? (
+        <StructureSVGView
+          structure={d.structure}
+          minWidth={d.moleculeType === 'protein' && d.parsedSeq.length > 3 ? `${d.parsedSeq.length * 120}px` : '100%'}
+          isExpanded={expandedPanel === 'formula'}
+          onToggleExpand={() => setExpandedPanel(expandedPanel === 'formula' ? null : 'formula')}
+          selectedKeys={selectedKeys}
+          manualKeys={manualKeys}
+          onAtomClick={handleAtomClick}
+          height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? `${Math.max(360, d.parsedSeq.length * 250 + 120)}px` : '300px'}
+        />
+      ) : null}
+      {/* ⚠ LA PHRASE « 💡 Click an atom in the formula (or in the 3D viewer
+          below) to highlight its cell in the atom table. » A ÉTÉ RETIRÉE — la
+          demande : « in the viewer remove the sentence “Click an atom in the 3D
+          viewer to highlight its cell in the atom table.” so that we save a
+          line ». Elle était trop longue pour tenir à côté du 📓 : la rangée
+          coûtait donc DEUX lignes. Rien d'autre ne bouge — piquer un atome
+          (dans la formule 2D comme dans la vue 3D) souligne toujours sa cellule
+          de tableau, seul le texte qui le disait est parti — et le 📓 reste à sa
+          place, à droite de la formule. */}
+      <div className="flex justify-end mt-1">
+        <button onClick={exportFormulaToNotebook} className="px-2 py-1 rounded-lg text-xs font-bold bg-indigo-50 border border-indigo-300 text-indigo-700 hover:bg-indigo-100" title="Append this formula (SVG) to the Lab Notebook notes">📓 Formula → Notebook</button>
+      </div>
+    </div>
+  );
+
+  /* 📂 CE QUE LE DOSSIER DE L'EXPÉRIENCE CONTIENT VRAIMENT — POSÉ DANS LA RANGÉE
+     DES FICHIERS DU VIEWER. Un bouton par fichier : il LISTE le dossier canonique
+     de l'expérience sur le Drive (par extension) et installe le fichier choisi
+     comme celui que CETTE condition rouvre par défaut. Geste de LECTURE seule —
+     le fichier est déjà sur le Drive, rien n'y est renvoyé (voir
+     utils/driveExperimentFiles.js).
+     Ces deux boutons ne font plus une rangée À EUX au-dessus du viewer : la
+     demande, mot pour mot, est « the "topology from Drive folder" and "trajectory
+     from drive folder" buttons should be in the same line as "PDB file" and
+     "trajectory" buttons ». Ils partent donc au viewer (`fileRowExtra`), qui les
+     rend dans sa rangée §1 General — la ligne même de 📂 PDB file(s) et
+     📂 Trajectory. La phrase qui les accompagnait (« Choosing a file here opens it
+     AND declares it… ») est passée dans leurs infobulles : rien n'est perdu, et
+     elle ne coûte plus une ligne à elle seule.
+
+     ⚠ LE BOUTON QUI CRÉE LE DOSSIER — 📁 « Create drive folder » — répond à
+     l'autre moitié du même défaut : « If the experiment does not exist in
+     drive, allow me to create it with the correct path ». Les 📂 NE CRÉENT
+     RIEN (un geste de lecture ne fabrique jamais d'arborescence) : quand le
+     dossier de l'expérience n'existe pas, ils ne peuvent rien montrer.
+     IL N'EST PLUS DÉFINI ICI : la demande de cette session, mot pour mot, est
+     « the "create experiment folder on drive" must be placed in the same line
+     of "PDB file" button always. to save space you can rename it "Create drive
+     folder". » — il est donc rendu par le VIEWER lui-même, dans cette même
+     rangée (§1 General, la ligne de 📂 PDB file(s)), sur les trois pages à
+     viewer (voir NMRMoleculeViewer, juste après `fileRowExtra`). Il crée le
+     chemin ENTIER — …/experiment_setup/Structure et …/experiment_setup/
+     Trajectory (voir utils/driveExperimentFiles.createExperimentFolder,
+     idempotent, et chaque segment vérifié). */
+  const folderFilePickers = (
+    <>
+      <DriveExperimentFilePicker
+        label="📂 Topology from Drive folder"
+        titleText="List the .gro / .pdb / .cif files that are in THIS experiment's Drive folder (even one you deposited by hand) and open one of them as this condition's topology. Choosing a file here opens it AND declares it: this condition will reopen it by default, on every computer. Nothing is uploaded again."
+        ctx={mdFolderCtx('Structure')}
+        ctxs={mdFolderCtxs('Structure')}
+        exts={MD_TOPOLOGY_EXTS}
+        declaredName={activeTest.structureFileName || activeTest.structureDriveName || ''}
+        onPick={pickStructureFromFolder}
+      />
+      <DriveExperimentFilePicker
+        label="📂 Trajectory from Drive folder"
+        titleText="List the .xtc / .trr / .dcd files that are in THIS experiment's Drive folder (even one you deposited by hand) and make one of them the trajectory of this condition. Choosing a file here opens it AND declares it: this condition will reopen it by default, on every computer. Nothing is uploaded again."
+        ctx={mdFolderCtx('Trajectory')}
+        ctxs={mdFolderCtxs('Trajectory')}
+        exts={MD_TRAJECTORY_EXTS}
+        declaredName={activeTest.trajectoryFileName || activeTest.trajectoryDriveName || ''}
+        onPick={pickTrajectoryFromFolder}
+      />
+      {/* LE SEUL GESTE QUI FABRIQUE de la rangée : les deux 📂 ci-dessus NE
+          CRÉENT RIEN (un geste de lecture ne fabrique jamais d'arborescence).
+          Quand l'expérience n'a pas encore de dossier sur le Drive, ils n'ont
+          donc rien à montrer — et le bouton qui crée ce dossier n'est plus
+          écrit ICI : c'est le VIEWER qui le rend, dans CETTE rangée, juste
+          après ces deux 📂 (la demande : « the "create experiment folder on
+          drive" must be placed in the same line of "PDB file" button always »).
+          Voir NMRMoleculeViewer, à côté de `fileRowExtra`. */}
+    </>
+  );
 
   const trajNorm = normalizeTrajectoryUrl(d.trajectoryUrl) || { url: null, fallbacks: [] };
 
@@ -1417,13 +1639,29 @@ export const MDExperimentSetupSection = ({ ctx }) => {
           ) : d.isPolymer ? (
             <>
               <label className="block text-xs font-bold text-slate-500 uppercase mb-2">{d.typeLabel} Sequence (1-letter code)</label>
-              <textarea 
-                value={d.rawSequence} 
-                onChange={(e) => updateActiveTest(sequencePatchForMoleculeType(activeTest, d.moleculeType, e.target.value))}
-                className="w-full border border-slate-300 rounded-lg p-3 font-mono text-sm tracking-widest outline-none focus:border-blue-500 uppercase h-24 custom-scrollbar shadow-inner"
-                placeholder={d.moleculeType === 'protein' ? 'e.g. MKWVTFISLL...' : d.moleculeType === 'dna' ? 'e.g. ATGCGTAC...' : 'e.g. AUGCGUAC...'} 
+              {/* 🎨 LA CASE COLORÉE (la demande : « when the sequence is inserted in the
+                  sequence field automatically color K and R in blue, E and D in red and C in
+                  orange ») : SequenceField peint les cinq lettres dans une couche SOUS le
+                  champ — le champ reste un vrai `<textarea>` (curseur, sélection, collage,
+                  annuler/rétablir) et l'écriture passe toujours par le patch de nature. */}
+              <SequenceField
+                value={d.rawSequence}
+                onChange={(v) => updateActiveTest(sequencePatchForMoleculeType(activeTest, d.moleculeType, v))}
+                moleculeType={d.moleculeType}
               />
               <p className="text-[10px] text-slate-400 mt-1 font-bold">Length: {d.seq.length} {d.moleculeType === 'protein' ? 'residues' : 'nucleotides'} (valid: {d.validChars.split('').join(' ')})</p>
+              {/* 🧬 LA LECTURE DE LA SÉQUENCE — sous la CASE : le nombre de chaque acide aminé,
+                  la charge totale à pH 7 et l'ε₂₈₀ estimé. La MÊME ligne que sous les cases des
+                  pages NMR, Docking et de la fiche du composé : elle la calcule elle-même avec
+                  le module pur des pKa, les modifications de la condition et des terminus
+                  GRATUITS par défaut. Rien pour un ADN / ARN (aucune composition d'acides
+                  aminés à dire). */}
+              <SequenceReadingLine
+                sequence={d.rawSequence}
+                moleculeType={d.moleculeType}
+                modifications={activeTest.modifications || ''}
+                className="mt-1"
+              />
               {d.seqNaturesNote && (
                 <p className="text-[10px] font-bold text-teal-800 bg-teal-50 border border-teal-200 rounded-lg px-2 py-1 mt-1">{d.seqNaturesNote}</p>
               )}
@@ -1446,15 +1684,22 @@ export const MDExperimentSetupSection = ({ ctx }) => {
         </div>
       </div>
 
-      {/* Sequence and structure (Issue #10) — la peinture 🖌️ et la bande de
-          séquence sont regroupées dans UNE sous-section repliée par défaut : les
-          cartes de résultats restent en tête de page, et CollapsibleSection
-          mémorise le choix (ouvert / replié) par expérience. */}
-      {d.moleculeType === 'protein' && d.parsedSeq.length > 0 && (
-        <CollapsibleSection title="Sequence and structure" icon="🖌️" defaultOpen={false}>
+      {/* ══ L'ORGANISATION DE LA PAGE NMR, ICI AUSSI ═══════════════════════════
+          « Sequence and structure » porte la FORMULE 2D ET la peinture 🖌️ de sa
+          bande, et elle est OUVERTE par défaut (c'est là que la formule se voit :
+          CollapsibleSection mémorise le choix, ouvert / replié, par expérience) ;
+          le VIEWER 3D a SA PROPRE carte repliable, plus bas, dans le MÊME
+          empilement — plus aucun sélecteur 2D ⇄ 3D, et aucun grand blanc entre
+          les deux. Exactement comme la page NMR (la demande). */}
+      <div className="flex flex-col">
+      {!isNucleic && (show2DFormula || showProteinStrip) && (
+        <CollapsibleSection title="Sequence and structure" icon="🖌️" defaultOpen>
+          {formulaBlock}
+          {showProteinStrip && (
+            <>
           <div className="flex flex-wrap gap-2 mb-3 items-center">
             <span className="text-xs font-bold text-slate-500 uppercase mr-1">🖌️ Brush:</span>
-            {['C', 'H', 'E'].map((l) => (
+            {['C', 'H', 'L', 'E', 'T'].map((l) => (
               <button key={l} onClick={() => setSSBrush(l)} className="px-3 py-1 rounded-lg text-xs font-black border transition-all"
                 style={{ backgroundColor: ssBrush === l ? SS_META[l].color : 'white', borderColor: SS_META[l].color, color: ssBrush === l ? 'white' : SS_META[l].color }}>
                 {SS_META[l].label}
@@ -1463,9 +1708,11 @@ export const MDExperimentSetupSection = ({ ctx }) => {
             <span className="mx-2 text-slate-300">|</span>
             <button onClick={() => setAllSS('C')} className="px-3 py-1 rounded-lg text-xs font-bold bg-slate-100 border border-slate-300 text-slate-600 hover:bg-slate-200">All Coil</button>
             <button onClick={() => setAllSS('H')} className="px-3 py-1 rounded-lg text-xs font-bold bg-violet-100 border border-violet-300 text-violet-700 hover:bg-violet-200">All α-Helix</button>
+            <button onClick={() => setAllSS('L')} className="px-3 py-1 rounded-lg text-xs font-bold bg-fuchsia-100 border border-fuchsia-300 text-fuchsia-700 hover:bg-fuchsia-200">All α-Helix (L)</button>
             <button onClick={() => setAllSS('E')} className="px-3 py-1 rounded-lg text-xs font-bold bg-amber-100 border border-amber-300 text-amber-700 hover:bg-amber-200">All β-Sheet</button>
+            <button onClick={() => setAllSS('T')} className="px-3 py-1 rounded-lg text-xs font-bold bg-teal-100 border border-teal-300 text-teal-700 hover:bg-teal-200">All γ-Turn</button>
           </div>
-          <p className="text-xs text-slate-400 mb-3">💡 Select a brush, then click or drag across the sequence chips to paint secondary structure.</p>
+          <p className="text-xs text-slate-400 mb-3">💡 Select a brush, then click or drag across the sequence chips to paint secondary structure. Paint two runs of β-strand (E) — a turn (T) between them holds the hairpin — then pair them as a β-sheet below.</p>
           <SequencePaintStrip
             residues={d.parsedSeq}
             getLetter={(i) => d.getSSAt(i)}
@@ -1473,12 +1720,36 @@ export const MDExperimentSetupSection = ({ ctx }) => {
             onApply={(i) => paintSSAt(i, ssBrush)}
             focusIdx={focusIdx}
             residueNo={residueNoOf}
+            sheetOf={(i) => sheetMarkAt(betaSheetRead.pairs, i + 1)}
           />
+            {/* 🧵 LA DÉFINITION DU FEUILLET — la seconde moitié de la définition de
+                séquence, ICI comme sur les pages NMR et Docking : deux brins peints E
+                appariés, parallèles ou antiparallèles. Le panneau écrit la
+                DÉCLARATION (`activeTest.betaSheets`, en positions de séquence — la clé
+                commune aux trois pages), et la note qu'il affiche est le rapport du
+                modèle RÉELLEMENT bâti (`sheetFold` : les échelons CA–CA et les ponts
+                N–H···O=C mesurés par le même lecteur que l'écrivain PDB). Le modèle
+                replié part au viewer 3D par `sequenceStructure`. */}
+            {!univTestMode && (
+              <BetaSheetEditor
+                secondaryStructure={activeTest.secondaryStructure || ''}
+                sequenceLength={(d.seq || '').length}
+                sheets={activeTest.betaSheets}
+                onChange={(next) => updateActiveTest({ betaSheets: next })}
+                residueNo={residueNoOf}
+                fold={sheetFold}
+              />
+            )}
+            </>
+          )}
         </CollapsibleSection>
       )}
 
-      {(d.moleculeType === 'dna' || d.moleculeType === 'rna') && d.parsedSeq.length > 0 && (
-        <CollapsibleSection title="Sequence and structure" icon="🖌️" defaultOpen={false}>
+      {isNucleic && (show2DFormula || showNucleicStrip) && (
+        <CollapsibleSection title="Sequence and structure" icon="🖌️" defaultOpen>
+          {formulaBlock}
+          {showNucleicStrip && (
+            <>
           <div className="flex flex-wrap gap-2 mb-3 items-center">
             <span className="text-xs font-bold text-slate-500 uppercase mr-1">🖌️ Brush:</span>
             {['A', 'B', 'Z'].map((l) => (
@@ -1500,31 +1771,42 @@ export const MDExperimentSetupSection = ({ ctx }) => {
             focusIdx={focusIdx}
             residueNo={residueNoOf}
           />
+            </>
+          )}
         </CollapsibleSection>
       )}
 
-      <div>
-        <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
-          <div className="flex bg-slate-200 p-1 rounded-lg">
-            <button onClick={() => updateActiveTest({ structureMode: '2d' })}
-              className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${structureMode === '2d' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>2D Formula</button>
-            <button onClick={() => updateActiveTest({ structureMode: '3d' })}
-              className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${structureMode === '3d' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>3D Viewer + Trajectory</button>
+      {/* ── LE VIEWER 3D : SA PROPRE SOUS-SECTION REPLIABLE ────────────────────
+          Replier NE DÉMONTE PAS le viewer (`keepMounted`) : son contenu n'est créé
+          qu'à la PREMIÈRE ouverture, puis reste monté et masqué en CSS — le
+          dépliage ne relit donc pas la structure — et `onToggle` fait recaler le
+          viewer et les tracés sur la largeur réelle. Une condition restée en mode 3D
+          (l'ancien sélecteur l'avait laissée en mode 3D) rouvre SA carte toute
+          seule : rien n'est perdu pour les expériences déjà remplies. Le 🔍 Focus et
+          le ✖ Deselect sont passés dans SON en-tête : ils restent accessibles même
+          repliée, sans occuper une rangée. */}
+      <CollapsibleSection
+        title="3D viewer"
+        icon="🧬"
+        defaultOpen={false}
+        openWhen={structureMode === '3d'}
+        keepMounted
+        onToggle={setViewerOpen}
+        headerExtra={(
+          <div className="flex items-center gap-2 flex-wrap justify-end">
+            <label className="text-[10px] font-bold text-slate-500 uppercase">🔍 Focus</label>
+            <select value={focusIdx} onChange={(e) => setFocusIdx(e.target.value === 'ALL' ? 'ALL' : Number(e.target.value))}
+              className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 max-w-[180px]">
+              <option value="ALL">All residues</option>
+              {d.parsedSeq.map((r, i) => <option key={i} value={i}>{r.id} — {r.name}</option>)}
+            </select>
+            {selectedKeys && (
+              <button onClick={() => updateActiveTest({ selectedAtomKeys: [] })} className="px-2 py-1 rounded-lg text-xs font-bold bg-amber-100 border border-amber-400 text-amber-800">✖ Deselect ({selectionLabel(d, selectedKeys)})</button>
+            )}
           </div>
-
-            <div className="flex items-center gap-2 flex-wrap justify-end">
-              <label className="text-[10px] font-bold text-slate-500 uppercase">🔍 Focus</label>
-              <select value={focusIdx} onChange={(e) => setFocusIdx(e.target.value === 'ALL' ? 'ALL' : Number(e.target.value))}
-                className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 max-w-[180px]">
-                <option value="ALL">All residues</option>
-                {d.parsedSeq.map((r, i) => <option key={i} value={i}>{r.id} — {r.name}</option>)}
-              </select>
-              {selectedKeys && (
-                <button onClick={() => updateActiveTest({ selectedAtomKeys: [] })} className="px-2 py-1 rounded-lg text-xs font-bold bg-amber-100 border border-amber-400 text-amber-800">✖ Deselect ({selectionLabel(d, selectedKeys)})</button>
-              )}
-              <button onClick={exportFormulaToNotebook} className="px-2 py-1 rounded-lg text-xs font-bold bg-indigo-50 border border-indigo-300 text-indigo-700 hover:bg-indigo-100" title="Append this formula (SVG) to the Lab Notebook notes">📓 Formula → Notebook</button>
-            </div>
-          </div>
+        )}
+      >
+        <div className="flex flex-col gap-2">
 
           {/* La barre d'état des deux fichiers (« System files », au-dessus du
               viewer) — état des fichiers, boutons de reprise Drive, réglages de
@@ -1538,14 +1820,37 @@ export const MDExperimentSetupSection = ({ ctx }) => {
               ou de l'URL) et les restaurations Drive automatiques (useDriveAutoRestore)
               continuent exactement comme avant. */}
 
-          <p className="text-xs text-slate-400 mb-2">💡 Click an atom in the {structureMode === '2d' ? 'formula' : '3D viewer'} to highlight its cell in the atom table.</p>
+          {/* (Le 💡 « Click an atom in the formula (or in the 3D viewer below) … »
+              de CETTE page a été RETIRÉ à la demande (voir la formule, dans
+              « Sequence and structure ») ; le volet que l'ancien mode 2D ⇄ 3D
+              masquait d'un `display: none` a disparu lui aussi : plus personne ne
+              cache plus personne, la carte repliable s'en charge.) */}
 
-          <div style={{ display: structureMode === '3d' ? 'block' : 'none' }} aria-hidden={structureMode !== '3d'}>
-            {hasOpened3D && (
-              
+            {/* 📂 LES DEUX BOUTONS DU DOSSIER SONT PASSÉS AU VIEWER — ils vivent
+                maintenant dans SA rangée de fichiers (§1 General), donc sur la
+                MÊME ligne que 📂 PDB file(s) et 📂 Trajectory (demande :
+                « the "topology from Drive folder" and "trajectory from drive
+                folder" buttons should be in the same line as "PDB file" and
+                "trajectory" buttons »). Leur définition est `folderFilePickers`,
+                plus haut, et elle part par `fileRowExtra`. Rien d'autre ne
+                change : c'est toujours un geste de LECTURE seule — le fichier est
+                déjà sur le Drive, rien n'y est renvoyé (voir
+                utils/driveExperimentFiles.js). */}
+            {/* (L'ancien montage conditionnel du viewer a disparu : c'est la carte
+                repliable `keepMounted` qui le monte à sa PREMIÈRE ouverture et le
+                garde monté ensuite — les fichiers du dossier se choisissent donc
+                ici, dans la même carte, sans second état à tenir.) */}
 <NMRMoleculeViewer
   key={`${activeTest.id || 'md'}|${trajectoryFile ? trajectoryFile.name : 'no-traj-file'}|${d.trajectoryUrl || 'no-traj'}`}
   instanceKey={activeTest.id || null}
+  /* ⚠ LE MÊME CONTEXTE DE NOMMAGE QUE LES PAGES NMR / DOCKING (le rapport de cette
+     session : « La finestra selections che si genera facendo delle selezioni con pymol,
+     continua a comparire in tutti gli esperimenti e questo non deve succedere. Deve
+     comparire solo nelle instances dell'esperimento dove é stata creata e non altrove! »).
+     Sans lui le viewer MD ne connaissait que sa CONDITION : la session des fenêtres de
+     sélection (projet · expérience, voir pymolSessionOwnerOf) ne pouvait donc pas être
+     partagée par les autres instances de l'expérience. */
+  driveNaming={{ project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || '', instance: activeTest.instanceName || '', scientist: activeTest.operator || '', section: 'Data', subsection: 'Structure' }}
   src={activeTest.structureSrc}
   structureFileData={activeTest.structureFileData}
   structureFile={structureFile}
@@ -1553,6 +1858,13 @@ export const MDExperimentSetupSection = ({ ctx }) => {
   structureFormat={activeTest.structureFormat || 'auto'}
   structureText={typeof organicFetch !== 'undefined' ? organicFetch.text : null}
   structureTextExt={typeof organicFetch !== 'undefined' ? organicFetch.ext : null}
+  /* 🧬 LE MODÈLE DE LA SÉQUENCE (le crochet `useSequenceStructureModel` ci-dessus) :
+     la peinture 🖌️, les FEUILLETS DÉCLARÉS (records SHEET + REMARK 950 / 951) et les
+     ponts disulfure ⚭ compris. Le viewer le sert dès que RIEN n'est chargé ici —
+     exactement le comportement de la page NMR — et « 🧬 Structure from sequence » le
+     reconstruit à la demande ; un PDB chargé, lui, reste prioritaire. */
+  sequenceStructureText={sequenceStructure?.text || null}
+  sequenceStructureExt={sequenceStructure?.ext || null}
   externalLoading={typeof organicFetch !== 'undefined' ? organicFetch.loading : false}
   externalError={typeof organicFetch !== 'undefined' ? organicFetch.error : null}
   trajectorySrc={trajNorm.url}
@@ -1578,12 +1890,30 @@ export const MDExperimentSetupSection = ({ ctx }) => {
     }
   }}
   parsedSeq={d.parsedSeq}
+  /* 🧪 …ET LA DÉFINITION DES MODIFICATIONS DU COMPOSÉ (Acetylation · Amidation · …) : le ⚙
+     Params & Constraints lit la charge de la SÉQUENCE avec elle (utils/sequenceCharge.js). */
+  sequenceModifications={activeTest.modifications || ''}
+  /* ⛓ La structure secondaire peinte dans « Sequence and structure » (🖌️) part vers
+     le viewer : c'est elle que le bouton ⛓ du panneau 🧬 convertit en contraintes de
+     dihèdre pour le ▶ MD, le ⚒ Minimise et le ▶ Run. */
+  imposedSecondaryStructure={activeTest.secondaryStructure || ''}
   selectedKeys={selectedKeys}
   manualKeys={manualKeys}
   onAtomClick={handleAtomClick}
   onStructureFile={handleStructureFile}
   onStructureSrc={(v) => updateActiveTest({ structureSrc: v })}
   onTrajectoryFile={handleTrajectoryFile}
+  /* 📂 LES DEUX BOUTONS DU DOSSIER DE L'EXPÉRIENCE → LA RANGÉE DES FICHIERS DU
+     VIEWER (§1 General, sur la ligne de 📂 PDB file(s) / 📂 Trajectory) : c'est
+     `fileRowExtra` du viewer qui les rend, et `folderFilePickers` qui les définit
+     (voir plus haut — la demande : les deux 📂 du dossier sur la MÊME ligne que
+     les deux 📂 du poste).
+     ⚠ « 📁 Create drive folder » n'est PAS passé ici : le VIEWER le rend lui-même
+     dans cette rangée dès qu'il a un contexte de nommage (`driveNaming`, quatre
+     lignes plus bas) — la demande, mot pour mot : « the "create experiment
+     folder on drive" must be placed in the same line of "PDB file" button
+     always ». La place ne dépend donc plus d'une page. */
+  fileRowExtra={folderFilePickers}
   residueOffset={residueOffset}
   atomNameMap={atomNameMap}
   atomRenames={activeTest.atomRenames || {}}
@@ -1600,26 +1930,15 @@ export const MDExperimentSetupSection = ({ ctx }) => {
   labelMode={atomLabelMode}
   height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? '1100px' : '1000px'}
 />
-            )}
-          </div>
 
-          <div style={{ display: structureMode === '2d' ? 'block' : 'none' }} aria-hidden={structureMode !== '2d'}>
-            {d.moleculeType === 'organic' && activeTest.smiles ? (
-               <OrganicViewer smiles={activeTest.smiles || activeTest.ligandSmiles} selectedKeys={selectedKeys} onAtomClick={handleAtomClick} />
-            ) : d.structure ? (
-              <StructureSVGView
-                structure={d.structure}
-                minWidth={d.moleculeType === 'protein' && d.parsedSeq.length > 3 ? `${d.parsedSeq.length * 120}px` : '100%'}
-                isExpanded={expandedPanel === 'formula'}
-                onToggleExpand={() => setExpandedPanel(expandedPanel === 'formula' ? null : 'formula')}
-                selectedKeys={selectedKeys}
-                manualKeys={manualKeys}
-                onAtomClick={handleAtomClick}
-                height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? `${Math.max(360, d.parsedSeq.length * 250 + 120)}px` : '300px'}
-              />
-            ) : null}
-          </div>
+          {/* (L'ancien SECOND volet — la formule 2D que le sélecteur 2D ⇄ 3D
+              cachait d'un `display: none` — a disparu. La formule vit désormais
+              DANS la sous-section « Sequence and structure » ci-dessus, comme sur
+              la page NMR : une seule définition (`formulaBlock`), aucun volet à
+              masquer.) */}
         </div>
+      </CollapsibleSection>
+      </div>
     </div>
   );
 };

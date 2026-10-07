@@ -100,8 +100,8 @@ has('{ELEMENT_ORDER.map((el) => (', '[⚙] une pastille par élément de la list
 has('{SUGAR_TYPE_ORDER.map((t) => (', '[⚙] une pastille par TYPE de sucre (la liste chimique du cahier des charges)');
 has('onChange={(e) => setElementColor(el, parseInt(e.target.value.slice(1), 16))}', '[⚙] la pastille écrit la table');
 has('onChange={(e) => setSugarTypeColors((p) => ({ ...p, [t]: parseInt(e.target.value.slice(1), 16) }))}', '[⚙] …et celle des sucres (par TYPE) aussi');
-has('const resetElementColors = () => setElementColors({ ...ELEMENT_COLOR_PALETTE });', '[⚙] ↺ des éléments');
-has('const resetSugarColors = () => setSugarColors({ ...SUGAR_IDENTITY_COLORS });', '[⚙] ↺ des sucres');
+has("const resetElementColors = () => setElementColors(paletteDefaults(ELEMENT_COLORS_KEY, ELEMENT_COLOR_PALETTE));", '[⚙] ↺ des éléments — il rend les couleurs ENREGISTRÉES par ce navigateur, jamais la table du code (voir paletteDefaults)');
+has("const resetSugarColors = () => setSugarColors(paletteDefaults(SUGAR_COLORS_KEY, SUGAR_IDENTITY_COLORS));", '[⚙] ↺ des sucres');
 // Les palettes sont le CONTENU des schémas : un effet les copie dans les stores
 // vivants que lisent lab-elements / lab-sugar-identity, puis les persiste.
 has('Object.assign(elementColorStore, elementColors);', '[⚙] la table vivante des éléments est alimentée');
@@ -128,8 +128,8 @@ has('const setNucleicFormColor = (form, hex) => setNucleicFormColors((prev) => (
   '[⚙] une pastille écrit la table des formes');
 has('const setNucleicMotifColor = (motif, hex) => setNucleicMotifColors((prev) => ({ ...prev, [motif]: hex }));',
   '[⚙] …et une pastille la table des motifs');
-has('const resetNucleicFormColors = () => setNucleicFormColors({ ...DEFAULT_NUCLEIC_FORM_COLORS });', '[⚙] ↺ des formes');
-has('const resetNucleicMotifColors = () => setNucleicMotifColors({ ...DEFAULT_NUCLEIC_MOTIF_COLORS });', '[⚙] ↺ des motifs');
+has("const resetNucleicFormColors = () => setNucleicFormColors(paletteDefaults(NUCLEIC_FORM_COLORS_KEY, DEFAULT_NUCLEIC_FORM_COLORS));", '[⚙] ↺ des formes');
+has("const resetNucleicMotifColors = () => setNucleicMotifColors(paletteDefaults(NUCLEIC_MOTIF_COLORS_KEY, DEFAULT_NUCLEIC_MOTIF_COLORS));", '[⚙] ↺ des motifs');
 has('{NUC_FORM_LABELS.map((form) => (', '[⚙] une pastille par forme (la liste des six formes)');
 has("{['gquad', 'hairpin'].map((motif) => (", '[⚙] …et une par motif (G4 · hairpin)');
 has('onChange={(e) => setNucleicFormColor(form, parseInt(e.target.value.slice(1), 16))}', '[⚙] la pastille d’une forme écrit la table');
@@ -193,10 +193,14 @@ has('{shown && subsectionsOf(kind).map((s) => renderSectionRow(sec, s.sub))}',
   '[barre] les rangées du type de la molécule, et elles seules');
 has('title="Transparency regulator of THIS row: 0 % = opaque, 100 % = invisible (NGL opacity)"',
   '[barre] la transparence d’une rangée dit ce qu’elle fait');
-has('🖱 drag a molecule: turn · right-drag: slide',
-  '[barre] la pastille DIT le geste du placement (✥ Move · ↻ Rotate ont disparu avec le mode : le rapport voulait « simply continue to move and rotate with the mouse »)');
-has('Drag ON a molecule to turn it about its own centre (left button)',
-  '[barre] …et son titre dit le geste entier : gauche = tourner, droit = glisser, fond · Alt = caméra');
+/* ⚠ La pastille du geste de placement a été RETIRÉE cette session (la demande :
+   « the button “drag a molecule: turn · right-drag: slide” seems useless and you
+   can remove it ») — avec elle, son titre. Le geste reste : il est vérifié par
+   le code (installMoleculeDrag / partStep) et par la ligne ★ de la barre. */
+ok(!VIEW.includes('🖱 drag a molecule: turn · right-drag: slide'),
+  '[barre] la pastille « 🖱 drag a molecule » n’est plus rendue (la demande l’a retirée)');
+ok(!VIEW.includes('Drag ON a molecule to turn it about its own centre (left button)'),
+  '[barre] …ni son titre, qui décrivait le geste entier');
 has('const MOL_STYLE_OPTIONS = (', '[barre] une seule liste de styles pour toutes les lignes');
 has('const MOL_COLOR_OPTIONS = (', '[barre] …et une seule liste de colorations');
 has('setMolFold((prev) => { const n = { ...prev }; delete n[id]; return n; });',
@@ -293,7 +297,8 @@ const buildHelpers = (keys = {}, stored = {}) => {
     `let glycanSchemeKey = ${keys.glycan === undefined ? 'null' : JSON.stringify(keys.glycan)};`,
     `let lipidClassSchemeKey = ${keys.lipidclass === undefined ? 'null' : JSON.stringify(keys.lipidclass)};`,
     `let nucleicFormSchemeKey = ${keys.nucform === undefined ? 'null' : JSON.stringify(keys.nucform)};`,
-    `let nucleicMotifSchemeKey = ${keys.motif === undefined ? 'null' : JSON.stringify(keys.motif)};`,  // PART 4 — les palettes et les schémas que la barre de style lit.
+    `let nucleicMotifSchemeKey = ${keys.motif === undefined ? 'null' : JSON.stringify(keys.motif)};`,
+    `let atomChargeSchemeKey = ${keys.atomcharge === undefined ? 'null' : JSON.stringify(keys.atomcharge)};`,  // PART 4 — les palettes et les schémas que la barre de style lit.
   `const BASE_TYPE_ORDER = ${sliceRaw('BASE_TYPE_ORDER')};`,
   sliceObject(VIEW, 'RESIDUE_COLOR_PALETTE'),
   sliceObject(VIEW, 'residueColorStore'),
@@ -328,7 +333,7 @@ const buildHelpers = (keys = {}, stored = {}) => {
   return api;
 };
 const H = buildHelpers();
-const HK = buildHelpers({ sstruc: 'lab-sstruc', elements: 'lab-elements', sugar: 'lab-sugar-identity' });
+const HK = buildHelpers({ sstruc: 'lab-sstruc', elements: 'lab-elements', sugar: 'lab-sugar-identity', atomcharge: 'lab-atom-charge' });
 
 /* ── 6a. Les deux palettes : lecture, écriture, et la garde des entrées ──── */
 eq(H.loadPalette('rien', { C: 1, N: 2 }), { C: 1, N: 2 }, 'aucune entrée enregistrée → les défauts');
@@ -420,6 +425,12 @@ eq(HK.schemeForColorMode('sugar'), 'lab-sugar-identity', 'Sugar type → la pale
 eq(H.schemeForColorMode('element'), 'element', 'schéma non enregistré → repli NGL natif');
 eq(H.schemeForColorMode('sugar'), 'element', '…idem pour les sucres : jamais de molécule sans couleur');
 eq(H.schemeForColorMode('sstruc'), 'sstruc', '…et le schéma de structure secondaire aussi');
+// « Atom charge » (la demande de cette session) : le schéma maison d'abord, et le
+// colormaker `partialcharge` de NGL en repli — la lecture la plus proche de la même
+// grandeur, jamais un aplat d'éléments qui ne dirait rien de la charge.
+eq(HK.schemeForColorMode('atomcharge'), 'lab-atom-charge', 'Atom charge → le schéma maison des charges PARTIELLES');
+eq(H.schemeForColorMode('atomcharge'), 'partialcharge',
+  '…et sans schéma maison il retombe sur le `partialcharge` NATIF de NGL');
 // Les QUATRE lectures de PART 2 / PART 3 passent par la même correspondance — et
 // les deux lectures NUCLEIC retombent sur la 2° structure, jamais sur un aplat.
 const HK2 = buildHelpers({

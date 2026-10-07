@@ -40,6 +40,7 @@ _drive_mirror_test.mjs
 _drive_restore_test.mjs
 _esm_test_hook.mjs
 _experiment_drive_root_test.mjs
+_experiment_folder_files_test.mjs
 _figures_folder_mismatch_test.mjs
 _figure_placement_test.mjs
 _figure_recapture_test.mjs

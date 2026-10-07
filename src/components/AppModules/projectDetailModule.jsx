@@ -28,6 +28,11 @@ import {
 } from '../Publications';
 import { getStarredItems, buildStarCaption, buildMaterialsAndMethods, tabConfigForType } from '../../utils/starredItems';
 import { loadProjects, saveProjects, saveProjectsChecked, lightenProjectForStorage, recordProjectDeletion, loadPublications, TEST_TYPE_OPTIONS, testTypeLabel, genProjectId, normalizeAuthorized, projectAccessFor, saveProjectsRescued } from './projectsModule';
+/* LA RÈGLE DE L'EXPÉRIENCE ↔ LE PROJET, en pur : « allow me to move an experiment
+   from one project to another » (une expérience = un test AVEC ses instances de
+   condition ; le projet visé devient son projet PRINCIPAL). Le modèle est
+   many-to-many : un test peut rester lié à d'autres projets (utils/experimentRules.js). */
+import { moveExperimentBetweenProjects } from '../../utils/experimentRules';
 import { storageFreedText, storageRefusedText } from '../../utils/localStoreRoom';
 import { suggestDriveFileName, openDrive, projectSectionFolderPath, projectSectionFolderLabel, projectImagesFolderLabel } from '../../utils/driveNaming';
 import { DriveUploadButton } from '../DriveUpload';
@@ -62,7 +67,7 @@ import {
   applyInTextStyle, withoutBibliographySection
 } from '../../utils/referenceLinks';
 import { moveFigureTo, splitAnchoredFigures } from '../../utils/figurePlacement';
-import { markAttachmentsDeleted, renameDriveFilesFor, moveTestFolderIntoProject, moveTestFolderOutOfProject, getDriveToken, getDriveRootName, resolveDrivePathFromNames, listDriveChildren } from '../../utils/driveUpload';
+import { markAttachmentsDeleted, renameDriveFilesFor, moveTestFolderIntoProject, moveTestFolderOutOfProject, moveTestFolderBetweenProjects, getDriveToken, getDriveRootName, resolveDrivePathFromNames, listDriveChildren } from '../../utils/driveUpload';
 /* Le texte du projet est AUSSI rangé dans le dossier du projet sur le Drive
    (Lab Workspace/<dataset>/projects/<projet>/<projet>_document.json) : le
    navigateur n'est qu'un cache (voir utils/projectDocumentDrive.js). */
@@ -456,6 +461,13 @@ export const ProjectDetailModule = ({
   /* Compte rendu du dernier « 🔗 Link citations… » (section References). */
   const [citationLinkReport, setCitationLinkReport] = useState('');
   const [linkTestId, setLinkTestId] = useState('');
+  /* ⇄ DÉPLACER UNE EXPÉRIENCE DANS UN AUTRE PROJET — la ligne dont le volet
+     « Move to project: » est ouvert ({ expId, targetId }), et le compte rendu du
+     dernier déplacement. La règle des données est PURE et testée
+     (utils/experimentRules.moveExperimentBetweenProjects) : la page ne fait
+     qu'écrire son résultat, puis suivre le dossier sur le Drive. */
+  const [moveExp, setMoveExp] = useState(null);
+  const [moveReport, setMoveReport] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
   const pubs = useMemo(loadPublications, []);
   /* Les « Relevant papers » alimentent eux aussi la bibliographie d'un projet
@@ -563,6 +575,16 @@ export const ProjectDetailModule = ({
       .map(([name]) => name)
       .sort((a, b) => a.localeCompare(b));
   }, [visibleTests, project?.experiments]);
+
+  /* « Move to project: » — les projets VERS lesquels cette expérience peut partir :
+     tous les projets de la page SAUF celui-ci, et seulement ceux que l'utilisateur
+     a le droit de MODIFIER (un déplacement ÉCRIT dans le projet visé : le même
+     `projectAccessFor` que la page Projets et la bibliothèque d'images). La liste
+     est triée par nom : elle se lit, elle ne bouge pas d'un rendu à l'autre. */
+  const moveTargets = useMemo(() => projects
+    .filter((p) => p && p.id !== project?.id && projectAccessFor(p, myName, isSuper) === 'modify')
+    .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''))),
+  [projects, project?.id, myName, isSuper]);
 
   // ---- Saved Image Builder canvases (editable figures linked on this page) ----
   // The Image Builder stores each composition in the project image library as an
@@ -1839,6 +1861,62 @@ export const ProjectDetailModule = ({
     });
     if (!stillLinked) {
       moveTestFolderOutOfProject({ testName, projectName: project.name }).catch(() => {});
+    }
+  };
+
+  /* ---- ⇄ DÉPLACER UNE EXPÉRIENCE D'UN PROJET À UN AUTRE ---------------------
+     Demande : « allow me to move an experiment from one project to another ».
+
+     Le DÉPLACEMENT lui-même est la règle pure
+     `moveExperimentBetweenProjects` (utils/experimentRules.js) : elle retire du
+     projet TOUTES les entrées de ce test (une expérience = un test avec ses
+     instances de condition), les donne au projet visé en gardant leur id, leur
+     « Include » et leur date, et fait du projet visé le projet PRINCIPAL du test
+     (les autres projets restent liés). Ici : une seule écriture (les deux projets
+     ensemble — jamais un état intermédiaire où l'expérience serait nulle part),
+     l'écriture du magasin, et le dossier du Drive qui SUIT.
+
+     Le dossier du Drive MIGRE sous le projet visé — déplacé, JAMAIS copié :
+     `moveTestFolderBetweenProjects` (driveUpload.js) réunit tout ce qui porte le
+     nom de l'expérience sur le Drive (le dossier du projet quitté, le bac
+     projects/test, les emplacements hérités, jumeaux compris), le DÉPLACE sous
+     `projects/<projet visé>/`, le FUSIONNE si un dossier du même nom y attend
+     déjà, met à la corbeille les dossiers vidés (l'ancien chemin disparaît) et
+     réécrit le registre des fichiers. Rien n'est bloquant : sans Drive connecté
+     (ou si le dossier n'existe pas encore), le geste ne fait rien et les
+     fichiers envoyés plus tard iront directement dans le bon projet (le chemin
+     Drive se calcule à partir de `projectNames`). */
+  const moveExperimentToProject = (expId, toProjectId) => {
+    if (!canModify) return;
+    const target = projectsRef.current.find((p) => p && p.id === toProjectId);
+    const res = moveExperimentBetweenProjects(projectsRef.current, tests, { expId, toProjectId });
+    if (!res.ok || !target) return;
+    replaceProjects(res.projects);
+    saveProjects(projectsRef.current);
+    setTests(res.tests);
+    setMoveExp(null);
+    const label = res.name
+      || ((project.experiments || []).find((e) => e && e.id === expId) || {}).label
+      || 'The experiment';
+    setMoveReport(
+      `⇄ “${label}” moved from “${project.name}” to “${target.name}”`
+      + (res.moved > 1 ? ` with its ${res.moved} condition instances` : '')
+      + (res.duplicates
+        ? ` — it was already linked to “${target.name}”, so nothing was added there (${res.duplicates} duplicate entry(ies) left out)`
+        : '')
+      + (getDriveToken()
+        ? ' — its Google-Drive folder moves to the new project too.'
+        : ' — its Google-Drive folder will follow as soon as Drive is connected.')
+    );
+    if (res.name) {
+      /* Le dossier Drive MIGRE sous le projet visé (déplacé, jamais copié, et
+         fusionné si un dossier du même nom y attend déjà). Au mieux : le
+         magasin a déjà été écrit, la page n'attend pas le Drive. */
+      moveTestFolderBetweenProjects({
+        testName: res.name,
+        fromProjectName: project.name,
+        toProjectName: target.name
+      }).catch(() => {});
     }
   };
 
@@ -4656,6 +4734,16 @@ export const ProjectDetailModule = ({
         {/* ---------- Experiments: collapsible window with the added tests ---------- */}
         <SectionCard title="🧪 Experiments in this project" open={openSections.expWindow} onToggle={() => toggleSection('expWindow')}
                      badge={<span className="text-[10px] font-bold text-slate-500 bg-slate-100 rounded-full px-2 py-0.5">{experimentsGrouped(project.experiments, tests).length}</span>}>
+          {/* Le compte rendu du dernier « ⇄ Move » : le geste change DEUX projets
+              (et le dossier Drive suit) — la page le dit, au lieu de laisser
+              l'expérience disparaître de la liste sans explication. */}
+          {moveReport && (
+            <p className="flex items-start gap-2 text-[11px] font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-2 py-1.5 mb-2">
+              <span className="flex-1">{moveReport}</span>
+              <button type="button" onClick={() => setMoveReport('')}
+                      className="shrink-0 font-black opacity-60 hover:opacity-100" title="Hide this message">✕</button>
+            </p>
+          )}
           {(project.experiments || []).length === 0 ? (
             <div className="text-xs italic text-slate-400 bg-slate-50 border border-dashed border-slate-300 rounded-lg px-3 py-6 text-center">
               No experiments yet — click a test type above to add the first one. Its button will appear here as a link
@@ -4672,9 +4760,14 @@ export const ProjectDetailModule = ({
                   return s + (t ? getStarredItems(t).length : 0);
                 }, 0);
                 const condCount = group.entries.length;
+                /* ⇄ Le volet « Move to project: » de CETTE ligne est-il ouvert ? */
+                const moveOpen = !!moveExp && moveExp.expId === exp.id;
                 return (
                   <div key={group.entries.map((e) => e.id).join('|')}
-                       className="flex items-center justify-between gap-2 bg-white border border-slate-200 rounded-lg p-2 hover:border-blue-300 hover:shadow-sm transition-shadow">
+                       className="flex flex-col gap-1">
+                  {/* La rangée : la même qu’avant (le ⇄ s’ajoute devant le ✕), et
+                      sous elle le volet « Move to project: » quand il est ouvert. */}
+                  <div className="flex items-center justify-between gap-2 bg-white border border-slate-200 rounded-lg p-2 hover:border-blue-300 hover:shadow-sm transition-shadow">
                     <button onClick={() => openTest(exp.testId)}
                             className="flex items-center gap-2 min-w-0 text-left">
                       <span className="shrink-0 text-[10px] font-black uppercase tracking-wide text-white bg-blue-600 rounded px-2 py-1">
@@ -4703,12 +4796,50 @@ export const ProjectDetailModule = ({
                           title="Items ⭐-starred on the test pages that will be imported into the document">
                       ⭐ {starCount}
                     </span>
+                    {canModify && moveTargets.length > 0 && (
+                      <button type="button"
+                              onClick={() => setMoveExp((prev) => (prev && prev.expId === exp.id
+                                ? null : { expId: exp.id, targetId: '' }))}
+                              className={`shrink-0 text-xs px-1.5 ${moveOpen ? 'text-blue-600' : 'text-slate-400 hover:text-blue-600'}`}
+                              title="Move this experiment to another project — the experiment (all its condition instances), its files and its Google-Drive folder leave this project for the chosen one.">
+                        ⇄
+                      </button>
+                    )}
                     {canModify && (
                       <button onClick={() => removeExperiment(exp.id)}
                               className="shrink-0 text-red-400 hover:text-red-600 text-xs px-1.5" title="Remove from project">
                         ✕
                       </button>
                     )}
+                  </div>
+                  {moveOpen && (
+                    <div className="flex flex-wrap items-center gap-2 bg-blue-50 border border-blue-200 rounded-lg px-2 py-1.5">
+                      <label className="text-[10px] font-black uppercase tracking-wide text-blue-700">
+                        ⇄ Move “{test?.name || group.name || 'this experiment'}” to project:
+                      </label>
+                      <select value={moveExp.targetId}
+                              onChange={(e) => setMoveExp((prev) => ({ expId: (prev && prev.expId) || exp.id, targetId: e.target.value }))}
+                              className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 font-semibold text-slate-700 max-w-xs">
+                        <option value="">Choose a project…</option>
+                        {moveTargets.map((p) => (
+                          <option key={p.id} value={p.id}>{p.name}</option>
+                        ))}
+                      </select>
+                      <button type="button" onClick={() => moveExperimentToProject(exp.id, moveExp.targetId)}
+                              disabled={!moveExp.targetId}
+                              className="px-3 py-1 text-xs font-bold rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40">
+                        ⇄ Move
+                      </button>
+                      <button type="button" onClick={() => setMoveExp(null)}
+                              className="px-2 py-1 text-xs font-bold rounded-lg bg-white border border-slate-300 text-slate-600 hover:bg-slate-100">
+                        Cancel
+                      </button>
+                      <span className="text-[10px] text-slate-500 flex-1 min-w-[180px]">
+                        Every condition instance of this experiment leaves this project, with its files and its
+                        Google-Drive folder. The “Include” choice follows it.
+                      </span>
+                    </div>
+                  )}
                   </div>
                 );
               })}

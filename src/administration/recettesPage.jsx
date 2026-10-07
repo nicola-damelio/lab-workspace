@@ -1,14 +1,5 @@
 /* =========================================================================
    src/administration/recettesPage.jsx
-   Page « Recettes » — lignes budgétaires.
-   Chaque ligne : type Fonctionnement / Investissement, porteur, budget total,
-   montant mis à disposition par l’université, dépenses déjà ordonnées
-   (BC signés), ordres de mission (acceptés / à prévoir — y compris ceux
-   marqués « Test », comptés en prévision sans être acceptés), souhaits d’achat
-   liés, solde calculé, date de fin d’engagement et commentaires.
-   Les agrégats sont calculés depuis les collections depenses / om /
-   desiderate / reimbursements de la même base (liaison par recetteId /
-   recetteSuggereeId).
    ========================================================================= */
 import React, { useEffect, useMemo, useState } from 'react';
 import { useAdmin } from './AdminContext';
@@ -399,22 +390,6 @@ export const RecettesPage = () => {
       budgetRendu, solde,
     };
   };
-
-  const totals = useMemo(() => {
-    let budgetTotal = 0; let budgetRendu = 0; let pi = 0; let omPay = 0; let omTot = 0; let des = 0; let reimb = 0;
-    let omSign = 0; let desSign = 0; let solde = 0; let soldePrevu = 0;
-    activeRecettes.forEach((r) => {
-      const a = aggFor(r);
-      budgetTotal += toNum(r.budgetTotal);
-      budgetRendu += a.budgetRendu;
-      pi += a.piTotal; omPay += a.omPaidTotal; omTot += a.omTotal; des += a.desMontant; reimb += a.reimbTotal;
-      omSign += a.omEnSignatureTotal; desSign += a.desEnSignatureTotal;
-      solde += a.solde;
-      soldePrevu += a.soldePrevu;
-    });
-    return { budgetTotal, budgetRendu, pi, omPay, omTot, des, reimb, omSign, desSign, solde, soldePrevu };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeRecettes, depenses, om, reimbursements, desiderate, devisBc]);
 
   const onSaveLine = (patch, existingId) => {
     if (!String(patch.ligne || '').trim()) { alert('Merci de donner un intitulé à la ligne budgétaire.'); return; }
@@ -908,7 +883,7 @@ export const RecettesPage = () => {
   ];
 
   return (
-    <div className="max-w-full mx-auto flex flex-col gap-4">
+    <div className="h-full min-h-0 w-full min-w-0 mx-auto flex flex-col gap-4">
       {linkRepair.report && (
         <div
           className={`rounded-xl border px-4 py-2.5 text-xs flex items-start justify-between gap-3 shadow-sm ${
@@ -956,12 +931,7 @@ export const RecettesPage = () => {
           </span>
         </div>
       )}
-      {/* Barre d’actions */}
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div className="flex items-center gap-2 text-xs font-bold text-slate-400">
-          <span className="inline-block w-2 h-2 rounded-full bg-blue-500" aria-hidden="true"></span>
-          Chaque ligne affiche ses montants et les éléments liés — survolez une case pour le détail, cliquez un élément lié pour l’ouvrir dans sa table d’origine.
-        </div>
+      <div className="flex items-center justify-end gap-3 flex-wrap">
         <button
           onClick={() => setImportOpen(true)}
           className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold text-sm px-4 py-2 rounded-xl shadow-sm transition-colors flex items-center gap-1.5"
@@ -977,8 +947,6 @@ export const RecettesPage = () => {
         </button>
       </div>
 
-      {/* Sélecteur d’onglet : Lignes budgétaires (Fonctionnement / Investissement)
-          · Salaires (lignes de rémunération, type « Salaire » — « Autres » historique). */}
       <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-xl p-1 shadow-sm w-fit flex-wrap">
         {[
           { id: 'budgets', icon: '📈', label: 'Lignes budgétaires', count: budgets.length },
@@ -999,21 +967,6 @@ export const RecettesPage = () => {
         ))}
       </div>
 
-      {/* Cartes de synthèse (onglet actif) — bandeau compact */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-10 gap-1.5">
-        <SummaryCard label="Budget total" value={totals.budgetTotal} tone="slate" />
-        <SummaryCard label="Mis à disposition (univ.)" value={totals.budgetRendu} tone="blue" />
-        <SummaryCard label="Prestations internes" value={totals.pi} tone="amber" />
-        <SummaryCard label="OM payés (Dépenses)" value={totals.omPay} tone="rose" />
-        <SummaryCard label="OM prévus (acceptés)" value={totals.omTot} tone="violet" />
-        <SummaryCard label="Achats prévus (approuvés)" value={totals.des} tone="teal" />
-        <SummaryCard label="Devis en signature/signé" value={totals.desSign} tone="teal" />
-        <SummaryCard label="OM en signature/signé" value={totals.omSign} tone="indigo" />
-        <SummaryCard label="Solde restant" value={totals.solde} tone={totals.solde < 0 ? 'red' : 'emerald'} />
-        <SummaryCard label="Solde prévu" value={totals.soldePrevu} tone={totals.soldePrevu < 0 ? 'red' : 'indigo'} />
-      </div>
-
-      {/* Table des lignes budgétaires */}
       {recettes.length === 0 ? (
         <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-10 text-center">
           <div className="text-4xl mb-2">📈</div>
@@ -1035,17 +988,20 @@ export const RecettesPage = () => {
           </p>
         </div>
       ) : (
-        <SmartTable
-          key={tab}
-          columns={recetteCols}
-          rows={recetteRows}
-          minWidth="1600px"
-          searchPlaceholder="Rechercher une ligne, un porteur, une note…"
-          emptyLabel="Aucune ligne budgétaire pour le moment"
-          noMatchLabel={tab === 'salaires'
-            ? 'Aucune ligne « salaires » ne correspond aux filtres.'
-            : 'Aucune ligne budgétaire ne correspond aux filtres.'}
-        />
+        <div className="flex-1 min-h-0 flex flex-col">
+          <SmartTable
+            key={tab}
+            columns={recetteCols}
+            rows={recetteRows}
+            minWidth="1600px"
+            fillHeight
+            searchPlaceholder="Rechercher une ligne, un porteur, une note…"
+            emptyLabel="Aucune ligne budgétaire pour le moment"
+            noMatchLabel={tab === 'salaires'
+              ? 'Aucune ligne « salaires » ne correspond aux filtres.'
+              : 'Aucune ligne budgétaire ne correspond aux filtres.'}
+          />
+        </div>
       )}
 
       {importOpen && <AdminImportModal kind="recettes" onClose={() => setImportOpen(false)} />}
@@ -1055,27 +1011,6 @@ export const RecettesPage = () => {
         depenses={depenses} om={om} desiderate={desiderate}
         onCancel={() => setModal(null)} onSave={onSaveLine}
       />}
-    </div>
-  );
-};
-
-/* ── Cartes de synthèse ─────────────────────────────────────────────────── */
-const SummaryCard = ({ label, value, tone }) => {
-  const tones = {
-    slate: 'border-slate-200 text-slate-800',
-    blue: 'border-blue-200 text-blue-700',
-    indigo: 'border-indigo-200 text-indigo-700',
-    amber: 'border-amber-200 text-amber-700',
-    rose: 'border-rose-200 text-rose-700',
-    violet: 'border-violet-200 text-violet-700',
-    teal: 'border-teal-200 text-teal-700',
-    emerald: 'border-emerald-200 text-emerald-700',
-    red: 'border-red-200 text-red-600',
-  };
-  return (
-    <div className={`bg-white border rounded-xl shadow-sm px-3 py-1.5 ${tones[tone] || tones.slate}`}>
-      <div className="text-[9px] font-black uppercase tracking-wide opacity-70 leading-none truncate">{label}</div>
-      <div className="text-sm font-black mt-1 leading-tight tabular-nums truncate">{euro.format(value)}</div>
     </div>
   );
 };

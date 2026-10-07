@@ -66,50 +66,109 @@ export const LinksManager = ({ links = [], setLinks, tableName = '', elementName
   );
 };
 
-export const LibraryTable = ({ columns, rows, onRowClick, emptyLabel }) => (
-  <div className="border border-slate-200 rounded-lg overflow-hidden">
-    <div className="max-h-64 overflow-y-auto custom-scrollbar">
-      <table className="w-full text-sm border-collapse">
-        <thead className="sticky top-0 bg-slate-100 z-10">
-          <tr>
-            {columns.map((col) => (
-              <th
-                key={col.key}
-                className="text-left text-[10px] font-bold text-slate-500 uppercase tracking-wide px-3 py-2 border-b border-slate-200"
-              >
-                {col.label}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.length === 0 ? (
-            <tr>
-              <td colSpan={columns.length} className="text-xs text-slate-400 italic px-3 py-3">
-                {emptyLabel}
-              </td>
-            </tr>
-          ) : (
-            rows.map((row, idx) => (
-              <tr
-                key={row.id}
-                onClick={() => onRowClick(row)}
-                title="Click to view / edit"
-                className={`cursor-pointer hover:bg-blue-50 transition-colors ${idx % 2 === 1 ? 'bg-slate-50/70' : 'bg-white'}`}
-              >
-                {columns.map((col) => (
-                  <td key={col.key} className="px-3 py-2 border-b border-slate-100 text-slate-700 align-top">
-                    {col.render ? col.render(row) : (row[col.key] ?? '—')}
-                  </td>
-                ))}
-              </tr>
-            ))
+/* 🔀 LA TABLE DE LA LIBRAIRIE — cliquer une ligne ouvre la fiche de l'élément
+   (comportement d'origine). Quand `selectable` est vrai, elle porte EN PLUS une
+   colonne de cases à cocher : c'est ce qui permet de sélectionner plusieurs
+   entrées d'une sous-catégorie — ou de plusieurs — et de les supprimer EN UNE
+   SEULE FOIS (le bouton apparaît dès qu'une case est cochée). La sélection est
+   tenue par la page (`selectedNames`), pas par la table : elle doit survivre au
+   filtrage, aux re-rendus et au compteur global de l'en-tête. */
+export const LibraryTable = ({
+  columns, rows, onRowClick, emptyLabel,
+  selectable = false, selectedNames = [], onToggleSelect, onToggleAll, onDeleteSelected
+}) => {
+  const selected = new Set(selectedNames);
+  const names = rows.map((row) => row.name);
+  const picked = names.filter((name) => selected.has(name)).length;
+  const allOn = names.length > 0 && picked === names.length;
+  const cols = columns.length + (selectable ? 1 : 0);
+
+  return (
+    <div className="border border-slate-200 rounded-lg overflow-hidden">
+      {selectable && rows.length > 0 && (
+        <div className="flex items-center gap-3 px-3 py-1.5 bg-white border-b border-slate-200">
+          <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              className="accent-blue-600"
+              checked={allOn}
+              onChange={() => onToggleAll && onToggleAll(!allOn)}
+              title={allOn ? 'Deselect every entry of this table' : 'Select every entry of this table'}
+            />
+            {allOn ? 'None' : 'All'}
+          </label>
+          <span className="text-[11px] text-slate-400">
+            {rows.length} {rows.length > 1 ? 'entries' : 'entry'}
+          </span>
+          {picked > 0 && (
+            <button
+              type="button"
+              onClick={onDeleteSelected}
+              title="Delete every selected entry of this table"
+              className="ml-auto text-[11px] font-black text-red-600 hover:text-red-800 bg-red-50 hover:bg-red-100 border border-red-200 rounded-lg px-2 py-1 transition-colors flex items-center gap-1"
+            >
+              🗑 Delete selected ({picked})
+            </button>
           )}
-        </tbody>
-      </table>
+        </div>
+      )}
+      <div className="max-h-64 overflow-y-auto custom-scrollbar">
+        <table className="w-full text-sm border-collapse">
+          <thead className="sticky top-0 bg-slate-100 z-10">
+            <tr>
+              {selectable && (
+                <th className="w-8 px-2 py-2 border-b border-slate-200" aria-label="Select" />
+              )}
+              {columns.map((col) => (
+                <th
+                  key={col.key}
+                  className="text-left text-[10px] font-bold text-slate-500 uppercase tracking-wide px-3 py-2 border-b border-slate-200"
+                >
+                  {col.label}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length === 0 ? (
+              <tr>
+                <td colSpan={cols} className="text-xs text-slate-400 italic px-3 py-3">
+                  {emptyLabel}
+                </td>
+              </tr>
+            ) : (
+              rows.map((row, idx) => (
+                <tr
+                  key={row.id}
+                  onClick={() => onRowClick(row)}
+                  title="Click to view / edit"
+                  className={`cursor-pointer hover:bg-blue-50 transition-colors ${idx % 2 === 1 ? 'bg-slate-50/70' : 'bg-white'}`}
+                >
+                  {selectable && (
+                    <td className="px-2 py-2 border-b border-slate-100 align-top" onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        className="accent-blue-600"
+                        checked={selected.has(row.name)}
+                        onChange={() => onToggleSelect && onToggleSelect(row.name)}
+                        title={`Select « ${row.name} »`}
+                      />
+                    </td>
+                  )}
+                  {columns.map((col) => (
+                    <td key={col.key} className="px-3 py-2 border-b border-slate-100 text-slate-700 align-top">
+                      {col.render ? col.render(row) : (row[col.key] ?? '—')}
+                    </td>
+                  ))}
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
-  </div>
-);
+  );
+};
 
 export const CellLineDefinitionSection = ({
   cellLineOptions = [],

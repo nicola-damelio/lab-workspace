@@ -9,6 +9,17 @@ import { storeJson, loadJson } from '../utils/pdbStore';
 import { archiveRestoreJson, placeRestorePointer, restoreJsonFor, restoreStems, takePendingRestorePointer } from '../utils/driveRestore';
 import { useDriveAutoRestore } from './useDriveAutoRestore';
 import { sequenceForMoleculeType, sequencePatchForMoleculeType, structureSequencePatch, sequenceNaturesNote } from '../utils/sequenceNatures';
+/* 🧬 LA LIGNE SOUS LA CASE DE SÉQUENCE — le nombre de chaque acide aminé, la charge totale à
+   pH 7 et l'ε₂₈₀. Le composant partagé (src/components/SequenceReadingLine.jsx) calcule la
+   lecture lui-même avec le module PUR des pKa (utils/sequenceCharge.js) et le texte de
+   modifications de la condition : la MÊME ligne sous TOUTES les cases de séquence (les pages
+   NMR, MD et Docking, et la fiche du composé de la Librairie), et le MÊME modèle que le ⚙
+   « Params & Constraints » lit pour le pH. */
+import { SequenceReadingLine } from './SequenceReadingLine';
+/* 🎨 LA CASE DE SÉQUENCE, LETTRES COLORÉES (la demande) — le même composant que les pages NMR
+   et MD : les cinq lettres de utils/sequenceHighlight.js y sont PEINTES (K · R bleu, E · D
+   rouge, C orange) dans une couche sous un vrai `<textarea>`. */
+import { SequenceField } from './SequenceField';
 // LE numéro affiché d'un résidu (position + residueOffset → table 🔢 du viewer) :
 // les pastilles de « Sequence and structure » montrent les mêmes numéros que le
 // viewer 3D et que la table des déplacements.
@@ -66,7 +77,11 @@ import NMRMoleculeViewer from './NMRMoleculeViewer';
 // utils/ligandSmiles.js). The viewer does the same on its own structure and
 // reports the answer back through onLigandSmiles.
 import { fetchLigandSmiles, ligandCodesFromPdbText } from '../utils/ligandSmiles';
-import {AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, SS_META, RESIDUE_COLORS, buildProteinStructure, buildNucleicStructure, buildSugarStructure, buildLipidStructure, elementsToSVG, StructureSVGView, CollapsibleSection, SequencePaintStrip, getSelectedKeys, getManualKeys, DOCKING_METRICS, DOCKING_PIPELINE_STAGES, parseDockingValue, getProgramInfo, parseDockingFile, parseCapriTsv, posesFromCapri, parseTomlSimple, extractDockedMolecules, getDockingInstances, getDockingActiveInstance, getDockingLayers, getDockingActiveLayerKey, getDockingLayerValues, writeDockingCellValue, generateDockingPoses, generateHADDOCKPoses, DEFAULT_DOCKING_CHART_STYLE, dockChartBoxStyle, dockDom, DOCK_CHART_MARGIN, dockingMetricOf, poseMetricValue, capriColumnMetricKey, chartEnergyMetricKey, poseChartValue, poseDeviation, poseRawColumnValue, deviationColumnOf, energyColumnOf, plotSourceOptions, plotSourceLabel, plotSourceValue, PLOT_SOURCE_PREFIX, PLOT_SOURCE_ALL, DEVIATION_PLOT_KEYS, dockingMetricLabel, HADDOCK_SCORE_TERM_KEYS, haddockScoreTerms} from './DockingData';
+// 🧵 La définition de séquence (le pinceau 🖌️ et les feuillets déclarés) est la
+// MÊME sur les trois pages : la bande de séquence marque ses brins avec le MÊME
+// lecteur que le panneau 🧵 et le repliement (utils/betaSheetFold.js).
+import { sheetMarkAt } from '../utils/betaSheetFold';
+import {AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, SS_META, RESIDUE_COLORS, buildProteinStructure, buildNucleicStructure, buildSugarStructure, buildLipidStructure, elementsToSVG, StructureSVGView, CollapsibleSection, SequencePaintStrip, BetaSheetEditor, useSequenceStructureModel, getSelectedKeys, getManualKeys, DOCKING_METRICS, DOCKING_PIPELINE_STAGES, parseDockingValue, getProgramInfo, parseDockingFile, parseCapriTsv, posesFromCapri, parseTomlSimple, extractDockedMolecules, getDockingInstances, getDockingActiveInstance, getDockingLayers, getDockingActiveLayerKey, getDockingLayerValues, writeDockingCellValue, generateDockingPoses, generateHADDOCKPoses, DEFAULT_DOCKING_CHART_STYLE, dockChartBoxStyle, dockDom, DOCK_CHART_MARGIN, dockingMetricOf, poseMetricValue, capriColumnMetricKey, chartEnergyMetricKey, poseChartValue, poseDeviation, poseRawColumnValue, deviationColumnOf, energyColumnOf, plotSourceOptions, plotSourceLabel, plotSourceValue, PLOT_SOURCE_PREFIX, PLOT_SOURCE_ALL, DEVIATION_PLOT_KEYS, dockingMetricLabel, HADDOCK_SCORE_TERM_KEYS, haddockScoreTerms} from './DockingData';
 
 
 /* ============================================================================
@@ -130,7 +145,9 @@ const useDockingDerived = (activeTest, ctx = {}) => {
     : moleculeType === 'organic' ? 'Organic Molecule' : 'Phospholipid';
 
   const ssRaw = activeTest.secondaryStructure || '';
-  const getSSAt = (i) => (ssRaw[i] && 'HES'.includes(ssRaw[i]) ? ssRaw[i] : 'C');
+  // ⚠ HESLT — L (hélice α GAUCHE) et T (tour β) sont des lettres peignables comme
+  // les autres.
+  const getSSAt = (i) => (ssRaw[i] && 'HESLT'.includes(ssRaw[i]) ? ssRaw[i] : 'C');
 
   const parsedSeq = useMemo(() => {
     let chars = [];
@@ -494,18 +511,25 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
     }
   };
 
-  // When the calculation-directory importer brought cluster structures, open the
-  // 3D viewer by default so they are actually visible (instead of a plain protein).
+  // When the calculation-directory importer brought cluster structures, the 3D
+  // viewer's own card opens by itself so they are actually visible (instead of a
+  // plain protein) — see `openWhen` on that card below.
   const structureMode = activeTest.structureMode || (hasDockStructs ? '3d' : '2d');
-  const [hasOpened3D, setHasOpened3D] = useState(structureMode === '3d');
+  /* ── LE VIEWER 3D A SA PROPRE SOUS-SECTION REPLIABLE (comme la page NMR) ────
+     `keepMounted` (src/components/ui.jsx) fait que replier NE DÉMONTE PAS le
+     viewer : son contenu n'est créé qu'à la PREMIÈRE ouverture, reste monté
+     ensuite (masqué en CSS). `viewerOpen` ne décide donc plus si le viewer
+     existe — c'est SA carte qui s'en charge — mais sert à faire recaler le
+     viewer sur la largeur RÉELLE à chaque repli / dépliage (aucun « resize »
+     n'est émis par le navigateur dans ce geste). */
+  const [viewerOpen, setViewerOpen] = useState(false);
   const [expandedPanel, setExpandedPanel] = useState(null);
   const [ssBrush, setSSBrush] = useState('H');
 
-  useEffect(() => { if (structureMode === '3d') setHasOpened3D(true); }, [structureMode]);
   useEffect(() => {
     const t = setTimeout(() => window.dispatchEvent(new Event('resize')), 100);
     return () => clearTimeout(t);
-  }, [structureMode, hasOpened3D]);
+  }, [viewerOpen]);
 
   // Auto-fill sequence / SMILES from compound metadata when a compound is selected
   const firstSelectedCmp = activeTest.selectedCompounds?.[0];
@@ -546,6 +570,18 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
     updateActiveTest({ secondaryStructure: arr.join('') });
   };
 
+  /* 🧵 LA DÉFINITION DE SÉQUENCE — le pinceau 🖌️, les feuillets déclarés et le modèle
+     replié : le crochet partagé `useSequenceStructureModel` (défini avec le bâtisseur
+     PDB, dans NMRSections.jsx) est LA seule lecture de cette définition, la même pour
+     les trois pages. `betaSheetRead` marque les brins sur la bande de séquence
+     ci-dessous, `sheetFold` est le rapport du modèle pour le panneau 🧵, et
+     `sequenceStructure` est le texte PDB que CETTE page confie à son viewer 3D — servi
+     dès que RIEN n'est chargé ici (la structure du cluster, elle, garde la priorité). */
+  const univTestMode = Boolean(activeTest.universityTest);
+  const { betaSheetRead, sheetFold, sequenceStructure } = useSequenceStructureModel({
+    activeTest, d, univTestMode,
+  });
+
   const structureSrc = useMemo(() => {
     const raw = (activeTest.structureSrc || '').trim();
     if (!raw) {
@@ -578,6 +614,49 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
       .catch(() => {});
     return () => { cancelled = true; };
   }, [structKey, activeTest.dockingStructures]);
+
+  /* ── CE QUE LA SOUS-SECTION « SEQUENCE AND STRUCTURE » A À MONTRER ──────────
+     La FORMULE 2D (l'ancien volet « 2D Formula » du sélecteur 2D / 3D) et la
+     peinture 🖌️ de sa bande forment UNE carte, OUVERTE par défaut (c'est là que
+     la formule se voit ; CollapsibleSection mémorise le choix, ouvert / replié,
+     par expérience). C'est l'organisation de la page NMR, mot pour mot (la
+     demande : « use the same separation and organization of 2D formula and 3D
+     viewer. and the same compressible windows that you used in NMR page ») : le
+     VIEWER 3D a SA propre sous-section repliable, juste après.
+     La carte se rend aussi pour un récepteur encore VIDE (aucune formule à
+     dessiner) : elle porte alors le rappel « No structure to display yet » qui
+     vivait dans l'ancien volet 2D — l'écran ne perd pas son repère. */
+  const show2DFormula = Boolean(d.structure);
+  const showPaintStrip = d.moleculeType === 'protein' && d.parsedSeq.length > 0;
+  const showFormulaBlock = show2DFormula || d.isPolymer;
+  const formulaBlock = (
+    <div className="mb-3">
+      {d.structure ? (
+        <StructureSVGView
+          structure={d.structure}
+          minWidth={d.moleculeType === 'protein' && d.parsedSeq.length > 3 ? `${d.parsedSeq.length * 120}px` : '100%'}
+          isExpanded={expandedPanel === 'formula'}
+          onToggleExpand={() => setExpandedPanel(expandedPanel === 'formula' ? null : 'formula')}
+          selectedKeys={selectedKeys}
+          manualKeys={manualKeys}
+          onAtomClick={handleAtomClick}
+          height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? `${Math.max(360, d.parsedSeq.length * 250 + 120)}px` : '300px'}
+        />
+      ) : (
+        <div className="flex items-center justify-center bg-slate-50 border border-dashed border-slate-300 rounded-xl p-6 text-center w-full">
+          <div>
+            <div className="text-2xl mb-1">🧬</div>
+            <p className="text-xs font-bold text-slate-500">No structure to display yet</p>
+            <p className="text-[11px] text-slate-400 mt-1 max-w-md">
+              Enter the receptor sequence above (or select a compound that has sequence / SMILES metadata)
+              to generate the 2D formula.
+            </p>
+          </div>
+        </div>
+      )}
+      <p className="text-xs text-slate-400 mt-1">💡 Click an atom in the formula (or in the 3D viewer below) to highlight its cell in the atom table.</p>
+    </div>
+  );
 
   return (
     <div className="flex flex-col gap-6">
@@ -615,15 +694,29 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
               <label className="block text-xs font-bold text-slate-500 uppercase mb-2">
                 {d.typeLabel} Sequence (1-letter code)
               </label>
-              <textarea
+              {/* 🎨 LA CASE COLORÉE (la demande) — le même composant que les pages NMR et MD :
+                  SequenceField peint K · R en bleu, E · D en rouge, C en orange dans une couche
+                  SOUS un vrai `<textarea>` (saisie, curseur, sélection, collage et
+                  annuler/rétablir inchangés), et l'écriture passe toujours par le même patch. */}
+              <SequenceField
                 value={d.rawSequence}
-                onChange={(e) => updateActiveTest(sequencePatchForMoleculeType(activeTest, d.moleculeType, e.target.value))}
-                className="w-full border border-slate-300 rounded-lg p-3 font-mono text-sm tracking-widest outline-none focus:border-blue-500 uppercase h-24 shadow-inner"
-                placeholder={d.moleculeType === 'protein' ? 'e.g. MKWVTFISLL...' : 'e.g. ATGCGTAC...'}
+                onChange={(v) => updateActiveTest(sequencePatchForMoleculeType(activeTest, d.moleculeType, v))}
+                moleculeType={d.moleculeType}
               />
               <p className="text-[10px] text-slate-400 mt-1 font-bold">
                 Length: {d.seq.length} {d.moleculeType === 'protein' ? 'residues' : 'nucleotides'}
               </p>
+              {/* 🧬 LA LECTURE DE LA SÉQUENCE — sous la CASE : le nombre de chaque acide aminé,
+                  la charge totale à pH 7 et l'ε₂₈₀ estimé. La MÊME ligne que sous les cases des
+                  pages NMR, MD et de la fiche du composé : elle la calcule elle-même avec le
+                  module pur des pKa, les modifications de la condition et des terminus GRATUITS
+                  par défaut. Rien pour un ADN / ARN (aucune composition d'acides aminés à dire). */}
+              <SequenceReadingLine
+                sequence={d.rawSequence}
+                moleculeType={d.moleculeType}
+                modifications={activeTest.modifications || ''}
+                className="mt-1"
+              />
               {d.seqNaturesNote && (
                 <p className="text-[10px] font-bold text-teal-800 bg-teal-50 border border-teal-200 rounded-lg px-2 py-1 mt-1">{d.seqNaturesNote}</p>
               )}
@@ -687,14 +780,22 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
         </div>
       </div>
 
-      {/* Secondary structure paint (protein only) — Issue #10 : regroupée avec la
-          bande de séquence dans une sous-section « Sequence and structure »
-          repliée par défaut (CollapsibleSection mémorise le choix). */}
-      {d.moleculeType === 'protein' && d.parsedSeq.length > 0 && (
-        <CollapsibleSection title="Sequence and structure" icon="🖌️" defaultOpen={false}>
+      {/* ══ L'ORGANISATION DE LA PAGE NMR, ICI AUSSI ═══════════════════════════
+          « Sequence and structure » porte la FORMULE 2D ET la peinture 🖌️ de sa
+          bande, et elle est OUVERTE par défaut (c'est là que la formule se voit :
+          CollapsibleSection mémorise le choix, ouvert / replié, par expérience) ;
+          le VIEWER 3D a SA PROPRE carte repliable, plus bas, dans le MÊME
+          empilement — plus aucun sélecteur 2D ⇄ 3D, et aucun grand blanc entre
+          les deux. Exactement comme la page NMR (la demande). */}
+      <div className="flex flex-col">
+      {showFormulaBlock && (
+        <CollapsibleSection title="Sequence and structure" icon="🖌️" defaultOpen>
+          {formulaBlock}
+          {showPaintStrip && (
+            <>
           <div className="flex flex-wrap gap-2 mb-3 items-center">
             <span className="text-xs font-bold text-slate-500 uppercase mr-1">🖌️ Brush:</span>
-            {['C', 'H', 'E'].map((l) => (
+            {['C', 'H', 'L', 'E', 'T'].map((l) => (
               <button
                 key={l}
                 onClick={() => setSSBrush(l)}
@@ -709,6 +810,7 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
               </button>
             ))}
           </div>
+          <p className="text-xs text-slate-400 mb-3">💡 Select a brush, then click or drag across the sequence chips to paint secondary structure. Paint two runs of β-strand (E) — a turn (T) between them holds the hairpin — then pair them as a β-sheet below.</p>
           <SequencePaintStrip
             residues={d.parsedSeq}
             getLetter={(i) => d.getSSAt(i)}
@@ -716,46 +818,75 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
             onApply={(i) => paintSSAt(i, ssBrush)}
             focusIdx="ALL"
             residueNo={residueNoOf}
+            sheetOf={(i) => sheetMarkAt(betaSheetRead.pairs, i + 1)}
           />
+          {/* 🧵 LA DÉFINITION DU FEUILLET — la seconde moitié de la définition de
+              séquence, ICI comme sur les pages NMR et MD : deux brins peints E
+              appariés, parallèles ou antiparallèles. Le panneau écrit la DÉCLARATION
+              (`activeTest.betaSheets`, en positions de séquence — la clé commune aux
+              trois pages), et la note qu'il affiche est le rapport du modèle RÉELLEMENT
+              bâti (`sheetFold` : échelons CA–CA et ponts N–H···O=C mesurés par le même
+              lecteur que l'écrivain PDB). Le modèle replié part au viewer 3D par
+              `sequenceStructure`. */}
+          {!univTestMode && (
+            <BetaSheetEditor
+              secondaryStructure={activeTest.secondaryStructure || ''}
+              sequenceLength={(d.seq || '').length}
+              sheets={activeTest.betaSheets}
+              onChange={(next) => updateActiveTest({ betaSheets: next })}
+              residueNo={residueNoOf}
+              fold={sheetFold}
+            />
+          )}
+            </>
+          )}
         </CollapsibleSection>
       )}
 
-      {/* 2D / 3D structure view */}
-      <div>
-        <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
-            <div className="flex bg-slate-200 p-1 rounded-lg">
-              <button
-                onClick={() => updateActiveTest({ structureMode: '2d' })}
-                className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${
-                  structureMode === '2d' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500'
-                }`}
-              >
-                2D Formula
-              </button>
-              <button
-                onClick={() => updateActiveTest({ structureMode: '3d' })}
-                className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${
-                  structureMode === '3d' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500'
-                }`}
-              >
-                3D Viewer
-              </button>
-            </div>
+      {/* ── LE VIEWER 3D : SA PROPRE SOUS-SECTION REPLIABLE ────────────────────
+          Replier NE DÉMONTE PAS le viewer (`keepMounted`) : son contenu n'est créé
+          qu'à la PREMIÈRE ouverture, puis reste monté et masqué en CSS — le
+          dépliage ne relit donc pas les structures — et `onToggle` fait recaler
+          le viewer sur la largeur réelle. La carte s'OUVRE toute seule quand une
+          structure de cluster est là (structureMode '3d') ou qu'une condition
+          garde l'ancien sélecteur en mode 3D : les structures importées restent
+          visibles sans un clic. */}
+      <CollapsibleSection
+        title="3D viewer"
+        icon="🧬"
+        defaultOpen={false}
+        openWhen={structureMode === '3d'}
+        keepMounted
+        onToggle={setViewerOpen}
+      >
+        <div className="flex flex-col gap-2">
+          {/* (Le « Receptor topology (PDB ID / URL) » vivait dans la rangée du
+              sélecteur 2D / 3D et n'apparaissait QU'en mode 3D : il est
+              maintenant DANS la carte du viewer, qui est l'endroit d'où l'on
+              charge la structure — c'est ce champ qui écrit `structureSrc`, le
+              même que les commandes du viewer.) */}
+          <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5">
+            <label className="text-[10px] font-bold text-slate-500 uppercase whitespace-nowrap">Receptor topology (PDB ID / URL)</label>
+            <input
+              type="text"
+              value={activeTest.structureSrc || ''}
+              onChange={(e) => updateActiveTest({ structureSrc: e.target.value })}
+              placeholder="e.g. 1UBQ"
+              className="flex-1 min-w-0 border border-slate-300 rounded-md px-2 py-1 text-xs bg-white outline-none focus:border-blue-500"
+            />
           </div>
-
-          {structureMode === '3d' && (
-            <div className="mb-2 flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5">
-              <label className="text-[10px] font-bold text-slate-500 uppercase whitespace-nowrap">Receptor topology (PDB ID / URL)</label>
-              <input
-                type="text"
-                value={activeTest.structureSrc || ''}
-                onChange={(e) => updateActiveTest({ structureSrc: e.target.value })}
-                placeholder="e.g. 1UBQ"
-                className="flex-1 min-w-0 border border-slate-300 rounded-md px-2 py-1 text-xs bg-white outline-none focus:border-blue-500"
-              />
+          {selectedStruct && (
+            <div className="flex flex-wrap items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+              <span className="text-[10px] font-black text-slate-600 uppercase">8_seletopclusts structure</span>
+              <select value={structIdx} onChange={(e) => setStructIdx(Number(e.target.value))}
+                className="border border-slate-300 rounded px-2 py-1 text-xs bg-white max-w-[260px]">
+                {structList.map((s, i) => <option key={s.name} value={i}>{s.name}</option>)}
+              </select>
+              {selectedStruct.driveUrl && (
+                <a href={selectedStruct.driveUrl} target="_blank" rel="noreferrer" className="text-[10px] font-bold text-sky-700 hover:underline">☁️ Drive</a>
+              )}
             </div>
           )}
-
           {/* Restauration automatique des structures depuis le Drive (voir
               useDockingDriveRestore) : l'archive est déposée toute seule à
               l'import d'un répertoire de calcul, et récupérée toute seule ici
@@ -813,8 +944,20 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
                 src={selectedStruct ? '' : structureSrc}
                 structureText={selectedStruct ? selectedStruct.pdb : undefined}
                 structureTextExt="pdb"
+                /* 🧬 LE MODÈLE DE LA SÉQUENCE (le crochet `useSequenceStructureModel`
+                   ci-dessus) : peinture 🖌️, FEUILLETS DÉCLARÉS (records SHEET + REMARK
+                   950 / 951) et ponts disulfure ⚭ compris. Le viewer le sert dès que RIEN
+                   n'est chargé ici — exactement le comportement de la page NMR — et
+                   « 🧬 Structure from sequence » le reconstruit à la demande ; la
+                   structure de cluster sélectionnée, elle, reste prioritaire. */
+                sequenceStructureText={sequenceStructure?.text || null}
+                sequenceStructureExt={sequenceStructure?.ext || null}
                 moleculeType={d.moleculeType}
                 parsedSeq={d.parsedSeq}
+                /* 🧪 …ET LA DÉFINITION DES MODIFICATIONS DU COMPOSÉ (Acetylation · Amidation · …) :
+                   le ⚙ Params & Constraints lit la charge de la SÉQUENCE avec elle
+                   (utils/sequenceCharge.js). */
+                sequenceModifications={activeTest.modifications || ''}
                 // The ligand's SMILES travels with the run: the Molecules bar shows
                 // it (folded, with 📋) so the docked ligand can be identified and
                 // pasted without leaving the page. It is read from the derived
@@ -833,6 +976,10 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
                 selectedKeys={selectedKeys}
                 manualKeys={manualKeys}
                 onAtomClick={handleAtomClick}
+                /* ⛓ La structure secondaire peinte dans « Sequence and structure » (🖌️)
+                   part vers le viewer : le bouton ⛓ du panneau 🧬 en fait des
+                   contraintes de dihèdre pour le ▶ MD, le ⚒ Minimise et le ▶ Run. */
+                imposedSecondaryStructure={activeTest.secondaryStructure || ''}
                 driveNaming={{ project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || '', instance: activeTest.instanceName || '', scientist: activeTest.operator || '', section: 'Data', subsection: 'Docking' }}
                 atomRenames={activeTest.atomRenames || {}}
                 onAtomRenames={(map) => updateActiveTest({ atomRenames: map })}
@@ -847,36 +994,16 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
                 }}
                 height="480px"
               />
-              </>
-            )}
-          </div>
 
-          <div style={{ display: structureMode === '2d' ? 'block' : 'none' }}>
-            {d.structure ? (
-              <StructureSVGView
-                structure={d.structure}
-                minWidth={d.moleculeType === 'protein' && d.parsedSeq.length > 3 ? `${d.parsedSeq.length * 120}px` : '100%'}
-                isExpanded={expandedPanel === 'formula'}
-                onToggleExpand={() => setExpandedPanel(expandedPanel === 'formula' ? null : 'formula')}
-                selectedKeys={selectedKeys}
-                manualKeys={manualKeys}
-                onAtomClick={handleAtomClick}
-                height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? `${Math.max(360, d.parsedSeq.length * 250 + 120)}px` : '300px'}
-              />
-            ) : (
-              <div className="flex items-center justify-center bg-slate-50 border border-dashed border-slate-300 rounded-xl p-6 text-center w-full">
-                <div>
-                  <div className="text-2xl mb-1">🧬</div>
-                  <p className="text-xs font-bold text-slate-500">No structure to display yet</p>
-                  <p className="text-[11px] text-slate-400 mt-1 max-w-md">
-                    Enter a receptor sequence below (or select a compound that has sequence / SMILES metadata)
-                    to generate the 2D formula.
-                  </p>
-                </div>
-              </div>
-            )}
-          </div>
+          {/* (L'ancien SECOND volet — la formule 2D que le sélecteur 2D ⇄ 3D
+              cachait d'un `display: none` — a disparu, ainsi que le montage
+              conditionnel du viewer : c'est la carte repliable `keepMounted` qui
+              le monte à sa PREMIÈRE ouverture et le garde monté ensuite. La
+              formule vit DANS « Sequence and structure » ci-dessus, comme sur la
+              page NMR : une seule définition (`formulaBlock`).) */}
         </div>
+      </CollapsibleSection>
+      </div>
     </div>
   );
 };

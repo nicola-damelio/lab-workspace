@@ -1306,6 +1306,191 @@ export const moveTestFolderOutOfProject = async ({ testName, projectName }) => {
   }
 };
 
+/* ── DÉPLACER LE DOSSIER D'UNE EXPÉRIENCE D'UN PROJET À UN AUTRE ──────────── */
+
+/** Un nœud Drive est-il un DOSSIER ? Le mime est la seule marque fiable. */
+const DRIVE_FOLDER_MIME = 'application/vnd.google-apps.folder';
+const isFolderNode = (node) => Boolean(node) && String(node.mimeType || '') === DRIVE_FOLDER_MIME;
+
+/** Fusionner le dossier `fromId` DANS `toId` : chaque enfant est DÉPLACÉ par son
+ *  identifiant (jamais copié), et un dossier portant le MÊME nom des deux côtés
+ *  est fusionné RÉCURSIVEMENT — c'est ce qui évite de fabriquer un jumeau de
+ *  plus (voir docs/DRIVE-MIRROR.md, « Les jumeaux d'INSTANCE »).
+ *  Un FICHIER homonyme n'est JAMAIS écrasé : il reste où il est (son dossier,
+ *  devenu non vide, n'est donc pas rangé à la corbeille — l'appelant le
+ *  signale). Même politique que `_repair_drive_twins.mjs`.
+ *  @returns {Promise<number>} nombre d'enfants déplacés */
+const mergeFolderInto = async (fromId, toId, depth = 0) => {
+  if (!fromId || !toId || fromId === toId || depth > 12) return 0;
+  let moved = 0;
+  const [kids, keep] = await Promise.all([listDriveChildren(fromId), listDriveChildren(toId)]);
+  for (const kid of kids) {
+    const folder = isFolderNode(kid);
+    const clash = keep.find((k) => k && k.name === kid.name && isFolderNode(k) === folder);
+    if (folder && clash) {
+      moved += await mergeFolderInto(kid.id, clash.id, depth + 1);
+      await trashEmptyFolderChain([{ name: kid.name, id: kid.id }]);
+      continue;
+    }
+    if (clash) continue; // homonyme : rien n'est écrasé, rien n'est supprimé
+    await moveDriveFile(kid.id, toId);
+    moved += 1;
+  }
+  return moved;
+};
+
+/** Ranger les SOURCES d'un dossier d'expérience sous le dossier du projet visé.
+ *  Partie « geste » de `moveTestFolderBetweenProjects` (voir sa documentation) :
+ *  chaque source est DÉPLACÉE, ou FUSIONNÉE dans le dossier du même nom déjà
+ *  présent dans le projet visé ; les conteneurs vidés partent à la corbeille ;
+ *  le registre des fichiers est réécrit en `projects/<projet visé>/…`.
+ *  @returns {Promise<{folders:number, merged:number, registry:number, kept:number}>} */
+const moveExperimentSourcesInto = async (sources, {
+  testName, testSlug, fromSlug, toProjectName, toSlug, toFolderId, projectsId, leftovers = [], report
+}) => {
+  /* Chaque source MIGRE — ou fusionne avec un dossier du même nom déjà là. */
+  for (const src of sources) {
+    if (src.id === toFolderId || src.parent === toFolderId) continue; // déjà rangé
+    try {
+      const twins = (await listFoldersByName(testSlug, toFolderId)).filter((f) => String(f.id) !== src.id);
+      const keep = twins.length ? await canonicalTwinOf(twins) : null;
+      if (!keep) {
+        await moveDriveFile(src.id, toFolderId); // DÉPLACÉ (addParents + removeParents)
+        report.folders += 1;
+        continue;
+      }
+      await mergeFolderInto(src.id, String(keep.id));
+      /* Le dossier ne part à la corbeille que s'il est VIDE maintenant : un
+         homonyme laissé en place le maintient (et il est signalé). */
+      await trashEmptyFolderChain([{ name: testSlug, id: src.id }]);
+      if ((await listDriveChildren(src.id)).length) report.kept += 1;
+      report.merged += 1;
+    } catch (err) {
+      console.warn('Could not move the experiment Drive folder:', err && err.message);
+    }
+  }
+
+  /* Les conteneurs devenus vides (bac, dossier du projet quitté) partent à la
+     corbeille : c'est ce qui fait DISPARAÎTRE l'ancien chemin. Ceux qui portent
+     encore quelque chose (documents du projet, une autre expérience) sont gardés
+     — la lecture de leur contenu décide. */
+  for (const parent of leftovers) {
+    if (!parent || parent === toFolderId || String(parent) === String(projectsId)) continue;
+    try { await trashEmptyFolderChain([{ name: '', id: parent }]); } catch { /* hygiène */ }
+  }
+
+  /* Le registre suit (voir registerDriveFile) : `ctx.project` devient le projet
+     visé et le chemin est refait à neuf. `expFolderId` est le dossier de
+     l'expérience MAINTENANT sous le projet visé (le canonique s'il en existe
+     plusieurs) : c'est l'identifiant que le registre doit porter — l'ancien vient
+     d'être déplacé, ou fusionné dans un autre. */
+  const landed = await listFoldersByName(testSlug, toFolderId);
+  const expFolderId = landed.length ? String((await canonicalTwinOf(landed)).id) : toFolderId;
+  const heads = new Set(['projects', '_unassigned', DEFAULT_PROJECT_NAME, fromSlug]);
+  const reg = getDriveFileRegistry();
+  const projectsSeg = { name: 'projects', id: projectsId };
+  const toSeg = { name: toSlug, id: toFolderId };
+  let count = 0;
+  for (const [fileId, entry] of Object.entries(reg)) {
+    if (!entry || entry.deleted) continue;
+    const ctx = entry.ctx || {};
+    if (String(ctx.test || '') !== String(testName)) continue;
+    const owner = String(ctx.project || '');
+    /* La copie d'un AUTRE projet resté lié ne bouge pas (many-to-many). */
+    if (owner && sanitizeSlug(owner) !== fromSlug) continue;
+    const segs = (Array.isArray(entry.path) ? entry.path : []).filter((s) => s && s.name);
+    const at = segs.findIndex((s) => s.name === testSlug);
+    /* Ce qui SUIT le segment de l'expérience (instance, section, …) est
+       conservé ; le segment de l'expérience est refait à neuf — son ancien
+       identifiant vient d'être déplacé, ou fusionné dans un autre. */
+    const tail = at >= 0 ? segs.slice(at + 1) : segs.filter((s) => !heads.has(s.name));
+    reg[fileId] = {
+      ...entry,
+      ctx: { ...ctx, project: toProjectName },
+      path: [projectsSeg, toSeg, { name: testSlug, id: expFolderId }, ...tail],
+      at: Date.now()
+    };
+    count++;
+  }
+  if (count > 0) saveDriveFileRegistry(reg);
+  report.registry = count;
+  return report;
+};
+
+/** DÉPLACER une expérience d'un projet à un autre : son dossier Drive MIGRE dans
+ *  le dossier du projet visé — DÉPLACÉ, jamais copié.
+ *
+ *  C'est le geste du ⇄ « Move to project » de la page projet
+ *  (projectDetailModule.jsx). Une expérience = un test = UN dossier Drive
+ *  (`projects/<projet>/<expérience>`, voir canonicalExperimentPath) : le
+ *  déplacement doit donc réunir tout ce qui porte ce nom sur le Drive, sinon un
+ *  dossier resté derrière continuerait d'être rendu par `findFolderByName` et
+ *  l'expérience vivrait à deux endroits.
+ *
+ *    1. les sources sont cherchées PARTOUT où ce dossier peut vivre — le projet
+ *       quitté, le bac des expériences sans projet (`projects/test`), l'ancien
+ *       bac `projects/_unassigned`, l'héritage `<dataset>/<projet>/<expérience>`
+ *       et la racine du dataset — JUMEAUX compris (folderRace.js) ;
+ *    2. le dossier du projet visé est retrouvé (ou créé) — mais SEULEMENT s'il y
+ *       a vraiment quelque chose à y ranger : aucun dossier n'est semé ;
+ *    3. chaque source est DÉPLACÉE : `moveDriveFile` retire TOUS les autres
+ *       parents, donc aucun doublon ne peut subsister ; si un dossier du même
+ *       nom est DÉJÀ dans le projet visé (l'expérience y était déjà liée, ou un
+ *       jumeau l'y attend), le contenu est FUSIONNÉ dedans (`mergeFolderInto`)
+ *       au lieu de poser un second dossier du même nom ;
+ *    4. les dossiers vidés (bac, dossier du projet quitté) partent à la
+ *       corbeille : l'ancien chemin disparaît ;
+ *    5. le registre des fichiers suit (`ctx.project` = projet visé, chemin refait
+ *       en `projects/<projet visé>/<expérience>/…`). Les fichiers d'un AUTRE
+ *       projet resté lié (many-to-many) ne sont pas touchés.
+ *
+ *  Au mieux, jamais bloquant : sans Drive connecté, ou si le dossier n'existe
+ *  pas encore, rien n'est fait et rien n'est créé — les fichiers envoyés plus
+ *  tard arrivent directement dans le bon dossier, puisque le chemin se calcule à
+ *  partir de `projectNames`.
+ *  @returns {Promise<{folders:number, merged:number, registry:number, kept:number}>}
+ *    `folders` dossiers déplacés, `merged` fusionnés dans un dossier existant,
+ *    `registry` entrées du registre réécrites, `kept` dossiers homonymes laissés
+ *    en place (devenus non vides). */
+export const moveTestFolderBetweenProjects = async ({ testName, fromProjectName, toProjectName }) => {
+  const report = { folders: 0, merged: 0, registry: 0, kept: 0 };
+  if (!getDriveToken() || !testName || !fromProjectName || !toProjectName) return report;
+  const testSlug = sanitizeSlug(testName);
+  const fromSlug = sanitizeSlug(fromProjectName);
+  const toSlug = sanitizeSlug(toProjectName);
+  if (!testSlug || !toSlug || toSlug === fromSlug) return report;
+  try {
+    const root = await ensureDriveFolder();
+    if (!root) return report;
+    const projectsId = await canonicalDatasetDirId('projects', { rootId: root });
+    if (!projectsId) return report;
+
+    /* 1. TOUTES les copies de ce dossier d'expérience. */
+    const fromProjectId = await findFolderByName(fromSlug, projectsId);
+    const bucketId = await findFolderByName(DEFAULT_PROJECT_NAME, projectsId);
+    const legacyBucketId = await findFolderByName('_unassigned', projectsId);
+    const legacyProjectId = await findFolderByName(fromSlug, root);
+    const sources = [];
+    for (const parent of [fromProjectId, bucketId, legacyBucketId, legacyProjectId, root]) {
+      if (!parent) continue;
+      for (const f of await listFoldersByName(testSlug, parent)) {
+        if (f && f.id && !sources.some((s) => s.id === String(f.id))) sources.push({ id: String(f.id), parent });
+      }
+    }
+    if (!sources.length) return report; // rien sur le Drive → aucun dossier à semer
+
+    const toFolderId = await findOrCreateFolder(toSlug, projectsId);
+    if (!toFolderId) return report;
+    return await moveExperimentSourcesInto(sources, {
+      testName, testSlug, fromSlug, toProjectName, toSlug, toFolderId, projectsId,
+      leftovers: [fromProjectId, bucketId, legacyBucketId, legacyProjectId], report
+    });
+  } catch (err) {
+    console.warn('moveTestFolderBetweenProjects failed:', err && err.message);
+    return report;
+  }
+};
+
 /**
  * Upload one file to the Drive folder and share it as "anyone with the link".
  * `file` can be a raw File/Blob (recommended — works for large files like

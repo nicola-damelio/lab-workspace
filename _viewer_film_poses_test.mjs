@@ -176,7 +176,8 @@ const gone = (needle, what) => {
      la barre compris, puisqu'ils font maintenant partie de la photographie. */
   has('const back = { state: captureViewerSetup(), pose: captureKeyframePoses() };',
     'l’enregistrement d’un film prend la photo d’AVANT (styles de la barre compris)');
-  has('applyKeyframeSample(back);', '…et la repose à la fin');
+  has('applyKeyframeSample(back, false);', '…et la repose à la fin (et `false` dit que ce retour n’est pas un MOUVEMENT : aucun fondu n’est ouvert par lui)');
+
 }
 
 console.log(`_viewer_film_poses_test.mjs — ${passed} assertions OK (styles de la barre dans une pose · zoom de NGL photographié · caméra qui glisse · câblage)`);

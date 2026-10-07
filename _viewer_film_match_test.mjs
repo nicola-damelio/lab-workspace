@@ -32,6 +32,7 @@ import {
   recordTrajectoryVideo, filmVignetteGeometry, filmVignetteStops, FILM_VIGNETTE_RGB,
   filmBackdropColor, FILM_BACKDROP_DEFAULT,
 } from './src/utils/viewerTrajectoryVideo.js';
+import { FILM_GLIDE_KEYS } from './src/utils/viewerKeyframes.js';
 
 let passed = 0;
 const ok = (cond, what) => { assert.ok(cond, what); passed += 1; };
@@ -93,9 +94,10 @@ eq(FILM_BACKDROP_DEFAULT, '#f8fafc', 'le défaut du module EST le fond par défa
 has('const backdrop = filmBackdropColor(background);', 'la toile de film valide la couleur de la scène');
 has('ctx.fillStyle = backdrop;\n        ctx.fillRect(0, 0, w, h);',
   '…et REMPLIT son fond avant de recopier la scène');
-has('const film = filmCanvasFor(canvas, vignetteDarkness, bgColor);',
-  'le 🎬 de la trajectoire passe la couleur de la scène');
-has(': Number.NaN, bgColor);', 'le 🎞 des poses aussi (les deux films ont le même fond)');
+has('const film = filmCanvasFor(canvas, vignetteDarkness, backgroundSpecOf(bgColor, bgGradient), rayLiveOn ? rayShadowCanvasRef.current : null);',
+  'le 🎬 de la trajectoire passe la SPÉCIFICATION du fond (la couleur de la scène ET la rampe ⬚, voir utils/viewerBackground)');
+has(': Number.NaN, backgroundSpecOf(bgColor, bgGradient), rayLiveOn ? rayShadowCanvasRef.current : null);',
+  'le 🎞 des poses aussi (les deux films ont le même fond)');
 /* L'ORDRE DU COMPOSITE est ce qui fait qu'une ombre assombrit le fond au lieu de le
    couvrir : le fond, puis la scène, puis la vignette. */
 ok(VIEW.indexOf('ctx.fillStyle = backdrop;') < VIEW.indexOf('ctx.drawImage(source, 0, 0, w, h);'),
@@ -152,7 +154,7 @@ eq(broken.out.frames, 3, 'une composition qui échoue N’ARRÊTE PAS le film (l
 
 /* ── 3. LE BRANCHEMENT DANS LE VIEWER, ET LE PARAGRAPHE RACCOURCI ─────────── */
 has('filmVignetteGeometry, filmVignetteStops,', 'le viewer prend la géométrie et les arrêts du module 🎬');
-has('const filmCanvasFor = (source, vignetteDarkness, background) => {', 'la toile de film est construite par le viewer');
+has('const filmCanvasFor = (source, vignetteDarkness, background, shadowLayer = null) => {', 'la toile de film est construite par le viewer');
 has("ctx.globalCompositeOperation = 'multiply';", 'la vignette est PEINTE en « multiply », comme le mix-blend-mode du CSS');
 has('canvas: film ? film.canvas : canvas,', 'le 🎬 de la trajectoire enregistre la toile de film');
 has('beforeCapture: film ? film.composite : undefined,', '…et compose la vignette à chaque image');
@@ -201,7 +203,8 @@ has('🎬 The film is the 3D canvas with the vignette the screen draws over it',
     else if (VIEW[i] === '}') { depth -= 1; if (depth === 0) { end = i + 1; break; } }
   }
   ok(end > start && body > start, '… et elle se lit d’un seul tenant (un bloc complet)');
-  const sceneRebuildSig = new Function(`${VIEW.slice(start, end)}; return sceneRebuildSig;`)();
+  const sceneRebuildSig = new Function('FILM_GLIDE_KEYS',
+    `${VIEW.slice(start, end)}; return sceneRebuildSig;`)(FILM_GLIDE_KEYS);
 
   /* Un instant du film, tel que `captureViewerSetup` le photographie. */
   const scene = (over = {}) => ({
@@ -237,21 +240,36 @@ has('🎬 The film is the 3D canvas with the vignette the screen draws over it',
   ok(sceneRebuildSig(base).length > 40, 'la signature est bien celle des réglages (pas une chaîne vide)');
 
   /* …MAIS TOUT CE QUI EST DESSINÉ LA CHANGE : un style, une surface, un drapeau, une
-     molécule ajoutée ou son look, la couleur de structure, le fond, une étiquette. */
+     molécule ajoutée ou son look, la couleur de structure, une étiquette. */
   const differs = (patch, what) => ok(sceneRebuildSig(scene(patch)) !== sceneRebuildSig(base), what);
+  const same = (patch, what) => ok(sceneRebuildSig(scene(patch)) === sceneRebuildSig(base), what);
   differs({ catStyles: { protein: { backbone: 'cartoon', surface: 'hide' } } },
     'éteindre la surface la REBÂTIT (elle disparaît vraiment)');
   differs({ catStyles: { protein: { backbone: 'cartoon', surface: 'transparent', surfaceOpacity: 0.9 } } },
     'son opacité aussi (le film morphe la transparence)');
   differs({ catLabels: { protein: { residues: true, residueType: false, atoms: false } } },
     'une étiquette 3D allumée par une pose');
-  differs({ background: '#112233' }, 'un fond');
   differs({ sstrucColors: { helix: 0xff0000 } }, 'la palette 2° structure (que le redessin des extra lisait)');
   differs({ molecules: { ...base.molecules, main: { ...base.molecules.main, transparency: 0.5 } } },
     'la transparence de la molécule principale');
   differs({ molecules: { ...base.molecules, extras: [{ ...base.molecules.extras[0], style: 'surface' }] } },
     'le style d’une molécule ajoutée');
   differs({ molecules: { ...base.molecules, extras: [] } }, 'une molécule ajoutée qui s’en va');
+  /* ⚠⚠ LES CINQ RÉGLAGES DE L'ÉTAGE, EUX, NE LA CHANGENT PLUS — LE CORRECTIF DE CETTE SESSION :
+     ils sont reposés EN PLACE par leurs propres effets (stage.setParameters / setQuality / le rig
+     de lumière), donc ils ne demandent AUCUNE représentation. Leur présence dans la signature
+     coûtait une reconstruction À CHAQUE IMAGE d'un film (l'image se vidait le temps que le
+     worker recalcule une surface) ; c'est aussi ce qui permet de les faire GLISSER pendant un
+     mouvement (le pendant de cette liste, FILM_GLIDE_KEYS, vit dans utils/viewerKeyframes.js).
+     Le rapport : « In the movie, the transition between one state and the other is not smooth.
+     there is a fraction of time where there is nothing. » */
+  same({ background: '#112233' },
+    '⚠ un FOND ne rebâtit RIEN (il est peint par le stage, jamais par une représentation)');
+  same({ quality: false }, '⚠ la qualité non plus (stage.setQuality)');
+  same({ fog: true }, '⚠ le brouillard non plus (fogNear / fogFar)');
+  same({ clip: { on: true, near: 2, far: 60, dist: 3 } }, '⚠ ni le clipping (clipNear / clipFar / clipDist)');
+  same({ shadows: { on: true, darkness: 0.4, az: 12, el: 40, color: '#ffcc00' } },
+    '⚠ ni les ombres ni la couleur de la lampe (des uniformes du rig de lumière)');
   eq(sceneRebuildSig(null), '', 'une photographie absente n’a pas de signature (jamais de rebâtiment pour rien)');
 
   /* LE CÂBLAGE : la signature est comparée, mémorisée, et un geste de la barre la

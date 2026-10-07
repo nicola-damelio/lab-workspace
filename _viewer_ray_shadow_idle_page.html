@@ -1,0 +1,486 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Sonde NGL — l'ombre vivante quand RIEN ne bouge (souris qui passe)</title>
+<style>
+  html, body { margin:0; padding:0; background:#fff; font:12px/1.45 monospace; color:#111; }
+  #log { padding:8px; white-space:pre-wrap; }
+  #host { position:absolute; left:-10000px; top:0; width:900px; height:600px; }
+  #layer { position:absolute; left:-10000px; top:0; width:900px; height:600px; pointer-events:none; }
+</style>
+</head>
+<body>
+<pre id="log">chargement de ngl.js…</pre>
+<div id="host"></div>
+<canvas id="layer"></canvas>
+<script src="/ngl.js"></script>
+<script type="module">
+'use strict';
+/* ---------------------------------------------------------------------------
+   Sonde : LE PILOTE DE L'OMBRE VIVANTE (src/utils/viewerRayShadowLive.js) sur
+   une VRAIE scène NGL 2.4, quand LA SOURIS BOUGE ET QUE LA MOLÉCULE NE BOUGE
+   PAS — le rapport de cette session : « the auto mode for live rendering of ray
+   is good but it reinitializes the view even if i move the mouse without moving
+   the molecule ».
+
+   LE MODULE DE L'OMBRE VIVANTE EST PUR (`attachRayShadowLive` décide, peint,
+   réarme) et sa politique se mesure déjà sans navigateur
+   (_viewer_ray_shadow_live_test.mjs). Ce qui ne se mesure PAS là-bas, c'est
+   QUELLES IMAGES NGL LUI PARVIENNENT : la politique peut être parfaite et
+   refaire l'ombre à chaque image rendue pour rien. C'est donc ici, sur la vraie
+   scène, que la question se tranche :
+
+     1. LE GESTE SANS GESTE. On promène la souris sur la toile — `mousemove`
+        sans bouton pressé, comme une main qui passe, avec des pauses — et on
+        lit (a) combien d'images NGL rend, (b) ce que le pilote en fait
+        (`builds` / `drafts` / `fulls`). La molécule, elle, ne bouge pas : la
+        pose ET les coordonnées des atomes sont comparées avant/après.
+
+     2. LE TÉMOIN DU GESTE. On déplace VRAIMENT la scène (le groupe de
+        translation, comme un recentrage / un glisser) : l'ombre DOIT être
+        refaite (et repartir du brouillon, c'est le régime `auto`).
+
+     3. LE TÉMOIN DU FILET. On déplace des ATOMES — invisibles à la pose comme à
+        la signature — et on demande une image : l'ombre DOIT finir par les
+        suivre (c'est le travail que le filet doit garder).
+
+     4. L'ÉCRITURE DE LA DYNAMIQUE, LE GESTE DIT (`moved()`). LE RAPPORT DE CETTE
+        SESSION : « when I start a MD run the shadow detaches from the molecule and
+        remains detached ». Une ▶ MD n'écrit que des COORDONNÉES : la pose et la
+        signature de la scène ne bougent pas, donc l'image qu'elle demande est
+        jugée « rendue pour rien », et le filet ne la regarde qu'au plus une fois
+        par `staleMs` — la DERNIÈRE écriture tombe dans cette fenêtre, et plus rien
+        n'est rendu ensuite : la couche reste accrochée à la géométrie d'avant.
+        On joue donc le geste EXACTEMENT comme le viewer (`pilot.moved()` après
+        chaque écriture, `stage.viewer.requestRender()`), et le verdict est le seul
+        qui compte : LE DERNIER MASQUE PEINT DOIT TOMBER SUR LA GÉOMÉTRIE
+        D'ARRIVÉE (écart en pixels de son centre de gravité), la passe nette étant
+        venue d'une MINUTERIE — aucune image n'étant rendue après la dernière
+        écriture.
+
+     5. LE TÉMOIN NÉGATIF : la MÊME dynamique, sans le mot du geste. Aucun
+        brouillon, et la couche RESTE à côté (l'écart en pixels ne retombe pas) :
+        c'est le défaut rapporté, mesuré, et non pas raconté.
+
+   Pilotée par _viewer_ray_shadow_idle_test.cjs, qui la sert en 127.0.0.1 avec
+   ngl.js (le même dist UMD 2.4.0 que src/utils/ngl.js) et le SOURCE des deux
+   modules (jamais une copie), puis lit le verdict JSON qu'elle POSTe. Elle
+   n'est jamais ouverte à la main.
+   --------------------------------------------------------------------------- */
+const OUT = { log: [], facts: {}, results: {}, errors: [] };
+const log = (...a) => {
+  OUT.log.push(a.map((v) => (typeof v === 'string' ? v : JSON.stringify(v))).join(' '));
+  document.getElementById('log').textContent = OUT.log.join('\n');
+};
+const post = (stage, extra) => fetch('/result', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(Object.assign({ stage, log: OUT.log, facts: OUT.facts, results: OUT.results, errors: OUT.errors }, extra || {})),
+});
+window.addEventListener('error', (e) => { OUT.errors.push('window.error: ' + (e.message || e)); });
+window.addEventListener('unhandledrejection', (e) => {
+  OUT.errors.push('rejet: ' + ((e.reason && e.reason.message) || e.reason));
+});
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+
+/* ---- UN PEPTIDE DE 12 RÉSIDUS, LIAISONS VRAIES -----------------------------
+   NGL ne construit un cartoon que pour des polymères VRAIS (la liaison
+   peptidique est lue sur le graphe des liaisons) : l'hélice de la sonde des
+   pixels fait de même. Ici une représentation `licorice` suffit — c'est la
+   scène la plus ordinaire du viewer (des bâtons et des billes), et c'est là que
+   le rapport a été fait. */
+const pad = (v, w) => { let s = String(v); while (s.length < w) s = ' ' + s; return s; };
+const f8 = (v) => { let s = v.toFixed(3); while (s.length < 8) s = ' ' + s; return s; };
+const N = 12;
+const R = 2.3;
+function peptidePdb () {
+  const names = ['N', 'CA', 'C', 'O', 'CB'];
+  const atoms = [];
+  for (let i = 0; i < N; i += 1) {
+    for (let k = 0; k < names.length; k += 1) {
+      const a = ((i * 100 + k * 30) * Math.PI) / 180;
+      atoms.push({ res: i + 1, name: names[k], xyz: [R * Math.cos(a), i * 1.5, R * Math.sin(a)] });
+    }
+  }
+  for (let i = 0; i < N - 1; i += 1) {
+    const c = atoms[i * 5 + 2].xyz;
+    const n = atoms[(i + 1) * 5].xyz;
+    let dx = n[0] - c[0], dy = n[1] - c[1], dz = n[2] - c[2];
+    const d = Math.hypot(dx, dy, dz) || 1;
+    dx /= d; dy /= d; dz /= d;
+    atoms[(i + 1) * 5].xyz = [c[0] + 1.4 * dx, c[1] + 1.4 * dy, c[2] + 1.4 * dz];
+  }
+  const lines = ['HEADER    SONDE OMBRE VIVANTE AU REPOS'];
+  let serial = 0;
+  atoms.forEach((a) => {
+    serial += 1;
+    lines.push('ATOM  ' + pad(serial, 5) + ' ' + pad(a.name, 4) + ' ALA A' + pad(a.res, 4)
+      + '    ' + f8(a.xyz[0]) + f8(a.xyz[1]) + f8(a.xyz[2]) + '  1.00  0.00          ' + a.name[0]);
+  });
+  lines.push(`HELIX    1   1 ALA A${pad(1, 4)}  ALA A${pad(N, 4)}  1${pad(N, 36)}`);
+  return lines.join('\n') + '\nEND\n';
+}
+
+/* ---- LES REPÈRES QUI DOIVENT RESTER IMMOBILES ----------------------------- */
+/* La pose : exactement ce que le module compare (`matrixWorldInverse`), plus les
+   deux groupes de la vue qu'il lit dans sa signature. */
+function poseOf (stage) {
+  const cam = stage.viewer.camera;
+  return {
+    view: Array.from(cam.matrixWorldInverse.elements),
+    rot: Array.from(stage.viewer.rotationGroup.matrix.elements),
+    pos: [stage.viewer.translationGroup.position.x, stage.viewer.translationGroup.position.y, stage.viewer.translationGroup.position.z],
+  };
+}
+/* Les ATOMES, à la source : c'est ce que le masque lit (`getAtomData`), et c'est
+   ce qu'un glisser partiel déplace SANS toucher ni la pose ni la signature.
+   ⚠ LE STORE SE LIT COMME IL EST, PAS COMME ON L'IMAGINE : NGL 2.4 range ses
+   coordonnées tantôt en trois tableaux (`x`/`y`/`z`), tantôt en un seul
+   (`position`, 3 par atome). La sonde reconnaît les deux et le DIT. */
+function atomStoreOf (comp) {
+  const store = comp && comp.structure && comp.structure.atomStore;
+  if (!store) return null;
+  if (store.x && store.x.length) {
+    return {
+      kind: 'x/y/z', count: store.x.length,
+      at: (i) => [store.x[i], store.y[i], store.z[i]],
+      shift: (i, d) => { store.x[i] += d; },
+    };
+  }
+  if (store.position && store.position.length) {
+    return {
+      kind: 'position', count: Math.floor(store.position.length / 3),
+      at: (i) => [store.position[i * 3], store.position[i * 3 + 1], store.position[i * 3 + 2]],
+      shift: (i, d) => { store.position[i * 3] += d; },
+    };
+  }
+  return null;
+}
+function atomsChecksum (access) {
+  if (!access) return 0;
+  let s = 0;
+  for (let i = 0; i < access.count; i += 1) {
+    const p = access.at(i);
+    s = (s + p[0] * (i + 1) + p[1] * (i + 2) + p[2] * (i + 3)) % 1e9;
+  }
+  return Math.round(s * 1000) / 1000;
+}
+const sameList = (a, b) => a.length === b.length && a.every((v, i) => Math.abs(v - b[i]) < 1e-9);
+
+async function main () {
+  if (typeof NGL === 'undefined') throw new Error('ngl.js non chargé');
+  const live = await import('/src/utils/viewerRayShadowLive.js');
+  log('module vivant importé : ' + Object.keys(live).length + ' exports');
+
+  const host = document.getElementById('host');
+  const layerCv = document.getElementById('layer');
+  const stage = new NGL.Stage(host, { backgroundColor: 'white' });
+  stage.handleResize();
+  const comp = await stage.loadFile(new Blob([peptidePdb()], { type: 'text/plain' }), { ext: 'pdb' });
+  if (!comp) throw new Error('le PDB n a pas été lu');
+  comp.addRepresentation('licorice', { sele: 'all', colorScheme: 'uniform', colorValue: 0x3377ff, radiusSize: 0.2 });
+  stage.autoView(0);
+  const canvas = host.querySelector('canvas');
+  if (!canvas) throw new Error('NGL n a pas posé de toile');
+  /* Les maillages NGL se construisent de façon ASYNCHRONE (sa file de tâches) :
+     lire tout de suite donnerait une scène vide, donc un pilote qui refuse de
+     peindre. On attend une toile STABLE avant de mesurer. */
+  const t0 = Date.now();
+  let stable = 0;
+  let lastW = 0;
+  while (Date.now() - t0 < 20000 && stable < 3) {
+    const w = canvas.width;
+    if (w > 0 && w === lastW) stable += 1; else stable = 0;
+    lastW = w;
+    await sleep(200);
+  }
+  OUT.facts.canvas = canvas.width + 'x' + canvas.height;
+  OUT.facts.atoms = comp.structure ? comp.structure.atomCount : 0;
+  OUT.facts.waitedMs = Date.now() - t0;
+  const atomStore = atomStoreOf(comp);
+  if (!atomStore) throw new Error('le store d atomes est illisible — la sonde ne peut pas dire si les atomes bougent');
+  OUT.facts.store = { kind: atomStore.kind, count: atomStore.count };
+  log('scène prête : ' + JSON.stringify(OUT.facts));
+  await post('scene');
+
+  /* ---- LE PILOTE, EXACTEMENT CELUI DU VIEWER ------------------------------- */
+  let renders = 0;
+  let hovers = 0;
+  stage.viewer.signals.rendered.add(() => { renders += 1; });
+  stage.signals.hovered.add(() => { hovers += 1; });
+  const timeline = [];
+  const layer = live.createRayShadowOverlay(layerCv);
+  /* ⚠ LE DERNIER MASQUE PEINT EST RETENU (voir la section 4) : c'est la SEULE
+     façon de dire si la couche est POSÉE sur la molécule ou restée à côté. */
+  let lastPaint = null;
+  const overlay = {
+    element: layer.element,
+    size: layer.size,
+    clear: () => { lastPaint = null; return layer.clear(); },
+    dispose: () => { lastPaint = null; return layer.dispose(); },
+    paint: (shadow) => { lastPaint = shadow; return layer.paint(shadow); },
+  };
+  const pilot = live.attachRayShadowLive({
+    stage,
+    overlay,
+    light: () => [0.52, 0.42, 0.74],
+    options: () => ({ strength: 0.55, blur: 1 }),
+    onStats: (s) => timeline.push({ t: Math.round(performance.now()), mode: s.mode, builds: s.builds, ms: s.lastMs }),
+  });
+  if (!pilot) throw new Error('le pilote n a pas pu s attacher');
+  pilot.refresh({ force: true });
+  const peek = () => {
+    const s = pilot.stats();
+    return { builds: s.builds, drafts: s.drafts, fulls: s.fulls, mode: s.mode, lastMs: s.lastMs, painted: s.painted, error: s.error };
+  };
+  OUT.results.attach = Object.assign({}, peek(), { renders });
+  log('première ombre : ' + JSON.stringify(OUT.results.attach));
+  await post('attach');
+
+const sameList = (a, b) => a.length === b.length && a.every((v, i) => Math.abs(v - b[i]) < 1e-9);
+
+  /* ---- 1. LA SOURIS PASSE, RIEN NE BOUGE ---------------------------------- */
+  /* Le geste du rapport : la souris se promène sur la toile, SANS bouton
+     pressé. Deux salves entrecoupées de pauses (pour franchir `idleMs` ET
+     `staleMs` : c'est dans ces fenêtres que l'ombre se refaisait). */
+  const pose0 = poseOf(stage);
+  const atoms0 = atomsChecksum(atomStore);
+  const before = peek();
+  const renders0 = renders;
+  const hovers0 = hovers;
+  const send = (type, x, y, buttons) => canvas.dispatchEvent(new MouseEvent(type, {
+    bubbles: true, cancelable: true, view: window,
+    clientX: x, clientY: y, button: 0, buttons: buttons || 0,
+  }));
+  const walk = async (steps) => {
+    const rect = canvas.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    for (let i = 0; i < steps; i += 1) {
+      const a = (i / steps) * Math.PI * 2;
+      send('mousemove', Math.round(cx + 120 * Math.cos(a)), Math.round(cy + 90 * Math.sin(a)), 0);
+      await sleep(30);
+    }
+  };
+  await walk(20);
+  await sleep(700);                          // la pause : idleMs ET staleMs passent
+  await walk(20);
+  await sleep(700);
+  const after = peek();
+  const pose1 = poseOf(stage);
+  const atoms1 = atomsChecksum(atomStore);
+  OUT.results.mouse = {
+    renders: renders - renders0,
+    hovers: hovers - hovers0,
+    builds: after.builds - before.builds,
+    drafts: after.drafts - before.drafts,
+    fulls: after.fulls - before.fulls,
+    mode: after.mode,
+    poseMoved: !sameList(pose0.view, pose1.view) || !sameList(pose0.rot, pose1.rot) || pose0.pos.some((v, i) => Math.abs(v - pose1.pos[i]) > 1e-9),
+    atomsMoved: atoms0 !== atoms1,
+  };
+  log('souris qui passe : ' + JSON.stringify(OUT.results.mouse));
+  await post('mouse');
+
+  /* ---- 2. LE TÉMOIN DU GESTE : la scène bouge VRAIMENT --------------------- */
+  const beforeMove = peek();
+  stage.viewer.translationGroup.position.x += 2;
+  stage.viewer.requestRender();
+  await sleep(60);                            // une image rendue : le geste est vu
+  const during = peek();
+  await sleep(600);                           // …et la passe NETTE de l'arrêt
+  const afterMove = peek();
+  OUT.results.sceneMove = {
+    duringMode: during.mode,
+    builds: afterMove.builds - beforeMove.builds,
+    drafts: afterMove.drafts - beforeMove.drafts,
+    fulls: afterMove.fulls - beforeMove.fulls,
+    mode: afterMove.mode,
+  };
+  log('la scène bouge vraiment (témoin du geste) : ' + JSON.stringify(OUT.results.sceneMove));
+  await post('sceneMove');
+
+  /* ---- 3. LE TÉMOIN DU FILET : des ATOMES bougent, pas la caméra ---------- */
+  /* Invisible à la pose ET à la signature (les coordonnées vivent dans le store
+     de la structure) : c'est exactement le trou que le filet doit couvrir. */
+  const beforeAtoms = peek();
+  for (let i = 0; i < 15; i += 1) atomStore.shift(i, 0.6);
+  stage.viewer.requestRender();
+  await sleep(80);
+  const early = peek();                       // dans la fenêtre du filet : il n'a rien fait
+  await sleep(700);                           // au-delà de staleMs
+  stage.viewer.requestRender();
+  await sleep(80);
+  const afterAtoms = peek();                  // ← c'est ICI que le filet a parlé
+  OUT.results.atomMove = {
+    builds: afterAtoms.builds - beforeAtoms.builds,
+    drafts: afterAtoms.drafts - beforeAtoms.drafts,
+    fulls: afterAtoms.fulls - beforeAtoms.fulls,
+    netMode: afterAtoms.mode,
+    earlyBuilds: early.builds - beforeAtoms.builds,
+    earlyMode: early.mode,
+  };
+  log('des atomes bougent (témoin du filet) : ' + JSON.stringify(OUT.results.atomMove));
+  await post('atomMove');
+
+  /* ---- 4. L'ÉCRITURE DE LA DYNAMIQUE : LE GESTE DIT (`moved()`) ------------
+     Voir l'en-tête : une ▶ MD n'écrit que des COORDONNÉES, donc on joue le geste
+     exactement comme le viewer (`pilot.moved()` après chaque écriture, puis
+     `stage.viewer.requestRender()` — ce que fait `writeStructurePositions`), et
+     on mesure LE SEUL verdict qui compte : le dernier masque peint tombe-t-il sur
+     la géométrie d'arrivée ? */
+  const rays = await import('/src/utils/viewerRayShadows.js');
+  const LIGHT = [0.52, 0.42, 0.74];
+  const maskCentroidOf = (mask, w, h) => {
+    if (!mask || !(w > 0) || !(h > 0) || mask.length < w * h) return null;
+    let sx = 0;
+    let sy = 0;
+    let sw = 0;
+    for (let i = 0; i < w * h; i += 1) {
+      const v = mask[i];
+      if (!(v > 0)) continue;
+      const x = i % w;
+      sx += v * x;
+      sy += v * ((i - x) / w);
+      sw += v;
+    }
+    return sw > 0 ? { x: sx / sw, y: sy / sw, weight: sw } : null;
+  };
+  /* LE MASQUE DE LA GÉOMÉTRIE PRÉSENTE, avec les options de la passe NETTE (celles
+     du « ✨ Ray ») : c'est cette passe-là qui est posée quand le geste s'arrête. */
+  const freshMaskNow = () => {
+    const options = live.rayLiveShadowOptions({ strength: 0.55, blur: 1 }, 'full');
+    const inputs = rays.rayShadowInputsOf(stage, { lightDir: LIGHT, options });
+    return rays.buildRayShadowMask({
+      atoms: inputs.atoms, camera: inputs.camera, light: inputs.light,
+      width: canvas.width, height: canvas.height, options,
+    });
+  };
+  /* L'ÉCART, EN PIXELS, entre le centre de gravité du DERNIER MASQUE PEINT et
+     celui du masque de la géométrie PRÉSENTE. Deux masques de tailles différentes
+     ne se comparent pas : on rend `null` et les deux tailles, jamais un chiffre
+     inventé. */
+  const gapNow = () => {
+    const fresh = freshMaskNow();
+    const pw = lastPaint && lastPaint.maskWidth;
+    const ph = lastPaint && lastPaint.maskHeight;
+    const painted = maskCentroidOf(lastPaint && lastPaint.mask, pw, ph);
+    const wanted = maskCentroidOf(fresh.mask, fresh.maskWidth, fresh.maskHeight);
+    const sameSize = pw === fresh.maskWidth && ph === fresh.maskHeight;
+    return {
+      gapPx: (painted && wanted && sameSize)
+        ? Math.round(Math.hypot(painted.x - wanted.x, painted.y - wanted.y) * 100) / 100 : null,
+      paintedSize: [pw, ph],
+      freshSize: [fresh.maskWidth, fresh.maskHeight],
+    };
+  };
+  /* UNE DYNAMIQUE : des pas qui ÉCRIVENT des coordonnées et demandent une image —
+     le chemin de `writeStructurePositions` — suivis du mot du geste quand la
+     version mesurée a le droit d'en dire un. */
+  const mdMotion = async (steps, withWord) => {
+    const t0 = Date.now();
+    let lastWriteAt = t0;
+    for (let s = 0; s < steps; s += 1) {
+      for (let i = 0; i < atomStore.count; i += 1) atomStore.shift(i, 0.06);
+      if (withWord) pilot.moved();
+      lastWriteAt = performance.now();      // l'instant de la DERNIÈRE écriture (et du mot)
+      stage.viewer.requestRender();
+      await sleep(10);
+    }
+    return { ms: Date.now() - t0, lastWriteAt };
+  };
+  const poseMovedFrom = (p) => {
+    const q = poseOf(stage);
+    return !sameList(p.view, q.view) || !sameList(p.rot, q.rot) || p.pos.some((v, i) => Math.abs(v - q.pos[i]) > 1e-9);
+  };
+
+  const md0 = peek();
+  const rendersMd0 = renders;
+  const poseMd = poseOf(stage);
+  const atomsMd0 = atomsChecksum(atomStore);
+  const { ms: mdMs, lastWriteAt: mdLastWriteAt } = await mdMotion(20, true);
+  /* ⚠ ON LAISSE ARRIVER L'IMAGE EN ATTENTE (NGL rend sur `requestAnimationFrame`) :
+     `rendersAfterWrites` doit compter les images rendues APRÈS les écritures, pas
+     une image encore en vol (idleMs = 220 ms, la minuterie n'a pas encore parlé). */
+  await sleep(60);
+  const mdEnd = peek();
+  const rendersMdEnd = renders;
+  const mdWritesEndT = performance.now();
+  await sleep(700);                          // idleMs passe : la passe NETTE de l'arrêt
+  const md1 = peek();
+  /* ⚠ COMPTÉ AVANT TOUTE LECTURE DE MASQUE À NOUS (`gapNow` relit la géométrie) :
+     ce sont les images rendues entre la DERNIÈRE ÉCRITURE et la passe nette. */
+  const rendersAfterWrites = renders - rendersMdEnd;
+  /* LA PASSE NETTE EST-ELLE VENUE D'UNE MINUTERIE ? Une passe déclenchée par une
+     image rendue serait là dans la frame qui la suit (≈16 ms) ; la minuterie de
+     l'arrêt, elle, ne parle qu'après `idleMs`. C'est ce délai qui le dit. */
+  const sharpAt = timeline.filter((e) => e.t >= mdWritesEndT && e.mode === 'full').map((e) => e.t)[0];
+  const sharpDelayMs = sharpAt === undefined ? null : Math.round(sharpAt - mdLastWriteAt);
+  const mdGap = gapNow();
+  OUT.results.mdWrite = Object.assign({
+    steps: 20, ms: mdMs,
+    renders: rendersMdEnd - rendersMd0,
+    drafts: md1.drafts - md0.drafts,
+    fulls: md1.fulls - md0.fulls,
+    builds: md1.builds - md0.builds,
+    endMode: mdEnd.mode,
+    mode: md1.mode,
+    /* ⚠ LA PASSE NETTE EST VENUE D'UNE MINUTERIE, PAS D'UN SIGNAL (voir plus haut) :
+       sans elle, `gapPx` ne retomberait jamais. */
+    rendersAfterWrites,
+    sharpDelayMs,
+    poseMoved: poseMovedFrom(poseMd),
+    atomsMoved: atomsChecksum(atomStore) !== atomsMd0,
+    staleWindow: live.RAY_LIVE_DEFAULTS.staleMs,
+    idleWindow: live.RAY_LIVE_DEFAULTS.idleMs,
+  }, mdGap);
+  log('la dynamique ÉCRIT (le geste dit) : ' + JSON.stringify(OUT.results.mdWrite));
+  await post('mdWrite');
+
+  /* ---- 5. LE TÉMOIN NÉGATIF : la MÊME dynamique SANS le mot du geste -------
+     ⚠ LA FENÊTRE DU FILET EST REPOSÉE JUSTE AVANT (une passe nette forcée) : ce
+     témoin mesure « ce que fait une dynamique SANS le mot du geste », pas « ce que
+     fait le filet quand il a eu le temps de regarder ». Le geste tient ensuite
+     dans `staleMs` (mesuré, et la vérification l'exige), donc le filet ne peut pas
+     parler : la couche reste sur la géométrie d'avant — et c'est exactement ce que
+     le rapport décrit, puisque dans l'application plus rien n'est rendu après la
+     dernière écriture d'une ▶ MD (NGL ne rend que sur demande). */
+  pilot.refresh({ force: true });            // la fenêtre du filet repart de zéro
+  await sleep(30);
+  const st0 = peek();
+  const rendersSt0 = renders;
+  const poseSt = poseOf(stage);
+  const atomsSt0 = atomsChecksum(atomStore);
+  const staleMs = (await mdMotion(12, false)).ms;
+  await sleep(60);                           // l'image en vol arrive (dans la fenêtre : rien à faire)
+  const st1 = peek();
+  const stGap = gapNow();
+  OUT.results.mdStale = Object.assign({
+    steps: 12, ms: staleMs,
+    renders: renders - rendersSt0,
+    drafts: st1.drafts - st0.drafts,
+    fulls: st1.fulls - st0.fulls,
+    builds: st1.builds - st0.builds,
+    mode: st1.mode,
+    poseMoved: poseMovedFrom(poseSt),
+    atomsMoved: atomsChecksum(atomStore) !== atomsSt0,
+    staleWindow: live.RAY_LIVE_DEFAULTS.staleMs,
+  }, stGap);
+  log('la même dynamique SANS le mot du geste : ' + JSON.stringify(OUT.results.mdStale));
+  await post('mdStale');
+
+  OUT.results.timeline = timeline;
+  log('chronologie : ' + JSON.stringify(timeline));
+  await post('done');
+}
+main().catch(async (e) => {
+  OUT.errors.push('fatal: ' + ((e && e.stack) || e));
+  log('ÉCHEC : ' + ((e && e.stack) || e));
+  await post('fatal').catch(() => {});
+});
+</script>
+</body>
+</html>
+

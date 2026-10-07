@@ -125,9 +125,9 @@ gone('[object Object]', 'le `[object Object]` laissé au milieu de §2 a disparu
 // maintenant dans le groupe ✏️ Modify de la barre « 2 · Toolbar ». Ce qui reste
 // vrai est la RÈGLE que le paragraphe protégeait — l'en-tête d'une section est un
 // VRAI commentaire JSX, jamais du texte dessiné au milieu du viewer.
-has('{/* ══ 2 · TOOLBAR — Scene | Modify | Analysis | PyMOL, ONE horizontal row',
+has('{/* ══ 2 · TOOLBAR — Scene | Styles | Modify | Analysis | PyMOL',
   "l'en-tête de §2 est un VRAI commentaire JSX (accolades ouvertes)");
-has('{/* ══ 2 · TOOLBAR — Scene | Modify | Analysis | PyMOL, ONE horizontal row ════\n    This is §2 of the command bar now',
+has('{/* ══ 2 · TOOLBAR — Scene | Styles | Modify | Analysis | PyMOL ══════════════\n    This is §2 of the command bar now',
   'le paragraphe de §2 est DANS les accolades du commentaire (sinon JSX le dessine)');
 
 /* ══ 2. « RAINBOW (first → last) » PEINT VRAIMENT ═════════════════════════ */

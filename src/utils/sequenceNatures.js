@@ -203,3 +203,86 @@ export const sequenceNaturesNote = (test, moleculeType) => {
     + `Click ${NATURE_LABELS[present[0]]} to see and edit it: the viewer shows the file as it is, `
     + `with all its molecules in the same view.`;
 };
+
+/* ============================================================================
+   PLUSIEURS SÉQUENCES DANS UN MÊME FICHIER — LAQUELLE ÉCRIRE ?
+
+   Un .pdb / un .gro porte souvent PLUSIEURS chaînes polymères : un homodimère
+   (A · B), un duplex d'ADN (B · C — le brin direct et son complémentaire), un
+   complexe. Une lettre ne dit pas d'où elle vient, et la case d'une nature ne
+   peut en garder qu'UNE : écrire les deux chaînes bout à bout fabriquait une
+   séquence qui n'existe dans aucun des deux brins. Le viewer remet donc à sa
+   page ce que le fichier contient vraiment (`structureSequenceParts` →
+   `onStructureSequence`), et quand une même nature y est servie par plusieurs
+   chaînes il DEMANDE laquelle écrire : c'est le panneau « Sequence to write »
+   du viewer, qui n'existe que pour ça.
+
+   Une « candidate » = un texte d'un seul tenant = UNE nature ET UNE chaîne :
+
+     { key: 'protein|A', nature: 'protein', chain: 'A', seq: 'MKWV…', len: 128 }
+
+   Ces trois fonctions sont PURES, comme le reste du module : elles lisent les
+   ticks du viewer (un par résidu : `{ code, nature, chainname, chainid }`, voir
+   collectResidueTicks) et ne touchent à rien.
+   ========================================================================= */
+
+/** La clé d'un résidu polymère : sa nature ET sa chaîne (`protein|A`). Une
+ *  chaîne absente (un .gro sans nom de chaîne) donne `protein|` : les résidus de
+ *  cette nature forment alors UNE seule candidate — le comportement d'avant. */
+const sequenceTickKey = (tick) => {
+  const nature = SEQUENCE_NATURES.includes(tick && tick.nature) ? tick.nature : '';
+  if (!nature) return '';
+  return `${nature}|${txt(tick && (tick.chainname || tick.chainid))}`;
+};
+
+/** CE QUE LE FICHIER CONTIENT : une candidate par (nature, chaîne), dans
+ *  l'ordre du fichier. Les résidus sans nature lisible ou sans 1-lettre (eau,
+ *  ions, lipides, ligands, nucléotides modifiés) n'en font jamais partie. */
+export const sequenceCandidatesOf = (ticks) => {
+  const out = [];
+  const byKey = new Map();
+  (Array.isArray(ticks) ? ticks : []).forEach((t) => {
+    const key = sequenceTickKey(t);
+    const code = txt(t && t.code).toUpperCase();
+    if (!key || !code) return;
+    let c = byKey.get(key);
+    if (!c) {
+      c = { key, nature: key.split('|')[0], chain: key.slice(key.indexOf('|') + 1), seq: '', len: 0 };
+      byKey.set(key, c);
+      out.push(c);
+    }
+    c.seq += code;
+    c.len += 1;
+  });
+  return out;
+};
+
+/** LES NATURES AMBIGUËS : celles que PLUSIEURS chaînes servent. Elles se
+ *  disputent le même champ, donc c'est pour elles — et seulement elles — qu'il
+ *  faut demander. Une nature servie par une seule chaîne (le cas courant d'un
+ *  .pdb / d'un .gro d'un seul polymère) n'est jamais ambiguë. */
+export const ambiguousSequenceNatures = (candidates) => {
+  const count = {};
+  (Array.isArray(candidates) ? candidates : []).forEach((c) => {
+    if (c && c.nature) count[c.nature] = (count[c.nature] || 0) + 1;
+  });
+  return SEQUENCE_NATURES.filter((n) => (count[n] || 0) > 1);
+};
+
+/** LES RÉSIDUS À ÉCRIRE UNE FOIS LE CHOIX FAIT — `chosenByNature` étant la
+ *  chaîne choisie pour chaque nature ambiguë (`{ dna: 'dna|B' }`) : tout ce qui
+ *  n'est pas ambigu part comme avant (chaque nature dans son champ), et de
+ *  chaque nature ambiguë seule la chaîne choisie est gardée. La liste obtenue
+ *  est celle que le viewer donne à `structureSequenceParts`. */
+export const sequenceChoiceTicks = (ticks, chosenByNature) => {
+  const list = Array.isArray(ticks) ? ticks : [];
+  const ambiguous = ambiguousSequenceNatures(sequenceCandidatesOf(list));
+  const pick = chosenByNature && typeof chosenByNature === 'object' ? chosenByNature : {};
+  return list.filter((t) => {
+    const key = sequenceTickKey(t);
+    if (!key) return false;
+    const nature = key.split('|')[0];
+    if (!ambiguous.includes(nature)) return true;
+    return pick[nature] === key;
+  });
+};
