@@ -49,14 +49,30 @@ export const useDriveAutoRestore = ({
 
   const attempt = useCallback(async (reason = 'auto') => {
     if (!enabled || !testId || runningRef.current) return null;
+    // Un essai EXPLICITE (le bouton « ⬇️ Restore from Drive » / « Try again ») se
+    // distingue de l'ouverture auto et de la reconnexion au cloud.
+    const forced = reason !== 'open' && reason !== 'cloud-connected';
+    /* UN CLIC EXPLICITE SANS CLOUD NE DOIT PAS SEMBLER MORT : la copie de
+       référence vit sur le Drive / Nextcloud, donc rien ne peut être tenté —
+       on le DIT au lieu de n'écrire aucun message (le bouton restait muet et le
+       clic paraissait sans effet). La règle ne change pas : sans cloud, rien
+       n'est tenté et rien n'est réservé. */
+    if (!hasCloudAccess() && forced && aliveRef.current) {
+      setStatus('failed');
+      setMessage('⚠️ The archived copy lives on Google Drive / Nextcloud — connect the cloud first (the ☁️ / 🔌 button), then press this button again.');
+    }
     if (!hasCloudAccess()) return null;
     let needs = false;
     try { needs = await missingRef.current?.(); } catch { needs = false; }
-    if (!needs || !aliveRef.current) return null;
+    if (!needs || !aliveRef.current) {
+      // Un clic EXPLICITE alors que rien ne manque : on le dit aussi (sinon le
+      // bouton paraît, là encore, sans effet).
+      if (forced && !needs && aliveRef.current) setMessage('✔ Nothing to restore — this data is already in this browser.');
+      return null;
+    }
     // Une seule tentative par expérience et par session : sans ce portillon,
     // chaque rendu relancerait des requêtes sur le Drive. Un essai MANUEL
     // (« Try again ») est explicite : il libère d'abord la réservation.
-    const forced = reason !== 'open' && reason !== 'cloud-connected';
     if (forced) releaseRestore(kind, testId);
     if (!claimRestore(kind, testId)) return null;
     runningRef.current = true;
@@ -78,6 +94,15 @@ export const useDriveAutoRestore = ({
       runningRef.current = false;
     }
   }, [enabled, kind, testId]);
+
+  // Changer d'expérience efface le VERDICT de la précédente : sans cela le
+  // message restait affiché sur l'expérience suivante (ex. « ✅ Docking
+  // structures restored from Google Drive ») — une page neuve montrait donc le
+  // résultat de l'autre, alors qu'elle n'a rien restauré.
+  useEffect(() => {
+    setStatus('idle');
+    setMessage('');
+  }, [kind, testId]);
 
   // 1) À l'ouverture (ou au changement d'expérience) : la tentative automatique.
   useEffect(() => {

@@ -24,7 +24,7 @@ import { SequenceField } from './SequenceField';
 // les pastilles de « Sequence and structure » montrent les mêmes numéros que le
 // viewer 3D et que la table des déplacements.
 import { residueNumberResolver } from '../utils/residueNumbering';
-import { gunzipSync } from 'fflate';
+import { gunzipSync, unzipSync } from 'fflate';
 // One character size per element + the font family of the shared figure style
 // (the axis numbers keep riding on cfg.fontSize, see utils/chartStyle.js).
 import { tickTextProps, legendTextStyle, seriesColorFor } from '../utils/chartStyle';
@@ -296,10 +296,20 @@ export const DockingExperimentalConditions = ({ ctx }) => {
   useEffect(() => {
     let cancelled = false;
     loadJson(molKey)
-      .then((list) => { if (!cancelled && Array.isArray(list)) setMolecules(list); })
+      .then((list) => { if (!cancelled) setMolecules(Array.isArray(list) ? list : null); })
       .catch(() => {});
     return () => { cancelled = true; };
   }, [molKey, activeTest.dockingMolecules]);
+
+  /* ── UNE EXPÉRIENCE NEUVE NE REPLIQUE PAS LA PRÉCÉDENTE ────────────────────
+     La page d'expérience n'est PAS re-montée quand on change d'expérience (sa
+     clé ne dépend que du nonce de rafraîchissement) : les états LOCAUX de cette
+     section survivraient donc au changement. `molKey` (qui contient l'id) change
+     exactement quand l'expérience affichée change — on referme alors le
+     « show structure » et l'effet ci-dessus REMET la liste à vide quand la
+     nouvelle expérience n'a rien d'importé (`setMolecules(null)` → `shown`
+     retombe sur les métadonnées, vides). */
+  useEffect(() => { setOpenIdx(null); }, [molKey]);
 
   const meta = Array.isArray(activeTest.dockingMolecules) ? activeTest.dockingMolecules : [];
   const shown = Array.isArray(molecules) && molecules.length ? molecules : meta;
@@ -365,6 +375,101 @@ export const DockingExperimentalConditions = ({ ctx }) => {
 
 
 // ================= 1) EXPERIMENT SETUP (Docking) =================
+/* ── LE DÉCLENCHEUR DE RESTAURATION DU DOCKING ─────────────────────────────
+   Les textes PDB vivent dans la base du NAVIGATEUR (IndexedDB), qui est LOCALE :
+   sur un autre poste, la page n'aurait que des NOMS de fichiers. Dès que les
+   métadonnées d'un import sont là SANS leur contenu, l'archive du Drive est donc
+   re-téléchargée TOUTE SEULE et remise dans la base, sans que l'utilisateur ait
+   rien à faire.
+
+   Ce hook est appelé par la section « Molecular structure » (celle qui MONTRE
+   les structures, donc celle qui DOIT les avoir pour afficher autre chose qu'une
+   formule 2D dérivée de la séquence) ET par la section « Data » (qui porte
+   l'import et garde un bouton de secours). La section « Data » étant repliée par
+   défaut (ses enfants ne sont pas montés par CollapsibleSection), c'est la
+   section « structure » qui déclenche la restauration à l'ouverture de la page ;
+   le portillon de useDriveAutoRestore (claimRestore) garantit UNE seule tentative
+   par expérience et par session, quel que soit le point d'appel monté d'abord. */
+const useDockingDriveRestore = ({ activeTest, updateActiveTest }) => {
+  const dockingStructKey = `labDockingStructures_${activeTest.id || 'global'}`;
+  const dockingMolKey = `labDockingMolecules_${activeTest.id || 'global'}`;
+
+  // Un pointeur arrivé après un changement d'expérience attend son tour.
+  useEffect(() => {
+    const pending = takePendingRestorePointer({ field: 'dockingDrive', key: activeTest.id || 'global' });
+    if (!pending) return;
+    updateActiveTest(pending);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTest.id]);
+
+  const dockingHasMeta = (
+    (Array.isArray(activeTest.dockingStructures) && activeTest.dockingStructures.length > 0)
+    || (Array.isArray(activeTest.dockingMolecules) && activeTest.dockingMolecules.length > 0)
+    /* Un POINTEUR d'archive suffit : s'il existe, la copie de référence est sur
+       le Drive — même si les métadonnées des structures ont disparu du dataset
+       (compressées par compressDatasetForSave, ou dataset ancien). Sans cette
+       ligne, le bouton « ⬇️ Restore from Drive » s'affichait mais ne tentait
+       RIEN (`missing` → false) : le clic paraissait sans effet. */
+    || !!activeTest.dockingDrive
+  );
+
+  const dockingDefaultStems = () => restoreStems(activeTest.instanceName, activeTest.name);
+
+  const dockingDriveMissing = async () => {
+    if (!dockingHasMeta) return false; // aucun import : rien à restaurer
+    const structs = await loadJson(dockingStructKey).catch(() => null);
+    const mols = await loadJson(dockingMolKey).catch(() => null);
+    const hasStructs = Array.isArray(structs) && structs.length > 0;
+    const hasMols = Array.isArray(mols) && mols.length > 0;
+    return !hasStructs && !hasMols;
+  };
+
+  const restoreDockingFromDrive = async () => {
+    const pointer = activeTest.dockingDrive || null;
+    const stems = (pointer && Array.isArray(pointer.stems) && pointer.stems.length
+      ? pointer.stems
+      : dockingDefaultStems());
+    const found = await restoreJsonFor({
+      kind: DOCKING_RESTORE_KIND, suffix: DOCKING_RESTORE_KIND, stems,
+      ctx: dockingDriveCtx(activeTest, activeTest.instanceName), pointer
+    });
+    if (!found) {
+      return {
+        ok: false,
+        message: '⚠️ The docking structures are not in this browser and no copy was found on Google Drive. Connect Google Drive, then re-import the calculation directory: it archives the structures AND the molecules.'
+      };
+    }
+    const data = (found.data && typeof found.data === 'object') ? found.data : {};
+    const structs = Array.isArray(data.structures) ? data.structures : [];
+    const mols = Array.isArray(data.molecules) ? data.molecules : [];
+    if (!structs.length && !mols.length) {
+      return { ok: false, message: `⚠️ The copy found on Google Drive (${found.name}) holds no structures — re-import the calculation directory.` };
+    }
+    /* La base du navigateur est réapprovisionnée AVANT l'état : c'est elle que
+       le viewer 3D et « Molecules to be docked » relisent. */
+    if (structs.length) await storeJson(dockingStructKey, structs);
+    if (mols.length) await storeJson(dockingMolKey, mols);
+    updateActiveTest({
+      ...(structs.length
+        ? { dockingStructures: structs.map((s) => ({ name: s.name, driveUrl: s.driveUrl || '' })) }
+        : {}),
+      dockingDrive: {
+        ...(activeTest.dockingDrive || {}),
+        id: found.id, name: found.name, at: Date.now(), stems, restoredAt: Date.now()
+      }
+    });
+    return { ok: true, message: `✅ Docking structures restored from Google Drive (${found.name}).` };
+  };
+
+  const dockingRestore = useDriveAutoRestore({
+    kind: DOCKING_RESTORE_KIND,
+    testId: activeTest.id,
+    missing: dockingDriveMissing,
+    restore: restoreDockingFromDrive
+  });
+  return dockingRestore;
+};
+
 export const DockingExperimentSetupSection = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
   const d = useDockingDerived(activeTest, ctx);
@@ -372,6 +477,15 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
   // viewer) : les pastilles de « Sequence and structure » portent les numéros
   // que la structure renumérotée montre dans le viewer 3D.
   const residueNoOf = residueNumberResolver(activeTest);
+
+  // Les textes PDB vivent dans la base du navigateur (LOCALE) : si les
+  // métadonnées d'un import de calcul sont là SANS leur contenu (autre poste,
+  // cache vidé), l'archive du Drive est re-téléchargée TOUTE SEULE pour que le
+  // viewer 3D montre les vraies structures — sinon la section retomberait sur
+  // la formule 2D dérivée de la séquence. C'est ICI (et non dans « Data »,
+  // repliée par défaut) que le déclencheur doit vivre : cette section est
+  // montée dès que des structures sont prévues, donc dès que le viewer s'affiche.
+  const dockingRestore = useDockingDriveRestore({ activeTest, updateActiveTest });
 
   // Docking cluster structures (8_seletopclusts) read by the calculation-directory
   // importer — the full PDB texts live in localStorage, keyed by the test id.
@@ -512,10 +626,27 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
   useEffect(() => {
     let cancelled = false;
     loadJson(structKey)
-      .then((list) => { if (!cancelled && Array.isArray(list)) setStructList(list); })
+      .then((list) => { if (!cancelled) setStructList(Array.isArray(list) ? list : []); })
       .catch(() => {});
     return () => { cancelled = true; };
   }, [structKey, activeTest.dockingStructures]);
+
+  /* ── UNE EXPÉRIENCE NEUVE EST VIERGE ──────────────────────────────────────
+     La page d'expérience n'est PAS re-montée quand on change d'expérience (sa
+     clé ne dépend que du nonce de rafraîchissement) : les états LOCAUX de cette
+     section survivraient donc au changement, et la nouvelle expérience HÉRITAIT
+     des structures, de la lecture du ligand et de la mise en page de la
+     précédente (rapport : « un nouvel essai de docking n'est pas vierge »).
+     `structKey` (qui contient l'id) change exactement quand l'expérience
+     affichée change : on remet alors ces états à zéro. L'effet ci-dessus
+     recharge la liste (vide) de la NOUVELLE clé, donc plus aucune structure du
+     cluster précédent n'est montrée. */
+  useEffect(() => {
+    setStructIdx(0);
+    setLigandInfo(null);
+    setViewerOpen(false);
+    setExpandedPanel(null);
+  }, [structKey]);
 
   /* ── CE QUE LA SOUS-SECTION « SEQUENCE AND STRUCTURE » A À MONTRER ──────────
      La FORMULE 2D (l'ancien volet « 2D Formula » du sélecteur 2D / 3D) et la
@@ -789,8 +920,54 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
               )}
             </div>
           )}
+          {/* Restauration automatique des structures depuis le Drive (voir
+              useDockingDriveRestore) : l'archive est déposée toute seule à
+              l'import d'un répertoire de calcul, et récupérée toute seule ici
+              quand le poste ne l'a pas encore — ce bouton n'est qu'un secours. */}
+          {(activeTest.dockingDrive
+            || (Array.isArray(activeTest.dockingStructures) && activeTest.dockingStructures.length > 0)
+            || dockingRestore.status !== 'idle'
+            || !!dockingRestore.message) && (
+            <div className="mb-2 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => dockingRestore.attempt('manual')}
+                disabled={dockingRestore.status === 'restoring'}
+                title="Download the archived copy of these structures from Google Drive (it is saved automatically when a calculation directory is imported) — it also happens by itself when the page opens"
+                className="text-[10px] font-bold bg-white border border-sky-300 text-sky-700 hover:bg-sky-50 px-2 py-1.5 rounded-lg shadow-sm disabled:opacity-50"
+              >
+                {dockingRestore.status === 'restoring' ? '⬇️ Downloading…' : '⬇️ Restore from Drive'}
+              </button>
+              {(dockingRestore.status === 'restoring' || dockingRestore.message) && (
+                <span className={`text-[10px] font-semibold rounded-lg px-3 py-1.5 border ${dockingRestore.status === 'restored'
+                  ? 'bg-green-50 border-green-200 text-green-800'
+                  : dockingRestore.status === 'failed'
+                    ? 'bg-amber-50 border-amber-200 text-amber-800'
+                    : 'bg-sky-50 border-sky-200 text-sky-800'}`}>
+                  {dockingRestore.status === 'restoring'
+                    ? '⬇️ These structures are not in this browser — restoring the archived copy from Google Drive…'
+                    : dockingRestore.message}
+                  {dockingRestore.status === 'failed' && (
+                    <button type="button" onClick={() => dockingRestore.attempt('manual')}
+                      className="ml-2 underline font-bold">Try again</button>
+                  )}
+                </span>
+              )}
+            </div>
+          )}
+
               <NMRMoleculeViewer
-                key={((activeTest && activeTest.id) || 'docking') + (selectedStruct ? '::' + selectedStruct.name : '')}
+                /* ⚭ LA CLÉ NE SUIT PLUS LA STRUCTURE CHOISIE — c'est ce qui rendait le
+                   zoom « perdu » au changement du dropdown « 8_seletopclusts structure ».
+                   Elle concaténait le NOM de la structure choisie à l'id de l'expérience :
+                   changer de structure changeait donc la clé, et React DÉMONTait puis
+                   REMONTAIT tout le viewer — nouvelle scène WebGL, écran vide le temps du
+                   chargement, puis un `autoView()` de premier montage qui recadrait tout.
+                   Aucune mémoire de caméra ne survit à un remontage (les refs du viewer
+                   repartent de zéro). En gardant la clé STABLE (l'expérience seule), le
+                   MÊME viewer reçoit le nouveau `structureText` : il remplace la molécule
+                   en gardant le point de vue (côté viewer : preserveViewOnNextLoadRef). */
+                key={((activeTest && activeTest.id) || 'docking')}
                 instanceKey={(activeTest && activeTest.id) || null}
                 src={selectedStruct ? '' : structureSrc}
                 structureText={selectedStruct ? selectedStruct.pdb : undefined}
@@ -862,9 +1039,19 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
 // ================= 2) DATA (Docking results table + import) =================
 const DockingImportPanel = ({ ctx, onPoses }) => {
   const { updateActiveTest } = ctx;
+  const activeTestId = (ctx.activeTest && ctx.activeTest.id) || '';
   const [pasteText, setPasteText] = useState('');
   const [report, setReport] = useState(null);
   const [calcDirBusy, setCalcDirBusy] = useState(false);
+  /* Le rapport d'import et le texte collé décrivent la DERNIÈRE action de
+     l'utilisateur : une expérience neuve ne les hérite pas (la page n'est pas
+     re-montée au changement d'expérience — voir la note dans « Sequence and
+     structure »). */
+  useEffect(() => {
+    setReport(null);
+    setPasteText('');
+    setCalcDirBusy(false);
+  }, [activeTestId]);
   /* Expérience affichée : dit si le pointeur d'une archive (asynchrone) peut
      être posé tout de suite, ou s'il doit attendre qu'on revienne dessus. */
   const dockingActiveIdRef = useRef((ctx.activeTest && ctx.activeTest.id) || '');
@@ -1069,31 +1256,72 @@ const DockingImportPanel = ({ ctx, onPoses }) => {
       }
     }
 
-    // 3) 8_seletopclusts/*.pdb[.gz] → 3D viewer structures
-    let pdbFiles = list.filter((f) => /(^|\/)(8_)?seletopclusts?\/[^/]+\.(pdb|pdb\.gz)$/i.test(lower(f.webkitRelativePath || f.name)));
+    // 3) 8_seletopclusts/*.pdb[.gz] → 3D viewer structures.
+    //    The docked cluster structures are normally loose .pdb / .pdb.gz files
+    //    under 8_seletopclusts/, but a HADDOCK run — or the download of its
+    //    output — sometimes ships them INSIDE a .zip (the whole folder zipped,
+    //    or one archive per cluster). Those archives are opened here and their
+    //    .pdb / .pdb.gz entries are read exactly like the loose files, so the
+    //    3D viewer shows the REAL docked structures instead of the model built
+    //    from the receptor sequence.
+    const inStructDir = (s) => /(^|\/)(8_)?seletopclusts?\//i.test(lower(s));
+    let pdbFiles = list.filter((f) => /(^|\/)(8_)?seletopclusts?\/.+\.(pdb|pdb\.gz)$/i.test(lower(f.webkitRelativePath || f.name)));
     if (!pdbFiles.length) pdbFiles = list.filter((f) => /\.(pdb|pdb\.gz)$/i.test(lower(f.webkitRelativePath || f.name)));
-    const structs = [];
+    // Zip archives that may hold the structures — the ones under 8_seletopclusts/
+    // are tried first (a nested zip keeps its cluster PDBs).
+    const zipFiles = list
+      .filter((f) => /\.zip$/i.test(lower(f.webkitRelativePath || f.name)))
+      .sort((a, b) => Number(inStructDir(b.webkitRelativePath || b.name)) - Number(inStructDir(a.webkitRelativePath || a.name)));
+    // name → { name, pdb, blob } — the decompressed text plus what to archive on
+    // Drive (first occurrence wins; a duplicate name is not shown twice).
+    const structByName = new Map();
+    const keepStruct = (rawName, pdbText, blob) => {
+      const base = String(rawName || 'structure').split('/').pop().replace(/\.gz$/i, '');
+      if (!base || structByName.has(base)) return;
+      structByName.set(base, {
+        name: base,
+        pdb: pdbText,
+        blob: pdbText ? new Blob([pdbText], { type: 'chemical/x-pdb' }) : blob
+      });
+    };
     for (const f of pdbFiles) {
       const rel = f.webkitRelativePath || f.name;
-      const isGz = lower(rel).endsWith('.gz');
       let pdbText = '';
       try {
-        if (isGz) {
+        if (lower(rel).endsWith('.gz')) {
           const buf = await readArrayBuffer(f);
           pdbText = new TextDecoder('utf-8').decode(gunzipSync(new Uint8Array(buf)));
         } else {
           pdbText = await readText(f);
         }
       } catch { continue; }
-      const base = String(f.name || rel.split('/').pop() || 'structure').replace(/\.gz$/i, '');
+      keepStruct(f.name || rel, pdbText, f);
+    }
+    for (const zf of zipFiles) {
+      let entries = null;
+      try { entries = unzipSync(new Uint8Array(await readArrayBuffer(zf))); } catch { entries = null; }
+      if (!entries) continue;
+      for (const entryName of Object.keys(entries)) {
+        if (entryName.endsWith('/') || !/\.(pdb|pdb\.gz)$/i.test(entryName)) continue;
+        const bytes = entries[entryName];
+        let pdbText = '';
+        try {
+          const gz = /\.gz$/i.test(entryName) || (bytes[0] === 0x1f && bytes[1] === 0x8b);
+          pdbText = new TextDecoder('utf-8').decode(gz ? gunzipSync(bytes) : bytes);
+        } catch { continue; }
+        keepStruct(entryName, pdbText, null);
+      }
+    }
+    const structs = [];
+    for (const s of structByName.values()) {
       // Archive the DECOMPRESSED PDB to Drive under Data/pdb files — the viewer
       // always reads the gunzipped text, and Drive also keeps usable .pdb files.
       const driveUrl = await archive(
-        base, 'chemical/x-pdb',
-        pdbText ? new Blob([pdbText], { type: 'chemical/x-pdb' }) : f,
+        s.name, 'chemical/x-pdb',
+        s.blob || new Blob([s.pdb], { type: 'chemical/x-pdb' }),
         ['Data', 'pdb files'], 'Data'
       );
-      structs.push({ name: base, pdb: pdbText, driveUrl });
+      structs.push({ name: s.name, pdb: s.pdb, driveUrl });
     }
     if (structs.length) {
       // The PDB texts can be large — keep them in the browser store
@@ -1106,7 +1334,7 @@ const DockingImportPanel = ({ ctx, onPoses }) => {
       if (!stored) warnings.push('Cluster structures could not be stored in this browser (storage unavailable) — they will not appear in the 3D viewer; the metadata is still saved.');
       else notes.push(stored === 'indexeddb' ? 'stored in browser database' : 'stored locally');
     } else {
-      warnings.push('No .pdb / .pdb.gz structures found — expected them under 8_seletopclusts/ (or anywhere in the picked folder)');
+      warnings.push('No .pdb / .pdb.gz structures found — expected them under 8_seletopclusts/ (or anywhere in the picked folder), loose or inside a .zip');
     }
 
     /* Copie de RÉFÉRENCE sur le Drive : les textes PDB vivent dans la base du
@@ -1146,7 +1374,7 @@ const DockingImportPanel = ({ ctx, onPoses }) => {
         <p className="text-[10px] text-indigo-800">
           Pick the whole calculation directory — the app reads <b>data/configurations/raw_input.toml</b> (link in Instrumental
           Setup), <b>9_caprieval/capri_ss.tsv</b> (full TSV into the Data table) and <b>8_seletopclusts/*.pdb[.gz]</b>
-          (structures opened in the 3D viewer). The docked molecules listed in <b>raw_input.toml</b> — or, when it has no
+          or a <b>.zip</b> holding them (structures opened in the 3D viewer). The docked molecules listed in <b>raw_input.toml</b> — or, when it has no
           molecule list, the PDB files in <b>data/0_topoaa</b> — appear under Experimental Conditions, and every file is
           archived to Google Drive.
         </p>
@@ -1276,76 +1504,11 @@ export const DockingDataSection = ({ ctx }) => {
   // Drive est donc la copie de RÉFÉRENCE — dès que les métadonnées d'un import
   // sont là mais pas leur contenu, l'archive est re-téléchargée TOUTE SEULE et
   // remise dans la base, et l'utilisateur n'a rien à faire.
-  const dockingStructKey = `labDockingStructures_${activeTest.id || 'global'}`;
-  const dockingMolKey = `labDockingMolecules_${activeTest.id || 'global'}`;
-  const dockingActiveIdRef = useRef(activeTest.id || '');
-  dockingActiveIdRef.current = activeTest.id || '';
-  useEffect(() => {
-    const pending = takePendingRestorePointer({ field: 'dockingDrive', key: activeTest.id || 'global' });
-    if (!pending) return;
-    updateActiveTest(pending);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTest.id]);
-
-  const dockingHasMeta = (
-    (Array.isArray(activeTest.dockingStructures) && activeTest.dockingStructures.length > 0)
-    || (Array.isArray(activeTest.dockingMolecules) && activeTest.dockingMolecules.length > 0)
-  );
-
-  const dockingDefaultStems = () => restoreStems(activeTest.instanceName, activeTest.name);
-
-  const dockingDriveMissing = async () => {
-    if (!dockingHasMeta) return false; // aucun import : rien à restaurer
-    const structs = await loadJson(dockingStructKey).catch(() => null);
-    const mols = await loadJson(dockingMolKey).catch(() => null);
-    const hasStructs = Array.isArray(structs) && structs.length > 0;
-    const hasMols = Array.isArray(mols) && mols.length > 0;
-    return !hasStructs && !hasMols;
-  };
-
-  const restoreDockingFromDrive = async () => {
-    const pointer = activeTest.dockingDrive || null;
-    const stems = (pointer && Array.isArray(pointer.stems) && pointer.stems.length
-      ? pointer.stems
-      : dockingDefaultStems());
-    const found = await restoreJsonFor({
-      kind: DOCKING_RESTORE_KIND, suffix: DOCKING_RESTORE_KIND, stems,
-      ctx: dockingDriveCtx(activeTest, activeTest.instanceName), pointer
-    });
-    if (!found) {
-      return {
-        ok: false,
-        message: '⚠️ The docking structures are not in this browser and no copy was found on Google Drive. Connect Google Drive, then re-import the calculation directory: it archives the structures AND the molecules.'
-      };
-    }
-    const data = (found.data && typeof found.data === 'object') ? found.data : {};
-    const structs = Array.isArray(data.structures) ? data.structures : [];
-    const mols = Array.isArray(data.molecules) ? data.molecules : [];
-    if (!structs.length && !mols.length) {
-      return { ok: false, message: `⚠️ The copy found on Google Drive (${found.name}) holds no structures — re-import the calculation directory.` };
-    }
-    /* La base du navigateur est réapprovisionnée AVANT l'état : c'est elle que
-       le viewer 3D et « Molecules to be docked » relisent. */
-    if (structs.length) await storeJson(dockingStructKey, structs);
-    if (mols.length) await storeJson(dockingMolKey, mols);
-    updateActiveTest({
-      ...(structs.length
-        ? { dockingStructures: structs.map((s) => ({ name: s.name, driveUrl: s.driveUrl || '' })) }
-        : {}),
-      dockingDrive: {
-        ...(activeTest.dockingDrive || {}),
-        id: found.id, name: found.name, at: Date.now(), stems, restoredAt: Date.now()
-      }
-    });
-    return { ok: true, message: `✅ Docking structures restored from Google Drive (${found.name}).` };
-  };
-
-  const dockingRestore = useDriveAutoRestore({
-    kind: DOCKING_RESTORE_KIND,
-    testId: activeTest.id,
-    missing: dockingDriveMissing,
-    restore: restoreDockingFromDrive
-  });
+  // La mécanique vit dans useDockingDriveRestore (appelée aussi par la section
+  // « Molecular structure », qui est montée dès que des structures sont prévues
+  // et déclenche donc la restauration sans attendre que « Data » soit ouverte).
+  // Ici on ne garde que le bouton de secours + son statut, à côté de l'import.
+  const dockingRestore = useDockingDriveRestore({ activeTest, updateActiveTest });
 
   const bestPose = d.poses.length ? d.poses.reduce((a, b) => (a.affinity < b.affinity ? a : b)) : null;
 

@@ -158,6 +158,15 @@ async function main () {
     'LA DIRECTION est bien celle demandée : à 90° c’est la gauche qui est A', px(film.left) + ' → ' + px(film.right));
   check(film.solidPainted === false, 'sans rampe, le module ne peint RIEN (le film uni d’avant)');
   check(film.solidPixel && film.solidPixel[3] === 0, '…la toile reste VIDÉE (alpha 0, aucun pixel écrit)', px(film.solidPixel));
+  console.log('--- 1bis. la rampe à TROIS couleurs (le milieu demandé) ---');
+  check(film.midPainted === true, 'le module PEINT la rampe à trois couleurs', String(film.midPainted));
+  check(nearHex(film.midTop, '#ff0000'), '…l’extrémité HAUTE reste A (rouge)', px(film.midTop));
+  check(nearHex(film.midCenter, '#00ff00', 6), '…le MILIEU est C (vert) : le 3e arrêt est bien au milieu', px(film.midCenter));
+  check(nearHex(film.midBottom, '#0000ff'), '…l’extrémité BASSE reste B (bleu)', px(film.midBottom));
+  check(String(film.midCss).match(/#[0-9a-f]{6}/gi) && String(film.midCss).match(/#[0-9a-f]{6}/gi).length === 3,
+    '…et le CSS porte TROIS arrêts (A, C, B)', film.midCss);
+
+
 
   console.log('\n--- 2. le canvas NGL : le fond est du CSS, la toile est transparente ---');
   check(canvasProbe.clearAlpha === 0,

@@ -51,6 +51,13 @@ export const BG_GRADIENT_DEFAULT_TO = '#cbd5e1';
 export const BG_GRADIENT_DEFAULT_ANGLE = 180;
 /** Un fond dégradé n'est JAMAIS imposé : le viewer s'ouvre sur sa couleur unie. */
 export const BG_GRADIENT_DEFAULT_ON = false;
+/** Le DÉFAUT du MILIEU — le TROISIÈME arrêt de la rampe (la demande : « if there
+ *  were three colours it would be even more interesting »). Une teinte franche,
+ *  choisie pour se VOIR entre A et B ; il ne sert que quand `midOn` est vrai. */
+export const BG_GRADIENT_DEFAULT_MID = '#93c5fd';
+/** Le MILIEU est FACULTATIF : une rampe s'ouvre à DEUX couleurs, comme avant —
+ *  le bouton « C 50 % » du panneau l'ajoute (et l'enlève) d'un clic. */
+export const BG_GRADIENT_DEFAULT_MID_ON = false;
 
 /* LES HUIT DIRECTIONS QU'UN CLIC OFFRE — les angles de la convention CSS
    (0° en haut, dans le sens des aiguilles d'une montre), avec le glyphe du
@@ -93,6 +100,10 @@ export const bgGradientOf = (value) => {
     on: v.on === true,
     to: normalizeBgColor(v.to, BG_GRADIENT_DEFAULT_TO) || BG_GRADIENT_DEFAULT_TO,
     angle: normalizeBgAngle(v.angle, BG_GRADIENT_DEFAULT_ANGLE),
+    // Le MILIEU (la 3e couleur) et son interrupteur — validés comme les autres :
+    // une couleur illisible retombe sur le défaut du module, jamais sur du noir.
+    mid: normalizeBgColor(v.mid, BG_GRADIENT_DEFAULT_MID) || BG_GRADIENT_DEFAULT_MID,
+    midOn: v.midOn === true,
   };
 };
 
@@ -114,6 +125,8 @@ export const backgroundSpecOf = (color, gradient) => {
     from: normalizeBgColor(color, BG_GRADIENT_DEFAULT_TO) || BG_GRADIENT_DEFAULT_TO,
     to: g.to,
     angle: g.angle,
+    mid: g.mid,
+    midOn: g.midOn,
   };
 };
 
@@ -125,7 +138,16 @@ export const gradientSpecOf = (spec) => {
   const from = normalizeBgColor(spec.from);
   const to = normalizeBgColor(spec.to);
   if (!from || !to) return null;
-  return { from, to, angle: normalizeBgAngle(spec.angle, BG_GRADIENT_DEFAULT_ANGLE) };
+  // Le MILIEU n'existe que s'il est DEMANDÉ (`midOn`) ET lisible : une rampe à
+  // deux couleurs reste exactement celle d'avant quand il est absent.
+  const mid = normalizeBgColor(spec.mid);
+  return {
+    from,
+    to,
+    angle: normalizeBgAngle(spec.angle, BG_GRADIENT_DEFAULT_ANGLE),
+    mid,
+    midOn: spec.midOn === true && !!mid,
+  };
 };
 
 /** LA DIRECTION NOMMÉE — la promesse du panneau : un angle qui vaut exactement
@@ -142,7 +164,10 @@ export const bgDirectionOf = (angle) => {
 export const backgroundCss = (spec) => {
   const g = gradientSpecOf(spec);
   if (!g) return '';
-  return `linear-gradient(${g.angle}deg, ${g.from} 0%, ${g.to} 100%)`;
+  // DEUX arrêts par défaut ; TROIS dès que le milieu est demandé (A 0 %, C 50 %,
+  // B 100 %) — les deux extrémités restent exactement A et B dans les deux cas.
+  const stops = g.midOn ? `${g.from} 0%, ${g.mid} 50%, ${g.to} 100%` : `${g.from} 0%, ${g.to} 100%`;
+  return `linear-gradient(${g.angle}deg, ${stops})`;
 };
 /** LA LIGNE DE LA RAMPE, en coordonnées de canvas — les maths de la
  *  spécification CSS (css-images-3, §linear-gradient) :
@@ -181,6 +206,7 @@ export const paintViewerBackground = (ctx, width, height, spec) => {
     const { x0, y0, x1, y1 } = gradientLineFor(g.angle, w, h);
     const ramp = ctx.createLinearGradient(x0, y0, x1, y1);
     ramp.addColorStop(0, g.from);
+    if (g.midOn) ramp.addColorStop(0.5, g.mid);   // le 3e arrêt, au MILIEU
     ramp.addColorStop(1, g.to);
     ctx.fillStyle = ramp;
     ctx.fillRect(0, 0, w, h);

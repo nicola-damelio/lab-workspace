@@ -168,7 +168,8 @@ const buildHelpers = (keys = {}, env = {}) => new Function('__window', [
   // peuvent manquer (l'enregistrement du schéma a échoué) et le menu doit alors
   // garder l'aspect classique au lieu de ne rien dessiner.
   `let elementSchemeKey = ${keys.elements === undefined ? 'null' : JSON.stringify(keys.elements)};`,
-  `let sugarSchemeKey = ${keys.sugar === undefined ? 'null' : JSON.stringify(keys.sugar)};`,  // PART 4 — les palettes et les schémas que la barre de style lit.
+  `let sugarSchemeKey = ${keys.sugar === undefined ? 'null' : JSON.stringify(keys.sugar)};`,
+  // PART 4 — les palettes et les schémas que la barre de style lit.
   `const BASE_TYPE_ORDER = ${sliceRaw('BASE_TYPE_ORDER')};`,
   sliceObject(VIEW, 'RESIDUE_COLOR_PALETTE'),
   sliceObject(VIEW, 'residueColorStore'),
@@ -593,82 +594,6 @@ ok(CODE.includes("value={look.opacity}") && CODE.includes("onChange={(e) => set(
 ok(CODE.includes('{ sub: \'ribose\', label: \'DNA/RNA ribose\''), 'la plaque du ribose est la row « DNA/RNA ribose » (Ring plates)');
 
 
-// 3. L'IMAGE SUIVANTE : les atomes bougent (la trajectoire), les liaisons NON — le
-//    graphe est le même, donc les anneaux sont les mêmes et la plaque ne fait que
-//    suivre ses atomes.
-const delta = { x: 1.7, y: -0.9, z: 2.3 };
-const move = (k) => atoms.forEach((a) => { a.x += k * delta.x; a.y += k * delta.y; a.z += k * delta.z; });
-move(1);
-eq(HF.refreshRingPlates([fakeComp]), 1, 'le changement d’image réécrit la plaque');
-const after = screenPos();
-ok(after.join() !== before.join(), 'la géométrie à l’écran n’est plus celle de l’image 1');
-eq(after, [...make().position], '…elle vaut EXACTEMENT les plaques de la NOUVELLE image');
-eq([...buffer.geometry.attributes.normal.array], [...make().normal], 'les normales des facettes suivent (le plan du cycle)');
-eq([...buffer.geometry.attributes.color.array], [...make().color], '…et les couleurs sont réécrites');
-eq(buffer.geometry.index.count, make().index.length, 'l’index est réécrit : mêmes anneaux, autres coordonnées');
-for (let i = 0; i < after.length; i += 3) {
-  ok(Math.abs(after[i] - before[i] - delta.x) < 1e-4, 'chaque sommet a suivi la translation des atomes (x)');
-  ok(Math.abs(after[i + 1] - before[i + 1] - delta.y) < 1e-4, '…(y)');
-  ok(Math.abs(after[i + 2] - before[i + 2] - delta.z) < 1e-4, '…(z)');
-}
-/* LE MÊME TAMPON : NGL n'a rien reconstruit — le BufferAttribute est celui de la
-   construction, donc les mêmes tampons WebGL sont réécrits et rien ne clignote. */
-eq(fakeComp.reps.length, 1, 'aucune représentation n’est refaite (pas de clignotement)');
-ok(fakeComp.reps[0].buffer === buffer, '…c’est le MÊME MeshBuffer qui est rempli à nouveau');
-ok(buffer.geometry.attributes.position === posAttr, '…et le MÊME BufferAttribute (mêmes tampons WebGL)');
-eq(HF.refreshRingPlates([fakeComp]), 1, 'la géométrie peut être réécrite à chaque image, sans fin');
-
-// 4. Retour à l'image 1 : la plaque se repose EXACTEMENT sur ses atomes.
-move(-1);
-eq(HF.refreshRingPlates([fakeComp]), 1, 'le retour à l’image 1 réécrit la plaque');
-eq(screenPos(), before, '…et elle revient sur les coordonnées de l’image 1');
-
-// 5. Le rendu n'est demandé QUE si quelque chose a réellement été réécrit.
-HF.plateFrame.componentRef.current = fakeComp;
-eq(HF.plateFrame.refreshScenePlates(), undefined, 'refreshScenePlates ne rend rien (il DEMANDE un rendu)');
-eq(HF.plateFrame.repaints(), 1, 'les plaques de la scène → un rendu demandé');
-const bareComp = { reps: [], eachRepresentation(cb) { this.reps.forEach((rep) => cb(rep)); } };
-HF.plateFrame.componentRef.current = bareComp;
-HF.plateFrame.refreshScenePlates();
-eq(HF.plateFrame.repaints(), 1, 'une scène SANS plaque ne demande aucun rendu (pas un pixel pour rien)');
-HF.plateFrame.componentRef.current = null;
-HF.plateFrame.extraCompsRef.current = [{ comp: fakeComp }];
-HF.plateFrame.refreshScenePlates();
-eq(HF.plateFrame.repaints(), 2, 'les plaques des molécules EXTRA suivent aussi (leur propre composant)');
-
-// 6. LE SIGNAL : c'est ce que NGL dispatche à chaque image de la trajectoire.
-HF.plateFrame.componentRef.current = fakeComp;
-HF.plateFrame.extraCompsRef.current = [];
-const n = HF.plateFrame.repaints();
-move(1);
-plateSignal.dispatch();                      // ← Structure#refreshPosition le fait
-eq(HF.plateFrame.repaints(), n + 1, 'une image de la trajectoire → plaques réécrites ET un rendu');
-eq(screenPos(), [...make().position], '…les plaques à l’écran sont celles de la dernière image');
-move(1);
-plateSignal.dispatch();
-eq(HF.plateFrame.repaints(), n + 2, '…une demande de rendu par image, jamais plus');
-HF.plateFrame.componentRef.current = null;
-plateSignal.dispatch();
-eq(HF.plateFrame.repaints(), n + 2, '…et une image sans plaque ne redessine rien du tout');
-refreshed.dispatch();                        // l'AUTRE structure (sans plaque) ne dessine rien non plus
-eq(HF.plateFrame.repaints(), n + 2, 'un composant hors de la scène ne fait redessiner personne');
-
-/* 7. LE REJEU DES MOLÉCULES DÉPLACÉES NE COÛTE RIEN SUR UNE SCÈNE INTACTE : la carte
-   des mouvements (partMoveRef) est vide — personne n'a attrapé de molécule — donc une
-   image de trajectoire passe sans qu'un seul atome soit réécrit. C'est ce que le
-   signal fait AVANT les plaques (voir reapplyPartMoves). */
-eq(HF.plateFrame.partMoveRef.current.size, 0, 'aucune molécule déplacée dans cette scène');
-eq(HF.plateFrame.reapplyPartMoves(fakeComp), 0,
-  '…et le rejeu d’une image le dit : rien à replacer, rien d’écrit (une scène intacte reste intacte)');
-eq(HF.plateFrame.reapplyPartMoves(null), 0, '…même sans composant du tout');
-
-/* 8. UNE PLAQUE EST UN INSTANTANÉ : elle reste sur la dernière image reçue JUSQU'À ce
-   qu'une image la réécrive — c'est la différence entre « suit les images » (ce que la
-   section 9 vient de montrer) et « se replace tout seul », qui n'existe pas. */
-move(-2);                                    // retour aux coordonnées de l'image 1
-ok(screenPos().join() !== before.join(), 'une plaque est un INSTANTANÉ : elle reste sur la dernière image reçue');
-eq(HF.refreshRingPlates([fakeComp]), 1, '…jusqu’à ce que la prochaine image la réécrive');
-eq(screenPos(), before, '…et la voilà reposée sur les atomes de l’image 1');
 
 /* ── Le BRANCHEMENT : ce que la section 9 vient d'exécuter est bien celui du viewer ── */
 has('hookStructurePlates(component);', 'le chargement ACCROCHE les plaques de la structure');
@@ -759,6 +684,82 @@ const posAttr = buffer.geometry.attributes.position;
 const screenPos = () => [...buffer.geometry.attributes.position.array];
 eq(screenPos(), before, 'la géométrie à l’écran est celle de l’image 1');
 eq(kept[0].__sec, undefined, 'aucune marque de rangée n’est inventée par le constructeur commun');
+// 3. L'IMAGE SUIVANTE : les atomes bougent (la trajectoire), les liaisons NON — le
+//    graphe est le même, donc les anneaux sont les mêmes et la plaque ne fait que
+//    suivre ses atomes.
+const delta = { x: 1.7, y: -0.9, z: 2.3 };
+const move = (k) => atoms.forEach((a) => { a.x += k * delta.x; a.y += k * delta.y; a.z += k * delta.z; });
+move(1);
+eq(HF.refreshRingPlates([fakeComp]), 1, 'le changement d’image réécrit la plaque');
+const after = screenPos();
+ok(after.join() !== before.join(), 'la géométrie à l’écran n’est plus celle de l’image 1');
+eq(after, [...make().position], '…elle vaut EXACTEMENT les plaques de la NOUVELLE image');
+eq([...buffer.geometry.attributes.normal.array], [...make().normal], 'les normales des facettes suivent (le plan du cycle)');
+eq([...buffer.geometry.attributes.color.array], [...make().color], '…et les couleurs sont réécrites');
+eq(buffer.geometry.index.count, make().index.length, 'l’index est réécrit : mêmes anneaux, autres coordonnées');
+for (let i = 0; i < after.length; i += 3) {
+  ok(Math.abs(after[i] - before[i] - delta.x) < 1e-4, 'chaque sommet a suivi la translation des atomes (x)');
+  ok(Math.abs(after[i + 1] - before[i + 1] - delta.y) < 1e-4, '…(y)');
+  ok(Math.abs(after[i + 2] - before[i + 2] - delta.z) < 1e-4, '…(z)');
+}
+/* LE MÊME TAMPON : NGL n'a rien reconstruit — le BufferAttribute est celui de la
+   construction, donc les mêmes tampons WebGL sont réécrits et rien ne clignote. */
+eq(fakeComp.reps.length, 1, 'aucune représentation n’est refaite (pas de clignotement)');
+ok(fakeComp.reps[0].buffer === buffer, '…c’est le MÊME MeshBuffer qui est rempli à nouveau');
+ok(buffer.geometry.attributes.position === posAttr, '…et le MÊME BufferAttribute (mêmes tampons WebGL)');
+eq(HF.refreshRingPlates([fakeComp]), 1, 'la géométrie peut être réécrite à chaque image, sans fin');
+
+// 4. Retour à l'image 1 : la plaque se repose EXACTEMENT sur ses atomes.
+move(-1);
+eq(HF.refreshRingPlates([fakeComp]), 1, 'le retour à l’image 1 réécrit la plaque');
+eq(screenPos(), before, '…et elle revient sur les coordonnées de l’image 1');
+
+// 5. Le rendu n'est demandé QUE si quelque chose a réellement été réécrit.
+HF.plateFrame.componentRef.current = fakeComp;
+eq(HF.plateFrame.refreshScenePlates(), undefined, 'refreshScenePlates ne rend rien (il DEMANDE un rendu)');
+eq(HF.plateFrame.repaints(), 1, 'les plaques de la scène → un rendu demandé');
+const bareComp = { reps: [], eachRepresentation(cb) { this.reps.forEach((rep) => cb(rep)); } };
+HF.plateFrame.componentRef.current = bareComp;
+HF.plateFrame.refreshScenePlates();
+eq(HF.plateFrame.repaints(), 1, 'une scène SANS plaque ne demande aucun rendu (pas un pixel pour rien)');
+HF.plateFrame.componentRef.current = null;
+HF.plateFrame.extraCompsRef.current = [{ comp: fakeComp }];
+HF.plateFrame.refreshScenePlates();
+eq(HF.plateFrame.repaints(), 2, 'les plaques des molécules EXTRA suivent aussi (leur propre composant)');
+
+// 6. LE SIGNAL : c'est ce que NGL dispatche à chaque image de la trajectoire.
+HF.plateFrame.componentRef.current = fakeComp;
+HF.plateFrame.extraCompsRef.current = [];
+const n = HF.plateFrame.repaints();
+move(1);
+plateSignal.dispatch();                      // ← Structure#refreshPosition le fait
+eq(HF.plateFrame.repaints(), n + 1, 'une image de la trajectoire → plaques réécrites ET un rendu');
+eq(screenPos(), [...make().position], '…les plaques à l’écran sont celles de la dernière image');
+move(1);
+plateSignal.dispatch();
+eq(HF.plateFrame.repaints(), n + 2, '…une demande de rendu par image, jamais plus');
+HF.plateFrame.componentRef.current = null;
+plateSignal.dispatch();
+eq(HF.plateFrame.repaints(), n + 2, '…et une image sans plaque ne redessine rien du tout');
+refreshed.dispatch();                        // l'AUTRE structure (sans plaque) ne dessine rien non plus
+eq(HF.plateFrame.repaints(), n + 2, 'un composant hors de la scène ne fait redessiner personne');
+
+/* 7. LE REJEU DES MOLÉCULES DÉPLACÉES NE COÛTE RIEN SUR UNE SCÈNE INTACTE : la carte
+   des mouvements (partMoveRef) est vide — personne n'a attrapé de molécule — donc une
+   image de trajectoire passe sans qu'un seul atome soit réécrit. C'est ce que le
+   signal fait AVANT les plaques (voir reapplyPartMoves). */
+eq(HF.plateFrame.partMoveRef.current.size, 0, 'aucune molécule déplacée dans cette scène');
+eq(HF.plateFrame.reapplyPartMoves(fakeComp), 0,
+  '…et le rejeu d’une image le dit : rien à replacer, rien d’écrit (une scène intacte reste intacte)');
+eq(HF.plateFrame.reapplyPartMoves(null), 0, '…même sans composant du tout');
+
+/* 8. UNE PLAQUE EST UN INSTANTANÉ : elle reste sur la dernière image reçue JUSQU'À ce
+   qu'une image la réécrive — c'est la différence entre « suit les images » (ce que la
+   section 9 vient de montrer) et « se replace tout seul », qui n'existe pas. */
+move(-2);                                    // retour aux coordonnées de l'image 1
+ok(screenPos().join() !== before.join(), 'une plaque est un INSTANTANÉ : elle reste sur la dernière image reçue');
+eq(HF.refreshRingPlates([fakeComp]), 1, '…jusqu’à ce que la prochaine image la réécrive');
+eq(screenPos(), before, '…et la voilà reposée sur les atomes de l’image 1');
 
 /* ── Bilan ─────────────────────────────────────────────────────────────── */
 console.log(`_viewer_rings_gradient_test.mjs — ${passed} assertions OK`);

@@ -23,6 +23,7 @@ import {
 // 🎨 de §2 Scene) et 'B', plus l'angle ; tout est validé par le module.
 import {
   BG_DIRECTIONS, BG_GRADIENT_DEFAULT_ANGLE, BG_GRADIENT_DEFAULT_TO,
+  BG_GRADIENT_DEFAULT_MID, BG_GRADIENT_DEFAULT_MID_ON,
   backgroundCss, backgroundSpecOf, bgDirectionOf, bgGradientOf,
   paintViewerBackground, readBgGradient, underlayBackdrop,
 } from '../utils/viewerBackground';
@@ -13649,6 +13650,16 @@ blobUrlsRef.current = [];
 
 const [manualOverride, setManualOverride] = useState(false);
 const lastLoadedTextRef = useRef(null);
+/* ⚭ LA STRUCTURE DE LA PAGE À L'ÉCRAN ET LE POINT DE VUE (voir l'effet `structureText`
+   et le chargement principal, plus bas). `lastStructureTextRef` retient le DERNIER
+   texte servi par la page (`structureText`) : c'est lui qui dit qu'un nouveau texte du
+   MÊME guichet REMPLACE l'ancien — le cas du dropdown « 8_seletopclusts structure » de
+   la page Docking, où seul le pose / le ligand change et où la caméra ne doit PAS
+   repartir. `preserveViewOnNextLoadRef` porte ce vœu jusqu'au chargement principal,
+   qui capture alors la caméra AVANT de vider la scène et la repose APRÈS, au lieu d'un
+   `autoView()` qui recadrerait la molécule à chaque changement. */
+const lastStructureTextRef = useRef(null);
+const preserveViewOnNextLoadRef = useRef(false);
 const loadedPdbTextRef = useRef(null); // raw PDB text of the currently loaded structure (rebuild-H source)
 const lastSeenSrcRef = useRef(undefined);
 const lastSeenTextRef = useRef(undefined);
@@ -13798,6 +13809,9 @@ if (!structureText) {
   // "replace or keep both?" prompt without destroying the viewer.
   const hadText = !!lastLoadedTextRef.current;
   lastLoadedTextRef.current = null;
+  // La page ne sert plus de structure : le prochain texte qu'elle offrira sera un
+  // PREMIER chargement, donc cadré normalement (voir preserveViewOnNextLoadRef).
+  lastStructureTextRef.current = null;
   if (!src && !structureFile && !structureFileData && hadText && statusRef.current !== 'loading') {
     clearExtraMolecules();
     try { if (stageRef.current) stageRef.current.removeAllComponents(); } catch {}
@@ -13821,6 +13835,14 @@ if (!structureText) {
 }
 if (structureText !== lastLoadedTextRef.current) {
 lastLoadedTextRef.current = structureText;
+/* ⚭ SWITCH ENTRE DEUX STRUCTURES DE LA PAGE (« 8_seletopclusts structure », Docking) :
+   même récepteur, seul le pose / le ligand change — la caméra reste donc EXACTEMENT
+   là où l'utilisateur l'a laissée. Le chargement principal capture le point de vue
+   AVANT de vider la scène et le repose après (voir preserveViewOnNextLoadRef), au lieu
+   d'un `autoView()`. Seul un VRAI changement de guichet la garde : le tout premier
+   texte (rien avant) se cadre normalement. */
+preserveViewOnNextLoadRef.current = !!lastStructureTextRef.current;
+lastStructureTextRef.current = structureText;
 clearExtraMolecules();
 setFile(null);
 setStructOrigin('generated');
@@ -13846,12 +13868,22 @@ useEffect(() => {
   if (structOrigin === 'external') return;   // un PDB chargé par l'utilisateur occupe l'écran
   if (!sequenceStructureText) return;        // pas de séquence sur la page : rien à bâtir
   if (sequenceStructureText === lastLoadedTextRef.current) return;  // c'est DÉJÀ ce modèle qui est affiché
+  /* ⚠️ LA STRUCTURE SERVIE PAR LA PAGE OCCUPE L'ÉCRAN — le modèle de la séquence n'est
+     qu'un REPLI, servi « quand RIEN n'est chargé » (voir les pages MD et Docking). Or
+     l'effet ci-dessus (le texte de la page, `structureText`) vient de la charger dans CE
+     MÊME rendu : il pose `lastLoadedTextRef` AVANT nous et marque l'origine « generated »
+     — PAS « external » — donc sans ce garde le modèle la REMPLAÇAIT aussitôt (les deux
+     effets écrivent le même `loadRequest`, le dernier gagne). C'est ce qui faisait montrer
+     la « protéine linéarisée » à la place des PDB « 8_seletopclusts » sélectionnés sur la
+     page Docking, et céder la molécule organique chargée sur MD — contre la règle « un PDB
+     chargé reste prioritaire » des deux pages. */
+  if (structureText && structureText === lastLoadedTextRef.current) return;
   if (loadRequest && loadRequest.text === sequenceStructureText) return;  // …ou il est en train de charger
   lastLoadedTextRef.current = sequenceStructureText;
   setStructOrigin('generated');
   console.log('🧬 Nothing loaded in the viewer — showing the structure built from the page sequence.');
   requestStructureLoad({ file: null, url: null, text: sequenceStructureText, ext: sequenceStructureExt || 'pdb', ts: Date.now() });
-}, [structOrigin, sequenceStructureText, sequenceStructureExt, loadRequest]);
+}, [structOrigin, sequenceStructureText, sequenceStructureExt, loadRequest, structureText]);
 
 useEffect(() => {
 if (!src) return;
@@ -15794,6 +15826,12 @@ const run = async () => {
 try {
 const stage = await stageReadyRef.current;
 if (cancelled || !stage) return;
+/* ⚭ LE POINT DE VUE SURVIT À UN SWITCH DE STRUCTURE DE LA PAGE (dropdown Docking) :
+   capturé AVANT que la scène ne soit vidée, il est reposé après le chargement à la
+   place d'`autoView()` — voir preserveViewOnNextLoadRef. Le drapeau est consommé ici
+   même, pour qu'aucun chargement suivant n'hérite du vœu par erreur. */
+const keepView = preserveViewOnNextLoadRef.current ? cameraPose() : null;
+preserveViewOnNextLoadRef.current = false;
 stage.removeAllComponents();
 clearMeasurements(); // any previously drawn distance lines are gone too
 clearHydrogenBonds(); // …et les lignes de 💧 H-bonds aussi
@@ -16031,11 +16069,13 @@ if (ambiguous.length > 0 && candidates.length > 1 && SEQUENCE_NATURES.includes(m
 }
 }
 
-component.autoView();
+if (keepView) applyCameraPose(keepView);   // ⚭ switch de structure : la caméra reste où elle est
+else component.autoView();
 requestAnimationFrame(() => {
 if (cancelled || !stageRef.current) return;
 try { stageRef.current.handleResize(); } catch {}
-try { component.autoView(); } catch {}
+if (keepView) applyCameraPose(keepView);
+else { try { component.autoView(); } catch {} }
 });
 
 if (!(component.structure ? component.structure.atomCount : 0)) {
@@ -24159,7 +24199,7 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
   aria-expanded={bgPanelOpen}
   aria-controls="viewer-background"
   className={`px-1 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 ${bgGradient.on ? 'bg-sky-100 border-sky-400 text-sky-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
-  title={`⬚ Background options — ${bgPanelOpen ? 'OPEN right now: this button closes them (so does a click on the background of the 3D view).' : 'CLOSED right now: this button opens them under the 3D view — two colours and their direction — and so does a click on the background itself.'} ${bgGradient.on ? `The gradient is ON (A ${bgColor} → B ${bgGradient.to}, ${bgGradient.angle}°).` : 'The gradient is OFF: the scene keeps its flat colour (A), which the 🎨 swatch beside this button sets.'} The ramp never touches the scene: NGL paints one colour and the ramp lives in the CSS of its canvas, so no representation is rebuilt — and the 🎬🎞 films and the ✨ Ray still take the very same ramp.`}>
+  title={`⬚ Background options — ${bgPanelOpen ? 'OPEN right now: this button closes them (so does a click on the background of the 3D view).' : 'CLOSED right now: this button opens them under the 3D view — two or three colours and their direction — and so does a click on the background itself.'} ${bgGradient.on ? `The gradient is ON (A ${bgColor}${bgGradient.midOn ? ` → C ${bgGradient.mid}` : ''} → B ${bgGradient.to}, ${bgGradient.angle}°).` : 'The gradient is OFF: the scene keeps its flat colour (A), which the 🎨 swatch beside this button sets.'} The ramp never touches the scene: NGL paints one colour and the ramp lives in the CSS of its canvas, so no representation is rebuilt — and the 🎬🎞 films and the ✨ Ray still take the very same ramp.`}>
   ⬚
 </button>
 <button type="button" onClick={() => setShadowOn((v) => !v)}
@@ -25858,6 +25898,26 @@ style={{ height: (viewerCollapsed ? 0 : viewH) + 'px' }}
       <input type="color" value={bgGradient.to} onChange={(e) => patchBgGradient({ to: e.target.value })}
         className="w-7 h-6 border border-slate-300 rounded cursor-pointer" aria-label="Background gradient second colour" />
     </label>
+    {/* C — LE TROISIÈME ARRÊT (la demande : « if there were three colours it
+        would be even more interesting »). Le bouton l'AJOUTE au MILIEU (50 %)
+        et l'ENLÈVE ; éteint, la rampe reste exactement celle à deux couleurs
+        d'avant. Le milieu ne touche ni A (la couleur de la scène) ni B. */}
+    <button type="button" onClick={() => patchBgGradient({ midOn: !bgGradient.midOn })}
+      aria-pressed={bgGradient.midOn}
+      className={`px-1.5 py-1 h-7 text-[10px] font-bold rounded-md border whitespace-nowrap transition-colors ${bgGradient.midOn ? 'bg-sky-100 border-sky-400 text-sky-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+      title={bgGradient.midOn
+        ? 'ON right now: the ramp is painted with THREE colours — A at the start, C in the MIDDLE (50 %), B at the end. This button puts the two-colour ramp back (A → B).'
+        : 'OFF right now: the ramp is painted with TWO colours (A → B). This button adds a THIRD colour C, halfway along the ramp (50 %).'}>
+      C 50%
+    </button>
+    {bgGradient.midOn && (
+      <label className="flex items-center gap-0.5 cursor-pointer whitespace-nowrap"
+        title="C — the MIDDLE colour of the ramp (at 50 %), used only while the C 50 % button is ON. It never touches A (the scene colour) nor B (the end of the ramp).">
+        <span className="text-[10px] font-black text-slate-500">C</span>
+        <input type="color" value={bgGradient.mid} onChange={(e) => patchBgGradient({ mid: e.target.value })}
+          className="w-7 h-6 border border-slate-300 rounded cursor-pointer" aria-label="Background gradient middle colour" />
+      </label>
+    )}
     <span className="flex items-center gap-0.5" role="group" aria-label="Gradient direction">
       {BG_DIRECTIONS.map((d) => (
         <button key={d.key} type="button" onClick={() => patchBgGradient({ angle: d.angle })}
@@ -25876,9 +25936,9 @@ style={{ height: (viewerCollapsed ? 0 : viewH) + 'px' }}
         className="w-20 accent-sky-600" aria-label="Gradient angle in degrees" />
       <span className="text-[10px] text-slate-500 w-8">{bgGradient.angle}°</span>
     </label>
-    <button type="button" onClick={() => patchBgGradient({ on: false, to: BG_GRADIENT_DEFAULT_TO, angle: BG_GRADIENT_DEFAULT_ANGLE })}
+    <button type="button" onClick={() => patchBgGradient({ on: false, to: BG_GRADIENT_DEFAULT_TO, angle: BG_GRADIENT_DEFAULT_ANGLE, mid: BG_GRADIENT_DEFAULT_MID, midOn: BG_GRADIENT_DEFAULT_MID_ON })}
       className="px-1.5 py-1 h-7 text-[10px] font-bold rounded-md border bg-white border-slate-300 text-slate-600 hover:bg-slate-100 whitespace-nowrap"
-      title={`↺ Back to the ramp as it comes (B ${BG_GRADIENT_DEFAULT_TO}, ↓ top → bottom) and ⬚ Gradient OFF — a flat background. The colour A (the 🎨 of §2 Scene) is NOT touched: use its own ↺ for that.`}>
+      title={`↺ Back to the ramp as it comes (B ${BG_GRADIENT_DEFAULT_TO}, ↓ top → bottom, no middle colour) and ⬚ Gradient OFF — a flat background. The colour A (the 🎨 of §2 Scene) is NOT touched: use its own ↺ for that.`}>
       ↺
     </button>
     <button type="button" onClick={() => setBgPanelOpen(false)}
@@ -25892,7 +25952,7 @@ style={{ height: (viewerCollapsed ? 0 : viewH) + 'px' }}
         un angle libre n'a pas de nom, et dit alors ses degrés. */}
     {bgGradient.on && (
       <span className="w-full text-[9px] text-slate-500 leading-tight">
-        The ramp runs {bgDirectionOf(bgGradient.angle)?.what || `${bgGradient.angle}°`} — A <b>{bgColor}</b> → B <b>{bgGradient.to}</b>. It paints the screen, the 🎬🎞 films and the ✨ Ray still; a click on the background closes these options.
+        The ramp runs {bgDirectionOf(bgGradient.angle)?.what || `${bgGradient.angle}°`} — A <b>{bgColor}</b>{bgGradient.midOn ? <> → C <b>{bgGradient.mid}</b></> : null} → B <b>{bgGradient.to}</b>. It paints the screen, the 🎬🎞 films and the ✨ Ray still; a click on the background closes these options.
       </span>
     )}
   </div>
