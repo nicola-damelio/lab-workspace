@@ -3835,10 +3835,14 @@ ci-dessus) : une instance qui a défini son style AVANT ce correctif ne le rejou
 mais elle ne rejoue pas non plus celui de sa voisine ; le 📌 une fois suffit à écrire le nom propre à
 l'instance, et tout ce qui suit est instantané et hors ligne.
 
-*Vérifier :* `node _viewer_style_recall_test.mjs` — **156** (le nom propre à l'instance, **EXÉCUTÉ** avec
-la vraie règle de slug ; deux instances, un seul magasin : chacune repose **sa** lampe et **son** fond ;
-la mémoire de l'ancien nom nu est ignorée au profit du fichier de la condition ; hors expérience, le nom
-nu reste légitime) ; `node _viewer_style_controls_test.mjs` — **504** (📌 et ↩ toujours branchés dans la
+*Vérifier :* `node _viewer_style_recall_test.mjs` — **161** (le nom propre à l'instance, **EXÉCUTÉ** avec
+la vraie règle de slug ; deux instances, un seul magasin : chacune repose **sa** lampe, **son** fond et
+**sa** rampe — la seconde a la rampe **ÉTEINTE**, c'est-à-dire le cas même du rapport, et le canvas de la
+première reçoit le CSS de **sa** rampe (`linear-gradient(90deg, …)`) calculé par le module du fond
+**EXÉCUTÉ** (`bgGradientOf` → `backgroundSpecOf` → `backgroundCss`, la chaîne que `applyBackgroundGradient`
+pose sur le canvas d'NGL), jamais la chaîne vide de sa voisine ; la mémoire de l'ancien nom nu est ignorée
+au profit du fichier de la condition ; hors expérience, le nom nu reste légitime) ;
+`node _viewer_style_controls_test.mjs` — **504** (📌 et ↩ toujours branchés dans la
 bande, avant 💾 Save, et le nom du style défini est celui de l'instance) ;
 `node _viewer_theme_snapshot_test.mjs` — **73** (`writeNamedEntry` **EXÉCUTÉ** : le nom d'une page survit
 à l'écriture d'une autre, `null` ne supprime que ce nom) ; `node _viewer_background_test.mjs` — **168** et
@@ -3847,4 +3851,12 @@ caractère) ; `node _viewer_light_rig_test.mjs` — **385** ; `npx oxlint` — *
 `node _verify.cjs` — **44 suites, 0 échec** — dont les PIXELS réels du fond
 (`_viewer_background_pixels_test.cjs`, **34/34** : la rampe est bien peinte). Le fond n'a jamais été le
 problème : c'est le STYLE qui ne la portait pas.
+
+**Et la preuve que ce garde-fou regarde vraiment.** `_viewer_style_recall_test.mjs` accepte `VIEWER_SRC` :
+en lui donnant une copie de la source où `DEFINED_STYLE_NAME` reprend le nom **NU** partagé (le bug d'avant,
+une seule ligne remise), il **échoue** — `AssertionError … porte L'INSTANCE`, attendu
+`Defined style · cond_A`, obtenu `Defined style`, exit 1 — au lieu de rester vert. Une assertion qui ne
+tombe pas sous la mutation qu'elle vise ne prouve rien ; celle-ci tombe, et les cinq assertions ajoutées
+pour le dégradé empruntent le même chemin que le viewer : la valeur rejouée de l'entrée du Drive, puis le
+CSS que le canvas reçoit.
 

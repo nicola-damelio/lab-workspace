@@ -51,6 +51,11 @@ Object.defineProperty(globalThis, 'localStorage', {
   }
 });
 const FILES = await import('./src/utils/viewerStyleFile.js');
+/* Le module du FOND, EXÉCUTÉ lui aussi : c'est LUI qui transforme l'entrée qu'un
+   viewer rejoue en la `backgroundImage` que le canvas d'NGL reçoit réellement
+   (voir applyBackgroundGradient dans le viewer). Un test du style qui s'arrête à
+   l'objet rejoué ne prouve pas ce que l'écran peint ; celui-ci va jusqu'au CSS. */
+const BG = await import('./src/utils/viewerBackground.js');
 
 const SRC = process.env.VIEWER_SRC || new URL('./src/components/NMRMoleculeViewer.jsx', import.meta.url);
 const VIEW = readFileSync(SRC, 'utf8').replace(/\r\n/g, '\n');
@@ -386,13 +391,18 @@ eq(definedNameOf(null, null).DEFINED_STYLE_NAME, 'Defined style',
   'un viewer monté HORS expérience garde le nom nu : il n’y a qu’un viewer, aucune ambiguïté');
 
 /* Le décor : la mémoire de A ET celle de B sont dans le même poste, et le magasin
-   porte LES DEUX entrées — ce que le nom partagé d’avant rendait impossible. */
+   porte LES DEUX entrées — ce que le nom partagé d’avant rendait impossible.
+   ⚠ B DÉFINIT SON STYLE AVEC LA RAMPE ÉTEINTE : c’est le cas même du rapport
+   (« …the gradient of the background still does not work »). Avant le correctif,
+   l’entrée de B — sans rampe — écrasait celle de A dans le magasin commun, et en
+   revenant dans A la rampe de A était donc ÉTEINTE : le dégradé « ne marchait
+   plus ». Il doit revenir ALLUMÉ, et celui de A ne doit pas se répandre dans B. */
 const lampFond = (az, bg, to, on) => ({
   shadows: { on: true, darkness: 0.5, az, el: 12, color: '#ffffff' },
   background: bg, backgroundGradient: { on, to, angle: 90, midOn: false }
 });
 const definedA = { v: 1, name: namedA.DEFINED_STYLE_NAME, global: lampFond(95, '#0b1f33', '#123456', true), sections: { 'protein|A': { tree: { radius: 1 } } } };
-const definedB = { v: 1, name: namedB.DEFINED_STYLE_NAME, global: lampFond(250, '#331f0b', '#654321', true), sections: { 'protein|A': { tree: { radius: 2 } } } };
+const definedB = { v: 1, name: namedB.DEFINED_STYLE_NAME, global: lampFond(250, '#331f0b', '#654321', false), sections: { 'protein|A': { tree: { radius: 2 } } } };
 const sharedStore = { [namedA.DEFINED_STYLE_NAME]: definedA, [namedB.DEFINED_STYLE_NAME]: definedB };
 
 const backInA = runRecall({
@@ -410,6 +420,21 @@ eq(backInA.seen.applied[0][2].global.shadows.az, 95, '…la LAMPE de A (◐ Shad
 eq(backInA.seen.applied[0][2].global.background, '#0b1f33', '…et SON fond');
 eq(backInA.seen.applied[0][2].global.backgroundGradient.on, true, '…sa rampe allumée, comme il l’avait définie');
 eq(backInA.seen.listed.length, 0, '…sans même interroger le Drive (la mémoire de l’instance suffit)');
+/* ⬚ LE DÉGRADÉ, JUSQU’AU CSS QUE LE CANVAS REÇOIT. Le rejeu réel de la source
+   passe par `bgGradientOf(global.backgroundGradient)` puis par
+   `backgroundCss(backgroundSpecOf(background, gradient))` (applyViewerSetup, puis
+   applyBackgroundGradient) : les trois fonctions du MODULE sont exécutées ci-dessous
+   sur l’entrée que A vient de rejouer — l’assertion porte donc sur la
+   `backgroundImage` posée sur le canvas d’NGL, pas sur un objet intermédiaire. */
+const cssOf = (entry) => {
+  const g = BG.bgGradientOf(entry.global.backgroundGradient);
+  return BG.backgroundCss(BG.backgroundSpecOf(entry.global.background, g));
+};
+eq(cssOf(backInA.seen.applied[0][2]), 'linear-gradient(90deg, #0b1f33 0%, #123456 100%)',
+  '…et le canvas d’A reçoit SA rampe (de son fond vers sa couleur B, à SON angle)');
+eq(BG.bgGradientOf(backInA.seen.applied[0][2].global.backgroundGradient),
+  { on: true, to: '#123456', angle: 90, mid: BG.BG_GRADIENT_DEFAULT_MID, midOn: false },
+  '…relue par le VALIDATEUR du module, exactement comme le fait applyViewerSetup');
 
 const backInB = runRecall({
   slug: 'cond_B',
@@ -422,6 +447,10 @@ eq(await backInB.recall(), { mode: 'snapshot', name: 'Defined style · cond_B', 
   '…et B retrouve le sien : deux instances, DEUX styles définis, aucun vol');
 eq(backInB.seen.applied[0][2].global.shadows.az, 250, '…avec SA lumière');
 eq(backInB.seen.applied[0][2].global.background, '#331f0b', '…et SON fond');
+eq(backInB.seen.applied[0][2].global.backgroundGradient.on, false, '…et SA rampe, qu’il avait laissée éteinte');
+eq(cssOf(backInB.seen.applied[0][2]), '', '…d’où un canvas sans `backgroundImage` : la couleur d’NGL reste seule');
+ok(cssOf(backInA.seen.applied[0][2]) !== cssOf(backInB.seen.applied[0][2]),
+  'LES DEUX INSTANCES PEIGNENT DEUX FONDS DIFFÉRENTS : la rampe de l’une n’est pas celle de l’autre');
 
 /* 5g. LA MÉMOIRE DE L'ANCIEN NOM NU EST AMBIGUË — on ne devine pas. Le poste garde
    ce qu'a écrit la version d'avant (une mémoire qui nomme « Defined style »), et le
