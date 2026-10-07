@@ -129,4 +129,33 @@ ok(/}, \[structOrigin, sequenceStructureText, sequenceStructureExt, loadRequest,
 ok(VIEWER.includes("if (structOrigin === 'external') return;"),
   '…sans retirer le garde existant (un PDB chargé par l’utilisateur garde la priorité)');
 
+/* ── 7. LE POINT DE VUE SURVIT AU SWITCH DE STRUCTURE (« 8_seletopclusts structure ») ──
+   Demande : « quand je passe d'une structure à la suivante via le dropdown, le zoom ne
+   doit pas se réinitialiser — je veux continuer à voir la macromolécule à la même
+   position et le ligand qui change. »
+
+   Les PDB « 8_seletopclusts » d'un même run partagent le repère du récepteur : aucun
+   alignement (fit RMSD) n'est nécessaire pour les superposer. Ce qui faisait « sauter »
+   le zoom était le recadrage `component.autoView()` du chargement principal, exécuté à
+   chaque nouveau `loadRequest`. Le viewer CAPTURE donc le point de vue (les mêmes
+   helpers que les poses de film, cameraPose / applyCameraPose) AVANT de vider la scène,
+   et le REPOSE après — à la place d'autoView — quand la page REMPLACE sa propre
+   structure (switch), jamais au tout premier chargement. */
+ok(VIEWER.includes('const lastStructureTextRef = useRef(null);'),
+  'le viewer retient le texte de structure actuellement servi par la page');
+ok(VIEWER.includes('const preserveViewOnNextLoadRef = useRef(false);'),
+  '…et un vœu « garder la caméra » porté jusqu’au chargement principal');
+ok(VIEWER.includes('preserveViewOnNextLoadRef.current = !!lastStructureTextRef.current;'),
+  'seul un SWITCH (une structure de page était déjà affichée) garde la caméra — le 1er texte se cadre');
+ok(VIEWER.includes('lastStructureTextRef.current = null;'),
+  '…et quand la page ne sert plus de structure, le prochain texte recadre');
+ok(VIEWER.includes('const keepView = preserveViewOnNextLoadRef.current ? cameraPose() : null;'),
+  'le chargement principal capture la caméra AVANT de vider la scène (cameraPose)');
+ok(VIEWER.includes('preserveViewOnNextLoadRef.current = false;'),
+  '…et consomme le vœu (aucun chargement ultérieur n’en hérite)');
+ok(VIEWER.includes('if (keepView) applyCameraPose(keepView);'),
+  '…puis repose le point de vue (orientation + position + zoom) au lieu d’autoView');
+ok(VIEWER.includes('else { try { component.autoView(); } catch {} }'),
+  '…autoView ne s’exécute plus que quand la caméra n’a PAS à être gardée');
+
 console.log(`${passed} passed`);

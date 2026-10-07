@@ -13630,6 +13630,16 @@ blobUrlsRef.current = [];
 
 const [manualOverride, setManualOverride] = useState(false);
 const lastLoadedTextRef = useRef(null);
+/* ⚭ LA STRUCTURE DE LA PAGE À L'ÉCRAN ET LE POINT DE VUE (voir l'effet `structureText`
+   et le chargement principal, plus bas). `lastStructureTextRef` retient le DERNIER
+   texte servi par la page (`structureText`) : c'est lui qui dit qu'un nouveau texte du
+   MÊME guichet REMPLACE l'ancien — le cas du dropdown « 8_seletopclusts structure » de
+   la page Docking, où seul le pose / le ligand change et où la caméra ne doit PAS
+   repartir. `preserveViewOnNextLoadRef` porte ce vœu jusqu'au chargement principal,
+   qui capture alors la caméra AVANT de vider la scène et la repose APRÈS, au lieu d'un
+   `autoView()` qui recadrerait la molécule à chaque changement. */
+const lastStructureTextRef = useRef(null);
+const preserveViewOnNextLoadRef = useRef(false);
 const loadedPdbTextRef = useRef(null); // raw PDB text of the currently loaded structure (rebuild-H source)
 const lastSeenSrcRef = useRef(undefined);
 const lastSeenTextRef = useRef(undefined);
@@ -13779,6 +13789,9 @@ if (!structureText) {
   // "replace or keep both?" prompt without destroying the viewer.
   const hadText = !!lastLoadedTextRef.current;
   lastLoadedTextRef.current = null;
+  // La page ne sert plus de structure : le prochain texte qu'elle offrira sera un
+  // PREMIER chargement, donc cadré normalement (voir preserveViewOnNextLoadRef).
+  lastStructureTextRef.current = null;
   if (!src && !structureFile && !structureFileData && hadText && statusRef.current !== 'loading') {
     clearExtraMolecules();
     try { if (stageRef.current) stageRef.current.removeAllComponents(); } catch {}
@@ -13802,6 +13815,14 @@ if (!structureText) {
 }
 if (structureText !== lastLoadedTextRef.current) {
 lastLoadedTextRef.current = structureText;
+/* ⚭ SWITCH ENTRE DEUX STRUCTURES DE LA PAGE (« 8_seletopclusts structure », Docking) :
+   même récepteur, seul le pose / le ligand change — la caméra reste donc EXACTEMENT
+   là où l'utilisateur l'a laissée. Le chargement principal capture le point de vue
+   AVANT de vider la scène et le repose après (voir preserveViewOnNextLoadRef), au lieu
+   d'un `autoView()`. Seul un VRAI changement de guichet la garde : le tout premier
+   texte (rien avant) se cadre normalement. */
+preserveViewOnNextLoadRef.current = !!lastStructureTextRef.current;
+lastStructureTextRef.current = structureText;
 clearExtraMolecules();
 setFile(null);
 setStructOrigin('generated');
@@ -15785,6 +15806,12 @@ const run = async () => {
 try {
 const stage = await stageReadyRef.current;
 if (cancelled || !stage) return;
+/* ⚭ LE POINT DE VUE SURVIT À UN SWITCH DE STRUCTURE DE LA PAGE (dropdown Docking) :
+   capturé AVANT que la scène ne soit vidée, il est reposé après le chargement à la
+   place d'`autoView()` — voir preserveViewOnNextLoadRef. Le drapeau est consommé ici
+   même, pour qu'aucun chargement suivant n'hérite du vœu par erreur. */
+const keepView = preserveViewOnNextLoadRef.current ? cameraPose() : null;
+preserveViewOnNextLoadRef.current = false;
 stage.removeAllComponents();
 clearMeasurements(); // any previously drawn distance lines are gone too
 clearHydrogenBonds(); // …et les lignes de 💧 H-bonds aussi
@@ -16022,11 +16049,13 @@ if (ambiguous.length > 0 && candidates.length > 1 && SEQUENCE_NATURES.includes(m
 }
 }
 
-component.autoView();
+if (keepView) applyCameraPose(keepView);   // ⚭ switch de structure : la caméra reste où elle est
+else component.autoView();
 requestAnimationFrame(() => {
 if (cancelled || !stageRef.current) return;
 try { stageRef.current.handleResize(); } catch {}
-try { component.autoView(); } catch {}
+if (keepView) applyCameraPose(keepView);
+else { try { component.autoView(); } catch {} }
 });
 
 if (!(component.structure ? component.structure.atomCount : 0)) {
