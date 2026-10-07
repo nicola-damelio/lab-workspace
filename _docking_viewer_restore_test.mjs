@@ -173,4 +173,40 @@ ok(!SRC.includes("+ (selectedStruct ? '::' + selectedStruct.name : '')"),
 ok(SRC.includes("key={((activeTest && activeTest.id) || 'docking')}"),
   '…elle ne dépend que de l’expérience : le MÊME viewer reçoit le nouveau structureText');
 
+/* ── 9. UNE EXPÉRIENCE NEUVE EST VIERGE ──────────────────────────────────────
+   Rapport : « quand je crée un nouvel essai de docking, il n'est pas vierge mais
+   contient déjà des données — mieux vaudrait le vider. »
+
+   Cause : la page d'expérience n'est re-montée que par la clé
+   `test-page-${testPageNonce}` (App.jsx) — jamais par l'id. Changer d'expérience
+   ne change PAS cette clé, donc DockingSections reste MONTÉE et ses états LOCAUX
+   (structList, structIdx, molecules, ligandInfo, rapport d'import) survivent au
+   changement. Pire : les effets de relecture de la base ne remettaient RIEN à
+   zéro quand la valeur lue n'était pas un tableau (nouvelle clé → null), donc la
+   liste des structures de l'expérience PRÉCÉDENTE restait affichée dans le viewer.
+
+   Correctif : les deux relectures écrasent désormais l'état même quand la valeur
+   lue est absente (→ [] / null), ET des effets keyés sur `structKey` / `molKey`
+   (qui contiennent l'id) remettent à zéro la sélection, la lecture du ligand,
+   l'ouverture de la formule et le rapport d'import. */
+const APP = readFileSync('src/App.jsx', 'utf8');
+ok(APP.includes('key={`test-page-${testPageNonce}`}'),
+  'la page d’expérience est re-montée par le NONCE — pas par l’id (changer d’expérience ne remonte donc rien)');
+
+ok(SRC.includes('.then((list) => { if (!cancelled) setStructList(Array.isArray(list) ? list : []); })'),
+  'la liste des structures est REMISE À VIDE quand la nouvelle expérience n’a rien importé');
+ok(SRC.includes('.then((list) => { if (!cancelled) setMolecules(Array.isArray(list) ? list : null); })'),
+  'idem pour les « Molecules to be docked »');
+ok(SRC.includes('useEffect(() => { setOpenIdx(null); }, [molKey]);'),
+  'changer d’expérience referme le « show structure » des molécules');
+ok(/useEffect\(\(\) => \{\s*setStructIdx\(0\);[\s\S]*?\}, \[structKey\]\);/.test(SRC),
+  '…et remet la sélection de structure / le ligand à zéro au moment EXACT où l’id change');
+ok(SRC.includes('setStructIdx(0);') && SRC.includes('setLigandInfo(null);'),
+  '…avec la lecture du ligand (SMILES) de la nouvelle expérience, pas de la précédente');
+
+const importPanel = SRC.slice(SRC.indexOf('const DockingImportPanel = ({ ctx, onPoses }) => {'));
+ok(importPanel.includes('setReport(null);') && importPanel.includes('}, [activeTestId]);'),
+  'le rapport d’import ne suit pas non plus la nouvelle expérience');
+
+
 console.log(`${passed} passed`);

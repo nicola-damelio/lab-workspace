@@ -296,10 +296,20 @@ export const DockingExperimentalConditions = ({ ctx }) => {
   useEffect(() => {
     let cancelled = false;
     loadJson(molKey)
-      .then((list) => { if (!cancelled && Array.isArray(list)) setMolecules(list); })
+      .then((list) => { if (!cancelled) setMolecules(Array.isArray(list) ? list : null); })
       .catch(() => {});
     return () => { cancelled = true; };
   }, [molKey, activeTest.dockingMolecules]);
+
+  /* ── UNE EXPÉRIENCE NEUVE NE REPLIQUE PAS LA PRÉCÉDENTE ────────────────────
+     La page d'expérience n'est PAS re-montée quand on change d'expérience (sa
+     clé ne dépend que du nonce de rafraîchissement) : les états LOCAUX de cette
+     section survivraient donc au changement. `molKey` (qui contient l'id) change
+     exactement quand l'expérience affichée change — on referme alors le
+     « show structure » et l'effet ci-dessus REMET la liste à vide quand la
+     nouvelle expérience n'a rien d'importé (`setMolecules(null)` → `shown`
+     retombe sur les métadonnées, vides). */
+  useEffect(() => { setOpenIdx(null); }, [molKey]);
 
   const meta = Array.isArray(activeTest.dockingMolecules) ? activeTest.dockingMolecules : [];
   const shown = Array.isArray(molecules) && molecules.length ? molecules : meta;
@@ -616,10 +626,27 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
   useEffect(() => {
     let cancelled = false;
     loadJson(structKey)
-      .then((list) => { if (!cancelled && Array.isArray(list)) setStructList(list); })
+      .then((list) => { if (!cancelled) setStructList(Array.isArray(list) ? list : []); })
       .catch(() => {});
     return () => { cancelled = true; };
   }, [structKey, activeTest.dockingStructures]);
+
+  /* ── UNE EXPÉRIENCE NEUVE EST VIERGE ──────────────────────────────────────
+     La page d'expérience n'est PAS re-montée quand on change d'expérience (sa
+     clé ne dépend que du nonce de rafraîchissement) : les états LOCAUX de cette
+     section survivraient donc au changement, et la nouvelle expérience HÉRITAIT
+     des structures, de la lecture du ligand et de la mise en page de la
+     précédente (rapport : « un nouvel essai de docking n'est pas vierge »).
+     `structKey` (qui contient l'id) change exactement quand l'expérience
+     affichée change : on remet alors ces états à zéro. L'effet ci-dessus
+     recharge la liste (vide) de la NOUVELLE clé, donc plus aucune structure du
+     cluster précédent n'est montrée. */
+  useEffect(() => {
+    setStructIdx(0);
+    setLigandInfo(null);
+    setViewerOpen(false);
+    setExpandedPanel(null);
+  }, [structKey]);
 
   /* ── CE QUE LA SOUS-SECTION « SEQUENCE AND STRUCTURE » A À MONTRER ──────────
      La FORMULE 2D (l'ancien volet « 2D Formula » du sélecteur 2D / 3D) et la
@@ -1012,9 +1039,19 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
 // ================= 2) DATA (Docking results table + import) =================
 const DockingImportPanel = ({ ctx, onPoses }) => {
   const { updateActiveTest } = ctx;
+  const activeTestId = (ctx.activeTest && ctx.activeTest.id) || '';
   const [pasteText, setPasteText] = useState('');
   const [report, setReport] = useState(null);
   const [calcDirBusy, setCalcDirBusy] = useState(false);
+  /* Le rapport d'import et le texte collé décrivent la DERNIÈRE action de
+     l'utilisateur : une expérience neuve ne les hérite pas (la page n'est pas
+     re-montée au changement d'expérience — voir la note dans « Sequence and
+     structure »). */
+  useEffect(() => {
+    setReport(null);
+    setPasteText('');
+    setCalcDirBusy(false);
+  }, [activeTestId]);
   /* Expérience affichée : dit si le pointeur d'une archive (asynchrone) peut
      être posé tout de suite, ou s'il doit attendre qu'on revienne dessus. */
   const dockingActiveIdRef = useRef((ctx.activeTest && ctx.activeTest.id) || '');

@@ -95,6 +95,15 @@ export const useDriveAutoRestore = ({
     }
   }, [enabled, kind, testId]);
 
+  // Changer d'expérience efface le VERDICT de la précédente : sans cela le
+  // message restait affiché sur l'expérience suivante (ex. « ✅ Docking
+  // structures restored from Google Drive ») — une page neuve montrait donc le
+  // résultat de l'autre, alors qu'elle n'a rien restauré.
+  useEffect(() => {
+    setStatus('idle');
+    setMessage('');
+  }, [kind, testId]);
+
   // 1) À l'ouverture (ou au changement d'expérience) : la tentative automatique.
   useEffect(() => {
     aliveRef.current = true;

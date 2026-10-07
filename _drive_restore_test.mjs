@@ -399,6 +399,9 @@ ok(HOOKSRC.includes("window.addEventListener('lab:drive-connected', onConnected)
   'connecter le Drive après coup déclenche la restauration');
 ok(HOOKSRC.includes('if (!hasCloudAccess()) return null;'),
   'sans cloud, rien n’est tenté (et rien n’est réservé)');
+ok(/setStatus\('idle'\)[\s\S]{0,40}setMessage\(''\)[\s\S]{0,40}\}, \[kind, testId\]\);/.test(HOOKSRC),
+  'changer d’expérience efface le verdict (un message ne survit pas à une page neuve)');
+
 
 /* Le module de restauration ne CRÉE jamais de dossier en lisant : une page qui
    s’ouvre ne doit pas semer une arborescence fantôme sur le Drive. */
