@@ -24,7 +24,7 @@ import { SequenceField } from './SequenceField';
 // les pastilles de « Sequence and structure » montrent les mêmes numéros que le
 // viewer 3D et que la table des déplacements.
 import { residueNumberResolver } from '../utils/residueNumbering';
-import { gunzipSync } from 'fflate';
+import { gunzipSync, unzipSync } from 'fflate';
 // One character size per element + the font family of the shared figure style
 // (the axis numbers keep riding on cfg.fontSize, see utils/chartStyle.js).
 import { tickTextProps, legendTextStyle, seriesColorFor } from '../utils/chartStyle';
@@ -1209,31 +1209,72 @@ const DockingImportPanel = ({ ctx, onPoses }) => {
       }
     }
 
-    // 3) 8_seletopclusts/*.pdb[.gz] → 3D viewer structures
-    let pdbFiles = list.filter((f) => /(^|\/)(8_)?seletopclusts?\/[^/]+\.(pdb|pdb\.gz)$/i.test(lower(f.webkitRelativePath || f.name)));
+    // 3) 8_seletopclusts/*.pdb[.gz] → 3D viewer structures.
+    //    The docked cluster structures are normally loose .pdb / .pdb.gz files
+    //    under 8_seletopclusts/, but a HADDOCK run — or the download of its
+    //    output — sometimes ships them INSIDE a .zip (the whole folder zipped,
+    //    or one archive per cluster). Those archives are opened here and their
+    //    .pdb / .pdb.gz entries are read exactly like the loose files, so the
+    //    3D viewer shows the REAL docked structures instead of the model built
+    //    from the receptor sequence.
+    const inStructDir = (s) => /(^|\/)(8_)?seletopclusts?\//i.test(lower(s));
+    let pdbFiles = list.filter((f) => /(^|\/)(8_)?seletopclusts?\/.+\.(pdb|pdb\.gz)$/i.test(lower(f.webkitRelativePath || f.name)));
     if (!pdbFiles.length) pdbFiles = list.filter((f) => /\.(pdb|pdb\.gz)$/i.test(lower(f.webkitRelativePath || f.name)));
-    const structs = [];
+    // Zip archives that may hold the structures — the ones under 8_seletopclusts/
+    // are tried first (a nested zip keeps its cluster PDBs).
+    const zipFiles = list
+      .filter((f) => /\.zip$/i.test(lower(f.webkitRelativePath || f.name)))
+      .sort((a, b) => Number(inStructDir(b.webkitRelativePath || b.name)) - Number(inStructDir(a.webkitRelativePath || a.name)));
+    // name → { name, pdb, blob } — the decompressed text plus what to archive on
+    // Drive (first occurrence wins; a duplicate name is not shown twice).
+    const structByName = new Map();
+    const keepStruct = (rawName, pdbText, blob) => {
+      const base = String(rawName || 'structure').split('/').pop().replace(/\.gz$/i, '');
+      if (!base || structByName.has(base)) return;
+      structByName.set(base, {
+        name: base,
+        pdb: pdbText,
+        blob: pdbText ? new Blob([pdbText], { type: 'chemical/x-pdb' }) : blob
+      });
+    };
     for (const f of pdbFiles) {
       const rel = f.webkitRelativePath || f.name;
-      const isGz = lower(rel).endsWith('.gz');
       let pdbText = '';
       try {
-        if (isGz) {
+        if (lower(rel).endsWith('.gz')) {
           const buf = await readArrayBuffer(f);
           pdbText = new TextDecoder('utf-8').decode(gunzipSync(new Uint8Array(buf)));
         } else {
           pdbText = await readText(f);
         }
       } catch { continue; }
-      const base = String(f.name || rel.split('/').pop() || 'structure').replace(/\.gz$/i, '');
+      keepStruct(f.name || rel, pdbText, f);
+    }
+    for (const zf of zipFiles) {
+      let entries = null;
+      try { entries = unzipSync(new Uint8Array(await readArrayBuffer(zf))); } catch { entries = null; }
+      if (!entries) continue;
+      for (const entryName of Object.keys(entries)) {
+        if (entryName.endsWith('/') || !/\.(pdb|pdb\.gz)$/i.test(entryName)) continue;
+        const bytes = entries[entryName];
+        let pdbText = '';
+        try {
+          const gz = /\.gz$/i.test(entryName) || (bytes[0] === 0x1f && bytes[1] === 0x8b);
+          pdbText = new TextDecoder('utf-8').decode(gz ? gunzipSync(bytes) : bytes);
+        } catch { continue; }
+        keepStruct(entryName, pdbText, null);
+      }
+    }
+    const structs = [];
+    for (const s of structByName.values()) {
       // Archive the DECOMPRESSED PDB to Drive under Data/pdb files — the viewer
       // always reads the gunzipped text, and Drive also keeps usable .pdb files.
       const driveUrl = await archive(
-        base, 'chemical/x-pdb',
-        pdbText ? new Blob([pdbText], { type: 'chemical/x-pdb' }) : f,
+        s.name, 'chemical/x-pdb',
+        s.blob || new Blob([s.pdb], { type: 'chemical/x-pdb' }),
         ['Data', 'pdb files'], 'Data'
       );
-      structs.push({ name: base, pdb: pdbText, driveUrl });
+      structs.push({ name: s.name, pdb: s.pdb, driveUrl });
     }
     if (structs.length) {
       // The PDB texts can be large — keep them in the browser store
@@ -1246,7 +1287,7 @@ const DockingImportPanel = ({ ctx, onPoses }) => {
       if (!stored) warnings.push('Cluster structures could not be stored in this browser (storage unavailable) — they will not appear in the 3D viewer; the metadata is still saved.');
       else notes.push(stored === 'indexeddb' ? 'stored in browser database' : 'stored locally');
     } else {
-      warnings.push('No .pdb / .pdb.gz structures found — expected them under 8_seletopclusts/ (or anywhere in the picked folder)');
+      warnings.push('No .pdb / .pdb.gz structures found — expected them under 8_seletopclusts/ (or anywhere in the picked folder), loose or inside a .zip');
     }
 
     /* Copie de RÉFÉRENCE sur le Drive : les textes PDB vivent dans la base du
@@ -1286,7 +1327,7 @@ const DockingImportPanel = ({ ctx, onPoses }) => {
         <p className="text-[10px] text-indigo-800">
           Pick the whole calculation directory — the app reads <b>data/configurations/raw_input.toml</b> (link in Instrumental
           Setup), <b>9_caprieval/capri_ss.tsv</b> (full TSV into the Data table) and <b>8_seletopclusts/*.pdb[.gz]</b>
-          (structures opened in the 3D viewer). The docked molecules listed in <b>raw_input.toml</b> — or, when it has no
+          or a <b>.zip</b> holding them (structures opened in the 3D viewer). The docked molecules listed in <b>raw_input.toml</b> — or, when it has no
           molecule list, the PDB files in <b>data/0_topoaa</b> — appear under Experimental Conditions, and every file is
           archived to Google Drive.
         </p>

@@ -89,4 +89,26 @@ ok(data.includes('const dockingRestore = useDockingDriveRestore({ activeTest, up
 ok(!data.includes('useDriveAutoRestore('),
   'plus de SECONDE mécanique dans « Data » : une seule source de vérité');
 
+/* ── 5. L'IMPORT LIT AUSSI LES STRUCTURES ENFERMÉES DANS UN .zip ─────────────
+   Le défaut rapporté : « les pdb de 8_seletopclusts sont parfois dans un zip ;
+   le programme récupère/convertit les fichiers mais le viewer ne les montre PAS
+   et régénère la structure depuis la séquence. » L'import ouvre donc les
+   archives .zip du dossier de calcul et en lit les entrées .pdb[.gz], comme
+   les fichiers posés à plat. */
+const importer = bodyOf('const DockingImportPanel = ({ ctx, onPoses }) => {');
+ok(SRC.includes("import { gunzipSync, unzipSync } from 'fflate';"),
+  'fflate fournit aussi le désarchiveur (unzipSync)');
+ok(importer.includes('const zipFiles = list'),
+  'l’import recense les archives .zip du dossier de calcul');
+ok(importer.includes('const structByName = new Map()'),
+  '…en dédoublonnant par nom de structure');
+ok(importer.includes('unzipSync(new Uint8Array(await readArrayBuffer(zf)))'),
+  '…et OUVRE chaque archive (fflate unzipSync)');
+ok(importer.includes('0x1f && bytes[1] === 0x8b'),
+  '…en reconnaissant une entrée gzip (magic) comme une entrée .pdb simple');
+ok(importer.includes('keepStruct(entryName, pdbText, null)'),
+  '…pour nourrir le MÊME chemin de stockage que les .pdb posés à plat');
+ok(importer.includes('const inStructDir ='),
+  'les .zip de 8_seletopclusts/ sont examinés en premier');
+
 console.log(`${passed} passed`);
