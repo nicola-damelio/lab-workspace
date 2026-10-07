@@ -158,4 +158,19 @@ ok(VIEWER.includes('if (keepView) applyCameraPose(keepView);'),
 ok(VIEWER.includes('else { try { component.autoView(); } catch {} }'),
   '…autoView ne s’exécute plus que quand la caméra n’a PAS à être gardée');
 
+/* ── 8. LA VRAIE CAUSE DU ZOOM PERDU : LE VIEWER ÉTAIT REMONTÉ ───────────────
+   Rapport suivant : « je prends la première structure, je zoome, je passe à la
+   suivante → la première disparaît, écran vide un moment, puis la seconde apparaît
+   NON zoomée. » Diagnostic : la clé React du viewer portait le NOM de la structure
+   choisie. Changer de structure changeait donc la clé, React démontait puis
+   remontait tout le viewer (nouvelle scène WebGL) : aucune ref de caméra ne survit
+   à un remontage, et le premier montage recadre (`autoView()`). Le correctif de la
+   section 7 (preserveViewOnNextLoadRef) était donc inopérant tant que le viewer
+   était remonté. La clé ne doit dépendre QUE de l'expérience, jamais de la
+   structure : le MÊME viewer reçoit le nouveau `structureText`. */
+ok(!SRC.includes("+ (selectedStruct ? '::' + selectedStruct.name : '')"),
+  'la clé du viewer ne suit PLUS la structure choisie (sinon remontage → zoom perdu)');
+ok(SRC.includes("key={((activeTest && activeTest.id) || 'docking')}"),
+  '…elle ne dépend que de l’expérience : le MÊME viewer reçoit le nouveau structureText');
+
 console.log(`${passed} passed`);

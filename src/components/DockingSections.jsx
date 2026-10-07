@@ -930,7 +930,17 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
           )}
 
               <NMRMoleculeViewer
-                key={((activeTest && activeTest.id) || 'docking') + (selectedStruct ? '::' + selectedStruct.name : '')}
+                /* ⚭ LA CLÉ NE SUIT PLUS LA STRUCTURE CHOISIE — c'est ce qui rendait le
+                   zoom « perdu » au changement du dropdown « 8_seletopclusts structure ».
+                   Elle concaténait le NOM de la structure choisie à l'id de l'expérience :
+                   changer de structure changeait donc la clé, et React DÉMONTait puis
+                   REMONTAIT tout le viewer — nouvelle scène WebGL, écran vide le temps du
+                   chargement, puis un `autoView()` de premier montage qui recadrait tout.
+                   Aucune mémoire de caméra ne survit à un remontage (les refs du viewer
+                   repartent de zéro). En gardant la clé STABLE (l'expérience seule), le
+                   MÊME viewer reçoit le nouveau `structureText` : il remplace la molécule
+                   en gardant le point de vue (côté viewer : preserveViewOnNextLoadRef). */
+                key={((activeTest && activeTest.id) || 'docking')}
                 instanceKey={(activeTest && activeTest.id) || null}
                 src={selectedStruct ? '' : structureSrc}
                 structureText={selectedStruct ? selectedStruct.pdb : undefined}
