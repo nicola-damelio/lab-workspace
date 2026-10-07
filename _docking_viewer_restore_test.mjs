@@ -46,7 +46,7 @@ const bodyOf = (startAnchor) => {
 };
 
 /* ── 1. La cause : CollapsibleSection ne MONTE PAS ses enfants repliés ────── */
-ok(/\{isOpen && <div className="p-3">\{children\}<\/div>\}/.test(UI),
+ok(/isOpen && <div className="p-3">\{children\}<\/div>/.test(UI),
   'CollapsibleSection ne monte ses enfants que quand la section est OUVERTE');
 
 ok(/title="Data" icon="🔢" defaultOpen=\{false\}/.test(SHELL),

@@ -395,6 +395,12 @@ const useDockingDriveRestore = ({ activeTest, updateActiveTest }) => {
   const dockingHasMeta = (
     (Array.isArray(activeTest.dockingStructures) && activeTest.dockingStructures.length > 0)
     || (Array.isArray(activeTest.dockingMolecules) && activeTest.dockingMolecules.length > 0)
+    /* Un POINTEUR d'archive suffit : s'il existe, la copie de référence est sur
+       le Drive — même si les métadonnées des structures ont disparu du dataset
+       (compressées par compressDatasetForSave, ou dataset ancien). Sans cette
+       ligne, le bouton « ⬇️ Restore from Drive » s'affichait mais ne tentait
+       RIEN (`missing` → false) : le clic paraissait sans effet. */
+    || !!activeTest.dockingDrive
   );
 
   const dockingDefaultStems = () => restoreStems(activeTest.instanceName, activeTest.name);
