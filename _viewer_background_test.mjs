@@ -21,6 +21,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   BG_DIRECTIONS, BG_GRADIENT_DEFAULT_ANGLE, BG_GRADIENT_DEFAULT_ON, BG_GRADIENT_DEFAULT_TO,
+  BG_GRADIENT_DEFAULT_MID, BG_GRADIENT_DEFAULT_MID_ON,
   backgroundCss, backgroundSpecOf, bgDirectionOf, bgGradientOf, gradientLineFor,
   gradientSpecOf, normalizeBgAngle, normalizeBgColor, paintViewerBackground,
   readBgGradient, underlayBackdrop,
@@ -60,27 +61,27 @@ eq(normalizeBgAngle('450'), 90, 'une chaîne numérique est lue, puis ramenée')
 eq(normalizeBgAngle('rouge'), BG_GRADIENT_DEFAULT_ANGLE, 'un angle qui n’en est pas un → celui de la rampe d’origine');
 eq(normalizeBgAngle(Infinity, 45), 45, 'un infini → le secours demandé');
 
-eq(bgGradientOf(null), { on: false, to: BG_GRADIENT_DEFAULT_TO, angle: BG_GRADIENT_DEFAULT_ANGLE },
+eq(bgGradientOf(null), { on: false, to: BG_GRADIENT_DEFAULT_TO, angle: BG_GRADIENT_DEFAULT_ANGLE, mid: BG_GRADIENT_DEFAULT_MID, midOn: false },
   'sans rien, la rampe est ÉTEINTE, avec les deux valeurs d’origine');
 eq(bgGradientOf({}).on, false, 'un objet vide ne l’allume pas');
 eq(BG_GRADIENT_DEFAULT_ON, false, 'et le défaut du module dit la même chose');
 eq(bgGradientOf({ on: 'yes' }).on, false, 'la vérité de `on` est STRICTE : la chaîne « yes » n’allume rien');
-eq(bgGradientOf({ on: true, to: 'bleu', angle: 361 }), { on: true, to: BG_GRADIENT_DEFAULT_TO, angle: 1 },
+eq(bgGradientOf({ on: true, to: 'bleu', angle: 361 }), { on: true, to: BG_GRADIENT_DEFAULT_TO, angle: 1, mid: BG_GRADIENT_DEFAULT_MID, midOn: false },
   'à l’intérieur d’une rampe, la couleur et l’angle sont validés comme dehors');
 
 eq(readBgGradient(null), bgGradientOf(null), 'rien à lire → la rampe d’origine');
-eq(readBgGradient('{"on":true,"to":"#101010","angle":90}'), { on: true, to: '#101010', angle: 90 },
+eq(readBgGradient('{"on":true,"to":"#101010","angle":90}'), { on: true, to: '#101010', angle: 90, mid: BG_GRADIENT_DEFAULT_MID, midOn: false },
   'une chaîne JSON se relit (c’est ce que localStorage rend)');
 eq(readBgGradient('pas du json'), bgGradientOf(null), 'un magasin illisible ne fait pas planter le viewer');
-eq(readBgGradient({ on: true, to: '#202020', angle: 45 }), { on: true, to: '#202020', angle: 45 },
+eq(readBgGradient({ on: true, to: '#202020', angle: 45 }), { on: true, to: '#202020', angle: 45, mid: BG_GRADIENT_DEFAULT_MID, midOn: false },
   'un OBJET (un ⚙️ setup, par exemple) se valide par le même lecteur');
 
 /* ══ 2. LA SPÉCIFICATION DU FOND, ET LE CSS QU'ELLE PRODUIT ═══════════════ */
 eq(backgroundSpecOf('#f8fafc', { on: true, to: '#112233', angle: 180 }),
-  { on: true, from: '#f8fafc', to: '#112233', angle: 180 },
+  { on: true, from: '#f8fafc', to: '#112233', angle: 180, mid: BG_GRADIENT_DEFAULT_MID, midOn: false },
   'la spécification porte les DEUX couleurs et la direction');
 eq(backgroundSpecOf('bleu', null),
-  { on: false, from: BG_GRADIENT_DEFAULT_TO, to: BG_GRADIENT_DEFAULT_TO, angle: BG_GRADIENT_DEFAULT_ANGLE },
+  { on: false, from: BG_GRADIENT_DEFAULT_TO, to: BG_GRADIENT_DEFAULT_TO, angle: BG_GRADIENT_DEFAULT_ANGLE, mid: BG_GRADIENT_DEFAULT_MID, midOn: false },
   'une couleur A illisible retombe sur le gris de la rampe (jamais du noir)');
 eq(backgroundSpecOf('#f8fafc', null).on, false, 'sans rampe, la spécification est ÉTEINTE — donc le fond uni');
 eq(backgroundSpecOf('#f8fafc', { on: true, to: '#112233', angle: 180 }).on, true, 'et elle s’allume avec la rampe');
@@ -88,7 +89,7 @@ eq(backgroundSpecOf('#f8fafc', { on: true, to: '#112233', angle: 180 }).on, true
 eq(gradientSpecOf('#f8fafc'), null, 'une simple couleur n’est PAS une rampe (le film d’avant, au pixel près)');
 eq(gradientSpecOf({ on: false, from: '#f8fafc', to: '#112233', angle: 180 }), null, 'une rampe éteinte non plus');
 eq(gradientSpecOf({ on: true, from: '#f8fafc', to: '#112233', angle: 180 }),
-  { from: '#f8fafc', to: '#112233', angle: 180 }, 'une rampe ALLUMÉE et valide, oui');
+  { from: '#f8fafc', to: '#112233', angle: 180, mid: '', midOn: false }, 'une rampe ALLUMÉE et valide, oui');
 eq(gradientSpecOf({ on: true, from: 'blanc', to: '#112233' }), null, 'une couleur invalide annule la rampe entière');
 
 eq(backgroundCss({ on: false, from: '#f8fafc', to: '#112233', angle: 180 }), '',
@@ -237,7 +238,7 @@ has('onClick={() => patchBgGradient({ angle: d.angle })}', '…un clic pose son 
 has('aria-pressed={bgGradient.angle === d.angle}', '…et la direction active se voit');
 has('onChange={(e) => patchBgGradient({ angle: Number(e.target.value) })}', 'le curseur d’angle écrit le même champ');
 has('aria-label="Gradient angle in degrees"', '…et il est nommé (lecteurs d’écran)');
-has('onClick={() => patchBgGradient({ on: false, to: BG_GRADIENT_DEFAULT_TO, angle: BG_GRADIENT_DEFAULT_ANGLE })}',
+has('onClick={() => patchBgGradient({ on: false, to: BG_GRADIENT_DEFAULT_TO, angle: BG_GRADIENT_DEFAULT_ANGLE, mid: BG_GRADIENT_DEFAULT_MID, midOn: BG_GRADIENT_DEFAULT_MID_ON })}',
   '↺ rend la rampe d’origine (et éteint le dégradé)');
 has('onClick={() => setBgPanelOpen(false)}', '⇤ referme le panneau sans rien changer d’autre');
 has('bgDirectionOf(bgGradient.angle)?.what', 'la ligne de lecture NOMME la direction (ou dit ses degrés)');
@@ -279,7 +280,37 @@ has('fileName: rayFileName({ label, width: out.width, height: out.height, transp
 has("${still.transparent ? ' · transparent' : ''}${gradientStill ? ' · gradient background' : ''}",
   'le rapport du rendu dit le fond dégradé, comme il dit le fond transparent');
 
-console.log(`_viewer_background_test.mjs — ${passed} assertions OK (⬚ le fond du viewer : deux couleurs, une direction, un clic qui ouvre et ferme)`);
+/* ══ LE MILIEU — la TROISIÈME couleur de la rampe (la demande de cette session :
+   « if there were three colours it would be even more interesting »). Le milieu
+   est FACULTATIF : éteint, la rampe reste EXACTEMENT celle à deux couleurs. ══ */
+eq(BG_GRADIENT_DEFAULT_MID_ON, false, 'le milieu n’est JAMAIS imposé : la rampe s’ouvre à deux couleurs');
+eq(bgGradientOf(null).mid, BG_GRADIENT_DEFAULT_MID, 'sans rien, le milieu a sa couleur d’origine (prête, mais éteinte)');
+eq(bgGradientOf(null).midOn, false, '…et son interrupteur est ÉTEINT');
+eq(bgGradientOf({ on: true, to: '#0000ff', angle: 180, mid: '#00ff00', midOn: true }),
+  { on: true, to: '#0000ff', angle: 180, mid: '#00ff00', midOn: true },
+  'un milieu DEMANDÉ est relu et validé comme les deux autres couleurs');
+eq(bgGradientOf({ on: true, mid: 'vert', midOn: 'yes' }).midOn, false, 'la vérité de `midOn` est STRICTE (comme celle de `on`)');
+eq(bgGradientOf({ on: true, mid: 'vert' }).mid, BG_GRADIENT_DEFAULT_MID, 'un milieu illisible retombe sur le défaut du module (jamais du noir)');
+eq(gradientSpecOf({ on: true, from: '#ff0000', to: '#0000ff', angle: 180, mid: '#00ff00', midOn: true }),
+  { from: '#ff0000', to: '#0000ff', angle: 180, mid: '#00ff00', midOn: true },
+  'la spécification d’une rampe à trois couleurs porte son milieu');
+eq(gradientSpecOf({ on: true, from: '#ff0000', to: '#0000ff', angle: 180, mid: '#00ff00', midOn: false }).midOn, false,
+  'un milieu PRÉSENT mais non demandé est ignoré (la rampe reste à deux couleurs)');
+eq(backgroundCss({ on: true, from: '#ff0000', to: '#0000ff', angle: 180, mid: '#00ff00', midOn: true }),
+  'linear-gradient(180deg, #ff0000 0%, #00ff00 50%, #0000ff 100%)',
+  'allumée, la rampe à TROIS arrêts : A 0 %, C 50 %, B 100 %');
+eq(backgroundCss({ on: true, from: '#ff0000', to: '#0000ff', angle: 180, mid: '#00ff00', midOn: false }),
+  'linear-gradient(180deg, #ff0000 0%, #0000ff 100%)',
+  'milieu éteint : EXACTEMENT la rampe à deux couleurs d’avant (aucun 3e arrêt)');
+
+/* …ET LE PANNEAU (le câblage du milieu, lu dans la source) */
+has('onClick={() => patchBgGradient({ midOn: !bgGradient.midOn })}', 'le bouton « C 50 % » ajoute / enlève le milieu');
+has('aria-pressed={bgGradient.midOn}', '…et il annonce son état');
+has('value={bgGradient.mid}', '…le 3e swatch (C) lit / écrit le milieu de la rampe');
+has('aria-label="Background gradient middle colour"', '…et il est nommé (lecteurs d’écran)');
+has('mid: BG_GRADIENT_DEFAULT_MID, midOn: BG_GRADIENT_DEFAULT_MID_ON', '↺ remet aussi le milieu d’origine');
+
+console.log(`_viewer_background_test.mjs — ${passed} assertions OK (⬚ le fond du viewer : deux ou trois couleurs, une direction, un clic qui ouvre et ferme)`);
 
 
 

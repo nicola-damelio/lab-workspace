@@ -130,6 +130,19 @@ async function main () {
   var g3 = c3.getContext('2d');
   film.solidPainted = paintViewerBackground(g3, W, H, '#f8fafc');
   film.solidPixel = pxOf(g3, W / 2, H / 2);
+  /* ⚠ …ET LA RAMPE À TROIS COULEURS (le milieu demandé, la demande : « if there
+     were three colours it would be even more interesting ») : le module peint A,
+     C (au MILIEU, 50 %) et B — la même fonction que la rampe à deux couleurs. */
+  var specMid = backgroundSpecOf('#ff0000', { on: true, to: '#0000ff', angle: 180, mid: '#00ff00', midOn: true });
+  var c4 = document.createElement('canvas'); c4.width = W; c4.height = H;
+  var g4 = c4.getContext('2d');
+  film.midPainted = paintViewerBackground(g4, W, H, specMid);
+  film.midTop = pxOf(g4, W / 2, 0);
+  film.midCenter = pxOf(g4, W / 2, H / 2);
+  film.midBottom = pxOf(g4, W / 2, H - 1);
+  film.midCss = backgroundCss(specMid);
+
+
   OUT.cases.push({ id: 'film', film: film, image: c1.toDataURL() });
   OUT.stage = 'film-peint';
   await post({});

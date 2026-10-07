@@ -923,21 +923,6 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
             </div>
           )}
 
-          <div style={{ display: structureMode === '3d' ? 'block' : 'none' }}>
-            {hasOpened3D && (
-              <>
-                {selectedStruct && (
-                  <div className="mb-2 flex flex-wrap items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
-                    <span className="text-[10px] font-black text-slate-600 uppercase">8_seletopclusts structure</span>
-                    <select value={structIdx} onChange={(e) => setStructIdx(Number(e.target.value))}
-                      className="border border-slate-300 rounded px-2 py-1 text-xs bg-white max-w-[260px]">
-                      {structList.map((s, i) => <option key={s.name} value={i}>{s.name}</option>)}
-                    </select>
-                    {selectedStruct.driveUrl && (
-                      <a href={selectedStruct.driveUrl} target="_blank" rel="noreferrer" className="text-[10px] font-bold text-sky-700 hover:underline">☁️ Drive</a>
-                    )}
-                  </div>
-                )}
               <NMRMoleculeViewer
                 key={((activeTest && activeTest.id) || 'docking') + (selectedStruct ? '::' + selectedStruct.name : '')}
                 instanceKey={(activeTest && activeTest.id) || null}
