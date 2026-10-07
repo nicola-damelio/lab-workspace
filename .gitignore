@@ -62,6 +62,12 @@ workspace-shared-token.json.*
 # compteur · opération seulement déclarée).
 /_render_progress/
 
+# Idem pour la sonde de _viewer_bg_live_test.cjs : le VRAI composant monté dans un
+# vrai Chrome (le clic sur le fond, l'interrupteur ⬚ Gradient, le repos mesuré, et
+# la mise en veille d'une page parquée). Le bundle est reconstruit à chaque
+# exécution de la suite.
+/_render_bg_live/
+
 # Idem pour la sonde de _page_parking_render_test.cjs : le motif des places de
 # page (la page quittée gardée vivante) rendu par un vrai Chrome.
 /_render_parking/

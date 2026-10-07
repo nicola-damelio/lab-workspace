@@ -3860,3 +3860,181 @@ tombe pas sous la mutation qu'elle vise ne prouve rien ; celle-ci tombe, et les 
 pour le dégradé empruntent le même chemin que le viewer : la valeur rejouée de l'entrée du Drive, puis le
 CSS que le canvas reçoit.
 
+
+---
+
+## ⏸ « the gradient does not work and the program is slow even if it does not have processes to do »
+
+**Le rapport de cette session, mot pour mot.** Deux symptômes à la fois : le fond dégradé qui ne
+se voit pas, et un programme **lent alors qu'il n'a rien à faire**. Les deux ont été **mesurés sur
+le vrai composant** (`NMRMoleculeViewer` monté dans un vrai Chrome), et **aucun des deux ne se
+lisait dans la source** : `_viewer_background_test.mjs` prouve le câblage, il ne dit pas ce que le
+navigateur compose ; `_viewer_background_pixels_test.cjs` prouve le module et un canvas monté à la
+main, il ne dit pas que **le composant** y arrive ; et la lenteur, elle, n'était écrite nulle part.
+
+### ① Le fond dégradé, mesuré sur le composant VIVANT
+
+La sonde `_viewer_bg_live_test.cjs` monte le **vrai** composant (`import NMRMoleculeViewer from
+'./src/components/NMRMoleculeViewer'` — aucune règle recopiée : c'est ce que le test vérifie
+d'abord), clique sur le **fond** de la vue, appuie sur l'**interrupteur ⬚ Gradient** du panneau
+`#viewer-background`, puis lit ce que le navigateur a RÉELLEMENT composé :
+
+* `canvas.style.backgroundImage` = `linear-gradient(rgb(248,250,252) 0%, rgb(203,213,225) 100%)`
+  — **c'est le viewer qui l'a écrit**, avec exactement A (la couleur de la scène, `#f8fafc`, que le
+  magasin ne recopie pas) et B (`#cbd5e1`, la seconde couleur du magasin) ;
+* `getComputedStyle(canvas).backgroundImage` = **la même chaîne** — le navigateur la compose sur la
+  toile, deux arrêts, aucune couleur inventée ; la couleur d'NGL reste dessous
+  (`style.backgroundColor` inchangé) et la toile n'a pas été redimensionnée ;
+* l'éteindre rend la couleur d'NGL telle quelle (`""` dans le style, `none` composé).
+
+**Le fond marche donc de bout en bout, dans le composant.** Ce que la mesure dit aussi, et qui
+explique le « ça ne marche pas » : **la rampe par défaut est presque invisible** — A `#f8fafc` →
+B `#cbd5e1`, deux gris très clairs (le module l'a voulue « discrète »). Un interrupteur qui allume
+une rampe de 45 unités d'écart entre deux blancs ressemble à un interrupteur mort. Le remède est
+d'un geste dans le panneau : **B** (le second nuancier) ou l'une des huit flèches — ils allument la
+rampe **en la choisissant**, et le fond devient franchement dégradé.
+
+### ①bis LA VRAIE CAUSE du « gradient does not work » — le rappel reposait le style PAR-DESSUS le geste
+
+L'utilisateur, relancé sur ce qu'il voyait vraiment : « **nothing changes at all — the ramp never
+appears** ». Une rampe qui ne s'allume pas *du tout* n'est donc pas la rampe par défaut (trop pâle) :
+c'est un geste **effacé**. La source disait où : `styleTouchedRef` — le drapeau qui dit « l'utilisateur
+a tranché », **lu par le rappel automatique** — n'était écrit qu'à **un seul endroit**,
+`rememberViewerStyle` (💾 Save · 📌 Define style · ↩ · ⬆ Import). Les réglages de la SCÈNE
+(⬚ Gradient, 🎨 Background, 🌫 Fog, ✨ lampe, ✂ Clipping…), eux, **ne le posaient pas** : le rappel
+qui part **400 ms après que la scène est prête** reposait donc le style retenu par l'instance —
+rampe éteinte comprise — **par-dessus le geste de l'utilisateur**.
+
+**Reproduit dans Chrome, sur le vrai composant** (`?phase=define` → 📌 Define style **avec la rampe
+éteinte** → rechargement → ⬚ Gradient pressé tout de suite) :
+
+| | avant le correctif | après |
+|---|---|---|
+| rampe à **+250 ms** après le ⬚ | `linear-gradient(rgb(248,250,252) 0%, rgb(203,213,225) 100%)` | idem |
+| rampe à **+2 s** (le rappel a parlé) | **`none`** ← la rampe s'est éteinte toute seule | **`linear-gradient(…)`** |
+| l'interrupteur (`aria-pressed`) à +2 s | `false` | `true` |
+
+C'est mot pour mot le rapport : **la rampe s'allume une fraction de seconde, puis s'éteint seule** —
+et à l'œil, « rien ne change du tout ». La même mécanique explique le rapport de la session d'avant
+(« the direction of the light is like in the second instance ») : la lampe était reposée elle aussi.
+
+**Le correctif — la règle du fichier appliquée à TOUS les gestes.** Le commentaire de
+`styleMemoryKeysRef` dit déjà : « un geste de l'utilisateur clôt le rappel ». Il l'est maintenant
+pour la SCÈNE entière : chaque écriture d'un réglage de la scène passe par **`sceneGesture(key)`**,
+posé **dans l'effet du réglage lui-même** (la couleur de fond, la rampe, la brume, le découpage, les
+ombres et leur noirceur, la couleur de la lampe, son azimut et son élévation) — la rampe et la lampe
+n'ont donc plus besoin d'un câblage par bouton, et aucun contrôle ne peut être oublié.
+
+⚠ **Le premier passage d'un effet n'est pas un geste** : React exécute chaque effet au montage, ce
+qui aurait marqué « tranché » avant même que le rappel parte — et il ne partirait plus jamais. Le
+registre `sceneSeenRef` (un `Set` de clés, gardé par un `useRef`) fait donc **le premier passage
+muet** pour chaque réglage, et marque tous les suivants. La règle est **exécutée** par
+`_viewer_style_recall_test.mjs` (le montage ne marque pas, le changement qui suit marque).
+
+*Vérifier :* `node _viewer_style_recall_test.mjs` — **177** (contre 161 : +16 pour ce correctif —
+la règle `sceneGesture` **EXTRAITE de la source et EXÉCUTÉE** : le premier passage du montage ne
+marque pas, le suivant clôt le rappel, et le drapeau n'est écrit qu'à **deux** endroits) ;
+`node _viewer_bg_live_test.cjs` — **44/44** (contre 38 : +6 pour le scénario du rapport, mesuré
+dans Chrome) ; **et la preuve que ce garde-fou regarde vraiment** : en neutralisant `sceneGesture`
+d'une ligne (`void styleTouchedRef;`), la rampe est **`none` à +2 s** et l'interrupteur revient à
+`false` — l'assertion tombe (exit 1), exactement le symptôme rapporté. La ligne est ensuite remise,
+et la sonde repasse 44/44.
+
+
+
+### ② « slow even if it does not have processes to do » — la mesure
+
+La même sonde mesure le **repos** (2,5 s sans rien demander), et instrumente trois témoins au
+niveau de la page : `NGL.Viewer.prototype.requestRender` (qui a le droit de demander une image, avec
+sa pile), `gl.clear` (les images peintes) et les mutations du DOM.
+
+| vue | images NGL | demandes | rAF demandées | tâches longues | mutations DOM |
+|---|---|---|---|---|---|
+| au repos (rampe éteinte) | 1 | **0** | 298 | 0 | **0** |
+| au repos (rampe allumée) | 1 | **0** | 298 | 0 | 0 |
+| **VUE CACHÉE** (`display: none`) | 0 | 0 | **300** | 0 | 0 |
+| au retour de la page | — | 0 | 180 (en 1,5 s) | 0 | 0 |
+
+**Le viewer ne demande donc RIEN au repos** — et React ne re-rend pas une seule fois (0 mutation) —
+et pourtant **~300 images sont demandées par 2,5 s, soit ~120 par seconde**, indéfiniment. Les piles
+des deux demandeurs sont sans ambiguïté, et elles sont **dans NGL 2.4** :
+
+* `Qc.animate` — `Viewer.animate`, dont la **dernière ligne** est
+  `this.frameRequest = window.requestAnimationFrame(this.animate)`
+  (`_ngl_src/viewer__viewer.ts:1015`) : rien ne l'arrête jamais ;
+* `eu._listen` — le relevé de survol et de double-clic d'NGL (`MouseControls`/`MouseObserver`),
+  relancé par la même ligne (`hoverTimeout`, `frameRequest`).
+
+C'est le « sans processus à faire » : le travail n'est pas dans nos règles, **il est dans la boucle
+du moteur**. Et il empire avec le **page parking** d'`App.jsx` (§ ③) : une page quittée reste
+**montée** (`display: none`), donc son étage continue de tourner pour personne — deux ou trois pages
+visitées font deux ou trois de ces boucles. La mesure le confirme : **vue cachée, le compte reste à
+300/2,5 s** (c'est la ligne `VUE CACHÉE` du tableau, avant correctif).
+
+
+
+### ③ Le correctif — `utils/nglStageParking.js` : la vue dort quand personne ne la regarde
+
+NGL ne sait pas se mettre en veille — mais **il sait déjà s'arrêter** : ses `dispose()` font
+exactement `window.cancelAnimationFrame(this.frameRequest)` (l'une pour `Viewer`, l'autre pour le
+survol). Le module reprend **ce geste-là**, le seul que le moteur reconnaisse :
+
+* `parkNglStage(stage)` — `cancelAnimationFrame` sur les deux `frameRequest` (le rendu et le
+  survol), puisqu'ils se relancent eux-mêmes ; `frameRequest = null` est le drapeau « endormi » ;
+* `wakeNglStage(stage)` — les entrées qu'NGL emploie lui-même : `viewer.animate()` (la boucle,
+  seulement si elle ne tourne plus), `viewer.requestRender()` (l'image tout de suite, pour ne pas
+  montrer l'image d'avant le sommeil) et `_listen()` pour le survol ;
+* `nglStageParkingDecision({ tabHidden, collapsed, onScreen })` — la **règle est pure**, donc
+  testée sous node. Trois raisons, dans l'ordre : **onglet caché** · **vue repliée** · **hors
+  écran**.
+
+Le viewer n'ajoute que les **déclencheurs** (un `useEffect` **après** la déclaration de `status` —
+avant, son tableau de dépendances lève « Cannot access 'status' before initialization », erreur
+mesurée au premier essai) : `document.hidden` + `visibilitychange`, la vue repliée, et un
+**`IntersectionObserver` sur la boîte d'NGL** — c'est lui qui attrape une page parquée, puisque
+`App.jsx` la cache en `display: none` : plus rien de sa boîte n'est à l'écran. Le démontage
+**réveille** (sinon la vue suivante serait muette).
+
+**Ce que la même sonde mesure après le correctif :** vue cachée, **0 image demandée** (contre 300),
+0 image peinte, 0 tâche longue ; au retour de la page, les boucles repartent (180 demandes en 1,5 s)
+et **la rampe est toujours là** (`linear-gradient(rgb(248,250,252) 0%, rgb(203,213,225) 100%)`) : le
+sommeil ne perd ni le fond, ni la scène.
+
+### ④ La preuve que ce garde-fou regarde vraiment
+
+`_viewer_bg_live_test.cjs` exige `idleHidden.rafSched <= 20`. En **neutralisant** la mise en veille
+d'une ligne (`if (want) { void stage; } else …`, le `parkNglStage` retiré), la même sonde mesure
+**300 demandes en 2,5 s vue cachée** — les piles citent `eu._listen` ×150 et `Qc.animate` ×150 — et
+l'assertion **tombe** (exit 1) : elle ne peut pas être verte sans la mise en veille. La ligne est
+ensuite remise, et la sonde repasse **38/38**.
+
+
+*Vérifier :* `node _viewer_stage_parking_test.mjs` — **35** assertions (la règle **exécutée** :
+onglet caché, vue repliée, hors écran, et l'ordre des raisons ; les deux gestes **mesurés sans
+navigateur** sur des étages factices, avec un `cancelAnimationFrame` qui enregistre ce qui est
+réellement annulé et un `requestRender` fidèle à NGL 2.4 — un étage déjà réveillé ne démarre
+**aucune** seconde boucle ; et le **câblage** du viewer : l'import du module, l'unique écriture
+`parkNglStage`/`wakeNglStage`, les trois déclencheurs, le réveil au démontage, et l'effet qui vit
+**après** `status`) ;
+
+*Vérifier :* `node _viewer_bg_live_test.cjs` — **38/38** (le clic sur le fond du **vrai** viewer qui
+ouvre `#viewer-background`, la rampe écrite par le viewer **et** composée par le navigateur, ses
+deux arrêts exactement A et B, l'extinction qui rend la couleur d'NGL, les quatre relevés de repos,
+et le sommeil/réveil mesurés ; ≈45 s, deux passages de Chrome, **SAUTÉE (exit 0)** sans Chrome).
+
+Le reste n'a pas bougé d'un caractère : `_viewer_render_smoke_test.mjs` **23** ·
+`_viewer_ui_layout_test.mjs` **517** · `_viewer_background_test.mjs` **168** ·
+`_viewer_ray_shadow_live_test.mjs` **183** · `_viewer_style_recall_test.mjs` **161** ·
+`_viewer_style_controls_test.mjs` **504** · `_page_parking_render_test.cjs` **19/19** ;
+`npx oxlint` — **0 erreur** (les dossiers de build des sondes — `_render_bg_live/`, `_render_smoke/`,
+`_render_parking/`, `_approval_bc_render/`, `_render_progress/`, `_seqline_smoke/` — sont désormais
+**ignorés par le linter** : ils ne sont pas du code, et ils noyaient le relevé).
+
+### ⑤ Ce que la sonde ne peut pas dire (et qui reste ouvert)
+
+La page de la sonde ne peut pas donner à la vue la hauteur que lui donne une page de
+l'application : le **chrome du viewer** (barre des molécules + fenêtres MD/docking rendues en ligne)
+y mesure **2246 px**, et la colonne de la vue garde sa hauteur propre — **la toile tombe à 1 px de
+haut** (`host: [2100, 1]`, relevé par la sonde). Les images peintes au repos (1 par 2,5 s) sont donc
+mesurées **sur une toile minuscule** : ce chiffre est un **plancher**. Le nombre de boucles, lui,
+ne dépend pas de la taille de la toile — et c'est lui qui était en cause.

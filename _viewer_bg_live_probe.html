@@ -1,0 +1,31 @@
+<!doctype html>
+<!-- =========================================================================
+     _viewer_bg_live_probe.html — la page de la sonde
+     _viewer_bg_live_test.cjs (⬚ le fond du viewer VIVANT : la rampe arrive-t-elle
+     vraiment sur le canvas de NGL, et le viewer travaille-t-il quand on ne lui
+     demande rien ?). Elle ne porte RIEN : le bundle construit par Vite monte le
+     VRAI composant (src/components/NMRMoleculeViewer.jsx) dans #root, joue le
+     geste (clic sur le fond → panneau → interrupteur ⬚ Gradient) et POSTe ses
+     mesures.
+     L'entry est une page (et non une « lib ») EXPRÈS : c'est le seul mode où Vite
+     lie la feuille de style de l'application — donc les VRAIES classes de Tailwind,
+     celles qui donnent sa boîte au canvas (un canvas de 0×0 ne peindrait rien).
+     ========================================================================= -->
+<meta charset="utf-8" />
+<title>viewer background live probe</title>
+<style>
+  /* LA VUE A BESOIN D'UNE VRAIE BOÎTE : le viewer se dimensionne sur son parent
+     (l'application lui donne ~1000 px). Sans hauteur ici, le canvas ferait 1 px
+     de haut et la sonde ne mesurerait qu'un trait. */
+  html, body { margin: 0; padding: 0; background: #fff; font: 12px/1.45 monospace; color: #111; }
+  /* ⚠ GRANDE PAGE : le viewer est une COLONNE (barres d'outils + vue). Sur une
+     page étroite, ses barres se replient en plusieurs rangées et mangent toute
+     la hauteur — la toile se retrouve à 1 px de haut (mesuré) et la sonde ne
+     mesurerait plus rien. L'application, elle, ouvre le viewer sur ~1000 px. */
+  #root { width: 2100px; height: 1200px; }
+  #log { padding: 6px; white-space: pre-wrap; }
+</style>
+<body>
+  <div id="root"></div>
+  <script type="module" src="./_viewer_bg_live_probe.jsx"></script>
+</body>

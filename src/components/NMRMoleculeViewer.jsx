@@ -27,6 +27,14 @@ import {
   backgroundCss, backgroundSpecOf, bgDirectionOf, bgGradientOf,
   paintViewerBackground, readBgGradient, underlayBackdrop,
 } from '../utils/viewerBackground';
+/* ⏸ LA VUE S'ARRÊTE QUAND PERSONNE NE LA REGARDE — les deux boucles
+   `requestAnimationFrame` d'NGL (`Viewer.animate` et le `_listen` de
+   l'observateur de souris) se relancent d'elles-mêmes indéfiniment : mesuré à
+   ~120 images demandées par seconde et par étage, MÊME quand la page n'est plus
+   à l'écran (le « page parking » d'App.jsx laisse chaque page quittée montée).
+   Voir le module : il n'y a là que le geste qu'NGL emploie lui-même dans ses
+   `dispose()`. */
+import { nglStageParkingDecision, parkNglStage, wakeNglStage } from '../utils/nglStageParking';
 // 🎬 The VIDEO OF A TRAJECTORY — the run the ▶ button plays, written as one file
 // (its own module, see src/utils/viewerTrajectoryVideo.js). It records the very
 // canvas NGL is drawing into (`canvas.captureStream` + `MediaRecorder`), frame
@@ -7918,6 +7926,70 @@ const [loadRequest, setLoadRequest] = useState(null);
 const [status, setStatus] = useState('idle');
 const statusRef = useRef(status); // mirror for event handlers (file-change dialog)
 statusRef.current = status;
+
+/* ── ⏸ ET LA VUE DORT QUAND PERSONNE NE LA REGARDE (mesuré, voir le rapport) ─
+   Le rapport de cette session : « the program is slow even if it does not have
+   processes to do ». Ce n'est PAS nos règles : au repos le viewer ne demande
+   rien (0 `requestRender`, 0 mutation du DOM, 0 tâche longue — mesuré sur le
+   vrai composant par _viewer_bg_live_test.cjs). Ce qui tourne, ce sont les
+   DEUX boucles `requestAnimationFrame` d'NGL 2.4, qui se relancent d'elles-mêmes
+   indéfiniment (`Viewer.animate` : sa dernière ligne est le
+   `requestAnimationFrame(this.animate)` qui la ressuscite ; `MouseControls._listen`
+   fait de même) — ~120 images demandées par seconde et par étage, POUR TOUJOURS.
+   Or App.jsx garde en vie chaque page quittée (`display: none`) : son étage
+   continue donc de tourner pour personne, et deux pages visitées font deux
+   boucles de plus.
+
+   LES TROIS DÉCLENCHEURS (la règle est pure, dans utils/nglStageParking.js) :
+     · l'onglet n'est plus au premier plan (`document.hidden`) ;
+     · la boîte du viewer n'est plus à l'écran — c'est CE témoin qui attrape une
+       page parquée (`display: none` : plus rien de sa boîte n'est visible), une
+       vue repliée, ou un viewer très au-dessus/hors du champ ;
+     · `viewerCollapsed`, le repli de l'utilisateur.
+   Le réveil est exactement le geste d'NGL (`animate()` + `requestRender()` +
+   `_listen()`), donc la vue se rallume telle qu'elle était — une image est
+   demandée dans la foulée pour ne pas montrer l'image d'avant le sommeil.
+   ⚠ CET EFFET VIT APRÈS LA DÉCLARATION DE `status` : son tableau de dépendances
+   est lu PENDANT le rendu, donc avant lui `status` n'existe pas encore (l'erreur
+   mesurée : « Cannot access 'status' before initialization »). */
+useEffect(() => {
+  if (status !== 'ready') return undefined;
+  const host = containerRef.current;
+  if (!host) return undefined;
+  let parked = false;
+  let onScreen = true;
+  const applyParking = (why) => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    const want = !!why;
+    if (want === parked) return;
+    parked = want;
+    if (want) parkNglStage(stage); else wakeNglStage(stage);
+  };
+  const decide = () => applyParking(nglStageParkingDecision({
+    tabHidden: !!document.hidden, collapsed: viewerCollapsed, onScreen,
+  }).why);
+  const onVisibility = () => decide();
+  document.addEventListener('visibilitychange', onVisibility);
+  let io = null;
+  if (typeof IntersectionObserver !== 'undefined') {
+    io = new IntersectionObserver((entries) => {
+      const last = entries[entries.length - 1];
+      onScreen = !!last.isIntersecting;
+      decide();
+    }, { threshold: 0 });
+    io.observe(host);
+  }
+  decide();
+  return () => {
+    if (io) io.disconnect();
+    document.removeEventListener('visibilitychange', onVisibility);
+    /* ⚠ ON RÉVEILLE EN SORTANT : l'effet se refait quand la vue se replie ou
+       quand la scène change — partir en laissant l'étage endormi rendrait la
+       vue suivante muette. */
+    applyParking('');
+  };
+}, [status, viewerCollapsed]);
 /* ✨ Ray — the high-resolution still of the scene (see viewerRayImage.js). Its OWN
    state and its own handler: the FACTOR (the supersampling multiple), the ⬚ alpha
    (a transparent background) and the ◐ shadows of the still are remembered like
@@ -9726,6 +9798,38 @@ const styleMemoryKeyRef = useRef(null);
 if (!styleMemoryKeyRef.current) styleMemoryKeyRef.current = styleMemoryKeysRef.current[0];
 const styleRecallRef = useRef(false);
 const styleTouchedRef = useRef(false);
+/* ⚠⚠ UNE ÉCRITURE DE LA SCÈNE EST UN GESTE DE L'UTILISATEUR — LE RAPPEL DOIT LE VOIR.
+
+   Le rapport de cette session : « the gradient does not work and the program is slow
+   even if it does not have processes to do ». Le fond, lui, MARCHE : mesuré sur le vrai
+   composant, le canvas reçoit bien sa rampe et le navigateur la compose
+   (_viewer_bg_live_test.cjs). Ce qui l'effaçait, c'est CE drapeau.
+
+   Le rappel automatique (`recallViewerStyle`, 400 ms après que la scène est prête)
+   repose le style retenu par l'instance — et il ne s'arrête que si `styleTouchedRef`
+   est vrai. Or ce drapeau n'était posé QUE par 💾 / 📌 / ↩ / ⬆ (`rememberViewerStyle`) :
+   un ⬚ Gradient — ou une couleur de fond, une lampe, une brume, un découpage — pressé
+   JUSTE APRÈS l'ouverture était donc REPOSÉ par le rappel. La rampe s'éteignait toute
+   seule, ce qui se lit exactement comme « le dégradé ne marche pas » ; la lampe, elle,
+   revenait à l'orientation retenue (« the direction of the light is like in the second
+   instance », le rapport d'avant).
+
+   La règle que ce fichier écrit déjà (« un geste de l'utilisateur clôt le rappel »,
+   voir le commentaire de `styleMemoryKeysRef`) vaut donc pour TOUS les gestes, pas
+   seulement pour ceux qui enregistrent : chaque réglage de la SCÈNE passe désormais
+   par `sceneGesture(...)` au moment où il est écrit.
+
+   ⚠ LE PREMIER PASSAGE D'UN EFFET N'EST PAS UN GESTE : React exécute chaque effet au
+   montage, ce qui marquerait « tranché » avant même que le rappel parte — et il ne
+   partirait jamais. Le registre `sceneSeenRef` retient qui a déjà parlé une fois : le
+   montage est muet, tout changement qui suit est un geste. */
+const sceneSeenRef = useRef(null);
+if (!sceneSeenRef.current) sceneSeenRef.current = new Set();
+const sceneGesture = (key) => {
+  const seen = sceneSeenRef.current;
+  if (!seen.has(key)) { seen.add(key); return; }   // le montage ne compte pas
+  styleTouchedRef.current = true;
+};
 const [pymolSession] = useState(() => loadPymolSessionFor(pymolSessionKeysRef.current, pymolOwnerRef.current));
 const [selections, setSelections] = useState(() => pymolSession.selections);   // [{ name, expr }]
 const [selStyles, setSelStyles] = useState(() => pymolSession.selStyles);       // key -> { cartoon, ribbon, tube, ball, stick, sphere, surface, color, colorMode, transparency, sphereScale, radiusSphere, radiusBond, hideFor, mat }
@@ -9910,6 +10014,7 @@ const applyClip = useCallback(() => {
 }, []);
 
 useEffect(() => {
+  sceneGesture('clip');   // ✂ Clipping et ses trois valeurs
   try {
     localStorage.setItem('labViewerClip', clipOn ? `on:${clipNear}:${clipFar}:${clipDist}` : 'off');
   } catch { /* ignore */ }
@@ -10104,6 +10209,7 @@ const applyShadowSettings = useCallback(() => {
 
 // Persist + apply the shadow preferences whenever they change.
 useEffect(() => {
+  sceneGesture('shadows');   // ◐ Shadows et 🌑 Darkness
   try { localStorage.setItem('labViewerShadows', shadowOn ? `on:${Math.round(shadowDarkness * 100)}` : 'off'); } catch { /* ignore */ }
   applyShadowSettings();
 }, [shadowOn, shadowDarkness, applyShadowSettings]);
@@ -10114,6 +10220,7 @@ useEffect(() => {
 // frame, so the new colour shows at once whether the ◐ Shadows rig is on (aimed
 // lamp) or off (NGL's camera-linked headlight).
 useEffect(() => {
+  sceneGesture('light');   // 💡 la couleur de la lampe
   try { localStorage.setItem('labViewerLightColor', lightColor); } catch { /* ignore */ }
   applyShadowSettings();
 }, [lightColor, applyShadowSettings]);
@@ -10121,9 +10228,11 @@ useEffect(() => {
 // Persist the light direction and re-render one frame so the fixed key light
 // visibly moves while the Azimuth / Elevation sliders are dragged.
 useEffect(() => {
+  sceneGesture('shadowAz');   // 💡 Azimuth — l'orientation que le rapport d'avant voyait revenir
   try { localStorage.setItem('labViewerShadowAz', String(Math.round(shadowAz))); } catch { /* ignore */ }
 }, [shadowAz]);
 useEffect(() => {
+  sceneGesture('shadowEl');   // 💡 Élévation
   try { localStorage.setItem('labViewerShadowEl', String(Math.round(shadowEl))); } catch { /* ignore */ }
 }, [shadowEl]);
 useEffect(() => {
@@ -18469,6 +18578,7 @@ useEffect(() => {
 // chosen colour survives a reload / another page — the effect above pushes it to
 // the live stage, this one remembers it.
 useEffect(() => {
+  sceneGesture('bg');   // un geste sur le FOND (🎨, ↺, A de la rampe, ⇄) clôt le rappel
   try { localStorage.setItem('labViewerBg', bgColor); } catch { /* ignore */ }
 }, [bgColor]);
 
@@ -18477,11 +18587,13 @@ useEffect(() => {
    couleur qu'elle prolonge : une scène réglée est là au rechargement suivant,
    sur n'importe quelle page. */
 useEffect(() => {
+  sceneGesture('bgGradient');   // ⬚ l'interrupteur, B, C, une flèche, le curseur, ⇄, ↺
   try { localStorage.setItem(BG_GRADIENT_KEY, JSON.stringify(bgGradient)); } catch { /* ignore */ }
 }, [bgGradient]);
 
 // Persist the fog preference and apply it to the live stage whenever it changes.
 useEffect(() => {
+  sceneGesture('fog');   // 🌫 Fog
   try { localStorage.setItem('labViewerFog', fogEnabled ? 'on' : 'off'); } catch { /* ignore */ }
   applyFog();
 }, [fogEnabled, applyFog]);

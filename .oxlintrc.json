@@ -5,7 +5,17 @@
   "globals": {
     "__APP_COMMIT__": "readonly"
   },
-  "ignorePatterns": ["scripts/**", "public/vendor/**", "_ngl_src/**"],
+  "ignorePatterns": [
+    "scripts/**",
+    "public/vendor/**",
+    "_ngl_src/**",
+    "_render_smoke/**",
+    "_render_parking/**",
+    "_render_bg_live/**",
+    "_approval_bc_render/**",
+    "_render_progress/**",
+    "_seqline_smoke/**"
+  ],
   "rules": {
     "react/rules-of-hooks": "error",
     "eslint/no-undef": "error"

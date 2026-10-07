@@ -19,6 +19,15 @@
 const { spawnSync } = require('child_process');
 const fs = require('fs');
 const tests = [
+  // ⏸ LA MISE EN VEILLE DE LA VUE — la règle PURE (onglet caché · vue repliée ·
+  // boîte hors de l'écran), les deux gestes mesurés sur des étages factices
+  // (`cancelAnimationFrame` sur `frameRequest`, les deux noms qu'NGL annule
+  // lui-même dans ses `dispose()`), et le câblage du viewer (les trois
+  // déclencheurs, et l'effet qui vit APRÈS la déclaration de `status`).
+  // Pourquoi : le rapport « the program is slow even if it does not have processes
+  // to do » — la sonde du navigateur (_viewer_bg_live_test.cjs) a montré que NGL
+  // 2.4 relance indéfiniment ses deux boucles `requestAnimationFrame`.
+  '_viewer_stage_parking_test.mjs',
   '_viewer_scheme_test.mjs', '_viewer_style_controls_test.mjs', '_viewer_ui_layout_test.mjs',
   '_viewer_rings_gradient_test.mjs', '_dock_style_test.mjs', '_large_system_style_test.mjs',
   '_viewer_color_settings_test.mjs', '_viewer_structure_classes_test.mjs',
@@ -368,6 +377,19 @@ const tests = [
   // puis il referme), et la still du ✨ Ray reçoit la rampe SOUS son PNG
   // transparent sans perdre un pixel de la molécule. SAUTÉE (exit 0) sans Chrome.
   '_viewer_background_pixels_test.cjs',
+  // ⏸ …ET LA VUE QUI S'ARRÊTE QUAND PERSONNE NE LA REGARDE. Le rapport de cette
+  // session : « the gradient does not work and the program is slow even if it does
+  // not have processes to do. » Les deux, mesurés sur le VRAI composant dans un
+  // vrai Chrome : un clic sur le fond, l'interrupteur ⬚ Gradient, et la rampe est
+  // COMPOSÉE par le navigateur sur la toile (`getComputedStyle(canvas).backgroundImage`,
+  // deux arrêts, exactement A et B) — le fond marche, de bout en bout. Puis le
+  // repos : 0 `requestRender`, 0 mutation du DOM, 0 tâche longue (le viewer ne
+  // demande rien) et POURTANT ~300 images demandées par 2,5 s, parce que NGL 2.4
+  // relance indéfiniment ses deux boucles `requestAnimationFrame`. La sonde cache
+  // la vue comme le fait le « page parking » : le compte tombe à ZÉRO, et le
+  // retour de la page le remet à ~300 (la rampe, elle, n'a pas bougé). ≈45 s
+  // (deux passages de Chrome), SAUTÉE (exit 0) sur une machine sans Chrome.
+  '_viewer_bg_live_test.cjs',
 ];
 const rows = tests.map((t) => {
   const r = spawnSync(process.execPath, [t], { encoding: 'utf8' });
