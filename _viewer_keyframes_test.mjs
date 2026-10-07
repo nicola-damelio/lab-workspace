@@ -595,7 +595,7 @@ const kf = (over = {}) => normalizeKeyframe({
     'moveKeyframe', 'duplicateKeyframe', 'clearKeyframes', 'showKeyframe',
     'previewKeyframeFilm', 'stopKeyframeFilm', 'recordKeyframeFilmClick',
     'exportKeyframeFilm', 'importKeyframeFilm', 'captureKeyframePoses',
-    'applyKeyframePoses', 'applyKeyframeSample'];
+    'applyKeyframePoses', 'applyKeyframeSample', 'applyKeyframeFilmInstant'];
   deep(gestures.filter((n) => countIn(panel, `const ${n} = `) !== 1), [],
     'chaque geste du panneau (capturer, recapturer, se placer, bouger, copier, effacer, jouer, écrire, lire, exporter, importer) est défini une fois dans son bloc');
   deep(gestures.filter((n) => countIn(VIEWER, `const ${n} = `) !== 1), [],
@@ -608,23 +608,26 @@ const kf = (over = {}) => normalizeKeyframe({
 
   /* 2. UNE SEULE FONCTION MET UN INSTANT À L’ÉCRAN. `applyKeyframeSample` est le
         seul endroit qui applique une photographie (applyViewerSetup) ET les
-        orientations (applyKeyframePoses) ; ses six appelants — la pose cliquée,
-        le début du ▶, sa fin, chaque image du ▶, chaque image du 🔴, et le retour
-        de la scène — passent tous par elle. Le film VU est donc littéralement le
-        film ÉCRIT : il n’existe pas de second moteur qui pourrait en diverger. */
-  eq(countIn(VIEWER, 'applyKeyframeSample('), 6,
-    'six endroits du viewer mettent un instant du film à l’écran (la pose, le début et la fin du ▶, chaque image du ▶, chaque image du 🔴, le retour)');
-  eq(countIn(panel, 'applyKeyframeSample('), 6, '… et les six sont dans le bloc 🎞 (le panneau ne fuit pas dans le reste du viewer)');
+        orientations (applyKeyframePoses) ; ses trois appelants — la PORTE DU FILM
+        (`applyKeyframeFilmInstant`, par où passent le début du ▶, chaque image du ▶,
+        sa fin et chaque image du 🔴), la pose cliquée et le retour de la scène —
+        passent tous par elle. Le film VU est donc littéralement le film ÉCRIT : il
+        n’existe pas de second moteur qui pourrait en diverger. */
+  eq(countIn(VIEWER, 'applyKeyframeSample('), 3,
+    'trois endroits du viewer mettent un instant du film à l’écran (la porte du film, la pose cliquée, le retour de la scène)');
+  eq(countIn(panel, 'applyKeyframeSample('), 3, '… et les trois sont dans le bloc 🎞 (le panneau ne fuit pas dans le reste du viewer)');
   eq(countIn(VIEWER, 'applyViewerSetup(filmSceneState(sample))'), 1,
     'une seule fonction écrit la PHOTOGRAPHIE d’un instant — et c’est CELLE-LÀ, par `filmSceneState` (l’aspect d’une pose, le mélange pour ce qui glisse : voir §14)');
   eq(countIn(VIEWER, 'applyKeyframePoses(sample.pose)'), 1,
     '… et elle écrit les ORIENTATIONS au même endroit, dans le même geste (jamais l’un sans l’autre)');
-  eq(countIn(VIEWER, 'sampleKeyframeFilm('), 4,
-    'l’échantillonneur du module (« qu’y a-t-il à l’écran à t ? ») est appelé quatre fois : une pose, le début du ▶, sa fin, chaque image du 🔴');
-  eq(countIn(panel, 'applyKeyframeSample(sampleKeyframeFilm('), 4,
-    '… et ces quatre appels finissent à l’écran par la MÊME fonction : le ▶ de contrôle et le 🔴 lisent la même chronologie');
-  ok(panel.includes('presentFrame: (i) => applyKeyframeSample(sampleKeyframeFilm(keys, plan.timeAt(i)))'),
+  eq(countIn(VIEWER, 'sampleKeyframeFilm('), 1,
+    'l’échantillonneur du module (« qu’y a-t-il à l’écran à t ? ») est appelé à UN SEUL endroit : la porte d’un instant du film, que le 👁, le ▶ et le 🔴 traversent tous');
+  eq(countIn(panel, 'applyKeyframeFilmInstant(keys, '), 4,
+    '… et les quatre instants du film (le début du ▶, chaque image du ▶, sa fin, chaque image du 🔴) passent par cette porte : le ▶ de contrôle et le 🔴 lisent la même chronologie');
+  ok(panel.includes('presentFrame: (i) => applyKeyframeFilmInstant(keys, plan.timeAt(i))'),
     'l’image i du film écrit est l’instant plan.timeAt(i) du geste — exactement ce que le ▶ montre au même moment');
+  ok(panel.includes('if (shown) spinSceneTurn(stageRef.current, seconds);'),
+    '… et cette porte joue aussi le TOUR des axes allumés, À L’INSTANT DU FILM (aucune horloge murale) : un tour allumé est donc dans le fichier écrit (la demande : « These rotation must be able to be inserted into the movies. »)');
 
   /* Le corps d’un geste, du `const` à l’accolade qui le ferme à la colonne 0. */
   const bodyOf = (name) => {
@@ -668,7 +671,7 @@ const kf = (over = {}) => normalizeKeyframe({
     'et les cinq façons d’aller d’une pose à la suivante sont offertes une fois, depuis la liste du module');
   hasIn(VIEWER, '<option key={name} value={name}>{KEYFRAME_EASING_LABELS[name] || name}</option>',
     '… chaque easing par le nom que le MODULE lui donne (aucun select muet, aucune sixième façon inventée ici)');
-  hasIn(VIEWER, "previewUrlOf, releasePreviewUrl, downloadBlob,\n} from '../utils/viewerRayImage';",
+  hasIn(VIEWER, "previewRayImage, previewUrlOf, releasePreviewUrl, downloadBlob, rayFileName,\n} from '../utils/viewerRayImage';",
     'un film s’écrit sur l’ordinateur avec le downloadBlob du ✨ Ray : une seule façon de rendre un fichier');
   eq(countIn(panel, 'downloadBlob('), 2, '… et le panneau s’en sert deux fois : le film (.webm) et le film lui-même (.json)');
   eq(countIn(panel, 'molKeysInBar('), 1,

@@ -1015,40 +1015,81 @@ has('and the ${c} anchor of « Atom charge », which walks from the NEUTRAL swat
   ok(labels.get('atomcharge') === 'Atom charge', '[13l] …dont « Atom charge » lui-même');
 }
 
-/* ── 13m. 🔄 SPIN x·y·z — LE BOUTON QUI TOURNE LA MOLÉCULE, JUSTE APRÈS 🎞 MOVIE ─────
-   LA DEMANDE DE CETTE SESSION, MOT POUR MOT : « Next to the movie button add a button to
-   rotate uniformly the molecule in x, y and z direction ». Trois faits, chacun mesuré :
-     · le bouton vit DANS la boîte 🎨 Styles, IMMÉDIATEMENT APRÈS 🎞 Movie (donc entre
-       🌫 Scene et ✏️ Modify, comme le Movie lui-même), et il PORTE son état ;
-     · l'état (`spinOn`) allume une BOUCLE D'IMAGES qui appelle `spinSceneStep`, et ce pas
-       est « uniforme » : le MÊME angle autour des TROIS axes, fabriqué par
-       pré-multiplication (q ← dq · q, donc dans le repère de l'ÉCRAN — ce qu'on voit
-       tourner), avec un `dt` MESURÉ (la même vitesse à 30, 60 ou 144 Hz) ;
-     · le tour est un geste de VUE : il écrit `viewer.rotationGroup.quaternion` — la
-       rotation que la pose de caméra lit et repose (`applyCameraPose`) — donc il ne touche
-       ni la place des molécules (⬇ PDB) ni le ↺ (qui remet des positions), et il S'EFFACE
-       devant un film qui se prévisualise ou s'écrit. */
+/* ── 13m. 🔄 x · 🔄 y · 🔄 z — UN BOUTON PAR AXE, JUSTE APRÈS 🎞 MOVIE, ET LE TOUR ENTRE DANS LE FILM ─
+   LES DEUX DEMANDES DE CETTE FAMILLE, MOT POUR MOT : « Next to the movie button add a button
+   to rotate uniformly the molecule in x, y and z direction », puis « the spin only turn the
+   molecule in one axis, in any case i would like three buttons corresponding to each axis.
+   These rotation must be able to be inserted into the movies. » Quatre faits, chacun mesuré :
+     · les TROIS boutons vivent DANS la boîte 🎨 Styles, IMMÉDIATEMENT APRÈS 🎞 Movie (donc entre
+       🌫 Scene et ✏️ Modify), rendus depuis LA MÊME liste d'axes (`SPIN_AXES`) ;
+     · l'état est UN PAR AXE (`spinAxes`) : un axe seul donne le geste net (bascule, plateau,
+       roulis), la boucle d'images ne suit que « un tour court » et lit les axes par une REF,
+       donc un axe allumé en cours de tour s'applique au pas suivant sans relancer la boucle ;
+     · `spinSceneTurn` est LA seule écriture du tour : pré-multiplication (le repère de l'ÉCRAN),
+       un `dt` MESURÉ pour la boucle, et un axe ÉTEINT qui vaut l'identité — donc un seul axe
+       allumé donne EXACTEMENT la rotation de cet axe ;
+     · LE TOUR ENTRE DANS LE FILM, par une seule porte (`applyKeyframeFilmInstant`) : le ▶ de
+       contrôle ET le 🔴 y passent, elle repose l'instant du film puis joue le tour des axes
+       allumés à l'horloge du film — ce qu'on VOIT et ce qui s'ÉCRIT ne peuvent pas diverger. */
 {
-  const iSpinBtn = VIEW.indexOf('🔄 Spin x·y·z{spinOn ?');
+  const iSpinBtn = VIEW.indexOf('{SPIN_AXES.map((axis) => (');
   ok(iMovieBtn > 0 && iSpinBtn > iMovieBtn && iSpinBtn < iModify2b,
-    '[13m] 🔄 Spin x·y·z est DANS la boîte 🎨 Styles, immédiatement APRÈS 🎞 Movie');
-  has('onClick={() => setSpinOn((v) => !v)}', '[13m] …un clic l’allume, un second l’éteint');
-  has('aria-pressed={spinOn}', '[13m] …et il annonce son état aux lecteurs d’écran');
-  has('const [spinOn, setSpinOn] = useState(false);', '[13m] l’état du tour a UNE déclaration');
+    '[13m] les trois 🔄 vivent DANS la boîte 🎨 Styles, immédiatement APRÈS 🎞 Movie');
+  has("const SPIN_AXES = Object.freeze(['x', 'y', 'z']);",
+    '[13m] les trois axes sont UNE liste — la rangée les rend depuis elle…');
+  has('<button key={axis}', '[13m] …donc les trois boutons sont UN bouton écrit une fois');
+  has('onClick={() => toggleSpinAxis(axis)}', '[13m] un clic allume ou éteint SON axe (les trois sont indépendants)');
+  has('aria-pressed={spinAxes[axis]}', '[13m] …et chaque bouton annonce son état aux lecteurs d’écran');
+  has('const [spinAxes, setSpinAxes] = useState({ x: false, y: false, z: false });',
+    '[13m] l’état du tour est UN PAR AXE, et il a UNE déclaration');
+  has('const spinOn = spinAxes.x || spinAxes.y || spinAxes.z;',
+    '[13m] « un tour court » = au moins un axe allumé (la boucle ne se demande jamais QUEL axe)');
+  has('const spinAxesRef = useRef(spinAxes);', '[13m] les axes sont lus par une REF…');
+  has('useEffect(() => { spinAxesRef.current = spinAxes; }, [spinAxes]);',
+    '[13m] …tenue à jour, donc un axe allumé pendant un film est suivi sans redémarrer le film');
+  has("const SPIN_AXIS_LABELS = Object.freeze({ x: '🔄 x', y: '🔄 y', z: '🔄 z' });",
+    '[13m] chaque axe a SON libellé (une seule liste, jamais trois lignes recopiées)');
+  has('const SPIN_AXIS_WHAT = Object.freeze({', '[13m] et SON geste, dit en clair…');
+  has('HORIZONTAL axis of the screen', '[13m] …x : la bascule, autour de l’axe horizontal de l’écran');
+  has('VERTICAL axis of the screen, like a turntable', '[13m] …y : le plateau, autour de l’axe vertical');
+  has('the axis that points AT YOU', '[13m] …z : le roulis, autour de l’axe qui vient vers le spectateur');
+  has('const spinAxisTitle = (axis, on) =>', '[13m] les trois bulles sont écrites UNE fois (spinAxisTitle)');
   has('const SPIN_RAD_PER_S = 0.6;', '[13m] la vitesse est une constante NOMMÉE (un tour complet en ~10 s)');
-  has('const spinSceneStep = (stage, dt) => {', '[13m] le pas du tour est une fonction à part, qui reçoit son `dt`');
-  has('const dq = new Q().setFromAxisAngle(new V3(1, 0, 0), w);', '[13m] …le tour part de l’axe x de l’écran');
-  has('dq.multiplyQuaternions(new Q().setFromAxisAngle(new V3(0, 1, 0), w), dq);', '[13m] …puis y');
-  has('dq.multiplyQuaternions(dq, new Q().setFromAxisAngle(new V3(0, 0, 1), w));', '[13m] …puis z : les TROIS axes, le MÊME angle (« uniformly »)');
+  has('const spinSceneTurn = (stage, seconds, axes = spinAxesRef.current) => {',
+    '[13m] le tour est une fonction À PART, qui reçoit sa durée ET ses axes');
+  has('const dq = new Q().setFromAxisAngle(new V3(1, 0, 0), a.x ? w : 0);', '[13m] …son pas part de l’axe x de l’écran');
+  has('dq.multiplyQuaternions(new Q().setFromAxisAngle(new V3(0, 1, 0), a.y ? w : 0), dq);', '[13m] …puis y');
+  has('dq.multiplyQuaternions(dq, new Q().setFromAxisAngle(new V3(0, 0, 1), a.z ? w : 0));',
+    '[13m] …puis z : un axe ÉTEINT vaut l’identité, donc un seul axe allumé donne EXACTEMENT cet axe');
   has('q.multiplyQuaternions(dq, q);', '[13m] …pré-multiplié : le tour est celui qu’on VOIT (le repère de l’écran)');
-  has('const dt = last == null ? 0 : Math.min(0.1, (t - last) / 1000);', '[13m] …et `dt` est MESURÉ (aucun bond après un onglet en arrière-plan)');
-  has('if (!spinOn || kfPreview || kfBusy) return undefined;', '[13m] la boucle ne tourne QUE si le bouton l’allume, et s’efface devant un film');
-  has('}, [spinOn, kfPreview, kfBusy]);', '[13m] …son effet suit l’état du bouton ET celui du film');
-  has('spinSceneStep(stageRef.current, dt);', '[13m] la boucle fait UNE chose : un pas, puis un rendu');
-  has('· 🎞 Movie · 🔄 Spin x·y·z', '[13m] la liste des commandes de §2 (l’en-tête du fichier) nomme le nouveau bouton');
+  has('const dt = last == null ? 0 : Math.min(0.1, (t - last) / 1000);',
+    '[13m] …et le `dt` de la boucle est MESURÉ (aucun bond après un onglet en arrière-plan)');
+  has('if (!spinOn || kfPreview || kfBusy) return undefined;',
+    '[13m] la boucle ne tourne QUE si un axe l’allume, et elle s’efface devant un film');
+  has('}, [spinOn, kfPreview, kfBusy]);', '[13m] …son effet suit « un tour court » ET l’état du film');
+  has('spinSceneTurn(stageRef.current, dt);', '[13m] la boucle fait UNE chose : un pas mesuré, puis un rendu');
+  /* LE TOUR ENTRE DANS LE FILM — la demande : « These rotation must be able to be inserted
+     into the movies. » Le ▶ de contrôle et le 🔴 n’ont qu’UNE porte (applyKeyframeFilmInstant) :
+     celle qui repose l’instant du film ET joue le tour des axes allumés, à l’horloge du film. */
+  has('const applyKeyframeFilmInstant = (keys, seconds) => {', '[13m] le film a UNE porte pour un instant…');
+  has('const shown = applyKeyframeSample(sampleKeyframeFilm(keys, seconds));',
+    '[13m] …elle repose l’instant du film par le MÊME échantillonneur que toujours…');
+  has('if (shown) spinSceneTurn(stageRef.current, seconds);',
+    '[13m] …puis joue le tour des axes allumés, À L’INSTANT DU FILM (jamais une horloge murale)');
+  ok(VIEW.split('applyKeyframeFilmInstant(keys, ').length - 1 === 4,
+    '[13m] …et le ▶ (trois instants) comme le 🔴 (presentFrame) passent par elle : le film VU et le film ÉCRIT ne divergent pas');
+  has('presentFrame: (i) => applyKeyframeFilmInstant(keys, plan.timeAt(i)),',
+    '[13m] l’image i du film écrit EST l’instant plan.timeAt(i) du geste, tour compris');
+  has('the turn of the lit axes included',
+    '[13m] le ▶ le DIT : le tour des axes allumés est joué, donc il est dans le fichier');
+  has('const spinFilmNote = () => {', '[13m] …par une seule phrase (`spinFilmNote`), lue par le ▶ ET par le 🔴');
+  has('· 🎞 Movie · 🔄 x / 🔄 y / 🔄 z', '[13m] la liste des commandes de §2 (l’en-tête du fichier) nomme les trois boutons');
   has('⬇ PDB writes where the molecules STAND (never where the camera looks)',
-    '[13m] …et sa bulle dit ce qui NE bouge pas : ⬇ PDB écrit des positions, jamais une orientation de caméra');
+    '[13m] …et la bulle commune dit ce qui NE bouge pas : ⬇ PDB écrit des positions, jamais la caméra');
+  has('it is the FILM that plays the turn', '[13m] …et que le tour est DANS le film (les trois bulles le disent)');
+  gone('🔄 Spin x·y·z', '[13m] l’ancien bouton UNIQUE a disparu (il ne tournait, à l’œil, que sur un axe)');
 }
+
 
 
 /* ── Bilan ───────────────────────────────────────────────────────────────── */

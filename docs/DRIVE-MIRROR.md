@@ -3603,11 +3603,14 @@ réel, ce que le moteur peint sur les pages réelles) ; `node _ui_bg_apply_test.
 `node _auth_identity_test.mjs` — **39** ; `node _tdz_scan_test.mjs` — **18** (250 fichiers) ;
 `npx oxlint` sur les trois fichiers touchés — **0 avertissement** ; `npx vite build` ✓.
 
-## Le 📂 PDB du dossier rejoint la rangée des fichiers, et 🔄 fait tourner la molécule (04/10/2026)
+## Le 📂 PDB du dossier rejoint la rangée des fichiers, et 🔄 x · 🔄 y · 🔄 z font tourner la molécule — films compris (04/10/2026)
 
-**Les deux demandes, mot pour mot.** « *in the viewer "pdb from drive folder" should fit in the
-same line as "create drive folder"* » et « *Next to the movie button add a button to rotate
-uniformly the molecule in x, y and z direction* ».
+**Les trois demandes, mot pour mot.** « *in the viewer "pdb from drive folder" should fit in the
+same line as "create drive folder"* », « *Next to the movie button add a button to rotate
+uniformly the molecule in x, y and z direction* », puis — le tour de cette première demande ne
+tournant, à l'œil, que sur un axe — « *the spin only turn the molecule in one axis, in any case i
+would like three buttons corresponding to each axis. These rotation must be able to be inserted
+into the movies.* »
 
 ### ① Le 📂 PDB du dossier de la page NMR vit sur la ligne de 📁 Create drive folder
 
@@ -3634,18 +3637,25 @@ juste avant lui.
 ligne 8 — « rien sur NMR / Docking » — vaut maintenant pour la page **Docking** seule, la page NMR
 passant elle aussi un 📂 de la page.)*
 
-### ② 🔄 Spin x·y·z — le tournoiement uniforme, juste après 🎞 Movie
+### ② 🔄 x · 🔄 y · 🔄 z — trois boutons, un axe chacun, juste après 🎞 Movie
 
-Le bouton vit dans la boîte 🎨 Styles, **immédiatement après 🎞 Movie** (donc entre 🌫 Scene et
-✏️ Modify, comme le Movie lui-même), et il ne fait qu'une chose de plus que lui : **il tourne**.
+Les trois boutons vivent dans la boîte 🎨 Styles, **immédiatement après 🎞 Movie** (donc entre
+🌫 Scene et ✏️ Modify, comme le Movie lui-même), et ils ne font qu'une chose de plus que lui :
+**ils tournent** — chacun **le sien**.
 
-* **« uniformly » = le MÊME angle sur les TROIS axes.** Chaque image compose
-  `dq = Rx(ω·dt) · Ry(ω·dt) · Rz(ω·dt)`, puis **pré-multiplie** la rotation de la scène
-  (`q ← dq · q`). La pré-multiplication exprime le tour dans le repère de l'**écran** (x vers la
+* **POURQUOI TROIS.** Le tour unique composait *le même angle* sur les trois axes : or
+  `Rx(θ)·Ry(θ)·Rz(θ)` **est** la rotation d'un seul angle autour de l'axe **(1, 1, 1)** — la
+  diagonale de l'écran. À l'œil, la molécule ne tournait donc que dans un sens, autour d'un axe
+  figé. Chaque axe a maintenant **son bouton** et les trois sont **indépendants** : `🔄 x` couche
+  la molécule (bascule), `🔄 y` en fait un plateau tournant, `🔄 z` la fait rouler dans le plan de
+  l'écran — et deux ou trois axes allumés se composent (c'est le « uniformly » d'origine, gardé).
+* **Un axe éteint vaut l'identité** : `spinSceneTurn` écrit toujours ses trois lignes
+  (`(new V3(1, 0, 0), a.x ? w : 0)`, puis y, puis z) — un angle de 0 **est** le quaternion
+  identité — donc **un seul axe allumé donne exactement la rotation de cet axe**. Le pas est
+  **pré-multiplié** (`q ← dq · q`), c'est-à-dire exprimé dans le repère de l'**écran** (x vers la
   droite, y vers le haut, z vers le spectateur) : c'est bien ce qu'on VOIT qui tourne, d'où le même
-  geste quelle que soit l'orientation d'où l'on regarde — et aucun axe ne prend le dessus (jamais le
-  va-et-vient droite / gauche d'un simple plateau). `SPIN_RAD_PER_S = 0.6` : un tour complet sur
-  chaque axe en ~10,5 s.
+  geste quelle que soit l'orientation d'où l'on regarde. `SPIN_RAD_PER_S = 0.6` : un tour complet
+  sur un axe en ~10,5 s.
 * **`dt` est MESURÉ**, pas supposé : c'est l'horloge que le navigateur donne à
   `requestAnimationFrame`, donc le tour est le même à 30, 60 ou 144 Hz, et un pas est **plafonné à
   0,1 s** pour qu'un onglet resté longtemps en arrière-plan ne fasse pas un bond au retour.
@@ -3655,30 +3665,73 @@ Le bouton vit dans la boîte 🎨 Styles, **immédiatement après 🎞 Movie** (
   le tour **où il en est**, une pose capturée **garde l'orientation qu'elle montre**, le fondu d'un
   film la mélange, ⬇ PDB continue d'écrire la **place des molécules** (jamais où la caméra regarde)
   et ↺ ne l'annule pas (il remet des *positions*, pas la vue).
-* **Il s'efface devant un film.** Pendant qu'une pose se vérifie (`kfPreview`) ou qu'un film s'écrit
-  (`kfBusy`), la boucle s'arrête — deux mains sur la même rotation ne donneraient qu'un tremblement
-  — et le bouton, lui, **reste allumé** : le tour reprend tout seul à la fin, sans un second clic.
+* **Il entre dans le film — voir ③.** La boucle d'images s'efface devant un film (`kfPreview` /
+  `kfBusy`) parce que c'est alors **le film** qui joue le tour des axes allumés, à **son** horloge :
+  les boutons, eux, **restent allumés**, et le tour reprend tout seul après, sans un second clic.
 
 ⚠ Les deux constructeurs d'objets (`Quaternion`, `Vector3`) sont **LUS** sur les objets de la scène,
 comme partout dans ce fichier : une version de NGL qui ne les exposerait pas ne tourne simplement
-pas, et l'exception ne remonte jamais au bouton. Rien n'est tenu dans un quaternion à nous — le seul
-objet fabriqué est l'**incrément d'une image**.
+pas, et l'exception ne remonte jamais au bouton. Rien n'est tenu dans un quaternion à nous : les
+seuls objets fabriqués sont le **pas d'une image** et la **rotation du tour d'un instant de film**
+(voir ③).
 
-*Vérifier :* `node _viewer_ui_layout_test.mjs` — **517 assertions** (contre **501**) : le bouton est
-mesuré DANS la boîte 🎨 Styles **immédiatement après** 🎞 Movie, l'état (`spinOn`, `aria-pressed`), la
-constante de vitesse, les trois axes du pas, la pré-multiplication, le `dt` mesuré, la boucle qui
-s'efface devant le film, et la liste des commandes de §2 qui nomme le nouveau bouton ;
+### ③ Le tour entre dans le film — « *These rotation must be able to be inserted into the movies.* »
+
+* **Une seule porte.** Le ▶ de contrôle et le 🔴 enregistreur ne mettent plus l'instant du film à
+  l'écran chacun de son côté : ils appellent **`applyKeyframeFilmInstant(keys, seconds)`**, qui
+  repose l'instant (`applyKeyframeSample(sampleKeyframeFilm(keys, seconds))`) **puis** joue le tour
+  des axes allumés (`spinSceneTurn(stageRef.current, seconds)`). Une image **montrée** et une image
+  **écrite** ne peuvent donc pas diverger, tour compris.
+* **L'horloge du FILM, jamais l'horloge murale.** `seconds` est l'instant du film
+  (`plan.timeAt(i)` au 🔴, le temps de lecture au ▶). La pose est reposée à chaque image, donc
+  `R(ω·seconds)` est posée **par-dessus** elle : un film 20 s tourne 20 s de tour quel que soit le
+  temps que le rendu met (aucun retard accumulé), et le résultat est **reproductible** — deux
+  enregistrements du même film sont le même film.
+* **Il se compose avec les poses** : un film peut donc **morpher ET tourner** — un tour est un
+  changement de VUE posé sur l'instant, jamais un contenu de la pose.
+* **Aucun axe allumé : rien ne change.** `spinSceneTurn` sort tout de suite, et l'instant du film est
+  **exactement** celui d'avant cette session : le film n'a pas changé d'un pixel.
+* **Ce qui n'entre PAS dans le film.** Une pose regardée (👁) et le retour de la scène à la fin d'un
+  enregistrement montrent ce qui a été capturé, sans tour (ils passent par `applyKeyframeSample`
+  avec `driven = false`) ; et le tour **ne voyage pas dans le `.json` exporté** — c'est un geste de
+  vue, pas une propriété d'une pose.
+* **Deux façons d'avoir un film qui tourne**, donc : **laisser un ou plusieurs 🔄 allumés** et
+  ▶/🔴 (le film tourne, à son horloge), ou **capturer ses poses pendant que la molécule tourne** (le
+  morphème du film porte alors les orientations capturées, comme avant).
+* **Le ▶ et le 🔴 le disent** : leur compte rendu ajoute « 🔄 X turning too, at the film clock — that
+  turn is in the file. » dès qu'un axe est allumé (`spinFilmNote`), et la bulle du ▶ s'ouvre sur
+  « …the turn of the lit axes included ».
+
+*Vérifier :* `node _viewer_ui_layout_test.mjs` — **537 assertions** (contre **517**) : les TROIS
+boutons sont mesurés DANS la boîte 🎨 Styles **immédiatement après** 🎞 Movie, la liste d'axes
+(`SPIN_AXES`, un seul `<button key={axis}>` pour les trois), l'état **par axe** (`spinAxes`,
+`aria-pressed`, la ref tenue à jour), les trois gestes nommés **une fois** (`SPIN_AXIS_WHAT`,
+`spinAxisTitle`), la constante de vitesse, les trois lignes du pas (un axe éteint = l'identité), la
+pré-multiplication, le `dt` mesuré, la boucle qui s'efface devant le film, **la porte du film**
+(`applyKeyframeFilmInstant`, ses quatre instants, `presentFrame`, la phrase du ▶), la **disparition
+de l'ancien bouton unique**, et la liste des commandes de §2 qui nomme les trois ;
 `node _structure_windows_test.mjs` — **112** (contre **108**) : la page NMR passe **UN**
 `fileRowExtra` (`nmrStructureFromFolder`, défini une seule fois, avec le MÊME `ctx`, le MÊME
 `onPick` et le MÊME libellé), la phrase passée dans son infobulle, et **un seul** 📂 PDB du dossier
 dans le fichier — sa rangée à lui a disparu. Régressions : `node _viewer_render_smoke_test.mjs` —
-**23** (le vrai build du viewer, qui rend le nouveau bouton et sa boucle),
+**23** (le vrai build du viewer, qui rend les trois boutons et sa boucle),
+`node _viewer_film_match_test.mjs` — **79** (le film ressemble toujours à l'écran, vignette et fond
+compris : la porte du film n'a pas ajouté d'image à rebours),
 `node _viewer_style_controls_test.mjs` — **494**, `node _viewer_general_row_test.mjs` — **189**,
 `node _viewer_row_bridges_test.mjs` — **69**, `node _compact_sections_test.mjs` — **211**,
 `node _condition_page_test.mjs` — **123**, `node _residue_numbering_panels_test.mjs` — **79**,
 `node _ss_sheet_test.mjs` — **163**, `node _nmr_nuclei_table_test.mjs` — **67** ;
 `npx oxlint` — **322 avertissements / 0 erreur** (inchangé) ; `npx vite build` ✓.
-Rouges AVANT cette session, et sans rapport : `node _viewer_keyframes_test.mjs` (sa sonde cherche
-encore l'ancienne ligne d'import de `viewerRayImage`, déjà remplacée à HEAD) et
-`node _experiment_folder_files_test.mjs` (le module importe `archiveFileDriveName`, absent à HEAD).
+Rouges AVANT cette session : `node _viewer_keyframes_test.mjs` **est redevenu VERT** — **347
+assertions OK** (contre **0** : la suite s'arrêtait sur une sonde, ses ~200 assertions suivantes ne
+s'exécutaient donc plus). C'était une **sonde périmée d'une seule ligne** : la ligne d'import du ✨
+Ray s'était enrichie (`previewRayImage` au début, `rayFileName` à la fin) et la sonde regardait
+encore l'ancienne. Elle a été réalignée, **et ses sondes de la porte du film ont suivi cette
+session** (elles comptent `applyKeyframeSample(` **3** fois, `sampleKeyframeFilm(` **1** fois,
+`applyKeyframeFilmInstant(keys, ` **4** fois, et vérifient que le tour y entre) — donc les
+assertions du panneau 🎞 qui ne tournaient plus **valident maintenant** la porte du film.
+Reste rouge, et toujours sans rapport : `node _experiment_folder_files_test.mjs` — le **bouchon** du
+Drive de `_esm_test_hook.mjs` ne fournit pas `archiveFileDriveName`, alors que le **vrai** module
+l'exporte (`src/utils/driveUpload.js`) : c'est le bouchon qui est en retard sur le module, la suite
+s'arrête à l'import. Aucun lien avec le viewer : non touché ici.
 
