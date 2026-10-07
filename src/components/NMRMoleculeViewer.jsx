@@ -13827,12 +13827,22 @@ useEffect(() => {
   if (structOrigin === 'external') return;   // un PDB chargé par l'utilisateur occupe l'écran
   if (!sequenceStructureText) return;        // pas de séquence sur la page : rien à bâtir
   if (sequenceStructureText === lastLoadedTextRef.current) return;  // c'est DÉJÀ ce modèle qui est affiché
+  /* ⚠️ LA STRUCTURE SERVIE PAR LA PAGE OCCUPE L'ÉCRAN — le modèle de la séquence n'est
+     qu'un REPLI, servi « quand RIEN n'est chargé » (voir les pages MD et Docking). Or
+     l'effet ci-dessus (le texte de la page, `structureText`) vient de la charger dans CE
+     MÊME rendu : il pose `lastLoadedTextRef` AVANT nous et marque l'origine « generated »
+     — PAS « external » — donc sans ce garde le modèle la REMPLAÇAIT aussitôt (les deux
+     effets écrivent le même `loadRequest`, le dernier gagne). C'est ce qui faisait montrer
+     la « protéine linéarisée » à la place des PDB « 8_seletopclusts » sélectionnés sur la
+     page Docking, et céder la molécule organique chargée sur MD — contre la règle « un PDB
+     chargé reste prioritaire » des deux pages. */
+  if (structureText && structureText === lastLoadedTextRef.current) return;
   if (loadRequest && loadRequest.text === sequenceStructureText) return;  // …ou il est en train de charger
   lastLoadedTextRef.current = sequenceStructureText;
   setStructOrigin('generated');
   console.log('🧬 Nothing loaded in the viewer — showing the structure built from the page sequence.');
   requestStructureLoad({ file: null, url: null, text: sequenceStructureText, ext: sequenceStructureExt || 'pdb', ts: Date.now() });
-}, [structOrigin, sequenceStructureText, sequenceStructureExt, loadRequest]);
+}, [structOrigin, sequenceStructureText, sequenceStructureExt, loadRequest, structureText]);
 
 useEffect(() => {
 if (!src) return;

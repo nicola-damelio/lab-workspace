@@ -111,4 +111,22 @@ ok(importer.includes('keepStruct(entryName, pdbText, null)'),
 ok(importer.includes('const inStructDir ='),
   'les .zip de 8_seletopclusts/ sont examinés en premier');
 
+/* ── 6. LE MODÈLE DE LA SÉQUENCE NE REMPLACE PLUS LA STRUCTURE DU CLUSTER ────
+   Défaut rapporté : même quand les PDB « 8_seletopclusts » sont bien captés et
+   rangés, le viewer montrait ENCORE la protéine linéarisée. Cause : le viewer a
+   DEUX effets de chargement — le texte servi par la page (`structureText`, le PDB
+   du cluster) puis le modèle de la séquence (`sequenceStructureText`) — qui
+   s'exécutent dans le MÊME rendu, dans cet ordre. Le premier marque l'origine
+   « generated » (JAMAIS « external »), donc le second ne le voyait pas comme une
+   structure posée et écrasait le cluster (les deux posent le même `loadRequest`).
+   Le viewer doit donc CÉDER au texte de la page : c'est la règle « un PDB chargé
+   reste prioritaire » promise par les pages MD et Docking. */
+const VIEWER = readFileSync('src/components/NMRMoleculeViewer.jsx', 'utf8');
+ok(VIEWER.includes('if (structureText && structureText === lastLoadedTextRef.current) return;'),
+  'le modèle de la séquence CÈDE à la structure servie par la page (cluster 8_seletopclusts / PDB chargé)');
+ok(/}, \[structOrigin, sequenceStructureText, sequenceStructureExt, loadRequest, structureText\]\);/.test(VIEWER),
+  '…et l’effet suit aussi ce texte (structureText ajouté aux dépendances)');
+ok(VIEWER.includes("if (structOrigin === 'external') return;"),
+  '…sans retirer le garde existant (un PDB chargé par l’utilisateur garde la priorité)');
+
 console.log(`${passed} passed`);
