@@ -231,12 +231,12 @@ has('onClick={() => patchBgGradient({ on: !bgGradient.on })}', 'l’interrupteur
 has('aria-pressed={bgGradient.on}', '…et il annonce son état');
 has('aria-label="Background colour (first colour of the ramp)"', 'la couleur A — la couleur de la scène — est là');
 has('onChange={(e) => setBgColor(e.target.value)}', '…et c’est le MÊME état que le 🎨 de §2 Scene (jamais deux fonds)');
-has('{ const a = bgColor; setBgColor(bgGradient.to); patchBgGradient({ to: a }); }', '⇄ échange les deux extrémités');
+has('{ const a = bgColor; setBgColor(bgGradient.to); patchBgGradient({ on: true, to: a }); }', '⇄ échange les deux extrémités — et ALLUME la rampe');
 has('aria-label="Background gradient second colour"', 'la couleur B est là');
 has('{BG_DIRECTIONS.map((d) => (', 'les HUIT directions sont rendues depuis le module (jamais recopiées)');
-has('onClick={() => patchBgGradient({ angle: d.angle })}', '…un clic pose son angle');
+has('onClick={() => patchBgGradient({ on: true, angle: d.angle })}', '…un clic pose son angle ET allume la rampe');
 has('aria-pressed={bgGradient.angle === d.angle}', '…et la direction active se voit');
-has('onChange={(e) => patchBgGradient({ angle: Number(e.target.value) })}', 'le curseur d’angle écrit le même champ');
+has('onChange={(e) => patchBgGradient({ on: true, angle: Number(e.target.value) })}', 'le curseur d’angle écrit le même champ (et allume la rampe)');
 has('aria-label="Gradient angle in degrees"', '…et il est nommé (lecteurs d’écran)');
 has('onClick={() => patchBgGradient({ on: false, to: BG_GRADIENT_DEFAULT_TO, angle: BG_GRADIENT_DEFAULT_ANGLE, mid: BG_GRADIENT_DEFAULT_MID, midOn: BG_GRADIENT_DEFAULT_MID_ON })}',
   '↺ rend la rampe d’origine (et éteint le dégradé)');
@@ -304,11 +304,33 @@ eq(backgroundCss({ on: true, from: '#ff0000', to: '#0000ff', angle: 180, mid: '#
   'milieu éteint : EXACTEMENT la rampe à deux couleurs d’avant (aucun 3e arrêt)');
 
 /* …ET LE PANNEAU (le câblage du milieu, lu dans la source) */
-has('onClick={() => patchBgGradient({ midOn: !bgGradient.midOn })}', 'le bouton « C 50 % » ajoute / enlève le milieu');
+has('onClick={() => patchBgGradient({ on: true, midOn: !bgGradient.midOn })}', 'le bouton « C 50 % » ajoute / enlève le milieu — et allume la rampe');
 has('aria-pressed={bgGradient.midOn}', '…et il annonce son état');
 has('value={bgGradient.mid}', '…le 3e swatch (C) lit / écrit le milieu de la rampe');
 has('aria-label="Background gradient middle colour"', '…et il est nommé (lecteurs d’écran)');
 has('mid: BG_GRADIENT_DEFAULT_MID, midOn: BG_GRADIENT_DEFAULT_MID_ON', '↺ remet aussi le milieu d’origine');
+
+/* ══ 9. LE PANNEAU NE PEUT PLUS SEMBLER INERTE ═════════════════════════════
+   Le rapport de cette session, mot pour mot : « The gradient options for the
+   background of the viewer window appear in the viewer but they do not work. the
+   background remains of the same color. » La rampe s'ouvre ÉTEINTE (le défaut
+   voulu), et ses contrôles écrivaient bien leur champ — mais rien ne se peignait
+   tant qu'elle était éteinte : B, C, les huit flèches, le curseur et ⇄ étaient donc
+   sans effet visible. Chacun ALLUME désormais la rampe du même geste ; ↺ et
+   l'interrupteur, eux, l'éteignent toujours. */
+has('onChange={(e) => patchBgGradient({ on: true, to: e.target.value })}',
+  'la couleur B ALLUME la rampe en la choisissant (plus de contrôle inerte)');
+has('onChange={(e) => patchBgGradient({ on: true, mid: e.target.value })}', '…et la couleur C du milieu');
+has('Every control here acts on the ramp, so touching B, C, an arrow, the angle or ⇄ turns it ON',
+  'la ligne du bas DIT que rien de ce panneau n’est inerte');
+has('⬚ Gradient is OFF: the scene is painted with the ONE colour A',
+  '…et elle dit l’ÉTAT quand la rampe est éteinte (jamais un panneau muet)');
+has('bgGradient.on ? (', 'la ligne de lecture a donc DEUX états (allumée / éteinte)');
+eq(countOf(/patchBgGradient\(\{ on: true,/g), 6,
+  'les SIX contrôles de la rampe (B · C 50 % · C · 8 directions · curseur · ⇄) l’allument — pas un de plus');
+gone('patchBgGradient({ angle: d.angle })', '…et aucune flèche ne reste muette');
+gone('patchBgGradient({ to: e.target.value })', '…ni la couleur B');
+gone('patchBgGradient({ midOn: !bgGradient.midOn })', '…ni le bouton du milieu');
 
 console.log(`_viewer_background_test.mjs — ${passed} assertions OK (⬚ le fond du viewer : deux ou trois couleurs, une direction, un clic qui ouvre et ferme)`);
 

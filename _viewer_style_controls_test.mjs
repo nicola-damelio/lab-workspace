@@ -311,6 +311,21 @@ has('if (!entry || typeof entry !== \'object\') throw new Error(\'not an environ
 has('📂 Load…', 'la liste déroulante des styles enregistrées');
 has('⬆\n<input type="file" accept=".json,application/json"', 'le bouton d’import (une flèche : son mode d’emploi est dans la bulle)');
 has('>🎨 Styles</span>', 'la bande s’appelle « 🎨 Styles » (l’ex-bouton « 🎨 Predefined styles » de la demande)');
+/* 📌 / ↩ LE STYLE DÉFINI DE CETTE INSTANCE — la demande de cette session : « a button with
+   which I define the style of the viewer for each instance of each experiment. Clicking on
+   this button will define its style based on what is shown at that moment in the viewer.
+   next to this button there must be another button to revert to the defined style. » */
+has('const DEFINED_STYLE_NAME = \'Defined style\';', 'un nom RÉSERVÉ porte le style défini d’une instance');
+has('const defineInstanceStyle = () => {', '📌 Define style — un geste, un bouton');
+has('const revertToDefinedStyle = () => {', '↩ Revert to defined — le bouton d’à côté');
+has('saveSnapshot(DEFINED_STYLE_NAME);',
+  '…📌 écrit un SNAPSHOT de SECTION (deux protéines colorées autrement le restent — le défaut rapporté)');
+has('loadSnapshot(DEFINED_STYLE_NAME);', '…↩ repose ce même snapshot');
+has('onClick={defineInstanceStyle}', '…📌 est branché dans la bande');
+has('onClick={revertToDefinedStyle}', '…↩ aussi');
+ok(VIEW.indexOf('onClick={defineInstanceStyle}') > VIEW.indexOf('>🎨 Styles</span>')
+  && VIEW.indexOf('onClick={defineInstanceStyle}') < VIEW.indexOf('onClick={saveActiveEnv}'),
+  'la paire 📌 / ↩ vit DANS la bande 🎨 Styles, avant 💾 Save');
 /* ⚠ LA BANDE A CHANGÉ DE RANG TROIS FOIS. D'abord : « the “styles” section can fit inside
    the line of the “scene” section but it should be clear that they are separated » — elle a
    quitté « 1 · General » pour la ligne de 🌫 Scene. Puis : « Move the styles section in

@@ -2888,7 +2888,33 @@ rapport du rendu ajoute « · gradient background » à côté de « · transpar
   assombri, aucun pixel de la molécule n'est touché).
 
 
-*Vérifier :* `node _viewer_background_test.mjs` — **144 assertions** : les deux couleurs et
+### ⑥ Le panneau ne peut plus sembler inerte, et le REGARD suit la molécule
+
+Deux rapports de la même session, mot pour mot :
+
+* « The gradient options for the background of the viewer window appear in the viewer but they do not
+  work. the background remains of the same color. » — La rampe s'ouvre **éteinte** (le défaut voulu) et
+  ses contrôles écrivaient bien leur champ… mais la **spécification** ne peint rien tant que `on` est
+  faux (`gradientSpecOf` rend `null`) : B, C, les huit flèches, le curseur et ⇄ n'avaient donc **aucun
+  effet visible**, et le panneau entier semblait mort. **Toucher l'un d'eux ALLUME désormais la rampe du
+  même geste** (`patchBgGradient({ on: true, … })`) ; l'interrupteur **⬚ Gradient** et **↺** restent les
+  deux gestes qui l'éteignent, et quand elle est éteinte la ligne du bas le **dit** au lieu de se taire.
+  La sonde du navigateur le mesure : la rampe éteinte, changer B allume la rampe (`on: true`) et le
+  canvas porte `linear-gradient(rgb(248, 250, 252) 0%, rgb(0, 255, 0) 100%)`.
+* « when I change the molecule not only the zoom must be conserved but also the style (style of the
+  molecule, the background etc.) » — Le **point de vue** était déjà tenu (voir le §7 de
+  `_docking_viewer_restore_test.mjs`) ; le **regard** ne l'était pas : une section ne retrouvait son
+  arbre de la barre que si le fichier suivant lui donnait le **même id global** (`main::protein|A`), et
+  un fichier qui nomme autrement ses chaînes, ses molécules ou ses ligands repartait des défauts du
+  **type**. Le viewer photographie donc, au même moment que la caméra, les trois choses qu'un geste de
+  la barre écrit — l'arbre de chaque section, son **✔** et ses **étiquettes 🏷** (`captureSwitchLook`)
+  — et les repose sur la molécule chargée (`applySwitchLook`), avec le lecteur des poses de film
+  (`poseStylesForSections`, qui retrouve une section par son id **puis par sa clé locale**). Le **fond**
+  n'a jamais bougé : ce n'est pas un réglage d'une molécule mais du viewer (A *est* la couleur de la
+  scène, la rampe vit sous `labViewerBgGradient`), et un chargement qui n'est pas un switch ne touche à
+  rien (le vœu est consommé : `null`).
+
+*Vérifier :* `node _viewer_background_test.mjs` — **168 assertions** : les deux couleurs et
 l'angle (validation : `#rrggbb`, l'angle ramené dans `[0, 360[`, `on` strictement vrai), ce que
 localStorage et un ⚙️ setup rendent (chaîne JSON, objet, magasin illisible), le CSS exact de la
 rampe, les **maths de la ligne** (↓ → ↑ ← et une diagonale — la ligne est plus longue que la
@@ -2899,9 +2925,12 @@ tout le **câblage du viewer** : l'état, le magasin, le CSS du canvas posé **a
 sans atome et son garde-fou de piquage, le panneau (une seule fois, `aria-*`, les deux couleurs,
 ⇄, les huit boutons, l'angle, ↺, ⇤, la ligne qui nomme la direction), le bouton ⬚ de §2, les
 ⚙️ setups et `THEME_GLOBAL_KEYS`, la toile de film (couleur puis rampe, **avant** la scène) et la
-recomposition de la still du ✨ Ray.
+recomposition de la still du ✨ Ray. Son **§9** ajoute la promesse du dernier rapport : les **six**
+contrôles de la rampe l'**ALLUMENT** (comptés un par un : aucune écriture muette ne subsiste), et la
+ligne du bas a désormais **deux** états — allumée, elle décrit la rampe ; éteinte, elle dit l'état et
+que rien dans ce panneau n'est inerte.
 
-`node _viewer_background_pixels_test.cjs` — **29/29 assertions dans Chrome** (`--headless=new`,
+`node _viewer_background_pixels_test.cjs` — **34/34 assertions dans Chrome** (`--headless=new`,
 SwiftShader), sur **le module servi comme module** et un **vrai** canvas NGL : la rampe peinte
 dans une toile 2D (les deux bords, le milieu, la direction), le fond CSS à travers une toile
 d'alpha zéro, le clic de fond reçu **deux fois sans atome**, et la still du ✨ Ray (la molécule
@@ -3681,4 +3710,73 @@ dans le fichier — sa rangée à lui a disparu. Régressions : `node _viewer_re
 Rouges AVANT cette session, et sans rapport : `node _viewer_keyframes_test.mjs` (sa sonde cherche
 encore l'ancienne ligne d'import de `viewerRayImage`, déjà remplacée à HEAD) et
 `node _experiment_folder_files_test.mjs` (le module importe `archiveFileDriveName`, absent à HEAD).
+
+
+---
+
+## ⑦ Une page de docking neuve est vierge, et une instance garde SON style
+
+La demande de cette session, en trois points : (1) « when I create a docking page it is never
+virgin because there are example data but I would prefer it to be empty » ; (2) « I would like to
+have a button with which I define the style of the viewer for each instance of each experiment.
+Clicking on this button will define its style based on what is shown at that moment in the viewer.
+next to this button there must be another button to revert to the defined style if in the meantime
+the style was changed. Most importantly, whenever I open that instance of that experiment this
+style must be applied automatically. For example I had two protein that I colored in different
+colors then I changed the page (went to another instance) and went back to it and both protein had
+the same colors. this cannot be. »
+
+### ① La page de docking ne s'invente plus de poses
+
+Le crochet `useDockingDerived` de `DockingSections.jsx` lisait `activeTest.dockingPoses` et, **quand
+la liste était vide**, fabriquait des poses de démonstration — douze si le programme était HADDOCK,
+neuf sinon. Toute la moitié « Data » de la page (table des scores, nuage « énergie vs. écart à la
+référence », cartes de métriques) était donc remplie de nombres qui n'existent nulle part, et rien
+à l'écran ne les distinguait d'un vrai import. Le crochet ne lit plus **que** `activeTest.dockingPoses`,
+et l'absence de liste veut dire « rien à montrer » : les deux générateurs ne sont plus ni importés ni
+appelés depuis la page (le module `DockingData.jsx` les garde exportés — `_docking_scatter_card_test.mjs`
+s'en sert comme sonde).
+
+### ② Le style appartient à l'INSTANCE
+
+`styleMemoryKeysRef` (`NMRMoleculeViewer.jsx`) mettait **l'expérience d'abord**
+(`pymolSessionExperimentSlug`), la condition ensuite : une seule mémoire — et un seul fichier de
+style — servait donc **toutes** les conditions d'un même essai. C'est exactement le défaut rapporté :
+le style enregistré sur une condition s'appliquait à sa voisine, et les deux protéines de celle-ci se
+retrouvaient habillées pareil. L'ordre est **inversé** : l'INSTANCE (projet · nom · condition — c'est
+l'`instanceKey` que la page donne au viewer) vient EN PREMIER, l'expérience entière ensuite (une
+mémoire écrite avant ce correctif reste donc lisible), la clé générale en dernier recours.
+Deux boutons accompagnent la bande 🎨 Styles :
+
+* **📌 Define style** — photographie ce qui est À L'ÉCRAN **maintenant** et en fait le style de CETTE
+  instance. C'est **toujours un snapshot** (par section, « protein · chain A » …) : un thème fusionne
+  par CLASSE moléculaire et confondrait deux protéines colorées autrement — le défaut même. Il est
+  retenu comme n'importe quel autre style (mémoire du poste **et** `viewer-style-snapshot.json` dans
+  le dossier de la condition), donc l'ouverture suivante l'applique **toute seule** : c'est le rappel
+  automatique déjà en place (`recallViewerStyle`), il n'y a rien de plus à croire sur parole.
+* **↩ Revert to defined** — repose ce même snapshot si des couleurs ont changé entre-temps, et le
+  **dit** quand rien n'a encore été défini au lieu de rester muet.
+
+*Vérifier :* `node _viewer_style_recall_test.mjs` — **132** (l'ordre des clés INSTANCE-puis-expérience,
+le nom réservé du style défini) ; `node _viewer_style_controls_test.mjs` — **502** (📌 et ↩ existent,
+sont branchés DANS la bande avant 💾 Save, et 📌 écrit bien un SNAPSHOT) ;
+`node _docking_viewer_restore_test.mjs` — **60** (la page ne connaît plus les générateurs de poses
+d'exemple et ne lit que `activeTest.dockingPoses`) ; `node _viewer_ui_layout_test.mjs` — **517** ;
+`node _viewer_background_test.mjs` — **168** ; `npx oxlint` — **0 erreur** ; `npx vite build` ✓.
+Rouge **avant** cette session, sans rapport : `node _docking_scatter_card_test.mjs` (sa liste de
+doublures est en retard sur les imports actuels de `NMRSections.jsx` — `useShowAssignedFlag`,
+`canonicalExperimentPath`, `sanitizeSlug` ; vérifié en remettant les deux fichiers touchés de côté,
+le rouge est identique) et `node _viewer_keyframes_test.mjs` (sonde d'import périmée).
+
+### ③ « Le programme est devenu très lent » — le constat, pas encore de correctif
+
+Ce qui est **mesuré dans le code** (et non deviné) : la page GARDÉE (`pageSlot`, `App.jsx` — un
+`display: none` mais **montée**) est **re-rendue à chaque rendu d'App** — `render()` est rappelé pour
+les DEUX places à chaque fois — et le contenu d'une page d'expérience (sections + viewer 3D) est
+volumineux. Le correctif proposé (non appliqué : il change le moment où une page cachée voit les props
+d'App, donc il attend l'accord de l'utilisateur) est de **mémoriser l'ÉLÉMENT** de la page gardée : un
+élément identique (`===`) fait sauter tout le sous-arbre à React, la page cachée cesse alors de
+re-rendre sur les changements d'App sans perdre ses propres mises à jour (une page gardée continue de
+vivre, ses chargements continuent), et elle repart d'un rendu frais à l'instant où elle redevient la
+page affichée.
 

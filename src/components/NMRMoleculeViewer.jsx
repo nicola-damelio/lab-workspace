@@ -9679,19 +9679,27 @@ if (!pymolScopeRef.current) pymolScopeRef.current = pymolScopeLabelOf(instanceKe
    glisser d'une expérience dans une autre. */
 const pymolOwnerRef = useRef(null);
 if (!pymolOwnerRef.current) pymolOwnerRef.current = pymolSessionOwnerOf(instanceKey, driveNaming);
-/* 🎨 LA MÉMOIRE DE STYLE DE CETTE INSTALLATION (la demande de cette session, voir
-   utils/viewerStyleFile.js) : le MÊME repère que la session 🧪 — l'expérience
-   d'abord (projet · nom, ses conditions la partagent), la condition ensuite (une
-   mémoire écrite avant ce correctif reste lisible), la clé générale en dernier
-   recours. Le monde est FIGÉ au montage, comme les clés ci-dessus : la page qu'on
-   quitte garde le sien, et le style d'une expérience ne peut pas glisser dans une
-   autre. Deux drapeaux : `styleRecallRef` = le rappel n'a lieu qu'UNE fois par
-   montage, `styleTouchedRef` = un geste de l'utilisateur (enregistrer, charger,
-   importer) le clôt — le style qu'il vient de choisir n'est jamais écrasé par un
-   rappel qui arrive après. */
+/* 🎨 LA MÉMOIRE DE STYLE DE CETTE INSTALLATION — ⚠⚠ ELLE APPARTIENT À L'INSTANCE, PAS À
+   L'EXPÉRIENCE. La demande de cette session : « I would like to have a button with which I
+   define the style of the viewer for each instance of each experiment. […] whenever I open
+   that instance of that experiment this style must be applied automatically. For example I
+   had two protein that I colored in different colors then I changed the page (went to
+   another instance) and went back to it and both protein had the same colors. »
+   Ce défaut était écrit dans l'ORDRE DE CES CLÉS : l'expérience venait d'abord, donc une
+   seule mémoire (et un seul fichier de style) servait TOUTES ses conditions — le style
+   enregistré sur une condition s'appliquait à sa voisine, et les deux protéines de celle-ci
+   se retrouvaient habillées pareil. L'INSTANCE (projet · nom · condition : c'est
+   l'`instanceKey` que la page donne au viewer) vient maintenant EN PREMIER, puis
+   l'expérience entière (une mémoire écrite avant ce correctif reste donc lisible), la clé
+   générale en dernier recours (un viewer monté hors de toute page d'expérience).
+   Le monde est FIGÉ au montage, comme les clés ci-dessus : la page qu'on quitte garde le
+   sien, et le style d'une instance ne peut plus glisser dans sa voisine. Deux drapeaux :
+   `styleRecallRef` = le rappel n'a lieu qu'UNE fois par montage, `styleTouchedRef` = un
+   geste de l'utilisateur (enregistrer, charger, importer) le clôt — le style qu'il vient de
+   choisir n'est jamais écrasé par un rappel qui arrive après. */
 const styleMemoryKeysRef = useRef(null);
 if (!styleMemoryKeysRef.current) {
-  const slugs = [pymolSessionExperimentSlug(driveNaming), pymolSessionInstanceSlug(instanceKey, driveNaming)]
+  const slugs = [pymolSessionInstanceSlug(instanceKey, driveNaming), pymolSessionExperimentSlug(driveNaming)]
     .filter(Boolean);
   styleMemoryKeysRef.current = [...slugs.map(viewerStyleMemoryKey), viewerStyleMemoryKey('')];
 }
@@ -13640,6 +13648,15 @@ const lastLoadedTextRef = useRef(null);
    `autoView()` qui recadrerait la molécule à chaque changement. */
 const lastStructureTextRef = useRef(null);
 const preserveViewOnNextLoadRef = useRef(false);
+/* ⚭ …ET LE REGARD AUSSI — le même vœu que le point de vue ci-dessous, mais pour
+   les STYLES : les arbres de la barre, le ✔ de chaque section et ses étiquettes 🏷
+   sont photographiés AVANT que la scène ne soit vidée, puis reposés sur la molécule
+   qui arrive quand sa CLÉ LOCALE correspond (voir captureSwitchLook / applySwitchLook,
+   et preserveViewOnNextLoadRef pour la caméra). Le rapport de cette session :
+   « when I change the molecule not only the zoom must be conserved but also the style
+   (style of the molecule, the background etc.) ». Le FOND, lui, n'est pas un réglage
+   d'une molécule mais du viewer : il n'a jamais bougé d'un changement à l'autre. */
+const carryLookOnNextLoadRef = useRef(null);
 const loadedPdbTextRef = useRef(null); // raw PDB text of the currently loaded structure (rebuild-H source)
 const lastSeenSrcRef = useRef(undefined);
 const lastSeenTextRef = useRef(undefined);
@@ -13822,6 +13839,10 @@ lastLoadedTextRef.current = structureText;
    d'un `autoView()`. Seul un VRAI changement de guichet la garde : le tout premier
    texte (rien avant) se cadre normalement. */
 preserveViewOnNextLoadRef.current = !!lastStructureTextRef.current;
+/* ⚭ …ET LE REGARD DE LA PRÉCÉDENTE (styles de la barre, ✔, étiquettes) : photographié
+   ici, AVANT `clearExtraMolecules()` et AVANT que le chargement ne vide la scène et
+   ne remplace le catalogue des sections — c'est tout l'intérêt d'être à cet endroit. */
+carryLookOnNextLoadRef.current = preserveViewOnNextLoadRef.current ? captureSwitchLook() : null;
 lastStructureTextRef.current = structureText;
 clearExtraMolecules();
 setFile(null);
@@ -16049,6 +16070,11 @@ if (ambiguous.length > 0 && candidates.length > 1 && SEQUENCE_NATURES.includes(m
 }
 }
 
+/* ⚭ …ET LE REGARD DE LA MOLÉCULE PRÉCÉDENTE : arbres de la barre, ✔ des sections et
+   étiquettes 🏷 reposés sur celle qui vient d'être chargée, par CLÉ LOCALE (voir
+   applySwitchLook). Sans vœu — un premier chargement, un fichier choisi à la main —
+   la fonction ne touche à rien : la molécule s'ouvre comme toujours. */
+applySwitchLook(component);
 if (keepView) applyCameraPose(keepView);   // ⚭ switch de structure : la caméra reste où elle est
 else component.autoView();
 requestAnimationFrame(() => {
@@ -21832,6 +21858,82 @@ const captureSectionVisForPose = () => {
   return out;
 };
 
+/* ══ ⚭ LE REGARD D'UNE MOLÉCULE QUI S'EN VA — LE SWITCH DE STRUCTURE ════════
+   Le rapport de cette session : « when I change the molecule not only the zoom must
+   be conserved but also the style (style of the molecule, the background etc.) ».
+   La CAMÉRA était déjà tenue (preserveViewOnNextLoadRef) ; le REGARD manquait : une
+   section ne retrouvait son arbre que si le fichier suivant lui donnait le MÊME ID
+   GLOBAL (`main::protein|A`), et un fichier qui nomme autrement ses chaînes, ses
+   molécules ou ses ligands repartait des défauts du TYPE.
+
+   La photographie est celle d'une pose 🎞 (arbres CLONÉS et ✔ effectif, voir
+   captureSectionLooksForPose / captureSectionVisForPose) plus les étiquettes 🏷 de
+   chaque section — les trois choses qu'un geste de la barre écrit. Elle est prise au
+   moment où la page sert un NOUVEAU texte (captureSwitchLook, dans l'effet du
+   `structureText`) et reposée par applySwitchLook quand la molécule est chargée : le
+   lecteur est celui des poses (poseStylesForSections), qui retrouve une section par
+   son id PUIS par sa CLÉ LOCALE — c'est exactement ce qu'il faut ici. Une section
+   que la nouvelle molécule n'a pas garde ce que son type lui donne : rien n'est
+   inventé, et un chargement qui n'est PAS un switch ne touche à rien (le vœu est
+   consommé, `null`). */
+const localKeyOfSectionId = (id) => {
+  const s = String(id == null ? '' : id);
+  const i = s.indexOf('::');
+  return i < 0 ? s : s.slice(i + 2);
+};
+const captureSwitchLook = () => ({
+  looks: captureSectionLooksForPose(),
+  vis: captureSectionVisForPose(),
+  labels: { ...(sectionLabelsRef.current || {}) },
+});
+/* Les étiquettes 🏷 de la scène qui arrive, lues par CLÉ LOCALE et VALIDÉES comme
+   partout ailleurs (les trois drapeaux connus, rien d'autre). `null` quand rien ne
+   correspond : l'appelant n'écrit alors aucune étiquette. */
+const switchLookLabels = (old, sections) => {
+  if (!old || typeof old !== 'object') return null;
+  const byKey = {};
+  Object.keys(old).forEach((id) => {
+    const l = old[id];
+    if (!l || typeof l !== 'object') return;
+    const one = { ...SECTION_LABEL_DEFAULTS };
+    Object.keys(SECTION_LABEL_DEFAULTS).forEach((k) => { if (typeof l[k] === 'boolean') one[k] = l[k]; });
+    byKey[localKeyOfSectionId(id)] = one;
+  });
+  const out = {};
+  (sections || []).forEach((sec) => {
+    const one = byKey[localKeyOfSectionId(sec.id)];
+    if (one) out[sec.id] = { ...one };
+  });
+  return Object.keys(out).length ? out : null;
+};
+/* LE GESTE, une fois la molécule chargée : les sections de la nouvelle scène sont
+   énumérées (le même ensureSections que la barre), le regard est retrouvé par
+   poseStylesForSections, et les trois magasins sont écrits D'UN COUP — les refs
+   d'abord (le constructeur des représentations les lit hors du rendu), puis l'état
+   (la barre les montre). */
+const applySwitchLook = (comp) => {
+  const carry = carryLookOnNextLoadRef.current;
+  carryLookOnNextLoadRef.current = null;   // consommé : aucun chargement suivant n'en hérite
+  if (!carry || !comp) return false;
+  let sections = [];
+  try { sections = ensureSections(comp, molKeyOfComp(comp)); } catch { sections = []; }
+  if (!sections.length) return false;
+  const pose = poseStylesForSections(carry.looks, carry.vis, sections);
+  if (pose) {
+    if (pose.looks) {
+      sectionLooksRef.current = { ...sectionLooksRef.current, ...pose.looks };
+      setSectionLooks((prev) => ({ ...prev, ...pose.looks }));
+    }
+    if (pose.vis) {
+      sectionVisRef.current = { ...sectionVisRef.current, ...pose.vis };
+      setSectionVis((prev) => ({ ...prev, ...pose.vis }));
+    }
+  }
+  const labels = switchLookLabels(carry.labels, sections);
+  if (labels) setSectionLabels((prev) => ({ ...prev, ...labels }));
+  return !!(pose || labels);
+};
+
 const captureSceneExtras = () => ({
   labels: { ...(sectionLabelsRef.current || {}) },
   molecules: {
@@ -22331,6 +22433,41 @@ const applySnapshotEntry = (sn, name) => {
 const loadSnapshot = (name) => {
   const sn = viewerSnaps[name];
   if (applySnapshotEntry(sn, name)) rememberViewerStyle('snapshot', name, sn);
+};
+
+/* ══ 📌 LE STYLE DÉFINI DE CETTE INSTANCE — LES DEUX BOUTONS DE LA DEMANDE ═════
+   « I would like to have a button with which I define the style of the viewer for each
+   instance of each experiment. Clicking on this button will define its style based on what
+   is shown at that moment in the viewer. next to this button there must be another button
+   to revert to the defined style if in the meantime the style was changed. Most
+   importantly, whenever I open that instance of that experiment this style must be applied
+   automatically. »
+
+   📌 DEFINE writes a SNAPSHOT (par SECTION, « protein · chain A » …) sous un nom RÉSERVÉ :
+   deux molécules dessinées autrement RESTENT différentes — un thème, lui, fusionne par
+   CLASSE moléculaire et les confondrait, ce qui est exactement le défaut rapporté. Une fois
+   écrit, ce snapshot est retenu comme n'importe quel autre (`rememberViewerStyle` → mémoire
+   du poste ET fichier canonique du dossier de la condition), donc l'ouverture suivante
+   l'applique TOUTE SEULE : c'est le rappel automatique déjà en place (`recallViewerStyle`),
+   il n'y a rien de plus à espérer. Un 📌 alors que le mode actif est 🎨 Cumulative ne change
+   pas cela : ce bouton est TOUJOURS une photographie de section.
+
+   ↩ REVERT repose ce même snapshot quand des couleurs ont changé entre-temps — et le DIT
+   quand rien n'a encore été défini, au lieu de rester muet. */
+const DEFINED_STYLE_NAME = 'Defined style';
+const defineInstanceStyle = () => {
+  setSetupName(DEFINED_STYLE_NAME);
+  setSetupSaveMode('snapshot');   // un style DÉFINI est toujours une photographie de section
+  setThemeConflicts(null);
+  setThemeChoices(null);
+  saveSnapshot(DEFINED_STYLE_NAME);
+};
+const revertToDefinedStyle = () => {
+  if (!viewerSnaps[DEFINED_STYLE_NAME]) {
+    flashSetupMsg('no style defined for this instance yet — press 📌 Define style first');
+    return;
+  }
+  loadSnapshot(DEFINED_STYLE_NAME);
 };
 
 /* ══ 🎨 LE STYLE QU'UNE EXPÉRIENCE RETIENT — LES TROIS GESTES DU VIEWER ═══════
@@ -24018,7 +24155,7 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
     clipping sliders, ⚙ Parameters) are full-width children of this same section, so
     the bar stays one row tall while nothing is open.
     • Scene: 🌫 Fog · 🎨 Background · ◐ Shadows (+ 🌑 Darkness / 💡 Light) · 💡 Light colour · ✂ Clipping · ✨ Ray (+ resolution · ⬚ alpha · ◐ shadows)
-    • Styles: the NAME · 🎨 Cumulative / 📷 Snapshot · 💾 Save · 📂 Load… · 🗑 Delete · ⬇ · ⬆ · 🎞 Movie · 🔄 Spin x·y·z
+    • Styles: the NAME · 🎨 Cumulative / 📷 Snapshot · 📌 Define style · ↩ Revert to defined · 💾 Save · 📂 Load… · 🗑 Delete · ⬇ · ⬆ · 🎞 Movie · 🔄 Spin x·y·z
     • Modify: 🧬 From sequence · ✥ Move / ↻ Rotate · ⚗️ Rebuild H · ✏️ Atom names · ⚡ ESP · 🔢 Renumber
     • Analysis: 📏 Measure · 💧 H-bonds · 🟢 Assigned
     • PyMOL: 🧪 Selections & PyMOL
@@ -24371,6 +24508,21 @@ className={`px-2 py-1 text-[10px] font-bold rounded border h-7 whitespace-nowrap
 {label}
 </button>
 ))}
+{/* 📌 / ↩ LE STYLE DÉFINI DE CETTE INSTANCE (la demande de cette session, voir
+    defineInstanceStyle) : le premier bouton fige ce qui est À L'ÉCRAN comme le style
+    que cette condition rouvrira toute seule ; le second le repose si des couleurs ont
+    changé entre-temps. Un SNAPSHOT, jamais un thème : deux protéines colorées
+    autrement gardent leurs couleurs respectives. */}
+<button type="button" onClick={defineInstanceStyle}
+title="📌 DEFINE THE STYLE OF THIS INSTANCE — photographs the look on screen RIGHT NOW (a snapshot, section by section, so two molecules drawn in different colours stay different) and makes it the style THIS instance re-applies by itself when you open it again. Always a snapshot (the 🎨 / 📷 mode on the left does not matter for this button), remembered on this station and filed in this condition's Drive folder like any other style."
+className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-teal-500 text-teal-900 hover:bg-teal-100 h-7 whitespace-nowrap">
+📌 Define style
+</button>
+<button type="button" onClick={revertToDefinedStyle}
+title="↩ REVERT TO THE DEFINED STYLE — puts the style defined with 📌 back on screen, undoing the colours / representations / background changed since. If nothing has been defined yet it says so instead of doing nothing."
+className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-teal-500 text-teal-900 hover:bg-teal-100 h-7 whitespace-nowrap">
+↩ Revert to defined
+</button>
 <button type="button" onClick={saveActiveEnv}
 title={setupSaveMode === 'theme'
 ? `Save the theme under the name written on the left: the styles of the classes on screen are learned (merged), the rest of the file is untouched. A name is typed for you when the box is empty. ${stylesSavedTitle}`
@@ -25762,7 +25914,14 @@ style={{ height: (viewerCollapsed ? 0 : viewH) + 'px' }}
     Ce qu'il porte, et rien d'autre : l'interrupteur de la rampe, ses DEUX couleurs
     (A = la couleur de la scène, celle du 🎨 de §2 Scene et du panneau 🧪 PyMOL ;
     B = l'autre bout), ⇄ pour les échanger, les HUIT directions d'un clic, le
-    curseur d'angle (0–360°) et ↺ pour revenir à la rampe d'origine. */}
+    curseur d'angle (0–360°) et ↺ pour revenir à la rampe d'origine.
+    ⚠ TOUT CONTRÔLE DE LA RAMPE L'ALLUME — le rapport de cette session : « The
+    gradient options for the background of the viewer window appear in the viewer
+    but they do not work. the background remains of the same color. » La cause est
+    là : la rampe ÉTEINTE (le défaut), ses boutons écrivaient bien leur champ mais
+    rien ne se peignait — un panneau entier qui semblait inerte. Toucher B, C, une
+    direction, le curseur ou ⇄ allume donc la rampe du même geste (l'interrupteur et
+    ↺ la rallument / l'éteignent comme avant), et la ligne du bas dit l'état. */}
 {bgPanelOpen && (
   <div id="viewer-background"
     role="group" aria-label="Background of the 3D scene — one colour, or a gradient of two colours with its direction"
@@ -25783,22 +25942,22 @@ style={{ height: (viewerCollapsed ? 0 : viewH) + 'px' }}
       <input type="color" value={bgColor} onChange={(e) => setBgColor(e.target.value)}
         className="w-7 h-6 border border-slate-300 rounded cursor-pointer" aria-label="Background colour (first colour of the ramp)" />
     </label>
-    <button type="button" onClick={() => { const a = bgColor; setBgColor(bgGradient.to); patchBgGradient({ to: a }); }}
+    <button type="button" onClick={() => { const a = bgColor; setBgColor(bgGradient.to); patchBgGradient({ on: true, to: a }); }}
       className="px-1.5 py-1 h-7 text-[11px] font-bold rounded-md border bg-white border-slate-300 text-slate-600 hover:bg-slate-100"
       title="⇄ Swap the two ends of the ramp: A becomes B and B becomes A — the colours change places, the direction does not. The scene's own colour (🎨 of §2 Scene) follows, because A IS that colour.">
       ⇄
     </button>
     <label className="flex items-center gap-0.5 cursor-pointer whitespace-nowrap"
-      title="B — the SECOND colour of the ramp, the end the arrow points at. Ignored while ⬚ Gradient is OFF (the scene is then painted with A alone), kept ready for the next time you turn it on.">
+      title="B — the SECOND colour of the ramp, the end the arrow points at. Choosing a colour HERE turns the ramp ON (a second colour is exactly what a ramp is made of); ⬚ Gradient puts the flat colour A back.">
       <span className="text-[10px] font-black text-slate-500">B</span>
-      <input type="color" value={bgGradient.to} onChange={(e) => patchBgGradient({ to: e.target.value })}
+      <input type="color" value={bgGradient.to} onChange={(e) => patchBgGradient({ on: true, to: e.target.value })}
         className="w-7 h-6 border border-slate-300 rounded cursor-pointer" aria-label="Background gradient second colour" />
     </label>
     {/* C — LE TROISIÈME ARRÊT (la demande : « if there were three colours it
         would be even more interesting »). Le bouton l'AJOUTE au MILIEU (50 %)
         et l'ENLÈVE ; éteint, la rampe reste exactement celle à deux couleurs
         d'avant. Le milieu ne touche ni A (la couleur de la scène) ni B. */}
-    <button type="button" onClick={() => patchBgGradient({ midOn: !bgGradient.midOn })}
+    <button type="button" onClick={() => patchBgGradient({ on: true, midOn: !bgGradient.midOn })}
       aria-pressed={bgGradient.midOn}
       className={`px-1.5 py-1 h-7 text-[10px] font-bold rounded-md border whitespace-nowrap transition-colors ${bgGradient.midOn ? 'bg-sky-100 border-sky-400 text-sky-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
       title={bgGradient.midOn
@@ -25810,16 +25969,16 @@ style={{ height: (viewerCollapsed ? 0 : viewH) + 'px' }}
       <label className="flex items-center gap-0.5 cursor-pointer whitespace-nowrap"
         title="C — the MIDDLE colour of the ramp (at 50 %), used only while the C 50 % button is ON. It never touches A (the scene colour) nor B (the end of the ramp).">
         <span className="text-[10px] font-black text-slate-500">C</span>
-        <input type="color" value={bgGradient.mid} onChange={(e) => patchBgGradient({ mid: e.target.value })}
+        <input type="color" value={bgGradient.mid} onChange={(e) => patchBgGradient({ on: true, mid: e.target.value })}
           className="w-7 h-6 border border-slate-300 rounded cursor-pointer" aria-label="Background gradient middle colour" />
       </label>
     )}
     <span className="flex items-center gap-0.5" role="group" aria-label="Gradient direction">
       {BG_DIRECTIONS.map((d) => (
-        <button key={d.key} type="button" onClick={() => patchBgGradient({ angle: d.angle })}
+        <button key={d.key} type="button" onClick={() => patchBgGradient({ on: true, angle: d.angle })}
           aria-pressed={bgGradient.angle === d.angle}
           className={`w-6 h-7 text-[11px] font-black rounded-md border transition-colors ${bgGradient.angle === d.angle ? 'bg-sky-100 border-sky-400 text-sky-800' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-100'}`}
-          title={`Paint the ramp ${d.what} (${d.angle}°) — A sits at the starting end, B at the end the arrow points at.`}>
+          title={`Paint the ramp ${d.what} (${d.angle}°) — A sits at the starting end, B at the end the arrow points at. Picking a direction also turns the ramp ON.`}>
           {d.glyph}
         </button>
       ))}
@@ -25828,7 +25987,7 @@ style={{ height: (viewerCollapsed ? 0 : viewH) + 'px' }}
       title="The exact angle of the ramp, in the CSS convention: 0° runs from the BOTTOM to the TOP, 90° from the left to the right, 180° from the top to the bottom, 270° from the right to the left. The eight arrows on the left are the eight angles you can also reach here by hand.">
       <span className="text-[10px] font-bold text-slate-700">angle</span>
       <input type="range" min="0" max="360" step="1" value={bgGradient.angle}
-        onChange={(e) => patchBgGradient({ angle: Number(e.target.value) })}
+        onChange={(e) => patchBgGradient({ on: true, angle: Number(e.target.value) })}
         className="w-20 accent-sky-600" aria-label="Gradient angle in degrees" />
       <span className="text-[10px] text-slate-500 w-8">{bgGradient.angle}°</span>
     </label>
@@ -25842,13 +26001,20 @@ style={{ height: (viewerCollapsed ? 0 : viewH) + 'px' }}
       title="Close these options — a click on the background of the 3D view brings them back (and so does the ⬚ button of §2 Toolbar → 🌫 Scene). Closing them changes nothing to the scene.">
       ⇤
     </button>
-    {/* LA LIGNE QUI DIT LA RAMPE — elle n'apparaît que quand elle est ALLUMÉE :
-        éteint, le panneau n'imprime rien de ce qui ne se voit pas. Le nom de la
-        direction vient des mêmes huit entrées que les boutons (bgDirectionOf) :
-        un angle libre n'a pas de nom, et dit alors ses degrés. */}
-    {bgGradient.on && (
+    {/* LA LIGNE QUI DIT LA RAMPE — elle décrit la rampe QUAND ELLE EST ALLUMÉE,
+        et dit l'ÉTAT quand elle ne l'est pas : le rapport de cette session est
+        exactement « the gradient options ... do not work. the background remains of
+        the same color » — un panneau dont les contrôles semblaient inertes parce que
+        la rampe était éteinte. Le nom de la direction vient des mêmes huit entrées
+        que les boutons (bgDirectionOf) : un angle libre n'a pas de nom, et dit alors
+        ses degrés. */}
+    {bgGradient.on ? (
       <span className="w-full text-[9px] text-slate-500 leading-tight">
         The ramp runs {bgDirectionOf(bgGradient.angle)?.what || `${bgGradient.angle}°`} — A <b>{bgColor}</b>{bgGradient.midOn ? <> → C <b>{bgGradient.mid}</b></> : null} → B <b>{bgGradient.to}</b>. It paints the screen, the 🎬🎞 films and the ✨ Ray still; a click on the background closes these options.
+      </span>
+    ) : (
+      <span className="w-full text-[9px] text-amber-700 leading-tight">
+        ⬚ Gradient is OFF: the scene is painted with the ONE colour A <b>{bgColor}</b>. Every control here acts on the ramp, so touching B, C, an arrow, the angle or ⇄ turns it ON — nothing in this panel is inert. ↺ puts it back to OFF.
       </span>
     )}
   </div>

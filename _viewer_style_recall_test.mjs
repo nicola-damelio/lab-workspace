@@ -337,8 +337,10 @@ has("import { listExperimentFiles } from '../utils/driveExperimentFiles';",
   '…et la LECTURE DU DOSSIER de l’expérience, le geste déjà offert par les boutons « 📂 … from Drive folder »');
 has("import { archiveFileToDrive, downloadDriveFileText, getDriveToken, uploadLocalFile } from '../utils/driveUpload';",
   '…et l’écriture / la lecture d’un fichier de Drive');
-has('const slugs = [pymolSessionExperimentSlug(driveNaming), pymolSessionInstanceSlug(instanceKey, driveNaming)]',
-  'la mémoire est portée par l’EXPÉRIENCE (projet · nom), la condition venant ensuite');
+has('const slugs = [pymolSessionInstanceSlug(instanceKey, driveNaming), pymolSessionExperimentSlug(driveNaming)]',
+  '⚠ LA MÉMOIRE DE STYLE EST PORTÉE PAR L’INSTANCE D’ABORD (projet · nom · condition) — chaque condition garde SON style, l’expérience entière venant ensuite (les mémoires d’avant restent lisibles)');
+has('const DEFINED_STYLE_NAME = \'Defined style\';',
+  '…et le style DÉFINI d’une instance a UN nom réservé (📌 Define style / ↩ Revert to defined)');
 has("const VIEWER_STYLE_RECALL_DELAY_MS = 400;", 'le rappel laisse la scène se poser (les molécules annexes arrivent après)');
 has("if (status !== 'ready') return;", '…il attend que les FICHIERS soient là (« after bringing back to live its files »)');
 has('if (!Object.keys(sectionCatalog || {}).length) return;', '…et que la scène ait ses sections (un snapshot se rejoue SUR elles)');

@@ -81,7 +81,7 @@ import { fetchLigandSmiles, ligandCodesFromPdbText } from '../utils/ligandSmiles
 // MÊME sur les trois pages : la bande de séquence marque ses brins avec le MÊME
 // lecteur que le panneau 🧵 et le repliement (utils/betaSheetFold.js).
 import { sheetMarkAt } from '../utils/betaSheetFold';
-import {AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, SS_META, RESIDUE_COLORS, buildProteinStructure, buildNucleicStructure, buildSugarStructure, buildLipidStructure, elementsToSVG, StructureSVGView, CollapsibleSection, SequencePaintStrip, BetaSheetEditor, useSequenceStructureModel, getSelectedKeys, getManualKeys, DOCKING_METRICS, DOCKING_PIPELINE_STAGES, parseDockingValue, getProgramInfo, parseDockingFile, parseCapriTsv, posesFromCapri, parseTomlSimple, extractDockedMolecules, getDockingInstances, getDockingActiveInstance, getDockingLayers, getDockingActiveLayerKey, getDockingLayerValues, writeDockingCellValue, generateDockingPoses, generateHADDOCKPoses, DEFAULT_DOCKING_CHART_STYLE, dockChartBoxStyle, dockDom, DOCK_CHART_MARGIN, dockingMetricOf, poseMetricValue, capriColumnMetricKey, chartEnergyMetricKey, poseChartValue, poseDeviation, poseRawColumnValue, deviationColumnOf, energyColumnOf, plotSourceOptions, plotSourceLabel, plotSourceValue, PLOT_SOURCE_PREFIX, PLOT_SOURCE_ALL, DEVIATION_PLOT_KEYS, dockingMetricLabel, HADDOCK_SCORE_TERM_KEYS, haddockScoreTerms} from './DockingData';
+import {AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, SS_META, RESIDUE_COLORS, buildProteinStructure, buildNucleicStructure, buildSugarStructure, buildLipidStructure, elementsToSVG, StructureSVGView, CollapsibleSection, SequencePaintStrip, BetaSheetEditor, useSequenceStructureModel, getSelectedKeys, getManualKeys, DOCKING_METRICS, DOCKING_PIPELINE_STAGES, parseDockingValue, getProgramInfo, parseDockingFile, parseCapriTsv, posesFromCapri, parseTomlSimple, extractDockedMolecules, getDockingInstances, getDockingActiveInstance, getDockingLayers, getDockingActiveLayerKey, getDockingLayerValues, writeDockingCellValue, DEFAULT_DOCKING_CHART_STYLE, dockChartBoxStyle, dockDom, DOCK_CHART_MARGIN, dockingMetricOf, poseMetricValue, capriColumnMetricKey, chartEnergyMetricKey, poseChartValue, poseDeviation, poseRawColumnValue, deviationColumnOf, energyColumnOf, plotSourceOptions, plotSourceLabel, plotSourceValue, PLOT_SOURCE_PREFIX, PLOT_SOURCE_ALL, DEVIATION_PLOT_KEYS, dockingMetricLabel, HADDOCK_SCORE_TERM_KEYS, haddockScoreTerms} from './DockingData';
 
 
 /* ============================================================================
@@ -181,13 +181,21 @@ const useDockingDerived = (activeTest, ctx = {}) => {
     return null;
   }, [parsedSeq, moleculeType]);
 
+  /* ⚠ UNE PAGE DE DOCKING NEUVE EST VIERGE — plus aucune pose d'exemple. Le rapport de
+     cette session : « when I create a docking page it is never virgin because there are
+     example data but I would prefer it to be empty. » Tant qu'aucun run n'avait été
+     importé, la page INVENTAIT une liste de poses (douze pour HADDOCK, neuf sinon, par
+     ses deux générateurs de démonstration) : la table des scores, le nuage « énergie
+     vs. écart » et les cartes de métriques paraissaient donc déjà remplis, et rien ne
+     distinguait ces nombres inventés des vrais. On ne lit plus QUE ce que l'import d'un
+     run (capri_ss.tsv / *out.log / raw_input.toml) a réellement écrit dans
+     `activeTest.dockingPoses` : une liste absente veut désormais dire « rien à montrer »,
+     jamais « inventons neuf poses ». */
   // Docking poses / results
-  const poses = useMemo(() => {
-    if (Array.isArray(activeTest.dockingPoses) && activeTest.dockingPoses.length) {
-      return activeTest.dockingPoses;
-    }
-    return dockingProgram === 'haddock' ? generateHADDOCKPoses(12) : generateDockingPoses(9);
-  }, [activeTest.dockingPoses, dockingProgram]);
+  const poses = useMemo(
+    () => (Array.isArray(activeTest.dockingPoses) ? activeTest.dockingPoses : []),
+    [activeTest.dockingPoses]
+  );
 
   // Instances / layers
   const instances = getDockingInstances(activeTest);

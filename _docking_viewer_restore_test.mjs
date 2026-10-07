@@ -158,6 +158,43 @@ ok(VIEWER.includes('if (keepView) applyCameraPose(keepView);'),
 ok(VIEWER.includes('else { try { component.autoView(); } catch {} }'),
   '…autoView ne s’exécute plus que quand la caméra n’a PAS à être gardée');
 
+/* ── 7bis. LE REGARD SURVIT AU SWITCH, PAS SEULEMENT LE ZOOM ─────────────────
+   Rapport suivant : « when I change the molecule not only the zoom must be
+   conserved but also the style (style of the molecule, the background etc.) ».
+   La caméra était tenue ; le REGARD ne l'était pas : une section ne retrouvait son
+   arbre de la barre que si le fichier suivant lui donnait le MÊME ID GLOBAL
+   (`main::protein|A`), et un fichier qui nomme autrement ses chaînes, ses molécules
+   ou ses ligands repartait des défauts du TYPE — exactement ce que la barre montre.
+   Le viewer photographie donc, au MÊME moment que la caméra, les trois choses qu'un
+   geste de la barre écrit (l'arbre de chaque section, son ✔, ses étiquettes 🏷), et
+   les repose sur la molécule chargée : le lecteur est celui des poses de film
+   (poseStylesForSections), qui retrouve une section par son id PUIS par sa CLÉ
+   LOCALE. Le FOND, lui, n'est pas un réglage d'une molécule : il n'a jamais bougé. */
+ok(VIEWER.includes('const carryLookOnNextLoadRef = useRef(null);'),
+  'le viewer retient un SECOND vœu : le regard de la molécule qui s’en va (styles de la barre, ✔, étiquettes)');
+ok(VIEWER.includes('carryLookOnNextLoadRef.current = preserveViewOnNextLoadRef.current ? captureSwitchLook() : null;'),
+  'la photographie est prise au MÊME moment que celle de la caméra — donc AVANT que la scène ne soit vidée');
+ok(VIEWER.includes('const captureSwitchLook = () => ({'), 'la capture du regard est UNE fonction');
+ok(VIEWER.includes('looks: captureSectionLooksForPose(),'), '…elle prend l’arbre EFFECTIF de chaque section');
+ok(VIEWER.includes('vis: captureSectionVisForPose(),'), '…le ✔ effectif de chaque section (ce qui est caché voyage aussi)');
+ok(VIEWER.includes('if (!carry || !comp) return false;'),
+  'sans vœu — un premier chargement, un fichier choisi à la main — RIEN n’est touché');
+ok(VIEWER.includes('carryLookOnNextLoadRef.current = null;'),
+  '…et le vœu est CONSOMMÉ : aucun chargement suivant n’en hérite');
+ok(VIEWER.includes('try { sections = ensureSections(comp, molKeyOfComp(comp)); } catch { sections = []; }'),
+  'les sections de la molécule qui arrive sont énumérées par la MÊME porte que la barre');
+ok(VIEWER.includes('const pose = poseStylesForSections(carry.looks, carry.vis, sections);'),
+  'le lecteur est CELUI des poses (par id, puis par CLÉ LOCALE) : un fichier qui renomme ses chaînes garde ses styles');
+ok(VIEWER.includes('byKey[localKeyOfSectionId(id)] = one;'),
+  '…et les étiquettes 🏷 se retrouvent par clé locale, elles aussi');
+ok(VIEWER.includes('sectionLooksRef.current = { ...sectionLooksRef.current, ...pose.looks };'),
+  'les REFS d’abord : le constructeur des représentations les lit hors du rendu');
+ok(VIEWER.includes('if (labels) setSectionLabels((prev) => ({ ...prev, ...labels }));'),
+  '…puis l’état, pour que la barre le montre');
+ok(VIEWER.includes('applySwitchLook(component);'), '…et le geste est appelé au chargement de la molécule');
+ok(VIEWER.indexOf('applySwitchLook(component);') < VIEWER.indexOf('if (keepView) applyCameraPose(keepView);'),
+  '…juste AVANT la caméra : le switch repose le regard ET le point de vue');
+
 /* ── 8. LA VRAIE CAUSE DU ZOOM PERDU : LE VIEWER ÉTAIT REMONTÉ ───────────────
    Rapport suivant : « je prends la première structure, je zoome, je passe à la
    suivante → la première disparaît, écran vide un moment, puis la seconde apparaît
@@ -207,6 +244,22 @@ ok(SRC.includes('setStructIdx(0);') && SRC.includes('setLigandInfo(null);'),
 const importPanel = SRC.slice(SRC.indexOf('const DockingImportPanel = ({ ctx, onPoses }) => {'));
 ok(importPanel.includes('setReport(null);') && importPanel.includes('}, [activeTestId]);'),
   'le rapport d’import ne suit pas non plus la nouvelle expérience');
+
+
+/* ── 10. « UNE PAGE DE DOCKING NEUVE EST VIERGE » — LES POSES D'EXEMPLE AUSSI ──
+   La section 9 vide les états LOCAUX, mais la TABLE des scores restait remplie : tant
+   qu'aucun run n'était importé, `poses` valait une liste INVENTÉE
+   (generateHADDOCKPoses(12) / generateDockingPoses(9)), donc toute la moitié « Data »
+   de la page (table, nuage « énergie vs. écart », cartes de métriques) affichait des
+   nombres qui n'existent nulle part. La demande de cette session : « when I create a
+   docking page it is never virgin because there are example data but I would prefer it
+   to be empty. » */
+ok(!SRC.includes('generateHADDOCKPoses') && !SRC.includes('generateDockingPoses'),
+  'la page ne connaît plus les générateurs de poses d’exemple (ni importés, ni appelés)');
+ok(SRC.includes('() => (Array.isArray(activeTest.dockingPoses) ? activeTest.dockingPoses : []),'),
+  '…elle ne lit QUE `activeTest.dockingPoses` : absent veut dire « rien à montrer »');
+ok(!/return dockingProgram === 'haddock'/.test(SRC),
+  '…et plus aucune branche ne fabrique neuf poses selon le programme choisi');
 
 
 console.log(`${passed} passed`);
