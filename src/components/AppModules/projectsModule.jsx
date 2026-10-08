@@ -1039,7 +1039,7 @@ export const ProjectsModule = ({
       return;
     }
     setRestoreNote(res.adopted
-      ? `✅ “${res.names.join('”, “') || 'the project'}” restored from the Drive index. Its text, references and '
+      ? `✅ “${res.names.join('”, “') || 'the project'}” restored from the Drive index. Its text, references and `
         + 'figures come back with the dataset document when the dataset is reopened (🔄), or by restoring a backup file. '
         + 'If its Drive folder is in the Drive TRASH, restore it there too (right-click → Restore): this gesture reopens '
         + 'the path, but it cannot pull files out of Google’s trash.'
