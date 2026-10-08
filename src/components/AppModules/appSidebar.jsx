@@ -49,6 +49,7 @@ export const AppSidebar = ({
   datasetTitle, setDatasetTitle, datasetSubtitle, setDatasetSubtitle,
   saveStatus, saveErrorMsg, saveTarget,
   backupStatus,
+  driveMirrorMsg,
   currentUser, setCurrentUser, setUnlockedTestIds, setLoginModal,
   onSignOut,
   currentModule, setCurrentModule,
@@ -136,6 +137,14 @@ export const AppSidebar = ({
                 ) : (
                   <span className="text-slate-600">...</span>
                 )}
+              </div>
+            )}
+
+            {isSidebarOpen && driveMirrorMsg && (
+              <div className="px-4 py-1.5 border-b border-slate-100 bg-amber-50/40 text-[10px] font-bold text-amber-700">
+                <span title="Lab Workspace/<dataset>/projects/… — the Drive copy of this dataset is not complete yet. The next save retries what is missing.">
+                  {driveMirrorMsg}
+                </span>
               </div>
             )}
 

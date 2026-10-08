@@ -47,6 +47,11 @@ const has = (hay, needle, what) => {
 
 const UPLOAD = readFileSync('./src/utils/driveUpload.js', 'utf8').replace(/\r\n/g, '\n');
 const FOLDER = 'application/vnd.google-apps.folder';
+/* La structure INTERNE d'un dossier de dataset (`ensureDriveFolder` la pose à
+   chaque résolution — backups/, storage/, protocols/, publications/, la
+   bibliothèque commune) : les scénarios qui comptent les créations de DOSSIERS
+   la mettent de côté, parce qu'elle ne dit rien du projet ni de l'expérience. */
+const CANONICAL_DATASET_DIR = /^DS\/(general_library_images|backups|protocols|storage|publications)$/;
 
 /* ── Le module RÉEL, branché sur un faux Drive ──────────────────────────────
    Le crochet des tests résout les imports SANS extension de src/ ; ici c'est le
@@ -57,11 +62,23 @@ const FOLDER = 'application/vnd.google-apps.folder';
 register('./_esm_test_hook.mjs', import.meta.url);
 
 /** Le localStorage du navigateur : le jeton, le dossier de dataset déjà connu
- *  (chemin rapide de `ensureDriveFolder`), le registre des fichiers. */
+ *  (chemin rapide de `ensureDriveFolder`), le registre des fichiers.
+ *  ⛔ LE DOSSIER DE DATASET EST RETENU **PAR DATASET** (`labDriveFolders`, voir
+ *  utils/driveFolderAnchor.js) : un identifiant retenu pour un dataset ne peut
+ *  pas servir à un autre — c'est ce qui a rempli le dossier `GEC-UPJV-pp` (un
+ *  dataset supprimé) avec les fichiers de `GEC-UPJV-projects`. Les trois clés
+ *  historiques sont écrites en plus : c'est le reflet que l'application tient
+ *  pour un poste resté sur une version antérieure. */
+const DATASET = 'ds_main';
 const makeStorage = ({ token = 'fake-token', rootId = 'DS', registry = null } = {}) => {
   const store = new Map();
   if (token) store.set('labDriveAccessToken', token);
-  if (rootId) store.set('labDriveFolderId', rootId);
+  if (rootId) {
+    store.set('labDriveFolders', JSON.stringify({ [DATASET]: { id: rootId, name: 'DS' } }));
+    store.set('labDriveFolderId', rootId);
+    store.set('labDriveFolderDatasetId', DATASET);
+    store.set('labDriveFolderName', 'DS');
+  }
   if (registry) store.set('labDriveFileRegistry', JSON.stringify(registry));
   return {
     getItem: (k) => (store.has(String(k)) ? store.get(String(k)) : null),
@@ -73,6 +90,11 @@ const makeStorage = ({ token = 'fake-token', rootId = 'DS', registry = null } = 
 
 /** Le module réel, une instance NEUVE par scénario. */
 const loadModule = async (tag) => import(`./src/utils/driveUpload.js?mv-${tag}`);
+
+/** POSER LE CONTEXTE DRIVE comme l'application le fait APRÈS l'ouverture d'un
+ *  dataset : sans lui, le module ne sait pas à QUEL dataset appartient le
+ *  dossier retenu — et ne s'en sert donc pas (c'est exactement la règle). */
+const anchor = (M, name = 'DS') => M.setDriveRootContext({ id: DATASET, name });
 
 /** Un faux Drive : chaque nœud garde ses VRAIS parents (c'est ce qui permet de
  *  distinguer « déplacé » de « copié »), les recherches par `q` sont
@@ -210,6 +232,7 @@ const makeDataset = (projectNames = []) => {
   });
   globalThis.fetch = drive.fetch;
   const M = await loadModule('migrate');
+  anchor(M);
 
   const rep = await M.moveTestFolderBetweenProjects({
     testName: 'NMR_p53H', fromProjectName: 'p53H', toProjectName: 'NADH'
@@ -267,6 +290,7 @@ const makeDataset = (projectNames = []) => {
   globalThis.localStorage = makeStorage();
   globalThis.fetch = drive.fetch;
   const M = await loadModule('merge');
+  anchor(M);
 
   const rep = await M.moveTestFolderBetweenProjects({
     testName: 'NMR_p53H', fromProjectName: 'p53H', toProjectName: 'NADH'
@@ -285,7 +309,16 @@ const makeDataset = (projectNames = []) => {
   ok(!drive.live(src7), 'l’instance vidée par la fusion part à la corbeille');
   eq(drive.childNames(ids.p53H), [], 'le dossier du projet quitté se vide');
   ok(drive.node(ids.p53H).trashed, '…et part à la corbeille');
-  eq(drive.creates(), [], 'aucun dossier créé (le projet visé et son dossier d’expérience existaient déjà)');
+  /* Le contexte Drive ancré fait aussi POSER la structure interne du dataset
+     (`backups`, `storage`, `protocols`, `publications`, la bibliothèque commune) :
+     c'est la règle du dossier d'un dataset (voir driveUpload.ensureDriveFolder).
+     Ce qui compte ici : AUCUN dossier n'est créé pour le projet visé ni pour
+     l'expérience — ils existaient déjà tous les deux. */
+  const CANONICAL = CANONICAL_DATASET_DIR;
+  eq(drive.creates().filter((c) => !CANONICAL.test(c)), [],
+    'aucun dossier créé pour le projet visé ni pour l’expérience (ils existaient déjà)');
+  eq(drive.creates().filter((c) => CANONICAL.test(c)).length, 5,
+    '…mais la structure interne du dataset est bien posée (un dossier de dataset la porte toujours)');
 }
 
 /* ══ 3. UN HOMONYME N’EST JAMAIS ÉCRASÉ ════════════════════════════════════ */
@@ -305,6 +338,7 @@ const makeDataset = (projectNames = []) => {
   globalThis.localStorage = makeStorage();
   globalThis.fetch = drive.fetch;
   const M = await loadModule('homonym');
+  anchor(M);
 
   const rep = await M.moveTestFolderBetweenProjects({
     testName: 'NMR_p53H', fromProjectName: 'p53H', toProjectName: 'NADH'
@@ -342,6 +376,7 @@ const makeDataset = (projectNames = []) => {
   globalThis.localStorage = makeStorage();
   globalThis.fetch = drive.fetch;
   const M = await loadModule('sweep');
+  anchor(M);
 
   const rep = await M.moveTestFolderBetweenProjects({
     testName: 'NMR_p53H', fromProjectName: 'p53H', toProjectName: 'NADH'
@@ -356,7 +391,11 @@ const makeDataset = (projectNames = []) => {
   ok(drive.node(bucket).trashed && drive.node(legacyBucket).trashed && drive.node(ids.p53H).trashed,
     'les conteneurs vidés (bac, ancien bac, projet quitté) partent à la corbeille');
   eq(drive.path(ids.projects), 'projects', 'le conteneur projects reste');
-  eq(drive.creates(), [], 'aucun dossier créé (tout existait déjà)');
+  /* Le contexte ancré fait poser la structure interne du dataset (backups/,
+     storage/…) : ce qui compte ici, c'est qu'aucun dossier n'est créé POUR
+     L'EXPÉRIENCE ni pour ses conteneurs — tout existait déjà. */
+  const CANONICAL = CANONICAL_DATASET_DIR;
+  eq(drive.creates().filter((c) => !CANONICAL.test(c)), [], 'aucun dossier créé pour l’expérience (tout existait déjà)');
 }
 
 /* ══ 5. RIEN À DÉPLACER : ON NE SÈME RIEN DANS LE PROJET VISÉ ══════════════ */
@@ -366,14 +405,16 @@ const makeDataset = (projectNames = []) => {
   globalThis.localStorage = makeStorage();
   globalThis.fetch = drive.fetch;
   const M = await loadModule('nothing');
+  anchor(M);
 
   const rep = await M.moveTestFolderBetweenProjects({
     testName: 'NMR_p53H', fromProjectName: 'p53H', toProjectName: 'NADH'
   });
 
   eq(rep, { folders: 0, merged: 0, registry: 0, kept: 0 }, 'aucun dossier d’expérience sur le Drive → rien à faire');
-  eq(drive.creates(), [], '…et surtout aucun dossier n’est SEMÉ dans le projet visé');
-  eq(drive.log, [], 'aucune écriture du tout (que des lectures)');
+  eq(drive.creates().filter((c) => !CANONICAL_DATASET_DIR.test(c)), [],
+    '…et surtout aucun dossier n’est SEMÉ dans le projet visé (seule la structure du dataset est posée)');
+  eq(drive.log.filter((e) => e.op !== 'create'), [], 'aucun autre geste : ni déplacement, ni corbeille');
   eq(drive.named('NADH').length, 0, 'le projet visé n’apparaît pas sur le Drive avant sa première vraie expérience');
 }
 
@@ -387,6 +428,7 @@ const makeDataset = (projectNames = []) => {
   globalThis.localStorage = makeStorage({ token: '' });
   globalThis.fetch = drive.fetch;
   const M = await loadModule('offline');
+  anchor(M);
 
   const rep = await M.moveTestFolderBetweenProjects({
     testName: 'NMR_p53H', fromProjectName: 'p53H', toProjectName: 'NADH'
@@ -405,6 +447,7 @@ const makeDataset = (projectNames = []) => {
   globalThis.localStorage = makeStorage();
   globalThis.fetch = drive.fetch;
   const M = await loadModule('guards');
+  anchor(M);
   const zero = { folders: 0, merged: 0, registry: 0, kept: 0 };
 
   eq(await M.moveTestFolderBetweenProjects({ testName: 'NMR_p53H', fromProjectName: 'p53H', toProjectName: 'p53H' }),

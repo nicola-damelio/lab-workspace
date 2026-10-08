@@ -49,7 +49,13 @@ export const UNSYNCED_KEYS = [
   'labServerAdminToken', 'labAdminToken', 'labCurrentUser',    // sécurité
   'labFirebaseCustomToken', 'labAuthSession',
   'labDriveMirror', 'labKeySyncMeta',                          // déjà synchronisés
-  'labDriveFolderId', 'labDriveFolderDatasetId', 'labDriveFolderName',
+  /* La mémoire des dossiers est PROPRE À CE POSTE (« labDriveFolders », et
+     l'ancienne mémoire unique « labDriveFolderId » / …DatasetId / …Name) : les
+     identifiants de dossiers ne se partagent PAS par les clés du navigateur —
+     c'est le registre partagé (`_workspace/state.json`, clé = identifiant du
+     dataset) qui les fait voyager, et un dossier venu d'un autre poste est
+     vérifié avant usage (voir utils/driveFolderAnchor.js). */
+  'labDriveFolders', 'labDriveFolderId', 'labDriveFolderDatasetId', 'labDriveFolderName',
   'labPendingUploads', 'labDriveFileRegistry', 'labDeletedProjects',
   'labWorkspace_projects', 'labWorkspace_deletedProjects',
   /* Les projets RESTAURÉS voyagent par le payload du dataset et par

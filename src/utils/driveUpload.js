@@ -41,8 +41,10 @@ export { MAX_DRIVE_LIST_PAGES } from './driveListPages';
 
 const TOKEN_KEY = 'labDriveAccessToken';
 const TOKEN_EXPIRY_KEY = 'labDriveAccessTokenExpiresAt';
-const FOLDER_ID_KEY = 'labDriveFolderId';
-const FOLDER_DATASET_KEY = 'labDriveFolderDatasetId';
+/* Les clés de la mémoire des dossiers (`labDriveFolders`, et l'ancienne mémoire
+   unique `labDriveFolderId` / `labDriveFolderDatasetId` / `labDriveFolderName`)
+   vivent dans utils/driveFolderAnchor.js : c'est LÀ que se décide à quel dataset
+   appartient un dossier retenu, et qu'un dossier d'un autre dataset est refusé. */
 
 /* Les créations de dossier EN VOL, par (parent, nom) — voir folderRace.js : deux
    envois simultanés vers le MÊME dossier partagent désormais une seule création
@@ -98,7 +100,6 @@ export const clearDriveToken = () => {
     localStorage.removeItem(TOKEN_EXPIRY_KEY);
   } catch { /* ignore */ }
 };
-const FOLDER_NAME_KEY = 'labDriveFolderName';
 import { suggestDriveFileName, sanitizeSlug, driveFolderPath, DATASET_FOLDER_DIRS, DEFAULT_PROJECT_NAME, datasetFolderSlug, canonicalPageSection, canonicalExperimentPath, canonicalizeExperimentPath, projectNamesOf } from './driveNaming';
 /* ⛔ LE GARDE-FOU DE LA RACINE DU DATASET : un chemin dont le premier segment
    est le nom d'un PROJET est routé sous `projects/<projet>/…` au lieu d'être
@@ -107,9 +108,17 @@ import { suggestDriveFileName, sanitizeSlug, driveFolderPath, DATASET_FOLDER_DIR
 import { guardProjectHead } from './driveStray';
 import {
   readDriveMirror, writeDriveMirror, rememberDatasetFolder, rememberProjectFolder,
-  rememberDatasetDir, findDatasetDirId,
+  rememberDatasetDir, findDatasetDirId, findDatasetFolderId,
   isDatasetMirrorDeleted, isDrivePathMirrorDeleted
 } from './driveMirrorStore';
+/* LA MÉMOIRE DES DOSSIERS DE DATASET — TENUE PAR DATASET (voir le bandeau de
+   utils/driveFolderAnchor.js) : l'identifiant retenu pour un dataset ne peut pas
+   servir à un autre, et un dossier n'est utilisé que s'il est VIVANT et qu'il
+   porte le nom du dataset. C'est ce qui empêche les fichiers d'un dataset de
+   partir dans le dossier d'un autre (le dossier `GEC-UPJV-pp` du Drive réel). */
+import {
+  datasetFolderEntry, rememberDatasetFolderEntry, forgetDatasetFolderEntry, folderUseDecision
+} from './driveFolderAnchor';
 import { pickCanonicalFolder, emptyTwinIds, isCanonicalDatasetDir } from './datasetDirTwins';
 import { oncePerFolder, folderCreateKey } from './folderRace';
 import { getCloudProvider, nextcloudConfigured, ncUploadFile } from './nextcloud';
@@ -149,31 +158,28 @@ export const testDriveAccess = async () => {
   } catch { return false; }
 };
 
-/** Folder id the app uploads into (persisted so we don't re-create it). */
-export const getDriveFolderId = () => {
-  try { return localStorage.getItem(FOLDER_ID_KEY) || ''; } catch { return ''; }
+/** Folder id the app uploads into — POUR LE DATASET OUVERT. La mémoire est tenue
+ *  PAR DATASET (utils/driveFolderAnchor.js) : l'identifiant retenu pour un
+ *  dataset ne peut pas servir à un autre, même si l'on passe de l'un à l'autre
+ *  plus vite que le rendu ne se termine. */
+export const getDriveFolderId = () => datasetFolderEntry(folderStore(), driveRootId).id;
+
+/** Retenir le dossier du dataset OUVERT (les autres datasets gardent le leur). */
+export const setDriveFolderId = (id) => { rememberDriveFolder({ id: String(id || '') }); };
+
+/** La mémoire du navigateur, ou null (jamais d'exception : la navigation privée
+ *  n'empêche pas d'envoyer — elle prive seulement de la mémoire du dossier). */
+const folderStore = () => {
+  try { return (typeof localStorage !== 'undefined' && localStorage) ? localStorage : null; } catch { return null; }
 };
 
-export const setDriveFolderId = (id) => {
-  try { localStorage.setItem(FOLDER_ID_KEY, String(id || '')); } catch { /* ignore */ }
-};
-
-/** The dataset id the cached folder id belongs to. Persisted alongside the
- *  folder id so a page reload does NOT lose the link between the dataset and
- *  its Drive folder — this is what lets the folder be RENAMED in place when
- *  the dataset title changes (instead of creating a second folder). */
-const getDriveFolderDatasetId = () => {
-  try { return localStorage.getItem(FOLDER_DATASET_KEY) || ''; } catch { return ''; }
-};
-const setDriveFolderDatasetId = (id) => {
-  try { localStorage.setItem(FOLDER_DATASET_KEY, String(id || '')); } catch { /* ignore */ }
-};
-/** The folder name the cached id was created / last renamed with. */
-const getDriveFolderName = () => {
-  try { return localStorage.getItem(FOLDER_NAME_KEY) || ''; } catch { return ''; }
-};
-const setDriveFolderName = (name) => {
-  try { localStorage.setItem(FOLDER_NAME_KEY, String(name || '')); } catch { /* ignore */ }
+/** Retenir l'identifiant et/ou le nom du dossier du dataset OUVERT. */
+const rememberDriveFolder = ({ id, name } = {}) => {
+  const current = datasetFolderEntry(folderStore(), driveRootId);
+  return rememberDatasetFolderEntry(folderStore(), driveRootId, {
+    id: id === undefined ? current.id : id,
+    name: name === undefined ? current.name : name
+  });
 };
 
 /** Read a File as a data URL (the "temporary in-app" copy). */
@@ -317,8 +323,22 @@ export const driveFetch = async (path, opts = {}) => {
 let driveRootId = '';            // dataset id the root folder belongs to
 let driveRootName = '';          // desired dataset folder name ('' → Lab Workspace root)
 let driveRootKind = 'scientific'; // 'scientific' | 'administration' (folder layout choice)
-let driveRootResolvedId = getDriveFolderDatasetId();   // dataset id of the cached labDriveFolderId
-let driveRootResolvedName = getDriveFolderName();      // dataset-name the cached labDriveFolderId was created with
+
+/** LES DOSSIERS VÉRIFIÉS DANS CETTE SESSION (dataset → nom vérifié). Le contrôle
+ *  du dossier retenu — UNE requête : est-il vivant, et porte-t-il bien le nom de
+ *  ce dataset ? (voir driveFolderAnchor.folderUseDecision) — coûte une fois par
+ *  dataset et par session, jamais à chaque envoi. Il est refait dès que le TITRE
+ *  change, puisque c'est le nom qui est vérifié. */
+const verifiedFolderNames = new Map();
+const folderVerified = (name) => !!driveRootId && verifiedFolderNames.get(driveRootId) === name;
+const markFolderVerified = (name) => { if (driveRootId) verifiedFolderNames.set(driveRootId, name); };
+/** Abandonner le dossier retenu du dataset ouvert (à la corbeille, ou portant le
+ *  nom d'un autre dataset) — et lui SEUL : les autres datasets gardent le leur. */
+const forgetDriveFolder = () => {
+  if (!driveRootId) return;
+  verifiedFolderNames.delete(driveRootId);
+  forgetDatasetFolderEntry(folderStore(), driveRootId);
+};
 
 /** Sub-directories that may exist directly inside a dataset folder. Scientific
  *  datasets keep the canonical five-folder tree (projects / backups / protocols
@@ -334,8 +354,16 @@ const datasetDirNames = () =>
 /** Tell the Drive layer which main file (dataset) is currently open, so the
  *  dataset folder on Drive (inside "Lab Workspace") is named after it, and
  *  which internal folder layout it expects (`kind` = 'scientific' |
- *  'administration'). Called by App.jsx whenever the current dataset id,
- *  title or kind changes. */
+ *  'administration').
+ *
+ *  ⛔ APPELÉ PENDANT LE RENDU (App.jsx), PAS DANS UN `useEffect` : un envoi part
+ *  d'un GESTE, donc avant les effets ; posé après le rendu, le contexte laissait
+ *  l'envoi viser le dossier du dataset PRÉCÉDENT — c'est ainsi que des fichiers
+ *  d'un dataset se sont retrouvés dans le dossier d'un autre.
+ *
+ *  Passer d'un dataset à l'autre n'EFFACE plus rien : chaque dataset a SA mémoire
+ *  de dossier (utils/driveFolderAnchor.js), donc le dossier du précédent reste le
+ *  sien et ne peut pas servir au suivant. */
 export const setDriveRootContext = ({ id = '', name = '', kind = '' } = {}) => {
   const nextId = String(id || '');
   const nextName = String(name || '').trim();
@@ -344,12 +372,6 @@ export const setDriveRootContext = ({ id = '', name = '', kind = '' } = {}) => {
   driveRootId = nextId;
   driveRootName = nextName;
   if (nextKind) driveRootKind = nextKind;
-  // Switching to a DIFFERENT dataset → the cached folder id belongs to the
-  // previous one: drop it so the new dataset gets its own folder. An EMPTY id
-  // (nothing open yet / going back to the explorer) keeps the cache, so
-  // re-opening the same dataset after a reload still knows its folder and can
-  // rename it in place.
-  if (nextId && nextId !== driveRootResolvedId) setDriveFolderId('');
 };
 
 /** L'id du dataset ouvert — le dossier d'un dataset sur le Drive est ancré
@@ -608,13 +630,104 @@ const rememberDatasetFolderId = (folderId, name) => {
   } catch { /* la mémoire du miroir est un confort, pas une condition */ }
 };
 
+/** Le dossier d'un dataset tel que le DRIVE le décrit ({ id, name, trashed }),
+ *  ou null quand le Drive n'a PAS répondu (hors ligne, jeton expiré, droits) :
+ *  un silence ne doit pas faire perdre le dossier retenu — il ne doit pas non
+ *  plus faire écrire au hasard (voir folderUseDecision). */
+const driveFolderMetaOrNull = async (folderId) => {
+  if (!folderId) return null;
+  try { return await getDriveFileMeta(folderId); } catch { return null; }
+};
+
+/** ADOPTER un dossier comme étant celui du dataset OUVERT : il est retenu (pour
+ *  ce dataset-là seulement), noté dans le registre partagé (donc valable depuis
+ *  n'importe quel poste), et il reçoit la structure interne du dataset. */
+const adoptDatasetFolder = async (folderId, name) => {
+  if (!folderId) return '';
+  rememberDriveFolder({ id: folderId, name });
+  markFolderVerified(name);
+  rememberDatasetFolderId(folderId, name);
+  if (name) await ensureDatasetFolderStructure(folderId).catch(() => {});
+  return folderId;
+};
+
+/** LE DOSSIER RETENU POUR LE DATASET OUVERT, s'il est UTILISABLE — vérifié une
+ *  fois par dataset et par session. Rend '' quand il n'y a rien de sûr :
+ *  l'appelant cherche alors ailleurs (registre partagé, nom, création), au lieu
+ *  d'écrire dans un dossier qui n'est pas celui de ce dataset. */
+const anchoredDatasetFolderId = async (name) => {
+  const entry = datasetFolderEntry(folderStore(), driveRootId);
+  if (!entry.id) return '';
+  if (!name) return entry.id;                 // rien d'ouvert : la racine de l'espace
+  if (folderVerified(name)) return entry.id;   // déjà vérifié dans cette session
+  if (!getDriveToken()) return entry.id;       // Drive muet : on ne juge rien
+  const meta = await driveFolderMetaOrNull(entry.id);
+  /* Renommer ne fabrique jamais un JUMEAU : on ne regarde s'il existe un dossier
+     au bon nom QUE sur ce chemin-là (une requête, une fois par session). */
+  const real = (meta && !meta.trashed) ? String(meta.name || '') : '';
+  let twinExists = false;
+  if (real && real !== name && entry.name && real === entry.name) {
+    const workspaceId = await ensureLabWorkspaceFolder().catch(() => '');
+    twinExists = !!(workspaceId && await findFolderByName(name, workspaceId));
+  }
+  const decision = folderUseDecision({ entry, wanted: name, meta, twinExists });
+  if (decision.action === 'use') {
+    markFolderVerified(name);
+    rememberDatasetFolderId(entry.id, name);
+    if (name) await ensureDatasetFolderStructure(entry.id).catch(() => {});
+    return entry.id;
+  }
+  if (decision.action === 'rename') {
+    try {
+      await renameDriveFile(entry.id, name);
+      return await adoptDatasetFolder(entry.id, name);
+    } catch { /* le renommage a échoué : on ne se rabat pas sur un dossier douteux */ }
+  }
+  /* ABANDON : dossier à la corbeille, ou portant le nom d'un AUTRE dataset (le
+     `GEC-UPJV-pp` du Drive réel). On l'oublie — lui seul — et on repart du nom :
+     écrire dedans, c'est ranger les fichiers d'un dataset chez un autre. */
+  forgetDriveFolder();
+  return '';
+};
+
+/** Le dossier du dataset ouvert tel que le REGISTRE PARTAGÉ le connaît : la clé
+ *  est l'IDENTIFIANT du dataset, donc ce dossier-là est le sien, d'où qu'on
+ *  vienne — et il suit un titre changé depuis un autre poste. Vérifié avant
+ *  usage, comme le dossier retenu : un dossier à la corbeille n'est jamais
+ *  réutilisé. Rend '' s'il n'y a rien de sûr. */
+const registeredDatasetFolderId = async (name) => {
+  if (!driveRootId || !name) return '';
+  let registered = '';
+  try { registered = findDatasetFolderId(readDriveMirror(), { id: driveRootId, name: driveRootName }); }
+  catch { registered = ''; }
+  if (!registered) return '';
+  const meta = await driveFolderMetaOrNull(registered);
+  /* Le registre l'affirme : ce dossier appartient à ce dataset. Un titre changé
+     se renomme donc EN PLACE (tous les fichiers déjà dedans suivent). */
+  const decision = folderUseDecision({ entry: { id: registered, name }, wanted: name, meta });
+  if (decision.action === 'use') return adoptDatasetFolder(registered, name);
+  if (decision.action === 'rename') {
+    try {
+      await renameDriveFile(registered, name);
+      return await adoptDatasetFolder(registered, name);
+    } catch { return ''; }
+  }
+  return '';
+};
 /** Resolve the upload root folder: "Lab Workspace" → the dataset folder inside
  *  it (when the dataset has a title). The dataset folder ALWAYS gets its own
  *  internal structure — the canonical five-folder tree for scientific datasets
  *  (projects/backups/protocols/storage/publications), or only backups +
  *  Budget_labo for an administration dataset — so uploads and weekly backups
  *  share one dataset directory and scientific folders are never created inside
- *  an administration base. */
+ *  an administration base.
+ *
+ *  ⛔ IL N'EST JAMAIS ÉCRIT DANS LE DOSSIER D'UN AUTRE DATASET. Trois étapes, et
+ *  toutes passent par l'IDENTIFIANT du dataset ouvert :
+ *    1. le dossier RETENU POUR CE DATASET (vérifié : vivant, et à son nom) ;
+ *    2. le REGISTRE PARTAGÉ (state.json), clé = identifiant du dataset ;
+ *    3. le NOM sous « Lab Workspace », puis la création — un dossier existant au
+ *       bon nom est toujours préféré à un nouveau. */
 export const ensureDriveFolder = async () => {
   const name = datasetFolderName();
   /* UN DOSSIER SUPPRIMÉ NE REVIENT PAS : si le dataset a été supprimé dans le
@@ -622,52 +735,12 @@ export const ensureDriveFolder = async () => {
      Drive. C'est ce qui laissait une arborescence fantôme après une
      suppression. */
   if (currentDatasetDeleted()) return '';
-  const saved = getDriveFolderId();
 
-  // Fast path: the cached folder already belongs to this dataset and name.
-  if (saved && driveRootResolvedId === driveRootId && driveRootResolvedName === name) {
-    if (name) await ensureDatasetFolderStructure(saved).catch(() => {});
-    rememberDatasetFolderId(saved, name);
-    return saved;
-  }
+  const anchored = await anchoredDatasetFolderId(name);
+  if (anchored) return anchored;
 
-  // Same dataset, but the title changed → rename the app-created dataset folder
-  // in place so every already-uploaded file follows.
-  if (name && saved && driveRootResolvedId === driveRootId && driveRootResolvedName && driveRootResolvedName !== name) {
-    try {
-      const metaRes = await driveFetch(`/drive/v3/files/${saved}?fields=id,name`);
-      const meta = await metaRes.json();
-      if (meta && meta.name === driveRootResolvedName) {
-        await renameDriveFile(saved, name);
-        driveRootResolvedName = name;
-        setDriveFolderName(name);
-        rememberDatasetFolderId(saved, name);
-        if (name) await ensureDatasetFolderStructure(saved).catch(() => {});
-        return saved;
-      }
-    } catch { /* not app-created or gone → fall back to an old-name lookup */ }
-  }
-
-  // Same dataset, title changed, but the cached folder id is missing or stale
-  // (e.g. after a tab/browser change): find the folder by its RECORDED name
-  // under Lab Workspace and RENAME that one — never silently create a second
-  // folder while the old one still exists on Drive.
-  if (name && driveRootResolvedId === driveRootId && driveRootResolvedName && driveRootResolvedName !== name) {
-    try {
-      const workspaceId = await ensureLabWorkspaceFolder();
-      const oldId = workspaceId ? await findFolderByName(driveRootResolvedName, workspaceId) : '';
-      if (oldId) {
-        await renameDriveFile(oldId, name);
-        setDriveFolderId(oldId);
-        setDriveFolderDatasetId(driveRootId);
-        setDriveFolderName(name);
-        driveRootResolvedName = name;
-        rememberDatasetFolderId(oldId, name);
-        if (name) await ensureDatasetFolderStructure(oldId).catch(() => {});
-        return oldId;
-      }
-    } catch { /* fall through to a plain lookup/create */ }
-  }
+  const registered = await registeredDatasetFolderId(name);
+  if (registered) return registered;
 
   const workspaceId = await ensureLabWorkspaceFolder();
   if (!workspaceId) return '';
@@ -677,17 +750,7 @@ export const ensureDriveFolder = async () => {
     rootId = await findFolderByName(name, workspaceId);
     if (!rootId) rootId = await findOrCreateFolder(name, workspaceId);
   }
-
-  if (rootId) {
-    setDriveFolderId(rootId);
-    setDriveFolderDatasetId(driveRootId);
-    setDriveFolderName(name);
-    driveRootResolvedId = driveRootId;
-    driveRootResolvedName = name;
-    rememberDatasetFolderId(rootId, name);
-    if (name) await ensureDatasetFolderStructure(rootId).catch(() => {});
-  }
-  return rootId;
+  return await adoptDatasetFolder(rootId, name);
 };
 
 // ── App-schema FOLDER helpers ─────────────────────────────────────────────

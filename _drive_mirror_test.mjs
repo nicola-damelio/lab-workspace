@@ -304,7 +304,8 @@ has(UPLOAD, "throwCode('PATH_DELETED'",
   '…ni une branche de projet supprimée (le fichier n’est pas écrit dans un dossier fantôme)');
 has(UPLOAD, '&& !deletedTarget', '…et la file de reprise ignore une cible supprimée');
 has(UPLOAD, 'rememberProjectFolder(readDriveMirror(), {', 'le dossier d’un projet est enregistré (registre partagé)');
-has(UPLOAD, 'rememberDatasetFolderId(saved, name);', 'le dossier du dataset est enregistré à chaque résolution');
+has(UPLOAD, 'rememberDatasetFolderId(folderId, name);', 'le dossier du dataset est enregistré à chaque résolution (adoption)');
+has(UPLOAD, 'rememberDatasetFolderId(entry.id, name);', '…y compris quand le dossier retenu est réutilisé tel quel');
 has(APP, 'await mirrorDeleteDataset({', 'App.jsx met le dossier Drive à la corbeille quand un dataset est supprimé');
 has(APP, 'await mirrorRenameDataset({ id, oldName: currentTitle, newName: clean })',
   'App.jsx renomme le dossier Drive quand un dataset est renommé');

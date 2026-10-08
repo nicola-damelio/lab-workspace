@@ -76,6 +76,12 @@ import { sweepWorkspaceDrive, resyncReportLines } from './utils/workspaceResync'
    plus une fois par minute, jamais deux relectures à la fois. La décision est
    PURE (ce module) : App.jsx garde le geste, elle dit seulement l'opportunité. */
 import { shouldRefreshWorkspaceOnOpen } from './utils/workspaceRefresh';
+/* LE DRIVE EST LE MIROIR COMPLET DU DATASET — un dossier par objet, un fichier
+   par objet, un `_meta.json` dans chaque dossier, la publication par
+   IDENTIFIANT (jamais un second dossier au même nom). Le plan est PUR et
+   testé hors navigateur (_drive_structure_test.mjs) ; ici on ne fait que
+   l'appeler à chaque sauvegarde, et DIRE ce qui n'a pas pu être écrit. */
+import { publishDatasetStructure, publishReportText } from './utils/driveStructure';
 /* LA SAUVEGARDE D'UN DATASET : un fichier JSON auto-descriptif (format, version,
    provenance, comptes, charge) que la restauration VALIDE avant d'adopter quoi
    que ce soit — et l'ANCIEN HTML, relu pour les sauvegardes déjà écrites. */
@@ -1319,19 +1325,39 @@ if (customType === 'dosy') {
   const [appClipboard, setAppClipboard] = useState(null);
   const [datasetTitle, setDatasetTitle] = useState('');
   const [datasetSubtitle, setDatasetSubtitle] = useState('');
-  // Keep the Google Drive dataset folder in sync with the main file (dataset)
-  // that is open: everything the app uploads lives inside Lab Workspace →
-  // a folder named after the dataset (see driveUpload.ensureDriveFolder).
-  // Renaming the dataset renames that Drive folder right away (debounced), so
-  // the name shown at the top of the app and the Drive folder name are one
-  // and the same.
+  /* Keep the Google Drive dataset folder in sync with the main file (dataset)
+     that is open: everything the app uploads lives inside Lab Workspace →
+     a folder named after the dataset (see driveUpload.ensureDriveFolder).
+     Renaming the dataset renames that Drive folder right away (debounced), so
+     the name shown at the top of the app and the Drive folder name are one
+     and the same.
+
+     ⛔ LE CONTEXTE DRIVE EST POSÉ ICI, PENDANT LE RENDU — il l'était dans un
+     `useEffect`, donc APRÈS le rendu, alors qu'un envoi part d'un GESTE : entre
+     les deux, un enregistrement pouvait viser le dossier du dataset PRÉCÉDENT et
+     y déposer les fichiers de celui-ci (c'est ainsi que le dossier `GEC-UPJV-pp`,
+     d'un dataset supprimé, a reçu les fichiers de `GEC-UPJV-projects`). Le poser
+     pendant le rendu garantit qu'aucun envoi — effet, minuteur, reprise en
+     attente — ne part avec l'ancrage de l'autre dataset. Les changements de
+     dataset qui déclenchent un envoi DANS LE MÊME geste l'ancrent en plus tout
+     de suite (voir anchorDriveContext). */
+  setDriveRootContext({
+    id: currentDatasetId || '',
+    name: datasetTitle || '',
+    kind: isAdministrationKind(activeDatasetKind) ? 'administration' : 'scientific',
+  });
+  /* ⛔ LE MÊME ANCRAGE, FAIT TOUT DE SUITE quand un geste change de dataset ET
+     envoie dans la foulée (ouvrir un dataset, en créer un, charger une
+     sauvegarde, refermer un dataset supprimé) : sans lui, l'envoi de ce geste
+     partirait encore avec le dossier du dataset précédent — le rendu, lui, n'a
+     pas encore eu lieu. */
+  const anchorDriveContext = (id, name, kind) => setDriveRootContext({
+    id: id || '',
+    name: name || '',
+    kind: isAdministrationKind(kind) ? 'administration' : 'scientific',
+  });
   const driveRenameTimeoutRef = useRef(null);
   useEffect(() => {
-    setDriveRootContext({
-      id: currentDatasetId || '',
-      name: datasetTitle || '',
-      kind: isAdministrationKind(activeDatasetKind) ? 'administration' : 'scientific',
-    });
     if (!currentDatasetId || !getDriveToken()) return;
     if (driveRenameTimeoutRef.current) clearTimeout(driveRenameTimeoutRef.current);
     driveRenameTimeoutRef.current = setTimeout(() => {
@@ -2802,6 +2828,11 @@ if (customType === 'dosy') {
   // <Lab Workspace>/<dataset>/backups/<title>_backup_<date>.html on Google
   // Drive — the same format the "Save HTML" button produces, so any backup file
   // can be re-imported with "Load HTML" if a dataset is ever lost or corrupted.
+  /* LE MIROIR DU DATASET SUR LE DRIVE (`Lab Workspace/<dataset>/projects/…`) :
+     la dernière publication qui n'a PAS pu être terminée ('' = tout est écrit).
+     Affiché dans la barre latérale — un Drive incomplet ne doit jamais
+     ressembler à un Drive à jour (voir utils/driveStructure.js). */
+  const [driveMirrorMsg, setDriveMirrorMsg] = useState('');
   const [backupStatus, setBackupStatus] = useState(null);
   const backupRunningRef = useRef(false);
   const datasetsListRef = useRef(datasetsList);
@@ -3290,6 +3321,25 @@ useEffect(() => {
          un autre poste, ou quand Firestore ne répond pas. Best-effort : la
          sauvegarde Firestore et l'instantané HTML restent la référence. */
       mirrorDatasetContent(currentDatasetId, updatedPayload);
+      /* LE DRIVE EST LE MIROIR COMPLET DU DATASET : le contenu du dataset, ses
+         projets, ses expériences (instance/section/sous-section), ses storages,
+         ses protocoles et son agenda deviennent des DOSSIERS, chacun décrit par
+         son `_meta.json`, et chaque objet un fichier — de quoi relire le dataset
+         par le Drive SEUL. La mécanique regroupe, ne réécrit pas deux fois la
+         même charge (empreintes) et ne fait rien si le Drive est injoignable ;
+         ce qui compte ici, c'est de le DIRE quand la publication n'a pas tout
+         écrit. */
+      publishDatasetStructure({
+        datasetId: currentDatasetId,
+        datasetName: datasetTitle || '',
+        data: rawData
+      }).then((res) => {
+        if (!res) return;
+        if (res.reason === 'publish-failed') setDriveMirrorMsg(publishReportText(res.report));
+        else if (res.ok) setDriveMirrorMsg('');
+      }).catch((err) => {
+        setDriveMirrorMsg(`⚠️ Drive mirror failed — ${err && err.message ? err.message : 'unknown error'}`);
+      });
       if (db) {
         const docRef = db
           .collection(`artifacts/${appId}/public/data/datasets`)
@@ -3721,6 +3771,10 @@ useEffect(() => {
         || '';
       setDatasetTitle(loadedTitle);
       setDatasetSubtitle(loadedSubtitle);
+      /* La base d'administration restaurée est ancrée AVANT la suite de
+         l'import : ses documents partent dans SON dossier, pas dans celui du
+         dataset resté ouvert. */
+      anchorDriveContext(targetId, loadedTitle, 'administration');
       setCurrentModule('administration');
       setCurrentAdminPage('overview');
       setAdminFocus(null);
@@ -3740,6 +3794,19 @@ useEffect(() => {
     // The restored dataset becomes the active project scope, so its projects
     // are stored/tagged under this dataset's id.
     setProjectDatasetScope(targetId);
+    /* ⛔ LE DATASET VISÉ PAR L'IMPORT EST ANCRÉ TOUT DE SUITE : les projets du
+       fichier sont ADOPTÉS par lui (importProjectsFromFile ci-dessous), et les
+       fichiers qu'on renvoie pour eux (figures, `.pdb`) doivent partir dans SON
+       dossier — c'est exactement le défaut qui a rempli le dossier
+       `GEC-UPJV-pp` avec les fichiers de `GEC-UPJV-projects`. En mode
+       « remplacer », le titre est celui du FICHIER quand il en porte un ; en
+       « ajouter » (et sans titre dans le fichier), celui du dataset reste. */
+    const importedTitle = (mode === 'replace')
+      ? (s.datasetTitle !== undefined
+        ? s.datasetTitle
+        : (s.reportTitle !== undefined ? s.reportTitle : datasetTitle))
+      : datasetTitle;
+    anchorDriveContext(targetId, importedTitle, 'scientific');
 
     if (mode === 'replace') {
       /* Les expériences ne sont remplacées que si l’élément « Expériences » est
@@ -4089,6 +4156,10 @@ const createNewDataset = async (kind = 'scientific') => {
 
     setCurrentDatasetId(newId);
     setAppView('dataset');
+    /* Le dataset NEUF est ancré tout de suite : son premier envoi (une figure,
+       une structure) part dans SON dossier, jamais dans celui du dataset encore
+       ouvert au moment du clic. */
+    anchorDriveContext(newId, isAdmin ? 'Base d’administration' : 'New Dataset', kind);
     // La page demandée par l'adresse (`?mod=`, le ⧉ d'une autre fenêtre) survit à
     // l'ouverture de la base : sans cela elle était remplacée par le tableau de bord
     // et la fenêtre neuve s'arrêtait là (voir requestedModuleRef).
@@ -4365,10 +4436,15 @@ const openDataset = (dset, { keepPlace = false } = {}) => {
       : createAdministrationSeed();
     setAdminContent(admin);
     setActiveDatasetKind('administration');
-    setDatasetTitle(dset.title && String(dset.title).trim() ? dset.title : 'Base d’administration');
+    const baseTitle = dset.title && String(dset.title).trim() ? dset.title : 'Base d’administration';
+    setDatasetTitle(baseTitle);
     setDatasetSubtitle(dset.subtitle || '');
     setCurrentDatasetId(dset.id);
     setAppView('dataset');
+    /* La base ouverte est ancrée tout de suite : son premier envoi part dans SON
+       dossier (voir anchorDriveContext). Le titre utilisé est CELUI de
+       l'affichage : le dossier Drive et l'en-tête ne peuvent pas diverger. */
+    anchorDriveContext(dset.id, baseTitle, 'administration');
     /* Relecture depuis la page ouverte (🔄 Refresh) : on reste sur la page et
        sur l'onglet où l'on est — le contenu est adopté, la navigation non. */
     if (!keepPlace) {
@@ -4411,15 +4487,16 @@ const openDataset = (dset, { keepPlace = false } = {}) => {
         setActiveTestId('t1');
       }
 
-      setDatasetTitle(
-        dset.title && String(dset.title).trim()
-          ? dset.title
-          : s.datasetTitle !== undefined
-          ? s.datasetTitle
-          : s.reportTitle !== undefined
-          ? s.reportTitle
-          : 'Untitled'
-      );
+      /* Le titre retenu EST celui du contexte Drive : un seul calcul, deux usages
+         (l'affichage et l'ancrage du dossier — voir anchorDriveContext). */
+      const openedTitle = dset.title && String(dset.title).trim()
+        ? dset.title
+        : s.datasetTitle !== undefined
+        ? s.datasetTitle
+        : s.reportTitle !== undefined
+        ? s.reportTitle
+        : 'Untitled';
+      setDatasetTitle(openedTitle);
 
       setDatasetSubtitle(
         s.datasetSubtitle !== undefined ? s.datasetSubtitle : s.reportSubtitle || ''
@@ -4475,6 +4552,9 @@ const openDataset = (dset, { keepPlace = false } = {}) => {
 
       setCurrentDatasetId(dset.id);
       setAppView('dataset');
+      /* Le dataset ouvert est ancré tout de suite : ce qui suit (restauration de
+         la bibliothèque de figures, envois de l'import) part dans SON dossier. */
+      anchorDriveContext(dset.id, openedTitle, 'scientific');
       /* Relecture depuis la page ouverte (🔄 Refresh) : on reste sur la page,
          sur le module et sur l'onglet du navigateur où l'on est — le contenu est
          adopté, la navigation non. Et quand ce n'est PAS une relecture (une
@@ -4724,6 +4804,10 @@ const openDataset = (dset, { keepPlace = false } = {}) => {
     setCurrentDatasetId(null);
     setDatasetTitle('');
     setDatasetSubtitle('');
+    /* Plus aucun dataset ouvert : le contexte Drive est refermé TOUT DE SUITE,
+       sinon le premier envoi suivant viserait encore le dossier du dataset qui
+       vient d'être supprimé. */
+    anchorDriveContext('', '', 'scientific');
   };
 
   const deleteDataset = (e, id) => {
@@ -5987,6 +6071,7 @@ const openDataset = (dset, { keepPlace = false } = {}) => {
             datasetSubtitle={datasetSubtitle} setDatasetSubtitle={setDatasetSubtitle}
             saveStatus={saveStatus} saveErrorMsg={saveErrorMsg} saveTarget={saveTarget}
             backupStatus={backupStatus}
+            driveMirrorMsg={driveMirrorMsg}
             currentUser={currentUser} setCurrentUser={setCurrentUser}
             onSignOut={handleSignOut}
             setUnlockedTestIds={setUnlockedTestIds} setLoginModal={setLoginModal}

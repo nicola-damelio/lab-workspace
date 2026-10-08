@@ -4651,3 +4651,99 @@ sur trois dossiers du même dataset (le titre courant, un jumeau, l'ancrage
 manquait.
 
 
+
+## Le dossier d'un dataset n'appartient qu'à son dataset
+
+**Ce qui a été constaté sur le Drive réel.** Le dossier où l'application écrivait
+s'appelait `GEC-UPJV-pp` — un dataset **supprimé** — et il portait *tout* le
+contenu du dataset vivant `GEC-UPJV-projects` : ses projets (`p53H`, `tau_protein`,
+`NATURAL_ARSENAL_Antibiotics`, `HADDOCK_calculations_-_Utrecht`, `bianca`, `temp`,
+`tests`), ses onze sauvegardes horodatées `GEC-UPJV-projects_*_backup_*.html`, sa
+bibliothèque de figures commune, ses papiers, son stockage. Pendant ce temps, le
+dossier portant le **bon** nom ne recevait presque rien. Le programme et le Drive ne
+se ressemblaient plus — et ce n'était pas un geste à la main : c'est l'ancrage qui
+était faux.
+
+**Trois causes, indépendantes.**
+
+| Cause | Où | Ce que ça produisait |
+| --- | --- | --- |
+| **Une SEULE mémoire de dossier pour TOUS les datasets** : un identifiant (`labDriveFolderId`) et « à qui il appartient » (`labDriveFolderDatasetId`) | `driveUpload.getDriveFolderId` / `setDriveRootContext` | Deux datasets qui se succèdent plus vite que cette mémoire n'est réécrite, et le dossier du précédent continue de servir : les fichiers d'un dataset partent dans le dossier d'un autre |
+| **Le contexte Drive était posé par un `useEffect`**, donc APRÈS le rendu, alors qu'un envoi part d'un **geste** | `App.jsx` | Entre le clic « ouvrir ce dataset » et l'effet, un enregistrement pouvait partir avec l'ancrage de l'**autre** dataset |
+| **Aucune vérification** : l'identifiant retenu était utilisé tel quel | `driveUpload.ensureDriveFolder` | Un dossier à la **corbeille** ou portant le nom d'un **autre** dataset était réutilisé sans que rien ne le dise |
+
+**Ce qui est fait.**
+
+| Règle | Où |
+| --- | --- |
+| La mémoire des dossiers est tenue **PAR DATASET** (`labDriveFolders`) : l'identifiant retenu pour A ne peut pas servir à B | `driveFolderAnchor.js` |
+| L'ancienne mémoire **unique** est reprise une fois, sous le dataset qu'elle nommait — personne ne perd son dossier au passage | `datasetFolderEntry` |
+| Un dossier n'est utilisé que s'il est **vivant** et qu'il porte **le nom du dataset** : sinon on **renomme** celui qu'on connaît (le titre a changé), ou on **l'abandonne** (c'est le dossier d'un autre) — jamais on n'écrit dedans | `folderUseDecision` |
+| Renommer ne fabrique jamais un **jumeau** : si un dossier porte déjà le nom voulu, c'est lui qu'on utilise | `folderUseDecision` (`twinExists`) |
+| Un **Drive muet** ne fait pas perdre le dossier retenu (hors ligne, on continue comme avant) — seule une réponse du Drive fait changer d'avis | `folderUseDecision` (`unverified`) |
+| Le contrôle coûte **UNE requête par dataset et par session**, pas une par envoi | `verifiedFolderNames` |
+| La résolution passe par l'**IDENTIFIANT du dataset** : le dossier retenu, puis le **registre partagé** (`state.json` → `datasets`), puis le **nom** sous « Lab Workspace », puis la création | `ensureDriveFolder` |
+| Changer de dataset **n'efface plus rien** (chaque dataset a sa mémoire) | `setDriveRootContext` |
+| Le contexte Drive est posé **PENDANT le rendu**, et aux cinq endroits qui changent de dataset ET envoient dans le même geste (ouvrir, créer, charger une sauvegarde, refermer) | `App.jsx` (`setDriveRootContext`, `anchorDriveContext`) |
+
+**Ce que ça change pour le Drive réel.** L'application n'écrit plus dans le dossier
+`GEC-UPJV-pp` : la décision dit « autre nom » (ce dossier ne porte pas le nom de ce
+dataset), il est oublié, et la résolution repart du nom — c'est le dossier
+`GEC-UPJV-projects` qui reçoit les fichiers. Le contenu déjà présent dans l'orphelin
+se récupère avec le script de la section suivante.
+
+### Vérifier soi-même
+
+```
+node _drive_folder_anchor_test.mjs  # 51 — mémoire PAR dataset, table de décision, et le cas du Drive réel rejoué
+```
+
+Le test travaille sur les modules **réels** avec un `storage` de test : il alterne
+deux datasets et vérifie qu'aucun ne voit le dossier de l'autre, reprend l'ancienne
+mémoire unique sous le seul dataset qu'elle nommait, parcourt la table de décision
+cas par cas (bon nom, titre changé, nom d'un autre, corbeille, Drive muet, jumeau),
+puis rejoue le parcours du Drive réel : la mémoire désigne `GEC-UPJV-pp`, un dossier
+au bon nom existe — l'envoi va **au dossier du dataset**, jamais à l'autre.
+
+
+## Récupérer le contenu d'un dossier de dataset supprimé, puis le mettre à la corbeille
+
+Le dossier d'un dataset supprimé part à la corbeille — **avec tout ce qu'il porte**.
+Quand il portait, comme `GEC-UPJV-pp`, les fichiers d'un dataset **vivant**, il faut
+donc **d'abord** les sortir de là.
+
+```
+node _recover_orphan_dataset.mjs                          # LECTURE SEULE : le plan, rien n'est modifié
+node _recover_orphan_dataset.mjs --apply                  # déplace, puis met à la corbeille
+node _recover_orphan_dataset.mjs --from=<id|nom> --to=<id|nom>
+```
+
+Ce qu'il fait, dans cet ordre et jamais l'inverse :
+
+1. il **DÉPLACE** par **identifiant** (jamais une copie) tout ce que le dossier
+   orphelin porte dans le dossier du dataset vivant, en **fusionnant** les
+   conteneurs de même nom (`projects`, `backups`, `storage`… et plus bas
+   `projects/<projet>`) ;
+2. un fichier déjà présent **sous le même nom** dans la destination n'est **jamais
+   écrasé** : il est signalé et laissé où il est ;
+3. il ne met à la corbeille que ce qui **reste vide** : tant qu'un fichier (ou un
+   conflit) subsiste, le dossier d'origine est intact et le script le dit.
+
+Le plan est lisible **avant** tout geste — sur le Drive réel, il annonçait
+19 déplacements et 0 conflit : `general_library_images`, `publications`, `storage`,
+`protocols` et `backups` (onze sauvegardes) entiers, plus les 14 dossiers des deux
+conteneurs `projects/` fusionnés.
+
+**Ce qu'il ne peut pas faire — dit franchement.** La portée `drive.file` ne montre
+que les fichiers créés par cette application **sous la connexion en cours**. Un
+dossier peut donc **paraître vide** (aucun enfant listé) et en contenir un, créé par
+une autre connexion (un autre poste, ou une connexion Google personnelle) : ce
+fichier-là n'est ni listé ni déplacé, et sa présence fait échouer la corbeille du
+dossier **parent** avec `403 appNotAuthorizedToChild`. La reprise automatique du
+programme (`mirrorPurgeDeletedDatasets`) échouera exactement de la même façon : ce
+dossier-là se finit **à la main**, dans le Drive. C'est le cas, sur le Drive réel, de
+`GEC-UPJV-pp/projects/p53H` : tout le contenu **visible** a été déplacé dans
+`GEC-UPJV-projects`, il reste un fichier que ce jeton ne voit pas.
+
+
+
