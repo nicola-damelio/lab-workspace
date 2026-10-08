@@ -119,6 +119,69 @@ export const withoutDeletedProjects = (projects, tombstones) => {
   });
 };
 
+/* ---------------------------------------------------------------------------
+ * ⛔ LE DÉFAUT RÉPARÉ ICI : « J'AI SUPPRIMÉ UN PROJET ET TOUS MES PROJETS ONT
+ *    DISPARU. »
+ *
+ * Le geste de suppression est le SEUL chemin qui fait partir un projet du
+ * magasin du navigateur : « Delete project » écrit d'abord la tombe du projet
+ * visé (`recordProjectDeletion`), puis la liste sans lui. Mais la liste est
+ * écrite par des fonctions qui reçoivent un TABLEAU — l'état d'une page, une
+ * copie relue du payload, une sauvegarde restaurée. Si ce tableau est plus
+ * court que le magasin pour une autre raison qu'une suppression (état périmé
+ * après un `await`, portée de dataset, filtre par scientifique, payload qui
+ * n'embarque que les projets d'un auteur…), l'écriture EFFAÇAIT des projets
+ * que personne n'avait supprimés — et comme le magasin du navigateur est la
+ * seule copie que le programme relit, ces projets disparaissaient de l'écran
+ * ALORS QU'ILS ÉTAIENT TOUJOURS LÀ (Drive, document du dataset, sauvegarde).
+ *
+ * La règle ci-dessous rend ce scénario impossible : une écriture ne peut
+ * faire disparaître que ce qui a une TOMBE. Toute autre disparition est
+ * refusée et les projets concernés sont REMIS dans la liste écrite. Une
+ * suppression reste une suppression (sa tombe est écrite avant la liste) ; une
+ * perte accidentelle, elle, ne passe plus.
+ * ------------------------------------------------------------------------ */
+
+/** Les projets qu'une écriture FERAIT DISPARAÎTRE SANS AUCUNE TOMBE.
+ *  C'est la signature d'une perte de données, jamais d'une suppression.
+ *  @param {Array} existing  ce que le magasin contient ("projets actuels")
+ *  @param {Array} incoming  ce que l'appelant veut écrire
+ *  @param {Array} tombstones les tombes (les seules disparitions légitimes)
+ *  @returns {Array} les projets à REMETTRE dans la liste écrite
+ */
+export const untombstonedDrops = (existing, incoming, tombstones) => {
+  const items = (Array.isArray(existing) ? existing : []).filter(Boolean);
+  const kept = new Set(
+    (Array.isArray(incoming) ? incoming : []).filter(Boolean).map(idOf).filter(Boolean)
+  );
+  const tombes = normalizeTombstones(tombstones);
+  return items.filter((p) => {
+    const id = idOf(p);
+    if (!id) return false;                 // un projet sans id n'est pas identifié
+    if (kept.has(id)) return false;        // il est dans la liste écrite
+    return !tombMatches(tombes, id, datasetOf(p));  // …et sans tombe : il est REMIS
+  });
+};
+
+/** La liste à écrire, corrigée : rien de ce qui n'est pas supprimé ne peut
+ *  disparaître. Rend `{ list, rescued }` — `rescued` sont les projets remis
+ *  (l'appelant peut le DIRE à l'utilisateur au lieu de l'avoir perdu).
+ *  L'ordre de la liste écrite est conservé, les projets remis suivent. */
+export const protectUntombstoned = (existing, incoming, tombstones) => {
+  const list = (Array.isArray(incoming) ? incoming : []).filter(Boolean);
+  const rescued = untombstonedDrops(existing, list, tombstones);
+  if (!rescued.length) return { list, rescued };
+  const seen = new Set(list.map(idOf).filter(Boolean));
+  const out = list.slice();
+  rescued.forEach((p) => {
+    const id = idOf(p);
+    if (id && seen.has(id)) return;
+    if (id) seen.add(id);
+    out.push(p);
+  });
+  return { list: out, rescued };
+};
+
 /** Ajoute la tombe d'un projet supprimé (la plus récente, en tête). */
 export const addTombstone = (tombstones, project, deletedAt = Date.now()) => {
   const id = idOf(project);

@@ -471,6 +471,15 @@ export const adoptWorkspaceState = (state) => {
   return {
     mirror,
     datasets: parsed ? parsed.datasets : [],
+    /* ⛔ LES PROJETS AUSSI — c'est la RÉCUPÉRATION du rapport « tous mes projets
+       ont disparu du programme alors qu'ils sont toujours sur le Drive ».
+       `state.json` porte la liste des projets (`buildWorkspaceState`, alimenté
+       par `cloudProjectsPayload`) depuis le début, mais personne ne la relisait :
+       le magasin du navigateur était donc la SEULE copie utilisée, et une
+       perte locale (magasin vidé, écriture refusée, poste neuf, cache effacé)
+       était définitive à l'écran. L'appelant (App.jsx) la fusionne maintenant
+       en AJOUT SEUL — rien de ce qui est enregistré n'est écrasé. */
+    projects: parsed ? parsed.projects : [],
     deletedProjects: parsed ? parsed.deletedProjects : []
   };
 };

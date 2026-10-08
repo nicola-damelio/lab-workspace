@@ -28,7 +28,7 @@ import { NotebookModule, CalculationsModule, PublicationsModule, ImageBuilderMod
    sauvegardes et les relit en FUSION lors d'un « Load HTML » (voir
    applyPapersRecovery — rien de ce qui est enregistré n'est écrasé). */
 import { applyPapersRecovery, readPublications, readExcludedPubs, readRelevantSubjects, loadRelevantPapers } from './components/Publications';
-import { ProjectsModule, loadProjects, saveProjects, mergeProjectsFromCloud, setProjectDatasetScope, removeProjectsOfDataset, loadDeletedProjects, adoptDeletedProjects } from './components/AppModules/projectsModule';
+import { ProjectsModule, loadProjects, saveProjects, mergeProjectsFromCloud, setProjectDatasetScope, removeProjectsOfDataset, loadDeletedProjects, adoptDeletedProjects, adoptWorkspaceProjects } from './components/AppModules/projectsModule';
 import { ProjectDetailModule } from './components/AppModules/projectDetailModule';
 import { normalizeOperators, memberIdentity } from './utils/auth';
 /* Les règles des boîtes de stockage (emplacement valide, champs obligatoires,
@@ -2373,6 +2373,19 @@ if (customType === 'dosy') {
        l'ouverture d'un dataset) les applique. */
     const adopted = adoptWorkspaceState(state);
     try { adoptDeletedProjects(state.deletedProjects); } catch { /* projet hors scope */ }
+    /* ↩ LES PROJETS DE L'INDEX SONT RÉ-ADOPTÉS ICI — la récupération du rapport
+       « tous mes projets ont disparu du programme alors qu'ils sont toujours sur
+       le Drive ». `_workspace/state.json` porte la liste des projets depuis le
+       début (`cloudProjectsPayload` → `buildWorkspaceState`) et personne ne la
+       relisait : le magasin du navigateur était donc la seule copie utilisée par
+       le programme, et n'importe quelle perte locale (magasin plein, écriture
+       refusée, cache d'un poste neuf, nettoyage du navigateur) était définitive
+       à l'écran. `adoptWorkspaceProjects` la fusionne en AJOUT SEUL : un projet
+       déjà là garde la copie la plus riche, un projet absent est REMIS avec son
+       dataset, un projet supprimé (tombe) ne revient pas, et rien n'est effacé.
+       Les tombes viennent d'être adoptées juste au-dessus : ce qui est supprimé
+       ailleurs ne ressuscite donc pas ici. */
+    try { adoptWorkspaceProjects(adopted.projects); } catch { /* magasin indisponible */ }
     /* + LA LISTE ADOPTÉE, elle aussi : `adoptKeysFromDrive` (juste au-dessus) vient
        d'écrire dans CE navigateur les datasets que `keys.json` rapporte d'un AUTRE
        poste — y compris ceux qu'une écriture Firestore encore en attente n'a pas

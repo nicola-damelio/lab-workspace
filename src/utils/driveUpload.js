@@ -93,6 +93,11 @@ export const clearDriveToken = () => {
 };
 const FOLDER_NAME_KEY = 'labDriveFolderName';
 import { suggestDriveFileName, sanitizeSlug, driveFolderPath, DATASET_FOLDER_DIRS, DEFAULT_PROJECT_NAME, datasetFolderSlug, canonicalPageSection, canonicalExperimentPath, canonicalizeExperimentPath, projectNamesOf } from './driveNaming';
+/* ⛔ LE GARDE-FOU DE LA RACINE DU DATASET : un chemin dont le premier segment
+   est le nom d'un PROJET est routé sous `projects/<projet>/…` au lieu d'être
+   créé à côté (voir utils/driveStray.js — la cause du dossier « au nom d'un
+   projet en dehors du dossier Projects », signalée trois fois). */
+import { guardProjectHead } from './driveStray';
 import {
   readDriveMirror, writeDriveMirror, rememberDatasetFolder, rememberProjectFolder,
   rememberDatasetDir, findDatasetDirId,
@@ -878,7 +883,26 @@ export const canonicalDatasetDirId = async (dir, {
  *  @param {{create?: boolean}} [opts]
  *  @returns {{ leafId:string, path:Array<{name:string,id:string}> }} */
 export const resolveDrivePathFromNames = async (names, { create = true } = {}) => {
-  const wanted = (names || []).map((n) => sanitizeSlug(n)).filter(Boolean);
+  /* ⛔ LE GARDE-FOU POSÉ DANS L'ENTONNOIR — voir utils/driveStray.js.
+     C'est ICI que le dossier fautif naissait : cette fonction CRÉE chaque
+     segment du chemin qu'on lui donne, en ne traitant spécialement que le
+     premier — et seulement s'il est un conteneur canonique. Un chemin
+     explicite resté en forme historique (`[<projet>, <expérience>, …]`), un
+     appelant qui assemble son tableau à la main ou une file d'envois rejouée
+     faisait donc naître `<dataset>/<projet>/…`, à côté de `projects/`.
+     Corriger les constructeurs de chemins un par un n'a jamais suffi (c'est la
+     troisième fois que le défaut est signalé) : le refus est donc posé ici, au
+     seul endroit par lequel TOUT envoi passe. Un premier segment qui est le nom
+     d'un projet de ce dataset passe sous `projects/<projet>/…` ; tout autre
+     premier segment (publications, protocols, storage, library…) est inchangé. */
+  const routed = guardProjectHead(names || [], { datasetId: driveRootId, datasetName: driveRootName });
+  if (routed.changed) {
+    console.warn(
+      `Drive: “${routed.head}” is a PROJECT of this dataset — the files are filed under `
+      + `“${routed.names.join('/')}”, never in a folder beside projects/.`
+    );
+  }
+  const wanted = routed.names.map((n) => sanitizeSlug(n)).filter(Boolean);
   /* UN DOSSIER SUPPRIMÉ NE SE RECRÉE PAS : si cette branche (ou celle du
      dataset lui-même) a été supprimée dans le programme, on s'arrête net au
      lieu de refabriquer une arborescence à côté de celle qui a été effacée.

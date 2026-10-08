@@ -4241,3 +4241,65 @@ couleurs différentes — jamais une rampe d'une seule teinte ») ; `node _viewe
 — **34/34**.
 
 
+
+## Trois rapports, trois causes de fond (04/10/2026)
+
+### ① « J'ai supprimé un projet et TOUS mes projets ont disparu » (perte de données)
+
+**Ce qui était vu.** Un projet créé puis supprimé : la liste des projets se vide
+entièrement à l'écran alors que les dossiers sont toujours sur le Drive.
+
+**La cause.** Le magasin du navigateur (`labWorkspace_projects`) est la SEULE
+copie que le programme relit, et ses trois écritures reçoivent un TABLEAU de
+l'extérieur : `saveProjects` (l'état d'une page), `saveProjectsRescued` (le
+même, allégé quand le magasin est plein) et `mergeProjectsFromCloud` (une copie
+du payload). Un tableau **plus court que le magasin pour une autre raison qu'une
+suppression** — état périmé après un `await`, portée de dataset, filtre par
+scientifique, payload partiel, sauvegarde restaurée — **effaçait** les projets
+absents. Le Drive les gardait, d'où « disparus du programme, toujours là sur le
+Drive ». Second défaut, du même coup : `_workspace/state.json` portait la liste
+des projets depuis le début, mais **personne ne la relisait** — aucune
+récupération n'existait.
+
+**Ce qui est fait.**
+
+| Règle | Où |
+| --- | --- |
+| Une écriture ne peut faire disparaître que ce qui a une **tombe** ; le reste est **remis** et **dit** à l'écran | `utils/projectTombstones.js` (`untombstonedDrops`, `protectUntombstoned`) + `projectsModule.writeRawProjects` (verrou unique) |
+| Seule la suppression d'un **dataset** laisse partir ses projets | `removeProjectsOfDataset` (`{ allowDrops: true }` — le seul appelant légitime) |
+| Les projets portés par `_workspace/state.json` sont **ré-adoptés** au démarrage, en **ajout seul** | `workspaceDrive.adoptWorkspaceState` (`projects`) → `projectsModule.adoptWorkspaceProjects` → `App.jsx` |
+
+Ce qui reste vrai : « Delete project » (et lui seul) retire un projet — sa tombe
+est écrite **avant** la liste. Un projet tombstoned n'est jamais ré-adopté.
+
+### ② « Un dossier au nom d'un projet en dehors du dossier Projects » (3ᵉ signalement)
+
+**La cause (enfin trouvée, ce n'était pas un constructeur de chemin).** TOUT
+envoi passe par un seul entonnoir, `driveUpload.resolveDrivePathFromNames(name)` :
+il **crée** chaque segment du chemin reçu et ne traite spécialement que le
+**premier** — et seulement s'il est un conteneur canonique
+(`isCanonicalDatasetDir`). Les réparations précédentes canonisaient les
+**constructeurs** de chemins un par un (`projectSectionFolderPath`,
+`canonicalExperimentPath`, les imports Bruker…) : chacun pouvait être juste
+pendant que l'entonnoir obéissait encore à un chemin explicite resté en forme
+historique, à un tableau assemblé à la main, ou à une file d'envois rejouée.
+D'où trois corrections sans effet durable.
+
+**Ce qui est fait.** Le garde-fou est posé **dans l'entonnoir** : si le premier
+segment est le nom d'un **projet** de ce dataset (registre du miroir partagé +
+`labWorkspace_projects`), le chemin est **routé sous `projects/<projet>/…`**
+(`utils/driveStray.js`). Les conteneurs réservés du dataset (`publications`,
+`storage`…) ne sont jamais détournés, un chemin déjà canonique est laissé tel
+quel, et le cas échéant le geste est journalisé. **Aucun appelant** — présent ou
+futur — ne peut donc plus fabriquer ce dossier.
+
+### ③ « La macro s'est arrêtée quand j'ai cliqué la troisième couleur »
+
+La rampe du fond du viewer (⬚) offrait un **troisième arrêt C** (au milieu).
+Demande : « support only two colors ». Le panneau ne l'offre plus (bouton
+« C 50 % » et son swatch retirés) et le **modèle** ne peut plus le rallumer — un
+magasin, un ⚙️ setup ou une figure enregistrés par une version à trois couleurs
+se relisent sans erreur mais **sans milieu** (`bgGradientOf` rend toujours
+`midOn: false`). La rampe a donc exactement **deux arrêts, A → B**, dans le CSS
+du canvas, dans les films 🎬🎞 et sous la still du ✨ Ray.
+

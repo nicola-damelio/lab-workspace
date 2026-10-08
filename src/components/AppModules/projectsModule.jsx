@@ -5,7 +5,8 @@ import { readLocalStoreUsage, storageFreedText, storageRefusedText } from '../..
 import { pruneRecoverableLibraryCaches } from '../../utils/figuresLibrary';
 import {
   DELETED_PROJECTS_KEY, normalizeTombstones, mergeTombstones, tombstonesForDataset,
-  isProjectDeleted, withoutDeletedProjects, addTombstone, withoutDatasetTombstones
+  isProjectDeleted, withoutDeletedProjects, addTombstone, withoutDatasetTombstones,
+  protectUntombstoned
 } from '../../utils/projectTombstones';
 
 /* =========================================================================
@@ -140,6 +141,63 @@ export const adoptDeletedProjects = (payloadTombstones, datasetArg) => {
   return normalizeTombstones(next);
 };
 
+/** RÉCUPÉRER les projets qu'un état d'espace de travail rapporte (Drive
+ *  `_workspace/state.json`, voir workspaceDrive.buildWorkspaceState).
+ *
+ *  POURQUOI : « all of my projects have disappeared from the program, even
+ *  though they are still present in Google Drive ». Le Drive gardait la liste
+ *  des projets depuis le début, mais RIEN ne la relisait : le magasin du
+ *  navigateur était la seule copie utilisée, donc n'importe quelle perte locale
+ *  (magasin vidé, écriture refusée, poste neuf, cache effacé) était définitive
+ *  à l'écran alors que tout était encore sur le Drive.
+ *
+ *  RÈGLE : AJOUT SEUL. Un projet déjà présent garde la copie la PLUS RICHE
+ *  (jamais remplacé par une version plus pauvre), un projet absent est remis
+ *  avec son propre `datasetId` (donc visible dans son dataset, pas dans un
+ *  autre), un projet tombstoned n'est jamais ré-adopté, et rien n'est jamais
+ *  effacé. C'est la même règle d'identité que mergeProjectsFromCloud (id, puis
+ *  nom dans le MÊME dataset).
+ *  @returns {{ adopted:number, list:Array }} */
+export const adoptWorkspaceProjects = (payloadProjects) => {
+  const payload = (Array.isArray(payloadProjects) ? payloadProjects : [])
+    .filter((p) => p && typeof p === 'object' && p.id);
+  if (!payload.length) return { adopted: 0, list: loadProjects() };
+  const tombstones = readDeletedProjects();
+  const byId = new Map();       // id -> projet (le plus riche)
+  const nameToId = new Map();   // <datasetId>::<nom> -> id
+  readRawProjects().forEach((p) => {
+    if (!p || !p.id) return;
+    if (isProjectDeleted(p, tombstones)) return;
+    byId.set(String(p.id), p);
+    const nk = p.name ? datasetNameKey(p) : '';
+    if (nk && !nameToId.has(nk)) nameToId.set(nk, String(p.id));
+  });
+  let adopted = 0;
+  payload.forEach((p) => {
+    if (isProjectDeleted(p, tombstones)) return;   // supprimé : jamais ré-adopté
+    const id = String(p.id);
+    const cur = byId.get(id);
+    if (cur) {
+      if (projectSize(p) > projectSize(cur)) { byId.set(id, p); adopted += 1; }
+      return;
+    }
+    const nk = p.name ? datasetNameKey(p) : '';
+    const twinId = nk ? nameToId.get(nk) : null;
+    if (twinId && twinId !== id) {
+      // Même nom dans le même dataset : la copie la plus riche gagne (un
+      // homonyme vide ne prend pas la place du vrai projet).
+      if (projectSize(byId.get(twinId) || {}) >= projectSize(p)) return;
+      byId.delete(twinId);
+      if (nk) nameToId.delete(nk);
+    }
+    byId.set(id, p);
+    if (nk) nameToId.set(nk, id);
+    adopted += 1;
+  });
+  if (adopted) writeRawProjects(Array.from(byId.values()));
+  return { adopted, list: loadProjects() };
+};
+
 const readRawProjects = () => {
   try {
     const raw = localStorage.getItem(PROJECTS_KEY);
@@ -150,13 +208,62 @@ const readRawProjects = () => {
   } catch { /* ignore malformed */ }
   return [];
 };
-const writeRawProjects = (list) => {
+/* ⛔ LE VERROU — UNE ÉCRITURE NE PEUT PAS FAIRE DISPARAÎTRE UN PROJET SANS TOMBE.
+
+   C'est la réparation de fond du rapport : « a user created a new project and
+   then tried to delete it … now all of my projects have disappeared from the
+   program, even though they are still present in Google Drive ».
+
+   Le magasin du navigateur (`labWorkspace_projects`) est la SEULE copie que le
+   programme relit : une écriture qui l'écourte efface donc des projets de
+   l'écran. Or trois fonctions l'écrivent avec un TABLEAU reçu de l'extérieur —
+   `saveProjects` (l'état d'une page), `saveProjectsRescued` (le même, allégé) et
+   `mergeProjectsFromCloud` (une copie du payload) — et un tableau peut être
+   plus court que le magasin pour cent raisons qui n'ont rien à voir avec une
+   suppression : un état React périmé après un `await`, la portée d'un dataset,
+   un filtre par scientifique, un payload qui ne portait que les projets d'un
+   auteur, une sauvegarde restaurée…
+
+   Une SUPPRESSION, elle, se reconnaît à sa TOMBE : « Delete project » écrit la
+   tombe du projet visé AVANT d'écrire la liste (voir `recordProjectDeletion`).
+   Le verrou compare donc les deux : ce qui manque à la liste ET n'a pas de
+   tombe est REMIS. Supprimer un projet reste possible (sa tombe le sort) ;
+   perdre un projet par accident ne l'est plus.
+   `allowDrops` n'a qu'un appelant légitime — `removeProjectsOfDataset`, qui
+   retire les projets d'un dataset lui-même supprimé (ses tombes viennent d'être
+   effacées : la disparition est voulue). */
+let lastUntombstonedRescue = [];
+
+/** Les projets qu'une écriture a REFUSÉ de perdre (elle les a remis dans le
+ *  magasin). L'appelant les affiche ; la lecture vide la note (un seul rapport
+ *  par écriture). */
+export const takeUntombstonedRescue = () => {
+  const out = lastUntombstonedRescue;
+  lastUntombstonedRescue = [];
+  return out;
+};
+
+const writeRawProjects = (list, { allowDrops = false } = {}) => {
   try {
     /* Une copie d'un projet SUPPRIMÉ ne peut jamais rentrer dans le cache :
        c'est le dernier rempart contre la « résurrection » (un état React
        périmé, un payload rechargé, une sauvegarde restaurée…). */
-    const live = withoutDeletedProjects(Array.isArray(list) ? list : [], readDeletedProjects());
-    localStorage.setItem(PROJECTS_KEY, JSON.stringify(dedupeProjects(live)));
+    const tombstones = readDeletedProjects();
+    const incoming = withoutDeletedProjects(Array.isArray(list) ? list : [], tombstones);
+    /* …et son PENDANT : ce qui n'a PAS de tombe ne peut pas disparaître non
+       plus (voir le verrou ci-dessus). */
+    const guarded = allowDrops
+      ? { list: incoming, rescued: [] }
+      : protectUntombstoned(readRawProjects(), incoming, tombstones);
+    if (guarded.rescued.length) {
+      lastUntombstonedRescue = guarded.rescued;
+      console.warn(
+        `Projects: ${guarded.rescued.length} project(s) this write was about to drop WITHOUT a deletion were kept `
+        + `(${guarded.rescued.slice(0, 5).map((p) => p && p.name).filter(Boolean).join(', ')}). `
+        + 'Only “Delete project” — which writes a tombstone first — removes a project.'
+      );
+    }
+    localStorage.setItem(PROJECTS_KEY, JSON.stringify(dedupeProjects(guarded.list)));
     return { ok: true, error: '' };
   } catch (err) {
     /* ❗ UNE ÉCRITURE QUI ÉCHOUE DOIT SE SAVOIR.
@@ -541,7 +648,10 @@ export const removeProjectsOfDataset = (datasetArg) => {
   try {
     writeDeletedProjects(withoutDatasetTombstones(readDeletedProjects(), datasetId));
     const kept = readRawProjects().filter((p) => !(p && String(p.datasetId) === datasetId));
-    writeRawProjects(kept);
+    /* ICI la disparition est VOULUE (le dataset n'existe plus, et ses tombes
+       viennent d'être effacées) : le verrou de `writeRawProjects` est donc
+       explicitement ouvert — c'est son seul appelant légitime. */
+    writeRawProjects(kept, { allowDrops: true });
   } catch { /* ignore */ }
 };
 
@@ -784,6 +894,20 @@ export const ProjectsModule = ({
     } else {
       setStorageWarning('');
       if (res.linked || res.droppedImages || res.forgotten) setStorageNote(storageFreedText(res));
+      /* ↩ UNE ÉCRITURE QUI AURAIT EFFACÉ DES PROJETS NON SUPPRIMÉS SE DIT.
+         Le verrou de `writeRawProjects` les a remis dans le magasin ; l'écran
+         l'annonce au lieu de laisser croire que la liste est ce qu'elle aurait
+         dû être (et le rapport d'un utilisateur ne dit plus « tout a disparu »
+         sans qu'on sache pourquoi). */
+      const rescued = takeUntombstonedRescue();
+      if (rescued.length) {
+        const names = rescued.slice(0, 3).map((p) => p && p.name).filter(Boolean).join(', ');
+        setStorageNote(
+          `↩ ${rescued.length} project(s) were about to disappear WITHOUT being deleted`
+          + `${names ? ` (${names}${rescued.length > 3 ? '…' : ''})` : ''} — they were kept. `
+          + 'Deleting a project is the only way to remove one: the store refuses any other loss.'
+        );
+      }
     }
     /* ⚠ L'ÉTAT SUIT CE QUI A ÉTÉ ÉCRIT. Quand le magasin du navigateur est plein,
        l'écriture est sauvée en allégeant la liste (voir saveProjectsRescued) :

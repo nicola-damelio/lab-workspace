@@ -386,12 +386,22 @@ eq(backgroundCss({ on: true, from: '#ff0000', to: '#0000ff', angle: 180, mid: '#
   'linear-gradient(180deg, #ff0000 0%, #0000ff 100%)',
   'milieu éteint : EXACTEMENT la rampe à deux couleurs d’avant (aucun 3e arrêt)');
 
-/* …ET LE PANNEAU (le câblage du milieu, lu dans la source) */
-has('onClick={() => patchBgGradient({ on: true, midOn: !bgGradient.midOn })}', 'le bouton « C 50 % » ajoute / enlève le milieu — et allume la rampe');
-has('aria-pressed={bgGradient.on && bgGradient.midOn}', '…et il annonce son état — et seulement quand la rampe est PEINTE (voir §10)');
-has('value={bgGradient.mid}', '…le 3e swatch (C) lit / écrit le milieu de la rampe');
-has('aria-label="Background gradient middle colour"', '…et il est nommé (lecteurs d’écran)');
-has('mid: BG_GRADIENT_DEFAULT_MID, midOn: BG_GRADIENT_DEFAULT_MID_ON', '↺ remet aussi le milieu d’origine');
+/* ⛔ LE PANNEAU N'OFFRE PLUS DE TROISIÈME COULEUR — la demande : « it stopped
+   working when I clicked the third color … support only two colors ». La rampe
+   du fond a donc EXACTEMENT DEUX arrêts (A → B) : le contrôle du milieu est
+   retiré du panneau ET le modèle ne peut plus le rallumer — un magasin qui
+   demande encore un 3e arrêt (version précédente, ⚙️ setup, figure enregistrée)
+   se relit sans erreur mais SANS milieu. */
+gone('patchBgGradient({ on: true, midOn:', 'le bouton « C 50 % » a disparu du panneau');
+gone('value={bgGradient.mid}', '…et le swatch (C) de la 3e couleur avec lui');
+gone('aria-label="Background gradient middle colour"', '…aucun contrôle du milieu ne subsiste');
+eq(bgGradientOf({ on: true, to: '#123456', mid: '#00ff00', midOn: true }).midOn, false,
+  'un magasin qui DEMANDE le milieu est relu avec midOn FAUX : le 3e arrêt ne peut plus être peint');
+eq(bgGradientOf({ on: true, to: '#123456', mid: '#00ff00', midOn: true }).mid, '#00ff00',
+  '…le champ `mid` reste lu (aucune lecture en erreur), il n’est simplement plus utilisé');
+eq(backgroundCss(backgroundSpecOf('#f8fafc', bgGradientOf({ on: true, to: '#94a3b8', mid: '#00ff00', midOn: true }))),
+  'linear-gradient(180deg, #f8fafc 0%, #94a3b8 100%)',
+  '…donc le canvas reçoit UNE rampe à deux arrêts, jamais trois');
 
 /* ══ 9. LE PANNEAU NE PEUT PLUS SEMBLER INERTE ═════════════════════════════
    Le rapport de cette session, mot pour mot : « The gradient options for the
@@ -403,16 +413,16 @@ has('mid: BG_GRADIENT_DEFAULT_MID, midOn: BG_GRADIENT_DEFAULT_MID_ON', '↺ reme
    l'interrupteur, eux, l'éteignent toujours. */
 has('onChange={(e) => patchBgGradient({ on: true, to: e.target.value })}',
   'la couleur B ALLUME la rampe en la choisissant (plus de contrôle inerte)');
-has('onChange={(e) => patchBgGradient({ on: true, mid: e.target.value })}', '…et la couleur C du milieu');
-has('Every control here acts on the ramp, so touching B, C, an arrow, the angle, ☀ or ⇄ turns it ON',
+gone('onChange={(e) => patchBgGradient({ on: true, mid: e.target.value })}', '…et plus aucune couleur du milieu (3e arrêt retiré)');
+has('Every control here acts on the ramp, so touching B, an arrow, the angle, ☀ or ⇄ turns it ON',
   'la ligne du bas DIT que rien de ce panneau n’est inerte');
 has('⬚ Gradient is OFF: the scene is painted with the ONE colour A',
   '…et elle dit l’ÉTAT quand la rampe est éteinte (jamais un panneau muet)');
 has('bgGradient.on ? (', 'la ligne de lecture part de l’ÉTAT de la rampe (allumée / éteinte) — et se sépare en TROIS, voir §10');
 has('bgGradient.light ? `in the direction of the light (${bgAngleLive}°)` :',
   '☀ allumé, la ligne DIT que la direction est celle de la lampe (avec ses degrés)');
-eq(countOf(/patchBgGradient\(\{ on: true,/g), 7,
-  'les SEPT contrôles de la rampe (B · C 50 % · C · 8 directions · ☀ Light · curseur · ⇄) l’allument — pas un de plus');
+eq(countOf(/patchBgGradient\(\{ on: true,/g), 5,
+  'les CINQ contrôles de la rampe (B · 8 directions · ☀ Light · curseur · ⇄) l’allument — pas un de plus (le bouton du milieu et son swatch ont été retirés : deux couleurs seulement)');
 gone('patchBgGradient({ angle: d.angle })', '…et aucune flèche ne reste muette');
 gone('patchBgGradient({ to: e.target.value })', '…ni la couleur B');
 gone('patchBgGradient({ midOn: !bgGradient.midOn })', '…ni le bouton du milieu');
@@ -459,7 +469,7 @@ has("aria-pressed={bgGradient.on && bgGradient.light && !bgRampFlat}",
   '☀ ne s’allume plus quand la rampe est éteinte (ou plate) — « I see the new button light » était cette promesse-là');
 has('aria-pressed={bgGradient.on && !bgGradient.light && bgGradient.angle === d.angle}',
   '…les huit flèches non plus : un bouton allumé veut dire « c’est peint »');
-has('aria-pressed={bgGradient.on && bgGradient.midOn}', '…ni « C 50 % »');
+gone('aria-pressed={bgGradient.on && bgGradient.midOn}', '…ni « C 50 % » (il n’existe plus : deux couleurs seulement)');
 gone('aria-pressed={bgGradient.light}', '…et l’ancienne promesse du bouton ☀ a disparu du source');
 gone('aria-pressed={bgGradient.midOn}', '…comme celle du milieu');
 gone('${!bgGradient.light && bgGradient.angle === d.angle ?',

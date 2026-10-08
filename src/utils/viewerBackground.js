@@ -116,8 +116,18 @@ export const bgGradientOf = (value) => {
     angle: normalizeBgAngle(v.angle, BG_GRADIENT_DEFAULT_ANGLE),
     // Le MILIEU (la 3e couleur) et son interrupteur — validés comme les autres :
     // une couleur illisible retombe sur le défaut du module, jamais sur du noir.
+    /* ⛔ LA TROISIÈME COULEUR (C, au milieu) N'EST PLUS PROPOSÉE — la demande :
+       « it stopped working when I clicked the third color … support only two
+       colors ». La rampe du fond a donc EXACTEMENT DEUX arrêts, A et B : le
+       champ `mid` reste lu (un magasin, un ⚙️ setup ou une figure enregistrés
+       par une version à trois couleurs se relisent sans erreur) mais
+       l'interrupteur du milieu est TOUJOURS FAUX, ici et nulle part ailleurs.
+       C'est ce qui rend le défaut signalé impossible : plus aucun contrôle ne
+       peut demander un 3e arrêt, et une rampe à trois arrêts ne peut plus être
+       peinte (le panneau ne l'offre plus, et le magasin ne la rallume pas tout
+       seul au chargement). */
     mid: normalizeBgColor(v.mid, BG_GRADIENT_DEFAULT_MID) || BG_GRADIENT_DEFAULT_MID,
-    midOn: v.midOn === true,
+    midOn: false,
     /* ☀ LA DIRECTION SUIT LA LAMPE — par DÉFAUT, et pour toujours : `false` est un
        choix explicite (les huit flèches, le curseur d'angle), absent veut dire
        « comme le viewer sait le faire ». Un fichier écrit avant ce champ suit donc

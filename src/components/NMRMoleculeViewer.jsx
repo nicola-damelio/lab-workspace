@@ -24502,7 +24502,7 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
   aria-expanded={bgPanelOpen}
   aria-controls="viewer-background"
   className={`px-1 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 ${bgGradient.on ? 'bg-sky-100 border-sky-400 text-sky-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
-  title={`⬚ Background options — ${bgPanelOpen ? 'OPEN right now: this button closes them (so does a click on the background of the 3D view).' : 'CLOSED right now: this button opens them under the 3D view — two or three colours and their direction — and so does a click on the background itself.'} ${bgGradient.on ? `The gradient is ON (A ${bgColor}${bgGradient.midOn ? ` → C ${bgGradient.mid}` : ''} → B ${bgGradient.to}, ${bgAngleLive}°${bgGradient.light ? ' — in the direction of the 💡 light' : ''}).` : 'The gradient is OFF: the scene keeps its flat colour (A), which the 🎨 swatch beside this button sets.'} The ramp never touches the scene: NGL paints one colour and the ramp lives in the CSS of its canvas, so no representation is rebuilt — and the 🎬🎞 films and the ✨ Ray still take the very same ramp.`}>
+  title={`⬚ Background options — ${bgPanelOpen ? 'OPEN right now: this button closes them (so does a click on the background of the 3D view).' : 'CLOSED right now: this button opens them under the 3D view — the two colours of the ramp and their direction — and so does a click on the background itself.'} ${bgGradient.on ? `The gradient is ON (A ${bgColor} → B ${bgGradient.to}, ${bgAngleLive}°${bgGradient.light ? ' — in the direction of the 💡 light' : ''}).` : 'The gradient is OFF: the scene keeps its flat colour (A), which the 🎨 swatch beside this button sets.'} The ramp never touches the scene: NGL paints one colour and the ramp lives in the CSS of its canvas, so no representation is rebuilt — and the 🎬🎞 films and the ✨ Ray still take the very same ramp.`}>
   ⬚
 </button>
 <button type="button" onClick={() => setShadowOn((v) => !v)}
@@ -26217,26 +26217,13 @@ style={{ height: (viewerCollapsed ? 0 : viewH) + 'px' }}
       <input type="color" value={bgGradient.to} onChange={(e) => patchBgGradient({ on: true, to: e.target.value })}
         className="w-7 h-6 border border-slate-300 rounded cursor-pointer" aria-label="Background gradient second colour" />
     </label>
-    {/* C — LE TROISIÈME ARRÊT (la demande : « if there were three colours it
-        would be even more interesting »). Le bouton l'AJOUTE au MILIEU (50 %)
-        et l'ENLÈVE ; éteint, la rampe reste exactement celle à deux couleurs
-        d'avant. Le milieu ne touche ni A (la couleur de la scène) ni B. */}
-    <button type="button" onClick={() => patchBgGradient({ on: true, midOn: !bgGradient.midOn })}
-      aria-pressed={bgGradient.on && bgGradient.midOn}
-      className={`px-1.5 py-1 h-7 text-[10px] font-bold rounded-md border whitespace-nowrap transition-colors ${bgGradient.on && bgGradient.midOn ? 'bg-sky-100 border-sky-400 text-sky-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
-      title={bgGradient.midOn
-        ? 'ON right now: the ramp is painted with THREE colours — A at the start, C in the MIDDLE (50 %), B at the end. This button puts the two-colour ramp back (A → B).'
-        : 'OFF right now: the ramp is painted with TWO colours (A → B). This button adds a THIRD colour C, halfway along the ramp (50 %).'}>
-      C 50%
-    </button>
-    {bgGradient.midOn && (
-      <label className="flex items-center gap-0.5 cursor-pointer whitespace-nowrap"
-        title="C — the MIDDLE colour of the ramp (at 50 %), used only while the C 50 % button is ON. It never touches A (the scene colour) nor B (the end of the ramp).">
-        <span className="text-[10px] font-black text-slate-500">C</span>
-        <input type="color" value={bgGradient.mid} onChange={(e) => patchBgGradient({ on: true, mid: e.target.value })}
-          className="w-7 h-6 border border-slate-300 rounded cursor-pointer" aria-label="Background gradient middle colour" />
-      </label>
-    )}
+    {/* ⛔ PLUS DE TROISIÈME COULEUR — la demande : « it stopped working when I
+        clicked the third color … support only two colors ». La rampe du fond a
+        donc EXACTEMENT DEUX arrêts : A (la couleur de la scène, le 🎨 de §2
+        Scene) et B. Le bouton « C 50 % » et son swatch ont été retirés, et le
+        modèle ne peut plus rallumer de 3e arrêt (bgGradientOf rend toujours
+        `midOn: false`, voir utils/viewerBackground.js) : le défaut signalé —
+        un contrôle de plus qui ne peignait rien — ne peut donc plus exister. */}
     <span className="flex items-center gap-0.5" role="group" aria-label="Gradient direction">
       {BG_DIRECTIONS.map((d) => (
         <button key={d.key} type="button" onClick={() => patchBgGradient({ on: true, angle: d.angle, light: false })}
@@ -26261,7 +26248,7 @@ style={{ height: (viewerCollapsed ? 0 : viewH) + 'px' }}
           ÉTEINTE, et le rapport de cette session le dit mot pour mot — « I see
           the new button light but the gradient does not work in any direction ».
           Un bouton allumé est une promesse : il ne l'allume plus que si quelque
-          chose est peint (les huit flèches et « C 50 % » suivent la même règle).
+          chose est peint (les huit flèches suivent la même règle).
           ⚠ Il reste ÉTEINT quand A et B sont la même couleur (bgRampFlat) : la
           rampe est bien « allumée » dans le magasin, mais elle ne peint rien —
           c'est la LIGNE du bas qui dit pourquoi, et un bouton allumé n'aurait
@@ -26283,7 +26270,7 @@ style={{ height: (viewerCollapsed ? 0 : viewH) + 'px' }}
     </label>
     <button type="button" onClick={() => patchBgGradient({ on: false, to: BG_GRADIENT_DEFAULT_TO, angle: BG_GRADIENT_DEFAULT_ANGLE, mid: BG_GRADIENT_DEFAULT_MID, midOn: BG_GRADIENT_DEFAULT_MID_ON, light: BG_GRADIENT_DEFAULT_LIGHT })}
       className="px-1.5 py-1 h-7 text-[10px] font-bold rounded-md border bg-white border-slate-300 text-slate-600 hover:bg-slate-100 whitespace-nowrap"
-      title={`↺ Back to the ramp as it comes (B ${BG_GRADIENT_DEFAULT_TO}, in the direction of the lamp, no middle colour) and ⬚ Gradient OFF — a flat background. The colour A (the 🎨 of §2 Scene) is NOT touched: use its own ↺ for that.`}>
+      title={`↺ Back to the ramp as it comes (B ${BG_GRADIENT_DEFAULT_TO}, in the direction of the lamp) and ⬚ Gradient OFF — a flat background. The colour A (the 🎨 of §2 Scene) is NOT touched: use its own ↺ for that.`}>
       ↺
     </button>
     <button type="button" onClick={() => setBgPanelOpen(false)}
@@ -26313,12 +26300,12 @@ style={{ height: (viewerCollapsed ? 0 : viewH) + 'px' }}
         </span>
       ) : (
         <span className="w-full text-[9px] text-slate-500 leading-tight">
-          The ramp runs {bgGradient.light ? `in the direction of the light (${bgAngleLive}°)` : (bgDirectionOf(bgGradient.angle)?.what || `${bgGradient.angle}°`)} — A <b>{bgColor}</b>{bgGradient.midOn ? <> → C <b>{bgGradient.mid}</b></> : null} → B <b>{bgGradient.to}</b>. {bgGradient.light ? 'A sits on the side the 💡 lamp is on and B on the side it has left: moving the light turns the ramp.' : 'The eight arrows and the slider own the direction.'} It paints the screen, the 🎬🎞 films and the ✨ Ray still; a click on the background closes these options.{bgRampTaken === 'ok' ? null : <> ⚠ The NGL canvas has not taken it ({bgRampTaken === 'no-canvas' ? 'no live canvas yet' : 'the value came back empty'}), so what the screen shows is the flat colour A. Nothing else is affected — touch any control of the ramp once the view is visible and it is written again.</>}
+          The ramp runs {bgGradient.light ? `in the direction of the light (${bgAngleLive}°)` : (bgDirectionOf(bgGradient.angle)?.what || `${bgGradient.angle}°`)} — A <b>{bgColor}</b> → B <b>{bgGradient.to}</b>. {bgGradient.light ? 'A sits on the side the 💡 lamp is on and B on the side it has left: moving the light turns the ramp.' : 'The eight arrows and the slider own the direction.'} It paints the screen, the 🎬🎞 films and the ✨ Ray still; a click on the background closes these options.{bgRampTaken === 'ok' ? null : <> ⚠ The NGL canvas has not taken it ({bgRampTaken === 'no-canvas' ? 'no live canvas yet' : 'the value came back empty'}), so what the screen shows is the flat colour A. Nothing else is affected — touch any control of the ramp once the view is visible and it is written again.</>}
         </span>
       )
     ) : (
       <span className="w-full text-[9px] text-amber-700 leading-tight">
-        ⬚ Gradient is OFF: the scene is painted with the ONE colour A <b>{bgColor}</b>. Every control here acts on the ramp, so touching B, C, an arrow, the angle, ☀ or ⇄ turns it ON — nothing in this panel is inert. ↺ puts it back to OFF.
+        ⬚ Gradient is OFF: the scene is painted with the ONE colour A <b>{bgColor}</b>. Every control here acts on the ramp, so touching B, an arrow, the angle, ☀ or ⇄ turns it ON — nothing in this panel is inert. ↺ puts it back to OFF.
       </span>
     )}
   </div>
