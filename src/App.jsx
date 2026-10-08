@@ -71,6 +71,11 @@ import { createDatasetCopyMirror } from './utils/datasetCopyMirror';
    est mal rangé, et les copies de contenu qui peuvent rendre ce qui manque.
    Rien n'est déplacé par ce module (voir workspaceResync.js). */
 import { sweepWorkspaceDrive, resyncReportLines } from './utils/workspaceResync';
+/* « LA PAGE S'OUVRE » : l'index partagé est relu aussi à l'ouverture des pages
+   qui MONTRENT les listes partagées (Projets, page d'un projet, Réglages) — au
+   plus une fois par minute, jamais deux relectures à la fois. La décision est
+   PURE (ce module) : App.jsx garde le geste, elle dit seulement l'opportunité. */
+import { shouldRefreshWorkspaceOnOpen } from './utils/workspaceRefresh';
 import {
   readDriveMirror, writeDriveMirror, isDatasetMirrorDeleted, notifyDriveMirrorChanged,
   withoutDrivePathTombstones, projectFolderPaths
@@ -2557,6 +2562,54 @@ if (customType === 'dosy') {
       stateAdopted: !!stateAdopted
     };
   }, [syncWorkspaceFromDrive, datasetsList]);
+
+  /* ── LA PAGE S'OUVRE : L'INDEX PARTAGÉ EST RELU ─────────────────────────────
+     Le défaut : l'index du Drive n'était lu qu'AU DÉMARRAGE et sur le geste
+     explicite « Resync from Drive ». Un poste resté ouvert affichait donc sa
+     liste d'alors — un projet créé, supprimé ou restauré ailleurs n'apparaissait
+     qu'après un rechargement de l'onglet — alors que la vérité était DÉJÀ sur le
+     Drive. Ici, ouvrir une page qui MONTRE ce que l'index porte (la liste des
+     projets, la page d'un projet, les Réglages où vit la liste des datasets)
+     relit cet index par le MÊME chemin qu'au démarrage (`syncWorkspaceFromDrive`,
+     donc les mêmes règles : tombes, levées de tombe, projets de l'index, liste
+     des datasets).
+
+     Les trois règles sont dans `utils/workspaceRefresh.js` — pures, donc
+     vérifiées hors navigateur : au plus une relecture par minute, jamais deux à
+     la fois, et seulement sur ces pages-là. Elles évitent de transformer chaque
+     navigation en lecture du Drive : c'est la navigation qui est fréquente, pas
+     la vérité partagée qui change.
+
+     La relecture est SILENCIEUSE (aucune attente à l'écran, la page s'affiche
+     avec ce qu'elle a) et ne REMONTE la page que si la liste des projets a
+     réellement changé — sinon ouvrir une page relancerait la sienne pour rien.
+     La liste des datasets, elle, est un état d'App : la relecture la met à jour
+     et les pages la reçoivent par leurs props, sans rien remonter. */
+  const workspaceOpenAtRef = useRef(0);
+  const workspaceOpenBusyRef = useRef(false);
+
+  useEffect(() => {
+    if (!shouldRefreshWorkspaceOnOpen({
+      module: currentModule,
+      lastAt: workspaceOpenAtRef.current,
+      driveReady: cloudBackendAvailable(),
+      busy: workspaceOpenBusyRef.current
+    })) return;
+    /* L'horodatage est posé AVANT la lecture : deux navigations rapprochées ne
+       doivent pas lancer deux relectures du même index. */
+    workspaceOpenAtRef.current = Date.now();
+    workspaceOpenBusyRef.current = true;
+    const projectsBefore = loadProjects('').length;
+    syncWorkspaceFromDrive()
+      .then((adoptedNow) => {
+        if (!adoptedNow) return;
+        if (loadProjects('').length !== projectsBefore) setWorkspaceResyncNonce((n) => n + 1);
+      })
+      /* Pas de Drive, pas d'index, index illisible : la page s'affiche avec ce
+         qu'elle a — l'ouverture d'une page ne doit jamais rien casser. */
+      .catch(() => { /* la relecture est un confort, pas une condition d'affichage */ })
+      .finally(() => { workspaceOpenBusyRef.current = false; });
+  }, [currentModule, syncWorkspaceFromDrive]);
 
   /* ── L'ESPACE DE TRAVAIL RÉÉCRIT SUR LE DRIVE ──────────────────────────────
      Toute modification (liste des datasets, projets, suppression, renommage)

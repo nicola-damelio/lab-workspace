@@ -4453,3 +4453,46 @@ fabrique est pur. Enfin, le branchement réel est vérifié dans `App.jsx` (les
 quatre temps, l'union au moment de la publication, le nonce seulement quand ça a
 bougé).
 
+## La page s'ouvre : l'index partagé est RELU (08/10/2026)
+
+**Le défaut.** L'index du Drive n'était lu qu'**au démarrage** et sur le geste
+explicite « Resync from Drive ». Un poste resté ouvert continuait donc d'afficher
+sa liste d'alors : un dataset ou un projet créé, supprimé ou restauré sur un
+autre poste n'apparaissait qu'après un **rechargement de l'onglet** — alors que la
+vérité était déjà sur le Drive. C'est le dernier morceau du défaut de fond
+réparé ci-dessus : relire la source ne sert que si on la relit quand ça compte.
+
+**Ce qui est fait.** Ouvrir une page qui **montre ce que l'index porte** relit cet
+index par le **même chemin qu'au démarrage** (`syncWorkspaceFromDrive` : tombes,
+levées de tombe, projets de l'index, liste des datasets). Trois règles, dans
+`utils/workspaceRefresh.js` — **pures**, donc vérifiées sans navigateur :
+
+| Règle | Pourquoi |
+| --- | --- |
+| Seulement les pages qui montrent les listes partagées : `projects`, `project-detail`, `settings` | une page qui ne montre rien de partagé n'a aucune raison de faire relire le Drive |
+| **Au plus une relecture par minute** (`OPEN_REFRESH_MS`) | c'est la navigation qui est fréquente, pas la vérité partagée qui change |
+| Jamais pendant qu'une relecture est **en cours**, ni sans Drive connecté | deux relectures simultanées liraient la même chose, et sans Drive il n'y a rien à apprendre |
+
+| Ce qui est garanti | Où |
+| --- | --- |
+| L'horodatage est posé **AVANT** la lecture (deux navigations rapprochées ne lisent pas deux fois) | `App.jsx` (`workspaceOpenAtRef`) |
+| La relecture est **silencieuse** : la page s'affiche avec ce qu'elle a, rien n'attend à l'écran | `App.jsx` (aucun état d'attente) |
+| La page Projets n'est **remontée que si la liste a réellement changé** (et seulement si un index a été adopté) | `App.jsx` (`projectsBefore` → `loadProjects('')`) |
+| Ouvrir une page **n'écrit RIEN** : ni l'index, ni une copie, ni un fichier du Drive | vérifié sur le texte du geste dans la suite ci-dessous |
+| Un Drive injoignable ou un index illisible ne casse rien : la page s'affiche comme avant | `.catch()` du geste |
+| Une horloge qui a RECULÉ fait **relire** plutôt que figer | `shouldRefreshWorkspaceOnOpen` (relire est sans conséquence, ne pas relire laisse l'écran faux) |
+
+### Vérifier soi-même
+
+```
+node _workspace_open_refresh_test.mjs # 54 vérifications — la décision, les horloges, le branchement
+```
+
+La suite vérifie la décision cas par cas (chaque page, chaque borne du délai,
+chaque refus), les horloges tordues (jamais relu, relu à l'instant, horloge
+reculée), la **pureté** du module (aucune dépendance, l'argument ressort intact,
+aucune exception) — puis le **branchement réel** dans `App.jsx` : l'ordre des
+temps du geste, la même porte qu'au démarrage, la page remontée seulement si la
+liste a changé, et l'absence de toute écriture dans le geste.
+
+
