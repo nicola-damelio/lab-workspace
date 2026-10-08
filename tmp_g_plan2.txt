@@ -1,5 +1,0 @@
-motif : [Pp]hase [0-9]|phase suivante|backups? JSON|JSON backup
-fichiers : out_log.txt, docs/DRIVE-MIRROR.md
-
--- out_log.txt : 0 ligne(s) retenue(s) sur 5040
--- docs/DRIVE-MIRROR.md : 0 ligne(s) retenue(s) sur 4456

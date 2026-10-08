@@ -37,6 +37,14 @@ workspace-shared-token.json.*
 /_replica_*.pdb
 **/_ls_*.txt
 
+# The same scratch, spelled WITHOUT the leading underscore (`tmp_all_result.txt`,
+# `tmp_run_suites.mjs`, the ad-hoc runners and dumps a working session writes):
+# a whole session's worth of them once reached the repo by accident — the 234
+# files removed by the commit that took the scratch out of the repo. This rule is
+# what keeps the accident from happening twice: nothing named `tmp_*` is ever part
+# of the app.
+/tmp_*
+
 # Same for the ad-hoc PROBES behind those dumps: one-off scripts (a dist probe, a
 # syntax probe, a toolchain probe…), not test harnesses. They stay on disk — they
 # are the reproducible evidence for what the dumps say — they are just never part

@@ -1,4 +1,0 @@
-src/App.jsx:3: import {LOCAL_STORAGE_KEY, PLATES_DEF, DEF_COMPOUNDS, DEF_CELL_LINES, parsePayload} from './data/constants';
-src/App.jsx:4246: // Defensively handle compressed payloads in case parsePayload doesn't already
-src/App.jsx:4251: s = parsePayload(dset);
-src/App.jsx:4745: const s = parsePayload(dset);

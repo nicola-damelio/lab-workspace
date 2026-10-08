@@ -1,9 +1,0 @@
-motif : ^import|^} from|BACKUP_BLOB_RE
-fichiers examinés : 1
-lignes retenues : 4
-
-src/utils/referenceImport.js:35: import { unzipSync, strFromU8 } from 'fflate';
-src/utils/referenceImport.js:41: import { canonicalName } from './authorNames.js';
-src/utils/referenceImport.js:1099: export const BACKUP_BLOB_RE = /<script[^>]*id=["']saved-data-blob["'][^>]*>([\s\S]*?)<\/script>/;
-src/utils/referenceImport.js:1128: const match = String(html || '').match(BACKUP_BLOB_RE);
--- src/utils/referenceImport.js : 4 ligne(s) sur 1230

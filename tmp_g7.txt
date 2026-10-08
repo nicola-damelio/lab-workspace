@@ -1,6 +1,0 @@
-src/App.jsx:2397: try { adoptWorkspaceProjects(adopted.projects); } catch { /* magasin indisponible */ }
-src/App.jsx:2462: adopted = (adoptWorkspaceProjects(state && state.projects) || {}).adopted || 0;
-src/components/AppModules/projectsModule.jsx:85: let activeProjectDataset = null;
-src/components/AppModules/projectsModule.jsx:88: export const setProjectDatasetScope = (datasetArg) => {
-src/components/AppModules/projectsModule.jsx:368: export const loadProjects = (datasetArg) => {
-src/components/AppModules/projectsModule.jsx:800: export const mergeProjectsFromCloud = (payloadProjects, opts = {}) => {

@@ -1,4 +1,0 @@
-src/utils/workspaceResync.js:351: const knownDeletedIds = new Set(
-src/utils/workspaceResync.js:352: asList(known.deletedDatasetIds).map((v) => text(v && v.id) || text(v)).filter(Boolean)
-src/utils/workspaceResync.js:434: const deleted = !!id && (knownDeletedIds.has(id) || mirrorDeletedIds.has(id));
-src/utils/workspaceResync.js:717: if (knownDeletedIds.has(id) || mirrorDeletedIds.has(id)) return; // supprimé : pas de retour

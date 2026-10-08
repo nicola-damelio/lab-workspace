@@ -1,8 +1,0 @@
-motif : accept=.\\.html|Load HTML File|const buildBackupHtml|buildBackupHtml\(
-fichiers examinés : 1
-lignes retenues : 3
-
-src/App.jsx:2812: const buildBackupHtml = (title, subtitle, payload, datasetId) => {
-src/App.jsx:5848: 📂 Load HTML File
-src/App.jsx:5865: “📂 Load HTML File” below.
--- src/App.jsx : 3 ligne(s) sur 6254

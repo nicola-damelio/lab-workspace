@@ -1,5 +1,0 @@
-27:      • et la page projet / App.jsx appliquent réellement tout cela.
-40: const APP = readFileSync('./src/App.jsx', 'utf8');
-225: has(PROJECTS, 'reviveDeletedProject(id, currentDatasetId);', '…et App.jsx lève la tombe du dataset ouvert');
-233:   'App.jsx porte le geste complet : lever la tombe PUIS ré-adopter la copie du Drive');
-TOTAL_LINES=248

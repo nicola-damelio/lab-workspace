@@ -1,4 +1,0 @@
-src/App.jsx:706: export const pageSlotIds = (shownModule, parkedModule) => {
-src/App.jsx:717: export const pageSlotClass = (slotId, shownModule) => (slotId === shownModule ? 'contents' : 'hidden');
-src/App.jsx:2198: const pageSlots = pageSlotIds(currentModule, parkedModule);
-src/App.jsx:2217: const pageSlot = (id, render) => {

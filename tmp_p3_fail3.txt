@@ -1,2 +1,0 @@
-code=0
-54 vérifications passées — « LA PAGE S'OUVRE » : l'index partagé est relu, et rien n'est écrit.

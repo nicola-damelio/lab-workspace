@@ -1,5 +1,0 @@
-src/App.jsx:15: import { SettingsModule } from './components/AppModules/settingsModule';
-src/App.jsx:5869: {pageSlot('settings', () => (<SettingsModule
-src/components/AppModules/settingsModule.jsx:2: src/components/AppModules/settingsModule.jsx
-src/components/AppModules/settingsModule.jsx:394: export const SettingsModule = ({
-src/utils/uiScale.js:19: DisplayScaleControl in settingsModule.jsx).

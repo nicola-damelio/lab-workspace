@@ -1,2 +1,0 @@
-code=0
-_viewer_background_test.mjs — 228 assertions OK (⬚ le fond du viewer : deux ou trois couleurs, une direction, un clic qui ouvre et ferme)

@@ -1,8 +1,0 @@
-motif : buildBackupHtml
-fichiers examinés : 6
-lignes retenues : 3
-
-_load_html_projects_test.mjs:227: has(APP, 'const buildBackupHtml = (title, subtitle, payload, datasetId) => {',
-_load_html_projects_test.mjs:228: 'la sauvegarde emporte l’id du dataset d’où elle vient (buildBackupHtml)');
-_load_html_projects_test.mjs:230: has(APP, 'buildBackupHtml(title, subtitle, payload, dset.id);',
--- _load_html_projects_test.mjs : 3 ligne(s) sur 286

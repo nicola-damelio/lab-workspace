@@ -1,3 +1,0 @@
-src/App.jsx:4379: const [testPageNonce, setTestPageNonce] = useState(0);
-src/App.jsx:4425: setTestPageNonce((n) => n + 1);
-src/App.jsx:5924: key={`test-page-${testPageNonce}`}

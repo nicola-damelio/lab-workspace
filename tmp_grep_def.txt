@@ -1,6 +1,0 @@
-src/App.jsx:75: readDriveMirror, writeDriveMirror, isDatasetMirrorDeleted, notifyDriveMirrorChanged,
-src/App.jsx:99: return !isDatasetMirrorDeleted(mirror, { id: d.id, name: d.title });
-src/utils/driveMirror.js:109: * réapparaître ailleurs (App.jsx filtre la liste avec isDatasetMirrorDeleted).
-src/utils/driveMirrorStore.js:279: export const isDatasetMirrorDeleted = (mirror, dataset = {}) => {
-src/utils/driveUpload.js:111: isDatasetMirrorDeleted, isDrivePathMirrorDeleted
-src/utils/driveUpload.js:595: && isDatasetMirrorDeleted(readDriveMirror(), { id: driveRootId, name: driveRootName });

@@ -1,7 +1,0 @@
-_cysteine_panel_layout_test.mjs -> ### _cysteine_panel_layout_test.mjs  EXIT=1 |   operator: '==',
-_docking_scatter_card_test.mjs -> ### _docking_scatter_card_test.mjs  EXIT=1 |     at async file:///C:/Users/nicol/lab-workspace/_docking_scatter_card_test.mjs:77:20 {
-_experiment_folder_files_test.mjs -> ### _experiment_folder_files_test.mjs  EXIT=1 |     at async ModuleJob.run (node:internal/modules/esm/module_job:561:5)
-_md_wall_test.mjs -> ### _md_wall_test.mjs  EXIT=1 |   operator: 'deepStrictEqual',
-_project_store_guard_test.mjs -> ### _project_store_guard_test.mjs  EXIT=1 |   operator: '==',
-_sequence_charge_test.mjs -> ### _sequence_charge_test.mjs  EXIT=1 |   operator: '==',
-_workspace_resync_ui_test.mjs -> ### _workspace_resync_ui_test.mjs  EXIT=0 | 70 vérifications passées — « RESYNC FROM DRIVE » : le compte-rendu dit tout, depuis une se

@@ -1,1 +1,0 @@
-src/components/ImageBuilder.jsx:1113: // ✅ La réouverture se RÉPARE donc elle-même, en trois temps :

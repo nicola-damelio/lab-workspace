@@ -1,6 +1,0 @@
-reste hors tmp_ : 0
-
-
---- deux derniers commits ---
-9a93d6e Phase 3 — « la page s'ouvre » : l'index partagé est relu (Drive-first)
-c48bc2e Phase 1 — le Drive est relu EN ENTIER, et ce qui revient repart sur le Drive

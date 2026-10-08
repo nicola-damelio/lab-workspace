@@ -1,8 +1,0 @@
-{
-  "len": 150381,
-  "i": 18355,
-  "e": 0,
-  "bodyHas": false,
-  "head": "export const findLabWorkspaceFolder = async () => {\r\n  if (!getDriveToken()) return '';\r\n  let containerId = '';\r\n  try ",
-  "tail": ""
-}
