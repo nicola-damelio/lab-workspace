@@ -28,6 +28,11 @@
 /** Clé localStorage des projets supprimés (écrite par projectsModule.jsx). */
 export const DELETED_PROJECTS_KEY = 'labWorkspace_deletedProjects';
 
+/** Clé localStorage des projets RESTAURÉS (« levées de tombe », voir plus bas).
+ *  Une levée voyage comme une tombe : magasin du navigateur, payload du dataset
+ *  et `_workspace/state.json`. */
+export const REVIVED_PROJECTS_KEY = 'labWorkspace_revivedProjects';
+
 /** Nombre de tombstones conservées (les plus récentes). Une suppression n'est
  *  jamais oubliée à court terme ; la limite n'existe que pour qu'un
  *  localStorage ne grossisse pas indéfiniment sur des années d'usage. */
@@ -50,14 +55,14 @@ export const tombstoneKey = (entry) => `${datasetOf(entry)}::${idOf(entry)}`;
 export const projectTombstoneKey = (project) => tombstoneKey(project);
 
 /**
- * Une liste de tombes propre et utilisable : les id vides sont écartés, deux
- * entrées de même identité n'en font qu'une (la suppression la plus récente
- * gagne) et la liste est bornée à MAX_TOMBSTONES, la plus récente d'abord.
- * Accepte aussi bien `['prj_1']` que `[{ id, datasetId, deletedAt }]` : une
- * tombe écrite par une version plus ancienne (ou un payload abîmé) reste donc
- * comprise.
+ * Une liste HORODATÉE propre et utilisable (tombes comme levées de tombe) : les
+ * id vides sont écartés, deux entrées de même identité n'en font qu'une (la
+ * date la plus récente gagne) et la liste est bornée à MAX_TOMBSTONES, la plus
+ * récente d'abord. Accepte aussi bien `['prj_1']` que
+ * `[{ id, datasetId, deletedAt }]` : une entrée écrite par une version plus
+ * ancienne (ou un payload abîmé) reste donc comprise.
  */
-export const normalizeTombstones = (list) => {
+const normalizeStamped = (list, field) => {
   const byKey = new Map();
   /* Une liste peut arriver IMBRIQUÉE : un payload écrit par une version
      antérieure (ou abîmé) rangeait la liste des tombes dans un tableau
@@ -69,16 +74,24 @@ export const normalizeTombstones = (list) => {
     const entry = {
       id,
       datasetId: datasetOf(raw),
-      deletedAt: Number(raw && typeof raw === 'object' ? raw.deletedAt : 0) || 0
+      [field]: Number(raw && typeof raw === 'object' ? raw[field] : 0) || 0
     };
     const key = `${entry.datasetId}::${id}`;
     const prev = byKey.get(key);
-    if (!prev || entry.deletedAt >= prev.deletedAt) byKey.set(key, entry);
+    if (!prev || entry[field] >= prev[field]) byKey.set(key, entry);
   });
   return Array.from(byKey.values())
-    .sort((a, b) => b.deletedAt - a.deletedAt)
+    .sort((a, b) => b[field] - a[field])
     .slice(0, MAX_TOMBSTONES);
 };
+
+/** Les tombes : voir le commentaire de `normalizeStamped` (champ `deletedAt`). */
+export const normalizeTombstones = (list) => normalizeStamped(list, 'deletedAt');
+
+/** Les LEVÉES de tombe : « ce projet supprimé a été RESTAURÉ ». Même forme et
+ *  même unicité qu'une tombe, la date étant celle de la restauration
+ *  (`revivedAt`). Voir « une tombe peut être levée » plus bas. */
+export const normalizeRevivals = (list) => normalizeStamped(list, 'revivedAt');
 
 /** Deux listes (locale + payload, par exemple) → une seule, sans doublon. */
 export const mergeTombstones = (current, incoming) => normalizeTombstones([
@@ -202,4 +215,70 @@ export const deletedProjectIds = (tombstones) =>
 export const withoutDatasetTombstones = (tombstones, datasetArg) => {
   const datasetId = datasetArg === undefined || datasetArg === null ? '' : String(datasetArg);
   return normalizeTombstones(tombstones).filter((t) => t.datasetId !== datasetId);
+};
+
+/* ---------------------------------------------------------------------------
+ * ↩ UNE TOMBE PEUT ÊTRE LEVÉE — « le projet supprimé doit revenir ».
+ *
+ * Le rapport : « there was a project called “tmp” with figures and text. It
+ * looks gone. If I reload from HTML and select only to restore projects,
+ * nothing happens. » Rien ne se passait — et rien ne POUVAIT se passer : une
+ * tombe était définitive. Aucun geste de l'application ne la retirait, et les
+ * trois chemins qui ramènent un projet depuis une copie (import d'une
+ * sauvegarde HTML, fusion du payload du dataset, ré-adoption de
+ * `_workspace/state.json`) appliquent TOUS la tombe : l'import écrivait donc
+ * la liste du fichier SANS le projet concerné, en silence.
+ *
+ * La levée est donc une DONNÉE, comme la tombe : la date à laquelle le projet
+ * a été restauré. Elle voyage avec le payload du dataset et avec
+ * `_workspace/state.json` (REVIVED_PROJECTS_KEY) — sinon un autre poste, qui
+ * garde la tombe, la re-publierait et le projet disparaîtrait une seconde fois.
+ *
+ * La règle se lit sur les deux dates, la plus RÉCENTE gagne : restaurer puis
+ * supprimer à nouveau supprime pour de bon ; restaurer après une suppression
+ * l'emporte, y compris sur une tombe d'une version antérieure (date inconnue
+ * = 0). Vérifié par _deleted_projects_test.mjs.
+ * ------------------------------------------------------------------------ */
+
+/** La RÈGLE d'identité, une seule fois : même id, et un dataset absent d'un
+ *  côté au moins (ou identique) — un projet sans dataset est le même projet. */
+const sameStamped = (a, b) => !!a && !!b && a.id === b.id
+  && (!a.datasetId || !b.datasetId || a.datasetId === b.datasetId);
+
+/** LES TOMBES QUI TIENNENT ENCORE : celles qu'aucune levée plus récente (ou de
+ *  même date) n'a annulées. C'est la seule lecture des suppressions de projets
+ *  (projectsModule) — lever une tombe est donc vu de partout d'un coup. */
+export const withoutRevivedProjects = (tombstones, revivals) => {
+  const lifted = normalizeRevivals(revivals);
+  const tombes = normalizeTombstones(tombstones);
+  if (!lifted.length) return tombes;
+  return tombes.filter((t) => !lifted.some(
+    (r) => sameStamped(r, t) && (Number(r.revivedAt) || 0) >= (Number(t.deletedAt) || 0)
+  ));
+};
+
+/** Enregistrer une levée de tombe (la plus récente d'abord). */
+export const addRevival = (revivals, target, revivedAt = Date.now()) => {
+  const id = idOf(target);
+  if (!id) return normalizeRevivals(revivals);
+  return normalizeRevivals([
+    { id, datasetId: datasetOf(target), revivedAt: Number(revivedAt) || Date.now() },
+    ...(Array.isArray(revivals) ? revivals : [])
+  ]);
+};
+
+/** Retirer la levée d'un projet : une SUPPRESSION postérieure doit l'emporter
+ *  (« Delete project » après une restauration est une vraie suppression). */
+export const withoutRevival = (revivals, target) => {
+  const id = idOf(target);
+  if (!id) return normalizeRevivals(revivals);
+  const wanted = { id, datasetId: datasetOf(target) };
+  return normalizeRevivals(revivals).filter((r) => !sameStamped(r, wanted));
+};
+
+/** Les levées telles qu'un PAYLOAD les porte : une levée sans dataset
+ *  appartient au dataset qui l'a écrite (le payload ne parle que de lui). */
+export const revivalsForDataset = (list, datasetArg) => {
+  const datasetId = datasetArg === undefined || datasetArg === null ? '' : String(datasetArg);
+  return normalizeRevivals(list).map((r) => (!r.datasetId && datasetId ? { ...r, datasetId } : r));
 };

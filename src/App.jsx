@@ -28,7 +28,7 @@ import { NotebookModule, CalculationsModule, PublicationsModule, ImageBuilderMod
    sauvegardes et les relit en FUSION lors d'un « Load HTML » (voir
    applyPapersRecovery — rien de ce qui est enregistré n'est écrasé). */
 import { applyPapersRecovery, readPublications, readExcludedPubs, readRelevantSubjects, loadRelevantPapers } from './components/Publications';
-import { ProjectsModule, loadProjects, saveProjects, mergeProjectsFromCloud, setProjectDatasetScope, removeProjectsOfDataset, loadDeletedProjects, adoptDeletedProjects, adoptWorkspaceProjects } from './components/AppModules/projectsModule';
+import { ProjectsModule, loadProjects, saveProjects, mergeProjectsFromCloud, setProjectDatasetScope, removeProjectsOfDataset, loadDeletedProjects, adoptDeletedProjects, adoptWorkspaceProjects, loadRevivedProjects, adoptRevivedProjects, reviveDeletedProject } from './components/AppModules/projectsModule';
 import { ProjectDetailModule } from './components/AppModules/projectDetailModule';
 import { normalizeOperators, memberIdentity } from './utils/auth';
 /* Les règles des boîtes de stockage (emplacement valide, champs obligatoires,
@@ -64,7 +64,10 @@ import { writeDatasetListCache, readDatasetListCache } from './utils/datasetList
    à la fermeture de l'onglet) : la mécanique vit dans un module pur, testé hors
    navigateur par _dataset_copy_mirror_test.mjs. */
 import { createDatasetCopyMirror } from './utils/datasetCopyMirror';
-import { readDriveMirror, isDatasetMirrorDeleted } from './utils/driveMirrorStore';
+import {
+  readDriveMirror, writeDriveMirror, isDatasetMirrorDeleted, notifyDriveMirrorChanged,
+  withoutDrivePathTombstones, projectFolderPaths
+} from './utils/driveMirrorStore';
 /* TOUT CE QUI VIVAIT DANS LE NAVIGATEUR part aussi sur le Drive : publications
    des scientifiques, bibliothèque de figures, éléments étoilés, presets…
    (voir workspaceKeyStore.js). Sans cela, deux postes n'affichaient pas la même
@@ -2372,6 +2375,11 @@ if (customType === 'dosy') {
        réécrites localement, donc TOUT ce qui suit (liste ci-dessous, projets à
        l'ouverture d'un dataset) les applique. */
     const adopted = adoptWorkspaceState(state);
+    /* …et les LEVÉES DE TOMBE (projets RESTAURÉS depuis un autre poste) D'ABORD :
+       elles rejoignent celles d'ici avant que les tombes ne soient adoptées — une
+       restauration faite ailleurs ne doit pas être effacée par la tombe que ce
+       poste garde encore (le projet disparaîtrait une seconde fois, sans un mot). */
+    try { adoptRevivedProjects(state.revivedProjects); } catch { /* projet hors scope */ }
     try { adoptDeletedProjects(state.deletedProjects); } catch { /* projet hors scope */ }
     /* ↩ LES PROJETS DE L'INDEX SONT RÉ-ADOPTÉS ICI — la récupération du rapport
        « tous mes projets ont disparu du programme alors qu'ils sont toujours sur
@@ -2426,10 +2434,53 @@ if (customType === 'dosy') {
       datasets: datasetsList,
       projects: loadProjects(''),
       deletedProjects: loadDeletedProjects(),
+      /* Les projets RESTAURÉS voyagent aussi : sans elles, la tombe que garde
+         encore un autre poste reviendrait par cet index (voir projectTombstones). */
+      revivedProjects: loadRevivedProjects(),
       mirror: readDriveMirror()
     }), { delay: 2500 });
     return () => uninstall();
   }, [isCloudReady, datasetsList]);
+
+  /* ↩ LE RETOUR D'UN PROJET SUPPRIMÉ (page Projets → « 🗑 Recently deleted »).
+     Deux temps, comme une ouverture de dataset : 1° la LEVÉE DE TOMBE — la
+     suppression est annulée, et l'annulation VOYAGE (payload du dataset +
+     `_workspace/state.json`), sinon un poste qui garde la tombe la republierait
+     et le projet disparaîtrait encore ; 2° la RÉ-ADOPTION de la copie encore sur
+     le Drive (`_workspace/state.json`, exactement l'appel du démarrage). Le
+     document du dataset, lui, reprend le projet à la prochaine ouverture
+     (mergeProjectsFromCloud) — sans la levée, sa copie était écartée en silence,
+     comme dans « Load HTML » : c'est le « nothing happens » du rapport.
+     Le CONTENU (texte, références, figures) revient avec la copie la plus riche :
+     l'index du Drive ne porte qu'un résumé, le document du dataset a le tout. */
+  const restoreDeletedProject = async (id) => {
+    const res = reviveDeletedProject(id, currentDatasetId);
+    let adopted = 0;
+    try {
+      const state = await readWorkspaceState();
+      adopted = (adoptWorkspaceProjects(state && state.projects) || {}).adopted || 0;
+    } catch { /* Drive indisponible : le document du dataset prendra le relais */ }
+    const proj = loadProjects('').find((p) => p && String(p.id) === String(id)) || null;
+    /* 3° LE DOSSIER DRIVE AUSSI : « Delete project » a mis `projects/<projet>` à
+       la corbeille et a mis son chemin en pierre tombale, donc la couche Drive
+       refuserait de le recréer — les figures et les fichiers du projet restauré
+       ne remonteraient plus (resolveDrivePathFromNames). On lève ces tombes de
+       chemin : la restauration est complète, pas à moitié. */
+    try {
+      if (proj && proj.name) {
+        let mirror = readDriveMirror();
+        projectFolderPaths(proj.name).forEach((path) => {
+          mirror = withoutDrivePathTombstones(mirror, { dataset: { id: currentDatasetId }, path });
+        });
+        writeDriveMirror(mirror);
+      }
+    } catch { /* miroir indisponible : le dossier se recréera tout seul */ }
+    /* La levée part vers les autres postes tout de suite : « enregistrer l'état
+       de l'espace de travail » est en différé, et ce n'est pas un geste qu'on
+       veut attendre (l'événement du miroir le programme immédiatement). */
+    try { notifyDriveMirrorChanged(); } catch { /* hors navigateur */ }
+    return { lifted: res.lifted, adopted, names: proj && proj.name ? [proj.name] : [] };
+  };
 
   /* ── LA LISTE VIT AUSSI DANS CE NAVIGATEUR (mode Firestore compris) ────────
      Firestore reste la référence partagée, mais une écriture Firestore peut être
@@ -2749,14 +2800,58 @@ const stripOversizedDataUrls = (value) => {
 /* Les projets du dataset + la LISTE DES PROJETS SUPPRIMÉS : sans elle, un
    autre poste (ou ce poste, après rechargement du payload) ré-adoptait la copie
    du projet supprimé restée dans le document et le projet réapparaissait. La
-   suppression voyage donc avec le payload (voir utils/projectTombstones.js). */
+   suppression voyage donc avec le payload (voir utils/projectTombstones.js).
+   Les LEVÉES DE TOMBE voyagent avec elle, pour la raison inverse : un projet
+   RESTAURÉ (« tmp », figures et texte compris) revient sur tous les postes, y
+   compris sur celui dont la copie porte encore la tombe. */
 const cloudProjectsPayload = () => {
   try {
     return {
       projects: stripOversizedDataUrls(loadProjects() || []),
-      deletedProjects: loadDeletedProjects()
+      deletedProjects: loadDeletedProjects(),
+      revivedProjects: loadRevivedProjects()
     };
-  } catch { return { projects: [], deletedProjects: [] }; }
+  } catch { return { projects: [], deletedProjects: [], revivedProjects: [] }; }
+};
+
+/* ❗ « JE RESTAURE LES PROJETS ET RIEN NE SE PASSE » — LA PHRASE QUI EXPLIQUE.
+   Après un import (« restore projects »), on regarde ce que le magasin contient
+   VRAIMENT. Deux causes, et deux seulement, font qu'un projet du fichier n'est
+   pas là :
+     • il a une TOMBE (« Delete project ») — la ré-adoption d'une copie n'annule
+       JAMAIS une suppression : c'était le « nothing happens », en silence ;
+     • il est attaché à un AUTRE dataset — écrit, mais invisible dans celui-ci.
+   On nomme les projets concernés et on donne la marche à suivre, au lieu de
+   laisser croire que le fichier était vide ou que le bouton n'a rien fait.
+   Rend '' quand il n'y a rien à dire (tout est déjà là, ou aucun projet). */
+const describeProjectRestore = (fileProjects) => {
+  const list = (Array.isArray(fileProjects) ? fileProjects : []).filter((p) => p && p.id);
+  if (!list.length) return '';
+  const known = new Set(loadProjects('').map((p) => p && String(p.id)));
+  const missing = list.filter((p) => !known.has(String(p.id)));
+  if (!missing.length) {
+    /* Tous connus de ce poste : reste à voir s'ils appartiennent au dataset
+       ouvert (sinon ils sont écrits mais invisibles ici). */
+    const here = new Set(loadProjects().map((p) => p && String(p.id)));
+    const elsewhere = list.filter((p) => !here.has(String(p.id)));
+    if (!elsewhere.length) return '';
+    const names = elsewhere.slice(0, 5).map((p) => `${p.name || p.id} (${p.datasetId || 'no dataset'})`).join(', ');
+    return `This file carries ${list.length} project(s), and they ARE on this device — but attached to ANOTHER `
+      + `dataset (${names}), so this dataset does not show them.\n\n`
+      + 'Open the dataset they belong to (or check that the file was not taken from another dataset).';
+  }
+  const names = missing.slice(0, 5).map((p) => p.name || p.id).join(', ');
+  const rest = missing.length > 5 ? ` (+${missing.length - 5})` : '';
+  return `This file carries ${list.length} project(s): ${list.length - missing.length} restored, `
+    + `${missing.length} NOT restored (${names}${rest}).\n\n`
+    + 'A project removed with “Delete project” cannot come back from a simple restore: the deletion is '
+    + 'remembered (a “tombstone”), and every copy — this file, the dataset document, the Drive index — '
+    + 'respects it. The restore DID work, on the projects that were not deleted; the silence was the defect.\n\n'
+    + 'TWO STEPS TO GET IT BACK:\n'
+    + '1. Projects → “🗑 Recently deleted” → ↩ Restore on the project (this lifts the deletion, on every device);\n'
+    + '2. then run this “📂 Load HTML” again with “Projets” checked — the copy held by this file comes in.\n'
+    + 'If a copy also lives in the dataset document or the Drive index, step 1 alone brings it back when the '
+    + 'dataset is reopened (🔄).';
 };
 
 const compressDatasetForSave = (raw) => {
@@ -3358,6 +3453,21 @@ useEffect(() => {
     const s = pruned.state;
     const loadedTests = selectionHasTests(picked) ? (pendingTests || []) : [];
     let targetId = currentDatasetId;
+    /* Le verdict de la restauration des projets ('' = rien à dire) : il est
+       affiché à la FIN, une fois la fenêtre d'import refermée — « rien ne se
+       passe » devient une phrase qui dit quoi faire (describeProjectRestore). */
+    let projectRestoreNote = '';
+    /* ❗ PREMIER CAS DE SILENCE : le fichier lui-même n'a RIEN à donner. Une
+       sauvegarde prise APRÈS la disparition des projets porte « Projets — vide »,
+       et l'import ne peut alors rien ramener : c'est exactement « nothing
+       happens » — il faut le dire, et dire où est la copie d'avant. */
+    if ((Array.isArray(picked) ? picked : []).indexOf('data:projects') !== -1
+        && (!Array.isArray(s.projects) || s.projects.length === 0)) {
+      projectRestoreNote = 'The “Projets” item of this file is EMPTY (the import window shows “vide” beside it): '
+        + 'this backup was taken when the project list was already empty, so it carries no project to give back.\n\n'
+        + 'Pick an OLDER backup (📂 Load HTML on an earlier file) — the project’s copy is in it. A project deleted on '
+        + 'this device, on the other hand, is restored from Projects → “🗑 Recently deleted” (↩ Restore).';
+    }
 
     /* Restauration d’une base d’administration : tout le contenu vit dans
        s.administration (aucune expérience). Si la base actuellement ouverte
@@ -3444,9 +3554,19 @@ useEffect(() => {
       // Projects live in localStorage (not React state) — restore them here.
       // Les SUPPRESSIONS portées par le fichier sont adoptées AVANT la
       // réécriture des projets : une sauvegarde encore porteuse d'un projet
-      // supprimé ne doit pas le faire revenir.
+      // supprimé ne doit pas le faire revenir. Ses RESTAURATIONS aussi — une
+      // levée plus récente que la tombe l'emporte : c'est le seul moyen de faire
+      // revenir un projet supprimé avec une sauvegarde.
+      adoptRevivedProjects(s.revivedProjects);
       adoptDeletedProjects(s.deletedProjects);
       if (Array.isArray(s.projects)) saveProjects(s.projects);
+      /* ❗ « JE RESTAURE LES PROJETS ET RIEN NE SE PASSE » — LE SILENCE EST
+         RÉPARÉ ICI. Un projet du fichier absent du magasin après l'écriture ne
+         peut venir que d'une tombe (« Delete project ») : ré-adopter une copie
+         n'annule jamais une suppression. On dit lesquels, et où est le chemin de
+         retour (page Projets → « 🗑 Recently deleted »), au lieu de laisser
+         l'utilisateur devant une liste inchangée. */
+      projectRestoreNote = describeProjectRestore(s.projects) || projectRestoreNote;
       // NOTE: operators and authSettings are NEVER imported from HTML
       // They are global app-level identity/security state — not dataset state.
       // if (s.operators !== undefined) setOperators(...);
@@ -3491,6 +3611,10 @@ useEffect(() => {
         const additions = s.projects.filter((p) => p && p.id && !ids.has(p.id));
         if (additions.length) saveProjects([...existing, ...additions]);
       }
+      /* La même vérité qu'en mode « remplacer » : un projet du fichier qui n'est
+         pas arrivé (il a une tombe) est DIT — un import muet laisse croire à une
+         panne (il est vrai que les projets déjà présents, eux, sont bien là). */
+      projectRestoreNote = describeProjectRestore(s.projects) || projectRestoreNote;
 
       if (newTests.length > 0) {
         setActiveTestId(newTests[0].id);
@@ -3639,6 +3763,11 @@ if (s.mandatoryFields !== undefined) setMandatoryFields((prev) => [...new Set([.
 
     setPendingLoad(null);
     setLoadPick(null);
+    /* ❗ LE VERDICT DES PROJETS, une fois la fenêtre fermée : « rien ne se passe »
+       est exactement le défaut réparé ici (voir describeProjectRestore). */
+    if (projectRestoreNote) {
+      setDialog({ type: 'alert', title: 'Projects not restored', message: projectRestoreNote });
+    }
     setCurrentModule('tests');
 
     if (window.innerWidth < 768) setIsSidebarOpen(false);
@@ -5651,6 +5780,7 @@ const openDataset = (dset, { keepPlace = false } = {}) => {
             {pageSlot('projects', () => (<ProjectsModule
               currentUser={currentUser} operatorNames={operatorNames} handlePrint={handlePrint}
               setCurrentModule={setCurrentModule} setCurrentProjectId={setCurrentProjectId}
+              onRestoreProject={restoreDeletedProject}
             />))}
             {pageSlot('project-detail', () => (<ProjectDetailModule
               currentUser={currentUser} setCurrentModule={setCurrentModule}

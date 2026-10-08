@@ -301,6 +301,40 @@ export const deletedDatasetMirrorIds = (mirror) => new Set(
   normalizeDriveMirror(mirror).tombstones.filter((t) => !t.path).map((t) => t.id).filter(Boolean)
 );
 
+/**
+ * OUBLIER les tombes d'un CHEMIN — LE GESTE DE RETOUR d'un projet RESTAURÉ.
+ *
+ * POURQUOI : « Delete project » met le dossier du projet à la corbeille ET
+ * inscrit son chemin en pierre tombale (`mirrorDeleteProject`), pour qu'il ne se
+ * recrée pas. Tant que cette tombe est là, la couche Drive REFUSE de recréer
+ * `projects/<projet>` (`resolveDrivePathFromNames` → `isDrivePathMirrorDeleted`) :
+ * le projet restauré reviendrait à l'écran mais ses FIGURES et ses fichiers ne
+ * remonteraient plus jamais — une réparation à moitié faite.
+ *
+ * Une restauration EXPLICITE lève donc aussi la tombe de chemin. Le dataset
+ * entier supprimé (tombe SANS chemin) n'est jamais concerné : remettre un projet
+ * ne ressuscite pas son dataset.
+ * @returns {object} le miroir sans ces tombes (le miroir tel quel si aucune).
+ */
+export const withoutDrivePathTombstones = (mirror, { dataset = {}, path = '' } = {}) => {
+  const current = normalizeDriveMirror(mirror);
+  const wanted = { id: dataset.id || dataset.datasetId || '', name: dataset.name || dataset.datasetName || '' };
+  const wantedPath = cleanMirrorPath(path);
+  if (!wantedPath) return current;
+  const kept = current.tombstones.filter((t) => !(
+    t.path
+    && sharesDatasetIdentity(t, wanted)
+    && (wantedPath === t.path || wantedPath.indexOf(`${t.path}/`) === 0)
+  ));
+  if (kept.length === current.tombstones.length) return current;
+  return normalizeDriveMirror({
+    tombstones: kept,
+    datasets: current.datasets,
+    projects: current.projects,
+    datasetDirs: current.datasetDirs
+  });
+};
+
 
 /* ── Registre des dossiers (identifiants Drive partagés entre les postes) ──── */
 

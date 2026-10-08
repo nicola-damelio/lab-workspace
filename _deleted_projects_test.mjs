@@ -20,6 +20,10 @@
      • la liste est bornée, mais une suppression récente n'est jamais oubliée ;
      • quand le DATASET est supprimé, ses tombes partent avec lui (sinon un
        dataset recréé avec le même id n'afficherait plus jamais ses projets) ;
+     • et une suppression n'est plus un aller SANS RETOUR : la LEVÉE de tombe
+       (un projet restauré) est une donnée qui voyage avec la tombe, la plus
+       récente des deux gagnant — c'est ce qui manquait quand « Load HTML →
+       restore projects » ne faisait rien, en silence (sections 8 et 9) ;
      • et la page projet / App.jsx appliquent réellement tout cela.
    ========================================================================= */
 import assert from 'node:assert/strict';
@@ -151,7 +155,7 @@ has(DETAIL, 'import { loadProjects, saveProjects, saveProjectsChecked, lightenPr
   '…en important la fonction de projectsModule');
 has(PROJECTS, 'recordProjectDeletion(target || { id, datasetId: activeProjectDataset });',
   'la liste des projets note la suppression avec le dataset du projet');
-has(PROJECTS, 'const live = withoutDeletedProjects(Array.isArray(list) ? list : [], readDeletedProjects());',
+has(PROJECTS, 'const incoming = withoutDeletedProjects(Array.isArray(list) ? list : [], tombstones);',
   'écrire les projets écarte toute copie d’un projet supprimé (dernier rempart)');
 has(PROJECTS, 'const all = withoutDeletedProjects(readRawProjects(), readDeletedProjects());',
   '…et lire les projets aussi');
@@ -170,4 +174,75 @@ has(APP, 'adoptDeletedProjects(s.deletedProjects);',
 has(APP, 'deleted: s.deletedProjects',
   '…et la restauration cloud aussi (projet supprimé absent des deux côtés)');
 
-console.log(`✅ ${passed} tests passés (projets supprimés : rien ne ressuscite)`);
+/* ── 8. UNE TOMBE PEUT ÊTRE LEVÉE — « le projet supprimé doit revenir » ─────
+      Le rapport : « there was a project called “tmp” with figures and text. It
+      looks gone. If I reload from HTML and select only to restore projects,
+      nothing happens. » Rien ne POUVAIT se passer : la tombe était DÉFINITIVE,
+      et les trois chemins qui ramènent un projet depuis une copie (import d'une
+      sauvegarde, fusion du payload, index du Drive) l'appliquent tous — le
+      projet ne revenait par aucun moyen, et sans un mot. La levée est donc une
+      DONNÉE (la date de la restauration) que toute LECTURE applique : l'import,
+      la fusion et l'index suivent sans rien savoir d'elle. */
+const TB = T.addTombstone([], { id: 'tmp', datasetId: DS }, 100);
+const RV = T.addRevival([], { id: 'tmp', datasetId: DS }, 200);
+eq(RV, [{ id: 'tmp', datasetId: DS, revivedAt: 200 }],
+  'restaurer un projet note son id, son dataset et l’instant');
+eq(T.withoutRevivedProjects(TB, RV), [], 'une levée plus récente annule la tombe (le projet revient)');
+eq(T.withoutRevivedProjects(TB, T.addRevival([], { id: 'tmp', datasetId: DS }, 50)).map((t) => t.id), ['tmp'],
+  'une levée PLUS ANCIENNE que la suppression ne l’annule pas (il a été supprimé de nouveau depuis)');
+eq(T.withoutRevivedProjects(TB, T.addRevival([], { id: 'tmp', datasetId: DS }, 100)).map((t) => t.id), [],
+  'à date égale, la restauration l’emporte (le geste explicite de l’utilisateur gagne)');
+eq(T.withoutRevivedProjects(TB, []), TB, 'sans levée, la tombe tient (comportement d’avant, inchangé)');
+eq(T.withoutRevivedProjects(TB, T.addRevival([], { id: 'other', datasetId: DS }, 200)), TB,
+  'la levée d’un autre projet ne blanchit pas celui-ci');
+eq(T.withoutRevivedProjects(TB, T.addRevival([], { id: 'tmp', datasetId: 'ds_other' }, 200)).map((t) => t.id), ['tmp'],
+  'une levée faite dans un AUTRE dataset ne blanchit pas la copie de celui-ci');
+eq(T.withoutRevivedProjects([...TB, { id: 'x', datasetId: DS, deletedAt: 1 }], RV).map((t) => t.id), ['x'],
+  'les autres tombes restent en place : on ne rouvre QUE le projet restauré');
+eq(T.normalizeRevivals(T.addRevival(RV, { id: 'tmp', datasetId: DS }, 300))[0].revivedAt, 300,
+  'restaurer deux fois garde la levée la plus récente');
+eq(T.withoutRevival(RV, { id: 'tmp', datasetId: DS }), [],
+  'supprimer à nouveau le projet retire sa levée (la suppression neuve l’emporte)');
+eq(T.normalizeRevivals(T.normalizeRevivals(RV)), RV, 'la normalisation des levées est idempotente');
+eq(T.addRevival([], { datasetId: DS }, 5), [], 'un id vide ne crée pas de levée');
+eq(T.revivalsForDataset([{ id: 'tmp', revivedAt: 5 }], 'ds2')[0].datasetId, 'ds2',
+  'une levée portée par un payload appartient au dataset qui l’a écrite');
+eq(T.revivalsForDataset([{ id: 'tmp', datasetId: 'ds1', revivedAt: 5 }], 'ds2')[0].datasetId, 'ds1',
+  '…et une levée qui nomme déjà son dataset n’est pas réattribuée');
+
+/* ── 9. LE RETOUR EST RÉELLEMENT BRANCHÉ ──────────────────────────────────
+      Une règle juste que PERSONNE n'appelle ne répare rien — et un bouton muet
+      est exactement le défaut signalé. */
+const WORKSPACE = readFileSync('./src/utils/workspaceDrive.js', 'utf8');
+const MIRROR = readFileSync('./src/utils/driveMirrorStore.js', 'utf8');
+has(PROJECTS, 'const readDeletedProjects = () => withoutRevivedProjects(readRawTombstones(), readRevivals());',
+  'la lecture des tombes applique les levées — UN SEUL entonnoir, donc l’import, la fusion et l’index suivent');
+has(PROJECTS, 'export const reviveDeletedProject = (id, datasetArg) => {', 'le geste de retour existe');
+has(PROJECTS, 'export const loadDeletedProjectsForDataset = (datasetArg) => {',
+  '…et la page peut LISTER les projets supprimés (le geste doit être atteignable)');
+has(PROJECTS, 'writeRevivals(withoutRevival(readRevivals(), { id: project.id, datasetId }));',
+  'supprimer à nouveau un projet restauré le supprime pour de bon');
+has(PROJECTS, 'reviveDeletedProject(id, currentDatasetId);', '…et App.jsx lève la tombe du dataset ouvert');
+has(APP, 'revivedProjects: loadRevivedProjects()',
+  'le payload du dataset (cloud / sauvegarde HTML) transporte les RESTAURATIONS, comme les suppressions');
+has(APP, 'adoptRevivedProjects(s.revivedProjects);',
+  'restaurer une sauvegarde HTML adopte ses restaurations AVANT ses suppressions');
+has(APP, 'adoptRevivedProjects(state.revivedProjects)',
+  '…et l’index du Drive aussi (une restauration faite ailleurs arrive ici)');
+has(APP, 'const restoreDeletedProject = async (id) => {',
+  'App.jsx porte le geste complet : lever la tombe PUIS ré-adopter la copie du Drive');
+has(APP, 'onRestoreProject={restoreDeletedProject}', '…et le passe à la page Projets');
+has(APP, 'projectRestoreNote = describeProjectRestore(s.projects) || projectRestoreNote;',
+  'un import qui ne ramène pas un projet le DIT (fini le « rien ne se passe »)');
+has(APP, 'this backup was taken when the project list was already empty',
+  '…et un fichier dont l’élément « Projets » est VIDE le dit aussi (sauvegarde prise après la perte)');
+has(APP, 'if (projectRestoreNote) {',
+  '…avec le verdict affiché une fois la fenêtre d’import refermée');
+has(WORKSPACE, 'revivedProjects: normalizeRevivals(revivedProjects),',
+  'state.json porte les restaurations (sinon un poste qui garde la tombe la re-publierait)');
+has(WORKSPACE, 'revivedProjects: parsed ? parsed.revivedProjects : []',
+  '…et les rend à l’appelant pour qu’il les adopte');
+has(MIRROR, 'export const withoutDrivePathTombstones = (mirror, { dataset = {}, path = ',
+  'le dossier Drive du projet restauré peut se recréer (sinon ses figures ne remonteraient jamais)');
+
+console.log(`✅ ${passed} tests passés (projets supprimés : rien ne ressuscite — et un projet restauré revient)`);

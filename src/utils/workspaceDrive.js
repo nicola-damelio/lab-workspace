@@ -45,7 +45,7 @@ import { sanitizeSlug } from './driveNaming';
 import {
   normalizeDriveMirror, mergeDriveMirrors, DRIVE_MIRROR_EVENT, readDriveMirror, writeDriveMirror
 } from './driveMirrorStore';
-import { normalizeTombstones } from './projectTombstones';
+import { normalizeTombstones, normalizeRevivals } from './projectTombstones';
 
 /** Dossier réservé à l'application (index, contenu des datasets). */
 export const WORKSPACE_DIR = '_workspace';
@@ -114,7 +114,8 @@ const readDriveMirrorSafe = () => {
 
 /** L'état complet, prêt à être écrit sur le Drive. PUR. */
 export const buildWorkspaceState = ({
-  datasets = [], projects = [], mirror = null, deletedProjects = [], at = new Date().toISOString()
+  datasets = [], projects = [], mirror = null, deletedProjects = [], revivedProjects = [],
+  at = new Date().toISOString()
 } = {}) => {
   const folders = normalizeDriveMirror(mirror || readDriveMirrorSafe());
   const datasetEntries = (Array.isArray(datasets) ? datasets : [])
@@ -132,6 +133,10 @@ export const buildWorkspaceState = ({
     datasets: datasetEntries,
     projects: projectEntries,
     deletedProjects: normalizeTombstones(deletedProjects),
+    /* ↘ LES LEVÉES DE TOMBE voyagent avec l'index du Drive, sans quoi un poste
+       qui garde la tombe d'un projet restauré la re-publierait ici : le projet
+       reviendrait… puis disparaîtrait encore. Même forme que les tombes. */
+    revivedProjects: normalizeRevivals(revivedProjects),
     mirror: folders
   };
 };
@@ -167,6 +172,7 @@ export const parseWorkspaceState = (raw) => {
     datasets,
     projects,
     deletedProjects: normalizeTombstones(data.deletedProjects),
+    revivedProjects: normalizeRevivals(data.revivedProjects),
     mirror: normalizeDriveMirror(data.mirror)
   };
 };
@@ -174,7 +180,9 @@ export const parseWorkspaceState = (raw) => {
 /** Fusion de deux états (ce poste + le Drive) : les datasets des deux côtés sans
  *  doublon (le plus récemment modifié décrit), les tombes ADDITIONNÉES. PUR. */
 export const mergeWorkspaceStates = (local, remote) => {
-  const empty = { datasets: [], projects: [], deletedProjects: [], mirror: null, savedAt: '' };
+  const empty = {
+    datasets: [], projects: [], deletedProjects: [], revivedProjects: [], mirror: null, savedAt: ''
+  };
   const a = parseWorkspaceState(local) || empty;
   const b = parseWorkspaceState(remote) || empty;
   const pick = (listA, listB) => {
@@ -192,6 +200,7 @@ export const mergeWorkspaceStates = (local, remote) => {
     datasets: pick(a.datasets, b.datasets),
     projects: pick(a.projects, b.projects),
     deletedProjects: normalizeTombstones([...a.deletedProjects, ...b.deletedProjects]),
+    revivedProjects: normalizeRevivals([...a.revivedProjects, ...b.revivedProjects]),
     mirror: mergeDriveMirrors(a.mirror, b.mirror)
   };
 };
@@ -480,6 +489,10 @@ export const adoptWorkspaceState = (state) => {
        était définitive à l'écran. L'appelant (App.jsx) la fusionne maintenant
        en AJOUT SEUL — rien de ce qui est enregistré n'est écrasé. */
     projects: parsed ? parsed.projects : [],
-    deletedProjects: parsed ? parsed.deletedProjects : []
+    deletedProjects: parsed ? parsed.deletedProjects : [],
+    /* …et les LEVÉES DE TOMBE : « ce projet supprimé a été restauré ailleurs ».
+       L'appelant les adopte AVANT d'appliquer les tombes, sinon la restauration
+       faite sur un autre poste serait écrasée par la tombe que celui-ci garde. */
+    revivedProjects: parsed ? parsed.revivedProjects : []
   };
 };

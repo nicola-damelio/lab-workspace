@@ -68,6 +68,7 @@ export const formatStoreSize = (bytes) => {
 export const LOCAL_STORE_LABELS = {
   labWorkspace_projects: 'projects (this browser)',
   labWorkspace_deletedProjects: 'deleted projects',
+  labWorkspace_revivedProjects: 'restored projects',
   labFiguresLibrary: 'dataset figure list',
   lab_datasets_local_v2: 'datasets kept on this device',
   labWorkspace_publications: 'papers',

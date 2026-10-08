@@ -86,7 +86,8 @@ has(PROJECTS, 'if (adopted) writeRawProjects(Array.from(byId.values()));',
   '…par une fusion en AJOUT SEUL (rien n’est écrasé ni effacé)');
 has(PROJECTS, 'if (isProjectDeleted(p, tombstones)) return;   // supprimé : jamais ré-adopté',
   '…qui n’annule JAMAIS une suppression (une tombe reste une tombe)');
-has(APP, 'adoptWorkspaceProjects } from', 'App.jsx importe le ré-adoptant');
+has(APP, 'adoptWorkspaceProjects, loadRevivedProjects, adoptRevivedProjects, reviveDeletedProject } from',
+  'App.jsx importe le ré-adoptant (et le geste de retour, qui lève la tombe)');
 has(APP, 'try { adoptWorkspaceProjects(adopted.projects); } catch { /* magasin indisponible */ }',
   '…et l’appelle au démarrage, juste après avoir adopté les tombes');
 

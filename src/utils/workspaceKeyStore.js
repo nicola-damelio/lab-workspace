@@ -51,7 +51,11 @@ export const UNSYNCED_KEYS = [
   'labDriveMirror', 'labKeySyncMeta',                          // déjà synchronisés
   'labDriveFolderId', 'labDriveFolderDatasetId', 'labDriveFolderName',
   'labPendingUploads', 'labDriveFileRegistry', 'labDeletedProjects',
-  'labWorkspace_projects', 'labWorkspace_deletedProjects'
+  'labWorkspace_projects', 'labWorkspace_deletedProjects',
+  /* Les projets RESTAURÉS voyagent par le payload du dataset et par
+     `_workspace/state.json`, exactement comme leurs suppressions (voir
+     projectTombstones.js) : pas de deuxième transport. */
+  'labWorkspace_revivedProjects'
 ];
 
 /** Cette clé doit-elle voyager ? */

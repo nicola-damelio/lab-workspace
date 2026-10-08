@@ -87,6 +87,7 @@ const state = W.buildWorkspaceState({
   projects: [{ id: 'p1', name: 'Aphids', datasetId: 'ds1' }],
   mirror,
   deletedProjects: [{ id: 'prj_9', datasetId: 'ds1', deletedAt: 4 }],
+  revivedProjects: [{ id: 'prj_8', datasetId: 'ds1', revivedAt: 6 }],
   at: '2026-02-01T10:00:00.000Z'
 });
 eq(state.kind, W.WORKSPACE_STATE_KIND, 'l’état porte une marque reconnaissable');
@@ -99,6 +100,11 @@ eq(state.datasets[1].driveFolder, undefined, 'un dataset sans dossier connu n’
 const round = W.parseWorkspaceState(W.workspaceStateJson(state));
 eq(round.datasets.map((d) => d.id).sort(), ['ds1', 'ds3'], 'l’état écrit puis relu rend les mêmes datasets');
 eq(round.mirror.tombstones.length, 1, '…et les mêmes tombes');
+/* ↘ Un projet RESTAURÉ (« tmp ») doit revoyager avec l'index : sans cela, le
+   poste dont la copie porte encore la tombe la re-publierait et le projet
+   disparaîtrait une seconde fois. */
+eq(round.revivedProjects.map((r) => r.id), ['prj_8'],
+  '…et les projets RESTAURÉS (une levée de tombe voyage comme une tombe)');
 eq(W.parseWorkspaceState('pas du json'), null, 'un contenu illisible ne casse rien (null)');
 eq(W.parseWorkspaceState('{"kind":"autre-app"}'), null,
   'un fichier d’une autre application est refusé (on n’écrase pas n’importe quoi)');
@@ -112,6 +118,7 @@ const localState = {
   datasets: [{ id: 'ds1', title: 'Pepper (local)', updatedAt: 200 }],
   projects: [],
   deletedProjects: [{ id: 'prj_local', datasetId: 'ds1', deletedAt: 1 }],
+  revivedProjects: [{ id: 'prj_local', datasetId: 'ds1', revivedAt: 2 }],
   mirror: { tombstones: [{ id: 'dsX', name: '', path: '', deletedAt: 1 }] }
 };
 const remoteState = {
@@ -123,6 +130,7 @@ const remoteState = {
   ],
   projects: [{ id: 'p9', name: 'Remote project', datasetId: 'ds9' }],
   deletedProjects: [{ id: 'prj_remote', datasetId: 'ds9', deletedAt: 2 }],
+  revivedProjects: [{ id: 'prj_other', datasetId: 'ds9', revivedAt: 3 }],
   mirror: { tombstones: [{ id: 'ds9', name: '', path: '', deletedAt: 3 }] }
 };
 const fused = W.mergeWorkspaceStates(localState, remoteState);
@@ -131,6 +139,8 @@ eq(fused.datasets.find((d) => d.id === 'ds1').title, 'Pepper (local)',
 eq(fused.datasets.map((d) => d.id).sort(), ['ds1', 'ds9'], 'les datasets des deux côtés sont réunis');
 eq(fused.projects.map((p) => p.id), ['p9'], 'les projets du Drive sont adoptés');
 eq(fused.deletedProjects.length, 2, 'les suppressions de projets des deux côtés sont conservées');
+eq(fused.revivedProjects.map((r) => r.id).sort(), ['prj_local', 'prj_other'],
+  '…tout comme les RESTAURATIONS faites de part et d’autre (une levée ne se perd pas dans la fusion)');
 eq(fused.mirror.tombstones.length, 2, '…et celles du miroir aussi');
 ok(S.isDatasetMirrorDeleted(fused.mirror, { id: 'ds9' }),
   'un dataset supprimé sur le Drive l’est ici (il ne revient pas)');

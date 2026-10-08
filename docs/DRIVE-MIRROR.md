@@ -4303,3 +4303,70 @@ se relisent sans erreur mais **sans milieu** (`bgGradientOf` rend toujours
 `midOn: false`). La rampe a donc exactement **deux arrêts, A → B**, dans le CSS
 du canvas, dans les films 🎬🎞 et sous la still du ✨ Ray.
 
+### ④ « Il y avait un projet “tmp” avec des figures et du texte … et une expérience a disparu »
+
+**Signalé.** « Now I see the projects, but there was a project called *tmp* with
+figures and text. It looks gone. If I reload from HTML and select only to restore
+projects, nothing happens. There was also an experiment in the p53H project that
+has gone, but its folders are still on Drive (it was called *pdbs_interactions*). »
+
+**La cause du silence (projets).** La tombe écrite par « Delete project » était
+**DÉFINITIVE** : aucun geste de l'application ne la retirait, et les trois chemins
+qui ramènent un projet depuis une copie — import d'une sauvegarde HTML, fusion du
+payload du dataset (`mergeProjectsFromCloud`), ré-adoption de
+`_workspace/state.json` — l'appliquent **tous**. L'import écrivait donc la liste du
+fichier **sans** le projet concerné, sans un mot : d'où « nothing happens ». Une
+suppression protégeait bien contre la « résurrection », mais c'était un **aller
+sans retour**.
+
+**La réparation — LA LEVÉE DE TOMBE.** Restaurer est un geste **explicite**, et la
+levée est une **donnée** (id + dataset + date de restauration) qui voyage **comme
+la tombe** :
+
+| Règle | Où |
+| --- | --- |
+| Une tombe peut être **levée** : la levée est une donnée, et la plus **récente** des deux dates l'emporte | `utils/projectTombstones.js` (`addRevival`, `withoutRevival`, `withoutRevivedProjects`, `normalizeRevivals`) |
+| Restaurer puis supprimer à nouveau ⇒ le projet repart (la levée est retirée en même temps que la tombe arrive) | `projectsModule.recordProjectDeletion` |
+| **Une seule lecture** applique les levées — l'import, la fusion et l'index du Drive suivent donc sans rien savoir d'elles | `projectsModule.readDeletedProjects` (`withoutRevivedProjects`) |
+| Le geste est **atteignable** : Projets → « 🗑 Recently deleted » → ↩ Restore | `ProjectsModule` (`loadDeletedProjectsForDataset`) → `App.jsx.restoreDeletedProject` |
+| La levée **voyage** (payload du dataset **et** `_workspace/state.json`) : sinon un poste qui garde la tombe la re-publierait et le projet disparaîtrait une seconde fois | `App.jsx.cloudProjectsPayload` (`revivedProjects`), `workspaceDrive` (`buildWorkspaceState`, `parseWorkspaceState`, `mergeWorkspaceStates`, `adoptWorkspaceState`) |
+| Le **dossier Drive** du projet restauré peut se recréer — sans quoi ses figures et ses fichiers ne remonteraient plus jamais (`resolveDrivePathFromNames` refuse un chemin tombstoned) | `driveMirrorStore.withoutDrivePathTombstones`, appelé par `restoreDeletedProject` |
+| Un import qui ne ramène pas un projet **le dit**, avec la marche à suivre (fini le bouton muet) | `App.jsx.describeProjectRestore` → `confirmLoad` (`projectRestoreNote`) |
+
+**La marche à suivre (le scénario « tmp »).** ① Projets → « 🗑 Recently deleted »
+→ ↩ Restore (la tombe est levée, la levée part sur le Drive) ; ② rejouer
+`📂 Load HTML` avec « Projets » coché — la copie portée par le fichier entre
+maintenant ; ③ le **contenu** (texte, références, figures) revient avec la copie
+la plus **riche** : `_workspace/state.json` ne porte qu'un résumé de projet, le
+document du dataset a le tout — il reprend le projet à l'ouverture (🔄). Et si le
+**dossier Drive** du projet est dans la corbeille de Google Drive (« Delete
+project » y met `projects/<projet>`), le restaurer aussi : la levée rouvre le
+chemin, elle ne vide pas la corbeille de Google (`markAttachmentsDeleted`, lui,
+n'a fait que renommer les fichiers référencés en `…_deleted`).
+
+**L'expérience perdue (`pdbs_interactions`).** Rien dans le code ne retire une
+expérience : `tests` n'a pas de tombe (voir `utils/experimentRules.js`, qui exige
+seulement qu'une expérience ait un projet). Deux cas, et l'écran les distingue :
+
+* l'expérience est **encore dans la liste « Expériences »** mais plus dans le
+  projet : c'est le **lien** qui est perdu — la page du projet offre
+  « Link existing test: » (liste des expériences visibles, groupées par nom) ;
+  c'est le geste à faire, aucun fichier n'est nécessaire ;
+* elle n'y est plus non plus : le **document du dataset** ne la porte plus. La
+  copie d'avant existe dans une **sauvegarde** (fichier HTML hebdomadaire, ou
+  `_workspace/datasets/<id>.json` d'avant la perte). La fenêtre d'import annonce le
+  compte de chaque élément (« Expériences — N expériences ») : choisir la
+  sauvegarde où le compte est le bon, cocher **Expériences**, choisir **Append**
+  (l'ajout ne touche à rien d'autre), puis **relier** l'expérience au projet p53H
+  par « Link existing test: ». Les dossiers Drive, eux, sont nommés d'après
+  `projects/<projet>/<expérience>` : ils se retrouvent d'eux-mêmes (aucun chemin ne
+  dépend de l'identifiant de l'expérience).
+
+*Vérifier :* `node _deleted_projects_test.mjs` — les levées (la plus récente gagne,
+une levée d'un autre dataset ne blanchit pas celle-ci, les autres tombes restent,
+idempotence) **et le branchement réel** (un seul entonnoir de lecture, le geste
+présent dans `App.jsx` et dans la page, le transport par le payload et par
+`state.json`, la levée du chemin Drive) ; `node _workspace_drive_test.mjs` —
+`revivedProjects` construit, relu et fusionné ; `node _project_store_guard_test.mjs`
+— le verrou de ① est intact.
+

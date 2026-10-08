@@ -4,9 +4,10 @@ import { mirrorDeleteProject } from '../../utils/driveMirror';
 import { readLocalStoreUsage, storageFreedText, storageRefusedText } from '../../utils/localStoreRoom';
 import { pruneRecoverableLibraryCaches } from '../../utils/figuresLibrary';
 import {
-  DELETED_PROJECTS_KEY, normalizeTombstones, mergeTombstones, tombstonesForDataset,
-  isProjectDeleted, withoutDeletedProjects, addTombstone, withoutDatasetTombstones,
-  protectUntombstoned
+  DELETED_PROJECTS_KEY, REVIVED_PROJECTS_KEY, normalizeTombstones, normalizeRevivals,
+  mergeTombstones, tombstonesForDataset, isProjectDeleted, withoutDeletedProjects,
+  addTombstone, withoutDatasetTombstones, protectUntombstoned,
+  withoutRevivedProjects, addRevival, withoutRevival, revivalsForDataset
 } from '../../utils/projectTombstones';
 
 /* =========================================================================
@@ -100,7 +101,7 @@ export const getActiveProjectDataset = () => activeProjectDataset;
  * CHAQUE lecture, CHAQUE écriture et CHAQUE fusion, et App.jsx la range dans
  * le payload du dataset pour que la suppression atteigne les autres postes.
  * ---------------------------------------------------------------------- */
-const readDeletedProjects = () => {
+const readRawTombstones = () => {
   try {
     const raw = localStorage.getItem(DELETED_PROJECTS_KEY);
     if (raw) {
@@ -116,17 +117,99 @@ const writeDeletedProjects = (list) => {
   } catch { /* ignore */ }
 };
 
+/* ── LES LEVÉES DE TOMBE : « ce projet supprimé doit revenir » ──────────────
+   Une suppression est définitive… sauf quand l'utilisateur dit le contraire. La
+   levée (la date de restauration) est écrite ici et APPLIQUÉE PAR LA SEULE
+   LECTURE des tombes (`readDeletedProjects`) : tous les chemins qui ramènent un
+   projet d'une copie la respectent donc sans rien savoir d'elle. Voir le
+   commentaire « une tombe peut être levée » de utils/projectTombstones.js. */
+const readRevivals = () => {
+  try {
+    const raw = localStorage.getItem(REVIVED_PROJECTS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch { /* ignore malformed */ }
+  return [];
+};
+const writeRevivals = (list) => {
+  try {
+    localStorage.setItem(REVIVED_PROJECTS_KEY, JSON.stringify(normalizeRevivals(list)));
+  } catch { /* ignore */ }
+};
+
+/** LES TOMBES QUI TIENNENT ENCORE — la seule lecture des projets supprimés :
+ *  celles que l'utilisateur n'a pas restaurées (voir projectTombstones.js). */
+const readDeletedProjects = () => withoutRevivedProjects(readRawTombstones(), readRevivals());
+
 /** Les projets supprimés sur ce navigateur (liste prête à être portée par le
  *  payload du dataset — voir App.jsx cloudProjectsPayload). */
 export const loadDeletedProjects = () => normalizeTombstones(readDeletedProjects());
+
+/** Les projets supprimés d'UN dataset : la liste que la page Projets montre
+ *  (« 🗑 Recently deleted ») pour offrir le chemin de retour. Une tombe sans
+ *  dataset est montrée partout (une suppression faite hors dataset supprime
+ *  l'id partout — même règle que isProjectDeleted). */
+export const loadDeletedProjectsForDataset = (datasetArg) => {
+  const datasetId = datasetArg != null ? String(datasetArg) : String(activeProjectDataset || '');
+  return loadDeletedProjects()
+    .filter((t) => !t.datasetId || !datasetId || t.datasetId === datasetId);
+};
+
+/** Les levées de tombe de ce navigateur : elles voyagent avec le payload du
+ *  dataset, comme les suppressions — sinon un autre poste, qui garde la tombe,
+ *  la re-publierait et le projet restauré disparaîtrait une seconde fois. */
+export const loadRevivedProjects = () => normalizeRevivals(readRevivals());
+
+/** Les levées portées par un payload de dataset : elles rejoignent celles de ce
+ *  navigateur (une restauration faite ailleurs s'applique donc ici aussi). */
+export const adoptRevivedProjects = (payloadRevivals, datasetArg) => {
+  const datasetId = datasetArg != null ? String(datasetArg) : (activeProjectDataset || '');
+  const next = normalizeRevivals([
+    ...readRevivals(),
+    ...revivalsForDataset(payloadRevivals, datasetId)
+  ]);
+  writeRevivals(next);
+  return next;
+};
+
+/** ↩ LE CHEMIN DE RETOUR D'UN PROJET SUPPRIMÉ — le geste qui manquait.
+ *
+ *  POURQUOI : la tombe d'un projet était DÉFINITIVE. Le rapport : « there was a
+ *  project called “tmp” with figures and text. It looks gone. If I reload from
+ *  HTML and select only to restore projects, nothing happens. » Rien ne pouvait
+ *  se passer : aucun geste ne retirait la tombe, et les trois chemins de
+ *  récupération (import d'une sauvegarde, fusion du payload, ré-adoption de
+ *  l'index du Drive) l'appliquent tous — le projet ne revenait par AUCUN moyen,
+ *  et sans un mot.
+ *
+ *  Ce que ce geste écrit : la LEVÉE (la date de restauration). La tombe n'est
+ *  pas effacée — c'est la lecture qui compare les deux dates, la plus récente
+ *  gagnant : la restauration est donc portée par le payload et par
+ *  `_workspace/state.json`, et un poste qui garde la tombe ne peut plus la
+ *  ré-imposer.
+ *  @returns {{ lifted:number, list:Array }} `lifted` = tombes réellement
+ *           annulées par ce geste (0 = le projet n'était pas supprimé). */
+export const reviveDeletedProject = (id, datasetArg) => {
+  const datasetId = datasetArg != null ? String(datasetArg) : (activeProjectDataset || '');
+  const before = readDeletedProjects().length;
+  writeRevivals(addRevival(readRevivals(), { id, datasetId }));
+  const list = readDeletedProjects();
+  return { lifted: Math.max(0, before - list.length), list };
+};
 
 /** Enregistre la suppression d'un projet : elle ne sera plus jamais annulée
  *  par une copie locale, un payload ou une sauvegarde (utils/projectTombstones). */
 export const recordProjectDeletion = (project, deletedAt) => {
   if (!project || !String(project.id || '').trim()) return loadDeletedProjects();
+  const datasetId = String(project.datasetId || activeProjectDataset || '');
+  /* Une suppression APRÈS une restauration l'emporte : la levée du projet part
+     en même temps que la tombe arrive (la plus récente des deux gagne). */
+  writeRevivals(withoutRevival(readRevivals(), { id: project.id, datasetId }));
   const next = addTombstone(readDeletedProjects(), {
     id: project.id,
-    datasetId: String(project.datasetId || activeProjectDataset || '')
+    datasetId
   }, deletedAt);
   writeDeletedProjects(next);
   return next;
@@ -647,6 +730,9 @@ export const removeProjectsOfDataset = (datasetArg) => {
   if (!datasetId) return;
   try {
     writeDeletedProjects(withoutDatasetTombstones(readDeletedProjects(), datasetId));
+    /* …et ses LEVÉES aussi : un dataset recréé avec le même id ne doit pas
+       hériter de restaurations de l'ancien (symétrique des tombes ci-dessus). */
+    writeRevivals(readRevivals().filter((r) => String((r && r.datasetId) || '') !== datasetId));
     const kept = readRawProjects().filter((p) => !(p && String(p.datasetId) === datasetId));
     /* ICI la disparition est VOULUE (le dataset n'existe plus, et ses tombes
        viennent d'être effacées) : le verrou de `writeRawProjects` est donc
@@ -871,7 +957,7 @@ const inputCls = 'border border-slate-300 rounded-lg px-2.5 py-1.5 text-sm bg-wh
 /* =====================  LIST VIEW ===================== */
 export const ProjectsModule = ({
   currentUser, handlePrint,
-  setCurrentModule, setCurrentProjectId
+  setCurrentModule, setCurrentProjectId, onRestoreProject
 }) => {
   const isSuper = currentUser?.role === 'superuser';
   const myName = currentUser?.name || '';
@@ -886,6 +972,11 @@ export const ProjectsModule = ({
      à échouer ; l'échec, LUI, s'affiche avec la mesure du magasin. */
   const [storageWarning, setStorageWarning] = useState('');
   const [storageNote, setStorageNote] = useState('');
+  /* 🗑 LES PROJETS SUPPRIMÉS DE CE DATASET (levée de tombe) et l'état du geste
+     de retour — voir le panneau « Recently deleted » en bas de la liste. */
+  const [deleted, setDeleted] = useState(loadDeletedProjectsForDataset);
+  const [restoreBusy, setRestoreBusy] = useState('');
+  const [restoreNote, setRestoreNote] = useState('');
 
   useEffect(() => {
     const res = saveProjectsRescued(projects);
@@ -915,6 +1006,48 @@ export const ProjectsModule = ({
        poids en place et l'écriture échouerait de nouveau, indéfiniment. */
     if (res.scopedChanged) setProjects(res.list);
   }, [projects]);
+
+  /* Les projets SUPPRIMÉS de ce dataset sont relus à chaque mouvement de la
+     liste : une suppression vient d'avoir lieu, ou une restauration vient de
+     réussir — le panneau « Recently deleted » montre donc toujours l'état réel. */
+  useEffect(() => { setDeleted(loadDeletedProjectsForDataset()); }, [projects]);
+
+  /* ↩ LE RETOUR D'UN PROJET SUPPRIMÉ — le geste qui manquait.
+     Le travail lourd vit dans App.jsx (`onRestoreProject` : lever la tombe PUIS
+     ré-adopter la copie de l'index du Drive) ; ici on l'appelle, on relit la
+     liste et on DIT ce qui s'est passé. Un bouton muet serait exactement le
+     défaut réparé (« nothing happens »). */
+  const restoreProject = async (id) => {
+    if (!onRestoreProject) return;
+    setRestoreBusy(id);
+    setRestoreNote('');
+    let res = { lifted: 0, adopted: 0, names: [] };
+    try {
+      res = (await onRestoreProject(id)) || res;
+    } catch (err) {
+      res = { lifted: 0, adopted: 0, names: [], error: String((err && err.message) || err) };
+    }
+    setRestoreBusy('');
+    setProjects(loadProjects());
+    setDeleted(loadDeletedProjectsForDataset());
+    if (res.error) {
+      setRestoreNote(`⚠ ${res.error}`);
+      return;
+    }
+    if (!res.lifted) {
+      setRestoreNote('ℹ This project was not deleted — nothing to lift (its copy is simply not in this dataset).');
+      return;
+    }
+    setRestoreNote(res.adopted
+      ? `✅ “${res.names.join('”, “') || 'the project'}” restored from the Drive index. Its text, references and '
+        + 'figures come back with the dataset document when the dataset is reopened (🔄), or by restoring a backup file. '
+        + 'If its Drive folder is in the Drive TRASH, restore it there too (right-click → Restore): this gesture reopens '
+        + 'the path, but it cannot pull files out of Google’s trash.'
+      : '✅ The deletion is lifted (it travels to the other devices). No copy was left in the Drive index: re-run '
+        + '“📂 Load HTML” with “Projets” checked — the copy held by that file comes in now that the deletion is '
+        + 'lifted — or reopen the dataset (🔄) if its document still carries the project. If its Drive folder is in the '
+        + 'Drive TRASH, restore it there too: this gesture reopens the path, it does not empty the trash.');
+  };
 
   const scientists = useMemo(() =>
     [...new Set(projects.map((p) => p.scientist).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
@@ -1215,6 +1348,49 @@ export const ProjectsModule = ({
                 </div>
               </div>
             ))}
+          </div>
+        )}
+
+        {/* 🗑 LES PROJETS SUPPRIMÉS DE CE DATASET — LE CHEMIN DE RETOUR.
+            Jusqu'ici une suppression était DÉFINITIVE : le projet ne revenait ni
+            par « Load HTML » (la tombe écartait sa copie, en silence), ni par
+            l'index du Drive, ni par le document du dataset. Le rapport : « there
+            was a project called “tmp” with figures and text. It looks gone. If I
+            reload from HTML and select only to restore projects, nothing
+            happens. » Le geste manquait : il est ici. */}
+        {currentUser && deleted.length > 0 && (
+          <div className="bg-white border border-amber-300 rounded-xl shadow-sm p-4 no-print">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <div className="text-xs font-black text-slate-800">
+                🗑 Recently deleted ({deleted.length})
+              </div>
+              <div className="text-[10px] font-semibold text-slate-400 max-w-xl">
+                Restoring lifts the deletion: the project comes back from the dataset document and from the
+                Drive index, on every device. Nothing else is touched.
+              </div>
+            </div>
+            <div className="mt-2 flex flex-col gap-1.5">
+              {deleted.map((t) => (
+                <div key={`${t.datasetId}::${t.id}`}
+                     className="flex items-center justify-between gap-2 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+                  <div className="min-w-0">
+                    <div className="text-[11px] font-bold text-slate-700 truncate">{t.id}</div>
+                    <div className="text-[10px] text-slate-500 font-semibold">
+                      deleted {t.deletedAt ? new Date(t.deletedAt).toLocaleString() : '(date unknown)'}
+                      {t.datasetId && t.datasetId !== (getActiveProjectDataset() || '') ? ' · belongs to another dataset' : ''}
+                    </div>
+                  </div>
+                  <button type="button" onClick={() => restoreProject(t.id)} disabled={restoreBusy === t.id}
+                          className="shrink-0 px-2.5 py-1.5 text-xs font-bold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
+                          title="Bring this deleted project back (lift the deletion).">
+                    {restoreBusy === t.id ? '…' : '↩ Restore'}
+                  </button>
+                </div>
+              ))}
+            </div>
+            {restoreNote && (
+              <div className="mt-2 text-[11px] font-semibold text-slate-600">{restoreNote}</div>
+            )}
           </div>
         )}
 
