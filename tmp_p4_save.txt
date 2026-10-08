@@ -1,0 +1,176 @@
+motif : Save HTML|buildBackupHtml|sanitizeSlug\(
+fichiers examinés : 261
+lignes retenues : 144
+
+src/administration/personnelModal.jsx:49: export const personnelDriveFolder = (nom) => ['personnel', sanitizeSlug(nom) || 'personne'];
+src/administration/personnelModal.jsx:407: const name = withExtension(`${sanitizeSlug(base) || 'entretien'}_${key === 'entretienPro' ? 'EP' : 'EF'}`, file.name || base);
+-- src/administration/personnelModal.jsx : 2 ligne(s) sur 1015
+src/App.jsx:2790: // Drive — the same format the "Save HTML" button produces, so any backup file
+src/App.jsx:2812: const buildBackupHtml = (title, subtitle, payload, datasetId) => {
+src/App.jsx:2907: const legacyFolder = `${sanitizeSlug(title) || 'dataset'}_${idTag}`;
+src/App.jsx:3486: const html = buildBackupHtml(title, subtitle, payload, currentDatasetId);
+src/App.jsx:3488: const slug = sanitizeSlug(title) || 'dataset';
+src/App.jsx:3503: console.warn('Save HTML to Drive failed:', err && err.message);
+src/App.jsx:3545: message: 'Could not save HTML file: ' + e.message
+-- src/App.jsx : 7 ligne(s) sur 6277
+src/components/AppModules/appSidebar.jsx:340: {/* Load HTML + Save HTML — superuser only */}
+src/components/AppModules/appSidebar.jsx:358: title="Save HTML — stores the full dataset state (scientific or administration) as a loadable HTML snapshot in Lab Workspace/<dataset>/backups/ on Google Drive; a local copy is downloaded wh
+src/components/AppModules/appSidebar.jsx:360: {isSidebarOpen ? '💾 Save HTML' : '💾'}
+-- src/components/AppModules/appSidebar.jsx : 3 ligne(s) sur 397
+src/components/DefinitionsExtra.jsx:166: name: withExtension(`${sanitizeSlug(elementName)}_${base}`, file.name || 'file'),
+src/components/DefinitionsExtra.jsx:1599: name: `${sanitizeSlug(expName)}_pulseSequence.txt`,
+-- src/components/DefinitionsExtra.jsx : 2 ligne(s) sur 1929
+src/components/DriveUpload.jsx:101: const ownBase = sanitizeSlug(nameFor(file) || '');
+src/components/DriveUpload.jsx:109: : sanitizeSlug(String(fileSuffix));
+-- src/components/DriveUpload.jsx : 2 ligne(s) sur 295
+src/components/FlowCytometrySections.jsx:2756: const slugOf = (s) => sanitizeSlug(String(s || '')).toLowerCase();
+-- src/components/FlowCytometrySections.jsx : 1 ligne(s) sur 3448
+src/components/NMRSections.jsx:7613: const path = [...basePath, sanitizeSlug(expNum), ...relParts.map((s) => sanitizeSlug(s))];
+-- src/components/NMRSections.jsx : 1 ligne(s) sur 9867
+src/components/Publications.jsx:1379: Un fichier « Save HTML » (ou une sauvegarde hebdomadaire Drive) contient
+-- src/components/Publications.jsx : 1 ligne(s) sur 4238
+src/components/ssNMRSections.jsx:1482: const path = [...basePath, sanitizeSlug(expNum), ...relParts.map((s) => sanitizeSlug(s))];
+-- src/components/ssNMRSections.jsx : 1 ligne(s) sur 3936
+src/components/Storage.jsx:38: return sanitizeSlug(raw.replace(/\.[^/.]+$/, '')) || fallback;
+src/components/Storage.jsx:48: const fallback = sanitizeSlug(`${boxName || 'box'}_${kind || 'photo'}`) || 'box_photo';
+src/components/Storage.jsx:573: suggestedName={sanitizeSlug(st.name) + '_image'}
+src/components/Storage.jsx:575: naming={storageFileCtx({ storage: st.name, title: sanitizeSlug(st.name) + '_image' })}
+src/components/Storage.jsx:576: nameFor={(file) => originalBaseName(file, sanitizeSlug(st.name) + '_image')}
+-- src/components/Storage.jsx : 5 ligne(s) sur 1221
+src/utils/backupFile.js:144: const slug = sanitizeSlug(text(title)) || 'dataset';
+-- src/utils/backupFile.js : 1 ligne(s) sur 267
+src/utils/driveExperimentFiles.js:184: (Array.isArray(path) ? path : []).map((seg) => sanitizeSlug(seg)).join('/')
+src/utils/driveExperimentFiles.js:289: return `Google Drive did not create “${sanitizeSlug(missing)}” on the way to “${text}”, so nothing below it exists either. Connect Drive, then press again: a folder that is already there is 
+-- src/utils/driveExperimentFiles.js : 2 ligne(s) sur 607
+src/utils/driveMirror.js:70: const parts = ['Lab Workspace', ...segments.filter(Boolean).map((s) => sanitizeSlug(s))];
+src/utils/driveMirror.js:91: const wanted = [mirrorDatasetFolderName({ id, name }), ...extraNames.map((n) => sanitizeSlug(n))]
+src/utils/driveMirror.js:93: if (id) wanted.push(`dataset_${sanitizeSlug(id)}`);
+src/utils/driveMirror.js:122: const urls = [datasetFolderNameOf(name, id), ...extraNames.map((n) => sanitizeSlug(n))]
+src/utils/driveMirror.js:217: return findFolderByName(sanitizeSlug(projectName), projectsFolderId);
+src/utils/driveMirror.js:266: ncUrlOf([datasetSlug, 'projects', sanitizeSlug(projectName)]),
+src/utils/driveMirror.js:267: ncUrlOf([datasetSlug, sanitizeSlug(projectName)])
+src/utils/driveMirror.js:301: const target = sanitizeSlug(newName);
+src/utils/driveMirror.js:302: if (!target || sanitizeSlug(oldName) === target) return ok({ folderId: '' });
+src/utils/driveMirror.js:308: const from = ncUrlOf([datasetSlug, 'projects', sanitizeSlug(oldName)]);
+src/utils/driveMirror.js:319: const rootFrom = ncUrlOf([datasetSlug, sanitizeSlug(oldName)]);
+-- src/utils/driveMirror.js : 11 ligne(s) sur 367
+src/utils/driveMirrorStore.js:48: .map((s) => sanitizeSlug(s))
+src/utils/driveMirrorStore.js:59: return text(id) ? `dataset_${sanitizeSlug(id)}` : '';
+src/utils/driveMirrorStore.js:208: `projects/${sanitizeSlug(projectName) || '_unassigned'}`;
+src/utils/driveMirrorStore.js:219: export const projectRootFolderPath = (projectName) => sanitizeSlug(projectName);
+src/utils/driveMirrorStore.js:228: const slug = sanitizeSlug(projectName);
+src/utils/driveMirrorStore.js:348: `${text(datasetKey)}::${sanitizeSlug(projectName) || '_unassigned'}`;
+src/utils/driveMirrorStore.js:375: if (!datasetKey || !folder || !sanitizeSlug(projectName)) return current;
+src/utils/driveMirrorStore.js:439: `${text(datasetKey)}::${sanitizeSlug(dir) || text(dir)}`;
+-- src/utils/driveMirrorStore.js : 8 ligne(s) sur 499
+src/utils/driveNaming.js:85: const slug = sanitizeSlug(name).toLowerCase();
+src/utils/driveNaming.js:87: return PROJECT_SECTION_FOLDER_NAMES.some((n) => sanitizeSlug(n).toLowerCase() === slug);
+src/utils/driveNaming.js:122: const parts = [sanitizeSlug(date), sanitizeSlug(owner), BOX_LABEL_NAME_SUFFIX].filter(Boolean);
+src/utils/driveNaming.js:127: const storageSlug = (name) => sanitizeSlug(name) || '_unassigned';
+src/utils/driveNaming.js:138: ...storageFolderPath(storageName), STORAGE_BOXES_DIR, sanitizeSlug(boxName) || 'box'
+src/utils/driveNaming.js:156: const section = sanitizeSlug(canonicalPageSection(raw));
+src/utils/driveNaming.js:172: if (String(ctx.box || '').trim()) segs.push(STORAGE_BOXES_DIR, sanitizeSlug(ctx.box));
+src/utils/driveNaming.js:183: const protoSlug = sanitizeSlug(ctx.protocol);
+src/utils/driveNaming.js:188: const projectSeg = sanitizeSlug(ctx.project);
+src/utils/driveNaming.js:296: export const datasetFolderSlug = (title) => sanitizeSlug(title) || 'dataset';
+src/utils/driveNaming.js:321: export const canonicalSubSection = (raw) => sanitizeSlug(raw);
+src/utils/driveNaming.js:347: const segs = ['projects', sanitizeSlug(project), sanitizeSlug(test)];
+src/utils/driveNaming.js:348: if (String(ctx.instance || '').trim()) segs.push(sanitizeSlug(ctx.instance));
+src/utils/driveNaming.js:377: const projectSeg = sanitizeSlug(projects[0] || DEFAULT_PROJECT_NAME);
+src/utils/driveNaming.js:382: const testSeg = sanitizeSlug(test);
+src/utils/driveNaming.js:383: const projectSlug = projects.length ? sanitizeSlug(projects[0]) : '';
+src/utils/driveNaming.js:412: export const projectImagesFolderPath = (projectName) => (sanitizeSlug(projectName)
+src/utils/driveNaming.js:413: ? ['projects', sanitizeSlug(projectName), 'images']
+src/utils/driveNaming.js:459: segs.push(...projectImagesFolderPath(projectName).map((s) => sanitizeSlug(s) || s));
+-- src/utils/driveNaming.js : 19 ligne(s) sur 462
+src/utils/driveRestore.js:105: sanitizeSlug(suffix || kind) || 'data'
+src/utils/driveRestore.js:119: `${sanitizeSlug(stem) || 'data'}_${restoreTag(kind, suffix)}${RESTORE_FILE_TAG}.json.gz`
+src/utils/driveRestore.js:124: `${sanitizeSlug(stem) || 'data'}_${restoreTag(kind, suffix)}${RESTORE_FILE_TAG}`
+src/utils/driveRestore.js:143: const slug = sanitizeSlug(raw);
+src/utils/driveRestore.js:304: const slug = sanitizeSlug(stem);
+src/utils/driveRestore.js:407: sanitizeSlug(String(name || '').replace(/\.[A-Za-z0-9]{1,6}$/, '')).toLowerCase();
+-- src/utils/driveRestore.js : 6 ligne(s) sur 624
+src/utils/driveStray.js:55: export const RESERVED_DATASET_DIRS = DATASET_FOLDER_DIRS.map((d) => sanitizeSlug(d));
+src/utils/driveStray.js:65: const slug = sanitizeSlug(name);
+src/utils/driveStray.js:74: const slug = sanitizeSlug(head);
+src/utils/driveStray.js:77: .map((s) => sanitizeSlug(s)).filter(Boolean);
+src/utils/driveStray.js:95: const list = (Array.isArray(names) ? names : []).map((n) => sanitizeSlug(n)).filter(Boolean);
+src/utils/driveStray.js:143: const slug = sanitizeSlug(p.name);
+-- src/utils/driveStray.js : 6 ligne(s) sur 157
+src/utils/driveUpload.js:573: return driveRootId ? `dataset_${sanitizeSlug(driveRootId)}` : '';
+src/utils/driveUpload.js:949: const wanted = routed.names.map((n) => sanitizeSlug(n)).filter(Boolean);
+src/utils/driveUpload.js:1023: return ctxPathOf(ctx).indexOf(sanitizeSlug(value));
+src/utils/driveUpload.js:1102: const testSlug = sanitizeSlug(testName);
+src/utils/driveUpload.js:1106: rels.push(`projects/${sanitizeSlug(projectName)}/${testSlug}`);
+src/utils/driveUpload.js:1107: rels.push(`${sanitizeSlug(projectName)}/${testSlug}`); // legacy
+src/utils/driveUpload.js:1143: const idx = chain.findIndex((seg) => seg && seg.name === sanitizeSlug(test.name));
+src/utils/driveUpload.js:1168: let protoFolderId = await findFolderByName(sanitizeSlug(protocol.title), protocolsFolderId);
+src/utils/driveUpload.js:1177: const seg = (entry.path || []).find((s) => s && s.name === sanitizeSlug(protocol.title));
+src/utils/driveUpload.js:1217: const seg = (entry.path || []).find((s) => s && s.name === sanitizeSlug(testName));
+src/utils/driveUpload.js:1224: const projectFolderId = await findOrCreateFolder(sanitizeSlug(projectName), projectsContainerId);
+src/utils/driveUpload.js:1226: if ((await findFolderByName(sanitizeSlug(testName), projectFolderId)) === testFolderId) return 0;
+src/utils/driveUpload.js:1238: const projectSeg = { name: sanitizeSlug(projectName), id: projectFolderId };
+src/utils/driveUpload.js:1296: const seg = (entry.path || []).find((s) => s && s.name === sanitizeSlug(testName));
+src/utils/driveUpload.js:1308: const existingThere = await findFolderByName(sanitizeSlug(testName), outOfProjectFolderId);
+src/utils/driveUpload.js:1318: const projectFolderId = await findFolderByName(sanitizeSlug(projectName), projectsFolderId);
+src/utils/driveUpload.js:1320: await trashEmptyFolderChain([{ name: sanitizeSlug(projectName), id: projectFolderId }]);
+src/utils/driveUpload.js:1341: && seg.name !== DEFAULT_PROJECT_NAME && seg.name !== sanitizeSlug(projectName));
+src/utils/driveUpload.js:1468: if (owner && sanitizeSlug(owner) !== fromSlug) continue;
+src/utils/driveUpload.js:1526: const testSlug = sanitizeSlug(testName);
+src/utils/driveUpload.js:1527: const fromSlug = sanitizeSlug(fromProjectName);
+src/utils/driveUpload.js:1528: const toSlug = sanitizeSlug(toProjectName);
+src/utils/driveUpload.js:1585: if (driveRootName) segments.push(sanitizeSlug(driveRootName));
+src/utils/driveUpload.js:1587: segments.push(...folderNames.map((s) => sanitizeSlug(String(s))));
+src/utils/driveUpload.js:1589: segments.push(...path.filter(Boolean).map((s) => sanitizeSlug(String(s))));
+src/utils/driveUpload.js:1623: ? path.map((seg, i) => ({ name: sanitizeSlug(String(seg)), id: i === path.length - 1 ? pinned : '' }))
+src/utils/driveUpload.js:2624: const segments = ['Lab Workspace', ...String(folder || 'backups').split('/').filter(Boolean).map((s) => sanitizeSlug(String(s)))];
+src/utils/driveUpload.js:2725: (seg) => seg && seg.name === sanitizeSlug(oldValue)
+src/utils/driveUpload.js:2777: await renameDriveFile(plan.folderSeg.id, plan.newFolderName || sanitizeSlug(newValue));
+src/utils/driveUpload.js:2794: seg && seg.name === oldFolderName ? { ...seg, name: newFolderName || sanitizeSlug(newValue) } : seg
+-- src/utils/driveUpload.js : 30 ligne(s) sur 3067
+src/utils/figuresFolder.js:71: *  segment : `sanitizeSlug('_unassigned')` vaut `unassigned` (le `_` de tête
+src/utils/figuresFolder.js:105: export const imagesFolderPathOnDrive = (projectName) => (sanitizeSlug(projectName)
+src/utils/figuresFolder.js:106: ? `projects/${sanitizeSlug(projectName)}/images`
+src/utils/figuresFolder.js:111: (sanitizeSlug(projectName) ? String(name) === sanitizeSlug(projectName) : isCommonLibraryName(name));
+src/utils/figuresFolder.js:114: const folderNameWords = (name) => sanitizeSlug(name).toLowerCase().split(/[_-]+/).filter(Boolean);
+src/utils/figuresFolder.js:146: const scoreOf = (name) => (sanitizeSlug(projectName)
+src/utils/figuresFolder.js:332: const key = sanitizeSlug(projectName) ? folderNameKey(projectName) : '';
+src/utils/figuresFolder.js:448: const leaves = sanitizeSlug(projectName)
+src/utils/figuresFolder.js:535: const wanted = sanitizeSlug(projectName);
+src/utils/figuresFolder.js:633: const wanted = sanitizeSlug(folderName);
+src/utils/figuresFolder.js:636: const found = all.find((c) => sanitizeSlug(c.name) === wanted);
+-- src/utils/figuresFolder.js : 11 ligne(s) sur 650
+src/utils/figuresLibrary.js:1545: fait QUE du libellé (`sanitizeSlug(label)`) — et le libellé d'une capture est
+src/utils/figuresLibrary.js:1642: let base = sanitizeSlug(label) || 'figure';
+src/utils/figuresLibrary.js:1681: : (sanitizeSlug(projectName) || commonLibraryFolderName());
+src/utils/figuresLibrary.js:1723: if (ds) parts.push(sanitizeSlug(ds));
+src/utils/figuresLibrary.js:2028: if (ds) parts.push(sanitizeSlug(ds));
+-- src/utils/figuresLibrary.js : 5 ligne(s) sur 2730
+src/utils/migrateTestImages.js:94: const sciSlug = sanitizeSlug(String(scientist || '').trim());
+-- src/utils/migrateTestImages.js : 1 ligne(s) sur 527
+src/utils/projectDocumentDrive.js:48: `${sanitizeSlug(String((project && project.name) || '') || 'project')}_document.json`;
+src/utils/projectDocumentDrive.js:52: `${datasetFolderSlug(datasetName)}/projects/${sanitizeSlug(String((project && project.name) || '') || 'project')}`;
+src/utils/projectDocumentDrive.js:159: const parts = ['Lab Workspace', ...String(folder).split('/').filter(Boolean).map((s) => sanitizeSlug(s))];
+-- src/utils/projectDocumentDrive.js : 3 ligne(s) sur 230
+src/utils/projectFiles.js:29: export const projectFolderSlug = (projectName) => sanitizeSlug(projectName) || DEFAULT_PROJECT_NAME;
+src/utils/projectFiles.js:53: return sanitizeSlug(stem) || 'file';
+-- src/utils/projectFiles.js : 2 ligne(s) sur 203
+src/utils/projectRootMigrate.js:60: const slug = sanitizeSlug(name);
+src/utils/projectRootMigrate.js:95: const slug = sanitizeSlug(name);
+-- src/utils/projectRootMigrate.js : 2 ligne(s) sur 180
+src/utils/referenceImport.js:16: écrit par « Save HTML » ou par la sauvegarde hebdomadaire Drive) est relu
+src/utils/referenceImport.js:1098: /** Le bloc JSON embarqué dans un fichier « Save HTML » / sauvegarde Drive. */
+src/utils/referenceImport.js:1122: * ÉTAT complet d'un fichier de sauvegarde (« Save HTML » / sauvegarde Drive) :
+-- src/utils/referenceImport.js : 3 ligne(s) sur 1230
+src/utils/storageDrive.js:156: const oldSlug = sanitizeSlug(oldName);
+src/utils/storageDrive.js:157: const newSlug = sanitizeSlug(newName);
+src/utils/storageDrive.js:174: const oldSlug = sanitizeSlug(oldName);
+src/utils/storageDrive.js:175: const newSlug = sanitizeSlug(newName);
+src/utils/storageDrive.js:181: const storageFolder = await findFolderByName(sanitizeSlug(storage) || '_unassigned', container).catch(() => '');
+-- src/utils/storageDrive.js : 5 ligne(s) sur 196
+src/utils/workspaceDrive.js:58: export const workspaceDatasetFileName = (id) => `ds_${sanitizeSlug(id) || 'dataset'}.json`;
+src/utils/workspaceDrive.js:287: const parts = ['Lab Workspace', ...String(folder).split('/').filter(Boolean).map((s) => sanitizeSlug(s))];
+-- src/utils/workspaceDrive.js : 2 ligne(s) sur 499
+src/utils/workspaceResync.js:82: const slugOf = (name) => sanitizeSlug(text(name));
+src/utils/workspaceResync.js:307: /* ⚠ COMPARAISON DE SLUGS DES DEUX CÔTÉS : `sanitizeSlug('_workspace')` vaut
+-- src/utils/workspaceResync.js : 2 ligne(s) sur 834

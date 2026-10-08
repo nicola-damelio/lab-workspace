@@ -1,0 +1,14 @@
+﻿_dataset_copy_mirror_test.mjs EXIT=0
+_dataset_creation_guard_test.mjs EXIT=0
+_dataset_dir_twins_test.mjs EXIT=0
+_drive_restore_test.mjs EXIT=0
+_drive_big_upload_test.mjs EXIT=0
+_experiment_drive_root_test.mjs EXIT=0
+_experiment_move_drive_test.mjs EXIT=0
+_figure_svg_drive_test.mjs EXIT=0
+_project_drive_doc_test.mjs EXIT=0
+_project_root_migrate_test.mjs EXIT=0
+_storage_drive_layout_test.mjs EXIT=0
+_common_library_folder_test.mjs EXIT=0
+_workspace_keys_test.mjs EXIT=0
+_deleted_projects_test.mjs EXIT=1

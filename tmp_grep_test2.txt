@@ -1,0 +1,2 @@
+361: eq(REPORT.counts.projectFoldersUnknown, 2, 'deux dossiers de projet ne correspondent à aucune fiche');
+417:   'les dossiers de projet trouvés sont tous là — y compris celui posé à la racine du dataset');

@@ -1,0 +1,41 @@
+3: import {LOCAL_STORAGE_KEY, PLATES_DEF, DEF_COMPOUNDS, DEF_CELL_LINES, parsePayload} from './data/constants';
+31: import { ProjectsModule, loadProjects, mergeProjectsFromCloud, setProjectDatasetScope, removeProjectsOfDataset, loadDeletedProjects, adoptDeletedProje
+57: readWorkspaceState, writeDatasetCopy, readDatasetCopy,
+58: buildWorkspaceState, writeWorkspaceState, WORKSPACE_DIR, WORKSPACE_STATE_FILE,
+64: import { writeDatasetListCache, readDatasetListCache } from './utils/datasetListIndex';
+73: import { sweepWorkspaceDrive, resyncReportLines } from './utils/workspaceResync';
+2394: début (`cloudProjectsPayload` → `buildWorkspaceState`) et personne ne la
+2410: const adoptedList = readDatasetListCache();
+2440: 2° L'INVENTAIRE — `sweepWorkspaceDrive` dit ce que le Drive porte, ce qui
+2442: 3° LES CONTENUS — chaque copie récupérable est relue (`readDatasetCopy`)
+2444: (`mergeProjectsFromCloud`, avec ses suppressions) : un dataset qui n'est
+2453: const resyncWorkspaceFromDrive = useCallback(async () => {
+2454: const projectsBefore = loadProjects('').length;
+2462: const report = await sweepWorkspaceDrive({
+2465: projects: loadProjects('')
+2476: const copy = await readDatasetCopy(id).catch(() => null);
+2481: répare. On décode par le chemin unique du programme (`parsePayload`) et
+2484: const content = parsePayload(copy);
+2487: mergeProjectsFromCloud(content.projects, {
+2506: const projectsAfter = loadProjects('').length;
+2513: l'adoption vient de mettre de côté (`readDatasetListCache`) : une liste
+2517: const published = await writeWorkspaceState(buildWorkspaceState({
+2519: datasets: [...(Array.isArray(datasetsList) ? datasetsList : []), ...readDatasetListCache()]
+2521: projects: loadProjects(''),
+2527: lines.push(`⚠ What was adopted here could NOT be written back to ${WORKSPACE_DIR}/${WORKSPACE_STATE_FILE}`
+2559: projects: loadProjects(''),
+2576: (mergeProjectsFromCloud) — sans la levée, sa copie était écartée en silence,
+2587: const proj = loadProjects('').find((p) => p && String(p.id) === String(id)) || null;
+2700: projects: loadProjects(),
+2940: projects: stripOversizedDataUrls(loadProjects() || []),
+2960: const known = new Set(loadProjects('').map((p) => p && String(p.id)));
+2965: const here = new Set(loadProjects().map((p) => p && String(p.id)));
+3727: (`datasetId`) et `loadProjects()` ne rend que ceux du dataset OUVERT.
+3989: const existingProjects = loadProjects() || [];
+4282: // Defensively handle compressed payloads in case parsePayload doesn't already
+4287: s = parsePayload(dset);
+4409: mergeProjectsFromCloud(s.projects, {
+4461: const copy = await readDatasetCopy(id).catch(() => null);
+4525: const copy = await readDatasetCopy(id).catch(() => null);
+4781: const s = parsePayload(dset);
+6006: onResyncFromDrive={resyncWorkspaceFromDrive}

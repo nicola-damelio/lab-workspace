@@ -1,0 +1,3 @@
+src/components/AppModules/settingsModule.jsx:12: import { WorkspaceResyncPanel } from '../WorkspaceResyncPanel';
+src/components/AppModules/settingsModule.jsx:410: onResyncFromDrive = null
+src/components/AppModules/settingsModule.jsx:522: <WorkspaceResyncPanel onResync={onResyncFromDrive} />

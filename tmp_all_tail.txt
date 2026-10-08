@@ -1,0 +1,14 @@
+lignes totales: 592
+### _storage_boxes_test.mjs  EXIT=0
+_storage_boxes_test.mjs : 119/119 passed
+
+### _storage_drive_layout_test.mjs  EXIT=0
+_storage_drive_layout_test: 149 passed
+
+--- echecs ---
+### _cysteine_panel_layout_test.mjs  EXIT=1
+### _docking_scatter_card_test.mjs  EXIT=1
+### _experiment_folder_files_test.mjs  EXIT=1
+### _md_wall_test.mjs  EXIT=1
+### _project_store_guard_test.mjs  EXIT=1
+### _sequence_charge_test.mjs  EXIT=1

@@ -1,0 +1,30 @@
+motif : readDatasetListCache|writeDatasetListCache|applyWorkspaceIndex|withoutDeletedDatasets
+fichiers examinés : 259
+lignes retenues : 23
+
+src/App.jsx:59: applyWorkspaceIndex, adoptWorkspaceState, installWorkspaceAutosave, workspaceDatasetPath
+src/App.jsx:64: import { writeDatasetListCache, readDatasetListCache } from './utils/datasetListIndex';
+src/App.jsx:94: const withoutDeletedDatasets = (list) => {
+src/App.jsx:2307: setDatasetsList((prev) => withoutDeletedDatasets(applyWorkspaceIndex({
+src/App.jsx:2321: setDatasetsList((prev) => withoutDeletedDatasets(applyWorkspaceIndex({
+src/App.jsx:2340: setDatasetsList((prev) => withoutDeletedDatasets(applyWorkspaceIndex({
+src/App.jsx:2410: const adoptedList = readDatasetListCache();
+src/App.jsx:2411: setDatasetsList((prev) => withoutDeletedDatasets(
+src/App.jsx:2412: applyWorkspaceIndex({
+src/App.jsx:2521: l'adoption vient de mettre de côté (`readDatasetListCache`) : une liste
+src/App.jsx:2523: union repasse par `withoutDeletedDatasets` — le cache du navigateur peut
+src/App.jsx:2529: datasets: withoutDeletedDatasets(applyWorkspaceIndex({
+src/App.jsx:2530: datasets: [...(Array.isArray(datasetsList) ? datasetsList : []), ...readDatasetListCache()]
+src/App.jsx:2638: writeDatasetListCache(datasetsList, { keepContent: !db });
+src/App.jsx:4101: writeDatasetListCache([localEntry], { keepContent: !db });
+src/App.jsx:4102: setDatasetsList((prev) => withoutDeletedDatasets(applyWorkspaceIndex({
+src/App.jsx:4735: setDatasetsList((prev) => withoutDeletedDatasets(prev));
+src/App.jsx:4862: setDatasetsList((prev) => withoutDeletedDatasets(prev));
+src/App.jsx:4882: setDatasetsList((prev) => withoutDeletedDatasets(prev));
+-- src/App.jsx : 19 ligne(s) sur 6202
+src/utils/datasetListIndex.js:134: export const readDatasetListCache = (storage = null) => {
+src/utils/datasetListIndex.js:146: export const writeDatasetListCache = (list, { keepContent = false, storage = null } = {}) => {
+src/utils/datasetListIndex.js:147: const merged = mergeDatasetLists(readDatasetListCache(storage), datasetListEntries(list, { keepContent }));
+-- src/utils/datasetListIndex.js : 3 ligne(s) sur 177
+src/utils/workspaceDrive.js:212: export const applyWorkspaceIndex = ({ datasets = [], state = null, mirror = null } = {}) => {
+-- src/utils/workspaceDrive.js : 1 ligne(s) sur 499

@@ -1,0 +1,5 @@
+src/App.jsx:1243: const [datasetsList, setDatasetsList] = useState([]);
+src/App.jsx:2437: d'accord avec le Drive en QUATRE temps, tous en LECTURE du Drive :
+src/components/ImageBuilder.jsx:1113: // ✅ La réouverture se RÉPARE donc elle-même, en trois temps :
+src/components/WorkspaceResyncPanel.jsx:12: Ce panneau fait donc, sur demande du superutilisateur, les QUATRE temps de la
+src/components/WorkspaceResyncPanel.jsx:44: /* Le geste : UN appel à App.jsx (`onResync`), qui fait les trois temps et

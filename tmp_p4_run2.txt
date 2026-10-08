@@ -1,0 +1,28 @@
+échecs: 1/6
+
+### _backup_file_test.mjs code=1
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: false,
+  expected: true,
+  operator: '==',
+  diff: 'simple'
+}
+Node.js v26.5.1
+
+### _save_html_test.mjs code=0
+_save_html_test.mjs — 45 assertions OK
+
+### _load_html_projects_test.mjs code=0
+_load_html_projects_test.mjs — 53 assertions OK (📂 Load HTML : les projets d’une sauvegarde sont adoptés par le dataset qui les reçoit — visibles, jamais ressuscités, jamais écrasés)
+
+### _library_restore_test.mjs code=0
+✅ 175 tests passés (bibliothèque d’images ↔ sauvegarde)
+Figure → Drive upload failed: Cannot reach Google Drive (network error).
+
+### _reference_import_test.mjs code=0
+✅ 183 tests passés (import de références)
+✅ 226 tests passés (import de références)
+
+### _deleted_projects_test.mjs code=0
+✅ 76 tests passés (projets supprimés : rien ne ressuscite — et un projet restauré revient)

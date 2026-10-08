@@ -1,0 +1,2 @@
+code=0
+86 vérifications passées — LA SAUVEGARDE : un format qui se valide (et l'ancien HTML qui se relit encore).

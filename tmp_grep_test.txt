@@ -1,0 +1,7 @@
+198:   ROOT_STRAY: 'F_ROOT_STRAY', ROOT_UNKNOWN: 'F_ROOT_UNKNOWN',
+218:     folder(F.ROOT_UNKNOWN, 'Random notes')
+226:     doc(F.FILE_CP1, 'ds_1.json'),
+227:     doc(F.FILE_CP3, 'ds_3.json'),
+228:     doc(F.FILE_CP7, 'ds_7.json'),
+325:   listChildren: async (id) => { spy.list.push(String(id)); return tree.get(String(id)) || []; },
+435: eq(spy.list, [

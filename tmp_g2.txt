@@ -1,0 +1,20 @@
+src/App.jsx:31: import { ProjectsModule, loadProjects, mergeProjectsFromCloud, setProjectDatasetScope, removeProjectsOfDataset, loadDeletedProjects, adoptDeletedProjects, adoptWorkspaceProjects, loadRevivedProjects, 
+src/App.jsx:57: readWorkspaceState, writeDatasetCopy, readDatasetCopy,
+src/App.jsx:2453: (mergeProjectsFromCloud) — sans la levée, sa copie était écartée en silence,
+src/App.jsx:4286: mergeProjectsFromCloud(s.projects, {
+src/App.jsx:4338: const copy = await readDatasetCopy(id).catch(() => null);
+src/App.jsx:4402: const copy = await readDatasetCopy(id).catch(() => null);
+src/components/AppModules/projectsModule.jsx:242: *  effacé. C'est la même règle d'identité que mergeProjectsFromCloud (id, puis
+src/components/AppModules/projectsModule.jsx:305: `mergeProjectsFromCloud` (une copie du payload) — et un tableau peut être
+src/components/AppModules/projectsModule.jsx:800: export const mergeProjectsFromCloud = (payloadProjects, opts = {}) => {
+src/utils/projectTombstones.js:9: que du navigateur : à la réouverture du dataset, mergeProjectsFromCloud
+src/utils/workspaceDrive.js:386: export const readDatasetCopy = async (id) => {
+src/utils/workspaceResync.js:26: (`readDatasetCopy` → `mergeProjectsFromCloud`), jamais par un chemin
+src/utils/workspaceResync.js:734: normaux (`readDatasetCopy` → `mergeProjectsFromCloud`). */
+_deleted_projects_test.mjs:8: mergeProjectsFromCloud ré-adoptait la copie du payload et le projet
+_project_store_guard_test.mjs:12: `saveProjectsRescued` — le même, allégé —, `mergeProjectsFromCloud` — une
+_refresh_shared_read_test.mjs:64: ok(READ.indexOf('doc(id).get()') < READ.indexOf('readDatasetCopy(id)'),
+_refresh_shared_read_test.mjs:66: has(READ, 'const copy = await readDatasetCopy(id).catch(() => null);',
+_workspace_drive_test.mjs:212: const reread = await W.readDatasetCopy('ds1');
+_workspace_drive_test.mjs:214: eq(await W.readDatasetCopy('ds2'), null, 'un fichier qui décrit un AUTRE dataset est refusé (jamais de mélange)');
+_workspace_drive_test.mjs:254: has(APP, 'const copy = await readDatasetCopy(id)', 'ouvrir un dataset absent du poste le relit du Drive');

@@ -1,0 +1,624 @@
+### _admin_header_boxes_test.mjs  EXIT=0
+_admin_header_boxes_test.mjs — 56 assertions OK (pavés d’explication retirés des pages OM prévus, Achats prévus, Congés et Budget overview ; aide verrou ET récapitulatif des postes retirés sous les boutons de transfert d’OM prévus)
+
+### _admin_tables_service_test.mjs  EXIT=0
+_admin_tables_service_test.mjs — 46 assertions OK (barre horizontale visible, demandeur « Service » visible par tous, ligne budgétaire affichée)
+
+### _approval_bc_flow_test.mjs  EXIT=0
+_approval_bc_flow_test: 116 passed
+
+### _app_page_window_test.mjs  EXIT=0
+_app_page_window_test.mjs — 60 assertions OK (⧉ une page dans une autre fenêtre · ?mod= relu au démarrage)
+
+### _auth_identity_test.mjs  EXIT=0
+_auth_identity_test.mjs — 39 assertions OK (l’utilisateur connecté est toujours le bon, et la session suit l’onglet)
+
+### _break_test.mjs  EXIT=0
+  ok   30 chartJsBrokenAxisOptions also works from the plotted values
+  ok   31 the typed numbers still win, and nothing happens without a gap
+  ok   32 chartJsYValues reads every dataset shape a canvas uses
+33/33 checks passed
+
+### _builder_arrows_test.mjs  EXIT=0
+│ 114     │ 'New image'                                                             │ true │ ''    │
+│ 115     │ '55 emptying the canvas empties the annotations too'                    │ true │ ''    │
+└─────────┴─────────────────────────────────────────────────────────────────────────┴──────┴───────┘
+✅ 116/116 checks passed
+
+### _builder_caption_style_test.mjs  EXIT=0
+_builder_caption_style_test.mjs — 112 assertions OK
+
+### _builder_copy_paste_test.mjs  EXIT=0
+_builder_copy_paste_test.mjs — 98 assertions OK
+
+### _builder_eraser_test.mjs  EXIT=0
+_builder_eraser_test.mjs — 62 assertions OK
+
+### _builder_figshadow_test.mjs  EXIT=0
+_builder_figshadow_test.mjs — 75 assertions OK
+
+### _builder_figtools_test.mjs  EXIT=0
+_builder_figtools_test.mjs — 117 assertions OK
+
+### _builder_figureorder_test.mjs  EXIT=0
+_builder_figureorder_test.mjs — 70 assertions OK
+
+### _builder_montage_test.mjs  EXIT=0
+_builder_montage_test.mjs — 50 assertions OK
+
+### _builder_multiselect_test.mjs  EXIT=0
+_builder_multiselect_test.mjs — 193 assertions OK
+
+### _builder_paneldock_test.mjs  EXIT=0
+_builder_paneldock_test.mjs — 53 assertions OK
+
+### _builder_recall_test.mjs  EXIT=0
+_builder_recall_test : 25 vérifications passées
+
+### _builder_shapes_test.mjs  EXIT=0
+_builder_shapes_test : 201 vérifications passées
+_builder_shapes_test : 201 vérifications passées
+
+### _builder_uibar_test.mjs  EXIT=0
+_builder_uibar_test.mjs — 124 assertions OK
+
+### _builder_upscale_test.mjs  EXIT=0
+_builder_upscale_test.mjs — 78 assertions OK
+
+### _calculation_entries_test.mjs  EXIT=0
+✅ 49 tests passés (les calculs d’un dataset se voient sur les deux postes)
+
+### _canvas_autosave_test.mjs  EXIT=0
+✅ _canvas_autosave_test : 142 vérifications passées
+
+### _canvas_composition_safety_test.mjs  EXIT=0
+✅ _canvas_composition_safety_test : 32 vérifications passées
+
+### _canvas_file_restore_test.mjs  EXIT=0
+✅ _canvas_file_restore_test : 108 vérifications passées
+
+### _canvas_identity_test.mjs  EXIT=0
+✅ _canvas_identity_test : 78 vérifications passées
+
+### _capture_fix_test.mjs  EXIT=0
+passed 73/73
+
+### _chemistry_ph_ionic_test.mjs  EXIT=0
+_chemistry_ph_ionic_test.mjs — 102 assertions OK (🧪 le pH titre les fonctions ionisables — formes chargées ET formes acides qu’un squelette hydrogéné porte —, la force ionique écrante le Coulomb (Debye–Hückel, κ = 3.29·√I), le défaut reste bit-à-bit celui d’avant, et les quatre gestes du champ lisent la même chimie)
+
+### _common_library_folder_test.mjs  EXIT=0
+Bibliothèque commune rangée : general_library_images   
+Bibliothèque commune rangée : general_library_images   
+_common_library_folder_test : 96 vérifications passées (bibliothèque commune à la racine + migration)
+
+### _compact_sections_test.mjs  EXIT=0
+_compact_sections_test.mjs — 211 assertions passées ✔
+
+### _condition_page_test.mjs  EXIT=0
+123 passed
+
+### _curve_style_test.mjs  EXIT=0
+│ 48      │ '47 the panel offers the ALONG-AXIS move of each title'                     │ true │ ''    │
+│ 49      │ '48 the move is not a gap: the two commands stay independent'               │ true │ ''    │
+└─────────┴─────────────────────────────────────────────────────────────────────────────┴──────┴───────┘
+✅ 50/50 checks passed
+
+### _cysteine_panel_layout_test.mjs  EXIT=1
+  operator: '==',
+  diff: 'simple'
+}
+Node.js v26.5.1
+
+### _cys_oxidized_ranges_test.mjs  EXIT=0
+_cys_oxidized_ranges_test.mjs : 48 assertions passées
+
+### _dataset_copy_mirror_test.mjs  EXIT=0
+✅ 44 tests passés (la copie Drive du dataset ne perd plus la dernière minute)
+
+### _dataset_creation_guard_test.mjs  EXIT=0
+_dataset_creation_guard_test.mjs — 21 assertions OK
+
+### _dataset_dir_twins_test.mjs  EXIT=0
+✅ 53 tests passés (un seul projects/ et un seul protocols/ par dataset, jamais de jumeau)
+
+### _dataset_index_test.mjs  EXIT=0
+✅ 49 tests passés (la liste des datasets a sa propre copie et voyage)
+
+### _deleted_projects_test.mjs  EXIT=0
+✅ 76 tests passés (projets supprimés : rien ne ressuscite — et un projet restauré revient)
+
+### _disulfide_fold_test.mjs  EXIT=0
+_disulfide_fold_test.mjs — 132 assertions OK
+
+### _docking_scatter_card_test.mjs  EXIT=1
+    at async file:///C:/Users/nicol/lab-workspace/_docking_scatter_card_test.mjs:77:20 {
+  errors: [Getter/Setter]
+}
+Node.js v26.5.1
+
+### _docking_viewer_restore_test.mjs  EXIT=0
+60 passed
+
+### _dock_style_test.mjs  EXIT=0
+_dock_style_test.mjs — 44 assertions OK
+
+### _doc_responsive_test.mjs  EXIT=0
+✅ 46 tests passés (document exporté et page « document » adaptés à la largeur de l’écran)
+
+### _dosy_points_test.mjs  EXIT=0
+│ 15      │ '16 un ±SD imposé est enregistré et dessiné comme barre d’erreur'        │ true │ ''    │
+│ 16      │ '17 le modal choisit la disposition et l’impose à l’import'              │ true │ ''    │
+└─────────┴──────────────────────────────────────────────────────────────────────────┴──────┴───────┘
+✅ 17/17 checks passed
+
+### _drive_big_upload_test.mjs  EXIT=0
+_drive_big_upload_test: 48 passed
+
+### _drive_mirror_test.mjs  EXIT=0
+✅ 78 tests passés (le Drive est le miroir du programme : rien ne ressuscite)
+
+### _drive_restore_test.mjs  EXIT=0
+251 passed
+
+### _drive_stray_project_test.mjs  EXIT=0
+_drive_stray_project_test.mjs — 20 assertions OK (un dossier de projet vit DANS projects/)
+
+### _experiment_drive_root_test.mjs  EXIT=0
+_experiment_drive_root_test: 41 passed
+
+### _experiment_folder_files_test.mjs  EXIT=1
+    at async ModuleJob.run (node:internal/modules/esm/module_job:561:5)
+    at async node:internal/modules/esm/loader:650:26
+    at async file:///C:/Users/nicol/lab-workspace/_experiment_folder_files_test.mjs:114:15
+Node.js v26.5.1
+
+### _experiment_move_drive_test.mjs  EXIT=0
+_experiment_move_drive_test.mjs — 62 assertions OK (le dossier d'une expérience MIGRE sous le projet visé)
+
+### _figures_folder_mismatch_test.mjs  EXIT=0
+✓ 64 vérifications passées — le dossier d’images d’un projet est CHERCHÉ, jamais fabriqué.
+
+### _figure_placement_test.mjs  EXIT=0
+_figure_placement_test.mjs — 40 assertions passed
+
+### _figure_recapture_test.mjs  EXIT=0
+│ 30      │ '31 the ⏹ Stop button is on the page and in the Image Builder'                │ true │ ''    │
+│ 31      │ '32 the duplicates a runaway run left behind can be cleaned in one click'     │ true │ ''    │
+└─────────┴───────────────────────────────────────────────────────────────────────────────┴──────┴───────┘
+✅ 32/32 checks passed
+
+### _figure_style_test.mjs  EXIT=0
+│ 69      │ '63 the helpers every chart already uses read the two colours'                        │ true │ ''    │
+│ 70      │ '64 Settings offers the ink and the lines, and the summaries list them'               │ true │ ''    │
+└─────────┴───────────────────────────────────────────────────────────────────────────────────────┴──────┴───────┘
+✅ 71/71 checks passed
+
+### _figure_svg_drive_test.mjs  EXIT=0
+passed 162/162
+
+### _folder_race_test.mjs  EXIT=0
+_folder_race_test: 47 passed
+
+### _geometry_relax_test.mjs  EXIT=0
+_geometry_relax_test.mjs — 595 assertions OK (les tables de la chimie, l'hybridation, les cycles et la PLANÉITÉ tenue, le gradient mesuré par différences finies (les cycles compris), la descente exécutée pas à pas, le PAS À PAS du rapprochement et ses reprises, la fenêtre, le REBÂTIMENT de la partie hors fenêtre (la molécule se resserre au lieu de s’étirer), les 🎲 ÉCHAPPÉES (la botte de torsion, les contacts trop courts, le meilleur modèle gardé), le PAS VU DE L’EXTÉRIEUR (onStep), le CONSTRUIT AUTOMATIQUE (les longueurs fausses trouvées tout seul, conduites une après l’autre, le second balayage quand le premier en a créé d’autres, et ce qui reste mesuré), le CŒUR DUR (Bondi, le terme, son gradient mesuré, le rebalayage pendant la descente, et le construit automatique qui désempile la molécule), et un vrai PDB étiré reconstruit puis relu par NGL)
+
+### _journal_formats_test.mjs  EXIT=0
+_journal_formats_test.mjs — 531 assertions passed
+
+### _large_system_style_test.mjs  EXIT=0
+_large_system_style_test.mjs — 44 assertions OK
+
+### _library_bulk_ops_test.mjs  EXIT=0
+_library_bulk_ops_test.mjs — 101 assertions OK (la Librairie se sélectionne et se supprime EN BLOC, s'exporte ENTIÈRE — les neuf sous-catégories, tous leurs éléments — et se recharge PAR SOUS-CATÉGORIE ou par éléments : fusion additive, par nom, jamais destructrice)
+
+### _library_csv_roundtrip_test.mjs  EXIT=0
+_library_csv_roundtrip_test.mjs — 60 assertions OK (export → relecture de la Librairie : colonnes par en-tête, valeurs citées, seule la section COMPOUNDS, formule/SMILES dans leurs champs ; et la case de séquence qui donne le TEXTE tapé à onChange)
+
+### _library_move_test.mjs  EXIT=0
+✅ 46 tests passés (un déplacement de bibliothèque survit au miroir des clés, et le fichier suit son entrée)
+
+### _library_reorder_test.mjs  EXIT=0
+_library_reorder_test.mjs — 41 assertions OK
+
+### _library_restore_test.mjs  EXIT=0
+✅ 175 tests passés (bibliothèque d’images ↔ sauvegarde)
+
+### _ligand_smiles_test.mjs  EXIT=0
+_ligand_smiles_test.mjs — 32 assertions OK
+
+### _load_html_projects_test.mjs  EXIT=0
+_load_html_projects_test.mjs — 54 assertions OK (📂 Load HTML : les projets d’une sauvegarde sont adoptés par le dataset qui les reçoit — visibles, jamais ressuscités, jamais écrasés)
+
+### _load_progress_bar_test.mjs  EXIT=0
+_load_progress_bar_test.mjs — 63 assertions OK
+
+### _mail_recipients_test.mjs  EXIT=0
+_mail_recipients_test: 47 passed
+
+### _manuscript_import_test.mjs  EXIT=0
+✅ 555 tests passés (manuscrit — blocs / parties / en-tête / sections / liens / figures)
+
+### _md_analysis_cache_test.mjs  EXIT=0
+_md_analysis_cache_test.mjs — 78 assertions OK
+
+### _md_axis_cfg_test.mjs  EXIT=0
+✅ _md_axis_cfg_test.mjs — 73 vérifications passées
+
+### _md_clash_report_test.mjs  EXIT=0
+_md_clash_report_test.mjs — 47 assertions OK (⚠ la dynamique REND ses clash — même lecteur et même seuil que le 🧬, sur la géométrie de l’écran — sans changer une seule trajectoire : le modèle engendré par la page en porte bien sous 1.45 Å pendant son ▶ MD à 300 K)
+
+### _md_thermal_motion_test.mjs  EXIT=0
+_md_thermal_motion_test.mjs — 50 assertions OK (🌡 la température CONDUIT le mouvement : vitesse thermique √(R·T/m) comme échelle du moteur, mouvement visible et suivant √T, la molécule n’est plus collée au fond du puits, toutes les vitesses bornées par la consigne, la contre-épreuve de l’ancienne inertie, le ⚖ poids qui mord toujours, et LA MÊME EXCURSION POUR CHAQUE DIÈDRE QUE LA MOLÉCULE AIT 8 OU 378 CANAUX)
+
+### _md_wall_test.mjs  EXIT=1
+  operator: 'deepStrictEqual',
+  diff: 'simple'
+}
+Node.js v26.5.1
+
+### _nmr1d_processing_test.mjs  EXIT=0
+_nmr1d_processing_test.mjs — 35 assertions OK (le réglage du spectre 1D suit le dataset)
+
+### _nmr_nuclei_table_test.mjs  EXIT=0
+_nmr_nuclei_table_test.mjs — 67 assertions OK (🎯 noyaux de la table, formule 2D dans « Sequence and structure », viewer 3D repliable)
+
+### _omega_free_test.mjs  EXIT=0
+_omega_free_test.mjs — 110 assertions OK (l'option 🪢 « ω varie » : son défaut FAUX, le VERROU DU TIRAGE qui pose les peptides trans au lieu de les tirer (et qui ramène un ω cis dans le plateau, d'où la protection seule ne le ramène qu'à moitié — mesuré), les trois moteurs qui lâchent chacun leur protection, le plateau GARANTI quand elle est fausse (un cliquet : on n'en sort pas), le TRADE exécuté quand elle est vraie — ω sort du plateau, paie sa barrière, la distance se rapproche et le coût TOTAL baisse —, le protocole entier du calcul de structure qui la porte, et le panneau qui la branche sur ▶ Run, ▶ MD et ⚒ Minimise)
+
+### _page_parking_test.mjs  EXIT=0
+_page_parking_test.mjs — 54 assertions OK (la page quittée reste vivante, une seule à la fois)
+
+### _persist_store_test.mjs  EXIT=0
+✅ 92 tests passés (écriture vérifiée, quota plein, allègement des figures, écriture sauvée sans place libre, garde-fous du code)
+
+### _project_drive_doc_test.mjs  EXIT=0
+✅ 61 tests passés (références « W.-J. » · import automatique · document du projet sur le Drive)
+
+### _project_experiment_move_test.mjs  EXIT=0
+_project_experiment_move_test.mjs — 77 assertions OK (déplacement d'une expérience entre deux projets)
+
+### _project_page_order_test.mjs  EXIT=0
+_project_page_order_test.mjs — 49 assertions passed
+
+### _project_root_migrate_test.mjs  EXIT=0
+_project_root_migrate_test: 56 passed
+
+### _project_section_editing_test.mjs  EXIT=0
+_project_section_editing_test.mjs — 61 assertions passed
+
+### _project_store_guard_test.mjs  EXIT=1
+  operator: '==',
+  diff: 'simple'
+}
+Node.js v26.5.1
+
+### _protein_heavy_bonds_test.mjs  EXIT=0
+ok   viewer applies it on every load path (4 call sites)
+ok   …et une molécule AJOUTÉE est prunée AVANT que ses molécules soient exposées
+ok   the main load prunes the graph BEFORE the first representation is built
+PASS
+
+### _protein_hydrogen_bonds_test.mjs  EXIT=0
+ok   viewer applies it on every load path (3 call sites)
+ok   …et une molécule AJOUTÉE est prunée AVANT que ses molécules soient exposées
+ok   the main load prunes the graph BEFORE the first representation is built
+PASS
+
+### _pub_abstract_test.mjs  EXIT=0
+_pub_abstract_test.mjs — 62 assertions OK (l’abstract : champ, bloc, style, position et .docx)
+
+### _pub_author_style_test.mjs  EXIT=0
+_pub_author_style_test: 244 passed
+
+### _pub_columns_test.mjs  EXIT=0
+_pub_columns_test.mjs — 159 assertions OK (page à deux colonnes : chaque partie, chaque section et chaque figure)
+
+### _pub_docx_export_test.mjs  EXIT=0
+_pub_docx_export_test.mjs — 170 assertions OK (export .docx du document)
+
+### _pub_doc_head_lines_test.mjs  EXIT=0
+_pub_doc_head_lines_test.mjs : 43 passed
+
+### _pub_doc_head_order_test.mjs  EXIT=0
+_pub_doc_head_order_test.mjs — 52 assertions OK (la tête du document suit l’ordre du panneau)
+
+### _pub_doc_screen_only_test.mjs  EXIT=0
+_pub_doc_screen_only_test.mjs : 62 passed
+
+### _pub_doc_sections_test.mjs  EXIT=0
+_pub_doc_sections_test.mjs — 135 assertions OK (ordre & intitulés des sections du document)
+
+### _pub_format_from_pdf_test.mjs  EXIT=0
+ok   the reference entries give the ACS shape (acs)
+ok   author names = “Smith, J. A.” (family-comma-initials)
+     evidence: body: Times 10 pt, left-aligned | title: Times bold 16 pt, bold | authors: Times 11 pt | sections, in the order printed: Introduction → Results and Discussion → Materials and Methods → References | in-text citations: Superscript | author names: Smith, J. A. | references: numbered, fields printed authors › title › journal › year › volume › pages, closest preset “ACS” | the reference list itself: Times 9 pt (its heading is not its text)
+PASS
+
+### _pub_format_panel_test.mjs  EXIT=0
+_pub_format_panel_test.mjs — 47 assertions OK (l’ordre des rubriques du panneau)
+
+### _pub_journal_adapts_test.mjs  EXIT=0
+_pub_journal_adapts_test.mjs — 122 assertions passed
+
+### _pub_style_presets_test.mjs  EXIT=0
+_pub_style_presets_test.mjs — 132 assertions OK (le journal réordonne, les sections de fin ont leur rangée, les styles se sauvent et se rappellent)
+
+### _pymol_selections_test.mjs  EXIT=0
+_pymol_selections_test.mjs — 126 assertions OK
+
+### _pymol_selection_bridge_test.mjs  EXIT=0
+_pymol_selection_bridge_test.mjs — 70 assertions OK
+
+### _ramachandran_test.mjs  EXIT=0
+_ramachandran_test.mjs — 234 assertions OK (les tables, la classe des résidus, les régions et leurs polygones, la géométrie du dessin, les caractères des DEUX AXES et leurs titres, le survol qui nomme un point et ses deux angles, une hélice α et un feuillet CONSTRUITS et relus au chiffre près, les trous de chaîne, les outliers nommés, le panneau 🪢 du viewer, et le 🪢 qui SUIT le calcul, la dynamique et la minimisation image par image)
+
+### _readonly_notice_test.mjs  EXIT=0
+_readonly_notice_test.mjs — 57 assertions OK (un refus d’écriture est toujours affiché)
+
+### _rebuild_h_test.mjs  EXIT=0
+rebuilt=157 kept=0 residues=20
+checked 154 H positions vs builder, mismatches=0
+amide N-H distance residue 2 = 1.0095 A
+PASS
+
+### _recettes_actions_superuser_test.mjs  EXIT=0
+_recettes_actions_superuser_test.mjs — 9 assertions OK (les 3 boutons de fin de ligne sont réservés au superutilisateur)
+
+### _recettes_no_totals_banner_test.mjs  EXIT=0
+_recettes_no_totals_banner_test.mjs — 43 assertions OK (page Recettes : plus de bandeau de totaux ni de commentaires en tête, et une table qui tient dans la page : seulement les boutons et la table)
+
+### _reference_complete_test.mjs  EXIT=0
+_reference_complete_test: 68 passed
+
+### _reference_import_test.mjs  EXIT=0
+✅ 183 tests passés (import de références)
+✅ 226 tests passés (import de références)
+
+### _reference_links_test.mjs  EXIT=0
+✅ 130 tests passés (liens de citation [n] ↔ références, import bibliographique numéroté, document exporté réparé)
+
+### _refresh_shared_read_test.mjs  EXIT=0
+✅ _refresh_shared_read_test : 40 vérifications passées (🔄 Refresh relit la source partagée avant de reconstruire la page)
+
+### _residue_numbering_panels_test.mjs  EXIT=0
+_residue_numbering_panels_test.mjs — 79 assertions OK
+
+### _save_html_test.mjs  EXIT=0
+_save_html_test.mjs — 45 assertions OK
+
+### _sequence_charge_test.mjs  EXIT=1
+  operator: '==',
+  diff: 'simple'
+}
+Node.js v26.5.1
+
+### _sequence_line_render_test.mjs  EXIT=0
+_sequence_line_render_test.mjs — 32 assertions OK (🧬 la ligne sous une case de séquence, RENDUE : composition · charge à pH 7 · ε₂₈₀, les deux façons d’appeler la ligne d’accord, les capuchons dits, rien pour une case non protéique ou vide)
+
+### _sequence_natures_test.mjs  EXIT=0
+_sequence_natures_test.mjs — 155 assertions OK
+
+### _spectra_split_test.mjs  EXIT=0
+passed 238/238
+
+### _ss_dihedral_test.mjs  EXIT=0
+_ss_dihedral_test.mjs — 128 assertions OK (les deux recettes de la peinture — H α −57/−47, E β −139/+135 —, le puits plat en degrés avec son écart circulaire, la famille « dihedral » du champ (sa ligne, son poids, son unité et son addition dans l’enthalpie), la conversion appariée PAR ORDRE (φ et ψ séparément, un bout de chaîne n’ayant que son angle, une longueur qui ne correspond pas DITE), et l’effet EXÉCUTÉ : une chaîne de feuillet imposée en hélice voit sa pénalité tomber par la minimisation (contrôle sans contraintes compris), le rapport de la dynamique la chiffrer avant/après, et le panneau 🧬 la brancher sur ▶ MD, ⚒ Minimise, ▶ Run et ⟳ Energy — avec la structure peinte qui arrive des trois pages)
+
+### _ss_geometry_test.mjs  EXIT=0
+_ss_geometry_test.mjs — 42 assertions OK
+  (la géométrie CONSTRUITE puis RELUE : φ/ψ/ω des lettres H, L, E et C, le carbone α du bon côté
+   — référence : un VRAI aminoacide L du dépôt —, le sens de chaque hélice, le couple de Pauling–Corey,
+   et le signe corrigé dans les DEUX copies du poseur)
+
+### _ss_sheet_test.mjs  EXIT=0
+_ss_sheet_test.mjs — 163 assertions OK
+
+### _storage_boxes_test.mjs  EXIT=0
+_storage_boxes_test.mjs : 119/119 passed
+
+### _storage_drive_layout_test.mjs  EXIT=0
+_storage_drive_layout_test: 149 passed
+
+### _structure_calculation_test.mjs  EXIT=0
+_structure_calculation_test.mjs — 768 assertions OK (les bornes et les emprunts du module, le lecteur des dièdres EXÉCUTÉ sur une chaîne, un cycle et une double liaison, le tirage REJOUÉ au chiffre près (longueurs et angles intacts, côté ancré bit à bit), le protocole du ⚒ qui rapproche une distance demandée et qui DIT celle qu’il ne peut pas atteindre, la note qui préfère ce qui respecte la contrainte, n départs classés par score croissant avec les m premières GARDÉES, la dispersion de la famille après superposition optimale, et le panneau 🧬 du viewer : les distances, n, m, ▶ Run / ⏹ Stop, le tableau classé, ⤓ Load, et l’écriture par le chemin d’une torsion ; et les deux pannes mesurées de cette session — le rapport du 🧬 qui lisait des champs absents du classement (il en mourait sur undefined.toFixed à la fin de chaque calcul), et le pont disulfure ÉTIRÉ dont la fausse liaison refermait le graphe sur un cycle : sans aucun canal entre les deux Cys, le pont ne pouvait jamais les rapprocher)
+
+### _structure_fit_test.mjs  EXIT=0
+_structure_fit_test.mjs — 150 assertions OK
+
+### _structure_restraints_test.mjs  EXIT=0
+_structure_restraints_test.mjs — 80 assertions OK (le format du fichier des distances : trois colonnes lisibles, la tête qui dit comment le relire, l’aller-retour exact, la relecture tolérante mais jamais devineuse, le numéro d’atome « #123 », et les deux gestes du panneau 🧬 — 💾 Save distances et 📂 Load distances — branchés sur ce seul module)
+
+### _structure_windows_test.mjs  EXIT=0
+_structure_windows_test.mjs — 112 assertions OK (la formule 2D dans « Sequence and structure », le viewer 3D repliable — sur les pages MD et Docking)
+
+### _target_solvent_torque_test.mjs  EXIT=0
+_target_solvent_torque_test.mjs — 100 assertions OK (💧 la boîte d’eau explicite — géométrie TIP3P, indices d’origine intacts, sites écartés, arête refusée si trop petite, ET DESSINÉE dans la vue comme une molécule de la barre (HETATM HOH, préfixe `solv_`) ; 🎯 la fonction cible DYANA — répulsion seule, sans charges, sans surface, atomes unis, lue par le champ ET par les quatre gestes ; ⚖ et le poids d’une ligne qui MORD vraiment sur la dynamique, plafond de couple séparé)
+
+### _tdz_scan_test.mjs  EXIT=0
+_tdz_scan_test.mjs — 18 assertions OK  (258 fichiers, 237431 références)
+
+### _torsion_drive_test.mjs  EXIT=0
+_torsion_drive_test.mjs — 652 assertions OK (la convention du dihèdre, la forme fermée, le côté qui tourne, le plan, le panneau, et un vrai PDB tourné puis relu par NGL)
+
+### _viewer_atom_charge_test.mjs  EXIT=0
+_viewer_atom_charge_test.mjs — 135 assertions OK
+
+### _viewer_background_test.mjs  EXIT=1
+  operator: 'deepStrictEqual',
+  diff: 'simple'
+}
+Node.js v26.5.1
+
+### _viewer_color_settings_test.mjs  EXIT=0
+_viewer_color_settings_test.mjs — 165 assertions OK
+
+### _viewer_film_dissolve_test.mjs  EXIT=0
+_viewer_film_dissolve_test.mjs — 76 assertions OK (un aspect par moitié de mouvement · fondu EXÉCUTÉ · ⏹ le referme · l'opacité est un uniforme de ngl)
+
+### _viewer_film_match_test.mjs  EXIT=0
+_viewer_film_match_test.mjs — 79 assertions OK (vignette du CSS · FOND DE LA FIGURE dans le film · beforeCapture par image · barre raccourcie · une surface survit au film)
+
+### _viewer_film_poses_test.mjs  EXIT=0
+_viewer_film_poses_test.mjs — 46 assertions OK (styles de la barre dans une pose · zoom de NGL photographié · caméra qui glisse · câblage)
+
+### _viewer_general_cession_test.mjs  EXIT=0
+_viewer_general_cession_test.mjs — 72 assertions OK (la cession, règle par règle)
+
+### _viewer_general_row_test.mjs  EXIT=0
+_viewer_general_row_test.mjs — 189 assertions OK (hiérarchie + rangée General exécutée)
+
+### _viewer_hbonds_test.mjs  EXIT=0
+_viewer_hbonds_test.mjs — 184 assertions OK
+
+### _viewer_headgroups_test.mjs  EXIT=0
+_viewer_headgroups_test.mjs : 58 assertions OK
+
+### _viewer_heads_row_test.mjs  EXIT=0
+_viewer_heads_row_test.mjs — 54 assertions OK
+
+### _viewer_hide_hydrogens_test.mjs  EXIT=0
+_viewer_hide_hydrogens_test.mjs — 25 assertions OK (clause mesurée sur NGL · tick branché sur toutes les molécules)
+
+### _viewer_keyframes_test.mjs  EXIT=1
+  operator: '==',
+  diff: 'simple'
+}
+Node.js v26.5.1
+
+### _viewer_light_rig_test.mjs  EXIT=0
+_viewer_light_rig_test.mjs — 385 assertions OK
+
+### _viewer_main_reps_ownership_test.mjs  EXIT=0
+_viewer_main_reps_ownership_test.mjs — 12 assertions OK
+
+### _viewer_materials_test.mjs  EXIT=0
+_viewer_materials_test.mjs — 143 assertions OK
+
+### _viewer_membrane_chains_test.mjs  EXIT=0
+_viewer_membrane_chains_test.mjs — 42 assertions OK (les chaînes acyle survivent au CPK des têtes)
+
+### _viewer_membrane_rows_test.mjs  EXIT=0
+_viewer_membrane_rows_test.mjs — 145 assertions OK (feuillets stylables + deux barres identiques)
+
+### _viewer_molecule_choice_test.mjs  EXIT=0
+_viewer_molecule_choice_test.mjs — 41 assertions OK (✔ des molécules · choix 🎯 · Move/Rotate par molécule)
+
+### _viewer_molecule_moves_test.mjs  EXIT=0
+✔ _viewer_molecule_moves_test.mjs — 131 vérifications
+
+### _viewer_molecule_parts_test.mjs  EXIT=0
+_viewer_molecule_parts_test.mjs — 55 assertions OK (fragments · noms · PDB écrit · branchement)
+
+### _viewer_palette_defaults_test.mjs  EXIT=0
+_viewer_palette_defaults_test.mjs — 43 assertions OK
+
+### _viewer_pdb_molecules_test.mjs  EXIT=0
+_viewer_pdb_molecules_test.mjs — 30 assertions OK (assemblage · poses écrites · scène rendue intacte)
+
+### _viewer_ray_shadows_test.mjs  EXIT=0
+bâton de 0,15 Å : bande d’ombre 14 px (2√2 × 0,15 Å = 14.5 px à 34.3 px/Å) · bille de 0,6 Å : 59 px (l’ancien rayon, celui du rapport)
+_viewer_ray_shadows_test.mjs — 333 assertions OK (ombres portées · deux rayons : bille et bâton)
+
+### _viewer_ray_shadow_live_test.mjs  EXIT=0
+_viewer_ray_shadow_live_test.mjs — 183 assertions OK (ombre vivante : parité PNG · 3 régimes · politique auto · pose · signature de la scène · signature des entrées du masque · geste des coordonnées (moved) · cadre redimensionné · couche · films)
+
+### _viewer_ray_test.mjs  EXIT=0
+_viewer_ray_test.mjs — 189 assertions OK
+
+### _viewer_render_smoke_test.mjs  EXIT=0
+_viewer_render_smoke_test.mjs — 23 assertions OK
+
+### _viewer_report_fixes_test.mjs  EXIT=0
+_viewer_report_fixes_test.mjs — 51 assertions OK
+
+### _viewer_rings_gradient_test.mjs  EXIT=0
+_viewer_rings_gradient_test.mjs — 298 assertions OK
+
+### _viewer_row_bridges_test.mjs  EXIT=0
+_viewer_row_bridges_test.mjs — 69 assertions OK
+
+### _viewer_scheme_test.mjs  EXIT=0
+_viewer_scheme_test.mjs — 382 assertions OK
+
+### _viewer_section_scope_test.mjs  EXIT=0
+_viewer_section_scope_test.mjs — 92 assertions OK (solid qui descend · section qui ne parle que pour elle · membrane par type de lipide · macro enregistrée depuis le viewer)
+
+### _viewer_section_visibility_test.mjs  EXIT=0
+_viewer_section_visibility_test.mjs — 19 assertions OK
+
+### _viewer_selected_space_test.mjs  EXIT=0
+_viewer_selected_space_test.mjs — 248 assertions OK
+
+### _viewer_selection_toggle_test.mjs  EXIT=0
+_viewer_selection_toggle_test.mjs — 78 assertions OK (styles + hide)
+
+### _viewer_sequence_highlight_test.mjs  EXIT=0
+_viewer_sequence_highlight_test.mjs — 52 assertions OK (séquence ⇄ 3D, vrai NGL 2.4)
+
+### _viewer_shadow_backbone_test.mjs  EXIT=0
+_viewer_shadow_backbone_test.mjs — 45 assertions OK (un trait ne répond que de ce qu'il dessine)
+
+### _viewer_shadow_blur_test.mjs  EXIT=0
+_viewer_shadow_blur_test.mjs — 68 assertions OK (le flou est une largeur, pas un compte de pixels)
+
+### _viewer_shadow_ghost_test.mjs  EXIT=0
+RUBAN SEUL — maillage lu : 0 px d’ombre (0 HORS du ruban)
+             maillage NON lu : 1339 px d’ombre (467 sur le ruban, 7560 px couverts par lui)
+_viewer_shadow_ghost_test.mjs — 33 assertions OK (un maillage lu ne se double pas d’une bille de vdW)
+
+### _viewer_shadow_links_test.mjs  EXIT=0
+_viewer_shadow_links_test.mjs — 55 assertions OK (les liens que l'ombre remplit)
+
+### _viewer_shadow_selfmask_test.mjs  EXIT=0
+  bille seule : 9176 pixel(s) ont rencontré leur propre forme · masque 0 px
+  paire alignée : 17883 (le reste — 28267 px ombrés — vient d'une AUTRE forme)
+  hélice de 40 : 2126 (ombre réelle gardée : 2564 px)
+mesures : 6
+
+### _viewer_sphere_size_test.mjs  EXIT=0
+_viewer_sphere_size_test.mjs — 38 assertions OK (une bille se mesure en radiusScale, un point ne pèse rien)
+
+### _viewer_sstruc_colors_test.mjs  EXIT=0
+_viewer_sstruc_colors_test.mjs — 64 assertions OK
+
+### _viewer_stage_parking_test.mjs  EXIT=0
+_viewer_stage_parking_test.mjs — 35 assertions OK (⏸ la mise en veille : la règle exécutée, les deux gestes mesurés sans navigateur, et le câblage du viewer)
+
+### _viewer_structure_classes_test.mjs  EXIT=0
+_viewer_structure_classes_test.mjs — 251 assertions OK
+
+### _viewer_style_controls_test.mjs  EXIT=0
+_viewer_style_controls_test.mjs — 504 assertions OK
+
+### _viewer_style_coverage_test.mjs  EXIT=0
+_viewer_style_coverage_test.mjs — 738 assertions OK (chaque atome, chaque liaison)
+
+### _viewer_style_gaps_test.mjs  EXIT=0
+_viewer_style_gaps_test.mjs — 267 assertions OK
+
+### _viewer_style_recall_test.mjs  EXIT=0
+_viewer_style_recall_test.mjs — 186 assertions OK (le style retenu par une expérience : fichier, mémoire, rappel)
+
+### _viewer_theme_snapshot_test.mjs  EXIT=0
+_viewer_theme_snapshot_test.mjs — 73 assertions OK (thème cumulatif + snapshot)
+
+### _viewer_trajectory_video_test.mjs  EXIT=0
+_viewer_trajectory_video_test.mjs — 175 assertions OK (🎬 le run écrit en un fichier vidéo)
+
+### _viewer_ui_layout_test.mjs  EXIT=0
+_viewer_ui_layout_test.mjs — 517 assertions OK
+
+### _water_md_test.mjs  EXIT=0
+_water_md_test.mjs — 61 assertions OK (💧 LES EAUX DE LA BOÎTE EXPLICITE BOUGENT VRAIMENT : six degrés de liberté de corps rigide, gradient = dérivée exacte du coût, thermostat MESURÉ (translation ET rotation), rotation libre qui conserve son énergie, géométrie TIP3P invariante à 10⁻¹⁵ Å, graine du dossier, `waterMobile: false` qui rend l’ancien geste au chiffre près, et le panneau qui suit et qui dit)
+
+### _workspace_drive_test.mjs  EXIT=0
+✅ 60 tests passés (l’espace de travail entier vit sur le Drive)
+
+### _workspace_keys_test.mjs  EXIT=0
+✅ 39 tests passés (les clés du navigateur vivent aussi sur le Drive)
+
+### _workspace_resync_test.mjs  EXIT=0
+154 vérifications passées — « RESYNC FROM DRIVE » : l’inventaire ne touche à rien.
+
+### _workspace_resync_ui_test.mjs  EXIT=0
+70 vérifications passées — « RESYNC FROM DRIVE » : le compte-rendu dit tout, depuis une seule source.

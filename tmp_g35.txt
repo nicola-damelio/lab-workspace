@@ -1,0 +1,28 @@
+src/App.jsx:64: import { writeDatasetListCache, readDatasetListCache } from './utils/datasetListIndex';
+src/App.jsx:2265: setDatasetsList([]);
+src/App.jsx:2307: setDatasetsList((prev) => withoutDeletedDatasets(applyWorkspaceIndex({
+src/App.jsx:2321: setDatasetsList((prev) => withoutDeletedDatasets(applyWorkspaceIndex({
+src/App.jsx:2340: setDatasetsList((prev) => withoutDeletedDatasets(applyWorkspaceIndex({
+src/App.jsx:2357: const syncWorkspaceFromDrive = useCallback(async () => {
+src/App.jsx:2410: const adoptedList = readDatasetListCache();
+src/App.jsx:2411: setDatasetsList((prev) => withoutDeletedDatasets(
+src/App.jsx:2423: const run = () => { if (!cancelled) syncWorkspaceFromDrive(); };
+src/App.jsx:2431: }, [syncWorkspaceFromDrive]);
+src/App.jsx:2438: 1° L'INDEX — exactement le chemin du démarrage (`syncWorkspaceFromDrive`) :
+src/App.jsx:2453: const resyncWorkspaceFromDrive = useCallback(async () => {
+src/App.jsx:2458: const stateAdopted = await syncWorkspaceFromDrive().catch(() => false);
+src/App.jsx:2524: }, [syncWorkspaceFromDrive, datasetsList]);
+src/App.jsx:2603: writeDatasetListCache(datasetsList, { keepContent: !db });
+src/App.jsx:3216: setDatasetsList(
+src/App.jsx:3317: setDatasetsList(
+src/App.jsx:4066: writeDatasetListCache([localEntry], { keepContent: !db });
+src/App.jsx:4067: setDatasetsList((prev) => withoutDeletedDatasets(applyWorkspaceIndex({
+src/App.jsx:4111: setDatasetsList(
+src/App.jsx:4168: setDatasetsList(
+src/App.jsx:4542: setDatasetsList((prev) => (Array.isArray(prev) ? prev : []).map((d) =>
+src/App.jsx:4629: setDatasetsList((prev) => (Array.isArray(prev) ? prev : []).filter((d) => !d || String(d.id) !== key));
+src/App.jsx:4700: setDatasetsList((prev) => withoutDeletedDatasets(prev));
+src/App.jsx:4737: setDatasetsList(stored);
+src/App.jsx:4827: setDatasetsList((prev) => withoutDeletedDatasets(prev));
+src/App.jsx:4847: setDatasetsList((prev) => withoutDeletedDatasets(prev));
+src/App.jsx:5982: onResyncFromDrive={resyncWorkspaceFromDrive}

@@ -1,0 +1,58 @@
+﻿MIRROR reason -
+MIRROR datasets [{"f":"Pepper viruses","id":"ds1","slug":"Pepper_viruses"},{"f":"Pepper viruses","id":"ds1","slug":"Pepper_viruses"},{"f":"Rhodopsin","id":"ds2","slug":"Rhodopsin"},{"f":"NMR structure","id":"ds3","slug":"NMR_structure"},{"f":"Chymotrypsin old","id":"ds4","slug":"Chymotrypsin_old"},{"f":"Removed dataset","id":"ds7","slug":"Removed_dataset"},{"f":"Mystery folder","id":"","slug":"Mystery_folder"}]
+MIRROR recoverable {"copyIds":["ds1","ds3"],"missingCopyIds":["ds4","ds5"],"datasetsInIndex":7,"projectsInIndex":6,"projectsListedHere":3,"datasetsListedHere":2}
+MIRROR    twin-workspace-folder |folder: - |project: - |scope: - |folderId: - |container: -
+MIRROR    dataset-container-at-workspace-root |folder: - |project: - |scope: - |folderId: F_ROOT_PROJECTS |container: projects
+MIRROR    legacy-container-at-workspace-root |folder: - |project: - |scope: - |folderId: F_ROOT_BACKUPS |container: backups
+MIRROR    project-folder-outside-projects |folder: Alpha |project: Alpha |scope: workspace-root |folderId: F_ROOT_STRAY |container: -
+MIRROR    project-folder-outside-projects |folder: Alpha |project: Alpha |scope: dataset-root |folderId: F_ALPHA_ROOT |container: -
+MIRROR    unknown-folder-inside-a-dataset |folder: Random |project: - |scope: - |folderId: F_IN_DS_UNKNOWN |container: -
+MIRROR    project-folder-in-two-places |folder: Pepper viruses |project: Alpha |scope: - |folderId: - |container: -
+MIRROR    project-folder-without-record |folder: Mystery |project: - |scope: - |folderId: F_MYSTERY_P1 |container: -
+MIRROR    dataset-folder-empty |folder: Pepper viruses |project: - |scope: - |folderId: - |container: -
+MIRROR    workspace-folder-inside-a-dataset |folder: Rhodopsin |project: - |scope: - |folderId: F_MISPLACED_WS |container: -
+MIRROR    dataset-folder-inside-a-dataset |folder: Pepper viruses |project: - |scope: - |folderId: F_NESTED_DS |container: -
+MIRROR    project-folder-without-record |folder: Mystery |project: - |scope: - |folderId: F_MYSTERY_P4 |container: -
+MIRROR    dataset-folder-name-differs |folder: Chymotrypsin old |project: - |scope: - |folderId: F_DS4 |container: -
+MIRROR    dataset-folder-empty |folder: Removed dataset |project: - |scope: - |folderId: - |container: -
+MIRROR    project-without-folder |folder: Rhodopsin |project: Gamma |scope: - |folderId: - |container: -
+MIRROR    dataset-folder-without-record |folder: Mystery folder |project: - |scope: - |folderId: F_NO_RECORD |container: projects
+MIRROR    unknown-folder-at-workspace-root |folder: Random notes |project: - |scope: - |folderId: F_ROOT_UNKNOWN |container: -
+MIRROR    two-folders-for-one-dataset |folder: - |project: - |scope: - |folderId: - |container: -
+MIRROR    dataset-without-folder |folder: - |project: - |scope: - |folderId: - |container: -
+NOMIRROR reason -
+NOMIRROR datasets [{"f":"Pepper viruses","id":"ds1","slug":"Pepper_viruses"},{"f":"Pepper viruses","id":"ds1","slug":"Pepper_viruses"},{"f":"Rhodopsin","id":"ds2","slug":"Rhodopsin"},{"f":"NMR structure","id":"ds3","slug":"NMR_structure"},{"f":"Removed dataset","id":"ds7","slug":"Removed_dataset"},{"f":"Chymotrypsin old","id":"","slug":"Chymotrypsin_old"},{"f":"Mystery folder","id":"","slug":"Mystery_folder"}]
+NOMIRROR recoverable {"copyIds":["ds1","ds3","ds7"],"missingCopyIds":["ds4","ds5"],"datasetsInIndex":7,"projectsInIndex":6,"projectsListedHere":3,"datasetsListedHere":2}
+NOMIRROR    twin-workspace-folder |folder: - |project: - |scope: - |folderId: - |container: -
+NOMIRROR    dataset-container-at-workspace-root |folder: - |project: - |scope: - |folderId: F_ROOT_PROJECTS |container: projects
+NOMIRROR    legacy-container-at-workspace-root |folder: - |project: - |scope: - |folderId: F_ROOT_BACKUPS |container: backups
+NOMIRROR    project-folder-outside-projects |folder: Alpha |project: Alpha |scope: dataset-root |folderId: F_ALPHA_ROOT |container: -
+NOMIRROR    unknown-folder-inside-a-dataset |folder: Random |project: - |scope: - |folderId: F_IN_DS_UNKNOWN |container: -
+NOMIRROR    project-folder-in-two-places |folder: Pepper viruses |project: Alpha |scope: - |folderId: - |container: -
+NOMIRROR    project-folder-without-record |folder: Mystery |project: - |scope: - |folderId: F_MYSTERY_P1 |container: -
+NOMIRROR    dataset-folder-empty |folder: Pepper viruses |project: - |scope: - |folderId: - |container: -
+NOMIRROR    workspace-folder-inside-a-dataset |folder: Rhodopsin |project: - |scope: - |folderId: F_MISPLACED_WS |container: -
+NOMIRROR    dataset-folder-inside-a-dataset |folder: Pepper viruses |project: - |scope: - |folderId: F_NESTED_DS |container: -
+NOMIRROR    dataset-folder-empty |folder: Removed dataset |project: - |scope: - |folderId: - |container: -
+NOMIRROR    project-without-folder |folder: Rhodopsin |project: Gamma |scope: - |folderId: - |container: -
+NOMIRROR    dataset-folder-without-record |folder: Chymotrypsin old |project: - |scope: - |folderId: F_DS4 |container: projects
+NOMIRROR    dataset-folder-without-record |folder: Mystery folder |project: - |scope: - |folderId: F_NO_RECORD |container: projects
+NOMIRROR    unknown-folder-at-workspace-root |folder: Alpha |project: - |scope: - |folderId: F_ROOT_STRAY |container: -
+NOMIRROR    unknown-folder-at-workspace-root |folder: Random notes |project: - |scope: - |folderId: F_ROOT_UNKNOWN |container: -
+NOMIRROR    two-folders-for-one-dataset |folder: - |project: - |scope: - |folderId: - |container: -
+NOMIRROR    dataset-without-folder |folder: - |project: - |scope: - |folderId: - |container: -
+NOMIRROR    dataset-without-folder |folder: - |project: - |scope: - |folderId: - |container: -
+node : (node:21744) [DEP0205] 
+Au caractère Ligne:1 : 58
++ ... lab-workspace; node 
+tmp_make_dbg3.mjs; node tmp_dbg3.mjs 
+2>&1 | Out-F ...
++                                     
+       ~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpec 
+   ified: ((node:21744) [D...oks()`   
+  instead.:String) [], RemoteExcept   
+ ion
+    + FullyQualifiedErrorId : NativeC 
+   ommandError
+to show where the warning was created)

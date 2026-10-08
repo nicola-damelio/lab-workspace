@@ -1,0 +1,72 @@
+﻿360: /* Le dÃ©faut rapportÃ©, chacun de ses visages : le conteneur Ã©garÃ©, le dossier de
+361:    projet hors de `projects/`, le jumeau, la fiche sans dossier â€” et lâ€™inverse. */
+362: ok(K.includes(ISSUE.TWIN_WORKSPACE), 'deux dossiers `_workspace` : câ€™est signalÃ©');
+363: ok(K.includes(ISSUE.STRAY_ROOT_CONTAINER), 'un conteneur `projects` posÃ© Ã  la racine de lâ€™espace de travail : câ€™est signalÃ©');
+364: ok(K.includes(ISSUE.LEGACY_ROOT_CONTAINER), 'â€¦et un conteneur historique `backups` : câ€™est signalÃ© aussi');
+365: eq(K.filter((k) => k === ISSUE.STRAY_PROJECT_AT_ROOT).length, 2,
+366:   'les deux dossiers de projet Ã©garÃ©s (racine de lâ€™espace de travail ET racine du dataset) sont signalÃ©s');
+367: eq((REPORT.issues || []).map((i) => (i.kind === ISSUE.STRAY_PROJECT_AT_ROOT ? i.scope : null)).filter(Boolean).sort(),
+368:   ['dataset-root', 'workspace-root'], 'â€¦et chaque constat dit Ã€ QUELLE racine il se trouve');
+369: ok(K.includes(ISSUE.PROJECT_TWIN), 'un projet portÃ© par DEUX dossiers (racine + `projects/`) : câ€™est signalÃ©, rien nâ€™est fusionnÃ©');
+370: eq(K.filter((k) => k === ISSUE.UNKNOWN_PROJECT_FOLDER).length, 2,
+371:   'deux dossiers de projet sans fiche : aucun nâ€™est ignorÃ© en silence');
+372: ok(K.includes(ISSUE.PROJECT_FOLDER_MISSING), 'un projet LISTÃ‰ sans dossier (Â« Gamma Â») : câ€™est signalÃ© (lâ€™inverse du prÃ©cÃ©dent)');
+373: ok(K.includes(ISSUE.DATASET_FOLDER_WITHOUT_RECORD), 'un dossier de dataset sans fiche : câ€™est signalÃ©');
+374: ok(K.includes(ISSUE.DATASET_FOLDER_INSIDE_DATASET), 'un dossier de dataset IMBRIQUÃ‰ dans un autre : câ€™est signalÃ©');
+375: ok(K.includes(ISSUE.DATASET_TWIN), 'deux dossiers pour un seul dataset : câ€™est signalÃ©, rien nâ€™est fusionnÃ©');
+376: ok(K.includes(ISSUE.DATASET_FOLDER_RENAMED), 'un dataset dont le dossier a Ã©tÃ© renommÃ© : câ€™est signalÃ©');
+377: ok(K.includes(ISSUE.MISPLACED_WORKSPACE), 'un dossier `_workspace` dans un dataset : câ€™est signalÃ©');
+378: ok(K.includes(ISSUE.UNKNOWN_FOLDER_IN_DATASET), 'un dossier inconnu DANS un dataset : câ€™est signalÃ©');
+379: ok(K.includes(ISSUE.UNKNOWN_FOLDER_AT_ROOT), 'un dossier inconnu Ã  la racine : câ€™est signalÃ©');
+380: ok(K.includes(ISSUE.DATASET_FOLDER_MISSING), 'un dataset listÃ© dont le dossier a disparu : câ€™est signalÃ©');
+381: ok(!K.includes(ISSUE.MISSING_STATE) && !K.includes(ISSUE.STATE_UNREADABLE),
+382:   'lâ€™index du Drive est lisible : aucun constat dâ€™index absent ou abÃ®mÃ©');
+383: ok(!K.includes(ISSUE.NO_WORKSPACE), 'le dossier dâ€™espace de travail existe : aucun constat de dossier manquant');
+384: 
+385: /* Le dossier Â« Mystery folder Â» : sans fiche, lâ€™inventaire le DIT et rappelle oÃ¹
+386:    le contenu reste lisible. */
+387: const noRecord = issue(REPORT, ISSUE.DATASET_FOLDER_WITHOUT_RECORD);
+388: ok(noRecord && noRecord.datasetFolder === 'Mystery folder', 'â€¦et le constat nomme le dossier sans fiche');
+389: ok(noRecord.text.includes('_workspace/datasets/'), 'â€¦en indiquant le chemin de la copie qui peut encore lire son contenu');
+390: 
+391: /* Ce que lâ€™Ã©cran affichera : une fiche par dossier de dataset. */
+392: const dsEntry = (id) => (REPORT.datasets || []).find((d) => d.id === id) || null;
+393: const ds1 = dsEntry('ds1');
+394: ok(!!ds1, 'lâ€™inventaire rend une fiche par dossier de dataset');
+395: eq(ds1.folderName, 'Pepper viruses', 'â€¦avec le nom que le Drive porte VRAIMENT');
+396: eq(ds1.listedLocally, true, 'â€¦et dit si la liste de ce poste le connaÃ®t');
+397: eq(ds1.listedInIndex, true, 'â€¦ainsi que celle de lâ€™index');
+398: eq(ds1.projects.map((p) => p.name).sort(), ['Alpha', 'Alpha', 'Delta'],
+399:   'les dossiers de projet trouvÃ©s sont tous lÃ  â€” y compris celui posÃ© Ã  la racine du dataset');
+400: eq(ds1.projectsAtRoot, 1, 'â€¦et ce dernier est comptÃ© comme Ã©garÃ©');
+401: eq(ds1.copiesHere, true, 'la copie de contenu de ce dataset est vue sur le Drive');
+402: eq(ds1.needsContent, true, 'le Drive porte PLUS de dossiers de projet que ce poste nâ€™en connaÃ®t : le contenu doit Ãªtre relu');
+403: eq(ds1.deleted, false, 'â€¦et ce dataset nâ€™est pas supprimÃ©');
+404: 
+405: const ds4 = dsEntry('ds4');
+406: eq(ds4.listedLocally, false, 'un dataset que ce poste ne liste plus est quand mÃªme rendu');
+407: eq(ds4.needsContent, true, 'â€¦et son contenu est Ã  relire');
+408: eq(ds4.copiesHere, false, 'â€¦mÃªme si aucune copie ne peut le faire ici');
+409: eq(ds4.projects.map((p) => p.name), ['Eta'],
+410:   'â€¦et son dossier de projet est reconnu par le REGISTRE : lâ€™identifiant rÃ©siste au renommage du dataset');
+411: 
+412: const ds7 = dsEntry('ds7');
+413: eq(ds7.deleted, true, 'un dataset supprimÃ© est reconnu comme tel');
+414: eq(ds7.needsContent, false, 'â€¦et son contenu nâ€™est jamais proposÃ© Ã  la rÃ©cupÃ©ration');
+415: eq(ds7.copiesHere, true, 'â€¦mÃªme quand une copie traÃ®ne sur le Drive');
+416: 
+417: /* Ce qui peut Ãªtre rÃ©cupÃ©rÃ© â€” et ce qui ne peut pas. */
+418: eq(REPORT.recoverable.copyIds, ['ds1', 'ds3'],
+419:   'les copies Ã  adopter : le dataset que le Drive connaÃ®t mieux que ce poste, et celui que ce poste ne connaÃ®t plus');
+420: eq(REPORT.recoverable.missingCopyIds, ['ds4', 'ds5'],
+421:   'ceux dont le contenu manque ET dont la copie manque sont dits sÃ©parÃ©ment (on ne promet rien)');
+422: ok(!REPORT.recoverable.copyIds.includes('ds7'),
+423:   'un dataset SUPPRIMÃ‰ nâ€™est JAMAIS proposÃ© Ã  la rÃ©cupÃ©ration, mÃªme avec une copie Ã  portÃ©e');
+424: ok(!REPORT.recoverable.copyIds.includes('ds6'),
+425:   'â€¦ni un dataset supprimÃ© qui nâ€™a plus de dossier du tout');
+426: eq(REPORT.recoverable.datasetsInIndex, INDEX_DATASETS.length, 'le compte des datasets de lâ€™index voyage avec les copies');
+427: eq(REPORT.recoverable.projectsInIndex, INDEX_PROJECTS.length, 'â€¦ainsi que celui des projets');
+428: eq(REPORT.recoverable.projectsListedHere, HERE_PROJECTS.length, 'â€¦et ce que ce poste affiche');
+429: eq(REPORT.recoverable.datasetsListedHere, HERE_DATASETS.length, 'â€¦des deux cÃ´tÃ©s');
+430: 
+431: /* Lâ€™inventaire NE TOUCHE Ã€ RIEN : ni Ã©criture, ni dÃ©placement, ni crÃ©ation. */

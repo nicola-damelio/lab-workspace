@@ -1,0 +1,40 @@
+1| /* =========================================================================
+2|    _workspace_resync_test.mjs — « RESYNC FROM DRIVE » : L'INVENTAIRE EN LECTURE.
+3| 
+4|    Le défaut réparé (voir src/utils/workspaceResync.js) : des datasets et des
+5|    projets que le DRIVE portait toujours n'apparaissaient plus dans le programme,
+6|    parce que la liste affichée venait du navigateur ; et quand un dossier était
+7|    créé au mauvais endroit (racine du dataset au lieu de `projects/`), personne
+8|    ne le voyait. Rien ne relisait le Drive EN ENTIER, et rien ne pouvait dire ce
+9|    qui manquait ici.
+10| 
+11|    Ce qui est vérifié ici, sans navigateur ni réseau :
+12|      • l'énumération d'un dossier suit TOUTES les pages (`nextPageToken`) et un
+13|        arrêt anticipé n'est jamais silencieux (driveListPages.js) ;
+14|      • les helpers purs (fusion des datasets connus, projets d'un dataset, texte
+15|        du rapport) ;
+16|      • l'inventaire lui-même, sur un faux Drive complet : jumeaux de `_workspace`,
+17|        conteneurs égarés à la racine, projet hors de `projects/`, jumeaux de
+18|        projet, dossier de projet sans fiche, dataset sans fiche, dataset vide,
+19|        dataset renommé, copies récupérables — et les copies qui MANQUENT ;
+20|      • un dataset supprimé n'est JAMAIS proposé à la récupération ;
+21|      • l'inventaire NE TOUCHE À RIEN : aucune écriture, aucun déplacement, et ce
+22|        qu'on lui donne (listes, miroir) ressort intact.
+23|    ========================================================================= */
+24| import assert from 'node:assert/strict';
+25| import { readFileSync } from 'node:fs';
+26| import { register } from 'node:module';
+27| 
+28| register('./_esm_test_hook.mjs', import.meta.url);
+29| 
+30| const store = new Map();
+31| globalThis.localStorage = {
+32|   getItem: (k) => (store.has(String(k)) ? store.get(String(k)) : null),
+33|   setItem: (k, v) => { store.set(String(k), String(v)); },
+34|   removeItem: (k) => { store.delete(String(k)); }
+35| };
+36| globalThis.window = { addEventListener: () => {}, removeEventListener: () => {}, dispatchEvent: () => true };
+37| globalThis.CustomEvent = class CustomEvent {
+38|   constructor(type, opts = {}) { this.type = type; this.detail = opts.detail; }
+39| };
+40| 

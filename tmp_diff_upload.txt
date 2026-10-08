@@ -1,0 +1,89 @@
+﻿diff --git a/src/utils/driveUpload.js b/src/utils/driveUpload.js
+index 386698c..2f3b329 100644
+--- a/src/utils/driveUpload.js
++++ b/src/utils/driveUpload.js
+@@ -31,6 +31,13 @@
+ // every SVG figure fail its Drive upload with "Failed to execute 'atob' on
+ // 'Window'ΓÇª" and stay browser-only; see utils/dataUrlBytes.
+ import { dataUrlToBytes, dataUrlMime } from './dataUrlBytes';
++/* La boucle ┬½ toutes les pages ┬╗ (voir driveListPages.js) : `listDriveChildren`
++   ne s'arr├¬te plus au premier millier d'enfants ΓÇö un dossier `projects/` un peu
++   fourni en contient davantage, et ce qui suit la premi├¿re page ┬½ disparaissait ┬╗
++   de la liste affich├⌐e. */
++import { MAX_DRIVE_LIST_PAGES, collectDrivePages } from './driveListPages';
++
++export { MAX_DRIVE_LIST_PAGES } from './driveListPages';
+ 
+ const TOKEN_KEY = 'labDriveAccessToken';
+ const TOKEN_EXPIRY_KEY = 'labDriveAccessTokenExpiresAt';
+@@ -360,6 +367,25 @@ export const getDriveRootAnchor = () => ({
+   kind: driveRootKind
+ });
+ 
++export const findLabWorkspaceFolder = async () => {
++  if (!getDriveToken()) return '';
++  let containerId = '';
++  try {
++    const { getDriveFolderUrl } = await import('./driveNaming');
++    containerId = extractDriveFolderId(getDriveFolderUrl());
++  } catch { /* ignore */ }
++  try {
++    if (containerId) return await findFolderByName('Lab Workspace', containerId);
++    const q = encodeURIComponent(
++      "name='Lab Workspace' and mimeType='application/vnd.google-apps.folder' and trashed=false"
++    );
++    const res = await driveFetch(`/drive/v3/files?q=${q}&fields=files(id,name)&pageSize=10`);
++    const j = await res.json();
++    const list = (Array.isArray(j.files) ? j.files : []).filter((f) => f && f.name === 'Lab Workspace');
++    return list.length ? String(list[0].id) : '';
++  } catch { return ''; }
++};
++
+ /** Find (or create) the app's "Lab Workspace" root folder (inside the user's
+  *  saved Drive folder URL if one is set, otherwise at the Drive root). */
+ export const ensureLabWorkspaceFolder = async () => {
+@@ -398,17 +424,35 @@ export const ensureLabWorkspaceFolder = async () => {
+   });
+ };
+ 
+-/** List immediate children (files AND folders) of a Drive folder. */
+-export const listDriveChildren = async (parentId) => {
+-  if (!parentId || !getDriveToken()) return [];
+-  try {
+-    const q = encodeURIComponent(`'${parentId}' in parents and trashed=false`);
+-    const res = await driveFetch(`/drive/v3/files?q=${q}&fields=files(id,name,mimeType,size,webViewLink)&pageSize=1000`);
+-    const j = await res.json();
+-    return Array.isArray(j.files) ? j.files : [];
+-  } catch { return []; }
++/* Combien de PAGES une ├⌐num├⌐ration de dossier suit avant de s'arr├¬ter : la
++   valeur vit dans driveListPages.js (MAX_DRIVE_LIST_PAGES) et c'est elle qui
++   est r├⌐-export├⌐e ici ΓÇö une seule d├⌐finition pour tout le d├⌐p├┤t. */
++
++/** List immediate children (files AND folders) of a Drive folder, EN SUIVANT
++ *  `nextPageToken` ΓÇö TOUTES les pages, pas seulement les mille premiers
++ *  ├⌐l├⌐ments. Un dossier `projects/` un peu fourni d├⌐passe 1000 entr├⌐es : s'y
++ *  arr├¬ter ferait ┬½ dispara├«tre ┬╗ des projets parfaitement pr├⌐sents (c'est la
++ *  question ├á laquelle ┬½ Resync from Drive ┬╗ doit r├⌐pondre). Renvoie aussi
++ *  combien de pages ont ├⌐t├⌐ lues et si l'├⌐num├⌐ration s'est arr├¬t├⌐e AVANT la fin
++ *  (`truncated`) ΓÇö jamais de troncature silencieuse. */
++export const listDriveChildrenDetailed = async (parentId, { maxPages = MAX_DRIVE_LIST_PAGES } = {}) => {
++  if (!parentId || !getDriveToken()) return { files: [], pages: 0, truncated: false, errors: 0 };
++  const q = encodeURIComponent(`'${parentId}' in parents and trashed=false`);
++  /* Une page du Drive, telle quelle : `collectDrivePages` lit `files` et
++     `nextPageToken` (voir driveListPages.js). */
++  const page = await collectDrivePages(async (pageToken) => {
++    const url = `/drive/v3/files?q=${q}&fields=nextPageToken,files(id,name,mimeType,size,webViewLink)`
++      + `&pageSize=1000${pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ''}`;
++    const res = await driveFetch(url);
++    return res.json();
++  }, { maxPages });
++  return { files: page.files, pages: page.pages, truncated: page.truncated, errors: page.errors };
+ };
+ 
++/** List immediate children (files AND folders) of a Drive folder. */
++export const listDriveChildren = async (parentId, opts = {}) =>
++  (await listDriveChildrenDetailed(parentId, opts)).files;
++
+ /**
+  * Les instantan├⌐s HTML (sauvegardes) du dataset actuellement ouvert, du plus
+  * r├⌐cent au plus ancien ΓÇö ils vivent dans

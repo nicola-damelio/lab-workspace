@@ -1,0 +1,24 @@
+### _workspace_open_refresh_test.mjs code=1
+
+  actual: false,
+  expected: true,
+  operator: '==',
+  diff: 'simple'
+}
+Node.js v26.5.1
+
+### _workspace_resync_test.mjs code=0
+
+154 vérifications passées — « RESYNC FROM DRIVE » : l’inventaire ne touche à rien.
+
+### _workspace_resync_ui_test.mjs code=0
+
+78 vérifications passées — « RESYNC FROM DRIVE » : le compte-rendu dit tout, depuis une seule source.
+
+### _workspace_drive_test.mjs code=0
+
+✅ 60 tests passés (l’espace de travail entier vit sur le Drive)
+
+### _workspace_keys_test.mjs code=0
+
+✅ 39 tests passés (les clés du navigateur vivent aussi sur le Drive)

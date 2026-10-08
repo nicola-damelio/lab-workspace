@@ -1,0 +1,37 @@
+motif : midOn|C 50|troisi
+fichiers examinés : 1
+lignes retenues : 32
+
+_viewer_background_test.mjs:68: eq(bgGradientOf(null), { on: false, to: BG_GRADIENT_DEFAULT_TO, angle: BG_GRADIENT_DEFAULT_ANGLE, mid: BG_GRADIENT_DEFAULT_MID, midOn: false, light: true },
+_viewer_background_test.mjs:73: eq(bgGradientOf({ on: true, to: 'bleu', angle: 361 }), { on: true, to: BG_GRADIENT_DEFAULT_TO, angle: 1, mid: BG_GRADIENT_DEFAULT_MID, midOn: false, light: true },
+_viewer_background_test.mjs:85: eq(readBgGradient('{"on":true,"to":"#101010","angle":90}'), { on: true, to: '#101010', angle: 90, mid: BG_GRADIENT_DEFAULT_MID, midOn: false, light: true },
+_viewer_background_test.mjs:88: eq(readBgGradient({ on: true, to: '#202020', angle: 45 }), { on: true, to: '#202020', angle: 45, mid: BG_GRADIENT_DEFAULT_MID, midOn: false, light: true },
+_viewer_background_test.mjs:140: { on: true, from: '#f8fafc', to: '#112233', angle: 180, mid: BG_GRADIENT_DEFAULT_MID, midOn: false },
+_viewer_background_test.mjs:143: { on: false, from: BG_SCENE_DEFAULT, to: BG_GRADIENT_DEFAULT_TO, angle: BG_GRADIENT_DEFAULT_ANGLE, mid: BG_GRADIENT_DEFAULT_MID, midOn: false },
+_viewer_background_test.mjs:153: { from: '#f8fafc', to: '#112233', angle: 180, mid: '', midOn: false }, 'une rampe ALLUMÉE et valide, oui');
+_viewer_background_test.mjs:322: has('onClick={() => patchBgGradient({ on: false, to: BG_GRADIENT_DEFAULT_TO, angle: BG_GRADIENT_DEFAULT_ANGLE, mid: BG_GRADIENT_DEFAULT_MID, midOn: BG_GRADIENT_DEFAULT_MID_ON, light: BG_GRAD
+_viewer_background_test.mjs:366: /* ══ LE MILIEU — la TROISIÈME couleur de la rampe (la demande de cette session :
+_viewer_background_test.mjs:371: eq(bgGradientOf(null).midOn, false, '…et son interrupteur est ÉTEINT');
+_viewer_background_test.mjs:372: eq(bgGradientOf({ on: true, to: '#0000ff', angle: 180, mid: '#00ff00', midOn: true }),
+_viewer_background_test.mjs:373: { on: true, to: '#0000ff', angle: 180, mid: '#00ff00', midOn: true, light: true },
+_viewer_background_test.mjs:375: eq(bgGradientOf({ on: true, mid: 'vert', midOn: 'yes' }).midOn, false, 'la vérité de `midOn` est STRICTE (comme celle de `on`)');
+_viewer_background_test.mjs:377: eq(gradientSpecOf({ on: true, from: '#ff0000', to: '#0000ff', angle: 180, mid: '#00ff00', midOn: true }),
+_viewer_background_test.mjs:378: { from: '#ff0000', to: '#0000ff', angle: 180, mid: '#00ff00', midOn: true },
+_viewer_background_test.mjs:380: eq(gradientSpecOf({ on: true, from: '#ff0000', to: '#0000ff', angle: 180, mid: '#00ff00', midOn: false }).midOn, false,
+_viewer_background_test.mjs:382: eq(backgroundCss({ on: true, from: '#ff0000', to: '#0000ff', angle: 180, mid: '#00ff00', midOn: true }),
+_viewer_background_test.mjs:384: 'allumée, la rampe à TROIS arrêts : A 0 %, C 50 %, B 100 %');
+_viewer_background_test.mjs:385: eq(backgroundCss({ on: true, from: '#ff0000', to: '#0000ff', angle: 180, mid: '#00ff00', midOn: false }),
+_viewer_background_test.mjs:389: /* ⛔ LE PANNEAU N'OFFRE PLUS DE TROISIÈME COULEUR — la demande : « it stopped
+_viewer_background_test.mjs:395: gone('patchBgGradient({ on: true, midOn:', 'le bouton « C 50 % » a disparu du panneau');
+_viewer_background_test.mjs:398: eq(bgGradientOf({ on: true, to: '#123456', mid: '#00ff00', midOn: true }).midOn, false,
+_viewer_background_test.mjs:399: 'un magasin qui DEMANDE le milieu est relu avec midOn FAUX : le 3e arrêt ne peut plus être peint');
+_viewer_background_test.mjs:400: eq(bgGradientOf({ on: true, to: '#123456', mid: '#00ff00', midOn: true }).mid, '#00ff00',
+_viewer_background_test.mjs:402: eq(backgroundCss(backgroundSpecOf('#f8fafc', bgGradientOf({ on: true, to: '#94a3b8', mid: '#00ff00', midOn: true }))),
+_viewer_background_test.mjs:428: gone('patchBgGradient({ midOn: !bgGradient.midOn })', '…ni le bouton du milieu');
+_viewer_background_test.mjs:452: eq(gradientSpecOf({ on: true, from: '#94a3b8', to: '#94a3b8', angle: 142, mid: '#93c5fd', midOn: true }), null,
+_viewer_background_test.mjs:454: eq(backgroundCss({ on: true, from: '#94a3b8', to: '#94a3b8', angle: 142, mid: '#93c5fd', midOn: true }), '',
+_viewer_background_test.mjs:456: eq(gradientSpecOf({ on: true, from: '#94a3b8', to: '#94a3b8', angle: 142, mid: '#94a3b8', midOn: true }), null,
+_viewer_background_test.mjs:464: has('The ramp is ON but its ends are the SAME colour', '…le troisième état est DIT, et pas tu');
+_viewer_background_test.mjs:472: gone('aria-pressed={bgGradient.on && bgGradient.midOn}', '…ni « C 50 % » (il n’existe plus : deux couleurs seulement)');
+_viewer_background_test.mjs:474: gone('aria-pressed={bgGradient.midOn}', '…comme celle du milieu');
+-- _viewer_background_test.mjs : 32 ligne(s) sur 483

@@ -1,0 +1,30 @@
+5886|                       <div className="flex flex-col overflow-hidden">
+5887|                         <span className="font-bold text-sm text-blue-700 truncate">
+5888|                           {dset.title || 'Untitled'}
+5889|                           {isDatasetRestricted(dset) && (
+5890|                             <span
+5891|                               className="ml-1 align-middle"
+5892|                               title="Accès restreint : seuls les membres définis + le superutilisateur voient ce dataset"
+5893|                             >🔒</span>
+5894|                           )}
+5895|                           {!isDatasetRestricted(dset) && (
+5896|                             <span className="ml-1 align-middle" title="Visible par TOUS les comptes de l’équipe — bouton « 👥 Membres » pour restreindre">🌐</span>
+5897|                           )}
+5898| 
+5899|                         </span>
+5900| 
+5901|                         <span className="text-[11px] text-slate-500 mt-1 flex gap-2">
+5902|                           <span>📅 {dset.date || 'No Date'}</span>
+5903|                           {dset.kind === 'administration' ? (
+5904|                             <span>🏛️ Base d’administration</span>
+5905|                           ) : (
+5906|                             <span>🧪 {dset.testCount || 1} Tests</span>
+5907|                           )}
+5908|                         </span>
+5909|                       </div>
+5910| 
+5911|                       {/* Rename / Delete — superuser only */}
+5912|                       {currentUser?.role === 'superuser' && (
+5913|                         <div className="flex flex-col gap-1 opacity-100 md:opacity-0 group-hover/item:opacity-100 transition-all shrink-0 ml-2">
+5914|                           <button
+5915|                             onClick={(e) => { e.stopPropagation(); setAccessEditorDataset(dset); }}

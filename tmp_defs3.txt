@@ -1,0 +1,16 @@
+src/utils/workspaceDrive.js:37: import {
+src/utils/workspaceDrive.js:41: import {
+src/utils/workspaceDrive.js:44: import { sanitizeSlug } from './driveNaming';
+src/utils/workspaceDrive.js:45: import {
+src/utils/workspaceDrive.js:48: import { normalizeTombstones, normalizeRevivals } from './projectTombstones';
+src/utils/driveMirror.js:36: import {
+src/utils/driveMirror.js:41: import {
+src/utils/driveMirror.js:44: import { sanitizeSlug } from './driveNaming';
+src/utils/driveMirror.js:45: import { projectDocumentFileName } from './projectDocumentDrive';
+src/utils/driveMirror.js:46: import {
+src/utils/driveMirror.js:109: * réapparaître ailleurs (App.jsx filtre la liste avec isDatasetMirrorDeleted).
+src/utils/workspaceResync.js:33: import { sanitizeSlug, datasetFolderSlug } from './driveNaming';
+src/utils/workspaceResync.js:34: import { isCanonicalDatasetDir } from './datasetDirTwins';
+src/utils/workspaceResync.js:35: import {
+src/utils/workspaceResync.js:38: import {
+src/utils/workspaceResync.js:41: import {

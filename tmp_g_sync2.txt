@@ -1,0 +1,29 @@
+motif : syncWorkspaceFromDrive
+fichiers examinés : 1
+lignes retenues : 8
+
+src/App.jsx:2357: const syncWorkspaceFromDrive = useCallback(async () => {
+src/App.jsx:2358:    | if (!cloudBackendAvailable()) return false;
+src/App.jsx:2359:    | /* Les clés du navigateur d'abord : l'observateur doit être en place AVANT
+src/App.jsx:2423: const run = () => { if (!cancelled) syncWorkspaceFromDrive(); };
+src/App.jsx:2424:    | run();
+src/App.jsx:2425:    | const onConnected = () => run();
+src/App.jsx:2431: }, [syncWorkspaceFromDrive]);
+src/App.jsx:2432:    | 
+src/App.jsx:2433:    | /* ── « RESYNC FROM DRIVE » (le geste du superutilisateur) ───────────────────
+src/App.jsx:2439: 1° L'INDEX — exactement le chemin du démarrage (`syncWorkspaceFromDrive`) :
+src/App.jsx:2440:    | tombes, levées de tombe, projets de l'index, liste des datasets ;
+src/App.jsx:2441:    | 2° L'INVENTAIRE — `sweepWorkspaceDrive` dit ce que le Drive porte, ce qui
+src/App.jsx:2458: const resyncWorkspaceFromDrive = useCallback(async () => {
+src/App.jsx:2459:    | const projectsBefore = loadProjects('').length;
+src/App.jsx:2460:    | /* 1° L'INDEX — le MÊME chemin qu'au démarrage, donc les mêmes règles : une
+src/App.jsx:2463: const stateAdopted = await syncWorkspaceFromDrive().catch(() => false);
+src/App.jsx:2464:    | /* 2° L'INVENTAIRE — l'inventaire croise la liste de CE poste et celle de
+src/App.jsx:2465:    | l'index qui vient d'être adopté (`collectResyncCandidates`) : une liste
+src/App.jsx:2559: }, [syncWorkspaceFromDrive, datasetsList]);
+src/App.jsx:2560:    | 
+src/App.jsx:2561:    | /* ── L'ESPACE DE TRAVAIL RÉÉCRIT SUR LE DRIVE ──────────────────────────────
+src/App.jsx:6017: onResyncFromDrive={resyncWorkspaceFromDrive}
+src/App.jsx:6018:    | />))}
+src/App.jsx:6019:    | 
+-- src/App.jsx : 8 ligne(s) sur 6202

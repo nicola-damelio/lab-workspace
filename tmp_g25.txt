@@ -1,0 +1,7 @@
+src/App.jsx:3168: payload: compressedPayload,
+src/App.jsx:3273: payload: LZString.compressToUTF16(JSON.stringify({ administration: adminContent })),
+src/App.jsx:4030: payload: isAdmin
+src/App.jsx:4123: payload: LZString.compressToUTF16(JSON.stringify({ administration: adminContent || createAdministrationSeed() })),
+src/App.jsx:4134: payload: compressedPayload,
+src/App.jsx:4189: write: (body) => writeDatasetCopy(body).catch(() => null)
+src/App.jsx:4434: openDataset({ ...dset, ...copy, id, payload: copy.payload, isCompressed: !!copy.isCompressed });

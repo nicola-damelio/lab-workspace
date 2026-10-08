@@ -1,0 +1,39 @@
+﻿node : (node:11004) [DEP0205] 
+DeprecationWarning: 
+`module.register()` is deprecated. 
+Use `module.registerHooks()` instead.
+Au caractère Ligne:1 : 34
++ ... -workspace; node 
+tmp_run_six.mjs 
+_workspace_drive_test.mjs _workspace 
+...
++                 ~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpec 
+   ified: ((node:11004) [D...oks()`   
+  instead.:String) [], RemoteExcept   
+ ion
+    + FullyQualifiedErrorId : NativeC 
+   ommandError
+ 
+(Use `node --trace-deprecation ...` 
+to show where the warning was created)
+(node:22024) [DEP0205] 
+DeprecationWarning: 
+`module.register()` is deprecated. 
+Use `module.registerHooks()` instead.
+(Use `node --trace-deprecation ...` 
+to show where the warning was created)
+(node:9548) [DEP0205] 
+DeprecationWarning: 
+`module.register()` is deprecated. 
+Use `module.registerHooks()` instead.
+(Use `node --trace-deprecation ...` 
+to show where the warning was created)
+(node:14200) [DEP0205] 
+DeprecationWarning: 
+`module.register()` is deprecated. 
+Use `module.registerHooks()` instead.
+(Use `node --trace-deprecation ...` 
+to show where the warning was created)
+wrote tmp_six_out.txt

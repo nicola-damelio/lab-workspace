@@ -1,0 +1,13 @@
+code=1
+AssertionError [ERR_ASSERTION]: la relecture passe par la MÊME porte qu’au démarrage (tombes, levées, projets de l’index, datasets)
+    at ok (file:///C:/Users/nicol/lab-workspace/_workspace_open_refresh_test.mjs:38:37)
+    at has (file:///C:/Users/nicol/lab-workspace/_workspace_open_refresh_test.mjs:39:36)
+    at file:///C:/Users/nicol/lab-workspace/_workspace_open_refresh_test.mjs:136:1 {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: false,
+  expected: true,
+  operator: '==',
+  diff: 'simple'
+}
+Node.js v26.5.1

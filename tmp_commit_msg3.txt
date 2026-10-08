@@ -1,0 +1,31 @@
+Phase 3 — « la page s'ouvre » : l'index partagé est relu (Drive-first)
+
+- L'index n'était lu qu'AU DÉMARRAGE et sur le geste « Resync from Drive » : un
+  poste resté ouvert gardait donc sa liste d'alors jusqu'à un rechargement de
+  l'onglet, alors que la vérité était déjà sur le Drive.
+- Ouvrir une page qui MONTRE les listes partagées (`projects`, `project-detail`,
+  `settings`) relit l'index par le MÊME chemin qu'au démarrage
+  (`syncWorkspaceFromDrive` : tombes, levées de tombe, projets de l'index, liste
+  des datasets).
+- Trois règles portées par le module PUR `src/utils/workspaceRefresh.js` : au
+  plus une relecture par minute, jamais deux à la fois, et seulement ces pages-là
+  (c'est la navigation qui est fréquente, pas la vérité partagée qui change).
+  L'horodatage est posé AVANT la lecture ; la relecture est silencieuse ; la page
+  Projets n'est remontée que si la liste a réellement changé ; et le geste
+  N'ÉCRIT RIEN (ni index, ni copie, ni fichier du Drive — vérifié sur son texte).
+  Une horloge qui a reculé fait relire plutôt que figer.
+- `_workspace_open_refresh_test.mjs` (54 vérifications) : la décision cas par
+  cas, les bornes du délai, les horloges tordues, la pureté du module, et le
+  branchement réel dans `App.jsx` (ordre des temps, même porte, nonce seulement
+  si ça a bougé, aucune écriture).
+- `_project_store_guard_test.mjs` : l'assertion sur l'import d'`App.jsx` était
+  PÉRIMÉE (la liste d'imports s'est allongée depuis) — elle rendait la suite
+  rouge sans que le verrou de tombe soit en cause. Elle vise maintenant la vraie
+  liste d'imports.
+- `docs/DRIVE-MIRROR.md` : la section « La page s'ouvre : l'index partagé est
+  RELU » dit le défaut, les trois règles et ce qui est garanti.
+
+Vérifié : 10 suites (_workspace_open_refresh 54, _workspace_resync 154,
+_workspace_resync_ui 78, _workspace_drive 60, _workspace_keys 39,
+_app_page_window 60, _project_store_guard 23, _deleted_projects 76,
+_dataset_index 49, _dataset_copy_mirror 44) et `npm run build` (EXIT=0).

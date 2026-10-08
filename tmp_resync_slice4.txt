@@ -1,0 +1,76 @@
+﻿641:      plus (ou pas encore) sur le Drive. C'est le cas le plus grave du dÃ©faut
+642:      rapportÃ© â€” la fiche survit, le dossier a disparu â€” et le seul qu'une copie
+643:      `_workspace/datasets/ds_â€¦` peut encore sauver. */
+644:   const folderIdsOnDrive = new Set(datasetFolders
+645:     .map((e) => text((e.candidate && e.candidate.id) || (e.mirrorEntry && e.mirrorEntry.id)))
+646:     .filter(Boolean));
+647:   candidates.forEach((c) => {
+648:     const id = text(c.id);
+649:     if (!id || folderIdsOnDrive.has(id)) return;
+650:     if (knownDeletedIds.has(id) || mirrorDeletedIds.has(id)) return; // supprimÃ© : pas de retour
+651:     datasetsWithoutFolder += 1;
+652:     const copyName = workspaceDatasetFileName(id);
+653:     const copyThere = copyNames.has(copyName);
+654:     add(RESYNC_ISSUES.DATASET_FOLDER_MISSING, {
+655:       datasetId: id,
+656:       datasetTitle: text(c.title),
+657:       copyFileName: copyName,
+658:       copyOnDrive: copyThere,
+659:       text: `The dataset "${text(c.title) || id}" (id ${id}) is listed on this PC or in the index, `
+660:         + 'but NO folder carries it in the workspace on the Drive. '
+661:         + (copyThere
+662:           ? `Its content is still readable through ${WORKSPACE_DIR}/datasets/${copyName}.`
+663:           : `No copy ${WORKSPACE_DIR}/datasets/${copyName} was found either.`)
+664:     });
+665:     /* Le contenu est rÃ©cupÃ©rable PAR LA COPIE : c'est le seul chemin qui reste
+666:        quand le dossier a disparu, et l'appelant l'adopte par les chemins
+667:        normaux (`readDatasetCopy` â†’ `mergeProjectsFromCloud`). */
+668:     if (copyThere) {
+669:       if (copyIds.length < maxCopies) copyIds.push(id);
+670:     } else {
+671:       missingCopyIds.push(id);
+672:     }
+673:   });
+674: 
+675:   const projectFoldersOnDrive = projectFolderCount + workspaceRootStrays;
+676:   const counts = {
+677:     workspaceFolders: workspaces.length,
+678:     datasetFolders: datasetFolders.length,
+679:     datasetsOnDrive: reports.filter((d) => !!d.id).length,
+680:     datasetsWithoutRecord: reports.filter((d) => !d.id).length,
+681:     datasetsWithoutFolder,
+682:     datasetsListedHere: localDatasets.length,
+683:     datasetsListedInIndex: indexDatasets.length,
+684:     projectsListedHere: localProjects.length,
+685:     projectsListedInIndex: indexProjects.length,
+686:     projectFoldersOnDrive,
+687:     projectFoldersAtDatasetRoot: reports.reduce((n, d) => n + d.projectsAtRoot, 0) + workspaceRootStrays,
+688:     projectFoldersUnknown: unknownProjectFolders,
+689:     copiesOnDrive: copyFiles.filter((f) => /^ds_.*\.json$/i.test(text(f.name))).length,
+690:     copiesToFetch: copyIds.length,
+691:     foldersUnreadable: listFailures.length,
+692:     issues: issues.length
+693:   };
+694:   return {
+695:     ok: true,
+696:     reason: '',
+697:     at,
+698:     workspaceFolderId,
+699:     index: {
+700:       savedAt: text(state && state.savedAt),
+701:       datasets: indexDatasets,
+702:       projects: indexProjects,
+703:       deletedProjects: indexDeletedProjects,
+704:       revivedProjects: state ? asList(state.revivedProjects) : []
+705:     },
+706:     datasets: reports,
+707:     issues,
+708:     counts,
+709:     recoverable: {
+710:       copyIds,
+711:       missingCopyIds,
+712:       datasetsInIndex: indexDatasets.length,
+713:       projectsInIndex: indexProjects.length,
+714:       projectsListedHere: localProjects.length,
+715:       datasetsListedHere: localDatasets.length
+716:     },

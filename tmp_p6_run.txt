@@ -1,0 +1,11 @@
+### _viewer_background_test.mjs code=1
+
+  diff: 'simple'
+}
+Node.js v26.5.1
+
+### _viewer_ring_gradient_test.mjs code=1
+
+  requireStack: []
+}
+Node.js v26.5.1

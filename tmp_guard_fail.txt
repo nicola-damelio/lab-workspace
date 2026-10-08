@@ -1,0 +1,16 @@
+code=1
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+AssertionError [ERR_ASSERTION]: App.jsx importe le ré-adoptant (et le geste de retour, qui lève la tombe)
+    at ok (file:///C:/Users/nicol/lab-workspace/_project_store_guard_test.mjs:38:37)
+    at has (file:///C:/Users/nicol/lab-workspace/_project_store_guard_test.mjs:39:36)
+    at file:///C:/Users/nicol/lab-workspace/_project_store_guard_test.mjs:89:1 {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: false,
+  expected: true,
+  operator: '==',
+  diff: 'simple'
+}
+Node.js v26.5.1

@@ -1,0 +1,20 @@
+src/App.jsx:3432: let loadedTests = [];
+src/App.jsx:3479: loadedTests = s.tests || s.plates || [];
+src/App.jsx:3502: if (loadedTests.length === 0) {
+src/App.jsx:3541: loadedTests = migrated.tests;
+src/App.jsx:3547: setPendingLoad({ tests: loadedTests, fullState: s, sections: dataSections });
+src/App.jsx:3575: const loadedTests = selectionHasTests(picked) ? (pendingTests || []) : [];
+src/App.jsx:3651: if (loadedTests.length > 0 || selectionHasTests(picked)) {
+src/App.jsx:3652: setReactTests(loadedTests);
+src/App.jsx:3653: historyRef.current = [loadedTests];
+src/App.jsx:3656: if (loadedTests.length > 0) {
+src/App.jsx:3657: setActiveTestId(loadedTests[0].id);
+src/App.jsx:3671: if (s.testCategories !== undefined) setTestCategories(sanitizeTestCategories(s.testCategories, loadedTests));
+src/App.jsx:3738: const newTests = loadedTests.map((p) => ({
+src/App.jsx:4296: const loadedTests = migrated.tests;
+src/App.jsx:4298: if (loadedTests.length > 0) {
+src/App.jsx:4299: setReactTests(loadedTests);
+src/App.jsx:4300: historyRef.current = [loadedTests];
+src/App.jsx:4307: keepPlace && loadedTests.some((t) => t && t.id === prev) ? prev : loadedTests[0].id
+src/App.jsx:4352: setTestCategories(sanitizeTestCategories(s.testCategories, loadedTests));
+src/App.jsx:4370: testIds: new Set((loadedTests || []).map((t) => t && t.id).filter(Boolean)),

@@ -1,0 +1,10 @@
+exit=0
+--- STDOUT ---
+
+70 vérifications passées — « RESYNC FROM DRIVE » : le compte-rendu dit tout, depuis une seule source.
+
+
+--- STDERR ---
+(node:12100) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+

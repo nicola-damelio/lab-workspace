@@ -1,0 +1,96 @@
+  return Array.from(out.values());
+};
+
+/** La cause d'un rapport vide, en clair. PUR. */
+export const resyncReasonText = (reason) => ({
+  'no-adapter': 'no Drive reader is available here',
+  'drive-offline': 'Google Drive is not connected',
+  'no-workspace-folder': `no "${WORKSPACE_DIR}" folder was found on the Drive (none was created)`
+}[text(reason)] || text(reason) || 'unknown reason');
+
+/** Les phrases de l'inventaire — l'interface les affiche telles quelles. PUR. */
+export const resyncReportLines = (report) => {
+  const r = report && typeof report === 'object' ? report : emptyResyncReport();
+  const c = r.counts || {};
+  const lines = [];
+  if (!r.ok) {
+    lines.push(`· Drive inventory unavailable: ${resyncReasonText(r.reason)}.`);
+    return lines;
+  }
+  lines.push(`· Drive: ${c.datasetFolders || 0} dataset folder(s), ${c.projectFoldersOnDrive || 0} project folder(s); `
+    + `the index ${WORKSPACE_STATE_FILE} lists ${c.datasetsListedInIndex || 0} dataset(s) and ${c.projectsListedInIndex || 0} project(s).`);
+  lines.push(`· This PC knows ${c.datasetsListedHere || 0} dataset(s) and ${c.projectsListedHere || 0} project(s)`
+    + (c.datasetsListedHere >= c.datasetsListedInIndex && c.projectsListedHere >= c.projectsListedInIndex
+      ? ' — at least as many as the Drive index.' : ' — FEWER than the Drive index: the list above is the one to trust.'));
+  if (r.recoverable && r.recoverable.copyIds && r.recoverable.copyIds.length) {
+    lines.push(`· ${r.recoverable.copyIds.length} dataset copy(ies) on the Drive can restore the missing content.`);
+  }
+  if (c.foldersUnreadable) {
+    lines.push(`· ${c.foldersUnreadable} folder(s) could not be listed: this inventory is INCOMPLETE.`);
+  }
+  asList(r.issues).forEach((i) => lines.push(`⚠ ${text(i && i.text)}`));
+  if (!asList(r.issues).length) lines.push('· No misplaced or incomplete folder found (nothing was moved).');
+  return lines;
+};
+
+/* ── LE TEXTE DU COMPTE-RENDU DE LA REPRISE ──────────────────────────────────
+   `resyncReportLines` dit l'état du Drive ; ce qui suit dit ce qui a été REMIS
+   dans ce navigateur — les deux sont lus par le panneau « Resync from Drive »
+   (src/components/WorkspaceResyncPanel.jsx), et les deux sont PURS : c'est ce
+   qui permet de vérifier à l'écran sans navigateur (_workspace_resync_ui_test.mjs).
+   Aucune phrase n'est fabriquée par le composant : le composant peint. */
+
+/** Le goût d'une ligne du rapport : `⚠` = un défaut trouvé (peint en ambre),
+ *  `·` = un constat (en gris). PUR. */
+export const resyncLineTone = (line) => (String(line == null ? '' : line).trim().startsWith('⚠') ? 'warn' : 'note');
+
+/** Les chiffres d'un compte-rendu, prêts à écrire — jamais de `undefined` à
+ *  l'écran et jamais de soustraction négative (une adoption ne rend pas de
+ *  projets « en moins »). PUR. */
+export const resyncSummaryText = (summary) => {
+  const s = summary && typeof summary === 'object' ? summary : {};
+  const before = Number(s.projectsBefore || 0);
+  const after = Number(s.projectsAfter || 0);
+  const restored = after > before ? after - before : 0;
+  const copies = Number(s.copiesAdopted || 0);
+  const failed = Array.isArray(s.copiesFailed) ? s.copiesFailed.filter(Boolean).map(String) : [];
+  return {
+    restored,
+    headline: s.error
+      ? 'The Drive could not be read.'
+      : (s.ok
+        ? 'The Drive was read and this browser was brought back in line with it.'
+        : 'The Drive inventory is unavailable — nothing was read.'),
+    projects: restored
+      ? `${restored} project(s) restored in this browser (${before} known before, ${after} now).`
+      : `No project was missing here (${after} known).`,
+    index: Number(s.projectsInIndex || 0)
+      ? `The workspace index lists ${Number(s.projectsInIndex)} project(s); everything it lists is now here too.`
+      : 'The workspace index lists no project.',
+    copies: copies ? `${copies} dataset copy(ies) were re-read from the Drive.` : '',
+    failed: failed.length
+      ? `${failed.length} copy(ies) could not be read: ${failed.join(', ')} (the dataset folders themselves are still on the Drive).`
+      : '',
+    stateAdopted: !!s.stateAdopted,
+    lines: Array.isArray(s.lines) ? s.lines.filter(Boolean).map(String) : []
+  };
+};
+
+/* ── L'INVENTAIRE ────────────────────────────────────────────────────────────
+   `known` = ce que CE poste affiche (`{ datasets, projects }` — la liste du
+   navigateur) ; `mirror` = le registre `labDriveMirror` (injectable) ;
+   `adapter` = le Drive (injectable). Rien n'est écrit, rien n'est déplacé :
+   le rapport dit, l'appelant décide. */
+export const sweepWorkspaceDrive = async ({
+  adapter = null, known = {}, mirror = null, maxCopies = 25
+} = {}) => {
+  const at = new Date().toISOString();
+  const drive = adapter || defaultDriveResyncAdapter();
+  if (!drive || typeof drive.listChildren !== 'function' || typeof drive.findWorkspaceFolder !== 'function') {
+    return emptyResyncReport({ at, reason: 'no-adapter' });
+  }
+  if (typeof drive.available === 'function' && !(await safeCall(() => drive.available(), false))) {
+    return emptyResyncReport({ at, reason: 'drive-offline' });
+  }
+  const workspaceFolderId = text(await safeCall(() => drive.findWorkspaceFolder(), ''));
+  if (!workspaceFolderId) return emptyResyncReport({ at, reason: 'no-workspace-folder' });

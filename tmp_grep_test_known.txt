@@ -1,0 +1,383 @@
+src/administration/importUtils.js:754: const KNOWN_GRADES = ['PR2', 'PR1', 'CE2', 'CE1', 'CN', 'HC', 'DR2', 'DR1', 'CR2', 'CR1'];
+src/administration/importUtils.js:755: const KNOWN_GRADES_LC = KNOWN_GRADES.map((g) => g.toLowerCase());
+src/administration/importUtils.js:781: const gi = KNOWN_GRADES_LC.indexOf(g);
+src/administration/importUtils.js:782: return gi >= 0 ? KNOWN_GRADES[gi] : '';
+src/administration/importUtils.js:1557: const known = new Set();
+src/administration/importUtils.js:1560: if (k) known.add(k);
+src/administration/importUtils.js:1584: return [...byName.values()].filter((f) => !known.has(normalizeKey(f.fournisseur)));
+src/App.jsx:64: import { writeDatasetListCache, readDatasetListCache } from './utils/datasetListIndex';
+src/App.jsx:1243: const [datasetsList, setDatasetsList] = useState([]);
+src/App.jsx:2265: setDatasetsList([]);
+src/App.jsx:2307: setDatasetsList((prev) => withoutDeletedDatasets(applyWorkspaceIndex({
+src/App.jsx:2321: setDatasetsList((prev) => withoutDeletedDatasets(applyWorkspaceIndex({
+src/App.jsx:2340: setDatasetsList((prev) => withoutDeletedDatasets(applyWorkspaceIndex({
+src/App.jsx:2410: const adoptedList = readDatasetListCache();
+src/App.jsx:2411: setDatasetsList((prev) => withoutDeletedDatasets(
+src/App.jsx:2467: known: {
+src/App.jsx:2468: datasets: Array.isArray(datasetsList) ? datasetsList : [],
+src/App.jsx:2518: l'adoption vient de mettre de côté (`readDatasetListCache`) : une liste
+src/App.jsx:2527: datasets: [...(Array.isArray(datasetsList) ? datasetsList : []), ...readDatasetListCache()]
+src/App.jsx:2556: }, [syncWorkspaceFromDrive, datasetsList]);
+src/App.jsx:2566: datasets: datasetsList,
+src/App.jsx:2575: }, [isCloudReady, datasetsList]);
+src/App.jsx:2634: if (!Array.isArray(datasetsList) || datasetsList.length === 0) return;
+src/App.jsx:2635: writeDatasetListCache(datasetsList, { keepContent: !db });
+src/App.jsx:2636: }, [datasetsList]);
+src/App.jsx:2731: const datasetsListRef = useRef(datasetsList);
+src/App.jsx:2732: datasetsListRef.current = datasetsList;
+src/App.jsx:2790: const list = Array.isArray(datasetsListRef.current) ? datasetsListRef.current : [];
+src/App.jsx:2867: if (due && (Array.isArray(datasetsList) ? datasetsList.length : 0) > 0 && getDriveToken()) runWeeklyBackup();
+src/App.jsx:2871: }, [datasetsList]);
+src/App.jsx:2968: const known = new Set(loadProjects('').map((p) => p && String(p.id)));
+src/App.jsx:2969: const missing = list.filter((p) => !known.has(String(p.id)));
+src/App.jsx:3248: setDatasetsList(
+src/App.jsx:3349: setDatasetsList(
+src/App.jsx:4099: setDatasetsList((prev) => withoutDeletedDatasets(applyWorkspaceIndex({
+src/App.jsx:4143: setDatasetsList(
+src/App.jsx:4200: setDatasetsList(
+src/App.jsx:4574: setDatasetsList((prev) => (Array.isArray(prev) ? prev : []).map((d) =>
+src/App.jsx:4617: const list = Array.isArray(datasetsList) ? datasetsList : [];
+src/App.jsx:4661: setDatasetsList((prev) => (Array.isArray(prev) ? prev : []).filter((d) => !d || String(d.id) !== key));
+src/App.jsx:4683: const target = (Array.isArray(datasetsList) ? datasetsList : [])
+src/App.jsx:4732: setDatasetsList((prev) => withoutDeletedDatasets(prev));
+src/App.jsx:4769: setDatasetsList(stored);
+src/App.jsx:4783: const emptyDatasets = datasetsList.filter((dset) => {
+src/App.jsx:4859: setDatasetsList((prev) => withoutDeletedDatasets(prev));
+src/App.jsx:4879: setDatasetsList((prev) => withoutDeletedDatasets(prev));
+src/App.jsx:4905: const list = Array.isArray(datasetsList) ? datasetsList : [];
+src/App.jsx:4907: }, [datasetsList]);
+src/App.jsx:6011: datasetsList={datasetsList} deleteDataset={deleteDataset} deleteEmptyDatasets={deleteEmptyDatasets}
+src/components/AppModules/activeTestModule.jsx:193: setTests((prev) => applyDataLock(prev, ids, lock, currentUser?.name || 'unknown', Date.now()));
+src/components/AppModules/activeTestModule.jsx:1463: return <div className="p-6">Unknown test type.</div>;
+src/components/AppModules/calculationsModule.jsx:15: CALC_FILTER_UNKNOWN,
+src/components/AppModules/calculationsModule.jsx:214: : 'Select a compound with known MW or enter a manual MW override.'}
+src/components/AppModules/calculationsModule.jsx:548: operator: myName || 'unknown', // associate with the scientist who saved it
+src/components/AppModules/calculationsModule.jsx:811: <option value={CALC_FILTER_UNKNOWN}>Saved without a name</option>
+src/components/AppModules/compoundDefinitionSection.jsx:540: {computed && !computed.ok && computed.unknown?.length > 0 && (
+src/components/AppModules/compoundDefinitionSection.jsx:542: Unknown tokens/letters: {computed.unknown.join(', ')}
+src/components/AppModules/definitionsManagers.jsx:719: l'échange de jeton et répond « Unknown grant_type "" » ou 404 not_found —
+src/components/AppModules/definitionsManagers.jsx:787: saisie. Sinon l'échec (« Unknown grant_type "" ») arrive après coup
+src/components/AppModules/libraryImportModal.jsx:167: unknown one is created, and a field the file does not carry keeps its current value. Nothing is ever deleted or
+src/components/AppModules/projectDetailModule.jsx:955: const known = new Set(lib.filter((i) => i && i.canvasData).map((i) => i.id));
+src/components/AppModules/projectDetailModule.jsx:960: const missing = expected.filter((id) => !known.has(id));
+src/components/AppModules/projectDetailModule.jsx:961: if (!missing.length && known.size) return;
+src/components/AppModules/projectDetailModule.jsx:3415: read back from its Drive copy as soon as that file is known here: press
+src/components/AppModules/projectsModule.jsx:1419: deleted {t.deletedAt ? new Date(t.deletedAt).toLocaleString() : '(date unknown)'}
+src/components/AppModules/settingsModule.jsx:403: datasetsList, deleteDataset, deleteEmptyDatasets, datasetTitle,
+src/components/AppModules/settingsModule.jsx:491: datasetsList={datasetsList}
+src/components/AppModules/storageModules.jsx:616: datasetsList, deleteDataset, deleteEmptyDatasets
+src/components/AppModules/storageModules.jsx:773: {(!datasetsList || datasetsList.length === 0) ? (
+src/components/AppModules/storageModules.jsx:777: {datasetsList.map((dset) => (
+src/components/AppModules/testsModule.jsx:122: ? { ...t, pendingDeletion: true, deletionRequestedBy: currentUser?.name || 'Unknown', deletionRequestedAt: Date.now() }
+src/components/CDSections.jsx:1068: many synthetic spectra with KNOWN compositions (fractions sum to 1),
+src/components/CDSections.jsx:1115: // uniformly over the simplex (Dirichlet(1)). Each reference stores its known
+src/components/CDSections.jsx:2842: title="Classical reference-set deconvolution (CONTIN / CDSSTR / SELCON style): NNLS fit on a database of reference spectra with known compos
+src/components/CDSections.jsx:3226: ? <span className="text-[10px] font-bold text-slate-500">Stored for this spectrum: {storedFit.manual ? 'manual entry' : `fitted (R² = ${Numb
+src/components/CDSections.jsx:4458: default: values = xs.map(() => 0); label = 'Unknown simulation';
+src/components/ChartStarLayer.jsx:104: String((err && err.message) || err || 'unknown error').replace(/\s+/g, ' ').slice(0, 120);
+src/components/DockingData.jsx:741: const known = DOCKING_METRICS.find((m) => (CAPRI_METRIC_SYNONYMS[m.key] || []).includes(c));
+src/components/DockingData.jsx:742: if (known) return known.key;
+src/components/DockingData.jsx:1039: return { type: 'unknown', program: null, poses: [], updates: {} };
+src/components/DockingSections.jsx:516: const knownLigandCode = useMemo(() => {
+src/components/DockingSections.jsx:526: const c = String(code || knownLigandCode || '').trim().toUpperCase();
+src/components/DockingSections.jsx:774: {knownLigandCode && (
+src/components/DockingSections.jsx:776: HETATM code {knownLigandCode}
+src/components/DockingSections.jsx:781: onClick={() => resolveLigandSmiles(knownLigandCode)}
+src/components/DockingSections.jsx:802: : (knownLigandCode
+src/components/DockingSections.jsx:803: ? <>A PDB carries no SMILES: press <b>⬇ from the PDB ligand code</b> to read the one of <b>{knownLigandCode}</b> in the RCSB Chemical Compon
+src/components/DockingSections.jsx:1079: else setReport({ ok: 0, type: 'unknown' });
+src/components/DOSYTestRenderer.jsx:1455: // Error Management; "Touch curve" is only known on the plot → left blank).
+src/components/DriveExperimentFiles.jsx:116: setMsg(`⚠️ ${file.name} could not be installed — ${(err && err.message) || 'unknown error'}.`);
+src/components/DriveUpload.jsx:122: driveError = err && err.message ? String(err.message) : 'unknown upload error';
+src/components/FiguresSlides.jsx:1168: const known = loadProjects() || [];
+src/components/FiguresSlides.jsx:1170: const found = known.find((p) => String(p && p.id) === String(pid));
+src/components/FlowCytometrySections.jsx:248: return label || name || key || 'Unknown';
+src/components/FlowCytometrySections.jsx:1726: { key: 'compensationApplied', label: 'Compensation Applied', type: 'select', options: ['Yes', 'No', 'Unknown'] },
+src/components/FlowCytometrySections.jsx:2934: if (!back) { failReason = failReason || (driveErr && driveErr.message) || 'unknown error'; return; }
+src/components/FlowCytometrySections.jsx:2938: failReason = failReason || (e2 && e2.message) || (driveErr && driveErr.message) || 'unknown error';
+src/components/FlowCytometrySections.jsx:2992: failReason = failReason || (e && e.message) || 'unknown error';
+src/components/Icons.jsx:9: <Icon name="unknown" />                     → falls back to rendering the raw
+src/components/Icons.jsx:501: // Unknown name — keep the original glyph so nothing disappears.
+src/components/ImageBuilder.jsx:348: // figure with its own ratio inside its panel, so the ratio has to be known
+src/components/ImageBuilder.jsx:360: * Returns a tick that changes once the ratios are known, so the canvas can
+src/components/ImageBuilder.jsx:690: const known = canvasEntryIn(scopeProjectId);
+src/components/ImageBuilder.jsx:691: if (known) return known;
+src/components/ImageBuilder.jsx:1546: // Detach from the stored canvas: with no known entry the next "💾 Save
+src/components/ImageBuilder.jsx:1760: if (!f.type || !String(f.type).startsWith('image/')) { failed.push(f.name || 'unknown file'); continue; }
+src/components/ImageBuilder.jsx:1782: if (!entry) { failed.push(f.name || 'unknown file'); continue; }
+src/components/ImageBuilder.jsx:1787: failed.push(f.name || 'unknown file');
+src/components/ImageBuilder.jsx:2255: setBgMsg(`⚠️ The background could not be removed: ${(err && err.message) || 'unknown error'}`);
+src/components/ImageBuilder.jsx:2365: setUpMsg(`⚠️ The figure could not be improved: ${(err && err.message) || 'unknown error'}`);
+src/components/ImageBuilder.jsx:2467: dimensions only rescales it. When the ratio is not known yet (figure
+src/components/ImageBuilder.jsx:3110: const known = canvasEntryFor(target);
+src/components/ImageBuilder.jsx:3118: updateId: known ? known.id : null,
+src/components/ImageBuilder.jsx:3381: const known = canvasEntryFor(target);
+src/components/ImageBuilder.jsx:3386: updateId: known ? known.id : null,
+src/components/journalFormats.js:532: const known = blocks.filter((b) => b.rank >= 0);
+src/components/journalFormats.js:533: if (!known.length) return src;                     // nulla di riconosciuto: intatto
+src/components/journalFormats.js:537: const sorted = known.slice().sort((a, b) => (a.rank - b.rank) || (a.i - b.i));
+src/components/MDSections.jsx:1278: setTrajDriveMsg(`⚠️ the cloud request failed (${(err && err.message) || 'unknown error'}). Re-select the file with “📂 Trajectory” if it hap
+src/components/MDTrajectoryFrames.js:171: return null; // unknown format, or XTC/DCD without a topology to anchor it
+src/components/NMRMoleculeViewer.jsx:534: // break the viewer (unknown / missing keys simply keep their default).
+src/components/NMRMoleculeViewer.jsx:736: // clipping). Unknown keys simply fall back to the default. A LOOK field that the
+src/components/NMRMoleculeViewer.jsx:1602: merged over the DEFAULT below, so a missing or unknown key can never break the
+src/components/NMRMoleculeViewer.jsx:1948: const lipidNamingKnown = (names) => {
+src/components/NMRMoleculeViewer.jsx:1978: // The element of an atom, from NGL when it is known and from the leading letter
+src/components/NMRMoleculeViewer.jsx:2153: /* …MAIS LA CLASSIFICATION, ELLE, SUIT LE RÉSIDU (voir lipidNamingKnown). La
+src/components/NMRMoleculeViewer.jsx:2167: namesOfRes.forEach((list, ri) => dialectOf.set(ri, lipidNamingKnown(list)));
+src/components/NMRMoleculeViewer.jsx:2576: let known = false;
+src/components/NMRMoleculeViewer.jsx:2577: try { known = ap1.hasBondTo(ap2); } catch { known = false; }
+src/components/NMRMoleculeViewer.jsx:2578: if (known) return;
+src/components/NMRMoleculeViewer.jsx:2621: // AtomSet#getSize(). 0 = KNOWN empty, -1 = could not be determined → draw.
+src/components/NMRMoleculeViewer.jsx:2653: } catch { /* unknown selection → no label */ }
+src/components/NMRMoleculeViewer.jsx:3466: // common modified sugars. An unknown code simply keeps the grey.
+src/components/NMRMoleculeViewer.jsx:3755: has tuned. A stored entry is only accepted for a KNOWN key and a finite colour,
+src/components/NMRMoleculeViewer.jsx:3765: // A stored / imported palette is merged over the defaults: only a KNOWN key with a
+src/components/NMRMoleculeViewer.jsx:3791: the same rule at their own depth: a KNOWN row (a class, a base, a residue) and a
+src/components/NMRMoleculeViewer.jsx:3792: KNOWN part (head · glycerol · acyl / base · sugar / backbone · sidechain) with a
+src/components/NMRMoleculeViewer.jsx:4004: // The tint of ONE kind (the swatch of the wheel), never undefined: an unknown
+src/components/NMRMoleculeViewer.jsx:4274: A stored entry is only accepted for a KNOWN kind / row / field and for a VALID
+src/components/NMRMoleculeViewer.jsx:5752: // An unknown word is what PyMOL itself would refuse: say so, and match
+src/components/NMRMoleculeViewer.jsx:8838: const known = which === 'a' ? row.i : row.j;
+src/components/NMRMoleculeViewer.jsx:8847: if (index === known && label === hadLabel && say === hadSay && written === hadText) return row;
+src/components/NMRMoleculeViewer.jsx:14432: // the standard atom naming (PART 2.1); an unknown naming still tiles the lipid by
+src/components/NMRMoleculeViewer.jsx:14941: what the measurement itself costs) and the sections' selections are known
+src/components/NMRMoleculeViewer.jsx:16320: applyShadowSettings(); // (re)configure the light/shadow map now that the bbox is known
+src/components/NMRMoleculeViewer.jsx:16383: // native XTC decode below is the only step of it whose length is known in
+src/components/NMRMoleculeViewer.jsx:16837: setVideoMsg(`⚠️ Video failed (${(err && err.message) || 'unknown error'}) — ${(err && err.hint) || 'try a slower rate (fps)'}`);
+src/components/NMRMoleculeViewer.jsx:17155: setKfMsg(`⚠️ The film failed (${(err && err.message) || 'unknown error'}) — ${(err && err.hint) || 'try a slower rate (fps)'}`);
+src/components/NMRMoleculeViewer.jsx:17189: setKfMsg(`⚠️ Could not write the film (${(err && err.message) || 'unknown error'})`);
+src/components/NMRMoleculeViewer.jsx:17205: setKfMsg(`⚠️ Could not read “${chosen.name}” (${(err && err.message) || 'unknown error'})`);
+src/components/NMRMoleculeViewer.jsx:17488: // empty and the memo is rebuilt as soon as the geometry is known.
+src/components/NMRMoleculeViewer.jsx:18120: const known = partMoveRef.current.get(key);
+src/components/NMRMoleculeViewer.jsx:18121: if (known && known.structure === structure) return known;
+src/components/NMRMoleculeViewer.jsx:19004: const known = all[name];
+src/components/NMRMoleculeViewer.jsx:19005: if (known && !window.confirm(`Overwrite the saved PyMOL script “${name}”?`)) return;
+src/components/NMRMoleculeViewer.jsx:19006: const comment = known ? (typeof known === 'string' ? '' : (known.comment || '')) : '';
+src/components/NMRMoleculeViewer.jsx:19035: // Runs when a structure is ready and `smiles` is known; the resulting map is
+src/components/NMRMoleculeViewer.jsx:21353: setRayMsg(`⚠️ Ray render failed (${(err && err.message) || 'unknown error'}) — ${hint}`);
+src/components/NMRMoleculeViewer.jsx:22253: // unknown key or a non-colour is simply ignored) and the general look.
+src/components/NMRMoleculeViewer.jsx:22575: let known = 0;
+src/components/NMRMoleculeViewer.jsx:22581: if (cls) known += 1; else neutral += 1;
+src/components/NMRMoleculeViewer.jsx:22588: flashSetupMsg(`✓ theme “${name}” applied — ${known} section(s) styled, ${neutral} on the neutral base`);
+src/components/NMRMoleculeViewer.jsx:22661: flashSetupMsg(`✓ snapshot “${name}” applied — ${hit} section(s)${miss ? `, ${miss} unknown (their look is kept)` : ''}`);
+src/components/NMRMoleculeViewer.jsx:26670: {/* A ligand the dictionary could not resolve says WHY (its code is unknown
+src/components/NMRSections.jsx:3119: // HB3-CG. Every CH2 whose two heavy neighbours are known is therefore re-placed
+src/components/NMRSections.jsx:6713: onClick={onImageClick} title={calibPicking ? 'Click a known peak (or an axis tick) on the image…' : undefined}>
+src/components/pubCitation.js:1160: unknown names/values coming from localStorage or a project document are
+src/components/publicationFormatFromPdf.js:64: export const isKnownSectionKey = (key) => DOC_KEYWORDS.some(([w]) =>
+src/components/publicationFormatFromPdf.js:206: .filter((l) => isKnownSectionKey(headingKey(l.text).toLowerCase())
+src/components/Publications.jsx:377: // Multi-label picker: toggleable chips for all known labels + free-text custom label
+src/components/Publications.jsx:2564: // Bulk choice: it writes the style for every known lab member and clears the
+src/components/RichTextEditor.jsx:232: alert('Word import failed: ' + (err && err.message ? err.message : 'unknown error'));
+src/components/tabConfigs.jsx:553: { key: 'compensationApplied', label: 'Compensation Applied', type: 'select', options: ['Yes', 'No', 'Unknown'] },
+src/components/ui.jsx:153: /** Scroll offset remembered for `scope` (an active test id); 0 when unknown. */
+src/components/UsefulFilesSection.jsx:117: flash(`⚠ Could not read the Drive folder (${(err && err.message) || 'unknown error'}).`);
+src/components/UsefulFilesSection.jsx:149: onError={(err) => flash(`⚠ Upload failed (${(err && err.message) || 'unknown error'}).`)}
+src/components/WorkspaceResyncPanel.jsx:56: setSummary({ ok: false, error: `The Drive could not be read: ${String((err && err.message) || err || 'unknown error')}` });
+src/data/testTypes.js:89: /** The human label of a test type, falling back to the raw type so an unknown
+src/data/testTypes.js:140: const known = new Set(EXPERIMENT_TYPES.map(normExperimentType));
+src/data/testTypes.js:141: const extra = out.filter((l) => !known.has(normExperimentType(l))).sort();
+src/utils/calculationEntries.js:20: (`operator: 'unknown'`, cas d'une session non identifiée) ou par un
+src/utils/calculationEntries.js:40: export const CALC_UNKNOWN_OPERATOR = 'unknown';
+src/utils/calculationEntries.js:46: export const CALC_FILTER_UNKNOWN = 'UNKNOWN';
+src/utils/calculationEntries.js:59: return !op || op === CALC_UNKNOWN_OPERATOR;
+src/utils/calculationEntries.js:86: if (op && op !== CALC_UNKNOWN_OPERATOR) out.add(op);
+src/utils/calculationEntries.js:122: /** Une valeur de filtre → 'ALL' | 'MINE' | 'UNKNOWN' | nom du scientifique. */
+src/utils/calculationEntries.js:127: if (up === CALC_FILTER_ALL || up === CALC_FILTER_MINE || up === CALC_FILTER_UNKNOWN) return up;
+src/utils/calculationEntries.js:144: if (filter === CALC_FILTER_UNKNOWN) return false;
+src/utils/chartStyle.js:323: * When `total` is unknown, degrade over a nominal 12-stop gradient so the
+src/utils/datasetDirTwins.js:39: export const knownItemsOf = (candidate) => {
+src/utils/datasetDirTwins.js:61: const items = knownItemsOf(c);
+src/utils/datasetDirTwins.js:67: || ((knownItemsOf(b) || 0) - (knownItemsOf(a) || 0))
+src/utils/datasetDirTwins.js:77: .filter((c) => c && c.id && String(c.id) !== String(keepId || '') && knownItemsOf(c) === 0)
+src/utils/datasetListIndex.js:134: export const readDatasetListCache = (storage = null) => {
+src/utils/datasetListIndex.js:147: const merged = mergeDatasetLists(readDatasetListCache(storage), datasetListEntries(list, { keepContent }));
+src/utils/driveMirror.js:201: const findProjectFolder = async ({ datasetId = '', datasetName = '', projectName = '', knownFolderId = '' }) => {
+src/utils/driveMirror.js:202: if (knownFolderId) {
+src/utils/driveMirror.js:204: const meta = await getDriveFileMeta(knownFolderId);
+src/utils/driveMirror.js:299: datasetId = '', datasetName = '', oldName = '', newName = '', knownFolderId = ''
+src/utils/driveMirror.js:326: datasetId, datasetName, projectName: oldName, knownFolderId
+src/utils/driveNaming.js:454: *  ('' when the dataset folder is not known yet — see driveUpload). */
+src/utils/driveStray.js:118: export const knownProjectSlugs = ({
+src/utils/driveStray.js:154: projectSlugs: knownProjectSlugs({ datasetId, datasetName })
+src/utils/driveUpload.js:565: *  While a dataset is open its folder is ALWAYS used: an unknown title (not
+src/utils/driveUpload.js:570: *  title is known (see the rename branch of ensureDriveFolder). */
+src/utils/driveUpload.js:2826: /** The email/name of the Google account currently connected for Drive ('' if unknown). */
+src/utils/experimentRules.js:67: *        ('unknown-experiment' | 'unknown-project' | 'same-project') the INPUTS
+src/utils/experimentRules.js:81: if (!source) return refuse('unknown-experiment');
+src/utils/experimentRules.js:82: if (!target) return refuse('unknown-project');
+src/utils/figuresLibrary.js:1163: //   • insertIfMissing  – false = an unknown updateId is a FAILURE, not a new
+src/utils/figuresLibrary.js:1271: // figure). Unknown id → normal insert.
+src/utils/figuresLibrary.js:1276: // figure). Unknown id → normal insert, unless the caller asked for the strict
+src/utils/figuresLibrary.js:2155: if (!from) return { ok: false, reason: 'name-unknown', from: '', name: to };
+src/utils/figuresLibrary.js:2671: const known = new Set(current.map((i) => driveIdOfLibraryItem(i)).filter(Boolean));
+src/utils/figuresLibrary.js:2672: const missing = items.filter((i) => !known.has(driveIdOfLibraryItem(i)) && !tombstoned(i));
+src/utils/figureStyle.js:727: * RENAME a configuration. `null` when the id is unknown, the name is empty, or
+src/utils/figureStyle.js:801: // A config of the export (`{ name, style }`) or a bare profile (any known key).
+src/utils/forceFieldKcal.js:210: /** La masse d'un élément inconnu — celle du carbone, et le rapport le dit (`unknown`). */
+src/utils/forceFieldKcal.js:287: known: FF_VDW_RADII[e] != null,
+src/utils/forceFieldKcal.js:309: known: a.known && b.known,
+src/utils/forceFieldKcal.js:550: *  unknown, limit}`. `pairs[k]` = `{i, j, rmin, epsilon, charges, cqq, topological,
+src/utils/forceFieldKcal.js:551: *  known}` ; `topological` = 3 pour un couple 1-4 (atténué), 0 sinon. `topology` compte
+src/utils/forceFieldKcal.js:568: topology: { bonded: 0, linked: 0, fourth: 0, free: 0 }, unknown: 0, limit,
+src/utils/forceFieldKcal.js:616: if (!pair.known) out.unknown += 1;
+src/utils/forceFieldKcal.js:1055: *  iterations, groups, unknown, min, max}`. Les charges sont en unités de charge
+src/utils/forceFieldKcal.js:1065: method: 'zero', iterations: 0, groups: [], unknown: 0, min: 0, max: 0,
+src/utils/forceFieldKcal.js:1077: out.unknown = els.filter((e) => !FF_PEOE[upper(e)]).length;
+src/utils/forceFieldKcal.js:1713: charges: { net: 0, method: 'zero', groups: [], unknown: 0 },
+src/utils/forceFieldKcal.js:1715: nonbonded: { count: 0, repulsive: 0, topology: { bonded: 0, linked: 0, fourth: 0, free: 0 }, unknown: 0 },
+src/utils/forceFieldKcal.js:1934: unknown: charges.unknown, min: charges.min, max: charges.max,
+src/utils/forceFieldKcal.js:1940: topology: walk.topology, unknown: walk.unknown, limit: walk.limit,
+src/utils/geometryRelax.js:223: *  (`unknownElements`) : une lecture qui complète doit le dire, jamais le taire. */
+src/utils/geometryRelax.js:529: *  le rayon de repli AVEC `known: false` : le balayage compte alors l'atome
+src/utils/geometryRelax.js:530: *  (`unknownElements`) au lieu de faire croire qu'il a lu une taille. */
+src/utils/geometryRelax.js:535: ? { radius: r, element: e, known: true }
+src/utils/geometryRelax.js:536: : { radius: VDW_RADIUS_FALLBACK, element: e, known: false };
+src/utils/geometryRelax.js:541: *  `known: false` quand l'un des deux a pris le rayon de repli. */
+src/utils/geometryRelax.js:547: known: a.known && b.known,
+src/utils/geometryRelax.js:569: * (`terms.unknownBonds`) plutôt que de la croire.
+src/utils/geometryRelax.js:868: const contactWalkOf = ({ positions, elements, bonds, margin = 0, movable = null, seeds = null, known = null }) => {
+src/utils/geometryRelax.js:886: let unknownElements = 0;
+src/utils/geometryRelax.js:891: if (!r.known) unknownElements += 1;
+src/utils/geometryRelax.js:897: /* LA MARCHE INCRÉMENTALE — `seeds` et `known` servent au REBALAYAGE pendant une
+src/utils/geometryRelax.js:904: const knownKeys = known && typeof known.has === 'function' ? known : null;
+src/utils/geometryRelax.js:925: if (knownKeys && knownKeys.has(pairKey(i, j))) continue;
+src/utils/geometryRelax.js:952: return { contacts: out, count, unknownElements, span };
+src/utils/geometryRelax.js:964: * `seeds` / `known` servent au REBALAYAGE PENDANT UNE DESCENTE (§8) : `seeds` = les
+src/utils/geometryRelax.js:965: * atomes qui ont bougé (la marche ne les parcourt qu'eux), `known` = les clés `i-j` des
+src/utils/geometryRelax.js:971: margin = RELAX_CONTACT_MARGIN, seeds = null, known = null,
+src/utils/geometryRelax.js:975: const walk = contactWalkOf({ positions, elements, bonds, margin, seeds, known });
+src/utils/geometryRelax.js:1005: *            severity:number, checked:number, unknownElements:number}|null}
+src/utils/geometryRelax.js:1012: *   `unknownElements` = combien d'atomes ont pris le rayon de repli. `null` quand les
+src/utils/geometryRelax.js:1026: checked: walk.contacts.length, unknownElements: walk.unknownElements,
+src/utils/geometryRelax.js:1046: *            unknownBonds:number, aromaticBonds:number}}
+src/utils/geometryRelax.js:1092: let unknownBonds = 0; let aromaticBonds = 0;
+src/utils/geometryRelax.js:1098: if (!Number.isFinite(target)) { unknownBonds += 1; continue; }
+src/utils/geometryRelax.js:1162: bondCount: bondsList.length, unknownBonds, aromaticBonds,
+src/utils/geometryRelax.js:1520: * hors du balayage et COMPTÉE (`unknownBonds`) : aucune longueur n'est inventée
+src/utils/geometryRelax.js:1542: *            severity:number, checked:number, unknownBonds:number,
+src/utils/geometryRelax.js:1563: checked: t.bonds.length, unknownBonds: t.unknownBonds, aromaticBonds: t.aromaticBonds,
+src/utils/geometryRelax.js:2000: inconnu (`terms.unknownBonds`).
+src/utils/geometryRelax.js:2563: unstuck: 0, bondCount: terms.bondCount, unknownBonds: terms.unknownBonds,
+src/utils/geometryRelax.js:2621: nouveaux (`seeds` / `known` de `contactPairsOf`). Le seuil n'est pas décoratif : un
+src/utils/geometryRelax.js:2646: positions: arr, elements: els, bonds, weight: contactWeight, seeds: moved, known: contactKeys,
+src/utils/geometryRelax.js:3319: unknownBonds: baseTerms.unknownBonds, aromaticBonds: baseTerms.aromaticBonds,
+src/utils/labAuth.js:186: dans notre corps → « Unknown grant_type "" ». (Une fois le garde-fou du
+src/utils/labMolecules.js:182: known: true
+src/utils/labMolecules.js:189: known: false
+src/utils/labMolecules.js:209: const unknown = [];
+src/utils/labMolecules.js:218: unknown.push(ch);
+src/utils/labMolecules.js:223: ok: unknown.length === 0,
+src/utils/labMolecules.js:227: unknown,
+src/utils/labMolecules.js:246: const unknown = [];
+src/utils/labMolecules.js:254: unknown.push(ch);
+src/utils/labMolecules.js:259: ok: unknown.length === 0,
+src/utils/labMolecules.js:263: unknown,
+src/utils/labMolecules.js:282: const unknown = [];
+src/utils/labMolecules.js:293: unknown.push(token);
+src/utils/labMolecules.js:298: ok: unknown.length === 0,
+src/utils/labMolecules.js:302: unknown,
+src/utils/labMolecules.js:312: unknown: [],
+src/utils/ligandSmiles.js:152: * the code is unknown / the network is unreachable / the answer holds no SMILES —
+src/utils/loadProgress.js:38: * @returns {number|null} 0–100 (integer) or null for an unknown / empty total
+src/utils/loadProgress.js:91: * whose length is unknown must make the bar pulse rather than display
+src/utils/manuscriptImport.js:2653: const known = new Map();
+src/utils/manuscriptImport.js:2654: refs.forEach((r) => entryKeys(r).forEach((k) => { if (!known.has(k)) known.set(k, r); }));
+src/utils/manuscriptImport.js:2658: const already = entryKeys(entry).map((k) => known.get(k)).find(Boolean) || null;
+src/utils/mdAnalysisCache.js:28: export const localAnalysisKey = (testId) => `${MD_ANALYSIS_LOCAL_PREFIX}${testId || '_unknown'}`;
+src/utils/migrateTestImages.js:334: /** Download the bytes of a publicly-shared Drive file by trying every known
+src/utils/migrateTestImages.js:505: reason: `cannot be downloaded (${copyErr && copyErr.message || 'unknown'}). ` +
+src/utils/modifications.js:10: modification inconnue vaut delta 0 et `known: false` (rien n'est deviné, exactement comme
+src/utils/modifications.js:34: UNITÉ, `{ label, delta, known }`, le libellé étant celui de la table (donc canonique : un
+src/utils/modifications.js:62: let known = false;
+src/utils/modifications.js:67: known = true;
+src/utils/modifications.js:74: known = true;
+src/utils/modifications.js:81: known
+src/utils/projectFiles.js:66: /** Human-readable size ("12 B", "1.4 MB", …); '' when unknown. */
+src/utils/projectFiles.js:119: /** Identity of an indexed file: the Drive file when known, else its link,
+src/utils/projectRootMigrate.js:59: export const looksLikeProjectSectionFolder = ({ name = '', childNames = [], isKnownProject = false } = {}) => {
+src/utils/projectRootMigrate.js:62: if (isKnownProject) return true;
+src/utils/projectRootMigrate.js:104: if (!looksLikeProjectSectionFolder({ name, childNames, isKnownProject: !!insideProjects })) {
+src/utils/rebuildProteinHydrogens.js:219: // (HD2-CE, HG2-CD, HB2-CG ...). Every CH2 with two known heavy neighbours is
+src/utils/sequenceCharge.js:98: `parseModifications` (utils/sequenceInfo.js) rend `{ label, delta, known }` — une entrée PAR
+src/utils/sequenceCharge.js:118: ensuite. `length` compte TOUTES les lettres, `known` celles de l'alphabet. */
+src/utils/sequenceCharge.js:124: const known = letters.filter((ch) => AA_ALPHABET.includes(ch)).length;
+src/utils/sequenceCharge.js:128: known,
+src/utils/sequenceCharge.js:129: unknown: letters.filter((ch) => !AA_ALPHABET.includes(ch)),
+src/utils/sequenceCharge.js:249: const known = AA_ALPHABET.filter((aa) => Number(counts[aa]) > 0)
+src/utils/sequenceCharge.js:256: return [...known, ...extra].join(' · ');
+src/utils/sequenceInfo.js:116: const unknown = [];
+src/utils/sequenceInfo.js:125: unknown.push(ch);
+src/utils/sequenceInfo.js:130: ok: unknown.length === 0,
+src/utils/sequenceInfo.js:134: unknown,
+src/utils/sequenceInfo.js:153: const unknown = [];
+src/utils/sequenceInfo.js:161: unknown.push(ch);
+src/utils/sequenceInfo.js:166: ok: unknown.length === 0,
+src/utils/sequenceInfo.js:170: unknown,
+src/utils/sequenceInfo.js:184: unknown: [],
+src/utils/sequenceInfo.js:200: const unknown = [];
+src/utils/sequenceInfo.js:211: unknown.push(token);
+src/utils/sequenceInfo.js:216: ok: unknown.length === 0,
+src/utils/sequenceInfo.js:220: unknown,
+src/utils/sequenceInfo.js:230: unknown: [],
+src/utils/structureCalc.js:1208: ring: 0, multiple: 0, terminal: 0, unknown: 0,
+src/utils/structureCalc.js:1233: if (!Number.isInteger(ref) || !Number.isInteger(probe)) { out.unknown += 1; continue; }
+src/utils/structureCalc.js:1375: terminal: list.terminal || 0, unknown: list.unknown || 0,
+src/utils/structureCalc.js:2105: charges: { net: 0, method: 'zero', groups: [], unknown: 0 },
+src/utils/structureCalc.js:2106: surface: { estimate: 0, exact: null, energy: 0 }, nonbonded: { count: 0, repulsive: 0, topology: {}, unknown: 0 },
+src/utils/structureCalc.js:2193: contacts: { count: 0, severity: 0, worst: null, checked: 0, unknownElements: 0 },
+src/utils/structureCalc.js:2214: }) || { count: 0, severity: 0, worst: null, checked: 0, unknownElements: 0 };
+src/utils/structureCalc.js:2301: checked: contacts.checked, unknownElements: contacts.unknownElements,
+src/utils/structureCalc.js:2623: const known = new Set();
+src/utils/structureCalc.js:2624: for (const p of ctx.nonbonded) known.add(p.i < p.j ? p.i * count + p.j : p.j * count + p.i);
+src/utils/structureCalc.js:2636: if (known.has(key) || seen.has(key)) continue;   // déjà dans la marche
+src/utils/structureCalc.js:3549: contacts: { count: 0, severity: 0, worst: null, checked: 0, unknownElements: 0 },
+src/utils/uiSkin.js:624: /* The stored skin, always usable: anything unreadable or unknown falls back to
+src/utils/viewerRayImage.js:331: const known = size.width > 0 && size.height > 0;
+src/utils/viewerRayImage.js:335: allowed: !known || best === size.factor,
+src/utils/viewerRayImage.js:336: label: known ? `${size.factor}× · ${size.width}×${size.height} px` : `${size.factor}×`,
+src/utils/viewerRayShadows_old.js:1056: transform, an unknown matrix-like) is the identity. */
+src/utils/viewerRayShadows_old.js:1129: not « unknown » — and such a component casts nothing. */
+src/utils/viewerRayShadows_old.js:1172: « unknown » and every atom kept its vdW radius: the fix was invisible in the
+src/utils/viewerRayShadows_old.js:2268: set that misses the drawing (or of an off-frustum one). Only an unknown
+src/utils/viewerStyleFile.js:87: const known = VIEWER_STYLE_FILE_STEMS[mode];
+src/utils/viewerStyleFile.js:89: if (stem === known || stem.startsWith(`${known}-`)) return mode;
+src/utils/viewerTrajectoryVideo.js:213: The bar shows all of this, so the price of a film is known before it starts:
+src/utils/viewerTrajectoryVideo.js:471: `the browser refused to record this canvas (${(err && err.message) || 'unknown error'})`,
+src/utils/viewerTrajectoryVideo.js:489: failed = videoError(`the recorder failed (${(err && err.message) || 'unknown error'})`, 'try a slower rate (fps) or a smaller window');
+src/utils/workspaceResync.js:65: UNKNOWN_PROJECT_FOLDER: 'project-folder-without-record',
+src/utils/workspaceResync.js:74: UNKNOWN_FOLDER_IN_DATASET: 'unknown-folder-inside-a-dataset',
+src/utils/workspaceResync.js:75: UNKNOWN_FOLDER_AT_ROOT: 'unknown-folder-at-workspace-root',
+src/utils/workspaceResync.js:132: datasetsListedHere: 0,
+src/utils/workspaceResync.js:133: datasetsListedInIndex: 0,
+src/utils/workspaceResync.js:138: projectFoldersUnknown: 0,
+src/utils/workspaceResync.js:146: projectsListedHere: 0, datasetsListedHere: 0
+src/utils/workspaceResync.js:203: }[text(reason)] || text(reason) || 'unknown reason');
+src/utils/workspaceResync.js:215: + `the index ${WORKSPACE_STATE_FILE} lists ${c.datasetsListedInIndex || 0} dataset(s) and ${c.projectsListedInIndex || 0} project(s).`);
+src/utils/workspaceResync.js:216: lines.push(`· This PC knows ${c.datasetsListedHere || 0} dataset(s) and ${c.projectsListedHere || 0} project(s)`
+src/utils/workspaceResync.js:217: + (c.datasetsListedHere >= c.datasetsListedInIndex && c.projectsListedHere >= c.projectsListedInIndex
+src/utils/workspaceResync.js:259: ? `${restored} project(s) restored in this browser (${before} known before, ${after} now).`
+src/utils/workspaceResync.js:260: : `No project was missing here (${after} known).`,
+src/utils/workspaceResync.js:274: `known` = ce que CE poste affiche (`{ datasets, projects }` — la liste du
+src/utils/workspaceResync.js:279: adapter = null, known = {}, mirror = null, maxCopies = 25
+src/utils/workspaceResync.js:372: const localDatasets = asList(known.datasets);
+src/utils/workspaceResync.js:373: const localProjects = asList(known.projects);
+src/utils/workspaceResync.js:394: const knownDeletedIds = new Set(
+src/utils/workspaceResync.js:395: asList(known.deletedDatasetIds).map((v) => text(v && v.id) || text(v)).filter(Boolean)
+src/utils/workspaceResync.js:408: let unknownProjectFolders = 0;
+src/utils/workspaceResync.js:477: const deleted = !!id && (knownDeletedIds.has(id) || mirrorDeletedIds.has(id));
+src/utils/workspaceResync.js:487: const known = records.find((p) => slugOf(p.name) === pslug)
+src/utils/workspaceResync.js:495: projectId: text(known && known.id),
+src/utils/workspaceResync.js:496: projectName: text(known && known.name) || text(mir && mir.name) || text(f.name),
+src/utils/workspaceResync.js:548: add(RESYNC_ISSUES.UNKNOWN_FOLDER_IN_DATASET, {
+src/utils/workspaceResync.js:553: text: `"${cname}" sits inside the dataset "${name}" and matches no known container and no known project. It was NOT touched.`
+src/utils/workspaceResync.js:580: unknownProjectFolders += 1;
+src/utils/workspaceResync.js:581: add(RESYNC_ISSUES.UNKNOWN_PROJECT_FOLDER, {
+src/utils/workspaceResync.js:709: add(RESYNC_ISSUES.UNKNOWN_FOLDER_AT_ROOT, {
+src/utils/workspaceResync.js:712: text: `"${u.name}" sits at the root of the workspace and matches no dataset, no project and no known container. Nothing was touched — open i
+src/utils/workspaceResync.js:760: if (knownDeletedIds.has(id) || mirrorDeletedIds.has(id)) return; // supprimé : pas de retour
+src/utils/workspaceResync.js:795: datasetsListedHere: localDatasets.length,
+src/utils/workspaceResync.js:796: datasetsListedInIndex: indexDatasets.length,
+src/utils/workspaceResync.js:801: projectFoldersUnknown: unknownProjectFolders,
+src/utils/workspaceResync.js:828: datasetsListedHere: localDatasets.length

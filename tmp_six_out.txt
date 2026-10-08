@@ -1,0 +1,8 @@
+### _workspace_drive_test.mjs  EXIT=0
+✅ 60 tests passés (l’espace de travail entier vit sur le Drive)
+
+### _workspace_resync_test.mjs  EXIT=0
+154 vérifications passées — « RESYNC FROM DRIVE » : l’inventaire ne touche à rien.
+
+### _workspace_resync_ui_test.mjs  EXIT=0
+78 vérifications passées — « RESYNC FROM DRIVE » : le compte-rendu dit tout, depuis une seule source.

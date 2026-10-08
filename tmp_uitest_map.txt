@@ -1,0 +1,15 @@
+lignes totales 255
+32: import { readFileSync } from 'node:fs';
+50: const RESYNC_SRC = readFileSync('./src/utils/workspaceResync.js', 'utf8');
+51: const PANEL_SRC = readFileSync('./src/components/WorkspaceResyncPanel.jsx', 'utf8');
+52: const SETTINGS_SRC = readFileSync('./src/components/AppModules/settingsModule.jsx', 'utf8');
+53: const APP_SRC = readFileSync('./src/App.jsx', 'utf8');
+81: eq(empty.projects, 'No project was missing here (0 known).', '…sans faire croire à une reprise');
+94: eq(restored.projects, '4 project(s) restored in this browser (3 known before, 7 now).', '…avec les deux chiffres, avant et après');
+109: eq(shrunk.projects, 'No project was missing here (4 known).', '…le compte-rendu dit simplement ce qui est là');
+123: eq(errored.projects, '4 project(s) restored in this browser (1 known before, 5 now).', '…le détail reste lisible sous l’en-tête');
+182: les sources : c'est ce qui empêche la réapparition d'une reprise qui ne fait
+187: 'le panneau importe les helpers purs : une seule source pour les phrases');
+211: has(APP_SRC, 'datasets: [...(Array.isArray(datasetsList) ? datasetsList : []), ...readDatasetListCache()]',
+221: const BTN = readFileSync('./src/components/WorkspaceResyncPanel.jsx', 'utf8');
+254: console.log(`\n${passed} vérifications passées — « RESYNC FROM DRIVE » : le compte-rendu dit tout, depuis une seule source.\n`);

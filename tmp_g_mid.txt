@@ -1,0 +1,19 @@
+motif : midOn|bgGradientOf
+fichiers : src/utils/viewerBackground.js, src/utils/uiSkin.js, src/App.jsx
+
+src/utils/viewerBackground.js:70: *  choisie pour se VOIR entre A et B ; il ne sert que quand `midOn` est vrai. */
+src/utils/viewerBackground.js:111: export const bgGradientOf = (value) => {
+src/utils/viewerBackground.js:130: midOn: false,
+src/utils/viewerBackground.js:153: if (raw == null || raw === '') return bgGradientOf(null);
+src/utils/viewerBackground.js:155: try { return refreshPaleBgGradient(bgGradientOf(JSON.parse(raw))); } catch { return bgGradientOf(null); }
+src/utils/viewerBackground.js:157: return refreshPaleBgGradient(bgGradientOf(raw));
+src/utils/viewerBackground.js:174: const g = bgGradientOf(gradient);
+src/utils/viewerBackground.js:181: midOn: g.midOn,
+src/utils/viewerBackground.js:193: // Le MILIEU n'existe que s'il est DEMANDÉ (`midOn`) ET lisible : une rampe à
+src/utils/viewerBackground.js:196: const midOn = spec.midOn === true && !!mid;
+src/utils/viewerBackground.js:227: midOn,
+src/utils/viewerBackground.js:271: const stops = g.midOn ? `${g.from} 0%, ${g.mid} 50%, ${g.to} 100%` : `${g.from} 0%, ${g.to} 100%`;
+src/utils/viewerBackground.js:311: if (g.midOn) ramp.addColorStop(0.5, g.mid);   // le 3e arrêt, au MILIEU
+-- src/utils/viewerBackground.js : 13 ligne(s) retenue(s) sur 376
+-- src/utils/uiSkin.js : 0 ligne(s) retenue(s) sur 741
+-- src/App.jsx : 0 ligne(s) retenue(s) sur 6202

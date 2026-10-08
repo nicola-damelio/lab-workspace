@@ -1,0 +1,4 @@
+code=0
+✅ 76 tests passés (projets supprimés : rien ne ressuscite — et un projet restauré revient)
+(node:25368) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)

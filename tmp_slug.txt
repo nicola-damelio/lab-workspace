@@ -1,0 +1,15 @@
+﻿82:const slugOf = (name) => sanitizeSlug(text(name));
+91:  || ADMIN_DATASET_DIRS.map(slugOf).includes(slugOf(name));
+184:      ? (dsId === scopeId || (!dsId && !!datasetSlug && slugOf(dsName) === datasetSlug) || (!dsId && !dsName))
+190:      : (!dsId && (!dsName || slugOf(dsName) === datasetSlug));
+264:  const workspaces = rootFolders.filter((f) => slugOf(f.name) === WORKSPACE_DIR);
+297:  const copiesDir = foldersOf(wsKids).find((f) => slugOf(f.name) === 'datasets') || null;
+334:    [datasetFolderSlug(c.title), slugOf(c.driveFolder)].filter(Boolean).forEach((s) => {
+360:    const slug = slugOf(name);
+404:    const projectsContainer = childFolders.find((f) => slugOf(f.name) === 'projects') || null;
+416:      const pslug = slugOf(f.name);
+418:      const known = records.find((p) => slugOf(p.name) === pslug)
+419:        || (mir ? records.find((p) => slugOf(p.name) === slugOf(mir.name)) : null)
+443:      const cslug = slugOf(cname);
+525:      const pslug = slugOf(p.name);
+555:      const recordedSlug = slugOf(recordedName);

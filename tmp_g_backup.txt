@@ -1,0 +1,38 @@
+motif : backup
+fichiers : src/utils/driveUpload.js, src/utils/workspaceDrive.js, src/utils/driveNaming.js
+
+src/utils/driveUpload.js:229: // timeout. Large UPLOADS (trajectory files, videos, backups) pass an explicit
+src/utils/driveUpload.js:324: *  datasets keep the canonical five-folder tree (projects / backups / protocols
+src/utils/driveUpload.js:326: *  `backups` folder (weekly HTML snapshots) and the `Budget_labo` container
+src/utils/driveUpload.js:331: ? ['backups', 'Budget_labo']
+src/utils/driveUpload.js:459: * <Lab Workspace>/<dataset>/backups/. Sert à RÉCUPÉRER les papiers d'une
+src/utils/driveUpload.js:464: export const listDatasetBackups = async () => {
+src/utils/driveUpload.js:469: const backupsId = (await canonicalDatasetDirId('backups', { rootId, create: false }).catch(() => ''))
+src/utils/driveUpload.js:470: || await findFolderByName('backups', rootId);
+src/utils/driveUpload.js:471: if (!backupsId) return [];
+src/utils/driveUpload.js:472: const items = await listDriveChildren(backupsId);
+src/utils/driveUpload.js:491: *  (projects/backups/protocols/storage/publications); an administration
+src/utils/driveUpload.js:492: *  dataset only gets its own `backups` + `Budget_labo` containers (the
+src/utils/driveUpload.js:505: ouvrir le dataset refaisait « projects/ » (ou « backups/ »…) juste après
+src/utils/driveUpload.js:536: *  1. A root-level "backups" folder (old shared backup location) is trashed
+src/utils/driveUpload.js:539: *     backup layout) is trashed — its current dataset/backups backup was just
+src/utils/driveUpload.js:545: const names = new Set(['backups', ...legacyFolderNames.map((s) => String(s || '').trim()).filter(Boolean)]);
+src/utils/driveUpload.js:614: *  (projects/backups/protocols/storage/publications), or only backups +
+src/utils/driveUpload.js:615: *  Budget_labo for an administration dataset — so uploads and weekly backups
+src/utils/driveUpload.js:854: /** Le conteneur canonique `dir` d'un dataset (`projects`, `backups`,
+src/utils/driveUpload.js:2612: *   <Lab Workspace>/<dataset>/backups/<name>
+src/utils/driveUpload.js:2613: * — one `backups` subfolder per dataset (the caller passes "<dataset>/backups"
+src/utils/driveUpload.js:2614: * via `folder`), instead of piling every dataset into a single shared "backups"
+src/utils/driveUpload.js:2619: export const uploadWorkspaceFile = async ({ name, mimeType, file, folder = 'backups' }) => {
+src/utils/driveUpload.js:2624: const segments = ['Lab Workspace', ...String(folder || 'backups').split('/').filter(Boolean).map((s) => sanitizeSlug(String(s)))];
+src/utils/driveUpload.js:2637: // `folder` may be a nested path (e.g. "<dataset>/backups") — resolve each
+src/utils/driveUpload.js:2638: // segment so every dataset's backups live in their own subfolder.
+src/utils/driveUpload.js:2640: for (const seg of String(folder || 'backups').split('/')) {
+src/utils/driveUpload.js:2684: // Weekly backup HTML files can be several MB — allow a long transfer time.
+-- src/utils/driveUpload.js : 28 ligne(s) retenue(s) sur 3067
+-- src/utils/workspaceDrive.js : 0 ligne(s) retenue(s) sur 499
+src/utils/driveNaming.js:260: <dataset>/backups      → weekly HTML saves of the dataset
+src/utils/driveNaming.js:292: export const DATASET_FOLDER_DIRS = [PROJECTS_CONTAINER, GENERAL_LIBRARY_DIR, 'backups', 'protocols', 'storage', 'publications'];
+src/utils/driveNaming.js:294: /** Canonical dataset directory name (used for uploads AND backups, so a dataset
+src/utils/driveNaming.js:411: *  projects/general_library_images/backups/protocols/storage/publications. */
+-- src/utils/driveNaming.js : 4 ligne(s) retenue(s) sur 462

@@ -1,0 +1,12 @@
+motif : ^const text|^const asList|^const slugOf
+fichiers examinés : 3
+lignes retenues : 5
+
+src/utils/workspaceResync.js:80: const asList = (v) => (Array.isArray(v) ? v : []);
+src/utils/workspaceResync.js:81: const text = (v) => (v === undefined || v === null ? '' : String(v).trim());
+src/utils/workspaceResync.js:82: const slugOf = (name) => sanitizeSlug(text(name));
+-- src/utils/workspaceResync.js : 3 ligne(s) sur 834
+src/utils/datasetListIndex.js:43: const text = (v) => (v === undefined || v === null ? '' : String(v).trim());
+-- src/utils/datasetListIndex.js : 1 ligne(s) sur 177
+src/utils/workspaceRefresh.js:87: const text = (v) => String(v == null ? '' : v).trim();
+-- src/utils/workspaceRefresh.js : 1 ligne(s) sur 88

@@ -1,0 +1,69 @@
+=== LOG ===
+3b5f14a dd
+5bfca5e fuix
+50a780d try
+3e52160 restore
+868e76f grad
+3ee98c4 grad
+6839aa8 grad
+1b61e1c gradient
+
+=== DIFF tests/hook ===
+diff --git a/_deleted_projects_test.mjs b/_deleted_projects_test.mjs
+index b50b6f7..e785913 100644
+--- a/_deleted_projects_test.mjs
++++ b/_deleted_projects_test.mjs
+@@ -222,7 +222,7 @@ has(PROJECTS, 'export const loadDeletedProjectsForDataset = (datasetArg) => {',
+   '…et la page peut LISTER les projets supprimés (le geste doit être atteignable)');
+ has(PROJECTS, 'writeRevivals(withoutRevival(readRevivals(), { id: project.id, datasetId }));',
+   'supprimer à nouveau un projet restauré le supprime pour de bon');
+-has(PROJECTS, 'reviveDeletedProject(id, currentDatasetId);', '…et App.jsx lève la tombe du dataset ouvert');
++has(APP, 'reviveDeletedProject(id, currentDatasetId);', '…et App.jsx lève la tombe du dataset ouvert');
+ has(APP, 'revivedProjects: loadRevivedProjects()',
+   'le payload du dataset (cloud / sauvegarde HTML) transporte les RESTAURATIONS, comme les suppressions');
+ has(APP, 'adoptRevivedProjects(s.revivedProjects);',
+diff --git a/_esm_test_hook.mjs b/_esm_test_hook.mjs
+index 38532ec..95432c1 100644
+--- a/_esm_test_hook.mjs
++++ b/_esm_test_hook.mjs
+@@ -14,6 +14,12 @@ import { fileURLToPath } from 'node:url';
+ 
+ const CANDIDATES = ['.js', '.jsx', '/index.js', '/index.jsx'];
+ 
++/* Les modules PURS que le bouchon de driveUpload ré-exporte tels quels : leur
++   valeur ne doit exister qu'une fois dans le dépôt (voir la ligne
++   MAX_DRIVE_LIST_PAGES du bouchon). */
++const DRIVE_LIST_PAGES_URL = new URL('./src/utils/driveListPages.js', import.meta.url).href;
++
++
+ export async function resolve(specifier, context, next) {
+   if (specifier.startsWith('.') && !/\.[a-z0-9]+$/i.test(specifier)) {
+     try {
+@@ -60,10 +66,21 @@ export async function load(url, context, next) {
+         'export const dataUrlToBlob = (u) => (typeof M().dataUrlToBlob === "function" ? M().dataUrlToBlob(u) : null);',
+         'export const getDriveRootName = () => M().driveRootName || "";',
+         'export const resolveDrivePathFromNames = async (names, opts) => (typeof M().resolveDrivePathFromNames === "function" ? M().resolveDrivePathFromNames(names, opts) : { leafId: "", path: [] });',
+-        'export const listDriveChildren = async (id) => (typeof M().listDriveChildren === "function" ? M().listDriveChildren(id) : []);',
++        'export const listDriveChildren = async (id, opts) => (typeof M().listDriveChildren === "function" ? M().listDriveChildren(id, opts) : []);',
++        // Toutes les pages + l'aveu de troncature (voir driveUpload.js) : un faux
++        // Drive peut en fournir plusieurs pour vérifier qu'on ne s'arrête pas au
++        // premier millier d'enfants.
++        'export const listDriveChildrenDetailed = async (id, opts) => (typeof M().listDriveChildrenDetailed === "function" ? M().listDriveChildrenDetailed(id, opts) : { files: await (typeof M().listDriveChildren === "function" ? M().listDriveChildren(id, opts) : []), pages: 1, truncated: false });',
++        // La borne d'énumération, ré-exportée du module PUR (driveListPages.js) :
++        // le bouchon ne recopie pas sa valeur, il la lit à la même source.
++        `export const MAX_DRIVE_LIST_PAGES = (await import(${JSON.stringify(DRIVE_LIST_PAGES_URL)})).MAX_DRIVE_LIST_PAGES;`,
+         // Miroir du Drive (driveMirror.js / workspaceDrive.js) : un faux Drive
+         // peut fournir dossiers et fichiers, mettre à la corbeille, renommer…
+         'export const ensureLabWorkspaceFolder = async () => (typeof M().ensureLabWorkspaceFolder === "function" ? M().ensureLabWorkspaceFolder() : "ws_folder");',
++        // Le dossier « Lab Workspace » CHERCHÉ (jamais créé) : un faux Drive peut
++        // dire qu'il n'y en a pas — c'est le cas que l'inventaire doit rapporter
++        // au lieu de fabriquer un dossier de travail.
++        'export const findLabWorkspaceFolder = async () => (typeof M().findLabWorkspaceFolder === "function" ? M().findLabWorkspaceFolder() : "");',
+         // Racine du DATASET (dossier du dataset dans « Lab Workspace ») : un faux
+         // Drive la fournit pour que les helpers qui CHERCHENT un dossier existant
+         // (utils/figuresFolder.js) restent testables hors navigateur.
+
+=== DIFFSTAT settings/upload ===
+ src/components/AppModules/settingsModule.jsx | 15 ++++++-
+ src/utils/driveUpload.js                     | 62 ++++++++++++++++++++++++----
+ 2 files changed, 67 insertions(+), 10 deletions(-)

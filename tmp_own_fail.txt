@@ -1,0 +1,12 @@
+--- App.jsx : lignes contenant adoptWorkspaceProjects
+31: import { ProjectsModule, loadProjects, mergeProjectsFromCloud, setProjectDatasetScope, removeProjectsOfDataset, loadDeletedProjects, adoptDeletedProjects, adoptWorkspaceProjects, loadRevivedProjects, adoptRevivedProjects, reviveDeletedProject, importProjectsFromFile } from './components/AppModules/projectsModule';
+2398:        à l'écran. `adoptWorkspaceProjects` la fusionne en AJOUT SEUL : un projet
+2403:     try { adoptWorkspaceProjects(adopted.projects); } catch { /* magasin indisponible */ }
+2593:       adopted = (adoptWorkspaceProjects(state && state.projects) || {}).adopted || 0;
+--- ligne complète attendue par le test présente ? false
+--- _project_store_guard_test.mjs lit : ./src/components/AppModules/projectsModule.jsx | ./src/App.jsx | ./src/utils/workspaceDrive.js
+--- _sequence_charge_test.mjs lit : (aucun)
+--- _cysteine_panel_layout_test.mjs lit : (aucun)
+--- _experiment_folder_files_test.mjs lit : src/components/MDSections.jsx | src/components/DriveExperimentFiles.jsx | src/components/NMRSections.jsx | src/utils/driveExperimentFiles.js | src/components/NMRMoleculeViewer.jsx | probe_tests.txt | package.json
+--- _md_wall_test.mjs lit : (aucun)
+--- _docking_scatter_card_test.mjs lit : (aucun)

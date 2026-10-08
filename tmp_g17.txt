@@ -1,0 +1,19 @@
+src/utils/workspaceResync.js:23: • il rend la liste des CONTENUS à récupérer (`recoverable.copyIds`) — les
+src/utils/workspaceResync.js:144: recoverable: {
+src/utils/workspaceResync.js:145: copyIds: [], missingCopyIds: [], datasetsInIndex: 0, projectsInIndex: 0,
+src/utils/workspaceResync.js:209: const lines = [];
+src/utils/workspaceResync.js:219: if (r.recoverable && r.recoverable.copyIds && r.recoverable.copyIds.length) {
+src/utils/workspaceResync.js:220: lines.push(`· ${r.recoverable.copyIds.length} dataset copy(ies) on the Drive can restore the missing content.`);
+src/utils/workspaceResync.js:251: compte total reste dans `counts.issues`, la phrase le dit. */
+src/utils/workspaceResync.js:357: const copyIds = [];
+src/utils/workspaceResync.js:358: const missingCopyIds = [];
+src/utils/workspaceResync.js:601: if (needsContent && !copyIds.includes(id) && !missingCopyIds.includes(id)) {
+src/utils/workspaceResync.js:603: if (copyIds.length < maxCopies) copyIds.push(id);
+src/utils/workspaceResync.js:605: missingCopyIds.push(id);
+src/utils/workspaceResync.js:736: if (copyIds.length < maxCopies && !copyIds.includes(id)) copyIds.push(id);
+src/utils/workspaceResync.js:737: } else if (!missingCopyIds.includes(id)) {
+src/utils/workspaceResync.js:738: missingCopyIds.push(id);
+src/utils/workspaceResync.js:760: copiesToFetch: copyIds.length,
+src/utils/workspaceResync.js:779: recoverable: {
+src/utils/workspaceResync.js:780: copyIds,
+src/utils/workspaceResync.js:781: missingCopyIds,

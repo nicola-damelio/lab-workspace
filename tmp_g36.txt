@@ -1,0 +1,5 @@
+src/utils/workspaceResync.js:56: export const RESYNC_ISSUES = {
+src/utils/workspaceResync.js:199: export const resyncReasonText = (reason) => ({
+src/utils/workspaceResync.js:206: export const resyncReportLines = (report) => {
+src/utils/workspaceResync.js:239: export const resyncLineTone = (line) => (String(line == null ? '' : line).trim().startsWith('⚠') ? 'warn' : 'note');
+src/utils/workspaceResync.js:244: export const resyncSummaryText = (summary) => {

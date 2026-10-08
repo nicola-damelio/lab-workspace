@@ -1,0 +1,15 @@
+code=1
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+AssertionError [ERR_ASSERTION]: l’horodatage est posé AVANT la lecture (deux navigations rapprochées ne lisent pas deux fois)
+    at ok (file:///C:/Users/nicol/lab-workspace/_workspace_open_refresh_test.mjs:38:37)
+    at file:///C:/Users/nicol/lab-workspace/_workspace_open_refresh_test.mjs:125:1 {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: false,
+  expected: true,
+  operator: '==',
+  diff: 'simple'
+}
+Node.js v26.5.1

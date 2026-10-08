@@ -1,0 +1,24 @@
+src/components/AppModules/appSidebar.jsx:90: title="Back to Workspace"
+src/components/AppModules/appSidebar.jsx:132: <span className="text-emerald-600 flex items-center gap-1" title="Saved in the shared cloud workspace — visible on every device."><Icon name="cloud" size={12} /> Cloud Sync</span>
+src/components/AppModules/appSidebar.jsx:143: <div className="px-4 py-1.5 border-b border-slate-100 bg-slate-50/30 text-[10px] font-bold flex items-center gap-1" title="Weekly HTML backups are written to Lab Workspace/<dataset>/backups/ (one subf
+src/components/AppModules/appSidebar.jsx:358: title="Save HTML — stores the full dataset state (scientific or administration) as a loadable HTML snapshot in Lab Workspace/<dataset>/backups/ on Google Drive; a local copy is downloaded when Drive i
+src/components/AppModules/calculationsModule.jsx:428: enregistré ? » se vérifie de l'œil (voir App.jsx → workspaceDatasetPath). */
+src/components/AppModules/cloudStorageSettings.jsx:50: ? 'Connected via Google (OAuth). Files go to Lab Workspace → dataset → …'
+src/components/AppModules/cloudStorageSettings.jsx:117: under <b>Lab Workspace → dataset → project/test/section</b>. Switching back to Google Drive restores this behaviour.
+src/components/AppModules/definitionsManagers.jsx:1157: <h1 className="text-2xl font-black text-white tracking-tight">Lab Workspace</h1>
+src/components/AppModules/projectDetailModule.jsx:72: (Lab Workspace/<dataset>/projects/<projet>/<projet>_document.json) : le
+src/components/AppModules/projectDetailModule.jsx:935: postes, voir utils/figuresLibrary + workspaceKeyStore) ; elle arrive donc
+src/components/AppModules/projectDetailModule.jsx:2575: Lab Workspace/<dataset>/projects/<projet>/<projet>_document.json
+src/components/AppModules/projectDetailModule.jsx:4371: title="Write the text of this project into Lab Workspace/&lt;dataset&gt;/projects/&lt;project&gt;/&lt;project&gt;_document.json on Google Drive.">
+src/components/AppModules/projectsModule.jsx:16: Conclusions / References" workspace pages.
+src/components/AppModules/projectsModule.jsx:22: export const PROJECTS_KEY = 'labWorkspace_projects';
+src/components/AppModules/projectsModule.jsx:191: *  `_workspace/state.json`, et un poste qui garde la tombe ne peut plus la
+src/components/AppModules/projectsModule.jsx:229: *  `_workspace/state.json`, voir workspaceDrive.buildWorkspaceState).
+src/components/AppModules/projectsModule.jsx:245: export const adoptWorkspaceProjects = (payloadProjects) => {
+src/components/AppModules/projectsModule.jsx:301: Le magasin du navigateur (`labWorkspace_projects`) est la SEULE copie que le
+src/components/AppModules/projectsModule.jsx:797: *  the upgrade (fallback chosen by the workspace owner). A legacy project
+src/components/AppModules/projectsModule.jsx:964: const raw = localStorage.getItem('labWorkspace_publications');
+src/components/AppModules/settingsModule.jsx:95: Lab Workspace
+src/components/AppModules/settingsModule.jsx:496: <CollapsibleSection title="Google Drive folder" subtitle="Open the Lab Workspace Google Drive folder in a new browser tab — visible to the superuser only." defaultOpen={false}>
+src/components/AppModules/settingsModule.jsx:499: Opens the Google Drive folder currently used by this app (workspace root, dataset folders and
+src/components/AppModules/settingsModule.jsx:512: <CollapsibleSection title="Files on Google Drive" subtitle="Move misplaced Drive files into the canonical folders — test attachments (figures, ⭐ starred items, PDFs/documents, links) into Lab Workspac

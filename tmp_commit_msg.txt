@@ -1,0 +1,25 @@
+Phase 1 — le Drive est relu EN ENTIER, et ce qui revient repart sur le Drive
+
+- « Resync from Drive » (Réglages → Workspace) : les quatre temps de la reprise ;
+  les trois premiers ne font que LIRE le Drive, le quatrième réécrit l'index
+  partagé `_workspace/state.json` — et rien d'autre.
+- Inventaire EN LECTURE SEULE sur TOUTES les pages de /drive/v3/files (jamais sur
+  le premier millier d'enfants) : un dossier est reconnu par son IDENTIFIANT
+  quand le registre le connaît, et un dataset par sa FORME quand il n'a pas de
+  fiche. Chaque constat est nommé, compté, et rien n'est déplacé.
+- Les copies récupérables sont adoptées par le chemin NORMAL de l'ouverture d'un
+  dataset (`readDatasetCopy` → `mergeProjectsFromCloud`, charge `payload`
+  décodée) : un dataset qui n'est pas ouvert ici est réparé sans l'ouvrir, et un
+  dataset supprimé ne remonte jamais (tombe locale ou du miroir).
+- La liste publiée est l'UNION de celle de l'écran et de celle mise de côté par
+  l'adoption, repassée par `withoutDeletedDatasets` : le cache du navigateur ne
+  peut ni amputer l'index ni y ressusciter un dataset supprimé ailleurs.
+- L'écran suit sans F5 (nonce sur la page Projets, seulement si ça a bougé) ; une
+  écriture qui échoue est dite (`⚠ What was adopted here could NOT be written
+  back…`) au lieu de laisser croire que tout est parti.
+- Compte-rendu de cause racine ajouté à `docs/DRIVE-MIRROR.md` (relire la source,
+  puis faire repartir ce qui a été relu).
+
+Vérifié : `_workspace_resync_test.mjs` (154), `_workspace_resync_ui_test.mjs`
+(78), `_workspace_drive_test.mjs` (60), `_workspace_keys_test.mjs` (39),
+`_deleted_projects_test.mjs`, `npm run build`.

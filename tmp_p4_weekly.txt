@@ -1,0 +1,23 @@
+motif : runWeeklyBackup|labLastWeeklyBackup|backupStatus|backupValidation
+fichiers examinés : 1
+lignes retenues : 18
+
+src/App.jsx:596: const BACKUP_INTERVAL_KEY = 'labLastWeeklyBackup';
+src/App.jsx:2785: const [backupStatus, setBackupStatus] = useState(null);
+src/App.jsx:2829: const runWeeklyBackup = useCallback(async () => {
+src/App.jsx:2831: if (!getDriveToken()) { setBackupStatus({ state: 'skip', msg: 'Connect Google Drive to enable weekly backups' }); return false; }
+src/App.jsx:2839: const backupValidation = activeDatasetKindRef.current === 'administration'
+src/App.jsx:2842: if (!backupValidation.ok) {
+src/App.jsx:2843: setBackupStatus({ state: 'error', msg: `${backupValidation.message} Link every experiment to a Project before the weekly backup runs.` });
+src/App.jsx:2847: if (list.length === 0) { setBackupStatus({ state: 'skip', msg: 'No datasets to back up yet' }); return false; }
+src/App.jsx:2849: setBackupStatus({ state: 'running', msg: `Writing weekly backup (${list.length} dataset${list.length > 1 ? 's' : ''})…` });
+src/App.jsx:2892: setBackupStatus({ state: 'ok', msg: `Weekly backup saved (${done} dataset${done > 1 ? 's' : ''}) → Lab Workspace/<dataset>/backups` });
+src/App.jsx:2901: setBackupStatus(failed > 0 ? { state: 'error', msg: 'Weekly backup failed — check the Drive connection' } : { state: 'skip', msg: 'Nothing to back up' });
+src/App.jsx:2905: setBackupStatus({ state: 'error', msg: 'Weekly backup failed' });
+src/App.jsx:2923: if (due && (Array.isArray(datasetsList) ? datasetsList.length : 0) > 0 && getDriveToken()) runWeeklyBackup();
+src/App.jsx:2924: const timer = setInterval(() => runWeeklyBackup(), 6 * 60 * 60 * 1000);
+src/App.jsx:2930: const onConnected = () => runWeeklyBackup();
+src/App.jsx:3476: setBackupStatus({ state: 'ok', msg: `💾 État enregistré → Lab Workspace/<dataset>/backups (${dateStr})` });
+src/App.jsx:3485: setBackupStatus(
+src/App.jsx:5997: backupStatus={backupStatus}
+-- src/App.jsx : 18 ligne(s) sur 6255

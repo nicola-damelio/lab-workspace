@@ -1,0 +1,50 @@
+/* ── 1. Un dossier se lit EN ENTIER (toutes les pages) ───────────────────────
+   Le faux Drive rend des pages ; `collectDrivePages` doit les enchaîner,
+   s'arrêter au bout, et ne JAMAIS faire passer une lecture partielle pour une
+   liste complète. */
+const pagerOf = (pages) => {
+  const asked = [];
+  const fetchPage = async (token) => {
+    asked.push(token);
+    const index = token ? Number(token) : 0;
+    const files = pages[index] || [];
+    const nextPageToken = index + 1 < pages.length ? String(index + 1) : '';
+    return { files, nextPageToken };
+  };
+  return { asked, fetchPage };
+};
+
+const one = pagerOf([['a', 'b']]);
+const singlePage = await PAGES.collectDrivePages(one.fetchPage);
+eq(singlePage.files, ['a', 'b'], 'une seule page : toutes ses entrées sont rendues');
+eq(singlePage.pages, 1, '…une page lue');
+eq(singlePage.truncated, false, '…et l’énumération est complète');
+eq(one.asked, [''], '…la première page se demande sans jeton');
+
+const many = pagerOf([['a'], ['b'], ['c']]);
+const allPages = await PAGES.collectDrivePages(many.fetchPage);
+eq(allPages.files, ['a', 'b', 'c'], 'les pages suivantes sont ENCHAÎNÉES (nextPageToken suivi jusqu’au bout)');
+eq(allPages.pages, 3, '…les trois pages sont lues');
+eq(many.asked, ['', '1', '2'], '…chaque page est demandée avec le jeton de la précédente');
+eq(allPages.truncated, false, '…rien n’a manqué');
+
+const capped = pagerOf([['a'], ['b'], ['c']]);
+const limited = await PAGES.collectDrivePages(capped.fetchPage, { maxPages: 2 });
+eq(limited.files, ['a', 'b'], 'la borne de sécurité arrête l’énumération');
+eq(limited.truncated, true, '…et l’arrêt ANTICIPÉ est AVOUÉ (jamais une liste tronquée en silence)');
+eq(limited.token, '2', '…le jeton restant est rendu à l’appelant');
+
+const broken = {
+  asked: [],
+  fetchPage: async (token) => {
+    broken.asked.push(token);
+    if (token) throw new Error('quota 403');
+    return { files: ['a'], nextPageToken: '1' };
+  }
+};
+const partial = await PAGES.collectDrivePages(broken.fetchPage);
+eq(partial.files, ['a'], 'une page en échec n’efface pas ce qui a déjà été lu');
+eq(partial.errors, 1, '…l’échec est compté');
+eq(partial.truncated, true, '…et la lecture est déclarée INCOMPLÈTE');
+
+eq(await PAGES.collectDrivePages(null), { files: [], pages: 0, truncated: false, token: '', pageTokens: [], errors: 0 },

@@ -1,0 +1,7 @@
+motif : datasetsList|datasets
+fichiers examinés : 1
+lignes retenues : 2
+
+src/components/AppModules/dashboardModule.jsx:10: export const DashboardModule = ({ datasetTitle, setDatasetTitle, datasetSubtitle, handlePrint, tests, storages, setCurrentModule, mergedPlan }) => {
+src/components/AppModules/dashboardModule.jsx:33: {datasetSubtitle ||
+-- src/components/AppModules/dashboardModule.jsx : 2 ligne(s) sur 192

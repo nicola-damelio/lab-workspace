@@ -1,0 +1,38 @@
+suites en échec : 0/15
+
+### _backup_file_test.mjs code=0 -> 100 vérifications passées — LA SAUVEGARDE : un format qui se valide (et l'ancien HTML qui se relit encore).
+
+### _save_html_test.mjs code=0 -> _save_html_test.mjs — 45 assertions OK
+
+### _load_html_projects_test.mjs code=0 -> _load_html_projects_test.mjs — 53 assertions OK (📂 Load HTML : les projets d’une sauvegarde sont adoptés par 
+
+### _library_restore_test.mjs code=0 -> ✅ 175 tests passés (bibliothèque d’images ↔ sauvegarde)
+
+### _reference_import_test.mjs code=0 -> ✅ 226 tests passés (import de références)
+
+### _deleted_projects_test.mjs code=0 -> ✅ 76 tests passés (projets supprimés : rien ne ressuscite — et un projet restauré revient)
+
+### _dataset_index_test.mjs code=0 -> ✅ 49 tests passés (la liste des datasets a sa propre copie et voyage)
+
+### _dataset_copy_mirror_test.mjs code=0 -> ✅ 44 tests passés (la copie Drive du dataset ne perd plus la dernière minute)
+
+### _project_store_guard_test.mjs code=0 -> _project_store_guard_test.mjs — 23 assertions OK (un projet ne disparaît que s’il a été SUPPRIMÉ)
+
+### _workspace_open_refresh_test.mjs code=0 -> 54 vérifications passées — « LA PAGE S'OUVRE » : l'index partagé est relu, et rien n'est écrit.
+
+### _workspace_resync_test.mjs code=0 -> 154 vérifications passées — « RESYNC FROM DRIVE » : l’inventaire ne touche à rien.
+
+### _workspace_resync_ui_test.mjs code=0 -> 78 vérifications passées — « RESYNC FROM DRIVE » : le compte-rendu dit tout, depuis une seule source.
+
+### _workspace_drive_test.mjs code=0 -> ✅ 60 tests passés (l’espace de travail entier vit sur le Drive)
+
+### _workspace_keys_test.mjs code=0 -> ✅ 39 tests passés (les clés du navigateur vivent aussi sur le Drive)
+
+### _app_page_window_test.mjs code=0 -> _app_page_window_test.mjs — 60 assertions OK (⧉ une page dans une autre fenêtre · ?mod= relu au démarrage)
+
+### BUILD code=0
+
+[36mvite v8.2.0 [32mbuilding client environment for production...[36m[39m
+[2Ktransforming...✓ 1272 modules transformed.
+rendering chunks...
+computing gzip size...

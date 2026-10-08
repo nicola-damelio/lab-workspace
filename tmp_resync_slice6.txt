@@ -1,0 +1,53 @@
+﻿511:         text: `The project "${arr[0].projectName}" has ${arr.length} folders: ${shown}. Nothing was merged â€” compare them before deleting either.`
+512:       });
+513:     });
+514:     places.forEach((p) => {
+515:       if (p.projectId || p.fromMirror) return;
+516:       unknownProjectFolders += 1;
+517:       add(RESYNC_ISSUES.UNKNOWN_PROJECT_FOLDER, {
+518:         datasetId: id,
+519:         datasetFolder: name,
+520:         folder: p.folderName,
+521:         folderId: p.folderId,
+522:         text: `A folder "${p.folderName}" lives in "${name}/projects/" but no listed project matches it (this PC: ${localProjects.length}, Drive index: ${indexProjects.length}). Its record may have been lost while its files are still there.`
+523:       });
+524:     });
+525: 
+526:     /* Un projet LISTÃ‰ mais sans dossier sur le Drive : l'inverse â€” sa fiche a
+527:        survÃ©cu, ses fichiers non (ou ils sont dans la copie du dataset). */
+528:     const placeSlugs = new Set(places.map((p) => p.slug));
+529:     records.forEach((p) => {
+530:       const pslug = slugOf(p.name);
+531:       if (!pslug || placeSlugs.has(pslug)) return;
+532:       add(RESYNC_ISSUES.PROJECT_FOLDER_MISSING, {
+533:         datasetId: id,
+534:         datasetFolder: name,
+535:         projectId: p.id,
+536:         projectName: p.name,
+537:         text: `The project "${p.name}" is listed but no folder was found for it under "${name}/projects/".`
+538:       });
+539:     });
+540: 
+541:     /* Le dossier du dataset lui-mÃªme : sans fiche, il n'apparaÃ®t nulle part ;
+542:        renommÃ©, il est introuvable par les autres postes â€” les deux se disent. */
+543:     if (!id) {
+544:       add(RESYNC_ISSUES.DATASET_FOLDER_WITHOUT_RECORD, {
+545:         datasetFolder: name,
+546:         folderId: folder.id,
+547:         text: `The folder "${name}" exists on the Drive but no dataset record matches it (this PC: ${localDatasets.length}, Drive index: ${indexDatasets.length}). Its content may still be readable through its copy in ${WORKSPACE_DIR}/datasets/.`
+548:       });
+549:     } else {
+550:       /* Un dataset RENOMMÃ‰ sur le Drive â€” mais on ne le dit que sur une PREUVE
+551:          d'identitÃ© : l'identifiant Drive du dossier (celui que `driveFolder`
+552:          porte dans l'index, ou celui du registre du miroir). Jamais sur une
+553:          ressemblance de nom : `driveFolder` contient un IDENTIFIANT, pas un
+554:          nom, et le confondre avec un nom ferait crier Â« renommÃ© Â» sur chaque
+555:          dataset Ã  chaque resynchronisation. */
+556:       const recordedId = text(candidate && candidate.driveFolder)
+557:         || text(mirrorEntry && mirrorEntry.folderId);
+558:       const recordedName = text(mirrorEntry && mirrorEntry.name)
+559:         || text(candidate && candidate.title);
+560:       const recordedSlug = slugOf(recordedName);
+561:       if (recordedId && recordedId === folderId && recordedSlug && recordedSlug !== slug) {
+562:         add(RESYNC_ISSUES.DATASET_FOLDER_RENAMED, {
+563:           datasetId: id,

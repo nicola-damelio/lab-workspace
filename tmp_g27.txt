@@ -1,0 +1,12 @@
+src/App.jsx:2708: isCompressed: true,
+src/App.jsx:3169: isCompressed: true
+src/App.jsx:3274: isCompressed: true
+src/App.jsx:3393: isCompressed: true,
+src/App.jsx:3464: if (dataBlob.isCompressed) {
+src/App.jsx:3465: const dec = LZString.decompressFromUTF16(pStr);
+src/App.jsx:4033: isCompressed: isAdmin
+src/App.jsx:4124: isCompressed: true
+src/App.jsx:4135: isCompressed: true,
+src/App.jsx:4247: if (dset.isCompressed && typeof dset.payload === 'string') {
+src/App.jsx:4248: const decompressed = LZString.decompressFromUTF16(dset.payload);
+src/App.jsx:4434: openDataset({ ...dset, ...copy, id, payload: copy.payload, isCompressed: !!copy.isCompressed });
