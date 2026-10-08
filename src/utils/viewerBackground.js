@@ -184,19 +184,31 @@ export const gradientSpecOf = (spec) => {
   // deux couleurs reste exactement celle d'avant quand il est absent.
   const mid = normalizeBgColor(spec.mid);
   const midOn = spec.midOn === true && !!mid;
-  /* ⚠ UNE RAMPE D'UNE SEULE COULEUR N'EST PAS UNE RAMPE — la correction du
-     rapport de cette session : « it says "the ramp runs..." and the colour is A
-     everywhere ». Des arrêts TOUS égaux peignent le fond uni de la couleur de
-     scène, dans TOUTES les directions : rien ne bouge d'un bout à l'autre de la
-     vue, ce qui se lit exactement « le dégradé ne marche pas », alors que le
-     panneau, lui, annonçait une rampe. ⚠ Les PIXELS, eux, ne changent pas d'un
-     iota (le CSS `linear-gradient(A 0%, A 100%)` et la couleur seule d'NGL
-     donnent la même image) : rendre `null` remplace donc une écriture inutile
-     par aucune écriture — mais cela REND LE FAIT REPRÉSENTABLE. Le panneau peut
-     désormais le DIRE au lieu de croire sa propre intention (voir bgRampFlat
-     dans NMRMoleculeViewer.jsx) et un test peut l'EXÉCUTER. */
-  const stops = midOn ? [from, mid, to] : [from, to];
-  if (stops.every((c) => c === stops[0])) return null;
+  /* ⚠ LES DEUX BOUTS SONT CE QUE LA RAMPE PROMET — la correction du rapport de
+     cette session : « it says "the ramp runs..." and the colour is A
+     everywhere ». Une rampe dont les DEUX BOUTS sont la même couleur peint le
+     fond uni de A, dans TOUTES les directions : rien ne bouge d'un bout à
+     l'autre de la vue, ce qui se lit exactement « le dégradé ne marche pas »,
+     alors que le panneau, lui, annonçait une rampe.
+     ⚠ ET LE MILIEU NE RACHÈTE PAS DES BOUTS ÉGAUX — le SECOND rapport de cette
+     session, mot pour mot : « when the gradient is on i see a small effect on
+     the molecule (very slight) but not on the background ». C'était celui-là :
+     A = B avec C allumé peint `linear-gradient(A 0%, C 50%, A 100%)`, une rampe
+     SYMÉTRIQUE dont les DEUX BOUTS sont A — le fond ne bouge donc pas (son haut
+     et son bas sont la couleur d'avant) et le SEUL endroit qui change est le
+     MILIEU de la vue, c'est-à-dire là où la molécule se trouve. Le module
+     bénissait ce cas (« trois arrêts dont deux diffèrent sont une vraie
+     rampe ») : c'est cette permission-là qui a produit le rapport, et elle est
+     retirée. C n'est pourtant que « la teinte qui se VOIT entre A et B » : entre
+     deux couleurs identiques il n'y a rien à éclairer, et le panneau annonçait
+     « A → C → B » alors que ses deux bouts nommés étaient le même A.
+     ⚠ Les PIXELS, eux, ne changent pas d'un iota (le CSS `linear-gradient(A 0%,
+     A 100%)` et la couleur seule d'NGL donnent la même image) : rendre `null`
+     remplace donc une écriture inutile par aucune écriture — mais cela REND LE
+     FAIT REPRÉSENTABLE. Le panneau peut désormais le DIRE au lieu de croire sa
+     propre intention (voir bgRampFlat dans NMRMoleculeViewer.jsx) et un test
+     peut l'EXÉCUTER. */
+  if (from === to) return null;
   return {
     from,
     to,

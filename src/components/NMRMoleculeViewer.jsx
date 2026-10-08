@@ -9949,9 +9949,17 @@ const patchBgGradient = (patch) => setBgGradient((g) => bgGradientOf({ ...g, ...
    persister : la rampe suit la lumière, le magasin ne bouge pas. */
 const bgLightAngleRef = useRef(null);
 /* LA SPÉCIFICATION VIVANTE DU FOND — celle que peignent l'écran, les deux films et
-   la still : l'angle du magasin, OU celui de la lampe quand la rampe la suit. */
+   la still : l'angle du magasin, OU celui de la lampe quand la rampe la suit.
+   ⚠ LA RÉFÉRENCE PEUT ÊTRE VIDE, ET L'ANGLE DU MAGASIN REPREND ALORS LA MAIN —
+   exactement la garde de `bgAngleLive` (§ plus bas), qui sert la ligne du panneau.
+   Sans elle, un rendu qui tombe AVANT que la lampe ait publié son angle donnerait
+   `normalizeBgAngle(null)` — c'est-à-dire 0°, un angle PARFAITEMENT VALIDE et donc
+   invisible : NGL accepterait la chaîne, le canvas la peindrait, et le fond serait
+   incliné vers le haut alors que le panneau annonce l'angle de la lampe. La
+   référence et la valeur de rendu ne peuvent pas se contredire si elles lisent la
+   même garde. */
 const bgSpecLive = () => backgroundSpecOf(bgColor, bgGradient.light
-  ? { ...bgGradient, angle: bgLightAngleRef.current }
+  ? { ...bgGradient, angle: bgLightAngleRef.current != null ? bgLightAngleRef.current : bgGradient.angle }
   : bgGradient);
 
 /* ⚠ CE QUE LE CANVAS A RÉELLEMENT PRIS — le seul fait que le panneau ne peut
@@ -26301,7 +26309,7 @@ style={{ height: (viewerCollapsed ? 0 : viewH) + 'px' }}
     {bgGradient.on ? (
       bgRampFlat ? (
         <span className="w-full text-[9px] text-amber-700 leading-tight">
-          ⚠ The ramp is ON but its ends are the SAME colour — <b>{bgColor}</b>{bgGradient.midOn ? <> and C <b>{bgGradient.mid}</b></> : null} — and a gradient of ONE colour paints the flat colour A: the same everywhere, in every direction, which is exactly why nothing seems to happen. Give B another colour (its swatch sits just right of the ⇄ button, on the left of the eight arrows), or press ⇄ if the two ends should change places. Nothing else in this panel is at fault, and the scene keeps the colour A until then.
+          ⚠ The ramp is ON but its ends are the SAME colour — <b>{bgColor}</b> — and a gradient of ONE colour paints the flat colour A: the same everywhere, in every direction, which is exactly why nothing seems to happen. Give B another colour (its swatch sits just right of the ⇄ button, on the left of the eight arrows), or press ⇄ if the two ends should change places. Nothing else in this panel is at fault, and the scene keeps the colour A until then.
         </span>
       ) : (
         <span className="w-full text-[9px] text-slate-500 leading-tight">

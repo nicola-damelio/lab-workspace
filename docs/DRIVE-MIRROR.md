@@ -4183,15 +4183,26 @@ rampe est **ALLUMÉE** dans le magasin, et l'écran est **uni de la couleur A**,
 directions. C'est la forme que le panneau ne savait pas dire — il n'avait que « allumée » et
 « éteinte » pour la décrire, donc il annonçait une rampe que l'écran n'avait pas.
 
-### ① La règle — une rampe d'une seule couleur n'est pas une rampe
+### ① La règle — une rampe dont les deux bouts sont la même couleur n'est pas une rampe
 
-`gradientSpecOf` (`utils/viewerBackground.js`) rend désormais `null` quand **tous les arrêts peints
-sont la même couleur** (`from`, `to`, et `mid` s'il est demandé) : cette « rampe » peint le fond uni de
-A d'un bout à l'autre, **quel que soit l'angle** — exactement ce que l'œil lit comme « le dégradé ne
-marche pas ». ⚠ **Les pixels ne changent pas d'un iota** : `linear-gradient(A 0%, A 100%)` ne peint que
-du A, et la couleur d'NGL reste dessous. Ce que la règle change, c'est que le fait devient
-**représentable** : `backgroundCss` rend `''` (aucune écriture au lieu d'une écriture inutile), le
-panneau peut le **dire**, et un test peut l'**exécuter**.
+`gradientSpecOf` (`utils/viewerBackground.js`) rend désormais `null` quand **`from` et `to` sont la même
+couleur** — c'est-à-dire quand **les deux bouts de la rampe** le sont, que le MILIEU soit demandé ou non :
+une telle rampe peint le fond uni de A d'un bout à l'autre, **quel que soit l'angle** — exactement ce que
+l'œil lit comme « le dégradé ne marche pas ».
+
+⚠ **Le MILIEU NE RACHÈTE PAS DES BOUTS ÉGAUX.** Le module bénissait ce cas (« trois arrêts dont deux
+diffèrent sont une vraie rampe ») : le second rapport de cette session, mot pour mot — « when the gradient
+is on i see a small effect on the molecule (very slight) but not on the background » — est EXACTEMENT
+lui. A = B avec C allumé peint `linear-gradient(A 0%, C 50%, A 100%)` : une rampe **symétrique** dont les
+deux bouts sont A, donc un fond qui ne bouge pas (son haut et son bas sont la couleur d'avant) et **un
+seul endroit qui change : le milieu de la vue, là où la molécule se trouve**. C n'est pourtant que « la
+teinte qui se VOIT **entre A et B** » : entre deux couleurs identiques, il n'y a rien à éclairer. La règle
+porte donc sur ce que la rampe PROMET (A au départ, B à l'arrivée), pas sur le nombre d'arrêts distincts.
+
+⚠ **Les pixels ne changent pas d'un iota** : `linear-gradient(A 0%, A 100%)` ne peint que du A, et la
+couleur d'NGL reste dessous. Ce que la règle change, c'est que le fait devient **représentable** :
+`backgroundCss` rend `''` (aucune écriture au lieu d'une écriture inutile), le panneau peut le **dire**,
+et un test peut l'**exécuter**.
 
 ### ② Le secours de A n'est plus celui de B
 
@@ -4203,8 +4214,9 @@ diffèrent.
 
 ### ③ Le panneau dit TROIS états, et aucun bouton ne promet pour rien
 
-* la ligne du bas dit **éteinte**, **allumée mais d'une seule couleur** (en ambre, **les deux couleurs
-  écrites** et le geste qui répare : « give B another colour », ou ⇄), ou **allumée** ;
+* la ligne du bas dit **éteinte**, **allumée mais d'une seule couleur** (en ambre, la couleur des deux
+  bouts écrite — c'est la même des deux côtés — et le geste qui répare : « give B another colour », ou
+  ⇄), ou **allumée** ;
 * **le canvas est relu** juste après l'écriture (`bgRampTaken` : `'ok' | 'no-canvas' | 'empty'`) : le
   panneau dit ce que le canvas a **PRIS**, jamais ce qu'on a voulu lui donner. La comparaison porte sur
   « quelque chose » contre « rien », **jamais** sur l'égalité du texte (la sérialisation du navigateur
@@ -4221,7 +4233,8 @@ spécification : ils cessent seulement de peindre une rampe d'une seule couleur 
 travail pour rien). Le rappel automatique du style, le sommeil de l'étage (`nglStageParking`) et la
 mémoire du poste sont inchangés.
 
-*Vérifier :* `node _viewer_background_test.mjs` — **227** (§10 : les arrêts égaux refusés, le secours
+*Vérifier :* `node _viewer_background_test.mjs` — **227** (§10 : les deux bouts égaux refusés — le
+milieu ne les rachète plus —, le secours
 qui n'est plus B, les trois états de la ligne, le canvas relu, les trois contrôles qui ne promettent
 plus) ; `node _viewer_bg_live_test.cjs` — **61/61** (le pixel composé, dont « A et B du défaut sont deux
 couleurs différentes — jamais une rampe d'une seule teinte ») ; `node _viewer_background_pixels_test.cjs`

@@ -425,10 +425,12 @@ gone('patchBgGradient({ midOn: !bgGradient.midOn })', '…ni le bouton du milieu
    deux arrêts sont la MÊME couleur — elle peint donc le fond uni de A, dans
    TOUTES les directions, ce qui se lit « le dégradé ne marche pas », alors que
    le panneau, lui, annonçait une rampe. Deux corrections, une seule règle :
-     · le MODULE refuse une rampe dont les arrêts sont tous égaux (les pixels ne
-       changent pas d'un iota — `linear-gradient(A 0%, A 100%)` ne peint que du A
-       — mais le fait devient REPRÉSENTABLE) ;
-     · le PANNEAU le dit, avec les deux couleurs, et dit quoi faire ;
+     · le MODULE refuse une rampe dont les DEUX BOUTS sont égaux, que le milieu
+       soit demandé ou non (les pixels ne changent pas d'un iota — et pour
+       A · C · A ils ne changeaient qu'au MILIEU de la vue, c'est-à-dire sur la
+       molécule : « a small effect on the molecule (very slight) but not on the
+       background », le second rapport de cette session) ;
+     · le PANNEAU le dit, avec la couleur des deux bouts, et dit quoi faire ;
      · et le CANVAS est relu après l'écriture : le panneau dit ce qu'il a PRIS,
        jamais ce qu'on a voulu lui donner. */
 eq(gradientSpecOf({ on: true, from: '#94a3b8', to: '#94a3b8', angle: 142 }), null,
@@ -437,12 +439,10 @@ eq(backgroundCss({ on: true, from: '#94a3b8', to: '#94a3b8', angle: 142 }), '',
   '…donc AUCUNE chaîne : le canvas rend la couleur d’NGL telle quelle, le fond uni d’avant');
 ok(!paintViewerBackground(quiet, 100, 100, { on: true, from: '#101010', to: '#101010' }),
   '…et un film 🎬 n’est pas peint davantage (mêmes pixels, et pas de travail pour rien)');
-eq(gradientSpecOf({ on: true, from: '#94a3b8', to: '#94a3b8', angle: 142, mid: '#93c5fd', midOn: true }),
-  { from: '#94a3b8', to: '#94a3b8', angle: 142, mid: '#93c5fd', midOn: true },
-  '…SAUF si le MILIEU diffère : trois arrêts dont deux diffèrent sont une vraie rampe');
-eq(backgroundCss({ on: true, from: '#94a3b8', to: '#94a3b8', angle: 142, mid: '#93c5fd', midOn: true }),
-  'linear-gradient(142deg, #94a3b8 0%, #93c5fd 50%, #94a3b8 100%)',
-  '…et elle se peint bien, A · C · A, sans que les deux bouts cessent d’être ce qu’ils sont');
+eq(gradientSpecOf({ on: true, from: '#94a3b8', to: '#94a3b8', angle: 142, mid: '#93c5fd', midOn: true }), null,
+  '…et le MILIEU ne rachète PAS des bouts égaux : A · C · A laisse le fond intact aux deux bouts et ne change que le MILIEU de la vue — « a small effect on the molecule (very slight) but not on the background »');
+eq(backgroundCss({ on: true, from: '#94a3b8', to: '#94a3b8', angle: 142, mid: '#93c5fd', midOn: true }), '',
+  '…donc pas de chaîne non plus quand C est allumé : c’est B qu’il faut changer, et le panneau le dit');
 eq(gradientSpecOf({ on: true, from: '#94a3b8', to: '#94a3b8', angle: 142, mid: '#94a3b8', midOn: true }), null,
   '…mais trois arrêts TOUS égaux ne sont pas une rampe non plus');
 eq(readBgGradient('{"on":true,"to":"#94a3b8"}').on, true,
