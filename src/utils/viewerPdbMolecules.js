@@ -57,3 +57,36 @@ export const joinPdbMolecules = (blocks) => {
   out.push('END');
   return out.join('\n');
 };
+
+/** LE RADICAL DU FICHIER QUE PRODUIT UNE SOURCE DE STRUCTURE — le nom sous lequel
+ *  le `.pdb` d'un CODE / d'une URL est déposé dans le dossier de l'expérience
+ *  (voir le viewer : archiveSourceStructureOnDrive).
+ *
+ *  · un CODE PDB garde son code, en majuscules comme le RCSB (« 1YCR ») ;
+ *  · `rcsb:1ycr` aussi (le préfixe n'est pas un nom) ;
+ *  · une URL donne son DERNIER segment sans son extension
+ *    (« …/download/1abc.pdb.gz » → « 1ABC », « …/my_model.cif » → « my_model ») ;
+ *  · ce qui n'a AUCUN nom à donner (`data:` / `blob:` — un texte engendré dans la
+ *    page, un fichier tenu par le navigateur) rend '' : un fichier sans nom n'a
+ *    rien à faire sur le Drive.
+ *
+ *  Le nom est STABLE pour une même source : recharger le même code RÉÉCRIT le
+ *  même fichier au lieu d'en empiler un second (driveUpload.uploadLocalFile
+ *  cherche par nom dans le dossier cible). PUR : aucune requête, aucun DOM.
+ *  @returns {string} le radical, ou '' quand il n'y a rien à nommer. */
+export const sourceStructureFileStem = (rawSrc) => {
+  const s = String(rawSrc == null ? '' : rawSrc).trim();
+  if (!s || /^(data:|blob:)/i.test(s)) return '';
+  const id = s.replace(/^rcsb:\/*/i, '');
+  if (/^[0-9a-z]{4}$/i.test(id)) return id.toUpperCase();
+  const last = s.split(/[?#]/)[0].split('/').filter(Boolean).pop() || '';
+  const stem = last
+    .replace(/\.gz$/i, '')                                     // « …/1abc.pdb.gz »
+    .replace(/\.(pdb|ent|cif|mmcif|mmtf|bcif|gro|mol2|sdf)$/i, '');
+  if (/^[0-9][a-z0-9]{3}$/i.test(stem)) return stem.toUpperCase();
+  /* Un nom d'URL n'est pas toujours un nom de fichier : ce qui n'est ni lettre,
+     ni chiffre, ni « . » / « - » / « _ » devient « _ » — le nom reste lisible et
+     le même pour la même source. */
+  return stem.replace(/[^\w.-]+/g, '_').replace(/^_+|_+$/g, '');
+};
+

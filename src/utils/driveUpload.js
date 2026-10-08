@@ -52,6 +52,16 @@ const TOKEN_EXPIRY_KEY = 'labDriveAccessTokenExpiresAt';
    réel le 20/09/2026, expérience NMR du projet p53H : `Exp_7` ×2, `Exp_19` ×2…). */
 const folderCreations = new Map();
 
+/* LES ENVOIS DE FICHIER EN VOL, par (dossier, nom) — même remède, autre défaut
+   (voir folderRace.js) : sur le Drive réel le 21/09/2026, SIX `_meta.json`
+   identiques de 519 octets sont nés en 1,8 s dans le même dossier
+   (`agenda/2026-07-02_appointment`), et 141 autres dossiers portaient le même
+   genre de jumeaux — des identifiants DIFFÉRENTS, donc de vrais doublons, écrits
+   par des publications simultanées. `uploadDriveFileToFolderOnce` garde donc son
+   couple (chercher le fichier par son nom → l'écraser ou le créer) EN VOL : les
+   appelants simultanés partagent un seul envoi, donc UN SEUL fichier naît. */
+const uploadsInFlight = new Map();
+
 /**
  * Google's OAuth access tokens expire after ~1 hour. We store the expiry time
  * (from the token response) and treat an expired token as "not connected", so
@@ -120,7 +130,7 @@ import {
   datasetFolderEntry, rememberDatasetFolderEntry, forgetDatasetFolderEntry, folderUseDecision
 } from './driveFolderAnchor';
 import { pickCanonicalFolder, emptyTwinIds, isCanonicalDatasetDir } from './datasetDirTwins';
-import { oncePerFolder, folderCreateKey } from './folderRace';
+import { oncePerFolder, folderCreateKey, fileInFolderKey } from './folderRace';
 import { getCloudProvider, nextcloudConfigured, ncUploadFile } from './nextcloud';
 /* L'ENVOI DES GROS FICHIERS PAR MORCEAUX (session « resumable ») : au-delà de
    `RESUMABLE_MIN_BYTES`, une seule requête multipart n'a aucun point de reprise —
@@ -1702,6 +1712,38 @@ const uploadDriveFileToFolderOnce = async ({ name, mimeType, file, ctx = null, p
   const blob = typeof file === 'string' ? dataUrlToBlob(file) : file;
   const type = mimeType || blob.type || 'application/octet-stream';
 
+  /* ── UN SEUL ENVOI PAR (DOSSIER, NOM) ──────────────────────────────────────
+     Le Drive ne départage pas deux envois simultanés : les deux cherchent le
+     fichier par son nom, ne le trouvent pas (l'autre n'a pas encore écrit),
+     puis écrivent TOUS LES DEUX — deux fichiers du même nom, deux identifiants,
+     dans le même dossier. Constaté sur le Drive réel le 21/09/2026 : six
+     `_meta.json` identiques de 519 octets écrits en 1,8 s dans
+     `agenda/2026-07-02_appointment` (et 141 autres dossiers dans le même cas),
+     six passes de publication qui se chevauchaient.
+
+     L'écriture est donc UNIQUE par (dossier, nom), comme la création d'un
+     dossier l'est déjà (`findOrCreateFolder`) : les appelants simultanés
+     PARTAGENT le même envoi — donc reçoivent le même identifiant, et un seul
+     fichier naît. Le nom est ici la seule identité d'un fichier dans un dossier
+     (c'est déjà la règle de l'envoi : un fichier de même nom est REMPLACÉ), et
+     la clé porte le dossier RÉSOLU, jamais un chemin nominal — deux chemins
+     différents peuvent viser le même dossier, et l'inverse.
+
+     Ce qui reste par appel : la résolution du dossier (au-dessus) et la reprise
+     en file d'attente (dans l'appelant). Un envoi qui ÉCHOUE libère la clé : le
+     prochain appel cherche et écrit pour de vrai (voir folderRace.js). */
+  return oncePerFolder(uploadsInFlight, fileInFolderKey(name, targetId), () => writeFileInResolvedFolder({
+    name, type, blob, targetId, ctx, drivePath, onProgress
+  }));
+};
+
+/** Écrire UN fichier dans un dossier DÉJÀ RÉSOLU : chercher le fichier de même
+ *  nom (pour l'écraser au lieu d'en empiler un second), transporter les octets
+ *  (par morceaux au-delà du seuil — voir driveChunkUpload.js), rendre le fichier
+ *  lisible par son lien, et retenir son contexte de nommage. Le dossier est
+ *  connu par son IDENTIFIANT : la résolution par nom a eu lieu au-dessus.
+ *  @returns {{ id:string, name:string, driveUrl:string }} */
+const writeFileInResolvedFolder = async ({ name, type, blob, targetId, ctx = null, drivePath = null, onProgress = null }) => {
   // Find an existing file with the same name in the target folder so we can
   // overwrite it instead of piling up duplicates.
   let existingId = '';
@@ -2676,10 +2718,18 @@ export const archiveFileToDriveWithPointer = async ({ file, ctx = {}, title = ''
  * — one `backups` subfolder per dataset (the caller passes "<dataset>/backups"
  * via `folder`), instead of piling every dataset into a single shared "backups"
  * folder. A file with the same name inside the same folder is overwritten
- * instead of piling up duplicates.
+ * instead of piling up duplicates — and two SIMULTANEOUS uploads of the same
+ * name share ONE transfer (see folderRace.js) instead of creating twins.
  * @returns {Promise<{id:string,name:string}|null>} the Drive file, or null on failure
  */
-export const uploadWorkspaceFile = async ({ name, mimeType, file, folder = 'backups' }) => {
+export const uploadWorkspaceFile = async ({ name, mimeType, file, folder = 'backups' } = {}) => {
+  /* Le dossier est résolu ICI, par identifiant, parce que la clé du verrou a
+     besoin du dossier RÉSOLU (jamais d'un chemin nominal) ; l'écriture elle-même
+     est confiée à `writeWorkspaceFileOnce`, sous `oncePerFolder` : deux
+     sauvegardes simultanées du même nom ne fabriquent plus deux fichiers — même
+     défaut que les `_meta.json` du dataset (voir folderRace.js).
+     Nextcloud passe à côté du verrou : `ncUploadFile` écrit par chemin (il écrase
+     déjà le fichier de même nom), et il n'y a pas d'identifiant de dossier à clé. */
   if (!name || !file) return null;
   // Nextcloud provider — mirror Drive: Lab Workspace/<folder>/<file>.
   if (getCloudProvider() === 'nextcloud') {
@@ -2694,18 +2744,42 @@ export const uploadWorkspaceFile = async ({ name, mimeType, file, folder = 'back
     }
   }
   if (!getDriveToken()) return null;
+  const folderId = await workspaceBackupFolderId(folder);
+  if (!folderId) return null;
+  return await oncePerFolder(uploadsInFlight, fileInFolderKey(name, folderId), () =>
+    writeWorkspaceFileOnce({ name, mimeType, file, folderId }));
+};
+
+/** Le dossier d'une sauvegarde : `<espace>/<dataset>/backups` — chaque segment
+ *  est résolu (ou créé) à la suite. '' quand le Drive n'a pas répondu : on
+ *  n'invente pas un dossier, et l'appelant ne dépose rien. */
+const workspaceBackupFolderId = async (folder) => {
   try {
     const workspaceId = await ensureLabWorkspaceFolder();
-    if (!workspaceId) return null;
+    if (!workspaceId) return '';
     // `folder` may be a nested path (e.g. "<dataset>/backups") — resolve each
     // segment so every dataset's backups live in their own subfolder.
-    let folderId = workspaceId;
+    let id = workspaceId;
     for (const seg of String(folder || 'backups').split('/')) {
-      const name = seg.trim();
-      if (!name) continue;
-      folderId = await findOrCreateFolder(name, folderId);
+      const part = seg.trim();
+      if (!part) continue;
+      id = await findOrCreateFolder(part, id);
+      if (!id) return '';
     }
+    return id;
+  } catch (err) {
+    console.warn('Workspace file upload failed:', err && err.message);
+    return '';
+  }
+};
 
+/** L'ÉCRITURE elle-même, dans un dossier DÉJÀ RÉSOLU : chercher le fichier de
+ *  même nom pour le REMPLACER au lieu d'en empiler un second, puis transporter
+ *  les octets (par morceaux pour une sauvegarde de plusieurs Mo). Contrairement
+ *  aux envois d'expérience (`writeFileInResolvedFolder`), une sauvegarde n'est
+ *  PAS partagée par son lien : c'est un fichier de travail. */
+const writeWorkspaceFileOnce = async ({ name, mimeType, file, folderId }) => {
+  try {
     const blob = typeof file === 'string' ? dataUrlToBlob(file) : file;
     const type = mimeType || blob.type || 'application/octet-stream';
 

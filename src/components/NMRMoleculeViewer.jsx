@@ -127,7 +127,7 @@ import { rigidTransform, atomMatchPairs, flatCoords, poseFromRigidMatrix, multip
 // ⬇ « LE PDB DE L'ÉCRAN » — toutes les molécules dans UN fichier, la place de chacune
 // comprise (son propre module, voir src/utils/viewerPdbMolecules.js) : c'est ce qui fait
 // qu'un déplacement EST un contenu, et pas seulement une vue.
-import { joinPdbMolecules } from '../utils/viewerPdbMolecules';
+import { joinPdbMolecules, sourceStructureFileStem } from '../utils/viewerPdbMolecules';
 // ⬇ 🧬 CHAQUE MOLÉCULE EST UNE ENTITÉ (la demande : « you assign main to the
 // composition of all molecules in a group and that means that I cannot do
 // anything. Let me select molecule by molecule, even if these molecules are in
@@ -6874,6 +6874,55 @@ const id = value.toUpperCase();
 return { url: `https://files.rcsb.org/download/${id}.cif`, params: { ext: 'cif' } };
 }
 return { url: value };
+};
+
+/* ⬆ LE PDB CHARGÉ PAR SON CODE / SON URL PART SUR LE DRIVE ────────────────────
+   LE DÉFAUT, constaté sur le Drive réel le 08/10/2026 (expérience `interaction_pdbs`
+   du projet `p53H`) : deux structures chargées par leur code, `1YCR` et `3LNZ`, et
+   leurs dossiers `…/<code>/data/Structure` créés — mais AUCUN `.pdb` dedans, seule la
+   mémoire de style du viewer y était arrivée. La cause est dans le geste : la rangée
+   §1 a DEUX portes d'entrée, et elles ne faisaient pas la même chose.
+
+     · 📂 PDB file(s) → un File du poste, qui part sur le Drive (`archiveFileToDrive`,
+       et la page y joint son pointeur quand elle fournit `onStructureFile`) ;
+     · « PDB ID or URL » + Load (ou Replace / Keep both) → AUCUN fichier : NGL lit
+       lui-même le fichier du RCSB. Rien n'était donc déposé, et le dossier de
+       l'expérience — celui que 📁 Create drive folder fabrique — restait sans sa
+       structure, sur un poste comme sur les autres.
+
+   Ce que fait cette fonction, geste par geste : le texte vient du MÊME writer NGL que
+   ⬇ PDB (`PdbWriter` sur la structure vraiment chargée, aucune requête de plus), le nom
+   est celui du CODE (`1YCR.pdb`, voir sourceStructureFileStem), et le dossier est celui
+   de la page (`driveNaming` — le MÊME que pour les fichiers choisis : c'est ce qui met
+   le `.pdb` à côté du `viewer-style-snapshot.json`). Recharger le même code RÉÉCRIT le
+   même fichier (aucun doublon : uploadLocalFile cherche par nom dans le dossier), et
+   l'échec SE DIT dans le message de la rangée §1 — un envoi raté ne laisse pas croire
+   que l'archive existe.
+   @returns {Promise<string>} le nom déposé, ou '' (rien à nommer, Drive non connecté,
+   ou envoi manqué — la raison est alors donnée à l'écran). */
+const archiveSourceStructureOnDrive = async ({ comp, rawSrc, ctx, onMessage = null } = {}) => {
+  const stem = sourceStructureFileStem(rawSrc);
+  if (!stem || !ctx || !comp || !comp.structure || !getDriveToken()) return '';
+  const report = (t) => { if (typeof onMessage === 'function') onMessage(t); };
+  try {
+    const NS = await ensureNGL();
+    const text = new NS.PdbWriter(comp.structure).getData();
+    if (!text || !String(text).trim()) return '';
+    const name = `${stem}.pdb`;
+    const archived = await archiveFileToDrive({
+      file: new File([text], name, { type: 'chemical/x-pdb' }),
+      ctx,
+      title: stem,
+      suffix: 'structure'
+    });
+    report(archived
+      ? `⬆ ${name} — the structure loaded by its code is now in this test's Drive folder.`
+      : `⚠️ ${name} was not archived (Drive unreachable?) — it lives in this browser only.`);
+    return archived ? stem : '';
+  } catch (err) {
+    report(`⚠️ ${stem}.pdb was not archived (${(err && err.message) || 'unknown error'}).`);
+    return '';
+  }
 };
 
 const getCarbonName = (molType, char, atom) => {
@@ -13877,6 +13926,14 @@ const lastLoadedTextRef = useRef(null);
    `autoView()` qui recadrerait la molécule à chaque changement. */
 const lastStructureTextRef = useRef(null);
 const preserveViewOnNextLoadRef = useRef(false);
+/* ⬆ LE CONTEXTE DE NOMMAGE, LU AU MOMENT DU GESTE — un REF, pas la prop : la page
+   en fabrique un NOUVEL objet à chaque rendu (« driveNaming={{ project: …, section:
+   'Data' … }} »), et l'effet de chargement ne peut donc PAS en dépendre (il
+   rechargerait la structure à chaque rendu de la page). Le ref dit seulement où
+   déposer le `.pdb` d'une structure chargée PAR SON CODE (voir
+   archiveSourceStructureOnDrive). */
+const driveNamingRef = useRef(null);
+driveNamingRef.current = driveNaming;
 /* ⚭ …ET LE REGARD AUSSI — le même vœu que le point de vue ci-dessous, mais pour
    les STYLES : les arbres de la barre, le ✔ de chaque section et ses étiquettes 🏷
    sont photographiés AVANT que la scène ne soit vidée, puis reposés sur la molécule
@@ -16121,6 +16178,18 @@ throw firstErr;
 }
 
 if (cancelled) return;
+/* ⬆ LE PDB CHARGÉ PAR SON CODE / SON URL PART SUR LE DRIVE — c'est ICI que le
+   geste arrive vraiment : la structure vient d'être lue (par NGL, depuis le
+   RCSB ou l'URL donnée) et la composante existe. `fromSource` n'est posé que par
+   les commandes de la rangée §1 (« PDB ID or URL » + Load, Replace / Keep both) :
+   la source que la PAGE fournit (son gabarit, son texte déclaré, la condition
+   relue) n'a pas à déposer de fichier — elle a ses propres replis et reviendrait
+   à chaque ouverture. Voir archiveSourceStructureOnDrive. */
+if (loadRequest.fromSource) {
+  archiveSourceStructureOnDrive({
+    comp: component, rawSrc: loadRequest.url, ctx: driveNamingRef.current, onMessage: setPdbMsg
+  }).catch(() => {});
+}
 componentRef.current = component;
 /* 🖱 LA MÉMOIRE DES MOLÉCULES DÉPLACÉES REPART À ZÉRO — la nouvelle structure n'a
    évidemment rien à voir avec l'ancienne : les mouvements (partMoveRef) et la carte
@@ -20810,6 +20879,10 @@ const loadExtraStructureUrl = useCallback(async (rawSrc, n = 0) => {
     // fichier ajouté (la barre n'a donc plus « la composition de toutes les
     // molécules » comme seule entrée).
     await registerExtraComponent(comp, label.replace(/\.[^.]+$/, ''), n);
+    /* ⬆ La molécule chargée PAR SON CODE part sur le Drive comme un fichier
+       ajouté (c'est le « Keep both » de la rangée §1, donc un geste de
+       l'utilisateur — voir archiveSourceStructureOnDrive). */
+    archiveSourceStructureOnDrive({ comp, rawSrc, ctx: driveNamingRef.current, onMessage: setPdbMsg }).catch(() => {});
   } catch (err) {
     console.warn('Could not load structure source:', err && err.message);
     setErrorMsg(`Could not load "${String(rawSrc || '').trim()}": ${(err && err.message) || 'failed'}`);
@@ -20825,7 +20898,9 @@ const doReplaceSrc = useCallback((rawSrc) => {
   setStructOrigin('external');
   setFile(null);
   setTrajFile(null);
-  requestStructureLoad({ file: null, url: rawSrc, ts: Date.now() });
+  /* `fromSource` : le geste vient du champ « PDB ID or URL » — c'est donc un
+     FICHIER que l'expérience doit garder (voir archiveSourceStructureOnDrive). */
+  requestStructureLoad({ file: null, url: rawSrc, ts: Date.now(), fromSource: true });
   if (typeof onStructureSrc === 'function') onStructureSrc(String(rawSrc || '').trim());
 }, [clearExtraMolecules, onStructureSrc]);
 
@@ -20886,7 +20961,7 @@ setManualOverride(true);
 setStructOrigin('external');
 setFile(null);
 setTrajFile(null);
-setLoadRequest({ file: null, url: value, ts: Date.now() });
+setLoadRequest({ file: null, url: value, ts: Date.now(), fromSource: true });
 onStructureSrc?.(value);   // share the web/PDB topology with the analysis sections
 }, [pdbId, onStructureSrc, clearExtraMolecules]);
 
@@ -21179,7 +21254,10 @@ const toggleDisulfideBonds = () => {
     : '';
   disulfidesShownRef.current = next;
   setDisulfidesShown(next);
-  requestStructureLoad({ ...(loadRequest || {}), ts: Date.now() });
+  /* Recharger le ⚭ n'est pas un nouveau geste de FICHIER : le .pdb de
+     l'expérience garde ses ponts disulfure, quoi qu'on dessine (c'est la promesse
+     écrite dans le message ci-dessous) — donc aucun nouvel envoi vers le Drive. */
+  requestStructureLoad({ ...(loadRequest || {}), ts: Date.now(), fromSource: false });
   flashDisulfideShowMsg(next
     ? `⚭ ${n} disulphide bond${n === 1 ? '' : 's'} drawn again — ${parts}.${hint}`
     : `⚭ ${n} disulphide bond${n === 1 ? '' : 's'} hidden — every atom stays, and the definition (“Cysteine states”), the PDB file, the 📥 download and the Drive copy keep their S–S: the model simply no longer draws it. ${parts}.${hint}`);

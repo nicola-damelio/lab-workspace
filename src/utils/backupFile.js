@@ -15,8 +15,10 @@
 
      • le fichier écrit est du **JSON structuré** — `format`, `schema`, `savedAt`,
        `datasetId` (D'OÙ VIENT la sauvegarde), titre, sous-titre, `compressed`,
-       les **COMPTES** de ce qu'elle porte, et la charge (`payload`, compressée
-       comme avant) : un fichier qui dit ce qu'il est et ce qu'il contient ;
+       les **COMPTES** de ce qu'elle porte, le **RÉSUMÉ** qui la NOMME (une liste
+       courte : « CD », « BG04_ », « 1YCR »…), et la charge (`payload`, compressée
+       comme avant) : un fichier qui dit ce qu'il est et ce qu'il contient — sans
+       rien décompresser, l'en-tête se lit à l'œil nu ;
      • la RESTAURATION VALIDE AVANT D'AGIR : le format, la version du schéma, la
        lisibilité de la charge, et la CONCORDANCE entre les comptes déclarés et
        les comptes réels. Un écart est un refus MOTIVÉ — jamais l'importation
@@ -56,16 +58,21 @@ const sizeOf = (v) => {
 /* ── CE QU'UNE SAUVEGARDE DIT PORTER ─────────────────────────────────────────
    Une liste courte et VRAIE : les collections qu'un utilisateur cherche quand
    il restaure (« mes expériences sont-elles dans ce fichier ? »). Chaque entrée
-   porte son nom ET son unité, pour que la phrase soit lisible. */
+   porte son nom ET son unité, pour que la phrase soit lisible — et, pour le
+   RÉSUMÉ (voir `backupSummaryOf`) — `fields` dit OÙ lire le nom d'un élément,
+   le premier champ non vide faisant foi (un protocole porte un `title`, une
+   expérience et un meuble un `name`). Une collection en forme de CARTE est
+   nommée par ses CLÉS — ses entrées y sont rangées par nom de composé, donc
+   `fields` y est vide. */
 export const BACKUP_COUNT_KEYS = [
-  { key: 'tests', label: 'Expériences', unit: 'expérience' },
-  { key: 'projects', label: 'Projets', unit: 'projet' },
-  { key: 'datasetProtocols', label: 'Protocoles', unit: 'protocole' },
-  { key: 'storages', label: 'Stockage', unit: 'emplacement' },
-  { key: 'molecules', label: 'Molécules', unit: 'molécule' },
-  { key: 'calculationEntries', label: 'Calculs', unit: 'calcul' },
-  { key: 'compoundMeta', label: 'Fiches composés', unit: 'fiche' },
-  { key: 'nmrExperiments', label: 'Expériences RMN', unit: 'expérience' }
+  { key: 'tests', label: 'Expériences', unit: 'expérience', fields: ['name', 'id'] },
+  { key: 'projects', label: 'Projets', unit: 'projet', fields: ['name', 'id'] },
+  { key: 'datasetProtocols', label: 'Protocoles', unit: 'protocole', fields: ['title', 'name', 'id'] },
+  { key: 'storages', label: 'Stockage', unit: 'emplacement', fields: ['name', 'id'] },
+  { key: 'molecules', label: 'Molécules', unit: 'molécule', fields: ['name', 'label', 'id'] },
+  { key: 'calculationEntries', label: 'Calculs', unit: 'calcul', fields: [] },
+  { key: 'compoundMeta', label: 'Fiches composés', unit: 'fiche', fields: [] },
+  { key: 'nmrExperiments', label: 'Expériences RMN', unit: 'expérience', fields: ['name', 'id'] }
 ];
 
 /** Les comptes d'un état de dataset (`{ tests: 12, projects: 3, … }`). PUR. */
@@ -86,6 +93,77 @@ export const describeBackupCounts = (counts, { max = 4 } = {}) => {
     .map((e) => `${e.n} ${e.unit}${e.n > 1 ? 's' : ''}`);
   if (!parts.length) return 'nothing to carry';
   return parts.join(', ');
+};
+
+/* ── CE QU'UNE SAUVEGARDE PORTE, EN CLAIR ────────────────────────────────────
+   Les COMPTES disent COMBIEN ; les NOMS disent QUOI. « Mes expériences sont-
+   elles dans ce fichier ? » ne se répond pas avec « 81 » : un en-tête qui NOMME
+   (« CD », « BG04_ », « 1YCR ») se lit à l'œil nu, sans rien décompresser —
+   c'est le même esprit que `counts`, appliqué aux noms.
+
+   Deux propriétés, et elles tiennent tout le mécanisme :
+     • le résumé est toujours tiré de la CHARGE (voir `buildBackupDocument`),
+       jamais d'un appelant : il ne peut donc pas dire autre chose que ce que le
+       fichier porte ;
+     • ce n'est PAS un second contrôle. Ce qui décide d'un import, ce sont les
+       comptes ; les noms servent à l'œil de qui ouvre le fichier. */
+export const BACKUP_SUMMARY_MAX = 24;
+export const BACKUP_SUMMARY_NAME_MAX = 120;
+/** La seule limite de l'en-tête, dite telle quelle (les comptes, eux, sont
+ *  complets : c'est la charge qui les porte EN ENTIER). */
+export const BACKUP_SUMMARY_NOTE = `the counts above are the complete ones — each list stops at ${BACKUP_SUMMARY_MAX} names`;
+
+/** Un nom tient sur UNE ligne : les retours et les espaces multiples sont
+ *  ramenés à une espace, et un nom démesuré est coupé (le « … » le dit). PUR. */
+const cleanName = (value) => {
+  if (value === undefined || value === null || typeof value === 'object') return '';
+  const flat = String(value).replace(/\s+/g, ' ').trim();
+  if (!flat) return '';
+  return flat.length > BACKUP_SUMMARY_NAME_MAX ? `${flat.slice(0, BACKUP_SUMMARY_NAME_MAX).trimEnd()}…` : flat;
+};
+
+/** Le nom d'un élément : une CHAÎNE est son propre nom (les bibliothèques
+ *  acceptent un nom écrit à la main — voir utils/libraryCsv.js), un OBJET est lu
+ *  par ses champs, le premier non vide des `fields` (un protocole porte un
+ *  `title`, une expérience et un meuble un `name`). PUR : ne lève jamais. */
+const nameOf = (item, fields = []) => {
+  if (typeof item === 'string' || typeof item === 'number') return cleanName(item);
+  if (!item || typeof item !== 'object') return '';
+  for (let i = 0; i < fields.length; i += 1) {
+    const found = cleanName(item[fields[i]]);
+    if (found) return found;
+  }
+  return '';
+};
+
+/** Les noms d'une collection : les CLÉS d'une carte (`compoundMeta`,
+ *  `calculationEntries` — l'app y range ses entrées PAR nom de composé, c'est
+ *  ainsi qu'elle les relit), sinon les noms des éléments d'une liste. Sans
+ *  doublon (« test31 » deux fois n'apprend rien) et pas plus de
+ *  `BACKUP_SUMMARY_MAX` : le reste est dans la charge, pas dans l'en-tête. PUR. */
+const namesOf = (value, fields = []) => {
+  const raw = Array.isArray(value)
+    ? value.map((item) => nameOf(item, fields))
+    : (value && typeof value === 'object' ? Object.keys(value) : [nameOf(value, fields)]);
+  const names = [];
+  raw.forEach((name) => {
+    if (!name || names.includes(name) || names.length >= BACKUP_SUMMARY_MAX) return;
+    names.push(name);
+  });
+  return names;
+};
+
+/** LE RÉSUMÉ d'un état — ce qu'une sauvegarde porte, NOMMÉ. Une collection vide
+ *  n'y figure pas, comme un compte nul ne figure pas dans la phrase des comptes.
+ *  La `note` ferme la liste et dit sa seule limite. PUR. */
+export const backupSummaryOf = (state) => {
+  const src = state && typeof state === 'object' ? state : {};
+  const summary = {};
+  BACKUP_COUNT_KEYS.forEach(({ key, fields }) => {
+    const names = namesOf(src[key], fields);
+    if (names.length) summary[key] = names;
+  });
+  return { ...summary, note: BACKUP_SUMMARY_NOTE };
 };
 
 /** La charge compressée d'un état (le format rangé sur le Drive n'a pas
@@ -115,12 +193,16 @@ export const decodeBackupState = (payload, compressed = true) => {
 
 /** Le document de sauvegarde, complet et auto-descriptif. PUR.
  *  Les comptes sont ceux de l'état s'ils ne sont pas donnés — donc jamais
- *  absents : un fichier sans comptes ne pourrait pas être validé à la relecture. */
+ *  absents : un fichier sans comptes ne pourrait pas être validé à la relecture.
+ *  Le RÉSUMÉ (les noms) est lui aussi toujours celui de la charge : il ne peut
+ *  donc jamais annoncer autre chose que ce que le fichier porte. */
 export const buildBackupDocument = ({
   payload = '', title = '', subtitle = '', datasetId = '', savedAt = 0,
   counts = null, compressed = true
 } = {}) => {
-  const state = counts ? null : decodeBackupState(payload, compressed !== false);
+  /* L'état est décodé UNE fois : les comptes ET les noms disent ce que la charge
+     porte vraiment — jamais ce qu'un appelant annonce à sa place. */
+  const state = decodeBackupState(payload, compressed !== false);
   return {
     format: BACKUP_FORMAT,
     schema: BACKUP_SCHEMA,
@@ -130,6 +212,7 @@ export const buildBackupDocument = ({
     subtitle: text(subtitle),
     compressed: compressed !== false,
     counts: counts && typeof counts === 'object' ? counts : backupCountsOf(state),
+    summary: backupSummaryOf(state),
     payload: String(payload || '')
   };
 };

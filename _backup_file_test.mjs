@@ -13,6 +13,9 @@
        compris ;
      • le fichier est AUTO-DESCRIPTIF : format, version, provenance (datasetId),
        titre, sous-titre, compression, comptes, charge ;
+     • le RÉSUMÉ NOMME ce que la sauvegarde porte (les expériences, les projets,
+       les composés…) et reste COURT — borné, sans doublon, une ligne par nom —
+       sans jamais devenir un second contrôle ;
      • la VALIDATION refuse, et dit POURQUOI : fichier tronqué, charge illisible,
        version plus récente, format inconnu, JSON invalide, fichier vide ;
      • le fichier ÉDITÉ est attrapé par ses COMPTES (déclarés ≠ réels) — c'est le
@@ -84,8 +87,8 @@ eq(read.reason, '', 'aucune phrase de refus non plus');
 /* ── 3. LE FICHIER SE DÉCRIT LUI-MÊME ───────────────────────────────────────
    Ce qu'un humain doit voir en ouvrant le fichier : d'où il vient, pour quel
    dataset, quand, et ce qu'il porte. */
-eq(Object.keys(doc).sort(), ['compressed', 'counts', 'datasetId', 'format', 'payload', 'savedAt', 'schema', 'subtitle', 'title'].sort(),
-  'le document porte exactement : format, schema, savedAt, provenance, titre, sous-titre, compression, comptes, charge');
+eq(Object.keys(doc).sort(), ['compressed', 'counts', 'datasetId', 'format', 'payload', 'savedAt', 'schema', 'subtitle', 'summary', 'title'].sort(),
+  'le document porte exactement : format, schema, savedAt, provenance, titre, sous-titre, compression, comptes, RÉSUMÉ, charge');
 eq(doc.datasetId, 'dsCafe9', 'd’OÙ VIENT la sauvegarde est écrit (la restauration en a besoin pour ne pas recréer un dataset)');
 eq(doc.title, STATE.datasetTitle, 'le titre est écrit');
 eq(doc.subtitle, 'sous-titre', 'le sous-titre aussi');
@@ -98,6 +101,74 @@ ok(B.backupDocumentText(doc).includes('\n  "format"'), '…et il est INDENTÉ : 
    sans comptes ne pourrait pas être validé à la relecture. */
 const inferred = B.buildBackupDocument({ payload: B.encodeBackupPayload({ tests: [{}, {}] }), title: 'X' });
 eq(inferred.counts.tests, 2, 'sans comptes donnés, le document les DÉDUIT de la charge');
+
+/* ── 3 bis. LE RÉSUMÉ : CE QU'UNE SAUVEGARDE PORTE, NOMMÉ ───────────────────
+   L'en-tête ne disait que des NOMBRES (« 81 expériences ») : ouvrir le fichier
+   ne montrait pas QUELLES expériences. Le résumé les nomme — et il est
+   TOUJOURS tiré de la charge, donc il ne peut pas dire autre chose que ce que
+   le fichier porte. */
+eq(doc.summary.tests, ['t1', 't2', 't3'], 'les expériences sont NOMMÉES (l’identifiant quand il n’y a pas de nom)');
+eq(doc.summary.projects, ['p1'], '…les projets aussi');
+eq(doc.summary.datasetProtocols, ['pr1', 'pr2'], '…et les protocoles');
+eq(doc.summary.molecules, ['m1', 'm2', 'm3', 'm4'], '…et les molécules');
+eq(doc.summary.compoundMeta, ['a', 'b'], 'une CARTE est nommée par ses CLÉS (les fiches composés sont rangées par nom)');
+eq(doc.summary.storages, undefined, 'une collection VIDE n’est pas nommée (comme un compte nul ne se dit pas)');
+eq(Object.keys(doc.summary).pop(), 'note', 'la note ferme la liste : les noms se lisent d’abord');
+ok(doc.summary.note.includes(String(B.BACKUP_SUMMARY_MAX)),
+  'la note dit la seule limite de l’en-tête — le nombre de noms par collection');
+eq(read.doc.summary, doc.summary, 'le résumé est DANS le fichier écrit (il se relit tel quel)');
+
+/* LE VOCABULAIRE RÉEL DES COLLECTIONS — relevé sur la sauvegarde d'un vrai
+   dataset : une expérience et un projet portent un `name`, un protocole un
+   `title`, un meuble un `name`, et les calculs sont rangés PAR nom de composé. */
+const REAL = {
+  tests: [{ name: 'CD' }, { name: 'Fluo' }, { id: 't9' }],
+  projects: [{ name: 'BG04_', scientist: 'Nicolas' }],
+  datasetProtocols: [{ title: 'CD_spec_acquisition', text: 'Pas à pas' }, { name: 'Sans titre' }],
+  storages: [{ name: 'Freezer -20', type: 'freezer', boxes: [{ name: 'Box 12' }] }],
+  molecules: ['HeLa-lysat', { name: '1YCR' }, { id: 'm7' }],
+  calculationEntries: { 'Peptide-01': [{ name: 'run 1' }], Cafeine: [] },
+  compoundMeta: { 'Peptide-01': {}, Cafeine: {} },
+  nmrExperiments: [{ name: 'hsqc' }, { name: 'hsqc' }]
+};
+const realSummary = B.backupSummaryOf(REAL);
+eq(realSummary.tests, ['CD', 'Fluo', 't9'], 'un nom vient du champ `name` — l’identifiant ne sert que faute de nom');
+eq(realSummary.projects, ['BG04_'], '…le projet par son nom');
+eq(realSummary.datasetProtocols, ['CD_spec_acquisition', 'Sans titre'], 'un protocole se nomme par son `title`, un autre par son `name`');
+eq(realSummary.storages, ['Freezer -20'], 'un meuble par son nom (les BOÎTES qu’il contient ne sont pas des noms du dataset)');
+eq(realSummary.molecules, ['HeLa-lysat', '1YCR', 'm7'], 'une molécule écrite à la main est son propre nom');
+eq(realSummary.calculationEntries, ['Peptide-01', 'Cafeine'], 'les calculs sont nommés par COMPOSÉ (c’est la clé de la carte)');
+eq(realSummary.compoundMeta, ['Peptide-01', 'Cafeine'], '…comme les fiches composés');
+eq(realSummary.nmrExperiments, ['hsqc'], 'un nom répété ne s’écrit qu’une fois (le COMPTE, lui, reste deux)');
+eq(B.backupCountsOf(REAL).nmrExperiments, 2, '…et les comptes disent bien les deux');
+
+/* LA LISTE EST BORNÉE : l'en-tête ne doit pas peser le poids de la charge. */
+const MANY = { tests: Array.from({ length: B.BACKUP_SUMMARY_MAX + 9 }, (_, i) => ({ name: `exp-${i + 1}` })) };
+eq(B.backupSummaryOf(MANY).tests.length, B.BACKUP_SUMMARY_MAX,
+  `le résumé s’arrête à ${B.BACKUP_SUMMARY_MAX} noms (les comptes disent ce qui suit)`);
+eq(B.backupCountsOf(MANY).tests, B.BACKUP_SUMMARY_MAX + 9, '…et le COMPTE, lui, reste complet');
+
+/* UN NOM TIENT SUR UNE LIGNE — un titre d'expérience peut être un paragraphe. */
+const MESSY = B.backupSummaryOf({
+  tests: [
+    { name: 'Ligne 1\nLigne 2\t  espacée' }, { name: '   ' }, { name: 'x'.repeat(400) },
+    { name: { nested: true } }, 42, null
+  ]
+});
+eq(MESSY.tests[0], 'Ligne 1 Ligne 2 espacée', 'les retours et les espaces multiples sont ramenés à une espace');
+eq(MESSY.tests[1].length, B.BACKUP_SUMMARY_NAME_MAX + 1, 'un nom démesuré est coupé…');
+ok(MESSY.tests[1].endsWith('…'), '…et le « … » le dit');
+eq(MESSY.tests.slice(2), ['42'], 'un nom vide ou illisible est écarté (un identifiant numérique, lui, se dit)');
+eq(B.backupSummaryOf(null), { note: B.BACKUP_SUMMARY_NOTE }, 'un état absent ne fait pas lever le résumé (et il n’a rien à nommer)');
+eq(B.backupSummaryOf({ tests: 'pas une liste' }).tests, ['pas une liste'], 'une valeur simple est son propre nom');
+eq(B.backupSummaryOf({ tests: [null, {}, ''] }).tests, undefined, 'rien de nommable : rien dans le résumé (jamais une liste vide)');
+
+/* ⚠ LE RÉSUMÉ N'EST PAS UN SECOND CONTRÔLE : ce qui décide d'un import, ce sont
+   les COMPTES ; le résumé est là pour l'œil de qui ouvre le fichier. Un résumé
+   retouché à la main ne doit donc pas bloquer une sauvegarde intacte. */
+const renamed = { ...doc, summary: { tests: ['autre chose'], note: 'retouché' } };
+eq(B.validateBackupDocument(renamed).ok, true, 'un résumé retouché ne fait pas refuser une sauvegarde intacte');
+ok(B.backupDocumentText(renamed).includes('autre chose'), '…et il reste tel quel dans le fichier (rien ne le recalcule à la lecture)');
 
 /* ── 4. CE QUI EST REFUSÉ, ET POURQUOI ─────────────────────────────────────
    Chaque refus doit dire sa cause : « échec » tout court ne sert à personne. */
@@ -245,6 +316,4 @@ has(APP, '$' + '{describeBackupCounts(carried)}', '…et le compte-rendu DIT ce 
 ok(!APP.includes('buildBackupHtml'), 'le constructeur HTML a disparu (plus rien n’écrit ce format)');
 ok(!APP.includes('saved-data-blob'), 'plus aucune écriture de fichier HTML dans App.jsx');
 
-console.log(`\n${passed} vérifications passées — LA SAUVEGARDE : un format qui se valide (et l'ancien HTML qui se relit encore).\n`);
-
-console.log(`\n${passed} vérifications passées — LA SAUVEGARDE : un format qui se valide (et l'ancien HTML qui se relit encore).\n`);
+console.log(`\n${passed} vérifications passées — LA SAUVEGARDE : un format qui se valide, un en-tête qui NOMME ce qu'il porte (et l'ancien HTML qui se relit encore).\n`);

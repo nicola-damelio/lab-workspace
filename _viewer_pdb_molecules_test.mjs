@@ -68,7 +68,7 @@ ok(Math.abs(turned[0]) < 1e-9 && Math.abs(turned[1] - 1) < 1e-9, 'une rotation d
 
 
 /* ── 4. LE BRANCHEMENT DANS LE VIEWER ─────────────────────────────────────── */
-has("import { joinPdbMolecules } from '../utils/viewerPdbMolecules';", 'le viewer importe l’assembleur');
+has("import { joinPdbMolecules, sourceStructureFileStem } from '../utils/viewerPdbMolecules';", 'le viewer importe l’assembleur');
 has('fitSummary, applyMat4 }', '…et la transformation de point du fit (une seule algèbre de matrices)');
 has('const bakePoseIntoStructure = (comp) => {', 'la matrice MONDE de chaque molécule est écrite dans ses coordonnées');
 has('const bx = new Float32Array(store.x);', 'les coordonnées d’origine sont COPIÉES avant d’être remplacées');

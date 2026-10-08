@@ -2854,8 +2854,9 @@ if (customType === 'dosy') {
      (voir utils/projectImport.js : sans cet id, les projets désignaient un
      dataset que l'application ne montrait plus). C'est `buildBackupDocument`
      (utils/backupFile.js) qui l'écrit — avec le format, la version, la date, le
-     titre, et les COMPTES de ce que la sauvegarde porte, donc la restauration
-     peut la VALIDER avant d'adopter quoi que ce soit. */
+     titre, les COMPTES de ce que la sauvegarde porte, et les NOMS de ce qu'elle
+     porte (le résumé : « CD », « BG04_ »…), donc la restauration peut la VALIDER
+     avant d'adopter quoi que ce soit. */
 
   const runWeeklyBackup = useCallback(async () => {
     if (backupRunningRef.current) return false;
@@ -2900,9 +2901,11 @@ if (customType === 'dosy') {
           const subtitle = isCurrent ? datasetSubtitleRef.current : (dset.subtitle || '');
           /* LA SAUVEGARDE ÉCRITE EST UN DOCUMENT JSON AUTO-DESCRIPTIF : format,
              version, provenance (l'identifiant du dataset), titre, et CE QU'ELLE
-             PORTE (les comptes de ses collections). La restauration peut donc la
-             VALIDER avant d'agir — ce que l'ancien HTML, un bloc opaque dans une
-             page, ne permettait pas (voir utils/backupFile.js). */
+             PORTE — les comptes de ses collections, et leurs NOMS (le résumé, qui
+             montre quelles expériences le fichier porte, pas seulement combien). La
+             restauration peut donc la VALIDER avant d'agir — ce que l'ancien HTML,
+             un bloc opaque dans une page, ne permettait pas (voir
+             utils/backupFile.js). */
           const backupDoc = buildBackupDocument({ payload, title, subtitle, datasetId: dset.id, savedAt: Date.now() });
           const body = backupDocumentText(backupDoc);
           // A short dataset-id fragment guarantees two datasets with the same

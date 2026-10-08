@@ -303,7 +303,7 @@ has(RACESRC, 'store.delete(key)', '…un échec libère la clé (le prochain app
 has(RACESRC, 'Exp_7', '…et la raison (les jumeaux d’instance du NMR) est écrite dans le module');
 has(RACESRC, 'projects/p53H/NMR_p53H/Exp_7/', '…avec le chemin réel constaté sur le Drive');
 
-has(UPLOAD, "import { oncePerFolder, folderCreateKey } from './folderRace';",
+has(UPLOAD, "import { oncePerFolder, folderCreateKey, fileInFolderKey } from './folderRace';",
   'driveUpload branche le module des créations uniques');
 has(UPLOAD, 'const folderCreations = new Map();', '…sur UN magasin de créations en vol');
 has(UPLOAD, 'export const findOrCreateFolder = async (name, parentId) => oncePerFolder(',

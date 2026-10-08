@@ -653,11 +653,12 @@ laissé en place. Une fusion peut réunir deux jumeaux de même nom dans le doss
 retenu (deux `Structure` d'instance) : l'exécution repasse alors jusqu'à ce
 qu'il n'y ait plus rien (4 passes au plus).
 
-Vérifié hors navigateur par `_folder_race_test.mjs` (46 assertions) : logique
+Vérifié hors navigateur par `_folder_race_test.mjs` (47 assertions) : logique
 pure, deux `findOrCreateFolder` simultanés → **une seule** création sur un faux
 Drive, la chaîne `projects/<projet>/<expérience>/<instance>/data/Bruker_1r`
 résolue deux fois en parallèle → aucun dossier en double, et le jumeau qui porte
-du contenu qui gagne.
+du contenu qui gagne. Le **même** verrou protège depuis les FICHIERS
+(`fileInFolderKey` — voir « Les jumeaux de FICHIERS » plus bas).
 
 ## Ce qui reste propre à un appareil (volontairement)
 
@@ -4515,6 +4516,7 @@ hebdomadaire et pour le geste manuel :
 | `savedAt`, `datasetId`, `title`, `subtitle` | d'où vient la sauvegarde (sans cet id, une restauration recréait un dataset neuf et les projets restaient invisibles) |
 | `compressed` + `payload` | la charge, compressée exactement comme avant (rien n'a changé dans le rangement) |
 | **`counts`** (expériences, projets, protocoles, stockage, molécules, calculs, fiches, RMN) | ce qu'elle déclare porter — donc ce qui peut être **comparé** |
+| **`summary`** (les NOMS : « CD », « BG04_ », « 1YCR »…) | ouvrir le fichier montre *quelles* données il porte, et pas seulement *combien* — lisible à l'œil nu, sans rien décompresser |
 
 | Règle | Où |
 | --- | --- |
@@ -4522,6 +4524,25 @@ hebdomadaire et pour le geste manuel :
 | Les **deux** gestes écrivent ce document, en `application/json` | `App.jsx` (`runWeeklyBackup`, `exportHTML`) |
 | Le compte-rendu DIT ce que la sauvegarde porte (« … — 12 expériences, 3 projets → Lab Workspace/<dataset>/backups ») | `App.jsx` (`describeBackupCounts`) |
 | Les gestes s'appellent « 📂 Load backup (.json / .html) » et « 💾 Save backup » | `App.jsx`, `appSidebar.jsx` |
+
+**Un en-tête qui NOMME ce qu'il porte.** Les comptes disent *combien* ; ils ne
+disent pas *quoi* : ouvrir le fichier montrait « 81 », pas les expériences. Le
+document porte donc aussi un **`summary`**, écrit dans le vocabulaire **réel** des
+collections (relevé sur une vraie sauvegarde : une expérience et un projet portent
+un `name`, un protocole un `title`, un meuble un `name`, et les fiches composés
+comme les calculs sont des **cartes indexées par nom de composé** — leurs **clés**
+sont donc les noms). Trois règles, dans `backupSummaryOf` (pur, vérifié sans
+navigateur) :
+
+| Règle | Pourquoi |
+| --- | --- |
+| Le résumé est **toujours tiré de la charge**, jamais d'un appelant | il ne peut pas annoncer autre chose que ce que le fichier porte |
+| **Borné** : au plus 24 noms par collection, sans doublon, un nom sur une ligne (coupé à 120 caractères avec « … ») | l'en-tête ne doit pas peser le poids de la charge, et il se lit d'un coup d'œil |
+| Ce n'est **pas un second contrôle** : un résumé retouché ne fait jamais refuser une sauvegarde intacte | ce qui décide d'un import, ce sont les **comptes** ; les noms sont là pour l'œil |
+
+Une collection vide n'y figure pas (comme un compte nul ne se dit pas), et la
+`note` qui ferme la liste dit sa seule limite : « the counts above are the complete
+ones — each list stops at 24 names ».
 
 **La restauration VALIDE avant d'agir** (`parseBackupText` → `validateBackupDocument`) :
 
@@ -4545,7 +4566,7 @@ ancien fichier ne devient orphelin.
 ### Vérifier soi-même
 
 ```
-node _backup_file_test.mjs            # 100 vérifications — le format, la validation, les refus
+node _backup_file_test.mjs            # 129 vérifications — le format, le résumé des noms, la validation, les refus
 node _save_html_test.mjs              # 45 — ce que la sauvegarde emporte (état, bibliothèques, projets)
 node _load_html_projects_test.mjs      # 53 — les projets d'une sauvegarde sont adoptés par leur dataset
 node _library_restore_test.mjs         # 175 — bibliothèque d'images ↔ sauvegarde
@@ -4556,7 +4577,11 @@ La suite de la sauvegarde est vérifiée **sur des fichiers réellement écrits*
 l'aller-retour (accents compris), le fichier **tronqué** (charge coupée), le
 fichier **édité** (comptes déclarés faux → refus motivé), la **version plus
 récente**, le format inconnu, le JSON invalide, le fichier vide — et l'**ancien
-HTML**, relu avec sa charge tronquée comprise. Elle vérifie aussi le
+HTML**, relu avec sa charge tronquée comprise. Le **résumé** y passe le vrai
+vocabulaire des collections (le nom d'une expérience, le titre d'un protocole,
+les clés d'une carte), ses bornes (24 noms, 120 caractères, sans doublon, rien
+d'illisible) — et le fait qu'il ne décide RIEN : un résumé retouché à la main
+n'empêche pas l'import d'une sauvegarde intacte. Elle vérifie aussi le
 **branchement réel** : l'import passe tout par la validation, les deux gestes
 écrivent le document en JSON, et plus rien n'écrit de fichier HTML.
 
@@ -4744,6 +4769,146 @@ programme (`mirrorPurgeDeletedDatasets`) échouera exactement de la même façon
 dossier-là se finit **à la main**, dans le Drive. C'est le cas, sur le Drive réel, de
 `GEC-UPJV-pp/projects/p53H` : tout le contenu **visible** a été déplacé dans
 `GEC-UPJV-projects`, il reste un fichier que ce jeton ne voit pas.
+
+## « La dir a été créée sur le Drive mais les .pdb n'y sont pas » — le PDB chargé par son CODE (08/10/2026)
+
+**Le rapport, mot pour mot.** « *ho appena creato un nuovo esperimento e ho caricato due pdb con il
+codice pdb. la dir é stata creata in drive ma i files pdb non ci sono.* »
+
+**Ce que le Drive réel montrait, avant toute correction** (sonde de lecture seule, jeton de
+l'application). L'expérience `interaction_pdbs` du projet `p53H` venait d'être créée (21 h 38) avec
+deux conditions nommées d'après les codes chargés — `1YCR` et `3LNZ` — et leurs deux dossiers
+`…/<code>/data/Structure` existaient bien. Chacun ne portait **qu'un** `viewer-style-snapshot.json`
+(la mémoire de style du viewer, 21 h 42) : **aucun `.pdb`**. Et, dans tout le dataset, **aucun**
+fichier `.pdb` n'avait été créé après 13 h 13 ce jour-là — l'arborescence de l'expérience était bien
+là, la structure non.
+
+**La cause, en une phrase : les deux portes de la rangée §1 ne faisaient pas la même chose.** 📂
+**PDB file(s)** part sur le Drive (`archiveFileToDrive`, et la page y joint son pointeur quand elle
+fournit `onStructureFile`) ; « **PDB ID or URL** » + **Load** (ou Replace / Keep both) n'apporte
+**aucun fichier** — NGL lit lui-même celui du RCSB — et **rien n'était donc déposé**. Le dossier que
+📁 **Create drive folder** venait de fabriquer restait sans sa structure, sur ce poste comme sur les
+autres.
+
+### Ce qui a été corrigé, geste par geste
+
+* **`src/utils/viewerPdbMolecules.js` → `sourceStructureFileStem(rawSrc)`** (PUR, testé sous node) :
+  le nom du fichier que la source produit. Un code garde son code, en majuscules comme le RCSB
+  (« 1YCR »), `rcsb:1ycr` aussi, une URL donne son **dernier segment sans son extension**
+  (« …/download/1abc.pdb.gz » → « 1ABC », « …/my_model.cif » → « my_model »), et ce qui n'a **aucun**
+  nom à donner (`data:` / `blob:`) rend `''` — un fichier sans nom n'a rien à faire sur le Drive.
+  Le nom est **stable** pour une même source, donc recharger le même code **réécrit le même fichier**
+  au lieu d'en empiler un second (`uploadLocalFile` cherche par nom dans le dossier cible).
+* **`src/components/NMRMoleculeViewer.jsx` → `archiveSourceStructureOnDrive({ comp, rawSrc, ctx,
+  onMessage })`** : le texte vient du **même** writer NGL que ⬇ PDB (`PdbWriter` sur la structure
+  vraiment chargée — **aucune requête de plus**, donc la promesse « ce viewer n'ouvre aucun réseau de
+  lui-même » reste vraie), le nom est `<code>.pdb`, et le dossier est **celui de la page**
+  (`driveNaming`), c'est-à-dire **le même** que celui des fichiers choisis : le `.pdb` se pose à côté
+  du `viewer-style-snapshot.json`.
+* **La marque `fromSource`** : posée par les **deux** commandes de l'utilisateur (« PDB ID or URL » +
+  Load, et le choix Replace), consommée par le **chargement principal** — une fois la structure lue —
+  et par le **« Keep both »** (la molécule venue par son code passe par le même dépôt).
+* **Ce qui ne dépose RIEN**, et c'est voulu : la source que la **PAGE** fournit (son gabarit
+  `template_amino_acid.pdb`, son texte déclaré, la condition relue à l'ouverture) — elle revient à
+  chaque ouverture et n'est pas un fichier de l'expérience ; et la bascule ⚭ **Disulfides**, qui
+  recharge la même structure (`fromSource: false`) parce que le `.pdb` de l'expérience garde ses
+  ponts S–S, quoi qu'on dessine.
+* **Le contexte de nommage est lu par un `ref`** (`driveNamingRef`) : la page en fabrique un **nouvel
+  objet à chaque rendu**, et l'effet de chargement ne peut donc pas en dépendre (il rechargerait la
+  structure à chaque rendu de la page).
+* **L'échec SE DIT** dans le message de la rangée §1 (« ⚠️ `1YCR.pdb` was not archived (Drive
+  unreachable?) — it lives in this browser only. »), comme le succès (« ⬆ `1YCR.pdb` — the structure
+  loaded by its code is now in this test's Drive folder. ») : un envoi raté ne laisse plus croire que
+  l'archive existe.
+
+*vérifier :* `node _viewer_source_drive_archive_test.mjs` — **35 vérifications** : la table des noms
+(`1YCR`, `1ycr`, ` 3LNZ `, `rcsb:1ycr`, `…/1ABC.pdb`, `…/1abc.pdb.gz`, `…/my_model.cif`, `data:`,
+`blob:`, vide), la présence du dépôt et de son texte NGL (et **aucun** `fetch(`/`XMLHttpRequest` /
+`sendBeacon` dans le viewer : la promesse du film tient toujours), `fromSource: true` posé **exactement
+deux fois** (et **pas** sur la source de la page), le dépôt du « Keep both », la bascule ⚭ qui ne
+redépose pas, et les deux messages (succès / échec). Régressions : `node _viewer_pdb_molecules_test.mjs`
+**30**, `node _viewer_ui_layout_test.mjs` **517**, `node _structure_windows_test.mjs` **112**,
+`node _viewer_general_row_test.mjs` **189**, `node _compact_sections_test.mjs` **211**,
+`node _drive_restore_test.mjs` **251**, `node _drive_folder_anchor_test.mjs` **51**,
+`node _drive_structure_test.mjs` **140**, `node _drive_mirror_test.mjs` **79**,
+`node _experiment_move_drive_test.mjs` **63** ; `npx oxlint` — **0 erreur** et, sur les deux fichiers
+touchés, **aucun avertissement sur une ligne ajoutée** (58 emplacements signalés, tous antérieurs) ;
+`npx vite build` ✓.
+
+**Ce que l'utilisateur doit faire pour les deux structures du rapport.** Rouvrir l'expérience
+`interaction_pdbs` dans chaque condition (`1YCR`, `3LNZ`) et **recharger le code** dans « PDB ID or
+URL » + **Load** : la structure est déjà celle que la condition garde, et le geste dépose maintenant
+`1YCR_Nicola_DAMELIO.pdb` (resp. `3LNZ…`) dans `…/<code>/data/Structure`, à côté du
+`viewer-style-snapshot.json`.
+
+### Les jumeaux de FICHIERS — corrigé (le même nom, deux fois dans le même dossier)
+
+La même lecture du Drive réel, le 21/09/2026, a montré autre chose que le défaut
+ci-dessus : **142 dossiers portaient plus d'un identifiant distinct du même nom** —
+six `_meta.json` de 519 octets écrits en 1,8 s (21 h 44 min 15 s à 21 h 44 min 16 s)
+dans `agenda/2026-07-02_appointment`,
+six dans
+`2026-07-04_appointment`, etc. Ce ne sont pas des artefacts de listage : les
+**identifiants sont différents** (la sonde les affiche :
+`node _probe_dups.mjs --name=_meta.json`).
+
+**La cause** : `uploadDriveFileToFolderOnce` cherchait le fichier **par son nom
+PUIS** écrivait. La sauvegarde publie le miroir à chaque frappe : plusieurs passes
+se chevauchaient donc — chacune cherchant le fichier *avant* que l'autre ne l'ait
+écrit — et le Drive recevait un fichier de plus par appelant (six passes → six
+`_meta.json` identiques).
+
+**Ce qui a été corrigé :**
+
+* `src/utils/folderRace.js` → **`fileInFolderKey(nom, dossier)`** : la clé d'un
+  fichier est celle de son dossier, vue depuis un fichier — le nom et le
+  conteneur, rien d'autre. `oncePerFolder` sert donc aux dossiers **et** aux
+  fichiers ;
+* `driveUpload.writeFileInResolvedFolder` — l'écriture d'un envoi d'expérience —
+  est appelée sous ce verrou : le couple *(chercher le fichier par son nom →
+  l'écraser ou le créer)* forme **un seul travail** par `(dossier, nom)`. Les
+  appelants simultanés **partagent l'envoi**, donc le même identifiant, et un seul
+  fichier naît. La clé porte le dossier **RÉSOLU** (un identifiant), jamais un
+  chemin nominal : deux chemins différents peuvent viser le même dossier, et
+  l'inverse ;
+* `driveUpload.uploadWorkspaceFile` (sauvegardes hebdomadaires, `state.json`,
+  `figures-library.json`, documents de section…) est protégé par le **même**
+  verrou : son dossier est désormais résolu *avant* la clé
+  (`workspaceBackupFolderId`), l'écriture restant dans `writeWorkspaceFileOnce`.
+  Ce second chemin s'appelait lui aussi « chercher puis écrire » ;
+* **rien d'autre ne change** : un envoi *postérieur* du même nom retrouve le
+  fichier et le **remplace** (un PATCH, pas un second POST) ; un échec libère la
+  clé, donc le prochain appel cherche et écrit pour de vrai ; le même nom dans un
+  **autre** dossier reste un autre fichier. Le dépôt du `.pdb` d'un code, lui,
+  n'avait rien à voir (appel unique et séquentiel).
+
+Vérifié hors navigateur par `_upload_twins_test.mjs` (**33 vérifications**) : la
+clé pure, un **témoin** de l'ancienne règle (six envois simultanés → SIX fichiers,
+journal à l'appui), puis le correctif sur le module réel branché sur un faux Drive
+(six envois → **un** fichier, un seul identifiant, une seule création), le
+remplacement postérieur, un autre dossier pour le même nom, et un Drive muet (5xx)
+où la clé est bien libérée. Régressions : `_folder_race_test.mjs` **47**,
+`_drive_structure_test.mjs` **140**, `_drive_folder_anchor_test.mjs` **51**,
+`_dataset_dir_twins_test.mjs` **53**, `_drive_restore_test.mjs` **251**,
+`_experiment_move_drive_test.mjs` **63**, `_drive_mirror_test.mjs` **79**,
+`_drive_purge_test.mjs` **40**, `_workspace_drive_test.mjs` **60**,
+`_workspace_keys_test.mjs` **39**, `_figure_svg_drive_test.mjs` **162**,
+`_library_restore_test.mjs` **175**, `_project_drive_doc_test.mjs` **61** ;
+`npx oxlint` — **0 erreur** ; `npx vite build` ✓.
+
+**Ce qui reste sur le Drive** : les jumeaux **déjà écrits** (142 dossiers). Le
+correctif empêche d'en créer de nouveaux, il ne supprime rien — et il ne faut rien
+supprimer à l'aveugle. Ce sont des copies **identiques** (le `_meta.json` du même
+dossier, même taille) : l'application en relit une, la même qu'elle réécrit, et
+leur seul coût est la place (519 octets × 142). Si tu veux les ramasser — à la
+CORBEILLE, jamais une suppression définitive — dis-le : j'écris la passe qui
+retrouve, par dossier, les fichiers de même nom de même taille, en garde un et met
+les autres à la corbeille (`_repair_drive_twins.mjs` sait déjà faire ce genre de
+geste pour les dossiers).
+
+
+
+
 
 
 
