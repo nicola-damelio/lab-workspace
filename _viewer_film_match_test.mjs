@@ -94,10 +94,10 @@ eq(FILM_BACKDROP_DEFAULT, '#f8fafc', 'le défaut du module EST le fond par défa
 has('const backdrop = filmBackdropColor(background);', 'la toile de film valide la couleur de la scène');
 has('ctx.fillStyle = backdrop;\n        ctx.fillRect(0, 0, w, h);',
   '…et REMPLIT son fond avant de recopier la scène');
-has('const film = filmCanvasFor(canvas, vignetteDarkness, backgroundSpecOf(bgColor, bgGradient), rayLiveOn ? rayShadowCanvasRef.current : null);',
-  'le 🎬 de la trajectoire passe la SPÉCIFICATION du fond (la couleur de la scène ET la rampe ⬚, voir utils/viewerBackground)');
-has(': Number.NaN, backgroundSpecOf(bgColor, bgGradient), rayLiveOn ? rayShadowCanvasRef.current : null);',
-  'le 🎞 des poses aussi (les deux films ont le même fond)');
+has('const film = filmCanvasFor(canvas, vignetteDarkness, bgSpecLive(), rayLiveOn ? rayShadowCanvasRef.current : null);',
+  'le 🎬 de la trajectoire passe la SPÉCIFICATION VIVANTE du fond (la couleur de la scène ET la rampe ⬚, angle de la lampe compris — voir utils/viewerBackground)');
+has(': Number.NaN, bgSpecLive(), rayLiveOn ? rayShadowCanvasRef.current : null);',
+  'le 🎞 des poses aussi (les deux films ont le même fond, et c’est celui de l’écran)');
 /* L'ORDRE DU COMPOSITE est ce qui fait qu'une ombre assombrit le fond au lieu de le
    couvrir : le fond, puis la scène, puis la vignette. */
 ok(VIEW.indexOf('ctx.fillStyle = backdrop;') < VIEW.indexOf('ctx.drawImage(source, 0, 0, w, h);'),

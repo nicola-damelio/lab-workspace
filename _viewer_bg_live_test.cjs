@@ -87,6 +87,14 @@ check(PROBE.includes('getComputedStyle(canvas).backgroundImage'),
   '…la lecture passe par le CSS RÉELLEMENT COMPOSÉ par le navigateur');
 check(PROBE.includes('sampleIdle') && PROBE.includes('longtask'),
   '…et le repos est mesuré (images, mutations du DOM, tâches longues)');
+check(PROBE.includes('const composedOf = async (canvas) => {') && PROBE.includes('drawImage(canvas, 0, 0, w, h)'),
+  '…et elle lit le PIXEL COMPOSÉ : le bitmap RÉEL d’NGL par-dessus la couche CSS du canvas (preserveDrawingBuffer, ngl 2.4)');
+check(PROBE.includes('cssLayerBitmap') && PROBE.includes('foreignObject'),
+  '…en faisant rasteriser la rampe PAR LE NAVIGATEUR (SVG foreignObject + la MÊME chaîne CSS) — aucun rasteriseur recopié');
+check(PROBE.includes('contentAlpha') && PROBE.includes('drawImage(canvas, Math.round(-w / 2)'),
+  '…et en lisant l’ALPHA du rendu seul : sans lui, « la rampe est dans le CSS » ne dirait pas « la rampe est visible »');
+check(PROBE.includes("PHASE === 'ramp'"), '…avec une phase dédiée : le viewer s’ouvre sur une rampe allumée, sans aucun geste');
+check(PROBE.includes('paleVsToday'), '…et la comparaison chiffrée du défaut pâle d’hier avec celui d’aujourd’hui');
 check(PROBE.includes("document.getElementById('viewer-background')"),
   '…sur le VRAI panneau (#viewer-background) du viewer');
 
@@ -200,6 +208,12 @@ const main = async () => {
      un ⬚ Gradient pressé pendant que le rappel automatique est encore en vol. ─── */
   console.log('--- troisième mesure : 📌 un style puis un ⬚ juste après l’ouverture ---');
   const run3 = await runOnce('?phase=define');
+
+  /* ── ET LE PIXEL : la phase `ramp` — le viewer s'ouvre sur une rampe ALLUMÉE, sans
+     le moindre geste (« I open the instance and the background is uniform »), et la
+     sonde lit la rampe rasterisée par le navigateur PUIS l'écran COMPOSÉ. ───────── */
+  console.log('--- quatrième mesure : ☀ le pixel composé (rampe rouge → bleu) ---');
+  const run4 = await runOnce('?phase=ramp');
   server.close();
 
   /* ── 5 · le verdict (le PREMIER passage : le viewer tel qu'il s'ouvre) ───── */
@@ -372,6 +386,61 @@ const main = async () => {
     '…et aucune tâche longue nouvelle ne vient du fond',
     idleBefore.longTaskMs + ' ms → ' + idleAfter.longTaskMs + ' ms');
   (d.log || []).forEach((l) => console.log('   [page] ' + l));
+
+  /* ── 7 · ☀ LA RAMPE SE VOIT-ELLE VRAIMENT ? — LE PIXEL COMPOSÉ, PAS LE CSS ────
+     Le rapport de cette session : « it has worked in the past for some seconds but
+     now nothing happens, ONLY UNIFORM BACKGROUND ». Une rampe écrite dans le CSS et
+     un fond UNI peuvent être le MÊME écran : la sonde ne lisait que le CSS, et le CSS
+     ne dit pas ce que l'œil reçoit. Elle lit désormais le pixel COMPOSÉ (composedOf) —
+     la rampe rasterisée par le navigateur, PUIS le rendu d'NGL par-dessus — plus
+     l'alpha du rendu seul (0 = la couche CSS est visible À TRAVERS la toile). Quatre
+     états : la rampe du rapport (le viewer s'ouvre avec elle, sans aucun geste), la
+     rampe par défaut allumée à la main, la rampe éteinte (le témoin « fond uni »), et
+     le défaut pâle d'hier contre celui d'aujourd'hui. */
+  const r4 = run4.verdict || {};
+  const rampCase = ((r4.cases || []).find((c) => c.id === 'ramp')) || {};
+  const rampPix = rampCase.composed || {};
+  console.log('\n--- 7. LE PIXEL COMPOSÉ (ce que l’œil reçoit, pas ce que dit le CSS) ---');
+  check(!!rampCase.inline && /linear-gradient\(/.test(String(rampCase.inline)),
+    'le viewer s’ouvre sur la rampe enregistrée SANS LE MOINDRE GESTE (rien n’a été cliqué)',
+    String(rampCase.inline).slice(0, 88));
+  check(rampCase.rampSeen === true,
+    '…la rampe du magasin est bien arrivée sur le canvas (la sonde l’a ATTENDUE)',
+    String(rampCase.rampSeen));
+  check(rampCase.boxSeen === true,
+    '…et la vue avait une VRAIE boîte au moment de la mesure (sinon le chiffre serait faux)',
+    String(rampCase.boxSeen));
+  check(!!rampPix.box && rampPix.box[1] > 100,
+    '…et la toile mesurée a une VRAIE boîte (plus le trait de 1 px de la première sonde)',
+    JSON.stringify(rampPix.box));
+  check(rampPix.contentAlpha === 0,
+    '⚠ LE RENDU D’NGL EST TRANSPARENT LÀ OÙ IL N’Y A RIEN : la couche CSS du canvas est donc visible À TRAVERS lui',
+    'alpha du rendu = ' + String(rampPix.contentAlpha));
+  check(!!rampPix.ramp && rampPix.rampGap > 250,
+    'la rampe rasterisée par le navigateur va bien de A (rouge) à B (bleu), coins compris',
+    JSON.stringify(rampPix.rampHex));
+  check(!!rampPix.screen && rampPix.screenGapMaxChannel > 100,
+    '⚠⚠ L’ÉCRAN COMPOSÉ PORTE LA MÊME RAMPE : le fond n’est PAS uni — le rapport, MESURÉ',
+    'écran ' + JSON.stringify(rampPix.screenHex) + ' · écart max = ' + String(rampPix.screenGapMaxChannel));
+  const pale = rampCase.paleToday || base.paleToday || {};
+  check(pale.gapPale > 0 && pale.gapToday > pale.gapPale,
+    '☀ …et le défaut du jour se VOIT PLUS que le défaut pâle d’hier — la correction du rapport, chiffrée',
+    'écart pâle ' + pale.gapPale + ' → aujourd’hui ' + pale.gapToday + ' (' + JSON.stringify(pale.hexPale) + ' puis ' + JSON.stringify(pale.hexToday) + ')');
+  const defPix = (p.after && p.after.composed) || {};
+  check(!!defPix.screen && defPix.screenGapMaxChannel > 15,
+    '…et la rampe PAR DÉFAUT (allumée à la main) se voit elle aussi à l’écran',
+    JSON.stringify(defPix.screenHex) + ' · écart max = ' + String(defPix.screenGapMaxChannel));
+  check(!!defPix.rampHex && defPix.rampHex.topLeft !== defPix.rampHex.bottomRight,
+    '…A et B du défaut sont deux couleurs différentes (jamais une rampe d’une seule teinte)',
+    JSON.stringify(defPix.rampHex));
+  const offPix = (p.off && p.off.composed) || {};
+  check(offPix.rampGap === null || offPix.rampGap === 0,
+    '…et rampe ÉTEINTE, le canvas ne porte AUCUNE image de fond : l’écran reprend la couleur d’NGL',
+    'rampe éteinte : écart=' + String(offPix.rampGap) + ' · css=' + String(offPix.css));
+  const definePix = ((d3cases.find((c) => c.id === 'define') || {}).composed) || {};
+  check(!!definePix.screen && definePix.screenGapMaxChannel <= 2,
+    '…et la phase 📌 (rampe ÉTEINTE) donne bien un fond UNI : le témoin qui rend les mesures ci-dessus significatives',
+    'écart max = ' + String(definePix.screenGapMaxChannel) + ' · ' + JSON.stringify(definePix.screenHex));
 
   const failed = CHECKS.filter((c) => !c.ok);
   failed.forEach((f) => console.log('   ÉCHEC ' + f.label));

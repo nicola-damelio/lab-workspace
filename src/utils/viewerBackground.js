@@ -44,13 +44,27 @@
    _viewer_background_test.mjs et _viewer_background_pixels_test.cjs.
    ========================================================================= */
 
-/** Le DÉFAUT de la seconde couleur : un gris clair, choisi pour que la rampe
- *  par défaut (fond blanc → gris clair, du haut vers le bas) reste discrète. */
-export const BG_GRADIENT_DEFAULT_TO = '#cbd5e1';
+/** ⚠ LE DÉFAUT DE LA SECONDE COULEUR A CHANGÉ, ET C'EST LA CORRECTION DU RAPPORT
+ *  « the gradient does not work … only uniform background ». Il était `#cbd5e1`
+ *  (slate-300) à côté d'une couleur de scène `#f8fafc` : la rampe par défaut
+ *  allait d'un blanc cassé à un gris si proche de lui que l'œil en lisait un
+ *  fond UNI — et l'utilisateur, lui, concluait que le dégradé ne marchait pas.
+ *  Le défaut est donc slate-400 : deux arrêts qu'on distingue d'un bout à
+ *  l'autre de la vue, sans crier. Un magasin qui porte ENCORE le défaut pâle
+ *  d'hier est reconnu et reçoit celui-ci (refreshPaleBgGradient) ; une couleur
+ *  CHOISIE n'est jamais touchée. */
+export const BG_GRADIENT_DEFAULT_TO = '#94a3b8';
+/** Le défaut PÂLE d'hier (slate-300), gardé NOMMÉ pour cette seule reconnaissance. */
+export const BG_GRADIENT_PALE_TO = '#cbd5e1';
 /** 180° = du HAUT vers le BAS (la convention CSS : 0° va vers le haut). */
 export const BG_GRADIENT_DEFAULT_ANGLE = 180;
 /** Un fond dégradé n'est JAMAIS imposé : le viewer s'ouvre sur sa couleur unie. */
 export const BG_GRADIENT_DEFAULT_ON = false;
+/** ☀ LA RAMPE VA DANS LA DIRECTION DE LA LAMPE — le défaut du jour. La demande de
+ *  cette session : « add the gradient in the direction of the light ». Seul un
+ *  refus EXPLICITE (`light: false`, écrit par les huit flèches ou par le curseur
+ *  d'angle) remet l'angle du magasin aux commandes. */
+export const BG_GRADIENT_DEFAULT_LIGHT = true;
 /** Le DÉFAUT du MILIEU — le TROISIÈME arrêt de la rampe (la demande : « if there
  *  were three colours it would be even more interesting »). Une teinte franche,
  *  choisie pour se VOIR entre A et B ; il ne sert que quand `midOn` est vrai. */
@@ -104,17 +118,33 @@ export const bgGradientOf = (value) => {
     // une couleur illisible retombe sur le défaut du module, jamais sur du noir.
     mid: normalizeBgColor(v.mid, BG_GRADIENT_DEFAULT_MID) || BG_GRADIENT_DEFAULT_MID,
     midOn: v.midOn === true,
+    /* ☀ LA DIRECTION SUIT LA LAMPE — par DÉFAUT, et pour toujours : `false` est un
+       choix explicite (les huit flèches, le curseur d'angle), absent veut dire
+       « comme le viewer sait le faire ». Un fichier écrit avant ce champ suit donc
+       la lampe lui aussi, sans que son angle enregistré soit perdu pour autant :
+       reprendre la main sur la direction le fait réapparaître. */
+    light: v.light !== false,
   };
 };
 
+/** LE DÉFAUT PÂLE D'HIER, RAFRAÎCHI UNE SEULE FOIS — jamais un choix de
+ *  l'utilisateur. Un magasin dont la seconde couleur est EXACTEMENT `#cbd5e1`
+ *  (le défaut de la première version, celui que l'œil lisait comme un fond uni,
+ *  voir BG_GRADIENT_DEFAULT_TO) reçoit le défaut du jour. Tout autre magasin
+ *  passe inchangé : une couleur choisie, un fichier, un objet bricolé. */
+export const refreshPaleBgGradient = (g) => (
+  g && g.to === BG_GRADIENT_PALE_TO ? { ...g, to: BG_GRADIENT_DEFAULT_TO } : g
+);
+
 /** Ce que localStorage rend : une CHAÎNE JSON (ou rien). Un magasin illisible
- *  rend le dégradé par défaut, jamais une exception. */
+ *  rend le dégradé par défaut, jamais une exception — et le défaut pâle d'hier
+ *  est rafraîchi (voir refreshPaleBgGradient). */
 export const readBgGradient = (raw) => {
   if (raw == null || raw === '') return bgGradientOf(null);
   if (typeof raw === 'string') {
-    try { return bgGradientOf(JSON.parse(raw)); } catch { return bgGradientOf(null); }
+    try { return refreshPaleBgGradient(bgGradientOf(JSON.parse(raw))); } catch { return bgGradientOf(null); }
   }
-  return bgGradientOf(raw);
+  return refreshPaleBgGradient(bgGradientOf(raw));
 };
 
 /* LA SPÉCIFICATION DU FOND — la seule que les trois consommateurs lisent. */
@@ -155,6 +185,30 @@ export const gradientSpecOf = (spec) => {
 export const bgDirectionOf = (angle) => {
   const a = normalizeBgAngle(angle, BG_GRADIENT_DEFAULT_ANGLE);
   return BG_DIRECTIONS.find((d) => d.angle === a) || null;
+};
+
+/* ☀ L'ANGLE DE LA RAMPE QUI VA DANS LA DIRECTION DE LA LAMPE — la demande de
+   cette session : « add the gradient in the direction of the light ».
+   `light` est le vecteur unitaire DU RIG (nglKeyLightDirection, voir
+   utils/viewerLightRig.js) : il va DE la molécule VERS la lampe, dans l'espace
+   d'NGL — x > 0 est la GAUCHE de l'écran (la caméra d'NGL regarde le long de
+   +z), y > 0 est le HAUT.
+   La rampe part du côté ÉCLAIRÉ (A — la couleur de la scène, là où la lampe est)
+   et va vers le côté qu'elle a quitté (B) : à l'écran, son vecteur est donc
+   l'OPPOSÉ de la lampe, soit (x, y) en coordonnées de canvas (l'axe Y descend).
+   L'angle CSS de ce vecteur se lit `atan2(dx, −dy)` — 0° vers le haut, 90° vers
+   la droite, la convention de tout ce fichier — d'où `atan2(x, −y)`.
+   La lampe par défaut (azimut 25°, élévation 28° : en haut à gauche) donne donc
+   142°, c'est-à-dire « du coin haut-gauche vers le coin bas-droit » — la
+   direction MÊME où les ombres de la vue tombent, puisque l'ombre fuit la lampe.
+   Une lampe pile derrière la caméra (azimut 180° / élévation 0° : elle n'éclaire
+   que le plan de l'écran, il n'y a aucune direction à y projeter) rend l'angle
+   par défaut, celui d'avant. PURE — donc exécutée sous node. */
+export const bgAngleFromLight = (light) => {
+  const x = Number(light && light.x) || 0;
+  const y = Number(light && light.y) || 0;
+  if (Math.abs(x) < 1e-6 && Math.abs(y) < 1e-6) return BG_GRADIENT_DEFAULT_ANGLE;
+  return normalizeBgAngle((Math.atan2(x, -y) * 180) / Math.PI);
 };
 
 /** LE CSS DU FOND VIVANT — `backgroundImage` du canvas NGL, ou `''` quand le

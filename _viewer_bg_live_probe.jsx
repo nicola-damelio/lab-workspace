@@ -208,13 +208,16 @@ const sampleIdle = async (ms) => {
   };
 };
 
-/* ── 5. LE CANVAS D'NGL (le SEUL de la vue qui soit WebGL) ──────────────── */
-const glCanvas = () => {
-  const list = Array.prototype.slice.call(document.querySelectorAll('canvas'));
-  return list.find((c) => {
-    try { return !!(c.getContext('webgl2') || c.getContext('webgl')); } catch { return false; }
-  }) || null;
-};
+/* ── 5. LE CANVAS D'NGL (le SEUL de la vue qui soit WebGL) ────────────────
+   ⚠ SANS JAMAIS CRÉER DE CONTEXTE SUR UNE AUTRE TOILE : l'ancienne version
+   demandait `getContext('webgl2')` à chaque canvas de la page, ce qui MARCHE —
+   mais qui, tant que l'étage n'existe pas encore, transformait la toile 2D de
+   l'ombre vivante en toile WebGL et la rendait ensuite inutilisable (mesuré : la
+   phase `ramp` mesurait une boîte de 300×150, la taille par défaut d'un canvas, au
+   lieu des 2100×620 de la vue). Le canvas d'NGL se reconnaît SANS RIEN CRÉER :
+   c'est le seul sur lequel NGL a écrit sa couleur de fond (`setBackground`). */
+const glCanvas = () => Array.prototype.slice.call(document.querySelectorAll('canvas'))
+  .find((c) => String((c.style && c.style.backgroundColor) || '') !== '') || null;
 /* Le clic sur le FOND, exactement comme la sonde des pixels : `mousedown` puis
    `mouseup` sur la toile, dans un COIN (aucun atome) — c'est ce que NGL traduit
    en `stage.signals.clicked` sans atome, la branche du viewer qui bascule
@@ -228,6 +231,162 @@ const clickCanvas = (canvas, x, y) => {
    état (`aria-pressed`) et se nomme « Gradient ». */
 const switchOf = (panel) => Array.prototype.slice.call((panel || document).querySelectorAll('button'))
   .find((b) => b.hasAttribute('aria-pressed') && /Gradient/i.test(b.textContent || '')) || null;
+
+/* ── 5ter. ☀ LA RAMPE EST-ELLE VISIBLE ? LE PIXEL COMPOSÉ, PAS LE CSS ─────────
+   Lire le CSS ne prouve pas ce que l'œil voit : `backgroundImage` peut très bien
+   être écrite sur la toile et ne JAMAIS paraître. C'est le trou de la première
+   sonde, et il est exactement là où le rapport de cette session se place — « it has
+   worked in the past for some seconds but now nothing happens, ONLY UNIFORM
+   BACKGROUND » : une rampe présente dans le CSS et un fond uni peuvent être le même
+   écran.
+
+   NGL construit son renderer avec `alpha: true` ET `preserveDrawingBuffer: true`
+   (lu dans _ngl_src/viewer__viewer.ts) : `drawImage(canvas)` rend donc le bitmap
+   RÉEL, alpha compris, à n'importe quel moment. La sonde empile alors les deux
+   couches comme le navigateur le fait pour l'ÉLÉMENT — le CSS du canvas DERRIÈRE,
+   le rendu d'NGL DEVANT — puis elle lit trois lignes : haut, milieu, bas. C'est
+   l'écran, au pixel près, sans capture d'écran et sans CDP.
+
+   ⚠ LA COUCHE CSS EST RASTERISÉE PAR LE NAVIGATEUR LUI-MÊME. `fillStyle` d'un
+   contexte 2D n'accepte PAS une chaîne `linear-gradient(…)`, donc la rampe est
+   peinte par le moteur dans un `<foreignObject>` SVG (la MÊME chaîne CSS, servie en
+   `data:` URL) puis recopiée. Aucune règle du module du fond n'est recopiée ici :
+   c'est un INSTRUMENT de mesure, jamais une seconde implémentation. */
+const cssLayerBitmap = async (css, w, h) => {
+  const grad = css && css !== 'none' ? css : 'transparent';
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}">`
+    + `<foreignObject x="0" y="0" width="${w}" height="${h}">`
+    + `<div xmlns="http://www.w3.org/1999/xhtml" style="width:${w}px;height:${h}px;background-image:${grad}"></div>`
+    + `</foreignObject></svg>`;
+  const img = new Image();
+  img.width = w;
+  img.height = h;
+  img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+  try { await img.decode(); } catch { return null; }
+  const c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  const ctx = c.getContext('2d');
+  if (!ctx) return null;
+  try { ctx.drawImage(img, 0, 0, w, h); } catch { return null; }
+  return c;
+};
+/* LES LIGNES D'UNE TOILE — le haut (2 %), le milieu (50 %) et le bas (98 %) au CENTRE
+   horizontalement, PLUS les deux coins (2 %, 2 %) et (98 %, 98 %) : la molécule est
+   au milieu, les coins sont donc du FOND à coup sûr, et sur une rampe diagonale (☀
+   la direction de la lampe) ce sont exactement ses deux extrémités. */
+const rowsOf = (source, w, h) => {
+  const c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  const ctx = c.getContext('2d');
+  if (!ctx) return null;
+  try { ctx.drawImage(source, 0, 0, w, h); } catch { return null; }
+  const px = (x, y) => Array.prototype.slice.call(ctx.getImageData(
+    Math.max(0, Math.min(w - 1, Math.round(x))), Math.max(0, Math.min(h - 1, Math.round(y))), 1, 1
+  ).data, 0, 4);
+  const mid = Math.max(0, Math.round(w / 2) - 1);
+  return {
+    top: px(mid, h * 0.02),
+    middle: px(mid, h * 0.5),
+    bottom: px(mid, h * 0.98),
+    topLeft: px(w * 0.02, h * 0.02),
+    bottomRight: px(w * 0.98, h * 0.98),
+  };
+};
+const hexOfRow = (row) => (row ? '#' + row.slice(0, 3).map((v) => v.toString(16).padStart(2, '0')).join('') : null);
+/* L'ÉCART ENTRE LES DEUX EXTRÉMITÉS MESURÉES — la somme des trois canaux : c'est le
+   nombre qui dit « une rampe se voit » (0 = fond uni). */
+const rowGap = (a, b) => (a && b ? Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[2] - b[2]) : null);
+const maxChannelGap = (a, b) => (a && b ? Math.max(Math.abs(a[0] - b[0]), Math.abs(a[1] - b[1]), Math.abs(a[2] - b[2])) : null);
+
+/* LE PIXEL COMPOSÉ DE LA BOÎTE DU CANVAS — la rampe SEULE (ce que l'œil verrait si
+   la toile était vide), puis la rampe SOUS le rendu d'NGL, et l'alpha du contenu
+   tout seul (0 = la couche CSS est visible AU TRAVERS de la toile ; 255 = elle est
+   recouverte, et l'écran est donc UNI quoi que dise le CSS). */
+const composedOf = async (canvas) => {
+  const b = canvas.getBoundingClientRect();
+  const w = Math.max(1, Math.round(b.width));
+  const h = Math.max(1, Math.round(b.height));
+  const css = String(getComputedStyle(canvas).backgroundImage || 'none');
+  const out = { box: [w, h], css: css.slice(0, 96), ramp: null, screen: null, rampHex: null, screenHex: null, rampGap: null, screenGap: null, screenGapMaxChannel: null, contentAlpha: null };
+  const layer = await cssLayerBitmap(css, w, h);
+  const stack = document.createElement('canvas');
+  stack.width = w;
+  stack.height = h;
+  const ctx = stack.getContext('2d');
+  if (!ctx) return out;
+  /* ⚠ LA COULEUR D'ABORD, LA RAMPE ENSUITE — exactement la pile du CSS
+     (`background-image` SUR `background-color`), sans quoi la couche serait
+     transparente là où la rampe est éteinte et la mesure mentirait. */
+  ctx.fillStyle = canvas.style.backgroundColor || '#ffffff';
+  ctx.fillRect(0, 0, w, h);
+  if (layer) {
+    ctx.drawImage(layer, 0, 0, w, h);
+    out.ramp = rowsOf(layer, w, h);
+    if (out.ramp) {
+      out.rampHex = { top: hexOfRow(out.ramp.top), bottom: hexOfRow(out.ramp.bottom), topLeft: hexOfRow(out.ramp.topLeft), bottomRight: hexOfRow(out.ramp.bottomRight) };
+      out.rampGap = rowGap(out.ramp.topLeft, out.ramp.bottomRight);
+    }
+  }
+  try {
+    ctx.drawImage(canvas, 0, 0, w, h);        // ⚠ possible : preserveDrawingBuffer
+    out.screen = rowsOf(stack, w, h);
+    if (out.screen) {
+      out.screenHex = { top: hexOfRow(out.screen.top), middle: hexOfRow(out.screen.middle), bottom: hexOfRow(out.screen.bottom), topLeft: hexOfRow(out.screen.topLeft), bottomRight: hexOfRow(out.screen.bottomRight) };
+      out.screenGap = rowGap(out.screen.topLeft, out.screen.bottomRight);
+      out.screenGapMaxChannel = maxChannelGap(out.screen.topLeft, out.screen.bottomRight);
+    }
+  } catch { out.screen = null; }
+  const probe = document.createElement('canvas');
+  probe.width = 1;
+  probe.height = 1;
+  const pctx = probe.getContext('2d');
+  if (pctx) {
+    try {
+      pctx.drawImage(canvas, Math.round(-w / 2), Math.round(-h * 0.06), w, h);
+      out.contentAlpha = pctx.getImageData(0, 0, 1, 1).data[3];
+    } catch { out.contentAlpha = null; }
+  }
+  return out;
+};
+/* LE DÉFAUT PÂLE D'HIER CONTRE CELUI D'AUJOURD'HUI — la mesure qui explique le
+   rapport « only uniform background ». Les deux chaînes sont celles que le module
+   écrit (le format de tout ce fichier), et c'est le navigateur qui les rasterise.
+   Le magasin du jour RÉÉCRIT le défaut pâle (voir le module), donc cette
+   comparaison ne peut pas passer par la page : elle est faite ici, en clair. */
+const paleVsToday = async (w, h) => {
+  const rows = (layer) => (layer ? rowsOf(layer, w, h) : null);
+  const pale = rows(await cssLayerBitmap('linear-gradient(180deg, #f8fafc 0%, #cbd5e1 100%)', w, h));
+  const today = rows(await cssLayerBitmap('linear-gradient(180deg, #f8fafc 0%, #94a3b8 100%)', w, h));
+  const ends = (r) => [r && r.topLeft, r && r.bottomRight];
+  return {
+    pale, today,
+    gapPale: rowGap(...ends(pale)), gapToday: rowGap(...ends(today)),
+    maxPale: maxChannelGap(...ends(pale)), maxToday: maxChannelGap(...ends(today)),
+    hexPale: { top: hexOfRow(pale && pale.topLeft), bottom: hexOfRow(pale && pale.bottomRight) },
+    hexToday: { top: hexOfRow(today && today.topLeft), bottom: hexOfRow(today && today.bottomRight) },
+  };
+};
+/* ⚠ LA VUE A BESOIN D'UNE VRAIE BOÎTE POUR LA MESURE CI-DESSUS. Le viewer se
+   dimensionne sur ses ancêtres (`h-full`) : hors de la page de l'application la
+   chaîne de hauteurs peut se rompre et la toile retomber à 1 px (déjà mesuré :
+   « host: [2100, 1] » — une rampe ne mesurerait alors qu'un trait). La sonde force
+   donc la hauteur des ancêtres de la toile, en s'arrêtant à #root, et laisse NGL se
+   redimensionner. */
+const growViewer = async (canvas) => {
+  const grew = [];
+  let el = canvas.parentElement;
+  while (el && el !== container) {
+    const h = Math.round(el.getBoundingClientRect().height);
+    if (h < 420) { el.style.height = '620px'; el.style.minHeight = '620px'; grew.push(h); }
+    el = el.parentElement;
+  }
+  await sleep(150);
+  await raf();
+  const box = canvas.getBoundingClientRect();
+  return { grew, canvas: [Math.round(box.width), Math.round(box.height)] };
+};
 
 /* ── 6. LE MONTAGE DU VRAI VIEWER ───────────────────────────────────────── */
 /* ⚠ LA PAGE DOIT DONNER UNE VRAIE BOÎTE À LA VUE. Le viewer se dimensionne sur
@@ -306,7 +465,12 @@ const runDefine = async () => {
   await waitFor(() => canvas.style.backgroundColor, 25000);
   await sleep(300);
   const pressed = clickByText('📌 Define style');
-  OUT.cases.push({ id: 'define', pressed, ramp: rampOf(canvas), stored: (() => { try { return localStorage.getItem('labViewerBgGradient'); } catch { return null; } })() });
+  await growViewer(canvas);
+  OUT.cases.push({
+    id: 'define', pressed, ramp: rampOf(canvas),
+    composed: await composedOf(canvas),   // ⬚ la rampe est ÉTEINTE ici : le témoin « fond uni »
+    stored: (() => { try { return localStorage.getItem('labViewerBgGradient'); } catch { return null; } })(),
+  });
   await sleep(1200);          // laisse l'écriture (mémoire + fichier) se faire
   await post({});
   location.replace('/?phase=revert');
@@ -326,10 +490,43 @@ const runRevert = async () => {
   const pressedAt = performance.now();
   if (sw0) sw0.click();
   await sleep(250);
-  const early = { ramp: rampOf(canvas), pressed: switchPressed(), at: Math.round(performance.now() - pressedAt) };
+  const early = { ramp: rampOf(canvas), pressed: switchPressed(), at: Math.round(performance.now() - pressedAt), composed: await composedOf(canvas) };
   await sleep(1950);          // bien après l'échéance du rappel
-  const late = { ramp: rampOf(canvas), pressed: switchPressed(), at: Math.round(performance.now() - pressedAt) };
+  const late = { ramp: rampOf(canvas), pressed: switchPressed(), at: Math.round(performance.now() - pressedAt), composed: await composedOf(canvas) };
   OUT.cases.push({ id: 'revert', early, late, stories: { snapshots: (() => { try { return Object.keys(JSON.parse(localStorage.getItem('labViewerSnapshots') || '{}')); } catch { return []; } })() } });
+  OUT.stage = 'done';
+  await post({});
+};
+
+/* LA PHASE `ramp` — LE CAS DU RAPPORT, MESURÉ AU PIXEL : le viewer s'ouvre sur une
+   rampe ALLUMÉE et l'on ne touche à RIEN (ni clic sur le fond, ni interrupteur).
+   « I open the instance and the background is uniform » n'a alors plus nulle part où
+   se cacher : la sonde lit la rampe telle que le navigateur la rasterise, puis le
+   pixel COMPOSÉ (la rampe sous le rendu d'NGL), et l'alpha du rendu tout seul. */
+const runRamp = async () => {
+  OUT.stage = 'ramp';
+  await post({});
+  const canvas = await waitFor(glCanvas, 25000);
+  if (!canvas) { OUT.stage = 'fatal'; log('aucun canvas WebGL (phase ramp)'); await post({}); return; }
+  const grown = await growViewer(canvas);
+  /* ⚠ ON ATTEND LA RAMPE ELLE-MÊME (le réglage est relu du magasin au montage, et
+     la pose demande que l'étage existe) PUIS une VRAIE BOÎTE : mesurer plus tôt
+     mesurerait une toile de 300×150 sans fond — déjà vu, et le chiffre serait faux. */
+  const rampSeen = await waitFor(() => (String(canvas.style.backgroundImage || '') ? canvas.style.backgroundImage : null), 12000);
+  const boxSeen = await waitFor(() => (canvas.getBoundingClientRect().height > 100 ? canvas : null), 8000);
+  await sleep(300);
+  if (!rampSeen) log('⚠ la rampe du magasin n’est jamais arrivée sur le canvas (phase ramp)');
+  OUT.cases.push({
+    id: 'ramp',
+    grown,
+    rampSeen: !!rampSeen,
+    boxSeen: !!boxSeen,
+    composed: await composedOf(canvas),
+    paleToday: await paleVsToday(160, 240),
+    cssBg: canvas.style.backgroundColor,
+    inline: canvas.style.backgroundImage,
+    stored: (() => { try { return localStorage.getItem('labViewerBgGradient'); } catch { return null; } })(),
+  });
   OUT.stage = 'done';
   await post({});
 };
@@ -341,9 +538,21 @@ const main = async () => {
   OUT.ngl = loaded ? 'local' : (window.NGL ? 'déjà là' : 'absent');
   OUT.watched = watchNgl();
   /* 2. Le viewer ENSUITE : il trouvera `window.NGL` et montera aussitôt. */
+  /* ⚠ LA PHASE `ramp` PRÉPARE LE MAGASIN AVANT LE MONTAGE — c'est le cas même du
+     rapport, « I open the instance and the background is uniform » : une rampe
+     ALLUMÉE qu'on relit à l'ouverture, sans toucher à rien. Les deux clés sont
+     celles que le viewer écrit lui-même (elles sont lues par lui, jamais devinées) ;
+     les couleurs sont fortes pour qu'un pixel ne puisse pas mentir. */
+  if (PHASE === 'ramp') {
+    try {
+      localStorage.setItem('labViewerBg', '#ff0000');
+      localStorage.setItem('labViewerBgGradient', JSON.stringify({ on: true, to: '#0000ff', angle: 180 }));
+    } catch { /* ignore */ }
+  }
   mountViewer();
   if (PHASE === 'define') { await runDefine(); return; }
   if (PHASE === 'revert') { await runRevert(); return; }
+  if (PHASE === 'ramp') { await runRamp(); return; }
   await raf();
   OUT.stage = 'mount';
   await post({ shadows: SHADOWS });
@@ -354,6 +563,9 @@ const main = async () => {
      (`setBackground` → `style.backgroundColor`) : c'est le repère d'attente. */
   const painted = await waitFor(() => (canvas.style.backgroundColor ? canvas : null), 25000);
   if (!painted) { OUT.stage = 'fatal'; log('la scène n’a jamais pris sa couleur de fond (status pas prêt ?)'); await post({}); return; }
+  /* ⚠ UNE VRAIE BOÎTE POUR LA TOILE — sinon la rampe mesurée ne serait qu'un trait
+     (voir growViewer : c'est la mesure qui a fait sortir le « host: [2100, 1] »). */
+  const grown = await growViewer(canvas);
 
   const box = canvas.getBoundingClientRect();
   const boxOf = (el) => { const b = el && el.getBoundingClientRect(); return b ? [Math.round(b.width), Math.round(b.height)] : null; };
@@ -371,6 +583,10 @@ const main = async () => {
   }
   const base = {
     canvas: [Math.round(box.width), Math.round(box.height)],
+    grown,
+    /* ☀ LE DÉFAUT PÂLE D'HIER CONTRE CELUI DU JOUR — la mesure qui explique le
+       rapport, faite par le rasteriseur du navigateur (voir paleVsToday). */
+    paleToday: await paleVsToday(160, 240),
     boxes: {
       root: boxOf(container),
       viewer: boxOf(vEl),
@@ -426,6 +642,9 @@ const main = async () => {
       cssBg: canvas.style.backgroundColor,
       stored: (() => { try { return localStorage.getItem('labViewerBgGradient'); } catch { return null; } })(),
       canvas: (() => { const b = canvas.getBoundingClientRect(); return [Math.round(b.width), Math.round(b.height)]; })(),
+      /* ☀ LE PIXEL COMPOSÉ — la rampe telle que le navigateur la peint SOUS la
+         scène : c'est l'écran, et c'est ce que « le fond reste uni » met en doute. */
+      composed: await composedOf(canvas),
     };
   }
   OUT.stage = 'rampe-allumee';
@@ -462,6 +681,7 @@ const main = async () => {
       pressed: btn.getAttribute('aria-pressed'),
       inlineCss: canvas.style.backgroundImage,
       computedCss: getComputedStyle(canvas).backgroundImage,
+      composed: await composedOf(canvas),
     };
   }
 

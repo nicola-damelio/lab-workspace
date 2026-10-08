@@ -23,8 +23,8 @@ import {
 // 🎨 de §2 Scene) et 'B', plus l'angle ; tout est validé par le module.
 import {
   BG_DIRECTIONS, BG_GRADIENT_DEFAULT_ANGLE, BG_GRADIENT_DEFAULT_TO,
-  BG_GRADIENT_DEFAULT_MID, BG_GRADIENT_DEFAULT_MID_ON,
-  backgroundCss, backgroundSpecOf, bgDirectionOf, bgGradientOf,
+  BG_GRADIENT_DEFAULT_MID, BG_GRADIENT_DEFAULT_MID_ON, BG_GRADIENT_DEFAULT_LIGHT,
+  backgroundCss, backgroundSpecOf, bgAngleFromLight, bgDirectionOf, bgGradientOf,
   paintViewerBackground, readBgGradient, underlayBackdrop,
 } from '../utils/viewerBackground';
 /* ⏸ LA VUE S'ARRÊTE QUAND PERSONNE NE LA REGARDE — les deux boucles
@@ -9822,12 +9822,22 @@ const styleTouchedRef = useRef(false);
    ⚠ LE PREMIER PASSAGE D'UN EFFET N'EST PAS UN GESTE : React exécute chaque effet au
    montage, ce qui marquerait « tranché » avant même que le rappel parte — et il ne
    partirait jamais. Le registre `sceneSeenRef` retient qui a déjà parlé une fois : le
-   montage est muet, tout changement qui suit est un geste. */
+   montage est muet, tout changement qui suit est un geste.
+
+   ⚠⚠ ET UNE RÉ-EXÉCUTION N'EST PAS UN CHANGEMENT. Un effet se relance aussi quand une
+   de ses dépendances change d'IDENTITÉ sans changer de valeur (`applyFog` renaît dès
+   que son propre tableau de dépendances bouge) : compter ces passages-là comme des
+   gestes clôturerait le rappel tout seul, SANS que l'utilisateur ait rien touché — le
+   style retenu par l'instance ne reviendrait plus jamais, ce qui se lit exactement
+   comme « the gradient does not work » de ce rapport-ci. Le registre garde donc la
+   VALEUR de chaque réglage, et seul un changement de valeur est un geste. */
 const sceneSeenRef = useRef(null);
-if (!sceneSeenRef.current) sceneSeenRef.current = new Set();
-const sceneGesture = (key) => {
+if (!sceneSeenRef.current) sceneSeenRef.current = new Map();
+const sceneGesture = (key, value) => {
   const seen = sceneSeenRef.current;
-  if (!seen.has(key)) { seen.add(key); return; }   // le montage ne compte pas
+  if (!seen.has(key)) { seen.set(key, value); return; }   // le montage ne compte pas
+  if (seen.get(key) === value) return;                    // ⚠ une ré-exécution non plus
+  seen.set(key, value);
   styleTouchedRef.current = true;
 };
 const [pymolSession] = useState(() => loadPymolSessionFor(pymolSessionKeysRef.current, pymolOwnerRef.current));
@@ -9930,6 +9940,19 @@ const [bgPanelOpen, setBgPanelOpen] = useState(false);
    l'angle, une direction, ⇄, ↺) passe par ici — donc par le validateur du
    module, qui normalise l'angle et les deux couleurs d'un même geste. */
 const patchBgGradient = (patch) => setBgGradient((g) => bgGradientOf({ ...g, ...patch }));
+/* ☀ L'ANGLE VIVANT DE LA RAMPE — la lampe du rig (💡 Azimuth / Élévation, §3 Scene)
+   projetée à l'écran par le module du fond (bgAngleFromLight). ⚠ IL VIT DANS UNE
+   RÉFÉRENCE, ET PAS DANS L'ÉTAT `bgGradient` : une écriture de l'application n'est
+   PAS un geste de l'utilisateur, et l'état d'une installation ne doit pas se
+   réécrire tout seul (c'est ce qui clôt le rappel automatique, voir sceneGesture).
+   Les curseurs de la lampe le rafraîchissent au fil du glissement, sans rien
+   persister : la rampe suit la lumière, le magasin ne bouge pas. */
+const bgLightAngleRef = useRef(null);
+/* LA SPÉCIFICATION VIVANTE DU FOND — celle que peignent l'écran, les deux films et
+   la still : l'angle du magasin, OU celui de la lampe quand la rampe la suit. */
+const bgSpecLive = () => backgroundSpecOf(bgColor, bgGradient.light
+  ? { ...bgGradient, angle: bgLightAngleRef.current }
+  : bgGradient);
 
 /* ⬚ LE FOND VIVANT — la rampe est une `backgroundImage` posée sur le canvas
    NGL, PAR-DESSUS la couleur qu'NGL vient d'y écrire (voir le module : c'est
@@ -9940,7 +9963,7 @@ const applyBackgroundGradient = useCallback(() => {
   const stage = stageRef.current;
   const el = stage && stage.viewer && stage.viewer.renderer ? stage.viewer.renderer.domElement : null;
   if (!el || !el.style) return;
-  try { el.style.backgroundImage = backgroundCss(backgroundSpecOf(bgColor, bgGradient)); } catch { /* ignore */ }
+  try { el.style.backgroundImage = backgroundCss(bgSpecLive()); } catch { /* ignore */ }
 }, [bgColor, bgGradient]);
 
 // ---- Depth fog ----
@@ -10014,7 +10037,7 @@ const applyClip = useCallback(() => {
 }, []);
 
 useEffect(() => {
-  sceneGesture('clip');   // ✂ Clipping et ses trois valeurs
+  sceneGesture('clip', `${clipOn}|${clipNear}|${clipFar}|${clipDist}`);   // ✂ Clipping et ses trois valeurs
   try {
     localStorage.setItem('labViewerClip', clipOn ? `on:${clipNear}:${clipFar}:${clipDist}` : 'off');
   } catch { /* ignore */ }
@@ -10072,6 +10095,20 @@ shadowDirRef.current = { az: shadowAz, el: shadowEl };
    à cet endroit du corps, `shadowAz` / `shadowEl` sont déclarées (plus haut,
    elles seraient encore dans leur zone morte). */
 rayLiveParamsRef.current = { az: shadowAz, el: shadowEl, strength: rayShadowStrength, blur: rayShadowBlur };
+/* ☀ …ET LA MÊME LAMPE DONNE LA DIRECTION DE LA RAMPE DU FOND (l'angle vivant, voir
+   bgLightAngleRef) : projetée à l'écran par le module du fond, elle est relue AU
+   MOMENT OÙ L'ON PEINT — jamais recopiée dans l'état, jamais persistée.
+   ⚠ C'EST ICI, ET PAS À CÔTÉ DE SA DÉCLARATION : à cet endroit du corps, `shadowAz`
+   / `shadowEl` sont déclarées (plus haut, la projection tomberait dans leur zone
+   morte et lèverait « Cannot access 'shadowAz' before initialization »). */
+bgLightAngleRef.current = bgAngleFromLight(nglKeyLightDirection(shadowAz, shadowEl));
+/* L'ANGLE QUE LA RAMPE A MAINTENANT — celui du magasin, ou celui de la lampe si la
+   rampe la suit. ⚠ C'est une valeur de RENDU (un `const` recalculé à chaque rendu),
+   pas un état : elle sert à la LIGNE DU PANNEAU et au curseur d'angle. Les
+   peintres, eux, lisent la référence ci-dessus au moment de peindre (bgSpecLive),
+   parce qu'un `useCallback` garde la fermeture du rendu qui l'a créé — une valeur
+   de rendu y serait PÉRIMÉE dès que la lampe bouge (mesuré, voir _viewer_*). */
+const bgAngleLive = bgGradient.light && bgLightAngleRef.current != null ? bgLightAngleRef.current : bgGradient.angle;
 /* ◐ LE PILOTE DE L'OMBRE VIVANTE s'accroche au signal `rendered` d'NGL : la
    pose de la caméra est comparée à la précédente, le régime vient de la
    politique du module, et rien n'est recalculé quand rien ne bouge. Il est
@@ -10109,6 +10146,21 @@ useEffect(() => {
 useEffect(() => {
   if (rayShadowLiveRef.current) rayShadowLiveRef.current.refresh({ force: true });
 }, [rayShadowStrength, rayShadowBlur, shadowAz, shadowEl]);
+
+/* ☀ BOUGER LA LAMPE BOUGE LA RAMPE — la demande de cette session : « add the
+   gradient in the direction of the light ». Tant que la rampe suit la lampe (le
+   défaut, voir BG_GRADIENT_DEFAULT_LIGHT), un mouvement d'Azimuth / Élévation
+   repaint le fond : l'angle est relu dans la référence ci-dessus AU MOMENT OÙ L'ON
+   PEINT, donc rien n'est recopié dans l'état, rien n'est persisté, et le magasin de
+   l'installation ne bouge pas d'un degré (une écriture de l'application n'est pas
+   un geste de l'utilisateur — voir sceneGesture). Rampe éteinte, ou direction
+   reprise en main (`light: false`) : il n'y a rien à repeindre, l'angle ne vient
+   plus de la lampe. */
+useEffect(() => {
+  if (!bgGradient.light) return;
+  applyBackgroundGradient();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [shadowAz, shadowEl, bgGradient.light, applyBackgroundGradient]);
 
 // ---- 💡 Light colour (Scene, JUST BEFORE « ✂ Clipping ») --------------------
 // The request: « in the molecular viewer add the possibility to change the color
@@ -10209,7 +10261,7 @@ const applyShadowSettings = useCallback(() => {
 
 // Persist + apply the shadow preferences whenever they change.
 useEffect(() => {
-  sceneGesture('shadows');   // ◐ Shadows et 🌑 Darkness
+  sceneGesture('shadows', `${shadowOn}|${shadowDarkness}`);   // ◐ Shadows et 🌑 Darkness
   try { localStorage.setItem('labViewerShadows', shadowOn ? `on:${Math.round(shadowDarkness * 100)}` : 'off'); } catch { /* ignore */ }
   applyShadowSettings();
 }, [shadowOn, shadowDarkness, applyShadowSettings]);
@@ -10220,7 +10272,7 @@ useEffect(() => {
 // frame, so the new colour shows at once whether the ◐ Shadows rig is on (aimed
 // lamp) or off (NGL's camera-linked headlight).
 useEffect(() => {
-  sceneGesture('light');   // 💡 la couleur de la lampe
+  sceneGesture('light', lightColor);   // 💡 la couleur de la lampe
   try { localStorage.setItem('labViewerLightColor', lightColor); } catch { /* ignore */ }
   applyShadowSettings();
 }, [lightColor, applyShadowSettings]);
@@ -10228,11 +10280,11 @@ useEffect(() => {
 // Persist the light direction and re-render one frame so the fixed key light
 // visibly moves while the Azimuth / Elevation sliders are dragged.
 useEffect(() => {
-  sceneGesture('shadowAz');   // 💡 Azimuth — l'orientation que le rapport d'avant voyait revenir
+  sceneGesture('shadowAz', shadowAz);   // 💡 Azimuth — l'orientation que le rapport d'avant voyait revenir
   try { localStorage.setItem('labViewerShadowAz', String(Math.round(shadowAz))); } catch { /* ignore */ }
 }, [shadowAz]);
 useEffect(() => {
-  sceneGesture('shadowEl');   // 💡 Élévation
+  sceneGesture('shadowEl', shadowEl);   // 💡 Élévation
   try { localStorage.setItem('labViewerShadowEl', String(Math.round(shadowEl))); } catch { /* ignore */ }
 }, [shadowEl]);
 useEffect(() => {
@@ -16675,7 +16727,7 @@ const recordTrajectoryVideoClick = async () => {
   const vignetteDarkness = shadowOn
     ? (Number.isFinite(Number(shadowDarkness)) ? Number(shadowDarkness) : 0)
     : Number.NaN;
-  const film = filmCanvasFor(canvas, vignetteDarkness, backgroundSpecOf(bgColor, bgGradient), rayLiveOn ? rayShadowCanvasRef.current : null);
+  const film = filmCanvasFor(canvas, vignetteDarkness, bgSpecLive(), rayLiveOn ? rayShadowCanvasRef.current : null);
   // ONE driver of the frame at a time, and the scene is put back where it was.
   setPlaying(false);
   videoCancelRef.current = false;
@@ -17009,7 +17061,7 @@ const recordKeyframeFilmClick = async () => {
      viewer se ressembleraient seulement l'un à l'autre. */
   const kfFilmCanvas = filmCanvasFor(canvas, shadowOn
     ? (Number.isFinite(Number(shadowDarkness)) ? Number(shadowDarkness) : 0)
-    : Number.NaN, backgroundSpecOf(bgColor, bgGradient), rayLiveOn ? rayShadowCanvasRef.current : null);
+    : Number.NaN, bgSpecLive(), rayLiveOn ? rayShadowCanvasRef.current : null);
   const back = { state: captureViewerSetup(), pose: captureKeyframePoses() };
   const label = (file && file.name) || (trajFile && trajFile.name) || declaredTrajName || 'scene';
   setKfMsg(`${keyframeFilmSummary(keys.length, plan)}${plan.long ? ' · long film — keep this tab in the foreground' : ''}`);
@@ -18578,7 +18630,7 @@ useEffect(() => {
 // chosen colour survives a reload / another page — the effect above pushes it to
 // the live stage, this one remembers it.
 useEffect(() => {
-  sceneGesture('bg');   // un geste sur le FOND (🎨, ↺, A de la rampe, ⇄) clôt le rappel
+  sceneGesture('bg', bgColor);   // un geste sur le FOND (🎨, ↺, A de la rampe, ⇄) clôt le rappel
   try { localStorage.setItem('labViewerBg', bgColor); } catch { /* ignore */ }
 }, [bgColor]);
 
@@ -18586,14 +18638,18 @@ useEffect(() => {
    (l'interrupteur compris), sous UNE clé JSON. C'est le même contrat que la
    couleur qu'elle prolonge : une scène réglée est là au rechargement suivant,
    sur n'importe quelle page. */
+/* LA VALEUR DU RÉGLAGE EN UNE CHAÎNE — la comparaison de sceneGesture porte sur ce
+   que la rampe EST, jamais sur l'identité de l'objet qui la décrit (chaque geste
+   en recrée un) : deux objets égaux ne comptent donc pas pour deux gestes. */
+const bgGradientSignature = `${bgGradient.on}|${bgGradient.to}|${bgGradient.angle}|${bgGradient.mid}|${bgGradient.midOn}|${bgGradient.light}`;
 useEffect(() => {
-  sceneGesture('bgGradient');   // ⬚ l'interrupteur, B, C, une flèche, le curseur, ⇄, ↺
+  sceneGesture('bgGradient', bgGradientSignature);   // ⬚ l'interrupteur, B, C, une flèche, le curseur, ⇄, ↺, ☀
   try { localStorage.setItem(BG_GRADIENT_KEY, JSON.stringify(bgGradient)); } catch { /* ignore */ }
 }, [bgGradient]);
 
 // Persist the fog preference and apply it to the live stage whenever it changes.
 useEffect(() => {
-  sceneGesture('fog');   // 🌫 Fog
+  sceneGesture('fog', fogEnabled);   // 🌫 Fog
   try { localStorage.setItem('labViewerFog', fogEnabled ? 'on' : 'off'); } catch { /* ignore */ }
   applyFog();
 }, [fogEnabled, applyFog]);
@@ -21199,7 +21255,11 @@ const captureRay = async () => {
        dans ce cas sa transparence est sa réponse, on n'y touche pas), puis
        `underlayBackdrop` peint la rampe SOUS le PNG (voir utils/viewerBackground) :
        le fichier montre alors exactement ce que l'écran montre, coin par coin. */
-    const backdrop = backgroundSpecOf(bgColor, bgGradient);
+    /* ⚠ LA MÊME SPÉCIFICATION QUE L'ÉCRAN (bgSpecLive) : depuis que la rampe peut
+       suivre la lampe, l'angle du magasin n'est plus forcément celui qui est peint —
+       une still composée avec l'ancien angle ne serait plus « coin par coin » ce que
+       l'écran montre. */
+    const backdrop = bgSpecLive();
     const gradientStill = !!backdrop.on && !rayTransparent;
     const out = await previewRayImage(stage, {
       label: stillLabel,
@@ -22723,6 +22783,13 @@ const recallViewerStyle = async () => {
   } catch { found = null; }
   if (!found || styleTouchedRef.current) return null;  // l'utilisateur a choisi entre-temps
   const text = await downloadDriveFileText(found.id).catch(() => '');
+  /* ⚠⚠ LE DÉFLAGAGE EST RELU APRÈS LE TÉLÉCHARGEMENT — c'est LE trou du rapport
+     « it has worked for some seconds » : un fichier de style du dossier met un temps
+     réel à descendre (une seconde, deux), et un geste de l'utilisateur PENDANT ce
+     temps-là était recouvert par le style qui arrivait après lui. Le drapeau est
+     donc relu juste avant d'ADRESSER le style, pas seulement avant de partir le
+     chercher : ce qui est déjà à l'écran ne se repose jamais par-dessus un geste. */
+  if (styleTouchedRef.current) return null;
   const parsed = parseViewerStyleFile(text);
   if (!parsed) return null;                            // ce .json n'est pas un style : on ne devine pas
   adoptViewerStyleEntry(parsed.mode, parsed.name, parsed.entry);
@@ -24386,7 +24453,7 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
   aria-expanded={bgPanelOpen}
   aria-controls="viewer-background"
   className={`px-1 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 ${bgGradient.on ? 'bg-sky-100 border-sky-400 text-sky-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
-  title={`⬚ Background options — ${bgPanelOpen ? 'OPEN right now: this button closes them (so does a click on the background of the 3D view).' : 'CLOSED right now: this button opens them under the 3D view — two or three colours and their direction — and so does a click on the background itself.'} ${bgGradient.on ? `The gradient is ON (A ${bgColor}${bgGradient.midOn ? ` → C ${bgGradient.mid}` : ''} → B ${bgGradient.to}, ${bgGradient.angle}°).` : 'The gradient is OFF: the scene keeps its flat colour (A), which the 🎨 swatch beside this button sets.'} The ramp never touches the scene: NGL paints one colour and the ramp lives in the CSS of its canvas, so no representation is rebuilt — and the 🎬🎞 films and the ✨ Ray still take the very same ramp.`}>
+  title={`⬚ Background options — ${bgPanelOpen ? 'OPEN right now: this button closes them (so does a click on the background of the 3D view).' : 'CLOSED right now: this button opens them under the 3D view — two or three colours and their direction — and so does a click on the background itself.'} ${bgGradient.on ? `The gradient is ON (A ${bgColor}${bgGradient.midOn ? ` → C ${bgGradient.mid}` : ''} → B ${bgGradient.to}, ${bgAngleLive}°${bgGradient.light ? ' — in the direction of the 💡 light' : ''}).` : 'The gradient is OFF: the scene keeps its flat colour (A), which the 🎨 swatch beside this button sets.'} The ramp never touches the scene: NGL paints one colour and the ramp lives in the CSS of its canvas, so no representation is rebuilt — and the 🎬🎞 films and the ✨ Ray still take the very same ramp.`}>
   ⬚
 </button>
 <button type="button" onClick={() => setShadowOn((v) => !v)}
@@ -26123,25 +26190,40 @@ style={{ height: (viewerCollapsed ? 0 : viewH) + 'px' }}
     )}
     <span className="flex items-center gap-0.5" role="group" aria-label="Gradient direction">
       {BG_DIRECTIONS.map((d) => (
-        <button key={d.key} type="button" onClick={() => patchBgGradient({ on: true, angle: d.angle })}
-          aria-pressed={bgGradient.angle === d.angle}
-          className={`w-6 h-7 text-[11px] font-black rounded-md border transition-colors ${bgGradient.angle === d.angle ? 'bg-sky-100 border-sky-400 text-sky-800' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-100'}`}
-          title={`Paint the ramp ${d.what} (${d.angle}°) — A sits at the starting end, B at the end the arrow points at. Picking a direction also turns the ramp ON.`}>
+        <button key={d.key} type="button" onClick={() => patchBgGradient({ on: true, angle: d.angle, light: false })}
+          aria-pressed={!bgGradient.light && bgGradient.angle === d.angle}
+          className={`w-6 h-7 text-[11px] font-black rounded-md border transition-colors ${!bgGradient.light && bgGradient.angle === d.angle ? 'bg-sky-100 border-sky-400 text-sky-800' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-100'}`}
+          title={`Paint the ramp ${d.what} (${d.angle}°) — A sits at the starting end, B at the end the arrow points at. Picking a direction also turns the ramp ON, and takes the direction back from the ☀ Light button: the ramp stops following the lamp.`}>
           {d.glyph}
         </button>
       ))}
+      {/* ☀ LA DIRECTION DE LA LAMPE — la demande de cette session : « add the
+          gradient in the direction of the light ». C'est le DÉFAUT : la rampe
+          part du côté ÉCLAIRÉ (là où la lampe est) et va vers l'ombre — la
+          direction MÊME où les ombres de la vue tombent, puisque l'ombre fuit la
+          lampe. Tant qu'il est allumé la rampe SUIT la lampe (💡 Azimuth /
+          Élévation la fait tourner), et une des huit flèches ou le curseur
+          d'angle reprend la direction en main. Lu par le module du fond
+          (bgAngleFromLight) : c'est le vecteur du rig ◐ Shadows projeté à
+          l'écran, jamais un nombre recopié ici. */}
+      <button type="button" onClick={() => patchBgGradient({ on: true, light: true, angle: bgAngleLive })}
+        aria-pressed={bgGradient.light}
+        className={`px-1.5 h-7 text-[10px] font-bold rounded-md border whitespace-nowrap transition-colors ${bgGradient.light ? 'bg-sky-100 border-sky-400 text-sky-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+        title={`☀ In the direction of the light — the ramp starts on the side the lamp is on (💡 Light, §3 Scene: azimuth ${shadowAz}°, elevation ${shadowEl}°) and runs towards the side it has left, so the background agrees with the shading and with the cast shadows. While it is ON the ramp FOLLOWS the lamp: moving the light turns the ramp (${bgAngleLive}° right now). One of the eight arrows, or the angle slider, takes the direction back into your hands.`}>
+        ☀ Light
+      </button>
     </span>
     <label className="flex items-center gap-0.5 whitespace-nowrap"
-      title="The exact angle of the ramp, in the CSS convention: 0° runs from the BOTTOM to the TOP, 90° from the left to the right, 180° from the top to the bottom, 270° from the right to the left. The eight arrows on the left are the eight angles you can also reach here by hand.">
+      title="The exact angle of the ramp, in the CSS convention: 0° runs from the BOTTOM to the TOP, 90° from the left to the right, 180° from the top to the bottom, 270° from the right to the left. The eight arrows on the left are the eight angles you can also reach here by hand. ⚠ While ☀ Light is on this reads the angle the LAMP gives, and moving the slider takes the direction back into your hands.">
       <span className="text-[10px] font-bold text-slate-700">angle</span>
-      <input type="range" min="0" max="360" step="1" value={bgGradient.angle}
-        onChange={(e) => patchBgGradient({ on: true, angle: Number(e.target.value) })}
+      <input type="range" min="0" max="360" step="1" value={bgAngleLive}
+        onChange={(e) => patchBgGradient({ on: true, angle: Number(e.target.value), light: false })}
         className="w-20 accent-sky-600" aria-label="Gradient angle in degrees" />
-      <span className="text-[10px] text-slate-500 w-8">{bgGradient.angle}°</span>
+      <span className="text-[10px] text-slate-500 w-8">{bgAngleLive}°</span>
     </label>
-    <button type="button" onClick={() => patchBgGradient({ on: false, to: BG_GRADIENT_DEFAULT_TO, angle: BG_GRADIENT_DEFAULT_ANGLE, mid: BG_GRADIENT_DEFAULT_MID, midOn: BG_GRADIENT_DEFAULT_MID_ON })}
+    <button type="button" onClick={() => patchBgGradient({ on: false, to: BG_GRADIENT_DEFAULT_TO, angle: BG_GRADIENT_DEFAULT_ANGLE, mid: BG_GRADIENT_DEFAULT_MID, midOn: BG_GRADIENT_DEFAULT_MID_ON, light: BG_GRADIENT_DEFAULT_LIGHT })}
       className="px-1.5 py-1 h-7 text-[10px] font-bold rounded-md border bg-white border-slate-300 text-slate-600 hover:bg-slate-100 whitespace-nowrap"
-      title={`↺ Back to the ramp as it comes (B ${BG_GRADIENT_DEFAULT_TO}, ↓ top → bottom, no middle colour) and ⬚ Gradient OFF — a flat background. The colour A (the 🎨 of §2 Scene) is NOT touched: use its own ↺ for that.`}>
+      title={`↺ Back to the ramp as it comes (B ${BG_GRADIENT_DEFAULT_TO}, in the direction of the lamp, no middle colour) and ⬚ Gradient OFF — a flat background. The colour A (the 🎨 of §2 Scene) is NOT touched: use its own ↺ for that.`}>
       ↺
     </button>
     <button type="button" onClick={() => setBgPanelOpen(false)}
@@ -26155,14 +26237,15 @@ style={{ height: (viewerCollapsed ? 0 : viewH) + 'px' }}
         the same color » — un panneau dont les contrôles semblaient inertes parce que
         la rampe était éteinte. Le nom de la direction vient des mêmes huit entrées
         que les boutons (bgDirectionOf) : un angle libre n'a pas de nom, et dit alors
-        ses degrés. */}
+        ses degrés. ☀ allumé, la direction n'est PAS dans le magasin : elle est celle
+        de la lampe, lue au moment du rendu (bgAngleLive) — la ligne le dit aussi. */}
     {bgGradient.on ? (
       <span className="w-full text-[9px] text-slate-500 leading-tight">
-        The ramp runs {bgDirectionOf(bgGradient.angle)?.what || `${bgGradient.angle}°`} — A <b>{bgColor}</b>{bgGradient.midOn ? <> → C <b>{bgGradient.mid}</b></> : null} → B <b>{bgGradient.to}</b>. It paints the screen, the 🎬🎞 films and the ✨ Ray still; a click on the background closes these options.
+        The ramp runs {bgGradient.light ? `in the direction of the light (${bgAngleLive}°)` : (bgDirectionOf(bgGradient.angle)?.what || `${bgGradient.angle}°`)} — A <b>{bgColor}</b>{bgGradient.midOn ? <> → C <b>{bgGradient.mid}</b></> : null} → B <b>{bgGradient.to}</b>. {bgGradient.light ? 'A sits on the side the 💡 lamp is on and B on the side it has left: moving the light turns the ramp.' : 'The eight arrows and the slider own the direction.'} It paints the screen, the 🎬🎞 films and the ✨ Ray still; a click on the background closes these options.
       </span>
     ) : (
       <span className="w-full text-[9px] text-amber-700 leading-tight">
-        ⬚ Gradient is OFF: the scene is painted with the ONE colour A <b>{bgColor}</b>. Every control here acts on the ramp, so touching B, C, an arrow, the angle or ⇄ turns it ON — nothing in this panel is inert. ↺ puts it back to OFF.
+        ⬚ Gradient is OFF: the scene is painted with the ONE colour A <b>{bgColor}</b>. Every control here acts on the ramp, so touching B, C, an arrow, the angle, ☀ or ⇄ turns it ON — nothing in this panel is inert. ↺ puts it back to OFF.
       </span>
     )}
   </div>

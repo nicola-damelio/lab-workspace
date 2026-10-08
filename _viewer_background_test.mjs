@@ -21,11 +21,15 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   BG_DIRECTIONS, BG_GRADIENT_DEFAULT_ANGLE, BG_GRADIENT_DEFAULT_ON, BG_GRADIENT_DEFAULT_TO,
-  BG_GRADIENT_DEFAULT_MID, BG_GRADIENT_DEFAULT_MID_ON,
-  backgroundCss, backgroundSpecOf, bgDirectionOf, bgGradientOf, gradientLineFor,
+  BG_GRADIENT_DEFAULT_MID, BG_GRADIENT_DEFAULT_MID_ON, BG_GRADIENT_DEFAULT_LIGHT,
+  BG_GRADIENT_PALE_TO,
+  backgroundCss, backgroundSpecOf, bgAngleFromLight, bgDirectionOf, bgGradientOf, gradientLineFor,
   gradientSpecOf, normalizeBgAngle, normalizeBgColor, paintViewerBackground,
-  readBgGradient, underlayBackdrop,
+  readBgGradient, refreshPaleBgGradient, underlayBackdrop,
 } from './src/utils/viewerBackground.js';
+/* ☀ LA LAMPE DU RIG — importée et EXÉCUTÉE ici : c'est son vecteur qui donne la
+   direction de la rampe (bgAngleFromLight), jamais un angle recopié à la main. */
+import { nglKeyLightDirection } from './src/utils/viewerLightRig.js';
 import { filmBackdropColor, FILM_BACKDROP_DEFAULT } from './src/utils/viewerTrajectoryVideo.js';
 
 let passed = 0;
@@ -61,20 +65,75 @@ eq(normalizeBgAngle('450'), 90, 'une chaîne numérique est lue, puis ramenée')
 eq(normalizeBgAngle('rouge'), BG_GRADIENT_DEFAULT_ANGLE, 'un angle qui n’en est pas un → celui de la rampe d’origine');
 eq(normalizeBgAngle(Infinity, 45), 45, 'un infini → le secours demandé');
 
-eq(bgGradientOf(null), { on: false, to: BG_GRADIENT_DEFAULT_TO, angle: BG_GRADIENT_DEFAULT_ANGLE, mid: BG_GRADIENT_DEFAULT_MID, midOn: false },
-  'sans rien, la rampe est ÉTEINTE, avec les deux valeurs d’origine');
+eq(bgGradientOf(null), { on: false, to: BG_GRADIENT_DEFAULT_TO, angle: BG_GRADIENT_DEFAULT_ANGLE, mid: BG_GRADIENT_DEFAULT_MID, midOn: false, light: true },
+  'sans rien, la rampe est ÉTEINTE, avec les deux valeurs d’origine — et sa direction SUIT LA LAMPE');
 eq(bgGradientOf({}).on, false, 'un objet vide ne l’allume pas');
 eq(BG_GRADIENT_DEFAULT_ON, false, 'et le défaut du module dit la même chose');
 eq(bgGradientOf({ on: 'yes' }).on, false, 'la vérité de `on` est STRICTE : la chaîne « yes » n’allume rien');
-eq(bgGradientOf({ on: true, to: 'bleu', angle: 361 }), { on: true, to: BG_GRADIENT_DEFAULT_TO, angle: 1, mid: BG_GRADIENT_DEFAULT_MID, midOn: false },
+eq(bgGradientOf({ on: true, to: 'bleu', angle: 361 }), { on: true, to: BG_GRADIENT_DEFAULT_TO, angle: 1, mid: BG_GRADIENT_DEFAULT_MID, midOn: false, light: true },
   'à l’intérieur d’une rampe, la couleur et l’angle sont validés comme dehors');
+/* ☀ LE MODE ☀ EST UN DÉFAUT, PAS UNE OBLIGATION : absent (un magasin ou un fichier
+   d’hier) il suit la lampe ; `false` — ce qu’écrivent les huit flèches et le
+   curseur — rend la direction au magasin. Aucune autre valeur ne compte. */
+eq(BG_GRADIENT_DEFAULT_LIGHT, true, 'la direction de la lampe est le défaut du module');
+eq(bgGradientOf({}).light, true, 'un magasin muet suit la lampe');
+eq(bgGradientOf({ light: true }).light, true, '…et le dire explicitement ne change rien');
+eq(bgGradientOf({ light: false }).light, false, '⚠ un refus EXPLICITE est respecté (la direction est à l’utilisateur)');
+eq(bgGradientOf({ light: 'bleu' }).light, true, 'une valeur qui n’est pas un refus ne prend pas la direction : le défaut gagne');
 
 eq(readBgGradient(null), bgGradientOf(null), 'rien à lire → la rampe d’origine');
-eq(readBgGradient('{"on":true,"to":"#101010","angle":90}'), { on: true, to: '#101010', angle: 90, mid: BG_GRADIENT_DEFAULT_MID, midOn: false },
+eq(readBgGradient('{"on":true,"to":"#101010","angle":90}'), { on: true, to: '#101010', angle: 90, mid: BG_GRADIENT_DEFAULT_MID, midOn: false, light: true },
   'une chaîne JSON se relit (c’est ce que localStorage rend)');
 eq(readBgGradient('pas du json'), bgGradientOf(null), 'un magasin illisible ne fait pas planter le viewer');
-eq(readBgGradient({ on: true, to: '#202020', angle: 45 }), { on: true, to: '#202020', angle: 45, mid: BG_GRADIENT_DEFAULT_MID, midOn: false },
+eq(readBgGradient({ on: true, to: '#202020', angle: 45 }), { on: true, to: '#202020', angle: 45, mid: BG_GRADIENT_DEFAULT_MID, midOn: false, light: true },
   'un OBJET (un ⚙️ setup, par exemple) se valide par le même lecteur');
+
+/* ⚠ LE DÉFAUT PÂLE D'HIER (slate-300) — la mesure du rapport « only uniform
+   background » : à côté d'une couleur de scène #f8fafc, cette rampe-là se lisait
+   comme un fond UNI. Un magasin qui la porte ENCORE est reconnu et reçoit le
+   défaut du jour ; une couleur CHOISIE n'est jamais touchée. */
+eq(BG_GRADIENT_PALE_TO, '#cbd5e1', 'le défaut pâle d’hier est gardé NOMMÉ (rien d’autre ne le reconnaîtrait)');
+ok(BG_GRADIENT_DEFAULT_TO !== BG_GRADIENT_PALE_TO, '…et le défaut du jour n’est plus celui-là');
+eq(readBgGradient('{"on":true,"to":"#cbd5e1","angle":180}').to, BG_GRADIENT_DEFAULT_TO,
+  'un magasin resté au défaut pâle reçoit le défaut du jour (la rampe se VOIT enfin)');
+eq(readBgGradient('{"on":true,"to":"#101010","angle":90}').to, '#101010',
+  '…et une couleur CHOISIE passe inchangée (aucune surprise)');
+eq(readBgGradient({ on: true, to: '#cbd5e1' }).to, BG_GRADIENT_DEFAULT_TO,
+  'la règle vaut pour un OBJET comme pour une chaîne (⚙️ setup d’hier)');
+eq(refreshPaleBgGradient(bgGradientOf({ on: true, to: '#123456' })).to, '#123456',
+  'le rafraîchisseur lui-même ne touche QUE le défaut pâle — il rend l’objet tel quel sinon');
+
+/* ══ 1bis. ☀ LA RAMPE DANS LA DIRECTION DE LA LAMPE (exécuté) ══════════════
+   La demande de cette session : « add the gradient in the direction of the light ».
+   `bgAngleFromLight` reçoit le vecteur du RIG (utils/viewerLightRig, le même que
+   l'ombre portée et que le ✨ Ray) et rend l'angle CSS de la rampe : A du côté
+   ÉCLAIRÉ, B du côté que la lampe a quitté — c'est-à-dire la direction où l'ombre
+   tombe. La convention du rig (ngl 2.4 : x > 0 = gauche de l'écran, y > 0 = haut)
+   est ce qui rend chaque cas vérifiable ; ils sont tous écrits en clair ici. */
+const angleOf = (az, el) => bgAngleFromLight(nglKeyLightDirection(az, el));
+eq(angleOf(25, 28), 142,
+  'la lampe par défaut (25° / 28°, en haut à gauche) donne 142° — du haut-gauche vers le bas-droit');
+eq(angleOf(90, 0), 90, 'lampe à l’horizon, à GAUCHE : la rampe va de la gauche vers la droite');
+eq(angleOf(270, 0), 270, '…et de la droite vers la gauche quand la lampe passe de l’autre côté');
+eq(angleOf(0, 28), 180, 'lampe derrière la caméra mais AU-DESSUS : la rampe descend — exactement l’angle d’avant');
+eq(angleOf(0, -28), 0, 'lampe derrière et EN DESSOUS : la rampe monte');
+eq(angleOf(180, 0), BG_GRADIENT_DEFAULT_ANGLE,
+  'lampe pile derrière la caméra (azimut 180 / élévation 0) : aucune direction à projeter → l’angle d’avant');
+eq(bgAngleFromLight(null), BG_GRADIENT_DEFAULT_ANGLE, 'sans vecteur du tout, l’angle d’avant');
+eq(bgAngleFromLight({ x: 0, y: 0, z: 1 }), BG_GRADIENT_DEFAULT_ANGLE, '…et pour un vecteur sans projection, aussi');
+ok(angleOf(45, 60) > 90 && angleOf(45, 60) < 180,
+  'une lampe en haut à gauche donne toujours une diagonale qui fuit vers le bas et la droite');
+/* LE SENS EST CELUI DE L'OMBRE : la lampe en haut à gauche éclaire le coin
+   haut-gauche (c'est là que A commence), et l'ombre, elle, tombe de l'autre côté. */
+const lamp25 = nglKeyLightDirection(25, 28);
+ok(lamp25.x > 0 && lamp25.y > 0, 'le rig dit bien : lampe à gauche (x > 0) et au-dessus (y > 0)');
+ok(angleOf(25, 28) > 90 && angleOf(25, 28) < 180, '…d’où une rampe A en haut à gauche, vers le bas-droit');
+eq(bgAngleFromLight({ x: -lamp25.x, y: -lamp25.y }), (angleOf(25, 28) + 180) % 360,
+  'une lampe OPPOSÉE donne la rampe opposée (180° plus loin, au degré près)');
+/* La rampe d'une lampe n'est pas forcément un des huit boutons : le panneau dit
+   alors ses degrés (c'est la ligne de lecture, plus bas). */
+eq(bgDirectionOf(angleOf(25, 28)), null, '142° n’est pas un des huit angles nommés');
+eq(bgDirectionOf(angleOf(90, 0))?.key, 'right', '…alors qu’une lampe plein gauche tombe pile sur « → »');
 
 /* ══ 2. LA SPÉCIFICATION DU FOND, ET LE CSS QU'ELLE PRODUIT ═══════════════ */
 eq(backgroundSpecOf('#f8fafc', { on: true, to: '#112233', angle: 180 }),
@@ -204,10 +263,21 @@ has('localStorage.setItem(BG_GRADIENT_KEY, JSON.stringify(bgGradient))',
 has('const applyBackgroundGradient = useCallback(() => {', 'la rampe est posée par son propre geste');
 has('const el = stage && stage.viewer && stage.viewer.renderer ? stage.viewer.renderer.domElement : null;',
   '…sur le canvas d’NGL (là où NGL a posé sa couleur, à travers lequel on la voit)');
-has('try { el.style.backgroundImage = backgroundCss(backgroundSpecOf(bgColor, bgGradient)); } catch { /* ignore */ }',
+has('try { el.style.backgroundImage = backgroundCss(bgSpecLive()); } catch { /* ignore */ }',
   '…en `backgroundImage`, par le CSS du module (chaîne vide = rampe éteinte)');
+has('const bgSpecLive = () => backgroundSpecOf(bgColor, bgGradient.light',
+  '…depuis la SPÉCIFICATION VIVANTE : l’angle du magasin, ou celui de la LAMPE quand la rampe la suit');
+has('const bgLightAngleRef = useRef(null);', '☀ l’angle vivant de la rampe vit dans une RÉFÉRENCE (et pas dans l’état)');
+has('bgLightAngleRef.current = bgAngleFromLight(nglKeyLightDirection(shadowAz, shadowEl));',
+  '…remplie par le RIG lui-même (la lampe des ◐ ombres), projetée par le module du fond');
+has('const bgAngleLive = bgGradient.light && bgLightAngleRef.current != null ? bgLightAngleRef.current : bgGradient.angle;',
+  '…et la valeur de RENDU (ligne du panneau, curseur d’angle) en descend');
 has('}, [bgColor, bgGradient]);', '…et il suit les deux réglages (la couleur A et la rampe)');
-ok(VIEW.indexOf('try { stage.setParameters({ backgroundColor: bgColor }); } catch {}') < VIEW.indexOf('  applyBackgroundGradient();'),
+has('if (!bgGradient.light) return;\n  applyBackgroundGradient();',
+  '☀ BOUGER LA LAMPE REpaint la rampe : le suivi vient de la lampe, jamais d’une écriture du magasin');
+has('}, [shadowAz, shadowEl, bgGradient.light, applyBackgroundGradient]);',
+  '…et c’est bien l’Azimuth / l’Élévation qui le déclenche');
+ok(VIEW.indexOf('try { stage.setParameters({ backgroundColor: bgColor }); } catch {}') < VIEW.indexOf('  applyBackgroundGradient();\n  try { stage.setQuality('),
   'la rampe est posée APRÈS la couleur d’NGL (jamais avant : NGL la recouvrirait)');
 has('}, [bgColor, qualityHigh, status, applyFog, applyBackgroundGradient]);',
   '…et l’effet du fond la repose à chaque changement');
@@ -234,12 +304,18 @@ has('onChange={(e) => setBgColor(e.target.value)}', '…et c’est le MÊME éta
 has('{ const a = bgColor; setBgColor(bgGradient.to); patchBgGradient({ on: true, to: a }); }', '⇄ échange les deux extrémités — et ALLUME la rampe');
 has('aria-label="Background gradient second colour"', 'la couleur B est là');
 has('{BG_DIRECTIONS.map((d) => (', 'les HUIT directions sont rendues depuis le module (jamais recopiées)');
-has('onClick={() => patchBgGradient({ on: true, angle: d.angle })}', '…un clic pose son angle ET allume la rampe');
-has('aria-pressed={bgGradient.angle === d.angle}', '…et la direction active se voit');
-has('onChange={(e) => patchBgGradient({ on: true, angle: Number(e.target.value) })}', 'le curseur d’angle écrit le même champ (et allume la rampe)');
+has('onClick={() => patchBgGradient({ on: true, angle: d.angle, light: false })}', '…un clic pose son angle ET allume la rampe…');
+has('aria-pressed={!bgGradient.light && bgGradient.angle === d.angle}', '…et la direction active se voit (aucune flèche allumée quand c’est la LAMPE qui dirige)');
+has('onChange={(e) => patchBgGradient({ on: true, angle: Number(e.target.value), light: false })}', 'le curseur d’angle écrit le même champ (et allume la rampe)');
 has('aria-label="Gradient angle in degrees"', '…et il est nommé (lecteurs d’écran)');
-has('onClick={() => patchBgGradient({ on: false, to: BG_GRADIENT_DEFAULT_TO, angle: BG_GRADIENT_DEFAULT_ANGLE, mid: BG_GRADIENT_DEFAULT_MID, midOn: BG_GRADIENT_DEFAULT_MID_ON })}',
-  '↺ rend la rampe d’origine (et éteint le dégradé)');
+has('value={bgAngleLive}', '…et il MONTRE l’angle vivant (celui de la lampe quand ☀ est allumé)');
+has('onClick={() => patchBgGradient({ on: true, light: true, angle: bgAngleLive })}',
+  '☀ Light : la rampe part du côté éclairé et SUIT la lampe');
+has('aria-pressed={bgGradient.light}', '…et il annonce son état, comme l’interrupteur de la rampe');
+ok(VIEW.indexOf("role=\"group\" aria-label=\"Gradient direction\"") < VIEW.indexOf('☀ Light'),
+  '…le bouton ☀ est DANS la rangée des directions (une dixième entrée, pas un réglage à part)');
+has('onClick={() => patchBgGradient({ on: false, to: BG_GRADIENT_DEFAULT_TO, angle: BG_GRADIENT_DEFAULT_ANGLE, mid: BG_GRADIENT_DEFAULT_MID, midOn: BG_GRADIENT_DEFAULT_MID_ON, light: BG_GRADIENT_DEFAULT_LIGHT })}',
+  '↺ rend la rampe d’origine — direction de la lampe comprise — et éteint le dégradé');
 has('onClick={() => setBgPanelOpen(false)}', '⇤ referme le panneau sans rien changer d’autre');
 has('bgDirectionOf(bgGradient.angle)?.what', 'la ligne de lecture NOMME la direction (ou dit ses degrés)');
 
@@ -261,12 +337,14 @@ ok(VIEW.indexOf('ctx.fillStyle = backdrop;') < VIEW.indexOf('paintViewerBackgrou
   '…APRÈS la couleur unie (comme `backgroundImage` sur `backgroundColor` en CSS)');
 ok(VIEW.indexOf('paintViewerBackground(ctx, w, h, background);') < VIEW.indexOf('ctx.drawImage(source, 0, 0, w, h);'),
   '…et AVANT la scène (le film reste la scène SUR le fond)');
-has('backgroundSpecOf(bgColor, bgGradient), rayLiveOn ? rayShadowCanvasRef.current : null)',
-  'le 🎬 de la trajectoire passe la MÊME spécification (couleur + rampe)');
-has(': Number.NaN, backgroundSpecOf(bgColor, bgGradient), rayLiveOn ? rayShadowCanvasRef.current : null);',
-  '…et le film de poses aussi (les deux films ont le même fond)');
+has('bgSpecLive(), rayLiveOn ? rayShadowCanvasRef.current : null)',
+  'le 🎬 de la trajectoire passe la MÊME spécification VIVANTE (couleur + rampe, angle de la lampe compris)');
+has(': Number.NaN, bgSpecLive(), rayLiveOn ? rayShadowCanvasRef.current : null);',
+  '…et le film de poses aussi (les deux films ont donc le fond de l’ÉCRAN, au degré près)');
 
 /* h) LA STILL ✨ RAY */
+has('const backdrop = bgSpecLive();',
+  'la still du ✨ Ray prend la MÊME spécification VIVANTE que l’écran (l’angle de la lampe compris) — sinon la figure ne serait pas « coin par coin » ce qu’on voit');
 has('const gradientStill = !!backdrop.on && !rayTransparent;',
   'la still n’est rendue transparente QUE par la rampe (jamais contre le choix ⬚ alpha de l’utilisateur)');
 has('transparent: rayTransparent || gradientStill,', '…et elle l’est alors vraiment, pour que la rampe passe SOUS elle');
@@ -287,7 +365,7 @@ eq(BG_GRADIENT_DEFAULT_MID_ON, false, 'le milieu n’est JAMAIS imposé : la ram
 eq(bgGradientOf(null).mid, BG_GRADIENT_DEFAULT_MID, 'sans rien, le milieu a sa couleur d’origine (prête, mais éteinte)');
 eq(bgGradientOf(null).midOn, false, '…et son interrupteur est ÉTEINT');
 eq(bgGradientOf({ on: true, to: '#0000ff', angle: 180, mid: '#00ff00', midOn: true }),
-  { on: true, to: '#0000ff', angle: 180, mid: '#00ff00', midOn: true },
+  { on: true, to: '#0000ff', angle: 180, mid: '#00ff00', midOn: true, light: true },
   'un milieu DEMANDÉ est relu et validé comme les deux autres couleurs');
 eq(bgGradientOf({ on: true, mid: 'vert', midOn: 'yes' }).midOn, false, 'la vérité de `midOn` est STRICTE (comme celle de `on`)');
 eq(bgGradientOf({ on: true, mid: 'vert' }).mid, BG_GRADIENT_DEFAULT_MID, 'un milieu illisible retombe sur le défaut du module (jamais du noir)');
@@ -321,13 +399,15 @@ has('mid: BG_GRADIENT_DEFAULT_MID, midOn: BG_GRADIENT_DEFAULT_MID_ON', '↺ reme
 has('onChange={(e) => patchBgGradient({ on: true, to: e.target.value })}',
   'la couleur B ALLUME la rampe en la choisissant (plus de contrôle inerte)');
 has('onChange={(e) => patchBgGradient({ on: true, mid: e.target.value })}', '…et la couleur C du milieu');
-has('Every control here acts on the ramp, so touching B, C, an arrow, the angle or ⇄ turns it ON',
+has('Every control here acts on the ramp, so touching B, C, an arrow, the angle, ☀ or ⇄ turns it ON',
   'la ligne du bas DIT que rien de ce panneau n’est inerte');
 has('⬚ Gradient is OFF: the scene is painted with the ONE colour A',
   '…et elle dit l’ÉTAT quand la rampe est éteinte (jamais un panneau muet)');
 has('bgGradient.on ? (', 'la ligne de lecture a donc DEUX états (allumée / éteinte)');
-eq(countOf(/patchBgGradient\(\{ on: true,/g), 6,
-  'les SIX contrôles de la rampe (B · C 50 % · C · 8 directions · curseur · ⇄) l’allument — pas un de plus');
+has('bgGradient.light ? `in the direction of the light (${bgAngleLive}°)` :',
+  '☀ allumé, la ligne DIT que la direction est celle de la lampe (avec ses degrés)');
+eq(countOf(/patchBgGradient\(\{ on: true,/g), 7,
+  'les SEPT contrôles de la rampe (B · C 50 % · C · 8 directions · ☀ Light · curseur · ⇄) l’allument — pas un de plus');
 gone('patchBgGradient({ angle: d.angle })', '…et aucune flèche ne reste muette');
 gone('patchBgGradient({ to: e.target.value })', '…ni la couleur B');
 gone('patchBgGradient({ midOn: !bgGradient.midOn })', '…ni le bouton du milieu');

@@ -387,8 +387,17 @@ const tests = [
   // demande rien) et POURTANT ~300 images demandées par 2,5 s, parce que NGL 2.4
   // relance indéfiniment ses deux boucles `requestAnimationFrame`. La sonde cache
   // la vue comme le fait le « page parking » : le compte tombe à ZÉRO, et le
-  // retour de la page le remet à ~300 (la rampe, elle, n'a pas bougé). ≈45 s
-  // (deux passages de Chrome), SAUTÉE (exit 0) sur une machine sans Chrome.
+  // retour de la page le remet à ~300 (la rampe, elle, n'a pas bougé).
+  // …ET DEPUIS LE RAPPORT « the gradient still does not work … only uniform
+  // background », elle lit LE PIXEL COMPOSÉ : la rampe rasterisée par le navigateur
+  // (SVG foreignObject + la chaîne CSS que le canvas porte vraiment), PUIS le rendu
+  // d'NGL par-dessus (`drawImage`, possible parce qu'NGL garde son drawing buffer),
+  // plus l'alpha du rendu seul. La phase `?phase=ramp` ouvre le viewer sur une rampe
+  // rouge → bleu SANS LE MOINDRE GESTE : l'écran composé va de #f90005 (coin haut
+  // gauche) à #0500fa (coin bas droit) en passant par #7f007f — le fond n'est pas
+  // uni —, la rampe ÉTEINTE donne un aplat (#f8fafc partout, le témoin), et le
+  // défaut pâle d'hier contre celui d'aujourd'hui est chiffré : 105 → 244.
+  // ≈2 min (quatre passages de Chrome), SAUTÉE (exit 0) sans Chrome.
   '_viewer_bg_live_test.cjs',
 ];
 const rows = tests.map((t) => {

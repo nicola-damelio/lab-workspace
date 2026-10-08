@@ -4038,3 +4038,139 @@ y mesure **2246 px**, et la colonne de la vue garde sa hauteur propre — **la t
 haut** (`host: [2100, 1]`, relevé par la sonde). Les images peintes au repos (1 par 2,5 s) sont donc
 mesurées **sur une toile minuscule** : ce chiffre est un **plancher**. Le nombre de boucles, lui,
 ne dépend pas de la taille de la toile — et c'est lui qui était en cause.
+
+---
+
+## ⬚☀ Le fond du viewer, re-mesuré au PIXEL — « only uniform background », et la rampe qui suit la lampe
+
+**Le rapport, mot pour mot :** « the gradient still does not work. it has worked in the past for some
+seconds but now nothing happens, only uniform background. If you fix it add the gradient in the
+direction of the light. »
+
+Quatre choses se cachaient là-dedans, et **trois d'entre elles ne se lisaient pas dans le CSS** — ce
+qui est précisément la leçon de cette session : la sonde précédente lisait le CSS
+(`getComputedStyle(canvas).backgroundImage`), et le CSS ne dit **pas** ce que l'œil reçoit. Une rampe
+présente dans le CSS et un fond **uni** peuvent être le même écran.
+
+### ⑤① Un geste effacé — la moitié qui manquait à la règle
+
+Le rappel automatique du style d'une instance (`recallViewerStyle`, 400 ms après que la scène est
+prête) ne s'arrête que si `styleTouchedRef` est vrai, et le garde-fou de la session précédente
+(`sceneGesture`) posait ce drapeau **au moindre changement** d'un réglage de la scène. Or **un effet
+se rejoue sans qu'aucune valeur ait changé** : React ré-évalue son tableau de dépendances à chaque
+rendu, et `applyFog` (entre autres) **change d'identité** dès que ses propres dépendances bougent —
+deux réglages rejouaient donc leur « geste » à l'ouverture, sans que l'utilisateur ait rien touché.
+Le rappel était clos **tout seul**, le style retenu par l'instance ne revenait plus jamais, et le fond
+restait uni : exactement le symptôme rapporté.
+
+`sceneGesture(key, value)` porte donc maintenant **la valeur du réglage**, et seul un **changement de
+valeur** tranche (le montage reste muet, une ré-exécution aussi). La rampe, elle, est comparée par ce
+qu'elle **EST** — une chaîne `on|to|angle|mid|midOn|light` — jamais par l'identité de l'objet d'état
+que chaque geste recrée.
+
+### ⑤② Un style qui repose par-dessus un geste arrivé pendant sa descente
+
+`recallViewerStyle` relisait le drapeau **avant** de partir chercher le fichier du dossier (et après
+le listing), mais **pas après le téléchargement** : un fichier de style met une seconde ou deux à
+descendre, et un geste de l'utilisateur pendant ce temps-là était recouvert par le style qui arrivait
+après lui. C'est le « it has worked in the past **for some seconds** ». Le drapeau est désormais relu
+**juste avant d'adresser le style** : ce qui est déjà à l'écran ne se repose jamais par-dessus un
+geste. Le cas est **exécuté** (`_viewer_style_recall_test.mjs` §5h : la doublure de
+`downloadDriveFileText` lève le drapeau en plein vol → le rappel rend `null`, n'applique rien, n'adopte
+rien).
+
+### ⑤③ Le défaut pâle — deux blancs ne font pas une rampe
+
+Le défaut de la seconde couleur était `#cbd5e1` (slate-300), à côté d'une couleur de scène `#f8fafc` :
+la mesure le chiffre — **écart total des deux extrémités : 105** (sur 765 possibles), c'est-à-dire deux
+gris très clairs que l'œil lit comme **un aplat**. Le défaut est passé à **`#94a3b8`** (slate-400), soit
+**244** — 2,3 fois plus. Et pour qu'un poste déjà réglé en profite, `readBgGradient` **reconnaît le
+défaut pâle d'hier** (`BG_GRADIENT_PALE_TO`, nommé) et le rafraîchit ; une couleur **choisie** n'est
+jamais touchée (ni un fichier, ni un objet bricolé).
+
+### ⑤④ ☀ La rampe va dans la direction de la lampe (la demande)
+
+`bgAngleFromLight(light)` (module du fond, **pure**, exécutée sous node) reçoit le vecteur **du rig
+◐ Shadows** (`nglKeyLightDirection`, le même que l'ombre portée et que le ✨ Ray) et rend l'angle CSS de
+la rampe : **A du côté éclairé, B du côté que la lampe a quitté** — la direction MÊME où l'ombre tombe.
+La convention du rig (ngl 2.4 : `x > 0` = gauche de l'écran, `y > 0` = haut) rend chaque cas
+vérifiable : lampe par défaut (25° / 28°, en haut à gauche) → **142°** (« du coin haut-gauche vers le
+coin bas-droit ») ; lampe à l'horizon à gauche → 90° ; lampe derrière la caméra mais au-dessus → 180°
+(l'angle d'avant) ; lampe pile derrière (aucune direction à projeter) → l'angle par défaut.
+
+C'est le **défaut du jour** (`BG_GRADIENT_DEFAULT_LIGHT`) : un magasin ou un fichier qui ne dit rien
+suit la lampe (le champ absent veut dire « comme le viewer sait le faire »), et **seul un refus
+explicite** — ce qu'écrivent les huit flèches et le curseur d'angle — rend la direction au magasin. Le
+panneau gagne un dixième bouton dans la rangée des directions, **☀ Light** (`aria-pressed`), et sa
+ligne de lecture dit ses degrés (« in the direction of the light (142°) »).
+
+⚠ **L'ANGLE DE LA LAMPE N'EST JAMAIS RECOPIÉ DANS L'ÉTAT.** Il vit dans une **référence**
+(`bgLightAngleRef`), remplie pendant le rendu à côté de celle du rig, et relue **au moment de peindre**
+(`bgSpecLive()` — c'est aussi la spécification que prennent les **deux films** 🎬🎞 et la **still
+✨ Ray**, sans quoi une figure ne serait plus « coin par coin » ce que l'écran montre). Deux raisons,
+toutes les deux mesurées : une écriture de l'application n'est **pas** un geste de l'utilisateur (elle
+clorait le rappel — le défaut de ⑤①), et un `useCallback` garde la fermeture du rendu qui l'a créé —
+une valeur de rendu y serait **périmée** dès que la lampe bouge. Un effet sur `[shadowAz, shadowEl]`
+repaint donc le fond quand la lampe tourne : **le magasin ne bouge pas d'un degré**.
+
+### ⑤⑤ LA PREUVE : LE PIXEL COMPOSÉ, PAS LE CSS (le trou de la sonde d'avant)
+
+Lire le CSS ne prouve pas ce que l'œil voit. La sonde lit maintenant **le pixel composé**, et elle le
+peut parce que **NGL 2.4 construit son renderer avec `alpha: true` ET `preserveDrawingBuffer: true`**
+(lu dans `_ngl_src/viewer__viewer.ts`) : `drawImage(canvas)` rend donc le **bitmap réel**, alpha
+compris, à n'importe quel moment. La sonde empile alors les deux couches **comme le navigateur le fait
+pour l'élément** — la couleur de fond du canvas, puis le CSS du canvas (`background-image`), puis le
+rendu d'NGL — et lit trois lignes **et les deux coins** (la molécule est au milieu : les coins sont du
+fond à coup sûr, et sur une rampe diagonale ce sont ses deux extrémités). La couche CSS est rasterisée
+**par le navigateur lui-même** : `fillStyle` n'accepte pas une chaîne `linear-gradient(…)`, donc la
+rampe passe par un `<foreignObject>` SVG portant **la même chaîne CSS** — aucune règle du module n'est
+recopiée, c'est un instrument.
+
+**Ce que le pixel dit** (Chrome headless, `?phase=ramp` : le viewer s'ouvre sur une rampe **allumée**,
+sans le moindre geste) :
+
+| mesure | valeur |
+| --- | --- |
+| la rampe écrite sur le canvas | `linear-gradient(142deg, rgb(255,0,0) 0%, rgb(0,0,255) 100%)` — **l'angle de la lampe**, alors que le magasin disait 180° |
+| **alpha du rendu** là où il n'y a rien | **0** — la couche CSS est donc visible **à travers** la toile |
+| la rampe, rasterisée par le navigateur | coin haut-gauche `#f90005` → coin bas-droit `#0500fa` |
+| **l'ÉCRAN COMPOSÉ** (la rampe **sous** le rendu d'NGL) | `#f90005` → `#7f007f` (milieu) → `#0500fa` — **le fond n'est pas uni**, écart max **245** |
+| le défaut pâle d'hier vs celui du jour | écart **105 → 244** |
+| la rampe du jour, allumée à la main | `#f6f8fa` (haut-gauche) → `#96a4b9` (bas-droit), écart max **96** |
+| **témoins négatifs** | rampe **éteinte** : aucune image de fond, écart **0** · phase 📌 (rampe éteinte) : `#f8fafc` **partout**, écart **0** |
+
+⚠ **La sonde s'est elle-même prise en défaut, et c'est écrit là pour que ça ne revienne pas** : sa
+recherche du canvas d'NGL appelait `getContext('webgl2')` sur **chaque** canvas de la page — ce qui
+**crée** un contexte WebGL sur la toile 2D de l'ombre vivante quand l'étage n'existe pas encore. La
+mesure portait alors sur une toile de **300×150** (la taille par défaut d'un canvas) au lieu des
+2100×620 de la vue, et trois assertions tombaient sans qu'une seule ligne du viewer soit en cause. Le
+canvas d'NGL se reconnaît maintenant **sans rien créer** : c'est le seul sur lequel NGL a écrit sa
+couleur de fond. La sonde **attend aussi la rampe** et une **vraie boîte** avant de mesurer, et le dit.
+
+*Vérifier :* `node _viewer_bg_live_test.cjs` — **61/61** (le geste du fond, la rampe écrite **et**
+composée, son extinction, les quatre relevés de repos, le sommeil/réveil, le scénario 📌 + ⬚ du
+rapport d'avant, **et le §7 : le pixel composé** — ≈2 min, quatre passages de Chrome, **SAUTÉE (exit
+0)** sans Chrome) ;
+
+*Vérifier :* `node _viewer_background_test.mjs` — **204** (les maths exécutées, **☀ `bgAngleFromLight`
+sur le vecteur du rig pour sept lampes**, la validation du mode ☀, le rafraîchissement du défaut pâle,
+et le câblage du panneau — dont **sept** contrôles qui allument la rampe) ;
+
+*Vérifier :* `node _viewer_style_recall_test.mjs` — **186** (le rappel exécuté sur un faux Drive, la
+**ré-exécution qui n'est pas un geste**, le geste **pendant le téléchargement** qui annule le rappel,
+et les huit écritures qui portent leur valeur) ;
+
+Le reste suit sans une perte : `_viewer_render_smoke_test.mjs` **23** · `_viewer_ui_layout_test.mjs`
+**517** · `_viewer_style_controls_test.mjs` **504** · `_viewer_style_coverage_test.mjs` **738** ·
+`_viewer_theme_snapshot_test.mjs` **73** · `_viewer_film_match_test.mjs` **79** ·
+`_viewer_ray_shadow_live_test.mjs` **183** · `_viewer_stage_parking_test.mjs` **35** ·
+`npx oxlint` — **0 erreur**.
+
+### ⑤⑥ Ce qui reste à vérifier par l'utilisateur
+
+Le viewer s'ouvre sur la rampe qu'il a retenue **sans aucun clic** (c'est le §7 ci-dessus), et le
+bouton **☀ Light** du panneau ⬚ la fait suivre la lampe. Un poste resté au défaut pâle d'hier reçoit
+le défaut du jour **au rechargement** (le rafraîchissement est dans le lecteur) ; une couleur choisie
+n'est pas touchée, donc un fond qu'on trouvait déjà juste le reste.
+
+

@@ -268,7 +268,7 @@ const buildRecall = () => new Function(
    dernier recours (voir styleMemoryKeysRef). */
 const runRecall = ({
   memory = null, memories = {}, files = [], texts = {}, token = () => 'tok', touched = false,
-  snaps = {}, themes = {}, slug = 'GEC_Mutant_X', memoryKeys = null
+  snaps = {}, themes = {}, slug = 'GEC_Mutant_X', memoryKeys = null, touchDuringDownload = false
 } = {}) => {
   const seen = { listed: [], downloads: [], adopted: [], applied: [], messages: [], saved: [] };
   const key = FILES.viewerStyleMemoryKey(slug);
@@ -279,8 +279,9 @@ const runRecall = ({
     if (seeded[k]) fakeStore.set(k, JSON.stringify(seeded[k]));
     else fakeStore.delete(k);
   });
+  const touchedRef = { current: touched };
   const recall = buildRecall()(
-    { current: touched },
+    touchedRef,
     { current: key },
     { current: memoryKeys || [key, 'labViewerStyle'] },
     FILES.loadViewerStyleMemory,
@@ -293,7 +294,15 @@ const runRecall = ({
     token,
     async (arg) => { seen.listed.push(arg); return { files }; },
     FILES.pickViewerStyleFile,
-    async (id) => { seen.downloads.push(id); return texts[id] || ''; },
+    async (id) => {
+      seen.downloads.push(id);
+      /* ⚠ LE GESTE PENDANT LE TÉLÉCHARGEMENT — c'est le trou du rapport « it has
+         worked for some seconds » : l'utilisateur presse ⬚ Gradient pendant que le
+         fichier de style descend. Le rappel doit relire le drapeau APRÈS la
+         descente et renoncer (voir la ré-lecture dans recallViewerStyle). */
+      if (touchDuringDownload) touchedRef.current = true;
+      return texts[id] || '';
+    },
     FILES.parseViewerStyleFile,
     (mode, name, e) => seen.adopted.push([mode, name, e]),
     (k, v) => seen.saved.push([k, v]),
@@ -433,8 +442,8 @@ const cssOf = (entry) => {
 eq(cssOf(backInA.seen.applied[0][2]), 'linear-gradient(90deg, #0b1f33 0%, #123456 100%)',
   '…et le canvas d’A reçoit SA rampe (de son fond vers sa couleur B, à SON angle)');
 eq(BG.bgGradientOf(backInA.seen.applied[0][2].global.backgroundGradient),
-  { on: true, to: '#123456', angle: 90, mid: BG.BG_GRADIENT_DEFAULT_MID, midOn: false },
-  '…relue par le VALIDATEUR du module, exactement comme le fait applyViewerSetup');
+  { on: true, to: '#123456', angle: 90, mid: BG.BG_GRADIENT_DEFAULT_MID, midOn: false, light: true },
+  '…relue par le VALIDATEUR du module, exactement comme le fait applyViewerSetup (et un style d’hier suit donc la LAMPE : le champ absent veut dire « comme le viewer sait le faire »)');
 
 const backInB = runRecall({
   slug: 'cond_B',
@@ -479,6 +488,19 @@ const generalViewer = runRecall({
 eq(await generalViewer.recall(), { mode: 'snapshot', name: 'Defined style', from: 'browser' },
   'hors expérience (aucun slug), le nom nu reste légitime : il n’y a qu’un viewer');
 
+/* 5h. UN GESTE PENDANT QUE LE STYLE DESCEND — LE RAPPEL RENONCE (le trou du
+   « it has worked for some seconds » : le fichier du dossier met un temps réel à
+   arriver, et ce qui descendait recouvrait ce que l'utilisateur venait de choisir). */
+const midFlight = runRecall({
+  memory: { mode: 'snapshot', name: 'Supprimé depuis' }, snaps: {},
+  files: [snap], texts: { S: payloadSnap }, touchDuringDownload: true
+});
+eq(await midFlight.recall(), null,
+  '⚠⚠ le style du dossier n’est PAS appliqué si l’utilisateur a tranché pendant qu’il descendait');
+eq(midFlight.seen.applied, [], '…rien n’est donc reposé par-dessus son geste (la rampe qu’il vient d’allumer reste)');
+eq(midFlight.seen.downloads, ['S'], '…le fichier avait bien été lu : c’est bien APRÈS la lecture que le rappel renonce');
+eq(midFlight.seen.adopted, [], '…et il n’est même pas adopté dans le magasin (aucune trace d’un style refusé)');
+
 /* ══ 6bis. UN GESTE SUR LA SCÈNE CLÔT LE RAPPEL — la règle, EXÉCUTÉE ═══════
    LE RAPPORT DE CETTE SESSION : « the gradient does not work and the program is slow
    even if it does not have processes to do ». Le fond MARCHE (mesuré dans le
@@ -489,7 +511,16 @@ eq(await generalViewer.recall(), { mode: 'snapshot', name: 'Defined style', from
    💾 / 📌 / ↩ / ⬆. Un ⬚ Gradient pressé JUSTE APRÈS l'ouverture était donc reposé par
    le rappel : la rampe s'allumait puis s'éteignait toute seule (reproduit dans Chrome :
    « linear-gradient(…) » à +250 ms, « none » à +2 s — et l'interrupteur revenu à
-   `aria-pressed="false"`). */
+   `aria-pressed="false"`).
+
+   ⚠⚠ ET LE SECOND RAPPORT — « the gradient still does not work … now nothing happens,
+   only uniform background » — a ajouté la seconde moitié de la règle : un effet se
+   rejoue sans qu'aucune VALEUR ait changé (`applyFog` renaît dès que ses propres
+   dépendances bougent, et le tableau de dépendances est évalué au rendu). Compter ces
+   passages-là comme des gestes clôturait le rappel TOUT SEUL, à l'ouverture : le style
+   retenu par l'instance ne revenait plus jamais, et le fond restait donc uni — la
+   rampe que l'instance avait enregistrée ne revenait pas. Le registre garde donc la
+   VALEUR de chaque réglage, et c'est un changement de valeur qui tranche. */
 const GESTURE_SRC = (() => {
   const a = VIEW.indexOf('const sceneSeenRef = useRef(null);');
   assert.ok(a > 0, 'sceneSeenRef introuvable (le registre du montage)');
@@ -505,29 +536,46 @@ const makeGesture = () => {
   return { gesture, touched };
 };
 const mount = makeGesture();
-mount.gesture('bgGradient');
+mount.gesture('bgGradient', 'on|#94a3b8|180');
 eq(mount.touched.current, false,
   '⚠ le PREMIER passage d’un effet (celui du MONTAGE) n’est pas un geste : le rappel peut encore parler');
-mount.gesture('bgGradient');
+mount.gesture('bgGradient', 'on|#94a3b8|180');
+eq(mount.touched.current, false,
+  '⚠⚠ …et une RÉ-EXÉCUTION du même effet (même VALEUR, objet d’état recréé) n’en est pas un non plus : le rappel ne se clôt pas tout seul — c’est ce qui ramenait le style de l’instance « pour quelques secondes »');
+mount.gesture('bgGradient', 'off|#94a3b8|142');
 eq(mount.touched.current, true,
-  '…et le changement qui suit — le ⬚ Gradient pressé juste après l’ouverture — CLÔT le rappel');
+  '…et le CHANGEMENT qui suit — le ⬚ Gradient pressé juste après l’ouverture — CLÔT le rappel');
 const many = makeGesture();
-['bg', 'bgGradient', 'fog', 'clip', 'shadows', 'light', 'shadowAz', 'shadowEl'].forEach((k) => many.gesture(k));
+['bg', 'bgGradient', 'fog', 'clip', 'shadows', 'light', 'shadowAz', 'shadowEl'].forEach((k, i) => many.gesture(k, i));
 eq(many.touched.current, false,
   'au montage, React exécute TOUS les effets de la scène : chacun a droit à son premier passage muet');
-many.gesture('fog');
+['bg', 'bgGradient', 'fog', 'clip', 'shadows', 'light', 'shadowAz', 'shadowEl'].forEach((k, i) => many.gesture(k, i));
+eq(many.touched.current, false,
+  '…et les huit rejoués à l’identique ne tranchent RIEN (huit ré-exécutions, zéro geste)');
+many.gesture('fog', 99);
 eq(many.touched.current, true, '…et le premier qui change vraiment clôt le rappel, quel qu’il soit');
 
 for (const key of ['bg', 'bgGradient', 'fog', 'clip', 'shadows', 'light', 'shadowAz', 'shadowEl']) {
-  has(`sceneGesture('${key}');`, `l’écriture de « ${key} » le dit au rappel (un réglage de la scène est un geste)`);
+  has(`sceneGesture('${key}', `, `l’écriture de « ${key} » le dit au rappel AVEC SA VALEUR (une ré-exécution ne compte pas)`);
 }
-has('const sceneGesture = (key) => {', 'la règle est UNE fonction nommée (aucune copie au fil des contrôles)');
+has('const sceneGesture = (key, value) => {', 'la règle est UNE fonction nommée (aucune copie au fil des contrôles)');
+has('if (seen.get(key) === value) return;                    // ⚠ une ré-exécution non plus',
+  '…et c’est bien la COMPARAISON DE VALEUR qui décide (jamais l’identité de l’objet)');
+has('const bgGradientSignature = `${bgGradient.on}|${bgGradient.to}|${bgGradient.angle}|${bgGradient.mid}|${bgGradient.midOn}|${bgGradient.light}`;',
+  'la rampe est comparée par ce qu’elle EST — une chaîne, pas l’objet que chaque geste recrée');
 eq(countOf(/styleTouchedRef\.current = true;/g), 2,
   'le drapeau n’est écrit qu’à DEUX endroits : le geste d’enregistrement, et le geste de la scène');
-ok(VIEW.indexOf("sceneGesture('bgGradient');") < VIEW.indexOf("localStorage.setItem(BG_GRADIENT_KEY"),
+ok(VIEW.indexOf("sceneGesture('bgGradient', bgGradientSignature)") < VIEW.indexOf("localStorage.setItem(BG_GRADIENT_KEY"),
   '…et il est bien posé par l’effet du RÉGLAGE lui-même (la rampe), pas ailleurs');
-ok(VIEW.indexOf("sceneGesture('shadowAz');") < VIEW.indexOf("localStorage.setItem('labViewerShadowAz'"),
+ok(VIEW.indexOf("sceneGesture('shadowAz', shadowAz)") < VIEW.indexOf("localStorage.setItem('labViewerShadowAz'"),
   '…idem pour l’orientation de la lampe, que le rapport d’avant voyait revenir seule');
+/* ⚠ LA RÉ-EXÉCUTION N'EST PAS UNE THÉORIE : `applyFog` (entre autres) change
+   d'IDENTITÉ dès que son propre tableau de dépendances bouge, donc deux effets
+   rejouaient leur geste sans qu'aucune valeur ait changé — le rappel était clos
+   tout seul et le style retenu par l'instance ne revenait jamais. Le registre
+   garde donc la valeur de chaque réglage (voir le commentaire de sceneGesture). */
+has('const seen = sceneSeenRef.current;\n  if (!seen.has(key)) { seen.set(key, value); return; }',
+  'le registre du montage ENREGISTRE la valeur du premier passage (il la comparera ensuite)');
 
 /* ══ 6ter. LE CÂBLAGE DANS LE VIEWER ══════════════════════════════════════════════ */
 
