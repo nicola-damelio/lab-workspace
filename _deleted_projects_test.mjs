@@ -222,7 +222,7 @@ has(PROJECTS, 'export const loadDeletedProjectsForDataset = (datasetArg) => {',
   '…et la page peut LISTER les projets supprimés (le geste doit être atteignable)');
 has(PROJECTS, 'writeRevivals(withoutRevival(readRevivals(), { id: project.id, datasetId }));',
   'supprimer à nouveau un projet restauré le supprime pour de bon');
-has(PROJECTS, 'reviveDeletedProject(id, currentDatasetId);', '…et App.jsx lève la tombe du dataset ouvert');
+has(APP, 'reviveDeletedProject(id, currentDatasetId);', '…et App.jsx lève la tombe du dataset ouvert');
 has(APP, 'revivedProjects: loadRevivedProjects()',
   'le payload du dataset (cloud / sauvegarde HTML) transporte les RESTAURATIONS, comme les suppressions');
 has(APP, 'adoptRevivedProjects(s.revivedProjects);',

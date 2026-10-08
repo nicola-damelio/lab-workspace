@@ -4370,3 +4370,86 @@ présent dans `App.jsx` et dans la page, le transport par le payload et par
 `revivedProjects` construit, relu et fusionné ; `node _project_store_guard_test.mjs`
 — le verrou de ① est intact.
 
+## Le Drive est relu EN ENTIER, et ce qui revient repart sur le Drive (08/10/2026)
+
+**Ce qui était vu.** La liste des projets qui se vidait a sa réparation depuis le
+04/10/2026 (voir ① plus haut), mais le défaut de fond restait entier : la liste
+affichée venait du **magasin du navigateur** et de Firestore, et l'index du Drive
+(`_workspace/state.json`) n'était relu **qu'au démarrage** — et seulement en
+AJOUT. La question « qu'y a-t-il réellement sur le Drive, et qu'est-ce qui manque
+ici ? » n'avait donc **aucune réponse** dans le programme : un poste neuf, un
+magasin vidé, une écriture refusée laissaient l'écran vide sans qu'aucun geste
+permette de le remplir — alors que les dossiers, les projets et les copies
+`_workspace/datasets/ds_….json` étaient toujours sur le Drive.
+
+**La cause, en deux temps.** ① *On ne relisait pas la source.* Le programme lit le
+Drive au démarrage (adoption en ajout seul), mais aucun geste ne relisait
+l'ensemble : ni l'index, ni les dossiers, ni les copies. Une perte locale était
+donc définitive à l'écran, sans aucun moyen de la constater ni de la réparer.
+② *Ce qui était relu ne repartait pas.* Une adoption restait locale : le poste
+suivant ne voyait toujours rien et l'inventaire signalait les mêmes « inconnus »
+à chaque fois.
+
+**Ce qui est fait.**
+
+| Règle | Où |
+| --- | --- |
+| Le Drive est lu **en entier** : toutes les pages de `/drive/v3/files`, pas seulement les 1000 premiers éléments d'un dossier | `utils/driveListPages.js` (`collectDrivePages`, `MAX_DRIVE_LIST_PAGES = 20`) |
+| Un **inventaire en LECTURE SEULE** confronte le Drive à ce que ce poste connaît (liste du navigateur, index `_workspace/state.json`, registre du miroir `labDriveMirror`) | `utils/workspaceResync.js` (`sweepWorkspaceDrive`) |
+| Un dossier est reconnu par son **identifiant** quand le registre le connaît, et par son **nom** seulement sinon — et un dossier est un dataset par sa **FORME** (il porte un conteneur canonique), jamais par son nom | `sweepWorkspaceDrive` (`isCanonicalDatasetDir`, `ADMIN_DATASET_DIRS`) |
+| Chaque constat a un **identifiant stable** (les tests et l'interface s'y accrochent) et une phrase lisible ; au-delà de 40 constats l'interface dit « …more findings were not listed », les comptes restant complets | `RESYNC_ISSUES`, `MAX_ISSUES` |
+| Un dossier que le Drive n'a pas laissé lire est **DIT** : cet inventaire est déclaré INCOMPLET, au lieu de prétendre « tout va bien » | `counts.foldersUnreadable`, `listFailures` |
+| Les copies qui peuvent rendre un contenu perdu sont **nommées** (les `_workspace/datasets/ds_<id>.json` qui existent VRAIMENT), et rien n'est créé | `recoverable.copyIds` / `missingCopyIds` |
+| Un dataset **supprimé** n'est jamais « récupéré » : sa tombe (locale ou du miroir) l'exclut de la reprise | `knownDeletedIds` / `mirrorDeletedIds` dans `sweepWorkspaceDrive` |
+
+**Le geste : Réglages → Workspace → « 🔄 Resync from Drive ».** QUATRE temps, tous
+décidés dans `App.jsx` (`resyncWorkspaceFromDrive`) ; les trois premiers ne font
+que LIRE le Drive, le quatrième réécrit l'index partagé — et rien d'autre. Le
+panneau (`components/WorkspaceResyncPanel.jsx`) ne fait que MONTRER le résultat :
+il ne connaît ni le Drive ni les magasins, ce qui rend la reprise vérifiable
+ailleurs qu'à l'écran.
+
+| Temps | Ce qu'il fait | Où |
+| --- | --- | --- |
+| 1° L'INDEX | exactement le chemin du démarrage, donc les mêmes règles : tombes, levées de tombe, projets de l'index, liste des datasets. Une suppression faite ailleurs reste appliquée, un projet rendu ailleurs est rendu ici | `syncWorkspaceFromDrive` |
+| 2° L'INVENTAIRE | `sweepWorkspaceDrive` dit ce que le Drive porte, ce qui manque ici, ce qui est mal rangé, et quelles copies sont récupérables. Les candidats sont ceux de l'écran **unis** à ceux de l'index qui vient d'être adopté (`collectResyncCandidates([localDatasets, indexDatasets])`) : une liste d'écran encore en retard ne peut donc pas faire perdre une copie récupérable | `collectResyncCandidates` |
+| 3° LES CONTENUS | chaque copie récupérable est relue (`readDatasetCopy`), sa charge est décodée (le contenu d'un dataset vit dans `payload`, compressé), puis adoptée par le chemin **NORMAL** de l'ouverture d'un dataset, suppressions comprises : un dataset qui n'est pas ouvert ici est donc réparé sans l'ouvrir | `readDatasetCopy` → `mergeProjectsFromCloud` (`adoptAllLegacy`, `deleted`) |
+| 4° LE RÉSULTAT REPART | quand quelque chose a bougé (`changed`), l'index partagé est réécrit avec ce que ce poste vient d'apprendre. La liste publiée est l'**union** de celle de l'écran et de celle que l'adoption vient de mettre de côté (`readDatasetListCache`), repassée par `withoutDeletedDatasets` : le cache du navigateur ne peut donc ni AMPUTER l'index partagé, ni y ressusciter un dataset supprimé ailleurs | `writeWorkspaceState(buildWorkspaceState({ … }))` |
+| L'écran suit **sans F5** | le nonce ne remonte la page Projets que si quelque chose a bougé (`key="projects-${workspaceResyncNonce}"`) : c'est ce qui faisait qu'un projet rendu n'apparaissait qu'après un rechargement de l'onglet | `workspaceResyncNonce` |
+| Une écriture qui échoue est **DITE** | l'adoption locale a bien eu lieu, mais `⚠ What was adopted here could NOT be written back…` prévient que les autres postes ne le verront pas | `resyncWorkspaceFromDrive` |
+
+**Ce qui n'est PAS touché (dit franchement).** Aucun dossier n'est créé, déplacé,
+renommé ni supprimé : un `projects/<projet>/` égaré, un jumeau, un conteneur à la
+racine, un dataset sans fiche ou un index absent sont **signalés**, jamais rangés —
+ranger le Drive reste un geste humain, et le panneau le rappelle à l'écran. La
+SEULE écriture du geste est `_workspace/state.json`. Un Drive injoignable ne
+produit d'ailleurs aucun geste partiel : le panneau répond « The Drive inventory
+is unavailable — nothing was read. », et `reason` en dit la cause exacte (aucun
+lecteur disponible, Drive non connecté, dossier `_workspace/` absent — dans ce
+dernier cas **aucun dossier n'a été créé**).
+
+**Où ça se voit.** Réglages → Workspace, sous le réglage de l'espace de travail.
+Toutes les phrases et le goût des lignes (`⚠` en ambre, `·` en gris) viennent du
+module pur (`resyncReportLines`, `resyncSummaryText`, `resyncLineTone`) : le
+panneau peint, il ne décide pas — c'est ce qui rend le compte-rendu vérifiable
+sans navigateur.
+
+### Vérifier soi-même
+
+```
+node _workspace_resync_test.mjs       # 154 vérifications — l'inventaire ne touche à rien
+node _workspace_resync_ui_test.mjs    # 78 vérifications — le compte-rendu dit tout
+node _workspace_drive_test.mjs        # 60 tests — l'espace de travail entier vit sur le Drive
+node _workspace_keys_test.mjs         # 39 tests — les clés du navigateur vivent aussi sur le Drive
+```
+
+L'inventaire est vérifié hors navigateur sur un **faux Drive complet** :
+pagination (au-delà des 1000 éléments d'un dossier), datasets, projets, jumeaux,
+dossier de projet hors de `projects/`, dossier qui EST un dataset mais sans fiche,
+dossier illisible, index absent ou illisible — et le fait qu'un dataset
+**supprimé** ne remonte jamais. Le compte-rendu de l'interface est vérifié sur le
+**texte** (phrases et comptes) et non sur des pixels, parce que le module qui les
+fabrique est pur. Enfin, le branchement réel est vérifié dans `App.jsx` (les
+quatre temps, l'union au moment de la publication, le nonce seulement quand ça a
+bougé).
+

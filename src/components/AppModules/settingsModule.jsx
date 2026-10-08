@@ -9,6 +9,7 @@ import { CollapsibleSectionPanel as CollapsibleSection } from '../ui';
 import { CustomMetadataFieldsManager, MandatoryParametersManager, ScientistsOperatorsManager } from './definitionsManagers';
 import { DatabaseCleanupManager } from './storageModules';
 import { DriveImageMigration } from '../DriveImageMigration';
+import { WorkspaceResyncPanel } from '../WorkspaceResyncPanel';
 import { CloudStorageSettings } from './cloudStorageSettings';
 import { FigureStylePanel } from '../FigureStylePanel';
 import { normalizeOperators } from '../../utils/auth';
@@ -402,7 +403,11 @@ export const SettingsModule = ({
   datasetsList, deleteDataset, deleteEmptyDatasets, datasetTitle,
   // Vrai quand les connexions passent par le serveur de jetons : les mots de
   // passe sont vérifiés par le serveur, un changement doit donc y être envoyé.
-  serverMode = false
+  serverMode = false,
+  /* « RESYNC FROM DRIVE » (App.jsx) : relire l'index du Drive, inventorier
+     l'espace de travail et remettre ici les datasets et projets que le Drive
+     porte encore. Rend le compte-rendu affiché par le panneau. */
+  onResyncFromDrive = null
 }) => {
   /* Dans un dataset scientifique, les comptes scientist non superutilisateurs
      ne voient que la section « Scientists / Operators » (en lecture seule) ;
@@ -507,6 +512,14 @@ export const SettingsModule = ({
                           Open ↗
                         </button>
                       </div>
+                   </CollapsibleSection>
+
+                   <CollapsibleSection
+                     title="Workspace — resync datasets & projects from Google Drive"
+                     subtitle="Puts this browser back in line with the Drive: the workspace index (_workspace/state.json) is re-read — so the datasets and projects it lists, the deletions recorded on another PC and the projects given back elsewhere all apply here — then the whole Drive is inventoried (Lab Workspace folder, _workspace/state.json, the dataset folders, the content copies in _workspace/datasets/), and every dataset whose content is missing here is re-read from its copy and restored into this browser exactly as if it had been opened here. The result is written back to the shared index, so the next PC sees it. No folder on the Drive is moved, renamed or deleted. Use it when datasets or projects no longer show up although they were never deleted: their local store in this browser can be emptied (full quota, refused write, new PC, browser cleanup) while the Drive still carries them."
+                     defaultOpen={false}
+                   >
+                     <WorkspaceResyncPanel onResync={onResyncFromDrive} />
                    </CollapsibleSection>
 
                    <CollapsibleSection title="Files on Google Drive" subtitle="Move misplaced Drive files into the canonical folders — test attachments (figures, ⭐ starred items, PDFs/documents, links) into Lab Workspace/<dataset>/projects/<project>/<test>/<instance>/Report, and image-library figures (captures, Image Builder canvases) into Lab Workspace/<dataset>/projects/<project>/images." defaultOpen={false}>

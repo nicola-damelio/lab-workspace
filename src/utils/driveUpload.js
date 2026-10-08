@@ -31,6 +31,13 @@
 // every SVG figure fail its Drive upload with "Failed to execute 'atob' on
 // 'Window'…" and stay browser-only; see utils/dataUrlBytes.
 import { dataUrlToBytes, dataUrlMime } from './dataUrlBytes';
+/* La boucle « toutes les pages » (voir driveListPages.js) : `listDriveChildren`
+   ne s'arrête plus au premier millier d'enfants — un dossier `projects/` un peu
+   fourni en contient davantage, et ce qui suit la première page « disparaissait »
+   de la liste affichée. */
+import { MAX_DRIVE_LIST_PAGES, collectDrivePages } from './driveListPages';
+
+export { MAX_DRIVE_LIST_PAGES } from './driveListPages';
 
 const TOKEN_KEY = 'labDriveAccessToken';
 const TOKEN_EXPIRY_KEY = 'labDriveAccessTokenExpiresAt';
@@ -360,6 +367,25 @@ export const getDriveRootAnchor = () => ({
   kind: driveRootKind
 });
 
+export const findLabWorkspaceFolder = async () => {
+  if (!getDriveToken()) return '';
+  let containerId = '';
+  try {
+    const { getDriveFolderUrl } = await import('./driveNaming');
+    containerId = extractDriveFolderId(getDriveFolderUrl());
+  } catch { /* ignore */ }
+  try {
+    if (containerId) return await findFolderByName('Lab Workspace', containerId);
+    const q = encodeURIComponent(
+      "name='Lab Workspace' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+    );
+    const res = await driveFetch(`/drive/v3/files?q=${q}&fields=files(id,name)&pageSize=10`);
+    const j = await res.json();
+    const list = (Array.isArray(j.files) ? j.files : []).filter((f) => f && f.name === 'Lab Workspace');
+    return list.length ? String(list[0].id) : '';
+  } catch { return ''; }
+};
+
 /** Find (or create) the app's "Lab Workspace" root folder (inside the user's
  *  saved Drive folder URL if one is set, otherwise at the Drive root). */
 export const ensureLabWorkspaceFolder = async () => {
@@ -398,16 +424,34 @@ export const ensureLabWorkspaceFolder = async () => {
   });
 };
 
-/** List immediate children (files AND folders) of a Drive folder. */
-export const listDriveChildren = async (parentId) => {
-  if (!parentId || !getDriveToken()) return [];
-  try {
-    const q = encodeURIComponent(`'${parentId}' in parents and trashed=false`);
-    const res = await driveFetch(`/drive/v3/files?q=${q}&fields=files(id,name,mimeType,size,webViewLink)&pageSize=1000`);
-    const j = await res.json();
-    return Array.isArray(j.files) ? j.files : [];
-  } catch { return []; }
+/* Combien de PAGES une énumération de dossier suit avant de s'arrêter : la
+   valeur vit dans driveListPages.js (MAX_DRIVE_LIST_PAGES) et c'est elle qui
+   est ré-exportée ici — une seule définition pour tout le dépôt. */
+
+/** List immediate children (files AND folders) of a Drive folder, EN SUIVANT
+ *  `nextPageToken` — TOUTES les pages, pas seulement les mille premiers
+ *  éléments. Un dossier `projects/` un peu fourni dépasse 1000 entrées : s'y
+ *  arrêter ferait « disparaître » des projets parfaitement présents (c'est la
+ *  question à laquelle « Resync from Drive » doit répondre). Renvoie aussi
+ *  combien de pages ont été lues et si l'énumération s'est arrêtée AVANT la fin
+ *  (`truncated`) — jamais de troncature silencieuse. */
+export const listDriveChildrenDetailed = async (parentId, { maxPages = MAX_DRIVE_LIST_PAGES } = {}) => {
+  if (!parentId || !getDriveToken()) return { files: [], pages: 0, truncated: false, errors: 0 };
+  const q = encodeURIComponent(`'${parentId}' in parents and trashed=false`);
+  /* Une page du Drive, telle quelle : `collectDrivePages` lit `files` et
+     `nextPageToken` (voir driveListPages.js). */
+  const page = await collectDrivePages(async (pageToken) => {
+    const url = `/drive/v3/files?q=${q}&fields=nextPageToken,files(id,name,mimeType,size,webViewLink)`
+      + `&pageSize=1000${pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ''}`;
+    const res = await driveFetch(url);
+    return res.json();
+  }, { maxPages });
+  return { files: page.files, pages: page.pages, truncated: page.truncated, errors: page.errors };
 };
+
+/** List immediate children (files AND folders) of a Drive folder. */
+export const listDriveChildren = async (parentId, opts = {}) =>
+  (await listDriveChildrenDetailed(parentId, opts)).files;
 
 /**
  * Les instantanés HTML (sauvegardes) du dataset actuellement ouvert, du plus

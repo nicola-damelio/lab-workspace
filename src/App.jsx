@@ -55,6 +55,7 @@ import { migrateProjectRootFoldersOnce } from './utils/projectRootMigrate';
 import { mirrorDeleteDataset, mirrorRenameDataset } from './utils/driveMirror';
 import {
   readWorkspaceState, writeDatasetCopy, readDatasetCopy,
+  buildWorkspaceState, writeWorkspaceState, WORKSPACE_DIR, WORKSPACE_STATE_FILE,
   applyWorkspaceIndex, adoptWorkspaceState, installWorkspaceAutosave, workspaceDatasetPath
 } from './utils/workspaceDrive';
 /* La LISTE des datasets a sa propre copie dans le navigateur, et elle voyage par
@@ -65,6 +66,11 @@ import { writeDatasetListCache, readDatasetListCache } from './utils/datasetList
    à la fermeture de l'onglet) : la mécanique vit dans un module pur, testé hors
    navigateur par _dataset_copy_mirror_test.mjs. */
 import { createDatasetCopyMirror } from './utils/datasetCopyMirror';
+/* « RESYNC FROM DRIVE » (Réglages → Workspace) : l'INVENTAIRE EN LECTURE de
+   l'espace de travail entier — ce que le Drive porte, ce qui manque ici, ce qui
+   est mal rangé, et les copies de contenu qui peuvent rendre ce qui manque.
+   Rien n'est déplacé par ce module (voir workspaceResync.js). */
+import { sweepWorkspaceDrive, resyncReportLines } from './utils/workspaceResync';
 import {
   readDriveMirror, writeDriveMirror, isDatasetMirrorDeleted, notifyDriveMirrorChanged,
   withoutDrivePathTombstones, projectFolderPaths
@@ -2423,6 +2429,134 @@ if (customType === 'dosy') {
       window.removeEventListener('lab:drive-connected', onConnected);
     };
   }, [syncWorkspaceFromDrive]);
+
+  /* ── « RESYNC FROM DRIVE » (le geste du superutilisateur) ───────────────────
+     Le défaut : des datasets et des projets que le DRIVE portait toujours ne
+     s'affichaient plus, parce que l'écran ne relisait que le magasin de CE
+     navigateur — et rien ne relisait le Drive en entier. Ce geste remet le poste
+     d'accord avec le Drive en QUATRE temps — les trois premiers ne font que LIRE
+     le Drive, le quatrième réécrit l'index partagé et rien d'autre :
+       1° L'INDEX — exactement le chemin du démarrage (`syncWorkspaceFromDrive`) :
+          tombes, levées de tombe, projets de l'index, liste des datasets ;
+       2° L'INVENTAIRE — `sweepWorkspaceDrive` dit ce que le Drive porte, ce qui
+          manque ici, ce qui est mal rangé, et les copies récupérables ;
+       3° LES CONTENUS — chaque copie récupérable est relue (`readDatasetCopy`)
+          et adoptée par le chemin NORMAL de l'ouverture d'un dataset
+          (`mergeProjectsFromCloud`, avec ses suppressions) : un dataset qui n'est
+          pas ouvert ici est donc réparé sans l'ouvrir ;
+       4° LE RÉSULTAT REPART — quand quelque chose a bougé, l'index partagé est
+          réécrit (`writeWorkspaceState`) pour que le poste suivant le voie : sans
+          cette réécriture, la reprise restait locale et l'inventaire signalait les
+          mêmes « inconnus » à chaque fois. C'est la SEULE écriture du geste.
+     Le compte-rendu est rendu au panneau (Réglages → Workspace) : il dit ce qui a
+     été remis et laisse voir les défauts de rangement du Drive sans y toucher.
+     Le magasin du navigateur ayant changé, le nonce re-monte la page Projets —
+     sans cela la page gardée (voir `pageSlot`) montrerait encore l'ancienne
+     liste — mais SEULEMENT si quelque chose a bougé (voir `changed`). */
+  const [workspaceResyncNonce, setWorkspaceResyncNonce] = useState(0);
+
+  const resyncWorkspaceFromDrive = useCallback(async () => {
+    const projectsBefore = loadProjects('').length;
+    /* 1° L'INDEX — le MÊME chemin qu'au démarrage, donc les mêmes règles : une
+       suppression faite ailleurs reste appliquée, un projet rendu ailleurs est
+       rendu ici. */
+    const stateAdopted = await syncWorkspaceFromDrive().catch(() => false);
+    /* 2° L'INVENTAIRE — l'inventaire croise la liste de CE poste et celle de
+       l'index qui vient d'être adopté (`collectResyncCandidates`) : une liste
+       d'écran encore en retard sur l'adoption ne peut donc pas faire perdre une
+       copie récupérable, elle peut seulement faire signaler un dossier que
+       l'index, lui, connaît déjà — d'où l'état d'après adoption ci-dessous. */
+    const report = await sweepWorkspaceDrive({
+      known: {
+        datasets: Array.isArray(datasetsList) ? datasetsList : [],
+        projects: loadProjects('')
+      }
+    }).catch(() => ({}));
+    /* 3° LES CONTENUS — dataset par dataset, la copie du Drive est adoptée sans
+       que le dataset soit ouvert : c'est le SEUL chemin qui rend des projets dont
+       le dossier du dataset a été vidé ou perdu sur le Drive. */
+    const copyIds = report && report.recoverable && Array.isArray(report.recoverable.copyIds)
+      ? report.recoverable.copyIds : [];
+    let copiesAdopted = 0;
+    const copiesFailed = [];
+    for (const id of copyIds) {
+      const copy = await readDatasetCopy(id).catch(() => null);
+      if (!copy || !copy.id) { copiesFailed.push(String(id)); continue; }
+      /* ⚠ LE CONTENU DE LA COPIE VIT DANS `payload` (compressé) : `copy.projects`
+         vaut `undefined` tant que la charge n'est pas décodée, et l'adoption ne
+         ferait alors RIEN — sans le dire, exactement le défaut que ce geste
+         répare. On décode par le chemin unique du programme (`parsePayload`) et
+         une charge illisible est COMPTÉE COMME UN ÉCHEC, jamais comme une
+         réussite silencieuse. */
+      const content = parsePayload(copy);
+      if (!content) { copiesFailed.push(String(id)); continue; }
+      try {
+        mergeProjectsFromCloud(content.projects, {
+          datasetId: String(id),
+          /* Les expériences de la copie servent à ATTRIBUER ses projets
+             historiques (créés avant le découpage par dataset) à CE dataset —
+             exactement comme à l'ouverture ; `adoptAllLegacy` couvre les projets
+             qui ne référencent aucune expérience. */
+          testIds: new Set((content.tests || content.plates || []).map((t) => t && t.id).filter(Boolean)),
+          adoptAllLegacy: true,
+          /* Les suppressions portées par la copie. Les LEVÉES de tombe, elles,
+             arrivent par l'index de l'espace de travail (1° ci-dessus), comme au
+             démarrage — un seul chemin pour une même règle. */
+          deleted: content.deletedProjects
+        });
+        copiesAdopted += 1;
+      } catch (err) {
+        console.warn('Resync: the copy of dataset', id, 'could not be adopted:', err && err.message);
+        copiesFailed.push(String(id));
+      }
+    }
+    const projectsAfter = loadProjects('').length;
+    const changed = projectsAfter !== projectsBefore || copiesAdopted > 0;
+    const lines = resyncReportLines(report);
+    /* 4° LE RÉSULTAT REPART — l'index partagé doit porter ce que ce poste vient
+       d'apprendre : sans cette réécriture, le poste suivant ne verrait toujours
+       rien et l'inventaire signalerait les mêmes « inconnus » à chaque fois.
+       C'est la SEULE écriture du geste (le reste est en lecture).
+       La liste des datasets est l'UNION de celle de l'écran et de celle que
+       l'adoption vient de mettre de côté (`readDatasetListCache`) : une liste
+       d'écran encore périmée ne doit jamais AMPUTER l'index partagé. Et cette
+       union repasse par `withoutDeletedDatasets` — le cache du navigateur peut
+       encore porter un dataset que CE poste (ou un autre) a supprimé depuis, et
+       le publier ici le ferait ressusciter partout. Un échec de cette écriture
+       est DIT (l'adoption locale, elle, a bien eu lieu). */
+    if (changed) {
+      const published = await writeWorkspaceState(buildWorkspaceState({
+        datasets: withoutDeletedDatasets(applyWorkspaceIndex({
+          datasets: [...(Array.isArray(datasetsList) ? datasetsList : []), ...readDatasetListCache()]
+        })),
+        projects: loadProjects(''),
+        deletedProjects: loadDeletedProjects(),
+        revivedProjects: loadRevivedProjects(),
+        mirror: readDriveMirror()
+      }));
+      if (!published) {
+        lines.push(`⚠ What was adopted here could NOT be written back to ${WORKSPACE_DIR}/${WORKSPACE_STATE_FILE}`
+          + ' — the other PC(s) will not see it until the next change on this one.');
+      }
+    }
+    /* Les pages relisent le magasin : la liste des projets affichée peut avoir
+       changé sans qu'aucun état d'App ne bouge (c'est ce qui faisait qu'un projet
+       rendu n'apparaissait qu'après un rechargement de l'onglet). */
+    if (changed) setWorkspaceResyncNonce((n) => n + 1);
+    return {
+      ok: !!(report && report.ok),
+      reason: (report && report.reason) || '',
+      at: (report && report.at) || '',
+      lines,
+      projectsBefore,
+      projectsAfter,
+      datasetsInIndex: (report && report.recoverable && report.recoverable.datasetsInIndex) || 0,
+      projectsInIndex: (report && report.recoverable && report.recoverable.projectsInIndex) || 0,
+      copiesAdopted,
+      copiesFailed,
+      stateAdopted: !!stateAdopted
+    };
+  }, [syncWorkspaceFromDrive, datasetsList]);
 
   /* ── L'ESPACE DE TRAVAIL RÉÉCRIT SUR LE DRIVE ──────────────────────────────
      Toute modification (liste des datasets, projets, suppression, renommage)
@@ -5839,6 +5973,7 @@ const openDataset = (dset, { keepPlace = false } = {}) => {
             />))}
 
             {pageSlot('projects', () => (<ProjectsModule
+              key={`projects-${workspaceResyncNonce}`}
               currentUser={currentUser} operatorNames={operatorNames} handlePrint={handlePrint}
               setCurrentModule={setCurrentModule} setCurrentProjectId={setCurrentProjectId}
               onRestoreProject={restoreDeletedProject}
@@ -5879,6 +6014,7 @@ const openDataset = (dset, { keepPlace = false } = {}) => {
               datasetsList={datasetsList} deleteDataset={deleteDataset} deleteEmptyDatasets={deleteEmptyDatasets}
               datasetTitle={datasetTitle}
               serverMode={serverLoginMode}
+              onResyncFromDrive={resyncWorkspaceFromDrive}
             />))}
 
             {pageSlot('agenda', () => (<AgendaModule
