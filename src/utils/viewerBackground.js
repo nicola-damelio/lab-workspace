@@ -147,12 +147,24 @@ export const readBgGradient = (raw) => {
   return refreshPaleBgGradient(bgGradientOf(raw));
 };
 
+/** LA COULEUR DE SCÈNE PAR DÉFAUT — le `#f8fafc` que le stage d'NGL pose à sa
+ *  construction (voir `new NGL.Stage(…, { backgroundColor: '#f8fafc' })`) et
+ *  celui du 🎨 de §2 Scene (BG_DEFAULT du viewer). C'est le secours de `from`
+ *  quand la COULEUR DE SCÈNE EST ILLISIBLE — et il ne doit JAMAIS être celui de
+ *  B. Le rapport de cette session, mot pour mot : « it says "the ramp runs..."
+ *  and the colour is A everywhere ». Un `from` retombé sur B donne une rampe
+ *  dont les DEUX arrêts sont la MÊME couleur : le fond uni, dans toutes les
+ *  directions, avec un panneau qui annonce une rampe. La version d'avant de ce
+ *  fichier tombait exactement là (`|| BG_GRADIENT_DEFAULT_TO`) ; celle-ci tombe
+ *  sur la couleur que la scène a VRAIMENT quand rien ne l'a réglée. */
+export const BG_SCENE_DEFAULT = '#f8fafc';
+
 /* LA SPÉCIFICATION DU FOND — la seule que les trois consommateurs lisent. */
 export const backgroundSpecOf = (color, gradient) => {
   const g = bgGradientOf(gradient);
   return {
     on: g.on,
-    from: normalizeBgColor(color, BG_GRADIENT_DEFAULT_TO) || BG_GRADIENT_DEFAULT_TO,
+    from: normalizeBgColor(color, BG_SCENE_DEFAULT) || BG_SCENE_DEFAULT,
     to: g.to,
     angle: g.angle,
     mid: g.mid,
@@ -171,12 +183,26 @@ export const gradientSpecOf = (spec) => {
   // Le MILIEU n'existe que s'il est DEMANDÉ (`midOn`) ET lisible : une rampe à
   // deux couleurs reste exactement celle d'avant quand il est absent.
   const mid = normalizeBgColor(spec.mid);
+  const midOn = spec.midOn === true && !!mid;
+  /* ⚠ UNE RAMPE D'UNE SEULE COULEUR N'EST PAS UNE RAMPE — la correction du
+     rapport de cette session : « it says "the ramp runs..." and the colour is A
+     everywhere ». Des arrêts TOUS égaux peignent le fond uni de la couleur de
+     scène, dans TOUTES les directions : rien ne bouge d'un bout à l'autre de la
+     vue, ce qui se lit exactement « le dégradé ne marche pas », alors que le
+     panneau, lui, annonçait une rampe. ⚠ Les PIXELS, eux, ne changent pas d'un
+     iota (le CSS `linear-gradient(A 0%, A 100%)` et la couleur seule d'NGL
+     donnent la même image) : rendre `null` remplace donc une écriture inutile
+     par aucune écriture — mais cela REND LE FAIT REPRÉSENTABLE. Le panneau peut
+     désormais le DIRE au lieu de croire sa propre intention (voir bgRampFlat
+     dans NMRMoleculeViewer.jsx) et un test peut l'EXÉCUTER. */
+  const stops = midOn ? [from, mid, to] : [from, to];
+  if (stops.every((c) => c === stops[0])) return null;
   return {
     from,
     to,
     angle: normalizeBgAngle(spec.angle, BG_GRADIENT_DEFAULT_ANGLE),
     mid,
-    midOn: spec.midOn === true && !!mid,
+    midOn,
   };
 };
 

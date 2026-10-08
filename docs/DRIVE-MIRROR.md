@@ -4152,7 +4152,7 @@ composée, son extinction, les quatre relevés de repos, le sommeil/réveil, le 
 rapport d'avant, **et le §7 : le pixel composé** — ≈2 min, quatre passages de Chrome, **SAUTÉE (exit
 0)** sans Chrome) ;
 
-*Vérifier :* `node _viewer_background_test.mjs` — **204** (les maths exécutées, **☀ `bgAngleFromLight`
+*Vérifier :* `node _viewer_background_test.mjs` — **227** (les maths exécutées, **☀ `bgAngleFromLight`
 sur le vecteur du rig pour sept lampes**, la validation du mode ☀, le rafraîchissement du défaut pâle,
 et le câblage du panneau — dont **sept** contrôles qui allument la rampe) ;
 
@@ -4172,5 +4172,59 @@ Le viewer s'ouvre sur la rampe qu'il a retenue **sans aucun clic** (c'est le §7
 bouton **☀ Light** du panneau ⬚ la fait suivre la lampe. Un poste resté au défaut pâle d'hier reçoit
 le défaut du jour **au rechargement** (le rafraîchissement est dans le lecteur) ; une couleur choisie
 n'est pas touchée, donc un fond qu'on trouvait déjà juste le reste.
+
+---
+
+## ⏸ 「 I see the new button light but the gradient does not work in any direction 」
+
+**Le rapport suivant, mot pour mot** — et la question qui l'a tranché : *« que dit la dernière ligne du
+panneau ⬚ ? »* → *« it says "the ramp runs..." and the colour is A everywhere »*. Autrement dit : la
+rampe est **ALLUMÉE** dans le magasin, et l'écran est **uni de la couleur A**, dans toutes les
+directions. C'est la forme que le panneau ne savait pas dire — il n'avait que « allumée » et
+« éteinte » pour la décrire, donc il annonçait une rampe que l'écran n'avait pas.
+
+### ① La règle — une rampe d'une seule couleur n'est pas une rampe
+
+`gradientSpecOf` (`utils/viewerBackground.js`) rend désormais `null` quand **tous les arrêts peints
+sont la même couleur** (`from`, `to`, et `mid` s'il est demandé) : cette « rampe » peint le fond uni de
+A d'un bout à l'autre, **quel que soit l'angle** — exactement ce que l'œil lit comme « le dégradé ne
+marche pas ». ⚠ **Les pixels ne changent pas d'un iota** : `linear-gradient(A 0%, A 100%)` ne peint que
+du A, et la couleur d'NGL reste dessous. Ce que la règle change, c'est que le fait devient
+**représentable** : `backgroundCss` rend `''` (aucune écriture au lieu d'une écriture inutile), le
+panneau peut le **dire**, et un test peut l'**exécuter**.
+
+### ② Le secours de A n'est plus celui de B
+
+`backgroundSpecOf(color, gradient)` retombait, quand la couleur de scène était illisible, sur
+**`BG_GRADIENT_DEFAULT_TO`** — c'est-à-dire sur **B** : `from === to`, une rampe née plate, que
+personne n'avait choisie. Le secours est maintenant **`BG_SCENE_DEFAULT`** (`#f8fafc`, la couleur que
+`new NGL.Stage(…)` pose lui-même et celle du 🎨 de §2 Scene), et un test exige que les deux constantes
+diffèrent.
+
+### ③ Le panneau dit TROIS états, et aucun bouton ne promet pour rien
+
+* la ligne du bas dit **éteinte**, **allumée mais d'une seule couleur** (en ambre, **les deux couleurs
+  écrites** et le geste qui répare : « give B another colour », ou ⇄), ou **allumée** ;
+* **le canvas est relu** juste après l'écriture (`bgRampTaken` : `'ok' | 'no-canvas' | 'empty'`) : le
+  panneau dit ce que le canvas a **PRIS**, jamais ce qu'on a voulu lui donner. La comparaison porte sur
+  « quelque chose » contre « rien », **jamais** sur l'égalité du texte (la sérialisation du navigateur
+  réécrit les couleurs en `rgb()`, et exiger la même lettre pour lettre ferait crier au loup) ;
+* **☀ Light**, les **huit flèches** et **« C 50 % »** ne s'allument plus sur le seul magasin mais sur ce
+  qui est PEINT (`bgGradient.on && …`, et pas même quand A = B) : « I see the new button light » était
+  exactement cette promesse-là — `light` vaut `true` **par défaut**, le bouton était donc allumé alors
+  que la rampe était éteinte ou plate.
+
+### ④ Ce qui n'a PAS été touché
+
+Les films 🎬🎞, la still ✨ Ray (`underlayBackdrop`) et `paintViewerBackground` lisent la **même**
+spécification : ils cessent seulement de peindre une rampe d'une seule couleur (mêmes pixels, aucun
+travail pour rien). Le rappel automatique du style, le sommeil de l'étage (`nglStageParking`) et la
+mémoire du poste sont inchangés.
+
+*Vérifier :* `node _viewer_background_test.mjs` — **227** (§10 : les arrêts égaux refusés, le secours
+qui n'est plus B, les trois états de la ligne, le canvas relu, les trois contrôles qui ne promettent
+plus) ; `node _viewer_bg_live_test.cjs` — **61/61** (le pixel composé, dont « A et B du défaut sont deux
+couleurs différentes — jamais une rampe d'une seule teinte ») ; `node _viewer_background_pixels_test.cjs`
+— **34/34**.
 
 

@@ -25,7 +25,7 @@ import {
   BG_DIRECTIONS, BG_GRADIENT_DEFAULT_ANGLE, BG_GRADIENT_DEFAULT_TO,
   BG_GRADIENT_DEFAULT_MID, BG_GRADIENT_DEFAULT_MID_ON, BG_GRADIENT_DEFAULT_LIGHT,
   backgroundCss, backgroundSpecOf, bgAngleFromLight, bgDirectionOf, bgGradientOf,
-  paintViewerBackground, readBgGradient, underlayBackdrop,
+  gradientSpecOf, paintViewerBackground, readBgGradient, underlayBackdrop,
 } from '../utils/viewerBackground';
 /* ⏸ LA VUE S'ARRÊTE QUAND PERSONNE NE LA REGARDE — les deux boucles
    `requestAnimationFrame` d'NGL (`Viewer.animate` et le `_listen` de
@@ -9954,16 +9954,48 @@ const bgSpecLive = () => backgroundSpecOf(bgColor, bgGradient.light
   ? { ...bgGradient, angle: bgLightAngleRef.current }
   : bgGradient);
 
+/* ⚠ CE QUE LE CANVAS A RÉELLEMENT PRIS — le seul fait que le panneau ne peut
+   PAS deviner. Écrire `style.backgroundImage` n'oblige personne à le garder :
+   sans canvas vivant (l'étage pas encore monté, la vue démontée) l'écriture n'a
+   pas de destinataire, et un navigateur qui refuse la chaîne laisse la propriété
+   VIDE. Le panneau, lui, lisait sa seule INTENTION (« ⬚ Gradient ON ») : il
+   pouvait donc annoncer une rampe que l'écran n'avait pas — la forme même du
+   rapport de cette session, « it says "the ramp runs..." and the colour is A
+   everywhere ». Cette lecture ne juge PAS la beauté de la rampe (c'est la sonde
+   pixel, _viewer_bg_live_test.cjs, qui juge les pixels) : elle dit seulement si
+   le canvas a pris quelque chose, pour que la ligne du panneau puisse se taire
+   quand tout va bien et le DIRE quand non. */
+const [bgRampTaken, setBgRampTaken] = useState('ok');   // 'ok' | 'no-canvas' | 'empty'
+
 /* ⬚ LE FOND VIVANT — la rampe est une `backgroundImage` posée sur le canvas
    NGL, PAR-DESSUS la couleur qu'NGL vient d'y écrire (voir le module : c'est
    là que le fond de l'écran vit, la toile ayant un clear d'alpha zéro). Rien
    n'est reconstruit, aucune représentation ne bouge. Éteinte, la chaîne vide
-   rend la main à la couleur de NGL — le fond uni d'avant, au pixel près. */
+   rend la main à la couleur de NGL — le fond uni d'avant, au pixel près.
+   ⚠ ET L'ÉCRITURE SE RELIT (`el.style.backgroundImage`) : le panneau dit ce que
+   le canvas a PRIS, jamais ce qu'on a voulu lui donner (voir bgRampTaken). La
+   comparaison porte sur « quelque chose » contre « rien », PAS sur l'égalité du
+   texte : la sérialisation du navigateur réécrit la chaîne (les couleurs
+   deviennent des `rgb(...)`), et exiger la même lettre pour lettre ferait crier
+   au loup sur une rampe parfaitement posée. */
 const applyBackgroundGradient = useCallback(() => {
   const stage = stageRef.current;
   const el = stage && stage.viewer && stage.viewer.renderer ? stage.viewer.renderer.domElement : null;
-  if (!el || !el.style) return;
-  try { el.style.backgroundImage = backgroundCss(bgSpecLive()); } catch { /* ignore */ }
+  const wanted = backgroundCss(bgSpecLive());
+  if (!el || !el.style) {
+    // Une rampe voulue SANS canvas vivant est le cas où l'écran ne peut rien montrer.
+    const verdict = wanted ? 'no-canvas' : 'ok';
+    setBgRampTaken((t) => (t === verdict ? t : verdict));
+    return;
+  }
+  try {
+    el.style.backgroundImage = wanted;
+    const took = el.style.backgroundImage || '';
+    const verdict = wanted && !took ? 'empty' : 'ok';
+    setBgRampTaken((t) => (t === verdict ? t : verdict));
+  } catch {
+    setBgRampTaken((t) => (t === 'empty' ? t : 'empty'));
+  }
 }, [bgColor, bgGradient]);
 
 // ---- Depth fog ----
@@ -10109,6 +10141,15 @@ bgLightAngleRef.current = bgAngleFromLight(nglKeyLightDirection(shadowAz, shadow
    parce qu'un `useCallback` garde la fermeture du rendu qui l'a créé — une valeur
    de rendu y serait PÉRIMÉE dès que la lampe bouge (mesuré, voir _viewer_*). */
 const bgAngleLive = bgGradient.light && bgLightAngleRef.current != null ? bgLightAngleRef.current : bgGradient.angle;
+/* ⚠ LA RAMPE EST-ELLE UNE RAMPE ? — la lecture que le panneau n'avait pas, et
+   la CAUSE du rapport de cette session : « it says "the ramp runs..." and the
+   colour is A everywhere ». `bgGradient.on` dit l'INTENTION ; le module, lui,
+   refuse une rampe dont les arrêts sont tous la même couleur (gradientSpecOf →
+   null, voir viewerBackground.js) parce que celle-là peint le fond uni, dans
+   toutes les directions — exactement ce que l'œil lit comme « le dégradé ne
+   marche pas ». La ligne du panneau dit donc TROIS choses distinctes, et jamais
+   deux : éteinte, allumée-mais-d'une-seule-couleur, allumée. */
+const bgRampFlat = bgGradient.on && !gradientSpecOf(bgSpecLive());
 /* ◐ LE PILOTE DE L'OMBRE VIVANTE s'accroche au signal `rendered` d'NGL : la
    pose de la caméra est comparée à la précédente, le régime vient de la
    politique du module, et rien n'est recalculé quand rien ne bouge. Il est
@@ -26173,8 +26214,8 @@ style={{ height: (viewerCollapsed ? 0 : viewH) + 'px' }}
         et l'ENLÈVE ; éteint, la rampe reste exactement celle à deux couleurs
         d'avant. Le milieu ne touche ni A (la couleur de la scène) ni B. */}
     <button type="button" onClick={() => patchBgGradient({ on: true, midOn: !bgGradient.midOn })}
-      aria-pressed={bgGradient.midOn}
-      className={`px-1.5 py-1 h-7 text-[10px] font-bold rounded-md border whitespace-nowrap transition-colors ${bgGradient.midOn ? 'bg-sky-100 border-sky-400 text-sky-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+      aria-pressed={bgGradient.on && bgGradient.midOn}
+      className={`px-1.5 py-1 h-7 text-[10px] font-bold rounded-md border whitespace-nowrap transition-colors ${bgGradient.on && bgGradient.midOn ? 'bg-sky-100 border-sky-400 text-sky-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
       title={bgGradient.midOn
         ? 'ON right now: the ramp is painted with THREE colours — A at the start, C in the MIDDLE (50 %), B at the end. This button puts the two-colour ramp back (A → B).'
         : 'OFF right now: the ramp is painted with TWO colours (A → B). This button adds a THIRD colour C, halfway along the ramp (50 %).'}>
@@ -26191,8 +26232,8 @@ style={{ height: (viewerCollapsed ? 0 : viewH) + 'px' }}
     <span className="flex items-center gap-0.5" role="group" aria-label="Gradient direction">
       {BG_DIRECTIONS.map((d) => (
         <button key={d.key} type="button" onClick={() => patchBgGradient({ on: true, angle: d.angle, light: false })}
-          aria-pressed={!bgGradient.light && bgGradient.angle === d.angle}
-          className={`w-6 h-7 text-[11px] font-black rounded-md border transition-colors ${!bgGradient.light && bgGradient.angle === d.angle ? 'bg-sky-100 border-sky-400 text-sky-800' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-100'}`}
+          aria-pressed={bgGradient.on && !bgGradient.light && bgGradient.angle === d.angle}
+          className={`w-6 h-7 text-[11px] font-black rounded-md border transition-colors ${bgGradient.on && !bgGradient.light && bgGradient.angle === d.angle ? 'bg-sky-100 border-sky-400 text-sky-800' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-100'}`}
           title={`Paint the ramp ${d.what} (${d.angle}°) — A sits at the starting end, B at the end the arrow points at. Picking a direction also turns the ramp ON, and takes the direction back from the ☀ Light button: the ramp stops following the lamp.`}>
           {d.glyph}
         </button>
@@ -26206,9 +26247,20 @@ style={{ height: (viewerCollapsed ? 0 : viewH) + 'px' }}
           d'angle reprend la direction en main. Lu par le module du fond
           (bgAngleFromLight) : c'est le vecteur du rig ◐ Shadows projeté à
           l'écran, jamais un nombre recopié ici. */}
+      {/* ⚠ ALLUMÉ VEUT DIRE « LA RAMPE EST PEINTE ». `bgGradient.light` est vrai
+          PAR DÉFAUT (la direction de la lampe est le défaut du module) : ce
+          bouton prenait donc son apparence allumée alors que la rampe était
+          ÉTEINTE, et le rapport de cette session le dit mot pour mot — « I see
+          the new button light but the gradient does not work in any direction ».
+          Un bouton allumé est une promesse : il ne l'allume plus que si quelque
+          chose est peint (les huit flèches et « C 50 % » suivent la même règle).
+          ⚠ Il reste ÉTEINT quand A et B sont la même couleur (bgRampFlat) : la
+          rampe est bien « allumée » dans le magasin, mais elle ne peint rien —
+          c'est la LIGNE du bas qui dit pourquoi, et un bouton allumé n'aurait
+          fait que répéter la promesse que l'écran ne tient pas. */}
       <button type="button" onClick={() => patchBgGradient({ on: true, light: true, angle: bgAngleLive })}
-        aria-pressed={bgGradient.light}
-        className={`px-1.5 h-7 text-[10px] font-bold rounded-md border whitespace-nowrap transition-colors ${bgGradient.light ? 'bg-sky-100 border-sky-400 text-sky-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+        aria-pressed={bgGradient.on && bgGradient.light && !bgRampFlat}
+        className={`px-1.5 h-7 text-[10px] font-bold rounded-md border whitespace-nowrap transition-colors ${bgGradient.on && bgGradient.light && !bgRampFlat ? 'bg-sky-100 border-sky-400 text-sky-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
         title={`☀ In the direction of the light — the ramp starts on the side the lamp is on (💡 Light, §3 Scene: azimuth ${shadowAz}°, elevation ${shadowEl}°) and runs towards the side it has left, so the background agrees with the shading and with the cast shadows. While it is ON the ramp FOLLOWS the lamp: moving the light turns the ramp (${bgAngleLive}° right now). One of the eight arrows, or the angle slider, takes the direction back into your hands.`}>
         ☀ Light
       </button>
@@ -26231,18 +26283,31 @@ style={{ height: (viewerCollapsed ? 0 : viewH) + 'px' }}
       title="Close these options — a click on the background of the 3D view brings them back (and so does the ⬚ button of §2 Toolbar → 🌫 Scene). Closing them changes nothing to the scene.">
       ⇤
     </button>
-    {/* LA LIGNE QUI DIT LA RAMPE — elle décrit la rampe QUAND ELLE EST ALLUMÉE,
-        et dit l'ÉTAT quand elle ne l'est pas : le rapport de cette session est
-        exactement « the gradient options ... do not work. the background remains of
-        the same color » — un panneau dont les contrôles semblaient inertes parce que
-        la rampe était éteinte. Le nom de la direction vient des mêmes huit entrées
-        que les boutons (bgDirectionOf) : un angle libre n'a pas de nom, et dit alors
-        ses degrés. ☀ allumé, la direction n'est PAS dans le magasin : elle est celle
-        de la lampe, lue au moment du rendu (bgAngleLive) — la ligne le dit aussi. */}
+    {/* LA LIGNE QUI DIT LA RAMPE — elle dit TROIS états, jamais deux, et c'est le
+        rapport de cette session qui a imposé le troisième : « the gradient options
+        ... do not work. the background remains of the same color » (la rampe
+        ÉTEINTE : ses contrôles semblaient inertes), puis « I see the new button
+        light but the gradient does not work in any direction » et « it says "the
+        ramp runs..." and the colour is A everywhere » — la rampe ALLUMÉE mais
+        d'UNE SEULE COULEUR (A et B égaux), qui peint le fond uni dans toutes les
+        directions. Un panneau qui n'a que « allumée » et « éteinte » pour le dire
+        annonce donc une rampe que l'écran n'a pas : les trois cas sont ici, les
+        deux couleurs des bouts écrites noir sur blanc, et le canvas relu quand il
+        n'a rien pris (voir bgRampFlat et bgRampTaken, plus haut).
+        Le nom de la direction vient des mêmes huit entrées que les boutons
+        (bgDirectionOf) : un angle libre n'a pas de nom, et dit alors ses degrés.
+        ☀ allumé, la direction n'est PAS dans le magasin : elle est celle de la
+        lampe, lue au moment du rendu (bgAngleLive) — la ligne le dit aussi. */}
     {bgGradient.on ? (
-      <span className="w-full text-[9px] text-slate-500 leading-tight">
-        The ramp runs {bgGradient.light ? `in the direction of the light (${bgAngleLive}°)` : (bgDirectionOf(bgGradient.angle)?.what || `${bgGradient.angle}°`)} — A <b>{bgColor}</b>{bgGradient.midOn ? <> → C <b>{bgGradient.mid}</b></> : null} → B <b>{bgGradient.to}</b>. {bgGradient.light ? 'A sits on the side the 💡 lamp is on and B on the side it has left: moving the light turns the ramp.' : 'The eight arrows and the slider own the direction.'} It paints the screen, the 🎬🎞 films and the ✨ Ray still; a click on the background closes these options.
-      </span>
+      bgRampFlat ? (
+        <span className="w-full text-[9px] text-amber-700 leading-tight">
+          ⚠ The ramp is ON but its ends are the SAME colour — <b>{bgColor}</b>{bgGradient.midOn ? <> and C <b>{bgGradient.mid}</b></> : null} — and a gradient of ONE colour paints the flat colour A: the same everywhere, in every direction, which is exactly why nothing seems to happen. Give B another colour (its swatch sits just right of the ⇄ button, on the left of the eight arrows), or press ⇄ if the two ends should change places. Nothing else in this panel is at fault, and the scene keeps the colour A until then.
+        </span>
+      ) : (
+        <span className="w-full text-[9px] text-slate-500 leading-tight">
+          The ramp runs {bgGradient.light ? `in the direction of the light (${bgAngleLive}°)` : (bgDirectionOf(bgGradient.angle)?.what || `${bgGradient.angle}°`)} — A <b>{bgColor}</b>{bgGradient.midOn ? <> → C <b>{bgGradient.mid}</b></> : null} → B <b>{bgGradient.to}</b>. {bgGradient.light ? 'A sits on the side the 💡 lamp is on and B on the side it has left: moving the light turns the ramp.' : 'The eight arrows and the slider own the direction.'} It paints the screen, the 🎬🎞 films and the ✨ Ray still; a click on the background closes these options.{bgRampTaken === 'ok' ? null : <> ⚠ The NGL canvas has not taken it ({bgRampTaken === 'no-canvas' ? 'no live canvas yet' : 'the value came back empty'}), so what the screen shows is the flat colour A. Nothing else is affected — touch any control of the ramp once the view is visible and it is written again.</>}
+        </span>
+      )
     ) : (
       <span className="w-full text-[9px] text-amber-700 leading-tight">
         ⬚ Gradient is OFF: the scene is painted with the ONE colour A <b>{bgColor}</b>. Every control here acts on the ramp, so touching B, C, an arrow, the angle, ☀ or ⇄ turns it ON — nothing in this panel is inert. ↺ puts it back to OFF.
