@@ -363,15 +363,20 @@ has('fileName: rayFileName({ label, width: out.width, height: out.height, transp
 has("${still.transparent ? ' · transparent' : ''}${gradientStill ? ' · gradient background' : ''}",
   'le rapport du rendu dit le fond dégradé, comme il dit le fond transparent');
 
-/* ══ LE MILIEU — la TROISIÈME couleur de la rampe (la demande de cette session :
-   « if there were three colours it would be even more interesting »). Le milieu
-   est FACULTATIF : éteint, la rampe reste EXACTEMENT celle à deux couleurs. ══ */
+/* ══ LE MILIEU — la TROISIÈME couleur, et son INTERRUPTEUR ═══════════════════
+   Le milieu a existé (« if there were three colours it would be even more
+   interesting »), puis a été RETIRÉ : « it stopped working when I clicked the
+   third color … support only two colors ». Ce qui reste vrai, et que cette
+   section vérifie : le champ `mid` se lit SANS ERREUR (un magasin, un ⚙️ setup
+   ou une figure enregistrés par une version à trois couleurs ne cassent rien),
+   mais son interrupteur est TOUJOURS FAUX — forcé à UN SEUL endroit
+   (`bgGradientOf`), donc aucun lecteur ne peut rallumer le 3e arrêt. */
 eq(BG_GRADIENT_DEFAULT_MID_ON, false, 'le milieu n’est JAMAIS imposé : la rampe s’ouvre à deux couleurs');
 eq(bgGradientOf(null).mid, BG_GRADIENT_DEFAULT_MID, 'sans rien, le milieu a sa couleur d’origine (prête, mais éteinte)');
 eq(bgGradientOf(null).midOn, false, '…et son interrupteur est ÉTEINT');
 eq(bgGradientOf({ on: true, to: '#0000ff', angle: 180, mid: '#00ff00', midOn: true }),
-  { on: true, to: '#0000ff', angle: 180, mid: '#00ff00', midOn: true, light: true },
-  'un milieu DEMANDÉ est relu et validé comme les deux autres couleurs');
+  { on: true, to: '#0000ff', angle: 180, mid: '#00ff00', midOn: false, light: true },
+  'un milieu DEMANDÉ est relu sans erreur, mais son interrupteur reste ÉTEINT : aucun magasin ne rallume le 3e arrêt');
 eq(bgGradientOf({ on: true, mid: 'vert', midOn: 'yes' }).midOn, false, 'la vérité de `midOn` est STRICTE (comme celle de `on`)');
 eq(bgGradientOf({ on: true, mid: 'vert' }).mid, BG_GRADIENT_DEFAULT_MID, 'un milieu illisible retombe sur le défaut du module (jamais du noir)');
 eq(gradientSpecOf({ on: true, from: '#ff0000', to: '#0000ff', angle: 180, mid: '#00ff00', midOn: true }),
@@ -381,7 +386,7 @@ eq(gradientSpecOf({ on: true, from: '#ff0000', to: '#0000ff', angle: 180, mid: '
   'un milieu PRÉSENT mais non demandé est ignoré (la rampe reste à deux couleurs)');
 eq(backgroundCss({ on: true, from: '#ff0000', to: '#0000ff', angle: 180, mid: '#00ff00', midOn: true }),
   'linear-gradient(180deg, #ff0000 0%, #00ff00 50%, #0000ff 100%)',
-  'allumée, la rampe à TROIS arrêts : A 0 %, C 50 %, B 100 %');
+  'le PEINTRE sait encore trois arrêts quand une SPÉCIFICATION les lui donne (A 0 %, C 50 %, B 100 %) — aucune lecture de magasin n’en produit une : voir juste en dessous');
 eq(backgroundCss({ on: true, from: '#ff0000', to: '#0000ff', angle: 180, mid: '#00ff00', midOn: false }),
   'linear-gradient(180deg, #ff0000 0%, #0000ff 100%)',
   'milieu éteint : EXACTEMENT la rampe à deux couleurs d’avant (aucun 3e arrêt)');
@@ -475,7 +480,7 @@ gone('aria-pressed={bgGradient.midOn}', '…comme celle du milieu');
 gone('${!bgGradient.light && bgGradient.angle === d.angle ?',
   '…et aucune flèche ne s’allume plus sur le seul `light` du magasin');
 
-console.log(`_viewer_background_test.mjs — ${passed} assertions OK (⬚ le fond du viewer : deux ou trois couleurs, une direction, un clic qui ouvre et ferme)`);
+console.log(`_viewer_background_test.mjs — ${passed} assertions OK (⬚ le fond du viewer : DEUX couleurs, une direction, un clic qui ouvre et ferme)`);
 
 
 
