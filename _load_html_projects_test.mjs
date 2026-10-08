@@ -224,12 +224,11 @@ has(APP, "import { fileDatasetIdOf } from './utils/projectImport';",
   'App.jsx importe la relecture de l’origine du fichier');
 has(APP, 'importProjectsFromFile', 'App.jsx importe l’adoption des projets');
 
-has(APP, 'const buildBackupHtml = (title, subtitle, payload, datasetId) => {',
-  'la sauvegarde emporte l’id du dataset d’où elle vient (buildBackupHtml)');
-has(APP, "datasetId: datasetId || '',", '…écrit dans le blob, à côté du titre et de la date');
-has(APP, 'buildBackupHtml(title, subtitle, payload, dset.id);',
-  'la sauvegarde hebdomadaire passe l’id du dataset qu’elle sauvegarde');
-has(APP, "datasetId: currentDatasetId || '',", 'le téléchargement local (« Save HTML ») aussi');
+has(APP, 'const backupDoc = buildBackupDocument({ payload, title, subtitle, datasetId: dset.id, savedAt: Date.now() });',
+  'la sauvegarde emporte l’id du dataset d’où elle vient (le document de sauvegarde)');
+has(APP, 'datasetId: dset.id,', '…écrit dans le document, à côté du titre et de la date');
+has(APP, 'payload, title, subtitle, datasetId: currentDatasetId || \'\', savedAt: Date.now()',
+  'le téléchargement local (« Save backup ») écrit le même document');
 
 has(APP, 'const fileDatasetId = dataBlob.datasetId || fileDatasetIdOf(s.projects);',
   'à l’import, l’origine est relue : ce que le fichier dit, sinon ce que disent ses projets');

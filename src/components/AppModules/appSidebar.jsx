@@ -337,17 +337,17 @@ export const AppSidebar = ({
                   build {typeof __APP_COMMIT__ !== 'undefined' ? __APP_COMMIT__ : 'dev'}
                 </div>
 
-                {/* Load HTML + Save HTML — superuser only */}
+                {/* Load backup + Save backup — superuser only */}
                 {currentUser?.role === 'superuser' && (
                   <div className={`flex ${isSidebarOpen ? 'gap-2' : 'flex-col gap-2 w-full'}`}>
                     <label
                       className={`flex-1 text-center bg-violet-50 hover:bg-violet-100 text-violet-700 border border-violet-200 font-bold py-1.5 rounded text-xs cursor-pointer shadow-sm transition-colors ${
                         !isSidebarOpen ? 'py-2 px-0 text-[10px]' : ''
                       }`}
-                      title="Load HTML"
+                      title="Load backup — a Lab Workspace backup document (.json) or an older HTML backup (.html): the file is VALIDATED before anything is imported"
                     >
-                      {isSidebarOpen ? '📂 Load HTML' : '📂'}
-                      <input type="file" accept=".html" onChange={loadHTML} className="hidden" />
+                      {isSidebarOpen ? '📂 Load backup' : '📂'}
+                      <input type="file" accept=".json,.html" onChange={loadHTML} className="hidden" />
                     </label>
 
                     <button
@@ -355,9 +355,9 @@ export const AppSidebar = ({
                       className={`flex-1 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 font-bold py-1.5 rounded text-xs shadow-sm transition-colors ${
                         !isSidebarOpen ? 'py-2 px-0 text-xs' : ''
                       }`}
-                      title="Save HTML — stores the full dataset state (scientific or administration) as a loadable HTML snapshot in Lab Workspace/<dataset>/backups/ on Google Drive; a local copy is downloaded when Drive is not connected"
+                      title="Save backup — stores the full dataset state (scientific or administration) as a validated JSON backup in Lab Workspace/<dataset>/backups/ on Google Drive; a local copy is downloaded when Drive is not connected"
                     >
-                      {isSidebarOpen ? '💾 Save HTML' : '💾'}
+                      {isSidebarOpen ? '💾 Save backup' : '💾'}
                     </button>
                   </div>
                 )}

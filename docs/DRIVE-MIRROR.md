@@ -4495,4 +4495,69 @@ aucune exception) — puis le **branchement réel** dans `App.jsx` : l'ordre des
 temps du geste, la même porte qu'au démarrage, la page remontée seulement si la
 liste a changé, et l'absence de toute écriture dans le geste.
 
+## La sauvegarde d'un dataset : un format qui se VALIDE (08/10/2026)
+
+**Le défaut.** La sauvegarde (hebdomadaire, et « Save ») était un fichier **HTML**
+dont tout le contenu vivait dans un `<script id="saved-data-blob">`. Ce format ne
+disait **rien de lui-même** : ni sa version, ni ce qu'il portait. Une restauration
+ne pouvait donc **pas vérifier ce qu'elle lisait** — un fichier tronqué, édité à
+la main, ou écrit par une version plus récente s'importait comme un fichier
+valide, et l'écran s'ouvrait sur une copie amputée **sans un mot**. C'est aussi ce
+qui rendait muet le « je recharge et il ne se passe rien » du rapport ④.
+
+**Ce qui est écrit maintenant.** Un **document JSON auto-descriptif**, déposé dans
+`Lab Workspace/<dataset>/backups/` — le même format pour la sauvegarde
+hebdomadaire et pour le geste manuel :
+
+| Ce que le fichier porte | Pourquoi |
+| --- | --- |
+| `format` + `schema` (version) | un lecteur sait QUOI il lit, et refuse ce qu'il ne connaît pas |
+| `savedAt`, `datasetId`, `title`, `subtitle` | d'où vient la sauvegarde (sans cet id, une restauration recréait un dataset neuf et les projets restaient invisibles) |
+| `compressed` + `payload` | la charge, compressée exactement comme avant (rien n'a changé dans le rangement) |
+| **`counts`** (expériences, projets, protocoles, stockage, molécules, calculs, fiches, RMN) | ce qu'elle déclare porter — donc ce qui peut être **comparé** |
+
+| Règle | Où |
+| --- | --- |
+| Le nom du fichier et son dossier ont UNE règle (`<titre>_<id>_backup_<date>.json`, `<dataset>/backups`) : deux datasets de même titre ne se recouvrent jamais | `utils/backupFile.js` (`backupFileName`, `backupFolderOf`) |
+| Les **deux** gestes écrivent ce document, en `application/json` | `App.jsx` (`runWeeklyBackup`, `exportHTML`) |
+| Le compte-rendu DIT ce que la sauvegarde porte (« … — 12 expériences, 3 projets → Lab Workspace/<dataset>/backups ») | `App.jsx` (`describeBackupCounts`) |
+| Les gestes s'appellent « 📂 Load backup (.json / .html) » et « 💾 Save backup » | `App.jsx`, `appSidebar.jsx` |
+
+**La restauration VALIDE avant d'agir** (`parseBackupText` → `validateBackupDocument`) :
+
+| Ce qui est vérifié | Ce qui est refusé, et ce que la phrase dit |
+| --- | --- |
+| le format et la **version** | « written by a NEWER version of the app (schema 2; this one reads 1) » — et la charge n'est même pas décodée |
+| la **charge** (présente, décompressable, JSON valide) | « the payload could not be decoded (the file is truncated or has been edited) » |
+| la **concordance des comptes** | « it DECLARES 12 expériences but actually carries 3. Nothing was imported… » |
+
+Le refus est **motivé** : l'import ne s'ouvre jamais sur une copie amputée sans le
+dire. Et il n'y a **pas de faux refus** : un ancien fichier HTML ne **déclarait**
+pas de comptes, il n'y a donc rien à lui comparer — il est relu comme avant, et
+reste accepté par les deux sélecteurs de fichier.
+
+**Ce qui n'est PAS touché.** La compression de la charge (LZString), la fenêtre
+d'import et ses règles d'adoption (fusion, tombes, levées, import partiel), le
+dossier Drive des sauvegardes et les fichiers **déjà écrits** (relus à
+l'identique) : rien n'est déplacé, renommé ni supprimé sur le Drive, et aucun
+ancien fichier ne devient orphelin.
+
+### Vérifier soi-même
+
+```
+node _backup_file_test.mjs            # 100 vérifications — le format, la validation, les refus
+node _save_html_test.mjs              # 45 — ce que la sauvegarde emporte (état, bibliothèques, projets)
+node _load_html_projects_test.mjs      # 53 — les projets d'une sauvegarde sont adoptés par leur dataset
+node _library_restore_test.mjs         # 175 — bibliothèque d'images ↔ sauvegarde
+node _reference_import_test.mjs        # 226 — les papiers se relisent en fusion
+```
+
+La suite de la sauvegarde est vérifiée **sur des fichiers réellement écrits** :
+l'aller-retour (accents compris), le fichier **tronqué** (charge coupée), le
+fichier **édité** (comptes déclarés faux → refus motivé), la **version plus
+récente**, le format inconnu, le JSON invalide, le fichier vide — et l'**ancien
+HTML**, relu avec sa charge tronquée comprise. Elle vérifie aussi le
+**branchement réel** : l'import passe tout par la validation, les deux gestes
+écrivent le document en JSON, et plus rien n'écrit de fichier HTML.
+
 
