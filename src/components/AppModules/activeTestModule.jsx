@@ -6,7 +6,7 @@
 import React, { lazy, useRef, useState, useEffect } from 'react';
 import { BoxDetail } from '../Storage';
 import { CLASSIFICATION_MAP, PRIMARY_CATEGORIES, EXPERIMENT_TYPES } from '../../data/testTypes';
-import { markAttachmentsDeleted, renameDriveFilesFor, deleteTestDriveFolder } from '../../utils/driveUpload';
+import { markAttachmentsDeleted, renameDriveFilesFor, deleteTestDriveFolder, deleteInstanceDriveFolder } from '../../utils/driveUpload';
 import { renameStorageBoxDriveFolder, tidyStorageFiles } from '../../utils/storageDrive';
 import { removeTestFcsBlobs } from '../../utils/fcsBlobStore';
 import { setSectionsCommand } from '../ui';
@@ -996,6 +996,18 @@ const TestHeader = (
                                       }
                                       return next;
                                     });
+                                    /* LE DRIVE SUIT LE PROGRAMME — la condition
+                                       emporte SON dossier (`deleteInstanceDriveFolder`,
+                                       jamais laissé derrière), et la DERNIÈRE
+                                       emporte aussi celui de l'expérience, qu'elle
+                                       supprime entièrement (même geste que le
+                                       bouton Delete de l'expérience). Best-effort :
+                                       un Drive injoignable ne bloque pas la
+                                       suppression demandée. */
+                                    markAttachmentsDeleted(t).catch(() => {});
+                                    deleteInstanceDriveFolder(t).catch(() => {});
+                                    if (isLast) deleteTestDriveFolder(t).catch(() => {});
+                                    removeTestFcsBlobs(t).catch(() => {});
                                     if (isLast) setCurrentModule('tests');
                                   }
                                 }}

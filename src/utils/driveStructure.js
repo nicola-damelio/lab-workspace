@@ -832,6 +832,47 @@ export const resetDriveStructureCache = () => {
  *
  * @param {{io:object}} options l'adaptateur Drive (obligatoire)
  */
+/* ── 5ter. L'OBJET RENOMMÉ N'A PAS DE SECOND DOSSIER ────────────────────────
+   LE DÉFAUT, sur le Drive réel le 08/10/2026 (dataset « GEC-UPJV-projects ») :
+   `projects/p53H/interaction_pdbs` portait CINQ dossiers d'instance —
+   `1YCR`, `3LNZ`, `instance1`, `New_Instance_2`, `New_Instance_3` — alors que le
+   programme n'en avait que trois. Les `_meta.json` le disent sans discussion :
+   `1YCR` et `instance1` portent le MÊME `extra.id` (`t17914951876631134`), donc
+   ce sont LE MÊME objet applicatif, sous deux noms. Renommer une instance (ou
+   une expérience, ou un projet) laissait le dossier du vieux nom derrière lui et
+   en fabriquait un nouveau — le renommage n'était qu'apparent.
+
+   POURQUOI. Le plan est bâti sur les NOMS (`projects/<projet>/<expérience>/…`) et
+   l'exécuteur ne savait faire que « chercher ce nom, sinon CRÉER » : après un
+   renommage, le nom cherché n'existait plus, donc un dossier était créé — et
+   l'ancien, que plus rien ne nommait, restait pour toujours.
+
+   LE REMÈDE. Le plan PORTE l'identité applicative de chaque objet
+   (`extra.id`, écrit dans son `_meta.json`, c'est elle qu'on lit dans la preuve
+   ci-dessus) : quand le nom cherché manque, l'exécuteur regarde les dossiers
+   FRÈRES et adopte celui dont la description porte le même identifiant — puis le
+   RENOMME (par identifiant, donc rien n'est copié, rien n'est perdu). Un objet
+   renommé n'a plus jamais deux dossiers. */
+
+/** LE FRÈRE QUI EST LE MÊME OBJET : parmi des dossiers frères décrits
+ *  (`{ id, name, meta }`), celui dont la description porte l'identifiant
+ *  applicatif voulu. Rend son identifiant, ou '' (aucun candidat, ou pas
+ *  d'identifiant à chercher). PUR. */
+export const pickRenamedSibling = (candidates = [], { appId = '' } = {}) => {
+  const want = String(appId || '').trim();
+  if (!want) return '';
+  const hit = (Array.isArray(candidates) ? candidates : []).find(
+    (c) => c && String((c.meta && c.meta.extra && c.meta.extra.id) || '') === want
+  );
+  return hit ? String(hit.id || '') : '';
+};
+
+/** Nom de dossier qu'une entrée de plan veut, et identité qu'elle porte. PUR. */
+export const planEntryIdentity = (entry = null) => ({
+  name: String((entry && entry.name) || ''),
+  appId: String((entry && entry.extra && entry.extra.id) || '')
+});
+
 export const createDriveStructure = ({ io = null } = {}) => {
   const drive = io && typeof io === 'object' ? io : null;
   if (!drive) return null;
@@ -908,13 +949,75 @@ export const createDriveStructure = ({ io = null } = {}) => {
     return true;
   };
 
+  /* ── L'OBJET DÉJÀ LÀ : PAR SON NOM, SINON PAR SON IDENTITÉ ────────────────
+     `existingObjectFolder` est le seul chemin qui ÉVITE la création ; quand il
+     rend '' l'appelant appelle `ensurePath` comme avant (donc rien ne change pour
+     un objet qui n'existe pas encore). Le magasin `scanStore` (un par publication)
+     fait qu'un dossier parent n'est LISTÉ qu'une fois par passage. */
+  const folderOfAppIdentity = async ({ parentId = '', appId = '', skipNames = null, scanStore = null } = {}) => {
+    const want = String(appId || '').trim();
+    if (!parentId || !want) return null;
+    const store = scanStore instanceof Map ? scanStore : new Map();
+    let entry = store.get(parentId);
+    if (!entry) {
+      let children = [];
+      try { children = await drive.list(parentId); } catch { children = []; }
+      const skip = skipNames instanceof Set ? skipNames : new Set();
+      const candidates = [];
+      for (const child of (Array.isArray(children) ? children : [])) {
+        if (!child || !child.id || !isFolderNode(child)) continue;
+        const childName = String(child.name || '');
+        /* Un frère dont le nom est DÉJÀ dans le plan de ce passage n'a pas été
+           renommé : le décrire serait une lecture par objet, pour rien. */
+        if (skip.has(childName)) continue;
+        candidates.push({ id: String(child.id), name: childName, meta: await readMeta(String(child.id)) });
+      }
+      entry = { candidates };
+      store.set(parentId, entry);
+    }
+    const id = pickRenamedSibling(entry.candidates, { appId: want });
+    if (!id) return null;
+    const hit = entry.candidates.find((c) => String(c.id) === String(id)) || null;
+    return { id: String(id), name: hit ? String(hit.name || '') : '' };
+  };
+
+  const existingObjectFolder = async ({ names = [], parentId = '', appId = '', skipNames = null, scanStore = null } = {}) => {
+    const wanted = (Array.isArray(names) ? names : []).map((n) => sanitizeSlug(n) || text(n)).filter(Boolean);
+    const name = wanted.length ? wanted[wanted.length - 1] : '';
+    if (!parentId || !name) return '';
+    /* 1. LE NOM — le cas ordinaire : l'objet n'a pas bougé. */
+    try {
+      const found = await drive.findFolder(name, parentId);
+      if (found) return String(found);
+    } catch { /* une recherche qui échoue ne décide de rien — on essaie l'identité */ }
+    /* 2. L'IDENTITÉ — l'objet a été RENOMMÉ : son dossier porte l'ancien nom, sa
+       description porte `extra.id`. On l'ADOPTE (jamais un second dossier) et on
+       le renomme PAR IDENTIFIANT, donc les fichiers qu'il contient suivent. */
+    const adopted = await folderOfAppIdentity({ parentId, appId, skipNames, scanStore });
+    if (!adopted || !adopted.id) return '';
+    if (adopted.name !== name) {
+      try { await drive.rename(adopted.id, name); } catch { /* le nom suivra au prochain passage */ }
+      metaCache.delete(adopted.id);
+    }
+    return adopted.id;
+  };
+
   /** Le dossier d'un objet, avec sa description (le seul chemin pour CRÉER). */
   const ensureObject = async ({ type, ctx = {}, rootId = '', order = 0, extra = null, dataset = null, path = null }) => {
     const names = Array.isArray(path) ? path : structurePathFor(type, ctx);
     const parentPath = names.slice(0, -1);
     const parent = parentPath.length ? (await ensurePath(parentPath, { rootId })) : { ok: true, leafId: rootId };
     if (!parent.ok) return { ok: false, id: '', path: names, error: parent.error };
-    const leaf = await ensurePath(names, { rootId });
+    /* L'OBJET RENOMMÉ EST ADOPTÉ (voir pickRenamedSibling) : son nom a changé, son
+       dossier existe déjà — le créer en fabriquerait un second. */
+    const adopted = await existingObjectFolder({
+      names,
+      parentId: parent.leafId || '',
+      appId: String((extra && extra.id) || ''),
+      skipNames: null,
+      scanStore: new Map()
+    });
+    const leaf = adopted ? { ok: true, leafId: adopted, error: '' } : await ensurePath(names, { rootId });
     if (!leaf.ok || !leaf.leafId) return { ok: false, id: '', path: names, error: leaf.error };
     const name = names.length ? names[names.length - 1] : '';
     await writeMeta({
@@ -979,10 +1082,38 @@ export const createDriveStructure = ({ io = null } = {}) => {
     }
     const dataset = { id: plan.datasetId, name: plan.datasetName, folder: plan.datasetFolder };
     const idByPath = new Map();
+    /* Les deux mémoires du RENOMMAGE (voir pickRenamedSibling) : les noms que ce
+       plan porte sous chaque parent (un frère dont le nom y est n'a pas bougé) et
+       les frères déjà décrits une fois dans ce passage. */
+    const planNamesByParent = new Map();
+    (plan.folders || []).forEach((entry) => {
+      const parentPath = entry.path.slice(0, -1).join('/');
+      if (!planNamesByParent.has(parentPath)) planNamesByParent.set(parentPath, new Set());
+      planNamesByParent.get(parentPath).add(String(entry.name || ''));
+    });
+    const scanStore = new Map();
     for (const entry of plan.folders) {
       const parentPath = entry.path.slice(0, -1).join('/');
       const parentId = entry.path.length ? (idByPath.get(parentPath) || rootId) : '';
-      const leaf = await ensurePath(entry.path, { rootId });
+      /* ⚠ LE DOSSIER EXISTANT SE CHERCHE D'ABORD PAR SON NOM, PUIS PAR L'IDENTITÉ
+         DE L'OBJET. Sans cette seconde recherche, un objet RENOMMÉ faisait créer
+         un dossier au nouveau nom et laissait l'ancien sur le Drive (constaté le
+         08/10/2026 : cinq dossiers d'instance pour trois instances). Le dossier
+         rendu est utilisé TEL QUEL, jamais recréé. */
+      /* Le PARENT de cette entrée : on ne le connaît que s'il est DÉJÀ dans le plan
+         (`idByPath`) ou si l'entrée est au premier niveau (parent = dossier du
+         dataset). Dans tous les autres cas le parent sera construit par
+         `ensurePath` juste après — et une recherche « par nom » sous un parent
+         inconnu pourrait tomber sur un dossier homonyme d'une AUTRE branche. */
+      const parentKnown = entry.path.length === 0 || parentPath === '' || idByPath.has(parentPath);
+      const existing = parentKnown ? await existingObjectFolder({
+        names: entry.path,
+        parentId,
+        appId: String((entry.extra && entry.extra.id) || ''),
+        skipNames: planNamesByParent.get(parentPath) || null,
+        scanStore
+      }) : '';
+      const leaf = existing ? { ok: true, leafId: existing } : await ensurePath(entry.path, { rootId });
       if (!leaf.ok || !leaf.leafId) {
         report.ok = false;
         report.errors.push({ scope: 'folder', path: entry.path.join('/'), message: leaf.error || 'unknown error' });

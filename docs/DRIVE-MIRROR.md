@@ -4912,3 +4912,151 @@ geste pour les dossiers).
 
 
 
+
+## Le rapport du 08/10/2026 au soir — six plaintes, deux lignes de code fautives (08/10/2026)
+
+**Le rapport, mot pour mot.** « *ho creato un esperimento e ho rinominato la instance. adesso nella
+cartella dell'esperimento in drive ho la cartella del vecchio nome della instance e quella del nuovo
+nome … non so se è una questione di tempo dato che la cartella in drive non si genera in maniera
+rapidissima. altro errore vedo un sacco di file ripetuti tutti uguali ad esempio i files `_meta.json`
+ma molti altri json. altro errore: mi avevo detto che adesso con il codice pdb si caricano i file pdb
+nelle cartelle di drive ma io vedo solo dei file json e non dei pdb ed in più sono ripetuti. altro
+errore: ho eliminato una cartella in drive perché non corrispondeva a un esperimento nel programma ma
+la cartella è ricomparsa. altro errore: ho eliminato una instance in un esperimento ma la sua cartella
+è rimasta in drive. infine il gradiente di colori nel background del molecular viewer dà solo il
+colore uniforme e non considera il colore B.* »
+
+### Ce que le Drive réel disait (sondes de lecture seule, jeton de l'application)
+
+Deux sondes neuves ont été écrites pour ÇA — elles n'écrivent rien :
+
+* **`_diag_report.mjs`** — les jumeaux de DOSSIERS et de FICHIERS, les `.pdb`, les objets les plus
+  récents, les dossiers créés dans les trois dernières heures ;
+* **`_diag_tree.mjs`** — l'arbre d'un dossier AVEC la description que le programme lui-même a écrite
+  (`_meta.json` : type, nom, `extra.id`), plus **`_diag_file.mjs`** (le contenu d'un fichier qu'on ne
+  s'explique pas), **`_diag_lag.mjs`** (le Drive voit-il tout de suite ce qu'il vient d'écrire ?) et
+  **`_repair_drive_file_twins.mjs`** (l'outil de réparation des jumeaux déjà écrits).
+
+Elles ont répondu, sans discussion possible :
+
+```
+projects/p53H/interaction_pdbs          5 dossiers d'instance pour TROIS instances
+   1YCR            21:41  type=instance  extra.id=t17914951876631134
+   instance1       21:42  type=instance  extra.id=t17914951876631134   ← LE MÊME objet
+   3LNZ            21:38  type=instance  extra.id=t17914952328471224
+   New_Instance_2  21:42  type=instance  extra.id=t17914952328471224   ← LE MÊME objet
+   New_Instance_3  22:42  type=instance  extra.id=t17914993166058436   (une VRAIE instance)
+```
+
+* **les jumeaux de fichiers** : **372 dossiers, 1 944 fichiers** — 123 `_meta.json`, 12 `name.txt`,
+  8 `comments.html`, 7 `flow_cyt_p53H_p53R.json`… six à huit copies IDENTIQUES écrites dans la même
+  seconde (des identifiants différents : de vrais jumeaux) ;
+* **les `.pdb`** : 66 fichiers, mais UNIQUEMENT dans les expériences HADDOCK
+  (`Test_84/instance1/Data/pdb_files/…`) ; les expériences NMR (`NMR_p53_H`, `interaction_pdbs`,
+  `BidH`) n'en portaient aucun — et, à la place, des JSON (le style du viewer) **rebaptisés
+  `Nicola_DAMELIO.json`** ;
+* **`_diag_lag.mjs`** : un fichier écrit par l'application est visible par une recherche PAR NOM
+  **≈ 1,4 s après** le POST — la fenêtre exacte où deux passes qui se suivent ne se voient pas.
+
+
+### Les deux lignes fautives
+
+1. **`driveUpload.renameDriveFilesFor` lisait le nouveau nom de dossier dans le MAUVAIS tableau.**
+   L'INDEX venait du chemin RÉEL (`ctxPathOf` : `projects/<projet>/<expérience>/<instance>/…`) et le
+   NOM du chemin HISTORIQUE (`driveFolderPath`, qui n'a pas le conteneur `projects/`) : **décalage
+   d'un cran**. Renommer l'instance `1YCR` lisait donc `driveFolderPath(newCtx)[3]` — la SECTION
+   (« Data ») —, ne trouvait pas le dossier à renommer, et **déplaçait chaque fichier** dans une
+   arborescence refabriquée : le dossier du vieux nom restait avec ce qu'il n'avait pas suivi, et un
+   second naissait. C'est le « non so se è una questione di tempo » : non, ce n'était pas le temps.
+2. **Le même module recalculait le nom de TOUS les fichiers depuis le contexte.** Or le nom d'un
+   fichier d'expérience est `<titre>_<scientifique>.<ext>` — **pas celui de tous** : le style du
+   viewer s'appelle `viewer-style-snapshot.json`, le `.pdb` d'un code son propre radical. Un
+   renommage les rebaptisait donc `<scientifique>.json` : c'est là que le style du viewer est devenu
+   `Nicola_DAMELIO.json`, et **le fichier qui portait la rampe du fond** (A → B) n'était plus
+   retrouvé à l'ouverture — la troisième plainte et la sixième ont la même racine.
+
+Et **deux gestes manquaient**, tout court :
+
+* **supprimer une INSTANCE ne touchait pas au Drive** : `deleteTestDriveFolder` existait (expérience
+  entière, bouton Delete) mais rien pour une seule condition — son dossier restait pour toujours ;
+* **le dossier d'une instance RENOMMÉE n'était jamais renommé par l'exécuteur** : le plan est bâti
+  sur les NOMS et `ensurePath` ne savait faire que « chercher ce nom, sinon CRÉER ».
+
+### Ce qui a été corrigé
+
+* **`driveUpload.renameDriveFilesFor`** : le nouveau nom ET l'ancien se lisent dans `ctxPathOf` —
+  **le même tableau que l'index** ; un fichier n'est renommé que si son nom **ÉTAIT** celui de la
+  convention (`entry.name === suggestDriveFileName(oldCtx) + ext`), donc le style du viewer, les
+  `.pdb` et les JSON canoniques gardent leur nom ;
+* **`driveUpload.deleteInstanceDriveFolder`** (+ `findInstanceFolder`) : le dossier d'une condition
+  supprimée part à la **corbeille** (jamais de destruction), retrouvé par son chemin réel puis, en
+  repli, par la chaîne du registre ; `activeTestModule.jsx` l'appelle sur le `×` d'une condition —
+  et la **dernière** condition emporte aussi le dossier de l'expérience (elle la supprime
+  entièrement, ce que la confirmation dit déjà) ;
+* **`driveStructure.pickRenamedSibling` + `existingObjectFolder`** (dans `publish` et
+  `ensureObject`) : quand le nom cherché manque, l'exécuteur regarde les dossiers **FRÈRES** et
+  adopte celui dont le `_meta.json` porte **le même `extra.id`** — puis le **RENOMME PAR IDENTIFIANT**
+  (rien n'est copié, ses fichiers suivent). Un objet renommé n'a plus jamais deux dossiers, qu'il
+  soit renommé depuis le programme, depuis un autre poste, ou avant que cette page ne s'ouvre. Les
+  frères dont le nom est déjà dans le plan sont sautés (leur description n'est même pas lue) : une
+  publication ordinaire ne lit donc presque rien, et la recherche n'a lieu que sous un parent
+  CONNU (`parentKnown`) — jamais de dossier homonyme d'une autre branche.
+
+
+### Vérifié hors navigateur
+
+`_drive_rename_test.mjs` (**56 vérifications**) : la règle pure du frère à adopter, l'exécuteur réel
+sur un faux Drive (dossier RENOMMÉ, aucun dossier créé, le `.pdb` resté dedans, `_meta.json` au nom
+d'aujourd'hui, idempotence), **le TÉMOIN de l'ancienne règle** (deux dossiers, deux identifiants, le
+vieux gardé), puis `renameDriveFilesFor` sur le module réel (le dossier d'instance renommé — pas
+recréé —, le style du viewer qui garde son nom canonique, aucun déplacement, le registre qui suit).
+
+Régressions : `_upload_twins_test` **33**, `_folder_race_test` **47**, `_drive_structure_test`
+**140**, `_drive_folder_anchor_test` **51**, `_dataset_dir_twins_test` **53**, `_drive_restore_test`
+**251**, `_experiment_move_drive_test` **63**, `_drive_mirror_test` **79**, `_drive_purge_test`
+**40**, `_workspace_drive_test` **60**, `_workspace_keys_test` **39**, `_project_drive_doc_test`
+**61**, `_figure_svg_drive_test` **162**, `_library_restore_test` **175**, `_backup_file_test`
+**129**, `_viewer_source_drive_archive_test` **35**, `_viewer_style_recall_test` **186**,
+`_viewer_background_test` **228**, `_viewer_theme_snapshot_test` **73** — et
+`_experiment_folder_files_test` **181**, qui ne tournait PLUS (le bouchon de test ne ré-exportait pas
+`archiveFileDriveName` ; c'est réparé dans `_esm_test_hook.mjs`, où le nommeur est importé du module
+RÉEL — une seule définition de la règle). `npx oxlint` — **0 erreur, 0 avertissement** ;
+`npx vite build` ✓ 3,76 s.
+
+### Ce qui RESTE, et c'est un coût, pas un défaut
+
+Les **1 944 fichiers jumeaux déjà écrits** sont toujours là (le correctif empêche d'en créer, il ne
+supprime rien). L'outil neuf **`_repair_drive_file_twins.mjs`** les répare selon la seule règle
+sûre : par (dossier, nom), **garder la copie la PLUS RÉCENTE quand toutes les copies ont la même
+taille**, ranger les autres à la **corbeille** (jamais de destruction), et **ne rien toucher** quand
+les tailles diffèrent (il le signale : c'est à l'utilisateur de regarder). Il est en **essai à blanc
+par défaut** :
+
+```
+node _repair_drive_file_twins.mjs                      # le plan, sans rien modifier
+node _repair_drive_file_twins.mjs --name=_meta.json    # un seul nom (123 groupes)
+node _repair_drive_file_twins.mjs --apply              # range vraiment les extras
+```
+
+Les **dossiers d'instance orphelins** des renommages passés (`1YCR`, `3LNZ`, `New_Instance_2`…) ne
+sont PAS rangés par ce correctif — l'application ne les écrit plus, mais ils existent encore : c'est
+`_repair_drive_twins.mjs --deep` (fusion + corbeille des jumeaux vides) ou un geste dans Drive pour
+eux. Et la plainte « **una cartella eliminata in Drive è ricomparsa** » a une racine connue : un
+dossier supprimé **dans Drive** n'est pas une suppression DU PROGRAMME (aucune tombe n'est écrite) —
+le programme qui republie son plan recrée donc ce que son état décrit. Supprimer depuis le programme
+(🗑 d'une expérience → `deleteTestDriveFolder`, `×` d'une condition → `deleteInstanceDriveFolder`,
+suppression d'un projet → tombes de `driveMirror`) écrit la tombe, et là rien ne revient.
+
+### Le dégradé du fond (sixième plainte)
+
+La RÈGLE est celle d'avant et elle est intacte : deux arrêts (A → B) et une direction, dans le CSS du
+canvas, dans les films 🎬🎞 et sous la still du ✨ Ray (`_viewer_background_test` **228**,
+`_viewer_theme_snapshot_test` **73**). Deux causes connues expliquaient « *dà solo il colore
+uniforme* », et les deux sont traitées : le défaut de B était SI PÂLE qu'on lisait un fond uni
+(`BG_GRADIENT_DEFAULT_TO` = slate-400, un magasin qui portait l'ancien `#cbd5e1` est reconnu et
+converti — `refreshPaleBgGradient`), et le FICHIER qui porte la rampe d'une expérience était
+justement celui que le renommage rebaptisait `Nicola_DAMELIO.json` — donc plus jamais relu. Ce
+qu'il faut regarder dans le navigateur : la ligne du panneau dit elle-même si le canvas a PRIS la
+rampe (`bgRampTaken`) — « the NGL canvas has not taken it » signifie qu'aucune vue n'est encore
+dessinée, pas que B est ignorée.
+

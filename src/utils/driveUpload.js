@@ -1227,6 +1227,56 @@ export const deleteTestDriveFolder = async (test) => {
   } catch { return 0; }
 };
 
+/** LE DOSSIER D'UNE INSTANCE — `<projet>/<expérience>/<instance>` : le chemin
+ *  RÉEL que l'envoi fabrique (voir canonicalExperimentPath ; l'instance est le
+ *  4e segment, après le conteneur `projects/`). '' quand il n'y a pas de nom
+ *  d'instance — une condition sans nom n'a pas de dossier à elle. */
+const findInstanceFolder = async (root, test, instanceName) => {
+  const instanceSlug = sanitizeSlug(instanceName);
+  if (!root || !instanceSlug) return '';
+  const project = (test && (test.projectNames || [])[0]) || '';
+  const testFolder = await findProjectTestFolder(root, test && test.name, project);
+  if (!testFolder) return '';
+  return await findFolderByName(instanceSlug, testFolder.id);
+};
+
+/** Ranger à la CORBEILLE le dossier Drive d'une INSTANCE supprimée. Le Drive
+ *  suit le programme : supprimer la DERNIÈRE condition d'une expérience emporte
+ *  le dossier de l'expérience entière (`deleteTestDriveFolder`, que le même geste
+ *  appelle), mais supprimer UNE condition n'emportait RIEN — son dossier (et ses
+ *  fichiers : structure, spectres, style du viewer) restait sur le Drive, et le
+ *  programme ne le voyait plus (défaut signalé le 08/10/2026 : « ho eliminato
+ *  una instance in un esperimento ma la sua cartella è rimasta in drive »).
+ *  Best-effort, JAMAIS de destruction : le dossier part à la corbeille, donc il
+ *  reste reprenable.
+ *  @returns {Promise<number>} 1 quand un dossier a été rangé, 0 sinon. */
+export const deleteInstanceDriveFolder = async (test) => {
+  const instanceName = String((test && test.instanceName) || '').trim();
+  if (!getDriveToken() || !test || !instanceName) return 0;
+  try {
+    const root = await ensureDriveFolder();
+    if (!root) return 0;
+    let folderId = await findInstanceFolder(root, test, instanceName);
+    if (!folderId) {
+      // Repli : le registre des fichiers connaît la chaîne exacte du dossier.
+      const reg = getDriveFileRegistry();
+      for (const entry of Object.values(reg)) {
+        if (!entry || entry.deleted) continue;
+        const chain = Array.isArray(entry.path) ? entry.path : [];
+        const seg = chain.find((s) => s && s.id && s.name === sanitizeSlug(instanceName));
+        if (seg) { folderId = String(seg.id); break; }
+      }
+    }
+    if (!folderId) return 0;
+    await driveFetch(`/drive/v3/files/${folderId}?fields=id`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ trashed: true })
+    });
+    return 1;
+  } catch { return 0; }
+};
+
 /** Trash the Drive folder that mirrors a protocol — protocols/<protocol> — so
  *  ALL of its files (attachments, imported Word documents, pasted images…)
  *  are removed together. The Drive mirrors the app: a protocol deleted here
@@ -2891,8 +2941,17 @@ export const renameDriveFilesFor = async ({ field, oldValue, newValue, scope = n
     // The new folder name at that position, computed from the full context
     // (e.g. for protocols the folder is protocols/<protocol>, so renaming the
     // protocol renames the folder; the scientist is not a folder level).
-    const newFolderName = (pathIndex >= 0 && String(newValue || '')) ? (driveFolderPath(newCtx)[pathIndex] || '') : '';
-    const oldFolderName = pathIndex >= 0 ? (driveFolderPath(oldCtx)[pathIndex] || '') : '';
+    /* ⚠ LE NOM DU DOSSIER SE LIT DANS LE **MÊME** TABLEAU QUE L'INDEX (`ctxPathOf`,
+       le chemin RÉEL : `projects/<projet>/<expérience>/<instance>/…`) — jamais
+       dans l'ordre HISTORIQUE de `driveFolderPath`, qui n'a pas le conteneur
+       `projects/` et se décale donc d'un cran. Constaté sur le Drive réel le
+       08/10/2026 : renommer une INSTANCE (`1YCR` → `instance1`) lisait
+       `driveFolderPath(newCtx)[3]`, c'est-à-dire la SECTION (« Data ») au lieu de
+       l'instance — la recherche du dossier échouait ou visait le mauvais, les
+       fichiers étaient DÉPLACÉS dans une arborescence refabriquée, et le dossier
+       du vieux nom restait à côté du nouveau (deux dossiers d'instance). */
+    const newFolderName = (pathIndex >= 0 && String(newValue || '')) ? (ctxPathOf(newCtx)[pathIndex] || '') : '';
+    const oldFolderName = pathIndex >= 0 ? (ctxPathOf(oldCtx)[pathIndex] || '') : '';
     let folderSeg = null;
     // When the field is being REMOVED (newValue === ''), the path structure
     // changes, so the folder must be MOVED, never renamed.
@@ -2920,7 +2979,7 @@ export const renameDriveFilesFor = async ({ field, oldValue, newValue, scope = n
   let count = 0;
   for (const plan of plans) {
     try {
-      const { fileId, entry, newCtx, folderSeg, ext, newFolderName, oldFolderName } = plan;
+      const { fileId, entry, oldCtx, newCtx, folderSeg, ext, newFolderName, oldFolderName } = plan;
       let newPath = entry.path || null;
 
       if (folderSeg && renamedFolderIds.has(folderSeg.id)) {
@@ -2946,11 +3005,22 @@ export const renameDriveFilesFor = async ({ field, oldValue, newValue, scope = n
         }
       }
 
-      const newName = suggestDriveFileName(newCtx) + ext;
-      if (newName !== entry.name) {
-        try { await renameDriveFile(fileId, newName); } catch { /* keep going */ }
+      /* ⚠ ON NE RENOMME QUE LES FICHIERS DONT LE NOM *EST* CELUI DE LA CONVENTION.
+         Le nom d'un fichier d'expérience est `<titre>_<scientifique>.<ext>` — mais
+         pas celui de TOUS : le style du viewer s'appelle `viewer-style-snapshot.json`,
+         le `.pdb` d'un code son propre radical, un document de structure son nom
+         canonique. Recalculer leur nom depuis le contexte les rebaptisait
+         `<scientifique>.json` : constaté sur le Drive réel le 08/10/2026
+         (`Nicola_DAMELIO.json` là où le style du viewer devait être, donc un style
+         que plus personne ne retrouve). La comparaison avec le nom que l'ANCIEN
+         contexte produisait est ce qui distingue les deux familles. */
+      const renamed = (entry.name === suggestDriveFileName(oldCtx) + ext)
+        ? suggestDriveFileName(newCtx) + ext
+        : entry.name;
+      if (renamed !== entry.name) {
+        try { await renameDriveFile(fileId, renamed); } catch { /* keep going */ }
       }
-      reg[fileId] = { ...entry, name: newName, ctx: newCtx, path: newPath, at: Date.now() };
+      reg[fileId] = { ...entry, name: renamed, ctx: newCtx, path: newPath, at: Date.now() };
       count++;
     } catch { /* skip files that cannot be updated (e.g. not app-created) */ }
   }

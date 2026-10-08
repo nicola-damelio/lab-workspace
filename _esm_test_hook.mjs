@@ -18,6 +18,14 @@ const CANDIDATES = ['.js', '.jsx', '/index.js', '/index.jsx'];
    valeur ne doit exister qu'une fois dans le dépôt (voir la ligne
    MAX_DRIVE_LIST_PAGES du bouchon). */
 const DRIVE_LIST_PAGES_URL = new URL('./src/utils/driveListPages.js', import.meta.url).href;
+/* Le NOMMEUR des fichiers archivés (`archiveFileDriveName`) est PUR lui aussi :
+   le bouchon l'importe du module RÉEL (aucune seconde définition de la règle
+   `<titre>_<scientifique>.<ext>`). Sans lui, `driveExperimentFiles.js` refusait
+   de se charger sous Node — « The requested module './driveUpload' does not
+   provide an export named 'archiveFileDriveName' » — et
+   `_experiment_folder_files_test.mjs` (les dossiers d'expérience, .pdb compris)
+   ne pouvait plus tourner du tout. */
+const DRIVE_NAMING_URL = new URL('./src/utils/driveNaming.js', import.meta.url).href;
 
 
 export async function resolve(specifier, context, next) {
@@ -115,6 +123,16 @@ export async function load(url, context, next) {
         'export const driveFetch = async (path, opts) => (typeof M().driveFetch === "function" ? M().driveFetch(path, opts) : { ok: false, status: 501, json: async () => ({}), blob: async () => new Blob([]) });',
         'export const untrashDriveFile = async (id) => (typeof M().untrashDriveFile === "function" ? M().untrashDriveFile(id) : false);',
         'export const renameDriveFile = async (id, name) => (typeof M().renameDriveFile === "function" ? M().renameDriveFile(id, name) : false);',
+        /* Le NOMMEUR RÉEL, importé du module pur (une seule définition). */
+        `import { suggestDriveFileName } from ${JSON.stringify(DRIVE_NAMING_URL)};`,
+        'export const withExtension = (baseName, originalName) => {',
+        '  const m = /(\\.[a-zA-Z0-9]+)$/.exec(String(originalName || ""));',
+        '  return m ? `${String(baseName).replace(/\\.\\w+$/, "")}${m[1]}` : baseName;',
+        '};',
+        'export const archiveFileDriveName = ({ file, ctx = {}, title = "", suffix = "file" }) => {',
+        '  const base = title || String((file && file.name) || "").replace(/\\.[^/.]+$/, "");',
+        '  return withExtension(suggestDriveFileName({ ...ctx, title: base, suffix }), (file && file.name) || "file");',
+        '};',
       ].join('\n'),
     };
   }
