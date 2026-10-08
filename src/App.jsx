@@ -52,7 +52,7 @@ import { migrateProjectRootFoldersOnce } from './utils/projectRootMigrate';
    projets, suppressions, dossiers) est écrit dans
    Lab Workspace/_workspace/state.json et relu au démarrage : un dataset créé
    ou supprimé sur un poste se voit sur les autres, et RIEN ne ressuscite. */
-import { mirrorDeleteDataset, mirrorRenameDataset } from './utils/driveMirror';
+import { mirrorDeleteDataset, mirrorRenameDataset, mirrorPurgeDeletedDatasets } from './utils/driveMirror';
 import {
   readWorkspaceState, writeDatasetCopy, readDatasetCopy,
   buildWorkspaceState, writeWorkspaceState, WORKSPACE_DIR, WORKSPACE_STATE_FILE,
@@ -2432,7 +2432,20 @@ if (customType === 'dosy') {
 
   useEffect(() => {
     let cancelled = false;
-    const run = () => { if (!cancelled) syncWorkspaceFromDrive(); };
+    /* L'INDEX d'abord (les tombes des autres postes arrivent : un dataset
+       supprimé AILLEURS l'est aussi ici), PUIS LES DOSSIERS : une suppression
+       dont la mise à la corbeille Drive n'a pas abouti (Drive éteint, jeton
+       expiré, quota, recherche en échec) est REPRISE — sans geste, sur n'importe
+       quel poste. C'est la promesse du miroir : « ce que je supprime dans le
+       programme est supprimé sur le Drive ». Best-effort : voir
+       driveMirror.mirrorPurgeDeletedDatasets. */
+    const run = () => {
+      if (cancelled) return;
+      Promise.resolve(syncWorkspaceFromDrive())
+        .catch(() => false)
+        .then(() => { if (!cancelled) return mirrorPurgeDeletedDatasets(); })
+        .catch(() => null);
+    };
     run();
     const onConnected = () => run();
     window.addEventListener('lab:drive-connected', onConnected);

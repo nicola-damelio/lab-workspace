@@ -4561,3 +4561,93 @@ HTML**, relu avec sa charge tronquée comprise. Elle vérifie aussi le
 écrivent le document en JSON, et plus rien n'écrit de fichier HTML.
 
 
+
+## Le dossier d'un dataset supprimé part vraiment à la corbeille
+
+**Signalé tel quel :** « ce que j'élimine dans le programme doit être éliminé sur le
+Drive, autrement ce n'est pas un miroir. » Constaté sur le Drive réel : le dossier
+`GEC-UPJV-pp` était toujours là — il portait des projets (`p53H`) et une expérience
+(`pdbs_interactions`) qui appartenaient à `GEC-UPJV-projects`, dataset toujours
+vivant ; et le `projects/` de ce dernier ne contenait plus qu'un projet incomplet.
+Le programme, lui, ne connaissait plus `GEC-UPJV-pp` : ce dataset avait été créé
+pour essayer « 📂 Load HTML », puis supprimé — et **rien n'y avait été déplacé à la
+main**.
+
+**Deux causes, indépendantes.**
+
+| Cause | Où | Ce que ça produisait |
+| --- | --- | --- |
+| La suppression ne visait **qu'un dossier** : le premier que la recherche rendait (registre → nom → `dataset_<id>`) | `driveMirror.mirrorDeleteDataset` | Un jumeau, un dossier resté sous un ancien titre ou l'ancrage `dataset_<id>` gardaient leurs fichiers : supprimer le dataset ne supprimait pas tout |
+| La mise à la corbeille **n'était jamais reprise**. La tombe est écrite dans TOUS les cas (c'est voulu : Drive éteint, jeton expiré, quota, 5xx, poste hors ligne) | `driveMirrorStore.addDriveTombstone` | La suppression était actée côté programme (le dataset disparaissait, et `datasets[key]` était oublié au passage) mais le dossier restait sur le Drive **pour toujours** : plus rien ne le cherchait, même une fois le Drive revenu |
+
+**Et pourquoi ces données d'un autre dataset étaient-elles là ?** Parce qu'un import
+« 📂 Load HTML » **adopte** les projets du fichier au dataset qui les reçoit
+(`importProjectsFromFile(s.projects, { datasetId: targetId })`, voir « Load HTML :
+les projets d'une sauvegarde sont adoptés par le dataset qui les reçoit ») : charger
+la sauvegarde de `GEC-UPJV-projects` **pendant** que `GEC-UPJV-pp` était ouvert
+rangeait donc ses projets sous `-pp`, et les fichiers que le programme renvoie pour
+eux (figures, `.pdb`) suivaient **le dossier du dataset ouvert**, c'est-à-dire
+`GEC-UPJV-pp`. Supprimer ensuite `-pp` laissait ces fichiers-là orphelins sur le
+Drive : les deux causes ci-dessus se cumulaient. Le programme n'avait jamais
+« déplacé » ces projets à la main : c'est l'adoption par le dataset ouvert qui les a
+étiquetés là, puis la suppression qui a retiré le dataset en laissant le dossier.
+
+**Ce qui est fait.**
+
+| Règle | Où |
+| --- | --- |
+| La tombe RETIENT le dossier qu'elle visait (`folderId`) et l'état de sa corbeille (`purgedAt` : 0 = à faire) | `driveMirrorStore.normTombstone`, `addDriveTombstone` |
+| Ces deux faits **voyagent** avec la tombe, sans être écrasés par une tombe plus récente d'un autre poste | `mergeDriveMirrors` |
+| Supprimer un dataset met à la corbeille **TOUS** ses dossiers : l'identifiant connu, tous les jumeaux du titre courant, les anciens titres, l'ancrage `dataset_<id>` | `driveMirror.deletedDatasetFolderIds` |
+| Une corbeille qui n'a PAS abouti reste **À FAIRE** : la tombe le dit, et rien ne prétend le contraire | `mirrorDeleteDataset` (`record({ folderId, purged: everyTarget })`) |
+| Les suppressions inachevées sont **REPRISES** : au démarrage et à chaque reconnexion au Drive, après l'adoption de l'index | `driveMirror.mirrorPurgeDeletedDatasets` ← `App.jsx` |
+| La reprise est **idempotente** : une tombe n'est réglée que si le geste a réellement abouti, une tombe réglée ne fait plus aucune requête, un Drive muet ne règle rien | `markDriveTombstonePurged`, `unpurgedDatasetTombstones` |
+
+**Un geste manuel pour un Drive déjà abîmé.**
+
+```
+node _purge_orphan_datasets.mjs                           # lecture seule : ce qui reste, et pourquoi
+node _purge_orphan_datasets.mjs --apply                   # corbeille pour les datasets SUPPRIMÉS dans le programme
+node _purge_orphan_datasets.mjs --apply --apply-unknown    # aussi ceux que l'index ne connaît pas
+node _purge_orphan_datasets.mjs --keep=BG04 --report=tmp_orphans.txt
+```
+
+Le script lit `_workspace/state.json` (datasets vivants + tombes) et classe chaque
+dossier de « Lab Workspace » : **vivant** (laissé en place), **supprimé dans le
+programme** (→ corbeille), **inconnu de l'index** (seulement signalé : un dataset
+créé sur un autre poste et pas encore indexé ne doit pas disparaître par surprise —
+`--apply-unknown` est un choix explicite).
+
+**Ce qui n'est PAS touché (dit franchement).** Rien n'est supprimé définitivement :
+tout part à la **corbeille** Drive (30 jours). Aucun dossier n'est créé, aucun
+fichier n'est déplacé ni renommé. Un dossier dont la recherche échoue (Drive muet)
+n'est jamais déclaré « rangé » : la tombe reste à reprendre au prochain démarrage.
+Et un dossier que l'index ne connaît pas n'est pas effacé parce qu'il « a l'air »
+orphelin.
+
+**Ce que ça change pour un Drive DÉJÀ abîmé.** Une tombe inachevée est reprise au
+prochain démarrage : un dossier comme `GEC-UPJV-pp` part donc à la corbeille **sans
+geste**, dès que le Drive répond — donc **avant** la première ouverture de
+l'application après cette version, si l'on veut d'abord y récupérer quelque chose,
+il faut lire le contenu (`node _purge_orphan_datasets.mjs`) ou le déplacer. Rien
+n'est perdu pour autant : le dossier reste **30 jours** dans la corbeille du Drive.
+
+### Vérifier soi-même
+
+```
+node _drive_purge_test.mjs        # 40 — tombe qui retient le dossier, suppression exhaustive, échec PUIS reprise, idempotence
+node _drive_mirror_test.mjs       # 78 — le Drive est le miroir du programme (rien ne ressuscite)
+node _dataset_dir_twins_test.mjs  # 53 — un seul projects/ par dataset, jamais de jumeau
+```
+
+Le test travaille avec les modules réels et un faux Drive qui sait **échouer** :
+`getDriveFileMeta` lève (quota), `trashDriveFile` répond `false`,
+`listFoldersByName` lève (5xx). Il vérifie qu'après cet échec la tombe est restée
+« à faire », que la reprise range le bon dossier (retrouvé par son identifiant, puis
+par son nom), qu'une seconde reprise ne fait plus aucune requête, et qu'un Drive muet
+pendant la reprise ne règle **aucune** tombe. La suppression exhaustive est éprouvée
+sur trois dossiers du même dataset (le titre courant, un jumeau, l'ancrage
+`dataset_<id>`) : les trois partent à la corbeille — c'est exactement ce qui
+manquait.
+
+

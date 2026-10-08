@@ -96,7 +96,19 @@ const normTombstone = (raw) => {
     name,
     path,
     kind: text(raw.kind) || (path ? 'folder' : 'dataset'),
-    deletedAt: Number(raw.deletedAt) || 0
+    deletedAt: Number(raw.deletedAt) || 0,
+    /* LE DOSSIER VISÉ et L'ÉTAT DE SA MISE À LA CORBEILLE. Sans eux, une
+       suppression dont la corbeille Drive N'A PAS ABOUTI (Drive éteint, jeton
+       expiré, quota, 5xx) ne laissait aucune trace utilisable : la même fonction
+       oubliait au passage l'identifiant du dossier (`datasets[key]` est retiré),
+       donc plus rien ne pouvait le retrouver — le dossier restait sur le Drive
+       avec ses fichiers, à jamais. C'est le défaut « ce que je supprime dans le
+       programme n'est pas supprimé sur le Drive : ce n'est plus un miroir ».
+       `folderId` = le dossier connu au moment de la suppression ; `purgedAt` = 0
+       tant que sa corbeille reste À FAIRE (voir driveMirror.mirrorPurgeDeletedDatasets,
+       qui reprend les tombes inachevées). */
+    folderId: text(raw.folderId),
+    purgedAt: Number(raw.purgedAt) || 0
   };
 };
 
@@ -177,7 +189,17 @@ export const mergeDriveMirrors = (current, incoming) => {
   [...a.tombstones, ...b.tombstones].forEach((t) => {
     const key = driveTombstoneKey(t);
     const prev = tombstones.get(key);
-    if (!prev || t.deletedAt >= prev.deletedAt) tombstones.set(key, t);
+    if (!prev) { tombstones.set(key, t); return; }
+    const newer = t.deletedAt >= prev.deletedAt ? t : prev;
+    /* `folderId` et `purgedAt` ne suivent PAS la date de la suppression : le fait
+       qu'un dossier ait été mis à la corbeille ne se perd pas parce que la tombe
+       d'un autre poste est plus récente — et un poste qui n'avait pas su quel
+       dossier viser hérite de celui que l'autre connaît. */
+    tombstones.set(key, {
+      ...newer,
+      folderId: newer.folderId || prev.folderId || t.folderId || '',
+      purgedAt: Math.max(Number(prev.purgedAt) || 0, Number(t.purgedAt) || 0)
+    });
   });
   const newest = (left, right) => {
     const out = { ...left };
@@ -235,12 +257,19 @@ export const projectFolderPaths = (projectName) => {
  *  le chemin supprimé est oublié au passage : réutiliser l'identifiant d'un
  *  dossier mis à la corbeille ferait écrire dans un dossier invisible. */
 export const addDriveTombstone = (
-  mirror, { id = '', name = '', path = '', kind = '' } = {}, deletedAt = Date.now()
+  mirror, { id = '', name = '', path = '', kind = '', folderId = '', purgedAt = 0 } = {}, deletedAt = Date.now()
 ) => {
   const current = normalizeDriveMirror(mirror);
   const gonePath = cleanMirrorPath(path);
   const entry = normTombstone({
-    id, name, path: gonePath, kind: kind || (gonePath ? 'folder' : 'dataset'), deletedAt
+    id, name, path: gonePath, kind: kind || (gonePath ? 'folder' : 'dataset'), deletedAt,
+    /* Le dossier visé et l'état de sa mise à la corbeille (voir normTombstone) :
+       l'appelant qui les connaît les donne ; celui qui n'en sait rien ne les
+       PERD pas pour autant — la tombe précédente de même clé les porte. */
+    folderId: folderId || ((current.tombstones.find(
+      (t) => driveTombstoneKey(t) === driveTombstoneKey({ id, name, path: gonePath })
+    ) || {}).folderId) || '',
+    purgedAt
   });
   if (!entry) return current;
   const datasetKey = mirrorDatasetKey({ id, name });
@@ -496,3 +525,34 @@ export const writeDriveMirror = (mirror, { notify = true } = {}) => {
  *  plusieurs opérations n'écrivent qu'une fois. */
 export const updateDriveMirror = (fn, { notify = true } = {}) =>
   writeDriveMirror(fn(readDriveMirror()), { notify });
+
+/* ── LES SUPPRESSIONS INACHEVÉES : ce qui reste à mettre à la corbeille ───── */
+
+/** Marquer comme FAITE la mise à la corbeille du dossier visé par une tombe.
+ *  PUR : rend le miroir, ne touche à rien d'autre, et ne CRÉE jamais de tombe
+ *  (seule une suppression déjà actée se termine). */
+export const markDriveTombstonePurged = (mirror, { id = '', name = '', path = '' } = {}, at = Date.now()) => {
+  const current = normalizeDriveMirror(mirror);
+  const key = driveTombstoneKey({ id, name, path });
+  if (!key) return current;
+  const when = Number(at) || Date.now();
+  let changed = false;
+  const tombstones = current.tombstones.map((t) => {
+    if (driveTombstoneKey(t) !== key || t.purgedAt) return t;
+    changed = true;
+    return { ...t, purgedAt: when };
+  });
+  if (!changed) return current;
+  return normalizeDriveMirror({
+    tombstones, datasets: current.datasets, projects: current.projects,
+    datasetDirs: current.datasetDirs
+  });
+};
+
+/** Les DATASETS supprimés dont le dossier Drive RESTE à mettre à la corbeille
+ *  (tombe sans chemin, `purgedAt` à 0). C'est la file de reprise : chaque entrée
+ *  porte l'identifiant du dossier quand il était connu, sinon le nom du dataset
+ *  — de quoi le retrouver même si la recherche par nom avait échoué au moment du
+ *  geste (`driveMirror.mirrorPurgeDeletedDatasets` les reprend). PUR. */
+export const unpurgedDatasetTombstones = (mirror) =>
+  normalizeDriveMirror(mirror).tombstones.filter((t) => !t.path && !t.purgedAt);

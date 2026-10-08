@@ -36,7 +36,7 @@
 import {
   getDriveToken, ensureLabWorkspaceFolder, findFolderByName,
   findDriveFileByName, getDriveFileMeta, trashDriveFile, renameDriveFile,
-  canonicalDatasetDirId
+  canonicalDatasetDirId, listFoldersByName
 } from './driveUpload';
 import {
   getCloudProvider, nextcloudConfigured, nextcloudDavBase, ncDelete, ncMove
@@ -46,7 +46,7 @@ import { projectDocumentFileName } from './projectDocumentDrive';
 import {
   readDriveMirror, writeDriveMirror, addDriveTombstone, rememberDatasetFolder,
   rememberProjectFolder, forgetProjectFolder, findDatasetFolderId, findProjectFolderId,
-  projectFolderPaths, datasetFolderNameOf
+  projectFolderPaths, datasetFolderNameOf, unpurgedDatasetTombstones, markDriveTombstonePurged
 } from './driveMirrorStore';
 
 /** Le nom de dossier d'un dataset ('' si l'on ne sait rien de lui). */
@@ -99,6 +99,55 @@ export const findDatasetFolder = async ({ id = '', name = '', extraNames = [] } 
 };
 
 
+/** TOUS les dossiers Drive d'un dataset — le premier trouvé NE SUFFIT PAS.
+
+    Ce que le défaut coûtait : supprimer un dataset ne mettait à la corbeille
+    qu'UN dossier (le premier que la recherche rendait) et laissait les autres —
+    un jumeau né d'une recherche qui avait échoué, un dossier resté sous un ANCIEN
+    titre, le dossier `dataset_<id>` d'avant que le titre soit connu. Leurs
+    fichiers restaient donc sur le Drive alors que le programme ne connaissait
+    plus ce dataset : « ce que je supprime dans le programme doit être supprimé
+    sur le Drive, sinon ce n'est pas un miroir ».
+
+    Sont rassemblés ici TOUS les candidats, sans jamais en créer ni en modifier
+    un seul :
+      • l'identifiant CONNU (registre du miroir, ou tombe) s'il est encore vivant
+        — lui seul retrouve un dossier renommé depuis ;
+      • TOUS les dossiers portant EXACTEMENT le nom du dataset, l'un de ses anciens
+        titres, ou `dataset_<id>` — jumeaux compris (`listFoldersByName`).
+    `complete` dit si la recherche a ABOUTI : une recherche qui échoue (quota,
+    5xx, délai) ne doit jamais faire croire que le Drive est propre. */
+const deletedDatasetFolderIds = async ({ id = '', name = '', extraNames = [], folderId = '' } = {}) => {
+  const ids = [];
+  let complete = true;
+  const push = (value) => {
+    const found = String(value || '');
+    if (found && ids.indexOf(found) === -1) ids.push(found);
+  };
+  const alive = async (candidate) => {
+    if (!candidate) return '';
+    try {
+      const meta = await getDriveFileMeta(candidate);
+      return meta && meta.id && !meta.trashed ? String(meta.id) : '';
+    } catch { complete = false; return ''; }
+  };
+  push(await alive(folderId));
+  push(await alive(findDatasetFolderId(readDriveMirror(), { id, name })));
+  const names = [
+    mirrorDatasetFolderName({ id, name }),
+    ...(Array.isArray(extraNames) ? extraNames : []).map((n) => sanitizeSlug(n))
+  ].concat(id ? [`dataset_${sanitizeSlug(id)}`] : []).filter(Boolean);
+  const workspaceId = await ensureLabWorkspaceFolder().catch(() => '');
+  if (!workspaceId) return { ids, complete: false };
+  for (const candidate of Array.from(new Set(names))) {
+    try {
+      const twins = await listFoldersByName(candidate, workspaceId);
+      (Array.isArray(twins) ? twins : []).forEach((twin) => push(twin && twin.id));
+    } catch { complete = false; }
+  }
+  return { ids, complete };
+};
+
 /* ── SUPPRIMER UN DATASET : son dossier Drive part avec lui ───────────────── */
 
 /**
@@ -112,8 +161,8 @@ export const findDatasetFolder = async ({ id = '', name = '', extraNames = [] } 
  * @returns {Promise<{ok:boolean,provider:string,reason?:string,folderIds?:string[]}>}
  */
 export const mirrorDeleteDataset = async ({ id = '', name = '', extraNames = [] } = {}) => {
-  const record = () => writeDriveMirror(
-    addDriveTombstone(readDriveMirror(), { id, name, path: '' }, Date.now())
+  const record = ({ folderId = '', purged = false } = {}) => writeDriveMirror(
+    addDriveTombstone(readDriveMirror(), { id, name, path: '', kind: 'dataset', folderId, purgedAt: purged ? Date.now() : 0 }, Date.now())
   );
   if (!id && !name) return failed('no-dataset');
   try {
@@ -125,14 +174,29 @@ export const mirrorDeleteDataset = async ({ id = '', name = '', extraNames = [] 
       for (const url of urls) {
         if (url && await ncDelete(url)) deleted.push(url);
       }
-      record();
-      return ok({ folderIds: deleted });
+      /* WebDAV n'a pas d'identifiant de dossier : la suppression a été demandée
+         à chaque emplacement candidat. La tombe n'est dite « faite » que si tous
+         ont répondu — sinon elle reste à reprendre. */
+      record({ purged: urls.length === 0 || deleted.length === urls.length });
+      return ok({ folderIds: deleted, trashed: deleted.length > 0 });
     }
     if (!getDriveToken()) { record(); return failed('no-backend'); }
     const folderId = await findDatasetFolder({ id, name, extraNames });
-    const trashed = folderId ? await trashDriveFile(folderId) : false;
-    record();
-    return ok({ folderIds: folderId ? [folderId] : [], trashed });
+    /* TOUS les dossiers de ce dataset (voir deletedDatasetFolderIds) : le premier
+       trouvé ne suffit pas — un jumeau laissé en place garderait ses fichiers,
+       et le Drive ne serait plus le miroir du programme. */
+    const targets = await deletedDatasetFolderIds({ id, name, extraNames, folderId });
+    const trashedIds = [];
+    let everyTarget = targets.complete;
+    for (const targetId of targets.ids) {
+      if (await trashDriveFile(targetId).catch(() => false)) trashedIds.push(targetId);
+      else everyTarget = false;
+    }
+    /* La tombe retient le dossier qu'elle visait ET si sa corbeille a abouti :
+       une recherche qui a échoué laisse la reprise ouverte (voir
+       mirrorPurgeDeletedDatasets). */
+    record({ folderId, purged: everyTarget });
+    return ok({ folderIds: trashedIds, trashed: trashedIds.length > 0, missing: !folderId });
   } catch (err) {
     /* Même si Drive n'a pas répondu, la tombe est écrite : la suppression est
        déjà actée dans le programme, et un dossier orphelin vaut mieux qu'un
@@ -364,3 +428,59 @@ export const mirrorRenameProject = async ({
     return failed(String((err && err.message) || err));
   }
 };
+/* ── SUPPRESSIONS INACHEVÉES : le Drive rejoint le programme ────────────────
+   Le geste de suppression écrit TOUJOURS sa tombe — même quand le Drive n'a pas
+   répondu (jeton expiré, quota, 5xx, délai, poste hors ligne). C'est voulu : la
+   suppression est actée dans le programme, et un dossier orphelin vaut mieux
+   qu'un dataset qui revient. Mais RIEN ne reprenait jamais la mise à la corbeille
+   restée en chemin : le dossier (et ses fichiers) restait sur le Drive pour
+   toujours, alors que le programme ne connaissait plus ce dataset — « ce que je
+   supprime dans le programme doit être supprimé sur le Drive, autrement ce n'est
+   pas un miroir ».
+
+   Ce qui suit reprend ces tombes inachevées : les dossiers du dataset supprimé
+   sont retrouvés (identifiant de la tombe, ancien titre, ancrage `dataset_<id>`,
+   jumeaux — voir deletedDatasetFolderIds), mis à la corbeille, et une tombe n'est
+   marquée « faite » que si le geste a RÉELLEMENT abouti. Idempotent et sans
+   exception : appelable au démarrage, à la reconnexion, ou après un resync. */
+
+/**
+ * Mettre à la corbeille les dossiers des datasets SUPPRIMÉS dont la suppression
+ * Drive n'a pas abouti (voir unpurgedDatasetTombstones). Aucun dossier n'est créé,
+ * aucun fichier n'est touché, rien n'est supprimé définitivement (corbeille).
+ * @param {{limit?:number}} [opts] nombre de tombes reprises dans cet appel
+ * @returns {Promise<{ok:boolean,reason?:string,checked:number,trashed:number,kept:number,left:number}>}
+ */
+export const mirrorPurgeDeletedDatasets = async ({ limit = 25 } = {}) => {
+  const pending = unpurgedDatasetTombstones(readDriveMirror())
+    .slice(0, Math.max(1, Number(limit) || 25));
+  const report = { ok: true, checked: 0, trashed: 0, kept: 0, left: pending.length };
+  if (!pending.length) return report;
+  /* WebDAV n'a pas d'identifiant de dossier à retrouver : la suppression y a
+     déjà tenté son geste (DELETE), on ne rejoue pas. */
+  if (getCloudProvider() === 'nextcloud') return failed('no-backend', report);
+  if (!getDriveToken()) return failed('no-backend', report);
+  try {
+    let mirror = readDriveMirror();
+    for (const tombstone of pending) {
+      const scope = { id: tombstone.id, name: tombstone.name };
+      report.checked += 1;
+      const targets = await deletedDatasetFolderIds({ ...scope, folderId: tombstone.folderId })
+        .catch(() => ({ ids: [], complete: false }));
+      let everyTarget = targets.complete;
+      for (const folderId of targets.ids) {
+        if (await trashDriveFile(folderId).catch(() => false)) report.trashed += 1;
+        else { report.kept += 1; everyTarget = false; }
+      }
+      if (everyTarget) {
+        mirror = markDriveTombstonePurged(mirror, { ...scope, path: '' });
+        report.left -= 1;
+      }
+    }
+    writeDriveMirror(mirror);
+    return report;
+  } catch (err) {
+    return failed(String((err && err.message) || err), report);
+  }
+};
+
