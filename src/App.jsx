@@ -28,7 +28,8 @@ import { NotebookModule, CalculationsModule, PublicationsModule, ImageBuilderMod
    sauvegardes et les relit en FUSION lors d'un « Load HTML » (voir
    applyPapersRecovery — rien de ce qui est enregistré n'est écrasé). */
 import { applyPapersRecovery, readPublications, readExcludedPubs, readRelevantSubjects, loadRelevantPapers } from './components/Publications';
-import { ProjectsModule, loadProjects, saveProjects, mergeProjectsFromCloud, setProjectDatasetScope, removeProjectsOfDataset, loadDeletedProjects, adoptDeletedProjects, adoptWorkspaceProjects, loadRevivedProjects, adoptRevivedProjects, reviveDeletedProject } from './components/AppModules/projectsModule';
+import { ProjectsModule, loadProjects, mergeProjectsFromCloud, setProjectDatasetScope, removeProjectsOfDataset, loadDeletedProjects, adoptDeletedProjects, adoptWorkspaceProjects, loadRevivedProjects, adoptRevivedProjects, reviveDeletedProject, importProjectsFromFile } from './components/AppModules/projectsModule';
+import { fileDatasetIdOf } from './utils/projectImport';
 import { ProjectDetailModule } from './components/AppModules/projectDetailModule';
 import { normalizeOperators, memberIdentity } from './utils/auth';
 /* Les règles des boîtes de stockage (emplacement valide, champs obligatoires,
@@ -2609,10 +2610,16 @@ if (customType === 'dosy') {
   const datasetSubtitleRef = useRef(datasetSubtitle);
   datasetSubtitleRef.current = datasetSubtitle;
 
-  const buildBackupHtml = (title, subtitle, payload) => {
+  /* Le fichier emporte D'OÙ IL VIENT (`datasetId`), à côté de son titre et de
+     sa date : c'est ce qui permet à « Import everything » de restaurer DANS son
+     dataset au lieu d'en recréer un neuf — et donc de retrouver ses PROJETS, qui
+     sont étiquetés par leur dataset (voir utils/projectImport.js : sans cet id,
+     les projets désignaient un dataset que l'application ne montrait plus). */
+  const buildBackupHtml = (title, subtitle, payload, datasetId) => {
     const dataBlob = {
       payload,
       isCompressed: true,
+      datasetId: datasetId || '',
       title: title || 'Untitled Dataset',
       subtitle: subtitle || '',
       savedAt: Date.now()
@@ -2670,7 +2677,7 @@ if (customType === 'dosy') {
             ? (datasetTitleRef.current || dset.title || 'Untitled Dataset')
             : (dset.title || 'Untitled Dataset');
           const subtitle = isCurrent ? datasetSubtitleRef.current : (dset.subtitle || '');
-          const html = buildBackupHtml(title, subtitle, payload);
+          const html = buildBackupHtml(title, subtitle, payload, dset.id);
           // A short dataset-id fragment guarantees two datasets with the same
           // title never collide in the FILE name (folders below are canonical
           // dataset directories named after the title).
@@ -2853,6 +2860,23 @@ const describeProjectRestore = (fileProjects) => {
     + 'If a copy also lives in the dataset document or the Drive index, step 1 alone brings it back when the '
     + 'dataset is reopened (🔄).';
 };
+
+/* ❗ CE QUE LA DESCRIPTION CI-DESSUS NE PEUT PAS VOIR : une écriture REFUSÉE par
+   le navigateur (magasin plein, navigation privée). Elle ne vient ni d'une tombe
+   ni d'un autre dataset — la marche à suivre n'est donc pas la même — et elle
+   n'est pas silencieuse : le magasin de ce poste est resté TEL QUEL (rien n'est
+   perdu), et cela se dit. Les projets écartés par une TOMBE, eux, sont déjà
+   nommés par `describeProjectRestore` : c'est le manque qu'elle explique, avec
+   les deux étapes pour les faire revenir. Rend '' quand l'écriture a été
+   acceptée — le cas normal reste muet. */
+const describeProjectWriteRefusal = (restore) => (
+  restore && restore.ok === false
+    ? `⚠ This browser REFUSED to store the ${restore.adopted.length} project(s) of this file `
+      + `(${restore.error}) — the project list of this device is unchanged, nothing was lost. Free some room `
+      + '(“Figures & slides” → ☁ Save to Drive, or delete from this device a dataset you no longer need), '
+      + 'then run 📂 Load HTML again.'
+    : ''
+);
 
 const compressDatasetForSave = (raw) => {
   const compress = (data) => LZString.compressToUTF16(JSON.stringify(data));
@@ -3248,7 +3272,7 @@ useEffect(() => {
       let storedOnDrive = false;
       if (getDriveToken() && currentDatasetId) {
         try {
-          const html = buildBackupHtml(title, subtitle, payload);
+          const html = buildBackupHtml(title, subtitle, payload, currentDatasetId);
           const dsFolder = datasetFolderSlug(title);
           const slug = sanitizeSlug(title) || 'dataset';
           const idTag = String(currentDatasetId || '').replace(/[^a-z0-9]/gi, '').slice(-6) || 'ds';
@@ -3280,6 +3304,7 @@ useEffect(() => {
       const dataBlob = {
         payload,
         isCompressed: true,
+        datasetId: currentDatasetId || '',
         title,
         subtitle,
         savedAt: Date.now()
@@ -3355,6 +3380,20 @@ useEffect(() => {
           }
 
           s = JSON.parse(pStr);
+
+          /* ❗ D'OÙ VIENT CE FICHIER — « Import everything » écrit DANS SON
+             dataset, il n'en recrée pas un neuf. Les sauvegardes récentes le
+             disent elles-mêmes (`datasetId`, à côté du titre et de la date) ;
+             les plus anciennes se lisent dans leurs PROJETS, qui portent
+             l'étiquette du dataset d'où ils ont été exportés. `filterLoadState`
+             conserve toujours cet identifiant (voir son commentaire) : c'est lui
+             qui décide du dataset de destination. Sans cette relecture, chaque
+             restauration créait un dataset neuf et les projets — étiquetés à
+             l'ancien — restaient invisibles : le bug « les expériences
+             reviennent, les projets non ». */
+          const fileDatasetId = dataBlob.datasetId || fileDatasetIdOf(s.projects);
+          if (fileDatasetId) s.id = fileDatasetId;
+
           loadedTests = s.tests || s.plates || [];
 
           /* Une sauvegarde d’une base d’administration (payload { administration:
@@ -3559,7 +3598,18 @@ useEffect(() => {
       // revenir un projet supprimé avec une sauvegarde.
       adoptRevivedProjects(s.revivedProjects);
       adoptDeletedProjects(s.deletedProjects);
-      if (Array.isArray(s.projects)) saveProjects(s.projects);
+      /* ❗ « LES EXPÉRIENCES REVIENNENT, LES PROJETS NON » — LE GESTE QUI MANQUAIT.
+         Les expériences vivent dans l'ÉTAT du dataset : elles suivent le dataset
+         où l'import écrit. Un PROJET, lui, est ÉTIQUETÉ par son dataset
+         (`datasetId`) et `loadProjects()` ne rend que ceux du dataset OUVERT.
+         Les projets du fichier portent l'étiquette de leur dataset d'ORIGINE :
+         écrits tels quels, ils restaient présents sur ce poste mais INVISIBLES
+         ici (la page Projets vide — `describeProjectRestore` allait jusqu'à le
+         constater). `importProjectsFromFile` les ADOPTE donc par le dataset qui
+         les reçoit : ils prennent SON id, et le magasin n'en garde qu'une copie.
+         Un projet qui a une TOMBE, lui, ne revient pas : la note ci-dessous le
+         nomme et donne la marche à suivre. */
+      const restore = importProjectsFromFile(s.projects, { datasetId: targetId, replace: true });
       /* ❗ « JE RESTAURE LES PROJETS ET RIEN NE SE PASSE » — LE SILENCE EST
          RÉPARÉ ICI. Un projet du fichier absent du magasin après l'écriture ne
          peut venir que d'une tombe (« Delete project ») : ré-adopter une copie
@@ -3567,6 +3617,12 @@ useEffect(() => {
          retour (page Projets → « 🗑 Recently deleted »), au lieu de laisser
          l'utilisateur devant une liste inchangée. */
       projectRestoreNote = describeProjectRestore(s.projects) || projectRestoreNote;
+      /* Ce que la description ci-dessus ne peut PAS voir : une écriture REFUSÉE
+         par le navigateur — elle ne vient ni d'une tombe ni d'un autre dataset,
+         et sa marche à suivre n'est donc pas la même (voir
+         describeProjectWriteRefusal, qui prend le pas sur la description). */
+      projectRestoreNote = describeProjectWriteRefusal(restore) || projectRestoreNote;
+
       // NOTE: operators and authSettings are NEVER imported from HTML
       // They are global app-level identity/security state — not dataset state.
       // if (s.operators !== undefined) setOperators(...);
@@ -3604,17 +3660,22 @@ useEffect(() => {
 
       setTests((prev) => [...prev, ...newTests]);
 
-      // Merge projects from the loaded file (by id) into the existing ones.
+      /* Les projets du fichier sont ADOPTÉS par ce dataset, comme en mode
+         « remplacer » (voir importProjectsFromFile) : sans cela ils restaient
+         étiquetés à leur dataset d'origine — écrits sur ce poste, invisibles
+         ici. En AJOUT, ce que ce dataset a DÉJÀ garde SA version : on n'ajoute
+         que ce qui manque — la même écriture qu'avant, mais qui ne peut plus
+         échouer en silence (voir describeProjectWriteRefusal, appelé plus bas). */
+      let restore = { ok: true, error: '', adopted: [], skippedDeleted: [] };
       if (Array.isArray(s.projects) && s.projects.length) {
-        const existing = loadProjects();
-        const ids = new Set(existing.map((p) => p && p.id));
-        const additions = s.projects.filter((p) => p && p.id && !ids.has(p.id));
-        if (additions.length) saveProjects([...existing, ...additions]);
+        restore = importProjectsFromFile(s.projects, { datasetId: targetId, replace: false });
       }
       /* La même vérité qu'en mode « remplacer » : un projet du fichier qui n'est
          pas arrivé (il a une tombe) est DIT — un import muet laisse croire à une
-         panne (il est vrai que les projets déjà présents, eux, sont bien là). */
+         panne (il est vrai que les projets déjà présents, eux, sont bien là) —
+         et une écriture refusée par le magasin se dit avec la même phrase. */
       projectRestoreNote = describeProjectRestore(s.projects) || projectRestoreNote;
+      projectRestoreNote = describeProjectWriteRefusal(restore) || projectRestoreNote;
 
       if (newTests.length > 0) {
         setActiveTestId(newTests[0].id);

@@ -9,6 +9,7 @@ import {
   addTombstone, withoutDatasetTombstones, protectUntombstoned,
   withoutRevivedProjects, addRevival, withoutRevival, revivalsForDataset
 } from '../../utils/projectTombstones';
+import { planProjectImport } from '../../utils/projectImport';
 
 /* =========================================================================
    PROJECTS — "Scientific background / Experiments / Results and Discussion /
@@ -392,6 +393,45 @@ export const saveProjects = (list) => {
     ...tagged
   ];
   return writeRawProjects(merged);
+};
+
+/** LE GESTE « LOAD HTML » — les projets venus d'un fichier de sauvegarde sont
+ *  ADOPTÉS par le dataset qui les reçoit.
+ *
+ *  Sans ce geste, ils gardent l'étiquette de leur dataset D'ORIGINE (ils ont été
+ *  exportés par `loadProjects()`, donc déjà étiquetés) : ils atterrissent bien
+ *  dans le magasin du navigateur, mais `loadProjects()` — qui ne rend que les
+ *  projets du dataset OUVERT — ne les voit pas. C'est le défaut réparé : « les
+ *  expériences reviennent, les projets non ». La décision, elle, est pure et
+ *  testable : voir `planProjectImport` (utils/projectImport.js).
+ *
+ *  @param {Array} fileProjects les projets du fichier de sauvegarde
+ *  @param {{ datasetId?:string, replace?:boolean }} [arg]
+ *    ⋅ `datasetId` — le dataset qui reçoit (défaut : celui qui est ouvert) ;
+ *    ⋅ `replace` — `true` pour « Import everything » (la copie du fichier
+ *      l'emporte), `false` pour « ➕ Add the selected elements » (on n'AJOUTE
+ *      que ce qui manque : ce que le dataset a déjà n'est jamais écrasé).
+ *  @returns {{ ok:boolean, error:string, adopted:Array, skippedDeleted:Array }}
+ *    `adopted` = les projets réellement écrits (re-étiquetés au dataset qui les
+ *    reçoit) ; `skippedDeleted` = les projets du fichier qui ont une TOMBE ici :
+ *    ils ne reviennent pas, et l'appelant le dit (une restauration silencieuse
+ *    qui « oublie » un projet est un mensonge). */
+export const importProjectsFromFile = (fileProjects, { datasetId, replace = false } = {}) => {
+  const target = datasetId != null ? String(datasetId) : (activeProjectDataset || '');
+  const { list, adopted, skippedDeleted } = planProjectImport({
+    store: readRawProjects(),
+    tombstones: readDeletedProjects(),
+    fileProjects,
+    targetDatasetId: target,
+    replace
+  });
+  /* RIEN N'ARRIVE → RIEN NE S'ÉCRIT. Un fichier dont l'élément « Projets » est
+     vide (ou dont tous les projets ont une tombe) ne doit pas emporter la liste
+     de ce dataset : le magasin reste tel quel, et l'appelant dit pourquoi
+     (App.jsx : « the “Projets” item of this file is EMPTY »). */
+  if (!adopted.length) return { ok: true, error: '', adopted, skippedDeleted };
+  const written = writeRawProjects(list);
+  return { ok: written.ok, error: written.error, adopted, skippedDeleted };
 };
 
 /** Poids approximatif d'un projet dans le magasin (octets JSON). */
