@@ -5551,4 +5551,108 @@ la casse, les blancs, `X`, les chaînes et le non-recouvrement sont ceux d'hier)
 modifié dans la molécule : ni le fichier PDB, ni le graphe de liaisons, ni un style. La sélection,
 elle, est celle de tout le programme — c'est justement le point : une seule définition, celle du
 clic.
+## « if I select one letter (e.g. A) it also selects others » · « searching AVK also matches NIA » — LA SÉLECTION PORTE ENFIN SES CHAÎNES (08/10/2026)
+
+**Les deux rapports, mot pour mot.** « *if I select one letter (e.g. A) sometimes it
+selects others* », puis « *searching “AVK” also matches “NIA”* ».
+
+### La cause : une clé qui ne dit pas la chaîne
+
+`computeResidueKeys` rend des clés **`${resno - 1}-${atome}`**, SANS la chaîne — et c'est la
+convention de tout le programme (ces clés nourrissent les spectres, les tables par atome et la
+structure 2D : elles ne changent pas ici). Dans un fichier dont **deux chaînes sont numérotées
+1…N** (dimère, complexe, ensemble RMN), deux résidus DIFFÉRENTS portent donc les MÊMES clés, et
+les deux moitiés de l'écran les confondaient :
+
+* le **bandeau de séquence** allumait la lettre de CHAQUE tick dont `resno - 1` valait le
+  préfixe de la clé (`isSel`) — deux lettres ambre pour un seul clic ;
+* le **surlignage 3D** (`stripHighlightClauses`) refaisait le même parcours par `resno` — deux
+  résidus allumés dans la vue.
+
+Chercher `AVK` dans la chaîne A allumait donc **aussi** les résidus de la chaîne B *aux mêmes
+numéros* : leurs lettres n'ont rien à voir avec la requête, et on les lit comme un second
+résultat — c'est très exactement « searching AVK also matches NIA ». **Le moteur de recherche,
+lui, était juste** : `motifFits` compare lettre à lettre ET DANS L'ORDRE
+(`query[i] === 'X' || query[i] === code`) — ni anagramme, ni sous-ensemble, ni brin inversé.
+Ce qui était FAUX, c'était ce qui s'allumait ; ce qui était TROUVÉ était bon.
+
+### La réparation : le geste passe la liste exacte de ses ticks
+
+Le geste, lui, SAIT quel résidu il a touché. Le clic du bandeau, le ⇧ de rangée, le ⊞/Ctrl et 🔎
+Find retiennent donc **leurs ticks** (`gestureTicks` = `{ sig, ticks }`, écrit par
+`noteGestureTicks`), et **tant que la sélection est exactement celle de cette signature**, le
+bandeau et la vue n'allument QUE ces résidus :
+
+| pièce | ce qu'elle fait |
+| --- | --- |
+| `gestureSel` | `sig === selectedKeys.join('|')` ? les ticks du geste : `null` |
+| `stripHighlightClauses(keys, ticks, exactTicks)` | avec les ticks du geste, elle peint LEURS clauses (et rien d'autre) |
+| `isSel` du bandeau | `gestureSel.some(t => t.chainid === r.chainid && t.resno === r.resno)` |
+| `keysOfTicks(list)` | les clés d'une liste de ticks — la sélection remise à la page et sa signature sortent de la MÊME fonction, elles ne peuvent pas diverger |
+| l'effet du surlignage | `gestureTicks` est une de ses dépendances (un geste qui ne change pas les clés redessine quand même) |
+
+**Le repli reste ce qu'il était** : une sélection qui ne vient pas du bandeau (un clic dans les
+spectres, une table, une figure) ne ressemble à aucune signature, et la règle par `resno` reprend
+la main — c'est tout ce que des clés seules permettent de dire, et c'est ce que la suite épingle
+des deux côtés. La provenance est oubliée avec la structure (vider · 🗑 Clear · 🗑 Delete PDB ·
+chargement) et par le ✕ du bandeau ; un ⊞/Ctrl sur une sélection venue d'ailleurs n'en invente
+pas une.
+
+### Le fond du viewer : « le bouton du fond uni écrase le carré du dégradé » — mesuré, il ne peut pas
+
+Le troisième point du même message : « *for the background I think there is a conflict between
+the button imposing the flat colour and the square button creating the gradient; the first
+overrides the second* ». Éprouvé, des deux côtés :
+
+* **les deux contrôles n'écrivent pas la même chose** — la couleur A est le `backgroundColor` du
+  canvas (posé par NGL, `stage.setParameters`) et la rampe est sa `backgroundImage` (posée par
+  `applyBackgroundGradient`, APRÈS la couleur). Une image de fond se peint PAR-DESSUS la couleur :
+  changer A change le **premier arrêt** de la rampe (`backgroundSpecOf(color, gradient).from`),
+  il ne peut pas la retirer. `node _viewer_background_test.mjs` le montre exécuté : A `#123456` +
+  B `#94a3b8` à 90° donne `linear-gradient(90deg, #123456 0%, #94a3b8 100%)` ;
+* **seuls deux gestes éteignent la rampe** : l'interrupteur ⬚ Gradient et le ↺ du panneau — eux
+  seuls écrivent `on: false` (compté dans tout le viewer : **1** et **1**), les cinq autres
+  contrôles (B · les huit flèches · l'angle · ☀ · ⇄) ne font qu'allumer ;
+* ce qui peut DONNER l'impression du contraire, et que le panneau dit déjà : une rampe ALLUMÉE
+  mais dont A = B (la ligne du bas le dit en ambre, avec le geste qui répare), ou un style / ⚙️
+  setup / thème REJOUÉ qui porte `on: false` — c'est un FICHIER qu'on rejoue, comme il rejoue la
+  brume et les ombres, jamais un bouton qui écrase.
+
+### Vérifier soi-même
+
+```bash
+node _viewer_sequence_highlight_test.mjs    # 74 assertions : le VRAI NGL 2.4, la clause du tick
+                                            # …et LES DEUX MOITIÉS du correctif mesurées
+node _viewer_sequence_search_test.mjs       # 84 assertions (contre 75) : deux chaînes 1…N portent
+                                            # les mêmes clés, et les gestes retiennent leurs ticks
+node _viewer_background_test.mjs            # 241 assertions (contre 228) : le fond uni n'éteint pas la rampe
+```
+
+La suite du **bandeau** mesure le correctif sur un complexe protéine + ADN + eau réellement parsé :
+`stripHighlightClauses(['0-Cα'], ticks, [A1])` rend `[':A and 1 and ALA']` — la chaîne B, qui porte
+le MÊME numéro et les mêmes clés, reste dehors (10 atomes au lieu de 20) —, et une correspondance
+groupée de la chaîne A n'allume plus jamais `:B`. Les deux replis sont épinglés à côté (provenance
+vide ou absente → la règle par `resno` revient, telle quelle), ainsi qu'un tick non polymère glissé
+dans une provenance (il ne peint rien).
+
+⚠ **Ce fichier n'était dans AUCUN lanceur** (`_verify.cjs` ni `_run_all.cjs`) : il l'est désormais,
+juste après la suite de la recherche — c'est lui qui prouve ce correctif, un balayage ne pouvait
+pas le voir.
+
+Régressions : `node _verify.cjs` — **48 suites** (la suite du bandeau y entre) ; le balayage a rendu
+**1 rouge**, `_viewer_ray_shadow_pixels_test.cjs` **30/32**, relancé **seul 32/32** — c'est la
+sensibilité à la CHARGE déjà notée ici (deux autres sondes de Chrome tournaient pendant ce
+balayage), pas une régression. Tout le reste est vert, y compris les suites à pixels du fond
+(**36/36** et **61/61**) et `_viewer_render_smoke_test.mjs` (**23**) — qui, lui, monte le composant
+touché et prouve que le JSX est sain.
+
+**Ce que ça ne fait pas** : `src/utils/sequenceSearch.js` est INTACT (la casse, les blancs, `X`,
+les chaînes, le non-recouvrement et les numéros du fichier sont ceux d'hier — la règle était juste),
+et les clés remises à la page sont **les mêmes qu'avant** (mêmes préfixes `resno - 1`, donc les
+spectres, les tables et la structure 2D lisent exactement ce qu'ils lisaient) : c'est seulement la
+PEINTURE (les deux lettres du bandeau, le résidu du 3D) qui cesse de confondre deux chaînes
+homonymes. Aucune molécule, aucun fichier, aucun style n'est touché.
+
+
+
 

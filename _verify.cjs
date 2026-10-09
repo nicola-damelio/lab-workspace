@@ -73,6 +73,19 @@ const tests = [
   // un dé-clic), ✕ Clear ne relâche que la sienne, et la surbrillance sky n'est que
   // le repli quand la page ne peut pas porter de sélection.
   '_viewer_sequence_search_test.mjs',
+  // LE MÊME GESTE, MESURÉ JUSQU'AUX ATOMES : le VRAI NGL 2.4 parse un complexe
+  // protéine + ADN + eau, `residueTickClause` allume EXACTEMENT les atomes du
+  // résidu touché (l'ancienne clause « :<index> N and resn X » en allumait zéro),
+  // et LE RAPPORT DE CETTE SESSION y est épinglé : deux chaînes numérotées 1…N
+  // portent les MÊMES clés (`resno - 1`, sans chaîne — elles nourrissent les
+  // spectres), donc un clic allumait DEUX lettres et 🔎 Find les lettres de
+  // l'autre chaîne aux mêmes numéros (« if I select one letter (e.g. A) it also
+  // selects others » · « searching AVK also matches NIA »). Les gestes passent
+  // désormais la LISTE EXACTE de leurs ticks (`stripHighlightClauses(keys, ticks,
+  // exactTicks)`) et la règle par `resno` reste le repli de tout ce qui ne vient
+  // pas du bandeau. ⚠ CE FICHIER N'ÉTAIT DANS AUCUN LANCEUR : il l'est ici, car
+  // c'est lui qui prouve ce correctif (titres de séquence ⇄ 3D).
+  '_viewer_sequence_highlight_test.mjs',
   // LA DEMANDE « styling window » DE CETTE SESSION, mesurée d'un bout à l'autre :
   // une teinte par TYPE peint l'ESPACE de la barre de style — et les rangées de cet
   // espace s'éclaircissent vers le blanc, General d'abord — toutes deux des pastilles

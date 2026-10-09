@@ -168,8 +168,10 @@ has(VIEW, 'const useSphere = lightRenderRef.current || atoms > 1500;',
 /* ══ LE GESTE SÉLECTIONNE (la demande de cette session) ═════════════════════
    « The MHEF button should select, not only show the sequence, as if the
    residues were clicked onto the sequence inside the viewer. » */
-has(VIEW, 'hitTicks.forEach((t) => computeResidueKeys(t).forEach((k) => { if (!keys.includes(k)) keys.push(k); }));',
-  'les résidus trouvés reçoivent les MÊMES clés qu’un clic sur le bandeau (computeResidueKeys)');
+has(VIEW, 'const keys = keysOfTicks(hitTicks);',
+  'les résidus trouvés reçoivent les MÊMES clés qu’un clic sur le bandeau (computeResidueKeys, via keysOfTicks)');
+has(VIEW, 'noteGestureTicks(keys, hitTicks);',
+  '⚠ ET LA LISTE EXACTE DE LEURS TICKS : c’est la moitié qui empêche « AVK » d’allumer les lettres d’une autre chaîne aux mêmes numéros (§Cbis)');
 has(VIEW, 'stripResidueRiRef.current = firstRi;',
   '…la sélection est mise en mode « résidu ENTIER », comme le fait un clic sur le bandeau');
 has(VIEW, 'const canSelect = keys.length > 0 && !!onAtomClickRef.current;',
@@ -191,6 +193,38 @@ has(VIEW, '  dropSequenceSelection();\n  setSeqResult(null);',
 has(VIEW, '  dropSequenceSelection();\n\n  const residues = residuesOfTicks(ticks);',
   '…et une NOUVELLE recherche relâche celle de la précédente AVANT de poser la sienne');
 has(VIEW, 'seqSelectionKeysRef.current = null;', 'la sélection du Find est oubliée quand la structure s’en va (vider · 🗑 Delete PDB · chargement)');
+
+/* ── Cbis. DEUX CHAÎNES NUMÉROTÉES 1…N — LE RAPPORT DE CETTE SESSION ────────
+   « if I select one letter (e.g. A) it also selects others » · « searching AVK
+   also matches NIA ». La clé de sélection est `${resno - 1}-atome` : elle ne porte
+   PAS la chaîne (elle nourrit aussi les spectres et la structure 2D). Deux
+   résidus homonymes de deux chaînes donnent donc les MÊMES clés, et la sélection
+   allumait les deux — la chaîne B montrait SES lettres aux numéros de la A.
+   C’est mesuré ici (le motif, puis les clés) ; le remède est mesuré juste à côté,
+   dans _viewer_sequence_highlight_test.mjs (les ticks exacts du geste). */
+const HOMO = [
+  ...['A', 'V', 'K', 'N', 'I', 'A'].map((c, i) => tick(i + 1, c, { chainname: 'A' })),
+  ...['N', 'I', 'A', 'N', 'I', 'A'].map((c, i) => tick(i + 1, c, { chainname: 'B' })),
+];
+const homo = S.residuesOfTicks(HOMO);
+const homoHit = S.findSequenceMatches(homo, 'AVK');
+eq(homoHit.matches.map((m) => [m.chain, m.resnos]), [['A', [1, 2, 3]]],
+  '« AVK » n’est trouvé QUE dans la chaîne A — le motif est ORDONNÉ, « NIA » ne le contient pas (ni anagramme, ni sous-ensemble)');
+const keyOf = (r) => `${r.ri}-CA`;
+const aKeys = homoHit.matches[0].indexes.map((i) => keyOf(homo[i]));
+eq(aKeys, ['0-CA', '1-CA', '2-CA'], '…et ses clés sont `resno - 1` : SANS chaîne (la convention de tout le programme)');
+const bSame = homo.filter((r) => r.chain === 'B' && r.resno <= 3);
+eq(bSame.map((r) => r.code), ['N', 'I', 'A'], 'la chaîne B porte N·I·A à ces MÊMES numéros');
+eq(bSame.map(keyOf), aKeys,
+  '…et exactement les mêmes clés : des clés seules ne peuvent pas départager les deux chaînes — le rapport, mot pour mot');
+has(VIEW, 'noteGestureTicks(keys, hitTicks);',
+  'les gestes retiennent donc LEURS ticks (la provenance) — la vue et le bandeau s’en servent');
+has(VIEW, "const gestureSel = gestureTicks && gestureTicks.sig === (selectedKeys || []).join('|')",
+  '…et la provenance ne survit jamais à une sélection qu’ils n’ont pas posée (signatures comparées)');
+has(VIEW, 'stripHighlightClauses(sel, residueTicks, gestureSel)',
+  'la surbrillance ambre reçoit ces ticks : elle ne peut plus peindre l’homonyme d’une autre chaîne');
+has(VIEW, 'setGestureTicks(null);',
+  '…et elle s’oublie quand la structure s’en va (vider · 🗑 Delete PDB · chargement)');
 
 /* Ce qu’elle ne fait PAS : toucher à la molécule ou au réseau. */
 ok(!/fetch\(|XMLHttpRequest|sendBeacon/.test(VIEW), 'la recherche n’ouvre aucun réseau (la promesse du film tient toujours)');

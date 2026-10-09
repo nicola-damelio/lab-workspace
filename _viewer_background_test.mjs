@@ -480,6 +480,48 @@ gone('aria-pressed={bgGradient.midOn}', '…comme celle du milieu');
 gone('${!bgGradient.light && bgGradient.angle === d.angle ?',
   '…et aucune flèche ne s’allume plus sur le seul `light` du magasin');
 
+/* ══ 11. LE RAPPORT D'AUJOURD'HUI, ÉPROUVÉ : LE FOND UNI N'ÉTEINT PAS LA RAMPE ══
+   « il y a un conflit entre le bouton qui impose le fond uni et le carré qui crée
+   le dégradé ; le premier écrase le second ». C'est mesuré ici, des deux côtés :
+     · LES DEUX CONTRÔLES N'ÉCRIVENT PAS LA MÊME CHOSE — la couleur A est le
+       `backgroundColor` du canvas (posé par NGL, `stage.setParameters`) et la
+       rampe est sa `backgroundImage` (posée par `applyBackgroundGradient`), et une
+       image de fond se peint PAR-DESSUS la couleur (c'est l'empilement même du
+       CSS, celui que les films reproduisent). Changer A change le PREMIER arrêt de
+       la rampe : il ne peut pas la retirer ;
+     · SEULS DEUX GESTES ÉTEIGNENT LA RAMPE — l'interrupteur ⬚ Gradient et le ↺
+       du panneau. Eux seuls écrivent `on: false`, et c'est leur sens.
+   Ce qui peut DONNER l'impression du contraire est dit par le panneau lui-même :
+   une rampe ALLUMÉE dont A et B sont la même couleur (§10 : la ligne du bas le dit
+   et nomme le geste qui répare), ou un style / ⚙️ setup / thème REJOUÉ qui porte
+   `on: false` — il remet alors le fond uni, comme il remet la brume et les ombres :
+   c'est un FICHIER qu'on rejoue, pas un bouton qui écrase. */
+eq(backgroundSpecOf('#123456', bgGradientOf({ on: true, to: '#94a3b8', angle: 90 })).from, '#123456',
+  'A EST le premier arrêt de la rampe (le fond uni ne s’ajoute pas : il la commence)');
+eq(backgroundCss(backgroundSpecOf('#123456', bgGradientOf({ on: true, to: '#94a3b8', angle: 90 }))),
+  'linear-gradient(90deg, #123456 0%, #94a3b8 100%)',
+  '…donc changer A REPEINT la rampe (de la nouvelle A vers B), il ne l’éteint pas');
+eq(backgroundCss(backgroundSpecOf('#94a3b8', bgGradientOf({ on: true, to: '#94a3b8', angle: 90 }))), '',
+  '…le seul cas où elle ne peint rien avec A = B (elle est plate) — et le panneau le DIT (§10)');
+has('el.style.backgroundImage = wanted;', 'la rampe est une `backgroundImage` du canvas d’NGL');
+has('stage.setParameters({ backgroundColor: bgColor })',
+  '…et le fond uni est le `backgroundColor` du MÊME canvas, posé par NGL (deux propriétés, aucun écrasement)');
+eq(countOf(/el\.style\.backgroundImage = wanted;/g), 1,
+  'UNE seule écriture de la rampe dans tout le viewer (aucun autre contrôle ne peut la retirer)');
+eq(countOf(/patchBgGradient\(\{ on: false/g), 1, 'UN seul contrôle écrit `on: false` : le ↺ du panneau');
+eq(countOf(/patchBgGradient\(\{ on: !bgGradient\.on/g), 1,
+  '…et l’interrupteur ⬚ Gradient est le seul à basculer : deux gestes, pas trois');
+eq(countOf(/patchBgGradient\(\{ on: true/g), 5,
+  'les CINQ gestes qui ALLUMENT (B · les huit flèches · l’angle · ☀ · ⇄) allument, jamais n’éteignent');
+has('onClick={() => patchBgGradient({ on: false, to: BG_GRADIENT_DEFAULT_TO,',
+  'le ↺ remet la rampe d’origine ET l’éteint (c’est son sens, et sa bulle le dit)');
+has('onClick={() => setBgColor(BG_DEFAULT)}',
+  'le ↺ du 🎨 de §2 Scene, lui, ne touche QUE la couleur : la rampe reste allumée et part de la nouvelle A');
+has("if (s.backgroundGradient && typeof s.backgroundGradient === 'object') setBgGradient(bgGradientOf(s.backgroundGradient));",
+  'un style / ⚙️ setup / thème rejoué repose la rampe qu’il porte (revalidée par le module)');
+eq(backgroundCss(backgroundSpecOf('#123456', bgGradientOf({ on: false, to: '#94a3b8' }))), '',
+  '…et s’il la porte ÉTEINTE, le fond uni revient : c’est le FICHIER rejoué, jamais un bouton qui écrase');
+
 console.log(`_viewer_background_test.mjs — ${passed} assertions OK (⬚ le fond du viewer : DEUX couleurs, une direction, un clic qui ouvre et ferme)`);
 
 

@@ -7441,15 +7441,38 @@ const residueTickClause = (tick) => {
    page stores are `${resno - 1}-${atom}` (they carry NO chain: they also feed
    the spectra and the 2D structure), so the residues a click covers are every
    POLYMER tick whose `resno - 1` is that prefix — EXACTLY the ticks the strip
-   lights for the same keys (see its `isSel`). A file whose two chains are both
-   numbered 1…N therefore highlights both residues in 3D, never the first one in
-   the file; the waters, ions and lipids of the file are never part of it.
+   lights for the same keys (see its `isSel`); the waters, ions and lipids of the
+   file are never part of it.
+
+   ⚠ MAIS LA CLÉ NE PORTE PAS LA CHAÎNE, ET DEUX CHAÎNES NUMÉROTÉES 1…N LA
+   PARTAGENT (le rapport de cette session : « if I select one letter (e.g. A) it
+   also selects others » et « searching AVK also matches NIA » — la chaîne B porte
+   les mêmes numéros que la A, donc les mêmes clés, et c'est SES lettres qui
+   s'allumaient). Le GESTE, lui, sait quel résidu il a touché : le clic du bandeau
+   et 🔎 Find passent donc la LISTE EXACTE de leurs ticks (3ᵉ argument), et ce sont
+   eux — et eux seuls — qui sont peints. Une sélection qui ne vient pas d'un geste
+   du bandeau (les spectres, une table, une figure) garde la règle par `resno` :
+   elle est la seule qu'on puisse appliquer à des clés seules.
 
    Returns the clause LIST (joined with ' or ' by the caller, the `sele` NGL
    receives) and the approximate number of atoms touched (the caller falls back
    to instanced spheres above 1500 — a big MD system must not pay for NGL's
    full-structure bond list). Pure: `residueTicks` is the strip's tick list. */
-const stripHighlightClauses = (keys, residueTicks) => {
+const stripHighlightClauses = (keys, residueTicks, exactTicks) => {
+  const clauses = new Map(); // `${chainname}|${resno}|${resname}` → its clause
+  let atoms = 0;
+  const add = (t) => {
+    if (!t || !t.polymer || !Number.isFinite(Number(t.resno))) return;
+    atoms += (t.atomNames || []).length;
+    const clause = residueTickClause(t);
+    if (clause) clauses.set(`${t.chainname || t.chainid}|${t.resno}|${t.resname}`, clause);
+  };
+  /* ⚠ LES TICKS DU GESTE, QUAND IL LES DONNE — c'est la seule façon de ne pas
+     allumer l'homonyme de l'autre chaîne (voir le commentaire ci-dessus). */
+  if (Array.isArray(exactTicks) && exactTicks.length) {
+    exactTicks.forEach(add);
+    return { parts: Array.from(clauses.values()), atoms };
+  }
   const polyByRi = new Map(); // `resno - 1` → the polymer ticks carrying it
   (Array.isArray(residueTicks) ? residueTicks : []).forEach((t) => {
     if (!t || !t.polymer || !Number.isFinite(Number(t.resno))) return;
@@ -7457,19 +7480,13 @@ const stripHighlightClauses = (keys, residueTicks) => {
     if (!polyByRi.has(ri)) polyByRi.set(ri, []);
     polyByRi.get(ri).push(t);
   });
-  const clauses = new Map(); // `${chainname}|${resno}|${resname}` → its clause
-  let atoms = 0;
   (Array.isArray(keys) ? keys : []).forEach((k) => {
     const riK = parseInt(String(k).split('-')[0], 10);
     if (!Number.isFinite(riK)) return;
     // resno alone can match SEVERAL residues when the file mixes molecule types
     // (e.g. a membrane MD system: protein + phospholipid + water) — the clause
     // pins the chain AND the residue name, in the tokens NGL really reads.
-    (polyByRi.get(riK) || []).forEach((t) => {
-      atoms += (t.atomNames || []).length;
-      const clause = residueTickClause(t);
-      if (clause) clauses.set(`${t.chainname || t.chainid}|${t.resno}|${t.resname}`, clause);
-    });
+    (polyByRi.get(riK) || []).forEach(add);
   });
   return { parts: Array.from(clauses.values()), atoms };
 };
@@ -7956,6 +7973,22 @@ const seqHighlightCompRef = useRef(null);
    SA sélection : une sélection que l'utilisateur a faite (ou refaite) à la main
    après la recherche est à lui, et le bouton ne la touche jamais. */
 const seqSelectionKeysRef = useRef(null);
+/* ⚠ LA PROVENANCE DE LA SÉLECTION — LES TICKS QUE LE GESTE A DÉSIGNÉS. Les clés
+   seules (`${ri}-atome`) ne portent pas la chaîne : dans un fichier dont deux
+   chaînes sont numérotées 1…N elles sont IDENTIQUES, et le bandeau comme la vue
+   allumaient alors plusieurs lettres pour un seul clic (« if I select one letter
+   (e.g. A) it also selects others ») et plusieurs résidus pour une recherche
+   (« searching AVK also matches NIA » — les lettres de l'autre chaîne, aux mêmes
+   numéros). Le geste, lui, SAIT quel résidu il a touché : on garde donc ses ticks
+   avec la signature des clés qu'ils ont produites, et la provenance ne vaut que
+   tant que la sélection est EXACTEMENT celle-là (voir `gestureSel`). */
+const [gestureTicks, setGestureTicks] = useState(null);   // { sig, ticks } | null
+/* La retenir — ou l'oublier : une liste vide ne promet rien. */
+const noteGestureTicks = (keys, ticks) => {
+  setGestureTicks(Array.isArray(ticks) && ticks.length
+    ? { sig: (keys || []).join('|'), ticks }
+    : null);
+};
 const abortRef = useRef(null); // { token, label, cancel } of the active long-running operation (structure / trajectory load)
 
 const [file, setFile] = useState(null);
@@ -9575,6 +9608,16 @@ const selectedSpaceSig = `${(selectedKeys || []).join(',')}|${residueTicks.lengt
    demande que la moitié du geste se VOIE ; c'est ce badge, et rien d'autre. */
 const seqSelectionLive = !!seqSelectionKeysRef.current
   && (selectedKeys || []).join('|') === seqSelectionKeysRef.current.join('|');
+/* ⚠ LA PROVENANCE VAUT POUR LA SÉLECTION DE CET INSTANT, ET POUR ELLE SEULE. Le
+   geste a posé des clés ET retenu ses ticks (voir `gestureTicks`) : tant que la
+   sélection est EXACTEMENT celle de la signature, le bandeau et la surbrillance
+   ambre n'allument que ces ticks (`stripHighlightClauses`), donc jamais
+   l'homonyme de l'autre chaîne. Dès qu'une autre sélection arrive — un clic dans
+   les spectres, une figure rejouée, le choix de la page — la signature ne
+   correspond plus et la règle générale par `resno` reprend la main : c'est la
+   seule que des clés seules puissent appliquer. */
+const gestureSel = gestureTicks && gestureTicks.sig === (selectedKeys || []).join('|')
+  ? gestureTicks.ticks : null;
 const extraCompsRef = useRef([]);                  // [{ id, name, comp, baseReps, style, color }]
 // "⚡ ESP" electrostatic-potential overlay — an optional extra NGL `surface`
 // representation per molecule component, coloured by NGL's built-in
@@ -16172,6 +16215,7 @@ manualHighlightCompRef.current = null;
    recherche l'oublie donc ici, et ne la « libérera » jamais sur la suivante. */
 seqHighlightCompRef.current = null;
 seqSelectionKeysRef.current = null;
+setGestureTicks(null);   // la provenance des ticks appartient à la structure qui s'en va
 setSeqResult(null);
 labelCompRef.current = null;
 sidechainCompRef.current = null;
@@ -17995,6 +18039,19 @@ const computeResidueKeys = (tick) => {
   return keys;
 };
 
+/* Les clés d'une LISTE de ticks — l'union, dans l'ordre, sans doublon. Le clic du
+   bandeau, le ⇧ / ⊞ et 🔎 Find passent par ici : la sélection remise à la page et
+   sa provenance (voir `gestureTicks`) sortent donc de la MÊME fonction et ne
+   peuvent pas diverger — la signature de la provenance EST, lettre pour lettre,
+   ce que la page reçoit. */
+const keysOfTicks = (list) => {
+  const keys = [];
+  (Array.isArray(list) ? list : []).forEach((t) => {
+    computeResidueKeys(t).forEach((k) => { if (!keys.includes(k)) keys.push(k); });
+  });
+  return keys;
+};
+
 // Merge addKeys into an existing key selection. toggle=true flips each key
 // (add if missing, remove if present) — used for Ctrl/Cmd and "⊞ multi" clicks.
 const mergeKeys = (baseKeys, addKeys, toggle) => {
@@ -18020,6 +18077,7 @@ const handleResidueTickClick = (tick, e = {}) => {
   if (!onAtomClickRef.current) return;
 
   const additive = multiSelectActive || e.ctrlKey || e.metaKey || e.shiftKey;
+  const sameTick = (t) => !!t && t.chainid === tick.chainid && t.resno === tick.resno;
 
   // Shift+click range selection within the same chain: [anchor … clicked].
   if (e.shiftKey && anchorTickRef.current && anchorTickRef.current.chainid === tick.chainid) {
@@ -18027,20 +18085,42 @@ const handleResidueTickClick = (tick, e = {}) => {
     const ti = polyTicks.findIndex((t) => t.chainid === tick.chainid && t.resno === tick.resno);
     const ai = polyTicks.findIndex((t) => t.chainid === tick.chainid && t.resno === anchorTickRef.current.resno);
     if (ti >= 0 && ai >= 0) {
-      const [lo, hi] = ai <= ti ? [ai, ti] : [ti, ai];
-      const addKeys = [];
-      for (let i = lo; i <= hi; i++) {
-        computeResidueKeys(polyTicks[i]).forEach((k) => { if (!addKeys.includes(k)) addKeys.push(k); });
-      }
-      onAtomClickRef.current(ri, mergeKeys(selectedKeysRef.current, addKeys, false));
+      const [lo, hi] = [Math.min(ai, ti), Math.max(ai, ti)];
+      const range = polyTicks.slice(lo, hi + 1);
+      /* ⚠ LA RANGÉE EST CONNUE EN TICKS, pas seulement en clés : la provenance les
+         retient tels quels, donc un ⇧ clic n'allume jamais l'homonyme d'une autre
+         chaîne (les clés, elles, ne portent pas la chaîne). */
+      const addKeys = keysOfTicks(range);
+      const next = mergeKeys(selectedKeysRef.current, addKeys, false);
+      noteGestureTicks(next, range);
+      onAtomClickRef.current(ri, next);
       anchorTickRef.current = tick;
       return;
     }
   }
 
   const keys = computeResidueKeys(tick);
-  if (additive) onAtomClickRef.current(ri, mergeKeys(selectedKeysRef.current, keys, true));
-  else onAtomClickRef.current(ri, keys);
+  if (additive) {
+    /* ⊞ / Ctrl / Cmd — un tick s'ajoute ou s'en va. Avec une provenance on
+       l'étend (ou on l'en retire) et les clés se DÉDUISENT de la liste : la
+       signature et la sélection restent la même chose, lettre pour lettre. Sans
+       provenance (la sélection vient d'ailleurs : spectres, tables, figure) on
+       n'en invente pas — des clés seules ne disent pas quels ticks elles
+       couvrent — et la règle par `resno` reprend la main, comme avant. */
+    if (gestureSel) {
+      const nextTicks = gestureSel.some(sameTick)
+        ? gestureSel.filter((t) => !sameTick(t))
+        : gestureSel.concat([tick]);
+      const nextKeys = keysOfTicks(nextTicks);
+      noteGestureTicks(nextKeys, nextTicks);
+      onAtomClickRef.current(ri, nextKeys);
+    } else {
+      onAtomClickRef.current(ri, mergeKeys(selectedKeysRef.current, keys, true));
+    }
+  } else {
+    noteGestureTicks(keys, [tick]);
+    onAtomClickRef.current(ri, keys);
+  }
   anchorTickRef.current = tick;
 };
 
@@ -18048,6 +18128,7 @@ const handleResidueTickClick = (tick, e = {}) => {
 const clearResidueSelection = () => {
   stripResidueRiRef.current = null;
   anchorTickRef.current = null;
+  setGestureTicks(null);          // plus de provenance : plus rien de « désigné »
   if (onAtomClickRef.current) onAtomClickRef.current(0, []);
 };
 
@@ -19293,16 +19374,22 @@ if (sel.length === 0) return;
 
 try {
 const stripRi = stripResidueRiRef.current;
-const isStripMode = stripRi !== null && Array.isArray(residueTicks) && sel.every((k) => {
+/* ⚠ UNE PROVENANCE VAUT MIEUX QUE CETTE DEVINETTE. Quand le geste a dit quels
+   ticks il a touchés (`gestureSel`), ce sont EUX que la vue allume — elle ne peut
+   donc plus peindre l'homonyme d'une autre chaîne. La devinette d'origine (le
+   préfixe `ri` d'une clé tombe sur un tick) reste le repli des sélections qui ne
+   viennent pas du bandeau (spectres, tables, figures). */
+const isStripMode = !!gestureSel || (stripRi !== null && Array.isArray(residueTicks) && sel.every((k) => {
   const riK = parseInt(String(k).split('-')[0], 10);
   return Number.isFinite(riK) && !!residueTicks[riK];
-});
+}));
 
 if (isStripMode) {
   // Every polymer residue the clicked tick(s) stand for — the SAME residues the
   // strip lights — in the three tokens NGL really reads (`:B` · `5` · `ALA`;
-  // neither NGL's chain INDEX nor `resn`, which are not in its grammar).
-  const { parts: selParts, atoms: approxAtoms } = stripHighlightClauses(sel, residueTicks);
+  // neither NGL's chain INDEX nor `resn`, which are not in its grammar). With a
+  // gesture provenance those residues are ITS ticks, and them alone.
+  const { parts: selParts, atoms: approxAtoms } = stripHighlightClauses(sel, residueTicks, gestureSel);
   if (selParts.length > 0) {
     // Lightweight mode → instanced spheres: ball+stick would force NGL to
     // compute the full-structure bond list (seconds of freeze on a big system).
@@ -19323,7 +19410,11 @@ if (isStripMode) {
   }
 }
 } catch { /* selection highlight is best-effort */ }
-}, [selectedKeys, status, residueTicks, selectedResidueColor]);
+/* ⚠ `gestureTicks` EST LISTÉ : la provenance décide QUELLES clauses peindre
+   (`stripHighlightClauses(..., gestureSel)`) et si la sélection est en mode
+   « bandeau ». Sans lui, un geste qui ne change pas les clés ne redessinerait
+   rien — et son arrival/loss changerait la peinture sans que l'effet le sache. */
+}, [selectedKeys, status, residueTicks, selectedResidueColor, gestureTicks]);
 
 /* ── 🔎 RECHERCHER UN MORCEAU DE SÉQUENCE (« MHEF ») ─────────────────────────
    La demande : « nel viewer sarebbe utile dentro la barra analysis un modo per
@@ -19377,6 +19468,10 @@ const dropSequenceSelection = () => {
   if ((selectedKeysRef.current || []).join('|') !== mine.join('|')) return false;
   stripResidueRiRef.current = null;
   anchorTickRef.current = null;
+  /* ⚠ LA PROVENANCE S'EN VA AVEC LA SÉLECTION QU'ELLE DÉCRIVAIT — et seulement
+     dans ce cas : quand la sélection a changé de mains (le test ci-dessus), elle
+     appartient au geste qui l'a faite, et on n'y touche pas. */
+  setGestureTicks(null);
   if (onAtomClickRef.current) onAtomClickRef.current(0, []);
   return true;
 };
@@ -19437,8 +19532,12 @@ const runSequenceSearch = useCallback(() => {
      ⚠ LA MÊME SÉLECTION N'EST PAS RENVOYÉE : la page lit deux fois les mêmes
      clés comme un dé-clic (« un second clic sur le même résidu l'enlève »), et
      relancer 🔎 Find doit re-cadrer la caméra, jamais éteindre ce qu'on voit. */
-  const keys = [];
-  hitTicks.forEach((t) => computeResidueKeys(t).forEach((k) => { if (!keys.includes(k)) keys.push(k); }));
+  /* Les clés ET LES TICKS : la provenance est la moitié qui empêche une
+     correspondance de la chaîne A d'allumer les homonymes de la chaîne B — les
+     clés `${ri}-atome` ne portent pas la chaîne, et c'est exactement le rapport
+     « searching AVK also matches NIA » (les lettres de l'autre chaîne, aux mêmes
+     numéros). */
+  const keys = keysOfTicks(hitTicks);
   const firstRi = Number(hitTicks[0].resno) - 1;
   const canSelect = keys.length > 0 && !!onAtomClickRef.current;
   if (canSelect) {
@@ -19446,8 +19545,10 @@ const runSequenceSearch = useCallback(() => {
     anchorTickRef.current = hitTicks[0];      // …et un ⇧ clic suivant prend la suite de là
     if ((selectedKeysRef.current || []).join('|') !== keys.join('|')) onAtomClickRef.current(firstRi, keys);
     seqSelectionKeysRef.current = keys;
+    noteGestureTicks(keys, hitTicks);         // …et la provenance dit QUELLES lettres s'allument
   } else {
     seqSelectionKeysRef.current = null;
+    setGestureTicks(null);
   }
 
   try {
@@ -21181,6 +21282,7 @@ const handleClearViewer = () => {
   stripResidueRiRef.current = null;
   seqHighlightCompRef.current = null;
   seqSelectionKeysRef.current = null;   // la sélection du Find s'en va avec la structure
+  setGestureTicks(null);                // …et la provenance des ticks du Find aussi
   setSeqResult(null);
   labelCompRef.current = null;
   sidechainCompRef.current = null;
@@ -21297,6 +21399,7 @@ const deleteLoadedPdb = () => {
   stripResidueRiRef.current = null;
   seqHighlightCompRef.current = null;
   seqSelectionKeysRef.current = null;   // la sélection du Find s'en va avec la structure
+  setGestureTicks(null);                // …et la provenance des ticks du Find aussi
   setSeqResult(null);
   labelCompRef.current = null;
   sidechainCompRef.current = null;
@@ -26289,7 +26392,13 @@ className="px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h
     <div className="flex gap-0.5 overflow-x-auto custom-scrollbar items-stretch py-0.5">
       {ticks.map((r, i) => {
         if (thinStep > 1 && i % thinStep !== 0) return null;
-        const isSel = selectedKeys && selectedKeys.some((k) => parseInt(String(k).split('-')[0], 10) === r.resno - 1);
+        /* ⚠ AVEC UNE PROVENANCE, LA LETTRE ALLUMÉE EST CELLE DU TICK TOUCHÉ, ET ELLE
+           SEULE. Sans elle (une sélection venue des spectres, d'une table, d'une
+           figure) la règle par `resno` reprend la main : c'est tout ce que des clés
+           sans chaîne permettent de dire. */
+        const isSel = gestureSel
+          ? gestureSel.some((t) => t.chainid === r.chainid && t.resno === r.resno)
+          : !!(selectedKeys && selectedKeys.some((k) => parseInt(String(k).split('-')[0], 10) === r.resno - 1));
         return (
           <button key={`${r.chainid}-${r.resno}`} type="button"
             onClick={(e) => handleResidueTickClick(r, e)}

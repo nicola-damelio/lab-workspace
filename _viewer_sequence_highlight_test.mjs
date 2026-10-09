@@ -36,6 +36,16 @@
        et le bandeau s'allume sur le même `resno - 1` ;
      • le viewer lui-même : l'effet du surlignage ambre passe par la clause
        partagée, et l'ancienne écriture (`resn`) n'est plus nulle part.
+
+   LA DEMANDE DE CETTE SESSION, ELLE AUSSI MESURÉE ICI : « if I select one letter
+   (e.g. A) it also selects others » et « searching AVK also matches NIA ». Deux
+   chaînes numérotées 1…N portent les MÊMES clés (`${resno - 1}-atome`, sans
+   chaîne — elles nourrissent les spectres) : le bandeau allumait donc les deux
+   lettres, et 🔎 Find les lettres de l'autre chaîne aux mêmes numéros. Le geste,
+   lui, SAIT quel résidu il a touché : `stripHighlightClauses(keys, ticks,
+   exactTicks)` peint SES ticks et eux seuls, et le bandeau décide sur le tick.
+   La règle par `resno` reste ce qu'elle était pour tout ce qui ne vient pas d'un
+   geste du bandeau (spectres, tables, figures) — et c'est mesuré des deux côtés.
    ========================================================================= */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -216,11 +226,12 @@ eq(H.residueTickClause(null), '', 'aucun tick : aucune clause (jamais «  and  �
 
 /* ── 1bis. Le `sele` EXACT que le viewer passe à NGL pour un tick cliqué ──── */
 /* Les clés du bandeau sont « resno - 1 » (elles n'ont pas de chaîne : elles
-   nourrissent aussi les spectres), donc un clic couvre TOUS les ticks polymères
-   de ce préfixe — exactement ceux que le bandeau allume. */
+   nourrissent aussi les spectres). La RÈGLE GÉNÉRALE couvre donc TOUS les ticks
+   polymères de ce préfixe — c'est tout ce que des clés seules permettent de dire,
+   et c'est le repli pour une sélection qui ne vient pas du bandeau. */
 const clickedA = H.stripHighlightClauses(['0-Cα'], ticks);
 eq(clickedA.parts, [':A and 1 and ALA', ':B and 1 and ALA'],
-  'cliquer le premier résidu allume les DEUX ALA 1 du fichier, comme le bandeau allume les deux ticks');
+  'sans les ticks du geste, le préfixe « 0 » couvre les DEUX ALA 1 du fichier (la règle de repli)');
 eq(countAtoms(clickedA.parts.join(' or ')), atomsOf('A', 1) + atomsOf('B', 1),
   '…et le 3D en allume bien vingt atomes (dix par chaîne)');
 eq(clickedA.atoms, 20, '…le compte d’atomes qui choisit sphères ou ball+stick suit');
@@ -234,6 +245,47 @@ eq(H.stripHighlightClauses(['9-X'], ticks).parts, [], 'un préfixe qu’aucun ti
 eq(H.stripHighlightClauses(['0-Cα', '0-Cα'], ticks).parts.length, 2,
   'deux clés du même résidu ne dessinent pas deux fois le même résidu (dédoublonné)');
 
+/* ── 1ter. LE RAPPORT DE CETTE SESSION : les ticks DU GESTE tranchent ────────
+   « if I select one letter (e.g. A) it also selects others » · « searching AVK
+   also matches NIA ». Les clés sont identiques pour les deux ALA 1 (elles ne
+   portent pas la chaîne) : le bandeau allumait donc DEUX lettres pour un clic, et
+   la vue DEUX résidus — la chaîne B montrait ses propres lettres aux numéros de
+   la chaîne A. Le clic du bandeau et 🔎 Find, eux, savent quel résidu ils ont
+   touché : ils passent la LISTE EXACTE de leurs ticks, et ce sont eux seuls qui
+   sont peints. */
+const A1 = poly.find((t) => t.chainname === 'A' && t.resno === 1);
+const B1 = poly.find((t) => t.chainname === 'B' && t.resno === 1);
+const exactA = H.stripHighlightClauses(['0-Cα'], ticks, [A1]);
+eq(exactA.parts, [':A and 1 and ALA'],
+  'avec le tick du geste, cliquer le premier résidu n’allume QUE lui — l’ALA 1 de la chaîne B reste dehors');
+eq(countAtoms(exactA.parts.join(' or ')), atomsOf('A', 1), '…soit les dix atomes de la seule chaîne A');
+eq(exactA.atoms, 10, '…et le compte d’atomes suit (dix, pas vingt)');
+eq(H.stripHighlightClauses(['0-Cα'], ticks, [B1]).parts, [':B and 1 and ALA'],
+  '…et le MÊME clic sur le tick de la chaîne B n’allume que celui de la B (le tick décide, pas le numéro)');
+/* La forme même du rapport : « AVK » trouvé dans la A, et les lettres de la B aux
+   mêmes numéros (« NIA ») qui s’allumaient avec lui. */
+const AVK = [
+  poly.find((t) => t.chainname === 'A' && t.resno === 1),   // A · ALA 1 — le « A » de la chaîne A
+  poly.find((t) => t.chainname === 'A' && t.resno === 2),   // A · GLY 2
+];
+eq(H.stripHighlightClauses(['0-Cα', '1-Cα'], ticks, AVK).parts, [':A and 1 and ALA', ':A and 2 and GLY'],
+  'une correspondance de la chaîne A n’allume QUE ses résidus : « AVK » ne devient plus « NIA » (les lettres de la B, aux mêmes numéros)');
+ok(H.stripHighlightClauses(['0-Cα', '1-Cα'], ticks, AVK).parts.join(' ').includes(':B and') === false,
+  '…la chaîne B n’est plus jamais du lot quand le geste a dit ses ticks');
+eq(H.stripHighlightClauses(['0-Cα', '1-Cα'], ticks, AVK).atoms, 20,
+  '…et le compte d’atomes est celui de la seule chaîne A');
+/* Un geste sans ticks (liste vide) ne promet rien : la règle par `resno` revient,
+   exactement comme pour une sélection venue d’ailleurs. */
+eq(H.stripHighlightClauses(['0-Cα'], ticks, []).parts, [':A and 1 and ALA', ':B and 1 and ALA'],
+  'une provenance VIDE n’a rien désigné : la règle générale reprend la main');
+eq(H.stripHighlightClauses(['0-Cα'], ticks, null).parts, [':A and 1 and ALA', ':B and 1 and ALA'],
+  '…et une provenance absente non plus (le repli est le défaut, jamais l’inverse)');
+/* Une eau ou un ion ne rentre pas par cette porte non plus (le bandeau ne les
+   montre pas : la liste du geste ne peut pas les contenir). */
+const HOH = ticks.find((t) => !t.polymer);
+eq(H.stripHighlightClauses(['0-O'], ticks, [HOH]).parts, [],
+  'un tick non polymère glissé dans une provenance ne peint rien (aucune clause)');
+
 /* ══ 2. 3D → SÉQUENCE : l’autre sens reste vert ════════════════════════════ */
 const seq = [
   { id: 'ALA1', char: 'A' }, { id: 'GLY2', char: 'G' }, { id: 'ALA1', char: 'A' },
@@ -246,9 +298,31 @@ ok(countAtoms(backSele) > 0, `les clés d’un atome cliqué allument bien du 3D
 const tickOfKey = (k) => poly.find((t) => t.resno - 1 === parseInt(String(k).split('-')[0], 10));
 ok(!!tickOfKey(clicked.keys[0]), '…et le bandeau s’allume sur le même `resno - 1` (le tick existe)');
 
-/* ══ 3. Le viewer lui-même : une seule écriture de clause ══════════════════ */
-has('const { parts: selParts, atoms: approxAtoms } = stripHighlightClauses(sel, residueTicks);',
-  'l’effet du surlignage ambre passe par la sélection partagée (pas une copie)');
+/* ══ 3. Le viewer lui-même : les ticks DES GESTES, une seule écriture ══════ */
+has('const stripHighlightClauses = (keys, residueTicks, exactTicks) => {',
+  'la construction des clauses accepte les ticks DU GESTE (3ᵉ argument)');
+has('const { parts: selParts, atoms: approxAtoms } = stripHighlightClauses(sel, residueTicks, gestureSel);',
+  'l’effet du surlignage ambre passe la sélection partagée ET la provenance du geste (jamais une copie)');
+has("const gestureSel = gestureTicks && gestureTicks.sig === (selectedKeys || []).join('|')",
+  'la provenance ne vaut que pour la sélection qu’elle décrit (signatures comparées, jamais un drapeau)');
+has('const [gestureTicks, setGestureTicks] = useState(null);   // { sig, ticks } | null',
+  'elle vit dans l’état du viewer, avec les ticks eux-mêmes');
+has('const noteGestureTicks = (keys, ticks) => {', '…et une seule porte l’écrit (la signature sort des MÊMES clés)');
+has('const keysOfTicks = (list) => {', 'les clés d’une liste de ticks sortent d’UNE fonction (page et provenance ne divergent pas)');
+/* LES TROIS GESTES QUI LA POSENT — et le geste qui l’éteint. */
+has('noteGestureTicks(keys, [tick]);', 'un clic du bandeau retient SON tick (et lui seul)');
+has('noteGestureTicks(next, range);', 'un ⇧ clic retient la RANGÉE qu’il vient de peindre');
+has('noteGestureTicks(keys, hitTicks);', '🔎 Find retient LES RÉSIDUS TROUVÉS — jamais leurs homonymes d’une autre chaîne');
+has('setGestureTicks(null);          // plus de provenance : plus rien de « désigné »',
+  'le ✕ du bandeau l’éteint');
+has('? gestureSel.some((t) => t.chainid === r.chainid && t.resno === r.resno)',
+  'le bandeau allume la lettre du tick désigné — la CHAÎNE comprise');
+has('}, [selectedKeys, status, residueTicks, selectedResidueColor, gestureTicks]);',
+  '…et l’effet suit la provenance (un geste qui ne change pas les clés redessine quand même)');
+gone("const isSel = selectedKeys && selectedKeys.some((k) => parseInt(String(k).split('-')[0], 10) === r.resno - 1);",
+  'la règle par `resno` n’est plus SEULE (la provenance passe devant : c’est le rapport de cette session)');
+has(": !!(selectedKeys && selectedKeys.some((k) => parseInt(String(k).split('-')[0], 10) === r.resno - 1));",
+  '…et elle reste le repli des sélections qui ne viennent pas du bandeau');
 gone('and resn ${',
   'plus une seule clause construite avec « resn » (le mot-clé que NGL ne lit pas)');
 gone('`:${t.chainid}`', 'l’index de chaîne de NGL ne peut plus revenir dans une clause');
@@ -258,7 +332,11 @@ ok(CLAUSE_SRC.includes('tick.chainname || tick.chainid'),
   '…la lettre d’abord, l’index de NGL seulement si le fichier n’a pas de nom de chaîne');
 ok(CLAUSE_SRC.includes('`[${resname}]`'),
   '…et le nom de résidu passe par la liste entre crochets quand NGL ne peut pas le lire nu');
-has("const isSel = selectedKeys && selectedKeys.some((k) => parseInt(String(k).split('-')[0], 10) === r.resno - 1);",
-  'le bandeau garde SON allumage (le sens 3D → séquence du rapport)');
+/* ⚠ LA LIGNE D'ALLUMAGE DU BANDEAU A CHANGÉ DE FORME (voir §3 ci-dessus, où les
+   DEUX moitiés sont épinglées) : elle décide sur le TICK quand un geste l'a
+   désigné, et garde la règle `resno - 1` en repli pour tout le reste. Sa forme
+   d'hier — la seule — n'est donc plus là, et c'est voulu : le rapport de cette
+   session (« if I select one letter … it also selects others ») vient exactement
+   de là. */
 
 console.log(`_viewer_sequence_highlight_test.mjs — ${passed} assertions OK (séquence ⇄ 3D, vrai NGL 2.4)`);
