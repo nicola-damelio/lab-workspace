@@ -1,0 +1,32 @@
+RETROUVER LES EXPÉRIENCES PERDUES — LE GESTE, EN CLAIR
+=====================================================
+
+Fichier à charger : GEC-UPJV-projects_774488_experiences-retrouvees_2026-10-09.json
+  (dossier _recover/ — il est LOCAL, rien n’a été écrit sur le Drive)
+
+Ce qu’il porte : 6 expérience(s), avec leurs ids d’origine —
+   • « pdb_Bad_BCL-XL »  (id t17915013096201399)
+   • « pdb_Bcl-XL_Bid »  (id t17915001326217901)
+   • « pdb_CDK2_CyclinA »  (id t17915016474816788)
+   • « pdb_Mdm2_p53 »  (id t17914952328471224)
+   • « pdb_PD1_PDL1 »  (id t17915023284364463)
+   • « Test 85 »  (id t17915002806849126)
+
+DANS L’APPLICATION :
+   1. OUVRIR le dataset « GEC-UPJV-projects » : l’import en AJOUT écrit dans
+      le dataset OUVERT (targetId = currentDatasetId), pas dans un nouveau ;
+   2. « 📂 Load HTML » (ou Load backup .json) et choisir ce fichier ;
+   3. dans la fenêtre : cocher la page « Expériences » SEULEMENT — les autres
+      pages gardent leur valeur actuelle (import partiel : rien n’est écrasé) ;
+   4. chaque expérience est une LIGNE : décocher celles qu’on ne veut pas
+      (par défaut tout est coché) ;
+   5. valider avec ➕ AJOUT (« Add »), JAMAIS ♻️ REMPLACEMENT : l’ajout ignore
+      ce qui est déjà là et n’efface rien ;
+   6. la fenêtre dit alors COMBIEN d’expériences sont revenues, avec leurs ids.
+
+CE QU’IL FAUT SAVOIR :
+   • une expérience retrouvée LÈVE sa suppression locale
+     (recordExperimentRevivals) : si elle avait été supprimée volontairement,
+     elle revient — c’est le geste ; décocher sa ligne l’écarte ;
+   • « Test 84 » N’EST PAS dans ce fichier : sa seule trace est à la CORBEILLE
+     du Drive, et la corbeille ne se restaure pas (règle posée).

@@ -1,0 +1,25 @@
+# Les 13 fichiers-objets VIVANTS absents de la copie du dataset
+copie : ds_ds_1788383774488.json  id=ds_1788383774488  (83 entrées / 37 noms)
+« Test 84 » : copie=false  drive=false  → absent des deux (seule copie : corbeille, non restaurée)
+
+nom de l'objet        gén.  id de l'expérience      instance     catégorie      projet           clés  essai?
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+Pd1                      1  t17915023284364463     instance1    Activity       PD1-PDL1          39  OUI
+Test 85                  2  t17915002806849126     New Instance… Activity       BidH              38  OUI
+Test 86                  2  t17915013096201399     2BZW         Activity       BadH              39  OUI
+Test 87                  1  t17915016474816788     instance1    Activity       cyclinA_H         37  OUI
+Test 88                  1  t17915023284364463     instance1    Activity       PD1-PDL1          37  OUI
+pdb                      2  t17915001326217901     4QVE         Activity       BidH              42  OUI
+pdb_                     3  t17915016474816788     instance1    Activity       cyclinA_H         39  OUI
+pdb_BadH                 1  t17915013096201399     2BZW         Activity       BadH              40  OUI
+pdb_Bad_BCL-XL           1  t17915013096201399     2BZW         Activity       BadH              40  OUI
+pdb_Bcl-XL_Bid           1  t17915001326217901     4QVE         Activity       BidH              43  OUI
+pdb_CDK2_CyclinA         2  t17915016474816788     5IF1         Activity       cyclinA_H         40  OUI
+pdb_Mdm2_p53             2  t17914952328471224     3LNZ         Activity       p53H              42  OUI
+pdb_PD1_PDL1             2  t17915023284364463     4ZQK         Activity       PD1-PDL1          40  OUI
+
+## Verdict
+   • 13 essai(s) RÉEL(S) : Pd1 | Test 85 | Test 86 | Test 87 | Test 88 | pdb | pdb_ | pdb_BadH | pdb_Bad_BCL-XL | pdb_Bcl-XL_Bid | pdb_CDK2_CyclinA | pdb_Mdm2_p53 | pdb_PD1_PDL1
+
+   rappel : « Test 84 » n'est PAS dans cette liste — sa seule copie est à la corbeille,
+   et la corbeille ne se restaure pas.

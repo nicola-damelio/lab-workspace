@@ -1,0 +1,52 @@
+# Expériences perdues — reprise depuis la moitié VIVANTE (2026-10-09T19:37:51.694Z)
+(règle : la corbeille ne se restaure pas — aucun fichier en corbeille n’est lu ni proposé)
+
+## La copie vivante du dataset
+   • ds_ds_1788383774488.json  id=1KHaI9R3Sj1IOIyctFiAOTW3QwDfyzIJS  936 Ko  2026-10-09T19:05:41.502Z
+   • dataset ds_ds_1788383774488  titre « GEC-UPJV-projects »  sous-titre « Running title »
+   • aujourd’hui : 83 expérience(s) · 14 projet(s)
+
+## 13 fichier(s)-objet(s) vivant(s) → 6 expérience(s) à retrouver
+   • « pdb_Bad_BCL-XL »  id=t17915013096201399  enregistrée 2026-10-09T08:43:43.324Z
+     instance 2BZW · catégorie Activity · projet(s) BadH
+     noms portés sur le Drive : Test 86, pdb_BadH, pdb_Bad_BCL-XL
+   • « pdb_Bcl-XL_Bid »  id=t17915001326217901  enregistrée 2026-10-09T08:44:24.650Z
+     instance 4QVE · catégorie Activity · projet(s) BidH
+     noms portés sur le Drive : pdb, pdb_Bcl-XL_Bid
+   • « pdb_CDK2_CyclinA »  id=t17915016474816788  enregistrée 2026-10-09T08:44:24.650Z
+     instance 5IF1 · catégorie Activity · projet(s) cyclinA_H
+     noms portés sur le Drive : Test 87, pdb_, pdb_CDK2_CyclinA
+   • « pdb_Mdm2_p53 »  id=t17914952328471224  enregistrée 2026-10-09T08:44:24.650Z
+     instance 3LNZ · catégorie Activity · projet(s) p53H
+     noms portés sur le Drive : pdb_Mdm2_p53
+   • « pdb_PD1_PDL1 »  id=t17915023284364463  enregistrée 2026-10-09T08:44:24.650Z
+     instance 4ZQK · catégorie Activity · projet(s) PD1-PDL1
+     noms portés sur le Drive : Pd1, Test 88, pdb_PD1_PDL1
+   • « Test 85 »  id=t17915002806849126  enregistrée 2026-10-08T22:58:11.190Z
+     instance New Instance 2 · catégorie Activity · projet(s) BidH
+     noms portés sur le Drive : Test 85
+
+## Le fichier écrit (LOCAL — rien n’a été écrit sur le Drive)
+   C:\Users\nicol\lab-workspace\_recover\GEC-UPJV-projects_774488_experiences-retrouvees_2026-10-09.json  (5 Ko)
+   format lab-workspace-backup · schéma 1 · dataset ds_ds_1788383774488 · compressé true
+   comptes déclarés : {"tests":6,"projects":0,"datasetProtocols":0,"storages":0,"molecules":0,"calculationEntries":0,"compoundMeta":0,"nmrExperiments":0}
+   ✔ VALIDÉ par le validateur de l’application
+   relecture : 6 expérience(s), charges identiques : oui
+
+## Les lignes de la fenêtre d’import (« Expériences », 6 ligne(s))
+   ➕ à ajouter  « pdb_Bad_BCL-XL »  clé name:pdb_Bad_BCL-XL  · BadH · Nicola D'AMELIO · 2026-10-08
+   ➕ à ajouter  « pdb_Bcl-XL_Bid »  clé name:pdb_Bcl-XL_Bid  · BidH · Nicola D'AMELIO · 2026-10-08
+   ➕ à ajouter  « pdb_CDK2_CyclinA »  clé name:pdb_CDK2_CyclinA  · cyclinA_H · Nicola D'AMELIO · 2026-10-08
+   ➕ à ajouter  « pdb_Mdm2_p53 »  clé name:pdb_Mdm2_p53  · p53H · Nicola D'AMELIO · 2026-10-08
+   ➕ à ajouter  « pdb_PD1_PDL1 »  clé name:pdb_PD1_PDL1  · PD1-PDL1 · Nicola D'AMELIO · 2026-10-08
+   ➕ à ajouter  « Test 85 »  clé name:Test 85  · BidH · Nicola D'AMELIO · 2026-10-08
+
+   → 6/6 ligne(s) seront VRAIMENT ajoutées.
+   → choix appliqué : 6 expérience(s), ids d’origine conservés : oui
+
+## Gestes
+   1. ouvrir le dataset « GEC-UPJV-projects » dans l’application ;
+   2. 📂 Load HTML → GEC-UPJV-projects_774488_experiences-retrouvees_2026-10-09.json ;
+   3. cocher « Expériences » seulement (chaque expérience est une ligne) ;
+   4. ➕ AJOUT (jamais ♻️ REMPLACEMENT) ;
+   → mode d’emploi écrit : C:\Users\nicol\lab-workspace\_recover\HOW-TO_retrouver-les-experiences.txt

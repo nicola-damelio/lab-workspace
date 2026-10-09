@@ -1,0 +1,24 @@
+# Garde — la corbeille ne se restaure pas (2026-10-09T19:40:32.467Z)
+
+## ① La matière de reprise
+   ✔ 13 fichier(s)-objet retenu(s), tous issus d'un balayage « trashed=false »
+   ✔ « Test 84 » absent de la matière (il n’existe plus que dans la corbeille)
+   • 6 expérience(s) distincte(s) pour 13 fichier(s)-objet (les autres noms sont des renommages)
+
+## ② Aucun de mes outils ne LIT la corbeille
+   • fichiers examinés : 338 · qui LISENT la corbeille : 0 · qui y RANGENT (écriture) : 6 · recherches sans « trashed=false » : 0
+     – range à la corbeille (jamais lue) : _diag_lag.mjs
+     – range à la corbeille (jamais lue) : _drive_restore_test.mjs
+     – range à la corbeille (jamais lue) : _purge_orphan_datasets.mjs
+     – range à la corbeille (jamais lue) : _recover_orphan_dataset.mjs
+     – range à la corbeille (jamais lue) : _repair_drive_file_twins.mjs
+     – range à la corbeille (jamais lue) : _repair_drive_twins.mjs
+   ✔ aucun outil ne cherche « trashed=true » (la corbeille n’est pas une source)
+   ✔ toutes les recherches portent « trashed=false »
+
+## ③ Le fichier de reprise produit
+   ✔ GEC-UPJV-projects_774488_experiences-retrouvees_2026-10-09.json ne contient pas « Test 84 »
+     • GEC-UPJV-projects_774488_experiences-retrouvees_2026-10-09.json · 5 Ko · dataset ds_ds_1788383774488 · comptes {"tests":6,"projects":0,"datasetProtocols":0,"storages":0,"molecules":0,"calculationEntries":0,"compoundMeta":0,"nmrExperiments":0}
+
+## Verdict
+   ✔ La règle est tenue : la corbeille n’est ni lue, ni proposée, ni citée.
