@@ -5377,7 +5377,7 @@ d'avant (vérifié assertion par assertion), et la route d'un DOCUMENT de projet
 ### Vérifier soi-même
 
 ```bash
-node _drive_instance_level_test.mjs   # 65 assertions : le fait, les constructeurs, le plan, l'EXÉCUTEUR réel
+node _drive_instance_level_test.mjs   # 77 assertions : le fait, les constructeurs, le plan, l'EXÉCUTEUR réel, le TEXTE annoncé
 ```
 
 Le test mesure **l'exécuteur réel** (`publishDatasetStructure`) sur un faux Drive, avec une
@@ -5400,4 +5400,58 @@ l'expérience ne sont pas déplacés par ce correctif. Le rangement (`Tidy the D
 `utils/driveTidy.js`) les **signale** (`folder-outside-the-plan`) sans les toucher — un dossier
 inconnu qui porte des fichiers n'est jamais effacé à l'aveugle. Ce correctif empêche qu'il en naisse
 de nouveaux.
+
+
+## « Il percorso corretto è …/projects/<projet>/… » — le chemin ANNONCÉ avait perdu le conteneur (08/10/2026)
+
+**Le rapport, mot pour mot.** « *se clicco sul bottone "move files to correct drive folders" il
+messaggio chiede se metterle nel "correct drive folder: Lab workspace/<dataset>/<test>/<instance>" ma
+quello non é il folder corretto perche manca la dir peojects. il percorso corertto é Lab
+workspace/<dataset>/projects/<projet>/<test>/<instance>* »
+
+### La cause : une phrase qui RECOPIAIT le chemin
+
+Le bouton `Move files to correct Drive folders` (Réglages › Files on Google Drive,
+`DriveImageMigration.jsx`) annonçait le chemin **écrit à la main** dans son `window.confirm` :
+`(Lab Workspace/<dataset>/<project>/<test>/<instance>/Report)`. Le **conteneur `projects/` y
+manquait** — même famille de défaut que ci-dessus (un niveau perdu), mais cette fois dans un TEXTE :
+le geste, lui, était juste ; c'est la phrase qui désignait un dossier qui n'existe pas. Le sous-titre
+de la section (Réglages) recopiait le même chemin.
+
+### La réparation : le texte est BÂTI par la règle qui écrit
+
+| fichier | ce qui change |
+| --- | --- |
+| `migrateTestImages.TEST_DRIVE_FOLDER_SHAPE` | NOUVEAU — la forme du dossier est construite par `canonicalExperimentPath` (le conteneur `projects/` et la section canonique viennent donc du CODE, pas d'une copie) : `Lab Workspace/<dataset>/projects/<project>/<test>/<instance>/report` |
+| `DriveImageMigration.jsx` | la boîte de dialogue annonce `TEST_DRIVE_FOLDER_SHAPE` **et** la PREMIÈRE cible réelle (`Example: Lab Workspace/<dataset>/projects/…`, le même chemin que l'aperçu) ; la phrase d'aide du panneau montre la même forme |
+| `settingsModule.jsx` | le sous-titre des Réglages annonce `TEST_DRIVE_FOLDER_SHAPE` — plus aucune copie à la main |
+
+Deux choses que le texte dit maintenant, et qui étaient invisibles :
+
+1. l'instance arrive au **6e segment**, DANS l'expérience (3e `projects`, 4e le projet, 5e
+   l'expérience, 6e l'instance) — c'est la forme du **Drive réel** :
+   `Lab Workspace/GEC-UPJV-projects/projects/p53H/NMR_tests/Exp_7/…` ;
+2. la **section est en minuscules** (`report`) : c'est la forme **canonique** que l'application écrit
+   (`canonicalPageSection` : « Data » → « data », « Report » → « report »), celle de ses propres
+   envois — `TEST_IMAGE_SECTION` (« Report ») est l'entrée du contexte, pas le nom du dossier.
+
+### Vérifier soi-même
+
+```bash
+node _drive_instance_level_test.mjs   # 77 assertions : … + la section 7 « le texte annoncé EST le chemin écrit »
+```
+
+La section 7 compare la forme annoncée au chemin que `canonicalExperimentPath` écrit pour un contexte
+réel (expérience `🧪`, instance `1YCR`) : **même nombre de niveaux**, 3e segment `projects`, 6e
+segment l'instance, dernière section identique — et elle exige qu'aucun des deux textes ne recopie
+plus le chemin (la boîte de dialogue comme le sous-titre).
+
+Régressions : le balayage filtré du dépôt — **46 suites, 0 rouge** (`_drive_instance_level_test` 77,
+`_drive_structure_test` 141, `_drive_stray_project_test` 20, `_drive_restore_test` 251,
+`_experiment_move_drive_test` 63, `_drive_tidy_test` 81, `_workspace_drive_test` 60,
+`_viewer_render_smoke_test` 23 — le rendu monte les DEUX composants touchés) ; `npx oxlint`
+**0 erreur** ; `npx vite build` ✓.
+
+**Rien d'autre ne bouge** : aucun chemin écrit, aucun envoi, aucun plan ne change — seules les
+phrases des dialogues et du sous-titre.
 

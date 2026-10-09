@@ -5,7 +5,12 @@
    Drive LINKS (uploaded before the folder/naming conventions existed) are
    moved + renamed on Drive so they follow the CURRENT rules:
 
-       <Lab Workspace>/<dataset>/<project>/<test>/<instance>/Report/<title>_<scientist>.<ext>
+       <Lab Workspace>/<dataset>/projects/<project>/<test>/<instance>/report/<title>_<scientist>.<ext>
+
+   The instance is INSIDE the experiment — `projects/<project>/…`, never a folder
+   beside the project — and the section folder is the CANONICAL one
+   (canonicalPageSection: "Report" → "report"), the very folder the app's own
+   uploads use. TEST_DRIVE_FOLDER_SHAPE below carries that shape for the labels.
 
    What is scanned (images only — never raw data files):
      • every test image array  (images, nmrSpectraImages, dosyImages, gelImages,
@@ -78,6 +83,24 @@ const IMAGE_ARRAY_RE = /images$/i;
 
 /** The Drive folder section used for test figures / report images. */
 export const TEST_IMAGE_SECTION = 'Report';
+
+/** LA FORME du dossier où cette migration range les fichiers — pour les libellés
+ *  et les boîtes de dialogue. Elle est CONSTRUITE avec la règle qui ÉCRIT
+ *  (`canonicalExperimentPath`, donc `canonicalPageSection` et le conteneur
+ *  `projects/`) et non recopiée à la main : une copie écrite à la main avait
+ *  perdu le conteneur et annonçait « Lab Workspace/<dataset>/<project>/<test>/
+ *  <instance>/Report » — un chemin que le code n'écrit pas (signalé le
+ *  08/10/2026 : « il percorso corretto è Lab workspace/<dataset>/projects/
+ *  <projet>/<test>/<instance> »). Une INSTANCE vit toujours DANS une expérience,
+ *  donc SOUS `projects/<projet>/…` : le 3e segment est le conteneur, le 6e est
+ *  l'instance, et la section est celle de la règle canonique (minuscule, « Report »
+ *  → « report », comme les envois de l'application). Si un niveau venait à
+ *  changer côté code, ce texte suivrait tout seul. PUR. */
+const SHAPE_LABELS = { project: '<project>', test: '<test>', instance: '<instance>' };
+export const TEST_DRIVE_FOLDER_SHAPE = ['Lab Workspace', '<dataset>',
+  ...canonicalExperimentPath({
+    project: 'project', test: 'test', instance: 'instance', section: TEST_IMAGE_SECTION
+  }).map((seg) => SHAPE_LABELS[seg] || seg)].join('/');
 
 /** Anchor texts that do not make a meaningful file title (fall back to the
  *  downloaded file's real name / "Attachment N"). */

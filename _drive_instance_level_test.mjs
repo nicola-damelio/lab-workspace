@@ -22,8 +22,10 @@
    `projects/<projet>/…` et l'instance resterait dans le dossier du projet).
 
    Vérifié : les constructeurs purs, le plan du dépôt, l'EXÉCUTEUR RÉEL sur un
-   faux Drive (aucun dossier d'instance ne naît dans le dossier du projet), et la
-   recherche par nom de `driveUpload` (qui doit retrouver ce que l'envoi crée).
+   faux Drive (aucun dossier d'instance ne naît dans le dossier du projet), la
+   recherche par nom de `driveUpload` (qui doit retrouver ce que l'envoi crée), et
+   le TEXTE annoncé par les boîtes de dialogue (bâti par la règle qui ÉCRIT : une
+   copie écrite à la main avait perdu `projects/`).
    ========================================================================= */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -271,5 +273,43 @@ has(STRUCT_SRC, "|| ((instance || section || subs.length) ? DEFAULT_EXPERIMENT_N
   '…laquelle repose le niveau de l’expérience dès qu’un niveau plus bas existe');
 has(UPLOAD_SRC, 'const testSlug = sanitizeSlug(testName) || DEFAULT_EXPERIMENT_NAME;',
   'la recherche par nom vise le dossier que l’envoi CRÉE (suppression de l’expérience, dossier d’une instance)');
+
+/* ── 7. LE TEXTE ANNONCÉ EST LE CHEMIN ÉCRIT ─────────────────────────────
+   Une boîte de dialogue recopiait le chemin à la main et avait perdu le conteneur
+   `projects/` : elle annonçait « Lab Workspace/<dataset>/<project>/<test>/<instance>/
+   Report », un dossier qui n'existe pas. Constaté le 08/10/2026 : « il percorso
+   corretto è Lab workspace/<dataset>/projects/<projet>/<test>/<instance> ». Le texte
+   est désormais BÂTI par la règle qui ÉCRIT
+   (migrateTestImages.TEST_DRIVE_FOLDER_SHAPE ← canonicalExperimentPath). */
+const MIG = await import('./src/utils/migrateTestImages.js');
+const MIG_SRC = readFileSync('./src/utils/migrateTestImages.js', 'utf8');
+const UI_SRC = readFileSync('./src/components/DriveImageMigration.jsx', 'utf8');
+const SETTINGS_SRC = readFileSync('./src/components/AppModules/settingsModule.jsx', 'utf8');
+
+const SHAPE = MIG.TEST_DRIVE_FOLDER_SHAPE.split('/');
+eq(MIG.TEST_DRIVE_FOLDER_SHAPE,
+  'Lab Workspace/<dataset>/projects/<project>/<test>/<instance>/report',
+  'la forme annoncée porte le conteneur `projects/` ET l’instance DANS l’expérience');
+const REAL = ['Lab Workspace', 'Mon Dataset', ...NAMING.canonicalExperimentPath({
+  project: 'p53H', test: '🧪', instance: '1YCR', section: MIG.TEST_IMAGE_SECTION
+})];
+eq(SHAPE.length, REAL.length,
+  '…autant de niveaux que le chemin réellement écrit (un niveau perdu dans le texte se verrait)');
+eq(SHAPE[2], 'projects', '…le 3e segment est le conteneur des projets');
+eq(REAL[2], 'projects', '…et le chemin écrit passe bien par lui');
+eq(SHAPE[5], '<instance>', '…l’instance est annoncée au 6e segment, APRÈS l’expérience');
+eq(REAL[5], '1YCR', '…là où le code la pose vraiment, même quand l’expérience est un emoji');
+eq(SHAPE[SHAPE.length - 1], REAL[REAL.length - 1],
+  '…la section annoncée est celle que la règle canonique écrit (« Report » → « report »)');
+ok(!UI_SRC.includes('`(Lab Workspace/<dataset>/<project>/<test>/<instance>/'),
+  'la boîte de dialogue n’écrit plus le chemin à la main');
+has(UI_SRC, '(${TEST_DRIVE_FOLDER_SHAPE})',
+  '…elle annonce la forme bâtie par la règle de la migration');
+has(UI_SRC, "targets[0].folder.split('/').slice(2).join('/')",
+  '…et elle montre la PREMIÈRE cible réelle (le même chemin que l’aperçu)');
+has(SETTINGS_SRC, '${TEST_DRIVE_FOLDER_SHAPE}',
+  'le sous-titre des Réglages annonce la même forme (aucune seconde copie)');
+has(MIG_SRC, 'export const TEST_DRIVE_FOLDER_SHAPE',
+  'la forme est construite une seule fois, dans le module qui écrit sur le Drive');
 
 console.log(`_drive_instance_level_test.mjs — ${passed} assertions OK (une instance vit toujours dans une expérience)`);

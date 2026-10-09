@@ -13,11 +13,12 @@
    ========================================================================= */
 import React, { useState } from 'react';
 import { getDriveToken } from '../utils/driveUpload';
+import { datasetFolderSlug } from '../utils/driveNaming';
 import {
   countTestImageRefs,
   previewTestDriveFiles,
   migrateTestDriveImages,
-  TEST_IMAGE_SECTION
+  TEST_DRIVE_FOLDER_SHAPE
 } from '../utils/migrateTestImages';
 import {
   countMisplacedFigures,
@@ -51,9 +52,21 @@ export const DriveImageMigration = ({ tests, setTests, datasetTitle = '' }) => {
       setResult({ nothing: true, at: Date.now() });
       return;
     }
+    /* Le chemin ANNONCÉ vient de la règle qui ÉCRIT (TEST_DRIVE_FOLDER_SHAPE, bâtie
+       sur canonicalExperimentPath) : recopié à la main, il avait perdu le conteneur
+       `projects/` et annonçait un dossier qui n'existe pas — une instance vit
+       toujours DANS une expérience (signalé le 08/10/2026 : « il percorso corretto è
+       Lab workspace/<dataset>/projects/<projet>/<test>/<instance> »). La ligne
+       « Example » montre en plus la PREMIÈRE cible réelle : le même chemin que
+       l'aperçu, avec le nom du dataset et les vrais noms de dossiers. */
+    const targets = previewTestDriveFiles(tests);
+    const example = targets.length > 0
+      ? `\nExample: Lab Workspace/${datasetTitle ? datasetFolderSlug(datasetTitle) : '<dataset>'}`
+        + `/${targets[0].folder.split('/').slice(2).join('/')}`
+      : '';
     const ok = window.confirm(
       `Move ${refCount} test file(s) into the correct Drive folders\n` +
-      `(Lab Workspace/<dataset>/<project>/<test>/<instance>/${TEST_IMAGE_SECTION})\n` +
+      `(${TEST_DRIVE_FOLDER_SHAPE})${example}\n` +
       `and rename them as <title>_<scientist>?\n\n` +
       `This covers figures/images, ⭐ starred items, attached documents (PDFs etc.) ` +
       `and links inside the report text.\n\n` +
@@ -122,7 +135,7 @@ export const DriveImageMigration = ({ tests, setTests, datasetTitle = '' }) => {
 
       <p className="text-xs text-slate-500 mb-3">
         Older test attachments were stored as plain Drive links. This moves them into
-        the correct folder (<code className="text-slate-600">…/&lt;test&gt;/&lt;instance&gt;/{TEST_IMAGE_SECTION}</code>)
+        the correct folder (<code className="text-slate-600">{TEST_DRIVE_FOLDER_SHAPE.replace('Lab Workspace/<dataset>/', '…/')}</code>)
         and renames them <code className="text-slate-600">&lt;title&gt;_&lt;scientist&gt;</code> —
         figures, ⭐ starred items, attached documents (PDFs) and links in the report text.
       </p>

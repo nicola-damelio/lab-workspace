@@ -9,6 +9,11 @@ import { CollapsibleSectionPanel as CollapsibleSection } from '../ui';
 import { CustomMetadataFieldsManager, MandatoryParametersManager, ScientistsOperatorsManager } from './definitionsManagers';
 import { DatabaseCleanupManager } from './storageModules';
 import { DriveImageMigration } from '../DriveImageMigration';
+/* La forme du dossier des pièces jointes de test est CONSTRUITE par la règle qui
+   écrit (migrateTestImages.TEST_DRIVE_FOLDER_SHAPE) : recopiée à la main dans ce
+   sous-titre, elle avait perdu le conteneur `projects/` et annonçait un chemin
+   qui n'existe pas (voir DriveImageMigration). */
+import { TEST_DRIVE_FOLDER_SHAPE } from '../../utils/migrateTestImages';
 import { WorkspaceResyncPanel } from '../WorkspaceResyncPanel';
 /* « TIDY THE DRIVE » — le geste qui RANGE le Drive (voir utils/driveTidy.js) :
    le pendant ÉCRIVANT de « Resync from Drive », qui ne fait que décrire. */
@@ -538,7 +543,7 @@ export const SettingsModule = ({
                      <DriveTidyPanel onTidy={onTidyDrive} />
                    </CollapsibleSection>
 
-                   <CollapsibleSection title="Files on Google Drive" subtitle="Move misplaced Drive files into the canonical folders — test attachments (figures, ⭐ starred items, PDFs/documents, links) into Lab Workspace/<dataset>/projects/<project>/<test>/<instance>/Report, and image-library figures (captures, Image Builder canvases) into Lab Workspace/<dataset>/projects/<project>/images." defaultOpen={false}>
+                   <CollapsibleSection title="Files on Google Drive" subtitle={`Move misplaced Drive files into the canonical folders — test attachments (figures, ⭐ starred items, PDFs/documents, links) into ${TEST_DRIVE_FOLDER_SHAPE}, and image-library figures (captures, Image Builder canvases) into Lab Workspace/<dataset>/projects/<project>/images.`} defaultOpen={false}>
                       <DriveImageMigration tests={tests} setTests={setTests} datasetTitle={datasetTitle} />
                    </CollapsibleSection>
                   </>
