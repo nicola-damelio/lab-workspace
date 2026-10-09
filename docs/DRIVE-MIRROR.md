@@ -4670,6 +4670,34 @@ faut savoir sans ouvrir : « 2/14 lines ticked · 3 already in the base ».
 | L'aperçu (« +3 lignes ») porte sur les lignes **cochées** : décocher une ligne fait bouger l'annonce | `loadMergePreview` (`App.jsx`) |
 | « ♻️ Import everything » passe explicitement « aucune sélection par ligne » : tout le contenu, pas seulement les lignes cochées | `confirmLoad` |
 
+## LIGNE À LIGNE AUSSI DANS UN DATASET SCIENTIFIQUE — une ligne = une expérience
+
+**Signalé tel quel :** « il load backup non è chirurgico, non mi permette di
+selezionare i singoli tests. »
+
+**La cause.** Les lignes d'un dataset scientifique existaient déjà
+(`experimentRowChoices`) et `confirmLoad` savait les appliquer
+(`pickExperimentRows`) — mais la fenêtre « Load Workspace Data » rendait son panneau
+**sans** les lignes (`rows` / `rowPicked` / `onToggleRow` / `onPickRows` absents) et
+ses deux boutons appelaient `confirmLoad('append')` / `confirmLoad('replace')`
+**sans** le troisième argument (`loadRows`) : le choix coché sous « ▸ lines » était
+jeté. Seul « reprendre la page ENTIÈRE » était possible — d'où le sentiment que le
+chargement n'était pas chirurgical.
+
+| Règle de la fenêtre d'un dataset scientifique | Où |
+| --- | --- |
+| La page « Expériences / Tests » a son « ▸ lines » : **une ligne = une expérience**, ses conditions comprises (le regroupement par NOM, celui des pages du dataset) | `experimentRowChoices` → `RowPickList` (`App.jsx`) |
+| Une ligne porte de quoi la RECONNAÎTRE : nombre de conditions, projets, auteur, date — et « already in the base » quand le dataset la porte déjà | `testSubOf`, `inBase` |
+| Cocher une ligne ramène l'essai **ENTIER et avec son id d'origine** : le lien du projet (`project.experiments[].testId`) et le dossier Drive sont retrouvés, rien à re-lier à la main | `pickExperimentRows` |
+| Le défaut est **TOUT coché** : en AJOUT, ce que le dataset porte déjà est écarté par l'ajout lui-même (aucun jumeau à supprimer) ; en REMPLACEMENT, décocher une ligne veut vraiment la laisser dehors — un geste, jamais un accident | `loadHTML` (`sciRows`) |
+| « ➕ Add the selected elements » et « 🔄 Replace the selected elements » portent la sélection (`confirmLoad(mode, undefined, loadRows)`) ; « 🔄 Import everything » passe explicitement `null` : tout le contenu du fichier | `App.jsx` |
+| Les autres pages (projets, définitions, stockage…) gardent leur case unique : elles n'ont pas de lignes à montrer | `LoadPickPanel` (pas de `rows` pour elles) |
+
+Suite : `node _experiment_vanishing_test.mjs` — elle EXÉCUTE la chaîne (les lignes de
+la fenêtre → la clé cochée → les essais qui partent, ids compris) et vérifie le
+câblage : DEUX fenêtres d'import, UNE seule liste de lignes, et aucun bouton qui
+oublie la sélection.
+
 ## La base ouverte garde son NOM (et son dossier Drive)
 
 **Signalé tel quel :** « charger la sauvegarde pour fusionner a aussi changé le nom
@@ -4703,7 +4731,8 @@ rouvert repart sur 🔀 Merge (le geste sans perte), et « ♻️ Import everyth
 reste le seul chemin vers une base exactement telle qu'elle a été sauvegardée —
 c'est le geste à faire en connaissance de cause. Le mode « remplacer » reste celui
 du dataset scientifique (« ➕ Add the selected elements » / « 🔄 Replace the
-selected elements »), inchangé.
+selected elements ») — qui, lui, a désormais **ses** lignes : une par expérience (voir
+la section précédente).
 
 Suite : `node _load_merge_test.mjs` (89 assertions) — elle EXÉCUTE la fusion (union,
 version de la base qui l'emporte, pages non cochées, `settings`, lignes sans identité,

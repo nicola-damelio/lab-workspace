@@ -6552,22 +6552,48 @@ const openDataset = (dset, { keepPlace = false } = {}) => {
             ) : (
               <>
                 <p className="text-sm text-slate-500 mb-4">
-                  Choose the elements to import from this file (per row, per project, or whole pages),
-                  then add them to the open dataset or replace what is already there.
+                  Choose the elements to import from this file (per row, per project, or whole pages) —
+                  and, inside “Expériences / Tests”, its LINES (“▸ lines”: one line = one EXPERIMENT,
+                  its conditions included) — then add them to the open dataset or replace what is
+                  already there.
                 </p>
+                {/* ⚠ LA FENÊTRE D’UN DATASET SCIENTIFIQUE OFFRE **SES** LIGNES, comme
+                   celle d’une base d’administration : « ▸ lines » sur la page
+                   « Expériences / Tests » déplie UNE LIGNE PAR EXPÉRIENCE (ses conditions
+                   comprises), « already in the base » marquant celles que ce dataset
+                   porte déjà. C’est ce qui rend le retour d’UNE expérience perdue
+                   chirurgical — et pas seulement « reprendre la page entière ».
+                   Les lignes viennent du memo `loadRowChoices` (UNE seule source, la même
+                   que la fenêtre d’administration) ; le choix par défaut est déjà posé
+                   par `loadHTML` à l’ouverture du fichier. Les autres pages gardent leur
+                   case unique : elles n’ont pas de lignes à montrer. */}
                 <LoadPickPanel
                   sections={loadSections}
                   picked={loadPicked}
                   onToggle={toggleLoadPick}
                   onPickMany={pickManyLoad}
+                  onPickRows={pickLoadRows}
+                  onToggleRow={toggleLoadRow}
+                  rows={loadRowChoices}
+                  rowPicked={loadRows}
                 />
                 <p className="text-[10px] text-slate-400 mt-2 leading-relaxed">
                   Un-ticked elements keep their current value; accounts (operators) and the security
-                  configuration are never imported.
+                  configuration are never imported. An experiment ticked under “▸ lines” comes back
+                  WHOLE — with its ORIGINAL id, so its project link and its Drive folder are found
+                  again — and one already in this dataset is never duplicated.
                 </p>
                 <div className="flex flex-col gap-3 mt-4">
+                  {/* ⚠ LE CHOIX RIGA PER RIGA PART AVEC LE GESTE (`loadRows`) : sans ce
+                     troisième argument, la page cochée partait ENTIÈRE et tout ce qui a
+                     été coché sous « ▸ lines » (une seule expérience, par exemple) ne
+                     servait à rien — c’est exactement « le chargement n’est pas
+                     chirurgical ». Le défaut (TOUT coché, posé par loadHTML) laisse les
+                     deux boutons faire ce qu’ils faisaient : en AJOUT, ce que le dataset
+                     porte déjà est écarté par l’ajout lui-même (aucun jumeau) ; en
+                     REMPLACEMENT, décocher une ligne veut vraiment la laisser dehors. */}
                   <button
-                    onClick={() => confirmLoad('append')}
+                    onClick={() => confirmLoad('append', undefined, loadRows)}
                     disabled={loadPicked.length === 0}
                     className="bg-blue-50 hover:bg-blue-100 disabled:opacity-50 disabled:cursor-not-allowed border border-blue-200 text-blue-800 font-bold py-2 px-4 rounded-lg text-left transition-colors"
                   >
@@ -6575,15 +6601,18 @@ const openDataset = (dset, { keepPlace = false } = {}) => {
                   </button>
 
                   <button
-                    onClick={() => confirmLoad('replace')}
+                    onClick={() => confirmLoad('replace', undefined, loadRows)}
                     disabled={loadPicked.length === 0}
                     className="bg-red-50 hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed border border-red-200 text-red-800 font-bold py-2 px-4 rounded-lg text-left transition-colors"
                   >
                     🔄 Replace the selected elements
                   </button>
 
+                  {/* « 🔄 Import everything » dit explicitement « aucune sélection par
+                     ligne » (`null`) : TOUT le contenu du fichier, pas seulement les
+                     lignes cochées — le geste reste intact, dans les deux fenêtres. */}
                   <button
-                    onClick={() => confirmLoad('replace', defaultSelection(loadSections))}
+                    onClick={() => confirmLoad('replace', defaultSelection(loadSections), null)}
                     className="bg-red-50 hover:bg-red-100 border border-red-200 text-red-800 font-bold py-2 px-4 rounded-lg text-left transition-colors"
                   >
                     🔄 Import everything (replace the dataset)

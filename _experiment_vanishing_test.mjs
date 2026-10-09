@@ -233,3 +233,49 @@ eq(L.pickExperimentRows([{ note: 'x' }], ['#row:0']).length, 1, '…et elle se c
 eq(L.testGroupKey({ name: 'Aphids', id: 't9' }), 'name:Aphids',
   'le nom prime sur l’id pour le REGROUPEMENT (deux conditions = une ligne)');
 
+/* ── 7. LA FENÊTRE DU DATASET SCIENTIFIQUE PORTE SES LIGNES ───────────────
+   LE RAPPORT, mot pour mot : « il load backup non é chirurgico, non mi
+   permette di selezionare i singoli tests ». Les lignes existaient, PURES et
+   testées ci-dessus, et `confirmLoad` savait déjà les appliquer — mais la
+   fenêtre d'un dataset SCIENTIFIQUE ne les recevait pas (`<LoadPickPanel>`
+   sans `rows`) et ses deux boutons appelaient `confirmLoad('append')` /
+   `confirmLoad('replace')` SANS le troisième argument (`loadRows`) : la
+   sélection cochée sous « ▸ lines » était jetée. Le retour d'UNE expérience
+   redevient le geste demandé — une ligne = une expérience, ses conditions
+   comprises, son id d'origine compris. */
+eq(APP.split('rows={loadRowChoices}').length - 1, 2,
+  'les DEUX fenêtres (base d’administration ET dataset scientifique) reçoivent les lignes — une seule source, jamais deux listes');
+eq(APP.split('onToggleRow={toggleLoadRow}').length - 1, 2,
+  '…et les deux branchent la même case à cocher (aucune ligne inerte)');
+eq(APP.split('onPickRows={pickLoadRows}').length - 1, 2,
+  '…et le même « all / none » de page (les DEUX niveaux remis à leur défaut)');
+has(APP, "confirmLoad('append', undefined, loadRows)",
+  '« ➕ Add the selected elements » applique la sélection ligne à ligne (sans ce 3e argument elle était jetée)');
+has(APP, "confirmLoad('replace', undefined, loadRows)",
+  '« 🔄 Replace the selected elements » aussi — les deux gestes voient la MÊME sélection');
+has(APP, "confirmLoad('replace', defaultSelection(loadSections), null)",
+  '« 🔄 Import everything » reste le seul geste SANS sélection par ligne (tout le contenu du fichier)');
+lacks(APP, "confirmLoad('append')",
+  'plus aucun geste n’oublie la sélection : c’est le bug « non é chirurgico »');
+lacks(APP, "confirmLoad('replace')",
+  '…ni le remplacement (les deux boutons de la fenêtre portent les lignes)');
+
+/* La chaîne complète, en PUR : les lignes de la fenêtre → la clé cochée → les
+   essais qui partent. C'est la relecture du geste, de bout en bout, sans
+   navigateur. */
+const missing = L.experimentRowChoices([C1, C2, C3], [C3], false).find((r) => !r.inBase);
+eq(missing && missing.key, 'name:Aphids',
+  'la ligne de l’expérience perdue est celle que rien ne marque « already in the base »');
+eq(L.pickExperimentRows([C1, C2, C3], [missing.key]).map((t) => [t.id, t.name]),
+  [['t1', 'Aphids'], ['t2', 'Aphids']],
+  'cette ligne part ENTIÈRE (ses deux conditions) et avec ses IDS D’ORIGINE — lien de projet et dossier Drive retrouvés');
+eq(L.pickExperimentRows([C1, C2, C3], L.experimentRowChoices([C1, C2, C3], [C3], false)
+  .filter((r) => r.picked).map((r) => r.key)).map((t) => t.id), ['t1', 't2', 't3'],
+  'le DÉFAUT de la fenêtre (TOUT coché) laisse les deux boutons faire exactement ce qu’ils faisaient : rien de perdu');
+eq(L.pickExperimentRows([C1, C2, C3], L.experimentRowChoices([C1, C2, C3], [C3], false)
+  .filter((r) => r.picked && !r.inBase).map((r) => r.key)).map((t) => t.id), ['t1', 't2'],
+  '…et ne cocher que ce qui MANQUE (ce que dit la ligne « already in the base ») ne ramène que ça');
+
+/* ── Bilan ─────────────────────────────────────────────────────────────── */
+console.log(`_experiment_vanishing_test.mjs — ${passed} assertions OK (le esperienze non spariscono più: lettura in aggiunta, scrittura sotto verrou, e il ritorno di UNA esperienza da una copia è CHIRURGICO — una riga per esperienza, con il suo id)`);
+
