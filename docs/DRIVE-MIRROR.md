@@ -39,6 +39,7 @@ jamais mélangés à cette mémoire.
 | Envoyer un document dans une section de la page projet | il va dans `<dataset>/projects/<projet>/<section>/` — jamais dans un dossier au nom du projet posé à la racine du dataset |
 | Renommer un projet | le dossier du projet **et** son `<projet>_document.json` sont renommés |
 | Supprimer une expérience / un protocole | le dossier de l'expérience / du protocole part à la corbeille |
+| Supprimer une expérience (document du dataset) | la suppression est **enregistrée** (record daté `deletedExperiments`, magasin `labWorkspace_deletedExperiments`) et voyage avec le payload : elle ne peut plus être annulée par un poste qui détenait encore l'expérience, et — surtout — plus aucun enregistrement ne peut perdre une expérience sans ce record (voir `src/utils/experimentTombstones.js`) |
 | Renommer un storage / une boîte | son dossier Drive (`storage/<storage>`, `storage/<storage>/boxes/<boîte>`) est **renommé** — une boîte ne garde jamais le « Test 74 » de sa création |
 | Modifier le contenu d'une boîte | `storage/<storage>/boxes/<boîte>/<date>_<propriétaire>_boxlabel.pdf` est réécrit (différé, ~2 s après la dernière modification) — et l'ancienne étiquette `label.pdf` part à la corbeille |
 | Enregistrer une figure sans projet | elle est écrite et relue dans `<dataset>/general_library_images/` — la bibliothèque COMMUNE n'est pas un projet |
@@ -65,6 +66,34 @@ Toute lecture l'applique :
 Un dossier supprimé et recréé à l'identique par la suite est distingué par
 l'**identifiant** du dataset : deux datasets peuvent porter le même titre, le
 nouveau doit pouvoir créer son dossier.
+
+## Pourquoi une expérience ne disparaît plus du dataset
+
+Les expériences d'un dataset vivent **entières** dans son payload (`tests`) et
+chaque enregistrement — automatique, 1,5 s après la dernière frappe, vidé à la
+fermeture de l'onglet — écrit cette liste d'un bloc. Un poste qui avait lu une
+copie plus ANCIENNE (Firestore injoignable → repli sur la copie du Drive)
+publiait donc une liste plus courte, sans un mot : sur le Drive les dossiers et
+les `.json` étaient encore là, dans le programme l'expérience n'existait plus.
+
+`src/utils/experimentTombstones.js` (vérifié par
+`_experiment_vanishing_test.mjs`) applique aux expériences les trois mêmes idées
+que les pierres tombales des projets :
+
+1. **la lecture n'efface plus** (`mergeExperimentsAddOnly`, appelé par
+   `openDataset` donc aussi par 🔄 Refresh) : ce que la copie relue apporte est
+   adopté, ce qu'elle *ne porte pas* et que ce poste connaît est **gardé** — et
+   l'écran le dit ;
+2. **l'écriture ne perd rien sans record** (`protectUnrecordedDrops`, appelé aux
+   deux seuls points d'écriture du payload) : ce qui manque sans suppression
+   enregistrée est **remis**, et l'écran le dit ;
+3. **la suppression est une donnée** (`deletedExperiments`) et un retour
+   volontaire est une **levée** datée (`revivedExperiments`) : les deux voyagent
+   avec le payload, comme `deletedProjects` / `revivedProjects`. C'est ce qui
+   distingue une suppression d'une perte — et ce qui permet au 📂 Load HTML de
+   ramener UNE expérience (une ligne par expérience dans la fenêtre d'import,
+   `experimentRowChoices`) **avec son id d'origine**, donc son lien de projet et
+   son dossier Drive.
 
 ## Pourquoi les lectures ne fabriquent plus de dossier
 

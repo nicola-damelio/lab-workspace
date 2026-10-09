@@ -40,6 +40,10 @@ import { ADMIN_COLLECTIONS, ADMIN_PAGES, collectionLabel } from '../administrati
    ligne — donc la fusion s’appuie sur `recordDedupeKey`, pas sur une seconde
    règle qui pourrait diverger. */
 import { recordDedupeKey, normalizeKey } from '../administration/importUtils';
+/* L'identité d'un ESSAI (« l'id, sinon le nom ») est celle du verrou des
+   expériences : la même règle, importée — jamais recopiée, sinon les deux
+   divergeraient (voir utils/experimentTombstones.js). */
+import { experimentKey } from './experimentTombstones';
 
 /* ── Éléments d’un dataset scientifique (une entrée = une case à cocher) ─── */
 const DEF_LIB = 'Définitions & bibliothèque';
@@ -559,4 +563,119 @@ export const describeCount = (section) => {
   const unit = String((section && section.unit) || '').trim();
   if (!unit) return n ? `${n} valeur${n > 1 ? 's' : ''}` : 'vide';
   return `${n} ${unit}${n > 1 ? 's' : ''}`;
+};
+
+/* ---------------------------------------------------------------------------
+ * 🔎 LIGNES D'UN DATASET SCIENTIFIQUE — UNE LIGNE = UNE EXPÉRIENCE
+ *
+ * Le rapport : « nel dataset scientifico il recupero da backup deve essere
+ * chirurgico come per quello amministrativo » — et, en amministration, on
+ * choisit RIGA PER RIGA. Un dataset scientifique n'avait que des cases par
+ * PAGE : pour ramener UNE expérience perdue d'une sauvegarde, il fallait
+ * reprendre la page entière ; et, en AJOUT, chaque copie recevait un id NEUF —
+ * donc ses liens avec son projet (`project.experiments[].testId`) et son dossier
+ * Drive étaient perdus, et les doublons restaient à supprimer à la main.
+ *
+ * `experimentRowChoices` décrit ces lignes : une par EXPÉRIENCE — c'est-à-dire
+ * par NOM, exactement comme les pages du dataset groupent les conditions d'un
+ * même essai (`experimentsGrouped`) — et `pickExperimentRows` ne garde que les
+ * essais cochés, ID D'ORIGINE COMPRIS (`inBase` dit ce que le dataset ouvert
+ * porte DÉJÀ, par id ou par nom, pour que la fenêtre prévienne au lieu de
+ * laisser empiler des jumeaux).
+ * ------------------------------------------------------------------------ */
+
+/** L'id de la page « Expériences / Tests » dans la fenêtre d'import. */
+export const TESTS_SECTION_ID = 'data:tests';
+
+const testTitleOf = (t, index) => String((t && (t.name || t.instanceName)) || '').trim() || `Test ${index + 1}`;
+
+/** LE REGROUPEMENT D'UNE EXPÉRIENCE : par NOM d'abord — c'est la règle des pages
+ *  du dataset (`experimentsGrouped`) et celle du geste 🗑, qui supprime TOUTES
+ *  les conditions d'un même essai. Deux conditions d'une même expérience portent
+ *  donc UNE ligne, alors qu'elles ont deux id : grouper par id couperait
+ *  l'expérience en morceaux, et la restaurer à moitié. Le nom fait défaut (entrée
+ *  écrite par une version ancienne) → l'identité du verrou (l'id), et faute de
+ *  tout, la position (voir `#row:` ci-dessous). */
+export const testGroupKey = (t) => {
+  const name = String((t && (t.name || t.instanceName)) || '').trim();
+  return name ? `name:${name}` : experimentKey(t);
+};
+
+/** Ce que la fenêtre affiche sous le titre d'une ligne : les conditions de
+ *  l'essai, ses projets, son auteur et sa date — ce qui permet de RECONNAÎTRE
+ *  l'expérience qu'on vient restaurer. */
+const testSubOf = (items) => {
+  const list = Array.isArray(items) ? items : [];
+  const first = list[0] || {};
+  const projects = [...new Set(list.flatMap((t) => (Array.isArray(t && t.projectNames) ? t.projectNames : [])))]
+    .map((s) => String(s || '').trim())
+    .filter(Boolean);
+  return [
+    list.length > 1 ? `${list.length} conditions` : '',
+    projects.length ? projects.join(' / ') : 'no project',
+    String(first.operator || '').trim(),
+    String(first.date || '').trim()
+  ].filter(Boolean).join(' · ');
+};
+
+/** Grouper une liste d'essais par IDENTITÉ (id sinon nom) : une expérience =
+ *  un essai AVEC ses conditions, comme partout ailleurs dans le programme. Une
+ *  entrée sans identité (ni id ni nom) fait une ligne à elle : elle est
+ *  reconnaissable à sa POSITION, pas à son contenu. */
+const groupTests = (tests) => {
+  const groups = [];
+  const byKey = new Map();
+  (Array.isArray(tests) ? tests : []).filter(Boolean).forEach((t) => {
+    const key = testGroupKey(t);
+    if (!key) { groups.push({ key: '', items: [t] }); return; }
+    let g = byKey.get(key);
+    if (!g) { g = { key, items: [] }; byKey.set(key, g); groups.push(g); }
+    g.items.push(t);
+  });
+  return groups;
+};
+
+/** Les lignes de la page « Expériences / Tests » d'un FICHIER : une par essai,
+ *  dans l'ordre du fichier. Même forme que `rowChoicesOf` (l'écran d'import n'a
+ *  donc rien de spécial à savoir) : `key`, `title`, `sub`, `inBase`, `locked`,
+ *  `picked`, `noIdentity`, `duplicateOf`. */
+export const experimentRowChoices = (incomingTests, baseTests, merging = false) => {
+  const baseKeys = new Set(
+    (Array.isArray(baseTests) ? baseTests : []).map(testGroupKey).filter(Boolean)
+  );
+  const groups = groupTests(incomingTests);
+  const firstSeen = new Map();
+  return groups.map((g, index) => {
+    const inBase = !!g.key && baseKeys.has(g.key);
+    const duplicateOf = g.key && firstSeen.has(g.key) ? firstSeen.get(g.key) : -1;
+    if (g.key && !firstSeen.has(g.key)) firstSeen.set(g.key, index);
+    return {
+      key: g.key || `#row:${index}`,
+      index,
+      title: testTitleOf(g.items[0], index),
+      sub: testSubOf(g.items),
+      identity: g.key,
+      inBase,
+      duplicateOf,
+      noIdentity: !g.key,
+      locked: !!merging && inBase,
+      picked: merging ? !inBase : true
+    };
+  });
+};
+
+/** APPLICATION du choix ligne à ligne : ne garde que les essais dont la ligne
+ *  est cochée. Les essais d'une ligne cochée partent ENTIERS (toutes leurs
+ *  conditions) et avec leur ID D'ORIGINE — c'est ce qui fait revenir le lien du
+ *  projet et le dossier du Drive au lieu d'en créer un jumeau anonyme. */
+export const pickExperimentRows = (tests, picks) => {
+  const list = (Array.isArray(tests) ? tests : []).filter(Boolean);
+  if (!Array.isArray(picks)) return list;
+  const keep = new Set(picks);
+  const kept = new Set();
+  groupTests(list).forEach((g, index) => {
+    const key = g.key || `#row:${index}`;
+    if (keep.has(key)) g.items.forEach((t) => kept.add(t));
+  });
+  return list.filter((t) => kept.has(t));
 };

@@ -129,11 +129,23 @@ import { sanitizeSlug, datasetFolderSlug } from './utils/driveNaming';
 import { resolveOriginTest } from './utils/pendingFigureScroll';
 import { RECAPTURE_RETURN_EVENT, RECAPTURE_NEXT_TEST_EVENT } from './utils/figureRecapture';
 import { validateDatasetExperiments } from './utils/experimentRules';
+/* 🗑 LE VERROU DES EXPÉRIENCES (voir utils/experimentTombstones.js) : une
+   lecture n'efface plus, un enregistrement ne perd rien sans record, et une
+   suppression (ou un retour) est une donnée qui voyage avec le payload. */
+import {
+  adoptExperimentDeletions, adoptExperimentRevivals,
+  deletionsForDataset, revivalsForDataset, withoutRevivedExperiments,
+  experimentKey, loadExperimentDeletions, loadExperimentRevivals,
+  mergeExperimentsAddOnly, protectUnrecordedDrops,
+  recordExperimentDeletions, recordExperimentRevivals,
+  describeUnrecordedDrops, describeKeptExperiments, describeRemovedExperiments
+} from './utils/experimentTombstones';
 import {
   loadSectionsOf, defaultSelection, sectionGroupsOf, filterLoadState,
   selectionHasTests, selectionIsComplete, describeCount,
   mergeAdministration, mergePreviewOf,
   rowChoicesOf, rowPicksOf, pickAdminRows,
+  experimentRowChoices, pickExperimentRows, testGroupKey, TESTS_SECTION_ID,
 } from './utils/loadSelection';
 import { canUserOpenDataset, isDatasetRestricted, normalizeMemberNames, datasetAccessOf } from './utils/datasetAccess';
 import {
@@ -1081,9 +1093,23 @@ const cloudProjectsPayload = () => {
     return {
       projects: stripOversizedDataUrls(loadProjects() || []),
       deletedProjects: loadDeletedProjects(),
-      revivedProjects: loadRevivedProjects()
+      revivedProjects: loadRevivedProjects(),
+      /* 🗑 LES EXPÉRIENCES SUPPRIMÉES ET RESTAURÉES voyagent avec le payload
+         pour la même raison que celles des projets (voir
+         utils/experimentTombstones.js) : sans elles, un autre poste — qui
+         détient encore l'expérience — la republierait au premier
+         enregistrement, et une expérience restaurée depuis une sauvegarde
+         serait effacée à nouveau par le poste dont la copie porte encore sa
+         suppression. */
+      deletedExperiments: loadExperimentDeletions(),
+      revivedExperiments: loadExperimentRevivals()
     };
-  } catch { return { projects: [], deletedProjects: [], revivedProjects: [] }; }
+  } catch {
+    return {
+      projects: [], deletedProjects: [], revivedProjects: [],
+      deletedExperiments: [], revivedExperiments: []
+    };
+  }
 };
 
 export default function App() {
@@ -1589,18 +1615,27 @@ if (customType === 'dosy') {
      contexte, « déjà dans la base », doublon interne… Recalculé avec le fichier,
      la base ou le mode — jamais à chaque frappe. */
   const loadRowChoices = useMemo(() => {
-    if (!pendingLoad || !pendingLoad.isAdmin || !loadIncomingAdmin) return null;
+    if (!pendingLoad) return null;
     const out = {};
-    (Array.isArray(pendingLoad.sections) ? pendingLoad.sections : []).forEach((s) => {
-      const rows = [];
-      (s.keys || []).forEach((k) => {
-        if (!Array.isArray(loadIncomingAdmin[k])) return;
-        rowChoicesOf(k, loadIncomingAdmin[k], loadMergeBase ? loadMergeBase[k] : undefined, loadAdminMode)
-          .forEach((c) => rows.push(c));
+    if (pendingLoad.isAdmin && loadIncomingAdmin) {
+      (Array.isArray(pendingLoad.sections) ? pendingLoad.sections : []).forEach((s) => {
+        const rows = [];
+        (s.keys || []).forEach((k) => {
+          if (!Array.isArray(loadIncomingAdmin[k])) return;
+          rowChoicesOf(k, loadIncomingAdmin[k], loadMergeBase ? loadMergeBase[k] : undefined, loadAdminMode)
+            .forEach((c) => rows.push(c));
+        });
+        out[s.id] = rows;
       });
-      out[s.id] = rows;
-    });
-    return out;
+      return out;
+    }
+    /* Dataset scientifique : SEULE la page « Expériences / Tests » a des lignes,
+       et UNE LIGNE = UNE EXPÉRIENCE (ses conditions comprises) — c'est ce qui
+       rend le retour d'une seule expérience chirurgical (voir
+       experimentRowChoices). Les autres pages gardent leur case unique. */
+    const testRows = experimentRowChoices(pendingLoad.tests, testsRef.current, false);
+    if (testRows.length) out[TESTS_SECTION_ID] = testRows;
+    return Object.keys(out).length ? out : null;
   }, [pendingLoad, loadIncomingAdmin, loadMergeBase, loadAdminMode]);
   /** Lignes cochées par défaut d’une page, dans le mode courant : celles que
    *  l’utilisateur décide (`picked`) ET celles que la fusion reconnaîtra de
@@ -1631,7 +1666,10 @@ if (customType === 'dosy') {
      lignes. Décocher la page remet aussi ses lignes à vide pour que le compte
      affiché et ce qui sera importé disent la même chose. */
   const pickLoadRows = (sectionIds, on) => setLoadRows((prev) => {
-    if (!loadIncomingAdmin) return prev;
+    /* Valable pour les DEUX familles de lignes : celles d’une base
+       d’administration (`rowChoicesOf`) et celles d’un dataset scientifique
+       (`experimentRowChoices`, une par expérience). Sans cette généralité, les
+       boutons « all / none » d’une ligne d’expérience ne feraient rien. */
     const cur = (prev && typeof prev === 'object') ? prev : {};
     const next = { ...cur };
     loadSections.forEach((s) => {
@@ -1886,11 +1924,142 @@ if (customType === 'dosy') {
           setHistoryIndex(currentHistory.length - 1);
         }
 
+        /* 🗑 CE QUI DISPARAÎT PAR UN GESTE LAISSE SA SUPPRESSION ENREGISTRÉE
+           (voir utils/experimentTombstones.js). C'est ce qui distingue une
+           suppression d'une PERTE : sans ce record, le verrou d'écriture
+           reprendrait l'expérience que l'utilisateur vient de supprimer ; avec
+           lui, il ne reprend que ce qui a disparu sans un mot.
+
+           Le geste passe TOUJOURS par ce point unique (🗑 d'Experiments, 🗑
+           d'une condition, undo/redo, déplacement…) ; les RELECTURES d'une
+           copie, elles, passent par `setReactTests` et ne notent rien. */
+        recordExperimentDeletions(prev, next, currentDatasetIdRef.current);
+
         return next;
       });
     },
     [historyIndex]
   );
+
+  /* ⛔ « L'EXPÉRIENCE A DISPARU DU DATASET » — la réparation de la CAUSE.
+
+     Le rapport, mot pour mot : « le esperienze spariscono dal dataset
+     all'enregistrement automatico — sul Drive ci sono ancora le cartelle e i
+     .json, ma nel programma non ci sono più », et rien ne le disait.
+
+     La cause : la liste des expériences vit ENTIÈRE dans le payload du dataset
+     et chaque enregistrement (automatique : 1,5 s après la dernière frappe,
+     vidé à la fermeture d'onglet — voir l'effet plus bas) écrit cette liste
+     d'un bloc. Un poste qui a lu une copie plus ANCIENNE (Firestore
+     injoignable → repli sur la copie du Drive) publie donc une liste PLUS
+     COURTE, en silence.
+
+     Trois pièces, les mêmes que pour les projets (utils/projectTombstones.js) ;
+     les règles sont dans utils/experimentTombstones.js et vérifiées par
+     _experiment_vanishing_test.mjs :
+
+       1. LA MÉMOIRE DU POSTE — `knownExperimentsRef` retient, dataset par
+          dataset, les expériences que ce poste a vues (ou écrites). Elle ne se
+          vide jamais toute seule : seules les suppressions enregistrées (🗑,
+          écrites par le geste, magasin en fin de module) l'écartent. C'est elle
+          qui permet de refuser un enregistrement qui perdrait une expérience ;
+       2. LA RELECTURE (openDataset, 🔄 Refresh) est en AJOUT SEUL : ce que la
+          copie apporte est adopté, ce qu'elle NE PORTE PAS et que ce poste
+          connaît est GARDÉ — et DIT (`describeKeptExperiments`) ;
+       3. L'ENREGISTREMENT passe par `guardExperimentsForWrite` : rien ne part
+          sans que ce qui manque ait un record de suppression. Ce qui a été
+          repris est DIT à l'écran — un sauvetage muet laisserait croire que
+          tout va bien alors qu'un poste publie une liste tronquée. */
+  const knownExperimentsRef = useRef(new Map());
+
+  /** Retenir (union, sans jamais effacer) ce que ce poste voit de ce dataset. */
+  const rememberExperiments = (datasetId, list) => {
+    const id = datasetId === undefined || datasetId === null ? '' : String(datasetId);
+    if (!id) return;
+    let map = knownExperimentsRef.current.get(id);
+    if (!map) { map = new Map(); knownExperimentsRef.current.set(id, map); }
+    (Array.isArray(list) ? list : []).forEach((t) => {
+      const key = experimentKey(t);
+      if (key) map.set(key, t);
+    });
+  };
+
+  /** Ce que ce poste connaît de ce dataset (la liste des expériences « vues »). */
+  const knownExperimentsOf = (datasetId) => {
+    const id = datasetId === undefined || datasetId === null ? '' : String(datasetId);
+    const map = knownExperimentsRef.current.get(id);
+    return map ? Array.from(map.values()) : [];
+  };
+
+  /** UN REMPLACEMENT VOLONTAIRE (« ♻️ Replace ») est le seul geste qui a le
+   *  droit de vider la mémoire de ce dataset : il est visible à l'écran et
+   *  l'utilisateur l'a demandé. La mémoire suit ce que l'écran montre — elle ne
+   *  ressuscite pas ce qu'on vient de remplacer. */
+  const forgetExperiments = (datasetId, list) => {
+    const id = datasetId === undefined || datasetId === null ? '' : String(datasetId);
+    if (!id) return;
+    const map = new Map();
+    (Array.isArray(list) ? list : []).forEach((t) => {
+      const key = experimentKey(t);
+      if (key) map.set(key, t);
+    });
+    knownExperimentsRef.current.set(id, map);
+  };
+
+  /** LES RECORDS DE CE DATASET : suppressions enregistrées MOINS les levées (une
+   *  expérience restaurée doit pouvoir revenir), chacun rattaché au dataset
+   *  quand il ne le portait pas. */
+  const experimentRecordsOf = (datasetId) => {
+    const deletions = deletionsForDataset(loadExperimentDeletions(), datasetId);
+    const revivals = revivalsForDataset(loadExperimentRevivals(), datasetId);
+    return { deletions: withoutRevivedExperiments(deletions, revivals), revivals };
+  };
+
+  /** ADOPTER les records portés par une copie (payload du dataset, fichier
+   *  HTML) : une suppression faite sur un autre poste vaut ici aussi — sinon ce
+   *  poste republierait l'expérience que l'autre vient de supprimer. */
+  const adoptDatasetExperimentRecords = (payload) => {
+    if (!payload || typeof payload !== 'object') return;
+    try {
+      if (Array.isArray(payload.deletedExperiments) && payload.deletedExperiments.length) {
+        adoptExperimentDeletions(payload.deletedExperiments);
+      }
+      if (Array.isArray(payload.revivedExperiments) && payload.revivedExperiments.length) {
+        adoptExperimentRevivals(payload.revivedExperiments);
+      }
+    } catch { /* magasin indisponible : la règle reste en mémoire pour la session */ }
+  };
+
+  /* LE VERROU D'ÉCRITURE — le seul contrat : ce qui n'a pas de record de
+     suppression ne peut pas quitter le dataset. Rend la liste À ÉCRIRE ; ce
+     qu'il a fallu reprendre (ou retirer) est mis à l'écran et DIT. */
+  const guardExperimentsForWrite = (list) => {
+    const datasetId = currentDatasetIdRef.current;
+    const { deletions } = experimentRecordsOf(datasetId);
+    const out = protectUnrecordedDrops(knownExperimentsOf(datasetId), list, deletions);
+    if (!out.rescued.length && !out.removed) return out.tests;
+    const message = [
+      describeUnrecordedDrops(out.rescued),
+      describeRemovedExperiments(out.removed)
+    ].filter(Boolean).join('\n\n');
+    try { console.warn('[experiments] write guard:', out.rescued.map((t) => t.name || t.id)); } catch { /* ignore */ }
+    /* Le dialogue NE REMPLACE PAS celui qui est déjà ouvert (import, sauvegarde
+       manuelle…) : il s'ajoute à ce qui se disait déjà. L'écran reçoit la liste
+       écrite — sinon le prochain enregistrement referait le même sauvetage et
+       l'affichage mentirait sur ce qui vient d'être publié. */
+    setDialog((prev) => prev || {
+      type: 'alert',
+      title: out.rescued.length ? '⚠ Experiments were about to disappear' : '🗑 Deleted experiments',
+      message
+    });
+    setReactTests(out.tests);
+    rememberExperiments(datasetId, out.tests);
+    return out.tests;
+  };
+
+  /* Ce que l'écran montre est RETENU : la mémoire se remplit au fil du rendu
+     (une union par identité — idempotente, donc la frappe ne change rien). */
+  rememberExperiments(currentDatasetId, tests);
 
   // ── AUTO-ATTRIBUTE OPENED TESTS TO THE CURRENT SCIENTIST ────────────────
   // A test with no owner is invisible to non-superuser scientists in the test
@@ -1980,7 +2149,13 @@ if (customType === 'dosy') {
     if (historyIndex > 0) {
       const newIdx = historyIndex - 1;
       setHistoryIndex(newIdx);
-      setReactTests(historyRef.current[newIdx]);
+      const target = historyRef.current[newIdx];
+      /* Un retour en arrière est VISIBLE à l'écran et réversible (↷ Redo) : la
+         mémoire du poste SUIT ce que l'écran montre au lieu de noter une
+         suppression — sinon le verrou d'écriture ressusciterait au prochain
+         enregistrement ce que l'utilisateur vient de défaire. */
+      forgetExperiments(currentDatasetIdRef.current, target);
+      setReactTests(target);
     }
   };
 
@@ -1988,7 +2163,9 @@ if (customType === 'dosy') {
     if (historyIndex < historyRef.current.length - 1) {
       const newIdx = historyIndex + 1;
       setHistoryIndex(newIdx);
-      setReactTests(historyRef.current[newIdx]);
+      const target = historyRef.current[newIdx];
+      forgetExperiments(currentDatasetIdRef.current, target);
+      setReactTests(target);
     }
   };
 
@@ -3689,6 +3866,12 @@ useEffect(() => {
     pendingDatasetSaveRef.current = null;
     try {
       const rawData = { ...latestDataRef.current, ...cloudProjectsPayload() };
+      /* ⛔ LE VERROU DES EXPÉRIENCES (voir guardExperimentsForWrite) : la liste
+         écrite ici ne peut pas perdre une expérience qui n'a pas de suppression
+         enregistrée. C'est CE point qui rend le scénario du rapport impossible —
+         l'enregistrement automatique publiait sans un mot une liste plus courte
+         que celle du document partagé. */
+      rawData.tests = guardExperimentsForWrite(rawData.tests);
       // Compress payload to prevent Firestore 1MB limit and write stream exhaustion
       const compressedPayload = compressDatasetForSave(rawData);
 
@@ -4091,6 +4274,19 @@ useEffect(() => {
         const dataSections = loadSectionsOf(s, false);
         setPendingLoad({ tests: loadedTests, fullState: s, sections: dataSections });
         setLoadPick(defaultSelection(dataSections));
+        /* 🔎 LA PAGE « EXPÉRIENCES / TESTS » SE CHOISIT RIGA PER RIGA, comme une
+           base d'administration : une ligne = une expérience, ses conditions
+           comprises (voir experimentRowChoices dans utils/loadSelection.js). Le
+           calcul est fait ICI et non par le memo `loadRowChoices` : celui-ci ne
+           connaît `pendingLoad` qu'à partir du rendu suivant.
+           Défaut = TOUT coché, le seul défaut sûr pour les DEUX boutons : en
+           AJOUT, ce que le dataset porte déjà est ignoré par l'ajout lui-même
+           (aucun jumeau ne s'empile) ; en REMPLACEMENT, décocher une ligne veut
+           vraiment la retirer — cela doit rester un geste. */
+        const sciRows = experimentRowChoices(loadedTests, testsRef.current, false);
+        setLoadRows(sciRows.length
+          ? { [TESTS_SECTION_ID]: sciRows.filter((r) => r.picked || r.locked).map((r) => r.key) }
+          : null);
       } catch (err) {
         setDialog({
           type: 'alert',
@@ -4114,7 +4310,9 @@ useEffect(() => {
     /* LIGNE À LIGNE : le choix fait dans la fenêtre (`{ [page]: [clés] }`, voir
        rowChoicesOf). `null` / absent = aucune sélection par ligne : le contenu
        part entier — c’est le cas de « ♻️ Import everything » et des imports qui
-       ne connaissent pas cette sélection (dataset scientifique). */
+       ne connaissent pas cette sélection (dataset scientifique) — le dataset
+       scientifique a désormais SES lignes : une par expérience, voir
+       experimentRowChoices. */
     const rowsPicked = (rowPicks && typeof rowPicks === 'object') ? rowPicks : null;
     /* Import PARTIEL : le snapshot est réduit aux éléments COCHÉS — les autres
        gardent leur valeur actuelle (rien n’est écrasé en silence). Les
@@ -4122,12 +4320,33 @@ useEffect(() => {
        l’élément « Expériences » est coché. */
     const pruned = filterLoadState(rawState, allSections, picked);
     const s = pruned.state;
-    const loadedTests = selectionHasTests(picked) ? (pendingTests || []) : [];
+    /* 🔎 LE CHOIX RIGA PER RIGA (voir experimentRowChoices) : la page
+       « Expériences / Tests » est réduite aux essais COCHÉS. L'ID D'ORIGINE de
+       chaque essai traverse tel quel — c'est lui que le lien du projet
+       (`project.experiments[].testId`) et le dossier du Drive nomment, donc
+       c'est ce qui fait revenir une expérience au lieu d'en créer un jumeau
+       anonyme. Sans sélection par ligne (import « everything », fichier sans
+       lignes), le contenu de la page part entier, comme avant. */
+    const allLoadedTests = selectionHasTests(picked) ? (pendingTests || []) : [];
+    const testRowPicks = (rowsPicked && Array.isArray(rowsPicked[TESTS_SECTION_ID]))
+      ? rowsPicked[TESTS_SECTION_ID]
+      : null;
+    const loadedTests = testRowPicks ? pickExperimentRows(allLoadedTests, testRowPicks) : allLoadedTests;
+    /* Les suppressions (et restaurations) portées par le FICHIER sont adoptées,
+       comme celles des projets : une expérience supprimée sur un autre poste
+       reste supprimée ici, et une expérience restaurée ailleurs peut revenir. */
+    adoptDatasetExperimentRecords(s);
     let targetId = currentDatasetId;
     /* Le verdict de la restauration des projets ('' = rien à dire) : il est
        affiché à la FIN, une fois la fenêtre d'import refermée — « rien ne se
        passe » devient une phrase qui dit quoi faire (describeProjectRestore). */
     let projectRestoreNote = '';
+    /* Le verdict de la restauration des EXPÉRIENCES ('' = rien à dire) : il dit
+       COMBIEN d'expériences sont revenues, avec leur id d'origine, et lesquelles
+       ont été écartées parce que le dataset les porte déjà — sinon l'ajout
+       « ne fait rien » pour une expérience déjà là, et cela ressemble à une
+       panne (voir le mode AJOUT plus bas). */
+    let experimentRestoreNote = '';
     /* ❗ PREMIER CAS DE SILENCE : le fichier lui-même n'a RIEN à donner. Une
        sauvegarde prise APRÈS la disparition des projets porte « Projets — vide »,
        et l'import ne peut alors rien ramener : c'est exactement « nothing
@@ -4290,6 +4509,13 @@ useEffect(() => {
          coché : importer uniquement les définitions ne doit jamais vider les
          expériences déjà présentes dans le dataset. */
       if (loadedTests.length > 0 || selectionHasTests(picked)) {
+        /* ♻️ REMPLACER est le SEUL geste qui a le droit d'effacer des expériences
+           SANS record : il est visible à l'écran et l'utilisateur l'a demandé (la
+           fenêtre le dit : « Replace the selected elements »). La mémoire du
+           poste suit donc ce que l'écran montre — sinon le verrou d'écriture
+           reprendrait, au prochain enregistrement, ce qui vient d'être
+           remplacé. */
+        forgetExperiments(targetId, loadedTests);
         setReactTests(loadedTests);
         historyRef.current = [loadedTests];
         setHistoryIndex(0);
@@ -4376,10 +4602,46 @@ useEffect(() => {
       // merged (never replaced) for BOTH modes, together with the papers, see
       // the `mergeLibraryFromSnapshot` call at the end of this function.
     } else if (mode === 'append') {
-      const newTests = loadedTests.map((p) => ({
-        ...p,
-        id: 't' + Math.random().toString(36).substr(2, 9) + Date.now()
-      }));
+      /* ➕ L'EXPÉRIENCE REVIENT AVEC SON ID D'ORIGINE — c'est tout l'intérêt du
+         retour chirurgical : un id NEUF (ce que ce mode faisait) laissait le lien
+         du projet (`project.experiments[].testId`) dans le vide et son dossier
+         Drive orphelin, si bien qu'il fallait re-lier à la main ET supprimer les
+         jumeaux. Une expérience que ce dataset porte DÉJÀ (même id ou même nom —
+         la règle d'identité du programme) est simplement ÉCARTÉE : un
+         chargement n'empile jamais un jumeau. Un essai sans id (entrée écrite
+         par une version ancienne) en reçoit un : sans id, rien ne pourrait plus
+         le reconnaître. */
+      const existingKeys = new Set(
+        (Array.isArray(testsRef.current) ? testsRef.current : []).map(testGroupKey).filter(Boolean)
+      );
+      const freshId = () => 't' + Math.random().toString(36).substr(2, 9) + Date.now();
+      const newTests = [];
+      loadedTests.forEach((p) => {
+        const key = testGroupKey(p);
+        if (key && existingKeys.has(key)) return;      // déjà là : jamais deux fois
+        if (key) existingKeys.add(key);
+        newTests.push(p && p.id ? { ...p } : { ...p, id: freshId() });
+      });
+      /* Le retour est VOLONTAIRE : les suppressions de ces expériences sont
+         LEVÉES (datées), sinon le verrou d'écriture les reprendrait — un autre
+         poste les avait peut-être supprimées, et c'est justement ce qu'on défait
+         ici (voir recordExperimentRevivals, experimentTombstones.js). */
+      if (newTests.length) {
+        try { recordExperimentRevivals(newTests, targetId); } catch { /* magasin indisponible */ }
+        rememberExperiments(targetId, newTests);
+      }
+      /* Ce qui est arrivé SE DIT : combien sont revenues (et avec leur id), et
+         combien ont été laissées de côté parce qu'elles étaient déjà là — un
+         ajout qui « ne fait rien » pour une expérience déjà présente ne doit pas
+         ressembler à une panne. */
+      if (newTests.length < loadedTests.length) {
+        experimentRestoreNote = `${loadedTests.length - newTests.length} experiment(s) of this file were ALREADY in this `
+          + 'dataset (same name or same id): they were left alone — a load never stacks twins. '
+          + `${newTests.length} came back WITH THEIR ORIGINAL ID, so their Project link and their Drive folder are found again.`;
+      } else if (newTests.length) {
+        experimentRestoreNote = `${newTests.length} experiment(s) came back WITH THEIR ORIGINAL ID: their Project link and `
+          + 'their Drive folder are found again — nothing to re-link by hand.';
+      }
 
       setTests((prev) => [...prev, ...newTests]);
 
@@ -4552,6 +4814,11 @@ if (s.mandatoryFields !== undefined) setMandatoryFields((prev) => [...new Set([.
        est exactement le défaut réparé ici (voir describeProjectRestore). */
     if (projectRestoreNote) {
       setDialog({ type: 'alert', title: 'Projects not restored', message: projectRestoreNote });
+    } else if (experimentRestoreNote) {
+      /* …celui des EXPÉRIENCES : combien sont revenues, avec leur id d'origine,
+         et combien ont été laissées de côté parce qu'elles étaient déjà là. Un
+         import dont on ne voit pas l'effet doit se lire (voir le mode AJOUT). */
+      setDialog({ type: 'alert', title: 'Experiments restored', message: experimentRestoreNote });
     }
     setCurrentModule('tests');
 
@@ -4750,6 +5017,11 @@ const handleBackToExplorer = async () => {
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     try {
       const rawData = { ...latestDataRef.current, ...cloudProjectsPayload() };
+      /* Le MÊME verrou qu'à l'enregistrement automatique (voir
+         guardExperimentsForWrite) : quitter un dataset ne peut pas perdre une
+         expérience non supprimée. Une base d'administration, elle, ne porte pas
+         d'expériences : le verrou n'a rien à y faire. */
+      if (!isAdmin) rawData.tests = guardExperimentsForWrite(rawData.tests);
       const compressedPayload = isAdmin ? '' : compressDatasetForSave(rawData);
       
       const updatedPayload = isAdmin
@@ -4944,7 +5216,33 @@ const openDataset = (dset, { keepPlace = false } = {}) => {
 
   try {
     const migrated = migrateLoadedDataset(s);
-      const loadedTests = migrated.tests;
+      /* Ce que la copie relue PORTE de suppressions (et de restaurations) est
+         adopté AVANT de fusionner : une expérience supprimée sur un autre poste
+         doit être écartée ici aussi — c'est le record qui voyage avec le payload
+         (voir utils/experimentTombstones.js). */
+      adoptDatasetExperimentRecords(dset);
+      /* ⛔ UNE RELECTURE N'EFFACE PLUS — `mergeExperimentsAddOnly` : ce que la
+         copie porte est adopté (elle est la plus récente par construction), ce
+         qu'elle NE PORTE PAS et que CE poste connaît est GARDÉ. Sans cela, une
+         copie plus ancienne (repli sur le Drive, autre poste en retard) vidait
+         la mémoire du poste — et l'enregistrement automatique publiait ce vide :
+         c'est exactement le scénario du rapport. */
+      const merged = mergeExperimentsAddOnly(
+        knownExperimentsOf(dset.id),
+        migrated.tests,
+        experimentRecordsOf(dset.id).deletions
+      );
+      const loadedTests = merged.tests;
+      /* Ce qui a été GARDÉ se dit : c'est le signe qu'un autre poste publie une
+         liste plus courte, et l'écran est le seul endroit où cela se voit. */
+      if (merged.added.length && keepPlace) {
+        setDialog((prev) => prev || {
+          type: 'alert',
+          title: '⚠ Experiments kept (the shared copy had fewer)',
+          message: describeKeptExperiments(merged.added)
+        });
+      }
+      rememberExperiments(dset.id, loadedTests);
 
       if (loadedTests.length > 0) {
         setReactTests(loadedTests);
