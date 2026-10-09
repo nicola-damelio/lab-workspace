@@ -28,7 +28,7 @@ import { NotebookModule, CalculationsModule, PublicationsModule, ImageBuilderMod
    sauvegardes et les relit en FUSION lors d'un « Load HTML » (voir
    applyPapersRecovery — rien de ce qui est enregistré n'est écrasé). */
 import { applyPapersRecovery, readPublications, readExcludedPubs, readRelevantSubjects, loadRelevantPapers } from './components/Publications';
-import { ProjectsModule, loadProjects, mergeProjectsFromCloud, setProjectDatasetScope, removeProjectsOfDataset, loadDeletedProjects, adoptDeletedProjects, adoptWorkspaceProjects, loadRevivedProjects, adoptRevivedProjects, reviveDeletedProject, importProjectsFromFile } from './components/AppModules/projectsModule';
+import { ProjectsModule, loadProjects, mergeProjectsFromCloud, reconcileProjectExperiments, setProjectDatasetScope, removeProjectsOfDataset, loadDeletedProjects, adoptDeletedProjects, adoptWorkspaceProjects, loadRevivedProjects, adoptRevivedProjects, reviveDeletedProject, importProjectsFromFile } from './components/AppModules/projectsModule';
 import { fileDatasetIdOf } from './utils/projectImport';
 import { ProjectDetailModule } from './components/AppModules/projectDetailModule';
 import { normalizeOperators, memberIdentity } from './utils/auth';
@@ -858,6 +858,59 @@ const LoadPickPanel = ({ sections, picked, onToggle, onPickMany }) => {
   );
 };
 
+/* ⛔ UNE DEP-ARRAY EST LUE PENDANT LE RENDU — CES DEUX FONCTIONS VIVENT DONC AU
+   NIVEAU DU MODULE, PAS DANS `App`.
+
+   Le défaut, trouvé par `_tdz_scan_test.mjs` (« aucune use before declaration
+   dans src/ ») et mesuré pour de vrai par `_ui_bg_live_test.cjs` (l'application
+   RÉELLE, chargée depuis `dist/`, ne peignait plus aucune surface : hauteur 0 —
+   page blanche) : `tidyWorkspaceFromDrive` cite `cloudProjectsPayload` dans son
+   tableau de dépendances, et une dep-array est ÉVALUÉE pendant le rendu. La
+   `const` déclarée plus BAS dans le corps du composant était donc encore dans sa
+   zone morte (TDZ) à cet instant, et la lecture **jetait** — `Cannot access
+   'cloudProjectsPayload' before initialization`. Au niveau du module, les deux
+   fonctions existent AVANT le premier rendu : plus de TDZ, et `App` n'a plus
+   deux allocations par rendu pour rien (elles ne lisent que le magasin du
+   navigateur, aucun état). */
+
+/* Firestore rejects a single document/field above ~1 MiB ("the value of property
+   payload is longer than 1048487 bytes"). LZString's UTF-16 output is up to 3
+   bytes per char in UTF-8, so we stay well under the limit: if the compressed
+   payload would be too large, drop the heavy legacy chart images
+   (mdNotebookCharts) that no longer belong in the dataset document — the MD
+   notebook now renders its figures from persisted data / sessionStorage.
+   Deep copy that replaces oversized base64 data-URLs with '' — used for the
+   CLOUD mirror of the (per-browser) project store, so Firestore stays small and
+   a phone never receives a giant string or a broken compression marker. */
+const stripOversizedDataUrls = (value) => {
+  if (typeof value === 'string') {
+    return value.startsWith('data:') && value.length > 5000 ? '' : value;
+  }
+  if (Array.isArray(value)) return value.map(stripOversizedDataUrls);
+  if (value && typeof value === 'object') {
+    const out = {};
+    for (const k of Object.keys(value)) out[k] = stripOversizedDataUrls(value[k]);
+    return out;
+  }
+  return value;
+};
+/* Les projets du dataset + la LISTE DES PROJETS SUPPRIMÉS : sans elle, un autre
+   poste (ou ce poste, après rechargement du payload) ré-adoptait la copie du
+   projet supprimé restée dans le document et le projet réapparaissait. La
+   suppression voyage donc avec le payload (voir utils/projectTombstones.js).
+   Les LEVÉES DE TOMBE voyagent avec elle, pour la raison inverse : un projet
+   RESTAURÉ (« tmp », figures et texte compris) revient sur tous les postes, y
+   compris sur celui dont la copie porte encore la tombe. */
+const cloudProjectsPayload = () => {
+  try {
+    return {
+      projects: stripOversizedDataUrls(loadProjects() || []),
+      deletedProjects: loadDeletedProjects(),
+      revivedProjects: loadRevivedProjects()
+    };
+  } catch { return { projects: [], deletedProjects: [], revivedProjects: [] }; }
+};
+
 export default function App() {
   try { console.info('Lab Workspace build:', typeof __APP_COMMIT__ !== 'undefined' ? __APP_COMMIT__ : 'dev'); } catch { /* ignore */ }
   const createEmptyTest = (id, num, customType = 'plate-96') => {
@@ -1613,6 +1666,35 @@ if (customType === 'dosy') {
     );
     writeLastExperiment(currentDatasetId, payload);
   }, [currentModule, activeTestId, currentDatasetId]);
+
+  /* 🔗 « LE PROJET SAIT ENFIN QUE L'EXPÉRIENCE LUI APPARTIENT » — la réparation
+     du lien test ↔ projet.
+
+     LE RAPPORT, mot pour mot : « quando creo un esperimento esso viene forzato ad
+     essere associato ad un progetto ma quando vado nella pagina dei progetti leggo
+     0 esperimenti associati. é come se l'esperimento sa di essere associato al
+     progetto ma il progetto non sa di avere l'esperimento associato a meno che non
+     lo si definisca a mano. »
+
+     Le lien vit des deux côtés — le test porte `projectNames`, le projet porte une
+     entrée par instance dans `experiments[]` — et une seule moitié était écrite au
+     moment de la création (le geste d'Experiments.jsx écrit désormais les deux, et
+     ce n'est pas la seule porte d'entrée : un fichier HTML, une copie du Drive, un
+     dataset rouvert sur un autre poste apportent des expériences déjà liées).
+
+     D'où cette réparation, ici, au niveau de la coquille : elle relit le magasin
+     des projets, ajoute ce qui manque (AJOUT SEUL, idempotent — voir
+     `reconcileProjectExperiments`) et n'écrit QUE si quelque chose manquait. Les
+     déclencheurs sont volontairement GROSSIERS — la page affichée, le dataset
+     ouvert, le NOMBRE d'expériences — jamais le tableau `tests` lui-même : il
+     change à chaque frappe dans une page d'expérience, et relire le magasin à
+     chaque caractère serait payer une réparation déjà faite. */
+  useEffect(() => {
+    if (!currentDatasetId) return;                 // hors dataset : aucun projet à réparer
+    if (!Array.isArray(tests) || tests.length === 0) return;
+    try { reconcileProjectExperiments(tests); } catch { /* magasin indisponible : rien de bloquant */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentDatasetId, currentModule, tests.length]);
 
   const handleSetCustomFields = useCallback((updater) => {
     setCustomFields((prev) => {
@@ -2617,6 +2699,11 @@ if (customType === 'dosy') {
     };
   }, [syncWorkspaceFromDrive, datasetsList]);
 
+  /* `stripOversizedDataUrls` et `cloudProjectsPayload` vivent désormais AU
+     NIVEAU DU MODULE (juste avant `export default function App`) : c'est la
+     seule place qui écarte pour de bon la lecture avant déclaration — voir la
+     note « ⛔ UNE DEP-ARRAY EST LUE PENDANT LE RENDU ». */
+
   /* ── « TIDY THE DRIVE » (le geste du superutilisateur) ──────────────────────
      Le défaut rapporté : après un renommage, le Drive portait la bonne
      arborescence MAIS aussi un tas de dossiers inutiles (un dossier d'instance
@@ -2658,7 +2745,13 @@ if (customType === 'dosy') {
       return { data, folder: slugOf(copy.title || ds.title), title: copy.title || ds.title || '' };
     };
     return tidyWorkspaceStructure({ datasets, dataFor, dryRun });
-  }, [datasetsList, currentDatasetId, datasetTitle, cloudProjectsPayload]);
+    /* ⚠ `cloudProjectsPayload` N'EST PAS dans les dépendances, volontairement :
+       c'est une fonction de niveau MODULE (déclarée en haut de ce fichier), donc
+       une valeur stable qui ne re-rend jamais — la lister faisait recréer cette
+       callback à chaque rendu pour rien. C'est aussi la ligne exacte que
+       `_tdz_scan_test.mjs` signalait : cette dep-array est lue PENDANT le rendu,
+       et la déclaration vivait alors plus BAS. */
+  }, [datasetsList, currentDatasetId, datasetTitle]);
 
   /* ── LA PAGE S'OUVRE : L'INDEX PARTAGÉ EST RELU ─────────────────────────────
      Le défaut : l'index du Drive n'était lu qu'AU DÉMARRAGE et sur le geste
@@ -3072,43 +3165,10 @@ const saveTimeoutRef = useRef(null);
    l'autre fenêtre (ou l'autre poste) voyait encore l'état d'AVANT (une
    condition supprimée qui « revient », un fichier ajouté qui manque). */
 const pendingDatasetSaveRef = useRef(null);
-// Firestore rejects a single document/field above ~1 MiB ("the value of
-// property payload is longer than 1048487 bytes"). LZString's UTF-16 output is
-// up to 3 bytes per char in UTF-8, so we stay well under the limit: if the
-// compressed payload would be too large, drop the heavy legacy chart images
-// (mdNotebookCharts) that no longer belong in the dataset document — the MD
-// notebook now renders its figures from persisted data / sessionStorage.
-// Deep copy that replaces oversized base64 data-URLs with '' — used for the
-// CLOUD mirror of the (per-browser) project store, so Firestore stays small and
-// a phone never receives a giant string or a broken compression marker.
-const stripOversizedDataUrls = (value) => {
-  if (typeof value === 'string') {
-    return value.startsWith('data:') && value.length > 5000 ? '' : value;
-  }
-  if (Array.isArray(value)) return value.map(stripOversizedDataUrls);
-  if (value && typeof value === 'object') {
-    const out = {};
-    for (const k of Object.keys(value)) out[k] = stripOversizedDataUrls(value[k]);
-    return out;
-  }
-  return value;
-};
-/* Les projets du dataset + la LISTE DES PROJETS SUPPRIMÉS : sans elle, un
-   autre poste (ou ce poste, après rechargement du payload) ré-adoptait la copie
-   du projet supprimé restée dans le document et le projet réapparaissait. La
-   suppression voyage donc avec le payload (voir utils/projectTombstones.js).
-   Les LEVÉES DE TOMBE voyagent avec elle, pour la raison inverse : un projet
-   RESTAURÉ (« tmp », figures et texte compris) revient sur tous les postes, y
-   compris sur celui dont la copie porte encore la tombe. */
-const cloudProjectsPayload = () => {
-  try {
-    return {
-      projects: stripOversizedDataUrls(loadProjects() || []),
-      deletedProjects: loadDeletedProjects(),
-      revivedProjects: loadRevivedProjects()
-    };
-  } catch { return { projects: [], deletedProjects: [], revivedProjects: [] }; }
-};
+/* `stripOversizedDataUrls` et `cloudProjectsPayload` vivent AU NIVEAU DU MODULE
+   (près du haut de ce fichier) — voir la note « ⛔ UNE DEP-ARRAY EST LUE PENDANT
+   LE RENDU » : les lire depuis le corps d'`App` AVANT leur déclaration faisait
+   jeter le rendu. */
 
 /* ❗ « JE RESTAURE LES PROJETS ET RIEN NE SE PASSE » — LA PHRASE QUI EXPLIQUE.
    Après un import (« restore projects »), on regarde ce que le magasin contient
@@ -6161,9 +6221,11 @@ const openDataset = (dset, { keepPlace = false } = {}) => {
               currentUser={currentUser} operatorNames={operatorNames} handlePrint={handlePrint}
               setCurrentModule={setCurrentModule} setCurrentProjectId={setCurrentProjectId}
               onRestoreProject={restoreDeletedProject}
+              tests={tests}
             />))}
             {pageSlot('project-detail', () => (<ProjectDetailModule
               currentUser={currentUser} setCurrentModule={setCurrentModule}
+              currentModule={currentModule}
               currentProjectId={currentProjectId} setCurrentProjectId={setCurrentProjectId}
               createEmptyTest={createEmptyTest} tests={tests} setTests={setTests}
               setActiveTestId={setActiveTestId} jumpToTest={jumpToTest}

@@ -387,7 +387,7 @@ export const figureDriveLink = (fig, projectId = '') => {
 export const ProjectDetailModule = ({
   currentUser, setCurrentModule, setCurrentProjectId, currentProjectId,
   createEmptyTest, tests, setTests, setActiveTestId, jumpToTest, operatorNames,
-  openImageBuilder
+  openImageBuilder, currentModule
 }) => {
   const isSuper = currentUser?.role === 'superuser';
   const myName = currentUser?.name || '';
@@ -585,6 +585,36 @@ export const ProjectDetailModule = ({
     .filter((p) => p && p.id !== project?.id && projectAccessFor(p, myName, isSuper) === 'modify')
     .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''))),
   [projects, project?.id, myName, isSuper]);
+
+  /* 🔗 LE LIEN test ↔ projet EST RELU À CHAQUE RETOUR SUR CETTE PAGE.
+
+     La page garde la liste des projets lue à SON montage (`useState(loadProjects)`),
+     et la coquille GARDE la page quittée MONTÉE (`parkedAfter`, App.jsx) : on
+     revenait donc sur une liste figée. Or c'est exactement ici que le lien se
+     VOIT — cette liste est celle qui porte la ligne ⇄ Move — et une expérience
+     créée entre-temps ailleurs (Experiments → « + NMR ») doit s'y trouver, sinon
+     le geste de déplacement reste introuvable (« mi sembrava che in passato
+     l'avevi fatto ma adesso non riesco »).
+
+     On adopte UNIQUEMENT ce que le magasin a de plus sur CETTE expérience : les
+     entrées dont le `testId` n'est pas déjà dans la liste affichée. Rien n'est
+     retiré, rien n'est écrasé (le ✕ et le ⇄ de cette page écrivent le magasin
+     aussitôt, donc ce qui est affiché n'est jamais « en avance » sur lui). */
+  useEffect(() => {
+    if (currentModule !== 'project-detail') return;
+    const id = project && project.id;
+    if (!id) return;
+    const stored = loadProjects().find((p) => p && String(p.id) === String(id));
+    if (!stored) return;
+    const known = new Set((project.experiments || []).map((e) => e && String(e.testId)));
+    const missing = (stored.experiments || [])
+      .filter((e) => e && e.testId && !known.has(String(e.testId)));
+    if (missing.length === 0) return;
+    replaceProjects(projectsRef.current.map((p) => (String(p.id) === String(id)
+      ? { ...p, experiments: [...(p.experiments || []), ...missing] }
+      : p)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentModule, project?.id]);
 
   // ---- Saved Image Builder canvases (editable figures linked on this page) ----
   // The Image Builder stores each composition in the project image library as an
@@ -4742,6 +4772,17 @@ export const ProjectDetailModule = ({
               <span className="flex-1">{moveReport}</span>
               <button type="button" onClick={() => setMoveReport('')}
                       className="shrink-0 font-black opacity-60 hover:opacity-100" title="Hide this message">✕</button>
+            </p>
+          )}
+          {/* ⇄ LE GESTE EST DIT ICI — le rapport : « Ci dovrebbe poi essere il modo
+              di spostare un esperimento su un altro progetto (mi sembrava che in
+              passato lo avevi fatto ma adesso non riesco) ». Le bouton ⇄ existait,
+              sans que rien ne l'annonce : la ligne le dit maintenant, et rappelle
+              la différence avec le ✕ (retirer ≠ déplacer). */}
+          {(project.experiments || []).length > 0 && (
+            <p className="text-[10px] text-slate-400 mb-2">
+              ⇄ on a row moves that experiment — its condition instances, its files and its Google-Drive folder
+              (the folder MIGRATES to the other project: nothing is copied) — while ✕ only removes it from this project.
             </p>
           )}
           {(project.experiments || []).length === 0 ? (

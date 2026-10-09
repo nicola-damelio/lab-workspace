@@ -10,6 +10,7 @@ import {
   withoutRevivedProjects, addRevival, withoutRevival, revivalsForDataset
 } from '../../utils/projectTombstones';
 import { planProjectImport } from '../../utils/projectImport';
+import { reconcileExperimentLinks, countExperimentsOfProject } from '../../utils/experimentRules';
 
 /* =========================================================================
    PROJECTS — "Scientific background / Experiments / Results and Discussion /
@@ -393,6 +394,62 @@ export const saveProjects = (list) => {
     ...tagged
   ];
   return writeRawProjects(merged);
+};
+
+/* 🔗 LE PROJET APPREND QUE L'EXPÉRIENCE LUI APPARTIENT — le lien écrit DU CÔTÉ
+   DU PROJET, depuis le magasin.
+
+   Le rapport, mot pour mot : « quando creo un esperimento esso viene forzato ad
+   essere associato ad un progetto ma quando vado nella pagina dei progetti leggo
+   0 esperimenti associati. é come se l'esperimento sa di essere associato al
+   progetto ma il progetto non sa di avere l'esperimento associato a meno che non
+   lo si definisca a mano. »
+
+   Le lien test ↔ projet vit des DEUX côtés : le test porte `projectNames` (il
+   « sait »), le projet porte une entrée par instance dans `experiments[]` (c'est
+   cette liste que cette page COMPTE et que la page du projet AFFICHE, avec sa
+   ligne ⇄ Move). La création forcée d'une expérience n'écrivait que le premier
+   côté : l'expérience était donc introuvable dans son propre projet — compte à
+   0, liste vide, et rien à déplacer non plus.
+
+   Cette fonction est la RÉPARATION : elle relit le magasin, ajoute les entrées
+   manquantes (règle pure `experimentRules.reconcileExperimentLinks`, AJOUT SEUL
+   et idempotente), réécrit une seule fois si quelque chose manquait, et rend son
+   compte rendu. Elle ne retire jamais rien : retirer une expérience d'un projet
+   reste le ✕ de la page projet.
+
+   @returns {{ ok:boolean, error:string, added:number, linked:number,
+               unpaired:Array, projects:Array }}
+     `added`    = entrées écrites (0 = le magasin était déjà d'aplomb) ;
+     `unpaired` = expériences qui nomment un projet INEXISTANT (renommé ou
+                  supprimé) : rien n'est écrit pour elles, et l'appelant le dit.
+*/
+export const reconcileProjectExperiments = (tests, opts = {}) => {
+  const options = { labelOf: testTypeLabel, ...(opts || {}) };
+  /* ⛔ HORS DATASET, ON NE RÉPARE RIEN. `loadProjects()` rend alors la vue
+     « globale » (les projets de TOUS les datasets) : y relier les expériences
+     d'un autre dataset écrirait un lien dans le projet homonyme d'un dataset
+     voisin. La portée est la seule autorité (voir setProjectDatasetScope). */
+  if (!getActiveProjectDataset()) {
+    return { ok: true, error: '', added: 0, linked: 0, unpaired: [], projects: [] };
+  }
+  const projects = loadProjects();
+  if (projects.length === 0) {
+    return { ok: true, error: '', added: 0, linked: 0, unpaired: [], projects };
+  }
+  const res = reconcileExperimentLinks(projects, tests, options);
+  if (!res.changed) {
+    return { ok: true, error: '', added: 0, linked: res.linked, unpaired: res.unpaired, projects };
+  }
+  const written = saveProjects(res.projects);
+  return {
+    ok: !!(written && written.ok),
+    error: String((written && written.error) || ''),
+    added: res.added,
+    linked: res.linked,
+    unpaired: res.unpaired,
+    projects: res.projects
+  };
 };
 
 /** LE GESTE « LOAD HTML » — les projets venus d'un fichier de sauvegarde sont
@@ -997,7 +1054,7 @@ const inputCls = 'border border-slate-300 rounded-lg px-2.5 py-1.5 text-sm bg-wh
 /* =====================  LIST VIEW ===================== */
 export const ProjectsModule = ({
   currentUser, handlePrint,
-  setCurrentModule, setCurrentProjectId, onRestoreProject
+  setCurrentModule, setCurrentProjectId, onRestoreProject, tests = []
 }) => {
   const isSuper = currentUser?.role === 'superuser';
   const myName = currentUser?.name || '';
@@ -1361,7 +1418,22 @@ export const ProjectsModule = ({
                   })()}
                 </div>
                 <div className="flex items-center gap-2 text-[10px] font-bold text-slate-500">
-                  <span className="bg-slate-100 rounded-full px-2 py-0.5">🧪 {(p.experiments || []).length} experiments</span>
+                  {/* 🧪 LE COMPTE NE PEUT PLUS DIRE « 0 » QUAND L'EXPÉRIENCE DIT
+                      APPARTENIR AU PROJET. `countExperimentsOfProject` compte
+                      l'UNION des deux moitiés du lien : les entrées de
+                      `project.experiments[]` **∪** les expériences dont
+                      `projectNames` nomme ce projet, groupées par NOM de test
+                      (une expérience = un test avec ses instances) — la même
+                      règle que la page du projet. Le défaut rapporté était
+                      exactement cet écart : la création d'une expérience
+                      n'écrivait que `projectNames`, et cette carte lisait
+                      `experiments.length` = 0. Voir
+                      `utils/experimentRules.reconcileExperimentLinks`, qui
+                      répare la liste, et App.jsx, qui la relance. */}
+                  <span className="bg-slate-100 rounded-full px-2 py-0.5"
+                        title="Experiments of this project (its own list, plus the experiments that name this project — grouped by experiment name)">
+                    🧪 {countExperimentsOfProject(p, tests)} experiments
+                  </span>
                   <span className="bg-slate-100 rounded-full px-2 py-0.5">📚 {(p.references || []).length} references</span>
                   {(() => {
                     const open = (p.comments || []).filter((c) => !c.resolved).length;

@@ -490,8 +490,8 @@ has(VIEW, 'disabled={disulfideDrawn.bonds.length === 0}',
   'le bouton est inactif quand la structure à l’écran ne dessine aucun pont');
 has(VIEW, "flashDisulfideShowMsg('⚠️ No disulphide bond is drawn in this model — nothing to hide.",
   '…et le geste le DIT au lieu de ne rien faire');
-has(VIEW, 'requestStructureLoad({ ...(loadRequest || {}), ts: Date.now() });',
-  'cacher — puis remontrer — ressert LE MÊME modèle (l’entonnoir du ⚗️ rebuild des hydrogènes)');
+has(VIEW, 'requestStructureLoad({ ...(loadRequest || {}), ts: Date.now(), fromSource: false });',
+  'cacher — puis remontrer — ressert LE MÊME modèle (l’entonnoir du ⚗️ rebuild des hydrogènes), sans REDÉPOSER la source sur le Drive (`fromSource: false` : le .pdb garde ses ponts S–S, quoi qu’on dessine — voir _viewer_source_drive_archive_test.mjs)');
 has(VIEW, '⚠️ drawn but stretched (the two Sγ are not at bonding distance)',
   'un pont dessiné mais ÉTIRÉ est dit tel : sa distance réelle, pas une promesse');
 has(VIEW, 'drawn but STRETCHED: the two Sγ are further apart than the S–S bond length',

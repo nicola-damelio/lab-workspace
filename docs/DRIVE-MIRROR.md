@@ -5218,3 +5218,114 @@ l'heure de modification, que la liste d'un dossier ne porte pas. C'est toujours
 seul exemplaire d'un fichier est **signalée, pas fusionnée** : le rapport la nomme, l'utilisateur
 décide (déplacer le fichier dans Drive, puis relancer 🧹 Apply — le jumeau devenu vraiment vide part
 alors tout seul).
+
+## « Le projet sait que l'expérience lui appartient » (09/10/2026)
+
+Le rapport, mot pour mot : « quando creo un esperimento esso viene forzato ad
+essere associato ad un progetto ma quando vado nella pagina dei progetti leggo
+0 esperimenti associati. é come se l'esperimento sa di essere associato al
+progetto ma il progetto non sa di avere l'esperimento associato a meno che non lo
+si definisca a mano. Ci dovrebbe poi essere il modo di spostare un esperimenti su
+un altro progetto (mi sembrava che in passato lo avevi fatto ma adesso non
+riesco); questo deve avere un riflesso su drive ovvero in quel caso la cartella
+dell'esperimento deve migrare (non essere copiata) nella cartella del progetto
+dove è stato spostato. »
+
+**Une seule cause pour les deux premiers symptômes.** Le lien expérience ↔ projet
+vit des **deux côtés** (voir `utils/experimentRules.js`) :
+
+| côté | où il vit | ce qu'il permet |
+| --- | --- | --- |
+| le **TEST** | `test.projectNames` | l'expérience « sait » à quels projets elle appartient (droits de l'utilisateur, tête du chemin Drive) |
+| le **PROJET** | `project.experiments[]` (une entrée par instance de condition) | la page Projets le **compte**, la page du projet l'**affiche** — et c'est cette liste qui porte la ligne **⇄ Move** |
+
+La création forcée d'une expérience (Experiments → « + NMR » → « Choose a
+project… ») n'écrivait que le premier côté : l'expérience appartenait bien à un
+projet et était **introuvable dans ce projet** — carte à `🧪 0 experiments`,
+fenêtre « Experiments in this project » vide, et donc **rien à déplacer** (le ⇄ vit
+sur ces lignes).
+
+### Ce qui écrit désormais le second côté
+
+| # | Geste | Où | Ce qu'il fait |
+| --- | --- | --- | --- |
+| 1 | la **création** d'une expérience | `testsModule.commitPendingExperiment` | écrit `projectNames` **et** l'entrée du projet, dans le même geste et en une seule écriture (`linkExperimentToProject` puis `saveProjects`) |
+| 2 | la **réparation de fond** | `App.jsx` → `projectsModule.reconcileProjectExperiments` | relit le magasin et ajoute ce qui manque (`experimentRules.reconcileExperimentLinks`) — à chaque changement de page, ouverture de dataset, ou changement du nombre d'expériences |
+| 3 | le **compte des cartes** | `ProjectsModule` | ne lit plus `experiments.length` mais l'**union** des deux moitiés (`countExperimentsOfProject`) |
+| 4 | la **page du projet** | `projectDetailModule` | relit le lien quand elle redevient la page affichée — la coquille garde la page quittée MONTÉE (`parkedAfter`), sans cette relecture on revenait sur une liste figée |
+
+Les règles sont **pures** (donc éprouvables hors navigateur) et en **AJOUT SEUL** :
+rien n'est jamais retiré ni réécrit — retirer une expérience d'un projet reste le
+✕ de la page projet — et la réparation est **idempotente**, donc la relancer ne
+coûte rien.
+
+* `linkExperimentToProject(projects, test, projectName, opts)` — lier UN test à UN
+  projet ; l'entrée a la forme exacte du bouton « + NMR » de la page projet
+  (`{ id, testId, type, label, includeInDocument: false, addedAt }`), donc la ligne
+  s'affiche, la coche « Include » et les ⭐ fonctionnent ;
+* `reconcileExperimentLinks(projects, tests, opts)` — toute la liste d'un coup,
+  avec son compte rendu (`added`, `linked`, `unpaired`) : une expérience qui nomme
+  un projet **inexistant** (renommé, supprimé) est **signalée**, jamais inventée —
+  une entrée que personne ne lirait ne répare rien ;
+* `countExperimentsOfProject(project, tests)` (et `experimentNamesOfProject`) — le
+  compte des cartes, groupé par **nom** de test (une expérience = un test avec ses
+  instances de condition) et pris sur l'**union** des deux moitiés : il ne peut plus
+  dire « 0 » alors que l'expérience dit appartenir au projet.
+
+Deux garde-fous, pour que la réparation ne puisse rien abîmer : elle **ne s'exécute
+jamais hors dataset** (`getActiveProjectDataset()` — sans portée, `loadProjects()`
+rend les projets de *tous* les datasets et un lien partirait dans le projet
+homonyme d'un dataset voisin) et elle **n'invente jamais de projet** — un
+`projectNames` qui ne correspond à rien est signalé, pas matérialisé.
+
+### Le déplacement, enfin atteignable — et le dossier qui MIGRE
+
+Le geste ⇄ existait déjà (voir « Déplacer une expérience d'un projet à un autre »,
+plus haut) : il était simplement **inatteignable**, puisque la liste qui le porte
+était vide. Il est maintenant dans une liste qui se remplit, et la fenêtre **dit**
+à quoi il sert — `⇄ on a row moves that experiment — its condition instances, its
+files and its Google-Drive folder (the folder MIGRATES …: nothing is copied)` — le
+✕ restant le geste pour **retirer** une expérience d'un projet.
+
+Rien n'a changé côté Drive, et c'est voulu : `moveTestFolderBetweenProjects`
+(`utils/driveUpload.js`) **déplace** le dossier par son identifiant (`files.update`
+avec `addParents` + `removeParents`), **fusionne** s'il existe déjà un dossier du
+même nom dans le projet visé, met à la corbeille celui du projet quitté s'il est
+vidé, et ramasse les copies restées dans le bac, dans l'ancien bac ou à la racine
+du dataset. Pour la demande « la cartella deve migrare, non essere copiata », c'est
+donc toujours le même geste, vérifié de bout en bout sur un faux Drive.
+
+### Vérifier soi-même
+
+```bash
+node _project_experiment_link_test.mjs     # 77 assertions : les règles, le compte, la création, la coquille, la page, le Drive
+node _project_experiment_move_test.mjs     # 77 assertions : la règle + la page + les contrats Drive
+node _experiment_move_drive_test.mjs       # 63 assertions : le dossier MIGRE (faux Drive fidèle)
+```
+
+Régressions : **les 69 suites qui lisent `App.jsx` ou les modules touchés sont vertes** — dont
+`_workspace_resync_ui_test` **78**, `_workspace_open_refresh_test` **54**, `_persist_store_test` **92**, `_page_parking_test` **54**, `_page_parking_render_test.cjs`,
+`_project_store_guard_test` **23**, `_project_page_order_test` **49**, `_project_experiment_move_test`
+**77**, `_experiment_move_drive_test` **63**, `_project_drive_doc_test` **61**,
+`_manuscript_import_test` **555**, `_load_html_projects_test` **53**, `_save_html_test` **45**,
+`_drive_tidy_test` **81**, `_viewer_sequence_search_test` **63**. `npx oxlint` — **0 erreur**, et
+**un seul avertissement** sur `App.jsx` (l'import `backupCountsOf` jamais employé, antérieur) ;
+`npx vite build` ✓ **3,41 s**.
+
+Ce correctif répare aussi **trois suites rouges** laissées par la session précédente, toutes dans
+son sillage :
+
+| suite | ce qui était cassé | correction |
+| --- | --- | --- |
+| `_tdz_scan_test` (**18**) | `App.jsx` lisait `cloudProjectsPayload` dans un tableau de dépendances AVANT sa déclaration : `ReferenceError` au rendu | `stripOversizedDataUrls` et `cloudProjectsPayload` passent **au niveau du module** (ils ne lisent que le magasin), et la dep devenue inutile quitte la dep-array |
+| `_ui_bg_live_test.cjs` (**17/17**, l'app RÉELLE mesurée dans Chrome sur `dist/`) | **l'application ne peignait plus rien** : « la première [surface] est réellement dessinée `[762×0]` » — page blanche, conséquence exacte du TDZ ci-dessus | mesuré après correction : `[762×484]` |
+| `_disulfide_fold_test` (**132**) | attendait `requestStructureLoad({ …loadRequest, ts })`, écrit depuis avec `fromSource: false` (le ⚭ ne redépose plus le .pdb sur le Drive) | l'attente suit le code, et son commentaire dit pourquoi |
+
+Balayage COMPLET (`node _run_all.mjs`) : **234 suites, 6 rouges** — les six sont **déjà rouges
+avant cette session** (le balayage précédent du dépôt en comptait huit : `_experiment_folder_files_test`
+et `_viewer_ray_shadow_pixels_test` y sont repassées au vert d'elles-mêmes, et les trois suites du
+tableau ci-dessus sont réparées par ce correctif). Les six qui restent : `_cysteine_panel_layout_test`,
+`_docking_scatter_card_test`, `_md_wall_test`, `_sequence_charge_test` (quatre attentes ou mesures
+numériques périmées) et les deux mesures de pixels `_viewer_background_pixels_test.cjs`,
+`_viewer_keyframes_test.mjs` — aucune ne touche les fichiers de cette section.
+

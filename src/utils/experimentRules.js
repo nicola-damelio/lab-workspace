@@ -197,3 +197,176 @@ export const validateDatasetExperiments = (payload = {}) => {
       : 'All experiments are linked to a Project.'
   };
 };
+
+/* =========================================================================
+   LE LIEN test ↔ projet, ÉCRIT DES DEUX CÔTÉS.
+
+   Le rapport, mot pour mot : « quando creo un esperimento esso viene forzato ad
+   essere associato ad un progetto ma quando vado nella pagina dei progetti leggo
+   0 esperimenti associati. é come se l'esperimento sa di essere associato al
+   progetto ma il progetto non sa di avere l'esperimento associato a meno che non
+   lo si definisca a mano. »
+
+   C'est EXACTEMENT ce que le modèle permettait. Le lien vit des DEUX côtés :
+     • le TEST porte `projectNames`   — l'expérience « sait » à qui elle est ;
+     • le PROJET porte une entrée par instance dans `experiments[]` — c'est
+       cette liste que la page Projets compte (`🧪 n experiments`) et que la page
+       du projet affiche, avec la ligne du bouton ⇄ Move.
+   Le geste de création forcée (Experiments → « + NMR » → « Choose a project… »)
+   n'écrivait que le PREMIER côté : l'expérience appartenait bien à un projet,
+   et elle était INTROUVABLE dans ce projet (compte à 0, liste vide, donc rien à
+   déplacer non plus — les deux symptômes du rapport ont cette seule cause).
+
+   Les règles ci-dessous écrivent le SECOND côté, et rien d'autre :
+     • `linkExperimentToProject`  — lier UN test à UN projet ;
+     • `reconcileExperimentLinks` — remettre d'aplomb TOUTE la liste d'un coup.
+   Les deux sont en AJOUT SEUL : ce qui est déjà lié n'est jamais réécrit, aucune
+   entrée n'est jamais retirée (retirer une expérience d'un projet, c'est le ✕ de
+   la page projet — `removeExperiment`), et aucune autre clé du projet n'est
+   touchée. La réparation est donc IDEMPOTENTE : on peut la relancer à chaque
+   changement de page (c'est ce que fait App.jsx) sans jamais rien dégrader.
+   ========================================================================= */
+
+/** Identifiant d'une entrée `project.experiments[]` — la MÊME forme que
+ *  `projectsModule.genProjectId`, pour qu'une entrée écrite ici soit
+ *  indiscernable d'une entrée écrite par le bouton « + NMR » de la page projet. */
+export const genExperimentEntryId = () =>
+  `prj_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+/**
+ * L'ENTRÉE qu'un projet doit porter pour ce test : la forme exacte de
+ * `+ NMR` de la page projet — `{ id, testId, type, label, includeInDocument,
+ * addedAt }` — pour que la ligne s'affiche (badge du type, nom du test, coche
+ * « Include », ⭐) comme une entrée créée à la main.
+ *
+ * @param {object} test l'expérience
+ * @param {{ makeId?:Function, labelOf?:Function }} [opts]
+ *        `makeId`  — le générateur d'identifiant (la page passe `genProjectId`) ;
+ *        `labelOf` — le libellé lisible d'un type (la page passe `testTypeLabel`,
+ *                    sans quoi le type brut sert de libellé).
+ */
+export const experimentEntryFor = (test, opts = {}) => {
+  const makeId = typeof opts.makeId === 'function' ? opts.makeId : genExperimentEntryId;
+  const type = String((test && test.type) || '').trim() || 'plate-96';
+  const label = String((typeof opts.labelOf === 'function' ? opts.labelOf(type) : '') || type);
+  return {
+    id: makeId(),
+    testId: test && test.id,
+    type,
+    label,
+    includeInDocument: false,
+    addedAt: new Date().toISOString()
+  };
+};
+
+/**
+ * LIER un test à un projet — le côté qui manquait. AJOUT SEUL.
+ *
+ * @returns {{ projects:Array, entry:object|null, changed:boolean,
+ *            reason:''|'invalid'|'unknown-project'|'already-linked' }}
+ *   `projects` est une liste NEUVE quand quelque chose a changé (sinon la liste
+ *   reçue, telle quelle — l'appelant peut comparer les références), `reason` dit
+ *   pourquoi rien n'a été écrit : une boîte de stockage (`plate-9x9box`) n'est
+ *   pas une expérience, un projet que la liste ne porte pas n'existe pas, et ce
+ *   qui est déjà lié ne l'est jamais deux fois.
+ */
+export const linkExperimentToProject = (projects, test, projectName, opts = {}) => {
+  const list = Array.isArray(projects) ? projects : [];
+  const unchanged = (reason) => ({ projects: list, entry: null, changed: false, reason });
+  const name = String(projectName || '').trim();
+  if (!name || !test || !test.id || !isExperimentTest(test)) return unchanged('invalid');
+  const index = list.findIndex((p) => p && String(p.name || '').trim() === name);
+  if (index < 0) return unchanged('unknown-project');
+  const already = (list[index].experiments || [])
+    .some((e) => e && String(e.testId) === String(test.id));
+  if (already) return unchanged('already-linked');
+  const entry = experimentEntryFor(test, opts);
+  const next = list.map((p, i) => (i === index
+    ? { ...p, experiments: [...(p.experiments || []), entry], updatedAt: new Date().toISOString() }
+    : p));
+  return { projects: next, entry, changed: true, reason: '' };
+};
+
+/**
+ * REMETTRE D'APLOMB TOUS LES LIENS : ce que `projectNames` annonce, les
+ * `experiments[]` des projets doivent le porter. C'est la réparation de fond du
+ * rapport (« le projet ne sait pas ») — AJOUT SEUL et IDEMPOTENTE : le premier
+ * passage écrit ce qui manque, les suivants ne font rien (d'où `added === 0`).
+ *
+ * @returns {{ projects:Array, added:number, changed:boolean, linked:number,
+ *            unpaired:Array<{ testId:string, test:string, projectName:string }> }}
+ *   `added`   = entrées réellement écrites, `linked` = liens déjà en place,
+ *   `unpaired`= noms de projets qu'AUCUN projet de la liste ne porte : le lien
+ *   reste dans le vide (projet renommé ou supprimé). Rien n'est écrit — une
+ *   entrée que personne ne lirait ne réparerait rien — et l'appelant le dit.
+ */
+export const reconcileExperimentLinks = (projects, tests, opts = {}) => {
+  let list = Array.isArray(projects) ? projects : [];
+  const known = new Set();
+  list.forEach((p) => {
+    const n = String((p && p.name) || '').trim();
+    if (n) known.add(n);
+  });
+  let added = 0;
+  let linked = 0;
+  const unpaired = [];
+  (Array.isArray(tests) ? tests : []).forEach((test) => {
+    if (!isExperimentTest(test)) return;
+    experimentProjects(test).forEach((projectName) => {
+      if (!known.has(projectName)) {
+        unpaired.push({ testId: test.id, test: String(test.name || ''), projectName });
+        return;
+      }
+      const res = linkExperimentToProject(list, test, projectName, opts);
+      if (res.changed) { list = res.projects; added += 1; } else if (res.reason === 'already-linked') linked += 1;
+    });
+  });
+  return { projects: list, added, changed: added > 0, linked, unpaired };
+};
+
+/**
+ * LES EXPÉRIENCES D'UN PROJET, telles que les pages doivent les COMPTER : les
+ * entrées de `project.experiments[]` **∪** les tests dont `projectNames` nomme
+ * ce projet, groupés par NOM de test (une expérience = un test avec ses
+ * instances de condition — exactement la règle de `experimentsGrouped`, la page
+ * du projet).
+ *
+ * L'UNION est là pour que le compte ne puisse plus MENTIR : même si une seule
+ * moitié du lien a été écrite (le cas du rapport), le compte ne dit plus « 0 »
+ * alors que l'expérience dit appartenir au projet. Une entrée qui ne résout
+ * aucun test compte pour une expérience (clé `#<id>`, comme la page projet).
+ *
+ * @returns {Array<{ name:string, testIds:string[] }>}
+ */
+export const experimentNamesOfProject = (project, tests) => {
+  const projectName = String((project && project.name) || '').trim();
+  const list = Array.isArray(tests) ? tests : [];
+  const byId = new Map(list.filter((t) => t && t.id).map((t) => [String(t.id), t]));
+  const groups = new Map();
+  const add = (key, testId) => {
+    const group = groups.get(key) || { name: key.startsWith('#') ? '' : key, testIds: [] };
+    if (testId != null && !group.testIds.includes(String(testId))) group.testIds.push(String(testId));
+    groups.set(key, group);
+  };
+  /* 1. Ce que le PROJET porte (une entrée par instance). */
+  ((project && project.experiments) || []).forEach((e) => {
+    if (!e) return;
+    const t = e.testId ? byId.get(String(e.testId)) : null;
+    const name = t ? String(t.name || '').trim() : '';
+    add(name || `#${e.id || e.testId || 'entry'}`, e.testId);
+  });
+  /* 2. ∪ Ce que les TESTS annoncent (l'autre moitié du lien). */
+  if (projectName) {
+    list.forEach((t) => {
+      if (!t || !t.id || !isExperimentTest(t)) return;
+      if (!experimentProjects(t).includes(projectName)) return;
+      add(String(t.name || '').trim() || `#${t.id}`, t.id);
+    });
+  }
+  return Array.from(groups.values());
+};
+
+/** Le nombre d'expériences d'un projet — ce que les cartes de la page Projets
+ *  affichent (`🧪 n experiments`), et rien d'autre. */
+export const countExperimentsOfProject = (project, tests) =>
+  experimentNamesOfProject(project, tests).length;

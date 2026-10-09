@@ -9,7 +9,8 @@ import { SearchableSelect } from '../SearchableSelect';
 import { Icon } from '../Icons';
 import { markAttachmentsDeleted, deleteTestDriveFolder } from '../../utils/driveUpload';
 import { removeTestFcsBlobs } from '../../utils/fcsBlobStore';
-import { testProjectAccess, loadProjects, getProjectAccessForUser } from './projectsModule';
+import { testProjectAccess, loadProjects, getProjectAccessForUser, saveProjects, testTypeLabel } from './projectsModule';
+import { linkExperimentToProject } from '../../utils/experimentRules';
 
 const TEST_CARD_ICON = {
   nmr: 'chart-line',
@@ -258,6 +259,24 @@ export const TestsModule = ({
                   const created = createEmptyTest(id, tests.length + 1, type);
                   created.projectNames = [chosen];
                   setTests((prev) => [...prev, created]);
+                  /* 🔗 LE PROJET L'APPREND DANS LE MÊME GESTE — le lien vit des
+                     DEUX côtés (le test porte `projectNames`, le projet porte une
+                     entrée dans `experiments[]`). Le rapport : « quando creo un
+                     esperimento ... nella pagina dei progetti leggo 0 esperimenti
+                     associati. é come se l'esperimento sa di essere associato al
+                     progetto ma il progetto non sa di avere l'esperimento ». Ici
+                     la seconde moitié est écrite tout de suite — une seule fois,
+                     en ajout seul (`linkExperimentToProject`) : la page Projets
+                     compte l'expérience, la page du projet l'affiche (avec sa
+                     ligne ⇄ Move), et l'entrée a exactement la forme qu'écrit le
+                     bouton « + NMR » de la page projet (id, type, libellé du type,
+                     « Include » à faux, date). Si le magasin refuse l'écriture, la
+                     réparation d'App.jsx (`reconcileProjectExperiments`) la
+                     reprendra : rien n'est perdu, et rien n'est bloquant ici. */
+                  try {
+                    const linked = linkExperimentToProject(loadProjects(), created, chosen, { labelOf: testTypeLabel });
+                    if (linked.changed) saveProjects(linked.projects);
+                  } catch { /* magasin indisponible : le lien sera rattrapé au prochain passage */ }
                   setPendingExperimentType(null);
                   setProjectDraft('');
                   setActiveTestId(id);
