@@ -380,10 +380,13 @@ for (const src of sources) {
 }
 console.log('\nMarche à suivre — 1) base ouverte → « 📂 Load backup (.json) » → le fichier ci-dessus ;');
 console.log('  2) ne cocher QUE les pages annoncées POUR CE fichier (les pages non cochées ne bougent pas) ;');
-console.log('  3) « ♻️ Import the selected pages » · 4) fichier suivant (même geste) · 5) finir par « 💾 Save backup ».');
-console.log('  ⚠ Ne PAS cocher une page que le fichier porte en MOINS que maintenant : elle écraserait du contenu plus récent.');
+console.log('  3) « 🔀 Merge the selected pages » (RIEN n’est effacé : le fichier n’AJOUTE que ce qui manque) ·');
+console.log('     4) fichier suivant (même geste) · 5) finir par « 💾 Save backup ».');
+console.log('  ✓ En « 🔀 Merge », cocher une page que le fichier porte en MOINS que maintenant est SANS danger :');
+console.log('    les lignes d’aujourd’hui gardent leur version. « ♻️ Replace the selected pages » reste là pour qui veut');
+console.log('    vraiment revenir page entière à la copie du fichier.');
 console.log(dangerTotal
-  ? `\n⛔ ${dangerTotal} ligne(s) d’AUJOURD’HUI ne sont dans AUCUN des fichiers ci-dessus : les importer telles quelles les effacerait. Faire « 💾 Save backup » d’abord, puis décider page par page.`
+  ? `\n⛔ ${dangerTotal} ligne(s) d’AUJOURD’HUI ne sont dans AUCUN des fichiers ci-dessus : en « ♻️ Replace », les importer telles quelles effacerait ces lignes-là. Faire « 💾 Save backup » d’abord, puis décider page par page (ou rester en « 🔀 Merge », qui ne peut rien effacer).`
   : '\n✔ Aucune ligne d’aujourd’hui ne manque dans les fichiers : ces imports ne peuvent rien effacer.');
 
 

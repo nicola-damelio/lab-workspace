@@ -205,6 +205,58 @@ export const mergeWorkspaceStates = (local, remote) => {
   };
 };
 
+/* ── NE JAMAIS PUBLIER UNE TOMBE DE MOINS ────────────────────────────────────
+   Le défaut réparé : ouvrir l'application sur un poste dont la copie locale n'a
+   pas encore entendu parler des suppressions faites AILLEURS réécrivait
+   `_workspace/state.json` AVEC SA SEULE MÉMOIRE — les tombes de l'autre poste
+   disparaissaient de l'index partagé, et le dataset supprimé revenait ensuite
+   partout (« supprimé sur un poste, ressuscité en ouvrant l'appli sur l'autre »).
+
+   Deux garde-fous, dans cet ordre :
+
+     ① `lastRemoteState` — le dernier état LU du Drive pendant cette session.
+        L'état publié est celui de CE poste, mais jamais plus pauvre que celui-là :
+        les tombes (et le registre des dossiers) s'ADDITIONNENT. Une écriture ne
+        peut donc pas faire oublier une suppression qu'on vient de voir.
+     ② la RELECTURE avant écriture (voir installWorkspaceAutosave.flush) : l'état
+        du Drive est relu JUSTE AVANT d'écrire, pour que ① ne parle pas d'une
+        lecture vieille de plusieurs minutes.
+
+   `publishableWorkspaceState` est PUR (aucun réseau, aucun stockage) : la règle
+   se vérifie sans navigateur (voir _workspace_publish_test.mjs). */
+
+/** Le dernier état lu SUR LE DRIVE pendant cette session (null tant que ce poste
+ *  n'a rien lu). Il garantit qu'une écriture ne publie jamais MOINS que ce que
+ *  ce poste a vu. */
+let lastRemoteState = null;
+
+/** Mémoriser un état du Drive SANS réseau : les tombes et le registre
+ *  s'ADDITIONNENT — un état plus ancien ne peut donc pas faire oublier une
+ *  suppression. Rend la mémoire à jour (utile aux tests). */
+export const rememberRemoteWorkspaceState = (state) => {
+  const parsed = parseWorkspaceState(state);
+  if (!parsed) return lastRemoteState;
+  lastRemoteState = lastRemoteState
+    ? { ...parsed, mirror: mergeDriveMirrors(lastRemoteState.mirror, parsed.mirror) }
+    : parsed;
+  return lastRemoteState;
+};
+
+/** Ce que ce poste sait du Drive (le résultat de la dernière lecture, ou de la
+ *  dernière mémorisation). null tant que rien n'a été lu. */
+export const lastRemoteWorkspaceState = () => lastRemoteState;
+
+/** L'état À PUBLIER : l'état de CE poste, complété par les tombes (et le
+ *  registre des dossiers) de l'état du Drive déjà connu — jamais plus pauvre que
+ *  lui. `null` quand l'état local n'en est pas un. PUR. */
+export const publishableWorkspaceState = (local, remote) => {
+  const mine = parseWorkspaceState(local);
+  if (!mine) return null;
+  const theirs = parseWorkspaceState(remote);
+  if (!theirs) return mine;
+  return { ...mine, mirror: mergeDriveMirrors(mine.mirror, theirs.mirror) };
+};
+
 /** La liste des datasets d'un poste, COMPLÉTÉE par celle du Drive : les datasets
  *  connus du Drive mais absents ici sont ajoutés (`fromDrive: true`, leur
  *  contenu sera relu du Drive à l'ouverture), jamais ceux qui ont une tombe.
@@ -326,7 +378,14 @@ export const readWorkspaceState = async () => {
   try {
     if (!workspaceBackendReady()) return null;
     const raw = await downloadJsonText({ folder: WORKSPACE_DIR, name: WORKSPACE_STATE_FILE });
-    return parseWorkspaceState(raw);
+    const parsed = parseWorkspaceState(raw);
+    /* ⛔ CE QU'ON VIENT DE LIRE EST RETENU : toute écriture de ce poste devra
+       être au moins aussi riche (voir publishableWorkspaceState). Sans cela, la
+       première réécriture d'un poste — à l'ouverture, avant que sa copie locale
+       n'ait adopté les tombes des autres — effaçait du Drive les suppressions
+       faites ailleurs. */
+    if (parsed) rememberRemoteWorkspaceState(parsed);
+    return parsed;
   } catch (err) {
     console.warn('Reading the Drive workspace state failed:', err && err.message);
     return null;
@@ -408,16 +467,29 @@ export const readDatasetCopy = async (id) => {
  *     exemple quand la liste des datasets ou les projets bougent.
  * Les écritures sont REGROUPÉES (une seule requête après `delay` ms de calme) :
  * taper dans un titre ne déclenche pas cinquante envois.
+ *
+ * ⛔ RELIRE AVANT D'ÉCRIRE, et ne jamais publier MOINS que ce qu'on a lu. C'est
+ * la règle qui empêche un dataset supprimé sur un poste de revenir sur l'autre :
+ * la copie locale d'un poste qui vient de s'ouvrir n'a pas encore adopté les
+ * tombes du Drive (`state.json`), et publier sa seule mémoire EFFAÇAIT ces
+ * tombes — définitivement, pour tous les postes. Chaque rafale relit donc l'état
+ * du Drive, et l'état publié est la fusion (tombes ADDITIONNÉES) de cette
+ * lecture et de la mémoire du poste (voir publishableWorkspaceState).
  * @returns {() => void} désinstallation
  */
 export const installWorkspaceAutosave = (getState, { delay = 2000 } = {}) => {
   let timer = null;
   let lastWritten = '';
   let stopped = false;
-  const flush = async () => {
+  const flush = async ({ fresh = true } = {}) => {
     if (stopped) return null;
     try {
-      const state = buildWorkspaceState(getState() || {});
+      /* La relecture met à jour `lastRemoteState` (voir readWorkspaceState) :
+         si elle échoue, la mémoire précédente reste en place — on ne publie
+         donc jamais moins que ce qu'on savait déjà. */
+      if (fresh) await readWorkspaceState();
+      const local = buildWorkspaceState(getState() || {});
+      const state = publishableWorkspaceState(local, lastRemoteState) || local;
       const json = workspaceStateJson(state);
       if (json === lastWritten) return null;
       const res = await writeWorkspaceState(state);
@@ -443,7 +515,10 @@ export const installWorkspaceAutosave = (getState, { delay = 2000 } = {}) => {
   const flushNow = () => {
     if (stopped) return;
     if (timer) { clearTimeout(timer); timer = null; }
-    flush();
+    /* PAS de relecture ici : la page se ferme, il ne reste le temps que d'un
+       envoi. `lastRemoteState` — ce que ce poste a déjà lu du Drive — suffit à
+       ne pas publier moins que ce qu'il connaît (voir flush). */
+    flush({ fresh: false });
   };
   const onVisibilityChange = () => {
     try { if (document.visibilityState === 'hidden') flushNow(); } catch { /* hors navigateur */ }

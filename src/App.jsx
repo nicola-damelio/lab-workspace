@@ -14,7 +14,7 @@ import { DashboardModule } from './components/AppModules/dashboardModule';
 import { LibraryModule } from './components/AppModules/libraryModule';
 import { SettingsModule } from './components/AppModules/settingsModule';
 import { AdministrationModule } from './administration/adminModule';
-import { isAdministrationKind, createAdministrationSeed, ADMIN_PAGES, adminCanViewPage, hasDefinedSuperuser } from './administration/adminSchema';
+import { isAdministrationKind, createAdministrationSeed, ADMIN_PAGES, ADMIN_COLLECTIONS, collectionLabel, adminCanViewPage, hasDefinedSuperuser } from './administration/adminSchema';
 import { StorageModule } from './components/AppModules/storageModuleViews';
 import { TestsModule } from './components/AppModules/testsModule';
 import { ProtocolsModule } from './components/AppModules/protocolsModule';
@@ -132,6 +132,7 @@ import { validateDatasetExperiments } from './utils/experimentRules';
 import {
   loadSectionsOf, defaultSelection, sectionGroupsOf, filterLoadState,
   selectionHasTests, selectionIsComplete, describeCount,
+  mergeAdministration, mergePreviewOf,
 } from './utils/loadSelection';
 import { canUserOpenDataset, isDatasetRestricted, normalizeMemberNames, datasetAccessOf } from './utils/datasetAccess';
 import {
@@ -782,7 +783,7 @@ const writeLastExperiment = (datasetId, payload) => {
    cocher EXACTEMENT ce qu’on veut importer (« quel élément de quelle page »),
    avec par page « Tout / Rien » et, globalement, « Tout sélectionner ».
    ========================================================================= */
-const LoadPickPanel = ({ sections, picked, onToggle, onPickMany }) => {
+const LoadPickPanel = ({ sections, picked, onToggle, onPickMany, preview }) => {
   const groups = sectionGroupsOf(sections);
   const isOn = (id) => picked.indexOf(id) !== -1;
   const groupIds = (g) => g.items.map((s) => s.id);
@@ -846,7 +847,10 @@ const LoadPickPanel = ({ sections, picked, onToggle, onPickMany }) => {
                   />
                   <span className="min-w-0 flex-1">
                     <span className="block text-xs font-bold text-slate-700 leading-tight">{s.label}</span>
-                    <span className="block text-[10px] text-slate-400 leading-tight">{describeCount(s)}</span>
+                    <span className="block text-[10px] text-slate-400 leading-tight">
+                      {describeCount(s)}
+                      {preview && preview[s.id] ? ` · ${describeMergePart(s, preview[s.id])}` : ''}
+                    </span>
                   </span>
                 </label>
               ))}
@@ -856,6 +860,57 @@ const LoadPickPanel = ({ sections, picked, onToggle, onPickMany }) => {
       </div>
     </div>
   );
+};
+
+/* =========================================================================
+   🔀 « Merge » (fusion) de la fenêtre d’import — ce qui se LIT à l’écran.
+   Le geste lui-même est décrit par utils/loadSelection.js (`mergeAdministration`
+   / `mergePreviewOf`) : ici, seulement l’aperçu AVANT de cliquer (« +3 lignes »
+   sur chaque page cochée) et le compte-rendu APRÈS, qui dit que rien n’a été
+   perdu.
+   ========================================================================= */
+
+/** « +3 lignes · 12 déjà là » — ce qu’une FUSION apporterait à cette page
+ *  (voir mergePreviewOf). « rien de neuf » dit que le fichier est plus ancien :
+ *  c’est l’information qui évite de croire qu’un import ne fait rien. */
+const describeMergePart = (section, part) => {
+  const added = (part && part.added) || 0;
+  const kept = (part && part.kept) || 0;
+  const unit = String((section && section.unit) || '').trim();
+  const name = unit || 'valeur';
+  if (!added) return kept ? `rien de neuf (${kept} déjà là)` : 'vide';
+  return `+${added} ${name}${added > 1 ? 's' : ''}${kept ? ` · ${kept} déjà là` : ''}`;
+};
+
+/** Nom de page d’une clé de collection (« recettes » → « Recettes ») : le
+ *  compte-rendu parle comme la navigation latérale. */
+const adminKeyLabel = (key) => (key === 'settings'
+  ? 'Setup'
+  : collectionLabel(ADMIN_COLLECTIONS[key] || key));
+
+/** Compte-rendu d’une FUSION de base d’administration (voir confirmLoad, mode
+ *  « 🔀 Merge ») : ce qui a été AJOUTÉ, ce qui a été GARDÉ — et, quand aucune
+ *  base n’est ouverte, le fait qu’il n’y avait rien à fusionner. Il dit
+ *  toujours que RIEN n’a été effacé : c’est la question qu’on se pose en
+ *  cliquant « Merge » avec une sauvegarde plus ancienne que la base. */
+const describeAdminMerge = (merged, opts) => {
+  const o = opts || {};
+  const lines = Object.keys(merged.addedByKey || {})
+    .filter((k) => merged.addedByKey[k] > 0)
+    .map((k) => `${adminKeyLabel(k)} +${merged.addedByKey[k]}`);
+  const detail = lines.length ? ` (${lines.join(', ')})` : '';
+  if (!o.intoOpenBase) {
+    return 'No Administration base was open: this file was imported into a NEW base as it stands — '
+      + `${merged.added} row${merged.added > 1 ? 's' : ''}${detail}. There was nothing to merge with.`;
+  }
+  if (!merged.added) {
+    return 'Nothing new: everything this file holds for the ticked pages is already in the open base '
+      + `(${merged.kept} row${merged.kept > 1 ? 's' : ''} recognised). The file is OLDER than the base — `
+      + 'no line was overwritten, and the base is unchanged.';
+  }
+  return `${merged.added} new row${merged.added > 1 ? 's' : ''} added${detail} · `
+    + `${merged.kept} row${merged.kept > 1 ? 's' : ''} already in the base were kept as they are `
+    + '(a merge never overwrites the newer copy).';
 };
 
 /* ⛔ UNE DEP-ARRAY EST LUE PENDANT LE RENDU — CES DEUX FONCTIONS VIVENT DONC AU
@@ -1380,6 +1435,30 @@ if (customType === 'dosy') {
     if (on) return [...new Set([...cur, ...ids])];
     return cur.filter((x) => ids.indexOf(x) === -1);
   });
+  /* 🔀 FUSION — le mode choisi dans la fenêtre d’import d’une base
+     d’administration : « merge » (n’efface RIEN : le fichier n’ajoute que ce
+     que la base n’a pas) ou « replace » (la page cochée est écrasée par celle
+     du fichier). Le défaut est la fusion, et chaque page cochée annonce ce
+     qu’elle apporterait — voir loadMergePreview. */
+  const [loadAdminMode, setLoadAdminMode] = useState('merge');
+  /* La base OUVERTE : la copie qui fait foi en fusion. `null` quand aucune base
+     d’administration n’est ouverte — il n’y a alors rien à fusionner (le
+     fichier partirait dans une base neuve). */
+  const loadMergeBase = (pendingLoad && pendingLoad.isAdmin && currentDatasetId
+    && isAdministrationKind(activeDatasetKind)
+    && adminContent && typeof adminContent === 'object')
+    ? adminContent
+    : null;
+  const loadMergePreview = useMemo(() => {
+    if (!pendingLoad || !pendingLoad.isAdmin) return null;
+    /* Les sections sont RELUES ICI (et non passées) : `loadSections` est un
+       tableau neuf à chaque rendu, ce qui ferait recalculer l’aperçu sans
+       arrêt — `pendingLoad.sections`, lui, ne change qu’avec le fichier. */
+    const list = Array.isArray(pendingLoad.sections) ? pendingLoad.sections : [];
+    const incoming = (pendingLoad.fullState && pendingLoad.fullState.administration) || {};
+    const picked = Array.isArray(loadPick) ? loadPick : defaultSelection(list);
+    return mergePreviewOf(loadMergeBase || {}, incoming, list, picked);
+  }, [pendingLoad, loadPick, loadMergeBase]);
   // Dataset dont le superutilisateur édite la liste d’accès (bouton « 👥
   // Membres » sur une carte de l’écran d’accueil).
   const [accessEditorDataset, setAccessEditorDataset] = useState(null);
@@ -3757,6 +3836,9 @@ useEffect(() => {
               adminSubtitle: dataBlob && (dataBlob.subtitle || ''),
             });
             setLoadPick(defaultSelection(sections));
+            /* Une nouvelle fenêtre s’ouvre sur le mode SANS PERTE (fusion) : le
+               choix se fait dans la fenêtre, pas d’une fois sur l’autre. */
+            setLoadAdminMode('merge');
             return;
           }
 
@@ -3857,17 +3939,49 @@ useEffect(() => {
        une NOUVELLE base (le dataset scientifique ouvert n’est pas touché). */
     if (pendingLoad && pendingLoad.isAdmin) {
       const pickedAdmin = pruned.administration || {};
-      /* Tout est coché → le contenu du fichier remplace la base, comme avant ;
-         import PARTIEL → seules les pages cochées remplacent leurs homologues,
-         les autres pages de la base ouverte restent intactes. */
+      /* DEUX FAÇONS d’appliquer les pages cochées — c’est le seul endroit où
+         elles se séparent :
+           · 🔀 FUSIONNER (mode 'merge', le défaut) : la BASE OUVERTE fait foi,
+             le fichier n’AJOUTE que ce qu’elle n’a pas encore. Rien n’est
+             effacé : une sauvegarde plus ancienne ne peut donc pas faire perdre
+             une ligne saisie depuis. Voir mergeAdministration ;
+           · ♻️ REMPLACER (mode 'replace') : tout est coché → le contenu du
+             fichier remplace la base, comme avant ; import PARTIEL → seules les
+             pages cochées remplacent leurs homologues, les autres pages de la
+             base ouverte restent intactes. */
       const complete = selectionIsComplete(allSections, picked);
-      const base = (currentDatasetId && isAdministrationKind(activeDatasetKind)
+      const openBase = (currentDatasetId && isAdministrationKind(activeDatasetKind)
         && adminContent && typeof adminContent === 'object')
         ? adminContent
-        : createAdministrationSeed();
-      const admin = complete
-        ? (Object.keys(pickedAdmin).length ? pickedAdmin : base)
-        : { ...base, ...pickedAdmin };
+        : null;
+      const base = openBase || createAdministrationSeed();
+      let admin;
+      /* Ce qui a été fait est DIT (describeAdminMerge) : une fusion qui n’ajoute
+         rien ne doit pas ressembler à un import qui ne marche pas — c’est
+         exactement le silence réparé partout ailleurs. */
+      let adminMergeNote = '';
+      const merging = mode === 'merge';
+      if (merging && openBase) {
+        const merged = mergeAdministration(openBase, pickedAdmin, Object.keys(pickedAdmin));
+        admin = merged.administration;
+        adminMergeNote = describeAdminMerge(merged, { intoOpenBase: true, picked });
+      } else if (merging) {
+        /* RIEN À FUSIONNER : aucune base d’administration n’est ouverte (ou la
+           base ouverte est scientifique). Le fichier ARRIVE dans une base
+           neuve : ses pages cochées se posent sur la semence (collections vides
+           + options par défaut), comme le faisait « importer les pages
+           cochées » — une base neuve a toutes ses pages, jamais seulement
+           celles du fichier. Rien ne peut être perdu : elle ne contient rien. */
+        admin = { ...base, ...pickedAdmin };
+        adminMergeNote = describeAdminMerge(
+          mergeAdministration({}, pickedAdmin, Object.keys(pickedAdmin)),
+          { intoOpenBase: false, picked },
+        );
+      } else {
+        admin = complete
+          ? (Object.keys(pickedAdmin).length ? pickedAdmin : base)
+          : { ...base, ...pickedAdmin };
+      }
       const restoringInPlace = !!currentDatasetId && isAdministrationKind(activeDatasetKind);
       targetId = restoringInPlace ? currentDatasetId : 'ds_' + Date.now();
       if (!restoringInPlace) {
@@ -3895,6 +4009,12 @@ useEffect(() => {
       resetAdminNavHistory();
       setPendingLoad(null);
       setLoadPick(null);
+      /* Le compte-rendu de la FUSION, une fois la fenêtre refermée : un « Merge »
+         muet laisserait croire que rien n’a été lu (l’ancien défaut « rien ne se
+         passe »). */
+      if (adminMergeNote) {
+        setDialog({ type: 'alert', title: '🔀 Merge — nothing was erased', message: adminMergeNote });
+      }
       if (window.innerWidth < 768) setIsSidebarOpen(false);
       return;
     }
@@ -5777,38 +5897,80 @@ const openDataset = (dset, { keepPlace = false } = {}) => {
 
             {pendingLoad.isAdmin ? (
               <>
-                <p className="text-sm text-slate-500 mb-4">
+                <p className="text-sm text-slate-500 mb-3">
                   This file contains an administration base ({' '}
                   <b>{pendingLoad.adminTitle
                     || (pendingLoad.fullState && (pendingLoad.fullState.title || pendingLoad.fullState.datasetTitle))
                     || 'sans titre'}</b>
-                  ). Tick the pages to import: a ticked page replaces its counterpart and the other
-                  pages of the open base stay untouched — or import everything to restore the base
-                  exactly as saved.
+                  ). Tick the pages to import, then choose what this file is allowed to do to the open
+                  base. 🔀 Merge never erases anything; ♻️ Replace overwrites each ticked page with the
+                  file’s copy — even if the base holds a newer one.
                 </p>
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="text-[10px] font-black text-slate-500 uppercase tracking-wide">Mode</span>
+                  <button
+                    type="button"
+                    onClick={() => setLoadAdminMode('merge')}
+                    className={`flex-1 text-[11px] font-bold py-1.5 px-2 rounded-lg border transition-colors ${
+                      loadAdminMode === 'merge'
+                        ? 'bg-blue-600 border-blue-600 text-white'
+                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    🔀 Merge — nothing is erased
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setLoadAdminMode('replace')}
+                    className={`flex-1 text-[11px] font-bold py-1.5 px-2 rounded-lg border transition-colors ${
+                      loadAdminMode === 'replace'
+                        ? 'bg-red-600 border-red-600 text-white'
+                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    ♻️ Replace — the file overwrites
+                  </button>
+                </div>
+                {loadAdminMode === 'merge' && !loadMergeBase ? (
+                  <p className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-3 leading-relaxed">
+                    No Administration base is open: there is nothing to merge with, so the file will be
+                    imported into a NEW base as it stands (nothing is erased either way — the open
+                    dataset, if it is a scientific one, is not touched).
+                  </p>
+                ) : null}
                 <LoadPickPanel
                   sections={loadSections}
                   picked={loadPicked}
                   onToggle={toggleLoadPick}
                   onPickMany={pickManyLoad}
+                  preview={loadAdminMode === 'merge' ? loadMergePreview : null}
                 />
                 <p className="text-[10px] text-slate-400 mt-2 leading-relaxed">
-                  Accounts (operators) and the security configuration are never imported: they belong
+                  {loadAdminMode === 'merge'
+                    ? 'Merge keeps the open base as it is and only ADDS what this file holds and the base does not: a line already there keeps its current version, un-ticked pages stay untouched, and each ticked page announces what it would bring.'
+                    : 'Replace copies each ticked page over its counterpart; un-ticked pages stay untouched.'}
+                  {' '}Accounts (operators) and the security configuration are never imported: they belong
                   to the application, not to the dataset.
                 </p>
                 <div className="flex flex-col gap-3 mt-4">
                   <button
-                    onClick={() => confirmLoad('replace')}
+                    onClick={() => confirmLoad(loadAdminMode)}
                     disabled={loadPicked.length === 0}
-                    className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-2 px-4 rounded-lg text-left transition-colors"
+                    className={`disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-2 px-4 rounded-lg text-left transition-colors ${
+                      loadAdminMode === 'merge'
+                        ? 'bg-blue-600 hover:bg-blue-700'
+                        : 'bg-red-600 hover:bg-red-700'
+                    }`}
                   >
-                    ♻️ Import the selected pages ({loadPicked.length})
+                    {loadAdminMode === 'merge'
+                      ? `🔀 Merge the selected pages (${loadPicked.length})`
+                      : `♻️ Replace the selected pages (${loadPicked.length})`}
                   </button>
                   <button
                     onClick={() => confirmLoad('replace', defaultSelection(loadSections))}
-                    className="bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-800 font-bold py-2 px-4 rounded-lg text-left transition-colors"
+                    className="bg-red-50 hover:bg-red-100 border border-red-200 text-red-800 font-bold py-2 px-4 rounded-lg text-left transition-colors"
                   >
-                    ♻️ Import everything (restore the whole base)
+                    ♻️ Import everything (restore the whole base as saved)
                   </button>
                   <button
                     onClick={() => { setPendingLoad(null); setLoadPick(null); }}

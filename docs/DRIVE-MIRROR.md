@@ -4569,6 +4569,7 @@ ancien fichier ne devient orphelin.
 node _backup_file_test.mjs            # 129 vérifications — le format, le résumé des noms, la validation, les refus
 node _save_html_test.mjs              # 45 — ce que la sauvegarde emporte (état, bibliothèques, projets)
 node _load_html_projects_test.mjs      # 53 — les projets d'une sauvegarde sont adoptés par leur dataset
+node _load_merge_test.mjs              # 41 — charger une base : 🔀 fusionner (rien n'est effacé) ou ♻️ remplacer
 node _library_restore_test.mjs         # 175 — bibliothèque d'images ↔ sauvegarde
 node _reference_import_test.mjs        # 226 — les papiers se relisent en fusion
 ```
@@ -4584,6 +4585,49 @@ d'illisible) — et le fait qu'il ne décide RIEN : un résumé retouché à la 
 n'empêche pas l'import d'une sauvegarde intacte. Elle vérifie aussi le
 **branchement réel** : l'import passe tout par la validation, les deux gestes
 écrivent le document en JSON, et plus rien n'écrit de fichier HTML.
+
+
+
+## Charger une sauvegarde : 🔀 fusionner (rien ne se perd) ou ♻️ remplacer, au choix
+
+**Signalé tel quel :** « je charge une sauvegarde HTML plus ancienne sur la page
+d'administration — est-ce que ça fusionne avec les entrées récentes, ou est-ce que
+ça les écrase ? » La réponse était : **ça les écrasait**, page par page, sans le
+dire. Une sauvegarde prise avant trois saisies les faisait disparaître en un clic.
+
+**Ce qui est fait.** La fenêtre d'import d'une base d'administration demande
+maintenant **ce que le fichier a le droit de faire**, et les deux gestes ne se
+ressemblent pas :
+
+| Mode | Ce qu'il fait | Quand le choisir |
+| --- | --- | --- |
+| 🔀 **Merge** (défaut) | la **base ouverte fait foi** ; le fichier n'**ajoute** que ce qu'elle n'a pas encore | ramener une sauvegarde plus ANCIENNE, récupérer des lignes perdues |
+| ♻️ **Replace** | chaque page cochée est **remplacée** par celle du fichier (le geste historique) | repartir de la copie du fichier, page entière |
+| ♻️ **Import everything** | tout le contenu du fichier remplace la base — les pages absentes du fichier deviennent **vides** | revenir exactement à l'état sauvegardé |
+
+| Règle de la fusion | Où |
+| --- | --- |
+| Union par **clé d'identité** — la même que l'assistant d'import (`recordDedupeKey`) : une ligne ramenée par deux sauvegardes n'entre qu'une fois | `utils/loadSelection.js` (`mergeAdminValue`) |
+| La ligne **déjà présente garde sa version** : c'est la plus récente qui gagne, jamais le fichier | idem — la base écrit APRÈS |
+| Une page **absente du fichier** est recopiée telle quelle ; une page **non cochée** n'est pas touchée | `mergeAdministration` |
+| `settings` : clé par clé, la base l'emporte ; le fichier ne remplit que les clés absentes | idem |
+| Une ligne **sans identité exploitable** (aucun champ) est ajoutée — la garder vaut mieux que de choisir à sa place | `rowIdentityOf` |
+| Chaque page cochée **annonce** ce qu'elle apporterait (« +3 lignes · 12 déjà là », « rien de neuf ») | `mergePreviewOf` → `describeMergePart` (`App.jsx`) |
+| Après coup, la fusion **se raconte** : ce qui a été ajouté, ce qui a été gardé, et « nothing was erased » | `describeAdminMerge` (`App.jsx`) |
+| Aucune base ouverte → rien à fusionner : le fichier part dans une base NEUVE, et la fenêtre le dit | `confirmLoad` |
+| Les comptes (`operators`) et la sécurité (`authSettings`) ne sont **jamais** importés | inchangé |
+
+**Le choix vit dans la FENÊTRE**, pas d'un fichier à l'autre : chaque fichier
+rouvert repart sur 🔀 Merge (le geste sans perte), et « ♻️ Import everything »
+reste le seul chemin vers une base exactement telle qu'elle a été sauvegardée —
+c'est le geste à faire en connaissance de cause. Le mode « remplacer » reste celui
+du dataset scientifique (« ➕ Add the selected elements » / « 🔄 Replace the
+selected elements »), inchangé.
+
+Suite : `node _load_merge_test.mjs` — elle EXÉCUTE la fusion (union, version de la
+base qui l'emporte, pages non cochées, `settings`, lignes sans identité, doublons,
+aperçu), puis vérifie le branchement dans `App.jsx` (le mode choisi est celui
+appliqué, et la fusion décidée AVANT l'écriture de la base).
 
 
 
@@ -5655,4 +5699,61 @@ homonymes. Aucune molécule, aucun fichier, aucun style n'est touché.
 
 
 
+
+## « Un dataset supprimé sur un poste REVIENT en ouvrant l'appli sur l'autre » (09/10/2026)
+
+**Le défaut.** Supprimer un dataset laisse une **tombe** dans le miroir, et cette
+tombe voyage avec l'index partagé (`_workspace/state.json`). Mais le poste qui
+s'**ouvrait** réécrivait cet index **avant d'avoir lu** celui du Drive, et avec
+**sa seule mémoire** (`labDriveMirror`, dans le navigateur) — vide de cette
+suppression : la tombe de l'autre poste n'existait plus dans le fichier publié.
+Le dataset revenait alors sur **tous** les postes, et la suppression était perdue
+**définitivement** (il ne restait plus rien à relire). Les primitives de tombe
+(`mergeDriveMirrors`, `isDatasetMirrorDeleted`, `withoutDeletedDatasets`) étaient
+justes : c'est **le moment** où on les appelait qui était faux.
+
+**Deux garde-fous, dans `utils/workspaceDrive.js`.**
+
+| Garde-fou | Ce qu'il empêche |
+| --- | --- |
+| ① `publishableWorkspaceState(local, lastRemoteState)` | publier un état **plus pauvre** que le dernier état **lu** du Drive : les tombes et le registre des dossiers s'**ADDITIONNENT** (`mergeDriveMirrors`), la liste des datasets reste celle de ce poste |
+| ② la **relecture juste avant écriture** (`installWorkspaceAutosave.flush`) | que ① parle d'une lecture vieille de plusieurs minutes : chaque rafale relit `state.json`, puis publie la fusion |
+
+| Ce qui est garanti | Où |
+| --- | --- |
+| Lire l'index du Drive, c'est le **retenir** pour toute la session | `readWorkspaceState` → `rememberRemoteWorkspaceState` |
+| Une **tombe ne s'oublie pas** dans la fusion, et une levée de tombe non plus | `mergeDriveMirrors` (inchangé) |
+| Fermer l'onglet (`pagehide`, onglet caché) **n'attend pas** le délai : un dataset créé une seconde avant repart quand même | `flushNow` → `flush({ fresh: false })` |
+| Le vidage de fermeture ne relit PAS (le temps manque) mais ne publie pas moins : `lastRemoteState` suffit | `flush` (fresh: false) |
+| Un Drive injoignable laisse la mémoire précédente en place : **rien** n'est effacé par un échec réseau | `.catch()` de `readWorkspaceState` |
+| L'état local qui n'en est pas un (autre application) ne se publie jamais | `parseWorkspaceState` (marque `kind`) |
+
+### Vérifier soi-même
+
+```bash
+node _workspace_publish_test.mjs   # 23 tests — un faux Drive (lectures ET écritures
+                                   # journalisées) : la règle pure, puis les DEUX postes
+                                   # rejoués (PC1 supprime, PC2 s'ouvre périmé), puis
+                                   # la fermeture d'onglet sans relecture
+```
+
+Le scénario est rejoué tel quel : l'index du Drive porte la tombe de `ds3`, la
+copie du poste qui s'ouvre ne la connaît pas et affiche encore le dataset — et
+l'index publié porte **toujours** `ds3`, donc `applyWorkspaceIndex` ne le ramène
+pas. Le test a été **vérifié contre le code d'avant** : retirer ① le fait échouer
+sur « la réécriture d'un poste périmé N'EFFACE PAS la suppression de l'autre
+poste », retirer ② sur « la relecture PRÉCÈDE l'écriture ».
+
+Régressions : `node _run_all.mjs _run.txt "workspace|drive|dataset|deleted|mirror"`
+— **28 suites, 0 rouge** (dont `_workspace_drive_test.mjs` **60**,
+`_drive_mirror_test.mjs` **79**, `_workspace_resync_test.mjs` **154**,
+`_workspace_open_refresh_test.mjs` **54**, `_dataset_copy_mirror_test.mjs` **44**,
+`_deleted_projects_test.mjs` **76**) ; `npx oxlint` — **0 avertissement, 0 erreur** ;
+`npm run build` — OK.
+
+**Ce que ça ne fait pas** : la liste des datasets publiée reste **celle de ce
+poste** (le Drive la complète, ne la remplace pas) ; seules les **tombes** et le
+**registre des dossiers** sont additifs. Le geste « Resync from Drive » est
+intact (il écrit l'union de l'écran et de ce que l'adoption vient de mettre de
+côté, déjà repassée par `withoutDeletedDatasets`).
 
