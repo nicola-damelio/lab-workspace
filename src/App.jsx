@@ -1632,8 +1632,13 @@ if (customType === 'dosy') {
     /* Dataset scientifique : SEULE la page « Expériences / Tests » a des lignes,
        et UNE LIGNE = UNE EXPÉRIENCE (ses conditions comprises) — c'est ce qui
        rend le retour d'une seule expérience chirurgical (voir
-       experimentRowChoices). Les autres pages gardent leur case unique. */
-    const testRows = experimentRowChoices(pendingLoad.tests, testsRef.current, false);
+       experimentRowChoices). Les autres pages gardent leur case unique.
+       La liste COURANTE du dataset, elle, est celle que le fichier a
+       photographiée à son ouverture (`pendingLoad.baseTests`, voir loadHTML) :
+       la lire dans `testsRef` ICI faisait lever « Cannot access 'testsRef'
+       before initialization » — un memo est évalué PENDANT le rendu, donc
+       avant la déclaration de cette ref, 250 lignes plus bas. */
+    const testRows = experimentRowChoices(pendingLoad.tests, pendingLoad.baseTests, false);
     if (testRows.length) out[TESTS_SECTION_ID] = testRows;
     return Object.keys(out).length ? out : null;
   }, [pendingLoad, loadIncomingAdmin, loadMergeBase, loadAdminMode]);
@@ -4272,7 +4277,17 @@ useEffect(() => {
         /* Éléments importables du dataset scientifique (expériences, projets,
            définitions, stockage, rapport, Figures & Slides…). */
         const dataSections = loadSectionsOf(s, false);
-        setPendingLoad({ tests: loadedTests, fullState: s, sections: dataSections });
+        /* `baseTests` : la liste COURANTE du dataset, photographiée MAINTENANT
+           (ici, dans le geste : la ref est lisible) et transportée par
+           `pendingLoad`. C'est elle que la fenêtre lira pour marquer « déjà
+           présent » — pendant le rendu, où un memo ne peut pas lire une ref
+           déclarée plus bas dans le corps du composant (voir loadRowChoices). */
+        setPendingLoad({
+          tests: loadedTests,
+          fullState: s,
+          sections: dataSections,
+          baseTests: testsRef.current,
+        });
         setLoadPick(defaultSelection(dataSections));
         /* 🔎 LA PAGE « EXPÉRIENCES / TESTS » SE CHOISIT RIGA PER RIGA, comme une
            base d'administration : une ligne = une expérience, ses conditions

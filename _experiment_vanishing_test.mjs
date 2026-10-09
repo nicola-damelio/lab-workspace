@@ -182,6 +182,12 @@ has(APP, 'pickExperimentRows(allLoadedTests, testRowPicks)',
   '…et elle réduit la page cochée à ce qui est coché');
 has(APP, 'const sciRows = experimentRowChoices(loadedTests, testsRef.current, false);',
   'la fenêtre d’import d’un dataset scientifique PROPOSE ces lignes');
+has(APP, 'const testRows = experimentRowChoices(pendingLoad.tests, pendingLoad.baseTests, false);',
+  'le memo des lignes lit la liste COURANTE dans `pendingLoad` (photographiée par loadHTML) — et non `testsRef`, déclarée 250 lignes plus bas : un memo s’exécute PENDANT le rendu, la lire là levait « Cannot access \'testsRef\' before initialization » à l’ouverture de 📂 Load backup');
+has(APP, 'baseTests: testsRef.current,',
+  '…et c’est le GESTE (loadHTML, après le rendu) qui photographie cette liste');
+lacks(APP, 'experimentRowChoices(pendingLoad.tests, testsRef.current',
+  'aucun memo ne lit une ref déclarée plus bas (la porte _tdz_scan_test.mjs tient le reste)');
 has(APP, 'experimentRestoreNote',
   'ce qui est revenu — et ce qui était déjà là — est DIT après l’import');
 

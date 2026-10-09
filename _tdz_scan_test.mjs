@@ -10,7 +10,13 @@
        NMRMoleculeViewer.jsx: l'effet 💾 cite les trois états de température,
        qui étaient déclarés ~50 lignes plus bas) — TOUTE page ouvrant le viewer
        jetait, donc l'expérience ouverte quelle qu'elle soit ;
-     · le viewer lui-même (pymolScript), corrigé de la même façon.
+     · le viewer lui-même (pymolScript), corrigé de la même façon ;
+     · 09/10/2026 → « Cannot access 'mn' before initialization » en ouvrant une
+       sauvegarde (« 📂 Load backup ») : la FABRIQUE d'un useMemo lisait
+       `testsRef`, déclarée 250 lignes plus bas. Même faute, mais le corps d'une
+       fabrique était classé « fonction imbriquée » — donc simple risque : la
+       porte ne pouvait pas échouer, et l'incident est passé (voir « MÊME
+       PASSAGE » plus bas, désormais la fabrique d'un useMemo en fait partie).
 
    Ce qui rend la faute invisible : un tableau de dépendances est PLUS QU'UNE
    MÉTA-DONNÉE, il est LU PENDANT LE RENDU. Citer un `const` déclaré plus bas
@@ -40,6 +46,12 @@
                      – fonction imbriquée définie avant → RISQUE seulement
                        (elle ne jette que si elle est appelée avant la
                        déclaration) : signalé, non bloquant.
+                    Le MÊME PASSAGE comprend la FABRIQUE d'un `useMemo` (et
+                    l'initialiseur de `useState`) : React l'INVOQUE pendant le
+                    rendu, à l'endroit exact de l'appel. `useCallback` /
+                    `useEffect`, NON : leur corps est appelé plus tard
+                    (`useEffect` après tout le rendu) — seule leur dep-array est
+                    lue au rendu.
 
    Ce que la suite exige (et qu'elle a déjà prouvé : elle a signalé les trois
    états de température de la révision 83d8dcb, et zéro sur l'arbre corrigé) :
@@ -48,7 +60,10 @@
      2. les témoins NÉGATIFS ne signalent rien (typeof, export nommé,
         déclaration après la lecture, fonction imbriquée appelée plus tard) ;
      3. ZÉRO TDZ CERTAINE dans tout `src/**`, et suffisamment de fichiers
-        analysés pour qu'un walk cassé ne puisse pas faire un faux vert.
+        analysés pour qu'un walk cassé ne puisse pas faire un faux vert ;
+     4. la FABRIQUE d'un `useMemo` comptée comme MÊME PASSAGE (témoin H), tandis
+        qu'un `useCallback` (témoin I) et un `useEffect` (témoin J) ne le sont
+        PAS : la règle ne déborde pas sur du code légitime.
 
    Elle ne dit rien, et ne doit RIEN dire, des BUNDLES minifiés : dans un
    bundle, le minifieur réutilise les mêmes noms courts dans des portées
@@ -135,6 +150,18 @@ function scanSource(file, code) {
     refs.push({ name: node.name, start: node.start, scopeId: scope.id, safe });
   };
 
+  /* Les hooks dont un ARGUMENT est INVOQUÉ PENDANT LE RENDU (voir visitExpr) :
+     `useMemo(fabrique)` et l'initialiseur paresseux `useState(() => …)`. */
+  const RENDER_INVOKED = new Set(['useMemo', 'useState']);
+  const calleeName = (callee) => {
+    if (ID(callee)) return callee.name;
+    if (callee && callee.type === 'MemberExpression' && !callee.computed && ID(callee.property)) {
+      return callee.property.name;   // React.useMemo
+    }
+    return '';
+  };
+  const isRenderInvoked = (callee) => RENDER_INVOKED.has(calleeName(callee));
+
   /* Le parcours GÉNÉRIQUE ne doit jamais voir un NOM (clé non calculée,
      propriété d'un membre, étiquette, nom d'import/export) : ces nœuds-là sont
      traités un par un ci-dessous. C'est ce qui distingue une lecture d'un nom. */
@@ -170,6 +197,20 @@ function scanSource(file, code) {
       case 'RestElement': visitPattern(node.argument, scope, kind, declStart); return;
       default: visitExpr(node, scope); return;
     }
+  }
+
+  /* Le corps d'une FABRIQUE INVOQUÉE AU RENDU (voir visitExpr) : il appartient
+     au MÊME PASSAGE que l'appel — sa lecture d'un `const` déclaré plus bas est
+     donc une TDZ certaine — mais il garde sa propre portée pour ses paramètres
+     et ses consts internes (`funcId` = celui de l'appelant). */
+  function visitRenderFactory(node, scope) {
+    const fnScope = mkScope('function', scope, scope.funcId);
+    if (node.type === 'FunctionExpression' && node.id) bind(fnScope, node.id, 'function', node.start);
+    for (const p of node.params) visitPattern(p, fnScope, 'param', node.start);
+    if (node.body && node.body.type === 'BlockStatement') {
+      const b = mkScope('block', fnScope, fnScope.funcId);
+      for (const st of node.body.body) visitStmt(st, b);
+    } else if (node.body) visitExpr(node.body, fnScope);
   }
 
   function visitFunction(node, scope) {
@@ -228,6 +269,30 @@ function scanSource(file, code) {
           for (const a of node.openingElement.attributes || []) visitJsxAttr(a, scope);
         }
         for (const c of node.children || []) visitExpr(c, scope);
+        return;
+      }
+      /* ⚠ LA FABRIQUE D'UN `useMemo` EST INVOQUÉE PENDANT LE RENDU, à l'endroit
+         exact de l'appel : son corps appartient donc au MÊME PASSAGE que le
+         corps du composant qui le cite, exactement comme ses dépendances. Un
+         `const` lu dans cette fabrique AVANT sa déclaration jette au rendu —
+         incident du 09/10/2026, « Cannot access 'mn' before initialization » en
+         ouvrant 📂 Load backup (la fabrique du memo lisait `testsRef`, déclaré
+         250 lignes plus bas) : le corps était classé « fonction imbriquée »,
+         donc simple RISQUE, et la porte le laissait passer.
+         `useState(() => …)` est le second cas (initialiseur appelé au premier
+         rendu). `useCallback` / `useEffect`, NON : leur corps est appelé plus
+         tard (`useEffect` après tout le rendu) — leurs lectures restent des
+         risques, et leur dep-array, elle, est bien lue au rendu. */
+      case 'CallExpression': case 'NewExpression': {
+        const callee = node.callee || null;
+        visitExpr(callee, scope);
+        const factory = (node.type === 'CallExpression' && isRenderInvoked(callee))
+          ? node.arguments[0] : null;
+        (node.arguments || []).forEach((a) => {
+          const isFactory = a === factory && nodeAt(a)
+            && (a.type === 'ArrowFunctionExpression' || a.type === 'FunctionExpression');
+          if (isFactory) visitRenderFactory(a, scope); else visitExpr(a, scope);
+        });
         return;
       }
       case 'JSXExpressionContainer': visitExpr(node.expression, scope); return;
@@ -394,6 +459,27 @@ const CONTROLS = [
   'const obj = { hot: 1 };',
   'const value = obj.hot;',
   'const { hot: alias } = obj;',
+  '',
+  '// H · la FABRIQUE d’un useMemo est INVOQUÉE au rendu : lire un const déclaré',
+  '//     plus bas JETTE, exactement comme une dep-array (incident 09/10/2026)',
+  'function CompH() {',
+  '  const memo = useMemo(() => LATER, []);',
+  '  const LATER = 1;',
+  '  return memo;',
+  '}',
+  '',
+  '// I · useCallback n’invoque rien au rendu : la même lecture reste un RISQUE',
+  'function CompI() {',
+  '  const cb = useCallback(() => CB, []);',
+  '  const CB = 1;',
+  '  return cb;',
+  '}',
+  '',
+  '// J · useEffect s’exécute APRÈS le corps du composant : lecture légale',
+  'function CompJ() {',
+  '  useEffect(() => EF, []);',
+  '  const EF = 1;',
+  '}',
 ].join('\n');
 
 const dir = mkdtempSync(join(tmpdir(), 'tdz-'));
@@ -419,9 +505,19 @@ const certainSet = new Set(certainNames);
 ));
 ok(!certainNames.includes('hot') || certainNames.filter((n) => n === 'hot').length === 1,
   'un même binding n\'est signalé qu\'une fois');
+/* 1c · la FABRIQUE d’un useMemo est du MÊME passage que l’appel (voir le
+   scanner) : sa lecture d’un const déclaré plus bas est une TDZ certaine —
+   c’est exactement l’incident du 09/10/2026, invisible avant cette règle. */
+ok(certainSet.has('LATER'),
+  `« LATER » (lu dans la fabrique d'un useMemo, déclaré plus bas) doit sortir en TDZ CERTAINE (vu : ${certainNames.join(', ') || 'rien'})`);
+ok(!certainSet.has('CB'),
+  '« CB » (lu dans un useCallback, qui n’invoque rien au rendu) ne doit JAMAIS être une certitude');
+ok(!certainSet.has('EF'),
+  '« EF » (lu dans un useEffect, appelé après tout le rendu) est une lecture légale');
+
 ok(riskyNames.includes('EV'),
   `« EV » (fonction imbriquée définie AVANT sa déclaration) doit ressortir en RISQUE (vu : ${riskyNames.join(', ') || 'rien'})`);
-ok(certainSet.size === 3 && control.refCount > 10,
+ok(certainSet.size === 4 && control.refCount > 10,
   `les témoins exercent vraiment l'analyseur (certaines : ${certainNames.join(', ')} · refs: ${control.refCount})`);
 
 /* ═══ 2 · LE DÉPÔT ══════════════════════════════════════════════════════════ */
