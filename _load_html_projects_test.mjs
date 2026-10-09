@@ -244,7 +244,7 @@ has(APP, 'restore = importProjectsFromFile(s.projects, { datasetId: targetId, re
 /* Le trait de fond : `saveProjects` écrivait la liste du fichier telle quelle,
    avec l'étiquette d'origine — c'est LUI qui rendait les projets restaurés
    invisibles. confirmLoad ne doit plus passer par là. */
-const confirmStart = APP.indexOf('const confirmLoad = (mode, pickedIds) => {');
+const confirmStart = APP.indexOf('const confirmLoad = (mode, pickedIds, rowPicks) => {');
 const confirmEnd = APP.indexOf("const createNewDataset = async (kind = 'scientific') => {", confirmStart);
 ok(confirmStart > 0 && confirmEnd > confirmStart, 'confirmLoad et la suite de la restauration sont localisables');
 const CONFIRM = APP.slice(confirmStart, confirmEnd);

@@ -4569,7 +4569,7 @@ ancien fichier ne devient orphelin.
 node _backup_file_test.mjs            # 129 vérifications — le format, le résumé des noms, la validation, les refus
 node _save_html_test.mjs              # 45 — ce que la sauvegarde emporte (état, bibliothèques, projets)
 node _load_html_projects_test.mjs      # 53 — les projets d'une sauvegarde sont adoptés par leur dataset
-node _load_merge_test.mjs              # 41 — charger une base : 🔀 fusionner (rien n'est effacé) ou ♻️ remplacer
+node _load_merge_test.mjs               # 89 — charger une base : 🔀 fusionner (rien n'est effacé, ligne à ligne) ou ♻️ remplacer
 node _library_restore_test.mjs         # 175 — bibliothèque d'images ↔ sauvegarde
 node _reference_import_test.mjs        # 226 — les papiers se relisent en fusion
 ```
@@ -4617,6 +4617,58 @@ ressemblent pas :
 | Aucune base ouverte → rien à fusionner : le fichier part dans une base NEUVE, et la fenêtre le dit | `confirmLoad` |
 | Les comptes (`operators`) et la sécurité (`authSettings`) ne sont **jamais** importés | inchangé |
 
+## LIGNE À LIGNE — choisir dans une page, pas seulement la page
+
+**Signalé tel quel :** « la page Dépenses » n'est pas un choix. Cocher la page pour
+n'en récupérer que trois lignes obligeait à tout prendre — et c'est comme ça que les
+doublons se fabriquent (la même ligne entre par deux sauvegardes, avec deux `id`
+différents, et plus personne ne peut la distinguer de sa jumelle).
+
+**Ce qui est fait.** Chaque page de la fenêtre d'import a un « ▸ lines » qui déplie
+**ses lignes**, une par une, avec leur libellé lisible (le champ qui les nomme, puis
+leur contexte : montant, statut, date). La ligne de résumé de la page dit ce qu'il
+faut savoir sans ouvrir : « 2/14 lines ticked · 3 already in the base ».
+
+| Règle de la sélection par ligne | Où |
+| --- | --- |
+| 🔀 **Merge** : une ligne **déjà dans la base** est **verrouillée** — cochée, non décochable (la décoher ne changerait rien : la base fait foi). Les lignes **nouvelles** arrivent cochées | `rowChoicesOf` (`locked`) |
+| ♻️ **Replace** : tout est coché **et** décochable — reprendre la page telle quelle reste le geste, décocher une ligne est un choix | `rowChoicesOf` |
+| Le **défaut de la fenêtre** est calculé une fois par fichier (et remis à zéro à chaque changement de mode) : jamais un héritage du fichier précédent | `rowPicksOf` (`App.jsx`) |
+| La sélection **réduit le fichier** avant la fusion comme avant le remplacement — les deux modes voient la même sélection | `pickAdminRows` (`confirmLoad`) |
+| « all / none » d'une page reprend le défaut **des deux niveaux** (la page et ses lignes) | `pickLoadRows` (`App.jsx`) |
+| Une ligne **sans identité** est repérée par sa position (« #3 ») : elle compte pour elle-même, jamais fondue dans une autre | `rowKeyOf` |
+| Un **doublon interne au fichier** est dit avant de cliquer (« same as line 1 ») — les deux seront fusionnées de toute façon | `rowChoicesOf` (`duplicateOf`) |
+| L'aperçu (« +3 lignes ») porte sur les lignes **cochées** : décocher une ligne fait bouger l'annonce | `loadMergePreview` (`App.jsx`) |
+| « ♻️ Import everything » passe explicitement « aucune sélection par ligne » : tout le contenu, pas seulement les lignes cochées | `confirmLoad` |
+
+## La base ouverte garde son NOM (et son dossier Drive)
+
+**Signalé tel quel :** « charger la sauvegarde pour fusionner a aussi changé le nom
+du dataset sur lequel je travaillais ». C'était exact : le titre adopté était celui du
+**fichier** (`title` de l'en-tête JSON), même quand la sauvegarde était chargée DANS
+une base déjà ouverte — et comme le nom décide du dossier Drive
+(`anchorDriveContext`), les envois suivants partaient dans le dossier de l'ancienne
+base : le travail continuait sous une identité qui n'était plus la sienne.
+
+**La règle est maintenant explicite :** charger une sauvegarde **dans une base déjà
+ouverte** (`restoringInPlace`) n'apporte que du **contenu** — elle ne renomme jamais
+la base, quel que soit le mode. Seule une sauvegarde qui **crée** un dataset lui donne
+son nom (il n'y a alors rien à renommer). Et quand le fichier portait un AUTRE nom,
+c'est **dit**, avant de cliquer (dans la fenêtre) comme après (dans le compte-rendu) :
+« This file was saved under the name “X”. The open base keeps ITS name, “Y” ».
+
+**La cause des jumeaux, elle, est corrigée à la source.** Trois collections n'avaient
+**aucune règle d'identité** (`librerie`, `devisBc`, `reimbursements`) : toutes leurs
+lignes se ressemblaient (identité `''`), donc chaque fusion les ré-ajoutait toutes —
+et `remove(kind, id)` en supprimait ensuite des paquets entiers. Les règles existent
+maintenant (`recordDedupeKey`), et deux défenses s'ajoutent derrière :
+
+| Défense | Où |
+| --- | --- |
+| `librerie` = le NOM du fournisseur · `devisBc` = type · description · numéro · `reimbursements` = description · bénéficiaire · date | `recordDedupeKey` (`administration/importUtils.js`) |
+| Une page **absente de la base** est dédoublonnée comme les autres (elle ne rejouait pas les règles) | `mergeAdministration` → `mergeAdminValue` |
+| Une ligne ajoutée qui portait un `id` **DÉJÀ pris** reçoit un identifiant libre (`r1~2`) : deux lignes ne partagent plus jamais un `id` (`remove` n'emporte plus la jumelle) — et le compte-rendu le DIT (« N lines received a NEW identifier ») | `mergeAdminValue` (`freshIdFor`) → `describeAdminMerge` |
+
 **Le choix vit dans la FENÊTRE**, pas d'un fichier à l'autre : chaque fichier
 rouvert repart sur 🔀 Merge (le geste sans perte), et « ♻️ Import everything »
 reste le seul chemin vers une base exactement telle qu'elle a été sauvegardée —
@@ -4624,10 +4676,15 @@ c'est le geste à faire en connaissance de cause. Le mode « remplacer » reste 
 du dataset scientifique (« ➕ Add the selected elements » / « 🔄 Replace the
 selected elements »), inchangé.
 
-Suite : `node _load_merge_test.mjs` — elle EXÉCUTE la fusion (union, version de la
-base qui l'emporte, pages non cochées, `settings`, lignes sans identité, doublons,
-aperçu), puis vérifie le branchement dans `App.jsx` (le mode choisi est celui
-appliqué, et la fusion décidée AVANT l'écriture de la base).
+Suite : `node _load_merge_test.mjs` (89 assertions) — elle EXÉCUTE la fusion (union,
+version de la base qui l'emporte, pages non cochées, `settings`, lignes sans identité,
+doublons, aperçu), la sélection LIGNE À LIGNE (`rowChoicesOf` : verrouillage en fusion,
+libellés, doublons internes ; `rowPicksOf`/`pickAdminRows` : le fichier réellement
+réduit), la cause des jumeaux (recharger deux fois la même sauvegarde n'ajoute plus
+rien, `librerie`/`devisBc`/`reimbursements`), le renommage des `id` en collision et le
+NOM de la base ouverte — puis vérifie le branchement dans `App.jsx` (le mode choisi est
+celui appliqué, sur les lignes cochées, et la fusion décidée AVANT l'écriture de la
+base).
 
 
 

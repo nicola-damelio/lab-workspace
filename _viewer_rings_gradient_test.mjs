@@ -629,61 +629,6 @@ eq((CODE.match(/__platesHook/g) || []).length, 2, 'l’accroche ne peut être po
 
 
 
-/* ══ 9. LES PLAQUES SUIVENT LES IMAGES DE LA TRAJECTOIRE ═══════════════════ */
-/* LA PANNE signalée (« le immagini scorrono ma le placche restano ») : les bâtons
-   des rangées nucléiques sont des représentations que NGL réécrit à chaque image
-   (`Structure#updatePosition` → `refreshPosition`), mais une plaque est un
-   MeshBuffer — un INSTANTANÉ de coordonnées, sans `updatePosition`. La recette qui
-   a construit chaque plaque est donc gardée SUR son élément de représentation
-   (`__plates`), et le signal `refreshed` de la structure la rejoue. */
-const HF = buildHelpers({}, { window: { NGL } });
-// Le VRAI Signal de NGL : c'est lui que la structure dispatche à chaque image.
-const refreshed = new NGL.Signal({ signals: {} });
-const mainComp = { structure: { signals: { refreshed } } };
-HF.plateFrame.componentRef.current = mainComp;
-
-// 1. L'accroche : UNE fois par structure, sur le signal des coordonnées.
-eq(refreshed.getNumListeners(), 0, 'rien n’écoute les coordonnées avant le chargement…');
-eq(HF.plateFrame.hookStructurePlates(mainComp), undefined, 'l’accroche ne rend rien (best-effort)');
-eq(refreshed.getNumListeners(), 1, '…et la structure principale est écoutée après');
-HF.plateFrame.hookStructurePlates(mainComp);
-eq(refreshed.getNumListeners(), 1, '…UNE seule fois (jamais un abonnement par rendu React)');
-HF.plateFrame.hookStructurePlates({});
-HF.plateFrame.hookStructurePlates(null);
-eq(refreshed.getNumListeners(), 1, '…et une structure sans signal ne casse rien');
-
-// 2. Une plaque de l'image 1, ajoutée EXACTEMENT comme l'application le fait.
-const make = () => HF.nucleicRingPlates(fakeStructure, 'nucleic', MENU);
-const before = [...new Float32Array(make().position)];
-const fakeComp = {
-  reps: [],
-  addBufferRepresentation(buffer, params) {
-    const rep = { buffer, params };            // ← l'élément que NGL rend (il porte __plates)
-    this.reps.push(rep);
-    return rep;
-  },
-  eachRepresentation(cb) { this.reps.forEach((rep) => cb(rep)); },
-};
-/* Le MÊME composant reçoit les coordonnées : c'est la structure de CE composant-là
-   qui dispatche `refreshed` — comme le StructureComponent de NGL, qui porte à la fois
-   ses représentations et le signal de sa structure. */
-fakeComp.structure = { signals: { refreshed: new NGL.Signal({ signals: {} }) } };
-const plateSignal = fakeComp.structure.signals.refreshed;
-HF.plateFrame.hookStructurePlates(fakeComp);
-eq(plateSignal.getNumListeners(), 1, 'la structure du composant PLAQUÉ est écoutée, elle aussi');
-
-const kept = [];
-const added = HF.addRingPlateRep(fakeComp, make(), make, { opacity: 0.5, side: 'double' }, kept);
-ok(!!added && !!added.rep, 'la plaque est confiée au composant (addBufferRepresentation)');
-eq(kept, [added.rep], '…et retenue dans la liste des représentations de la rangée');
-ok(added.rep.buffer instanceof NGL.MeshBuffer, 'le tampon est un VRAI MeshBuffer de NGL');
-eq(added.rep.__plates.make, make, 'la recette est gardée SUR l’élément de représentation');
-eq(added.rep.params, { opacity: 0.5, side: 'double' }, '…avec les paramètres choisis par addRingPlateRep seul');
-const buffer = added.rep.buffer;
-const posAttr = buffer.geometry.attributes.position;
-const screenPos = () => [...buffer.geometry.attributes.position.array];
-eq(screenPos(), before, 'la géométrie à l’écran est celle de l’image 1');
-eq(kept[0].__sec, undefined, 'aucune marque de rangée n’est inventée par le constructeur commun');
 // 3. L'IMAGE SUIVANTE : les atomes bougent (la trajectoire), les liaisons NON — le
 //    graphe est le même, donc les anneaux sont les mêmes et la plaque ne fait que
 //    suivre ses atomes.
@@ -760,6 +705,62 @@ move(-2);                                    // retour aux coordonnées de l'ima
 ok(screenPos().join() !== before.join(), 'une plaque est un INSTANTANÉ : elle reste sur la dernière image reçue');
 eq(HF.refreshRingPlates([fakeComp]), 1, '…jusqu’à ce que la prochaine image la réécrive');
 eq(screenPos(), before, '…et la voilà reposée sur les atomes de l’image 1');
+
+/* ══ 9. LES PLAQUES SUIVENT LES IMAGES DE LA TRAJECTOIRE ═══════════════════ */
+/* LA PANNE signalée (« le immagini scorrono ma le placche restano ») : les bâtons
+   des rangées nucléiques sont des représentations que NGL réécrit à chaque image
+   (`Structure#updatePosition` → `refreshPosition`), mais une plaque est un
+   MeshBuffer — un INSTANTANÉ de coordonnées, sans `updatePosition`. La recette qui
+   a construit chaque plaque est donc gardée SUR son élément de représentation
+   (`__plates`), et le signal `refreshed` de la structure la rejoue. */
+const HF = buildHelpers({}, { window: { NGL } });
+// Le VRAI Signal de NGL : c'est lui que la structure dispatche à chaque image.
+const refreshed = new NGL.Signal({ signals: {} });
+const mainComp = { structure: { signals: { refreshed } } };
+HF.plateFrame.componentRef.current = mainComp;
+
+// 1. L'accroche : UNE fois par structure, sur le signal des coordonnées.
+eq(refreshed.getNumListeners(), 0, 'rien n’écoute les coordonnées avant le chargement…');
+eq(HF.plateFrame.hookStructurePlates(mainComp), undefined, 'l’accroche ne rend rien (best-effort)');
+eq(refreshed.getNumListeners(), 1, '…et la structure principale est écoutée après');
+HF.plateFrame.hookStructurePlates(mainComp);
+eq(refreshed.getNumListeners(), 1, '…UNE seule fois (jamais un abonnement par rendu React)');
+HF.plateFrame.hookStructurePlates({});
+HF.plateFrame.hookStructurePlates(null);
+eq(refreshed.getNumListeners(), 1, '…et une structure sans signal ne casse rien');
+
+// 2. Une plaque de l'image 1, ajoutée EXACTEMENT comme l'application le fait.
+const make = () => HF.nucleicRingPlates(fakeStructure, 'nucleic', MENU);
+const before = [...new Float32Array(make().position)];
+const fakeComp = {
+  reps: [],
+  addBufferRepresentation(buffer, params) {
+    const rep = { buffer, params };            // ← l'élément que NGL rend (il porte __plates)
+    this.reps.push(rep);
+    return rep;
+  },
+  eachRepresentation(cb) { this.reps.forEach((rep) => cb(rep)); },
+};
+/* Le MÊME composant reçoit les coordonnées : c'est la structure de CE composant-là
+   qui dispatche `refreshed` — comme le StructureComponent de NGL, qui porte à la fois
+   ses représentations et le signal de sa structure. */
+fakeComp.structure = { signals: { refreshed: new NGL.Signal({ signals: {} }) } };
+const plateSignal = fakeComp.structure.signals.refreshed;
+HF.plateFrame.hookStructurePlates(fakeComp);
+eq(plateSignal.getNumListeners(), 1, 'la structure du composant PLAQUÉ est écoutée, elle aussi');
+
+const kept = [];
+const added = HF.addRingPlateRep(fakeComp, make(), make, { opacity: 0.5, side: 'double' }, kept);
+ok(!!added && !!added.rep, 'la plaque est confiée au composant (addBufferRepresentation)');
+eq(kept, [added.rep], '…et retenue dans la liste des représentations de la rangée');
+ok(added.rep.buffer instanceof NGL.MeshBuffer, 'le tampon est un VRAI MeshBuffer de NGL');
+eq(added.rep.__plates.make, make, 'la recette est gardée SUR l’élément de représentation');
+eq(added.rep.params, { opacity: 0.5, side: 'double' }, '…avec les paramètres choisis par addRingPlateRep seul');
+const buffer = added.rep.buffer;
+const posAttr = buffer.geometry.attributes.position;
+const screenPos = () => [...buffer.geometry.attributes.position.array];
+eq(screenPos(), before, 'la géométrie à l’écran est celle de l’image 1');
+eq(kept[0].__sec, undefined, 'aucune marque de rangée n’est inventée par le constructeur commun');
 
 /* ── Bilan ─────────────────────────────────────────────────────────────── */
 console.log(`_viewer_rings_gradient_test.mjs — ${passed} assertions OK`);

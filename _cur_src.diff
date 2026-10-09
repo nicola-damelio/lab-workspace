@@ -1,425 +1,821 @@
-diff --git a/src/components/AppModules/settingsModule.jsx b/src/components/AppModules/settingsModule.jsx
-index b3fdac0..45fbaee 100644
---- a/src/components/AppModules/settingsModule.jsx
-+++ b/src/components/AppModules/settingsModule.jsx
-@@ -18,6 +18,14 @@ import {
-   UI_CUSTOM_ACCENTS, UI_CUSTOM_NEUTRALS, UI_SKIN_CUSTOM, UI_SKIN_DEFAULT, UI_SKINS,
-   readUiCustomSkin, readUiSkin, saveUiCustomSkin, saveUiSkin, uiSkinCustomVars
- } from '../../utils/uiSkin';
-+/* LE FOND DES PAGES voyage avec l'accent : il vit dans le MÊME réglage (une
-+   couleur et un nom de motif, à côté de l'accent et de la famille neutre), donc
-+   `saveUiCustomSkin` l'écrit et l'applique, et `uiSkinCustomVars` le pose sur la
-+   miniature comme sur <html>. */
-+import {
-+  UI_BG_DEFAULT, UI_BG_PATTERN_DEFAULT, UI_BG_PATTERNS, UI_BG_PRESETS,
-+  oklchToHex, uiBgStops
-+} from '../../utils/uiSkin';
- 
- /* ── Display scale ─────────────────────────────────────────────────────────
-    Tailwind v4 computes every text size and every spacing step from the ROOT
-@@ -73,10 +81,11 @@ const DisplayScaleControl = () => {
-    one of the session before the first paint. Every user sees the control — and
-    the choice follows HIM from one computer to the next, like the other browser
-    keys. */
--const SkinMiniature = ({ skin, tone = '', style = null }) => (
-+const SkinMiniature = ({ skin, tone = '', pattern = '', style = null }) => (
-   <span
-     data-skin={skin.id === UI_SKIN_DEFAULT ? undefined : skin.id}
-     data-tone={tone || undefined}
-+    data-pattern={pattern && pattern !== UI_BG_PATTERN_DEFAULT ? pattern : undefined}
-     style={style || undefined}
-     className="flex w-40 flex-col gap-1 rounded-lg border border-slate-200 bg-slate-50 p-2 no-print"
-   >
-@@ -113,6 +122,12 @@ const SkinControl = ({ operator = null }) => {
-   const pick = (id) => { setSkin(id); saveUiSkin(id, operator); };
-   const setAccent = (color) => setCustom(saveUiCustomSkin({ ...custom, accent: color }, operator));
-   const setNeutral = (neutral) => setCustom(saveUiCustomSkin({ ...custom, neutral }, operator));
-+  /* LE FOND DES PAGES : une couleur (n'importe laquelle — elle est RAMENÉE DANS
-+     LA BANDE de lisibilité par uiSkin.js, donc la page ne peut pas devenir
-+     illisible) et un motif sobre. `UI_BG_DEFAULT` = la page de la famille
-+     neutre choisie, c'est-à-dire celle que le programme livre. */
-+  const setBg = (bg) => setCustom(saveUiCustomSkin({ ...custom, bg }, operator));
-+  const setPattern = (pattern) => setCustom(saveUiCustomSkin({ ...custom, pattern }, operator));
+diff --git a/src/App.jsx b/src/App.jsx
+index 12d09a6..8c26ac5 100644
+--- a/src/App.jsx
++++ b/src/App.jsx
+@@ -133,6 +133,7 @@ import {
+   loadSectionsOf, defaultSelection, sectionGroupsOf, filterLoadState,
+   selectionHasTests, selectionIsComplete, describeCount,
+   mergeAdministration, mergePreviewOf,
++  rowChoicesOf, rowPicksOf, pickAdminRows,
+ } from './utils/loadSelection';
+ import { canUserOpenDataset, isDatasetRestricted, normalizeMemberNames, datasetAccessOf } from './utils/datasetAccess';
+ import {
+@@ -783,10 +784,90 @@ const writeLastExperiment = (datasetId, payload) => {
+    cocher EXACTEMENT ce qu’on veut importer (« quel élément de quelle page »),
+    avec par page « Tout / Rien » et, globalement, « Tout sélectionner ».
+    ========================================================================= */
+-const LoadPickPanel = ({ sections, picked, onToggle, onPickMany, preview }) => {
++/* =========================================================================
++   LIGNE À LIGNE — la liste dépliable des lignes d’UNE page.
++   Une page peut porter des centaines de lignes : elles restent donc REPLIÉES
++   (« ▸ lines »), et la ligne de résumé dit ce qu’il faut savoir sans ouvrir
++   (« 12/14 lines ticked · 2 already in the base »). Chaque ligne se coche
++   seule ; « all / none » reprend le défaut calculé par `rowChoicesOf`
++   (fusion : ce que la base n’a pas · remplacement : tout).
++   ========================================================================= */
++const RowPickList = ({ section, rows, pickedKeys, onToggleRow, onPickRows }) => {
++  const list = Array.isArray(rows) ? rows : [];
++  if (!list.length) return null;
++  const keep = new Set(Array.isArray(pickedKeys) ? pickedKeys : []);
++  const onCount = list.filter((r) => keep.has(r.key)).length;
++  return (
++    <>
++      <div className="flex items-center gap-2 mb-1">
++        <span className="text-[10px] font-black text-slate-400 uppercase tracking-wide">
++          Lines of this page ({onCount}/{list.length} ticked)
++        </span>
++        <button
++          type="button"
++          onClick={() => onPickRows([section.id], true)}
++          className="text-[10px] font-bold text-blue-700 hover:underline"
++        >
++          all
++        </button>
++        <button
++          type="button"
++          onClick={() => onPickRows([section.id], false)}
++          className="text-[10px] font-bold text-slate-400 hover:underline"
++        >
++          none
++        </button>
++      </div>
++      {list.map((r) => (
++        <label
++          key={r.key}
++          className={`flex items-start gap-2 rounded px-1 py-0.5 ${r.locked ? 'cursor-default' : 'cursor-pointer hover:bg-slate-50'}`}
++        >
++          <input
++            type="checkbox"
++            className="accent-blue-600 mt-0.5 disabled:opacity-60"
++            checked={keep.has(r.key)}
++            disabled={!!r.locked}
++            onChange={(e) => onToggleRow(section.id, r.key, e.target.checked)}
++          />
++          <span className="min-w-0 flex-1">
++            <span className="block text-[11px] font-bold text-slate-700 leading-tight truncate">{r.title}</span>
++            <span className="block text-[10px] text-slate-400 leading-tight truncate">
++              {[
++                r.sub,
++                r.locked ? 'already in the base — the merge recognises it, nothing to decide' : '',
++                r.inBase && !r.locked ? 'already in the base' : '',
++                r.duplicateOf >= 0 ? `same as line ${r.duplicateOf + 1}` : '',
++                r.noIdentity ? 'nothing to recognise it by — one line of its own' : '',
++              ].filter(Boolean).join(' · ')}
++            </span>
++          </span>
++        </label>
++      ))}
++    </>
++  );
++};
++
++const LoadPickPanel = ({
++  sections, picked, onToggle, onPickMany, onPickRows, onToggleRow, preview, rows, rowPicked,
++}) => {
+   const groups = sectionGroupsOf(sections);
+   const isOn = (id) => picked.indexOf(id) !== -1;
+   const groupIds = (g) => g.items.map((s) => s.id);
++  /* Les lignes d’une page s’affichent à la demande (`rows` vaut `null` quand la
++     sélection ligne à ligne n’existe pas : dataset scientifique, ou
++     « ♻️ Import everything »). */
++  const [openRows, setOpenRows] = useState({});
++  const rowsOf = (id) => (rows && Array.isArray(rows[id]) ? rows[id] : []);
++  const pickedRowsOf = (id) => ((rowPicked && Array.isArray(rowPicked[id])) ? rowPicked[id] : []);
++  const summarizeRows = (id) => {
++    const list = rowsOf(id);
++    if (!list.length) return '';
++    const keep = pickedRowsOf(id);
++    const on = list.filter((r) => keep.indexOf(r.key) !== -1).length;
++    const inBase = list.filter((r) => r.inBase).length;
++    return `${on}/${list.length} lines ticked${inBase ? ` · ${inBase} already in the base` : ''}`;
++  };
    return (
-     <div className="flex flex-col gap-3">
-       <div className="flex flex-wrap gap-3">
-@@ -131,6 +146,7 @@ const SkinControl = ({ operator = null }) => {
-             <SkinMiniature
-               skin={s}
-               tone={s.id === UI_SKIN_CUSTOM ? custom.neutral : ''}
-+              pattern={s.id === UI_SKIN_CUSTOM ? custom.pattern : ''}
-               style={s.id === UI_SKIN_CUSTOM ? uiSkinCustomVars(custom) : null}
-             />
-             <span className="flex flex-col items-center">
-@@ -187,11 +203,72 @@ const SkinControl = ({ operator = null }) => {
-               </button>
-             ))}
+     <div className="border border-slate-200 rounded-xl overflow-hidden">
+       <div className="flex items-center justify-between gap-2 px-3 py-2 bg-slate-50 border-b border-slate-200">
+@@ -838,21 +919,48 @@ const LoadPickPanel = ({ sections, picked, onToggle, onPickMany, preview }) => {
+             ) : null}
+             <div className="flex flex-col gap-1">
+               {g.items.map((s) => (
+-                <label key={s.id} className="flex items-start gap-2 cursor-pointer rounded-lg px-1.5 py-1 hover:bg-slate-50">
+-                  <input
+-                    type="checkbox"
+-                    className="accent-blue-600 mt-0.5"
+-                    checked={isOn(s.id)}
+-                    onChange={(e) => onToggle(s.id, e.target.checked)}
+-                  />
+-                  <span className="min-w-0 flex-1">
+-                    <span className="block text-xs font-bold text-slate-700 leading-tight">{s.label}</span>
+-                    <span className="block text-[10px] text-slate-400 leading-tight">
+-                      {describeCount(s)}
+-                      {preview && preview[s.id] ? ` · ${describeMergePart(s, preview[s.id])}` : ''}
++                <div key={s.id}>
++                  <label className="flex items-start gap-2 cursor-pointer rounded-lg px-1.5 py-1 hover:bg-slate-50">
++                    <input
++                      type="checkbox"
++                      className="accent-blue-600 mt-0.5"
++                      checked={isOn(s.id)}
++                      onChange={(e) => onToggle(s.id, e.target.checked)}
++                    />
++                    <span className="min-w-0 flex-1">
++                      <span className="block text-xs font-bold text-slate-700 leading-tight">{s.label}</span>
++                      <span className="block text-[10px] text-slate-400 leading-tight">
++                        {describeCount(s)}
++                        {preview && preview[s.id] ? ` · ${describeMergePart(s, preview[s.id])}` : ''}
++                        {isOn(s.id) && rowsOf(s.id).length ? ` · ${summarizeRows(s.id)}` : ''}
++                      </span>
+                     </span>
+-                  </span>
+-                </label>
++                    {isOn(s.id) && rowsOf(s.id).length ? (
++                      <button
++                        type="button"
++                        title="Pick the lines of this page one by one"
++                        onClick={(e) => {
++                          e.preventDefault();
++                          setOpenRows((prev) => ({ ...prev, [s.id]: !prev[s.id] }));
++                        }}
++                        className="text-[10px] font-bold text-blue-700 hover:underline whitespace-nowrap"
++                      >
++                        {openRows[s.id] ? '▾ lines' : '▸ lines'}
++                      </button>
++                    ) : null}
++                  </label>
++                  {isOn(s.id) && openRows[s.id] ? (
++                    <div className="ml-6 mb-1 border-l-2 border-slate-100 pl-2">
++                      <RowPickList
++                        section={s}
++                        rows={rowsOf(s.id)}
++                        pickedKeys={pickedRowsOf(s.id)}
++                        onToggleRow={onToggleRow}
++                        onPickRows={onPickRows}
++                      />
++                    </div>
++                  ) : null}
++                </div>
+               ))}
+             </div>
            </div>
-+          <span className="text-xs font-bold text-slate-700">…and the page background</span>
-+          <div className="flex flex-wrap items-center gap-2">
-+            <button
-+              type="button"
-+              onClick={() => setBg(UI_BG_DEFAULT)}
-+              title={`The page the program ships with — the lightest grey of the neutral family above (${custom.neutral}).`}
-+              className={`rounded-lg border px-2 py-1 text-[11px] font-bold ${
-+                custom.bg === UI_BG_DEFAULT
-+                  ? 'border-blue-600 bg-blue-50 text-blue-700'
-+                  : 'border-slate-300 bg-white text-slate-600 hover:border-slate-400'
-+              }`}
-+            >
-+              {custom.neutral} page
-+            </button>
-+            {UI_BG_PRESETS.map((p) => (
-+              <button
-+                key={p.id}
-+                type="button"
-+                onClick={() => setBg(p.hex)}
-+                title={`${p.label} page — a pastel page, kept light enough for the ink the program writes on it.`}
-+                className={`h-7 w-7 rounded-full border-2 shadow-sm ${
-+                  custom.bg === p.hex ? 'border-slate-800' : 'border-white'
-+                }`}
-+                style={{ backgroundColor: p.hex }}
-+              />
-+            ))}
-+            <label
-+              title="Any colour at all: it is pulled back into a legible band (lightness, chroma, and the sRGB gamut), so the writing on the page always stays readable."
-+              className="flex items-center gap-1.5 text-[11px] font-bold text-slate-600"
-+            >
-+              <input
-+                type="color"
-+                value={custom.bg || oklchToHex(uiBgStops(UI_BG_DEFAULT).page)}
-+                onChange={(e) => setBg(e.target.value)}
-+                className="h-7 w-10 cursor-pointer rounded border border-slate-300 bg-white"
-+              />
-+              {custom.bg || 'page colour'}
-+            </label>
-+          </div>
-+          <span className="text-xs font-bold text-slate-700">…and a sober pattern</span>
-+          <div className="flex flex-wrap gap-2">
-+            {UI_BG_PATTERNS.map((p) => (
-+              <button
-+                key={p.id}
-+                type="button"
-+                onClick={() => setPattern(p.id)}
-+                title={`${p.label} — ${p.hint}. A few CSS hairlines (nothing to download), painted on the pages only, and never on a printed document.`}
-+                className={`rounded-lg border px-2 py-1 text-[11px] font-bold ${
-+                  custom.pattern === p.id
-+                    ? 'border-blue-600 bg-blue-50 text-blue-700'
-+                    : 'border-slate-300 bg-white text-slate-600 hover:border-slate-400'
-+                }`}
-+              >
-+                {p.label}
-+              </button>
-+            ))}
-+          </div>
-           <span className="text-[10px] text-slate-500 leading-relaxed">
-             The accent repaints every button, link, highlight and chip; the neutral family repaints the
-             pages, the cards, the borders and the inks. The eleven accent stops are <b>derived from the
-             one colour</b> you pick — the same shape as the shipped ramp — so a custom skin keeps the
--            contrast of the program instead of producing an unreadable mix.
-+            contrast of the program instead of producing an unreadable mix. The page background is the one
-+            colour you can pick freely: whatever you choose is <b>pulled back into a legible band</b>
-+            (lightness, chroma, sRGB gamut), and the panels that sit on the page follow it, so the titles
-+            and captions the program writes there stay readable. The pattern is a few CSS hairlines drawn
-+            on the page — and never on a printed document.
-           </span>
-         </div>
-       )}
-@@ -255,7 +332,7 @@ export const SettingsModule = ({
+@@ -1449,16 +1557,90 @@ if (customType === 'dosy') {
+     && adminContent && typeof adminContent === 'object')
+     ? adminContent
+     : null;
++  /* ── LIGNE À LIGNE (voir utils/loadSelection.js) ───────────────────────────
++     `loadRows` = les lignes cochées, page par page (`{ [sectionId]: [clés] }`).
++     Il est REMIS À SON DÉFAUT à chaque fichier ouvert et à chaque changement de
++     mode (fusion = ce que la base n’a pas ; remplacement = tout) : le point de
++     départ est donc toujours le geste sans perte, et décocher une ligne est un
++     choix explicite de l’utilisateur — jamais un héritage du fichier d’avant.
++     `null` = aucune sélection par ligne (le contenu part entier, comme avant) :
++     c’est le cas de « ♻️ Import everything ». */
++  const [loadRows, setLoadRows] = useState(null);
++  /* Le fichier ouvert, en base d’administration — la SOURCE des libellés de
++     ligne (jamais la copie filtrée : on liste toutes les lignes du fichier). */
++  const loadIncomingAdmin = (pendingLoad && pendingLoad.isAdmin
++    && pendingLoad.fullState && typeof pendingLoad.fullState.administration === 'object'
++    && pendingLoad.fullState.administration)
++    ? pendingLoad.fullState.administration
++    : null;
++  /* Les lignes à MONTRER, page par page (`rowChoicesOf`) : titre lisible,
++     contexte, « déjà dans la base », doublon interne… Recalculé avec le fichier,
++     la base ou le mode — jamais à chaque frappe. */
++  const loadRowChoices = useMemo(() => {
++    if (!pendingLoad || !pendingLoad.isAdmin || !loadIncomingAdmin) return null;
++    const out = {};
++    (Array.isArray(pendingLoad.sections) ? pendingLoad.sections : []).forEach((s) => {
++      const rows = [];
++      (s.keys || []).forEach((k) => {
++        if (!Array.isArray(loadIncomingAdmin[k])) return;
++        rowChoicesOf(k, loadIncomingAdmin[k], loadMergeBase ? loadMergeBase[k] : undefined, loadAdminMode)
++          .forEach((c) => rows.push(c));
++      });
++      out[s.id] = rows;
++    });
++    return out;
++  }, [pendingLoad, loadIncomingAdmin, loadMergeBase, loadAdminMode]);
++  /** Lignes cochées par défaut d’une page, dans le mode courant : celles que
++   *  l’utilisateur décide (`picked`) ET celles que la fusion reconnaîtra de
++   *  toute façon (`locked` — voir rowChoicesOf : elles doivent traverser la
++   *  sélection pour être comptées comme « déjà là »). */
++  const defaultRowKeysOf = (section) => {
++    const rows = (loadRowChoices && section) ? loadRowChoices[section.id] : null;
++    return Array.isArray(rows) ? rows.filter((c) => c.picked || c.locked).map((c) => c.key) : [];
++  };
++  /* Le mode se choisit dans la fenêtre : changer de mode REMET les lignes à
++     leur défaut (un « tout est coché » hérité du remplacement n’a aucun sens en
++     fusion) — et l’écran le dit, les compteurs se recalculent. */
++  const setLoadMode = (m) => {
++    setLoadAdminMode(m);
++    if (loadIncomingAdmin) {
++      setLoadRows(rowPicksOf(loadIncomingAdmin, loadSections, loadMergeBase, m));
++    }
++  };
++  const toggleLoadRow = (sectionId, key, on) => setLoadRows((prev) => {
++    const cur = (prev && typeof prev === 'object') ? prev : {};
++    const list = Array.isArray(cur[sectionId]) ? cur[sectionId] : [];
++    const next = on
++      ? (list.indexOf(key) === -1 ? [...list, key] : list)
++      : list.filter((k) => k !== key);
++    return { ...cur, [sectionId]: next };
++  });
++  /* « Tout / Rien » d’une PAGE aux deux niveaux à la fois : la page et ses
++     lignes. Décocher la page remet aussi ses lignes à vide pour que le compte
++     affiché et ce qui sera importé disent la même chose. */
++  const pickLoadRows = (sectionIds, on) => setLoadRows((prev) => {
++    if (!loadIncomingAdmin) return prev;
++    const cur = (prev && typeof prev === 'object') ? prev : {};
++    const next = { ...cur };
++    loadSections.forEach((s) => {
++      if (sectionIds.indexOf(s.id) === -1) return;
++      next[s.id] = on ? defaultRowKeysOf(s) : [];
++    });
++    return next;
++  });
+   const loadMergePreview = useMemo(() => {
+     if (!pendingLoad || !pendingLoad.isAdmin) return null;
+     /* Les sections sont RELUES ICI (et non passées) : `loadSections` est un
+        tableau neuf à chaque rendu, ce qui ferait recalculer l’aperçu sans
+        arrêt — `pendingLoad.sections`, lui, ne change qu’avec le fichier. */
+     const list = Array.isArray(pendingLoad.sections) ? pendingLoad.sections : [];
+-    const incoming = (pendingLoad.fullState && pendingLoad.fullState.administration) || {};
++    /* L’aperçu porte sur les lignes COCHÉES (`pickAdminRows`) : unticker une
++       ligne doit faire bouger le « +3 lignes » de la page — sinon l’annonce
++       mentirait sur ce que le bouton va faire. */
++    const incoming = pickAdminRows(loadIncomingAdmin || {}, list, loadRows);
+     const picked = Array.isArray(loadPick) ? loadPick : defaultSelection(list);
+     return mergePreviewOf(loadMergeBase || {}, incoming, list, picked);
+-  }, [pendingLoad, loadPick, loadMergeBase]);
++  }, [pendingLoad, loadPick, loadMergeBase, loadRows, loadIncomingAdmin]);
+   // Dataset dont le superutilisateur édite la liste d’accès (bouton « 👥
+   // Membres » sur une carte de l’écran d’accueil).
+   const [accessEditorDataset, setAccessEditorDataset] = useState(null);
+@@ -3836,6 +4018,14 @@ useEffect(() => {
+               adminSubtitle: dataBlob && (dataBlob.subtitle || ''),
+             });
+             setLoadPick(defaultSelection(sections));
++            /* LES LIGNES AUSSI partent de leur défaut : en fusion, ce que la
++               base ouverte n’a pas encore. Le fichier ouvre donc la fenêtre
++               « prête à ne rien dupliquer » — et tout est visible, ligne à
++               ligne, avant de cliquer. La base qui fait foi est relue ICI (et
++               non par `loadMergeBase`) : `pendingLoad` n’est pas encore posé. */
++            const baseAtOpen = (currentDatasetId && isAdministrationKind(activeDatasetKind)
++              && adminContent && typeof adminContent === 'object') ? adminContent : null;
++            setLoadRows(rowPicksOf(s.administration, sections, baseAtOpen, 'merge'));
+             /* Une nouvelle fenêtre s’ouvre sur le mode SANS PERTE (fusion) : le
+                choix se fait dans la fenêtre, pas d’une fois sur l’autre. */
+             setLoadAdminMode('merge');
+@@ -3903,12 +4093,17 @@ useEffect(() => {
+     e.target.value = '';
+   };
  
-                   <CollapsibleSection
-                     title="Interface skin — the colours of the whole program"
--                    subtitle="Repaints every page, modal, table and badge at once — the neutral greys, the ink and the accent colour — by restating the palette Tailwind's classes read. Graphite drops the blue cast, Warm paper turns the greys warm, Indigo, Violet, Purple, Red and Rose move the accent, Dimmed softens the white for long sessions, High contrast deepens every ink and border, and Custom lets you pick your own accent and neutral family. The choice is immediate, belongs to the OPERATOR who picks it (each one has his own, on every computer he signs in to; when nobody is signed in it is the skin of this computer), and every user sees it."
-+                    subtitle="Repaints every page, modal, table and badge at once — the neutral greys, the ink and the accent colour — by restating the palette Tailwind's classes read. Graphite drops the blue cast, Warm paper turns the greys warm, Indigo, Violet, Purple, Red and Rose move the accent, Dimmed softens the white for long sessions, High contrast deepens every ink and border, and Custom lets you pick your own accent and neutral family. The choice is immediate, belongs to the OPERATOR who picks it (each one has his own, on every computer he signs in to; when nobody is signed in it is the skin of this computer), and every user sees it. The PAGE BACKGROUND, too: pick the colour of the pages — any colour, since it is pulled back into a band that keeps the writing readable — and a sober pattern (grid, dots, ruled lines, slanted hairlines) drawn with CSS, on screen only."
-                     defaultOpen={false}
+-  const confirmLoad = (mode, pickedIds) => {
++  const confirmLoad = (mode, pickedIds, rowPicks) => {
+     const { tests: pendingTests, fullState: rawState, sections } = pendingLoad;
+     const allSections = Array.isArray(sections) ? sections : [];
+     const picked = Array.isArray(pickedIds)
+       ? pickedIds
+       : (Array.isArray(loadPick) ? loadPick : defaultSelection(allSections));
++    /* LIGNE À LIGNE : le choix fait dans la fenêtre (`{ [page]: [clés] }`, voir
++       rowChoicesOf). `null` / absent = aucune sélection par ligne : le contenu
++       part entier — c’est le cas de « ♻️ Import everything » et des imports qui
++       ne connaissent pas cette sélection (dataset scientifique). */
++    const rowsPicked = (rowPicks && typeof rowPicks === 'object') ? rowPicks : null;
+     /* Import PARTIEL : le snapshot est réduit aux éléments COCHÉS — les autres
+        gardent leur valeur actuelle (rien n’est écrasé en silence). Les
+        expériences d’un dataset scientifique ne sont remplacées que si
+@@ -3938,7 +4133,11 @@ useEffect(() => {
+        n’est PAS une base d’administration, la sauvegarde est restaurée dans
+        une NOUVELLE base (le dataset scientifique ouvert n’est pas touché). */
+     if (pendingLoad && pendingLoad.isAdmin) {
+-      const pickedAdmin = pruned.administration || {};
++      /* Les lignes cochées s’appliquent AVANT les deux modes : la fusion comme
++         le remplacement ne voient que ce qui a été coché — c’est le même
++         filtre, donc les deux gestes restent comparables (« la même sélection,
++         deux façons de l’appliquer »). */
++      const pickedAdmin = pickAdminRows(pruned.administration || {}, allSections, rowsPicked);
+       /* DEUX FAÇONS d’appliquer les pages cochées — c’est le seul endroit où
+          elles se séparent :
+            · 🔀 FUSIONNER (mode 'merge', le défaut) : la BASE OUVERTE fait foi,
+@@ -3991,14 +4190,40 @@ useEffect(() => {
+       }
+       setActiveDatasetKind('administration');
+       setAdminContent(admin);
+-      const loadedTitle = (pendingLoad && pendingLoad.adminTitle)
++      /* ❗ LE NOM DE LA BASE OUVERTE EST INTANGIBLE. Une sauvegarde chargée DANS
++         une base d’administration déjà ouverte (« restoringInPlace ») ne la
++         rebaptise JAMAIS : elle n’apporte que du CONTENU (pages, lignes). Seule
++         une sauvegarde qui CRÉE un dataset (aucune base ouverte) donne son nom —
++         c’est la seule copie disponible, il n’y a donc rien à renommer.
++         Sans cette règle, « 🔀 Merge » d’un fichier ancien rebaptisait la base en
++         cours du titre que CE fichier portait, et comme le nom décide du dossier
++         Drive (anchorDriveContext, juste après), les envois suivants partaient
++         dans le dossier de l’ancienne base : le travail continuait sous une
++         identité qui n’était plus la sienne. */
++      const openTitle = String(datasetTitle || '').trim();
++      const fileTitle = String((pendingLoad && pendingLoad.adminTitle)
+         || (s && (s.title || s.datasetTitle))
+-        || (restoringInPlace ? datasetTitle : 'Base d’administration');
+-      const loadedSubtitle = (pendingLoad && pendingLoad.adminSubtitle)
++        || '').trim();
++      const fileSubtitle = String((pendingLoad && pendingLoad.adminSubtitle)
+         || (s && (s.subtitle || s.datasetSubtitle))
+-        || '';
++        || '');
++      const loadedTitle = restoringInPlace
++        ? (openTitle || fileTitle || 'Base d’administration')
++        : (fileTitle || 'Base d’administration');
++      const loadedSubtitle = restoringInPlace ? String(datasetSubtitle || '') : fileSubtitle;
+       setDatasetTitle(loadedTitle);
+       setDatasetSubtitle(loadedSubtitle);
++      /* Le fichier portait un AUTRE nom : c’est dit — un chargement ne doit rien
++         changer en silence, et la question « où est passée ma base ? » se pose
++         exactement là. La note n’apparaît que quand les noms DIFFÈRENT. */
++      const renamedFileNote = (openTitle && fileTitle
++        && fileTitle.toLowerCase() !== openTitle.toLowerCase())
++        ? `\n\n⚠️ This file was saved under the name “${fileTitle}”. `
++          + (restoringInPlace
++            ? `The open base keeps ITS name, “${openTitle}” — a load changes the content, never the `
++              + 'identity of the base (nor its Drive folder).'
++            : `The new base has taken its name, “${loadedTitle}”.`)
++        : '';
+       /* La base d'administration restaurée est ancrée AVANT la suite de
+          l'import : ses documents partent dans SON dossier, pas dans celui du
+          dataset resté ouvert. */
+@@ -4009,11 +4234,17 @@ useEffect(() => {
+       resetAdminNavHistory();
+       setPendingLoad(null);
+       setLoadPick(null);
++      setLoadRows(null);
+       /* Le compte-rendu de la FUSION, une fois la fenêtre refermée : un « Merge »
+          muet laisserait croire que rien n’a été lu (l’ancien défaut « rien ne se
+-         passe »). */
+-      if (adminMergeNote) {
+-        setDialog({ type: 'alert', title: '🔀 Merge — nothing was erased', message: adminMergeNote });
++         passe »). Le NOM y figure quand le fichier en portait un autre : c’est la
++         seule trace de ce qui a (ou n’a pas) changé hors contenu. */
++      if (adminMergeNote || renamedFileNote) {
++        setDialog({
++          type: 'alert',
++          title: merging ? '🔀 Merge — nothing was erased' : '♻️ Replace — the open base kept its name',
++          message: `${adminMergeNote}${renamedFileNote}`,
++        });
+       }
+       if (window.innerWidth < 768) setIsSidebarOpen(false);
+       return;
+@@ -4304,6 +4535,7 @@ if (s.mandatoryFields !== undefined) setMandatoryFields((prev) => [...new Set([.
+ 
+     setPendingLoad(null);
+     setLoadPick(null);
++    setLoadRows(null);
+     /* ❗ LE VERDICT DES PROJETS, une fois la fenêtre fermée : « rien ne se passe »
+        est exactement le défaut réparé ici (voir describeProjectRestore). */
+     if (projectRestoreNote) {
+@@ -5902,15 +6134,23 @@ const openDataset = (dset, { keepPlace = false } = {}) => {
+                   <b>{pendingLoad.adminTitle
+                     || (pendingLoad.fullState && (pendingLoad.fullState.title || pendingLoad.fullState.datasetTitle))
+                     || 'sans titre'}</b>
+-                  ). Tick the pages to import, then choose what this file is allowed to do to the open
++                  ). Tick the pages to import — and, inside a page, its LINES (“▸ lines”: every line can
++                  be picked on its own) — then choose what this file is allowed to do to the open
+                   base. 🔀 Merge never erases anything; ♻️ Replace overwrites each ticked page with the
+                   file’s copy — even if the base holds a newer one.
+                 </p>
++                {loadMergeBase ? (
++                  <p className="text-[10px] text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 mb-3 leading-relaxed">
++                    A load changes the CONTENT of the open base, never its identity: it keeps its name
++                    {' '}<b>“{String(datasetTitle || '').trim() || 'Base d’administration'}”</b> (and its Drive
++                    folder), whatever name the file was saved under.
++                  </p>
++                ) : null}
+                 <div className="flex items-center gap-2 mb-3">
+                   <span className="text-[10px] font-black text-slate-500 uppercase tracking-wide">Mode</span>
+                   <button
+                     type="button"
+-                    onClick={() => setLoadAdminMode('merge')}
++                    onClick={() => setLoadMode('merge')}
+                     className={`flex-1 text-[11px] font-bold py-1.5 px-2 rounded-lg border transition-colors ${
+                       loadAdminMode === 'merge'
+                         ? 'bg-blue-600 border-blue-600 text-white'
+@@ -5921,7 +6161,7 @@ const openDataset = (dset, { keepPlace = false } = {}) => {
+                   </button>
+                   <button
+                     type="button"
+-                    onClick={() => setLoadAdminMode('replace')}
++                    onClick={() => setLoadMode('replace')}
+                     className={`flex-1 text-[11px] font-bold py-1.5 px-2 rounded-lg border transition-colors ${
+                       loadAdminMode === 'replace'
+                         ? 'bg-red-600 border-red-600 text-white'
+@@ -5943,18 +6183,21 @@ const openDataset = (dset, { keepPlace = false } = {}) => {
+                   picked={loadPicked}
+                   onToggle={toggleLoadPick}
+                   onPickMany={pickManyLoad}
++                  onPickRows={pickLoadRows}
++                  rows={loadRowChoices}
++                  rowPicked={loadRows}
+                   preview={loadAdminMode === 'merge' ? loadMergePreview : null}
+                 />
+                 <p className="text-[10px] text-slate-400 mt-2 leading-relaxed">
+                   {loadAdminMode === 'merge'
+-                    ? 'Merge keeps the open base as it is and only ADDS what this file holds and the base does not: a line already there keeps its current version, un-ticked pages stay untouched, and each ticked page announces what it would bring.'
++                    ? 'Merge keeps the open base as it is and only ADDS what this file holds and the base does not: a line already there keeps its current version, un-ticked pages stay untouched, and each ticked page announces what it would bring. Lines already in the base are un-ticked for you — that is what stops a load from stacking twins.'
+                     : 'Replace copies each ticked page over its counterpart; un-ticked pages stay untouched.'}
+                   {' '}Accounts (operators) and the security configuration are never imported: they belong
+                   to the application, not to the dataset.
+                 </p>
+                 <div className="flex flex-col gap-3 mt-4">
+                   <button
+-                    onClick={() => confirmLoad(loadAdminMode)}
++                    onClick={() => confirmLoad(loadAdminMode, undefined, loadRows)}
+                     disabled={loadPicked.length === 0}
+                     className={`disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-2 px-4 rounded-lg text-left transition-colors ${
+                       loadAdminMode === 'merge'
+@@ -5967,13 +6210,13 @@ const openDataset = (dset, { keepPlace = false } = {}) => {
+                       : `♻️ Replace the selected pages (${loadPicked.length})`}
+                   </button>
+                   <button
+-                    onClick={() => confirmLoad('replace', defaultSelection(loadSections))}
++                    onClick={() => confirmLoad('replace', defaultSelection(loadSections), null)}
+                     className="bg-red-50 hover:bg-red-100 border border-red-200 text-red-800 font-bold py-2 px-4 rounded-lg text-left transition-colors"
                    >
-                     <SkinControl operator={currentUser} />
-diff --git a/src/index.css b/src/index.css
-index 904d5a5..8cbd1d6 100644
---- a/src/index.css
-+++ b/src/index.css
-@@ -833,6 +833,66 @@ table td .text-xs, table th .text-xs {
-   --color-slate-950: oklch(14.7% 0.004 49.25);
- }
+-                    ♻️ Import everything (restore the whole base as saved)
++                    ♻️ Import everything (restore the whole base as saved — every line, not just the ticked ones)
+                   </button>
+                   <button
+-                    onClick={() => { setPendingLoad(null); setLoadPick(null); }}
++                    onClick={() => { setPendingLoad(null); setLoadPick(null); setLoadRows(null); }}
+                     className="mt-2 text-slate-500 hover:text-slate-700 text-sm font-bold py-2 w-full transition-colors"
+                   >
+                     Cancel
+@@ -6021,7 +6264,7 @@ const openDataset = (dset, { keepPlace = false } = {}) => {
+                   </button>
  
-+/* ── LE FOND DES PAGES — LE MOTIF CHOISI DANS ⚙ SETTINGS.
-+   LA COULEUR n'est pas ici : elle dépend d'un choix, donc src/utils/uiSkin.js
-+   l'écrit EN LIGNE sur <html> (`--color-slate-50` et `--color-slate-100`,
-+   ramenés dans une bande de lisibilité — voir « LA BANDE », là-bas). Le MOTIF,
-+   lui, ne dépend que d'un NOM : `data-pattern`, posé sur <html> par le même
-+   appel, est décrit ici une seule fois pour toutes les pages du programme.
-+   Quatre dégradés CSS répétés — aucun octet à charger, aucun composant à
-+   toucher, et RIEN À L'IMPRESSION : les règles vivent dans `@media screen`,
-+   donc un document imprimé garde sa page blanche.
-+
-+   Elles ne peignent qu'un élément qui porte la classe de la page
-+   (`bg-slate-50`) — le seul repère qui dise « ceci EST une page » (le grand
-+   cadre de l'application, le conteneur d'une page, le fond de ⚙ Settings, la
-+   miniature). `--lab-page-line` est une encre neutre diluée, assez pâle pour ne
-+   jamais gêner une lecture : les quatre motifs se contentent de filets et de
-+   points, jamais d'une image. */
-+
-+@media screen {
-+
-+  /* l'encre du motif — écrite UNE fois, les quatre motifs la partagent */
-+  [data-pattern] {
-+    --lab-page-line: rgb(15 23 42 / 0.06);
+                   <button
+-                    onClick={() => { setPendingLoad(null); setLoadPick(null); }}
++                    onClick={() => { setPendingLoad(null); setLoadPick(null); setLoadRows(null); }}
+                     className="mt-2 text-slate-500 hover:text-slate-700 text-sm font-bold py-2 w-full transition-colors"
+                   >
+                     Cancel
+diff --git a/src/administration/importUtils.js b/src/administration/importUtils.js
+index b586dba..5b71794 100644
+--- a/src/administration/importUtils.js
++++ b/src/administration/importUtils.js
+@@ -1584,7 +1584,15 @@ export const buildMissingFournisseurs = (rows, existing) => {
+   return [...byName.values()].filter((f) => !known.has(normalizeKey(f.fournisseur)));
+ };
+ 
+-/* Clé de dédoublonnage partagée (utilisée aussi par l’assistant d’import). */
++/* Clé de dédoublonnage partagée (utilisée aussi par l’assistant d’import).
++   ⚠ CHAQUE collection doit avoir SA règle : une collection oubliée retombe sur
++   la règle générique (`description || nom || ligne`), qui ne trouve AUCUNE des
++   clés de ses fiches — toutes ses lignes partagent alors la même identité vide.
++   Le catalogue fournisseurs (`fournisseur`, pas `nom`), les devis & BC (`kind` +
++   numéro) et les remboursements (bénéficiaire) tombaient exactement dans ce
++   trou : une fusion les ré-ajoutait donc TOUS à chaque chargement, avec leurs
++   identifiants d’origine — des jumeaux parfaits qu’une suppression emportait
++   d’un seul coup (remove(kind, id) efface toutes les lignes du même id). */
+ export const recordDedupeKey = (kind, rec) => {
+   const r = rec || {};
+   const n = (x) => normalizeKey(x);
+@@ -1599,6 +1607,16 @@ export const recordDedupeKey = (kind, rec) => {
+   if (kind === 'desiderate') return `${n(r.description)}|${n(r.demandeur)}`;
+   if (kind === 'questioni' || kind === 'sicurezza') return `${n(r.description)}`;
+   if (kind === 'conges') return `${n(r.demandeur)}|${n(r.dateDebut)}|${n(r.dateFin)}`;
++  /* Catalogue fournisseurs : une fiche EST un nom (c’est le nom qui sert de clé
++     partout ailleurs — voir SUPPLIER_NAME_KEYS / buildMissingFournisseurs). */
++  if (kind === 'librerie') return `${n(firstValue(r, SUPPLIER_NAME_KEYS))}`;
++  /* Devis & BC : un devis et un BC peuvent décrire le même achat (même
++     description) — `kind` les sépare, le numéro les distingue à l’intérieur. */
++  if (kind === 'devisBc') return `${n(r.kind)}|${n(r.description)}|${n(r.numDevis || r.numBC || '')}`;
++  /* Remboursements : même forme qu’un OM (description, bénéficiaire, date). */
++  if (kind === 'reimbursements') {
++    return `${n(r.description)}|${n(r.demandeur || r.beneficiaire)}|${n(r.dateMission || r.dateDemande || '')}`;
 +  }
+   return `${n(r.description || r.nom || r.ligne || '')}`;
+ };
+ 
+diff --git a/src/utils/loadSelection.js b/src/utils/loadSelection.js
+index 73abdb1..eac231a 100644
+--- a/src/utils/loadSelection.js
++++ b/src/utils/loadSelection.js
+@@ -21,6 +21,13 @@
+        fichier ne fait qu’AJOUTER ce qu’elle n’a pas encore (rien n’est
+        jamais effacé). Voir le bloc « FUSION » plus bas.
+ 
++   ⚠ Et, DANS une page cochée, la sélection descend jusqu’à la LIGNE : cocher
++   « Dépenses » ne veut pas dire accepter ses 412 lignes — `rowChoicesOf` décrit
++   chaque ligne du fichier (son libellé, si la base la connaît déjà) et
++   `pickAdminRows` ne garde que celles qui sont cochées. En fusion, le défaut est
++   « seulement ce que la base n’a pas encore » : c’est ce qui empêche d’empiler
++   des doublons à chaque chargement. Voir le bloc « LIGNE À LIGNE » plus bas.
 +
-+  [data-pattern="grid"] {
-+    --lab-page-image:
-+      linear-gradient(to right, var(--lab-page-line) 1px, transparent 1px),
-+      linear-gradient(to bottom, var(--lab-page-line) 1px, transparent 1px);
-+    --lab-page-size: 24px 24px;
-+  }
+    Les comptes (operators) et la configuration de sécurité (authSettings) ne
+    sont JAMAIS importés : ce sont des données globales de l’application, pas du
+    dataset — ils ne figurent donc pas dans la liste.
+@@ -218,25 +225,64 @@ const rowIdentityOf = (kind, rec) => {
+   return /[a-z0-9]/.test(raw) ? raw : '';
+ };
+ 
++/** Identifiant TECHNIQUE d’une ligne (`id`), '' s’il n’y en a pas. */
++const rowIdOf = (rec) => {
++  if (!rec || typeof rec !== 'object' || Array.isArray(rec)) return '';
++  return String(rec.id === undefined || rec.id === null ? '' : rec.id).trim();
++};
 +
-+  [data-pattern="dots"] {
-+    --lab-page-image: radial-gradient(var(--lab-page-line) 1px, transparent 1.1px);
-+    --lab-page-size: 18px 18px;
-+  }
++/** Identifiant libre pour une ligne qui arrive avec un `id` DÉJÀ pris : `r1~2`,
++ *  `r1~3`… (déterministe, donc la même fusion rejouée donne le même résultat). */
++const freshIdFor = (id, used) => {
++  const stem = `${id}~`;
++  let n = 2;
++  while (used.has(`${stem}${n}`)) n += 1;
++  return `${stem}${n}`;
++};
 +
-+  [data-pattern="rules"] {
-+    --lab-page-image: repeating-linear-gradient(to bottom,
-+      var(--lab-page-line) 0, var(--lab-page-line) 1px,
-+      transparent 1px, transparent 28px);
-+    --lab-page-size: auto;
-+  }
-+
-+  [data-pattern="diagonal"] {
-+    --lab-page-image: repeating-linear-gradient(45deg,
-+      var(--lab-page-line) 0, var(--lab-page-line) 1px,
-+      transparent 1px, transparent 12px);
-+    --lab-page-size: auto;
-+  }
-+
-+  /* LA PAGE — un élément peint avec le fond des pages. `background-image` ne
-+     touche pas `background-color` : la teinte choisie reste, le motif se pose
-+     dessus. Et `var(--lab-page-image, none)` laisse intacte une page sans
-+     motif — aucun attribut, aucun dessin. */
-+  [class~="bg-slate-50"] {
-+    background-image: var(--lab-page-image, none);
-+    background-size: var(--lab-page-size, auto);
-+  }
-+}
-+
- /* ---------------------------------------------------------------------------
-    THE SEQUENCE FIELD — the selection of a COLOURED field stays readable.
-    `SequenceField` (src/components/SequenceField.jsx) renders the letters in a
-diff --git a/src/utils/uiSkin.js b/src/utils/uiSkin.js
-index bbe9ba8..efd93d4 100644
---- a/src/utils/uiSkin.js
-+++ b/src/utils/uiSkin.js
-@@ -198,20 +198,162 @@ export const uiSkinCustomRamp = (accent = UI_CUSTOM_ACCENT_DEFAULT) => {
+ /** Fusion d’UNE valeur d’administration. `added` compte les lignes du fichier
+  *  AJOUTÉES, `kept` celles DÉJÀ présentes (elles nourrissent l’aperçu de la
+- *  fenêtre d’import et le compte-rendu affiché après l’import). */
++ *  fenêtre d’import et le compte-rendu affiché après l’import), `renamed` celles
++ *  dont l’identifiant technique a dû être renouvelé (voir plus bas).
++ *
++ *  Pourquoi renouveler un identifiant ? Une ligne du fichier ABSENTE de la base
++ *  mais qui PORTE le même `id` qu’une ligne de la base est une AUTRE ligne (c’est
++ *  ainsi que la fusion l’a reconnue) : deux lignes qui partagent un `id` sont
++ *  indissociables — `remove(kind, id)` les supprime TOUTES LES DEUX. C’est très
++ *  exactement le défaut constaté (« je supprime un doublon, les deux
++ *  disparaissent ») : la ligne ajoutée reçoit donc un identifiant libre. */
+ export const mergeAdminValue = (kind, baseVal, incomingVal) => {
+   if (Array.isArray(incomingVal)) {
+     const baseArr = Array.isArray(baseVal) ? baseVal : [];
+     const known = new Set();
+-    baseArr.forEach((r) => { const k = rowIdentityOf(kind, r); if (k) known.add(k); });
++    const usedIds = new Set();
++    baseArr.forEach((r) => {
++      const k = rowIdentityOf(kind, r);
++      if (k) known.add(k);
++      const id = rowIdOf(r);
++      if (id) usedIds.add(id);
++    });
+     const add = [];
+     let kept = 0;
++    let renamed = 0;
+     incomingVal.forEach((r) => {
+       const k = rowIdentityOf(kind, r);
+       if (k) {
+         if (known.has(k)) { kept += 1; return; }
+         known.add(k);         // …et un doublon INTERNE au fichier n’en passe pas non plus
+       }
++      const id = rowIdOf(r);
++      if (id && usedIds.has(id)) {
++        const fresh = freshIdFor(id, usedIds);
++        usedIds.add(fresh);
++        renamed += 1;
++        add.push({ ...r, id: fresh });
++        return;
++      }
++      if (id) usedIds.add(id);
+       add.push(r);
+     });
+-    return { value: [...baseArr, ...add], added: add.length, kept };
++    return { value: [...baseArr, ...add], added: add.length, kept, renamed };
+   }
+   if (incomingVal && typeof incomingVal === 'object') {
+     const baseObj = (baseVal && typeof baseVal === 'object' && !Array.isArray(baseVal)) ? baseVal : {};
+@@ -247,16 +293,16 @@ export const mergeAdminValue = (kind, baseVal, incomingVal) => {
+       else added += 1;
+     });
+     /* La base ÉCRIT APRÈS : ses valeurs l’emportent, clé par clé. */
+-    return { value: { ...incomingVal, ...baseObj }, added, kept };
++    return { value: { ...incomingVal, ...baseObj }, added, kept, renamed: 0 };
+   }
+   if (isPresent(incomingVal)) {
+     const baseEmpty = !isPresent(baseVal) || baseVal === ''
+       || (typeof baseVal === 'object' && Object.keys(baseVal).length === 0);
+     return baseEmpty
+-      ? { value: incomingVal, added: 1, kept: 0 }
+-      : { value: baseVal, added: 0, kept: 1 };
++      ? { value: incomingVal, added: 1, kept: 0, renamed: 0 }
++      : { value: baseVal, added: 0, kept: 1, renamed: 0 };
+   }
+-  return { value: baseVal, added: 0, kept: 0 };
++  return { value: baseVal, added: 0, kept: 0, renamed: 0 };
+ };
+ 
+ /**
+@@ -279,14 +325,11 @@ export const mergeAdministration = (baseAdmin, incomingAdmin, keys) => {
+   let kept = 0;
+   wanted.forEach((k) => {
+     if (!isPresent(inc[k])) return;      // la page n’est pas dans le fichier
+-    if (!isPresent(base[k])) {           // rien en face : la page arrive telle quelle
+-      const n = sizeOf(inc[k]);
+-      out[k] = inc[k];
+-      addedByKey[k] = n;
+-      keptByKey[k] = 0;
+-      added += n;
+-      return;
+-    }
++    /* MÊME RÈGLE que lorsque les deux côtés portent la page : une page qui
++       n’existe QUE dans le fichier arrive avec ses lignes — sans les doublons
++       internes du fichier, et sans jamais reprendre un `id` déjà pris dans la
++       base (voir mergeAdminValue). Sans cela, charger un fichier déjà pollué
++       ramenait ses doublons, et deux lignes pouvaient partager un `id`. */
+     const r = mergeAdminValue(k, base[k], inc[k]);
+     out[k] = r.value;
+     addedByKey[k] = r.added;
+@@ -313,7 +356,9 @@ export const mergePreviewOf = (baseAdmin, incomingAdmin, sections, selectedIds)
+     let kept = 0;
+     (s.keys || []).forEach((k) => {
+       if (!isPresent(inc[k])) return;
+-      if (!isPresent(base[k])) { added += sizeOf(inc[k]); return; }
++      /* La page absente de la base est annoncée comme ENTIÈREMENT nouvelle,
++         mais dédoublonnée : l’aperçu compte ce que la fusion ajouterait VRAI-
++         MENT (mêmes règles que mergeAdministration, en lecture seule). */
+       const r = mergeAdminValue(k, base[k], inc[k]);
+       added += r.added;
+       kept += r.kept;
+@@ -323,6 +368,178 @@ export const mergePreviewOf = (baseAdmin, incomingAdmin, sections, selectedIds)
    return out;
  };
  
-+/* ── LE FOND DES PAGES — LA COULEUR CHOISIE, ET SON MOTIF ────────────────────
-+   « let the user choose the background color, with sober patterns ». Le fond
-+   vit ICI, à côté de l'accent, et pas dans index.css : la couleur dépend d'un
-+   CHOIX, donc c'est `applyUiSkin` qui l'écrit EN LIGNE sur <html>, exactement
-+   comme les onze crans de l'accent. Le MOTIF, lui, est une affaire de feuille
-+   (src/index.css, `[data-pattern="…"]`) : le même appel pose l'attribut.
++/* ──────────────────────────────────────────────────────────────────────────
++   LIGNE À LIGNE — choisir DANS une page, pas seulement la page entière
++   ──────────────────────────────────────────────────────────────────────────
++   Une page peut porter des centaines de lignes : « la page Dépenses » n’est pas
++   un choix, et cocher la page pour n’en récupérer que trois obligeait à tout
++   prendre — c’est comme ça que les doublons se fabriquent. `rowChoicesOf`
++   DÉCRIT donc chaque ligne du fichier (libellé lisible, déjà présente dans la
++   base ou non) et `pickAdminRows` ne garde que celles qui sont cochées.
 +
-+   CHAQUE COULEUR EST RAMENÉE DANS UNE BANDE (c'est le garde-fou de cette
-+   section). Une page peut prendre n'importe quelle TEINTE, jamais n'importe
-+   quelle LUMIÈRE : les deux paires que le programme écrit SUR une page —
-+   `text-slate-700` sur `bg-slate-50` (le titre d'une carte, 7 281 fois) et
-+   `text-slate-800` sur `bg-slate-100` (les panneaux posés sur la page) —
-+   doivent garder au pire 1.5 cran de contraste de moins que ce que la palette
-+   livrée donne ; c'est la règle que la sonde impose déjà à toute peau.
-+   En OKLCH c'est une bande simple : la luminosité reste entre 95.5 et 99, le
-+   chroma sous 0.03 — et, parce qu'un chroma élevé sur une page aussi claire
-+   sortirait du gamut sRGB (le moteur le réduirait lui-même, et la page ne
-+   serait plus la couleur qu'on a mesurée), le chroma est RAMENÉ DANS LE GAMUT
-+   par dichotomie, comme le fait le CSS Color 4. Toutes les teintes passent, y
-+   compris les pastels qu'on attend d'un fond de page ; aucune ne descend sous
-+   le plancher de lisibilité.
++   · en FUSION, le défaut est « ce que la base n’a pas encore » : les lignes
++     déjà reconnues sont VERROUILLÉES (`locked` : cochées, non décochables —
++     la base fait foi, les décoher ne changerait rien) et les lignes nouvelles
++     arrivent cochées — un chargement ne ré-ajoute donc rien, même si
++     l’utilisateur ne touche à rien ;
++   · en REMPLACEMENT, tout est coché et décochable (le geste demandé est de
++     reprendre la page telle quelle) ; décocher une ligne est alors un choix
++     explicite.
 +
-+   LE SECOND CRAN DE LA PAGE (le 100 : les panneaux, les entêtes de tableau)
-+   est DÉRIVÉ du premier — même teinte, même chroma, 1.6 point de luminosité en
-+   moins, l'écart exact que la palette livrée a entre ses deux crans. */
++   La clé d’une ligne est son identité (`recordDedupeKey`, préfixée par la
++   collection) : deux lignes que la fusion considère comme LA MÊME se cochent et
++   se décochent ensemble — et c’est dit (`duplicateOf`). Une ligne sans identité
++   exploitable (aucun champ renseigné) est repérée par sa POSITION (`#3`) : elle
++   compte alors pour elle-même.
++   ────────────────────────────────────────────────────────────────────────── */
 +
-+/** Le fond de page LIVRÉ (slate-50, la référence) : ce que le réglage vide veut
-+ *  dire, et la valeur de repli d'une couleur illisible. */
-+export const UI_BG_SHIPPED_OKLCH = { L: 98.4, C: 0.003, H: 247.858 };
-+
-+/* LA BANDE — les valeurs que la sonde mesure. Le PLANCHER est celui des trois
-+   familles neutres que le programme sait servir, pas seulement de l'ardoise :
-+   une page rose vif (le pire cas possible, L=50 ramené au plancher, chroma au
-+   plafond) coûte 1.56 cran de contraste sur la paire des panneaux avec le gris
-+   CHAUD (stone, dont l'encre et les crans 100/800 donnent la paire la plus
-+   serrée), donc 95 ne suffisait pas — 95.5 ramène le pire cas à 1.37. Les
-+   changer sans les remesurer casserait la garantie. */
-+export const UI_BG_FLOOR = 95.5;  /* L minimum d'une page choisie */
-+export const UI_BG_CEIL = 99;     /* L maximum (100 = blanc pur, aveuglant) */
-+export const UI_BG_CAP = 0.03;    /* chroma maximum — un pastel, jamais plus */
-+export const UI_BG_GAP = 1.6;     /* l'écart livré entre la page et son cran 100 */
-+
-+/** Le réglage vide : « la page de la famille neutre choisie ». Rien n'est
-+ *  écrit, donc le cran 50 du thème livré — ou celui du `data-tone` — reste en
-+ *  place, et changer de famille neutre change AUSSI la page. */
-+export const UI_BG_DEFAULT = '';
-+
-+/** LES QUATRE MOTIFS — tous des dégradés CSS répétés (aucune image, aucun octet
-+ *  à charger, et rien à l'impression : voir `@media screen`, index.css), tous
-+ *  volontairement discrets. `none` est le défaut, et ne pose donc rien. */
-+export const UI_BG_PATTERNS = [
-+  { id: 'none', label: 'None', hint: 'the plain page' },
-+  { id: 'grid', label: 'Grid', hint: 'hairline squares' },
-+  { id: 'dots', label: 'Dots', hint: 'a dotted sheet' },
-+  { id: 'rules', label: 'Rules', hint: 'ruled lines' },
-+  { id: 'diagonal', label: 'Diagonal', hint: 'slanted hairlines' }
-+];
-+export const UI_BG_PATTERN_DEFAULT = 'none';
-+
-+/** OKLCH → sRGB LINÉAIRE : le retour exact de `hexToOklch` (mêmes matrices,
-+ *  inversées). Sert à savoir si une couleur TIENT dans le gamut sRGB. PUR. */
-+export const oklchToLin = ({ L, C, H }) => {
-+  const h = (H * Math.PI) / 180;
-+  const a = C * Math.cos(h);
-+  const b = C * Math.sin(h);
-+  const l_ = L / 100 + 0.3963377774 * a + 0.2158037573 * b;
-+  const m_ = L / 100 - 0.1055613458 * a - 0.0638541728 * b;
-+  const s_ = L / 100 - 0.0894841775 * a - 1.2914855480 * b;
-+  const l = l_ ** 3, m = m_ ** 3, s = s_ ** 3;
-+  return [
-+    4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
-+    -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
-+    -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s
-+  ];
++/** Colonnes qui NOMMENT une ligne, par collection : la première renseignée sert
++ *  de titre, les suivantes de contexte (« 1 250 · Payé »). Volontairement
++ *  courtes : une ligne d’aperçu, pas une fiche. */
++const ROW_FIELDS = {
++  recettes: { title: ['ligne', 'description'], sub: ['type', 'montant', 'financeur'] },
++  librerie: {
++    title: ['fournisseur', 'nomFournisseur', 'fournisseurNom', 'nom', 'name'],
++    sub: ['contact', 'email', 'telephone', 'referenceSifac'],
++  },
++  personnel: { title: ['nom', 'description'], sub: ['prenom', 'fonction', 'dateDebutStage', 'dateEmbauche'] },
++  depenses: { title: ['description'], sub: ['fournisseur', 'montant', 'statut', 'dateDemande'] },
++  om: { title: ['description'], sub: ['demandeur', 'dateMission', 'coutTotal', 'numOM'] },
++  reimbursements: { title: ['description'], sub: ['demandeur', 'beneficiaire', 'dateMission', 'coutTotal'] },
++  conges: { title: ['demandeur'], sub: ['dateDebut', 'dateFin', 'type', 'statut'] },
++  desiderate: { title: ['description'], sub: ['demandeur', 'montant', 'statut'] },
++  devisBc: { title: ['description'], sub: ['kind', 'numDevis', 'numBC', 'montant'] },
++  questioni: { title: ['description'], sub: ['demandeur', 'statut', 'date'] },
++  sicurezza: { title: ['description'], sub: ['demandeur', 'lieu', 'date'] },
 +};
 +
-+/** Le chroma le plus élevé qui TIENT dans le gamut sRGB à cette lumière et
-+ *  cette teinte (dichotomie, comme la réduction de chroma du CSS Color 4) :
-+ *  c'est ce qui garantit que la page ÉCRITE est la page PEINTE. PUR. */
-+export const sRGBChroma = (col) => {
-+  const inside = (c) => oklchToLin({ ...col, C: c }).every((v) => v >= -1e-4 && v <= 1 + 1e-4);
-+  if (inside(col.C)) return col.C;
-+  let lo = 0, hi = col.C;
-+  for (let i = 0; i < 40; i++) {
-+    const mid = (lo + hi) / 2;
-+    if (inside(mid)) lo = mid; else hi = mid;
++/** Première valeur LISIBLE d’une liste de champs (texte ou nombre — jamais un
++ *  objet, jamais un pavé : au-delà de 120 caractères c’est un commentaire, pas
++ *  un libellé). Rend '' s’il n’y a rien. */
++const firstText = (rec, keys) => {
++  if (!rec || typeof rec !== 'object') return '';
++  for (const k of keys) {
++    const v = rec[k];
++    if (v === undefined || v === null || typeof v === 'object') continue;
++    const s = String(v).trim();
++    if (s && s.length <= 120) return s;
 +  }
-+  return lo;
++  return '';
 +};
 +
-+/** OKLCH → hexadécimal sRGB : le chemin inverse de `hexToOklch`, pour les
-+ *  pastilles de ⚙ Settings (chaque canal est écrêté, comme le fait le
-+ *  moteur). PUR. */
-+export const oklchToHex = (col) => `#${oklchToLin(col).map((v) => {
-+  const c = Math.min(1, Math.max(0, v));
-+  const g = c <= 0.0031308 ? 12.92 * c : 1.055 * Math.pow(c, 1 / 2.4) - 0.055;
-+  return Math.round(255 * g).toString(16).padStart(2, '0');
-+}).join('')}`;
-+
-+/** Un OKLCH écrit comme index.css l'écrit — donc relu tel quel par la sonde et
-+ *  compris tel quel par le moteur. PUR. */
-+export const oklchCss = ({ L, C, H }) => `oklch(${L.toFixed(1)}% ${C.toFixed(3)} ${H.toFixed(1)})`;
-+
-+/** LES FONDS PROPOSÉS — les crans 50 de la palette que Tailwind livre (relevés
-+ *  dans son thème, pas inventés), donc TOUS déjà dans la bande : ce que la
-+ *  pastille montre est exactement ce que la page prendra. */
-+export const UI_BG_PRESETS = [
-+  { id: 'slate', label: 'Slate', oklch: UI_BG_SHIPPED_OKLCH },
-+  { id: 'zinc', label: 'Zinc', oklch: { L: 98.5, C: 0, H: 0 } },
-+  { id: 'stone', label: 'Stone', oklch: { L: 98.5, C: 0.001, H: 106.423 } },
-+  { id: 'sky', label: 'Sky', oklch: { L: 97.7, C: 0.013, H: 236.62 } },
-+  { id: 'emerald', label: 'Emerald', oklch: { L: 97.9, C: 0.021, H: 166.113 } },
-+  { id: 'amber', label: 'Amber', oklch: { L: 98.7, C: 0.022, H: 95.277 } },
-+  { id: 'rose', label: 'Rose', oklch: { L: 96.9, C: 0.015, H: 12.422 } },
-+  { id: 'violet', label: 'Violet', oklch: { L: 96.9, C: 0.016, H: 293.756 } }
-+].map((p) => ({ ...p, hex: oklchToHex(p.oklch) }));
-+
-+/** LES DEUX CRANS D'UNE PAGE CHOISIE — la couleur ramenée dans la bande, et le
-+ *  cran 100 DÉRIVÉ (même teinte, même chroma, `UI_BG_GAP` de luminosité en
-+ *  moins). Une couleur illisible retombe sur la page livrée ; le réglage vide
-+ *  (`UI_BG_DEFAULT`) rend donc, lui aussi, la page livrée. PUR. */
-+export const uiBgStops = (hex) => {
-+  const pick = hexToOklch(hex) || UI_BG_SHIPPED_OKLCH;
-+  const L = Math.min(UI_BG_CEIL, Math.max(UI_BG_FLOOR, pick.L));
-+  const C = sRGBChroma({ L, C: Math.min(UI_BG_CAP, pick.C), H: pick.H });
-+  return { page: { L, C, H: pick.H }, card: { L: L - UI_BG_GAP, C, H: pick.H } };
-+};
-+
- /** Le réglage retenu, toujours utilisable (une couleur illisible ou une famille
-  *  inconnue retombent sur le défaut livré). PUR. */
- export const uiCustomSkinOf = (raw) => ({
-   accent: (raw && /^#[0-9a-f]{6}$/i.test(String(raw.accent || '')))
-     ? String(raw.accent).toLowerCase() : UI_CUSTOM_ACCENT_DEFAULT,
-   neutral: UI_CUSTOM_NEUTRALS.some((n) => n.id === (raw && raw.neutral))
--    ? raw.neutral : UI_CUSTOM_NEUTRAL_DEFAULT
-+    ? raw.neutral : UI_CUSTOM_NEUTRAL_DEFAULT,
-+  bg: (raw && /^#[0-9a-f]{6}$/i.test(String(raw.bg || '')))
-+    ? String(raw.bg).toLowerCase() : UI_BG_DEFAULT,
-+  pattern: UI_BG_PATTERNS.some((p) => p.id === (raw && raw.pattern))
-+    ? raw.pattern : UI_BG_PATTERN_DEFAULT
- });
- 
- /** Les variables d'une peau personnalisée : les onze crans de l'accent, plus
-- *  `--lab-tone` (la famille neutre, pour la miniature ET pour <html>). PUR. */
-+ *  `--lab-tone` (la famille neutre, pour la miniature ET pour <html>), plus —
-+ *  quand un fond a été choisi — LES DEUX CRANS DE LA PAGE, ramenés dans la
-+ *  bande (utils : `uiBgStops`). Écrites EN LIGNE, donc au-dessus du bloc de la
-+ *  famille neutre : un fond choisi l'emporte sur le `tone` qu'on lit à côté.
-+ *  Le MOTIF n'est pas une variable : c'est l'attribut `data-pattern`. PUR. */
- export const uiSkinCustomVars = (raw) => {
-   const custom = uiCustomSkinOf(raw);
--  return { ...uiSkinCustomRamp(custom.accent), '--lab-tone': custom.neutral };
-+  const vars = { ...uiSkinCustomRamp(custom.accent), '--lab-tone': custom.neutral };
-+  if (custom.bg) {
-+    const { page, card } = uiBgStops(custom.bg);
-+    vars['--color-slate-50'] = oklchCss(page);
-+    vars['--color-slate-100'] = oklchCss(card);
++/** Libellé d’une ligne : `{ title, sub }` — JAMAIS vide. Les champs attendus
++ *  d’abord, puis n’importe quel autre champ de la fiche (mieux vaut montrer
++ *  « 12/03/2025 » que rien), et en dernier recours la position de la ligne. */
++const rowLabelOf = (kind, rec, index) => {
++  if (!rec || typeof rec !== 'object' || Array.isArray(rec)) {
++    const bare = rec === undefined || rec === null ? '' : String(rec).trim();
++    return { title: bare || `ligne ${index + 1}`, sub: '' };
 +  }
-+  return vars;
- };
- 
- /** Le réglage stocké (localStorage indisponible ⇒ le défaut livré) — celui de
-@@ -263,9 +405,11 @@ export const readUiSkin = (operator = null) => {
- 
- /* `id` = the reference ⇒ the attribute is REMOVED (the shipped palette comes
-    back exactly as Tailwind defines it). The custom skin is the one case whose
--   accent ramp is NOT in the stylesheet: its eleven stops depend on a colour the
--   user picked, so they are written INLINE on <html> — and cleared for every
--   other skin, or they would outlive the choice.
-+   accent ramp — and the page colour the user chose — is NOT in the stylesheet:
-+   its eleven stops depend on a colour the user picked, so they are written
-+   INLINE on <html> — and cleared for every other skin, or they would outlive
-+   the choice. The PATTERN is the stylesheet's job (index.css): here we only
-+   raise or drop `data-pattern` on <html>, which paints every page at once.
-    `operator` : l'accent lu (peau personnalisée) est celui de CET opérateur. */
- export const applyUiSkin = (id, operator = null) => {
-   if (typeof document === 'undefined') return; // unit tests (node) have no DOM
-@@ -273,15 +417,31 @@ export const applyUiSkin = (id, operator = null) => {
-   if (!root) return;
-   const skin = uiSkinById(id);
-   if (!root.dataset) return;
--  const customKeys = [...Object.keys(uiSkinCustomRamp(UI_CUSTOM_ACCENT_DEFAULT)), '--lab-tone'];
-+  /* les clés à effacer : TOUTE la rampe d'accent, `--lab-tone`, et les deux
-+     crans de la page — qu'un fond ait été choisi ou non (sinon un fond posé
-+     hier survivrait au passage à une autre peau). */
-+  const customKeys = [
-+    ...Object.keys(uiSkinCustomRamp(UI_CUSTOM_ACCENT_DEFAULT)),
-+    '--lab-tone', '--color-slate-50', '--color-slate-100'
-+  ];
-   const clearCustom = () => {
-     if (root.style) customKeys.forEach((k) => root.style.removeProperty(k));
-     delete root.dataset.tone;
-+    delete root.dataset.pattern;
-   };
-   if (skin.id === UI_SKIN_CUSTOM) {
-     const custom = readUiCustomSkin(operator);
-+    /* ON EFFACE D'ABORD : un fond qu'on vient de retirer (ou l'accent d'un autre
-+       opérateur) doit disparaître des variables en ligne, sinon l'écriture qui
-+       suit ne ferait qu'ajouter le réglage courant À l'ancien — la page
-+       resterait peinte avec la couleur qu'on vient d'abandonner. */
-+    clearCustom();
-     if (root.style) Object.entries(uiSkinCustomVars(custom)).forEach(([k, v]) => root.style.setProperty(k, v));
-     root.dataset.tone = custom.neutral;
-+    /* le motif : « none » (le défaut) n'écrit AUCUN attribut, donc la feuille
-+       ne peint rien et l'attribut ne traîne pas dans le DOM. */
-+    if (custom.pattern === UI_BG_PATTERN_DEFAULT) delete root.dataset.pattern;
-+    else root.dataset.pattern = custom.pattern;
-     root.dataset.skin = UI_SKIN_CUSTOM;
-     return;
-   }
++  const spec = ROW_FIELDS[kind] || {};
++  const others = Object.keys(rec).filter((k) => k !== 'id');
++  const title = firstText(rec, (spec.title || []).concat(others)) || `ligne ${index + 1}`;
++  const sub = [];
++  (spec.sub || []).forEach((k) => {
++    const v = firstText(rec, [k]);
++    if (v && v.toLowerCase() !== title.toLowerCase() && sub.indexOf(v) === -1) sub.push(v);
++  });
++  return { title, sub: sub.slice(0, 3).join(' · ') };
++};
++
++/** Clé d’une ligne DANS sa collection : son identité, sinon sa position (`#3`).
++ *  Toujours préfixée par la collection : deux pages peuvent avoir une ligne
++ *  `#0` sans que cocher l’une touche l’autre. */
++export const rowKeyOf = (kind, rec, index) =>
++  `${kind}::${rowIdentityOf(kind, rec) || `#${Number(index) || 0}`}`;
++
++/**
++ * CHAQUE LIGNE d’une page, telle que la fenêtre d’import la montre. Chaque
++ * entrée porte `{ key, index, title, sub, identity, inBase, duplicateOf,
++ * noIdentity, locked, picked }` :
++ *  · `inBase` — la ligne est DÉJÀ dans la base ouverte (même identité) ;
++ *  · `locked` — en FUSION, une telle ligne n’est pas un choix : la fusion la
++ *    reconnaîtra de toute façon (la base fait foi). Elle est donc cochée et
++ *    NE PEUT PAS être décochée — la décoher ne changerait rien, et le
++ *    compte-rendu doit pouvoir dire « 2 lignes reconnues » ;
++ *  · `duplicateOf` — index d’une ligne DÉJÀ listée portant la même identité
++ *    (elles seront fusionnées de toute façon : autant le dire avant) ;
++ *  · `picked` — l’état par défaut des lignes que l’utilisateur DÉCIDE (voir
++ *    l’en-tête du bloc), renversable ligne à ligne.
++ */
++export const rowChoicesOf = (kind, incomingVal, baseVal, mode) => {
++  if (!Array.isArray(incomingVal)) return [];
++  const merging = mode !== 'replace';
++  const known = new Set();
++  (Array.isArray(baseVal) ? baseVal : []).forEach((r) => {
++    const id = rowIdentityOf(kind, r);
++    if (id) known.add(id);
++  });
++  const firstSeen = new Map();
++  return incomingVal.map((r, index) => {
++    const identity = rowIdentityOf(kind, r);
++    const inBase = !!identity && known.has(identity);
++    const duplicateOf = identity && firstSeen.has(identity) ? firstSeen.get(identity) : -1;
++    if (identity && !firstSeen.has(identity)) firstSeen.set(identity, index);
++    const label = rowLabelOf(kind, r, index);
++    return {
++      key: rowKeyOf(kind, r, index),
++      index,
++      title: label.title,
++      sub: label.sub,
++      identity,
++      inBase,
++      duplicateOf,
++      noIdentity: !identity,
++      locked: merging && inBase,
++      picked: merging ? !inBase : true,
++    };
++  });
++};
++
++/** Choix PAR DÉFAUT de la fenêtre : une liste de clés par page (voir
++ *  `rowChoicesOf`). C’est l’état initial de la sélection ligne à ligne, et ce
++ *  que « Tout » remet pour les pages concernées. Les lignes VERROUILLÉES
++ *  (`locked`) en font partie : elles traversent la sélection pour que la fusion
++ *  les reconnaisse et le dise — sans elles, elle annoncerait « 0 ligne ». */
++export const rowPicksOf = (administration, sections, baseAdmin, mode) => {
++  const src = administration && typeof administration === 'object' ? administration : {};
++  const base = baseAdmin && typeof baseAdmin === 'object' ? baseAdmin : {};
++  const out = {};
++  (Array.isArray(sections) ? sections : []).forEach((s) => {
++    const keys = [];
++    (s.keys || []).forEach((k) => {
++      if (!Array.isArray(src[k])) return;
++      rowChoicesOf(k, src[k], base[k], mode)
++        .forEach((c) => { if (c.picked || c.locked) keys.push(c.key); });
++    });
++    out[s.id] = keys;
++  });
++  return out;
++};
++
++/**
++ * APPLICATION du choix ligne à ligne : une copie de `administration` où chaque
++ * collection d’une page dont les lignes ont été choisies (`picks[page]` = liste
++ * de clés) ne garde que ces lignes-là. Une page ABSENTE de `picks` n’est pas
++ * touchée : sa page entière suit le sort de sa case à cocher — c’est ce qui
++ * laisse « ♻️ Import everything » intact.
++ */
++export const pickAdminRows = (administration, sections, picks) => {
++  const src = administration && typeof administration === 'object' ? administration : {};
++  const out = { ...src };
++  if (!picks || typeof picks !== 'object') return out;
++  (Array.isArray(sections) ? sections : []).forEach((s) => {
++    const chosen = picks[s.id];
++    if (!Array.isArray(chosen)) return;
++    const keep = new Set(chosen);
++    (s.keys || []).forEach((k) => {
++      if (!Array.isArray(src[k])) return;
++      out[k] = src[k].filter((r, i) => keep.has(rowKeyOf(k, r, i)));
++    });
++  });
++  return out;
++};
++
+ /** L’élément « expériences » est-il dans la sélection ? (import des tests) */
+ export const selectionHasTests = (selectedIds) =>
+   (Array.isArray(selectedIds) ? selectedIds : []).indexOf('data:tests') !== -1;

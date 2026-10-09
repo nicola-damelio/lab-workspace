@@ -385,6 +385,9 @@ console.log('     4) fichier suivant (même geste) · 5) finir par « 💾 Save 
 console.log('  ✓ En « 🔀 Merge », cocher une page que le fichier porte en MOINS que maintenant est SANS danger :');
 console.log('    les lignes d’aujourd’hui gardent leur version. « ♻️ Replace the selected pages » reste là pour qui veut');
 console.log('    vraiment revenir page entière à la copie du fichier.');
+console.log('  ✓ En « 🔀 Merge », « ▸ lines » ouvre la page LIGNE À LIGNE : chaque ligne du fichier s’y coche seule,');
+console.log('    et une ligne déjà dans la base y est VERROUILLÉE (reconnue, jamais dupliquée en jumeau).');
+console.log('  ✓ Le NOM de la base ouverte ne change pas : un chargement n’apporte que du contenu.');
 console.log(dangerTotal
   ? `\n⛔ ${dangerTotal} ligne(s) d’AUJOURD’HUI ne sont dans AUCUN des fichiers ci-dessus : en « ♻️ Replace », les importer telles quelles effacerait ces lignes-là. Faire « 💾 Save backup » d’abord, puis décider page par page (ou rester en « 🔀 Merge », qui ne peut rien effacer).`
   : '\n✔ Aucune ligne d’aujourd’hui ne manque dans les fichiers : ces imports ne peuvent rien effacer.');

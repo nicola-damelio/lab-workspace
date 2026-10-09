@@ -24,7 +24,21 @@
      3. le BRANCHEMENT dans App.jsx : le mode, le bouton qui applique LE mode
         choisi, et le compte-rendu d’après coup qui dit que rien n’a été effacé ;
      4. la NON-RÉGRESSION du mode « remplacer » : `filterLoadState` écrase
-        toujours (c’est le geste historique, il ne doit pas changer).
+        toujours (c’est le geste historique, il ne doit pas changer) ;
+     5. la CAUSE des jumeaux : `librerie`, `devisBc` et `reimbursements`
+        n’avaient aucune identité (toutes leurs lignes se ressemblaient, donc se
+        ré-ajoutaient à chaque chargement) — on vérifie ici que recharger DEUX
+        FOIS la même sauvegarde n’ajoute plus rien, et que deux règles de
+        défense s’ajoutent (page absente de la base dédoublonnée, `id` déjà pris
+        renommé) ;
+     6. la SÉLECTION LIGNE À LIGNE (`rowChoicesOf` / `rowPicksOf` /
+        `pickAdminRows`) : « la page Dépenses » n’est pas un choix, donc chaque
+        ligne du fichier se coche seule — en fusion, une ligne DÉJÀ dans la base
+        est VERROUILLÉE (reconnue, jamais dupliquée) et les lignes nouvelles
+        arrivent cochées ;
+     7. le NOM : charger dans la base OUVERTE ne la renomme jamais (défaut
+        constaté : une fusion rebaptisait la base du titre du fichier, et le
+        nom décidant du dossier Drive, tout le travail suivant partait ailleurs).
 
    Suite : `node _load_merge_test.mjs` (reprise par _run_all.cjs).
    ========================================================================= */
@@ -171,17 +185,17 @@ has(APP, 'mergeAdministration, mergePreviewOf,',
   'App.jsx importe les deux fonctions (rien n’est re-défini dans le composant)');
 has(APP, "const [loadAdminMode, setLoadAdminMode] = useState('merge');",
   'la fenêtre d’import offre le choix, et son défaut est la fusion (le geste sans perte)');
-has(APP, "onClick={() => setLoadAdminMode('replace')}",
+has(APP, "onClick={() => setLoadMode('replace')}",
   '…le mode « remplacer » reste à un clic (le geste historique)');
-has(APP, 'onClick={() => confirmLoad(loadAdminMode)}',
-  'le bouton principal applique LE MODE CHOISI (jamais un mode figé)');
+has(APP, 'onClick={() => confirmLoad(loadAdminMode, undefined, loadRows)}',
+  'le bouton principal applique LE MODE CHOISI, sur les LIGNES cochées (jamais un mode figé)');
 has(APP, '🔀 Merge the selected pages (${loadPicked.length})',
   '…et son libellé dit lequel il appliquera');
 has(APP, "preview={loadAdminMode === 'merge' ? loadMergePreview : null}",
   'les cases annoncent ce que la FUSION apporterait, page par page');
 has(APP, 'describeMergePart(s, preview[s.id])', '…avec la phrase qui lit cet aperçu');
 has(APP, "const merging = mode === 'merge';", 'confirmLoad distingue les deux gestes');
-has(APP, "title: '🔀 Merge — nothing was erased'",
+has(APP, "'🔀 Merge — nothing was erased'",
   'la fusion est RACONTÉE après coup (ce qui a été ajouté, ce qui a été gardé)');
 has(APP, "setLoadAdminMode('merge');",
   'chaque fichier rouvert repart du mode sans perte (le choix ne survit pas d’un fichier à l’autre)');
@@ -205,6 +219,135 @@ const replaceAt = APP.indexOf('} else {', noBaseAt);
 ok(noBaseAt > 0 && seedAt > noBaseAt && seedAt < replaceAt,
   'sans base ouverte, la fusion pose le fichier sur la SEMENCE (une base neuve garde toutes ses pages)');
 
+/* ── 6. L’IDENTITÉ des collections oubliées — la CAUSE des jumeaux ─────────
+      `librerie`, `devisBc` et `reimbursements` n’avaient AUCUNE règle
+      d’identité : toutes leurs lignes se ressemblaient (identité ''), donc
+      chaque fusion les ré-ajoutait toutes — et `remove(kind, id)` les
+      supprimait ensuite par paquets. Ces trois règles sont la première
+      défense ; le renommage d’`id` (plus bas) est la seconde. */
+const U = await import('./src/administration/importUtils.js');
+const SUPPLIER = { id: 'f1', fournisseur: 'Papeterie Dupont', email: 'contact@dupont.fr' };
+ok(U.recordDedupeKey('librerie', SUPPLIER).length > 0,
+  'librerie a une identité (elle était VIDE : tous les fournisseurs se ressemblaient)');
+eq(U.recordDedupeKey('librerie', SUPPLIER),
+  U.recordDedupeKey('librerie', { fournisseur: 'Papeterie Dupont', email: 'autre@x.fr' }),
+  '…le NOM du fournisseur (voir SUPPLIER_NAME_KEYS) : deux fiches de coordonnées font UN fournisseur');
+ok(U.recordDedupeKey('librerie', SUPPLIER) !== U.recordDedupeKey('librerie', { fournisseur: 'Sigma' }),
+  '…et deux fournisseurs différents restent deux lignes');
+const DEV_A = { kind: 'devis', description: 'Fioles', numDevis: 'DV-12' };
+const DEV_B = { kind: 'devis', description: 'Fioles', numDevis: 'DV-13' };
+const BC_A = { kind: 'bc', description: 'Fioles', numBC: 'DV-12' };
+ok(U.recordDedupeKey('devisBc', DEV_A) !== U.recordDedupeKey('devisBc', DEV_B),
+  'devisBc : le NUMÉRO distingue deux devis de même description');
+ok(U.recordDedupeKey('devisBc', DEV_A) !== U.recordDedupeKey('devisBc', BC_A),
+  '…et le TYPE sépare un devis du BC qui décrit le même achat');
+const REI = { description: 'Taxi congrès', demandeur: 'Alice', dateMission: '2026-05-01' };
+eq(U.recordDedupeKey('reimbursements', REI),
+  U.recordDedupeKey('reimbursements', { description: 'Taxi congrès', beneficiaire: 'Alice', dateMission: '2026-05-01' }),
+  'reimbursements : le bénéficiaire peut s’écrire « demandeur » ou « beneficiaire » — même identité');
+
+/* Le test qui compte : charger DEUX FOIS la même sauvegarde n’ajoute rien —
+   c’est exactement ce que la base a vécu (des jumeaux par chargement). */
+const LIB = { librerie: [SUPPLIER, { id: 'f2', fournisseur: 'Sigma-Aldrich' }] };
+const libOnce = L.mergeAdministration({}, LIB, ['librerie']);
+eq(libOnce.added, 2, 'le premier chargement apporte ses deux fournisseurs');
+const libTwice = L.mergeAdministration(libOnce.administration, LIB, ['librerie']);
+eq([libTwice.added, libTwice.kept], [0, 2], 'le MÊME fichier rechargé n’ajoute RIEN (plus de jumeaux)');
+const devOnce = L.mergeAdministration({}, { devisBc: [DEV_A] }, ['devisBc']);
+const devTwice = L.mergeAdministration(devOnce.administration, { devisBc: [DEV_A] }, ['devisBc']);
+eq([devTwice.added, devTwice.kept], [0, 1], 'devisBc : recharger le même devis ne le double pas');
+const reiOnce = L.mergeAdministration({}, { reimbursements: [REI] }, ['reimbursements']);
+const reiTwice = L.mergeAdministration(reiOnce.administration, { reimbursements: [REI] }, ['reimbursements']);
+eq([reiTwice.added, reiTwice.kept], [0, 1], 'reimbursements : recharger le même remboursement ne le double pas');
+
+/* ── 7. Les deux autres protections : page absente de la base, id déjà pris ── */
+const twinFile = L.mergeAdministration({}, {
+  recettes: [{ id: 'r1', ligne: 'Bourse', type: 'Salaire' }, { id: 'r2', ligne: 'Bourse', type: 'Salaire' }],
+}, ['recettes']);
+eq([twinFile.added, twinFile.administration.recettes.length], [1, 1],
+  'une page qui n’existe QUE dans le fichier est dédoublonnée à l’arrivée (mêmes règles des deux côtés)');
+const clash = L.mergeAdminValue('recettes',
+  [{ id: 'r1', ligne: 'Bourse', type: 'Salaire' }],
+  [{ id: 'r1', ligne: 'Prestation', type: 'Salaire' }]);
+eq(clash.value.map((r) => r.id), ['r1', 'r1~2'],
+  'une ligne ajoutée qui portait un id DÉJÀ pris reçoit un identifiant libre (sinon remove() en emportait deux)');
+eq([clash.added, clash.renamed], [1, 1], '…et le compte-rendu le sait');
+const clashMerge = L.mergeAdministration(
+  { recettes: [{ id: 'r1', ligne: 'Bourse', type: 'Salaire' }] },
+  { recettes: [{ id: 'r1', ligne: 'Prestation', type: 'Salaire' }] },
+  ['recettes'],
+);
+eq(clashMerge.renamed, 1, 'la fusion COMPTE les identifiants renouvelés (le compte-rendu peut le dire)');
+has(APP, 'received a NEW identifier', '…et il le DIT : une ligne que l’utilisateur n’a pas touchée a changé d’id');
+
+/* ── 8. LIGNE À LIGNE — choisir DANS une page ──────────────────────────────── */
+const CHOICES = L.rowChoicesOf('recettes', FILE.recettes, BASE.recettes, 'merge');
+eq(CHOICES.map((c) => c.picked), [false, true],
+  'en fusion, une ligne DÉJÀ dans la base n’est pas un CHOIX (le fichier ne la ré-ajoute pas)');
+eq(CHOICES.map((c) => c.inBase), [true, false], '…ce que la fenêtre écrit : « already in the base »');
+eq(CHOICES.map((c) => c.locked), [true, false],
+  '…elle est VERROUILLÉE (elle traverse la sélection : la fusion la compte, mais ne la duplique pas)');
+eq(L.rowChoicesOf('recettes', FILE.recettes, BASE.recettes, 'replace').map((c) => c.picked), [true, true],
+  'en remplacement, tout est coché et décochable (le geste demandé est de reprendre la page telle quelle)');
+ok(L.rowChoicesOf('recettes', FILE.recettes, BASE.recettes, 'replace').every((c) => !c.locked),
+  '…et RIEN n’y est verrouillé : chaque ligne reste une décision');
+eq(CHOICES[1].title, 'Prestation', 'chaque ligne se NOMME par son champ le plus parlant');
+ok(CHOICES[1].sub.includes('300'), '…et rappelle son contexte (montant, statut, date)');
+ok(CHOICES[0].key.startsWith('recettes::'), 'la clé d’une ligne est préfixée par sa collection');
+const idlessChoice = L.rowChoicesOf('recettes', [{ ligne: '', type: '' }], [], 'merge');
+ok(idlessChoice[0].noIdentity && idlessChoice[0].picked && idlessChoice[0].key.endsWith('#0'),
+  'une ligne sans aucun champ reste cochée, repérée par sa position (aucun jumeau possible)');
+const dupChoice = L.rowChoicesOf('recettes', [{ ligne: 'A', type: 'B' }, { ligne: 'A', type: 'B' }], [], 'merge');
+eq(dupChoice[1].duplicateOf, 0, 'un doublon INTERNE au fichier est dit (« same as line 1 ») avant de cliquer');
+
+/* Le défaut de la fenêtre, puis l’application de ce choix. */
+const PICKS = L.rowPicksOf(FILE, SECTIONS, BASE, 'merge');
+eq(PICKS['admin:recettes'], [CHOICES[0].key, CHOICES[1].key],
+  'le défaut = la ligne verrouillée + la ligne nouvelle que la base n’a pas encore, page par page');
+eq(PICKS['admin:personnel'].length, 1,
+  '…une page entièrement déjà en base ne propose RIEN à décider (sa ligne est là pour être reconnue)');
+const only = L.pickAdminRows(FILE, SECTIONS, PICKS);
+eq(only.recettes.map((r) => r.id), ['r1', 'r9'],
+  'le fichier est RÉDUIT aux lignes cochées — la verrouillée voyage pour être RECONNUE, pas ajoutée');
+eq(only.personnel.map((r) => r.id), ['p1'], '…et une page dont toutes les lignes passent reste entière');
+eq(only.om, undefined, '…sans CRÉER une page que le fichier ne porte pas');
+eq(L.pickAdminRows(FILE, SECTIONS, null).recettes.length, 2,
+  'sans sélection par ligne, la page part entière (c’est « ♻️ Import everything »)');
+const mergedRows = L.mergeAdministration(BASE, only, ['recettes', 'personnel', 'conges']);
+eq([mergedRows.added, mergedRows.administration.recettes.map((r) => r.id)], [2, ['r1', 'r2', 'r9']],
+  'la fusion des lignes cochées ajoute la seule nouvelle (+ la page Congés) et ne touche à rien d’autre');
+eq(mergedRows.kept, 2,
+  '…et elle compte les lignes reconnues (2) : le compte-rendu dira « nothing new » en le justifiant');
+
+/* ── 9. Le BRANCHEMENT de la sélection ligne à ligne ──────────────────────── */
+has(SEL, 'export const rowChoicesOf', 'loadSelection.js décrit les lignes d’une page (libellé, « déjà là »)');
+has(SEL, 'export const pickAdminRows', '…et sait réduire un fichier à ces lignes');
+has(APP, 'const RowPickList = ', 'App.jsx porte la liste dépliable des lignes');
+has(APP, 'onPickRows={pickLoadRows}', '…ses « all / none » repassent par le défaut calculé');
+has(APP, 'onPickRows, onToggleRow, preview, rows, rowPicked,', '…le panneau DÉCLARE ce handler dans sa signature (le maillon qui manquait)');
+has(APP, 'onToggleRow={toggleLoadRow}', '…et chaque ligne cochée remonte au handler du composant (pas de case inerte)');
+has(APP, 'rows={loadRowChoices}', '…et elle reçoit les lignes du FICHIER ouvert');
+has(APP, 'rowPicked={loadRows}', '…avec les lignes cochées de l’utilisateur');
+has(APP, 'const pickedAdmin = pickAdminRows(pruned.administration || {}, allSections, rowsPicked);',
+  'confirmLoad applique la sélection par ligne AVANT la fusion comme avant le remplacement');
+has(APP, "'replace', defaultSelection(loadSections), null)",
+  '« ♻️ Import everything » passe explicitement `null` : tout le contenu, pas seulement les lignes cochées');
+has(APP, "setLoadRows(rowPicksOf(s.administration, sections, baseAtOpen, 'merge'));",
+  'chaque fichier ouvert part de son défaut (en fusion : ce que la base n’a pas)');
+
+/* ── 10. LE NOM DE LA BASE OUVERTE EST INTANGIBLE ───────────────────────────
+      Défaut constaté en production : charger une sauvegarde pour FUSIONNER
+      rebaptisait la base en cours du titre que portait le fichier — et le nom
+      décidant du dossier Drive, le travail continuait sous une autre identité. */
+has(APP, 'const loadedTitle = restoringInPlace',
+  'une sauvegarde chargée DANS la base ouverte ne la renomme pas (elle n’apporte que du contenu)');
+has(APP, 'const renamedFileNote = (openTitle && fileTitle',
+  '…et quand le fichier portait un AUTRE nom, c’est DIT (rien ne change en silence)');
+has(APP, 'A load changes the CONTENT of the open base, never its identity',
+  'la fenêtre d’import l’annonce AVANT de cliquer');
+has(APP, "title: merging ? '🔀 Merge — nothing was erased' : '♻️ Replace — the open base kept its name'",
+  'le compte-rendu d’après coup porte la même phrase');
+
 /* ── Bilan ────────────────────────────────────────────────────────────────── */
-console.log(`_load_merge_test.mjs — ${passed} assertions OK (📂 Load backup : 🔀 fusionner sans rien perdre ou ♻️ remplacer, au choix — en fusion, la base ouverte fait foi)`);
+console.log(`_load_merge_test.mjs — ${passed} assertions OK (📂 Load backup : 🔀 fusionner sans rien perdre ou ♻️ remplacer, au choix — en fusion, la base ouverte fait foi, ligne à ligne, et garde son nom)`);
 

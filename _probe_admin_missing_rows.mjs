@@ -459,7 +459,8 @@ if (!hit.length) {
   console.log('  2. sur un poste qui montre encore les lignes : « 💾 Save backup » AVANT toute autre chose —');
   console.log('     c’est cette copie-là qui servira de source pour la restauration ;');
   console.log('  3. page concernée par page : « 📂 Load backup (.json / .html) » → cocher CETTE SEULE page');
-  console.log('     (l’en-tête annonce son compte) → « 🔀 Merge the selected pages » (mode par défaut : il');
+  console.log('     (l’en-tête annonce son compte) → « ▸ lines » permet de ne cocher QUE les lignes manquantes');
+  console.log('     (une ligne déjà présente y est verrouillée) → « 🔀 Merge the selected pages » (mode par défaut : il');
   console.log('     n’AJOUTE que les lignes manquantes) : les autres pages de');
   console.log('     la base ouverte ne bougent pas, et AUCUNE ligne n’est effacée ;');
   console.log('  4. une ligne disparue peut aussi avoir été SUPPRIMÉE volontairement : c’est le « dernier vu »');

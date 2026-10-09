@@ -1584,7 +1584,15 @@ export const buildMissingFournisseurs = (rows, existing) => {
   return [...byName.values()].filter((f) => !known.has(normalizeKey(f.fournisseur)));
 };
 
-/* Clé de dédoublonnage partagée (utilisée aussi par l’assistant d’import). */
+/* Clé de dédoublonnage partagée (utilisée aussi par l’assistant d’import).
+   ⚠ CHAQUE collection doit avoir SA règle : une collection oubliée retombe sur
+   la règle générique (`description || nom || ligne`), qui ne trouve AUCUNE des
+   clés de ses fiches — toutes ses lignes partagent alors la même identité vide.
+   Le catalogue fournisseurs (`fournisseur`, pas `nom`), les devis & BC (`kind` +
+   numéro) et les remboursements (bénéficiaire) tombaient exactement dans ce
+   trou : une fusion les ré-ajoutait donc TOUS à chaque chargement, avec leurs
+   identifiants d’origine — des jumeaux parfaits qu’une suppression emportait
+   d’un seul coup (remove(kind, id) efface toutes les lignes du même id). */
 export const recordDedupeKey = (kind, rec) => {
   const r = rec || {};
   const n = (x) => normalizeKey(x);
@@ -1599,6 +1607,16 @@ export const recordDedupeKey = (kind, rec) => {
   if (kind === 'desiderate') return `${n(r.description)}|${n(r.demandeur)}`;
   if (kind === 'questioni' || kind === 'sicurezza') return `${n(r.description)}`;
   if (kind === 'conges') return `${n(r.demandeur)}|${n(r.dateDebut)}|${n(r.dateFin)}`;
+  /* Catalogue fournisseurs : une fiche EST un nom (c’est le nom qui sert de clé
+     partout ailleurs — voir SUPPLIER_NAME_KEYS / buildMissingFournisseurs). */
+  if (kind === 'librerie') return `${n(firstValue(r, SUPPLIER_NAME_KEYS))}`;
+  /* Devis & BC : un devis et un BC peuvent décrire le même achat (même
+     description) — `kind` les sépare, le numéro les distingue à l’intérieur. */
+  if (kind === 'devisBc') return `${n(r.kind)}|${n(r.description)}|${n(r.numDevis || r.numBC || '')}`;
+  /* Remboursements : même forme qu’un OM (description, bénéficiaire, date). */
+  if (kind === 'reimbursements') {
+    return `${n(r.description)}|${n(r.demandeur || r.beneficiaire)}|${n(r.dateMission || r.dateDemande || '')}`;
+  }
   return `${n(r.description || r.nom || r.ligne || '')}`;
 };
 

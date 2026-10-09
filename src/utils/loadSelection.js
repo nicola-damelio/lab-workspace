@@ -21,6 +21,13 @@
        fichier ne fait qu’AJOUTER ce qu’elle n’a pas encore (rien n’est
        jamais effacé). Voir le bloc « FUSION » plus bas.
 
+   ⚠ Et, DANS une page cochée, la sélection descend jusqu’à la LIGNE : cocher
+   « Dépenses » ne veut pas dire accepter ses 412 lignes — `rowChoicesOf` décrit
+   chaque ligne du fichier (son libellé, si la base la connaît déjà) et
+   `pickAdminRows` ne garde que celles qui sont cochées. En fusion, le défaut est
+   « seulement ce que la base n’a pas encore » : c’est ce qui empêche d’empiler
+   des doublons à chaque chargement. Voir le bloc « LIGNE À LIGNE » plus bas.
+
    Les comptes (operators) et la configuration de sécurité (authSettings) ne
    sont JAMAIS importés : ce sont des données globales de l’application, pas du
    dataset — ils ne figurent donc pas dans la liste.
@@ -218,25 +225,64 @@ const rowIdentityOf = (kind, rec) => {
   return /[a-z0-9]/.test(raw) ? raw : '';
 };
 
+/** Identifiant TECHNIQUE d’une ligne (`id`), '' s’il n’y en a pas. */
+const rowIdOf = (rec) => {
+  if (!rec || typeof rec !== 'object' || Array.isArray(rec)) return '';
+  return String(rec.id === undefined || rec.id === null ? '' : rec.id).trim();
+};
+
+/** Identifiant libre pour une ligne qui arrive avec un `id` DÉJÀ pris : `r1~2`,
+ *  `r1~3`… (déterministe, donc la même fusion rejouée donne le même résultat). */
+const freshIdFor = (id, used) => {
+  const stem = `${id}~`;
+  let n = 2;
+  while (used.has(`${stem}${n}`)) n += 1;
+  return `${stem}${n}`;
+};
+
 /** Fusion d’UNE valeur d’administration. `added` compte les lignes du fichier
  *  AJOUTÉES, `kept` celles DÉJÀ présentes (elles nourrissent l’aperçu de la
- *  fenêtre d’import et le compte-rendu affiché après l’import). */
+ *  fenêtre d’import et le compte-rendu affiché après l’import), `renamed` celles
+ *  dont l’identifiant technique a dû être renouvelé (voir plus bas).
+ *
+ *  Pourquoi renouveler un identifiant ? Une ligne du fichier ABSENTE de la base
+ *  mais qui PORTE le même `id` qu’une ligne de la base est une AUTRE ligne (c’est
+ *  ainsi que la fusion l’a reconnue) : deux lignes qui partagent un `id` sont
+ *  indissociables — `remove(kind, id)` les supprime TOUTES LES DEUX. C’est très
+ *  exactement le défaut constaté (« je supprime un doublon, les deux
+ *  disparaissent ») : la ligne ajoutée reçoit donc un identifiant libre. */
 export const mergeAdminValue = (kind, baseVal, incomingVal) => {
   if (Array.isArray(incomingVal)) {
     const baseArr = Array.isArray(baseVal) ? baseVal : [];
     const known = new Set();
-    baseArr.forEach((r) => { const k = rowIdentityOf(kind, r); if (k) known.add(k); });
+    const usedIds = new Set();
+    baseArr.forEach((r) => {
+      const k = rowIdentityOf(kind, r);
+      if (k) known.add(k);
+      const id = rowIdOf(r);
+      if (id) usedIds.add(id);
+    });
     const add = [];
     let kept = 0;
+    let renamed = 0;
     incomingVal.forEach((r) => {
       const k = rowIdentityOf(kind, r);
       if (k) {
         if (known.has(k)) { kept += 1; return; }
         known.add(k);         // …et un doublon INTERNE au fichier n’en passe pas non plus
       }
+      const id = rowIdOf(r);
+      if (id && usedIds.has(id)) {
+        const fresh = freshIdFor(id, usedIds);
+        usedIds.add(fresh);
+        renamed += 1;
+        add.push({ ...r, id: fresh });
+        return;
+      }
+      if (id) usedIds.add(id);
       add.push(r);
     });
-    return { value: [...baseArr, ...add], added: add.length, kept };
+    return { value: [...baseArr, ...add], added: add.length, kept, renamed };
   }
   if (incomingVal && typeof incomingVal === 'object') {
     const baseObj = (baseVal && typeof baseVal === 'object' && !Array.isArray(baseVal)) ? baseVal : {};
@@ -247,16 +293,16 @@ export const mergeAdminValue = (kind, baseVal, incomingVal) => {
       else added += 1;
     });
     /* La base ÉCRIT APRÈS : ses valeurs l’emportent, clé par clé. */
-    return { value: { ...incomingVal, ...baseObj }, added, kept };
+    return { value: { ...incomingVal, ...baseObj }, added, kept, renamed: 0 };
   }
   if (isPresent(incomingVal)) {
     const baseEmpty = !isPresent(baseVal) || baseVal === ''
       || (typeof baseVal === 'object' && Object.keys(baseVal).length === 0);
     return baseEmpty
-      ? { value: incomingVal, added: 1, kept: 0 }
-      : { value: baseVal, added: 0, kept: 1 };
+      ? { value: incomingVal, added: 1, kept: 0, renamed: 0 }
+      : { value: baseVal, added: 0, kept: 1, renamed: 0 };
   }
-  return { value: baseVal, added: 0, kept: 0 };
+  return { value: baseVal, added: 0, kept: 0, renamed: 0 };
 };
 
 /**
@@ -265,8 +311,8 @@ export const mergeAdminValue = (kind, baseVal, incomingVal) => {
  * `settings`…) ; les autres pages de la base ouverte sont recopiées telles
  * quelles. `baseAdmin` peut être vide (`{}` : aucune base ouverte, ou base
  * neuve) : la fusion se réduit alors à ce que le fichier apporte. Retourne
- * `{ administration, added, kept, addedByKey, keptByKey }` — `added` et `kept`
- * sont des nombres de LIGNES, par page et au total.
+ * `{ administration, added, kept, renamed, addedByKey, keptByKey }` — `added`,
+ * `kept` et `renamed` sont des nombres de LIGNES, par page et au total.
  */
 export const mergeAdministration = (baseAdmin, incomingAdmin, keys) => {
   const base = (baseAdmin && typeof baseAdmin === 'object') ? baseAdmin : {};
@@ -277,24 +323,23 @@ export const mergeAdministration = (baseAdmin, incomingAdmin, keys) => {
   const keptByKey = {};
   let added = 0;
   let kept = 0;
+  let renamed = 0;
   wanted.forEach((k) => {
     if (!isPresent(inc[k])) return;      // la page n’est pas dans le fichier
-    if (!isPresent(base[k])) {           // rien en face : la page arrive telle quelle
-      const n = sizeOf(inc[k]);
-      out[k] = inc[k];
-      addedByKey[k] = n;
-      keptByKey[k] = 0;
-      added += n;
-      return;
-    }
+    /* MÊME RÈGLE que lorsque les deux côtés portent la page : une page qui
+       n’existe QUE dans le fichier arrive avec ses lignes — sans les doublons
+       internes du fichier, et sans jamais reprendre un `id` déjà pris dans la
+       base (voir mergeAdminValue). Sans cela, charger un fichier déjà pollué
+       ramenait ses doublons, et deux lignes pouvaient partager un `id`. */
     const r = mergeAdminValue(k, base[k], inc[k]);
     out[k] = r.value;
     addedByKey[k] = r.added;
     keptByKey[k] = r.kept;
     added += r.added;
     kept += r.kept;
+    renamed += r.renamed || 0;
   });
-  return { administration: out, added, kept, addedByKey, keptByKey };
+  return { administration: out, added, kept, renamed, addedByKey, keptByKey };
 };
 
 /**
@@ -313,12 +358,186 @@ export const mergePreviewOf = (baseAdmin, incomingAdmin, sections, selectedIds) 
     let kept = 0;
     (s.keys || []).forEach((k) => {
       if (!isPresent(inc[k])) return;
-      if (!isPresent(base[k])) { added += sizeOf(inc[k]); return; }
+      /* La page absente de la base est annoncée comme ENTIÈREMENT nouvelle,
+         mais dédoublonnée : l’aperçu compte ce que la fusion ajouterait VRAI-
+         MENT (mêmes règles que mergeAdministration, en lecture seule). */
       const r = mergeAdminValue(k, base[k], inc[k]);
       added += r.added;
       kept += r.kept;
     });
     out[s.id] = { added, kept };
+  });
+  return out;
+};
+
+/* ──────────────────────────────────────────────────────────────────────────
+   LIGNE À LIGNE — choisir DANS une page, pas seulement la page entière
+   ──────────────────────────────────────────────────────────────────────────
+   Une page peut porter des centaines de lignes : « la page Dépenses » n’est pas
+   un choix, et cocher la page pour n’en récupérer que trois obligeait à tout
+   prendre — c’est comme ça que les doublons se fabriquent. `rowChoicesOf`
+   DÉCRIT donc chaque ligne du fichier (libellé lisible, déjà présente dans la
+   base ou non) et `pickAdminRows` ne garde que celles qui sont cochées.
+
+   · en FUSION, le défaut est « ce que la base n’a pas encore » : les lignes
+     déjà reconnues sont VERROUILLÉES (`locked` : cochées, non décochables —
+     la base fait foi, les décoher ne changerait rien) et les lignes nouvelles
+     arrivent cochées — un chargement ne ré-ajoute donc rien, même si
+     l’utilisateur ne touche à rien ;
+   · en REMPLACEMENT, tout est coché et décochable (le geste demandé est de
+     reprendre la page telle quelle) ; décocher une ligne est alors un choix
+     explicite.
+
+   La clé d’une ligne est son identité (`recordDedupeKey`, préfixée par la
+   collection) : deux lignes que la fusion considère comme LA MÊME se cochent et
+   se décochent ensemble — et c’est dit (`duplicateOf`). Une ligne sans identité
+   exploitable (aucun champ renseigné) est repérée par sa POSITION (`#3`) : elle
+   compte alors pour elle-même.
+   ────────────────────────────────────────────────────────────────────────── */
+
+/** Colonnes qui NOMMENT une ligne, par collection : la première renseignée sert
+ *  de titre, les suivantes de contexte (« 1 250 · Payé »). Volontairement
+ *  courtes : une ligne d’aperçu, pas une fiche. */
+const ROW_FIELDS = {
+  recettes: { title: ['ligne', 'description'], sub: ['type', 'montant', 'financeur'] },
+  librerie: {
+    title: ['fournisseur', 'nomFournisseur', 'fournisseurNom', 'nom', 'name'],
+    sub: ['contact', 'email', 'telephone', 'referenceSifac'],
+  },
+  personnel: { title: ['nom', 'description'], sub: ['prenom', 'fonction', 'dateDebutStage', 'dateEmbauche'] },
+  depenses: { title: ['description'], sub: ['fournisseur', 'montant', 'statut', 'dateDemande'] },
+  om: { title: ['description'], sub: ['demandeur', 'dateMission', 'coutTotal', 'numOM'] },
+  reimbursements: { title: ['description'], sub: ['demandeur', 'beneficiaire', 'dateMission', 'coutTotal'] },
+  conges: { title: ['demandeur'], sub: ['dateDebut', 'dateFin', 'type', 'statut'] },
+  desiderate: { title: ['description'], sub: ['demandeur', 'montant', 'statut'] },
+  devisBc: { title: ['description'], sub: ['kind', 'numDevis', 'numBC', 'montant'] },
+  questioni: { title: ['description'], sub: ['demandeur', 'statut', 'date'] },
+  sicurezza: { title: ['description'], sub: ['demandeur', 'lieu', 'date'] },
+};
+
+/** Première valeur LISIBLE d’une liste de champs (texte ou nombre — jamais un
+ *  objet, jamais un pavé : au-delà de 120 caractères c’est un commentaire, pas
+ *  un libellé). Rend '' s’il n’y a rien. */
+const firstText = (rec, keys) => {
+  if (!rec || typeof rec !== 'object') return '';
+  for (const k of keys) {
+    const v = rec[k];
+    if (v === undefined || v === null || typeof v === 'object') continue;
+    const s = String(v).trim();
+    if (s && s.length <= 120) return s;
+  }
+  return '';
+};
+
+/** Libellé d’une ligne : `{ title, sub }` — JAMAIS vide. Les champs attendus
+ *  d’abord, puis n’importe quel autre champ de la fiche (mieux vaut montrer
+ *  « 12/03/2025 » que rien), et en dernier recours la position de la ligne. */
+const rowLabelOf = (kind, rec, index) => {
+  if (!rec || typeof rec !== 'object' || Array.isArray(rec)) {
+    const bare = rec === undefined || rec === null ? '' : String(rec).trim();
+    return { title: bare || `ligne ${index + 1}`, sub: '' };
+  }
+  const spec = ROW_FIELDS[kind] || {};
+  const others = Object.keys(rec).filter((k) => k !== 'id');
+  const title = firstText(rec, (spec.title || []).concat(others)) || `ligne ${index + 1}`;
+  const sub = [];
+  (spec.sub || []).forEach((k) => {
+    const v = firstText(rec, [k]);
+    if (v && v.toLowerCase() !== title.toLowerCase() && sub.indexOf(v) === -1) sub.push(v);
+  });
+  return { title, sub: sub.slice(0, 3).join(' · ') };
+};
+
+/** Clé d’une ligne DANS sa collection : son identité, sinon sa position (`#3`).
+ *  Toujours préfixée par la collection : deux pages peuvent avoir une ligne
+ *  `#0` sans que cocher l’une touche l’autre. */
+export const rowKeyOf = (kind, rec, index) =>
+  `${kind}::${rowIdentityOf(kind, rec) || `#${Number(index) || 0}`}`;
+
+/**
+ * CHAQUE LIGNE d’une page, telle que la fenêtre d’import la montre. Chaque
+ * entrée porte `{ key, index, title, sub, identity, inBase, duplicateOf,
+ * noIdentity, locked, picked }` :
+ *  · `inBase` — la ligne est DÉJÀ dans la base ouverte (même identité) ;
+ *  · `locked` — en FUSION, une telle ligne n’est pas un choix : la fusion la
+ *    reconnaîtra de toute façon (la base fait foi). Elle est donc cochée et
+ *    NE PEUT PAS être décochée — la décoher ne changerait rien, et le
+ *    compte-rendu doit pouvoir dire « 2 lignes reconnues » ;
+ *  · `duplicateOf` — index d’une ligne DÉJÀ listée portant la même identité
+ *    (elles seront fusionnées de toute façon : autant le dire avant) ;
+ *  · `picked` — l’état par défaut des lignes que l’utilisateur DÉCIDE (voir
+ *    l’en-tête du bloc), renversable ligne à ligne.
+ */
+export const rowChoicesOf = (kind, incomingVal, baseVal, mode) => {
+  if (!Array.isArray(incomingVal)) return [];
+  const merging = mode !== 'replace';
+  const known = new Set();
+  (Array.isArray(baseVal) ? baseVal : []).forEach((r) => {
+    const id = rowIdentityOf(kind, r);
+    if (id) known.add(id);
+  });
+  const firstSeen = new Map();
+  return incomingVal.map((r, index) => {
+    const identity = rowIdentityOf(kind, r);
+    const inBase = !!identity && known.has(identity);
+    const duplicateOf = identity && firstSeen.has(identity) ? firstSeen.get(identity) : -1;
+    if (identity && !firstSeen.has(identity)) firstSeen.set(identity, index);
+    const label = rowLabelOf(kind, r, index);
+    return {
+      key: rowKeyOf(kind, r, index),
+      index,
+      title: label.title,
+      sub: label.sub,
+      identity,
+      inBase,
+      duplicateOf,
+      noIdentity: !identity,
+      locked: merging && inBase,
+      picked: merging ? !inBase : true,
+    };
+  });
+};
+
+/** Choix PAR DÉFAUT de la fenêtre : une liste de clés par page (voir
+ *  `rowChoicesOf`). C’est l’état initial de la sélection ligne à ligne, et ce
+ *  que « Tout » remet pour les pages concernées. Les lignes VERROUILLÉES
+ *  (`locked`) en font partie : elles traversent la sélection pour que la fusion
+ *  les reconnaisse et le dise — sans elles, elle annoncerait « 0 ligne ». */
+export const rowPicksOf = (administration, sections, baseAdmin, mode) => {
+  const src = administration && typeof administration === 'object' ? administration : {};
+  const base = baseAdmin && typeof baseAdmin === 'object' ? baseAdmin : {};
+  const out = {};
+  (Array.isArray(sections) ? sections : []).forEach((s) => {
+    const keys = [];
+    (s.keys || []).forEach((k) => {
+      if (!Array.isArray(src[k])) return;
+      rowChoicesOf(k, src[k], base[k], mode)
+        .forEach((c) => { if (c.picked || c.locked) keys.push(c.key); });
+    });
+    out[s.id] = keys;
+  });
+  return out;
+};
+
+/**
+ * APPLICATION du choix ligne à ligne : une copie de `administration` où chaque
+ * collection d’une page dont les lignes ont été choisies (`picks[page]` = liste
+ * de clés) ne garde que ces lignes-là. Une page ABSENTE de `picks` n’est pas
+ * touchée : sa page entière suit le sort de sa case à cocher — c’est ce qui
+ * laisse « ♻️ Import everything » intact.
+ */
+export const pickAdminRows = (administration, sections, picks) => {
+  const src = administration && typeof administration === 'object' ? administration : {};
+  const out = { ...src };
+  if (!picks || typeof picks !== 'object') return out;
+  (Array.isArray(sections) ? sections : []).forEach((s) => {
+    const chosen = picks[s.id];
+    if (!Array.isArray(chosen)) return;
+    const keep = new Set(chosen);
+    (s.keys || []).forEach((k) => {
+      if (!Array.isArray(src[k])) return;
+      out[k] = src[k].filter((r, i) => keep.has(rowKeyOf(k, r, i)));
+    });
   });
   return out;
 };

@@ -133,6 +133,7 @@ import {
   loadSectionsOf, defaultSelection, sectionGroupsOf, filterLoadState,
   selectionHasTests, selectionIsComplete, describeCount,
   mergeAdministration, mergePreviewOf,
+  rowChoicesOf, rowPicksOf, pickAdminRows,
 } from './utils/loadSelection';
 import { canUserOpenDataset, isDatasetRestricted, normalizeMemberNames, datasetAccessOf } from './utils/datasetAccess';
 import {
@@ -783,10 +784,90 @@ const writeLastExperiment = (datasetId, payload) => {
    cocher EXACTEMENT ce qu’on veut importer (« quel élément de quelle page »),
    avec par page « Tout / Rien » et, globalement, « Tout sélectionner ».
    ========================================================================= */
-const LoadPickPanel = ({ sections, picked, onToggle, onPickMany, preview }) => {
+/* =========================================================================
+   LIGNE À LIGNE — la liste dépliable des lignes d’UNE page.
+   Une page peut porter des centaines de lignes : elles restent donc REPLIÉES
+   (« ▸ lines »), et la ligne de résumé dit ce qu’il faut savoir sans ouvrir
+   (« 12/14 lines ticked · 2 already in the base »). Chaque ligne se coche
+   seule ; « all / none » reprend le défaut calculé par `rowChoicesOf`
+   (fusion : ce que la base n’a pas · remplacement : tout).
+   ========================================================================= */
+const RowPickList = ({ section, rows, pickedKeys, onToggleRow, onPickRows }) => {
+  const list = Array.isArray(rows) ? rows : [];
+  if (!list.length) return null;
+  const keep = new Set(Array.isArray(pickedKeys) ? pickedKeys : []);
+  const onCount = list.filter((r) => keep.has(r.key)).length;
+  return (
+    <>
+      <div className="flex items-center gap-2 mb-1">
+        <span className="text-[10px] font-black text-slate-400 uppercase tracking-wide">
+          Lines of this page ({onCount}/{list.length} ticked)
+        </span>
+        <button
+          type="button"
+          onClick={() => onPickRows([section.id], true)}
+          className="text-[10px] font-bold text-blue-700 hover:underline"
+        >
+          all
+        </button>
+        <button
+          type="button"
+          onClick={() => onPickRows([section.id], false)}
+          className="text-[10px] font-bold text-slate-400 hover:underline"
+        >
+          none
+        </button>
+      </div>
+      {list.map((r) => (
+        <label
+          key={r.key}
+          className={`flex items-start gap-2 rounded px-1 py-0.5 ${r.locked ? 'cursor-default' : 'cursor-pointer hover:bg-slate-50'}`}
+        >
+          <input
+            type="checkbox"
+            className="accent-blue-600 mt-0.5 disabled:opacity-60"
+            checked={keep.has(r.key)}
+            disabled={!!r.locked}
+            onChange={(e) => onToggleRow(section.id, r.key, e.target.checked)}
+          />
+          <span className="min-w-0 flex-1">
+            <span className="block text-[11px] font-bold text-slate-700 leading-tight truncate">{r.title}</span>
+            <span className="block text-[10px] text-slate-400 leading-tight truncate">
+              {[
+                r.sub,
+                r.locked ? 'already in the base — the merge recognises it, nothing to decide' : '',
+                r.inBase && !r.locked ? 'already in the base' : '',
+                r.duplicateOf >= 0 ? `same as line ${r.duplicateOf + 1}` : '',
+                r.noIdentity ? 'nothing to recognise it by — one line of its own' : '',
+              ].filter(Boolean).join(' · ')}
+            </span>
+          </span>
+        </label>
+      ))}
+    </>
+  );
+};
+
+const LoadPickPanel = ({
+  sections, picked, onToggle, onPickMany, onPickRows, onToggleRow, preview, rows, rowPicked,
+}) => {
   const groups = sectionGroupsOf(sections);
   const isOn = (id) => picked.indexOf(id) !== -1;
   const groupIds = (g) => g.items.map((s) => s.id);
+  /* Les lignes d’une page s’affichent à la demande (`rows` vaut `null` quand la
+     sélection ligne à ligne n’existe pas : dataset scientifique, ou
+     « ♻️ Import everything »). */
+  const [openRows, setOpenRows] = useState({});
+  const rowsOf = (id) => (rows && Array.isArray(rows[id]) ? rows[id] : []);
+  const pickedRowsOf = (id) => ((rowPicked && Array.isArray(rowPicked[id])) ? rowPicked[id] : []);
+  const summarizeRows = (id) => {
+    const list = rowsOf(id);
+    if (!list.length) return '';
+    const keep = pickedRowsOf(id);
+    const on = list.filter((r) => keep.indexOf(r.key) !== -1).length;
+    const inBase = list.filter((r) => r.inBase).length;
+    return `${on}/${list.length} lines ticked${inBase ? ` · ${inBase} already in the base` : ''}`;
+  };
   return (
     <div className="border border-slate-200 rounded-xl overflow-hidden">
       <div className="flex items-center justify-between gap-2 px-3 py-2 bg-slate-50 border-b border-slate-200">
@@ -838,21 +919,48 @@ const LoadPickPanel = ({ sections, picked, onToggle, onPickMany, preview }) => {
             ) : null}
             <div className="flex flex-col gap-1">
               {g.items.map((s) => (
-                <label key={s.id} className="flex items-start gap-2 cursor-pointer rounded-lg px-1.5 py-1 hover:bg-slate-50">
-                  <input
-                    type="checkbox"
-                    className="accent-blue-600 mt-0.5"
-                    checked={isOn(s.id)}
-                    onChange={(e) => onToggle(s.id, e.target.checked)}
-                  />
-                  <span className="min-w-0 flex-1">
-                    <span className="block text-xs font-bold text-slate-700 leading-tight">{s.label}</span>
-                    <span className="block text-[10px] text-slate-400 leading-tight">
-                      {describeCount(s)}
-                      {preview && preview[s.id] ? ` · ${describeMergePart(s, preview[s.id])}` : ''}
+                <div key={s.id}>
+                  <label className="flex items-start gap-2 cursor-pointer rounded-lg px-1.5 py-1 hover:bg-slate-50">
+                    <input
+                      type="checkbox"
+                      className="accent-blue-600 mt-0.5"
+                      checked={isOn(s.id)}
+                      onChange={(e) => onToggle(s.id, e.target.checked)}
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-xs font-bold text-slate-700 leading-tight">{s.label}</span>
+                      <span className="block text-[10px] text-slate-400 leading-tight">
+                        {describeCount(s)}
+                        {preview && preview[s.id] ? ` · ${describeMergePart(s, preview[s.id])}` : ''}
+                        {isOn(s.id) && rowsOf(s.id).length ? ` · ${summarizeRows(s.id)}` : ''}
+                      </span>
                     </span>
-                  </span>
-                </label>
+                    {isOn(s.id) && rowsOf(s.id).length ? (
+                      <button
+                        type="button"
+                        title="Pick the lines of this page one by one"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          setOpenRows((prev) => ({ ...prev, [s.id]: !prev[s.id] }));
+                        }}
+                        className="text-[10px] font-bold text-blue-700 hover:underline whitespace-nowrap"
+                      >
+                        {openRows[s.id] ? '▾ lines' : '▸ lines'}
+                      </button>
+                    ) : null}
+                  </label>
+                  {isOn(s.id) && openRows[s.id] ? (
+                    <div className="ml-6 mb-1 border-l-2 border-slate-100 pl-2">
+                      <RowPickList
+                        section={s}
+                        rows={rowsOf(s.id)}
+                        pickedKeys={pickedRowsOf(s.id)}
+                        onToggleRow={onToggleRow}
+                        onPickRows={onPickRows}
+                      />
+                    </div>
+                  ) : null}
+                </div>
               ))}
             </div>
           </div>
@@ -899,18 +1007,30 @@ const describeAdminMerge = (merged, opts) => {
     .filter((k) => merged.addedByKey[k] > 0)
     .map((k) => `${adminKeyLabel(k)} +${merged.addedByKey[k]}`);
   const detail = lines.length ? ` (${lines.join(', ')})` : '';
+  /* Un identifiant RENOUVELÉ est dit : c’est la seule chose qui change dans une
+     ligne que l’utilisateur n’a pas touchée, et c’est ce qui empêche deux lignes
+     de partager un `id` (deux lignes qui en partagent un se suppriment
+     ENSEMBLE). */
+  const renamed = merged.renamed
+    ? `\n\n${merged.renamed} line${merged.renamed > 1 ? 's' : ''} received a NEW identifier: `
+      + 'the file carried an id the base had already given to another line, and two lines sharing '
+      + 'one id are deleted together — the newcomer was renamed rather than joined to it.'
+    : '';
   if (!o.intoOpenBase) {
     return 'No Administration base was open: this file was imported into a NEW base as it stands — '
-      + `${merged.added} row${merged.added > 1 ? 's' : ''}${detail}. There was nothing to merge with.`;
+      + `${merged.added} row${merged.added > 1 ? 's' : ''}${detail}. There was nothing to merge with.`
+      + renamed;
   }
   if (!merged.added) {
     return 'Nothing new: everything this file holds for the ticked pages is already in the open base '
       + `(${merged.kept} row${merged.kept > 1 ? 's' : ''} recognised). The file is OLDER than the base — `
-      + 'no line was overwritten, and the base is unchanged.';
+      + 'no line was overwritten, and the base is unchanged.'
+      + renamed;
   }
   return `${merged.added} new row${merged.added > 1 ? 's' : ''} added${detail} · `
     + `${merged.kept} row${merged.kept > 1 ? 's' : ''} already in the base were kept as they are `
-    + '(a merge never overwrites the newer copy).';
+    + '(a merge never overwrites the newer copy).'
+    + renamed;
 };
 
 /* ⛔ UNE DEP-ARRAY EST LUE PENDANT LE RENDU — CES DEUX FONCTIONS VIVENT DONC AU
@@ -1449,16 +1569,90 @@ if (customType === 'dosy') {
     && adminContent && typeof adminContent === 'object')
     ? adminContent
     : null;
+  /* ── LIGNE À LIGNE (voir utils/loadSelection.js) ───────────────────────────
+     `loadRows` = les lignes cochées, page par page (`{ [sectionId]: [clés] }`).
+     Il est REMIS À SON DÉFAUT à chaque fichier ouvert et à chaque changement de
+     mode (fusion = ce que la base n’a pas ; remplacement = tout) : le point de
+     départ est donc toujours le geste sans perte, et décocher une ligne est un
+     choix explicite de l’utilisateur — jamais un héritage du fichier d’avant.
+     `null` = aucune sélection par ligne (le contenu part entier, comme avant) :
+     c’est le cas de « ♻️ Import everything ». */
+  const [loadRows, setLoadRows] = useState(null);
+  /* Le fichier ouvert, en base d’administration — la SOURCE des libellés de
+     ligne (jamais la copie filtrée : on liste toutes les lignes du fichier). */
+  const loadIncomingAdmin = (pendingLoad && pendingLoad.isAdmin
+    && pendingLoad.fullState && typeof pendingLoad.fullState.administration === 'object'
+    && pendingLoad.fullState.administration)
+    ? pendingLoad.fullState.administration
+    : null;
+  /* Les lignes à MONTRER, page par page (`rowChoicesOf`) : titre lisible,
+     contexte, « déjà dans la base », doublon interne… Recalculé avec le fichier,
+     la base ou le mode — jamais à chaque frappe. */
+  const loadRowChoices = useMemo(() => {
+    if (!pendingLoad || !pendingLoad.isAdmin || !loadIncomingAdmin) return null;
+    const out = {};
+    (Array.isArray(pendingLoad.sections) ? pendingLoad.sections : []).forEach((s) => {
+      const rows = [];
+      (s.keys || []).forEach((k) => {
+        if (!Array.isArray(loadIncomingAdmin[k])) return;
+        rowChoicesOf(k, loadIncomingAdmin[k], loadMergeBase ? loadMergeBase[k] : undefined, loadAdminMode)
+          .forEach((c) => rows.push(c));
+      });
+      out[s.id] = rows;
+    });
+    return out;
+  }, [pendingLoad, loadIncomingAdmin, loadMergeBase, loadAdminMode]);
+  /** Lignes cochées par défaut d’une page, dans le mode courant : celles que
+   *  l’utilisateur décide (`picked`) ET celles que la fusion reconnaîtra de
+   *  toute façon (`locked` — voir rowChoicesOf : elles doivent traverser la
+   *  sélection pour être comptées comme « déjà là »). */
+  const defaultRowKeysOf = (section) => {
+    const rows = (loadRowChoices && section) ? loadRowChoices[section.id] : null;
+    return Array.isArray(rows) ? rows.filter((c) => c.picked || c.locked).map((c) => c.key) : [];
+  };
+  /* Le mode se choisit dans la fenêtre : changer de mode REMET les lignes à
+     leur défaut (un « tout est coché » hérité du remplacement n’a aucun sens en
+     fusion) — et l’écran le dit, les compteurs se recalculent. */
+  const setLoadMode = (m) => {
+    setLoadAdminMode(m);
+    if (loadIncomingAdmin) {
+      setLoadRows(rowPicksOf(loadIncomingAdmin, loadSections, loadMergeBase, m));
+    }
+  };
+  const toggleLoadRow = (sectionId, key, on) => setLoadRows((prev) => {
+    const cur = (prev && typeof prev === 'object') ? prev : {};
+    const list = Array.isArray(cur[sectionId]) ? cur[sectionId] : [];
+    const next = on
+      ? (list.indexOf(key) === -1 ? [...list, key] : list)
+      : list.filter((k) => k !== key);
+    return { ...cur, [sectionId]: next };
+  });
+  /* « Tout / Rien » d’une PAGE aux deux niveaux à la fois : la page et ses
+     lignes. Décocher la page remet aussi ses lignes à vide pour que le compte
+     affiché et ce qui sera importé disent la même chose. */
+  const pickLoadRows = (sectionIds, on) => setLoadRows((prev) => {
+    if (!loadIncomingAdmin) return prev;
+    const cur = (prev && typeof prev === 'object') ? prev : {};
+    const next = { ...cur };
+    loadSections.forEach((s) => {
+      if (sectionIds.indexOf(s.id) === -1) return;
+      next[s.id] = on ? defaultRowKeysOf(s) : [];
+    });
+    return next;
+  });
   const loadMergePreview = useMemo(() => {
     if (!pendingLoad || !pendingLoad.isAdmin) return null;
     /* Les sections sont RELUES ICI (et non passées) : `loadSections` est un
        tableau neuf à chaque rendu, ce qui ferait recalculer l’aperçu sans
        arrêt — `pendingLoad.sections`, lui, ne change qu’avec le fichier. */
     const list = Array.isArray(pendingLoad.sections) ? pendingLoad.sections : [];
-    const incoming = (pendingLoad.fullState && pendingLoad.fullState.administration) || {};
+    /* L’aperçu porte sur les lignes COCHÉES (`pickAdminRows`) : unticker une
+       ligne doit faire bouger le « +3 lignes » de la page — sinon l’annonce
+       mentirait sur ce que le bouton va faire. */
+    const incoming = pickAdminRows(loadIncomingAdmin || {}, list, loadRows);
     const picked = Array.isArray(loadPick) ? loadPick : defaultSelection(list);
     return mergePreviewOf(loadMergeBase || {}, incoming, list, picked);
-  }, [pendingLoad, loadPick, loadMergeBase]);
+  }, [pendingLoad, loadPick, loadMergeBase, loadRows, loadIncomingAdmin]);
   // Dataset dont le superutilisateur édite la liste d’accès (bouton « 👥
   // Membres » sur une carte de l’écran d’accueil).
   const [accessEditorDataset, setAccessEditorDataset] = useState(null);
@@ -3836,6 +4030,14 @@ useEffect(() => {
               adminSubtitle: dataBlob && (dataBlob.subtitle || ''),
             });
             setLoadPick(defaultSelection(sections));
+            /* LES LIGNES AUSSI partent de leur défaut : en fusion, ce que la
+               base ouverte n’a pas encore. Le fichier ouvre donc la fenêtre
+               « prête à ne rien dupliquer » — et tout est visible, ligne à
+               ligne, avant de cliquer. La base qui fait foi est relue ICI (et
+               non par `loadMergeBase`) : `pendingLoad` n’est pas encore posé. */
+            const baseAtOpen = (currentDatasetId && isAdministrationKind(activeDatasetKind)
+              && adminContent && typeof adminContent === 'object') ? adminContent : null;
+            setLoadRows(rowPicksOf(s.administration, sections, baseAtOpen, 'merge'));
             /* Une nouvelle fenêtre s’ouvre sur le mode SANS PERTE (fusion) : le
                choix se fait dans la fenêtre, pas d’une fois sur l’autre. */
             setLoadAdminMode('merge');
@@ -3903,12 +4105,17 @@ useEffect(() => {
     e.target.value = '';
   };
 
-  const confirmLoad = (mode, pickedIds) => {
+  const confirmLoad = (mode, pickedIds, rowPicks) => {
     const { tests: pendingTests, fullState: rawState, sections } = pendingLoad;
     const allSections = Array.isArray(sections) ? sections : [];
     const picked = Array.isArray(pickedIds)
       ? pickedIds
       : (Array.isArray(loadPick) ? loadPick : defaultSelection(allSections));
+    /* LIGNE À LIGNE : le choix fait dans la fenêtre (`{ [page]: [clés] }`, voir
+       rowChoicesOf). `null` / absent = aucune sélection par ligne : le contenu
+       part entier — c’est le cas de « ♻️ Import everything » et des imports qui
+       ne connaissent pas cette sélection (dataset scientifique). */
+    const rowsPicked = (rowPicks && typeof rowPicks === 'object') ? rowPicks : null;
     /* Import PARTIEL : le snapshot est réduit aux éléments COCHÉS — les autres
        gardent leur valeur actuelle (rien n’est écrasé en silence). Les
        expériences d’un dataset scientifique ne sont remplacées que si
@@ -3938,7 +4145,11 @@ useEffect(() => {
        n’est PAS une base d’administration, la sauvegarde est restaurée dans
        une NOUVELLE base (le dataset scientifique ouvert n’est pas touché). */
     if (pendingLoad && pendingLoad.isAdmin) {
-      const pickedAdmin = pruned.administration || {};
+      /* Les lignes cochées s’appliquent AVANT les deux modes : la fusion comme
+         le remplacement ne voient que ce qui a été coché — c’est le même
+         filtre, donc les deux gestes restent comparables (« la même sélection,
+         deux façons de l’appliquer »). */
+      const pickedAdmin = pickAdminRows(pruned.administration || {}, allSections, rowsPicked);
       /* DEUX FAÇONS d’appliquer les pages cochées — c’est le seul endroit où
          elles se séparent :
            · 🔀 FUSIONNER (mode 'merge', le défaut) : la BASE OUVERTE fait foi,
@@ -3991,14 +4202,40 @@ useEffect(() => {
       }
       setActiveDatasetKind('administration');
       setAdminContent(admin);
-      const loadedTitle = (pendingLoad && pendingLoad.adminTitle)
+      /* ❗ LE NOM DE LA BASE OUVERTE EST INTANGIBLE. Une sauvegarde chargée DANS
+         une base d’administration déjà ouverte (« restoringInPlace ») ne la
+         rebaptise JAMAIS : elle n’apporte que du CONTENU (pages, lignes). Seule
+         une sauvegarde qui CRÉE un dataset (aucune base ouverte) donne son nom —
+         c’est la seule copie disponible, il n’y a donc rien à renommer.
+         Sans cette règle, « 🔀 Merge » d’un fichier ancien rebaptisait la base en
+         cours du titre que CE fichier portait, et comme le nom décide du dossier
+         Drive (anchorDriveContext, juste après), les envois suivants partaient
+         dans le dossier de l’ancienne base : le travail continuait sous une
+         identité qui n’était plus la sienne. */
+      const openTitle = String(datasetTitle || '').trim();
+      const fileTitle = String((pendingLoad && pendingLoad.adminTitle)
         || (s && (s.title || s.datasetTitle))
-        || (restoringInPlace ? datasetTitle : 'Base d’administration');
-      const loadedSubtitle = (pendingLoad && pendingLoad.adminSubtitle)
+        || '').trim();
+      const fileSubtitle = String((pendingLoad && pendingLoad.adminSubtitle)
         || (s && (s.subtitle || s.datasetSubtitle))
-        || '';
+        || '');
+      const loadedTitle = restoringInPlace
+        ? (openTitle || fileTitle || 'Base d’administration')
+        : (fileTitle || 'Base d’administration');
+      const loadedSubtitle = restoringInPlace ? String(datasetSubtitle || '') : fileSubtitle;
       setDatasetTitle(loadedTitle);
       setDatasetSubtitle(loadedSubtitle);
+      /* Le fichier portait un AUTRE nom : c’est dit — un chargement ne doit rien
+         changer en silence, et la question « où est passée ma base ? » se pose
+         exactement là. La note n’apparaît que quand les noms DIFFÈRENT. */
+      const renamedFileNote = (openTitle && fileTitle
+        && fileTitle.toLowerCase() !== openTitle.toLowerCase())
+        ? `\n\n⚠️ This file was saved under the name “${fileTitle}”. `
+          + (restoringInPlace
+            ? `The open base keeps ITS name, “${openTitle}” — a load changes the content, never the `
+              + 'identity of the base (nor its Drive folder).'
+            : `The new base has taken its name, “${loadedTitle}”.`)
+        : '';
       /* La base d'administration restaurée est ancrée AVANT la suite de
          l'import : ses documents partent dans SON dossier, pas dans celui du
          dataset resté ouvert. */
@@ -4009,11 +4246,17 @@ useEffect(() => {
       resetAdminNavHistory();
       setPendingLoad(null);
       setLoadPick(null);
+      setLoadRows(null);
       /* Le compte-rendu de la FUSION, une fois la fenêtre refermée : un « Merge »
          muet laisserait croire que rien n’a été lu (l’ancien défaut « rien ne se
-         passe »). */
-      if (adminMergeNote) {
-        setDialog({ type: 'alert', title: '🔀 Merge — nothing was erased', message: adminMergeNote });
+         passe »). Le NOM y figure quand le fichier en portait un autre : c’est la
+         seule trace de ce qui a (ou n’a pas) changé hors contenu. */
+      if (adminMergeNote || renamedFileNote) {
+        setDialog({
+          type: 'alert',
+          title: merging ? '🔀 Merge — nothing was erased' : '♻️ Replace — the open base kept its name',
+          message: `${adminMergeNote}${renamedFileNote}`,
+        });
       }
       if (window.innerWidth < 768) setIsSidebarOpen(false);
       return;
@@ -4304,6 +4547,7 @@ if (s.mandatoryFields !== undefined) setMandatoryFields((prev) => [...new Set([.
 
     setPendingLoad(null);
     setLoadPick(null);
+    setLoadRows(null);
     /* ❗ LE VERDICT DES PROJETS, une fois la fenêtre fermée : « rien ne se passe »
        est exactement le défaut réparé ici (voir describeProjectRestore). */
     if (projectRestoreNote) {
@@ -5902,15 +6146,23 @@ const openDataset = (dset, { keepPlace = false } = {}) => {
                   <b>{pendingLoad.adminTitle
                     || (pendingLoad.fullState && (pendingLoad.fullState.title || pendingLoad.fullState.datasetTitle))
                     || 'sans titre'}</b>
-                  ). Tick the pages to import, then choose what this file is allowed to do to the open
+                  ). Tick the pages to import — and, inside a page, its LINES (“▸ lines”: every line can
+                  be picked on its own) — then choose what this file is allowed to do to the open
                   base. 🔀 Merge never erases anything; ♻️ Replace overwrites each ticked page with the
                   file’s copy — even if the base holds a newer one.
                 </p>
+                {loadMergeBase ? (
+                  <p className="text-[10px] text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 mb-3 leading-relaxed">
+                    A load changes the CONTENT of the open base, never its identity: it keeps its name
+                    {' '}<b>“{String(datasetTitle || '').trim() || 'Base d’administration'}”</b> (and its Drive
+                    folder), whatever name the file was saved under.
+                  </p>
+                ) : null}
                 <div className="flex items-center gap-2 mb-3">
                   <span className="text-[10px] font-black text-slate-500 uppercase tracking-wide">Mode</span>
                   <button
                     type="button"
-                    onClick={() => setLoadAdminMode('merge')}
+                    onClick={() => setLoadMode('merge')}
                     className={`flex-1 text-[11px] font-bold py-1.5 px-2 rounded-lg border transition-colors ${
                       loadAdminMode === 'merge'
                         ? 'bg-blue-600 border-blue-600 text-white'
@@ -5921,7 +6173,7 @@ const openDataset = (dset, { keepPlace = false } = {}) => {
                   </button>
                   <button
                     type="button"
-                    onClick={() => setLoadAdminMode('replace')}
+                    onClick={() => setLoadMode('replace')}
                     className={`flex-1 text-[11px] font-bold py-1.5 px-2 rounded-lg border transition-colors ${
                       loadAdminMode === 'replace'
                         ? 'bg-red-600 border-red-600 text-white'
@@ -5943,18 +6195,22 @@ const openDataset = (dset, { keepPlace = false } = {}) => {
                   picked={loadPicked}
                   onToggle={toggleLoadPick}
                   onPickMany={pickManyLoad}
+                  onPickRows={pickLoadRows}
+                  onToggleRow={toggleLoadRow}
+                  rows={loadRowChoices}
+                  rowPicked={loadRows}
                   preview={loadAdminMode === 'merge' ? loadMergePreview : null}
                 />
                 <p className="text-[10px] text-slate-400 mt-2 leading-relaxed">
                   {loadAdminMode === 'merge'
-                    ? 'Merge keeps the open base as it is and only ADDS what this file holds and the base does not: a line already there keeps its current version, un-ticked pages stay untouched, and each ticked page announces what it would bring.'
+                    ? 'Merge keeps the open base as it is and only ADDS what this file holds and the base does not: a line already there keeps its current version, un-ticked pages stay untouched, and each ticked page announces what it would bring. Lines already in the base are un-ticked for you — that is what stops a load from stacking twins.'
                     : 'Replace copies each ticked page over its counterpart; un-ticked pages stay untouched.'}
                   {' '}Accounts (operators) and the security configuration are never imported: they belong
                   to the application, not to the dataset.
                 </p>
                 <div className="flex flex-col gap-3 mt-4">
                   <button
-                    onClick={() => confirmLoad(loadAdminMode)}
+                    onClick={() => confirmLoad(loadAdminMode, undefined, loadRows)}
                     disabled={loadPicked.length === 0}
                     className={`disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-2 px-4 rounded-lg text-left transition-colors ${
                       loadAdminMode === 'merge'
@@ -5967,13 +6223,13 @@ const openDataset = (dset, { keepPlace = false } = {}) => {
                       : `♻️ Replace the selected pages (${loadPicked.length})`}
                   </button>
                   <button
-                    onClick={() => confirmLoad('replace', defaultSelection(loadSections))}
+                    onClick={() => confirmLoad('replace', defaultSelection(loadSections), null)}
                     className="bg-red-50 hover:bg-red-100 border border-red-200 text-red-800 font-bold py-2 px-4 rounded-lg text-left transition-colors"
                   >
-                    ♻️ Import everything (restore the whole base as saved)
+                    ♻️ Import everything (restore the whole base as saved — every line, not just the ticked ones)
                   </button>
                   <button
-                    onClick={() => { setPendingLoad(null); setLoadPick(null); }}
+                    onClick={() => { setPendingLoad(null); setLoadPick(null); setLoadRows(null); }}
                     className="mt-2 text-slate-500 hover:text-slate-700 text-sm font-bold py-2 w-full transition-colors"
                   >
                     Cancel
@@ -6021,7 +6277,7 @@ const openDataset = (dset, { keepPlace = false } = {}) => {
                   </button>
 
                   <button
-                    onClick={() => { setPendingLoad(null); setLoadPick(null); }}
+                    onClick={() => { setPendingLoad(null); setLoadPick(null); setLoadRows(null); }}
                     className="mt-2 text-slate-500 hover:text-slate-700 text-sm font-bold py-2 w-full transition-colors"
                   >
                     Cancel
