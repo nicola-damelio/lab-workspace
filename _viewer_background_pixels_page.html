@@ -132,8 +132,15 @@ async function main () {
   film.solidPixel = pxOf(g3, W / 2, H / 2);
   /* ⚠ …ET LA RAMPE À TROIS COULEURS (le milieu demandé, la demande : « if there
      were three colours it would be even more interesting ») : le module peint A,
-     C (au MILIEU, 50 %) et B — la même fonction que la rampe à deux couleurs. */
-  var specMid = backgroundSpecOf('#ff0000', { on: true, to: '#0000ff', angle: 180, mid: '#00ff00', midOn: true });
+     C (au MILIEU, 50 %) et B — la même fonction que la rampe à deux couleurs.
+     ⚠⚠ CE CAS EST UNE SPÉCIFICATION DONNÉE AU PEINTRE, JAMAIS UN ÉTAT DU VIEWER :
+     depuis que la troisième couleur n'est plus proposée (`bgGradientOf` rend
+     TOUJOURS `midOn: false` — la demande « it stopped working when I clicked the
+     third color … support only two colors »), aucune lecture de magasin n'en
+     produit une. Le cas d'à côté le mesure (`storeMid…`) : la MÊME entrée passée
+     par la porte de l'application (`backgroundSpecOf`) ne demande plus que deux
+     arrêts, et le milieu redevient le mélange de A et B. */
+  var specMid = { on: true, from: '#ff0000', to: '#0000ff', angle: 180, mid: '#00ff00', midOn: true };
   var c4 = document.createElement('canvas'); c4.width = W; c4.height = H;
   var g4 = c4.getContext('2d');
   film.midPainted = paintViewerBackground(g4, W, H, specMid);
@@ -141,6 +148,12 @@ async function main () {
   film.midCenter = pxOf(g4, W / 2, H / 2);
   film.midBottom = pxOf(g4, W / 2, H - 1);
   film.midCss = backgroundCss(specMid);
+  var specMidStore = backgroundSpecOf('#ff0000', { on: true, to: '#0000ff', angle: 180, mid: '#00ff00', midOn: true });
+  film.storeMidCss = backgroundCss(specMidStore);
+  var c5 = document.createElement('canvas'); c5.width = W; c5.height = H;
+  var g5 = c5.getContext('2d');
+  film.storeMidPainted = paintViewerBackground(g5, W, H, specMidStore);
+  film.storeMidCenter = pxOf(g5, W / 2, H / 2);
 
 
   OUT.cases.push({ id: 'film', film: film, image: c1.toDataURL() });

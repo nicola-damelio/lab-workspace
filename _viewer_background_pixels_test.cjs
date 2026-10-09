@@ -18,7 +18,13 @@
         s'ouvrirait jamais ;
      3. la rampe PEINTE est celle des deux couleurs et de la direction demandées :
         le module peint une toile 2D (le fond d'un film 🎬🎞) et pose la rampe SOUS
-        un PNG transparent (le fond du ✨ Ray). Les pixels le disent.
+        un PNG transparent (le fond du ✨ Ray). Les pixels le disent — et avec eux
+        le fait d'AUJOURD'HUI sur la troisième couleur : le PEINTRE sait encore
+        peindre A · C · B quand une spécification les porte, mais AUCUN ÉTAT ne
+        peut plus en demander trois (`bgGradientOf` rend toujours `midOn: false`,
+        la demande « support only two colors ») : la même entrée passée par la
+        porte de l'application rend deux arrêts, sans vert au milieu. Ce fichier
+        attendait l'inverse et restait rouge depuis cette demande-là.
 
    COMMENT (zéro dépendance : ni Playwright ni Puppeteer dans ce dépôt)
    Un serveur 127.0.0.1 sert à Chrome en `--headless=new` (WebGL par SwiftShader)
@@ -158,13 +164,22 @@ async function main () {
     'LA DIRECTION est bien celle demandée : à 90° c’est la gauche qui est A', px(film.left) + ' → ' + px(film.right));
   check(film.solidPainted === false, 'sans rampe, le module ne peint RIEN (le film uni d’avant)');
   check(film.solidPixel && film.solidPixel[3] === 0, '…la toile reste VIDÉE (alpha 0, aucun pixel écrit)', px(film.solidPixel));
-  console.log('--- 1bis. la rampe à TROIS couleurs (le milieu demandé) ---');
-  check(film.midPainted === true, 'le module PEINT la rampe à trois couleurs', String(film.midPainted));
+  console.log('--- 1bis. la rampe à TROIS couleurs, et l’ÉTAT qui n’en demande plus ---');
+  check(film.midPainted === true, 'le PEINTRE sait peindre une rampe à trois couleurs quand la SPÉCIFICATION les porte', String(film.midPainted));
   check(nearHex(film.midTop, '#ff0000'), '…l’extrémité HAUTE reste A (rouge)', px(film.midTop));
   check(nearHex(film.midCenter, '#00ff00', 6), '…le MILIEU est C (vert) : le 3e arrêt est bien au milieu', px(film.midCenter));
   check(nearHex(film.midBottom, '#0000ff'), '…l’extrémité BASSE reste B (bleu)', px(film.midBottom));
   check(String(film.midCss).match(/#[0-9a-f]{6}/gi) && String(film.midCss).match(/#[0-9a-f]{6}/gi).length === 3,
     '…et le CSS porte TROIS arrêts (A, C, B)', film.midCss);
+  /* ⚠ LA MÊME ENTRÉE PAR LA PORTE DE L’APPLICATION — la vérité d’AUJOURD’HUI : la
+     troisième couleur n’est plus proposée (« it stopped working when I clicked the
+     third color … support only two colors »), `bgGradientOf` rend TOUJOURS
+     `midOn: false`, et le vert demandé ici est donc ignoré : deux arrêts, et un
+     milieu qui est le MÉLANGE de A et B, jamais C. */
+  check(String(film.storeMidCss).match(/#[0-9a-f]{6}/gi) && String(film.storeMidCss).match(/#[0-9a-f]{6}/gi).length === 2,
+    '…mais AUCUN ÉTAT ne peut plus en demander trois : la même entrée relue par le viewer rend DEUX arrêts', film.storeMidCss);
+  check(film.storeMidPainted === true && !nearHex(film.storeMidCenter, '#00ff00', 60),
+    '…et le MILIEU de la toile n’est PAS vert : le 3e arrêt demandé par un magasin est ignoré', px(film.storeMidCenter));
 
 
 

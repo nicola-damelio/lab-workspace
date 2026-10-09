@@ -15,10 +15,13 @@
      B. LE TEXTE DU COMPTE-RENDU : « rien trouvé » est une réponse, et les
         étiquettes sont des rangées (`12-15`), pas des listes de 40 numéros ;
      C. LE BRANCHEMENT dans le viewer : le champ ET le bouton vivent DANS le
-        groupe 📏 Analysis, la surbrillance est UNE représentation à part (sa
-        couleur, sa ref, retirée en relançant la recherche comme par ✕ Clear),
-        la caméra cadre la première correspondance, et la recherche meurt avec
-        la structure.
+        groupe 📏 Analysis, et le geste SÉLECTIONNE les résidus trouvés — les
+        mêmes clés qu'un clic sur le bandeau de séquence (« as if the residues
+        were clicked onto the sequence inside the viewer »), sans qu'une même
+        sélection soit renvoyée à la page (elle la lirait comme un dé-clic) ;
+        la surbrillance sky n'est que le REPLI quand la page ne porte pas de
+        sélection, la caméra cadre la première correspondance, et la recherche
+        meurt avec la structure.
    ========================================================================= */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -136,10 +139,13 @@ has(VIEW, '🔎 Find', 'le bouton dit ce qu’il fait');
 has(VIEW, 'placeholder="MHEF"', '…et le champ montre la demande telle qu’elle a été formulée');
 
 /* Le champ et le bouton sont DANS le groupe 📏 Analysis : après l’en-tête du
-   groupe, après 🟢 Assigned… et avant le groupe 🧪 PyMOL qui suit. */
+   groupe, après 🟢 Assigned… et avant le groupe 🧪 PyMOL qui suit.
+   ⚠ L’aiguille du bouton est « 🔎 Find » SUIVI de sa fermeture : le texte du
+   geste apparaît aussi dans le titre du champ (et dans les commentaires du
+   geste), une simple recherche de texte désignerait donc autre chose que lui. */
 const iAnalysis = VIEW.indexOf('>📏 Analysis</span>');
 const iAssigned = VIEW.indexOf('onClick={() => setShowAssignedFlag(!showManualHighlight)}');
-const iFind = VIEW.indexOf('🔎 Find');
+const iFind = VIEW.indexOf('🔎 Find\n</button>');
 const iInput = VIEW.indexOf('aria-label="Sequence fragment to find in this structure"');
 const iPymol = VIEW.indexOf('>🧪 PyMOL</span>');
 ok(iAnalysis > 0 && iAssigned > iAnalysis && iInput > iAssigned && iFind > iInput && iPymol > iFind,
@@ -147,20 +153,44 @@ ok(iAnalysis > 0 && iAssigned > iAnalysis && iInput > iAssigned && iFind > iInpu
 has(VIEW, 'onKeyDown={(e) => { if (e.key === \'Enter\') { e.preventDefault(); runSequenceSearch(); } }}',
   'Entrée lance la recherche (on ne quitte pas le clavier pour ça)');
 
-/* Ce que fait le geste : les résidus de la structure CHARGÉE, une seule
-   représentation à part, la caméra sur la première correspondance. */
+/* Ce que fait le geste : les résidus de la structure CHARGÉE, la SÉLECTION
+   partagée du programme, la caméra sur la première correspondance. */
 has(VIEW, 'const residues = residuesOfTicks(ticks);',
   'la recherche lit les résidus de la structure chargée (la même liste que le bandeau de séquence)');
 has(VIEW, 'const result = findSequenceMatches(residues, seqQuery);', '…par la règle pure');
 has(VIEW, 'const clause = residueTickClause(tick);',
   'chaque résidu trouvé reçoit SA clause NGL (chaîne + numéro + nom, comme le bandeau)');
-has(VIEW, "seqHighlightCompRef.current = component.addRepresentation(useSphere ? 'spacefill' : 'ball+stick', {",
-  'la surbrillance est UNE représentation, dessinée sur les résidus trouvés');
-has(VIEW, 'color: SEQUENCE_HIT_COLOR', '…dans SA couleur (ni l’ambre des sélections, ni le vert des assignés)');
 has(VIEW, 'component.autoView(clauses[0])', '…et la caméra cadre la PREMIÈRE correspondance');
-has(VIEW, 'const SEQUENCE_HIT_COLOR = 0x0ea5e9;', 'la couleur est nommée une fois');
+has(VIEW, 'const SEQUENCE_HIT_COLOR = 0x0ea5e9;', 'la couleur de repli est nommée une fois');
 has(VIEW, 'const useSphere = lightRenderRef.current || atoms > 1500;',
   'les gros motifs passent en sphères instanciées (pas de graphe de liaisons à recalculer)');
+
+/* ══ LE GESTE SÉLECTIONNE (la demande de cette session) ═════════════════════
+   « The MHEF button should select, not only show the sequence, as if the
+   residues were clicked onto the sequence inside the viewer. » */
+has(VIEW, 'hitTicks.forEach((t) => computeResidueKeys(t).forEach((k) => { if (!keys.includes(k)) keys.push(k); }));',
+  'les résidus trouvés reçoivent les MÊMES clés qu’un clic sur le bandeau (computeResidueKeys)');
+has(VIEW, 'stripResidueRiRef.current = firstRi;',
+  '…la sélection est mise en mode « résidu ENTIER », comme le fait un clic sur le bandeau');
+has(VIEW, 'const canSelect = keys.length > 0 && !!onAtomClickRef.current;',
+  'la sélection est le chemin PRINCIPAL du geste (et elle n’existe que si la page peut la porter)');
+ok(VIEW.indexOf("if (!canSelect) {") < VIEW.indexOf("seqHighlightCompRef.current = component.addRepresentation"),
+  'la représentation sky n’est donc peinte QUE dans le cas de repli (aucune page ne porte la sélection)');
+has(VIEW, 'onAtomClickRef.current(firstRi, keys);',
+  'la sélection part par la porte ordinaire de la page (spectres, tables, espace « Selected »)');
+has(VIEW, "if ((selectedKeysRef.current || []).join('|') !== keys.join('|')) onAtomClickRef.current(firstRi, keys);",
+  '⚠ la MÊME sélection n’est pas renvoyée : la page lirait deux clés identiques comme un dé-clic, et relancer Find éteindrait ce qu’on regarde');
+has(VIEW, 'seqSelectionKeysRef.current = keys;', 'la recherche retient CE QU’ELLE a sélectionné (c’est à cela que ✕ Clear la reconnaît)');
+has(VIEW, 'const seqSelectionLive = !!seqSelectionKeysRef.current', '…et le badge « ✓ selected » se lit sur la sélection VRAIE (jamais un souvenir de plus longue vie qu’elle)');
+has(VIEW, '✓ selected', 'le badge existe, et il est nommé');
+has(VIEW, 'const dropSequenceSelection = () => {', 'défaire la sélection du Find passe par UNE fonction');
+has(VIEW, "if ((selectedKeysRef.current || []).join('|') !== mine.join('|')) return false;",
+  '⚠ une sélection faite à la main depuis la recherche est laissée INTACTE (comparaison de clés, jamais un drapeau)');
+has(VIEW, '  dropSequenceSelection();\n  setSeqResult(null);',
+  '✕ Clear relâche la sélection qu’il avait posée (le compte-rendu et la surbrillance partent avec)');
+has(VIEW, '  dropSequenceSelection();\n\n  const residues = residuesOfTicks(ticks);',
+  '…et une NOUVELLE recherche relâche celle de la précédente AVANT de poser la sienne');
+has(VIEW, 'seqSelectionKeysRef.current = null;', 'la sélection du Find est oubliée quand la structure s’en va (vider · 🗑 Delete PDB · chargement)');
 
 /* Ce qu’elle ne fait PAS : toucher à la molécule ou au réseau. */
 ok(!/fetch\(|XMLHttpRequest|sendBeacon/.test(VIEW), 'la recherche n’ouvre aucun réseau (la promesse du film tient toujours)');
@@ -175,4 +205,4 @@ has(VIEW, '{matchesSummaryText(seqResult)}', 'le compte-rendu affiché vient du 
 has(VIEW, 'disabled={status !== \'ready\' || !normalizeSequenceQuery(seqQuery)}',
   'Find est inerte sans structure chargée ou sans requête (jamais un bouton mort)');
 
-console.log(`\n${passed} vérifications passées — recherche de séquence : la règle est pure, la surbrillance est à part.\n`);
+console.log(`\n${passed} vérifications passées — recherche de séquence : la règle est pure, et le geste SÉLECTIONNE (la surbrillance n'est que le repli).\n`);

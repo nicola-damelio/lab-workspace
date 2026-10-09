@@ -58,6 +58,21 @@ const tests = [
   // (helpers EXTRAITS puis EXÉCUTÉS sur la structure), une molécule sans charges ne
   // disant rien de plus au lieu d'annoncer « 0 ».
   '_viewer_hbonds_test.mjs',
+  // « nel viewer sarebbe utile dentro la barra analysis un modo per cercare pezzi
+  // di sequenza, ad esempio cerco la sequenza MHEF dentro la sequenza della
+  // proteina. se lanciato deve selezionare quella parte della proteina. », puis
+  // « The MHEF button should select, not only show the sequence, as if the
+  // residues were clicked onto the sequence inside the viewer. » — LE CHAMP + 🔎
+  // Find de 📏 Analysis : la RÈGLE de la recherche est PURE (utils/sequenceSearch.js,
+  // exécutée sous node — casse et blancs, `X` = n'importe quel résidu, une
+  // correspondance ne traverse jamais deux chaînes, pas de recouvrement, les
+  // numéros DU FICHIER), le compte-rendu dit toujours la réponse, et le geste
+  // SÉLECTIONNE : les résidus trouvés reçoivent les mêmes CLÉS qu'un clic sur le
+  // bandeau de séquence, la sélection part par la porte ordinaire de la page
+  // (`onAtomClick`), une même sélection n'est pas renvoyée (la page la lirait comme
+  // un dé-clic), ✕ Clear ne relâche que la sienne, et la surbrillance sky n'est que
+  // le repli quand la page ne peut pas porter de sélection.
+  '_viewer_sequence_search_test.mjs',
   // LA DEMANDE « styling window » DE CETTE SESSION, mesurée d'un bout à l'autre :
   // une teinte par TYPE peint l'ESPACE de la barre de style — et les rangées de cet
   // espace s'éclaircissent vers le blanc, General d'abord — toutes deux des pastilles

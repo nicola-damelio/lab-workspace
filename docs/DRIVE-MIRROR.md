@@ -5455,3 +5455,100 @@ Régressions : le balayage filtré du dépôt — **46 suites, 0 rouge** (`_driv
 **Rien d'autre ne bouge** : aucun chemin écrit, aucun envoi, aucun plan ne change — seules les
 phrases des dialogues et du sous-titre.
 
+
+## ⏸ Le 🔎 Find SÉLECTIONNE, et le fond du viewer (08/10/2026)
+
+**Les deux rapports de cette session, mot pour mot.** « *The MHEF button should select, not only
+show the sequence, as if the residues were clicked onto the sequence inside the viewer.* » puis
+« *amazing how the gradient of the background color of the viewer still does not work.* »
+
+### ① 🔎 Find : le geste SÉLECTIONNE, il ne « montre » plus
+
+**Ce qui était fait.** Le geste de 📏 Analysis (le champ + 🔎 Find, la règle dans
+`src/utils/sequenceSearch.js`) allumait **sa** représentation sky-500 sur les résidus trouvés et
+cadrait la caméra : une lecture de plus, à côté de 📏 Measure et 💧 H-bonds. La demande dit
+maintenant ce qu'il fallait depuis le début : ce doit être une **SÉLECTION**, la même que celle d'un
+clic sur le bandeau de séquence.
+
+**Le correctif — aucun mécanisme nouveau, celui du clic.** Les résidus trouvés reçoivent les mêmes
+**clés** qu'un clic de bandeau (`computeResidueKeys`, qui traduit un tick en clés `ri-atome`), le
+bandeau passe en mode « résidu ENTIER » comme ce clic le fait (`stripResidueRiRef`), et la sélection
+part par la **porte ordinaire de la page** (`onAtomClick`). Tout ce qui lit la sélection suit donc
+sans une ligne de plus : le bandeau allume ses ticks en ambre, l'ambre dessine les résidus dans la
+vue, les spectres et les tables de la page reçoivent leurs clés, et l'espace « Selected » du panneau
+de style se reconstruit (il suit la sélection par `selectedSpaceSig`). C'est le « as if the residues
+were clicked ».
+
+Trois garde-fous, chacun pour une raison lisible :
+
+* **la même sélection n'est PAS renvoyée** : la page lit deux fois les mêmes clés comme un DÉ-clic
+  (« un second clic sur le même résidu l'enlève ») — relancer 🔎 Find re-cadre la caméra et re-dit le
+  compte-rendu, mais n'éteint jamais ce qu'on regarde ;
+* **✕ Clear relâche la sélection QUE LA RECHERCHE AVAIT POSÉE**, et seulement elle : les clés
+  retenues (`seqSelectionKeysRef`) sont comparées à la sélection de l'instant, donc un clic venu
+  après est à l'utilisateur et reste intact ;
+* **la surbrillance sky devient le REPLI** : elle n'est peinte que si la page ne peut pas porter de
+  sélection (aucun `onAtomClick` — le viewer monté seul) ; sinon deux représentations se
+  recouvriraient sur les mêmes atomes.
+
+`src/components/NMRMoleculeViewer.jsx` : `seqSelectionKeysRef`, `dropSequenceSelection`,
+`runSequenceSearch` (le geste), `clearSequenceSearch` (le ✕), le badge **✓ selected** à côté du
+compte-rendu — sans lui, la sélection serait invisible dans la barre, et c'est justement ce que le
+rapport demandait de voir. Le badge se lit sur la sélection **vraie** (`seqSelectionLive`, la même
+comparaison de clés que la libération) : un clic venu après la recherche le fait disparaître tout
+seul, la barre ne garde jamais un souvenir qui parlerait plus longtemps que la sélection. Avec lui,
+les trois titres (champ, bouton, ✕) et les trois oublis (chargement, 🗑 Clear, 🗑 Delete PDB).
+
+*Vérifier :* `node _viewer_sequence_search_test.mjs` — **75 assertions** (contre 63 : les douze
+nouvelles portent la sélection — les clés du bandeau, le mode « résidu entier », la porte
+`onAtomClick`, la même sélection non renvoyée, le badge qui suit la sélection vraie, la fonction
+unique de libération, et le fait qu'une sélection faite à la main depuis la recherche reste
+intacte). La suite est désormais **inscrite dans `_verify.cjs`** : elle tournait seule et un
+balayage ne l'aurait pas vue.
+
+### ② Le fond du viewer : ce qui a été RÉPARÉ ici, et ce qui se mesure
+
+**Le rapport n'est pas reproductible sur ce poste, et c'est un fait mesuré, pas une opinion.**
+`node _viewer_bg_live_test.cjs` monte le **VRAI** `NMRMoleculeViewer` dans Chrome et lit ce que le
+navigateur a composé — **61/61** : la rampe écrite sur le canvas
+(`linear-gradient(142deg, rgb(248, 250, 252) 0%, rgb(148, 163, 184) 100%)`), la même chaîne
+**composée** par le moteur, le canvas vidé d'**alpha zéro** (c'est ce qui laisse voir le CSS à travers
+la toile), et les **pixels composés** : écart maximal **245** sur la rampe rouge → bleue, **96** sur
+la rampe par défaut, **0** quand elle est éteinte. La rampe allumée n'ajoute aucun rendu et ne perd
+pas une image au repos. Le mécanisme est donc entier ; ce qui reste, quand un poste dit « le dégradé
+ne marche toujours pas », est un ÉTAT — et la ligne du bas du panneau ⬚ le dit aujourd'hui en trois
+phrases : éteinte · allumée mais d'UNE seule couleur (A = B, dite en ambre, avec le geste qui répare)
+· allumée. La sonde à coller dans la console du navigateur pour trancher sur un poste est
+`_bg_canvas_witness.js` (lecture seule : la toile écrite, la rampe composée, la ligne du panneau et
+les magasins).
+
+**Le filet de sécurité qui, lui, était bel et bien cassé : `_viewer_background_pixels_test.cjs`
+restait ROUGE (32/34)** depuis la demande « *it stopped working when I clicked the third color …
+support only two colors* ». La sonde demandait au module une rampe à **trois** arrêts en passant par
+`backgroundSpecOf` — la porte de l'application, qui relit tout par `bgGradientOf` — et celui-ci rend
+TOUJOURS `midOn: false` depuis cette demande-là : le vert n'existe plus, et les deux assertions qui
+attendaient un CSS à trois arrêts tombaient. Le fait d'aujourd'hui est donc écrit des deux côtés : la
+page donne au PEINTRE une spécification qui porte ses trois arrêts (ils se peignent), et mesure juste
+à côté que la MÊME entrée passée par la porte de l'application rend **deux** arrêts, sans vert au
+milieu.
+
+*Vérifier :* `node _viewer_background_pixels_test.cjs` — **36/36** (contre 32/34, rouge) ;
+`node _viewer_bg_live_test.cjs` — **61/61** ; `node _viewer_background_test.mjs` — 228 ;
+`node _viewer_style_recall_test.mjs` — 186 ; `node _viewer_theme_snapshot_test.mjs` — 73.
+
+Régressions : `node _verify.cjs` — **47 suites, 0 échec** (la suite de la recherche y entre maintenant, et
+le garde-fou pixel du fond y repasse) ; `npx oxlint` sur les fichiers touchés — **0 erreur** (le compte
+d'avertissements du viewer ne bouge pas : 67) ; `npx vite build` ✓.
+
+**Un mot sur la mesure, pour la prochaine session :** les suites à pixels de Chrome
+(`_viewer_ray_shadow_pixels_test.cjs`, `_viewer_bg_live_test.cjs`, les deux autres) sont sensibles à la
+CHARGE du poste. Lancée **pendant** une autre sonde de Chrome, la même suite des ombres est revenue
+**30/32** dans un balayage, puis **32/32** seule — deux fois — et **32/32** dans le balayage refait au
+calme. Aucun échec de ce genre ne veut dire « régression » avant d'avoir été relancé seul.
+
+**Ce que ça ne fait pas** : aucune règle de la recherche ne change (`sequenceSearch.js` est intact —
+la casse, les blancs, `X`, les chaînes et le non-recouvrement sont ceux d'hier), et **rien** n'est
+modifié dans la molécule : ni le fichier PDB, ni le graphe de liaisons, ni un style. La sélection,
+elle, est celle de tout le programme — c'est justement le point : une seule définition, celle du
+clic.
+

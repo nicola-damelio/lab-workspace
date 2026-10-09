@@ -132,7 +132,9 @@ import { joinPdbMolecules, sourceStructureFileStem } from '../utils/viewerPdbMol
    sequenza MHEF dentro la sequenza della proteina … deve selezionare quella parte
    della proteina ») : la RÈGLE (lecture des résidus, casse, `X` = n'importe quel
    résidu, plages de numéros, phrase du compte-rendu) vit dans ce module PUR,
-   vérifié sous node — le viewer ne fait que la peindre. */
+   vérifié sous node — le viewer, lui, SÉLECTIONNE les résidus trouvés (les mêmes
+   clés qu'un clic sur le bandeau, voir runSequenceSearch) et cadre la première
+   correspondance. */
 import { findSequenceMatches, matchesSummaryText, normalizeSequenceQuery, residuesOfTicks } from '../utils/sequenceSearch';
 
 // ⬇ 🧬 CHAQUE MOLÉCULE EST UNE ENTITÉ (la demande : « you assign main to the
@@ -7947,6 +7949,13 @@ const sidechainCompRef = useRef(null);
    dessiner) : elle se retire toute seule au chargement suivant, et « ✕ Clear »
    ne touche à rien d'autre dans la molécule. */
 const seqHighlightCompRef = useRef(null);
+/* ⚠ CE QUE LA RECHERCHE A SÉLECTIONNÉ, ELLE — le fait que la demande réclame
+   (« se lanciato deve selezionare quella parte della proteina » : les résidus
+   trouvés entrent dans la MÊME sélection qu'un clic sur le bandeau). Cette ref
+   garde les CLÉS posées par le geste, et c'est à cela que « ✕ Clear » reconnaît
+   SA sélection : une sélection que l'utilisateur a faite (ou refaite) à la main
+   après la recherche est à lui, et le bouton ne la touche jamais. */
+const seqSelectionKeysRef = useRef(null);
 const abortRef = useRef(null); // { token, label, cancel } of the active long-running operation (structure / trajectory load)
 
 const [file, setFile] = useState(null);
@@ -9557,6 +9566,15 @@ const [sequenceChoice, setSequenceChoice] = useState(null);
    have their own signature (styleSignature), which cannot see the selection:
    this one is added to the dependency array of the effects that rebuild. */
 const selectedSpaceSig = `${(selectedKeys || []).join(',')}|${residueTicks.length}|${status}`;
+/* ⚠ LE BADGE « ✓ selected » SUIT LA SÉLECTION VRAIE — la même comparaison de clés
+   que la libération (dropSequenceSelection) : il dit que les résidus TROUVÉS sont
+   dans la sélection MAINTENANT. Un clic venu après la recherche (ou la libération
+   de la sienne) le fait donc disparaître tout seul : la barre ne garde jamais un
+   souvenir qui parlerait plus longtemps que la sélection elle-même. La demande de
+   cette session — « The MHEF button should select, not only show the sequence » —
+   demande que la moitié du geste se VOIE ; c'est ce badge, et rien d'autre. */
+const seqSelectionLive = !!seqSelectionKeysRef.current
+  && (selectedKeys || []).join('|') === seqSelectionKeysRef.current.join('|');
 const extraCompsRef = useRef([]);                  // [{ id, name, comp, baseReps, style, color }]
 // "⚡ ESP" electrostatic-potential overlay — an optional extra NGL `surface`
 // representation per molecule component, coloured by NGL's built-in
@@ -16149,8 +16167,11 @@ manualHighlightCompRef.current = null;
 /* 🔎 La surbrillance de la recherche de séquence meurt AVEC l'ancienne
    structure (`removeAllComponents` ci-dessus) et son compte-rendu aussi : un
    « MHEF: 2 matches — A 12-15 » posé sur un fichier qui n'est plus là serait
-   un mensonge. La requête, elle, reste tapée : on relance d'un clic. */
+   un mensonge. La requête, elle, reste tapée : on relance d'un clic. La
+   SÉLECTION que le Find avait posée appartient à la structure qui s'en va : la
+   recherche l'oublie donc ici, et ne la « libérera » jamais sur la suivante. */
 seqHighlightCompRef.current = null;
+seqSelectionKeysRef.current = null;
 setSeqResult(null);
 labelCompRef.current = null;
 sidechainCompRef.current = null;
@@ -19307,35 +19328,68 @@ if (isStripMode) {
 /* ── 🔎 RECHERCHER UN MORCEAU DE SÉQUENCE (« MHEF ») ─────────────────────────
    La demande : « nel viewer sarebbe utile dentro la barra analysis un modo per
    cercare pezzi di sequenza … se lanciato deve selezionare quella parte della
-   proteina. » Une LECTURE, comme 📏 Measure et 💧 H-bonds juste à côté : rien
+   proteina. » Puis, sur ce geste-là : « The MHEF button should select, not only
+   show the sequence, as if the residues were clicked onto the sequence inside
+   the viewer. » Une LECTURE, comme 📏 Measure et 💧 H-bonds juste à côté : rien
    n'est modifié dans la molécule (ni le fichier PDB, ni le graphe de liaisons,
-   ni un style) — on allume une représentation sur les résidus TROUVÉS et on
-   cadre la caméra sur la PREMIÈRE correspondance.
+   ni un style) — mais le geste SÉLECTIONNE.
 
-   Trois choix, tous lisibles à l'écran :
+   QUATRE CHOIX, TOUS LISIBLES À L'ÉCRAN :
 
+     • les résidus trouvés entrent dans la SÉLECTION PARTAGÉE, avec les mêmes
+       clés qu'un clic sur le bandeau (`computeResidueKeys`) : le bandeau les
+       allume en ambre, la vue les dessine comme une sélection, les spectres et
+       les tables de la page suivent, et l'espace « Selected » du panneau de
+       style les prend. C'est le « as if the residues were clicked » — une seule
+       définition de la sélection dans tout le programme ;
      • le compte-rendu dit TOUJOURS la réponse — « MHEF: 2 matches — A 12-15 ·
-       A 40-43 », ou « no match in the 428 residue(s) of this structure » (un
-       bouton muet ferait croire à une panne) ;
-     • la surbrillance est une SEULE représentation, dans une couleur à elle
-       (l'ambre des sélections reste au clic sur le bandeau de résidus) : elle
-       se retire en relançant la recherche ou par « ✕ Clear », et elle meurt
-       avec la structure ;
-     • au-delà de ~1500 atomes touchés on dessine des SPHÈRES instanciées — le
-       `ball+stick` de NGL exigerait tout le graphe de liaisons (secondes de
-       gel sur un gros système).
+       A 40-43 · selected on the structure », ou « no match in the 428 residue(s)
+       of this structure » (un bouton muet ferait croire à une panne) ;
+     • relancer la recherche REPOSE la sélection (la précédente recherche
+       relâche la sienne d'abord) et re-cadre la caméra — mais une sélection
+       identique n'est PAS renvoyée à la page : celle-ci interprète deux clics
+       identiques comme un dé-clic, et « je relance Find » ne doit jamais
+       éteindre ce qu'on vient de voir. ✕ Clear, lui, relâche la sélection QUE
+       LA RECHERCHE AVAIT POSÉE (comparaison de clés : une sélection faite à la
+       main depuis est à l'utilisateur) ;
+     • quand la page ne peut PAS porter de sélection (aucun `onAtomClick` : le
+       viewer monté seul), la surbrillance sky reste, seule, comme réponse — deux
+       représentations sur les mêmes atomes se recouvriraient l'une l'autre.
+       Au-delà de ~1500 atomes touchés elle passe en SPHÈRES instanciées : le
+       `ball+stick` de NGL exigerait tout le graphe de liaisons (secondes de gel
+       sur un gros système).
 
    Les résidus lus sont ceux de la structure CHARGÉE (`residueTicksRef`, la
    même liste que le bandeau de séquence au-dessus du viewport) : on cherche
    donc dans ce que l'écran montre, jamais dans une séquence déclarée par la
    page qui ne serait pas dans le fichier. */
-const SEQUENCE_HIT_COLOR = 0x0ea5e9;   // sky-500 — une couleur à part des sélections (ambre) et des assignés (vert)
+const SEQUENCE_HIT_COLOR = 0x0ea5e9;   // sky-500 — la couleur de la surbrillance de repli (voir canSelect)
+/* ⚠ DÉFAIRE LA SÉLECTION DE LA RECHERCHE — ET SEULEMENT LA SIENNE. Les clés que
+   le Find a posées sont comparées à la sélection de CET INSTANT (le même `join`
+   que la page emploie pour reconnaître deux clics identiques) : une sélection
+   refaite à la main depuis la recherche ne lui ressemble plus, donc elle est
+   laissée telle quelle. Rend true quand le geste a vraiment relâché quelque
+   chose. */
+const dropSequenceSelection = () => {
+  const mine = seqSelectionKeysRef.current;
+  seqSelectionKeysRef.current = null;
+  if (!mine || !mine.length) return false;
+  if ((selectedKeysRef.current || []).join('|') !== mine.join('|')) return false;
+  stripResidueRiRef.current = null;
+  anchorTickRef.current = null;
+  if (onAtomClickRef.current) onAtomClickRef.current(0, []);
+  return true;
+};
+
 const clearSequenceSearch = useCallback(() => {
   const component = componentRef.current;
   if (component && seqHighlightCompRef.current) {
     try { component.removeRepresentation(seqHighlightCompRef.current); } catch { /* déjà partie avec la structure */ }
   }
   seqHighlightCompRef.current = null;
+  /* ✕ Clear relâche AUSSI la sélection que le Find avait posée — sinon la moitié
+     du geste resterait à l'écran après avoir effacé son compte-rendu. */
+  dropSequenceSelection();
   setSeqResult(null);
 }, []);
 
@@ -19343,11 +19397,13 @@ const runSequenceSearch = useCallback(() => {
   const component = componentRef.current;
   const ticks = Array.isArray(residueTicksRef.current) ? residueTicksRef.current : [];
   /* La recherche PRÉCÉDENTE s'éteint d'abord : deux « Find » de suite ne
-     laissent jamais deux surbrillances superposées. */
+     laissent jamais deux surbrillances superposées — ni deux sélections (la
+     sienne est relâchée ici, la nouvelle est posée plus bas). */
   if (component && seqHighlightCompRef.current) {
     try { component.removeRepresentation(seqHighlightCompRef.current); } catch { /* best-effort */ }
   }
   seqHighlightCompRef.current = null;
+  dropSequenceSelection();
 
   const residues = residuesOfTicks(ticks);
   const result = findSequenceMatches(residues, seqQuery);
@@ -19370,17 +19426,53 @@ const runSequenceSearch = useCallback(() => {
     });
   });
   if (!clauses.length) return;
+
+  /* 🔎 LE GESTE SÉLECTIONNE — « se lanciato deve selezionare quella parte della
+     proteina », puis « as if the residues were clicked ». Les résidus trouvés
+     reçoivent les MÊMES clés qu'un clic sur le bandeau (computeResidueKeys), le
+     bandeau est mis en mode « résidu entier » comme ce clic le fait
+     (stripResidueRiRef), et la sélection part par la porte ordinaire de la page
+     (`onAtomClick`) — donc les spectres, les tables, l'espace « Selected » et le
+     style de sélection suivent, exactement comme après un clic dans la séquence.
+     ⚠ LA MÊME SÉLECTION N'EST PAS RENVOYÉE : la page lit deux fois les mêmes
+     clés comme un dé-clic (« un second clic sur le même résidu l'enlève »), et
+     relancer 🔎 Find doit re-cadrer la caméra, jamais éteindre ce qu'on voit. */
+  const keys = [];
+  hitTicks.forEach((t) => computeResidueKeys(t).forEach((k) => { if (!keys.includes(k)) keys.push(k); }));
+  const firstRi = Number(hitTicks[0].resno) - 1;
+  const canSelect = keys.length > 0 && !!onAtomClickRef.current;
+  if (canSelect) {
+    stripResidueRiRef.current = firstRi;      // le bandeau allume le RÉSIDU ENTIER, comme un clic
+    anchorTickRef.current = hitTicks[0];      // …et un ⇧ clic suivant prend la suite de là
+    if ((selectedKeysRef.current || []).join('|') !== keys.join('|')) onAtomClickRef.current(firstRi, keys);
+    seqSelectionKeysRef.current = keys;
+  } else {
+    seqSelectionKeysRef.current = null;
+  }
+
   try {
-    const atoms = hitTicks.reduce((n, t) => n + ((t.atomNames || []).length), 0);
-    const useSphere = lightRenderRef.current || atoms > 1500;
-    seqHighlightCompRef.current = component.addRepresentation(useSphere ? 'spacefill' : 'ball+stick', {
-      sele: clauses.join(' or '),
-      color: SEQUENCE_HIT_COLOR, aspectRatio: 1.5, radius: useSphere ? 0.4 : 0.4,
-    });
+    /* ⚠ LA REPRÉSENTATION À PART N'EST PEINTE QUE FAUTE DE SÉLECTION : la
+       sélection EST la réponse du geste, et deux représentations sur les mêmes
+       atomes se recouvriraient. Elle reste le seul chemin quand la page ne
+       porte pas de sélection (aucun `onAtomClick` : le viewer monté seul). */
+    if (!canSelect) {
+      const atoms = hitTicks.reduce((n, t) => n + ((t.atomNames || []).length), 0);
+      const useSphere = lightRenderRef.current || atoms > 1500;
+      seqHighlightCompRef.current = component.addRepresentation(useSphere ? 'spacefill' : 'ball+stick', {
+        sele: clauses.join(' or '),
+        color: SEQUENCE_HIT_COLOR, aspectRatio: 1.5, radius: useSphere ? 0.4 : 0.4,
+      });
+    }
     // La caméra cadre la PREMIÈRE correspondance (les autres restent allumées).
-    try { component.autoView(clauses[0]); } catch { /* pas de caméra : la surbrillance suffit */ }
+    try { component.autoView(clauses[0]); } catch { /* pas de caméra : la sélection suffit */ }
     try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch { /* best-effort */ }
-  } catch { /* la surbrillance est best-effort — le compte-rendu, lui, est déjà posé */ }
+  } catch { /* la sélection est best-effort — le compte-rendu, lui, est déjà posé */ }
+  /* ⚠ `computeResidueKeys` et `dropSequenceSelection` ne sont PAS listés : ce
+     sont des lectures de refs, recréées à chaque rendu, et elles sont lues AU
+     MOMENT DU GESTE (jamais pendant un rendu). Les lister recréerait ce rappel à
+     chaque rendu sans qu'aucune valeur n'entre jamais dans sa fermeture — la
+     requête, elle, en est bien la seule entrée. */
+  // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [seqQuery]);
 
 // Highlight the MANUALLY-ASSIGNED atoms (green "🟢 Assigned atoms"). Lives in its
@@ -21088,6 +21180,7 @@ const handleClearViewer = () => {
   stripHighlightCompRef.current = null;
   stripResidueRiRef.current = null;
   seqHighlightCompRef.current = null;
+  seqSelectionKeysRef.current = null;   // la sélection du Find s'en va avec la structure
   setSeqResult(null);
   labelCompRef.current = null;
   sidechainCompRef.current = null;
@@ -21203,6 +21296,7 @@ const deleteLoadedPdb = () => {
   stripHighlightCompRef.current = null;
   stripResidueRiRef.current = null;
   seqHighlightCompRef.current = null;
+  seqSelectionKeysRef.current = null;   // la sélection du Find s'en va avec la structure
   setSeqResult(null);
   labelCompRef.current = null;
   sidechainCompRef.current = null;
@@ -25809,14 +25903,14 @@ onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); runSequenceSear
 placeholder="MHEF"
 disabled={status !== 'ready'}
 aria-label="Sequence fragment to find in this structure"
-title="Find a fragment of the sequence, in one-letter code (MHEF). Spaces, line breaks and lower case are ignored; X stands for any residue. Enter or 🔎 Find highlights every match on the structure and frames the first one. The search reads the residues of the structure shown here — never a sequence typed elsewhere."
+title="Find a fragment of the sequence, in one-letter code (MHEF). Spaces, line breaks and lower case are ignored; X stands for any residue. Enter or 🔎 Find SELECTS every place it occurs on the structure — exactly as if you had clicked those residues in the sequence strip (same keys: the strip lights them, the amber selection draws them, the spectra and tables of the page follow) — and frames the first one. The search reads the residues of the structure shown here — never a sequence typed elsewhere."
 className="h-7 w-24 px-2 rounded-md border border-rose-200 bg-white text-[11px] font-mono uppercase tracking-wider outline-none focus:border-rose-400 disabled:bg-slate-100 disabled:text-slate-400"
 />
 <button
 type="button"
 onClick={() => runSequenceSearch()}
 disabled={status !== 'ready' || !normalizeSequenceQuery(seqQuery)}
-title="Highlight every place this fragment occurs in the sequence of the loaded structure, and frame the first one. 📏 Measure, 💧 H-bonds, the molecule itself: nothing else changes."
+title="Select every place this fragment occurs in the sequence of the loaded structure, exactly as if you had clicked those residues in the sequence strip, and frame the first one. Pressing it again re-frames the first match — it never clears the selection you are looking at. 📏 Measure, 💧 H-bonds, the molecule itself: nothing else changes."
 className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${seqResult && seqResult.matches.length ? 'bg-sky-50 border-sky-300 text-sky-700' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'} disabled:bg-slate-100 disabled:text-slate-400`}
 >
 🔎 Find
@@ -25825,7 +25919,7 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
 <button
 type="button"
 onClick={clearSequenceSearch}
-title="Remove the sequence-search highlight (the molecule keeps its own look)"
+title="Drop what the search lit: its highlight and the selection IT had posed (a selection you have made by hand since then is left alone). The molecule keeps its own look."
 className="px-2 py-1 text-[11px] font-bold rounded-md border border-sky-300 bg-white text-sky-700 hover:bg-sky-50 h-7 whitespace-nowrap"
 >
 ✕ Clear
@@ -25837,6 +25931,18 @@ title="Which places the fragment was found in — the residue numbers are the on
 className="text-[10px] font-semibold text-sky-700 bg-sky-50 border border-sky-200 rounded-md px-2 py-1 h-7 inline-flex items-center max-w-[320px] truncate"
 >
 {matchesSummaryText(seqResult)}
+</span>
+)}
+{/* ⚠ LA MOITIÉ DU GESTE QUI SE VOIT — le compte-rendu dit OÙ le motif est, ce
+    badge dit que ces résidus sont maintenant SÉLECTIONNÉS, avec les mêmes clés
+    qu'un clic sur le bandeau. Sans lui, la sélection serait un effet invisible
+    dans la barre, et « le bouton ne fait que montrer la séquence » se lirait
+    encore là. */}
+{seqSelectionLive && (
+<span
+title="These residues are in the SHARED selection, with the very keys a click on the residue strip uses: the strip is lit in amber, the 3D view draws them as a selection, and the spectra, the per-atom tables and the “Selected” space of the styling panel follow. A new Find replaces it, ✕ Clear releases it, and a selection you make by hand is never touched by it."
+className="text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-300 rounded-md px-2 py-1 h-7 inline-flex items-center whitespace-nowrap">
+✓ selected
 </span>
 )}
 </div>
