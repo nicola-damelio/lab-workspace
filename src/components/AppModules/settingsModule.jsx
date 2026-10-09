@@ -10,6 +10,9 @@ import { CustomMetadataFieldsManager, MandatoryParametersManager, ScientistsOper
 import { DatabaseCleanupManager } from './storageModules';
 import { DriveImageMigration } from '../DriveImageMigration';
 import { WorkspaceResyncPanel } from '../WorkspaceResyncPanel';
+/* « TIDY THE DRIVE » — le geste qui RANGE le Drive (voir utils/driveTidy.js) :
+   le pendant ÉCRIVANT de « Resync from Drive », qui ne fait que décrire. */
+import { DriveTidyPanel } from '../DriveTidyPanel';
 import { CloudStorageSettings } from './cloudStorageSettings';
 import { FigureStylePanel } from '../FigureStylePanel';
 import { normalizeOperators } from '../../utils/auth';
@@ -407,7 +410,12 @@ export const SettingsModule = ({
   /* « RESYNC FROM DRIVE » (App.jsx) : relire l'index du Drive, inventorier
      l'espace de travail et remettre ici les datasets et projets que le Drive
      porte encore. Rend le compte-rendu affiché par le panneau. */
-  onResyncFromDrive = null
+  onResyncFromDrive = null,
+  /* « TIDY THE DRIVE » (App.jsx) : le GESTE qui range le Drive lui-même —
+     publier l'arborescence décrite par l'application puis mettre à la corbeille
+     les dossiers et fichiers en double (utils/driveTidy.js). `dryRun: true`
+     pour le seul compte-rendu (voir DriveTidyPanel). */
+  onTidyDrive = null
 }) => {
   /* Dans un dataset scientifique, les comptes scientist non superutilisateurs
      ne voient que la section « Scientists / Operators » (en lecture seule) ;
@@ -520,6 +528,14 @@ export const SettingsModule = ({
                      defaultOpen={false}
                    >
                      <WorkspaceResyncPanel onResync={onResyncFromDrive} />
+                   </CollapsibleSection>
+
+                   <CollapsibleSection
+                     title="Drive — tidy the folders (remove duplicates, put the tree back in order)"
+                     subtitle="Compares every dataset folder on the Drive with the tree the application describes (projects/<project>/<experiment>/<instance>/<section>/…). It first writes the tree back — so a folder the app RENAMED is adopted under its new name instead of being duplicated, and the missing folders / _meta.json / object files are written — then it moves the PROVEN leftovers to the Drive Trash: a twin folder carrying no file of its own, an empty leftover, the folder of an object that no longer exists (a deleted instance or experiment), and identical twin files. Two files that differ, a folder holding unknown files, and a file the app still points at but the Drive no longer carries are reported and left untouched. Nothing is ever deleted: the Trash keeps everything for 30 days. Use it when Google Drive shows the right folders next to a pile of useless ones — the aftermath of a rename, or of a dataset restored from a copy."
+                     defaultOpen={false}
+                   >
+                     <DriveTidyPanel onTidy={onTidyDrive} />
                    </CollapsibleSection>
 
                    <CollapsibleSection title="Files on Google Drive" subtitle="Move misplaced Drive files into the canonical folders — test attachments (figures, ⭐ starred items, PDFs/documents, links) into Lab Workspace/<dataset>/projects/<project>/<test>/<instance>/Report, and image-library figures (captures, Image Builder canvases) into Lab Workspace/<dataset>/projects/<project>/images." defaultOpen={false}>

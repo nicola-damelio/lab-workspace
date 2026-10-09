@@ -71,6 +71,14 @@ import { createDatasetCopyMirror } from './utils/datasetCopyMirror';
    est mal rangé, et les copies de contenu qui peuvent rendre ce qui manque.
    Rien n'est déplacé par ce module (voir workspaceResync.js). */
 import { sweepWorkspaceDrive, resyncReportLines } from './utils/workspaceResync';
+/* « TIDY THE DRIVE » (Réglages → Workspace) : le pendant ÉCRIVANT de la reprise
+   ci-dessus — comparer l'arborescence du Drive au plan du dépôt, écrire ce qui
+   manque (un dossier renommé est ADOPTÉ, jamais dupliqué) puis mettre à la
+   corbeille les doublons PROUVÉS (dossiers jumeaux sans fichier propre, restes
+   vides, dossiers d'objets supprimés, fichiers identiques). Le geste complet et
+   ses raisons vivent dans utils/driveTidy.js ; ici on ne fait que lui donner le
+   contenu des datasets et rendre son compte-rendu. */
+import { tidyWorkspaceStructure } from './utils/driveTidy';
 /* « LA PAGE S'OUVRE » : l'index partagé est relu aussi à l'ouverture des pages
    qui MONTRENT les listes partagées (Projets, page d'un projet, Réglages) — au
    plus une fois par minute, jamais deux relectures à la fois. La décision est
@@ -2608,6 +2616,49 @@ if (customType === 'dosy') {
       stateAdopted: !!stateAdopted
     };
   }, [syncWorkspaceFromDrive, datasetsList]);
+
+  /* ── « TIDY THE DRIVE » (le geste du superutilisateur) ──────────────────────
+     Le défaut rapporté : après un renommage, le Drive portait la bonne
+     arborescence MAIS aussi un tas de dossiers inutiles (un dossier d'instance
+     en double, un `instance1` DANS un `instance1`) et des fichiers en plusieurs
+     exemplaires — « …restano un sacco di cartelle inutili … non potresti fare
+     una funzione che controlla la corrispondenza del google drive con
+     l'organizzazione del programma e rimette in ordine? »
+
+     Ce geste donne à `tidyWorkspaceStructure` (utils/driveTidy.js) le CONTENU de
+     chaque dataset — par les chemins NORMAUX : l'état vivant du dataset ouvert,
+     sinon sa copie `_workspace/datasets/ds_<id>.json` relue et DÉCODÉE
+     (`parsePayload`, le même décodeur qu'à l'ouverture) — et rien d'autre : la
+     décision, la publication du plan, la mise à la corbeille et le
+     compte-rendu vivent dans le module, où ils sont vérifiés hors navigateur.
+
+     `dryRun: true` = le seul compte-rendu (le panneau commence par là) ; le
+     geste écrivant ne part que du bouton « 🧹 Apply », après un check. */
+  const tidyWorkspaceFromDrive = useCallback(async ({ dryRun = true } = {}) => {
+    const datasets = (Array.isArray(datasetsList) ? datasetsList : [])
+      .filter((d) => d && d.id)
+      .map((d) => ({ id: String(d.id), title: d.title || d.name || '', folder: d.folder || '' }));
+    const dataFor = async (ds) => {
+      const slugOf = (name) => datasetFolderSlug(String(name || ''));
+      /* Le dataset OUVERT : l'état de CE poste est la vérité qui vient d'être
+         écrite (mêmes sources qu'à la sauvegarde, voir publishDatasetStructure). */
+      if (currentDatasetId && String(ds.id) === String(currentDatasetId) && latestDataRef.current) {
+        return {
+          data: { ...latestDataRef.current, ...cloudProjectsPayload() },
+          folder: slugOf(datasetTitle),
+          title: datasetTitle || ''
+        };
+      }
+      /* Un dataset fermé : sa copie Drive, décodée par le chemin normal. Sans
+         copie lisible, rien n'est affirmé — le module le dira (`no-content`). */
+      const copy = await readDatasetCopy(ds.id).catch(() => null);
+      if (!copy || !copy.payload) return null;
+      const data = parsePayload(copy);
+      if (!data) return null;
+      return { data, folder: slugOf(copy.title || ds.title), title: copy.title || ds.title || '' };
+    };
+    return tidyWorkspaceStructure({ datasets, dataFor, dryRun });
+  }, [datasetsList, currentDatasetId, datasetTitle, cloudProjectsPayload]);
 
   /* ── LA PAGE S'OUVRE : L'INDEX PARTAGÉ EST RELU ─────────────────────────────
      Le défaut : l'index du Drive n'était lu qu'AU DÉMARRAGE et sur le geste
@@ -6148,6 +6199,7 @@ const openDataset = (dset, { keepPlace = false } = {}) => {
               datasetTitle={datasetTitle}
               serverMode={serverLoginMode}
               onResyncFromDrive={resyncWorkspaceFromDrive}
+              onTidyDrive={tidyWorkspaceFromDrive}
             />))}
 
             {pageSlot('agenda', () => (<AgendaModule

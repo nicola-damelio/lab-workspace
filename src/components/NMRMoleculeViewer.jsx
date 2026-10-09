@@ -128,6 +128,13 @@ import { rigidTransform, atomMatchPairs, flatCoords, poseFromRigidMatrix, multip
 // comprise (son propre module, voir src/utils/viewerPdbMolecules.js) : c'est ce qui fait
 // qu'un déplacement EST un contenu, et pas seulement une vue.
 import { joinPdbMolecules, sourceStructureFileStem } from '../utils/viewerPdbMolecules';
+/* 🔎 LA RECHERCHE DE SÉQUENCE DE LA BARRE 📏 ANALYSIS (la demande : « cerco la
+   sequenza MHEF dentro la sequenza della proteina … deve selezionare quella parte
+   della proteina ») : la RÈGLE (lecture des résidus, casse, `X` = n'importe quel
+   résidu, plages de numéros, phrase du compte-rendu) vit dans ce module PUR,
+   vérifié sous node — le viewer ne fait que la peindre. */
+import { findSequenceMatches, matchesSummaryText, normalizeSequenceQuery, residuesOfTicks } from '../utils/sequenceSearch';
+
 // ⬇ 🧬 CHAQUE MOLÉCULE EST UNE ENTITÉ (la demande : « you assign main to the
 // composition of all molecules in a group and that means that I cannot do
 // anything. Let me select molecule by molecule, even if these molecules are in
@@ -7935,6 +7942,11 @@ const manualSigRef = useRef('');              // signature of the last green "as
 const manualSigCompRef = useRef(null);        // the component that signature was built for (structure reload)
 const labelCompRef = useRef(null);
 const sidechainCompRef = useRef(null);
+/* 🔎 LA RECHERCHE DE SÉQUENCE — sa surbrillance a sa propre représentation
+   (utils/sequenceSearch.js dit QUELS résidus, cette ref ne fait que les
+   dessiner) : elle se retire toute seule au chargement suivant, et « ✕ Clear »
+   ne touche à rien d'autre dans la molécule. */
+const seqHighlightCompRef = useRef(null);
 const abortRef = useRef(null); // { token, label, cancel } of the active long-running operation (structure / trajectory load)
 
 const [file, setFile] = useState(null);
@@ -9516,6 +9528,14 @@ const [residueTicks, setResidueTicks] = useState([]); // [{ resno, resname, code
 // FIRST render's value. The ref always holds the list the strip is showing.
 const residueTicksRef = useRef(residueTicks);
 residueTicksRef.current = residueTicks;
+/* 🔎 LA RECHERCHE DE SÉQUENCE DE LA BARRE 📏 ANALYSIS (la demande : « cerco la
+   sequenza MHEF dentro la sequenza della proteina … deve selezionare quella
+   parte della proteina »). L'état porte ce qu'on a tapé et ce que la dernière
+   recherche a trouvé ; la RÈGLE vit dans utils/sequenceSearch.js (pure, testée
+   sous node). `sequenceSearch` = null tant qu'aucune recherche n'a été lancée
+   depuis le chargement de la structure courante. */
+const [seqQuery, setSeqQuery] = useState('');
+const [seqResult, setSeqResult] = useState(null);
 /* 🧬 LE FICHIER PORTE PLUSIEURS SÉQUENCES — LAQUELLE ÉCRIRE ? (la demande)
    Un .pdb / un .gro peut contenir plusieurs chaînes polymères (un homodimère
    A · B, les deux brins d'un ADN, un complexe) : la case d'une nature n'en peut
@@ -16126,6 +16146,12 @@ componentRef.current = null;
 espResetAll(); // every previous component (and its ⚡ ESP overlay) is gone
 highlightCompRef.current = null;
 manualHighlightCompRef.current = null;
+/* 🔎 La surbrillance de la recherche de séquence meurt AVEC l'ancienne
+   structure (`removeAllComponents` ci-dessus) et son compte-rendu aussi : un
+   « MHEF: 2 matches — A 12-15 » posé sur un fichier qui n'est plus là serait
+   un mensonge. La requête, elle, reste tapée : on relance d'un clic. */
+seqHighlightCompRef.current = null;
+setSeqResult(null);
 labelCompRef.current = null;
 sidechainCompRef.current = null;
 
@@ -19278,6 +19304,85 @@ if (isStripMode) {
 } catch { /* selection highlight is best-effort */ }
 }, [selectedKeys, status, residueTicks, selectedResidueColor]);
 
+/* ── 🔎 RECHERCHER UN MORCEAU DE SÉQUENCE (« MHEF ») ─────────────────────────
+   La demande : « nel viewer sarebbe utile dentro la barra analysis un modo per
+   cercare pezzi di sequenza … se lanciato deve selezionare quella parte della
+   proteina. » Une LECTURE, comme 📏 Measure et 💧 H-bonds juste à côté : rien
+   n'est modifié dans la molécule (ni le fichier PDB, ni le graphe de liaisons,
+   ni un style) — on allume une représentation sur les résidus TROUVÉS et on
+   cadre la caméra sur la PREMIÈRE correspondance.
+
+   Trois choix, tous lisibles à l'écran :
+
+     • le compte-rendu dit TOUJOURS la réponse — « MHEF: 2 matches — A 12-15 ·
+       A 40-43 », ou « no match in the 428 residue(s) of this structure » (un
+       bouton muet ferait croire à une panne) ;
+     • la surbrillance est une SEULE représentation, dans une couleur à elle
+       (l'ambre des sélections reste au clic sur le bandeau de résidus) : elle
+       se retire en relançant la recherche ou par « ✕ Clear », et elle meurt
+       avec la structure ;
+     • au-delà de ~1500 atomes touchés on dessine des SPHÈRES instanciées — le
+       `ball+stick` de NGL exigerait tout le graphe de liaisons (secondes de
+       gel sur un gros système).
+
+   Les résidus lus sont ceux de la structure CHARGÉE (`residueTicksRef`, la
+   même liste que le bandeau de séquence au-dessus du viewport) : on cherche
+   donc dans ce que l'écran montre, jamais dans une séquence déclarée par la
+   page qui ne serait pas dans le fichier. */
+const SEQUENCE_HIT_COLOR = 0x0ea5e9;   // sky-500 — une couleur à part des sélections (ambre) et des assignés (vert)
+const clearSequenceSearch = useCallback(() => {
+  const component = componentRef.current;
+  if (component && seqHighlightCompRef.current) {
+    try { component.removeRepresentation(seqHighlightCompRef.current); } catch { /* déjà partie avec la structure */ }
+  }
+  seqHighlightCompRef.current = null;
+  setSeqResult(null);
+}, []);
+
+const runSequenceSearch = useCallback(() => {
+  const component = componentRef.current;
+  const ticks = Array.isArray(residueTicksRef.current) ? residueTicksRef.current : [];
+  /* La recherche PRÉCÉDENTE s'éteint d'abord : deux « Find » de suite ne
+     laissent jamais deux surbrillances superposées. */
+  if (component && seqHighlightCompRef.current) {
+    try { component.removeRepresentation(seqHighlightCompRef.current); } catch { /* best-effort */ }
+  }
+  seqHighlightCompRef.current = null;
+
+  const residues = residuesOfTicks(ticks);
+  const result = findSequenceMatches(residues, seqQuery);
+  setSeqResult(result);
+  if (!result.matches.length || !component) return;
+
+  /* Les résidus trouvés, en clair : chaque résidu touché porte SA clause NGL
+     (`:A and 12 and ALA` — voir residueTickClause), donc un motif à cheval sur
+     deux chaînes ne pourrait pas allumer le mauvais résidu. */
+  const tickByIndex = new Map(residues.map((r, i) => [i, ticks[r.tickIndex]]));
+  const clauses = [];
+  const hitTicks = [];
+  result.matches.forEach((m) => {
+    m.indexes.forEach((i) => {
+      const tick = tickByIndex.get(i);
+      if (!tick) return;
+      hitTicks.push(tick);
+      const clause = residueTickClause(tick);
+      if (clause && !clauses.includes(clause)) clauses.push(clause);
+    });
+  });
+  if (!clauses.length) return;
+  try {
+    const atoms = hitTicks.reduce((n, t) => n + ((t.atomNames || []).length), 0);
+    const useSphere = lightRenderRef.current || atoms > 1500;
+    seqHighlightCompRef.current = component.addRepresentation(useSphere ? 'spacefill' : 'ball+stick', {
+      sele: clauses.join(' or '),
+      color: SEQUENCE_HIT_COLOR, aspectRatio: 1.5, radius: useSphere ? 0.4 : 0.4,
+    });
+    // La caméra cadre la PREMIÈRE correspondance (les autres restent allumées).
+    try { component.autoView(clauses[0]); } catch { /* pas de caméra : la surbrillance suffit */ }
+    try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch { /* best-effort */ }
+  } catch { /* la surbrillance est best-effort — le compte-rendu, lui, est déjà posé */ }
+}, [seqQuery]);
+
 // Highlight the MANUALLY-ASSIGNED atoms (green "🟢 Assigned atoms"). Lives in its
 // own effect so a selection click does not rebuild this representation — on a
 // fully analysed MD/NMR page it can contain thousands of atoms. A signature
@@ -20982,6 +21087,8 @@ const handleClearViewer = () => {
   manualHighlightCompRef.current = null;
   stripHighlightCompRef.current = null;
   stripResidueRiRef.current = null;
+  seqHighlightCompRef.current = null;
+  setSeqResult(null);
   labelCompRef.current = null;
   sidechainCompRef.current = null;
   selCompsRef.current = {};
@@ -21095,6 +21202,8 @@ const deleteLoadedPdb = () => {
   manualHighlightCompRef.current = null;
   stripHighlightCompRef.current = null;
   stripResidueRiRef.current = null;
+  seqHighlightCompRef.current = null;
+  setSeqResult(null);
   labelCompRef.current = null;
   sidechainCompRef.current = null;
   loadedPdbTextRef.current = null;
@@ -25685,6 +25794,51 @@ className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors 
 >
 {showManualHighlight ? '🟢 Assigned: On' : '⚪ Assigned: Off'}
 </button>
+{/* 🔎 RECHERCHER UN MORCEAU DE SÉQUENCE (la demande : « cerco la sequenza MHEF
+    dentro la sequenza della proteina. se lanciato deve selezionare quella parte
+    della proteina ») : une LECTURE de plus dans 📏 Analysis, à la suite de
+    📏 Measure. La règle vit dans utils/sequenceSearch.js (pure, vérifiée sous
+    node : casse, blancs, `X` = n'importe quel résidu, plages de numéros) ; ici
+    on allume la représentation et la caméra (voir runSequenceSearch). */}
+<span className="w-px h-5 bg-rose-200 shrink-0" aria-hidden="true" />
+<input
+type="text"
+value={seqQuery}
+onChange={(e) => setSeqQuery(e.target.value)}
+onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); runSequenceSearch(); } }}
+placeholder="MHEF"
+disabled={status !== 'ready'}
+aria-label="Sequence fragment to find in this structure"
+title="Find a fragment of the sequence, in one-letter code (MHEF). Spaces, line breaks and lower case are ignored; X stands for any residue. Enter or 🔎 Find highlights every match on the structure and frames the first one. The search reads the residues of the structure shown here — never a sequence typed elsewhere."
+className="h-7 w-24 px-2 rounded-md border border-rose-200 bg-white text-[11px] font-mono uppercase tracking-wider outline-none focus:border-rose-400 disabled:bg-slate-100 disabled:text-slate-400"
+/>
+<button
+type="button"
+onClick={() => runSequenceSearch()}
+disabled={status !== 'ready' || !normalizeSequenceQuery(seqQuery)}
+title="Highlight every place this fragment occurs in the sequence of the loaded structure, and frame the first one. 📏 Measure, 💧 H-bonds, the molecule itself: nothing else changes."
+className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors h-7 whitespace-nowrap ${seqResult && seqResult.matches.length ? 'bg-sky-50 border-sky-300 text-sky-700' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'} disabled:bg-slate-100 disabled:text-slate-400`}
+>
+🔎 Find
+</button>
+{seqResult && seqResult.matches.length > 0 && (
+<button
+type="button"
+onClick={clearSequenceSearch}
+title="Remove the sequence-search highlight (the molecule keeps its own look)"
+className="px-2 py-1 text-[11px] font-bold rounded-md border border-sky-300 bg-white text-sky-700 hover:bg-sky-50 h-7 whitespace-nowrap"
+>
+✕ Clear
+</button>
+)}
+{seqResult && (
+<span
+title="Which places the fragment was found in — the residue numbers are the ones written in the file"
+className="text-[10px] font-semibold text-sky-700 bg-sky-50 border border-sky-200 rounded-md px-2 py-1 h-7 inline-flex items-center max-w-[320px] truncate"
+>
+{matchesSummaryText(seqResult)}
+</span>
+)}
 </div>
 
 {/* ── PyMOL ──────────────────────────────────────────────────────────────── */}

@@ -1255,6 +1255,10 @@ export const defaultDriveStructureIo = async () => {
       return res && res.id ? String(res.id) : '';
     },
     downloadText: (fileId) => up.downloadDriveFileText(fileId),
+    /* Les métadonnées d'UN fichier par son identifiant — c'est ainsi qu'un
+       rangement (utils/driveTidy.js) peut dire « l'application pointe ce fichier
+       et le Drive ne l'a plus » (voir readPointedMetas). */
+    fileMeta: (fileId) => up.getDriveFileMeta(fileId),
     rename: (fileId, name) => up.renameDriveFile(fileId, name),
     move: (fileId, parentId) => up.moveDriveFile(fileId, parentId),
     trash: (fileId) => up.trashDriveFile(fileId),

@@ -5059,4 +5059,162 @@ justement celui que le renommage rebaptisait `Nicola_DAMELIO.json` — donc plus
 qu'il faut regarder dans le navigateur : la ligne du panneau dit elle-même si le canvas a PRIS la
 rampe (`bgRampTaken`) — « the NGL canvas has not taken it » signifie qu'aucune vue n'est encore
 dessinée, pas que B est ignorée.
+## « Rimette in ordine » : le rangement du Drive, et la recherche de séquence dans 📏 Analysis (10/08/2026)
 
+Deux demandes de la même session.
+
+### ① « non potresti fare una funzione che controlla la corrispondenza del google drive con l'organizzazione del programma e rimette in ordine? »
+
+Le constat, mot pour mot : « *la cartella del progetto é stata correttamente creata ma dentro la
+cartella invece del nome dell'esperimento c'era una cartella chiamata instance1 che conteneva dentro
+un'altra cartella instance1. Inoltre in nessuna delle sottocartelle c'era il pdb. Poi dopo un po di
+tempo sono comparse le cartelle giuste ma restano un sacco di cartelle inutili (anche se il pdb non
+c'era).* » Les causes de fond (décalage d'un cran dans le renommage, style du viewer rebaptisé) sont
+celles du § précédent : on ne les reprend pas ici. Ce qui manquait, c'est le **geste inverse de
+« Resync from Drive »** : celui qui, au lieu de décrire, **remet le Drive d'aplomb**.
+
+**Le geste : Réglages → Workspace → « 🔍 Check the Drive » puis « 🧹 Apply ».** UN module neuf,
+`src/utils/driveTidy.js`, fait les deux temps, **toujours dans cet ordre** :
+
+| Temps | Ce qu'il fait | Qui décide |
+|---|---|---|
+| 1° **PUBLIER** | le plan pur du dataset est écrit : ce qui manque est créé, `_meta.json` et les fichiers d'objet sont réécrits, et un objet **renommé** est **ADOPTÉ** par son identifiant (son dossier est renommé PAR IDENTIFIANT, ses fichiers suivent — aucun second dossier) | `driveStructure.createDriveStructure.publish` (déjà là, inchangé) |
+| 2° **LIRE** | l'arbre RÉEL est relu **après** la publication (sinon on rangerait un dossier que la publication vient d'adopter) : dossiers, fichiers, identité de chaque dossier (`_meta.json` → `extra.id`) | `driveTidy.readTidyTree` |
+| 3° **DÉCIDER** | `planTidy` (PUR) confronte cet arbre au plan et rend des décisions motivées | `driveTidy.planTidy` |
+| 4° **RANGER** | du plus profond au plus haut, **à la CORBEILLE** — jamais de destruction | `driveTidy.tidyDatasetStructure` |
+
+**Ce qui part à la corbeille — et rien d'autre :**
+
+* un **JUMEAU DE DOSSIER** (deux dossiers du même nom sous le même parent) : on garde celui dont la
+  description porte l'identifiant de l'objet, à défaut celui du plan qui porte du contenu, à défaut
+  le plus fourni — et **si le perdant cache un fichier que le gardé n'a pas, RIEN n'est rangé** : il
+  est signalé (« 1 file(s) exist ONLY in this copy (`1YCR.pdb`) »). Fusionner deux contenus est une
+  décision humaine, et l'ignorer, c'est perdre le seul exemplaire d'un pdb ;
+* un dossier **VIDE** (aucun fichier à aucune profondeur — un `_meta.json` ne compte pas) que le plan
+  ne connaît pas : le reste d'un renommage réparé, un dossier fabriqué puis abandonné. Comme une
+  branche entière se range **en un seul geste**, une arborescence vide créée sous un ancien nom part
+  d'un coup ;
+* le dossier d'un **OBJET SUPPRIMÉ** : sa description porte l'identifiant d'un projet / d'une
+  expérience / d'une instance que le plan ne connaît plus (une condition effacée, par exemple) ;
+* **rien d'autre** : un dossier inconnu QUI PORTE DES FICHIERS est signalé, jamais touché ; les
+  fichiers ne sont **jamais** rangés (deux copies identiques ne sont pas départageables sans l'heure
+  de modification, que la liste d'un dossier ne porte pas — le signaler ne coûte rien, se tromper
+  coûte un fichier) ; et un dossier d'une PAGE — `Data/Structure`, `Bruker_1r`, `images`…, c'est-à-dire
+  SOUS une feuille du plan — est reconnu comme tel et laissé tranquille **sans bruit**.
+
+**Ce que le rapport dit aussi — « in nessuna delle sottocartelle c'era il pdb ».** La fiche d'une
+expérience garde l'identifiant Drive des fichiers qu'une page a déposés (un `.pdb` chargé par son
+code, une trajectoire, une image) : `missingPointedFiles` demande à Drive s'ils sont encore là et
+**nomme** ceux qui manquent ou qui sont à la corbeille, avec leur identifiant. C'est la seule façon
+de répondre « le pdb n'y est pas » autrement qu'à l'œil : le plan ne peut pas recréer un fichier
+qu'une page a fabriqué, mais il sait lequel il attend.
+
+**Aucun dossier n'est créé pour ranger** : un dataset sans dossier est signalé, pas inventé (c'est
+« 🔄 Resync from Drive » qui rend un dataset disparu, puis ce geste-ci qui le range). Le geste part du
+**dataset ouvert** (l'état de ce poste est la vérité qui vient d'être écrite) et, pour les autres
+datasets de l'espace de travail, de leur **copie Drive** relue et DÉCODÉE par le chemin normal
+(`readDatasetCopy` → `parsePayload`) : le rangement ne devine jamais un contenu.
+
+Deux garde-fous de forme : un dossier qui refuse de se laisser lire est **consigné** (le rapport
+l'avoue au lieu de dire « tout est en ordre »), et la lecture est bornée (profondeur 8, 2 000
+dossiers) donc un Drive inattendu ne fait pas boucler le geste.
+
+**Ce qui est écrit, fichier par fichier :**
+
+* **`src/utils/driveTidy.js`** (neuf) — `planIndex` / `hasPlannedDescendant` / `insidePlannedLeaf` /
+  `pointedFilesIn` / `pointedLabelOf` / `missingPointedFiles` / `planTidy` (PUR : aucune requête),
+  `readTidyTree` / `readPointedMetas` / `tidyDatasetStructure` / `tidyWorkspaceStructure`
+  (l'exécution), et les phrases du compte-rendu (`tidySummaryLines`, `tidySummaryText`,
+  `tidyReasonText`, `missingPointerText`) — l'écran n'invente aucun texte ;
+  ⚠ le sous-arbre d'un dossier se compte **PAR IDENTIFIANT** : deux jumeaux partagent leur chemin, un
+  comptage par préfixe de chemin les confondrait (et ferait croire qu'un jumeau vide contient ce qui
+  est dans l'autre) ;
+* **`src/components/DriveTidyPanel.jsx`** (neuf) — le bouton 🔍 Check (LECTURE seule) puis 🧹 Apply
+  (« N » = ce qui sera rangé), le compte-rendu peint à partir de `tidySummaryText` ;
+* **`src/components/AppModules/settingsModule.jsx`** — une section Réglages → Workspace juste après
+  « Resync from Drive », et la prop `onTidyDrive` ;
+* **`src/App.jsx`** — `tidyWorkspaceFromDrive({ dryRun })` : assemble la liste des datasets et leur
+  contenu (dataset ouvert = état vivant, sinon copie Drive décodée) et appelle
+  `tidyWorkspaceStructure` ; `onTidyDrive={tidyWorkspaceFromDrive}` sur le module Réglages ;
+* **`src/utils/driveStructure.js`** — l'adaptateur réel expose `fileMeta` (`getDriveFileMeta`) : c'est
+  par lui que le rangement demande « ce fichier pointé existe-t-il encore ? ».
+
+**Ce qui N'A PAS changé** : la publication à chaque sauvegarde (`publishDatasetStructure`), l'audit en
+lecture (`auditDatasetStructure`), le renommage par identifiant (`renameDriveFilesFor`,
+`pickRenamedSibling`), la règle du dépôt, et « 🔄 Resync from Drive » — les deux gestes se
+complètent : l'un rend ce qui manque AU POSTE, l'autre range ce qui est en trop SUR LE DRIVE.
+
+### ② « nel viewer sarebbe utile dentro la barra analysis un modo per cercare pezzi di sequenza, ad esempio cerco la sequenza MHEF dentro la sequenza della proteina. se lanciato deve selezionare quella parte della proteina. »
+
+**Un champ + 🔎 Find dans le groupe 📏 Analysis** (à la suite de 📏 Measure, 💧 H-bonds et 🟢 Assigned),
+et un bouton ✕ Clear quand il y a quelque chose à effacer. On tape `MHEF`, Entrée ou 🔎 Find :
+
+* la **règle** vit dans `src/utils/sequenceSearch.js` (PUR, vérifié sous node) : les résidus de la
+  structure CHARGÉE sont lus par `collectResidueTicks` (la même liste que la bande de séquence au-dessus
+  du viewport), la **casse et les blancs ne comptent pas**, `X` vaut **n'importe quel résidu**, une
+  correspondance ne traverse **jamais deux chaînes**, et les correspondances **ne se chevauchent pas**
+  (`AAAA` contient `AAA` UNE fois) ; les numéros rendus sont ceux **DU FICHIER** (`resno`), pas une
+  position 1…N ;
+* **toutes les correspondances sont allumées** dans une couleur à part (sky-500 : ni l'ambre des
+  sélections, ni le vert des assignés), et la caméra **cadre la première** ; au-delà de ~1 500 atomes
+  touchés ce sont des **sphères instanciées** (le `ball+stick` de NGL exigerait tout le graphe de
+  liaisons — secondes de gel sur un gros système) ;
+* **le compte-rendu dit toujours la réponse** : « `MHEF`: 2 matches — A 12-15 · A 40-43 », ou « no
+  match in the 428 residue(s) of this structure (chain A) ». Un bouton muet ferait croire à une panne ;
+* la surbrillance est UNE représentation (elle se retire en relançant la recherche, par ✕ Clear, et
+  elle meurt avec la structure — le compte-rendu est effacé en même temps, sinon il parlerait d'un
+  fichier qui n'est plus là) ; **rien** n'est modifié dans la molécule : ni le PDB, ni le graphe de
+  liaisons, ni un style — et aucun réseau n'est ouvert (la promesse du film tient toujours).
+
+**Ce qui est écrit, pour la recherche de séquence :**
+
+* **`src/utils/sequenceSearch.js`** (neuf) — `normalizeSequenceQuery`, `residuesOfTicks`,
+  `findSequenceMatches`, `resnoRangeText`, `matchLabel`, `matchesSummaryText`, `SEQUENCE_SEARCH_LIMIT` ;
+* **`src/components/NMRMoleculeViewer.jsx`** — l'import du module pur, l'état (`seqQuery`,
+  `seqResult`) et la ref de la surbrillance, `runSequenceSearch` / `clearSequenceSearch` (à côté de
+  l'effet de sélection déjà existant), le champ et les deux boutons DANS 📏 Analysis, et la remise à
+  zéro de la surbrillance **et du compte-rendu** à chaque chargement / 🗑 Clear / 🗑 Delete PDB.
+
+### Vérifié hors navigateur
+
+* **`_drive_tidy_test.mjs`** (**81 vérifications**) : la décision pure (dossier du plan jamais touché ;
+  jumeaux — gardé par identité puis par contenu, et le **jumeau qui cache un pdb n'est jamais rangé** ;
+  reste VIDE ; dossier d'objet supprimé ; dossier de page laissé tranquille ; dossier inconnu avec
+  contenu seulement signalé ; fichiers jumeaux jamais rangés ; un dossier rangé emporte ses enfants) ;
+  les **fichiers pointés** (pointeur à la racine, pointeur imbriqué, fichier là / plus là / à la
+  corbeille, et la phrase qui dit toujours l'identifiant Drive) ; puis **l'exécuteur sur un faux
+  Drive**, dans le scénario rapporté — dossier d'expérience resté au nom de l'instance contenant
+  `1YCR/1YCR` avec son pdb : le CHECK ne touche à rien (et voit déjà le reste vide), le GESTE publie
+  l'arborescence (5 dossiers, 5 `_meta.json`, 4 fichiers), range `cartella_vuota`, **laisse le dossier
+  resté au mauvais nom et son pdb INTACTS** en le signalant, et un second scénario prouve qu'un jumeau
+  vraiment identique part à la corbeille **sans** emporter le pdb du dossier gardé ; enfin les
+  contrats (publier avant de ranger, `trash` et jamais de suppression, le panneau qui ne range
+  qu'après un check, le câblage Réglages ← App.jsx) ;
+* **`_viewer_sequence_search_test.mjs`** (**63 vérifications**) : la règle pure (majuscules et blancs,
+  `X`, deux chaînes, pas de recouvrement, limite avouée, étiquettes en rangées `12-15 · 20`), le texte
+  du compte-rendu (« rien trouvé » est une réponse), et le branchement (le champ ET le bouton DANS
+  📏 Analysis entre 🟢 Assigned et 🧪 PyMOL, Entrée qui lance, une seule représentation dans SA couleur,
+  la caméra sur la première correspondance, aucun réseau, le nettoyage partout où il faut).
+
+Régressions : **26 suites, 0 échec** — `_drive_structure_test` **141**, `_drive_rename_test` **56**,
+`_drive_mirror_test` **79**, `_drive_restore_test` **251**, `_drive_purge_test` **40**,
+`_drive_stray_project_test` **20**, `_drive_big_upload_test` **48**, `_drive_folder_anchor_test`
+**51**, `_dataset_dir_twins_test` **53**, `_experiment_folder_files_test` **181**,
+`_experiment_drive_root_test` **41**, `_experiment_move_drive_test` **63**, `_folder_race_test` **47**,
+`_workspace_resync_test` **154**, `_workspace_resync_ui_test` **78**, `_workspace_drive_test` **60**,
+`_viewer_sequence_highlight_test` **52**, `_viewer_source_drive_archive_test` **35**,
+`_viewer_ui_layout_test` **517**, `_viewer_style_recall_test` **186**, `_viewer_background_test`
+**228**, `_viewer_pdb_molecules_test` **30**, `_structure_windows_test` **112**,
+`_condition_page_test` **123**. `npx oxlint` sur les trois fichiers neufs — **0 erreur,
+0 avertissement** ; `npx vite build` ✓ 4,62 s.
+
+### Ce qui reste à faire, à la main
+
+Le rangement **range les dossiers prouvés en trop**, mais il **ne touche pas aux fichiers en double**
+(1 944 groupes sur le Drive réel, § précédent) : deux copies identiques ne se départagent pas sans
+l'heure de modification, que la liste d'un dossier ne porte pas. C'est toujours
+`_repair_drive_file_twins.mjs` (essai à blanc par défaut, garde la plus récente quand les tailles sont
+égales, corbeille, jamais de destruction) qui s'en occupe. Et une branche restée derrière **avec** le
+seul exemplaire d'un fichier est **signalée, pas fusionnée** : le rapport la nomme, l'utilisateur
+décide (déplacer le fichier dans Drive, puis relancer 🧹 Apply — le jumeau devenu vraiment vide part
+alors tout seul).
