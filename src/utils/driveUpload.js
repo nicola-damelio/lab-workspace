@@ -110,7 +110,7 @@ export const clearDriveToken = () => {
     localStorage.removeItem(TOKEN_EXPIRY_KEY);
   } catch { /* ignore */ }
 };
-import { suggestDriveFileName, sanitizeSlug, driveFolderPath, DATASET_FOLDER_DIRS, DEFAULT_PROJECT_NAME, datasetFolderSlug, canonicalPageSection, canonicalExperimentPath, canonicalizeExperimentPath, projectNamesOf } from './driveNaming';
+import { suggestDriveFileName, sanitizeSlug, driveFolderPath, DATASET_FOLDER_DIRS, DEFAULT_PROJECT_NAME, DEFAULT_EXPERIMENT_NAME, datasetFolderSlug, canonicalPageSection, canonicalExperimentPath, canonicalizeExperimentPath, projectNamesOf } from './driveNaming';
 /* ⛔ LE GARDE-FOU DE LA RACINE DU DATASET : un chemin dont le premier segment
    est le nom d'un PROJET est routé sous `projects/<projet>/…` au lieu d'être
    créé à côté (voir utils/driveStray.js — la cause du dossier « au nom d'un
@@ -1172,7 +1172,11 @@ export const trashEmptyFolderChain = async (path) => {
  *    <dataset>/<project>/<test> and <dataset>/<test> (pre-architecture layout)
  *  @returns {{ id:string, pathNames:string[] }|null} */
 const findProjectTestFolder = async (root, testName, projectName) => {
-  const testSlug = sanitizeSlug(testName);
+  /* Le dossier de l'expérience porte le nom d'attente quand le nom ne laisse pas
+     de slug (emoji, alphabet non latin) : c'est ce que `canonicalExperimentPath`
+     CRÉE, la recherche doit donc le chercher SOUS CE NOM — sinon un dossier bien
+     créé serait introuvable (suppression de l'expérience, dossier d'une instance). */
+  const testSlug = sanitizeSlug(testName) || DEFAULT_EXPERIMENT_NAME;
   if (!root || !testSlug) return null;
   const rels = [];
   if (projectName) {

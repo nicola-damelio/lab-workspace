@@ -5329,3 +5329,75 @@ tableau ci-dessus sont réparées par ce correctif). Les six qui restent : `_cys
 numériques périmées) et les deux mesures de pixels `_viewer_background_pixels_test.cjs`,
 `_viewer_keyframes_test.mjs` — aucune ne touche les fichiers de cette section.
 
+
+## « Le instances vanno sempre dentro un esperimento » — un niveau qui DISPARAÎT (08/10/2026)
+
+**Le rapport, mot pour mot.** « *ho notato che in certi casi crei cartelle di instance in google
+drive dentro la cartella del progetto ma questo non é mai possibile. le instances vanno sempre
+dentro un esperimento.* »
+
+### La cause : un niveau dont le NOM ne laisse pas de slug
+
+`sanitizeSlug` (driveNaming) ne garde que `\w` — l'alphabet **latin** — plus `.` et `-` : les emoji,
+les symboles (« ①②③ », « →→ ») et **tout autre alphabet** (grec, cyrillique, CJK, arabe…) sont
+retirés. Un nom d'expérience réduit à RIEN faisait donc tomber **son segment**, et tout ce qui est
+DESSOUS remontait d'un cran :
+
+| ce que l'application voulait écrire | ce qu'elle écrivait |
+| --- | --- |
+| `projects/p53H/interaction_pdbs/1YCR/data` | `projects/p53H/1YCR/data` |
+
+L'**INSTANCE** se retrouvait posée DANS le dossier du **PROJET**. Le défaut n'était pas dans un
+appelant de plus : il était dans les **quatre** fonctions qui assemblent un chemin, chacune avec son
+`.filter(Boolean)` (ou son `slugOr`) qui *effaçait* le niveau — les deux constructeurs de l'ENVOI
+(`canonicalExperimentPath`, `driveFolderPath`) **et** ceux du PLAN DU DÉPÔT (`structurePathFor`,
+`pathLevelsFor`, donc le même défaut par la publication, sans même un envoi). C'est aussi ce qui le
+rendait intermittent (« in certi casi ») : avec un nom latin, rien ne se voyait.
+
+### La réparation : un niveau DÉCLARÉ ne peut plus disparaître
+
+`driveNaming.DEFAULT_EXPERIMENT_NAME` (`experiment`) est le pendant de `DEFAULT_PROJECT_NAME`
+(`test`) : un niveau qui EXISTE porte toujours un nom, donc son segment ne tombe plus jamais.
+L'expérience est désormais **toujours le 3e segment** de `projects/<projet>/…`, et une instance ne
+peut plus être posée à sa place. Le nom d'attente est **celui que `driveStructure.experimentCtxOf`
+employait déjà** pour une expérience sans nom du tout : les deux modules parlent du même dossier.
+
+| où | ce qui change |
+| --- | --- |
+| `driveNaming.canonicalExperimentPath` | le projet et l'expérience portent leur nom d'attente (`projects/<projet>/<expérience>/…`) — l'instance ne peut plus être le 3e segment |
+| `driveNaming.driveFolderPath` | même règle dans la forme HISTORIQUE (`<projet>/<expérience>/<instance>/<section>`) : sans elle, l'interface Nextcloud et les replis écrits avant la canonisation gardaient le défaut |
+| `driveNaming.canonicalizeExperimentPath` | un chemin DÉJÀ écrit dans la forme fautive est **reposé** : `projects/<projet>/<instance>/…`, `<projet>/<instance>/…` et `<instance>/…` reçoivent leur expérience, reconnue par le **nom de l'instance** du contexte. Sans cela, le garde-fou de l'entonnoir (`driveStray.routeProjectHeadUnderProjects`) rangeait ce chemin sous `projects/<projet>/…` et l'instance restait dans le dossier du projet. Le nom d'une SECTION n'est jamais pris pour une instance : la route d'un document de projet (`<projet>/<section>`) n'est pas touchée, et rien n'est jamais retiré (le geste est idempotent) |
+| `driveStructure.structurePathFor` + `pathLevelsFor` | UNE seule règle pour les deux (`pageLevelsOf`) : un niveau plus bas (instance, section, sous-section) **impose** le niveau de l'expérience — le plan du dépôt ne peut donc plus décrire la forme fautive |
+| `driveUpload.findProjectTestFolder` | la recherche par nom vise le dossier que l'envoi CRÉE (`sanitizeSlug(nom) \|\| 'experiment'`) : supprimer une expérience ou une condition **retrouve** son dossier au lieu de ne rien trouver |
+
+**Rien d'autre ne bouge** : pour un nom qui donne un slug, les chemins sont **identiques** à ceux
+d'avant (vérifié assertion par assertion), et la route d'un DOCUMENT de projet
+(`projects/<projet>/<section>`) garde la sienne.
+
+### Vérifier soi-même
+
+```bash
+node _drive_instance_level_test.mjs   # 65 assertions : le fait, les constructeurs, le plan, l'EXÉCUTEUR réel
+```
+
+Le test mesure **l'exécuteur réel** (`publishDatasetStructure`) sur un faux Drive, avec une
+expérience nommée `🧪` et son instance `1YCR` : le dossier du projet ne porte QUE `experiment`,
+l'instance est DEDANS — et le chemin fautif du rapport (`projects/<projet>/<instance>`) **n'existe
+pas**. Il vérifie aussi qu'un chemin déjà écrit dans cette forme est reposé (et que le geste est
+idempotent), que la route d'un document de projet n'est pas touchée, et que les cinq noms
+« imprenables » (emoji, symboles, grec, cyrillique, CJK) donnent tous le **même** chemin à l'envoi et
+au plan.
+
+Régressions : `_drive_structure_test`, `_drive_stray_project_test`, `_drive_rename_test`,
+`_drive_tidy_test`, `_drive_mirror_test`, `_drive_restore_test`, `_drive_purge_test`,
+`_drive_folder_anchor_test`, `_drive_big_upload_test` **48**, `_experiment_drive_root_test` **41**,
+`_experiment_folder_files_test`, `_experiment_move_drive_test`, `_upload_twins_test` **33**,
+`_folder_race_test` **47**, `_workspace_drive_test`, `_dataset_dir_twins_test` — toutes vertes ;
+`npx oxlint` — **0 erreur** ; `npx vite build` ✓.
+
+**Ce qui reste sur un Drive déjà touché** : les dossiers d'instance posés à côté de celui de
+l'expérience ne sont pas déplacés par ce correctif. Le rangement (`Tidy the Drive`,
+`utils/driveTidy.js`) les **signale** (`folder-outside-the-plan`) sans les toucher — un dossier
+inconnu qui porte des fichiers n'est jamais effacé à l'aveugle. Ce correctif empêche qu'il en naisse
+de nouveaux.
+

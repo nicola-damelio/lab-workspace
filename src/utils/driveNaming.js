@@ -185,14 +185,22 @@ export const driveFolderPath = (ctx = {}) => {
   }
   const segs = [];
   const test = String(ctx.test || '').trim();
-  const projectSeg = sanitizeSlug(ctx.project);
+  /* LES NIVEAUX NE DISPARAISSENT JAMAIS : un nom que `sanitizeSlug` réduit à rien
+     (emoji seul, alphabet non latin) faisait tomber son SEGMENT, et tout ce qui
+     est dessous remontait d'un cran — une instance dans le dossier du projet.
+     Le projet tombe donc sur `DEFAULT_PROJECT_NAME`, l'expérience sur
+     `DEFAULT_EXPERIMENT_NAME` (voir son commentaire, et canonicalExperimentPath). */
+  const projectSeg = sanitizeSlug(ctx.project)
+    || (String(ctx.project || '').trim() ? DEFAULT_PROJECT_NAME : '');
+  const testSeg = test ? (sanitizeSlug(test) || DEFAULT_EXPERIMENT_NAME) : '';
+  const instanceSeg = sanitizeSlug(ctx.instance);
   if (test) {
     // Test files: Project/Test/Instance/Section (l'ordre historique de cette
     // fonction — le chemin d'une EXPÉRIENCE, conteneur `projects/` compris, est
     // celui de canonicalExperimentPath, qui est la route réellement utilisée).
     if (projectSeg) segs.push(projectSeg);
-    segs.push(test);
-    if (ctx.instance) segs.push(ctx.instance);
+    segs.push(testSeg);
+    if (instanceSeg) segs.push(instanceSeg);
   } else if (projectSeg) {
     /* UN DOCUMENT DE PROJET (aucune expérience) : il vit DANS le dossier du
        projet, comme ses expériences, ses figures, son document de texte et ses
@@ -288,6 +296,20 @@ export const GENERAL_LIBRARY_DIR = 'general_library_images';
  *  bac « hors projet »). */
 export const DEFAULT_PROJECT_NAME = 'test';
 
+/** Le nom d'EXPÉRIENCE de dernier recours — le pendant de DEFAULT_PROJECT_NAME
+ *  pour le niveau de l'expérience. `sanitizeSlug` ne garde que `\w` (ASCII) :
+ *  un nom d'expérience fait d'emoji, de symboles (« ①②③ », « →→ ») ou
+ *  entièrement d'un alphabet non latin (grec, cyrillique, CJK, arabe…) est
+ *  réduit à RIEN. Le segment disparaissait alors de la chaîne, et tout ce qui
+ *  est DESSOUS remontait d'un cran : l'INSTANCE se retrouvait DANS le dossier
+ *  du PROJET (`projects/<projet>/<instance>`, défaut signalé le 08/10/2026 :
+ *  « in certi casi crei cartelle di instance in google drive dentro la cartella
+ *  del progetto ma questo non é mai possibile. le instances vanno sempre dentro
+ *  un esperimento »). Or un niveau qui EXISTE ne peut pas disparaître : le
+ *  niveau porte alors ce nom, exactement comme `driveStructure.experimentCtxOf`
+ *  le fait déjà pour une expérience sans nom du tout. */
+export const DEFAULT_EXPERIMENT_NAME = 'experiment';
+
 /** The only sub-directories allowed directly inside a dataset folder. */
 export const DATASET_FOLDER_DIRS = [PROJECTS_CONTAINER, GENERAL_LIBRARY_DIR, 'backups', 'protocols', 'storage', 'publications'];
 
@@ -344,8 +366,16 @@ export const canonicalExperimentPath = (ctx = {}) => {
   if (!test) return []; // project documents / library figures keep legacy routing
   const projects = projectNamesOf(ctx);
   const project = (projects[0] || DEFAULT_PROJECT_NAME); // validation forbids missing projects
-  const segs = ['projects', sanitizeSlug(project), sanitizeSlug(test)];
-  if (String(ctx.instance || '').trim()) segs.push(sanitizeSlug(ctx.instance));
+  /* `sanitizeSlug` ne garde que `\w` — ASCII : le nom d'un niveau peut donc être
+     réduit à RIEN (emoji seul, alphabet non latin) et son segment disparaissait,
+     ce qui faisait remonter l'INSTANCE d'un cran, DANS le dossier du projet
+     (`projects/<projet>/<instance>`). Le niveau du projet et celui de
+     l'expérience portent donc leur nom d'attente : l'expérience est TOUJOURS le
+     3e segment, et une instance ne peut plus être posée à la place. */
+  const segs = ['projects', sanitizeSlug(project) || DEFAULT_PROJECT_NAME,
+    sanitizeSlug(test) || DEFAULT_EXPERIMENT_NAME];
+  const instance = sanitizeSlug(ctx.instance);
+  if (instance) segs.push(instance);
   const section = canonicalPageSection(ctx.section || ctx.pagesection || '');
   if (section) segs.push(section);
   const subsection = canonicalSubSection(ctx.subsection || ctx.pagesubsection || '');
@@ -374,13 +404,23 @@ export const canonicalizeExperimentPath = (path, ctx = {}) => {
   const test = String((ctx && ctx.test) || '').trim();
   if (!test) return segs;
   const projects = projectNamesOf(ctx);
-  const projectSeg = sanitizeSlug(projects[0] || DEFAULT_PROJECT_NAME);
-  if (segs[0] === PROJECTS_CONTAINER) {
-    // Déjà canonique : on ne remplace que le projet (envoi multi-projets).
-    return segs[1] ? [PROJECTS_CONTAINER, projectSeg, ...segs.slice(2)] : segs;
-  }
-  const testSeg = sanitizeSlug(test);
+  const projectSeg = sanitizeSlug(projects[0] || DEFAULT_PROJECT_NAME) || DEFAULT_PROJECT_NAME;
+  const testSeg = sanitizeSlug(test) || DEFAULT_EXPERIMENT_NAME;
+  const instanceSeg = sanitizeSlug(ctx && ctx.instance);
   const projectSlug = projects.length ? sanitizeSlug(projects[0]) : '';
+  if (segs[0] === PROJECTS_CONTAINER) {
+    if (!segs[1]) return segs;
+    /* Déjà canonique : on ne remplace que le projet (envoi multi-projets) — et,
+       si le 3e segment est l'INSTANCE (chemin écrit pendant qu'un nom
+       d'expérience ne laissait pas de slug, voir DEFAULT_EXPERIMENT_NAME), le
+       niveau manquant est REPOSÉ : `projects/<projet>/<instance>/…` devient
+       `projects/<projet>/<expérience>/<instance>/…`. Rien n'est jamais retiré. */
+    if (instanceSeg && instanceSeg !== testSeg && segs.length >= 4
+      && segs[1] === projectSlug && segs[2] === instanceSeg) {
+      return [PROJECTS_CONTAINER, projectSeg, testSeg, ...segs.slice(2)];
+    }
+    return [PROJECTS_CONTAINER, projectSeg, ...segs.slice(2)];
+  }
   if (projectSlug && segs[0] === projectSlug && segs[1] === testSeg) {
     // <projet>/<expérience>/… → projects/<projet visé>/<expérience>/…
     return [PROJECTS_CONTAINER, projectSeg, ...segs.slice(1)];
@@ -388,6 +428,20 @@ export const canonicalizeExperimentPath = (path, ctx = {}) => {
   if (segs[0] === testSeg) {
     // <expérience>/… (ancienne forme sans projet, ou projet absent du chemin)
     return [PROJECTS_CONTAINER, projectSeg, ...segs];
+  }
+  /* LE NIVEAU DE L'EXPÉRIENCE NE PEUT PAS MANQUER. Un chemin
+     `<projet>/<instance>/…` ou `<instance>/…` est reconnu par le NOM de
+     l'instance (celui du contexte) et reçoit son expérience. Sans cela, le
+     garde-fou de l'entonnoir (`driveStray.routeProjectHeadUnderProjects`) range
+     ce chemin sous `projects/<projet>/…` et l'INSTANCE finit DANS le dossier du
+     PROJET — ce qui n'existe pas : une instance vit toujours dans une
+     expérience. Le nom d'une SECTION n'est jamais pris pour une instance : la
+     route d'un document de projet (`<projet>/<section>`) n'est pas touchée. */
+  if (instanceSeg) {
+    if (projectSlug && segs[0] === projectSlug && segs[1] === instanceSeg) {
+      return [PROJECTS_CONTAINER, projectSeg, testSeg, ...segs.slice(1)];
+    }
+    if (segs[0] === instanceSeg) return [PROJECTS_CONTAINER, projectSeg, testSeg, ...segs];
   }
   return segs;
 };

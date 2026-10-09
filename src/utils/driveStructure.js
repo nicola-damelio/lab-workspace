@@ -61,8 +61,8 @@
    ========================================================================= */
 
 import {
-  DEFAULT_PROJECT_NAME, GENERAL_LIBRARY_DIR, PROJECTS_CONTAINER, STORAGE_DIR,
-  canonicalPageSection, canonicalSubSection, datasetFolderSlug, sanitizeSlug
+  DEFAULT_EXPERIMENT_NAME, DEFAULT_PROJECT_NAME, GENERAL_LIBRARY_DIR, PROJECTS_CONTAINER,
+  STORAGE_DIR, canonicalPageSection, canonicalSubSection, datasetFolderSlug, sanitizeSlug
 } from './driveNaming';
 
 /** Le fichier qui décrit un dossier (identique dans TOUS les dossiers). */
@@ -221,18 +221,39 @@ export const subsectionChain = (value) => {
  * subsections|subsection, storage, box, protocol, date, title.
  * @returns {string[]} les noms de dossiers, du plus haut au plus bas
  */
-export const structurePathFor = (type, ctx = {}) => {
-  const t = text(type).toLowerCase();
+/**
+ * LES NIVEAUX D'UNE PAGE d'un contexte — projet · expérience · instance ·
+ * section · sous-sections — avec LA règle qui empêche un niveau de
+ * DISPARAÎTRE. `sanitizeSlug` ne garde que `\w` ASCII : un nom fait d'emoji, de
+ * symboles (« ①②③ », « →→ ») ou entièrement d'un alphabet non latin (grec,
+ * cyrillique, CJK…) est réduit à RIEN, le segment tombait, et tout ce qui est
+ * DESSOUS remontait d'un cran : l'INSTANCE se retrouvait DANS le dossier du
+ * PROJET (`projects/<projet>/<instance>`), ce qui n'existe pas — une instance
+ * vit toujours dans une expérience (défaut signalé le 08/10/2026). Un niveau
+ * DÉCLARÉ porte donc son nom d'attente (`driveNaming.DEFAULT_EXPERIMENT_NAME`).
+ *
+ * Une expérience SANS projet ne tombe JAMAIS à la racine du dataset : elle reçoit
+ * le bac `test` SOUS `projects/`, exactement ce que fait l'envoi
+ * (`driveNaming.canonicalExperimentPath` : `projects[0] || DEFAULT_PROJECT_NAME`).
+ * PUR.
+ * @returns {{project:string, experiment:string, instance:string,
+ *            section:string, subs:string[]}}
+ */
+const pageLevelsOf = (ctx = {}) => {
   const c = ctx && typeof ctx === 'object' ? ctx : {};
-  const experiment = slugOr(c.experiment || c.test);
-  /* Une expérience SANS projet ne tombe JAMAIS à la racine du dataset (défaut
-     constaté : « <dataset>/<projet>/… » À CÔTÉ de `projects/`) : elle reçoit le
-     bac `test` SOUS `projects/`, exactement ce que fait l'envoi
-     (`driveNaming.canonicalExperimentPath` : `projects[0] || DEFAULT_PROJECT_NAME`). */
-  const project = slugOr(c.project) || (experiment ? DEFAULT_PROJECT_NAME : '');
   const instance = slugOr(c.instance);
   const section = slugOr(canonicalPageSection(c.section || ''));
   const subs = subsectionChain(c.subsections || c.subsection || '');
+  const experiment = slugOr(c.experiment || c.test)
+    || ((instance || section || subs.length) ? DEFAULT_EXPERIMENT_NAME : '');
+  const project = slugOr(c.project) || (experiment ? DEFAULT_PROJECT_NAME : '');
+  return { project, experiment, instance, section, subs };
+};
+
+export const structurePathFor = (type, ctx = {}) => {
+  const t = text(type).toLowerCase();
+  const c = ctx && typeof ctx === 'object' ? ctx : {};
+  const { project, experiment, instance, section, subs } = pageLevelsOf(c);
   const head = [PROJECTS_CONTAINER];
   switch (t) {
     case STRUCTURE_TYPES.DATASET:
@@ -537,19 +558,15 @@ export const jsonText = (value) => `${JSON.stringify(value, null, 2)}\n`;
 export const pathLevelsFor = (ctx = {}) => {
   const c = ctx && typeof ctx === 'object' ? ctx : {};
   const levels = [];
-  const experiment = slugOr(c.experiment || c.test);
-  /* Même règle que `structurePathFor` : sans projet, une expérience vit dans le
-     bac `test` SOUS `projects/` — le dossier du projet n'est jamais posé à la
-     racine du dataset. */
-  const project = slugOr(c.project) || (experiment ? DEFAULT_PROJECT_NAME : '');
+  /* MÊMES niveaux que `structurePathFor` : une seule règle (pageLevelsOf), donc
+     le plan du dépôt et l'envoi ne peuvent pas diverger — et une instance ne peut
+     pas se retrouver posée dans le dossier du projet. */
+  const { project, experiment, instance, section, subs } = pageLevelsOf(c);
   if (project) levels.push({ type: STRUCTURE_TYPES.PROJECT, name: project });
   if (experiment) levels.push({ type: STRUCTURE_TYPES.EXPERIMENT, name: experiment });
-  const instance = slugOr(c.instance);
   if (instance) levels.push({ type: STRUCTURE_TYPES.INSTANCE, name: instance });
-  const section = slugOr(canonicalPageSection(c.section || ''));
   if (section) levels.push({ type: STRUCTURE_TYPES.SECTION, name: section });
-  subsectionChain(c.subsections || c.subsection || '')
-    .forEach((sub) => levels.push({ type: STRUCTURE_TYPES.SUBSECTION, name: sub }));
+  subs.forEach((sub) => levels.push({ type: STRUCTURE_TYPES.SUBSECTION, name: sub }));
   return levels;
 };
 
