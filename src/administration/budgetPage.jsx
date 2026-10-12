@@ -15,7 +15,10 @@
      · regroupement : subdivision (Achats / PI / OM / Stages), classification,
        catégorie, statut, fournisseur, opérateur (demandeur), bénéficiaire,
        état liquidatif, ligne budgétaire, mois / année / jour… ;
-     · mesure : somme des montants ou nombre d’enregistrements.
+     · mesure : somme des montants ou nombre d’enregistrements ;
+     · ligne budgétaire : la page se restreint à UNE SEULE ligne à la fois via
+       le sélecteur de tête — « GEC NA » par défaut. Toutes les sources (donc
+       aussi les graphiques déjà enregistrés) sont filtrées sur cette ligne.
 
    Sauvegarde : les graphiques personnels sont rangés DANS la base courante,
    sous administration.settings.budgetCharts[<id opérateur>], et persistés
@@ -148,6 +151,60 @@ const scopeFilter = (scope) => (row) => {
 };
 const SAVE_KEY = 'budgetCharts';
 const ROUND = (v) => Math.round(v * 100) / 100;
+
+/* ── Filtre par ligne budgétaire (sélecteur de tête de la page) ──────────
+   La page « Budget overview » peut être restreinte à UNE SEULE ligne
+   budgétaire (fiches de la page Recettes) : toutes les sources — dépenses,
+   lignes, OM, souhaits, remboursements, devis & BC — sont alors filtrées sur
+   cette ligne, y compris les graphiques déjà enregistrés (recalculés à
+   l’affichage). La ligne « GEC NA » est choisie par défaut ; LINE_FILTER_ALL
+   laisse voir toutes les lignes. Ce réglage ne vit que dans cette page : rien
+   d’autre dans l’application ne le lit ni ne le sauvegarde.
+
+   Repère des données réelles (module budget historique) : une ligne porte un
+   code de projet entre parenthèses — « GEC NA (NA) », « S2R01GEC (INTRUDE) »,
+   « Valcelmat (FED25001) »… — et existe en DEUX fiches jumelles
+   « Fonctionnement » / « Investissement » qui partagent le même intitulé. La
+   clé de regroupement est donc l’intitulé exact normalisé (les jumelles
+   tombent sur la même entrée, sans confondre des lignes aux codes
+   différents) ; le « cœur » sans parenthèses ne sert qu’à retrouver la ligne
+   visée par le nom court « GEC NA » et à rattraper les enregistrements qui ne
+   porteraient que ce nom court. */
+const LINE_FILTER_ALL = 'all';
+const DEFAULT_LINE_LABEL = 'GEC NA';
+/** Clé d’une ligne : intitulé exact normalisé (accents, casse, ponctuation) —
+ *  « GEC NA (NA) » → « gec na na ». */
+const lineKey = (s) => normLabel(s);
+/** Cœur d’une ligne : intitulé sans sa partie entre parenthèses, normalisé —
+ *  « GEC NA (NA) », « GEC NA » et « gec-na » donnent tous « gec na ». */
+const lineCore = (s) => normLabel(String(s || '').replace(/\([^)]*\)/g, ' '));
+const DEFAULT_LINE_KEY = lineCore(DEFAULT_LINE_LABEL);
+/* Champs portant l’ID de la ligne budgétaire d’un enregistrement (dépense /
+   OM / souhait / remboursement / devis & BC)… */
+const RECORD_LINE_ID_FIELDS = ['recetteId', 'recetteSuggereeId', 'recetteSuggerieId'];
+/* …et champs portant son intitulé (imports / saisies libres). */
+const RECORD_LINE_LABEL_FIELDS = ['ligneBudgetaire', 'ligne', 'recetteSuggerie', 'recetteSuggeree'];
+/** Prédicat « cet enregistrement appartient-il à la ligne `targetKey` ? ».
+ *  Rentre s’il porte l’ID d’une fiche Recettes de cette ligne (les fiches
+ *  jumelles « Fonctionnement » / « Investissement » sont donc toutes deux
+ *  acceptées) ou, à défaut, un intitulé de ligne correspondant — à l’identique,
+ *  ou par son cœur sans parenthèses (`targetCore`). */
+const lineMatcher = (recettes, targetKey, targetCore) => {
+  const ids = new Set();
+  (Array.isArray(recettes) ? recettes : []).forEach((r) => {
+    if (r && r.id && lineKey(r.ligne) === targetKey) ids.add(txt(r.id));
+  });
+  const sameLine = (v) => {
+    const k = lineKey(v);
+    if (!k) return false;
+    return k === targetKey || (!!targetCore && lineCore(v) === targetCore);
+  };
+  return (rec) => {
+    if (!rec) return false;
+    if (ids.size && RECORD_LINE_ID_FIELDS.some((k) => ids.has(txt(rec[k])))) return true;
+    return RECORD_LINE_LABEL_FIELDS.some((k) => sameLine(rec[k]));
+  };
+};
 
 /* ── Dates de référence par source ─────────────────────────────────────── */
 const DATE_KEYS = {
@@ -1087,12 +1144,63 @@ const EXAMPLES = [
 export const BudgetPage = () => {
   const { data, settings, updateSettings, currentUser } = useAdmin();
   const list = (k) => (Array.isArray(data[k]) ? data[k] : []);
-  const recettes = list('recettes');
-  const depenses = list('depenses');
-  const om = list('om');
-  const desiderate = list('desiderate');
-  const reimbursements = list('reimbursements');
-  const devisBc = list('devisBc');
+  const rawRecettes = list('recettes');
+
+  /* ── Filtre par ligne budgétaire (sélecteur de tête de page) ──────────────
+     Une seule ligne budgétaire à la fois ; la ligne « GEC NA » est choisie par
+     défaut (voir lineKey / lineCore en tête de fichier). Le filtre s’applique à
+     TOUTES les sources — dépenses, lignes, OM, souhaits, remboursements,
+     devis & BC — donc aussi aux graphiques déjà enregistrés, recalculés à
+     l’affichage. */
+  const lineOptions = useMemo(() => {
+    const seen = new Map();
+    rawRecettes.forEach((r) => {
+      const key = lineKey(r && r.ligne);
+      if (key && !seen.has(key)) {
+        seen.set(key, { key, label: txt(r && r.ligne), core: lineCore(r && r.ligne) });
+      }
+    });
+    return [...seen.values()].sort((a, b) => a.label.localeCompare(b.label, 'fr'));
+  }, [rawRecettes]);
+  /* Ligne de repli par défaut : la fiche « GEC NA » (intitulé exact, sinon son
+     cœur sans parenthèses) ; null si la base n’en contient aucune. */
+  const defaultLineKey = useMemo(() => {
+    const found = lineOptions.find((o) => o.key === DEFAULT_LINE_KEY)
+      || lineOptions.find((o) => o.core === DEFAULT_LINE_KEY);
+    return found ? found.key : null;
+  }, [lineOptions]);
+  const lineKeys = useMemo(() => new Set(lineOptions.map((o) => o.key)), [lineOptions]);
+  const [lineFilter, setLineFilter] = useState(DEFAULT_LINE_KEY);
+  /* La clé mémorisée n’est retenue que si la ligne existe encore dans la base ;
+     sinon on retombe sur « GEC NA » (si présente) puis sur toutes les lignes. */
+  const activeLine = lineFilter === LINE_FILTER_ALL
+    ? LINE_FILTER_ALL
+    : (lineKeys.has(lineFilter) ? lineFilter : (defaultLineKey || LINE_FILTER_ALL));
+  const activeOption = lineOptions.find((o) => o.key === activeLine) || null;
+  const activeLineLabel = activeOption ? activeOption.label : activeLine;
+  const hasDefaultLine = Boolean(defaultLineKey);
+
+  /* `keepLine` = prédicat appliqué à TOUTES les sources, ou null quand toutes
+     les lignes sont affichées. */
+  const keepLine = useMemo(
+    () => (activeLine === LINE_FILTER_ALL
+      ? null
+      : lineMatcher(rawRecettes, activeLine, activeOption ? activeOption.core : lineCore(activeLine))),
+    [rawRecettes, activeLine, activeOption],
+  );
+  const keep = useMemo(
+    () => (keepLine ? (arr) => arr.filter(keepLine) : (arr) => arr),
+    [keepLine],
+  );
+
+  /* Les six sources passent par le même filtre (les fiches Recettes portent
+     leur ligne dans `ligne`, déjà couverte par RECORD_LINE_LABEL_FIELDS). */
+  const recettes = useMemo(() => keep(rawRecettes), [keep, rawRecettes]);
+  const depenses = useMemo(() => keep(Array.isArray(data.depenses) ? data.depenses : []), [keep, data]);
+  const om = useMemo(() => keep(Array.isArray(data.om) ? data.om : []), [keep, data]);
+  const desiderate = useMemo(() => keep(Array.isArray(data.desiderate) ? data.desiderate : []), [keep, data]);
+  const reimbursements = useMemo(() => keep(Array.isArray(data.reimbursements) ? data.reimbursements : []), [keep, data]);
+  const devisBc = useMemo(() => keep(Array.isArray(data.devisBc) ? data.devisBc : []), [keep, data]);
 
   const rowsBySource = useMemo(() => ({
     depenses,
@@ -1220,6 +1328,35 @@ export const BudgetPage = () => {
             <div className="text-2xl font-black text-blue-700">{rendered.length}</div>
             <div className="text-[10px] font-bold uppercase text-slate-400">{countLabel}</div>
           </div>
+        </div>
+
+        {/* Sélecteur de ligne budgétaire — « GEC NA » par défaut */}
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          <label htmlFor="budget-line-filter" className="text-[10px] font-black uppercase tracking-wide text-slate-400">
+            Ligne budgétaire
+          </label>
+          <select
+            id="budget-line-filter"
+            className="border border-slate-300 rounded-lg px-2.5 py-1.5 text-sm text-slate-800 bg-white outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+            value={activeLine}
+            onChange={(e) => setLineFilter(e.target.value)}
+          >
+            <option value={LINE_FILTER_ALL}>📚 Toutes les lignes budgétaires</option>
+            {lineOptions.map((o) => (
+              <option key={o.key} value={o.key}>💶 {o.label}</option>
+            ))}
+          </select>
+          {activeLine !== LINE_FILTER_ALL ? (
+            <span className="text-[11px] font-bold text-blue-700 bg-blue-50 border border-blue-200 rounded-full px-2.5 py-0.5">
+              Uniquement « {activeLineLabel} »
+            </span>
+          ) : (
+            <span className="text-[11px] text-slate-400 leading-snug">
+              {hasDefaultLine
+                ? `Choisissez « ${DEFAULT_LINE_LABEL} » pour n’afficher que cette ligne.`
+                : `Aucune ligne « ${DEFAULT_LINE_LABEL} » trouvée — toutes les lignes sont affichées.`}
+            </span>
+          )}
         </div>
 
         {/* Exemples en un clic */}
