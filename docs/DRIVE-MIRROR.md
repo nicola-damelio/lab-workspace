@@ -95,6 +95,67 @@ que les pierres tombales des projets :
    `experimentRowChoices`) **avec son id d'origine**, donc son lien de projet et
    son dossier Drive.
 
+Le verrou ci-dessus protège ce que **ce poste connaît**. Reste le cas d'une
+expérience créée sur un **autre poste** pendant que celui-ci gardait une copie
+plus ancienne : ce poste ne l'a jamais vue, sa mémoire ne peut donc pas la
+reprendre — alors que l'enregistrement l'effacerait quand même du document
+partagé. D'où un second verrou, `protectDistantDrops` (App.jsx,
+`guardDistantExperiments`) : **avant d'écrire**, la copie partagée est relue
+(`readDistantExperiments`, cloud uniquement) et ce qu'elle porte et que nous
+n'avons pas est **remis** — sauf s'il existe une suppression enregistrée pour
+lui. Deux silences, volontaires : un geste qui a le droit d'écarter (♻️ Replace,
+undo/redo — `forgetExperiments`) désarme ce verrou pour le dataset pendant
+10 s ; une lecture impossible (hors ligne, règles Firestore) laisse
+l'enregistrement tel quel. Vérifié par `_distant_experiments_test.mjs`.
+
+## Pourquoi un compte de l'équipe ne disparaît plus
+
+La liste des comptes vit **entière** dans le document partagé
+(`appConfig/global.operators`) et chaque poste l'écrit d'un bloc. Un poste resté
+sur une copie plus ancienne (onglet ouvert depuis le matin, cache local, lecture
+cloud en échec) publiait donc une liste plus courte : le collègue ajouté
+entre-temps disparaissait, avec son mot de passe. Le garde-fou historique ne se
+déclenchait que si la liste locale était **vide**.
+
+`src/utils/teamAccounts.js` (vérifié par `_team_accounts_test.mjs`) applique à
+la liste des comptes les mêmes idées qu'aux projets et aux expériences :
+
+1. **l'écriture relit et fusionne** — `mergeOperators(local, distant, removed)` :
+   la liste des comptes est FUSIONNÉE, personne par personne. La copie partagée
+   fait foi pour les comptes qu'elle porte (un poste en retard ne renverse donc
+   pas un mot de passe posé ailleurs) ; ceux que ce poste a et qu'elle ne porte
+   pas sont **ajoutés** ;
+2. **l'identité est la personne**, pas l'id (`personKey` / `opNameKey`, accents
+   et ordre des mots ignorés) : deux postes qui créent le même collègue ne
+   fabriquent pas deux comptes ;
+3. **la suppression est une donnée** — `removedOperators`, écrite par le geste
+   « × » **avant** la liste, publiée avec elle et adoptée par les autres postes ;
+   recréer (ou rééditer) la personne **lève** le record (`reviveOperator`).
+
+Si la relecture du document partagé échoue, l'app écrit la liste locale comme
+avant (le garde-fou « liste vide » reste le filet) et le **dit** dans la console :
+aucune sauvegarde n'est bloquée par une lecture manquée.
+
+## Pourquoi « I forgot my password » est une demande, pas un bouton
+
+Aucun client ne peut réinitialiser un mot de passe : la liste ne contient qu'un
+hash et c'est le serveur de jetons qui les vérifie — **personne** (pas même un
+superutilisateur) ne peut lire l'ancien mot de passe, et le changement de mot de
+passe de quelqu'un d'autre exige son ancien mot de passe. Ce que l'app peut
+faire, et fait, est donc un **record** (`src/utils/passwordResets.js`, clé
+`labWorkspace_passwordResets`, une demande par personne, datée, « ouverte » ou
+« traitée ») **plus** une notification aux superutilisateurs par e-mail
+(`sendAdminMail`, avec le repli `mailto:` — jamais un envoi silencieux) :
+
+* la personne demande depuis la page **Change My Password** *et* depuis l'**écran
+  de connexion** (c'est là qu'elle est, puisqu'elle ne peut plus entrer) ;
+* le superutilisateur voit les demandes ouvertes **là où il pose le nouveau mot
+  de passe** (Setup → Team & access), et les referme quand c'est fait ;
+* l'écran dit toujours ce qui s'est réellement passé : « enregistrée »,
+  « envoyée », ou « pas envoyée » avec un message prêt à envoyer.
+
+Vérifié par `_password_reset_test.mjs`.
+
 ## Pourquoi les lectures ne fabriquent plus de dossier
 
 Le dossier d'images d'un projet est **dérivé de son nom**

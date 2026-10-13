@@ -137,9 +137,18 @@ import {
   deletionsForDataset, revivalsForDataset, withoutRevivedExperiments,
   experimentKey, loadExperimentDeletions, loadExperimentRevivals,
   mergeExperimentsAddOnly, protectUnrecordedDrops,
+  protectDistantDrops, describeDistantRescue,
   recordExperimentDeletions, recordExperimentRevivals,
   describeUnrecordedDrops, describeKeptExperiments, describeRemovedExperiments
 } from './utils/experimentTombstones';
+/* 👥 LA MÊME RÈGLE POUR LA LISTE DES COMPTES (voir utils/teamAccounts.js) : la
+   copie partagée est relue avant d'écrire, la liste est FUSIONNÉE (personne par
+   personne) et une suppression est un record qui voyage. Sans elle, un poste
+   resté sur une copie ancienne effaçait les collègues ajoutés ailleurs. */
+import {
+  loadRemovedOperators, mergeOperators, adoptRemovedOperators,
+  describeTeamMerge, sameTeamList
+} from './utils/teamAccounts';
 import {
   loadSectionsOf, defaultSelection, sectionGroupsOf, filterLoadState,
   selectionHasTests, selectionIsComplete, describeCount,
@@ -1989,6 +1998,14 @@ if (customType === 'dosy') {
     });
   };
 
+  /** LE GESTE QUI A LE DROIT D'ÉCARTER SANS RECORD (♻️ Replace, undo/redo) : il
+   *  ne se contente pas de vider la mémoire du poste, il DÉSARME aussi le verrou
+   *  à distance pendant quelques secondes (voir `guardDistantExperiments`) — car
+   *  à cet instant la copie partagée porte encore, mot pour mot, ce que
+   *  l'utilisateur vient d'écarter. */
+  const voluntaryForgetRef = useRef({ datasetId: '', at: 0 });
+  const DISTANT_GUARD_SILENCE_MS = 10000;
+
   /** Ce que ce poste connaît de ce dataset (la liste des expériences « vues »). */
   const knownExperimentsOf = (datasetId) => {
     const id = datasetId === undefined || datasetId === null ? '' : String(datasetId);
@@ -2009,6 +2026,11 @@ if (customType === 'dosy') {
       if (key) map.set(key, t);
     });
     knownExperimentsRef.current.set(id, map);
+    /* ♻️ Ce geste ÉCARTE volontairement : le verrou à distance se taît pour ce
+       dataset pendant quelques secondes, sinon il reprendrait tout de suite, de
+       la copie partagée, ce que l'utilisateur vient de remplacer (même règle que
+       la mémoire du poste ci-dessus). */
+    voluntaryForgetRef.current = { datasetId: id, at: Date.now() };
   };
 
   /** LES RECORDS DE CE DATASET : suppressions enregistrées MOINS les levées (une
@@ -2056,6 +2078,70 @@ if (customType === 'dosy') {
       type: 'alert',
       title: out.rescued.length ? '⚠ Experiments were about to disappear' : '🗑 Deleted experiments',
       message
+    });
+    setReactTests(out.tests);
+    rememberExperiments(datasetId, out.tests);
+    return out.tests;
+  };
+
+  /* ── LE VERROU À DISTANCE — « la copie PARTAGÉE qu'on s'apprête à écraser » ──
+     `guardExperimentsForWrite` protège ce que CE poste connaît. Reste le cas du
+     rapport : une expérience créée sur un AUTRE poste pendant que celui-ci
+     gardait une copie plus ancienne. Ce poste ne l'a jamais vue — sa mémoire ne
+     peut donc pas la reprendre — mais l'enregistrement l'effacerait quand même
+     du document partagé, puisque le payload voyage ENTIER.
+
+     D'où cette relecture AVANT d'écrire : la copie distante (cloud uniquement :
+     une copie du Drive qui a trois heures de retard ferait plus de mal que de
+     bien) est relue, et ce qu'elle porte et que nous n'avons pas est REMIS —
+     tant qu'aucune suppression n'est enregistrée pour lui (voir
+     `protectDistantDrops` : la 🗑 faite ailleurs reste une 🗑).
+
+     Deux silences, volontaires et explicites :
+       · un geste qui a le droit d'écarter (`forgetExperiments` : ♻️ Replace,
+         undo/redo) désarme ce verrou pour ce dataset pendant
+         `DISTANT_GUARD_SILENCE_MS` ;
+       · toute lecture impossible (hors ligne, règles Firestore) laisse
+         l'enregistrement tel quel : le verrou LOCAL reste le filet, et on ne
+         bloque jamais une sauvegarde sur une lecture qui a échoué. */
+  const readDistantExperiments = async (datasetId) => {
+    if (!db || !datasetId) return null;
+    try {
+      const snap = await db
+        .collection(`artifacts/${appId}/public/data/datasets`)
+        .doc(datasetId)
+        .get();
+      const data = snap && snap.exists ? snap.data() : null;
+      if (!data || !data.payload) return null;
+      const raw = data.isCompressed && typeof data.payload === 'string'
+        ? LZString.decompressFromUTF16(data.payload)
+        : data.payload;
+      if (!raw) return null;
+      const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      return Array.isArray(parsed && parsed.tests) ? parsed.tests : [];
+    } catch (err) {
+      console.warn('[experiments] shared copy unreadable before writing — the local lock stays the only net:', err && err.message);
+      return null;
+    }
+  };
+
+  /** La liste À ÉCRIRE, relue depuis le document partagé : rien de ce qu'un
+   *  collègue a créé ailleurs ne peut disparaître du fait de cet enregistrement. */
+  const guardDistantExperiments = async (list) => {
+    const datasetId = currentDatasetIdRef.current;
+    if (!datasetId) return list;
+    const forget = voluntaryForgetRef.current;
+    if (forget.datasetId === datasetId && Date.now() - forget.at < DISTANT_GUARD_SILENCE_MS) return list;
+    const distant = await readDistantExperiments(datasetId);
+    if (!Array.isArray(distant) || !distant.length) return list;
+    const { deletions } = experimentRecordsOf(datasetId);
+    const out = protectDistantDrops(distant, list, deletions);
+    if (!out.rescued.length) return out.tests;
+    try { console.warn('[experiments] distant write guard:', out.rescued.map((t) => t.name || t.id)); } catch { /* ignore */ }
+    setDialog((prev) => prev || {
+      type: 'alert',
+      title: '⚠ Experiments from another workstation were about to disappear',
+      message: describeDistantRescue(out.rescued)
     });
     setReactTests(out.tests);
     rememberExperiments(datasetId, out.tests);
@@ -2238,11 +2324,63 @@ if (customType === 'dosy') {
     if (appConfigSaveRef.current) clearTimeout(appConfigSaveRef.current);
     appConfigSaveRef.current = setTimeout(async () => {
       try {
+        /* 👥 LA LISTE N'EST PLUS ÉCRITE « TELLE QUELLE » (voir
+           utils/teamAccounts.js) : le document partagé est RELU et la liste est
+           FUSIONNÉE, personne par personne. C'est ce qui manquait : un poste
+           resté sur une copie plus ancienne publiait une liste plus courte, et
+           le collègue ajouté ailleurs — avec son mot de passe — disparaissait.
+           La relecture peut échouer (règles, hors ligne) : on écrit alors ce
+           qu'on a, comme avant — le garde-fou « liste locale vide » ci-dessus
+           reste le filet. */
+        let data = null;
+        try {
+          const snap = await db.collection(`artifacts/${appId}/public/data/appConfig`).doc('global').get();
+          data = snap && snap.exists ? snap.data() : null;
+          /* 🗑 Les tombes de comptes lues dans la copie partagée valent ici
+             aussi : un compte supprimé ailleurs ne doit pas être republié. */
+          if (data && data.removedOperators) {
+            try { adoptRemovedOperators(JSON.parse(data.removedOperators)); } catch { /* record illisible : ignoré */ }
+          }
+        } catch (err) {
+          console.warn('Team list: the shared copy could not be re-read before writing — publishing this browser copy:', err && err.message);
+        }
+        let listToPublish = operators;
+        let report = null;
+        if (data && data.operators) {
+          let distant = [];
+          try { const parsed = JSON.parse(data.operators); distant = Array.isArray(parsed) ? parsed : []; } catch { distant = []; }
+          const merged = mergeOperators(operators, distant, loadRemovedOperators());
+          if (merged.list.length) { listToPublish = merged.list; report = merged; }
+        }
+        const publishedOperators = JSON.stringify(listToPublish);
+        const publishedAuth = JSON.stringify(authSettings);
+        const publishedRemoved = JSON.stringify(loadRemovedOperators());
+        /* Rien à changer ? Ne pas écrire (le document est déjà exactement ce
+           qu'on publierait) — et surtout ne pas boucler : la fusion d'une copie
+           déjà écrite par nous rend la même liste. */
+        if (data
+          && data.operators === publishedOperators
+          && data.authSettings === publishedAuth
+          && (data.removedOperators || '[]') === publishedRemoved) return;
         await db.collection(`artifacts/${appId}/public/data/appConfig`).doc('global').set({
-          operators: JSON.stringify(operators),
-          authSettings: JSON.stringify(authSettings),
+          operators: publishedOperators,
+          authSettings: publishedAuth,
+          /* 🗑 LES SUPPRESSIONS VOYAGENT AVEC LA LISTE : c'est le record qui
+             empêche un poste resté en arrière de republier un compte retiré. */
+          removedOperators: publishedRemoved,
           updatedAt: window.firebase ? window.firebase.firestore.FieldValue.serverTimestamp() : Date.now()
         }, { merge: true });
+        if (report && report.saved.length) {
+          try { console.warn('[team] the merge kept accounts this browser did not have:', report.saved.map((op) => op.name)); } catch { /* ignore */ }
+          setDialog((prev) => prev || {
+            type: 'alert',
+            title: '👥 The shared team list was merged, not replaced',
+            message: describeTeamMerge(report)
+          });
+        }
+        /* L'écran suit ce qui vient d'être publié (sinon le prochain
+           enregistrement referait la même fusion). */
+        if (!sameTeamList(listToPublish, operators)) setOperators(listToPublish);
       } catch (e) { console.warn('Could not sync app config to Firestore:', e.message); }
     }, 1500);
     return () => { if (appConfigSaveRef.current) clearTimeout(appConfigSaveRef.current); };
@@ -2485,6 +2623,13 @@ if (customType === 'dosy') {
               }
             }
           } catch {}
+
+          /* 🗑 LES SUPPRESSIONS DE COMPTES voyagent avec la liste (voir
+             utils/teamAccounts.js) : une suppression faite sur un autre poste
+             vaut ici aussi — sinon ce poste republierait le compte retiré. */
+          try {
+            if (data.removedOperators) adoptRemovedOperators(JSON.parse(data.removedOperators));
+          } catch { /* record illisible : ignoré */ }
         },
         (err) => console.warn('AppConfig Firestore listener error:', err.message)
       );
@@ -3877,6 +4022,10 @@ useEffect(() => {
          l'enregistrement automatique publiait sans un mot une liste plus courte
          que celle du document partagé. */
       rawData.tests = guardExperimentsForWrite(rawData.tests);
+      /* …PUIS LA COPIE PARTAGÉE (voir guardDistantExperiments) : ce qu'un autre
+         poste a créé entre-temps — et que ce poste n'a jamais vu — ne peut plus
+         être effacé par cet enregistrement. */
+      rawData.tests = await guardDistantExperiments(rawData.tests);
       // Compress payload to prevent Firestore 1MB limit and write stream exhaustion
       const compressedPayload = compressDatasetForSave(rawData);
 
@@ -5037,6 +5186,9 @@ const handleBackToExplorer = async () => {
          expérience non supprimée. Une base d'administration, elle, ne porte pas
          d'expériences : le verrou n'a rien à y faire. */
       if (!isAdmin) rawData.tests = guardExperimentsForWrite(rawData.tests);
+      /* …et la copie PARTAGÉE (voir guardDistantExperiments) : quitter une base
+         ne peut pas effacer ce qu'un collègue a créé ailleurs entre-temps. */
+      if (!isAdmin) rawData.tests = await guardDistantExperiments(rawData.tests);
       const compressedPayload = isAdmin ? '' : compressDatasetForSave(rawData);
       
       const updatedPayload = isAdmin

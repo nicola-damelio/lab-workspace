@@ -230,8 +230,11 @@ const howTo = [
   '   • une expérience retrouvée LÈVE sa suppression locale',
   '     (recordExperimentRevivals) : si elle avait été supprimée volontairement,',
   '     elle revient — c’est le geste ; décocher sa ligne l’écarte ;',
-  '   • « Test 84 » N’EST PAS dans ce fichier : sa seule trace est à la CORBEILLE',
-  '     du Drive, et la corbeille ne se restaure pas (règle posée).',
+  '   • seules les expériences listées ci-dessus reviennent : le Drive n’est lu',
+  '     que du côté VIVANT (balayage `trashed=false`), la CORBEILLE n’est ni lue',
+  '     ni proposée (règle posée). Une expérience qui n’a plus AUCUN fichier-objet',
+  '     vivant ne peut donc pas figurer dans ce fichier — elle est signalée à part',
+  '     par les entrées de projet restées orphelines (voir _probe_dangling.txt).',
   ''
 ].join('\n');
 const howToPath = path.join(OUT_DIR, 'HOW-TO_retrouver-les-experiences.txt');

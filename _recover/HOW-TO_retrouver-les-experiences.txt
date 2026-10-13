@@ -1,16 +1,22 @@
 RETROUVER LES EXPÉRIENCES PERDUES — LE GESTE, EN CLAIR
 =====================================================
 
-Fichier à charger : GEC-UPJV-projects_774488_experiences-retrouvees_2026-10-09.json
+Fichier à charger : GEC-UPJV-projects_774488_experiences-retrouvees_2026-10-13.json
   (dossier _recover/ — il est LOCAL, rien n’a été écrit sur le Drive)
 
-Ce qu’il porte : 6 expérience(s), avec leurs ids d’origine —
+Ce qu’il porte : 12 expérience(s), avec leurs ids d’origine —
    • « pdb_Bad_BCL-XL »  (id t17915013096201399)
    • « pdb_Bcl-XL_Bid »  (id t17915001326217901)
    • « pdb_CDK2_CyclinA »  (id t17915016474816788)
    • « pdb_Mdm2_p53 »  (id t17914952328471224)
    • « pdb_PD1_PDL1 »  (id t17915023284364463)
+   • « Test 84 »  (id t17918099728805139)
    • « Test 85 »  (id t17915002806849126)
+   • « Test 85 »  (id t1791811075020906)
+   • « Test 86 »  (id t17918122680048458)
+   • « Test 89 »  (id t17917933668194158)
+   • « Test 90 »  (id t17917966358606832)
+   • « Test 91 »  (id t17917988902732120)
 
 DANS L’APPLICATION :
    1. OUVRIR le dataset « GEC-UPJV-projects » : l’import en AJOUT écrit dans
@@ -28,5 +34,8 @@ CE QU’IL FAUT SAVOIR :
    • une expérience retrouvée LÈVE sa suppression locale
      (recordExperimentRevivals) : si elle avait été supprimée volontairement,
      elle revient — c’est le geste ; décocher sa ligne l’écarte ;
-   • « Test 84 » N’EST PAS dans ce fichier : sa seule trace est à la CORBEILLE
-     du Drive, et la corbeille ne se restaure pas (règle posée).
+   • seules les expériences listées ci-dessus reviennent : le Drive n’est lu
+     que du côté VIVANT (balayage `trashed=false`), la CORBEILLE n’est ni lue
+     ni proposée (règle posée). Une expérience qui n’a plus AUCUN fichier-objet
+     vivant ne peut donc pas figurer dans ce fichier — elle est signalée à part
+     par les entrées de projet restées orphelines (voir _probe_dangling.txt).

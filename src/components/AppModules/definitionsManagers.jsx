@@ -12,6 +12,18 @@ import {
   authServerBase, fetchAuthStatus, publishAccounts, serverAdminToken, setServerAdminToken,
   serverChangePassword
 } from '../../utils/labAuth';
+/* 🔑 « I forgot my password » — la demande est un RECORD daté (voir
+   utils/passwordResets.js) et l'e-mail aux superutilisateurs le canal qui
+   traverse les postes (sendAdminMail : Gmail du compte connecté, sinon le relais
+   du serveur, sinon un lien mailto: pré-rempli — jamais un envoi silencieux). */
+import {
+  loadPasswordResets, requestPasswordReset, openResets, closePasswordReset,
+  resetRequestText, resetMailSubject, describeResetOutcome
+} from '../../utils/passwordResets';
+import { sendAdminMail, superuserEmailsOf, summarizeMail, buildMailto } from '../../administration/emailNotify';
+/* 👥 La tombe d'un compte retiré (voir utils/teamAccounts.js) : écrite AVANT la
+   liste, elle voyage avec elle et empêche un autre poste de republier le compte. */
+import { removeOperatorRecord, reviveOperator } from '../../utils/teamAccounts';
 
 export const CustomMetadataFieldsManager = ({ customFields = [], setCustomFields }) => {
   const [draft, setDraft] = useState({
@@ -669,11 +681,21 @@ export const ScientistsOperatorsManager = ({
       passwordHash: hash,
       personnelId: draft.personnelId || null,
     };
+    /* 🔁 RECRÉER la personne LÈVE sa tombe (voir utils/teamAccounts.js) : sans
+       cela, un autre poste qui ne connaît que la suppression laisserait le
+       nouveau compte de côté à la prochaine fusion. */
+    try { reviveOperator(newOp); } catch { /* magasin indisponible */ }
     setOperators((prev) => [...normalizeOperators(prev), newOp].sort((a, b) => a.name.localeCompare(b.name)));
     setDraft({ name: '', surname: '', role: 'user', password: '', personnelId: '' });
   };
 
   const removeOperator = (id) => {
+    /* 🗑 LA SUPPRESSION EST UNE DONNÉE, ET ELLE S'ÉCRIT AVANT LA LISTE (voir
+       utils/teamAccounts.js) : c'est ce record qui empêche un poste resté plus
+       ancien — qui détient encore le compte — de le republier au prochain
+       enregistrement. */
+    const gone = normalizeOperators(operators).find((op) => op.id === id) || null;
+    if (gone) { try { removeOperatorRecord(gone); } catch { /* magasin indisponible */ } }
     setOperators((prev) => normalizeOperators(prev).filter((op) => op.id !== id));
   };
 
@@ -688,6 +710,12 @@ export const ScientistsOperatorsManager = ({
     setSaving(true);
     const hash = editPassword ? await hashPassword(editPassword) : null;
     setSaving(false);
+    /* 🔁 RÉÉDITER la personne vaut comme un retour volontaire : sa tombe est
+       levée (voir utils/teamAccounts.js) — sinon une suppression faite ailleurs
+       la laisserait hors de la prochaine fusion, alors qu'on vient de lui
+       écrire ici. */
+    const current = normalizeOperators(operators).find((op) => op.id === id) || null;
+    if (current) { try { reviveOperator(current); } catch { /* magasin indisponible */ } }
     setOperators((prev) =>
       normalizeOperators(prev).map((op) => {
         if (op.id !== id) return op;
@@ -819,6 +847,22 @@ export const ScientistsOperatorsManager = ({
               {selfSaving ? 'Saving…' : 'Update Password'}
             </button>
             {selfMsg && <p className="text-xs text-center mt-1">{selfMsg}</p>}
+            {/* 🔑 Celui qui a OUBLIÉ son mot de passe ne peut pas le changer :
+                en mode serveur l'ancien est exigé, et personne ne peut lire le
+                nouveau. C'est donc exactement ici qu'il faut pouvoir DEMANDER
+                une réinitialisation — demande enregistrée (le superutilisateur
+                la voit) et envoyée par e-mail. */}
+            <div className="mt-1 pt-3 border-t border-slate-100 text-center flex flex-col items-center gap-1">
+              <PasswordResetRequest
+                operators={operators}
+                personnel={personnelList}
+                defaultName={selfServiceOp.name}
+              />
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                A superuser can set a new password for you (Setup → Team &amp; access → ✏️ → New password → Save):
+                nobody, not even a superuser, can read the current one.
+              </p>
+            </div>
             {serverMode && (
               <p className="text-[11px] text-slate-500 leading-relaxed">
                 Passwords are checked by the <b>lab token server</b>: your current password is required and the new
@@ -847,6 +891,22 @@ export const ScientistsOperatorsManager = ({
         </div>
       )}
 
+
+      {/* 🔑 Les demandes de réinitialisation enregistrées SUR CE POSTE : elles
+          apparaissent juste avant la liste, là où le superutilisateur change les
+          mots de passe (✏️). */}
+      <PasswordResetRequestsPanel />
+
+      {/* 🔑 Et pour un superutilisateur qui a lui-même oublié son mot de passe
+          (deux superutilisateurs, le second pose le nouveau) : le même
+          formulaire, ici — sans quitter la page où il change les mots de passe. */}
+      <div className="text-center">
+        <PasswordResetRequest
+          operators={operators}
+          personnel={personnelList}
+          triggerLabel="🔑 I forgot my password (ask another superuser)"
+        />
+      </div>
 
       {/* ── ADD SCIENTIST (superuser / bootstrap only) ── */}
       {canManage && (
@@ -1084,9 +1144,219 @@ export const ScientistsOperatorsManager = ({
 };
 
 /* =========================================================
-   SCIENTIST LOGIN GATE  (full-screen, mandatory)
+   « I FORGOT MY PASSWORD »  (voir utils/passwordResets.js)
 ========================================================= */
 
+/** LA DEMANDE DE RÉINITIALISATION, EN UN SEUL COMPOSANT.
+ *
+ *  Ce qu'un client NE PEUT PAS faire : réinitialiser un mot de passe. La liste
+ *  ne porte qu'un hash et c'est le serveur de jetons qui vérifie les mots de
+ *  passe (server/token-server.js) : personne — pas même un superutilisateur — ne
+ *  peut lire l'ancien, et changer le mot de passe de quelqu'un sans le
+ *  connaître est impossible.
+ *
+ *  Ce qui peut être fait, et qui est fait ici :
+ *    · la demande est ENREGISTRÉE (datée, une par personne) : le superutilisateur
+ *      la voit sur ce poste, là où il pose le nouveau mot de passe ;
+ *    · elle est ENVOYÉE aux superutilisateurs (sendAdminMail : Gmail du compte
+ *      connecté, sinon relais du serveur, sinon lien mailto: pré-rempli) — le
+ *      canal qui traverse les postes même sans connexion ;
+ *    · l'écran dit EXACTEMENT ce qui s'est passé (enregistrée / envoyée / pas
+ *      envoyée) : jamais « c'est fait » quand ça ne l'est pas.
+ *
+ *  Utilisé par la page « Change My Password » ET par l'écran de connexion —
+ *  c'est là que se trouve la personne qui ne peut plus entrer. */
+export const PasswordResetRequest = ({
+  operators = [],
+  personnel = [],
+  defaultName = '',
+  triggerLabel = '🔑 I forgot my password',
+  triggerClassName = 'text-[11px] text-blue-600 hover:text-blue-700 underline transition-colors'
+}) => {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState(defaultName);
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState(null);
+
+  const superusers = normalizeOperators(operators).filter((op) => op.role === 'superuser');
+  const openPanel = () => { if (defaultName) setName(defaultName); setResult(null); setOpen(true); };
+
+  const submit = async () => {
+    const who = String(name || '').trim();
+    if (!who) { setResult({ error: 'Enter the name of your account (as it appears in the team list).' }); return; }
+    setBusy(true);
+    const entry = requestPasswordReset({ name: who, note });
+    const text = resetRequestText(entry);
+    const subject = resetMailSubject(entry);
+    const to = superuserEmailsOf(normalizeOperators(operators), Array.isArray(personnel) ? personnel : []);
+    const mail = await sendAdminMail({ to, subject, text })
+      .catch((err) => ({ ok: false, mode: 'none', reason: (err && err.message) || 'e-mail unavailable' }));
+    setBusy(false);
+    setResult({ entry, text, subject, mail, summary: summarizeMail(mail, 'Reset request') });
+  };
+
+  /* Le lien mailto: de repli est construit ICI quand rien n'a pu être envoyé :
+     l'app ne laisse jamais croire qu'un message est parti (même règle que le
+     reste du module Administration). */
+  const mailto = result && result.entry && !(result.mail && result.mail.ok)
+    ? ((result.mail && result.mail.mailto) || buildMailto([], result.subject, result.text))
+    : '';
+
+  return (
+    <>
+      <button type="button" onClick={openPanel} className={triggerClassName}>{triggerLabel}</button>
+      {open && (
+        <div
+          className="fixed inset-0 z-[10001] flex items-center justify-center bg-slate-900/60 p-4"
+          onClick={() => setOpen(false)}
+        >
+          <div
+            className="bg-white rounded-2xl border border-slate-200 shadow-2xl w-full max-w-md p-5 text-left"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h4 className="text-sm font-black text-slate-800 mb-1">🔑 Forgot your password?</h4>
+            <p className="text-xs text-slate-500 leading-relaxed mb-3">
+              Nobody — not even a superuser — can read a password: only a hash is kept, and the lab server is
+              what checks it at sign-in. A superuser can <b>set a new one</b> for you, and this form asks them to.
+            </p>
+            {result && !result.error ? (
+              <div className="flex flex-col gap-3">
+                <div className="text-xs text-slate-700 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 leading-relaxed">
+                  ✅ {describeResetOutcome(result.entry, result.mail)}
+                  {!(result.mail && result.mail.ok) && (
+                    <p className="mt-1 text-amber-800">
+                      {(result.summary && result.summary.text) || 'The e-mail could not be sent.'}
+                    </p>
+                  )}
+                </div>
+                {mailto && (
+                  <a href={mailto} className="text-xs font-bold text-blue-700 underline break-words">
+                    ✉️ Send the request from your own mailbox (message ready)
+                  </a>
+                )}
+                {superusers.length > 0 ? (
+                  <p className="text-[11px] text-slate-500 leading-relaxed">
+                    Superuser(s) of this lab: <b>{superusers.map((op) => op.name).join(', ')}</b>. They set a new
+                    password from <b>Setup → Team &amp; access</b> → ✏️ → <i>New password</i> → Save.
+                  </p>
+                ) : (
+                  <p className="text-[11px] text-slate-500 leading-relaxed">
+                    No superuser appears in this browser's team list: ask whoever set up Lab Workspace to replace
+                    your password from Setup → Team &amp; access.
+                  </p>
+                )}
+                <details className="text-[11px] text-slate-500">
+                  <summary className="cursor-pointer">Show the message that was prepared</summary>
+                  <pre className="whitespace-pre-wrap mt-1 bg-slate-50 border border-slate-200 rounded p-2">{result.text}</pre>
+                </details>
+                <button
+                  type="button"
+                  onClick={() => setOpen(false)}
+                  className="self-end bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold py-1.5 px-3 rounded-lg text-xs transition-colors"
+                >
+                  Close
+                </button>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-2">
+                {result && result.error && (
+                  <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                    ⚠️ {result.error}
+                  </div>
+                )}
+                <label className="text-[11px] font-bold text-slate-500 uppercase">Your name</label>
+                <input
+                  type="text"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="e.g. Marie Curie"
+                  className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 w-full"
+                />
+                <label className="text-[11px] font-bold text-slate-500 uppercase mt-1">Message (optional)</label>
+                <textarea
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  rows={2}
+                  placeholder="e.g. I am at the bench next to the NMR — any temporary password is fine"
+                  className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 w-full"
+                />
+                <div className="flex gap-2 mt-2">
+                  <button
+                    type="button"
+                    onClick={submit}
+                    disabled={busy}
+                    className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg text-sm transition-colors disabled:opacity-50"
+                  >
+                    {busy ? 'Sending…' : 'Ask for a reset'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setOpen(false)}
+                    className="bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold py-2 px-4 rounded-lg text-sm transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+                <p className="text-[11px] text-slate-400 leading-relaxed">
+                  The request is recorded on this computer and sent to the superuser(s) by e-mail — and, if the
+                  e-mail cannot leave, a ready-to-send message is offered.
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </>
+  );
+};
+
+/** CE QUE LE SUPERUTILISATEUR VOIT : les demandes encore ouvertes, exactement
+ *  là où il pose le nouveau mot de passe (Setup → Team & access → ✏️). L'e-mail
+ *  est le canal qui traverse les postes ; ce panneau montre les demandes
+ *  enregistrées SUR CE POSTE — et les referme quand le mot de passe est posé. */
+export const PasswordResetRequestsPanel = () => {
+  const [list, setList] = useState(() => openResets(loadPasswordResets()));
+  useEffect(() => {
+    const refresh = () => setList(openResets(loadPasswordResets()));
+    refresh();
+    window.addEventListener('focus', refresh);
+    return () => window.removeEventListener('focus', refresh);
+  }, []);
+  if (!list.length) return null;
+  const when = (ts) => (Number(ts) ? new Date(Number(ts)).toLocaleString() : '');
+  return (
+    <div className="text-xs bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 leading-relaxed flex flex-col gap-2">
+      <p className="font-bold text-amber-900">
+        🔑 {list.length} password reset request{list.length > 1 ? 's' : ''} recorded on this computer
+      </p>
+      {list.map((r) => (
+        <div key={r.id} className="flex items-start gap-2 bg-white/80 border border-amber-100 rounded px-2 py-1.5">
+          <div className="flex-1 min-w-0">
+            <p className="text-amber-900">
+              <b>{r.name}</b> · <span className="text-amber-700">{when(r.askedAt)}</span>
+            </p>
+            {r.note && <p className="text-[11px] italic text-amber-800">{r.note}</p>}
+            <p className="text-[11px] text-amber-700">
+              Set a new password for this person below (✏️ → New password → Save), then mark the request handled.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setList(openResets(closePasswordReset(r.id)))}
+            className="shrink-0 bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold px-2 py-1 rounded transition-colors"
+          >
+            ✔ Handled
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+};
+
+/* =========================================================
+   SCIENTIST LOGIN GATE  (full-screen, mandatory)
+========================================================= */
 export const ScientistLoginGate = ({ operators, onLogin, onRecovery, serverMode = false, serverStatus = null }) => {
   const normalizedOps = normalizeOperators(operators || []);
   // Recovery mode: if nobody has a password set, allow emergency bypass
@@ -1265,6 +1535,23 @@ export const ScientistLoginGate = ({ operators, onLogin, onRecovery, serverMode 
               >
                 🔓 Emergency recovery (no passwords configured)
               </button>
+            </div>
+          )}
+
+          {/* 🔑 « I forgot my password » — ICI, et pas seulement dans les
+              réglages : la personne qui ne peut plus entrer ne verra jamais la
+              page des réglages. La demande est enregistrée sur ce poste et
+              préparée pour les superutilisateurs (e-mail quand un envoi est
+              possible, sinon un message prêt à envoyer). */}
+          {normalizedOps.length > 0 && (
+            <div className="mt-4 flex flex-col items-center gap-1">
+              <PasswordResetRequest
+                operators={normalizedOps}
+                triggerClassName="text-xs text-blue-300/70 hover:text-blue-200 underline transition-colors"
+              />
+              <p className="text-[10px] text-blue-200/50 leading-relaxed text-center">
+                A superuser sets a new password (nobody can read the old one).
+              </p>
             </div>
           )}
         </div>

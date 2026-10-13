@@ -266,6 +266,46 @@ export const protectUnrecordedDrops = (known, outgoing, deletions) => {
   return { tests, rescued, removed: out.length - tests.length };
 };
 
+/** ⛔ LE MÊME VERROU, VU DE L'AUTRE CÔTÉ DU FIL — « la copie PARTAGÉE qu'on
+ *  s'apprête à écraser ».
+ *
+ *  `protectUnrecordedDrops` protège ce que CE poste connaît. Reste le cas du
+ *  rapport : une expérience créée sur un AUTRE poste pendant que celui-ci
+ *  gardait une copie plus ancienne. Ce poste-ci ne l'a jamais vue, donc sa
+ *  mémoire ne peut pas la reprendre… alors que l'enregistrement l'effacerait
+ *  quand même du document partagé (le payload voyage ENTIER : le vider de ce
+ *  qu'on ne connaît pas est exactement ce qu'aucun enregistrement n'a le droit
+ *  de faire).
+ *
+ *  D'où ce second verrou, appliqué AVANT d'écrire (App.jsx,
+ *  `guardDistantExperiments`) : la copie DISTANTE — le document partagé — est
+ *  relue, et ce qu'elle porte et que nous n'avons pas est REMIS, tant qu'aucune
+ *  suppression n'est enregistrée pour lui (une 🗑 faite ailleurs reste une 🗑).
+ *
+ *  @param {Array} distant  les expériences de la copie partagée (relue)
+ *  @param {Array} outgoing la liste que ce poste s'apprête à écrire
+ *  @param {Array} deletions les suppressions enregistrées (déjà sans les levées)
+ *  @returns {{tests:Array, rescued:Array, removed:number}}
+ */
+export const protectDistantDrops = (distant, outgoing, deletions) => {
+  const list = (Array.isArray(outgoing) ? outgoing : []).filter(Boolean);
+  const records = normalizeDeletions(deletions);
+  const rescued = unrecordedDrops(distant, list, records);
+  let out = list;
+  if (rescued.length) {
+    const seen = new Set(list.map(experimentKey).filter(Boolean));
+    out = list.slice();
+    rescued.forEach((t) => {
+      const key = experimentKey(t);
+      if (key && seen.has(key)) return;
+      if (key) seen.add(key);
+      out.push(t);
+    });
+  }
+  const tests = withoutDeletedExperiments(out, records);
+  return { tests, rescued, removed: out.length - tests.length };
+};
+
 /** UNE LECTURE N'EFFACE PLUS : la copie relue (`incoming`) est adoptée telle
  *  quelle, et ce que ce poste connaît (`current`) et qu'elle ne porte pas est
  *  AJOUTÉ à la fin. Les suppressions enregistrées s'appliquent aux deux.
@@ -306,6 +346,20 @@ export const describeUnrecordedDrops = (rescued) => (
       + 'This is the signature of a stale copy (another workstation, or an offline read): '
       + 'reopen the dataset there and let it publish again (🔄 Refresh). An experiment you really want gone '
       + 'is deleted in the Experiments page (🗑), so that it is forgotten everywhere.'
+    : ''
+);
+
+/** Le compte-rendu du verrou à DISTANCE : la copie partagée portait des
+ *  expériences que ce poste n'avait JAMAIS vues (un collègue les a créées entre
+ *  deux enregistrements, sur un autre poste). Elles sont REMISES : un
+ *  enregistrement ne les efface plus. */
+export const describeDistantRescue = (rescued) => (
+  Array.isArray(rescued) && rescued.length
+    ? `⚠ The SHARED copy of this dataset carried ${rescued.length} experiment(s) this device had `
+      + `never seen (${namesOf(rescued)}): a save was about to erase them from the document everyone `
+      + 'reads. They were KEPT and written back with your copy. This is what a colleague working on '
+      + 'the same dataset from another workstation looks like — reopen the dataset here (🔄 Refresh) '
+      + 'to see their experiments.'
     : ''
 );
 

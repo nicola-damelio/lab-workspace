@@ -1,52 +1,75 @@
-# Expériences perdues — reprise depuis la moitié VIVANTE (2026-10-09T19:37:51.694Z)
+# Expériences perdues — reprise depuis la moitié VIVANTE (2026-10-13T18:09:48.256Z)
 (règle : la corbeille ne se restaure pas — aucun fichier en corbeille n’est lu ni proposé)
 
 ## La copie vivante du dataset
-   • ds_ds_1788383774488.json  id=1KHaI9R3Sj1IOIyctFiAOTW3QwDfyzIJS  936 Ko  2026-10-09T19:05:41.502Z
+   • ds_ds_1788383774488.json  id=1KHaI9R3Sj1IOIyctFiAOTW3QwDfyzIJS  937 Ko  2026-10-13T18:04:43.707Z
    • dataset ds_ds_1788383774488  titre « GEC-UPJV-projects »  sous-titre « Running title »
-   • aujourd’hui : 83 expérience(s) · 14 projet(s)
+   • aujourd’hui : 82 expérience(s) · 15 projet(s)
 
-## 13 fichier(s)-objet(s) vivant(s) → 6 expérience(s) à retrouver
+## 28 fichier(s)-objet(s) vivant(s) → 12 expérience(s) à retrouver
    • « pdb_Bad_BCL-XL »  id=t17915013096201399  enregistrée 2026-10-09T08:43:43.324Z
      instance 2BZW · catégorie Activity · projet(s) BadH
-     noms portés sur le Drive : Test 86, pdb_BadH, pdb_Bad_BCL-XL
+     noms portés sur le Drive : Test 86, pdb_BadH, pdb_Bad_BCL-XL, Test 86
    • « pdb_Bcl-XL_Bid »  id=t17915001326217901  enregistrée 2026-10-09T08:44:24.650Z
      instance 4QVE · catégorie Activity · projet(s) BidH
-     noms portés sur le Drive : pdb, pdb_Bcl-XL_Bid
+     noms portés sur le Drive : pdb, pdb_Bcl-XL_Bid, Test 85
    • « pdb_CDK2_CyclinA »  id=t17915016474816788  enregistrée 2026-10-09T08:44:24.650Z
      instance 5IF1 · catégorie Activity · projet(s) cyclinA_H
-     noms portés sur le Drive : Test 87, pdb_, pdb_CDK2_CyclinA
+     noms portés sur le Drive : Test 87, pdb_, pdb_CDK2_CyclinA, pdb_CDK2_CyclinA, Test 87, pdb_
    • « pdb_Mdm2_p53 »  id=t17914952328471224  enregistrée 2026-10-09T08:44:24.650Z
      instance 3LNZ · catégorie Activity · projet(s) p53H
      noms portés sur le Drive : pdb_Mdm2_p53
    • « pdb_PD1_PDL1 »  id=t17915023284364463  enregistrée 2026-10-09T08:44:24.650Z
      instance 4ZQK · catégorie Activity · projet(s) PD1-PDL1
-     noms portés sur le Drive : Pd1, Test 88, pdb_PD1_PDL1
+     noms portés sur le Drive : Pd1, Test 88, pdb_PD1_PDL1, Test 88, pdb_PD1_PDL1, Pd1
+   • « Test 84 »  id=t17918099728805139  enregistrée 2026-10-12T13:49:53.275Z
+     instance instance1 · catégorie Blind Docking · projet(s) NATURAL ARSENAL Antibiotics
+     noms portés sur le Drive : Test 84
    • « Test 85 »  id=t17915002806849126  enregistrée 2026-10-08T22:58:11.190Z
      instance New Instance 2 · catégorie Activity · projet(s) BidH
+     noms portés sur le Drive : Test 85, Test 85
+   • « Test 85 »  id=t1791811075020906  enregistrée 2026-10-12T13:49:53.275Z
+     instance instance1 · catégorie Blind Docking · projet(s) NATURAL ARSENAL Antibiotics
      noms portés sur le Drive : Test 85
+   • « Test 86 »  id=t17918122680048458  enregistrée 2026-10-12T13:50:38.825Z
+     instance instance1 · catégorie Blind Docking · projet(s) NATURAL ARSENAL Antibiotics
+     noms portés sur le Drive : Test 86
+   • « Test 89 »  id=t17917933668194158  enregistrée 2026-10-12T09:45:25.376Z
+     instance instance1 · catégorie Activity · projet(s) BidH
+     noms portés sur le Drive : Test 89
+   • « Test 90 »  id=t17917966358606832  enregistrée 2026-10-12T09:50:42.493Z
+     instance instance1 · catégorie Blind Docking · projet(s) NATURAL ARSENAL Antibiotics
+     noms portés sur le Drive : Test 90
+   • « Test 91 »  id=t17917988902732120  enregistrée 2026-10-12T09:55:01.761Z
+     instance instance1 · catégorie Blind Docking · projet(s) NATURAL ARSENAL Antibiotics
+     noms portés sur le Drive : Test 91
 
 ## Le fichier écrit (LOCAL — rien n’a été écrit sur le Drive)
-   C:\Users\nicol\lab-workspace\_recover\GEC-UPJV-projects_774488_experiences-retrouvees_2026-10-09.json  (5 Ko)
+   C:\Users\nicol\lab-workspace\_recover\GEC-UPJV-projects_774488_experiences-retrouvees_2026-10-13.json  (64 Ko)
    format lab-workspace-backup · schéma 1 · dataset ds_ds_1788383774488 · compressé true
-   comptes déclarés : {"tests":6,"projects":0,"datasetProtocols":0,"storages":0,"molecules":0,"calculationEntries":0,"compoundMeta":0,"nmrExperiments":0}
+   comptes déclarés : {"tests":12,"projects":0,"datasetProtocols":0,"storages":0,"molecules":0,"calculationEntries":0,"compoundMeta":0,"nmrExperiments":0}
    ✔ VALIDÉ par le validateur de l’application
-   relecture : 6 expérience(s), charges identiques : oui
+   relecture : 12 expérience(s), charges identiques : oui
 
-## Les lignes de la fenêtre d’import (« Expériences », 6 ligne(s))
+## Les lignes de la fenêtre d’import (« Expériences », 11 ligne(s))
    ➕ à ajouter  « pdb_Bad_BCL-XL »  clé name:pdb_Bad_BCL-XL  · BadH · Nicola D'AMELIO · 2026-10-08
    ➕ à ajouter  « pdb_Bcl-XL_Bid »  clé name:pdb_Bcl-XL_Bid  · BidH · Nicola D'AMELIO · 2026-10-08
    ➕ à ajouter  « pdb_CDK2_CyclinA »  clé name:pdb_CDK2_CyclinA  · cyclinA_H · Nicola D'AMELIO · 2026-10-08
    ➕ à ajouter  « pdb_Mdm2_p53 »  clé name:pdb_Mdm2_p53  · p53H · Nicola D'AMELIO · 2026-10-08
    ➕ à ajouter  « pdb_PD1_PDL1 »  clé name:pdb_PD1_PDL1  · PD1-PDL1 · Nicola D'AMELIO · 2026-10-08
-   ➕ à ajouter  « Test 85 »  clé name:Test 85  · BidH · Nicola D'AMELIO · 2026-10-08
+   ➕ à ajouter  « Test 84 »  clé name:Test 84  · NATURAL ARSENAL Antibiotics · Cintia LEAL · 2026-10-12
+   ➕ à ajouter  « Test 85 »  clé name:Test 85  · 2 conditions · BidH / NATURAL ARSENAL Antibiotics · Nicola D'AMELIO · 2026-10-08
+   ➕ à ajouter  « Test 86 »  clé name:Test 86  · NATURAL ARSENAL Antibiotics · Cintia LEAL · 2026-10-12
+   ➕ à ajouter  « Test 89 »  clé name:Test 89  · BidH · Nicola D'AMELIO · 2026-10-12
+   ➕ à ajouter  « Test 90 »  clé name:Test 90  · NATURAL ARSENAL Antibiotics · Cintia LEAL · 2026-10-12
+   ➕ à ajouter  « Test 91 »  clé name:Test 91  · NATURAL ARSENAL Antibiotics · Cintia LEAL · 2026-10-12
 
-   → 6/6 ligne(s) seront VRAIMENT ajoutées.
-   → choix appliqué : 6 expérience(s), ids d’origine conservés : oui
+   → 11/11 ligne(s) seront VRAIMENT ajoutées.
+   → choix appliqué : 12 expérience(s), ids d’origine conservés : oui
 
 ## Gestes
    1. ouvrir le dataset « GEC-UPJV-projects » dans l’application ;
-   2. 📂 Load HTML → GEC-UPJV-projects_774488_experiences-retrouvees_2026-10-09.json ;
+   2. 📂 Load HTML → GEC-UPJV-projects_774488_experiences-retrouvees_2026-10-13.json ;
    3. cocher « Expériences » seulement (chaque expérience est une ligne) ;
    4. ➕ AJOUT (jamais ♻️ REMPLACEMENT) ;
    → mode d’emploi écrit : C:\Users\nicol\lab-workspace\_recover\HOW-TO_retrouver-les-experiences.txt
