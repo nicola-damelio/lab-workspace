@@ -5933,3 +5933,93 @@ poste** (le Drive la complète, ne la remplace pas) ; seules les **tombes** et l
 intact (il écrit l'union de l'écran et de ce que l'adoption vient de mettre de
 côté, déjà repassée par `withoutDeletedDatasets`).
 
+## Une page de docking neuve est vierge — et la structure attendue arrive
+
+Signalé le 13/10/2026 :
+
+> « some docking tests do not load automatically the structure they are supposed
+> to load. By default the structure of a protein appears that has nothing to do
+> with the dataset (its sequence starts with MQIFVKTL), sometimes after a while
+> the correct structure appears but not always. a new docking page when data
+> have not been loaded yet should not contain default data, it must be virgin. »
+
+`MQIFVKTL…` est l'**ubiquitine** du RCSB (`1UBQ`). Deux causes indépendantes,
+donc deux réparations.
+
+### 1. La page de docking ne fabrique plus aucune structure
+
+`DockingSections.jsx` calculait `structureSrc` ainsi : quand le dataset ne
+déclarait aucune source **et** qu'un « système » était défini (une séquence
+tapée, un SMILES, un composé de la Librairie), elle servait au viewer
+`https://models.rcsb.org/1UBQ.mmtf` — `1BNA` pour l'ADN, `1EHZ` pour l'ARN.
+Cette protéine n'appartient à **aucun** dataset ; et comme elle vient du
+**réseau**, elle pouvait s'afficher AVANT — ou À LA PLACE — de la vraie
+structure : d'où « parfois la bonne arrive, pas toujours ».
+
+La lecture vit maintenant dans **`src/utils/dockingStructureSrc.js`**
+(`dockingStructureSrcOf`, PUR, testé sous node) : elle rend `structureSrc`
+(les codes PDB réels des datasets : `5IF1`, `4QVE`, `2BZW`…), son ancien nom
+`pdbId`, une URL, un chemin absolu — **ou rien**. Une expérience neuve est donc
+**vierge**, et la structure du cluster `8_seletopclusts`
+(`src={selectedStruct ? '' : structureSrc}`) reste prioritaire.
+
+La page **NMR** garde, elle, son gabarit (`/structures/template_amino_acid.pdb`,
+`NMRSections.jsx`) : c'est une décision d'écran assumée et documentée ici même
+(§ « Le dépôt d'une structure »), pas un oubli de cette réparation. Ce qui est
+supprimé ici est la protéine **étrangère au dataset**.
+
+### 2. « La structure attendue » est ramenée par le lien que le dataset porte
+
+Les textes PDB d'un docking vivent dans la base **locale** du navigateur
+(IndexedDB → localStorage) ; le dataset ne garde que des métadonnées — dont le
+**lien** de chaque fichier (`dockingStructures[].driveUrl`,
+`dockingMolecules[].driveUrl`). La restauration ne connaissait qu'un chemin :
+l'archive `<instance>_docking_restore.json.gz`, qui n'existe **que** depuis
+qu'un poste a importé le dossier de calcul. Un dataset plus ancien (import
+antérieur à cette mécanique) n'en a aucune : la page ne restaurait donc rien,
+alors que le lien de chaque PDB était sous ses yeux.
+
+* **`src/utils/dockingDeclaredFiles.js`** (PUR, testé) —
+  `declaredDockingFiles(test)` liste les fichiers déclarés avec leur lien (une
+  entrée sans lien est écartée : rien à télécharger), `structureNameKey`
+  compare deux noms par **radical** (dossier, `.gz`, extension ignorés : le
+  dossier de calcul écrit tantôt `cluster_1.pdb`, tantôt `…/cluster_1.pdb.gz`),
+  `missingDeclaredDockingFiles` dit ce qui **manque** en base, et
+  `fetchDeclaredDockingFiles({ test, have, fetchText })` rend les entrées à
+  ranger — dans la forme EXACTE de l'import (`{ name, pdb, driveUrl }`,
+  `{ …métadonnées, pdb, hasPdb: true }` pour une molécule). Le téléchargement
+  est **injecté**.
+* **`useDockingDriveRestore`** (DockingSections.jsx) —
+  1. l'archive est lue et rangée en base comme avant ;
+  2. **ce qui manque encore** est téléchargé par son propre lien
+     (`downloadCloudFile` : jeton, corbeille, Nextcloud ; `.gz` reconnu à ses
+     octets magiques `1f 8b`) ;
+  3. `missing` compare désormais **les noms déclarés** à la base : un poste
+     qui a 2 des 4 structures déclarées a bien quelque chose à récupérer ;
+  4. les métadonnées du test sont touchées même quand elles décrivent déjà ces
+     fichiers — c'est ce qui **réveille `structList`** (sans quoi les PDB
+     ramenés seraient en base mais pas à l'écran).
+  Les deux messages d'échec d'origine sont conservés **mot pour mot** (ils
+  portent le geste à faire), complétés du nom des fichiers qui n'ont pas pu
+  être téléchargés.
+
+### Vérifier soi-même
+
+```bash
+node _docking_virgin_page_test.mjs   # 48 vérifications — la règle pure (rien
+                                     # n'est fabriqué ; un code déclaré donne son
+                                     # URL RCSB), les fichiers déclarés (radicaux,
+                                     # manquants, téléchargés, échecs) et le
+                                     # câblage exact dans la page
+node _docking_viewer_restore_test.mjs   # 60 — la restauration d'archive intacte
+```
+
+Le test a été **vérifié contre le code d'avant** : remettre la ligne
+`return 'https://models.rcsb.org/1UBQ.mmtf'` fait échouer « une expérience neuve
+n’a AUCUNE source de structure ».
+
+**Ce que ça ne fait pas** : la page ne **devine** jamais une structure. Sans
+lien déclaré, sans archive et sans Drive, elle reste vierge et le dit (message
+de restauration, import du dossier de calcul) — c'est le comportement demandé.
+
+

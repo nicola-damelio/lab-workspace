@@ -361,8 +361,22 @@ ok(!/cdDrive[^\n]*localStorage/.test(CDSRC), 'aucun pointeur rangé dans le navi
 
 const DOCKSRC = readFileSync('src/components/DockingSections.jsx', 'utf8');
 
-ok(DOCKSRC.includes("import { archiveRestoreJson, placeRestorePointer, restoreJsonFor, restoreStems, takePendingRestorePointer } from '../utils/driveRestore';"),
+ok(DOCKSRC.includes("import { archiveRestoreJson, downloadCloudFile, placeRestorePointer, restoreJsonFor, restoreStems, takePendingRestorePointer } from '../utils/driveRestore';"),
   'DockingSections passe par le mécanisme GÉNÉRAL (aucune restauration maison)');
+/* Le repli AJOUTÉ le 13/10/2026 — « la structure que l'expérience DOIT montrer
+   arrive toute seule » : les fichiers que le DATASET DÉCLARE (leur lien est
+   écrit dans `dockingStructures[].driveUrl` / `dockingMolecules[].driveUrl`)
+   sont téléchargés par le MÊME noyau (`downloadCloudFile` : jeton, corbeille,
+   Nextcloud) — jamais par un `fetch` maison. La règle de ce fichier tient donc
+   toujours ; c'est _docking_virgin_page_test.mjs qui vérifie la règle pure. */
+const declaredDownloader = DOCKSRC.slice(
+  DOCKSRC.indexOf('const downloadDeclaredDockingText'),
+  DOCKSRC.indexOf('const restoreDockingFromDrive')
+);
+ok(declaredDownloader.includes('downloadCloudFile(id ? { id } : { url }'),
+  'le repli par les liens du dataset passe par le noyau partagé');
+ok(declaredDownloader.length > 0 && !/\bfetch\s*\(/.test(declaredDownloader),
+  '…et par aucun téléchargement maison (aucun `fetch(`)');
 ok(DOCKSRC.includes("import { useDriveAutoRestore } from './useDriveAutoRestore';"),
   '…et par le déclencheur automatique partagé');
 ok(DOCKSRC.includes("const DOCKING_RESTORE_KIND = 'docking';"), 'le type de donnée docking est déclaré une fois');

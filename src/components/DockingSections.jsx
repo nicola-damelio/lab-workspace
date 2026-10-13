@@ -4,9 +4,17 @@ import {ChartControlBar, SharedChartStylePanel, ChartInspector, brokenAxisProps,
 import { Icon } from './Icons';
 import { DriveUploadButton } from './DriveUpload';
 import { suggestDriveFileName } from '../utils/driveNaming';
-import { getDriveToken, uploadLocalFile } from '../utils/driveUpload';
+import { getDriveToken, uploadLocalFile, extractDriveFileIds } from '../utils/driveUpload';
 import { storeJson, loadJson } from '../utils/pdbStore';
-import { archiveRestoreJson, placeRestorePointer, restoreJsonFor, restoreStems, takePendingRestorePointer } from '../utils/driveRestore';
+import { archiveRestoreJson, downloadCloudFile, placeRestorePointer, restoreJsonFor, restoreStems, takePendingRestorePointer } from '../utils/driveRestore';
+/* 🧬 LA SOURCE DE LA STRUCTURE DU VIEWER (voir utils/dockingStructureSrc.js) :
+   elle ne vient QUE du dataset — la page ne fabrique plus de protéine de
+   démonstration (le `1UBQ` du RCSB apparaissait sur toute expérience neuve).
+   Et 📂 LES FICHIERS QUE LE DATASET DÉCLARE (utils/dockingDeclaredFiles.js) :
+   le repli qui ramène les PDB d'un import ancien, dont le dataset porte le lien
+   mais que la base du navigateur n'a pas. */
+import { dockingStructureSrcOf } from '../utils/dockingStructureSrc';
+import { fetchDeclaredDockingFiles, missingDeclaredDockingFiles } from '../utils/dockingDeclaredFiles';
 import { useDriveAutoRestore } from './useDriveAutoRestore';
 import { sequenceForMoleculeType, sequencePatchForMoleculeType, structureSequencePatch, sequenceNaturesNote } from '../utils/sequenceNatures';
 /* 🧬 LA LIGNE SOUS LA CASE DE SÉQUENCE — le nombre de chaque acide aminé, la charge totale à
@@ -423,13 +431,40 @@ const useDockingDriveRestore = ({ activeTest, updateActiveTest }) => {
 
   const dockingDefaultStems = () => restoreStems(activeTest.instanceName, activeTest.name);
 
+  /* « La donnée manque-t-elle ? » — un poste qui n'a AUCUN fichier, mais aussi
+     un poste à qui il en MANQUE : le dataset en déclare quatre, la base du
+     navigateur en porte deux (import interrompu, cache partiel, dataset
+     enrichi ailleurs) — il reste bien quelque chose à récupérer. Le nom décide
+     (voir utils/dockingDeclaredFiles.js : dossier, `.gz` et extension
+     ignorés), donc un fichier présent n'est jamais re-téléchargé. */
   const dockingDriveMissing = async () => {
     if (!dockingHasMeta) return false; // aucun import : rien à restaurer
     const structs = await loadJson(dockingStructKey).catch(() => null);
     const mols = await loadJson(dockingMolKey).catch(() => null);
     const hasStructs = Array.isArray(structs) && structs.length > 0;
     const hasMols = Array.isArray(mols) && mols.length > 0;
-    return !hasStructs && !hasMols;
+    if (!hasStructs && !hasMols) return true;
+    return missingDeclaredDockingFiles({
+      test: activeTest,
+      structures: Array.isArray(structs) ? structs : [],
+      molecules: Array.isArray(mols) ? mols : []
+    }).length > 0;
+  };
+
+  /* 📂 TÉLÉCHARGER UN FICHIER QUE LE DATASET DÉCLARE (voir
+     utils/dockingDeclaredFiles.js). Le lien du fichier est écrit dans le
+     dataset, donc son id Drive y est aussi : le téléchargement passe par le
+     noyau (`downloadCloudFile`), qui gère le jeton expiré, la corbeille et
+     Nextcloud. Le texte est GUNZIPPÉ au besoin (octets magiques 1f 8b) : un
+     dossier de calcul livre aussi bien des `.pdb` que des `.pdb.gz`. */
+  const downloadDeclaredDockingText = async (file) => {
+    const url = (file && file.url) || '';
+    const id = extractDriveFileIds(url)[0] || '';
+    const blob = await downloadCloudFile(id ? { id } : { url }, { name: (file && file.name) || '' });
+    if (!blob || !blob.size) return '';
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    const gz = bytes.length > 1 && bytes[0] === 0x1f && bytes[1] === 0x8b;
+    return new TextDecoder('utf-8').decode(gz ? gunzipSync(bytes) : bytes);
   };
 
   const restoreDockingFromDrive = async () => {
@@ -441,32 +476,87 @@ const useDockingDriveRestore = ({ activeTest, updateActiveTest }) => {
       kind: DOCKING_RESTORE_KIND, suffix: DOCKING_RESTORE_KIND, stems,
       ctx: dockingDriveCtx(activeTest, activeTest.instanceName), pointer
     });
-    if (!found) {
-      return {
-        ok: false,
-        message: '⚠️ The docking structures are not in this browser and no copy was found on Google Drive. Connect Google Drive, then re-import the calculation directory: it archives the structures AND the molecules.'
-      };
-    }
-    const data = (found.data && typeof found.data === 'object') ? found.data : {};
-    const structs = Array.isArray(data.structures) ? data.structures : [];
-    const mols = Array.isArray(data.molecules) ? data.molecules : [];
-    if (!structs.length && !mols.length) {
-      return { ok: false, message: `⚠️ The copy found on Google Drive (${found.name}) holds no structures — re-import the calculation directory.` };
-    }
+    const data = (found && found.data && typeof found.data === 'object') ? found.data : {};
+    const archivedStructs = Array.isArray(data.structures) ? data.structures : [];
+    const archivedMols = Array.isArray(data.molecules) ? data.molecules : [];
     /* La base du navigateur est réapprovisionnée AVANT l'état : c'est elle que
        le viewer 3D et « Molecules to be docked » relisent. */
+    if (archivedStructs.length) await storeJson(dockingStructKey, archivedStructs);
+    if (archivedMols.length) await storeJson(dockingMolKey, archivedMols);
+
+    /* ── LE REPLI QUI MANQUAIT : LES FICHIERS QUE LE DATASET DÉCLARE ─────────
+       L'archive `<instance>_docking_restore.json.gz` n'existe QUE depuis qu'un
+       poste a importé le dossier de calcul : un dataset plus ancien (ou un
+       import antérieur à cette mécanique) n'en a aucune, et la page ne
+       restaurait donc RIEN — alors que le LIEN de chaque PDB est écrit dans le
+       dataset (`dockingStructures[].driveUrl`, `dockingMolecules[].driveUrl`).
+       Ces fichiers-là sont téléchargés un à un et rangés dans la base du
+       navigateur, exactement là où l'archive les mettrait : la structure que
+       l'expérience DOIT montrer arrive toute seule, sans réimport manuel.
+       (Défaut rapporté : « some docking tests do not load automatically the
+       structure they are supposed to load. ») */
+    const local = await (async () => {
+      const s = await loadJson(dockingStructKey).catch(() => null);
+      const m = await loadJson(dockingMolKey).catch(() => null);
+      return {
+        structures: Array.isArray(s) ? s : [],
+        molecules: Array.isArray(m) ? m : []
+      };
+    })();
+    const declared = await fetchDeclaredDockingFiles({
+      test: activeTest, have: local, fetchText: downloadDeclaredDockingText
+    });
+    const structs = [...local.structures, ...declared.structures];
+    const mols = [...local.molecules, ...declared.molecules];
     if (structs.length) await storeJson(dockingStructKey, structs);
     if (mols.length) await storeJson(dockingMolKey, mols);
+
+    if (!structs.length && !mols.length) {
+      /* Rien dans l'archive ET rien de téléchargeable par les liens déclarés :
+         on le DIT, en nommant ce qui a échoué (les deux messages d'origine sont
+         conservés mot pour mot — ils portent le geste à faire). */
+      const failNote = declared.failed.length
+        ? ` ${declared.failed.length} declared file(s) could not be downloaded: ${declared.failed.join(', ')}.`
+        : '';
+      return {
+        ok: false,
+        message: (found
+          ? `⚠️ The copy found on Google Drive (${found.name}) holds no structures — re-import the calculation directory.`
+          : '⚠️ The docking structures are not in this browser and no copy was found on Google Drive. Connect Google Drive, then re-import the calculation directory: it archives the structures AND the molecules.') + failNote
+      };
+    }
+    /* Les métadonnées sont touchées MÊME quand elles décrivent déjà ces
+       fichiers : c'est ce qui « RÉVEILLE » structList (l'effet de relecture de
+       la base est keyé sur `activeTest.dockingStructures`) — sans quoi les PDB
+       ramenés seraient dans la base mais PAS à l'écran. */
     updateActiveTest({
       ...(structs.length
         ? { dockingStructures: structs.map((s) => ({ name: s.name, driveUrl: s.driveUrl || '' })) }
         : {}),
-      dockingDrive: {
-        ...(activeTest.dockingDrive || {}),
-        id: found.id, name: found.name, at: Date.now(), stems, restoredAt: Date.now()
-      }
+      /* Le pointeur d'archive n'est posé que si une archive a été lue : les
+         fichiers venus des liens du dataset n'en fabriquent pas un. */
+      ...(found
+        ? {
+          dockingDrive: {
+            ...(activeTest.dockingDrive || {}),
+            id: found.id, name: found.name, at: Date.now(), stems, restoredAt: Date.now()
+          }
+        }
+        : {})
     });
-    return { ok: true, message: `✅ Docking structures restored from Google Drive (${found.name}).` };
+    const failNote = declared.failed.length
+      ? ` (${declared.failed.length} declared file(s) could not be downloaded: ${declared.failed.join(', ')})`
+      : '';
+    /* Le nom de l'archive quand il y en a une ; les liens du dataset sinon (une
+       restauration MANUELLE peut n'avoir rien pris à l'archive et compléter par
+       les fichiers déclarés). */
+    const source = found ? found.name : 'the file links declared by the dataset';
+    return {
+      ok: true,
+      message: declared.fetched.length
+        ? `✅ Docking structures restored from Google Drive — ${declared.fetched.length} file(s) declared by the dataset${failNote}.`
+        : `✅ Docking structures restored from Google Drive (${source})${failNote}.`
+    };
   };
 
   const dockingRestore = useDriveAutoRestore({
@@ -606,26 +696,31 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
     activeTest, d, univTestMode,
   });
 
-  const structureSrc = useMemo(() => {
-    const raw = (activeTest.structureSrc || '').trim();
-    if (!raw) {
-      // Only offer a demo structure once the user has actually defined a
-      // receptor (sequence / SMILES / compound) — a brand-new docking
-      // experiment should NOT silently load a generic protein. The sequence is
-      // read through `d.seq`, i.e. the one of the RECEPTOR'S OWN NATURE (a DNA
-      // receptor keeps its sequence in the DNA field, not in the protein one).
-      const hasDefinedSystem = !!(d.seq || activeTest.smiles ||
-        activeTest.ligandPdbId || (activeTest.selectedCompounds || []).length || (activeTest.compoundsSelected || []).length);
-      if (!hasDefinedSystem) return '';
-      if (d.moleculeType === 'protein') return 'https://models.rcsb.org/1UBQ.mmtf';
-      if (d.moleculeType === 'dna') return 'https://models.rcsb.org/1BNA.mmtf';
-      if (d.moleculeType === 'rna') return 'https://models.rcsb.org/1EHZ.mmtf';
-      return '';
-    }
-    if (/^(https?:|blob:|data:)/i.test(raw) || raw.startsWith('/')) return raw;
-    if (/^[0-9][A-Za-z0-9]{3}$/.test(raw)) return `https://models.rcsb.org/${raw.toUpperCase()}.mmtf`;
-    return raw;
-  }, [activeTest.structureSrc, d.moleculeType, d.seq, activeTest.smiles, activeTest.ligandPdbId, activeTest.selectedCompounds, activeTest.compoundsSelected]);
+  /* ── LA SOURCE DE LA STRUCTURE : CELLE DU DATASET, RIEN D'AUTRE ────────────
+     Défaut rapporté : « some docking tests do not load automatically the
+     structure they are supposed to load. By default the structure of a protein
+     appears that has nothing to do with the dataset (its sequence starts with
+     MQIFVKTL), sometimes after a while the correct structure appears but not
+     always. » Ce `MQIFVKTL…` était l'UBIQUITINE du RCSB (1UBQ) : une protéine
+     de DÉMONSTRATION que cette page fabriquait elle-même dès qu'un récepteur
+     était « défini » (séquence tapée, SMILES, composé de la Librairie) alors
+     qu'aucune structure n'était chargée. Elle n'appartient à aucun dataset, et
+     comme elle venait du RÉSEAU (le `.mmtf` du RCSB) elle s'affichait APRÈS —
+     ou À LA PLACE de — la vraie structure : d'où « parfois la bonne arrive,
+     pas toujours ».
+     La règle est maintenant celle des autres pages : LA STRUCTURE EST CELLE
+     QUE LE DATASET DÉCLARE (`structureSrc`, ou son ancien nom `pdbId`), et
+     RIEN quand il ne déclare rien. Une expérience neuve est donc VIERGE, et un
+     poste qui n'a pas (encore) le PDB du cluster LE DIT — état vide du viewer,
+     restauration Drive (voir useDockingDriveRestore) et import du dossier de
+     calcul — au lieu de montrer une protéine étrangère. La structure du
+     CLUSTER (`structureText` ci-dessous, relue dans la base du navigateur et
+     restaurée du Drive) garde la priorité sur cette source.
+     La règle pure est vérifiée par _docking_virgin_page_test.mjs. */
+  const structureSrc = useMemo(
+    () => dockingStructureSrcOf({ structureSrc: activeTest.structureSrc, pdbId: activeTest.pdbId }),
+    [activeTest.structureSrc, activeTest.pdbId]
+  );
 
   // Keep the structure list in sync when the calculation-directory importer
   // stores new structures (the states are declared above the viewer). The
