@@ -35,7 +35,7 @@
    rigide ne change pas une longueur : voir `engine.constants` de
    utils/structureCalc.js), donc l'écart pesait dans le score sans qu'aucun mouvement
    ne rapproche jamais les deux Sγ : « I only want the disulphide to be at the default
-   bond length after minimization. » `stretchedDisulfideTermsOf` (plus bas) rend le
+   bond length after minimization. » `disulfideTermsOf` (plus bas) rend le
    terme de DISTANCE que le viewer ajoute, pour chaque pont étiré, aux contraintes des
    quatre gestes — le pont est alors CONDUIT vers sa longueur de liaison par le même
    chemin qu'une ligne de la table des distances, et le rapport du geste dit où il en
@@ -49,9 +49,27 @@
    charnières du segment entre les deux Cys comme des liaisons de CYCLE et les écarte du
    tirage — mesuré sur le modèle de la page (pont Cys3–Cys10 à 22.6 Å) : 24 canaux et
    AUCUN qui sépare les deux Sγ, contre 47 dont 23 sans cette liaison. Les quatre gestes
-   reçoivent donc le graphe de `withoutStretchedDisulfideBonds` : un pont ÉTIRÉ perd sa
+   reçoivent donc le graphe de `withoutDisulfideBonds` : un pont ÉTIRÉ perd sa
    fausse liaison (il est CONDUIT par le terme de distance), un pont FERMÉ garde la
    sienne — c'est une vraie liaison S–S, et c'est elle qui tient les deux Sγ.
+
+   ⚠ …ET LA FORME RÉDUITE DISSOUT TOUTES LES LIAISONS S–S — la demande de cette session :
+   « in MD and structure calculation of the viewer add a tick allowing to dissolve
+   disulfide bonds defined in the sequence without having to lose their definition in the
+   sequence. This is the rationale. since the structure calculation would be impaired
+   with disulfides on, I need to have the reduced form, bring close the cysteines and then
+   oxidize them in the final step. I can do it removing bonds from the sequence definition
+   but then I have to remember how they were and this is not practical. »
+
+   LE GESTE QUE LA CASE REMPLACE : retirer les paires dans « Cysteine states » — la page
+   n'écrit alors plus le CONECT SG–SG, donc AUCUNE liaison S–S n'entre dans les moteurs et
+   AUCUN terme de distance ne les rappelle : les deux Cys sont libres, comme n'importe
+   quelle autre chaîne latérale. C'est exactement ce que `reduced: true` reproduit ICI,
+   sans que la définition soit perdue : `unheldDisulfideBridges` rend alors TOUS les ponts
+   (au lieu des seuls étirés) et `disulfideTermsOf` n'en conduit plus aucun. Rien d'autre
+   ne bouge : les atomes, le fichier, la définition de la séquence (`cysDisulfides`), le
+   dessin et l'interrupteur ⚭ « SS: shown / hidden » sont intacts — celui-ci ne touche que
+   le graphe de la STRUCTURE AFFICHÉE, celui-là que ce que les MOTEURS lisent.
 
    Module PUR (aucun import) : la géométrie est INJECTÉE (`sgPositions`), donc
    le test peut la remplacer par une chaîne jouet, et la page par le vrai
@@ -103,8 +121,8 @@ const DEG = Math.PI / 180;
  *   étiré, prêt pour `restraints` (▶ Run, ▶ MD, ⚒ Minimise, ⟳ Energy).
  */
 /* LE PRÉDICAT UNIQUE — « ce pont est ÉTIRÉ », écrit UNE fois : le terme qui le CONDUIT
-   (`stretchedDisulfideTermsOf`) et le filtre qui RETIRE sa liaison du graphe des moteurs
-   (`withoutStretchedDisulfideBonds`) ne peuvent pas juger deux choses différentes. */
+   (`disulfideTermsOf`) et le filtre qui RETIRE sa liaison du graphe des moteurs
+   (`withoutDisulfideBonds`) ne peuvent pas juger deux choses différentes. */
 export const isStretchedDisulfideBond = (b, {
   length = SS_BOND_LENGTH, tolerance = SS_BOND_TOLERANCE,
 } = {}) => {
@@ -119,14 +137,65 @@ export const isStretchedDisulfideBond = (b, {
   return Number.isFinite(d) && Math.abs(d - length) > Math.max(0, Number(tolerance) || 0);
 };
 
-export const stretchedDisulfideTermsOf = ({
-  bridges = [], length = SS_BOND_LENGTH, tolerance = SS_BOND_TOLERANCE,
-  weight = SS_DRIVE_WEIGHT,
-} = {}) => Array.from(bridges || [])
-  .filter((b) => isStretchedDisulfideBond(b, { length, tolerance }))
-  .map((b) => ({ i: b.atomIndex1, j: b.atomIndex2, target: length, weight }));
+/* ── ⚭ LA FORME RÉDUITE — CE QUI ENTRE DANS LA PHYSIQUE, ET RIEN D'AUTRE ───────────
+   `reduced` (le booléen de la case ⚭ « dissolve S–S » du viewer — la chaîne 'reduced'
+   est acceptée aussi, comme ailleurs dans le dossier) dit UNE chose : la liaison S–S
+   n'est plus tenue par les moteurs. Il ne dit rien des atomes, du fichier, du dessin ni
+   de la définition de la séquence — c'est la différence, et toute la différence, avec le
+   geste manuel qu'il remplace (retirer les paires de « Cysteine states »).
+   ⚠ UNE SEULE LECTURE DU BOOLÉEN : `unheldDisulfideBridges` ci-dessous, que les DEUX
+   fonctions du dessous lisent — les deux listes ne peuvent donc pas se contredire. */
+export const isReducedDisulfides = (v) => v === true || v === 'reduced';
 
-/** LE GRAPHE QUE LES MOTEURS LISENT — la liaison SG–SG d'un pont ÉTIRÉ n'y est PLUS.
+/** LES PONTS DONT LA LIAISON N'EST PAS TENUE PAR LES MOTEURS — LA liste, écrite UNE fois.
+ *
+ *  · forme OXYDÉE (le défaut, `reduced: false`) : les seuls ponts ÉTIRÉS. Un pont fermé
+ *    EST une vraie liaison S–S et reste dans le graphe (c'est elle qui tient les deux
+ *    Sγ) ;
+ *  · forme RÉDUITE (`reduced: true`) : TOUS les ponts, fermés compris — la liaison S–S est
+ *    DISSOUTE, donc plus aucune n'entre dans le graphe des moteurs : les deux Cys sont
+ *    libres, exactement comme si la séquence ne déclarait aucun pont.
+ *
+ *  @param {{bridges?: Array<{atomIndex1:number, atomIndex2:number, distance?:number|null}>,
+ *           reduced?:boolean, length?:number, tolerance?:number}} spec
+ *  @returns {Array} les ponts à RETIRER du graphe (et, en forme oxydée, à CONDUIRE)
+ */
+export const unheldDisulfideBridges = ({
+  bridges = [], reduced = false, length = SS_BOND_LENGTH, tolerance = SS_BOND_TOLERANCE,
+} = {}) => {
+  /* ⚠ UN PONT ILLISIBLE OU DÉGÉNÉRÉ EST ÉCARTÉ DES DEUX FORMES : deux indices entiers et
+     distincts, sinon il n'y a pas de liaison à retirer — la même prudence que
+     `isStretchedDisulfideBond`, et la raison pour laquelle le filtre ne peut pas retirer
+     une liaison par erreur. */
+  const list = Array.from(bridges || []).filter((b) => !!b
+    && Number.isInteger(b.atomIndex1) && Number.isInteger(b.atomIndex2)
+    && b.atomIndex1 !== b.atomIndex2);
+  if (isReducedDisulfides(reduced)) return list;
+  return list.filter((b) => isStretchedDisulfideBond(b, { length, tolerance }));
+};
+
+/** LES PONTS CONDUITS PAR UN TERME DE DISTANCE — ce que les quatre gestes reçoivent EN PLUS
+ *  de la table : un couple `{ i, j, target: 2.05 Å, weight }` par pont que la physique
+ *  tient par une distance au lieu d'une liaison (voir le commentaire de
+ *  `isStretchedDisulfideBond` ci-dessus).
+ *
+ *  ⚠ EN FORME RÉDUITE, AUCUN : rien ne rappelle la liaison S–S dans les moteurs, ni par une
+ *  liaison, ni par une distance — c'est la définition même du geste (« I need to have the
+ *  reduced form »). Pour RAPPROCHER les deux Cys d'une molécule réduite, l'outil existe
+ *  déjà et il est explicite : le bouton « ⚭ Disulfides → distances » du panneau 🧬 écrit
+ *  les lignes de la table, que les quatre gestes conduisent comme n'importe quelle autre.
+ *
+ *  @returns {Array<{i:number, j:number, target:number, weight:number}>} un couple par pont
+ *    conduit, prêt pour `restraints` (▶ Run, ▶ MD, ⚒ Minimise, ⟳ Energy).
+ */
+export const disulfideTermsOf = ({
+  bridges = [], reduced = false, length = SS_BOND_LENGTH, tolerance = SS_BOND_TOLERANCE,
+  weight = SS_DRIVE_WEIGHT,
+} = {}) => (isReducedDisulfides(reduced) ? []
+  : unheldDisulfideBridges({ bridges, reduced, length, tolerance })
+    .map((b) => ({ i: b.atomIndex1, j: b.atomIndex2, target: length, weight })));
+
+/** LE GRAPHE QUE LES MOTEURS LISENT — la liaison SG–SG d'un pont NON TENU n'y est PLUS.
  *
  *  POURQUOI IL NE SUFFISAIT PAS DE CONDUIRE LE PONT (le second rapport de cette session :
  *  « when a disulphide is declared this long bond created by two far cysteines seems
@@ -143,21 +212,23 @@ export const stretchedDisulfideTermsOf = ({
  *  liaison ; 47 canaux dont 23 qui les séparent sans elle — et le même calcul conduit
  *  le pont de 22.6 Å à 2.6 Å au lieu de le laisser à 22.6 Å.
  *
- *  ⚠ SEULS LES PONTS ÉTIRÉS SONT RETIRÉS : un pont FERMÉ (dans la fenêtre de liaison)
- *  EST une vraie liaison S–S, et c'est elle qui tient les deux Sγ — la retirer les
- *  laisserait dériver. Les deux listes s'accordent par construction (même prédicat).
+ *  ⚠ LA LISTE RETIRÉE EST CELLE DE `unheldDisulfideBridges`, ET RIEN D'AUTRE : en forme
+ *  oxydée, seuls les ponts ÉTIRÉS — un pont FERMÉ (dans la fenêtre de liaison) EST une
+ *  vraie liaison S–S, et c'est elle qui tient les deux Sγ : la retirer les laisserait
+ *  dériver. En forme RÉDUITE, TOUS les ponts — et le même prédicat que le terme de
+ *  conduite décide, donc les deux listes s'accordent par construction.
  *
  *  `bonds` accepte les trois écritures du dossier ([[i, j]], [[i, j, ordre]],
  *  [{i, j, order}] — voir `bondGraphOf`, utils/geometryRelax.js) et la liste est rendue
- *  TELLE QUELLE quand aucun pont n'est étiré : le cas ordinaire ne copie rien.
+ *  TELLE QUELLE quand aucun pont n'est retiré : le cas ordinaire ne copie rien.
  */
-export const withoutStretchedDisulfideBonds = ({
-  bonds = [], bridges = [], length = SS_BOND_LENGTH, tolerance = SS_BOND_TOLERANCE,
+export const withoutDisulfideBonds = ({
+  bonds = [], bridges = [], reduced = false,
+  length = SS_BOND_LENGTH, tolerance = SS_BOND_TOLERANCE,
 } = {}) => {
   const list = Array.isArray(bonds) ? bonds : Array.from(bonds || []);
   const drop = new Set();
-  Array.from(bridges || [])
-    .filter((b) => isStretchedDisulfideBond(b, { length, tolerance }))
+  unheldDisulfideBridges({ bridges, reduced, length, tolerance })
     .forEach((b) => drop.add(b.atomIndex1 < b.atomIndex2
       ? `${b.atomIndex1}-${b.atomIndex2}` : `${b.atomIndex2}-${b.atomIndex1}`));
   if (!drop.size) return list;

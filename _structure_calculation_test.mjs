@@ -86,10 +86,11 @@ import {
 } from './src/utils/forceFieldKcal.js';
 import { ramaGapOf as ramaGapOfFromPlot } from './src/utils/ramachandran.js';
 /* ⚭ Le pont disulfure d'une Cys lointaine : sa liaison SG–SG n'est pas une liaison
-   covalente, et c'est `withoutStretchedDisulfideBonds` qui la retire du graphe des
-   moteurs (§8). */
+   covalente, et c'est `withoutDisulfideBonds` qui la retire du graphe des
+   moteurs (§8) — TOUS les ponts quand la forme est RÉDUITE (la case ⚭ « dissolve S–S »
+   des fenêtres 🧬 et 🌡 MD), les seuls ÉTIRÉS sinon. */
 import {
-  SS_BOND_LENGTH, SS_BOND_TOLERANCE, withoutStretchedDisulfideBonds,
+  SS_BOND_LENGTH, SS_BOND_TOLERANCE, withoutDisulfideBonds,
 } from './src/utils/disulfideFold.js';
 
 let passed = 0;
@@ -1549,6 +1550,29 @@ for (const label of ['Molecular dynamics temperature, in kelvins',
 }
 has(mdWindow, '= {mdTime.ps} ps ({mdTime.ns} ns)',
   '⚠ …et la fenêtre AFFICHE sa durée (pas × dt), calculée par le module');
+/* ⚭ LA CASE DE LA FORME DES PONTS — la demande de cette session : « in MD and structure
+   calculation of the viewer add a tick allowing to dissolve disulfide bonds defined in the
+   sequence without having to lose their definition in the sequence. … since the structure
+   calculation would be impaired with disulfides on, I need to have the reduced form, bring
+   close the cysteines and then oxidize them in the final step. » Elle est demandée DANS LES
+   DEUX fenêtres, et c'est le MÊME état : un seul graphe pour les quatre gestes du champ,
+   donc le calcul de structure ne peut pas conduire une molécule oxydée pendant que le ▶ MD
+   en conduit une réduite. Le JSX est écrit UNE fois (`renderDisulfideReducedTick`), rendu
+   deux fois — et il ne cite AUCUN état de l'une ou l'autre des deux dynamiques. */
+has(mdWindow, '{renderDisulfideReducedTick()}',
+  '⚠ la fenêtre 🌡 MD porte la case « ⚭ dissolve S–S » (la demande la nomme en premier)');
+has(calcPanel, '{renderDisulfideReducedTick()}',
+  '…et le panneau 🧬 la porte aussi (« and structure calculation »)');
+eq(VIEW.split('{renderDisulfideReducedTick()}').length - 1, 2,
+  '⚠ …et elle n’est rendue que là : DEUX fenêtres, UN état (aucune troisième copie, aucun second état)');
+has(VIEW, 'aria-label="Dissolve the disulphide bonds of the sequence for the force field"',
+  '…nommée pour ce qu’elle fait (le graphe de la séquence, pour le champ de forces)');
+has(VIEW, 'const [ssReduced, setSsReduced] = useState(false);',
+  '⚠ …un seul état, et DÉFAUT OXYDÉ : aucune physique ne change tant que la case n’est pas cochée');
+has(mdWindow, 'T · 💧 solvent · steps',
+  '…la rangée garde ses réglages de dynamique (le résumé de l’en-tête est intact)');
+ok(mdWindow.indexOf('{renderDisulfideReducedTick()}') > mdWindow.indexOf('aria-label="Use the distance constraints defined in Structure calculation"'),
+  '…et la case des ponts vient APRÈS la 📏 : les réglages de cette dynamique d’abord, la forme des ponts pour le champ ensuite');
 for (const label of ['Annealing temperature steps', 'Images per annealing temperature step']) {
   has(calcPanel, `aria-label="${label}"`,
     `⚠ …et « ${label} » reste au panneau 🧬 (c’est un paramètre des départs)`);
@@ -1887,8 +1911,8 @@ has(VIEW, 'const calcInertCount = () => calcUsableRows().filter((r) => calcWeigh
   '…et le nombre de lignes en pause, pour que les rapports puissent le DIRE');
 has(VIEW, 'const calcRestraintTermsOf = (list) => Array.from(list || []).map((r) => ({',
   '…et UNE seule fabrique de contraintes (i, j, target, weight) pour les quatre gestes');
-has(VIEW, '})).concat(stretchedDisulfideTermsOf({ bridges: disulfideDrawnRef.current.bonds }));',
-  '⚠ …et elle y ajoute les PONTS DISULFURE ÉTIRÉS (un terme de distance visé à 2.05 Å : la liaison du graphe est une famille FIGÉE du champ, donc aucun geste ne les refermerait — voir utils/disulfideFold.js)');
+has(VIEW, '})).concat(disulfideTermsOf({\n  bridges: disulfideDrawnRef.current.bonds, reduced: ssReducedRef.current,\n}));',
+  '⚠ …et elle y ajoute les PONTS DISULFURE ÉTIRÉS (un terme de distance visé à 2.05 Å : la liaison du graphe est une famille FIGÉE du champ, donc aucun geste ne les refermerait — voir utils/disulfideFold.js), et AUCUN quand la forme est réduite (la case ⚭ « dissolve S–S » : le module reçoit le booléen)');
 has(VIEW, 'const disulfideConductedNote = () => {',
   '…et la phrase qui DIT qu’un pont étiré est conduit (le rapport compterait sinon une distance de plus que la table)');
 eq(VIEW.split('disulfideConductedNote()}').length - 1, 3,
@@ -1908,7 +1932,7 @@ has(VIEW, 'weight: Number.isFinite(wv) && wv >= 0 ? wv : null,',
    `_viewer_render_smoke_test.mjs`, et la leçon est répétée ici pour qu'on ne la
    réapprenne pas deux fois. */
 for (const state of ['mdTemp', 'mdSteps', 'mdDt', 'mdImage', 'mdSolvent', 'mdFreeOmega',
-  'calcMdHot', 'calcMdCold', 'mdUseRestraints']) {
+  'calcMdHot', 'calcMdCold', 'mdUseRestraints', 'ssReduced']) {
   ok(VIEW.indexOf(`const [${state}, set`) < VIEW.indexOf("const CALC_STORE_KEY = 'labViewerCalcState';"),
     `⚠ …et ${state} est déclaré AVANT l’effet 💾 qui le lit dans ses dépendances (aucune TDZ au rendu)`);
 }
@@ -2112,8 +2136,10 @@ has(runSrc, 'setCalcResult({ ...family, comp, structure, moleculeKey })',
       qu'NGL dessine le pont referme le graphe sur un CYCLE, donc toutes les charnières du
       segment entre les deux Cys passent pour des liaisons de cycle et AUCUN canal ne peut
       plus rapprocher les deux Sγ. Le graphe des moteurs est celui de
-      `withoutStretchedDisulfideBonds` (les ponts ÉTIRÉS seulement : un pont fermé garde
-      sa vraie liaison S–S). */
+      `withoutDisulfideBonds` (les ponts ÉTIRÉS seulement : un pont fermé garde
+      sa vraie liaison S–S) — et, en forme RÉDUITE (la case ⚭ « dissolve S–S » des fenêtres
+      🧬 et 🌡 MD), TOUS les ponts : même un pont FERMÉ sort du graphe, donc son macrocycle
+      s'ouvre ; et plus aucun terme de distance ne le rappelle (`disulfideTermsOf`). */
 const spanOf = (geo, i, j) => Math.hypot(
   geo.positions[i * 3] - geo.positions[j * 3],
   geo.positions[i * 3 + 1] - geo.positions[j * 3 + 1],
@@ -2129,18 +2155,33 @@ const bridgeSpan = spanOf(bridged, 0, 7);
 ok(Math.abs(bridgeSpan - SS_BOND_LENGTH) > SS_BOND_TOLERANCE,
   `le pont déclaré est ÉTIRÉ : les deux Sγ sont à ${bridgeSpan.toFixed(2)} Å, hors de la fenêtre de liaison`);
 const bridge = { atomIndex1: 0, atomIndex2: 7, distance: bridgeSpan };
-const engineBonds = withoutStretchedDisulfideBonds({ bonds: bridged.bonds, bridges: [bridge] });
+const engineBonds = withoutDisulfideBonds({ bonds: bridged.bonds, bridges: [bridge] });
 eq(engineBonds.length, bridged.bonds.length - 1,
   '⚠ la fausse liaison d’un pont ÉTIRÉ est RETIRÉE du graphe des moteurs (une seule arête, rien d’autre)');
 eq(rotatableBondsOf({ elements: bridged.elements, bonds: bridged.bonds, atomCount: 8 }).count, 0,
   '⚠ avec elle, la chaîne entière est UN CYCLE : aucune charnière — donc aucun canal ne peut rapprocher les deux Sγ');
 eq(rotatableBondsOf({ elements: bridged.elements, bonds: engineBonds, atomCount: 8 }).count, 5,
   '…sans elle, les cinq charnières de la chaîne redeviennent des canaux');
-const closedBridge = withoutStretchedDisulfideBonds({
+const closedBridge = withoutDisulfideBonds({
   bonds: bridged.bonds, bridges: [{ atomIndex1: 0, atomIndex2: 7, distance: SS_BOND_LENGTH }],
 });
 ok(closedBridge === bridged.bonds,
   '⚠ un pont FERMÉ garde sa liaison S–S (le cas ordinaire rend la liste reçue telle quelle, sans même la copier)');
+/* ⚭ …ET LA FORME RÉDUITE RETIRE CE PONT FERMÉ-LÀ — la demande de cette session :
+   « in MD and structure calculation of the viewer add a tick allowing to dissolve disulfide
+   bonds defined in the sequence without having to lose their definition in the sequence. …
+   since the structure calculation would be impaired with disulfides on, I need to have the
+   reduced form. » La molécule que le §8 vient de figer (la chaîne entière est UN CYCLE) est
+   donc EXACTEMENT celle qui redevient libre : les mêmes cinq charnières, la même liste
+   rendue par le module, sous le seul booléen de la case. */
+const reducedBonds = withoutDisulfideBonds({
+  bonds: bridged.bonds, bridges: [{ atomIndex1: 0, atomIndex2: 7, distance: SS_BOND_LENGTH }],
+  reduced: true,
+});
+eq(reducedBonds.length, bridged.bonds.length - 1,
+  '⚠ forme RÉDUITE : la liaison S–S d’un pont FERMÉ sort AUSSI du graphe des moteurs (même arête, même filtre)');
+eq(rotatableBondsOf({ elements: bridged.elements, bonds: reducedBonds, atomCount: 8 }).count, 5,
+  '…donc le cycle s’ouvre et les cinq charnières redeviennent des canaux : la molécule est bien RÉDUITE');
 /* LE GESTE, EXÉCUTÉ : la même distance demandée (3 Å, plus courte que le pont), sur les
    deux graphes. Avec la fausse liaison, la molécule ne bouge pas d’un chiffre. */
 const driveOn = (bondList) => structureCalculationOf({
@@ -2196,12 +2237,12 @@ ok(topRow.anneal !== null && topRow.anneal.steps > 0,
   '⚠ …et le RECUIT est transporté : le rapport ne peut plus dire « recuit OFF » sur un recuit qui a tourné');
 /* LE GRAPHE DES MOTEURS, DANS LE VIEWER — les QUATRE gestes du champ lisent le même, et
    c'est la fonction du module qui le fabrique (aucun geste ne se bricole un graphe à lui). */
-has(VIEW, 'withoutStretchedDisulfideBonds,',
-  '⚠ le viewer importe le filtre des ponts étirés (le module du pont, pas une seconde règle)');
+has(VIEW, 'withoutDisulfideBonds,',
+  '⚠ le viewer importe le filtre des ponts (le module du pont, pas une seconde règle)');
 has(VIEW, 'const calcEngineGeometry = () => {',
   '…et les gestes du champ lisent un graphe à part (`calcEngineGeometry`)');
-has(VIEW, 'bonds: now.geom.bonds, bridges: disulfideDrawnRef.current.bonds,',
-  '…fabriqué avec les ponts DESSINÉS de l’écran (un pont étiré perd sa fausse longueur, un pont fermé la garde)');
+has(VIEW, 'bonds: now.geom.bonds, bridges: disulfideDrawnRef.current.bonds,\n    reduced: ssReducedRef.current,',
+  '…fabriqué avec les ponts DESSINÉS de l’écran (un pont étiré perd sa fausse longueur, un pont fermé la garde — et la case ⚭ « dissolve S–S » les retire TOUS)');
 eq(VIEW.split('calcEngineGeometry();').length - 1, 5,
   '⚠ …et les QUATRE gestes — ▶ Run, ▶ MD, ⚒ Minimise, ⟳ Energy — le lisent (aucun ne garde la molécule brute),'
   + ' PLUS l’aperçu de la boîte d’eau explicite (le `useEffect` de cette session : il lit le MÊME graphe, donc'
