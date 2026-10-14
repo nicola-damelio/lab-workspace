@@ -108,16 +108,21 @@ export const DatasetMembershipMatrix = ({ datasets = [], operators = [], onSaveA
     if (busy || !draft.size || typeof onSaveAccess !== 'function') return;
     setBusy(true);
     const patches = [...draft.entries()].map(([id, access]) => ({ id, access }));
-    let done = 0;
-    for (const patch of patches) {
-      try {
-        // eslint-disable-next-line no-await-in-loop
-        await onSaveAccess(patch.id, patch.access);
-        done += 1;
-      } catch (e) {
-        console.error('Dataset membership save error:', e && e.message);
-      }
-    }
+    /* Les datasets sont des documents INDÉPENDANTS : on les enregistre EN
+       PARALLÈLE. Les écrire l'un après l'autre faisait attendre un aller-retour
+       réseau PAR dataset — c'était l'attente qui « n'en finissait pas » pour un
+       seul geste. Un échec est compté et DIT ; les autres aboutissent quand même
+       (chaque écriture met déjà l'écran à jour, voir saveDatasetAccess). */
+    const results = await Promise.all(patches.map((patch) =>
+      Promise.resolve()
+        .then(() => onSaveAccess(patch.id, patch.access))
+        .then(() => true)
+        .catch((e) => {
+          console.error('Dataset membership save error:', e && e.message);
+          return false;
+        })
+    ));
+    const done = results.filter(Boolean).length;
     setBusy(false);
     setDraft(new Map());
     setNote(done === patches.length

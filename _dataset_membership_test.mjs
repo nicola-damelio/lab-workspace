@@ -149,7 +149,8 @@ has(APP, 'const showTeamPanel = currentUser',
 has(APP, '{showTeamPanel && (', 'le panneau est bien monté dans la page d’accueil');
 has(APP, 'const loadTeamPersonnel = useCallback(async () => {',
   'les fiches des bases d’administration sont lues pour la liaison compte ↔ fiche');
-has(MATRIX, 'await onSaveAccess(patch.id, patch.access);', 'la matrice n’écrit que les datasets modifiés');
+has(MATRIX, '.then(() => onSaveAccess(patch.id, patch.access))',
+  'la matrice n’écrit que les datasets modifiés (les patches du brouillon)');
 has(MATRIX, "datasetsOfUser(withDraft, { name: op.name, role: 'user' })",
   'chaque ligne annonce le nombre de datasets que la personne VERRA (la même règle que l’application)');
 has(MATRIX, 'unknownMembersOf({ ...dset, access }, operators)',

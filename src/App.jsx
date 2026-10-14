@@ -2128,14 +2128,21 @@ if (customType === 'dosy') {
 
   /** La liste À ÉCRIRE, relue depuis le document partagé : rien de ce qu'un
    *  collègue a créé ailleurs ne peut disparaître du fait de cet enregistrement. */
-  const guardDistantExperiments = async (list) => {
-    const datasetId = currentDatasetIdRef.current;
-    if (!datasetId) return list;
+  /* `opts.datasetId` — l'enregistrement qui part en QUITTANT une base (voir
+     `saveLeavingDataset`) fige ici l'identifiant de la base quittée : au moment
+     où le réseau répond, la base ouverte n'est plus forcément la sienne.
+     `opts.applyToScreen: false` — ce même enregistrement ne doit PAS verser les
+     expériences rattrapées dans la base que l'utilisateur regarde maintenant (il
+     a déjà changé de page). La MÉMOIRE, elle, est toujours écrite : c'est elle
+     qui protège les enregistrements suivants. */
+  const guardDistantExperiments = async (list, { datasetId = null, applyToScreen = true } = {}) => {
+    const targetId = datasetId || currentDatasetIdRef.current;
+    if (!targetId) return list;
     const forget = voluntaryForgetRef.current;
-    if (forget.datasetId === datasetId && Date.now() - forget.at < DISTANT_GUARD_SILENCE_MS) return list;
-    const distant = await readDistantExperiments(datasetId);
+    if (forget.datasetId === targetId && Date.now() - forget.at < DISTANT_GUARD_SILENCE_MS) return list;
+    const distant = await readDistantExperiments(targetId);
     if (!Array.isArray(distant) || !distant.length) return list;
-    const { deletions } = experimentRecordsOf(datasetId);
+    const { deletions } = experimentRecordsOf(targetId);
     const out = protectDistantDrops(distant, list, deletions);
     if (!out.rescued.length) return out.tests;
     try { console.warn('[experiments] distant write guard:', out.rescued.map((t) => t.name || t.id)); } catch { /* ignore */ }
@@ -2144,8 +2151,8 @@ if (customType === 'dosy') {
       title: '⚠ Experiments from another workstation were about to disappear',
       message: describeDistantRescue(out.rescued)
     });
-    setReactTests(out.tests);
-    rememberExperiments(datasetId, out.tests);
+    if (applyToScreen) setReactTests(out.tests);
+    rememberExperiments(targetId, out.tests);
     return out.tests;
   };
 
@@ -3766,6 +3773,23 @@ const saveTimeoutRef = useRef(null);
    l'autre fenêtre (ou l'autre poste) voyait encore l'état d'AVANT (une
    condition supprimée qui « revient », un fichier ajouté qui manque). */
 const pendingDatasetSaveRef = useRef(null);
+/* ── QUI A LE DROIT D'ÉCRIRE EN DERNIER (par dataset) ───────────────────────
+   Un enregistrement peut désormais CONTINUER APRÈS qu'on a quitté la base (voir
+   `saveLeavingDataset`) : s'il aboutissait après une écriture plus récente du
+   même dataset — la base a été rouverte et retapée pendant son attente réseau —
+   il remettrait une version plus VIEILLE en ligne. Chaque écriture prend donc un
+   ticket, et seul le dernier ticket en date écrit ; l'écriture dépassée se tait
+   au lieu d'écraser. Le compteur est PAR dataset : écrire ailleurs ne bloque
+   jamais l'écriture d'ici. */
+const writeTicketRef = useRef(new Map()); // datasetId → numéro du dernier ticket posé
+const takeWriteTicket = (datasetId) => {
+  const key = String(datasetId);
+  const nextTicket = (writeTicketRef.current.get(key) || 0) + 1;
+  writeTicketRef.current.set(key, nextTicket);
+  return nextTicket;
+};
+const holdsLatestWriteTicket = (datasetId, ticket) =>
+  writeTicketRef.current.get(String(datasetId)) === ticket;
 /* `stripOversizedDataUrls` et `cloudProjectsPayload` vivent AU NIVEAU DU MODULE
    (près du haut de ce fichier) — voir la note « ⛔ UNE DEP-ARRAY EST LUE PENDANT
    LE RENDU » : les lire depuis le corps d'`App` AVANT leur déclaration faisait
@@ -4015,6 +4039,10 @@ useEffect(() => {
   if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
   const runSave = async () => {
     pendingDatasetSaveRef.current = null;
+    /* Le ticket de cette écriture : une écriture d'arrière-plan plus ancienne
+       (dataset quitté juste avant, voir `saveLeavingDataset`) devient caduque et
+       se taira au lieu d'écraser celle-ci. */
+    const writeTicket = takeWriteTicket(currentDatasetId);
     try {
       const rawData = { ...latestDataRef.current, ...cloudProjectsPayload() };
       /* ⛔ LE VERROU DES EXPÉRIENCES (voir guardExperimentsForWrite) : la liste
@@ -4045,6 +4073,7 @@ useEffect(() => {
          (_workspace/datasets/<id>.json) : c'est ce qui permet de le rouvrir sur
          un autre poste, ou quand Firestore ne répond pas. Best-effort : la
          sauvegarde Firestore et l'instantané HTML restent la référence. */
+      if (!holdsLatestWriteTicket(currentDatasetId, writeTicket)) return;
       mirrorDatasetContent(currentDatasetId, updatedPayload);
       /* LE DRIVE EST LE MIROIR COMPLET DU DATASET : le contenu du dataset, ses
          projets, ses expériences (instance/section/sous-section), ses storages,
@@ -4153,6 +4182,10 @@ useEffect(() => {
     setSaveStatus('saving');
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     saveTimeoutRef.current = setTimeout(async () => {
+      /* Même ticket que l'enregistrement scientifique : une écriture
+         d'arrière-plan dépassée (dataset quitté) ne peut pas atterrir après
+         celle-ci. */
+      const writeTicket = takeWriteTicket(currentDatasetId);
       try {
         const updatedPayload = {
           kind: 'administration',
@@ -4165,6 +4198,7 @@ useEffect(() => {
           payload: LZString.compressToUTF16(JSON.stringify({ administration: adminContent })),
           isCompressed: true
         };
+        if (!holdsLatestWriteTicket(currentDatasetId, writeTicket)) return;
         mirrorDatasetContent(currentDatasetId, updatedPayload);
         if (db) {
           const docRef = db
@@ -5175,21 +5209,61 @@ const createNewDataset = async (kind = 'scientific') => {
     }
   };
 
-const handleBackToExplorer = async () => {
-  if (currentDatasetId) {
-    const isAdmin = isAdministrationKind(activeDatasetKind);
-    setSaveStatus('saving');
-    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+/* ── QUITTER UN DATASET : LA PAGE PART TOUT DE SUITE, L'ÉCRITURE SUIT ───────
+   Le ◀ de la barre latérale ne changeait de page QU'UNE FOIS l'écriture finie :
+   il fallait rester devant un écran immobile le temps d'une lecture Firestore
+   (le verrou des expériences) puis d'une compression. Rien n'oblige à cette
+   attente : tout ce qu'il faut écrire est déjà en mémoire AU CLIC. La page
+   d'accueil s'affiche donc dans le même clic, et l'écriture continue DERRIÈRE —
+   la barre latérale continue de la raconter (« Saving… », puis l'heure, ou
+   l'erreur), exactement comme pendant l'enregistrement automatique.
+
+   Le corps ci-dessous est celui de l'ancien `handleBackToExplorer`, à quatre
+   choses près :
+     · l'instantANÉ est pris ICI, tout de suite (voir plus bas) ;
+     · l'identifiant du dataset et son TYPE sont FIGÉS au clic — le réseau peut
+       répondre alors qu'une AUTRE base est ouverte (les titres et le contenu
+       d'administration, eux, viennent du rendu du clic : c'est ce que voit
+       cette fonction) ;
+     · le verrou des expériences ne remet plus l'écran à jour (voir
+       `guardDistantExperiments`) : l'utilisateur est déjà ailleurs ;
+     · la compression (lourde) ne commence qu'après avoir rendu la main au
+       navigateur, pour que la page d'arrivée se peigne d'abord. */
+const saveLeavingDataset = (datasetId, isAdmin) => {
+  setSaveStatus('saving');
+  if (saveTimeoutRef.current) {
+    clearTimeout(saveTimeoutRef.current);
+    saveTimeoutRef.current = null;
+  }
+  /* Ce qui attendait dans le minuteur d'enregistrement automatique vient d'être
+     remplacé par ce qui part d'ici : il ne doit plus se croire en attente (sinon
+     la fermeture de l'onglet enverrait deux fois la même base). */
+  pendingDatasetSaveRef.current = null;
+  /* …et la copie du dataset repart sur le Drive sans son délai : c'est elle qui
+     permet de rouvrir la base sur un autre poste. */
+  try { datasetCopyMirrorRef.current.flush(); } catch { /* best-effort */ }
+  const writeTicket = takeWriteTicket(datasetId);
+
+  /* 🔴 L'INSTANTANÉ EST PRIS MAINTENANT (tout vit en mémoire, et
+     `cloudProjectsPayload` ne lit qu'un cache local synchrone) : ce qui part
+     est l'état du CLIC, jamais celui d'une page déjà quittée. */
+  const rawData = isAdmin ? null : { ...latestDataRef.current, ...cloudProjectsPayload() };
+  /* Le MÊME verrou qu'à l'enregistrement automatique (voir
+     guardExperimentsForWrite) : quitter un dataset ne peut pas perdre une
+     expérience non supprimée. Une base d'administration, elle, ne porte pas
+     d'expériences : le verrou n'a rien à y faire. */
+  if (!isAdmin) rawData.tests = guardExperimentsForWrite(rawData.tests);
+
+  (async () => {
     try {
-      const rawData = { ...latestDataRef.current, ...cloudProjectsPayload() };
-      /* Le MÊME verrou qu'à l'enregistrement automatique (voir
-         guardExperimentsForWrite) : quitter un dataset ne peut pas perdre une
-         expérience non supprimée. Une base d'administration, elle, ne porte pas
-         d'expériences : le verrou n'a rien à y faire. */
-      if (!isAdmin) rawData.tests = guardExperimentsForWrite(rawData.tests);
+      /* On rend la main au navigateur AVANT la compression : la page d'arrivée
+         se peint pendant que le travail commence, jamais après. */
+      await new Promise((resolve) => { setTimeout(resolve, 0); });
       /* …et la copie PARTAGÉE (voir guardDistantExperiments) : quitter une base
-         ne peut pas effacer ce qu'un collègue a créé ailleurs entre-temps. */
-      if (!isAdmin) rawData.tests = await guardDistantExperiments(rawData.tests);
+         ne peut pas effacer ce qu'un collègue a créé ailleurs entre-temps. Le
+         dataset est CELUI QU'ON VIENT DE QUITTER, et l'écran ne doit pas être
+         retouché : l'utilisateur regarde déjà autre chose. */
+      if (!isAdmin) rawData.tests = await guardDistantExperiments(rawData.tests, { datasetId, applyToScreen: false });
       const compressedPayload = isAdmin ? '' : compressDatasetForSave(rawData);
       
       const updatedPayload = isAdmin
@@ -5216,22 +5290,26 @@ const handleBackToExplorer = async () => {
             isCompressed: true,
             kind: 'scientific'
           };
-      mirrorDatasetContent(currentDatasetId, updatedPayload);
+      /* Une écriture plus récente de la MÊME base (rouverte et retapée pendant
+         notre attente réseau) a la priorité : la nôtre se tait au lieu de
+         remettre une version plus vieille en ligne. */
+      if (!holdsLatestWriteTicket(datasetId, writeTicket)) return;
+      mirrorDatasetContent(datasetId, updatedPayload);
       if (db) {
         await db
           .collection(`artifacts/${appId}/public/data/datasets`)
-          .doc(currentDatasetId)
+          .doc(datasetId)
           .set(updatedPayload, { merge: true });
       } else {
         let stored = [];
         try {
           stored = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]');
         } catch {}
-        const existingIdx = stored.findIndex((e) => e.id === currentDatasetId);
+        const existingIdx = stored.findIndex((e) => e.id === datasetId);
         if (existingIdx >= 0) {
           stored[existingIdx] = { ...stored[existingIdx], ...updatedPayload };
         } else {
-          stored.push({ id: currentDatasetId, ...updatedPayload });
+          stored.push({ id: datasetId, ...updatedPayload });
         }
         localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(stored));
         setDatasetsList(
@@ -5239,10 +5317,24 @@ const handleBackToExplorer = async () => {
         );
       }
     } catch (e) {
+      /* L'échec se DIT dans la barre latérale (pastille rouge + message) : c'est
+         le prix de ne pas attendre — au moment du clic, l'écriture n'avait pas
+         commencé. Ce qui est déjà écrit reste écrit, et rouvrir la base fait
+         repartir l'enregistrement automatique. */
       console.error('Back to explorer save error:', e);
       setSaveStatus('error');
       setSaveErrorMsg(e.message || String(e));
     }
+  })();
+};
+
+/* ── LE BOUTON ◀ : LA NAVIGATION, SANS ATTENTE ──────────────────────────────
+   On quitte la base et on affiche la liste des datasets dans LE MÊME clic ; la
+   sauvegarde de la base quittée part derrière (voir `saveLeavingDataset`). Rien
+   n'est perdu au passage : l'instantané a été pris avant la navigation. */
+const handleBackToExplorer = () => {
+  if (currentDatasetId) {
+    saveLeavingDataset(String(currentDatasetId), isAdministrationKind(activeDatasetKind));
   }
   window.history.pushState({}, '', window.location.pathname);
   setAppView('explorer');
@@ -5747,12 +5839,20 @@ const openDataset = (dset, { keepPlace = false } = {}) => {
       onConfirm: async () => {
         setAllVisibleBusy(true);
         try {
-          for (const d of restrictedList) {
-            await saveDatasetAccess(String(d.id), {
+          /* Les datasets sont des documents INDÉPENDANTS : on les écrit EN
+             PARALLÈLE. Les enchaîner faisait attendre un aller-retour réseau PAR
+             dataset pour un seul geste (l'attente qui « n'en finit pas »). Une
+             écriture qui échoue n'empêche plus les autres : `saveDatasetAccess`
+             met déjà l'écran et le cache local à jour, donc la liste reflète
+             l'état voulu et la tentative suivante repart de là. */
+          await Promise.all(restrictedList.map((d) => Promise.resolve()
+            .then(() => saveDatasetAccess(String(d.id), {
               restricted: false,
               memberNames: datasetAccessOf(d).memberNames
-            });
-          }
+            }))
+            .catch((e) => {
+              console.warn('Could not make a dataset team-visible:', e && e.message);
+            })));
         } finally {
           setAllVisibleBusy(false);
         }
@@ -6962,6 +7062,26 @@ const openDataset = (dset, { keepPlace = false } = {}) => {
                   )}
                 </div>
               )}
+              {/* ── UNE ÉCRITURE QUI CONTINUE APRÈS AVOIR QUITTÉ UNE BASE SE DIT ICI ──
+                  L'état de sauvegarde s'affiche d'ordinaire dans la barre latérale
+                  (« Saving… », puis l'heure ou l'erreur) — mais cette barre
+                  appartient à la page d'un dataset, et l'on est sur la page
+                  d'accueil : sans ce bandeau, la sauvegarde d'arrière-plan serait
+                  INVISIBLE et son échec MUET (voir saveLeavingDataset). */}
+              {saveStatus === 'saving' && (
+                <div className="mt-4 flex items-center gap-2 text-xs font-bold text-blue-700 bg-blue-50 border border-blue-200 rounded-xl px-3 py-2">
+                  <span className="animate-pulse">💾</span>
+                  <span>Enregistrement de la base que vous venez de quitter… vous pouvez continuer, rien n’est perdu.</span>
+                </div>
+              )}
+              {saveStatus === 'error' && saveErrorMsg && (
+                <div className="mt-4 flex items-start gap-2 text-xs font-bold text-red-700 bg-red-50 border border-red-200 rounded-xl px-3 py-2">
+                  <span>⚠️</span>
+                  <span>L’enregistrement de la dernière base n’a pas abouti : {saveErrorMsg} — rouvrez la base pour réessayer.</span>
+                </div>
+              )}
+
+
             </div>
 
             {/* Recent Datasets — hidden from unauthenticated users when scientists are configured */}

@@ -93,21 +93,25 @@ has(APP, 'protectDistantDrops, describeDistantRescue,',
   'App.jsx importe le verrou à distance (une règle non importée ne répare rien)');
 has(APP, 'const out = protectDistantDrops(distant, list, deletions);',
   'la liste écrite est corrigée avec la copie PARTAGÉE');
-has(APP, 'const guardDistantExperiments = async (list) => {',
-  'un seul point d’entrée pour ce verrou');
+has(APP, 'const guardDistantExperiments = async (list, { datasetId = null, applyToScreen = true } = {}) => {',
+  'un seul point d’entrée pour ce verrou — qui sait POUR QUEL dataset il relit, et s’il doit toucher l’écran');
 has(APP, 'const readDistantExperiments = async (datasetId) => {',
   '…et une seule relecture, isolée du reste');
 has(APP, 'LZString.decompressFromUTF16(data.payload)',
   'la copie relue est décompressée comme partout ailleurs (même format de payload)');
 has(APP, "console.warn('[experiments] shared copy unreadable before writing",
   'une lecture impossible est DITE et ne bloque pas la sauvegarde (le verrou local reste le filet)');
-eq((APP.match(/= await guardDistantExperiments\(rawData\.tests\);/g) || []).length, 2,
+eq((APP.match(/guardDistantExperiments\(rawData\.tests/g) || []).length, 2,
   'les DEUX points d’écriture du payload (enregistrement automatique ET retour à l’explorateur) passent par le verrou');
+eq((APP.match(/= await guardDistantExperiments\(rawData\.tests\);/g) || []).length, 1,
+  'l’enregistrement automatique garde le dataset OUVERT : identifiant courant, écran remis à jour');
+has(APP, 'if (!isAdmin) rawData.tests = await guardDistantExperiments(rawData.tests, { datasetId, applyToScreen: false });',
+  'la sortie du dataset, elle, FIGE l’identifiant quitté et ne retouche plus l’écran (on est déjà ailleurs)');
 has(APP, 'voluntaryForgetRef.current = { datasetId: id, at: Date.now() };',
   'un geste qui a le droit d’écarter (♻️ Replace, undo/redo) désarme le verrou à distance');
 has(APP, 'const DISTANT_GUARD_SILENCE_MS = 10000;',
   '…pour une durée explicite et courte (le temps que l’écriture passe)');
-has(APP, 'if (forget.datasetId === datasetId && Date.now() - forget.at < DISTANT_GUARD_SILENCE_MS) return list;',
+has(APP, 'if (forget.datasetId === targetId && Date.now() - forget.at < DISTANT_GUARD_SILENCE_MS) return list;',
   'le silence ne concerne que le dataset concerné');
 lacks(APP, 'await readDatasetCopy(datasetId)',
   'le verrou à distance ne lit PAS la copie du Drive (une copie en retard ferait plus de mal que de bien)');
