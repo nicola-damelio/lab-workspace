@@ -1,0 +1,33 @@
+# Reprise lue : _recover/GEC-UPJV-projects_774488_experiences-retrouvees_2026-10-13.json
+   12 expérience(s) · dataset — · « GEC-UPJV-projects »
+   • « pdb_Bad_BCL-XL »  id=t17915013096201399  instance 2BZW  Activity  projet(s) BadH  enregistrée 
+   • « pdb_Bcl-XL_Bid »  id=t17915001326217901  instance 4QVE  Activity  projet(s) BidH  enregistrée 
+   • « pdb_CDK2_CyclinA »  id=t17915016474816788  instance 5IF1  Activity  projet(s) cyclinA_H  enregistrée 
+   • « pdb_Mdm2_p53 »  id=t17914952328471224  instance 3LNZ  Activity  projet(s) p53H  enregistrée 
+   • « pdb_PD1_PDL1 »  id=t17915023284364463  instance 4ZQK  Activity  projet(s) PD1-PDL1  enregistrée 
+   • « Test 84 »  id=t17918099728805139  instance instance1  Blind Docking  projet(s) NATURAL ARSENAL Antibiotics  enregistrée 
+   • « Test 85 »  id=t17915002806849126  instance New Instance 2  Activity  projet(s) BidH  enregistrée 
+   • « Test 85 »  id=t1791811075020906  instance instance1  Blind Docking  projet(s) NATURAL ARSENAL Antibiotics  enregistrée 
+   • « Test 86 »  id=t17918122680048458  instance instance1  Blind Docking  projet(s) NATURAL ARSENAL Antibiotics  enregistrée 
+   • « Test 89 »  id=t17917933668194158  instance instance1  Activity  projet(s) BidH  enregistrée 
+   • « Test 90 »  id=t17917966358606832  instance instance1  Blind Docking  projet(s) NATURAL ARSENAL Antibiotics  enregistrée 
+   • « Test 91 »  id=t17917988902732120  instance instance1  Blind Docking  projet(s) NATURAL ARSENAL Antibiotics  enregistrée 
+
+## L’expérience retenue : « Test 86 »
+   id t17918122680048458 · instance instance1 · catégorie Blind Docking · projet(s) NATURAL ARSENAL Antibiotics
+   enregistrée 
+
+## Le fichier écrit (LOCAL — rien n’a été écrit sur le Drive)
+   _recover\RESTORE-Test_86_2026-10-14.json  (16 Ko)
+   comptes déclarés : {"tests":1,"projects":0,"datasetProtocols":0,"storages":0,"molecules":0,"calculationEntries":0,"compoundMeta":0,"nmrExperiments":0}
+   ✔ VALIDÉ par le validateur de l’application
+   relecture : 1 expérience(s) — « Test 86 » (id t17918122680048458)
+   id conservé : oui
+
+## Le geste, dans l’application
+   1. ouvrir le dataset « GEC-UPJV-projects » (celui qui a perdu l’expérience) ;
+   2. 📂 Load HTML → RESTORE-Test_86_2026-10-14.json  (dossier _recover/) ;
+   3. cocher la page « Expériences » seulement — une seule ligne, déjà cochée ;
+   4. valider avec ➕ AJOUT (Add), jamais ♻️ REMPLACEMENT.
+   → l’expérience revient avec son id d’origine, et sa suppression locale est levée ;
+     le dossier de son projet sur le Drive la reconnaît donc à nouveau.

@@ -118,6 +118,13 @@ import {
   SS_BOND_LENGTH, SS_BOND_TOLERANCE, stretchedDisulfideTermsOf,
   withoutStretchedDisulfideBonds,
 } from '../utils/disulfideFold';
+// ⚭ …ET LA MÊME DÉFINITION, VERS LA TABLE DES DISTANCES : le bouton
+// « ⚭ Disulfides → distances » du panneau 🧬 traduit les ponts déclarés dans
+// « Cysteine states » de la page (`cysDisulfides`, des POSITIONS DE SÉQUENCE) en
+// lignes de la table du calcul, à SS_BOND_LENGTH (2.05 Å). La correspondance
+// séquence ↔ structure est celle du module pur (position + décalage de la
+// condition, utils/disulfideRestraints.js) : elle n'est pas réécrite ici.
+import { disulfidePairsOf, disulfideRestraintsOf } from '../utils/disulfideRestraints';
 
 
 import { readXtcFrames, countXtcFrames, countXtcFramesInFile } from '../utils/xtcDecoder';
@@ -7720,6 +7727,13 @@ sequenceStructureExt = null,
 // secondary structure imposed in the “sequence and structure” subsection into
 // dihedral angle constraints. »
 imposedSecondaryStructure = '',
+/* ⚭ LES PONTS DISULFURE DE LA SÉQUENCE, TELS QUE LA PAGE LES DÉCLARE —
+   « Cysteine states » (sous-section « Sequence and structure ») range les paires
+   sur la CONDITION (`cysDisulfides`), en positions de SÉQUENCE 1-based : c'est la
+   définition que le bouton « ⚭ Disulfides → distances » du panneau 🧬 traduit en
+   lignes de la table (voir `calcConvertDisulfides`). La page qui n'en déclare pas
+   n'envoie rien — le bouton dit alors qu'il n'y a rien à convertir. */
+cysDisulfides = [],
 externalLoading = false,
 externalError = null,
 structureFileData,
@@ -12005,6 +12019,95 @@ const calcConvertSecondaryStructure = () => {
     + ` ⚒ Minimise, the ▶ Run and the ⟳ Energy reading of this panel. ${worst}`);
 };
 
+/* ── ⚭ LES PONTS DISULFURE DE LA SÉQUENCE → DES DISTANCES ──────────────────────
+   La demande de cette session, mot pour mot : « Can you add a button “generate
+   distances from disulfide” which generates distance restraints according to the
+   disulfide definition in the sequence? »
+
+   La définition vient de « Cysteine states » de la page (la condition,
+   `cysDisulfides` : des POSITIONS DE SÉQUENCE 1-based — la même clé que
+   `betaSheets`). La conversion est le module PUR
+   (utils/disulfideRestraints.js) : il apparie chaque paire à la molécule À L'ÉCRAN
+   par le numéro d'ORIGINE des résidus — position + `residueOffset`, la règle
+   unique de utils/residueNumbering.js — et rend une ligne par pont, à la longueur
+   de la liaison S–S (SS_BOND_LENGTH, la même constante que le repliement et que
+   l'interrupteur ⚭).
+
+   POURQUOI CE BOUTON EXISTE — le terme AUTOMATIQUE du champ
+   (`stretchedDisulfideTermsOf`) ne conduit qu'un pont que le MODÈLE DESSINE et
+   dont les deux Sγ sont trop loin ; un .pdb chargé ne dessine pas le CONECT SG–SG
+   de la page, donc ses ponts déclarés n'entraient dans aucun geste. Ce que ce
+   bouton écrit, ce sont des lignes de la table ORDINAIRES : ▶ Run, ▶ MD, ⚒
+   Minimise et ⟳ Energy les conduisent comme une ligne tapée, la colonne ⚖ marche,
+   📂/💾 aussi.
+
+   ⚠ UN PONT DÉJÀ DANS LA TABLE N'EST NI DOUBLÉ NI RÉÉCRIT : c'est une ligne de
+   l'utilisateur (sa cible, son poids), elle reste la sienne — le rapport dit
+   combien étaient déjà là. Et un pont dont les deux Sγ ne sont pas sur la molécule
+   est DIT par le module (`missing`), jamais inventé. */
+const calcConvertDisulfides = () => {
+  const declared = disulfidePairsOf(cysDisulfides).pairs;
+  if (!declared.length) {
+    setCalcMsg('✕ No disulphide is declared for this sequence — « Cysteine states », in the “Sequence and'
+      + ' structure” subsection, is where the pairs are defined (they are what this button converts into distances).');
+    return;
+  }
+  const now = calcGeometryNow();
+  if (!now) {
+    setCalcMsg('✕ There is no molecule on screen — load a structure first: the declared pairs are matched to'
+      + ' the Cys of the structure that is DISPLAYED.');
+    return;
+  }
+  const read = disulfideRestraintsOf({
+    pairs: declared, atoms: structureAtomRecords(now.structure), residueOffset,
+  });
+  const plural = (n) => (n === 1 ? '' : 's');
+  if (!read.ok) {
+    setCalcMsg(`✕ ${read.declared} disulphide bond${plural(read.declared)} declared, and not one could be written:`
+      + ` ${read.missing.map((m) => m.say).join(' · ')}. A bridge needs BOTH Sγ on the molecule on screen — load the`
+      + ' model the pairs were defined on, or type the two atoms by hand (➕ or ⌖).');
+    return;
+  }
+  let seq = calcRowSeqRef.current;
+  const existing = new Set(calcRestraints.map((r) => r.key));
+  const added = [];
+  read.rows.forEach((row) => {
+    const key = row.i < row.j ? `${row.i}-${row.j}` : `${row.j}-${row.i}`;
+    if (existing.has(key)) return;
+    seq += 1;
+    existing.add(key);
+    /* LES DEUX ATOMES SONT ÉCRITS DANS LA LIGNE (« CYS 3 SG »), et le libellé suit la
+       règle d'affichage du viewer (`displayResno`) : la ligne se relit donc à la main
+       (elle dit de quels atomes elle parle), et 💾 l'écrit telle quelle. Le texte des
+       cases reste le numéro d'ORIGINE — c'est lui que `calcAtomOfText` relit en
+       premier pour une ligne générée, et c'est le numéro que la structure porte. */
+    const textOf = (i) => `${row.resname[i]} ${row.residue[i]} ${row.name[i]}`.trim();
+    const shownOf = (i) => `${row.resname[i]} ${displayResno(row.residue[i])} ${row.name[i]}`.trim();
+    added.push({
+      key, i: row.i, j: row.j, target: row.target,
+      label: `${shownOf(0)}–${shownOf(1)}`,
+      a: textOf(0), b: textOf(1), la: textOf(0), lb: textOf(1),
+      weight: 1, w: '1', say: '', sayA: '', sayB: '',
+    });
+  });
+  if (!added.length) {
+    setCalcMsg(`✓ ⚭ The ${read.declared} declared disulphide bond${plural(read.declared)}`
+      + ` ${read.declared === 1 ? 'is' : 'are'} already in the table — nothing was added, and none of your lines was`
+      + ' touched (a line of yours keeps its own target and its own ⚖ weight).');
+    return;
+  }
+  calcRowSeqRef.current = seq;
+  const next = [...calcRestraints, ...added]
+    .sort((r, s) => ((r.i ?? 0) - (s.i ?? 0)) || ((r.j ?? 0) - (s.j ?? 0)));
+  setCalcRestraints(next);
+  const already = read.declared - added.length;
+  setCalcMsg(`✓ ⚭ ${added.length} of the ${read.declared} declared disulphide bond${plural(read.declared)} written`
+    + ` into the table at ${read.target} Å (${added.map((r) => r.label).join(' · ')}) — they are ordinary distances now:`
+    + ' ▶ Run, ▶ MD, ⚒ Minimise and ⟳ Energy conduct them, and ⌖ ➕ 💾 📂 see them like any other line.'
+    + `${already > 0 ? ` ${already} already had their line, left exactly as written.` : ''}`
+    + `${read.missing.length ? ` ⚠ ${read.missing.map((m) => m.say).join(' · ')} — those were NOT written.` : ''}`);
+};
+
 
 /* ── 💾 LA LISTE DES DISTANCES DANS UN FICHIER — LA DEMANDE DE CETTE SESSION ────
    « Allow to save/upload from file the distance constraints in the structure
@@ -12308,7 +12411,12 @@ const calcLoadRestraintsFile = (file) => {
    Un atome illisible est DIT sur la ligne, jamais deviné — et une ligne à moitié
    remplie se garde pour la finir plus tard, mais n'est jamais envoyée au module. */
 const CALC_KEY = (s) => String(s == null ? '' : s).toUpperCase().replace(/[^A-Z0-9]/g, '');
-const calcAtomLabel = (rec) => `${rec.resname || ''} ${rec.resno || ''} ${rec.name || ''}`.trim();
+/* ⚠ LE NUMÉRO ÉCRIT EST CELUI QUE L'ÉCRAN MONTRE (`displayResno`, la règle du 🔢 du
+   viewer) — la renumérotation atteint donc la table des distances comme elle
+   atteint la bande de séquence, les étiquettes 3D et la fenêtre du 🔢. Le numéro
+   d'ORIGINE, lui, reste LU par `calcAtomOfText` (qui accepte les deux), donc un
+   fichier de distances écrit avant une renumérotation continue de se résoudre. */
+const calcAtomLabel = (rec) => `${rec.resname || ''} ${rec.resno == null ? '' : displayResno(rec.resno)} ${rec.name || ''}`.trim();
 
 /** LE RÉSIDU QUI PORTE UN ATOME — « ALA 12 », tel que la molécule à l'écran le nomme.
  *  Le rapport de cette session : « The table of dihedral constraints does not report the
@@ -12321,7 +12429,7 @@ const calcResidueLabelOf = (index) => {
   const rec = Number.isInteger(index)
     ? structureAtomRecords(structure).find((r) => r.index === index) : null;
   if (!rec) return index == null ? '—' : `#${index}`;
-  const label = `${rec.resname || ''}${rec.resno != null ? ` ${rec.resno}` : ''}${rec.chainIndex ? ` · ${rec.chainIndex}` : ''}`.trim();
+  const label = `${rec.resname || ''}${rec.resno != null ? ` ${displayResno(rec.resno)}` : ''}${rec.chainIndex ? ` · ${rec.chainIndex}` : ''}`.trim();
   return label || `#${index}`;
 };
 
@@ -12341,9 +12449,25 @@ const calcAtomOfText = (structure, text) => {
     if (rec) return { ok: true, index: i, element: rec.element, label: calcAtomLabel(rec) };
     return { ok: false, say: `this molecule has no atom #${i} (it has ${records.length})` };
   }
-  const hits = records.filter((r) => CALC_KEY(calcAtomLabel(r)) === want
-    || CALC_KEY(`${r.name}${r.resno}`) === want
-    || CALC_KEY(`${r.resname}${r.resno}${r.name}`) === want);
+  /* ⚠ DEUX NUMÉROS SONT ACCEPTÉS, ET CELUI QUE L'ÉCRAN MONTRE PASSE EN PREMIER —
+     la renumérotation 🔢 change le numéro d'un résidu À L'ÉCRAN, donc « CYS 37 SG »
+     doit tomber sur le résidu que la bande de séquence appelle 37 ; mais un fichier
+     de distances écrit AVANT la renumérotation nomme le numéro d'ORIGINE, qui doit
+     continuer de se relire (le rapport historique : « I type “CYS 31 SG” and I get
+     “no atom … named “CYS 1 SG”. It does not see the 1. Mistery. »).
+     ⚠ LES DEUX LISTES NE SONT JAMAIS FONDUES : une renumérotation peut faire
+     coïncider le numéro MONTRÉ d'un résidu avec le numéro d'ORIGINE d'un autre, et
+     une liste fusionnée dirait alors « ce nom désigne 2 atomes » — l'ambiguïté serait
+     fabriquée par la fusion. Le montré est donc essayé seul, et l'origine n'est lu
+     que s'il n'a rien trouvé. */
+  const keysOf = (r, no) => [
+    `${r.resname || ''} ${no == null ? '' : no} ${r.name || ''}`,
+    `${r.name || ''}${no}`,
+    `${r.resname || ''}${no}${r.name || ''}`,
+  ].map(CALC_KEY);
+  const hitsWith = (numberOf) => records.filter((r) => keysOf(r, numberOf(r)).includes(want));
+  const shown = hitsWith((r) => displayResno(r.resno));
+  const hits = shown.length ? shown : hitsWith((r) => r.resno);
   if (!hits.length) return { ok: false, say: `no atom of this molecule is named “${asked}”` };
   if (hits.length > 1) return { ok: false, say: `“${asked}” names ${hits.length} atoms — add the residue number` };
   return { ok: true, index: hits[0].index, element: hits[0].element, label: calcAtomLabel(hits[0]) };
@@ -24139,6 +24263,19 @@ const renderParamsWindow = () => {
               {(calcSsReading && calcSsReading.matched) || 0} residue{((calcSsReading && calcSsReading.matched) || 0) === 1 ? '' : 's'} converted (± {SS_DIHEDRAL_TOLERANCE}°)
             </span>
           )}
+          {/* ⚭ LES PONTS DISULFURE DE LA SÉQUENCE → DES DISTANCES — la demande de cette
+              session : « Can you add a button “generate distances from disulfide” which
+              generates distance restraints according to the disulfide definition in the
+              sequence? » La définition est celle de « Cysteine states » (`cysDisulfides`,
+              des positions de séquence) : chaque paire devient une ligne de la table, à
+              SS_BOND_LENGTH (2.05 Å). Voir `calcConvertDisulfides`, et
+              utils/disulfideRestraints.js pour la correspondance séquence ↔ structure. */}
+          <button type="button" onClick={calcConvertDisulfides}
+            disabled={!disulfidePairsOf(cysDisulfides).pairs.length}
+            title={`Write the disulphide bonds declared in “Cysteine states” (${disulfidePairsOf(cysDisulfides).pairs.length} pair${disulfidePairsOf(cysDisulfides).pairs.length === 1 ? '' : 's'}) into the distance table as ${SS_BOND_LENGTH} Å restraints — the S–S bond length, the SAME figure the folding and the ⚭ switch use. Each pair is matched to the two Cys of the molecule ON SCREEN (the sequence position plus the residue offset of the condition): a pair already in the table is left exactly as you wrote it, and a pair whose Sγ are not on screen is REPORTED, never invented. What is added is an ordinary distance — ▶ Run, ▶ MD, ⚒ Minimise and ⟳ Energy conduct it like any other line.`}
+            className="px-2 py-1 text-[10px] font-bold rounded border transition-colors bg-white border-amber-400 text-amber-800 hover:bg-amber-50 disabled:opacity-40 disabled:cursor-not-allowed">
+            ⚭ Disulfides → distances{disulfidePairsOf(cysDisulfides).pairs.length ? ` (${disulfidePairsOf(cysDisulfides).pairs.length})` : ''}
+          </button>
         </div>
       {/* ⛓ LA TABLE DES CONTRAINTES DE φ/ψ — la demande : « Quest'ultimo deve riempire la
           tabella di constraints. » Elle est écrite ICI, à côté de celle des distances, et

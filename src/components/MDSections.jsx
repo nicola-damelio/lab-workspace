@@ -1897,6 +1897,11 @@ export const MDExperimentSetupSection = ({ ctx }) => {
      le viewer : c'est elle que le bouton ⛓ du panneau 🧬 convertit en contraintes de
      dihèdre pour le ▶ MD, le ⚒ Minimise et le ▶ Run. */
   imposedSecondaryStructure={activeTest.secondaryStructure || ''}
+  /* ⚭ LES PONTS DISULFURE DÉCLARÉS (« Cysteine states ») — des POSITIONS DE SÉQUENCE :
+     le bouton « ⚭ Disulfides → distances » du panneau 🧬 en fait des lignes de la
+     table des distances, à SS_BOND_LENGTH, que le ▶ Run, le ▶ MD, le ⚒ Minimise et le
+     ⟳ Energy conduisent comme n'importe quelle distance. */
+  cysDisulfides={activeTest.cysDisulfides}
   selectedKeys={selectedKeys}
   manualKeys={manualKeys}
   onAtomClick={handleAtomClick}

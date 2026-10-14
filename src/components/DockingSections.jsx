@@ -1233,6 +1233,11 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
                    part vers le viewer : le bouton ⛓ du panneau 🧬 en fait des
                    contraintes de dihèdre pour le ▶ MD, le ⚒ Minimise et le ▶ Run. */
                 imposedSecondaryStructure={activeTest.secondaryStructure || ''}
+                /* ⚭ LES PONTS DISULFURE DÉCLARÉS (« Cysteine states ») — des positions de
+                   séquence : le bouton « ⚭ Disulfides → distances » du panneau 🧬 en fait
+                   des lignes de la table des distances, à SS_BOND_LENGTH, que le ▶ Run, le
+                   ▶ MD, le ⚒ Minimise et le ⟳ Energy conduisent comme toute distance. */
+                cysDisulfides={activeTest.cysDisulfides}
                 driveNaming={{ project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || '', instance: activeTest.instanceName || '', scientist: activeTest.operator || '', section: 'Data', subsection: 'Docking' }}
                 /* 📂 LE SEUL 📂 DE CETTE PAGE — « Topology from Drive folder » et
                    son mot partent AU VIEWER : c'est lui qui les rend dans SA
