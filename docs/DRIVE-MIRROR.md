@@ -4466,6 +4466,29 @@ seulement qu'une expérience ait un projet). Deux cas, et l'écran les distingue
   `projects/<projet>/<expérience>` : ils se retrouvent d'eux-mêmes (aucun chemin ne
   dépend de l'identifiant de l'expérience).
 
+**« Test 86 » n'était PAS perdue : elle avait été RENOMMÉE (14/10/2026).** La
+leçon vaut pour TOUT l'inventaire : `_probe_drive_only.mjs` et
+`_recover_experiments_scan.mjs` comparent des **noms** (le nom du fichier-objet
+du Drive ↔ les noms des tests du dataset). Or un renommage dans l'application ne
+réécrit pas le dossier du Drive au même instant : l'objet
+`projects/NATURAL_ARSENAL_Antibiotics/Test_86/instance1/Test_86.json` portait
+encore « Test 86 » alors que le dataset portait le **même id**
+(`t17918122680048458`) sous le nom « CDCHD », lié à son projet — les deux
+moitiés du lien présentes, aucun jumeau (voir `_probe_test86.mjs`, lecture
+seule : `node _probe_test86.mjs`).
+
+* conséquence **méthode** : chercher par nom ne peut pas distinguer « renommée »
+  de « disparue » — c'est l'**id** qui tranche (le fichier-objet le porte) ; une
+  reprise doit donc être écrite après une comparaison par id ;
+* pour remettre le DOSSIER du Drive au nom courant, publier (une sauvegarde du
+  dataset ouvert) ou Réglages → Workspace → « 🔍 Check the Drive » puis
+  « 🧹 Apply » : le dossier est **adopté par son identifiant**, jamais dupliqué ;
+* ⚠ l'import, lui, garde une règle de **nom** (`testGroupKey` =
+  `name:<nom>`, `loadSelection.js`) : un fichier de reprise qui rapporte l'ANCIEN
+  nom alors que le dataset porte le nouveau ajouterait une **seconde**
+  expérience avec le même id. Un fichier de reprise par nom se revérifie donc
+  quand l'expérience a été renommée.
+
 *Vérifier :* `node _deleted_projects_test.mjs` — les levées (la plus récente gagne,
 une levée d'un autre dataset ne blanchit pas celle-ci, les autres tombes restent,
 idempotence) **et le branchement réel** (un seul entonnoir de lecture, le geste

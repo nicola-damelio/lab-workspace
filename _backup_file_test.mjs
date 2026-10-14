@@ -305,8 +305,15 @@ has(APP, 'if (parsedBackup.ok) {', '…et ne continue que si le fichier est vali
 has(APP, 's = parsedBackup.state;', '…l’état adopté venant de la validation (jamais d’un JSON reparsé à la main)');
 has(APP, 'message: parsedBackup.reason ||', '…un refus DIT sa raison (fini le bouton muet)');
 ok(!/text\.match\(\s*\/<script/.test(APP), 'plus aucune extraction à la main du bloc de l’ancien format dans App.jsx');
-has(APP, 'accept=".json,.html"', 'le sélecteur de fichier accepte le format d’aujourd’hui ET les anciens');
-has(SIDEBAR, 'accept=".json,.html"', '…dans la barre latérale aussi');
+/* LE SÉLECTEUR VIT DANS LA BARRE LATÉRALE D'UN DATASET : la page d'accueil n'en
+   a plus — les trois gestes globaux en sont partis (🗑 Delete Empty,
+   🌐 Rendre visibles à toute l'équipe, 📂 Load backup), parce qu'ils ne
+   dépendaient pas du dataset ouvert et faisaient croire à un couple
+   sauvegarde/restauration GLOBAL qui n'existe pas (voir App.jsx). Le geste de
+   reprise n'est donc pas perdu : il est dans la barre latérale, à côté de
+   « 💾 Save backup ». */
+has(SIDEBAR, 'accept=".json,.html"', 'le sélecteur de fichier accepte le format d’aujourd’hui ET les anciens');
+ok(!APP.includes('accept=".json,.html"'), '…et la page d’accueil n’en propose plus (gestes globaux déplacés)');
 /* ② L'ÉCRITURE : les DEUX gestes écrivent le document, en JSON. */
 has(APP, 'buildBackupDocument({ payload, title, subtitle, datasetId: dset.id, savedAt: Date.now() })',
   'la sauvegarde hebdomadaire écrit un document auto-descriptif');

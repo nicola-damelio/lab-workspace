@@ -420,7 +420,14 @@ export const SettingsModule = ({
      publier l'arborescence décrite par l'application puis mettre à la corbeille
      les dossiers et fichiers en double (utils/driveTidy.js). `dryRun: true`
      pour le seul compte-rendu (voir DriveTidyPanel). */
-  onTidyDrive = null
+  onTidyDrive = null,
+  /* « 🌐 RENDRE VISIBLES À TOUTE L'ÉQUIPE » — le geste GLOBAL qui a quitté la
+     page d'accueil (voir App.jsx) : il survit ICI, dans la seule zone que le
+     superutilisateur ouvre pour agir sur les datasets en bloc (voir la section
+     « Database Cleanup & Data management »). `allVisibleBusy` désactive le
+     bouton pendant les écritures (elles partent en parallèle). */
+  onMakeAllTeamVisible = null,
+  allVisibleBusy = false
 }) => {
   /* Dans un dataset scientifique, les comptes scientist non superutilisateurs
      ne voient que la section « Scientists / Operators » (en lecture seule) ;
@@ -491,7 +498,7 @@ export const SettingsModule = ({
                     </div>
                   </CollapsibleSection>
 
-                  <CollapsibleSection title="Database Cleanup & Data management" subtitle="Rename items globally, merge duplicates, and delete datasets — this is the only area of the program where data deletion is available." defaultOpen={false}>
+                  <CollapsibleSection title="Database Cleanup & Data management" subtitle="Rename items globally, merge duplicates, and delete datasets — this is the only area of the program where data deletion is available. The bulk dataset gestures of the start page also live here: “🗑 Delete Empty Datasets” and “🌐 Make every dataset team-visible”." defaultOpen={false}>
                      <DatabaseCleanupManager
                         tests={tests}
                         setTests={setTests}
@@ -506,6 +513,8 @@ export const SettingsModule = ({
                         datasetsList={datasetsList}
                         deleteDataset={deleteDataset}
                         deleteEmptyDatasets={deleteEmptyDatasets}
+                        onMakeAllTeamVisible={onMakeAllTeamVisible}
+                        allVisibleBusy={allVisibleBusy}
                      />
                   </CollapsibleSection>
 

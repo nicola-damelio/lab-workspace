@@ -22,7 +22,8 @@ Deux failles annexes du client ont été corrigées dans le même passage :
   toute l'équipe ;
 * le lien « 🔓 Emergency recovery » (affiché dès qu'aucun compte n'avait de mot
   de passe) ouvrait l'accès complet, y compris les boutons réservés
-  (Load HTML, Delete Empty, Rendre visibles à toute l'équipe).
+  (Load HTML, Delete Empty, Rendre visibles à toute l'équipe — ces trois gestes
+  ne vivent plus sur la page d'accueil : voir § 6 bis).
 
 ## 2. Ce qui protège désormais les données
 
@@ -766,6 +767,39 @@ secours reste active tant que les règles sont ouvertes.
   dans les variables d'environnement Cloud Run.
 
 ---
+
+## 6 bis. Les gestes globaux ont quitté la page d'accueil (14/10/2026)
+
+**Ce qui était vu.** La page d'accueil (« Your Recent Datasets ») portait trois
+boutons : **🗑 Delete Empty**, **🌐 Rendre visibles à toute l'équipe** et
+**📂 Load backup (.json / .html)**. Aucun des trois ne dépendait du dataset
+ouvert, et le troisième faisait croire à un couple sauvegarde/restauration
+**global** qui n'existe pas : la sauvegarde est celle d'un **dataset**, elle vit
+dans sa barre latérale (💾 Save backup), et la page d'accueil n'en a jamais eu.
+
+**Ce qui est fait — rien n'est perdu, tout est rendu là où le geste a un sens :**
+
+| Geste | Où il vit maintenant | Qui le voit |
+| --- | --- | --- |
+| 🗑 Delete Empty | Réglages → « Database Cleanup & Data management » (il y était DÉJÀ : le bouton de la page d'accueil ne faisait qu'ouvrir un dialogue puis rediriger) | superutilisateur (`isSuper`) |
+| 🌐 Rendre visibles à toute l'équipe | Réglages → la **même** section (à côté de « Delete Empty Datasets »), écrit en parallèle, `allVisibleBusy` désactive le bouton pendant les écritures | superutilisateur (`isSuper`) |
+| 📂 Load backup (.json / .html) | la **barre latérale d'un dataset**, à côté de 💾 Save backup (le sélecteur y accepte `.json` et `.html`) | superutilisateur |
+
+Par dataset, le geste « rendre visible » se fait **sans passer par Réglages** :
+l'en-tête de colonne de la matrice d'appartenance (👥 Membres) dé-coche
+« Restreindre la visibilité aux membres » (voir § 5 ter).
+
+**Ce qui n'a pas changé** : la **création** d'un dataset reste derrière la même
+porte (`canManageDatasets` : superuser / bootstrap / recovery, et
+`createNewDataset` refuse en le disant) ; l'import valide toujours le fichier
+avant d'adopter quoi que ce soit (`parseBackupText`) ; et un import lancé sans
+dataset ouvert **recrée** le dataset que le fichier porte (son `datasetId`) —
+c'est le chemin de reprise quand la liste est vide.
+
+*Vérifier :* `node _dataset_creation_guard_test.mjs` (plus aucune action globale
+gardée par le drapeau sur la page d'accueil, le geste passé aux Réglages, la
+section superutilisateur qui le porte) ; `node _backup_file_test.mjs` (le
+sélecteur vit dans la barre latérale, et la page d'accueil n'en propose plus).
 
 ## 7. Riepilogo (italiano)
 

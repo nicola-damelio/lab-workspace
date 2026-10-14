@@ -613,7 +613,14 @@ export const DatabaseCleanupManager = ({
   allCmpds, allCellLines,
   setCustomCmpds, setCompoundMeta,
   setCustomCellLines, setCellLineMeta,
-  datasetsList, deleteDataset, deleteEmptyDatasets
+  datasetsList, deleteDataset, deleteEmptyDatasets,
+  /* « 🌐 RENDRE VISIBLES À TOUTE L'ÉQUIPE » (App.jsx, via Réglages) : le geste
+     GLOBAL par lots a quitté la page d'accueil — il est rendu ICI, à côté de
+     « Delete Empty Datasets », parce que c'est la zone des gestes de
+     superutilisateur sur les datasets. `allVisibleBusy` désactive le bouton
+     pendant les écritures (un dataset en échec n'empêche pas les autres). */
+  onMakeAllTeamVisible = null,
+  allVisibleBusy = false
 }) => {
   // Merge state
   const [oldName, setOldName] = useState('');
@@ -800,6 +807,22 @@ export const DatabaseCleanupManager = ({
         >
           🗑️ Delete Empty Datasets
         </button>
+        {/* Le geste par LOTS de la page d'accueil, rendu ici (superutilisateur
+            seulement — toute cette section est réservée au superutilisateur) :
+            il dé-coche « Restreindre la visibilité aux membres » sur TOUS les
+            datasets, qui redeviennent visibles par toute l'équipe (les listes de
+            membres sont conservées). Le bouton n'apparaît que si le geste a été
+            câblé (App.jsx le passe par Réglages). */}
+        {typeof onMakeAllTeamVisible === 'function' && (
+          <button
+            onClick={onMakeAllTeamVisible}
+            disabled={allVisibleBusy}
+            className={`mt-3 w-full md:w-auto bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-4 rounded-lg shadow-sm transition-colors text-sm ${allVisibleBusy ? 'opacity-60 cursor-wait' : ''}`}
+            title="Dé-coche « Restreindre la visibilité aux membres » sur TOUS les datasets : ils redeviennent visibles par tous les comptes de l’équipe (les listes de membres sont conservées). Par dataset, le même geste se fait dans l’en-tête de colonne de la matrice d’appartenance (👥 Membres)."
+          >
+            {allVisibleBusy ? '⏳ Mise à jour…' : '🌐 Rendre visibles à toute l’équipe'}
+          </button>
+        )}
         <p className="text-xs text-red-500 mt-2 font-medium">
           ⚠️ Deleting is permanent — a confirmation dialog always asks before anything is removed.
         </p>

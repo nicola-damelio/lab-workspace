@@ -7113,37 +7113,28 @@ const openDataset = (dset, { keepPlace = false } = {}) => {
                 <h2 className="text-xl md:text-2xl font-bold text-slate-800">
                   Your Recent Datasets
                 </h2>
-               {/* Delete Empty — superuser / bootstrap / recovery */}
-               {canManageDatasets && (
-                 <button
-                   onClick={(e) => redirectDeleteToSettings(e, 'Delete Empty Datasets')}
-                   className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 font-bold py-2 px-4 rounded-lg shadow-sm transition-colors flex-1 md:flex-none items-center justify-center gap-2 cursor-pointer text-sm"
-                 >
-                   🗑️ Delete Empty
-                 </button>
-               )}
-               {/* Rendre TOUS les datasets visibles par l’équipe — superuser / bootstrap / recovery */}
-               {canManageDatasets && (
-                 <button
-                   onClick={makeAllDatasetsTeamVisible}
-                   disabled={allVisibleBusy}
-                   className={`bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold py-2 px-4 rounded-lg shadow-sm transition-colors flex-1 md:flex-none flex items-center justify-center gap-2 text-sm ${allVisibleBusy ? 'opacity-60 cursor-wait' : 'cursor-pointer'}`}
-                   title="Dé-coche « Restreindre la visibilité aux membres » sur TOUS les datasets : ils redeviennent visibles par tous les comptes de l’équipe (les listes de membres sont conservées)"
-                 >
-                   {allVisibleBusy ? '⏳ Mise à jour…' : '🌐 Rendre visibles à toute l’équipe'}
-                 </button>
-               )}
-
-               {/* Load backup — superuser / bootstrap / recovery */}
-               {canManageDatasets && (
-                 <label className="bg-slate-50 hover:bg-slate-100 text-slate-600 border border-slate-200 font-bold py-2 px-4 rounded-lg shadow-sm transition-colors flex-1 md:flex-none flex items-center justify-center gap-2 cursor-pointer text-sm">
-                   📂 Load backup (.json / .html)
-                   <input type="file" accept=".json,.html" onChange={loadHTML} className="hidden" />
-                 </label>
-               )}
-                <div className="flex flex-wrap gap-2 w-full md:w-auto">
-
-                </div>
+                {/* LES TROIS GESTES GLOBAUX ONT QUITTÉ LA PAGE D'ACCUEIL.
+                   Ce qu'ils faisaient ne dépendait PAS du dataset ouvert, et le
+                   « 📂 Load backup » y faisait croire à un couple
+                   sauvegarde/restauration GLOBAL qui n'existe pas (la sauvegarde
+                   est celle d'un dataset, elle vit dans sa barre latérale). Où
+                   chacun est rendu maintenant :
+                     · 🗑 Delete Empty — Réglages → « Database Cleanup & Data
+                       management » (superutilisateur seulement : c'est la SEULE
+                       zone où la suppression est possible) ;
+                     · 🌐 Rendre visibles à toute l'équipe — Réglages → la même
+                       section (geste de superutilisateur, écrit en parallèle) ;
+                       par dataset, l'en-tête de colonne de la matrice
+                       d'appartenance (👥 Membres) fait exactement ce geste ;
+                     · 📂 Load backup (.json / .html) — la barre latérale d'un
+                       dataset, à côté de 💾 Save backup. Le geste fait les deux
+                       sens : « ➕ Add » écrit dans le dataset OUVERT,
+                       « Import everything / ♻️ » RECRÉE le dataset que le
+                       fichier porte (son `datasetId`) — c'est le chemin de
+                       reprise d'une liste vide.
+                   La CRÉATION d'un dataset, elle, reste derrière la même porte
+                   que jamais — superuser / bootstrap / recovery
+                   (`canManageDatasets`, voir createNewDataset qui refuse). */}
               </div>
 
               {isCloudReady && flatDatasets.length === 0 ? (
@@ -7153,8 +7144,10 @@ const openDataset = (dset, { keepPlace = false } = {}) => {
                   <span className="text-xs max-w-md text-slate-400 leading-relaxed">
                     Every dataset is saved to the shared cloud workspace, so it shows up here
                     automatically on any device — no sign-in needed. If this list is empty, the cloud
-                    may be unreachable right now; a superuser can restore a copy with
-                    “📂 Load backup (.json / .html)” below.
+                    may be unreachable right now; a superuser can re-read the Drive
+                    (Réglages → « Resync from Drive ») or open any dataset and use
+                    “📂 Load backup (.json / .html)” in its sidebar — importing with
+                    “Import everything” recreates the dataset the file carries.
                   </span>
                 </div>
               ) : visibleDatasets.length === 0 ? (
@@ -7360,6 +7353,8 @@ const openDataset = (dset, { keepPlace = false } = {}) => {
               setCustomCmpds={setCustomCmpds} setCompoundMeta={setCompoundMeta} compoundMeta={compoundMeta}
               setCustomCellLines={setCustomCellLines} setCellLineMeta={setCellLineMeta} cellLineMeta={cellLineMeta}
               datasetsList={datasetsList} deleteDataset={deleteDataset} deleteEmptyDatasets={deleteEmptyDatasets}
+              onMakeAllTeamVisible={makeAllDatasetsTeamVisible}
+              allVisibleBusy={allVisibleBusy}
               datasetTitle={datasetTitle}
               serverMode={serverLoginMode}
               onResyncFromDrive={resyncWorkspaceFromDrive}
