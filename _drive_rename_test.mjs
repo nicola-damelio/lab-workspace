@@ -443,5 +443,88 @@ eq(STRUCT.split('pickRenamedSibling(entry.candidates').length - 1, 1,
 has(STRUCT, 'const parentKnown = entry.path.length === 0 || parentPath === \'\' || idByPath.has(parentPath);',
   'la recherche n’a lieu que sous un parent CONNU (jamais sous un parent deviné)');
 
+/* ── E. LE RENOMMAGE QUAND LE REGISTRE DE CE POSTE NE CONNAÎT RIEN ─────────
+   Le défaut : renommer une expérience sur un poste où ses fichiers n'ont jamais
+   été téléversés (dataset repris d'un autre poste, registre vidé, navigation
+   privée). `renameDriveFilesFor` ne voyait AUCUN fichier, ne renommait donc
+   aucun dossier — et le prochain envoi (structure, style, spectre) fabriquait
+   l'arborescence du nouveau nom À CÔTÉ de l'ancienne : deux dossiers
+   d'expérience, le nouveau « différemment structuré », et le .pdb resté dans
+   l'ancien. Ici : registre VIDE (le .pdb n'y figure pas) et le dossier doit
+   quand même être RENOMMÉ, sur place, le .pdb suivant son dossier. */
+const fd2 = makeFetchDrive();
+fd2.put({ id: 'wsRoot', name: 'Lab Workspace', parent: '', mimeType: FOLDER });
+fd2.put({ id: 'dsRoot', name: 'GEC-UPJV-projects', parent: 'wsRoot', mimeType: FOLDER });
+CHAIN.forEach((seg, i) => fd2.put({
+  id: seg.id, name: seg.name, parent: i === 0 ? 'dsRoot' : CHAIN[i - 1].id, mimeType: FOLDER
+}));
+fd2.put({ id: 'F_PDB', name: '1YCR_Nicola_DAMELIO.pdb', parent: 's1', mimeType: 'chemical/x-pdb', text: 'ATOM' });
+
+globalThis.fetch = fd2.fetch;
+globalThis.localStorage = makeStorage(); // AUCUN registre : ce poste ne connaît aucun fichier
+const U2 = await import('./src/utils/driveUpload.js?rename-testless');
+U2.setDriveRootContext({ id: 'dsRoot', name: 'GEC-UPJV-projects' });
+
+const nt = await U2.renameDriveFilesFor({
+  field: 'test', oldValue: 'Exp_7', newValue: 'Test_7', project: 'CD_project'
+});
+eq(nt, 1, 'un renommage d’expérience SANS registre renomme le dossier quand même');
+eq(fd2.node('e1').name, 'Test_7', 'le dossier de l’expérience est RENOMMÉ (pas recréé)');
+eq(fd2.renamesOf('e1'), ['Test_7'], '…par un vrai renommage (PATCH)');
+eq(fd2.creations('Test_7'), 0, '…et AUCUN dossier « Test_7 » n’est créé');
+eq(fd2.moves(), [], '…ni aucun fichier DÉPLACÉ dans une arborescence refabriquée');
+eq([...fd2.nodes.values()].filter((n) => n.name === 'Exp_7').length, 0, 'plus aucun dossier au vieux nom');
+eq(fd2.node('F_PDB').parent, 's1', 'le .pdb reste dans son dossier de structure (il a suivi le renommage)');
+
+/* Le Drive DÉJÀ abîmé : les deux dossiers coexistent (le vieux avec ses
+   fichiers — le .pdb —, le nouveau fabriqué par un envoi). Le rattrapage ne
+   fabrique pas un troisième nom : il RÉUNIT le contenu dans le dossier
+   d'aujourd'hui, puis range le vieux (devenu vide) à la corbeille. */
+const fd3 = makeFetchDrive();
+fd3.put({ id: 'wsRoot', name: 'Lab Workspace', parent: '', mimeType: FOLDER });
+fd3.put({ id: 'dsRoot', name: 'GEC-UPJV-projects', parent: 'wsRoot', mimeType: FOLDER });
+CHAIN.forEach((seg, i) => fd3.put({
+  id: seg.id, name: seg.name, parent: i === 0 ? 'dsRoot' : CHAIN[i - 1].id, mimeType: FOLDER
+}));
+fd3.put({ id: 'F_PDB', name: '1YCR_Nicola_DAMELIO.pdb', parent: 's1', mimeType: 'chemical/x-pdb', text: 'ATOM' });
+fd3.put({ id: 'e2', name: 'Test_7', parent: 'c1', mimeType: FOLDER });
+fd3.put({ id: 'F_STY', name: 'viewer-style-snapshot.json', parent: 'e2', mimeType: 'application/json', text: '{}' });
+/* Ce dossier-là est POSÉ pour la mise en scène (le Drive déjà abîmé) : le
+   compteur de créations part donc de là — ce qui compte, c'est qu'AUCUN
+   dossier de plus n'est fabriqué par le renommage. */
+const seededTest7 = fd3.creations('Test_7');
+
+globalThis.fetch = fd3.fetch;
+globalThis.localStorage = makeStorage();
+const U3 = await import('./src/utils/driveUpload.js?rename-testless-merge');
+U3.setDriveRootContext({ id: 'dsRoot', name: 'GEC-UPJV-projects' });
+
+const nm = await U3.renameDriveFilesFor({
+  field: 'test', oldValue: 'Exp_7', newValue: 'Test_7', project: 'CD_project'
+});
+eq(nm, 1, 'un Drive déjà abîmé (deux dossiers) est RÉUNI, pas triplé');
+eq(fd3.creations('Test_7'), seededTest7, 'aucun troisième dossier « Test_7 » n’est créé');
+eq(fd3.node('i1').parent, 'e2', 'le contenu de l’ancien dossier rejoint celui d’aujourd’hui');
+eq(fd3.node('F_PDB').parent, 's1', '…et le .pdb resté derrière revient dans l’expérience (il suit son dossier)');
+eq(fd3.node('e1').trashed, true, 'l’ancien dossier (vide) part à la CORBEILLE — jamais de destruction');
+
+/* Les contrats du rattrapage : il ne fabrique rien, il renomme ou il réunit. */
+{
+  const TLD = UPLOAD.slice(UPLOAD.indexOf('const renameTestFolderOnDrive'),
+    UPLOAD.indexOf('export const renameDriveFilesFor'));
+  ok(TLD.length > 0, 'le rattrapage du dossier d’expérience est nommé (renameTestFolderOnDrive)');
+  ok(!TLD.includes('findOrCreateFolder'), 'le rattrapage NE CRÉE JAMAIS de dossier (aucun findOrCreateFolder)');
+  has(TLD, 'await renameDriveFile(folderId, newSlug)', '…il RENOMME le dossier retrouvé par son nom');
+  has(TLD, 'await moveDriveFile(String(child.id), taken)',
+    '…et, quand le nom est déjà pris, il DÉPLACE le contenu (rien n’est perdu)');
+  has(TLD, 'await trashDriveFile(folderId)', '…puis range l’ancien dossier vide à la corbeille');
+  has(TLD, 'const found = await findProjectTestFolder(root, oldName, project);',
+    'le dossier est retrouvé aux emplacements de sa création (projet compris)');
+  has(UPLOAD, "if (field === 'test') return await renameTestFolderOnDrive({ oldValue, newValue, project });",
+    'le registre muet déclenche le rattrapage pour l’EXPÉRIENCE');
+  has(ACTIVE, "project: (activeTest.projectNames || [])[0] || ''",
+    'la page donne le PROJET au renommage (il dit où chercher le dossier)');
+}
+
 console.log(`_drive_rename_test: ${passed} passed`);
 

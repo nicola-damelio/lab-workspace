@@ -54,13 +54,16 @@ const USE = 'ml-auto shrink-0 bg-indigo-600 hover:bg-indigo-700 text-white font-
  * @param {object[]} [props.ctxs]         autres contextes à regarder (branches Setup / Data)
  * @param {string[]} props.exts           extensions voulues
  * @param {string}   [props.declaredName] le fichier DÉJÀ déclaré (marqué ✓ dans la liste)
+ * @param {string[]} [props.declaredNames] les fichiers DÉJÀ déclarés, quand la page en déclare
+ *                                        PLUSIEURS (un docking en déclare N : les N modèles du
+ *                                        cluster) — chacun porte ✓, donc aucun n'est pris deux fois
  * @param {string}   [props.note]         phrase d'aide affichée à droite du bouton
  * @param {boolean}  [props.disabled]
  * @param {Function} props.onPick         async (file, meta) => void — meta = la ligne choisie
  */
 export const DriveExperimentFilePicker = ({
   label, titleText = '', ctx = null, ctxs = [], exts = [],
-  declaredName = '', note = '', disabled = false, onPick
+  declaredName = '', declaredNames = [], note = '', disabled = false, onPick
 }) => {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -69,6 +72,14 @@ export const DriveExperimentFilePicker = ({
   const [msg, setMsg] = useState('');
   const [takingId, setTakingId] = useState('');
   const wanted = normalizeFileExts(exts);
+
+  /* Un fichier de la liste porte ✓ quand il est DÉJÀ celui de la condition —
+     le nom déposé et le nom déclaré décrivent le même fichier (mêmes règles que
+     la restauration : `sameRawFileFor`). `declaredNames` sert aux pages qui en
+     déclarent PLUSIEURS : les N modèles d'un cluster docking sont tous déjà
+     déclarés, donc tous marqués (aucun n'est pris deux fois par erreur). */
+  const isDeclared = (name) => [declaredName, ...(Array.isArray(declaredNames) ? declaredNames : [])]
+    .some((declared) => declared && sameRawFileFor(name, declared));
 
   const load = async () => {
     setBusy(true);
@@ -143,7 +154,7 @@ export const DriveExperimentFilePicker = ({
               <span className="text-[11px] font-semibold text-slate-800 truncate" title={file.name}>{file.name}</span>
               <span className="text-[10px] text-slate-400 shrink-0">{describeDriveFileSize(file.size)}</span>
               <span className="text-[10px] text-slate-400 truncate" title={file.folderPathText}>{file.folderPathText}</span>
-              {declaredName && sameRawFileFor(file.name, declaredName) && (
+              {isDeclared(file.name) && (
                 <span className="text-[10px] font-bold text-emerald-700 shrink-0">✓ declared</span>
               )}
               <button type="button" className={USE} onClick={() => take(file)}

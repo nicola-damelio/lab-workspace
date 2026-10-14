@@ -23,7 +23,7 @@ import { useDriveAutoRestore } from './useDriveAutoRestore';
    geste manquant est une lecture du dossier ; le fichier choisi devient le PDB
    déclaré de la condition (nom + pointeur). */
 import { DriveExperimentFilePicker } from './DriveExperimentFiles';
-import { experimentFilePointer, STRUCTURE_FILE_EXTS } from '../utils/driveExperimentFiles';
+import { experimentFilePointer, MD_TRAJECTORY_EXTS, STRUCTURE_FILE_EXTS } from '../utils/driveExperimentFiles';
 import { sequenceForMoleculeType, sequencePatchForMoleculeType, structureSequencePatch, sequenceNaturesNote } from '../utils/sequenceNatures';
 /* 🧬 LA LECTURE D'UNE SÉQUENCE — la ligne COMPACTE qui la montre SOUS une case de séquence
    (src/components/SequenceReadingLine.jsx) : c'est ELLE qui lit le module PUR (le pKa de CHAQUE
@@ -66,6 +66,11 @@ export { VIS_PALETTES };
 // files also travel on the test as a data URL (structureFileData).
 const nmrLocalFileCache = new Map();
 const nmrStructBlobKey = (testId) => `nmr_struct_${testId}`;
+// …ET LE MÊME RANGEMENT POUR LA TRAJECTOIRE (voir plus bas) : les octets d'une
+// trajectoire ne peuvent pas plus vivre dans le document du dataset que ceux
+// d'un PDB (elles pèsent beaucoup plus lourd), donc la base du navigateur, et le
+// Drive pour la copie de référence.
+const nmrTrajBlobKey = (testId) => `nmr_traj_${testId}`;
 
 /* ── RESTAURATION AUTOMATIQUE DU FICHIER DE STRUCTURE DEPUIS LE DRIVE ────────
    (mécanisme général : src/utils/driveRestore.js + useDriveAutoRestore.js)
@@ -99,6 +104,55 @@ const nmrStructNames = (test = {}) => [
   ...wantedRawNames({
     declared: test.structureFileName,
     hints: [test.structureDrive?.name, test.structureDriveName]
+  })
+];
+
+/* ── LA TRAJECTOIRE — LE SECOND FICHIER DE CETTE PAGE ────────────────────────
+   La page NMR n'avait AUCUNE trajectoire : la barre « ▶ Trajectory playback »
+   du viewer 3D (le composeur NGL est déjà là, il lit XTC / TRR / DCD / …) ne
+   s'allumait donc jamais. Elle reçoit ici la MÊME mécanique que la structure
+   ci-dessus — mot pour mot celle de la page MD : les octets dans la base du
+   navigateur (`nmrTrajBlobKey`), le NOM déclaré et le POINTEUR sur la condition
+   (`trajectoryFileName` / `trajectoryDriveName` / `trajectoryDrive`), le Drive
+   comme copie de RÉFÉRENCE, et la reprise automatique à l'ouverture.
+   Le geste de LECTURE qui manquait est le 📂 « Trajectory from Drive folder »
+   (le pendant des deux 📂 de la page MD) : il liste le dossier canonique de
+   l'expérience et installe le fichier choisi — qui n'est alors ni renommé ni
+   renvoyé au Drive, il y est déjà. */
+const NMR_TRAJ_KIND = 'nmrtraj';
+const nmrTrajDriveCtx = (test = {}) => ({
+  project: (test.projectNames || [])[0] || '',
+  test: test.name || '',
+  instance: test.instanceName || '',
+  scientist: test.operator || '',
+  section: 'Data',
+  subsection: 'Trajectory'
+});
+
+/** Le contexte du dossier CANONIQUE de l'expérience — `…/experiment_setup/
+ *  <sous-section>` : celui que « 📁 Create drive folder » FABRIQUE (voir
+ *  DriveExperimentFiles.jsx), donc le premier que les 📂 doivent lire. La page
+ *  NMR range ses propres envois sous SA section (`Data/…`, voir
+ *  nmrStructDriveCtx / nmrTrajDriveCtx) : les deux branches sont lues — la
+ *  canonique d'abord — sans quoi le dossier créé par ce bouton ne servirait à
+ *  rien sur cette page. PUR. */
+const nmrCanonicalFolderCtx = (test = {}, subsection = 'Structure') => ({
+  project: (test.projectNames || [])[0] || '',
+  test: test.name || '',
+  instance: test.instanceName || '',
+  scientist: test.operator || '',
+  section: 'Setup',
+  subsection
+});
+
+/** Mêmes règles que `nmrStructNames` : le nom DÉCLARÉ d'abord, puis les indices
+ *  qui décrivent bien le même fichier (nom porté par le pointeur, nom déposé à
+ *  l'envoi). Un choix PRÉCÉDENT n'est jamais cherché : il ramènerait l'ancienne
+ *  trajectoire par la recherche par nom. */
+const nmrTrajNames = (test = {}) => [
+  ...wantedRawNames({
+    declared: test.trajectoryFileName,
+    hints: [test.trajectoryDrive?.name, test.trajectoryDriveName]
   })
 ];
 
@@ -5076,11 +5130,25 @@ export const MolecularStructureSection = ({ ctx }) => {
   const nmrStructPageIdRef = useRef(activeTest.id);
   const nmrConditionChanged = nmrStructPageIdRef.current !== activeTest.id;
   const [structFileEpoch, setStructFileEpoch] = useState(0);
+  /* LA TRAJECTOIRE SUIT LA MÊME RÈGLE, pour la même raison : son état ne doit pas
+     rester celui de la condition PRÉCÉDENTE (le ▶ du viewer jouerait la
+     trajectoire de l'autre condition, et la reprise de la nouvelle ne partirait
+     jamais). `nmrTrajConditionChanged` dit la même chose que
+     `nmrConditionChanged`, pour le portillon du Drive de la trajectoire. */
+  const [trajectoryFile, setTrajectoryFile] = useState(() => nmrLocalFileCache.get(activeTest.id)?.trajectory || null);
+  const nmrTrajConditionChanged = nmrStructPageIdRef.current !== activeTest.id;
+  const [trajFileEpoch, setTrajFileEpoch] = useState(0);
+  // Le constat de la trajectoire (envoi en cours / archivé / échec d'envoi, ou
+  // reprise du Drive) : affiché sous le viewer, à côté de celui de la structure.
+  const [nmrTrajMsg, setNmrTrajMsg] = useState('');
+  const [nmrTrajPhase, setNmrTrajPhase] = useState('');
   useEffect(() => {
     if (activeTest.id === nmrStructPageIdRef.current) return;
     nmrStructPageIdRef.current = activeTest.id;
     setStructureFile(nmrLocalFileCache.get(activeTest.id)?.structure || null);
+    setTrajectoryFile(nmrLocalFileCache.get(activeTest.id)?.trajectory || null);
     setStructFileEpoch((n) => n + 1);
+    setTrajFileEpoch((n) => n + 1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTest.id]);
   const handleStructureFile = (file) => {
@@ -5131,6 +5199,74 @@ export const MolecularStructureSection = ({ ctx }) => {
     nmrLocalFileCache.set(activeTest.id, { ...cache, structure: file });
   };
 
+  /* ── LA TRAJECTOIRE CHOISIE DANS LE VIEWER (« 📂 Trajectory ») ───────────────
+     Le MÊME geste que `handleStructureFile` juste au-dessus, sur le second
+     fichier du viewer : le fichier choisi est joué tout de suite (le viewer le
+     reçoit par `trajectoryFile`), rangé dans la base du navigateur (il survit au
+     rechargement), et DÉCLARÉ sur la condition — nom + pointeur — après son
+     envoi au Drive, sa copie de référence. C'est cet envoi qui fait voyager la
+     trajectoire vers les autres postes : sans lui, elle n'existerait que dans ce
+     navigateur-ci. Le retrait (fichier `null`) défait les trois, dans le même
+     mouvement. */
+  const handleTrajectoryFile = (file) => {
+    if (!file) {
+      // Le nom déclaré ET le pointeur partent ENSEMBLE : sinon la reprise (base
+      // du navigateur puis Drive) ramenait la trajectoire qu'on venait de retirer.
+      updateActiveTest({
+        trajectoryFileName: null,
+        trajectoryDrive: null, trajectoryDriveName: null
+      });
+      setTrajectoryFile(null);
+      setNmrTrajPhase('');
+      setNmrTrajMsg('');
+      blobStore.remove(nmrTrajBlobKey(activeTest.id));
+      return;
+    }
+    // Le pointeur de l'ANCIENNE trajectoire part dès qu'on en choisit une autre :
+    // la condition ne doit plus annoncer l'ancien fichier comme sa copie de
+    // référence (l'envoi ci-dessous posera le nouveau dès qu'il aboutit).
+    updateActiveTest({ trajectoryDrive: null, trajectoryDriveName: null });
+    setNmrTrajPhase('upload');
+    setNmrTrajMsg(`⬆️ Archiving ${file.name} to Google Drive…`);
+    (async () => {
+      /* L'AVANCEMENT EST MONTRÉ : une trajectoire part par morceaux (session
+         « resumable », voir utils/driveChunkUpload.js) et un envoi de plusieurs
+         Go resterait muet pendant des minutes (distinguer « ça travaille » de
+         « c'est perdu »). Même code que la page MD. */
+      let lastPct = -1;
+      const onProgress = (sent, total) => {
+        if (!total) return;
+        const pct = Math.min(100, Math.round((sent / total) * 100));
+        if (pct === lastPct) return;
+        lastPct = pct;
+        setNmrTrajMsg(`⬆️ Archiving ${file.name} to Google Drive… ${pct}%`);
+      };
+      const { name: driveName, pointer, error } = await archiveFileToDriveWithPointer({
+        file, ctx: nmrTrajDriveCtx(activeTest), suffix: 'trajectory', onProgress
+      }).catch(() => null);
+      if (!driveName) return;
+      placeRestorePointer({
+        field: 'trajectoryDrive',
+        pointer: { trajectoryDriveName: driveName, ...(pointer ? { trajectoryDrive: pointer } : {}) },
+        key: activeTest.id,
+        activeKey: structActiveIdRef.current,
+        patch: updateActiveTest
+      });
+      /* L'ÉCHEC SE DIT, AVEC SA RAISON : « archivé » ne doit jamais être annoncé
+         quand le fichier n'est pas sur le Drive — c'est ce qui ferait croire une
+         trajectoire en sécurité alors que ni le Drive ni l'autre poste ne l'ont. */
+      setNmrTrajPhase(pointer ? 'done' : 'failed');
+      setNmrTrajMsg(pointer
+        ? `✅ ${file.name} archived to Google Drive.`
+        : `⚠️ ${file.name} was loaded, but the Drive upload failed${error ? ` — ${error}` : ''}. Pick it again once the Drive connection is back (the upload archives it once more).`);
+    })();
+    setTrajectoryFile(file);
+    updateActiveTest({ trajectoryFileName: file.name });
+    const cache = nmrLocalFileCache.get(activeTest.id) || {};
+    nmrLocalFileCache.set(activeTest.id, { ...cache, trajectory: file });
+    blobStore.save(nmrTrajBlobKey(activeTest.id), file);
+  };
+
   // Restore a previously-picked structure file on (re)load, so the viewer shows
   // the same PDB after navigating away/back or a page reload. Source: this
   // browser's IndexedDB cache (the file was archived to Drive on upload too).
@@ -5154,6 +5290,27 @@ export const MolecularStructureSection = ({ ctx }) => {
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTest.id, activeTest.structureFileName, structFileEpoch]);
+
+  // LA MÊME REPRISE POUR LA TRAJECTOIRE : les octets laissés par cette condition
+  // dans la base du navigateur sont rechargés au (re)chargement de la page, donc
+  // la barre ▶ du viewer se rallume sans rien redemander. Le nom comparé est
+  // celui du fichier rangé à l'import (voir sameRawFileFor, comme ci-dessus).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (trajectoryFile || !activeTest.trajectoryFileName) return;
+      const blob = await blobStore.load(nmrTrajBlobKey(activeTest.id));
+      if (cancelled) return;
+      if (blob && sameRawFileFor(blob.name, activeTest.trajectoryFileName)) {
+        const restored = new File([blob], blob.name || activeTest.trajectoryFileName || 'trajectory.xtc', { type: blob.type || 'application/octet-stream' });
+        setTrajectoryFile(restored);
+        const cache = nmrLocalFileCache.get(activeTest.id) || {};
+        nmrLocalFileCache.set(activeTest.id, { ...cache, trajectory: restored });
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTest.id, activeTest.trajectoryFileName, trajFileEpoch]);
 
   // Un pointeur resté en attente (l'envoi s'est terminé après un changement de
   // condition) est posé sur SA condition dès qu'elle revient à l'écran : c'est
@@ -5228,6 +5385,126 @@ export const MolecularStructureSection = ({ ctx }) => {
     };
   };
 
+  /* ── LA TRAJECTOIRE ABSENTE : LE MÊME PORTILLON, LE MÊME GESTE ────────────────
+     (mécanisme général : src/utils/driveRestore.js + useDriveAutoRestore.js)
+     La trajectoire déclarée sur la condition mais absente de la base du
+     navigateur n'est PAS perdue : le Drive en a la copie de référence. Elle est
+     re-téléchargée seule, remise dans la base, et le ▶ du viewer se rallume. Le
+     « déjà en main » ne vaut que pour la condition AFFICHÉE (voir
+     `nmrTrajConditionChanged`), et un fichier lourd est cherché en mode STRICT
+     (`strictNames`) : le pointeur périmé d'un ancien choix n'est pas essayé, donc
+     on n'installe jamais l'ancienne trajectoire sous le nom de la nouvelle. */
+  const nmrTrajDriveMissing = async () => {
+    if (!activeTest.trajectoryFileName && !activeTest.trajectoryDriveName && !activeTest.trajectoryDrive) return false;
+    if (trajectoryFile && !nmrTrajConditionChanged) return false;
+    const blob = await blobStore.load(nmrTrajBlobKey(activeTest.id)).catch(() => null);
+    return !blob;
+  };
+
+  const restoreNmrTrajectoryFromDrive = async () => {
+    const declared = activeTest.trajectoryFileName || '';
+    const driveName = activeTest.trajectoryDriveName || '';
+    const label = declared || driveName || 'the archived trajectory';
+    const found = await restoreRawFileFor({
+      pointer: activeTest.trajectoryDrive || null,
+      ctx: nmrTrajDriveCtx(activeTest),
+      names: nmrTrajNames(activeTest),
+      strictNames: true
+    });
+    if (!found) {
+      const message = `ℹ️ ${label} is not in this browser, and no copy was found on Google Drive. Connect Google Drive (sidebar) or open it with “📂 Trajectory from Drive folder” — the file is read from the experiment folder without being uploaded again.`;
+      setNmrTrajPhase('notfound');
+      setNmrTrajMsg(message);
+      return { ok: false, message };
+    }
+    /* MÊME RÈGLE QUE POUR LA STRUCTURE : une copie qui n'est pas CE fichier (un
+       pointeur périmé d'un ancien choix) n'est pas installée en silence — elle
+       est DITE, et l'utilisateur re-sélectionne. */
+    if (declared && !sameRawFileFor(found.name || found.file.name || '', declared)) {
+      const message = `⚠️ ${declared} is not on Google Drive under that name — the archived copy found is “${found.name}”, a different file. Open the right one with “📂 Trajectory from Drive folder”.`;
+      setNmrTrajPhase('notfound');
+      setNmrTrajMsg(message);
+      return { ok: false, message };
+    }
+    const restored = new File(
+      [found.file],
+      found.file.name || declared || 'trajectory.xtc',
+      { type: found.file.type || 'application/octet-stream' }
+    );
+    try { await blobStore.save(nmrTrajBlobKey(activeTest.id), restored); } catch { /* base indisponible : le fichier reste en mémoire */ }
+    const cache = nmrLocalFileCache.get(activeTest.id) || {};
+    nmrLocalFileCache.set(activeTest.id, { ...cache, trajectory: restored });
+    setTrajectoryFile(restored);
+    // Un nom DÉCLARÉ perdu est réécrit : c'est lui qui fait voyager la
+    // trajectoire vers les autres postes au prochain affichage.
+    if (!declared) updateActiveTest({ trajectoryFileName: restored.name });
+    const message = `✅ ${restored.name} restored from Google Drive — the ▶ Trajectory playback bar is back.`;
+    setNmrTrajPhase('done');
+    setNmrTrajMsg(message);
+    return { ok: true, message };
+  };
+
+  const nmrTrajRestore = useDriveAutoRestore({
+    kind: NMR_TRAJ_KIND,
+    testId: activeTest.id,
+    missing: nmrTrajDriveMissing,
+    restore: restoreNmrTrajectoryFromDrive
+  });
+
+  /* UN NOM DE TRAJECTOIRE QUI ARRIVE APRÈS L'AFFICHAGE RELANCE LA RECHERCHE
+     (même défaut que pour la structure : sur une fenêtre neuve, la page peut
+     s'afficher avant que le dataset ne soit relu du cloud). */
+  const nmrTrajNameSeenRef = useRef(activeTest.trajectoryFileName || '');
+  useEffect(() => {
+    const name = activeTest.trajectoryFileName || '';
+    if (name === nmrTrajNameSeenRef.current) return;
+    nmrTrajNameSeenRef.current = name;
+    if (!name || trajectoryFile) return;
+    nmrTrajRestore.attempt('data-arrived');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTest.id, activeTest.trajectoryFileName]);
+
+  // Un pointeur resté en attente (l'envoi a fini après un changement de
+  // condition) est posé sur SA condition dès qu'elle revient à l'écran — et
+  // seulement s'il décrit encore la trajectoire déclarée (le noyau s'en charge :
+  // takePendingRestorePointer / pointerStillWanted).
+  useEffect(() => {
+    const pending = takePendingRestorePointer({ field: 'trajectoryDrive', key: activeTest.id });
+    if (!pending) return;
+    const pendingName = pending.trajectoryDriveName || pending.trajectoryDrive?.name || '';
+    if (pointerStillWanted({ pointer: { name: pendingName }, names: [activeTest.trajectoryFileName || ''] })) {
+      updateActiveTest(pending);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTest.id]);
+
+  /* ⬇️ « BRING IT BACK FROM THE CLOUD » — le geste à la demande de la barre de
+     lecture : la MÊME fonction que la reprise automatique (un seul chemin de
+     code, donc rien qui puisse dire autre chose que ce qu'il fait). Sans lui, une
+     tentative automatique manquée restait sans recours. Un seul essai à la fois :
+     le bouton est inerte tant que la recherche tourne. */
+  const nmrTrajRestoreBusyRef = useRef(false);
+  const bringNmrTrajectoryBack = async () => {
+    if (nmrTrajRestoreBusyRef.current) return;
+    nmrTrajRestoreBusyRef.current = true;
+    setNmrTrajPhase('drive');
+    setNmrTrajMsg(`🔎 ${activeTest.trajectoryFileName || activeTest.trajectoryDriveName || 'the archived trajectory'} not in this browser — checking Google Drive…`);
+    try {
+      await restoreNmrTrajectoryFromDrive();
+    } catch (err) {
+      setNmrTrajPhase('notfound');
+      setNmrTrajMsg(`⚠️ the cloud request failed (${(err && err.message) || 'unknown error'}). Open the file with “📂 Trajectory from Drive folder” if it happens again.`);
+    } finally {
+      nmrTrajRestoreBusyRef.current = false;
+    }
+  };
+  /* Seuls les constats d'une recherche EN COURS ou de son dernier échec sont
+     affichés sous le bouton : une reprise réussie (ou un envoi) n'a rien à y
+     faire — la barre ▶ parle déjà d'elle-même. */
+  const nmrTrajRestoreNote = (nmrTrajPhase === 'drive' || nmrTrajPhase === 'notfound' || nmrTrajPhase === 'nocloud')
+    ? nmrTrajMsg
+    : '';
+
   /* ── 📂 PRENDRE LE PDB DANS LE DOSSIER DE L'EXPÉRIENCE ────────────────────
      Le même geste que sur la page MD (voir utils/driveExperimentFiles.js) : le
      dossier canonique de l'expérience est LU (`projects/<projet>/<expérience>/
@@ -5260,6 +5537,40 @@ export const MolecularStructureSection = ({ ctx }) => {
       structureDriveName: meta.name || restored.name,
       ...(pointer ? { structureDrive: pointer } : {})
     }, testId);
+  };
+
+  /* ── 📂 PRENDRE LA TRAJECTOIRE DANS LE DOSSIER DE L'EXPÉRIENCE ────────────
+     Le pendant exact du 📂 de la page MD, et le frère du PDB ci-dessus : la
+     MÊME lecture (le dossier canonique de l'expérience, sous-section Trajectory :
+     `…/experiment_setup/Trajectory`, et la branche de la page `…/Data/Trajectory`
+     où ses envois arrivent), mais par `listExperimentFiles` — donc un fichier
+     DÉPOSÉ À LA MAIN dans le dossier est vu, alors que la reprise automatique
+     (qui cherche par nom et par pointeur) ne le voit pas. Le fichier choisi
+     devient la trajectoire DÉCLARÉE de la condition — nom + pointeur — donc
+     celle que le ▶ rejouera par défaut, ici comme sur un autre poste. Rien n'est
+     renvoyé au Drive : le fichier y est déjà, on l'ouvre. */
+  const pickNmrTrajectoryFromFolder = async (file, meta) => {
+    const testId = activeTest.id;
+    const restored = new File(
+      [file],
+      file.name || 'trajectory.xtc',
+      { type: file.type || 'application/octet-stream' }
+    );
+    try { await blobStore.save(nmrTrajBlobKey(testId), restored); } catch { /* base indisponible : le fichier reste en mémoire */ }
+    const cache = nmrLocalFileCache.get(testId) || {};
+    nmrLocalFileCache.set(testId, { ...cache, trajectory: restored });
+    // L'écran ne bouge que si c'est TOUJOURS cette condition qui est affichée :
+    // le fichier est rangé sous la clé de la condition lue, et la suivante le
+    // reprendra de son cache.
+    if (nmrStructPageIdRef.current === testId) setTrajectoryFile(restored);
+    const pointer = experimentFilePointer(meta);
+    updateActiveTest({
+      trajectoryFileName: restored.name,
+      trajectoryDriveName: meta.name || restored.name,
+      ...(pointer ? { trajectoryDrive: pointer } : {})
+    }, testId);
+    setNmrTrajPhase('done');
+    setNmrTrajMsg(`✅ ${restored.name} taken from the experiment folder on Google Drive — the ▶ bar uses it.`);
   };
 
 
@@ -5480,11 +5791,57 @@ const generatedStructure = useMemo(() => {
     <DriveExperimentFilePicker
       label="📂 PDB from Drive folder"
       titleText="List the .pdb / .cif files that are in THIS experiment's Drive folder (even one you deposited by hand) and open one of them as this condition's structure. Choosing a file here opens it AND declares it: this condition will reopen it by default, on every computer. Nothing is uploaded again."
-      ctx={nmrStructDriveCtx(activeTest)}
+      ctx={nmrCanonicalFolderCtx(activeTest, 'Structure')}
+      ctxs={[nmrStructDriveCtx(activeTest)]}
       exts={STRUCTURE_FILE_EXTS}
       declaredName={activeTest.structureFileName || activeTest.structureDriveName || ''}
       onPick={pickNmrStructureFromFolder}
     />
+  );
+
+  /* 📂 LA TRAJECTOIRE DU DOSSIER DE L'EXPÉRIENCE — LE SECOND 📂 DE LA RANGÉE.
+     Le pendant NMR du 📂 « Trajectory from Drive folder » de la page MD (même
+     composant, même lecture, même exts), posé dans la MÊME rangée des fichiers
+     que 📂 PDB file(s), 📂 Trajectory et 📁 Create drive folder (`fileRowExtra`
+     ci-dessous). La page NMR n'avait AUCUN moyen de rejouer une trajectoire
+     déposée dans le dossier de l'expérience : le viewer a la barre ▶ et NGL la
+     lit, mais rien ne la lui donnait. Le dossier lu est le canonique
+     (`…/experiment_setup/Trajectory`, celui que 📁 Create drive folder fabrique),
+     puis la branche de la page (`…/Data/Trajectory`, où ses envois arrivent). */
+  const nmrTrajectoryFromFolder = (
+    <DriveExperimentFilePicker
+      label="📂 Trajectory from Drive folder"
+      titleText="List the .xtc / .trr / .dcd files that are in THIS experiment's Drive folder (even one you deposited by hand) and play one of them in the 3D view. Choosing a file here opens it AND declares it: this condition will reopen it by default, on every computer. Nothing is uploaded again."
+      ctx={nmrCanonicalFolderCtx(activeTest, 'Trajectory')}
+      ctxs={[nmrTrajDriveCtx(activeTest)]}
+      exts={MD_TRAJECTORY_EXTS}
+      declaredName={activeTest.trajectoryFileName || activeTest.trajectoryDriveName || ''}
+      onPick={pickNmrTrajectoryFromFolder}
+    />
+  );
+
+  /* Ce que la rangée des fichiers (§1) ajoute à la fin : les DEUX 📂 de la page,
+     dans l'ordre de la demande (« Create drive folder, Pdb from folder, trajectory
+     from folder »), et le mot de l'envoi / de la lecture en cours. Ce mot vit ICI,
+     sur la ligne des fichiers, parce qu'il décrit un geste fait sur un fichier —
+     la barre ▶, elle, ne parle que de ce qu'elle joue. `nmrTrajRestoreNote` n'y
+     figure pas : il appartient à la phrase de la barre ▶ qui l'appelle. */
+  const nmrTrajectoryNote = (nmrTrajPhase === 'upload' || nmrTrajPhase === 'done' || nmrTrajPhase === 'failed')
+    ? nmrTrajMsg
+    : '';
+  const nmrFileRowExtra = (
+    <>
+      {nmrStructureFromFolder}
+      {nmrTrajectoryFromFolder}
+      {nmrTrajectoryNote && (
+        <span
+          className={`text-[10px] font-bold leading-tight max-w-[420px] truncate ${nmrTrajPhase === 'failed' ? 'text-red-600' : nmrTrajPhase === 'done' ? 'text-emerald-700' : 'text-indigo-700'}`}
+          title={nmrTrajectoryNote}
+        >
+          {nmrTrajectoryNote}
+        </span>
+      )}
+    </>
   );
 
   return (
@@ -5850,8 +6207,12 @@ const generatedStructure = useMemo(() => {
               phrase qui l'accompagnait (« Choosing a file here opens it AND declares
               it… ») vit dans son infobulle. Rien d'autre ne change : le VIEWER rend
               toujours le geste de création (📁 Create drive folder) sur la ligne de
-              📂 PDB file(s), et le `driveNaming` du viewer, plus bas, le lui donne. */}
-          <NMRMoleculeViewer key={(activeTest && activeTest.id) || 'molecular-structure'} instanceKey={(activeTest && activeTest.id) || null} src={structureSrc} structureText={structureText} structureTextExt={structureTextExt} sequenceStructureText={sequenceStructure?.text || null} sequenceStructureExt={sequenceStructure?.ext || null} imposedSecondaryStructure={univTestMode ? '' : (activeTest.secondaryStructure || '')} externalLoading={organicFetch.loading} externalError={organicFetch.error} structureFileData={activeTest.structureFileData} structureFileName={activeTest.structureFileName} structureFile={structureFile} onStructureSrc={(v) => updateActiveTest({ structureSrc: v })} onStructureFile={handleStructureFile} moleculeType={d.moleculeType} parsedSeq={d.parsedSeq} sequenceModifications={activeTest.modifications || ''} smiles={activeTest.smiles} onLigandSmiles={(info) => { if (info && info.smiles && !activeTest.smiles && !activeTest.ligandSmiles) updateActiveTest({ ligandCode: info.code, ligandSmiles: info.smiles }); }} selectedKeys={selectedKeys} manualKeys={manualKeys} onAtomClick={handleAtomClick} residueOffset={residueOffset} atomNameMap={atomNameMap} atomRenames={activeTest.atomRenames || {}} onAtomRenames={(map) => updateActiveTest({ atomRenames: map })} resRenumber={activeTest.resRenumber || {}} onResRenumber={(map) => updateActiveTest({ resRenumber: map })} onStructureSequence={(seq, parts) => { const _nat = structureSequencePatch(activeTest, d.moleculeType, seq, parts); if (_nat) updateActiveTest(_nat); }} driveNaming={{ project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || '', instance: activeTest.instanceName || '', scientist: activeTest.operator || '', section: 'Data', subsection: 'Structure' }} fileRowExtra={nmrStructureFromFolder} labelMode={atomLabelMode} height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? '1100px' : '1000px'} />
+              📂 PDB file(s), et le `driveNaming` du viewer, plus bas, le lui donne.
+              Depuis, le 📂 « Trajectory from Drive folder » (voir
+              `nmrTrajectoryFromFolder`) est monté à côté du 📂 PDB, dans la MÊME
+              rangée : `fileRowExtra` porte les deux, plus le mot de l'envoi. */}
+
+          <NMRMoleculeViewer key={(activeTest && activeTest.id) || 'molecular-structure'} instanceKey={(activeTest && activeTest.id) || null} src={structureSrc} structureText={structureText} structureTextExt={structureTextExt} sequenceStructureText={sequenceStructure?.text || null} sequenceStructureExt={sequenceStructure?.ext || null} imposedSecondaryStructure={univTestMode ? '' : (activeTest.secondaryStructure || '')} externalLoading={organicFetch.loading} externalError={organicFetch.error} structureFileData={activeTest.structureFileData} structureFileName={activeTest.structureFileName} structureFile={structureFile} onStructureSrc={(v) => updateActiveTest({ structureSrc: v })} onStructureFile={handleStructureFile} trajectoryFile={trajectoryFile} trajectoryName={activeTest.trajectoryFileName || activeTest.trajectoryDriveName || ''} onTrajectoryFile={handleTrajectoryFile} onBringTrajectoryBack={bringNmrTrajectoryBack} bringTrajectoryNote={nmrTrajRestoreNote} bringTrajectoryBusy={nmrTrajPhase === 'drive'} moleculeType={d.moleculeType} parsedSeq={d.parsedSeq} sequenceModifications={activeTest.modifications || ''} smiles={activeTest.smiles} onLigandSmiles={(info) => { if (info && info.smiles && !activeTest.smiles && !activeTest.ligandSmiles) updateActiveTest({ ligandCode: info.code, ligandSmiles: info.smiles }); }} selectedKeys={selectedKeys} manualKeys={manualKeys} onAtomClick={handleAtomClick} residueOffset={residueOffset} atomNameMap={atomNameMap} atomRenames={activeTest.atomRenames || {}} onAtomRenames={(map) => updateActiveTest({ atomRenames: map })} resRenumber={activeTest.resRenumber || {}} onResRenumber={(map) => updateActiveTest({ resRenumber: map })} onStructureSequence={(seq, parts) => { const _nat = structureSequencePatch(activeTest, d.moleculeType, seq, parts); if (_nat) updateActiveTest(_nat); }} driveNaming={{ project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || '', instance: activeTest.instanceName || '', scientist: activeTest.operator || '', section: 'Data', subsection: 'Structure' }} fileRowExtra={nmrFileRowExtra} labelMode={atomLabelMode} height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? '1100px' : '1000px'} />
           <button onClick={downloadPdbFile} className="self-center mt-2 px-4 py-2 bg-indigo-50 border border-indigo-200 text-indigo-700 font-bold text-xs rounded-lg hover:bg-indigo-100 transition-colors shadow-sm">📥 Download 3D PDB File</button>
           {activeTest.structureFileName && (!structureFile || nmrStructRestore.message) && (
             <div className="flex flex-wrap items-center justify-center gap-2 text-[11px]">

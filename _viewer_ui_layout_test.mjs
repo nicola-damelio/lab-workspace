@@ -169,7 +169,9 @@ has('if (f) handleTrajFileChosen(f);', '[§1] …branché sur handleTrajFileChos
    SUR LA MÊME LIGNE que 📂 PDB file(s) et 📂 Trajectory — la demande de cette
    session : « the "topology from Drive folder" and "trajectory from drive folder"
    buttons should be in the same line as "PDB file" and "trajectory" buttons ».
-   Défaut `null` : les pages NMR et Docking ne voient AUCUN changement. */
+   Défaut `null` : une page qui ne passe rien ne voit aucun changement — et, depuis le
+   14/10/2026, les TROIS pages s'en servent : NMR y ajoute « 📂 Trajectory from Drive folder »
+   à côté de son 📂 PDB, et Docking gagne son premier 📂, « 📂 Topology from Drive folder ». */
 has('fileRowExtra = null,', '[§1] la rangée des fichiers accepte les commandes de la PAGE');
 has('{fileRowExtra}', '[§1] …et les rend DANS la même rangée (la ligne de 📂 PDB file(s))');
 has('onClick={handleClearViewer}', '[§1] bouton Clear');

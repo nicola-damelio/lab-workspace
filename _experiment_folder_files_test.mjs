@@ -509,7 +509,8 @@ ok(NMRSRC.includes("import { DriveExperimentFilePicker } from './DriveExperiment
   'la page NMR monte le même geste de LECTURE (le PDB de la condition) — la création vient du viewer');
 ok(NMRSRC.includes("import { DriveExperimentFilePicker, DriveExperimentFolderCreator } from './DriveExperimentFiles';") === false,
   '…et n’importe plus le geste de création non plus');
-eq((NMRSRC.match(/<DriveExperimentFilePicker/g) || []).length, 1, 'un bouton : le PDB, sous la vue 3D');
+eq((NMRSRC.match(/<DriveExperimentFilePicker/g) || []).length, 2,
+  'deux boutons : le PDB de la condition ET sa trajectoire, sur la ligne de la rangée des fichiers');
 ok(NMRSRC.includes('const pickNmrStructureFromFolder = async (file, meta) => {'),
   '…et la page NMR installe le PDB choisi');
 ok(/pickNmrStructureFromFolder = async[\s\S]{0,2000}?structureDriveName: meta.name \|\| restored.name,/.test(NMRSRC),
@@ -518,8 +519,16 @@ ok(/pickNmrStructureFromFolder = async[\s\S]{0,2000}?structureDrive: pointer/.te
   '…et en posant son pointeur (id exact)');
 ok(/pickNmrStructureFromFolder = async[\s\S]{0,2000}?await blobStore\.save\(nmrStructBlobKey\(testId\), restored\)/.test(NMRSRC),
   '…et en le rangeant dans la base du navigateur (il survit au rechargement)');
-ok(NMRSRC.includes('ctx={nmrStructDriveCtx(activeTest)}'),
-  'la lecture part du dossier canonique de l’expérience NMR (Data/Structure)');
+ok(NMRSRC.includes("ctx={nmrCanonicalFolderCtx(activeTest, 'Structure')}"),
+  'la lecture part du dossier CANONIQUE de l’expérience NMR (Setup/Structure, celui que 📁 Create drive folder fabrique)');
+ok(NMRSRC.includes("ctx={nmrCanonicalFolderCtx(activeTest, 'Trajectory')}"),
+  '…et le second 📂 lit le dossier canonique de SA sous-section (Setup/Trajectory)');
+ok(NMRSRC.includes('label="📂 Trajectory from Drive folder"'),
+  'le second 📂 est celui de la trajectoire — le pendant NMR du 📂 de la page MD');
+ok(NMRSRC.includes("import { experimentFilePointer, MD_TRAJECTORY_EXTS, STRUCTURE_FILE_EXTS } from '../utils/driveExperimentFiles';"),
+  '…et les extensions de trajectoire viennent du module partagé (une seule liste pour les deux pages)');
+ok(NMRSRC.includes('fileRowExtra={nmrFileRowExtra}'),
+  'les deux 📂 partent AU VIEWER (une seule rangée), comme ceux de la page MD');
 
 /* ── LA CRÉATION, CÔTÉ CODE : le module qui crée le CHEMIN ENTIER, le composant
    qui le donne à l'utilisateur, et le VIEWER qui le pose sur la ligne de

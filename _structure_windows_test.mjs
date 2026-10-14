@@ -214,14 +214,45 @@ has(VIEW, '{fileRowExtra}', '[viewer] …et elle les rend dans la rangée des fi
   ok(VIEW.indexOf('label="📂 Style from folder"') === -1,
     '[viewer] …et plus de 📂 Style from folder : le style du dossier est lu par le rappel automatique');
 }
-eq(count(SEC, 'fileRowExtra={nmrStructureFromFolder}'), 1, '[NMR] la page NMR en passe UN — LE 📂 PDB DU DOSSIER, sur la ligne de 📁 Create drive folder (la demande : « in the viewer "pdb from drive folder" should fit in the same line as "create drive folder" »)');
+eq(count(SEC, 'fileRowExtra={nmrFileRowExtra}'), 1, '[NMR] la page NMR passe AU VIEWER les 📂 du dossier de la condition, sur la ligne de 📁 Create drive folder (la demande : « in the viewer "pdb from drive folder" should fit in the same line as "create drive folder" »)');
 has(SEC, 'const nmrStructureFromFolder = (', '[NMR] …définie une seule fois, avant le rendu de la page');
-ok(/const nmrStructureFromFolder = \([\s\S]{0,900}?label="📂 PDB from Drive folder"[\s\S]{0,900}?ctx=\{nmrStructDriveCtx\(activeTest\)\}[\s\S]{0,900}?onPick=\{pickNmrStructureFromFolder\}/.test(SEC),
-  '[NMR] …et c’est bien le MÊME bouton : sa lecture (le dossier de l’expérience) et son installation sont inchangées');
+ok(/const nmrStructureFromFolder = \([\s\S]{0,900}?label="📂 PDB from Drive folder"[\s\S]{0,900}?ctx=\{nmrCanonicalFolderCtx\(activeTest, 'Structure'\)\}[\s\S]{0,900}?onPick=\{pickNmrStructureFromFolder\}/.test(SEC),
+  '[NMR] …et c’est bien le MÊME bouton : sa lecture (le dossier canonique EN PREMIER) et son installation sont inchangées');
 has(SEC, 'Choosing a file here opens it AND declares it: this condition will reopen it by default, on every computer. Nothing is uploaded again.',
   '[NMR] …la phrase qui l’accompagnait est passée dans son infobulle (rien n’est perdu)');
-eq(count(SEC, '<DriveExperimentFilePicker'), 1, '[NMR] …un seul 📂 PDB du dossier, donc : sa rangée à lui tout seul a disparu');
-eq(count(DOCK, 'fileRowExtra'), 0, '[Docking] …la page Docking non plus');
+/* LE SECOND 📂 DE CETTE PAGE : la trajectoire du dossier (le pendant NMR du 📂
+   « Trajectory from Drive folder » de la page MD — la page NMR n'avait AUCUN
+   moyen de rejouer une trajectoire déposée dans le dossier de l'expérience). La
+   rangée porte donc LES DEUX 📂, dans l'ordre de la demande (« Create drive
+   folder, Pdb from folder, trajectory from folder ») : la structure D'ABORD, la
+   trajectoire ensuite, et le mot du geste après eux. */
+eq(count(SEC, '<DriveExperimentFilePicker'), 2, '[NMR] …deux 📂 : le PDB du dossier ET la trajectoire du dossier');
+{
+  const iStruct = SEC.indexOf('const nmrStructureFromFolder = (');
+  const iTraj = SEC.indexOf('const nmrTrajectoryFromFolder = (');
+  const iRow = SEC.indexOf('const nmrFileRowExtra = (');
+  ok(iStruct > 0 && iStruct < iTraj && iTraj < iRow,
+    '[NMR] …définis dans l’ordre (structure · trajectoire) puis rendus par UNE rangée');
+  ok(/const nmrFileRowExtra = \([\s\S]{0,900}?\{nmrStructureFromFolder\}[\s\S]{0,300}?\{nmrTrajectoryFromFolder\}/.test(SEC),
+    '[NMR] …la rangée les monte dans CET ordre (et le mot de l’envoi vient après eux)');
+}
+/* LA MÊME LIGNE SUR LA PAGE DOCKING — le pendant Docking du 📂 « Topology from
+   Drive folder » de la page MD. La page n'avait AUCUN moyen de lire un récepteur
+   déposé à la main dans le dossier de l'expérience : la restauration ne cherche
+   que les NOMS que le dataset déclare (voir utils/dockingDeclaredFiles.js), donc
+   un fichier déposé à la main restait invisible. Le 📂 (et son mot) part donc AU
+   VIEWER, comme les deux de la page MD. */
+eq(count(DOCK, 'fileRowExtra={dockFileRowExtra}'), 1,
+  '[Docking] la page passe SON 📂 (et son mot) au viewer, sur la ligne de 📁 Create drive folder');
+has(DOCK, 'const dockTopologyFromFolder = (', '[Docking] …défini une seule fois, avant le rendu de la page');
+has(DOCK, 'label="📂 Topology from Drive folder"', '[Docking] …c’est le 📂 « Topology from Drive folder »');
+ok(/const dockTopologyFromFolder = \([\s\S]{0,1200}?ctx=\{dockFolderCtx\('Structure'\)\}[\s\S]{0,1200}?ctxs=\{\[dockFolderCtx\('Structure', 'Data'\), dockFolderCtx\('Docking', 'Data'\)\]\}[\s\S]{0,1200}?exts=\{DOCKING_TOPOLOGY_EXTS\}[\s\S]{0,1200}?onPick=\{pickTopologyFromFolder\}/.test(DOCK),
+  '[Docking] …le dossier canonique d’abord (celui de 📁 Create drive folder), puis les deux branches de la page (le dossier de calcul · les envois du viewer 3D)');
+eq(count(DOCK, '<DriveExperimentFilePicker'), 1,
+  '[Docking] …un seul 📂 : cette page n’a qu’un fichier à lire dans le dossier');
+has(DOCK, 'declaredNames={declaredStructureNames}',
+  '[Docking] …et les N structures déclarées par le dataset sont marquées ✓ (aucune n’est prise deux fois)');
+has(DOCK, 'const dockFileRowExtra = (', '[Docking] …le mot du geste accompagne le bouton dans la rangée');
 
 const dkFlex = at(DOCK, '<div className="flex flex-col">', '[Docking] les deux cartes sont dans UN empilement');
 const dk3D = at(DOCK, 'title="3D viewer"', '[Docking] le viewer 3D a SA sous-section repliable');

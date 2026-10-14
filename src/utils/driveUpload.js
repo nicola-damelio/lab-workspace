@@ -2885,6 +2885,64 @@ const writeWorkspaceFileOnce = async ({ name, mimeType, file, folderId }) => {
   }
 };
 
+/* ── LE DOSSIER D'EXPÉRIENCE, RENOMMÉ SUR LE DRIVE MÊME QUAND LE REGISTRE
+   L'IGNORE ────────────────────────────────────────────────────────────────
+   `renameDriveFilesFor` s'appuie sur le REGISTRE des fichiers du poste
+   (localStorage) : il ne voit donc que les fichiers téléversés D'ICI. Renommer
+   une expérience sur un poste où ses fichiers n'ont jamais été envoyés (dataset
+   repris d'un autre poste, registre vidé, navigation privée) ne trouvait AUCUN
+   fichier, ne renommait donc AUCUN dossier — et le geste suivant (structure,
+   style du viewer, spectre… qui, lui, sait écrire au chemin canonique du nom
+   d'aujourd'hui) fabriquait l'arborescence du nouveau nom À CÔTÉ de l'ancienne :
+   deux dossiers d'expérience, le nouveau « différemment structuré » (il ne porte
+   que ce que ce poste-là a déposé) et l'ancien gardant tout le reste — le .pdb
+   compris. Le geste juste existe pourtant à côté : un dossier se RENOMME (ses
+   fichiers suivent tous), il ne se recrée pas.
+
+   Ici : le dossier de l'expérience est retrouvé par SON NOM, aux emplacements
+   mêmes de sa création (`findProjectTestFolder` : projects/<projet>, l'ancien
+   rangement à la racine du dataset…), puis RENOMMÉ sur place ; si le nom
+   d'arrivée est déjà pris (un renommage précédent a laissé son dossier derrière
+   lui), le contenu de l'ancien y est DÉPLACÉ et l'ancien — alors vide — part à
+   la corbeille : rien n'est perdu, aucun dossier n'est créé. Best-effort, et
+   jamais de jeton : 0 (un renommage n'invente JAMAIS d'arborescence).
+   @returns {Promise<number>} 1 quand le dossier a été renommé (ou réuni), 0 sinon. */
+const renameTestFolderOnDrive = async ({ oldValue, newValue, project = '' }) => {
+  const oldName = String(oldValue || '');
+  const newName = String(newValue || '');
+  const oldSlug = oldName ? (sanitizeSlug(oldName) || DEFAULT_EXPERIMENT_NAME) : '';
+  const newSlug = newName ? (sanitizeSlug(newName) || DEFAULT_EXPERIMENT_NAME) : '';
+  if (!oldSlug || !newSlug || oldSlug === newSlug) return 0;
+  const root = await ensureDriveFolder();
+  if (!root) return 0;
+  const found = await findProjectTestFolder(root, oldName, project);
+  if (!found || !found.id) return 0; // aucun dossier à ce nom : on ne fabrique rien
+  const folderId = found.id;
+  const meta = await getDriveFileMeta(folderId).catch(() => null);
+  const parentId = (meta && meta.parents && meta.parents[0]) || '';
+  const taken = parentId ? await findFolderByName(newSlug, parentId) : '';
+  if (taken && taken !== folderId) {
+    /* LE NOM D'ARRIVÉE EST DÉJÀ PRIS : deux dossiers de la même expérience ont
+       coexisté (l'ancien, resté avec ses fichiers — le .pdb compris — et le
+       nouveau, fabriqué par un envoi). On ne fabrique pas un troisième nom : le
+       contenu de l'ancien rejoint le nouveau, puis l'ancien (vide) part à la
+       corbeille. C'est la réparation d'un Drive déjà abîmé, et les fichiers
+       laissés derrière retrouvent le dossier de leur expérience. */
+    let moved = 0;
+    try {
+      const q = encodeURIComponent(`'${folderId}' in parents and trashed=false`);
+      const res = await driveFetch(`/drive/v3/files?q=${q}&fields=files(id)&pageSize=1000`);
+      const j = await res.json();
+      for (const child of (Array.isArray(j.files) ? j.files : [])) {
+        if (child && child.id && await moveDriveFile(String(child.id), taken)) moved += 1;
+      }
+    } catch { /* best-effort : un déplacement raté laisse le fichier dans l'ancien dossier */ }
+    await trashDriveFile(folderId).catch(() => false);
+    return moved || 1;
+  }
+  return (await renameDriveFile(folderId, newSlug)) ? 1 : 0;
+};
+
 /**
  * Keep the Drive file tree in sync when a naming context value changes.
  *
@@ -2898,7 +2956,7 @@ const writeWorkspaceFileOnce = async ({ name, mimeType, file, folderId }) => {
  * every { field: value } it lists.
  * @returns {Promise<number>} number of files updated
  */
-export const renameDriveFilesFor = async ({ field, oldValue, newValue, scope = null }) => {
+export const renameDriveFilesFor = async ({ field, oldValue, newValue, scope = null, project = '' }) => {
   if (!field || oldValue === undefined || newValue === undefined) return 0;
   if (String(oldValue) === String(newValue)) return 0;
   if (!getDriveToken()) return 0;
@@ -2925,7 +2983,17 @@ export const renameDriveFilesFor = async ({ field, oldValue, newValue, scope = n
     }
     return true;
   });
-  if (matches.length === 0) return 0;
+  /* AUCUN fichier du registre ne parle de cet objet : le dossier de
+     l'EXPÉRIENCE est quand même renommé, SUR LE DRIVE, par son nom (voir
+     renameTestFolderOnDrive) — c'est le rattrapage d'un renommage fait sur un
+     poste dont le registre ne connaît pas ces fichiers (dataset repris d'un
+     autre poste, registre vidé…). Sans lui, le geste ne faisait RIEN et le
+     prochain envoi fabriquait l'arborescence du nouveau nom à côté de
+     l'ancienne : deux dossiers d'expérience, et le .pdb resté dans l'ancien. */
+  if (matches.length === 0) {
+    if (field === 'test') return await renameTestFolderOnDrive({ oldValue, newValue, project });
+    return 0;
+  }
 
   const FOLDER_FIELDS = ['protocol', 'scientist', 'project', 'test', 'section', 'subsection', 'instance'];
   const isFolderLevel = FOLDER_FIELDS.includes(field);

@@ -571,7 +571,20 @@ const TestHeader = (
                                     urls: [activeTest.boxImageUrl || '', activeTest.boxContentsImageUrl || '']
                                   }).catch(() => {});
                                 } else {
-                                  renameDriveFilesFor({ field: 'test', oldValue: before, newValue: activeTest.name }).catch(() => {});
+                                  renameDriveFilesFor({
+                                    field: 'test',
+                                    oldValue: before,
+                                    newValue: activeTest.name,
+                                    /* LE PROJET : il dit OÙ chercher le dossier de
+                                       l'expérience quand le registre de CE poste ne
+                                       connaît aucun de ses fichiers (dataset repris
+                                       d'un autre poste, registre vidé — voir
+                                       driveUpload.renameTestFolderOnDrive). Sans lui,
+                                       le dossier restait à l'ancien nom et le prochain
+                                       envoi en fabriquait un second, « différemment
+                                       structuré », le .pdb restant dans le premier. */
+                                    project: (activeTest.projectNames || [])[0] || ''
+                                  }).catch(() => {});
                                 }
                               }
                               testNameBeforeEditRef.current = null;

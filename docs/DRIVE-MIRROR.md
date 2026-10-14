@@ -3417,12 +3417,16 @@ mais AVANT ⬇ PDB et 🗑 Clear). Ce qui reste vrai : c'est le viewer qui rend 
 | 5 | 🗑 **Clear** | vide la vue |
 | 6 | 🗑 **Delete PDB ⇄ ↩ Restore PDB** | met le PDB de côté / le ressuscite (conditionnel) |
 | 7 | 📁 **Create drive folder** | le seul geste qui FABRIQUE l'arborescence de l'expérience |
-| 8 | `{fileRowExtra}` | les 📂 de la PAGE : 📂 Topology / 📂 Trajectory from Drive folder (MD), rien sur NMR / Docking |
+| 8 | `{fileRowExtra}` | les 📂 de la PAGE : 📂 Topology / 📂 Trajectory from Drive folder (MD), 📂 PDB / 📂 Trajectory from Drive folder (NMR), 📂 Topology from Drive folder (Docking) |
 
 *(Depuis la session du **04/10/2026** — « Le 📂 PDB du dossier rejoint la rangée des fichiers, et 🔄
 fait tourner la molécule », en fin de document — la page **NMR** passe elle aussi son 📂 de la PAGE,
-le « 📂 PDB from Drive folder », sur cette même ligne : la ligne 8 ci-dessus ne vaut donc plus que
-pour la page **Docking**.)*
+le « 📂 PDB from Drive folder », sur cette même ligne. **Et depuis le 14/10/2026 les deux pages qui
+n'en avaient pas — ou pas pour ce qu'elles ont à lire — ont le leur** : NMR y ajoute « 📂 Trajectory
+from Drive folder » à côté de son 📂 PDB, et la page **Docking** gagne son premier 📂, « 📂 Topology
+from Drive folder » — la ligne 8 ci-dessus se lit donc désormais « une page, ses 📂 » (voir « Les deux
+📂 qui manquaient … », en fin de document). Ce qui reste vrai, c'est **qui** les rend : c'est le
+viewer, à la fin de sa rangée §1 General — aucune page ne peut les oublier ni les déplacer.)*
 
 ⚠ **« 📂 Style from folder » a disparu** (« *Style from folder should not be there* ») et son geste
 `pickStyleFileFromFolder` avec lui : aucun code mort, et le viewer n'importe même plus
@@ -5017,6 +5021,71 @@ autres.
   (« 1YCR »), `rcsb:1ycr` aussi, une URL donne son **dernier segment sans son extension**
   (« …/download/1abc.pdb.gz » → « 1ABC », « …/my_model.cif » → « my_model »), et ce qui n'a **aucun**
   nom à donner (`data:` / `blob:`) rend `''` — un fichier sans nom n'a rien à faire sur le Drive.
+## Renommer une expérience : un VRAI renommage, même quand ce poste ne connaît aucun de ses fichiers
+
+**Le défaut signalé.** « Quand je renomme un test, un dossier au nouveau nom est
+créé sur le Drive au lieu de renommer l'ancien — et le nouveau ne contient pas le
+`.pdb`, qui reste dans le premier. »
+
+**La cause — deux pièces, et il n'en manquait qu'une.**
+
+* `renameDriveFilesFor` (`src/utils/driveUpload.js`) **savait déjà** renommer un
+  dossier EN PLACE (le nom ET son index se lisent dans `ctxPathOf` — le correctif
+  du 08/10/2026). Mais il ne sait quels fichiers concerner que par le **registre
+  du poste** (`labDriveFileRegistry`, `localStorage`) : les fichiers envoyés
+  D'ICI. Sur un poste qui n'a jamais téléversé cette expérience (dataset repris
+  d'un autre poste, registre vidé, navigation privée), `matches` était **vide**
+  et la fonction sortait en `return 0` : **rien n'était renommé sur le Drive** ;
+* le geste suivant (structure du viewer, style, spectre…) écrit, lui, au chemin
+  **canonique du nom d'aujourd'hui** (`resolveDrivePath(newCtx)`) : il
+  **fabriquait** l'arborescence du nouveau nom À CÔTÉ de l'ancienne — un second
+  dossier d'expérience, « différemment structuré » (il ne porte que ce que ce
+  poste-là a déposé), pendant que l'ancien gardait tout le reste, le `.pdb`
+  compris.
+
+**Le correctif — `driveUpload.renameTestFolderOnDrive`**, appelé par
+`renameDriveFilesFor` quand le registre ne connaît **aucun** fichier de l'objet
+(`if (field === 'test') …`) :
+
+* le dossier est retrouvé **par son nom**, aux emplacements mêmes de sa création
+  (`findProjectTestFolder` : `projects/<projet>/<expérience>`, `projects/test/…`,
+  `projects/_unassigned/…`, l'ancien rangement à la racine du dataset) — le
+  projet est passé par la page (`activeTestModule.jsx` :
+  `project: (activeTest.projectNames || [])[0] || ''`) ;
+* il est **RENOMMÉ sur place** (`renameDriveFile`) : tous ses fichiers suivent,
+  rien n'est déplacé, **aucun** dossier n'est créé ;
+* si le nom d'arrivée est **déjà pris** (un Drive déjà abîmé : l'ancien dossier
+  et le nouveau coexistent), le contenu de l'ancien est **DÉPLACÉ** dans celui
+  d'aujourd'hui, puis l'ancien (devenu vide) part à la **corbeille** — jamais de
+  destruction, et les fichiers restés derrière (le `.pdb`) retrouvent leur
+  expérience ;
+* **aucun `findOrCreateFolder`** sur ce chemin : un renommage n'invente jamais
+  d'arborescence (principe déjà tenu partout ailleurs).
+
+### Vérifier soi-même
+
+```bash
+node _drive_rename_test.mjs   # 76 vérifications (56 + 20)
+                              # §E : registre VIDE → dossier renommé (PATCH),
+                              #      creations('Test_7') = 0, moves() = [],
+                              #      plus aucun « Exp_7 », le .pdb toujours
+                              #      dans son dossier de structure
+                              #    + Drive DÉJÀ abîmé (deux dossiers) → contenu
+                              #      réuni dans celui d'aujourd'hui, ancien à la
+                              #      corbeille, aucun troisième nom
+```
+
+Régressions relancées, **toutes vertes** : `_drive_mirror_test` **79**,
+`_drive_structure_test` **141**, `_drive_restore_test` **253**,
+`_drive_folder_anchor_test` **51**, `_drive_purge_test` **40**,
+`_drive_instance_level_test` **77**, `_drive_tidy_test` **81**,
+`_dataset_dir_twins_test` **53**, `_experiment_move_drive_test` **63**,
+`_upload_twins_test` **33**, `_folder_race_test` **47**,
+`_experiment_folder_files_test` **181**, `_structure_windows_test` **112**,
+`_viewer_ui_layout_test` **517** ; `npx oxlint src/utils/driveUpload.js
+src/components/AppModules/activeTestModule.jsx` — **0 erreur, 0 avertissement**.
+
+
   Le nom est **stable** pour une même source, donc recharger le même code **réécrit le même fichier**
   au lieu d'en empiler un second (`uploadLocalFile` cherche par nom dans le dossier cible).
 * **`src/components/NMRMoleculeViewer.jsx` → `archiveSourceStructureOnDrive({ comp, rawSrc, ctx,
@@ -6023,3 +6092,100 @@ lien déclaré, sans archive et sans Drive, elle reste vierge et le dit (message
 de restauration, import du dossier de calcul) — c'est le comportement demandé.
 
 
+## Les deux 📂 qui manquaient : la trajectoire de la page NMR, la topologie de la page Docking (14/10/2026)
+
+**Ce qui manquait.** Un geste, trois pages. Lire le dossier de l'expérience sur le Drive existait déjà
+sur la page **MD** (📂 **Topology** / 📂 **Trajectory from Drive folder**, 03/10/2026) et, pour son PDB,
+sur la page **NMR** (📂 **PDB from Drive folder**, 04/10/2026) — mais pas là où la lecture manquait
+vraiment :
+
+* la page **NMR** n'avait **aucun** moyen de rejouer une trajectoire posée dans le dossier de
+  l'expérience : la barre ▶ du viewer et NGL savent la lire, mais rien ne la leur donnait. La reprise
+  automatique, elle, cherche par **nom** et par pointeur : un fichier déposé à la main dans le dossier
+  reste invisible ;
+* la page **Docking** n'avait aucun 📂 du tout : le dossier de l'expérience ne pouvait pas lui donner
+  son récepteur.
+
+Les deux pages gagnent donc le leur, et **aucun geste n'est réécrit** : le composant
+`DriveExperimentFilePicker`, sa lecture (`listExperimentFiles` : le dossier canonique de l'expérience,
+puis les branches de la page) et le 📂 rendu par le viewer sont ceux du 03/10. Rien n'est renvoyé au
+Drive : le fichier y est déjà, on l'**ouvre**.
+
+### ① NMR — 📂 Trajectory from Drive folder
+
+`nmrTrajectoryFromFolder` (`NMRSections.jsx`) : le 📂 est monté **à côté de son 📂 PDB**, dans la
+rangée des fichiers du viewer, et prend la **même liste d'extensions que la page MD**
+(`MD_TRAJECTORY_EXTS` : `.xtc .trr .dcd .nc .netcdf .lammpstrj .binpos .crd`). Les dossiers lus sont,
+dans l'ordre, le canonique de l'expérience pour cette sous-section
+(`nmrCanonicalFolderCtx(activeTest, 'Trajectory')` → `…/experiment_setup/Trajectory`, celui que
+📁 Create drive folder fabrique) puis la branche où les envois de la page arrivent (`nmrTrajDriveCtx`
+→ `…/Data/Trajectory`).
+
+`pickNmrTrajectoryFromFolder` fait trois choses, dans cet ordre :
+
+1. il range le fichier choisi dans la base du navigateur sous la clé de sa condition
+   (`nmrTrajBlobKey(activeTest.id)` = `nmr_traj_<id>`) et dans le cache mémoire de la page ;
+2. il ne touche l'écran **que si c'est toujours cette condition qui est affichée**
+   (`nmrStructPageIdRef.current === testId`) : un fichier rangé sous la clé d'une autre condition
+   attend son tour ;
+3. il **déclare** le fichier sur la condition — `trajectoryFileName`, `trajectoryDriveName` et son
+   pointeur (`trajectoryDrive` = `experimentFilePointer(meta)`) — donc la barre ▶ le rejoue par
+   défaut, ici comme sur un autre poste.
+
+La liste marque ✓ devant le fichier **déjà déclaré** (`declaredName`) : le même fichier n'est pas pris
+deux fois.
+
+### ② Docking — 📂 Topology from Drive folder
+
+`dockTopologyFromFolder` (`DockingSections.jsx`) est **le seul 📂 de cette page**, et il n'en fallait
+qu'un : ce que la page installe, c'est le **récepteur** de la condition. Il lit le dossier canonique de
+la sous-section `Structure` (`dockFolderCtx('Structure')`), puis la sous-section `Structure` et la
+sous-section `Docking` dans `Data` (`ctxs` : le dossier de calcul importé, et les envois du viewer 3D).
+
+`pickTopologyFromFolder` :
+
+* décompresse un `.pdb.gz` par ses **octets magiques** (`1f 8b`) — la même lecture que celle des
+  fichiers que le dataset déclare ;
+* range le texte dans la base du navigateur sous la clé **exacte** que le viewer relit
+  (`dockingStructKey`), en **remplaçant** l'entrée du même nom (`structureNameKey` : dossier, `.gz` et
+  extension ignorés) : choisir deux fois le même fichier ne l'empile pas ;
+* **déclare** le nom + le lien du fichier (`dockingStructures`), ce qui **réveille `structList`** et
+  ouvre la carte 3D — le récepteur choisi s'affiche tout de suite, et chaque poste le rouvrira.
+
+Ce que le 📂 propose est ce que la page sait ouvrir : `DOCKING_TOPOLOGY_EXTS` =
+`.pdb .ent .cif .mmcif .mol2 .sdf`, et `dockingTopologyExt(name)` dit au viewer l'extension qu'il
+reçoit (`.ent` EST du PDB, `.mmcif` EST du CIF ; tout le reste — dont un nom sans extension — retombe
+sur `pdb`).
+
+### ③ Trois pages, un seul `fileRowExtra` — et la ✓ qui va avec
+
+Les deux 📂 ne se posent pas dans une rangée à eux : ils partent **au viewer** par la prop
+`fileRowExtra` (celle du 03/10), qui les rend à la **fin de sa rangée §1 General** — la ligne même de
+📂 PDB file(s), 📂 Trajectory et 📁 Create drive folder :
+
+* `NMRSections.jsx` → `fileRowExtra={nmrFileRowExtra}` : 📂 PDB from Drive folder, 📂 Trajectory from
+  Drive folder, puis le mot du geste (✅ / ⚠️) ;
+* `DockingSections.jsx` → `fileRowExtra={dockFileRowExtra}` : son 📂 et son mot.
+
+`DriveExperimentFiles.jsx` gagne **une** prop : `declaredNames`, une **liste**. Un docking déclare
+**N** fichiers — les N modèles d'un cluster — et chacun porte ✓ : aucun n'est pris deux fois par
+erreur. Le test de ✓ est celui de la restauration (`sameRawFileFor`).
+
+### Vérifier soi-même
+
+```bash
+node _docking_virgin_page_test.mjs      # 64 — la page vierge, et son 📂 « Topology from Drive folder »
+node _structure_windows_test.mjs        # 120 — les 📂 de chaque page, et leur place dans la rangée
+node _experiment_folder_files_test.mjs  # 185 — le dossier lu, et la ✓ des fichiers déjà déclarés
+node _viewer_ui_layout_test.mjs         # 517 — la rangée §1 General du viewer
+node _drive_rename_test.mjs             # 76 — le renommage (voir « Renommer une expérience », ci-dessus)
+```
+
+Régressions relancées : `npx vite build` **OK**, et `npx oxlint` sur les six fichiers source touchés,
+**avant comme après** — **0 erreur** des deux côtés, **33 diagnostics** de part et d'autre, les mêmes
+règles : les trois `react-hooks(exhaustive-deps)` de `NMRSections.jsx` citent les mêmes dépendances
+dans un autre ordre. Rien de neuf, rien de perdu.
+
+**Ce que ça ne fait pas** : la page NMR ne **devine** aucune trajectoire, et la page Docking ne devine
+aucun récepteur — sans fichier déclaré, sans dossier et sans Drive, les deux restent ce qu'elles
+étaient. Et rien n'est **téléversé** une seconde fois : les deux gestes ne font que lire.

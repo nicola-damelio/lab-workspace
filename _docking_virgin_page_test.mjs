@@ -31,7 +31,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dockingStructureSrcOf, isDirectStructureSrc, rcsbModelUrl, PDB_CODE_RE } from './src/utils/dockingStructureSrc.js';
-import { declaredDockingFiles, fetchDeclaredDockingFiles, missingDeclaredDockingFiles, structureNameKey } from './src/utils/dockingDeclaredFiles.js';
+import { DOCKING_TOPOLOGY_EXTS, declaredDockingFiles, dockingTopologyExt, fetchDeclaredDockingFiles, missingDeclaredDockingFiles, structureNameKey } from './src/utils/dockingDeclaredFiles.js';
 
 let passed = 0;
 const ok = (cond, what) => { assert.ok(cond, what); passed += 1; };
@@ -185,6 +185,45 @@ ok(SRC.includes('no copy was found on Google Drive') && SRC.includes('holds no s
   'les deux messages d’échec d’origine sont conservés mot pour mot (ils portent le geste à faire)');
 ok(SRC.includes('const source = found ? found.name :'),
   'le message de réussite ne présume plus qu’une archive a été lue (elle peut manquer)');
+
+
+/* ── 6. 📂 LE RÉCEPTEUR DÉPOSÉ DANS LE DOSSIER DE L’EXPÉRIENCE ────────────
+   Le pendant Docking des deux 📂 de la page MD (même composant, même lecture du
+   dossier — voir DriveExperimentFiles.jsx) : ce que la restauration automatique
+   ne sait PAS faire, parce qu’elle ne cherche que les noms que le dataset
+   déclare (et ceux des archives). Un récepteur déposé À LA MAIN dans
+   `…/experiment_setup/Structure` n’a aucun de ces noms : la page restait sans la
+   structure qu’elle doit montrer. La liste proposée ne contient donc que des
+   formats que le viewer 3D sait charger — les mêmes que `structureNameKey`
+   reconnaît juste au-dessus. */
+eq(DOCKING_TOPOLOGY_EXTS, ['pdb', 'ent', 'cif', 'mmcif', 'mol2', 'sdf'],
+  'la liste ne propose QUE les formats que cette page sait ouvrir');
+eq(dockingTopologyExt('receptor.pdb'), 'pdb', 'un `.pdb` reste un PDB');
+eq(dockingTopologyExt('run/8_seletopclusts/cluster_1_model_1.PDB'), 'pdb',
+  '…même en majuscules et avec son dossier');
+eq(dockingTopologyExt('receptor.pdb.gz'), 'pdb', '…et même gzippé (le `.gz` est retiré : il est décompressé à la lecture)');
+eq(dockingTopologyExt('receptor.ent'), 'pdb', 'un `.ent` EST du PDB (l’alias est ramené)');
+eq(dockingTopologyExt('receptor.mmcif'), 'cif', 'un `.mmcif` EST du CIF');
+eq(dockingTopologyExt('receptor.cif'), 'cif', '…comme un `.cif`');
+eq(dockingTopologyExt('receptor.mol2'), 'mol2', 'un `.mol2` garde son format');
+eq(dockingTopologyExt('receptor'), 'pdb', 'un nom sans extension retombe sur le défaut de la page');
+eq(dockingTopologyExt(''), 'pdb', 'un nom vide aussi — jamais d’extension inventée');
+
+ok(/const dockTopologyFromFolder = \([\s\S]{0,1200}?onPick=\{pickTopologyFromFolder\}/.test(SRC),
+  'la page a UN 📂 « Topology from Drive folder », qui installe le fichier choisi');
+ok(SRC.includes("ctx={dockFolderCtx('Structure')}")
+  && SRC.includes("ctxs={[dockFolderCtx('Structure', 'Data'), dockFolderCtx('Docking', 'Data')]}"),
+  '…le dossier canonique (celui que 📁 Create drive folder fabrique) D’ABORD, puis les branches de la page');
+ok(SRC.includes('storeJson(structKey, next)')
+  && SRC.includes("dockingStructures: next.map((s) => ({ name: s.name, driveUrl: s.driveUrl || '' }))"),
+  'le fichier choisi est rangé là où le viewer relit, et les métadonnées sont touchées (structList se réveille)');
+ok(SRC.includes('ext: dockingTopologyExt(name)')
+  && SRC.includes("structureTextExt={selectedStruct && selectedStruct.ext ? selectedStruct.ext : 'pdb'}"),
+  '…et c’est l’extension DU FICHIER qui part au viewer (un CIF ne se lit pas comme un PDB)');
+ok(SRC.includes('fileRowExtra={dockFileRowExtra}'),
+  '…et le bouton part au viewer, sur la ligne même de 📁 Create drive folder');
+ok(SRC.includes('declaredNames={declaredStructureNames}'),
+  'les N structures déclarées portent ✓ dans la liste (aucune n’est prise deux fois)');
 
 console.log(`${passed} passed`);
 

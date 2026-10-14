@@ -42,6 +42,31 @@ export const structureNameKey = (name = '') => String(name || '')
   .trim()
   .toLowerCase();
 
+/** LES FORMATS DE RÉCEPTEUR QUE CETTE PAGE SAIT OUVRIR — la liste EXACTE des
+ *  extensions que `structureNameKey` (juste au-dessus) reconnaît comme un
+ *  fichier de structure. Sert au geste de lecture du dossier de l'expérience
+ *  (📂 Topology from Drive folder, DockingSections.jsx) : la liste proposée ne
+ *  contient donc que des fichiers que le viewer 3D sait charger. */
+export const DOCKING_TOPOLOGY_EXTS = ['pdb', 'ent', 'cif', 'mmcif', 'mol2', 'sdf'];
+
+/** L'EXTENSION QUE LE VIEWER 3D REÇOIT pour un fichier choisi dans le dossier.
+ *  Les alias du PDB sont ramenés au nom que le composeur lit sûr — `.ent` EST du
+ *  PDB, `.mmcif` EST du CIF — et tout le reste (dont un nom sans extension)
+ *  retombe sur `pdb`, le défaut de la page. PUR : le nom entre, l'extension
+ *  sort, rien d'autre n'est lu. */
+export const dockingTopologyExt = (name = '') => {
+  const ext = String(name || '')
+    .split(/[\\/]/)
+    .pop()
+    .replace(/\.gz$/i, '')
+    .split('.')
+    .pop()
+    .toLowerCase();
+  if (ext === 'ent') return 'pdb';
+  if (ext === 'mmcif') return 'cif';
+  return ['cif', 'mol2', 'sdf'].includes(ext) ? ext : 'pdb';
+};
+
 /** Les fichiers d'un docking que le dataset DÉCLARE, avec leur lien.
  *  Un fichier sans lien (métadonnées d'un import où l'envoi Drive a échoué) est
  *  écarté : il n'y a rien à télécharger, et le nom seul ne fait pas une

@@ -14,7 +14,12 @@ import { archiveRestoreJson, downloadCloudFile, placeRestorePointer, restoreJson
    le repli qui ramène les PDB d'un import ancien, dont le dataset porte le lien
    mais que la base du navigateur n'a pas. */
 import { dockingStructureSrcOf } from '../utils/dockingStructureSrc';
-import { fetchDeclaredDockingFiles, missingDeclaredDockingFiles } from '../utils/dockingDeclaredFiles';
+import { DOCKING_TOPOLOGY_EXTS, dockingTopologyExt, fetchDeclaredDockingFiles, missingDeclaredDockingFiles, structureNameKey } from '../utils/dockingDeclaredFiles';
+/* 📂 LE DOSSIER DE L'EXPÉRIENCE COMME SOURCE (le pendant Docking des 📂 de la
+   page MD) : `experimentFilePointer` rend le pointeur du fichier CHOISI, le
+   composant partagé liste le dossier (voir DriveExperimentFiles.jsx). */
+import { experimentFilePointer } from '../utils/driveExperimentFiles';
+import { DriveExperimentFilePicker } from './DriveExperimentFiles';
 import { useDriveAutoRestore } from './useDriveAutoRestore';
 import { sequenceForMoleculeType, sequencePatchForMoleculeType, structureSequencePatch, sequenceNaturesNote } from '../utils/sequenceNatures';
 /* 🧬 LA LIGNE SOUS LA CASE DE SÉQUENCE — le nombre de chaque acide aminé, la charge totale à
@@ -603,6 +608,10 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
      la même résolution sur SA structure chargée et la signale ici par
      onLigandSmiles, donc le SMILES arrive même quand la page ne savait rien. */
   const [ligandInfo, setLigandInfo] = useState(null);   // { code, smiles, name, source, loading, error }
+  /* Le mot du geste 📂 « Topology from Drive folder » (lecture du dossier,
+     installation, échec) : il vit SUR la ligne des fichiers, à côté du bouton
+     (voir `dockFileRowExtra`), comme le mot équivalent de la page NMR. */
+  const [topoMsg, setTopoMsg] = useState('');
   const knownLigandCode = useMemo(() => {
     const fromRun = String(activeTest.ligandCode || '').trim().toUpperCase();
     if (fromRun) return fromRun;
@@ -749,6 +758,7 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
     setLigandInfo(null);
     setViewerOpen(false);
     setExpandedPanel(null);
+    setTopoMsg('');
   }, [structKey]);
 
   /* ── CE QUE LA SOUS-SECTION « SEQUENCE AND STRUCTURE » A À MONTRER ──────────
@@ -792,6 +802,112 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
       )}
       <p className="text-xs text-slate-400 mt-1">💡 Click an atom in the formula (or in the 3D viewer below) to highlight its cell in the atom table.</p>
     </div>
+  );
+
+  /* ── 📂 PRENDRE LA TOPOLOGIE DANS LE DOSSIER DE L'EXPÉRIENCE ────────────────
+     Le pendant Docking des deux 📂 de la page MD (MÊME composant, MÊME geste :
+     voir DriveExperimentFiles.jsx). Ce que la restauration automatique NE PEUT
+     PAS faire : elle cherche par NOM (les liens déclarés par le dataset, le nom
+     des archives — voir utils/dockingDeclaredFiles.js). Un RÉCEPTEUR déposé À LA
+     MAIN dans le dossier de l'expérience, ou envoyé sous un autre nom, n'a aucun
+     de ces noms : la page restait donc sans la structure qu'elle doit montrer —
+     exactement le défaut réparé sur la page MD, et la question posée ici aussi
+     (« the topology from drive folder »). Le geste manquant est une LECTURE DU
+     DOSSIER : l'utilisateur VOIT ce que l'expérience contient et choisit.
+
+     DEUX BRANCHES, LA CANONIQUE D'ABORD (`ctx` = `…/experiment_setup/Structure`,
+     le dossier que 📁 « Create drive folder » FABRIQUE : le fichier qu'on vient y
+     déposer à la main est vu en premier) ; puis ce que la page range elle-même
+     (`ctxs` = `…/Data/pdb files`, le dossier de calcul importé, et
+     `…/Data/Docking`, les envois du viewer 3D — voir `driveNaming` plus bas).
+
+     LE FICHIER CHOISI DEVIENT LA STRUCTURE DU CLUSTER : son texte entre dans la
+     base du navigateur sous la clé EXACTE que le viewer relit
+     (`dockingStructKey`), et son nom + son lien entrent dans les métadonnées du
+     dataset (`dockingStructures`) — ce qui RÉVEILLE `structList` (l'effet de
+     relecture de la base est keyé sur elles) et ouvre la carte 3D
+     (`structureMode`). Rien n'est renvoyé au Drive : le fichier y est déjà. */
+  const dockFolderCtx = (subsection, section = 'Setup') => ({
+    project: (activeTest.projectNames || [])[0] || '',
+    test: activeTest.name || '',
+    instance: activeTest.instanceName || '',
+    scientist: activeTest.operator || '',
+    section,
+    subsection
+  });
+
+  const pickTopologyFromFolder = async (file, meta) => {
+    const name = String((meta && meta.name) || (file && file.name) || '').trim() || 'receptor.pdb';
+    setTopoMsg(`⬇️ ${name} — installing it as this condition's receptor…`);
+    let text = '';
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      // Un `.pdb.gz` déposé sur le Drive est décompressé (octets magiques gzip) :
+      // c'est la MÊME lecture que celle des fichiers que le dataset déclare
+      // (downloadDeclaredDockingText).
+      const gz = bytes.length > 1 && bytes[0] === 0x1f && bytes[1] === 0x8b;
+      text = new TextDecoder('utf-8').decode(gz ? gunzipSync(bytes) : bytes);
+    } catch { text = ''; }
+    if (!text.trim()) {
+      setTopoMsg(`⚠️ ${name} could not be read as a structure — nothing was installed.`);
+      return;
+    }
+    const entry = {
+      name,
+      pdb: text,
+      ext: dockingTopologyExt(name),
+      driveUrl: (experimentFilePointer(meta) || {}).url || ''
+    };
+    const stored = await loadJson(structKey).catch(() => null);
+    const prev = Array.isArray(stored) ? stored : [];
+    const next = [entry, ...prev.filter((s) => structureNameKey(s && s.name) !== structureNameKey(name))];
+    let kept = '';
+    try { kept = await storeJson(structKey, next); } catch { kept = ''; }
+    // L'état d'abord (l'écran montre le récepteur choisi tout de suite), puis les
+    // métadonnées : elles décrivent le MÊME fichier que la base vient de ranger.
+    setStructList(next);
+    setStructIdx(0);
+    updateActiveTest({
+      dockingStructures: next.map((s) => ({ name: s.name, driveUrl: s.driveUrl || '' }))
+    });
+    setTopoMsg(kept
+      ? `✅ ${name} is now the receptor of this condition — the 3D viewer uses it, and every computer reopens it by default.`
+      : `⚠️ ${name} is shown now, but this browser could not store it — it will have to be read from Drive again next time.`);
+  };
+
+  /* Le seul 📂 de cette page, et son mot : les deux partent AU VIEWER
+     (`fileRowExtra`), qui les rend dans SA rangée §1 General — la ligne même de
+     📂 PDB file(s), 📂 Trajectory et 📁 Create drive folder. `declaredName` /
+     `declaredNames` marquent ✓ les fichiers DÉJÀ déclarés : le modèle du cluster
+     affiché ET les N structures que le dataset nomme (aucun n'est pris deux
+     fois). Le fichier peut venir de n'importe laquelle des branches lues. */
+  const declaredStructureNames = (Array.isArray(activeTest.dockingStructures) ? activeTest.dockingStructures : [])
+    .map((s) => String((s && s.name) || '').trim())
+    .filter(Boolean);
+  const dockTopologyFromFolder = (
+    <DriveExperimentFilePicker
+      label="📂 Topology from Drive folder"
+      titleText="List the .pdb / .cif / .mol2 files that are in THIS experiment's Drive folder (even one you deposited by hand) and open one of them as this condition's receptor. Choosing a file here opens it AND declares it: this condition will reopen it by default, on every computer. Nothing is uploaded again."
+      ctx={dockFolderCtx('Structure')}
+      ctxs={[dockFolderCtx('Structure', 'Data'), dockFolderCtx('Docking', 'Data')]}
+      exts={DOCKING_TOPOLOGY_EXTS}
+      declaredName={selectedStruct ? selectedStruct.name : ''}
+      declaredNames={declaredStructureNames}
+      onPick={pickTopologyFromFolder}
+    />
+  );
+  const dockFileRowExtra = (
+    <>
+      {dockTopologyFromFolder}
+      {topoMsg && (
+        <span
+          className={`text-[10px] font-bold leading-tight max-w-[420px] truncate ${topoMsg.startsWith('⚠️') ? 'text-red-600' : topoMsg.startsWith('✅') ? 'text-emerald-700' : 'text-indigo-700'}`}
+          title={topoMsg}
+        >
+          {topoMsg}
+        </span>
+      )}
+    </>
   );
 
   return (
@@ -1074,7 +1190,13 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
                 instanceKey={(activeTest && activeTest.id) || null}
                 src={selectedStruct ? '' : structureSrc}
                 structureText={selectedStruct ? selectedStruct.pdb : undefined}
-                structureTextExt="pdb"
+                /* L'extension de la structure de CLUSTER (l'import range des
+                   `.pdb`) ; le 📂 « Topology from Drive folder » peut y
+                   installer un `.cif` / `.mol2` / `.ent`, et son entrée porte
+                   alors l'extension que le composeur doit lire (voir
+                   `dockingTopologyExt`) — sans quoi un CIF serait lu comme un
+                   PDB. Une structure sans `ext` (celle de l'import) reste `pdb`. */
+                structureTextExt={selectedStruct && selectedStruct.ext ? selectedStruct.ext : 'pdb'}
                 /* 🧬 LE MODÈLE DE LA SÉQUENCE (le crochet `useSequenceStructureModel`
                    ci-dessus) : peinture 🖌️, FEUILLETS DÉCLARÉS (records SHEET + REMARK
                    950 / 951) et ponts disulfure ⚭ compris. Le viewer le sert dès que RIEN
@@ -1112,6 +1234,13 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
                    contraintes de dihèdre pour le ▶ MD, le ⚒ Minimise et le ▶ Run. */
                 imposedSecondaryStructure={activeTest.secondaryStructure || ''}
                 driveNaming={{ project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || '', instance: activeTest.instanceName || '', scientist: activeTest.operator || '', section: 'Data', subsection: 'Docking' }}
+                /* 📂 LE SEUL 📂 DE CETTE PAGE — « Topology from Drive folder » et
+                   son mot partent AU VIEWER : c'est lui qui les rend dans SA
+                   rangée §1 General, la ligne même de 📂 PDB file(s), 📂
+                   Trajectory et 📁 Create drive folder (il décide de l'ordre de
+                   sa rangée : 📁 Create drive folder, puis le 📂 de la page —
+                   exactement comme sur les pages MD et NMR). */
+                fileRowExtra={dockFileRowExtra}
                 atomRenames={activeTest.atomRenames || {}}
                 onAtomRenames={(map) => updateActiveTest({ atomRenames: map })}
                 resRenumber={activeTest.resRenumber || {}}
