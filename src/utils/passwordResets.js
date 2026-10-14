@@ -9,7 +9,7 @@
    peut faire honnêtement, c'est :
      1. ENREGISTRER la demande (ici, dans ce magasin daté) : c'est ce que le
         superutilisateur voit là où il pose le nouveau mot de passe
-        (Setup → Team & access) ;
+        (page d’accueil → 👥 Équipe &amp; accès) ;
      2. PRÉVENIR les superutilisateurs par e-mail — le canal qui traverse les
         postes (voir sendAdminMail / emailNotify.js, avec le repli mailto:).
 
@@ -138,7 +138,7 @@ export const resetRequestText = (entry, { label = 'Lab Workspace' } = {}) => {
     '',
     `${nameOf(entry) || 'A team member'} cannot sign in to ${label} (forgotten password) and asks for a reset.`,
     '',
-    'What to do: open Setup → Team & access, find the account, press the pencil (✏️), type a new',
+    'What to do: open the Home page → 👥 Team & access (page d’accueil → 👥 Équipe & accès), find the account, press the pencil (✏️), type a new',
     'password and press Save — then tell the person that new password. A password can only be',
     'REPLACED (nobody, not even a superuser, can read the old one: it is the lab token server that',
     'checks it at sign-in).',

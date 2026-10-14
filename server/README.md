@@ -30,7 +30,7 @@ which is what the Firestore rules require (`firestore.rules` at the repo root).
 | -------- | ------- |
 | `POST /api/auth/login` `{ name, password }` | verifies the password server-side (PBKDF2-SHA256; the app's legacy SHA-256 fingerprints are hardened on first successful login) and answers `{ token }` — a Firebase **custom token** carrying `claims { lab: true, name, role }`. |
 | `GET /api/auth/roster` | `{ members: [{ id, name, role }] }` — fills the login screen's name list. **No password, no hash.** |
-| `POST /api/auth/accounts` (header `X-Admin-Token`) | replaces the server-side copy of the team (the app publishes it from *Setup → Équipe & accès → 🛡️ Sécurité serveur*). |
+| `POST /api/auth/accounts` (header `X-Admin-Token`) | replaces the server-side copy of the team (the app publishes it from *Home page → 👥 Team & access → 🛡️ Server security*). |
 | `POST /api/auth/change-password` `{ name, currentPassword, newPassword }` | **self-service** — verifies `currentPassword` and rewrites *that member's own* record (PBKDF2-SHA256, hashed on the server: no fingerprint ever reaches the browser). Requires **no** `X-Admin-Token`, because every member can change their own password from *My Account → 🔑 Change My Password*. Rate-limited like `/api/auth/login`. |
 | `GET /api/auth/status` | `{ configured, accounts, savedAt, adminPushEnabled }`. |
 
@@ -103,7 +103,7 @@ sed -i 's/\r$//' ~/cloud-shell-quick-update.sh && bash ~/cloud-shell-quick-updat
 `ADMIN_TOKEN` is **preserved** across updates: the script re-uses the token already
 on the service (or `~/ADMIN_TOKEN.txt`) instead of minting a new one, so a redeploy
 that only brings new code cannot silently invalidate the token stored in your
-browser (*Setup → Server security → Publish accounts* would start replying 401 with
+browser (*Home page → 👥 Team & access → Server security → Publish accounts* would start replying 401 with
 no apparent link to the update). Rotate it deliberately with
 `ROTATE_ADMIN_TOKEN=1 bash ~/cloud-shell-quick-update.sh`.
 

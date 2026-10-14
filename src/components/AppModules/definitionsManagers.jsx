@@ -602,6 +602,196 @@ const ServerSecurityPanel = ({ operators }) => {
   );
 };
 
+/* =========================================================
+   MON COMPTE — LE GESTE PERSONNEL, SÉPARÉ DE LA DÉFINITION DE L'ÉQUIPE.
+
+   Ce bloc vivait DANS ScientistsOperatorsManager (un « if » en tête qui
+   remplaçait toute la page pour un compte non superutilisateur). Depuis que la
+   définition de l'équipe a déménagé sur la page d'accueil (teamAccessPanel.jsx,
+   superutilisateur seulement), « changer MON mot de passe » ne pouvait plus
+   rester là : c'est le seul geste d'authentification que TOUT LE MONDE doit
+   pouvoir faire, depuis les réglages de la base où il travaille. Ce composant
+   est donc monté dans les DEUX réglages (dataset scientifique et Setup d'une
+   base d'administration), pour tout compte connecté.
+
+   Rien d'autre n'a changé : le mot de passe est remplacé par le SERVEUR de
+   jetons quand l'authentification serveur est active (POST
+   /api/auth/change-password, qui exige l'ancien mot de passe), la copie locale
+   suit, et « 🔑 I forgot my password » reste le seul recours quand il est
+   oublié (la demande est enregistrée et notifiée aux superutilisateurs — voir
+   utils/passwordResets.js).
+   ========================================================= */
+export const MyAccountPanel = ({
+  operators = [],
+  setOperators,
+  currentUser = null,
+  personnel = null,
+  serverMode = false,
+}) => {
+  const personnelList = Array.isArray(personnel) ? personnel : [];
+  /* L'entrée de la personne CONNECTÉE dans la liste locale (c'est elle qui
+     porte le hash que le serveur a durci) ; à défaut, l'identité du compte
+     connecté — un compte publié au serveur peut ne pas figurer dans cette
+     copie du navigateur, et le changement de mot de passe reste possible
+     (c'est le serveur qui le vérifie et l'enregistre). */
+  const selfServiceOp = currentUser
+    ? (normalizeOperators(operators).find((op) => op.id === currentUser.id)
+      || { id: currentUser.id, name: currentUser.name, role: currentUser.role || 'user', passwordHash: '' })
+    : null;
+  const [selfPw, setSelfPw] = useState('');
+  const [selfPwConfirm, setSelfPwConfirm] = useState('');
+  const [selfCurrentPw, setSelfCurrentPw] = useState('');
+  const [selfSaving, setSelfSaving] = useState(false);
+  const [selfMsg, setSelfMsg] = useState('');
+
+  /* Le serveur de jetons ANNONCE les routes qu'il connaît (/api/auth/status →
+     « authChangePassword »). Un déploiement ANTÉRIEUR à POST
+     /api/auth/change-password ne l'annonce pas : la requête retombe alors sur
+     l'échange de jeton et répond « Unknown grant_type "" » ou 404 not_found —
+     message inquiétant et surtout TROMPEUR, puisque l'ancien mot de passe
+     continue d'être accepté partout. On le dit donc AVANT la saisie (le bouton
+     reste inactif), au lieu de laisser croire que le mot de passe a changé.
+     Après un redéploiement du serveur : « Recheck » (ou recharger la page). */
+  const [serverChangePwOk, setServerChangePwOk] = useState(null);
+  const checkChangePwSupport = useCallback(async () => {
+    if (!serverMode) { setServerChangePwOk(null); return; }
+    const st = await fetchAuthStatus();
+    setServerChangePwOk(!!st.changePasswordEnabled);
+  }, [serverMode]);
+  useEffect(() => { checkChangePwSupport(); }, [checkChangePwSupport]);
+
+  /* Changement de mot de passe par la personne elle-même.
+     ⚠️ En mode serveur, les mots de passe sont vérifiés PAR LE SERVEUR : écrire
+     le nouveau hash seulement dans cette liste ne servait à rien — le serveur
+     gardait l'ancien, refusait le nouveau et continuait d'accepter l'ancien
+     (« le changement n'a aucun effet »). L'app ne peut pas publier la liste à sa
+     place (POST /api/auth/accounts exige le jeton administrateur, réservé au
+     superutilisateur) : elle appelle donc POST /api/auth/change-password, qui
+     exige l'ANCIEN mot de passe. Le serveur d'abord, la copie locale ensuite. */
+  const saveSelfPassword = async () => {
+    const op = selfServiceOp;
+    if (!op) return;
+    if (!selfPw) { setSelfMsg('⚠️ Enter a new password.'); return; }
+    if (selfPw !== selfPwConfirm) { setSelfMsg('⚠️ Passwords do not match.'); return; }
+    if (serverMode && !selfCurrentPw) { setSelfMsg('⚠️ Enter your current password.'); return; }
+    if (serverMode && serverChangePwOk === false) {
+      setSelfMsg('⚠️ The lab token server is an OLDER build: it does not know POST /api/auth/change-password yet, so no new password can be registered there. Redeploy server/token-server.js first (server/README.md).');
+      return;
+    }
+    setSelfSaving(true); setSelfMsg('');
+    if (serverMode) {
+      const res = await serverChangePassword(op.name, selfCurrentPw, selfPw);
+      if (!res.ok) {
+        setSelfSaving(false);
+        setSelfMsg(`⚠️ ${res.message}`);
+        return;
+      }
+    }
+    const hash = await hashPassword(selfPw);
+    if (typeof setOperators === 'function') {
+      setOperators((prev) => normalizeOperators(prev).map((o) =>
+        op.id === o.id ? { ...o, passwordHash: hash } : o
+      ));
+    }
+    setSelfPw(''); setSelfPwConfirm(''); setSelfCurrentPw('');
+    setSelfSaving(false);
+    setSelfMsg(serverMode
+      ? '✅ Password changed — the lab server accepts it from now on.'
+      : '✅ Password updated successfully.');
+    setTimeout(() => setSelfMsg(''), 4000);
+  };
+
+  if (!selfServiceOp) {
+    return (
+      <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
+        <h3 className="text-sm font-bold text-slate-700 uppercase">My Account</h3>
+        <p className="text-xs text-slate-500 mt-2 leading-relaxed">
+          Connectez-vous pour changer votre mot de passe (la barre latérale porte le bouton
+          « 🔑 Sign In »). La définition des comptes de l'équipe se fait, elle, sur la page
+          d'accueil → 👥 Équipe &amp; accès (superutilisateur).
+        </p>
+      </div>
+    );
+  }
+
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm flex flex-col gap-4">
+      <h3 className="text-sm font-bold text-slate-700 uppercase">My Account</h3>
+      <div className={`flex items-center gap-3 px-4 py-3 rounded-xl border ${
+        selfServiceOp.role === 'superuser' ? 'bg-amber-50 border-amber-200' : 'bg-slate-50 border-slate-200'
+      }`}>
+        <span className="text-lg">{selfServiceOp.role === 'superuser' ? '👑' : '🧪'}</span>
+        <div>
+          <p className="font-bold text-slate-800">{selfServiceOp.name}</p>
+          <p className="text-xs text-slate-500 capitalize">{selfServiceOp.role}</p>
+        </div>
+      </div>
+      <div>
+        {/* Serveur plus ancien que cette fonctionnalité : le dire AVANT la
+            saisie. Sinon l'échec (« Unknown grant_type "" ») arrive après coup
+            et laisse croire que le mot de passe a été changé alors que le
+            serveur continue d'accepter l'ancien. */}
+        {serverMode && serverChangePwOk === false && (
+          <div className="mb-3 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 leading-relaxed">
+            ⚠️ The lab token server (
+            <code className="px-1 bg-amber-100 rounded break-all">{authServerBase()}</code>
+            ) is an <b>older build</b>: it does not know{' '}
+            <code className="px-1 bg-amber-100 rounded">POST /api/auth/change-password</code>, so a new password cannot be
+            registered there and signing in would keep accepting the old one. Redeploy{' '}
+            <code className="px-1 bg-amber-100 rounded">server/token-server.js</code> (see server/README.md), then{' '}
+            <button type="button" onClick={checkChangePwSupport} className="underline font-bold">Recheck</button>.
+          </div>
+        )}
+        <h4 className="text-xs font-bold text-slate-500 uppercase mb-2">Change My Password</h4>
+        <div className="flex flex-col gap-2">
+          {serverMode && (
+            <input type="password" value={selfCurrentPw} onChange={(e) => setSelfCurrentPw(e.target.value)}
+              autoComplete="current-password"
+              placeholder="Current password"
+              className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 w-full" />
+          )}
+          <input type="password" value={selfPw} onChange={(e) => setSelfPw(e.target.value)}
+            autoComplete="new-password"
+            placeholder="New password"
+            className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 w-full" />
+          <input type="password" value={selfPwConfirm} onChange={(e) => setSelfPwConfirm(e.target.value)}
+            autoComplete="new-password"
+            placeholder="Confirm new password"
+            className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 w-full" />
+          <button onClick={saveSelfPassword} disabled={selfSaving || (serverMode && serverChangePwOk === false)}
+            className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg text-sm transition-colors disabled:opacity-50 w-full">
+            {selfSaving ? 'Saving…' : 'Update Password'}
+          </button>
+          {selfMsg && <p className="text-xs text-center mt-1">{selfMsg}</p>}
+          {/* 🔑 Celui qui a OUBLIÉ son mot de passe ne peut pas le changer :
+              en mode serveur l'ancien est exigé, et personne ne peut lire le
+              nouveau. C'est donc exactement ici qu'il faut pouvoir DEMANDER
+              une réinitialisation — demande enregistrée (le superutilisateur
+              la voit) et envoyée par e-mail. */}
+          <div className="mt-1 pt-3 border-t border-slate-100 text-center flex flex-col items-center gap-1">
+            <PasswordResetRequest
+              operators={operators}
+              personnel={personnelList}
+              defaultName={selfServiceOp.name}
+            />
+            <p className="text-[11px] text-slate-400 leading-relaxed">
+              A superuser can set a new password for you (page d&apos;accueil → 👥 Équipe &amp; accès → ✏️ →
+              New password → Save): nobody, not even a superuser, can read the current one.
+            </p>
+          </div>
+          {serverMode && (
+            <p className="text-[11px] text-slate-500 leading-relaxed">
+              Passwords are checked by the <b>lab token server</b>: your current password is required and the new
+              one is registered there immediately — the old password stops working in every browser.
+            </p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export const ScientistsOperatorsManager = ({
   operators = [],
   setOperators,
@@ -731,149 +921,6 @@ export const ScientistsOperatorsManager = ({
   };
 
   const normalizedOps = normalizeOperators(operators);
-  // For normal users: only their own entry
-  const selfServiceOp = !canManage && currentUser
-    ? normalizedOps.find((op) => op.id === currentUser.id) || null
-    : null;
-  const [selfPw, setSelfPw] = useState('');
-  const [selfPwConfirm, setSelfPwConfirm] = useState('');
-  const [selfCurrentPw, setSelfCurrentPw] = useState('');
-  const [selfSaving, setSelfSaving] = useState(false);
-  const [selfMsg, setSelfMsg] = useState('');
-
-  /* Le serveur de jetons ANNONCE les routes qu'il connaît (/api/auth/status →
-     « authChangePassword »). Un déploiement ANTÉRIEUR à POST
-     /api/auth/change-password ne l'annonce pas : la requête retombe alors sur
-     l'échange de jeton et répond « Unknown grant_type "" » ou 404 not_found —
-     message inquiétant et surtout TROMPEUR, puisque l'ancien mot de passe
-     continue d'être accepté partout. On le dit donc AVANT la saisie (le bouton
-     reste inactif), au lieu de laisser croire que le mot de passe a changé.
-     Après un redéploiement du serveur : « Recheck » (ou recharger la page). */
-  const [serverChangePwOk, setServerChangePwOk] = useState(null);
-  const checkChangePwSupport = useCallback(async () => {
-    if (!serverMode) { setServerChangePwOk(null); return; }
-    const st = await fetchAuthStatus();
-    setServerChangePwOk(!!st.changePasswordEnabled);
-  }, [serverMode]);
-  useEffect(() => { checkChangePwSupport(); }, [checkChangePwSupport]);
-
-  /* Changement de mot de passe par la personne elle-même.
-     ⚠️ En mode serveur, les mots de passe sont vérifiés PAR LE SERVEUR : écrire
-     le nouveau hash seulement dans cette liste ne servait à rien — le serveur
-     gardait l'ancien, refusait le nouveau et continuait d'accepter l'ancien
-     (« le changement n'a aucun effet »). L'app ne peut pas publier la liste à sa
-     place (POST /api/auth/accounts exige le jeton administrateur, réservé au
-     superutilisateur) : elle appelle donc POST /api/auth/change-password, qui
-     exige l'ANCIEN mot de passe. Le serveur d'abord, la copie locale ensuite. */
-  const saveSelfPassword = async () => {
-    const op = selfServiceOp;
-    if (!op) return;
-    if (!selfPw) { setSelfMsg('⚠️ Enter a new password.'); return; }
-    if (selfPw !== selfPwConfirm) { setSelfMsg('⚠️ Passwords do not match.'); return; }
-    if (serverMode && !selfCurrentPw) { setSelfMsg('⚠️ Enter your current password.'); return; }
-    if (serverMode && serverChangePwOk === false) {
-      setSelfMsg('⚠️ The lab token server is an OLDER build: it does not know POST /api/auth/change-password yet, so no new password can be registered there. Redeploy server/token-server.js first (server/README.md).');
-      return;
-    }
-    setSelfSaving(true); setSelfMsg('');
-    if (serverMode) {
-      const res = await serverChangePassword(op.name, selfCurrentPw, selfPw);
-      if (!res.ok) {
-        setSelfSaving(false);
-        setSelfMsg(`⚠️ ${res.message}`);
-        return;
-      }
-    }
-    const hash = await hashPassword(selfPw);
-    setOperators((prev) => normalizeOperators(prev).map((o) =>
-      op.id === o.id ? { ...o, passwordHash: hash } : o
-    ));
-    setSelfPw(''); setSelfPwConfirm(''); setSelfCurrentPw('');
-    setSelfSaving(false);
-    setSelfMsg(serverMode
-      ? '✅ Password changed — the lab server accepts it from now on.'
-      : '✅ Password updated successfully.');
-    setTimeout(() => setSelfMsg(''), 4000);
-  };
-
-  // Self-service view for normal users
-  if (selfServiceOp) {
-    return (
-      <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm flex flex-col gap-4">
-        <h3 className="text-sm font-bold text-slate-700 uppercase">My Account</h3>
-        <div className={`flex items-center gap-3 px-4 py-3 rounded-xl border ${
-          selfServiceOp.role === 'superuser' ? 'bg-amber-50 border-amber-200' : 'bg-slate-50 border-slate-200'
-        }`}>
-          <span className="text-lg">{selfServiceOp.role === 'superuser' ? '👑' : '🧪'}</span>
-          <div>
-            <p className="font-bold text-slate-800">{selfServiceOp.name}</p>
-            <p className="text-xs text-slate-500 capitalize">{selfServiceOp.role}</p>
-          </div>
-        </div>
-        <div>
-          {/* Serveur plus ancien que cette fonctionnalité : le dire AVANT la
-              saisie. Sinon l'échec (« Unknown grant_type "" ») arrive après coup
-              et laisse croire que le mot de passe a été changé alors que le
-              serveur continue d'accepter l'ancien. */}
-          {serverMode && serverChangePwOk === false && (
-            <div className="mb-3 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 leading-relaxed">
-              ⚠️ The lab token server (
-              <code className="px-1 bg-amber-100 rounded break-all">{authServerBase()}</code>
-              ) is an <b>older build</b>: it does not know{' '}
-              <code className="px-1 bg-amber-100 rounded">POST /api/auth/change-password</code>, so a new password cannot be
-              registered there and signing in would keep accepting the old one. Redeploy{' '}
-              <code className="px-1 bg-amber-100 rounded">server/token-server.js</code> (see server/README.md), then{' '}
-              <button type="button" onClick={checkChangePwSupport} className="underline font-bold">Recheck</button>.
-            </div>
-          )}
-          <h4 className="text-xs font-bold text-slate-500 uppercase mb-2">Change My Password</h4>
-          <div className="flex flex-col gap-2">
-            {serverMode && (
-              <input type="password" value={selfCurrentPw} onChange={(e) => setSelfCurrentPw(e.target.value)}
-                autoComplete="current-password"
-                placeholder="Current password"
-                className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 w-full" />
-            )}
-            <input type="password" value={selfPw} onChange={(e) => setSelfPw(e.target.value)}
-              autoComplete="new-password"
-              placeholder="New password"
-              className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 w-full" />
-            <input type="password" value={selfPwConfirm} onChange={(e) => setSelfPwConfirm(e.target.value)}
-              autoComplete="new-password"
-              placeholder="Confirm new password"
-              className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 w-full" />
-            <button onClick={saveSelfPassword} disabled={selfSaving || (serverMode && serverChangePwOk === false)}
-              className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg text-sm transition-colors disabled:opacity-50 w-full">
-              {selfSaving ? 'Saving…' : 'Update Password'}
-            </button>
-            {selfMsg && <p className="text-xs text-center mt-1">{selfMsg}</p>}
-            {/* 🔑 Celui qui a OUBLIÉ son mot de passe ne peut pas le changer :
-                en mode serveur l'ancien est exigé, et personne ne peut lire le
-                nouveau. C'est donc exactement ici qu'il faut pouvoir DEMANDER
-                une réinitialisation — demande enregistrée (le superutilisateur
-                la voit) et envoyée par e-mail. */}
-            <div className="mt-1 pt-3 border-t border-slate-100 text-center flex flex-col items-center gap-1">
-              <PasswordResetRequest
-                operators={operators}
-                personnel={personnelList}
-                defaultName={selfServiceOp.name}
-              />
-              <p className="text-[11px] text-slate-400 leading-relaxed">
-                A superuser can set a new password for you (Setup → Team &amp; access → ✏️ → New password → Save):
-                nobody, not even a superuser, can read the current one.
-              </p>
-            </div>
-            {serverMode && (
-              <p className="text-[11px] text-slate-500 leading-relaxed">
-                Passwords are checked by the <b>lab token server</b>: your current password is required and the new
-                one is registered there immediately — the old password stops working in every browser.
-              </p>
-            )}
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col gap-6">
@@ -1238,12 +1285,12 @@ export const PasswordResetRequest = ({
                 {superusers.length > 0 ? (
                   <p className="text-[11px] text-slate-500 leading-relaxed">
                     Superuser(s) of this lab: <b>{superusers.map((op) => op.name).join(', ')}</b>. They set a new
-                    password from <b>Setup → Team &amp; access</b> → ✏️ → <i>New password</i> → Save.
+                    password from <b>page d’accueil → 👥 Équipe &amp; accès</b> → ✏️ → <i>New password</i> → Save.
                   </p>
                 ) : (
                   <p className="text-[11px] text-slate-500 leading-relaxed">
                     No superuser appears in this browser's team list: ask whoever set up Lab Workspace to replace
-                    your password from Setup → Team &amp; access.
+                    your password from page d’accueil → 👥 Équipe &amp; accès.
                   </p>
                 )}
                 <details className="text-[11px] text-slate-500">
@@ -1312,7 +1359,7 @@ export const PasswordResetRequest = ({
 };
 
 /** CE QUE LE SUPERUTILISATEUR VOIT : les demandes encore ouvertes, exactement
- *  là où il pose le nouveau mot de passe (Setup → Team & access → ✏️). L'e-mail
+ *  là où il pose le nouveau mot de passe (page d'accueil → 👥 Équipe & accès → ✏️). L'e-mail
  *  est le canal qui traverse les postes ; ce panneau montre les demandes
  *  enregistrées SUR CE POSTE — et les referme quand le mot de passe est posé. */
 export const PasswordResetRequestsPanel = () => {
@@ -1500,7 +1547,7 @@ export const ScientistLoginGate = ({ operators, onLogin, onRecovery, serverMode 
           ) : (serverStatus && serverStatus.configured && serverStatus.accounts === 0) ? (
             <p className="mb-4 text-[11px] text-amber-200/80 leading-relaxed">
               ⚠️ Le serveur sécurisé n’a pas encore reçu la liste de l’équipe : un superutilisateur doit
-              publier les comptes (Setup → Équipe & accès) AVANT de fermer les règles Firestore
+              publier les comptes (page d'accueil → 👥 Équipe & accès) AVANT de fermer les règles Firestore
               (docs/SECURITY-SETUP.md).
             </p>
           ) : (serverStatus && serverStatus.lastError) ? (

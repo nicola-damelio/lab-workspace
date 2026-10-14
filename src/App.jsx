@@ -164,6 +164,7 @@ import {
 
 import { ScientistLoginGate, ScientistLoginModal } from './components/AppModules/definitionsManagers';
 import { DatasetAccessModal } from './components/AppModules/datasetAccessModal';
+import { TeamAccessPanel } from './components/AppModules/teamAccessPanel';
 
 
 
@@ -2509,7 +2510,7 @@ if (customType === 'dosy') {
   // ── PUBLICATION DE L'ÉQUIPE SUR LE SERVEUR DE JETONS ──────────────────────
   // Le serveur doit connaître les comptes (nom + hash) pour vérifier lui-même
   // les mots de passe : le superutilisateur publie la liste (ADMIN_TOKEN requis,
-  // voir docs/SECURITY-SETUP.md). Mise en page : Setup → Équipe & accès.
+  // voir docs/SECURITY-SETUP.md). Mise en page : page d’accueil → 👥 Équipe & accès.
   const publishTeamToServer = useCallback(async () => {
     const list = normalizeOperators(operators);
     if (!list.length) return { ok: false, error: 'empty_roster', message: 'Aucun compte à publier.' };
@@ -5679,6 +5680,50 @@ const openDataset = (dset, { keepPlace = false } = {}) => {
       localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(stored));
     }
   };
+  /* ── LES FICHES PERSONNEL POUR LE PANNEAU D'ÉQUIPE (page d'accueil) ────────
+     La liaison compte ↔ fiche Personnel (« Linked personnel record ») détermine
+     les pages d'administration visibles : c'est elle qui fait d'un compte un
+     AP, un Gestionnaire ou un Responsable d'achats. Les fiches vivent DANS les
+     bases d'administration (chacune a sa liste Personnel) et la page d'accueil
+     n'en a aucune en mémoire — d'où cette lecture, faite UNE fois, à l'ouverture
+     du panneau par le superutilisateur (jamais pour qui ne gère pas l'équipe).
+
+     La base ouverte, si elle l'est, est lue en premier (ses fiches sont déjà
+     là) ; les autres bases connues de l'index sont relues depuis Firestore. Une
+     lecture impossible (hors ligne, règles) laisse simplement la liste telle
+     qu'elle était : on ne bloque jamais l'affichage de l'équipe sur un réseau. */
+  const loadTeamPersonnel = useCallback(async () => {
+    const found = new Map();
+    const add = (list) => {
+      (Array.isArray(list) ? list : []).forEach((p) => {
+        if (p && p.id) found.set(String(p.id), p);
+      });
+    };
+    const open = adminContentRef.current;
+    if (open && Array.isArray(open.personnel)) add(open.personnel);
+    const admins = (Array.isArray(datasetsList) ? datasetsList : [])
+      .filter((d) => d && d.id && d.kind === 'administration')
+      .map((d) => String(d.id));
+    if (db && admins.length) {
+      await Promise.all(admins.map(async (id) => {
+        try {
+          const snap = await db.collection(`artifacts/${appId}/public/data/datasets`).doc(id).get();
+          const data = snap && snap.exists ? snap.data() : null;
+          if (!data || !data.payload) return;
+          const raw = data.isCompressed && typeof data.payload === 'string'
+            ? LZString.decompressFromUTF16(data.payload)
+            : data.payload;
+          if (!raw) return;
+          const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+          add(parsed && parsed.administration && parsed.administration.personnel);
+        } catch (err) {
+          console.warn('[team] personnel d’une base d’administration illisible :', err && err.message);
+        }
+      }));
+    }
+    return [...found.values()];
+  }, [datasetsList]);
+
   // ── Action groupée : rendre TOUS les datasets visibles par l’équipe ──────
   // Dé-coche « Restreindre la visibilité aux membres » sur chaque dataset ;
   // les listes de membres sont conservées pour une restriction ultérieure.
@@ -5989,6 +6034,16 @@ const openDataset = (dset, { keepPlace = false } = {}) => {
       canUserOpenDataset(d, currentUser, { bootstrap: datasetAccessBootstrap })
     );
   }, [flatDatasets, currentUser, datasetAccessBootstrap]);
+
+  /* Le PANNEAU D'ÉQUIPE de la page d'accueil (👥 Équipe & accès) : la définition
+     des comptes, de leurs mots de passe et de leurs datasets est celle du
+     SUPERUTILISATEUR — et, tant qu'aucun superutilisateur n'est défini
+     (bootstrap), celle de la personne qui doit en créer un. Avant toute
+     connexion, il n'apparaît que dans ce cas de bootstrap : sans cela, la liste
+     de l'équipe serait affichée à qui ouvre simplement l'application. */
+  const showTeamPanel = currentUser
+    ? (currentUser.role === 'superuser' || !hasDefinedSuperuser(operators))
+    : !hasDefinedSuperuser(operators);
 
   const [currentMonth, setCurrentMonth] = useState(() => {
     const d = new Date();
@@ -6919,6 +6974,20 @@ const openDataset = (dset, { keepPlace = false } = {}) => {
                 </p>
               </div>
             ) : (
+            <>
+            {showTeamPanel && (
+              <TeamAccessPanel
+                operators={operators}
+                setOperators={setOperators}
+                authSettings={authSettings}
+                setAuthSettings={setAuthSettings}
+                currentUser={currentUser}
+                onLoadPersonnel={loadTeamPersonnel}
+                serverMode={serverLoginMode}
+                datasets={flatDatasets}
+                onSaveAccess={saveDatasetAccess}
+              />
+            )}
             <div className="bg-white p-4 md:p-8 rounded-2xl shadow-xl border border-slate-200">
               <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 border-b border-slate-100 pb-4 gap-4">
                 <h2 className="text-xl md:text-2xl font-bold text-slate-800">
@@ -7044,6 +7113,7 @@ const openDataset = (dset, { keepPlace = false } = {}) => {
                 </div>
               )}
             </div>
+            </>
             )} {/* end: login-required ternary */}
           </div>
         </div>

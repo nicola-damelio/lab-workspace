@@ -50,7 +50,7 @@ export const AdministrationModule = ({
   canAdminBack, onAdminBack, canAdminUndo, onAdminUndo,
   // Vrai quand les connexions passent par le serveur de jetons : les mots de
   // passe sont alors vérifiés par le serveur, et un changement doit y être
-  // envoyé (voir ScientistsOperatorsManager).
+  // envoyé (voir MyAccountPanel / teamAccessPanel).
   serverMode = false,
 }) => {
   const team = normalizeOperators(operators || []);

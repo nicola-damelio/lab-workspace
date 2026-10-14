@@ -657,7 +657,7 @@ cat <<EOF
       comme aujourd'hui (aucune connexion Google pour elle).
 
    2. Comptes : ouvre l'app, connecte-toi en superutilisateur, puis
-        Setup → Équipe & accès → 🛡️ Sécurité serveur
+        page d'accueil → 👥 Équipe & accès → 🛡️ Sécurité serveur
       - vérifie « Signature de jetons : configurée »
       - jeton : si le cadre ci-dessus indique INCHANGÉ, celui déjà enregistré dans
         ce navigateur convient — ne recopie rien ; sinon colle l'ADMIN_TOKEN ci-dessus

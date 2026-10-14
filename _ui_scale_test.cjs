@@ -131,7 +131,7 @@ const frag = (name, hay, needle) => checkTrue(`${name}: ${needle.slice(0, 46)}�
   frag('…and the page shows it', SET, 'title="Display scale — character size of every page"');
   check('4a the section sits before the superuser-only block (a screen property, not a dataset setting)',
     SET.indexOf('<DisplayScaleControl />') > 0
-    && SET.indexOf('<DisplayScaleControl />') < SET.indexOf('<ScientistsOperatorsManager'), true);
+    && SET.indexOf('<DisplayScaleControl />') < SET.indexOf('<MyAccountPanel'), true);
   check('4b it is NOT inside the `isSuper &&` block',
     SET.indexOf('{isSuper && (') > SET.indexOf('<DisplayScaleControl />'), true);
   check('4c the presets offer the browser default back',

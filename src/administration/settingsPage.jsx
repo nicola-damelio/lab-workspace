@@ -1,11 +1,15 @@
 /* =========================================================================
    src/administration/settingsPage.jsx
-   Setup d’une base d’administration : Équipe & accès (scientifiques,
-   superutilisateur) + options des listes déroulantes (administration.settings).
+   Setup d’une base d’administration : Mon compte (mot de passe personnel) +
+   options des listes déroulantes (administration.settings) + accès aux pages.
+   ⚠️ La DÉFINITION DE L’ÉQUIPE (comptes, rôles, mots de passe, publication au
+   serveur de jetons, datasets de chacun) N’EST PLUS ICI : elle vit sur la page
+   d’accueil (👥 Équipe & accès, superutilisateur) — une seule liste, une seule
+   porte, pour les bases d’administration comme pour les datasets scientifiques.
    ========================================================================= */
 import React, { useEffect, useState } from 'react';
 import { useAdmin } from './AdminContext';
-import { ScientistsOperatorsManager } from '../components/AppModules/definitionsManagers';
+import { MyAccountPanel } from '../components/AppModules/definitionsManagers';
 import { openDrive, datasetFolderSlug } from '../utils/driveNaming';
 import {
   DEFAULT_OPTIONS, DEPENSE_FIELD_CATALOG, DEFAULT_DEPENSE_MANDATORY,
@@ -354,7 +358,7 @@ const DriveDataPanel = ({ datasetTitle }) => {
     </div>
   );
 };
-export const SettingsPage = ({ operators, setOperators, authSettings, setAuthSettings, currentUser, datasetTitle, serverMode = false }) => {
+export const SettingsPage = ({ operators, setOperators, currentUser, datasetTitle, serverMode = false }) => {
   const { data, settings, updateSettings, access } = useAdmin();
   const personnelList = (Array.isArray(data && data.personnel) ? data.personnel : []).filter((p) => p && p.id);
   const isSuper = !!(access && access.isSuperuser);
@@ -444,34 +448,24 @@ export const SettingsPage = ({ operators, setOperators, authSettings, setAuthSet
     <div className="max-w-5xl mx-auto flex flex-col gap-4">
       <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
         <div className="px-5 py-4 border-b border-slate-100 flex items-center gap-3">
-          <span className="text-2xl" aria-hidden="true">{canManageTeam ? '👑' : '🔑'}</span>
+          <span className="text-2xl" aria-hidden="true">🔑</span>
           <div>
-            <h2 className="text-lg font-black text-slate-800">{canManageTeam ? 'Équipe & accès' : 'Mon compte & sécurité'}</h2>
-            {canManageTeam ? (
-            <p className="text-xs text-slate-400">
-              Scientifiques et superutilisateur. Sans superutilisateur défini, les rôles restent modifiables (bootstrap) :
-              créez un compte superutilisateur avec mot de passe, puis connectez-vous avec le bouton Login de la barre latérale.
-            </p>
-            ) : (
+            <h2 className="text-lg font-black text-slate-800">Mon compte &amp; sécurité</h2>
             <p className="text-xs text-slate-400 leading-relaxed">
               Vous êtes connecté comme <b>{currentUser && currentUser.name ? currentUser.name : 'membre de l’équipe'}</b>.
-              Cette page vous permet de <b>changer votre propre mot de passe</b> de connexion à la base d’administration.
-              La gestion des comptes, des accès aux pages et des réglages avancés reste réservée au superutilisateur.
+              Cette page vous permet de <b>changer votre propre mot de passe</b> de connexion, et de demander une
+              réinitialisation s’il est oublié.
             </p>
-            )}
-            {canManageTeam && (
-            <p className="text-xs text-slate-400 mt-1">
-              Accès aux pages d’administration : liez chaque compte à sa fiche Personnel (menu « Linked personnel record »).
-              Le statut (Permanent / Non permanent) et la ou les fonctions (AP / Gestionnaire / Responsable d'achats — une personne
-              peut en cumuler plusieurs) de la fiche déterminent les pages visibles — un compte sans fiche liée n’a qu’un accès minimal.
-              En dessous, le panneau « Accès aux pages » permet au superutilisateur de personnaliser chaque page.
+            <p className="text-xs text-amber-700 mt-1 leading-relaxed">
+              👥 <b>La définition de l’équipe s’est déplacée sur la page d’accueil → « Équipe &amp; accès »</b> :
+              comptes, rôles, mots de passe, publication vers le serveur et datasets de chacune et chacun s’y font
+              <b> une seule fois</b> — pour les bases d’administration COMME pour les datasets scientifiques — et
+              seulement pour le superutilisateur.
             </p>
-            )}
           </div>
         </div>
-        <ScientistsOperatorsManager
+        <MyAccountPanel
           operators={operators} setOperators={setOperators}
-          authSettings={authSettings} setAuthSettings={setAuthSettings}
           currentUser={currentUser}
           personnel={data && data.personnel}
           serverMode={serverMode}

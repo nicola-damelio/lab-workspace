@@ -136,8 +136,8 @@ export const DatasetAccessModal = ({ dset, operators, onClose, onSave }) => {
           {invitable.length === 0 ? (
             <p className="text-xs italic text-slate-400 bg-slate-50 border border-slate-200 rounded-xl px-3 py-3">
               Aucun autre compte scientifique — seul le superutilisateur a accès.
-              Créez des comptes dans « Settings → Scientists / Operators » (ou
-              « Setup » d’une base d’administration) puis revenez ici.
+              Les comptes se créent sur la <b>page d’accueil → 👥 Équipe &amp; accès</b>
+              (superutilisateur) puis reviennent ici pour choisir les membres.
             </p>
           ) : (
             <div className="flex flex-col gap-1.5">

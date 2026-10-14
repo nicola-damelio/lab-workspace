@@ -21,8 +21,8 @@ export const authServerBase = () =>
 export const authServerConfigured = () => !!authServerBase();
 
 // Jeton administrateur (ADMIN_TOKEN du serveur) : saisi une fois par le
-// superutilisateur dans Setup → Équipe & accès. Il ne permet QUE de publier la
-// liste de l'équipe ; il ne donne aucun accès aux données.
+// superutilisateur dans la page d'accueil → 👥 Équipe & accès. Il ne permet QUE
+// de publier la liste de l'équipe ; il ne donne aucun accès aux données.
 const ADMIN_TOKEN_KEY = 'labWorkspace_serverAdminToken';
 export const serverAdminToken = () => {
   try { return localStorage.getItem(ADMIN_TOKEN_KEY) || ''; } catch { return ''; }
@@ -136,7 +136,7 @@ export const publishAccounts = async (operators, adminToken) => {
     return {
       ok: false,
       error: 'no_admin_token',
-      message: 'Jeton administrateur manquant (Setup → Équipe & accès).'
+      message: 'Jeton administrateur manquant (page d’accueil → 👥 Équipe & accès).'
     };
   }
   const members = (Array.isArray(operators) ? operators : [])

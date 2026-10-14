@@ -454,7 +454,7 @@ async function handleAuthLogin(body, ip) {
       json: {
         ok: false,
         error: 'accounts_not_initialized',
-        error_description: "Aucun compte n'a encore été publié sur ce serveur — le superutilisateur doit presser « Publier les comptes » (Setup → Équipe & accès). Voir docs/SECURITY-SETUP.md."
+        error_description: "Aucun compte n'a encore été publié sur ce serveur — le superutilisateur doit presser « Publier les comptes » (page d'accueil → 👥 Équipe & accès). Voir docs/SECURITY-SETUP.md."
       }
     };
   }
@@ -529,7 +529,7 @@ function handleAuthChangePassword(body, ip) {
       json: {
         ok: false,
         error: 'accounts_not_initialized',
-        error_description: "Aucun compte n'a encore été publié sur ce serveur (Setup → Équipe & accès → Publier les comptes)."
+        error_description: "Aucun compte n'a encore été publié sur ce serveur (page d'accueil → 👥 Équipe & accès → Publier les comptes)."
       }
     };
   }
@@ -1124,7 +1124,7 @@ server.listen(port, () => {
   const sa = loadServiceAccount();
   const acc = loadAccounts();
   console.log(`  team auth:        ${sa ? `ENABLED (SA ${sa.clientEmail})` : 'disabled — FIREBASE_SERVICE_ACCOUNT absent'}`);
-  console.log(`  team accounts:    ${acc.members.length}${acc.members.length ? ` (with password: ${acc.members.filter((m) => m.passwordHash).length})` : ' — owner must publish them from the app (Setup → Équipe & accès)'}`);
+  console.log(`  team accounts:    ${acc.members.length}${acc.members.length ? ` (with password: ${acc.members.filter((m) => m.passwordHash).length})` : ' — owner must publish them from the app (Home page → 👥 Team & access)'}`);
   console.log(`  accounts file:    ${ACCOUNTS_FILE}`);
   console.log(`  admin push:       ${ADMIN_TOKEN ? 'enabled (ADMIN_TOKEN set)' : 'disabled — ADMIN_TOKEN absent'}`);
 });

@@ -41,7 +41,7 @@ navigateur ◀──(jeton signé, claims lab/role)──┘
 | `server/token-server.js` → `POST /api/auth/change-password` | SEUL le propriétaire d'un compte peut changer SON mot de passe (ancien mot de passe exigé — **pas** de jeton administrateur) |
 | `firestore.rules` | refuse tout ce qui n'est pas porteur de `request.auth.token.lab == true` |
 | `src/utils/labAuth.js` + `App.jsx` | échangent le jeton, reconstruisent nom + rôle depuis les claims signés |
-| `Setup → Équipe & accès → 🛡️ Sécurité serveur` | publie la liste de l'équipe vers le serveur |
+| `page d'accueil → 👥 Équipe & accès → 🛡️ Sécurité serveur` | publie la liste de l'équipe vers le serveur |
 
 **Les règles Firestore sont la seule pièce qui compte vraiment** : le reste
 sert à ce que l'application continue de fonctionner normalement.
@@ -483,7 +483,7 @@ curl.exe -s -i -X OPTIONS https://drive-token-server-763848765523.europe-west1.r
 
 **Voie normale (depuis l'application)** : ouvrir l'app, se connecter comme
 superutilisateur (l'ancien nom + mot de passe fonctionnent toujours), puis
-`Setup → Équipe & accès → 🛡️ Sécurité serveur` :
+`page d'accueil → 👥 Équipe & accès → 🛡️ Sécurité serveur` :
 
 1. coller le jeton administrateur de l'étape 2 ;
 2. presser **⬆ Publier les comptes** ;
@@ -547,7 +547,46 @@ Puis, dans l'application (fenêtre de navigation privée) : l'écran de connexio
 doit afficher « 🔐 Mot de passe vérifié par le serveur sécurisé du laboratoire »
 et la liste des noms doit venir du serveur.
 
-#### Étape 5 bis — vérifier le changement de mot de passe
+#### Étape 5 ter — où vit la définition de l'équipe (une seule porte)
+
+Les comptes (scientifiques, superutilisateur), leurs mots de passe, la
+publication vers le serveur de jetons et **les datasets de chacune et chacun**
+se définissent à UN seul endroit : **la page d'accueil → 👥 Équipe & accès**,
+ouvert au superutilisateur — et, tant qu'aucun superutilisateur n'est défini
+(bootstrap), à la personne qui doit en créer un, sinon plus personne ne peut le
+faire.
+
+Cet écran existe parce que la liste des comptes est **UNE**
+(`appConfig/global.operators`, fusionnée puis publiée — voir
+`src/utils/teamAccounts.js`) alors qu'elle était servie par **deux portes** :
+les réglages d'un dataset scientifique (« Scientists / Operators ») et le Setup
+d'une base d'administration. Deux portes pour une même liste laissent croire
+que l'on « définit quelqu'un dans ce dataset » : les deux ont été retirées. Il
+ne reste dans les réglages de chaque base que le geste **personnel** —
+`My Account → 🔑 Change My Password` — que tout le monde doit pouvoir faire
+(`MyAccountPanel`, `src/components/AppModules/definitionsManagers.jsx`).
+
+**Les datasets d'une personne** se lisent dans l'autre sens, dans le même
+panneau : une ligne = un compte, une colonne = un dataset. Cocher une case
+**nomme la personne dans le dataset ET restreint ce dataset** (`access:
+{ restricted: true, memberNames: […] }`) — sans quoi un dataset 🌐 resterait
+visible par tous et la case ne voudrait rien dire. L'en-tête de la colonne
+permet de repasser un dataset en 🌐 « visible par toute l'équipe » (la liste des
+membres est conservée : refermer la retrouve) ; décocher la dernière personne
+**ne rouvre pas** le dataset, c'est un geste explicite.
+
+⚠️ Deux choses à savoir :
+* un nom inscrit comme membre qui ne correspond à **aucun compte** n'ouvre le
+  dataset à personne — le panneau le signale (en-tête de colonne et
+  avertissement) ;
+* il n'y a **qu'une copie de la vérité** : le champ `access` de chaque document
+  dataset (`src/utils/datasetAccess.js`). La matrice n'écrit rien sur le compte ;
+  les règles pures sont dans `src/utils/datasetMembership.js`, et
+  `canUserOpenDataset` reste LA règle appliquée par la page d'accueil (c'est ce
+  que vérifie `_dataset_membership_test.mjs` : la promesse de la matrice et la
+  règle appliquée donnent exactement la même liste).
+
+#### Étape 5 quater — vérifier le changement de mot de passe
 
 Chaque membre change **son** mot de passe depuis `My Account → 🔑 Change My
 Password`. En mode serveur, l'écran demande l'**ancien** mot de passe : le
@@ -657,7 +696,7 @@ secours reste active tant que les règles sont ouvertes.
   cause du profil « d'un utilisateur générique » après connexion (page Congés
   seule, corrigé par un rechargement) : le profil ne retrouvait plus la fiche
   et retombait sur le statut minimal.
-* Ajouter/retirer un membre : `Setup → Équipe & accès` (publication automatique
+* Ajouter/retirer un membre : `page d'accueil → 👥 Équipe & accès` (publication automatique
   si le jeton administrateur est enregistré). Un changement de **rôle** prend
   effet à la prochaine connexion de la personne.
 * **Changer son propre mot de passe** : `My Account → 🔑 Change My Password`.
@@ -743,7 +782,7 @@ secours reste active tant que les règles sont ouvertes.
 3. Ordine da rispettare (i numeri sono gli « Étape » del documento): (0) deploy
    dell'app — **fatto**, (1) chiave di servizio Firebase, (2) ADMIN_TOKEN,
    (3) ridistribuire il server dei token, (4) pubblicare l'equipe
-   (`Setup → Équipe & accès → 🛡️ Sécurité serveur`), (5) verificare la
+   (`page d'accueil → 👥 Équipe & accès → 🛡️ Sécurité serveur`), (5) verificare la
    connessione via server, (6) pubblicare `firestore.rules` nella Console
    Firebase, (7) verificare che un accesso anonimo risponda **403**.
 4. Per l'équipe nulla cambia: stessi nomi, stesse password, stesso schermo.

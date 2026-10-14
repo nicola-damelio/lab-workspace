@@ -6,7 +6,7 @@
 
 import React from 'react';
 import { CollapsibleSectionPanel as CollapsibleSection } from '../ui';
-import { CustomMetadataFieldsManager, MandatoryParametersManager, ScientistsOperatorsManager } from './definitionsManagers';
+import { CustomMetadataFieldsManager, MandatoryParametersManager, MyAccountPanel } from './definitionsManagers';
 import { DatabaseCleanupManager } from './storageModules';
 import { DriveImageMigration } from '../DriveImageMigration';
 /* La forme du dossier des pièces jointes de test est CONSTRUITE par la règle qui
@@ -401,7 +401,7 @@ const SkinControl = ({ operator = null }) => {
 };
 
 export const SettingsModule = ({
-  operators, setOperators, authSettings, setAuthSettings,
+  operators, setOperators,
   currentUser, tests, setTests, handleSetCustomFields,
   customFields, mandatoryRules, setMandatoryRules,
   mandatoryBehavior, setMandatoryBehavior,
@@ -449,18 +449,20 @@ export const SettingsModule = ({
                     <SkinControl operator={currentUser} />
                   </CollapsibleSection>
 
+                  {/* LE GESTE PERSONNEL SEULEMENT. La définition des comptes de
+                      l'équipe (scientifiques, rôles, mots de passe, qui voit quel
+                      dataset) se fait UNE fois, sur la page d'accueil →
+                      👥 Équipe & accès, et seulement pour le superutilisateur :
+                      deux portes pour une même liste, c'était deux façons de
+                      croire qu'on a « défini quelqu'un dans ce dataset ». */}
                   <CollapsibleSection
-                    title="Scientists / Operators"
-                    subtitle={currentUser?.role === 'superuser'
-                      ? "Manage scientists, roles, passwords, and access control settings."
-                      : "Scientists defined in this dataset. Log in or contact a superuser to manage."}
+                    title="My Account — my password"
+                    subtitle="Change the password of the account you are signed in with. The TEAM — scientists, roles, who sees which dataset — is defined once, on the Home page (👥 Team & access), by the superuser."
                     defaultOpen={false}
                   >
-                    <ScientistsOperatorsManager
+                    <MyAccountPanel
                       operators={normalizeOperators(operators)}
                       setOperators={setOperators}
-                      authSettings={authSettings}
-                      setAuthSettings={setAuthSettings}
                       currentUser={currentUser}
                       serverMode={serverMode}
                     />

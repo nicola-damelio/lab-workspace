@@ -247,7 +247,7 @@ const ROLES = [
   frag('…with the control inside, branchée sur l’opérateur connecté', SET, SKIN_CTL);
   ok('3b the section sits after the display scale', SET.indexOf('<DisplayScaleControl />') < SET.indexOf(SKIN_CTL));
   ok('3c …and BEFORE the superuser-only block', SET.indexOf(SKIN_CTL) < SET.indexOf('{isSuper && ('));
-  ok('3d …so it is not reserved to the superuser', SET.indexOf('<ScientistsOperatorsManager') > 0);
+  ok('3d …so it is not reserved to the superuser', SET.indexOf('<MyAccountPanel') > 0);
   frag('…the choice never touches the dataset (browser storage only, under the operator’s key)', UTIL,
     'localStorage.setItem(uiSkinKeyOf(operator), skin.id)');
 

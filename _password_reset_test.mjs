@@ -86,7 +86,7 @@ const entry = R.addPasswordReset([], { name: 'Cintia LEAL', note: 'Sono al banco
 ok(R.resetMailSubject(entry).includes('Cintia LEAL'), 'le sujet de l’e-mail nomme la personne');
 ok(R.resetMailSubject(entry).includes('Password reset'), '…et dit de quoi il s’agit');
 const body = R.resetRequestText(entry);
-ok(body.includes('Setup → Team & access'), 'le corps dit OÙ poser le nouveau mot de passe');
+ok(body.includes('Home page → 👥 Team & access'), 'le corps dit OÙ poser le nouveau mot de passe (page d’accueil → 👥 Équipe & accès)');
 ok(body.includes('Sono al banco'), 'le corps reprend la note de la personne');
 ok(body.includes('cannot sign in'), 'le corps explique le problème');
 ok(/REPLACED/.test(body), 'le corps dit qu’un mot de passe ne peut être que REMPLACÉ (jamais lu)');

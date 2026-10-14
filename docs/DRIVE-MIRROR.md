@@ -150,7 +150,16 @@ faire, et fait, est donc un **record** (`src/utils/passwordResets.js`, clé
 * la personne demande depuis la page **Change My Password** *et* depuis l'**écran
   de connexion** (c'est là qu'elle est, puisqu'elle ne peut plus entrer) ;
 * le superutilisateur voit les demandes ouvertes **là où il pose le nouveau mot
-  de passe** (Setup → Team & access), et les referme quand c'est fait ;
+  de passe** (page d'accueil → 👥 Équipe & accès), et les referme quand c'est fait ;
+* **la définition de l'équipe n'appartient à aucun dataset** : les comptes, leurs
+  rôles, leurs mots de passe, la publication au serveur de jetons et **les
+  datasets de chacune et chacun** (matrice compte × dataset du même panneau)
+  vivent sur la **page d'accueil → 👥 Équipe & accès**, pour le superutilisateur —
+  la liste des comptes est UNE (`utils/teamAccounts.js`) et n'a donc qu'UNE
+  porte ; les réglages de chaque base ne gardent que « changer MON mot de
+  passe » (`MyAccountPanel`). Cocher une personne pour un dataset le **restreint**
+  à son nom (`access.memberNames`, la seule copie de la vérité — voir
+  `utils/datasetMembership.js`) ;
 * l'écran dit toujours ce qui s'est réellement passé : « enregistrée »,
   « envoyée », ou « pas envoyée » avec un message prêt à envoyer.
 
