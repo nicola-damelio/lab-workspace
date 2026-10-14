@@ -4143,6 +4143,113 @@ haut** (`host: [2100, 1]`, relevé par la sonde). Les images peintes au repos (1
 mesurées **sur une toile minuscule** : ce chiffre est un **plancher**. Le nombre de boucles, lui,
 ne dépend pas de la taille de la toile — et c'est lui qui était en cause.
 
+## ⏱ « quando clicco su un test non si apre subito… anche il lab notebook è molto lenta »
+
+**Le rapport, mot pour mot :** « quando clicco su un test non si apre subito perché aspetta il
+salvataggio globale che potrebbe essere fatto in background. anche l'apertura della pagina "lab
+notebook" è molto lenta ».
+
+**Ce qui a été MESURÉ AVANT de toucher au code** (fil principal, même machine, sonde jetable) :
+
+| ce qui tournait | payload | coût |
+| --- | --- | --- |
+| `JSON.stringify(prev)` + `JSON.stringify(next)` dans `setTests` | 6,0 Mo | **41 ms** |
+| …le même geste | 26,5 Mo | **125 ms** |
+| `JSON.stringify` + `LZString.compressToUTF16` (l'enregistrement) | 6,0 Mo | **884 ms** |
+| `LZString.compressToUTF16` seul | 6,0 Mo | **3 815 ms** |
+
+**Il n'y avait AUCUN `await` dans la navigation.** Le clic ouvrait bien la page… mais le fil
+principal était occupé — et le navigateur ne peut pas peindre une page pendant qu'une tâche de 0,9 s
+(davantage sur de plus gros datasets) tourne. Le « salvataggio globale » que l'utilisateur attendait
+était donc littéralement devant lui. Ce n'est pas une attente à supprimer : c'est du travail à
+rendre à l'arrière-plan.
+
+### ① Le changement d'expérience ne recopie plus le dataset en texte
+
+`setTests` comparait `JSON.stringify(next) !== JSON.stringify(prev)` pour décider d'empiler un pas
+d'historique (undo/redo) : **deux chaînes de la taille du dataset, à chaque frappe** — et ce geste
+est aussi celui qui s'exécute quand on OUVRE une expérience sans propriétaire (elle est alors
+attribuée au scientifique connecté, `App.jsx`).
+
+`src/utils/deepSame.js` dit la même chose **sans rien écrire** : il court-circuite sur l'identité
+(les fiches qu'un geste n'a pas touchées gardent leur **référence**), s'arrête à la première
+différence, et suit les règles de `JSON.stringify` (`undefined` absent d'un objet, `null` dans un
+tableau, `NaN` / `Infinity` écrits `null`). La seule différence **voulue** : l'ordre des clés n'est
+plus un changement (un réarrangement ne mérite pas un pas d'historique). Mesuré : 41–125 ms →
+**0,00 ms**, et la sonde le prouve par un **compteur de lectures** (0 lecture sur une fiche intacte).
+
+### ② La sauvegarde rend la main AVANT de travailler — et la réparation de fond aussi
+
+`src/utils/backgroundWork.js` porte les deux gestes qui manquaient :
+
+* `yieldToPaint()` — attend la prochaine **peinture** (`requestAnimationFrame` + minuterie à 0 ms,
+  repli par minuterie quand l'onglet est caché). L'enregistrement automatique l'appelle **avant** la
+  compression et **avant** la construction du plan du miroir Drive : la page que l'utilisateur vient
+  de demander se peint d'abord. La base d'administration (qui se compresse aussi, d'un bloc) rend la
+  main de la même façon.
+* `runInBackground(work)` — `requestIdleCallback` **avec échéance** (2 s : un poste très occupé ne
+  remet pas la sauvegarde à demain), repli par minuterie. C'est ce que fait désormais la
+  **réparation du lien expérience ↔ projet**, déclenchée par un changement de PAGE : elle relit le
+  magasin des projets (localStorage) et peut le réécrire — du travail dont personne n'attend le
+  résultat à l'écran.
+
+Ce qui reste **immédiat**, et le doit : le vidage à la fermeture d'onglet (`flushPendingSave`) et la
+sortie d'un dataset (`saveLeavingDataset`) — là, attendre une image serait perdre la dernière minute
+du travail. `pendingDatasetSaveRef.current(true)` porte cette urgence, et une sauvegarde déjà vidée
+ou dépassée **se tait** (`if (pendingDatasetSaveRef.current !== runSave) return;`) : le travail
+différé ne double jamais un envoi.
+
+### ③ Le cahier de laboratoire se déplie par tranches
+
+`LabNotebook.jsx` montait **toutes** les fiches d'un coup — conditions, formule 2D, tableau NMR,
+rapport HTML, images, graphes (recharts / chart.js) — c'est-à-dire un rapport complet **par
+expérience**, avant la première image utile. Le nombre de nœuds DOM suivait donc la taille du
+cahier, et « Lab Notebook » était la page la plus lente du programme.
+
+`src/utils/notebookWindow.js` porte la règle (pure, donc exécutée sous node) : **4 fiches** à
+l'ouverture, **4 de plus** quand le marqueur du bas entre à l'écran (`IntersectionObserver`,
+`rootMargin: 600px` — la tranche suivante est montée avant qu'on n'y arrive), un bouton
+« ⬇ Unfold every experiment » pour ceux qui défilent au clavier, et le compte **dit** :
+« 4 of 31 experiment(s) shown — the rest unfolds as you scroll ». Rien n'est caché : le défilement
+montre tout, dans l'ordre.
+
+⚠ **L'impression ne devait pas payer ce gain.** `handlePrint` (`App.jsx`) envoie `lab:before-print`
+**avant** d'attendre les images et **avant** sa pause de 150 ms ; le cahier écoute ce mot (et
+`beforeprint`, pour un Ctrl+P du navigateur) et monte alors **tout**. Le PDF porte donc tout le
+cahier, jamais la tranche du moment — et rien n'est replié après l'impression.
+
+
+*Vérifier :* `node _save_in_background_test.mjs` — **1 070** assertions (les 25 cas de `deepSame`
+recoupés avec `JSON.stringify`, **1 000 paires tirées au hasard**, les **compteurs de lectures** qui
+prouvent que ce qui n'a pas bougé n'est pas parcouru, les deux gestes d'arrière-plan exécutés sur des
+fenêtres factices — y compris le repli et l'annulation —, et les fragments d'`App.jsx` : le rendu de
+main AVANT la compression et AVANT le miroir, l'urgence du vidage d'onglet, la réparation différée,
+l'impression qui déplie). Cette sonde a aussi trouvé un **défaut réel** avant le navigateur :
+`window.setTimeout` gardé puis appelé sans son objet lève « Illegal invocation » — le module le
+**lie** désormais à sa fenêtre.
+
+*Vérifier :* `node _notebook_window_test.mjs` — **54** assertions (la règle de la tranche exécutée :
+première tranche, croissance, bornes — jamais plus que la liste, jamais un pas nul —, « tout
+déplier », le libellé, ce qui reste ; et le cahier : **plus aucune** `filteredTests.map(...)`, le
+marqueur observé, le bouton, `no-print` sur le marqueur, l'écoute de `lab:before-print` **et** de
+`beforeprint`).
+
+Le reste n'a pas bougé d'un caractère : `_background_save_test.mjs` **56** ·
+`_condition_page_test.mjs` **123** · `_project_experiment_link_test.mjs` **77** ·
+`_experiment_vanishing_test.mjs` **92** · `_page_parking_test.mjs` **54** ·
+`_dataset_creation_guard_test.mjs` **25** · `_backup_file_test.mjs` **129** ;
+`npx oxlint src/App.jsx src/components/LabNotebook.jsx src/utils/*.js` — **0 erreur** (le seul
+avertissement, `backupCountsOf` importé sans usage dans `App.jsx`, était déjà là) ;
+`npm run build` — **exit 0**.
+
+**Ce qui reste ouvert, honnêtement :** la compression LZString est **toujours synchrone**. Le rendu
+de main la place *après* la page demandée, il ne la rend pas plus rapide : sur un dataset de
+plusieurs dizaines de mégaoctets, une image sautera encore au moment où la sauvegarde démarre (la
+barre latérale le dit : « Saving… »). La compression dans un *worker* réglerait cela — c'est le
+prochain pas si le besoin se confirme.
+
+
+
 ---
 
 ## ⬚☀ Le fond du viewer, re-mesuré au PIXEL — « only uniform background », et la rampe qui suit la lampe

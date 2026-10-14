@@ -37,6 +37,15 @@ import { normalizeOperators, memberIdentity } from './utils/auth';
    qu'une boîte ne reste jamais sans emplacement visible (voir plus bas,
    migrateLoadedDataset). */
 import { repairBoxPlacements } from './utils/storageBoxes';
+/* ── DEUX GESTES DE CONVIVIALITÉ MESURÉE (voir docs/DRIVE-MIRROR.md) ─────────
+   `yieldToPaint` : rendre la main jusqu'à la prochaine peinture, pour qu'un
+   travail lourd (la compression d'un dataset : 0,9 s pour 6 Mo, mesuré) ne
+   retarde pas la page que l'utilisateur vient de demander.
+   `deepSame` : comparer deux listes d'expériences SANS allouer deux chaînes de
+   la taille du dataset (41–125 ms mesurés à chaque changement de `tests`). */
+import { yieldToPaint, runInBackground } from './utils/backgroundWork';
+import { deepSame } from './utils/deepSame';
+
 import { setActiveProjectId, readLibrary, readAllProjectLibraries, mergeLibraryFromSnapshot, refreshLibraryFromStorage } from './utils/figuresLibrary';
 import { clearDriveToken, testDriveAccess, getConfiguredDriveClientId, connectDriveWithGis, sharedWorkspaceMode, getWorkspaceServerIssue, getLastDriveConnectError, driveBootstrapRequestedAtLoad, setDriveRootContext, ensureDriveFolder, getDriveToken, uploadWorkspaceFile, cleanupWorkspaceRootFolders, cloudBackendAvailable } from './utils/driveUpload';
 import { migrateCommonLibraryOnce } from './utils/commonLibraryMigrate';
@@ -1926,10 +1935,14 @@ if (customType === 'dosy') {
     (updater) => {
       setReactTests((prev) => {
         const next = typeof updater === 'function' ? updater(prev) : updater;
-        const nextStr = JSON.stringify(next);
-        const prevStr = JSON.stringify(prev);
-
-        if (nextStr !== prevStr) {
+        /* ⛔ DEUX `JSON.stringify` DU DATASET ENTIER À CHAQUE CHANGEMENT — c'était
+           du fil principal occupé pendant qu'un clic demandait une page : mesuré
+           41 ms pour 6,0 Mo de `tests`, 125 ms pour 26,5 Mo. `deepSame` dit la
+           MÊME chose sans rien écrire, et court-circuite sur les fiches que le
+           geste n'a pas touchées (elles gardent leur référence). C'est ce qui
+           décide seulement d'un pas d'historique : un cas exotique qui
+           pousserait un pas de trop ne peut rien perdre. */
+        if (!deepSame(next, prev)) {
           const currentHistory = historyRef.current.slice(0, historyIndex + 1);
           currentHistory.push(next);
 
@@ -2233,7 +2246,16 @@ if (customType === 'dosy') {
   useEffect(() => {
     if (!currentDatasetId) return;                 // hors dataset : aucun projet à réparer
     if (!Array.isArray(tests) || tests.length === 0) return;
-    try { reconcileProjectExperiments(tests); } catch { /* magasin indisponible : rien de bloquant */ }
+    /* 🖐 CETTE RÉPARATION TOMBAIT SUR LE CLIC. Elle est déclenchée par le
+       changement de PAGE (`currentModule`, dans les dépendances ci-dessous),
+       relit le magasin des projets (localStorage) et peut le réécrire — du
+       travail dont PERSONNE n'attend le résultat à l'écran. Elle part donc quand
+       le navigateur n'a rien d'autre à faire (voir utils/backgroundWork) : la
+       page demandée se peint d'abord, la réparation suit. */
+    const cancel = runInBackground(() => {
+      try { reconcileProjectExperiments(tests); } catch { /* magasin indisponible : rien de bloquant */ }
+    });
+    return cancel;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentDatasetId, currentModule, tests.length]);
 
@@ -4037,13 +4059,27 @@ useEffect(() => {
   if (isAdministrationKind(activeDatasetKind)) return;
   setSaveStatus('saving');
   if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-  const runSave = async () => {
+  /* `urgent` : le vidage d'une fermeture d'onglet ou d'un départ de base (voir
+     `flushPendingSave`) ne rend PAS la main — il n'y a plus de peinture à
+     protéger et la dernière minute du travail ne doit pas attendre. Appelée par
+     le minuteur (`setTimeout(runSave, 1500)`), elle est en mode arrière-plan. */
+  const runSave = async (urgent = false) => {
+    /* Cette sauvegarde a été VIDÉE (pagehide/◀) ou remplacée par une plus récente
+       du même dataset : elle se tait — jamais deux envois de la même base. */
+    if (pendingDatasetSaveRef.current !== runSave) return;
     pendingDatasetSaveRef.current = null;
     /* Le ticket de cette écriture : une écriture d'arrière-plan plus ancienne
        (dataset quitté juste avant, voir `saveLeavingDataset`) devient caduque et
        se taira au lieu d'écraser celle-ci. */
     const writeTicket = takeWriteTicket(currentDatasetId);
     try {
+      /* 🖐 LA PAGE D'ABORD, LE TRAVAIL ENSUITE (voir utils/backgroundWork) : le
+         clic de l'utilisateur est déjà commité par React, et ce qui suit coûte
+         cher sur le fil principal (la compression : 0,9 s pour 6 Mo, mesuré).
+         Ce geste laisse la page demandée se peindre AVANT que la sauvegarde ne
+         commence — c'est tout ce que « sauvegarder en arrière-plan » veut dire
+         ici : personne n'attend devant l'écran. */
+      if (!urgent) await yieldToPaint();
       const rawData = { ...latestDataRef.current, ...cloudProjectsPayload() };
       /* ⛔ LE VERROU DES EXPÉRIENCES (voir guardExperimentsForWrite) : la liste
          écrite ici ne peut pas perdre une expérience qui n'a pas de suppression
@@ -4083,6 +4119,10 @@ useEffect(() => {
          même charge (empreintes) et ne fait rien si le Drive est injoignable ;
          ce qui compte ici, c'est de le DIRE quand la publication n'a pas tout
          écrit. */
+      /* 🖐 DEUXIÈME RENDEZ LA MAIN : le plan du miroir Drive se construit d'un
+         bloc (`datasetMirrorPlan` parcourt tout le dataset). Là encore, la page
+         que l'utilisateur regarde passe d'abord. */
+      if (!urgent) await yieldToPaint();
       publishDatasetStructure({
         datasetId: currentDatasetId,
         datasetName: datasetTitle || '',
@@ -4147,7 +4187,10 @@ useEffect(() => {
       clearTimeout(saveTimeoutRef.current);
       saveTimeoutRef.current = null;
     }
-    pendingDatasetSaveRef.current();
+    /* `true` = URGENT : l'onglet s'en va (ou passe en arrière-plan) — il n'y a
+       plus de peinture à protéger, et attendre une image perdrait la dernière
+       minute du travail (voir le mode d'arrière-plan dans `runSave`). */
+    pendingDatasetSaveRef.current(true);
     try { datasetCopyMirrorRef.current.flush(); } catch { /* best-effort */ }
   };
   const onVisibilityChange = () => {
@@ -4187,6 +4230,10 @@ useEffect(() => {
          celle-ci. */
       const writeTicket = takeWriteTicket(currentDatasetId);
       try {
+        /* 🖐 La base d'administration se compresse aussi (tout son contenu d'un
+           bloc) : elle attend la peinture de ce que l'utilisateur vient d'ouvrir
+           (voir utils/backgroundWork). */
+        await yieldToPaint();
         const updatedPayload = {
           kind: 'administration',
           title: datasetTitle || 'Base d’administration',
@@ -6312,6 +6359,12 @@ const openDataset = (dset, { keepPlace = false } = {}) => {
 
 
   const handlePrint = async () => {
+    /* 📓 LE CAHIER SE DÉPLIE AVANT D'ÊTRE IMPRIMÉ : il ne monte qu'une TRANCHE
+       d'expériences à l'écran (voir utils/notebookWindow.js) — sans ce mot, le
+       PDF ne porterait que les fiches déjà montées. L'attente des images
+       ci-dessous et la pause de 150 ms laissent React tout monter avant
+       `window.print()`. Le nom est celui du canal de la maison (`lab:*`). */
+    try { window.dispatchEvent(new CustomEvent('lab:before-print')); } catch { /* ignore */ }
     // Wait for all visible images to finish loading before printing
     // This is the correct approach for public Drive/external images already in the browser
     const imgs = Array.from(document.querySelectorAll('img'));

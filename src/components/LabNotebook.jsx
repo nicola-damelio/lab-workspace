@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { getDirectImageUrl, repairContentImages } from '../data/constants';
 import { FCSDataVisualizations } from './FlowCytometrySections';
 import { CLASSIFICATION_MAP, PRIMARY_CATEGORIES, experimentTypeFilterOptions, matchesExperimentTypeFilter } from '../data/testTypes';
@@ -8,6 +8,11 @@ import { getTestTypeMeta, getNotebookTypeKey } from './testTypeMeta';
 import { sequenceForMoleculeType, NUCLEIC_SEQUENCES_KEY } from '../utils/sequenceNatures';
 import { Icon } from './Icons';
 import { NOTEBOOK_ANALYSIS_PREVIEWS, RemovablePanel, ChunkedTable, NMRSpectraPreview, PlateGridPreview, PlateMapPreview, Formula2DPreview, CDSpectraChart, CDSimChartPreview, CloningUvSpectraChart, CloningSimChartPreview, ProteinChromatogramChart, NMR_SPECTRUM_TYPES, NMRFittingSimPreview, MDParamsPreview, MDAtomTablePreview, normalizeImagePreview } from './notebookPreviews';
+/* 📓 Le cahier se déplie PAR TRANCHES (voir utils/notebookWindow.js) : monter
+   toutes les fiches d'un coup — conditions, images, rapports, graphes — faisait
+   de l'ouverture du cahier le geste le plus lent du programme. La règle est
+   pure (testée sous node) ; ici, on ne fait que la suivre. */
+import { NOTEBOOK_WINDOW_FIRST, notebookVisibleCount, notebookGrownCount, notebookHiddenCount, notebookWindowLabel } from '../utils/notebookWindow';
 
 /* ============================================================================
    NOTEBOOK TEST ITEM
@@ -940,6 +945,60 @@ const allScientists = useMemo(() => [...new Set([...operators, ...tests.map(t =>
     return result;
   }, [tests, isSuperuser, currentUser, filterPrimary, filterSecondary, filterScientist, filterType, filterCompound, filterPlasmid, filterCellLine, filterProject, showAdvanced, filterSolvent, filterBuffer, filterAdditive, filterInstrument, filterProbe, filterPulseSeq, dateFrom, dateTo, bestOnly, searchQuery, sortBy]);
 
+  /* ── LE CAHIER SE DÉPLIE PAR TRANCHES (voir utils/notebookWindow.js) ────────
+     Ce qui est MONTÉ est ce qui coûte : une fiche = conditions, formule,
+     images, rapport HTML, graphes. On en monte donc une tranche, et le bas de
+     page en demande la suivante — un marqueur observé (`IntersectionObserver`)
+     plutôt qu'un bouton à trouver, plus le bouton pour ceux qui le cherchent.
+     Rien n'est caché : le compteur dit ce qui est montré, et l'impression
+     déplie TOUT avant que le navigateur ne photographie la page. */
+  const [notebookShown, setNotebookShown] = useState(NOTEBOOK_WINDOW_FIRST);
+  const [notebookShowAll, setNotebookShowAll] = useState(false);
+  const notebookEndRef = useRef(null);
+  const notebookShownCount = notebookVisibleCount(filteredTests.length, notebookShown, { showAll: notebookShowAll });
+  const notebookLeftToShow = notebookHiddenCount(filteredTests.length, notebookShownCount);
+  const notebookFirstId = filteredTests.length ? filteredTests[0].id : '';
+
+  /* Une liste qui change (filtres, recherche, dataset) repart de la PREMIÈRE
+     tranche : garder la tranche d'un autre filtre montrerait une page à moitié
+     vide sans raison. */
+  useEffect(() => {
+    setNotebookShown(NOTEBOOK_WINDOW_FIRST);
+  }, [notebookFirstId, filteredTests.length]);
+
+  useEffect(() => {
+    if (notebookShowAll) return undefined;
+    if (notebookLeftToShow <= 0) return undefined;
+    const node = notebookEndRef.current;
+    if (!node || typeof IntersectionObserver !== 'function') return undefined;
+    /* `600px` d'avance : la tranche suivante est montée avant qu'on n'arrive
+       dessus (le défilement ne s'arrête donc pas sur un vide). Recréé à chaque
+       croissance, l'observateur se redéclenche tant que le marqueur est visible :
+       l'écran se remplit jusqu'à la première image non montrée. */
+    const io = new IntersectionObserver((entries) => {
+      if (!entries.some((e) => e.isIntersecting)) return;
+      setNotebookShown((prev) => notebookGrownCount(filteredTests.length, prev));
+    }, { rootMargin: '600px 0px' });
+    io.observe(node);
+    return () => io.disconnect();
+  }, [notebookShowAll, notebookLeftToShow, notebookShown, notebookFirstId, filteredTests.length]);
+
+  /* 📓 L'IMPRESSION DÉPLIE TOUT — sinon le PDF ne porterait que la tranche
+     montrée. Deux entrées : le geste de la maison (`lab:before-print`, envoyé
+     par `handlePrint` d'App.jsx AVANT son attente d'images et sa pause de
+     150 ms — React a donc tout monté quand `window.print()` part) et
+     `beforeprint`, pour un Ctrl+P du navigateur. On ne replie jamais après :
+     qui a imprimé tout le cahier veut le garder tel quel. */
+  useEffect(() => {
+    const expand = () => setNotebookShowAll(true);
+    window.addEventListener('lab:before-print', expand);
+    window.addEventListener('beforeprint', expand);
+    return () => {
+      window.removeEventListener('lab:before-print', expand);
+      window.removeEventListener('beforeprint', expand);
+    };
+  }, []);
+
   return (
     <div className="flex flex-col h-full w-full overflow-y-auto md:overflow-hidden custom-scrollbar">
       <div className="bg-white p-3 md:p-4 border-b border-slate-200 shadow-sm flex flex-col gap-3 no-print shrink-0">
@@ -1168,8 +1227,14 @@ const allScientists = useMemo(() => [...new Set([...operators, ...tests.map(t =>
             </div>
           ) : (
             <>
-              <p className="text-[10px] text-slate-400 font-bold uppercase">{filteredTests.length} experiment(s) found</p>
-              {filteredTests.map((test) => (
+              {/* 📓 CE QUI EST MONTÉ EST DIT (voir utils/notebookWindow.js) :
+                  personne ne doit croire que le cahier filtre ce qu'il n'a pas
+                  encore déplié. */}
+              <p className="text-[10px] text-slate-400 font-bold uppercase">
+                {notebookWindowLabel(notebookShownCount, filteredTests.length)}
+                {notebookLeftToShow > 0 ? ' — the rest unfolds as you scroll' : ''}
+              </p>
+              {filteredTests.slice(0, notebookShownCount).map((test) => (
                 <NotebookTestItem
                   key={test.id}
                   test={test}
@@ -1187,6 +1252,20 @@ const allScientists = useMemo(() => [...new Set([...operators, ...tests.map(t =>
                   imageScale={imageScale}
                 />
               ))}
+              {notebookLeftToShow > 0 && (
+                <div ref={notebookEndRef} className="no-print flex flex-col items-center gap-2 pt-2">
+                  <p className="text-[10px] text-slate-400 font-bold uppercase">
+                    {notebookLeftToShow} experiment(s) still folded
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setNotebookShowAll(true)}
+                    className="text-xs font-bold bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-lg shadow-sm"
+                  >
+                    ⬇ Unfold every experiment
+                  </button>
+                </div>
+              )}
             </>
           )}
         </div>
