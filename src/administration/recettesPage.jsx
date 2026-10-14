@@ -4,7 +4,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useAdmin } from './AdminContext';
 import { RECETTE_TYPES, DEPENSE_BC_SIGNE, depenseKindOf, isDesiderataRejected, isDesiderataApproved, isDesiderataTest, desiderataDecisionOf, reimbTotalOf, isSalaireRecetteType } from './adminSchema';
-import { omTransferStatus, demandeTransferOrphaned } from './transferAchats';
+import { omTransferStatus, demandeTransferOrphaned, directDevisEnSignature } from './transferAchats';
 import { AdminImportModal } from './adminImportModal';
 import { SmartTable } from './smartTable';
 import { useDepenseLinkRepair } from './useDepenseLinkRepair';
@@ -321,7 +321,8 @@ export const RecettesPage = () => {
       if (x.whole) return s + toNum(x.om.coutTotal);
       return s + x.parts.reduce((s2, p) => s2 + (p.montant || 0), 0);
     }, 0);
-    /* — Achats prévus / « Devis en signature ou signé » — */
+    /* — Achats prévus / « Devis en signature ou signé » / devis déposés
+         directement dans « Approbation devis & BC » — */
     const lineDes = desiderate.filter((d) => d.recetteSuggereeId === recId && !isDesiderataRejected(d.statut));
     const desApprouvees = lineDes.filter((d) => isDesiderataApproved(d.statut));
     const desEnSignatureItems = [];
@@ -341,7 +342,14 @@ export const RecettesPage = () => {
       const orphanDevis = !!(dv && dv.statut === 'Approuvé' && txt(dv.depenseId) && !depOfDv)
         || (!dv && !!d.transfert);
       const dvLive = !!dv && (dv.statut === 'En attente' || dv.statut === 'Approuvé');
-      if (dvLive && d.transfert && !orphanDevis) desEnSignatureItems.push(d);
+      /* Un devis VIVANT suffit à considérer le transfert comme fait — même
+         critère que `desiderataTransferStatus` (`rec.transfert || devis`), la
+         source de vérité de toute l'application. Sans cela, une demande dont la
+         marque `transfert` manque (données plus anciennes ou importées) alors
+         que son devis existe restait comptée « Achats prévus » ici, alors que
+         la page « Achats prévus / souhaités » la montre déjà transférée. */
+      const transferred = !!(d.transfert || dv);
+      if (dvLive && transferred && !orphanDevis) desEnSignatureItems.push(d);
       else if (!orphanDevis) desPrevuItems.push(d);
     });
     /* Demandes « Test » (choix du superutilisateur) : comptées « Achats prévus »
@@ -353,7 +361,21 @@ export const RecettesPage = () => {
       const bcSigned = !!directDep && isAchatBcSigne(directDep);
       if (!bcSigned) desPrevuItems.push(d);
     });
+    /* Devis DÉPOSÉS DIRECTEMENT dans « Approbation devis & BC » (sans achat
+       prévu ni poste d'OM à l'origine) imputés sur cette ligne budgétaire : ils
+       comptent « Devis en signature / signé » — envoyés pour signature ou
+       signés tant que leur BC n'est pas signé. Sans cette règle, un devis
+       déposé à la main dans la page d'approbation (avec sa propre ligne
+       budgétaire) n'apparaissait dans AUCUNE colonne des Recettes : il n'a ni
+       demande ni OM d'origine pour le porter. */
+    const devisEnSignatureDirects = directDevisEnSignature(devisBc, depenses, recettes, recId);
+    const devisDirectsTotal = devisEnSignatureDirects
+      .reduce((s, dv) => s + toNum(dv.montant) + toNum(dv.fraisPort), 0);
     const desEnSignatureTotal = desEnSignatureItems.reduce((s, d) => s + toNum(d.montantEstime) + toNum(d.fraisPort), 0);
+    /* Total de la colonne « Devis en signature / signé » : les devis nés d'un
+       transfert (comptés via leur demande d'achat prévu) + les devis déposés
+       directement. */
+    const devisEnSignatureTotal = desEnSignatureTotal + devisDirectsTotal;
     const desMontant = desPrevuItems.reduce((s, d) => s + toNum(d.montantEstime), 0);
     const budgetRendu = rec.budgetRenduDispo !== undefined && rec.budgetRenduDispo !== null && rec.budgetRenduDispo !== ''
       ? toNum(rec.budgetRenduDispo)
@@ -369,9 +391,11 @@ export const RecettesPage = () => {
       return s + x.parts.reduce((s2, p) => s2 + (p.montant || 0), 0);
     }, 0);
     /* « Solde prévu » = solde − OM prévus − achats prévus − montants déjà en
-       signature / signés (devis et OM « en signature / signé ») : projection du
-       solde si toutes les prévisions (et signatures en cours) se concrétisent. */
-    const soldePrevu = solde - omPrevuEnCours - desMontant - omEnSignatureTotal - desEnSignatureTotal;
+       signature / signés (devis — y compris ceux DÉPOSÉS DIRECTEMENT dans
+       « Approbation devis & BC » — et OM « en signature / signé ») : projection
+       du solde si toutes les prévisions (et signatures en cours) se
+       concrétisent. */
+    const soldePrevu = solde - omPrevuEnCours - desMontant - omEnSignatureTotal - devisEnSignatureTotal;
     return {
       lineDepenses, ordonneeRows, ordonneeTotal,
       piRows, piTotal, omPaidRows, omPaidTotal, stageRows, stageTotal,
@@ -387,6 +411,9 @@ export const RecettesPage = () => {
          des autres demandes. */
       desPrevuItems,
       desEnSignatureItems, desEnSignatureTotal,
+      /* Devis déposés directement dans « Approbation devis & BC » et total de la
+         colonne « Devis en signature / signé » (transferts + dépôts directs). */
+      devisEnSignatureDirects, devisEnSignatureTotal,
       budgetRendu, solde,
     };
   };
@@ -759,25 +786,43 @@ export const RecettesPage = () => {
     },
     {
       key: 'devisEnSignature', label: 'Devis en signature/signé',
-      header: <span title="Achats prévus / souhaités acceptés et transférés pour signature : devis « en attente de signature » ou déjà signé (BC pas encore signé) — déduit du solde prévu">Devis en signature/signé</span>,
+      header: <span title="Devis « en attente de signature » ou déjà signés (BC pas encore signé), déduits du solde prévu : ceux nés d'un achat prévu / souhaité accepté et transféré pour signature, ET ceux déposés directement dans « Approbation devis & BC » sur cette ligne budgétaire">Devis en signature/signé</span>,
       dataType: 'number', align: 'right', nowrap: true,
-      value: (r) => Number(r.__agg.desEnSignatureTotal) || 0,
+      value: (r) => Number(r.__agg.devisEnSignatureTotal) || 0,
       display: (r) => (
         <HoverCell
-          amount={r.__agg.desEnSignatureTotal}
+          amount={r.__agg.devisEnSignatureTotal}
           onOpen={openTarget}
-          items={r.__agg.desEnSignatureItems.map((d) => {
-            const dv = (Array.isArray(devisBc) ? devisBc : []).find((x) => x && x.kind === 'devis'
-              && x.sourceKind === 'desiderate' && x.sourceId === d.id && !x.sourcePart) || null;
-            return {
-              title: d.description || 'Achat prévu / souhaité',
-              meta: [d.demandeur || '', dv && dv.numDevis ? dv.numDevis : d.numDevis || '',
-                dv ? (dv.statut === 'Approuvé' ? 'devis signé — BC à signer' : 'devis en attente de signature') : ''].filter(Boolean).join(' · '),
-              value: euro.format(toNum(d.montantEstime) + toNum(d.fraisPort)),
-              /* Le lien mène à la position du devis dans « Approbation devis & BC ». */
-              to: dv ? devisBcLink(dv) : desLink(d),
-            };
-          })}
+          items={[
+            /* 1. Devis nés d'un achat prévu / souhaité transféré pour signature
+                  (le détail est porté par la demande d'origine). */
+            ...r.__agg.desEnSignatureItems.map((d) => {
+              const dv = (Array.isArray(devisBc) ? devisBc : []).find((x) => x && x.kind === 'devis'
+                && x.sourceKind === 'desiderate' && x.sourceId === d.id && !x.sourcePart) || null;
+              return {
+                title: d.description || 'Achat prévu / souhaité',
+                meta: [d.demandeur || '', dv && dv.numDevis ? dv.numDevis : d.numDevis || '',
+                  dv ? (dv.statut === 'Approuvé' ? 'devis signé — BC à signer' : 'devis en attente de signature') : ''].filter(Boolean).join(' · '),
+                value: euro.format(toNum(d.montantEstime) + toNum(d.fraisPort)),
+                /* Le lien mène à la position du devis dans « Approbation devis & BC ». */
+                to: dv ? devisBcLink(dv) : desLink(d),
+              };
+            }),
+            /* 2. Devis DÉPOSÉS DIRECTEMENT dans « Approbation devis & BC » sur
+                  cette ligne (aucun achat prévu ni OM d'origine) : c'est ici
+                  qu'ils apparaissent tant que leur BC n'est pas signé — une
+                  fois le BC signé, la dépense prend le relais dans la colonne
+                  « Achats (BC signé) ». Le lien mène à leur ligne dans la page
+                  d'approbation. */
+            ...r.__agg.devisEnSignatureDirects.map((dv) => ({
+              title: dv.description || 'Devis',
+              meta: [dv.fournisseur || '', dv.numDevis || '', dv.deposant || '',
+                dv.statut === 'Approuvé' ? 'devis signé — BC à signer' : 'devis en attente de signature',
+                'déposé dans Approbation devis & BC'].filter(Boolean).join(' · '),
+              value: euro.format(toNum(dv.montant) + toNum(dv.fraisPort)),
+              to: devisBcLink(dv),
+            })),
+          ]}
         />
       ),
     },
@@ -1162,7 +1207,7 @@ const SoldePrevuCell = ({ agg }) => {
     { key: 'solde', label: 'Solde actuel', value: agg.solde, sign: '+' },
     { key: 'omPrevu', label: 'OM prévus (à payer)', value: agg.omPrevuEnCours, sign: '−' },
     { key: 'desPrevu', label: 'Achats prévus (approuvés)', value: agg.desMontant, sign: '−' },
-    { key: 'desSign', label: 'Devis en signature/signé', value: agg.desEnSignatureTotal, sign: '−' },
+    { key: 'desSign', label: 'Devis en signature/signé', value: agg.devisEnSignatureTotal, sign: '−' },
     { key: 'omSign', label: 'OM en signature/signé', value: agg.omEnSignatureTotal, sign: '−' },
   ];
   return (

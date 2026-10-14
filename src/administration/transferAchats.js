@@ -26,10 +26,11 @@
    postes sont soldés (BC signés + remboursements corrigés).
    ========================================================================= */
 import {
-  REIMBURSEMENT_COST_FIELDS, DEPENSE_BC_SIGNE, APPROVAL_APPROVED, APPROVAL_REJECTED, APPROVAL_NOT_RETAINED,
+  REIMBURSEMENT_COST_FIELDS, DEPENSE_BC_SIGNE, APPROVAL_PENDING, APPROVAL_APPROVED, APPROVAL_REJECTED, APPROVAL_NOT_RETAINED,
 } from './adminSchema';
 import { parseEuroAmount } from './importUtils';
 import { personnelEmailsMatching } from './emailNotify';
+import { findRecetteByLabel } from './recetteLink';
 
 /* ── Petites aides ─────────────────────────────────────────────────────── */
 export const txt = (v) => (v === null || v === undefined ? '' : String(v).trim());
@@ -401,6 +402,52 @@ export const desiderataTransferStatus = (rec, devisBcList, depenses) => {
   };
 };
 
+
+/* ── Devis déposés DIRECTEMENT dans « Approbation devis & BC » ──────────── */
+/** Fiche Recettes imputée à un devis / BC déposé : `recetteId` quand il a été
+ *  choisi au dépôt ; sinon l'intitulé « Ligne budgétaire » est résolu dans les
+ *  fiches Recettes — d'abord restreint à la catégorie (Fonctionnement /
+ *  Investissement), puis toutes fiches confondues. Ce sont EXACTEMENT les
+ *  règles qui rattachent la dépense « BC signé » à sa ligne (page
+ *  « Approbation devis & BC ») : le devis et la dépense qu'il produira
+ *  tombent donc toujours sur la MÊME ligne budgétaire des Recettes. */
+export const recetteIdOfDeposit = (rec, recettes) => {
+  const direct = txt(rec && rec.recetteId);
+  if (direct) return direct;
+  const label = txt(rec && pick(rec, ['ligneBudgetaire', 'ligne']));
+  if (!label) return '';
+  const found = findRecetteByLabel(recettes, label, txt(rec && rec.categorie))
+    || findRecetteByLabel(recettes, label, '');
+  return found ? found.id : '';
+};
+
+/** Devis DÉPOSÉS DIRECTEMENT dans « Approbation devis & BC » (aucun achat
+ *  prévu ni poste d'OM à l'origine) imputés à la ligne budgétaire `recetteId` :
+ *  ils comptent dans la colonne « Devis en signature / signé » des Recettes —
+ *  « En attente » (envoyé pour signature) ou « Approuvé » (signé, son BC reste
+ *  à signer) — tant que leur bon de commande n'est pas signé. Écartés :
+ *   · les devis créés par un transfert (`sourceKind` / `sourceId` /
+ *     `sourcePart`) : leur demande ou leur poste d'OM les compte déjà
+ *     (« Achats prévus » / « OM en signature ») — jamais deux fois ;
+ *   · les devis « En gestion » (à compléter : pas encore envoyés) ;
+ *   · les devis dont le BC est signé — la dépense liée les suit alors dans la
+ *     colonne « Achats (BC signé) » — et les devis « orphelins » (dépense liée
+ *     supprimée), que plus rien ne relie à la page d'approbation.
+ */
+export const directDevisEnSignature = (devisBcList, depenses, recettes, recetteId) => {
+  const deps = Array.isArray(depenses) ? depenses : [];
+  return (Array.isArray(devisBcList) ? devisBcList : []).filter((dv) => {
+    if (!dv || dv.kind !== 'devis') return false;
+    if (txt(dv.sourceKind) || txt(dv.sourceId) || txt(dv.sourcePart)) return false;
+    const statut = txt(dv.statut);
+    if (statut !== APPROVAL_PENDING && statut !== APPROVAL_APPROVED) return false;
+    if (!recetteId || recetteIdOfDeposit(dv, recettes) !== recetteId) return false;
+    const depId = txt(dv.depenseId);
+    if (!depId) return true;
+    const dep = deps.find((d) => d && d.id === depId) || null;
+    return !!dep && !isDepenseBcSigne(dep);
+  });
+};
 
 /* ── Circuit « gestion de requêtes » (transferts pour signature / révision) ── */
 /** Modes de transfert d’une demande acceptée (directeur) :
